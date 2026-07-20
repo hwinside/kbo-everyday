@@ -1,18 +1,17 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Loader2, Video as VideoIcon, MapPin } from "lucide-react";
 import { getSafeSession } from "@/lib/supabase/client";
 import { prepareVenueStoryMedia } from "@/lib/venue-stories/upload";
 import { getVenuePosition } from "@/lib/venue-stories/geo";
-import { stadiumByTeamId, haversineMeters } from "@/lib/venue-stories/stadiums";
-import { VENUE_GEOFENCE_RADIUS_M } from "@/lib/venue-stories/types";
+import { haversineMeters } from "@/lib/venue-stories/stadiums";
+import type { VenueInfo } from "@/lib/venue-stories/types";
 
 interface Props {
   gameId: string;
-  homeTeamId: number;
   isOpen: boolean;
   onClose: () => void;
   onUploaded: () => void;
@@ -20,24 +19,43 @@ interface Props {
 
 type Phase = "idle" | "geo" | "upload";
 
-export default function VenueStoryComposer({
-  gameId,
-  homeTeamId,
-  isOpen,
-  onClose,
-  onUploaded,
-}: Props) {
+export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded }: Props) {
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewType, setPreviewType] = useState<"image" | "video" | null>(null);
   const [caption, setCaption] = useState("");
   const [phase, setPhase] = useState<Phase>("idle");
   const [error, setError] = useState<string | null>(null);
+  const [venue, setVenue] = useState<VenueInfo | null>(null);
+  const [venueLoading, setVenueLoading] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const stadium = stadiumByTeamId(homeTeamId);
   const submitting = phase !== "idle";
-  const radiusKm = Math.round((VENUE_GEOFENCE_RADIUS_M / 1000) * 10) / 10;
+  const radiusKm = venue ? Math.round((venue.radiusM / 1000) * 10) / 10 : null;
+
+  // 열릴 때 서버에서 구장/업로드 가능 시간대를 받아온다(서버가 최종 권위, 여기선 UX 게이트용).
+  useEffect(() => {
+    if (!isOpen) return;
+    let alive = true;
+    setVenueLoading(true);
+    setVenue(null);
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/venue-stories/venue?gameId=${encodeURIComponent(gameId)}`,
+        );
+        const data = (await res.json()) as VenueInfo;
+        if (alive) setVenue(data);
+      } catch {
+        // 무시 — 서버가 POST 에서 최종 판정
+      } finally {
+        if (alive) setVenueLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [isOpen, gameId]);
 
   const reset = () => {
     if (previewUrl) URL.revokeObjectURL(previewUrl);
@@ -74,26 +92,31 @@ export default function VenueStoryComposer({
   const submit = async () => {
     if (!file || submitting) return;
     setError(null);
-    let lat: number | null = null;
-    let lng: number | null = null;
 
-    // 지오펜스: 구장 좌표가 있는 경기는 반경 안에서만 허용
-    if (stadium) {
-      setPhase("geo");
-      const pos = await getVenuePosition();
-      if ("error" in pos) {
-        setError(pos.error);
+    // 업로드 가능 시간대 아님(경기 전/후, 취소, 미지원 구장) — 서버 사유 그대로 노출
+    if (venue && !venue.uploadOpen) {
+      setError(venue.reason ?? "지금은 올릴 수 없어요");
+      return;
+    }
+
+    // 지오펜스(직관 인증): 위치 필수. 반경 밖/권한 거부/저정확도는 업로드 차단(서버도 재검증).
+    setPhase("geo");
+    const pos = await getVenuePosition();
+    if ("error" in pos) {
+      setError(pos.error);
+      setPhase("idle");
+      return;
+    }
+    if (venue && venue.lat != null && venue.lng != null) {
+      const dist = haversineMeters(pos.lat, pos.lng, venue.lat, venue.lng);
+      if (dist > venue.radiusM) {
+        const where = venue.stadiumName ?? "경기장";
+        setError(
+          `직관 인증 실패 — ${where}${radiusKm ? ` 반경 ${radiusKm}km` : ""} 안에서만 올릴 수 있어요`,
+        );
         setPhase("idle");
         return;
       }
-      const dist = haversineMeters(pos.lat, pos.lng, stadium.lat, stadium.lng);
-      if (dist > VENUE_GEOFENCE_RADIUS_M) {
-        setError(`직관 인증 실패 — ${stadium.name} 반경 ${radiusKm}km 안에서만 올릴 수 있어요`);
-        setPhase("idle");
-        return;
-      }
-      lat = pos.lat;
-      lng = pos.lng;
     }
 
     setPhase("upload");
@@ -123,8 +146,9 @@ export default function VenueStoryComposer({
           width: prepared.width,
           height: prepared.height,
           caption: caption.trim() || null,
-          lat,
-          lng,
+          lat: pos.lat,
+          lng: pos.lng,
+          accuracy: pos.accuracy,
         }),
       });
       const data = await res.json();
@@ -142,6 +166,8 @@ export default function VenueStoryComposer({
   };
 
   if (!isOpen || typeof document === "undefined") return null;
+
+  const gateReason = venue && !venue.uploadOpen ? venue.reason : null;
 
   return createPortal(
     <AnimatePresence>
@@ -168,14 +194,16 @@ export default function VenueStoryComposer({
           </div>
 
           <div className="p-4 flex flex-col gap-3">
-            {stadium && (
-              <div className="flex items-center gap-1.5 text-[12px] text-text-tertiary bg-bg-tertiary/50 rounded-lg px-3 py-2">
-                <MapPin size={13} className="text-red-400 shrink-0" />
-                <span>
-                  {stadium.name} 반경 {radiusKm}km 안(직관 중)일 때만 올릴 수 있어요
-                </span>
-              </div>
-            )}
+            <div className="flex items-center gap-1.5 text-[12px] text-text-tertiary bg-bg-tertiary/50 rounded-lg px-3 py-2">
+              <MapPin size={13} className="text-red-400 shrink-0" />
+              <span>
+                {venueLoading
+                  ? "구장 정보 확인 중…"
+                  : gateReason
+                    ? gateReason
+                    : `${venue?.stadiumName ?? "경기장"}${radiusKm ? ` 반경 ${radiusKm}km` : ""} 안(직관 중)에서만 올릴 수 있어요`}
+              </span>
+            </div>
 
             {!previewUrl ? (
               <button
@@ -224,11 +252,11 @@ export default function VenueStoryComposer({
 
             <button
               onClick={submit}
-              disabled={!file || submitting}
+              disabled={!file || submitting || !!gateReason}
               className="w-full py-3 rounded-xl bg-brand-primary text-white font-semibold flex items-center justify-center gap-2 disabled:opacity-40"
             >
               {submitting ? <Loader2 size={18} className="animate-spin" /> : null}
-              {phase === "geo" ? "위치 확인 중…" : phase === "upload" ? "올리는 중…" : "올리기"}
+              {phase === "geo" ? "직관 인증 중…" : phase === "upload" ? "올리는 중…" : "올리기"}
             </button>
           </div>
         </motion.div>

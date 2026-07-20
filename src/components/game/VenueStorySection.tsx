@@ -9,10 +9,9 @@ import type { VenueStory } from "@/lib/venue-stories/types";
 
 interface Props {
   gameId: string;
-  homeTeamId: number;
 }
 
-export default function VenueStorySection({ gameId, homeTeamId }: Props) {
+export default function VenueStorySection({ gameId }: Props) {
   const { user } = useAuth();
   const [stories, setStories] = useState<VenueStory[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -106,7 +105,6 @@ export default function VenueStorySection({ gameId, homeTeamId }: Props) {
 
       <VenueStoryComposer
         gameId={gameId}
-        homeTeamId={homeTeamId}
         isOpen={composerOpen}
         onClose={() => setComposerOpen(false)}
         onUploaded={fetchStories}

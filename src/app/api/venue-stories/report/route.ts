@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { getVerifiedUserFromRequest } from "@/lib/auth/verified-user";
-import { VENUE_STORY_REPORT_HIDE_THRESHOLD } from "@/lib/venue-stories/types";
 
-// POST: 직관 스토리 신고 → reports 테이블 기록 + report_count++, 임계치 이상이면 자동 숨김
+// POST: 직관 스토리 신고 — DB RPC 로 insert+증가+임계 숨김을 한 트랜잭션 원자 처리
 export async function POST(req: NextRequest) {
   const verified = await getVerifiedUserFromRequest(req);
   if (!verified) {
@@ -18,48 +17,30 @@ export async function POST(req: NextRequest) {
   }
 
   const storyId = Number(body.storyId);
-  const reason = typeof body.reason === "string" ? body.reason : "기타";
+  const reason = typeof body.reason === "string" ? body.reason.slice(0, 100) : "기타";
   const detail = typeof body.detail === "string" ? body.detail.slice(0, 500) : null;
   if (!Number.isInteger(storyId)) {
     return NextResponse.json({ error: "잘못된 id" }, { status: 400 });
   }
 
-  // 대상 존재 확인
-  const { data: story } = await supabase
-    .from("venue_stories")
-    .select("id, report_count, status")
-    .eq("id", storyId)
-    .maybeSingle();
-  if (!story) {
-    return NextResponse.json({ error: "없는 스토리" }, { status: 404 });
-  }
-
-  // reports 테이블 기록 (중복 신고는 unique 위반으로 409 — 기존 report 패턴 재활용)
-  const { error: reportErr } = await supabase.from("reports").insert({
-    reporter_id: verified.user.id,
-    target_type: "venue_story",
-    target_id: String(storyId),
-    reason,
-    detail,
+  const { data, error } = await supabase.rpc("report_venue_story", {
+    p_story_id: storyId,
+    p_reporter: verified.user.id,
+    p_reason: reason,
+    p_detail: detail,
   });
-  if (reportErr) {
-    // 이미 신고한 경우(unique 위반)는 조용히 성공 처리
-    const code = (reportErr as { code?: string }).code;
-    if (code !== "23505") {
-      return NextResponse.json({ error: "신고 실패" }, { status: 500 });
-    }
-    return NextResponse.json({ success: true, alreadyReported: true });
+
+  if (error) {
+    return NextResponse.json({ error: "신고 실패" }, { status: 500 });
+  }
+  const result = (data ?? {}) as { ok?: boolean; error?: string; hidden?: boolean; alreadyReported?: boolean };
+  if (result.ok === false) {
+    return NextResponse.json({ error: result.error === "not_found" ? "없는 스토리" : "신고 실패" }, { status: 404 });
   }
 
-  const nextCount = ((story.report_count as number) ?? 0) + 1;
-  const shouldHide = nextCount >= VENUE_STORY_REPORT_HIDE_THRESHOLD;
-  await supabase
-    .from("venue_stories")
-    .update({
-      report_count: nextCount,
-      ...(shouldHide ? { status: "removed" } : {}),
-    })
-    .eq("id", storyId);
-
-  return NextResponse.json({ success: true, hidden: shouldHide });
+  return NextResponse.json({
+    success: true,
+    hidden: !!result.hidden,
+    alreadyReported: !!result.alreadyReported,
+  });
 }

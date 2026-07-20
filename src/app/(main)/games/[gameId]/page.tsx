@@ -480,7 +480,7 @@ export default function GameDetailPage() {
       {d.derivedStatus !== "cancelled" && (
         <>
           {/* 직관 라이브 — 현장 팬 스토리 (경기 밑, 탭 위) */}
-          <VenueStorySection gameId={gameId} homeTeamId={game.homeTeamId} />
+          <VenueStorySection gameId={gameId} />
 
           {/* Tabs */}
           <div className="flex border-b border-border mx-4">

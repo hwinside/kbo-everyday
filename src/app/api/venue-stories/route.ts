@@ -1,22 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { getVerifiedUserFromRequest } from "@/lib/auth/verified-user";
+import { resolveGameVenue } from "@/lib/venue-stories/venue-resolve";
+import { evaluateGeofence } from "@/lib/venue-stories/geofence";
 import {
   VENUE_STORY_MAX_DURATION_MS,
   VENUE_STORY_DURATION_TOLERANCE_MS,
-  VENUE_STORY_TTL_HOURS,
+  VENUE_STORY_MAX_BYTES,
   VENUE_STORY_MAX_PER_USER_PER_GAME,
-  VENUE_GEOFENCE_RADIUS_M,
+  VENUE_GEOFENCE_MAX_ACCURACY_M,
   type VenueStory,
 } from "@/lib/venue-stories/types";
-import { stadiumForGame, haversineMeters } from "@/lib/venue-stories/stadiums";
 
 const ALLOWED_BUCKETS = new Set(["videos", "photos"]);
 
-/** 우리 Supabase storage 공개 URL 인지 검증하고 { bucket, path } 파싱 */
-function parseStoragePublicUrl(
-  url: string,
-): { bucket: string; path: string } | null {
+export const maxDuration = 30;
+
+/** 우리 Supabase storage 공개 URL 검증 + { bucket, path } 파싱 */
+function parseStoragePublicUrl(url: string): { bucket: string; path: string } | null {
   const base = process.env.NEXT_PUBLIC_SUPABASE_URL;
   if (!base || typeof url !== "string") return null;
   const prefix = `${base}/storage/v1/object/public/`;
@@ -30,12 +31,57 @@ function parseStoragePublicUrl(
   return { bucket, path };
 }
 
-// GET: 경기별 active 직관 스토리 목록
+/** 소유권 바인딩: 경로가 venue-stories/{gameId}/{userId}/ 아래인지 */
+function ownsPath(path: string, gameId: string, userId: string): boolean {
+  return path.startsWith(`venue-stories/${gameId}/${userId}/`);
+}
+
+/** storage 객체 실제 존재·크기·MIME 서버 검증(HEAD, 없으면 Range GET 폴백) */
+async function probeObject(
+  url: string,
+): Promise<{ ok: boolean; size: number | null; contentType: string | null }> {
+  try {
+    let res = await fetch(url, { method: "HEAD" });
+    if (!res.ok) {
+      res = await fetch(url, { method: "GET", headers: { Range: "bytes=0-0" } });
+      if (!res.ok && res.status !== 206) return { ok: false, size: null, contentType: null };
+    }
+    const ct = res.headers.get("content-type");
+    const cr = res.headers.get("content-range"); // "bytes 0-0/12345"
+    const cl = res.headers.get("content-length");
+    let size: number | null = null;
+    if (cr) {
+      const total = cr.split("/")[1];
+      size = total ? parseInt(total, 10) : null;
+    } else if (cl) {
+      size = parseInt(cl, 10);
+    }
+    return { ok: true, size: Number.isNaN(size as number) ? null : size, contentType: ct };
+  } catch {
+    return { ok: false, size: null, contentType: null };
+  }
+}
+
+/** 신뢰 유저의 차단 목록(작성자 필터용) */
+async function blockedAuthorIds(viewerId: string): Promise<Set<string>> {
+  const { data } = await supabase
+    .from("user_blocks")
+    .select("blocked_id")
+    .eq("blocker_id", viewerId);
+  return new Set((data ?? []).map((r) => r.blocked_id as string));
+}
+
+// GET: 경기별 active 직관 스토리 목록 (차단 유저 제외)
 export async function GET(req: NextRequest) {
   const gameId = req.nextUrl.searchParams.get("gameId");
   if (!gameId) {
     return NextResponse.json({ error: "gameId 필요" }, { status: 400 });
   }
+
+  // 로그인 유저면 차단 목록으로 필터
+  let blocked = new Set<string>();
+  const verified = await getVerifiedUserFromRequest(req);
+  if (verified) blocked = await blockedAuthorIds(verified.user.id);
 
   const { data: rows, error } = await supabase
     .from("venue_stories")
@@ -52,7 +98,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "조회 실패" }, { status: 500 });
   }
 
-  const list = rows ?? [];
+  const list = (rows ?? []).filter((r) => !blocked.has(r.user_id as string));
   const userIds = [...new Set(list.map((r) => r.user_id as string))];
   const profileMap = new Map<
     string,
@@ -98,7 +144,7 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({ stories });
 }
 
-// POST: 직관 스토리 생성 (verified user, expires_at 서버 권위)
+// POST: 직관 스토리 생성 (소유권 바인딩 + 실제 경기/구장/시간 + 지오펜스 + 크기/MIME 서버 검증)
 export async function POST(req: NextRequest) {
   const verified = await getVerifiedUserFromRequest(req);
   if (!verified) {
@@ -125,65 +171,80 @@ export async function POST(req: NextRequest) {
     typeof body.caption === "string" ? body.caption.trim().slice(0, 200) : null;
   const lat = typeof body.lat === "number" ? body.lat : null;
   const lng = typeof body.lng === "number" ? body.lng : null;
+  const accuracy = typeof body.accuracy === "number" ? body.accuracy : null;
 
-  if (!gameId) {
-    return NextResponse.json({ error: "gameId 필요" }, { status: 400 });
-  }
+  if (!gameId) return NextResponse.json({ error: "gameId 필요" }, { status: 400 });
   if (mediaType !== "video" && mediaType !== "image") {
     return NextResponse.json({ error: "mediaType 오류" }, { status: 400 });
   }
+  if (!/^[A-Za-z0-9_-]{8,}$/.test(gameId)) {
+    return NextResponse.json({ error: "gameId 형식 오류" }, { status: 400 });
+  }
 
+  // 1) 소유권 바인딩: 미디어/썸네일 경로가 업로더 본인 예약 경로 아래여야 함
   const media = parseStoragePublicUrl(mediaUrl);
-  if (!media) {
-    return NextResponse.json({ error: "미디어 URL 오류" }, { status: 400 });
+  if (!media || !ownsPath(media.path, gameId, userId)) {
+    return NextResponse.json({ error: "미디어 경로 권한 오류" }, { status: 403 });
   }
   let thumb: { bucket: string; path: string } | null = null;
   if (thumbUrl) {
     thumb = parseStoragePublicUrl(thumbUrl);
-    if (!thumb) {
-      return NextResponse.json({ error: "썸네일 URL 오류" }, { status: 400 });
+    if (!thumb || !ownsPath(thumb.path, gameId, userId)) {
+      return NextResponse.json({ error: "썸네일 경로 권한 오류" }, { status: 403 });
     }
   }
 
-  if (mediaType === "video") {
-    if (
-      durationMs != null &&
-      durationMs > VENUE_STORY_MAX_DURATION_MS + VENUE_STORY_DURATION_TOLERANCE_MS
-    ) {
-      return NextResponse.json(
-        { error: "영상은 15초 이하만 올릴 수 있어요" },
-        { status: 400 },
-      );
-    }
+  // 2) 실제 경기/구장/시간 검증 (fail-closed)
+  const venue = await resolveGameVenue(gameId);
+  if (!venue.exists) {
+    return NextResponse.json({ error: venue.reason ?? "경기를 확인할 수 없어요" }, { status: 404 });
+  }
+  if (!venue.uploadOpen || !venue.coord || venue.expiresAtMs == null) {
+    return NextResponse.json(
+      { error: venue.reason ?? "지금은 올릴 수 없어요" },
+      { status: 403 },
+    );
   }
 
-  // 지오펜스: gameId 로 구장 좌표를 독립 파싱 → 좌표 있는 경기는 반경 안에서만 허용
-  const stadium = stadiumForGame(gameId);
-  let venueVerified = false;
-  if (stadium) {
-    if (lat == null || lng == null) {
-      return NextResponse.json(
-        { error: "직관 인증(위치)이 필요해요" },
-        { status: 403 },
-      );
-    }
-    const dist = haversineMeters(lat, lng, stadium.lat, stadium.lng);
-    if (dist > VENUE_GEOFENCE_RADIUS_M) {
-      return NextResponse.json(
-        { error: "직관 인증 실패 — 구장 근처에서만 올릴 수 있어요" },
-        { status: 403 },
-      );
-    }
-    venueVerified = true;
+  // 3) 지오펜스: 위치 필수 + accuracy 상한 + 반경 (fail-closed 순수 판정 공유)
+  const geo = evaluateGeofence({
+    lat,
+    lng,
+    accuracy,
+    coord: venue.coord,
+    maxAccuracy: VENUE_GEOFENCE_MAX_ACCURACY_M,
+  });
+  if (!geo.ok) {
+    return NextResponse.json({ error: geo.reason ?? "직관 인증이 필요해요" }, { status: 403 });
   }
 
-  // 게임당 유저 상한(스팸 방지)
+  // 4) 미디어 객체 실제 존재·크기·MIME 서버 검증
+  const probe = await probeObject(mediaUrl);
+  if (!probe.ok) {
+    return NextResponse.json({ error: "업로드된 미디어를 확인할 수 없어요" }, { status: 400 });
+  }
+  if (probe.size != null && probe.size > VENUE_STORY_MAX_BYTES) {
+    return NextResponse.json({ error: "파일이 너무 큽니다 (최대 60MB)" }, { status: 400 });
+  }
+  if (probe.contentType && !probe.contentType.startsWith(mediaType + "/")) {
+    return NextResponse.json({ error: "미디어 형식이 올바르지 않아요" }, { status: 400 });
+  }
+  // 영상 클라 duration 힌트(참고용, 실제 검증은 트랜스코딩 워커 ffprobe)
+  if (
+    mediaType === "video" &&
+    durationMs != null &&
+    durationMs > VENUE_STORY_MAX_DURATION_MS + VENUE_STORY_DURATION_TOLERANCE_MS
+  ) {
+    return NextResponse.json({ error: "영상은 15초 이하만 올릴 수 있어요" }, { status: 400 });
+  }
+
+  // 5) 게임당 유저 상한(active+pending)
   const { count } = await supabase
     .from("venue_stories")
     .select("id", { count: "exact", head: true })
     .eq("user_id", userId)
     .eq("game_id", gameId)
-    .eq("status", "active");
+    .in("status", ["active", "pending"]);
   if ((count ?? 0) >= VENUE_STORY_MAX_PER_USER_PER_GAME) {
     return NextResponse.json(
       { error: "이 경기에 올릴 수 있는 개수를 초과했어요" },
@@ -191,10 +252,8 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const expiresAt = new Date(
-    Date.now() + VENUE_STORY_TTL_HOURS * 3600_000,
-  ).toISOString();
-
+  // 6) insert — 영상은 pending(720p·duration 검증 후 워커가 active), 사진은 active
+  const initialStatus = mediaType === "video" ? "pending" : "active";
   const { data: inserted, error } = await supabase
     .from("venue_stories")
     .insert({
@@ -211,8 +270,10 @@ export async function POST(req: NextRequest) {
       width,
       height,
       caption,
-      venue_verified: venueVerified,
-      expires_at: expiresAt,
+      venue_verified: true,
+      stadium_name: venue.stadiumName,
+      status: initialStatus,
+      expires_at: new Date(venue.expiresAtMs).toISOString(),
     })
     .select("id")
     .single();
@@ -221,5 +282,5 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "저장 실패" }, { status: 500 });
   }
 
-  return NextResponse.json({ success: true, id: inserted.id });
+  return NextResponse.json({ success: true, id: inserted.id, status: initialStatus });
 }

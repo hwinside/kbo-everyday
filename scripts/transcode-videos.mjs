@@ -92,6 +92,37 @@ function optimizedPath(origPath) {
   return `transcoded/${dir}${name}-${h}.mp4`;
 }
 
+// ── 직관 라이브(venue_stories) 헬퍼 ──
+let HAS_FFPROBE = true;
+const VENUE_MAX_DURATION_MS = 16000; // 15초 + 여유
+const VENUE_MAX_BYTES = 60 * 1024 * 1024;
+
+/** ffprobe 로 duration(ms)/해상도 추출 */
+function probeVideoMeta(input) {
+  const out = execFileSync("ffprobe", [
+    "-v", "error",
+    "-select_streams", "v:0",
+    "-show_entries", "stream=width,height",
+    "-show_entries", "format=duration",
+    "-of", "json", input,
+  ]).toString();
+  const j = JSON.parse(out);
+  const s = (j.streams && j.streams[0]) || {};
+  const dur = parseFloat((j.format && j.format.duration) || "0");
+  return {
+    durationMs: Math.round((isNaN(dur) ? 0 : dur) * 1000),
+    width: s.width || null,
+    height: s.height || null,
+  };
+}
+
+/** 원본 media_path → 같은 폴더의 720p 최적화본 path */
+function venueOptimizedPath(mediaPath) {
+  const name = basename(mediaPath).replace(/\.[^.]+$/, "");
+  const dir = mediaPath.slice(0, mediaPath.length - basename(mediaPath).length);
+  return `${dir}${name}-720p.mp4`;
+}
+
 async function downloadTo(url, dest) {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`download ${res.status}`);
@@ -292,11 +323,92 @@ async function probe() {
   }
 }
 
+// ── 직관 라이브(venue_stories) pending 영상 처리: ffprobe(≤15초·60MB) + 720p → active ──
+async function processVenueStories() {
+  if (!HAS_FFPROBE) {
+    console.warn("⚠️  ffprobe 없어 직관 라이브 영상 처리 skip");
+    return;
+  }
+  const { data: rows, error } = await supabase
+    .from("venue_stories")
+    .select("id, media_url, media_bucket, media_path, transcode_attempts")
+    .eq("media_type", "video")
+    .eq("status", "pending")
+    .lt("transcode_attempts", MAX_ATTEMPTS)
+    .order("created_at", { ascending: true })
+    .limit(LIMIT);
+  if (error) throw new Error(`venue_stories 조회 실패: ${error.message}`);
+  if (!rows || rows.length === 0) { console.log("직관 라이브 pending 영상 없음."); return; }
+
+  const work = mkdtempSync(join(tmpdir(), "kbo-venue-"));
+  let done = 0, removed = 0, failed = 0;
+  try {
+    for (const row of rows) {
+      const inPath = join(work, "in" + (basename(row.media_path).match(/\.[^.]+$/)?.[0] || ".mp4"));
+      const outPath = join(work, "out.mp4");
+      try {
+        const inBytes = await downloadTo(row.media_url, inPath);
+        const meta = probeVideoMeta(inPath);
+        // duration/크기 서버 권위 검증 — 초과 시 노출 없이 removed(정리 cron 이 storage 제거)
+        if (meta.durationMs > VENUE_MAX_DURATION_MS || inBytes > VENUE_MAX_BYTES) {
+          await supabase.from("venue_stories").update({ status: "removed" }).eq("id", row.id);
+          console.log(`  🚫 venue ${row.id} 검증실패(dur ${meta.durationMs}ms/${fmtMB(inBytes)}) → removed`);
+          removed++;
+          continue;
+        }
+        transcode(inPath, outPath);
+        const outBytes = statSync(outPath).size;
+        const newPath = venueOptimizedPath(row.media_path);
+        const buf = readFileSync(outPath);
+        const { error: upErr } = await supabase.storage
+          .from(row.media_bucket)
+          .upload(newPath, buf, { contentType: "video/mp4", upsert: true });
+        if (upErr) throw new Error(`upload 실패: ${upErr.message}`);
+        const { data: pub } = supabase.storage.from(row.media_bucket).getPublicUrl(newPath);
+        const { error: updErr } = await supabase
+          .from("venue_stories")
+          .update({
+            media_url: pub.publicUrl,
+            media_path: newPath,
+            width: meta.width,
+            height: meta.height,
+            duration_ms: meta.durationMs,
+            status: "active",
+            transcode_attempts: row.transcode_attempts + 1,
+          })
+          .eq("id", row.id);
+        if (updErr) throw new Error(`row 갱신 실패: ${updErr.message}`);
+        // 최적화본으로 교체됐으니 원본 제거
+        if (row.media_path !== newPath) {
+          try { await supabase.storage.from(row.media_bucket).remove([row.media_path]); } catch {}
+        }
+        console.log(`  ✅ venue ${row.id} ${fmtMB(inBytes)}→${fmtMB(outBytes)} active`);
+        done++;
+      } catch (e) {
+        const attempts = row.transcode_attempts + 1;
+        const status = attempts >= MAX_ATTEMPTS ? "removed" : "pending";
+        try {
+          await supabase.from("venue_stories").update({ transcode_attempts: attempts, status }).eq("id", row.id);
+        } catch {}
+        console.log(`  ❌ venue ${row.id} ${status} (${attempts}/${MAX_ATTEMPTS}): ${e.message || e}`);
+        failed++;
+      } finally {
+        for (const f of [inPath, outPath]) { try { rmSync(f); } catch {} }
+      }
+    }
+  } finally {
+    try { rmSync(work, { recursive: true, force: true }); } catch {}
+  }
+  console.log(`직관 라이브 처리: ✅${done} 🚫${removed} ❌${failed}`);
+}
+
 // ── main ──
 (async () => {
   // ffmpeg 존재 확인
   try { execFileSync("ffmpeg", ["-version"], { stdio: "ignore" }); }
   catch { console.error("❌ ffmpeg 없음 — brew install ffmpeg"); process.exit(1); }
+  try { execFileSync("ffprobe", ["-version"], { stdio: "ignore" }); }
+  catch { HAS_FFPROBE = false; console.warn("⚠️  ffprobe 없음 — 직관 라이브 영상 duration 검증 불가"); }
 
   if (PROBE) {
     console.log(`🔍 probe (최신 ${LIMIT}개, DB/스토리지 무변경)\n`);
@@ -316,4 +428,7 @@ async function probe() {
     return;
   }
   await processJobs();
+
+  console.log("\n── 직관 라이브(venue_stories) 영상 처리 ──");
+  await processVenueStories();
 })().catch((e) => { console.error("❌", e); process.exit(1); });
