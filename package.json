@@ -62,7 +62,8 @@
     "qa:roster-moves:db": "node scripts/qa/roster-moves-db-integration.mjs",
     "qa:player-search-backfill": "node scripts/qa/player-search-backfill-smoke.mjs",
     "qa:venue-geofence": "tsx scripts/qa/venue-geofence-smoke.ts",
-    "qa:venue-media": "tsx scripts/qa/venue-media-smoke.ts"
+    "qa:venue-media": "tsx scripts/qa/venue-media-smoke.ts",
+    "qa:venue-storage-path": "tsx scripts/qa/venue-storage-path-smoke.ts"
   },
   "dependencies": {
     "@capacitor-firebase/messaging": "^8.3.0",

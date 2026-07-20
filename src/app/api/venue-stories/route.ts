@@ -5,6 +5,10 @@ import { resolveGameVenue } from "@/lib/venue-stories/venue-resolve";
 import { evaluateGeofence } from "@/lib/venue-stories/geofence";
 import { probeMediaObject } from "@/lib/venue-stories/media-probe";
 import {
+  parseStoragePublicUrl as parseVenueStorageUrl,
+  ownsPath as ownsVenuePath,
+} from "@/lib/venue-stories/storage-path";
+import {
   VENUE_STORY_MAX_DURATION_MS,
   VENUE_STORY_DURATION_TOLERANCE_MS,
   VENUE_STORY_MAX_BYTES,
@@ -14,28 +18,16 @@ import {
   type VenueStory,
 } from "@/lib/venue-stories/types";
 
-const ALLOWED_BUCKETS = new Set(["videos", "photos"]);
-
 export const maxDuration = 30;
 
-/** 우리 Supabase storage 공개 URL 검증 + { bucket, path } 파싱 */
+/** 우리 Supabase storage 공개 URL 검증 + { bucket, path } 파싱(canonicalization 우회 차단) */
 function parseStoragePublicUrl(url: string): { bucket: string; path: string } | null {
-  const base = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  if (!base || typeof url !== "string") return null;
-  const prefix = `${base}/storage/v1/object/public/`;
-  if (!url.startsWith(prefix)) return null;
-  const rest = url.slice(prefix.length).split("?")[0];
-  const slash = rest.indexOf("/");
-  if (slash <= 0) return null;
-  const bucket = rest.slice(0, slash);
-  const path = decodeURIComponent(rest.slice(slash + 1));
-  if (!ALLOWED_BUCKETS.has(bucket) || !path) return null;
-  return { bucket, path };
+  return parseVenueStorageUrl(url, process.env.NEXT_PUBLIC_SUPABASE_URL);
 }
 
-/** 소유권 바인딩: 경로가 venue-stories/{gameId}/{userId}/ 아래인지 */
+/** 소유권 바인딩: canonical path 가 venue-stories/{gameId}/{userId}/{파일} 규격이고 gameId/userId 일치 */
 function ownsPath(path: string, gameId: string, userId: string): boolean {
-  return path.startsWith(`venue-stories/${gameId}/${userId}/`);
+  return ownsVenuePath(path, gameId, userId);
 }
 
 /** 신뢰 유저의 차단 목록(작성자 필터용). 조회 실패 시 null → 호출부가 fail-closed 처리. */

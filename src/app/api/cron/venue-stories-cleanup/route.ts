@@ -137,11 +137,18 @@ export async function GET(req: NextRequest) {
   // bucket 별 durable cursor — 실행마다 이전 위치(after_name) 이후부터 이어서 스캔.
   // offset=0 고정으로 41번째 이후 폴더가 영구 starvation 되던 문제(삼순 NO-GO #2) 해소.
   for (const bucket of BUCKETS) {
-    const { data: cur } = await supabase
+    const { data: cur, error: curReadErr } = await supabase
       .from("venue_cleanup_cursor")
       .select("after_name")
       .eq("bucket", bucket)
       .maybeSingle();
+    if (curReadErr) {
+      // cursor 조회 fault → afterName 미상이라 처음부터 재스캔 위험 → 즉시 스킵+5xx, 기존 cursor 불변 유지
+      return NextResponse.json(
+        { deleted, retryLater, orphanRemoved, faults: faults + 1, orphanSkipped: "cursor_read_error" },
+        { status: 500 },
+      );
+    }
     const afterName: string | null = (cur?.after_name as string) ?? null;
 
     // 이름 정렬로 전체 game 폴더를 페이지네이션하며 cursor 이후만 스캔

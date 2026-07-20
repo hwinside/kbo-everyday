@@ -326,8 +326,16 @@ async function probe() {
 // ── 직관 라이브(venue_stories) pending 영상 처리: ffprobe(≤15초·60MB) + 720p → active ──
 async function processVenueStories() {
   if (!HAS_FFPROBE) {
-    console.warn("⚠️  ffprobe 없어 직관 라이브 영상 처리 skip");
-    return;
+    // ffprobe 부재 = 서버 권위 duration 검증 전면 skip → pending 영상이 방치되므로 green 으로 넘기지 않고 관제
+    const { count: pendingCount } = await supabase
+      .from("venue_stories")
+      .select("id", { count: "exact", head: true })
+      .eq("media_type", "video")
+      .eq("status", "pending");
+    console.error(
+      `❌ ffprobe 부재 — 직관 라이브 영상 duration 검증 불가. pending ${pendingCount ?? "?"}건 미처리.`,
+    );
+    return { done: 0, removed: 0, failed: (pendingCount ?? 0) > 0 ? (pendingCount ?? 1) : 0, updateErrors: 0, ffprobeMissing: true };
   }
   const { data: rows, error } = await supabase
     .from("venue_stories")
@@ -443,9 +451,9 @@ async function processVenueStories() {
 
   console.log("\n── 직관 라이브(venue_stories) 영상 처리 ──");
   const venueRes = (await processVenueStories()) || { failed: 0, updateErrors: 0 };
-  if ((venueRes.failed || 0) > 0 || (venueRes.updateErrors || 0) > 0) {
+  if ((venueRes.failed || 0) > 0 || (venueRes.updateErrors || 0) > 0 || venueRes.ffprobeMissing) {
     console.error(
-      `❌ 직관 라이브 처리 중 실패 ${venueRes.failed} / 상태기록오류 ${venueRes.updateErrors} — 관제를 위해 non-zero 종료`,
+      `❌ 직관 라이브 처리 이상 — 실패 ${venueRes.failed} / 상태기록오류 ${venueRes.updateErrors}${venueRes.ffprobeMissing ? " / ffprobe 부재" : ""} — 관제 non-zero 종료`,
     );
     process.exit(1);
   }
