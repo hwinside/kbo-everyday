@@ -311,12 +311,12 @@ check(
   [{ date: "7/19", n: 2 }, { date: "7/16", n: 1 }],
 );
 check(
-  "grouped display: 스샷 케이스(7/19 2건 + 7/16 1건) → 2그룹 노출 / overflow 0",
+  "grouped display: 스샷 케이스(7/19 2건 + 7/16 1건) → 2그룹 인라인 / hidden 0 / overflow 0",
   (() => {
     const r = computeRosterMovesGroupedDisplay([mv("7/19", "register", "송승기"), mv("7/19", "deregister", "강민균"), mv("7/16", "register", "강민균")]);
-    return { groups: r.visibleGroups.map((g) => ({ date: g.date, n: g.moves.length })), overflow: r.overflowCount };
+    return { groups: r.visibleGroups.map((g) => ({ date: g.date, n: g.moves.length, hidden: g.hiddenInGroup })), overflow: r.overflowCount };
   })(),
-  { groups: [{ date: "7/19", n: 2 }, { date: "7/16", n: 1 }], overflow: 0 },
+  { groups: [{ date: "7/19", n: 2, hidden: 0 }, { date: "7/16", n: 1, hidden: 0 }], overflow: 0 },
 );
 check(
   "grouped display: 0건 → 그룹 0 / overflow 0",
@@ -324,7 +324,7 @@ check(
   { visibleGroups: [], overflowCount: 0 },
 );
 check(
-  "grouped display: 4개 날짜 그룹 → 최신 3그룹만 / overflow=숨긴 그룹 건수",
+  "grouped display: 4개 날짜 그룹 → 최신 3그룹만 / overflow=숨긴 날짜그룹 건수",
   (() => {
     const rows = [
       mv("7/20", "register", "a"),
@@ -345,6 +345,35 @@ check(
     return { dates: r.visibleGroups.map((g) => g.date), overflow: r.overflowCount };
   })(),
   { dates: ["7/20", "7/19", "7/18"], overflow: 0 },
+);
+check(
+  "grouped display(한줄강제): 같은 날 4건 → 인라인 2 + 외 2명(hiddenInGroup) / overflow 0",
+  (() => {
+    const rows = [mv("7/16", "register", "a"), mv("7/16", "deregister", "b"), mv("7/16", "register", "c"), mv("7/16", "deregister", "d")];
+    const r = computeRosterMovesGroupedDisplay(rows);
+    const g = r.visibleGroups[0];
+    return { date: g.date, inline: g.moves.map((m) => m.playerName), hidden: g.hiddenInGroup, overflow: r.overflowCount };
+  })(),
+  { date: "7/16", inline: ["a", "b"], hidden: 2, overflow: 0 },
+);
+check(
+  "grouped display(한줄강제): 같은 날 3건 → 인라인 2 + 외 1명 / overflow 0",
+  (() => {
+    const rows = [mv("7/16", "register", "a"), mv("7/16", "deregister", "b"), mv("7/16", "register", "c")];
+    const r = computeRosterMovesGroupedDisplay(rows);
+    const g = r.visibleGroups[0];
+    return { inline: g.moves.length, hidden: g.hiddenInGroup, overflow: r.overflowCount };
+  })(),
+  { inline: 2, hidden: 1, overflow: 0 },
+);
+check(
+  "grouped display(한줄강제): 같은 날 2건은 축약 없음(hidden 0)",
+  (() => {
+    const rows = [mv("7/16", "register", "a"), mv("7/16", "deregister", "b")];
+    const g = computeRosterMovesGroupedDisplay(rows).visibleGroups[0];
+    return { inline: g.moves.length, hidden: g.hiddenInGroup };
+  })(),
+  { inline: 2, hidden: 0 },
 );
 
 // ═══ ⑨ 행 클릭 목적지 분리 (삼순 #726 NO-GO 2차: 중첩 anchor 없이 4클릭 분리) ═══
