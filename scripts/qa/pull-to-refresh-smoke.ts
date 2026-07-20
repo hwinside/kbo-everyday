@@ -33,9 +33,10 @@ ok("일반 콘텐츠(overflow visible/static) → 통과", nodeBlocksPull({ tag:
 const { window } = new JSDOM(`<!DOCTYPE html><body></body>`);
 const doc = window.document;
 // 컴포넌트가 참조하는 DOM 전역(window/HTMLElement/getComputedStyle)을 jsdom 것으로 세팅
-const g = globalThis as unknown as { window: unknown; HTMLElement: unknown };
+const g = globalThis as unknown as { window: unknown; HTMLElement: unknown; Element: unknown };
 g.window = window;
 g.HTMLElement = window.HTMLElement;
+g.Element = window.Element;
 
 function el(tag: string, style = "", attrs: Record<string, string> = {}) {
   const n = doc.createElement(tag);
@@ -68,6 +69,25 @@ const pageChild = el("p");
 pageContent.appendChild(pageChild);
 container.appendChild(pageContent);
 ok("[DOM] 일반 page 콘텐츠 시작 → 통과(arm)", pullStartIsBlocked(pageChild, container) === false);
+
+// (4) 모달 안 SVG 아이콘(<svg><path>)에서 시작 → 부모 modal(fixed) 감지 차단 (삼순 3차 NO-GO)
+const SVG_NS = "http://www.w3.org/2000/svg";
+const modalFixed = el("div", "position: fixed;");
+const svgIcon = doc.createElementNS(SVG_NS, "svg");
+const svgPath = doc.createElementNS(SVG_NS, "path");
+svgIcon.appendChild(svgPath);
+modalFixed.appendChild(svgIcon);
+container.appendChild(modalFixed);
+ok("[DOM] 모달 안 SVG path 시작 → 부모 fixed 감지 차단", pullStartIsBlocked(svgPath, container) === true);
+
+// (5) 일반 page 콘텐츠의 SVG 아이콘 → 통과(실제 아이콘 touch 보존)
+const plainIconWrap = el("div");
+const plainSvg = doc.createElementNS(SVG_NS, "svg");
+const plainPath = doc.createElementNS(SVG_NS, "path");
+plainSvg.appendChild(plainPath);
+plainIconWrap.appendChild(plainSvg);
+container.appendChild(plainIconWrap);
+ok("[DOM] 일반 page SVG 아이콘 → 통과(arm 보존)", pullStartIsBlocked(plainPath, container) === false);
 
 console.log(`\npull-to-refresh smoke: ${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);

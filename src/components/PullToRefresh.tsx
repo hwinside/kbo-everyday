@@ -40,14 +40,16 @@ export function nodeBlocksPull(f: PullStartNodeFlags): boolean {
 }
 
 // e.target에서 container 전까지 조상을 올라가며 중첩 입력/모달/스크롤러 감지.
+// 시작 타입은 Element(SVG 포함) — Lucide 아이콘 <svg>/<path>는 HTMLElement가 아니므로
+// HTMLElement로 좀히면 walker가 즉시 null로 끝나 부모 modal/fixed/overflow를 전부 우회한다(삼순 #731 3차 NO-GO).
 export function pullStartIsBlocked(target: EventTarget | null, container: HTMLElement): boolean {
-  let node = target instanceof HTMLElement ? target : null;
+  let node: Element | null = target instanceof Element ? target : null;
   while (node && node !== container) {
     const style = window.getComputedStyle(node);
     if (
       nodeBlocksPull({
         tag: node.tagName,
-        contentEditable: node.isContentEditable,
+        contentEditable: node instanceof HTMLElement ? node.isContentEditable : false,
         role: node.getAttribute("role"),
         ariaModal: node.getAttribute("aria-modal") === "true",
         position: style.position,
