@@ -46,5 +46,7 @@ export async function POST(req: NextRequest) {
     });
   }
 
+  // 신고 3회 누적 시 자동 블라인드 + outbox 적재는 DB 트리거(auto_blind_on_report)가
+  // 이 insert 와 같은 트랜잭션에서 수행한다. 안내 쪽지는 크론이 outbox 를 소비해 발송.
   return NextResponse.json({ success: true });
 }

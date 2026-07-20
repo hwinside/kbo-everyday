@@ -22,6 +22,10 @@
   ],
   "crons": [
     {
+      "path": "/api/cron/report-blind-notify",
+      "schedule": "*/5 * * * *"
+    },
+    {
       "path": "/api/cron/highlights",
       "schedule": "0 */4 * * *"
     },
