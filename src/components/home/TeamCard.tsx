@@ -427,12 +427,12 @@ export default function TeamCard({ team, gameSlot, refreshNonce = 0 }: TeamCardP
                       <span className="min-w-0 flex-1 truncate text-[12.5px] font-semibold text-text-primary">
                         {move.playerName}
                       </span>
-                      {move.href && <ChevronRight size={14} className="flex-shrink-0 text-text-tertiary" />}
+                      <ChevronRight size={14} className="flex-shrink-0 text-text-tertiary" />
                     </div>
                   );
                   return (
                     <li key={`${move.moveType}-${move.kboPlayerId}-${move.moveDate}-${index}`}>
-                      {move.href ? <Link href={move.href}>{content}</Link> : content}
+                      <Link href={`/teams/${team.slug}`}>{content}</Link>
                     </li>
                   );
                 })}
