@@ -127,18 +127,32 @@ class WearStoreTest {
     )
 
     @Test
-    fun `pull commit is dropped when a push arrived during the pull (CAS)`() {
-        // 시나리오: pull 시작(lastPushTs=100 측정) → final push 커밋(lastPushTs=200) → 늦은 pull 완료
+    fun `pull commit is dropped when a push arrived during the pull (CAS by rev)`() {
+        // 시나리오: pull 시작(rev 측정) → final push 커밋(rev+1) → 늦은 pull 완료
         val p = FakeSharedPreferences()
         WearStore.saveMyTeam(p, "LG")
         WearStore.savePushSnapshot(p, liveSnap("LG"), ts = 100L, gid = "G1")
-        val pushTsBefore = WearStore.lastPushTs(p) // 100 — pull 시작 시점
+        val revBefore = WearStore.pushRevision(p) // pull 시작 시점
         // pull 진행 중 final push 도착·커밋
         WearStore.savePushSnapshot(p, finalSnap("LG"), ts = 200L, gid = "G1")
         // 늦은 pull이 stale live로 덮으려 시도 → CAS가 막음
-        val committed = WearStore.commitPullSnapshot(p, liveSnap("LG"), pushTsBefore)
+        val committed = WearStore.commitPullSnapshot(p, liveSnap("LG"), revBefore)
         assertFalse(committed)
-        // 캐시는 final 유지(terminal이 live로 부활 안 함)
+        assertEquals("final", WearStore.loadCachedSnapshot(p)!!.kind)
+    }
+
+    @Test
+    fun `pull commit dropped for same-ts terminal during pull (samsoon 723 rev CAS)`() {
+        // 삼순 #723 2차: 동일-ts terminal(live ts=100 → final ts=100)은 ts만 보면 100→100이라
+        // 변화 미감지되던 케이스 — pushRevision은 +1 되므로 CAS가 정상 차단.
+        val p = FakeSharedPreferences()
+        WearStore.saveMyTeam(p, "LG")
+        WearStore.savePushSnapshot(p, liveSnap("LG"), ts = 100L, gid = "G1")
+        val revBefore = WearStore.pushRevision(p)
+        // pull 중 *동일 ts=100* final push(정책상 동일-ts terminal 허용)
+        WearStore.savePushSnapshot(p, finalSnap("LG").copy(sourceAt = 100L), ts = 100L, gid = "G1")
+        val committed = WearStore.commitPullSnapshot(p, liveSnap("LG"), revBefore)
+        assertFalse(committed) // rev 불일치 → 늦은 pull 폐기(FINAL 보존)
         assertEquals("final", WearStore.loadCachedSnapshot(p)!!.kind)
     }
 
@@ -147,9 +161,9 @@ class WearStoreTest {
         val p = FakeSharedPreferences()
         WearStore.saveMyTeam(p, "LG")
         WearStore.savePushSnapshot(p, liveSnap("LG"), ts = 100L, gid = "G1")
-        val pushTsBefore = WearStore.lastPushTs(p) // 100
+        val revBefore = WearStore.pushRevision(p)
         val next = liveSnap("LG").copy(line = "LIVE 8회초", sourceAt = 150L)
-        val committed = WearStore.commitPullSnapshot(p, next, pushTsBefore)
+        val committed = WearStore.commitPullSnapshot(p, next, revBefore)
         assertTrue(committed)
         assertEquals("LIVE 8회초", WearStore.loadCachedSnapshot(p)!!.line)
     }

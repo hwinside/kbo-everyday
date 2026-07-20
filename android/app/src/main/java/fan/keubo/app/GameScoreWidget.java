@@ -867,12 +867,13 @@ public class GameScoreWidget extends AppWidgetProvider {
         boolean hasGame = p.getBoolean(KEY_HAS_GAME, false);
         String prevGameId = p.getString(KEY_GAME_ID, "");
         long prevSeq = p.getLong(KEY_LAST_SEQ, -1L);
-        // gameId 매칭: 상대가 비었거나 둘 다 있고 일치해야 같은 경기(fail-closed 판정은 봉투/evaluate).
-        boolean gameMatches = (gameId == null || gameId.isEmpty() || prevGameId.isEmpty()
-            || gameId.equals(prevGameId));
+        // 삼순 #723 2차 fail-closed: incoming gid가 비지 않고 저장된 경기 gid와 *정확히* 일치해야
+        // terminal 적용. gid 공백(incoming 또는 prev)·불일치면 무시(다른/미지 경기 오종료 방지).
+        boolean gameIdMatchesExactly = gameId != null && !gameId.isEmpty()
+            && !prevGameId.isEmpty() && gameId.equals(prevGameId);
         boolean alreadyFinal = "FINAL".equals(p.getString(KEY_STATUS, ""));
-        // 삼순 #723 — 순수 판정(WidgetUpdatePolicy.decideTerminal): terminal retry watermark 포함.
-        switch (WidgetUpdatePolicy.decideTerminal(hasGame, gameMatches, alreadyFinal, seq, prevSeq)) {
+        // 삼순 #723 — 순수 판정(WidgetUpdatePolicy.decideTerminal): terminal retry watermark + fail-closed.
+        switch (WidgetUpdatePolicy.decideTerminal(hasGame, gameIdMatchesExactly, alreadyFinal, seq, prevSeq)) {
             case NOOP:
                 return WidgetUpdatePolicy.ApplyResult.NO_CHANGE;
             case STALE:

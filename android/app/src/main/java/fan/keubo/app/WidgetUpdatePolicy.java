@@ -71,13 +71,21 @@ final class WidgetUpdatePolicy {
      */
     enum TerminalResult { APPLY, RETRY_ADVANCE_SEQ, STALE, NOOP }
 
-    static TerminalResult decideTerminal(boolean hasGame, boolean gameMatches,
+    /**
+     * @param hasGame            위젯에 현재 경기가 있는가.
+     * @param gameIdMatchesExactly incoming gid가 비지 않고 저장된 경기 gid와 *정확히* 일치하는가.
+     *                           삼순 #723 2차 fail-closed — gid 공백/불일치면 terminal 무시(오종료 방지).
+     * @param seq                incoming 종료의 seq(w_ts). <0이면 유효 seq 부재 → fail-closed STALE.
+     */
+    static TerminalResult decideTerminal(boolean hasGame, boolean gameIdMatchesExactly,
                                          boolean alreadyFinal, long seq, long prevSeq) {
         if (!hasGame) return TerminalResult.NOOP;
-        if (!gameMatches) return TerminalResult.STALE;                 // 다른 경기 종료 신호
-        if (seq >= 0 && seq < prevSeq) return TerminalResult.STALE;    // 순서 역전(옷 종료)
+        // fail-closed(삼순 #723 2차): 유효 seq(w_ts)와 정확한 gid 매칭이 없으면 terminal 무시.
+        // (w_ts 누락·gid 공백 fail-open 제거 — 다른/미지 경기를 오종료시키지 않게)
+        if (seq < 0 || !gameIdMatchesExactly) return TerminalResult.STALE;
+        if (seq < prevSeq) return TerminalResult.STALE;                // 순서 역전(옷 종료)
         if (alreadyFinal) {
-            return (seq >= 0 && seq > prevSeq)
+            return (seq > prevSeq)
                 ? TerminalResult.RETRY_ADVANCE_SEQ                    // 종료 재전송 → watermark 전진
                 : TerminalResult.NOOP;
         }

@@ -57,4 +57,20 @@ public class Pr723FaultMatrixTest {
         assertEquals(WidgetUpdatePolicy.TerminalResult.NOOP,
             WidgetUpdatePolicy.decideTerminal(true, true, true, 200L, 200L));
     }
+
+    // ── 삼순 #723 2차 P0 — terminal w_ts 누락·gid 공백 fail-closed ──
+
+    @Test
+    public void terminalMissingSeqFailsClosed() {
+        // w_ts 누락(seq<0) → 유효 seq 부재 → STALE(fail-open 제거)
+        assertEquals(WidgetUpdatePolicy.TerminalResult.STALE,
+            WidgetUpdatePolicy.decideTerminal(true, true, false, -1L, 100L));
+    }
+
+    @Test
+    public void terminalGidMismatchFailsClosed() {
+        // gid 불일치(gameIdMatchesExactly=false) → STALE(다른/미지 경기 오종료 방지)
+        assertEquals(WidgetUpdatePolicy.TerminalResult.STALE,
+            WidgetUpdatePolicy.decideTerminal(true, false, false, 200L, 100L));
+    }
 }
