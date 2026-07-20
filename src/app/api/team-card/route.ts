@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchStandings, fetchGames } from "@/lib/crawler/kbo-api";
 import { getMonthGames } from "@/lib/crawler/season-games-cache";
+import { appendLiveRankIfStale } from "@/lib/analysis/rank-history-selfheal";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { TEAMS } from "@/lib/constants/teams";
 
@@ -137,6 +138,13 @@ export async function GET(req: NextRequest) {
     } catch {
       // 스냅샷 조회 실패해도 카드의 나머지는 정상 반환
     }
+
+    // 4b) 자가복구 — 새벽 스냅샷 크론(daily-analysis)이 하루 스킵되면(Vercel best-effort,
+    //     2026-06-19·2026-07-20 실사례) 그래프가 마지막 스냅샷에서 멈춰 실제 순위 하락을
+    //     못 보여준다. 최신 스냅샷이 오늘(KST)보다 과거면 라이브 순위(현재 카드 헤더와 동일)로
+    //     '오늘' 포인트를 덧붙인다. 저장 스냅샷은 변경하지 않음.
+    const todayKstIso = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    rankHistory = appendLiveRankIfStale(rankHistory, todayKstIso, standing?.rank ?? null);
 
     // 5) 순위권 선수는 TeamCard 클라이언트가 /api/stats + rankByStat(공식 랭킹 소스)로
     //    계산한다(리더보드와 100% 동일). daily_stats_snapshot은 부문이 9개뿐이라 미사용.
