@@ -168,3 +168,34 @@ export function filterVisibleMoves<T extends { moveType: string; status: string 
 ): T[] {
   return rows.filter((r) => r.moveType === "deregister" || r.status === "published");
 }
+
+/**
+ * 홈 팀카드 로스터 변동 표시 계약(삼순 합의): 최신 N건만 카드에 노출,
+ * 초과분은 "외 M건 더보기 → 팀 페이지"로 오버플로우. 순수 함수(경계 회귀 테스트용).
+ *   - overflowCount = max(0, total - limit)  (0/limit 이하면 더보기 숨김)
+ */
+export function computeRosterMovesDisplay<T>(
+  moves: T[],
+  limit = 3,
+): { visible: T[]; overflowCount: number } {
+  const n = Math.max(0, limit);
+  return { visible: moves.slice(0, n), overflowCount: Math.max(0, moves.length - n) };
+}
+
+/**
+ * 홈 팀카드 로스터 변동 행 클릭 계약(삼순 #726 NO-GO 2차): 중첩 anchor 없이 목적지 분리.
+ *   - 행 배경/날짜/상태/chevron·외 N건·정상 0건 영역 → 팀홈(teamHomeHref)
+ *   - 선수명 → 선수상세(move.href). 미해결(null)이면 링크 없이 텍스트.
+ * 순수 함수(4클릭 회귀 단일 SSOT).
+ */
+export function teamHomeHref(teamSlug: string): string {
+  return `/teams/${teamSlug}`;
+}
+
+export function rosterMovesCardTargets(
+  teamSlug: string,
+  move: { href: string | null } | null,
+): { rowHref: string; nameHref: string | null; overflowHref: string; emptyHref: string } {
+  const home = teamHomeHref(teamSlug);
+  return { rowHref: home, nameHref: move ? move.href : null, overflowHref: home, emptyHref: home };
+}
