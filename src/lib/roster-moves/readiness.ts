@@ -182,6 +182,45 @@ export function computeRosterMovesDisplay<T>(
   return { visible: moves.slice(0, n), overflowCount: Math.max(0, moves.length - n) };
 }
 
+export interface RosterMoveDateGroup<T> {
+  date: string;
+  moves: T[];
+}
+
+/**
+ * 같은 KST 달력일 변동을 한 그룹으로 묶는다(홈 세로공간 절약 — 하린아빠 2026-07-20).
+ * Map 삽입 순서 보존 → 입력이 최신순이면 그룹도 최신순(비연속 동일날짜도 하나로 병합).
+ */
+export function groupRosterMovesByDate<T extends { moveDate: string }>(
+  moves: T[],
+): RosterMoveDateGroup<T>[] {
+  const map = new Map<string, T[]>();
+  for (const m of moves) {
+    const arr = map.get(m.moveDate);
+    if (arr) arr.push(m);
+    else map.set(m.moveDate, [m]);
+  }
+  return Array.from(map, ([date, ms]) => ({ date, moves: ms }));
+}
+
+/**
+ * 홈 팀카드 로스터 변동 표시 계약(날짜 그룹 버전): 같은 날은 한 줄(그룹)로 묶고
+ * 최신 N개 날짜 그룹만 노출, 초과 그룹의 변동 건수 합을 "외 M건 더보기 → 팀 페이지"로 오버플로우.
+ *   - visibleGroups = 최신 limit개 날짜 그룹(각 그룹은 그날 전체 변동을 한 줄에)
+ *   - overflowCount = 숨긴 그룹들의 변동 건수 합 = max(0, total - shownInVisibleGroups)
+ * 순수 함수(경계 회귀 테스트용).
+ */
+export function computeRosterMovesGroupedDisplay<T extends { moveDate: string }>(
+  moves: T[],
+  limit = 3,
+): { visibleGroups: RosterMoveDateGroup<T>[]; overflowCount: number } {
+  const groups = groupRosterMovesByDate(moves);
+  const n = Math.max(0, limit);
+  const visibleGroups = groups.slice(0, n);
+  const shown = visibleGroups.reduce((s, g) => s + g.moves.length, 0);
+  return { visibleGroups, overflowCount: Math.max(0, moves.length - shown) };
+}
+
 /**
  * 홈 팀카드 로스터 변동 행 클릭 계약(삼순 #726 NO-GO 2차): 중첩 anchor 없이 목적지 분리.
  *   - 행 배경/날짜/상태/chevron·외 N건·정상 0건 영역 → 팀홈(teamHomeHref)
