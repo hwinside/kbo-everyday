@@ -261,6 +261,14 @@ export function buildRankMap(standings: TeamStanding[]): Map<number, number> {
   return new Map(rankStandings(standings).map((r) => [r.teamId, r.rank]));
 }
 
+/**
+ * team-card standing.rank + self-heal liveRank 공통 소스 — buildRankMap SSOT(공동순위 보존).
+ * winRate-sort + idx+1 방식은 공동순위를 깨므로 route에서 직접 쓰지 말고 이 함수로 통일한다(삼순 #729).
+ */
+export function teamCardRank(standings: TeamStanding[], teamId: number): number | null {
+  return buildRankMap(standings).get(teamId) ?? null;
+}
+
 /** 팀 순위 (HTML 파싱) */
 /** 팀 순위 (네이버 API → KBO HTML 폴백) */
 export async function fetchStandings(): Promise<TeamStanding[]> {

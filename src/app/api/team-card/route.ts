@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { fetchStandings, fetchGames } from "@/lib/crawler/kbo-api";
+import { fetchStandings, teamCardRank, fetchGames } from "@/lib/crawler/kbo-api";
 import { getMonthGames } from "@/lib/crawler/season-games-cache";
 import { appendLiveRankIfStale } from "@/lib/analysis/rank-history-selfheal";
+import { fetchAllRows } from "@/lib/db/paginate";
+import { weeklyBattingRankMap, weeklyPitchingRankMap, type WeekGameLogRow } from "@/lib/analysis/weekly-team-rank";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { TEAMS } from "@/lib/constants/teams";
 
@@ -10,6 +12,13 @@ import { TEAMS } from "@/lib/constants/teams";
 // + 시즌 순위 변동(daily_standings_snapshot). 기존 lib 재사용, 신규 크롤 없음.
 
 type FormResult = "W" | "L" | "D";
+
+// YYYY-MM-DD에 days를 더한 YYYY-MM-DD (주간 범위 간유용)
+function addDaysIso(iso: string, days: number): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
 
 // YYYY-MM-DD → 그 주 월요일 YYYY-MM-DD (주간 버킷 키)
 function mondayOf(iso: string): string {
@@ -41,13 +50,16 @@ export async function GET(req: NextRequest) {
   try {
     // 1) 순위 + 게임차 + 연승연패
     const standings = await fetchStandings();
+    // 순위는 teamCardRank→buildRankMap(네이버 원본 ranking 우선 + competition fallback, 공동순위 보존) SSOT를 사용.
+    // winRate-sort idx+1은 공동순위를 깨므로 standing.rank·self-heal liveRank 둘 다 동일 값을 쓴다(삼순 #729).
+    const teamRankValue = teamCardRank(standings, team.id);
     const ranked = [...standings].sort((a, b) => b.winRate - a.winRate);
     const idx = ranked.findIndex((s) => s.teamId === team.id);
     const me = idx >= 0 ? ranked[idx] : null;
 
     const standing = me
       ? {
-          rank: idx + 1,
+          rank: teamRankValue ?? idx + 1,
           gamesBehind: me.gamesBehind, // 1위 대비
           streak: me.continuousGameResult ?? null,
           above:
@@ -152,12 +164,26 @@ export async function GET(req: NextRequest) {
     // 6) 주간 팀 타율/방어율 추이 — player_game_logs 주(월요일 기준) 단위 합산
     let weeklyBatting: { week: string; avg: number }[] = [];
     let weeklyPitching: { week: string; era: number }[] = [];
+    // ① 괄호 순위 = 그래프와 같은 최신 주차·같은 10구단 주간 competition ranking(시즌 누적 순위 아님).
+    let weeklyBattingRank: number | null = null;
+    let weeklyPitchingRank: number | null = null;
     try {
-      const { data } = await supabaseAdmin
-        .from("player_game_logs")
-        .select("game_date, ab, h, ip_outs, er")
-        .eq("team_id", team.id)
-        .order("game_date", { ascending: true });
+      // Supabase 기본 max-rows(1000) 상한을 넘는 시즌 전체 로그를 range 페이지네이션으로 전량 수집.
+      // (limit 없이 오름차순이면 오래된 1000행만 반환돼 최근 주차가 잘림 — 그래프 정지 버그.)
+      // game_date만 정렬하면 동률 행이 1000 경계에서 중복/누락 가능 → id 2차 키로 유일 전체순서 보장.
+      const data = await fetchAllRows<{ id: number; game_date: string; ab: number; h: number; ip_outs: number; er: number }>(
+        async (from, to) => {
+          const { data: page, error } = await supabaseAdmin
+            .from("player_game_logs")
+            .select("id, game_date, ab, h, ip_outs, er")
+            .eq("team_id", team.id)
+            .order("game_date", { ascending: true })
+            .order("id", { ascending: true })
+            .range(from, to);
+          if (error) throw error;
+          return page ?? [];
+        },
+      );
       if (Array.isArray(data)) {
         const wk = new Map<string, { ab: number; h: number; outs: number; er: number }>();
         for (const r of data) {
@@ -172,6 +198,37 @@ export async function GET(req: NextRequest) {
         const weeks = [...wk.entries()].sort((a, b) => a[0].localeCompare(b[0]));
         weeklyBatting = weeks.filter(([, e]) => e.ab > 0).map(([week, e]) => ({ week, avg: Number((e.h / e.ab).toFixed(3)) }));
         weeklyPitching = weeks.filter(([, e]) => e.outs > 0).map(([week, e]) => ({ week, era: Number(((e.er * 27) / e.outs).toFixed(2)) }));
+      }
+
+      // ① 최신 주차 10구단 competition ranking — 그래프 마지막 점과 동일 주차로 괄호 순위 산출.
+      const bw = weeklyBatting.length ? weeklyBatting[weeklyBatting.length - 1].week : null;
+      const pw = weeklyPitching.length ? weeklyPitching[weeklyPitching.length - 1].week : null;
+      if (bw || pw) {
+        const needed = [bw, pw].filter((w): w is string => !!w);
+        const spanStart = needed.reduce((a, b) => (a < b ? a : b));
+        const spanEnd = addDaysIso(needed.reduce((a, b) => (a > b ? a : b)), 6);
+        const leagueRows = await fetchAllRows<WeekGameLogRow & { game_date: string }>(
+          async (from, to) => {
+            const { data: page, error } = await supabaseAdmin
+              .from("player_game_logs")
+              .select("team_id, game_date, ab, h, ip_outs, er")
+              .gte("game_date", spanStart)
+              .lte("game_date", spanEnd)
+              .order("game_date", { ascending: true })
+              .order("id", { ascending: true })
+              .range(from, to);
+            if (error) throw error;
+            return page ?? [];
+          },
+        );
+        if (bw) {
+          const wkRows = leagueRows.filter((r) => mondayOf(String(r.game_date)) === bw);
+          weeklyBattingRank = weeklyBattingRankMap(wkRows).get(team.id) ?? null;
+        }
+        if (pw) {
+          const wkRows = leagueRows.filter((r) => mondayOf(String(r.game_date)) === pw);
+          weeklyPitchingRank = weeklyPitchingRankMap(wkRows).get(team.id) ?? null;
+        }
       }
     } catch {
       // 주간 스탯 실패해도 나머지 정상 반환
@@ -194,7 +251,7 @@ export async function GET(req: NextRequest) {
     }
 
     return NextResponse.json(
-      { team: team.slug, standing, recentForm, nextGame, rankHistory, weeklyBatting, weeklyPitching, communityNewPosts },
+      { team: team.slug, standing, recentForm, nextGame, rankHistory, weeklyBatting, weeklyPitching, weeklyBattingRank, weeklyPitchingRank, communityNewPosts },
       { headers: { "Cache-Control": "public, s-maxage=300, stale-while-revalidate=600" } },
     );
   } catch (e: unknown) {
