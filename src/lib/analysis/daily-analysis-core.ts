@@ -4,6 +4,10 @@ import { fetchStandings, fetchGames, fetchBoxScore, type BoxScoreResult } from "
 import { TEAMS } from "@/lib/constants/teams";
 import { evaluateLiveReadiness } from "@/lib/analysis/daily-analysis-live-policy";
 import {
+  parseTitleEntries,
+  type TitleEntry,
+} from "@/lib/analysis/daily-analysis-title-parser";
+import {
   computeStandingsDelta,
   computeTitlesDelta,
   computeStreak,
@@ -55,34 +59,7 @@ async function fetchHtml(url: string): Promise<string> {
   return res.text();
 }
 
-function parseTable(html: string): string[][] {
-  const rows: string[][] = [];
-  const tbodyMatch = html.match(/<tbody[^>]*>([\s\S]*?)<\/tbody>/i);
-  if (!tbodyMatch) return rows;
-  const trMatches = tbodyMatch[1].match(/<tr[^>]*>([\s\S]*?)<\/tr>/gi);
-  if (!trMatches) return rows;
-  for (const tr of trMatches) {
-    const cells: string[] = [];
-    const tdMatches = tr.match(/<td[^>]*>([\s\S]*?)<\/td>/gi);
-    if (tdMatches) {
-      for (const td of tdMatches) {
-        cells.push(td.replace(/<[^>]+>/g, "").trim());
-      }
-    }
-    if (cells.length > 0) rows.push(cells);
-  }
-  return rows;
-}
-
 // ===== Stats fetchers for title snapshots =====
-
-interface TitleEntry {
-  category: string;
-  rank: number;
-  player_name: string;
-  team: string;
-  value: number;
-}
 
 const BATTER_TITLES: { category: string; sort: string; colIndex: number }[] = [
   { category: "avg", sort: "HRA_RT", colIndex: 3 },
@@ -99,30 +76,6 @@ const PITCHER_TITLES: { category: string; sort: string; colIndex: number }[] = [
   { category: "whip", sort: "WHIP_RT", colIndex: 18 },
 ];
 
-// Assign competition (tie-aware) ranks: equal values share the same rank,
-// next distinct value jumps to (index+1). e.g. 5,5,5,4 -> 1,1,1,4.
-// `lowerIsBetter` handles ERA/WHIP where smaller value = better rank.
-function assignTieAwareRanks<T extends { value: number; rank: number }>(
-  entries: T[],
-  lowerIsBetter = false,
-): T[] {
-  const sorted = [...entries].sort((a, b) =>
-    lowerIsBetter ? a.value - b.value : b.value - a.value,
-  );
-  let prevValue: number | null = null;
-  let prevRank = 0;
-  sorted.forEach((e, i) => {
-    if (prevValue !== null && e.value === prevValue) {
-      e.rank = prevRank;
-    } else {
-      e.rank = i + 1;
-      prevRank = i + 1;
-      prevValue = e.value;
-    }
-  });
-  return sorted;
-}
-
 async function fetchBatterTitleEntries(): Promise<TitleEntry[]> {
   const entries: TitleEntry[] = [];
 
@@ -130,33 +83,16 @@ async function fetchBatterTitleEntries(): Promise<TitleEntry[]> {
     const catEntries: TitleEntry[] = [];
     if (title.category === "sb") {
       const html = await fetchHtml(`${KBO_BASE}/Record/Player/Runner/Basic.aspx?sort=SB_CN`);
-      const rows = parseTable(html);
-      for (let i = 0; i < Math.min(10, rows.length); i++) {
-        const c = rows[i];
-        catEntries.push({
-          category: "sb",
-          rank: 0, // filled below
-          player_name: c[1] || "",
-          team: c[2] || "",
-          value: parseInt(c[3]) || 0, // SB column in Runner page
-        });
-      }
+      catEntries.push(...parseTitleEntries({ html, category: "sb", valueColumn: 5 }));
     } else {
       const html = await fetchHtml(`${KBO_BASE}/Record/Player/HitterBasic/Basic1.aspx?sort=${title.sort}`);
-      const rows = parseTable(html);
-      for (let i = 0; i < Math.min(10, rows.length); i++) {
-        const c = rows[i];
-        const raw = c[title.colIndex] || "0";
-        catEntries.push({
-          category: title.category,
-          rank: 0,
-          player_name: c[1] || "",
-          team: c[2] || "",
-          value: parseFloat(raw) || 0,
-        });
-      }
+      catEntries.push(...parseTitleEntries({
+        html,
+        category: title.category,
+        valueColumn: title.colIndex,
+      }));
     }
-    entries.push(...assignTieAwareRanks(catEntries));
+    entries.push(...catEntries);
   }
 
   return entries;
@@ -167,22 +103,14 @@ async function fetchPitcherTitleEntries(): Promise<TitleEntry[]> {
 
   for (const title of PITCHER_TITLES) {
     const html = await fetchHtml(`${KBO_BASE}/Record/Player/PitcherBasic/Basic1.aspx?sort=${title.sort}`);
-    const rows = parseTable(html);
-    const catEntries: TitleEntry[] = [];
-    for (let i = 0; i < Math.min(10, rows.length); i++) {
-      const c = rows[i];
-      const raw = c[title.colIndex] || "0";
-      catEntries.push({
-        category: title.category,
-        rank: 0,
-        player_name: c[1] || "",
-        team: c[2] || "",
-        value: parseFloat(raw) || 0,
-      });
-    }
     // ERA/WHIP: lower is better
     const lowerIsBetter = title.category === "era" || title.category === "whip";
-    entries.push(...assignTieAwareRanks(catEntries, lowerIsBetter));
+    entries.push(...parseTitleEntries({
+      html,
+      category: title.category,
+      valueColumn: title.colIndex,
+      lowerIsBetter,
+    }));
   }
 
   return entries;
