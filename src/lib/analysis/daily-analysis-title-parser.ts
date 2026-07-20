@@ -55,13 +55,17 @@ export function parseTitleEntries(params: {
   lowerIsBetter?: boolean;
   limit?: number;
 }): TitleEntry[] {
-  const entries = parseTable(params.html).map((cells) => ({
-    category: params.category,
-    rank: 0,
-    player_name: cells[1] || "",
-    team: cells[2] || "",
-    value: Number.parseFloat(cells[params.valueColumn] || "0") || 0,
-  }));
+  const entries = parseTable(params.html).flatMap((cells) => {
+    const value = Number.parseFloat(cells[params.valueColumn] ?? "");
+    if (!Number.isFinite(value)) return [];
+    return [{
+      category: params.category,
+      rank: 0,
+      player_name: cells[1] || "",
+      team: cells[2] || "",
+      value,
+    }];
+  });
 
   // KBO의 sort 쿼리를 신뢰해 먼저 자르면 WHIP처럼 서버 응답 정렬이 반대인 경우
   // 실제 선두군이 누락된다. 전체 후보를 지표 방향대로 정렬한 뒤 상위 N명을 고른다.

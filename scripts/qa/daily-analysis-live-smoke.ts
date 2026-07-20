@@ -76,6 +76,18 @@ const whipEntries = parseTitleEntries({
 });
 check("title parser: WHIP 전체 후보 lower-sort 후 상위 10명", whipEntries[0]?.value, 1.01);
 check("title parser: WHIP 첫 10행 밖 실제 선두 보존", whipEntries[0]?.player_name, "P12");
+const missingWhipRows = whipRows.map((cells, index) => {
+  const row = [...cells];
+  row[18] = index % 2 === 0 ? "" : "N/A";
+  return row;
+});
+const missingWhipEntries = parseTitleEntries({
+  html: htmlTable(missingWhipRows),
+  category: "whip",
+  valueColumn: 18,
+  lowerIsBetter: true,
+});
+check("title parser: WHIP 결측/비수치 행은 0으로 만들지 않고 배제", missingWhipEntries.length, 0);
 
 // ===== P0① readiness =====
 // baseline: 10팀 전부 100경기(오늘 경기 전), 오늘 팀1 vs 팀2 final 1경기
@@ -119,6 +131,23 @@ const full = (over: Partial<Record<number, [number, number, number]>>): Readines
       ? { teamId: id, wins: o[0], losses: o[1], draws: o[2] }
       : { teamId: id, wins: 50, losses: 45, draws: 5 };
   });
+
+check(
+  "title parser: WHIP 전 행 결측이면 readiness fail-closed",
+  evaluateLiveReadiness({
+    baselineStandings,
+    currentStandings: full({ 1: [51, 45, 5], 2: [48, 48, 5] }),
+    todayFinalGames,
+    baselineStats,
+    currentStats: [
+      ...titlesFor(TITLE_CATS.filter((cat) => cat !== "whip"), { bump: 100 }),
+      ...missingWhipEntries,
+    ],
+    expectedTitleCategories: TITLE_CATS,
+    expectedTitleRowsPerCategory: 10,
+  }),
+  { ready: false, reason: "titles invalid: whip 0/10 rows", laggingTeams: [] },
+);
 
 // 경계값 1: 순위표 stale(팀1/팀2 아직 100) → not ready
 check(
