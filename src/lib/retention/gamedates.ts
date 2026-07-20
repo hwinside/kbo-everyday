@@ -64,6 +64,18 @@ export function resolveTargetDate(raw: string | null, todayKst: string): TargetD
   return { ok: true, date: trimmed };
 }
 
+/**
+ * backfill(과거 소급) 실행 여부. (2026-07-21 삼순 리뷰 계약 확정)
+ * funnel 축은 profiles.team_id/favorite_players 등 mutable 현재 상태에 의존해
+ * 과거 시점의 exact 복원이 불가능 → backfill 실행에서는 funnel을 제외한다
+ * (근사치로 과거 행을 조작하는 것보다 결측이 정직. funnel은 as-of 누적 스냅샷이라
+ * 당일 행이 현재 진실을 대변 — 일별 결측 무해). 나머지 4축은 timestamped
+ * 이벤트 기반(KST 일말 상한 포함)이라 소급 안전.
+ */
+export function isBackfill(targetDate: string, todayKst: string): boolean {
+  return targetDate < todayKst;
+}
+
 export interface CollectGameDatesResult {
   /** 경기 있는 날짜, 입력 순서(오름차순) 보존 */
   gameDates: string[];

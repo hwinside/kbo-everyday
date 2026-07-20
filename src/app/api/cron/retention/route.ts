@@ -13,6 +13,7 @@ import {
 import {
   buildDateRange,
   collectGameDates,
+  isBackfill,
   resolveTargetDate,
 } from "@/lib/retention/gamedates";
 
@@ -30,11 +31,15 @@ export async function GET(req: NextRequest) {
 
   // 2026-07-21: `?date=YYYY-MM-DD`로 과거 소급(backfill) 지원 — 7/19~ 타임아웃 결손분 복구 경로.
   // 검증(형식·실존일·미래 금지·60일 이내) 실패 시 400 fail-close. 미지정 시 기존과 동일하게 오늘.
-  const resolved = resolveTargetDate(req.nextUrl.searchParams.get("date"), getKSTToday());
+  const todayKst = getKSTToday();
+  const resolved = resolveTargetDate(req.nextUrl.searchParams.get("date"), todayKst);
   if (!resolved.ok) {
     return NextResponse.json({ error: resolved.error }, { status: 400 });
   }
   const targetDate = resolved.date;
+  // backfill 계약: funnel은 mutable 현재 상태(team_id/favorite_players) 기반이라
+  // 과거 exact 복원 불가 → 소급 실행에서는 제외(결측 유지). 상세는 isBackfill JSDoc.
+  const backfill = isBackfill(targetDate, todayKst);
 
   const logId = await startJob("retention");
 
@@ -58,7 +63,7 @@ export async function GET(req: NextRequest) {
     const [cohortRows, dailyCohortRows, funnelRows, gamedayRows, visitDistRows] = await Promise.all([
       computeCohortRetention(supabase, targetDate),
       computeDailyCohortRetention(supabase, targetDate),
-      computeActivationFunnel(supabase, targetDate),
+      backfill ? Promise.resolve([]) : computeActivationFunnel(supabase, targetDate),
       computeGamedayRetention(supabase, targetDate, gameDates),
       computeVisitDistribution(supabase, targetDate),
     ]);
@@ -76,7 +81,8 @@ export async function GET(req: NextRequest) {
       if (error) throw error;
     }
 
-    const summary = `cohort:${cohortRows.length} dailyCohort:${dailyCohortRows.length} funnel:${funnelRows.length} gameday:${gamedayRows.length} visitDist:${visitDistRows.length} gameDates:${gameDates.length}`;
+    const funnelLabel = backfill ? "skipped(backfill)" : String(funnelRows.length);
+    const summary = `cohort:${cohortRows.length} dailyCohort:${dailyCohortRows.length} funnel:${funnelLabel} gameday:${gamedayRows.length} visitDist:${visitDistRows.length} gameDates:${gameDates.length}`;
     await finishJob(logId, "success", summary);
 
     return NextResponse.json({ ok: true, date: targetDate, summary });
