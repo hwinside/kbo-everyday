@@ -61,8 +61,9 @@ report_count, transcode_attempts, status(pending|active|removed|cleanup_failed),
 - `GET  /api/venue-stories?gameId=`  — active·미만료 스토리 목록 + 작성자 프로필(admin join, 차단 유저 제외)
 - `GET  /api/venue-stories/venue?gameId=` — 클라 지오펜스 프리체크(구장 좌표·반경·업로드 가능 시간대)
 - `POST /api/venue-stories`          — 생성(verified): 소유 경로 바인딩·gameId→실제 경기/구장/시간 fail-closed·
-                                        지오펜스(lat/lng/accuracy) 재검증·객체 크기/MIME 검증·게임당 유저 상한(10)·
-                                        영상 pending / 사진 active·expires_at(경기+6h) 서버 세팅
+                                        지오펜스(lat/lng/accuracy 필수) 재검증·객체 크기(maxBytes 선제)/매직바이트 검증·
+                                        UGC 동의 버전 정확일치 검증·게임당 유저 상한(10, RPC advisory lock)·
+                                        영상 pending / 사진 active·expires_at(시작+30h 근사치) 서버 세팅
 - `POST /api/venue-stories/report`   — 신고(verified): DB RPC(reports insert + report_count++ + ≥3 자동 숨김) 원자 처리
 - `DELETE /api/venue-stories/[id]`   — 본인 삭제(verified): 소유 재검증 후 스토리지 오브젝트 + 행 제거
 - `GET  /api/admin/venue-stories` · `POST` (admin PIN) — 모더레이션 목록 + 즉시 내림(status=removed)

@@ -58,6 +58,7 @@ export interface CreateVenueStoryBody {
   lat?: number | null;
   lng?: number | null;
   accuracy?: number | null;
+  consentVersion?: number; // UGC 가이드라인 동의 버전(서버가 현재 버전과 정확히 일치하는 유한 정수만 허용)
 }
 
 /** GET /api/venue-stories/venue?gameId= 응답 — 클라 지오펜스 프리체크·업로드 게이트용 */

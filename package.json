@@ -54,7 +54,6 @@
     "validate:player-identity": "node scripts/validate-player-identity.mjs",
     "qa:native-ios-naver-smoke-preflight": "node scripts/qa/native-ios-naver-smoke-preflight.mjs",
     "qa:full-entry": "tsx scripts/qa/full-entry-smoke.ts",
-
     "qa:admin-alerts": "tsx scripts/qa/admin-alerts-smoke.ts",
     "qa:roster-moves": "tsx scripts/qa/roster-moves-diff-smoke.ts",
     "qa:backfill-roster-parse": "tsx scripts/qa/backfill-roster-parse-smoke.ts",
@@ -62,7 +61,8 @@
     "qa:report-blind:db": "tsx scripts/qa/report-blind-db-integration.mjs",
     "qa:roster-moves:db": "node scripts/qa/roster-moves-db-integration.mjs",
     "qa:player-search-backfill": "node scripts/qa/player-search-backfill-smoke.mjs",
-    "qa:venue-geofence": "tsx scripts/qa/venue-geofence-smoke.ts"
+    "qa:venue-geofence": "tsx scripts/qa/venue-geofence-smoke.ts",
+    "qa:venue-media": "tsx scripts/qa/venue-media-smoke.ts"
   },
   "dependencies": {
     "@capacitor-firebase/messaging": "^8.3.0",

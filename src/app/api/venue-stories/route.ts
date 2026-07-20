@@ -3,6 +3,7 @@ import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { getVerifiedUserFromRequest } from "@/lib/auth/verified-user";
 import { resolveGameVenue } from "@/lib/venue-stories/venue-resolve";
 import { evaluateGeofence } from "@/lib/venue-stories/geofence";
+import { probeMediaObject } from "@/lib/venue-stories/media-probe";
 import {
   VENUE_STORY_MAX_DURATION_MS,
   VENUE_STORY_DURATION_TOLERANCE_MS,
@@ -35,53 +36,6 @@ function parseStoragePublicUrl(url: string): { bucket: string; path: string } | 
 /** 소유권 바인딩: 경로가 venue-stories/{gameId}/{userId}/ 아래인지 */
 function ownsPath(path: string, gameId: string, userId: string): boolean {
   return path.startsWith(`venue-stories/${gameId}/${userId}/`);
-}
-
-/** 매직 바이트로 실제 파일 형식 판별(클라 지정 Content-Type 불신). */
-function magicMediaType(head: Uint8Array): "image" | "video" | null {
-  const b = head;
-  const has = (off: number, sig: number[]) => sig.every((v, i) => b[off + i] === v);
-  // 이미지
-  if (has(0, [0xff, 0xd8, 0xff])) return "image"; // JPEG
-  if (has(0, [0x89, 0x50, 0x4e, 0x47])) return "image"; // PNG
-  if (has(0, [0x47, 0x49, 0x46, 0x38])) return "image"; // GIF8
-  if (has(0, [0x52, 0x49, 0x46, 0x46]) && has(8, [0x57, 0x45, 0x42, 0x50])) return "image"; // RIFF....WEBP
-  // 영상: ISO-BMFF(mp4/mov)는 offset4 'ftyp'
-  if (has(4, [0x66, 0x74, 0x79, 0x70])) return "video"; // ....ftyp
-  if (has(0, [0x1a, 0x45, 0xdf, 0xa3])) return "video"; // Matroska/WebM
-  return null;
-}
-
-/**
- * storage 객체 실제 존재·크기·**매직 바이트** 서버 검증(Range GET). fail-closed:
- * 크기 미상이거나 매직으로 판별한 형식이 선언 타입과 다르면 ok=false.
- * 클라가 업로드 때 지정한 Content-Type 메타는 신뢰하지 않는다(삼순 NO-GO #2).
- */
-async function probeObject(
-  url: string,
-  declaredType: "image" | "video",
-): Promise<{ ok: boolean; size: number | null }> {
-  try {
-    const res = await fetch(url, { method: "GET", headers: { Range: "bytes=0-63" } });
-    if (!res.ok && res.status !== 206) return { ok: false, size: null };
-    const cr = res.headers.get("content-range"); // "bytes 0-63/12345"
-    const cl = res.headers.get("content-length");
-    let size: number | null = null;
-    if (cr) {
-      const total = cr.split("/")[1];
-      size = total && total !== "*" ? parseInt(total, 10) : null;
-    } else if (cl && res.status === 200) {
-      // 서버가 Range 무시하고 전체를 준 경우 content-length = 전체 크기
-      size = parseInt(cl, 10);
-    }
-    if (size == null || Number.isNaN(size) || size <= 0) return { ok: false, size: null };
-    const buf = new Uint8Array(await res.arrayBuffer());
-    const kind = magicMediaType(buf);
-    if (kind == null || kind !== declaredType) return { ok: false, size };
-    return { ok: true, size };
-  } catch {
-    return { ok: false, size: null };
-  }
 }
 
 /** 신뢰 유저의 차단 목록(작성자 필터용). 조회 실패 시 null → 호출부가 fail-closed 처리. */
@@ -201,12 +155,16 @@ export async function POST(req: NextRequest) {
   const lat = typeof body.lat === "number" ? body.lat : null;
   const lng = typeof body.lng === "number" ? body.lng : null;
   const accuracy = typeof body.accuracy === "number" ? body.accuracy : null;
-  const consentVersion =
-    typeof body.consentVersion === "number" ? Math.round(body.consentVersion) : 0;
+  const consentVersion = typeof body.consentVersion === "number" ? body.consentVersion : null;
 
   if (!gameId) return NextResponse.json({ error: "gameId 필요" }, { status: 400 });
-  // UGC 가이드라인 동의 서버 필수 검증(versioned) — device-local 뿐 아니라 API 직호출도 차단
-  if (consentVersion < VENUE_STORY_CONSENT_VERSION) {
+  // UGC 가이드라인 동의 서버 필수 검증 — **현재 버전과 정확히 일치하는 유한 정수**만 허용
+  // (device-local 상속·API 직호출·future-version 위조 audit 전부 차단).
+  if (
+    consentVersion == null ||
+    !Number.isInteger(consentVersion) ||
+    consentVersion !== VENUE_STORY_CONSENT_VERSION
+  ) {
     return NextResponse.json({ error: "업로드 가이드라인 동의가 필요해요" }, { status: 400 });
   }
   if (mediaType !== "video" && mediaType !== "image") {
@@ -253,21 +211,19 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: geo.reason ?? "직관 인증이 필요해요" }, { status: 403 });
   }
 
-  // 4) 미디어 객체 실제 존재·크기·매직바이트 서버 검증(fail-closed)
-  const probe = await probeObject(mediaUrl, mediaType);
+  // 4) 미디어 객체 실제 존재·크기·매직바이트 서버 검증(fail-closed, maxBytes 선제 차단)
+  const probe = await probeMediaObject(mediaUrl, mediaType, VENUE_STORY_MAX_BYTES);
   if (!probe.ok) {
-    return NextResponse.json({ error: "업로드된 미디어를 확인할 수 없어요" }, { status: 400 });
-  }
-  if (probe.size != null && probe.size > VENUE_STORY_MAX_BYTES) {
-    return NextResponse.json({ error: "파일이 너무 큽니다 (최대 60MB)" }, { status: 400 });
+    const msg = probe.reason === "too_large" ? "파일이 너무 큽니다 (최대 60MB)" : "업로드된 미디어를 확인할 수 없어요";
+    return NextResponse.json({ error: msg }, { status: 400 });
   }
   // 영상 포스터 썸네일도 이미지로 실검증 — 유효하지 않으면 메타에서 드롭(옵션값)
   let thumbUrlOut: string | null = thumbUrl;
   let thumbBucketOut: string | null = thumb?.bucket ?? null;
   let thumbPathOut: string | null = thumb?.path ?? null;
   if (thumb && thumbUrl) {
-    const tprobe = await probeObject(thumbUrl, "image");
-    if (!tprobe.ok || (tprobe.size != null && tprobe.size > VENUE_STORY_MAX_BYTES)) {
+    const tprobe = await probeMediaObject(thumbUrl, "image", VENUE_STORY_MAX_BYTES);
+    if (!tprobe.ok) {
       thumbUrlOut = null;
       thumbBucketOut = null;
       thumbPathOut = null;

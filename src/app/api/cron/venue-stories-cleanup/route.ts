@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { VENUE_STORY_EXPIRY_HOURS_AFTER_START } from "@/lib/venue-stories/types";
+import { shouldDeleteOrphanFile } from "@/lib/venue-stories/cleanup-policy";
 
 const CRON_SECRET = process.env.CRON_SECRET || "";
 const BUCKETS = ["videos", "photos"] as const;
@@ -81,18 +82,25 @@ export async function GET(req: NextRequest) {
 
   let deleted = 0;
   let retryLater = 0;
+  let faults = 0; // storage/delete/update 오류 — 있으면 최종 5xx 로 관제
   for (const r of (rows ?? []) as Row[]) {
     const ok = await removeRowObjects(r);
     if (ok) {
       const { error: delErr } = await supabase.from("venue_stories").delete().eq("id", r.id);
       if (delErr) {
         retryLater++;
+        faults++;
       } else {
         deleted++;
       }
     } else {
-      await supabase.from("venue_stories").update({ status: "cleanup_failed" }).eq("id", r.id);
+      const { error: updErr } = await supabase
+        .from("venue_stories")
+        .update({ status: "cleanup_failed" })
+        .eq("id", r.id);
       retryLater++;
+      faults++; // storage remove 실패(+ 상태갱신 실패 가능)
+      if (updErr) { /* 상태갱신까지 실패 — 다음 실행 재시도 */ }
     }
   }
 
@@ -108,8 +116,11 @@ export async function GET(req: NextRequest) {
         .select("media_bucket, media_path, thumb_bucket, thumb_path")
         .range(from, from + PAGE - 1);
       if (refErr) {
-        // 정리(1)는 이미 수행됨 — orphan 스캔만 스킵하고 다음 실행에서 재시도
-        return NextResponse.json({ deleted, retryLater, orphanRemoved: 0, orphanSkipped: "ref_query_error" });
+        // 참조 집합을 완전히 못 만들면 orphan 삭제는 위험(오탐) — 스캔 중단+5xx 관제
+        return NextResponse.json(
+          { deleted, retryLater, orphanRemoved: 0, orphanSkipped: "ref_query_error" },
+          { status: 500 },
+        );
       }
       for (const p of allPaths ?? []) {
         if (p.media_bucket && p.media_path) referenced.add(`${p.media_bucket}:${p.media_path}`);
@@ -134,15 +145,18 @@ export async function GET(req: NextRequest) {
     const afterName: string | null = (cur?.after_name as string) ?? null;
 
     // 이름 정렬로 전체 game 폴더를 페이지네이션하며 cursor 이후만 스캔
+    // cursor 는 **fault 없이 완전히 처리된 마지막 폴더**(lastCompletedName)로만 전진한다.
+    // list/remove fault 는 cursor 를 실패 지점 이전에 유지하고 5xx 로 관제(삼순 NO-GO #2).
     let scanned = 0;
     let offset = 0;
-    let lastScannedName: string | null = null;
+    let lastCompletedName: string | null = null; // fault 없이 끝난 폴더만
     let reachedEnd = true;
+    let bucketFault = false;
     scanLoop: for (;;) {
       const { data: games, error: listErr } = await supabase.storage
         .from(bucket)
         .list("venue-stories", { limit: STORAGE_PAGE, offset, sortBy: { column: "name", order: "asc" } });
-      if (listErr) { reachedEnd = false; break; } // fault: cursor 미전진(다음 실행 재시도)
+      if (listErr) { reachedEnd = false; bucketFault = true; break; } // fault: cursor 미전진
       if (!games || games.length === 0) break;
       offset += games.length;
       for (const gameFolder of games) {
@@ -150,41 +164,54 @@ export async function GET(req: NextRequest) {
         if (afterName != null && gameFolder.name <= afterName) continue; // cursor 이전은 skip
         if (scanned >= ORPHAN_MAX_GAME_FOLDERS) { reachedEnd = false; break scanLoop; }
         scanned++;
-        lastScannedName = gameFolder.name;
         const gamePrefix = `venue-stories/${gameFolder.name}`;
         const users = await listAll(bucket, gamePrefix);
-        if (users == null) continue; // fault: 이 폴더 skip(cursor 는 전진해도 다음 회차가 orphan 다시 봄)
+        if (users == null) { reachedEnd = false; bucketFault = true; break scanLoop; } // fault: cursor 미전진
+        let folderFault = false;
         for (const userFolder of users) {
           if (userFolder.id !== null) continue;
           const userPrefix = `${gamePrefix}/${userFolder.name}`;
           const files = await listAll(bucket, userPrefix);
-          if (files == null) continue;
+          if (files == null) { folderFault = true; break; } // fault: 이 폴더 미완료
           const toDelete: string[] = [];
           for (const f of files) {
-            if (f.id === null) continue; // 폴더 skip
             const fullPath = `${userPrefix}/${f.name}`;
-            if (referenced.has(`${bucket}:${fullPath}`)) continue;
-            const ts = f.created_at ? Date.parse(f.created_at) : 0;
-            if (ts && ts > orphanCutoff) continue; // 아직 최근이면 두고 다음 실행에
-            toDelete.push(fullPath);
+            if (
+              shouldDeleteOrphanFile({
+                isFolder: f.id === null,
+                isReferenced: referenced.has(`${bucket}:${fullPath}`),
+                createdAt: f.created_at,
+                cutoffMs: orphanCutoff,
+              })
+            ) {
+              toDelete.push(fullPath);
+            }
           }
           if (toDelete.length > 0) {
             const { error: rmErr } = await supabase.storage.from(bucket).remove(toDelete);
-            if (!rmErr) orphanRemoved += toDelete.length;
+            if (rmErr) { folderFault = true; break; } // remove fault → 이 폴더 미완료
+            orphanRemoved += toDelete.length;
           }
         }
+        if (folderFault) { reachedEnd = false; bucketFault = true; break scanLoop; } // cursor 미전진
+        lastCompletedName = gameFolder.name; // 이 폴더는 fault 없이 완전 완료
       }
       if (games.length < STORAGE_PAGE) break; // 마지막 페이지
     }
 
-    // cursor 갱신: 이번에 스캔한 마지막 폴더명으로 전진. 전 구간 도달했으면 리셋(다음 회차 처음부터).
-    const nextAfter = reachedEnd ? null : lastScannedName;
-    if (lastScannedName != null || reachedEnd) {
-      await supabase
+    // cursor 갱신: 완전 처리된 마지막 폴더명으로만 전진. 전 구간 도달했으면 리셋(null).
+    const nextAfter = reachedEnd ? null : lastCompletedName;
+    if (lastCompletedName != null || reachedEnd) {
+      const { error: curErr } = await supabase
         .from("venue_cleanup_cursor")
         .upsert({ bucket, after_name: nextAfter, updated_at: new Date().toISOString() });
+      if (curErr) faults++; // cursor 저장 실패도 관제
     }
+    if (bucketFault) faults++;
   }
 
+  if (faults > 0) {
+    return NextResponse.json({ deleted, retryLater, orphanRemoved, faults }, { status: 500 });
+  }
   return NextResponse.json({ deleted, retryLater, orphanRemoved });
 }

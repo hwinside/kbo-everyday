@@ -341,7 +341,7 @@ async function processVenueStories() {
   if (!rows || rows.length === 0) { console.log("직관 라이브 pending 영상 없음."); return; }
 
   const work = mkdtempSync(join(tmpdir(), "kbo-venue-"));
-  let done = 0, removed = 0, failed = 0;
+  let done = 0, removed = 0, failed = 0, updateErrors = 0;
   try {
     for (const row of rows) {
       const inPath = join(work, "in" + (basename(row.media_path).match(/\.[^.]+$/)?.[0] || ".mp4"));
@@ -355,7 +355,7 @@ async function processVenueStories() {
             .from("venue_stories")
             .update({ status: "removed", transcode_attempts: row.transcode_attempts + 1 })
             .eq("id", row.id);
-          if (rmErr) throw new Error(`removed 갱신 실패: ${rmErr.message}`); // pending 잔류 방지 — catch 에서 재시도
+          if (rmErr) { updateErrors++; throw new Error(`removed 갱신 실패: ${rmErr.message}`); } // pending 잔류 방지 — catch 에서 재시도
           console.log(`  🚫 venue ${row.id} 검증실패(dur ${meta.durationMs}ms/${fmtMB(inBytes)}) → removed`);
           removed++;
           continue;
@@ -397,6 +397,7 @@ async function processVenueStories() {
           .update({ transcode_attempts: attempts, status })
           .eq("id", row.id);
         if (updErr) {
+          updateErrors++;
           console.log(`  ⚠️ venue ${row.id} 상태갱신 실패(다음 실행 재시도): ${updErr.message}`);
         }
         console.log(`  ❌ venue ${row.id} ${status} (${attempts}/${MAX_ATTEMPTS}): ${e.message || e}`);
@@ -408,7 +409,9 @@ async function processVenueStories() {
   } finally {
     try { rmSync(work, { recursive: true, force: true }); } catch {}
   }
-  console.log(`직관 라이브 처리: ✅${done} 🚫${removed} ❌${failed}`);
+  console.log(`직관 라이브 처리: ✅${done} 🚫${removed} ❌${failed} (상태갱신오류 ${updateErrors})`);
+  // 실패 건/상태기록 실패가 있으면 지속 pending/removed 실패 관제를 위해 비정상 종료 시그널을 올린다.
+  return { done, removed, failed, updateErrors };
 }
 
 // ── main ──
@@ -439,5 +442,11 @@ async function processVenueStories() {
   await processJobs();
 
   console.log("\n── 직관 라이브(venue_stories) 영상 처리 ──");
-  await processVenueStories();
+  const venueRes = (await processVenueStories()) || { failed: 0, updateErrors: 0 };
+  if ((venueRes.failed || 0) > 0 || (venueRes.updateErrors || 0) > 0) {
+    console.error(
+      `❌ 직관 라이브 처리 중 실패 ${venueRes.failed} / 상태기록오류 ${venueRes.updateErrors} — 관제를 위해 non-zero 종료`,
+    );
+    process.exit(1);
+  }
 })().catch((e) => { console.error("❌", e); process.exit(1); });
