@@ -212,7 +212,10 @@ export default function TeamCard({ team, gameSlot, refreshNonce = 0 }: TeamCardP
 
   useEffect(() => {
     let cancelled = false;
-    fetch(`/api/team-card?team=${team.slug}`)
+    // cache: no-store — 응답이 `cache-control: public`이라 웹봰 HTTP 캐시가 오래된 그래프를
+    // 물고 있다(당겨서 새로고침해도 fetch URL이 동일해 캐시 적중). 항상 서버
+    // 최신(순위변동/주간그래프)를 반영하도록 클라 캐시를 우회(CDN s-maxage=300이 origin 보호).
+    fetch(`/api/team-card?team=${team.slug}`, { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : null))
       .then((d: TeamCardData | null) => { if (!cancelled) { setData(d && !("error" in d) ? d : null); setLoaded(true); } })
       .catch(() => { if (!cancelled) setLoaded(true); });
