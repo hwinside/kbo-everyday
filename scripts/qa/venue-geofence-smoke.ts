@@ -54,6 +54,12 @@ ok("좌표 미제출 → 차단", evaluateGeofence({ lat: null, lng: null, accur
 ok("구장 미매핑(coord=null) → 차단", evaluateGeofence({ ...inside, accuracy: 20, coord: null, maxAccuracy: VENUE_GEOFENCE_MAX_ACCURACY_M }).ok === false);
 ok("저정확도(accuracy>300m) → 차단", evaluateGeofence({ ...inside, accuracy: 500, coord: jamsil, maxAccuracy: VENUE_GEOFENCE_MAX_ACCURACY_M }).ok === false);
 ok("accuracy 경계(=300m)는 통과", evaluateGeofence({ ...inside, accuracy: 300, coord: jamsil, maxAccuracy: VENUE_GEOFENCE_MAX_ACCURACY_M }).ok === true);
+ok("accuracy 누락(null) → 차단(생략 우회 방지)", evaluateGeofence({ ...inside, accuracy: null, coord: jamsil, maxAccuracy: VENUE_GEOFENCE_MAX_ACCURACY_M }).ok === false);
+ok("accuracy 음수 → 차단", evaluateGeofence({ ...inside, accuracy: -1, coord: jamsil, maxAccuracy: VENUE_GEOFENCE_MAX_ACCURACY_M }).ok === false);
+ok("accuracy NaN → 차단", evaluateGeofence({ ...inside, accuracy: NaN, coord: jamsil, maxAccuracy: VENUE_GEOFENCE_MAX_ACCURACY_M }).ok === false);
+ok("lat NaN → 차단", evaluateGeofence({ lat: NaN, lng: 127.07, accuracy: 20, coord: jamsil, maxAccuracy: VENUE_GEOFENCE_MAX_ACCURACY_M }).ok === false);
+ok("lat 범위밖(>90) → 차단", evaluateGeofence({ lat: 200, lng: 127.07, accuracy: 20, coord: jamsil, maxAccuracy: VENUE_GEOFENCE_MAX_ACCURACY_M }).ok === false);
+ok("lng 범위밖(>180) → 차단", evaluateGeofence({ lat: 37.51, lng: 999, accuracy: 20, coord: jamsil, maxAccuracy: VENUE_GEOFENCE_MAX_ACCURACY_M }).ok === false);
 ok("반경 경계 밖 살짝(700m 구장 900m) → 차단", (() => {
   const daegu = resolveStadiumByName("대구삼성라이온즈파크")!; // 700m
   // 대구 구장에서 정북 약 900m 지점

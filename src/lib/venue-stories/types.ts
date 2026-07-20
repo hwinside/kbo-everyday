@@ -12,10 +12,13 @@ export const VENUE_GEOFENCE_DEFAULT_RADIUS_M = 700;
 export const VENUE_GEOFENCE_MAX_RADIUS_M = 1_000;
 export const VENUE_GEOFENCE_MAX_ACCURACY_M = 300;
 
-// 업로드 가능 시간대(경기 기준) + 만료(경기 종료 기준)
-export const VENUE_UPLOAD_WINDOW_BEFORE_MIN = 60; // 경기 시작 60분 전부터
-export const VENUE_UPLOAD_WINDOW_AFTER_HOURS = 6; // 경기 시작 +6h 까지(종료+여유)
-export const VENUE_STORY_EXPIRY_HOURS_AFTER_START = 6; // 만료 = 경기 시작 +6h
+// 업로드 가능 시간대(경기 기준)와 만료(경기 종료 후 유지)를 분리한다.
+// 업로드 마감(시작+6h)이 곧 만료였던 문제(시작+5h59 업로드 → 1분 뒤 소멸) 해소.
+export const VENUE_UPLOAD_WINDOW_BEFORE_MIN = 60; // 경기 시작 60분 전부터 업로드 가능
+export const VENUE_UPLOAD_WINDOW_AFTER_HOURS = 6; // 경기 시작 +6h 까지 업로드 가능(종료+여유)
+// 만료 = 경기 종료 후 24h 유지. 정확한 종료시각이 없으므로 시작 기준으로 넉넉히 잡는다
+// (평균 경기 ~3.5h + 24h ≈ 시작+27.5h, 연장/우천 여유 포함 30h). 업로드 마감과 독립.
+export const VENUE_STORY_EXPIRY_HOURS_AFTER_START = 30;
 
 export type VenueStoryMediaType = "video" | "image";
 

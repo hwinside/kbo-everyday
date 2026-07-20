@@ -112,3 +112,62 @@ $$;
 
 REVOKE ALL ON FUNCTION report_venue_story(BIGINT, UUID, TEXT, TEXT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION report_venue_story(BIGINT, UUID, TEXT, TEXT) TO service_role;
+
+-- ── 생성 원자 처리 RPC ──────────────────────────────────────────────
+-- 게임당 유저 상한(active+pending) 체크 + insert 를 advisory lock 으로 원자화.
+-- count 후 별도 insert 하던 route 로직의 동시요청 초과(스팸/Storage 비용 우회)를 하드리밋으로.
+CREATE OR REPLACE FUNCTION create_venue_story(
+  p_game_id      TEXT,
+  p_user_id      UUID,
+  p_media_type   TEXT,
+  p_media_url    TEXT,
+  p_media_bucket TEXT,
+  p_media_path   TEXT,
+  p_thumb_url    TEXT,
+  p_thumb_bucket TEXT,
+  p_thumb_path   TEXT,
+  p_duration_ms  INT,
+  p_width        INT,
+  p_height       INT,
+  p_caption      TEXT,
+  p_stadium_name TEXT,
+  p_status       TEXT,
+  p_expires_at   TIMESTAMPTZ,
+  p_max_per_game INT
+) RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_count INT;
+  v_id    BIGINT;
+BEGIN
+  -- (user, game) 단위 트랜잭션 advisory lock — 같은 유저·경기의 동시 생성 직렬화
+  PERFORM pg_advisory_xact_lock(hashtextextended(p_user_id::text || ':' || p_game_id, 0));
+
+  SELECT count(*) INTO v_count
+    FROM venue_stories
+   WHERE user_id = p_user_id AND game_id = p_game_id
+     AND status IN ('active', 'pending');
+
+  IF v_count >= p_max_per_game THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'limit');
+  END IF;
+
+  INSERT INTO venue_stories (
+    game_id, user_id, media_type, media_url, media_bucket, media_path,
+    thumb_url, thumb_bucket, thumb_path, duration_ms, width, height, caption,
+    venue_verified, stadium_name, status, expires_at
+  ) VALUES (
+    p_game_id, p_user_id, p_media_type, p_media_url, p_media_bucket, p_media_path,
+    p_thumb_url, p_thumb_bucket, p_thumb_path, p_duration_ms, p_width, p_height, p_caption,
+    true, p_stadium_name, p_status, p_expires_at
+  ) RETURNING id INTO v_id;
+
+  RETURN jsonb_build_object('ok', true, 'id', v_id);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION create_venue_story(TEXT, UUID, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, INT, INT, INT, TEXT, TEXT, TEXT, TIMESTAMPTZ, INT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION create_venue_story(TEXT, UUID, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, INT, INT, INT, TEXT, TEXT, TEXT, TIMESTAMPTZ, INT) TO service_role;

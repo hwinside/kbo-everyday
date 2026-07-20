@@ -351,7 +351,11 @@ async function processVenueStories() {
         const meta = probeVideoMeta(inPath);
         // duration/크기 서버 권위 검증 — 초과 시 노출 없이 removed(정리 cron 이 storage 제거)
         if (meta.durationMs > VENUE_MAX_DURATION_MS || inBytes > VENUE_MAX_BYTES) {
-          await supabase.from("venue_stories").update({ status: "removed" }).eq("id", row.id);
+          const { error: rmErr } = await supabase
+            .from("venue_stories")
+            .update({ status: "removed", transcode_attempts: row.transcode_attempts + 1 })
+            .eq("id", row.id);
+          if (rmErr) throw new Error(`removed 갱신 실패: ${rmErr.message}`); // pending 잔류 방지 — catch 에서 재시도
           console.log(`  🚫 venue ${row.id} 검증실패(dur ${meta.durationMs}ms/${fmtMB(inBytes)}) → removed`);
           removed++;
           continue;
@@ -387,9 +391,14 @@ async function processVenueStories() {
       } catch (e) {
         const attempts = row.transcode_attempts + 1;
         const status = attempts >= MAX_ATTEMPTS ? "removed" : "pending";
-        try {
-          await supabase.from("venue_stories").update({ transcode_attempts: attempts, status }).eq("id", row.id);
-        } catch {}
+        // DB 갱신 실패는 명시 로그(성공처럼 넘기지 않음) — 다음 실행이 같은 pending 재시도
+        const { error: updErr } = await supabase
+          .from("venue_stories")
+          .update({ transcode_attempts: attempts, status })
+          .eq("id", row.id);
+        if (updErr) {
+          console.log(`  ⚠️ venue ${row.id} 상태갱신 실패(다음 실행 재시도): ${updErr.message}`);
+        }
         console.log(`  ❌ venue ${row.id} ${status} (${attempts}/${MAX_ATTEMPTS}): ${e.message || e}`);
         failed++;
       } finally {

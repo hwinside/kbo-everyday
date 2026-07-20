@@ -28,7 +28,31 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   const [error, setError] = useState<string | null>(null);
   const [venue, setVenue] = useState<VenueInfo | null>(null);
   const [venueLoading, setVenueLoading] = useState(false);
+  const [agreed, setAgreed] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // UGC 가이드라인 동의 — 한 번 동의하면 기기에 기억(재업로드 시 재체크 불필요)
+  useEffect(() => {
+    if (!isOpen) return;
+    try {
+      setAgreed(localStorage.getItem("venueStoryGuidelineAgreed") === "1");
+    } catch {
+      setAgreed(false);
+    }
+  }, [isOpen]);
+
+  const toggleAgree = () => {
+    setAgreed((prev) => {
+      const next = !prev;
+      try {
+        if (next) localStorage.setItem("venueStoryGuidelineAgreed", "1");
+        else localStorage.removeItem("venueStoryGuidelineAgreed");
+      } catch {
+        /* noop */
+      }
+      return next;
+    });
+  };
 
   const submitting = phase !== "idle";
   const radiusKm = venue ? Math.round((venue.radiusM / 1000) * 10) / 10 : null;
@@ -92,6 +116,12 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   const submit = async () => {
     if (!file || submitting) return;
     setError(null);
+
+    // UGC 가이드라인 동의 필수(업로드 시점 게이트)
+    if (!agreed) {
+      setError("업로드 가이드라인에 동의해주세요");
+      return;
+    }
 
     // 업로드 가능 시간대 아님(경기 전/후, 취소, 미지원 구장) — 서버 사유 그대로 노출
     if (venue && !venue.uploadOpen) {
@@ -248,11 +278,24 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
               className="w-full px-3 py-2.5 rounded-xl bg-bg-tertiary text-sm text-text-primary placeholder:text-text-tertiary outline-none"
             />
 
+            <label className="flex items-start gap-2 text-[11px] text-text-tertiary leading-relaxed cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={agreed}
+                onChange={toggleAgree}
+                className="mt-0.5 accent-brand-primary shrink-0"
+              />
+              <span>
+                중계화면 무단 재촬영·타인 얼굴/초상권 침해·욕설/폭력·불법 촬영물을 올리지 않겠습니다.
+                위반 콘텐츠는 신고·삭제될 수 있어요. <b className="text-text-secondary">가이드라인에 동의합니다.</b>
+              </span>
+            </label>
+
             {error && <p className="text-sm text-red-400">{error}</p>}
 
             <button
               onClick={submit}
-              disabled={!file || submitting || !!gateReason}
+              disabled={!file || submitting || !!gateReason || !agreed}
               className="w-full py-3 rounded-xl bg-brand-primary text-white font-semibold flex items-center justify-center gap-2 disabled:opacity-40"
             >
               {submitting ? <Loader2 size={18} className="animate-spin" /> : null}

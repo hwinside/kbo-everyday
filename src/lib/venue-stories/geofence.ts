@@ -54,16 +54,25 @@ export interface GeofenceResult {
 
 /**
  * GPS 좌표가 구장 반경 안(직관 인증)인지 판정(fail-closed).
- * - 좌표 미제출 / 구장 미매핑 / accuracy 상한 초과 / 반경 밖 → ok=false
+ * - 구장 미매핑 / 좌표 미제출·비유한·범위밖 / accuracy 누락·비유한·음수·상한초과 / 반경 밖 → ok=false
+ * - accuracy 를 필수화해 "accuracy 생략하면 통과" 우회를 차단(삼순 NO-GO #1).
  */
 export function evaluateGeofence(i: GeofenceInput): GeofenceResult {
   if (!i.coord) {
     return { ok: false, reason: "이 구장은 아직 직관 라이브를 지원하지 않아요" };
   }
-  if (i.lat == null || i.lng == null) {
+  // 좌표는 finite + 지구 범위 내여야 함(누락·NaN·범위밖 fail-closed)
+  if (
+    typeof i.lat !== "number" || !Number.isFinite(i.lat) || i.lat < -90 || i.lat > 90 ||
+    typeof i.lng !== "number" || !Number.isFinite(i.lng) || i.lng < -180 || i.lng > 180
+  ) {
     return { ok: false, reason: "직관 인증(위치)이 필요해요" };
   }
-  if (i.accuracy != null && i.accuracy > i.maxAccuracy) {
+  // accuracy 필수: finite + 0 이상 + 상한 이하. 누락/비유한/음수/과대는 전부 차단.
+  if (typeof i.accuracy !== "number" || !Number.isFinite(i.accuracy) || i.accuracy < 0) {
+    return { ok: false, reason: "위치 정확도를 확인할 수 없어요. 야외에서 다시 시도해주세요" };
+  }
+  if (i.accuracy > i.maxAccuracy) {
     return { ok: false, reason: "위치 정확도가 낮아요. 야외에서 다시 시도해주세요" };
   }
   const dist = haversineMeters(i.lat, i.lng, i.coord.lat, i.coord.lng);

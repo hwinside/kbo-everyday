@@ -22,8 +22,10 @@
 - 업로드 미디어 **서버 권위 검증**: 소유 경로 바인딩(`venue-stories/{gameId}/{userId}/`) + 객체 실제
   존재·크기(≤60MB)·MIME 확인. 영상은 업로드 시 `pending`(비노출) → 트랜스코딩 워커(ffprobe ≤15초 재검증
   + 720p 인코딩) 통과 시 `active`, 실패/초과 시 `removed`. 사진은 기존 클라 압축(1600px JPEG) 후 `active`.
-- 만료 = **경기 시작 +6h(종료 기준)**. cron `venue-stories-cleanup`: storage 먼저 제거 후 행 삭제,
-  실패 시 `cleanup_failed` 로 남겨 재시도 + orphan(생성 실패 잔여 객체) 스캔 정리.
+- **업로드 마감과 만료 분리**: 업로드 가능=경기 시작 -60min~+6h. 만료(자동삭제)=**경기 종료 후 24h 유지**
+  (시작+30h ≈ 종료+~26h). 시작+6h가 만료도 겸하던 문제(시작+5h59 업로드가 1분 뒤 사라짐) 해소.
+  cron `venue-stories-cleanup`: storage 먼저 제거 후 행 삭제, 실패 시 `cleanup_failed` 로 남겨 재시도 +
+  orphan(생성 실패 잔여) bucket별 독립 예산·offset 페이지네이션 스캔(starvation 방지).
 - 신고 원자 처리(DB RPC insert+증가+임계 3건 자동 숨김 한 트랜잭션) + 어드민 즉시 내림(`/admin/venue-stories`)
   + 차단 유저 콘텐츠 필터 + 본인 삭제 (App Store/Play UGC 모더 요건 충족).
 
