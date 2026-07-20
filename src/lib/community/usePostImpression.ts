@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { useAuth } from "@/lib/supabase/AuthContext";
-import { currentViewerKey, hasSeenView, trackPostImpressionOncePerSession } from "./view-tracker";
+import { currentViewerKey, canCountImpression, trackPostImpressionOncePerSession } from "./view-tracker";
 
 /**
  * 피드 카드 임프레션 트래킹 훅.
@@ -15,15 +15,18 @@ import { currentViewerKey, hasSeenView, trackPostImpressionOncePerSession } from
  */
 export function usePostImpression<T extends HTMLElement = HTMLDivElement>(postId: number) {
   const ref = useRef<T | null>(null);
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const userId = user?.id ?? null;
 
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
     if (!Number.isInteger(postId) || postId <= 0) return;
+    // auth 복원 중엔 관찰하지 않는다 — loading 중 user=null을 게스트로 잡아 1회 찍힌 뒤
+    // 로그인이 복원되면 같은 사람이 user키로 또 1회(=이중 집계)되는 것 방지(삼순 blocker1).
+    if (authLoading) return;
     const viewerKey = currentViewerKey(userId);
-    if (hasSeenView(postId, "impression", viewerKey)) return; // 동일 유저 세션당 1회
+    if (!canCountImpression(postId, viewerKey)) return; // 동일 유저 세션당 1회
     if (typeof IntersectionObserver === "undefined") return;
 
     let dwellTimer: ReturnType<typeof setTimeout> | null = null;
@@ -43,7 +46,7 @@ export function usePostImpression<T extends HTMLElement = HTMLDivElement>(postId
           if (dwellTimer) return; // 이미 dwell 카운트 중
           dwellTimer = setTimeout(() => {
             dwellTimer = null;
-            if (hasSeenView(postId, "impression", viewerKey)) return;
+            if (!canCountImpression(postId, viewerKey)) return;
             trackPostImpressionOncePerSession(postId, userId);
             io.disconnect();
           }, 500);
@@ -59,7 +62,7 @@ export function usePostImpression<T extends HTMLElement = HTMLDivElement>(postId
       clearDwell();
       io.disconnect();
     };
-  }, [postId, userId]);
+  }, [postId, userId, authLoading]);
 
   return ref;
 }

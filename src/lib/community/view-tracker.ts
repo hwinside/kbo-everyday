@@ -1,34 +1,35 @@
 "use client";
 
 import { getGuestId } from "@/lib/store/onboarding";
+import {
+  viewerKeyOf,
+  impressionDedupKey,
+  shouldCountImpression,
+  pickTransport,
+} from "./view-tracker-policy";
 
 /**
- * 게시글 조회수 트래킹 (클라) — 2026-07-21.
+ * 게시글 조회수 트래킹 (클라 · DOM/스토리지 배선) — 2026-07-21.
+ * 순수 판정은 view-tracker-policy.ts. 여기선 sessionStorage/navigator 배선만.
  *
  * dedup 규칙(하린아빠 스펙):
- *  - **click**: 상세 진입마다 +1 (dedup 없음)
- *  - **impression**: 피드 카드 세로 ≥50% + 0.5초 dwell 시 +1, **동일 유저 + 세션당 글 1회**
- *    · "동일 유저" = 로그인 유저는 userId, 비로그인은 guestId(localStorage). 같은 세션에서
- *      계정을 바꾸면 각 유저가 1회씩 집계된다.
+ *  - click: 상세 진입마다 +1 (dedup 없음)
+ *  - impression: 카드 세로 ≥50% + 0.5초 dwell 시 +1, 동일 유저 + 세션당 글 1회
  *
- * 서버(/api/posts/[postId]/view)는 순수 증가만. 세션 dedup은 여기(sessionStorage).
- * 전송 실패는 조용히 무시(best-effort 텔레메트리 — UX를 막지 않음).
+ * 서버(/api/posts/[postId]/view)는 순수 증가만. 전송 실패는 best-effort(UX 무영향).
  */
 
-const SEEN_KEY = "kbo-po…seen";
+const SEEN_KEY = "***";
 
-/** 현재 유저 식별자 — 로그인 userId 우선, 없으면 게스트 id. */
+/** 현재 유저 식별자 — 로그인 userId 우선, 없으면 게스트 id(localStorage). */
 export function currentViewerKey(userId?: string | null): string {
-  if (userId) return `u:${userId}`;
+  let guestId: string | null = null;
   try {
-    return `g:${getGuestId()}`;
+    guestId = getGuestId();
   } catch {
-    return "g:anon";
+    guestId = null;
   }
-}
-
-function dedupKey(postId: number, kind: "click" | "impression", viewerKey: string): string {
-  return `${kind}:${postId}:${viewerKey}`;
+  return viewerKeyOf(userId, guestId);
 }
 
 function seenSet(): Set<string> {
@@ -40,43 +41,47 @@ function seenSet(): Set<string> {
   }
 }
 
-/** 이 세션에서 이 유저가 이미 (kind) 집계된 글인지. */
-export function hasSeenView(postId: number, kind: "click" | "impression", viewerKey: string): boolean {
-  return seenSet().has(dedupKey(postId, kind, viewerKey));
+/** 이 유저가 이 세션에서 아직 이 글 임프레션을 집계 안 했으면 true. */
+export function canCountImpression(postId: number, viewerKey: string): boolean {
+  return shouldCountImpression(seenSet(), postId, viewerKey);
 }
 
-/** 세션 집계 마킹. */
-export function markViewSeen(postId: number, kind: "click" | "impression", viewerKey: string): void {
+function markImpressionSeen(postId: number, viewerKey: string): void {
   try {
     const s = seenSet();
-    s.add(dedupKey(postId, kind, viewerKey));
+    s.add(impressionDedupKey(postId, viewerKey));
     sessionStorage.setItem(SEEN_KEY, JSON.stringify([...s]));
   } catch {
     /* storage 불가 환경 무시 */
   }
 }
 
-/** 조회수 카운터 +1 (best-effort). 페이지 이동 중에도 유실 없게 sendBeacon 우선. */
+/** 조회수 카운터 +1 (best-effort). sendBeacon 우선, 큐잉 실패(false)면 fetch 폴백. */
 function sendView(postId: number, kind: "click" | "impression"): void {
   const url = `/api/posts/${postId}/view`;
   const body = JSON.stringify({ kind });
-  try {
-    if (typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function") {
-      navigator.sendBeacon(url, new Blob([body], { type: "application/json" }));
-      return;
+  const beaconAvailable =
+    typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function";
+  let beaconQueued = false;
+  if (beaconAvailable) {
+    try {
+      beaconQueued = navigator.sendBeacon(url, new Blob([body], { type: "application/json" }));
+    } catch {
+      beaconQueued = false;
     }
-  } catch {
-    /* sendBeacon 실패 → fetch 폴백 */
   }
-  try {
-    void fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body,
-      keepalive: true,
-    }).catch(() => {});
-  } catch {
-    /* 무시 */
+  // beacon이 없거나 큐잉 실패(false 반환) 시에만 fetch 폴백 — 실패한 전송이 조용히 유실되지 않게.
+  if (pickTransport(beaconAvailable, beaconQueued) === "fetch") {
+    try {
+      void fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+        keepalive: true,
+      }).catch(() => {});
+    } catch {
+      /* 무시 */
+    }
   }
 }
 
@@ -93,7 +98,7 @@ export function trackPostClick(postId: number): void {
 export function trackPostImpressionOncePerSession(postId: number, userId?: string | null): void {
   if (!Number.isInteger(postId) || postId <= 0) return;
   const viewerKey = currentViewerKey(userId);
-  if (hasSeenView(postId, "impression", viewerKey)) return;
-  markViewSeen(postId, "impression", viewerKey);
+  if (!canCountImpression(postId, viewerKey)) return;
+  markImpressionSeen(postId, viewerKey);
   sendView(postId, "impression");
 }
