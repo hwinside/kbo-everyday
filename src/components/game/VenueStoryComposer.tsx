@@ -8,7 +8,7 @@ import { getSafeSession } from "@/lib/supabase/client";
 import { prepareVenueStoryMedia } from "@/lib/venue-stories/upload";
 import { getVenuePosition } from "@/lib/venue-stories/geo";
 import { haversineMeters } from "@/lib/venue-stories/stadiums";
-import type { VenueInfo } from "@/lib/venue-stories/types";
+import { VENUE_STORY_CONSENT_VERSION, type VenueInfo } from "@/lib/venue-stories/types";
 
 interface Props {
   gameId: string;
@@ -31,22 +31,23 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   const [agreed, setAgreed] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // UGC 가이드라인 동의 — 한 번 동의하면 기기에 기억(재업로드 시 재체크 불필요)
+  // UGC 가이드라인 동의 — 버전별 기억(문구 바뀌면 재동의). 서버가 최종 검증하므로 이건 UX 편의용.
+  const CONSENT_KEY = `venueStoryGuidelineAgreed_v${VENUE_STORY_CONSENT_VERSION}`;
   useEffect(() => {
     if (!isOpen) return;
     try {
-      setAgreed(localStorage.getItem("venueStoryGuidelineAgreed") === "1");
+      setAgreed(localStorage.getItem(CONSENT_KEY) === "1");
     } catch {
       setAgreed(false);
     }
-  }, [isOpen]);
+  }, [isOpen, CONSENT_KEY]);
 
   const toggleAgree = () => {
     setAgreed((prev) => {
       const next = !prev;
       try {
-        if (next) localStorage.setItem("venueStoryGuidelineAgreed", "1");
-        else localStorage.removeItem("venueStoryGuidelineAgreed");
+        if (next) localStorage.setItem(CONSENT_KEY, "1");
+        else localStorage.removeItem(CONSENT_KEY);
       } catch {
         /* noop */
       }
@@ -179,6 +180,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
           lat: pos.lat,
           lng: pos.lng,
           accuracy: pos.accuracy,
+          consentVersion: VENUE_STORY_CONSENT_VERSION,
         }),
       });
       const data = await res.json();

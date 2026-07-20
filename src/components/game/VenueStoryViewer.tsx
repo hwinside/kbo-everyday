@@ -6,6 +6,7 @@ import { motion } from "framer-motion";
 import { X, Volume2, VolumeX, MoreVertical, Loader2 } from "lucide-react";
 import { getSafeSession } from "@/lib/supabase/client";
 import { VENUE_STORY_IMAGE_HOLD_MS, type VenueStory } from "@/lib/venue-stories/types";
+import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 
 interface Props {
   stories: VenueStory[];
@@ -210,9 +211,23 @@ export default function VenueStoryViewer({
           )}
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-white text-sm font-semibold truncate">
-            {story.author.nickname ?? "익명"}
-          </p>
+          <div className="flex items-center gap-1.5 min-w-0">
+            <p className="text-white text-sm font-semibold truncate">
+              {story.author.nickname ?? "익명"}
+            </p>
+            {(() => {
+              const team = story.author.teamId != null ? getTeamById(story.author.teamId) : undefined;
+              if (!team) return null;
+              return (
+                <span
+                  className="shrink-0 px-1.5 py-0.5 rounded-md text-[10px] font-bold text-white leading-none"
+                  style={{ backgroundColor: getTeamBgColor(team, "dark") }}
+                >
+                  {team.shortName}
+                </span>
+              );
+            })()}
+          </div>
           <p className="text-white/60 text-[11px]">{timeAgo(story.createdAt)}</p>
         </div>
         {story.mediaType === "video" && (

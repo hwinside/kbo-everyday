@@ -25,6 +25,9 @@ CREATE TABLE IF NOT EXISTS venue_stories (
   caption      TEXT,
   -- 지오펜스: 업로드 시 구장 반경 안에서 GPS 검증됐는지(직관 인증). fail-closed 라 항상 true.
   venue_verified BOOLEAN NOT NULL DEFAULT false,
+  -- UGC 가이드라인 동의(서버 필수 검증) — 버전과 시각을 행에 기록(audit).
+  consent_version SMALLINT NOT NULL DEFAULT 0,
+  consent_at   TIMESTAMPTZ,
   -- 실제 경기 스케줄에서 확인한 구장명(S_NM). 홈팀=홈구장 가정 대신 실제 개최 구장.
   stadium_name TEXT,
   report_count INT NOT NULL DEFAULT 0,
@@ -110,7 +113,8 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION report_venue_story(BIGINT, UUID, TEXT, TEXT) FROM PUBLIC;
+-- ACL fail-closed: PUBLIC 뿐 아니라 anon·authenticated 도 명시 revoke → service_role 전용.
+REVOKE ALL ON FUNCTION report_venue_story(BIGINT, UUID, TEXT, TEXT) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION report_venue_story(BIGINT, UUID, TEXT, TEXT) TO service_role;
 
 -- ── 생성 원자 처리 RPC ──────────────────────────────────────────────
@@ -133,7 +137,8 @@ CREATE OR REPLACE FUNCTION create_venue_story(
   p_stadium_name TEXT,
   p_status       TEXT,
   p_expires_at   TIMESTAMPTZ,
-  p_max_per_game INT
+  p_max_per_game INT,
+  p_consent_version SMALLINT
 ) RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -158,16 +163,29 @@ BEGIN
   INSERT INTO venue_stories (
     game_id, user_id, media_type, media_url, media_bucket, media_path,
     thumb_url, thumb_bucket, thumb_path, duration_ms, width, height, caption,
-    venue_verified, stadium_name, status, expires_at
+    venue_verified, stadium_name, status, expires_at, consent_version, consent_at
   ) VALUES (
     p_game_id, p_user_id, p_media_type, p_media_url, p_media_bucket, p_media_path,
     p_thumb_url, p_thumb_bucket, p_thumb_path, p_duration_ms, p_width, p_height, p_caption,
-    true, p_stadium_name, p_status, p_expires_at
+    true, p_stadium_name, p_status, p_expires_at, p_consent_version, now()
   ) RETURNING id INTO v_id;
 
   RETURN jsonb_build_object('ok', true, 'id', v_id);
 END;
 $$;
 
-REVOKE ALL ON FUNCTION create_venue_story(TEXT, UUID, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, INT, INT, INT, TEXT, TEXT, TEXT, TIMESTAMPTZ, INT) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION create_venue_story(TEXT, UUID, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, INT, INT, INT, TEXT, TEXT, TEXT, TIMESTAMPTZ, INT) TO service_role;
+-- ACL fail-closed: create RPC 는 user_id/media/status/expiry/max 를 인자로 받으므로 노출 시
+-- route 의 인증·지오펜스·미디어검증·상한을 전부 우회. anon·authenticated 명시 revoke 필수.
+REVOKE ALL ON FUNCTION create_venue_story(TEXT, UUID, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, INT, INT, INT, TEXT, TEXT, TEXT, TIMESTAMPTZ, INT, SMALLINT) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION create_venue_story(TEXT, UUID, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, INT, INT, INT, TEXT, TEXT, TEXT, TIMESTAMPTZ, INT, SMALLINT) TO service_role;
+
+-- ── orphan 스캔 durable cursor ───────────────────────────────────────
+-- cleanup cron 이 실행마다 이어서 스캔하도록 bucket별 마지막 스캔 위치(game 폴더명)를 저장.
+-- offset=0 고정으로 41번째 이후 폴더가 영구 starvation 되던 문제(삼순 NO-GO #2) 해소.
+CREATE TABLE IF NOT EXISTS venue_cleanup_cursor (
+  bucket      TEXT PRIMARY KEY,
+  after_name  TEXT,                       -- 다음 실행이 이 이름 '초과'부터 스캔(정렬 기준)
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE venue_cleanup_cursor ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE venue_cleanup_cursor FROM PUBLIC, anon, authenticated;

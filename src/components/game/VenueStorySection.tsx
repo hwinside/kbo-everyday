@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Plus, Play } from "lucide-react";
 import { useAuth } from "@/lib/supabase/AuthContext";
+import { getSafeSession } from "@/lib/supabase/client";
+import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import VenueStoryComposer from "./VenueStoryComposer";
 import VenueStoryViewer from "./VenueStoryViewer";
 import type { VenueStory } from "@/lib/venue-stories/types";
@@ -21,7 +23,12 @@ export default function VenueStorySection({ gameId }: Props) {
 
   const fetchStories = useCallback(async () => {
     try {
-      const res = await fetch(`/api/venue-stories?gameId=${encodeURIComponent(gameId)}`);
+      // 로그인 상태면 bearer 전달 → 서버가 차단 유저 필터(getVerifiedUserFromRequest 는 Bearer-only)
+      const session = await getSafeSession();
+      const token = session?.access_token;
+      const res = await fetch(`/api/venue-stories?gameId=${encodeURIComponent(gameId)}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
       const data = await res.json();
       setStories(Array.isArray(data.stories) ? data.stories : []);
     } catch {
@@ -67,32 +74,44 @@ export default function VenueStorySection({ gameId }: Props) {
           <span className="text-[11px] text-text-tertiary">올리기</span>
         </button>
 
-        {stories.map((s, i) => (
-          <button
-            key={s.id}
-            onClick={() => setViewerIndex(i)}
-            className="shrink-0 w-[68px] flex flex-col items-center gap-1"
-          >
-            <div className="relative w-[68px] h-[104px] rounded-xl overflow-hidden bg-bg-tertiary ring-2 ring-red-500/60">
-              {s.thumbUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={s.thumbUrl} alt="" className="w-full h-full object-cover" />
-              ) : (
-                <div className="w-full h-full flex items-center justify-center text-text-tertiary text-xs">
-                  {s.mediaType === "video" ? "🎬" : "📷"}
-                </div>
-              )}
-              {s.mediaType === "video" && (
-                <span className="absolute bottom-1 right-1 w-5 h-5 rounded-full bg-black/60 flex items-center justify-center">
-                  <Play size={11} className="text-white fill-white" />
-                </span>
-              )}
-            </div>
-            <span className="text-[11px] text-text-secondary truncate w-full text-center">
-              {s.author.nickname ?? "익명"}
-            </span>
-          </button>
-        ))}
+        {stories.map((s, i) => {
+          const team = s.author.teamId != null ? getTeamById(s.author.teamId) : undefined;
+          const teamColor = team ? getTeamBgColor(team, "dark") : null;
+          return (
+            <button
+              key={s.id}
+              onClick={() => setViewerIndex(i)}
+              className="shrink-0 w-[68px] flex flex-col items-center gap-1"
+            >
+              <div className="relative w-[68px] h-[104px] rounded-xl overflow-hidden bg-bg-tertiary ring-2 ring-red-500/60">
+                {s.thumbUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={s.thumbUrl} alt="" className="w-full h-full object-cover" />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center text-text-tertiary text-xs">
+                    {s.mediaType === "video" ? "🎬" : "📷"}
+                  </div>
+                )}
+                {team && teamColor && (
+                  <span
+                    className="absolute top-1 left-1 px-1.5 py-0.5 rounded-md text-[9px] font-extrabold text-white leading-none shadow"
+                    style={{ backgroundColor: teamColor }}
+                  >
+                    {team.shortName}
+                  </span>
+                )}
+                {s.mediaType === "video" && (
+                  <span className="absolute bottom-1 right-1 w-5 h-5 rounded-full bg-black/60 flex items-center justify-center">
+                    <Play size={11} className="text-white fill-white" />
+                  </span>
+                )}
+              </div>
+              <span className="text-[11px] text-text-secondary truncate w-full text-center">
+                {s.author.nickname ?? "익명"}
+              </span>
+            </button>
+          );
+        })}
 
         {loaded && stories.length === 0 && (
           <div className="shrink-0 flex items-center px-3">

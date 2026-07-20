@@ -9,6 +9,7 @@ import {
   VENUE_STORY_MAX_BYTES,
   VENUE_STORY_MAX_PER_USER_PER_GAME,
   VENUE_GEOFENCE_MAX_ACCURACY_M,
+  VENUE_STORY_CONSENT_VERSION,
   type VenueStory,
 } from "@/lib/venue-stories/types";
 
@@ -83,12 +84,13 @@ async function probeObject(
   }
 }
 
-/** 신뢰 유저의 차단 목록(작성자 필터용) */
-async function blockedAuthorIds(viewerId: string): Promise<Set<string>> {
-  const { data } = await supabase
+/** 신뢰 유저의 차단 목록(작성자 필터용). 조회 실패 시 null → 호출부가 fail-closed 처리. */
+async function blockedAuthorIds(viewerId: string): Promise<Set<string> | null> {
+  const { data, error } = await supabase
     .from("user_blocks")
     .select("blocked_id")
     .eq("blocker_id", viewerId);
+  if (error) return null;
   return new Set((data ?? []).map((r) => r.blocked_id as string));
 }
 
@@ -99,10 +101,16 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "gameId 필요" }, { status: 400 });
   }
 
-  // 로그인 유저면 차단 목록으로 필터
+  // 로그인 유저면 차단 목록으로 필터. 차단 조회 실패는 fail-closed(노출 차단).
   let blocked = new Set<string>();
   const verified = await getVerifiedUserFromRequest(req);
-  if (verified) blocked = await blockedAuthorIds(verified.user.id);
+  if (verified) {
+    const b = await blockedAuthorIds(verified.user.id);
+    if (b == null) {
+      return NextResponse.json({ error: "조회 실패" }, { status: 500 });
+    }
+    blocked = b;
+  }
 
   const { data: rows, error } = await supabase
     .from("venue_stories")
@@ -193,8 +201,14 @@ export async function POST(req: NextRequest) {
   const lat = typeof body.lat === "number" ? body.lat : null;
   const lng = typeof body.lng === "number" ? body.lng : null;
   const accuracy = typeof body.accuracy === "number" ? body.accuracy : null;
+  const consentVersion =
+    typeof body.consentVersion === "number" ? Math.round(body.consentVersion) : 0;
 
   if (!gameId) return NextResponse.json({ error: "gameId 필요" }, { status: 400 });
+  // UGC 가이드라인 동의 서버 필수 검증(versioned) — device-local 뿐 아니라 API 직호출도 차단
+  if (consentVersion < VENUE_STORY_CONSENT_VERSION) {
+    return NextResponse.json({ error: "업로드 가이드라인 동의가 필요해요" }, { status: 400 });
+  }
   if (mediaType !== "video" && mediaType !== "image") {
     return NextResponse.json({ error: "mediaType 오류" }, { status: 400 });
   }
@@ -289,6 +303,7 @@ export async function POST(req: NextRequest) {
     p_status: initialStatus,
     p_expires_at: new Date(venue.expiresAtMs).toISOString(),
     p_max_per_game: VENUE_STORY_MAX_PER_USER_PER_GAME,
+    p_consent_version: consentVersion,
   });
   if (error) {
     return NextResponse.json({ error: "저장 실패" }, { status: 500 });

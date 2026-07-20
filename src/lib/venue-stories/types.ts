@@ -5,6 +5,8 @@ export const VENUE_STORY_DURATION_TOLERANCE_MS = 1_000; // 클라 duration 반�
 export const VENUE_STORY_MAX_BYTES = 60 * 1024 * 1024; // 60MB
 export const VENUE_STORY_MAX_PER_USER_PER_GAME = 10; // 게임당 유저 상한(스팸 방지)
 export const VENUE_STORY_REPORT_HIDE_THRESHOLD = 3; // 신고 누적 자동 숨김
+// UGC 가이드라인 동의 버전 — 문구 변경 시 증을로 재동의 강제. 서버가 이 값 이상만 허용.
+export const VENUE_STORY_CONSENT_VERSION = 1;
 export const VENUE_STORY_IMAGE_HOLD_MS = 5_000; // 사진 스토리 자동 진행 시간
 
 // 지오펜스(직관 인증) — 삼순 권고: 기본 700m, 대형 구장 최대 1km, GPS accuracy ≤300m
