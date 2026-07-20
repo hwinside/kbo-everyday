@@ -421,9 +421,10 @@ export default function TeamCard({ team, gameSlot, refreshNonce = 0 }: TeamCardP
                       aria-label={`${team.name} 팀 페이지`}
                       className="absolute inset-0 z-0"
                     />
-                    <div className="pointer-events-none relative z-10 flex items-start gap-2 py-0.5">
-                      <span className="w-8 flex-shrink-0 pt-0.5 text-[11px] text-text-tertiary">{shortMoveDate(group.date)}</span>
-                      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
+                    <div className="pointer-events-none relative z-10 flex items-center gap-2 py-0.5">
+                      <span className="w-8 flex-shrink-0 text-[11px] text-text-tertiary">{shortMoveDate(group.date)}</span>
+                      {/* 한 줄 강제: nowrap + overflow-hidden (삼순 NO-GO 반영 — flex-wrap 제거) */}
+                      <div className="flex min-w-0 flex-1 flex-nowrap items-center gap-x-2 overflow-hidden">
                         {group.moves.map((move, index) => {
                           const isRegister = move.moveType === "register";
                           const label = isRegister ? "등록" : "말소";
@@ -431,7 +432,7 @@ export default function TeamCard({ team, gameSlot, refreshNonce = 0 }: TeamCardP
                           return (
                             <span
                               key={`${move.moveType}-${move.kboPlayerId}-${index}`}
-                              className="inline-flex items-center gap-1"
+                              className="inline-flex min-w-0 items-center gap-1"
                             >
                               <span
                                 className="flex-shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-bold"
@@ -442,20 +443,23 @@ export default function TeamCard({ team, gameSlot, refreshNonce = 0 }: TeamCardP
                               {move.href ? (
                                 <Link
                                   href={move.href}
-                                  className="pointer-events-auto text-[12.5px] font-semibold text-text-primary"
+                                  className="pointer-events-auto truncate text-[12.5px] font-semibold text-text-primary"
                                 >
                                   {move.playerName}
                                 </Link>
                               ) : (
-                                <span className="text-[12.5px] font-semibold text-text-primary">
+                                <span className="truncate text-[12.5px] font-semibold text-text-primary">
                                   {move.playerName}
                                 </span>
                               )}
                             </span>
                           );
                         })}
+                        {group.hiddenInGroup > 0 && (
+                          <span className="flex-shrink-0 text-[11.5px] text-text-tertiary">외 {group.hiddenInGroup}명</span>
+                        )}
                       </div>
-                      <ChevronRight size={14} className="mt-0.5 flex-shrink-0 text-text-tertiary" />
+                      <ChevronRight size={14} className="flex-shrink-0 text-text-tertiary" />
                     </div>
                   </li>
                 ))}
