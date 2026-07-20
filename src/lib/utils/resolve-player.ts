@@ -84,10 +84,10 @@ export interface ResolveOptions {
 }
 
 /* 외부 표기 변형 alias — 라이브/스탯 피드가 로스터 등록명과 다른 로마자 표기를 쓰는 케이스.
- * (예: 戸田 → 피드 "토다" vs 로스터 "도다 나츠키" — suffix/prefix 어느 쪽에도 안 걸림)
+ * (예: 戸田 → 로스터/등록명 "토다 나츠키" vs 일부 레거시 표기 "도다"[외래어표기법] — suffix/prefix 어느 쪽에도 안 걸림)
  * 오매칭 방지를 위해 팀 가드 필수: 쿼리의 team/teamId가 대상 선수의 로스터 팀과 일치할 때만 적용. */
 const NAME_ALIASES: Record<string, string> = {
-  토다: "AQ006", // NC 도다 나츠키 — KBO 라이브 피드 표기 (2026-07-18 PR #679 리뷰)
+  도다: "AQ006", // NC 토다 나츠키 — KBO/NC 공식 등록명은 "토다", 레거시 "도다" 표기 구제 (2026-07-21 CS 정정)
 };
 
 const DEFAULT_ROSTER = playersRoster as RosterPlayer[];
