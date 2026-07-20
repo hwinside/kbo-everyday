@@ -52,8 +52,15 @@ final class NativeLiveEnvelope {
             return null;
         }
         String gameId = resolveGameId(kind, data);
+        // fail-closed(삼순 #723): 경기 식별자 없으면 봉투 자체를 버린다 — 특히 terminal(종료/취소)이
+        // gid 없이 적용되면 엉복 카드/다른 경기를 오종료시킬 수 있다(identity 강제).
+        if (gameId == null || gameId.isEmpty()) {
+            return null;
+        }
         long sourceTs = parseLong(data.get("w_ts"), -1L);
-        long orderTs = parseLong(data.get("w_source_at"), recvMs);
+        // 순서 기준 orderTs 단일 계약(삼순 #723 clock domain 통일): w_source_at → w_ts → 수신시각.
+        // live/cancel/end 전부 동일 규칙 — 폰 시계/서버 시각이 섞이지 않게.
+        long orderTs = parseLong(data.get("w_source_at"), sourceTs >= 0 ? sourceTs : recvMs);
         return new NativeLiveEnvelope(kind, gameId, sourceTs, orderTs, data);
     }
 

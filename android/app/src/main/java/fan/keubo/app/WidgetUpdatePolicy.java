@@ -37,14 +37,22 @@ final class WidgetUpdatePolicy {
         String prev = prevSig == null ? "" : prevSig;
         boolean sameSig = sig.equals(prev);
 
-        // 경기 전환: 새 경기 → 시그니처가 우연히 같아도 반드시 재렌더
+        // seq 가드 비활성(구버전 서버 w_ts 미전달 / JS 포그라운드 경로) → 시그니처로만 no-op 판정.
+        // (경기 전환은 seq 없이도 반영 — 구버전 폴백)
+        if (seq < 0) {
+            if (gameChanged) return ApplyResult.APPLIED;
+            return sameSig ? ApplyResult.NO_CHANGE : ApplyResult.APPLIED;
+        }
+
+        // seq watermark 우선 (경기 전환 여부와 무관, 삼순 #723 fault-matrix):
+        // 늦게 도착한 이전 경기(낮은 seq)는 gid가 달라도 STALE — 새 경기로 역전 방지.
+        // 정상 새 경기는 서버 send-time(seq)이 항상 더 크므로 아래 gameChanged 분기를 통과한다.
+        if (seq < prevSeq) return ApplyResult.STALE;
+
+        // 경기 전환: 새 경기(더 높은/같은 seq 통과) → 시그니처 우연 일치여도 반드시 재렌더
         if (gameChanged) return ApplyResult.APPLIED;
 
-        // seq 가드 비활성(구버전 서버 w_ts 미전달 / JS 포그라운드 경로) → 시그니처로만 no-op 판정
-        if (seq < 0) return sameSig ? ApplyResult.NO_CHANGE : ApplyResult.APPLIED;
-
-        // 같은 경기, seq 있음
-        if (seq < prevSeq) return ApplyResult.STALE;               // 순서 역전 옛 상태
+        // 같은 경기, seq >= prevSeq
         if (seq == prevSeq) {
             if (sameSig) return ApplyResult.NO_CHANGE;             // 동일 ts + 동일 내용 = 중복
             // 동일 ts + 다른 내용: terminal(종료/취소)이면 우선 수락, 아니면 모호 → 폐기

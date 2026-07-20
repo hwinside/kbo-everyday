@@ -66,22 +66,24 @@ public class KboMessagingService extends MessagingService {
                     body == null ? "" : body,
                     path == null ? "" : path);
             }
-            // 선수 카드 위젯 — 라이브 틱 편승 재조회(55초 스로틀, 미배치면 no-op)
-            PlayerCardWidget.onLiveTick(this);
-            // 갤럭시워치 — APPLIED에서만 push(중복 발사 제거). 경기 전(SCHEDULED)은 pushGameStateToWatch가 스킵.
+            // APPLIED에서만 부수효과(삼순 #723 — NO_CHANGE는 계약상 부수효과 0).
             if (applied) {
-                pushGameStateToWatch("live", data, env.gameId);
+                // 선수 카드 위젯 — 라이브 틱 편승 재조회(55초 스로틀, 미배치면 no-op)
+                PlayerCardWidget.onLiveTick(this);
+                // 갤럭시워치 — 경기 전(SCHEDULED)은 pushGameStateToWatch가 스킵.
+                pushGameStateToWatch("live", data, env.gameId, env.orderTs);
             }
         } else if (NativeLiveEnvelope.KIND_CANCEL.equals(env.kind)) {
-            // 취소 → 잠금화면 정리(멱등). STALE(다른/이전 경기 취소)은 위에서 이미 return돼 현재 카드 보존.
-            GameNotificationPlugin.clear(this);
+            // 취소 → APPLIED에서만 잠금화면 정리+워치 push. NO_CHANGE(중복 취소)는 부수효과 0.
+            // STALE(다른/이전 경기 취소)은 위에서 이미 return돼 현재 카드 보존.
             if (applied) {
-                pushGameStateToWatch("cancelled", data, env.gameId);
+                GameNotificationPlugin.clear(this);
+                pushGameStateToWatch("cancelled", data, env.gameId, env.orderTs);
             }
         } else { // game_end
-            // 종료 → 잠금화면 정리(멱등). STALE(다른/이전 경기 종료)은 return돼 최신 카드 오종료 방지.
-            GameNotificationPlugin.clear(this);
+            // 종료 → APPLIED에서만 잠금화면 정리+후속. STALE(다른/이전 경기 종료)은 return돼 최신 카드 오종료 방지.
             if (applied) {
+                GameNotificationPlugin.clear(this);
                 // 순위 위젯 — 종료 직후 순위 갱신(미배치면 no-op)
                 TeamRankWidget.fetchAndRefresh(this);
                 // 선수 카드 위젯 — 종료 직후 오늘 경기 라인/최근 3경기 갱신(미배치면 no-op)
@@ -100,7 +102,7 @@ public class KboMessagingService extends MessagingService {
      * 타일/컴플리케이션을 재렌더한다. 워치 미연결/GMS 이상은 조용히 무시(폰 기능 무영향).
      * ts는 서버 w_source_at 우선(FCM 재정렬에도 강건), 없으면 폰 수신 시각.
      */
-    private void pushGameStateToWatch(String kind, Map<String, String> data, String gameId) {
+    private void pushGameStateToWatch(String kind, Map<String, String> data, String gameId, long orderTs) {
         String status = data.get("w_status");
         // 경기 전(SCHEDULED)은 워치가 카운트다운/pull로 처리 — 라이브 스냅샷으로 오합성 방지.
         if ("live".equals(kind) && status != null && status.startsWith("SCHEDULED")) {
@@ -112,8 +114,8 @@ public class KboMessagingService extends MessagingService {
             com.google.android.gms.wearable.DataMap m = req.getDataMap();
             m.putString("kind", kind);
             m.putString("gid", gameId == null ? "" : gameId);
-            // 순서 기준 ts = 서버 원천 w_source_at(있으면, FCM 재정렬에도 강건) 우선, 없으면 폰 수신 시각.
-            m.putLong("ts", parseSourceAt(data.get("w_source_at")));
+            // 순서 기준 ts = 봉투 orderTs(w_source_at→w_ts→수신시각 단일 계약, 삼순 #723 clock domain 통일).
+            m.putLong("ts", orderTs);
             putIf(m, "w_away", data.get("w_away"));
             putIf(m, "w_home", data.get("w_home"));
             putIf(m, "w_as", data.get("w_as"));

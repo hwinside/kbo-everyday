@@ -99,10 +99,11 @@ class WearPushPolicyTest {
     }
 
     @Test
-    fun `older ts on new game is not stale`() {
-        // gid가 다르면 새 경기 → ts 역전 게이트 우회(정상 렌더)
+    fun `older ts new game is stale (samsoon 723 global watermark)`() {
+        // 삼순 #723: 서버 send-time(ts)은 단조 → 정상 새 경기는 항상 더 큰 ts.
+        // gid가 달라도 lastPushTs보다 오래된 ts는 늦게 도착한 이전 경기 → drop(역전 방지).
         val d = eval(push(gid = "G2", ts = now - 10_000, awayScore = 9), lastPushTs = now, lastPushGid = "G1")
-        assertTrue(d is WearPushPolicy.Decision.Render)
+        assertEquals("stale-ts", (d as WearPushPolicy.Decision.Drop).reason)
     }
 
     // ── wrong-team ──

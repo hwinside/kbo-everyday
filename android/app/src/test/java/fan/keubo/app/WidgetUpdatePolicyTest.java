@@ -62,8 +62,16 @@ public class WidgetUpdatePolicyTest {
     // ── 경기 전환 / 구버전 호환 ──
 
     @Test
-    public void gameChangedAlwaysApplies() {
+    public void newGameWithHigherSeqApplies() {
+        // 정상 새 경기는 서버 send-time(seq)이 이전보다 항상 큼 → 시그니처 우연 일치여도 반영
         assertEquals(ApplyResult.APPLIED,
+            WidgetUpdatePolicy.decide(1000000L, 999999L, true, SIG_A, SIG_A, false));
+    }
+
+    @Test
+    public void delayedPreviousGameWithLowerSeqIsStale() {
+        // 삼순 #723 fault-matrix: 늦게 도착한 이전 경기(낮은 seq)는 gid가 달라도 STALE(역전 방지)
+        assertEquals(ApplyResult.STALE,
             WidgetUpdatePolicy.decide(1L, 999999L, true, SIG_A, SIG_A, false));
     }
 

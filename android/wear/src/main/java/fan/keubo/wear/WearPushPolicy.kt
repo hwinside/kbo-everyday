@@ -68,8 +68,11 @@ object WearPushPolicy {
 
         val away = push.away.uppercase()
         val home = push.home.uppercase()
-        // wrong-team: final은 team 필드가 비어올 수 있어(게임엔드 payload 최소화) cached로 팀 검증.
-        if (push.kind != "final") {
+        val hasTeams = away.isNotEmpty() && home.isNotEmpty()
+        // wrong-team(삼순 #723): 팀 필드가 채워져 오면 kind 무관 검증 — populated final도 우리 팀
+        // 경기가 아니면 drop(다른 경기 종료가 카드를 덮지 못하게). 최소 end payload(팀 비어옴)만
+        // 아래 gid 일치(sameGame)로 검증.
+        if (hasTeams) {
             if (team != away && team != home) return Decision.Drop("wrong-team")
         }
 
@@ -78,10 +81,11 @@ object WearPushPolicy {
         val sameGame = push.gid.isNotEmpty() &&
             (push.gid == cachedGid || push.gid == lastPushGid)
 
-        // out-of-order: 같은 경기에서 sourceAt(=ts) 역전이면 drop(더 오래된/재전송 push가
-        // 최신 상태를 덮어쓰지 못하게). 비교 기준은 마지막 수락(Render+NoOp) sourceAt.
+        // 전역 watermark(삼순 #723): 마지막 수락 push보다 오래된 ts는 *다른 경기여도* drop —
+        // 늦게 도착한 이전 경기가 새 경기를 구경기로 역전하는 것 방지. 서버 send-time(ts)은
+        // 단조 증가라 정상 새 경기는 항상 더 큰 ts로 이 게이트를 통과한다.
         val lastAt = maxOf(lastPushTs, cached?.sourceAt ?: 0L)
-        if (sameGame && push.ts < lastAt) return Decision.Drop("stale-ts")
+        if (push.ts < lastAt) return Decision.Drop("stale-ts")
 
         // terminal 고착: 같은 경기(gameId 일치)가 이미 종료/취소로 캐시됐는데 live가 오면 drop.
         if (sameGame && cached != null && (cached.kind == "final" || cached.kind == "cancelled") &&
@@ -93,8 +97,9 @@ object WearPushPolicy {
         val candidate = buildSnapshot(team, push, cached, nowMs)
             ?: return Decision.Drop("unbuildable")
 
-        // duplicate no-op: 렌더 영향 필드가 캐시와 동일하면 재렌더 생략(ts만 전진).
-        if (cached != null && candidate.contentSignature() == cached.contentSignature()) {
+        // duplicate no-op: *같은 경기*일 때만 재렌더 생략(삼순 #723 — 새 경기는 visible state가
+        // 우연히 같아도 Render로 identity를 전진시켜야 함, gid/sourceAt은 contentSignature 제외).
+        if (sameGame && cached != null && candidate.contentSignature() == cached.contentSignature()) {
             return Decision.NoOp
         }
         // same-ts tie(삼순): 동일 sourceAt의 *다른 content* live는 역전 위험(seq 부재) → drop.
