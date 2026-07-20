@@ -28,6 +28,8 @@ interface SupabasePostRow {
   created_at: string;
   is_hidden: boolean;
   author_team_id_snapshot?: number | null;
+  click_view_count?: number | null;
+  impression_view_count?: number | null;
   profiles?: SupabaseProfileJoin | SupabaseProfileJoin[] | null;
 }
 
@@ -141,7 +143,7 @@ export function usePlayerCommunity(userTeamId?: number) {
 
     let query = supabase
       .from("posts")
-      .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, author_team_id_snapshot, profiles(nickname, team_id, grade)")
+      .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, author_team_id_snapshot, click_view_count, impression_view_count, profiles(nickname, team_id, grade)")
       .eq("board_type", "player")
       .eq("content_type", "photo")
       .in("board_id", queryIds)
@@ -180,6 +182,8 @@ export function usePlayerCommunity(userTeamId?: number) {
             nickname: prof?.nickname || "익명",
             team_id: p.author_team_id_snapshot ?? prof?.team_id,
             grade: prof?.grade,
+            click_view_count: p.click_view_count ?? 0,
+            impression_view_count: p.impression_view_count ?? 0,
           };
         })
       );
