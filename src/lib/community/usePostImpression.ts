@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { hasSeenImpression, markImpressionSeen, trackPostView } from "./view-tracker";
+import { useAuth } from "@/lib/supabase/AuthContext";
+import { currentViewerKey, hasSeenView, trackPostViewOncePerSession } from "./view-tracker";
 
 /**
  * 피드 카드 임프레션 트래킹 훅.
@@ -14,12 +15,15 @@ import { hasSeenImpression, markImpressionSeen, trackPostView } from "./view-tra
  */
 export function usePostImpression<T extends HTMLElement = HTMLDivElement>(postId: number) {
   const ref = useRef<T | null>(null);
+  const { user } = useAuth();
+  const userId = user?.id ?? null;
 
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
     if (!Number.isInteger(postId) || postId <= 0) return;
-    if (hasSeenImpression(postId)) return; // 세션당 1회 — 이미 봤으면 관찰 안 함
+    const viewerKey = currentViewerKey(userId);
+    if (hasSeenView(postId, "impression", viewerKey)) return; // 동일 유저 세션당 1회
     if (typeof IntersectionObserver === "undefined") return;
 
     let dwellTimer: ReturnType<typeof setTimeout> | null = null;
@@ -39,9 +43,8 @@ export function usePostImpression<T extends HTMLElement = HTMLDivElement>(postId
           if (dwellTimer) return; // 이미 dwell 카운트 중
           dwellTimer = setTimeout(() => {
             dwellTimer = null;
-            if (hasSeenImpression(postId)) return;
-            markImpressionSeen(postId);
-            trackPostView(postId, "impression");
+            if (hasSeenView(postId, "impression", viewerKey)) return;
+            trackPostViewOncePerSession(postId, "impression", userId);
             io.disconnect();
           }, 500);
         } else {
@@ -56,7 +59,7 @@ export function usePostImpression<T extends HTMLElement = HTMLDivElement>(postId
       clearDwell();
       io.disconnect();
     };
-  }, [postId]);
+  }, [postId, userId]);
 
   return ref;
 }
