@@ -21,6 +21,8 @@ import {
   publishedRegisterHref,
   filterVisibleMoves,
   computeRosterMovesDisplay,
+  computeRosterMovesGroupedDisplay,
+  groupRosterMovesByDate,
   rosterMovesCardTargets,
   checkPublishReadiness,
   type AssetProbe,
@@ -294,6 +296,55 @@ check(
   "display: 9건 → visible 3 / overflow 6 (외 6건)",
   computeRosterMovesDisplay(mk(9)),
   { visible: [{ id: 0 }, { id: 1 }, { id: 2 }], overflowCount: 6 },
+);
+
+// ═══ ⑧-b 같은 날 등말소 한 줄 그룹 (하린아빠 2026-07-20: 홈 세로공간 절약) ═══
+const mv = (date: string, type: string, name: string) => ({ moveDate: date, moveType: type, playerName: name });
+check(
+  "group: 같은 날 등록+말소 → 한 그룹(2건)",
+  groupRosterMovesByDate([mv("7/19", "register", "송승기"), mv("7/19", "deregister", "강민균")]),
+  [{ date: "7/19", moves: [mv("7/19", "register", "송승기"), mv("7/19", "deregister", "강민균")] }],
+);
+check(
+  "group: 다른 날 → 날짜별 별도 그룹(최신순 보존)",
+  groupRosterMovesByDate([mv("7/19", "register", "송승기"), mv("7/19", "deregister", "강민균"), mv("7/16", "register", "강민균")]).map((g) => ({ date: g.date, n: g.moves.length })),
+  [{ date: "7/19", n: 2 }, { date: "7/16", n: 1 }],
+);
+check(
+  "grouped display: 스샷 케이스(7/19 2건 + 7/16 1건) → 2그룹 노출 / overflow 0",
+  (() => {
+    const r = computeRosterMovesGroupedDisplay([mv("7/19", "register", "송승기"), mv("7/19", "deregister", "강민균"), mv("7/16", "register", "강민균")]);
+    return { groups: r.visibleGroups.map((g) => ({ date: g.date, n: g.moves.length })), overflow: r.overflowCount };
+  })(),
+  { groups: [{ date: "7/19", n: 2 }, { date: "7/16", n: 1 }], overflow: 0 },
+);
+check(
+  "grouped display: 0건 → 그룹 0 / overflow 0",
+  computeRosterMovesGroupedDisplay([] as { moveDate: string }[]),
+  { visibleGroups: [], overflowCount: 0 },
+);
+check(
+  "grouped display: 4개 날짜 그룹 → 최신 3그룹만 / overflow=숨긴 그룹 건수",
+  (() => {
+    const rows = [
+      mv("7/20", "register", "a"),
+      mv("7/19", "register", "b"), mv("7/19", "deregister", "c"),
+      mv("7/18", "register", "d"),
+      mv("7/16", "register", "e"), mv("7/16", "deregister", "f"), mv("7/16", "register", "g"),
+    ];
+    const r = computeRosterMovesGroupedDisplay(rows);
+    return { dates: r.visibleGroups.map((g) => g.date), overflow: r.overflowCount };
+  })(),
+  { dates: ["7/20", "7/19", "7/18"], overflow: 3 },
+);
+check(
+  "grouped display: 3그룹(경계) → 전부 노출 / overflow 0",
+  (() => {
+    const rows = [mv("7/20", "register", "a"), mv("7/19", "register", "b"), mv("7/18", "register", "c")];
+    const r = computeRosterMovesGroupedDisplay(rows);
+    return { dates: r.visibleGroups.map((g) => g.date), overflow: r.overflowCount };
+  })(),
+  { dates: ["7/20", "7/19", "7/18"], overflow: 0 },
 );
 
 // ═══ ⑨ 행 클릭 목적지 분리 (삼순 #726 NO-GO 2차: 중첩 anchor 없이 4클릭 분리) ═══
