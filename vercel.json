@@ -101,6 +101,10 @@
     {
       "path": "/api/cron/venue-stories-cleanup",
       "schedule": "20 */2 * * *"
+    },
+    {
+      "path": "/api/cron/venue-stories-finalize",
+      "schedule": "*/10 5-15 * * *"
     }
   ]
 }

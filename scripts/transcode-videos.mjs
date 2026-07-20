@@ -337,16 +337,17 @@ async function processVenueStories() {
     );
     return { done: 0, removed: 0, failed: (pendingCount ?? 0) > 0 ? (pendingCount ?? 1) : 0, updateErrors: 0, ffprobeMissing: true };
   }
+  // 즉시 노출(active) 된 영상 중 720p 최적화·ffprobe 사후검증 대기(needs_transcode) + 레거시 pending 동시 처리
   const { data: rows, error } = await supabase
     .from("venue_stories")
     .select("id, media_url, media_bucket, media_path, transcode_attempts")
     .eq("media_type", "video")
-    .eq("status", "pending")
+    .or("and(status.eq.active,needs_transcode.eq.true),status.eq.pending")
     .lt("transcode_attempts", MAX_ATTEMPTS)
     .order("created_at", { ascending: true })
     .limit(LIMIT);
   if (error) throw new Error(`venue_stories 조회 실패: ${error.message}`);
-  if (!rows || rows.length === 0) { console.log("직관 라이브 pending 영상 없음."); return; }
+  if (!rows || rows.length === 0) { console.log("직관 라이브 최적화 대기 영상 없음."); return; }
 
   const work = mkdtempSync(join(tmpdir(), "kbo-venue-"));
   let done = 0, removed = 0, failed = 0, updateErrors = 0;
@@ -385,7 +386,8 @@ async function processVenueStories() {
             width: meta.width,
             height: meta.height,
             duration_ms: meta.durationMs,
-            status: "active",
+            status: "active", // 이미 노출중 — 최적화본으로 교체
+            needs_transcode: false, // 최적화 완료 → 재스캔 안 함
             transcode_attempts: row.transcode_attempts + 1,
           })
           .eq("id", row.id);

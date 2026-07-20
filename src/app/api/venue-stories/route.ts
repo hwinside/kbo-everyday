@@ -231,8 +231,9 @@ export async function POST(req: NextRequest) {
   }
 
   // 5) 게임당 유저 상한 + insert 원자 처리(RPC advisory lock) — count→insert 레이스 방지(삼순 NO-GO #2)
-  // 영상은 pending(720p·duration 검증 후 워커가 active), 사진은 active
-  const initialStatus = mediaType === "video" ? "pending" : "active";
+  // 즉시 노출(하린아빠 스펙): 영상도 바로 active + needs_transcode=true(720p 최적화·ffprobe 사후 검증), 사진도 active
+  const initialStatus = "active";
+  const needsTranscode = mediaType === "video";
   const { data: rpcData, error } = await supabase.rpc("create_venue_story", {
     p_game_id: gameId,
     p_user_id: userId,
@@ -252,6 +253,7 @@ export async function POST(req: NextRequest) {
     p_expires_at: new Date(venue.expiresAtMs).toISOString(),
     p_max_per_game: VENUE_STORY_MAX_PER_USER_PER_GAME,
     p_consent_version: consentVersion,
+    p_needs_transcode: needsTranscode,
   });
   if (error) {
     return NextResponse.json({ error: "저장 실패" }, { status: 500 });

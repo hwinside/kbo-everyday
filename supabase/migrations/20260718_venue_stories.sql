@@ -32,14 +32,28 @@ CREATE TABLE IF NOT EXISTS venue_stories (
   stadium_name TEXT,
   report_count INT NOT NULL DEFAULT 0,
   transcode_attempts INT NOT NULL DEFAULT 0,
-  -- pending: 영상 트랜스코딩(720p)·duration 검증 대기(노출 안 함)
+  -- pending: (레거시) 영상 트랜스코딩 대기 — 현재는 즉시 노출(active)로 바뀌고 needs_transcode 로 대체
   -- active: 노출 / removed: 신고 임계·어드민·본인삭제·검증실패 → 정리 대상
   -- cleanup_failed: storage 삭제 실패 → 다음 정리 cron 재시도
   status       TEXT NOT NULL DEFAULT 'active'
                CHECK (status IN ('pending', 'active', 'removed', 'cleanup_failed')),
+  -- 즉시 노출 후 백그라운드 720p 최적화 + ffprobe(≤15초) 사후 검증 대기(영상만 true)
+  needs_transcode BOOLEAN NOT NULL DEFAULT false,
+  -- 경기 종료 첫 감지 시각(종료 근사). finalize cron 이 진행중→종료 전이 시 세팅 → 만료=종료+24h
+  game_ended_at TIMESTAMPTZ,
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
   expires_at   TIMESTAMPTZ NOT NULL
 );
+
+-- finalize cron: game_ended_at 미확정 스토리 스캔(종료 감지용)
+CREATE INDEX IF NOT EXISTS idx_venue_stories_finalize
+  ON venue_stories (game_id)
+  WHERE game_ended_at IS NULL AND status IN ('active', 'pending');
+
+-- 트랜스코딩 워커: 즉시 노출된 영상 중 720p 최적화 대기 스캔
+CREATE INDEX IF NOT EXISTS idx_venue_stories_needs_transcode
+  ON venue_stories (created_at)
+  WHERE needs_transcode = true AND status = 'active' AND media_type = 'video';
 
 -- 경기별 active 스토리 최신순 조회
 CREATE INDEX IF NOT EXISTS idx_venue_stories_game_active
@@ -138,7 +152,8 @@ CREATE OR REPLACE FUNCTION create_venue_story(
   p_status       TEXT,
   p_expires_at   TIMESTAMPTZ,
   p_max_per_game INT,
-  p_consent_version SMALLINT
+  p_consent_version SMALLINT,
+  p_needs_transcode BOOLEAN
 ) RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -163,11 +178,11 @@ BEGIN
   INSERT INTO venue_stories (
     game_id, user_id, media_type, media_url, media_bucket, media_path,
     thumb_url, thumb_bucket, thumb_path, duration_ms, width, height, caption,
-    venue_verified, stadium_name, status, expires_at, consent_version, consent_at
+    venue_verified, stadium_name, status, expires_at, consent_version, consent_at, needs_transcode
   ) VALUES (
     p_game_id, p_user_id, p_media_type, p_media_url, p_media_bucket, p_media_path,
     p_thumb_url, p_thumb_bucket, p_thumb_path, p_duration_ms, p_width, p_height, p_caption,
-    true, p_stadium_name, p_status, p_expires_at, p_consent_version, now()
+    true, p_stadium_name, p_status, p_expires_at, p_consent_version, now(), p_needs_transcode
   ) RETURNING id INTO v_id;
 
   RETURN jsonb_build_object('ok', true, 'id', v_id);
@@ -176,8 +191,8 @@ $$;
 
 -- ACL fail-closed: create RPC 는 user_id/media/status/expiry/max 를 인자로 받으므로 노출 시
 -- route 의 인증·지오펜스·미디어검증·상한을 전부 우회. anon·authenticated 명시 revoke 필수.
-REVOKE ALL ON FUNCTION create_venue_story(TEXT, UUID, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, INT, INT, INT, TEXT, TEXT, TEXT, TIMESTAMPTZ, INT, SMALLINT) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION create_venue_story(TEXT, UUID, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, INT, INT, INT, TEXT, TEXT, TEXT, TIMESTAMPTZ, INT, SMALLINT) TO service_role;
+REVOKE ALL ON FUNCTION create_venue_story(TEXT, UUID, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, INT, INT, INT, TEXT, TEXT, TEXT, TIMESTAMPTZ, INT, SMALLINT, BOOLEAN) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION create_venue_story(TEXT, UUID, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, INT, INT, INT, TEXT, TEXT, TEXT, TIMESTAMPTZ, INT, SMALLINT, BOOLEAN) TO service_role;
 
 -- ── orphan 스캔 durable cursor ───────────────────────────────────────
 -- cleanup cron 이 실행마다 이어서 스캔하도록 bucket별 마지막 스캔 위치(game 폴더명)를 저장.

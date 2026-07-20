@@ -19,15 +19,19 @@
   저정확도/미매핑 구장/시간대 밖/없는·가짜 gameId 는 전부 **fail-closed**(업로드 차단).
   네이티브 GPS(@capacitor/geolocation, When-In-Use 권한) 실제 등록(capacitor 플러그인 생성 파일 커밋).
   구버전 앱은 플러그인 미지원 감지 → "앱 업데이트 필요" 명시 안내(fail-closed).
-- 업로드 미디어 **서버 권위 검증**: 소유 경로 바인딩(`venue-stories/{gameId}/{userId}/`) + 객체 실제
-  존재·크기(≤60MB)·MIME 확인. 영상은 업로드 시 `pending`(비노출) → 트랜스코딩 워커(ffprobe ≤15초 재검증
-  + 720p 인코딩) 통과 시 `active`, 실패/초과 시 `removed`. 사진은 기존 클라 압축(1600px JPEG) 후 `active`.
-- **업로드 마감과 만료 분리**: 업로드 가능=경기 시작 -60min~+6h. 만료(자동삭제)=**경기 시작 +30h 근사치**
-  (평균 경기 ~3.5h 기준 종료+~26h ≈ "종료 후 약 24h 유지"). ⚠️ KBO 피드에 경기 종료 정확 시각이
-  없어 **시작 기준 고정 근사치**를 쓴다(terminal 전이 기반 정밀 만료는 후속 트랙). 시작+6h가
-  만료도 겸하던 문제(시작+5h59 업로드가 1분 뒤 사라짐)는 분리로 해소됨.
-  cron `venue-stories-cleanup`: storage 먼저 제거 후 행 삭제, 실패 시 `cleanup_failed` 로 남겨 재시도 +
-  orphan(생성 실패 잔여) bucket별 **durable cursor + 전구간 페이지네이션** 스캔(starvation/fault 방지).
+- 업로드 미디어 **서버 권위 검증**: 소유 경로 바인딩(`venue-stories/{gameId}/{userId}/`, canonical URL 정규화 후 exact key) +
+  객체 실제 존재·크기(≤60MB, maxBytes 선제 cancel)·매직바이트 확인.
+- **즉시 노출(하린아빠 스펙 2026-07-20)**: 영상도 업로드 즉시 `active`(원본 서빙) + `needs_transcode=true`.
+  720p 최적화는 백그라운드 워커(Mac mini)가 best-effort 로 뒤에서 교체, ffprobe ≤15초 사후 재검증 → 초과 시 `removed`.
+  ⚠️ 즉시 노출 = 서버 duration 권위검증(ffprobe) 전에 노출되는 트레이드오프(제품 오너 승인) — 즉시 방어(매직·60MB·클라
+  duration 힌트·지오펜스)로 1차 가드, 15초 살짝 초과 영상이 잠긐 노출됐다 워커가 내림. 사진은 기존 클라 압축(1600px JPEG) 후 `active`.
+- **업로드 마감과 만료 분리(하린아빠 스펙 2026-07-20)**: 업로드 가능=경기 시작 -60min~+6h.
+  만료(자동삭제)=**경기 종료 +24h**. 종료 전에는 시작+30h 안전상한(업로드 시 임시값, 조기삭제 방지) →
+  finalize cron `venue-stories-finalize`(라이브 시간대 10분)이 진행중→종료(final/cancelled) 전이를 감지해
+  `game_ended_at` 확정 → 만료=종료감지+24h 로 재설정(감지 오차 ≤10분). KBO 피드에 종료 정확시각이 없어
+  종료 감지 시각을 종료 근사로 쓴다.
+  cron `venue-stories-cleanup`(2시간): storage 먼저 제거 후 행 삭제, 실패 시 `cleanup_failed` 재시도 +
+  orphan bucket별 **durable cursor + 전구간 페이지네이션**(starvation/fault 방지, fault는 cursor 유지+5xx).
 - **UGC 동의(versioned)**: 업로드 시 `consentVersion` 전송, 서버가 현재 버전 이상만 허용(device-local 아님) +
   행에 `consent_version`/`consent_at` audit 기록. 문구 변경 시 버전 증마로 재동의 강제.
 - **최애팀 라벨**: 트레이 썸네일 compact 배지 + 뷰어 작성자 full 라벨(author.teamId). 댓글 라벨과 댓글 기능은 Slice 2.
