@@ -16,6 +16,8 @@ import { deletePost } from "@/lib/supabase/usePosts";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import type { CommunitySourceLabel } from "@/lib/utils/community-board";
 import ShareSheet, { type ShareSheetPost } from "@/components/community/ShareSheet";
+import PostViewBadge from "@/components/community/PostViewBadge";
+import { usePostImpression } from "@/lib/community/usePostImpression";
 import CommentSheet from "./CommentSheet";
 import LinkPreview from "./LinkPreview";
 import { stripUrls, hasLink, isShortText, BrandedTextCard } from "./FeedTextCards";
@@ -86,6 +88,24 @@ function buildProminentLabel(post: Post): ProminentLabel | null {
   // 단일 선수만 선수 페이지로 이동(여러 명은 모호하므로 비링크).
   const href = players.length === 1 && firstKboId ? `/community/players/${firstKboId}` : undefined;
   return { teamShort: team?.shortName, teamId, href, players };
+}
+
+/** 카드 최상위에 임프레션 ref를 걸어 세로 50%+ 노출 시 조회수를 집계하는 래퍼. */
+function PostImpressionWrapper({
+  postId,
+  className,
+  children,
+}: {
+  postId: number;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  const ref = usePostImpression<HTMLDivElement>(postId);
+  return (
+    <div ref={ref} className={className}>
+      {children}
+    </div>
+  );
 }
 
 interface PhotoFeedProps {
@@ -1013,7 +1033,8 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
             {/* Post separator */}
             {index > 0 && <div className="h-2 bg-white/[0.02]" />}
 
-            <div
+            <PostImpressionWrapper
+              postId={post.id}
               className={`${zoomedPostId === post.id ? "" : "overflow-hidden"}${
                 isPlayerPost ? " bg-accent/[0.06] border-l-2 border-accent/40" : ""
               }`}
@@ -1158,6 +1179,11 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
                   <Share2 size={20} />
                   <span className="sr-only">공유</span>
                 </button>
+                <PostViewBadge
+                  clickCount={post.click_view_count}
+                  impressionCount={post.impression_view_count}
+                  className="ml-2"
+                />
               </div>
 
               {/* Caption — 미디어 카드에만 (텍스트 카드는 본문이 카드 자체).
@@ -1180,7 +1206,7 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
                   ))}
                 </div>
               )}
-            </div>
+            </PostImpressionWrapper>
           </div>
         );
       })}
