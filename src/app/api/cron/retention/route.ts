@@ -13,7 +13,9 @@ import {
 
 const CRON_SECRET = process.env.CRON_SECRET || "";
 
-export const maxDuration = 60;
+// 2026-07-21: 60 → 300초 상향 — 집계 데이터 누적(일일 코호트 행 매일 증가)으로 실행시간이 선형 증가,
+// 7/19부터 60s 초과 FUNCTION_INVOCATION_TIMEOUT으로 집계 멈춤(7/8 11s → 7/18 51s 실측).
+export const maxDuration = 300;
 
 export async function GET(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
@@ -25,19 +27,32 @@ export async function GET(req: NextRequest) {
   const targetDate = getKSTToday();
 
   try {
-    // 1) 경기일 목록 수집 (최근 60일)
-    const gameDates: string[] = [];
+    // 1) 경기일 목록 수집 (최근 60일) — 61회 순차 fetch가 전체 실행시간을 크게 잡아먹어
+    // 배치 10개씩 병렬로 전환 (2026-07-21, 결과 동일·순서 보장·실패 날짜는 기존처럼 skip)
+    const allDates: string[] = [];
     for (let i = 60; i >= 0; i--) {
-      const d = new Date(
-        new Date(targetDate + "T00:00:00+09:00").getTime() - i * 86400000,
-      ).toISOString().slice(0, 10);
-      try {
-        const games = await fetchGames(d.replace(/-/g, ""));
-        if (games.length > 0) gameDates.push(d);
-      } catch {
-        // skip dates where API fails
-      }
+      allDates.push(
+        new Date(
+          new Date(targetDate + "T00:00:00+09:00").getTime() - i * 86400000,
+        ).toISOString().slice(0, 10),
+      );
     }
+    const gameDateFlags: boolean[] = new Array(allDates.length).fill(false);
+    const BATCH = 10;
+    for (let start = 0; start < allDates.length; start += BATCH) {
+      const batch = allDates.slice(start, start + BATCH);
+      await Promise.all(
+        batch.map(async (d, idx) => {
+          try {
+            const games = await fetchGames(d.replace(/-/g, ""));
+            if (games.length > 0) gameDateFlags[start + idx] = true;
+          } catch {
+            // skip dates where API fails
+          }
+        }),
+      );
+    }
+    const gameDates: string[] = allDates.filter((_, i) => gameDateFlags[i]);
 
     // 2) 3축 집계
     const [cohortRows, dailyCohortRows, funnelRows, gamedayRows, visitDistRows] = await Promise.all([
