@@ -148,13 +148,16 @@ export async function GET(req: NextRequest) {
     try {
       // Supabase 기본 max-rows(1000) 상한을 넘는 시즌 전체 로그를 range 페이지네이션으로 전량 수집.
       // (limit 없이 오름차순이면 오래된 1000행만 반환돼 최근 주차가 잘림 — 그래프 정지 버그.)
-      const data = await fetchAllRows<{ game_date: string; ab: number; h: number; ip_outs: number; er: number }>(
+      // game_date만 정렬하면 같은 날짜 동률 행이 1000 경계에서 순서 불안정해 중복/누락될 수 있으므로
+      // id를 2차 키로 추가해 유일 전체순서(game_date ASC, id ASC)를 보장한다.
+      const data = await fetchAllRows<{ id: number; game_date: string; ab: number; h: number; ip_outs: number; er: number }>(
         async (from, to) => {
           const { data: page, error } = await supabaseAdmin
             .from("player_game_logs")
-            .select("game_date, ab, h, ip_outs, er")
+            .select("id, game_date, ab, h, ip_outs, er")
             .eq("team_id", team.id)
             .order("game_date", { ascending: true })
+            .order("id", { ascending: true })
             .range(from, to);
           if (error) throw error;
           return page ?? [];

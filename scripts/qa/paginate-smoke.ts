@@ -62,6 +62,17 @@ function pager(total: number) {
     }
     ok("pageSize<1 → throw", threw);
   }
+  // (f) 1000 경계 tie-break — 같은 game_date 동률 행이 페이지 경계를 가로질러도
+  //     (game_date ASC, id ASC) 유일 정렬이면 중복0·누락0으로 전량 수집.
+  {
+    // 2100행: 전부 같은 날짜, id만 고유 → (date,id) 정렬은 id 순서로 유일.
+    const rows = Array.from({ length: 2100 }, (_, i) => ({ id: i + 1, game_date: "2026-06-01" }));
+    const fetch = async (from: number, to: number) => rows.slice(from, to + 1);
+    const all = await fetchAllRows(fetch, 1000);
+    const ids = new Set(all.map((r) => r.id));
+    ok("경계 동률 행 중복0", ids.size === all.length && all.length === 2100);
+    ok("경계 동률 행 누락0(1..2100 완전)", ids.has(1) && ids.has(1000) && ids.has(1001) && ids.has(2100));
+  }
 
   console.log(`\npaginate smoke: ${pass} passed, ${fail} failed`);
   process.exit(fail === 0 ? 0 : 1);
