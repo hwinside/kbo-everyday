@@ -79,6 +79,13 @@ export const WIDGET_STREAM = {
 } as const;
 
 /**
+ * 위젯 제어 data-only 스트림 kind — 이 kind엔 서버 send-time(w_ts, ms)을 실어 네이티브가
+ * 순서 역전 배달을 차단(seq 가드)하고 수신→렌더 지연을 계측한다(삼순 vc14). w_ts는 단조 증가하는
+ * send-time이라 같은 경기에서 더 작은/같은 값은 옛 배달로 보고 버린다.
+ */
+export const WIDGET_CONTROL_KINDS = new Set(["game_live", "game_cancel", "game_end"]);
+
+/**
  * 대상 유저들에게 FCM 발송.
  * - prefKey 지정 시 notification_prefs로 필터 (row 없음 = 디폴트)
  * - 토큰 500개 chunk + 무효 토큰 정리
@@ -177,6 +184,8 @@ async function sendFcmToUsersInner(
   let sent = 0;
   let failed = 0;
   const invalid: string[] = [];
+  // 위젯 제어 스트림 send-time(ms) — 한 발송 내 모든 청크가 동일 w_ts를 갖도록 루프 밖에서 1회 계산.
+  const sendTsMs = String(Date.now());
   for (let i = 0; i < tokens.length; i += CHUNK) {
     const chunk = tokens.slice(i, i + CHUNK);
     // data-only(ongoing card)는 notification 블록 생략 + title/body를 data에 실음.
@@ -186,6 +195,12 @@ async function sendFcmToUsersInner(
       ...(payload.data ?? {}),
       ...(payload.dataOnly ? { title: payload.title, body: payload.body } : {}),
     };
+    // 위젯 제어 스트림(game_live/game_cancel/game_end)엔 서버 send-time(ms)을 실어
+    // 네이티브가 순서 역전 배달을 차단(seq 가드)하고 수신→렌더 지연을 계측한다(삼순 vc14).
+    // 청크 간 동일 값 보장을 위해 루프 밖 sendTsMs를 사용. w_ts가 이미 있으면 존중.
+    if (WIDGET_CONTROL_KINDS.has(dataBlock.kind) && dataBlock.w_ts == null) {
+      dataBlock.w_ts = sendTsMs;
+    }
     // Android 설정 — data-only는 high priority(Doze 우회), collapseKey/ttl은 지정 시만.
     // 라이브 위젯처럼 매분 갱신되는 푸시에 (경기별 collapseKey + 짧은 ttl)을 주면 옛 상태
     // 백로그 대신 최신 1건만 배달된다. admin SDK의 ttl은 밀리초 단위.

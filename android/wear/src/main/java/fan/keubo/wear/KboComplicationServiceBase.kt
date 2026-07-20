@@ -74,7 +74,10 @@ abstract class KboComplicationServiceBase : ComplicationDataSourceService() {
                 val before = WearStore.loadCachedSnapshot(ctx)
                 WearFetcher.fetch(ctx)
                 val after = WearStore.loadCachedSnapshot(ctx)
-                if (after != null && after != before) {
+                // 삼순 blocker 2: contentSignature(updatedAt 제외)로 실제 변화 시에만 재요청.
+                if (after != null &&
+                    (before == null || after.contentSignature() != before.contentSignature())
+                ) {
                     WearComplicationUpdater.requestUpdateAll(ctx)
                 }
             } finally {
