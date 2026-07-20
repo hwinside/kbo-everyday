@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { useAuth } from "@/lib/supabase/AuthContext";
-import { currentViewerKey, hasSeenView, trackPostViewOncePerSession } from "./view-tracker";
+import { currentViewerKey, hasSeenView, trackPostImpressionOncePerSession } from "./view-tracker";
 
 /**
  * 피드 카드 임프레션 트래킹 훅.
@@ -44,7 +44,7 @@ export function usePostImpression<T extends HTMLElement = HTMLDivElement>(postId
           dwellTimer = setTimeout(() => {
             dwellTimer = null;
             if (hasSeenView(postId, "impression", viewerKey)) return;
-            trackPostViewOncePerSession(postId, "impression", userId);
+            trackPostImpressionOncePerSession(postId, userId);
             io.disconnect();
           }, 500);
         } else {

@@ -5,11 +5,11 @@ import { getGuestId } from "@/lib/store/onboarding";
 /**
  * 게시글 조회수 트래킹 (클라) — 2026-07-21.
  *
- * dedup 규칙(하린아빠 스펙): click·impression 모두 **동일 유저 + 세션당 글 1회**.
- *  - click: 상세 진입 시 집계(세션 내 재진입은 미집계)
- *  - impression: 피드에서 카드 세로 ≥50% + 0.5초 dwell 시 집계
- *  - "동일 유저" = 로그인 유저는 userId, 비로그인은 guestId(localStorage). 같은 세션에서
- *    계정을 바꾸면 각 유저가 1회씩 집계된다.
+ * dedup 규칙(하린아빠 스펙):
+ *  - **click**: 상세 진입마다 +1 (dedup 없음)
+ *  - **impression**: 피드 카드 세로 ≥50% + 0.5초 dwell 시 +1, **동일 유저 + 세션당 글 1회**
+ *    · "동일 유저" = 로그인 유저는 userId, 비로그인은 guestId(localStorage). 같은 세션에서
+ *      계정을 바꾸면 각 유저가 1회씩 집계된다.
  *
  * 서버(/api/posts/[postId]/view)는 순수 증가만. 세션 dedup은 여기(sessionStorage).
  * 전송 실패는 조용히 무시(best-effort 텔레메트리 — UX를 막지 않음).
@@ -80,18 +80,20 @@ function sendView(postId: number, kind: "click" | "impression"): void {
   }
 }
 
+/** 클릭 조회수 집계 — 상세 진입마다 +1 (dedup 없음, 하린아빠 스펙). */
+export function trackPostClick(postId: number): void {
+  if (!Number.isInteger(postId) || postId <= 0) return;
+  sendView(postId, "click");
+}
+
 /**
- * 조회수 집계 — 동일 유저 세션당 글 1회만 서버로 전송.
+ * 임프레션 조회수 집계 — 동일 유저 세션당 글 1회만 서버로 전송.
  * 이미 이 세션에서 이 유저가 집계한 글이면 no-op.
  */
-export function trackPostViewOncePerSession(
-  postId: number,
-  kind: "click" | "impression",
-  userId?: string | null,
-): void {
+export function trackPostImpressionOncePerSession(postId: number, userId?: string | null): void {
   if (!Number.isInteger(postId) || postId <= 0) return;
   const viewerKey = currentViewerKey(userId);
-  if (hasSeenView(postId, kind, viewerKey)) return;
-  markViewSeen(postId, kind, viewerKey);
-  sendView(postId, kind);
+  if (hasSeenView(postId, "impression", viewerKey)) return;
+  markViewSeen(postId, "impression", viewerKey);
+  sendView(postId, "impression");
 }
