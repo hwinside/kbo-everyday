@@ -21,31 +21,37 @@ export interface PullStartNodeFlags {
   tag: string; // uppercase tagName
   contentEditable?: boolean;
   role?: string | null;
-  scrollableY?: boolean; // overflow-y auto/scroll 이면서 실제 세로 스크롤 가능
+  ariaModal?: boolean; // aria-modal="true"
+  position?: string; // computed position (fixed 모달/오버레이 루트)
+  overflowY?: string; // computed overflow-y
 }
 
+// 핵심: overflow-y auto/scroll은 현재 스크롤 양(scrollHeight>clientHeight) 무관하게 차단.
+// (삼순 #731 2차 NO-GO: 모달 패딩 DIV가 overflowY=auto지만 scrollHeight===clientHeight라
+//  이전 "실제 스크롤 가능" 게이트를 통과해 pull이 모달을 날렸다.)
 export function nodeBlocksPull(f: PullStartNodeFlags): boolean {
   if (f.tag === "INPUT" || f.tag === "TEXTAREA" || f.tag === "SELECT") return true;
   if (f.contentEditable) return true;
   if (f.role === "dialog") return true;
-  if (f.scrollableY) return true;
+  if (f.ariaModal) return true;
+  if (f.position === "fixed") return true;
+  if (f.overflowY === "auto" || f.overflowY === "scroll") return true;
   return false;
 }
 
 // e.target에서 container 전까지 조상을 올라가며 중첩 입력/모달/스크롤러 감지.
-function pullStartIsBlocked(target: EventTarget | null, container: HTMLElement): boolean {
+export function pullStartIsBlocked(target: EventTarget | null, container: HTMLElement): boolean {
   let node = target instanceof HTMLElement ? target : null;
   while (node && node !== container) {
     const style = window.getComputedStyle(node);
-    const scrollableY =
-      (style.overflowY === "auto" || style.overflowY === "scroll") &&
-      node.scrollHeight > node.clientHeight;
     if (
       nodeBlocksPull({
         tag: node.tagName,
         contentEditable: node.isContentEditable,
         role: node.getAttribute("role"),
-        scrollableY,
+        ariaModal: node.getAttribute("aria-modal") === "true",
+        position: style.position,
+        overflowY: style.overflowY,
       })
     ) {
       return true;
