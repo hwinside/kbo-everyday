@@ -20,6 +20,7 @@ import {
   moveHref,
   publishedRegisterHref,
   filterVisibleMoves,
+  computeRosterMovesDisplay,
   checkPublishReadiness,
   type AssetProbe,
   type ProbeResult,
@@ -274,6 +275,25 @@ async function asyncChecks() {
     { ready: false, canonicalId: null, missing: ["roster", "photo", "hero"] },
   );
 }
+
+// ═══ ⑧ 홈 팀카드 로스터 표시 경계 (삼순 NO-GO: 최신 3건 + 외 N건 → 팀 페이지) ═══
+const mk = (n: number) => Array.from({ length: n }, (_, i) => ({ id: i }));
+check("display: 0건 → visible 0 / overflow 0", computeRosterMovesDisplay(mk(0)), { visible: [], overflowCount: 0 });
+check(
+  "display: 3건(경계) → visible 3 / overflow 0 (더보기 숨김)",
+  computeRosterMovesDisplay(mk(3)),
+  { visible: [{ id: 0 }, { id: 1 }, { id: 2 }], overflowCount: 0 },
+);
+check(
+  "display: 4건 → visible 3 / overflow 1 (외 1건)",
+  computeRosterMovesDisplay(mk(4)),
+  { visible: [{ id: 0 }, { id: 1 }, { id: 2 }], overflowCount: 1 },
+);
+check(
+  "display: 9건 → visible 3 / overflow 6 (외 6건)",
+  computeRosterMovesDisplay(mk(9)),
+  { visible: [{ id: 0 }, { id: 1 }, { id: 2 }], overflowCount: 6 },
+);
 
 asyncChecks().then(() => {
   console.log(`\nroster-moves smoke: ${pass} passed, ${fail} failed`);

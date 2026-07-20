@@ -8,6 +8,7 @@ import TeamLogo from "@/components/ui/TeamLogo";
 import { getTeamById, type TeamData } from "@/lib/constants/teams";
 import { getTeamColor } from "@/lib/utils/team";
 import { getCanonicalPlayerHref } from "@/lib/utils/resolve-player";
+import { computeRosterMovesDisplay } from "@/lib/roster-moves/readiness";
 
 type FormResult = "W" | "L" | "D";
 
@@ -410,7 +411,7 @@ export default function TeamCard({ team, gameSlot, refreshNonce = 0 }: TeamCardP
               <p className="text-[12px] text-text-tertiary">최근 7일 변동이 없어요.</p>
             ) : (
               <ul className="flex flex-col gap-1.5">
-                {currentRosterMoves.moves.map((move, index) => {
+                {computeRosterMovesDisplay(currentRosterMoves.moves).visible.map((move, index) => {
                   const isRegister = move.moveType === "register";
                   const label = isRegister ? "등록" : "말소";
                   const labelColor = isRegister ? "#34D399" : "#F87171";
@@ -435,6 +436,17 @@ export default function TeamCard({ team, gameSlot, refreshNonce = 0 }: TeamCardP
                     </li>
                   );
                 })}
+                {computeRosterMovesDisplay(currentRosterMoves.moves).overflowCount > 0 && (
+                  <li>
+                    <Link
+                      href={`/teams/${team.slug}`}
+                      className="flex items-center justify-between py-0.5 text-[12px] text-text-secondary"
+                    >
+                      <span>외 {computeRosterMovesDisplay(currentRosterMoves.moves).overflowCount}건 더보기</span>
+                      <ChevronRight size={14} className="flex-shrink-0 text-text-tertiary" />
+                    </Link>
+                  </li>
+                )}
               </ul>
             )}
           </div>

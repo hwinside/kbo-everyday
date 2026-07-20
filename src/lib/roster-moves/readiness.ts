@@ -168,3 +168,16 @@ export function filterVisibleMoves<T extends { moveType: string; status: string 
 ): T[] {
   return rows.filter((r) => r.moveType === "deregister" || r.status === "published");
 }
+
+/**
+ * 홈 팀카드 로스터 변동 표시 계약(삼순 합의): 최신 N건만 카드에 노출,
+ * 초과분은 "외 M건 더보기 → 팀 페이지"로 오버플로우. 순수 함수(경계 회귀 테스트용).
+ *   - overflowCount = max(0, total - limit)  (0/limit 이하면 더보기 숨김)
+ */
+export function computeRosterMovesDisplay<T>(
+  moves: T[],
+  limit = 3,
+): { visible: T[]; overflowCount: number } {
+  const n = Math.max(0, limit);
+  return { visible: moves.slice(0, n), overflowCount: Math.max(0, moves.length - n) };
+}
