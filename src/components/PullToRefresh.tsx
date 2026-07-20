@@ -12,6 +12,49 @@ interface PullToRefreshProps {
 const THRESHOLD = 60; // px to trigger refresh
 const MAX_PULL = 100; // max pull distance
 
+/**
+ * 당김 제스처 arm 여부 — 터치가 시작된 노드가 입력/모달/중첩 스크롤러면 버블링으로
+ * 상위 pull-to-refresh가 오발동해 key remount·미저장 입력 유실이 난다(삼순 #731 NO-GO).
+ * 순수 판정(DOM 분리): 페이지 최상단 일반 콘텐츠에서 시작한 pull만 arm한다.
+ */
+export interface PullStartNodeFlags {
+  tag: string; // uppercase tagName
+  contentEditable?: boolean;
+  role?: string | null;
+  scrollableY?: boolean; // overflow-y auto/scroll 이면서 실제 세로 스크롤 가능
+}
+
+export function nodeBlocksPull(f: PullStartNodeFlags): boolean {
+  if (f.tag === "INPUT" || f.tag === "TEXTAREA" || f.tag === "SELECT") return true;
+  if (f.contentEditable) return true;
+  if (f.role === "dialog") return true;
+  if (f.scrollableY) return true;
+  return false;
+}
+
+// e.target에서 container 전까지 조상을 올라가며 중첩 입력/모달/스크롤러 감지.
+function pullStartIsBlocked(target: EventTarget | null, container: HTMLElement): boolean {
+  let node = target instanceof HTMLElement ? target : null;
+  while (node && node !== container) {
+    const style = window.getComputedStyle(node);
+    const scrollableY =
+      (style.overflowY === "auto" || style.overflowY === "scroll") &&
+      node.scrollHeight > node.clientHeight;
+    if (
+      nodeBlocksPull({
+        tag: node.tagName,
+        contentEditable: node.isContentEditable,
+        role: node.getAttribute("role"),
+        scrollableY,
+      })
+    ) {
+      return true;
+    }
+    node = node.parentElement;
+  }
+  return false;
+}
+
 export default function PullToRefresh({ onRefresh, children, className }: PullToRefreshProps) {
   const [pullDistance, setPullDistance] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -26,6 +69,8 @@ export default function PullToRefresh({ onRefresh, children, className }: PullTo
     // Support both scrollable containers (overflow-y-auto) and page-level scroll
     const scrolled = container.scrollTop > 0 || window.scrollY > 0;
     if (scrolled) return;
+    // 중첩 입력/모달/스크롤러에서 시작한 제스처는 arm하지 않는다(삼순 #731 NO-GO).
+    if (pullStartIsBlocked(e.target, container)) return;
     startYRef.current = e.touches[0].clientY;
     isPullingRef.current = true;
   }, [isRefreshing]);
