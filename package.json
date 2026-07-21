@@ -57,6 +57,7 @@
     "qa:full-entry": "tsx scripts/qa/full-entry-smoke.ts",
     "qa:admin-alerts": "tsx scripts/qa/admin-alerts-smoke.ts",
     "qa:admin-traffic": "tsx scripts/qa/admin-traffic-smoke.ts",
+    "qa:admin-traffic:db": "node scripts/qa/admin-traffic-db-integration.mjs",
     "qa:roster-moves": "tsx scripts/qa/roster-moves-diff-smoke.ts",
     "qa:backfill-roster-parse": "tsx scripts/qa/backfill-roster-parse-smoke.ts",
     "qa:report-blind": "tsx scripts/qa/report-blind-smoke.ts",
