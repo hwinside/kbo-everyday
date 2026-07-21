@@ -184,6 +184,10 @@ const migration = readFileSync(
   resolve("supabase/migrations/20260721_admin_traffic_dwell_rollup.sql"),
   "utf8",
 );
+const pageViewMigration = readFileSync(
+  resolve("supabase/migrations/20260721_admin_traffic_page_view_rollup.sql"),
+  "utf8",
+);
 const route = readFileSync(resolve("src/app/api/admin/traffic/route.ts"), "utf8");
 const page = readFileSync(resolve("src/app/admin/traffic/page.tsx"), "utf8");
 
@@ -222,6 +226,36 @@ check(
 check(
   "dashboard slice range has a covering index",
   migration.includes("idx_admin_dwell_slices_day_covering"),
+);
+check(
+  "page-view backfill and triggers share one writer lock",
+  pageViewMigration.includes("LOCK TABLE admin_page_views IN SHARE ROW EXCLUSIVE MODE") &&
+    pageViewMigration.includes("trg_admin_page_views_track_traffic_rollups"),
+);
+check(
+  "daily and window totals read the compact visitor rollup",
+  /FUNCTION admin_traffic_daily[\s\S]*FROM admin_traffic_daily_visitors/.test(
+    pageViewMigration,
+  ) &&
+    /FUNCTION admin_traffic_totals[\s\S]*FROM admin_traffic_daily_visitors/.test(
+      pageViewMigration,
+    ),
+);
+check(
+  "version share reads one latest row per native device",
+  /FUNCTION admin_app_version_share[\s\S]*FROM admin_app_version_devices/.test(
+    pageViewMigration,
+  ),
+);
+check(
+  "celebration telemetry stays excluded from both page-view rollups",
+  (pageViewMigration.match(/NOT starts_with\([^\n]+, '\/_celeb'\)/g)?.length ?? 0) >= 3,
+);
+check(
+  "out-of-order native events cannot replace a newer version",
+  pageViewMigration.includes(
+    "WHERE admin_app_version_devices.last_seen <= EXCLUDED.last_seen",
+  ),
 );
 check("route no longer throws dwell RPC errors", !route.includes("if (dwell.error) throw dwell.error"));
 check(
