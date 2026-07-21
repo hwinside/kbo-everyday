@@ -48,6 +48,10 @@ export interface KboGame {
   date: string;
   time: string;
   stadium: string;
+  /** 시리즈 구분 (응답 SR_ID): 0=정규, 1=시범, 3/4/5/7=포스트시즌 등. 누락 시 0 취급.
+   * ⚠️ 요청 파라미터 srId는 KBO 서버가 무시하고 날짜의 전 경기를 반환함(2026-07-21 실측) —
+   * 시리즈 필터링은 이 필드로 응답 후 처리해야 함. */
+  srId: number;
   awayTeamId: number;
   homeTeamId: number;
   awayName: string;
@@ -116,6 +120,7 @@ interface KboGameRaw {
   T_RANK_NO: number;
   B_RANK_NO: number;
   TV_IF?: string;
+  SR_ID?: number | string;
 }
 
 function parseGame(raw: KboGameRaw): KboGame {
@@ -153,6 +158,7 @@ function parseGame(raw: KboGameRaw): KboGame {
     awayRank: raw.T_RANK_NO ?? 0,
     homeRank: raw.B_RANK_NO ?? 0,
     broadcastChannels: decodeBroadcast(raw.TV_IF),
+    srId: raw.SR_ID != null ? Number(raw.SR_ID) : 0,
   };
 }
 
