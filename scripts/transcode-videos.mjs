@@ -28,6 +28,7 @@ import { resolve, join, basename } from "path";
 import { tmpdir } from "os";
 import { execFileSync } from "child_process";
 import { createHash } from "crypto";
+import { processVenueJob } from "./venue-transcode-job.mjs";
 
 // ── env (.env.local 수동 파싱, dotenv 의존성 없음 — award-event-badges.mjs 패턴) ──
 try {
@@ -94,8 +95,6 @@ function optimizedPath(origPath) {
 
 // ── 직관 라이브(venue_stories) 헬퍼 ──
 let HAS_FFPROBE = true;
-const VENUE_MAX_DURATION_MS = 16000; // 15초 + 여유
-const VENUE_MAX_BYTES = 60 * 1024 * 1024;
 
 /** ffprobe 로 duration(ms)/해상도 추출 */
 function probeVideoMeta(input) {
@@ -114,13 +113,6 @@ function probeVideoMeta(input) {
     width: s.width || null,
     height: s.height || null,
   };
-}
-
-/** 원본 media_path → 같은 폴더의 720p 최적화본 path */
-function venueOptimizedPath(mediaPath) {
-  const name = basename(mediaPath).replace(/\.[^.]+$/, "");
-  const dir = mediaPath.slice(0, mediaPath.length - basename(mediaPath).length);
-  return `${dir}${name}-720p.mp4`;
 }
 
 async function downloadTo(url, dest) {
@@ -354,123 +346,30 @@ async function processVenueStories() {
   if (error) throw new Error(`venue_stories 조회 실패: ${error.message}`);
   if (!rows || rows.length === 0) { console.log("직관 라이브 최적화 대기 영상 없음."); return; }
 
-  const PUBLIC_VIDEO_BUCKET = "videos";
   const work = mkdtempSync(join(tmpdir(), "kbo-venue-"));
   let done = 0, removed = 0, failed = 0, updateErrors = 0, claimedElsewhere = 0;
   try {
     for (const row of rows) {
-      const isPending = row.status === "pending";
       const inPath = join(work, "in" + (basename(row.media_path).match(/\.[^.]+$/)?.[0] || ".mp4"));
       const outPath = join(work, "out.mp4");
       try {
-        let inBytes;
-        if (isPending) {
-          // pending 원본은 private staging — 공개 URL 이 없으므로 storage API 로 다운로드
-          const { data: blob, error: dlErr } = await supabase.storage
-            .from(row.media_bucket)
-            .download(row.media_path);
-          if (dlErr || !blob) throw new Error(`staging download 실패: ${dlErr?.message || "empty"}`);
-          const buf = Buffer.from(await blob.arrayBuffer());
-          writeFileSync(inPath, buf);
-          inBytes = buf.length;
-        } else {
-          inBytes = await downloadTo(row.media_url, inPath);
-        }
-        const meta = probeVideoMeta(inPath);
-        // duration/크기 서버 권위 검증 — 초과 시 노출 없이 removed(정리 cron 이 storage 제거)
-        if (meta.durationMs > VENUE_MAX_DURATION_MS || inBytes > VENUE_MAX_BYTES) {
-          let rmQuery = supabase
-            .from("venue_stories")
-            .update({ status: "removed", transcode_attempts: row.transcode_attempts + 1 })
-            .eq("id", row.id);
-          if (isPending) rmQuery = rmQuery.eq("status", "pending"); // CAS — 즉시 경로와 중복 claim 방지
-          const { data: rmRows, error: rmErr } = await rmQuery.select("id");
-          if (rmErr) { updateErrors++; throw new Error(`removed 갱신 실패: ${rmErr.message}`); } // pending 잔류 방지 — catch 에서 재시도
-          if (isPending && (rmRows ?? []).length === 0) { claimedElsewhere++; continue; }
-          console.log(`  🚫 venue ${row.id} 검증실패(dur ${meta.durationMs}ms/${fmtMB(inBytes)}) → removed`);
-          removed++;
-          continue;
-        }
-        transcode(inPath, outPath);
-        const outBytes = statSync(outPath).size;
-        const targetBucket = isPending ? PUBLIC_VIDEO_BUCKET : row.media_bucket;
-        const newPath = venueOptimizedPath(row.media_path);
-        const buf = readFileSync(outPath);
-        const { error: upErr } = await supabase.storage
-          .from(targetBucket)
-          .upload(newPath, buf, { contentType: "video/mp4", upsert: true });
-        if (upErr) throw new Error(`upload 실패: ${upErr.message}`);
-        const { data: pub } = supabase.storage.from(targetBucket).getPublicUrl(newPath);
-        let updQuery = supabase
-          .from("venue_stories")
-          .update({
-            media_url: pub.publicUrl,
-            media_bucket: targetBucket,
-            media_path: newPath,
-            width: meta.width,
-            height: meta.height,
-            duration_ms: meta.durationMs,
-            // active 경로는 status 재기록 금지 — 처리 중 신고/어드민이 removed로 내린 상태 보존
-            // (불변식: worker 최적화 update는 removed 영상을 절대 되살리지 않는다)
-            ...(isPending ? { status: "active" } : {}),
-            needs_transcode: false,
-            transcode_attempts: row.transcode_attempts + 1,
-          })
-          .eq("id", row.id)
-          .eq("needs_transcode", true); // CAS: 이미 완료됐거나 재처리 불필요 행 방지
-        // CAS: 기대 status 일치 시만 갱신(active 경로는 removed 보존, pending 경로는 즉시경로 경합 방지)
-        if (isPending) updQuery = updQuery.eq("status", "pending");
-        else updQuery = updQuery.eq("status", "active");
-        const { data: updRows, error: updErr } = await updQuery.select("id");
-        if (updErr) throw new Error(`row 갱신 실패: ${updErr.message}`);
-        if ((updRows ?? []).length === 0) {
-          // 0-row: status 변경됨(신고/어드민 내림 등) 또는 이미 처리 완료 → resurrect 금지
-          claimedElsewhere++;
-          console.log(`  ⏭️  venue ${row.id} 상태 변경됨(skip) — ${isPending ? "즉시경로 선점" : "관리자 내림 등"}`);
-          continue;
-        }
-        // 교체 완료 — 원본 제거(pending 이면 staging 원본, active 면 공개 원본)
-        if (row.media_path !== newPath) {
-          try { await supabase.storage.from(row.media_bucket).remove([row.media_path]); } catch {}
-        }
-        console.log(`  ✅ venue ${row.id} ${fmtMB(inBytes)}→${fmtMB(outBytes)} active${isPending ? "(복구승격)" : ""}`);
-        done++;
-      } catch (e) {
-        const attempts = row.transcode_attempts + 1;
-        // DB 갱신 실패는 명시 로그(성공처럼 넘기지 않음) — 다음 실행이 재시도
-        let failQuery;
-        let catchStatus;
-        if (isPending) {
-          // pending 경로: 재시도 소진 시 removed, 아니면 pending 유지 — 즉시경로가 승격한 행 건드리지 않음
-          catchStatus = attempts >= MAX_ATTEMPTS ? "removed" : "pending";
-          failQuery = supabase
-            .from("venue_stories")
-            .update({ transcode_attempts: attempts, status: catchStatus })
-            .eq("id", row.id)
-            .eq("status", "pending"); // CAS: 즉시경로가 이미 active로 승격했으면 0-row skip
-        } else {
-          // active 경로: status 재기록 절대 금지 — 처리 중 신고/어드민이 removed로 내린 상태 보존
-          // (불변식: worker catch 도 removed 영상을 active로 되살리지 않는다)
-          catchStatus = "active"; // 로그 출력용(실제 DB 기록 아님)
-          failQuery = supabase
-            .from("venue_stories")
-            .update({ transcode_attempts: attempts }) // status 제외 — CAS 미일치 행 보존
-            .eq("id", row.id)
-            .eq("status", "active")       // CAS: removed 된 행이면 0-row → skip
-            .eq("needs_transcode", true);  // CAS: 다른 worker가 이미 완료했으면 skip
-        }
-        const { data: failRows, error: updErr } = await failQuery.select("id");
-        if (updErr) {
-          updateErrors++;
-          console.log(`  ⚠️ venue ${row.id} 상태갱신 실패(다음 실행 재시도): ${updErr.message}`);
-        } else if ((failRows ?? []).length === 0) {
-          // 0-row: 처리 중 removed/완료됨 → skip(resurrect 금지) — 성공 경로와 동일 카운팅
-          claimedElsewhere++;
-          console.log(`  ⏭️  venue ${row.id} catch-skip — ${isPending ? "즉시경로 선점" : "관리자 내림 등"} (${e.message || e})`);
-        } else {
-          console.log(`  ❌ venue ${row.id} ${catchStatus} (${attempts}/${MAX_ATTEMPTS}): ${e.message || e}`);
-          failed++;
-        }
+        const res = await processVenueJob(row, {
+          db: supabase,
+          storage: supabase.storage,
+          runner: {
+            probe: probeVideoMeta,
+            transcode,
+            downloadToFile: downloadTo,
+          },
+          inPath,
+          outPath,
+          maxAttempts: MAX_ATTEMPTS,
+        });
+        if (res.result === "done") done++;
+        else if (res.result === "removed") removed++;
+        else if (res.result === "claimedElsewhere") claimedElsewhere++;
+        else if (res.result === "updateError") updateErrors++;
+        else if (res.result === "failed") failed++;
       } finally {
         for (const f of [inPath, outPath]) { try { rmSync(f); } catch {} }
       }
