@@ -1,8 +1,10 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
+import { ChevronLeft } from "lucide-react";
 import { getTeamBySlug } from "@/lib/constants/teams";
+import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
 import TeamHero from "@/components/team/TeamHero";
 import TeamSwitcher from "@/components/team/TeamSwitcher";
 import TeamMenu from "@/components/team/TeamMenu";
@@ -10,6 +12,7 @@ import NextGameBanner from "@/components/team/NextGameBanner";
 import TeamNextTicketCard from "@/components/team/TeamNextTicketCard";
 import TeamRosterMovesCard from "@/components/team/TeamRosterMovesCard";
 import { STADIUMS } from "@/lib/constants/stadiums";
+import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 
 interface StandingData {
   rank: number;
@@ -23,6 +26,7 @@ interface StandingData {
 
 export default function TeamHubPage() {
   const params = useParams();
+  const router = useRouter();
   const teamSlug = params.teamId as string;
   const team = getTeamBySlug(teamSlug);
   const [standings, setStandings] = useState<StandingData | undefined>();
@@ -64,6 +68,22 @@ export default function TeamHubPage() {
 
   return (
     <div className="mx-auto max-w-lg pb-24">
+      <div
+        className="border-b px-5"
+        style={{ borderColor: getTeamBorderColorById(team.id) }}
+      >
+        <header className="flex items-center gap-3 py-3">
+          <button
+            onClick={() => router.back()}
+            className="rounded-full p-1 text-text-secondary transition-colors hover:bg-bg-tertiary"
+            aria-label="뒤로 가기"
+          >
+            <ChevronLeft size={24} />
+          </button>
+          <h1 className="flex-1 text-2xl font-bold tracking-tight text-text-primary">팀</h1>
+          <HeaderProfileLink />
+        </header>
+      </div>
       <TeamSwitcher currentTeam={team} />
       <TeamHero
         team={team}
