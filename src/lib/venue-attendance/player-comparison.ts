@@ -34,9 +34,6 @@ export interface PlayerPerformanceLine {
   state: "rated" | "sample_limited";
   evaluation: PerformanceEvaluation | null;
   priorAppearances: number;
-  metricLabel: "타율" | "ERA";
-  todayMetric: number | null;
-  averageMetric: number | null;
   today: {
     ab?: number;
     h?: number;
@@ -46,6 +43,15 @@ export interface PlayerPerformanceLine {
     er?: number;
     strikeouts?: number;
   };
+  average: {
+    ab?: number;
+    h?: number;
+    hr?: number;
+    rbi?: number;
+    innings?: number;
+    er?: number;
+    strikeouts?: number;
+  } | null;
 }
 
 export interface FavoritePlayerPerformance {
@@ -55,9 +61,10 @@ export interface FavoritePlayerPerformance {
   lines: PlayerPerformanceLine[];
 }
 
-function evaluateDelta(delta: number): PerformanceEvaluation {
-  if (delta > 0.0005) return "above";
-  if (delta < -0.0005) return "below";
+function evaluateDelta(delta: number, baseline: number): PerformanceEvaluation {
+  const similarBand = Math.max(0.5, Math.abs(baseline) * 0.15);
+  if (delta > similarBand) return "above";
+  if (delta < -similarBand) return "below";
   return "similar";
 }
 
@@ -67,15 +74,8 @@ function didPlay(row: PlayerGameLog): boolean {
     : row.ab > 0 || row.h > 0 || row.hr > 0 || row.rbi > 0 || row.bb > 0 || row.so > 0;
 }
 
-function rate(rows: PlayerGameLog[], type: "batter" | "pitcher"): number | null {
-  if (type === "pitcher") {
-    const outs = rows.reduce((sum, row) => sum + row.ip_outs, 0);
-    const earnedRuns = rows.reduce((sum, row) => sum + row.er, 0);
-    return outs > 0 ? (earnedRuns * 27) / outs : null;
-  }
-  const atBats = rows.reduce((sum, row) => sum + row.ab, 0);
-  const hits = rows.reduce((sum, row) => sum + row.h, 0);
-  return atBats > 0 ? hits / atBats : null;
+function average(rows: PlayerGameLog[], field: keyof PlayerGameLog): number {
+  return rows.reduce((sum, row) => sum + Number(row[field] ?? 0), 0) / rows.length;
 }
 
 function buildLine(
@@ -86,44 +86,57 @@ function buildLine(
 
   if (current.player_type === "batter") {
     const today = { ab: current.ab, h: current.h, hr: current.hr, rbi: current.rbi };
-    const todayMetric = rate([current], "batter");
-    const averageMetric = rate(prior, "batter");
+    const priorAverage = enoughSample
+      ? {
+          ab: average(prior, "ab"),
+          h: average(prior, "h"),
+          hr: average(prior, "hr"),
+          rbi: average(prior, "rbi"),
+        }
+      : null;
+    const todayImpact = current.h + current.hr * 2 + current.rbi * 0.5;
+    const averageImpact = priorAverage
+      ? priorAverage.h + priorAverage.hr * 2 + priorAverage.rbi * 0.5
+      : 0;
 
     return {
       type: "batter",
       state: enoughSample ? "rated" : "sample_limited",
-      evaluation:
-        enoughSample && todayMetric != null && averageMetric != null
-          ? evaluateDelta(todayMetric - averageMetric)
-          : null,
+      evaluation: priorAverage
+        ? evaluateDelta(todayImpact - averageImpact, averageImpact)
+        : null,
       priorAppearances: prior.length,
-      metricLabel: "타율",
-      todayMetric,
-      averageMetric,
       today,
+      average: priorAverage,
     };
   }
 
   const today = { ipOuts: current.ip_outs, er: current.er, strikeouts: current.k };
-  const todayMetric = rate([current], "pitcher");
-  const averageMetric = rate(prior, "pitcher");
+  const priorAverage = enoughSample
+    ? {
+        innings: average(prior, "ip_outs") / 3,
+        er: average(prior, "er"),
+        strikeouts: average(prior, "k"),
+      }
+    : null;
+  const todayImpact = current.ip_outs / 3 + current.k * 0.75 - current.er * 1.5;
+  const averageImpact = priorAverage
+    ? priorAverage.innings + priorAverage.strikeouts * 0.75 - priorAverage.er * 1.5
+    : 0;
 
   return {
     type: "pitcher",
     state: enoughSample ? "rated" : "sample_limited",
-    evaluation:
-      enoughSample && todayMetric != null && averageMetric != null
-        ? evaluateDelta(averageMetric - todayMetric)
-        : null,
+    evaluation: priorAverage
+      ? evaluateDelta(todayImpact - averageImpact, averageImpact)
+      : null,
     priorAppearances: prior.length,
-    metricLabel: "ERA",
-    todayMetric,
-    averageMetric,
     today,
+    average: priorAverage,
   };
 }
 
-/** 현재 최애선수 중 해당 경기 참가팀 선수만, 그 경기 이전 시즌 누적 타율/ERA와 비교한다. */
+/** 현재 최애선수 중 해당 경기 참가팀 선수만, 그 경기 이전 시즌 경기당 평균과 비교한다. */
 export function buildFavoritePlayerPerformances(params: {
   favorites: FavoritePlayerSnapshot[];
   logs: PlayerGameLog[];

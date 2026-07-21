@@ -53,7 +53,7 @@ const RESULT_STYLE = {
 const EVALUATION_LABEL = {
   above: { text: "평균 이상", className: "bg-blue-500/15 text-blue-500" },
   similar: { text: "평균 비슷", className: "bg-gray-500/15 text-text-secondary" },
-  below: { text: "평균 이하", className: "bg-orange-500/15 text-orange-500" },
+  below: { text: "아쉬움", className: "bg-orange-500/15 text-orange-500" },
 } as const;
 
 function innings(outs: number | undefined): string {
@@ -69,8 +69,12 @@ function performanceText(line: PlayerPerformanceLine): string {
   return `${innings(stats.ipOuts)}이닝 ${stats.er ?? 0}자책 ${stats.strikeouts ?? 0}K`;
 }
 
-function metricText(line: PlayerPerformanceLine, value: number): string {
-  return line.type === "batter" ? value.toFixed(3).replace(/^0\./, ".") : value.toFixed(2);
+function averagePerformanceText(line: PlayerPerformanceLine): string | null {
+  if (!line.average) return null;
+  if (line.type === "batter") {
+    return `${line.average.ab?.toFixed(1)}타수 ${line.average.h?.toFixed(1)}안타 ${line.average.hr?.toFixed(1)}홈런 ${line.average.rbi?.toFixed(1)}타점`;
+  }
+  return `${line.average.innings?.toFixed(1)}이닝 ${line.average.er?.toFixed(1)}자책 ${line.average.strikeouts?.toFixed(1)}K`;
 }
 
 export default function VenueDiaryCard() {
@@ -235,9 +239,9 @@ export default function VenueDiaryCard() {
                                 )}
                               </div>
                               <p className="mt-1 text-xs text-text-secondary">오늘 · {performanceText(line)}</p>
-                              {line.averageMetric != null && line.todayMetric != null && (
+                              {averagePerformanceText(line) && (
                                 <p className="mt-0.5 text-[11px] text-text-tertiary">
-                                  경기 {line.metricLabel} {metricText(line, line.todayMetric)} · 경기 전 시즌 평균 {metricText(line, line.averageMetric)}
+                                  경기 전 평균 · {averagePerformanceText(line)}
                                 </p>
                               )}
                             </div>

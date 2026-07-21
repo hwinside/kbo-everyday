@@ -105,12 +105,12 @@ const result = buildFavoritePlayerPerformances({
 });
 assert.equal(result.length, 2, "참가팀 최애선수만 표시");
 assert.equal(result[0].state, "rated", "이전 3경기부터 평가");
-assert.equal(result[0].lines[0].evaluation, "above", "경기 타율이 경기 전 시즌 타율보다 높음");
-assert.equal(result[0].lines[0].todayMetric, 0.5, "타자 경기 타율");
-assert.equal(result[0].lines[0].averageMetric, 0.25, "현재·미래 경기 제외 시즌 누적 타율");
-assert.equal(result[1].lines[0].evaluation, "above", "경기 ERA가 경기 전 시즌 ERA보다 낮음");
-assert.equal(result[1].lines[0].todayMetric, 1.5, "투수 경기 ERA");
-assert.equal(result[1].lines[0].averageMetric, 6, "투수 경기 전 시즌 ERA");
+assert.equal(result[0].lines[0].evaluation, "above", "안타·홈런·타점 활약이 경기 전 평균보다 높음");
+assert.equal(result[0].lines[0].average?.ab, 4, "타자 경기 전 평균 타수");
+assert.equal(result[0].lines[0].average?.h, 1, "현재·미래 경기 제외 경기당 평균 안타");
+assert.equal(result[1].lines[0].evaluation, "above", "이닝·자책·삼진 활약이 경기 전 평균보다 높음");
+assert.equal(result[1].lines[0].average?.innings, 3, "투수 경기 전 평균 이닝");
+assert.equal(result[1].lines[0].average?.er, 2, "투수 경기 전 평균 자책");
 
 const limited = buildFavoritePlayerPerformances({
   favorites: favorites.slice(0, 1),
