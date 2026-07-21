@@ -1,6 +1,7 @@
 // Smoke: admin app-rankings chart parsing — fail-close + timeout contracts.
 // Run: npm run qa:app-rankings
 import {
+  rankFromAppleChartHtml,
   rankFromItunesFeed,
   rankFromPlayList,
   withTimeout,
@@ -38,8 +39,95 @@ function throws(fn: () => unknown): boolean {
 
 const APP = "6765719087";
 const entry = (id: string) => ({ id: { attributes: { "im:id": id } } });
+const appleHtml = (data: unknown) =>
+  `<html><script type="application/json" id="serialized-server-data">${JSON.stringify(data)}</script></html>`;
+const appleChart = (visible: unknown[], remaining: unknown[]) =>
+  appleHtml({
+    data: [
+      {
+        data: {
+          segments: [
+            {
+              chart: "top-paid",
+              shelves: [{ items: [{ adamId: "paid" }] }],
+              nextPage: { remainingContent: [] },
+            },
+            {
+              chart: "top-free",
+              shelves: [{ items: visible }],
+              nextPage: { remainingContent: remaining },
+            },
+          ],
+        },
+      },
+    ],
+  });
 
 async function main() {
+  console.log("[apple chart web]");
+  await check("rank found across visible + deferred rows", () => {
+    const r = rankFromAppleChartHtml(
+      appleChart(
+        [{ adamId: "1" }, { adamId: "2" }],
+        [{ id: APP }, { id: "4" }],
+      ),
+      APP,
+      4,
+    );
+    return r.rank === 3 && r.chartSize === 4;
+  });
+  await check("app absent → rank null, full chartSize kept", () => {
+    const r = rankFromAppleChartHtml(
+      appleChart([{ adamId: "1" }], [{ id: "2" }]),
+      APP,
+      2,
+    );
+    return r.rank === null && r.chartSize === 2;
+  });
+  await check("script attribute order may differ", () => {
+    const payload = JSON.stringify({
+      chart: "top-free",
+      shelves: [{ items: [{ adamId: APP }] }],
+      nextPage: { remainingContent: [] },
+    });
+    const r = rankFromAppleChartHtml(
+      `<script data-x="1" id='serialized-server-data' type="application/json">${payload}</script>`,
+      APP,
+      1,
+    );
+    return r.rank === 1 && r.chartSize === 1;
+  });
+  await check("missing JSON script → throws", () =>
+    throws(() => rankFromAppleChartHtml("<html></html>", APP)),
+  );
+  await check("malformed JSON → throws", () =>
+    throws(() =>
+      rankFromAppleChartHtml(
+        '<script id="serialized-server-data">{broken</script>',
+        APP,
+      ),
+    ),
+  );
+  await check("empty/reshaped chart → throws", () =>
+    throws(() =>
+      rankFromAppleChartHtml(appleChart([{ id: "wrong" }], []), APP),
+    ),
+  );
+  await check("partial chart below 200 rows → throws", () =>
+    throws(() =>
+      rankFromAppleChartHtml(appleChart([{ adamId: APP }], [{ id: "2" }]), APP),
+    ),
+  );
+  await check("duplicate ids → throws", () =>
+    throws(() =>
+      rankFromAppleChartHtml(
+        appleChart([{ adamId: APP }], [{ id: APP }]),
+        APP,
+        2,
+      ),
+    ),
+  );
+
   console.log("[itunes feed]");
   await check("rank found (2nd of 3)", () => {
     const r = rankFromItunesFeed({ feed: { entry: [entry("1"), entry(APP), entry("3")] } }, APP);

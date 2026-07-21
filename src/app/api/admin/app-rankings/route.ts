@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAdminAuthedRequest } from "@/lib/admin/pin";
 import {
+  rankFromAppleChartHtml,
   rankFromItunesFeed,
   rankFromPlayList,
   withTimeout,
@@ -13,7 +14,8 @@ export const maxDuration = 60;
 // 크보팬 store identifiers (fixed per store listing).
 const APPLE_APP_ID = "6765719087";
 const ANDROID_APP_ID = "fan.keubo.app";
-// iTunes RSS genre id for the Sports category.
+// Apple genre ids: 36 = all apps, 6004 = Sports.
+const APPLE_ALL_APPS_GENRE = "36";
 const APPLE_SPORTS_GENRE = "6004";
 // Per-chart budget so one hanging source can't drag the whole response to the
 // 60s function limit — worst case the response returns in ~15s with the slow
@@ -26,18 +28,36 @@ export type AppRankingsPayload = {
   android: { sports: ChartRank; overall: ChartRank };
 };
 
-// Apple's public RSS chart. The feed caps at 100 entries regardless of the
-// requested limit, so "null rank" here means "outside the top ~100".
-async function fetchAppleRank(genre?: string): Promise<ChartRank> {
-  const url = genre
-    ? `https://itunes.apple.com/kr/rss/topfreeapplications/limit=200/genre=${genre}/json`
-    : `https://itunes.apple.com/kr/rss/topfreeapplications/limit=200/json`;
-  const res = await fetch(url, {
+// Apple's public chart page embeds all 200 ranks in serialized-server-data;
+// its public RSS feed currently truncates the same chart at 100.
+async function fetchAppleRank(genre: string): Promise<ChartRank> {
+  const signal = AbortSignal.timeout(CHART_TIMEOUT_MS);
+  const chartUrl = `https://apps.apple.com/kr/iphone/charts/${genre}?chart=top-free`;
+  try {
+    const res = await fetch(chartUrl, {
+      cache: "no-store",
+      headers: { "user-agent": "Mozilla/5.0 (compatible; KeuboFanAdmin/1.0)" },
+      signal,
+    });
+    if (!res.ok) throw new Error(`apple chart ${res.status}`);
+    return rankFromAppleChartHtml(await res.text(), APPLE_APP_ID);
+  } catch {
+    // Continue to the RSS fallback below. The same AbortSignal preserves the
+    // original 15-second per-chart deadline across both attempts.
+  }
+
+  // Best-effort fallback: RSS can still recover an in-range rank. Absence in
+  // its 100-row window is not enough to claim the app is outside the top 200.
+  const rssUrl = `https://itunes.apple.com/kr/rss/topfreeapplications/limit=200/genre=${genre}/json`;
+  const rss = await fetch(rssUrl, {
     cache: "no-store",
-    signal: AbortSignal.timeout(CHART_TIMEOUT_MS),
+    signal,
   });
-  if (!res.ok) throw new Error(`itunes rss ${res.status}`);
-  return rankFromItunesFeed(await res.json(), APPLE_APP_ID);
+  if (!rss.ok) throw new Error(`apple RSS ${rss.status}`);
+  const fallback = rankFromItunesFeed(await rss.json(), APPLE_APP_ID);
+  if (fallback.rank === null)
+    throw new Error("apple web failed and RSS top-100 is inconclusive");
+  return fallback;
 }
 
 // Google Play has no official chart API; google-play-scraper reads the public
@@ -76,7 +96,7 @@ export async function GET(request: NextRequest) {
 
   const [iosSports, iosOverall, aosSports, aosOverall] = await Promise.all([
     safe(fetchAppleRank(APPLE_SPORTS_GENRE)),
-    safe(fetchAppleRank()),
+    safe(fetchAppleRank(APPLE_ALL_APPS_GENRE)),
     safe(fetchPlayRank("SPORTS")),
     safe(fetchPlayRank("APPLICATION")),
   ]);
