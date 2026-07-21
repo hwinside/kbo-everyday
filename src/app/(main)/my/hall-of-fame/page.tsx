@@ -50,6 +50,16 @@ interface MyRank {
   month?: string | null;
 }
 
+interface RowsResult {
+  requestKey: string;
+  rows: Row[];
+}
+
+interface RankResult {
+  requestKey: string;
+  rank: MyRank | null;
+}
+
 // 크보팬 글쓰기 집계 시작 월(KST). 아카이브 드롭다운 하한.
 const LAUNCH_MONTH = "2026-04";
 
@@ -97,57 +107,78 @@ export default function HallOfFamePage() {
 
   const [tab, setTab] = useState<Tab>("monthly");
   const [month, setMonth] = useState<string>(() => currentMonthKST());
-  const [rows, setRows] = useState<Row[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [activeRank, setActiveRank] = useState<MyRank | null>(null);
+  const listRequestKey = tab === "monthly" ? `${tab}:${month}` : tab;
+  const userId = user?.id ?? null;
+  const rankRequestKey = `${listRequestKey}:${userId ?? "guest"}`;
+  const listUrl =
+    tab === "monthly"
+      ? `/api/leaderboard/monthly?month=${month}&limit=100`
+      : tab === "cumulative"
+        ? `/api/leaderboard/writing?limit=100`
+        : `/api/leaderboard/invite?limit=100`;
+  const rankUrl =
+    tab === "monthly"
+      ? `/api/leaderboard/my-rank?track=writing&month=${month}`
+      : tab === "cumulative"
+        ? `/api/leaderboard/my-rank?track=writing`
+        : `/api/leaderboard/my-rank?track=invite`;
+  const [rowsResult, setRowsResult] = useState<RowsResult>({ requestKey: "", rows: [] });
+  const [rankResult, setRankResult] = useState<RankResult>({ requestKey: "", rank: null });
+  // 탭/월/유저가 바뀐 첫 렌더부터 이전 응답을 숨겨 pt→명 등 stale 단위 오표시를 막는다.
+  const rows = rowsResult.requestKey === listRequestKey ? rowsResult.rows : [];
+  const loading = rowsResult.requestKey !== listRequestKey;
+  const activeRank = rankResult.requestKey === rankRequestKey ? rankResult.rank : null;
   // 레벨/다음 레벨은 누적(lifetime) 점수 기준 — 월별 탭에서도 동일.
   const [levelScore, setLevelScore] = useState<number | null>(null);
 
-  // 리스트 + 활성 탭 기준 내 순위
+  // 목록과 내 순위는 별도 effect로 같은 렌더에서 병렬 시작한다.
   useEffect(() => {
     let cancelled = false;
-    async function load() {
-      setLoading(true);
-      const listUrl =
-        tab === "monthly"
-          ? `/api/leaderboard/monthly?month=${month}&limit=100`
-          : tab === "cumulative"
-            ? `/api/leaderboard/writing?limit=100`
-            : `/api/leaderboard/invite?limit=100`;
+    const controller = new AbortController();
+    async function loadRows() {
       try {
-        const r = await fetch(listUrl, { cache: "no-store" });
+        const r = await fetch(listUrl, { cache: "no-store", signal: controller.signal });
         const j = await r.json();
-        if (!cancelled) setRows(j.rows ?? []);
+        if (!cancelled) setRowsResult({ requestKey: listRequestKey, rows: j.rows ?? [] });
       } catch {
-        if (!cancelled) setRows([]);
-      } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) setRowsResult({ requestKey: listRequestKey, rows: [] });
       }
+    }
+    void loadRows();
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [listRequestKey, listUrl]);
 
-      if (!user) {
-        if (!cancelled) setActiveRank(null);
+  useEffect(() => {
+    let cancelled = false;
+    const controller = new AbortController();
+    async function loadRank() {
+      if (!userId) {
+        setRankResult({ requestKey: rankRequestKey, rank: null });
         return;
       }
       const headers = await getAuthHeaders();
-      const rankUrl =
-        tab === "monthly"
-          ? `/api/leaderboard/my-rank?track=writing&month=${month}`
-          : tab === "cumulative"
-            ? `/api/leaderboard/my-rank?track=writing`
-            : `/api/leaderboard/my-rank?track=invite`;
+      if (cancelled) return;
       try {
-        const r = await fetch(rankUrl, { cache: "no-store", headers });
+        const r = await fetch(rankUrl, {
+          cache: "no-store",
+          headers,
+          signal: controller.signal,
+        });
         const j = await r.json();
-        if (!cancelled) setActiveRank(j);
+        if (!cancelled) setRankResult({ requestKey: rankRequestKey, rank: j });
       } catch {
-        if (!cancelled) setActiveRank(null);
+        if (!cancelled) setRankResult({ requestKey: rankRequestKey, rank: null });
       }
     }
-    load();
+    void loadRank();
     return () => {
       cancelled = true;
+      controller.abort();
     };
-  }, [tab, month, user]);
+  }, [rankRequestKey, rankUrl, userId]);
 
   // 누적 점수(레벨 산정) — 탭/월과 무관, 유저 변경 시에만 재조회
   useEffect(() => {
