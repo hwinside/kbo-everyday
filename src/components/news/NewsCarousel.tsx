@@ -5,9 +5,9 @@ import Image from "next/image";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import { readableTextColor } from "@/lib/utils/team";
 import type { NewsMock } from "@/lib/constants/news";
-import { openExternalUrl } from "@/lib/open-external";
 import NewsCommentButton from "@/components/news/NewsCommentButton";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
+import { useNewsArticleBrowser } from "@/hooks/useNewsArticleBrowser";
 
 interface NewsCarouselProps {
   news: NewsMock[];
@@ -17,6 +17,7 @@ const AUTO_INTERVAL = 4000;
 
 export default function NewsCarousel({ news }: NewsCarouselProps) {
   const isAdmin = useIsAdmin();
+  const { openArticle } = useNewsArticleBrowser();
   const [current, setCurrent] = useState(0);
   const [isUserPaused, setIsUserPaused] = useState(false);
   // 썸네일 로드 실패 id 집합 — 실패하면 썸네일 없이 현행 레이아웃으로 폴백.
@@ -166,6 +167,14 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
             // 썸네일이 있고 로드 실패하지 않았으면 왼쪽 사진 + 제목 우측. 없으면 현행 그대로.
             const thumbUrl = item.thumbnailUrl ?? ogThumbs[item.id] ?? null;
             const hasThumb = Boolean(thumbUrl) && !failedThumbs.has(item.id);
+            const article = {
+              url: item.sourceUrl,
+              canonicalUrl: item.ogUrl || item.sourceUrl,
+              title: item.title,
+              source: item.source,
+              thumbnailUrl: thumbUrl,
+              teamId: item.teamId,
+            };
 
             return (
               <div
@@ -181,7 +190,7 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
                   aria-label={`${item.title} 원문 보기`}
                   className="relative hidden h-[172px] w-full cursor-pointer overflow-hidden text-left dark:block"
                   style={{ background: bgDark }}
-                  onClick={() => item.sourceUrl && openExternalUrl(item.sourceUrl)}
+                  onClick={() => openArticle(article)}
                 >
                   {team && (
                     <div className="absolute right-4 top-4 opacity-20">
@@ -232,7 +241,7 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
                     aria-label={`${item.title} 원문 보기`}
                     className="relative h-[172px] w-full cursor-pointer overflow-hidden rounded-2xl border border-black/[0.06] text-left shadow-sm"
                     style={{ background: bgLightCard, borderTopWidth: 3, borderTopColor: accent }}
-                    onClick={() => item.sourceUrl && openExternalUrl(item.sourceUrl)}
+                    onClick={() => openArticle(article)}
                   >
                     {team && (
                       <div className="absolute right-3 top-3 flex h-7 w-7 items-center justify-center rounded-lg bg-white shadow-sm ring-1 ring-black/[0.04]">
@@ -280,14 +289,7 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
                 </div>
                 {isAdmin && (
                   <NewsCommentButton
-                    article={{
-                      url: item.sourceUrl,
-                      canonicalUrl: item.ogUrl || item.sourceUrl,
-                      title: item.title,
-                      source: item.source,
-                      thumbnailUrl: thumbUrl,
-                      teamId: item.teamId,
-                    }}
+                    article={article}
                     initialCount={commentCounts[String(item.id)] ?? 0}
                     showCount
                     onCountChange={(next) => setCommentCounts((previous) => ({

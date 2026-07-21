@@ -12,6 +12,8 @@
  * (native-app-review.ts / native-meta-app-events.ts와 동일 패턴).
  */
 import { isNative } from "@/lib/capacitor/platform";
+import { registerPlugin } from "@capacitor/core";
+import type { NewsArticleDiscussion } from "@/lib/news/article-discussion";
 
 interface InjectedCapacitor {
   isNativePlatform?: () => boolean;
@@ -33,6 +35,44 @@ function openInNewTab(url: string): void {
   window.open(url, "_blank", "noopener,noreferrer");
 }
 
+interface NewsArticleBrowserPlugin {
+  open(options: { url: string; commentsUrl?: string }): Promise<void>;
+}
+
+const NewsArticleBrowser = registerPlugin<NewsArticleBrowserPlugin>(
+  "NewsArticleBrowser",
+);
+
+function isHttpUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+export function buildNewsCommentsUrl(article: NewsArticleDiscussion): string {
+  const params = new URLSearchParams({
+    url: article.url,
+    title: article.title,
+  });
+  if (article.canonicalUrl) params.set("canonicalUrl", article.canonicalUrl);
+  if (article.source) params.set("source", article.source);
+  if (article.thumbnailUrl) params.set("thumbnailUrl", article.thumbnailUrl);
+  if (article.teamId) params.set("teamId", String(article.teamId));
+  return `https://keubo.fan/native/news-comments?${params.toString()}`;
+}
+
+async function openLegacyNativeBrowser(url: string): Promise<void> {
+  try {
+    const { Browser } = await import("@capacitor/browser");
+    await Browser.open({ url });
+  } catch {
+    openInNewTab(url);
+  }
+}
+
 /** 외부 URL 열기 — 네이티브는 인앱 브라우저, 웹은 새 탭. */
 export function openExternalUrl(url: string): void {
   if (!url) return;
@@ -43,6 +83,22 @@ export function openExternalUrl(url: string): void {
     return;
   }
   openInNewTab(url);
+}
+
+/** 뉴스 원문 전용 — 새 앱은 자체 WebView, 구버전 앱은 기존 인앱 브라우저. */
+export function openNewsArticle(
+  article: NewsArticleDiscussion,
+  commentsEnabled: boolean,
+): void {
+  if (!isHttpUrl(article.url)) return;
+  if (!isNativeRuntime()) {
+    openInNewTab(article.url);
+    return;
+  }
+
+  const commentsUrl = commentsEnabled ? buildNewsCommentsUrl(article) : undefined;
+  NewsArticleBrowser.open({ url: article.url, commentsUrl })
+    .catch(() => openLegacyNativeBrowser(article.url));
 }
 
 /**
@@ -57,4 +113,14 @@ export function handleExternalAnchorClick(
   if (!url || !isNativeRuntime()) return;
   e.preventDefault();
   openExternalUrl(url);
+}
+
+export function handleNewsArticleAnchorClick(
+  e: { preventDefault: () => void },
+  article: NewsArticleDiscussion,
+  commentsEnabled: boolean,
+): void {
+  if (!isNativeRuntime()) return;
+  e.preventDefault();
+  openNewsArticle(article, commentsEnabled);
 }
