@@ -24,6 +24,7 @@ const cases: [string | { name: string; team?: string }, string | null][] = [
   ["56548", "쿄야마"],
   [{ name: "교야마", team: "롯데" }, "쿄야마"],
   [{ name: "교야마", team: "LG" }, null], // alias 팀 가드 불일치 → 미적용
+  ["AQ008", "쿄야마"], // 로스터 제거된 레거시 합성 ID → 현행 56548 구제(DB 잔존 참조 방어)
   [{ name: "다무라", team: "두산" }, "다무라 이치로"],
   [{ name: "다케다", team: "SSG" }, "다케다 쇼타"],
   [{ name: "토다", team: "NC" }, "토다 나츠키"],

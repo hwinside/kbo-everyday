@@ -91,6 +91,13 @@ const NAME_ALIASES: Record<string, string> = {
   교야마: "56548", // 롯데 쿄야마 — KBO 등록명 "쿄야마", 레거시/외래어표기 "교야마" 구제 (2026-07-21 중복 항목 통합)
 };
 
+/* 로스터에서 제거된 레거시 합성 ID → 현행 숫자 ID.
+ * DB(최애선수 favorite_players·게시판 board_id)·캐시·알림 payload 등에 구 ID가
+ * 잔존해도 카드/상세/href가 깨지지 않도록 구제(forward-only 이관 마이그레이션과 이중 방어). */
+const LEGACY_RETIRED_IDS: Record<string, string> = {
+  AQ008: "56548", // 교야마 마사야(구 합성 ID) → 쿄야마 (2026-07-21 중복 항목 통합)
+};
+
 const DEFAULT_ROSTER = playersRoster as RosterPlayer[];
 
 function toResolved(p: RosterPlayer): ResolvedPlayer {
@@ -181,6 +188,13 @@ function resolveInternal(
     // 2. roster canonical kboId로 직접 매칭
     const exact = roster.find((p) => p.kboId === normalized);
     if (exact) return toResolved(exact);
+
+    // 2.5 로스터에서 제거된 레거시 합성 ID → 현행 숫자 ID 구제 (AQ008→쿄야마)
+    const legacy = LEGACY_RETIRED_IDS[normalized];
+    if (legacy) {
+      const byLegacy = roster.find((p) => p.kboId === legacy);
+      if (byLegacy) return toResolved(byLegacy);
+    }
 
     // 3. 숫자 외국인 ID(55348) → 영문(AQ002) 역변환 후 재시도
     const alpha = FOREIGN_NUMERIC_TO_ALPHA[normalized];
