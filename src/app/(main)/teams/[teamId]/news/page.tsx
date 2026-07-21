@@ -8,6 +8,7 @@ import GlassCard from "@/components/ui/GlassCard";
 import { useNewsPhotoFilter } from "@/hooks/useNewsPhotoFilter";
 import { setPhotoFilterEnabled } from "@/lib/store/news-pref";
 import { isPhotoArticle } from "@/lib/news-relevance";
+import { handleExternalAnchorClick } from "@/lib/open-external";
 
 interface NewsItem {
   title: string;
@@ -93,7 +94,7 @@ export default function TeamNewsPage() {
               // 출처 표기는 언론사 원문(originalLink) host 기준 — 클릭만 네이버
               const source = (item.originalLink || item.link).match(/\/\/(?:www\.)?([^/]+)/)?.[1]?.replace(/\.com$|\.co\.kr$|\.kr$/, "") ?? "";
               return (
-                <a key={i} href={item.link} target="_blank" rel="noopener noreferrer">
+                <a key={i} href={item.link} target="_blank" rel="noopener noreferrer" onClick={(e) => handleExternalAnchorClick(e, item.link)}>
                   <GlassCard pressable className="overflow-hidden p-0">
                     {item.thumbnailUrl && (
                       <div className="relative aspect-[16/9] w-full overflow-hidden bg-bg-tertiary">

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Play } from "lucide-react";
 import { TEAMS } from "@/lib/constants/teams";
+import { handleExternalAnchorClick } from "@/lib/open-external";
 
 interface Video {
   id: string;
@@ -47,6 +48,7 @@ export default function HomeOfficialVideos({ team }: HomeOfficialVideosProps) {
             href={`https://www.youtube.com/watch?v=${v.id}`}
             target="_blank"
             rel="noopener noreferrer"
+            onClick={(e) => handleExternalAnchorClick(e, `https://www.youtube.com/watch?v=${v.id}`)}
             className="shrink-0 group"
           >
             <div className="relative w-[220px] rounded-xl overflow-hidden">

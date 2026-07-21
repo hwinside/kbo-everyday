@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Play } from "lucide-react";
 import ReelViewer from "@/components/home/ReelViewer";
+import { handleExternalAnchorClick } from "@/lib/open-external";
 
 interface Video {
   id: string;
@@ -89,6 +90,7 @@ export default function TeamVideos({ teamSlug }: { teamSlug: string }) {
                 href={`https://www.youtube.com/watch?v=${v.id}`}
                 target="_blank"
                 rel="noopener noreferrer"
+                onClick={(e) => handleExternalAnchorClick(e, `https://www.youtube.com/watch?v=${v.id}`)}
                 className="block group"
               >
                 <div className="relative w-full rounded-xl overflow-hidden">

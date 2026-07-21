@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { ExternalLink } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { TEAMS } from "@/lib/constants/teams";
+import { handleExternalAnchorClick } from "@/lib/open-external";
 
 interface NewsItem {
   title: string;
@@ -68,7 +69,7 @@ export default function PlayerNews({ playerName, teamId }: PlayerNewsProps) {
       ) : (
         <div className="space-y-2">
           {news.map((item, i) => (
-            <a key={i} href={item.link} target="_blank" rel="noopener noreferrer">
+            <a key={i} href={item.link} target="_blank" rel="noopener noreferrer" onClick={(e) => handleExternalAnchorClick(e, item.link)}>
               <GlassCard pressable className="overflow-hidden p-0">
                 <div className="flex gap-3">
                   {item.thumbnailUrl && (

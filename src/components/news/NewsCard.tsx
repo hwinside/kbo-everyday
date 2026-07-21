@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import { ExternalLink } from "lucide-react";
 import TeamBadge from "@/components/ui/TeamBadge";
 import type { NewsMock } from "@/lib/constants/news";
+import { handleExternalAnchorClick } from "@/lib/open-external";
 
 interface NewsCardProps {
   news: NewsMock;
@@ -15,6 +16,7 @@ export default function NewsCard({ news }: NewsCardProps) {
       href={news.sourceUrl}
       target="_blank"
       rel="noopener noreferrer"
+      onClick={(e) => handleExternalAnchorClick(e, news.sourceUrl)}
       className="glass-card flex gap-4 p-5 transition-colors hover:bg-white/[0.03]"
       whileTap={{ scale: 0.98 }}
       transition={{ type: "spring", stiffness: 400, damping: 25 }}
