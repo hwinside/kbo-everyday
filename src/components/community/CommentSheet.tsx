@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { Send, X, MoreHorizontal, Check, Heart, CornerDownRight, ImagePlay, ImagePlus, Loader2 } from "lucide-react";
+import { Send, X, MoreHorizontal, Check, Heart, CornerDownRight, ImagePlay, ImagePlus, Loader2, Flag } from "lucide-react";
 import { getAvatarPath } from "@/lib/constants/avatars";
 import { createComment, updateComment, deleteComment, toggleCommentLike, uploadCommentImage } from "@/lib/supabase/usePosts";
 import { useAuth } from "@/lib/supabase/AuthContext";
@@ -16,6 +16,7 @@ import GifPicker from "@/components/community/GifPicker";
 import CommentImageLightbox from "@/components/community/CommentImageLightbox";
 import { isImageComment, prepareCommentImageForUpload } from "@/lib/community/comment-media";
 import { normalizeForFloodKey } from "@/lib/utils/normalize-message";
+import ReportSheet from "@/components/community/ReportSheet";
 
 interface CommentSheetProps {
   isOpen: boolean;
@@ -88,6 +89,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
   const [cooldown, setCooldown] = useState(false);
   const [cooldownReason, setCooldownReason] = useState("");
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
+  const [reportCommentId, setReportCommentId] = useState<number | null>(null);
   const lastSentRef = useRef(0);
   const sentTimestampsRef = useRef<number[]>([]);
   const recentContentsRef = useRef<string[]>([]);
@@ -127,6 +129,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
         .from("comments")
         .select("*, profiles!comments_author_id_fkey(nickname, team_id, grade, avatar_url)")
         .eq("post_id", postId)
+        .neq("is_hidden", true)
         .order("created_at", { ascending: true });
 
       let myLikedIds: Set<number> = new Set();
@@ -247,6 +250,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
       .from("comments")
       .select("*, profiles!comments_author_id_fkey(nickname, team_id, grade, avatar_url)")
       .eq("post_id", pid)
+      .neq("is_hidden", true)
       .order("created_at", { ascending: true });
 
     let myLikedIds: Set<number> = new Set();
@@ -611,6 +615,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
     const commentTeam = comment.team_id ? getTeamById(comment.team_id) : undefined;
     const isMine = !!user && comment.author_id === user.id;
     const canDelete = isMine || canModerateComments;
+    const canReport = !!user && !isMine;
     const isEditing = editingId === comment.id;
     const isEdited = !!comment.updated_at;
     const likeCount = comment.like_count ?? 0;
@@ -652,7 +657,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
             <span className="text-[11px] text-text-tertiary ml-auto flex-shrink-0">
               {timeAgo(comment.created_at)}{isEdited ? " · 수정됨" : ""}
             </span>
-            {canDelete && !isEditing && (
+            {(canDelete || canReport) && !isEditing && (
               <div className="relative flex-shrink-0">
                 <button
                   onClick={(e) => {
@@ -677,12 +682,22 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
                         수정
                       </button>
                     )}
-                    <button
-                      onClick={() => handleDelete(comment.id)}
-                      className="block w-full px-3 py-2 text-left text-xs text-[#FF453A] hover:bg-bg-tertiary"
-                    >
-                      삭제
-                    </button>
+                    {canReport && (
+                      <button
+                        onClick={() => { setMenuOpenId(null); setReportCommentId(comment.id); }}
+                        className="flex w-full items-center gap-1.5 px-3 py-2 text-left text-xs text-text-primary hover:bg-bg-tertiary"
+                      >
+                        <Flag size={12} /> 신고
+                      </button>
+                    )}
+                    {canDelete && (
+                      <button
+                        onClick={() => handleDelete(comment.id)}
+                        className="block w-full px-3 py-2 text-left text-xs text-[#FF453A] hover:bg-bg-tertiary"
+                      >
+                        삭제
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -997,6 +1012,14 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
     document.body
   )}
   {showLogin && <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />}
+  {reportCommentId !== null && (
+    <ReportSheet
+      isOpen
+      onClose={() => setReportCommentId(null)}
+      targetType="comment"
+      targetId={reportCommentId}
+    />
+  )}
   <CommentImageLightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />
   </>);
 }

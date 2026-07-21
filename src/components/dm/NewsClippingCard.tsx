@@ -2,6 +2,7 @@
 
 import type { NewsClippingPayload } from "@/types/news-clipping";
 import { openExternalUrl } from "@/lib/open-external";
+import NewsCommentButton from "@/components/news/NewsCommentButton";
 
 // 뉴스클리핑 쪽지 카드 — 뉴스카드와 동일한 구성(OG 사진+제목, 탭하면 원문)
 // 아래에 LLM 3줄 요약. 쪽지 말풍선 자리에 렌더된다.
@@ -62,6 +63,18 @@ export default function NewsClippingCard({ payload }: { payload: NewsClippingPay
                 </li>
               ))}
             </ul>
+            <div className="flex justify-end border-t border-border px-3 py-2">
+              <NewsCommentButton
+                article={{
+                  url: article.link,
+                  canonicalUrl: article.original_link || article.link,
+                  title: article.title,
+                  thumbnailUrl: article.thumbnail_url,
+                  teamId: payload.team_id,
+                }}
+                className="bg-bg-tertiary text-text-secondary hover:bg-bg-primary"
+              />
+            </div>
           </div>
         ))}
       </div>

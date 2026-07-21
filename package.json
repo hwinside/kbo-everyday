@@ -24,6 +24,7 @@
     "qa:news-naver-url": "tsx scripts/qa/news-naver-url-smoke.ts",
     "qa:photo-filter": "tsx scripts/qa/photo-article-filter-smoke.ts",
     "qa:news-dedup": "tsx scripts/qa/news-dedup-title-smoke.ts",
+    "qa:news-discussion": "tsx scripts/qa/news-discussion-smoke.ts",
     "qa:news-roundup": "tsx scripts/qa/news-roundup-filter-smoke.ts",
     "qa:news-clip-title": "tsx scripts/qa/news-clipping-title-signal-smoke.ts",
     "qa:urgent-notice": "tsx scripts/qa/urgent-notice-smoke.ts",
