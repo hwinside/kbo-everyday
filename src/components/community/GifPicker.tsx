@@ -25,7 +25,7 @@ interface GiphyGif {
 }
 
 interface GifPickerProps {
-  onSelect: (gifUrl: string) => void;
+  onSelect: (gifUrl: string, gifId: string) => void;
   onClose: () => void;
 }
 
@@ -119,9 +119,10 @@ export default function GifPicker({ onSelect, onClose }: GifPickerProps) {
             {gifs.map((gif) => (
               <button
                 key={gif.id}
-                onClick={() => onSelect(gif.images.fixed_height.url)}
+                onClick={() => onSelect(gif.images.fixed_height.url, gif.id)}
                 className="block w-full mb-1.5 rounded-lg overflow-hidden hover:opacity-80 transition-opacity break-inside-avoid"
               >
+                {/* eslint-disable-next-line @next/next/no-img-element -- GIPHY 애니메이션 원본을 그대로 재생한다. */}
                 <img
                   src={gif.images.fixed_height.url}
                   alt={gif.title}

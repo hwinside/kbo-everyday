@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Send, Users, Flame, Trash2, Flag, Ban, MoreHorizontal, Reply, X } from "lucide-react";
+import { Send, Users, Flame, Trash2, Flag, Ban, MoreHorizontal, Reply, X, ImagePlay } from "lucide-react";
 import { clsx } from "clsx";
 import TeamBadge from "@/components/ui/TeamBadge";
 import { getTeamById, isAllStarGame } from "@/lib/constants/teams";
@@ -13,6 +13,8 @@ import { useAuth } from "@/lib/supabase/AuthContext";
 import { useBlockedIds, blockUserById } from "@/lib/supabase/useBlock";
 import { supabase } from "@/lib/supabase/client";
 import ReportSheet from "@/components/community/ReportSheet";
+import GifPicker, { isGifComment } from "@/components/community/GifPicker";
+import { buildCanonicalGiphyUrl } from "@/lib/community/giphy";
 
 interface GameChatProps {
   gameId: string;
@@ -67,6 +69,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   const { blockedIds } = useBlockedIds();
   const canModerateChat = profile?.is_operator === true;
   const [input, setInput] = useState("");
+  const [showGifPicker, setShowGifPicker] = useState(false);
   const [msgMenuId, setMsgMenuId] = useState<number | null>(null);
   // 답글 대상 원글(루트). null이면 일반 메시지 전송.
   const [replyTo, setReplyTo] = useState<{ id: number; nickname: string } | null>(null);
@@ -223,6 +226,17 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     }
   }
 
+  async function handleGifSelect(gifUrl: string, gifId: string) {
+    if (qaKeyboardInputEnabled || !canWrite || cooldown) return;
+    const canonicalUrl = buildCanonicalGiphyUrl(gifId);
+    if (!canonicalUrl || !isGifComment(gifUrl)) return;
+    const ok = await sendMessage(canonicalUrl, replyTo?.id ?? null);
+    if (ok) {
+      setShowGifPicker(false);
+      setReplyTo(null);
+    }
+  }
+
   // 답글 작성 시작 — 입력창에 대상 칩 표시 + textarea 포커스. (루트 메시지에만)
   function startReply(msg: ChatMessage) {
     setMsgMenuId(null);
@@ -275,17 +289,26 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   // 메시지 본문(닉네임 + 내용) — 루트/답글 공용.
   function renderMsgBody(msg: ChatMessage) {
     const isMe = user?.id === msg.user_id;
+    const isGif = isGifComment(msg.content);
     return (
       <div className="min-w-0 flex-1">
-        <span className="inline">
-          <span
-            className={clsx("text-xs font-semibold mr-1 cursor-pointer hover:underline", isMe ? "text-accent" : "text-text-tertiary")}
-            onClick={() => msg.user_id && window.location.assign(`/profile/${msg.user_id}`)}
-          >
-            {msg.nickname || "익명"}
-          </span>
-          <span className="text-sm text-text-primary">{msg.content}</span>
+        <span
+          className={clsx("text-xs font-semibold mr-1 cursor-pointer hover:underline", isMe ? "text-accent" : "text-text-tertiary")}
+          onClick={() => msg.user_id && window.location.assign(`/profile/${msg.user_id}`)}
+        >
+          {msg.nickname || "익명"}
         </span>
+        {isGif ? (
+          // eslint-disable-next-line @next/next/no-img-element -- GIPHY 애니메이션 원본을 그대로 재생한다.
+          <img
+            src={msg.content.trim()}
+            alt="GIPHY GIF"
+            loading="lazy"
+            className="mt-1 w-auto h-auto max-w-[160px] max-h-[120px] rounded-lg object-contain"
+          />
+        ) : (
+          <span className="text-sm text-text-primary">{msg.content}</span>
+        )}
       </div>
     );
   }
@@ -397,6 +420,23 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
           </div>
         )}
         <div className="max-w-[640px] mx-auto px-3 py-2 flex items-end gap-2">
+          <button
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => {
+              textareaRef.current?.blur();
+              setShowGifPicker((open) => !open);
+            }}
+            disabled={!canWrite || cooldown}
+            aria-label="GIF"
+            className={clsx(
+              "w-10 h-10 rounded-full flex items-center justify-center shrink-0 transition-colors",
+              showGifPicker ? "bg-accent/20 text-accent" : "bg-bg-tertiary text-text-tertiary",
+              (!canWrite || cooldown) && "opacity-50"
+            )}
+          >
+            <ImagePlay className="w-5 h-5" />
+          </button>
           <div className="relative flex-1">
             <textarea
               ref={textareaRef}
@@ -409,6 +449,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
                 el.style.height = "auto";
                 el.style.height = `${Math.min(el.scrollHeight, 96)}px`;
               }}
+              onFocus={() => setShowGifPicker(false)}
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
                   e.preventDefault();
@@ -456,6 +497,21 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
             <Send className="w-5 h-5" />
           </motion.button>
         </div>
+        <AnimatePresence initial={false}>
+          {showGifPicker && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 280, opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              className="max-w-[640px] mx-auto overflow-hidden border-t border-border"
+            >
+              <GifPicker
+                onSelect={handleGifSelect}
+                onClose={() => setShowGifPicker(false)}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* Messages — 최신순(최신→오래된), 최신글이 리스트 상단 */}
