@@ -2,10 +2,11 @@
 
 import { Eye } from "lucide-react";
 import AdminOnly from "@/components/admin/AdminOnly";
+import { postViewTotal } from "@/lib/community/view-tracker-policy";
 
 /**
  * 게시글 조회수 배지 — 관리자(ADMIN_EMAILS)에게만 노출.
- * click = 상세 진입 누적, impression = 피드 노출(카드 세로 50%+) 누적.
+ * 화면에는 click + impression 합산값만 표시하고, 원본 집계는 분리 유지한다.
  */
 export default function PostViewBadge({
   clickCount,
@@ -16,16 +17,15 @@ export default function PostViewBadge({
   impressionCount?: number | null;
   className?: string;
 }) {
-  const clicks = clickCount ?? 0;
-  const impressions = impressionCount ?? 0;
+  const total = postViewTotal(clickCount, impressionCount);
   return (
     <AdminOnly>
       <span
         className={`inline-flex items-center gap-1 text-xs text-text-tertiary ${className ?? ""}`}
-        title="관리자 전용 · 클릭(상세 진입) · 노출(피드 50%+)"
+        title="관리자 전용 조회수"
       >
         <Eye size={13} />
-        <span>클릭 {clicks.toLocaleString()} · 노출 {impressions.toLocaleString()}</span>
+        <span>{total.toLocaleString()}</span>
       </span>
     </AdminOnly>
   );

@@ -3,9 +3,11 @@
  *   ① 관리자 화이트리스트 게이트(isAdminEmail)
  *   ② 조회수 dedup 정책(view-tracker-policy): click 재진입=집계, impression 동일유저·세션=1회,
  *      계정 전환 분리, viewerKey 우선순위(로그인>게스트), beacon=false fallback
- *   ③ route abuse cap(view-rate-limit): 1초 창 중복 차단
+ *   ③ 피드·상세 공용 관리자 배지: click+impression 합산, 라벨 제거, 일반 유저 미노출
+ *   ④ route abuse cap(view-rate-limit): 1초 창 중복 차단
  * 실행: npm run qa:admin-view
  */
+import { readFileSync } from "node:fs";
 import {
   isAdminEmail,
   ADMIN_EMAILS,
@@ -16,6 +18,7 @@ import {
   impressionDedupKey,
   shouldCountImpression,
   pickTransport,
+  postViewTotal,
 } from "../../src/lib/community/view-tracker-policy";
 import { shouldAllowView } from "../../src/lib/community/view-rate-limit";
 
@@ -97,7 +100,25 @@ check("beacon ok → beacon", pickTransport(true, true), "beacon");
 check("beacon queued false → fetch", pickTransport(true, false), "fetch");
 check("beacon unavailable → fetch", pickTransport(false, false), "fetch");
 
-// ── ③ route abuse cap(1초 창) ────────────────────────
+// ── ③ 관리자 피드·상세 공용 합산 표시 ────────────────
+check("view total click+impression", postViewTotal(12, 34), 46);
+check("view total null click", postViewTotal(null, 34), 34);
+check("view total null impression", postViewTotal(12, null), 12);
+check("view total both null", postViewTotal(null, null), 0);
+
+{
+  const badge = readFileSync(new URL("../../src/components/community/PostViewBadge.tsx", import.meta.url), "utf8");
+  const feed = readFileSync(new URL("../../src/components/community/PhotoFeed.tsx", import.meta.url), "utf8");
+  const detail = readFileSync(new URL("../../src/components/community/PostDetail.tsx", import.meta.url), "utf8");
+  check("view badge remains admin-only", badge.includes("<AdminOnly>"), true);
+  check("view badge uses shared total", badge.includes("postViewTotal(clickCount, impressionCount)"), true);
+  check("view badge removes click label", badge.includes("클릭 {"), false);
+  check("view badge removes impression label", badge.includes("노출 {"), false);
+  check("feed uses shared view badge", feed.includes("<PostViewBadge"), true);
+  check("detail uses shared view badge", detail.includes("<PostViewBadge"), true);
+}
+
+// ── ④ route abuse cap(1초 창) ────────────────────────
 check("rate first allow", shouldAllowView(undefined, 1000, 1000), true);
 check("rate within window block", shouldAllowView(1000, 1500, 1000), false);
 check("rate at boundary allow", shouldAllowView(1000, 2000, 1000), true);
