@@ -2,9 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { supabaseErrorResponse } from "@/lib/supabase/error";
 import { isAdminAuthedRequest } from "@/lib/admin/pin";
-import { sendFcmToUsers, getFcm } from "@/lib/notifications/fcm";
+import { sendFcmToTokens, getFcm } from "@/lib/notifications/fcm";
 import { fetchAllByKeyset } from "@/lib/db/paginate";
-import { reconcileDeliveryLedger } from "@/lib/admin/delivery-ledger";
+import { normalizeManualPushTargets, reconcileDeliveryLedger } from "@/lib/admin/delivery-ledger";
 
 // 어드민 수동 FCM 푸시 발송 — 공용 헬퍼(src/lib/notifications/fcm.ts) 사용.
 // prefs 필터 없음 (어드민 수동 발송은 전체/지정 대상에 그대로)
@@ -17,27 +17,39 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "FIREBASE_SERVICE_ACCOUNT not configured" }, { status: 500 });
   }
 
-  const { title, body, url, userIds } = await req.json();
+  const requestBody = await req.json();
+  const { title, body, url, userIds } = requestBody;
   if (!title || !body) {
     return NextResponse.json({ error: "title and body required" }, { status: 400 });
   }
 
-  const requestedIds: unknown[] = Array.isArray(userIds) ? userIds : [];
-  let targetIds = [...new Set(requestedIds.filter((id): id is string => typeof id === "string"))];
-  const hasExplicitTargets = targetIds.length > 0;
-  if (targetIds.length === 0) {
+  let explicitTargets: string[] | null;
+  try {
+    explicitTargets = normalizeManualPushTargets(
+      userIds,
+      Object.prototype.hasOwnProperty.call(requestBody, "userIds"),
+    );
+  } catch (error) {
+    return NextResponse.json(
+      { error: "invalid_user_ids", detail: error instanceof Error ? error.message : "invalid" },
+      { status: 400 },
+    );
+  }
+  let targetIds = explicitTargets ?? [];
+  const hasExplicitTargets = explicitTargets !== null;
+  let tokenRows: Array<{ id: number; user_id: string; fcm_token: string }> = [];
+  if (!hasExplicitTargets) {
     const { count: expectedTokenRows, error: countError } = await supabase
       .from("device_push_tokens")
       .select("*", { count: "exact", head: true });
     if (countError) return supabaseErrorResponse(countError);
 
-    let tokenRows: Array<{ id: number; user_id: string }>;
     try {
       tokenRows = await fetchAllByKeyset(
         async (cursor, limit) => {
           let query = supabase
             .from("device_push_tokens")
-            .select("id, user_id")
+            .select("id, user_id, fcm_token")
             .order("id", { ascending: true })
             .limit(limit);
           if (cursor !== null) query = query.gt("id", cursor);
@@ -59,6 +71,33 @@ export async function POST(req: NextRequest) {
       );
     }
     targetIds = [...new Set(tokenRows.map((row) => row.user_id))];
+  } else {
+    const IN_CHUNK = 150;
+    try {
+      for (let i = 0; i < targetIds.length; i += IN_CHUNK) {
+        const slice = targetIds.slice(i, i + IN_CHUNK);
+        const rows = await fetchAllByKeyset(
+          async (cursor, limit) => {
+            let query = supabase
+              .from("device_push_tokens")
+              .select("id, user_id, fcm_token")
+              .in("user_id", slice)
+              .order("id", { ascending: true })
+              .limit(limit);
+            if (cursor !== null) query = query.gt("id", cursor);
+            return query;
+          },
+          (row) => row.id,
+          { label: "admin manual push explicit token targets" },
+        );
+        tokenRows.push(...rows);
+      }
+    } catch (error) {
+      return NextResponse.json(
+        { error: "fetch_push_targets_failed", detail: error instanceof Error ? error.message : "unknown" },
+        { status: 500 },
+      );
+    }
   }
 
   const expected = targetIds.length;
@@ -81,7 +120,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "create_push_ledger_failed" }, { status: 500 });
   }
 
-  const res = await sendFcmToUsers(targetIds, { title, body, url });
+  const tokens = [...new Set(tokenRows.map((row) => row.fcm_token))];
+  const res = await sendFcmToTokens(tokens, { title, body, url });
   let reconciliation;
   try {
     reconciliation = reconcileDeliveryLedger({
@@ -113,7 +153,7 @@ export async function POST(req: NextRequest) {
       token_count: res.tokens,
       sent_count: res.sent,
       failed_count: res.failed,
-      last_error: reconciliation.lastError,
+      last_error: res.lastError ?? reconciliation.lastError,
       completed_at: new Date().toISOString(),
     })
     .eq("id", ledger.id);

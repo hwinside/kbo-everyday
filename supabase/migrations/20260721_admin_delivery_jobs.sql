@@ -143,17 +143,26 @@ as $$
       join admin_delivery_jobs j on j.id = r.job_id
      where j.kind = 'broadcast_dm'
        and j.status in ('queued', 'processing')
-       and r.attempts < greatest(p_max_attempts, 1)
        and (
-         r.status = 'pending'
-         or (r.status = 'processing' and r.claimed_at < now() - make_interval(secs => greatest(p_lease_seconds, 1)))
+         (r.status = 'pending' and r.attempts < greatest(p_max_attempts, 1))
+         or (
+           r.status = 'processing'
+           and r.attempts <= greatest(p_max_attempts, 1)
+           and r.claimed_at < now() - make_interval(secs => greatest(p_lease_seconds, 1))
+         )
        )
      order by j.created_at, r.user_id
      for update of r skip locked
      limit greatest(p_limit, 1)
   ), claimed as (
     update admin_broadcast_recipients r
-       set status = 'processing', claimed_at = now(), attempts = r.attempts + 1
+       set status = 'processing',
+           claimed_at = now(),
+           attempts = case
+             when r.status = 'processing' and r.attempts >= greatest(p_max_attempts, 1)
+               then r.attempts
+             else r.attempts + 1
+           end
       from candidates c
      where r.job_id = c.job_id and r.user_id = c.user_id
     returning r.job_id, r.user_id, r.attempts

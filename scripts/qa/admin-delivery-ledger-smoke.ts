@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { reconcileDeliveryLedger } from "../../src/lib/admin/delivery-ledger";
+import { normalizeManualPushTargets, reconcileDeliveryLedger } from "../../src/lib/admin/delivery-ledger";
+import { deliverTokenChunks } from "../../src/lib/notifications/fcm-batch";
 
 const exactCases = [999, 1000, 1001, 2001];
 for (const count of exactCases) {
@@ -59,4 +60,32 @@ const infraFailure = reconcileDeliveryLedger({
 assert.equal(infraFailure.status, "completed_with_failures");
 assert.equal(infraFailure.lastError, "fcm_infrastructure_failure");
 
-console.log("admin delivery ledger smoke: PASS (7 cases)");
+assert.equal(normalizeManualPushTargets(undefined, false), null);
+assert.deepEqual(
+  normalizeManualPushTargets([
+    "00000000-0000-4000-8000-000000000001",
+    "00000000-0000-4000-8000-000000000001",
+  ], true),
+  ["00000000-0000-4000-8000-000000000001"],
+);
+assert.throws(() => normalizeManualPushTargets([123], true), /UUID strings/);
+assert.throws(() => normalizeManualPushTargets([], true), /non-empty UUID array/);
+
+async function main() {
+  const fixtureTokens = Array.from({ length: 1001 }, (_, index) => `token-${index}`);
+  let chunk = 0;
+  const partial = await deliverTokenChunks(fixtureTokens, async (items) => {
+    chunk += 1;
+    if (chunk === 2) throw new Error("page-2 FCM fault");
+    return { successCount: items.length, failureCount: 0, responses: items.map(() => ({})) };
+  });
+  assert.deepEqual(
+    { tokens: partial.tokens, sent: partial.sent, failed: partial.failed, ok: partial.ok },
+    { tokens: 1001, sent: 501, failed: 500, ok: false },
+  );
+  assert.equal(partial.lastError, "page-2 FCM fault");
+
+  console.log("admin delivery ledger smoke: PASS (target fail-closed + partial FCM ledger)");
+}
+
+void main();

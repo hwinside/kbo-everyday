@@ -12,6 +12,26 @@ export interface DeliveryLedgerResult extends DeliveryLedgerCounts {
   lastError: string | null;
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/**
+ * userIds 필드가 없을 때만 전체 발송이다. 명시 필드가 빈 배열/잘못된 값이면
+ * 전체 발송으로 승격하지 않고 400 처리하도록 예외를 던진다.
+ */
+export function normalizeManualPushTargets(
+  value: unknown,
+  fieldPresent: boolean,
+): string[] | null {
+  if (!fieldPresent) return null;
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error("userIds must be a non-empty UUID array when provided");
+  }
+  if (value.some((id) => typeof id !== "string" || !UUID_RE.test(id))) {
+    throw new Error("userIds must contain only UUID strings");
+  }
+  return [...new Set(value as string[])];
+}
+
 function assertCount(name: string, value: number) {
   if (!Number.isInteger(value) || value < 0) {
     throw new Error(`${name} must be a non-negative integer`);
