@@ -124,12 +124,16 @@ BEGIN
     WHERE created_at < v_raw_cutoff
       AND NOT starts_with(path, '/_celeb')
     GROUP BY 1, 2, 3
+  ), rolled_daily AS (
+    SELECT day_kst, platform, visitor_id, pv
+    FROM admin_traffic_daily_visitors
+    WHERE day_kst < (v_raw_cutoff AT TIME ZONE 'Asia/Seoul')::date
   )
   SELECT count(*) INTO v_page_mismatches
   FROM raw_daily AS raw
-  LEFT JOIN admin_traffic_daily_visitors AS rolled
+  LEFT JOIN rolled_daily AS rolled
     USING (day_kst, platform, visitor_id)
-  WHERE rolled.pv IS NULL OR rolled.pv <> raw.pv;
+  WHERE rolled.pv IS DISTINCT FROM raw.pv;
 
   WITH raw_user_days AS (
     SELECT (created_at AT TIME ZONE 'Asia/Seoul')::date AS day_kst,
@@ -145,31 +149,45 @@ BEGIN
       AND user_id IS NOT NULL
       AND NOT starts_with(path, '/_celeb')
     GROUP BY 1, 2
+  ), rolled_user_days AS (
+    SELECT day_kst, user_id, page_views, game_ids
+    FROM admin_page_view_user_days
+    WHERE day_kst < (v_raw_cutoff AT TIME ZONE 'Asia/Seoul')::date
   )
   SELECT count(*) INTO v_user_day_mismatches
   FROM raw_user_days AS raw
-  LEFT JOIN admin_page_view_user_days AS rolled
+  LEFT JOIN rolled_user_days AS rolled
     USING (day_kst, user_id)
-  WHERE rolled.page_views IS NULL
-     OR rolled.page_views <> raw.page_views
-     OR NOT rolled.game_ids @> raw.game_ids;
+  WHERE rolled.page_views IS DISTINCT FROM raw.page_views
+     OR raw.game_ids IS NULL
+     OR rolled.game_ids IS NULL
+     OR NOT (
+       rolled.game_ids @> raw.game_ids
+       AND rolled.game_ids <@ raw.game_ids
+     );
 
   WITH raw_dwell AS (
     SELECT (created_at AT TIME ZONE 'Asia/Seoul')::date AS day_kst,
            COALESCE(platform, 'unknown') AS platform,
+           sum(dwell_ms)::bigint AS dwell_ms,
            count(*)::bigint AS events
     FROM admin_page_dwell
     WHERE created_at < v_raw_cutoff
     GROUP BY 1, 2
   ), rolled_dwell AS (
-    SELECT day_kst, platform, sum(event_count)::bigint AS events
+    SELECT day_kst,
+           platform,
+           sum(dwell_ms)::bigint AS dwell_ms,
+           sum(event_count)::bigint AS events
     FROM admin_dwell_session_slices
+    WHERE day_kst < (v_raw_cutoff AT TIME ZONE 'Asia/Seoul')::date
     GROUP BY 1, 2
   )
   SELECT count(*) INTO v_dwell_mismatches
   FROM raw_dwell AS raw
   LEFT JOIN rolled_dwell AS rolled USING (day_kst, platform)
-  WHERE rolled.events IS NULL OR rolled.events <> raw.events;
+  WHERE rolled.events IS DISTINCT FROM raw.events
+     OR rolled.dwell_ms IS DISTINCT FROM raw.dwell_ms;
 
   SELECT count(*) INTO v_traffic_expired
   FROM admin_traffic_daily_visitors WHERE day_kst < v_rollup_cutoff;
