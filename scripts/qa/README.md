@@ -1,5 +1,24 @@
 # QA Scripts
 
+## Supabase collection query guard
+
+`npm run qa:query-guard` scans production and operational TypeScript/JavaScript for
+Supabase SELECT/RPC, Storage list, and Auth listUsers calls. New unbounded reads,
+non-unique range pagination, and custom full scans that do not use the shared
+fail-closed keyset helper fail the build.
+
+Existing findings are frozen in `query-pagination-baseline.json`; the baseline may
+shrink, but growth requires an explicit code fix or a nearby reasoned annotation:
+
+```ts
+// query-guard: bounded -- one user's rows behind an authenticated user id
+// query-guard: bounded-page -- UI intentionally returns one stable page only
+// query-guard: full-scan -- unique id keyset through fetchAllByKeyset
+```
+
+When a reviewed audit intentionally resets the baseline, run
+`QUERY_GUARD_BASE_SHA=$(git rev-parse HEAD) node scripts/qa/query-pagination-guard.mjs --write-baseline`.
+
 삼순이(QA)가 배포 직후 *최종 사용자 QA*까지 한 번에 찍을 수 있는 CLI 모음.
 
 ## 왜 있음?

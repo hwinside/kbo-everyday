@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "growingTables": {
+    "profiles": { "uniqueKeys": ["id"] },
+    "device_push_tokens": { "uniqueKeys": ["id", "fcm_token"] },
+    "posts": { "uniqueKeys": ["id"] },
+    "comments": { "uniqueKeys": ["id"] },
+    "likes": { "uniqueKeys": ["id"] },
+    "comment_likes": { "uniqueKeys": ["id"] },
+    "chat_messages": { "uniqueKeys": ["id"] },
+    "dm_messages": { "uniqueKeys": ["id"] },
+    "dm_conversations": { "uniqueKeys": ["id"] },
+    "notifications": { "uniqueKeys": ["id"] },
+    "admin_page_views": { "uniqueKeys": ["id"] },
+    "admin_page_dwell": { "uniqueKeys": ["id"] },
+    "api_fallback_events": { "uniqueKeys": ["id"] },
+    "admin_client_errors": { "uniqueKeys": ["id"] },
+    "live_activity_tokens": { "uniqueKeys": ["id"] },
+    "live_activity_started_users": { "uniqueKeys": ["id"] },
+    "live_activity_channel_subscriptions": { "uniqueKeys": ["id"] },
+    "venue_stories": { "uniqueKeys": ["id"] },
+    "venue_attendance": { "uniqueKeys": ["id"] },
+    "news_discussions": { "uniqueKeys": ["id"] },
+    "gif_collector_queue": { "uniqueKeys": ["id"] },
+    "video_transcode_jobs": { "uniqueKeys": ["id"] }
+  },
+  "boundedRpcAllowlist": {
+    "create_admin_broadcast_job": "creates one job and returns its id",
+    "create_venue_story_v2": "creates one story and returns one row",
+    "dead_letter_report_blind_notice": "state transition for one notice",
+    "delete_any_chat_message": "deletes one message",
+    "delete_own_chat_message": "deletes one message",
+    "finish_admin_broadcast_recipient": "state transition for one recipient",
+    "increment_post_view": "increments one post counter",
+    "log_urgent_notice_error": "writes one delivery error",
+    "record_youtube_quota": "writes one quota ledger entry",
+    "replace_team_roster_day": "bounded replacement for one team and date",
+    "report_venue_story": "creates one report",
+    "reserve_youtube_quota": "returns one atomic quota decision",
+    "upsert_naver_identity": "upserts one authenticated identity"
+  }
+}
