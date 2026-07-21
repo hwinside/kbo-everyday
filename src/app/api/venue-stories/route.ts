@@ -208,26 +208,27 @@ export async function POST(req: NextRequest) {
   if (!venue.exists) {
     return NextResponse.json({ error: venue.reason ?? "경기를 확인할 수 없어요" }, { status: 404 });
   }
-  if (!venue.uploadOpen || !venue.coord || venue.expiresAtMs == null) {
+  if (!venue.uploadOpen || !venue.coord || venue.expiresAtMs == null || !venue.gameDate) {
     return NextResponse.json(
       { error: venue.reason ?? "지금은 올릴 수 없어요" },
       { status: 403 },
     );
   }
 
-  // 3) 지오펜스: 일반 유저는 fail-closed. 관리자 WIP QA 계정만 구장 밖 테스트를 위해 임시 우회.
-  if (!canBypassVenueGeofenceForQa(verified.user.email)) {
-    const geo = evaluateGeofence({
-      lat,
-      lng,
-      accuracy,
-      coord: venue.coord,
-      maxAccuracy: VENUE_GEOFENCE_MAX_ACCURACY_M,
-    });
-    if (!geo.ok) {
-      return NextResponse.json({ error: geo.reason ?? "직관 인증이 필요해요" }, { status: 403 });
-    }
+  // 3) 지오펜스: 일반 유저는 fail-closed. 관리자 QA 계정도 실제 GPS를 통과한 경우만
+  // 직관 이력에 포함하고, 구장 밖 우회 업로드는 admin_qa로 분리한다(승률 오염 방지).
+  const geo = evaluateGeofence({
+    lat,
+    lng,
+    accuracy,
+    coord: venue.coord,
+    maxAccuracy: VENUE_GEOFENCE_MAX_ACCURACY_M,
+  });
+  const qaBypass = canBypassVenueGeofenceForQa(verified.user.email);
+  if (!geo.ok && !qaBypass) {
+    return NextResponse.json({ error: geo.reason ?? "직관 인증이 필요해요" }, { status: 403 });
   }
+  const attendanceSource = geo.ok ? "story_geofence" : "admin_qa";
 
   // 4) 미디어 객체 실제 존재·크기·매직바이트 서버 검증(fail-closed, maxBytes 선제 차단)
   //  - video 는 private staging 이라 공개 URL 이 없다 → 단기 signed URL 로 probe
@@ -277,7 +278,7 @@ export async function POST(req: NextRequest) {
   const finalMediaUrl = isVideo
     ? supabase.storage.from(VENUE_STORY_PUBLIC_VIDEO_BUCKET).getPublicUrl(media.path).data.publicUrl
     : mediaUrl;
-  const { data: rpcData, error } = await supabase.rpc("create_venue_story", {
+  const { data: rpcData, error } = await supabase.rpc("create_venue_story_v2", {
     p_game_id: gameId,
     p_user_id: userId,
     p_media_type: mediaType,
@@ -297,6 +298,8 @@ export async function POST(req: NextRequest) {
     p_max_per_game: VENUE_STORY_MAX_PER_USER_PER_GAME,
     p_consent_version: consentVersion,
     p_needs_transcode: needsTranscode,
+    p_attendance_source: attendanceSource,
+    p_game_date: venue.gameDate,
   });
   if (error) {
     return NextResponse.json({ error: "저장 실패" }, { status: 500 });
