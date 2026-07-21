@@ -6,11 +6,15 @@ import {
   VENUE_STORY_MAX_BYTES,
   VENUE_STORY_MAX_DURATION_MS,
   VENUE_STORY_DURATION_TOLERANCE_MS,
+  VENUE_STORY_STAGING_BUCKET,
 } from "./types";
 
 export interface PreparedMedia {
   mediaType: "video" | "image";
-  mediaUrl: string;
+  /** image: 공개 URL. video: null(원본은 private staging — 서버 검증 통과 시에만 공개). */
+  mediaUrl: string | null;
+  /** video: staging 경로(venue-stories/{gameId}/{userId}/{file}). image: null. */
+  mediaPath: string | null;
   thumbUrl: string | null;
   durationMs: number | null;
   width: number | null;
@@ -21,8 +25,13 @@ export interface PrepareError {
   error: string;
 }
 
-const VIDEO_BUCKET = "videos";
 const IMAGE_BUCKET = "photos";
+
+/** 확장자는 서버 strict allowlist([A-Za-z0-9._-]) 통과하도록 영숫자만 남긴다. */
+function sanitizeExt(name: string, fallback: string): string {
+  const raw = (name.split(".").pop() || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  return raw && raw.length <= 8 ? raw : fallback;
+}
 
 function randPath(gameId: string, userId: string, ext: string): string {
   const safeGame = gameId.replace(/[^a-zA-Z0-9_-]/g, "");
@@ -130,6 +139,18 @@ async function uploadBlob(
   return urlData.publicUrl;
 }
 
+/** private staging 업로드 — 공개 URL 을 만들지 않는다(B+①: 검증 통과 전 비노출). */
+async function uploadToStaging(
+  path: string,
+  data: Blob | File,
+  contentType: string,
+): Promise<boolean> {
+  const { error } = await supabase.storage
+    .from(VENUE_STORY_STAGING_BUCKET)
+    .upload(path, data, { contentType, cacheControl: "3600", upsert: false });
+  return !error;
+}
+
 /**
  * 직관 스토리 미디어를 검증·압축·업로드하고 생성에 필요한 메타를 반환.
  * 실패 시 { error } 반환(호출부가 토스트로 노출).
@@ -164,14 +185,10 @@ export async function prepareVenueStoryMedia(
     ) {
       return { error: "영상은 15초 이하만 올릴 수 있어요" };
     }
-    const ext = (file.name.split(".").pop() || "mp4").toLowerCase();
-    const mediaUrl = await uploadBlob(
-      VIDEO_BUCKET,
-      randPath(gameId, user.id, ext),
-      file,
-      file.type || "video/mp4",
-    );
-    if (!mediaUrl) return { error: "영상 업로드에 실패했어요" };
+    // 원본은 private staging 에만 — 서버 ffprobe 검증 통과 시 서버가 공개 버킷으로 승격(B+①)
+    const mediaPath = randPath(gameId, user.id, sanitizeExt(file.name, "mp4"));
+    const uploaded = await uploadToStaging(mediaPath, file, file.type || "video/mp4");
+    if (!uploaded) return { error: "영상 업로드에 실패했어요" };
 
     let thumbUrl: string | null = null;
     if (probe.poster) {
@@ -184,7 +201,8 @@ export async function prepareVenueStoryMedia(
     }
     return {
       mediaType: "video",
-      mediaUrl,
+      mediaUrl: null,
+      mediaPath,
       thumbUrl,
       durationMs: probe.durationMs,
       width: probe.width || null,
@@ -215,6 +233,7 @@ export async function prepareVenueStoryMedia(
   return {
     mediaType: "image",
     mediaUrl,
+    mediaPath: null,
     thumbUrl: mediaUrl,
     durationMs: null,
     width: width || null,

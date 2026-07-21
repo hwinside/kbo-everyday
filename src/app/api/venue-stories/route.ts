@@ -15,10 +15,15 @@ import {
   VENUE_STORY_MAX_PER_USER_PER_GAME,
   VENUE_GEOFENCE_MAX_ACCURACY_M,
   VENUE_STORY_CONSENT_VERSION,
+  VENUE_STORY_STAGING_BUCKET,
+  VENUE_STORY_PUBLIC_VIDEO_BUCKET,
   type VenueStory,
 } from "@/lib/venue-stories/types";
+import { decideListAuth } from "@/lib/venue-stories/auth-consent";
+import { validateVenueVideoRow } from "@/lib/venue-stories/video-validate-server";
 
-export const maxDuration = 30;
+// 영상 즉시 검증(다운로드 최대 60MB + ffprobe)을 요청 안에서 수행
+export const maxDuration = 60;
 
 /** 우리 Supabase storage 공개 URL 검증 + { bucket, path } 파싱(canonicalization 우회 차단) */
 function parseStoragePublicUrl(url: string): { bucket: string; path: string } | null {
@@ -48,10 +53,15 @@ export async function GET(req: NextRequest) {
   }
 
   // 로그인 유저면 차단 목록으로 필터. 차단 조회 실패는 fail-closed(노출 차단).
+  // invalid bearer 는 익명 강등 금지(차단 필터가 꺼짐) → 401 거부(삼순 09:44 #3).
   let blocked = new Set<string>();
   const verified = await getVerifiedUserFromRequest(req);
-  if (verified) {
-    const b = await blockedAuthorIds(verified.user.id);
+  const auth = decideListAuth(!!req.headers.get("authorization"), verified?.user.id ?? null);
+  if (auth.kind === "reject") {
+    return NextResponse.json({ error: "인증이 유효하지 않습니다" }, { status: 401 });
+  }
+  if (auth.kind === "user") {
+    const b = await blockedAuthorIds(auth.userId);
     if (b == null) {
       return NextResponse.json({ error: "조회 실패" }, { status: 500 });
     }
@@ -137,6 +147,8 @@ export async function POST(req: NextRequest) {
   const gameId = typeof body.gameId === "string" ? body.gameId.trim() : "";
   const mediaType = body.mediaType;
   const mediaUrl = typeof body.mediaUrl === "string" ? body.mediaUrl : "";
+  // 영상: private staging 경로(venue-stories/{gameId}/{userId}/{file}) — 공개 URL 아님(B+①)
+  const mediaPath = typeof body.mediaPath === "string" ? body.mediaPath : "";
   const thumbUrl = typeof body.thumbUrl === "string" ? body.thumbUrl : null;
   const durationMs =
     typeof body.durationMs === "number" ? Math.round(body.durationMs) : null;
@@ -167,9 +179,20 @@ export async function POST(req: NextRequest) {
   }
 
   // 1) 소유권 바인딩: 미디어/썸네일 경로가 업로더 본인 예약 경로 아래여야 함
-  const media = parseStoragePublicUrl(mediaUrl);
-  if (!media || !ownsPath(media.path, gameId, userId)) {
-    return NextResponse.json({ error: "미디어 경로 권한 오류" }, { status: 403 });
+  //  - video: staging 경로 직접 검증(strict allowlist 규격 + gameId/userId 일치)
+  //  - image: 공개 URL canonical 파싱 후 검증
+  let media: { bucket: string; path: string };
+  if (mediaType === "video") {
+    if (!mediaPath || !ownsPath(mediaPath, gameId, userId)) {
+      return NextResponse.json({ error: "미디어 경로 권한 오류" }, { status: 403 });
+    }
+    media = { bucket: VENUE_STORY_STAGING_BUCKET, path: mediaPath };
+  } else {
+    const parsed = parseStoragePublicUrl(mediaUrl);
+    if (!parsed || !ownsPath(parsed.path, gameId, userId)) {
+      return NextResponse.json({ error: "미디어 경로 권한 오류" }, { status: 403 });
+    }
+    media = parsed;
   }
   let thumb: { bucket: string; path: string } | null = null;
   if (thumbUrl) {
@@ -204,7 +227,18 @@ export async function POST(req: NextRequest) {
   }
 
   // 4) 미디어 객체 실제 존재·크기·매직바이트 서버 검증(fail-closed, maxBytes 선제 차단)
-  const probe = await probeMediaObject(mediaUrl, mediaType, VENUE_STORY_MAX_BYTES);
+  //  - video 는 private staging 이라 공개 URL 이 없다 → 단기 signed URL 로 probe
+  let probeUrl = mediaUrl;
+  if (mediaType === "video") {
+    const { data: signed, error: signErr } = await supabase.storage
+      .from(media.bucket)
+      .createSignedUrl(media.path, 60);
+    if (signErr || !signed?.signedUrl) {
+      return NextResponse.json({ error: "업로드된 미디어를 확인할 수 없어요" }, { status: 400 });
+    }
+    probeUrl = signed.signedUrl;
+  }
+  const probe = await probeMediaObject(probeUrl, mediaType, VENUE_STORY_MAX_BYTES);
   if (!probe.ok) {
     const msg = probe.reason === "too_large" ? "파일이 너무 큽니다 (최대 60MB)" : "업로드된 미디어를 확인할 수 없어요";
     return NextResponse.json({ error: msg }, { status: 400 });
@@ -221,7 +255,7 @@ export async function POST(req: NextRequest) {
       thumbPathOut = null;
     }
   }
-  // 영상 클라 duration 힌트(참고용, 실제 검증은 트랜스코딩 워커 ffprobe)
+  // 영상 클라 duration 힌트는 빠른 거부용일 뿐 — 서버 권위 검증은 아래 즉시 ffprobe(B+①)
   if (
     mediaType === "video" &&
     durationMs != null &&
@@ -231,14 +265,20 @@ export async function POST(req: NextRequest) {
   }
 
   // 5) 게임당 유저 상한 + insert 원자 처리(RPC advisory lock) — count→insert 레이스 방지(삼순 NO-GO #2)
-  // 즉시 노출(하린아빠 스펙): 영상도 바로 active + needs_transcode=true(720p 최적화·ffprobe 사후 검증), 사진도 active
-  const initialStatus = "active";
-  const needsTranscode = mediaType === "video";
+  // B+①(삼순 09:44 #1): 영상은 **pending**(목록·원본 URL 미노출)으로 넣고 같은 요청 안에서
+  // 즉시 ffprobe 검증 → 통과 시에만 active 승격(원본 공개) + 720p 는 백그라운드. 사진은 바로 active.
+  const isVideo = mediaType === "video";
+  const initialStatus = isVideo ? "pending" : "active";
+  const needsTranscode = isVideo;
+  // 영상 media_url 은 승격 후 공개될 최종 URL(공개 videos 버킷, 같은 path) — pending 동안 객체 미존재(비노출)
+  const finalMediaUrl = isVideo
+    ? supabase.storage.from(VENUE_STORY_PUBLIC_VIDEO_BUCKET).getPublicUrl(media.path).data.publicUrl
+    : mediaUrl;
   const { data: rpcData, error } = await supabase.rpc("create_venue_story", {
     p_game_id: gameId,
     p_user_id: userId,
     p_media_type: mediaType,
-    p_media_url: mediaUrl,
+    p_media_url: finalMediaUrl,
     p_media_bucket: media.bucket,
     p_media_path: media.path,
     p_thumb_url: thumbUrlOut,
@@ -269,6 +309,30 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "저장 실패" }, { status: 500 });
   }
   const inserted = { id: result.id };
+
+  // 6) 영상 즉시 검증(B+①): 같은 요청 안에서 ffprobe 구조·15초 서버 권위 검증.
+  //  - 통과 → 원본 공개 버킷 승격 + pending→active CAS(즉시 공개)
+  //  - 실패 → pending→removed CAS + staging 정리(노출 0)
+  //  - fault → pending 유지(검증 약화 금지) — 30분 복구 워커가 처리, 목록엔 계속 미노출
+  if (isVideo && typeof inserted.id === "number") {
+    const validated = await validateVenueVideoRow({
+      id: inserted.id,
+      media_bucket: media.bucket,
+      media_path: media.path,
+    });
+    if (validated.outcome === "rejected") {
+      const msg =
+        validated.reason === "duration_exceeded"
+          ? "영상은 15초 이하만 올릴 수 있어요"
+          : "영상을 확인할 수 없어요. 다시 시도해주세요";
+      return NextResponse.json({ error: msg }, { status: 400 });
+    }
+    if (validated.outcome === "promoted" || validated.outcome === "already_claimed") {
+      return NextResponse.json({ success: true, id: inserted.id, status: "active" });
+    }
+    // fault: pending 유지 — 복구 워커가 처리(최대 30분+지연). 업로드 자체는 접수 성공.
+    return NextResponse.json({ success: true, id: inserted.id, status: "pending" });
+  }
 
   return NextResponse.json({ success: true, id: inserted.id, status: initialStatus });
 }

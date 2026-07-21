@@ -33,6 +33,24 @@ ok("prefix 불일치 → null", parseStoragePublicUrl(`${BASE}/storage/v1/object
 ok("raw ..\\ backslash → null", parseStoragePublicUrl(pub(`videos/venue-stories/${GAME}/${ME}/..\\${VICTIM}/x.mp4`), BASE) === null);
 ok("raw %2e%2e → null", parseStoragePublicUrl(pub(`videos/venue-stories/${GAME}/${ME}/%2e%2e/${VICTIM}/x.mp4`), BASE) === null);
 ok("raw %2f → null", parseStoragePublicUrl(pub(`videos/venue-stories/${GAME}/${ME}%2f${VICTIM}/x.mp4`), BASE) === null);
+
+console.log("[percent 봉인 — 삼순 09:44 #3 double-encode/malformed]");
+// double-encoded %252f: 1회 decode 후 %2f 가 남아 ownsPath 우회하던 벡터 → percent 전면 거부
+ok("double-encoded %252f → null", parseStoragePublicUrl(pub(`videos/venue-stories/${GAME}/${ME}/a%252fb.mp4`), BASE) === null);
+ok("double-encoded %252e%252e → null", parseStoragePublicUrl(pub(`videos/venue-stories/${GAME}/${ME}/%252e%252e.mp4`), BASE) === null);
+// malformed %zz: decodeURIComponent 가 URIError throw 하던 벡터 → throw 없이 null
+{
+  let threw = false;
+  let r: unknown = undefined;
+  try {
+    r = parseStoragePublicUrl(pub(`videos/venue-stories/${GAME}/${ME}/a%zz.mp4`), BASE);
+  } catch {
+    threw = true;
+  }
+  ok("malformed %zz → throw 없이 null(URIError 봉인)", !threw && r === null);
+}
+ok("임의 percent(%41) 도 전면 거부", parseStoragePublicUrl(pub(`videos/venue-stories/${GAME}/${ME}/%41.mp4`), BASE) === null);
+ok("정상 경로는 계속 허용(봉인 부작용 없음)", parseStoragePublicUrl(pub(`videos/venue-stories/${GAME}/${ME}/1700-ab.mp4`), BASE) !== null);
 // URL 정규화로 ../ 가 접혀도, 남은 dot segment/규격 미스는 ownsPath 에서도 막힘. 여기선 파싱 단계 확인.
 const traversal = parseStoragePublicUrl(pub(`videos/venue-stories/${GAME}/${ME}/../${VICTIM}/x.mp4`), BASE);
 ok("../ 는 canonical 로 접힘(파싱은 될 수 있으나 victim 경로로 정규화)", traversal === null || traversal.path.includes(VICTIM));
@@ -47,6 +65,11 @@ ok("prefix 밖 경로 → false", ownsPath(`other/${GAME}/${ME}/x.mp4`, GAME, ME
 ok("uuid 형식 아님 → false", ownsPath(`venue-stories/${GAME}/not-a-uuid/x.mp4`, GAME, "not-a-uuid") === false);
 // traversal 로 파싱을 통과시켜도(정규화 후 victim path) ownsPath 가 규격 미스로 최종 차단
 ok("정규화된 victim 경로도 ownsPath 차단", ownsPath(`venue-stories/${GAME}/${VICTIM}/x.mp4`, GAME, ME) === false);
+// strict filename allowlist([A-Za-z0-9._-]) — percent/공백/특수문자 거부(staging 경로 직접 검증에도 적용)
+ok("filename 에 %2f → false(봉인)", ownsPath(`venue-stories/${GAME}/${ME}/a%2fb.mp4`, GAME, ME) === false);
+ok("filename 에 공백 → false", ownsPath(`venue-stories/${GAME}/${ME}/a b.mp4`, GAME, ME) === false);
+ok("filename 비 ASCII → false", ownsPath(`venue-stories/${GAME}/${ME}/한글.mp4`, GAME, ME) === false);
+ok("과장 길이(>512) → false", ownsPath(`venue-stories/${GAME}/${ME}/${"a".repeat(600)}.mp4`, GAME, ME) === false);
 
 console.log(`\n결과: ${pass} pass / ${fail} fail`);
 if (fail > 0) process.exit(1);

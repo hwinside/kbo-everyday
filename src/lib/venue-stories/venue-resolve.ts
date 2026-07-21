@@ -7,8 +7,8 @@ import { evaluateUploadWindow } from "./geofence";
 import {
   VENUE_UPLOAD_WINDOW_BEFORE_MIN,
   VENUE_UPLOAD_WINDOW_AFTER_HOURS,
-  VENUE_STORY_EXPIRY_HOURS_AFTER_START,
 } from "./types";
+import { safetyCapExpiryIso } from "./expiry-policy";
 
 export interface ResolvedVenue {
   exists: boolean;
@@ -70,8 +70,9 @@ export async function resolveGameVenue(gameId: string): Promise<ResolvedVenue> {
 
   const coord = resolveStadiumByName(game.stadium);
   const startMs = parseStartMs(date, game.time);
-  const expiresAtMs =
-    startMs != null ? startMs + VENUE_STORY_EXPIRY_HOURS_AFTER_START * 3600_000 : null;
+  // 업로드 시점 expires_at 은 **안전상한(시작+72h, 장애 정책·관제용)** — 정상 만료 조건이 아니다.
+  // 정상 만료(종료+24h)는 finalize cron 이 terminal CAS 성공 후에만 확정한다(삼순 09:44 #2).
+  const expiresAtMs = startMs != null ? Date.parse(safetyCapExpiryIso(startMs)) : null;
 
   const { uploadOpen, reason } = evaluateUploadWindow({
     cancelled: game.status === "cancelled",

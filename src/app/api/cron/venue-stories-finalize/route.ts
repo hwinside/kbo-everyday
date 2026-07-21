@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { fetchGames } from "@/lib/crawler/kbo-api";
-import { VENUE_STORY_EXPIRY_HOURS_AFTER_END } from "@/lib/venue-stories/types";
+import { isTerminalGameStatus, finalizedExpiryIso } from "@/lib/venue-stories/expiry-policy";
 
 const CRON_SECRET = process.env.CRON_SECRET || "";
 
@@ -14,9 +14,10 @@ function gameDateFromId(gameId: string): string | null {
 
 /**
  * 직관 라이브 만료 확정 cron:
- *  진행중→종료(final/cancelled) 전이를 감지해 game_ended_at 을 확정하고
- *  만료시각을 **경기 종료+24h** 로 재설정한다(하린아빠 스펙: 종료+24h).
- *  종료 전에는 업로드 시 넣은 시작+30h 안전상한이 유지된다.
+ *  진행중→terminal(final/cancelled) 전이를 감지해 **CAS(game_ended_at IS NULL 가드) 성공 후에만**
+ *  game_ended_at 을 확정하고 만료를 감지시각+24h 로 확정한다(하린아빠 스펙: 종료+24h).
+ *  terminal 전에는 업로드 시 넣은 시작+72h 안전상한(장애 정책)만 존재 — 조기삭제 금지.
+ *  vercel.json 스케줄은 UTC 5-18(KST 14:00~03:59)로 연장지연·서스펜드 등 늦은 종료도 당일 감지한다.
  */
 export async function GET(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
@@ -49,10 +50,9 @@ export async function GET(req: NextRequest) {
     byDate.set(d, set);
   }
 
-  const nowIso = new Date().toISOString();
-  const expiresIso = new Date(
-    Date.now() + VENUE_STORY_EXPIRY_HOURS_AFTER_END * 3600_000,
-  ).toISOString();
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const expiresIso = finalizedExpiryIso(nowMs);
 
   let finalized = 0;
   let faults = 0;
@@ -66,13 +66,13 @@ export async function GET(req: NextRequest) {
     }
     for (const g of games) {
       if (!wantSet.has(g.gameId)) continue;
-      // 종료(final) 또는 취소(cancelled) = terminal 전이 → 만료 확정
-      if (g.status !== "final" && g.status !== "cancelled") continue;
+      // terminal(final/cancelled) 전이에서만 만료 확정
+      if (!isTerminalGameStatus(g.status)) continue;
       const { error: updErr } = await supabase
         .from("venue_stories")
         .update({ game_ended_at: nowIso, expires_at: expiresIso })
         .eq("game_id", g.gameId)
-        .is("game_ended_at", null); // 첫 확정만(멱등)
+        .is("game_ended_at", null); // CAS: 첫 확정만(멱등) — 재실행이 만료를 느리게 밀지 않음
       if (updErr) {
         faults++;
         continue;

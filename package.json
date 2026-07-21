@@ -63,7 +63,11 @@
     "qa:player-search-backfill": "node scripts/qa/player-search-backfill-smoke.mjs",
     "qa:venue-geofence": "tsx scripts/qa/venue-geofence-smoke.ts",
     "qa:venue-media": "tsx scripts/qa/venue-media-smoke.ts",
-    "qa:venue-storage-path": "tsx scripts/qa/venue-storage-path-smoke.ts"
+    "qa:venue-storage-path": "tsx scripts/qa/venue-storage-path-smoke.ts",
+    "qa:venue-validate": "tsx scripts/qa/venue-validate-smoke.ts",
+    "qa:venue-expiry": "tsx scripts/qa/venue-expiry-smoke.ts",
+    "qa:venue-cleanup-keyset": "tsx scripts/qa/venue-cleanup-keyset-smoke.ts",
+    "qa:venue-auth-consent": "tsx scripts/qa/venue-auth-consent-smoke.ts"
   },
   "dependencies": {
     "@capacitor-firebase/messaging": "^8.3.0",
@@ -77,6 +81,7 @@
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
+    "@ffprobe-installer/ffprobe": "^2.1.2",
     "@nivo/bar": "^0.99.0",
     "@nivo/radar": "^0.99.0",
     "@supabase/ssr": "^0.8.0",

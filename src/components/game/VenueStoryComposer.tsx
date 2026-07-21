@@ -9,6 +9,7 @@ import { prepareVenueStoryMedia } from "@/lib/venue-stories/upload";
 import { getVenuePosition } from "@/lib/venue-stories/geo";
 import { haversineMeters } from "@/lib/venue-stories/stadiums";
 import { VENUE_STORY_CONSENT_VERSION, type VenueInfo } from "@/lib/venue-stories/types";
+import { consentStorageKey } from "@/lib/venue-stories/auth-consent";
 
 interface Props {
   gameId: string;
@@ -29,25 +30,40 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   const [venue, setVenue] = useState<VenueInfo | null>(null);
   const [venueLoading, setVenueLoading] = useState(false);
   const [agreed, setAgreed] = useState(false);
+  const [sessionUserId, setSessionUserId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // UGC 가이드라인 동의 — 버전별 기억(문구 바뀌면 재동의). 서버가 최종 검증하므로 이건 UX 편의용.
-  const CONSENT_KEY = `venueStoryGuidelineAgreed_v${VENUE_STORY_CONSENT_VERSION}`;
+  // UGC 가이드라인 동의 — 버전별 + **user-scoped** 기억(삼순 09:44 #3: 계정 전환 시 타 계정
+  // 동의 상속 금지). userId 미상이면 기억하지 않는다. 서버가 최종 검증하므로 이건 UX 편의용.
+  const consentKey = consentStorageKey(VENUE_STORY_CONSENT_VERSION, sessionUserId);
   useEffect(() => {
     if (!isOpen) return;
-    try {
-      setAgreed(localStorage.getItem(CONSENT_KEY) === "1");
-    } catch {
-      setAgreed(false);
-    }
-  }, [isOpen, CONSENT_KEY]);
+    let alive = true;
+    (async () => {
+      const session = await getSafeSession();
+      const uid = session?.user?.id ?? null;
+      if (!alive) return;
+      setSessionUserId(uid);
+      const key = consentStorageKey(VENUE_STORY_CONSENT_VERSION, uid);
+      try {
+        setAgreed(key != null && localStorage.getItem(key) === "1");
+      } catch {
+        setAgreed(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [isOpen]);
 
   const toggleAgree = () => {
     setAgreed((prev) => {
       const next = !prev;
       try {
-        if (next) localStorage.setItem(CONSENT_KEY, "1");
-        else localStorage.removeItem(CONSENT_KEY);
+        if (consentKey != null) {
+          if (next) localStorage.setItem(consentKey, "1");
+          else localStorage.removeItem(consentKey);
+        }
       } catch {
         /* noop */
       }
@@ -172,6 +188,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
           gameId,
           mediaType: prepared.mediaType,
           mediaUrl: prepared.mediaUrl,
+          mediaPath: prepared.mediaPath, // 영상: private staging 경로(서버 즉시 검증 후 공개 승격)
           thumbUrl: prepared.thumbUrl,
           durationMs: prepared.durationMs,
           width: prepared.width,

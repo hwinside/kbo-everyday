@@ -104,7 +104,7 @@
     },
     {
       "path": "/api/cron/venue-stories-finalize",
-      "schedule": "*/10 5-15 * * *"
+      "schedule": "*/10 5-18 * * *"
     }
   ]
 }

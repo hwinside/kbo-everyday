@@ -1,10 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
-import { VENUE_STORY_EXPIRY_HOURS_AFTER_START } from "@/lib/venue-stories/types";
-import { shouldDeleteOrphanFile } from "@/lib/venue-stories/cleanup-policy";
+import {
+  VENUE_STORY_SAFETY_CAP_HOURS_AFTER_START,
+  VENUE_STORY_STAGING_BUCKET,
+} from "@/lib/venue-stories/types";
+import {
+  shouldDeleteOrphanFile,
+  collectReferencedPaths,
+  type RefPageRow,
+} from "@/lib/venue-stories/cleanup-policy";
+import { classifyCleanupRow } from "@/lib/venue-stories/expiry-policy";
 
 const CRON_SECRET = process.env.CRON_SECRET || "";
-const BUCKETS = ["videos", "photos"] as const;
+// staging 버킷도 orphan 스캔 대상(생성 API 도달 전 이탈한 업로드 잔여 정리)
+const BUCKETS = ["videos", "photos", VENUE_STORY_STAGING_BUCKET] as const;
 const ORPHAN_MAX_GAME_FOLDERS = 40; // 실행당 bucket별 orphan 스캔 상한(durable cursor 로 이어짐)
 const STORAGE_PAGE = 100; // storage list 페이지 크기
 
@@ -32,6 +41,9 @@ async function listAll(
 
 interface Row {
   id: number;
+  status: string;
+  game_ended_at: string | null;
+  expires_at: string | null;
   media_bucket: string | null;
   media_path: string | null;
   thumb_bucket: string | null;
@@ -68,12 +80,16 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const nowIso = new Date().toISOString();
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
 
   // ── 1) 대상 행 정리 ──
+  // 만료 계약(삼순 09:44 #2): terminal(game_ended_at 확정) 전에는 expiry 삭제 금지.
+  //  - expired_after_end: 종료 확정 + 종료+24h 경과 → 정상 삭제
+  //  - stale_cap: 종료 미확정인데 안전상한(시작+72h) 도달 = finalize 장애 → 누수 방지 삭제 + 관제(5xx)
   const { data: rows, error } = await supabase
     .from("venue_stories")
-    .select("id, media_bucket, media_path, thumb_bucket, thumb_path")
+    .select("id, status, game_ended_at, expires_at, media_bucket, media_path, thumb_bucket, thumb_path")
     .or(`expires_at.lte.${nowIso},status.in.(removed,cleanup_failed)`)
     .limit(500);
   if (error) {
@@ -82,8 +98,16 @@ export async function GET(req: NextRequest) {
 
   let deleted = 0;
   let retryLater = 0;
+  let staleCapDeleted = 0; // finalize 장애 신호 — 0 이 아니면 관제(5xx)
   let faults = 0; // storage/delete/update 오류 — 있으면 최종 5xx 로 관제
   for (const r of (rows ?? []) as Row[]) {
+    const cls = classifyCleanupRow({
+      status: r.status,
+      gameEndedAt: r.game_ended_at,
+      expiresAtMs: r.expires_at ? Date.parse(r.expires_at) : null,
+      nowMs,
+    });
+    if (cls === "keep") continue; // terminal 전 — 삭제 금지
     const ok = await removeRowObjects(r);
     if (ok) {
       const { error: delErr } = await supabase.from("venue_stories").delete().eq("id", r.id);
@@ -92,6 +116,7 @@ export async function GET(req: NextRequest) {
         faults++;
       } else {
         deleted++;
+        if (cls === "stale_cap") staleCapDeleted++;
       }
     } else {
       const { error: updErr } = await supabase
@@ -105,33 +130,28 @@ export async function GET(req: NextRequest) {
   }
 
   // ── 2) orphan 스캔 (생성 API 실패로 남은 storage 잔여) ──
-  // referenced 집합은 전 행 기준 — 전량 페이지네이션. 조회 오류면 orphan 스캔 자체를 건너뛴다(오탐 삭제 방지).
-  const referenced = new Set<string>();
-  {
-    const PAGE = 1000;
-    let from = 0;
-    for (;;) {
-      const { data: allPaths, error: refErr } = await supabase
-        .from("venue_stories")
-        .select("media_bucket, media_path, thumb_bucket, thumb_path")
-        .range(from, from + PAGE - 1);
-      if (refErr) {
-        // 참조 집합을 완전히 못 만들면 orphan 삭제는 위험(오탐) — 스캔 중단+5xx 관제
-        return NextResponse.json(
-          { deleted, retryLater, orphanRemoved: 0, orphanSkipped: "ref_query_error" },
-          { status: 500 },
-        );
-      }
-      for (const p of allPaths ?? []) {
-        if (p.media_bucket && p.media_path) referenced.add(`${p.media_bucket}:${p.media_path}`);
-        if (p.thumb_bucket && p.thumb_path) referenced.add(`${p.thumb_bucket}:${p.thumb_path}`);
-      }
-      if (!allPaths || allPaths.length < PAGE) break;
-      from += PAGE;
-    }
+  // referenced 집합은 전 행 기준 — **keyset pagination**(id 오름차순, id > lastId).
+  // offset(.range) 방식은 동시 insert/update 시 참조행 누락 → orphan 오삭제 위험(삼순 09:44 #3).
+  // 조회 오류면 orphan 스캔 자체를 건너뛴다(오탐 삭제 방지).
+  const referenced = await collectReferencedPaths(async (afterId, limit) => {
+    const { data: page, error: refErr } = await supabase
+      .from("venue_stories")
+      .select("id, media_bucket, media_path, thumb_bucket, thumb_path")
+      .gt("id", afterId)
+      .order("id", { ascending: true })
+      .limit(limit);
+    if (refErr) return null;
+    return (page ?? []) as RefPageRow[];
+  }, 1000);
+  if (referenced == null) {
+    // 참조 집합을 완전히 못 만들면 orphan 삭제는 위험(오탐) — 스캔 중단+5xx 관제
+    return NextResponse.json(
+      { deleted, retryLater, staleCapDeleted, orphanRemoved: 0, orphanSkipped: "ref_query_error" },
+      { status: 500 },
+    );
   }
-  // orphan 은 업로드 직후 실패분이라 넉넉한 버퍼(만료+1일)보다 오래된 것만 정리
-  const orphanCutoff = Date.now() - (VENUE_STORY_EXPIRY_HOURS_AFTER_START + 24) * 3600_000;
+  // orphan 은 업로드 직후 실패분이라 넉넉한 버퍼(안전상한+1일)보다 오래된 것만 정리
+  const orphanCutoff = nowMs - (VENUE_STORY_SAFETY_CAP_HOURS_AFTER_START + 24) * 3600_000;
   let orphanRemoved = 0;
 
   // bucket 별 durable cursor — 실행마다 이전 위치(after_name) 이후부터 이어서 스캔.
@@ -217,8 +237,12 @@ export async function GET(req: NextRequest) {
     if (bucketFault) faults++;
   }
 
-  if (faults > 0) {
-    return NextResponse.json({ deleted, retryLater, orphanRemoved, faults }, { status: 500 });
+  if (faults > 0 || staleCapDeleted > 0) {
+    // staleCapDeleted > 0 = finalize 장애 신호(안전상한 도달) — 삭제는 수행했지만 관제를 위해 5xx
+    return NextResponse.json(
+      { deleted, retryLater, staleCapDeleted, orphanRemoved, faults },
+      { status: 500 },
+    );
   }
-  return NextResponse.json({ deleted, retryLater, orphanRemoved });
+  return NextResponse.json({ deleted, retryLater, staleCapDeleted, orphanRemoved });
 }

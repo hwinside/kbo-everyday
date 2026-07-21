@@ -323,7 +323,12 @@ async function probe() {
   }
 }
 
-// ── 직관 라이브(venue_stories) pending 영상 처리: ffprobe(≤15초·60MB) + 720p → active ──
+// ── 직관 라이브(venue_stories) 처리 — **복구 전용**(B+①, 삼순 09:44 #1) ──
+// 즉시 경로(업로드 API 인라인 ffprobe)가 정상 동작하면 pending 은 여기 오지 않는다.
+//  - pending(즉시 경로 fault 잔여): private staging 에서 다운로드 → ffprobe 재검증
+//    → 통과: 720p 인코딩 후 공개 videos 버킷 게시 + **CAS(status='pending' 조건)** 로 active 승격
+//    → 거부: CAS 로 removed. CAS 패배 = 즉시 경로가 먼저 처리(중복 claim 방지) → skip.
+//  - active+needs_transcode(이미 공개된 원본): 720p 백그라운드 최적화만(실패해도 노출 유지).
 async function processVenueStories() {
   if (!HAS_FFPROBE) {
     // ffprobe 부재 = 서버 권위 duration 검증 전면 skip → pending 영상이 방치되므로 green 으로 넘기지 않고 관제
@@ -337,10 +342,10 @@ async function processVenueStories() {
     );
     return { done: 0, removed: 0, failed: (pendingCount ?? 0) > 0 ? (pendingCount ?? 1) : 0, updateErrors: 0, ffprobeMissing: true };
   }
-  // 즉시 노출(active) 된 영상 중 720p 최적화·ffprobe 사후검증 대기(needs_transcode) + 레거시 pending 동시 처리
+  // pending(즉시 경로 fault 잔여, staging 원본) + active·needs_transcode(720p 대기) 동시 스캔
   const { data: rows, error } = await supabase
     .from("venue_stories")
-    .select("id, media_url, media_bucket, media_path, transcode_attempts")
+    .select("id, status, media_url, media_bucket, media_path, transcode_attempts")
     .eq("media_type", "video")
     .or("and(status.eq.active,needs_transcode.eq.true),status.eq.pending")
     .lt("transcode_attempts", MAX_ATTEMPTS)
@@ -349,68 +354,98 @@ async function processVenueStories() {
   if (error) throw new Error(`venue_stories 조회 실패: ${error.message}`);
   if (!rows || rows.length === 0) { console.log("직관 라이브 최적화 대기 영상 없음."); return; }
 
+  const PUBLIC_VIDEO_BUCKET = "videos";
   const work = mkdtempSync(join(tmpdir(), "kbo-venue-"));
-  let done = 0, removed = 0, failed = 0, updateErrors = 0;
+  let done = 0, removed = 0, failed = 0, updateErrors = 0, claimedElsewhere = 0;
   try {
     for (const row of rows) {
+      const isPending = row.status === "pending";
       const inPath = join(work, "in" + (basename(row.media_path).match(/\.[^.]+$/)?.[0] || ".mp4"));
       const outPath = join(work, "out.mp4");
       try {
-        const inBytes = await downloadTo(row.media_url, inPath);
+        let inBytes;
+        if (isPending) {
+          // pending 원본은 private staging — 공개 URL 이 없으므로 storage API 로 다운로드
+          const { data: blob, error: dlErr } = await supabase.storage
+            .from(row.media_bucket)
+            .download(row.media_path);
+          if (dlErr || !blob) throw new Error(`staging download 실패: ${dlErr?.message || "empty"}`);
+          const buf = Buffer.from(await blob.arrayBuffer());
+          writeFileSync(inPath, buf);
+          inBytes = buf.length;
+        } else {
+          inBytes = await downloadTo(row.media_url, inPath);
+        }
         const meta = probeVideoMeta(inPath);
         // duration/크기 서버 권위 검증 — 초과 시 노출 없이 removed(정리 cron 이 storage 제거)
         if (meta.durationMs > VENUE_MAX_DURATION_MS || inBytes > VENUE_MAX_BYTES) {
-          const { error: rmErr } = await supabase
+          let rmQuery = supabase
             .from("venue_stories")
             .update({ status: "removed", transcode_attempts: row.transcode_attempts + 1 })
             .eq("id", row.id);
+          if (isPending) rmQuery = rmQuery.eq("status", "pending"); // CAS — 즉시 경로와 중복 claim 방지
+          const { data: rmRows, error: rmErr } = await rmQuery.select("id");
           if (rmErr) { updateErrors++; throw new Error(`removed 갱신 실패: ${rmErr.message}`); } // pending 잔류 방지 — catch 에서 재시도
+          if (isPending && (rmRows ?? []).length === 0) { claimedElsewhere++; continue; }
           console.log(`  🚫 venue ${row.id} 검증실패(dur ${meta.durationMs}ms/${fmtMB(inBytes)}) → removed`);
           removed++;
           continue;
         }
         transcode(inPath, outPath);
         const outBytes = statSync(outPath).size;
+        const targetBucket = isPending ? PUBLIC_VIDEO_BUCKET : row.media_bucket;
         const newPath = venueOptimizedPath(row.media_path);
         const buf = readFileSync(outPath);
         const { error: upErr } = await supabase.storage
-          .from(row.media_bucket)
+          .from(targetBucket)
           .upload(newPath, buf, { contentType: "video/mp4", upsert: true });
         if (upErr) throw new Error(`upload 실패: ${upErr.message}`);
-        const { data: pub } = supabase.storage.from(row.media_bucket).getPublicUrl(newPath);
-        const { error: updErr } = await supabase
+        const { data: pub } = supabase.storage.from(targetBucket).getPublicUrl(newPath);
+        let updQuery = supabase
           .from("venue_stories")
           .update({
             media_url: pub.publicUrl,
+            media_bucket: targetBucket,
             media_path: newPath,
             width: meta.width,
             height: meta.height,
             duration_ms: meta.durationMs,
-            status: "active", // 이미 노출중 — 최적화본으로 교체
+            status: "active", // pending 복구 승격 또는 이미 노출중 교체
             needs_transcode: false, // 최적화 완료 → 재스캔 안 함
             transcode_attempts: row.transcode_attempts + 1,
           })
           .eq("id", row.id);
+        if (isPending) updQuery = updQuery.eq("status", "pending"); // CAS — 즉시 경로 승격과 경합 방지
+        const { data: updRows, error: updErr } = await updQuery.select("id");
         if (updErr) throw new Error(`row 갱신 실패: ${updErr.message}`);
-        // 최적화본으로 교체됐으니 원본 제거
+        if (isPending && (updRows ?? []).length === 0) {
+          // 즉시 경로가 먼저 승격(중복 claim 방지) — 우리 720p 본은 다음 active 스캔이 재사용/교체
+          claimedElsewhere++;
+          console.log(`  ⏭️  venue ${row.id} 즉시 경로가 이미 처리 — skip`);
+          continue;
+        }
+        // 교체 완료 — 원본 제거(pending 이면 staging 원본, active 면 공개 원본)
         if (row.media_path !== newPath) {
           try { await supabase.storage.from(row.media_bucket).remove([row.media_path]); } catch {}
         }
-        console.log(`  ✅ venue ${row.id} ${fmtMB(inBytes)}→${fmtMB(outBytes)} active`);
+        console.log(`  ✅ venue ${row.id} ${fmtMB(inBytes)}→${fmtMB(outBytes)} active${isPending ? "(복구승격)" : ""}`);
         done++;
       } catch (e) {
         const attempts = row.transcode_attempts + 1;
-        const status = attempts >= MAX_ATTEMPTS ? "removed" : "pending";
-        // DB 갱신 실패는 명시 로그(성공처럼 넘기지 않음) — 다음 실행이 같은 pending 재시도
-        const { error: updErr } = await supabase
+        // pending: 재시도 소진 시에만 removed. active: 노출 유지(720p 는 최적화일 뿐) — attempts 만 증가.
+        const nextStatus = isPending ? (attempts >= MAX_ATTEMPTS ? "removed" : "pending") : "active";
+        // DB 갱신 실패는 명시 로그(성공처럼 넘기지 않음) — 다음 실행이 재시도
+        let failQuery = supabase
           .from("venue_stories")
-          .update({ transcode_attempts: attempts, status })
+          .update({ transcode_attempts: attempts, status: nextStatus })
           .eq("id", row.id);
+        if (isPending) failQuery = failQuery.eq("status", "pending"); // 승격된 행을 되돌리지 않음
+        const { error: updErr } = await failQuery;
         if (updErr) {
           updateErrors++;
           console.log(`  ⚠️ venue ${row.id} 상태갱신 실패(다음 실행 재시도): ${updErr.message}`);
         }
-        console.log(`  ❌ venue ${row.id} ${status} (${attempts}/${MAX_ATTEMPTS}): ${e.message || e}`);
+        console.log(`  ❌ venue ${row.id} ${nextStatus} (${attempts}/${MAX_ATTEMPTS}): ${e.message || e}`);
         failed++;
       } finally {
         for (const f of [inPath, outPath]) { try { rmSync(f); } catch {} }
@@ -419,7 +454,7 @@ async function processVenueStories() {
   } finally {
     try { rmSync(work, { recursive: true, force: true }); } catch {}
   }
-  console.log(`직관 라이브 처리: ✅${done} 🚫${removed} ❌${failed} (상태갱신오류 ${updateErrors})`);
+  console.log(`직관 라이브 처리: ✅${done} 🚫${removed} ❌${failed} ⏭️${claimedElsewhere} (상태갱신오류 ${updateErrors})`);
   // 실패 건/상태기록 실패가 있으면 지속 pending/removed 실패 관제를 위해 비정상 종료 시그널을 올린다.
   return { done, removed, failed, updateErrors };
 }
