@@ -46,8 +46,10 @@
     "invite_abuse_check",
     "invite_refill_log",
     "likes",
+    "ios_widget_push_state",
     "live_activity_channel_subscriptions",
     "live_activity_channels",
+    "live_activity_game_push_state",
     "live_activity_start_tokens",
     "live_activity_started",
     "live_activity_started_users",
@@ -92,8 +94,6 @@
   "boundedTables": [
     "admin_alert_state",
     "channel_discovery_lock",
-    "ios_widget_push_state",
-    "live_activity_game_push_state",
     "push_dispatch_config",
     "team_rank_notify_state",
     "venue_cleanup_cursor"

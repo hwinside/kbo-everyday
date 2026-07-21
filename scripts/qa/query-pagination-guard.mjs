@@ -12,7 +12,7 @@ const WRITE_BASELINE = process.argv.includes("--write-baseline");
 const VERBOSE = process.argv.includes("--verbose") || WRITE_BASELINE;
 const SOURCE_DIRS = ["src", "scripts"];
 const MIGRATION_DIRS = ["migrations", "supabase/migrations"];
-const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".mjs", ".mts"]);
+const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".cts", ".js", ".jsx", ".cjs", ".mjs", ".mts"]);
 const SKIP_FILES = new Set(["scripts/qa/query-pagination-guard.mjs"]);
 
 const policy = JSON.parse(await readFile(POLICY_PATH, "utf8"));
@@ -87,7 +87,7 @@ function issue(kind, file, source, position, subject, chain, detail) {
 function scriptKind(file) {
   if (file.endsWith(".tsx")) return ts.ScriptKind.TSX;
   if (file.endsWith(".jsx")) return ts.ScriptKind.JSX;
-  if (file.endsWith(".js") || file.endsWith(".mjs")) return ts.ScriptKind.JS;
+  if (file.endsWith(".js") || file.endsWith(".cjs") || file.endsWith(".mjs")) return ts.ScriptKind.JS;
   return ts.ScriptKind.TS;
 }
 
@@ -156,6 +156,7 @@ function withControlContext(chain, node, sourceFile) {
   const control = controlContexts(node, sourceFile);
   return {
     ...chain,
+    baseControl: control,
     methods: chain.methods.map((method) => ({ ...method, control })),
   };
 }
@@ -169,12 +170,6 @@ function outermostChainCall(node) {
     ts.isPropertyAccessExpression(node.parent) && node.parent.expression === node &&
     ts.isCallExpression(node.parent.parent) && node.parent.parent.expression === node.parent
   );
-}
-
-function containingScope(node) {
-  let current = node.parent;
-  while (current && !ts.isFunctionLike(current) && !ts.isSourceFile(current)) current = current.parent;
-  return current;
 }
 
 function helperContext(node) {
@@ -202,21 +197,40 @@ function uniqueKeySetsFor(table) {
   return Array.isArray(configured) && configured.length > 0 ? configured : [["id"]];
 }
 
+function sameControl(left, right) {
+  return left.kind === right.kind && left.branch === right.branch && normalize(left.test) === normalize(right.test);
+}
+
+function relativeControls(method, chain) {
+  const controls = [...(method.control ?? [])];
+  const base = chain.baseControl ?? [];
+  if (base.length > controls.length) return null;
+  for (let index = 1; index <= base.length; index += 1) {
+    if (!sameControl(controls.at(-index), base.at(-index))) return null;
+  }
+  return controls.slice(0, controls.length - base.length);
+}
+
+function appliesOnEveryBuilderPath(method, chain) {
+  return relativeControls(method, chain)?.length === 0;
+}
+
 function keysetContract(chain, table, context) {
   if (!context) return false;
   const methodNames = new Set(chain.methods.map((method) => method.name));
   if (!methodNames.has("limit")) return false;
   const equalityKeys = new Set(chain.methods
-    .filter((method) => ["eq", "match"].includes(method.name))
+    .filter((method) => ["eq", "match"].includes(method.name) && appliesOnEveryBuilderPath(method, chain))
     .map((method) => literalFirstArgument(method.args)));
   const orders = chain.methods
-    .filter((method) => method.name === "order" && (method.control?.length ?? 0) === 0)
+    .filter((method) => method.name === "order" && appliesOnEveryBuilderPath(method, chain))
     .map((method) => literalFirstArgument(method.args));
   const cursorMethods = chain.methods.filter((method) =>
-    ["gt", "gte", "lt", "lte"].includes(method.name) && cursorControlIsSafe(method.control ?? [])
+    ["gt", "gte", "lt", "lte"].includes(method.name) &&
+    cursorControlIsSafe(relativeControls(method, chain) ?? [{ kind: "conditional", test: "unknown", branch: "unknown" }])
   );
   const unconditionalLimit = chain.methods.some((method) =>
-    method.name === "limit" && (method.control?.length ?? 0) === 0
+    method.name === "limit" && appliesOnEveryBuilderPath(method, chain)
   );
   if (!unconditionalLimit) return false;
   return uniqueKeySetsFor(table).some((keySet) =>
@@ -246,25 +260,26 @@ function inspectSelect(file, source, position, chain, context) {
   if (chain.methods.some((method) => ["insert", "update", "upsert", "delete"].includes(method.name))) return [];
   if (/\bhead\s*:\s*true\b/.test(select.args)) return [];
 
-  if (table !== "<dynamic>" && !relationPolicies.has(table)) {
-    return [issue("unclassified_relation", file, source, position, table, chainText(chain), "classify this relation as growing or bounded before querying it")];
-  }
-
   const annotation = annotationBefore(source, position);
   if (annotation && annotation.reason.length < 12) {
     return [issue("invalid_annotation", file, source, position, table, chainText(chain), "annotation reason must be at least 12 characters")];
   }
+  const annotatedDynamic = table === "<dynamic>" && ["bounded", "bounded-page"].includes(annotation?.kind);
+  if ((table === "<dynamic>" && !annotatedDynamic) || (table !== "<dynamic>" && !relationPolicies.has(table))) {
+    return [issue("unclassified_relation", file, source, position, table, chainText(chain), "classify this relation or add an explicit bounded annotation before querying it")];
+  }
 
-  const names = new Set(chain.methods.map((method) => method.name));
+  const safeMethods = chain.methods.filter((method) => appliesOnEveryBuilderPath(method, chain));
+  const names = new Set(safeMethods.map((method) => method.name));
   const uniqueKeySets = uniqueKeySetsFor(table);
-  const equalityKeys = new Set(chain.methods
+  const equalityKeys = new Set(safeMethods
     .filter((method) => ["eq", "match"].includes(method.name))
     .map((method) => literalFirstArgument(method.args)));
   const uniqueEquality = uniqueKeySets.some((keySet) => keySet.every((key) => equalityKeys.has(key)));
   const single = names.has("single") || names.has("maybeSingle");
   const limited = names.has("limit");
   const ranged = names.has("range");
-  const orders = chain.methods.filter((method) => method.name === "order").map((method) => literalFirstArgument(method.args));
+  const orders = safeMethods.filter((method) => method.name === "order").map((method) => literalFirstArgument(method.args));
   const stableOrder = uniqueKeySets.some((keySet) => keySet.every((key) => orders.includes(key)));
   const safeKeyset = keysetContract(chain, table, context);
   const growing = relationPolicies.get(table)?.growth === "growing";
@@ -302,10 +317,10 @@ function inspectRpc(file, source, position, chain) {
   const rpc = chain.methods.find((method) => method.name === "rpc");
   if (!rpc) return [];
   const name = literalFirstArgument(rpc.args);
-  if (!name || boundedRpcs.has(name)) return [];
   const annotation = annotationBefore(source, position);
   if (annotation?.kind === "bounded" && annotation.reason.length >= 12) return [];
-  return [issue("unbounded_rpc", file, source, position, name, chainText(chain), "RPC row cardinality must be allowlisted or annotated")];
+  if (name && boundedRpcs.has(name)) return [];
+  return [issue("unbounded_rpc", file, source, position, name ?? "<dynamic>", chainText(chain), "RPC row cardinality must be allowlisted or annotated")];
 }
 
 function inspectCollectionApi(file, source, position, chain) {
@@ -330,13 +345,17 @@ function inspectChain(file, source, position, chain, context) {
 
 function inspectFile(file, source) {
   const sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, scriptKind(file));
-  const events = new Map();
+  const events = [];
   const direct = [];
 
-  function addEvent(scope, event) {
-    const values = events.get(scope) ?? [];
-    values.push(event);
-    events.set(scope, values);
+  function lexicalScope(node) {
+    let current = node.parent;
+    while (
+      current && !ts.isBlock(current) && !ts.isSourceFile(current) && !ts.isForStatement(current) &&
+      !ts.isForInStatement(current) && !ts.isForOfStatement(current) && !ts.isCaseBlock(current) &&
+      !ts.isCatchClause(current)
+    ) current = current.parent;
+    return current;
   }
 
   function visit(node) {
@@ -344,7 +363,14 @@ function inspectFile(file, source) {
       const parsed = callChain(node.initializer, sourceFile);
       const chain = parsed ? withControlContext(parsed, node, sourceFile) : null;
       if (chain?.methods.some((method) => method.name === "from")) {
-        addEvent(containingScope(node), { type: "declare", name: node.name.text, chain, node, context: helperContext(node) });
+        events.push({
+          type: "declare",
+          name: node.name.text,
+          chain,
+          node,
+          scope: lexicalScope(node),
+          context: helperContext(node),
+        });
       }
     } else if (
       ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
@@ -353,13 +379,18 @@ function inspectFile(file, source) {
       const parsed = callChain(node.right, sourceFile);
       const chain = parsed ? withControlContext(parsed, node, sourceFile) : null;
       if (chain?.baseName === node.left.text && chain.methods.length > 0) {
-        addEvent(containingScope(node), { type: "extend", name: node.left.text, chain, node });
+        events.push({ type: "extend", name: node.left.text, chain, node });
       }
     } else if (ts.isCallExpression(node) && outermostChainCall(node)) {
       const parsed = callChain(node, sourceFile);
       const chain = parsed ? withControlContext(parsed, node, sourceFile) : null;
-      if (chain?.baseName && chain.methods.length > 0 && !chain.methods.some((method) => method.name === "from")) {
-        addEvent(containingScope(node), { type: "extend", name: chain.baseName, chain, node });
+      const assignmentParent = ts.isBinaryExpression(node.parent) &&
+        node.parent.operatorToken.kind === ts.SyntaxKind.EqualsToken && node.parent.right === node;
+      if (
+        !assignmentParent && chain?.baseName && chain.methods.length > 0 &&
+        !chain.methods.some((method) => method.name === "from")
+      ) {
+        events.push({ type: "extend", name: chain.baseName, chain, node });
       }
       if (chain?.methods.some((method) => ["from", "rpc", "listUsers", "list"].includes(method.name))) {
         const declaration = node.parent && ts.isVariableDeclaration(node.parent)
@@ -378,26 +409,36 @@ function inspectFile(file, source) {
   for (const { chain, node, context } of direct) {
     issues.push(...inspectChain(file, source, node.getStart(sourceFile), chain, context));
   }
-  for (const scopeEvents of events.values()) {
-    const builders = new Map();
-    for (const event of scopeEvents.sort((a, b) => a.node.getStart(sourceFile) - b.node.getStart(sourceFile))) {
-      if (event.type === "declare") {
-        builders.set(event.name, { chain: event.chain, node: event.node, context: event.context });
-      } else {
-        const builder = builders.get(event.name);
-        if (!builder) continue;
-        builder.chain = {
-          ...builder.chain,
-          methods: [...builder.chain.methods, ...event.chain.methods],
-          nodes: [...builder.chain.nodes, ...event.chain.nodes],
-        };
-      }
-    }
-    for (const builder of builders.values()) {
-      issues.push(...inspectChain(file, source, builder.node.getStart(sourceFile), builder.chain, builder.context));
-    }
+  const builders = events
+    .filter((event) => event.type === "declare")
+    .map((event) => ({ ...event, position: event.node.getStart(sourceFile) }));
+  for (const event of events.filter((candidate) => candidate.type === "extend")) {
+    const position = event.node.getStart(sourceFile);
+    const builder = builders
+      .filter((candidate) =>
+        candidate.name === event.name && candidate.position < position && candidate.scope &&
+        candidate.scope.getStart(sourceFile) <= position && candidate.scope.getEnd() >= event.node.getEnd()
+      )
+      .sort((left, right) =>
+        right.scope.getStart(sourceFile) - left.scope.getStart(sourceFile) || right.position - left.position
+      )[0];
+    if (!builder) continue;
+    builder.chain = {
+      ...builder.chain,
+      methods: [...builder.chain.methods, ...event.chain.methods],
+      nodes: [...builder.chain.nodes, ...event.chain.nodes],
+    };
+  }
+  for (const builder of builders) {
+    issues.push(...inspectChain(file, source, builder.node.getStart(sourceFile), builder.chain, builder.context));
   }
   return issues;
+}
+
+function createdRelations(sql) {
+  return [...sql.matchAll(
+    /create\s+(?:unlogged\s+)?table\s+(?:if\s+not\s+exists\s+)?(?:"?[A-Za-z_][\w$]*"?\s*\.\s*)?"?([A-Za-z_][\w$]*)"?/gi,
+  )].map((match) => match[1]);
 }
 
 async function migrationRelations() {
@@ -405,9 +446,7 @@ async function migrationRelations() {
   const relations = new Set();
   for (const file of files) {
     const sql = await readFile(path.join(ROOT, file), "utf8");
-    for (const match of sql.matchAll(/create\s+table\s+(?:if\s+not\s+exists\s+)?(?:(?:public|private)\s*\.\s*)?["']?([A-Za-z_][\w$]*)["']?/gi)) {
-      relations.add(match[1]);
-    }
+    for (const relation of createdRelations(sql)) relations.add(relation);
   }
   return [...relations].sort();
 }
@@ -434,6 +473,11 @@ function compareBaseline(allIssues, sourceBaseline) {
 }
 
 function runSelfTest() {
+  assert.deepEqual(
+    createdRelations('create table archive.events (id uuid); create unlogged table if not exists "ops"."jobs" (id uuid);'),
+    ["events", "jobs"],
+    "migration inventory must cover arbitrary schemas and unlogged tables",
+  );
   const cases = [
     ["unbounded growing select", 'db.from("profiles").select("id");', ["unbounded_growing_select"]],
     ["ambiguous growing limit", 'db.from("profiles").select("id").limit(20);', ["ambiguous_growing_limit"]],
@@ -444,6 +488,7 @@ function runSelfTest() {
     ["unreviewed stable range", 'db.from("posts").select("id").order("id").range(0, 99);', ["partial_page_risk"]],
     ["bounded stable page", '// query-guard: bounded-page -- feed returns one stable UI page only\ndb.from("posts").select("id").order("id").range(0, 99);', []],
     ["unknown rpc", 'db.rpc("returns_many_rows");', ["unbounded_rpc"]],
+    ["dynamic rpc", 'db.rpc(rpcName);', ["unbounded_rpc"]],
     ["factory rpc", 'getSupabaseAdmin().rpc("returns_many_rows");', ["unbounded_rpc"]],
     ["factory from", 'getSupabaseAdmin().from("profiles").select("id");', ["unbounded_growing_select"]],
     ["allowlisted rpc", 'db.rpc("increment_post_view");', []],
@@ -454,7 +499,15 @@ function runSelfTest() {
     ["unclassified growing relation", 'db.from("new_growth_table").select("id").limit(1000);', ["unclassified_relation"]],
     ["growing game event state", 'db.from("game_event_state").select("game_id").limit(1000);', ["ambiguous_growing_limit"]],
     ["growing game notify state", 'db.from("game_notify_state").select("game_id").limit(1000);', ["ambiguous_growing_limit"]],
+    ["growing ios widget state", 'db.from("ios_widget_push_state").select("game_id").limit(1000);', ["ambiguous_growing_limit"]],
+    ["growing live activity game state", 'db.from("live_activity_game_push_state").select("game_id").limit(1000);', ["ambiguous_growing_limit"]],
     ["split builder", 'const q = db.from("profiles");\nq.select("id");', ["unbounded_growing_select"]],
+    ["same name separate blocks", '{ const query = db.from("profiles").select("id"); }\n{ const query = db.from("profiles").select("id").eq("id", "one-user"); }', ["unbounded_growing_select"]],
+    ["conditional unique", 'let query = db.from("profiles").select("id");\nif (userId) query = query.eq("id", userId);', ["unbounded_growing_select"]],
+    ["conditional single", 'let query = db.from("profiles").select("id");\nif (userId) query.single();', ["unbounded_growing_select"]],
+    ["conditional order", 'let query = db.from("posts").select("id").range(0, 99);\nif (userId) query = query.order("id");', ["non_unique_pagination"]],
+    ["dynamic relation limit", 'db.from(table).select("id").limit(1000);', ["unclassified_relation"]],
+    ["annotated dynamic relation", '// query-guard: bounded -- caller restricts this to the audited leaderboard views\ndb.from(table).select("id").limit(1000);', []],
     [
       "dead branch keyset",
       'fetchAllByKeyset(async (cursor, limit) => {\n// query-guard: full-scan -- dead branch must not prove the keyset contract\nlet q = db.from("profiles").select("id");\nif (false) { q = q.order("id").gt("id", cursor).limit(limit); }\nreturn q;\n});',
@@ -468,6 +521,14 @@ function runSelfTest() {
   ];
   for (const [name, source, expected] of cases) {
     assert.deepEqual(inspectFile(`fixture/${name}.ts`, source).map((item) => item.kind), expected, name);
+  }
+  for (const extension of [".cjs", ".cts", ".jsx"]) {
+    assert.equal(SOURCE_EXTENSIONS.has(extension), true, `${extension} must be scanned`);
+    assert.deepEqual(
+      inspectFile(`fixture/unbounded${extension}`, 'db.from("profiles").select("id");').map((item) => item.kind),
+      ["unbounded_growing_select"],
+      `${extension} parser fixture`,
+    );
   }
 
   const oldFinding = { kind: "x", file: "x", subject: "x", chain: "x", fingerprint: "old" };

@@ -12,6 +12,8 @@ and a resolved finding fail until the reviewed baseline is regenerated, so a rem
 finding cannot be reintroduced under an old count. `query-pagination-policy.json`
 also classifies every migration relation as growing or bounded; an unclassified new
 table fails before baseline comparison. Composite unique keys are listed as key sets.
+Dynamic relations fail closed unless a reasoned bounded annotation names the caller's
+audited relation set. The scanner covers TS/JS module variants, including CTS/CJS/JSX.
 
 ```ts
 // query-guard: bounded -- one user's rows behind an authenticated user id
