@@ -18,7 +18,9 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const allGames = await getSeasonGames(season);
+    // 정규시즌(srId=0)만 집계 — 시범경기(SR=1)·올스타(SR=9)·포스트시즌이 섞이면
+    // 상대전적 합계가 공식 순위표와 어긋난다 (2026-07-21 CS: 롯데 47승49패 오표시)
+    const allGames = await getSeasonGames(season, "0");
 
     // Only final games involving this team
     const teamGames = allGames.filter(
