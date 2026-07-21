@@ -59,7 +59,8 @@
     "qa:backfill-roster-parse": "tsx scripts/qa/backfill-roster-parse-smoke.ts",
     "qa:report-blind": "tsx scripts/qa/report-blind-smoke.ts",
     "qa:report-blind:db": "tsx scripts/qa/report-blind-db-integration.mjs",
-    "qa:roster-moves:db": "node scripts/qa/roster-moves-db-integration.mjs"
+    "qa:roster-moves:db": "node scripts/qa/roster-moves-db-integration.mjs",
+    "qa:player-search-backfill": "node scripts/qa/player-search-backfill-smoke.mjs"
   },
   "dependencies": {
     "@capacitor-firebase/messaging": "^8.3.0",
