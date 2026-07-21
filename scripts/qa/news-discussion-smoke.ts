@@ -96,4 +96,32 @@ test("visible count SQL excludes blinded comments", () => {
   assert.match(migration, /REVOKE EXECUTE ON FUNCTION news_discussion_visible_counts\(text\[\]\)/);
 });
 
+test("discussion UI and APIs stay admin-only during production QA", () => {
+  const button = readFileSync(
+    new URL("../../src/components/news/NewsCommentButton.tsx", import.meta.url),
+    "utf8",
+  );
+  const ensureRoute = readFileSync(
+    new URL("../../src/app/api/news/discussion/route.ts", import.meta.url),
+    "utf8",
+  );
+  const countsRoute = readFileSync(
+    new URL("../../src/app/api/news/discussion/counts/route.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(button, /<AdminOnly>/);
+  assert.match(ensureRoute, /isNewsDiscussionAdmin/);
+  assert.match(countsRoute, /isNewsDiscussionAdmin/);
+});
+
+test("carousel article opener is not on the comment sheet React ancestor", () => {
+  const carousel = readFileSync(
+    new URL("../../src/components/news/NewsCarousel.tsx", import.meta.url),
+    "utf8",
+  );
+  const slide = carousel.slice(carousel.indexOf('role="group"'), carousel.indexOf("{/* ── 다크"));
+  assert.doesNotMatch(slide, /onClick/);
+  assert.match(carousel, /if \(!isAdmin\) return/);
+});
+
 console.log(`news discussion smoke: ${passed} passed`);

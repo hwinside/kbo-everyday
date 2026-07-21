@@ -7,6 +7,7 @@ import { readableTextColor } from "@/lib/utils/team";
 import type { NewsMock } from "@/lib/constants/news";
 import { openExternalUrl } from "@/lib/open-external";
 import NewsCommentButton from "@/components/news/NewsCommentButton";
+import { useIsAdmin } from "@/hooks/useIsAdmin";
 
 interface NewsCarouselProps {
   news: NewsMock[];
@@ -15,6 +16,7 @@ interface NewsCarouselProps {
 const AUTO_INTERVAL = 4000;
 
 export default function NewsCarousel({ news }: NewsCarouselProps) {
+  const isAdmin = useIsAdmin();
   const [current, setCurrent] = useState(0);
   const [isUserPaused, setIsUserPaused] = useState(false);
   // 썸네일 로드 실패 id 집합 — 실패하면 썸네일 없이 현행 레이아웃으로 폴백.
@@ -30,6 +32,7 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
 
   // 홈 카드 댓글 수는 최대 10건을 한 번에 조회한다. 조회만으로 빈 댓글방을 만들지 않는다.
   useEffect(() => {
+    if (!isAdmin) return;
     const articles = news.slice(0, 10)
       .filter((item) => item.sourceUrl && item.sourceUrl !== "#")
       .map((item) => ({
@@ -51,7 +54,7 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
       })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [news]);
+  }, [isAdmin, news]);
 
   // 슬라이드별 og:image를 캐시된 /api/og-meta로 비동기 조회(텍스트 렌더 비차단).
   useEffect(() => {
@@ -167,18 +170,18 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
             return (
               <div
                 key={item.id}
-                className="relative w-full flex-shrink-0 cursor-pointer"
+                className="relative w-full flex-shrink-0"
                 role="group"
                 aria-roledescription="slide"
                 aria-label={`${i + 1} / ${len}`}
-                onClick={() =>
-                  item.sourceUrl && openExternalUrl(item.sourceUrl)
-                }
               >
                 {/* ── 다크: 기존 히어로(팀컬러→#1a1a1d, 흰 글씨) 그대로 ── */}
-                <div
-                  className="relative hidden h-[172px] w-full overflow-hidden dark:block"
+                <button
+                  type="button"
+                  aria-label={`${item.title} 원문 보기`}
+                  className="relative hidden h-[172px] w-full cursor-pointer overflow-hidden text-left dark:block"
                   style={{ background: bgDark }}
+                  onClick={() => item.sourceUrl && openExternalUrl(item.sourceUrl)}
                 >
                   {team && (
                     <div className="absolute right-4 top-4 opacity-20">
@@ -220,13 +223,16 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
                       {item.source} · {item.timeAgo}
                     </p>
                   </div>
-                </div>
+                </button>
 
                 {/* ── 라이트: 옅은 팀틴트 카드(진한 글씨·팀색 포인트, 인셋+라운드) ── */}
                 <div className="px-4 dark:hidden">
-                  <div
-                    className="relative h-[172px] w-full overflow-hidden rounded-2xl border border-black/[0.06] shadow-sm"
+                  <button
+                    type="button"
+                    aria-label={`${item.title} 원문 보기`}
+                    className="relative h-[172px] w-full cursor-pointer overflow-hidden rounded-2xl border border-black/[0.06] text-left shadow-sm"
                     style={{ background: bgLightCard, borderTopWidth: 3, borderTopColor: accent }}
+                    onClick={() => item.sourceUrl && openExternalUrl(item.sourceUrl)}
                   >
                     {team && (
                       <div className="absolute right-3 top-3 flex h-7 w-7 items-center justify-center rounded-lg bg-white shadow-sm ring-1 ring-black/[0.04]">
@@ -270,25 +276,27 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
                         {item.source} · {item.timeAgo}
                       </p>
                     </div>
-                  </div>
+                  </button>
                 </div>
-                <NewsCommentButton
-                  article={{
-                    url: item.sourceUrl,
-                    canonicalUrl: item.ogUrl || item.sourceUrl,
-                    title: item.title,
-                    source: item.source,
-                    thumbnailUrl: thumbUrl,
-                    teamId: item.teamId,
-                  }}
-                  initialCount={commentCounts[String(item.id)] ?? 0}
-                  showCount
-                  onCountChange={(next) => setCommentCounts((previous) => ({
-                    ...previous,
-                    [String(item.id)]: next,
-                  }))}
-                  className="absolute bottom-2 right-5 z-20 bg-black/10 text-neutral-600 hover:bg-black/20 dark:bg-white/25 dark:text-white dark:hover:bg-white/40 backdrop-blur-sm"
-                />
+                {isAdmin && (
+                  <NewsCommentButton
+                    article={{
+                      url: item.sourceUrl,
+                      canonicalUrl: item.ogUrl || item.sourceUrl,
+                      title: item.title,
+                      source: item.source,
+                      thumbnailUrl: thumbUrl,
+                      teamId: item.teamId,
+                    }}
+                    initialCount={commentCounts[String(item.id)] ?? 0}
+                    showCount
+                    onCountChange={(next) => setCommentCounts((previous) => ({
+                      ...previous,
+                      [String(item.id)]: next,
+                    }))}
+                    className="absolute bottom-2 right-5 z-20 bg-black/10 text-neutral-600 hover:bg-black/20 dark:bg-white/25 dark:text-white dark:hover:bg-white/40 backdrop-blur-sm"
+                  />
+                )}
               </div>
             );
           })}

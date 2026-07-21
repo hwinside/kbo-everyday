@@ -6,8 +6,12 @@ import {
   parseCountLookups,
 } from "@/lib/news/discussion";
 import { allowNewsDiscussionRequest } from "@/lib/news/discussion-rate-limit";
+import { isNewsDiscussionAdmin } from "@/lib/news/discussion-admin";
 
 export async function POST(req: NextRequest) {
+  if (!(await isNewsDiscussionAdmin())) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
     return NextResponse.json({ error: "discussion service unavailable" }, { status: 503 });
   }
