@@ -410,18 +410,23 @@ async function processVenueStories() {
             width: meta.width,
             height: meta.height,
             duration_ms: meta.durationMs,
-            status: "active", // pending 복구 승격 또는 이미 노출중 교체
-            needs_transcode: false, // 최적화 완료 → 재스캔 안 함
+            // active 경로는 status 재기록 금지 — 처리 중 신고/어드민이 removed로 내린 상태 보존
+            // (불변식: worker 최적화 update는 removed 영상을 절대 되살리지 않는다)
+            ...(isPending ? { status: "active" } : {}),
+            needs_transcode: false,
             transcode_attempts: row.transcode_attempts + 1,
           })
-          .eq("id", row.id);
-        if (isPending) updQuery = updQuery.eq("status", "pending"); // CAS — 즉시 경로 승격과 경합 방지
+          .eq("id", row.id)
+          .eq("needs_transcode", true); // CAS: 이미 완료됐거나 재처리 불필요 행 방지
+        // CAS: 기대 status 일치 시만 갱신(active 경로는 removed 보존, pending 경로는 즉시경로 경합 방지)
+        if (isPending) updQuery = updQuery.eq("status", "pending");
+        else updQuery = updQuery.eq("status", "active");
         const { data: updRows, error: updErr } = await updQuery.select("id");
         if (updErr) throw new Error(`row 갱신 실패: ${updErr.message}`);
-        if (isPending && (updRows ?? []).length === 0) {
-          // 즉시 경로가 먼저 승격(중복 claim 방지) — 우리 720p 본은 다음 active 스캔이 재사용/교체
+        if ((updRows ?? []).length === 0) {
+          // 0-row: status 변경됨(신고/어드민 내림 등) 또는 이미 처리 완료 → resurrect 금지
           claimedElsewhere++;
-          console.log(`  ⏭️  venue ${row.id} 즉시 경로가 이미 처리 — skip`);
+          console.log(`  ⏭️  venue ${row.id} 상태 변경됨(skip) — ${isPending ? "즉시경로 선점" : "관리자 내림 등"}`);
           continue;
         }
         // 교체 완료 — 원본 제거(pending 이면 staging 원본, active 면 공개 원본)

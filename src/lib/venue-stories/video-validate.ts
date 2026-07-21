@@ -102,7 +102,6 @@ export interface ValidateDeps {
 export async function validateAndPromoteVideo(
   deps: ValidateDeps,
   row: PendingVideoRow,
-  publicBucket: string,
 ): Promise<ValidateOutcome> {
   const dl = await deps.download(row.media_bucket, row.media_path);
   if (dl == null) return { outcome: "fault", step: "download" };
@@ -123,8 +122,8 @@ export async function validateAndPromoteVideo(
     const promoted = await deps.promoteRow(row.id, verdict.meta);
     if (promoted === "fault") return { outcome: "fault", step: "promote" };
     if (promoted === false) {
-      // 복구 워커가 먼저 claim — 우리가 게시한 사본은 잔여물이므로 정리(베스트에포트)
-      await deps.removeObject(publicBucket, row.media_path);
+      // CAS 패배 — winner가 동일 key(row.media_path)로 공개 버킷에 이미 게시했으므로 삭제 금지
+      // 불변식: status=active → publicExists=true 유지. loser의 publish는 upsert라 동일 객체.
       return { outcome: "already_claimed" };
     }
     await deps.removeObject(row.media_bucket, row.media_path); // staging 원본 제거(베스트에포트)

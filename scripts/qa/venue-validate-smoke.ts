@@ -93,7 +93,7 @@ const okMeta: FfprobeMeta = { durationMs: 12000, width: 720, height: 1280, hasVi
   console.log("[(1) pending → ffprobe 통과 즉시 공개 — 승격 순서 불변식]");
   {
     const { deps, log } = makeDeps({ probe: okMeta });
-    const r = await validateAndPromoteVideo(deps, ROW, "videos");
+    const r = await validateAndPromoteVideo(deps, ROW);
     ok("통과 → promoted", r.outcome === "promoted");
     const pubIdx = log.calls.findIndex((c) => c.startsWith("publish"));
     const promIdx = log.calls.findIndex((c) => c.startsWith("promote"));
@@ -102,56 +102,57 @@ const okMeta: FfprobeMeta = { durationMs: 12000, width: 720, height: 1280, hasVi
   }
   {
     const { deps, log } = makeDeps({ probe: { ...okMeta, durationMs: 20000 } });
-    const r = await validateAndPromoteVideo(deps, ROW, "videos");
+    const r = await validateAndPromoteVideo(deps, ROW);
     ok("거부 시 publish/promote 미호출(비노출 유지)", r.outcome === "rejected" && !log.calls.some((c) => c.startsWith("publish") || c.startsWith("promote")));
   }
 
   console.log("[(2) 초과/fault 계약]");
   {
     const { deps, log } = makeDeps({ probe: { ...okMeta, durationMs: 16001 } });
-    const r = await validateAndPromoteVideo(deps, ROW, "videos");
+    const r = await validateAndPromoteVideo(deps, ROW);
     ok("16.001s → rejected(duration_exceeded) + reject CAS", r.outcome === "rejected" && r.outcome === "rejected" && r.reason === "duration_exceeded" && log.calls.includes("reject:7"));
     ok("거부 후 staging 정리", log.calls.some((c) => c.startsWith("remove:venue-staging")));
   }
   {
     const { deps, log } = makeDeps({ probe: null });
-    const r = await validateAndPromoteVideo(deps, ROW, "videos");
+    const r = await validateAndPromoteVideo(deps, ROW);
     ok("구조 불량 → rejected(bad_structure)", r.outcome === "rejected" && r.reason === "bad_structure");
     ok("구조 불량도 노출 없음", !log.calls.some((c) => c.startsWith("publish")));
   }
   {
     const { deps, log } = makeDeps({ probe: "fault" });
-    const r = await validateAndPromoteVideo(deps, ROW, "videos");
+    const r = await validateAndPromoteVideo(deps, ROW);
     ok("ffprobe 실행 불가 → fault(검증 약화 금지, pending 유지)", r.outcome === "fault");
     ok("fault 시 reject/promote 미호출(removed 로 오판 금지)", !log.calls.some((c) => c.startsWith("reject") || c.startsWith("promote")));
   }
   {
     const { deps } = makeDeps({ probe: okMeta, downloadOk: false });
-    const r = await validateAndPromoteVideo(deps, ROW, "videos");
+    const r = await validateAndPromoteVideo(deps, ROW);
     ok("다운로드 fault → fault(pending 유지 → 복구 워커)", r.outcome === "fault");
   }
   {
     const { deps } = makeDeps({ probe: okMeta, publishOk: false });
-    const r = await validateAndPromoteVideo(deps, ROW, "videos");
+    const r = await validateAndPromoteVideo(deps, ROW);
     ok("공개 게시 fault → fault(절대 active 승격 없음)", r.outcome === "fault");
   }
 
   console.log("[(3) 즉시 + 30분 recovery 중복 claim 방지(CAS)]");
   {
     const { deps, log } = makeDeps({ probe: okMeta, promoteResult: false });
-    const r = await validateAndPromoteVideo(deps, ROW, "videos");
+    const r = await validateAndPromoteVideo(deps, ROW);
     ok("promote CAS 패배 → already_claimed(중복 승격 없음)", r.outcome === "already_claimed");
-    ok("CAS 패배 시 게시 사본 정리", log.calls.includes("remove:videos:venue-stories/G/u/1.mp4"));
+    ok("CAS 패배 시 공개 객체 생존(삭제 금지, 불변식: status=active→publicExists=true)", !log.calls.includes("remove:videos:venue-stories/G/u/1.mp4"));
     ok("CAS 패배 시 staging 원본은 승자에게 위임(미삭제)", !log.calls.includes("remove:venue-staging:venue-stories/G/u/1.mp4"));
   }
   {
     const { deps } = makeDeps({ probe: { ...okMeta, durationMs: 99999 }, rejectResult: false });
-    const r = await validateAndPromoteVideo(deps, ROW, "videos");
+    const r = await validateAndPromoteVideo(deps, ROW);
     ok("reject CAS 패배 → already_claimed", r.outcome === "already_claimed");
   }
   {
     // 동시 2회 검증 시뮬레이션: 공유 상태에서 첫 CAS 만 성공
     let status = "pending";
+    const publicRemovals: string[] = [];
     const casPromote = async () => {
       if (status !== "pending") return false;
       status = "active";
@@ -160,14 +161,56 @@ const okMeta: FfprobeMeta = { durationMs: 12000, width: 720, height: 1280, hasVi
     const mk = () => {
       const { deps } = makeDeps({ probe: okMeta });
       deps.promoteRow = casPromote;
+      // publicBucket("videos") removeObject 호출을 추적 — loser가 삭제하면 안 됨
+      deps.removeObject = async (b, p) => {
+        if (b === "videos") publicRemovals.push(p);
+      };
       return deps;
     };
     const [a, b] = await Promise.all([
-      validateAndPromoteVideo(mk(), ROW, "videos"),
-      validateAndPromoteVideo(mk(), ROW, "videos"),
+      validateAndPromoteVideo(mk(), ROW),
+      validateAndPromoteVideo(mk(), ROW),
     ]);
     const outcomes = [a.outcome, b.outcome].sort();
     ok("동시 검증 2회 → promoted 1 + already_claimed 1", outcomes[0] === "already_claimed" && outcomes[1] === "promoted" && status === "active");
+    ok("동시성 공개 객체 최종 생존 — loser가 publicBucket 삭제 안 함(불변식)", publicRemovals.length === 0);
+  }
+
+  // ── P0 #2 transcode worker resurrect 방지 CAS 불변식 ──
+  // transcode-videos.mjs update 조건 모사:
+  //   .eq("status", expectedStatus).eq("needs_transcode", true)
+  //   active 경로는 status를 payload에 포함하지 않음 → removed 상태 보존
+  function simulateTranscodeCas(opts: {
+    rowStatus: string;
+    rowNeedsTranscode: boolean;
+    isPending: boolean;
+  }): { rowsAffected: number; statusInPayload: boolean } {
+    const expectedStatus = opts.isPending ? "pending" : "active";
+    const rowsAffected = (opts.rowStatus === expectedStatus && opts.rowNeedsTranscode) ? 1 : 0;
+    return { rowsAffected, statusInPayload: opts.isPending };
+  }
+
+  console.log("[P0 #2 transcode worker resurrect 방지 CAS 불변식]");
+  {
+    const r = simulateTranscodeCas({ rowStatus: "removed", rowNeedsTranscode: true, isPending: false });
+    ok("active 경로 — removed 행 → 0-row(resurrect 금지)", r.rowsAffected === 0);
+    ok("active 경로 — status 페이로드 미포함(재기록 금지)", r.statusInPayload === false);
+  }
+  {
+    const r = simulateTranscodeCas({ rowStatus: "active", rowNeedsTranscode: false, isPending: false });
+    ok("active 경로 — needs_transcode=false 이미 완료 → 0-row(중복 방지)", r.rowsAffected === 0);
+  }
+  {
+    const r = simulateTranscodeCas({ rowStatus: "active", rowNeedsTranscode: true, isPending: false });
+    ok("active 경로 — active+needs_transcode=true → 1-row(정상 교체)", r.rowsAffected === 1);
+  }
+  {
+    const r = simulateTranscodeCas({ rowStatus: "removed", rowNeedsTranscode: true, isPending: true });
+    ok("pending 경로 — removed 행 → 0-row(resurrect 금지)", r.rowsAffected === 0);
+  }
+  {
+    const r = simulateTranscodeCas({ rowStatus: "pending", rowNeedsTranscode: true, isPending: true });
+    ok("pending 경로 — 정상 복구 → 1-row + status:active 페이로드", r.rowsAffected === 1 && r.statusInPayload === true);
   }
 
   console.log(`\n결과: ${pass} pass / ${fail} fail`);

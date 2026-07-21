@@ -155,7 +155,7 @@ function realDeps(): ValidateDeps {
 
 /** pending 영상 행 1건 즉시 검증(업로드 요청 내 인라인 + 복구 경로 공용). */
 export async function validateVenueVideoRow(row: PendingVideoRow): Promise<ValidateOutcome> {
-  return validateAndPromoteVideo(realDeps(), row, VENUE_STORY_PUBLIC_VIDEO_BUCKET);
+  return validateAndPromoteVideo(realDeps(), row);
 }
 
 /**
