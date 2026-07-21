@@ -19,3 +19,11 @@ export function isAdminEmail(email?: string | null): boolean {
   if (!email) return false;
   return ADMIN_EMAILS.includes(email.trim().toLowerCase());
 }
+
+/**
+ * 직관 라이브 WIP 실환경 QA용 GPS 우회 여부.
+ * 서버에서는 반드시 검증된 유저 이메일로만 호출한다. 일반 관리자 인가를 대체하지 않는다.
+ */
+export function canBypassVenueGeofenceForQa(email?: string | null): boolean {
+  return isAdminEmail(email);
+}

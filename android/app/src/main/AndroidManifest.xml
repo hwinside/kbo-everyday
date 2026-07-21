@@ -171,4 +171,7 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Android 16+ Live Update(Promoted Ongoing) 게시 — 없으면 setRequestPromotedOngoing이 무시됨. -->
     <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
+    <!-- 직관 라이브: 구장 현장 인증(지오펜스)을 위해 업로드 시 위치 사용 -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
 </manifest>
