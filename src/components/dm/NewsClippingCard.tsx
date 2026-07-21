@@ -1,6 +1,7 @@
 "use client";
 
 import type { NewsClippingPayload } from "@/types/news-clipping";
+import { openExternalUrl } from "@/lib/open-external";
 
 // 뉴스클리핑 쪽지 카드 — 뉴스카드와 동일한 구성(OG 사진+제목, 탭하면 원문)
 // 아래에 LLM 3줄 요약. 쪽지 말풍선 자리에 렌더된다.
@@ -36,7 +37,7 @@ export default function NewsClippingCard({ payload }: { payload: NewsClippingPay
           <div key={article.link} className="rounded-xl bg-bg-secondary border border-border overflow-hidden">
             <button
               type="button"
-              onClick={() => window.open(article.link, "_blank")}
+              onClick={() => openExternalUrl(article.link)}
               className="block w-full text-left"
             >
               {article.thumbnail_url && (

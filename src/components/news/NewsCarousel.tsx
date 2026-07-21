@@ -5,6 +5,7 @@ import Image from "next/image";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import { readableTextColor } from "@/lib/utils/team";
 import type { NewsMock } from "@/lib/constants/news";
+import { openExternalUrl } from "@/lib/open-external";
 
 interface NewsCarouselProps {
   news: NewsMock[];
@@ -144,7 +145,7 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
                 aria-roledescription="slide"
                 aria-label={`${i + 1} / ${len}`}
                 onClick={() =>
-                  item.sourceUrl && window.open(item.sourceUrl, "_blank")
+                  item.sourceUrl && openExternalUrl(item.sourceUrl)
                 }
               >
                 {/* ── 다크: 기존 히어로(팀컬러→#1a1a1d, 흰 글씨) 그대로 ── */}
