@@ -34,6 +34,9 @@ export interface PlayerPerformanceLine {
   state: "rated" | "sample_limited";
   evaluation: PerformanceEvaluation | null;
   priorAppearances: number;
+  metricLabel: "타율" | "ERA";
+  todayMetric: number | null;
+  averageMetric: number | null;
   today: {
     ab?: number;
     h?: number;
@@ -61,10 +64,9 @@ export interface FavoritePlayerPerformance {
   lines: PlayerPerformanceLine[];
 }
 
-function evaluateDelta(delta: number, baseline: number): PerformanceEvaluation {
-  const similarBand = Math.max(0.5, Math.abs(baseline) * 0.15);
-  if (delta > similarBand) return "above";
-  if (delta < -similarBand) return "below";
+function evaluateDelta(delta: number): PerformanceEvaluation {
+  if (delta > 0.0005) return "above";
+  if (delta < -0.0005) return "below";
   return "similar";
 }
 
@@ -76,6 +78,17 @@ function didPlay(row: PlayerGameLog): boolean {
 
 function average(rows: PlayerGameLog[], field: keyof PlayerGameLog): number {
   return rows.reduce((sum, row) => sum + Number(row[field] ?? 0), 0) / rows.length;
+}
+
+function rate(rows: PlayerGameLog[], type: "batter" | "pitcher"): number | null {
+  if (type === "pitcher") {
+    const outs = rows.reduce((sum, row) => sum + row.ip_outs, 0);
+    const earnedRuns = rows.reduce((sum, row) => sum + row.er, 0);
+    return outs > 0 ? (earnedRuns * 27) / outs : null;
+  }
+  const atBats = rows.reduce((sum, row) => sum + row.ab, 0);
+  const hits = rows.reduce((sum, row) => sum + row.h, 0);
+  return atBats > 0 ? hits / atBats : null;
 }
 
 function buildLine(
@@ -94,18 +107,20 @@ function buildLine(
           rbi: average(prior, "rbi"),
         }
       : null;
-    const todayImpact = current.h + current.hr * 2 + current.rbi * 0.5;
-    const averageImpact = priorAverage
-      ? priorAverage.h + priorAverage.hr * 2 + priorAverage.rbi * 0.5
-      : 0;
+    const todayMetric = rate([current], "batter");
+    const averageMetric = rate(prior, "batter");
 
     return {
       type: "batter",
       state: enoughSample ? "rated" : "sample_limited",
-      evaluation: priorAverage
-        ? evaluateDelta(todayImpact - averageImpact, averageImpact)
-        : null,
+      evaluation:
+        priorAverage && todayMetric != null && averageMetric != null
+          ? evaluateDelta(todayMetric - averageMetric)
+          : null,
       priorAppearances: prior.length,
+      metricLabel: "타율",
+      todayMetric,
+      averageMetric,
       today,
       average: priorAverage,
     };
@@ -118,19 +133,21 @@ function buildLine(
         er: average(prior, "er"),
         strikeouts: average(prior, "k"),
       }
-    : null;
-  const todayImpact = current.ip_outs / 3 + current.k * 0.75 - current.er * 1.5;
-  const averageImpact = priorAverage
-    ? priorAverage.innings + priorAverage.strikeouts * 0.75 - priorAverage.er * 1.5
-    : 0;
+      : null;
+  const todayMetric = rate([current], "pitcher");
+  const averageMetric = rate(prior, "pitcher");
 
   return {
     type: "pitcher",
     state: enoughSample ? "rated" : "sample_limited",
-    evaluation: priorAverage
-      ? evaluateDelta(todayImpact - averageImpact, averageImpact)
-      : null,
+    evaluation:
+      priorAverage && todayMetric != null && averageMetric != null
+        ? evaluateDelta(averageMetric - todayMetric)
+        : null,
     priorAppearances: prior.length,
+    metricLabel: "ERA",
+    todayMetric,
+    averageMetric,
     today,
     average: priorAverage,
   };
@@ -171,12 +188,14 @@ export function buildFavoritePlayerPerformances(params: {
     }
 
     const lines = currentRows.map((current) => {
+      const targetDate = game.date.replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3");
       const prior = logs.filter(
         (log) =>
           log.kbo_id === favorite.playerId &&
           log.player_type === current.player_type &&
           didPlay(log) &&
-          log.game_date < game.date.replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3"),
+          (log.game_date < targetDate ||
+            (log.game_date === targetDate && log.game_id < game.gameId)),
       );
       return buildLine(current, prior);
     });

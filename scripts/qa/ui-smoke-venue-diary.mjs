@@ -82,6 +82,9 @@ const diaryFixture = {
           state: "rated",
           evaluation: "above",
           priorAppearances: 3,
+          metricLabel: "타율",
+          todayMetric: 0.5,
+          averageMetric: 0.27,
           today: { ab: 4, h: 2, hr: 1, rbi: 3 },
           average: { ab: 3.7, h: 1, hr: 0.2, rbi: 0.8 },
         }],
@@ -133,6 +136,8 @@ async function main() {
   await page.locator("button").filter({ hasText: "LG vs 롯데" }).first().click();
   await page.getByText("내 최애선수 오늘 활약", { exact: true }).waitFor();
   if (!(await page.getByText("평균 이상", { exact: true }).isVisible())) throw new Error("comparison missing");
+  if (!(await page.getByText("경기 타율 .500 · 경기 전 시즌 .270", { exact: true }).isVisible())) throw new Error("official metric comparison missing");
+  if (!(await page.getByText("경기 전 평균 · 3.7타수 1.0안타 0.2홈런 0.8타점", { exact: true }).isVisible())) throw new Error("per-game average missing");
   await page.screenshot({ path: resolve(SHOT_DIR, "venue-diary-my.png"), fullPage: true });
 
   await page.goto(`${BASE_URL}/profile/${userId}`, { waitUntil: "networkidle" });

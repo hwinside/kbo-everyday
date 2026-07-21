@@ -101,4 +101,14 @@ const attendanceTable = migration.match(/CREATE TABLE IF NOT EXISTS venue_attend
 assert.ok(attendanceTable, "venue_attendance table contract");
 assert.doesNotMatch(attendanceTable, /media_url|thumb_url|caption/, "스토리 콘텐츠 영구 복제 금지");
 
-console.log("venue-attendance smoke: PASS (result 8 + persistence contract 5)");
+const diaryRoute = readFileSync(
+  resolve(process.cwd(), "src/app/api/me/venue-attendance/route.ts"),
+  "utf8",
+);
+assert.match(
+  diaryRoute,
+  /if \(profileResult\.error\) \{[\s\S]*?status: 500/,
+  "프로필 DB 오류를 최애선수 없음으로 오인하지 않고 5xx 처리",
+);
+
+console.log("venue-attendance smoke: PASS (result 8 + persistence/API contract 6)");

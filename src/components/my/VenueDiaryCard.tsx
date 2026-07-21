@@ -77,6 +77,10 @@ function averagePerformanceText(line: PlayerPerformanceLine): string | null {
   return `${line.average.innings?.toFixed(1)}이닝 ${line.average.er?.toFixed(1)}자책 ${line.average.strikeouts?.toFixed(1)}K`;
 }
 
+function metricText(line: PlayerPerformanceLine, value: number): string {
+  return line.type === "batter" ? value.toFixed(3).replace(/^0\./, ".") : value.toFixed(2);
+}
+
 export default function VenueDiaryCard() {
   const { user } = useAuth();
   const [loaded, setLoaded] = useState<{ userId: string; data: VenueDiaryResponse } | null>(null);
@@ -239,6 +243,11 @@ export default function VenueDiaryCard() {
                                 )}
                               </div>
                               <p className="mt-1 text-xs text-text-secondary">오늘 · {performanceText(line)}</p>
+                              {line.todayMetric != null && line.averageMetric != null && (
+                                <p className="mt-0.5 text-[11px] text-text-tertiary">
+                                  경기 {line.metricLabel} {metricText(line, line.todayMetric)} · 경기 전 시즌 {metricText(line, line.averageMetric)}
+                                </p>
+                              )}
                               {averagePerformanceText(line) && (
                                 <p className="mt-0.5 text-[11px] text-text-tertiary">
                                   경기 전 평균 · {averagePerformanceText(line)}

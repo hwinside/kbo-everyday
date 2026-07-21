@@ -127,6 +127,9 @@ export async function GET(req: NextRequest) {
   if (attendanceResult.error) {
     return NextResponse.json({ error: "직관 기록 조회 실패" }, { status: 500 });
   }
+  if (profileResult.error) {
+    return NextResponse.json({ error: "최애선수 조회 실패" }, { status: 500 });
+  }
 
   const rows = (attendanceResult.data ?? []) as VenueAttendanceRow[];
   const favorites = normalizeFavorites(profileResult.data?.favorite_players);
