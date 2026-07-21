@@ -23,6 +23,10 @@
   "crons": [
 
     {
+      "path": "/api/cron/admin-broadcast",
+      "schedule": "* * * * *"
+    },
+    {
       "path": "/api/cron/report-blind-notify",
       "schedule": "*/5 * * * *"
     },

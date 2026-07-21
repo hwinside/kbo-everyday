@@ -91,6 +91,8 @@ export const WIDGET_CONTROL_KINDS = new Set(["game_live", "game_cancel", "game_e
  * - 토큰 500개 chunk + 무효 토큰 정리
  */
 export interface SendResult {
+  /** FCM에 실제 전달을 시도한 디바이스 토큰 수(sent + failed). */
+  tokens: number;
   sent: number;
   failed: number;
   cleaned: number;
@@ -107,14 +109,14 @@ export async function sendFcmToUsers(
   platform?: "ios" | "android",
   opts?: { minAppBuild?: number },
 ): Promise<SendResult> {
-  if (userIds.length === 0) return { sent: 0, failed: 0, cleaned: 0, skipped: 0, ok: true };
+  if (userIds.length === 0) return { tokens: 0, sent: 0, failed: 0, cleaned: 0, skipped: 0, ok: true };
   try {
     return await sendFcmToUsersInner(userIds, payload, prefKey, platform, opts);
   } catch (e) {
     // getFcm()의 JSON parse/init 또는 sendEachForMulticast throw 등 —
     // ok:false로 호출자(game-status unclaim)가 재시도하게 함 (삼순 #210 재리뷰 NO-GO)
     console.error("[fcm] send threw:", (e as Error).message);
-    return { sent: 0, failed: 0, cleaned: 0, skipped: 0, ok: false };
+    return { tokens: 0, sent: 0, failed: 0, cleaned: 0, skipped: 0, ok: false };
   }
 }
 
@@ -126,7 +128,7 @@ async function sendFcmToUsersInner(
   opts?: { minAppBuild?: number },
 ): Promise<SendResult> {
   const fcm = getFcm();
-  if (!fcm) return { sent: 0, failed: 0, cleaned: 0, skipped: 0, ok: false }; // env 미설정 = 인프라 실패
+  if (!fcm) return { tokens: 0, sent: 0, failed: 0, cleaned: 0, skipped: 0, ok: false }; // env 미설정 = 인프라 실패
 
   // 1. 알림 종류별 설정 필터 (row 없음 = 디폴트)
   // ⚠️ .in()에 id를 한 번에 넣으면 대상이 수백 명일 때 URL 한도 초과(Bad Request)
@@ -144,7 +146,7 @@ async function sendFcmToUsersInner(
         .in("user_id", slice);
       if (prefErr) {
         console.error("[fcm] prefs query failed:", prefErr.message);
-        return { sent: 0, failed: 0, cleaned: 0, skipped: 0, ok: false };
+        return { tokens: 0, sent: 0, failed: 0, cleaned: 0, skipped: 0, ok: false };
       }
       for (const r of prefRows ?? []) {
         const row = r as unknown as Record<string, unknown>;
@@ -155,7 +157,7 @@ async function sendFcmToUsersInner(
     targets = targets.filter((id) => explicit.get(id) ?? DEFAULT_PREFS[prefKey]);
     skipped = before - targets.length;
   }
-  if (targets.length === 0) return { sent: 0, failed: 0, cleaned: 0, skipped, ok: true };
+  if (targets.length === 0) return { tokens: 0, sent: 0, failed: 0, cleaned: 0, skipped, ok: true };
 
   // 2. 디바이스 토큰 (동일하게 분할 조회)
   const tokens: string[] = [];
@@ -173,11 +175,11 @@ async function sendFcmToUsersInner(
     const { data: rows, error: tokenErr } = await tokenQuery;
     if (tokenErr) {
       console.error("[fcm] token query failed:", tokenErr.message);
-      return { sent: 0, failed: 0, cleaned: 0, skipped, ok: false };
+      return { tokens: 0, sent: 0, failed: 0, cleaned: 0, skipped, ok: false };
     }
     for (const r of rows ?? []) tokens.push((r as { fcm_token: string }).fcm_token);
   }
-  if (tokens.length === 0) return { sent: 0, failed: 0, cleaned: 0, skipped, ok: true };
+  if (tokens.length === 0) return { tokens: 0, sent: 0, failed: 0, cleaned: 0, skipped, ok: true };
 
   // 3. chunk 발송 (FCM multicast 한도 500)
   const CHUNK = 500;
@@ -250,5 +252,5 @@ async function sendFcmToUsersInner(
     if (cleanupError) console.error("[fcm] invalid token cleanup failed:", cleanupError.message);
   }
 
-  return { sent, failed, cleaned: invalid.length, skipped, ok: true };
+  return { tokens: tokens.length, sent, failed, cleaned: invalid.length, skipped, ok: true };
 }
