@@ -10,6 +10,7 @@ import { getVenuePosition } from "@/lib/venue-stories/geo";
 import { haversineMeters } from "@/lib/venue-stories/stadiums";
 import { VENUE_STORY_CONSENT_VERSION, type VenueInfo } from "@/lib/venue-stories/types";
 import { consentStorageKey } from "@/lib/venue-stories/auth-consent";
+import { useIsAdmin } from "@/hooks/useIsAdmin";
 
 interface Props {
   gameId: string;
@@ -21,6 +22,7 @@ interface Props {
 type Phase = "idle" | "geo" | "upload";
 
 export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded }: Props) {
+  const isAdmin = useIsAdmin();
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewType, setPreviewType] = useState<"image" | "video" | null>(null);
@@ -146,23 +148,31 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
       return;
     }
 
-    // 지오펜스(직관 인증): 위치 필수. 반경 밖/권한 거부/저정확도는 업로드 차단(서버도 재검증).
-    setPhase("geo");
-    const pos = await getVenuePosition();
-    if ("error" in pos) {
-      setError(pos.error);
-      setPhase("idle");
-      return;
-    }
-    if (venue && venue.lat != null && venue.lng != null) {
-      const dist = haversineMeters(pos.lat, pos.lng, venue.lat, venue.lng);
-      if (dist > venue.radiusM) {
-        const where = venue.stadiumName ?? "경기장";
-        setError(
-          `직관 인증 실패 — ${where}${radiusKm ? ` 반경 ${radiusKm}km` : ""} 안에서만 올릴 수 있어요`,
-        );
+    // 일반 유저는 위치 필수. 관리자 WIP QA 계정은 구장 밖 테스트를 위해 GPS 수집부터 생략.
+    let pos: { lat: number | null; lng: number | null; accuracy: number | null } = {
+      lat: null,
+      lng: null,
+      accuracy: null,
+    };
+    if (!isAdmin) {
+      setPhase("geo");
+      const measured = await getVenuePosition();
+      if ("error" in measured) {
+        setError(measured.error);
         setPhase("idle");
         return;
+      }
+      pos = measured;
+      if (venue && venue.lat != null && venue.lng != null) {
+        const dist = haversineMeters(measured.lat, measured.lng, venue.lat, venue.lng);
+        if (dist > venue.radiusM) {
+          const where = venue.stadiumName ?? "경기장";
+          setError(
+            `직관 인증 실패 — ${where}${radiusKm ? ` 반경 ${radiusKm}km` : ""} 안에서만 올릴 수 있어요`,
+          );
+          setPhase("idle");
+          return;
+        }
       }
     }
 
@@ -246,7 +256,9 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
             <div className="flex items-center gap-1.5 text-[12px] text-text-tertiary bg-bg-tertiary/50 rounded-lg px-3 py-2">
               <MapPin size={13} className="text-red-400 shrink-0" />
               <span>
-                {venueLoading
+                {isAdmin
+                  ? "관리자 QA 모드 · 위치 인증 없이 업로드할 수 있어요"
+                  : venueLoading
                   ? "구장 정보 확인 중…"
                   : gateReason
                     ? gateReason

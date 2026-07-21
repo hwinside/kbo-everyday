@@ -6,7 +6,11 @@
  *   ③ route abuse cap(view-rate-limit): 1초 창 중복 차단
  * 실행: npm run qa:admin-view
  */
-import { isAdminEmail, ADMIN_EMAILS } from "../../src/lib/admin/admin-users";
+import {
+  isAdminEmail,
+  ADMIN_EMAILS,
+  canBypassVenueGeofenceForQa,
+} from "../../src/lib/admin/admin-users";
 import {
   viewerKeyOf,
   impressionDedupKey,
@@ -38,6 +42,9 @@ check("undefined", isAdminEmail(undefined), false);
 check("prefix spoof", isAdminEmail("harinclaw@gmail.com.evil.com"), false);
 check("substring spoof", isAdminEmail("xharinclaw@gmail.com"), false);
 check("list is lowercase", ADMIN_EMAILS.every((e) => e === e.toLowerCase()), true);
+check("venue QA admin GPS bypass", canBypassVenueGeofenceForQa("harinclaw@gmail.com"), true);
+check("venue QA random user GPS enforced", canBypassVenueGeofenceForQa("someone@gmail.com"), false);
+check("venue QA missing email GPS enforced", canBypassVenueGeofenceForQa(null), false);
 
 // ── ② viewerKey 우선순위 ─────────────────────────────
 check("viewer login>guest", viewerKeyOf("u1", "g1"), "u:u1");

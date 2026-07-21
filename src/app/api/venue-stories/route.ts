@@ -21,6 +21,7 @@ import {
 } from "@/lib/venue-stories/types";
 import { decideListAuth } from "@/lib/venue-stories/auth-consent";
 import { validateVenueVideoRow } from "@/lib/venue-stories/video-validate-server";
+import { canBypassVenueGeofenceForQa } from "@/lib/admin/admin-users";
 
 // 영상 즉시 검증(다운로드 최대 50MiB + ffprobe)을 요청 안에서 수행
 export const maxDuration = 60;
@@ -214,16 +215,18 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // 3) 지오펜스: 위치 필수 + accuracy 상한 + 반경 (fail-closed 순수 판정 공유)
-  const geo = evaluateGeofence({
-    lat,
-    lng,
-    accuracy,
-    coord: venue.coord,
-    maxAccuracy: VENUE_GEOFENCE_MAX_ACCURACY_M,
-  });
-  if (!geo.ok) {
-    return NextResponse.json({ error: geo.reason ?? "직관 인증이 필요해요" }, { status: 403 });
+  // 3) 지오펜스: 일반 유저는 fail-closed. 관리자 WIP QA 계정만 구장 밖 테스트를 위해 임시 우회.
+  if (!canBypassVenueGeofenceForQa(verified.user.email)) {
+    const geo = evaluateGeofence({
+      lat,
+      lng,
+      accuracy,
+      coord: venue.coord,
+      maxAccuracy: VENUE_GEOFENCE_MAX_ACCURACY_M,
+    });
+    if (!geo.ok) {
+      return NextResponse.json({ error: geo.reason ?? "직관 인증이 필요해요" }, { status: 403 });
+    }
   }
 
   // 4) 미디어 객체 실제 존재·크기·매직바이트 서버 검증(fail-closed, maxBytes 선제 차단)
