@@ -88,6 +88,7 @@ export interface ResolveOptions {
  * 오매칭 방지를 위해 팀 가드 필수: 쿼리의 team/teamId가 대상 선수의 로스터 팀과 일치할 때만 적용. */
 const NAME_ALIASES: Record<string, string> = {
   도다: "AQ006", // NC 토다 나츠키 — KBO/NC 공식 등록명은 "토다", 레거시 "도다" 표기 구제 (2026-07-21 CS 정정)
+  교야마: "56548", // 롯데 쿄야마 — KBO 등록명 "쿄야마", 레거시/외래어표기 "교야마" 구제 (2026-07-21 중복 항목 통합)
 };
 
 const DEFAULT_ROSTER = playersRoster as RosterPlayer[];

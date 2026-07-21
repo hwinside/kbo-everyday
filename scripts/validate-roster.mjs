@@ -24,7 +24,7 @@ const FLAGS_DIR = path.resolve(__dirname, "../public/flags");
 // ============================================================================
 // 기대값 (스펙 §3.1)
 // ============================================================================
-const EXPECTED_COUNT = 876; // 2026-07-20: Player/Search.aspx 전수 dry-run에서 2026 공식사진까지 확인된 미출전/퓨처스 33명 1회 백필. 843: 조요한(SSG/51809, 상무 복무로 기존 크롤 미포착) 수동 온보딩.
+const EXPECTED_COUNT = 875; // 2026-07-21: 교야마 마사야(AQ008) stale 중복 항목 제거(실제 등록명 쿄야마/56548로 통합). 876: 07-20 Player/Search.aspx 전수 dry-run 미출전/퓨처스 33명 1회 백필.
 const MIN_PER_TEAM = 30;
 const BACKNO_REGEX = /^(\d{1,3}|-|\?)$/; // 숫자 1~3자리 | "-" | "?"
 const KNOWN_TEAMS = new Set([
