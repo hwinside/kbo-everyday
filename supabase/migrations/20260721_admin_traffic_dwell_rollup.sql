@@ -213,9 +213,7 @@ AS $$
   SELECT platform,
          count(*) AS sessions,
          round(avg(session_ms)) AS avg_ms,
-         round(
-           percentile_cont(0.5) WITHIN GROUP (ORDER BY session_ms)::numeric
-         ) AS median_ms
+         round(percentile_cont(0.5) WITHIN GROUP (ORDER BY session_ms)) AS median_ms
   FROM session_totals
   GROUP BY platform
   ORDER BY platform;

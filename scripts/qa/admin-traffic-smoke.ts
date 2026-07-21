@@ -214,6 +214,12 @@ check(
     !/FUNCTION admin_dwell_by_platform[\s\S]*WHERE session_end >=/.test(migration),
 );
 check(
+  "median keeps legacy floating-point tie rounding",
+  migration.includes(
+    "round(percentile_cont(0.5) WITHIN GROUP (ORDER BY session_ms)) AS median_ms",
+  ) && !migration.includes("ORDER BY session_ms)::numeric"),
+);
+check(
   "dashboard slice range has a covering index",
   migration.includes("idx_admin_dwell_slices_day_covering"),
 );
