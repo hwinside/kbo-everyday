@@ -5,11 +5,13 @@ import { ExternalLink } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { TEAMS } from "@/lib/constants/teams";
 import { handleExternalAnchorClick } from "@/lib/open-external";
+import NewsCommentButton from "@/components/news/NewsCommentButton";
 
 interface NewsItem {
   title: string;
   description: string;
   link: string;
+  originalLink?: string;
   pubDate: string;
   thumbnailUrl?: string | null;
 }
@@ -69,8 +71,8 @@ export default function PlayerNews({ playerName, teamId }: PlayerNewsProps) {
       ) : (
         <div className="space-y-2">
           {news.map((item, i) => (
-            <a key={i} href={item.link} target="_blank" rel="noopener noreferrer" onClick={(e) => handleExternalAnchorClick(e, item.link)}>
-              <GlassCard pressable className="overflow-hidden p-0">
+              <GlassCard key={i} pressable className="overflow-hidden p-0">
+                <a href={item.link} target="_blank" rel="noopener noreferrer" onClick={(e) => handleExternalAnchorClick(e, item.link)}>
                 <div className="flex gap-3">
                   {item.thumbnailUrl && (
                     <div className="h-24 w-28 shrink-0 overflow-hidden bg-bg-tertiary">
@@ -102,8 +104,20 @@ export default function PlayerNews({ playerName, teamId }: PlayerNewsProps) {
                     </div>
                   </div>
                 </div>
+                </a>
+                <div className="flex justify-end border-t border-border px-3 py-2">
+                  <NewsCommentButton
+                    article={{
+                      url: item.link,
+                      canonicalUrl: item.originalLink || item.link,
+                      title: item.title,
+                      thumbnailUrl: item.thumbnailUrl,
+                      teamId,
+                    }}
+                    className="bg-bg-tertiary text-text-secondary hover:bg-bg-primary"
+                  />
+                </div>
               </GlassCard>
-            </a>
           ))}
         </div>
       )}

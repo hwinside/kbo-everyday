@@ -263,8 +263,11 @@ export default function WhatsNewPage() {
         onCommentAdded={(postId) =>
           setCommentCounts((prev) => ({ ...prev, [postId]: (prev[postId] ?? 0) + 1 }))
         }
-        onCommentDeleted={(postId) =>
-          setCommentCounts((prev) => ({ ...prev, [postId]: Math.max(0, (prev[postId] ?? 0) - 1) }))
+        onCommentDeleted={(postId, removedCount = 1) =>
+          setCommentCounts((prev) => ({
+            ...prev,
+            [postId]: Math.max(0, (prev[postId] ?? 0) - removedCount),
+          }))
         }
       />
 

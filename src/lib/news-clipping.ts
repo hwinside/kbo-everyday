@@ -270,6 +270,7 @@ export async function buildTeamClipping(
   const articles: NewsClippingArticle[] = picked.map(({ pick, item }, i) => ({
     title: item.title,
     link: item.link,
+    original_link: item.originalLink || item.link,
     thumbnail_url: thumbnails[i] ?? null,
     summary: pick.summary,
   }));
