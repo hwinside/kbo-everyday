@@ -53,6 +53,18 @@ const CANCEL_WINDOW_MS = 6 * 60 * 60 * 1000;
 // 시 분 간)만 유효 — cold start면 비어서 무조건 발사(현행 동작 보존). 직전 payload.data 시그니처와 비교.
 const lastWidgetSig = new Map<string, string>();
 
+/** 테스트 전용 — fast-refresh dedupe 캐시 초기화(프로덕션 미사용). */
+export function __resetWidgetSigCacheForTest(): void {
+  lastWidgetSig.clear();
+}
+
+/** 주입 가능 의존성 — QA 스모크가 supabase/FCM/network 없이 분기를 검증(삼순 #718 테스트 요구). */
+export interface AndroidWidgetPushDeps {
+  fansOfTeamsImpl?: typeof fansOfTeams;
+  sendFcmImpl?: typeof sendFcmToUsers;
+  fetchImpl?: typeof fetch;
+}
+
 /** dedupe 판정(순수) — dedupe=true이고 직전 시그니처와 동일하면 skip. cycle 0(dedupe=false)은 항상 발사. */
 export function shouldSkipWidgetPush(prevSig: string | undefined, currentSig: string, dedupe: boolean): boolean {
   return dedupe === true && prevSig !== undefined && prevSig === currentSig;
@@ -81,7 +93,12 @@ export function widgetStateSignature(data: Record<string, unknown>): string {
  *  - 예정(GAME_STATE_SC="1")이고 시작 30분 전 이내: '경기 예정' 매치업 카드를 미리 띄운다(iOS 패리티).
  * 네이티브 알림은 setOnlyAlertOnce라 같은 카드를 매분 갱신해도 재알림 없이 조용히 갱신된다.
  */
-export async function pushAndroidWidgetLiveUpdates(games: KboRawGame[], baseUrl: string, opts?: { dedupeAgainstLast?: boolean }): Promise<{
+export async function pushAndroidWidgetLiveUpdates(
+  games: KboRawGame[],
+  baseUrl: string,
+  opts?: { dedupeAgainstLast?: boolean; deadlineAtMs?: number },
+  deps?: AndroidWidgetPushDeps,
+): Promise<{
   games: number;
   sent: number;
   failed: number;
@@ -89,6 +106,10 @@ export async function pushAndroidWidgetLiveUpdates(games: KboRawGame[], baseUrl:
   skipped: number;
 }> {
   const dedupe = opts?.dedupeAgainstLast === true;
+  const deadlineAtMs = opts?.deadlineAtMs;
+  const fansOf = deps?.fansOfTeamsImpl ?? fansOfTeams;
+  const sendFcm = deps?.sendFcmImpl ?? sendFcmToUsers;
+  const fetchFn = deps?.fetchImpl ?? fetch;
   let pushed = 0;
   let sent = 0;
   let failed = 0;
@@ -101,12 +122,16 @@ export async function pushAndroidWidgetLiveUpdates(games: KboRawGame[], baseUrl:
   const liveIds = games
     .filter((g) => g.G_ID && g.GAME_STATE_SC === "2")
     .map((g) => g.G_ID as string);
-  if (liveIds.length > 0) {
+  // deadline(요청 진입 기준 절대값)이 지나면 relay를 시작하지 않고, 진행 시에도 남은
+  // 시간만큼 abort timeout을 걸어 완료까지 deadline 안에 묶는다(삼순 blocker①).
+  const relayBudgetMs = deadlineAtMs != null ? deadlineAtMs - Date.now() : null;
+  if (liveIds.length > 0 && (relayBudgetMs == null || relayBudgetMs > 0)) {
     const relays = await Promise.allSettled(
       liveIds.map(async (gameId) => {
-        const r = await fetch(`${baseUrl}/api/game-relay?gameId=${gameId}`, {
+        const r = await fetchFn(`${baseUrl}/api/game-relay?gameId=${gameId}`, {
           cache: "no-store",
           headers: { "User-Agent": "kbo-everyday-widget/1.0" },
+          ...(relayBudgetMs != null ? { signal: AbortSignal.timeout(relayBudgetMs) } : {}),
         });
         if (!r.ok) return null;
         const j = await r.json().catch(() => null);
@@ -123,6 +148,8 @@ export async function pushAndroidWidgetLiveUpdates(games: KboRawGame[], baseUrl:
 
   for (const g of games) {
     if (!g.G_ID) continue;
+    // deadline 도달 — 남은 경기의 FCM 발사를 시작하지 않는다(다음 크론 틱과 겹침 방지).
+    if (deadlineAtMs != null && Date.now() >= deadlineAtMs) break;
 
     const isLive = g.GAME_STATE_SC === "2";
     const isCancelled = g.CANCEL_SC_ID !== "0";
@@ -159,7 +186,7 @@ export async function pushAndroidWidgetLiveUpdates(games: KboRawGame[], baseUrl:
     const home = g.HOME_NM ?? "";
     const teamIds = [teamIdByShortName(away), teamIdByShortName(home)]
       .filter((v): v is number => v !== null);
-    const fans = await fansOfTeams(teamIds);
+    const fans = await fansOf(teamIds);
     if (!fans.ok) {
       failed += 1;
       continue;
@@ -270,8 +297,12 @@ export async function pushAndroidWidgetLiveUpdates(games: KboRawGame[], baseUrl:
       skipped += fans.ids.length;
       continue;
     }
-    lastWidgetSig.set(g.G_ID as string, sig);
-    const res = await sendFcmToUsers(fans.ids, payload, "game_start");
+    // 안드 위젯/워치 브릿지 전용 data 푸시라 platform="android"로 iOS 토큰 조회를 제외한다
+    // (삼순 blocker④ — iOS는 별도 pushIosWidgetLiveUpdates가 담당, 무관 토큰 발송 제거).
+    const res = await sendFcm(fans.ids, payload, "game_start", "android");
+    // FCM 인프라 성공(res.ok) 확인 후에만 시그니처 기록 — 실패 시 다음 사이클이 동일 상태를
+    // 재시도할 수 있게 한다(삼순 blocker③ — 실패 dedupe 오염 방지).
+    if (res.ok) lastWidgetSig.set(g.G_ID as string, sig);
     sent += res.sent;
     failed += res.failed;
     cleaned += res.cleaned;
