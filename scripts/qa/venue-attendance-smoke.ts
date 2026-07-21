@@ -7,6 +7,7 @@ import {
   summarizeVenueAttendance,
   type VenueAttendanceRow,
 } from "../../src/lib/venue-attendance/summary";
+import { fetchAttendanceGamesWithinDeadline } from "../../src/lib/venue-attendance/fetch-games";
 
 function row(overrides: Partial<VenueAttendanceRow> = {}): VenueAttendanceRow {
   return {
@@ -111,4 +112,32 @@ assert.match(
   "프로필 DB 오류를 최애선수 없음으로 오인하지 않고 5xx 처리",
 );
 
-console.log("venue-attendance smoke: PASS (result 8 + persistence/API contract 6)");
+async function testDeadline() {
+  let deadlineCalls = 0;
+  const deadlineRows = Array.from({ length: 20 }, (_, index) =>
+    row({
+      id: index + 10,
+      game_id: `deadline-${index}`,
+      game_date: `2026-06-${String(index + 1).padStart(2, "0")}`,
+    }),
+  );
+  const deadlineStartedAt = Date.now();
+  const deadlineGames = await fetchAttendanceGamesWithinDeadline(deadlineRows, {
+    deadlineMs: 25,
+    maxConcurrency: 3,
+    fetcher: async () => {
+      deadlineCalls += 1;
+      return new Promise(() => {});
+    },
+  });
+  assert.ok(Date.now() - deadlineStartedAt < 250, "KBO 장애에도 전체 deadline 안에서 반환");
+  assert.equal(deadlineCalls, 3, "느린 KBO 호출의 동시성 상한");
+  assert.equal(deadlineGames.size, 0, "deadline 미조회 경기는 fail-soft 제외");
+}
+
+void testDeadline()
+  .then(() => console.log("venue-attendance smoke: PASS (result 8 + persistence/API/deadline contract 9)"))
+  .catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });

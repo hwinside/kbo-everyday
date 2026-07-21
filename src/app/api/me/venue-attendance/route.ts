@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getVerifiedUserFromRequest } from "@/lib/auth/verified-user";
-import { fetchGames, type KboGame } from "@/lib/crawler/kbo-api";
+import { fetchGames } from "@/lib/crawler/kbo-api";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
+import { fetchAttendanceGamesWithinDeadline } from "@/lib/venue-attendance/fetch-games";
 import {
   buildVenueDiaryItem,
   summarizeVenueAttendance,
@@ -21,22 +22,6 @@ function currentKstYear(): number {
       new Date(),
     ),
   );
-}
-
-async function fetchAttendanceGames(rows: VenueAttendanceRow[]): Promise<Map<string, KboGame>> {
-  const dates = [...new Set(rows.map((row) => row.game_date.replaceAll("-", "")))];
-  const gamesById = new Map<string, KboGame>();
-
-  // 직관일만 조회하되 KBO API 순간 부하를 피하도록 5일씩 제한한다.
-  for (let i = 0; i < dates.length; i += 5) {
-    const batch = await Promise.allSettled(dates.slice(i, i + 5).map((date) => fetchGames(date)));
-    for (const result of batch) {
-      if (result.status !== "fulfilled") continue;
-      for (const game of result.value) gamesById.set(game.gameId, game);
-    }
-  }
-
-  return gamesById;
 }
 
 function normalizeFavorites(value: unknown): FavoritePlayerSnapshot[] {
@@ -83,15 +68,6 @@ async function fetchFavoriteLogs(
   return { rows, ok: true };
 }
 
-async function fetchReadyGameIds(gameIds: string[]): Promise<Set<string>> {
-  if (gameIds.length === 0) return new Set();
-  const { data, error } = await supabase.rpc("get_games_with_player_logs", {
-    p_game_ids: gameIds,
-  });
-  if (error) return new Set();
-  return new Set(((data ?? []) as { game_id: string }[]).map((row) => row.game_id));
-}
-
 /** 본인 전용 직관 다이어리. userId 파라미터를 받지 않아 공개 프로필 조회로 확장되지 않는다. */
 export async function GET(req: NextRequest) {
   const verified = await getVerifiedUserFromRequest(req);
@@ -133,10 +109,9 @@ export async function GET(req: NextRequest) {
 
   const rows = (attendanceResult.data ?? []) as VenueAttendanceRow[];
   const favorites = normalizeFavorites(profileResult.data?.favorite_players);
-  const [gamesById, favoriteLogResult, readyGameIds] = await Promise.all([
-    fetchAttendanceGames(rows),
+  const [gamesById, favoriteLogResult] = await Promise.all([
+    fetchAttendanceGamesWithinDeadline(rows, { fetcher: fetchGames }),
     fetchFavoriteLogs(favorites, requestedSeason),
-    fetchReadyGameIds(rows.map((row) => row.game_id)),
   ]);
   const games = rows.map((row) => {
     const game = gamesById.get(row.game_id) ?? null;
@@ -146,7 +121,7 @@ export async function GET(req: NextRequest) {
         favorites,
         logs: favoriteLogResult.rows,
         game,
-        gameLogReady: favoriteLogResult.ok && readyGameIds.has(row.game_id),
+        logsReady: favoriteLogResult.ok,
       }),
     };
   });

@@ -104,7 +104,7 @@ const result = buildFavoritePlayerPerformances({
   favorites,
   logs,
   game: fixtureGame,
-  gameLogReady: true,
+  logsReady: true,
 });
 assert.equal(result.length, 2, "참가팀 최애선수만 표시");
 assert.equal(result[0].state, "rated", "이전 3경기부터 평가");
@@ -124,21 +124,33 @@ const limited = buildFavoritePlayerPerformances({
   favorites: favorites.slice(0, 1),
   logs: logs.filter((log) => log.game_date >= "2026-07-20" && log.game_date <= "2026-07-21"),
   game: fixtureGame,
-  gameLogReady: true,
+  logsReady: true,
 });
 assert.equal(limited[0].state, "sample_limited", "이전 2경기는 표본 부족");
 assert.equal(limited[0].lines[0].evaluation, null, "표본 부족 시 과장 평가 금지");
 
 const withoutCurrent = logs.filter((log) => log.game_id !== fixtureGame.gameId);
 assert.equal(
-  buildFavoritePlayerPerformances({ favorites: favorites.slice(0, 1), logs: withoutCurrent, game: fixtureGame, gameLogReady: true })[0].state,
-  "not_played",
-  "적재 완료 후 행 없음은 미출전",
+  buildFavoritePlayerPerformances({ favorites: favorites.slice(0, 1), logs: withoutCurrent, game: fixtureGame, logsReady: true })[0].state,
+  "pending",
+  "부분 적재 가능성이 있어 행 없음은 기록 확인 중",
 );
 assert.equal(
-  buildFavoritePlayerPerformances({ favorites: favorites.slice(0, 1), logs: withoutCurrent, game: fixtureGame, gameLogReady: false })[0].state,
+  buildFavoritePlayerPerformances({ favorites: favorites.slice(0, 1), logs: withoutCurrent, game: fixtureGame, logsReady: false })[0].state,
   "pending",
   "적재 전은 기록 집계 중",
 );
 
-console.log("venue player comparison smoke: PASS (17 assertions)");
+const zeroStatAppearance = buildFavoritePlayerPerformances({
+  favorites: favorites.slice(0, 1),
+  logs: [
+    ...logs.filter((log) => log.kbo_id === "50108" && log.game_id < fixtureGame.gameId),
+    batterLog({ game_id: fixtureGame.gameId, game_date: "2026-07-21", ab: 0, h: 0, hr: 0, rbi: 0 }),
+  ],
+  game: fixtureGame,
+  logsReady: true,
+});
+assert.equal(zeroStatAppearance[0].lines.length, 1, "0타수 행도 박스스코어 출전 기록으로 표시");
+assert.equal(zeroStatAppearance[0].lines[0].todayMetric, null, "0타수는 타율 평가만 생략");
+
+console.log("venue player comparison smoke: PASS (19 assertions)");

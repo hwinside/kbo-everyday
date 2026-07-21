@@ -143,20 +143,3 @@ REVOKE ALL ON FUNCTION create_venue_story_v2(TEXT, UUID, TEXT, TEXT, TEXT, TEXT,
   FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION create_venue_story_v2(TEXT, UUID, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, INT, INT, INT, TEXT, TEXT, TEXT, TIMESTAMPTZ, INT, SMALLINT, BOOLEAN, TEXT, DATE)
   TO service_role;
-
--- 최애선수 미출전과 적재 대기를 구분하는 경기별 ingest 완료 신호.
--- player_game_logs 원문은 반환하지 않고 요청한 경기 중 1행 이상 적재된 game_id만 반환한다.
-CREATE OR REPLACE FUNCTION get_games_with_player_logs(p_game_ids TEXT[])
-RETURNS TABLE (game_id TEXT)
-LANGUAGE sql
-SECURITY DEFINER
-SET search_path = public
-STABLE
-AS $$
-  SELECT DISTINCT pgl.game_id
-    FROM player_game_logs pgl
-   WHERE pgl.game_id = ANY(p_game_ids);
-$$;
-
-REVOKE ALL ON FUNCTION get_games_with_player_logs(TEXT[]) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION get_games_with_player_logs(TEXT[]) TO service_role;

@@ -27,7 +27,7 @@ export interface PlayerGameLog {
 }
 
 export type PerformanceEvaluation = "above" | "similar" | "below";
-export type PerformanceState = "rated" | "sample_limited" | "not_played" | "pending";
+export type PerformanceState = "rated" | "sample_limited" | "pending";
 
 export interface PlayerPerformanceLine {
   type: "batter" | "pitcher";
@@ -68,12 +68,6 @@ function evaluateDelta(delta: number): PerformanceEvaluation {
   if (delta > 0.0005) return "above";
   if (delta < -0.0005) return "below";
   return "similar";
-}
-
-function didPlay(row: PlayerGameLog): boolean {
-  return row.player_type === "pitcher"
-    ? row.ip_outs > 0 || row.er > 0 || row.h_allowed > 0 || row.k > 0 || row.bb_allowed > 0
-    : row.ab > 0 || row.h > 0 || row.hr > 0 || row.rbi > 0 || row.bb > 0 || row.so > 0;
 }
 
 function average(rows: PlayerGameLog[], field: keyof PlayerGameLog): number {
@@ -158,9 +152,9 @@ export function buildFavoritePlayerPerformances(params: {
   favorites: FavoritePlayerSnapshot[];
   logs: PlayerGameLog[];
   game: KboGame | null;
-  gameLogReady: boolean;
+  logsReady: boolean;
 }): FavoritePlayerPerformance[] {
-  const { favorites, logs, game, gameLogReady } = params;
+  const { favorites, logs, game, logsReady } = params;
   if (!game) return [];
 
   const participatingTeams = new Set([game.awayTeamId, game.homeTeamId]);
@@ -174,16 +168,18 @@ export function buildFavoritePlayerPerformances(params: {
 
   const result: FavoritePlayerPerformance[] = [];
   for (const favorite of favorites) {
-    const currentRows = (currentByPlayer.get(favorite.playerId) ?? []).filter(didPlay);
+    const currentRows = currentByPlayer.get(favorite.playerId) ?? [];
     if (!participatingTeams.has(favorite.teamId) && currentRows.length === 0) continue;
 
-    if (game.status !== "final" || !gameLogReady) {
+    if (game.status !== "final" || !logsReady) {
       result.push({ playerId: favorite.playerId, name: favorite.name, state: "pending", lines: [] });
       continue;
     }
 
+    // 경기 단위 완전 적재 신호가 없으므로 행 부재를 미출전으로 단정하지 않는다.
+    // resolvePlayer 누락/부분 적재일 수 있어 안전하게 확인 중을 유지한다.
     if (currentRows.length === 0) {
-      result.push({ playerId: favorite.playerId, name: favorite.name, state: "not_played", lines: [] });
+      result.push({ playerId: favorite.playerId, name: favorite.name, state: "pending", lines: [] });
       continue;
     }
 
@@ -193,7 +189,6 @@ export function buildFavoritePlayerPerformances(params: {
         (log) =>
           log.kbo_id === favorite.playerId &&
           log.player_type === current.player_type &&
-          didPlay(log) &&
           (log.game_date < targetDate ||
             (log.game_date === targetDate && log.game_id < game.gameId)),
       );

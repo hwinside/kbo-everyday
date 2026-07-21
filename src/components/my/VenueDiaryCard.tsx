@@ -226,8 +226,7 @@ export default function VenueDiaryCard() {
                         <div key={player.playerId} className="border-t border-border/50 pt-3 first:border-0 first:pt-0">
                           <div className="flex items-center justify-between gap-2">
                             <span className="text-sm font-semibold text-text-primary">{player.name}</span>
-                            {player.state === "pending" && <span className="text-[11px] text-text-tertiary">기록 집계 중</span>}
-                            {player.state === "not_played" && <span className="text-[11px] text-text-tertiary">오늘 출전 없음</span>}
+                            {player.state === "pending" && <span className="text-[11px] text-text-tertiary">기록 확인 중</span>}
                           </div>
                           {player.lines.map((line) => (
                             <div key={line.type} className="mt-2">

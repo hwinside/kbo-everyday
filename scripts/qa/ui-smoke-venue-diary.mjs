@@ -138,6 +138,8 @@ async function main() {
   if (!(await page.getByText("평균 이상", { exact: true }).isVisible())) throw new Error("comparison missing");
   if (!(await page.getByText("경기 타율 .500 · 경기 전 시즌 .270", { exact: true }).isVisible())) throw new Error("official metric comparison missing");
   if (!(await page.getByText("경기 전 평균 · 3.7타수 1.0안타 0.2홈런 0.8타점", { exact: true }).isVisible())) throw new Error("per-game average missing");
+  await page.locator("button").filter({ hasText: "LG vs 두산" }).first().click();
+  await page.getByText("기록 확인 중", { exact: true }).waitFor();
   await page.screenshot({ path: resolve(SHOT_DIR, "venue-diary-my.png"), fullPage: true });
 
   await page.goto(`${BASE_URL}/profile/${userId}`, { waitUntil: "networkidle" });
