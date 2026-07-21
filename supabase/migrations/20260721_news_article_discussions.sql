@@ -19,6 +19,24 @@ ALTER TABLE news_discussions ENABLE ROW LEVEL SECURITY;
 
 COMMENT ON TABLE news_discussions IS '기사 canonical URL과 기존 comments용 숨김 bridge post 연결. 기사 본문 저장 금지.';
 
+-- 홈/댓글시트에 표시할 수 있는 댓글만 집계한다. posts.comment_count는 INSERT/DELETE
+-- 카운터라 신고 블라인드(is_hidden 전환)를 반영하지 못하므로 뉴스 UI에서 사용하지 않는다.
+CREATE OR REPLACE FUNCTION news_discussion_visible_counts(p_article_keys text[])
+RETURNS TABLE(article_key text, visible_comment_count bigint)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public
+AS $$
+  SELECT nd.article_key, count(c.id) AS visible_comment_count
+  FROM news_discussions nd
+  LEFT JOIN comments c
+    ON c.post_id = nd.post_id
+   AND c.is_hidden IS DISTINCT FROM true
+  WHERE nd.article_key = ANY(COALESCE(p_article_keys, ARRAY[]::text[]))
+  GROUP BY nd.article_key;
+$$;
+
+REVOKE EXECUTE ON FUNCTION news_discussion_visible_counts(text[]) FROM public, anon, authenticated;
+GRANT EXECUTE ON FUNCTION news_discussion_visible_counts(text[]) TO service_role;
+
 -- 새소식/뉴스 댓글용 bridge post는 게시글·사진 KPI에서 제외한다. 실제 댓글 활동은 comments 집계에 포함한다.
 CREATE OR REPLACE FUNCTION admin_content_daily()
 RETURNS TABLE(day date, posts bigint, comments bigint, photos bigint, chats bigint)

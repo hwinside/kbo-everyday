@@ -25,11 +25,15 @@ export async function POST(req: NextRequest) {
   }
   if (lookups.length === 0) return NextResponse.json({ counts: {} });
 
-  const { data, error } = await getSupabaseAdmin()
-    .from("news_discussions")
-    .select("article_key, posts!inner(comment_count)")
-    .in("article_key", [...new Set(lookups.map((item) => item.articleKey))]);
+  const { data, error } = await getSupabaseAdmin().rpc("news_discussion_visible_counts", {
+    p_article_keys: [...new Set(lookups.map((item) => item.articleKey))],
+  });
   if (error) return NextResponse.json({ error: "failed to load counts" }, { status: 500 });
 
-  return NextResponse.json({ counts: mapDiscussionCounts(lookups, data ?? []) });
+  return NextResponse.json({
+    counts: mapDiscussionCounts(
+      lookups,
+      (data ?? []) as Array<{ article_key: string; visible_comment_count: number | string | null }>,
+    ),
+  });
 }

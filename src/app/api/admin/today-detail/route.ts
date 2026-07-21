@@ -98,13 +98,13 @@ export async function GET(req: NextRequest) {
         ? supabase.from("posts").select("id, board_type, board_id").in("id", postIds)
         : { data: [] },
       postIds.length > 0
-        ? supabase.from("news_discussions").select("post_id, source_url").in("post_id", postIds)
+        ? supabase.from("news_discussions").select("post_id, canonical_url").in("post_id", postIds)
         : { data: [] },
     ]);
 
     const profileMap = new Map((profilesRes.data ?? []).map((p: { id: string; nickname: string }) => [p.id, p.nickname]));
     const postMap = new Map((postsRes.data ?? []).map((p: { id: number; board_type: string; board_id: string }) => [p.id, p]));
-    const newsUrlMap = new Map((newsRes.data ?? []).map((n: { post_id: number; source_url: string }) => [n.post_id, n.source_url]));
+    const newsUrlMap = new Map((newsRes.data ?? []).map((n: { post_id: number; canonical_url: string }) => [n.post_id, n.canonical_url]));
 
     const items = (data ?? []).map((c: { id: number; content: string; post_id: number; created_at: string; author_id: string }) => {
       const post = postMap.get(c.post_id);

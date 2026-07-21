@@ -142,12 +142,11 @@ export function parseCountLookups(value: unknown): Array<{ lookupId: string; art
 
 export function mapDiscussionCounts(
   lookups: Array<{ lookupId: string; articleKey: string }>,
-  rows: Array<{ article_key: string; posts: { comment_count?: number | null } | Array<{ comment_count?: number | null }> | null }>,
+  rows: Array<{ article_key: string; visible_comment_count?: number | string | null }>,
 ): Record<string, number> {
   const byKey = new Map<string, number>();
   for (const row of rows) {
-    const relation = Array.isArray(row.posts) ? row.posts[0] : row.posts;
-    byKey.set(row.article_key, Math.max(0, Number(relation?.comment_count ?? 0)));
+    byKey.set(row.article_key, Math.max(0, Number(row.visible_comment_count ?? 0)));
   }
   return Object.fromEntries(lookups.map(({ lookupId, articleKey }) => [lookupId, byKey.get(articleKey) ?? 0]));
 }

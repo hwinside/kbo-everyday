@@ -15,15 +15,19 @@ async function existingDiscussion(input: ParsedNewsDiscussionInput) {
   const supabase = getSupabaseAdmin();
   const { data } = await supabase
     .from("news_discussions")
-    .select("post_id, posts!inner(comment_count)")
+    .select("post_id")
     .eq("article_key", input.articleKey)
     .maybeSingle();
-  return data as { post_id: number; posts: { comment_count?: number | null } | Array<{ comment_count?: number | null }> } | null;
+  return data as { post_id: number } | null;
 }
 
-function commentCount(row: { posts: { comment_count?: number | null } | Array<{ comment_count?: number | null }> }): number {
-  const post = Array.isArray(row.posts) ? row.posts[0] : row.posts;
-  return Math.max(0, Number(post?.comment_count ?? 0));
+async function visibleCommentCount(articleKey: string): Promise<number> {
+  const { data, error } = await getSupabaseAdmin().rpc("news_discussion_visible_counts", {
+    p_article_keys: [articleKey],
+  });
+  if (error) throw error;
+  const row = (data as Array<{ visible_comment_count?: number | string | null }> | null)?.[0];
+  return Math.max(0, Number(row?.visible_comment_count ?? 0));
 }
 
 export async function POST(req: NextRequest) {
@@ -45,18 +49,12 @@ export async function POST(req: NextRequest) {
   const supabase = getSupabaseAdmin();
   const existing = await existingDiscussion(input);
   if (existing) {
-    await supabase
-      .from("news_discussions")
-      .update({
-        source_url: input.sourceUrl,
-        title: input.title,
-        source: input.source,
-        thumbnail_url: input.thumbnailUrl,
-        team_id: input.teamId,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("article_key", input.articleKey);
-    return NextResponse.json({ postId: existing.post_id, commentCount: commentCount(existing) });
+    // 공개 ensure 요청은 최초 저장된 메타데이터를 절대 갱신하지 않는다.
+    // canonical URL을 아는 제3자가 운영자 링크/제목을 오염시키는 것을 막는다.
+    return NextResponse.json({
+      postId: existing.post_id,
+      commentCount: await visibleCommentCount(input.articleKey),
+    });
   }
 
   const { data: bridge, error: bridgeError } = await supabase
@@ -94,7 +92,12 @@ export async function POST(req: NextRequest) {
   await supabase.from("posts").delete().eq("id", bridge.id);
   if (linkError.code === "23505") {
     const winner = await existingDiscussion(input);
-    if (winner) return NextResponse.json({ postId: winner.post_id, commentCount: commentCount(winner) });
+    if (winner) {
+      return NextResponse.json({
+        postId: winner.post_id,
+        commentCount: await visibleCommentCount(input.articleKey),
+      });
+    }
   }
   return NextResponse.json({ error: "failed to link discussion" }, { status: 500 });
 }

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   articleKeyForUrl,
   mapDiscussionCounts,
@@ -58,9 +59,39 @@ test("batch counts preserve lookup ids and default missing discussions to zero",
     ],
   });
   const counts = mapDiscussionCounts(lookups, [
-    { article_key: lookups[0].articleKey, posts: { comment_count: 7 } },
+    { article_key: lookups[0].articleKey, visible_comment_count: 7 },
   ]);
   assert.deepEqual(counts, { "home-1": 7, "home-2": 0 });
+});
+
+test("batch counts use visible rows and accept bigint strings", () => {
+  const lookups = parseCountLookups({
+    articles: [{ lookupId: "home-1", url: "https://example.com/1" }],
+  });
+  const counts = mapDiscussionCounts(lookups, [
+    { article_key: lookups[0].articleKey, visible_comment_count: "0" },
+  ]);
+  assert.deepEqual(counts, { "home-1": 0 });
+});
+
+test("existing ensure path cannot update stored metadata", () => {
+  const route = readFileSync(new URL("../../src/app/api/news/discussion/route.ts", import.meta.url), "utf8");
+  const existingBranch = route.slice(route.indexOf("if (existing)"), route.indexOf("const { data: bridge"));
+  assert.doesNotMatch(existingBranch, /\.update\s*\(/);
+});
+
+test("report sheet stays above the comment sheet stacking layer", () => {
+  const reportSheet = readFileSync(new URL("../../src/components/community/ReportSheet.tsx", import.meta.url), "utf8");
+  assert.match(reportSheet, /z-\[10000\]/);
+});
+
+test("visible count SQL excludes blinded comments", () => {
+  const migration = readFileSync(
+    new URL("../../supabase/migrations/20260721_news_article_discussions.sql", import.meta.url),
+    "utf8",
+  );
+  assert.match(migration, /c\.is_hidden IS DISTINCT FROM true/);
+  assert.match(migration, /REVOKE EXECUTE ON FUNCTION news_discussion_visible_counts\(text\[\]\)/);
 });
 
 console.log(`news discussion smoke: ${passed} passed`);

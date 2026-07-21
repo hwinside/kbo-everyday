@@ -1018,6 +1018,11 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
       onClose={() => setReportCommentId(null)}
       targetType="comment"
       targetId={reportCommentId}
+      onReported={({ hidden }) => {
+        if (!hidden) return;
+        setComments((prev) => prev.filter((comment) => comment.id !== reportCommentId));
+        if (postId) onCommentDeleted?.(postId);
+      }}
     />
   )}
   <CommentImageLightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />
