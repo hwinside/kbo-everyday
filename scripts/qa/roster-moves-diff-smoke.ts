@@ -30,6 +30,11 @@ import {
 } from "../../src/lib/roster-moves/readiness";
 import { formatPendingMessage } from "../../src/lib/roster-moves/pending-alert";
 import { validateRosterCollection } from "../../src/lib/roster-moves/collection";
+import {
+  getPregameRosterMovesDecision,
+  isDailyRosterMovesWindow,
+} from "../../src/lib/roster-moves/schedule";
+import { readFileSync } from "node:fs";
 
 let pass = 0;
 let fail = 0;
@@ -391,6 +396,50 @@ check(
   "클릭: 0건 상태(move 없음) → 영역 전체 팀홈",
   rosterMovesCardTargets("lg", null),
   { rowHref: "/teams/lg", nameHref: null, overflowHref: "/teams/lg", emptyHref: "/teams/lg" },
+);
+
+// ═══ ⑩ 실행 일정 — 매일 10시 + 경기일 첫 경기 2시간 전 ═══
+check("일정: 10:00 KST 기본 실행", isDailyRosterMovesWindow(new Date("2026-07-21T01:00:00Z")), true);
+check("일정: 10:29 KST 지연 실행 허용", isDailyRosterMovesWindow(new Date("2026-07-21T01:29:59Z")), true);
+check("일정: 10:30 KST 기본 윈도우 종료", isDailyRosterMovesWindow(new Date("2026-07-21T01:30:00Z")), false);
+
+const eveningGames = [
+  { time: "18:30", status: "scheduled" },
+  { time: "17:00", status: "scheduled" },
+];
+check(
+  "일정: 첫 경기 17:00의 2시간 전 15:00 KST 실행",
+  getPregameRosterMovesDecision(eveningGames, new Date("2026-07-21T06:00:00Z")),
+  { run: true, reason: "pregame", firstGameTime: "17:00", targetTime: "15:00" },
+);
+check(
+  "일정: pregame 30분 윈도우 밖은 skip",
+  getPregameRosterMovesDecision(eveningGames, new Date("2026-07-21T06:30:00Z")),
+  { run: false, reason: "outside-pregame-window", firstGameTime: "17:00", targetTime: "15:00" },
+);
+check(
+  "일정: 취소 경기는 제외하고 다음 첫 경기 기준",
+  getPregameRosterMovesDecision(
+    [{ time: "14:00", status: "cancelled" }, { time: "17:00", status: "scheduled" }],
+    new Date("2026-07-21T06:00:00Z"),
+  ),
+  { run: true, reason: "pregame", firstGameTime: "17:00", targetTime: "15:00" },
+);
+check(
+  "일정: 경기 없음은 skip",
+  getPregameRosterMovesDecision([], new Date("2026-07-21T06:00:00Z")),
+  { run: false, reason: "no-games" },
+);
+
+const vercelConfig = JSON.parse(readFileSync("vercel.json", "utf8")) as {
+  crons: { path: string; schedule: string }[];
+};
+check(
+  "일정: 09:00~19:30 KST 30분 tick 한 개로 10시·pregame 판정",
+  vercelConfig.crons
+    .filter((cron) => cron.path === "/api/cron/roster-moves")
+    .map((cron) => cron.schedule),
+  ["*/30 0-10 * * *"],
 );
 
 asyncChecks().then(() => {
