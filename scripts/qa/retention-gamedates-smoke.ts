@@ -16,7 +16,10 @@ import {
   LOOKBACK_DAYS,
   MAX_RETRY_PASSES,
 } from "../../src/lib/retention/gamedates";
-import { computeVisitDistribution } from "../../src/lib/retention/compute";
+import {
+  computeActivationFunnel,
+  computeVisitDistribution,
+} from "../../src/lib/retention/compute";
 
 /** 최소 fake supabase: created_at gte/lte 필터 + not-null + range 페이징 지원 */
 type Row = Record<string, unknown>;
@@ -171,8 +174,8 @@ async function main() {
   {
     // 상한 없던 종전 코드엔 total=1로 오염되던 케이스 → 이제 빈 결과여야 함
     const sb = fakeSupabase({
-      admin_page_views: [
-        { user_id: "userA", created_at: "2026-07-20T10:00:00+09:00" },
+      admin_page_view_user_days: [
+        { user_id: "userA", day_kst: "2026-07-20" },
       ],
     });
     const rows = await computeVisitDistribution(sb, "2026-07-19");
@@ -184,7 +187,7 @@ async function main() {
       posts: [{ author_id: "userB", created_at: "2026-07-18T12:00:00+09:00" }],
       likes: [{ user_id: "userB", created_at: "2026-07-19T23:30:00+09:00" }],
       chat_messages: [{ user_id: "userB", created_at: "2026-07-21T09:00:00+09:00" }],
-      admin_page_views: [{ user_id: "userA", created_at: "2026-07-20T10:00:00+09:00" }],
+      admin_page_view_user_days: [{ user_id: "userA", day_kst: "2026-07-20" }],
     });
     const rows = await computeVisitDistribution(sb, "2026-07-19");
     const b2 = rows.find((r) => r.metric_key === "2");
@@ -204,6 +207,21 @@ async function main() {
     });
     const rows = await computeVisitDistribution(sb, "2026-07-21");
     check("same-day activity counted (regular run)", rows.find((r) => r.metric_key === "1")?.value, 1);
+  }
+  {
+    const sb = fakeSupabase({
+      profiles: [
+        { id: "userA", team_id: 1, favorite_players: ["p1"], created_at: "2026-07-01T10:00:00+09:00" },
+        { id: "userB", team_id: 2, favorite_players: ["p2"], created_at: "2026-07-02T10:00:00+09:00" },
+      ],
+      admin_page_view_user_days: [
+        { user_id: "userA", day_kst: "2026-07-20", game_ids: ["20260720LGOB"] },
+        { user_id: "userB", day_kst: "2026-07-20", game_ids: [] },
+      ],
+    });
+    const rows = await computeActivationFunnel(sb, "2026-07-21");
+    check("user-day game rollup feeds activation", rows.find((r) => r.metric_key === "games_1plus")?.value, 1);
+    check("activation still requires all three steps", rows.find((r) => r.metric_key === "activated")?.value, 1);
   }
   {
     // 삼순 3차 재현: 마지막 1초 fractional timestamp 포함 + 익일 00:00 exclusive 제외

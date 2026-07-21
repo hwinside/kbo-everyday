@@ -14,6 +14,7 @@
     "qa:admin-view": "tsx scripts/qa/admin-view-smoke.ts",
     "qa:app-rankings": "tsx scripts/qa/app-rankings-smoke.ts",
     "qa:retention-dates": "tsx scripts/qa/retention-gamedates-smoke.ts",
+    "qa:admin-telemetry-retention": "tsx scripts/qa/admin-telemetry-retention-smoke.ts",
     "qa:war-saber": "tsx scripts/qa/war-saber-smoke.ts",
     "qa:rank-selfheal": "tsx scripts/qa/rank-history-selfheal-smoke.ts",
     "qa:la-broadcast": "tsx scripts/qa/la-broadcast-policy-smoke.ts",
