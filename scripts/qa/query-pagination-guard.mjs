@@ -121,6 +121,7 @@ function callChain(node, sourceFile) {
     methods: [...prefix.methods, {
       name: current.expression.name.text,
       args: current.arguments.map((argument) => argument.getText(sourceFile)).join(", "),
+      argumentNodes: [...current.arguments],
     }],
     nodes: [...prefix.nodes, current],
   };
@@ -184,7 +185,15 @@ function helperContext(node) {
           : ts.isPropertyAccessExpression(callee) ? callee.name.text : null;
         const config = helperName ? keysetHelpers.get(helperName) : null;
         const callbackIndex = call.arguments.findIndex((argument) => unwrapExpression(argument) === current);
-        if (config?.callbackArgs?.includes(callbackIndex)) return { helperName, callbackIndex, callback: current };
+        if (config?.callbackArgs?.includes(callbackIndex)) {
+          const cursorParameter = current.parameters[config.cursorParam ?? 0]?.name;
+          return {
+            helperName,
+            callbackIndex,
+            callback: current,
+            cursorName: cursorParameter && ts.isIdentifier(cursorParameter) ? cursorParameter.text : null,
+          };
+        }
       }
     }
     current = current.parent;
@@ -227,7 +236,11 @@ function keysetContract(chain, table, context) {
     .map((method) => literalFirstArgument(method.args));
   const cursorMethods = chain.methods.filter((method) =>
     ["gt", "gte", "lt", "lte"].includes(method.name) &&
-    cursorControlIsSafe(relativeControls(method, chain) ?? [{ kind: "conditional", test: "unknown", branch: "unknown" }])
+    cursorControlIsSafe(
+      relativeControls(method, chain) ?? [{ kind: "conditional", test: "unknown", branch: "unknown" }],
+      context.cursorName,
+    ) &&
+    cursorValueMatches(method, context)
   );
   const unconditionalLimit = chain.methods.some((method) =>
     method.name === "limit" && appliesOnEveryBuilderPath(method, chain)
@@ -240,14 +253,20 @@ function keysetContract(chain, table, context) {
   );
 }
 
-function cursorControlIsSafe(contexts) {
+function cursorValueMatches(method, context) {
+  const value = unwrapExpression(method.argumentNodes?.[1]);
+  return Boolean(context.cursorName && value && ts.isIdentifier(value) && value.text === context.cursorName);
+}
+
+function cursorControlIsSafe(contexts, cursorName) {
+  if (!cursorName) return false;
   if (contexts.length === 0) return true;
+  const cursorPattern = cursorName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return contexts.every((context) => {
     if (context.kind !== "if") return false;
-    const test = normalize(context.test);
-    if (!/\bcursor\b/.test(test) || !/\bnull\b/.test(test)) return false;
-    const nonNullThen = /cursor\s*!={1,2}\s*null|null\s*!={1,2}\s*cursor/.test(test);
-    const nonNullElse = /cursor\s*={2,3}\s*null|null\s*={2,3}\s*cursor/.test(test);
+    const test = normalize(context.test).replace(/^\((.*)\)$/, "$1").trim();
+    const nonNullThen = new RegExp(`^(?:${cursorPattern}\\s*!={1,2}\\s*null|null\\s*!={1,2}\\s*${cursorPattern})$`).test(test);
+    const nonNullElse = new RegExp(`^(?:${cursorPattern}\\s*={2,3}\\s*null|null\\s*={2,3}\\s*${cursorPattern})$`).test(test);
     return (context.branch === "then" && nonNullThen) || (context.branch === "else" && nonNullElse);
   });
 }
@@ -511,6 +530,21 @@ function runSelfTest() {
     [
       "dead branch keyset",
       'fetchAllByKeyset(async (cursor, limit) => {\n// query-guard: full-scan -- dead branch must not prove the keyset contract\nlet q = db.from("profiles").select("id");\nif (false) { q = q.order("id").gt("id", cursor).limit(limit); }\nreturn q;\n});',
+      ["unsafe_full_scan"],
+    ],
+    [
+      "compound cursor guard",
+      'fetchAllByKeyset(async (cursor, limit) => {\n// query-guard: full-scan -- compound cursor guard is not proof on every path\nlet q = db.from("profiles").select("id").order("id").limit(limit);\nif (cursor !== null && shouldPage) q = q.gt("id", cursor);\nreturn q;\n});',
+      ["unsafe_full_scan"],
+    ],
+    [
+      "literal cursor value",
+      'fetchAllByKeyset(async (_cursor, limit) => {\n// query-guard: full-scan -- literal null is not the helper cursor\nreturn db.from("profiles").select("id").order("id").gt("id", null).limit(limit);\n});',
+      ["unsafe_full_scan"],
+    ],
+    [
+      "unrelated cursor value",
+      'fetchAllByKeyset(async (cursor, limit) => {\n// query-guard: full-scan -- unrelated value is not the helper cursor\nreturn db.from("profiles").select("id").order("id").gt("id", otherCursor).limit(limit);\n});',
       ["unsafe_full_scan"],
     ],
     [

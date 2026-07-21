@@ -140,8 +140,8 @@
     "venue_cleanup_cursor": [["bucket"]]
   },
   "keysetHelpers": {
-    "fetchAllByKeyset": { "callbackArgs": [0] },
-    "fetchProfileIds": { "callbackArgs": [1] }
+    "fetchAllByKeyset": { "callbackArgs": [0], "cursorParam": 0 },
+    "fetchProfileIds": { "callbackArgs": [1], "cursorParam": 0 }
   },
   "boundedRpcAllowlist": {
     "create_admin_broadcast_job": "creates one job and returns its id",
