@@ -1219,8 +1219,8 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
           onCommentAdded={(postId) => {
             setCommentDeltas((prev) => ({ ...prev, [postId]: (prev[postId] ?? 0) + 1 }));
           }}
-          onCommentDeleted={(postId, removedCount = 1) => {
-            setCommentDeltas((prev) => ({ ...prev, [postId]: (prev[postId] ?? 0) - removedCount }));
+          onCommentDeleted={(postId) => {
+            setCommentDeltas((prev) => ({ ...prev, [postId]: (prev[postId] ?? 0) - 1 }));
           }}
         />
       )}

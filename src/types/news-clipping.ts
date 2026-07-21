@@ -4,8 +4,6 @@ export interface NewsClippingArticle {
   title: string;
   /** 클릭 이동 URL (네이버 뉴스) */
   link: string;
-  /** 동일 기사 댓글방 식별용 언론사 원문 URL (과거 payload에는 없을 수 있음) */
-  original_link?: string;
   /** OG 이미지 — 없으면 제목형 카드 */
   thumbnail_url: string | null;
   /** LLM 3줄 요약 (무슨 일 / 구체 내용 / 팀 팬 관점 의미) */

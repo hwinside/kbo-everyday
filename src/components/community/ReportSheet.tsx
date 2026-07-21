@@ -11,7 +11,6 @@ interface ReportSheetProps {
   onClose: () => void;
   targetType: "post" | "comment" | "chat";
   targetId: number;
-  onReported?: (result: { hidden: boolean }) => void;
 }
 
 const REASONS = [
@@ -42,7 +41,7 @@ function useBackgroundTouchLock(isOpen: boolean) {
   }, [isOpen]);
 }
 
-export default function ReportSheet({ isOpen, onClose, targetType, targetId, onReported }: ReportSheetProps) {
+export default function ReportSheet({ isOpen, onClose, targetType, targetId }: ReportSheetProps) {
   const { user } = useAuth();
   const [selected, setSelected] = useState<string | null>(null);
   const [detail, setDetail] = useState("");
@@ -83,7 +82,6 @@ export default function ReportSheet({ isOpen, onClose, targetType, targetId, onR
     if (data.error) {
       setError(data.error);
     } else {
-      onReported?.({ hidden: data.hidden === true });
       setDone(true);
       setTimeout(onClose, 1500);
     }
@@ -96,7 +94,7 @@ export default function ReportSheet({ isOpen, onClose, targetType, targetId, onR
   return createPortal(
     <AnimatePresence>
       <motion.div
-        className="fixed inset-0 z-[10000] flex items-end overscroll-none"
+        className="fixed inset-0 z-50 flex items-end overscroll-none"
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}

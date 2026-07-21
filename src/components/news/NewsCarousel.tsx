@@ -6,7 +6,6 @@ import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import { readableTextColor } from "@/lib/utils/team";
 import type { NewsMock } from "@/lib/constants/news";
 import { openExternalUrl } from "@/lib/open-external";
-import NewsCommentButton from "@/components/news/NewsCommentButton";
 
 interface NewsCarouselProps {
   news: NewsMock[];
@@ -22,36 +21,10 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
   // 기사 og:image를 클라이언트에서 점진 로드 — 뉴스 텍스트는 즉시 뜨고 사진은
   // 뒤따라 채워져 홈 로딩이 og 추출에 막히지 않게 한다(서버 블로킹 회피).
   const [ogThumbs, setOgThumbs] = useState<Record<NewsMock["id"], string | null>>({});
-  const [commentCounts, setCommentCounts] = useState<Record<string, number>>({});
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
   const slides = news.slice(0, 10);
   const len = slides.length;
-
-  // 홈 카드 댓글 수는 최대 10건을 한 번에 조회한다. 조회만으로 빈 댓글방을 만들지 않는다.
-  useEffect(() => {
-    const articles = news.slice(0, 10)
-      .filter((item) => item.sourceUrl && item.sourceUrl !== "#")
-      .map((item) => ({
-        lookupId: String(item.id),
-        url: item.sourceUrl,
-        canonicalUrl: item.ogUrl || item.sourceUrl,
-      }));
-    if (articles.length === 0) return;
-
-    let cancelled = false;
-    fetch("/api/news/discussion/counts", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ articles }),
-    })
-      .then((response) => response.ok ? response.json() : null)
-      .then((result) => {
-        if (!cancelled && result?.counts) setCommentCounts(result.counts);
-      })
-      .catch(() => {});
-    return () => { cancelled = true; };
-  }, [news]);
 
   // 슬라이드별 og:image를 캐시된 /api/og-meta로 비동기 조회(텍스트 렌더 비차단).
   useEffect(() => {
@@ -167,7 +140,7 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
             return (
               <div
                 key={item.id}
-                className="relative w-full flex-shrink-0 cursor-pointer"
+                className="w-full flex-shrink-0 cursor-pointer"
                 role="group"
                 aria-roledescription="slide"
                 aria-label={`${i + 1} / ${len}`}
@@ -272,23 +245,6 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
                     </div>
                   </div>
                 </div>
-                <NewsCommentButton
-                  article={{
-                    url: item.sourceUrl,
-                    canonicalUrl: item.ogUrl || item.sourceUrl,
-                    title: item.title,
-                    source: item.source,
-                    thumbnailUrl: thumbUrl,
-                    teamId: item.teamId,
-                  }}
-                  initialCount={commentCounts[String(item.id)] ?? 0}
-                  showCount
-                  onCountChange={(next) => setCommentCounts((previous) => ({
-                    ...previous,
-                    [String(item.id)]: next,
-                  }))}
-                  className="absolute bottom-2 right-5 z-20 bg-black/10 text-neutral-600 hover:bg-black/20 dark:bg-white/25 dark:text-white dark:hover:bg-white/40 backdrop-blur-sm"
-                />
               </div>
             );
           })}
@@ -296,12 +252,12 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
       </div>
 
       {/* 하단 컨트롤: 좌버튼 + 인디케이터 + 우버튼 */}
-      <div className="pointer-events-none absolute bottom-2 inset-x-0 z-10 flex items-center justify-center gap-3 px-3">
+      <div className="absolute bottom-2 inset-x-0 z-10 flex items-center justify-center gap-3 px-3">
         {len > 1 && (
           <button
             type="button"
             onClick={() => goTo(current - 1)}
-            className="pointer-events-auto flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-black/10 text-neutral-600 dark:bg-white/25 dark:text-white backdrop-blur-sm transition-opacity hover:bg-black/20 dark:hover:bg-white/40"
+            className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-black/10 text-neutral-600 dark:bg-white/25 dark:text-white backdrop-blur-sm transition-opacity hover:bg-black/20 dark:hover:bg-white/40"
             aria-label="이전 뉴스"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
@@ -314,7 +270,7 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
               key={i}
               onClick={() => goTo(i)}
               aria-label={`뉴스 ${i + 1}번으로 이동`}
-              className={`pointer-events-auto h-1.5 rounded-full transition-all duration-300 ${
+              className={`h-1.5 rounded-full transition-all duration-300 ${
                 i === current ? "w-5 bg-accent" : "w-1.5 bg-text-tertiary/40"
               }`}
             />
@@ -324,7 +280,7 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
           <button
             type="button"
             onClick={() => goTo(current + 1)}
-            className="pointer-events-auto flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-black/10 text-neutral-600 dark:bg-white/25 dark:text-white backdrop-blur-sm transition-opacity hover:bg-black/20 dark:hover:bg-white/40"
+            className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-black/10 text-neutral-600 dark:bg-white/25 dark:text-white backdrop-blur-sm transition-opacity hover:bg-black/20 dark:hover:bg-white/40"
             aria-label="다음 뉴스"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18l6-6-6-6"/></svg>

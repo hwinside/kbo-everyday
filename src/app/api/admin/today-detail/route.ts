@@ -7,9 +7,8 @@ import { isAdminAuthedRequest } from "@/lib/admin/pin";
  * 오늘 KST 기준 상세 목록 반환
  */
 
-function postLink(boardType: unknown, boardId: unknown, postId: unknown, newsUrl?: string): string {
+function postLink(boardType: unknown, boardId: unknown, postId: unknown): string {
   if (boardType === "announcement") return "/whats-new"; // 새소식 댓글용 브리지 포스트
-  if (boardType === "news") return newsUrl || "/";
   if (boardType === "free") return `/community/free/${postId}`;
   if (boardType === "player") return `/community/players/${boardId}/posts/${postId}`;
   return `/community/teams/${boardId}/posts/${postId}`;
@@ -53,8 +52,7 @@ export async function GET(req: NextRequest) {
       .from("posts")
       .select("id, title, content, content_type, board_type, board_id, created_at, author_id, profiles(nickname)")
       .neq("content_type", "photo")
-      .neq("board_type", "announcement")
-      .neq("board_type", "news") // 댓글용 브리지 포스트 제외
+      .neq("board_type", "announcement") // 새소식 브리지 포스트 제외
       .gte("created_at", start)
       .lte("created_at", end)
       .order("created_at", { ascending: false })
@@ -90,21 +88,17 @@ export async function GET(req: NextRequest) {
     const authorIds = [...new Set((data ?? []).map((c: { author_id: string }) => c.author_id))];
     const postIds = [...new Set((data ?? []).map((c: { post_id: number }) => c.post_id))];
 
-    const [profilesRes, postsRes, newsRes] = await Promise.all([
+    const [profilesRes, postsRes] = await Promise.all([
       authorIds.length > 0
         ? supabase.from("profiles").select("id, nickname").in("id", authorIds)
         : { data: [] },
       postIds.length > 0
         ? supabase.from("posts").select("id, board_type, board_id").in("id", postIds)
         : { data: [] },
-      postIds.length > 0
-        ? supabase.from("news_discussions").select("post_id, canonical_url").in("post_id", postIds)
-        : { data: [] },
     ]);
 
     const profileMap = new Map((profilesRes.data ?? []).map((p: { id: string; nickname: string }) => [p.id, p.nickname]));
     const postMap = new Map((postsRes.data ?? []).map((p: { id: number; board_type: string; board_id: string }) => [p.id, p]));
-    const newsUrlMap = new Map((newsRes.data ?? []).map((n: { post_id: number; canonical_url: string }) => [n.post_id, n.canonical_url]));
 
     const items = (data ?? []).map((c: { id: number; content: string; post_id: number; created_at: string; author_id: string }) => {
       const post = postMap.get(c.post_id);
@@ -115,7 +109,7 @@ export async function GET(req: NextRequest) {
         title: "",
         content: c.content ?? "",
         link: post
-          ? postLink(post.board_type, post.board_id, c.post_id, newsUrlMap.get(c.post_id))
+          ? postLink(post.board_type, post.board_id, c.post_id)
           : "",
       };
     });
