@@ -1,15 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
-import { fetchRegisterRosters, RosterCollectionError } from "@/lib/crawler/kbo-api";
+import { fetchGames, fetchRegisterRosters, RosterCollectionError } from "@/lib/crawler/kbo-api";
 import { planTeamMoves, type RosterEntry } from "@/lib/roster-moves/parse";
 import { checkPublishReadiness } from "@/lib/roster-moves/readiness";
+import { getKSTToday } from "@/lib/utils/date-kst";
+import {
+  getPregameRosterMovesDecision,
+  isDailyRosterMovesWindow,
+} from "@/lib/roster-moves/schedule";
 import {
   notifyPendingMoves,
   notifyCollectionFailure,
   type PendingMove,
 } from "@/lib/roster-moves/pending-alert";
 
-// 팀별 선수 등록/말소 스냅샷 cron (일 2회, KST 오전/저녁 — vercel.json).
+// 팀별 선수 등록/말소 스냅샷 cron (매일 10:00 KST + 경기일 첫 경기 2시간 전 — vercel.json).
 //
 // 실행 흐름 (2026-07-18 삼순 P0/P1 2차 반영):
 // ⓪ 수집: KBO 공식 등록명단을 10구단 전부 수집(HTTP status/토큰/날짜/인원수 sanity 검증).
@@ -39,6 +44,28 @@ function toIsoDate(yyyymmdd: string): string {
 export async function GET(req: NextRequest) {
   if (!authorized(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  // 30분 tick 중 실제 수집은 매일 10시와 당일 첫 경기 2시간 전에만 실행한다.
+  // 운영 수동 실행은 인증된 ?force=1로 시간 게이트를 우회할 수 있다.
+  const now = new Date();
+  if (req.nextUrl.searchParams.get("force") !== "1" && !isDailyRosterMovesWindow(now)) {
+    let games;
+    try {
+      games = await fetchGames(getKSTToday().replaceAll("-", ""));
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      console.error(`[roster-moves] 경기일정 확인 실패: ${message}`);
+      return NextResponse.json(
+        { ok: false, stage: "schedule", error: message },
+        { status: 502 },
+      );
+    }
+
+    const decision = getPregameRosterMovesDecision(games, now);
+    if (!decision.run) {
+      return NextResponse.json({ ok: true, skipped: true, ...decision });
+    }
   }
 
   // ── run ordering 워터마크는 수집 *시작 전*에 고정한다 (삼순 P0/P1 4차).
