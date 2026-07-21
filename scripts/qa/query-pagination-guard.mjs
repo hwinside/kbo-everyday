@@ -187,11 +187,15 @@ function helperContext(node) {
         const callbackIndex = call.arguments.findIndex((argument) => unwrapExpression(argument) === current);
         if (config?.callbackArgs?.includes(callbackIndex)) {
           const cursorParameter = current.parameters[config.cursorParam ?? 0]?.name;
+          const cursorName = cursorParameter && ts.isIdentifier(cursorParameter) ? cursorParameter.text : null;
           return {
             helperName,
             callbackIndex,
             callback: current,
-            cursorName: cursorParameter && ts.isIdentifier(cursorParameter) ? cursorParameter.text : null,
+            cursorName,
+            cursorSymbol: cursorName
+              ? current.locals?.get(ts.escapeLeadingUnderscores(cursorName)) ?? null
+              : null,
           };
         }
       }
@@ -255,7 +259,17 @@ function keysetContract(chain, table, context) {
 
 function cursorValueMatches(method, context) {
   const value = unwrapExpression(method.argumentNodes?.[1]);
-  return Boolean(context.cursorName && value && ts.isIdentifier(value) && value.text === context.cursorName);
+  if (!context.cursorName || !context.cursorSymbol || !value || !ts.isIdentifier(value)) return false;
+  if (value.text !== context.cursorName) return false;
+  const escapedName = ts.escapeLeadingUnderscores(value.text);
+  let scope = value.parent;
+  while (scope) {
+    const symbol = scope.locals?.get(escapedName);
+    if (symbol) return symbol === context.cursorSymbol;
+    if (scope === context.callback) return false;
+    scope = scope.parent;
+  }
+  return false;
 }
 
 function cursorControlIsSafe(contexts, cursorName) {
@@ -364,6 +378,7 @@ function inspectChain(file, source, position, chain, context) {
 
 function inspectFile(file, source) {
   const sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, scriptKind(file));
+  ts.bindSourceFile(sourceFile, {});
   const events = [];
   const direct = [];
 
@@ -545,6 +560,11 @@ function runSelfTest() {
     [
       "unrelated cursor value",
       'fetchAllByKeyset(async (cursor, limit) => {\n// query-guard: full-scan -- unrelated value is not the helper cursor\nreturn db.from("profiles").select("id").order("id").gt("id", otherCursor).limit(limit);\n});',
+      ["unsafe_full_scan"],
+    ],
+    [
+      "shadowed cursor value",
+      'fetchAllByKeyset(async (cursor, limit) => {\n// query-guard: full-scan -- predicate must bind to the callback cursor symbol\nlet query = db.from("profiles").select("id").order("id").limit(limit);\nif (cursor !== null) {\nconst cursor = null;\nquery = query.gt("id", cursor);\n}\nreturn query;\n}, row => row.id);',
       ["unsafe_full_scan"],
     ],
     [
