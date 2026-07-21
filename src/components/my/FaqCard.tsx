@@ -85,12 +85,12 @@ const FAQ_ITEMS: Record<FaqPlatform, readonly FaqItem[]> = {
     {
       question: "애플워치는 어떻게 설치·연결하고 화면에 표시하나요?",
       answer:
-        "아이폰 마이페이지에서 최애팀을 설정한 뒤 아이폰의 Watch 앱에서 크보팬을 설치하고 워치 앱을 한 번 열어주세요. 워치페이스 꾸미기에서 크보팬 경기·순위 컴플리케이션을 추가할 수 있고, 실시간 Smart Stack 카드는 iOS 18·watchOS 11 이상에서 지원돼요.",
+        "watchOS 10 이상에서 아이폰 마이페이지의 최애팀을 설정한 뒤 Watch 앱에서 크보팬을 설치하고 워치 앱을 한 번 열어주세요. 워치페이스 꾸미기에서 크보팬 경기·순위 컴플리케이션을 추가할 수 있고, 실시간 Smart Stack 카드는 iOS 18·watchOS 11 이상에서 지원돼요.",
     },
     {
       question: "아이폰 홈 위젯은 어떻게 추가하고 갱신하나요?",
       answer:
-        "홈 화면의 빈 곳을 길게 누른 뒤 편집 > 위젯 추가 > 크보팬에서 경기 중계, 팀 순위, 최애선수 카드를 선택해 주세요. 목록에 없거나 멈춰 있으면 최신 앱을 설치하고 앱을 한 번 연 뒤 다시 확인해 주세요.",
+        "홈 화면의 빈 곳을 길게 누른 뒤 편집 > 위젯 추가 > 크보팬에서 ‘크보팬 경기’·‘팀 순위’(iOS 16.1 이상), ‘최애선수 카드’(iOS 17 이상)를 선택해 주세요. 목록에 없거나 멈춰 있으면 최신 앱을 설치하고 앱을 한 번 연 뒤 다시 확인해 주세요.",
     },
     {
       question: "뉴스·영상을 본 뒤 앱으로 어떻게 돌아오나요?",
@@ -156,7 +156,31 @@ const FAQ_ITEMS: Record<FaqPlatform, readonly FaqItem[]> = {
 };
 
 const subscribeToPlatform = () => () => {};
-const getPlatformSnapshot = () => platform;
+
+interface InjectedCapacitor {
+  getPlatform?: () => string;
+  isNativePlatform?: () => boolean;
+}
+
+// 원격 로드(server.url) 앱에서는 npm @capacitor/core가 web으로 오판할 수 있어,
+// 네이티브 셸이 주입한 window.Capacitor 브릿지를 함께 확인한다.
+const getPlatformSnapshot = (): FaqPlatform => {
+  if (platform !== "web" || typeof window === "undefined") return platform;
+
+  const injected = (window as unknown as { Capacitor?: InjectedCapacitor }).Capacitor;
+  try {
+    const injectedPlatform = injected?.getPlatform?.();
+    if (injectedPlatform === "ios" || injectedPlatform === "android") return injectedPlatform;
+
+    if (injected?.isNativePlatform?.() === true) {
+      if (/android/i.test(navigator.userAgent)) return "android";
+      if (/iphone|ipad|ipod/i.test(navigator.userAgent)) return "ios";
+    }
+  } catch {
+    // 브릿지 조회 실패 시 웹 FAQ로 안전하게 폴백한다.
+  }
+  return "web";
+};
 const getServerPlatformSnapshot = (): FaqPlatform => "web";
 
 export default function FaqCard() {
