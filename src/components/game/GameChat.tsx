@@ -14,6 +14,7 @@ import { useBlockedIds, blockUserById } from "@/lib/supabase/useBlock";
 import { supabase } from "@/lib/supabase/client";
 import ReportSheet from "@/components/community/ReportSheet";
 import GifPicker, { isGifComment } from "@/components/community/GifPicker";
+import { buildCanonicalGiphyUrl } from "@/lib/community/giphy";
 
 interface GameChatProps {
   gameId: string;
@@ -58,16 +59,6 @@ function MoodGauge({ homeTeamId, awayTeamId, homePct }: { homeTeamId: number; aw
 /* ===== Room ID builder ===== */
 function getRoomId(gameId: string): string {
   return `game:${gameId}`;
-}
-
-function canonicalizeGiphyUrl(gifUrl: string): string | null {
-  try {
-    const url = new URL(gifUrl);
-    if (!/^media\d*\.giphy\.com$/.test(url.hostname)) return null;
-    return `${url.origin}${url.pathname}`;
-  } catch {
-    return null;
-  }
 }
 
 export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatProps) {
@@ -235,10 +226,10 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     }
   }
 
-  async function handleGifSelect(gifUrl: string) {
+  async function handleGifSelect(gifUrl: string, gifId: string) {
     if (qaKeyboardInputEnabled || !canWrite || cooldown) return;
-    const canonicalUrl = canonicalizeGiphyUrl(gifUrl);
-    if (!canonicalUrl) return;
+    const canonicalUrl = buildCanonicalGiphyUrl(gifId);
+    if (!canonicalUrl || !isGifComment(gifUrl)) return;
     const ok = await sendMessage(canonicalUrl, replyTo?.id ?? null);
     if (ok) {
       setShowGifPicker(false);
