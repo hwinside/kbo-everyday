@@ -3,17 +3,20 @@
  * KBO Player/Search.aspx 팀별 전 페이지를 기준으로 한 1회 로스터 백필.
  *
  * 기본은 dry-run이며 파일을 절대 수정하지 않는다. 실제 반영은 dry-run에서 확인한
- * 정확한 후보 수를 `--ack-count=N`으로 재확인해야만 허용한다.
+ * 정확한 후보 수(`--ack-count=N`)와 sorted candidate manifest digest(`--ack-sha=HEX`)를
+ * 모두 재확인해야만 허용한다. manifest는 `teamId,kboId,name,position,backNo,birthDate,photoSha256`
+ * 정렬 라인의 sha256이므로 dry-run 이후 후보 집합/사진이 하나라도 바뀌면 write가 막힌다.
  *
  * Usage:
  *   node scripts/backfill-roster-from-player-search.mjs
- *   node scripts/backfill-roster-from-player-search.mjs --write --ack-count=N
+ *   node scripts/backfill-roster-from-player-search.mjs --write --ack-count=N --ack-sha=HEX
  */
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   KBO_TEAM_CODES,
+  buildCandidateManifest,
   fetchPlayerProfileWithPhoto,
   fetchTeamSearchEntries,
   selectMissingPlayers,
@@ -28,6 +31,8 @@ const args = process.argv.slice(2);
 const write = args.includes("--write");
 const ackCountArg = args.find((arg) => arg.startsWith("--ack-count="));
 const ackCount = ackCountArg ? Number(ackCountArg.slice("--ack-count=".length)) : null;
+const ackShaArg = args.find((arg) => arg.startsWith("--ack-sha="));
+const ackSha = ackShaArg ? ackShaArg.slice("--ack-sha=".length).trim().toLowerCase() : null;
 const REQUIRED_SOURCE_IDS = new Set(["51809", "65665"]); // 조요한·이준영 회귀 타깃
 
 function loadForeignNumericToAlpha() {
@@ -39,7 +44,7 @@ function loadForeignNumericToAlpha() {
 
 async function auditCandidates(candidates) {
   const eligible = [];
-  const excluded = { foreign: [], "invalid-position": [], "no-photo": [] };
+  const excluded = { foreign: [], "invalid-position": [], "no-photo": [], "stale-photo": [] };
   for (let index = 0; index < candidates.length; index += 8) {
     const batch = candidates.slice(index, index + 8);
     const results = await Promise.all(batch.map(async (candidate) => ({
@@ -112,8 +117,11 @@ async function main() {
 
   console.log(`\nKBO 검색 소스 ${allSearchPlayers.length}명 / 현재 roster ${roster.length}명`);
   console.log(`외국인 숫자 alias skip ${skippedForeignAliases.length}명`);
-  console.log(`roster gap ${missing.length}명 → 외국인 ${excluded.foreign.length} / 유효포지션 없음 ${excluded["invalid-position"].length} / 2026 사진 없음 ${excluded["no-photo"].length} 제외`);
+  console.log(`roster gap ${missing.length}명 → 외국인 ${excluded.foreign.length} / 유효포지션 없음 ${excluded["invalid-position"].length} / 2026 사진 없음 ${excluded["no-photo"].length} / 비정규(old-year·wrong-id) 사진 ${excluded["stale-photo"].length} 제외`);
+  const manifest = buildCandidateManifest(eligible);
   console.log(`[dry-run] 사진 포함 신규 백필 후보 ${eligible.length}명`);
+  console.log(`[dry-run] candidate manifest sha256: ${manifest.sha256}`);
+  console.log(`[dry-run] 반영: --write --ack-count=${eligible.length} --ack-sha=${manifest.sha256}`);
   for (const [team, players] of byTeam) {
     console.log(`  ${team} ${players.length}명: ${players.map((p) => `${p.name}(${p.kboId}/${p.position}/#${p.backNo})`).join(", ")}`);
   }
@@ -121,6 +129,11 @@ async function main() {
   if (!write) return;
   if (!Number.isInteger(ackCount) || ackCount !== eligible.length) {
     throw new Error(`write blocked: --ack-count=${eligible.length} required (got ${ackCountArg ?? "none"})`);
+  }
+  if (ackSha !== manifest.sha256) {
+    throw new Error(
+      `write blocked: --ack-sha=${manifest.sha256} required (got ${ackShaArg ?? "none"}) — dry-run 이후 후보 집합/사진이 바뀌었을 수 있음`,
+    );
   }
 
   const next = [...roster, ...eligible.map((player) => ({

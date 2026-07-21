@@ -1,4 +1,8 @@
+import crypto from "node:crypto";
+
 const SEARCH_URL = "https://www.koreabaseball.com/Player/Search.aspx";
+
+const PHOTO_SEASON = "2026";
 
 export const KBO_TEAM_CODES = ["LG", "OB", "KT", "SK", "NC", "HT", "LT", "SS", "HH", "WO"];
 
@@ -136,6 +140,44 @@ function profileLabel(html, label) {
   return match ? stripTags(match[1]) : "";
 }
 
+export function normalizePlayerName(value) {
+  return String(value ?? "").normalize("NFC").replace(/\s+/g, "");
+}
+
+export function assertProfileIdentity(player, profile) {
+  if (normalizePlayerName(player.name) !== normalizePlayerName(profile.name)) {
+    throw new Error(
+      `profile name mismatch: search=${player.name}, profile=${profile.name} (playerId=${player.kboId})`,
+    );
+  }
+}
+
+export function photoUrlMatches2026(photoUrl, kboId) {
+  try {
+    return new URL(photoUrl).pathname === `/KBO_IMAGE/person/middle/${PHOTO_SEASON}/${kboId}.jpg`;
+  } catch {
+    return false;
+  }
+}
+
+export function buildCandidateManifest(candidates) {
+  const lines = candidates
+    .map((candidate) =>
+      [
+        candidate.teamId,
+        candidate.kboId,
+        candidate.name,
+        candidate.position,
+        candidate.backNo,
+        candidate.birthDate ?? "",
+        crypto.createHash("sha256").update(candidate.photo).digest("hex"),
+      ].join(","),
+    )
+    .sort();
+  const sha256 = crypto.createHash("sha256").update(lines.join("\n")).digest("hex");
+  return { lines, sha256 };
+}
+
 export function parsePlayerDetailPage(html) {
   const photo = html.match(/playerProfile_imgProgile[^>]*src=["']([^"']+)["']/i)?.[1] ?? "";
   const rawPosition = profileLabel(html, "lblPosition");
@@ -153,11 +195,15 @@ export async function fetchPlayerProfileWithPhoto(player) {
   const html = await fetchWithRetry(detailUrl, { headers: HEADERS });
   const profile = parsePlayerDetailPage(html);
   if (!profile.name) throw new Error(`profile parse failed: ${player.name}(${player.kboId})`);
+  assertProfileIdentity(player, profile);
   if (/자유선발/.test(profile.draft)) return { profile, photo: null, excluded: "foreign" };
   if (!["투수", "포수", "내야수", "외야수"].includes(profile.position)) {
     return { profile, photo: null, excluded: "invalid-position" };
   }
   if (!profile.photoUrl) return { profile, photo: null, excluded: "no-photo" };
+  if (!photoUrlMatches2026(profile.photoUrl, player.kboId)) {
+    return { profile, photo: null, excluded: "stale-photo" };
+  }
 
   let lastError;
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -232,14 +278,26 @@ export function selectMissingPlayers(searchPlayers, roster, foreignNumericToAlph
   const rosterNameTeam = new Set(roster.map((player) => `${player.team}\u0000${player.name}`));
   const missing = [];
   const skippedForeignAliases = [];
+  const nameTeamCollisions = [];
 
   for (const player of searchPlayers) {
-    if (rosterIds.has(player.kboId) || rosterNameTeam.has(`${player.team}\u0000${player.name}`)) continue;
+    if (rosterIds.has(player.kboId)) continue;
     if (foreignNumericToAlpha[player.kboId]) {
       skippedForeignAliases.push({ ...player, canonicalId: foreignNumericToAlpha[player.kboId] });
       continue;
     }
+    if (rosterNameTeam.has(`${player.team}\u0000${player.name}`)) {
+      nameTeamCollisions.push(player);
+      continue;
+    }
     missing.push(player);
+  }
+  if (nameTeamCollisions.length > 0) {
+    throw new Error(
+      `name+team collision without ID/alias match (동명이인 의심, 수동 audit 필요): ${nameTeamCollisions
+        .map((player) => `${player.team}/${player.name}(${player.kboId})`)
+        .join(", ")}`,
+    );
   }
   return { missing, skippedForeignAliases };
 }

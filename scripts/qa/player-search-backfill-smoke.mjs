@@ -1,8 +1,11 @@
 #!/usr/bin/env node
 import {
+  assertProfileIdentity,
+  buildCandidateManifest,
   extractHiddenFields,
   parsePlayerDetailPage,
   parseSearchPage,
+  photoUrlMatches2026,
   selectMissingPlayers,
 } from "../lib/kbo-player-search.mjs";
 
@@ -46,12 +49,62 @@ const roster = [
 ];
 const source = [
   ...parsed.players,
-  { ...parsed.players[0], name: "기존외인-숫자alias", kboId: "56789" },
-  { ...parsed.players[0], name: "이름중복", kboId: "77777" },
+  { ...parsed.players[0], name: "기존외인", kboId: "56789" },
 ];
 const selected = selectMissingPlayers(source, roster, { "56789": "FP001" });
-ok("기존 id/name+team/외국인 alias 중복 차단", selected.missing.length === 1 && selected.missing[0].kboId === "50811");
-ok("외국인 alias skip 관측", selected.skippedForeignAliases.length === 1);
+ok("기존 ID hit 차단 + 신규만 missing", selected.missing.length === 1 && selected.missing[0].kboId === "50811");
+ok("외국인 alias는 name+team 겹쳐도 collision 아님(ID→alias→collision 순서)", selected.skippedForeignAliases.length === 1);
+
+let collisionThrown = false;
+try {
+  selectMissingPlayers(
+    [...parsed.players, { ...parsed.players[0], name: "이름중복", kboId: "77777" }],
+    roster,
+    { "56789": "FP001" },
+  );
+} catch (error) {
+  collisionThrown = /collision/.test(String(error?.message));
+}
+ok("동명이인 name+team collision은 silent skip 대신 fail-closed throw", collisionThrown);
+
+ok("2026 정확한 사진 경로 통과", photoUrlMatches2026("https://cdn.koreabaseball.com/KBO_IMAGE/person/middle/2026/65665.jpg", "65665"));
+ok("old-year(2025) 사진 거부", !photoUrlMatches2026("https://cdn.koreabaseball.com/KBO_IMAGE/person/middle/2025/65665.jpg", "65665"));
+ok("wrong-id 사진 거부", !photoUrlMatches2026("https://cdn.koreabaseball.com/KBO_IMAGE/person/middle/2026/99999.jpg", "65665"));
+ok("default/no-image 사진 거부", !photoUrlMatches2026("https://cdn.koreabaseball.com/KBO_IMAGE/person/no_Image.png", "65665"));
+ok("malformed 사진 URL 거부", !photoUrlMatches2026("not-a-url", "65665"));
+
+let identityPassed = true;
+try {
+  assertProfileIdentity({ name: "이 준영", kboId: "65665" }, { name: "이준영" });
+} catch {
+  identityPassed = false;
+}
+ok("search/profile 정규화 동일 이름 통과", identityPassed);
+
+let identityThrown = false;
+try {
+  assertProfileIdentity({ name: "이준영", kboId: "65665" }, { name: "김철수" });
+} catch (error) {
+  identityThrown = /name mismatch/.test(String(error?.message));
+}
+ok("다른 선수 profile name은 fail-closed throw", identityThrown);
+
+const mkCandidate = (kboId, name, photoBytes) => ({
+  teamId: 4,
+  kboId,
+  name,
+  position: "투수",
+  backNo: "1",
+  birthDate: "2000-01-01",
+  photo: Buffer.from(photoBytes),
+});
+const manifestA = buildCandidateManifest([mkCandidate("111", "A", "pa"), mkCandidate("222", "B", "pb")]);
+const manifestAReversed = buildCandidateManifest([mkCandidate("222", "B", "pb"), mkCandidate("111", "A", "pa")]);
+ok("manifest digest는 정렬 기반이라 순서 무관 안정", manifestA.sha256 === manifestAReversed.sha256);
+const manifestSwapped = buildCandidateManifest([mkCandidate("111", "A", "pa"), mkCandidate("333", "C", "pc")]);
+ok("same-count set-swap(A탈락+B신규)은 digest 변경", manifestSwapped.sha256 !== manifestA.sha256);
+const manifestPhotoChanged = buildCandidateManifest([mkCandidate("111", "A", "pa"), mkCandidate("222", "B", "DIFFERENT")]);
+ok("동일 집합이라도 사진 bytes 변경이면 digest 변경", manifestPhotoChanged.sha256 !== manifestA.sha256);
 
 const detail = parsePlayerDetailPage(`
 <img id="x_playerProfile_imgProgile" src="//cdn.example/65665.jpg" />
