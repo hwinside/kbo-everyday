@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ChevronLeft, Trophy } from "lucide-react";
 import { clsx } from "clsx";
@@ -357,7 +358,12 @@ function RankRow({
           {medal ?? rank}
         </div>
         <div className="flex min-w-0 items-center gap-1.5">
-          <span className="truncate font-semibold text-text-primary">{row.nickname}</span>
+          <Link
+            href={`/profile/${row.user_id}`}
+            className="-my-1 truncate rounded-sm py-1 font-semibold text-text-primary transition-colors hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 active:text-accent"
+          >
+            {row.nickname}
+          </Link>
           {row.team_id != null && <TeamBadge teamId={row.team_id} size="xs" />}
           {tab === "cumulative" && <LevelBadge points={(row as CumulativeRow).total_points} />}
         </div>
