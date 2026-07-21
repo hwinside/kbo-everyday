@@ -9,6 +9,74 @@ export type ChartRank = ChartRankValue | null;
 
 type ItunesEntry = { id?: { attributes?: { "im:id"?: string } } };
 
+type AppleChartSegment = {
+  chart?: unknown;
+  shelves?: { items?: { adamId?: unknown }[] }[];
+  nextPage?: { remainingContent?: { id?: unknown }[] };
+};
+
+function findAppleTopFreeSegment(value: unknown): AppleChartSegment | null {
+  if (!value || typeof value !== "object") return null;
+  if ((value as AppleChartSegment).chart === "top-free") {
+    const segment = value as AppleChartSegment;
+    if (
+      Array.isArray(segment.shelves) &&
+      Array.isArray(segment.nextPage?.remainingContent)
+    ) {
+      return segment;
+    }
+  }
+  const children = Array.isArray(value) ? value : Object.values(value);
+  for (const child of children) {
+    const found = findAppleTopFreeSegment(child);
+    if (found) return found;
+  }
+  return null;
+}
+
+// Apple renders the complete top-200 chart into this JSON script on its
+// public chart page. The RSS feed currently truncates the same chart at 100.
+export function rankFromAppleChartHtml(
+  html: unknown,
+  appleAppId: string,
+  minimumChartSize = 200,
+): ChartRankValue {
+  if (typeof html !== "string") throw new Error("apple chart html missing");
+  const match = html.match(
+    /<script\b[^>]*\bid=["']serialized-server-data["'][^>]*>([\s\S]*?)<\/script>/i,
+  );
+  if (!match) throw new Error("apple chart JSON script missing");
+
+  let data: unknown;
+  try {
+    data = JSON.parse(match[1]);
+  } catch {
+    throw new Error("apple chart JSON malformed");
+  }
+
+  const segment = findAppleTopFreeSegment(data);
+  if (!segment) throw new Error("apple top-free segment missing");
+  const visibleIds = segment.shelves!.flatMap((shelf) =>
+    (shelf.items ?? [])
+      .map((item) => item.adamId)
+      .filter((id): id is string => typeof id === "string"),
+  );
+  const remainingIds = segment
+    .nextPage!.remainingContent!.map((item) => item.id)
+    .filter((id): id is string => typeof id === "string");
+  const ids = [...visibleIds, ...remainingIds];
+
+  if (ids.length < minimumChartSize) {
+    throw new Error(
+      `apple chart incomplete or schema mismatch (${ids.length} rows)`,
+    );
+  }
+  if (new Set(ids).size !== ids.length)
+    throw new Error("apple chart contains duplicate ids");
+  const idx = ids.indexOf(appleAppId);
+  return { rank: idx >= 0 ? idx + 1 : null, chartSize: ids.length };
+}
+
 export function rankFromItunesFeed(data: unknown, appleAppId: string): ChartRankValue {
   const raw = (data as { feed?: { entry?: ItunesEntry | ItunesEntry[] } } | null)?.feed?.entry;
   const entries = Array.isArray(raw) ? raw : raw ? [raw] : [];
