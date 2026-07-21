@@ -22,11 +22,12 @@ const cases: [string | { name: string; team?: string }, string | null][] = [
   [{ name: "교야마", team: "롯데" }, "교야마 마사야"],
   [{ name: "다무라", team: "두산" }, "다무라 이치로"],
   [{ name: "다케다", team: "SSG" }, "다케다 쇼타"],
-  [{ name: "도다", team: "NC" }, "도다 나츠키"],
-  // 표기 변형 alias — 라이브 피드 "토다" vs 로스터 "도다 나츠키" (팀 가드 필수, 2026-07-18 PR #679)
-  [{ name: "토다", team: "NC" }, "도다 나츠키"],
-  [{ name: "토다", team: "LG" }, null], // 팀 가드 불일치 → alias 미적용
-  ["토다", null], // 팀 정보 없음 → alias 미적용
+  [{ name: "토다", team: "NC" }, "토다 나츠키"],
+  // 표기 변형 alias — 레거시 "도다"[외래어표기법] → 등록명 "토다 나츠키" (팀 가드 필수, 2026-07-21 CS 정정)
+  [{ name: "도다", team: "NC" }, "토다 나츠키"],
+  ["토다", "토다 나츠키"], // 등록명 유일 → 스기모토처럼 단독 성(姓) 표기 resolve
+  [{ name: "도다", team: "LG" }, null], // 레거시 표기 alias는 팀 가드 불일치 시 미적용
+  ["도다", null], // 팀 정보 없는 string은 alias 미적용
   // prefix 동명 첫 토큰 ("맷" — 매닝/사우어): team 있으면 분리, 없으면 유일성 게이트로 null
   [{ name: "맷", team: "삼성" }, "맷 매닝"],
   ["맷", null],
