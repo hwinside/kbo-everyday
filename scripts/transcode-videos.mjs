@@ -437,21 +437,40 @@ async function processVenueStories() {
         done++;
       } catch (e) {
         const attempts = row.transcode_attempts + 1;
-        // pending: 재시도 소진 시에만 removed. active: 노출 유지(720p 는 최적화일 뿐) — attempts 만 증가.
-        const nextStatus = isPending ? (attempts >= MAX_ATTEMPTS ? "removed" : "pending") : "active";
         // DB 갱신 실패는 명시 로그(성공처럼 넘기지 않음) — 다음 실행이 재시도
-        let failQuery = supabase
-          .from("venue_stories")
-          .update({ transcode_attempts: attempts, status: nextStatus })
-          .eq("id", row.id);
-        if (isPending) failQuery = failQuery.eq("status", "pending"); // 승격된 행을 되돌리지 않음
-        const { error: updErr } = await failQuery;
+        let failQuery;
+        let catchStatus;
+        if (isPending) {
+          // pending 경로: 재시도 소진 시 removed, 아니면 pending 유지 — 즉시경로가 승격한 행 건드리지 않음
+          catchStatus = attempts >= MAX_ATTEMPTS ? "removed" : "pending";
+          failQuery = supabase
+            .from("venue_stories")
+            .update({ transcode_attempts: attempts, status: catchStatus })
+            .eq("id", row.id)
+            .eq("status", "pending"); // CAS: 즉시경로가 이미 active로 승격했으면 0-row skip
+        } else {
+          // active 경로: status 재기록 절대 금지 — 처리 중 신고/어드민이 removed로 내린 상태 보존
+          // (불변식: worker catch 도 removed 영상을 active로 되살리지 않는다)
+          catchStatus = "active"; // 로그 출력용(실제 DB 기록 아님)
+          failQuery = supabase
+            .from("venue_stories")
+            .update({ transcode_attempts: attempts }) // status 제외 — CAS 미일치 행 보존
+            .eq("id", row.id)
+            .eq("status", "active")       // CAS: removed 된 행이면 0-row → skip
+            .eq("needs_transcode", true);  // CAS: 다른 worker가 이미 완료했으면 skip
+        }
+        const { data: failRows, error: updErr } = await failQuery.select("id");
         if (updErr) {
           updateErrors++;
           console.log(`  ⚠️ venue ${row.id} 상태갱신 실패(다음 실행 재시도): ${updErr.message}`);
+        } else if ((failRows ?? []).length === 0) {
+          // 0-row: 처리 중 removed/완료됨 → skip(resurrect 금지) — 성공 경로와 동일 카운팅
+          claimedElsewhere++;
+          console.log(`  ⏭️  venue ${row.id} catch-skip — ${isPending ? "즉시경로 선점" : "관리자 내림 등"} (${e.message || e})`);
+        } else {
+          console.log(`  ❌ venue ${row.id} ${catchStatus} (${attempts}/${MAX_ATTEMPTS}): ${e.message || e}`);
+          failed++;
         }
-        console.log(`  ❌ venue ${row.id} ${nextStatus} (${attempts}/${MAX_ATTEMPTS}): ${e.message || e}`);
-        failed++;
       } finally {
         for (const f of [inPath, outPath]) { try { rmSync(f); } catch {} }
       }
