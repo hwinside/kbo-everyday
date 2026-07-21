@@ -110,7 +110,10 @@ function callChain(node, sourceFile) {
   if (ts.isPropertyAccessExpression(current)) {
     return { baseName: null, baseText: current.getText(sourceFile), methods: [], nodes: [] };
   }
-  if (!ts.isCallExpression(current) || !ts.isPropertyAccessExpression(current.expression)) return null;
+  if (!ts.isCallExpression(current)) return null;
+  if (!ts.isPropertyAccessExpression(current.expression)) {
+    return { baseName: null, baseText: current.getText(sourceFile), methods: [], nodes: [current] };
+  }
   const prefix = callChain(current.expression.expression, sourceFile);
   if (!prefix) return null;
   return {
@@ -120,6 +123,40 @@ function callChain(node, sourceFile) {
       args: current.arguments.map((argument) => argument.getText(sourceFile)).join(", "),
     }],
     nodes: [...prefix.nodes, current],
+  };
+}
+
+function controlContexts(node, sourceFile) {
+  const contexts = [];
+  let child = node;
+  let current = node.parent;
+  while (current && !ts.isFunctionLike(current) && !ts.isSourceFile(current)) {
+    if (ts.isIfStatement(current)) {
+      contexts.push({
+        kind: "if",
+        test: current.expression.getText(sourceFile),
+        branch: current.elseStatement && (child === current.elseStatement || child.getStart(sourceFile) >= current.elseStatement.getStart(sourceFile))
+          ? "else"
+          : "then",
+      });
+    } else if (
+      ts.isConditionalExpression(current) || ts.isSwitchStatement(current) || ts.isCaseBlock(current) ||
+      ts.isForStatement(current) || ts.isForInStatement(current) || ts.isForOfStatement(current) ||
+      ts.isWhileStatement(current) || ts.isDoStatement(current) || ts.isTryStatement(current)
+    ) {
+      contexts.push({ kind: "conditional", test: current.getText(sourceFile).slice(0, 120), branch: "unknown" });
+    }
+    child = current;
+    current = current.parent;
+  }
+  return contexts;
+}
+
+function withControlContext(chain, node, sourceFile) {
+  const control = controlContexts(node, sourceFile);
+  return {
+    ...chain,
+    methods: chain.methods.map((method) => ({ ...method, control })),
   };
 }
 
@@ -173,14 +210,32 @@ function keysetContract(chain, table, context) {
     .filter((method) => ["eq", "match"].includes(method.name))
     .map((method) => literalFirstArgument(method.args)));
   const orders = chain.methods
-    .filter((method) => method.name === "order")
+    .filter((method) => method.name === "order" && (method.control?.length ?? 0) === 0)
     .map((method) => literalFirstArgument(method.args));
-  const cursorMethods = chain.methods.filter((method) => ["gt", "gte", "lt", "lte"].includes(method.name));
+  const cursorMethods = chain.methods.filter((method) =>
+    ["gt", "gte", "lt", "lte"].includes(method.name) && cursorControlIsSafe(method.control ?? [])
+  );
+  const unconditionalLimit = chain.methods.some((method) =>
+    method.name === "limit" && (method.control?.length ?? 0) === 0
+  );
+  if (!unconditionalLimit) return false;
   return uniqueKeySetsFor(table).some((keySet) =>
     keySet.every((key) => equalityKeys.has(key) || (
       orders.includes(key) && cursorMethods.some((method) => literalFirstArgument(method.args) === key)
     )) && cursorMethods.length > 0
   );
+}
+
+function cursorControlIsSafe(contexts) {
+  if (contexts.length === 0) return true;
+  return contexts.every((context) => {
+    if (context.kind !== "if") return false;
+    const test = normalize(context.test);
+    if (!/\bcursor\b/.test(test) || !/\bnull\b/.test(test)) return false;
+    const nonNullThen = /cursor\s*!={1,2}\s*null|null\s*!={1,2}\s*cursor/.test(test);
+    const nonNullElse = /cursor\s*={2,3}\s*null|null\s*={2,3}\s*cursor/.test(test);
+    return (context.branch === "then" && nonNullThen) || (context.branch === "else" && nonNullElse);
+  });
 }
 
 function inspectSelect(file, source, position, chain, context) {
@@ -286,7 +341,8 @@ function inspectFile(file, source) {
 
   function visit(node) {
     if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
-      const chain = callChain(node.initializer, sourceFile);
+      const parsed = callChain(node.initializer, sourceFile);
+      const chain = parsed ? withControlContext(parsed, node, sourceFile) : null;
       if (chain?.methods.some((method) => method.name === "from")) {
         addEvent(containingScope(node), { type: "declare", name: node.name.text, chain, node, context: helperContext(node) });
       }
@@ -294,12 +350,14 @@ function inspectFile(file, source) {
       ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
       ts.isIdentifier(node.left)
     ) {
-      const chain = callChain(node.right, sourceFile);
+      const parsed = callChain(node.right, sourceFile);
+      const chain = parsed ? withControlContext(parsed, node, sourceFile) : null;
       if (chain?.baseName === node.left.text && chain.methods.length > 0) {
         addEvent(containingScope(node), { type: "extend", name: node.left.text, chain, node });
       }
     } else if (ts.isCallExpression(node) && outermostChainCall(node)) {
-      const chain = callChain(node, sourceFile);
+      const parsed = callChain(node, sourceFile);
+      const chain = parsed ? withControlContext(parsed, node, sourceFile) : null;
       if (chain?.baseName && chain.methods.length > 0 && !chain.methods.some((method) => method.name === "from")) {
         addEvent(containingScope(node), { type: "extend", name: chain.baseName, chain, node });
       }
@@ -380,19 +438,28 @@ function runSelfTest() {
     ["unbounded growing select", 'db.from("profiles").select("id");', ["unbounded_growing_select"]],
     ["ambiguous growing limit", 'db.from("profiles").select("id").limit(20);', ["ambiguous_growing_limit"]],
     ["explicit bounded limit", '// query-guard: bounded -- dashboard intentionally shows only the newest rows\ndb.from("profiles").select("id").limit(20);', []],
-    ["bounded relation limit", 'db.from("game_event_state").select("game_id").limit(20);', []],
+    ["bounded relation limit", 'db.from("admin_alert_state").select("job_name").limit(20);', []],
     ["unique lookup", 'db.from("profiles").select("id").eq("id", userId);', []],
     ["non-unique range", 'db.from("posts").select("id").order("created_at").range(0, 99);', ["non_unique_pagination"]],
     ["unreviewed stable range", 'db.from("posts").select("id").order("id").range(0, 99);', ["partial_page_risk"]],
     ["bounded stable page", '// query-guard: bounded-page -- feed returns one stable UI page only\ndb.from("posts").select("id").order("id").range(0, 99);', []],
     ["unknown rpc", 'db.rpc("returns_many_rows");', ["unbounded_rpc"]],
+    ["factory rpc", 'getSupabaseAdmin().rpc("returns_many_rows");', ["unbounded_rpc"]],
+    ["factory from", 'getSupabaseAdmin().from("profiles").select("id");', ["unbounded_growing_select"]],
     ["allowlisted rpc", 'db.rpc("increment_post_view");', []],
     ["auth list", 'db.auth.admin.listUsers({ page: 1, perPage: 1000 });', ["unbounded_collection_api"]],
     ["storage list", 'db.storage.from(bucket).list(prefix, { limit: 100 });', ["unbounded_collection_api"]],
     ["helper import only", 'import { fetchAllByKeyset } from "./paginate";\ndb.from("profiles").select("id").limit(1000);', ["ambiguous_growing_limit"]],
     ["helper outside limit", 'fetchAllByKeyset(async (cursor, limit) => db.from("profiles").select("id").order("id").gt("id", cursor).limit(limit));\ndb.from("profiles").select("id").limit(1000);', ["ambiguous_growing_limit"]],
     ["unclassified growing relation", 'db.from("new_growth_table").select("id").limit(1000);', ["unclassified_relation"]],
+    ["growing game event state", 'db.from("game_event_state").select("game_id").limit(1000);', ["ambiguous_growing_limit"]],
+    ["growing game notify state", 'db.from("game_notify_state").select("game_id").limit(1000);', ["ambiguous_growing_limit"]],
     ["split builder", 'const q = db.from("profiles");\nq.select("id");', ["unbounded_growing_select"]],
+    [
+      "dead branch keyset",
+      'fetchAllByKeyset(async (cursor, limit) => {\n// query-guard: full-scan -- dead branch must not prove the keyset contract\nlet q = db.from("profiles").select("id");\nif (false) { q = q.order("id").gt("id", cursor).limit(limit); }\nreturn q;\n});',
+      ["unsafe_full_scan"],
+    ],
     [
       "verified full scan",
       'fetchAllByKeyset(async (cursor, limit) => {\n// query-guard: full-scan -- unique id keyset rejects every page error\nlet q = db.from("profiles").select("id").order("id").limit(limit);\nif (cursor !== null) q = q.gt("id", cursor);\nreturn q;\n});',

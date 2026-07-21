@@ -20,7 +20,8 @@ table fails before baseline comparison. Composite unique keys are listed as key 
 ```
 
 `full-scan` is accepted only when the query is structurally inside a trusted helper
-callback and contains the cursor predicate, complete unique order, and page limit.
+callback and the same executable path contains the cursor predicate, complete unique
+order, and page limit. Dead/unknown branches cannot prove the helper contract.
 
 When a reviewed audit intentionally resets the baseline, run
 `QUERY_GUARD_BASE_SHA=$(git rev-parse HEAD) node scripts/qa/query-pagination-guard.mjs --write-baseline`.

@@ -37,6 +37,8 @@
     "event_leaderboard_snapshot",
     "feedback",
     "game_summaries",
+    "game_event_state",
+    "game_notify_state",
     "games",
     "gif_collector_queue",
     "highlights",
@@ -90,8 +92,6 @@
   "boundedTables": [
     "admin_alert_state",
     "channel_discovery_lock",
-    "game_event_state",
-    "game_notify_state",
     "ios_widget_push_state",
     "live_activity_game_push_state",
     "push_dispatch_config",

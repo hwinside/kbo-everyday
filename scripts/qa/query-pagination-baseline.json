@@ -107,13 +107,6 @@
       "subject": "comments",
       "detail": "add a bound, unique-key lookup, or query-guard annotation"
     },
-    "153f6f821507b8d2a4a7": {
-      "count": 1,
-      "kind": "unbounded_select",
-      "file": "src/lib/notifications/live-activity.ts",
-      "subject": "game_notify_state",
-      "detail": "add a bound, unique-key lookup, or query-guard annotation"
-    },
     "16a26babe359140bf82d": {
       "count": 1,
       "kind": "ambiguous_growing_limit",
@@ -478,11 +471,25 @@
       "subject": "app_downloads",
       "detail": "add a bound, unique-key lookup, or query-guard annotation"
     },
+    "51067393dd25d3907386": {
+      "count": 1,
+      "kind": "unbounded_rpc",
+      "file": "src/app/api/news/discussion/route.ts",
+      "subject": "news_discussion_visible_counts",
+      "detail": "RPC row cardinality must be allowlisted or annotated"
+    },
     "52429173cfa3f44d8c01": {
       "count": 1,
       "kind": "unbounded_growing_select",
       "file": "src/app/api/admin/today-detail/route.ts",
       "subject": "profiles",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "52ae51009ba83f9041b5": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/lib/notifications/live-activity.ts",
+      "subject": "game_notify_state",
       "detail": "add a bound, unique-key lookup, or query-guard annotation"
     },
     "53bf4d8c8a554a567cdd": {
@@ -581,6 +588,13 @@
       "kind": "unbounded_rpc",
       "file": "src/app/api/cron/discover-channels/route.ts",
       "subject": "commit_channel_discovery",
+      "detail": "RPC row cardinality must be allowlisted or annotated"
+    },
+    "624669178026ad457abf": {
+      "count": 1,
+      "kind": "unbounded_rpc",
+      "file": "src/app/api/news/discussion/counts/route.ts",
+      "subject": "news_discussion_visible_counts",
       "detail": "RPC row cardinality must be allowlisted or annotated"
     },
     "65551df15d4b25e0d332": {
