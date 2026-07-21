@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * 직관 다이어리 End-User UI 스모크.
- * 일회용 로그인 유저를 만들고, migration HOLD 중인 attendance API만 브라우저에서 fixture로 대체한다.
- * 실제 AuthContext 로그인·/my 렌더·경기 상세 펼침·공개 프로필 비노출을 검증한 뒤 유저를 정리한다.
+ * 직관 다이어리 관리자 게이트 End-User UI 스모크.
+ * 일회용 일반 로그인 유저를 만들고, /my에서 다이어리 UI·API 요청이 모두 차단되는지 검증한다.
+ * 공개 프로필 비노출도 함께 확인한 뒤 유저를 정리한다.
  */
 import { createClient } from "@supabase/supabase-js";
 import playwright from "playwright";
@@ -123,23 +123,21 @@ async function main() {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
   await injectSession(context, session);
   const page = await context.newPage();
-  await page.route("**/api/me/venue-attendance**", (route) => route.fulfill({
-    status: 200,
-    contentType: "application/json",
-    body: JSON.stringify(diaryFixture),
-  }));
+  let attendanceRequests = 0;
+  await page.route("**/api/me/venue-attendance**", (route) => {
+    attendanceRequests++;
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(diaryFixture),
+    });
+  });
 
   await page.goto(`${BASE_URL}/my`, { waitUntil: "networkidle" });
-  await page.getByText("직관 다이어리", { exact: true }).waitFor();
-  if (!(await page.getByText("2경기", { exact: true }).isVisible())) throw new Error("attendance count missing");
-  if (!(await page.getByText("100.0%", { exact: true }).isVisible())) throw new Error("win rate missing");
-  await page.locator("button").filter({ hasText: "LG vs 롯데" }).first().click();
-  await page.getByText("내 최애선수 오늘 활약", { exact: true }).waitFor();
-  if (!(await page.getByText("평균 이상", { exact: true }).isVisible())) throw new Error("comparison missing");
-  if (!(await page.getByText("경기 타율 .500 · 경기 전 시즌 .270", { exact: true }).isVisible())) throw new Error("official metric comparison missing");
-  if (!(await page.getByText("경기 전 평균 · 3.7타수 1.0안타 0.2홈런 0.8타점", { exact: true }).isVisible())) throw new Error("per-game average missing");
-  await page.locator("button").filter({ hasText: "LG vs 두산" }).first().click();
-  await page.getByText("기록 확인 중", { exact: true }).waitFor();
+  if (await page.getByText("직관 다이어리", { exact: true }).count()) {
+    throw new Error("regular user leaked venue diary on /my");
+  }
+  if (attendanceRequests !== 0) throw new Error("regular user requested venue attendance API");
   await page.screenshot({ path: resolve(SHOT_DIR, "venue-diary-my.png"), fullPage: true });
 
   await page.goto(`${BASE_URL}/profile/${userId}`, { waitUntil: "networkidle" });
@@ -148,7 +146,7 @@ async function main() {
   }
   await page.screenshot({ path: resolve(SHOT_DIR, "venue-diary-public-profile.png"), fullPage: true });
   await browser.close();
-  console.log("venue diary UI smoke: PASS (login + /my summary/detail + public profile privacy)");
+  console.log("venue diary UI smoke: PASS (regular user /my + API + public profile hidden)");
 }
 
 try {
