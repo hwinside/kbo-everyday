@@ -71,7 +71,8 @@
     "qa:venue-auth-consent": "tsx scripts/qa/venue-auth-consent-smoke.ts",
     "qa:venue-transcode-worker": "tsx scripts/qa/venue-transcode-worker-smoke.ts",
     "qa:venue-attendance": "tsx scripts/qa/venue-attendance-smoke.ts",
-    "qa:venue-player-comparison": "tsx scripts/qa/venue-player-comparison-smoke.ts"
+    "qa:venue-player-comparison": "tsx scripts/qa/venue-player-comparison-smoke.ts",
+    "qa:ui:venue-diary": "node scripts/qa/ui-smoke-venue-diary.mjs"
   },
   "dependencies": {
     "@capacitor-firebase/messaging": "^8.3.0",
