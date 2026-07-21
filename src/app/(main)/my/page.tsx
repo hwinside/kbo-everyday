@@ -168,6 +168,22 @@ export default function MyPage() {
         <FaqCard />
       </motion.div>
 
+      {/* FAQ에서 답을 찾지 못한 로그인 유저가 바로 문의하도록 연결 */}
+      {user && (
+        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="mt-3">
+          <GlassCard pressable className="flex items-center justify-between p-5" onClick={() => setShowFeedback(true)}>
+            <div className="flex items-center gap-4">
+              <MessageSquareHeart size={22} className="text-text-secondary" />
+              <div>
+                <span className="text-base text-text-primary">찾는 답변이 없나요?</span>
+                <p className="mt-0.5 text-xs text-text-tertiary">피드백 보내기에서 직접 문의해주세요</p>
+              </div>
+            </div>
+            <ChevronRight size={22} className="text-text-tertiary" />
+          </GlassCard>
+        </motion.div>
+      )}
+
       {/* 회원가입 CTA (비로그인) */}
       {!user && (
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="mt-3">
@@ -290,20 +306,6 @@ export default function MyPage() {
       <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }} className="mt-5">
         <MenuSection />
       </motion.div>
-
-      {/* 피드백 보내기 */}
-      {user && (
-        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.17 }} className="mt-3">
-          <GlassCard pressable className="flex items-center justify-between p-5" onClick={() => setShowFeedback(true)}>
-            <div className="flex items-center gap-4">
-              <MessageSquareHeart size={22} className="text-text-secondary" />
-              <span className="text-base text-text-primary">📮 피드백 보내기</span>
-            </div>
-            <ChevronRight size={22} className="text-text-tertiary" />
-          </GlassCard>
-        </motion.div>
-      )}
-
 
       {/* Logged in info */}
       {user && (
