@@ -100,7 +100,7 @@ export default function NewsCommentButton({
           postId={postId}
           teamId={article.teamId}
           onCommentAdded={() => syncAfterMutation(1)}
-          onCommentDeleted={() => syncAfterMutation(-1)}
+          onCommentDeleted={(_postId, removedCount = 1) => syncAfterMutation(-removedCount)}
         />
       )}
     </>

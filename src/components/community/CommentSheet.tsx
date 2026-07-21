@@ -27,7 +27,7 @@ interface CommentSheetProps {
   /** 댓글 작성 성공 시 부모에게 알림 (comment_count 동기화용) */
   onCommentAdded?: (postId: number) => void;
   /** 댓글 삭제 성공 시 부모에게 알림 (comment_count 동기화용) */
-  onCommentDeleted?: (postId: number) => void;
+  onCommentDeleted?: (postId: number, removedCount?: number) => void;
 }
 
 function timeAgo(dateStr: string): string {
@@ -510,12 +510,13 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
 
     try {
       await deleteComment(commentId, { canDeleteAny: canModerateComments });
+      const removedCount = comments.filter((c) => c.id === commentId || c.parent_id === commentId).length;
       setComments((prev) => prev.filter((c) => c.id !== commentId && c.parent_id !== commentId));
-      if (postId) onCommentDeleted?.(postId);
+      if (postId) onCommentDeleted?.(postId, Math.max(1, removedCount));
     } catch {
       alert("댓글 삭제에 실패했어요");
     }
-  }, [postId, onCommentDeleted, canModerateComments]);
+  }, [postId, onCommentDeleted, canModerateComments, comments]);
 
   const handleLike = useCallback(async (commentId: number) => {
     if (!user) { setShowLogin(true); return; }
@@ -1020,8 +1021,13 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
       targetId={reportCommentId}
       onReported={({ hidden }) => {
         if (!hidden) return;
-        setComments((prev) => prev.filter((comment) => comment.id !== reportCommentId));
-        if (postId) onCommentDeleted?.(postId);
+        const removedCount = comments.filter(
+          (comment) => comment.id === reportCommentId || comment.parent_id === reportCommentId,
+        ).length;
+        setComments((prev) => prev.filter(
+          (comment) => comment.id !== reportCommentId && comment.parent_id !== reportCommentId,
+        ));
+        if (postId) onCommentDeleted?.(postId, Math.max(1, removedCount));
       }}
     />
   )}

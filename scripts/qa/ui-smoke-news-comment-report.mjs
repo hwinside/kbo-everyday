@@ -21,6 +21,7 @@ const admin = createClient(SUPABASE_URL, SERVICE_ROLE, {
 const userIds = [];
 let postId = null;
 let commentId = null;
+let replyId = null;
 let passed = 0;
 let failed = 0;
 
@@ -117,6 +118,19 @@ async function seed() {
   if (commentError || !comment) throw commentError || new Error("comment seed failed");
   commentId = comment.id;
 
+  const { data: reply, error: replyError } = await admin
+    .from("comments")
+    .insert({
+      post_id: postId,
+      author_id: author.id,
+      parent_id: commentId,
+      content: `신고대상답글-${STAMP}`,
+    })
+    .select("id")
+    .single();
+  if (replyError || !reply) throw replyError || new Error("reply seed failed");
+  replyId = reply.id;
+
   const { error: reportsError } = await admin.from("reports").insert([
     { reporter_id: reporter1.id, target_type: "comment", target_id: commentId, reason: "abuse" },
     { reporter_id: reporter2.id, target_type: "comment", target_id: commentId, reason: "abuse" },
@@ -154,9 +168,10 @@ async function run() {
     });
 
     await page.goto(`${BASE_URL}/whats-new`, { waitUntil: "networkidle" });
-    await page.getByRole("button", { name: /댓글 1/ }).click();
+    await page.getByRole("button", { name: /댓글 2/ }).click();
     await page.getByText(`신고대상-${STAMP}`).waitFor({ state: "visible" });
-    await page.getByRole("button", { name: "댓글 메뉴" }).click();
+    await page.getByText(`신고대상답글-${STAMP}`).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "댓글 메뉴" }).first().click();
     await page.getByRole("button", { name: "신고" }).click();
 
     const reportTitle = page.getByRole("heading", { name: "🚨 신고하기" });
@@ -172,6 +187,8 @@ async function run() {
 
     const { data: blinded } = await admin.from("comments").select("is_hidden").eq("id", commentId).single();
     check("서로 다른 3계정 신고 후 댓글 블라인드", blinded?.is_hidden === true);
+    const { data: visibleReply } = await admin.from("comments").select("is_hidden").eq("id", replyId).single();
+    check("루트 블라인드 후 답글 row는 visible 상태 유지", visibleReply?.is_hidden === false);
 
     await page.waitForTimeout(1700);
     await page.getByRole("button", { name: "댓글 닫기" }).click().catch(async () => {
@@ -185,11 +202,69 @@ async function run() {
 }
 
 async function cleanup() {
+  const cleanupErrors = [];
+  const runDelete = async (label, operation) => {
+    const { error } = await operation;
+    if (error) cleanupErrors.push(`${label}: ${error.message}`);
+  };
+
   if (commentId !== null) {
-    await admin.from("reports").delete().eq("target_type", "comment").eq("target_id", commentId);
+    await runDelete(
+      "reports delete",
+      admin.from("reports").delete().eq("target_type", "comment").eq("target_id", commentId),
+    );
+    await runDelete(
+      "blind notice delete",
+      admin.from("report_blind_notices").delete().eq("target_type", "comment").eq("target_id", commentId),
+    );
   }
-  if (postId !== null) await admin.from("posts").delete().eq("id", postId);
-  for (const id of userIds) await admin.auth.admin.deleteUser(id).catch(() => {});
+  if (postId !== null) await runDelete("post delete", admin.from("posts").delete().eq("id", postId));
+  if (userIds.length > 0) {
+    await runDelete("profiles delete", admin.from("profiles").delete().in("id", userIds));
+  }
+  for (const id of userIds) {
+    const { error: hardDeleteError } = await admin.auth.admin.deleteUser(id);
+    if (hardDeleteError) {
+      const { error: softDeleteError } = await admin.auth.admin.deleteUser(id, true);
+      if (softDeleteError) {
+        cleanupErrors.push(`auth delete ${id}: ${softDeleteError.message || JSON.stringify(softDeleteError)}`);
+      }
+    }
+  }
+
+  const [reports, blindNotices, posts, profiles, comments] = await Promise.all([
+    commentId === null
+      ? Promise.resolve({ data: [], error: null })
+      : admin.from("reports").select("id").eq("target_type", "comment").eq("target_id", commentId),
+    commentId === null
+      ? Promise.resolve({ data: [], error: null })
+      : admin.from("report_blind_notices").select("id").eq("target_type", "comment").eq("target_id", commentId),
+    postId === null
+      ? Promise.resolve({ data: [], error: null })
+      : admin.from("posts").select("id").eq("id", postId),
+    userIds.length === 0
+      ? Promise.resolve({ data: [], error: null })
+      : admin.from("profiles").select("id").in("id", userIds),
+    postId === null
+      ? Promise.resolve({ data: [], error: null })
+      : admin.from("comments").select("id").eq("post_id", postId),
+  ]);
+  for (const [label, result] of [
+    ["reports", reports],
+    ["blind notices", blindNotices],
+    ["posts", posts],
+    ["profiles", profiles],
+    ["comments", comments],
+  ]) {
+    if (result.error) cleanupErrors.push(`${label} verify: ${result.error.message}`);
+    if ((result.data ?? []).length > 0) cleanupErrors.push(`${label} residue: ${result.data.length}`);
+  }
+  for (const id of userIds) {
+    const { data, error } = await admin.auth.admin.getUserById(id);
+    if (!error && data.user && !data.user.deleted_at) cleanupErrors.push(`active auth residue: ${id}`);
+  }
+  if (cleanupErrors.length > 0) throw new Error(cleanupErrors.join("; "));
+  console.log("PASS cleanup residue 0 (active auth/profile/post/comment/report/blind notice)");
 }
 
 try {
@@ -198,7 +273,12 @@ try {
   failed += 1;
   console.error("FAIL ui smoke", error);
 } finally {
-  await cleanup();
+  try {
+    await cleanup();
+  } catch (error) {
+    failed += 1;
+    console.error("FAIL cleanup", error);
+  }
 }
 
 console.log(`news comment report UI: ${passed}/${passed + failed} passed`);

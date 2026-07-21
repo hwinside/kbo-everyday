@@ -91,6 +91,8 @@ test("visible count SQL excludes blinded comments", () => {
     "utf8",
   );
   assert.match(migration, /c\.is_hidden IS DISTINCT FROM true/);
+  assert.match(migration, /root\.id = c\.parent_id/);
+  assert.match(migration, /root\.is_hidden IS DISTINCT FROM true/);
   assert.match(migration, /REVOKE EXECUTE ON FUNCTION news_discussion_visible_counts\(text\[\]\)/);
 });
 

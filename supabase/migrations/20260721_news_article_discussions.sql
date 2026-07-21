@@ -30,6 +30,17 @@ AS $$
   LEFT JOIN comments c
     ON c.post_id = nd.post_id
    AND c.is_hidden IS DISTINCT FROM true
+   AND (
+     c.parent_id IS NULL
+     OR EXISTS (
+       SELECT 1
+       FROM comments root
+       WHERE root.id = c.parent_id
+         AND root.post_id = nd.post_id
+         AND root.parent_id IS NULL
+         AND root.is_hidden IS DISTINCT FROM true
+     )
+   )
   WHERE nd.article_key = ANY(COALESCE(p_article_keys, ARRAY[]::text[]))
   GROUP BY nd.article_key;
 $$;
