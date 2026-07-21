@@ -2,7 +2,9 @@
 
 export const VENUE_STORY_MAX_DURATION_MS = 15_000; // 영상 15초
 export const VENUE_STORY_DURATION_TOLERANCE_MS = 1_000; // 클라 duration 반올림 여유
-export const VENUE_STORY_MAX_BYTES = 60 * 1024 * 1024; // 60MB
+// Supabase Storage 프로젝트 전역 상한(50MiB)과 동일하게 유지한다.
+// 앱 상한이 더 크면 클라이언트 검증을 통과해도 Storage가 413으로 거부한다.
+export const VENUE_STORY_MAX_BYTES = 50 * 1024 * 1024; // 50MiB
 export const VENUE_STORY_MAX_PER_USER_PER_GAME = 10; // 게임당 유저 상한(스팸 방지)
 export const VENUE_STORY_REPORT_HIDE_THRESHOLD = 3; // 신고 누적 자동 숨김
 // UGC 가이드라인 동의 버전 — 문구 변경 시 증을로 재동의 강제. 서버가 이 값 이상만 허용.

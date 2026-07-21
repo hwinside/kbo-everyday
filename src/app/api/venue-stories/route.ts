@@ -22,7 +22,7 @@ import {
 import { decideListAuth } from "@/lib/venue-stories/auth-consent";
 import { validateVenueVideoRow } from "@/lib/venue-stories/video-validate-server";
 
-// 영상 즉시 검증(다운로드 최대 60MB + ffprobe)을 요청 안에서 수행
+// 영상 즉시 검증(다운로드 최대 50MiB + ffprobe)을 요청 안에서 수행
 export const maxDuration = 60;
 
 /** 우리 Supabase storage 공개 URL 검증 + { bucket, path } 파싱(canonicalization 우회 차단) */
@@ -240,7 +240,7 @@ export async function POST(req: NextRequest) {
   }
   const probe = await probeMediaObject(probeUrl, mediaType, VENUE_STORY_MAX_BYTES);
   if (!probe.ok) {
-    const msg = probe.reason === "too_large" ? "파일이 너무 큽니다 (최대 60MB)" : "업로드된 미디어를 확인할 수 없어요";
+    const msg = probe.reason === "too_large" ? "파일이 너무 큽니다 (최대 50MB)" : "업로드된 미디어를 확인할 수 없어요";
     return NextResponse.json({ error: msg }, { status: 400 });
   }
   // 영상 포스터 썸네일도 이미지로 실검증 — 유효하지 않으면 메타에서 드롭(옵션값)

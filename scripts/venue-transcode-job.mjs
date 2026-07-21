@@ -7,7 +7,7 @@ import { writeFileSync, readFileSync, statSync } from "fs";
 import { basename } from "path";
 
 const VENUE_MAX_DURATION_MS = 16000; // 15초 + 여유
-const VENUE_MAX_BYTES = 60 * 1024 * 1024;
+const VENUE_MAX_BYTES = 50 * 1024 * 1024;
 const PUBLIC_VIDEO_BUCKET = "videos";
 const MAX_ATTEMPTS_DEFAULT = 3;
 

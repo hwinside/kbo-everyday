@@ -14,13 +14,14 @@
 -- game_ended_at/needs_transcode 도 기존 컬럼. RPC create_venue_story 시그니처 변경 없음.
 
 -- ── private staging 버킷 ────────────────────────────────────────────
--- 60MB 상한 + 영상 MIME 만 허용(클라 업로드 시점 1차 방어 — 서버 ffprobe 가 최종 권위).
+-- Supabase 프로젝트 전역 상한과 같은 50MiB + 영상 MIME 만 허용
+-- (클라 업로드 시점 1차 방어 — 서버 ffprobe 가 최종 권위).
 INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 VALUES (
   'venue-staging',
   'venue-staging',
   false,
-  62914560, -- 60MB
+  52428800, -- 50MiB (Supabase Storage 프로젝트 전역 상한과 일치)
   ARRAY['video/mp4', 'video/quicktime', 'video/webm', 'video/x-m4v']
 )
 ON CONFLICT (id) DO UPDATE

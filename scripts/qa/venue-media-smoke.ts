@@ -12,6 +12,7 @@ import {
   PROBE_HEAD_BYTES,
 } from "../../src/lib/venue-stories/media-probe";
 import { shouldDeleteOrphanFile } from "../../src/lib/venue-stories/cleanup-policy";
+import { VENUE_STORY_MAX_BYTES } from "../../src/lib/venue-stories/types";
 
 let pass = 0;
 let fail = 0;
@@ -20,7 +21,7 @@ function ok(name: string, cond: boolean) {
   else { fail++; console.log(`  ❌ ${name}`); }
 }
 
-const MAX = 60 * 1024 * 1024;
+const MAX = VENUE_STORY_MAX_BYTES;
 const JPEG = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0]);
 const MP4 = new Uint8Array([0, 0, 0, 0x18, 0x66, 0x74, 0x79, 0x70, 0x6d, 0x70, 0x34, 0x32]);
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);

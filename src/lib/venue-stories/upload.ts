@@ -165,7 +165,7 @@ export async function prepareVenueStoryMedia(
   if (!user) return { error: "로그인이 필요합니다" };
 
   if (file.size > VENUE_STORY_MAX_BYTES) {
-    return { error: "파일이 너무 큽니다 (최대 60MB)" };
+    return { error: "파일이 너무 큽니다 (최대 50MB)" };
   }
 
   const isVideo = file.type.startsWith("video/");

@@ -20,13 +20,13 @@
   네이티브 GPS(@capacitor/geolocation, When-In-Use 권한) 실제 등록(capacitor 플러그인 생성 파일 커밋).
   구버전 앱은 플러그인 미지원 감지 → "앱 업데이트 필요" 명시 안내(fail-closed).
 - 업로드 미디어 **서버 권위 검증**: 소유 경로 바인딩(`venue-stories/{gameId}/{userId}/`, canonical URL 정규화 후 exact key) +
-  객체 실제 존재·크기(≤60MB, maxBytes 선제 cancel)·매직바이트 확인.
-- **즉시 노출(하린아빠 스펙 2026-07-20)**: 영상도 업로드 즉시 `active`(원본 서빙) + `needs_transcode=true`.
-  720p 최적화는 백그라운드 워커(Mac mini)가 best-effort 로 뒤에서 교체, ffprobe ≤15초 사후 재검증 → 초과 시 `removed`.
-  ⚠️ 즉시 노출 = 서버 duration 권위검증(ffprobe) 전에 노출되는 트레이드오프(제품 오너 승인) — 즉시 방어(매직·60MB·클라
-  duration 힌트·지오펜스)로 1차 가드, 15초 살짝 초과 영상이 잠긐 노출됐다 워커가 내림. 사진은 기존 클라 압축(1600px JPEG) 후 `active`.
+  객체 실제 존재·크기(≤50MiB, Supabase Storage 전역 상한과 일치, maxBytes 선제 cancel)·매직바이트 확인.
+- **검증 후 즉시 노출(B+①, 하린아빠 확정 2026-07-21)**: 영상은 private staging의 `pending`으로 저장해 목록·URL에서 숨기고,
+  같은 업로드 요청에서 서버 ffprobe(구조·≤15초)를 통과한 뒤에만 공개 버킷 게시 + `active` CAS 승격.
+  fault는 `pending` 유지, 거부는 `removed` 처리한다. GitHub Actions Ubuntu 워커는 30분 복구·720p 최적화만 담당한다.
+  사진은 기존 클라 압축(1600px JPEG) 후 `active`.
 - **업로드 마감과 만료 분리(하린아빠 스펙 2026-07-20)**: 업로드 가능=경기 시작 -60min~+6h.
-  만료(자동삭제)=**경기 종료 +24h**. 종료 전에는 시작+30h 안전상한(업로드 시 임시값, 조기삭제 방지) →
+  만료(자동삭제)=**경기 종료 +24h**. 종료 전에는 시작+72h 장애 안전상한(정상 만료 조건 아님) →
   finalize cron `venue-stories-finalize`(라이브 시간대 10분)이 진행중→종료(final/cancelled) 전이를 감지해
   `game_ended_at` 확정 → 만료=종료감지+24h 로 재설정(감지 오차 ≤10분). KBO 피드에 종료 정확시각이 없어
   종료 감지 시각을 종료 근사로 쓴다.
@@ -84,7 +84,7 @@ report_count, transcode_attempts, status(pending|active|removed|cleanup_failed),
 ## 검증(Definition of Done)
 
 - tsc 신규 에러 0 / eslint 0
-- 영상 15초 초과·60MB 초과 업로드 거부(클라) + 서버 ffprobe duration/크기 재검증(720p 완료 전 비노출)
+- 영상 15초 초과·50MiB 초과 업로드 거부(클라) + 서버 ffprobe duration/크기 재검증(검증 완료 전 비노출)
 - 지오펜스 단위 테스트: 실제/제2구장/중립·올스타/가짜 경기 × inside/outside/저accuracy/권한거부 → fail-closed
 - 만료 cron 로컬 dry 확인(만료 행 select 카운트) + cleanup_failed 재시도·orphan 스캔
 - 배포 후 End-User QA: 경기방에서 업로드 → 트레이 노출 → 뷰어 재생 → 신고/삭제 → 만료 정리
