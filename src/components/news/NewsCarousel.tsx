@@ -23,7 +23,7 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
   const [failedThumbs, setFailedThumbs] = useState<Set<NewsMock["id"]>>(new Set());
   // 기사 og:image를 클라이언트에서 점진 로드 — 뉴스 텍스트는 즉시 뜨고 사진은
   // 뒤따라 채워져 홈 로딩이 og 추출에 막히지 않게 한다(서버 블로킹 회피).
-  const [ogThumbs, setOgThumbs] = useState<Record<NewsMock["id"], string | null>>({});
+  const [ogThumbs, setOgThumbs] = useState<Record<string, string | null>>({});
   const [commentCounts, setCommentCounts] = useState<Record<string, number>>({});
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -56,23 +56,52 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
     return () => { cancelled = true; };
   }, [isAdmin, news]);
 
-  // 슬라이드별 og:image를 캐시된 /api/og-meta로 비동기 조회(텍스트 렌더 비차단).
+  // 최대 10개 og:image를 단일 batch로 비동기 조회(텍스트 렌더 비차단).
   useEffect(() => {
     let cancelled = false;
-    slides.forEach((item) => {
-      if (item.thumbnailUrl || ogThumbs[item.id] !== undefined) return;
+    const targets = slides.flatMap((item) => {
+      if (item.thumbnailUrl) return [];
       // OG 추출은 언론사 원문(ogUrl) 우선 — 클릭 타깃(sourceUrl=네이버)과 분리
       const ogTarget = item.ogUrl || item.sourceUrl;
-      if (!ogTarget || ogTarget === "#") return;
-      fetch(`/api/og-meta?url=${encodeURIComponent(ogTarget)}`)
-        .then((r) => (r.ok ? r.json() : null))
-        .then((d) => {
-          if (!cancelled) setOgThumbs((prev) => ({ ...prev, [item.id]: d?.image ?? null }));
-        })
-        .catch(() => {
-          if (!cancelled) setOgThumbs((prev) => ({ ...prev, [item.id]: null }));
-        });
+      if (!ogTarget || ogTarget === "#" || ogThumbs[ogTarget] !== undefined) return [];
+      return [ogTarget];
     });
+    const urls = Array.from(new Set(targets));
+    if (urls.length === 0) return;
+
+    fetch("/api/og-meta", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ urls }),
+    })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((result) => {
+        if (cancelled) return;
+        const items = result?.items as Record<string, { image?: string | null } | null> | undefined;
+        setOgThumbs((prev) => {
+          const next: Record<string, string | null> = {};
+          for (const item of slides) {
+            if (item.thumbnailUrl) continue;
+            const url = item.ogUrl || item.sourceUrl;
+            if (!url || url === "#") continue;
+            next[url] = items?.[url]?.image ?? prev[url] ?? null;
+          }
+          return next;
+        });
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setOgThumbs((prev) => {
+          const next: Record<string, string | null> = {};
+          for (const item of slides) {
+            if (item.thumbnailUrl) continue;
+            const url = item.ogUrl || item.sourceUrl;
+            if (!url || url === "#") continue;
+            next[url] = prev[url] ?? null;
+          }
+          return next;
+        });
+      });
     return () => {
       cancelled = true;
     };
@@ -164,7 +193,8 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
               ? `color-mix(in srgb, ${team.colorPrimary} 6%, #FFFFFF)`
               : "#FFFFFF";
             // 썸네일이 있고 로드 실패하지 않았으면 왼쪽 사진 + 제목 우측. 없으면 현행 그대로.
-            const thumbUrl = item.thumbnailUrl ?? ogThumbs[item.id] ?? null;
+            const ogTarget = item.ogUrl || item.sourceUrl;
+            const thumbUrl = item.thumbnailUrl ?? ogThumbs[ogTarget] ?? null;
             const hasThumb = Boolean(thumbUrl) && !failedThumbs.has(item.id);
 
             return (
