@@ -93,9 +93,17 @@ const migration = readFileSync(
   resolve(process.cwd(), "supabase/migrations/20260721_venue_attendance.sql"),
   "utf8",
 );
+const storagePolicyMigration = readFileSync(
+  resolve(process.cwd(), "supabase/migrations/20260721_venue_attendance_storage_policy.sql"),
+  "utf8",
+);
 assert.match(migration, /UNIQUE \(user_id, game_id\)/, "유저·경기 멱등 키");
 assert.match(migration, /NEW\.status <> 'active'/, "active 전환만 영구 기록");
 assert.match(migration, /NEW\.attendance_source <> 'story_geofence'/, "QA 우회 제외");
+assert.match(storagePolicyMigration, /FOR INSERT TO authenticated/, "사진 업로드는 로그인 유저만 허용");
+assert.match(storagePolicyMigration, /bucket_id = 'photos'/, "photos 버킷에만 적용");
+assert.match(storagePolicyMigration, /\[3\] = auth\.uid\(\)::text/, "경로의 userId를 로그인 유저에 바인딩");
+assert.match(storagePolicyMigration, /array_length\(storage\.foldername\(name\), 1\) = 3/, "정확한 3단 폴더만 허용");
 assert.match(migration, /AFTER INSERT OR UPDATE OF status ON venue_stories/, "영상 승격 경로 포함");
 
 const attendanceTable = migration.match(/CREATE TABLE IF NOT EXISTS venue_attendance \(([\s\S]*?)\n\);/)?.[1] ?? "";
