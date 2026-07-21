@@ -46,7 +46,8 @@ async function fetchAllPages<T>(queryFn: () => any): Promise<T[]> {
   const batchSize = 1000;
   for (let from = 0; ; from += batchSize) {
     const { data, error } = await queryFn().range(from, from + batchSize - 1);
-    if (error || !data || data.length === 0) break;
+    if (error) throw new Error(`[retention] page ${from / batchSize + 1}: ${error.message}`);
+    if (!data || data.length === 0) break;
     all.push(...data);
     if (data.length < batchSize) break;
   }

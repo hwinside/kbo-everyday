@@ -24,6 +24,7 @@ import {
 } from "@/lib/notifications/live-activity-channel-policy";
 import { teamIdByShortName, fansOfTeams } from "@/lib/notifications/game-status";
 import { sendFcmToUsers } from "@/lib/notifications/fcm";
+import { fetchAllByKeyset } from "@/lib/db/paginate";
 import type { KboRawGame } from "@/types/api";
 
 // Live Activity W3a — 백그라운드 실시간 갱신.
@@ -107,11 +108,89 @@ const gameStatus = liveActivityGameStatus;
 // 완전히 죽으면 카드가 스피너 없이 옛 값으로 남음. 단 정상 종료는 별도 end 푸시로 처리됨.
 
 interface TokenRow {
+  id: number;
   user_id: string;
   game_id: string;
   push_token: string;
   app_build: number | null;
   updated_at: string | null;
+}
+
+interface ActiveChannelRow {
+  game_id: string;
+  environment: ApnsEnvironment;
+  channel_id: string;
+  last_score_state?: string | null;
+  last_state_hash?: string | null;
+}
+
+interface ChannelSubscriptionRow {
+  game_id: string;
+  user_id: string | null;
+  environment: ApnsEnvironment;
+  channel_id: string;
+  device_key: string;
+}
+
+interface StartedUserRow {
+  user_id: string;
+  game_id: string;
+  created_at: string | null;
+}
+
+async function fetchLiveActivityTokens(gameIds: string[]): Promise<TokenRow[]> {
+  if (gameIds.length === 0) return [];
+  return fetchAllByKeyset(async (cursor, limit) => {
+    let query = supabase
+      .from("live_activity_tokens")
+      .select("id, user_id, game_id, push_token, app_build, updated_at")
+      .in("game_id", gameIds)
+      .order("id", { ascending: true })
+      .limit(limit);
+    if (cursor !== null) query = query.gt("id", cursor);
+    const { data, error } = await query;
+    return { data: data as TokenRow[] | null, error };
+  }, (row) => row.id, { label: "live_activity_tokens" });
+}
+
+async function fetchStartedUsers(gameIds: string[]): Promise<StartedUserRow[]> {
+  const pages = await Promise.all(gameIds.map((gameId) =>
+    fetchAllByKeyset(async (cursor, limit) => {
+      let query = supabase
+        .from("live_activity_started_users")
+        .select("user_id, game_id, created_at")
+        .eq("game_id", gameId)
+        .order("user_id", { ascending: true })
+        .limit(limit);
+      if (cursor !== null) query = query.gt("user_id", cursor);
+      const { data, error } = await query;
+      return { data: data as StartedUserRow[] | null, error };
+    }, (row) => row.user_id, { label: `live_activity_started_users (${gameId})` }),
+  ));
+  return pages.flat();
+}
+
+async function fetchChannelSubscriptions(
+  channels: ActiveChannelRow[],
+): Promise<ChannelSubscriptionRow[]> {
+  const pages = await Promise.all(channels.map((channel) =>
+    fetchAllByKeyset(async (cursor, limit) => {
+      let query = supabase
+        .from("live_activity_channel_subscriptions")
+        .select("game_id, user_id, environment, channel_id, device_key")
+        .eq("game_id", channel.game_id)
+        .eq("environment", channel.environment)
+        .eq("channel_id", channel.channel_id)
+        .order("device_key", { ascending: true })
+        .limit(limit);
+      if (cursor !== null) query = query.gt("device_key", cursor);
+      const { data, error } = await query;
+      return { data: data as ChannelSubscriptionRow[] | null, error };
+    }, (row) => row.device_key, {
+      label: `live_activity_channel_subscriptions (${channel.game_id}/${channel.environment})`,
+    }),
+  ));
+  return pages.flat();
 }
 
 /**
@@ -140,22 +219,24 @@ export async function pushLiveActivityUpdates(
   // 기록된다(발송 완료 후 now()로 쓰면, 토큰 fetch~upsert 사이에 등록된 토큰이 기록
   // 시각보다 과거가 되어 다음 틱 catch-up 판정에서 영영 빠지는 race — 삼순 #664 리뷰).
   const tickStartedAtIso = new Date().toISOString();
-  const { data: tokens, error } = await supabase
-    .from("live_activity_tokens")
-    .select("user_id, game_id, push_token, app_build, updated_at")
-    .in("game_id", gameIds);
-  if (error) return { error: error.message };
-  if (!tokens || tokens.length === 0) return { pushed: 0, ended: 0, cleaned: 0 };
+  let tokens: TokenRow[];
+  try {
+    tokens = await fetchLiveActivityTokens(gameIds);
+  } catch (error) {
+    return { error: (error as Error).message };
+  }
+  if (tokens.length === 0) return { pushed: 0, ended: 0, cleaned: 0 };
 
   // W3c 토글: "잠금화면 실시간 중계"를 끈 유저는 update 푸시에서 제외(row 없음/null = 디폴트 on).
   // end 푸시는 허용해 기존 카드/토큰을 정리한다. .in()은 URL 한도 회피 위해 200개 청크.
-  const userIds = [...new Set((tokens as TokenRow[]).map((t) => t.user_id))];
+  const userIds = [...new Set(tokens.map((t) => t.user_id))];
   const optedOut = new Set<string>();
   for (let i = 0; i < userIds.length; i += 200) {
-    const { data: prefRows } = await supabase
+    const { data: prefRows, error: prefError } = await supabase
       .from("notification_prefs")
       .select("user_id, live_activity")
       .in("user_id", userIds.slice(i, i + 200));
+    if (prefError) return { error: prefError.message };
     for (const r of (prefRows ?? []) as { user_id: string; live_activity: boolean | null }[]) {
       if (r.live_activity === false) optedOut.add(r.user_id);
     }
@@ -173,11 +254,12 @@ export async function pushLiveActivityUpdates(
   // update 토큰 행엔 env가 없으므로 user 단위로 매칭 — 유효 구독이 있으면 그 유저의 카드는
   // broadcast가 갱신하므로 per-토큰 update를 스킵한다(end는 유지: 잔존 토큰 정리 경로 보존,
   // 채널 end와 이중 수신해도 멱등).
-  const { data: chanRows } = await supabase
+  const { data: chanRows, error: chanError } = await supabase
     .from("live_activity_channels")
     .select("game_id, environment, channel_id, last_score_state, last_state_hash")
     .in("game_id", gameIds)
     .eq("status", "active");
+  if (chanError) return { error: chanError.message };
   const activeChanKeys = new Set<string>();
   const lastStateByGame = new Map<string, { score: string | null; hash: string | null }>();
   for (const r of (chanRows ?? []) as {
@@ -198,10 +280,11 @@ export async function pushLiveActivityUpdates(
   const liveGameIds = gameIds.filter((gid) => stateByGame.get(gid) === "live");
   const lastWriteAtByGame = new Map<string, number>();
   if (liveGameIds.length > 0) {
-    const { data: fallbackRows } = await supabase
+    const { data: fallbackRows, error: fallbackError } = await supabase
       .from("live_activity_game_push_state")
       .select("game_id, last_score_state, last_state_hash, updated_at")
       .in("game_id", liveGameIds);
+    if (fallbackError) return { error: fallbackError.message };
     for (const r of (fallbackRows ?? []) as {
       game_id: string; last_score_state: string | null; last_state_hash: string | null;
       updated_at: string;
@@ -214,14 +297,14 @@ export async function pushLiveActivityUpdates(
   }
   const subscribed = new Set<string>(); // `${user_id}|${game_id}`
   if (activeChanKeys.size > 0) {
-    const { data: subRows } = await supabase
-      .from("live_activity_channel_subscriptions")
-      .select("game_id, user_id, environment, channel_id")
-      .in("game_id", gameIds)
-      .not("user_id", "is", null);
-    for (const s of (subRows ?? []) as {
-      game_id: string; user_id: string; environment: string; channel_id: string;
-    }[]) {
+    let subRows: ChannelSubscriptionRow[];
+    try {
+      subRows = await fetchChannelSubscriptions((chanRows ?? []) as ActiveChannelRow[]);
+    } catch (error) {
+      return { error: (error as Error).message };
+    }
+    for (const s of subRows) {
+      if (!s.user_id) continue;
       if (activeChanKeys.has(`${s.game_id}|${s.environment}|${s.channel_id}`)) {
         subscribed.add(`${s.user_id}|${s.game_id}`);
       }
@@ -268,7 +351,7 @@ export async function pushLiveActivityUpdates(
   }
 
   await Promise.all(
-    (tokens as TokenRow[]).map(async (t) => {
+    tokens.map(async (t) => {
       const g = gameById.get(t.game_id);
       const status = stateByGame.get(t.game_id);
       if (!g || !status) return;
@@ -689,15 +772,16 @@ export async function pushLiveActivityStarts(
   const startGameIds = liveGames.map((g) => g.G_ID as string);
   const channelsByGame = new Map<string, Map<ApnsEnvironment, string>>();
   const activeChanKeySet = new Set<string>();
+  let activeChannels: ActiveChannelRow[] = [];
   {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("live_activity_channels")
       .select("game_id, environment, channel_id")
       .in("game_id", startGameIds)
       .eq("status", "active");
-    for (const r of (data ?? []) as {
-      game_id: string; environment: ApnsEnvironment; channel_id: string;
-    }[]) {
+    if (error) return { error: error.message };
+    activeChannels = (data ?? []) as ActiveChannelRow[];
+    for (const r of activeChannels) {
       if (!channelsByGame.has(r.game_id)) channelsByGame.set(r.game_id, new Map());
       channelsByGame.get(r.game_id)!.set(r.environment, r.channel_id);
       activeChanKeySet.add(`${r.game_id}|${r.environment}|${r.channel_id}`);
@@ -708,15 +792,14 @@ export async function pushLiveActivityStarts(
   // device_key)은 카드 소멸 상태라 차단 사유가 아님(삼순 NO-GO: heartbeat 시각 오인 방지).
   const subscribedByGame = new Map<string, Map<string, Set<string>>>();
   if (activeChanKeySet.size > 0) {
-    const { data } = await supabase
-      .from("live_activity_channel_subscriptions")
-      .select("game_id, user_id, environment, channel_id, device_key")
-      .in("game_id", startGameIds)
-      .not("user_id", "is", null);
-    for (const s of (data ?? []) as {
-      game_id: string; user_id: string; environment: string; channel_id: string;
-      device_key: string;
-    }[]) {
+    let subscriptions: ChannelSubscriptionRow[];
+    try {
+      subscriptions = await fetchChannelSubscriptions(activeChannels);
+    } catch (error) {
+      return { error: (error as Error).message };
+    }
+    for (const s of subscriptions) {
+      if (!s.user_id) continue;
       if (!activeChanKeySet.has(`${s.game_id}|${s.environment}|${s.channel_id}`)) continue;
       if (!subscribedByGame.has(s.game_id)) subscribedByGame.set(s.game_id, new Map());
       const m = subscribedByGame.get(s.game_id)!;
@@ -874,39 +957,44 @@ export async function pushLiveActivitySilentWakes(
   if (wakeGameIds.length === 0) return EMPTY_WAKE;
 
   // 갭 = started_users(카드 생성) − live_activity_tokens(update 토큰 등록).
-  const [startedRes, tokenRes] = await Promise.all([
-    supabase.from("live_activity_started_users").select("user_id, game_id, created_at").in("game_id", wakeGameIds),
-    supabase.from("live_activity_tokens").select("user_id, game_id").in("game_id", wakeGameIds),
-  ]);
-  if (startedRes.error) return { error: startedRes.error.message };
-  if (tokenRes.error) return { error: tokenRes.error.message };
-  const started = (startedRes.data ?? []) as { user_id: string; game_id: string; created_at: string | null }[];
+  let started: StartedUserRow[];
+  let tokenRows: TokenRow[];
+  try {
+    [started, tokenRows] = await Promise.all([
+      fetchStartedUsers(wakeGameIds),
+      fetchLiveActivityTokens(wakeGameIds),
+    ]);
+  } catch (error) {
+    return { error: (error as Error).message };
+  }
   if (started.length === 0) return EMPTY_WAKE;
   const tokened = new Set(
-    ((tokenRes.data ?? []) as { user_id: string; game_id: string }[]).map((r) => `${r.user_id}|${r.game_id}`),
+    tokenRows.map((r) => `${r.user_id}|${r.game_id}`),
   );
   // 채널 구독 확인(active 채널 일치) 유저는 update 토큰이 없어도 gap이 아님 — broadcast가
   // 카드를 갱신하므로 wake 불필요(스펙 v4 §서버 4: gap 계산도 동일 조건으로 제외).
   {
-    const { data: chanRows } = await supabase
+    const { data: chanRows, error: chanError } = await supabase
       .from("live_activity_channels")
       .select("game_id, environment, channel_id")
       .in("game_id", wakeGameIds)
       .eq("status", "active");
+    if (chanError) return { error: chanError.message };
+    const activeChannels = (chanRows ?? []) as ActiveChannelRow[];
     const activeKeys = new Set(
-      ((chanRows ?? []) as { game_id: string; environment: string; channel_id: string }[]).map(
+      activeChannels.map(
         (r) => `${r.game_id}|${r.environment}|${r.channel_id}`,
       ),
     );
     if (activeKeys.size > 0) {
-      const { data: subRows } = await supabase
-        .from("live_activity_channel_subscriptions")
-        .select("game_id, user_id, environment, channel_id")
-        .in("game_id", wakeGameIds)
-        .not("user_id", "is", null);
-      for (const s of (subRows ?? []) as {
-        game_id: string; user_id: string; environment: string; channel_id: string;
-      }[]) {
+      let subRows: ChannelSubscriptionRow[];
+      try {
+        subRows = await fetchChannelSubscriptions(activeChannels);
+      } catch (error) {
+        return { error: (error as Error).message };
+      }
+      for (const s of subRows) {
+        if (!s.user_id) continue;
         if (activeKeys.has(`${s.game_id}|${s.environment}|${s.channel_id}`)) {
           tokened.add(`${s.user_id}|${s.game_id}`);
         }
