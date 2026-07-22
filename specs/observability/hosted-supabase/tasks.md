@@ -9,15 +9,15 @@
 
 ## Waiting on Harin's dad
 
-- [ ] Grafana Cloud Free stack name.
-- [ ] Supabase Secret API key stored outside Slack.
+- [x] Grafana Cloud Free stack created.
+- [x] Supabase service-role Metrics credential entered directly in Grafana, never sent through Slack.
 - [ ] Approval and activation of one $60/month Supabase Log Drain.
 - [ ] Cloudflare Workers access and account identifier/token.
 - [ ] Better Stack Free account or invitation.
 
 ## Hosted wiring
 
-- [ ] Install Grafana Supabase managed integration and official dashboard.
+- [x] Install Grafana Supabase managed integration and official dashboard; verify live CPU, RAM, disk, and PostgreSQL status.
 - [ ] Provision PromQL alerts and contact points.
 - [ ] Attach Loki Log Drain, capture one-hour schema/volume sample, then provision LogQL auth alerts.
 - [ ] Configure composite synthetic and independent uptime checks.

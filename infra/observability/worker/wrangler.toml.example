@@ -2,12 +2,13 @@ name = "keubo-observability"
 main = "src/index.ts"
 compatibility_date = "2026-07-22"
 
-[[kv_namespaces]]
-binding = "INCIDENTS"
-id = "REPLACE_WITH_KV_NAMESPACE_ID"
+[[durable_objects.bindings]]
+name = "INCIDENT_COORDINATOR"
+class_name = "IncidentCoordinator"
 
-[triggers]
-crons = ["* * * * *"]
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["IncidentCoordinator"]
 
 [vars]
 SLACK_CHANNEL_ID = "REPLACE_WITH_INCIDENT_CHANNEL_ID"

@@ -16,7 +16,7 @@ Detect Supabase saturation before user-visible failure, attribute abnormal `/aut
 2. One Supabase Log Drain sends stack logs directly to Grafana Cloud Loki.
 3. Grafana Synthetic Monitoring runs a composite API journey from two hosted probe locations.
 4. Better Stack performs an independent three-minute availability check and alert-path heartbeat.
-5. Grafana alert webhooks call a Cloudflare Worker. The Worker authenticates the webhook, deduplicates incidents, and sends Slack and Telegram notifications directly.
+5. Grafana alert webhooks call a Cloudflare Worker. A per-fingerprint Durable Object serializes incident updates before the Worker sends Slack and Telegram notifications directly.
 6. Reversible load shedding is stored outside Supabase. Destructive operations such as restart, resize, and PITR always require explicit human approval.
 
 ## Required signals
@@ -32,7 +32,7 @@ Detect Supabase saturation before user-visible failure, attribute abnormal `/aut
 
 - CPU: warning above 70% for 5 minutes; critical above 85% for 3 minutes.
 - Memory: warning above 75% for 5 minutes; critical above 85% for 3 minutes.
-- Disk used: warning above 70%; critical above 80%; warning when forecast exhaustion is under 7 days.
+- Disk used: warning above 75%; critical above 85%; warning when forecast exhaustion is under 7 days.
 - Disk I/O utilization: critical above 80% for 5 minutes.
 - Waiting DB clients: critical when non-zero for 3 minutes. Pool checkout over one second: warning above 1%, critical above 5%.
 - `/auth/v1/user`: warning above max(2x same-time baseline, 5,000/min) for 3 minutes; critical above max(3x baseline, 8,000/min) for 2 minutes.
@@ -47,6 +47,8 @@ Thresholds are recalibrated after seven days of post-fix traffic without weakeni
 - MTTD at most 2 minutes, Slack and Telegram delivery at most 3 minutes, mitigation decision at most 5 minutes.
 - Every critical alert has a stable incident fingerprint and opens or updates one Slack thread.
 - Alert payload includes timestamps, severity, current value, threshold, dashboard/log links, deployment SHA, and recommended first action.
+- A resolved fingerprint that fires again creates a new episode. ACK links are episode-bound, GET is read-only, and only an explicit POST records ownership.
+- Incident delivery and escalation keep a per-channel ledger; retrying a failed channel cannot resend a channel that already succeeded.
 - No acknowledgement within 3 minutes triggers a second hosted escalation path.
 - Recovery requires metrics, synthetic probes, and an actual authenticated user journey; a static page 200 is insufficient.
 
@@ -62,10 +64,16 @@ Thresholds are recalibrated after seven days of post-fix traffic without weakeni
 - Webhooks require a shared secret and replay window; logs must not contain JWTs, cookies, API keys, IP addresses, or user identifiers.
 - One Log Drain is the only fixed paid observability add-on. Cost alerts are required because Log Drain charges are outside the Supabase spend cap.
 
-## Acceptance criteria
+## Repository acceptance criteria
 
 - No production config references a local path, host, launchd label, OpenClaw command, or Mac mini state.
+- Concurrent duplicate alerts are serialized into one incident and one top-level delivery per channel.
+- Recovery followed by a recurrence opens a fresh episode and sends both channels again.
+- GET cannot acknowledge an incident; explicit POST, channel-specific retry ledgers, HMAC validation, and stale-timestamp rejection pass unit tests.
+- Prometheus rules use labels present in the official Supabase metrics fixture; external-schema-dependent rules are explicitly marked pending and cannot be provisioned accidentally.
+
+## Hosted production acceptance criteria
+
 - Forced CPU, auth-volume, synthetic-failure, alert-delivery, and stale-monitor scenarios route to both channels.
-- Duplicate alerts update one incident rather than creating a storm.
 - Three consecutive full drills meet the timing targets.
 - End-user QA uses an actual logged-in account and validates login, data load, permissions, and recovery.

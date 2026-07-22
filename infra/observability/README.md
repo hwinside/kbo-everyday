@@ -5,17 +5,17 @@ This directory is the repository-owned control plane for production observabilit
 ## Components
 
 - `alert-policies.json`: canonical thresholds and expressions. Loki rules remain `schema-pending` until a real Log Drain sample confirms field names.
-- `worker/`: Cloudflare Worker that validates Grafana HMAC webhooks, deduplicates incidents in KV, posts directly to Slack and Telegram, records signed ACK links, and escalates after three minutes without ACK.
+- `worker/`: Cloudflare Worker that validates Grafana HMAC webhooks, serializes each incident in a Durable Object, posts directly to Slack and Telegram, requires an explicit POST for ACK, and escalates after three minutes without ACK.
 - `scripts/qa/observability-config-smoke.ts`: fails on missing safety rules, local-machine dependencies, duplicate IDs, or secret-like values.
 
 ## External setup order
 
 1. Create a Grafana Cloud Free stack.
-2. Create a Supabase Secret API key and install the Grafana Supabase integration with a 60-second scrape interval.
+2. Enter the Supabase service-role Metrics credential directly in Grafana and install the Supabase integration with a 60-second scrape interval.
 3. Install the official Supabase dashboard and translate enabled PromQL rules from `alert-policies.json` into Grafana-managed alerts.
 4. Create a Grafana Cloud Loki destination, then enable exactly one Supabase Log Drain.
 5. Capture one hour of actual Log Drain data and record volume. Replace `SCHEMA_PENDING` auth expressions only after verifying the actual path, status, duration, and source fields.
-6. Create a Cloudflare KV namespace, copy `worker/wrangler.toml.example` to an untracked `wrangler.toml`, fill non-secret identifiers, and store secrets with Wrangler.
+6. Copy `worker/wrangler.toml.example` to an untracked `wrangler.toml`, fill non-secret identifiers, and store secrets with Wrangler. The checked-in Durable Object migration creates the strongly consistent incident store.
 7. Configure Grafana's webhook contact point with HMAC-SHA256, signature header `X-Grafana-Alerting-Signature`, and timestamp header `X-Grafana-Alerting-Signature-Timestamp`.
 8. Configure a composite Grafana Synthetic check in two hosted regions and an independent Better Stack check.
 9. Inject test alerts and complete three drills before retiring the old local health probe.
@@ -24,13 +24,13 @@ This directory is the repository-owned control plane for production observabilit
 
 Never send these values through Slack or commit them:
 
-- Supabase Secret API key (`sb_secret_...`) for Metrics API scraping.
+- Supabase service-role/secret Metrics credential entered directly into Grafana.
 - Grafana HMAC secret shared only with the Worker.
 - Worker ACK-link HMAC secret.
 - Dedicated Slack bot token with only `chat:write`, installed only in the incident channel.
 - Telegram bot token and target chat ID.
 - Grafana/Loki credentials required by the Supabase Log Drain.
-- Cloudflare API token limited to Workers Scripts and KV for the target account.
+- Cloudflare API token limited to Workers Scripts and Durable Objects for the target account.
 
 The recommended local handoff file is `~/.openclaw/credentials/hosted-observability.env` with mode `0600`; deployment must copy values into hosted secret stores and must not read that file at runtime.
 
@@ -39,7 +39,6 @@ The recommended local handoff file is `~/.openclaw/credentials/hosted-observabil
 ```bash
 cd infra/observability/worker
 cp wrangler.toml.example wrangler.toml
-npx wrangler kv namespace create INCIDENTS
 npx wrangler secret put GRAFANA_HMAC_SECRET
 npx wrangler secret put ACK_LINK_SECRET
 npx wrangler secret put SLACK_BOT_TOKEN
@@ -80,7 +79,9 @@ Production PASS additionally requires:
 1. bad HMAC and stale timestamps return 401;
 2. a firing test reaches Slack and Telegram;
 3. a duplicate fingerprint creates no new top-level incident;
-4. no ACK for three minutes creates one escalation;
-5. a resolved event replies in the incident thread and reaches Telegram;
-6. Metrics/Synthetic/Better Stack all fail when deliberately pointed at a controlled failing target;
-7. an actual logged-in user completes login, authorized data load, and recovery.
+4. a resolved fingerprint that fires again creates a fresh two-channel episode;
+5. GET renders an ACK confirmation page without mutation and POST records ACK;
+6. no ACK for three minutes creates one escalation, and partial retry targets only the missing channel;
+7. a resolved event replies in the incident thread and reaches Telegram;
+8. Metrics/Synthetic/Better Stack all fail when deliberately pointed at a controlled failing target;
+9. an actual logged-in user completes login, authorized data load, and recovery.
