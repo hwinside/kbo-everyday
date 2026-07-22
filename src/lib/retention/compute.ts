@@ -46,7 +46,8 @@ async function fetchAllPages<T>(queryFn: () => any): Promise<T[]> {
   const batchSize = 1000;
   for (let from = 0; ; from += batchSize) {
     const { data, error } = await queryFn().range(from, from + batchSize - 1);
-    if (error || !data || data.length === 0) break;
+    if (error) throw new Error(`[retention] page ${from / batchSize + 1}: ${error.message}`);
+    if (!data || data.length === 0) break;
     all.push(...data);
     if (data.length < batchSize) break;
   }
@@ -56,10 +57,16 @@ async function fetchAllPages<T>(queryFn: () => any): Promise<T[]> {
 /**
  * 유저별 활동일 수집: posts, comments, likes, chat_messages, admin_page_views에서 활동일 추출.
  * broad revisit: 페이지 방문도 활동으로 포함.
+ * untilExclusive(2026-07-21 추가, 삼순 리뷰): targetDate 익일 KST 00:00 exclusive 상한 —
+ * backfill 시 미래 활동이 과거 행에 섞이는 것을 원천 차단(visit_dist는 일 수 카운트라 상한 필수,
+ * 나머지 축은 특정일 매칭이라 의미론 no-op이지만 fetch 절감 + 계약 통일).
+ * exclusive(.lt)인 이유: `<= 23:59:59` 형태는 23:59:59.500 같은 마지막 1초 fractional
+ * timestamp를 누락(삼순 3차 리뷰 재현) — 익일 00:00 미만으로 경계 손실 없이 포함.
  */
 async function collectActivityDays(
   supabase: SupabaseClient,
   since: string,
+  untilExclusive: string,
 ): Promise<Map<string, Set<string>>> {
   const visitDays = new Map<string, Set<string>>();
 
@@ -72,7 +79,7 @@ async function collectActivityDays(
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const q = (table: string, cols: string, extra?: (q: any) => any) => () => {
-    let query = supabase.from(table).select(cols).gte("created_at", since).order("created_at", { ascending: true });
+    let query = supabase.from(table).select(cols).gte("created_at", since).lt("created_at", untilExclusive).order("created_at", { ascending: true });
     if (extra) query = extra(query);
     return query;
   };
@@ -117,7 +124,7 @@ export async function computeCohortRetention(
   if (!profiles.length) return [];
 
   // 2) 같은 기간 활동 데이터 수집
-  const visitDays = await collectActivityDays(supabase, sixtyDaysAgo);
+  const visitDays = await collectActivityDays(supabase, sixtyDaysAgo, addKSTDays(targetDate, 1) + "T00:00:00+09:00");
 
   // 3) 코호트별 D-N 잔존율 계산 (D0 = 가입 당일 활동)
   const dayOffsets = [0, 1, 2, 3, 4, 5, 6, 7, 14, 30];
@@ -182,7 +189,7 @@ export async function computeDailyCohortRetention(
 
   if (!profiles.length) return [];
 
-  const visitDays = await collectActivityDays(supabase, sixtyDaysAgo);
+  const visitDays = await collectActivityDays(supabase, sixtyDaysAgo, addKSTDays(targetDate, 1) + "T00:00:00+09:00");
 
   const dayOffsets = [0, 1, 2, 3, 4, 5, 6, 7, 14, 30];
   const cohorts = new Map<string, { id: string; signupDate: string }[]>();
@@ -312,7 +319,7 @@ export async function computeVisitDistribution(
     new Date(targetDate + "T00:00:00+09:00").getTime() - 30 * 86400000,
   ).toISOString();
 
-  const visitDays = await collectActivityDays(supabase, thirtyDaysAgo);
+  const visitDays = await collectActivityDays(supabase, thirtyDaysAgo, addKSTDays(targetDate, 1) + "T00:00:00+09:00");
 
   // 활동이 1회 이상인 유저만 카운트
   const buckets = new Map<string, number>();
@@ -367,7 +374,7 @@ export async function computeGamedayRetention(
   if (!profiles.length) return [];
 
   // 활동 데이터 수집
-  const visitDays = await collectActivityDays(supabase, sixtyDaysAgo);
+  const visitDays = await collectActivityDays(supabase, sixtyDaysAgo, addKSTDays(targetDate, 1) + "T00:00:00+09:00");
 
   // 유저별: 가입일 이후 경기일 목록 (시간순), 그 중 활동한 경기일 체크
   const cohorts = new Map<string, { users: { id: string; signupDate: string }[] }>();

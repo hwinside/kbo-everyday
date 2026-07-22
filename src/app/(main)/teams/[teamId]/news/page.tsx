@@ -8,6 +8,8 @@ import GlassCard from "@/components/ui/GlassCard";
 import { useNewsPhotoFilter } from "@/hooks/useNewsPhotoFilter";
 import { setPhotoFilterEnabled } from "@/lib/store/news-pref";
 import { isPhotoArticle } from "@/lib/news-relevance";
+import NewsCommentButton from "@/components/news/NewsCommentButton";
+import { useNewsArticleBrowser } from "@/hooks/useNewsArticleBrowser";
 
 interface NewsItem {
   title: string;
@@ -19,6 +21,7 @@ interface NewsItem {
 }
 
 export default function TeamNewsPage() {
+  const { handleArticleAnchorClick } = useNewsArticleBrowser();
   const params = useParams();
   const router = useRouter();
   const teamSlug = params.teamId as string;
@@ -92,9 +95,17 @@ export default function TeamNewsPage() {
             {visibleNews.map((item, i) => {
               // 출처 표기는 언론사 원문(originalLink) host 기준 — 클릭만 네이버
               const source = (item.originalLink || item.link).match(/\/\/(?:www\.)?([^/]+)/)?.[1]?.replace(/\.com$|\.co\.kr$|\.kr$/, "") ?? "";
+              const article = {
+                url: item.link,
+                canonicalUrl: item.originalLink || item.link,
+                title: item.title.replace(/<[^>]+>/g, ""),
+                source,
+                thumbnailUrl: item.thumbnailUrl,
+                teamId: team.id,
+              };
               return (
-                <a key={i} href={item.link} target="_blank" rel="noopener noreferrer">
-                  <GlassCard pressable className="overflow-hidden p-0">
+                <GlassCard key={i} pressable className="overflow-hidden p-0">
+                  <a href={item.link} target="_blank" rel="noopener noreferrer" onClick={(event) => handleArticleAnchorClick(event, article)}>
                     {item.thumbnailUrl && (
                       <div className="relative aspect-[16/9] w-full overflow-hidden bg-bg-tertiary">
                         {/* eslint-disable-next-line @next/next/no-img-element -- article OG images come from arbitrary news domains */}
@@ -126,8 +137,14 @@ export default function TeamNewsPage() {
                         <ExternalLink size={13} className="ml-auto text-text-tertiary" />
                       </div>
                     </div>
-                  </GlassCard>
-                </a>
+                  </a>
+                  <div className="flex justify-end border-t border-border px-3 py-2">
+                    <NewsCommentButton
+                      article={article}
+                      className="bg-bg-tertiary text-text-secondary hover:bg-bg-primary"
+                    />
+                  </div>
+                </GlassCard>
               );
             })}
           </div>

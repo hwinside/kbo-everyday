@@ -150,3 +150,87 @@ export function isTeamBaseballRelevant(
   if (!mascot) return hasBaseballSignal(`${title} ${description}`);
   return `${title} ${description}`.includes(mascot);
 }
+
+// 뉴스클리핑 전용 positive 제목 게이트 — 팀 뉴스탭보다 높은 정밀도 기준.
+//
+// isTeamBaseballRelevant 는 제목/본문 어디든 마스코트가 있으면 통과시킨다. 그래서
+// 여자 골프·연예·정치 등 *다른 토픽* 기사가 본문에 소속 선수(예: 'LG 트윈스 김진성')를
+// 스쳐 언급하면 후보에 들고, Gemini가 억지 요약을 만들어 제목·사진(골프)과 요약(야구)이
+// 어긋난 카드가 나온다(2026-07-19 하린아빠 제보 — '여자 골프' 기사에 김진성 야구 요약).
+//
+// 클리핑은 팬에게 매일 발송하는 큐레이션이라 뉴스탭보다 recall을 조금 내주고 정밀도를
+// 택한다: 제목에 (1)야구 키워드 (2)팀 식별자 (3)소속 선수명 중 하나라도 있어야 선정.
+// 골프 헤드라인은 셋 다 없어 원천 컷되고, "고승민 1루·손호영 2루"처럼 선수명만 쓴 정상
+// 팀 기사는 로스터 매칭으로 유지된다. (isOtherTeamTitle·isTeamBaseballRelevant 게이트
+// *다음*에 추가로 적용하는 최종 관문.)
+//
+// rosterNames 는 2자 이름(최정·곽빈 등)도 포함한다 — 아래 titleHasNameToken 이 토큰
+// 경계로 매칭해 "김건"→"김건희", "최정"→"최정상" substring 오탐을 차단하므로 recall을
+// 위해 이름을 버리지 않는다(2026-07-18 SSG '최정 부상' 등 팀 핵심 이슈 누락 — 삼순 NO-GO).
+export function hasClippingTitleSignal(
+  title: string,
+  teamTokens: string[],
+  rosterNames: string[]
+): boolean {
+  if (BASEBALL_KEYWORDS.some((kw) => title.includes(kw))) return true;
+  if (teamTokens.some((t) => titleHasTeamToken(title, t))) return true;
+  return rosterNames.some((n) => n && titleHasNameToken(title, n));
+}
+
+// 완성형 한글 음절 여부 — 이름 토큰 경계 판정용.
+function isHangulSyllable(ch: string | undefined): boolean {
+  if (!ch) return false;
+  const code = ch.charCodeAt(0);
+  return code >= 0xac00 && code <= 0xd7a3;
+}
+
+const ASCII_ALNUM_RE = /[A-Za-z0-9]/;
+
+// 이름 뒤에 붙어도 토큰 경계로 인정하는 한국어 조사(선수명 헤드라인은 이름 바로 뒤에
+// 조사가 붙는 게 정상 — "김진성이"·"오스틴의"·"고승민은"). '은/는/이/가/을/를/의/도…'로
+// 시작하면 경계로 본다. 조사가 아닌 한글이 이어지면("최정상"·"김건희") 단어 일부로 보고 컷.
+// 단음절 조사 뒤에 다른 글자가 이어져도("이에서"류) 앞 조사만으로 경계 성립이라 무방.
+const TRAILING_JOSA = [
+  "은", "는", "이", "가", "을", "를", "의", "에", "와", "과", "도", "만", "께", "로",
+  "으로", "에게", "한테", "에서", "부터", "까지", "보다", "처럼", "조차", "마저", "라도", "밖에",
+];
+
+// 제목에서 선수명을 토큰 경계로 매칭 — 앞 글자는 한글 음절이 아니고, 뒤는
+// (a)한글 음절이 아니거나 (b)한국어 조사로 시작해야 한다.
+// "최정,"·"최정 부상"·"…최정"·"김진성이"·"오스틴의"=true, "최정상"·"김건희"=false.
+// 2자 이름뿐 아니라 3자+ 선수명의 조사 결합("김진성이 지킨")도 유지된다(삼순 NO-GO #1).
+function titleHasNameToken(title: string, name: string): boolean {
+  for (let from = 0; ; ) {
+    const idx = title.indexOf(name, from);
+    if (idx === -1) return false;
+    const prev = title[idx - 1];
+    const after = title.slice(idx + name.length);
+    const nextCh = after[0];
+    const leftOk = !isHangulSyllable(prev);
+    const rightOk =
+      !isHangulSyllable(nextCh) || TRAILING_JOSA.some((j) => after.startsWith(j));
+    if (leftOk && rightOk) return true;
+    from = idx + 1;
+  }
+}
+
+// 제목에서 팀 식별자 토큰을 매칭 — case-insensitive 이되 Latin 약칭은 ASCII 영숫자
+// 경계로만 인정한다. 소문자 own-team 헤드라인("프로야구 kt,"·"nc, 끝내기")은 유지하고,
+// 일반 영단어에 약칭이 substring으로 박힌 것(algorithm→LG, concert/encore→NC,
+// Nokia→KIA)은 컷한다(삼순 NO-GO #2). 한글 식별자(트윈스 등)는 한글 경계 오탐이
+// 사실상 없어 그대로 substring 매칭한다.
+export function titleHasTeamToken(title: string, token: string): boolean {
+  if (!token) return false;
+  const isLatin = ASCII_ALNUM_RE.test(token);
+  if (!isLatin) return title.includes(token);
+  const needle = token.toLowerCase();
+  const hay = title.toLowerCase();
+  for (let from = 0; ; ) {
+    const idx = hay.indexOf(needle, from);
+    if (idx === -1) return false;
+    const prev = hay[idx - 1];
+    const next = hay[idx + needle.length];
+    if (!ASCII_ALNUM_RE.test(prev ?? "") && !ASCII_ALNUM_RE.test(next ?? "")) return true;
+    from = idx + 1;
+  }
+}

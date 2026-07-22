@@ -141,7 +141,7 @@ function pitcherTodayChips(p: NonNullable<TodayGame["pitcher"]>): string[] {
   return [`${p.k}K`, `${p.bb}볼넷`, `${p.hits}피안타`, `${p.runs}실점`];
 }
 
-export default function FavoritePlayersSection({ favPlayers }: { favPlayers: FavoritePlayer[] }) {
+export default function FavoritePlayersSection({ favPlayers, refreshNonce = 0 }: { favPlayers: FavoritePlayer[]; refreshNonce?: number }) {
   const [liveStats, setLiveStats] = useState<Record<string, StatLike>>({});
   const [gameLogs, setGameLogs] = useState<Record<string, WeeklyTrendRow[]>>({});
   const [leagueStats, setLeagueStats] = useState<{ batter: StatLike[]; pitcher: StatLike[] }>({
@@ -210,7 +210,7 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
     };
     // favKey로 최애선수 변경만 감지 (favPlayers 배열 identity 변동에 따른 재요청 방지)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [favKey]);
+  }, [favKey, refreshNonce]);
 
   // 오늘 경기 활약 — 팀의 당일 경기 박스스코어 라인. 라이브 갱신 위해 45초 폴링.
   useEffect(() => {
@@ -237,7 +237,7 @@ export default function FavoritePlayersSection({ favPlayers }: { favPlayers: Fav
     const iv = setInterval(load, 45000);
     return () => { cancelled = true; clearInterval(iv); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [favKey]);
+  }, [favKey, refreshNonce]);
 
   if (favPlayers.length === 0) return null;
 

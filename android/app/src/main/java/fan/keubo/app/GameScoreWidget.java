@@ -54,6 +54,12 @@ public class GameScoreWidget extends AppWidgetProvider {
     static final String KEY_ASTARTER = "astarter"; // 예고선발(원정) — 예정 경기에서만
     static final String KEY_HSTARTER = "hstarter"; // 예고선발(홈)
     static final String KEY_LAST_PLAY = "last_play"; // 문자중계 최근 플레이 한 줄(라이브만)
+    // 삼순 vc14 네이티브 견고화:
+    //  KEY_LAST_SEQ = 마지막 적용한 서버 send-time(ms) = seq. 같은 경기에서 이보다 작거나 같은
+    //  seq는 순서 역전/중복 배달로 보고 무시. KEY_SIG = 렌더 시그니처(동일 payload no-op).
+    static final String KEY_LAST_SEQ = "last_seq";
+    static final String KEY_SIG = "render_sig";
+    static final String KEY_LAST_LATENCY = "last_latency_ms"; // 수신→핸들 지연 계측(phase-1 로컬)
     // gameId(YYYYMMDD… ) — 06:00 롤오버 기준일 계산용. 다음 예정 경기(next_*) 자동 전환.
     static final String KEY_GAME_ID = "game_id";
     static final String KEY_NEXT_HAS = "next_has";       // 다음 예정 경기 존재(결과/라이브일 때만)
@@ -561,15 +567,21 @@ public class GameScoreWidget extends AppWidgetProvider {
 
     /** 혼합 텍스트(숫자/영문=Montserrat, 한글=Noto)를 한 비트맵으로 렌더. spSize는 dp 환산. */
     private static Bitmap textBitmap(Context ctx, String text, float spSize, int color) {
+        return textBitmap(ctx, text, spSize, color, false);
+    }
+
+    /** bold 오버로드 — setFakeBoldText는 글리프 두께만 키우고 폰트 실높이는 무변화라
+     *  접힌 카드 높이 캡을 넘기지 않고 스코어 존재감을 키운다(2026-07-18 실측). */
+    private static Bitmap textBitmap(Context ctx, String text, float spSize, int color, boolean bold) {
         if (text == null) text = "";
         float density = ctx.getResources().getDisplayMetrics().density;
         float px = spSize * density;
         Paint pm = new Paint(Paint.ANTI_ALIAS_FLAG);
         pm.setTypeface(mont(ctx)); pm.setTextSize(px); pm.setColor(color);
-        pm.setLetterSpacing(-0.02f); pm.setSubpixelText(true);
+        pm.setLetterSpacing(-0.02f); pm.setSubpixelText(true); pm.setFakeBoldText(bold);
         Paint pn = new Paint(Paint.ANTI_ALIAS_FLAG);
         pn.setTypeface(noto(ctx)); pn.setTextSize(px); pn.setColor(color);
-        pn.setLetterSpacing(-0.04f); pn.setSubpixelText(true);
+        pn.setLetterSpacing(-0.04f); pn.setSubpixelText(true); pn.setFakeBoldText(bold);
 
         // 한글/비한글 런으로 분할
         List<String> runs = new ArrayList<>();
@@ -627,8 +639,9 @@ public class GameScoreWidget extends AppWidgetProvider {
         if (awayLogo != 0) v.setImageViewResource(R.id.ncc_away_logo, awayLogo);
         if (homeLogo != 0) v.setImageViewResource(R.id.ncc_home_logo, homeLogo);
         // 약어 — SystemUI(알림)도 런처처럼 커스텀 fontFamily를 무시하므로 홈위젯과 동일 비트맵 렌더.
-        v.setImageViewBitmap(R.id.ncc_away_name, textBitmap(context, shortName(away), 14f, 0xFFE8B0BC));
-        v.setImageViewBitmap(R.id.ncc_home_name, textBitmap(context, shortName(home), 14f, 0xFFE8B0BC));
+        // 약어 17f — 큰 스코어(32f) 대비 팀 약어 가독성 상향(하린아빠 2026-07-20 "적당히 키워").
+        v.setImageViewBitmap(R.id.ncc_away_name, textBitmap(context, shortName(away), 17f, 0xFFE8B0BC));
+        v.setImageViewBitmap(R.id.ncc_home_name, textBitmap(context, shortName(home), 17f, 0xFFE8B0BC));
 
         String status = e.status;
         boolean isScheduled = status != null && status.startsWith("SCHEDULED|");
@@ -650,26 +663,29 @@ public class GameScoreWidget extends AppWidgetProvider {
         } else {
             v.setViewVisibility(R.id.ncc_score, View.VISIBLE);
             v.setViewVisibility(R.id.ncc_score_scheduled, View.GONE);
-            v.setImageViewBitmap(R.id.ncc_score, textBitmap(context, e.as + " : " + e.hs, 20f, 0xFFF5F5F7));
+            // 32f bold·순백 — 접힌 카드 스코어 최대화(하린아빠 2026-07-19 "숫자 더 크게").
+            // 문자중계 2행을 접힌 뷰에서 제거(아래)해 단일 행이 되므로 로고(26dp) 높이 캡에
+            // 묶이지 않고 32f까지 키움(삼순 권고). wrap_content라 좁은 폭에서도 축소 안 됨.
+            v.setImageViewBitmap(R.id.ncc_score,
+                textBitmap(context, e.as + " : " + e.hs, 32f, 0xFFFFFFFF, true));
         }
 
-        // 상태 pill — 홈위젯과 동일 문구: 예정=시각, 종료="경기 종료", 취소="경기 취소", 라이브="● N회초".
+        // 상태 pill — 라이브는 "● LIVE N회말"을 최대한 줄여 스코어에 폭을 양보(하린아빠
+        // 2026-07-19 "LIVE 2회말 최대한 줄이고"). 빨간 pill 배경 자체가 라이브 신호라
+        // "● LIVE " 접두를 떼고 이닝만("2회말") 표기. 예정/종료/취소는 기존 문구 유지.
         if (status.isEmpty() || "SCHEDULED|".equals(status)) {
             v.setViewVisibility(R.id.ncc_status, View.GONE);
         } else {
             v.setViewVisibility(R.id.ncc_status, View.VISIBLE);
-            String pill = isCancelled ? "경기 취소" : isScheduled ? schedTime : isFinal ? "경기 종료" : "● " + status;
+            String liveInning = status.replaceFirst("^(?:●\\s*)?LIVE\\s*", "").trim();
+            String pill = isCancelled ? "경기 취소" : isScheduled ? schedTime
+                : isFinal ? "경기 종료" : liveInning;
             v.setImageViewBitmap(R.id.ncc_status_img, textBitmap(context, pill, 11f, 0xFFFF6B7A));
         }
 
-        // 문자중계 최근 플레이 — 홈위젯과 동일(라이브 + 텍스트 있을 때만). 점(●)은 XML ViewFlipper pulse.
-        boolean isLiveStatus = !isScheduled && !isFinal && !isCancelled && !status.isEmpty();
-        if (isLiveStatus && !TextUtils.isEmpty(e.lastPlay)) {
-            v.setViewVisibility(R.id.ncc_relay_row, View.VISIBLE);
-            v.setTextViewText(R.id.ncc_relay_text, e.lastPlay);
-        } else {
-            v.setViewVisibility(R.id.ncc_relay_row, View.GONE);
-        }
+        // 문자중계 2행은 접힌 카드에서 제거(하린아빠 "아랫줄 비어보임" + 삼순 권고 2026-07-19) —
+        // 접힌 뷰는 스코어 최대화 우선, 최근 플레이는 펼친 카드(notif_card_full)에서 유지.
+        // notif_card_compact.xml에서 ncc_relay_row 삭제됨 → 여기서도 참조 제거.
         return v;
     }
 
@@ -689,9 +705,20 @@ public class GameScoreWidget extends AppWidgetProvider {
                                 String batter, String bteam, String outs, String diamond,
                                 String stadium, String astarter, String hstarter, String gameId,
                                 String lastPlay) {
-        writeInternal(ctx, myTeam, away, home, as, hs, status, pitcher, pteam,
+        writeAndRefresh(ctx, myTeam, away, home, as, hs, status, pitcher, pteam,
+            batter, bteam, outs, diamond, stadium, astarter, hstarter, gameId, lastPlay, -1L);
+    }
+
+    /** FCM 경로 — seq(서버 send-time ms)로 역전/중복 가드. seq<0이면 가드 비활성(구버전 호환).
+     *  coordinator(NativeLiveState)가 ApplyResult를 받아 UI 부수효과를 분기한다. */
+    static WidgetUpdatePolicy.ApplyResult writeAndRefresh(Context ctx, String myTeam, String away, String home,
+                                String as, String hs, String status, String pitcher, String pteam,
+                                String batter, String bteam, String outs, String diamond,
+                                String stadium, String astarter, String hstarter, String gameId,
+                                String lastPlay, long seq) {
+        return writeInternal(ctx, myTeam, away, home, as, hs, status, pitcher, pteam,
             batter, bteam, outs, diamond, stadium, astarter, hstarter, gameId,
-            false, "", "", "", "", "", "", "", lastPlay);
+            false, "", "", "", "", "", "", "", lastPlay, seq);
     }
 
     /** 앱(홈) 경로 — 결과/라이브 경기와 함께 '다음 예정 경기'를 실어 위젯 06:00 자동 전환을 준비. */
@@ -703,18 +730,34 @@ public class GameScoreWidget extends AppWidgetProvider {
                                 String nDate, String nAStarter, String nHStarter) {
         writeInternal(ctx, myTeam, away, home, as, hs, status, pitcher, pteam,
             batter, bteam, outs, diamond, stadium, astarter, hstarter, gameId,
-            true, nAway, nHome, nStadium, nTime, nDate, nAStarter, nHStarter, null);
+            true, nAway, nHome, nStadium, nTime, nDate, nAStarter, nHStarter, null, -1L);
     }
 
-    private static void writeInternal(Context ctx, String myTeam, String away, String home,
+    private static WidgetUpdatePolicy.ApplyResult writeInternal(Context ctx, String myTeam, String away, String home,
                                 String as, String hs, String status, String pitcher, String pteam,
                                 String batter, String bteam, String outs, String diamond,
                                 String stadium, String astarter, String hstarter, String gameId,
                                 boolean hasNext, String nAway, String nHome, String nStadium,
                                 String nTime, String nDate, String nAStarter, String nHStarter,
-                                String lastPlay) {
+                                String lastPlay, long seq) {
         SharedPreferences p = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         String prevGameId = p.getString(KEY_GAME_ID, "");
+        boolean gameChanged = !TextUtils.isEmpty(gameId) && !gameId.equals(prevGameId);
+        // 삼순 딥리뷰 — ApplyResult 상태머신으로 판정(seq/내용/terminal 종합).
+        long prevSeq = p.getLong(KEY_LAST_SEQ, -1L);
+        // 동일 payload no-op 판정용 실효 last_play (FCM=주어진 값, JS=기존 보존값)
+        String effLastPlay = (lastPlay != null)
+            ? lastPlay
+            : (gameChanged ? "" : p.getString(KEY_LAST_PLAY, ""));
+        String sig = buildSignature(away, home, as, hs, status, pitcher, pteam,
+            batter, bteam, outs, diamond, stadium, astarter, hstarter, gameId, effLastPlay);
+        WidgetUpdatePolicy.ApplyResult result = WidgetUpdatePolicy.decide(
+            seq, prevSeq, gameChanged, sig, p.getString(KEY_SIG, ""),
+            WidgetUpdatePolicy.isTerminalStatus(status));
+        if (result == WidgetUpdatePolicy.ApplyResult.STALE
+            || result == WidgetUpdatePolicy.ApplyResult.INVALID) {
+            return result; // 순서 역전/모호 동률 — 어떤 UI 부수효과도 금지
+        }
         SharedPreferences.Editor e = p.edit();
         e.putBoolean(KEY_HAS_GAME, true);
         e.putString(KEY_STADIUM, stadium == null ? "" : stadium);
@@ -738,7 +781,6 @@ public class GameScoreWidget extends AppWidgetProvider {
         //  - JS 경로(lastPlay==null) = 기본 보존. 단 *실제* 경기 전환(gameChanged)일 때만 "" clear
         //  - 빈 gameId(경기룸이 gameId 미전달)는 "모름"으로 보고 gameChanged=false → 보존
         //    (경기룸 진입/10초 폴링이 FCM 중계를 지우지 않게). hasNext와 독립.
-        boolean gameChanged = !TextUtils.isEmpty(gameId) && !gameId.equals(prevGameId);
         if (lastPlay != null) {
             e.putString(KEY_LAST_PLAY, lastPlay);
         } else if (gameChanged) {
@@ -757,8 +799,50 @@ public class GameScoreWidget extends AppWidgetProvider {
             // 다른 경기로 바뀌면(FCM 라이브 등) 이전 경기의 stale next 제거 → 오탐 롤오버 방지.
             e.putBoolean(KEY_NEXT_HAS, false);
         }
+        e.putString(KEY_SIG, sig);
+        if (seq >= 0) e.putLong(KEY_LAST_SEQ, seq);
         e.apply();
-        refresh(ctx);
+        // NO_CHANGE(동일 payload)면 seq만 전진, RemoteViews 재빌드 금지. APPLIED만 재렌더.
+        if (result == WidgetUpdatePolicy.ApplyResult.APPLIED) refresh(ctx);
+        return result;
+    }
+
+    /** 렌더 결과에 영향을 주는 필드만 묶은 시그니처(동일 payload no-op 판정용).
+     *  next 필드는 라이브 틱에서 불변이라 제외. 구분자는 데이터에 안 쓰이는 US(\u001f). */
+    private static String buildSignature(String away, String home, String as, String hs,
+            String status, String pitcher, String pteam, String batter, String bteam,
+            String outs, String diamond, String stadium, String astarter, String hstarter,
+            String gameId, String lastPlay) {
+        return TextUtils.join("\u001f", new String[]{
+            nz(away), nz(home), nz(as), nz(hs), nz(status), nz(pitcher), nz(pteam),
+            nz(batter), nz(bteam), nz(outs), nz(diamond), nz(stadium), nz(astarter),
+            nz(hstarter), nz(gameId), nz(lastPlay)});
+    }
+
+    private static String nz(String s) { return s == null ? "" : s; }
+
+    /**
+     * 지연 계측(삼순 vc14 딥리뷰 — 명칭 분리):
+     *  delivery_ms          = 기기 수신(recvMs) − 서버 send-time(sourceTsMs)  [서버→기기 배달]
+     *  handler_to_dispatch_ms = 핸들러 시작→updateAppWidget IPC dispatch (SystemClock.elapsedRealtime 기준)
+     *  source_to_dispatch_ms  = 둘의 합
+     * ⚠️ updateAppWidget/notify 반환은 IPC dispatch 완료이지 실제 픽셀 렌더 완료가 아니므로
+     * 'render latency'라 부르지 않는다. phase-1은 로컬(logcat + prefs delivery 마지막값), 집계 beacon은 phase-2.
+     * sourceTsMs<=0(w_ts 미전달 = 구버 서버)이면 no-op.
+     */
+    static void recordDeliveryLatency(Context ctx, long sourceTsMs, long recvMs, long handlerToDispatchMs) {
+        if (sourceTsMs <= 0) return;
+        long deliveryMs = Math.max(0L, recvMs - sourceTsMs); // 음수(기기 시계 스큐)는 0 클램프
+        long h2d = Math.max(0L, handlerToDispatchMs);
+        long sourceToDispatchMs = deliveryMs + h2d;
+        try {
+            ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .edit().putLong(KEY_LAST_LATENCY, deliveryMs).apply();
+        } catch (Exception ignore) {
+        }
+        android.util.Log.i("kbo-widget",
+            "delivery_ms=" + deliveryMs + " handler_to_dispatch_ms=" + h2d
+                + " source_to_dispatch_ms=" + sourceToDispatchMs);
     }
 
     /** 빈 상태로 전환 (경기 종료/이탈). 최애팀 값은 유지. */
@@ -772,10 +856,42 @@ public class GameScoreWidget extends AppWidgetProvider {
      *  이렇게 해야 앱 미실행 상태에서도 readEff의 06:00 롤오버가 다음 예정 경기로 전환된다.
      *  잠금화면 진행중 알림은 별도로 GameNotificationPlugin.clear()가 내린다(game_end 경로). */
     static void markFinal(Context ctx) {
+        markFinal(ctx, null, -1L);
+    }
+
+    /** game_end 경로(삼순 딥리뷰 — live/cancel과 동일 게이트): incoming gameId 일치 + sourceTs(seq) 통과 강제.
+     *  ① gameId 불일치(다른/이전 경기 종료 신호) → 최신 카드 오종료 방지. ② 저-seq(늦게 도착한 옷 종료) → 무시.
+     *  ③ 이미 FINAL이면 중복 no-op. game_end는 live 뒤에 발송되어 seq가 더 큼 → 이후 가드가 저-seq live 무시. */
+    static WidgetUpdatePolicy.ApplyResult markFinal(Context ctx, String gameId, long seq) {
         SharedPreferences p = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-        if (!p.getBoolean(KEY_HAS_GAME, false)) return;
-        p.edit().putString(KEY_STATUS, "FINAL").apply();
-        refresh(ctx);
+        boolean hasGame = p.getBoolean(KEY_HAS_GAME, false);
+        String prevGameId = p.getString(KEY_GAME_ID, "");
+        long prevSeq = p.getLong(KEY_LAST_SEQ, -1L);
+        // 삼순 #723 2차 fail-closed: incoming gid가 비지 않고 저장된 경기 gid와 *정확히* 일치해야
+        // terminal 적용. gid 공백(incoming 또는 prev)·불일치면 무시(다른/미지 경기 오종료 방지).
+        boolean gameIdMatchesExactly = gameId != null && !gameId.isEmpty()
+            && !prevGameId.isEmpty() && gameId.equals(prevGameId);
+        boolean alreadyFinal = "FINAL".equals(p.getString(KEY_STATUS, ""));
+        // 삼순 #723 — 순수 판정(WidgetUpdatePolicy.decideTerminal): terminal retry watermark + fail-closed.
+        switch (WidgetUpdatePolicy.decideTerminal(hasGame, gameIdMatchesExactly, alreadyFinal, seq, prevSeq)) {
+            case NOOP:
+                return WidgetUpdatePolicy.ApplyResult.NO_CHANGE;
+            case STALE:
+                return WidgetUpdatePolicy.ApplyResult.STALE;
+            case RETRY_ADVANCE_SEQ:
+                // 이미 FINAL이지만 더 큰 seq(종료 재전송) → watermark만 전진(후속 저-seq live 차단).
+                p.edit().putLong(KEY_LAST_SEQ, seq).apply();
+                return WidgetUpdatePolicy.ApplyResult.NO_CHANGE;
+            case APPLY:
+            default:
+                SharedPreferences.Editor e = p.edit().putString(KEY_STATUS, "FINAL");
+                if (seq >= 0) e.putLong(KEY_LAST_SEQ, seq);
+                // status만 바뀌니 sig 불일치화(다음 live가 정상 재렌더되게).
+                e.remove(KEY_SIG);
+                e.apply();
+                refresh(ctx);
+                return WidgetUpdatePolicy.ApplyResult.APPLIED;
+        }
     }
 
     /** 디바이스 최애팀 코드 기록(앱이 알 때). 위젯 배경/워터마크/헤더 색 결정. */

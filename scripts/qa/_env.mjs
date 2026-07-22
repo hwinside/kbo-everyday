@@ -16,8 +16,14 @@ try {
     if (!process.env[m[1]]) process.env[m[1]] = v;
   }
 } catch (e) {
-  console.error("[qa] failed to load .env.local:", e.message);
-  process.exit(1);
+  const alreadyInjected =
+    process.env.NEXT_PUBLIC_SUPABASE_URL &&
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY &&
+    process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!alreadyInjected) {
+    console.error("[qa] failed to load .env.local:", e.message);
+    process.exit(1);
+  }
 }
 
 export const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;

@@ -11,5 +11,14 @@
 	},
 	"android": {
 		"allowMixedContent": false
+	},
+	"plugins": {
+		"FirebaseMessaging": {
+			"presentationOptions": [
+				"alert",
+				"badge",
+				"sound"
+			]
+		}
 	}
 }

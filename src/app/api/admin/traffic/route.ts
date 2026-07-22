@@ -14,6 +14,7 @@ type TrafficPayload = {
   totals: Record<string, { pv: number; uv: number }>;
   devices: Record<string, number>;
   dwell: Record<string, { sessions: number; avgMs: number; medianMs: number }>;
+  dwellStatus: "ok" | "error";
   versions: Record<string, { version: string; devices: number }[]>;
 };
 
@@ -37,7 +38,6 @@ async function loadTraffic(days: number): Promise<TrafficPayload> {
   if (daily.error) throw daily.error;
   if (windowTotals.error) throw windowTotals.error;
   if (appDevices.error) throw appDevices.error;
-  if (dwell.error) throw dwell.error;
   if (versions.error) throw versions.error;
 
   const rows = (daily.data ?? []) as TrafficRow[];
@@ -93,6 +93,9 @@ async function loadTraffic(days: number): Promise<TrafficPayload> {
     totals,
     devices,
     dwell: dwellByPlatform,
+    // Dwell is an optional card. A timeout must not erase otherwise valid
+    // PV/UV/device/version data or turn the whole dashboard into an API 500.
+    dwellStatus: dwell.error ? "error" : "ok",
     versions: versionShare,
   };
 }

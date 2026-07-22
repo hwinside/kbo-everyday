@@ -4,11 +4,14 @@ import { useEffect, useState } from "react";
 import { ExternalLink } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { TEAMS } from "@/lib/constants/teams";
+import NewsCommentButton from "@/components/news/NewsCommentButton";
+import { useNewsArticleBrowser } from "@/hooks/useNewsArticleBrowser";
 
 interface NewsItem {
   title: string;
   description: string;
   link: string;
+  originalLink?: string;
   pubDate: string;
   thumbnailUrl?: string | null;
 }
@@ -19,6 +22,7 @@ interface PlayerNewsProps {
 }
 
 export default function PlayerNews({ playerName, teamId }: PlayerNewsProps) {
+  const { handleArticleAnchorClick } = useNewsArticleBrowser();
   const [news, setNews] = useState<NewsItem[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -67,9 +71,17 @@ export default function PlayerNews({ playerName, teamId }: PlayerNewsProps) {
         </div>
       ) : (
         <div className="space-y-2">
-          {news.map((item, i) => (
-            <a key={i} href={item.link} target="_blank" rel="noopener noreferrer">
-              <GlassCard pressable className="overflow-hidden p-0">
+          {news.map((item, i) => {
+            const article = {
+              url: item.link,
+              canonicalUrl: item.originalLink || item.link,
+              title: item.title,
+              thumbnailUrl: item.thumbnailUrl,
+              teamId,
+            };
+            return (
+              <GlassCard key={i} pressable className="overflow-hidden p-0">
+                <a href={item.link} target="_blank" rel="noopener noreferrer" onClick={(event) => handleArticleAnchorClick(event, article)}>
                 <div className="flex gap-3">
                   {item.thumbnailUrl && (
                     <div className="h-24 w-28 shrink-0 overflow-hidden bg-bg-tertiary">
@@ -101,9 +113,16 @@ export default function PlayerNews({ playerName, teamId }: PlayerNewsProps) {
                     </div>
                   </div>
                 </div>
+                </a>
+                <div className="flex justify-end border-t border-border px-3 py-2">
+                  <NewsCommentButton
+                    article={article}
+                    className="bg-bg-tertiary text-text-secondary hover:bg-bg-primary"
+                  />
+                </div>
               </GlassCard>
-            </a>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

@@ -48,6 +48,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true, skipped: true, reason: "existing_user" });
     }
 
+    // 신규 안드 가입자 긴급공지 자동발송은 /api/push/register-device(서버 검증 platform)로 이관
+    // (삼순 NO-GO #3 — 클라 body.platform 미신뢰, 토큰 등록 성공 시점에 발송).
+
     // 정렬해서 저장 (user1 < user2)
     const [u1, u2] = [systemUserId, user.id].sort();
 

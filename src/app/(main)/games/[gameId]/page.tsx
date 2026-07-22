@@ -36,6 +36,8 @@ import MatchupCard from "@/components/game/MatchupCard";
 import Diamond from "@/components/game/Diamond";
 import { ChevronUp, ChevronDown } from "lucide-react";
 import ScoreBoard from "@/components/game/ScoreBoard";
+import AdminOnly from "@/components/admin/AdminOnly";
+import VenueStorySection from "@/components/game/VenueStorySection";
 import KgwanTab from "@/components/game/KgwanTab";
 import LineupTab from "@/components/game/LineupTab";
 import AllStarEntryRoster from "@/components/game/AllStarEntryRoster";
@@ -478,6 +480,11 @@ export default function GameDetailPage() {
 
       {d.derivedStatus !== "cancelled" && (
         <>
+          {/* 직관 라이브 — WIP 실환경 QA 동안 관리자에게만 노출 */}
+          <AdminOnly>
+            <VenueStorySection gameId={gameId} />
+          </AdminOnly>
+
           {/* Tabs */}
           <div className="flex border-b border-border mx-4">
             {TABS.map((tab) => (

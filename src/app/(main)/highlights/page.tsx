@@ -7,6 +7,7 @@ import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import { HIGHLIGHTS, rankHighlights, type Highlight } from "@/lib/constants/highlights";
 import { getMyTeamId } from "@/lib/store/myteam";
 import { getFavoritePlayers } from "@/lib/store/favorites";
+import { handleExternalAnchorClick } from "@/lib/open-external";
 
 /**
  * YouTube ToS III.C.1 / III.I.4 compliance:
@@ -118,6 +119,7 @@ function ReelSlide({
             href={`https://www.youtube.com/watch?v=${reel.youtubeId}`}
             target="_blank"
             rel="noopener noreferrer"
+            onClick={(e) => handleExternalAnchorClick(e, `https://www.youtube.com/watch?v=${reel.youtubeId}`)}
             className="ml-auto flex items-center gap-1.5 active:scale-95 transition-transform"
           >
             <ExternalLink size={20} className="text-white" />

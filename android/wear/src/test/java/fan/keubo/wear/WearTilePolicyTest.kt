@@ -31,10 +31,11 @@ class WearTilePolicyTest {
     // --- isStale: kind별 임계 경계 ---
 
     @Test
-    fun `live cache stale strictly after 60s`() {
+    fun `live cache stale strictly after 20s`() {
+        // push bridge가 주경로 — STALE_LIVE_MS는 폰 단절 시 pull 폴백 임계(20초, freshness 30초보다 짧음)
         val live = snap("live")
-        assertFalse(WearTilePolicy.isStale(live, now - 60_000L, now))
-        assertTrue(WearTilePolicy.isStale(live, now - 60_001L, now))
+        assertFalse(WearTilePolicy.isStale(live, now - 20_000L, now))
+        assertTrue(WearTilePolicy.isStale(live, now - 20_001L, now))
     }
 
     @Test
@@ -57,9 +58,10 @@ class WearTilePolicyTest {
     // --- canAttemptSync: 재시도 스로틀 경계 ---
 
     @Test
-    fun `sync throttled within 30s of last attempt`() {
-        assertFalse(WearTilePolicy.canAttemptSync(now - 29_999L, now))
-        assertTrue(WearTilePolicy.canAttemptSync(now - 30_000L, now))
+    fun `sync throttled within 20s of last attempt`() {
+        // renderer inter-update 20초 선례(삼순 정정) — push bridge 주경로라 실 pull은 폰 단절 시만
+        assertFalse(WearTilePolicy.canAttemptSync(now - 19_999L, now))
+        assertTrue(WearTilePolicy.canAttemptSync(now - 20_000L, now))
         assertTrue(WearTilePolicy.canAttemptSync(0L, now)) // 첫 시도
     }
 
@@ -67,7 +69,9 @@ class WearTilePolicyTest {
 
     @Test
     fun `freshness hints per kind`() {
-        assertEquals(5 * 60_000L, WearTilePolicy.freshnessForMs(snap("live"), now))
+        // live 60초 — AndroidX Tiles 계약 준수(1분 미만 throttle), 20~40초는 push bridge가 달성
+        // live 30초 fallback(60초 하한 없음), 20~40초는 push bridge가 달성
+        assertEquals(30_000L, WearTilePolicy.freshnessForMs(snap("live"), now))
         assertEquals(60_000L, WearTilePolicy.freshnessForMs(snap("loading"), now))
         assertEquals(30 * 60_000L, WearTilePolicy.freshnessForMs(snap("final"), now))
         // 오늘 아닌 예정 경기 → 30분

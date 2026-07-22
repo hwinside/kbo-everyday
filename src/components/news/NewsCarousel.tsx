@@ -5,6 +5,9 @@ import Image from "next/image";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import { readableTextColor } from "@/lib/utils/team";
 import type { NewsMock } from "@/lib/constants/news";
+import NewsCommentButton from "@/components/news/NewsCommentButton";
+import { useIsAdmin } from "@/hooks/useIsAdmin";
+import { useNewsArticleBrowser } from "@/hooks/useNewsArticleBrowser";
 
 interface NewsCarouselProps {
   news: NewsMock[];
@@ -13,6 +16,8 @@ interface NewsCarouselProps {
 const AUTO_INTERVAL = 4000;
 
 export default function NewsCarousel({ news }: NewsCarouselProps) {
+  const isAdmin = useIsAdmin();
+  const { openArticle } = useNewsArticleBrowser();
   const [current, setCurrent] = useState(0);
   const [isUserPaused, setIsUserPaused] = useState(false);
   // 썸네일 로드 실패 id 집합 — 실패하면 썸네일 없이 현행 레이아웃으로 폴백.
@@ -20,10 +25,37 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
   // 기사 og:image를 클라이언트에서 점진 로드 — 뉴스 텍스트는 즉시 뜨고 사진은
   // 뒤따라 채워져 홈 로딩이 og 추출에 막히지 않게 한다(서버 블로킹 회피).
   const [ogThumbs, setOgThumbs] = useState<Record<NewsMock["id"], string | null>>({});
+  const [commentCounts, setCommentCounts] = useState<Record<string, number>>({});
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
   const slides = news.slice(0, 10);
   const len = slides.length;
+
+  // 홈 카드 댓글 수는 최대 10건을 한 번에 조회한다. 조회만으로 빈 댓글방을 만들지 않는다.
+  useEffect(() => {
+    if (!isAdmin) return;
+    const articles = news.slice(0, 10)
+      .filter((item) => item.sourceUrl && item.sourceUrl !== "#")
+      .map((item) => ({
+        lookupId: String(item.id),
+        url: item.sourceUrl,
+        canonicalUrl: item.ogUrl || item.sourceUrl,
+      }));
+    if (articles.length === 0) return;
+
+    let cancelled = false;
+    fetch("/api/news/discussion/counts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ articles }),
+    })
+      .then((response) => response.ok ? response.json() : null)
+      .then((result) => {
+        if (!cancelled && result?.counts) setCommentCounts(result.counts);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [isAdmin, news]);
 
   // 슬라이드별 og:image를 캐시된 /api/og-meta로 비동기 조회(텍스트 렌더 비차단).
   useEffect(() => {
@@ -135,22 +167,30 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
             // 썸네일이 있고 로드 실패하지 않았으면 왼쪽 사진 + 제목 우측. 없으면 현행 그대로.
             const thumbUrl = item.thumbnailUrl ?? ogThumbs[item.id] ?? null;
             const hasThumb = Boolean(thumbUrl) && !failedThumbs.has(item.id);
+            const article = {
+              url: item.sourceUrl,
+              canonicalUrl: item.ogUrl || item.sourceUrl,
+              title: item.title,
+              source: item.source,
+              thumbnailUrl: thumbUrl,
+              teamId: item.teamId,
+            };
 
             return (
               <div
                 key={item.id}
-                className="w-full flex-shrink-0 cursor-pointer"
+                className="relative w-full flex-shrink-0"
                 role="group"
                 aria-roledescription="slide"
                 aria-label={`${i + 1} / ${len}`}
-                onClick={() =>
-                  item.sourceUrl && window.open(item.sourceUrl, "_blank")
-                }
               >
                 {/* ── 다크: 기존 히어로(팀컬러→#1a1a1d, 흰 글씨) 그대로 ── */}
-                <div
-                  className="relative hidden h-[172px] w-full overflow-hidden dark:block"
+                <button
+                  type="button"
+                  aria-label={`${item.title} 원문 보기`}
+                  className="relative hidden h-[172px] w-full cursor-pointer overflow-hidden text-left dark:block"
                   style={{ background: bgDark }}
+                  onClick={() => openArticle(article)}
                 >
                   {team && (
                     <div className="absolute right-4 top-4 opacity-20">
@@ -192,13 +232,16 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
                       {item.source} · {item.timeAgo}
                     </p>
                   </div>
-                </div>
+                </button>
 
                 {/* ── 라이트: 옅은 팀틴트 카드(진한 글씨·팀색 포인트, 인셋+라운드) ── */}
                 <div className="px-4 dark:hidden">
-                  <div
-                    className="relative h-[172px] w-full overflow-hidden rounded-2xl border border-black/[0.06] shadow-sm"
+                  <button
+                    type="button"
+                    aria-label={`${item.title} 원문 보기`}
+                    className="relative h-[172px] w-full cursor-pointer overflow-hidden rounded-2xl border border-black/[0.06] text-left shadow-sm"
                     style={{ background: bgLightCard, borderTopWidth: 3, borderTopColor: accent }}
+                    onClick={() => openArticle(article)}
                   >
                     {team && (
                       <div className="absolute right-3 top-3 flex h-7 w-7 items-center justify-center rounded-lg bg-white shadow-sm ring-1 ring-black/[0.04]">
@@ -242,8 +285,20 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
                         {item.source} · {item.timeAgo}
                       </p>
                     </div>
-                  </div>
+                  </button>
                 </div>
+                {isAdmin && (
+                  <NewsCommentButton
+                    article={article}
+                    initialCount={commentCounts[String(item.id)] ?? 0}
+                    showCount
+                    onCountChange={(next) => setCommentCounts((previous) => ({
+                      ...previous,
+                      [String(item.id)]: next,
+                    }))}
+                    className="absolute bottom-2 right-5 z-20 bg-black/10 text-neutral-600 hover:bg-black/20 dark:bg-white/25 dark:text-white dark:hover:bg-white/40 backdrop-blur-sm"
+                  />
+                )}
               </div>
             );
           })}
@@ -251,12 +306,12 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
       </div>
 
       {/* 하단 컨트롤: 좌버튼 + 인디케이터 + 우버튼 */}
-      <div className="absolute bottom-2 inset-x-0 z-10 flex items-center justify-center gap-3 px-3">
+      <div className="pointer-events-none absolute bottom-2 inset-x-0 z-10 flex items-center justify-center gap-3 px-3">
         {len > 1 && (
           <button
             type="button"
             onClick={() => goTo(current - 1)}
-            className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-black/10 text-neutral-600 dark:bg-white/25 dark:text-white backdrop-blur-sm transition-opacity hover:bg-black/20 dark:hover:bg-white/40"
+            className="pointer-events-auto flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-black/10 text-neutral-600 dark:bg-white/25 dark:text-white backdrop-blur-sm transition-opacity hover:bg-black/20 dark:hover:bg-white/40"
             aria-label="이전 뉴스"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
@@ -269,7 +324,7 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
               key={i}
               onClick={() => goTo(i)}
               aria-label={`뉴스 ${i + 1}번으로 이동`}
-              className={`h-1.5 rounded-full transition-all duration-300 ${
+              className={`pointer-events-auto h-1.5 rounded-full transition-all duration-300 ${
                 i === current ? "w-5 bg-accent" : "w-1.5 bg-text-tertiary/40"
               }`}
             />
@@ -279,7 +334,7 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
           <button
             type="button"
             onClick={() => goTo(current + 1)}
-            className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-black/10 text-neutral-600 dark:bg-white/25 dark:text-white backdrop-blur-sm transition-opacity hover:bg-black/20 dark:hover:bg-white/40"
+            className="pointer-events-auto flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-black/10 text-neutral-600 dark:bg-white/25 dark:text-white backdrop-blur-sm transition-opacity hover:bg-black/20 dark:hover:bg-white/40"
             aria-label="다음 뉴스"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18l6-6-6-6"/></svg>

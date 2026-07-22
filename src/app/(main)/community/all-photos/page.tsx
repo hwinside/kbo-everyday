@@ -24,7 +24,7 @@ export default function AllPhotosPage() {
       setLoading(true);
       const { data } = await supabase
         .from("posts")
-        .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, game_id, player_tags, team_tags, hashtags, author_team_id_snapshot, profiles(nickname, team_id, grade, points)")
+        .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, game_id, player_tags, team_tags, hashtags, author_team_id_snapshot, click_view_count, impression_view_count, profiles(nickname, team_id, grade, points)")
         .in("board_type", ["team", "player"])
         .eq("content_type", "photo")
         .neq("is_hidden", true)
@@ -46,6 +46,8 @@ export default function AllPhotosPage() {
           team_id: (snap ?? (profile?.team_id as number | undefined)) as number | undefined,
           grade: profile?.grade as string | undefined,
           points: (profile?.points as number) ?? 0,
+          click_view_count: ((p as Record<string, unknown>).click_view_count as number | null | undefined) ?? 0,
+          impression_view_count: ((p as Record<string, unknown>).impression_view_count as number | null | undefined) ?? 0,
         };
       }));
       setLoading(false);

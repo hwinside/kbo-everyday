@@ -10,5 +10,9 @@
 	{
 		"pkg": "@capacitor/browser",
 		"classpath": "com.capacitorjs.plugins.browser.BrowserPlugin"
+	},
+	{
+		"pkg": "@capacitor/geolocation",
+		"classpath": "com.capacitorjs.plugins.geolocation.GeolocationPlugin"
 	}
 ]

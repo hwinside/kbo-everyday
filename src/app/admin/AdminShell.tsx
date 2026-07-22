@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect, type ReactNode } from "react";
+import { useState, useEffect, useCallback, type ReactNode } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import PullToRefresh from "@/components/PullToRefresh";
 import {
   LayoutDashboard,
   Users,
@@ -270,13 +271,16 @@ function Sidebar({ mobile, onClose, unreadDM, batchProblems }: { mobile?: boolea
         } flex flex-col min-h-screen border-r border-white/8`}
         style={{ background: "#101012" }}
       >
-        <div className="flex items-center justify-between p-5 border-b border-white/8">
+        <div
+          className="flex items-center justify-between p-5 border-b border-white/8"
+          style={mobile ? { paddingTop: "calc(env(safe-area-inset-top) + 1.25rem)" } : undefined}
+        >
           <div className="flex items-center gap-2">
             <img src="/logo.png" alt="크보팬" style={{height: "28px", objectFit: "contain"}} />
             <h2 className="font-bold text-lg">어드민</h2>
           </div>
           {mobile && (
-            <button onClick={onClose} className="p-1 text-[#8E8E93]">
+            <button onClick={onClose} aria-label="메뉴 닫기" className="flex h-11 w-11 items-center justify-center rounded-lg text-[#8E8E93] active:bg-white/10">
               <X className="w-5 h-5" />
             </button>
           )}
@@ -324,8 +328,21 @@ export default function AdminShell({ children }: { children: ReactNode }) {
   const [authed, setAuthed] = useState(false);
   const [checking, setChecking] = useState(true);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [refreshNonce, setRefreshNonce] = useState(0);
+  const router = useRouter();
   const unreadDM = useAdminUnreadDMCount(30000, authed);
   const batchProblems = useAdminBatchHealthCount(60000, authed);
+
+  // 당겨서 새로고침(#713 홈 확장) — 어드민 페이지는 각자 client fetch(useEffect mount 1회)라
+  // router.refresh()(서버 컴포넌트 revalidate)만으로는 클라 상태가 안 바뀐다.
+  // → 콘텐츠 래퍼 key를 bump해 페이지 subtree를 remount, 모든 페이지의 fetch effect를 재실행한다
+  //   (페이지별 nonce 배선 없이 전 어드민 페이지 범용 갱신).
+  const handleRefresh = useCallback(async () => {
+    router.refresh();
+    setRefreshNonce((n) => n + 1);
+    // 스피너가 눈에 보이도록 최소 노출 시간 확보
+    await new Promise((res) => setTimeout(res, 500));
+  }, [router]);
 
   // PWA manifest·앱 이름은 server layout(layout.tsx metadata)에서 SSR HTML로 주입한다.
   // — iOS Safari가 "홈 화면에 추가"할 때 페이지 로드 시점의 HTML manifest만 읽기 때문에
@@ -370,16 +387,27 @@ export default function AdminShell({ children }: { children: ReactNode }) {
       <Sidebar unreadDM={unreadDM} batchProblems={batchProblems} />
       {mobileOpen && <Sidebar mobile onClose={() => setMobileOpen(false)} unreadDM={unreadDM} batchProblems={batchProblems} />}
       <main className="flex-1 min-w-0">
-        <header className="sticky top-0 z-40 flex items-center gap-4 px-6 py-4 border-b border-white/8 backdrop-blur-xl bg-[#0A0A0B]/80 lg:hidden">
-          <button onClick={() => setMobileOpen(true)} className="p-2 -ml-2">
-            <Menu className="w-5 h-5" />
+        {/* PWA standalone(black-translucent 상태바)에서 헤더가 상태바 밑까지 올라와 햄버거가
+            시계/배터리와 겹쳐 탭이 안 먹던 문제 → safe-area-inset-top 만큼 내립니다 (2026-07-19). */}
+        <header
+          className="sticky top-0 z-40 flex items-center gap-4 px-4 py-3 border-b border-white/8 backdrop-blur-xl bg-[#0A0A0B]/80 lg:hidden"
+          style={{ paddingTop: "calc(env(safe-area-inset-top) + 0.75rem)" }}
+        >
+          <button
+            onClick={() => setMobileOpen(true)}
+            aria-label="메뉴 열기"
+            className="flex h-11 w-11 items-center justify-center rounded-lg -ml-1 active:bg-white/10"
+          >
+            <Menu className="w-6 h-6" />
           </button>
           <div className="flex items-center gap-2">
             <img src="/logo.png" alt="크보팬" style={{height: "24px", objectFit: "contain"}} />
             <h1 className="font-bold">어드민</h1>
           </div>
         </header>
-        <div className="p-4 lg:p-8 max-w-[1600px]">{children}</div>
+        <PullToRefresh onRefresh={handleRefresh}>
+          <div key={refreshNonce} className="p-4 lg:p-8 max-w-[1600px]">{children}</div>
+        </PullToRefresh>
       </main>
     </div>
   );

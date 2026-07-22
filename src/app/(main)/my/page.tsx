@@ -28,12 +28,16 @@ import InviteSection from "@/components/my/InviteSection";
 import FavoritePlayersCard from "@/components/my/FavoritePlayersCard";
 import NotificationCard from "@/components/my/NotificationCard";
 import NotificationPrefsCard from "@/components/my/NotificationPrefsCard";
+import LockScreenCard from "@/components/my/LockScreenCard";
 import MenuSection from "@/components/my/MenuSection";
 import ThemeToggleCard from "@/components/my/ThemeToggleCard";
 import HomeSectionsCard from "@/components/my/HomeSectionsCard";
 import NewsPrefsCard from "@/components/my/NewsPrefsCard";
 import PwaGuideModal from "@/components/my/PwaGuideModal";
 import DeleteAccountSheet from "@/components/my/DeleteAccountSheet";
+import VenueDiaryCard from "@/components/my/VenueDiaryCard";
+import AdminOnly from "@/components/admin/AdminOnly";
+import FaqCard from "@/components/my/FaqCard";
 
 export default function MyPage() {
   const [nicknameStatus, setNicknameStatus] = useState<{
@@ -159,21 +163,8 @@ export default function MyPage() {
         </header>
       </div>
 
-      {/* 회원가입 CTA (비로그인 시 최상단) */}
-      {!user && (
-        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="mt-6">
-          <GlassCard className="flex flex-col items-center gap-4 py-6">
-            <p className="text-base font-semibold text-text-primary">크보팬에 가입하고 더 많은 기능을 이용하세요</p>
-            <p className="text-sm text-text-tertiary">커뮤니티, 쪽지 등 회원 전용 기능</p>
-            <button onClick={() => setShowLogin(true)} className="w-full max-w-[240px] rounded-full bg-accent px-8 py-3 text-sm font-semibold text-white transition-transform active:scale-95">
-              회원가입 / 로그인
-            </button>
-          </GlassCard>
-        </motion.div>
-      )}
-
-      {/* Profile card */}
-      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className={user ? "mt-6" : "mt-3"}>
+      {/* Profile card — 마이페이지 최상단 */}
+      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="mt-6">
         <ProfileCard
           user={user}
           profile={profile}
@@ -185,6 +176,45 @@ export default function MyPage() {
           onHallOfFame={() => user && router.push("/my/hall-of-fame")}
         />
       </motion.div>
+
+      {/* 반복 CS를 바탕으로 정리한 FAQ — 기본은 접힌 상태 */}
+      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="mt-3">
+        <FaqCard />
+      </motion.div>
+
+      {/* FAQ에서 답을 찾지 못한 로그인 유저가 바로 문의하도록 연결 */}
+      {user && (
+        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="mt-3">
+          <GlassCard pressable className="flex items-center justify-between p-5" onClick={() => setShowFeedback(true)}>
+            <div className="flex items-center gap-4">
+              <MessageSquareHeart size={22} className="text-text-secondary" />
+              <div>
+                <span className="text-base text-text-primary">찾는 답변이 없나요?</span>
+                <p className="mt-0.5 text-xs text-text-tertiary">피드백 보내기에서 직접 문의해주세요</p>
+              </div>
+            </div>
+            <ChevronRight size={22} className="text-text-tertiary" />
+          </GlassCard>
+        </motion.div>
+      )}
+
+      {/* 회원가입 CTA (비로그인) */}
+      {!user && (
+        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="mt-3">
+          <GlassCard className="flex flex-col items-center gap-4 py-6">
+            <p className="text-base font-semibold text-text-primary">크보팬에 가입하고 더 많은 기능을 이용하세요</p>
+            <p className="text-sm text-text-tertiary">커뮤니티, 쪽지 등 회원 전용 기능</p>
+            <button onClick={() => setShowLogin(true)} className="w-full max-w-[240px] rounded-full bg-accent px-8 py-3 text-sm font-semibold text-white transition-transform active:scale-95">
+              회원가입 / 로그인
+            </button>
+          </GlassCard>
+        </motion.div>
+      )}
+
+      {/* 스토리 지오펜스 인증에서 자동 생성되는 본인 전용 직관 기록 */}
+      <AdminOnly>
+        <VenueDiaryCard />
+      </AdminOnly>
 
       {/* 친구 초대 */}
       <InviteSection />
@@ -252,6 +282,11 @@ export default function MyPage() {
         <NotificationPrefsCard />
       </motion.div>
 
+      {/* 잠금화면 설정 (네이티브 전용 — 실시간 중계 토글·카드 스타일·다시 표시, 컴포넌트 내부 가드) */}
+      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.133 }} className="mt-3">
+        <LockScreenCard />
+      </motion.div>
+
       {/* 홈 화면 섹션 구성 (기기 로컬) — 숏츠 포함 6섹션 on/off */}
       <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.135 }} className="mt-3">
         <HomeSectionsCard />
@@ -271,20 +306,6 @@ export default function MyPage() {
       <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }} className="mt-5">
         <MenuSection />
       </motion.div>
-
-      {/* 피드백 보내기 */}
-      {user && (
-        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.17 }} className="mt-3">
-          <GlassCard pressable className="flex items-center justify-between p-5" onClick={() => setShowFeedback(true)}>
-            <div className="flex items-center gap-4">
-              <MessageSquareHeart size={22} className="text-text-secondary" />
-              <span className="text-base text-text-primary">📮 피드백 보내기</span>
-            </div>
-            <ChevronRight size={22} className="text-text-tertiary" />
-          </GlassCard>
-        </motion.div>
-      )}
-
 
       {/* Logged in info */}
       {user && (

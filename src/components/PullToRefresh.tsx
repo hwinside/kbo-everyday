@@ -12,6 +12,57 @@ interface PullToRefreshProps {
 const THRESHOLD = 60; // px to trigger refresh
 const MAX_PULL = 100; // max pull distance
 
+/**
+ * 당김 제스처 arm 여부 — 터치가 시작된 노드가 입력/모달/중첩 스크롤러면 버블링으로
+ * 상위 pull-to-refresh가 오발동해 key remount·미저장 입력 유실이 난다(삼순 #731 NO-GO).
+ * 순수 판정(DOM 분리): 페이지 최상단 일반 콘텐츠에서 시작한 pull만 arm한다.
+ */
+export interface PullStartNodeFlags {
+  tag: string; // uppercase tagName
+  contentEditable?: boolean;
+  role?: string | null;
+  ariaModal?: boolean; // aria-modal="true"
+  position?: string; // computed position (fixed 모달/오버레이 루트)
+  overflowY?: string; // computed overflow-y
+}
+
+// 핵심: overflow-y auto/scroll은 현재 스크롤 양(scrollHeight>clientHeight) 무관하게 차단.
+// (삼순 #731 2차 NO-GO: 모달 패딩 DIV가 overflowY=auto지만 scrollHeight===clientHeight라
+//  이전 "실제 스크롤 가능" 게이트를 통과해 pull이 모달을 날렸다.)
+export function nodeBlocksPull(f: PullStartNodeFlags): boolean {
+  if (f.tag === "INPUT" || f.tag === "TEXTAREA" || f.tag === "SELECT") return true;
+  if (f.contentEditable) return true;
+  if (f.role === "dialog") return true;
+  if (f.ariaModal) return true;
+  if (f.position === "fixed") return true;
+  if (f.overflowY === "auto" || f.overflowY === "scroll") return true;
+  return false;
+}
+
+// e.target에서 container 전까지 조상을 올라가며 중첩 입력/모달/스크롤러 감지.
+// 시작 타입은 Element(SVG 포함) — Lucide 아이콘 <svg>/<path>는 HTMLElement가 아니므로
+// HTMLElement로 좀히면 walker가 즉시 null로 끝나 부모 modal/fixed/overflow를 전부 우회한다(삼순 #731 3차 NO-GO).
+export function pullStartIsBlocked(target: EventTarget | null, container: HTMLElement): boolean {
+  let node: Element | null = target instanceof Element ? target : null;
+  while (node && node !== container) {
+    const style = window.getComputedStyle(node);
+    if (
+      nodeBlocksPull({
+        tag: node.tagName,
+        contentEditable: node instanceof HTMLElement ? node.isContentEditable : false,
+        role: node.getAttribute("role"),
+        ariaModal: node.getAttribute("aria-modal") === "true",
+        position: style.position,
+        overflowY: style.overflowY,
+      })
+    ) {
+      return true;
+    }
+    node = node.parentElement;
+  }
+  return false;
+}
+
 export default function PullToRefresh({ onRefresh, children, className }: PullToRefreshProps) {
   const [pullDistance, setPullDistance] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -26,6 +77,8 @@ export default function PullToRefresh({ onRefresh, children, className }: PullTo
     // Support both scrollable containers (overflow-y-auto) and page-level scroll
     const scrolled = container.scrollTop > 0 || window.scrollY > 0;
     if (scrolled) return;
+    // 중첩 입력/모달/스크롤러에서 시작한 제스처는 arm하지 않는다(삼순 #731 NO-GO).
+    if (pullStartIsBlocked(e.target, container)) return;
     startYRef.current = e.touches[0].clientY;
     isPullingRef.current = true;
   }, [isRefreshing]);

@@ -168,3 +168,90 @@ export function filterVisibleMoves<T extends { moveType: string; status: string 
 ): T[] {
   return rows.filter((r) => r.moveType === "deregister" || r.status === "published");
 }
+
+/**
+ * 홈 팀카드 로스터 변동 표시 계약(삼순 합의): 최신 N건만 카드에 노출,
+ * 초과분은 "외 M건 더보기 → 팀 페이지"로 오버플로우. 순수 함수(경계 회귀 테스트용).
+ *   - overflowCount = max(0, total - limit)  (0/limit 이하면 더보기 숨김)
+ */
+export function computeRosterMovesDisplay<T>(
+  moves: T[],
+  limit = 3,
+): { visible: T[]; overflowCount: number } {
+  const n = Math.max(0, limit);
+  return { visible: moves.slice(0, n), overflowCount: Math.max(0, moves.length - n) };
+}
+
+export interface RosterMoveDateGroup<T> {
+  date: string;
+  moves: T[];
+}
+
+/**
+ * 같은 KST 달력일 변동을 한 그룹으로 묶는다(홈 세로공간 절약 — 하린아빠 2026-07-20).
+ * Map 삽입 순서 보존 → 입력이 최신순이면 그룹도 최신순(비연속 동일날짜도 하나로 병합).
+ */
+export function groupRosterMovesByDate<T extends { moveDate: string }>(
+  moves: T[],
+): RosterMoveDateGroup<T>[] {
+  const map = new Map<string, T[]>();
+  for (const m of moves) {
+    const arr = map.get(m.moveDate);
+    if (arr) arr.push(m);
+    else map.set(m.moveDate, [m]);
+  }
+  return Array.from(map, ([date, ms]) => ({ date, moves: ms }));
+}
+
+export interface RosterMoveVisibleGroup<T> {
+  date: string;
+  /** 한 줄 안 인라인으로 표시할 변동(inlineLimit까지) */
+  moves: T[];
+  /** 같은 날 인라인 상한 초과분(줄 안 "외 N명"으로 축약, 클릭은 팀홈) */
+  hiddenInGroup: number;
+}
+
+/**
+ * 홈 팀카드 로스터 변동 표시 계약(날짜 그룹 + 한 줄 강제 버전 — 삼순 NO-GO 반영):
+ * 같은 날은 무조건 한 줄. 줄바꿈(flex-wrap) 금지 — 바쁘 날을 위해 같은 날 인라인은
+ * inlineLimit개까지만 노출하고 초과분은 그 줄 안 "외 N명"(팀홈)으로 축약해 행 높이 1줄 보장.
+ *   - visibleGroups = 최신 limit개 날짜 그룹(각각 inlineLimit개 인라인 + hiddenInGroup)
+ *   - overflowCount = 숨긴 날짜 그룹들의 변동 건수 합 = max(0, total - 보이는날짜그룹 전체건수)
+ *     → "외 M건 더보기"(그룹 아래 별도 줄, 팀홈). 같은 날 축약분(hiddenInGroup)은 여기 미포함.
+ * 순수 함수(경계 회귀 테스트용).
+ */
+export function computeRosterMovesGroupedDisplay<T extends { moveDate: string }>(
+  moves: T[],
+  limit = 3,
+  inlineLimit = 2,
+): { visibleGroups: RosterMoveVisibleGroup<T>[]; overflowCount: number } {
+  const groups = groupRosterMovesByDate(moves);
+  const n = Math.max(0, limit);
+  const inl = Math.max(0, inlineLimit);
+  const visibleDateGroups = groups.slice(0, n);
+  const visibleGroups: RosterMoveVisibleGroup<T>[] = visibleDateGroups.map((g) => ({
+    date: g.date,
+    moves: g.moves.slice(0, inl),
+    hiddenInGroup: Math.max(0, g.moves.length - inl),
+  }));
+  const shownDatesTotal = visibleDateGroups.reduce((s, g) => s + g.moves.length, 0);
+  return { visibleGroups, overflowCount: Math.max(0, moves.length - shownDatesTotal) };
+}
+
+/**
+ * 홈 팀카드 로스터 변동 행 클릭 계약(삼순 #726 NO-GO 2차): 중첩 anchor 없이 목적지 분리.
+ *   - 행 배경/날짜/상태/chevron·외 N건·정상 0건 영역 → 팀홈(teamHomeHref)
+ *   - 선수명 → 선수상세(move.href). 미해결(null)이면 링크 없이 텍스트.
+ * 순수 함수(4클릭 회귀 단일 SSOT).
+ */
+export function teamHomeHref(teamSlug: string): string {
+  return `/teams/${teamSlug}`;
+}
+
+export function rosterMovesCardTargets(
+  teamSlug: string,
+  move: { href: string | null } | null,
+): { rowHref: string; nameHref: string | null; overflowHref: string; emptyHref: string } {
+  const home = teamHomeHref(teamSlug);
+  return { rowHref: home, nameHref: move ? move.href : null, overflowHref: home, emptyHref: home };
+}

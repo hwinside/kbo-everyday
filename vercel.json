@@ -21,6 +21,15 @@
     }
   ],
   "crons": [
+
+    {
+      "path": "/api/cron/admin-broadcast",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/report-blind-notify",
+      "schedule": "*/5 * * * *"
+    },
     {
       "path": "/api/cron/highlights",
       "schedule": "0 */4 * * *"
@@ -50,6 +59,10 @@
       "schedule": "0 16 * * *"
     },
     {
+      "path": "/api/cron/daily-analysis-live",
+      "schedule": "*/10 7-15 * * *"
+    },
+    {
       "path": "/api/cron/retention",
       "schedule": "30 0 * * *"
     },
@@ -75,15 +88,23 @@
     },
     {
       "path": "/api/cron/roster-moves",
-      "schedule": "0 1 * * *"
-    },
-    {
-      "path": "/api/cron/roster-moves",
-      "schedule": "0 11 * * *"
+      "schedule": "*/30 0-10 * * *"
     },
     {
       "path": "/api/cron/admin-alerts",
       "schedule": "*/30 * * * *"
+    },
+    {
+      "path": "/api/cron/discover-channels",
+      "schedule": "0 0 * * 0"
+    },
+    {
+      "path": "/api/cron/venue-stories-cleanup",
+      "schedule": "20 */2 * * *"
+    },
+    {
+      "path": "/api/cron/venue-stories-finalize",
+      "schedule": "*/10 5-18 * * *"
     }
   ]
 }

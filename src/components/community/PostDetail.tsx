@@ -21,6 +21,8 @@ import CommentImageLightbox from "@/components/community/CommentImageLightbox";
 import { isImageComment, prepareCommentImageForUpload } from "@/lib/community/comment-media";
 import LoginSheet from "@/components/auth/LoginSheet";
 import ShareSheet, { type ShareSheetPost } from "@/components/community/ShareSheet";
+import PostViewBadge from "@/components/community/PostViewBadge";
+import { trackPostClick } from "@/lib/community/view-tracker";
 import { useBlockedIds, blockUserById } from "@/lib/supabase/useBlock";
 import { supabase } from "@/lib/supabase/client";
 
@@ -34,6 +36,15 @@ export default function PostDetail({ postId }: PostDetailProps) {
   const [showReport, setShowReport] = useState(false);
   const [reportTarget, setReportTarget] = useState<{type: "post"|"comment"; id: number}>({type: "post", id: 0});
   const { post, comments, loading, liked, setLiked, setComments } = usePostDetail(postId);
+  // 조회수(클릭) 집계 — 상세 진입마다 +1(dedup 없음, 하린아빠 스펙). postId당 1회(StrictMode
+  // 이중발화 방지) — 같은 글 재진입(별도 네비게이션)은 새 마운트라서 정상 집계된다.
+  const clickTrackedRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!Number.isInteger(postId) || postId <= 0) return;
+    if (clickTrackedRef.current === postId) return;
+    clickTrackedRef.current = postId;
+    trackPostClick(postId);
+  }, [postId]);
   const { blockedIds } = useBlockedIds();
   const [comment, setComment] = useState("");
   const [likeCount, setLikeCount] = useState(0);
@@ -423,6 +434,10 @@ export default function PostDetail({ postId }: PostDetailProps) {
           <span className="text-xs text-text-tertiary ml-auto">
             {timeAgo(post.created_at)}{(postPatch.updated_at || post.updated_at) ? " · 수정됨" : ""}
           </span>
+          <PostViewBadge
+            clickCount={post.click_view_count}
+            impressionCount={post.impression_view_count}
+          />
           {user && !postEditing && (
             <div className="relative">
               <button

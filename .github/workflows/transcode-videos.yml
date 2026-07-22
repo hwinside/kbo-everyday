@@ -5,11 +5,17 @@ name: Transcode Community Videos
 # GitHub-hosted 러너(ephemeral 디스크, ffmpeg 기본 탑재)에서 주기 실행한다.
 # 백필은 1회성으로 이미 완료됐고, 이 크론은 *신규 업로드 영상 자동 처리*만 담당.
 #
+# 직관 라이브(venue_stories) 역할 — **복구 전용**(B+①, 삼순 09:44 #1):
+#  영상의 즉시 ffprobe 검증·공개 승격은 업로드 API 요청 안(Vercel, @ffprobe-installer)에서 끝난다.
+#  이 30분 cron 은 ① 즉시 경로가 fault 로 놓친 pending 재검증(승격/거부) 복구와
+#  ② 이미 공개된 영상의 720p 백그라운드 재인코딩만 담당한다.
+#  CAS(status='pending' 조건 갱신)라 즉시 경로와 중복 claim 불가.
+#
 # 멱등성: video_transcode_jobs(original_url UNIQUE) 큐로 추적. 신규 URL 만 처리.
 
 on:
   schedule:
-    - cron: '*/30 * * * *' # 30분마다 (GitHub 스케줄은 best-effort, 지연 가능)
+    - cron: '*/30 * * * *' # 30분마다 복구 스캔 (GitHub 스케줄은 best-effort, 지연 가능 — 즉시성은 업로드 경로가 책임)
   workflow_dispatch: # 수동 실행
 
 # 동시 실행 금지 — 워커는 단일 인스턴스 가정(작업 claim 락 없음)이라

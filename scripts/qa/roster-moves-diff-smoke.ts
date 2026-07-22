@@ -20,12 +20,21 @@ import {
   moveHref,
   publishedRegisterHref,
   filterVisibleMoves,
+  computeRosterMovesDisplay,
+  computeRosterMovesGroupedDisplay,
+  groupRosterMovesByDate,
+  rosterMovesCardTargets,
   checkPublishReadiness,
   type AssetProbe,
   type ProbeResult,
 } from "../../src/lib/roster-moves/readiness";
 import { formatPendingMessage } from "../../src/lib/roster-moves/pending-alert";
 import { validateRosterCollection } from "../../src/lib/roster-moves/collection";
+import {
+  getPregameRosterMovesDecision,
+  isDailyRosterMovesWindow,
+} from "../../src/lib/roster-moves/schedule";
+import { readFileSync } from "node:fs";
 
 let pass = 0;
 let fail = 0;
@@ -274,6 +283,164 @@ async function asyncChecks() {
     { ready: false, canonicalId: null, missing: ["roster", "photo", "hero"] },
   );
 }
+
+// ═══ ⑧ 홈 팀카드 로스터 표시 경계 (삼순 NO-GO: 최신 3건 + 외 N건 → 팀 페이지) ═══
+const mk = (n: number) => Array.from({ length: n }, (_, i) => ({ id: i }));
+check("display: 0건 → visible 0 / overflow 0", computeRosterMovesDisplay(mk(0)), { visible: [], overflowCount: 0 });
+check(
+  "display: 3건(경계) → visible 3 / overflow 0 (더보기 숨김)",
+  computeRosterMovesDisplay(mk(3)),
+  { visible: [{ id: 0 }, { id: 1 }, { id: 2 }], overflowCount: 0 },
+);
+check(
+  "display: 4건 → visible 3 / overflow 1 (외 1건)",
+  computeRosterMovesDisplay(mk(4)),
+  { visible: [{ id: 0 }, { id: 1 }, { id: 2 }], overflowCount: 1 },
+);
+check(
+  "display: 9건 → visible 3 / overflow 6 (외 6건)",
+  computeRosterMovesDisplay(mk(9)),
+  { visible: [{ id: 0 }, { id: 1 }, { id: 2 }], overflowCount: 6 },
+);
+
+// ═══ ⑧-b 같은 날 등말소 한 줄 그룹 (하린아빠 2026-07-20: 홈 세로공간 절약) ═══
+const mv = (date: string, type: string, name: string) => ({ moveDate: date, moveType: type, playerName: name });
+check(
+  "group: 같은 날 등록+말소 → 한 그룹(2건)",
+  groupRosterMovesByDate([mv("7/19", "register", "송승기"), mv("7/19", "deregister", "강민균")]),
+  [{ date: "7/19", moves: [mv("7/19", "register", "송승기"), mv("7/19", "deregister", "강민균")] }],
+);
+check(
+  "group: 다른 날 → 날짜별 별도 그룹(최신순 보존)",
+  groupRosterMovesByDate([mv("7/19", "register", "송승기"), mv("7/19", "deregister", "강민균"), mv("7/16", "register", "강민균")]).map((g) => ({ date: g.date, n: g.moves.length })),
+  [{ date: "7/19", n: 2 }, { date: "7/16", n: 1 }],
+);
+check(
+  "grouped display: 스샷 케이스(7/19 2건 + 7/16 1건) → 2그룹 인라인 / hidden 0 / overflow 0",
+  (() => {
+    const r = computeRosterMovesGroupedDisplay([mv("7/19", "register", "송승기"), mv("7/19", "deregister", "강민균"), mv("7/16", "register", "강민균")]);
+    return { groups: r.visibleGroups.map((g) => ({ date: g.date, n: g.moves.length, hidden: g.hiddenInGroup })), overflow: r.overflowCount };
+  })(),
+  { groups: [{ date: "7/19", n: 2, hidden: 0 }, { date: "7/16", n: 1, hidden: 0 }], overflow: 0 },
+);
+check(
+  "grouped display: 0건 → 그룹 0 / overflow 0",
+  computeRosterMovesGroupedDisplay([] as { moveDate: string }[]),
+  { visibleGroups: [], overflowCount: 0 },
+);
+check(
+  "grouped display: 4개 날짜 그룹 → 최신 3그룹만 / overflow=숨긴 날짜그룹 건수",
+  (() => {
+    const rows = [
+      mv("7/20", "register", "a"),
+      mv("7/19", "register", "b"), mv("7/19", "deregister", "c"),
+      mv("7/18", "register", "d"),
+      mv("7/16", "register", "e"), mv("7/16", "deregister", "f"), mv("7/16", "register", "g"),
+    ];
+    const r = computeRosterMovesGroupedDisplay(rows);
+    return { dates: r.visibleGroups.map((g) => g.date), overflow: r.overflowCount };
+  })(),
+  { dates: ["7/20", "7/19", "7/18"], overflow: 3 },
+);
+check(
+  "grouped display: 3그룹(경계) → 전부 노출 / overflow 0",
+  (() => {
+    const rows = [mv("7/20", "register", "a"), mv("7/19", "register", "b"), mv("7/18", "register", "c")];
+    const r = computeRosterMovesGroupedDisplay(rows);
+    return { dates: r.visibleGroups.map((g) => g.date), overflow: r.overflowCount };
+  })(),
+  { dates: ["7/20", "7/19", "7/18"], overflow: 0 },
+);
+check(
+  "grouped display(한줄강제): 같은 날 4건 → 인라인 2 + 외 2명(hiddenInGroup) / overflow 0",
+  (() => {
+    const rows = [mv("7/16", "register", "a"), mv("7/16", "deregister", "b"), mv("7/16", "register", "c"), mv("7/16", "deregister", "d")];
+    const r = computeRosterMovesGroupedDisplay(rows);
+    const g = r.visibleGroups[0];
+    return { date: g.date, inline: g.moves.map((m) => m.playerName), hidden: g.hiddenInGroup, overflow: r.overflowCount };
+  })(),
+  { date: "7/16", inline: ["a", "b"], hidden: 2, overflow: 0 },
+);
+check(
+  "grouped display(한줄강제): 같은 날 3건 → 인라인 2 + 외 1명 / overflow 0",
+  (() => {
+    const rows = [mv("7/16", "register", "a"), mv("7/16", "deregister", "b"), mv("7/16", "register", "c")];
+    const r = computeRosterMovesGroupedDisplay(rows);
+    const g = r.visibleGroups[0];
+    return { inline: g.moves.length, hidden: g.hiddenInGroup, overflow: r.overflowCount };
+  })(),
+  { inline: 2, hidden: 1, overflow: 0 },
+);
+check(
+  "grouped display(한줄강제): 같은 날 2건은 축약 없음(hidden 0)",
+  (() => {
+    const rows = [mv("7/16", "register", "a"), mv("7/16", "deregister", "b")];
+    const g = computeRosterMovesGroupedDisplay(rows).visibleGroups[0];
+    return { inline: g.moves.length, hidden: g.hiddenInGroup };
+  })(),
+  { inline: 2, hidden: 0 },
+);
+
+// ═══ ⑨ 행 클릭 목적지 분리 (삼순 #726 NO-GO 2차: 중첩 anchor 없이 4클릭 분리) ═══
+check(
+  "클릭: 해결 선수 → 행배경/외N건/0건=팀홈, 선수명=선수상세",
+  rosterMovesCardTargets("kia", { href: "/community/players/50000" }),
+  { rowHref: "/teams/kia", nameHref: "/community/players/50000", overflowHref: "/teams/kia", emptyHref: "/teams/kia" },
+);
+check(
+  "클릭: 미해결 선수(href null) → 선수명 링크 없음(텍스트), 나머지 팀홈",
+  rosterMovesCardTargets("doosan", { href: null }),
+  { rowHref: "/teams/doosan", nameHref: null, overflowHref: "/teams/doosan", emptyHref: "/teams/doosan" },
+);
+check(
+  "클릭: 0건 상태(move 없음) → 영역 전체 팀홈",
+  rosterMovesCardTargets("lg", null),
+  { rowHref: "/teams/lg", nameHref: null, overflowHref: "/teams/lg", emptyHref: "/teams/lg" },
+);
+
+// ═══ ⑩ 실행 일정 — 매일 10시 + 경기일 첫 경기 2시간 전 ═══
+check("일정: 10:00 KST 기본 실행", isDailyRosterMovesWindow(new Date("2026-07-21T01:00:00Z")), true);
+check("일정: 10:29 KST 지연 실행 허용", isDailyRosterMovesWindow(new Date("2026-07-21T01:29:59Z")), true);
+check("일정: 10:30 KST 기본 윈도우 종료", isDailyRosterMovesWindow(new Date("2026-07-21T01:30:00Z")), false);
+
+const eveningGames = [
+  { time: "18:30", status: "scheduled" },
+  { time: "17:00", status: "scheduled" },
+];
+check(
+  "일정: 첫 경기 17:00의 2시간 전 15:00 KST 실행",
+  getPregameRosterMovesDecision(eveningGames, new Date("2026-07-21T06:00:00Z")),
+  { run: true, reason: "pregame", firstGameTime: "17:00", targetTime: "15:00" },
+);
+check(
+  "일정: pregame 30분 윈도우 밖은 skip",
+  getPregameRosterMovesDecision(eveningGames, new Date("2026-07-21T06:30:00Z")),
+  { run: false, reason: "outside-pregame-window", firstGameTime: "17:00", targetTime: "15:00" },
+);
+check(
+  "일정: 취소 경기는 제외하고 다음 첫 경기 기준",
+  getPregameRosterMovesDecision(
+    [{ time: "14:00", status: "cancelled" }, { time: "17:00", status: "scheduled" }],
+    new Date("2026-07-21T06:00:00Z"),
+  ),
+  { run: true, reason: "pregame", firstGameTime: "17:00", targetTime: "15:00" },
+);
+check(
+  "일정: 경기 없음은 skip",
+  getPregameRosterMovesDecision([], new Date("2026-07-21T06:00:00Z")),
+  { run: false, reason: "no-games" },
+);
+
+const vercelConfig = JSON.parse(readFileSync("vercel.json", "utf8")) as {
+  crons: { path: string; schedule: string }[];
+};
+check(
+  "일정: 09:00~19:30 KST 30분 tick 한 개로 10시·pregame 판정",
+  vercelConfig.crons
+    .filter((cron) => cron.path === "/api/cron/roster-moves")
+    .map((cron) => cron.schedule),
+  ["*/30 0-10 * * *"],
+);
 
 asyncChecks().then(() => {
   console.log(`\nroster-moves smoke: ${pass} passed, ${fail} failed`);
