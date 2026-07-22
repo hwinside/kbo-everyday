@@ -9,6 +9,7 @@ Show the current Supabase server and database health inside `/admin/system` with
 - Read-only cards for CPU load, memory, root disk, PostgreSQL connections, pool waits, and oldest transaction.
 - Service state for DB, Auth, REST, and Storage.
 - Refresh every 60 seconds and show the observation timestamp and partial-source failures.
+- A required source failure must never leave the overall badge green; failed refreshes keep the last value but visibly mark it stale.
 - Derive current warning/critical state from the same resource thresholds as the hosted alert catalog where the raw metric is available.
 
 ## Safety

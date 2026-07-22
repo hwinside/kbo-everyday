@@ -23,6 +23,7 @@ function combineLevel(metricLevel: HealthLevel, services: Array<{ level: Service
   if (services.some((service) => service.level === "critical") || metricLevel === "critical") return "critical";
   if (metricLevel === "warning") return "warning";
   if (metricLevel === "unknown" && services.every((service) => service.level === "unknown")) return "unknown";
+  if (metricLevel === "unknown" || services.some((service) => service.level === "unknown")) return "warning";
   return "healthy";
 }
 

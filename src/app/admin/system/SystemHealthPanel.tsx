@@ -172,6 +172,7 @@ export default function SystemHealthPanel() {
   const waiting = metrics?.poolWaitingConnections ?? null;
   const transaction = metrics?.oldestTransactionSeconds ?? null;
   const sourceWarnings = Object.entries(data.sourceErrors).filter(([, value]) => value);
+  const displayLevel: HealthLevel = error && data.level === "healthy" ? "warning" : data.level;
 
   return (
     <section className="glass-card p-5">
@@ -180,13 +181,13 @@ export default function SystemHealthPanel() {
           <div className="flex items-center gap-2">
             <Activity className="w-5 h-5 text-[#6366F1]" />
             <h2 className="text-lg font-semibold">서버·DB Health</h2>
-            <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full border text-xs font-medium ${levelStyle(data.level)}`}>
-              <LevelIcon level={data.level} className="w-3.5 h-3.5" />
-              {levelLabel(data.level)}
+            <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full border text-xs font-medium ${levelStyle(displayLevel)}`}>
+              <LevelIcon level={displayLevel} className="w-3.5 h-3.5" />
+              {levelLabel(displayLevel)}
             </span>
           </div>
           <p className="mt-1 text-xs text-[#636366]">
-            Supabase 공식 Metrics · 마지막 확인 {new Date(data.checkedAt).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+            Supabase 공식 Metrics · 마지막 성공 {new Date(data.checkedAt).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
           </p>
         </div>
         <button
@@ -260,6 +261,11 @@ export default function SystemHealthPanel() {
       {metrics?.reasons && metrics.reasons.length > 0 && (
         <div className="mt-4 rounded-lg bg-[#FFD60A]/5 border border-[#FFD60A]/10 px-3 py-2 text-xs text-[#FFD60A]">
           {metrics.reasons.join(" · ")}
+        </div>
+      )}
+      {error && (
+        <div role="alert" className="mt-4 rounded-lg bg-[#FFD60A]/5 border border-[#FFD60A]/10 px-3 py-2 text-xs text-[#FFD60A]">
+          최근 갱신 실패 · 이전 정상값일 수 있음: {error}
         </div>
       )}
       {sourceWarnings.length > 0 && (
