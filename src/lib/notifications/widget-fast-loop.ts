@@ -70,10 +70,15 @@ export interface FastLoopTick {
  * 다른 쪽의 시작을 막지 않도록 Promise를 먼저 둘 다 만들고, route 본작업과 병렬로 둔다.
  */
 export function startWidgetRefreshPipelines<T>(deps: {
-  pushInitial(): Promise<T>;
+  pushInitial(deadlineAtMs: number): Promise<T>;
   runFast(): Promise<FastLoopTick[]>;
+}, opts: {
+  requestStartMs: number;
+  overallDeadlineAtMs: number;
 }): { initialPromise: Promise<T>; fastPromise: Promise<FastLoopTick[]> } {
-  const initialPromise = deps.pushInitial();
+  const initialPromise = deps.pushInitial(
+    initialWidgetPushDeadlineAt(opts.requestStartMs, opts.overallDeadlineAtMs),
+  );
   const fastPromise = deps.runFast();
   return { initialPromise, fastPromise };
 }

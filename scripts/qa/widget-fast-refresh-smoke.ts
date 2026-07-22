@@ -131,19 +131,42 @@ async function runLoopTests() {
     INITIAL_PUSH_DEADLINE_MS < FAST_LOOP_TARGETS_MS[0], true);
   checkNum("loop: 더 이른 전체 deadline을 넘지 않음", initialWidgetPushDeadlineAt(1_000, 15_000), 15_000);
 
-  // 초기 push가 hang해도 fast-loop는 같은 tick에서 즉시 시작한다.
+  // route 오케스트레이션 회귀: 초기 hang은 +18s에 abort되고 +20s fast 최신 1건만 발송한다.
   {
-    let releaseInitial!: () => void;
+    let abortInitial!: () => void;
+    let releaseFast!: () => void;
+    let active = 0;
+    let activeAtFast = -1;
+    let initialDeadlineAt = -1;
     let fastStarted = false;
-    const initialGate = new Promise<void>((resolve) => { releaseInitial = resolve; });
-    const pipelines = startWidgetRefreshPipelines({
-      pushInitial: () => initialGate.then(() => ({ sent: 0 })),
-      runFast: async () => { fastStarted = true; return []; },
+    const sendOrder: number[] = [];
+    const initialGate = new Promise<void>((resolve) => {
+      abortInitial = () => { active = 0; resolve(); };
     });
+    const fastGate = new Promise<void>((resolve) => { releaseFast = resolve; });
+    const pipelines = startWidgetRefreshPipelines({
+      pushInitial: (deadlineAtMs) => {
+        initialDeadlineAt = deadlineAtMs;
+        active = 1;
+        return initialGate.then(() => ({ sent: 0 }));
+      },
+      runFast: async () => {
+        fastStarted = true;
+        await fastGate;
+        activeAtFast = active;
+        sendOrder.push(2_000);
+        return [];
+      },
+    }, { requestStartMs: 0, overallDeadlineAtMs: 46_000 });
     await Promise.resolve();
+    checkNum("loop: 주입 initial deadline = +18s", initialDeadlineAt, 18_000);
     check("loop: 초기 push hang 중에도 fast-loop 즉시 시작", fastStarted, true);
-    releaseInitial();
+    abortInitial();
+    releaseFast();
     await Promise.all([pipelines.initialPromise, pipelines.fastPromise]);
+    checkEq("loop: initial abort 후 fast 최신 1건만 발송", sendOrder.join(","), "2000");
+    checkNum("loop: fast 시작 시 active initial 0", activeAtFast, 0);
+    checkNum("loop: 종료 시 active 요청 0", active, 0);
   }
 
   // 정상: warmup 5s 소요 → +20/+40s tick 모두 실행 (요청 진입 기준).

@@ -12,7 +12,6 @@ import { pushIosWidgetLiveUpdates } from "@/lib/notifications/ios-widget-live";
 import {
   runWidgetFastLoop,
   startWidgetRefreshPipelines,
-  initialWidgetPushDeadlineAt,
   FAST_LOOP_DEADLINE_MS,
   parseKboGameListPayload,
 } from "@/lib/notifications/widget-fast-loop";
@@ -116,7 +115,6 @@ export async function GET(req: NextRequest) {
 
   const date = getKSTDateStr();
   const deadlineAtMs = requestStartMs + FAST_LOOP_DEADLINE_MS;
-  const initialPushDeadlineAtMs = initialWidgetPushDeadlineAt(requestStartMs, deadlineAtMs);
   // 손상 응답은 정상 "라이브 0"으로 보지 않는다. 본체 알림은 이번 틱 skip하되 fast-loop는
   // +20/+40초 재시도해 일시 KBO parse/schema 오류를 다음 분까지 끌지 않는다.
   const initialFetch = await fetchKboLiveGames(
@@ -151,7 +149,7 @@ export async function GET(req: NextRequest) {
   const shouldRetryFast = !initialFetch.ok || liveGameIds.length > 0;
   const { initialPromise: androidWidgetPromise, fastPromise: fastRefreshPromise } =
     startWidgetRefreshPipelines<AndroidWidgetResult>({
-      pushInitial: async () => {
+      pushInitial: async (initialPushDeadlineAtMs) => {
         if (!initialFetch.ok) return { error: "kbo_fetch_failed" };
         try {
           return await pushAndroidWidgetLiveUpdates(games, baseUrl, {
@@ -182,7 +180,7 @@ export async function GET(req: NextRequest) {
             { requestStartMs },
           )
         : Promise.resolve([]),
-    });
+    }, { requestStartMs, overallDeadlineAtMs: deadlineAtMs });
 
   const results = await Promise.allSettled(
     liveGameIds.map(gameId =>
