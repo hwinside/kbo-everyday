@@ -29,6 +29,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  buildNewlyOnboardedPhotoManifest,
+  classifyForeign,
+  mergePendingReport,
+} from "./lib/foreign-onboard.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
@@ -36,6 +41,16 @@ const ROSTER_PATH = path.join(ROOT, "src/lib/constants/players-roster.json");
 const BATTERS_PATH = path.join(ROOT, "src/lib/constants/stats-2026-batters.json");
 const PITCHERS_PATH = path.join(ROOT, "src/lib/constants/stats-2026-pitchers.json");
 const FOREIGN_MAP_PATH = path.join(ROOT, "src/lib/constants/foreign-id-map.ts");
+const NATIONALITY_PATH = path.join(ROOT, "src/lib/constants/player-nationality.json");
+const FOREIGN_PENDING_PATH = path.join(ROOT, "src/lib/constants/foreign-nationality-pending.json");
+// P0 사진 게이트 인계 파일 — 외국인 휴리스틱과 무관하게 이번 실행에서 신규 온보딩된 숫자 id 전원.
+// tmp/ 는 gitignore 대상이라 자동 PR diff에 노출되지 않음 — 같은 CI job 내 다음 스텝(qa:foreign-onboard-photo-gate)만 소비.
+const NEW_FOREIGN_PHOTO_MANIFEST_PATH = path.join(ROOT, "tmp/reconcile-newly-onboarded-foreign.json");
+
+function writeNewForeignPhotoManifest(entries) {
+  fs.mkdirSync(path.dirname(NEW_FOREIGN_PHOTO_MANIFEST_PATH), { recursive: true });
+  fs.writeFileSync(NEW_FOREIGN_PHOTO_MANIFEST_PATH, JSON.stringify(entries, null, 2) + "\n");
+}
 
 const argv = process.argv.slice(2);
 const dryRun = argv.includes("--dry-run");
@@ -178,6 +193,10 @@ async function main() {
   const batters = JSON.parse(fs.readFileSync(BATTERS_PATH, "utf8"));
   const pitchers = JSON.parse(fs.readFileSync(PITCHERS_PATH, "utf8"));
   const foreignNumericToAlpha = loadForeignNumericToAlpha();
+  const nationalityMap = (() => {
+    try { return JSON.parse(fs.readFileSync(NATIONALITY_PATH, "utf8")); }
+    catch { return {}; }
+  })();
 
   const byId = new Map(roster.map((p) => [String(p.kboId), p]));
 
@@ -232,24 +251,22 @@ async function main() {
 
   if (missing.length === 0) {
     console.log("✅ reconcile: stats/등록명단의 모든 선수가 roster 로 resolve 됨 — 온보딩 불필요");
+    if (!dryRun) {
+      writeNewForeignPhotoManifest([]);
+      await updateForeignPending([], nationalityMap);
+    }
     return;
   }
 
   console.log(`🔧 reconcile: roster 미등록 선수 ${missing.length}명 발견(stats+등록명단) → KBO 상세 보강 시도`);
   const onboarded = [];
   const failed = [];
+  const foreignPendingNew = []; // 신규 외국인(숫자 직결 온보딩) 중 국적 미등록 — 알림 대상
   for (const m of missing) {
     const teamId = TEAM_TO_ID[m.team];
     if (!teamId) { failed.push({ ...m, reason: `unknown team ${m.team}` }); continue; }
     const detail = await fetchPlayerDetail(m.kboId, m.isPitcher);
     if (!detail) { failed.push({ ...m, reason: "KBO 상세 fetch 실패" }); continue; }
-    // 등록명단 신규 외국인은 skip+로그만 — canonical(FP/AQ)은 foreign-id-map 경유가 계약.
-    // 판별: KBO 입단 표기 "자유선발"(외국인 영입 전용 표기, 실측). 오판 시에도 stats 경로가
-    // 나중에 동일 선수를 다시 온보딩하므로(기존 동작) 안전하게 보수적으로 skip한다.
-    if (m.source === "register" && /자유선발/.test(detail.draft || "")) {
-      console.log(`  · 등록명단 신규 외국인 추정 skip: ${m.name}(${m.kboId}, ${m.team}) — foreign-id-map 등록 필요 (입단: ${detail.draft})`);
-      continue;
-    }
     const entry = {
       name: detail.name || m.name,
       kboId: m.kboId,
@@ -261,6 +278,15 @@ async function main() {
     };
     onboarded.push(entry);
     if (verbose) console.log(`  + ${entry.name} (${entry.kboId}, ${entry.team}, ${entry.position}, No.${entry.backNo}, ${entry.birthDate})`);
+
+    // A안: 신규 외국인은 숫자 id로 그대로 온보딩(페이지·사진 자동). 단 국적(국기)은
+    // 자동 소스가 없어 사람 큐레이션이 필요 → "국적 미등록 외인"만 알림 대상으로 수집한다.
+    // (분류 오판은 알림 노이즈/누락일 뿐 온보딩 자체엔 영향 없음 — foreign-onboard.mjs 참고)
+    if (classifyForeign(detail)) {
+      if (!Object.prototype.hasOwnProperty.call(nationalityMap, String(m.kboId))) {
+        foreignPendingNew.push({ kboId: String(m.kboId), name: entry.name, team: entry.team, draft: detail.draft || "" });
+      }
+    }
   }
 
   for (const f of failed) {
@@ -270,11 +296,18 @@ async function main() {
   if (onboarded.length === 0) {
     console.log("reconcile: 온보딩 가능한 선수 없음 (fetch 실패/외국인 skip만 존재)");
     if (failed.length > 0) process.exitCode = 0; // 게이트는 validator 가 담당 — 여기선 실패시 조용히 넘김
+    if (!dryRun) {
+      writeNewForeignPhotoManifest([]);
+      await updateForeignPending([], nationalityMap);
+    }
     return;
   }
 
   if (dryRun) {
     console.log(`[dry-run] roster 에 ${onboarded.length}명 추가 예정:`, onboarded.map((e) => `${e.name}(${e.kboId})`).join(", "));
+    if (foreignPendingNew.length > 0) {
+      console.log(`[dry-run] 국적 미등록 외인 후보 ${foreignPendingNew.length}명:`, foreignPendingNew.map((p) => `${p.name}(${p.kboId})`).join(", "));
+    }
     return;
   }
 
@@ -283,6 +316,66 @@ async function main() {
   console.log(`✅ reconcile: roster 에 ${onboarded.length}명 온보딩 완료 (${roster.length} → ${next.length})`);
   console.log(`   ${onboarded.map((e) => `${e.name}(${e.kboId})`).join(", ")}`);
   console.log("   사진은 후속 update-player-photos 스텝이 자동 다운로드/맵 재생성합니다.");
+
+  writeNewForeignPhotoManifest(buildNewlyOnboardedPhotoManifest(onboarded));
+  await updateForeignPending(foreignPendingNew, nationalityMap);
+}
+
+/**
+ * 신규 외국인 국적 미등록 리포트 갱신 + 알림(A안 슬라이스 1).
+ * - foreign-nationality-pending.json: SSOT(사람이 국적 넣으면 다음 실행에 자동 소멸). 자동PR diff에 노출.
+ * - GitHub Actions ::warning:: 어노테이션 + STEP_SUMMARY로 크롤 실행 가시화.
+ * - FOREIGN_ONBOARD_WEBHOOK 설정 시 Slack best-effort POST(미설정이면 no-op).
+ */
+async function updateForeignPending(foreignPendingNew, nationalityMap) {
+  const existing = (() => {
+    try { return JSON.parse(fs.readFileSync(FOREIGN_PENDING_PATH, "utf8")); }
+    catch { return {}; }
+  })();
+  const merged = mergePendingReport(existing, foreignPendingNew, nationalityMap, new Date().toISOString());
+
+  // 정렬된 키로 안정적 직렬화(자동PR diff 노이즈 최소화)
+  const sorted = {};
+  for (const k of Object.keys(merged).sort()) sorted[k] = merged[k];
+  const nextJson = JSON.stringify(sorted, null, 2) + "\n";
+  const prevJson = (() => { try { return fs.readFileSync(FOREIGN_PENDING_PATH, "utf8"); } catch { return ""; } })();
+  if (nextJson !== prevJson) fs.writeFileSync(FOREIGN_PENDING_PATH, nextJson);
+
+  if (foreignPendingNew.length === 0) return;
+
+  const lines = foreignPendingNew.map((p) => `${p.name}(${p.kboId}, ${p.team})`);
+  console.log(`\n🚩 신규 외국인 ${foreignPendingNew.length}명 온보딩 — 국적(국기) 미등록, 사람 확인 필요:`);
+  for (const l of lines) console.log(`   • ${l}  → player-nationality.json 에 ISO alpha-2 추가`);
+
+  // GitHub Actions 어노테이션(크롤 실행/PR 체크에 노출)
+  for (const p of foreignPendingNew) {
+    console.log(`::warning title=신규 외국인 국적 미등록::${p.name}(${p.kboId}, ${p.team}) — player-nationality.json 국적 추가 필요`);
+  }
+  const summaryPath = process.env.GITHUB_STEP_SUMMARY;
+  if (summaryPath) {
+    try {
+      fs.appendFileSync(summaryPath, `\n### 🚩 신규 외국인 국적 미등록 ${foreignPendingNew.length}명\n` +
+        foreignPendingNew.map((p) => `- ${p.name} (\`${p.kboId}\`, ${p.team})`).join("\n") + "\n");
+    } catch { /* ignore */ }
+  }
+
+  // Slack webhook(best-effort, 미설정이면 no-op) — cron/CI에서 직접 HTTP POST이라 메시지 툴 제약 무관.
+  const webhook = process.env.FOREIGN_ONBOARD_WEBHOOK;
+  if (webhook) {
+    try {
+      await fetch(webhook, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: `🚩 신규 외국인 ${foreignPendingNew.length}명 자동 온보딩(페이지·사진 OK) — 국적 미등록:\n` +
+            lines.map((l) => `• ${l}`).join("\n") + `\nplayer-nationality.json 에 ISO alpha-2 추가하면 국기 표시됩니다.`,
+        }),
+        signal: AbortSignal.timeout(8000),
+      });
+    } catch (err) {
+      console.warn(`  ⚠️ Slack 알림 실패(무시 가능): ${err?.message ?? err}`);
+    }
+  }
 }
 
 main().catch((e) => { console.error("reconcile 실패:", e); process.exit(1); });

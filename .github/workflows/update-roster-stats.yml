@@ -73,10 +73,22 @@ jobs:
       # KBO 공식 상세에서 자동 온보딩한다. 사진은 다음 스텝(update-player-photos)이
       # roster 기준으로 자동 다운로드/맵 재생성한다. (2026-07-14 스탯 반영 정지 근본대응)
       - name: Reconcile roster from stats
+        # FOREIGN_ONBOARD_WEBHOOK secret 미등록 시 이 슬라이스의 알림 계약은 GHA ::warning::+STEP_SUMMARY만이다
+        # (신규 외국인 국적 미등록 알림). secret 등록 시 코드 변경 없이 Slack best-effort POST가 추가로 켜진다.
+        env:
+          FOREIGN_ONBOARD_WEBHOOK: ${{ secrets.FOREIGN_ONBOARD_WEBHOOK }}
         run: node scripts/reconcile-roster-from-stats.mjs
 
       - name: Update player photos
         run: node scripts/update-player-photos.mjs
+
+      # P0(삼순 코드리뷰 NO-GO 81149356): reconcile이 이번 실행에 온보딩한 숫자 외국인마다
+      # 사진 파일+PLAYER_PHOTO_ID_SET을 실제로 검증한다. CDN 다운로드가 실패해도
+      # 이전엔 조용히 넘어갔으므로(사진 0인데 roster엔 정상 등록) non-zero 게이트로 잡는다.
+      - name: Validate newly onboarded foreign player photos (P0 gate)
+        id: validate_new_foreign_photo
+        continue-on-error: true
+        run: npm run qa:foreign-onboard-photo-gate
 
       - name: Validate roster SSOT
         id: validate_roster
@@ -173,6 +185,7 @@ jobs:
           - Roster SSOT: ${{ steps.validate_roster.outcome }}
           - Player identity: ${{ steps.validate_identity.outcome }}
           - Foreign photo: ${{ steps.validate_photo.outcome }}
+          - 신규 온보딩 외국인 사진(P0): ${{ steps.validate_new_foreign_photo.outcome }}
 
           매일 새벽 5시(KST) 자동 크롤링 결과입니다.
           검증(roster SSOT + player identity)과 Vercel 빌드가 전부 PASS면 자동 머지됩니다.
@@ -187,7 +200,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Report validation failure after PR creation
-        if: steps.changes.outputs.changed == 'true' && (steps.validate_roster.outcome == 'failure' || steps.validate_identity.outcome == 'failure' || steps.validate_photo.outcome == 'failure')
+        if: steps.changes.outputs.changed == 'true' && (steps.validate_roster.outcome == 'failure' || steps.validate_identity.outcome == 'failure' || steps.validate_photo.outcome == 'failure' || steps.validate_new_foreign_photo.outcome == 'failure')
         run: |
           {
             echo "## ❌ 자동 업데이트 검증 실패"
@@ -196,6 +209,7 @@ jobs:
             echo "Roster SSOT: ${{ steps.validate_roster.outcome }}"
             echo "Player identity: ${{ steps.validate_identity.outcome }}"
             echo "Foreign photo: ${{ steps.validate_photo.outcome }}"
+            echo "신규 온보딩 외국인 사진(P0): ${{ steps.validate_new_foreign_photo.outcome }}"
             echo ""
             echo "PR은 생성했으므로 누락 선수/매핑 보강 후 수동 검토하세요."
           } >> "$GITHUB_STEP_SUMMARY"
@@ -219,7 +233,7 @@ jobs:
           # 어드민 크롤러 헬스(STALE) 알림 경로로 드러나게 한다.
 
           # ① 방어적 재확인 (이전 스텝이 게이트하지만 이중 안전핀)
-          if [ "${{ steps.validate_roster.outcome }}" != "success" ] || [ "${{ steps.validate_identity.outcome }}" != "success" ] || [ "${{ steps.validate_photo.outcome }}" != "success" ]; then
+          if [ "${{ steps.validate_roster.outcome }}" != "success" ] || [ "${{ steps.validate_identity.outcome }}" != "success" ] || [ "${{ steps.validate_photo.outcome }}" != "success" ] || [ "${{ steps.validate_new_foreign_photo.outcome }}" != "success" ]; then
             echo "❌ 검증 outcome 비정상 — 자동 머지 보류: $PR_URL"
             exit 1
           fi
