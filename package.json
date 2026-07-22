@@ -72,6 +72,7 @@
     "qa:native-ios-naver-smoke-preflight": "node scripts/qa/native-ios-naver-smoke-preflight.mjs",
     "qa:full-entry": "tsx scripts/qa/full-entry-smoke.ts",
     "qa:admin-alerts": "tsx scripts/qa/admin-alerts-smoke.ts",
+    "qa:observability": "tsx scripts/qa/observability-config-smoke.ts && tsx --test infra/observability/worker/src/index.test.ts",
     "qa:admin-traffic": "tsx scripts/qa/admin-traffic-smoke.ts",
     "qa:admin-traffic:db": "node scripts/qa/admin-traffic-db-integration.mjs",
     "qa:roster-moves": "tsx scripts/qa/roster-moves-diff-smoke.ts",

@@ -1,0 +1,7 @@
+# Minimal official Supabase metrics sample used by config QA.
+# Source: https://github.com/supabase/supabase-grafana/blob/main/docs/metrics.md
+node_filesystem_avail_bytes{supabase_project_ref="project_ref_1",service_type="db",device="device_1",fstype="ext4",mountpoint="/"} 4294967296
+node_filesystem_size_bytes{supabase_project_ref="project_ref_1",service_type="db",device="device_1",fstype="ext4",mountpoint="/"} 10737418240
+node_memory_SwapTotal_bytes{supabase_project_ref="project_ref_1",service_type="db"} 1073741824
+node_memory_SwapFree_bytes{supabase_project_ref="project_ref_1",service_type="db"} 1073741824
+replication_realtime_lag_bytes{supabase_project_ref="project_ref_1",service_type="db"} 0
