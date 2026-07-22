@@ -3,7 +3,19 @@
  * 신규 외국인 자동 온보딩 분류/리포트 순수 로직 스모크 (A안 슬라이스 1).
  * Usage: node scripts/qa/foreign-onboard-smoke.mjs
  */
-import { classifyForeign, mergePendingReport, checkNewlyOnboardedPhotos } from "../lib/foreign-onboard.mjs";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import {
+  buildNewlyOnboardedPhotoManifest,
+  classifyForeign,
+  mergePendingReport,
+  checkNewlyOnboardedPhotos,
+} from "../lib/foreign-onboard.mjs";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 let pass = 0, fail = 0;
 function ok(cond, label) {
@@ -110,6 +122,55 @@ eq(
     [{ kboId: "77777", name: "부분누락", team: "LG", hasFile: true, hasIdSet: false }],
     "파일은 있는데 player-photos.ts 재생성 전(idSet 미반영) → 누락 목록에 포함",
   );
+}
+
+// ===== false-negative 분류 → 숫자 id 온보딩 → 실제 사진 게이트 fail 통합 회귀 =====
+{
+  const detail = { draft: "", name: "페덱" }; // 허용된 휴리스틱 false-negative
+  ok(classifyForeign(detail) === false, "페덱 단일명+draft 없음은 외인 휴리스틱 false-negative");
+
+  const manifest = buildNewlyOnboardedPhotoManifest([
+    { kboId: "56459", name: detail.name, team: "삼성" },
+  ]);
+  eq(
+    manifest,
+    [{ kboId: "56459", name: "페덱", team: "삼성" }],
+    "분류 false-negative여도 숫자 id 온보딩은 사진 manifest에 포함",
+  );
+
+  const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "foreign-onboard-photo-gate-"));
+  try {
+    const manifestPath = path.join(fixtureRoot, "manifest.json");
+    const photosDir = path.join(fixtureRoot, "players");
+    const photosTsPath = path.join(fixtureRoot, "player-photos.ts");
+    fs.mkdirSync(photosDir);
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+    fs.writeFileSync(
+      photosTsPath,
+      "// === GENERATED:PHOTO_ID_SET:BEGIN ===\nexport const PLAYER_PHOTO_ID_SET = new Set([]);\n// === GENERATED:PHOTO_ID_SET:END ===\n",
+    );
+
+    const gate = spawnSync(
+      process.execPath,
+      [path.join(__dirname, "foreign-onboard-photo-gate.mjs")],
+      {
+        env: {
+          ...process.env,
+          FOREIGN_ONBOARD_PHOTO_MANIFEST_PATH: manifestPath,
+          FOREIGN_ONBOARD_PHOTOS_DIR: photosDir,
+          FOREIGN_ONBOARD_PHOTOS_TS_PATH: photosTsPath,
+        },
+        encoding: "utf8",
+      },
+    );
+    ok(
+      gate.status === 1 && gate.stderr.includes("public/players/56459.jpg=MISSING") &&
+        gate.stderr.includes("PLAYER_PHOTO_ID_SET=MISSING"),
+      "false-negative 온보딩 후 사진/ID_SET 없음 → 실제 gate exit 1",
+    );
+  } finally {
+    fs.rmSync(fixtureRoot, { recursive: true, force: true });
+  }
 }
 
 console.log(`\n${pass} pass, ${fail} fail`);

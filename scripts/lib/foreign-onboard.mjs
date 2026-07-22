@@ -51,10 +51,23 @@ export function mergePendingReport(existing, pending, nationalityMap, nowIso) {
 }
 
 /**
- * P0 사진 게이트: 이번 실행에서 신규 온보딩된 숫자 외국인 각각이 실제로
+ * 이번 reconcile 실행에서 숫자 KBO id로 온보딩된 선수 전원을 사진 게이트에 인계한다.
+ * 외국인 분류는 false-negative를 허용하는 국적 알림용 휴리스틱이므로 사진 게이트 대상
+ * 선정에 사용하면 안 된다.
+ * @param {Array<{kboId: string | number, name: string, team: string}>} onboarded
+ * @returns {Array<{kboId: string, name: string, team: string}>}
+ */
+export function buildNewlyOnboardedPhotoManifest(onboarded) {
+  return onboarded
+    .filter((entry) => /^\d+$/.test(String(entry.kboId)))
+    .map((entry) => ({ kboId: String(entry.kboId), name: entry.name, team: entry.team }));
+}
+
+/**
+ * P0 사진 게이트: 이번 실행에서 신규 온보딩된 숫자 id 선수 각각이 실제로
  * public/players/{id}.jpg + player-photos.ts PLAYER_PHOTO_ID_SET 양쪽에서 확인되는지 검사한다.
- * 신규 숫자 외인은 canonical FP/AQ 경유가 아니라 CDN 다운로드 성공 여부에 사진 유무가 갈리므로,
- * 다운로드 실패(404/타임아웃) 시에도 roster 온보딩 자체는 통과해 사진만 조용히 빠질 수 있다(재발 방지 대상).
+ * 다운로드 실패(404/타임아웃) 시에도 roster 온보딩 자체는 통과해 사진만 조용히
+ * 빠질 수 있으므로 외국인 분류 결과와 무관하게 전원을 검사한다.
  * @param {Array<{kboId: string, name: string, team: string}>} entries
  * @param {{photoFileExists: (kboId: string) => boolean, idSetHas: (kboId: string) => boolean}} deps
  * @returns {Array<{kboId: string, name: string, team: string, hasFile: boolean, hasIdSet: boolean}>} 누락된 항목만

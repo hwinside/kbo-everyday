@@ -29,7 +29,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { classifyForeign, mergePendingReport } from "./lib/foreign-onboard.mjs";
+import {
+  buildNewlyOnboardedPhotoManifest,
+  classifyForeign,
+  mergePendingReport,
+} from "./lib/foreign-onboard.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
@@ -39,7 +43,7 @@ const PITCHERS_PATH = path.join(ROOT, "src/lib/constants/stats-2026-pitchers.jso
 const FOREIGN_MAP_PATH = path.join(ROOT, "src/lib/constants/foreign-id-map.ts");
 const NATIONALITY_PATH = path.join(ROOT, "src/lib/constants/player-nationality.json");
 const FOREIGN_PENDING_PATH = path.join(ROOT, "src/lib/constants/foreign-nationality-pending.json");
-// P0 사진 게이트 인계 파일 — 이번 실행에서 신규 온보딩된 숫자 외국인만(리뷰 지적 대상).
+// P0 사진 게이트 인계 파일 — 외국인 휴리스틱과 무관하게 이번 실행에서 신규 온보딩된 숫자 id 전원.
 // tmp/ 는 gitignore 대상이라 자동 PR diff에 노출되지 않음 — 같은 CI job 내 다음 스텝(qa:foreign-onboard-photo-gate)만 소비.
 const NEW_FOREIGN_PHOTO_MANIFEST_PATH = path.join(ROOT, "tmp/reconcile-newly-onboarded-foreign.json");
 
@@ -258,7 +262,6 @@ async function main() {
   const onboarded = [];
   const failed = [];
   const foreignPendingNew = []; // 신규 외국인(숫자 직결 온보딩) 중 국적 미등록 — 알림 대상
-  const newForeignOnboarded = []; // 신규 외국인(숫자 직결 온보딩) 전원 — P0 사진 게이트 대상(국적 등록 여부 무관)
   for (const m of missing) {
     const teamId = TEAM_TO_ID[m.team];
     if (!teamId) { failed.push({ ...m, reason: `unknown team ${m.team}` }); continue; }
@@ -280,7 +283,6 @@ async function main() {
     // 자동 소스가 없어 사람 큐레이션이 필요 → "국적 미등록 외인"만 알림 대상으로 수집한다.
     // (분류 오판은 알림 노이즈/누락일 뿐 온보딩 자체엔 영향 없음 — foreign-onboard.mjs 참고)
     if (classifyForeign(detail)) {
-      newForeignOnboarded.push({ kboId: String(m.kboId), name: entry.name, team: entry.team });
       if (!Object.prototype.hasOwnProperty.call(nationalityMap, String(m.kboId))) {
         foreignPendingNew.push({ kboId: String(m.kboId), name: entry.name, team: entry.team, draft: detail.draft || "" });
       }
@@ -315,7 +317,7 @@ async function main() {
   console.log(`   ${onboarded.map((e) => `${e.name}(${e.kboId})`).join(", ")}`);
   console.log("   사진은 후속 update-player-photos 스텝이 자동 다운로드/맵 재생성합니다.");
 
-  writeNewForeignPhotoManifest(newForeignOnboarded);
+  writeNewForeignPhotoManifest(buildNewlyOnboardedPhotoManifest(onboarded));
   await updateForeignPending(foreignPendingNew, nationalityMap);
 }
 
