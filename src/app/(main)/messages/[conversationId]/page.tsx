@@ -35,6 +35,7 @@ export default function DMChatPage() {
   const { messages, loading, sendMessage } = useDMChat(conversationId);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState("");
   const [images, setImages] = useState<{ url: string; name: string }[]>([]);
   const [uploading, setUploading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -156,11 +157,14 @@ export default function DMChatPage() {
     // 사진은 운영팀 대화에서만 전송 (유저↔유저는 텍스트만)
     const sendImages = isOperatorConv ? images : [];
     if ((!input.trim() && sendImages.length === 0) || sending || uploading) return;
+    setSendError("");
     setSending(true);
     const ok = await sendMessage(input.trim(), sendImages.map((img) => img.url));
     if (ok) {
       setInput("");
       setImages([]);
+    } else {
+      setSendError("쪽지를 보낼 수 없습니다. 잠시 후 다시 시도해주세요.");
     }
     setSending(false);
   };
@@ -343,6 +347,9 @@ export default function DMChatPage() {
         </div>
       ) : (
         <div className="px-5 py-3 border-t border-border bg-bg-secondary pb-safe">
+          {sendError && (
+            <p role="alert" className="mb-2 text-center text-xs text-red-500">{sendError}</p>
+          )}
           {isOperatorConv && images.length > 0 && (
             <div className="flex flex-wrap gap-2 mb-2">
               {images.map((image, index) => (
@@ -391,7 +398,7 @@ export default function DMChatPage() {
             <textarea
               ref={inputRef}
               value={input}
-              onChange={(e) => setInput(e.target.value)}
+              onChange={(e) => { setInput(e.target.value); setSendError(""); }}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                   e.preventDefault();

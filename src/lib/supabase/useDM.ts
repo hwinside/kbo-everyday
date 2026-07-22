@@ -45,6 +45,7 @@ export function useDMList() {
       .from("dm_conversations")
       .select("*")
       .or(`user1_id.eq.${user.id},user2_id.eq.${user.id}`)
+      .not("last_message", "is", null)
       .order("last_message_at", { ascending: false });
 
     if (!data || data.length === 0) { setConversations([]); setLoading(false); return; }
