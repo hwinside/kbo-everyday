@@ -64,6 +64,21 @@ export function buildNewlyOnboardedPhotoManifest(onboarded) {
 }
 
 /**
+ * tsx tsImport의 Node 버전별 ESM/CJS interop 차이를 흡수한다.
+ * Node 22(GitHub Actions)는 TS named export를 default 객체 아래에만 노출하고,
+ * Node 24(local)는 named export도 최상위에 노출한다.
+ * @param {Record<string, unknown>} moduleNamespace
+ * @returns {(html: string) => Array<{kboId: string, name: string, backNo: string, position: string}>}
+ */
+export function resolveTeamRegisterParser(moduleNamespace) {
+  const parser = moduleNamespace?.parseTeamRegister ?? moduleNamespace?.default?.parseTeamRegister;
+  if (typeof parser !== "function") {
+    throw new TypeError("parseTeamRegister export not found");
+  }
+  return parser;
+}
+
+/**
  * P0 사진 게이트: 이번 실행에서 신규 온보딩된 숫자 id 선수 각각이 실제로
  * public/players/{id}.jpg + player-photos.ts PLAYER_PHOTO_ID_SET 양쪽에서 확인되는지 검사한다.
  * 다운로드 실패(404/타임아웃) 시에도 roster 온보딩 자체는 통과해 사진만 조용히
