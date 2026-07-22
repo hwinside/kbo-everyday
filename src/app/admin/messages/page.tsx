@@ -215,11 +215,8 @@ export default function AdminMessagesPage() {
     [getPin]
   );
 
-  useEffect(() => {
-    loadConversations(tab);
-  }, [tab, loadConversations]);
-
   // PIN 어드민은 Supabase 세션이 없으므로 실시간 채널 대신 가벼워진 첫 페이지를 주기적으로 교체한다.
+  // initial load effect보다 먼저 선언해 첫 request 중에도 focus listener가 항상 설치되게 한다.
   useEffect(() => {
     if (tab !== "inbox" || selectedConv) return;
     const refresh = () => loadConversations("inbox", null, false, true);
@@ -230,6 +227,10 @@ export default function AdminMessagesPage() {
       window.removeEventListener("focus", refresh);
     };
   }, [loadConversations, selectedConv, tab]);
+
+  useEffect(() => {
+    loadConversations(tab);
+  }, [tab, loadConversations]);
 
   // 대화 상세 로드
   async function loadMessages(conv: Conversation) {
