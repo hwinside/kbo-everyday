@@ -1,0 +1,1616 @@
+{
+  "version": 2,
+  "generatedFrom": "886dcad2762dc73dfa0da86c05bd7e6b1dfd6830",
+  "violations": {
+    "0034fe9a6a6cff327c64": {
+      "count": 1,
+      "kind": "unbounded_rpc",
+      "file": "src/app/api/admin/traffic/route.ts",
+      "subject": "admin_app_device_totals",
+      "detail": "RPC row cardinality must be allowlisted or annotated"
+    },
+    "00e51b691c4081d3fd31": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/lib/notifications/live-activity-channels.ts",
+      "subject": "live_activity_channels",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "026446196dd27d6c2489": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "scripts/qa/roster-moves-db-integration.mjs",
+      "subject": "roster_moves",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "0340884045cda3d85d89": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "scripts/qa/ui-smoke-news-comment-report.mjs",
+      "subject": "comments",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "042e5895f8079ad518f4": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/lib/urgent-notice/send.ts",
+      "subject": "urgent_notices",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "073c6ba71e94403c116f": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/app/api/leaderboard/my-snapshot/route.ts",
+      "subject": "event_leaderboard_snapshot",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "07c427bb24ee86b518f6": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "scripts/qa/roster-moves-db-integration.mjs",
+      "subject": "roster_snapshots",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "0a7e6a1770fc95915475": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/app/api/admin/dedup-photos/route.ts",
+      "subject": "posts",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "0ae71c0edb253a608dbb": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/lib/supabase/usePosts.ts",
+      "subject": "posts",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "0c5908fcb82ae45e17f8": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/app/(main)/profile/[userId]/page.tsx",
+      "subject": "posts",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "0cfc67bcb11301b64d77": {
+      "count": 1,
+      "kind": "unbounded_rpc",
+      "file": "src/app/api/cron/report-blind-notify/route.ts",
+      "subject": "claim_report_blind_notices",
+      "detail": "RPC row cardinality must be allowlisted or annotated"
+    },
+    "0d3ca84c062868226c49": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "scripts/roster-supabase-purge.mjs",
+      "subject": "players_roster",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "0f8615e9d5dd3944a148": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/app/(main)/community/all-photos/page.tsx",
+      "subject": "posts",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "1348c35b1f52f4a554c5": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/app/api/cron/daily-fallback-report/route.ts",
+      "subject": "api_fallback_events",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "14cf65c3264ff6216f1d": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/lib/supabase/usePosts.ts",
+      "subject": "comments",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "16a26babe359140bf82d": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/lib/supabase/useChat.ts",
+      "subject": "chat_messages",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "17e111db2f699fbdbccc": {
+      "count": 1,
+      "kind": "unbounded_collection_api",
+      "file": "src/app/api/cron/venue-stories-cleanup/route.ts",
+      "subject": "storage.list",
+      "detail": "collection API requires bounded-page/full-scan annotation"
+    },
+    "1a1b1a79c9850c00d8f0": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/app/api/highlights/route.ts",
+      "subject": "highlights",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "1bdd80dfd3b6c5a3e9e4": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/lib/supabase/useDM.ts",
+      "subject": "user_blocks",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "1e55c0f0af5df891d329": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/lib/supabase/badge-engine.ts",
+      "subject": "posts",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "1e9b497c0624d844cd5f": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/app/api/admin/messages/route.ts",
+      "subject": "profiles",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "2059f6dcd30a53370a6f": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/app/api/leaderboard/invite/route.ts",
+      "subject": "v_leaderboard_invite",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "2063ab68081498fcf402": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/app/api/venue-stories/route.ts",
+      "subject": "profiles",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "20b786bef55b1c0bcb1b": {
+      "count": 1,
+      "kind": "non_unique_pagination",
+      "file": "src/app/api/cron/news-clipping/route.ts",
+      "subject": "news_clipping_sends",
+      "detail": "range pagination must include a full unique order (clip_date + user_id)"
+    },
+    "2282b961551f1b3fd48b": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/app/api/admin/jobs/health/route.ts",
+      "subject": "admin_job_logs",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "234511bbb3cafdb4193a": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "scripts/transcode-videos.mjs",
+      "subject": "posts",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "23d62e24a9191ade223f": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/lib/supabase/useBlock.ts",
+      "subject": "user_blocks",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "23f32bc3dd83e63a1816": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "scripts/qa/ui-smoke-news-comment-report.mjs",
+      "subject": "profiles",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "2455b58c86d291a6f1c1": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/app/api/invite/route.ts",
+      "subject": "profiles",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "25986c4bd5aeb6b5c4bf": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/app/(main)/profile/[userId]/page.tsx",
+      "subject": "user_badges",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "2689bf537b5d9a0f5c99": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "scripts/roster-supabase-purge.mjs",
+      "subject": "players_roster",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "286a48aba0655869bcef": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/app/api/admin/retention/route.ts",
+      "subject": "retention_metrics",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "28ece92f9ed5b5fdc152": {
+      "count": 2,
+      "kind": "unbounded_growing_select",
+      "file": "src/components/community/CommentSheet.tsx",
+      "subject": "comment_likes",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "29aa4096ad2bc238836c": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/lib/supabase/useTickets.ts",
+      "subject": "ticket_transfers",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "29de424f01a5d91765f2": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/lib/notifications/live-activity.ts",
+      "subject": "live_activity_channels",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "2a41916123c61e63b605": {
+      "count": 1,
+      "kind": "unbounded_collection_api",
+      "file": "src/app/api/cron/venue-stories-cleanup/route.ts",
+      "subject": "storage.list",
+      "detail": "collection API requires bounded-page/full-scan annotation"
+    },
+    "2ada702cbd2468f6c800": {
+      "count": 1,
+      "kind": "unbounded_rpc",
+      "file": "src/app/api/admin/watch-activity/route.ts",
+      "subject": "admin_watch_activity",
+      "detail": "RPC row cardinality must be allowlisted or annotated"
+    },
+    "2b4c01d7d143f2ee3b39": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/app/api/invite/route.ts",
+      "subject": "invitations",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "2bcfe07d44d58f37eb85": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/app/api/cron/discover-channels/route.ts",
+      "subject": "channel_pool",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "2db57494ce562d23244f": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/app/api/daily-analysis/route.ts",
+      "subject": "daily_analysis",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "2f8257c05ebf60263487": {
+      "count": 1,
+      "kind": "unbounded_select",
+      "file": "src/lib/notifications/team-rank.ts",
+      "subject": "team_rank_notify_state",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "313f6a035bf1e894b229": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "scripts/backfill-player-ids-v2.ts",
+      "subject": "player_stats_batter",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "317dbe5818a9c4dbc1c9": {
+      "count": 1,
+      "kind": "non_unique_pagination",
+      "file": "scripts/backfill-player-ids-v2.ts",
+      "subject": "videos",
+      "detail": "range pagination must include a full unique order (id)"
+    },
+    "31be9ab384f7de05d802": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/lib/notifications/live-activity.ts",
+      "subject": "live_activity_started_users",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "3244bb4e6283346a1776": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/app/(main)/whats-new/page.tsx",
+      "subject": "posts",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "3410e532d38d6dc5da42": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/app/(main)/whats-new/page.tsx",
+      "subject": "likes",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "36a528bc115516445676": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/app/api/admin/venue-stories/route.ts",
+      "subject": "venue_stories",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "37b9930a6b5670e26a47": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/app/api/venue-stories/route.ts",
+      "subject": "venue_stories",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "38a334a2dd70292520a3": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/app/api/admin/retention/route.ts",
+      "subject": "retention_metrics",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "3c04a1560cc228eb1d8f": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/lib/retention/compute.ts",
+      "subject": "profiles",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "3d811748b0b5c1befb7e": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/lib/notifications/live-activity.ts",
+      "subject": "notification_prefs",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "426de94c5e2b6c3aaaa2": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "scripts/audit-lineup-cache.ts",
+      "subject": "game_summaries",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "42a4d513113c1d80ec31": {
+      "count": 1,
+      "kind": "non_unique_pagination",
+      "file": "scripts/batch-badge-check.mjs",
+      "subject": "profiles",
+      "detail": "range pagination must include a full unique order (id)"
+    },
+    "4499b516d22ddd255f05": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/app/api/cron/venue-stories-cleanup/route.ts",
+      "subject": "venue_stories",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "459d61da116bfbd6f767": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/lib/admin/push.ts",
+      "subject": "admin_push_subscriptions",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "46895093cfe846b11998": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/app/api/leaderboard/monthly/route.ts",
+      "subject": "v_leaderboard_writing_monthly",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "470d17f388347586e894": {
+      "count": 1,
+      "kind": "partial_page_risk",
+      "file": "src/app/api/team-card/route.ts",
+      "subject": "player_game_logs",
+      "detail": "range pager must declare bounded-page or satisfy the trusted keyset helper contract"
+    },
+    "4794c2410a40ff429f9e": {
+      "count": 1,
+      "kind": "unbounded_collection_api",
+      "file": "src/app/api/auth/naver/callback/route.ts",
+      "subject": "auth.admin.listUsers",
+      "detail": "collection API requires bounded-page/full-scan annotation"
+    },
+    "47e96ebbd7e908de69d0": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/app/api/roster-moves/route.ts",
+      "subject": "roster_moves",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "481868bd49d3098715f6": {
+      "count": 1,
+      "kind": "unbounded_rpc",
+      "file": "src/lib/urgent-notice/send.ts",
+      "subject": "send_urgent_notice",
+      "detail": "RPC row cardinality must be allowlisted or annotated"
+    },
+    "496c9c150c6afecd7393": {
+      "count": 1,
+      "kind": "unbounded_rpc",
+      "file": "src/app/api/admin/traffic/route.ts",
+      "subject": "admin_traffic_daily",
+      "detail": "RPC row cardinality must be allowlisted or annotated"
+    },
+    "4be92a35787bc47ba30f": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/app/api/cron/admin-alerts/route.ts",
+      "subject": "admin_job_logs",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "4cb13849adf62cfc0d8a": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/lib/notifications/live-activity.ts",
+      "subject": "live_activity_tokens",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "505ae73199c6d7fcdb09": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/app/api/admin/downloads/route.ts",
+      "subject": "app_downloads",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "50f27db03272b9a119e6": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/app/api/admin/downloads/route.ts",
+      "subject": "app_downloads",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "51067393dd25d3907386": {
+      "count": 1,
+      "kind": "unbounded_rpc",
+      "file": "src/app/api/news/discussion/route.ts",
+      "subject": "news_discussion_visible_counts",
+      "detail": "RPC row cardinality must be allowlisted or annotated"
+    },
+    "52429173cfa3f44d8c01": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/app/api/admin/today-detail/route.ts",
+      "subject": "profiles",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "52ae51009ba83f9041b5": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/lib/notifications/live-activity.ts",
+      "subject": "game_notify_state",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "53bf4d8c8a554a567cdd": {
+      "count": 1,
+      "kind": "unbounded_select",
+      "file": "src/app/api/cron/admin-alerts/route.ts",
+      "subject": "admin_alert_state",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "53d8be14f4f61d7ae97f": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/app/api/admin/retention/route.ts",
+      "subject": "retention_metrics",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "5478de92c5a6bb95d29b": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/app/api/admin/venue-stories/route.ts",
+      "subject": "profiles",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "560f0a89ee90ea7d1dc3": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/app/api/admin/today-detail/route.ts",
+      "subject": "chat_messages",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "56a737a305468b1a8a31": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/app/api/cron/discover-channels/route.ts",
+      "subject": "videos",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "570a3fcb524179cb4256": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "scripts/seed-upload.ts",
+      "subject": "posts",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "57f7d5a1ef62375c4894": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/lib/supabase/usePredictions.ts",
+      "subject": "prediction_stats",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "592a3606d6209ed030e0": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/app/api/admin/feedback/route.ts",
+      "subject": "feedback",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "5b157c1439a32981b65f": {
+      "count": 1,
+      "kind": "non_unique_pagination",
+      "file": "src/app/api/admin/content/route.ts",
+      "subject": "chat_messages",
+      "detail": "range pagination must include a full unique order (id)"
+    },
+    "5b74cee06a96e62b6ec6": {
+      "count": 1,
+      "kind": "unclassified_relation",
+      "file": "src/app/api/leaderboard/my-rank/route.ts",
+      "subject": "<dynamic>",
+      "detail": "classify this relation or add an explicit bounded annotation before querying it"
+    },
+    "5bd23853a6597a7c0d7d": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/app/api/admin/tester-signups/route.ts",
+      "subject": "tester_signups",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "5c253e1bccb47dc2ce6a": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/app/api/daily-analysis/route.ts",
+      "subject": "daily_analysis",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "5ecdae3b56eadfe8cf58": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/lib/supabase/useDM.ts",
+      "subject": "dm_messages",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "5f3bd4521c73e09eea82": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/app/api/cron/videos/route.ts",
+      "subject": "videos",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "5f8a2bd63171adb21de8": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "scripts/transcode-videos.mjs",
+      "subject": "video_transcode_jobs",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "61baac7240f2b096718f": {
+      "count": 1,
+      "kind": "unbounded_rpc",
+      "file": "src/app/api/cron/discover-channels/route.ts",
+      "subject": "commit_channel_discovery",
+      "detail": "RPC row cardinality must be allowlisted or annotated"
+    },
+    "624669178026ad457abf": {
+      "count": 1,
+      "kind": "unbounded_rpc",
+      "file": "src/app/api/news/discussion/counts/route.ts",
+      "subject": "news_discussion_visible_counts",
+      "detail": "RPC row cardinality must be allowlisted or annotated"
+    },
+    "65551df15d4b25e0d332": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/app/api/admin/messages/route.ts",
+      "subject": "dm_messages",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "65dcc0015f3670b24b68": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "scripts/send-nickname-apology-dm.ts",
+      "subject": "dm_messages",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "666881236bf38c0a31e1": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/app/api/admin/today-detail/route.ts",
+      "subject": "posts",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "66a982d4c59a62eef8fe": {
+      "count": 1,
+      "kind": "non_unique_pagination",
+      "file": "src/app/api/admin/live-activity/route.ts",
+      "subject": "live_activity_channel_subscriptions",
+      "detail": "range pagination must include a full unique order (game_id + environment + channel_id + device_key)"
+    },
+    "687bc647377a1d97cead": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "scripts/transcode-videos.mjs",
+      "subject": "posts",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "697ff31155bdede3a9ee": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "scripts/send-urgent-notice.ts",
+      "subject": "device_push_tokens",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "6dfd840381e8bec97d89": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "scripts/qa/report-blind-db-integration.mjs",
+      "subject": "dm_conversations",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "6efe99bd7a4c8e632eb7": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/lib/notifications/live-activity.ts",
+      "subject": "notification_prefs",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "70cd45d376448223e6b3": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/hooks/usePlayerCommunity.ts",
+      "subject": "posts",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "71a62964eec7f82389f5": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/lib/supabase/usePosts.ts",
+      "subject": "posts",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "71bc99c1a56677e63d6c": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/app/api/admin/whats-new/route.ts",
+      "subject": "announcements",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "740882ec11710cd3f6f4": {
+      "count": 1,
+      "kind": "unbounded_rpc",
+      "file": "src/app/api/admin/content/route.ts",
+      "subject": "admin_content_daily",
+      "detail": "RPC row cardinality must be allowlisted or annotated"
+    },
+    "75f16b579ed296a52637": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "scripts/qa/ui-smoke-news-comment-report.mjs",
+      "subject": "report_blind_notices",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "770db3c265bf20a38dd8": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/lib/notifications/live-activity.ts",
+      "subject": "live_activity_channels",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "79e7ad58ae2163f877ba": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/app/api/monitoring/fallbacks/route.ts",
+      "subject": "api_fallback_events",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "7a8286d1214613c78970": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "scripts/backfill-player-ids-v2.ts",
+      "subject": "player_stats_pitcher",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "7dd79734296805128060": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "scripts/backfill-standings-snapshot.ts",
+      "subject": "daily_standings_snapshot",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "7e82fd8cf8e41f598e5f": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "scripts/discover-channels.ts",
+      "subject": "channel_pool",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "7ea255bcc88595832e8f": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/app/api/admin/messages/route.ts",
+      "subject": "admin_broadcast_logs",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "7eed39f3a3014b4f6e8b": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "scripts/transcode-videos.mjs",
+      "subject": "venue_stories",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "7f24d30185ab5f06de89": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/lib/video/team-channels.ts",
+      "subject": "channel_pool",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "8034905ca8dccd436154": {
+      "count": 1,
+      "kind": "unclassified_relation",
+      "file": "src/app/api/admin/live-activity/route.ts",
+      "subject": "<dynamic>",
+      "detail": "classify this relation or add an explicit bounded annotation before querying it"
+    },
+    "81a6e80a55aa77bb426f": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/lib/supabase/useChat.ts",
+      "subject": "chat_messages",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "832d667229d3b4b47b44": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/components/community/CommentSheet.tsx",
+      "subject": "comments",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "83c1e9dbe6c1fbde8788": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/lib/supabase/useDM.ts",
+      "subject": "profiles",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "83efd63c04a2b733517c": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/app/api/shorts-feed/route.ts",
+      "subject": "videos",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "83fa57797e3a29185ac4": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/app/api/venue-stories/route.ts",
+      "subject": "user_blocks",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "84ad916effcc70c31d87": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/app/api/admin/messages/route.ts",
+      "subject": "admin_delivery_jobs",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "857d916b294de944a8f4": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/app/api/team-card/route.ts",
+      "subject": "daily_standings_snapshot",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "877160a6e0e572ae67bc": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/lib/notifications/live-activity-channels.ts",
+      "subject": "live_activity_channels",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "88420634ac666b71fbed": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/lib/analysis/daily-analysis-core.ts",
+      "subject": "daily_analysis",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "89e4186af1bd9fc90f5a": {
+      "count": 1,
+      "kind": "unclassified_relation",
+      "file": "src/lib/retention/compute.ts",
+      "subject": "<dynamic>",
+      "detail": "classify this relation or add an explicit bounded annotation before querying it"
+    },
+    "89ebfc8dbc9e777441e9": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/app/(main)/community/players/[playerId]/page.tsx",
+      "subject": "posts",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "8a43c43bcfa136bee4b9": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/app/api/shorts-feed/route.ts",
+      "subject": "videos",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "8ac58ddb15e81df2fd7c": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/app/api/shorts-feed/route.ts",
+      "subject": "videos",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "8c2bb6afd9d85c59427e": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/lib/supabase/usePredictions.ts",
+      "subject": "season_predictions",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "8e3fc7c76fa6a6a46249": {
+      "count": 1,
+      "kind": "non_unique_pagination",
+      "file": "src/app/api/admin/messages/route.ts",
+      "subject": "dm_conversations",
+      "detail": "range pagination must include a full unique order (id)"
+    },
+    "8f6baabe79dff5ac99bc": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/lib/supabase/usePosts.ts",
+      "subject": "comment_likes",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "904253dc0a8afc37f5a6": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/app/api/admin/today-detail/route.ts",
+      "subject": "posts",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "909d9ee73aaef113ded8": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "scripts/award-event-badges.mjs",
+      "subject": "event_leaderboard_snapshot",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "90af7ff4d24a771d3009": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/lib/notifications/live-activity-channels.ts",
+      "subject": "live_activity_channels",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "90fcac6dfcd571144de2": {
+      "count": 1,
+      "kind": "unbounded_collection_api",
+      "file": "scripts/seed-gif-collector-bot.ts",
+      "subject": "auth.admin.listUsers",
+      "detail": "collection API requires bounded-page/full-scan annotation"
+    },
+    "91104c76698ebcf32d44": {
+      "count": 1,
+      "kind": "unbounded_rpc",
+      "file": "src/app/api/admin/traffic/route.ts",
+      "subject": "admin_app_version_share",
+      "detail": "RPC row cardinality must be allowlisted or annotated"
+    },
+    "9142146403b99cc9573a": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/app/api/admin/users/route.ts",
+      "subject": "profiles",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "915a641cbc52a3b96a53": {
+      "count": 1,
+      "kind": "non_unique_pagination",
+      "file": "src/app/api/me/venue-attendance/route.ts",
+      "subject": "player_game_logs",
+      "detail": "range pagination must include a full unique order (id)"
+    },
+    "93867edd3c871da3ab10": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/app/api/admin/retention/route.ts",
+      "subject": "retention_metrics",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "94cfea1e54684974d9ca": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "scripts/transcode-videos.mjs",
+      "subject": "video_transcode_jobs",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "9610330ab103a73c4b58": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/app/api/me/nickname/route.ts",
+      "subject": "profile_nickname_changes",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "976c4685017c4b69e850": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/lib/supabase/usePosts.ts",
+      "subject": "posts",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "991500263dbf3b668d29": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/app/api/cron/videos-shorts/route.ts",
+      "subject": "player_stats_pitcher",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "9cac00fcdf1a5fc4b555": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/app/(main)/profile/[userId]/page.tsx",
+      "subject": "user_badges",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "9cde9c6af92dc96ebebf": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/app/api/admin/jobs/route.ts",
+      "subject": "admin_job_logs",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "9dbf419976e7f4458351": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/lib/notifications/ios-widget-live.ts",
+      "subject": "ios_widget_push_state",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "9f248de0f579fe855e46": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/lib/supabase/useUnifiedFeed.ts",
+      "subject": "likes",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "a1836421283f6e90051f": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/lib/supabase/useDM.ts",
+      "subject": "profiles",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "a23369f75f38044bb371": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/lib/supabase/badge-engine.ts",
+      "subject": "posts",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "a370cdedfe9fe949201c": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/app/api/admin/retention/route.ts",
+      "subject": "retention_metrics",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "a3918aca32d651aaf9e9": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/app/api/leaderboard/writing/route.ts",
+      "subject": "v_leaderboard_writing",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "a5b3a985db5f9d4c37c5": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/components/community/CommentSheet.tsx",
+      "subject": "comments",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "a627693f7d4d3581b1f7": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/lib/supabase/useDM.ts",
+      "subject": "dm_conversations",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "a850b96d139ef88a4832": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/lib/notifications/live-activity.ts",
+      "subject": "notification_prefs",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "a87c010bf340ec1c4eed": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/app/api/leaderboard/my-snapshot/route.ts",
+      "subject": "event_leaderboard_snapshot",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "ac36e79f1adfb576dadc": {
+      "count": 1,
+      "kind": "non_unique_pagination",
+      "file": "src/app/api/cron/news-clipping/route.ts",
+      "subject": "dm_conversations",
+      "detail": "range pagination must include a full unique order (id)"
+    },
+    "acf3cc0c48f8b0d13e5e": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/lib/retention/compute.ts",
+      "subject": "admin_page_views",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "adabe6bdb3e2fb260b44": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "scripts/batch-badge-check.mjs",
+      "subject": "posts",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "ae2bcb795c79aedf1f05": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/lib/admin/anomaly.ts",
+      "subject": "admin_perf_metrics",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "b08d255f9521b2251caf": {
+      "count": 1,
+      "kind": "partial_page_risk",
+      "file": "src/app/api/team-card/route.ts",
+      "subject": "player_game_logs",
+      "detail": "range pager must declare bounded-page or satisfy the trusted keyset helper contract"
+    },
+    "b1a0ca6460a58aa46b88": {
+      "count": 3,
+      "kind": "unbounded_growing_select",
+      "file": "src/lib/retention/compute.ts",
+      "subject": "profiles",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "b3a0e52cce6b06a03232": {
+      "count": 1,
+      "kind": "non_unique_pagination",
+      "file": "src/app/api/admin/content/route.ts",
+      "subject": "posts",
+      "detail": "range pagination must include a full unique order (id)"
+    },
+    "b50a0138702f8366ba0d": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/app/api/cron/venue-stories-validate/route.ts",
+      "subject": "venue_stories",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "b7b911575d964e3522e8": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/app/api/cron/venue-stories-cleanup/route.ts",
+      "subject": "venue_stories",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "b92aaa410db720d5029f": {
+      "count": 1,
+      "kind": "unbounded_rpc",
+      "file": "src/app/api/admin/traffic/route.ts",
+      "subject": "admin_dwell_by_platform",
+      "detail": "RPC row cardinality must be allowlisted or annotated"
+    },
+    "ba483f36b0c625ec9438": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/app/api/cron/roster-moves/route.ts",
+      "subject": "roster_moves",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "ba5cc676e876b7204440": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/app/api/admin/today-detail/route.ts",
+      "subject": "comments",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "ba8622ba0c9d5655cf40": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "scripts/batch-badge-check.mjs",
+      "subject": "posts",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "ba8d3800e586223d5fd7": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/lib/supabase/useBlock.ts",
+      "subject": "profiles",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "bc3b4f5052dc051b98dd": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/lib/notifications/live-activity.ts",
+      "subject": "live_activity_game_push_state",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "bdf76cc5268436393b42": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/app/api/cron/news-clipping/route.ts",
+      "subject": "notification_prefs",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "be23c7666139400d66f6": {
+      "count": 1,
+      "kind": "non_unique_pagination",
+      "file": "src/app/api/cron/news-clipping/route.ts",
+      "subject": "profiles",
+      "detail": "range pagination must include a full unique order (id)"
+    },
+    "be64ae903b4281d0630e": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/app/api/cron/roster-moves/route.ts",
+      "subject": "roster_snapshots",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "bf2fa26e8f843ecf2a48": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/lib/supabase/useDM.ts",
+      "subject": "dm_messages",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "c07f5f9c351a0cd3ec55": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/lib/supabase/useUnreadDMCount.ts",
+      "subject": "dm_conversations",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "c09a27262f8a1158edf4": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "scripts/send-nickname-apology-dm.ts",
+      "subject": "profiles",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "c101904ccc2c989618cb": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/app/api/player-game-logs/route.ts",
+      "subject": "player_game_logs",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "c6cf6ca816af48df4c89": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/lib/video/player-tagger.ts",
+      "subject": "player_stats_batter",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "c6f62864eeb60cca8eee": {
+      "count": 1,
+      "kind": "non_unique_pagination",
+      "file": "src/app/api/admin/content/route.ts",
+      "subject": "comments",
+      "detail": "range pagination must include a full unique order (id)"
+    },
+    "c7b458a4d917923f7fd0": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/app/api/admin/retention/route.ts",
+      "subject": "retention_metrics",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "c7da6173ba7c6fccb665": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/app/api/cron/venue-stories-finalize/route.ts",
+      "subject": "venue_stories",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "c8cfd59f11708885b20e": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/app/api/cron/news-clipping/route.ts",
+      "subject": "profiles",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "ca0a9276aaecdc8ad368": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/lib/video/player-tagger.ts",
+      "subject": "player_stats_pitcher",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "cbaf10e9c6621f88cb0e": {
+      "count": 1,
+      "kind": "unbounded_rpc",
+      "file": "src/app/api/game-events/route.ts",
+      "subject": "upsert_game_event_state",
+      "detail": "RPC row cardinality must be allowlisted or annotated"
+    },
+    "cc3d95ea7fe7e93e0437": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/app/api/admin/today-detail/route.ts",
+      "subject": "posts",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "cc8516a60a749745ed6b": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "scripts/purge-fn-lineup-cache.ts",
+      "subject": "game_summaries",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "cce110706621aeba06f1": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/lib/supabase/useMoodGauge.ts",
+      "subject": "chat_messages",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "cd9d319ce9660beeeb33": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "scripts/batch-badge-check.mjs",
+      "subject": "posts",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "ce1a6edf322b796d2597": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/lib/supabase/useChat.ts",
+      "subject": "chat_messages",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "d0822b6bf9eb9ccbecb9": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/app/api/roster/route.ts",
+      "subject": "players_roster",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "d17998d6cdd781126272": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/app/api/cron/prewarm-summaries/route.ts",
+      "subject": "game_summaries",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "d19110b9c37dde5c096a": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/app/api/admin/live-activity/route.ts",
+      "subject": "live_activity_channels",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "d36a0acd527250b65b8e": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/lib/supabase/useUnifiedFeed.ts",
+      "subject": "posts",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "d6186fd106ef9d7d7811": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/app/api/me/venue-attendance/route.ts",
+      "subject": "venue_attendance",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "da78629d746b2a53baf7": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/lib/supabase/useDM.ts",
+      "subject": "user_blocks",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "db377689e79c096dd7ec": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/lib/notifications/live-activity.ts",
+      "subject": "live_activity_channels",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "dbfc8ce19adc4627ca1f": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/lib/admin/anomaly.ts",
+      "subject": "admin_job_logs",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "dd9c57c277c90c96cea3": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/lib/notifications/fcm.ts",
+      "subject": "notification_prefs",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "dddbdd66173753421402": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/app/api/team-videos/route.ts",
+      "subject": "highlights",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "de98d3c2d10c7e906316": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "scripts/batch-badge-check.mjs",
+      "subject": "user_badges",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "df97888b44defb831994": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/lib/analysis/daily-analysis-core.ts",
+      "subject": "daily_stats_snapshot",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "dfe3d879521a1c974615": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "scripts/qa/kyoyama-legacy-verify.mjs",
+      "subject": "profiles",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "e02021d2a68c7eac2131": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/app/api/standings-snapshot/route.ts",
+      "subject": "daily_standings_snapshot",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "e043e1f113f448f7c157": {
+      "count": 1,
+      "kind": "unbounded_rpc",
+      "file": "src/app/api/cron/daily-analysis-live/route.ts",
+      "subject": "claim_daily_analysis_live",
+      "detail": "RPC row cardinality must be allowlisted or annotated"
+    },
+    "e24133a1425715405ad9": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/app/(main)/community/players/[playerId]/page.tsx",
+      "subject": "posts",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "e2991e04547184e499b4": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/app/(main)/profile/[userId]/page.tsx",
+      "subject": "posts",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "e36fc24ae84041af3101": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/app/api/whats-new/route.ts",
+      "subject": "announcements",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "e3e51209a81e0d7979fc": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/app/api/cron/videos-shorts/route.ts",
+      "subject": "player_stats_batter",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "e3f1983ca5101609088d": {
+      "count": 1,
+      "kind": "unbounded_rpc",
+      "file": "src/app/api/cron/admin-broadcast/route.ts",
+      "subject": "claim_admin_broadcast_recipients",
+      "detail": "RPC row cardinality must be allowlisted or annotated"
+    },
+    "e51c45f14e753bb78874": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/app/api/push/send/route.ts",
+      "subject": "push_subscriptions",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "e55d4e47c7ac86a569ed": {
+      "count": 1,
+      "kind": "unbounded_collection_api",
+      "file": "scripts/seed-jjal-collector-bot.ts",
+      "subject": "auth.admin.listUsers",
+      "detail": "collection API requires bounded-page/full-scan annotation"
+    },
+    "e59def4049803b83c98d": {
+      "count": 1,
+      "kind": "non_unique_pagination",
+      "file": "src/app/api/admin/messages/route.ts",
+      "subject": "dm_messages",
+      "detail": "range pagination must include a full unique order (id)"
+    },
+    "e77896e8fb9e512ea1d6": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/lib/supabase/useChat.ts",
+      "subject": "chat_messages",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "e7e5c516eb56a4b7b031": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/app/api/admin/content/route.ts",
+      "subject": "posts",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "e84e95981dbc1f9f554c": {
+      "count": 1,
+      "kind": "non_unique_pagination",
+      "file": "src/app/api/admin/content/route.ts",
+      "subject": "likes",
+      "detail": "range pagination must include a full unique order (post_id + user_id)"
+    },
+    "e88f92bd0afd9558cc70": {
+      "count": 1,
+      "kind": "unbounded_collection_api",
+      "file": "scripts/setup-urgent-notice-account.ts",
+      "subject": "auth.admin.listUsers",
+      "detail": "collection API requires bounded-page/full-scan annotation"
+    },
+    "e923461d6815194293b3": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/lib/analysis/daily-analysis-core.ts",
+      "subject": "daily_standings_snapshot",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "e9248a25647182ae4526": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/lib/supabase/badge-engine.ts",
+      "subject": "posts",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "e9474760c92300a86d6e": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/lib/notifications/game-status.ts",
+      "subject": "daily_standings_snapshot",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "e961cd3ccd5404db8a15": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/lib/supabase/badge-engine.ts",
+      "subject": "user_badges",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "e9eaab66e9ee5c16fd6d": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/app/api/admin/feedback/route.ts",
+      "subject": "profiles",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "ea220783bc4941be082d": {
+      "count": 1,
+      "kind": "unbounded_rpc",
+      "file": "scripts/qa/report-blind-db-integration.mjs",
+      "subject": "requeue_report_blind_notice",
+      "detail": "RPC row cardinality must be allowlisted or annotated"
+    },
+    "ea9e2f1c254b91110c3d": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/app/api/live-activity/channel/route.ts",
+      "subject": "live_activity_channels",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "ec02d226b3caaea646fe": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "scripts/qa/ui-smoke-comment-crud.mjs",
+      "subject": "comments",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "ed7db094d2bfa761eba6": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/components/community/GamePicker.tsx",
+      "subject": "games",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "eed4495c887cceb63a31": {
+      "count": 1,
+      "kind": "unbounded_rpc",
+      "file": "src/app/api/admin/content/route.ts",
+      "subject": "admin_engaged_users_daily",
+      "detail": "RPC row cardinality must be allowlisted or annotated"
+    },
+    "ef06d704d0207e20bdda": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/app/api/admin/stats/route.ts",
+      "subject": "admin_daily_stats",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "ef34bd9b1b86407a8266": {
+      "count": 1,
+      "kind": "non_unique_pagination",
+      "file": "src/app/api/badges/batch/route.ts",
+      "subject": "profiles",
+      "detail": "range pagination must include a full unique order (id)"
+    },
+    "ef91491cc06605666e4d": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/app/api/notifications/dispatch/route.ts",
+      "subject": "dm_messages",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "efe3c288a7493a29cbc6": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "scripts/qa/kyoyama-legacy-verify.mjs",
+      "subject": "profiles",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "f1e1fe88545111c18250": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/app/api/admin/messages/route.ts",
+      "subject": "profiles",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "f549d63af84ffd630ab1": {
+      "count": 1,
+      "kind": "unbounded_rpc",
+      "file": "src/app/api/admin/traffic/route.ts",
+      "subject": "admin_traffic_totals",
+      "detail": "RPC row cardinality must be allowlisted or annotated"
+    },
+    "f58a498abba6f71e3f14": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "scripts/qa/ui-smoke-news-comment-report.mjs",
+      "subject": "reports",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "f9283c154313ba2b8803": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/lib/notifications/live-activity.ts",
+      "subject": "live_activity_start_tokens",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "f9c850d666dce24b2b86": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/lib/supabase/useBlock.ts",
+      "subject": "user_blocks",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "fb08e1b568f4b4f66356": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/hooks/usePlayerCommunity.ts",
+      "subject": "posts",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "fe5899d81932cd6902bd": {
+      "count": 1,
+      "kind": "partial_page_risk",
+      "file": "scripts/migrations/backfill-player-team-tags.mjs",
+      "subject": "posts",
+      "detail": "range pager must declare bounded-page or satisfy the trusted keyset helper contract"
+    },
+    "ff74541f7c6389e54a7f": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/app/api/admin/today-detail/route.ts",
+      "subject": "news_discussions",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    }
+  }
+}
