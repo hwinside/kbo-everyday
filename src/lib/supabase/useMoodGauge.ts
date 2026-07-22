@@ -77,18 +77,14 @@ export function useMoodGauge(
   // ── 2) 최근 10분 채팅 메시지 team_id 집계 (primary) ──
   const fetchChatMood = useCallback(async () => {
     const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
-    // 전체 + 홈팬방 + 어웨이팬방 모두 집계
-    const roomIds = [
-      `game:${gameId}`,
-      `game:${gameId}:home`,
-      `game:${gameId}:away`,
-    ];
-
+    // query-guard: bounded -- 분위기 비율은 최근 채팅 500건 표본이면 충분함
     const { data } = await supabase
       .from("chat_messages")
       .select("user_id, profiles!user_id(team_id)")
-      .in("room_id", roomIds)
-      .gte("created_at", tenMinAgo);
+      .eq("room_id", `game:${gameId}`)
+      .gte("created_at", tenMinAgo)
+      .order("created_at", { ascending: false })
+      .limit(500);
 
     let home = 0;
     let away = 0;
@@ -112,33 +108,6 @@ export function useMoodGauge(
     const interval = setInterval(fetchChatMood, 30_000);
     return () => clearInterval(interval);
   }, [fetchChatMood]);
-
-  // Realtime INSERT 시에도 갱신 (전체 + 팬방, eq 3개 구독)
-  useEffect(() => {
-    const prefix = `game:${gameId}`;
-    const channel = supabase
-      .channel(`mood-chat:${gameId}`)
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "chat_messages", filter: `room_id=eq.${prefix}` },
-        () => fetchChatMood(),
-      )
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "chat_messages", filter: `room_id=eq.${prefix}:home` },
-        () => fetchChatMood(),
-      )
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "chat_messages", filter: `room_id=eq.${prefix}:away` },
-        () => fetchChatMood(),
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [gameId, fetchChatMood]);
 
   // ── 3) 블렌딩 ──
   // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -35,6 +35,7 @@
     "qa:ticket-open": "tsx scripts/qa/ticket-open-smoke.ts",
     "qa:watch-telemetry": "tsx scripts/qa/watch-telemetry-smoke.ts",
     "qa:proxy-auth-refresh": "tsx scripts/qa/proxy-auth-refresh-smoke.ts",
+    "qa:mood-realtime-load": "tsx scripts/qa/mood-gauge-realtime-load-smoke.ts",
     "qa:gif-collector-matching": "tsx scripts/qa/gif-collector-matching-smoke.ts",
     "qa:gif-collector-slack-parser": "tsx scripts/qa/gif-collector-slack-parser-smoke.ts",
     "qa:gif-collector-inbox-resolver": "tsx scripts/qa/gif-collector-inbox-resolver-smoke.ts",
