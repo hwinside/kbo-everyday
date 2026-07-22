@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "generatedFrom": "886dcad2762dc73dfa0da86c05bd7e6b1dfd6830",
+  "generatedFrom": "9059e96129d37904785f0fb4e08be511d23a1ace",
   "violations": {
     "0034fe9a6a6cff327c64": {
       "count": 1,
@@ -1037,13 +1037,6 @@
       "file": "src/app/api/cron/news-clipping/route.ts",
       "subject": "dm_conversations",
       "detail": "range pagination must include a full unique order (id)"
-    },
-    "acf3cc0c48f8b0d13e5e": {
-      "count": 1,
-      "kind": "unbounded_growing_select",
-      "file": "src/lib/retention/compute.ts",
-      "subject": "admin_page_views",
-      "detail": "add a bound, unique-key lookup, or query-guard annotation"
     },
     "adabe6bdb3e2fb260b44": {
       "count": 1,

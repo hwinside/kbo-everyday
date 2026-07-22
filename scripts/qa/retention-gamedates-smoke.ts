@@ -28,6 +28,19 @@ function fakeSupabase(tables: Record<string, Row[]>): SupabaseClient {
     from(table: string) {
       const rows = tables[table] ?? [];
       const filters: ((r: Row) => boolean)[] = [];
+      let orderColumn: string | null = null;
+      let orderAscending = true;
+      let pageLimit: number | null = null;
+      const materialize = () => {
+        const filtered = rows.filter((r) => filters.every((f) => f(r)));
+        if (!orderColumn) return filtered;
+        return [...filtered].sort((left, right) => {
+          const a = left[orderColumn!];
+          const b = right[orderColumn!];
+          const compared = a === b ? 0 : a! > b! ? 1 : -1;
+          return orderAscending ? compared : -compared;
+        });
+      };
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const builder: any = {
         select: () => builder,
@@ -43,6 +56,10 @@ function fakeSupabase(tables: Record<string, Row[]>): SupabaseClient {
           filters.push((r) => new Date(String(r[col])).getTime() < new Date(v).getTime());
           return builder;
         },
+        gt: (col: string, v: string | number) => {
+          filters.push((r) => r[col]! > v);
+          return builder;
+        },
         not: (col: string) => {
           filters.push((r) => r[col] != null);
           return builder;
@@ -52,12 +69,25 @@ function fakeSupabase(tables: Record<string, Row[]>): SupabaseClient {
           filters.push((r) => String(r[col]).startsWith(prefix));
           return builder;
         },
-        order: () => builder,
+        order: (col: string, options?: { ascending?: boolean }) => {
+          orderColumn = col;
+          orderAscending = options?.ascending !== false;
+          return builder;
+        },
+        limit: (value: number) => {
+          pageLimit = value;
+          return builder;
+        },
         range: (from: number, to: number) =>
           Promise.resolve({
-            data: rows.filter((r) => filters.every((f) => f(r))).slice(from, to + 1),
+            data: materialize().slice(from, to + 1),
             error: null,
           }),
+        then: (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) =>
+          Promise.resolve({
+            data: materialize().slice(0, pageLimit ?? undefined),
+            error: null,
+          }).then(resolve, reject),
       };
       return builder;
     },
@@ -175,7 +205,7 @@ async function main() {
     // 상한 없던 종전 코드엔 total=1로 오염되던 케이스 → 이제 빈 결과여야 함
     const sb = fakeSupabase({
       admin_page_view_user_days: [
-        { user_id: "userA", day_kst: "2026-07-20" },
+        { id: 1, user_id: "userA", day_kst: "2026-07-20" },
       ],
     });
     const rows = await computeVisitDistribution(sb, "2026-07-19");
@@ -187,7 +217,7 @@ async function main() {
       posts: [{ author_id: "userB", created_at: "2026-07-18T12:00:00+09:00" }],
       likes: [{ user_id: "userB", created_at: "2026-07-19T23:30:00+09:00" }],
       chat_messages: [{ user_id: "userB", created_at: "2026-07-21T09:00:00+09:00" }],
-      admin_page_view_user_days: [{ user_id: "userA", day_kst: "2026-07-20" }],
+      admin_page_view_user_days: [{ id: 1, user_id: "userA", day_kst: "2026-07-20" }],
     });
     const rows = await computeVisitDistribution(sb, "2026-07-19");
     const b2 = rows.find((r) => r.metric_key === "2");
@@ -215,8 +245,8 @@ async function main() {
         { id: "userB", team_id: 2, favorite_players: ["p2"], created_at: "2026-07-02T10:00:00+09:00" },
       ],
       admin_page_view_user_days: [
-        { user_id: "userA", day_kst: "2026-07-20", game_ids: ["20260720LGOB"] },
-        { user_id: "userB", day_kst: "2026-07-20", game_ids: [] },
+        { id: 1, user_id: "userA", day_kst: "2026-07-20", game_ids: ["20260720LGOB"] },
+        { id: 2, user_id: "userB", day_kst: "2026-07-20", game_ids: [] },
       ],
     });
     const rows = await computeActivationFunnel(sb, "2026-07-21");

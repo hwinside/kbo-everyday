@@ -6,6 +6,7 @@
 -- DELETE is fail-closed behind physical-backup and exact coverage gates.
 
 CREATE TABLE admin_page_view_user_days (
+  id         bigint GENERATED ALWAYS AS IDENTITY UNIQUE,
   day_kst    date   NOT NULL,
   user_id    uuid   NOT NULL,
   page_views bigint NOT NULL CHECK (page_views > 0),

@@ -1,4 +1,5 @@
 import { SupabaseClient } from "@supabase/supabase-js";
+import { fetchAllByKeyset } from "@/lib/db/paginate";
 import { toKSTDateString, addKSTDays } from "@/lib/utils/date-kst";
 
 interface MetricRow {
@@ -97,13 +98,17 @@ async function collectActivityDays(
     fetchAllPages<{ author_id: string; created_at: string }>(q("comments", "author_id, created_at")),
     fetchAllPages<{ user_id: string; created_at: string }>(q("likes", "user_id, created_at")),
     fetchAllPages<{ user_id: string; created_at: string }>(q("chat_messages", "user_id, created_at")),
-    fetchAllPages<{ user_id: string; day_kst: string }>(() =>
-      supabase.from("admin_page_view_user_days")
-        .select("user_id, day_kst")
+    fetchAllByKeyset<{ id: number; user_id: string; day_kst: string }, number>(async (cursor, limit) => {
+      let query = supabase.from("admin_page_view_user_days")
+        .select("id, user_id, day_kst")
         .gte("day_kst", pageViewSinceDay)
         .lt("day_kst", pageViewUntilDay)
-        .order("day_kst", { ascending: true }),
-    ),
+        .order("id", { ascending: true })
+        .limit(limit);
+      if (cursor !== null) query = query.gt("id", cursor);
+      const { data, error } = await query;
+      return { data: data as { id: number; user_id: string; day_kst: string }[] | null, error };
+    }, (row) => row.id, { label: "retention page-view user days" }),
   ]);
 
   for (const r of posts) addVisit(r.author_id, r.created_at);
@@ -275,12 +280,23 @@ export async function computeActivationFunnel(
 
   // ③ 서로 다른 경기 1개 이상 방문. Raw 30일 purge 뒤에도 정확하도록
   // user/day rollup의 game_ids를 읽는다.
-  const gameViewDays = await fetchAllPages<{ user_id: string; game_ids: string[] }>(
-    () => supabase.from("admin_page_view_user_days").select("user_id, game_ids")
+  const gameViewDays = await fetchAllByKeyset<{
+    id: number;
+    user_id: string;
+    game_ids: string[];
+  }, number>(async (cursor, limit) => {
+    let query = supabase.from("admin_page_view_user_days").select("id, user_id, game_ids")
       .gte("day_kst", MIN_DAILY_COHORT)
       .lte("day_kst", targetDate)
-      .order("day_kst", { ascending: true }),
-  );
+      .order("id", { ascending: true })
+      .limit(limit);
+    if (cursor !== null) query = query.gt("id", cursor);
+    const { data, error } = await query;
+    return {
+      data: data as { id: number; user_id: string; game_ids: string[] }[] | null,
+      error,
+    };
+  }, (row) => row.id, { label: "activation game-view user days" });
   const gamesByUser = new Map<string, Set<string>>();
   for (const v of gameViewDays) {
     if (!cohortIds.has(v.user_id)) continue;
