@@ -183,17 +183,23 @@ test("resolved incident recurrence starts a fresh episode and notifies both chan
   const calls: Array<{ url: string; body: string }> = [];
   const fetchImpl = fakeFetch(calls) as typeof fetch;
   const firing = firingAlert("stable-fingerprint");
+  const recurrence = { ...firing, startsAt: "2026-07-22T12:10:00Z" };
 
   await handleAlert(firing, env, store, 1_000, fetchImpl);
   const firstEpisode = store.value?.episodeId;
   await handleAlert({ ...firing, status: "resolved" }, env, store, 2_000, fetchImpl);
-  await handleAlert(firing, env, store, 3_000, fetchImpl);
+  await handleAlert(recurrence, env, store, 3_000, fetchImpl);
 
   assert.equal(calls.length, 6);
   assert.notEqual(store.value?.episodeId, firstEpisode);
   assert.equal(store.value?.firstSeenAt, 3_000);
   assert.equal(store.value?.acknowledgedAt, undefined);
   assert.equal(store.value?.escalatedAt, undefined);
+
+  await handleAlert({ ...firing, status: "resolved", endsAt: "2026-07-22T12:05:00Z" }, env, store, 4_000, fetchImpl);
+  assert.equal(calls.length, 6, "a delayed resolved event from the previous episode must be ignored");
+  assert.equal(store.value?.status, "firing");
+  assert.equal(store.value?.sourceStartedAt, Date.parse(recurrence.startsAt));
 });
 
 test("partial initial delivery retry sends only the missing channel", async () => {
@@ -263,7 +269,7 @@ test("GET ACK is read-only and POST records acknowledgement", async () => {
   await namespace.get("ack-1").fetch("https://incident.internal/alert", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(alert),
+    body: JSON.stringify({ ...alert, startsAt: "2026-07-22T12:10:00Z" }),
   });
   const stalePost = await worker.fetch(new Request(ackUrl, { method: "POST" }), env);
   assert.equal(stalePost.status, 409, "an ACK capability from an older episode must not acknowledge a recurrence");
@@ -275,6 +281,7 @@ test("partial escalation persists channel ledger and retries only the failed cha
     fingerprint: "abc",
     episodeId: "00000000-0000-4000-8000-000000000001",
     status: "firing",
+    sourceStartedAt: 1_000,
     firstSeenAt: 1_000,
     lastSeenAt: 1_000,
     summary: "CPU critical",
@@ -293,4 +300,48 @@ test("partial escalation persists channel ledger and retries only the failed cha
   assert.equal(await escalateUnacknowledged(env, store, due + 120_000, fetchImpl), 0);
   assert.equal(calls.filter((call) => call.url.includes("slack.com")).length, 1);
   assert.equal(calls.filter((call) => call.url.includes("telegram.org")).length, 2);
+});
+
+test("signed webhook forwards all 23 catalog-sized alerts and rejects oversized groups", async () => {
+  const calls: Array<{ url: string; body: string }> = [];
+  const env = makeEnv();
+  const fetchImpl = fakeFetch(calls) as typeof fetch;
+  const namespace = new TestNamespace(env, fetchImpl);
+  env.INCIDENT_COORDINATOR = namespace;
+
+  const alerts = Array.from({ length: 23 }, (_, index) => ({
+    ...firingAlert(`catalog-${index}`),
+    startsAt: `2026-07-22T12:${String(index).padStart(2, "0")}:00Z`,
+  }));
+  const body = JSON.stringify({ alerts });
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const signature = await sign(env.GRAFANA_HMAC_SECRET, timestamp, body);
+  const response = await worker.fetch(new Request("https://alerts.example.test/webhooks/grafana", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-grafana-alerting-signature": signature,
+      "x-grafana-alerting-signature-timestamp": timestamp,
+    },
+    body,
+  }), env);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { ok: true, accepted: 23 });
+  assert.equal(namespace.coordinators.size, 23);
+  assert.equal(calls.filter((call) => call.url.includes("slack.com")).length, 23);
+  assert.equal(calls.filter((call) => call.url.includes("telegram.org")).length, 23);
+
+  const oversizedBody = JSON.stringify({ alerts: Array.from({ length: 41 }, (_, index) => firingAlert(`oversized-${index}`)) });
+  const oversizedSignature = await sign(env.GRAFANA_HMAC_SECRET, timestamp, oversizedBody);
+  const oversized = await worker.fetch(new Request("https://alerts.example.test/webhooks/grafana", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-grafana-alerting-signature": oversizedSignature,
+      "x-grafana-alerting-signature-timestamp": timestamp,
+    },
+    body: oversizedBody,
+  }), env);
+  assert.equal(oversized.status, 413);
+  assert.equal(namespace.coordinators.size, 23, "oversized payload must fail before partial forwarding");
 });

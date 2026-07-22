@@ -50,6 +50,7 @@ export interface IncidentState {
   fingerprint: string;
   episodeId: string;
   status: "firing" | "resolved";
+  sourceStartedAt: number;
   firstSeenAt: number;
   lastSeenAt: number;
   acknowledgedAt?: number;
@@ -77,6 +78,7 @@ const STATE_KEY = "incident";
 const REPLAY_WINDOW_SECONDS = 300;
 const ACK_DEADLINE_MS = 3 * 60 * 1000;
 const ESCALATION_RETRY_MS = 60 * 1000;
+const MAX_ALERTS_PER_WEBHOOK = 40;
 
 class DurableIncidentStore implements IncidentStore {
   constructor(private readonly storage: DurableStorage) {}
@@ -157,6 +159,12 @@ function alertFingerprint(alert: GrafanaAlert): string {
   return alert.fingerprint || `${alert.labels?.alertname || "unknown"}:${alert.startsAt || "unknown"}`;
 }
 
+function alertSourceStartedAt(alert: GrafanaAlert): number | null {
+  if (!alert.startsAt) return null;
+  const parsed = Date.parse(alert.startsAt);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function firstNumericValue(values: Record<string, number> | undefined): string | undefined {
   if (!values) return undefined;
   const entry = Object.entries(values).find(([, value]) => Number.isFinite(value));
@@ -227,6 +235,7 @@ function newEpisode(alert: GrafanaAlert, nowMs: number): IncidentState {
     fingerprint: alertFingerprint(alert),
     episodeId: crypto.randomUUID(),
     status: "firing",
+    sourceStartedAt: alertSourceStartedAt(alert) ?? nowMs,
     firstSeenAt: nowMs,
     lastSeenAt: nowMs,
     summary: alertSummary(alert),
@@ -242,9 +251,31 @@ export async function handleAlert(
   fetchImpl: typeof fetch = fetch,
 ): Promise<IncidentState> {
   const existing = await store.get();
+  const incomingSourceStartedAt = alertSourceStartedAt(alert);
+  if (existing) {
+    if (incomingSourceStartedAt === null && alert.status === "resolved") return existing;
+    if (incomingSourceStartedAt !== null && incomingSourceStartedAt < existing.sourceStartedAt) return existing;
+    if (
+      existing.status === "resolved" &&
+      alert.status === "firing" &&
+      incomingSourceStartedAt !== null &&
+      incomingSourceStartedAt === existing.sourceStartedAt
+    ) return existing;
+    if (
+      alert.status === "resolved" &&
+      incomingSourceStartedAt !== null &&
+      incomingSourceStartedAt !== existing.sourceStartedAt
+    ) return existing;
+  } else if (alert.status === "resolved") {
+    return { ...newEpisode({ ...alert, status: "firing" }, nowMs), status: "resolved" };
+  }
   const previousStatus = existing?.status;
   const status = alert.status;
-  const isNewEpisode = status === "firing" && (!existing || existing.status === "resolved");
+  const isNewEpisode = status === "firing" && (
+    !existing ||
+    existing.status === "resolved" ||
+    (incomingSourceStartedAt !== null && incomingSourceStartedAt > existing.sourceStartedAt)
+  );
   const state = isNewEpisode ? newEpisode(alert, nowMs) : existing || newEpisode(alert, nowMs);
 
   state.status = status;
@@ -473,8 +504,11 @@ async function handleWebhook(request: Request, env: Env): Promise<Response> {
   }
   const alerts = Array.isArray(payload.alerts) ? payload.alerts : [];
   if (alerts.length === 0) return new Response("no alerts", { status: 400 });
-  await Promise.all(alerts.slice(0, 20).map((alert) => forwardAlert(alert, env)));
-  return Response.json({ ok: true, accepted: Math.min(alerts.length, 20) });
+  if (alerts.length > MAX_ALERTS_PER_WEBHOOK) {
+    return Response.json({ ok: false, error: "too many alerts", max: MAX_ALERTS_PER_WEBHOOK }, { status: 413 });
+  }
+  await Promise.all(alerts.map((alert) => forwardAlert(alert, env)));
+  return Response.json({ ok: true, accepted: alerts.length });
 }
 
 interface AckCapability {
