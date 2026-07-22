@@ -91,22 +91,22 @@ export default function ProfileCard({ user, profile, team, points, onAvatarClick
           {onViewProfile && (
             <button
               onClick={onViewProfile}
-              className="flex min-h-12 items-center justify-between rounded-xl bg-bg-tertiary px-3 py-2 text-left transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+              className="flex h-12 min-w-0 items-center justify-between gap-1 rounded-xl bg-bg-tertiary px-2 text-left transition-colors hover:bg-black/5 dark:hover:bg-white/5"
             >
-              <span className="text-sm font-medium text-text-primary">내 프로필 보기</span>
-              <ChevronRight size={16} className="shrink-0 text-text-tertiary" />
+              <span className="whitespace-nowrap text-xs font-medium text-text-primary min-[360px]:text-sm">내 프로필 보기</span>
+              <ChevronRight size={14} className="shrink-0 text-text-tertiary" />
             </button>
           )}
           {onHallOfFame && (
             <button
               onClick={onHallOfFame}
-              className="flex min-h-12 items-center justify-between rounded-xl bg-bg-tertiary px-3 py-2 text-left transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+              className="flex h-12 min-w-0 items-center justify-between gap-1 rounded-xl bg-bg-tertiary px-2 text-left transition-colors hover:bg-black/5 dark:hover:bg-white/5"
             >
-              <span className="flex items-center gap-1.5 text-sm font-medium text-text-primary">
-                <Trophy size={15} className="shrink-0 text-yellow-500" />
+              <span className="flex min-w-0 items-center gap-1 whitespace-nowrap text-xs font-medium text-text-primary min-[360px]:text-sm">
+                <Trophy size={14} className="shrink-0 text-yellow-500" />
                 명예의 전당
               </span>
-              <ChevronRight size={16} className="shrink-0 text-text-tertiary" />
+              <ChevronRight size={14} className="shrink-0 text-text-tertiary" />
             </button>
           )}
         </div>
