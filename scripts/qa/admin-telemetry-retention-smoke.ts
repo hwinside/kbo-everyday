@@ -38,8 +38,10 @@ for (const contract of [
   "rolled.dwell_ms IS DISTINCT FROM raw.dwell_ms",
   "pageDwellSessions",
   "pageDwellDistribution",
-  "count(DISTINCT session_id)::bigint AS sessions",
+  "created_at - previous_at > interval '30 minutes'",
+  "PARTITION BY visitor_id",
   "FULL JOIN rolled_session_slices",
+  "USING (visitor_id, session_no, platform, day_kst)",
   "admin_telemetry_retention_runs",
   "REVOKE EXECUTE ON FUNCTION admin_telemetry_retention_run",
 ]) {

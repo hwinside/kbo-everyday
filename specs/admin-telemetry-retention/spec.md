@@ -26,7 +26,7 @@
    - user/day page view + game visit
    - dwell day/platform event count + total dwell
    - dwell platform별 session count
-   - dwell session/day/platform별 event count + dwell 분포 exact match
+   - raw visitor별 30분 gap 독립 sessionization 후 visitor/session/day/platform dwell 분포 exact match
 4. advisory lock으로 동시 purge 차단
 5. 삭제 전 후보 수 = 실제 삭제 수. 불일치 시 transaction raise/rollback
 6. 실행 결과와 backup ref를 audit table에 기록
@@ -40,4 +40,5 @@
 - tsc/lint/build PASS
 - migration은 dry-run·prod rollback 통합 검증 후에만 GO
 - 같은 event count·총합을 유지한 session dwell 분포 변조도 DELETE 전 차단
+- rollup session start/end를 손상해 raw 2세션을 1세션으로 합쳐도 독립 raw sessionization으로 차단
 - 하린아빠 머지 승인 전 prod DELETE 0건

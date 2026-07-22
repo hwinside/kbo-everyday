@@ -191,48 +191,98 @@ BEGIN
   WHERE rolled.events IS DISTINCT FROM raw.events
      OR rolled.dwell_ms IS DISTINCT FROM raw.dwell_ms;
 
-  -- Totals alone cannot protect the dashboard's session count/median contract:
-  -- [1000, 2000, 9000] and [4000, 4000, 4000] have the same count and sum.
-  -- Compare each raw-backed session/day/platform slice exactly. Restrict the
-  -- rollup side to raw-backed session-days so rollups whose raw was purged by
-  -- an earlier run remain valid.
-  WITH raw_session_slices AS MATERIALIZED (
-    SELECT sessions.id AS session_id,
-           COALESCE(raw.platform, 'unknown') AS platform,
-           (raw.created_at AT TIME ZONE 'Asia/Seoul')::date AS day_kst,
-           sum(raw.dwell_ms)::bigint AS dwell_ms,
+  -- Rebuild raw sessions independently from the visitor-wide 30-minute gap.
+  -- The rollup's session boundaries are data under validation and must never
+  -- define the raw side: corrupting 2 raw sessions into 1 rollup session would
+  -- otherwise make the validator reproduce the same corruption.
+  --
+  -- Compare exact session/day/platform slices after independently numbering
+  -- raw and rollup sessions per visitor. This preserves both the within-day
+  -- distribution and the attachment of slices across reporting-window days.
+  WITH candidate_days AS MATERIALIZED (
+    SELECT DISTINCT (created_at AT TIME ZONE 'Asia/Seoul')::date AS day_kst
+    FROM admin_page_dwell
+    WHERE created_at < v_raw_cutoff
+  ), raw_ordered AS MATERIALIZED (
+    SELECT id,
+           visitor_id,
+           COALESCE(platform, 'unknown') AS platform,
+           created_at,
+           dwell_ms,
+           lag(created_at) OVER (
+             PARTITION BY visitor_id
+             ORDER BY created_at, id
+           ) AS previous_at
+    FROM admin_page_dwell
+    WHERE created_at < v_raw_cutoff
+  ), raw_marked AS MATERIALIZED (
+    SELECT *,
+           CASE
+             WHEN previous_at IS NULL
+               OR created_at - previous_at > interval '30 minutes'
+             THEN 1 ELSE 0
+           END AS new_session
+    FROM raw_ordered
+  ), raw_sessionized AS MATERIALIZED (
+    SELECT *,
+           sum(new_session) OVER (
+             PARTITION BY visitor_id
+             ORDER BY created_at, id
+             ROWS UNBOUNDED PRECEDING
+           ) AS session_no
+    FROM raw_marked
+  ), raw_session_slices AS MATERIALIZED (
+    SELECT visitor_id,
+           session_no,
+           platform,
+           (created_at AT TIME ZONE 'Asia/Seoul')::date AS day_kst,
+           sum(dwell_ms)::bigint AS dwell_ms,
            count(*)::bigint AS events
-    FROM admin_page_dwell AS raw
-    JOIN admin_dwell_sessions AS sessions
-      ON sessions.visitor_id = raw.visitor_id
-     AND raw.created_at BETWEEN sessions.session_start AND sessions.session_end
-    WHERE raw.created_at < v_raw_cutoff
-    GROUP BY 1, 2, 3
-  ), candidate_session_days AS MATERIALIZED (
-    SELECT DISTINCT session_id, day_kst
-    FROM raw_session_slices
+    FROM raw_sessionized
+    GROUP BY 1, 2, 3, 4
+  ), rolled_candidate_sessions AS MATERIALIZED (
+    SELECT sessions.id AS session_id,
+           sessions.visitor_id,
+           sessions.session_start
+    FROM admin_dwell_sessions AS sessions
+    JOIN admin_dwell_session_slices AS rolled
+      ON rolled.session_id = sessions.id
+    JOIN candidate_days AS candidates USING (day_kst)
+    GROUP BY sessions.id, sessions.visitor_id, sessions.session_start
+  ), rolled_sessionized AS MATERIALIZED (
+    SELECT session_id,
+           visitor_id,
+           row_number() OVER (
+             PARTITION BY visitor_id
+             ORDER BY session_start, session_id
+           ) AS session_no
+    FROM rolled_candidate_sessions
   ), rolled_session_slices AS MATERIALIZED (
-    SELECT rolled.session_id,
+    SELECT sessions.visitor_id,
+           sessions.session_no,
            rolled.platform,
            rolled.day_kst,
            rolled.dwell_ms,
            rolled.event_count::bigint AS events
-    FROM admin_dwell_session_slices AS rolled
-    JOIN candidate_session_days AS candidates
-      USING (session_id, day_kst)
+    FROM rolled_sessionized AS sessions
+    JOIN admin_dwell_session_slices AS rolled
+      ON rolled.session_id = sessions.session_id
+    JOIN candidate_days AS candidates USING (day_kst)
   ), distribution_mismatches AS (
     SELECT 1
     FROM raw_session_slices AS raw
     FULL JOIN rolled_session_slices AS rolled
-      USING (session_id, platform, day_kst)
+      USING (visitor_id, session_no, platform, day_kst)
     WHERE rolled.dwell_ms IS DISTINCT FROM raw.dwell_ms
        OR rolled.events IS DISTINCT FROM raw.events
   ), raw_platform_counts AS (
-    SELECT platform, count(DISTINCT session_id)::bigint AS sessions
+    SELECT platform,
+           count(DISTINCT (visitor_id, session_no))::bigint AS sessions
     FROM raw_session_slices
     GROUP BY platform
   ), rolled_platform_counts AS (
-    SELECT platform, count(DISTINCT session_id)::bigint AS sessions
+    SELECT platform,
+           count(DISTINCT (visitor_id, session_no))::bigint AS sessions
     FROM rolled_session_slices
     GROUP BY platform
   ), platform_count_mismatches AS (
