@@ -114,8 +114,13 @@ main()
     if (browser) await browser.close();
     if (userIds.length === 2) {
       const [u1, u2] = [...userIds].sort();
-      const { data } = await admin.from("dm_conversations").select("id").eq("user1_id", u1).eq("user2_id", u2);
-      if (data?.length) await admin.from("dm_conversations").delete().in("id", data.map((row) => row.id));
+      const { data } = await admin
+        .from("dm_conversations")
+        .select("id")
+        .eq("user1_id", u1)
+        .eq("user2_id", u2)
+        .maybeSingle();
+      if (data) await admin.from("dm_conversations").delete().eq("id", data.id);
     }
     if (userIds.length) await admin.from("profiles").delete().in("id", userIds);
     for (const id of userIds) await admin.auth.admin.deleteUser(id);
