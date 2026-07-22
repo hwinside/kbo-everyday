@@ -106,18 +106,6 @@ export default function MyTeamHero({ myTeam, myTeamGame, embedded = false }: { m
               {(myTeamGame.status === "scheduled" || myTeamGame.status === "final") && (
                 <div className="text-[10px] text-text-tertiary">🏟 {myTeamGame.stadium}</div>
               )}
-              {myTeamGame.status === "scheduled" && weather && (
-                <div
-                  className={`whitespace-nowrap text-[10px] ${
-                    weather.pop !== null && weather.pop >= 60 ? "font-medium text-amber-400" : "text-text-tertiary"
-                  }`}
-                  title="경기 시간 기준 예보"
-                >
-                  {weather.emoji}
-                  {weather.temp !== null && ` ${weather.temp}°`}
-                  {weather.indoor ? " · 돔" : weather.pop !== null ? ` · 강수 ${weather.pop}%` : ""}
-                </div>
-              )}
               {myTeamGame.status === "scheduled" ? (
                 <div className="px-3 py-1 rounded-full bg-accent/10">
                   <span className="text-sm font-semibold text-accent">경기 예정</span>
@@ -141,6 +129,18 @@ export default function MyTeamHero({ myTeam, myTeamGame, embedded = false }: { m
               }`}>
                 {myTeamGame.status === "live" ? `LIVE ${myTeamGame.inning}` : myTeamGame.status === "cancelled" ? "경기 취소" : myTeamGame.status === "final" ? "경기 종료" : myTeamGame.dateLabel ? `${myTeamGame.dateLabel} ${myTeamGame.time}` : myTeamGame.time}
               </span>
+              {myTeamGame.status === "scheduled" && weather && (
+                <div
+                  className={`whitespace-nowrap text-[10px] ${
+                    weather.pop !== null && weather.pop >= 60 ? "font-medium text-amber-400" : "text-text-tertiary"
+                  }`}
+                  title="경기 시간 기준 예보"
+                >
+                  {weather.emoji}
+                  {weather.temp !== null && ` ${weather.temp}°`}
+                  {weather.indoor ? " · 돔" : weather.pop !== null ? ` · 강수 ${weather.pop}%` : ""}
+                </div>
+              )}
             </div>
             <div className="flex flex-col items-center gap-1.5 flex-1">
               <div className="w-8 h-8 rounded-full bg-white p-0.5 flex items-center justify-center">
