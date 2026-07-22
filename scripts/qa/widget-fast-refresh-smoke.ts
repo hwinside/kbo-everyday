@@ -17,6 +17,7 @@ import {
 } from "../../src/lib/notifications/widget-fast-loop";
 import { sendFcmToUsers } from "../../src/lib/notifications/fcm";
 import { deliverTokenChunks } from "../../src/lib/notifications/fcm-batch";
+import { fetchKboLiveGames } from "../../src/app/api/cron/game-events-warmup/route";
 import type { fansOfTeams } from "../../src/lib/notifications/game-status";
 import { supabaseAdmin } from "../../src/lib/supabase/admin";
 import type { KboRawGame } from "../../src/types/api";
@@ -69,7 +70,13 @@ check("schema: game 누락은 실패", parseKboGameListPayload({}) === null, tru
 check("schema: JSON null은 실패", parseKboGameListPayload(null) === null, true);
 check("schema: 행 G_ID 누락은 실패", parseKboGameListPayload({ game: [{ GAME_STATE_SC: "2", AWAY_NM: "LG", HOME_NM: "KT" }] }) === null, true);
 check("schema: 행 state 타입 손상은 실패", parseKboGameListPayload({ game: [{ G_ID: "G1", GAME_STATE_SC: 2, AWAY_NM: "LG", HOME_NM: "KT" }] }) === null, true);
-check("schema: 최소 유효 행 통과", parseKboGameListPayload({ game: [{ G_ID: "G1", GAME_STATE_SC: "2", AWAY_NM: "LG", HOME_NM: "KT" }] })?.length === 1, true);
+check("schema: 최소 유효 행 통과", parseKboGameListPayload({ game: [{ G_ID: "20260721LGKT0", GAME_STATE_SC: "2", AWAY_NM: "LG", HOME_NM: "KT" }] })?.length === 1, true);
+check("schema: unknown state 실패", parseKboGameListPayload({ game: [{ G_ID: "20260721LGKT0", GAME_STATE_SC: "BROKEN", AWAY_NM: "LG", HOME_NM: "KT" }] }) === null, true);
+check("schema: malformed game id 실패", parseKboGameListPayload({ game: [{ G_ID: "x", GAME_STATE_SC: "2", AWAY_NM: "LG", HOME_NM: "KT" }] }) === null, true);
+check("schema: 빈 원정 팀명 실패", parseKboGameListPayload({ game: [{ G_ID: "20260721LGKT0", GAME_STATE_SC: "2", AWAY_NM: "  ", HOME_NM: "KT" }] }) === null, true);
+check("schema: 빈 홈 팀명 실패", parseKboGameListPayload({ game: [{ G_ID: "20260721LGKT0", GAME_STATE_SC: "2", AWAY_NM: "LG", HOME_NM: "" }] }) === null, true);
+check("schema: state 1/2/3 domain 통과", ["1", "2", "3"].every((state) =>
+  parseKboGameListPayload({ game: [{ G_ID: "20260721LGKT0", GAME_STATE_SC: state, AWAY_NM: "LG", HOME_NM: "KT" }] })?.length === 1), true);
 
 // ---------------------------------------------------------------------------
 // fast-loop 오케스트레이션 (삼순 blocker①②) — fake clock으로 절대 deadline/오류 분기 검증.
@@ -253,6 +260,25 @@ async function runBatchRetryTests() {
   );
   checkNum("batch: deadline 뒤 미시도 토큰 전부 retryable", deadline.retryableFailed, 3);
   check("batch: deadline 뒤 chunk 시작 안 함", deadline.lastError === "deadline_exceeded", true);
+
+  const hangStartedAt = Date.now();
+  const hanging = await deliverTokenChunks(
+    ["a", "b", "c"],
+    () => new Promise(() => {}),
+    2,
+    { deadlineAtMs: hangStartedAt + 10 },
+  );
+  check("batch: 시작한 무응답 chunk도 deadline에 반환", Date.now() - hangStartedAt < 250, true);
+  checkNum("batch: 무응답 chunk+잔여 토큰 retryable", hanging.retryableFailed, 3);
+  check("batch: 무응답 chunk deadline 오류", hanging.lastError === "deadline_exceeded", true);
+}
+
+async function runKboFetchDeadlineTests() {
+  const startedAt = Date.now();
+  const neverFetch = (() => new Promise<Response>(() => {})) as typeof fetch;
+  const result = await fetchKboLiveGames("20260722", startedAt + 10, neverFetch);
+  check("kbo: 초기 fetch 무응답도 deadline에 반환", Date.now() - startedAt < 250, true);
+  check("kbo: 초기 fetch timeout은 retryable ok:false", result.ok, false);
 }
 
 // ---------------------------------------------------------------------------
@@ -273,6 +299,7 @@ async function runTokenQueryTests() {
   });
 
   const eqCalls: Array<{ table: string; col: string; val: unknown }> = [];
+  let hangingTable: string | null = null;
   const fakeFrom = (table: string) => {
     const q = {
       select: () => q,
@@ -283,7 +310,9 @@ async function runTokenQueryTests() {
       order: () => q,
       limit: () => q,
       abortSignal: () => q,
-      then: (resolve: (v: { data: unknown[]; error: null }) => void) => resolve({ data: [], error: null }),
+      then: (resolve: (v: { data: unknown[]; error: null }) => void) => {
+        if (hangingTable !== table) resolve({ data: [], error: null });
+      },
     };
     return q;
   };
@@ -299,12 +328,31 @@ async function runTokenQueryTests() {
   await sendFcmToUsers(["u1"], payload, undefined);
   check("fcm: platform 미지정 → platform 필터 없음(iOS 포함 = 기존 동작)",
     eqCalls.some((c) => c.col === "platform"), false);
+
+  hangingTable = "notification_prefs";
+  const prefsStartedAt = Date.now();
+  const prefsTimeout = await sendFcmToUsers(
+    ["u1"], payload, "game_start", "android", { deadlineAtMs: prefsStartedAt + 10 },
+  );
+  check("fcm: 무응답 prefs query도 deadline에 반환", Date.now() - prefsStartedAt < 250, true);
+  check("fcm: prefs timeout은 ok:false", prefsTimeout.ok, false);
+  check("fcm: prefs timeout 오류 계약", prefsTimeout.lastError === "deadline_exceeded", true);
+
+  hangingTable = "device_push_tokens";
+  const tokenStartedAt = Date.now();
+  const tokenTimeout = await sendFcmToUsers(
+    ["u1"], payload, undefined, "android", { deadlineAtMs: tokenStartedAt + 10 },
+  );
+  check("fcm: 무응답 token query도 deadline에 반환", Date.now() - tokenStartedAt < 250, true);
+  check("fcm: token timeout은 ok:false", tokenTimeout.ok, false);
+  check("fcm: token timeout 오류 계약", tokenTimeout.lastError === "deadline_exceeded", true);
 }
 
 (async () => {
   await runLoopTests();
   await runPushTests();
   await runBatchRetryTests();
+  await runKboFetchDeadlineTests();
   await runTokenQueryTests();
   console.log(`\nwidget-fast-refresh smoke: ${pass} passed, ${fail} failed`);
   process.exit(fail === 0 ? 0 : 1);

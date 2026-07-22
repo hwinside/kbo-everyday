@@ -1,5 +1,6 @@
 import { fetchAllByKeyset } from "@/lib/db/paginate";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
+import { runBeforeDeadline } from "@/lib/async-deadline";
 
 interface ProfileIdRow {
   id: string;
@@ -29,7 +30,7 @@ export function fetchTeamFanIds(teamIds: number[], opts?: { deadlineAtMs?: numbe
       .limit(limit);
     if (cursor !== null) query = query.gt("id", cursor);
     if (remainingMs != null) query = query.abortSignal(AbortSignal.timeout(Math.max(1, remainingMs)));
-    const { data, error } = await query;
+    const { data, error } = await runBeforeDeadline(() => query, opts?.deadlineAtMs);
     return { data: data as ProfileIdRow[] | null, error };
   });
 }

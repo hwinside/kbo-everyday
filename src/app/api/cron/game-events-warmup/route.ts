@@ -14,6 +14,7 @@ import {
   FAST_LOOP_DEADLINE_MS,
   parseKboGameListPayload,
 } from "@/lib/notifications/widget-fast-loop";
+import { runBeforeDeadline } from "@/lib/async-deadline";
 
 /**
  * Warm up the in-memory prevState cache of /api/game-events for every
@@ -42,11 +43,12 @@ function getKSTDateStr(): string {
 // KBO 라이브 스코어보드 원천 — fast-refresh 루프가 매 사이클 신선한 games를 다시 읽도록 추출.
 // (2026-05-20: KBO가 Referer가 koreabaseball.com이 아닌 요청을 IE 에러 페이지로 막음.)
 // ok:false = HTTP/network 실패 — fast-loop가 "라이브 0(정상 종료)"과 구분해 다음 tick에
-// 재시도하도록 오류를 빈 배열로 축약하지 않는다(삼순 blocker②). timeoutMs 지정 시 abort로
+// 재시도하도록 오류를 빈 배열로 축약하지 않는다(삼순 blocker②). deadlineAtMs 지정 시 abort로
 // fetch 완료도 deadline 안에 묶는다(미지정 = 기존 동작 그대로, 메인 경로 무변경).
-async function fetchKboLiveGames(
+export async function fetchKboLiveGames(
   date: string,
-  timeoutMs?: number,
+  deadlineAtMs?: number,
+  fetchImpl: typeof fetch = fetch,
 ): Promise<{
   ok: boolean;
   games: KboRawGame[];
@@ -54,19 +56,23 @@ async function fetchKboLiveGames(
 }> {
   const sourceAtMs = Date.now();
   try {
-    const r = await fetch(`${KBO_MAIN}/GetKboGameList`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)",
-        "Referer": "https://www.koreabaseball.com/Schedule/ScoreBoard.aspx",
-      },
-      body: `leId=1&srId=0,1,3,4,5,7,8,9&date=${date}`,
-      cache: "no-store",
-      ...(timeoutMs != null ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
-    });
+    const remainingMs = deadlineAtMs == null ? null : deadlineAtMs - Date.now();
+    const r = await runBeforeDeadline(
+      () => fetchImpl(`${KBO_MAIN}/GetKboGameList`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)",
+          "Referer": "https://www.koreabaseball.com/Schedule/ScoreBoard.aspx",
+        },
+        body: `leId=1&srId=0,1,3,4,5,7,8,9&date=${date}`,
+        cache: "no-store",
+        ...(remainingMs != null ? { signal: AbortSignal.timeout(Math.max(1, remainingMs)) } : {}),
+      }),
+      deadlineAtMs,
+    );
     if (!r.ok) return { ok: false, games: [], trace: { sourceAtMs, fetchedAtMs: Date.now() } };
-    const json = await r.json().catch(() => null);
+    const json = await runBeforeDeadline(() => r.json(), deadlineAtMs).catch(() => null);
     const games = parseKboGameListPayload(json);
     const fetchedAtMs = Date.now();
     if (games === null) return { ok: false, games: [], trace: { sourceAtMs, fetchedAtMs } };
@@ -107,9 +113,13 @@ export async function GET(req: NextRequest) {
   }
 
   const date = getKSTDateStr();
+  const deadlineAtMs = requestStartMs + FAST_LOOP_DEADLINE_MS;
   // 손상 응답은 정상 "라이브 0"으로 보지 않는다. 본체 알림은 이번 틱 skip하되 fast-loop는
   // +20/+40초 재시도해 일시 KBO parse/schema 오류를 다음 분까지 끌지 않는다.
-  const initialFetch = await fetchKboLiveGames(date);
+  const initialFetch = await fetchKboLiveGames(
+    date,
+    Math.min(deadlineAtMs, Date.now() + 10_000),
+  );
   const games: KboRawGame[] = initialFetch.ok ? initialFetch.games : [];
   const liveGameIds = games
     .filter(g => g.GAME_STATE_SC === "2" && g.G_ID)
@@ -149,14 +159,13 @@ export async function GET(req: NextRequest) {
   }
 
   const shouldRetryFast = !initialFetch.ok || liveGameIds.length > 0;
-  const deadlineAtMs = requestStartMs + FAST_LOOP_DEADLINE_MS;
   const fastRefreshPromise = shouldRetryFast
     ? runWidgetFastLoop(
         {
           now: () => Date.now(),
           sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
           fetchLiveGames: () =>
-            fetchKboLiveGames(date, Math.min(10_000, Math.max(1, deadlineAtMs - Date.now()))),
+            fetchKboLiveGames(date, Math.min(deadlineAtMs, Date.now() + 10_000)),
           pushWidgets: (freshGames, trace) =>
             pushAndroidWidgetLiveUpdates(freshGames, baseUrl, {
               dedupeAgainstLast: true,

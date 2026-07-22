@@ -4,6 +4,7 @@ import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { DEFAULT_PREFS, type PrefKey } from "@/lib/notifications/prefs";
 import { fetchAllByKeyset } from "@/lib/db/paginate";
 import { deliverTokenChunks } from "@/lib/notifications/fcm-batch";
+import { runBeforeDeadline } from "@/lib/async-deadline";
 
 // FCM 발송 공용 헬퍼 (push-notifications-v1 S3).
 // 디스패처(/api/notifications/dispatch)와 어드민 수동 발송(/api/admin/push/send-fcm)이 공용.
@@ -163,10 +164,13 @@ async function sendFcmToUsersInner(
       if (remainingMs != null && remainingMs <= 0) {
         return { tokens: 0, sent: 0, failed: 0, cleaned: 0, skipped: 0, ok: false, lastError: "deadline_exceeded" };
       }
-      const { data: prefRows, error: prefErr } = await supabase
-        .from("notification_prefs")
-        .select(`user_id, ${prefKey}`)
-        .in("user_id", slice);
+      const { data: prefRows, error: prefErr } = await runBeforeDeadline(
+        () => supabase
+          .from("notification_prefs")
+          .select(`user_id, ${prefKey}`)
+          .in("user_id", slice),
+        opts?.deadlineAtMs,
+      );
       if (prefErr) {
         console.error("[fcm] prefs query failed:", prefErr.message);
         return { tokens: 0, sent: 0, failed: 0, cleaned: 0, skipped: 0, ok: false };
@@ -200,7 +204,7 @@ async function sendFcmToUsersInner(
         if (opts?.minAppBuild != null) tokenQuery = tokenQuery.gte("app_build", opts.minAppBuild);
         if (cursor !== null) tokenQuery = tokenQuery.gt("id", cursor);
         if (remainingMs != null) tokenQuery = tokenQuery.abortSignal(AbortSignal.timeout(Math.max(1, remainingMs)));
-        return tokenQuery;
+        return runBeforeDeadline(() => tokenQuery, opts?.deadlineAtMs);
       },
       (row) => row.id,
       { label: "FCM device token targets" },
@@ -299,10 +303,17 @@ export async function sendFcmToTokens(
   const CLEANUP_CHUNK = 200;
   for (let i = 0; i < delivery.invalid.length; i += CLEANUP_CHUNK) {
     if (opts?.deadlineAtMs != null && Date.now() >= opts.deadlineAtMs) break;
-    const { error: cleanupError } = await supabase
+    let cleanupQuery = supabase
       .from("device_push_tokens")
       .delete()
       .in("fcm_token", delivery.invalid.slice(i, i + CLEANUP_CHUNK));
+    if (opts?.deadlineAtMs != null) {
+      cleanupQuery = cleanupQuery.abortSignal(AbortSignal.timeout(Math.max(1, opts.deadlineAtMs - Date.now())));
+    }
+    const { error: cleanupError } = await runBeforeDeadline(
+      () => cleanupQuery,
+      opts?.deadlineAtMs,
+    );
     if (cleanupError) console.error("[fcm] invalid token cleanup failed:", cleanupError.message);
   }
 

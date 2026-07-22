@@ -1,3 +1,5 @@
+import { isDeadlineExceeded, runBeforeDeadline } from "@/lib/async-deadline";
+
 export interface FcmChunkResponse {
   successCount: number;
   failureCount: number;
@@ -60,7 +62,11 @@ export async function deliverTokenChunks(
     }
     const chunk = tokens.slice(i, i + chunkSize);
     try {
-      const response = await sendChunk(chunk);
+      const response = await runBeforeDeadline(
+        () => sendChunk(chunk),
+        opts?.deadlineAtMs,
+        now,
+      );
       sent += response.successCount;
       failed += response.failureCount;
       response.responses.forEach((item, index) => {
@@ -69,6 +75,14 @@ export async function deliverTokenChunks(
         else if (TRANSIENT_TOKEN_CODES.has(code)) retryableFailed += 1;
       });
     } catch (error) {
+      if (isDeadlineExceeded(error)) {
+        const unfinished = tokens.length - i;
+        ok = false;
+        failed += unfinished;
+        retryableFailed += unfinished;
+        lastError = "deadline_exceeded";
+        break;
+      }
       ok = false;
       failed += chunk.length;
       retryableFailed += chunk.length;

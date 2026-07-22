@@ -32,9 +32,10 @@ export function parseKboGameListPayload(value: unknown): KboRawGame[] | null {
   for (const row of games) {
     if (row === null || typeof row !== "object") return null;
     const game = row as Record<string, unknown>;
-    if (typeof game.G_ID !== "string" || game.G_ID.length === 0) return null;
-    if (typeof game.GAME_STATE_SC !== "string" || game.GAME_STATE_SC.length === 0) return null;
-    if (typeof game.AWAY_NM !== "string" || typeof game.HOME_NM !== "string") return null;
+    if (typeof game.G_ID !== "string" || !/^\d{8}[A-Z]{4}\d$/.test(game.G_ID)) return null;
+    if (typeof game.GAME_STATE_SC !== "string" || !["1", "2", "3"].includes(game.GAME_STATE_SC)) return null;
+    if (typeof game.AWAY_NM !== "string" || game.AWAY_NM.trim().length === 0) return null;
+    if (typeof game.HOME_NM !== "string" || game.HOME_NM.trim().length === 0) return null;
   }
   return games as KboRawGame[];
 }
