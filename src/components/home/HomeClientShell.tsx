@@ -104,6 +104,7 @@ type MyTeamHeroGame = HomeGame & {
   currentPitcher: string | null;
   isTop: boolean;
   dateLabel?: string | null;
+  dateISO?: string;
 };
 
 type WidgetGame = HomeGame & {
@@ -326,8 +327,12 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
       currentBatter: null, currentPitcher: null, isTop: true,
     });
     // 예정 경기엔 날짜 라벨('7월 12일 (일)') 부착 — 오늘 예정 경기는 dateISO가 없으므로 오늘로 폴백(위젯과 동일 규칙).
-    const withDateLabel = (g: MyTeamHeroGame, dateISO?: string): MyTeamHeroGame =>
-      g.status === "scheduled" ? { ...g, dateLabel: formatKoreanDate(dateISO ?? formatKSTDateOffset(0)) } : g;
+    const withDateLabel = (g: MyTeamHeroGame, dateISO?: string): MyTeamHeroGame => {
+      const resolvedDate = dateISO ?? formatKSTDateOffset(0);
+      return g.status === "scheduled"
+        ? { ...g, dateISO: resolvedDate, dateLabel: formatKoreanDate(resolvedDate) }
+        : g;
+    };
     if (isOvernight && overnightGame) return coerce(overnightGame);
     if (myTeamGame) return withDateLabel(myTeamGame);
     if (nextWidgetGame) return withDateLabel(coerce(nextWidgetGame), nextWidgetGame.dateISO);

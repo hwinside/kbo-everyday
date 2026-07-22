@@ -1,3 +1,6 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { getTeamBgColor } from "@/lib/constants/teams";
@@ -6,6 +9,7 @@ import { getTeamShortName, getTeamLogo } from "@/lib/utils/team";
 import Diamond from "@/components/game/Diamond";
 import type { TeamData } from "@/lib/constants/teams";
 import type { BroadcastChannel } from "@/lib/broadcast-channels";
+import { pickGameWeather, type GameWeather, type StadiumWeatherMap } from "@/lib/weather/stadium-weather";
 
 interface HomeGame {
   id: string;
@@ -32,9 +36,37 @@ interface HomeGame {
   losePitcher?: string | null;
   broadcastChannels?: BroadcastChannel[];
   dateLabel?: string | null; // 예정 경기 날짜 라벨 ('7월 12일 (일)') — 시간 pill에 병기
+  dateISO?: string; // 날씨 조회용 경기 날짜 (YYYY-MM-DD)
 }
 
 export default function MyTeamHero({ myTeam, myTeamGame, embedded = false }: { myTeam: TeamData; myTeamGame: HomeGame; embedded?: boolean }) {
+  const { status, dateISO, stadium, time } = myTeamGame;
+  const weatherKey = status === "scheduled" && dateISO && stadium
+    ? `${dateISO}|${stadium}|${time}`
+    : null;
+  const [weatherState, setWeatherState] = useState<{ key: string; value: GameWeather | null } | null>(null);
+  const weather = weatherState?.key === weatherKey ? weatherState.value : null;
+
+  useEffect(() => {
+    if (!weatherKey || !dateISO) return;
+
+    let cancelled = false;
+    fetch(`/api/weather?date=${dateISO.replace(/-/g, "")}&stadiums=${encodeURIComponent(stadium)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { stadiums?: StadiumWeatherMap } | null) => {
+        if (cancelled) return;
+        setWeatherState({
+          key: weatherKey,
+          value: pickGameWeather(data?.stadiums?.[stadium], { status, time }, dateISO),
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setWeatherState({ key: weatherKey, value: null });
+      });
+
+    return () => { cancelled = true; };
+  }, [weatherKey, status, dateISO, stadium, time]);
+
   return (
     <div className={embedded ? "" : "mb-3"}>
       <Link href={`/games/${myTeamGame.id}`}>
@@ -73,6 +105,18 @@ export default function MyTeamHero({ myTeam, myTeamGame, embedded = false }: { m
             <div className="flex min-w-0 flex-col items-center gap-1.5 text-center">
               {(myTeamGame.status === "scheduled" || myTeamGame.status === "final") && (
                 <div className="text-[10px] text-text-tertiary">🏟 {myTeamGame.stadium}</div>
+              )}
+              {myTeamGame.status === "scheduled" && weather && (
+                <div
+                  className={`whitespace-nowrap text-[10px] ${
+                    weather.pop !== null && weather.pop >= 60 ? "font-medium text-amber-400" : "text-text-tertiary"
+                  }`}
+                  title="경기 시간 기준 예보"
+                >
+                  {weather.emoji}
+                  {weather.temp !== null && ` ${weather.temp}°`}
+                  {weather.indoor ? " · 돔" : weather.pop !== null ? ` · 강수 ${weather.pop}%` : ""}
+                </div>
               )}
               {myTeamGame.status === "scheduled" ? (
                 <div className="px-3 py-1 rounded-full bg-accent/10">
