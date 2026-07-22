@@ -1052,11 +1052,32 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
                     <TeamBadge teamId={prominent!.teamId!} playerName={prominentPlayers} />
                   )
                 ) : (
-                  post.team_id ? <TeamBadge teamId={post.team_id} /> : null
+                  post.team_id ? (
+                    post.author_id ? (
+                      <Link
+                        href={`/profile/${post.author_id}`}
+                        aria-label={`${post.nickname || "익명"} 프로필 보기`}
+                        className="shrink-0 active:opacity-70 transition-opacity"
+                      >
+                        <TeamBadge teamId={post.team_id} />
+                      </Link>
+                    ) : (
+                      <TeamBadge teamId={post.team_id} />
+                    )
+                  ) : null
                 )}
-                <span className="text-base font-medium text-text-primary truncate">
-                  {post.nickname || "익명"}
-                </span>
+                {post.author_id ? (
+                  <Link
+                    href={`/profile/${post.author_id}`}
+                    className="min-w-0 truncate text-base font-medium text-text-primary active:opacity-70 transition-opacity"
+                  >
+                    {post.nickname || "익명"}
+                  </Link>
+                ) : (
+                  <span className="min-w-0 truncate text-base font-medium text-text-primary">
+                    {post.nickname || "익명"}
+                  </span>
+                )}
                 {post.grade === "staff" && (
                   <span className="ml-1 px-1.5 py-0.5 text-[10px] font-bold bg-accent/20 text-accent rounded-full">
                     운영팀

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
 import { Heart, MessageCircle, Play, Share2 } from "lucide-react";
+import Link from "next/link";
 import TeamBadge from "@/components/ui/TeamBadge";
 import LinkPreview from "@/components/community/LinkPreview";
 import type { Post } from "@/lib/types";
@@ -50,11 +51,24 @@ export default function PostCard({ post, onPress, playerLabel, sourceLabel }: Po
         {playerLabel ? (
           <TeamBadge teamId={playerLabel.teamId} playerName={playerLabel.playerName} />
         ) : (
-          post.author?.myTeamId ? <TeamBadge teamId={post.author.myTeamId} /> : null
+          post.author?.myTeamId ? (
+            <Link
+              href={`/profile/${post.authorId}`}
+              aria-label={`${post.author.nickname || "익명"} 프로필 보기`}
+              onClick={(e) => e.stopPropagation()}
+              className="shrink-0 active:opacity-70 transition-opacity"
+            >
+              <TeamBadge teamId={post.author.myTeamId} />
+            </Link>
+          ) : null
         )}
-        <span className="text-base font-medium text-text-primary truncate">
+        <Link
+          href={`/profile/${post.authorId}`}
+          onClick={(e) => e.stopPropagation()}
+          className="min-w-0 truncate text-base font-medium text-text-primary active:opacity-70 transition-opacity"
+        >
           {post.author?.nickname ?? "익명"}
-        </span>
+        </Link>
         {post.author?.grade === 'staff' && (
           <span className='ml-1 px-1.5 py-0.5 text-[10px] font-bold bg-accent/20 text-accent rounded-full'>운영팀</span>
         )}
