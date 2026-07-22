@@ -38,6 +38,7 @@ import { ChevronUp, ChevronDown } from "lucide-react";
 import ScoreBoard from "@/components/game/ScoreBoard";
 import AdminOnly from "@/components/admin/AdminOnly";
 import VenueStorySection from "@/components/game/VenueStorySection";
+import GameChat from "@/components/game/GameChat";
 import KgwanTab from "@/components/game/KgwanTab";
 import LineupTab from "@/components/game/LineupTab";
 import AllStarEntryRoster from "@/components/game/AllStarEntryRoster";
@@ -478,7 +479,9 @@ export default function GameDetailPage() {
         </div>
       )}
 
-      {d.derivedStatus !== "cancelled" && (
+      {d.derivedStatus === "cancelled" ? (
+        <GameChat gameId={gameId} homeTeamId={game.homeTeamId} awayTeamId={game.awayTeamId} />
+      ) : (
         <>
           {/* 직관 라이브 — WIP 실환경 QA 동안 관리자에게만 노출 */}
           <AdminOnly>
