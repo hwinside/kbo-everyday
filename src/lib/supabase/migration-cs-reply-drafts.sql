@@ -5,15 +5,21 @@ create table if not exists public.cs_reply_drafts (
   id uuid primary key default gen_random_uuid(),
   token text unique not null,                 -- 1회용 고엔트로피 토큰(링크 capability)
   cs_id text not null,                        -- feedback:<id> | dm:<conv>:<msg>
-  kind text not null check (kind in ('feedback', 'dm')),
-  user_id uuid not null,                      -- 수신 유저
+  kind text not null check (kind in ('feedback', 'dm', 'store_review')),
+  user_id uuid,                               -- 수신 유저(store_review는 null)
   conversation_id uuid,                       -- dm 건의 대화 id (nullable)
   feedback_id uuid,                           -- feedback 건의 id (uuid, nullable)
   body text not null,                         -- 발송할 초안 본문
-  status text not null default 'pending' check (status in ('pending', 'sent', 'canceled')),
+  status text not null default 'pending' check (status in ('pending', 'approved', 'processing', 'sent', 'canceled')),
   created_at timestamptz not null default now(),
   sent_at timestamptz,
-  expires_at timestamptz not null default (now() + interval '7 days')
+  approved_at timestamptz,
+  processing_at timestamptz,
+  expires_at timestamptz not null default (now() + interval '7 days'),
+  constraint cs_reply_drafts_target_shape_check check (
+    (kind = 'store_review' and user_id is null and conversation_id is null and feedback_id is null)
+    or (kind in ('feedback', 'dm') and user_id is not null)
+  )
 );
 
 create index if not exists cs_reply_drafts_cs_id_idx on public.cs_reply_drafts (cs_id);

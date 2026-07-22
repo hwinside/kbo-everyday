@@ -115,7 +115,7 @@ export async function POST(
     .from("cs_reply_drafts")
     .update({ escalate_requested_at: now })
     .eq("token", token)
-    .in("status", ["pending", "sent"])
+    .in("status", ["pending", "approved", "processing", "sent"])
     .gte("expires_at", now)
     .is("escalate_requested_at", null)
     .is("escalated_at", null)
