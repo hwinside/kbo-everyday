@@ -12,6 +12,7 @@ import {
 } from "../../src/lib/notifications/android-widget-live";
 import {
   runWidgetFastLoop,
+  startWidgetRefreshPipelines,
   parseKboGameListPayload,
   type FastLoopDeps,
 } from "../../src/lib/notifications/widget-fast-loop";
@@ -122,6 +123,21 @@ function makeLoopHarness(startAtMs: number, steps: FetchStep[]) {
 }
 
 async function runLoopTests() {
+  // 초기 push가 hang해도 fast-loop는 같은 tick에서 즉시 시작한다.
+  {
+    let releaseInitial!: () => void;
+    let fastStarted = false;
+    const initialGate = new Promise<void>((resolve) => { releaseInitial = resolve; });
+    const pipelines = startWidgetRefreshPipelines({
+      pushInitial: () => initialGate.then(() => ({ sent: 0 })),
+      runFast: async () => { fastStarted = true; return []; },
+    });
+    await Promise.resolve();
+    check("loop: 초기 push hang 중에도 fast-loop 즉시 시작", fastStarted, true);
+    releaseInitial();
+    await Promise.all([pipelines.initialPromise, pipelines.fastPromise]);
+  }
+
   // 정상: warmup 5s 소요 → +20/+40s tick 모두 실행 (요청 진입 기준).
   {
     const h = makeLoopHarness(5_000, [{ ok: true, games: [LIVE_GAME] }]);
@@ -370,8 +386,12 @@ async function runTokenQueryTests() {
   });
 
   const eqCalls: Array<{ table: string; col: string; val: unknown }> = [];
+  const abortSignalCalls: string[] = [];
+  let hangingActive = 0;
+  let hangingAborted = 0;
   let hangingTable: string | null = null;
   const fakeFrom = (table: string) => {
+    let querySignal: AbortSignal | undefined;
     const q = {
       select: () => q,
       in: () => q,
@@ -380,9 +400,27 @@ async function runTokenQueryTests() {
       gt: () => q,
       order: () => q,
       limit: () => q,
-      abortSignal: () => q,
-      then: (resolve: (v: { data: unknown[]; error: null }) => void) => {
-        if (hangingTable !== table) resolve({ data: [], error: null });
+      abortSignal: (signal: AbortSignal) => {
+        querySignal = signal;
+        abortSignalCalls.push(table);
+        return q;
+      },
+      then: (
+        resolve: (v: { data: unknown[]; error: null }) => void,
+        reject: (reason: unknown) => void,
+      ) => {
+        if (hangingTable !== table) {
+          resolve({ data: [], error: null });
+          return;
+        }
+        hangingActive += 1;
+        const onAbort = () => {
+          hangingActive -= 1;
+          hangingAborted += 1;
+          reject(new DOMException("aborted", "AbortError"));
+        };
+        if (querySignal?.aborted) onAbort();
+        else querySignal?.addEventListener("abort", onAbort, { once: true });
       },
     };
     return q;
@@ -408,6 +446,10 @@ async function runTokenQueryTests() {
   check("fcm: 무응답 prefs query도 deadline에 반환", Date.now() - prefsStartedAt < 250, true);
   check("fcm: prefs timeout은 ok:false", prefsTimeout.ok, false);
   check("fcm: prefs timeout 오류 계약", prefsTimeout.lastError === "deadline_exceeded", true);
+  check("fcm: prefs query에 AbortSignal 전달", abortSignalCalls.includes("notification_prefs"), true);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  checkNum("fcm: prefs timeout 뒤 active DB 요청 0", hangingActive, 0);
+  checkNum("fcm: prefs timeout이 실제 DB 요청 abort", hangingAborted, 1);
 
   hangingTable = "device_push_tokens";
   const tokenStartedAt = Date.now();

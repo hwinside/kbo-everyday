@@ -57,6 +57,19 @@ export interface FastLoopTick {
 }
 
 /**
+ * 초기 위젯 push와 +20/+40 fast-loop를 같은 tick에서 시작한다. 어느 한쪽이 지연돼도
+ * 다른 쪽의 시작을 막지 않도록 Promise를 먼저 둘 다 만들고, route 본작업과 병렬로 둔다.
+ */
+export function startWidgetRefreshPipelines<T>(deps: {
+  pushInitial(): Promise<T>;
+  runFast(): Promise<FastLoopTick[]>;
+}): { initialPromise: Promise<T>; fastPromise: Promise<FastLoopTick[]> } {
+  const initialPromise = deps.pushInitial();
+  const fastPromise = deps.runFast();
+  return { initialPromise, fastPromise };
+}
+
+/**
  * fast-refresh 루프 실행. 각 tick은 requestStartMs + target 시점에 발사되며,
  * 모든 단계(sleep 시작·fetch 시작·push 시작)가 requestStartMs + deadlineMs 안에서만 시작된다.
  * 정상 응답에 라이브 경기가 0이면 종료, fetch 실패면 다음 tick 재시도.

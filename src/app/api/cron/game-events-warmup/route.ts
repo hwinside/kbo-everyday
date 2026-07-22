@@ -11,6 +11,7 @@ import { pushAndroidWidgetLiveUpdates } from "@/lib/notifications/android-widget
 import { pushIosWidgetLiveUpdates } from "@/lib/notifications/ios-widget-live";
 import {
   runWidgetFastLoop,
+  startWidgetRefreshPipelines,
   FAST_LOOP_DEADLINE_MS,
   parseKboGameListPayload,
 } from "@/lib/notifications/widget-fast-loop";
@@ -138,46 +139,48 @@ export async function GET(req: NextRequest) {
         ? `https://${process.env.VERCEL_URL}`
         : req.nextUrl.origin);
 
-  // 초기 Android 발송을 KBO fetch 직후 먼저 끝내고, 추가 +20/+40초 loop는 즉시 Promise로
-  // 시작한다. 이후 무거운 warmup 알림/LA 작업과 병렬 실행하므로 이들 지연이 fast tick 시작을
-  // 막지 않는다. fans→token→FCM까지 같은 절대 deadline을 전파한다.
-  let androidWidget:
+  // 초기 Android 발송과 추가 +20/+40초 loop를 KBO fetch 직후 동시에 시작한다.
+  // 초기 push가 deadline까지 지연돼도 fast tick 시작을 막지 않으며, 둘 다 이후 무거운
+  // warmup 알림/LA 작업과 병렬 실행한다. fans→token→FCM까지 같은 절대 deadline을 전파한다.
+  type AndroidWidgetResult =
     | { games: number; sent: number; failed: number; cleaned: number; skipped: number; retryableFailed: number }
-    | { error: string } = { games: 0, sent: 0, failed: 0, cleaned: 0, skipped: 0, retryableFailed: 0 };
-  if (initialFetch.ok) {
-    try {
-      androidWidget = await pushAndroidWidgetLiveUpdates(games, baseUrl, {
-        deadlineAtMs,
-        sourceAtMs: initialFetch.trace.sourceAtMs,
-        fetchedAtMs: initialFetch.trace.fetchedAtMs,
-      });
-    } catch (e) {
-      androidWidget = { error: (e as Error).message };
-      console.error("[warmup] android widget live update failed:", (e as Error).message);
-    }
-  } else {
-    androidWidget = { error: "kbo_fetch_failed" };
-  }
+    | { error: string };
 
   const shouldRetryFast = !initialFetch.ok || liveGameIds.length > 0;
-  const fastRefreshPromise = shouldRetryFast
-    ? runWidgetFastLoop(
-        {
-          now: () => Date.now(),
-          sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
-          fetchLiveGames: () =>
-            fetchKboLiveGames(date, Math.min(deadlineAtMs, Date.now() + 10_000)),
-          pushWidgets: (freshGames, trace) =>
-            pushAndroidWidgetLiveUpdates(freshGames, baseUrl, {
-              dedupeAgainstLast: true,
-              deadlineAtMs,
-              sourceAtMs: trace.sourceAtMs,
-              fetchedAtMs: trace.fetchedAtMs,
-            }),
-        },
-        { requestStartMs },
-      )
-    : Promise.resolve([]);
+  const { initialPromise: androidWidgetPromise, fastPromise: fastRefreshPromise } =
+    startWidgetRefreshPipelines<AndroidWidgetResult>({
+      pushInitial: async () => {
+        if (!initialFetch.ok) return { error: "kbo_fetch_failed" };
+        try {
+          return await pushAndroidWidgetLiveUpdates(games, baseUrl, {
+            deadlineAtMs,
+            sourceAtMs: initialFetch.trace.sourceAtMs,
+            fetchedAtMs: initialFetch.trace.fetchedAtMs,
+          });
+        } catch (e) {
+          console.error("[warmup] android widget live update failed:", (e as Error).message);
+          return { error: (e as Error).message };
+        }
+      },
+      runFast: () => shouldRetryFast
+        ? runWidgetFastLoop(
+            {
+              now: () => Date.now(),
+              sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+              fetchLiveGames: () =>
+                fetchKboLiveGames(date, Math.min(deadlineAtMs, Date.now() + 10_000)),
+              pushWidgets: (freshGames, trace) =>
+                pushAndroidWidgetLiveUpdates(freshGames, baseUrl, {
+                  dedupeAgainstLast: true,
+                  deadlineAtMs,
+                  sourceAtMs: trace.sourceAtMs,
+                  fetchedAtMs: trace.fetchedAtMs,
+                }),
+            },
+            { requestStartMs },
+          )
+        : Promise.resolve([]),
+    });
 
   const results = await Promise.allSettled(
     liveGameIds.map(gameId =>
@@ -350,7 +353,10 @@ export async function GET(req: NextRequest) {
   // 상태가 바뀐 경기만 발사해 배터리/FCM 쿼터 부담을 막는다. deadline은 *요청 진입 시각*
   // 기준 절대값(FAST_LOOP_DEADLINE_MS)이라 위 warmup 본작업이 오래 걸려도 maxDuration(60s)/
   // 다음 크론 틱과 겹치지 않는다. 오케스트레이션은 widget-fast-loop.ts(테스트 커버) 참조.
-  const fastRefresh = await fastRefreshPromise;
+  const [androidWidget, fastRefresh] = await Promise.all([
+    androidWidgetPromise,
+    fastRefreshPromise,
+  ]);
 
   return NextResponse.json({
     date,

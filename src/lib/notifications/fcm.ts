@@ -4,7 +4,7 @@ import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { DEFAULT_PREFS, type PrefKey } from "@/lib/notifications/prefs";
 import { fetchAllByKeyset } from "@/lib/db/paginate";
 import { deliverTokenChunks } from "@/lib/notifications/fcm-batch";
-import { runBeforeDeadline } from "@/lib/async-deadline";
+import { isDeadlineExceeded, runBeforeDeadline } from "@/lib/async-deadline";
 import {
   sendDeadlineFcmChunk,
   type DeadlineFcmMessage,
@@ -134,9 +134,13 @@ export async function sendFcmToUsers(
     // getFcm()의 JSON parse/init 또는 sendEachForMulticast throw 등 —
     // ok:false로 호출자(game-status unclaim)가 재시도하게 함 (삼순 #210 재리뷰 NO-GO)
     console.error("[fcm] send threw:", (e as Error).message);
+    const lastError = isDeadlineExceeded(e)
+      || (opts?.deadlineAtMs != null && e instanceof Error && e.name === "AbortError")
+      ? "deadline_exceeded"
+      : e instanceof Error ? e.message : "fcm_send_exception";
     return {
       tokens: 0, sent: 0, failed: 0, cleaned: 0, skipped: 0, ok: false,
-      lastError: e instanceof Error ? e.message : "fcm_send_exception",
+      lastError,
     };
   }
 }
@@ -168,11 +172,16 @@ async function sendFcmToUsersInner(
       if (remainingMs != null && remainingMs <= 0) {
         return { tokens: 0, sent: 0, failed: 0, cleaned: 0, skipped: 0, ok: false, lastError: "deadline_exceeded" };
       }
+      // query-guard: bounded -- outer loop caps every preference lookup to IN_CHUNK=200 user ids
+      const prefQuery = supabase
+        .from("notification_prefs")
+        .select(`user_id, ${prefKey}`)
+        .in("user_id", slice);
+      if (remainingMs != null) {
+        prefQuery.abortSignal(AbortSignal.timeout(Math.max(1, remainingMs)));
+      }
       const { data: prefRows, error: prefErr } = await runBeforeDeadline(
-        () => supabase
-          .from("notification_prefs")
-          .select(`user_id, ${prefKey}`)
-          .in("user_id", slice),
+        () => prefQuery,
         opts?.deadlineAtMs,
       );
       if (prefErr) {

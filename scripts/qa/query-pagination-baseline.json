@@ -1325,13 +1325,6 @@
       "subject": "admin_job_logs",
       "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
     },
-    "dd9c57c277c90c96cea3": {
-      "count": 1,
-      "kind": "unbounded_growing_select",
-      "file": "src/lib/notifications/fcm.ts",
-      "subject": "notification_prefs",
-      "detail": "add a bound, unique-key lookup, or query-guard annotation"
-    },
     "dddbdd66173753421402": {
       "count": 1,
       "kind": "ambiguous_growing_limit",
