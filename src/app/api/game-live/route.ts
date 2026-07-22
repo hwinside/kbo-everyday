@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import type { KboRawGame } from "@/types/api";
 import { resolveCurrentPlayers } from "@/lib/kbo-player-mapping";
 import { PLAYER_PHOTO_MAP } from "@/lib/constants/player-photos";
+import { resolveGameLiveDate } from "@/lib/game-live-date";
 
 const __diagSeenPitchers = new Set<string>();
 
@@ -20,7 +21,7 @@ function diagMissingPitcherPhoto(pitcherName: string | null, gameId: string) {
 }
 
 export async function GET(req: NextRequest) {
-  const date = req.nextUrl.searchParams.get("date") || new Date().toISOString().slice(0, 10).replace(/-/g, "");
+  const date = req.nextUrl.searchParams.get("date") || resolveGameLiveDate();
   
   try {
     // 2026-05-20: KBO가 Referer가 koreabaseball.com이 아닌 요청을 IE 에러 페이지로 막음.

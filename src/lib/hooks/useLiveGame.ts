@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { resolveGameLiveDate } from "@/lib/game-live-date";
 
 export interface LiveGameData {
   gameId: string;
@@ -37,10 +38,11 @@ export function useLiveGame(gameId?: string, pollInterval = 30000) {
   const [games, setGames] = useState<LiveGameData[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const gameDate = resolveGameLiveDate(gameId);
 
   const fetchGames = useCallback(async () => {
     try {
-      const res = await fetch("/api/game-live");
+      const res = await fetch(`/api/game-live?date=${gameDate}`);
       const data = await res.json();
       if (data.games) setGames(data.games);
       setError(data.error || null);
@@ -49,7 +51,7 @@ export function useLiveGame(gameId?: string, pollInterval = 30000) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [gameDate]);
 
   useEffect(() => {
     // pollInterval=0 이면 폴링 비활성 (비경기시간 등)
