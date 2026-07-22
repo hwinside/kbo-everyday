@@ -26,6 +26,8 @@ async function preview(db: PGlite) {
         pageViews: number;
         userDays: number;
         pageDwell: number;
+        pageDwellSessions: number;
+        pageDwellDistribution: number;
       };
     };
   }>(
@@ -83,7 +85,8 @@ async function main() {
       created_at, visitor_id, platform, dwell_ms
     ) VALUES
       ('2026-06-01T01:00:00Z', 'visitor-a', 'web', 1000),
-      ('2026-06-01T01:01:00Z', 'visitor-a', 'web', 2000);
+      ('2026-06-01T01:01:00Z', 'visitor-b', 'web', 2000),
+      ('2026-06-01T01:02:00Z', 'visitor-c', 'web', 9000);
   `);
 
     await apply(db, migration("20260721_admin_traffic_page_view_rollup.sql"));
@@ -120,13 +123,116 @@ async function main() {
         pageViews: 0,
         userDays: 0,
         pageDwell: 0,
+        pageDwellSessions: 0,
+        pageDwellDistribution: 0,
       },
       "retained rollups whose raw was already purged must not count as mismatches",
     );
 
+    const rawViewsBefore = await scalar(
+      db,
+      "SELECT count(*)::int AS value FROM admin_page_views",
+    );
+    const rawDwellBefore = await scalar(
+      db,
+      "SELECT count(*)::int AS value FROM admin_page_dwell",
+    );
+
     await db.exec(`
+    UPDATE admin_dwell_session_slices SET dwell_ms = 4000;
+  `);
+
+    assert.deepEqual(
+      await preview(db),
+      {
+        pageViews: 0,
+        userDays: 0,
+        pageDwell: 0,
+        pageDwellSessions: 0,
+        pageDwellDistribution: 3,
+      },
+      "equal-count/equal-sum session distribution corruption must fail coverage",
+    );
+
+    await db.exec(`
+    DO $$
+    BEGIN
+      PERFORM admin_telemetry_retention_run(
+        true,
+        '${BACKUP_REF}',
+        '${NOW}'::timestamptz
+      );
+      RAISE EXCEPTION 'expected session distribution mismatch';
+    EXCEPTION
+      WHEN OTHERS THEN
+        IF SQLERRM NOT LIKE 'raw-to-rollup coverage mismatch:%' THEN
+          RAISE;
+        END IF;
+    END
+    $$;
+  `);
+
+    assert.equal(
+      await scalar(db, "SELECT count(*)::int AS value FROM admin_page_views"),
+      rawViewsBefore,
+      "session distribution failure must preserve raw page views",
+    );
+    assert.equal(
+      await scalar(db, "SELECT count(*)::int AS value FROM admin_page_dwell"),
+      rawDwellBefore,
+      "session distribution failure must preserve raw dwell",
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "SELECT count(*)::int AS value FROM admin_telemetry_retention_runs",
+      ),
+      0,
+      "session distribution failure must not leave an audit success row",
+    );
+
+    await db.exec(`
+    WITH ordered AS (
+      SELECT session_id,
+             row_number() OVER (ORDER BY session_id) AS position
+      FROM admin_dwell_session_slices
+      WHERE day_kst = '2026-06-01'
+    )
+    UPDATE admin_dwell_session_slices AS slices
+    SET dwell_ms = CASE ordered.position
+      WHEN 1 THEN 1000
+      WHEN 2 THEN 2000
+      ELSE 9000
+    END
+    FROM ordered
+    WHERE slices.session_id = ordered.session_id
+      AND slices.day_kst = '2026-06-01';
+
     UPDATE admin_dwell_session_slices
-    SET dwell_ms = dwell_ms + 777;
+    SET platform = 'ios'
+    WHERE session_id = (
+      SELECT min(session_id) FROM admin_dwell_session_slices
+      WHERE day_kst = '2026-06-01'
+    );
+  `);
+
+    const platformTamper = await preview(db);
+    assert.equal(
+      platformTamper.pageDwellSessions,
+      2,
+      "platform session-count corruption must fail both affected platforms",
+    );
+    assert(platformTamper.pageDwellDistribution > 0);
+
+    await db.exec(`
+    UPDATE admin_dwell_session_slices SET platform = 'web';
+
+    UPDATE admin_dwell_session_slices
+    SET dwell_ms = dwell_ms + 777
+    WHERE session_id = (
+      SELECT min(session_id) FROM admin_dwell_session_slices
+      WHERE day_kst = '2026-06-01'
+    );
 
     UPDATE admin_page_view_user_days
     SET game_ids = array_append(game_ids, 'fake-game-id');
@@ -138,17 +244,10 @@ async function main() {
         pageViews: 0,
         userDays: 1,
         pageDwell: 1,
+        pageDwellSessions: 0,
+        pageDwellDistribution: 1,
       },
       "dwell sum and game-id superset corruption must fail coverage",
-    );
-
-    const rawViewsBefore = await scalar(
-      db,
-      "SELECT count(*)::int AS value FROM admin_page_views",
-    );
-    const rawDwellBefore = await scalar(
-      db,
-      "SELECT count(*)::int AS value FROM admin_page_dwell",
     );
 
     await db.exec(`
@@ -182,7 +281,11 @@ async function main() {
 
     await db.exec(`
     UPDATE admin_dwell_session_slices
-    SET dwell_ms = dwell_ms - 777;
+    SET dwell_ms = dwell_ms - 777
+    WHERE session_id = (
+      SELECT min(session_id) FROM admin_dwell_session_slices
+      WHERE day_kst = '2026-06-01'
+    );
 
     UPDATE admin_page_view_user_days
     SET game_ids = array_remove(game_ids, 'fake-game-id');
@@ -210,6 +313,8 @@ async function main() {
         pageViews: 0,
         userDays: 0,
         pageDwell: 0,
+        pageDwellSessions: 0,
+        pageDwellDistribution: 0,
       },
       "coverage must recover after tamper restoration",
     );
@@ -252,7 +357,7 @@ async function main() {
     );
 
     console.log(
-      "PASS PG17 retention DB regression: exact dwell/game coverage and transactional rollback",
+      "PASS PG17 retention DB regression: exact platform/session distribution coverage and transactional rollback",
     );
   } finally {
     await db.close();

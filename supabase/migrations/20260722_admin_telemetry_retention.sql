@@ -103,6 +103,8 @@ DECLARE
   v_page_mismatches bigint;
   v_user_day_mismatches bigint;
   v_dwell_mismatches bigint;
+  v_dwell_session_count_mismatches bigint;
+  v_dwell_distribution_mismatches bigint;
   v_traffic_expired bigint;
   v_user_days_expired bigint;
   v_dwell_slices_expired bigint;
@@ -189,6 +191,61 @@ BEGIN
   WHERE rolled.events IS DISTINCT FROM raw.events
      OR rolled.dwell_ms IS DISTINCT FROM raw.dwell_ms;
 
+  -- Totals alone cannot protect the dashboard's session count/median contract:
+  -- [1000, 2000, 9000] and [4000, 4000, 4000] have the same count and sum.
+  -- Compare each raw-backed session/day/platform slice exactly. Restrict the
+  -- rollup side to raw-backed session-days so rollups whose raw was purged by
+  -- an earlier run remain valid.
+  WITH raw_session_slices AS MATERIALIZED (
+    SELECT sessions.id AS session_id,
+           COALESCE(raw.platform, 'unknown') AS platform,
+           (raw.created_at AT TIME ZONE 'Asia/Seoul')::date AS day_kst,
+           sum(raw.dwell_ms)::bigint AS dwell_ms,
+           count(*)::bigint AS events
+    FROM admin_page_dwell AS raw
+    JOIN admin_dwell_sessions AS sessions
+      ON sessions.visitor_id = raw.visitor_id
+     AND raw.created_at BETWEEN sessions.session_start AND sessions.session_end
+    WHERE raw.created_at < v_raw_cutoff
+    GROUP BY 1, 2, 3
+  ), candidate_session_days AS MATERIALIZED (
+    SELECT DISTINCT session_id, day_kst
+    FROM raw_session_slices
+  ), rolled_session_slices AS MATERIALIZED (
+    SELECT rolled.session_id,
+           rolled.platform,
+           rolled.day_kst,
+           rolled.dwell_ms,
+           rolled.event_count::bigint AS events
+    FROM admin_dwell_session_slices AS rolled
+    JOIN candidate_session_days AS candidates
+      USING (session_id, day_kst)
+  ), distribution_mismatches AS (
+    SELECT 1
+    FROM raw_session_slices AS raw
+    FULL JOIN rolled_session_slices AS rolled
+      USING (session_id, platform, day_kst)
+    WHERE rolled.dwell_ms IS DISTINCT FROM raw.dwell_ms
+       OR rolled.events IS DISTINCT FROM raw.events
+  ), raw_platform_counts AS (
+    SELECT platform, count(DISTINCT session_id)::bigint AS sessions
+    FROM raw_session_slices
+    GROUP BY platform
+  ), rolled_platform_counts AS (
+    SELECT platform, count(DISTINCT session_id)::bigint AS sessions
+    FROM rolled_session_slices
+    GROUP BY platform
+  ), platform_count_mismatches AS (
+    SELECT 1
+    FROM raw_platform_counts AS raw
+    FULL JOIN rolled_platform_counts AS rolled USING (platform)
+    WHERE rolled.sessions IS DISTINCT FROM raw.sessions
+  )
+  SELECT (SELECT count(*) FROM platform_count_mismatches),
+         (SELECT count(*) FROM distribution_mismatches)
+  INTO v_dwell_session_count_mismatches,
+       v_dwell_distribution_mismatches;
+
   SELECT count(*) INTO v_traffic_expired
   FROM admin_traffic_daily_visitors WHERE day_kst < v_rollup_cutoff;
   SELECT count(*) INTO v_user_days_expired
@@ -206,7 +263,9 @@ BEGIN
     'coverageMismatches', jsonb_build_object(
       'pageViews', v_page_mismatches,
       'userDays', v_user_day_mismatches,
-      'pageDwell', v_dwell_mismatches
+      'pageDwell', v_dwell_mismatches,
+      'pageDwellSessions', v_dwell_session_count_mismatches,
+      'pageDwellDistribution', v_dwell_distribution_mismatches
     ),
     'expiredRollups', jsonb_build_object(
       'trafficDailyVisitors', v_traffic_expired,
@@ -270,7 +329,9 @@ BEGIN
 
   IF COALESCE((v_preview #>> '{coverageMismatches,pageViews}')::bigint, 0) <> 0
      OR COALESCE((v_preview #>> '{coverageMismatches,userDays}')::bigint, 0) <> 0
-     OR COALESCE((v_preview #>> '{coverageMismatches,pageDwell}')::bigint, 0) <> 0 THEN
+     OR COALESCE((v_preview #>> '{coverageMismatches,pageDwell}')::bigint, 0) <> 0
+     OR COALESCE((v_preview #>> '{coverageMismatches,pageDwellSessions}')::bigint, 0) <> 0
+     OR COALESCE((v_preview #>> '{coverageMismatches,pageDwellDistribution}')::bigint, 0) <> 0 THEN
     RAISE EXCEPTION 'raw-to-rollup coverage mismatch: %', v_preview->'coverageMismatches';
   END IF;
 
