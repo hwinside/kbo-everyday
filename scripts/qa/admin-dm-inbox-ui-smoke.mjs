@@ -113,14 +113,15 @@ try {
   });
   await initialRacePage.goto(`${baseUrl}/admin/messages`, { waitUntil: "domcontentloaded" });
   await initialStarted;
-  // initial fetch는 첫 effect, focus listener는 다음 effect에서 설치된다.
-  // 두 frame을 넘겨 effect flush를 확인한 뒤 focus race를 발생시켜 false failure를 막는다.
-  await initialRacePage.evaluate(() => new Promise((resolve) => {
-    requestAnimationFrame(() => requestAnimationFrame(resolve));
-  }));
-  await initialRacePage.evaluate(() => window.dispatchEvent(new Event("focus")));
+  // focus listener effect 설치 시점은 frame으로 보장되지 않으므로,
+  // 실제 2번째 request가 관찰될 때까지 1초 안에서만 focus를 재시도한다.
+  const focusDeadline = Date.now() + 1000;
+  while (initialRequestCount < 2 && Date.now() < focusDeadline) {
+    await initialRacePage.evaluate(() => window.dispatchEvent(new Event("focus")));
+    await initialRacePage.waitForTimeout(25);
+  }
+  check(initialRequestCount === 2, "focus listener did not issue the bounded retry request");
   await initialRacePage.getByText(/\d+개 대화/).waitFor({ timeout: 5000 });
-  check(initialRequestCount === 2, "focus refresh did not supersede the delayed initial request");
   check(await initialRacePage.locator("button.glass-card").count() === 50, "silent refresh left the initial spinner stuck");
   releaseInitial();
   await initialRacePage.waitForTimeout(100);
