@@ -199,20 +199,17 @@ export default function FaqCard() {
   };
 
   return (
-    <GlassCard className="overflow-hidden p-0">
+    <GlassCard className="overflow-hidden !p-0">
       <button
         type="button"
-        className="flex w-full items-center justify-between gap-3 p-5 text-left"
+        className="flex min-h-12 w-full items-center justify-between gap-3 px-4 text-left"
         aria-expanded={isExpanded}
         aria-controls="faq-question-list"
         onClick={toggleFaq}
       >
-        <div className="flex items-start gap-4">
-          <CircleHelp size={22} className="mt-0.5 shrink-0 text-text-secondary" />
-          <div>
-            <h2 className="text-base font-semibold text-text-primary">자주 묻는 질문 (FAQ)</h2>
-            <p className="mt-0.5 text-xs text-text-tertiary">내 기기에 맞는 자주 묻는 질문을 모았어요</p>
-          </div>
+        <div className="flex items-center gap-3">
+          <CircleHelp size={20} className="shrink-0 text-text-secondary" />
+          <h2 className="text-base font-semibold text-text-primary">자주 묻는 질문 (FAQ)</h2>
         </div>
         <ChevronDown
           size={20}
@@ -230,7 +227,7 @@ export default function FaqCard() {
               <div key={question}>
                 <button
                   type="button"
-                  className="flex w-full items-center justify-between gap-3 px-5 py-4 text-left"
+                  className="flex min-h-11 w-full items-center justify-between gap-3 px-4 py-3 text-left"
                   aria-expanded={isOpen}
                   aria-controls={answerId}
                   onClick={() => setOpenQuestion(isOpen ? null : question)}
@@ -242,7 +239,7 @@ export default function FaqCard() {
                   />
                 </button>
                 {isOpen && (
-                  <p id={answerId} className="px-5 pb-4 pr-11 text-sm leading-6 text-text-secondary">
+                  <p id={answerId} className="px-4 pb-3 pr-10 text-sm leading-5 text-text-secondary">
                     {answer}
                   </p>
                 )}

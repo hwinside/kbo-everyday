@@ -30,17 +30,17 @@ export default function ProfileCard({ user, profile, team, points, onAvatarClick
   const nextLevel = score !== null ? getNextLevel(score) : null;
   const remaining = nextLevel ? Math.max(0, nextLevel.requiredPoints - (score ?? 0)) : 0;
   return (
-    <GlassCard className="p-5">
-      <div className="flex items-center gap-4">
+    <GlassCard className="!p-4">
+      <div className="flex items-center gap-3">
         <button
           onClick={onAvatarClick}
-          className="relative flex h-14 w-14 items-center justify-center rounded-full bg-bg-tertiary text-2xl overflow-hidden transition-transform hover:scale-105"
+          className="relative flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-full bg-bg-tertiary text-xl transition-transform hover:scale-105"
         >
           {profile?.avatar_url && getAvatarPath(profile.avatar_url) ? (
             <img src={getAvatarPath(profile.avatar_url)!} alt="" className="w-full h-full object-cover" />
           ) : profile?.nickname ? (
             <div
-              className="w-full h-full flex items-center justify-center text-xl font-bold text-white"
+              className="flex h-full w-full items-center justify-center text-lg font-bold text-white"
               style={{ backgroundColor: team ? getTeamBgColor(team) : '#6366f1' }}
             >
               {profile.nickname.charAt(0)}
@@ -49,7 +49,7 @@ export default function ProfileCard({ user, profile, team, points, onAvatarClick
             <>⚾</>
           )}
           {user && (
-            <div className="absolute bottom-0 right-0 w-5 h-5 bg-bg-secondary rounded-full flex items-center justify-center border border-black/15 dark:border-white/20">
+            <div className="absolute bottom-0 right-0 flex h-4 w-4 items-center justify-center rounded-full border border-black/15 bg-bg-secondary dark:border-white/20">
               <Settings size={10} className="text-text-secondary" />
             </div>
           )}
@@ -71,15 +71,14 @@ export default function ProfileCard({ user, profile, team, points, onAvatarClick
               {isScoreLoading ? (
                 <p className="text-sm text-text-tertiary">점수 확인 중…</p>
               ) : (
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
                   <LevelBadge points={score ?? 0} showTitle />
+                  <span className="text-xs text-text-tertiary">{score ?? 0}P</span>
                   <span className="text-xs text-text-tertiary">
                     {nextLevel ? `· 다음 레벨까지 ${remaining}점` : "· 최고 레벨 달성 🎉"}
                   </span>
                 </div>
               )}
-              <p className="mt-1 text-xs text-text-tertiary">닉네임을 누르면 변경할 수 있어요</p>
-              {!isScoreLoading && <p className="mt-0.5 text-base text-text-tertiary">{score ?? 0} 포인트</p>}
             </>
           ) : (
             <p className="mt-0.5 text-base text-text-tertiary">로그인 해주세요</p>
@@ -87,27 +86,30 @@ export default function ProfileCard({ user, profile, team, points, onAvatarClick
         </div>
       </div>
 
-      {user && onViewProfile && (
-        <button
-          onClick={onViewProfile}
-          className="mt-4 flex w-full items-center justify-between rounded-2xl bg-bg-tertiary px-4 py-3 text-left transition-colors hover:bg-black/5 dark:hover:bg-white/5"
-        >
-          <span className="text-sm font-medium text-text-primary">내 프로필 보기</span>
-          <ChevronRight size={18} className="text-text-tertiary" />
-        </button>
-      )}
-
-      {user && onHallOfFame && (
-        <button
-          onClick={onHallOfFame}
-          className="mt-2 flex w-full items-center justify-between rounded-2xl bg-bg-tertiary px-4 py-3 text-left transition-colors hover:bg-black/5 dark:hover:bg-white/5"
-        >
-          <span className="flex items-center gap-2 text-sm font-medium text-text-primary">
-            <Trophy size={16} className="text-yellow-500" />
-            명예의 전당
-          </span>
-          <ChevronRight size={18} className="text-text-tertiary" />
-        </button>
+      {user && (onViewProfile || onHallOfFame) && (
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          {onViewProfile && (
+            <button
+              onClick={onViewProfile}
+              className="flex h-12 min-w-0 items-center justify-between gap-1 rounded-xl bg-bg-tertiary px-2 text-left transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+            >
+              <span className="whitespace-nowrap text-xs font-medium text-text-primary min-[360px]:text-sm">내 프로필 보기</span>
+              <ChevronRight size={14} className="shrink-0 text-text-tertiary" />
+            </button>
+          )}
+          {onHallOfFame && (
+            <button
+              onClick={onHallOfFame}
+              className="flex h-12 min-w-0 items-center justify-between gap-1 rounded-xl bg-bg-tertiary px-2 text-left transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+            >
+              <span className="flex min-w-0 items-center gap-1 whitespace-nowrap text-xs font-medium text-text-primary min-[360px]:text-sm">
+                <Trophy size={14} className="shrink-0 text-yellow-500" />
+                명예의 전당
+              </span>
+              <ChevronRight size={14} className="shrink-0 text-text-tertiary" />
+            </button>
+          )}
+        </div>
       )}
     </GlassCard>
   );
