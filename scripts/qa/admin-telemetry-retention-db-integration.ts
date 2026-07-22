@@ -86,7 +86,9 @@ async function main() {
     ) VALUES
       ('2026-06-01T01:00:00Z', 'visitor-a', 'web', 1000),
       ('2026-06-01T01:01:00Z', 'visitor-b', 'web', 2000),
-      ('2026-06-01T01:02:00Z', 'visitor-c', 'web', 9000);
+      ('2026-06-01T01:02:00Z', 'visitor-c', 'web', 9000),
+      ('2026-06-02T01:00:00Z', 'visitor-boundary', 'web', 1000),
+      ('2026-06-02T01:31:00Z', 'visitor-boundary', 'web', 2000);
   `);
 
     await apply(db, migration("20260721_admin_traffic_page_view_rollup.sql"));
@@ -139,7 +141,112 @@ async function main() {
     );
 
     await db.exec(`
-    UPDATE admin_dwell_session_slices SET dwell_ms = 4000;
+    BEGIN;
+
+    UPDATE admin_dwell_session_slices AS survivor
+    SET dwell_ms = survivor.dwell_ms + collapsed.dwell_ms,
+        event_count = survivor.event_count + collapsed.event_count
+    FROM admin_dwell_session_slices AS collapsed
+    WHERE survivor.session_id = (
+        SELECT id FROM admin_dwell_sessions
+        WHERE visitor_id = 'visitor-boundary'
+        ORDER BY session_start
+        LIMIT 1
+      )
+      AND collapsed.session_id = (
+        SELECT id FROM admin_dwell_sessions
+        WHERE visitor_id = 'visitor-boundary'
+        ORDER BY session_start DESC
+        LIMIT 1
+      )
+      AND survivor.platform = collapsed.platform
+      AND survivor.day_kst = collapsed.day_kst;
+
+    UPDATE admin_dwell_sessions
+    SET session_end = (
+      SELECT max(session_end) FROM admin_dwell_sessions
+      WHERE visitor_id = 'visitor-boundary'
+    )
+    WHERE id = (
+      SELECT id FROM admin_dwell_sessions
+      WHERE visitor_id = 'visitor-boundary'
+      ORDER BY session_start
+      LIMIT 1
+    );
+
+    DELETE FROM admin_dwell_sessions
+    WHERE id = (
+      SELECT id FROM admin_dwell_sessions
+      WHERE visitor_id = 'visitor-boundary'
+      ORDER BY session_start DESC
+      LIMIT 1
+    );
+  `);
+
+    const collapsedBoundary = await preview(db);
+    assert.equal(collapsedBoundary.pageDwell, 0);
+    assert.equal(
+      collapsedBoundary.pageDwellSessions,
+      1,
+      "independent raw session count must catch a 2-to-1 boundary collapse",
+    );
+    assert(collapsedBoundary.pageDwellDistribution > 0);
+
+    await db.exec(`
+    DO $$
+    BEGIN
+      PERFORM admin_telemetry_retention_run(
+        true,
+        '${BACKUP_REF}',
+        '${NOW}'::timestamptz
+      );
+      RAISE EXCEPTION 'expected session boundary mismatch';
+    EXCEPTION
+      WHEN OTHERS THEN
+        IF SQLERRM NOT LIKE 'raw-to-rollup coverage mismatch:%' THEN
+          RAISE;
+        END IF;
+    END
+    $$;
+  `);
+
+    assert.equal(
+      await scalar(db, "SELECT count(*)::int AS value FROM admin_page_views"),
+      rawViewsBefore,
+      "session boundary failure must preserve raw page views",
+    );
+    assert.equal(
+      await scalar(db, "SELECT count(*)::int AS value FROM admin_page_dwell"),
+      rawDwellBefore,
+      "session boundary failure must preserve raw dwell",
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "SELECT count(*)::int AS value FROM admin_telemetry_retention_runs",
+      ),
+      0,
+      "session boundary failure must not leave an audit success row",
+    );
+
+    await db.exec("ROLLBACK;");
+
+    assert.deepEqual(
+      await preview(db),
+      {
+        pageViews: 0,
+        userDays: 0,
+        pageDwell: 0,
+        pageDwellSessions: 0,
+        pageDwellDistribution: 0,
+      },
+      "coverage must recover after rolling back the boundary tamper",
+    );
+
+    await db.exec(`
+    UPDATE admin_dwell_session_slices
+    SET dwell_ms = 4000
+    WHERE day_kst = '2026-06-01';
   `);
 
     assert.deepEqual(
