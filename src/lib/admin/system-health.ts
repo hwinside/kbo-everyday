@@ -69,6 +69,11 @@ function maxValue(samples: PrometheusSample[], name: string): number | null {
   return found.length > 0 ? Math.max(...found) : null;
 }
 
+function minValue(samples: PrometheusSample[], name: string): number | null {
+  const found = values(samples, name).map((sample) => sample.value);
+  return found.length > 0 ? Math.min(...found) : null;
+}
+
 function percent(numerator: number, denominator: number): number | null {
   if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator <= 0) return null;
   return Math.min(100, Math.max(0, (numerator / denominator) * 100));
@@ -110,8 +115,10 @@ export function summarizeSystemMetrics(text: string): SystemMetricSummary {
   const load1 = firstValue(samples, "node_load1");
   const cpuLoadPercent = load1 !== null && cpuCores ? percent(load1, cpuCores) : null;
 
-  const pgUpValue = maxValue(samples, "pg_up");
-  const poolerUpValue = maxValue(samples, "pgbouncer_up");
+  // Multiple exporters/instances may emit these gauges. Any explicit down sample
+  // must fail closed instead of being hidden by a healthy sibling sample.
+  const pgUpValue = minValue(samples, "pg_up");
+  const poolerUpValue = minValue(samples, "pgbouncer_up");
   const postgresConnections = sumValues(samples, "pg_stat_database_num_backends");
   const poolActiveConnections = sumValues(samples, "pgbouncer_pools_client_active_connections");
   const poolWaitingConnections = sumValues(samples, "pgbouncer_pools_client_waiting_connections");
@@ -119,12 +126,14 @@ export function summarizeSystemMetrics(text: string): SystemMetricSummary {
 
   const reasons: string[] = [];
   let level: HealthLevel = "healthy";
+  let hasCritical = false;
   const warn = (reason: string) => {
     reasons.push(reason);
     if (level === "healthy") level = "warning";
   };
   const critical = (reason: string) => {
     reasons.push(reason);
+    hasCritical = true;
     level = "critical";
   };
 
@@ -158,8 +167,8 @@ export function summarizeSystemMetrics(text: string): SystemMetricSummary {
   ].filter((name): name is string => name !== null);
 
   if (missingCoreMetrics.length === 5) {
-    level = "unknown";
     reasons.push("핵심 메트릭 없음");
+    if (!hasCritical) level = "unknown";
   } else if (missingCoreMetrics.length > 0) {
     warn(`핵심 메트릭 누락: ${missingCoreMetrics.join(", ")}`);
   }

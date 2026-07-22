@@ -77,6 +77,34 @@ test("degrades partial core metrics instead of reporting healthy", () => {
   assert.ok(result.reasons.some((reason) => reason.startsWith("핵심 메트릭 누락")));
 });
 
+test("preserves critical DB waits when all core metrics are missing", () => {
+  const result = summarizeSystemMetrics("pgbouncer_pools_client_waiting_connections 2\n");
+  assert.equal(result.level, "critical");
+  assert.ok(result.reasons.includes("DB 연결 대기 2건"));
+  assert.ok(result.reasons.includes("핵심 메트릭 없음"));
+});
+
+test("preserves critical long transactions when all core metrics are missing", () => {
+  const result = summarizeSystemMetrics("pg_stat_activity_xact_runtime 120\n");
+  assert.equal(result.level, "critical");
+  assert.ok(result.reasons.includes("장기 트랜잭션 120초"));
+  assert.ok(result.reasons.includes("핵심 메트릭 없음"));
+});
+
+test("treats any pg_up down sample as critical", () => {
+  const result = summarizeSystemMetrics("pg_up 1\npg_up 0\n");
+  assert.equal(result.level, "critical");
+  assert.equal(result.postgresUp, false);
+  assert.ok(result.reasons.includes("PostgreSQL 응답 없음"));
+});
+
+test("treats any pgbouncer_up down sample as critical", () => {
+  const result = summarizeSystemMetrics("pgbouncer_up 1\npgbouncer_up 0\n");
+  assert.equal(result.level, "critical");
+  assert.equal(result.poolerUp, false);
+  assert.ok(result.reasons.includes("PgBouncer 응답 없음"));
+});
+
 const healthyServices = ["db", "rest", "auth", "storage"].map((name) => ({
   name,
   status: "ACTIVE_HEALTHY",

@@ -8,4 +8,5 @@
 - [x] Degrade partial-source failures and expose stale refresh failures in the UI.
 - [x] Add route partial-failure and UI success-to-failure regressions.
 - [x] Reject unrelated/partial Metrics payloads as healthy and cover aged timestamps in the UI.
+- [x] Preserve critical precedence under missing metrics and aggregate up gauges with any-down semantics.
 - [ ] Complete PR review and End-User QA gates.

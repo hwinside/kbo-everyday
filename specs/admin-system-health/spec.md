@@ -11,6 +11,7 @@ Show the current Supabase server and database health inside `/admin/system` with
 - Refresh every 60 seconds and show the observation timestamp and partial-source failures.
 - A required source failure must never leave the overall badge green; failed refreshes keep the last value but visibly mark it stale.
 - HTTP 200 payloads with missing core metrics are degraded, and stale values show a full date plus elapsed age.
+- Health precedence is `critical > unknown > warning > healthy`; any explicit down sample wins across duplicated up gauges.
 - Derive current warning/critical state from the same resource thresholds as the hosted alert catalog where the raw metric is available.
 
 ## Safety
