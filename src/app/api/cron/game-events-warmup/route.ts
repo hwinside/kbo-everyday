@@ -147,21 +147,9 @@ export async function GET(req: NextRequest) {
     | { error: string };
 
   const shouldRetryFast = !initialFetch.ok || liveGameIds.length > 0;
-  const { initialPromise: androidWidgetPromise, fastPromise: fastRefreshPromise } =
+  const { initialPromise: initialAndroidWidgetPromise, fastPromise: fastRefreshPromise } =
     startWidgetRefreshPipelines<AndroidWidgetResult>({
-      pushInitial: async (initialPushDeadlineAtMs) => {
-        if (!initialFetch.ok) return { error: "kbo_fetch_failed" };
-        try {
-          return await pushAndroidWidgetLiveUpdates(games, baseUrl, {
-            deadlineAtMs: initialPushDeadlineAtMs,
-            sourceAtMs: initialFetch.trace.sourceAtMs,
-            fetchedAtMs: initialFetch.trace.fetchedAtMs,
-          });
-        } catch (e) {
-          console.error("[warmup] android widget live update failed:", (e as Error).message);
-          return { error: (e as Error).message };
-        }
-      },
+      pushInitial: pushAndroidWidgetLiveUpdates,
       runFast: () => shouldRetryFast
         ? runWidgetFastLoop(
             {
@@ -180,7 +168,21 @@ export async function GET(req: NextRequest) {
             { requestStartMs },
           )
         : Promise.resolve([]),
-    }, { requestStartMs, overallDeadlineAtMs: deadlineAtMs });
+    }, {
+      requestStartMs,
+      overallDeadlineAtMs: deadlineAtMs,
+      initial: initialFetch.ok ? {
+        games,
+        baseUrl,
+        sourceAtMs: initialFetch.trace.sourceAtMs,
+        fetchedAtMs: initialFetch.trace.fetchedAtMs,
+      } : null,
+      initialSkipped: { error: "kbo_fetch_failed" },
+    });
+  const androidWidgetPromise = initialAndroidWidgetPromise.catch((e): AndroidWidgetResult => {
+    console.error("[warmup] android widget live update failed:", (e as Error).message);
+    return { error: (e as Error).message };
+  });
 
   const results = await Promise.allSettled(
     liveGameIds.map(gameId =>

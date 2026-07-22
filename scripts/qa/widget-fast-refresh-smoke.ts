@@ -131,40 +131,65 @@ async function runLoopTests() {
     INITIAL_PUSH_DEADLINE_MS < FAST_LOOP_TARGETS_MS[0], true);
   checkNum("loop: 더 이른 전체 deadline을 넘지 않음", initialWidgetPushDeadlineAt(1_000, 15_000), 15_000);
 
-  // route 오케스트레이션 회귀: 초기 hang은 +18s에 abort되고 +20s fast 최신 1건만 발송한다.
+  // 실제 route wiring 경계: fake clock이 +18s initial abort → +20s fast 최신 1건을 만든다.
   {
-    let abortInitial!: () => void;
-    let releaseFast!: () => void;
+    let t = 0;
     let active = 0;
     let activeAtFast = -1;
-    let initialDeadlineAt = -1;
-    let fastStarted = false;
+    let initialAbortedAt = -1;
     const sendOrder: number[] = [];
-    const initialGate = new Promise<void>((resolve) => {
-      abortInitial = () => { active = 0; resolve(); };
-    });
-    const fastGate = new Promise<void>((resolve) => { releaseFast = resolve; });
+    const timers: Array<{ at: number; run: () => void }> = [];
+    const advanceTo = (target: number) => {
+      for (;;) {
+        const next = timers.filter((timer) => timer.at <= target).sort((a, b) => a.at - b.at)[0];
+        if (!next) break;
+        timers.splice(timers.indexOf(next), 1);
+        t = next.at;
+        next.run();
+      }
+      t = target;
+    };
     const pipelines = startWidgetRefreshPipelines({
-      pushInitial: (deadlineAtMs) => {
-        initialDeadlineAt = deadlineAtMs;
+      pushInitial: (_games, _baseUrl, opts) => {
         active = 1;
-        return initialGate.then(() => ({ sent: 0 }));
+        const controller = new AbortController();
+        return new Promise<{ sent: number }>((resolve) => {
+          controller.signal.addEventListener("abort", () => {
+            initialAbortedAt = t;
+            active = 0;
+            resolve({ sent: 0 });
+          }, { once: true });
+          timers.push({
+            at: opts.deadlineAtMs,
+            run: () => controller.abort(),
+          });
+        });
       },
-      runFast: async () => {
-        fastStarted = true;
-        await fastGate;
-        activeAtFast = active;
-        sendOrder.push(2_000);
-        return [];
-      },
-    }, { requestStartMs: 0, overallDeadlineAtMs: 46_000 });
-    await Promise.resolve();
-    checkNum("loop: 주입 initial deadline = +18s", initialDeadlineAt, 18_000);
-    check("loop: 초기 push hang 중에도 fast-loop 즉시 시작", fastStarted, true);
-    abortInitial();
-    releaseFast();
-    await Promise.all([pipelines.initialPromise, pipelines.fastPromise]);
+      runFast: () => runWidgetFastLoop({
+        now: () => t,
+        sleep: async (ms) => { advanceTo(t + ms); },
+        fetchLiveGames: async () => ({
+          ok: true,
+          games: [LIVE_GAME],
+          trace: { sourceAtMs: 2_000, fetchedAtMs: 2_001 },
+        }),
+        pushWidgets: async (_games, trace) => {
+          activeAtFast = active;
+          sendOrder.push(trace.sourceAtMs);
+          return { sent: 1 };
+        },
+      }, { requestStartMs: 0, targetsMs: [20_000], deadlineMs: 46_000 }),
+    }, {
+      requestStartMs: 0,
+      overallDeadlineAtMs: 46_000,
+      initial: { games: [LIVE_GAME], baseUrl: "http://smoke.local", sourceAtMs: 1_000, fetchedAtMs: 1_001 },
+      initialSkipped: { sent: 0 },
+    });
+    await pipelines.fastPromise;
+    advanceTo(46_000); // +46s 역변이도 pending initial을 정리해 assertion까지 도달시킨다.
+    await pipelines.initialPromise;
     checkEq("loop: initial abort 후 fast 최신 1건만 발송", sendOrder.join(","), "2000");
+    checkNum("loop: initial AbortSignal은 +18s에 발화", initialAbortedAt, 18_000);
     checkNum("loop: fast 시작 시 active initial 0", activeAtFast, 0);
     checkNum("loop: 종료 시 active 요청 0", active, 0);
   }

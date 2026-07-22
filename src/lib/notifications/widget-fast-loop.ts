@@ -65,20 +65,39 @@ export interface FastLoopTick {
   result: unknown;
 }
 
+interface InitialWidgetPushInput {
+  games: KboRawGame[];
+  baseUrl: string;
+  sourceAtMs: number;
+  fetchedAtMs: number;
+}
+
+type InitialWidgetPush<T> = (
+  games: KboRawGame[],
+  baseUrl: string,
+  opts: { deadlineAtMs: number; sourceAtMs: number; fetchedAtMs: number },
+) => Promise<T>;
+
 /**
  * 초기 위젯 push와 +20/+40 fast-loop를 같은 tick에서 시작한다. 어느 한쪽이 지연돼도
  * 다른 쪽의 시작을 막지 않도록 Promise를 먼저 둘 다 만들고, route 본작업과 병렬로 둔다.
  */
 export function startWidgetRefreshPipelines<T>(deps: {
-  pushInitial(deadlineAtMs: number): Promise<T>;
+  pushInitial: InitialWidgetPush<T>;
   runFast(): Promise<FastLoopTick[]>;
 }, opts: {
   requestStartMs: number;
   overallDeadlineAtMs: number;
+  initial: InitialWidgetPushInput | null;
+  initialSkipped: T;
 }): { initialPromise: Promise<T>; fastPromise: Promise<FastLoopTick[]> } {
-  const initialPromise = deps.pushInitial(
-    initialWidgetPushDeadlineAt(opts.requestStartMs, opts.overallDeadlineAtMs),
-  );
+  const initialPromise = opts.initial == null
+    ? Promise.resolve(opts.initialSkipped)
+    : deps.pushInitial(opts.initial.games, opts.initial.baseUrl, {
+        deadlineAtMs: initialWidgetPushDeadlineAt(opts.requestStartMs, opts.overallDeadlineAtMs),
+        sourceAtMs: opts.initial.sourceAtMs,
+        fetchedAtMs: opts.initial.fetchedAtMs,
+      });
   const fastPromise = deps.runFast();
   return { initialPromise, fastPromise };
 }
