@@ -27,6 +27,7 @@ class GameStateListenerService : WearableListenerService() {
     }
 
     private fun handle(map: DataMap) {
+        val recvElapsed = android.os.SystemClock.elapsedRealtime()
         val myTeam = WearStore.loadMyTeam(this)
         val push = parse(map)
         val now = System.currentTimeMillis()
@@ -48,6 +49,42 @@ class GameStateListenerService : WearableListenerService() {
                 WearStore.savePushMeta(this, push.ts, push.gid)
             is WearPushPolicy.Decision.Drop -> Unit // 무시(wrong-team/stale/terminal/unbuildable)
         }
+        val decisionLabel = when (decision) {
+            is WearPushPolicy.Decision.Render -> "render"
+            is WearPushPolicy.Decision.NoOp -> "noop"
+            is WearPushPolicy.Decision.Drop -> "drop:${decision.reason}"
+        }
+        logPipeline(
+            map,
+            now,
+            android.os.SystemClock.elapsedRealtime() - recvElapsed,
+            decisionLabel,
+        )
+    }
+
+    /** source→KBO fetch→FCM send→폰 receive/apply→워치 receive/apply 구간별 구조화 로그. */
+    private fun logPipeline(map: DataMap, wearRecvMs: Long, wearRecvToDispatchMs: Long, decision: String) {
+        val sourceAt = map.getLong("source_at", -1L)
+        val fetchedAt = map.getLong("fetched_at", -1L)
+        val sentAt = map.getLong("sent_at", -1L)
+        val phoneRecvAt = map.getLong("phone_recv_at", -1L)
+        val phoneApplyAt = map.getLong("phone_apply_at", -1L)
+        fun d(end: Long, start: Long): Long =
+            if (end < 0L || start < 0L) -1L else maxOf(0L, end - start)
+        val sourceToWearRecv = d(wearRecvMs, sourceAt)
+        val sourceToWearDispatch =
+            if (sourceToWearRecv < 0L) -1L else sourceToWearRecv + maxOf(0L, wearRecvToDispatchMs)
+        android.util.Log.i(
+            "kbo-wear-pipeline",
+            "source_to_fetch_ms=${d(fetchedAt, sourceAt)}" +
+                " fetch_to_send_ms=${d(sentAt, fetchedAt)}" +
+                " send_to_phone_recv_ms=${d(phoneRecvAt, sentAt)}" +
+                " phone_recv_to_apply_ms=${d(phoneApplyAt, phoneRecvAt)}" +
+                " phone_apply_to_wear_recv_ms=${d(wearRecvMs, phoneApplyAt)}" +
+                " wear_recv_to_dispatch_ms=${maxOf(0L, wearRecvToDispatchMs)}" +
+                " source_to_wear_dispatch_ms=$sourceToWearDispatch" +
+                " decision=$decision",
+        )
     }
 
     /** DataMap → PushState. 폰 KboMessagingService.pushGameStateToWatch가 넣는 키와 1:1. */

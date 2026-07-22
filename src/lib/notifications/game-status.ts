@@ -39,10 +39,13 @@ function kstDateIso(): string {
 }
 
 /** 양팀을 최애팀으로 둔 유저 id 목록. ok=false면 조회 실패(재시도 대상) */
-export async function fansOfTeams(teamIds: number[]): Promise<{ ids: string[]; ok: boolean }> {
+export async function fansOfTeams(
+  teamIds: number[],
+  opts?: { deadlineAtMs?: number },
+): Promise<{ ids: string[]; ok: boolean }> {
   if (teamIds.length === 0) return { ids: [], ok: true };
   try {
-    return { ids: await fetchTeamFanIds(teamIds), ok: true };
+    return { ids: await fetchTeamFanIds(teamIds, opts), ok: true };
   } catch (error) {
     console.error("[game-status] fans query failed:", (error as Error).message);
     return { ids: [], ok: false };

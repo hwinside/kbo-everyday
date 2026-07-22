@@ -7,10 +7,11 @@ import java.util.Map;
 /**
  * FCM 위젯 제어 메시지(game_live/game_cancel/game_end)를 1회 파싱한 불변 봉투(삼순 vc14 coordinator).
  *
- * kind/gameId/sourceTs/orderTs를 확정하고 원본 data map을 보존한다. 위젯 제어 kind가 아니면
+ * kind/gameId/sourceAt/fetchedAt/sourceTs/orderTs를 확정하고 원본 data map을 보존한다. 위젯 제어 kind가 아니면
  * parse가 null을 반환해 KboMessagingService가 곧바로 빠진다(super가 이미 JS 이벤트/알림 처리).
  *
- * - sourceTs = 서버 send-time(w_ts, ms). seq 가드 기준. 미전달(구버 서버)이면 -1(가드 비활성).
+ * - sourceAt = KBO 원천 fetch 시작(w_source_at), fetchedAt = 검증 완료(w_fetched_at).
+ * - sourceTs = 서버 FCM send-time(w_ts, ms). seq 가드 기준. 미전달(구버 서버)이면 -1(가드 비활성).
  * - orderTs  = 워치 DataItem 순서 기준. 서버 원천 w_source_at 우선(FCM 재정렬 강건), 없으면 수신 시각.
  */
 final class NativeLiveEnvelope {
@@ -20,14 +21,19 @@ final class NativeLiveEnvelope {
 
     final String kind;
     final String gameId;
+    final long sourceAt;
+    final long fetchedAt;
     final long sourceTs;
     final long orderTs;
     final Map<String, String> data;
 
-    private NativeLiveEnvelope(String kind, String gameId, long sourceTs, long orderTs,
+    private NativeLiveEnvelope(String kind, String gameId, long sourceAt, long fetchedAt,
+                              long sourceTs, long orderTs,
                               Map<String, String> data) {
         this.kind = kind;
         this.gameId = gameId;
+        this.sourceAt = sourceAt;
+        this.fetchedAt = fetchedAt;
         this.sourceTs = sourceTs;
         this.orderTs = orderTs;
         this.data = data;
@@ -58,10 +64,12 @@ final class NativeLiveEnvelope {
             return null;
         }
         long sourceTs = parseLong(data.get("w_ts"), -1L);
+        long sourceAt = parseLong(data.get("w_source_at"), sourceTs >= 0 ? sourceTs : recvMs);
+        long fetchedAt = parseLong(data.get("w_fetched_at"), sourceAt);
         // 순서 기준 orderTs 단일 계약(삼순 #723 clock domain 통일): w_source_at → w_ts → 수신시각.
         // live/cancel/end 전부 동일 규칙 — 폰 시계/서버 시각이 섞이지 않게.
-        long orderTs = parseLong(data.get("w_source_at"), sourceTs >= 0 ? sourceTs : recvMs);
-        return new NativeLiveEnvelope(kind, gameId, sourceTs, orderTs, data);
+        long orderTs = sourceAt;
+        return new NativeLiveEnvelope(kind, gameId, sourceAt, fetchedAt, sourceTs, orderTs, data);
     }
 
     /**

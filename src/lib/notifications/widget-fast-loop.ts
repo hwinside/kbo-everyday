@@ -13,6 +13,32 @@ export const FAST_LOOP_DEADLINE_MS = 46_000;
 /** 요청 진입 시각 기준 추가 사이클 목표 시점 — cron(60s) 사이 ~20s 간격 갱신. */
 export const FAST_LOOP_TARGETS_MS: readonly number[] = [20_000, 40_000];
 
+export interface WidgetSourceTrace {
+  /** KBO 원천 요청 시작 시각(epoch ms). */
+  sourceAtMs: number;
+  /** KBO 응답 JSON 검증 완료 시각(epoch ms). */
+  fetchedAtMs: number;
+}
+
+/**
+ * KBO GetKboGameList 응답 최소 계약. JSON 파싱 실패·game 배열 누락·행 identity/state
+ * 손상은 모두 null로 fail-close한다. 잘못된 응답을 정상 "라이브 0"으로 축약하면 다음
+ * fast tick 재시도까지 사라지므로, 빈 배열은 game:[]이 명시된 경우에만 정상이다.
+ */
+export function parseKboGameListPayload(value: unknown): KboRawGame[] | null {
+  if (value === null || typeof value !== "object") return null;
+  const games = (value as { game?: unknown }).game;
+  if (!Array.isArray(games)) return null;
+  for (const row of games) {
+    if (row === null || typeof row !== "object") return null;
+    const game = row as Record<string, unknown>;
+    if (typeof game.G_ID !== "string" || game.G_ID.length === 0) return null;
+    if (typeof game.GAME_STATE_SC !== "string" || game.GAME_STATE_SC.length === 0) return null;
+    if (typeof game.AWAY_NM !== "string" || typeof game.HOME_NM !== "string") return null;
+  }
+  return games as KboRawGame[];
+}
+
 export interface FastLoopDeps {
   now(): number;
   sleep(ms: number): Promise<void>;
@@ -20,8 +46,8 @@ export interface FastLoopDeps {
    * KBO 라이브 스코어보드 재조회. ok:false = HTTP/network 실패 — "라이브 0"과 구분해
    * 루프를 끊지 않고 다음 tick에서 재시도한다(삼순 blocker② — 오류를 경기 종료로 오인 금지).
    */
-  fetchLiveGames(): Promise<{ ok: boolean; games: KboRawGame[] }>;
-  pushWidgets(games: KboRawGame[]): Promise<unknown>;
+  fetchLiveGames(): Promise<{ ok: boolean; games: KboRawGame[]; trace?: WidgetSourceTrace }>;
+  pushWidgets(games: KboRawGame[], trace: WidgetSourceTrace): Promise<unknown>;
 }
 
 export interface FastLoopTick {
@@ -59,7 +85,8 @@ export async function runWidgetFastLoop(
       const hasLive = fresh.games.some((g) => g.G_ID && g.GAME_STATE_SC === "2");
       if (!hasLive) break; // 정상 응답 + 라이브 0 → 모든 경기 종료, 루프 종료.
       if (deps.now() >= deadlineAt) break; // fetch가 남은 시간을 소진 → FCM/relay 시작 금지(blocker①).
-      const w = await deps.pushWidgets(fresh.games);
+      const trace = fresh.trace ?? { sourceAtMs: atMs + opts.requestStartMs, fetchedAtMs: deps.now() };
+      const w = await deps.pushWidgets(fresh.games, trace);
       ticks.push({ atMs, result: w });
     } catch (e) {
       ticks.push({ atMs, result: { error: (e as Error).message } });

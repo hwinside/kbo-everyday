@@ -822,27 +822,33 @@ public class GameScoreWidget extends AppWidgetProvider {
     private static String nz(String s) { return s == null ? "" : s; }
 
     /**
-     * 지연 계측(삼순 vc14 딥리뷰 — 명칭 분리):
-     *  delivery_ms          = 기기 수신(recvMs) − 서버 send-time(sourceTsMs)  [서버→기기 배달]
-     *  handler_to_dispatch_ms = 핸들러 시작→updateAppWidget IPC dispatch (SystemClock.elapsedRealtime 기준)
-     *  source_to_dispatch_ms  = 둘의 합
+     * 지연 계측: KBO source 요청→fetch 검증→FCM send→기기 receive→위젯 apply/IPC dispatch.
      * ⚠️ updateAppWidget/notify 반환은 IPC dispatch 완료이지 실제 픽셀 렌더 완료가 아니므로
      * 'render latency'라 부르지 않는다. phase-1은 로컬(logcat + prefs delivery 마지막값), 집계 beacon은 phase-2.
      * sourceTsMs<=0(w_ts 미전달 = 구버 서버)이면 no-op.
      */
-    static void recordDeliveryLatency(Context ctx, long sourceTsMs, long recvMs, long handlerToDispatchMs) {
-        if (sourceTsMs <= 0) return;
-        long deliveryMs = Math.max(0L, recvMs - sourceTsMs); // 음수(기기 시계 스큐)는 0 클램프
+    static void recordPipelineLatency(
+            Context ctx, long sourceAtMs, long fetchedAtMs, long sentAtMs, long recvMs,
+            long applyCompletedMs, long handlerToDispatchMs) {
+        if (sentAtMs <= 0) return;
+        long sourceToFetchMs = Math.max(0L, fetchedAtMs - sourceAtMs);
+        long fetchToSendMs = Math.max(0L, sentAtMs - fetchedAtMs);
+        long deliveryMs = Math.max(0L, recvMs - sentAtMs); // 음수(기기 시계 스큐)는 0 클램프
+        long recvToApplyMs = Math.max(0L, applyCompletedMs - recvMs);
         long h2d = Math.max(0L, handlerToDispatchMs);
-        long sourceToDispatchMs = deliveryMs + h2d;
+        long sourceToApplyMs = Math.max(0L, applyCompletedMs - sourceAtMs);
         try {
             ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .edit().putLong(KEY_LAST_LATENCY, deliveryMs).apply();
         } catch (Exception ignore) {
         }
         android.util.Log.i("kbo-widget",
-            "delivery_ms=" + deliveryMs + " handler_to_dispatch_ms=" + h2d
-                + " source_to_dispatch_ms=" + sourceToDispatchMs);
+            "source_to_fetch_ms=" + sourceToFetchMs
+                + " fetch_to_send_ms=" + fetchToSendMs
+                + " send_to_recv_ms=" + deliveryMs
+                + " recv_to_apply_ms=" + recvToApplyMs
+                + " handler_to_dispatch_ms=" + h2d
+                + " source_to_apply_ms=" + sourceToApplyMs);
     }
 
     /** 빈 상태로 전환 (경기 종료/이탈). 최애팀 값은 유지. */

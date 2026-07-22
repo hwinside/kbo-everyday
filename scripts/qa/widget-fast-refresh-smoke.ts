@@ -10,8 +10,13 @@ import {
   pushAndroidWidgetLiveUpdates,
   __resetWidgetSigCacheForTest,
 } from "../../src/lib/notifications/android-widget-live";
-import { runWidgetFastLoop, type FastLoopDeps } from "../../src/lib/notifications/widget-fast-loop";
+import {
+  runWidgetFastLoop,
+  parseKboGameListPayload,
+  type FastLoopDeps,
+} from "../../src/lib/notifications/widget-fast-loop";
 import { sendFcmToUsers } from "../../src/lib/notifications/fcm";
+import { deliverTokenChunks } from "../../src/lib/notifications/fcm-batch";
 import type { fansOfTeams } from "../../src/lib/notifications/game-status";
 import { supabaseAdmin } from "../../src/lib/supabase/admin";
 import type { KboRawGame } from "../../src/types/api";
@@ -49,13 +54,22 @@ function checkEq(name: string, got: string, want: string) {
   if (got === want) { pass++; }
   else { fail++; console.error(`✗ ${name}: got ${got}, want ${want}`); }
 }
-const d1 = { kind: "game_live", w_as: "1", w_hs: "0", w_status: "LIVE 4회초", w_source_at: "1000" };
-const d2 = { kind: "game_live", w_as: "1", w_hs: "0", w_status: "LIVE 4회초", w_source_at: "9999" };
-const d3 = { kind: "game_live", w_as: "2", w_hs: "0", w_status: "LIVE 4회초", w_source_at: "1001" };
+const d1 = { kind: "game_live", w_as: "1", w_hs: "0", w_status: "LIVE 4회초", w_source_at: "1000", w_fetched_at: "1005" };
+const d2 = { kind: "game_live", w_as: "1", w_hs: "0", w_status: "LIVE 4회초", w_source_at: "9999", w_fetched_at: "10004" };
+const d3 = { kind: "game_live", w_as: "2", w_hs: "0", w_status: "LIVE 4회초", w_source_at: "1001", w_fetched_at: "1006" };
 checkEq("sig: w_source_at 만 달라도 동일(순서 메타 제외)", widgetStateSignature(d1), widgetStateSignature(d2));
 check("sig: sourceAt만 다른 두 사이클 → skip 유지", shouldSkipWidgetPush(widgetStateSignature(d1), widgetStateSignature(d2), true), true);
 check("sig: 득점 변화는 sourceAt 무관하게 push", shouldSkipWidgetPush(widgetStateSignature(d1), widgetStateSignature(d3), true), false);
 if (widgetStateSignature(d1).includes("w_source_at")) { fail++; console.error("✗ sig should not contain w_source_at"); } else { pass++; }
+if (widgetStateSignature(d1).includes("w_fetched_at")) { fail++; console.error("✗ sig should not contain w_fetched_at"); } else { pass++; }
+
+// KBO parse/schema fail-close — 손상 응답은 정상 game:[]과 구분한다.
+check("schema: 명시적 빈 game 배열은 정상", parseKboGameListPayload({ game: [] })?.length === 0, true);
+check("schema: game 누락은 실패", parseKboGameListPayload({}) === null, true);
+check("schema: JSON null은 실패", parseKboGameListPayload(null) === null, true);
+check("schema: 행 G_ID 누락은 실패", parseKboGameListPayload({ game: [{ GAME_STATE_SC: "2", AWAY_NM: "LG", HOME_NM: "KT" }] }) === null, true);
+check("schema: 행 state 타입 손상은 실패", parseKboGameListPayload({ game: [{ G_ID: "G1", GAME_STATE_SC: 2, AWAY_NM: "LG", HOME_NM: "KT" }] }) === null, true);
+check("schema: 최소 유효 행 통과", parseKboGameListPayload({ game: [{ G_ID: "G1", GAME_STATE_SC: "2", AWAY_NM: "LG", HOME_NM: "KT" }] })?.length === 1, true);
 
 // ---------------------------------------------------------------------------
 // fast-loop 오케스트레이션 (삼순 blocker①②) — fake clock으로 절대 deadline/오류 분기 검증.
@@ -164,11 +178,20 @@ async function runLoopTests() {
 // pushAndroidWidgetLiveUpdates 주입 의존성 테스트 (삼순 blocker③④)
 // ---------------------------------------------------------------------------
 async function runPushTests() {
-  const fcmCalls: Array<{ ids: string[]; prefKey?: string; platform?: string }> = [];
+  const fcmCalls: Array<{ ids: string[]; prefKey?: string; platform?: string; deadlineAtMs?: number }> = [];
   let fcmOk = true;
-  const sendFcmFake: typeof sendFcmToUsers = async (ids, _payload, prefKey, platform) => {
-    fcmCalls.push({ ids, prefKey, platform });
-    return { sent: fcmOk ? ids.length : 0, failed: fcmOk ? 0 : ids.length, cleaned: 0, skipped: 0, ok: fcmOk };
+  let fcmRetryableFailed = 0;
+  const sendFcmFake: typeof sendFcmToUsers = async (ids, _payload, prefKey, platform, opts) => {
+    fcmCalls.push({ ids, prefKey, platform, deadlineAtMs: opts?.deadlineAtMs });
+    return {
+      tokens: ids.length,
+      sent: fcmOk ? ids.length - fcmRetryableFailed : 0,
+      failed: fcmOk ? fcmRetryableFailed : ids.length,
+      cleaned: 0,
+      skipped: 0,
+      ok: fcmOk,
+      retryableFailed: fcmRetryableFailed,
+    };
   };
   const fansFake: typeof fansOfTeams = async () => ({ ids: ["fan1"], ok: true });
   const fetchFail = (async () => ({ ok: false })) as unknown as typeof fetch; // relay 생략(줄만 안 뜩)
@@ -186,6 +209,15 @@ async function runPushTests() {
   checkNum("push: ok:true 기록 후 동일 상태 → skip(FCM 미호출)", fcmCalls.length, 2);
   checkNum("push: skip 카운트 반영", r3.skipped, 1);
 
+  // partial transient 실패는 인프라 호출 자체가 ok여도 시그니처를 commit하지 않아 다음 tick 재시도.
+  __resetWidgetSigCacheForTest();
+  fcmRetryableFailed = 1;
+  await pushAndroidWidgetLiveUpdates([LIVE_GAME], "http://smoke.local", { dedupeAgainstLast: true }, deps);
+  const partialCalls = fcmCalls.length;
+  fcmRetryableFailed = 0;
+  await pushAndroidWidgetLiveUpdates([LIVE_GAME], "http://smoke.local", { dedupeAgainstLast: true }, deps);
+  checkNum("push: partial transient 실패 → 동일 상태 다음 tick 재시도", fcmCalls.length, partialCalls + 1);
+
   // blocker④: 안드 위젯 data 푸시는 platform="android"로만 발송(iOS 토큰 제외).
   check("push: platform=android 전달", fcmCalls.every((c) => c.platform === "android"), true);
   check("push: prefKey=game_start 유지", fcmCalls.every((c) => c.prefKey === "game_start"), true);
@@ -198,6 +230,29 @@ async function runPushTests() {
   );
   checkNum("push: deadline 경과 → FCM 미호출", fcmCalls.length, before);
   checkNum("push: deadline 경과 → 처리 경기 0", rd.games, 0);
+}
+
+async function runBatchRetryTests() {
+  const partial = await deliverTokenChunks(["ok", "transient", "invalid"], async () => ({
+    successCount: 1,
+    failureCount: 2,
+    responses: [
+      {},
+      { error: { code: "messaging/server-unavailable" } },
+      { error: { code: "messaging/registration-token-not-registered" } },
+    ],
+  }));
+  checkNum("batch: transient 실패만 재시도 카운트", partial.retryableFailed, 1);
+  checkNum("batch: invalid token 정리 카운트", partial.invalid.length, 1);
+
+  const deadline = await deliverTokenChunks(
+    ["a", "b", "c"],
+    async () => { throw new Error("should-not-start"); },
+    2,
+    { deadlineAtMs: 100, now: () => 100 },
+  );
+  checkNum("batch: deadline 뒤 미시도 토큰 전부 retryable", deadline.retryableFailed, 3);
+  check("batch: deadline 뒤 chunk 시작 안 함", deadline.lastError === "deadline_exceeded", true);
 }
 
 // ---------------------------------------------------------------------------
@@ -224,6 +279,10 @@ async function runTokenQueryTests() {
       in: () => q,
       eq: (col: string, val: unknown) => { eqCalls.push({ table, col, val }); return q; },
       gte: () => q,
+      gt: () => q,
+      order: () => q,
+      limit: () => q,
+      abortSignal: () => q,
       then: (resolve: (v: { data: unknown[]; error: null }) => void) => resolve({ data: [], error: null }),
     };
     return q;
@@ -245,6 +304,7 @@ async function runTokenQueryTests() {
 (async () => {
   await runLoopTests();
   await runPushTests();
+  await runBatchRetryTests();
   await runTokenQueryTests();
   console.log(`\nwidget-fast-refresh smoke: ${pass} passed, ${fail} failed`);
   process.exit(fail === 0 ? 0 : 1);

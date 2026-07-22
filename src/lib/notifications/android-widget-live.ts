@@ -71,7 +71,7 @@ export function shouldSkipWidgetPush(prevSig: string | undefined, currentSig: st
 }
 
 // dedupe에 포함하면 안 되는 순서/시간 메타 — 매 사이클 값이 바뀌면 무변화 skip이 깨진다(삼순).
-const WIDGET_SIG_OMIT = new Set(["w_source_at"]);
+const WIDGET_SIG_OMIT = new Set(["w_source_at", "w_fetched_at"]);
 
 /**
  * canonical 상태 시그니처 — 순서 메타(w_source_at)를 제외한 경기 필드만으로 계산.
@@ -96,7 +96,12 @@ export function widgetStateSignature(data: Record<string, unknown>): string {
 export async function pushAndroidWidgetLiveUpdates(
   games: KboRawGame[],
   baseUrl: string,
-  opts?: { dedupeAgainstLast?: boolean; deadlineAtMs?: number },
+  opts?: {
+    dedupeAgainstLast?: boolean;
+    deadlineAtMs?: number;
+    sourceAtMs?: number;
+    fetchedAtMs?: number;
+  },
   deps?: AndroidWidgetPushDeps,
 ): Promise<{
   games: number;
@@ -104,17 +109,21 @@ export async function pushAndroidWidgetLiveUpdates(
   failed: number;
   cleaned: number;
   skipped: number;
+  retryableFailed: number;
 }> {
   const dedupe = opts?.dedupeAgainstLast === true;
   const deadlineAtMs = opts?.deadlineAtMs;
   const fansOf = deps?.fansOfTeamsImpl ?? fansOfTeams;
   const sendFcm = deps?.sendFcmImpl ?? sendFcmToUsers;
   const fetchFn = deps?.fetchImpl ?? fetch;
+  const sourceAtMs = opts?.sourceAtMs ?? Date.now();
+  const fetchedAtMs = opts?.fetchedAtMs ?? sourceAtMs;
   let pushed = 0;
   let sent = 0;
   let failed = 0;
   let cleaned = 0;
   let skipped = 0;
+  let retryableFailed = 0;
 
   // 라이브 경기 문자중계 최근 플레이 한 줄 — game-relay self-fetch(공개 도메인 baseUrl, 병렬,
   // 실패 격리). iOS 잠금 LA와 동일 소스/문구(relay-line.ts). 실패·누락 시 위젯에 줄만 안 뜸.
@@ -186,7 +195,7 @@ export async function pushAndroidWidgetLiveUpdates(
     const home = g.HOME_NM ?? "";
     const teamIds = [teamIdByShortName(away), teamIdByShortName(home)]
       .filter((v): v is number => v !== null);
-    const fans = await fansOf(teamIds);
+    const fans = await fansOf(teamIds, { deadlineAtMs });
     if (!fans.ok) {
       failed += 1;
       continue;
@@ -223,6 +232,8 @@ export async function pushAndroidWidgetLiveUpdates(
           w_outs: "",
           w_diamond: "000",
           w_stadium: g.S_NM ?? "",
+          w_source_at: String(sourceAtMs),
+          w_fetched_at: String(fetchedAtMs),
         },
       };
     } else if (isLive) {
@@ -258,7 +269,8 @@ export async function pushAndroidWidgetLiveUpdates(
           w_stadium: g.S_NM ?? "",
           w_lastplay: lastPlayByGame.get(g.G_ID) ?? "",
           // 워치 push bridge(#719) 순서 기준 — FCM 재정렬에도 강건. dedupe canonical에서는 제외.
-          w_source_at: String(Date.now()),
+          w_source_at: String(sourceAtMs),
+          w_fetched_at: String(fetchedAtMs),
         },
       };
     } else {
@@ -286,7 +298,8 @@ export async function pushAndroidWidgetLiveUpdates(
           w_outs: "",
           w_diamond: "000",
           w_stadium: g.S_NM ?? "",
-          w_source_at: String(Date.now()),
+          w_source_at: String(sourceAtMs),
+          w_fetched_at: String(fetchedAtMs),
         },
       };
     }
@@ -299,15 +312,36 @@ export async function pushAndroidWidgetLiveUpdates(
     }
     // 안드 위젯/워치 브릿지 전용 data 푸시라 platform="android"로 iOS 토큰 조회를 제외한다
     // (삼순 blocker④ — iOS는 별도 pushIosWidgetLiveUpdates가 담당, 무관 토큰 발송 제거).
-    const res = await sendFcm(fans.ids, payload, "game_start", "android");
+    const res = await sendFcm(
+      fans.ids,
+      payload,
+      "game_start",
+      "android",
+      { deadlineAtMs },
+    );
     // FCM 인프라 성공(res.ok) 확인 후에만 시그니처 기록 — 실패 시 다음 사이클이 동일 상태를
     // 재시도할 수 있게 한다(삼순 blocker③ — 실패 dedupe 오염 방지).
-    if (res.ok) lastWidgetSig.set(g.G_ID as string, sig);
+    const transientFailed = res.retryableFailed ?? 0;
+    if (res.ok && transientFailed === 0) lastWidgetSig.set(g.G_ID as string, sig);
     sent += res.sent;
     failed += res.failed;
     cleaned += res.cleaned;
     skipped += res.skipped;
+    retryableFailed += transientFailed;
+    console.info("[widget-pipeline]", JSON.stringify({
+      gameId: g.G_ID,
+      sourceAtMs,
+      fetchedAtMs,
+      sendStartedAtMs: res.sendStartedAtMs ?? null,
+      sendCompletedAtMs: res.sendCompletedAtMs ?? null,
+      sourceToFetchMs: Math.max(0, fetchedAtMs - sourceAtMs),
+      fetchToSendMs: res.sendStartedAtMs == null ? null : Math.max(0, res.sendStartedAtMs - fetchedAtMs),
+      sent: res.sent,
+      failed: res.failed,
+      retryableFailed: transientFailed,
+      ok: res.ok,
+    }));
   }
 
-  return { games: pushed, sent, failed, cleaned, skipped };
+  return { games: pushed, sent, failed, cleaned, skipped, retryableFailed };
 }

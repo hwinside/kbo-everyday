@@ -9,6 +9,8 @@ export interface TokenBatchResult {
   sent: number;
   failed: number;
   invalid: string[];
+  /** 다음 fast tick에서 재시도해야 하는 transient/미시도 토큰 수. */
+  retryableFailed: number;
   ok: boolean;
   lastError: string | null;
 }
@@ -18,11 +20,22 @@ const INVALID_TOKEN_CODES = new Set([
   "messaging/invalid-argument",
 ]);
 
+const TRANSIENT_TOKEN_CODES = new Set([
+  "messaging/internal-error",
+  "messaging/server-unavailable",
+  "messaging/unknown-error",
+  "messaging/quota-exceeded",
+  "messaging/message-rate-exceeded",
+  "messaging/device-message-rate-exceeded",
+  "messaging/topics-message-rate-exceeded",
+]);
+
 /** FCM 500개 한도 청크 발송. 한 청크 throw가 앞선 성공 수를 지우지 않는다. */
 export async function deliverTokenChunks(
   tokens: string[],
   sendChunk: (chunk: string[]) => Promise<FcmChunkResponse>,
   chunkSize = 500,
+  opts?: { deadlineAtMs?: number; now?: () => number },
 ): Promise<TokenBatchResult> {
   if (!Number.isInteger(chunkSize) || chunkSize < 1) {
     throw new Error("chunkSize must be a positive integer");
@@ -31,24 +44,37 @@ export async function deliverTokenChunks(
   let sent = 0;
   let failed = 0;
   let ok = true;
+  let retryableFailed = 0;
   let lastError: string | null = null;
   const invalid: string[] = [];
+  const now = opts?.now ?? Date.now;
 
   for (let i = 0; i < tokens.length; i += chunkSize) {
+    if (opts?.deadlineAtMs != null && now() >= opts.deadlineAtMs) {
+      const unattempted = tokens.length - i;
+      failed += unattempted;
+      retryableFailed += unattempted;
+      ok = false;
+      lastError = "deadline_exceeded";
+      break;
+    }
     const chunk = tokens.slice(i, i + chunkSize);
     try {
       const response = await sendChunk(chunk);
       sent += response.successCount;
       failed += response.failureCount;
       response.responses.forEach((item, index) => {
-        if (INVALID_TOKEN_CODES.has(item.error?.code ?? "")) invalid.push(chunk[index]);
+        const code = item.error?.code ?? "";
+        if (INVALID_TOKEN_CODES.has(code)) invalid.push(chunk[index]);
+        else if (TRANSIENT_TOKEN_CODES.has(code)) retryableFailed += 1;
       });
     } catch (error) {
       ok = false;
       failed += chunk.length;
+      retryableFailed += chunk.length;
       lastError = error instanceof Error ? error.message : "fcm_chunk_exception";
     }
   }
 
-  return { tokens: tokens.length, sent, failed, invalid, ok, lastError };
+  return { tokens: tokens.length, sent, failed, invalid, retryableFailed, ok, lastError };
 }
