@@ -1,0 +1,114 @@
+{
+  "version": 1,
+  "projectLabel": "supabase_project_ref",
+  "rules": [
+    {
+      "id": "supabase-cpu-warning",
+      "source": "prometheus",
+      "severity": "warning",
+      "for": "5m",
+      "expr": "clamp_min(100 - (avg(rate(node_cpu_seconds_total{mode=\"idle\",supabase_project_ref=\"${SUPABASE_PROJECT_REF}\"}[5m])) by (instance) * 100), 0) > 70"
+    },
+    {
+      "id": "supabase-cpu-critical",
+      "source": "prometheus",
+      "severity": "critical",
+      "for": "3m",
+      "expr": "clamp_min(100 - (avg(rate(node_cpu_seconds_total{mode=\"idle\",supabase_project_ref=\"${SUPABASE_PROJECT_REF}\"}[3m])) by (instance) * 100), 0) > 85"
+    },
+    {
+      "id": "supabase-memory-warning",
+      "source": "prometheus",
+      "severity": "warning",
+      "for": "5m",
+      "expr": "((node_memory_MemTotal_bytes{supabase_project_ref=\"${SUPABASE_PROJECT_REF}\"} - node_memory_MemFree_bytes{supabase_project_ref=\"${SUPABASE_PROJECT_REF}\"} - node_memory_Buffers_bytes{supabase_project_ref=\"${SUPABASE_PROJECT_REF}\"} - node_memory_Cached_bytes{supabase_project_ref=\"${SUPABASE_PROJECT_REF}\"}) / node_memory_MemTotal_bytes{supabase_project_ref=\"${SUPABASE_PROJECT_REF}\"}) * 100 > 75"
+    },
+    {
+      "id": "supabase-memory-critical",
+      "source": "prometheus",
+      "severity": "critical",
+      "for": "3m",
+      "expr": "((node_memory_MemTotal_bytes{supabase_project_ref=\"${SUPABASE_PROJECT_REF}\"} - node_memory_MemFree_bytes{supabase_project_ref=\"${SUPABASE_PROJECT_REF}\"} - node_memory_Buffers_bytes{supabase_project_ref=\"${SUPABASE_PROJECT_REF}\"} - node_memory_Cached_bytes{supabase_project_ref=\"${SUPABASE_PROJECT_REF}\"}) / node_memory_MemTotal_bytes{supabase_project_ref=\"${SUPABASE_PROJECT_REF}\"}) * 100 > 85"
+    },
+    {
+      "id": "supabase-disk-warning",
+      "source": "prometheus",
+      "severity": "warning",
+      "for": "5m",
+      "expr": "100 - ((node_filesystem_avail_bytes{supabase_project_ref=\"${SUPABASE_PROJECT_REF}\",mountpoint=\"/data\"} * 100) / node_filesystem_size_bytes{supabase_project_ref=\"${SUPABASE_PROJECT_REF}\",mountpoint=\"/data\"}) > 70"
+    },
+    {
+      "id": "supabase-disk-critical",
+      "source": "prometheus",
+      "severity": "critical",
+      "for": "3m",
+      "expr": "100 - ((node_filesystem_avail_bytes{supabase_project_ref=\"${SUPABASE_PROJECT_REF}\",mountpoint=\"/data\"} * 100) / node_filesystem_size_bytes{supabase_project_ref=\"${SUPABASE_PROJECT_REF}\",mountpoint=\"/data\"}) > 80"
+    },
+    {
+      "id": "supabase-disk-exhaustion-forecast",
+      "source": "prometheus",
+      "severity": "warning",
+      "for": "30m",
+      "expr": "predict_linear(node_filesystem_avail_bytes{supabase_project_ref=\"${SUPABASE_PROJECT_REF}\",mountpoint=\"/data\"}[7d], 7 * 24 * 3600) < 0"
+    },
+    {
+      "id": "supabase-disk-io-critical",
+      "source": "prometheus",
+      "severity": "critical",
+      "for": "5m",
+      "expr": "max(rate(node_disk_io_time_seconds_total{supabase_project_ref=\"${SUPABASE_PROJECT_REF}\"}[5m])) > 0.80"
+    },
+    {
+      "id": "supabase-database-down",
+      "source": "prometheus",
+      "severity": "critical",
+      "for": "2m",
+      "expr": "pg_up{supabase_project_ref=\"${SUPABASE_PROJECT_REF}\"} == 0"
+    },
+    {
+      "id": "supabase-client-waiting",
+      "source": "prometheus",
+      "severity": "critical",
+      "for": "3m",
+      "expr": "sum(pgbouncer_pools_client_waiting_connections{supabase_project_ref=\"${SUPABASE_PROJECT_REF}\"}) > 0"
+    },
+    {
+      "id": "supabase-pool-checkout-slow-critical",
+      "source": "prometheus",
+      "severity": "critical",
+      "for": "3m",
+      "expr": "100 * (1 - sum(rate(supavisor_pool_checkout_duration_local_bucket{supabase_project_ref=\"${SUPABASE_PROJECT_REF}\",le=\"1000\"}[5m])) / sum(rate(supavisor_pool_checkout_duration_local_bucket{supabase_project_ref=\"${SUPABASE_PROJECT_REF}\",le=\"+Inf\"}[5m]))) > 5"
+    },
+    {
+      "id": "supabase-metrics-stale",
+      "source": "prometheus",
+      "severity": "critical",
+      "for": "3m",
+      "expr": "absent_over_time(pg_up{supabase_project_ref=\"${SUPABASE_PROJECT_REF}\"}[3m]) == 1"
+    },
+    {
+      "id": "auth-user-rpm-warning",
+      "source": "loki",
+      "severity": "warning",
+      "for": "3m",
+      "deploymentState": "schema-pending",
+      "expr": "SCHEMA_PENDING: rate of /auth/v1/user > max(2x seven-day same-time baseline, 5000/min)"
+    },
+    {
+      "id": "auth-user-rpm-critical",
+      "source": "loki",
+      "severity": "critical",
+      "for": "2m",
+      "deploymentState": "schema-pending",
+      "expr": "SCHEMA_PENDING: rate of /auth/v1/user > max(3x seven-day same-time baseline, 8000/min)"
+    },
+    {
+      "id": "auth-user-errors-critical",
+      "source": "loki",
+      "severity": "critical",
+      "for": "2m",
+      "deploymentState": "schema-pending",
+      "expr": "SCHEMA_PENDING: /auth/v1/user 5xx ratio > 1%"
+    }
+  ]
+}
