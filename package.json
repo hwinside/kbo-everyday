@@ -42,6 +42,7 @@
     "qa:team-rank": "tsx scripts/qa/team-rank-smoke.ts",
     "qa:team-card-graph": "tsx scripts/qa/team-card-graph-smoke.ts",
     "qa:pagination": "tsx scripts/qa/pagination-fail-closed-smoke.ts",
+    "qa:admin-delivery-ledger": "tsx scripts/qa/admin-delivery-ledger-smoke.ts",
     "qa:daily-live": "tsx scripts/qa/daily-analysis-live-smoke.ts",
     "qa:contextual-split-inline": "tsx scripts/qa/contextual-stats-split-inline-smoke.ts",
     "qa:celebration-hit-overcount": "tsx scripts/qa/celebration-hit-overcount-smoke.ts",

@@ -133,13 +133,52 @@ export async function GET(request: NextRequest) {
 
   // 발송 로그 조회 (발송함 탭)
   if (tab === "sent") {
-    const { data: logs } = await admin
-      .from("admin_broadcast_logs")
-      .select("*")
-      .order("created_at", { ascending: false })
-      .limit(50);
+    const [{ data: jobs, error }, { data: legacyLogs, error: legacyError }] = await Promise.all([
+      admin
+        .from("admin_delivery_jobs")
+        .select("id, content, target_label, expected_count, selected_count, sent_count, failed_count, status, created_at")
+        .eq("kind", "broadcast_dm")
+        .order("created_at", { ascending: false })
+        .limit(50),
+      admin
+        .from("admin_broadcast_logs")
+        .select("id, content, target_label, total_count, success_count, fail_count, created_at")
+        .order("created_at", { ascending: false })
+        .limit(50),
+    ]);
 
-    return NextResponse.json({ broadcastLogs: logs ?? [] });
+    if (error) {
+      return NextResponse.json({ error: "fetch_broadcast_jobs_failed" }, { status: 500 });
+    }
+    if (legacyError) {
+      console.warn("[admin/messages] legacy broadcast logs unavailable:", legacyError.message);
+    }
+
+    return NextResponse.json({
+      broadcastLogs: [
+        ...(jobs ?? []).map((job) => ({
+          id: job.id,
+          content: job.content,
+          target_label: job.target_label,
+          total_count: job.selected_count,
+          expected_count: job.expected_count,
+          selected_count: job.selected_count,
+          success_count: job.sent_count,
+          fail_count: job.failed_count,
+          status: job.status,
+          created_at: job.created_at,
+        })),
+        ...(legacyLogs ?? []).map((log) => ({
+          ...log,
+          id: `legacy-${log.id}`,
+          expected_count: log.total_count,
+          selected_count: log.total_count,
+          status: log.fail_count > 0 ? "completed_with_failures" : "completed",
+        })),
+      ]
+        .sort((a, b) => b.created_at.localeCompare(a.created_at))
+        .slice(0, 50),
+    });
   }
 
   // 개별 대화 메시지 조회
@@ -337,86 +376,15 @@ export async function POST(request: NextRequest) {
     if (!content?.trim()) {
       return NextResponse.json({ error: "missing_content" }, { status: 400 });
     }
-
-    // 대상 유저 조회
-    let query = admin.from("profiles").select("id, team_id").neq("id", systemUserId);
-    if (teamIds && teamIds.length > 0 && teamIds.length < 10) {
-      query = query.in("team_id", teamIds);
-    }
-    const { data: targetUsers, error: userError } = await query;
-
-    if (userError || !targetUsers) {
-      return NextResponse.json({ error: "fetch_users_failed" }, { status: 500 });
+    if (
+      teamIds !== undefined &&
+      (!Array.isArray(teamIds) ||
+        teamIds.some((id) => !Number.isInteger(id) || id < 1 || id > 10) ||
+        new Set(teamIds).size !== teamIds.length)
+    ) {
+      return NextResponse.json({ error: "invalid_team_ids" }, { status: 400 });
     }
 
-    let successCount = 0;
-    let failCount = 0;
-
-    for (const user of targetUsers) {
-      try {
-        // 기존 conversation 찾기
-        const { data: existingConv } = await admin
-          .from("dm_conversations")
-          .select("id")
-          .or(
-            `and(user1_id.eq.${systemUserId},user2_id.eq.${user.id}),and(user1_id.eq.${user.id},user2_id.eq.${systemUserId})`
-          )
-          .maybeSingle();
-
-        let conversationId: string;
-
-        if (existingConv) {
-          conversationId = existingConv.id;
-        } else {
-          // 새 conversation 생성
-          const { data: newConv, error: convError } = await admin
-            .from("dm_conversations")
-            .insert({
-              user1_id: systemUserId,
-              user2_id: user.id,
-              last_message: content.trim().substring(0, 100),
-              last_message_at: new Date().toISOString(),
-            })
-            .select("id")
-            .single();
-
-          if (convError || !newConv) {
-            failCount++;
-            continue;
-          }
-          conversationId = newConv.id;
-        }
-
-        // 메시지 발송
-        const { error: msgError } = await admin
-          .from("dm_messages")
-          .insert({
-            conversation_id: conversationId,
-            sender_id: systemUserId,
-            content: content.trim(),
-          });
-
-        if (msgError) {
-          failCount++;
-          continue;
-        }
-
-        // conversation 업데이트
-        await admin
-          .from("dm_conversations")
-          .update({
-            last_message: content.trim().substring(0, 100),
-            last_message_at: new Date().toISOString(),
-          })
-          .eq("id", conversationId);
-
-        successCount++;
-      } catch {
-        failCount++;
-      }
-    }
-
-    // broadcast 로그 저장
     const targetLabel = (!teamIds || teamIds.length === 0 || teamIds.length >= 10)
       ? "전체"
       : teamIds.map((id: number) => {
@@ -424,18 +392,29 @@ export async function POST(request: NextRequest) {
           return names[id] ?? `팀${id}`;
         }).join(", ");
 
-    await admin.from("admin_broadcast_logs").insert({
-      content: content.trim().substring(0, 500),
-      target_label: targetLabel,
-      target_team_ids: (!teamIds || teamIds.length === 0) ? null : teamIds,
-      total_count: targetUsers.length,
-      success_count: successCount,
-      fail_count: failCount,
-    }).then(() => {}, () => {}); // best-effort
+    const { data: created, error: createError } = await admin.rpc("create_admin_broadcast_job", {
+      p_sender_id: systemUserId,
+      p_content: content.trim(),
+      p_target_label: targetLabel,
+      p_team_ids: teamIds && teamIds.length > 0 ? teamIds : null,
+    });
+    const job = Array.isArray(created) ? created[0] : created;
+    if (createError || !job) {
+      console.error("[admin/messages] create broadcast job failed:", createError?.message);
+      return NextResponse.json({ error: "create_broadcast_job_failed" }, { status: 500 });
+    }
 
     return NextResponse.json({
       ok: true,
-      result: { total: targetUsers.length, success: successCount, fail: failCount },
+      result: {
+        jobId: job.job_id,
+        expected: job.expected_count,
+        selected: job.selected_count,
+        total: job.selected_count,
+        success: 0,
+        fail: 0,
+        status: job.selected_count === 0 ? "completed" : "queued",
+      },
     });
   }
 
