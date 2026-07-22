@@ -69,6 +69,17 @@ function levelLabel(level: HealthLevel) {
   return "확인 불가";
 }
 
+function formatAge(checkedAt: string): string {
+  const ageMs = Math.max(0, Date.now() - Date.parse(checkedAt));
+  if (!Number.isFinite(ageMs) || ageMs < 60_000) return "방금 전";
+  const minutes = Math.floor(ageMs / 60_000);
+  if (minutes < 60) return `${minutes}분 전`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}시간 전`;
+  const days = Math.floor(hours / 24);
+  return `${days}일 ${hours % 24}시간 전`;
+}
+
 function LevelIcon({ level, className = "w-4 h-4" }: { level: HealthLevel; className?: string }) {
   if (level === "healthy") return <CheckCircle2 className={className} />;
   if (level === "warning") return <AlertTriangle className={className} />;
@@ -172,7 +183,10 @@ export default function SystemHealthPanel() {
   const waiting = metrics?.poolWaitingConnections ?? null;
   const transaction = metrics?.oldestTransactionSeconds ?? null;
   const sourceWarnings = Object.entries(data.sourceErrors).filter(([, value]) => value);
-  const displayLevel: HealthLevel = error && data.level === "healthy" ? "warning" : data.level;
+  const checkedAtMs = Date.parse(data.checkedAt);
+  const aged = !Number.isFinite(checkedAtMs) || Date.now() - checkedAtMs > 120_000;
+  const stale = Boolean(error) || aged;
+  const displayLevel: HealthLevel = stale && data.level === "healthy" ? "warning" : data.level;
 
   return (
     <section className="glass-card p-5">
@@ -187,7 +201,7 @@ export default function SystemHealthPanel() {
             </span>
           </div>
           <p className="mt-1 text-xs text-[#636366]">
-            Supabase 공식 Metrics · 마지막 성공 {new Date(data.checkedAt).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+            Supabase 공식 Metrics · 마지막 성공 {new Date(data.checkedAt).toLocaleString("ko-KR", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" })} ({formatAge(data.checkedAt)})
           </p>
         </div>
         <button
@@ -263,9 +277,11 @@ export default function SystemHealthPanel() {
           {metrics.reasons.join(" · ")}
         </div>
       )}
-      {error && (
+      {stale && (
         <div role="alert" className="mt-4 rounded-lg bg-[#FFD60A]/5 border border-[#FFD60A]/10 px-3 py-2 text-xs text-[#FFD60A]">
-          최근 갱신 실패 · 이전 정상값일 수 있음: {error}
+          {error
+            ? `최근 갱신 실패 · 이전 정상값일 수 있음: ${error}`
+            : `데이터 지연 · 마지막 성공 ${formatAge(data.checkedAt)}`}
         </div>
       )}
       {sourceWarnings.length > 0 && (

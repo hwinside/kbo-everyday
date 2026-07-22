@@ -149,9 +149,19 @@ export function summarizeSystemMetrics(text: string): SystemMetricSummary {
     else if (cpuLoadPercent >= 70) warn(`CPU 부하 ${round(cpuLoadPercent)}%`);
   }
 
-  if (samples.length === 0) {
+  const missingCoreMetrics = [
+    cpuLoadPercent === null ? "CPU" : null,
+    memoryUsedPercent === null ? "메모리" : null,
+    diskUsedPercent === null ? "디스크" : null,
+    pgUpValue === null ? "PostgreSQL" : null,
+    poolerUpValue === null ? "PgBouncer" : null,
+  ].filter((name): name is string => name !== null);
+
+  if (missingCoreMetrics.length === 5) {
     level = "unknown";
-    reasons.push("메트릭 없음");
+    reasons.push("핵심 메트릭 없음");
+  } else if (missingCoreMetrics.length > 0) {
+    warn(`핵심 메트릭 누락: ${missingCoreMetrics.join(", ")}`);
   }
 
   return {

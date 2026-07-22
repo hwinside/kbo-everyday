@@ -65,6 +65,18 @@ test("returns unknown for malformed or empty input", () => {
   assert.equal(result.memoryUsedPercent, null);
 });
 
+test("returns unknown for HTTP 200 payloads without core metrics", () => {
+  const result = summarizeSystemMetrics("unrelated_metric 1\n");
+  assert.equal(result.level, "unknown");
+  assert.ok(result.reasons.includes("핵심 메트릭 없음"));
+});
+
+test("degrades partial core metrics instead of reporting healthy", () => {
+  const result = summarizeSystemMetrics("pg_up 1\npgbouncer_up 1\n");
+  assert.equal(result.level, "warning");
+  assert.ok(result.reasons.some((reason) => reason.startsWith("핵심 메트릭 누락")));
+});
+
 const healthyServices = ["db", "rest", "auth", "storage"].map((name) => ({
   name,
   status: "ACTIVE_HEALTHY",
@@ -124,6 +136,19 @@ test("route degrades overall health when Management Health is unavailable", asyn
   assert.match(payload.sourceErrors.management, /503/);
 });
 
+test("route does not report healthy for HTTP 200 unrelated metrics", async () => {
+  const response = await routeWith(async (input) => {
+    const url = String(input);
+    if (url.includes("privileged/metrics")) return new Response("unrelated_metric 1\n", { status: 200 });
+    return Response.json(healthyServices);
+  });
+  const payload = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(payload.level, "warning");
+  assert.equal(payload.metrics.level, "unknown");
+  assert.equal(payload.sourceErrors.metrics, null);
+});
+
 test("UI marks retained data stale after a successful load then refresh failure", async () => {
   const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
     url: "http://localhost/admin/system",
@@ -155,7 +180,7 @@ test("UI marks retained data stale after a successful load then refresh failure"
       metrics: summarizeSystemMetrics(sample()),
       services: healthyServices.map((service) => ({ ...service, level: "healthy" })),
       sourceErrors: { metrics: null, management: null },
-      checkedAt: "2026-07-23T00:00:00.000Z",
+      checkedAt: new Date().toISOString(),
     });
   }) as typeof fetch;
 
@@ -167,19 +192,76 @@ test("UI marks retained data stale after a successful load then refresh failure"
     await act(async () => {
       root.render(React.createElement(SystemHealthPanel));
     });
-    await new Promise((resolve) => setTimeout(resolve, 30));
-    await act(async () => undefined);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
     assert.match(container.textContent || "", /정상/);
     const refresh = container.querySelector('button[aria-label="서버 상태 새로고침"]') as HTMLButtonElement | null;
     assert.ok(refresh);
     await act(async () => {
       refresh.click();
+      await new Promise((resolve) => setTimeout(resolve, 30));
     });
-    await new Promise((resolve) => setTimeout(resolve, 30));
-    await act(async () => undefined);
     assert.match(container.textContent || "", /최근 갱신 실패/);
     assert.match(container.textContent || "", /이전 정상값일 수 있음/);
     assert.match(container.textContent || "", /주의/);
+  } finally {
+    await act(async () => root.unmount());
+    globalThis.fetch = previous.fetch;
+    for (const [key, value] of Object.entries(previous)) {
+      if (key !== "fetch") globals[key] = value;
+    }
+    dom.window.close();
+  }
+});
+
+test("UI shows date and age when checkedAt is stale", async () => {
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+    url: "http://localhost/admin/system",
+  });
+  const globals = globalThis as typeof globalThis & Record<string, unknown>;
+  const previous = {
+    window: globals.window,
+    document: globals.document,
+    navigator: globals.navigator,
+    HTMLElement: globals.HTMLElement,
+    sessionStorage: globals.sessionStorage,
+    IS_REACT_ACT_ENVIRONMENT: globals.IS_REACT_ACT_ENVIRONMENT,
+    fetch: globalThis.fetch,
+  };
+  globals.window = dom.window;
+  globals.document = dom.window.document;
+  globals.navigator = dom.window.navigator;
+  globals.HTMLElement = dom.window.HTMLElement;
+  globals.sessionStorage = dom.window.sessionStorage;
+  globals.IS_REACT_ACT_ENVIRONMENT = true;
+  dom.window.sessionStorage.setItem("admin_pin", "health-test-pin");
+
+  const oldCheckedAt = new Date(Date.now() - 26 * 60 * 60 * 1000);
+  globalThis.fetch = (async () => Response.json({
+    level: "healthy",
+    metrics: summarizeSystemMetrics(sample()),
+    services: healthyServices.map((service) => ({ ...service, level: "healthy" })),
+    sourceErrors: { metrics: null, management: null },
+    checkedAt: oldCheckedAt.toISOString(),
+  })) as typeof fetch;
+
+  const container = dom.window.document.getElementById("root");
+  assert.ok(container);
+  const { createRoot } = await import("react-dom/client");
+  const root = createRoot(container);
+  try {
+    await act(async () => {
+      root.render(React.createElement(SystemHealthPanel));
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    const text = container.textContent || "";
+    assert.match(text, /데이터 지연/);
+    assert.match(text, /1일 2시간 전/);
+    assert.match(text, new RegExp(String(oldCheckedAt.getFullYear())));
+    assert.match(text, /주의/);
   } finally {
     await act(async () => root.unmount());
     globalThis.fetch = previous.fetch;
