@@ -185,13 +185,10 @@ export default function MyPage() {
       {/* FAQ에서 답을 찾지 못한 로그인 유저가 바로 문의하도록 연결 */}
       {user && (
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="mt-2">
-          <GlassCard pressable className="flex min-h-11 items-center justify-between !px-4 !py-3" onClick={() => setShowFeedback(true)}>
+          <GlassCard pressable className="flex min-h-12 items-center justify-between !px-4 !py-0" onClick={() => setShowFeedback(true)}>
             <div className="flex items-center gap-3">
               <MessageSquareHeart size={20} className="text-text-secondary" />
-              <div>
-                <span className="text-base text-text-primary">찾는 답변이 없나요?</span>
-                <p className="mt-0.5 text-xs text-text-tertiary">피드백 보내기에서 직접 문의해주세요</p>
-              </div>
+              <span className="text-base text-text-primary">찾는 답변이 없나요?</span>
             </div>
             <ChevronRight size={20} className="text-text-tertiary" />
           </GlassCard>

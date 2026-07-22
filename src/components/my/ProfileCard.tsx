@@ -91,7 +91,7 @@ export default function ProfileCard({ user, profile, team, points, onAvatarClick
           {onViewProfile && (
             <button
               onClick={onViewProfile}
-              className="flex min-h-11 items-center justify-between rounded-xl bg-bg-tertiary px-3 py-2 text-left transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+              className="flex min-h-12 items-center justify-between rounded-xl bg-bg-tertiary px-3 py-2 text-left transition-colors hover:bg-black/5 dark:hover:bg-white/5"
             >
               <span className="text-sm font-medium text-text-primary">내 프로필 보기</span>
               <ChevronRight size={16} className="shrink-0 text-text-tertiary" />
@@ -100,7 +100,7 @@ export default function ProfileCard({ user, profile, team, points, onAvatarClick
           {onHallOfFame && (
             <button
               onClick={onHallOfFame}
-              className="flex min-h-11 items-center justify-between rounded-xl bg-bg-tertiary px-3 py-2 text-left transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+              className="flex min-h-12 items-center justify-between rounded-xl bg-bg-tertiary px-3 py-2 text-left transition-colors hover:bg-black/5 dark:hover:bg-white/5"
             >
               <span className="flex items-center gap-1.5 text-sm font-medium text-text-primary">
                 <Trophy size={15} className="shrink-0 text-yellow-500" />
