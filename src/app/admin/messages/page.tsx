@@ -123,6 +123,7 @@ export default function AdminMessagesPage() {
   const replyRef = useRef<HTMLTextAreaElement>(null);
   const replyFileInputRef = useRef<HTMLInputElement>(null);
   const listRequestSerialRef = useRef(0);
+  const loadingMoreRef = useRef(false);
 
   const [broadcastLogs, setBroadcastLogs] = useState<BroadcastLog[]>([]);
   // 전체발송 상태
@@ -147,15 +148,22 @@ export default function AdminMessagesPage() {
       append = false,
       silent = false
     ) => {
+      // 더보기가 진행 중일 때 polling/focus refresh는 스킵한다.
+      // silent가 append request serial을 무효화하면 버튼이 영구 loading 상태에 남는다.
+      if (silent && loadingMoreRef.current) return;
       const requestSerial = ++listRequestSerialRef.current;
       if (targetTab === "broadcast") {
         setLoading(false);
+        loadingMoreRef.current = false;
         setLoadingMore(false);
         return;
       }
-      if (append) setLoadingMore(true);
-      else if (!silent) {
+      if (append) {
+        loadingMoreRef.current = true;
+        setLoadingMore(true);
+      } else if (!silent) {
         setLoading(true);
+        loadingMoreRef.current = false;
         setLoadingMore(false);
         setLoadError(false);
       }
@@ -195,8 +203,10 @@ export default function AdminMessagesPage() {
         if (requestSerial === listRequestSerialRef.current) setLoadError(true);
       }
       if (requestSerial === listRequestSerialRef.current) {
-        if (append) setLoadingMore(false);
-        else if (!silent) setLoading(false);
+        if (append) {
+          loadingMoreRef.current = false;
+          setLoadingMore(false);
+        } else if (!silent) setLoading(false);
       }
     },
     [getPin]
