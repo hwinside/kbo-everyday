@@ -113,6 +113,11 @@ try {
   });
   await initialRacePage.goto(`${baseUrl}/admin/messages`, { waitUntil: "domcontentloaded" });
   await initialStarted;
+  // initial fetch는 첫 effect, focus listener는 다음 effect에서 설치된다.
+  // 두 frame을 넘겨 effect flush를 확인한 뒤 focus race를 발생시켜 false failure를 막는다.
+  await initialRacePage.evaluate(() => new Promise((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(resolve));
+  }));
   await initialRacePage.evaluate(() => window.dispatchEvent(new Event("focus")));
   await initialRacePage.getByText(/\d+개 대화/).waitFor({ timeout: 5000 });
   check(initialRequestCount === 2, "focus refresh did not supersede the delayed initial request");
