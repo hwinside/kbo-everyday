@@ -97,6 +97,30 @@ try {
   check(await page.getByRole("button", { name: "발송함" }).getAttribute("class").then((value) => value?.includes("bg-[#6366F1]")), "sent tab lost active state");
   check(await page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth), "horizontal overflow detected");
 
+  const initialRacePage = await context.newPage();
+  let initialRequestCount = 0;
+  let releaseInitial;
+  let markInitialStarted;
+  const initialStarted = new Promise((resolve) => { markInitialStarted = resolve; });
+  const initialRelease = new Promise((resolve) => { releaseInitial = resolve; });
+  await initialRacePage.route("**/api/admin/messages?tab=inbox", async (route) => {
+    initialRequestCount += 1;
+    if (initialRequestCount === 1) {
+      markInitialStarted();
+      await initialRelease;
+    }
+    await route.continue();
+  });
+  await initialRacePage.goto(`${baseUrl}/admin/messages`, { waitUntil: "domcontentloaded" });
+  await initialStarted;
+  await initialRacePage.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await initialRacePage.getByText(/\d+개 대화/).waitFor({ timeout: 5000 });
+  check(initialRequestCount === 2, "focus refresh did not supersede the delayed initial request");
+  check(await initialRacePage.locator("button.glass-card").count() === 50, "silent refresh left the initial spinner stuck");
+  releaseInitial();
+  await initialRacePage.waitForTimeout(100);
+  check(await initialRacePage.locator("button.glass-card").count() === 50, "stale initial response changed the refreshed list");
+
   console.log(JSON.stringify({ checks, firstListMs: Math.round(firstListMs), firstPage: 50, afterAppend: 100 }));
 } finally {
   await browser.close();

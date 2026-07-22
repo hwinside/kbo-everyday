@@ -206,7 +206,10 @@ export default function AdminMessagesPage() {
         if (append) {
           loadingMoreRef.current = false;
           setLoadingMore(false);
-        } else if (!silent) setLoading(false);
+        } else {
+          // silent refresh가 초기 request를 supersede한 경우에도 초기 spinner를 정리한다.
+          setLoading(false);
+        }
       }
     },
     [getPin]
