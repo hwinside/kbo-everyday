@@ -17,6 +17,7 @@ import {
 } from "../../src/lib/notifications/widget-fast-loop";
 import { sendFcmToUsers } from "../../src/lib/notifications/fcm";
 import { deliverTokenChunks } from "../../src/lib/notifications/fcm-batch";
+import { sendDeadlineFcmChunk } from "../../src/lib/notifications/fcm-deadline-transport";
 import { fetchKboLiveGames } from "../../src/app/api/cron/game-events-warmup/route";
 import type { fansOfTeams } from "../../src/lib/notifications/game-status";
 import { supabaseAdmin } from "../../src/lib/supabase/admin";
@@ -186,6 +187,7 @@ async function runLoopTests() {
 // ---------------------------------------------------------------------------
 async function runPushTests() {
   const fcmCalls: Array<{ ids: string[]; prefKey?: string; platform?: string; deadlineAtMs?: number }> = [];
+  const fansDeadlines: Array<number | undefined> = [];
   let fcmOk = true;
   let fcmRetryableFailed = 0;
   const sendFcmFake: typeof sendFcmToUsers = async (ids, _payload, prefKey, platform, opts) => {
@@ -200,7 +202,10 @@ async function runPushTests() {
       retryableFailed: fcmRetryableFailed,
     };
   };
-  const fansFake: typeof fansOfTeams = async () => ({ ids: ["fan1"], ok: true });
+  const fansFake: typeof fansOfTeams = async (_teamIds, opts) => {
+    fansDeadlines.push(opts?.deadlineAtMs);
+    return { ids: ["fan1"], ok: true };
+  };
   const fetchFail = (async () => ({ ok: false })) as unknown as typeof fetch; // relay 생략(줄만 안 뜩)
   const deps = { fansOfTeamsImpl: fansFake, sendFcmImpl: sendFcmFake, fetchImpl: fetchFail };
 
@@ -237,6 +242,15 @@ async function runPushTests() {
   );
   checkNum("push: deadline 경과 → FCM 미호출", fcmCalls.length, before);
   checkNum("push: deadline 경과 → 처리 경기 0", rd.games, 0);
+
+  // 초기 Android 발송도 추가 tick과 같은 deadline을 fans→FCM까지 전달한다.
+  __resetWidgetSigCacheForTest();
+  const initialDeadline = Date.now() + 1_000;
+  await pushAndroidWidgetLiveUpdates(
+    [LIVE_GAME], "http://smoke.local", { deadlineAtMs: initialDeadline }, deps,
+  );
+  check("push: 초기 발송 fans query에 deadline 전달", fansDeadlines.at(-1) === initialDeadline, true);
+  check("push: 초기 발송 FCM에 deadline 전달", fcmCalls.at(-1)?.deadlineAtMs === initialDeadline, true);
 }
 
 async function runBatchRetryTests() {
@@ -261,16 +275,73 @@ async function runBatchRetryTests() {
   checkNum("batch: deadline 뒤 미시도 토큰 전부 retryable", deadline.retryableFailed, 3);
   check("batch: deadline 뒤 chunk 시작 안 함", deadline.lastError === "deadline_exceeded", true);
 
-  const hangStartedAt = Date.now();
-  const hanging = await deliverTokenChunks(
+}
+
+async function runAbortableFcmTransportTests() {
+  let preAuthFetchCalls = 0;
+  let authTimedOut = false;
+  try {
+    await sendDeadlineFcmChunk(
+      ["a"],
+      { data: { kind: "game_live" } },
+      Date.now() + 10,
+      {
+        projectId: "smoke",
+        getAccessToken: () => new Promise(() => {}),
+        fetchImpl: (async () => { preAuthFetchCalls += 1; return new Response(); }) as typeof fetch,
+      },
+    );
+  } catch (error) {
+    authTimedOut = error instanceof Error && error.message === "deadline_exceeded";
+  }
+  check("fcm transport: auth hang은 deadline 오류", authTimedOut, true);
+  checkNum("fcm transport: auth 미완료면 전송 시작 0", preAuthFetchCalls, 0);
+
+  let active = 0;
+  let aborted = 0;
+  const hangingFetch = ((_url: URL | RequestInfo, init?: RequestInit) => {
+    active += 1;
+    return new Promise<Response>((_resolve, reject) => {
+      const signal = init?.signal;
+      const onAbort = () => {
+        active -= 1;
+        aborted += 1;
+        reject(new DOMException("aborted", "AbortError"));
+      };
+      if (signal?.aborted) onAbort();
+      else signal?.addEventListener("abort", onAbort, { once: true });
+    });
+  }) as typeof fetch;
+  const startedAt = Date.now();
+  const timedOut = await sendDeadlineFcmChunk(
     ["a", "b", "c"],
-    () => new Promise(() => {}),
-    2,
-    { deadlineAtMs: hangStartedAt + 10 },
+    { data: { kind: "game_live" }, android: { priority: "HIGH", ttl: "90s" } },
+    startedAt + 10,
+    { projectId: "smoke", getAccessToken: async () => "token", fetchImpl: hangingFetch },
   );
-  check("batch: 시작한 무응답 chunk도 deadline에 반환", Date.now() - hangStartedAt < 250, true);
-  checkNum("batch: 무응답 chunk+잔여 토큰 retryable", hanging.retryableFailed, 3);
-  check("batch: 무응답 chunk deadline 오류", hanging.lastError === "deadline_exceeded", true);
+  check("fcm transport: deadline에 실제 요청 3개 abort", aborted === 3, true);
+  checkNum("fcm transport: 반환 시 active 요청 0", active, 0);
+  checkNum("fcm transport: abort 3건 transient 실패", timedOut.failureCount, 3);
+  check("fcm transport: deadline 내 반환", Date.now() - startedAt < 250, true);
+
+  let body: { message?: Record<string, unknown> } | null = null;
+  const okFetch = (async (_url: URL | RequestInfo, init?: RequestInit) => {
+    body = JSON.parse(String(init?.body ?? "{}")) as { message?: Record<string, unknown> };
+    return new Response(JSON.stringify({ name: "projects/smoke/messages/1" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }) as typeof fetch;
+  const success = await sendDeadlineFcmChunk(
+    ["device-token"],
+    { data: { kind: "game_live" }, android: { priority: "HIGH", collapse_key: "kbo_widget_stream", ttl: "90s" } },
+    Date.now() + 1_000,
+    { projectId: "smoke", getAccessToken: async () => "token", fetchImpl: okFetch },
+  );
+  checkNum("fcm transport: 정상 HTTP v1 성공", success.successCount, 1);
+  check("fcm transport: token/payload 보존",
+    body?.message?.token === "device-token"
+      && (body?.message?.android as { collapse_key?: string })?.collapse_key === "kbo_widget_stream", true);
 }
 
 async function runKboFetchDeadlineTests() {
@@ -352,6 +423,7 @@ async function runTokenQueryTests() {
   await runLoopTests();
   await runPushTests();
   await runBatchRetryTests();
+  await runAbortableFcmTransportTests();
   await runKboFetchDeadlineTests();
   await runTokenQueryTests();
   console.log(`\nwidget-fast-refresh smoke: ${pass} passed, ${fail} failed`);

@@ -5,6 +5,10 @@ import { DEFAULT_PREFS, type PrefKey } from "@/lib/notifications/prefs";
 import { fetchAllByKeyset } from "@/lib/db/paginate";
 import { deliverTokenChunks } from "@/lib/notifications/fcm-batch";
 import { runBeforeDeadline } from "@/lib/async-deadline";
+import {
+  sendDeadlineFcmChunk,
+  type DeadlineFcmMessage,
+} from "@/lib/notifications/fcm-deadline-transport";
 
 // FCM 발송 공용 헬퍼 (push-notifications-v1 S3).
 // 디스패처(/api/notifications/dispatch)와 어드민 수동 발송(/api/admin/push/send-fcm)이 공용.
@@ -272,6 +276,46 @@ export async function sendFcmToTokens(
       ...(payload.collapseKey ? { collapseKey: payload.collapseKey } : {}),
       ...(payload.ttlSeconds != null ? { ttl: payload.ttlSeconds * 1000 } : {}),
     };
+    if (opts?.deadlineAtMs != null) {
+      const raw = process.env.FIREBASE_SERVICE_ACCOUNT;
+      const projectId = raw
+        ? (JSON.parse(raw) as { project_id?: string }).project_id
+        : undefined;
+      const credential = getApps()[0]?.options.credential;
+      if (!projectId || !credential) throw new Error("missing_fcm_deadline_transport_config");
+      const deadlineMessage: DeadlineFcmMessage = {
+        ...(payload.dataOnly ? {} : { notification: { title: payload.title, body: payload.body } }),
+        ...(Object.keys(dataBlock).length ? { data: dataBlock } : {}),
+        ...(Object.keys(androidCfg).length
+          ? {
+              android: {
+                ...(payload.dataOnly ? { priority: "HIGH" as const } : {}),
+                ...(payload.collapseKey ? { collapse_key: payload.collapseKey } : {}),
+                ...(payload.ttlSeconds != null ? { ttl: `${payload.ttlSeconds}s` } : {}),
+              },
+            }
+          : {}),
+        ...(payload.apnsBackground
+          ? {
+              apns: {
+                headers: {
+                  "apns-push-type": "background",
+                  "apns-priority": "5",
+                  ...(payload.apnsCollapseId ? { "apns-collapse-id": payload.apnsCollapseId } : {}),
+                  ...(payload.apnsExpirationSeconds != null
+                    ? { "apns-expiration": String(Math.floor(Date.now() / 1000) + payload.apnsExpirationSeconds) }
+                    : {}),
+                },
+                payload: { aps: { "content-available": 1 } },
+              },
+            }
+          : {}),
+      };
+      return sendDeadlineFcmChunk(chunk, deadlineMessage, opts.deadlineAtMs, {
+        projectId,
+        getAccessToken: async () => (await credential.getAccessToken()).access_token,
+      });
+    }
     return fcm.sendEachForMulticast({
       tokens: chunk,
       ...(payload.dataOnly ? {} : { notification: { title: payload.title, body: payload.body } }),

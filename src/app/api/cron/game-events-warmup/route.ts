@@ -147,6 +147,7 @@ export async function GET(req: NextRequest) {
   if (initialFetch.ok) {
     try {
       androidWidget = await pushAndroidWidgetLiveUpdates(games, baseUrl, {
+        deadlineAtMs,
         sourceAtMs: initialFetch.trace.sourceAtMs,
         fetchedAtMs: initialFetch.trace.fetchedAtMs,
       });
