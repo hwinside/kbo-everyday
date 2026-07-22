@@ -128,13 +128,6 @@
       "subject": "highlights",
       "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
     },
-    "1bdd80dfd3b6c5a3e9e4": {
-      "count": 1,
-      "kind": "ambiguous_growing_limit",
-      "file": "src/lib/supabase/useDM.ts",
-      "subject": "user_blocks",
-      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
-    },
     "1e55c0f0af5df891d329": {
       "count": 1,
       "kind": "unbounded_growing_select",
@@ -1288,13 +1281,6 @@
       "kind": "ambiguous_growing_limit",
       "file": "src/app/api/me/venue-attendance/route.ts",
       "subject": "venue_attendance",
-      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
-    },
-    "da78629d746b2a53baf7": {
-      "count": 1,
-      "kind": "ambiguous_growing_limit",
-      "file": "src/lib/supabase/useDM.ts",
-      "subject": "user_blocks",
       "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
     },
     "db377689e79c096dd7ec": {

@@ -4,7 +4,7 @@ import { useState, useRef, useEffect, useCallback, type ChangeEvent } from "reac
 import { useParams, useRouter } from "next/navigation";
 import { ChevronLeft, Send, EllipsisVertical, AlertTriangle, ShieldBan, Flag, X, ImagePlus, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { getOrCreateConversation, useDMChat } from "@/lib/supabase/useDM";
+import { useDMChat } from "@/lib/supabase/useDM";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { useBlockUser } from "@/lib/supabase/useBlock";
 import { submitDMReport } from "@/lib/supabase/useBlock";
@@ -26,6 +26,7 @@ const REPORT_CATEGORIES = [
 ] as const;
 
 const MAX_DM_IMAGES = 3;
+const SEND_ERROR = "현재 이 대화에서는 쪽지를 보낼 수 없어요.";
 
 export default function DMChatPage() {
   const params = useParams();
@@ -130,7 +131,8 @@ export default function DMChatPage() {
     for (const file of files.slice(0, remaining)) {
       const formData = new FormData();
       formData.append("file", file);
-      formData.append("conversationId", conversationId);
+      if (draftTargetId) formData.append("targetUserId", draftTargetId);
+      else formData.append("conversationId", conversationId);
       try {
         const res = await fetch("/api/dm/upload", {
           method: "POST",
@@ -163,21 +165,13 @@ export default function DMChatPage() {
     if ((!input.trim() && sendImages.length === 0) || sending || uploading) return;
     setSendError("");
     setSending(true);
-    const targetConversationId = draftTargetId && user
-      ? await getOrCreateConversation(user.id, otherId)
-      : conversationId;
-    if (!targetConversationId) {
-      setSendError("쪽지를 보낼 수 없습니다. 잠시 후 다시 시도해주세요.");
-      setSending(false);
-      return;
-    }
-    const ok = await sendMessage(input.trim(), sendImages.map((img) => img.url), targetConversationId);
-    if (ok) {
+    const result = await sendMessage(input.trim(), sendImages.map((img) => img.url), draftTargetId ?? undefined);
+    if (result.ok && result.conversationId) {
       setInput("");
       setImages([]);
-      if (draftTargetId) router.replace(`/messages/${targetConversationId}`);
+      if (draftTargetId) router.replace(`/messages/${result.conversationId}`);
     } else {
-      setSendError("쪽지를 보낼 수 없습니다. 잠시 후 다시 시도해주세요.");
+      setSendError(SEND_ERROR);
     }
     setSending(false);
   };

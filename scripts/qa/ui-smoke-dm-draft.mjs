@@ -12,6 +12,8 @@ const password = `QaDm!${stamp}`;
 const emails = [`qa-dm-a-${stamp}@keubo.fan`, `qa-dm-b-${stamp}@keubo.fan`];
 const userIds = [];
 let browser;
+const uploadedPaths = [];
+const OPERATOR_USER_ID = "7b58d68e-e212-40aa-a96d-5018cb82cc81";
 
 async function signIn(email) {
   const response = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
@@ -99,8 +101,50 @@ async function main() {
   if (!conversation || conversation.last_message !== content) {
     throw new Error("first send did not create the conversation with its preview");
   }
+  await admin.from("user_blocks").insert({ blocker_id: userIds[1], blocked_id: userIds[0] });
+  const blockedDraft = `blocked draft ${stamp}`;
+  await page.getByPlaceholder("쪽지를 입력하세요...").fill(blockedDraft);
+  await page.getByRole("button", { name: "쪽지 보내기" }).click();
+  await page.getByRole("alert").getByText("현재 이 대화에서는 쪽지를 보낼 수 없어요.").waitFor();
+  if (await page.getByPlaceholder("쪽지를 입력하세요...").inputValue() !== blockedDraft) {
+    throw new Error("blocked send did not preserve the draft");
+  }
+  await admin.from("user_blocks").delete().eq("blocker_id", userIds[1]).eq("blocked_id", userIds[0]);
 
-  console.log("dm draft UI smoke: 2/2 PASS");
+  await page.goto(`${BASE_URL}/messages/new-${OPERATOR_USER_ID}`, { waitUntil: "networkidle" });
+  if (await conversationBetween(userIds[0], OPERATOR_USER_ID)) {
+    throw new Error("opening the operator draft created an empty conversation");
+  }
+  await page.locator('input[type="file"]').setInputFiles({
+    name: "dm-draft.png",
+    mimeType: "image/png",
+    buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nL8AAAAASUVORK5CYII=", "base64"),
+  });
+  await page.getByRole("button", { name: "첨부 이미지 제거" }).waitFor();
+  if (await conversationBetween(userIds[0], OPERATOR_USER_ID)) {
+    throw new Error("uploading the first photo created an empty conversation");
+  }
+  await page.getByRole("button", { name: "쪽지 보내기" }).click();
+  await page.waitForURL(/\/messages\/[0-9a-f-]{36}$/);
+  const operatorConversation = await conversationBetween(userIds[0], OPERATOR_USER_ID);
+  if (!operatorConversation || operatorConversation.last_message !== "[사진]") {
+    throw new Error("photo-only first send did not create the expected preview");
+  }
+  const { data: photoMessage } = await admin
+    .from("dm_messages")
+    .select("image_urls")
+    .eq("conversation_id", operatorConversation.id)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .single();
+  if (!photoMessage?.image_urls?.length) throw new Error("photo-only first send lost its image");
+  for (const url of photoMessage.image_urls) {
+    const marker = "/storage/v1/object/public/photos/";
+    const index = url.indexOf(marker);
+    if (index >= 0) uploadedPaths.push(decodeURIComponent(url.slice(index + marker.length)));
+  }
+
+  console.log("dm draft UI smoke: 7/7 PASS");
   await browser.close();
   browser = null;
 }
@@ -113,15 +157,20 @@ main()
   .finally(async () => {
     if (browser) await browser.close();
     if (userIds.length === 2) {
-      const [u1, u2] = [...userIds].sort();
-      const { data } = await admin
-        .from("dm_conversations")
-        .select("id")
-        .eq("user1_id", u1)
-        .eq("user2_id", u2)
-        .maybeSingle();
-      if (data) await admin.from("dm_conversations").delete().eq("id", data.id);
+      for (const [left, right] of [[userIds[0], userIds[1]], [userIds[0], OPERATOR_USER_ID]]) {
+        const [u1, u2] = [left, right].sort();
+        const { data } = await admin
+          .from("dm_conversations")
+          .select("id")
+          .eq("user1_id", u1)
+          .eq("user2_id", u2)
+          .maybeSingle();
+        if (data) await admin.from("dm_conversations").delete().eq("id", data.id);
+      }
+      await admin.from("user_blocks").delete().eq("blocker_id", userIds[0]).eq("blocked_id", userIds[1]);
+      await admin.from("user_blocks").delete().eq("blocker_id", userIds[1]).eq("blocked_id", userIds[0]);
     }
+    if (uploadedPaths.length) await admin.storage.from("photos").remove(uploadedPaths);
     if (userIds.length) await admin.from("profiles").delete().in("id", userIds);
     for (const id of userIds) await admin.auth.admin.deleteUser(id);
   });
