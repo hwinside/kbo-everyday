@@ -189,48 +189,68 @@ export default function FaqCard() {
     getPlatformSnapshot,
     getServerPlatformSnapshot,
   );
+  const [isExpanded, setIsExpanded] = useState(false);
   const [openQuestion, setOpenQuestion] = useState<string | null>(null);
   const items = FAQ_ITEMS[devicePlatform];
 
+  const toggleFaq = () => {
+    if (isExpanded) setOpenQuestion(null);
+    setIsExpanded(!isExpanded);
+  };
+
   return (
     <GlassCard className="overflow-hidden p-0">
-      <div className="flex items-start gap-4 p-5">
-        <CircleHelp size={22} className="mt-0.5 shrink-0 text-text-secondary" />
-        <div>
-          <h2 className="text-base font-semibold text-text-primary">자주 묻는 질문 (FAQ)</h2>
-          <p className="mt-0.5 text-xs text-text-tertiary">내 기기에 맞는 자주 묻는 질문을 모았어요</p>
+      <button
+        type="button"
+        className="flex w-full items-center justify-between gap-3 p-5 text-left"
+        aria-expanded={isExpanded}
+        aria-controls="faq-question-list"
+        onClick={toggleFaq}
+      >
+        <div className="flex items-start gap-4">
+          <CircleHelp size={22} className="mt-0.5 shrink-0 text-text-secondary" />
+          <div>
+            <h2 className="text-base font-semibold text-text-primary">자주 묻는 질문 (FAQ)</h2>
+            <p className="mt-0.5 text-xs text-text-tertiary">내 기기에 맞는 자주 묻는 질문을 모았어요</p>
+          </div>
         </div>
-      </div>
+        <ChevronDown
+          size={20}
+          className={`shrink-0 text-text-tertiary transition-transform ${isExpanded ? "rotate-180" : ""}`}
+        />
+      </button>
 
-      <div className="divide-y divide-white/10 border-t border-white/10">
-        {items.map(({ question, answer }, index) => {
-          const isOpen = openQuestion === question;
-          const answerId = `faq-answer-${index}`;
+      {isExpanded && (
+        <div id="faq-question-list" className="divide-y divide-white/10 border-t border-white/10">
+          {items.map(({ question, answer }, index) => {
+            const isOpen = openQuestion === question;
+            const answerId = `faq-answer-${index}`;
 
-          return (
-            <div key={question}>
-              <button
-                type="button"
-                className="flex w-full items-center justify-between gap-3 px-5 py-4 text-left"
-                aria-expanded={isOpen}
-                aria-controls={answerId}
-                onClick={() => setOpenQuestion(isOpen ? null : question)}
-              >
-                <span className="text-sm font-medium text-text-primary">{question}</span>
-                <ChevronDown
-                  size={18}
-                  className={`shrink-0 text-text-tertiary transition-transform ${isOpen ? "rotate-180" : ""}`}
-                />
-              </button>
-              {isOpen && (
-                <p id={answerId} className="px-5 pb-4 pr-11 text-sm leading-6 text-text-secondary">
-                  {answer}
-                </p>
-              )}
-            </div>
-          );
-        })}
-      </div>
+            return (
+              <div key={question}>
+                <button
+                  type="button"
+                  className="flex w-full items-center justify-between gap-3 px-5 py-4 text-left"
+                  aria-expanded={isOpen}
+                  aria-controls={answerId}
+                  onClick={() => setOpenQuestion(isOpen ? null : question)}
+                >
+                  <span className="text-sm font-medium text-text-primary">{question}</span>
+                  <ChevronDown
+                    size={18}
+                    className={`shrink-0 text-text-tertiary transition-transform ${isOpen ? "rotate-180" : ""}`}
+                  />
+                </button>
+                {isOpen && (
+                  <p id={answerId} className="px-5 pb-4 pr-11 text-sm leading-6 text-text-secondary">
+                    {answer}
+                  </p>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </GlassCard>
   );
 }
