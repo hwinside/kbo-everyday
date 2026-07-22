@@ -37,6 +37,7 @@ import PwaGuideModal from "@/components/my/PwaGuideModal";
 import DeleteAccountSheet from "@/components/my/DeleteAccountSheet";
 import VenueDiaryCard from "@/components/my/VenueDiaryCard";
 import AdminOnly from "@/components/admin/AdminOnly";
+import FaqCard from "@/components/my/FaqCard";
 
 export default function MyPage() {
   const [nicknameStatus, setNicknameStatus] = useState<{
@@ -162,9 +163,30 @@ export default function MyPage() {
         </header>
       </div>
 
-      {/* 회원가입 CTA (비로그인 시 최상단) */}
+      {/* 반복 CS를 바탕으로 정리한 FAQ — 마이페이지 최상단 */}
+      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="mt-6">
+        <FaqCard />
+      </motion.div>
+
+      {/* FAQ에서 답을 찾지 못한 로그인 유저가 바로 문의하도록 연결 */}
+      {user && (
+        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="mt-3">
+          <GlassCard pressable className="flex items-center justify-between p-5" onClick={() => setShowFeedback(true)}>
+            <div className="flex items-center gap-4">
+              <MessageSquareHeart size={22} className="text-text-secondary" />
+              <div>
+                <span className="text-base text-text-primary">찾는 답변이 없나요?</span>
+                <p className="mt-0.5 text-xs text-text-tertiary">피드백 보내기에서 직접 문의해주세요</p>
+              </div>
+            </div>
+            <ChevronRight size={22} className="text-text-tertiary" />
+          </GlassCard>
+        </motion.div>
+      )}
+
+      {/* 회원가입 CTA (비로그인) */}
       {!user && (
-        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="mt-6">
+        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="mt-3">
           <GlassCard className="flex flex-col items-center gap-4 py-6">
             <p className="text-base font-semibold text-text-primary">크보팬에 가입하고 더 많은 기능을 이용하세요</p>
             <p className="text-sm text-text-tertiary">커뮤니티, 쪽지 등 회원 전용 기능</p>
@@ -176,7 +198,7 @@ export default function MyPage() {
       )}
 
       {/* Profile card */}
-      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className={user ? "mt-6" : "mt-3"}>
+      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="mt-3">
         <ProfileCard
           user={user}
           profile={profile}
@@ -284,20 +306,6 @@ export default function MyPage() {
       <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }} className="mt-5">
         <MenuSection />
       </motion.div>
-
-      {/* 피드백 보내기 */}
-      {user && (
-        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.17 }} className="mt-3">
-          <GlassCard pressable className="flex items-center justify-between p-5" onClick={() => setShowFeedback(true)}>
-            <div className="flex items-center gap-4">
-              <MessageSquareHeart size={22} className="text-text-secondary" />
-              <span className="text-base text-text-primary">📮 피드백 보내기</span>
-            </div>
-            <ChevronRight size={22} className="text-text-tertiary" />
-          </GlassCard>
-        </motion.div>
-      )}
-
 
       {/* Logged in info */}
       {user && (

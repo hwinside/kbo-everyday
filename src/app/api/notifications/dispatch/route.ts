@@ -5,6 +5,7 @@ import type { PrefKey } from "@/lib/notifications/prefs";
 import { NEWS_CLIPPER_IDS } from "@/lib/constants/news-clippers";
 import { URGENT_NOTICE_USER_ID } from "@/lib/constants/urgent-notice";
 import { isNoReplySender, noReplyAutoReplyText } from "@/lib/constants/no-reply-senders";
+import { fetchFavoritePlayerFanIds } from "@/lib/notifications/audience";
 
 // 푸시 알림 디스패처 (push-notifications-v1 S3).
 // DB 트리거(pg_net)가 INSERT 이벤트를 POST — 대상 결정 → prefs 필터 → FCM 발송.
@@ -195,15 +196,8 @@ async function handlePost(record: Record<string, unknown>): Promise<Dispatch[]> 
     const [kboId, playerName] = tag.split(":");
     if (!kboId) continue;
     // favorite_players: [{playerId: "53123", ...}]
-    const { data: fans, error } = await supabase
-      .from("profiles")
-      .select("id")
-      .contains("favorite_players", JSON.stringify([{ playerId: kboId }]));
-    if (error) {
-      console.error("[dispatch] fans query failed:", error.message);
-      continue;
-    }
-    const targets = (fans ?? []).map((f: { id: string }) => f.id).filter((id) => !notified.has(id));
+    const fans = await fetchFavoritePlayerFanIds(kboId);
+    const targets = fans.filter((id) => !notified.has(id));
     targets.forEach((id) => notified.add(id));
     if (targets.length === 0) continue;
     out.push({

@@ -20,6 +20,7 @@ type TrafficResp = {
   totals: Record<string, { pv: number; uv: number }>;
   devices: Record<string, number>;
   dwell: Record<string, { sessions: number; avgMs: number; medianMs: number }>;
+  dwellStatus: "ok" | "error";
   versions: Record<string, { version: string; devices: number }[]>;
 };
 // Store chart rank at view time. rank=null → outside the chart window;
@@ -462,6 +463,8 @@ export default function TrafficPage() {
         </div>
         {loading ? (
           <p className="text-sm text-[#8E8E93]">불러오는 중…</p>
+        ) : resp?.dwellStatus === "error" ? (
+          <p className="text-sm text-[#FF6B6B]">조회 실패</p>
         ) : activePlatforms.length === 0 ? (
           <p className="text-sm text-[#8E8E93]">데이터 없음</p>
         ) : (

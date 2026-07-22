@@ -35,6 +35,8 @@
 		A1B2C3D42FE000000000001 /* MetaAppEventsPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D42FE000000000002 /* MetaAppEventsPlugin.swift */; };
 		A1B2C3D42FE000000000003 /* FacebookCore in Frameworks */ = {isa = PBXBuildFile; productRef = A1B2C3D42FE000000000004 /* FacebookCore */; };
 		AAEE11D52FE000000000001 /* AppReviewPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAEE11D52FE000000000002 /* AppReviewPlugin.swift */; };
+		B001A7712FE0000000000001 /* NewsArticleBrowserPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = B001A7712FE0000000000002 /* NewsArticleBrowserPlugin.swift */; };
+		B001A7722FE0000000000001 /* NewsArticleBrowserSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B001A7722FE0000000000002 /* NewsArticleBrowserSupport.swift */; };
 		ABCD00000000000000000002 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = ABCD00000000000000000001 /* Assets.xcassets */; };
 		ABCD00000000000000000004 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = ABCD00000000000000000003 /* Assets.xcassets */; };
 		B9C9CA25150B8EEF9F62ACB0 /* WatchData.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4C1D752B8E5F1912873A2F0 /* WatchData.swift */; };
@@ -135,6 +137,8 @@
 		A1B2C3D42FE000000000002 /* MetaAppEventsPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetaAppEventsPlugin.swift; sourceTree = "<group>"; };
 		A4C1D752B8E5F1912873A2F0 /* WatchData.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WatchData.swift; sourceTree = "<group>"; };
 		AAEE11D52FE000000000002 /* AppReviewPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppReviewPlugin.swift; sourceTree = "<group>"; };
+		B001A7712FE0000000000002 /* NewsArticleBrowserPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewsArticleBrowserPlugin.swift; sourceTree = "<group>"; };
+		B001A7722FE0000000000002 /* NewsArticleBrowserSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewsArticleBrowserSupport.swift; sourceTree = "<group>"; };
 		ABCD00000000000000000001 /* Assets.xcassets */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		ABCD00000000000000000003 /* Assets.xcassets */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		AEB8F65459C635243ED9DD36 /* KBOWatch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = KBOWatch.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -286,6 +290,8 @@
 				47B1AA0A2FDADA7700271DE5 /* MainViewController.swift */,
 				A1B2C3D42FE000000000002 /* MetaAppEventsPlugin.swift */,
 				AAEE11D52FE000000000002 /* AppReviewPlugin.swift */,
+				B001A7712FE0000000000002 /* NewsArticleBrowserPlugin.swift */,
+				B001A7722FE0000000000002 /* NewsArticleBrowserSupport.swift */,
 				50379B222058CBB4000EE86E /* capacitor.config.json */,
 				504EC3071FED79650016851F /* AppDelegate.swift */,
 				8C0B1A992FDB001000000001 /* LiveActivityController.swift */,
@@ -521,6 +527,8 @@
 				47B1AA0B2FDADA7700271DE5 /* MainViewController.swift in Sources */,
 				A1B2C3D42FE000000000001 /* MetaAppEventsPlugin.swift in Sources */,
 				AAEE11D52FE000000000001 /* AppReviewPlugin.swift in Sources */,
+				B001A7712FE0000000000001 /* NewsArticleBrowserPlugin.swift in Sources */,
+				B001A7722FE0000000000001 /* NewsArticleBrowserSupport.swift in Sources */,
 				1FB9D552D369B5999B046BE8 /* WatchSyncManager.swift in Sources */,
 				08E32B4C8D8F8FA4802047ED /* ChannelAckPolicy.swift in Sources */,
 			);

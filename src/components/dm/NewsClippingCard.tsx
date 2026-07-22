@@ -1,8 +1,8 @@
 "use client";
 
 import type { NewsClippingPayload } from "@/types/news-clipping";
-import { openExternalUrl } from "@/lib/open-external";
 import NewsCommentButton from "@/components/news/NewsCommentButton";
+import { useNewsArticleBrowser } from "@/hooks/useNewsArticleBrowser";
 
 // 뉴스클리핑 쪽지 카드 — 뉴스카드와 동일한 구성(OG 사진+제목, 탭하면 원문)
 // 아래에 LLM 3줄 요약. 쪽지 말풍선 자리에 렌더된다.
@@ -14,6 +14,8 @@ function formatDateLabel(isoDate: string): string {
 }
 
 export default function NewsClippingCard({ payload }: { payload: NewsClippingPayload }) {
+  const { openArticle } = useNewsArticleBrowser();
+
   return (
     <div className="rounded-2xl rounded-bl-md bg-bg-tertiary overflow-hidden">
       {/* 헤더 + 데일리 총평 */}
@@ -34,11 +36,19 @@ export default function NewsClippingCard({ payload }: { payload: NewsClippingPay
 
       {/* 기사 카드 목록 */}
       <div className="px-2 pb-2 space-y-2">
-        {payload.articles.map((article) => (
+        {payload.articles.map((article) => {
+          const discussion = {
+            url: article.link,
+            canonicalUrl: article.original_link || article.link,
+            title: article.title,
+            thumbnailUrl: article.thumbnail_url,
+            teamId: payload.team_id,
+          };
+          return (
           <div key={article.link} className="rounded-xl bg-bg-secondary border border-border overflow-hidden">
             <button
               type="button"
-              onClick={() => openExternalUrl(article.link)}
+              onClick={() => openArticle(discussion)}
               className="block w-full text-left"
             >
               {article.thumbnail_url && (
@@ -65,18 +75,13 @@ export default function NewsClippingCard({ payload }: { payload: NewsClippingPay
             </ul>
             <div className="flex justify-end border-t border-border px-3 py-2">
               <NewsCommentButton
-                article={{
-                  url: article.link,
-                  canonicalUrl: article.original_link || article.link,
-                  title: article.title,
-                  thumbnailUrl: article.thumbnail_url,
-                  teamId: payload.team_id,
-                }}
+                article={discussion}
                 className="bg-bg-tertiary text-text-secondary hover:bg-bg-primary"
               />
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

@@ -1,6 +1,7 @@
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { isAdminAuthedRequest } from "@/lib/admin/pin";
 import { verifyDraftTarget } from "@/lib/cs/verify-draft-target";
+import { parseCsDraftKind, validateStoreDraftBody } from "@/lib/cs/store-review-draft";
 import { NextRequest, NextResponse } from "next/server";
 import { randomBytes } from "crypto";
 
@@ -19,7 +20,7 @@ export async function POST(request: NextRequest) {
 
   const body = await request.json().catch(() => null);
   const csId = typeof body?.csId === "string" ? body.csId.trim() : "";
-  const kind = body?.kind === "feedback" || body?.kind === "dm" ? body.kind : "";
+  const kind = parseCsDraftKind(body?.kind);
   const userId = typeof body?.userId === "string" ? body.userId.trim() : "";
   const content = typeof body?.body === "string" ? body.body.trimEnd() : "";
   const conversationId = typeof body?.conversationId === "string" ? body.conversationId : null;
@@ -35,7 +36,15 @@ export async function POST(request: NextRequest) {
   const csContentTrimmed = typeof body?.csContent === "string" ? body.csContent.trimEnd() : "";
   const csContent = csContentTrimmed.trim() ? csContentTrimmed : null;
 
-  if (!csId || !kind || !userId || !content.trim()) {
+  const isStoreReview = kind === "store_review";
+  const hasValidTargetShape = isStoreReview
+    ? !userId && conversationId == null && feedbackId == null
+    : !!userId;
+  const hasValidContent = isStoreReview
+    ? validateStoreDraftBody(csId, content)
+    : !!content.trim();
+
+  if (!csId || !kind || !hasValidTargetShape || !hasValidContent) {
     return NextResponse.json({ error: "missing_params" }, { status: 400 });
   }
 
@@ -43,9 +52,11 @@ export async function POST(request: NextRequest) {
 
   // 원본 CS 건(feedback 소유자 / dm 대화 참여자)과 userId가 실제로 일치하는지 검증.
   // 이게 없으면 잘못된 payload 하나로 "A 유저에게 발송 + B feedback resolved" 상태가 생길 수 있다.
-  const isValidTarget = await verifyDraftTarget(admin, kind, userId, conversationId, feedbackId, systemUserId);
-  if (!isValidTarget) {
-    return NextResponse.json({ error: "target_mismatch" }, { status: 400 });
+  if (!isStoreReview) {
+    const isValidTarget = await verifyDraftTarget(admin, kind, userId, conversationId, feedbackId, systemUserId);
+    if (!isValidTarget) {
+      return NextResponse.json({ error: "target_mismatch" }, { status: 400 });
+    }
   }
 
   const token = randomBytes(24).toString("base64url");
@@ -56,7 +67,7 @@ export async function POST(request: NextRequest) {
       token,
       cs_id: csId,
       kind,
-      user_id: userId,
+      user_id: userId || null,
       conversation_id: conversationId,
       feedback_id: feedbackId,
       body: content,
