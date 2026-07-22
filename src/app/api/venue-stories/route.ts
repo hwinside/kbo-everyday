@@ -230,22 +230,19 @@ export async function POST(req: NextRequest) {
   }
   const attendanceSource = geo.ok ? "story_geofence" : "admin_qa";
 
-  // 4) 미디어 객체 실제 존재·크기·매직바이트 서버 검증(fail-closed, maxBytes 선제 차단)
-  //  - video 는 private staging 이라 공개 URL 이 없다 → 단기 signed URL 로 probe
-  let probeUrl = mediaUrl;
-  if (mediaType === "video") {
-    const { data: signed, error: signErr } = await supabase.storage
-      .from(media.bucket)
-      .createSignedUrl(media.path, 60);
-    if (signErr || !signed?.signedUrl) {
-      return NextResponse.json({ error: "업로드된 미디어를 확인할 수 없어요" }, { status: 400 });
+  // 4) 이미지 객체 실제 존재·크기·매직바이트 서버 검증(fail-closed, maxBytes 선제 차단).
+  // 영상은 private signed URL Range probe가 Vercel에서 응답을 끝내지 않아 60초 timeout을
+  // 만들 수 있다. 아래 step 6이 service_role 직접 download(50MiB 상한) + ffprobe를 수행하므로
+  // 영상은 그 단일 권위 검증 경로만 사용한다(검증 전 pending/비노출 불변식 유지).
+  if (mediaType === "image") {
+    const probe = await probeMediaObject(mediaUrl, mediaType, VENUE_STORY_MAX_BYTES);
+    if (!probe.ok) {
+      const msg =
+        probe.reason === "too_large"
+          ? "파일이 너무 큽니다 (최대 50MB)"
+          : "업로드된 미디어를 확인할 수 없어요";
+      return NextResponse.json({ error: msg }, { status: 400 });
     }
-    probeUrl = signed.signedUrl;
-  }
-  const probe = await probeMediaObject(probeUrl, mediaType, VENUE_STORY_MAX_BYTES);
-  if (!probe.ok) {
-    const msg = probe.reason === "too_large" ? "파일이 너무 큽니다 (최대 50MB)" : "업로드된 미디어를 확인할 수 없어요";
-    return NextResponse.json({ error: msg }, { status: 400 });
   }
   // 영상 포스터 썸네일도 이미지로 실검증 — 유효하지 않으면 메타에서 드롭(옵션값)
   let thumbUrlOut: string | null = thumbUrl;

@@ -3,6 +3,7 @@ import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { supabaseErrorResponse } from "@/lib/supabase/error";
 import { isAdminAuthedRequest } from "@/lib/admin/pin";
 import { getKSTTodayStart, toKSTDateString } from "@/lib/utils/date-kst";
+import { fetchAllByKeyset } from "@/lib/db/paginate";
 
 async function verifyPin(req: NextRequest): Promise<boolean> {
   return isAdminAuthedRequest(req);
@@ -28,15 +29,38 @@ export async function GET(req: NextRequest) {
 
   if (todayError) return supabaseErrorResponse(todayError);
 
-  // Team distribution
-  const { data: teamData, error: teamError } = await supabase
-    .from("profiles")
-    .select("team_id");
+  // Team distribution + 30-day signups. `profiles` is already >1,000 rows, so one
+  // fail-closed keyset snapshot is shared by both aggregates and checked against exact count.
+  let profileRows: Array<{ id: string; team_id: number | null; created_at: string }>;
+  try {
+    profileRows = await fetchAllByKeyset(
+      async (cursor, limit) => {
+        let query = supabase
+          .from("profiles")
+          .select("id, team_id, created_at")
+          .order("id", { ascending: true })
+          .limit(limit);
+        if (cursor !== null) query = query.gt("id", cursor);
+        return query;
+      },
+      (row) => row.id,
+      { label: "admin user aggregates" },
+    );
+  } catch (e) {
+    return NextResponse.json(
+      { error: "fetch_profile_snapshot_failed", detail: e instanceof Error ? e.message : "unknown" },
+      { status: 500 },
+    );
+  }
+  if (profileRows.length !== (totalUsers ?? 0)) {
+    return NextResponse.json(
+      { error: "profile_count_mismatch", expected: totalUsers, selected: profileRows.length },
+      { status: 500 },
+    );
+  }
 
-  if (teamError) return supabaseErrorResponse(teamError);
-
-  const teamMap = new Map<string | null, number>();
-  for (const row of teamData ?? []) {
+  const teamMap = new Map<number | null, number>();
+  for (const row of profileRows) {
     const key = row.team_id;
     teamMap.set(key, (teamMap.get(key) ?? 0) + 1);
   }
@@ -53,24 +77,11 @@ export async function GET(req: NextRequest) {
 
   if (recentError) return supabaseErrorResponse(recentError);
 
-  // Daily signup counts (last 30 days) — paginated fetch to bypass 1000-row default
+  // Daily signup counts (last 30 days) — same verified full snapshot.
   const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString();
-  const allSignupRows: { created_at: string }[] = [];
-  const batchSize = 1000;
-  for (let from = 0; ; from += batchSize) {
-    const { data, error } = await supabase
-      .from("profiles")
-      .select("created_at")
-      .gte("created_at", thirtyDaysAgo)
-      .order("created_at", { ascending: true })
-      .range(from, from + batchSize - 1);
-    if (error || !data || data.length === 0) break;
-    allSignupRows.push(...data);
-    if (data.length < batchSize) break;
-  }
-
   const dayMap = new Map<string, number>();
-  for (const row of allSignupRows) {
+  for (const row of profileRows) {
+    if (row.created_at < thirtyDaysAgo) continue;
     const d = toKSTDateString(row.created_at);
     dayMap.set(d, (dayMap.get(d) ?? 0) + 1);
   }
