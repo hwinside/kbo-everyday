@@ -36,6 +36,10 @@ for (const contract of [
   "sum(dwell_ms)::bigint AS dwell_ms",
   "rolled.game_ids <@ raw.game_ids",
   "rolled.dwell_ms IS DISTINCT FROM raw.dwell_ms",
+  "pageDwellSessions",
+  "pageDwellDistribution",
+  "count(DISTINCT session_id)::bigint AS sessions",
+  "FULL JOIN rolled_session_slices",
   "admin_telemetry_retention_runs",
   "REVOKE EXECUTE ON FUNCTION admin_telemetry_retention_run",
 ]) {
