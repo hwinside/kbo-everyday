@@ -39,23 +39,12 @@ public final class NewsArticleBrowserPlugin: CAPPlugin, CAPBridgedPlugin {
 }
 
 final class NewsArticleBrowserViewController: UIViewController {
-    private static let commentsHost = "keubo.fan"
-    private static let commentsPath = "/native/news-comments"
-
     static func httpURL(_ rawValue: String) -> URL? {
-        guard let url = URL(string: rawValue),
-              let scheme = url.scheme?.lowercased(),
-              url.host != nil,
-              scheme == "http" || scheme == "https" else { return nil }
-        return url
+        NewsArticleBrowserURLPolicy.httpURL(rawValue)
     }
 
     static func commentsURL(_ rawValue: String) -> URL? {
-        guard let url = URL(string: rawValue),
-              url.scheme?.lowercased() == "https",
-              url.host?.lowercased() == commentsHost,
-              url.path == commentsPath else { return nil }
-        return url
+        NewsArticleBrowserURLPolicy.commentsURL(rawValue)
     }
 
     private let articleURL: URL
@@ -189,13 +178,14 @@ final class NewsArticleBrowserViewController: UIViewController {
     private func configureCommentsOverlayIfNeeded() {
         guard commentsURL != nil else { return }
         let controller = WKUserContentController()
-        controller.add(self, name: "NewsCommentsBridge")
+        controller.add(WeakNewsCommentsMessageHandler(self), name: "NewsCommentsBridge")
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .default()
         configuration.userContentController = controller
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
+        webView.navigationDelegate = self
         webView.translatesAutoresizingMaskIntoConstraints = false
         webView.isOpaque = false
         webView.backgroundColor = .clear

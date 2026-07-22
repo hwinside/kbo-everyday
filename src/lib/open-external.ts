@@ -17,13 +17,19 @@ import type { NewsArticleDiscussion } from "@/lib/news/article-discussion";
 
 interface InjectedCapacitor {
   isNativePlatform?: () => boolean;
+  Plugins?: {
+    NewsArticleBrowser?: NewsArticleBrowserPlugin;
+  };
+}
+
+function getInjectedCapacitor(): InjectedCapacitor | undefined {
+  if (typeof window === "undefined") return undefined;
+  return (window as unknown as { Capacitor?: InjectedCapacitor }).Capacitor;
 }
 
 function isNativeRuntime(): boolean {
   if (isNative) return true;
-  if (typeof window === "undefined") return false;
-  const injected = (window as unknown as { Capacitor?: InjectedCapacitor })
-    .Capacitor;
+  const injected = getInjectedCapacitor();
   try {
     return injected?.isNativePlatform?.() === true;
   } catch {
@@ -73,6 +79,29 @@ async function openLegacyNativeBrowser(url: string): Promise<void> {
   }
 }
 
+export async function openNewsArticleWithFallback(
+  options: { url: string; commentsUrl?: string },
+  coreOpen: (value: { url: string; commentsUrl?: string }) => Promise<void>,
+  injectedOpen: ((value: { url: string; commentsUrl?: string }) => Promise<void>) | undefined,
+  legacyOpen: () => Promise<void>,
+): Promise<void> {
+  try {
+    await coreOpen(options);
+    return;
+  } catch {
+    // Remote-load apps can expose the native bridge even when the bundled core proxy is web-only.
+  }
+  if (injectedOpen) {
+    try {
+      await injectedOpen(options);
+      return;
+    } catch {
+      // Old app builds do not have NewsArticleBrowser; use the existing system browser.
+    }
+  }
+  await legacyOpen();
+}
+
 /** 외부 URL 열기 — 네이티브는 인앱 브라우저, 웹은 새 탭. */
 export function openExternalUrl(url: string): void {
   if (!url) return;
@@ -97,8 +126,15 @@ export function openNewsArticle(
   }
 
   const commentsUrl = commentsEnabled ? buildNewsCommentsUrl(article) : undefined;
-  NewsArticleBrowser.open({ url: article.url, commentsUrl })
-    .catch(() => openLegacyNativeBrowser(article.url));
+  const injectedPlugin = getInjectedCapacitor()?.Plugins?.NewsArticleBrowser;
+  void openNewsArticleWithFallback(
+    { url: article.url, commentsUrl },
+    (options) => NewsArticleBrowser.open(options),
+    injectedPlugin?.open
+      ? (options) => injectedPlugin.open(options)
+      : undefined,
+    () => openLegacyNativeBrowser(article.url),
+  );
 }
 
 /**
