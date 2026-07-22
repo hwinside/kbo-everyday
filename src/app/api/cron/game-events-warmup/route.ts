@@ -12,6 +12,7 @@ import { pushIosWidgetLiveUpdates } from "@/lib/notifications/ios-widget-live";
 import {
   runWidgetFastLoop,
   startWidgetRefreshPipelines,
+  initialWidgetPushDeadlineAt,
   FAST_LOOP_DEADLINE_MS,
   parseKboGameListPayload,
 } from "@/lib/notifications/widget-fast-loop";
@@ -115,6 +116,7 @@ export async function GET(req: NextRequest) {
 
   const date = getKSTDateStr();
   const deadlineAtMs = requestStartMs + FAST_LOOP_DEADLINE_MS;
+  const initialPushDeadlineAtMs = initialWidgetPushDeadlineAt(requestStartMs, deadlineAtMs);
   // 손상 응답은 정상 "라이브 0"으로 보지 않는다. 본체 알림은 이번 틱 skip하되 fast-loop는
   // +20/+40초 재시도해 일시 KBO parse/schema 오류를 다음 분까지 끌지 않는다.
   const initialFetch = await fetchKboLiveGames(
@@ -140,8 +142,8 @@ export async function GET(req: NextRequest) {
         : req.nextUrl.origin);
 
   // 초기 Android 발송과 추가 +20/+40초 loop를 KBO fetch 직후 동시에 시작한다.
-  // 초기 push가 deadline까지 지연돼도 fast tick 시작을 막지 않으며, 둘 다 이후 무거운
-  // warmup 알림/LA 작업과 병렬 실행한다. fans→token→FCM까지 같은 절대 deadline을 전파한다.
+  // 초기 경로는 요청+18초에 실제 fans/prefs/token/FCM 요청까지 중단해 +20초의 최신
+  // snapshot보다 뒤늦게 옛 상태를 발송하지 않는다. fast loop는 전체 +46초 deadline을 쓴다.
   type AndroidWidgetResult =
     | { games: number; sent: number; failed: number; cleaned: number; skipped: number; retryableFailed: number }
     | { error: string };
@@ -153,7 +155,7 @@ export async function GET(req: NextRequest) {
         if (!initialFetch.ok) return { error: "kbo_fetch_failed" };
         try {
           return await pushAndroidWidgetLiveUpdates(games, baseUrl, {
-            deadlineAtMs,
+            deadlineAtMs: initialPushDeadlineAtMs,
             sourceAtMs: initialFetch.trace.sourceAtMs,
             fetchedAtMs: initialFetch.trace.fetchedAtMs,
           });

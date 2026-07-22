@@ -12,6 +12,15 @@ import type { KboRawGame } from "@/types/api";
 export const FAST_LOOP_DEADLINE_MS = 46_000;
 /** 요청 진입 시각 기준 추가 사이클 목표 시점 — cron(60s) 사이 ~20s 간격 갱신. */
 export const FAST_LOOP_TARGETS_MS: readonly number[] = [20_000, 40_000];
+/** 초기 snapshot은 첫 fast tick보다 2초 먼저 실제 요청까지 중단해 늦은 옛 상태 발송을 막는다. */
+export const INITIAL_PUSH_DEADLINE_MS = 18_000;
+
+export function initialWidgetPushDeadlineAt(
+  requestStartMs: number,
+  overallDeadlineAtMs: number,
+): number {
+  return Math.min(overallDeadlineAtMs, requestStartMs + INITIAL_PUSH_DEADLINE_MS);
+}
 
 export interface WidgetSourceTrace {
   /** KBO 원천 요청 시작 시각(epoch ms). */

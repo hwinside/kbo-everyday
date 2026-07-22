@@ -13,6 +13,9 @@ import {
 import {
   runWidgetFastLoop,
   startWidgetRefreshPipelines,
+  initialWidgetPushDeadlineAt,
+  INITIAL_PUSH_DEADLINE_MS,
+  FAST_LOOP_TARGETS_MS,
   parseKboGameListPayload,
   type FastLoopDeps,
 } from "../../src/lib/notifications/widget-fast-loop";
@@ -123,6 +126,11 @@ function makeLoopHarness(startAtMs: number, steps: FetchStep[]) {
 }
 
 async function runLoopTests() {
+  checkNum("loop: 초기 push deadline은 요청+18s", initialWidgetPushDeadlineAt(1_000, 47_000), 19_000);
+  check("loop: 초기 push deadline은 첫 fast tick보다 빠름",
+    INITIAL_PUSH_DEADLINE_MS < FAST_LOOP_TARGETS_MS[0], true);
+  checkNum("loop: 더 이른 전체 deadline을 넘지 않음", initialWidgetPushDeadlineAt(1_000, 15_000), 15_000);
+
   // 초기 push가 hang해도 fast-loop는 같은 tick에서 즉시 시작한다.
   {
     let releaseInitial!: () => void;
