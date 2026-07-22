@@ -163,8 +163,22 @@ export default function MyPage() {
         </header>
       </div>
 
-      {/* 반복 CS를 바탕으로 정리한 FAQ — 마이페이지 최상단 */}
+      {/* Profile card — 마이페이지 최상단 */}
       <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="mt-6">
+        <ProfileCard
+          user={user}
+          profile={profile}
+          team={team}
+          points={writingPoints}
+          onAvatarClick={() => user && setShowAvatarSelect(true)}
+          onNicknameClick={() => user && setShowNicknameEdit(true)}
+          onViewProfile={() => user && router.push(`/profile/${user.id}`)}
+          onHallOfFame={() => user && router.push("/my/hall-of-fame")}
+        />
+      </motion.div>
+
+      {/* 반복 CS를 바탕으로 정리한 FAQ — 기본은 접힌 상태 */}
+      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="mt-3">
         <FaqCard />
       </motion.div>
 
@@ -196,20 +210,6 @@ export default function MyPage() {
           </GlassCard>
         </motion.div>
       )}
-
-      {/* Profile card */}
-      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="mt-3">
-        <ProfileCard
-          user={user}
-          profile={profile}
-          team={team}
-          points={writingPoints}
-          onAvatarClick={() => user && setShowAvatarSelect(true)}
-          onNicknameClick={() => user && setShowNicknameEdit(true)}
-          onViewProfile={() => user && router.push(`/profile/${user.id}`)}
-          onHallOfFame={() => user && router.push("/my/hall-of-fame")}
-        />
-      </motion.div>
 
       {/* 스토리 지오펜스 인증에서 자동 생성되는 본인 전용 직관 기록 */}
       <AdminOnly>
