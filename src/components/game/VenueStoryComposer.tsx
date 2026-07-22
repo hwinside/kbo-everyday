@@ -5,7 +5,10 @@ import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Loader2, Video as VideoIcon, MapPin } from "lucide-react";
 import { getSafeSession } from "@/lib/supabase/client";
-import { prepareVenueStoryMedia } from "@/lib/venue-stories/upload";
+import {
+  prepareVenueStoryMedia,
+  type VenueStoryUploadProgress,
+} from "@/lib/venue-stories/upload";
 import { getVenuePosition } from "@/lib/venue-stories/geo";
 import { haversineMeters } from "@/lib/venue-stories/stadiums";
 import { VENUE_STORY_CONSENT_VERSION, type VenueInfo } from "@/lib/venue-stories/types";
@@ -33,6 +36,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   const [venueLoading, setVenueLoading] = useState(false);
   const [agreed, setAgreed] = useState(false);
   const [sessionUserId, setSessionUserId] = useState<string | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<VenueStoryUploadProgress | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // UGC 가이드라인 동의 — 버전별 + **user-scoped** 기억(삼순 09:44 #3: 계정 전환 시 타 계정
@@ -108,6 +112,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
     setCaption("");
     setError(null);
     setPhase("idle");
+    setUploadProgress(null);
   };
 
   const close = () => {
@@ -177,20 +182,34 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
     }
 
     setPhase("upload");
+    setUploadProgress({ percent: 1, label: "업로드 준비 중…" });
     try {
-      const prepared = await prepareVenueStoryMedia(file, gameId);
+      const session = await getSafeSession();
+      const token = session?.access_token;
+      const userId = session?.user?.id;
+      if (!token || !userId) {
+        setError("로그인이 필요해요");
+        setPhase("idle");
+        return;
+      }
+      const prepared = await prepareVenueStoryMedia(file, gameId, {
+        userId,
+        accessToken: token,
+        onProgress: (progress) => {
+          setUploadProgress((current) =>
+            current && progress.percent < current.percent ? current : progress,
+          );
+        },
+      });
       if ("error" in prepared) {
         setError(prepared.error);
         setPhase("idle");
         return;
       }
-      const session = await getSafeSession();
-      const token = session?.access_token;
-      if (!token) {
-        setError("로그인이 필요해요");
-        setPhase("idle");
-        return;
-      }
+      setUploadProgress({
+        percent: 94,
+        label: prepared.mediaType === "video" ? "영상 확인 중…" : "게시 준비 중…",
+      });
       const res = await fetch("/api/venue-stories", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
@@ -216,7 +235,9 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
         setPhase("idle");
         return;
       }
+      setUploadProgress({ percent: 100, label: "업로드 완료" });
       onUploaded();
+      await new Promise((resolve) => setTimeout(resolve, 250));
       close();
     } catch {
       setError("업로드에 실패했어요");
@@ -236,7 +257,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
       >
-        <div className="absolute inset-0 bg-black/60" onClick={close} />
+        <div className="absolute inset-0 bg-black/60" onClick={submitting ? undefined : close} />
         <motion.div
           className="relative w-full max-w-lg mx-auto bg-bg-secondary rounded-t-3xl max-h-[90dvh] overflow-y-auto flex flex-col"
           initial={{ y: "100%" }}
@@ -247,7 +268,12 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
         >
           <div className="flex items-center justify-between px-4 py-3 border-b border-border">
             <span className="text-base font-semibold text-text-primary">직관 라이브 올리기</span>
-            <button onClick={close} aria-label="닫기" className="text-text-tertiary">
+            <button
+              onClick={close}
+              disabled={submitting}
+              aria-label="닫기"
+              className="text-text-tertiary disabled:opacity-40"
+            >
               <X size={22} />
             </button>
           </div>
@@ -285,6 +311,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
                 )}
                 <button
                   onClick={() => inputRef.current?.click()}
+                  disabled={submitting}
                   className="absolute bottom-2 right-2 text-xs bg-black/60 text-white px-3 py-1.5 rounded-full"
                 >
                   다시 선택
@@ -297,6 +324,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
               type="file"
               accept="image/*,video/*"
               className="hidden"
+              disabled={submitting}
               onChange={onPick}
             />
 
@@ -305,6 +333,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
               value={caption}
               onChange={(e) => setCaption(e.target.value)}
               maxLength={200}
+              disabled={submitting}
               placeholder="한 줄 코멘트 (선택)"
               className="w-full px-3 py-2.5 rounded-xl bg-bg-tertiary text-sm text-text-primary placeholder:text-text-tertiary outline-none"
             />
@@ -314,6 +343,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
                 type="checkbox"
                 checked={agreed}
                 onChange={toggleAgree}
+                disabled={submitting}
                 className="mt-0.5 accent-brand-primary shrink-0"
               />
               <span>
@@ -323,6 +353,30 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
             </label>
 
             {error && <p className="text-sm text-red-400">{error}</p>}
+
+            {phase === "upload" && uploadProgress && (
+              <div className="rounded-xl bg-bg-tertiary/70 px-3 py-2.5" aria-live="polite">
+                <div className="mb-1.5 flex items-center justify-between gap-3 text-xs">
+                  <span className="text-text-secondary">{uploadProgress.label}</span>
+                  <span className="tabular-nums font-semibold text-text-primary">
+                    {uploadProgress.percent}%
+                  </span>
+                </div>
+                <div
+                  role="progressbar"
+                  aria-label="직관 라이브 업로드 진행률"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={uploadProgress.percent}
+                  className="h-2 overflow-hidden rounded-full bg-border"
+                >
+                  <div
+                    className="h-full rounded-full bg-brand-primary transition-[width] duration-200 ease-out"
+                    style={{ width: `${uploadProgress.percent}%` }}
+                  />
+                </div>
+              </div>
+            )}
 
             <button
               onClick={submit}

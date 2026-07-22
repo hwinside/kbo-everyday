@@ -2,6 +2,7 @@
 
 import { supabase } from "@/lib/supabase/client";
 import imageCompression from "browser-image-compression";
+import { uploadStorageObjectWithProgress } from "./upload-progress";
 import {
   VENUE_STORY_MAX_BYTES,
   VENUE_STORY_MAX_DURATION_MS,
@@ -25,7 +26,28 @@ export interface PrepareError {
   error: string;
 }
 
+export interface VenueStoryUploadProgress {
+  percent: number;
+  label: string;
+}
+
+interface PrepareOptions {
+  userId: string;
+  accessToken: string;
+  onProgress?: (progress: VenueStoryUploadProgress) => void;
+}
+
 const IMAGE_BUCKET = "photos";
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
+
+function reportProgress(
+  onProgress: PrepareOptions["onProgress"],
+  percent: number,
+  label: string,
+): void {
+  onProgress?.({ percent: Math.min(100, Math.max(0, Math.round(percent))), label });
+}
 
 /** 확장자는 서버 strict allowlist([A-Za-z0-9._-]) 통과하도록 영숫자만 남긴다. */
 function sanitizeExt(name: string, fallback: string): string {
@@ -129,12 +151,21 @@ async function uploadBlob(
   bucket: string,
   path: string,
   data: Blob | File,
-  contentType: string,
+  accessToken: string,
+  onProgress?: (percent: number) => void,
 ): Promise<string | null> {
-  const { error } = await supabase.storage
-    .from(bucket)
-    .upload(path, data, { contentType, cacheControl: "31536000", upsert: false });
-  if (error) return null;
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return null;
+  const uploaded = await uploadStorageObjectWithProgress({
+    bucket,
+    path,
+    data,
+    accessToken,
+    supabaseUrl: SUPABASE_URL,
+    anonKey: SUPABASE_ANON_KEY,
+    cacheControl: "31536000",
+    onProgress: (progress) => onProgress?.(progress.percent),
+  });
+  if (!uploaded) return null;
   const { data: urlData } = supabase.storage.from(bucket).getPublicUrl(path);
   return urlData.publicUrl;
 }
@@ -143,12 +174,20 @@ async function uploadBlob(
 async function uploadToStaging(
   path: string,
   data: Blob | File,
-  contentType: string,
+  accessToken: string,
+  onProgress?: (percent: number) => void,
 ): Promise<boolean> {
-  const { error } = await supabase.storage
-    .from(VENUE_STORY_STAGING_BUCKET)
-    .upload(path, data, { contentType, cacheControl: "3600", upsert: false });
-  return !error;
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return false;
+  return uploadStorageObjectWithProgress({
+    bucket: VENUE_STORY_STAGING_BUCKET,
+    path,
+    data,
+    accessToken,
+    supabaseUrl: SUPABASE_URL,
+    anonKey: SUPABASE_ANON_KEY,
+    cacheControl: "3600",
+    onProgress: (progress) => onProgress?.(progress.percent),
+  });
 }
 
 /**
@@ -158,11 +197,12 @@ async function uploadToStaging(
 export async function prepareVenueStoryMedia(
   file: File,
   gameId: string,
+  options: PrepareOptions,
 ): Promise<PreparedMedia | PrepareError> {
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { error: "로그인이 필요합니다" };
+  const { userId, accessToken, onProgress } = options;
+  if (!userId || !accessToken) return { error: "로그인이 필요합니다" };
+
+  reportProgress(onProgress, 3, "파일 확인 중…");
 
   if (file.size > VENUE_STORY_MAX_BYTES) {
     return { error: "파일이 너무 큽니다 (최대 50MB)" };
@@ -179,6 +219,7 @@ export async function prepareVenueStoryMedia(
     } catch (e) {
       return { error: e instanceof Error ? e.message : "영상을 읽을 수 없습니다" };
     }
+    reportProgress(onProgress, 12, "영상 정보 확인 완료");
     if (
       probe.durationMs >
       VENUE_STORY_MAX_DURATION_MS + VENUE_STORY_DURATION_TOLERANCE_MS
@@ -186,19 +227,23 @@ export async function prepareVenueStoryMedia(
       return { error: "영상은 15초 이하만 올릴 수 있어요" };
     }
     // 원본은 private staging 에만 — 서버 ffprobe 검증 통과 시 서버가 공개 버킷으로 승격(B+①)
-    const mediaPath = randPath(gameId, user.id, sanitizeExt(file.name, "mp4"));
-    const uploaded = await uploadToStaging(mediaPath, file, file.type || "video/mp4");
+    const mediaPath = randPath(gameId, userId, sanitizeExt(file.name, "mp4"));
+    const uploaded = await uploadToStaging(mediaPath, file, accessToken, (percent) => {
+      reportProgress(onProgress, 12 + percent * 0.73, "영상 전송 중…");
+    });
     if (!uploaded) return { error: "영상 업로드에 실패했어요" };
 
     let thumbUrl: string | null = null;
     if (probe.poster) {
       thumbUrl = await uploadBlob(
         IMAGE_BUCKET,
-        randPath(gameId, user.id, "jpg"),
+        randPath(gameId, userId, "jpg"),
         probe.poster,
-        "image/jpeg",
+        accessToken,
+        (percent) => reportProgress(onProgress, 85 + percent * 0.05, "미리보기 준비 중…"),
       );
     }
+    reportProgress(onProgress, 90, "영상 전송 완료");
     return {
       mediaType: "video",
       mediaUrl: null,
@@ -211,9 +256,11 @@ export async function prepareVenueStoryMedia(
   }
 
   // image
+  reportProgress(onProgress, 8, "사진 정보 확인 중…");
   const { width, height } = await probeImage(file);
   let compressed: File = file;
   try {
+    reportProgress(onProgress, 15, "사진 최적화 중…");
     compressed = await imageCompression(file, {
       maxSizeMB: 1.2,
       maxWidthOrHeight: 1600,
@@ -223,13 +270,16 @@ export async function prepareVenueStoryMedia(
   } catch {
     // 압축 실패 시 원본 사용
   }
+  reportProgress(onProgress, 25, "사진 전송 준비 완료");
   const mediaUrl = await uploadBlob(
     IMAGE_BUCKET,
-    randPath(gameId, user.id, "jpg"),
+    randPath(gameId, userId, "jpg"),
     compressed,
-    "image/jpeg",
+    accessToken,
+    (percent) => reportProgress(onProgress, 25 + percent * 0.65, "사진 전송 중…"),
   );
   if (!mediaUrl) return { error: "사진 업로드에 실패했어요" };
+  reportProgress(onProgress, 90, "사진 전송 완료");
   return {
     mediaType: "image",
     mediaUrl,

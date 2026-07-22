@@ -70,6 +70,7 @@
     "qa:player-search-backfill": "node scripts/qa/player-search-backfill-smoke.mjs",
     "qa:venue-geofence": "tsx scripts/qa/venue-geofence-smoke.ts",
     "qa:venue-media": "tsx scripts/qa/venue-media-smoke.ts",
+    "qa:venue-upload-progress": "tsx scripts/qa/venue-upload-progress-smoke.ts",
     "qa:venue-storage-path": "tsx scripts/qa/venue-storage-path-smoke.ts",
     "qa:venue-validate": "tsx scripts/qa/venue-validate-smoke.ts",
     "qa:venue-expiry": "tsx scripts/qa/venue-expiry-smoke.ts",
