@@ -163,6 +163,7 @@ export default function AdminMessagesPage() {
         });
         if (!res.ok) throw new Error("load failed");
         const json = await res.json();
+        setLoadError(false);
         if (targetTab === "sent") {
           setBroadcastLogs(json.broadcastLogs || []);
           setConversations([]);
