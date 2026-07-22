@@ -122,6 +122,7 @@ export default function AdminMessagesPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const replyRef = useRef<HTMLTextAreaElement>(null);
   const replyFileInputRef = useRef<HTMLInputElement>(null);
+  const listRequestSerialRef = useRef(0);
 
   const [broadcastLogs, setBroadcastLogs] = useState<BroadcastLog[]>([]);
   // 전체발송 상태
@@ -146,10 +147,16 @@ export default function AdminMessagesPage() {
       append = false,
       silent = false
     ) => {
-      if (targetTab === "broadcast") return;
+      const requestSerial = ++listRequestSerialRef.current;
+      if (targetTab === "broadcast") {
+        setLoading(false);
+        setLoadingMore(false);
+        return;
+      }
       if (append) setLoadingMore(true);
       else if (!silent) {
         setLoading(true);
+        setLoadingMore(false);
         setLoadError(false);
       }
       try {
@@ -163,6 +170,7 @@ export default function AdminMessagesPage() {
         });
         if (!res.ok) throw new Error("load failed");
         const json = await res.json();
+        if (requestSerial !== listRequestSerialRef.current) return;
         setLoadError(false);
         if (targetTab === "sent") {
           setBroadcastLogs(json.broadcastLogs || []);
@@ -171,18 +179,25 @@ export default function AdminMessagesPage() {
           const incoming = (json.conversations || []) as Conversation[];
           setConversations((previous) => {
             if (!append && !silent) return incoming;
+            if (append) {
+              const previousIds = new Set(previous.map((conversation) => conversation.id));
+              return [...previous, ...incoming.filter((conversation) => !previousIds.has(conversation.id))];
+            }
             const incomingIds = new Set(incoming.map((conversation) => conversation.id));
-            return [...incoming, ...previous.filter((conversation) => !incomingIds.has(conversation.id))];
+            const withoutDuplicates = previous.filter((conversation) => !incomingIds.has(conversation.id));
+            return [...incoming, ...withoutDuplicates];
           });
           if (!silent) setNextCursor(json.nextCursor || null);
           setUnreadTotal(typeof json.unreadTotal === "number" ? json.unreadTotal : 0);
           setBroadcastLogs([]);
         }
       } catch {
-        setLoadError(true);
+        if (requestSerial === listRequestSerialRef.current) setLoadError(true);
       }
-      if (append) setLoadingMore(false);
-      else if (!silent) setLoading(false);
+      if (requestSerial === listRequestSerialRef.current) {
+        if (append) setLoadingMore(false);
+        else if (!silent) setLoading(false);
+      }
     },
     [getPin]
   );

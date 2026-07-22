@@ -51,6 +51,7 @@
     "qa:query-guard": "node scripts/qa/query-pagination-guard.mjs",
     "qa:admin-delivery-ledger": "tsx scripts/qa/admin-delivery-ledger-smoke.ts",
     "qa:admin-dm-inbox": "node scripts/qa/admin-dm-inbox-smoke.mjs",
+    "qa:admin-dm-inbox:ui": "node scripts/qa/admin-dm-inbox-ui-smoke.mjs",
     "qa:daily-live": "tsx scripts/qa/daily-analysis-live-smoke.ts",
     "qa:contextual-split-inline": "tsx scripts/qa/contextual-stats-split-inline-smoke.ts",
     "qa:celebration-hit-overcount": "tsx scripts/qa/celebration-hit-overcount-smoke.ts",
