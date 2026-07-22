@@ -28,6 +28,7 @@ import { resolve, join, basename } from "path";
 import { tmpdir } from "os";
 import { execFileSync } from "child_process";
 import { createHash } from "crypto";
+import { processVenueJob } from "./venue-transcode-job.mjs";
 
 // ── env (.env.local 수동 파싱, dotenv 의존성 없음 — award-event-badges.mjs 패턴) ──
 try {
@@ -90,6 +91,28 @@ function optimizedPath(origPath) {
   const dir = origPath.slice(0, origPath.length - basename(origPath).length);
   const h = createHash("sha1").update(origPath).digest("hex").slice(0, 8);
   return `transcoded/${dir}${name}-${h}.mp4`;
+}
+
+// ── 직관 라이브(venue_stories) 헬퍼 ──
+let HAS_FFPROBE = true;
+
+/** ffprobe 로 duration(ms)/해상도 추출 */
+function probeVideoMeta(input) {
+  const out = execFileSync("ffprobe", [
+    "-v", "error",
+    "-select_streams", "v:0",
+    "-show_entries", "stream=width,height",
+    "-show_entries", "format=duration",
+    "-of", "json", input,
+  ]).toString();
+  const j = JSON.parse(out);
+  const s = (j.streams && j.streams[0]) || {};
+  const dur = parseFloat((j.format && j.format.duration) || "0");
+  return {
+    durationMs: Math.round((isNaN(dur) ? 0 : dur) * 1000),
+    width: s.width || null,
+    height: s.height || null,
+  };
 }
 
 async function downloadTo(url, dest) {
@@ -292,11 +315,80 @@ async function probe() {
   }
 }
 
+// ── 직관 라이브(venue_stories) 처리 — **복구 전용**(B+①, 삼순 09:44 #1) ──
+// 즉시 경로(업로드 API 인라인 ffprobe)가 정상 동작하면 pending 은 여기 오지 않는다.
+//  - pending(즉시 경로 fault 잔여): private staging 에서 다운로드 → ffprobe 재검증
+//    → 통과: 720p 인코딩 후 공개 videos 버킷 게시 + **CAS(status='pending' 조건)** 로 active 승격
+//    → 거부: CAS 로 removed. CAS 패배 = 즉시 경로가 먼저 처리(중복 claim 방지) → skip.
+//  - active+needs_transcode(이미 공개된 원본): 720p 백그라운드 최적화만(실패해도 노출 유지).
+async function processVenueStories() {
+  if (!HAS_FFPROBE) {
+    // ffprobe 부재 = 서버 권위 duration 검증 전면 skip → pending 영상이 방치되므로 green 으로 넘기지 않고 관제
+    const { count: pendingCount } = await supabase
+      .from("venue_stories")
+      .select("id", { count: "exact", head: true })
+      .eq("media_type", "video")
+      .eq("status", "pending");
+    console.error(
+      `❌ ffprobe 부재 — 직관 라이브 영상 duration 검증 불가. pending ${pendingCount ?? "?"}건 미처리.`,
+    );
+    return { done: 0, removed: 0, failed: (pendingCount ?? 0) > 0 ? (pendingCount ?? 1) : 0, updateErrors: 0, ffprobeMissing: true };
+  }
+  // pending(즉시 경로 fault 잔여, staging 원본) + active·needs_transcode(720p 대기) 동시 스캔
+  const { data: rows, error } = await supabase
+    .from("venue_stories")
+    .select("id, status, media_url, media_bucket, media_path, transcode_attempts")
+    .eq("media_type", "video")
+    .or("and(status.eq.active,needs_transcode.eq.true),status.eq.pending")
+    .lt("transcode_attempts", MAX_ATTEMPTS)
+    .order("created_at", { ascending: true })
+    .limit(LIMIT);
+  if (error) throw new Error(`venue_stories 조회 실패: ${error.message}`);
+  if (!rows || rows.length === 0) { console.log("직관 라이브 최적화 대기 영상 없음."); return; }
+
+  const work = mkdtempSync(join(tmpdir(), "kbo-venue-"));
+  let done = 0, removed = 0, failed = 0, updateErrors = 0, claimedElsewhere = 0;
+  try {
+    for (const row of rows) {
+      const inPath = join(work, "in" + (basename(row.media_path).match(/\.[^.]+$/)?.[0] || ".mp4"));
+      const outPath = join(work, "out.mp4");
+      try {
+        const res = await processVenueJob(row, {
+          db: supabase,
+          storage: supabase.storage,
+          runner: {
+            probe: probeVideoMeta,
+            transcode,
+            downloadToFile: downloadTo,
+          },
+          inPath,
+          outPath,
+          maxAttempts: MAX_ATTEMPTS,
+        });
+        if (res.result === "done") done++;
+        else if (res.result === "removed") removed++;
+        else if (res.result === "claimedElsewhere") claimedElsewhere++;
+        else if (res.result === "updateError") updateErrors++;
+        else if (res.result === "failed") failed++;
+      } finally {
+        for (const f of [inPath, outPath]) { try { rmSync(f); } catch {} }
+      }
+    }
+  } finally {
+    try { rmSync(work, { recursive: true, force: true }); } catch {}
+  }
+  console.log(`직관 라이브 처리: ✅${done} 🚫${removed} ❌${failed} ⏭️${claimedElsewhere} (상태갱신오류 ${updateErrors})`);
+  // 실패 건/상태기록 실패가 있으면 지속 pending/removed 실패 관제를 위해 비정상 종료 시그널을 올린다.
+  return { done, removed, failed, updateErrors };
+}
+
 // ── main ──
 (async () => {
   // ffmpeg 존재 확인
   try { execFileSync("ffmpeg", ["-version"], { stdio: "ignore" }); }
   catch { console.error("❌ ffmpeg 없음 — brew install ffmpeg"); process.exit(1); }
+  try { execFileSync("ffprobe", ["-version"], { stdio: "ignore" }); }
+  catch { HAS_FFPROBE = false; console.warn("⚠️  ffprobe 없음 — 직관 라이브 영상 duration 검증 불가"); }
 
   if (PROBE) {
     console.log(`🔍 probe (최신 ${LIMIT}개, DB/스토리지 무변경)\n`);
@@ -316,4 +408,13 @@ async function probe() {
     return;
   }
   await processJobs();
+
+  console.log("\n── 직관 라이브(venue_stories) 영상 처리 ──");
+  const venueRes = (await processVenueStories()) || { failed: 0, updateErrors: 0 };
+  if ((venueRes.failed || 0) > 0 || (venueRes.updateErrors || 0) > 0 || venueRes.ffprobeMissing) {
+    console.error(
+      `❌ 직관 라이브 처리 이상 — 실패 ${venueRes.failed} / 상태기록오류 ${venueRes.updateErrors}${venueRes.ffprobeMissing ? " / ffprobe 부재" : ""} — 관제 non-zero 종료`,
+    );
+    process.exit(1);
+  }
 })().catch((e) => { console.error("❌", e); process.exit(1); });

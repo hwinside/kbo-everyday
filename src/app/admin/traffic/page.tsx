@@ -20,7 +20,16 @@ type TrafficResp = {
   totals: Record<string, { pv: number; uv: number }>;
   devices: Record<string, number>;
   dwell: Record<string, { sessions: number; avgMs: number; medianMs: number }>;
+  dwellStatus: "ok" | "error";
   versions: Record<string, { version: string; devices: number }[]>;
+};
+// Store chart rank at view time. rank=null → outside the chart window;
+// ChartRank=null → that source fetch failed.
+type ChartRank = { rank: number | null; chartSize: number } | null;
+type RankingsResp = {
+  fetchedAt: string;
+  ios: { sports: ChartRank; overall: ChartRank };
+  android: { sports: ChartRank; overall: ChartRank };
 };
 type WatchStat = { todayDevices: number; peakDevices: number; totalHits: number };
 type WatchResp = {
@@ -66,6 +75,12 @@ function fmt(n: number): string {
   return n.toLocaleString("ko-KR");
 }
 
+function fmtRank(c: ChartRank): string {
+  if (!c) return "조회 실패";
+  if (c.rank == null) return `${c.chartSize}위 밖`;
+  return `${c.rank}위`;
+}
+
 function fmtDur(ms: number): string {
   if (!ms || ms < 1000) return "0초";
   const s = Math.round(ms / 1000);
@@ -80,6 +95,9 @@ export default function TrafficPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [watch, setWatch] = useState<WatchResp | null>(null);
+  const [rankings, setRankings] = useState<RankingsResp | null>(null);
+  const [rankLoading, setRankLoading] = useState(true);
+  const [rankRefresh, setRankRefresh] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -103,6 +121,24 @@ export default function TrafficPage() {
       cancelled = true;
     };
   }, [days]);
+
+  // 앱스토어 순위 (조회 시점) — Apple RSS·Play 탑차트를 요청 시점에 라이브 조회.
+  useEffect(() => {
+    let cancelled = false;
+    setRankLoading(true);
+    fetch(`/api/admin/app-rankings`, { headers: { "x-admin-pin": getPin() } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: RankingsResp | null) => {
+        if (!cancelled && d) setRankings(d);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setRankLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [rankRefresh]);
 
   // 워치(갤워치 Wear OS + 애플워치) 앱 사용 계측 — 미들웨어가 UA로 적재한 일자·플랫폼버 집계.
   useEffect(() => {
@@ -209,6 +245,53 @@ export default function TrafficPage() {
       {error && (
         <div className="glass-card p-4 text-sm text-red-400">데이터 로드 실패: {error}</div>
       )}
+
+      {/* Store chart rankings at view time (Apple RSS / Play top charts) */}
+      <div className="glass-card p-4">
+        <div className="flex items-baseline justify-between flex-wrap gap-1">
+          <h2 className="text-sm font-semibold">📈 앱스토어 순위 (조회 시점)</h2>
+          <button
+            onClick={() => setRankRefresh((n) => n + 1)}
+            disabled={rankLoading}
+            className="text-xs text-[#8E8E93] hover:text-white disabled:opacity-50"
+          >
+            {rankings
+              ? `조회 ${new Date(rankings.fetchedAt).toLocaleTimeString("ko-KR", {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })} · 새로고침`
+              : "새로고침"}
+          </button>
+        </div>
+        <div className="grid grid-cols-2 gap-3 mt-3">
+          {(
+            [
+              { label: "iOS 앱스토어", color: "#0A84FF", data: rankings?.ios },
+              { label: "구글 플레이", color: "#3DDC84", data: rankings?.android },
+            ] as const
+          ).map((os) => (
+            <div key={os.label}>
+              <p className="text-xs font-medium" style={{ color: os.color }}>
+                {os.label}
+              </p>
+              <div className="mt-2 space-y-1.5">
+                <div className="flex items-baseline justify-between">
+                  <span className="text-xs text-[#8E8E93]">스포츠</span>
+                  <span className="text-xl font-bold">
+                    {rankLoading ? "—" : fmtRank(os.data?.sports ?? null)}
+                  </span>
+                </div>
+                <div className="flex items-baseline justify-between">
+                  <span className="text-xs text-[#8E8E93]">무료 전체</span>
+                  <span className="text-xl font-bold">
+                    {rankLoading ? "—" : fmtRank(os.data?.overall ?? null)}
+                  </span>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
 
       {/* Summary cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -380,6 +463,8 @@ export default function TrafficPage() {
         </div>
         {loading ? (
           <p className="text-sm text-[#8E8E93]">불러오는 중…</p>
+        ) : resp?.dwellStatus === "error" ? (
+          <p className="text-sm text-[#FF6B6B]">조회 실패</p>
         ) : activePlatforms.length === 0 ? (
           <p className="text-sm text-[#8E8E93]">데이터 없음</p>
         ) : (

@@ -42,8 +42,7 @@ const PHOTO_ALIAS_BY_KBO_ID = {
 // 공식 프로필이 없을 때는 보도사진으로 우선 blank state를 해소한다.
 const MANUAL_PHOTO_URL_BY_KBO_ID = {
   AQ005: 'http://file.osen.co.kr/article_thumb/2026/03/19/202603191343779118_69bb7f0476bc4_300x.jpg', // 다케다 쇼타
-  AQ006: 'https://wimg.mk.co.kr/news/cms/202603/02/news-p.v1.20260302.719f505021ce45b1bf90147a0a1dc234_P1.jpg', // 도다 나츠키
-  AQ008: 'https://cdn.stnsports.co.kr/news/photo/202512/309575_312284_104.jpg', // 교야마 마사야
+  AQ006: 'https://wimg.mk.co.kr/news/cms/202603/02/news-p.v1.20260302.719f505021ce45b1bf90147a0a1dc234_P1.jpg', // 토다 나츠키
   AQ009: 'https://menu.mt.co.kr/cdn-cgi/image/w=1200,h=929,fit=cover,bg=whilte,f=auto,quality=high,sharpen=2,g=face/mobile/osen/data/2026/03/12/202603121615779085_1.jpg', // 다무라 이치로
   AQ010: 'https://6ptotvmi5753.edge.naverncp.com/KBO_IMAGE/person/middle/2026/56348.jpg', // 가나쿠보 유토 (KBO 공식 헤드샷, numericId 56348)
   AQ011: 'https://6ptotvmi5753.edge.naverncp.com/KBO_IMAGE/person/middle/2026/54843.jpg', // 시라카와 (KBO 공식 헤드샷, numericId 54843)

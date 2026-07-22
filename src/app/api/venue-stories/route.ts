@@ -1,0 +1,341 @@
+import { NextRequest, NextResponse } from "next/server";
+import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
+import { getVerifiedUserFromRequest } from "@/lib/auth/verified-user";
+import { resolveGameVenue } from "@/lib/venue-stories/venue-resolve";
+import { evaluateGeofence } from "@/lib/venue-stories/geofence";
+import { probeMediaObject } from "@/lib/venue-stories/media-probe";
+import {
+  parseStoragePublicUrl as parseVenueStorageUrl,
+  ownsPath as ownsVenuePath,
+} from "@/lib/venue-stories/storage-path";
+import {
+  VENUE_STORY_MAX_DURATION_MS,
+  VENUE_STORY_DURATION_TOLERANCE_MS,
+  VENUE_STORY_MAX_BYTES,
+  VENUE_STORY_MAX_PER_USER_PER_GAME,
+  VENUE_GEOFENCE_MAX_ACCURACY_M,
+  VENUE_STORY_CONSENT_VERSION,
+  VENUE_STORY_STAGING_BUCKET,
+  VENUE_STORY_PUBLIC_VIDEO_BUCKET,
+  type VenueStory,
+} from "@/lib/venue-stories/types";
+import { decideListAuth } from "@/lib/venue-stories/auth-consent";
+import { validateVenueVideoRow } from "@/lib/venue-stories/video-validate-server";
+import { canBypassVenueGeofenceForQa } from "@/lib/admin/admin-users";
+
+// 영상 즉시 검증(다운로드 최대 50MiB + ffprobe)을 요청 안에서 수행
+export const maxDuration = 60;
+
+/** 우리 Supabase storage 공개 URL 검증 + { bucket, path } 파싱(canonicalization 우회 차단) */
+function parseStoragePublicUrl(url: string): { bucket: string; path: string } | null {
+  return parseVenueStorageUrl(url, process.env.NEXT_PUBLIC_SUPABASE_URL);
+}
+
+/** 소유권 바인딩: canonical path 가 venue-stories/{gameId}/{userId}/{파일} 규격이고 gameId/userId 일치 */
+function ownsPath(path: string, gameId: string, userId: string): boolean {
+  return ownsVenuePath(path, gameId, userId);
+}
+
+/** 신뢰 유저의 차단 목록(작성자 필터용). 조회 실패 시 null → 호출부가 fail-closed 처리. */
+async function blockedAuthorIds(viewerId: string): Promise<Set<string> | null> {
+  const { data, error } = await supabase
+    .from("user_blocks")
+    .select("blocked_id")
+    .eq("blocker_id", viewerId);
+  if (error) return null;
+  return new Set((data ?? []).map((r) => r.blocked_id as string));
+}
+
+// GET: 경기별 active 직관 스토리 목록 (차단 유저 제외)
+export async function GET(req: NextRequest) {
+  const gameId = req.nextUrl.searchParams.get("gameId");
+  if (!gameId) {
+    return NextResponse.json({ error: "gameId 필요" }, { status: 400 });
+  }
+
+  // 로그인 유저면 차단 목록으로 필터. 차단 조회 실패는 fail-closed(노출 차단).
+  // invalid bearer 는 익명 강등 금지(차단 필터가 꺼짐) → 401 거부(삼순 09:44 #3).
+  let blocked = new Set<string>();
+  const verified = await getVerifiedUserFromRequest(req);
+  const auth = decideListAuth(!!req.headers.get("authorization"), verified?.user.id ?? null);
+  if (auth.kind === "reject") {
+    return NextResponse.json({ error: "인증이 유효하지 않습니다" }, { status: 401 });
+  }
+  if (auth.kind === "user") {
+    const b = await blockedAuthorIds(auth.userId);
+    if (b == null) {
+      return NextResponse.json({ error: "조회 실패" }, { status: 500 });
+    }
+    blocked = b;
+  }
+
+  const { data: rows, error } = await supabase
+    .from("venue_stories")
+    .select(
+      "id, game_id, user_id, media_type, media_url, thumb_url, duration_ms, width, height, caption, venue_verified, created_at",
+    )
+    .eq("game_id", gameId)
+    .eq("status", "active")
+    .gt("expires_at", new Date().toISOString())
+    .order("created_at", { ascending: false })
+    .limit(100);
+
+  if (error) {
+    return NextResponse.json({ error: "조회 실패" }, { status: 500 });
+  }
+
+  const list = (rows ?? []).filter((r) => !blocked.has(r.user_id as string));
+  const userIds = [...new Set(list.map((r) => r.user_id as string))];
+  const profileMap = new Map<
+    string,
+    { nickname: string | null; avatar_url: string | null; team_id: number | null }
+  >();
+  if (userIds.length > 0) {
+    const { data: profiles } = await supabase
+      .from("profiles")
+      .select("id, nickname, avatar_url, team_id")
+      .in("id", userIds);
+    for (const p of profiles ?? []) {
+      profileMap.set(p.id as string, {
+        nickname: (p.nickname as string) ?? null,
+        avatar_url: (p.avatar_url as string) ?? null,
+        team_id: (p.team_id as number) ?? null,
+      });
+    }
+  }
+
+  const stories: VenueStory[] = list.map((r) => {
+    const prof = profileMap.get(r.user_id as string);
+    return {
+      id: r.id as number,
+      gameId: r.game_id as string,
+      userId: r.user_id as string,
+      mediaType: r.media_type as "video" | "image",
+      mediaUrl: r.media_url as string,
+      thumbUrl: (r.thumb_url as string) ?? null,
+      durationMs: (r.duration_ms as number) ?? null,
+      width: (r.width as number) ?? null,
+      height: (r.height as number) ?? null,
+      caption: (r.caption as string) ?? null,
+      venueVerified: (r.venue_verified as boolean) ?? false,
+      createdAt: r.created_at as string,
+      author: {
+        nickname: prof?.nickname ?? null,
+        avatarUrl: prof?.avatar_url ?? null,
+        teamId: prof?.team_id ?? null,
+      },
+    };
+  });
+
+  return NextResponse.json({ stories });
+}
+
+// POST: 직관 스토리 생성 (소유권 바인딩 + 실제 경기/구장/시간 + 지오펜스 + 크기/MIME 서버 검증)
+export async function POST(req: NextRequest) {
+  const verified = await getVerifiedUserFromRequest(req);
+  if (!verified) {
+    return NextResponse.json({ error: "인증이 필요합니다" }, { status: 401 });
+  }
+  const userId = verified.user.id;
+
+  let body: Record<string, unknown>;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "잘못된 요청" }, { status: 400 });
+  }
+
+  const gameId = typeof body.gameId === "string" ? body.gameId.trim() : "";
+  const mediaType = body.mediaType;
+  const mediaUrl = typeof body.mediaUrl === "string" ? body.mediaUrl : "";
+  // 영상: private staging 경로(venue-stories/{gameId}/{userId}/{file}) — 공개 URL 아님(B+①)
+  const mediaPath = typeof body.mediaPath === "string" ? body.mediaPath : "";
+  const thumbUrl = typeof body.thumbUrl === "string" ? body.thumbUrl : null;
+  const durationMs =
+    typeof body.durationMs === "number" ? Math.round(body.durationMs) : null;
+  const width = typeof body.width === "number" ? Math.round(body.width) : null;
+  const height = typeof body.height === "number" ? Math.round(body.height) : null;
+  const caption =
+    typeof body.caption === "string" ? body.caption.trim().slice(0, 200) : null;
+  const lat = typeof body.lat === "number" ? body.lat : null;
+  const lng = typeof body.lng === "number" ? body.lng : null;
+  const accuracy = typeof body.accuracy === "number" ? body.accuracy : null;
+  const consentVersion = typeof body.consentVersion === "number" ? body.consentVersion : null;
+
+  if (!gameId) return NextResponse.json({ error: "gameId 필요" }, { status: 400 });
+  // UGC 가이드라인 동의 서버 필수 검증 — **현재 버전과 정확히 일치하는 유한 정수**만 허용
+  // (device-local 상속·API 직호출·future-version 위조 audit 전부 차단).
+  if (
+    consentVersion == null ||
+    !Number.isInteger(consentVersion) ||
+    consentVersion !== VENUE_STORY_CONSENT_VERSION
+  ) {
+    return NextResponse.json({ error: "업로드 가이드라인 동의가 필요해요" }, { status: 400 });
+  }
+  if (mediaType !== "video" && mediaType !== "image") {
+    return NextResponse.json({ error: "mediaType 오류" }, { status: 400 });
+  }
+  if (!/^[A-Za-z0-9_-]{8,}$/.test(gameId)) {
+    return NextResponse.json({ error: "gameId 형식 오류" }, { status: 400 });
+  }
+
+  // 1) 소유권 바인딩: 미디어/썸네일 경로가 업로더 본인 예약 경로 아래여야 함
+  //  - video: staging 경로 직접 검증(strict allowlist 규격 + gameId/userId 일치)
+  //  - image: 공개 URL canonical 파싱 후 검증
+  let media: { bucket: string; path: string };
+  if (mediaType === "video") {
+    if (!mediaPath || !ownsPath(mediaPath, gameId, userId)) {
+      return NextResponse.json({ error: "미디어 경로 권한 오류" }, { status: 403 });
+    }
+    media = { bucket: VENUE_STORY_STAGING_BUCKET, path: mediaPath };
+  } else {
+    const parsed = parseStoragePublicUrl(mediaUrl);
+    if (!parsed || !ownsPath(parsed.path, gameId, userId)) {
+      return NextResponse.json({ error: "미디어 경로 권한 오류" }, { status: 403 });
+    }
+    media = parsed;
+  }
+  let thumb: { bucket: string; path: string } | null = null;
+  if (thumbUrl) {
+    thumb = parseStoragePublicUrl(thumbUrl);
+    if (!thumb || !ownsPath(thumb.path, gameId, userId)) {
+      return NextResponse.json({ error: "썸네일 경로 권한 오류" }, { status: 403 });
+    }
+  }
+
+  // 2) 실제 경기/구장/시간 검증 (fail-closed)
+  const venue = await resolveGameVenue(gameId);
+  if (!venue.exists) {
+    return NextResponse.json({ error: venue.reason ?? "경기를 확인할 수 없어요" }, { status: 404 });
+  }
+  if (!venue.uploadOpen || !venue.coord || venue.expiresAtMs == null || !venue.gameDate) {
+    return NextResponse.json(
+      { error: venue.reason ?? "지금은 올릴 수 없어요" },
+      { status: 403 },
+    );
+  }
+
+  // 3) 지오펜스: 일반 유저는 fail-closed. 관리자 QA 계정도 실제 GPS를 통과한 경우만
+  // 직관 이력에 포함하고, 구장 밖 우회 업로드는 admin_qa로 분리한다(승률 오염 방지).
+  const geo = evaluateGeofence({
+    lat,
+    lng,
+    accuracy,
+    coord: venue.coord,
+    maxAccuracy: VENUE_GEOFENCE_MAX_ACCURACY_M,
+  });
+  const qaBypass = canBypassVenueGeofenceForQa(verified.user.email);
+  if (!geo.ok && !qaBypass) {
+    return NextResponse.json({ error: geo.reason ?? "직관 인증이 필요해요" }, { status: 403 });
+  }
+  const attendanceSource = geo.ok ? "story_geofence" : "admin_qa";
+
+  // 4) 이미지 객체 실제 존재·크기·매직바이트 서버 검증(fail-closed, maxBytes 선제 차단).
+  // 영상은 private signed URL Range probe가 Vercel에서 응답을 끝내지 않아 60초 timeout을
+  // 만들 수 있다. 아래 step 6이 service_role 직접 download(50MiB 상한) + ffprobe를 수행하므로
+  // 영상은 그 단일 권위 검증 경로만 사용한다(검증 전 pending/비노출 불변식 유지).
+  if (mediaType === "image") {
+    const probe = await probeMediaObject(mediaUrl, mediaType, VENUE_STORY_MAX_BYTES);
+    if (!probe.ok) {
+      const msg =
+        probe.reason === "too_large"
+          ? "파일이 너무 큽니다 (최대 50MB)"
+          : "업로드된 미디어를 확인할 수 없어요";
+      return NextResponse.json({ error: msg }, { status: 400 });
+    }
+  }
+  // 영상 포스터 썸네일도 이미지로 실검증 — 유효하지 않으면 메타에서 드롭(옵션값)
+  let thumbUrlOut: string | null = thumbUrl;
+  let thumbBucketOut: string | null = thumb?.bucket ?? null;
+  let thumbPathOut: string | null = thumb?.path ?? null;
+  if (thumb && thumbUrl) {
+    const tprobe = await probeMediaObject(thumbUrl, "image", VENUE_STORY_MAX_BYTES);
+    if (!tprobe.ok) {
+      thumbUrlOut = null;
+      thumbBucketOut = null;
+      thumbPathOut = null;
+    }
+  }
+  // 영상 클라 duration 힌트는 빠른 거부용일 뿐 — 서버 권위 검증은 아래 즉시 ffprobe(B+①)
+  if (
+    mediaType === "video" &&
+    durationMs != null &&
+    durationMs > VENUE_STORY_MAX_DURATION_MS + VENUE_STORY_DURATION_TOLERANCE_MS
+  ) {
+    return NextResponse.json({ error: "영상은 15초 이하만 올릴 수 있어요" }, { status: 400 });
+  }
+
+  // 5) 게임당 유저 상한 + insert 원자 처리(RPC advisory lock) — count→insert 레이스 방지(삼순 NO-GO #2)
+  // B+①(삼순 09:44 #1): 영상은 **pending**(목록·원본 URL 미노출)으로 넣고 같은 요청 안에서
+  // 즉시 ffprobe 검증 → 통과 시에만 active 승격(원본 공개) + 720p 는 백그라운드. 사진은 바로 active.
+  const isVideo = mediaType === "video";
+  const initialStatus = isVideo ? "pending" : "active";
+  const needsTranscode = isVideo;
+  // 영상 media_url 은 승격 후 공개될 최종 URL(공개 videos 버킷, 같은 path) — pending 동안 객체 미존재(비노출)
+  const finalMediaUrl = isVideo
+    ? supabase.storage.from(VENUE_STORY_PUBLIC_VIDEO_BUCKET).getPublicUrl(media.path).data.publicUrl
+    : mediaUrl;
+  const { data: rpcData, error } = await supabase.rpc("create_venue_story_v2", {
+    p_game_id: gameId,
+    p_user_id: userId,
+    p_media_type: mediaType,
+    p_media_url: finalMediaUrl,
+    p_media_bucket: media.bucket,
+    p_media_path: media.path,
+    p_thumb_url: thumbUrlOut,
+    p_thumb_bucket: thumbBucketOut,
+    p_thumb_path: thumbPathOut,
+    p_duration_ms: durationMs,
+    p_width: width,
+    p_height: height,
+    p_caption: caption,
+    p_stadium_name: venue.stadiumName,
+    p_status: initialStatus,
+    p_expires_at: new Date(venue.expiresAtMs).toISOString(),
+    p_max_per_game: VENUE_STORY_MAX_PER_USER_PER_GAME,
+    p_consent_version: consentVersion,
+    p_needs_transcode: needsTranscode,
+    p_attendance_source: attendanceSource,
+    p_game_date: venue.gameDate,
+  });
+  if (error) {
+    return NextResponse.json({ error: "저장 실패" }, { status: 500 });
+  }
+  const result = (rpcData ?? {}) as { ok?: boolean; error?: string; id?: number };
+  if (result.ok === false) {
+    if (result.error === "limit") {
+      return NextResponse.json(
+        { error: "이 경기에 올릴 수 있는 개수를 초과했어요" },
+        { status: 429 },
+      );
+    }
+    return NextResponse.json({ error: "저장 실패" }, { status: 500 });
+  }
+  const inserted = { id: result.id };
+
+  // 6) 영상 즉시 검증(B+①): 같은 요청 안에서 ffprobe 구조·15초 서버 권위 검증.
+  //  - 통과 → 원본 공개 버킷 승격 + pending→active CAS(즉시 공개)
+  //  - 실패 → pending→removed CAS + staging 정리(노출 0)
+  //  - fault → pending 유지(검증 약화 금지) — 30분 복구 워커가 처리, 목록엔 계속 미노출
+  if (isVideo && typeof inserted.id === "number") {
+    const validated = await validateVenueVideoRow({
+      id: inserted.id,
+      media_bucket: media.bucket,
+      media_path: media.path,
+    });
+    if (validated.outcome === "rejected") {
+      const msg =
+        validated.reason === "duration_exceeded"
+          ? "영상은 15초 이하만 올릴 수 있어요"
+          : "영상을 확인할 수 없어요. 다시 시도해주세요";
+      return NextResponse.json({ error: msg }, { status: 400 });
+    }
+    if (validated.outcome === "promoted" || validated.outcome === "already_claimed") {
+      return NextResponse.json({ success: true, id: inserted.id, status: "active" });
+    }
+    // fault: pending 유지 — 복구 워커가 처리(최대 30분+지연). 업로드 자체는 접수 성공.
+    return NextResponse.json({ success: true, id: inserted.id, status: "pending" });
+  }
+
+  return NextResponse.json({ success: true, id: inserted.id, status: initialStatus });
+}

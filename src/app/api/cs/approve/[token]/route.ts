@@ -47,6 +47,7 @@ button:active { opacity:.85; }
 type Draft = {
   token: string;
   cs_id: string;
+  title: string | null;
   kind: "feedback" | "dm";
   user_id: string;
   conversation_id: string | null;
@@ -81,10 +82,6 @@ export async function GET(
   if (draft.status === "canceled" || new Date(draft.expires_at) < new Date()) {
     return page("링크 만료", `<h1 class="warn">만료되었거나 취소된 회신이에요</h1><div class="card"><pre>${esc(draft.body)}</pre></div>`);
   }
-  if (draft.escalate_requested_at || draft.escalated_at) {
-    return page("이관됨", `<h1 class="warn">이 건은 #cs로 이관됐어요</h1><div class="card">#cs 스레드에서 논의 중이라 여기서는 발송하지 않습니다.</div>`);
-  }
-
   // 수신자 닉네임(있으면 표기)
   const { data: prof } = await admin
     .from("profiles")
@@ -92,11 +89,29 @@ export async function GET(
     .eq("id", draft.user_id)
     .maybeSingle();
   const who = prof?.nickname ? `${prof.nickname}님에게` : "이 유저에게";
+  const kindLabel = draft.kind === "feedback" ? "건의함" : "쪽지";
+  const titleLine = draft.title ? `<div class="meta">건: ${esc(draft.title)}</div>` : "";
+
+  // 이관된 건도 발송은 허용하되, 논의 중 경고를 명시한다 (2026-07-21 하린아빠 결정).
+  if (draft.escalate_requested_at || draft.escalated_at) {
+    return page(
+      "이관된 건 발송 확인",
+      `<h1 class="warn">⚠️ 이 건은 #cs로 이관돼 논의 중이에요</h1>
+${titleLine}
+<div class="meta">${esc(who)} · ${kindLabel} 회신 · 팀 논의가 끝나지 않았을 수 있어요</div>
+<div class="card"><pre>${esc(draft.body)}</pre></div>
+<form method="post" action="/api/cs/approve/${esc(draft.token)}">
+<button type="submit">논의 중이지만 그대로 발송</button>
+</form>
+<div class="small">발송 버튼을 눌러야 실제로 전송됩니다. #cs 스레드 논의 내용과 다른 초안일 수 있으니 확인 후 발송해주세요.</div>`,
+    );
+  }
 
   return page(
     "회신 확인",
     `<h1>이 내용 그대로 발송할까요?</h1>
-<div class="meta">${esc(who)} · ${draft.kind === "feedback" ? "건의함" : "쪽지"} 회신</div>
+${titleLine}
+<div class="meta">${esc(who)} · ${kindLabel} 회신</div>
 <div class="card"><pre>${esc(draft.body)}</pre></div>
 <form method="post" action="/api/cs/approve/${esc(draft.token)}">
 <button type="submit">그대로 발송</button>
@@ -117,15 +132,14 @@ export async function POST(
   const admin = getSupabaseAdmin();
   const now = new Date().toISOString();
 
-  // 원자적 선점: pending + 미만료 + 이관 안 된 건만 sent 로 전이(중복 발송/더블클릭 + 이관건 발송 방지).
+  // 원자적 선점: pending + 미만료 건만 sent 로 전이(중복 발송/더블클릭 방지).
+  // 이관(escalate)된 건도 발송 허용 — GET 확인 화면에서 "논의 중" 경고를 거친 명시 발송이다 (2026-07-21).
   const { data: claimedRow } = await admin
     .from("cs_reply_drafts")
     .update({ status: "sent", sent_at: now })
     .eq("token", token)
     .eq("status", "pending")
     .gte("expires_at", now)
-    .is("escalate_requested_at", null)
-    .is("escalated_at", null)
     .select("*")
     .maybeSingle();
   const claimed = claimedRow as Draft | null;

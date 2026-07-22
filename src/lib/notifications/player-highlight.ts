@@ -1,10 +1,10 @@
-import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { sendFcmToUsers } from "@/lib/notifications/fcm";
 import { teamIdByShortName } from "@/lib/notifications/game-status";
 import { claimEvent, unclaimEvent } from "@/lib/notifications/game-score";
 import { resolvePhantomSingle, inheritHitRbi } from "@/lib/notifications/score-dedupe";
 import { resolvePlayer, resolveUniquePlayerByName } from "@/lib/utils/resolve-player";
 import { isAllStarGameId } from "@/lib/constants/teams";
+import { fetchFavoritePlayerFanIds } from "@/lib/notifications/audience";
 import type { KboRawGame } from "@/types/api";
 import type { GameEvent, GameEventType } from "@/types/game-events";
 
@@ -128,12 +128,13 @@ export async function notifyPlayerHighlights(
       if (phantom === "suppress") continue; // 유령 단타 — 같은 타석 홈런/장타 알림이 대체(claim으로 종결)
 
       // 이 선수를 최애선수로 둔 유저 (favorite_players: [{playerId: kboId}])
-      const { data: fansData, error } = await supabase
-        .from("profiles")
-        .select("id")
-        .contains("favorite_players", JSON.stringify([{ playerId: resolved.kboId }]));
-      if (error) { await unclaimEvent(dedupId); continue; } // 조회 실패 → 선점 해제 후 재시도
-      const userIds = (fansData ?? []).map((r: { id: string }) => r.id);
+      let userIds: string[];
+      try {
+        userIds = await fetchFavoritePlayerFanIds(resolved.kboId);
+      } catch {
+        await unclaimEvent(dedupId);
+        continue;
+      } // 조회 실패 → 선점 해제 후 재시도
       if (userIds.length === 0) continue; // 최애로 둔 유저 없음 — claim 유지(과거 알림 방지)
 
       // 타점(detail.rbi)이 있으면 "{라벨}{으로/로} N타점 획득!", 0타점이면 "{라벨}!" (하린아빠 확정)

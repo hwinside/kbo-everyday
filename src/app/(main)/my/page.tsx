@@ -35,6 +35,8 @@ import HomeSectionsCard from "@/components/my/HomeSectionsCard";
 import NewsPrefsCard from "@/components/my/NewsPrefsCard";
 import PwaGuideModal from "@/components/my/PwaGuideModal";
 import DeleteAccountSheet from "@/components/my/DeleteAccountSheet";
+import VenueDiaryCard from "@/components/my/VenueDiaryCard";
+import AdminOnly from "@/components/admin/AdminOnly";
 
 export default function MyPage() {
   const [nicknameStatus, setNicknameStatus] = useState<{
@@ -186,6 +188,11 @@ export default function MyPage() {
           onHallOfFame={() => user && router.push("/my/hall-of-fame")}
         />
       </motion.div>
+
+      {/* 스토리 지오펜스 인증에서 자동 생성되는 본인 전용 직관 기록 */}
+      <AdminOnly>
+        <VenueDiaryCard />
+      </AdminOnly>
 
       {/* 친구 초대 */}
       <InviteSection />

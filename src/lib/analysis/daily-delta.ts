@@ -91,6 +91,7 @@ export function computeStandingsDelta(
 
 export interface CategoryDelta {
   category: string;
+  baselineSuppressed: boolean;
   leaderChanged: boolean;
   oldLeader: { player_name: string; team: string; value: number } | null;
   newLeader: { player_name: string; team: string; value: number };
@@ -110,6 +111,43 @@ export interface TitlesDelta {
   summary: string;
 }
 
+const CUMULATIVE_TITLE_CATEGORIES = new Set(["hr", "rbi", "sb", "wins", "k", "saves"]);
+
+/**
+ * 파서/원천 계약이 바뀐 baseline을 정상 일간 변동으로 오인하지 않도록 보수적으로 판정한다.
+ * - 누적 지표: 같은 선수의 현재 값이 baseline보다 작으면 비교 불가능
+ * - 전체 지표: 양쪽 5행 이상인데 선수 집합 겹침이 절반 미만이면 leaderboard 계약 전환으로 간주
+ */
+export function shouldSuppressTitleBaseline(
+  category: string,
+  todayRows: StatsSnapshotRow[],
+  yesterdayRows: StatsSnapshotRow[],
+): boolean {
+  if (todayRows.length === 0 || yesterdayRows.length === 0) return false;
+
+  const yesterdayMap = new Map(
+    yesterdayRows.map((row) => [`${row.player_name}::${row.team}`, row]),
+  );
+  const overlapping = todayRows.flatMap((row) => {
+    const previous = yesterdayMap.get(`${row.player_name}::${row.team}`);
+    return previous ? [{ current: row, previous }] : [];
+  });
+
+  if (
+    CUMULATIVE_TITLE_CATEGORIES.has(category) &&
+    overlapping.some(({ current, previous }) => current.value < previous.value)
+  ) {
+    return true;
+  }
+
+  const comparableRows = Math.min(todayRows.length, yesterdayRows.length);
+  return comparableRows >= 5 && overlapping.length < Math.ceil(comparableRows / 2);
+}
+
+export function titleCategoriesForNarrative(delta: TitlesDelta): CategoryDelta[] {
+  return delta.categories.filter((category) => !category.baselineSuppressed);
+}
+
 export function computeTitlesDelta(
   today: StatsSnapshotRow[],
   yesterday: StatsSnapshotRow[],
@@ -119,7 +157,10 @@ export function computeTitlesDelta(
 
   for (const cat of categories) {
     const todayRows = today.filter((s) => s.category === cat).sort((a, b) => a.rank - b.rank);
-    const yesterdayRows = yesterday.filter((s) => s.category === cat);
+    const originalYesterdayRows = yesterday.filter((s) => s.category === cat);
+    const baselineSuppressed = shouldSuppressTitleBaseline(cat, todayRows, originalYesterdayRows);
+    // 전환 오염 카테고리는 current를 neutral baseline으로 사용해 잘못된 상승/하락/1위 교체를 만들지 않는다.
+    const yesterdayRows = baselineSuppressed ? todayRows : originalYesterdayRows;
     const yesterdayMap = new Map(yesterdayRows.map((s) => [`${s.player_name}::${s.team}`, s]));
 
     const newLeaderRow = todayRows[0];
@@ -144,6 +185,7 @@ export function computeTitlesDelta(
 
     results.push({
       category: cat,
+      baselineSuppressed,
       leaderChanged,
       oldLeader: oldLeaderRow ? { player_name: oldLeaderRow.player_name, team: oldLeaderRow.team, value: oldLeaderRow.value } : null,
       newLeader: { player_name: newLeaderRow.player_name, team: newLeaderRow.team, value: newLeaderRow.value },
@@ -151,7 +193,7 @@ export function computeTitlesDelta(
     });
   }
 
-  const changedLeaders = results.filter((r) => r.leaderChanged);
+  const changedLeaders = results.filter((r) => !r.baselineSuppressed && r.leaderChanged);
   const summary = changedLeaders.length > 0
     ? `${changedLeaders.map((r) => r.category).join(", ")} 1위 교체`
     : "타이틀 1위 변동 없음";

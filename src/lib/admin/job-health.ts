@@ -45,6 +45,7 @@ export const JOB_DEFS: JobDef[] = [
   { name: "photos-check", label: "선수 사진 모니터링", schedule: "매주 일 06:00", description: "KBO CDN 선수 사진 존재 여부 확인", maxAgeHours: 192, tracked: true },
   { name: "roster-update", label: "로스터 업데이트", schedule: "매일 05:00", description: "GitHub Actions 크롤링 → 자동 PR+머지 (스탯/로스터 반영)", maxAgeHours: 30, tracked: false, dataFreshness: true },
   { name: "hero-shot-batch", label: "히어로샷 자동 배치", schedule: "매주 월 03:00", description: "히어로샷 없는 선수(공식샷 보유) 탐지 → KBO 공식샷 rembg 컷아웃 생성 → 자동 PR+머지 (외부 API 없음)", maxAgeHours: 192, tracked: false },
+  { name: "channel-discovery", label: "채널 자동 발굴", schedule: "매주 일 09:00", description: "active 채널 숏츠 제목 분석 → 유사 신규 채널 발굴 (shadow 2회 후 자동 활성)", maxAgeHours: 192, tracked: true },
 ];
 
 export interface JobHealthInput {

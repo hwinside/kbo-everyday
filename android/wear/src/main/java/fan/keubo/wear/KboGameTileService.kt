@@ -94,7 +94,11 @@ class KboGameTileService : TileService() {
                 val before = WearStore.loadCachedSnapshot(ctx)
                 WearFetcher.fetch(ctx)
                 val after = WearStore.loadCachedSnapshot(ctx)
-                if (after != null && after != before) {
+                // 삼순 blocker 2: updatedAt은 매 fetch 갱신되므로 data class `!=`는 항상 true.
+                // contentSignature(updatedAt 제외)로 실제 상태 변화가 있을 때만 재렌더.
+                if (after != null &&
+                    (before == null || after.contentSignature() != before.contentSignature())
+                ) {
                     getUpdater(ctx).requestUpdate(KboGameTileService::class.java)
                 }
             } finally {

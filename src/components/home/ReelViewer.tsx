@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { X, ChevronUp, ChevronDown, Volume2, VolumeX, ExternalLink } from "lucide-react";
+import { handleExternalAnchorClick } from "@/lib/open-external";
 
 interface ReelVideo {
   thumbnail?: string;
@@ -131,6 +132,7 @@ export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerPr
             href={`https://www.youtube.com/watch?v=${video.id}`}
             target="_blank"
             rel="noopener noreferrer"
+            onClick={(e) => handleExternalAnchorClick(e, `https://www.youtube.com/watch?v=${video.id}`)}
             className="flex items-center gap-1.5 active:scale-95 transition-transform"
           >
             <ExternalLink size={20} className="text-white" />

@@ -49,19 +49,24 @@ interface ReplyImage {
 const MAX_REPLY_IMAGES = 3;
 
 interface BroadcastLog {
-  id: number;
+  id: string;
   content: string;
   target_label: string;
   total_count: number;
   success_count: number;
   fail_count: number;
+  status: "queued" | "processing" | "completed" | "completed_with_failures";
   created_at: string;
 }
 
 interface BroadcastResult {
+  jobId: string;
+  expected: number;
+  selected: number;
   total: number;
   success: number;
   fail: number;
+  status: "queued" | "completed";
 }
 
 const KBO_TEAMS = [
@@ -592,16 +597,20 @@ export default function AdminMessagesPage() {
                 ) : (
                   <AlertCircle className="w-5 h-5 text-[#FFD60A]" />
                 )}
-                <h3 className="text-sm font-semibold">발송 완료</h3>
+                <h3 className="text-sm font-semibold">
+                  {broadcastResult.status === "queued" ? "발송 예약 완료" : "발송 완료"}
+                </h3>
               </div>
               <div className="flex gap-4 text-sm">
                 <span className="text-[#8E8E93]">
-                  전체: <span className="text-white font-medium">{broadcastResult.total}명</span>
+                  대상: <span className="text-white font-medium">{broadcastResult.selected}명</span>
                 </span>
-                <span className="text-[#8E8E93]">
-                  성공:{" "}
-                  <span className="text-[#30D158] font-medium">{broadcastResult.success}명</span>
-                </span>
+                {broadcastResult.status !== "queued" && (
+                  <span className="text-[#8E8E93]">
+                    성공:{" "}
+                    <span className="text-[#30D158] font-medium">{broadcastResult.success}명</span>
+                  </span>
+                )}
                 {broadcastResult.fail > 0 && (
                   <span className="text-[#8E8E93]">
                     실패:{" "}
@@ -641,6 +650,18 @@ export default function AdminMessagesPage() {
                   </div>
                   <p className="text-sm text-[#8E8E93] truncate mb-2">{log.content}</p>
                   <div className="flex gap-4 text-xs">
+                    <span className="text-[#8E8E93]">
+                      상태{" "}
+                      <span className="text-white font-medium">
+                        {log.status === "queued"
+                          ? "대기"
+                          : log.status === "processing"
+                            ? "발송 중"
+                            : log.status === "completed"
+                              ? "완료"
+                              : "일부 실패"}
+                      </span>
+                    </span>
                     <span className="text-[#8E8E93]">전체 <span className="text-white font-medium">{log.total_count}명</span></span>
                     <span className="text-[#8E8E93]">성공 <span className="text-[#30D158] font-medium">{log.success_count}명</span></span>
                     {log.fail_count > 0 && (

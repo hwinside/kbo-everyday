@@ -8,10 +8,24 @@ import TeamLogo from "@/components/ui/TeamLogo";
 import { getTeamById, type TeamData } from "@/lib/constants/teams";
 import { getTeamColor } from "@/lib/utils/team";
 import { getCanonicalPlayerHref } from "@/lib/utils/resolve-player";
+import { computeRosterMovesGroupedDisplay, teamHomeHref } from "@/lib/roster-moves/readiness";
 
 type FormResult = "W" | "L" | "D";
 
 interface TopPlayer { playerName: string; href: string | null; titles: { label: string; rank: number }[] }
+
+interface RosterMove {
+  kboPlayerId: string;
+  playerName: string;
+  moveType: "register" | "deregister";
+  moveDate: string;
+  href: string | null;
+}
+
+type RosterMovesState =
+  | { status: "loading"; teamId: number }
+  | { status: "error"; teamId: number }
+  | { status: "ready"; teamId: number; moves: RosterMove[] };
 
 type StatRow = Record<string, unknown>;
 const num = (v: unknown) => Number(v ?? 0) || 0;
@@ -92,12 +106,16 @@ interface TeamCardData {
   rankHistory?: { date: string; rank: number }[];
   weeklyBatting?: { week: string; avg: number }[];
   weeklyPitching?: { week: string; era: number }[];
+  weeklyBattingRank?: number | null;
+  weeklyPitchingRank?: number | null;
   communityNewPosts?: number;
 }
 
 interface TeamCardProps {
   team: TeamData;
   gameSlot?: ReactNode;
+  /** Pull-to-refresh 트리거. 값이 바뀌면 순위/주간기록/순위권 선수를 재페치한다. */
+  refreshNonce?: number;
 }
 
 
@@ -151,6 +169,18 @@ function withGwaWa(name: string): string {
   return `${name}와`;
 }
 
+// 오늘을 포함한 최근 7개 KST 달력일. moveDate가 YYYY-MM-DD라 문자열 비교가 안전하다.
+function recentWeekCutoff(): string {
+  const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
+  const SIX_DAYS_MS = 6 * 24 * 60 * 60 * 1000;
+  return new Date(Date.now() + KST_OFFSET_MS - SIX_DAYS_MS).toISOString().slice(0, 10);
+}
+
+function shortMoveDate(iso: string): string {
+  const [, month, day] = iso.split("-");
+  return `${Number(month)}/${Number(day)}`;
+}
+
 function MiniStatChart({ title, values, fmt, higherIsBetter, accent, rank }: {
   title: string; values: number[]; fmt: (v: number) => string; higherIsBetter: boolean; accent: string; rank?: number | null;
 }) {
@@ -174,38 +204,26 @@ function MiniStatChart({ title, values, fmt, higherIsBetter, accent, rank }: {
   );
 }
 
-export default function TeamCard({ team, gameSlot }: TeamCardProps) {
+export default function TeamCard({ team, gameSlot, refreshNonce = 0 }: TeamCardProps) {
   const [data, setData] = useState<TeamCardData | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [topPlayers, setTopPlayers] = useState<TopPlayer[]>([]);
-  const [teamRank, setTeamRank] = useState<{ batting: number | null; era: number | null }>({ batting: null, era: null });
+  // 괄호 순위 = team-card API가 그래프와 같은 최신 주차·10구단 competition ranking으로 반환(timebase 일치).
+  // 이전 /api/team-records 시즌 누적 순위 fetch는 제거(주간 그래프↔시즌 순위 불일치 사고).
+  const [rosterMoves, setRosterMoves] = useState<RosterMovesState>({ status: "loading", teamId: team.id });
   const accent = getTeamColor(team.id);
 
   useEffect(() => {
     let cancelled = false;
-    fetch(`/api/team-card?team=${team.slug}`)
+    // cache: no-store — 응답이 `cache-control: public`이라 웹봰 HTTP 캐시가 오래된 그래프를
+    // 물고 있다(당겨서 새로고침해도 fetch URL이 동일해 캐시 적중). 항상 서버
+    // 최신(순위변동/주간그래프)를 반영하도록 클라 캐시를 우회(CDN s-maxage=300이 origin 보호).
+    fetch(`/api/team-card?team=${team.slug}`, { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : null))
       .then((d: TeamCardData | null) => { if (!cancelled) { setData(d && !("error" in d) ? d : null); setLoaded(true); } })
       .catch(() => { if (!cancelled) setLoaded(true); });
     return () => { cancelled = true; };
-  }, [team.slug]);
-
-  // 주간 타율/방어율 리그 순위 — team-records(전 구단) 정렬로 산출
-  useEffect(() => {
-    let cancelled = false;
-    fetch(`/api/team-records?season=2026`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d: { batting?: { teamId: number; avg: string }[]; pitching?: { teamId: number; era: string }[] } | null) => {
-        if (cancelled || !d) return;
-        const bat = [...(d.batting ?? [])].sort((a, b) => parseFloat(b.avg) - parseFloat(a.avg));
-        const pit = [...(d.pitching ?? [])].sort((a, b) => parseFloat(a.era) - parseFloat(b.era));
-        const bi = bat.findIndex((t) => t.teamId === team.id);
-        const pi = pit.findIndex((t) => t.teamId === team.id);
-        setTeamRank({ batting: bi >= 0 ? bi + 1 : null, era: pi >= 0 ? pi + 1 : null });
-      })
-      .catch(() => { /* 순위 실패해도 카드 정상 */ });
-    return () => { cancelled = true; };
-  }, [team.id]);
+  }, [team.slug, refreshNonce]);
 
   // 순위권 선수 — 공식 랭킹 소스(/api/stats + rankByStat). 리더보드와 동일.
   useEffect(() => {
@@ -222,13 +240,38 @@ export default function TeamCard({ team, gameSlot }: TeamCardProps) {
       })
       .catch(() => { /* 순위권 실패해도 카드 나머지는 정상 */ });
     return () => { cancelled = true; };
-  }, [team.shortName]);
+  }, [team.shortName, refreshNonce]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/roster-moves?teamId=${team.id}`)
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
+      .then((d: { moves?: RosterMove[] }) => {
+        if (cancelled) return;
+        const cutoff = recentWeekCutoff();
+        const moves = Array.isArray(d?.moves)
+          ? d.moves.filter((m) =>
+              m.moveDate >= cutoff && (m.moveType !== "register" || Boolean(m.href)),
+            )
+          : [];
+        setRosterMoves({ status: "ready", teamId: team.id, moves });
+      })
+      .catch(() => {
+        if (!cancelled) setRosterMoves({ status: "error", teamId: team.id });
+      });
+    return () => { cancelled = true; };
+  }, [team.id, refreshNonce]);
 
   if (loaded && !data?.standing && !data?.nextGame && !data?.recentForm?.length) return null;
 
   const streak = formatStreak(data?.standing?.streak ?? null);
   const st = data?.standing;
   const rg = data?.rankHistory ? rankPoints(data.rankHistory, 300, 96, 6) : null;
+  const currentRosterMoves: RosterMovesState =
+    rosterMoves.teamId === team.id ? rosterMoves : { status: "loading", teamId: team.id };
 
   return (
     <GlassCard className="p-5 mb-3">
@@ -301,8 +344,8 @@ export default function TeamCard({ team, gameSlot }: TeamCardProps) {
                 </Link>
                 {/* 우: 타율 / 방어율 — 클릭 → 팀 기록 페이지 */}
                 <Link href={`/teams/${team.slug}/records`} className="flex h-[136px] flex-1 flex-col gap-2">
-                  <MiniStatChart title="주간 팀 타율" values={(data?.weeklyBatting ?? []).map((w) => w.avg)} fmt={(v) => v.toFixed(3).replace(/^0\./, ".")} higherIsBetter accent={accent} rank={teamRank.batting} />
-                  <MiniStatChart title="주간 팀 방어율" values={(data?.weeklyPitching ?? []).map((w) => w.era)} fmt={(v) => v.toFixed(2)} higherIsBetter={false} accent={accent} rank={teamRank.era} />
+                  <MiniStatChart title="주간 팀 타율" values={(data?.weeklyBatting ?? []).map((w) => w.avg)} fmt={(v) => v.toFixed(3).replace(/^0\./, ".")} higherIsBetter accent={accent} rank={data?.weeklyBattingRank ?? null} />
+                  <MiniStatChart title="주간 팀 방어율" values={(data?.weeklyPitching ?? []).map((w) => w.era)} fmt={(v) => v.toFixed(2)} higherIsBetter={false} accent={accent} rank={data?.weeklyPitchingRank ?? null} />
                 </Link>
               </div>
             </div>
@@ -346,7 +389,85 @@ export default function TeamCard({ team, gameSlot }: TeamCardProps) {
             </div>
           )}
 
-          {/* 5. 커뮤니티 새 글 — 클릭 → 커뮤니티 */}
+          {/* 5. 최근 7일 등록·말소 */}
+          <div className="mt-4 border-t border-border/40 pt-3.5">
+            <p className="text-[11px] text-text-tertiary mb-2">최근 7일 등록·말소</p>
+            {currentRosterMoves.status === "loading" ? (
+              <div className="h-7 animate-pulse rounded-lg bg-bg-secondary" />
+            ) : currentRosterMoves.status === "error" ? (
+              <p className="text-[12px] text-text-tertiary">등록·말소 내역을 불러오지 못했어요.</p>
+            ) : currentRosterMoves.moves.length === 0 ? (
+              <Link href={teamHomeHref(team.slug)} className="block text-[12px] text-text-tertiary">
+                최근 7일 변동이 없어요.
+              </Link>
+            ) : (
+              <ul className="flex flex-col gap-1.5">
+                {computeRosterMovesGroupedDisplay(currentRosterMoves.moves).visibleGroups.map((group) => (
+                  <li key={group.date} className="relative">
+                    {/* 행 배경(날짜·chevron 영역) → 팀홈. absolute 형제라 중첩 anchor 없음 */}
+                    <Link
+                      href={teamHomeHref(team.slug)}
+                      aria-label={`${team.name} 팀 페이지`}
+                      className="absolute inset-0 z-0"
+                    />
+                    <div className="pointer-events-none relative z-10 flex items-center gap-2 py-0.5">
+                      <span className="w-8 flex-shrink-0 text-[11px] text-text-tertiary">{shortMoveDate(group.date)}</span>
+                      {/* 한 줄 강제: nowrap + overflow-hidden (삼순 NO-GO 반영 — flex-wrap 제거) */}
+                      <div className="flex min-w-0 flex-1 flex-nowrap items-center gap-x-2 overflow-hidden">
+                        {group.moves.map((move, index) => {
+                          const isRegister = move.moveType === "register";
+                          const label = isRegister ? "등록" : "말소";
+                          const labelColor = isRegister ? "#34D399" : "#F87171";
+                          return (
+                            <span
+                              key={`${move.moveType}-${move.kboPlayerId}-${index}`}
+                              className="inline-flex min-w-0 items-center gap-1"
+                            >
+                              <span
+                                className="flex-shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-bold"
+                                style={{ color: labelColor, backgroundColor: `${labelColor}1f` }}
+                              >
+                                {label}
+                              </span>
+                              {move.href ? (
+                                <Link
+                                  href={move.href}
+                                  className="pointer-events-auto truncate text-[12.5px] font-semibold text-text-primary"
+                                >
+                                  {move.playerName}
+                                </Link>
+                              ) : (
+                                <span className="truncate text-[12.5px] font-semibold text-text-primary">
+                                  {move.playerName}
+                                </span>
+                              )}
+                            </span>
+                          );
+                        })}
+                        {group.hiddenInGroup > 0 && (
+                          <span className="flex-shrink-0 text-[11.5px] text-text-tertiary">외 {group.hiddenInGroup}명</span>
+                        )}
+                      </div>
+                      <ChevronRight size={14} className="flex-shrink-0 text-text-tertiary" />
+                    </div>
+                  </li>
+                ))}
+                {computeRosterMovesGroupedDisplay(currentRosterMoves.moves).overflowCount > 0 && (
+                  <li>
+                    <Link
+                      href={teamHomeHref(team.slug)}
+                      className="flex items-center justify-between py-0.5 text-[12px] text-text-secondary"
+                    >
+                      <span>외 {computeRosterMovesGroupedDisplay(currentRosterMoves.moves).overflowCount}건 더보기</span>
+                      <ChevronRight size={14} className="flex-shrink-0 text-text-tertiary" />
+                    </Link>
+                  </li>
+                )}
+              </ul>
+            )}
+          </div>
+
+          {/* 6. 커뮤니티 새 글 — 클릭 → 커뮤니티 */}
           {(data?.communityNewPosts ?? 0) > 0 && (
             <Link href="/community" className="mt-4 border-t border-border/40 pt-3.5 flex items-center justify-between">
               <span className="text-[12.5px] text-text-secondary">💬 최근 1주 새 글 <b className="text-text-primary">{data!.communityNewPosts}</b>개</span>

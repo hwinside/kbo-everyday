@@ -47,9 +47,32 @@ data class WearSnapshot(
     val winPitcher: String? = null,  // 승리투수 — final (하린아빠 7/17)
     val losePitcher: String? = null, // 패전투수 — final
     val savePitcher: String? = null, // 세이브투수 — final(없으면 null)
+    // push bridge 순서/식별 메타 (구버전 JSON 호환 — 렌더 무관, contentSignature 제외):
+    val gameId: String? = null,   // 어느 경기의 스냅샷인지 — terminal/cancel을 같은 경기에만 적용(삼순 게이트)
+    val sourceAt: Long? = null,   // 원천/수신 순서(서버 w_source_at 우선, 없으면 폰 push ts) — out-of-order drop 기준
 ) {
     val isLive: Boolean get() = kind == "live"
     val hasScore: Boolean get() = kind == "live" || kind == "final"
+
+    /**
+     * updatedAt(신선도 전용)을 **제외한** 렌더 영향 필드 시그니처.
+     * 삼순 blocker 2: WearFetcher.fetch()는 매 fetch마다 updatedAt=now를 새로 써서 data class `!=`가
+     * 항상 true가 된다(무변화 fetch도 재렌더). tile/complication의 백그라운드 sync·push bridge의
+     * 중복 no-op 판정은 이 시그니처로 비교해 **실제 상태 변화만** requestUpdate 한다.
+     * (updatedAt은 '업데이트 지연' 배지 계산에만 쓰이는데 그건 렌더 시점 clock 함수라 시그니처 무관.)
+     */
+    fun contentSignature(): String = buildString {
+        append(kind).append('|')
+        append(myTeamCode).append('|').append(awayCode).append('|').append(homeCode).append('|')
+        append(awayScore).append(':').append(homeScore).append('|')
+        append(line).append('|').append(rankLine).append('|')
+        append(startAt ?: -1L).append('|')
+        append(bases?.let { "${it.first}${it.second}${it.third}" } ?: "-").append('|')
+        append(venue ?: "-").append('|').append(outs ?: -1).append('|')
+        append(pitcher ?: "-").append('|').append(batter ?: "-").append('|')
+        append(lastPlay ?: "-").append('|').append(starters ?: "-").append('|')
+        append(winPitcher ?: "-").append('|').append(losePitcher ?: "-").append('|').append(savePitcher ?: "-")
+    }
 
     fun toJson(): String {
         val o = JSONObject()
@@ -73,6 +96,8 @@ data class WearSnapshot(
         if (winPitcher != null) o.put("winPitcher", winPitcher)
         if (losePitcher != null) o.put("losePitcher", losePitcher)
         if (savePitcher != null) o.put("savePitcher", savePitcher)
+        if (gameId != null) o.put("gameId", gameId)
+        if (sourceAt != null) o.put("sourceAt", sourceAt)
         return o.toString()
     }
 
@@ -117,6 +142,8 @@ data class WearSnapshot(
                     winPitcher = if (o.has("winPitcher")) o.optString("winPitcher") else null,
                     losePitcher = if (o.has("losePitcher")) o.optString("losePitcher") else null,
                     savePitcher = if (o.has("savePitcher")) o.optString("savePitcher") else null,
+                    gameId = if (o.has("gameId")) o.optString("gameId") else null,
+                    sourceAt = if (o.has("sourceAt")) o.optLong("sourceAt") else null,
                 )
             } catch (_: Exception) {
                 null

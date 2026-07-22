@@ -3,6 +3,7 @@ import { sendFcmToUsers, WIDGET_STREAM } from "@/lib/notifications/fcm";
 import { TEAMS } from "@/lib/constants/teams";
 import { fetchStandings } from "@/lib/crawler/kbo-api";
 import { decideEndStreakCount, type StreakDir } from "@/lib/notifications/end-streak-policy";
+import { fetchTeamFanIds } from "@/lib/notifications/audience";
 import type { KboRawGame } from "@/types/api";
 
 // 경기 시작/종료 알림 (push-notifications-v1 S4).
@@ -40,12 +41,12 @@ function kstDateIso(): string {
 /** 양팀을 최애팀으로 둔 유저 id 목록. ok=false면 조회 실패(재시도 대상) */
 export async function fansOfTeams(teamIds: number[]): Promise<{ ids: string[]; ok: boolean }> {
   if (teamIds.length === 0) return { ids: [], ok: true };
-  const { data, error } = await supabase.from("profiles").select("id").in("team_id", teamIds);
-  if (error) {
-    console.error("[game-status] fans query failed:", error.message);
+  try {
+    return { ids: await fetchTeamFanIds(teamIds), ok: true };
+  } catch (error) {
+    console.error("[game-status] fans query failed:", (error as Error).message);
     return { ids: [], ok: false };
   }
-  return { ids: (data ?? []).map((r: { id: string }) => r.id), ok: true };
 }
 
 // 종료 알림은 수신자 최애팀 기준으로 승팀/패팀 다른 메시지라 한 게임에서 away/home
