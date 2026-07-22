@@ -19,12 +19,15 @@ const SCORE_EVENT_TYPES = new Set<string>(["run_scored", "at_bat_homerun"]);
 
 /**
  * event_id 선점 — 멱등 INSERT에 성공한(첫 발송) 호출만 true.
- * UNIQUE 충돌(23505) = 이미 다른 인스턴스가 발송 → false. 기타 에러도 보류(다음 cron).
+ * 이미 선점된 event_id는 충돌 예외를 만들지 않고 no-op → false. 기타 에러도 보류(다음 cron).
  */
 export async function claimEvent(eventId: string, gameId: string): Promise<boolean> {
   const { data, error } = await supabase
     .from("notified_score_events")
-    .insert({ event_id: eventId, game_id: gameId })
+    .upsert(
+      { event_id: eventId, game_id: gameId },
+      { onConflict: "event_id", ignoreDuplicates: true },
+    )
     .select("event_id");
   if (error) return false;
   return (data ?? []).length > 0;

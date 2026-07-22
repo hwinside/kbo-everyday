@@ -278,5 +278,66 @@ function mkHit(o: { type: GameEvent["type"]; batter: string; inning: number; isT
   assert("그랜드슬램 아님: 3타점 홈런 → 3(일반 홈런)", inheritHitRbi(hr3, [hr3]) === 3);
 }
 
-console.log(failed === 0 ? "\n✅ ALL PASS" : `\n❌ ${failed} FAILED`);
-process.exit(failed === 0 ? 0 : 1);
+// ── ⑦ score-event DB claim 동시성/쿼리 계약 ────────────────────────────
+// 중복 cron 인스턴스는 정확히 1개만 true여야 하며, 나머지는 PK 예외 없이 빈 returning으로 false.
+async function verifyScoreEventClaim(): Promise<void> {
+  process.env.NEXT_PUBLIC_SUPABASE_URL = "https://claim-smoke.supabase.co";
+  process.env.SUPABASE_SERVICE_ROLE_KEY = "claim-smoke-key";
+
+  const [{ claimEvent }, { supabaseAdmin }] = await Promise.all([
+    import("@/lib/notifications/game-score"),
+    import("@/lib/supabase/admin"),
+  ]);
+  const admin = supabaseAdmin as unknown as {
+    from: (table: string) => unknown;
+  };
+  const originalFrom = admin.from;
+  let winnerAvailable = true;
+  const calls: Array<{
+    table: string;
+    payload: unknown;
+    options: unknown;
+    selected: string;
+  }> = [];
+
+  admin.from = (table: string) => ({
+    upsert(payload: unknown, options: unknown) {
+      return {
+        async select(selected: string) {
+          calls.push({ table, payload, options, selected });
+          const won = winnerAvailable;
+          winnerAvailable = false;
+          return {
+            data: won ? [{ event_id: "event-1" }] : [],
+            error: null,
+          };
+        },
+      };
+    },
+  });
+
+  try {
+    const claims = await Promise.all(
+      Array.from({ length: 20 }, () => claimEvent("event-1", "game-1")),
+    );
+    assert("DB claim: 동시 20회 중 승자 정확히 1개", claims.filter(Boolean).length === 1, claims);
+    assert("DB claim: 전 호출 upsert(ignoreDuplicates)", calls.every((call) =>
+      call.table === "notified_score_events"
+      && JSON.stringify(call.payload) === JSON.stringify({ event_id: "event-1", game_id: "game-1" })
+      && JSON.stringify(call.options) === JSON.stringify({ onConflict: "event_id", ignoreDuplicates: true })
+      && call.selected === "event_id"
+    ), calls);
+  } finally {
+    admin.from = originalFrom;
+  }
+}
+
+verifyScoreEventClaim()
+  .catch((error) => {
+    failed++;
+    console.error("[FAIL] DB claim smoke threw:", error);
+  })
+  .finally(() => {
+    console.log(failed === 0 ? "\n✅ ALL PASS" : `\n❌ ${failed} FAILED`);
+    process.exit(failed === 0 ? 0 : 1);
+  });
