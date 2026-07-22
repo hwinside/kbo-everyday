@@ -21,6 +21,7 @@ import {
   Clock,
   ExternalLink,
 } from "lucide-react";
+import SystemHealthPanel from "./SystemHealthPanel";
 
 /* ── helpers ─────────────────────────────────────────── */
 
@@ -176,6 +177,8 @@ export default function AdminSystemPage() {
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">시스템 모니터링</h1>
+
+      <SystemHealthPanel />
 
       {/* API Usage */}
       {apiUsageData.length > 0 ? (
