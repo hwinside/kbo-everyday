@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "generatedFrom": "6a2a74cb991258a5eb1e8670913de8e00411aa5d",
+  "generatedFrom": "fc00241901e9fb418a0141fc5e75e4d8a2f40f80",
   "violations": {
     "0034fe9a6a6cff327c64": {
       "count": 1,
@@ -849,13 +849,6 @@
       "subject": "season_predictions",
       "detail": "add a bound, unique-key lookup, or query-guard annotation"
     },
-    "8e3fc7c76fa6a6a46249": {
-      "count": 1,
-      "kind": "non_unique_pagination",
-      "file": "src/app/api/admin/messages/route.ts",
-      "subject": "dm_conversations",
-      "detail": "range pagination must include a full unique order (id)"
-    },
     "8f6baabe79dff5ac99bc": {
       "count": 1,
       "kind": "unbounded_growing_select",
@@ -1416,13 +1409,6 @@
       "subject": "auth.admin.listUsers",
       "detail": "collection API requires bounded-page/full-scan annotation"
     },
-    "e59def4049803b83c98d": {
-      "count": 1,
-      "kind": "non_unique_pagination",
-      "file": "src/app/api/admin/messages/route.ts",
-      "subject": "dm_messages",
-      "detail": "range pagination must include a full unique order (id)"
-    },
     "e77896e8fb9e512ea1d6": {
       "count": 1,
       "kind": "unbounded_growing_select",
@@ -1546,13 +1532,6 @@
       "count": 1,
       "kind": "unbounded_growing_select",
       "file": "scripts/qa/kyoyama-legacy-verify.mjs",
-      "subject": "profiles",
-      "detail": "add a bound, unique-key lookup, or query-guard annotation"
-    },
-    "f1e1fe88545111c18250": {
-      "count": 1,
-      "kind": "unbounded_growing_select",
-      "file": "src/app/api/admin/messages/route.ts",
       "subject": "profiles",
       "detail": "add a bound, unique-key lookup, or query-guard annotation"
     },

@@ -29,6 +29,11 @@ interface Conversation {
   unread_count: number;
 }
 
+interface InboxCursor {
+  lastMessageAt: string;
+  conversationId: string;
+}
+
 interface Message {
   id: number;
   conversation_id: string;
@@ -103,6 +108,10 @@ export default function AdminMessagesPage() {
   const [tab, setTab] = useState<Tab>("inbox");
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [nextCursor, setNextCursor] = useState<InboxCursor | null>(null);
+  const [unreadTotal, setUnreadTotal] = useState(0);
+  const [loadError, setLoadError] = useState(false);
   const [selectedConv, setSelectedConv] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [msgLoading, setMsgLoading] = useState(false);
@@ -131,35 +140,67 @@ export default function AdminMessagesPage() {
 
   // 대화 목록 / 발송 로그 로드
   const loadConversations = useCallback(
-    async (targetTab: Tab) => {
+    async (
+      targetTab: Tab,
+      cursor: InboxCursor | null = null,
+      append = false,
+      silent = false
+    ) => {
       if (targetTab === "broadcast") return;
-      setLoading(true);
+      if (append) setLoadingMore(true);
+      else if (!silent) {
+        setLoading(true);
+        setLoadError(false);
+      }
       try {
-        const res = await fetch(`/api/admin/messages?tab=${targetTab}`, {
+        const params = new URLSearchParams({ tab: targetTab });
+        if (targetTab === "inbox" && cursor) {
+          params.set("cursorAt", cursor.lastMessageAt);
+          params.set("cursorId", cursor.conversationId);
+        }
+        const res = await fetch(`/api/admin/messages?${params}`, {
           headers: { "x-admin-pin": getPin() },
         });
-        if (res.ok) {
-          const json = await res.json();
-          if (targetTab === "sent") {
-            setBroadcastLogs(json.broadcastLogs || []);
-            setConversations([]);
-          } else {
-            setConversations(json.conversations || []);
-            setBroadcastLogs([]);
-          }
+        if (!res.ok) throw new Error("load failed");
+        const json = await res.json();
+        if (targetTab === "sent") {
+          setBroadcastLogs(json.broadcastLogs || []);
+          setConversations([]);
+        } else {
+          const incoming = (json.conversations || []) as Conversation[];
+          setConversations((previous) => {
+            if (!append && !silent) return incoming;
+            const incomingIds = new Set(incoming.map((conversation) => conversation.id));
+            return [...incoming, ...previous.filter((conversation) => !incomingIds.has(conversation.id))];
+          });
+          if (!silent) setNextCursor(json.nextCursor || null);
+          setUnreadTotal(typeof json.unreadTotal === "number" ? json.unreadTotal : 0);
+          setBroadcastLogs([]);
         }
       } catch {
-        /* ignore */
+        setLoadError(true);
       }
-      setLoading(false);
+      if (append) setLoadingMore(false);
+      else if (!silent) setLoading(false);
     },
     [getPin]
   );
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadConversations(tab);
   }, [tab, loadConversations]);
+
+  // PIN 어드민은 Supabase 세션이 없으므로 실시간 채널 대신 가벼워진 첫 페이지를 주기적으로 교체한다.
+  useEffect(() => {
+    if (tab !== "inbox" || selectedConv) return;
+    const refresh = () => loadConversations("inbox", null, false, true);
+    const interval = window.setInterval(refresh, 30000);
+    window.addEventListener("focus", refresh);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refresh);
+    };
+  }, [loadConversations, selectedConv, tab]);
 
   // 대화 상세 로드
   async function loadMessages(conv: Conversation) {
@@ -173,6 +214,7 @@ export default function AdminMessagesPage() {
       if (res.ok) {
         const json = await res.json();
         setMessages(json.messages || []);
+        setUnreadTotal((previous) => Math.max(0, previous - conv.unread_count));
         setConversations((prev) =>
           prev.map((item) => (item.id === conv.id ? { ...item, unread_count: 0 } : item))
         );
@@ -682,10 +724,9 @@ export default function AdminMessagesPage() {
             ) : (
               <>
                 {conversations.length}개 대화
-                {tab === "inbox" &&
-                  conversations.reduce((sum, c) => sum + c.unread_count, 0) > 0 && (
+                {tab === "inbox" && unreadTotal > 0 && (
                     <span className="ml-1 text-[#FF453A]">
-                      · {conversations.reduce((sum, c) => sum + c.unread_count, 0)}개 안 읽음
+                      · {unreadTotal}개 안 읽음
                     </span>
                   )}
               </>
@@ -695,6 +736,11 @@ export default function AdminMessagesPage() {
           {loading ? (
             <div className="flex items-center justify-center py-32">
               <Loader2 className="w-8 h-8 animate-spin text-[#6366F1]" />
+            </div>
+          ) : loadError && conversations.length === 0 ? (
+            <div className="glass-card p-12 text-center">
+              <AlertCircle className="w-12 h-12 text-[#FF453A] mx-auto mb-3" />
+              <p className="text-[#8E8E93]">쪽지함을 불러오지 못했습니다</p>
             </div>
           ) : conversations.length === 0 ? (
             <div className="glass-card p-12 text-center">
@@ -740,6 +786,16 @@ export default function AdminMessagesPage() {
                   </div>
                 </button>
               ))}
+              {nextCursor && (
+                <button
+                  type="button"
+                  onClick={() => loadConversations("inbox", nextCursor, true)}
+                  disabled={loadingMore}
+                  className="w-full rounded-xl border border-white/10 py-3 text-sm text-[#8E8E93] transition-colors hover:bg-white/5 hover:text-white disabled:opacity-50"
+                >
+                  {loadingMore ? "불러오는 중..." : "이전 대화 더 보기"}
+                </button>
+              )}
             </div>
           )}
         </>
