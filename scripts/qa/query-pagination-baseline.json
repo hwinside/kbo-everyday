@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "generatedFrom": "6a2a74cb991258a5eb1e8670913de8e00411aa5d",
+  "generatedFrom": "fc00241901e9fb418a0141fc5e75e4d8a2f40f80",
   "violations": {
     "0034fe9a6a6cff327c64": {
       "count": 1,
@@ -126,13 +126,6 @@
       "kind": "ambiguous_growing_limit",
       "file": "src/app/api/highlights/route.ts",
       "subject": "highlights",
-      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
-    },
-    "1bdd80dfd3b6c5a3e9e4": {
-      "count": 1,
-      "kind": "ambiguous_growing_limit",
-      "file": "src/lib/supabase/useDM.ts",
-      "subject": "user_blocks",
       "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
     },
     "1e55c0f0af5df891d329": {
@@ -1010,13 +1003,6 @@
       "subject": "comments",
       "detail": "add a bound, unique-key lookup, or query-guard annotation"
     },
-    "a627693f7d4d3581b1f7": {
-      "count": 1,
-      "kind": "unbounded_growing_select",
-      "file": "src/lib/supabase/useDM.ts",
-      "subject": "dm_conversations",
-      "detail": "add a bound, unique-key lookup, or query-guard annotation"
-    },
     "a850b96d139ef88a4832": {
       "count": 1,
       "kind": "unbounded_growing_select",
@@ -1295,13 +1281,6 @@
       "kind": "ambiguous_growing_limit",
       "file": "src/app/api/me/venue-attendance/route.ts",
       "subject": "venue_attendance",
-      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
-    },
-    "da78629d746b2a53baf7": {
-      "count": 1,
-      "kind": "ambiguous_growing_limit",
-      "file": "src/lib/supabase/useDM.ts",
-      "subject": "user_blocks",
       "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
     },
     "db377689e79c096dd7ec": {

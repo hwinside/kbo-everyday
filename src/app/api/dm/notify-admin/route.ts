@@ -29,7 +29,14 @@ export async function POST(req: NextRequest) {
   const systemUserId = process.env.SYSTEM_USER_ID;
   if (!systemUserId) return NextResponse.json({ ok: false });
 
-  const { conversationId, messageId: rawMessageId } = await req.json();
+  const body = await req.json().catch(() => null);
+  if (!body || typeof body !== "object") {
+    return NextResponse.json({ error: "Invalid body" }, { status: 400 });
+  }
+  const { conversationId, messageId: rawMessageId } = body as {
+    conversationId?: unknown;
+    messageId?: unknown;
+  };
   // dm_messages.id는 BIGSERIAL(정수) — number 또는 정수 문자열로 정규화
   const messageId = normalizeMessageId(rawMessageId);
   if (!conversationId || typeof conversationId !== "string" || messageId === null) {
