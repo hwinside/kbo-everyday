@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { MessageCircle } from "lucide-react";
 import { useAuth } from "@/lib/supabase/AuthContext";
-import { getOrCreateConversation } from "@/lib/supabase/useDM";
+import { getExistingConversation } from "@/lib/supabase/useDM";
 import LoginSheet from "@/components/auth/LoginSheet";
 
 interface DMButtonProps {
@@ -31,12 +31,10 @@ export default function DMButton({ targetUserId, label = "쪽지", className = "
     if (user.id === targetUserId) return; // 자기 자신한테 못 보냄
 
     setLoading(true);
-    const convId = await getOrCreateConversation(user.id, targetUserId);
+    const convId = await getExistingConversation(user.id, targetUserId);
     setLoading(false);
 
-    if (convId) {
-      router.push(`/messages/${convId}`);
-    }
+    router.push(convId ? `/messages/${convId}` : `/messages/new-${targetUserId}`);
   };
 
   return (

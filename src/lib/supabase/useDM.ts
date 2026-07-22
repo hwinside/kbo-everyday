@@ -41,12 +41,14 @@ export function useDMList() {
   const load = useCallback(async () => {
     if (!user) return;
 
+    // query-guard: bounded -- 쪽지함은 최신 대화 500개 UI 페이지만 제공한다.
     const { data } = await supabase
       .from("dm_conversations")
       .select("*")
       .or(`user1_id.eq.${user.id},user2_id.eq.${user.id}`)
       .not("last_message", "is", null)
-      .order("last_message_at", { ascending: false });
+      .order("last_message_at", { ascending: false })
+      .limit(500);
 
     if (!data || data.length === 0) { setConversations([]); setLoading(false); return; }
 
@@ -127,7 +129,7 @@ export function useDMList() {
 export function useDMChat(conversationId: string) {
   const { user } = useAuth();
   const [messages, setMessages] = useState<DMMessage[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(Boolean(conversationId));
 
   // 메시지 로드
   useEffect(() => {
@@ -225,17 +227,18 @@ export function useDMChat(conversationId: string) {
 
   // 메시지 전송 (차단 체크)
   const sendMessage = useCallback(
-    async (content: string, imageUrls?: string[]) => {
+    async (content: string, imageUrls?: string[], conversationIdOverride?: string) => {
       const trimmed = content.trim();
       const images = (imageUrls ?? []).filter((u) => typeof u === "string" && u.length > 0);
+      const targetConversationId = conversationIdOverride ?? conversationId;
       // 텍스트 또는 사진 중 하나는 있어야 전송
-      if (!user || (!trimmed && images.length === 0)) return false;
+      if (!user || !targetConversationId || (!trimmed && images.length === 0)) return false;
 
       // 차단 여부 체크
       const { data: conv } = await supabase
         .from("dm_conversations")
         .select("user1_id, user2_id")
-        .eq("id", conversationId)
+        .eq("id", targetConversationId)
         .single();
 
       if (conv) {
@@ -257,7 +260,7 @@ export function useDMChat(conversationId: string) {
       const { data: inserted, error } = await supabase
         .from("dm_messages")
         .insert({
-          conversation_id: conversationId,
+          conversation_id: targetConversationId,
           sender_id: user.id,
           content: trimmed,
           ...(images.length > 0 ? { image_urls: images } : {}),
@@ -271,7 +274,7 @@ export function useDMChat(conversationId: string) {
         await supabase
           .from("dm_conversations")
           .update({ last_message: preview, last_message_at: new Date().toISOString() })
-          .eq("id", conversationId);
+          .eq("id", targetConversationId);
 
         // 운영팀 대화면 어드민 PWA 알림 트리거 (fire-and-forget — 실패해도 쪽지 발송에 영향 0, 2026-07-18)
         // messageId를 전달해 서버가 "정확히 그 행"을 검증 + 메시지당 1회 claim (replay 방지)
@@ -291,7 +294,7 @@ export function useDMChat(conversationId: string) {
                   "Content-Type": "application/json",
                   ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
                 },
-                body: JSON.stringify({ conversationId, messageId }),
+                body: JSON.stringify({ conversationId: targetConversationId, messageId }),
               });
             } catch {
               /* ignore */
@@ -344,4 +347,17 @@ export async function getOrCreateConversation(myId: string, otherId: string): Pr
 
   if (error) { return null; }
   return created?.id ?? null;
+}
+
+// 대화 화면 진입만으로 빈 방을 만들지 않도록 기존 방 조회와 생성을 분리한다.
+export async function getExistingConversation(myId: string, otherId: string): Promise<string | null> {
+  const [u1, u2] = [myId, otherId].sort();
+  const { data } = await supabase
+    .from("dm_conversations")
+    .select("id")
+    .eq("user1_id", u1)
+    .eq("user2_id", u2)
+    .maybeSingle();
+
+  return data?.id ?? null;
 }

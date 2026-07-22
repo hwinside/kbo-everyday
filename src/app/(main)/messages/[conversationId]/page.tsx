@@ -4,7 +4,7 @@ import { useState, useRef, useEffect, useCallback, type ChangeEvent } from "reac
 import { useParams, useRouter } from "next/navigation";
 import { ChevronLeft, Send, EllipsisVertical, AlertTriangle, ShieldBan, Flag, X, ImagePlus, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { useDMChat } from "@/lib/supabase/useDM";
+import { getOrCreateConversation, useDMChat } from "@/lib/supabase/useDM";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { useBlockUser } from "@/lib/supabase/useBlock";
 import { submitDMReport } from "@/lib/supabase/useBlock";
@@ -31,8 +31,9 @@ export default function DMChatPage() {
   const params = useParams();
   const router = useRouter();
   const conversationId = params.conversationId as string;
+  const draftTargetId = conversationId.startsWith("new-") ? conversationId.slice(4) : null;
   const { user } = useAuth();
-  const { messages, loading, sendMessage } = useDMChat(conversationId);
+  const { messages, loading, sendMessage } = useDMChat(draftTargetId ? "" : conversationId);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState("");
@@ -52,14 +53,17 @@ export default function DMChatPage() {
     if (!user || !conversationId) return;
 
     async function fetchOther() {
-      const { data: conv } = await supabase
-        .from("dm_conversations")
-        .select("user1_id, user2_id")
-        .eq("id", conversationId)
-        .single();
+      let oid = draftTargetId;
+      if (!oid) {
+        const { data: conv } = await supabase
+          .from("dm_conversations")
+          .select("user1_id, user2_id")
+          .eq("id", conversationId)
+          .single();
 
-      if (!conv) return;
-      const oid = conv.user1_id === user!.id ? conv.user2_id : conv.user1_id;
+        if (!conv) return;
+        oid = conv.user1_id === user!.id ? conv.user2_id : conv.user1_id;
+      }
       setOtherId(oid);
 
       const { data: prof } = await supabase
@@ -74,7 +78,7 @@ export default function DMChatPage() {
       }
     }
     fetchOther();
-  }, [user, conversationId]);
+  }, [user, conversationId, draftTargetId]);
 
   // Block hook
   const { block, isBlocked } = useBlockUser(otherId ?? "");
@@ -159,10 +163,19 @@ export default function DMChatPage() {
     if ((!input.trim() && sendImages.length === 0) || sending || uploading) return;
     setSendError("");
     setSending(true);
-    const ok = await sendMessage(input.trim(), sendImages.map((img) => img.url));
+    const targetConversationId = draftTargetId && user
+      ? await getOrCreateConversation(user.id, otherId)
+      : conversationId;
+    if (!targetConversationId) {
+      setSendError("쪽지를 보낼 수 없습니다. 잠시 후 다시 시도해주세요.");
+      setSending(false);
+      return;
+    }
+    const ok = await sendMessage(input.trim(), sendImages.map((img) => img.url), targetConversationId);
     if (ok) {
       setInput("");
       setImages([]);
+      if (draftTargetId) router.replace(`/messages/${targetConversationId}`);
     } else {
       setSendError("쪽지를 보낼 수 없습니다. 잠시 후 다시 시도해주세요.");
     }
@@ -412,6 +425,7 @@ export default function DMChatPage() {
             <button
               onClick={handleSend}
               disabled={(!input.trim() && images.length === 0) || sending || uploading}
+              aria-label="쪽지 보내기"
               className="w-10 h-10 rounded-full bg-accent flex items-center justify-center disabled:opacity-30 transition-opacity flex-shrink-0"
             >
               <Send size={18} className="text-white" />
