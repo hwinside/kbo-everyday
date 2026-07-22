@@ -17,6 +17,7 @@
     "qa:retention-dates": "tsx scripts/qa/retention-gamedates-smoke.ts",
     "qa:war-saber": "tsx scripts/qa/war-saber-smoke.ts",
     "qa:foreign-onboard": "node scripts/qa/foreign-onboard-smoke.mjs",
+    "qa:foreign-onboard-photo-gate": "node scripts/qa/foreign-onboard-photo-gate.mjs",
     "qa:rank-selfheal": "tsx scripts/qa/rank-history-selfheal-smoke.ts",
     "qa:la-broadcast": "tsx scripts/qa/la-broadcast-policy-smoke.ts",
     "qa:la-autostart": "tsx scripts/qa/la-autostart-smoke.ts",

@@ -39,6 +39,14 @@ const PITCHERS_PATH = path.join(ROOT, "src/lib/constants/stats-2026-pitchers.jso
 const FOREIGN_MAP_PATH = path.join(ROOT, "src/lib/constants/foreign-id-map.ts");
 const NATIONALITY_PATH = path.join(ROOT, "src/lib/constants/player-nationality.json");
 const FOREIGN_PENDING_PATH = path.join(ROOT, "src/lib/constants/foreign-nationality-pending.json");
+// P0 사진 게이트 인계 파일 — 이번 실행에서 신규 온보딩된 숫자 외국인만(리뷰 지적 대상).
+// tmp/ 는 gitignore 대상이라 자동 PR diff에 노출되지 않음 — 같은 CI job 내 다음 스텝(qa:foreign-onboard-photo-gate)만 소비.
+const NEW_FOREIGN_PHOTO_MANIFEST_PATH = path.join(ROOT, "tmp/reconcile-newly-onboarded-foreign.json");
+
+function writeNewForeignPhotoManifest(entries) {
+  fs.mkdirSync(path.dirname(NEW_FOREIGN_PHOTO_MANIFEST_PATH), { recursive: true });
+  fs.writeFileSync(NEW_FOREIGN_PHOTO_MANIFEST_PATH, JSON.stringify(entries, null, 2) + "\n");
+}
 
 const argv = process.argv.slice(2);
 const dryRun = argv.includes("--dry-run");
@@ -239,6 +247,10 @@ async function main() {
 
   if (missing.length === 0) {
     console.log("✅ reconcile: stats/등록명단의 모든 선수가 roster 로 resolve 됨 — 온보딩 불필요");
+    if (!dryRun) {
+      writeNewForeignPhotoManifest([]);
+      await updateForeignPending([], nationalityMap);
+    }
     return;
   }
 
@@ -246,6 +258,7 @@ async function main() {
   const onboarded = [];
   const failed = [];
   const foreignPendingNew = []; // 신규 외국인(숫자 직결 온보딩) 중 국적 미등록 — 알림 대상
+  const newForeignOnboarded = []; // 신규 외국인(숫자 직결 온보딩) 전원 — P0 사진 게이트 대상(국적 등록 여부 무관)
   for (const m of missing) {
     const teamId = TEAM_TO_ID[m.team];
     if (!teamId) { failed.push({ ...m, reason: `unknown team ${m.team}` }); continue; }
@@ -266,8 +279,11 @@ async function main() {
     // A안: 신규 외국인은 숫자 id로 그대로 온보딩(페이지·사진 자동). 단 국적(국기)은
     // 자동 소스가 없어 사람 큐레이션이 필요 → "국적 미등록 외인"만 알림 대상으로 수집한다.
     // (분류 오판은 알림 노이즈/누락일 뿐 온보딩 자체엔 영향 없음 — foreign-onboard.mjs 참고)
-    if (classifyForeign(detail) && !Object.prototype.hasOwnProperty.call(nationalityMap, String(m.kboId))) {
-      foreignPendingNew.push({ kboId: String(m.kboId), name: entry.name, team: entry.team, draft: detail.draft || "" });
+    if (classifyForeign(detail)) {
+      newForeignOnboarded.push({ kboId: String(m.kboId), name: entry.name, team: entry.team });
+      if (!Object.prototype.hasOwnProperty.call(nationalityMap, String(m.kboId))) {
+        foreignPendingNew.push({ kboId: String(m.kboId), name: entry.name, team: entry.team, draft: detail.draft || "" });
+      }
     }
   }
 
@@ -278,6 +294,10 @@ async function main() {
   if (onboarded.length === 0) {
     console.log("reconcile: 온보딩 가능한 선수 없음 (fetch 실패/외국인 skip만 존재)");
     if (failed.length > 0) process.exitCode = 0; // 게이트는 validator 가 담당 — 여기선 실패시 조용히 넘김
+    if (!dryRun) {
+      writeNewForeignPhotoManifest([]);
+      await updateForeignPending([], nationalityMap);
+    }
     return;
   }
 
@@ -295,6 +315,7 @@ async function main() {
   console.log(`   ${onboarded.map((e) => `${e.name}(${e.kboId})`).join(", ")}`);
   console.log("   사진은 후속 update-player-photos 스텝이 자동 다운로드/맵 재생성합니다.");
 
+  writeNewForeignPhotoManifest(newForeignOnboarded);
   await updateForeignPending(foreignPendingNew, nationalityMap);
 }
 

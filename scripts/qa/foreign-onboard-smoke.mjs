@@ -3,7 +3,7 @@
  * 신규 외국인 자동 온보딩 분류/리포트 순수 로직 스모크 (A안 슬라이스 1).
  * Usage: node scripts/qa/foreign-onboard-smoke.mjs
  */
-import { classifyForeign, mergePendingReport } from "../lib/foreign-onboard.mjs";
+import { classifyForeign, mergePendingReport, checkNewlyOnboardedPhotos } from "../lib/foreign-onboard.mjs";
 
 let pass = 0, fail = 0;
 function ok(cond, label) {
@@ -68,6 +68,49 @@ eq(
   { "56459": { name: "페덱", team: "삼성", addedAt: now } },
   "해결된 기존 제거 + 신규 추가 동시",
 );
+
+// 삼순 NO-GO(81149356) blocker 2 회귀: 신규 온보딩 0명(missing.length===0 경로)이어도
+// 사람이 국적을 넣은 기존 pending은 이번 실행에서 그대로 정리되어야 한다(자동 소멸 계약).
+eq(
+  mergePendingReport(
+    { "56459": { name: "페덱", team: "삼성", addedAt: "2026-07-18T00:00:00.000Z" } },
+    [],
+    { "56459": "US" },
+    now,
+  ),
+  {},
+  "신규 온보딩 0명이어도 국적 등록된 기존 pending은 소멸",
+);
+
+// ===== checkNewlyOnboardedPhotos (P0 사진 게이트) =====
+{
+  const files = new Set(["56459"]); // 페덱만 파일 있음
+  const idSet = new Set(["56459"]); // 페덱만 PLAYER_PHOTO_ID_SET에 있음
+  const deps = { photoFileExists: (id) => files.has(id), idSetHas: (id) => idSet.has(id) };
+
+  eq(checkNewlyOnboardedPhotos([], deps), [], "온보딩 0명 → 누락 없음");
+
+  eq(
+    checkNewlyOnboardedPhotos([{ kboId: "56459", name: "페덱", team: "삼성" }], deps),
+    [],
+    "파일+idSet 둘 다 있으면 통과",
+  );
+
+  eq(
+    checkNewlyOnboardedPhotos([{ kboId: "99999", name: "가상외인", team: "KT" }], deps),
+    [{ kboId: "99999", name: "가상외인", team: "KT", hasFile: false, hasIdSet: false }],
+    "CDN 다운로드 실패(파일·idSet 둘 다 없음) → 누락 목록에 포함",
+  );
+
+  eq(
+    checkNewlyOnboardedPhotos([{ kboId: "77777", name: "부분누락", team: "LG" }], {
+      photoFileExists: () => true,
+      idSetHas: () => false,
+    }),
+    [{ kboId: "77777", name: "부분누락", team: "LG", hasFile: true, hasIdSet: false }],
+    "파일은 있는데 player-photos.ts 재생성 전(idSet 미반영) → 누락 목록에 포함",
+  );
+}
 
 console.log(`\n${pass} pass, ${fail} fail`);
 if (fail > 0) process.exit(1);
