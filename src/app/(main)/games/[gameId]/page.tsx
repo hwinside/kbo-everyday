@@ -27,6 +27,7 @@ import { generateRelayEvents } from "@/lib/relay-event-generator";
 import { latestRelayLine } from "@/lib/notifications/relay-line";
 import type { LineupEntry } from "@/lib/hooks/useGameDetail";
 import { deriveGameState } from "@/lib/utils/game-derived";
+import { shouldKeepCancelledGameChat } from "@/lib/game-chat-visibility";
 import GameDetailHeader from "@/components/game/GameDetailHeader";
 import NonLiveScoreDisplay from "@/components/game/NonLiveScoreDisplay";
 import ScoreBar from "@/components/game/ScoreBar";
@@ -38,6 +39,8 @@ import { ChevronUp, ChevronDown } from "lucide-react";
 import ScoreBoard from "@/components/game/ScoreBoard";
 import AdminOnly from "@/components/admin/AdminOnly";
 import VenueStorySection from "@/components/game/VenueStorySection";
+import GameChat from "@/components/game/GameChat";
+import { useChatRoomHasMessages } from "@/lib/supabase/useChatRoomHasMessages";
 import KgwanTab from "@/components/game/KgwanTab";
 import LineupTab from "@/components/game/LineupTab";
 import AllStarEntryRoster from "@/components/game/AllStarEntryRoster";
@@ -54,6 +57,24 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "lineup", label: "라인업" },
   { id: "stats", label: "기록" },
 ];
+
+function CancelledGameChat({
+  gameId,
+  homeTeamId,
+  awayTeamId,
+  hasGameProgress,
+}: {
+  gameId: string;
+  homeTeamId: number;
+  awayTeamId: number;
+  hasGameProgress: boolean;
+}) {
+  const { hasMessages, loading } = useChatRoomHasMessages(`game:${gameId}`);
+  if (loading && !hasGameProgress) return null;
+  if (!shouldKeepCancelledGameChat({ hasGameProgress, hasExistingMessages: hasMessages })) return null;
+
+  return <GameChat gameId={gameId} homeTeamId={homeTeamId} awayTeamId={awayTeamId} />;
+}
 
 /* boxScore → GameStats 변환 */
 function boxScoreToGameStats(
@@ -355,6 +376,14 @@ export default function GameDetailPage() {
   const tabIndicatorTeam = myTeamInGame ? getTeamById(myTeamId)! : homeTeam;
 
   const d = deriveGameState(liveGame, game, gameDetail);
+  const hasGameProgress = Boolean(
+    gameEvents.length > 0
+    || gameRelay?.innings.some((inning) => inning.plays.length > 0)
+    || /^\d+회(?:초|말)/.test(d.currentInning)
+    || d.awayScore > 0
+    || d.homeScore > 0
+    || hasBoxScoreData
+  );
 
   return (
     <PullToRefresh
@@ -478,7 +507,14 @@ export default function GameDetailPage() {
         </div>
       )}
 
-      {d.derivedStatus !== "cancelled" && (
+      {d.derivedStatus === "cancelled" ? (
+        <CancelledGameChat
+          gameId={gameId}
+          homeTeamId={game.homeTeamId}
+          awayTeamId={game.awayTeamId}
+          hasGameProgress={hasGameProgress}
+        />
+      ) : (
         <>
           {/* 직관 라이브 — WIP 실환경 QA 동안 관리자에게만 노출 */}
           <AdminOnly>
