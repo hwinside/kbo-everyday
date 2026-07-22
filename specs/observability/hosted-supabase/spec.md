@@ -68,6 +68,7 @@ Thresholds are recalibrated after seven days of post-fix traffic without weakeni
 
 - No production config references a local path, host, launchd label, OpenClaw command, or Mac mini state.
 - Concurrent duplicate alerts are serialized into one incident and one top-level delivery per channel.
+- Webhook bursts are durably accepted through one ingress Durable Object and drained in bounded batches without dropping groups larger than the alert catalog.
 - Recovery followed by a recurrence opens a fresh episode and sends both channels again.
 - GET cannot acknowledge an incident; explicit POST, channel-specific retry ledgers, HMAC validation, and stale-timestamp rejection pass unit tests.
 - Prometheus rules use labels present in the official Supabase metrics fixture; external-schema-dependent rules are explicitly marked pending and cannot be provisioned accidentally.

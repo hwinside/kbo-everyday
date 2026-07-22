@@ -66,6 +66,7 @@ for (const rule of diskRules) {
 }
 
 assert(wranglerText.includes('class_name = "IncidentCoordinator"'), "Durable Object binding missing");
+assert(wranglerText.includes('class_name = "AlertIngressCoordinator"'), "durable ingress queue binding missing");
 assert(!wranglerText.includes("kv_namespaces"), "eventually-consistent KV must not own incident state");
 
 for (const forbidden of ["/Users/", "/Volumes/", "launchctl", "launchd", "openclaw", "Mac mini"]) {

@@ -6,9 +6,13 @@ compatibility_date = "2026-07-22"
 name = "INCIDENT_COORDINATOR"
 class_name = "IncidentCoordinator"
 
+[[durable_objects.bindings]]
+name = "ALERT_INGRESS"
+class_name = "AlertIngressCoordinator"
+
 [[migrations]]
 tag = "v1"
-new_sqlite_classes = ["IncidentCoordinator"]
+new_sqlite_classes = ["IncidentCoordinator", "AlertIngressCoordinator"]
 
 [vars]
 SLACK_CHANNEL_ID = "REPLACE_WITH_INCIDENT_CHANNEL_ID"

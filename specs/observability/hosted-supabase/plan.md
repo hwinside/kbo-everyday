@@ -3,7 +3,7 @@
 ## Slice 1: repository-owned control plane
 
 - Add a vendor-neutral alert policy catalog with PromQL/LogQL expressions and thresholds.
-- Add a Cloudflare Worker webhook receiver with authentication, replay protection, per-incident Durable Object serialization, Slack delivery, and Telegram delivery.
+- Add a Cloudflare Worker webhook receiver with authentication, replay protection, a durable bounded-batch ingress queue, per-incident Durable Object serialization, Slack delivery, and Telegram delivery.
 - Add configuration smoke tests that reject local-machine dependencies and secret material.
 - Document required hosted accounts, credentials, deploy order, rollback, and cost guards.
 

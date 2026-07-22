@@ -5,7 +5,7 @@ This directory is the repository-owned control plane for production observabilit
 ## Components
 
 - `alert-policies.json`: canonical thresholds and expressions. Loki rules remain `schema-pending` until a real Log Drain sample confirms field names.
-- `worker/`: Cloudflare Worker that validates Grafana HMAC webhooks, serializes each incident in a Durable Object, posts directly to Slack and Telegram, requires an explicit POST for ACK, and escalates after three minutes without ACK.
+- `worker/`: Cloudflare Worker that validates Grafana HMAC webhooks, durably queues bursts before processing them in bounded batches, serializes each incident in a Durable Object, posts directly to Slack and Telegram, requires an explicit POST for ACK, and escalates after three minutes without ACK.
 - `scripts/qa/observability-config-smoke.ts`: fails on missing safety rules, local-machine dependencies, duplicate IDs, or secret-like values.
 
 ## External setup order
@@ -82,6 +82,7 @@ Production PASS additionally requires:
 4. a resolved fingerprint that fires again creates a fresh two-channel episode;
 5. GET renders an ACK confirmation page without mutation and POST records ACK;
 6. no ACK for three minutes creates one escalation, and partial retry targets only the missing channel;
-7. a resolved event replies in the incident thread and reaches Telegram;
-8. Metrics/Synthetic/Better Stack all fail when deliberately pointed at a controlled failing target;
-9. an actual logged-in user completes login, authorized data load, and recovery.
+7. signed 23-alert and 41-alert webhook groups are durably accepted and eventually delivered in full;
+8. a resolved event replies in the incident thread and reaches Telegram;
+9. Metrics/Synthetic/Better Stack all fail when deliberately pointed at a controlled failing target;
+10. an actual logged-in user completes login, authorized data load, and recovery.

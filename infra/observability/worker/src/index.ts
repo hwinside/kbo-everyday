@@ -1,6 +1,7 @@
 interface DurableStorage {
   get<T>(key: string): Promise<T | undefined>;
   put<T>(key: string, value: T): Promise<void>;
+  delete(key: string): Promise<boolean>;
   setAlarm(timestamp: number): Promise<void>;
   deleteAlarm(): Promise<void>;
 }
@@ -21,6 +22,7 @@ interface DurableNamespace {
 
 interface Env {
   INCIDENT_COORDINATOR: DurableNamespace;
+  ALERT_INGRESS: DurableNamespace;
   GRAFANA_HMAC_SECRET: string;
   SLACK_BOT_TOKEN: string;
   SLACK_CHANNEL_ID: string;
@@ -78,7 +80,14 @@ const STATE_KEY = "incident";
 const REPLAY_WINDOW_SECONDS = 300;
 const ACK_DEADLINE_MS = 3 * 60 * 1000;
 const ESCALATION_RETRY_MS = 60 * 1000;
-const MAX_ALERTS_PER_WEBHOOK = 40;
+const INGRESS_BATCH_SIZE = 20;
+const INGRESS_RETRY_MS = 60 * 1000;
+const QUEUE_META_KEY = "queue-meta";
+
+interface QueueMeta {
+  head: number;
+  tail: number;
+}
 
 class DurableIncidentStore implements IncidentStore {
   constructor(private readonly storage: DurableStorage) {}
@@ -486,6 +495,74 @@ async function forwardAlert(alert: GrafanaAlert, env: Env): Promise<void> {
   if (!response.ok) throw new Error(`incident coordinator:${response.status}`);
 }
 
+export class AlertIngressCoordinator {
+  constructor(
+    private readonly state: DurableState,
+    private readonly env: Env,
+  ) {}
+
+  fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+    const request = input instanceof Request ? input : new Request(input, init);
+    return this.state.blockConcurrencyWhile(async () => {
+      const url = new URL(request.url);
+      if (request.method !== "POST" || url.pathname !== "/enqueue") {
+        return new Response("not found", { status: 404 });
+      }
+      const payload = await request.json() as { alerts?: GrafanaAlert[] };
+      if (!Array.isArray(payload.alerts) || payload.alerts.length === 0) {
+        return new Response("no alerts", { status: 400 });
+      }
+      const meta = (await this.state.storage.get<QueueMeta>(QUEUE_META_KEY)) ?? { head: 0, tail: 0 };
+      for (let offset = 0; offset < payload.alerts.length; offset += INGRESS_BATCH_SIZE) {
+        const batch = payload.alerts.slice(offset, offset + INGRESS_BATCH_SIZE);
+        await this.state.storage.put(this.batchKey(meta.tail), batch);
+        meta.tail += 1;
+      }
+      await this.state.storage.put(QUEUE_META_KEY, meta);
+      await this.state.storage.setAlarm(Date.now());
+      return Response.json({ ok: true, queued: payload.alerts.length }, { status: 202 });
+    });
+  }
+
+  alarm(): Promise<void> {
+    return this.state.blockConcurrencyWhile(async () => {
+      let failed = false;
+      try {
+        await this.drainOneBatch();
+      } catch {
+        failed = true;
+      }
+      const meta = await this.state.storage.get<QueueMeta>(QUEUE_META_KEY);
+      if (meta && meta.head < meta.tail) {
+        await this.state.storage.setAlarm(Date.now() + (failed ? INGRESS_RETRY_MS : 1000));
+      } else {
+        await this.state.storage.deleteAlarm();
+      }
+      if (failed) throw new Error("alert ingress drain incomplete");
+    });
+  }
+
+  private async drainOneBatch(): Promise<void> {
+    const meta = await this.state.storage.get<QueueMeta>(QUEUE_META_KEY);
+    if (!meta || meta.head >= meta.tail) return;
+    const key = this.batchKey(meta.head);
+    const batch = await this.state.storage.get<GrafanaAlert[]>(key);
+    if (!batch) throw new Error(`missing alert ingress batch:${meta.head}`);
+    await Promise.all(batch.map((alert) => forwardAlert(alert, this.env)));
+    meta.head += 1;
+    await this.state.storage.put(QUEUE_META_KEY, meta);
+    await this.state.storage.delete(key);
+  }
+
+  private batchKey(index: number): string {
+    return `queue:${index}`;
+  }
+}
+
+function ingressStub(env: Env): DurableStub {
+  return env.ALERT_INGRESS.get(env.ALERT_INGRESS.idFromName("grafana-webhooks"));
+}
+
 async function handleWebhook(request: Request, env: Env): Promise<Response> {
   const body = await request.text();
   const verified = await verifyGrafanaSignature(
@@ -504,11 +581,16 @@ async function handleWebhook(request: Request, env: Env): Promise<Response> {
   }
   const alerts = Array.isArray(payload.alerts) ? payload.alerts : [];
   if (alerts.length === 0) return new Response("no alerts", { status: 400 });
-  if (alerts.length > MAX_ALERTS_PER_WEBHOOK) {
-    return Response.json({ ok: false, error: "too many alerts", max: MAX_ALERTS_PER_WEBHOOK }, { status: 413 });
-  }
-  await Promise.all(alerts.map((alert) => forwardAlert(alert, env)));
-  return Response.json({ ok: true, accepted: alerts.length });
+  const queued = await ingressStub(env).fetch("https://ingress.internal/enqueue", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ alerts }),
+  });
+  if (!queued.ok) return new Response("alert queue unavailable", { status: 503 });
+  return new Response(await queued.text(), {
+    status: 202,
+    headers: { "content-type": queued.headers.get("content-type") || "application/json" },
+  });
 }
 
 interface AckCapability {

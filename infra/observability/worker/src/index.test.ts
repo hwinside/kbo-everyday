@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import worker, {
+  AlertIngressCoordinator,
   IncidentCoordinator,
   type IncidentState,
   type IncidentStore,
@@ -31,6 +32,10 @@ class MemoryDurableStorage {
 
   async put<T>(key: string, value: T) {
     this.values.set(key, structuredClone(value));
+  }
+
+  async delete(key: string) {
+    return this.values.delete(key);
   }
 
   async setAlarm(timestamp: number) {
@@ -76,6 +81,22 @@ class TestNamespace {
   }
 }
 
+class TestIngressNamespace {
+  readonly coordinator: AlertIngressCoordinator;
+
+  constructor(env: ReturnType<typeof makeEnv>) {
+    this.coordinator = new AlertIngressCoordinator(new SerialDurableState(), env);
+  }
+
+  idFromName(name: string) {
+    return name;
+  }
+
+  get() {
+    return this.coordinator;
+  }
+}
+
 async function sign(secret: string, timestamp: string, body: string): Promise<string> {
   const encoder = new TextEncoder();
   const key = await crypto.subtle.importKey(
@@ -91,6 +112,7 @@ async function sign(secret: string, timestamp: string, body: string): Promise<st
 function makeEnv() {
   return {
     INCIDENT_COORDINATOR: undefined as unknown as TestNamespace,
+    ALERT_INGRESS: undefined as unknown as TestIngressNamespace,
     GRAFANA_HMAC_SECRET: "grafana-test-secret",
     SLACK_BOT_TOKEN: "slack-test-token",
     SLACK_CHANNEL_ID: "C123",
@@ -302,12 +324,14 @@ test("partial escalation persists channel ledger and retries only the failed cha
   assert.equal(calls.filter((call) => call.url.includes("telegram.org")).length, 2);
 });
 
-test("signed webhook forwards all 23 catalog-sized alerts and rejects oversized groups", async () => {
+test("signed webhook durably queues and eventually delivers 23 and 41 alert groups", async () => {
   const calls: Array<{ url: string; body: string }> = [];
   const env = makeEnv();
   const fetchImpl = fakeFetch(calls) as typeof fetch;
   const namespace = new TestNamespace(env, fetchImpl);
+  const ingress = new TestIngressNamespace(env);
   env.INCIDENT_COORDINATOR = namespace;
+  env.ALERT_INGRESS = ingress;
 
   const alerts = Array.from({ length: 23 }, (_, index) => ({
     ...firingAlert(`catalog-${index}`),
@@ -325,13 +349,16 @@ test("signed webhook forwards all 23 catalog-sized alerts and rejects oversized 
     },
     body,
   }), env);
-  assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { ok: true, accepted: 23 });
+  assert.equal(response.status, 202);
+  assert.deepEqual(await response.json(), { ok: true, queued: 23 });
+  assert.equal(namespace.coordinators.size, 0, "webhook must acknowledge only after durable enqueue, before delivery");
+  await ingress.coordinator.alarm();
+  await ingress.coordinator.alarm();
   assert.equal(namespace.coordinators.size, 23);
   assert.equal(calls.filter((call) => call.url.includes("slack.com")).length, 23);
   assert.equal(calls.filter((call) => call.url.includes("telegram.org")).length, 23);
 
-  const oversizedBody = JSON.stringify({ alerts: Array.from({ length: 41 }, (_, index) => firingAlert(`oversized-${index}`)) });
+  const oversizedBody = JSON.stringify({ alerts: Array.from({ length: 41 }, (_, index) => firingAlert(`burst-${index}`)) });
   const oversizedSignature = await sign(env.GRAFANA_HMAC_SECRET, timestamp, oversizedBody);
   const oversized = await worker.fetch(new Request("https://alerts.example.test/webhooks/grafana", {
     method: "POST",
@@ -342,6 +369,12 @@ test("signed webhook forwards all 23 catalog-sized alerts and rejects oversized 
     },
     body: oversizedBody,
   }), env);
-  assert.equal(oversized.status, 413);
-  assert.equal(namespace.coordinators.size, 23, "oversized payload must fail before partial forwarding");
+  assert.equal(oversized.status, 202);
+  assert.deepEqual(await oversized.json(), { ok: true, queued: 41 });
+  await ingress.coordinator.alarm();
+  await ingress.coordinator.alarm();
+  await ingress.coordinator.alarm();
+  assert.equal(namespace.coordinators.size, 64, "every alert in the 41-alert burst must eventually reach its incident coordinator");
+  assert.equal(calls.filter((call) => call.url.includes("slack.com")).length, 64);
+  assert.equal(calls.filter((call) => call.url.includes("telegram.org")).length, 64);
 });
