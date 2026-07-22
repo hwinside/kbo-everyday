@@ -4,14 +4,24 @@ import { motion } from "framer-motion";
 import { ExternalLink } from "lucide-react";
 import TeamBadge from "@/components/ui/TeamBadge";
 import type { NewsMock } from "@/lib/constants/news";
-import { handleExternalAnchorClick } from "@/lib/open-external";
 import NewsCommentButton from "@/components/news/NewsCommentButton";
+import { useNewsArticleBrowser } from "@/hooks/useNewsArticleBrowser";
 
 interface NewsCardProps {
   news: NewsMock;
 }
 
 export default function NewsCard({ news }: NewsCardProps) {
+  const { handleArticleAnchorClick } = useNewsArticleBrowser();
+  const article = {
+    url: news.sourceUrl,
+    canonicalUrl: news.ogUrl || news.sourceUrl,
+    title: news.title,
+    source: news.source,
+    thumbnailUrl: news.thumbnailUrl,
+    teamId: news.teamId,
+  };
+
   return (
     <motion.div
       className="glass-card relative transition-colors hover:bg-white/[0.03]"
@@ -22,7 +32,7 @@ export default function NewsCard({ news }: NewsCardProps) {
         href={news.sourceUrl}
         target="_blank"
         rel="noopener noreferrer"
-        onClick={(e) => handleExternalAnchorClick(e, news.sourceUrl)}
+        onClick={(event) => handleArticleAnchorClick(event, article)}
         className="flex gap-4 p-5 pr-20"
       >
         {/* Thumbnail placeholder */}
@@ -50,14 +60,7 @@ export default function NewsCard({ news }: NewsCardProps) {
         </div>
       </a>
       <NewsCommentButton
-        article={{
-          url: news.sourceUrl,
-          canonicalUrl: news.ogUrl || news.sourceUrl,
-          title: news.title,
-          source: news.source,
-          thumbnailUrl: news.thumbnailUrl,
-          teamId: news.teamId,
-        }}
+        article={article}
         className="absolute bottom-4 right-4 bg-bg-tertiary text-text-secondary hover:bg-bg-secondary"
       />
     </motion.div>

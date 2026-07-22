@@ -4,15 +4,9 @@ import { useCallback, useState } from "react";
 import { Loader2, MessageCircle } from "lucide-react";
 import AdminOnly from "@/components/admin/AdminOnly";
 import CommentSheet from "@/components/community/CommentSheet";
+import type { NewsArticleDiscussion } from "@/lib/news/article-discussion";
 
-export interface NewsArticleDiscussion {
-  url: string;
-  canonicalUrl?: string | null;
-  title: string;
-  source?: string | null;
-  thumbnailUrl?: string | null;
-  teamId?: number | null;
-}
+export type { NewsArticleDiscussion } from "@/lib/news/article-discussion";
 
 interface NewsCommentButtonProps {
   article: NewsArticleDiscussion;

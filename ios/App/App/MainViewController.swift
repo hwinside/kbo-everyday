@@ -16,5 +16,6 @@ class MainViewController: CAPBridgeViewController {
         bridge?.registerPluginInstance(LiveActivityPlugin())
         bridge?.registerPluginInstance(MetaAppEventsPlugin())
         bridge?.registerPluginInstance(AppReviewPlugin())
+        bridge?.registerPluginInstance(NewsArticleBrowserPlugin())
     }
 }
