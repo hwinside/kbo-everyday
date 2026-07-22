@@ -24,6 +24,7 @@
 3. raw→rollup coverage mismatch 0
    - page view visitor/day/platform PV
    - user/day page view + game visit
+   - raw candidate date의 page-view/user-day rollup-only extra row 포함 양방향 exact match
    - dwell day/platform event count + total dwell
    - dwell platform별 session count
    - raw visitor별 30분 gap 독립 sessionization 후 visitor/session/day/platform dwell 분포 exact match

@@ -117,7 +117,11 @@ BEGIN
   FROM admin_page_dwell
   WHERE created_at < v_raw_cutoff;
 
-  WITH raw_daily AS (
+  WITH candidate_days AS MATERIALIZED (
+    SELECT DISTINCT (created_at AT TIME ZONE 'Asia/Seoul')::date AS day_kst
+    FROM admin_page_views
+    WHERE created_at < v_raw_cutoff
+  ), raw_daily AS (
     SELECT (created_at AT TIME ZONE 'Asia/Seoul')::date AS day_kst,
            COALESCE(platform, 'unknown') AS platform,
            visitor_id,
@@ -127,17 +131,21 @@ BEGIN
       AND NOT starts_with(path, '/_celeb')
     GROUP BY 1, 2, 3
   ), rolled_daily AS (
-    SELECT day_kst, platform, visitor_id, pv
-    FROM admin_traffic_daily_visitors
-    WHERE day_kst < (v_raw_cutoff AT TIME ZONE 'Asia/Seoul')::date
+    SELECT rolled.day_kst, rolled.platform, rolled.visitor_id, rolled.pv
+    FROM admin_traffic_daily_visitors AS rolled
+    JOIN candidate_days AS candidates USING (day_kst)
   )
   SELECT count(*) INTO v_page_mismatches
   FROM raw_daily AS raw
-  LEFT JOIN rolled_daily AS rolled
+  FULL JOIN rolled_daily AS rolled
     USING (day_kst, platform, visitor_id)
   WHERE rolled.pv IS DISTINCT FROM raw.pv;
 
-  WITH raw_user_days AS (
+  WITH candidate_days AS MATERIALIZED (
+    SELECT DISTINCT (created_at AT TIME ZONE 'Asia/Seoul')::date AS day_kst
+    FROM admin_page_views
+    WHERE created_at < v_raw_cutoff
+  ), raw_user_days AS (
     SELECT (created_at AT TIME ZONE 'Asia/Seoul')::date AS day_kst,
            user_id,
            count(*)::bigint AS page_views,
@@ -152,13 +160,16 @@ BEGIN
       AND NOT starts_with(path, '/_celeb')
     GROUP BY 1, 2
   ), rolled_user_days AS (
-    SELECT day_kst, user_id, page_views, game_ids
-    FROM admin_page_view_user_days
-    WHERE day_kst < (v_raw_cutoff AT TIME ZONE 'Asia/Seoul')::date
+    SELECT rolled.day_kst,
+           rolled.user_id,
+           rolled.page_views,
+           rolled.game_ids
+    FROM admin_page_view_user_days AS rolled
+    JOIN candidate_days AS candidates USING (day_kst)
   )
   SELECT count(*) INTO v_user_day_mismatches
   FROM raw_user_days AS raw
-  LEFT JOIN rolled_user_days AS rolled
+  FULL JOIN rolled_user_days AS rolled
     USING (day_kst, user_id)
   WHERE rolled.page_views IS DISTINCT FROM raw.page_views
      OR raw.game_ids IS NULL

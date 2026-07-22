@@ -143,6 +143,74 @@ async function main() {
     await db.exec(`
     BEGIN;
 
+    INSERT INTO admin_traffic_daily_visitors (
+      day_kst, platform, visitor_id, pv
+    ) VALUES ('2026-06-01', 'web', 'rollup-only-visitor', 777);
+
+    INSERT INTO admin_page_view_user_days (
+      day_kst, user_id, page_views, game_ids
+    ) VALUES (
+      '2026-06-01',
+      '33333333-3333-3333-3333-333333333333',
+      777,
+      ARRAY['rollup-only-game']
+    );
+  `);
+
+    assert.deepEqual(
+      await preview(db),
+      {
+        pageViews: 1,
+        userDays: 1,
+        pageDwell: 0,
+        pageDwellSessions: 0,
+        pageDwellDistribution: 0,
+      },
+      "rollup-only visitor/user rows on a raw candidate day must fail coverage",
+    );
+
+    await db.exec(`
+    DO $$
+    BEGIN
+      PERFORM admin_telemetry_retention_run(
+        true,
+        '${BACKUP_REF}',
+        '${NOW}'::timestamptz
+      );
+      RAISE EXCEPTION 'expected rollup-only coverage mismatch';
+    EXCEPTION
+      WHEN OTHERS THEN
+        IF SQLERRM NOT LIKE 'raw-to-rollup coverage mismatch:%' THEN
+          RAISE;
+        END IF;
+    END
+    $$;
+  `);
+
+    assert.equal(
+      await scalar(db, "SELECT count(*)::int AS value FROM admin_page_views"),
+      rawViewsBefore,
+      "rollup-only coverage failure must preserve raw page views",
+    );
+    assert.equal(
+      await scalar(db, "SELECT count(*)::int AS value FROM admin_page_dwell"),
+      rawDwellBefore,
+      "rollup-only coverage failure must preserve raw dwell",
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "SELECT count(*)::int AS value FROM admin_telemetry_retention_runs",
+      ),
+      0,
+      "rollup-only coverage failure must not leave an audit success row",
+    );
+
+    await db.exec("ROLLBACK;");
+
+    await db.exec(`
+    BEGIN;
+
     UPDATE admin_dwell_session_slices AS survivor
     SET dwell_ms = survivor.dwell_ms + collapsed.dwell_ms,
         event_count = survivor.event_count + collapsed.event_count

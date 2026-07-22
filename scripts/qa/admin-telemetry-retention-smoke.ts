@@ -35,6 +35,8 @@ for (const contract of [
   "raw delete count mismatch",
   "sum(dwell_ms)::bigint AS dwell_ms",
   "rolled.game_ids <@ raw.game_ids",
+  "FULL JOIN rolled_daily",
+  "FULL JOIN rolled_user_days",
   "rolled.dwell_ms IS DISTINCT FROM raw.dwell_ms",
   "pageDwellSessions",
   "pageDwellDistribution",
