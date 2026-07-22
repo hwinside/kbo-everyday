@@ -9,6 +9,7 @@ export function useChatRoomHasMessages(roomId: string) {
   useEffect(() => {
     let cancelled = false;
 
+    // query-guard: bounded -- one exact game room existence probe returns at most one id
     void supabase
       .from("chat_messages")
       .select("id")
