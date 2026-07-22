@@ -2232,6 +2232,15 @@
     "birthDate": "1993-06-27"
   },
   {
+    "name": "마드리스",
+    "kboId": "56813",
+    "teamId": 4,
+    "position": "외야수",
+    "backNo": "13",
+    "team": "SSG",
+    "birthDate": "1996-02-29"
+  },
+  {
     "name": "맷 매닝",
     "kboId": "FP005",
     "teamId": 8,
@@ -7873,14 +7882,5 @@
     "backNo": "22",
     "team": "키움",
     "birthDate": "1996-08-02"
-  },
-  {
-    "name": "마드리스",
-    "kboId": "56813",
-    "teamId": 4,
-    "position": "외야수",
-    "backNo": "13",
-    "team": "SSG",
-    "birthDate": "1996-02-29"
   }
 ]
