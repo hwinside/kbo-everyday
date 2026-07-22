@@ -1,9 +1,15 @@
 // 숏츠 야구 관련성 필터 회귀 가드.
 // 2026-06-19 #cs 제보: 오스틴(LG) 검색에 종교 영상, 김영우 정치 뉴스가 숏츠에 노출.
 import {
+  hasBaseballShortContext,
   hasNonBaseballSignal,
   isPlayerShortRelevant,
+  isTeamShortRelevant,
 } from "@/lib/video/shorts-relevance";
+import {
+  detectAllTeamsFromTitle,
+  detectTeamFromTitle,
+} from "@/lib/video/team-detector";
 
 let pass = 0,
   fail = 0;
@@ -54,6 +60,46 @@ check(
   "선수명 없는 일반 영상 차단",
   isPlayerShortRelevant("오늘의 홈런 모음 베스트", "오스틴"),
   false,
+);
+
+// --- LG 약칭 오탐 차단 (#cs 2026-07-22 실제 제보) ---
+const LG_CHEMICAL_TITLE = "LG화학 나주공장, 또 생산라인 축소...가소제 라인";
+check("LG화학: 야구 문맥 없음", hasBaseballShortContext(LG_CHEMICAL_TITLE), false);
+check("LG화학: 수집 team_id ETC", detectTeamFromTitle(LG_CHEMICAL_TITLE) === "ETC", true);
+check(
+  "LG화학: 전체 팀 감지에서도 LG 제외",
+  detectAllTeamsFromTitle(LG_CHEMICAL_TITLE).includes("LG"),
+  false,
+);
+check(
+  "LG화학: 기존 LG 오분류 행도 노출 차단",
+  isTeamShortRelevant(LG_CHEMICAL_TITLE, "LG"),
+  false,
+);
+check(
+  "정상: LG + 트윈스 문맥",
+  isTeamShortRelevant("LG 트윈스 끝내기 승리", "LG"),
+  true,
+);
+check(
+  "정상: LG + 경기 문맥",
+  detectTeamFromTitle("LG 경기 하이라이트") === "LG",
+  true,
+);
+check(
+  "정상: LG 선수 태그가 있는 커뮤니티 영상",
+  isTeamShortRelevant("LG 오스틴 결승타", "LG", { hasPlayerTag: true }),
+  true,
+);
+check(
+  "정상: LG 공식 채널 영상",
+  isTeamShortRelevant("드디어 돌아왔다", "LG", { isOfficial: true }),
+  true,
+);
+check(
+  "회귀: 다른 팀 기존 동작 유지",
+  isTeamShortRelevant("삼성 멋진 장면", "삼성"),
+  true,
 );
 
 console.log(`\n${pass} passed, ${fail} failed`);

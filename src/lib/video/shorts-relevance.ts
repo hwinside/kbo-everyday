@@ -9,6 +9,56 @@
 
 import { NON_BASEBALL_NEGATIVE } from "@/lib/news-relevance";
 
+// 팀 약칭만으로 team_id가 붙는 커뮤니티 영상은 추가 야구 문맥이 필요하다.
+// 특히 `LG`는 LG화학·LG전자 등 계열사 제목에도 흔해서 약칭 단독 매칭을 신뢰할 수 없다.
+const SHORTS_BASEBALL_CONTEXT = [
+  "프로야구",
+  "kbo",
+  "야구",
+  "트윈스",
+  "선수",
+  "경기",
+  "홈런",
+  "안타",
+  "타점",
+  "투수",
+  "타자",
+  "선발",
+  "불펜",
+  "마운드",
+  "타석",
+  "이닝",
+  "삼진",
+  "볼넷",
+  "도루",
+  "병살",
+  "끝내기",
+  "역전",
+  "승리",
+  "패배",
+  "우승",
+  "연승",
+  "연패",
+  "라인업",
+  "감독",
+  "포수",
+  "내야",
+  "외야",
+  "등판",
+  "세이브",
+  "타율",
+  "평균자책",
+  "트레이드",
+  "드래프트",
+  "잠실",
+];
+
+/** 제목에 팀 약칭 외의 야구 문맥이 있는지 판정 */
+export function hasBaseballShortContext(title: string): boolean {
+  const normalized = title.toLowerCase();
+  return SHORTS_BASEBALL_CONTEXT.some((keyword) => normalized.includes(keyword));
+}
+
 // 제목에 등장하면 야구 숏츠가 아니라고 보는 키워드. 야구 헤드라인엔 등장하지
 // 않는 정치·종교 stem만 골라 recall 손실 없이 비-야구 영상을 차단한다.
 export const SHORTS_NON_BASEBALL_NEGATIVE = [
@@ -62,4 +112,22 @@ export function isPlayerShortRelevant(title: string, playerName: string): boolea
   if (hasNonBaseballSignal(title)) return false;
   if (playerName && !title.includes(playerName)) return false;
   return true;
+}
+
+/**
+ * team_id 기반 숏츠 노출 게이트.
+ *
+ * LG 커뮤니티 영상은 `LG` 약칭만으로는 통과시키지 않는다. 공식 채널·선수 태그가
+ * 있거나 제목에 트윈스/KBO/경기 등 야구 문맥이 있을 때만 유지한다. 다른 팀은
+ * 기존 동작을 보존하고, 공통 non-baseball negative는 계속 차단한다.
+ */
+export function isTeamShortRelevant(
+  title: string,
+  teamId: string | null,
+  options: { hasPlayerTag?: boolean; isOfficial?: boolean } = {},
+): boolean {
+  if (hasNonBaseballSignal(title)) return false;
+  if (teamId !== "LG") return true;
+  if (options.hasPlayerTag || options.isOfficial) return true;
+  return hasBaseballShortContext(title);
 }

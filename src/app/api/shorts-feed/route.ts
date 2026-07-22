@@ -12,7 +12,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { DEFAULT_EXCLUDE_FLAGS, extractNoiseFlags } from "@/lib/video/noise-flags";
 import { loadPlayerAliases } from "@/lib/video/player-tagger";
-import { hasNonBaseballSignal } from "@/lib/video/shorts-relevance";
+import { isTeamShortRelevant } from "@/lib/video/shorts-relevance";
 
 export async function GET(req: NextRequest) {
   const team = req.nextUrl.searchParams.get("team") || "_ALL";
@@ -97,8 +97,11 @@ export async function GET(req: NextRequest) {
   const filtered = (data ?? []).filter((v) => {
     const flags: string[] = Array.isArray(v.noise_flags) ? v.noise_flags : [];
     if (flags.some((f) => excludeSet.has(f))) return false;
-    // 정치·종교 등 비-야구 영상 차단 — 게이트 추가 전 수집된 기존 행도 즉시 제외
-    if (hasNonBaseballSignal(v.title ?? "")) return false;
+    // 기존 오분류 행도 즉시 차단: LG 약칭만 걸린 커뮤니티 영상은 야구 문맥 필수
+    if (!isTeamShortRelevant(v.title ?? "", v.team_id ?? null, {
+      hasPlayerTag: Boolean(v.player_id || v.player_ids?.length),
+      isOfficial: String(v.source_type ?? "").startsWith("official_"),
+    })) return false;
     // Runtime title recheck for patterns added after ingestion
     const runtimeFlags = extractNoiseFlags(v.title, v.channel);
     return !runtimeFlags.some((f) => excludeSet.has(f as string));

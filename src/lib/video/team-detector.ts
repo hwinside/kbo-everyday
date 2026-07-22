@@ -3,8 +3,9 @@
  * 커뮤니티 채널 영상의 team_id 배정에 사용
  */
 
+import { hasBaseballShortContext } from "./shorts-relevance";
+
 const TEAM_PATTERNS: [string, RegExp][] = [
-  ["LG", /\bLG\b|트윈스|엘지/i],
   ["두산", /두산|베어스/],
   ["KT", /\bKT\b|위즈|케이티/i],
   ["SSG", /\bSSG\b|랜더스|에스에스지/i],
@@ -16,11 +17,19 @@ const TEAM_PATTERNS: [string, RegExp][] = [
   ["키움", /키움|히어로즈/],
 ];
 
+const LG_NAME_PATTERN = /(^|[^A-Za-z0-9])LG(?![A-Za-z0-9])|엘지/i;
+
+function hasLgTeamSignal(title: string): boolean {
+  if (title.includes("트윈스")) return true;
+  return LG_NAME_PATTERN.test(title) && hasBaseballShortContext(title);
+}
+
 /**
  * 제목에서 첫 번째 매칭되는 팀 shortName 반환.
  * 매칭 없으면 "ETC"
  */
 export function detectTeamFromTitle(title: string): string {
+  if (hasLgTeamSignal(title)) return "LG";
   for (const [team, re] of TEAM_PATTERNS) {
     if (re.test(title)) return team;
   }
@@ -32,6 +41,7 @@ export function detectTeamFromTitle(title: string): string {
  */
 export function detectAllTeamsFromTitle(title: string): string[] {
   const teams: string[] = [];
+  if (hasLgTeamSignal(title)) teams.push("LG");
   for (const [team, re] of TEAM_PATTERNS) {
     if (re.test(title)) teams.push(team);
   }
