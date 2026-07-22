@@ -78,11 +78,20 @@ async function main() {
   const androidActivity = read(
     "android/app/src/main/java/fan/keubo/app/NewsArticleBrowserActivity.java",
   );
-  assert.match(
-    androidActivity,
-    /COMMENTS_HOST\.equalsIgnoreCase\(uri\.getHost\(\)\)/,
+  assert.equal(
+    (
+      androidActivity.match(
+        /NewsArticleBrowserUrlPolicy\.isAllowedCommentsUrl/g,
+      ) ?? []
+    ).length,
+    2,
+    "initial and redirected comments URLs must share the same origin policy",
   );
-  assert.match(androidActivity, /COMMENTS_PATH\.equals\(uri\.getPath\(\)\)/);
+  const androidUrlPolicy = read(
+    "android/app/src/main/java/fan/keubo/app/NewsArticleBrowserUrlPolicy.java",
+  );
+  assert.match(androidUrlPolicy, /uri\.getRawUserInfo\(\) == null/);
+  assert.match(androidUrlPolicy, /port == -1 \|\| port == 443/);
   assert.match(
     androidActivity,
     /addJavascriptInterface\(new CommentsBridge\(\), "NewsCommentsBridge"\)/,
@@ -111,7 +120,7 @@ async function main() {
   assert.match(nativePage, /isNewsDiscussionAdmin/);
   assert.match(nativePage, /notFound\(\)/);
 
-  console.log("news WebView comments smoke: 22 assertions passed");
+  console.log("news WebView comments smoke: 23 assertions passed");
 }
 
 main().catch((error) => {

@@ -30,9 +30,6 @@ public class NewsArticleBrowserActivity extends Activity {
     public static final String EXTRA_URL = "news_article_url";
     public static final String EXTRA_COMMENTS_URL = "news_comments_url";
 
-    private static final String COMMENTS_HOST = "keubo.fan";
-    private static final String COMMENTS_PATH = "/native/news-comments";
-
     private WebView articleWebView;
     private WebView commentsWebView;
     private Button commentButton;
@@ -49,13 +46,7 @@ public class NewsArticleBrowserActivity extends Activity {
     }
 
     public static String validCommentsUrl(String rawValue) {
-        if (rawValue == null || rawValue.isEmpty()) return null;
-        Uri uri = Uri.parse(rawValue);
-        return "https".equalsIgnoreCase(uri.getScheme())
-            && COMMENTS_HOST.equalsIgnoreCase(uri.getHost())
-            && COMMENTS_PATH.equals(uri.getPath())
-            ? rawValue
-            : null;
+        return NewsArticleBrowserUrlPolicy.isAllowedCommentsUrl(rawValue) ? rawValue : null;
     }
 
     @Override
@@ -218,11 +209,9 @@ public class NewsArticleBrowserActivity extends Activity {
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                Uri target = request.getUrl();
-                boolean allowed = "https".equalsIgnoreCase(target.getScheme())
-                    && COMMENTS_HOST.equalsIgnoreCase(target.getHost())
-                    && COMMENTS_PATH.equals(target.getPath());
-                return !allowed;
+                return !NewsArticleBrowserUrlPolicy.isAllowedCommentsUrl(
+                    request.getUrl().toString()
+                );
             }
         });
         return webView;
