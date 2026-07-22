@@ -13,6 +13,7 @@ import {
   classifyForeign,
   mergePendingReport,
   checkNewlyOnboardedPhotos,
+  resolveTeamRegisterParser,
 } from "../lib/foreign-onboard.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -93,6 +94,24 @@ eq(
   {},
   "신규 온보딩 0명이어도 국적 등록된 기존 pending은 소멸",
 );
+
+// ===== Node 22/24 tsx tsImport interop =====
+{
+  const named = () => ["named"];
+  const defaultOnly = () => ["default"];
+  ok(
+    resolveTeamRegisterParser({ parseTeamRegister: named }) === named,
+    "Node 24 named export shape → 등록명단 파서 resolve",
+  );
+  ok(
+    resolveTeamRegisterParser({ default: { parseTeamRegister: defaultOnly } }) === defaultOnly,
+    "Node 22 default-only export shape → 등록명단 파서 resolve",
+  );
+  let invalidRejected = false;
+  try { resolveTeamRegisterParser({ default: {} }); }
+  catch (err) { invalidRejected = err instanceof TypeError; }
+  ok(invalidRejected, "파서 export 없음 → 명시적 TypeError");
+}
 
 // ===== checkNewlyOnboardedPhotos (P0 사진 게이트) =====
 {

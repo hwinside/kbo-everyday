@@ -33,6 +33,7 @@ import {
   buildNewlyOnboardedPhotoManifest,
   classifyForeign,
   mergePendingReport,
+  resolveTeamRegisterParser,
 } from "./lib/foreign-onboard.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -151,7 +152,8 @@ function extractRegisterHidden(html, id) {
 /** 10개 구단 1군 등록명단 → flat 선수 목록 [{kboId,name,backNo,position,teamId,team}] */
 async function fetchRegisterEntries() {
   const { tsImport } = await import("tsx/esm/api");
-  const { parseTeamRegister } = await tsImport("../src/lib/roster-moves/parse.ts", import.meta.url);
+  const rosterMoveModule = await tsImport("../src/lib/roster-moves/parse.ts", import.meta.url);
+  const parseTeamRegister = resolveTeamRegisterParser(rosterMoveModule);
 
   const initRes = await fetch(REGISTER_URL, { headers: { ...KBO_HEADERS, Referer: REGISTER_URL } });
   if (!initRes.ok) throw new Error(`Register.aspx GET HTTP ${initRes.status}`);
