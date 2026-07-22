@@ -73,8 +73,16 @@ export function decideProbe(opts: {
 
 type FetchLike = (
   url: string,
-  init: { method: string; headers: Record<string, string> },
+  init: { method: string; headers: Record<string, string>; signal?: AbortSignal },
 ) => Promise<Response>;
+
+function cancelBody(body: ReadableStream<Uint8Array> | null): void {
+  try {
+    void body?.cancel().catch(() => {});
+  } catch {
+    /* noop */
+  }
+}
 
 /**
  * storage 객체를 Range GET 으로 프로브. total 이 헤더로 판명되고 maxBytes 초과면 body 를
@@ -91,16 +99,13 @@ export async function probeMediaObject(
     res = await fetchImpl(url, {
       method: "GET",
       headers: { Range: `bytes=0-${PROBE_HEAD_BYTES - 1}` },
+      signal: AbortSignal.timeout(10_000),
     });
   } catch {
     return { ok: false, size: null, reason: "fetch_error" };
   }
   if (!res.ok && res.status !== 206) {
-    try {
-      await res.body?.cancel();
-    } catch {
-      /* noop */
-    }
+    cancelBody(res.body);
     return { ok: false, size: null, reason: "fetch_error" };
   }
 
@@ -112,11 +117,7 @@ export async function probeMediaObject(
 
   // 크기 미상 또는 초과면 body 를 읽지 않고 즉시 취소(대용량 메모리 유입 차단)
   if (total == null || total <= 0 || total > maxBytes) {
-    try {
-      await res.body?.cancel();
-    } catch {
-      /* noop */
-    }
+    cancelBody(res.body);
     return decideProbe({ total, head: null, declaredType, maxBytes });
   }
 
@@ -151,7 +152,7 @@ async function readCapped(res: Response, limit: number): Promise<Uint8Array | nu
     return null;
   } finally {
     try {
-      await reader.cancel();
+      void reader.cancel().catch(() => {});
     } catch {
       /* noop */
     }

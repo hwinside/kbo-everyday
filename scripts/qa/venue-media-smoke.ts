@@ -56,8 +56,9 @@ function makeRes(opts: {
   headers: Record<string, string>;
   bytes?: Uint8Array;
   cancelSpy?: { cancelled: boolean };
+  cancelHangs?: boolean;
 }): Response {
-  const { status, headers, bytes, cancelSpy } = opts;
+  const { status, headers, bytes, cancelSpy, cancelHangs } = opts;
   let readOffset = 0;
   const body = bytes
     ? ({
@@ -69,10 +70,16 @@ function makeRes(opts: {
               readOffset += chunk.length;
               return { done: false, value: chunk };
             },
-            async cancel() { if (cancelSpy) cancelSpy.cancelled = true; },
+            async cancel() {
+              if (cancelSpy) cancelSpy.cancelled = true;
+              if (cancelHangs) await new Promise(() => {});
+            },
           };
         },
-        async cancel() { if (cancelSpy) cancelSpy.cancelled = true; },
+        async cancel() {
+          if (cancelSpy) cancelSpy.cancelled = true;
+          if (cancelHangs) await new Promise(() => {});
+        },
       } as unknown as ReadableStream<Uint8Array>)
     : null;
   return {
@@ -98,6 +105,18 @@ async function run() {
     makeRes({ status: 200, headers: { "content-length": String(MAX + 5) }, bytes: MP4, cancelSpy: spy }));
   ok("Range 무시 200 초과 → too_large", r.reason === "too_large");
   ok("초과 시 body cancel 호출됨(대용량 메모리 유입 차단)", spy.cancelled === true);
+
+  const hangingCancel = await Promise.race([
+    probeMediaObject("u", "video", MAX, async () =>
+      makeRes({
+        status: 200,
+        headers: { "content-length": String(MAX + 5) },
+        bytes: MP4,
+        cancelHangs: true,
+      })).then(() => true),
+    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 100)),
+  ]);
+  ok("Storage cancel 지연이 probe 응답을 막지 않음", hangingCancel === true);
 
   // unknown length(206 '*') → no_size + cancel
   const spy2 = { cancelled: false };
