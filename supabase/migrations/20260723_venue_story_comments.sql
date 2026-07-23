@@ -6,8 +6,10 @@
 -- 방어선(defense-in-depth)으로 클라 RLS 정책도 명시한다:
 --   SELECT: 미삭제(deleted_at IS NULL) 댓글은 누구나 조회
 --   INSERT: 로그인 유저 본인(user_id = auth.uid())만, 200자 제한은 CHECK 로 강제
---   DELETE 계약: 물리 DELETE 대신 soft delete(deleted_at) — 본인은 UPDATE 정책으로
---                자기 댓글만 deleted_at 세팅 가능. 관리자 삭제는 service_role(API)가 수행.
+--   DELETE 계약: 물리 DELETE 대신 soft delete(deleted_at) — 본인/관리자 삭제 모두
+--                API route(service_role)가 권한 검사 후 수행한다.
+--   UPDATE 정책은 의도적으로 만들지 않는다 — authenticated UPDATE 를 열면
+--   본인 row 의 content/story_id/created_at 임의 수정·undelete 까지 허용되는 과허용이 된다(삼순 #807 blocker).
 
 CREATE TABLE IF NOT EXISTS venue_story_comments (
   id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -36,9 +38,5 @@ CREATE POLICY venue_story_comments_insert ON venue_story_comments
   TO authenticated
   WITH CHECK (auth.uid() = user_id AND deleted_at IS NULL);
 
--- 본인 댓글 soft delete(deleted_at 세팅)만 허용 — content 수정은 API 계약에 없음
-CREATE POLICY venue_story_comments_soft_delete ON venue_story_comments
-  FOR UPDATE
-  TO authenticated
-  USING (auth.uid() = user_id)
-  WITH CHECK (auth.uid() = user_id);
+-- UPDATE/DELETE 정책 없음(의도적): soft delete 는 API route(service_role)가
+-- canDeleteComment 권한 검사 후 deleted_at 만 세팅한다. 클라 직접 UPDATE 불가.

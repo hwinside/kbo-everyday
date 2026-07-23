@@ -20,6 +20,53 @@ interface Props {
   onChanged: () => void; // 삭제/신고 후 목록 갱신
 }
 
+// 댓글 아바타 — 외부 호스트(카카오/구글 CDN 등) 핫링크 차단으로 깨질 때
+// referrerPolicy=no-referrer + onError 이니셜 폴백 (삼순 #807 blocker — 댓글 영역 전용,
+// 뷰어 헤더 아바타는 #805에서 별도 처리)
+function CommentAvatar({
+  avatarUrl,
+  nickname,
+  className,
+  initialClassName,
+}: {
+  avatarUrl: string | null;
+  nickname: string | null;
+  className: string;
+  initialClassName: string;
+}) {
+  const initial = (nickname ?? "?").slice(0, 1);
+  return (
+    <div className={className}>
+      {avatarUrl ? (
+        <>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={avatarUrl}
+            alt=""
+            className="w-full h-full object-cover"
+            referrerPolicy="no-referrer"
+            onError={(e) => {
+              e.currentTarget.classList.add("hidden");
+              const fallback = e.currentTarget.nextElementSibling;
+              if (fallback) {
+                fallback.classList.remove("hidden");
+                fallback.classList.add("flex");
+              }
+            }}
+          />
+          <div className={`hidden w-full h-full items-center justify-center ${initialClassName}`}>
+            {initial}
+          </div>
+        </>
+      ) : (
+        <div className={`flex w-full h-full items-center justify-center ${initialClassName}`}>
+          {initial}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function timeAgo(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
   const min = Math.floor(diff / 60000);
@@ -47,8 +94,14 @@ export default function VenueStoryViewer({
   // 인스타식 하단 상시 입력바 — 입력 중(포커스)에도 재생 일시정지 (하린아빠 21:22 지시)
   const [inputFocused, setInputFocused] = useState(false);
   const [comments, setComments] = useState<VenueStoryComment[] | null>(null);
+  const [commentTotal, setCommentTotal] = useState<number | null>(null);
   const [commentInput, setCommentInput] = useState("");
   const [commentBusy, setCommentBusy] = useState(false);
+  // iOS 키보드 회피 — CommentSheet 와 동일한 state 기반 visualViewport 패턴.
+  // iOS Safari/WKWebView 는 키보드가 떠도 레이아웃 뷰포트가 그대로라
+  // absolute bottom+safe-area 만으로는 컴포저가 키보드에 덮인다 →
+  // 시각 뷰포트 차이(kbInset)를 state 로 끌어와 bottom 에 더해준다.
+  const [kbInset, setKbInset] = useState(0);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const rafRef = useRef<number | null>(null);
@@ -78,6 +131,7 @@ export default function VenueStoryViewer({
     startRef.current = performance.now();
     setCommentsOpen(false);
     setComments(null);
+    setCommentTotal(null);
     setCommentInput("");
   }, [index]);
 
@@ -89,7 +143,12 @@ export default function VenueStoryViewer({
     fetch(`/api/venue-stories/${storyId}/comments`)
       .then((res) => res.json())
       .then((data) => {
-        if (!cancelled && Array.isArray(data?.comments)) setComments(data.comments);
+        if (!cancelled && Array.isArray(data?.comments)) {
+          setComments(data.comments);
+          setCommentTotal(
+            typeof data.total === "number" ? data.total : data.comments.length,
+          );
+        }
       })
       .catch(() => {});
     return () => {
@@ -97,10 +156,29 @@ export default function VenueStoryViewer({
     };
   }, [story?.id]);
 
+  // 키보드 회피 — 입력바 포커스/댓글 시트가 열려 있을 때만 구독(CommentSheet 패턴 재사용)
+  useEffect(() => {
+    if (!inputFocused && !commentsOpen) return;
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const apply = () => {
+      setKbInset(Math.max(0, window.innerHeight - vv.height - vv.offsetTop));
+    };
+    apply();
+    vv.addEventListener("resize", apply);
+    vv.addEventListener("scroll", apply);
+    return () => {
+      vv.removeEventListener("resize", apply);
+      vv.removeEventListener("scroll", apply);
+      setKbInset(0);
+    };
+  }, [inputFocused, commentsOpen]);
+
   // 이미지 자동 진행(RAF), 영상은 timeupdate 로 처리
   useEffect(() => {
     if (!story || story.mediaType !== "image") return;
-    if (paused || menuOpen || commentsOpen || inputFocused) return;
+    // commentBusy: 전송 중 blur 로 inputFocused 가 먼저 풀려도 재생이 재개되지 않게 결속
+    if (paused || menuOpen || commentsOpen || inputFocused || commentBusy) return;
     const hold = VENUE_STORY_IMAGE_HOLD_MS;
     startRef.current = performance.now();
     const base = elapsedRef.current;
@@ -119,14 +197,14 @@ export default function VenueStoryViewer({
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
       elapsedRef.current = base + (performance.now() - startRef.current);
     };
-  }, [story, index, paused, menuOpen, commentsOpen, inputFocused, goNext]);
+  }, [story, index, paused, menuOpen, commentsOpen, inputFocused, commentBusy, goNext]);
 
   // 영상 재생/일시정지 동기화
   useEffect(() => {
     const v = videoRef.current;
     if (!v || !story || story.mediaType !== "video") return;
     v.muted = muted;
-    if (paused || menuOpen || commentsOpen || inputFocused) {
+    if (paused || menuOpen || commentsOpen || inputFocused || commentBusy) {
       v.pause();
     } else {
       v.play().catch(() => {
@@ -136,7 +214,7 @@ export default function VenueStoryViewer({
         v.play().catch(() => {});
       });
     }
-  }, [story, index, paused, menuOpen, commentsOpen, inputFocused, muted]);
+  }, [story, index, paused, menuOpen, commentsOpen, inputFocused, commentBusy, muted]);
 
   const onVideoTime = () => {
     const v = videoRef.current;
@@ -197,6 +275,7 @@ export default function VenueStoryViewer({
         setToast(data.error);
       } else if (data.comment) {
         setComments((prev) => [...(prev ?? []), data.comment]);
+        setCommentTotal((prev) => (prev ?? 0) + 1);
         setCommentInput("");
       }
     } catch {
@@ -225,6 +304,7 @@ export default function VenueStoryViewer({
         setToast(data.error);
       } else {
         setComments((prev) => (prev ?? []).filter((c) => c.id !== commentId));
+        setCommentTotal((prev) => Math.max(0, (prev ?? 1) - 1));
       }
     } catch {
       setToast("삭제 실패");
@@ -409,7 +489,7 @@ export default function VenueStoryViewer({
         <div
           className="absolute left-0 right-0 z-20 px-3 flex flex-col justify-end"
           style={{
-            bottom: "calc(env(safe-area-inset-bottom, 0px) + 64px)",
+            bottom: `calc(env(safe-area-inset-bottom, 0px) + ${64 + kbInset}px)`,
             maxHeight: "38%",
           }}
           // 오버레이 터치로 입력 blur 되지 않게 (스크롤 중 오버레이가 사라지는 것 방지)
@@ -427,21 +507,12 @@ export default function VenueStoryViewer({
             ) : (
               comments.map((c) => (
                 <div key={c.id} className="flex items-start gap-2 max-w-[85%]">
-                  <div className="w-6 h-6 rounded-full bg-white/20 overflow-hidden shrink-0">
-                    {c.author.avatarUrl ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={c.author.avatarUrl}
-                        alt=""
-                        className="w-full h-full object-cover"
-                        referrerPolicy="no-referrer"
-                      />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center text-white text-[10px]">
-                        {(c.author.nickname ?? "?").slice(0, 1)}
-                      </div>
-                    )}
-                  </div>
+                  <CommentAvatar
+                    avatarUrl={c.author.avatarUrl}
+                    nickname={c.author.nickname}
+                    className="w-6 h-6 rounded-full bg-white/20 overflow-hidden shrink-0"
+                    initialClassName="text-white text-[10px]"
+                  />
                   <div className="bg-black/45 rounded-2xl px-3 py-1.5 min-w-0">
                     <p className="text-white/70 text-[10px] leading-tight">
                       {c.author.nickname ?? "익명"} · {timeAgo(c.createdAt)}
@@ -458,7 +529,7 @@ export default function VenueStoryViewer({
       {/* 인스타식 하단 상시 댓글 입력바 (하린아빠 21:22 지시 — 인스타 UI와 동일하게 바로 아래쪽 배치) */}
       <div
         className="absolute left-0 right-0 z-20 flex items-center gap-2 px-3"
-        style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 12px)" }}
+        style={{ bottom: `calc(env(safe-area-inset-bottom, 0px) + ${12 + kbInset}px)` }}
       >
         <input
           value={commentInput}
@@ -488,7 +559,7 @@ export default function VenueStoryViewer({
             aria-label="댓글 목록"
           >
             <MessageCircle size={18} />
-            <span className="text-sm font-semibold">{comments?.length ?? 0}</span>
+            <span className="text-sm font-semibold">{commentTotal ?? 0}</span>
           </button>
         )}
       </div>
@@ -501,12 +572,12 @@ export default function VenueStoryViewer({
         >
           <div
             className="w-full max-w-lg mx-auto bg-bg-secondary rounded-t-3xl flex flex-col max-h-[70%]"
-            style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
+            style={{ paddingBottom: `calc(env(safe-area-inset-bottom, 0px) + ${kbInset}px)` }}
             onClick={(e) => e.stopPropagation()}
           >
             <div className="px-4 pt-4 pb-2 flex items-center justify-between">
               <p className="text-text-primary font-semibold text-sm">
-                댓글 {comments?.length ?? 0}
+                댓글 {commentTotal ?? 0}
               </p>
               <button
                 onClick={() => setCommentsOpen(false)}
@@ -528,16 +599,12 @@ export default function VenueStoryViewer({
               ) : (
                 comments.map((c) => (
                   <div key={c.id} className="flex items-start gap-2">
-                    <div className="w-7 h-7 rounded-full bg-white/10 overflow-hidden shrink-0">
-                      {c.author.avatarUrl ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={c.author.avatarUrl} alt="" className="w-full h-full object-cover" />
-                      ) : (
-                        <div className="w-full h-full flex items-center justify-center text-text-secondary text-[10px]">
-                          {(c.author.nickname ?? "?").slice(0, 1)}
-                        </div>
-                      )}
-                    </div>
+                    <CommentAvatar
+                      avatarUrl={c.author.avatarUrl}
+                      nickname={c.author.nickname}
+                      className="w-7 h-7 rounded-full bg-white/10 overflow-hidden shrink-0"
+                      initialClassName="text-text-secondary text-[10px]"
+                    />
                     <div className="flex-1 min-w-0">
                       <p className="text-text-secondary text-[11px]">
                         {c.author.nickname ?? "익명"} · {timeAgo(c.createdAt)}
