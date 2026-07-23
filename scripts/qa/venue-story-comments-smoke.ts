@@ -15,6 +15,7 @@ import {
   evaluateCommentAbuse,
   isStoryOpenForComments,
   scrollToLatest,
+  shouldApplyCommentResponse,
   VENUE_STORY_COMMENT_MAX_LENGTH,
   VENUE_STORY_COMMENT_LIST_LIMIT,
   VENUE_STORY_COMMENT_COOLDOWN_MS,
@@ -211,6 +212,81 @@ console.log("[최신 댓글 bottom scroll — 삼순 #807 blocker 5]");
   scrollToLatest(el);
   ok("컨테이너를 맨 아래(scrollHeight)로 이동", el.scrollTop === 1234);
   ok("null 안전(ref 미마운트)", (() => { scrollToLatest(null); return true; })());
+}
+
+console.log("[전송 중 스토리 전환 오염 가드 — 삼순 #807 라운드3 blocker 3]");
+{
+  // 시나리오: A(id=10) 에서 submit 시작 → 수동 next 로 B(id=11) 전환 → A 응답 도착
+  const requestStoryId = 10; // submit 시작 시점 캡처
+  ok("같은 스토리면 반영", shouldApplyCommentResponse(requestStoryId, 10) === true);
+  ok("B 로 전환 후 A 응답 도착 → 반영 스킵(B 목록 미오염)",
+    shouldApplyCommentResponse(requestStoryId, 11) === false);
+  ok("뷰어 닫힘(null) 후 응답 도착 → 반영 스킵",
+    shouldApplyCommentResponse(requestStoryId, null) === false);
+  ok("undefined 도 반영 스킵(fail-closed)",
+    shouldApplyCommentResponse(requestStoryId, undefined) === false);
+
+  // 컴포넌트 배선 계약(텍스트 레벨) — 가드 함수 사용 + 요청 id 캡처 + nav 잠금
+  const viewerSrc = readFileSync(
+    path.resolve(process.cwd(), "src/components/game/VenueStoryViewer.tsx"),
+    "utf8",
+  );
+  ok("handleCommentSubmit 이 요청 시점 story.id 를 캡처",
+    /const submitStoryId = story\.id/.test(viewerSrc));
+  ok("응답 반영 전 shouldApplyCommentResponse 가드 통과",
+    /shouldApplyCommentResponse\(submitStoryId, storyIdRef\.current\)/.test(viewerSrc));
+  ok("좌/우 탭 이동이 commentBusy/포커스 잠금을 본다(pointerdown 캡처)",
+    (viewerSrc.match(/navSuppressRef\.current = commentBusy \|\| inputFocused/g) ?? []).length === 2 &&
+    (viewerSrc.match(/if \(navSuppressRef\.current \|\| commentBusy\)/g) ?? []).length === 2);
+  ok("iOS 실기기 QA 마커 data-composer=\"venue-story\" 부여",
+    viewerSrc.includes('data-composer="venue-story"'));
+}
+
+console.log("[rate limit 원자화 RPC 계약 — 삼순 #807 라운드3 blocker 1]");
+{
+  const sql = readFileSync(
+    path.resolve(process.cwd(), "supabase/migrations/20260723_venue_story_comments.sql"),
+    "utf8",
+  );
+  const fnMatch = sql.match(
+    /CREATE OR REPLACE FUNCTION venue_story_comment_post[\s\S]*?\$\$;\n/,
+  );
+  const fn = fnMatch?.[0] ?? "";
+  ok("RPC 함수 venue_story_comment_post 존재", fn.length > 0);
+  ok("유저별 advisory xact lock 으로 직렬화",
+    fn.includes("pg_advisory_xact_lock(hashtext(p_user_id::text))"));
+  ok("단일 함수 안에서 스토리 active/만료 게이트 수행",
+    /status = 'active' AND expires_at > v_now/.test(fn));
+  ok("단일 함수 안에서 10초/60초 rate 판정 수행",
+    fn.includes("INTERVAL '10 seconds'") && fn.includes("INTERVAL '60 seconds'"));
+  ok("단일 함수 안에서 동일내용(content_key 최근 5건) 판정 수행",
+    /LIMIT 5[\s\S]*?content_key = p_content_key/.test(fn));
+  ok("단일 함수 안에서 INSERT 까지 수행(판정+INSERT 단일 트랜잭션)",
+    fn.includes("INSERT INTO venue_story_comments"));
+  ok("advisory lock 이 게이트/판정/INSERT 보다 앞서 잡힌다",
+    fn.indexOf("pg_advisory_xact_lock") < fn.indexOf("status = 'active'") &&
+    fn.indexOf("pg_advisory_xact_lock") < fn.indexOf("INSERT INTO venue_story_comments"));
+  ok("유저 최근 댓글 판정용 (user_id, created_at DESC) 인덱스 존재",
+    /idx_venue_story_comments_user_recent\s+ON venue_story_comments \(user_id, created_at DESC\)/.test(sql));
+  ok("RPC 클라 롤(anon/authenticated) 실행 차단(REVOKE)",
+    /REVOKE ALL ON FUNCTION venue_story_comment_post[\s\S]*?FROM anon/.test(sql) &&
+    /REVOKE ALL ON FUNCTION venue_story_comment_post[\s\S]*?FROM authenticated/.test(sql));
+
+  // route 계약: POST 가 더 이상 개별 SELECT+INSERT 를 하지 않고 RPC 호출로 단일화
+  const routeSrc = readFileSync(
+    path.resolve(process.cwd(), "src/app/api/venue-stories/[id]/comments/route.ts"),
+    "utf8",
+  );
+  ok("route POST 가 venue_story_comment_post RPC 를 호출",
+    /\.rpc\(\s*"venue_story_comment_post"/.test(routeSrc));
+  ok("route 에 개별 INSERT 잔류 0(원자성 우회 경로 없음)", !routeSrc.includes(".insert("));
+  ok("route 에 유저 최근 댓글 사전 SELECT 잔류 0", !routeSrc.includes('.eq("user_id"'));
+  ok("정규화 키를 route 가 계산해 RPC 로 전달(normalizeForFloodKey)",
+    routeSrc.includes("normalizeForFloodKey(check.content)"));
+  ok("RPC 오류 매핑: not_found→404 / rate·duplicate→429",
+    /not_found[\s\S]*?404/.test(routeSrc) &&
+    /duplicate[\s\S]*?429/.test(routeSrc) &&
+    /"rate"[\s\S]*?429/.test(routeSrc));
 }
 
 console.log("[migration RLS 계약 — service_role 전용(정책 0개)]");

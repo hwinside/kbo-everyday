@@ -9,6 +9,7 @@ import { VENUE_STORY_IMAGE_HOLD_MS, type VenueStory } from "@/lib/venue-stories/
 import {
   VENUE_STORY_COMMENT_MAX_LENGTH,
   scrollToLatest,
+  shouldApplyCommentResponse,
   type VenueStoryComment,
 } from "@/lib/venue-stories/comments";
 import { subscribeKeyboardInset } from "@/lib/venue-stories/keyboard-inset";
@@ -106,6 +107,12 @@ export default function VenueStoryViewer({
   const [kbInset, setKbInset] = useState(0);
 
   const videoRef = useRef<HTMLVideoElement>(null);
+  // 전송 중 스토리 전환 오염 방지(삼순 #807 라운드3 blocker 3) — 현재 보이는 story id.
+  // POST 응답 도착 시 요청 시점에 캡처한 id 와 비교해 불일치면 반영을 스킵한다.
+  const storyIdRef = useRef<number | null>(null);
+  // 탭 순간 nav 잠금 여부 캡처 — pointerdown 은 input blur 보다 먼저 오므로
+  // 포커스 중 탭은 키보드만 닫고 이동은 막는다(blur 후 click 시점엔 state 가 풀려 있음).
+  const navSuppressRef = useRef(false);
   // 최신 댓글 bottom scroll 대상 — 포커스 오버레이/댓글 시트 목록 컨테이너
   const overlayListRef = useRef<HTMLDivElement>(null);
   const sheetListRef = useRef<HTMLDivElement>(null);
@@ -114,6 +121,10 @@ export default function VenueStoryViewer({
   const elapsedRef = useRef<number>(0);
 
   const story = stories[index];
+
+  useEffect(() => {
+    storyIdRef.current = story?.id ?? null;
+  }, [story?.id]);
 
   const goNext = useCallback(() => {
     setIndex((i) => {
@@ -268,6 +279,8 @@ export default function VenueStoryViewer({
     if (!story || commentBusy) return;
     const content = commentInput.trim();
     if (!content) return;
+    // 요청 시점 story id 캡처 — 응답 도착 시 다른 스토리로 전환돼 있으면 반영 스킵
+    const submitStoryId = story.id;
     setCommentBusy(true);
     try {
       const session = await getSafeSession();
@@ -285,9 +298,12 @@ export default function VenueStoryViewer({
       if (data.error) {
         setToast(data.error);
       } else if (data.comment) {
-        setComments((prev) => [...(prev ?? []), data.comment]);
-        setCommentTotal((prev) => (prev ?? 0) + 1);
-        setCommentInput("");
+        // A 스토리 submit → B 로 전환 → A 응답 도착 시 B 목록 오염 방지
+        if (shouldApplyCommentResponse(submitStoryId, storyIdRef.current)) {
+          setComments((prev) => [...(prev ?? []), data.comment]);
+          setCommentTotal((prev) => (prev ?? 0) + 1);
+          setCommentInput("");
+        }
       }
     } catch {
       setToast("댓글 작성 실패");
@@ -464,20 +480,40 @@ export default function VenueStoryViewer({
           />
         )}
 
-        {/* 탭 존: 좌(이전)/우(다음), 길게 눌러 일시정지 */}
+        {/* 탭 존: 좌(이전)/우(다음), 길게 눌러 일시정지.
+            전송 중(commentBusy)·입력 포커스 중엔 이동 비활성(삼순 #807 라운드3 blocker 3) —
+            pointerdown(blur 이전) 시점의 잠금을 캡처해 click 에서 이동을 스킵한다. */}
         <button
           className="absolute inset-y-0 left-0 w-1/3"
           aria-label="이전"
-          onClick={goPrev}
-          onPointerDown={() => setPaused(true)}
+          onClick={() => {
+            if (navSuppressRef.current || commentBusy) {
+              navSuppressRef.current = false;
+              return;
+            }
+            goPrev();
+          }}
+          onPointerDown={() => {
+            navSuppressRef.current = commentBusy || inputFocused;
+            setPaused(true);
+          }}
           onPointerUp={() => setPaused(false)}
           onPointerLeave={() => setPaused(false)}
         />
         <button
           className="absolute inset-y-0 right-0 w-2/3"
           aria-label="다음"
-          onClick={goNext}
-          onPointerDown={() => setPaused(true)}
+          onClick={() => {
+            if (navSuppressRef.current || commentBusy) {
+              navSuppressRef.current = false;
+              return;
+            }
+            goNext();
+          }}
+          onPointerDown={() => {
+            navSuppressRef.current = commentBusy || inputFocused;
+            setPaused(true);
+          }}
           onPointerUp={() => setPaused(false)}
           onPointerLeave={() => setPaused(false)}
         />
@@ -537,8 +573,10 @@ export default function VenueStoryViewer({
         </div>
       )}
 
-      {/* 인스타식 하단 상시 댓글 입력바 (하린아빠 21:22 지시 — 인스타 UI와 동일하게 바로 아래쪽 배치) */}
+      {/* 인스타식 하단 상시 댓글 입력바 (하린아빠 21:22 지시 — 인스타 UI와 동일하게 바로 아래쪽 배치).
+          data-composer 는 iOS 실기기 키보드 QA(browserstack-ios-story-comments-keyboard.mjs) 마커. */}
       <div
+        data-composer="venue-story"
         className="absolute left-0 right-0 z-20 flex items-center gap-2 px-3"
         style={{ bottom: `calc(env(safe-area-inset-bottom, 0px) + ${12 + kbInset}px)` }}
       >

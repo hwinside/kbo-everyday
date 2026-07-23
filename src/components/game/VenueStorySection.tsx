@@ -13,12 +13,39 @@ interface Props {
   gameId: string;
 }
 
+// iOS 실기기 키보드 QA(?storyQaKeyboard=1) 전용 mock — game-chat 의 chatQaKeyboard 패턴.
+// 실제 스토리/로그인 없이도 뷰어 입력바의 focus→키보드→submit→blur 를 검증한다.
+// src 없는 video 라 자동진행/종료가 없어 뷰어가 측정 동안 열려 있다(id -1 은
+// 서버에 없는 스토리 — 댓글 GET 404/POST 비로그인 차단이라 쓰기 부작용 0).
+function buildQaKeyboardStory(gameId: string): VenueStory {
+  return {
+    id: -1,
+    gameId,
+    userId: "00000000-0000-0000-0000-000000000000",
+    mediaType: "video",
+    mediaUrl: "data:video/mp4;base64,",
+    thumbUrl: null,
+    durationMs: null,
+    width: null,
+    height: null,
+    caption: null,
+    venueVerified: false,
+    createdAt: new Date().toISOString(),
+    author: { nickname: "QA", avatarUrl: null, teamId: null },
+  };
+}
+
 export default function VenueStorySection({ gameId }: Props) {
   const { user } = useAuth();
+  const storyQaKeyboard =
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("storyQaKeyboard") === "1";
   const [stories, setStories] = useState<VenueStory[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [composerOpen, setComposerOpen] = useState(false);
-  const [viewerIndex, setViewerIndex] = useState<number | null>(null);
+  const [viewerIndex, setViewerIndex] = useState<number | null>(
+    storyQaKeyboard ? 0 : null,
+  );
   const [toast, setToast] = useState<string | null>(null);
 
   const fetchStories = useCallback(async () => {
@@ -129,9 +156,9 @@ export default function VenueStorySection({ gameId }: Props) {
         onUploaded={fetchStories}
       />
 
-      {viewerIndex !== null && stories[viewerIndex] && (
+      {viewerIndex !== null && (storyQaKeyboard || stories[viewerIndex]) && (
         <VenueStoryViewer
-          stories={stories}
+          stories={storyQaKeyboard ? [buildQaKeyboardStory(gameId)] : stories}
           startIndex={viewerIndex}
           currentUserId={user?.id ?? null}
           onClose={() => setViewerIndex(null)}

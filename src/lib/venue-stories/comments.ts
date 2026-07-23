@@ -134,6 +134,18 @@ export function evaluateCommentAbuse(
 }
 
 /**
+ * 전송 중 스토리 전환 오염 가드(삼순 #807 라운드3 blocker 3) —
+ * POST 시작 시점에 캡처한 story id 와 응답 도착 시점의 현재 story id 가
+ * 일치할 때만 댓글 목록/카운트에 반영한다(A 응답이 B UI 를 오염하지 않게).
+ */
+export function shouldApplyCommentResponse(
+  requestStoryId: number,
+  currentStoryId: number | null | undefined,
+): boolean {
+  return currentStoryId != null && requestStoryId === currentStoryId;
+}
+
+/**
  * 목록/오버레이 하단 스크롤(삼순 #807 blocker 5) — DESC→정순 반전 렌더에서
  * 최신 댓글이 입력창 바로 위에 보이도록 컨테이너를 맨 아래로 내린다.
  */

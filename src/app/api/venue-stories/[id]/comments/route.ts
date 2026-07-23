@@ -5,11 +5,10 @@ import {
   validateCommentContent,
   toChronological,
   isStoryOpenForComments,
-  evaluateCommentAbuse,
   VENUE_STORY_COMMENT_LIST_LIMIT,
-  VENUE_STORY_COMMENT_DUP_RECENT,
   type VenueStoryComment,
 } from "@/lib/venue-stories/comments";
+import { normalizeForFloodKey } from "@/lib/utils/normalize-message";
 
 function parseStoryId(id: string): number | null {
   const storyId = Number(id);
@@ -140,48 +139,55 @@ export async function POST(
     return NextResponse.json({ error: check.error }, { status: 400 });
   }
 
-  const gate = await loadOpenStory(storyId);
-  if (gate.error) {
-    return NextResponse.json({ error: "조회 실패" }, { status: 500 });
-  }
-  if (!gate.open) {
-    return NextResponse.json({ error: "없는 스토리" }, { status: 404 });
-  }
-
-  // 어뷰징 가드 — DB 권위(삼순 #807 blocker 3): 서버리스 인스턴스 메모리 대신
-  // 유저 최근 댓글 행으로 10초 간격/60초 내 3건 + 정규화 동일내용 반복(최근 5건) 차단.
-  // soft delete 된 행도 포함(삭제로 rate 리셋 불가). 정책 상수는 CommentSheet 와 동일.
-  // query-guard: bounded -- 유저 최근 댓글 5건만 조회(어뷰징 판정용)
-  const { data: recent, error: recentErr } = await supabase
-    .from("venue_story_comments")
-    .select("content, created_at")
-    .eq("user_id", verified.user.id)
-    .order("created_at", { ascending: false })
-    .limit(VENUE_STORY_COMMENT_DUP_RECENT);
-  if (recentErr) {
-    return NextResponse.json({ error: "조회 실패" }, { status: 500 });
-  }
-  const abuse = evaluateCommentAbuse(
-    (recent ?? []) as { content: string; created_at: string }[],
-    check.content,
-    Date.now(),
+  // 원자화 RPC(삼순 #807 라운드3 blocker 1) — 스토리 active/만료 게이트 +
+  // 10초 간격/60초 내 3건/동일내용(최근 5건) 판정 + INSERT 를 유저별
+  // advisory xact lock 안 단일 트랜잭션으로 수행 — 동시 POST 가 같은 빈
+  // snapshot 을 읽고 둘 다 통과하는 경쟁을 막는다. 판정 참조 구현은
+  // evaluateCommentAbuse(comments.ts) — 상수/경계 동일 계약을 스모크가 검증한다.
+  const contentKey = normalizeForFloodKey(check.content) || check.content;
+  // query-guard: bounded -- 단일 jsonb 결과(댓글 1건 또는 오류 코드)만 반환하는 RPC
+  const { data: rpcData, error: rpcErr } = await supabase.rpc(
+    "venue_story_comment_post",
+    {
+      p_story_id: storyId,
+      p_user_id: verified.user.id,
+      p_content: check.content,
+      p_content_key: contentKey,
+    },
   );
-  if (!abuse.allowed) {
-    return NextResponse.json({ error: abuse.error }, { status: 429 });
-  }
-
-  const { data: inserted, error: insErr } = await supabase
-    .from("venue_story_comments")
-    .insert({
-      story_id: storyId,
-      user_id: verified.user.id,
-      content: check.content,
-    })
-    .select("id, story_id, user_id, content, created_at")
-    .single();
-  if (insErr || !inserted) {
+  if (rpcErr || !rpcData) {
     return NextResponse.json({ error: "작성 실패" }, { status: 500 });
   }
+  const result = rpcData as {
+    ok: boolean;
+    error?: string;
+    comment?: {
+      id: number;
+      story_id: number;
+      user_id: string;
+      content: string;
+      created_at: string;
+    };
+  };
+  if (!result.ok || !result.comment) {
+    if (result.error === "not_found") {
+      return NextResponse.json({ error: "없는 스토리" }, { status: 404 });
+    }
+    if (result.error === "duplicate") {
+      return NextResponse.json(
+        { error: "같은 댓글은 반복해서 달 수 없어요" },
+        { status: 429 },
+      );
+    }
+    if (result.error === "rate") {
+      return NextResponse.json(
+        { error: "잠시 후 다시 입력해 주세요" },
+        { status: 429 },
+      );
+    }
+    return NextResponse.json({ error: "작성 실패" }, { status: 500 });
+  }
+  const inserted = result.comment;
 
   const authorMap = await buildAuthorMap([verified.user.id]);
   const comment: VenueStoryComment = {
