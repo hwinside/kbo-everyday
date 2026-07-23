@@ -210,12 +210,26 @@ export default function VenueStoryViewer({
         <div className="w-8 h-8 rounded-full bg-white/20 overflow-hidden shrink-0">
           {story.author.avatarUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={story.author.avatarUrl} alt="" className="w-full h-full object-cover" />
-          ) : (
-            <div className="w-full h-full flex items-center justify-center text-white text-xs">
-              {(story.author.nickname ?? "?").slice(0, 1)}
-            </div>
-          )}
+            <img
+              src={story.author.avatarUrl}
+              alt=""
+              className="w-full h-full object-cover"
+              // 구글 프로필 이미지는 referrer 달리면 403 → 깨진 아이콘 (NewsCarousel과 동일 패턴)
+              referrerPolicy="no-referrer"
+              // 로드 실패 시 깨진 이미지 대신 이니셜 폴백
+              onError={(e) => {
+                const img = e.currentTarget;
+                img.style.display = "none";
+                img.parentElement?.querySelector("[data-avatar-fallback]")?.classList.remove("hidden");
+              }}
+            />
+          ) : null}
+          <div
+            data-avatar-fallback
+            className={`w-full h-full items-center justify-center text-white text-xs ${story.author.avatarUrl ? "hidden" : "flex"}`}
+          >
+            {(story.author.nickname ?? "?").slice(0, 1)}
+          </div>
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5 min-w-0">

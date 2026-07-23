@@ -14,6 +14,7 @@ import {
   type VenueInfo,
 } from "@/lib/venue-stories/types";
 import { consentStorageKey } from "@/lib/venue-stories/auth-consent";
+import { createPickSession, type PickSession } from "@/lib/venue-stories/pick-session";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
 
 interface Props {
