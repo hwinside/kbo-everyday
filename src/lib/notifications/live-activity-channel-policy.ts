@@ -285,11 +285,47 @@ export function p2sChannelEligible(token: {
 /**
  * p2s 발송 attempt 순서 — env는 게이트가 아니라 per-attempt 규칙 (v4 blocker①).
  * known이면 그 env 쌍만, null이면 prod 쌍 → (BadDeviceToken 시) sandbox 쌍.
- * 각 attempt에서 해당 env의 active 채널이 없으면 그 attempt는 채널 없이(기존 payload) 발송.
  * 불변식: 발송 host env == 포함 channelId env (교차 쌍 금지 — 쌍은 호출부가 이 순서로 구성).
+ * channel-capable 토큰의 채널 부재 처리(레거시 발송 금지·유보)는 p2sSendPlan이 담당한다
+ * (PR #808 R3 — 종전 "채널 없으면 그 attempt는 채널 없이 발송" 규칙 폐기).
  */
 export function p2sEnvAttempts(knownEnv: ApnsEnvironment | null): ApnsEnvironment[] {
   return knownEnv === null ? ["production", "sandbox"] : [knownEnv];
+}
+
+/**
+ * p2s 발송 계획 (PR #808 R3, 삼순 blocker① — 서버 자동 시작 경로의 레거시 fallback 차단).
+ *
+ * channel-capable(iOS18+/build16+) 토큰은 *active 채널이 준비된 env로만* 발송한다:
+ * - 준비된 env가 하나도 없으면 `defer` — 선점(claim)도 발송도 하지 않고 다음 틱이
+ *   재시도한다. 7/23 사고 입구(채널이 늦게 생긴 날, 자동 p2s가 채널 payload 없이 레거시
+ *   카드를 낳아 예산 스로틀에 갇힘)의 서버측 차단. 앱 내 start()의 deferStart와 대칭.
+ * - 준비된 env가 일부면 그 env로만 attempt(`truncated` 표시). env 미상(null) 토큰이
+ *   prod-only 채널에서 BadDeviceToken을 받으면 "sandbox 토큰인데 sandbox 채널이 아직
+ *   없다"일 수 있으므로, truncated의 마지막 BadDeviceToken은 토큰 무효 확정이 아니다 —
+ *   호출부는 삭제 대신 선점 해제(다음 틱 재시도)로 처리한다.
+ * 레거시 토큰(iOS17↓/build15↓/미보고)은 기존 그대로 — 채널 payload 없이 전체 attempt.
+ */
+export type P2sSendPlan =
+  | { kind: "defer" }
+  | { kind: "send"; attempts: ApnsEnvironment[]; channelRequired: boolean; truncated: boolean };
+
+export function p2sSendPlan(
+  token: { os_major: number | null; app_build: number | null; env: ApnsEnvironment | null },
+  channelEnvs: ReadonlySet<ApnsEnvironment>,
+): P2sSendPlan {
+  const attempts = p2sEnvAttempts(token.env);
+  if (!p2sChannelEligible(token)) {
+    return { kind: "send", attempts, channelRequired: false, truncated: false };
+  }
+  const withChannel = attempts.filter((e) => channelEnvs.has(e));
+  if (withChannel.length === 0) return { kind: "defer" };
+  return {
+    kind: "send",
+    attempts: withChannel,
+    channelRequired: true,
+    truncated: withChannel.length < attempts.length,
+  };
 }
 
 /**

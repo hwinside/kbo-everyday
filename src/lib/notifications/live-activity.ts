@@ -14,8 +14,8 @@ import {
   decideStartReissue,
   scoreStateOf,
   fullStateHashOf,
-  p2sChannelEligible,
-  p2sEnvAttempts,
+  p2sSendPlan,
+  type P2sSendPlan,
   startTokenResultFence,
   decideLegacyTokenUpdate,
   shouldAdvanceFallbackCursor,
@@ -648,6 +648,28 @@ async function startForTeamSide(params: {
   });
   if (eligible.length === 0) return { sent: 0, failed: false };
 
+  // R3 (삼순 PR #808 blocker①): channel-capable(iOS18+/build16+) 토큰은 active 채널이
+  // 준비된 env가 있어야만 발송 — 없으면 *선점(claim) 전에* 유보하고 다음 틱이 재시도한다.
+  // 7/23 사고 입구(채널 부재 시 자동 p2s가 레거시 카드로 태어나 예산 스로틀에 갇힘)의
+  // 서버측 차단 — 앱 내 start() deferStart(R2 blocker④)와 대칭. 레거시 토큰은 기존 그대로.
+  const channelEnvs = new Set([...params.channelByEnv.keys()]);
+  const planByUser = new Map<string, Extract<P2sSendPlan, { kind: "send" }>>();
+  const sendable = eligible.filter(([userId, meta]) => {
+    const plan = p2sSendPlan(
+      { os_major: meta.osMajor, app_build: meta.appBuild, env: meta.env },
+      channelEnvs,
+    );
+    if (plan.kind === "defer") return false; // claim 0 — 다음 틱 재시도(레거시 발송 금지)
+    planByUser.set(userId, plan);
+    return true;
+  });
+  if (sendable.length < eligible.length) {
+    console.log(
+      `[live-activity] p2s deferred (channel not ready): game=${params.gameId} deferred=${eligible.length - sendable.length}`,
+    );
+  }
+  if (sendable.length === 0) return { sent: 0, failed: false };
+
   // stale claim 무효화 — *현재 토큰 세대 이전에 생성된 행만* 삭제(fence: lt created_at).
   // 병렬 틱이 방금 만든 새 claim(created_at >= token_changed_at)은 건드리지 않는다.
   for (const s of staleClaimUsers) {
@@ -664,8 +686,8 @@ async function startForTeamSide(params: {
   // 유저는 충돌로 제외되고 *새로 선점된 유저만* 반환된다. 게임 단위 선점과 달리 윈도우
   // 도중 늦게 등록된 토큰도 그 시점 cron이 처음 선점 → 발송된다.
   const claimed: { user_id: string }[] = [];
-  for (let i = 0; i < eligible.length; i += 200) {
-    const chunk = eligible.slice(i, i + 200);
+  for (let i = 0; i < sendable.length; i += 200) {
+    const chunk = sendable.slice(i, i + 200);
     const { data, error } = await supabase
       .from("live_activity_started_users")
       .upsert(
@@ -678,7 +700,7 @@ async function startForTeamSide(params: {
   }
   if (claimed.length === 0) return { sent: 0, failed: false };
   const claimedSet = new Set(claimed.map((r) => r.user_id));
-  const toSend = eligible.filter(([userId]) => claimedSet.has(userId));
+  const toSend = sendable.filter(([userId]) => claimedSet.has(userId));
 
   let sent = 0;
   let transientFail = false;
@@ -691,14 +713,12 @@ async function startForTeamSide(params: {
       // BadDeviceToken 시 sandbox 쌍 재시도 → 성공 env 저장·고정. 불변식 = 발송 host env ==
       // 포함 channelId env (교차 쌍 금지). 채널 payload는 클라가 os_major>=18 && app_build>=16을
       // *명시 보고*한 토큰만 (iOS17 이하에 input-push-channel이 실리면 start 자체가 실패).
-      const channelCapable = p2sChannelEligible({
-        os_major: meta.osMajor,
-        app_build: meta.appBuild,
-      });
-      const attempts = p2sEnvAttempts(meta.env);
+      // R3: attempt 목록은 사전 계산된 plan — channelRequired면 모든 attempt env에 채널이
+      // 보장된다(채널 없는 env는 attempt에서 제외, 전부 없으면 위에서 defer 이미 처리).
+      const plan = planByUser.get(userId)!;
       let res: ApnsResult = { ok: false, status: 0, invalidToken: false };
-      for (const env of attempts) {
-        const channelId = channelCapable ? params.channelByEnv.get(env) : undefined;
+      for (const env of plan.attempts) {
+        const channelId = plan.channelRequired ? params.channelByEnv.get(env) : undefined;
         res = await sendLiveActivityPushToEnv(
           {
             pushToken: meta.token,
@@ -735,7 +755,12 @@ async function startForTeamSide(params: {
         if (res.reason !== "BadDeviceToken") break;
       }
       if (res.ok) sent += 1;
-      else if (res.invalidToken) invalid.push({ userId, token: meta.token });
+      else if (res.invalidToken && plan.truncated && res.reason === "BadDeviceToken") {
+        // R3: env 미상 토큰의 attempt 쌍이 채널 부재로 잘린 상태의 BadDeviceToken은 "반대 env
+        // 토큰인데 그 env 채널이 아직 없음"일 수 있어 무효 확정 불가 — 토큰 보존, 선점만
+        // 해제(반대 env 채널 생성 후 다음 틱 재시도). 레거시 발송 fallback 없음.
+        releaseRetry.push(userId);
+      } else if (res.invalidToken) invalid.push({ userId, token: meta.token });
       else {
         transientFail = true; // 일시 APNs 오류(무효 토큰 아님)
         releaseRetry.push(userId);
