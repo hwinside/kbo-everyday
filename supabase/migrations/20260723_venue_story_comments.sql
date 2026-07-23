@@ -118,3 +118,5 @@ $$;
 REVOKE ALL ON FUNCTION venue_story_comment_post(BIGINT, UUID, TEXT, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION venue_story_comment_post(BIGINT, UUID, TEXT, TEXT) FROM anon;
 REVOKE ALL ON FUNCTION venue_story_comment_post(BIGINT, UUID, TEXT, TEXT) FROM authenticated;
+-- service_role 실행권한을 migration에서 명시적으로 고정 (소유자/기본권한 의존 금지 — 삼순 #807 라운드4)
+GRANT EXECUTE ON FUNCTION venue_story_comment_post(BIGINT, UUID, TEXT, TEXT) TO service_role;
