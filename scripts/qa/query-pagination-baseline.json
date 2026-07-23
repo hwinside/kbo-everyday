@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "generatedFrom": "b5f284c89c9554b6a74692b0d0bf601a5f3806db",
+  "generatedFrom": "28078c1f81818ebfdfe01b13b6d3791d34a1e30c",
   "violations": {
     "0034fe9a6a6cff327c64": {
       "count": 1,
@@ -1254,13 +1254,6 @@
       "file": "src/app/api/me/venue-attendance/route.ts",
       "subject": "venue_attendance",
       "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
-    },
-    "db377689e79c096dd7ec": {
-      "count": 1,
-      "kind": "unbounded_growing_select",
-      "file": "src/lib/notifications/live-activity.ts",
-      "subject": "live_activity_channels",
-      "detail": "add a bound, unique-key lookup, or query-guard annotation"
     },
     "dbfc8ce19adc4627ca1f": {
       "count": 1,

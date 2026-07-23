@@ -429,6 +429,29 @@ export function selectWakeGapRows<T extends WakeGapRow>(
   });
 }
 
+// ── 무음 wake 창 오픈 판정 (삼순 라운드3: 채널 세대 기준 재오픈) ──────────
+
+/**
+ * 무음 wake 창 오픈 여부 — live 전환/취소·종료 이벤트 시각 기준 windowMs 창에 더해,
+ * *해당 게임의 현재 active 채널 세대가 생성/변경된 시각*(live_activity_channels.created_at
+ * — 재생성 CAS 경로가 새 시각으로 다시 기록) 기준으로도 창을 재오픈한다(삼순 라운드3
+ * blocker): 라이브 도중 채널이 늦게 생성되거나 A→B로 교체되면 *그 시점 이후에야*
+ * 구채널/레거시 카드가 gap으로 복귀하는데, 이벤트 창(live 전환+20분)만 보면 이미 닫혀
+ * wake 자동구제가 불가능하다(2026-07-23 실사례: 19:07 시작 경기의 늦은 채널 생성).
+ * - eventSinceMs undefined(이벤트 row 없음 = 막 발생/알림 경로 이슈) → 오픈(기존 안전 동작).
+ * - 채널 변경 없이 두 창 모두 지난 경우 → 기존대로 마감(스팸/throttle 방지 유지).
+ */
+export function isWakeWindowOpen(
+  nowMs: number,
+  eventSinceMs: number | undefined,
+  channelGenerationMs: number | undefined,
+  windowMs: number,
+): boolean {
+  if (eventSinceMs === undefined) return true;
+  if (nowMs - eventSinceMs <= windowMs) return true;
+  return channelGenerationMs !== undefined && nowMs - channelGenerationMs <= windowMs;
+}
+
 // ── p2s stale 토큰 발송 제외 ─────────────────────────────────────────
 // gap 유저 41%가 updated_at 1~30일+ 미갱신 휴면 기기(2026-07-23 실측) — 앱을 오래 안 연
 // 기기는 p2s로 카드가 떠도 update 토큰 등록(wake/앱 오픈)이 사실상 안 일어나 갱신불가

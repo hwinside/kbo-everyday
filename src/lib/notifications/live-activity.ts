@@ -15,6 +15,7 @@ import {
   scoreStateOf,
   fullStateHashOf,
   isStaleStartToken,
+  isWakeWindowOpen,
   selectWakeGapRows,
   p2sChannelEligible,
   p2sEnvAttempts,
@@ -125,6 +126,8 @@ interface ActiveChannelRow {
   channel_id: string;
   last_score_state?: string | null;
   last_state_hash?: string | null;
+  // 채널 세대 생성/교체 시각 — wake 창 재오픈 기준(isWakeWindowOpen, 삼순 라운드3).
+  created_at?: string | null;
 }
 
 interface ChannelSubscriptionRow {
@@ -934,6 +937,10 @@ const EMPTY_WAKE: WakeResult = { woke: 0, failed: 0, skipped: 0, cleaned: 0, ok:
  * 세팅하므로, 그 updated_at(=live 전환 근사시각)에서 WAKE_WINDOW_MS 이내 경기만 대상.
  * → 우천/지연으로 예정시각+20분을 한참 넘겨 live 전환된 경기도 정확히 커버(예정시각 기준이면
  * 스킵됐음). start_notified row가 아직 없으면(막 전환/알림 경로 이슈) 안전하게 포함.
+ * 창은 *현재 active 채널 세대의 생성/교체 시각* 기준으로도 재오픈된다(isWakeWindowOpen,
+ * 삼순 라운드3): 라이브 도중 채널이 늦게 생성되거나 A→B로 교체되면 그 시점에야
+ * 구채널/레거시 카드가 gap으로 복귀하므로, 이벤트 창이 닫혔어도 세대 생성 후
+ * WAKE_WINDOW_MS 동안 wake 구제를 허용한다(채널 변경 없으면 기존 마감 유지).
  * 취소(우천 등) 경기도 동일하게 커버(cancel_notified 시각 기준 창) — 토큰 미등록 gap 카드를 깨워
  * 등록 유도 → pushLiveActivityUpdates(cancelled→end)가 정리. (이미 오래된 취소는 창 밖=자동만료.)
  * 종료(final) 경기도 동일하게 커버(end_notified 시각 기준 창) — gap 유저는 end 푸시가 못 닿아
@@ -985,13 +992,37 @@ export async function pushLiveActivitySilentWakes(
       if ((r.start_notified || r.cancel_notified || r.end_notified) && r.updated_at) eventSince.set(r.game_id, new Date(r.updated_at).getTime());
     }
   }
-  // wake 대상 = 이벤트(live 전환/취소·종료 확정) 후 WAKE_WINDOW_MS 이내. row 없으면(막 발생 등) 포함(안전).
+  // active 채널 조회를 wake 창 판정 *앞*으로 — created_at(현재 채널 세대의 생성/교체
+  // 시각)이 창 재오픈 판정에 필요(삼순 라운드3). 같은 결과를 아래 activeKeys/구독
+  // 확인에서 재사용해 채널 쿼리는 종전처럼 1회만 나간다(.in 범위만 candidate로 확장).
+  // query-guard: bounded -- PK (game_id, environment)·env 2종 → 행수 ≤ 2×당일 경기수(≤10),
+  // .in은 당일 스케줄 game_id로 상한(종전 wakeGameIds 쿼리와 동일 구조, 범위만 candidate)
+  const { data: chanRows, error: chanError } = await supabase
+    .from("live_activity_channels")
+    .select("game_id, environment, channel_id, created_at")
+    .in("game_id", candidateGameIds)
+    .eq("status", "active");
+  if (chanError) return { error: chanError.message };
+  const allActiveChannels = (chanRows ?? []) as ActiveChannelRow[];
+  // 게임별 현재 채널 세대 생성/교체 시각 — env별 active 행 중 가장 최근 created_at.
+  const chanGenAt = new Map<string, number>();
+  for (const r of allActiveChannels) {
+    if (!r.created_at) continue;
+    const t = new Date(r.created_at).getTime();
+    if (!Number.isFinite(t)) continue;
+    const prev = chanGenAt.get(r.game_id);
+    if (prev === undefined || t > prev) chanGenAt.set(r.game_id, t);
+  }
+
+  // wake 대상 = 이벤트(live 전환/취소·종료 확정) 후 WAKE_WINDOW_MS 이내, *또는* 현재
+  // active 채널 세대가 생성/교체된 지 WAKE_WINDOW_MS 이내(삼순 라운드3 — 라이브 도중
+  // 채널 늦은 생성/A→B 교체 시 구채널·레거시 카드 wake 구제 창 재오픈). 이벤트 row
+  // 없으면(막 발생 등) 포함(안전). 채널 변경 없이 두 창 모두 지나면 기존대로 마감.
   // 예정 경기는 게임 단위 창 없이 통과 — 유저별 created_at 창으로 아래에서 거른다.
+  const nowMs = Date.now();
   const wakeGameIds = [
-    ...eventGameIds.filter((id) => {
-      const since = eventSince.get(id);
-      return since === undefined || Date.now() - since <= WAKE_WINDOW_MS;
-    }),
+    ...eventGameIds.filter((id) =>
+      isWakeWindowOpen(nowMs, eventSince.get(id), chanGenAt.get(id), WAKE_WINDOW_MS)),
     ...scheduledGameIds,
   ];
   if (wakeGameIds.length === 0) return EMPTY_WAKE;
@@ -1016,13 +1047,8 @@ export async function pushLiveActivitySilentWakes(
   // activeKeys는 아래 selectWakeGapRows의 채널출생 세대 일치 판정에도 쓴다(단일 기준).
   const activeKeys = new Set<string>();
   {
-    const { data: chanRows, error: chanError } = await supabase
-      .from("live_activity_channels")
-      .select("game_id, environment, channel_id")
-      .in("game_id", wakeGameIds)
-      .eq("status", "active");
-    if (chanError) return { error: chanError.message };
-    const activeChannels = (chanRows ?? []) as ActiveChannelRow[];
+    const wakeSet = new Set(wakeGameIds);
+    const activeChannels = allActiveChannels.filter((r) => wakeSet.has(r.game_id));
     for (const r of activeChannels) {
       activeKeys.add(`${r.game_id}|${r.environment}|${r.channel_id}`);
     }
@@ -1048,7 +1074,7 @@ export async function pushLiveActivitySilentWakes(
   // 행(세대 불일치)은 gap으로 복귀해 wake로 구제한다(삼순 라운드2 blocker).
   // 예정 경기 row는 카드 발급(created_at) 후 WAKE_WINDOW_MS 이내만 — 그 뒤는 live 전환 창이 백스톱.
   const scheduledSet = new Set(scheduledGameIds);
-  const gapRows = selectWakeGapRows(started, tokened, activeKeys, scheduledSet, Date.now(), WAKE_WINDOW_MS);
+  const gapRows = selectWakeGapRows(started, tokened, activeKeys, scheduledSet, nowMs, WAKE_WINDOW_MS);
   const gapUsers = [...new Set(gapRows.map((r) => r.user_id))];
   if (gapUsers.length === 0) return EMPTY_WAKE;
 

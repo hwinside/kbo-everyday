@@ -24,6 +24,7 @@ import {
   countUpdatableUsers,
   isStaleStartToken,
   STALE_START_TOKEN_MS,
+  isWakeWindowOpen,
   selectWakeGapRows,
 } from "../../src/lib/notifications/live-activity-channel-policy";
 
@@ -488,6 +489,50 @@ check("cursor: invalidToken + retryable 혼합(성공 無) → 보류",
   check("wakeGap: scheduled + 구채널 born → 창 이내면 gap 복귀(재제외 아님)",
     selectWakeGapRows([row("u1", sched, "A", fresh)], new Set(), activeB, new Set([sched]), now, W),
     [row("u1", sched, "A", fresh)]);
+}
+
+// ── isWakeWindowOpen — 채널 세대 기준 wake 창 재오픈(삼순 라운드3) ──
+// live 전환 20분 창이 닫혀도, 라이브 도중 채널이 늦게 생성/A→B 교체되면 그 시점
+// 기준으로 창을 다시 연다 — 구채널·레거시 카드 자동구제(2026-07-23 실사례: 19:07 시작
+// 경기의 늦은 채널 생성 시 이미 닫힌 창 때문에 구제 불가). 정책(20분 창)은 그대로.
+{
+  const W = 20 * 60 * 1000;
+  const now = Date.parse("2026-07-23T19:40:00+09:00");
+  const liveAt = now - 30 * 60 * 1000; // live 전환 30분 전 = 이벤트 창 마감 상황
+
+  // ① live+30분(이벤트 창 마감) 후 채널 A→B 교체(5분 전) → 창 재오픈.
+  check("wakeWindow: [라운드3①] live+30분 마감 + 채널 A→B 교체 5분 전 → 재오픈",
+    isWakeWindowOpen(now, liveAt, now - 5 * 60 * 1000, W), true);
+  // ① 통합: 재오픈된 창에서 구채널(A) 출생 세대 카드가 wake gap으로 복귀(라운드2 세대
+  // 일치 설계 그대로 — 창만 열리면 selectWakeGapRows가 구채널 row를 대상으로 복원).
+  {
+    const game = "20260723LGKT0";
+    const oldBorn = {
+      user_id: "u1", game_id: game, created_at: null,
+      channel_born_environment: "production", channel_born_channel_id: "chanA",
+    };
+    const activeB = new Set([`${game}|production|chanB`]);
+    check("wakeWindow: [라운드3① 통합] 재오픈 창 + 구채널(A) born row → wake gap 복귀",
+      isWakeWindowOpen(now, liveAt, now - 5 * 60 * 1000, W)
+        ? selectWakeGapRows([oldBorn], new Set(), activeB, new Set(), now, W)
+        : [],
+      [oldBorn]);
+  }
+  // ② 채널이 live 도중 늦게 *처음* 생성 → 생성 시각 기준 창 오픈.
+  check("wakeWindow: [라운드3②] live 도중 늦은 첫 채널 생성(1분 전) → 생성 시각 기준 오픈",
+    isWakeWindowOpen(now, liveAt, now - 60 * 1000, W), true);
+  // ③ 채널 변경 없음(세대도 live 직후 생성) + 20분 경과 → 기존대로 마감 유지.
+  check("wakeWindow: [라운드3③] 채널 변경 없음 + 20분 경과 → 마감 유지(스팸 방지)",
+    isWakeWindowOpen(now, liveAt, liveAt, W), false);
+  check("wakeWindow: 채널 세대 정보 없음(active 없음/created_at null) + 창 마감 → 마감 유지",
+    isWakeWindowOpen(now, liveAt, undefined, W), false);
+  check("wakeWindow: 채널 교체 후에도 20분+ 경과 → 재오픈 창도 마감(정책 유지)",
+    isWakeWindowOpen(now, liveAt, now - W - 1000, W), false);
+  // 기존 동작 회귀: 이벤트 창 이내 · 이벤트 row 없음(막 발생) → 오픈.
+  check("wakeWindow: 이벤트 창 이내(live+1분) → 오픈(기존 동작)",
+    isWakeWindowOpen(now, now - 60 * 1000, undefined, W), true);
+  check("wakeWindow: 이벤트 row 없음(막 전환) → 오픈(기존 안전 동작)",
+    isWakeWindowOpen(now, undefined, undefined, W), true);
 }
 
 // ── isLiveBornChannel — 채널출생 세대 일치(삼순 라운드2) — 어드민 updatable 합산과
