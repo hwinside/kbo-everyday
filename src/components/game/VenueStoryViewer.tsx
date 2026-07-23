@@ -404,6 +404,57 @@ export default function VenueStoryViewer({
         </div>
       )}
 
+      {/* 입력창 포커스 시 기존 댓글을 입력바 위에 오버레이 (하린아빠 21:45 지시 — 인스타 DM과 달리 우리는 댓글을 보여줌) */}
+      {inputFocused && (
+        <div
+          className="absolute left-0 right-0 z-20 px-3 flex flex-col justify-end"
+          style={{
+            bottom: "calc(env(safe-area-inset-bottom, 0px) + 64px)",
+            maxHeight: "38%",
+          }}
+          // 오버레이 터치로 입력 blur 되지 않게 (스크롤 중 오버레이가 사라지는 것 방지)
+          onMouseDown={(e) => e.preventDefault()}
+        >
+          <div className="overflow-y-auto flex flex-col gap-2 py-1">
+            {comments == null ? (
+              <div className="flex justify-center py-2">
+                <Loader2 size={16} className="animate-spin text-white/70" />
+              </div>
+            ) : comments.length === 0 ? (
+              <p className="text-white/70 text-xs bg-black/40 rounded-full px-3 py-1.5 self-start">
+                첫 댓글을 남겨보세요
+              </p>
+            ) : (
+              comments.map((c) => (
+                <div key={c.id} className="flex items-start gap-2 max-w-[85%]">
+                  <div className="w-6 h-6 rounded-full bg-white/20 overflow-hidden shrink-0">
+                    {c.author.avatarUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={c.author.avatarUrl}
+                        alt=""
+                        className="w-full h-full object-cover"
+                        referrerPolicy="no-referrer"
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center text-white text-[10px]">
+                        {(c.author.nickname ?? "?").slice(0, 1)}
+                      </div>
+                    )}
+                  </div>
+                  <div className="bg-black/45 rounded-2xl px-3 py-1.5 min-w-0">
+                    <p className="text-white/70 text-[10px] leading-tight">
+                      {c.author.nickname ?? "익명"} · {timeAgo(c.createdAt)}
+                    </p>
+                    <p className="text-white text-[13px] break-words">{c.content}</p>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
       {/* 인스타식 하단 상시 댓글 입력바 (하린아빠 21:22 지시 — 인스타 UI와 동일하게 바로 아래쪽 배치) */}
       <div
         className="absolute left-0 right-0 z-20 flex items-center gap-2 px-3"
