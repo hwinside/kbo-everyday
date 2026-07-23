@@ -146,6 +146,14 @@ async function main() {
     ok(`disabled={submitting} 6곳 이상 (현재 ${disabledCount})`, disabledCount >= 6);
     ok("caption input에 disabled 적용", /maxLength=\{200\}\s*\n\s*disabled=\{submitting\}/.test(src));
     ok("동의 checkbox에 disabled 적용", /onChange=\{toggleAgree\}\s*\n\s*disabled=\{submitting\}/.test(src));
+
+    // 픽 대기 안내 계약 — iOS 영상 export 무피드백 구간 (7/23 리포트)
+    console.log("[픽 대기 안내 계약 — openPicker/picking]");
+    ok("openPicker가 picking 상태 설정", /const openPicker = [\s\S]*?setPicking\(true\);/.test(src));
+    ok("픽커 취소(cancel) 시 picking 해제 등록", /addEventListener\("cancel", \(\) => setPicking\(false\), \{ once: true \}\)/.test(src));
+    ok("onPick 진입 시 picking 해제", /const onPick = [\s\S]{0,80}?setPicking\(false\);/.test(src));
+    ok("픽 CTA가 openPicker 사용(직접 click 잔존 0)", !src.includes("inputRef.current?.click()") && (src.match(/onClick=\{openPicker\}/g) ?? []).length === 2);
+    ok("대기 안내 UI는 업로드 중엔 미표시(picking && !submitting)", /picking && !submitting && \(/.test(src));
   }
 
   console.log(`\n${pass} passed, ${fail} failed`);

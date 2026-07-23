@@ -33,6 +33,9 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   const [caption, setCaption] = useState("");
   const [phase, setPhase] = useState<Phase>("idle");
   const [progress, setProgress] = useState(0); // 0~100, phase==="upload" 일 때만 유효
+  // iOS가 사진앱 영상을 export하느라 픽 후 change 이벤트까지 수 초간 무피드백 구간이 있다
+  // → 픽 대기 안내 오버레이 (하린아빠 7/23 21:05 리포트)
+  const [picking, setPicking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [venue, setVenue] = useState<VenueInfo | null>(null);
   const [venueLoading, setVenueLoading] = useState(false);
@@ -123,7 +126,18 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
     onClose();
   };
 
+  const openPicker = () => {
+    if (submitting) return;
+    const input = inputRef.current;
+    if (!input) return;
+    // Safari 16.4+는 픽커 취소 시 input에 'cancel' 이벤트를 준다 — 대기 오버레이 해제용
+    input.addEventListener("cancel", () => setPicking(false), { once: true });
+    input.click();
+    setPicking(true);
+  };
+
   const onPick = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setPicking(false);
     const f = e.target.files?.[0];
     e.target.value = "";
     if (!f || submitting) return;
@@ -289,7 +303,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
 
             {!previewUrl ? (
               <button
-                onClick={() => inputRef.current?.click()}
+                onClick={openPicker}
                 disabled={submitting}
                 className="flex flex-col items-center justify-center gap-2 h-48 rounded-2xl border-2 border-dashed border-border text-text-tertiary active:bg-bg-tertiary disabled:opacity-40"
               >
@@ -306,7 +320,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
                   <img src={previewUrl} alt="" className="w-full h-full object-contain" />
                 )}
                 <button
-                  onClick={() => inputRef.current?.click()}
+                  onClick={openPicker}
                   disabled={submitting}
                   className="absolute bottom-2 right-2 text-xs bg-black/60 text-white px-3 py-1.5 rounded-full disabled:opacity-40"
                 >
@@ -323,6 +337,19 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
               className="hidden"
               onChange={onPick}
             />
+
+            {/* iOS 사진앱 영상 export 대기 구간 안내 — 픽커가 닫힌 뒤 change 이벤트까지 수 초간 무피드백이던 구간 (7/23 리포트) */}
+            {picking && !submitting && (
+              <div className="flex items-center justify-between gap-2 rounded-xl bg-bg-tertiary/60 px-3 py-2.5 text-sm text-text-secondary">
+                <span className="flex items-center gap-2">
+                  <Loader2 size={16} className="animate-spin shrink-0" />
+                  사진·영상 불러오는 중… 영상은 몇 초 걸릴 수 있어요
+                </span>
+                <button onClick={() => setPicking(false)} className="text-xs text-text-tertiary shrink-0">
+                  취소
+                </button>
+              </div>
+            )}
 
             <input
               type="text"
