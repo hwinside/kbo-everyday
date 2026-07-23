@@ -42,7 +42,10 @@ export function parseKboGameListPayload(value: unknown): KboRawGame[] | null {
     if (row === null || typeof row !== "object") return null;
     const game = row as Record<string, unknown>;
     if (typeof game.G_ID !== "string" || !/^\d{8}[A-Z]{4}\d$/.test(game.G_ID)) return null;
-    if (typeof game.GAME_STATE_SC !== "string" || !["1", "2", "3"].includes(game.GAME_STATE_SC)) return null;
+    // 2026-07-23 P0: 취소경기(예: 그라운드사정)는 GAME_STATE_SC="4"로 내려온다. "1/2/3" 허용목록이
+    // 취소경기 1건 혼재만으로 payload 전체를 null 처리해 라이브 4경기의 시작/득점 알림·위젯이
+    // 전부 죽었다(7/22~7/23 실사고). 상태값은 한 자리 숫자면 유효 — 손상 감지는 타입/G_ID/팀명으로 충분.
+    if (typeof game.GAME_STATE_SC !== "string" || !/^[0-9]$/.test(game.GAME_STATE_SC)) return null;
     if (typeof game.AWAY_NM !== "string" || game.AWAY_NM.trim().length === 0) return null;
     if (typeof game.HOME_NM !== "string" || game.HOME_NM.trim().length === 0) return null;
   }

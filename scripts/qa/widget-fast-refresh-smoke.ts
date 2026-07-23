@@ -80,8 +80,21 @@ check("schema: unknown state 실패", parseKboGameListPayload({ game: [{ G_ID: "
 check("schema: malformed game id 실패", parseKboGameListPayload({ game: [{ G_ID: "x", GAME_STATE_SC: "2", AWAY_NM: "LG", HOME_NM: "KT" }] }) === null, true);
 check("schema: 빈 원정 팀명 실패", parseKboGameListPayload({ game: [{ G_ID: "20260721LGKT0", GAME_STATE_SC: "2", AWAY_NM: "  ", HOME_NM: "KT" }] }) === null, true);
 check("schema: 빈 홈 팀명 실패", parseKboGameListPayload({ game: [{ G_ID: "20260721LGKT0", GAME_STATE_SC: "2", AWAY_NM: "LG", HOME_NM: "" }] }) === null, true);
-check("schema: state 1/2/3 domain 통과", ["1", "2", "3"].every((state) =>
+check("schema: state 한 자리 숫자(0~9) domain 통과", ["0", "1", "2", "3", "4", "5", "9"].every((state) =>
   parseKboGameListPayload({ game: [{ G_ID: "20260721LGKT0", GAME_STATE_SC: state, AWAY_NM: "LG", HOME_NM: "KT" }] })?.length === 1), true);
+// 2026-07-23 P0 회귀: 취소경기(state "4", 그라운드사정) 1건 혼재가 payload 전체를 무효화해
+// 라이브 경기 알림/위젯이 전부 0건이 되던 실사고 재현 — 5경기 payload가 그대로 통과해야 한다.
+check("schema: 취소경기(state 4) 혼재 payload 통과(7/23 실사고 회귀)", (() => {
+  const rows = [
+    { G_ID: "20260723NCLG0", GAME_STATE_SC: "2", AWAY_NM: "NC", HOME_NM: "LG" },
+    { G_ID: "20260723SKLT0", GAME_STATE_SC: "2", AWAY_NM: "SSG", HOME_NM: "롯데" },
+    { G_ID: "20260723HHHT0", GAME_STATE_SC: "2", AWAY_NM: "한화", HOME_NM: "KIA" },
+    { G_ID: "20260723OBKT0", GAME_STATE_SC: "4", AWAY_NM: "두산", HOME_NM: "KT" },
+    { G_ID: "20260723SSWO0", GAME_STATE_SC: "2", AWAY_NM: "삼성", HOME_NM: "키움" },
+  ];
+  const parsed = parseKboGameListPayload({ game: rows });
+  return parsed?.length === 5 && parsed.filter((g) => g.GAME_STATE_SC === "2").length === 4;
+})(), true);
 
 // ---------------------------------------------------------------------------
 // fast-loop 오케스트레이션 (삼순 blocker①②) — fake clock으로 절대 deadline/오류 분기 검증.

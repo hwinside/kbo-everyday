@@ -3,6 +3,7 @@ import { sendFcmToUsers, WIDGET_STREAM } from "@/lib/notifications/fcm";
 import { TEAMS } from "@/lib/constants/teams";
 import { fetchStandings, isKboGameCancelled } from "@/lib/crawler/kbo-api";
 import { decideEndStreakCount, type StreakDir } from "@/lib/notifications/end-streak-policy";
+import { isStartNotificationFresh } from "@/lib/notifications/start-freshness-policy";
 import { fetchTeamFanIds } from "@/lib/notifications/audience";
 import type { KboRawGame } from "@/types/api";
 
@@ -203,9 +204,14 @@ export async function notifyGameStatusTransitions(games: KboRawGame[]): Promise<
     }
 
     if (g.GAME_STATE_SC === "2") {
-      // 진행 중 — 시작 알림. 시간 윈도우 밖이면 발송 없이 마킹만(뒷북 차단)
+      // 진행 중 — 시작 알림. 시간 윈도우 밖이거나 이미 경기가 진행된 뒤면(1회초 이후)
+      // 발송 없이 마킹만(뒷북 차단 — 2026-07-23 하린아빠 지시: 늦은 시작알림 금지 가드)
       const startedAt = scheduledStartMs(g.G_DT, g.G_TM);
-      const tooLate = startedAt !== null && Date.now() - startedAt > START_WINDOW_MS;
+      const notFresh = !isStartNotificationFresh({
+        inningNo: g.GAME_INN_NO,
+        isTop: g.GAME_TB_SC ? g.GAME_TB_SC === "T" : null,
+      });
+      const tooLate = notFresh || (startedAt !== null && Date.now() - startedAt > START_WINDOW_MS);
       if (tooLate) {
         await markOnly(gameId, { start: true });
         continue;
