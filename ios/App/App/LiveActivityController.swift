@@ -468,14 +468,36 @@ final class LiveActivityController {
         if #available(iOS 16.2, *) {
             for activity in Activity<KBOGameAttributes>.activities {
                 observePushToken(activity, gameId: activity.attributes.gameId)
-                // 레거시(per-토큰) 라이브 카드 → broadcast 채널 카드 자동 교체(아래 MARK 섹션).
-                // 채널이 경기 시작 *후*에 생긴 날(7/23 파서 장애)은 토큰 재등록만으론 예산
-                // 스로틀을 못 벗어난다 — 포그라운드마다 마이그레이션 기회를 준다.
-                if #available(iOS 18.0, *) {
-                    migrateLegacyActivityIfNeeded(activity)
-                }
             }
+            // ⚠️ 여기서는 마이그레이션을 하지 않는다(삼순 R2 blocker③) — rescan은 silent wake
+            // (didReceiveRemoteNotification)에서도 불리는데, local `Activity.request()`는
+            // foreground 시작 계약이다. 레거시→채널 교체는 foreground-active 전용 진입점
+            // migrateLegacyActivitiesOnForeground()(didBecomeActive)가 담당 — 백그라운드
+            // rescan 경로의 request는 0건이다.
         }
+    }
+
+    // MARK: - 경기 단위 직렬 큐 (삼순 R2 blocker①)
+    //
+    // start()·migration·end()가 같은 경기 카드에 동시에 손대면 "migration이 만든 새 채널
+    // 카드를 start()가 종료 + migration이 레거시 종료 = 카드 0장" 경합이 가능하다(앱 오픈 시
+    // native didBecomeActive migration과 웹뷰發 start()가 함께 도는 게 정상 진입 경로).
+    // 경기별 Task 체인으로 상호 배제 — 락을 await 경계 너머로 들고 가지 않는다.
+    // tail 항목은 경기 수만큼만 남는다(하루 최대 5경기 — 무해).
+    private let gameSerialLock = NSLock()
+    private var gameSerialTails: [String: Task<Void, Never>] = [:]
+
+    private func withGameSerialQueue<T>(_ gameId: String,
+                                        _ operation: @escaping () async -> T) async -> T {
+        gameSerialLock.lock()
+        let previous = gameSerialTails[gameId]
+        let task = Task<T, Never> {
+            _ = await previous?.value   // 앞 작업 완료 대기(FIFO 체인)
+            return await operation()
+        }
+        gameSerialTails[gameId] = Task { _ = await task.value }
+        gameSerialLock.unlock()
+        return await task.value
     }
 
     // MARK: - 레거시 per-토큰 → broadcast 채널 마이그레이션 (포그라운드 rescan)
@@ -491,15 +513,33 @@ final class LiveActivityController {
     /// 같은 경기 동시 시도 방지(in-flight 가드).
     private var migrationInFlightGameIds = Set<String>()
     private let migrationLock = NSLock()
+    /// 삼순 R2 blocker③ — 마이그레이션은 *foreground-active에서만* 실행한다. local
+    /// `Activity.request()`는 foreground 시작 계약 — silent wake(didReceiveRemoteNotification)
+    /// 경로의 rescan은 토큰 재등록만 하고 request 0건을 보장한다. 진입점은
+    /// applicationDidBecomeActive — cold launch·백그라운드 복귀 모두 커버한다
+    /// (willEnterForeground는 cold launch에서 호출되지 않음). 백그라운드 자동구제가 목표면
+    /// current channel push-to-start 등 지원되는 경로로 별도 분리한다(본 PR 범위 밖).
+    func migrateLegacyActivitiesOnForeground() {
+        if #available(iOS 18.0, *) {
+            // didBecomeActive = 메인 스레드 — applicationState 안전 조회.
+            let foreground = UIApplication.shared.applicationState == .active
+            guard foreground else { return }
+            for activity in Activity<KBOGameAttributes>.activities {
+                migrateLegacyActivityIfNeeded(activity, isForegroundActive: foreground)
+            }
+        }
+    }
 
     @available(iOS 18.0, *)
-    private func migrateLegacyActivityIfNeeded(_ activity: Activity<KBOGameAttributes>) {
+    private func migrateLegacyActivityIfNeeded(_ activity: Activity<KBOGameAttributes>,
+                                               isForegroundActive: Bool) {
         let gameId = activity.attributes.gameId
         migrationLock.lock()
         let pre = ChannelMigrationPolicy.preflight(
             osAtLeast18: true,   // #available 게이트 통과 — 정책 표와의 정합용 명시 인자
+            isForegroundActive: isForegroundActive,   // R2 blocker③ — silent wake 컨텍스트 차단
             hasChannelMarker: activity.attributes.channelId != nil,
-            // scheduled 카드는 제외 — 라이브 진입 후 다음 포그라운드 rescan이 잡는다.
+            // scheduled 카드는 제외 — 라이브 진입 후 다음 포그라운드가 잡는다.
             isLive: activity.contentState.status == .live && activity.activityState == .active,
             alreadyMigrated: migratedGameIds.contains(gameId),
             inFlight: migrationInFlightGameIds.contains(gameId))
@@ -515,6 +555,56 @@ final class LiveActivityController {
                 migrationInFlightGameIds.remove(gameId)
                 migrationLock.unlock()
             }
+            // R2 blocker① — 같은 경기 start()/end()와 상호 배제(경기 직렬 큐).
+            await withGameSerialQueue(gameId) { [self] in
+                await migrateSerialized(activity: activity, gameId: gameId)
+            }
+        }
+    }
+
+    /// 경기 직렬 큐 안에서 실행되는 마이그레이션 본체 — 락 대기 중 변한 상태를 재검증한다.
+    @available(iOS 18.0, *)
+    private func migrateSerialized(activity: Activity<KBOGameAttributes>, gameId: String) async {
+        // 직렬 구간 재검증 — 락 대기 중 start() 스윕이 카드를 정리했거나 앱이 background로
+        // 전환됐을 수 있다. request 직전 최종 게이트(R2 blocker③ — background request 0).
+        let foreground = await MainActor.run { UIApplication.shared.applicationState == .active }
+        switch ChannelMigrationPolicy.recheck(
+            isForegroundActive: foreground,
+            legacyStillActive: activity.activityState == .active
+        ) {
+        case .abortBackground:
+            return   // 다음 foreground(didBecomeActive)가 재시도 — 마킹 없음
+        case .abortLegacyGone:
+            return   // start() 채널-우선 스윕 등이 이미 정리 — 할 일 없음
+        case .proceed:
+            break
+        }
+        // R2 blocker② — 같은 경기 active 채널 카드가 이미 있으면 신규 request 금지.
+        let existingChannel = Activity<KBOGameAttributes>.activities.first {
+            $0.attributes.gameId == gameId && $0.attributes.channelId != nil
+                && $0.activityState == .active
+        }
+        switch ChannelMigrationPolicy.migrateMode(hasActiveSameGameChannelCard: existingChannel != nil) {
+        case .adoptExistingChannelCard:
+            guard let existing = existingChannel,
+                  let channelId = existing.attributes.channelId else { return }
+            // 기존 채널 카드 재사용 — legacy만 정리(채널 카드가 살아 있으므로 카드 0장 불가).
+            for legacy in Activity<KBOGameAttributes>.activities
+            where legacy.attributes.gameId == gameId && legacy.attributes.channelId == nil {
+                await legacy.end(using: legacy.contentState, dismissalPolicy: .immediate)
+            }
+            // 마킹은 legacy 정리 *완료 후* (삼순 R2 게이트 — 새 카드 active 확인·정리 끝난 뒤에만).
+            migrationLock.lock()
+            migratedGameIds.insert(gameId)
+            migrationLock.unlock()
+            if currentActivity?.attributes.gameId == gameId,
+               currentActivity?.attributes.channelId == nil {
+                currentActivity = existing
+            }
+            // 재-ack는 멱등(ackedActivityIds 중복가드) — 구독 SSOT 누락만 보완.
+            ackChannelActivity(gameId: gameId, channelId: channelId, activityId: existing.id)
+            NSLog("[LiveActivity] adopted existing channel card, legacy cleaned (game=\(gameId))")
+        case .requestNewChannelCard:
             switch ChannelMigrationPolicy.onFetch(await fetchActiveChannel(gameId: gameId)) {
             case .retryNextForeground:
                 return   // 채널 없음/GET 일시 실패 — 레거시 유지, 다음 포그라운드 재시도
@@ -529,16 +619,20 @@ final class LiveActivityController {
                         content: .init(state: state, staleDate: nil),
                         pushType: .channel(channelId)
                     )
-                    migrationLock.lock()
-                    migratedGameIds.insert(gameId)
-                    migrationLock.unlock()
                     // 같은 경기 레거시 카드 전부 즉시 종료(원본 + 혹시 남은 중복) —
                     // 현재 contentState 그대로 end라 잠금화면 정보 손실 없음.
                     for legacy in Activity<KBOGameAttributes>.activities
                     where legacy.attributes.gameId == gameId && legacy.attributes.channelId == nil {
                         await legacy.end(using: state, dismissalPolicy: .immediate)
                     }
-                    if currentActivity?.id == activity.id { currentActivity = newActivity }
+                    // 마킹은 새 카드 active 확인(request 성공) + legacy 정리 완료 *후* (R2 게이트).
+                    migrationLock.lock()
+                    migratedGameIds.insert(gameId)
+                    migrationLock.unlock()
+                    if currentActivity?.attributes.gameId == gameId,
+                       currentActivity?.attributes.channelId == nil {
+                        currentActivity = newActivity
+                    }
                     // 구독 SSOT 기록 — 기존 ACK 경로 재사용(active 재검증·persist 큐 포함).
                     ackChannelActivity(gameId: gameId, channelId: channelId, activityId: newActivity.id)
                     NSLog("[LiveActivity] migrated legacy → channel card (game=\(gameId), id=\(newActivity.id))")
@@ -647,24 +741,49 @@ final class LiveActivityController {
             return false
         }
 
+        // R2 blocker① — 같은 경기 migration/end와 상호 배제(경기 직렬 큐).
+        return await withGameSerialQueue(gameId) { [self] in
+            await startSerialized(gameId: gameId, awayTeam: awayTeam, homeTeam: homeTeam,
+                                  awayTeamCode: awayTeamCode, homeTeamCode: homeTeamCode,
+                                  myTeamCode: myTeamCode, state: state)
+        }
+    }
+
+    /// 경기 직렬 큐 안에서 실행되는 start 본체.
+    private func startSerialized(
+        gameId: String,
+        awayTeam: String,
+        homeTeam: String,
+        awayTeamCode: String,
+        homeTeamCode: String,
+        myTeamCode: String,
+        state: KBOGameAttributes.ContentState
+    ) async -> Bool {
         // 시스템에 살아있는 *모든* Activity를 회수해 정리한다 (앱 재시작·더미 누적으로
         // 여러 장 남은 상태를 코드로 거둠 — `.activities.first` 하나만으론 정리 불가, 삼순 #220).
-        // 같은 gameId의 첫 한 개만 보존(아래서 갱신), 나머지(다른 경기·중복·더미)는 즉시 종료.
-        // 전환/중복 종료는 .immediate, 15분 잔상은 경기 final(W4)에만.
-        var keep: Activity<KBOGameAttributes>? = nil
-        for activity in Activity<KBOGameAttributes>.activities {
-            if activity.attributes.gameId == gameId && keep == nil {
-                keep = activity
-            } else {
-                await activity.end(using: activity.contentState, dismissalPolicy: .immediate)
-            }
+        // R2 blocker①: 같은 경기 카드 중 *채널 카드(marker 보유)를 최우선 보존* — 기존 임의
+        // first-card 보존이 migration이 방금 만든 채널 카드를 죽이던 경합 차단. 카드가
+        // 하나라도 있으면 반드시 한 장은 보존된다(카드 0장 불가). 나머지(다른 경기·중복·
+        // 더미)는 즉시 종료 — 전환/중복 종료는 .immediate, 15분 잔상은 경기 final(W4)에만.
+        let all = Activity<KBOGameAttributes>.activities
+        let sameGame = all.filter { $0.attributes.gameId == gameId }
+        let keepIdx = ChannelMigrationPolicy.keepIndex(
+            hasChannelMarker: sameGame.map { $0.attributes.channelId != nil })
+        let keep = keepIdx.map { sameGame[$0] }
+        for activity in all where activity.id != keep?.id {
+            await activity.end(using: activity.contentState, dismissalPolicy: .immediate)
         }
         currentActivity = keep
 
         // 같은 경기가 이미 떠 있으면 갱신만 (재진입 중복 방지)
-        if let existing = currentActivity {
+        if let existing = keep {
             await existing.update(using: state)
-            observePushToken(existing, gameId: gameId)   // 앱 재시작 복구분도 토큰 재관찰
+            if #available(iOS 18.0, *), let channelId = existing.attributes.channelId {
+                // 보존된 채널 카드 — 구독 SSOT 재확인(ackedActivityIds 중복가드로 멱등).
+                ackChannelActivity(gameId: gameId, channelId: channelId, activityId: existing.id)
+            } else {
+                observePushToken(existing, gameId: gameId)   // 레거시 보존분 토큰 재관찰
+            }
             writeWidgetSnapshot(attributes: existing.attributes, state: state)
             return true
         }
@@ -678,11 +797,18 @@ final class LiveActivityController {
             myTeamCode: myTeamCode
         )
 
-        // Broadcast 채널 start(스펙 v4 §클라 2) — iOS 18+ && 자기 env active 채널이 *definitive*
-        // 하게 조회될 때만 `.channel` 구독으로 시작(per-토큰 예산 없이 broadcast 갱신). attributes에
-        // marker를 실어 앱 재시작 후 rescan에서도 채널 activity로 식별되게 한다. 조회 일시 실패/
-        // 채널 없음/생성 실패 → 아래 기존 `.token` 경로로 폴백(어떤 유저도 지금보다 나빠지지 않음).
-        if #available(iOS 18.0, *), case .active(let channelId?) = await fetchActiveChannel(gameId: gameId) {
+        // R2 blocker④ — build16+/iOS18+ 신규 시작은 *채널 카드만*(스펙 v4 §클라 2). 채널
+        // 미준비(definitive 부재)·GET 일시 실패·request 실패 = 시작 유보(false 반환, 다음
+        // 기회 재시도 — 웹뷰 재진입/다음 포그라운드가 다시 부른다). 기존 레거시 `.token`
+        // fallback 분기 제거 — 7/23 사고 입구: fallback으로 태어난 레거시 카드가 예산
+        // 스로틀에 갇혀 이닝 단위 지연. iOS 17 이하는 위 isEnabled(18 게이트)로 start 자체가
+        // no-op이고, build 15 이하 구버전 바이너리의 레거시 경로는 본 코드와 무관(그대로 유지).
+        guard #available(iOS 18.0, *) else { return false }   // isEnabled와 동일 게이트(방어적)
+        switch ChannelMigrationPolicy.startDecision(await fetchActiveChannel(gameId: gameId)) {
+        case .deferStart:
+            NSLog("[LiveActivity] start deferred: channel not ready (game=\(gameId)) — no legacy fallback")
+            return false
+        case .startChannelCard(let channelId):
             var channelAttributes = attributes
             channelAttributes.channelId = channelId
             do {
@@ -697,24 +823,10 @@ final class LiveActivityController {
                 NSLog("[LiveActivity] started game=\(gameId) via channel id=\(activity.id)")
                 return true
             } catch {
-                NSLog("[LiveActivity] channel start failed → token fallback: \(error.localizedDescription)")
+                // request 실패도 시작 유보 — 레거시 fallback 금지(R2 blocker④).
+                NSLog("[LiveActivity] channel start failed → deferred, no legacy fallback: \(error.localizedDescription)")
+                return false
             }
-        }
-
-        do {
-            let activity = try Activity.request(
-                attributes: attributes,
-                contentState: state,
-                pushType: .token   // W3: APNs 토큰 발급 → 서버가 백그라운드 갱신 푸시
-            )
-            currentActivity = activity
-            observePushToken(activity, gameId: gameId)
-            writeWidgetSnapshot(attributes: attributes, state: state)
-            NSLog("[LiveActivity] started game=\(gameId) id=\(activity.id)")
-            return true
-        } catch {
-            NSLog("[LiveActivity] start failed: \(error.localizedDescription)")
-            return false
         }
     }
 
@@ -726,8 +838,12 @@ final class LiveActivityController {
     }
 
     /// 종료(경기 final) — 최종 content-state + 15분 후 자동 제거(dismissal-date).
+    /// R2 blocker① — 같은 경기 start/migration과 상호 배제(경기 직렬 큐).
     func end(finalState: KBOGameAttributes.ContentState? = nil) async {
-        await endCurrent(immediate: false, finalState: finalState)
+        guard let gameId = currentActivity?.attributes.gameId else { return }
+        await withGameSerialQueue(gameId) { [self] in
+            await endCurrent(immediate: false, finalState: finalState)
+        }
     }
 
     /// 공통 종료 헬퍼. immediate=true면 즉시 제거(경기 전환), false면 now+15m 잔상(W4 final).
@@ -789,6 +905,7 @@ final class LiveActivityController {
     @discardableResult func startDummyActivity() -> Bool { false }
     func startObservers() {}
     func resyncPushToStartTokenOnForeground() {}
+    func migrateLegacyActivitiesOnForeground() {}
     #endif
 }
 

@@ -55,6 +55,11 @@
 2. **재생성 우선 순서(안전 원칙)**: active 채널 확보 시 *먼저* `Activity.request(pushType: .channel, attributes+marker)`로 현재 contentState 그대로 채널 카드를 재생성하고, **성공한 뒤에만** 같은 경기 레거시 카드를 `.immediate` end. fetch 실패/채널 부재/request 실패 = 레거시 유지 no-op — 어떤 경로에서도 카드만 사라지지 않는다.
 3. 재생성 성공 시 기존 ACK 경로(`ackChannelActivity` — active 재검증·persist 큐·device-auth) 재사용으로 구독 SSOT 기록. 서버 레거시 발송 제외(§서버 5 NOT EXISTS)도 그대로 작동해 per-토큰 발송이 자연 중단된다. 서버 변경 없음.
 4. 재시도 정책: 채널 부재(definitive)·GET 일시 실패도 폐기 아닌 유보 — 완료 마킹 없이 다음 포그라운드에서 재시도(채널이 늦게 생기는 7/23 케이스 커버). 성공만 경기당 1회 마킹, 동시 중복은 in-flight 가드.
+5. **R2(삼순 blocker 반영, 2026-07-23)**:
+   - **경기 단위 직렬화**: `start()`·migration·`end()`는 경기별 Task 체인(`withGameSerialQueue`)에서 상호 배제. start()의 정리 스윕은 같은 경기 카드 중 *채널 카드(marker)를 최우선 보존*(`keepIndex`) — 카드가 있으면 반드시 한 장 보존(카드 0장 경로 없음).
+   - **중복 채널 방지**: 직렬 구간에서 같은 경기 active 채널 카드가 이미 있으면 신규 `request` 없이 legacy만 정리(`migrateMode = adopt`). `migrated` 마킹은 새 카드 active 확인 + legacy 정리 완료 *후*에만.
+   - **background request 0**: 마이그레이션은 `applicationDidBecomeActive`(foreground-active) 전용 진입점 `migrateLegacyActivitiesOnForeground()`에서만 실행. silent wake(`didReceiveRemoteNotification`)의 rescan은 토큰 재등록만 — local `Activity.request()` 0건. 직렬 구간에서도 request 직전 `recheck`로 background 전환·legacy 소멸을 재검증.
+   - **레거시 fallback 차단(build16+/iOS18+)**: 신규 `start()`는 채널 카드만 생성(`startDecision`) — 채널 미준비/GET 일시 실패/request 실패 = 시작 유보(다음 기회 재시도), 기존 `.token` fallback 분기 제거. iOS 17 이하는 `isEnabled`(18 게이트)로 start 자체 no-op, build 15 이하 구버전 바이너리 레거시 경로는 불변.
 
 ## p2s `input-push-channel` 포함 규칙 (v4 통합 — per-attempt 단일 규칙)
 **게이트(토큰 단위)**: `os_major>=18 && app_build>=16`(둘 다 클라 명시 보고값). 미충족/미보고 → 기존 payload(레거시).
