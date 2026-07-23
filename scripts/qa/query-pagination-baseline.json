@@ -737,13 +737,6 @@
       "subject": "channel_pool",
       "detail": "add a bound, unique-key lookup, or query-guard annotation"
     },
-    "8034905ca8dccd436154": {
-      "count": 1,
-      "kind": "unclassified_relation",
-      "file": "src/app/api/admin/live-activity/route.ts",
-      "subject": "<dynamic>",
-      "detail": "classify this relation or add an explicit bounded annotation before querying it"
-    },
     "81a6e80a55aa77bb426f": {
       "count": 1,
       "kind": "ambiguous_growing_limit",
@@ -1505,13 +1498,6 @@
       "kind": "unbounded_growing_select",
       "file": "scripts/qa/ui-smoke-news-comment-report.mjs",
       "subject": "reports",
-      "detail": "add a bound, unique-key lookup, or query-guard annotation"
-    },
-    "f9283c154313ba2b8803": {
-      "count": 1,
-      "kind": "unbounded_growing_select",
-      "file": "src/lib/notifications/live-activity.ts",
-      "subject": "live_activity_start_tokens",
       "detail": "add a bound, unique-key lookup, or query-guard annotation"
     },
     "f9c850d666dce24b2b86": {

@@ -15,6 +15,7 @@ import {
   scoreStateOf,
   fullStateHashOf,
   isStaleStartToken,
+  selectWakeGapRows,
   p2sChannelEligible,
   p2sEnvAttempts,
   startTokenResultFence,
@@ -138,6 +139,9 @@ interface StartedUserRow {
   user_id: string;
   game_id: string;
   created_at: string | null;
+  // 채널 내장 출생 카드(p2s payload에 channelId 포함 발송 성공) — broadcast 수신이라
+  // wake 대상·attempted 기록에서 제외(selectWakeGapRows, 분모 오염 방지).
+  channel_born: boolean | null;
 }
 
 async function fetchLiveActivityTokens(gameIds: string[]): Promise<TokenRow[]> {
@@ -160,7 +164,7 @@ async function fetchStartedUsers(gameIds: string[]): Promise<StartedUserRow[]> {
     fetchAllByKeyset(async (cursor, limit) => {
       let query = supabase
         .from("live_activity_started_users")
-        .select("user_id, game_id, created_at")
+        .select("user_id, game_id, created_at, channel_born")
         .eq("game_id", gameId)
         .order("user_id", { ascending: true })
         .limit(limit);
@@ -547,10 +551,12 @@ async function startForTeamSide(params: {
   // push-to-start 토큰 보유 유저만. .in()은 URL 한도 회피 위해 200개 청크.
   const tokenByUser = new Map<string, StartTokenMeta>();
   for (let i = 0; i < fans.ids.length; i += 200) {
+    // query-guard: bounded -- 바깥 루프가 매 조회를 200개 user id 청크로 상한(user_id unique → ≤200행)
     const { data, error } = await supabase
       .from("live_activity_start_tokens")
       .select("user_id, push_to_start_token, apns_environment, app_build, os_major, token_changed_at, updated_at")
-      .in("user_id", fans.ids.slice(i, i + 200));
+      .in("user_id", fans.ids.slice(i, i + 200))
+      .limit(200);
     if (error) return { sent: 0, failed: true }; // 토큰 조회 실패 → 재시도
     for (const r of (data ?? []) as {
       user_id: string; push_to_start_token: string;
@@ -1021,16 +1027,12 @@ export async function pushLiveActivitySilentWakes(
       }
     }
   }
-  // 갭 유저 = (user,game) 토큰 없음. wake는 기기 단위라 user로 중복 제거.
+  // 갭 유저 = (user,game) 토큰·유효 ACK 없음 + channel_born 아님. wake는 기기 단위라 user로 중복 제거.
+  // channel_born 카드는 broadcast 수신(어드민 updatable 합산과 동일 기준)이므로 wake
+  // 대상·wake_attempted_at 기록 모두에서 제외(분모 오염 방지) — selectWakeGapRows가 SSOT.
   // 예정 경기 row는 카드 발급(created_at) 후 WAKE_WINDOW_MS 이내만 — 그 뒤는 live 전환 창이 백스톱.
   const scheduledSet = new Set(scheduledGameIds);
-  const gapRows = started
-    .filter((r) => !tokened.has(`${r.user_id}|${r.game_id}`))
-    .filter(
-      (r) =>
-        !scheduledSet.has(r.game_id) ||
-        (r.created_at !== null && Date.now() - new Date(r.created_at).getTime() <= WAKE_WINDOW_MS),
-    );
+  const gapRows = selectWakeGapRows(started, tokened, scheduledSet, Date.now(), WAKE_WINDOW_MS);
   const gapUsers = [...new Set(gapRows.map((r) => r.user_id))];
   if (gapUsers.length === 0) return EMPTY_WAKE;
 

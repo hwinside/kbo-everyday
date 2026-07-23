@@ -364,6 +364,44 @@ export function countUpdatableUsers(i: {
   return n;
 }
 
+// ── 무음 wake 대상 선별 (③ wake 오염 제거, 삼순 재리뷰 2026-07-23) ──────
+// channel_born 카드는 broadcast로 갱신을 받아 wake가 불필요한데, 이를 wake 대상에
+// 넣으면 FCM 무음 wake가 낭비될 뿐 아니라 wake_attempted_at이 기록돼 어드민의
+// wake 구제 성공률 분모가 오염된다(시도할 필요가 없던 카드가 분모에 섞임).
+// gap 판정과 attempted 기록이 같은 행 집합에서 나오도록 순수 함수로 고정한다.
+
+export interface WakeGapRow {
+  user_id: string;
+  game_id: string;
+  created_at: string | null;
+  channel_born: boolean | null;
+}
+
+/**
+ * 무음 wake 대상 gap 행 선별 — wake 발송 대상과 wake_attempted_at 기록이 모두
+ * 이 반환값에서만 파생돼야 한다(분모 오염 방지 계약).
+ * - channel_born=true 행 제외: 채널 내장 출생 카드는 토큰/ACK 없이도 updatable —
+ *   wake 불필요·attempted 기록 금지.
+ * - updatableKeys(`user|game` — update 토큰 or 유효 채널 ACK) 보유 행 제외.
+ * - scheduled 경기 행은 카드 발급(created_at) 후 wakeWindowMs 이내만(그 뒤는 live 전환 창이 백스톱).
+ */
+export function selectWakeGapRows<T extends WakeGapRow>(
+  rows: T[],
+  updatableKeys: Set<string>,
+  scheduledGameIds: Set<string>,
+  nowMs: number,
+  wakeWindowMs: number,
+): T[] {
+  return rows.filter((r) => {
+    if (r.channel_born) return false;
+    if (updatableKeys.has(`${r.user_id}|${r.game_id}`)) return false;
+    if (scheduledGameIds.has(r.game_id)) {
+      return r.created_at !== null && nowMs - new Date(r.created_at).getTime() <= wakeWindowMs;
+    }
+    return true;
+  });
+}
+
 // ── p2s stale 토큰 발송 제외 ─────────────────────────────────────────
 // gap 유저 41%가 updated_at 1~30일+ 미갱신 휴면 기기(2026-07-23 실측) — 앱을 오래 안 연
 // 기기는 p2s로 카드가 떠도 update 토큰 등록(wake/앱 오픈)이 사실상 안 일어나 갱신불가

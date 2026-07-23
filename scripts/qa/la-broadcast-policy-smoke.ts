@@ -23,6 +23,7 @@ import {
   countUpdatableUsers,
   isStaleStartToken,
   STALE_START_TOKEN_MS,
+  selectWakeGapRows,
 } from "../../src/lib/notifications/live-activity-channel-policy";
 
 let pass = 0;
@@ -428,6 +429,46 @@ check("cursor: invalidToken + retryable 혼합(성공 無) → 보류",
     isStaleStartToken(new Date(now - 24 * 60 * 60 * 1000).toISOString(), now), false);
   check("stale: null → false(보수적 — 발송 유지)", isStaleStartToken(null, now), false);
   check("stale: 파싱 불가 → false(보수적)", isStaleStartToken("not-a-date", now), false);
+}
+
+// ── selectWakeGapRows — 무음 wake 대상·attempted 기록 선별(삼순 재리뷰 wake 오염 제거) ──
+// pushLiveActivitySilentWakes는 wake 발송 대상과 wake_attempted_at 기록을 *모두* 이
+// 함수 반환값(gapRows)에서만 파생시킨다 — 여기서 빠지면 wake도 attempted 기록도 없다.
+{
+  const now = Date.parse("2026-07-23T19:00:00+09:00");
+  const W = 10 * 60 * 1000; // wake 창 10분 가정
+  const live = "20260723LGKT0";
+  const sched = "20260723OBSS0";
+  const row = (user: string, game: string, channelBorn: boolean | null, createdAt: string | null = null) =>
+    ({ user_id: user, game_id: game, created_at: createdAt, channel_born: channelBorn });
+
+  // 핵심 회귀: channel_born 단독 row(토큰/ACK 없음)는 wake 대상·attempted 기록에서 제외.
+  check("wakeGap: channel_born 단독 row → 제외(wake·attempted 모두 없음)",
+    selectWakeGapRows([row("u1", live, true)], new Set(), new Set(), now, W), []);
+  // channel_born 아닌 순수 gap row는 여전히 대상.
+  check("wakeGap: 토큰·ACK·channel_born 없는 row → 대상 유지",
+    selectWakeGapRows([row("u1", live, false)], new Set(), new Set(), now, W),
+    [row("u1", live, false)]);
+  check("wakeGap: channel_born null(마이그레이션 이전 행) → 종전대로 대상(보수적)",
+    selectWakeGapRows([row("u1", live, null)], new Set(), new Set(), now, W),
+    [row("u1", live, null)]);
+  // 혼합: channel_born row만 정확히 빠진다(같은 경기 다른 유저 영향 없음).
+  check("wakeGap: 혼합 — channel_born row만 제외, 나머지 gap 유지",
+    selectWakeGapRows([row("u1", live, true), row("u2", live, false)], new Set(), new Set(), now, W),
+    [row("u2", live, false)]);
+  // 기존 제외 조건 회귀: update 토큰/유효 ACK 보유 유저 제외 유지.
+  check("wakeGap: update 토큰/유효 ACK 보유 → 제외(기존 동작 보존)",
+    selectWakeGapRows([row("u1", live, false)], new Set([`u1|${live}`]), new Set(), now, W), []);
+  // scheduled 창 회귀: 발급 직후만 포함, 창 밖/created_at null 제외.
+  const fresh = new Date(now - W + 1000).toISOString();
+  const old = new Date(now - W - 1000).toISOString();
+  check("wakeGap: scheduled 창 이내 발급 row → 포함",
+    selectWakeGapRows([row("u1", sched, false, fresh)], new Set(), new Set([sched]), now, W),
+    [row("u1", sched, false, fresh)]);
+  check("wakeGap: scheduled 창 경과 row → 제외",
+    selectWakeGapRows([row("u1", sched, false, old)], new Set(), new Set([sched]), now, W), []);
+  check("wakeGap: scheduled + channel_born → 창 이내여도 제외",
+    selectWakeGapRows([row("u1", sched, true, fresh)], new Set(), new Set([sched]), now, W), []);
 }
 
 console.log(`\nla-broadcast-policy-smoke: ${pass} PASS / ${fail} FAIL`);

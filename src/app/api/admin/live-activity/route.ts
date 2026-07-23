@@ -71,24 +71,46 @@ interface SubRow {
 
 // Supabase는 요청당 기본 1000행 캡이 있어(무제한 select가 조용히 잘림 — #560 사고)
 // 반드시 range 페이지네이션으로 전량을 모은다. game_id 내림차순(오늘 날짜가 접두라
-// 최신이 먼저 옴)으로 정렬해서, 상한에 걸려도 과거 잔존행부터 잘리고 오늘 활성
-// 경기 행은 항상 먼저 채워지도록 보장한다. 상한 도달 시 truncated=true로 알린다.
-async function fetchAllRows<T extends CardRow>(
-  table: string,
-  columns = "game_id, user_id",
-): Promise<{ rows: T[]; truncated: boolean }> {
-  const PAGE = 1000;
-  const MAX_PAGES = 30; // 현재 실측 ~1,900행 대비 15배 여유(3만 행)
-  const rows: T[] = [];
+// 최신이 먼저 옴) + 고유키 tie-breaker(페이지 경계 안정 정렬 — 동점 game_id 행이
+// 페이지 사이에서 누락/중복되지 않게)로 정렬해서, 상한에 걸려도 과거 잔존행부터
+// 잘리고 오늘 활성 경기 행은 항상 먼저 채워지도록 보장한다. 상한 도달 시
+// truncated=true로 알린다. 테이블명은 정적 리터럴(query guard가 relation을 분류
+// 가능하도록 — 삼순 재리뷰 2026-07-23, dynamic relation 구조적 해소).
+const PAGE = 1000;
+const MAX_PAGES = 30; // 현재 실측 ~1,900행 대비 15배 여유(3만 행)
+
+async function fetchStartedRows(): Promise<{ rows: StartedRow[]; truncated: boolean }> {
+  const rows: StartedRow[] = [];
   let truncated = false;
   for (let page = 0; page < MAX_PAGES; page++) {
+    // query-guard: bounded-page -- MAX_PAGES×1000행 상한 + (game_id desc, user_id) 안정 정렬 페이지
     const { data, error } = await supabase
-      .from(table)
-      .select(columns)
+      .from("live_activity_started_users")
+      .select("game_id, user_id, channel_born, wake_attempted_at")
       .order("game_id", { ascending: false })
+      .order("user_id", { ascending: true })
       .range(page * PAGE, page * PAGE + PAGE - 1);
-    if (error) throw new Error(`${table}: ${error.message}`);
-    rows.push(...((data ?? []) as unknown as T[]));
+    if (error) throw new Error(`live_activity_started_users: ${error.message}`);
+    rows.push(...((data ?? []) as StartedRow[]));
+    if (!data || data.length < PAGE) break;
+    if (page === MAX_PAGES - 1) truncated = true;
+  }
+  return { rows, truncated };
+}
+
+async function fetchTokenRows(): Promise<{ rows: CardRow[]; truncated: boolean }> {
+  const rows: CardRow[] = [];
+  let truncated = false;
+  for (let page = 0; page < MAX_PAGES; page++) {
+    // query-guard: bounded-page -- MAX_PAGES×1000행 상한 + (game_id desc, id) 안정 정렬 페이지
+    const { data, error } = await supabase
+      .from("live_activity_tokens")
+      .select("game_id, user_id")
+      .order("game_id", { ascending: false })
+      .order("id", { ascending: true })
+      .range(page * PAGE, page * PAGE + PAGE - 1);
+    if (error) throw new Error(`live_activity_tokens: ${error.message}`);
+    rows.push(...((data ?? []) as CardRow[]));
     if (!data || data.length < PAGE) break;
     if (page === MAX_PAGES - 1) truncated = true;
   }
@@ -141,11 +163,8 @@ export async function GET(req: NextRequest) {
       supabase.from("live_activity_start_tokens").select("*", { count: "exact", head: true }),
       supabase.from("live_activity_start_tokens").select("*", { count: "exact", head: true }).gte("updated_at", since24h),
       supabase.from("live_activity_start_tokens").select("*", { count: "exact", head: true }).gte("updated_at", since7d),
-      fetchAllRows<StartedRow>(
-        "live_activity_started_users",
-        "game_id, user_id, channel_born, wake_attempted_at",
-      ),
-      fetchAllRows("live_activity_tokens"),
+      fetchStartedRows(),
+      fetchTokenRows(),
       fetchAllSubRows(),
       fetchActiveChannels(),
       fetchTodayGames(),
