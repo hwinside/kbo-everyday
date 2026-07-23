@@ -4,6 +4,7 @@ import { isAdminAuthedRequest } from "@/lib/admin/pin";
 import {
   activeChannelKeySet,
   countUpdatableUsers,
+  isLiveBornChannel,
   isLiveChannelSubscription,
   type ActiveChannelRef,
 } from "@/lib/notifications/live-activity-channel-policy";
@@ -54,9 +55,11 @@ interface CardRow {
 }
 
 interface StartedRow extends CardRow {
-  // p2s payload에 channelId 내장 발송 성공(서버 기록) — ACK 없이도 broadcast 갱신 수신.
-  // ⚠️ 2026-07-23 마이그레이션 이전 발송 행은 항상 false(backfill 불가).
-  channel_born: boolean | null;
+  // p2s payload에 channelId 내장 발송 성공한 *채널 세대*(서버 기록) — 현재 active
+  // 채널과 정확 일치할 때만 broadcast 갱신 수신으로 인정(삼순 라운드2 — 출생 채널이
+  // 재생성으로 교체된 카드는 gap 복귀). ⚠️ 마이그레이션 이전 행은 null(backfill 불가).
+  channel_born_environment: string | null;
+  channel_born_channel_id: string | null;
   // 무음 wake 첫 시도 시각 — 구제 성공률(시도 후 updatable 전환) 집계용.
   wake_attempted_at: string | null;
 }
@@ -86,7 +89,7 @@ async function fetchStartedRows(): Promise<{ rows: StartedRow[]; truncated: bool
     // query-guard: bounded-page -- MAX_PAGES×1000행 상한 + (game_id desc, user_id) 안정 정렬 페이지
     const { data, error } = await supabase
       .from("live_activity_started_users")
-      .select("game_id, user_id, channel_born, wake_attempted_at")
+      .select("game_id, user_id, channel_born_environment, channel_born_channel_id, wake_attempted_at")
       .order("game_id", { ascending: false })
       .order("user_id", { ascending: true })
       .range(page * PAGE, page * PAGE + PAGE - 1);
@@ -201,9 +204,10 @@ export async function GET(req: NextRequest) {
     for (const r of startedRows) {
       const e = entry(r.game_id);
       e.started.add(r.user_id);
-      // channel_born = p2s 발송 시점에 서버가 기록한 '채널 내장 출생' 카드 — 네이티브 ACK와
-      // 무관하게 broadcast 갱신을 받으므로 updatable 합산(gap 과대계상 교정, 2026-07-23).
-      if (r.channel_born) e.channelBorn.add(r.user_id);
+      // 채널 내장 출생 카드 — *출생 세대가 현재 active 채널과 정확 일치*할 때만 네이티브
+      // ACK 없이도 broadcast 갱신 수신으로 합산(gap 과대계상 교정, 2026-07-23). 출생 채널이
+      // 교체된 행은 gap으로 복귀 — wake 제외 판정(selectWakeGapRows)과 동일 기준(이중 기준 금지).
+      if (isLiveBornChannel(r, activeKeys)) e.channelBorn.add(r.user_id);
       if (r.wake_attempted_at) e.wakeAttempted.add(r.user_id);
     }
     for (const r of tokenRows) entry(r.game_id).tokens.add(r.user_id);
@@ -232,7 +236,7 @@ export async function GET(req: NextRequest) {
         });
         const gap = started - updatable;
         // wake 구제 성공 = 무음 wake 시도 후 update 토큰/채널 ACK가 등록된 유저
-        // (channel_born은 애초에 gap이 아니라 wake 대상이 아니므로 성공 판정에서 제외).
+        // (유효 채널출생은 애초에 gap이 아니라 wake 대상이 아니므로 성공 판정에서 제외).
         const wakeAttempted = e.wakeAttempted.size;
         const wakeRescued = [...e.wakeAttempted].filter(u => e.tokens.has(u) || e.channelUsers.has(u)).length;
         return {

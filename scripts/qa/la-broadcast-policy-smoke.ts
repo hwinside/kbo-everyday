@@ -20,6 +20,7 @@ import {
   CHANNEL_HEARTBEAT_INTERVAL_MS,
   activeChannelKeySet,
   isLiveChannelSubscription,
+  isLiveBornChannel,
   countUpdatableUsers,
   isStaleStartToken,
   STALE_START_TOKEN_MS,
@@ -434,41 +435,89 @@ check("cursor: invalidToken + retryable 혼합(성공 無) → 보류",
 // ── selectWakeGapRows — 무음 wake 대상·attempted 기록 선별(삼순 재리뷰 wake 오염 제거) ──
 // pushLiveActivitySilentWakes는 wake 발송 대상과 wake_attempted_at 기록을 *모두* 이
 // 함수 반환값(gapRows)에서만 파생시킨다 — 여기서 빠지면 wake도 attempted 기록도 없다.
+// 채널출생 제외는 *세대 일치(isLiveBornChannel)*일 때만 — 출생 채널이 교체되면 gap 복귀
+// (삼순 라운드2 blocker).
 {
   const now = Date.parse("2026-07-23T19:00:00+09:00");
   const W = 10 * 60 * 1000; // wake 창 10분 가정
   const live = "20260723LGKT0";
   const sched = "20260723OBSS0";
-  const row = (user: string, game: string, channelBorn: boolean | null, createdAt: string | null = null) =>
-    ({ user_id: user, game_id: game, created_at: createdAt, channel_born: channelBorn });
+  // 출생 세대: "A" = chanA(구채널), "B" = chanB(현 active), null = 레거시/비채널 발송.
+  const row = (user: string, game: string, born: "A" | "B" | null, createdAt: string | null = null) =>
+    ({
+      user_id: user, game_id: game, created_at: createdAt,
+      channel_born_environment: born ? "production" : null,
+      channel_born_channel_id: born === "A" ? "chanA" : born === "B" ? "chanB" : null,
+    });
+  // 현재 active 채널 = chanB (채널 A는 ChannelNotRegistered로 deleted 후 B로 재생성된 상황).
+  const activeB = new Set([`${live}|production|chanB`, `${sched}|production|chanB`]);
 
-  // 핵심 회귀: channel_born 단독 row(토큰/ACK 없음)는 wake 대상·attempted 기록에서 제외.
-  check("wakeGap: channel_born 단독 row → 제외(wake·attempted 모두 없음)",
-    selectWakeGapRows([row("u1", live, true)], new Set(), new Set(), now, W), []);
-  // channel_born 아닌 순수 gap row는 여전히 대상.
-  check("wakeGap: 토큰·ACK·channel_born 없는 row → 대상 유지",
-    selectWakeGapRows([row("u1", live, false)], new Set(), new Set(), now, W),
-    [row("u1", live, false)]);
-  check("wakeGap: channel_born null(마이그레이션 이전 행) → 종전대로 대상(보수적)",
-    selectWakeGapRows([row("u1", live, null)], new Set(), new Set(), now, W),
+  // 핵심 회귀: 유효 채널출생 단독 row(토큰/ACK 없음)는 wake 대상·attempted 기록에서 제외.
+  check("wakeGap: 유효 채널출생(세대 일치) 단독 row → 제외(wake·attempted 모두 없음)",
+    selectWakeGapRows([row("u1", live, "B")], new Set(), activeB, new Set(), now, W), []);
+  // 삼순 라운드2 회귀: 채널 A born → A 무효화(deleted) → B active — 구채널 출생 row는
+  // broadcast를 못 받으므로 wake gap으로 복귀해야 한다(boolean 영구 제외 금지).
+  check("wakeGap: [라운드2] 채널 A born + 현 active=B → gap 복귀(wake 대상)",
+    selectWakeGapRows([row("u1", live, "A")], new Set(), activeB, new Set(), now, W),
+    [row("u1", live, "A")]);
+  // 재제외(③): 구채널 출생 row도 이후 update 토큰 또는 새 채널 B ACK가 생기면
+  // updatableKeys(토큰∪유효 ACK 동일 경로)로 다시 제외된다.
+  check("wakeGap: [라운드2] 구채널 born + 이후 토큰/B ACK 등록 → 재제외",
+    selectWakeGapRows([row("u1", live, "A")], new Set([`u1|${live}`]), activeB, new Set(), now, W), []);
+  // 채널출생 아닌 순수 gap row(세대 null)는 여전히 대상 — 마이그레이션 이전 행 포함(보수적).
+  check("wakeGap: 토큰·ACK·채널출생 없는 row(null 세대) → 대상 유지",
+    selectWakeGapRows([row("u1", live, null)], new Set(), activeB, new Set(), now, W),
     [row("u1", live, null)]);
-  // 혼합: channel_born row만 정확히 빠진다(같은 경기 다른 유저 영향 없음).
-  check("wakeGap: 혼합 — channel_born row만 제외, 나머지 gap 유지",
-    selectWakeGapRows([row("u1", live, true), row("u2", live, false)], new Set(), new Set(), now, W),
-    [row("u2", live, false)]);
+  // 혼합: 유효 채널출생 row만 정확히 빠진다(같은 경기 다른 유저 영향 없음).
+  check("wakeGap: 혼합 — 유효 채널출생 row만 제외, 구채널·null row는 gap 유지",
+    selectWakeGapRows([row("u1", live, "B"), row("u2", live, "A"), row("u3", live, null)], new Set(), activeB, new Set(), now, W),
+    [row("u2", live, "A"), row("u3", live, null)]);
   // 기존 제외 조건 회귀: update 토큰/유효 ACK 보유 유저 제외 유지.
   check("wakeGap: update 토큰/유효 ACK 보유 → 제외(기존 동작 보존)",
-    selectWakeGapRows([row("u1", live, false)], new Set([`u1|${live}`]), new Set(), now, W), []);
+    selectWakeGapRows([row("u1", live, null)], new Set([`u1|${live}`]), activeB, new Set(), now, W), []);
   // scheduled 창 회귀: 발급 직후만 포함, 창 밖/created_at null 제외.
   const fresh = new Date(now - W + 1000).toISOString();
   const old = new Date(now - W - 1000).toISOString();
   check("wakeGap: scheduled 창 이내 발급 row → 포함",
-    selectWakeGapRows([row("u1", sched, false, fresh)], new Set(), new Set([sched]), now, W),
-    [row("u1", sched, false, fresh)]);
+    selectWakeGapRows([row("u1", sched, null, fresh)], new Set(), activeB, new Set([sched]), now, W),
+    [row("u1", sched, null, fresh)]);
   check("wakeGap: scheduled 창 경과 row → 제외",
-    selectWakeGapRows([row("u1", sched, false, old)], new Set(), new Set([sched]), now, W), []);
-  check("wakeGap: scheduled + channel_born → 창 이내여도 제외",
-    selectWakeGapRows([row("u1", sched, true, fresh)], new Set(), new Set([sched]), now, W), []);
+    selectWakeGapRows([row("u1", sched, null, old)], new Set(), activeB, new Set([sched]), now, W), []);
+  check("wakeGap: scheduled + 유효 채널출생 → 창 이내여도 제외",
+    selectWakeGapRows([row("u1", sched, "B", fresh)], new Set(), activeB, new Set([sched]), now, W), []);
+  check("wakeGap: scheduled + 구채널 born → 창 이내면 gap 복귀(재제외 아님)",
+    selectWakeGapRows([row("u1", sched, "A", fresh)], new Set(), activeB, new Set([sched]), now, W),
+    [row("u1", sched, "A", fresh)]);
+}
+
+// ── isLiveBornChannel — 채널출생 세대 일치(삼순 라운드2) — 어드민 updatable 합산과
+// wake 제외가 모두 이 함수 하나를 기준으로 삼는다(이중 기준 금지 계약).
+{
+  const game = "20260723LGKT0";
+  const activeKeys = new Set([`${game}|production|chanB`]);
+  const born = (env: string | null, chan: string | null) =>
+    ({ game_id: game, channel_born_environment: env, channel_born_channel_id: chan });
+  check("bornChannel: 현 active 세대 일치 → 유효",
+    isLiveBornChannel(born("production", "chanB"), activeKeys), true);
+  check("bornChannel: 구채널(chanA 출생, 현 active=chanB) → 불인정(gap 복귀)",
+    isLiveBornChannel(born("production", "chanA"), activeKeys), false);
+  check("bornChannel: 같은 channel_id지만 env 불일치 → 불인정",
+    isLiveBornChannel(born("sandbox", "chanB"), activeKeys), false);
+  check("bornChannel: 세대 미기록(null — 마이그레이션 이전 행) → 불인정(보수적)",
+    isLiveBornChannel(born(null, null), activeKeys), false);
+  check("bornChannel: active 채널 없는 경기 → 불인정",
+    isLiveBornChannel({ ...born("production", "chanB"), game_id: "20260723OBNC0" }, activeKeys), false);
+
+  // 어드민 updatable 통합 시나리오: 채널 A born → A deleted → B active.
+  // channelBornUsers는 isLiveBornChannel 통과 유저만 담는다(호출부 계약) — 구채널 출생
+  // 유저는 updatable 아님(①), 이후 B ACK/토큰 생기면 다시 updatable(③).
+  const rows = [born("production", "chanA"), born("production", "chanB")].map((b, i) =>
+    ({ ...b, user_id: `u${i + 1}` }));
+  const bornUsers = new Set(rows.filter((r) => isLiveBornChannel(r, activeKeys)).map((r) => r.user_id));
+  check("updatable: [라운드2] 구채널 born 유저는 updatable 아님(u2만 인정)",
+    countUpdatableUsers({ started: ["u1", "u2"], tokenUsers: new Set(), channelAckUsers: new Set(), channelBornUsers: bornUsers }), 1);
+  check("updatable: [라운드2] 구채널 born 유저도 이후 토큰/B ACK 등록 시 재인정 → 2",
+    countUpdatableUsers({ started: ["u1", "u2"], tokenUsers: new Set(["u1"]), channelAckUsers: new Set(), channelBornUsers: bornUsers }), 2);
 }
 
 console.log(`\nla-broadcast-policy-smoke: ${pass} PASS / ${fail} FAIL`);

@@ -139,9 +139,11 @@ interface StartedUserRow {
   user_id: string;
   game_id: string;
   created_at: string | null;
-  // 채널 내장 출생 카드(p2s payload에 channelId 포함 발송 성공) — broadcast 수신이라
-  // wake 대상·attempted 기록에서 제외(selectWakeGapRows, 분모 오염 방지).
-  channel_born: boolean | null;
+  // 채널 내장 출생 세대(p2s payload에 channelId 포함 발송 성공한 env+channel_id) —
+  // *현재 active 채널과 정확 일치*할 때만 broadcast 수신으로 보고 wake 대상·attempted
+  // 기록에서 제외(selectWakeGapRows/isLiveBornChannel, 삼순 라운드2 세대 일치 계약).
+  channel_born_environment: string | null;
+  channel_born_channel_id: string | null;
 }
 
 async function fetchLiveActivityTokens(gameIds: string[]): Promise<TokenRow[]> {
@@ -164,7 +166,7 @@ async function fetchStartedUsers(gameIds: string[]): Promise<StartedUserRow[]> {
     fetchAllByKeyset(async (cursor, limit) => {
       let query = supabase
         .from("live_activity_started_users")
-        .select("user_id, game_id, created_at, channel_born")
+        .select("user_id, game_id, created_at, channel_born_environment, channel_born_channel_id")
         .eq("game_id", gameId)
         .order("user_id", { ascending: true })
         .limit(limit);
@@ -680,10 +682,13 @@ async function startForTeamSide(params: {
   // 무효 토큰은 (user, 발송한 그 토큰) pair로 보관 — rotation fence용(삼순 재리뷰 blocker②).
   const invalid: { userId: string; token: string }[] = [];
   const releaseRetry: string[] = []; // 일시 실패 → 선점 해제(다음 cron 재시도)
-  // ① 집계 교정 — channelId 내장 payload로 발송 성공한 유저(channel_born). 이 카드는 앱
-  // wake 없이 broadcast로 갱신을 받으므로 서버가 직접 기록 → 어드민이 updatable로 합산
-  // (네이티브 ACK만 인정하던 기존 집계의 gap 과대계상 교정, 2026-07-23 실측).
-  const channelBorn: string[] = [];
+  // ① 집계 교정 — channelId 내장 payload로 발송 성공한 유저의 *채널 세대(env+channelId)*
+  // 기록. 이 카드는 앱 wake 없이 broadcast로 갱신을 받으므로 서버가 직접 기록 → 어드민이
+  // updatable로 합산(네이티브 ACK만 인정하던 기존 집계의 gap 과대계상 교정, 2026-07-23 실측).
+  // boolean이 아니라 세대를 남기는 이유: 출생 채널이 ChannelNotRegistered로 교체되면
+  // 그 카드는 새 채널 broadcast를 못 받으므로 세대 불일치 시 gap/wake로 복귀시켜야 한다
+  // (삼순 라운드2 blocker). env+channelId 조합별로 묶어 기록한다.
+  const channelBornGroups = new Map<string, { env: ApnsEnvironment; channelId: string; users: string[] }>();
   await Promise.all(
     toSend.map(async ([userId, meta]) => {
       // p2s per-attempt env 쌍 규칙 (스펙 v4): env known = 그 쌍만 / null = prod 쌍 →
@@ -719,7 +724,11 @@ async function startForTeamSide(params: {
           params.jwt,
         );
         if (res.ok) {
-          if (channelId) channelBorn.push(userId);
+          if (channelId) {
+            const key = `${env}|${channelId}`;
+            if (!channelBornGroups.has(key)) channelBornGroups.set(key, { env, channelId, users: [] });
+            channelBornGroups.get(key)!.users.push(userId);
+          }
           // 성공 env 기록(이후 그 쌍으로 고정) — null이었거나 바뀐 경우만 update.
           // rotation fence(삼순 재리뷰 blocker②): 발송 중 앱이 토큰을 교체(env null 리셋)
           // 했으면 affected 0 = no-op — 옛 토큰의 in-flight 결과가 새 토큰 env를 덮지 않는다.
@@ -762,14 +771,19 @@ async function startForTeamSide(params: {
       .eq("game_id", params.gameId)
       .eq("user_id", u);
   }
-  // channel_born 마킹 — best-effort(발송은 이미 확정이므로 실패해도 재시도 안 함).
+  // 채널 출생 세대 마킹 — best-effort(발송은 이미 확정이므로 실패해도 재시도 안 함).
   // 마킹 누락 = 그 유저만 종전처럼 네이티브 ACK 대기 집계(gap 과대계상 쪽 오차만 = 보수적).
-  for (let i = 0; i < channelBorn.length; i += 200) {
-    await supabase
-      .from("live_activity_started_users")
-      .update({ channel_born: true })
-      .eq("game_id", params.gameId)
-      .in("user_id", channelBorn.slice(i, i + 200));
+  for (const group of channelBornGroups.values()) {
+    for (let i = 0; i < group.users.length; i += 200) {
+      await supabase
+        .from("live_activity_started_users")
+        .update({
+          channel_born_environment: group.env,
+          channel_born_channel_id: group.channelId,
+        })
+        .eq("game_id", params.gameId)
+        .in("user_id", group.users.slice(i, i + 200));
+    }
   }
   return { sent, failed: transientFail && sent === 0 };
 }
@@ -999,6 +1013,8 @@ export async function pushLiveActivitySilentWakes(
   );
   // 채널 구독 확인(active 채널 일치) 유저는 update 토큰이 없어도 gap이 아님 — broadcast가
   // 카드를 갱신하므로 wake 불필요(스펙 v4 §서버 4: gap 계산도 동일 조건으로 제외).
+  // activeKeys는 아래 selectWakeGapRows의 채널출생 세대 일치 판정에도 쓴다(단일 기준).
+  const activeKeys = new Set<string>();
   {
     const { data: chanRows, error: chanError } = await supabase
       .from("live_activity_channels")
@@ -1007,11 +1023,9 @@ export async function pushLiveActivitySilentWakes(
       .eq("status", "active");
     if (chanError) return { error: chanError.message };
     const activeChannels = (chanRows ?? []) as ActiveChannelRow[];
-    const activeKeys = new Set(
-      activeChannels.map(
-        (r) => `${r.game_id}|${r.environment}|${r.channel_id}`,
-      ),
-    );
+    for (const r of activeChannels) {
+      activeKeys.add(`${r.game_id}|${r.environment}|${r.channel_id}`);
+    }
     if (activeKeys.size > 0) {
       let subRows: ChannelSubscriptionRow[];
       try {
@@ -1027,12 +1041,14 @@ export async function pushLiveActivitySilentWakes(
       }
     }
   }
-  // 갭 유저 = (user,game) 토큰·유효 ACK 없음 + channel_born 아님. wake는 기기 단위라 user로 중복 제거.
-  // channel_born 카드는 broadcast 수신(어드민 updatable 합산과 동일 기준)이므로 wake
-  // 대상·wake_attempted_at 기록 모두에서 제외(분모 오염 방지) — selectWakeGapRows가 SSOT.
+  // 갭 유저 = (user,game) 토큰·유효 ACK 없음 + 유효 채널출생 아님. wake는 기기 단위라 user로 중복 제거.
+  // 채널출생 카드는 *출생 세대가 현재 active 채널과 일치*할 때만 broadcast 수신(어드민
+  // updatable 합산과 동일 기준 = isLiveBornChannel)으로 보고 wake 대상·wake_attempted_at
+  // 기록 모두에서 제외(분모 오염 방지) — selectWakeGapRows가 SSOT. 출생 채널이 교체된
+  // 행(세대 불일치)은 gap으로 복귀해 wake로 구제한다(삼순 라운드2 blocker).
   // 예정 경기 row는 카드 발급(created_at) 후 WAKE_WINDOW_MS 이내만 — 그 뒤는 live 전환 창이 백스톱.
   const scheduledSet = new Set(scheduledGameIds);
-  const gapRows = selectWakeGapRows(started, tokened, scheduledSet, Date.now(), WAKE_WINDOW_MS);
+  const gapRows = selectWakeGapRows(started, tokened, activeKeys, scheduledSet, Date.now(), WAKE_WINDOW_MS);
   const gapUsers = [...new Set(gapRows.map((r) => r.user_id))];
   if (gapUsers.length === 0) return EMPTY_WAKE;
 
