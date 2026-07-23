@@ -130,6 +130,24 @@ async function main() {
   ok("token 없음 → 폴백", shouldFallbackToSupabaseJs({ ...full, token: undefined }) === true);
   ok("XHR 미가용 → 폴백", shouldFallbackToSupabaseJs({ ...full, hasXhr: false }) === true);
 
+  console.log("[업로드 중 UI 잠금 계약 — 컴포저 소스 정적 검증(삼순 #795 blocker)]");
+  {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const src = readFileSync(
+      join(__dirname, "../../src/components/game/VenueStoryComposer.tsx"),
+      "utf8",
+    );
+    // submitting 동안 잠겨야 하는 조작 전수: 닫기 guard + disabled 속성들
+    ok("close()에 submitting guard 존재", /const close = \(\) => \{\s*(\/\/[^\n]*\n\s*)*if \(submitting\) return;/.test(src));
+    ok("onPick이 submitting 중 무시", /if \(!f \|\| submitting\) return;/.test(src));
+    const disabledCount = (src.match(/disabled=\{submitting\}/g) ?? []).length;
+    // 닫기 버튼 + 선택 CTA + 다시선택 + hidden file input + caption + 동의 checkbox = 6곳
+    ok(`disabled={submitting} 6곳 이상 (현재 ${disabledCount})`, disabledCount >= 6);
+    ok("caption input에 disabled 적용", /maxLength=\{200\}\s*\n\s*disabled=\{submitting\}/.test(src));
+    ok("동의 checkbox에 disabled 적용", /onChange=\{toggleAgree\}\s*\n\s*disabled=\{submitting\}/.test(src));
+  }
+
   console.log(`\n${pass} passed, ${fail} failed`);
   if (fail > 0) process.exit(1);
 }

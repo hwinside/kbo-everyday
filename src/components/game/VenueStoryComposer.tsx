@@ -290,7 +290,8 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
             {!previewUrl ? (
               <button
                 onClick={() => inputRef.current?.click()}
-                className="flex flex-col items-center justify-center gap-2 h-48 rounded-2xl border-2 border-dashed border-border text-text-tertiary active:bg-bg-tertiary"
+                disabled={submitting}
+                className="flex flex-col items-center justify-center gap-2 h-48 rounded-2xl border-2 border-dashed border-border text-text-tertiary active:bg-bg-tertiary disabled:opacity-40"
               >
                 <VideoIcon size={28} />
                 <span className="text-sm">현장 사진·영상 선택</span>
@@ -318,6 +319,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
               ref={inputRef}
               type="file"
               accept="image/*,video/*"
+              disabled={submitting}
               className="hidden"
               onChange={onPick}
             />
@@ -327,8 +329,9 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
               value={caption}
               onChange={(e) => setCaption(e.target.value)}
               maxLength={200}
+              disabled={submitting}
               placeholder="한 줄 코멘트 (선택)"
-              className="w-full px-3 py-2.5 rounded-xl bg-bg-tertiary text-sm text-text-primary placeholder:text-text-tertiary outline-none"
+              className="w-full px-3 py-2.5 rounded-xl bg-bg-tertiary text-sm text-text-primary placeholder:text-text-tertiary outline-none disabled:opacity-40"
             />
 
             <label className="flex items-start gap-2 text-[11px] text-text-tertiary leading-relaxed cursor-pointer select-none">
@@ -336,7 +339,8 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
                 type="checkbox"
                 checked={agreed}
                 onChange={toggleAgree}
-                className="mt-0.5 accent-brand-primary shrink-0"
+                disabled={submitting}
+                className="mt-0.5 accent-brand-primary shrink-0 disabled:opacity-40"
               />
               <span>
                 중계화면 무단 재촬영·타인 얼굴/초상권 침해·욕설/폭력·불법 촬영물을 올리지 않겠습니다.
