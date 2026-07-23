@@ -7,6 +7,7 @@ import {
   type ActiveChannelRef,
 } from "@/lib/notifications/live-activity-channel-policy";
 import type { KboRawGame } from "@/types/api";
+import { isKboGameCancelled } from "@/lib/crawler/kbo-status";
 
 // 어드민 — Live Activity 토큰/카드 종합 현황.
 // 발급된 push-to-start 토큰 수, 떠있는 잠금화면(started_users), update 토큰·현재
@@ -21,7 +22,7 @@ function getKSTDateStr(): string {
 }
 
 function gameStatus(g: KboRawGame): "live" | "final" | "scheduled" | "cancelled" | "other" {
-  if (g.CANCEL_SC_ID !== "0") return "cancelled";
+  if (isKboGameCancelled(g.CANCEL_SC_ID)) return "cancelled";
   if (g.GAME_STATE_SC === "3") return "final";
   if (g.GAME_STATE_SC === "2") return "live";
   if (g.GAME_STATE_SC === "1") return "scheduled";

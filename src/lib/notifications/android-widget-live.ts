@@ -1,4 +1,5 @@
 import { resolveCurrentPlayers } from "@/lib/kbo-player-mapping";
+import { isKboGameCancelled } from "@/lib/crawler/kbo-status";
 import { sendFcmToUsers, WIDGET_STREAM, type PushPayload } from "@/lib/notifications/fcm";
 import { fansOfTeams, teamIdByShortName } from "@/lib/notifications/game-status";
 import { latestRelayLine } from "@/lib/notifications/relay-line";
@@ -161,7 +162,7 @@ export async function pushAndroidWidgetLiveUpdates(
     if (deadlineAtMs != null && Date.now() >= deadlineAtMs) break;
 
     const isLive = g.GAME_STATE_SC === "2";
-    const isCancelled = g.CANCEL_SC_ID !== "0";
+    const isCancelled = isKboGameCancelled(g.CANCEL_SC_ID);
     // 취소: 예정시각 −30분 ~ +CANCEL_WINDOW_MS 창이면 '경기 취소' 카드를 밀어 앱 미오픈
     // 상태에서도 안드 위젯을 갱신(iOS 홈위젯은 백그라운드 갱신 불가라 안드 전용 이점). 창 후엔
     // 위젯이 마지막 상태 유지 → 앱 오픈으로 next 캐시된 기기는 익일 06:00 롤오버로 다음 경기

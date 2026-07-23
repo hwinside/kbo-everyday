@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { isKboGameCancelled } from "@/lib/crawler/kbo-status";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { resolveCurrentPlayers } from "@/lib/kbo-player-mapping";
 import {
@@ -92,7 +93,7 @@ const buildContentState = buildLiveActivityContentState;
 export function liveActivityGameStatus(
   g: KboRawGame,
 ): "live" | "final" | "scheduled" | "other" {
-  if (g.CANCEL_SC_ID !== "0") return "other";
+  if (isKboGameCancelled(g.CANCEL_SC_ID)) return "other";
   if (g.GAME_STATE_SC === "3") return "final";
   if (g.GAME_STATE_SC === "2") return "live";
   if (g.GAME_STATE_SC === "1") return "scheduled";
@@ -210,7 +211,7 @@ export async function pushLiveActivityUpdates(
   for (const g of games) {
     const s = gameStatus(g);
     if (s === "live" || s === "final") stateByGame.set(g.G_ID, s);
-    else if (g.CANCEL_SC_ID !== "0" && g.G_ID) stateByGame.set(g.G_ID, "cancelled");
+    else if (isKboGameCancelled(g.CANCEL_SC_ID) && g.G_ID) stateByGame.set(g.G_ID, "cancelled");
   }
   if (stateByGame.size === 0) return { pushed: 0, ended: 0, cleaned: 0 };
 
@@ -914,17 +915,17 @@ export async function pushLiveActivitySilentWakes(
   // #529의 end 경로가 못 닿아 "경기 예정"으로 얼어붙는다. 무음 wake로 토큰 등록을 유도하면
   // 다음 warmup의 pushLiveActivityUpdates(cancelled→end)가 그 토큰으로 카드를 정리한다.
   const cancelledGameIds = games
-    .filter((g) => g.CANCEL_SC_ID !== "0" && g.G_ID)
+    .filter((g) => isKboGameCancelled(g.CANCEL_SC_ID) && g.G_ID)
     .map((g) => g.G_ID as string);
   // 종료(final) 경기 — end 푸시는 토큰 보유자에게만 가므로 gap 유저의 카드는 좀비로 잔존.
   // end 이벤트 후 WAKE_WINDOW_MS 창에서 깨워 토큰 등록 → 다음 틱 end 경로가 정리.
   const finalGameIds = games
-    .filter((g) => gameStatus(g) === "final" && g.CANCEL_SC_ID === "0" && g.G_ID)
+    .filter((g) => gameStatus(g) === "final" && !isKboGameCancelled(g.CANCEL_SC_ID) && g.G_ID)
     .map((g) => g.G_ID as string);
   // 예정(scheduled) 경기 — 30분 전 push-to-start 카드가 발급된 직후부터 토큰 선등록 유도.
   // 게임 단위 이벤트가 없으므로 아래에서 *유저별 started_users.created_at* 기준으로 창 적용.
   const scheduledGameIds = games
-    .filter((g) => gameStatus(g) === "scheduled" && g.CANCEL_SC_ID === "0" && g.G_ID)
+    .filter((g) => gameStatus(g) === "scheduled" && !isKboGameCancelled(g.CANCEL_SC_ID) && g.G_ID)
     .map((g) => g.G_ID as string);
   const eventGameIds = [...new Set([...liveGameIds, ...cancelledGameIds, ...finalGameIds])];
   const candidateGameIds = [...new Set([...eventGameIds, ...scheduledGameIds])];

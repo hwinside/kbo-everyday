@@ -4,7 +4,7 @@ import type { HomeGame } from "@/hooks/useHomeInit";
 import { PRESEASON_DATES } from "@/lib/constants/preseason-schedule";
 import type { LiveGameData } from "@/lib/hooks/useLiveGame";
 import { resolveCurrentPlayers } from "@/lib/kbo-player-mapping";
-import { fetchGames } from "@/lib/crawler/kbo-api";
+import { fetchGames, isKboGameCancelled } from "@/lib/crawler/kbo-api";
 import type { KboRawGame } from "@/types/api";
 
 // Force dynamic rendering — game data changes throughout the day
@@ -61,7 +61,7 @@ async function getInitialData(): Promise<{
       if (res.ok) {
         const data = await res.json();
         liveGames = (data?.game || []).map((g: KboRawGame) => {
-          const status = g.CANCEL_SC_ID !== "0" ? "cancelled"
+          const status = isKboGameCancelled(g.CANCEL_SC_ID) ? "cancelled"
             : g.GAME_STATE_SC === "3" ? "final"
             : g.GAME_STATE_SC === "2" ? "live"
             : "scheduled";

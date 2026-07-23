@@ -7,6 +7,9 @@ import { RosterCollectionError, validateRosterCollection } from "@/lib/roster-mo
 // 수집 sanity 검증/예외는 순수 모듈(roster-moves/collection.ts)에 두고 재노출(스모크가 supabase 의존 없이 import).
 export { RosterCollectionError, validateRosterCollection } from "@/lib/roster-moves/collection";
 import { decodeBroadcast, type BroadcastChannel } from "@/lib/broadcast-channels";
+import { isKboGameCancelled } from "@/lib/crawler/kbo-status";
+// 순수 상태 헬퍼 재노출 — 스모크가 supabase 의존 없이 import.
+export { isKboGameCancelled } from "@/lib/crawler/kbo-status";
 import { ALLSTAR_CODE_TO_ID, allstarTeamIdByName } from "@/lib/constants/teams";
 
 /** 숫자 kboId로 로스터 조회 — 외국인 숫자→영문 변환 포함 */
@@ -79,7 +82,7 @@ export interface KboGame {
 }
 
 function parseGameStatus(stateCode: string, cancelCode: string): KboGame["status"] {
-  if (cancelCode !== "0") return "cancelled";
+  if (isKboGameCancelled(cancelCode)) return "cancelled";
   if (stateCode === "3") return "final";
   if (stateCode === "2") return "live";
   return "scheduled";

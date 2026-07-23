@@ -1,4 +1,5 @@
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
+import { isKboGameCancelled } from "@/lib/crawler/kbo-status";
 import { sendFcmToUsers, WIDGET_STREAM } from "@/lib/notifications/fcm";
 import { teamIdByShortName, fansOfTeams } from "@/lib/notifications/game-status";
 import { isHomerunCoveredRun, resolveHomerunScore, inheritHitRbi } from "@/lib/notifications/score-dedupe";
@@ -54,7 +55,7 @@ export async function notifyScoreEvents(
 
   for (const [gameId, events] of eventsByGame) {
     const g = gameById.get(gameId);
-    if (!g || g.CANCEL_SC_ID !== "0") continue;
+    if (!g || isKboGameCancelled(g.CANCEL_SC_ID)) continue;
     const away = g.AWAY_NM ?? "";
     const home = g.HOME_NM ?? "";
     const url = `/games/${gameId}`;
@@ -209,7 +210,7 @@ export async function notifyInningSummaries(
 
   for (const [gameId, events] of eventsByGame) {
     const g = gameById.get(gameId);
-    if (!g || g.CANCEL_SC_ID !== "0") continue;
+    if (!g || isKboGameCancelled(g.CANCEL_SC_ID)) continue;
     const away = g.AWAY_NM ?? "";
     const home = g.HOME_NM ?? "";
     const url = `/games/${gameId}`;
