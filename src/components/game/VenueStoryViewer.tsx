@@ -181,7 +181,8 @@ export default function VenueStoryViewer({
 
   return createPortal(
     <motion.div
-      className="fixed inset-0 z-[60] bg-black flex flex-col select-none"
+      // 경기 페이지 상단 스코어 헤더가 z-[100]이라 그 위로 — 풀스크린 뷰어는 모든 UI를 덮어야 함
+      className="fixed inset-0 z-[120] bg-black flex flex-col select-none"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
