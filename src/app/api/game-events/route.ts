@@ -6,6 +6,7 @@ import { generateEvents, type PrevGameState } from "@/lib/event-generator";
 import type { GameEvent } from "@/types/game-events";
 import type { KboRawGame } from "@/types/api";
 import { resolveCurrentPlayers } from "@/lib/kbo-player-mapping";
+import { isKboGameCancelled } from "@/lib/crawler/kbo-status";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 
 // State is persisted in Supabase (table: game_event_state) so all Vercel
@@ -163,7 +164,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ events: existing, currentState: emptySnapshot });
     }
 
-    const status = rawGame.CANCEL_SC_ID !== "0" ? "cancelled"
+    const status = isKboGameCancelled(rawGame.CANCEL_SC_ID) ? "cancelled"
       : rawGame.GAME_STATE_SC === "3" ? "final"
       : rawGame.GAME_STATE_SC === "2" ? "live"
       : "scheduled";

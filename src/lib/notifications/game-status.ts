@@ -1,7 +1,7 @@
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { sendFcmToUsers, WIDGET_STREAM } from "@/lib/notifications/fcm";
 import { TEAMS } from "@/lib/constants/teams";
-import { fetchStandings } from "@/lib/crawler/kbo-api";
+import { fetchStandings, isKboGameCancelled } from "@/lib/crawler/kbo-api";
 import { decideEndStreakCount, type StreakDir } from "@/lib/notifications/end-streak-policy";
 import { fetchTeamFanIds } from "@/lib/notifications/audience";
 import type { KboRawGame } from "@/types/api";
@@ -153,7 +153,7 @@ async function markOnly(gameId: string, flags: { start?: boolean; end?: boolean;
  * - final && end 미발송 → (start도 미발송이면 cron이 경기 중 못 본 것 — 종료만 발송)
  * - 처음 보는 게임이 이미 final이고 start/end 둘 다 미발송 → 발송 없이 마킹
  *   (배포/도입 직후 과거 경기에 뒷북 알림 방지)
- * - cancelled(CANCEL_SC_ID != "0") → "경기 취소" 알림 1회(우천 등). 예정시각 +90분 밖이면 마킹만(뒷북 차단).
+ * - cancelled(isKboGameCancelled) → "경기 취소" 알림 1회(우천 등). 예정시각 +90분 밖이면 마킹만(뒷북 차단).
  */
 export async function notifyGameStatusTransitions(games: KboRawGame[]): Promise<{ started: number; ended: number; cancelled: number }> {
   let started = 0;
@@ -173,7 +173,7 @@ export async function notifyGameStatusTransitions(games: KboRawGame[]): Promise<
     // dedup = cancel_notified 선점. 시작 알림과 달리 +90분 윈도우를 쓰지 않는다 — 우천 지연이
     // 90분을 넘겨 취소되는 "기다리다 취소"가 가장 중요한 알림이라(삼순 #287 블로커1). 대신
     // *과거 날짜*(배포 직후 지난 경기 백필)만 markOnly로 차단하고, 오늘(KST) 이후 경기 취소는 발송.
-    if (g.CANCEL_SC_ID !== "0") {
+    if (isKboGameCancelled(g.CANCEL_SC_ID)) {
       const isPastDay = g.G_DT != null && g.G_DT.length === 8 && g.G_DT < kstDateStr();
       if (isPastDay) { await markOnly(gameId, { cancel: true }); continue; }
       if (await claim(gameId, "cancel_notified")) {
@@ -270,7 +270,7 @@ export async function notifyGameStatusTransitions(games: KboRawGame[]): Promise<
       // 오늘 팀별 final 경기 수 — 더블헤더 2차전은 스냅샷이 1차전 결과를 모르므로 폴백 판정용.
       const finalsToday = new Map<number, number>();
       for (const gg of games) {
-        if (gg.CANCEL_SC_ID !== "0" || gg.GAME_STATE_SC !== "3") continue;
+        if (isKboGameCancelled(gg.CANCEL_SC_ID) || gg.GAME_STATE_SC !== "3") continue;
         for (const nm of [gg.AWAY_NM ?? "", gg.HOME_NM ?? ""]) {
           const id = teamIdByShortName(nm);
           if (id !== null) finalsToday.set(id, (finalsToday.get(id) ?? 0) + 1);

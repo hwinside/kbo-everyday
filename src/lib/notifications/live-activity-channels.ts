@@ -1,4 +1,5 @@
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
+import { isKboGameCancelled } from "@/lib/crawler/kbo-status";
 import { apnsConfigured, getProviderTokenSafe } from "@/lib/notifications/apns";
 import {
   createBroadcastChannel,
@@ -69,7 +70,7 @@ export async function ensureLiveActivityChannels(
 ): Promise<{ created: number } | { error: string }> {
   if (!apnsConfigured()) return { created: 0 };
   const targets = games.filter(
-    (g) => g.G_ID && liveActivityStartWindow(g) && g.CANCEL_SC_ID === "0",
+    (g) => g.G_ID && liveActivityStartWindow(g) && !isKboGameCancelled(g.CANCEL_SC_ID),
   );
   if (targets.length === 0) return { created: 0 };
 
@@ -207,7 +208,7 @@ export async function pushLiveActivityChannelBroadcasts(
   for (const row of channels) {
     const g = gameById.get(row.game_id);
     const status = g ? liveActivityGameStatus(g) : "other";
-    const isCancelled = g ? g.CANCEL_SC_ID !== "0" : false;
+    const isCancelled = g ? isKboGameCancelled(g.CANCEL_SC_ID) : false;
 
     // ── 스테일 sweep: 오늘 경기 목록에 없고 24h 지난 채널은 정리(한도 방어). ──
     if (!g && now - new Date(row.created_at).getTime() > 24 * 60 * 60 * 1000) {

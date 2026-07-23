@@ -3,6 +3,7 @@ import type { KboRawGame } from "@/types/api";
 import { resolveCurrentPlayers } from "@/lib/kbo-player-mapping";
 import { PLAYER_PHOTO_MAP } from "@/lib/constants/player-photos";
 import { resolveGameLiveDate } from "@/lib/game-live-date";
+import { isKboGameCancelled } from "@/lib/crawler/kbo-status";
 
 const __diagSeenPitchers = new Set<string>();
 
@@ -40,7 +41,7 @@ export async function GET(req: NextRequest) {
     
     const data = await res.json();
     const games = (data?.game || []).map((g: KboRawGame) => {
-      const status = g.CANCEL_SC_ID !== "0" ? "cancelled"
+      const status = isKboGameCancelled(g.CANCEL_SC_ID) ? "cancelled"
         : g.GAME_STATE_SC === "3" ? "final"
         : g.GAME_STATE_SC === "2" ? "live"
         : "scheduled";
