@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { getSupabaseAdmin } from '@/lib/supabase/admin'
+import { getWritingLeaderboardRows } from '@/lib/events/leaderboard-cache'
 
 export const dynamic = 'force-dynamic'
 
@@ -83,27 +84,42 @@ export async function GET(request: NextRequest) {
     scoreColumn = 'total_points'
   }
 
-  let query = admin
-    .from(viewName)
-    .select(`user_id, nickname, team_id, ${scoreColumn}, ${tieBreakerColumn}`)
-    // view 내 ORDER BY 독립적으로 명시 정렬
-    .order(scoreColumn, { ascending: false })
-    .order(tieBreakerColumn, { ascending: true })
-  if (useMonthly) {
-    query = query.eq('month_start', `${month}-01`)
+  // 누적 writing 트랙은 서버 메모리 60s 캐시 공유 (2026-07-22 장애 후속:
+  // v_leaderboard_writing 재집계 mean ~316ms × 매 요청 → 분당 1회로 흡수)
+  let rows: Array<Record<string, unknown>> | null = null
+  if (track === 'writing' && !useMonthly) {
+    try {
+      rows = (await getWritingLeaderboardRows()) as unknown as Array<Record<string, unknown>>
+    } catch (e) {
+      return NextResponse.json(
+        { error: 'my-rank query failed', details: e instanceof Error ? e.message : String(e) },
+        { status: 500 },
+      )
+    }
+  } else {
+    let query = admin
+      .from(viewName)
+      .select(`user_id, nickname, team_id, ${scoreColumn}, ${tieBreakerColumn}`)
+      // view 내 ORDER BY 독립적으로 명시 정렬
+      .order(scoreColumn, { ascending: false })
+      .order(tieBreakerColumn, { ascending: true })
+    if (useMonthly) {
+      query = query.eq('month_start', `${month}-01`)
+    }
+
+    const { data, error } = await query
+
+    if (error) {
+      return NextResponse.json(
+        { error: 'my-rank query failed', details: error.message },
+        { status: 500 },
+      )
+    }
+    // 동적 select(scoreColumn 변수) → supabase 타입 추론이 ParserError 가 되므로 unknown 경유 캐스트
+    rows = data as unknown as Array<Record<string, unknown>>
   }
 
-  const { data: rows, error } = await query
-
-  if (error) {
-    return NextResponse.json(
-      { error: 'my-rank query failed', details: error.message },
-      { status: 500 },
-    )
-  }
-
-  // 동적 select(scoreColumn 변수) → supabase 타입 추론이 ParserError 가 되므로 unknown 경유 캐스트
-  const list = (rows ?? []) as unknown as Array<Record<string, unknown>>
+  const list = rows ?? []
   const idx = list.findIndex((r) => r.user_id === userId)
   if (idx === -1) {
     return NextResponse.json({

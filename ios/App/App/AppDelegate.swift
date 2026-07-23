@@ -45,6 +45,12 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     }
 
     func applicationDidBecomeActive(_ application: UIApplication) {
+        // 레거시 LA → broadcast 채널 카드 마이그레이션 — *foreground-active에서만* (삼순 R2
+        // blocker③: local Activity.request()는 foreground 시작 계약). didBecomeActive는
+        // cold launch·백그라운드 복귀 모두 커버한다(willEnterForeground는 cold launch 미호출).
+        if #available(iOS 16.1, *) {
+            LiveActivityController.shared.migrateLegacyActivitiesOnForeground()
+        }
         // ATT 권한 상태를 Meta SDK(advertiserTrackingEnabled)에 *먼저* 반영한 뒤
         // App Activate 이벤트를 보낸다. Meta ATE는 이벤트 전 상태 반영이 원칙이므로,
         // activateApp() 호출은 syncAdvertiserTracking 내부에서 ATE 반영 직후 수행한다.
@@ -117,6 +123,8 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // push-to-start로 카드만 뜨고 앱이 안 열린 유저의 토큰 미등록 갭을 "앱을 열지 않고"
         // 메운다 — 서버가 경기 시작/진행 중 무음 wake 푸시를 보내면 이 경로가 토큰을 잡는다.
         // 멱등(observedActivityIds 중복가드) — 매 푸시마다 호출해도 이중 등록 없음.
+        // ⚠️ silent wake 컨텍스트 — rescan은 토큰 재등록만 하며 local Activity.request()는
+        // 0건이다(삼순 R2 blocker③ — 마이그레이션은 didBecomeActive 전용).
         // completionHandler는 건드리지 않는다(Capacitor/Firebase 메시징 플러그인이 호출).
         if #available(iOS 16.1, *) {
             LiveActivityController.shared.rescanActiveActivities()

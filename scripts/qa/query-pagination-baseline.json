@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "generatedFrom": "fc00241901e9fb418a0141fc5e75e4d8a2f40f80",
+  "generatedFrom": "28078c1f81818ebfdfe01b13b6d3791d34a1e30c",
   "violations": {
     "0034fe9a6a6cff327c64": {
       "count": 1,
@@ -737,13 +737,6 @@
       "subject": "channel_pool",
       "detail": "add a bound, unique-key lookup, or query-guard annotation"
     },
-    "8034905ca8dccd436154": {
-      "count": 1,
-      "kind": "unclassified_relation",
-      "file": "src/app/api/admin/live-activity/route.ts",
-      "subject": "<dynamic>",
-      "detail": "classify this relation or add an explicit bounded annotation before querying it"
-    },
     "81a6e80a55aa77bb426f": {
       "count": 1,
       "kind": "ambiguous_growing_limit",
@@ -982,13 +975,6 @@
       "subject": "retention_metrics",
       "detail": "add a bound, unique-key lookup, or query-guard annotation"
     },
-    "a3918aca32d651aaf9e9": {
-      "count": 1,
-      "kind": "ambiguous_growing_limit",
-      "file": "src/app/api/leaderboard/writing/route.ts",
-      "subject": "v_leaderboard_writing",
-      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
-    },
     "a5b3a985db5f9d4c37c5": {
       "count": 1,
       "kind": "unbounded_growing_select",
@@ -1016,13 +1002,6 @@
       "file": "src/app/api/cron/news-clipping/route.ts",
       "subject": "dm_conversations",
       "detail": "range pagination must include a full unique order (id)"
-    },
-    "acf3cc0c48f8b0d13e5e": {
-      "count": 1,
-      "kind": "unbounded_growing_select",
-      "file": "src/lib/retention/compute.ts",
-      "subject": "admin_page_views",
-      "detail": "add a bound, unique-key lookup, or query-guard annotation"
     },
     "adabe6bdb3e2fb260b44": {
       "count": 1,
@@ -1276,13 +1255,6 @@
       "subject": "venue_attendance",
       "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
     },
-    "db377689e79c096dd7ec": {
-      "count": 1,
-      "kind": "unbounded_growing_select",
-      "file": "src/lib/notifications/live-activity.ts",
-      "subject": "live_activity_channels",
-      "detail": "add a bound, unique-key lookup, or query-guard annotation"
-    },
     "dbfc8ce19adc4627ca1f": {
       "count": 1,
       "kind": "ambiguous_growing_limit",
@@ -1519,13 +1491,6 @@
       "kind": "unbounded_growing_select",
       "file": "scripts/qa/ui-smoke-news-comment-report.mjs",
       "subject": "reports",
-      "detail": "add a bound, unique-key lookup, or query-guard annotation"
-    },
-    "f9283c154313ba2b8803": {
-      "count": 1,
-      "kind": "unbounded_growing_select",
-      "file": "src/lib/notifications/live-activity.ts",
-      "subject": "live_activity_start_tokens",
       "detail": "add a bound, unique-key lookup, or query-guard annotation"
     },
     "f9c850d666dce24b2b86": {

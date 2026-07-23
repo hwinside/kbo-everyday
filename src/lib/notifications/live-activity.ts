@@ -14,8 +14,11 @@ import {
   decideStartReissue,
   scoreStateOf,
   fullStateHashOf,
-  p2sChannelEligible,
-  p2sEnvAttempts,
+  isStaleStartToken,
+  isWakeWindowOpen,
+  selectWakeGapRows,
+  p2sSendPlan,
+  type P2sSendPlan,
   startTokenResultFence,
   decideLegacyTokenUpdate,
   shouldAdvanceFallbackCursor,
@@ -123,6 +126,8 @@ interface ActiveChannelRow {
   channel_id: string;
   last_score_state?: string | null;
   last_state_hash?: string | null;
+  // 채널 세대 생성/교체 시각 — wake 창 재오픈 기준(isWakeWindowOpen, 삼순 라운드3).
+  created_at?: string | null;
 }
 
 interface ChannelSubscriptionRow {
@@ -137,6 +142,11 @@ interface StartedUserRow {
   user_id: string;
   game_id: string;
   created_at: string | null;
+  // 채널 내장 출생 세대(p2s payload에 channelId 포함 발송 성공한 env+channel_id) —
+  // *현재 active 채널과 정확 일치*할 때만 broadcast 수신으로 보고 wake 대상·attempted
+  // 기록에서 제외(selectWakeGapRows/isLiveBornChannel, 삼순 라운드2 세대 일치 계약).
+  channel_born_environment: string | null;
+  channel_born_channel_id: string | null;
 }
 
 async function fetchLiveActivityTokens(gameIds: string[]): Promise<TokenRow[]> {
@@ -159,7 +169,7 @@ async function fetchStartedUsers(gameIds: string[]): Promise<StartedUserRow[]> {
     fetchAllByKeyset(async (cursor, limit) => {
       let query = supabase
         .from("live_activity_started_users")
-        .select("user_id, game_id, created_at")
+        .select("user_id, game_id, created_at, channel_born_environment, channel_born_channel_id")
         .eq("game_id", gameId)
         .order("user_id", { ascending: true })
         .limit(limit);
@@ -201,6 +211,16 @@ async function fetchChannelSubscriptions(
 export async function pushLiveActivityUpdates(
   games: KboRawGame[],
   lastPlayByGame?: Map<string, string>,
+  opts?: {
+    /**
+     * broadcast 직전에 떬 채널 상태 스냅샷 (삼순 R2 blocker① — 느린 fanout 분리).
+     * 제공 시 레거시 skip/priority 판정은 현재 채널 행이 아니라 이 스냅샷을 쓴다 —
+     * broadcast가 먼저 hash를 전진시켜도 레거시가 "이미 받음"으로 오인해 영구 skip되지
+     * 않는다(구빌드 11~15 카드 프리즈 방지). 스냅샷에 없는 경기의 채널 행은 스냅샷
+     * 이후 생성된 것 → 미사용(폴백 테이블/null → p10 발송 쪽으로 안전).
+     */
+    channelLastStateOverride?: Map<string, { score: string | null; hash: string | null }>;
+  },
 ): Promise<{ pushed: number; ended: number; cleaned: number } | { error: string }> {
   if (!apnsConfigured()) return { pushed: 0, ended: 0, cleaned: 0 };
 
@@ -269,8 +289,14 @@ export async function pushLiveActivityUpdates(
   }[]) {
     activeChanKeys.add(`${r.game_id}|${r.environment}|${r.channel_id}`);
     // 레거시 priority 판정용 직전 상태 — production 행 기준(채널 broadcast가 지난 틱에 기록).
-    if (r.environment === "production") {
+    // 스냅샷 override 제공 시 현재 행 값은 무시(broadcast가 이미 전진시켰을 수 있음 — 위 opts 주석).
+    if (r.environment === "production" && !opts?.channelLastStateOverride) {
       lastStateByGame.set(r.game_id, { score: r.last_score_state, hash: r.last_state_hash });
+    }
+  }
+  if (opts?.channelLastStateOverride) {
+    for (const [gid, st] of opts.channelLastStateOverride) {
+      lastStateByGame.set(gid, { score: st.score, hash: st.hash });
     }
   }
   // 채널 행이 없는 경기(Broadcast Capability 미활성/생성 실패)는 경기 단위 폴백 상태를
@@ -546,16 +572,22 @@ async function startForTeamSide(params: {
   // push-to-start 토큰 보유 유저만. .in()은 URL 한도 회피 위해 200개 청크.
   const tokenByUser = new Map<string, StartTokenMeta>();
   for (let i = 0; i < fans.ids.length; i += 200) {
+    // query-guard: bounded -- 바깥 루프가 매 조회를 200개 user id 청크로 상한(user_id unique → ≤200행)
     const { data, error } = await supabase
       .from("live_activity_start_tokens")
-      .select("user_id, push_to_start_token, apns_environment, app_build, os_major, token_changed_at")
-      .in("user_id", fans.ids.slice(i, i + 200));
+      .select("user_id, push_to_start_token, apns_environment, app_build, os_major, token_changed_at, updated_at")
+      .in("user_id", fans.ids.slice(i, i + 200))
+      .limit(200);
     if (error) return { sent: 0, failed: true }; // 토큰 조회 실패 → 재시도
     for (const r of (data ?? []) as {
       user_id: string; push_to_start_token: string;
       apns_environment: ApnsEnvironment | null; app_build: number | null; os_major: number | null;
-      token_changed_at: string | null;
+      token_changed_at: string | null; updated_at: string | null;
     }[]) {
+      // ④ stale 발송 제외 — updated_at 30일+ 미갱신 휴면 기기(gap 유저 41% 실측)는 카드만
+      // 띄우고 update 토큰 등록이 사실상 안 일어나 갱신불가 카드만 늘린다. 토큰 행은
+      // 보존(앱 재실행 시 updated_at 갱신 → 즉시 발송 재개).
+      if (isStaleStartToken(r.updated_at, Date.now())) continue;
       const genMs = r.token_changed_at ? Date.parse(r.token_changed_at) : NaN;
       tokenByUser.set(r.user_id, {
         token: r.push_to_start_token,
@@ -632,6 +664,28 @@ async function startForTeamSide(params: {
   });
   if (eligible.length === 0) return { sent: 0, failed: false };
 
+  // R3 (삼순 PR #808 blocker①): channel-capable(iOS18+/build16+) 토큰은 active 채널이
+  // 준비된 env가 있어야만 발송 — 없으면 *선점(claim) 전에* 유보하고 다음 틱이 재시도한다.
+  // 7/23 사고 입구(채널 부재 시 자동 p2s가 레거시 카드로 태어나 예산 스로틀에 갇힘)의
+  // 서버측 차단 — 앱 내 start() deferStart(R2 blocker④)와 대칭. 레거시 토큰은 기존 그대로.
+  const channelEnvs = new Set([...params.channelByEnv.keys()]);
+  const planByUser = new Map<string, Extract<P2sSendPlan, { kind: "send" }>>();
+  const sendable = eligible.filter(([userId, meta]) => {
+    const plan = p2sSendPlan(
+      { os_major: meta.osMajor, app_build: meta.appBuild, env: meta.env },
+      channelEnvs,
+    );
+    if (plan.kind === "defer") return false; // claim 0 — 다음 틱 재시도(레거시 발송 금지)
+    planByUser.set(userId, plan);
+    return true;
+  });
+  if (sendable.length < eligible.length) {
+    console.log(
+      `[live-activity] p2s deferred (channel not ready): game=${params.gameId} deferred=${eligible.length - sendable.length}`,
+    );
+  }
+  if (sendable.length === 0) return { sent: 0, failed: false };
+
   // stale claim 무효화 — *현재 토큰 세대 이전에 생성된 행만* 삭제(fence: lt created_at).
   // 병렬 틱이 방금 만든 새 claim(created_at >= token_changed_at)은 건드리지 않는다.
   for (const s of staleClaimUsers) {
@@ -648,8 +702,8 @@ async function startForTeamSide(params: {
   // 유저는 충돌로 제외되고 *새로 선점된 유저만* 반환된다. 게임 단위 선점과 달리 윈도우
   // 도중 늦게 등록된 토큰도 그 시점 cron이 처음 선점 → 발송된다.
   const claimed: { user_id: string }[] = [];
-  for (let i = 0; i < eligible.length; i += 200) {
-    const chunk = eligible.slice(i, i + 200);
+  for (let i = 0; i < sendable.length; i += 200) {
+    const chunk = sendable.slice(i, i + 200);
     const { data, error } = await supabase
       .from("live_activity_started_users")
       .upsert(
@@ -662,27 +716,32 @@ async function startForTeamSide(params: {
   }
   if (claimed.length === 0) return { sent: 0, failed: false };
   const claimedSet = new Set(claimed.map((r) => r.user_id));
-  const toSend = eligible.filter(([userId]) => claimedSet.has(userId));
+  const toSend = sendable.filter(([userId]) => claimedSet.has(userId));
 
   let sent = 0;
   let transientFail = false;
   // 무효 토큰은 (user, 발송한 그 토큰) pair로 보관 — rotation fence용(삼순 재리뷰 blocker②).
   const invalid: { userId: string; token: string }[] = [];
   const releaseRetry: string[] = []; // 일시 실패 → 선점 해제(다음 cron 재시도)
+  // ① 집계 교정 — channelId 내장 payload로 발송 성공한 유저의 *채널 세대(env+channelId)*
+  // 기록. 이 카드는 앱 wake 없이 broadcast로 갱신을 받으므로 서버가 직접 기록 → 어드민이
+  // updatable로 합산(네이티브 ACK만 인정하던 기존 집계의 gap 과대계상 교정, 2026-07-23 실측).
+  // boolean이 아니라 세대를 남기는 이유: 출생 채널이 ChannelNotRegistered로 교체되면
+  // 그 카드는 새 채널 broadcast를 못 받으므로 세대 불일치 시 gap/wake로 복귀시켜야 한다
+  // (삼순 라운드2 blocker). env+channelId 조합별로 묶어 기록한다.
+  const channelBornGroups = new Map<string, { env: ApnsEnvironment; channelId: string; users: string[] }>();
   await Promise.all(
     toSend.map(async ([userId, meta]) => {
       // p2s per-attempt env 쌍 규칙 (스펙 v4): env known = 그 쌍만 / null = prod 쌍 →
       // BadDeviceToken 시 sandbox 쌍 재시도 → 성공 env 저장·고정. 불변식 = 발송 host env ==
       // 포함 channelId env (교차 쌍 금지). 채널 payload는 클라가 os_major>=18 && app_build>=16을
       // *명시 보고*한 토큰만 (iOS17 이하에 input-push-channel이 실리면 start 자체가 실패).
-      const channelCapable = p2sChannelEligible({
-        os_major: meta.osMajor,
-        app_build: meta.appBuild,
-      });
-      const attempts = p2sEnvAttempts(meta.env);
+      // R3: attempt 목록은 사전 계산된 plan — channelRequired면 모든 attempt env에 채널이
+      // 보장된다(채널 없는 env는 attempt에서 제외, 전부 없으면 위에서 defer 이미 처리).
+      const plan = planByUser.get(userId)!;
       let res: ApnsResult = { ok: false, status: 0, invalidToken: false };
-      for (const env of attempts) {
-        const channelId = channelCapable ? params.channelByEnv.get(env) : undefined;
+      for (const env of plan.attempts) {
+        const channelId = plan.channelRequired ? params.channelByEnv.get(env) : undefined;
         res = await sendLiveActivityPushToEnv(
           {
             pushToken: meta.token,
@@ -704,6 +763,11 @@ async function startForTeamSide(params: {
           params.jwt,
         );
         if (res.ok) {
+          if (channelId) {
+            const key = `${env}|${channelId}`;
+            if (!channelBornGroups.has(key)) channelBornGroups.set(key, { env, channelId, users: [] });
+            channelBornGroups.get(key)!.users.push(userId);
+          }
           // 성공 env 기록(이후 그 쌍으로 고정) — null이었거나 바뀐 경우만 update.
           // rotation fence(삼순 재리뷰 blocker②): 발송 중 앱이 토큰을 교체(env null 리셋)
           // 했으면 affected 0 = no-op — 옛 토큰의 in-flight 결과가 새 토큰 env를 덮지 않는다.
@@ -719,7 +783,12 @@ async function startForTeamSide(params: {
         if (res.reason !== "BadDeviceToken") break;
       }
       if (res.ok) sent += 1;
-      else if (res.invalidToken) invalid.push({ userId, token: meta.token });
+      else if (res.invalidToken && plan.truncated && res.reason === "BadDeviceToken") {
+        // R3: env 미상 토큰의 attempt 쌍이 채널 부재로 잘린 상태의 BadDeviceToken은 "반대 env
+        // 토큰인데 그 env 채널이 아직 없음"일 수 있어 무효 확정 불가 — 토큰 보존, 선점만
+        // 해제(반대 env 채널 생성 후 다음 틱 재시도). 레거시 발송 fallback 없음.
+        releaseRetry.push(userId);
+      } else if (res.invalidToken) invalid.push({ userId, token: meta.token });
       else {
         transientFail = true; // 일시 APNs 오류(무효 토큰 아님)
         releaseRetry.push(userId);
@@ -745,6 +814,20 @@ async function startForTeamSide(params: {
       .delete()
       .eq("game_id", params.gameId)
       .eq("user_id", u);
+  }
+  // 채널 출생 세대 마킹 — best-effort(발송은 이미 확정이므로 실패해도 재시도 안 함).
+  // 마킹 누락 = 그 유저만 종전처럼 네이티브 ACK 대기 집계(gap 과대계상 쪽 오차만 = 보수적).
+  for (const group of channelBornGroups.values()) {
+    for (let i = 0; i < group.users.length; i += 200) {
+      await supabase
+        .from("live_activity_started_users")
+        .update({
+          channel_born_environment: group.env,
+          channel_born_channel_id: group.channelId,
+        })
+        .eq("game_id", params.gameId)
+        .in("user_id", group.users.slice(i, i + 200));
+    }
   }
   return { sent, failed: transientFail && sent === 0 };
 }
@@ -895,6 +978,10 @@ const EMPTY_WAKE: WakeResult = { woke: 0, failed: 0, skipped: 0, cleaned: 0, ok:
  * 세팅하므로, 그 updated_at(=live 전환 근사시각)에서 WAKE_WINDOW_MS 이내 경기만 대상.
  * → 우천/지연으로 예정시각+20분을 한참 넘겨 live 전환된 경기도 정확히 커버(예정시각 기준이면
  * 스킵됐음). start_notified row가 아직 없으면(막 전환/알림 경로 이슈) 안전하게 포함.
+ * 창은 *현재 active 채널 세대의 생성/교체 시각* 기준으로도 재오픈된다(isWakeWindowOpen,
+ * 삼순 라운드3): 라이브 도중 채널이 늦게 생성되거나 A→B로 교체되면 그 시점에야
+ * 구채널/레거시 카드가 gap으로 복귀하므로, 이벤트 창이 닫혔어도 세대 생성 후
+ * WAKE_WINDOW_MS 동안 wake 구제를 허용한다(채널 변경 없으면 기존 마감 유지).
  * 취소(우천 등) 경기도 동일하게 커버(cancel_notified 시각 기준 창) — 토큰 미등록 gap 카드를 깨워
  * 등록 유도 → pushLiveActivityUpdates(cancelled→end)가 정리. (이미 오래된 취소는 창 밖=자동만료.)
  * 종료(final) 경기도 동일하게 커버(end_notified 시각 기준 창) — gap 유저는 end 푸시가 못 닿아
@@ -946,13 +1033,37 @@ export async function pushLiveActivitySilentWakes(
       if ((r.start_notified || r.cancel_notified || r.end_notified) && r.updated_at) eventSince.set(r.game_id, new Date(r.updated_at).getTime());
     }
   }
-  // wake 대상 = 이벤트(live 전환/취소·종료 확정) 후 WAKE_WINDOW_MS 이내. row 없으면(막 발생 등) 포함(안전).
+  // active 채널 조회를 wake 창 판정 *앞*으로 — created_at(현재 채널 세대의 생성/교체
+  // 시각)이 창 재오픈 판정에 필요(삼순 라운드3). 같은 결과를 아래 activeKeys/구독
+  // 확인에서 재사용해 채널 쿼리는 종전처럼 1회만 나간다(.in 범위만 candidate로 확장).
+  // query-guard: bounded -- PK (game_id, environment)·env 2종 → 행수 ≤ 2×당일 경기수(≤10),
+  // .in은 당일 스케줄 game_id로 상한(종전 wakeGameIds 쿼리와 동일 구조, 범위만 candidate)
+  const { data: chanRows, error: chanError } = await supabase
+    .from("live_activity_channels")
+    .select("game_id, environment, channel_id, created_at")
+    .in("game_id", candidateGameIds)
+    .eq("status", "active");
+  if (chanError) return { error: chanError.message };
+  const allActiveChannels = (chanRows ?? []) as ActiveChannelRow[];
+  // 게임별 현재 채널 세대 생성/교체 시각 — env별 active 행 중 가장 최근 created_at.
+  const chanGenAt = new Map<string, number>();
+  for (const r of allActiveChannels) {
+    if (!r.created_at) continue;
+    const t = new Date(r.created_at).getTime();
+    if (!Number.isFinite(t)) continue;
+    const prev = chanGenAt.get(r.game_id);
+    if (prev === undefined || t > prev) chanGenAt.set(r.game_id, t);
+  }
+
+  // wake 대상 = 이벤트(live 전환/취소·종료 확정) 후 WAKE_WINDOW_MS 이내, *또는* 현재
+  // active 채널 세대가 생성/교체된 지 WAKE_WINDOW_MS 이내(삼순 라운드3 — 라이브 도중
+  // 채널 늦은 생성/A→B 교체 시 구채널·레거시 카드 wake 구제 창 재오픈). 이벤트 row
+  // 없으면(막 발생 등) 포함(안전). 채널 변경 없이 두 창 모두 지나면 기존대로 마감.
   // 예정 경기는 게임 단위 창 없이 통과 — 유저별 created_at 창으로 아래에서 거른다.
+  const nowMs = Date.now();
   const wakeGameIds = [
-    ...eventGameIds.filter((id) => {
-      const since = eventSince.get(id);
-      return since === undefined || Date.now() - since <= WAKE_WINDOW_MS;
-    }),
+    ...eventGameIds.filter((id) =>
+      isWakeWindowOpen(nowMs, eventSince.get(id), chanGenAt.get(id), WAKE_WINDOW_MS)),
     ...scheduledGameIds,
   ];
   if (wakeGameIds.length === 0) return EMPTY_WAKE;
@@ -974,19 +1085,14 @@ export async function pushLiveActivitySilentWakes(
   );
   // 채널 구독 확인(active 채널 일치) 유저는 update 토큰이 없어도 gap이 아님 — broadcast가
   // 카드를 갱신하므로 wake 불필요(스펙 v4 §서버 4: gap 계산도 동일 조건으로 제외).
+  // activeKeys는 아래 selectWakeGapRows의 채널출생 세대 일치 판정에도 쓴다(단일 기준).
+  const activeKeys = new Set<string>();
   {
-    const { data: chanRows, error: chanError } = await supabase
-      .from("live_activity_channels")
-      .select("game_id, environment, channel_id")
-      .in("game_id", wakeGameIds)
-      .eq("status", "active");
-    if (chanError) return { error: chanError.message };
-    const activeChannels = (chanRows ?? []) as ActiveChannelRow[];
-    const activeKeys = new Set(
-      activeChannels.map(
-        (r) => `${r.game_id}|${r.environment}|${r.channel_id}`,
-      ),
-    );
+    const wakeSet = new Set(wakeGameIds);
+    const activeChannels = allActiveChannels.filter((r) => wakeSet.has(r.game_id));
+    for (const r of activeChannels) {
+      activeKeys.add(`${r.game_id}|${r.environment}|${r.channel_id}`);
+    }
     if (activeKeys.size > 0) {
       let subRows: ChannelSubscriptionRow[];
       try {
@@ -1002,21 +1108,15 @@ export async function pushLiveActivitySilentWakes(
       }
     }
   }
-  // 갭 유저 = (user,game) 토큰 없음. wake는 기기 단위라 user로 중복 제거.
+  // 갭 유저 = (user,game) 토큰·유효 ACK 없음 + 유효 채널출생 아님. wake는 기기 단위라 user로 중복 제거.
+  // 채널출생 카드는 *출생 세대가 현재 active 채널과 일치*할 때만 broadcast 수신(어드민
+  // updatable 합산과 동일 기준 = isLiveBornChannel)으로 보고 wake 대상·wake_attempted_at
+  // 기록 모두에서 제외(분모 오염 방지) — selectWakeGapRows가 SSOT. 출생 채널이 교체된
+  // 행(세대 불일치)은 gap으로 복귀해 wake로 구제한다(삼순 라운드2 blocker).
   // 예정 경기 row는 카드 발급(created_at) 후 WAKE_WINDOW_MS 이내만 — 그 뒤는 live 전환 창이 백스톱.
   const scheduledSet = new Set(scheduledGameIds);
-  const gapUsers = [
-    ...new Set(
-      started
-        .filter((r) => !tokened.has(`${r.user_id}|${r.game_id}`))
-        .filter(
-          (r) =>
-            !scheduledSet.has(r.game_id) ||
-            (r.created_at !== null && Date.now() - new Date(r.created_at).getTime() <= WAKE_WINDOW_MS),
-        )
-        .map((r) => r.user_id),
-    ),
-  ];
+  const gapRows = selectWakeGapRows(started, tokened, activeKeys, scheduledSet, nowMs, WAKE_WINDOW_MS);
+  const gapUsers = [...new Set(gapRows.map((r) => r.user_id))];
   if (gapUsers.length === 0) return EMPTY_WAKE;
 
   // 옵트아웃(live_activity=false) 제외 — 깨워도 register-device가 skip. .in() 200 청크.
@@ -1041,6 +1141,30 @@ export async function pushLiveActivitySilentWakes(
     undefined,
     "ios",
   );
+  // ③ wake 계측 — 시도한 (game,user) pair에 첫 시도 시각만 기록(wake_attempted_at is null 조건).
+  // 이후 그 pair가 update 토큰/채널 ACK로 전환되면 어드민 API가 '구제 성공'으로 집계해
+  // wake 성공률을 낸다. best-effort(계측 실패가 wake 경로를 막지 않게 에러 무시) —
+  // 새 테이블 없이 기존 선점 행 컴럼 활용(최소 인프라).
+  {
+    const targetSet = new Set(targets);
+    const pairsByGame = new Map<string, string[]>();
+    for (const r of gapRows) {
+      if (!targetSet.has(r.user_id)) continue;
+      if (!pairsByGame.has(r.game_id)) pairsByGame.set(r.game_id, []);
+      pairsByGame.get(r.game_id)!.push(r.user_id);
+    }
+    const nowIso = new Date().toISOString();
+    for (const [gid, users] of pairsByGame) {
+      for (let i = 0; i < users.length; i += 200) {
+        await supabase
+          .from("live_activity_started_users")
+          .update({ wake_attempted_at: nowIso })
+          .eq("game_id", gid)
+          .is("wake_attempted_at", null)
+          .in("user_id", users.slice(i, i + 200));
+      }
+    }
+  }
   // 운영 관측용 전체 통계 노출(삼순 비블로커) — woke=성공 발송 기기수.
   return { woke: res.sent, failed: res.failed, skipped: res.skipped, cleaned: res.cleaned, ok: res.ok };
 }

@@ -8,6 +8,7 @@ import {
   fullStateHashOf,
   p2sChannelEligible,
   p2sEnvAttempts,
+  p2sSendPlan,
   endRetryDelayMinutes,
   startTokenEnvPatch,
   channelMutationFence,
@@ -17,9 +18,16 @@ import {
   startTokenChangePatch,
   shouldAdvanceFallbackCursor,
   applyChannelHeartbeat,
+  resolveChannelUpdateDecision,
   CHANNEL_HEARTBEAT_INTERVAL_MS,
   activeChannelKeySet,
   isLiveChannelSubscription,
+  isLiveBornChannel,
+  countUpdatableUsers,
+  isStaleStartToken,
+  STALE_START_TOKEN_MS,
+  isWakeWindowOpen,
+  selectWakeGapRows,
 } from "../../src/lib/notifications/live-activity-channel-policy";
 
 let pass = 0;
@@ -397,5 +405,358 @@ check("cursor: invalidToken + retryable 혼합(성공 無) → 보류",
     applyChannelHeartbeat({ send: false }, t - HB + 1, t), { send: false });
 }
 
-console.log(`\nla-broadcast-policy-smoke: ${pass} PASS / ${fail} FAIL`);
-if (fail > 0) process.exit(1);
+// ── countUpdatableUsers — gap 집계 교정(channel_born 합산, 2026-07-23) ──
+{
+  const started = ["a", "b", "c", "d"];
+  // 교정 전(channel_born 미합산): a=토큰, b=ACK → updatable 2, gap 2.
+  check("updatable: 토큰∪ACK만(기존 집계) → 2",
+    countUpdatableUsers({ started, tokenUsers: new Set(["a"]), channelAckUsers: new Set(["b"]), channelBornUsers: new Set() }), 2);
+  // 교정 후: c가 채널 내장 발송 → updatable 3, gap 1 (ACK 미도착이어도 수신).
+  check("updatable: channel_born 합산 → 3 (gap 과대계상 교정)",
+    countUpdatableUsers({ started, tokenUsers: new Set(["a"]), channelAckUsers: new Set(["b"]), channelBornUsers: new Set(["c"]) }), 3);
+  // 중복(토큰+ACK+내장 동일 유저)은 1로만 셈.
+  check("updatable: 토큰∩ACK∩내장 중복 유저 → 1",
+    countUpdatableUsers({ started: ["a"], tokenUsers: new Set(["a"]), channelAckUsers: new Set(["a"]), channelBornUsers: new Set(["a"]) }), 1);
+  // started 밖 유저(경기룸 방문으로만 뜼 LA)는 분자에 안 셈.
+  check("updatable: started 밖 토큰 유저 미집계",
+    countUpdatableUsers({ started: ["a"], tokenUsers: new Set(["z"]), channelAckUsers: new Set(), channelBornUsers: new Set() }), 0);
+}
+
+// ── isStaleStartToken — ④ 30일+ 휴면 p2s 발송 제외 ──
+{
+  const now = Date.parse("2026-07-23T12:00:00+09:00");
+  check("stale: 30일+1ms 경과 → true",
+    isStaleStartToken(new Date(now - STALE_START_TOKEN_MS - 1).toISOString(), now), true);
+  check("stale: 정확히 30일(경계) → false(발송 유지)",
+    isStaleStartToken(new Date(now - STALE_START_TOKEN_MS).toISOString(), now), false);
+  check("stale: 어제 갱신 → false",
+    isStaleStartToken(new Date(now - 24 * 60 * 60 * 1000).toISOString(), now), false);
+  check("stale: null → false(보수적 — 발송 유지)", isStaleStartToken(null, now), false);
+  check("stale: 파싱 불가 → false(보수적)", isStaleStartToken("not-a-date", now), false);
+}
+
+// ── selectWakeGapRows — 무음 wake 대상·attempted 기록 선별(삼순 재리뷰 wake 오염 제거) ──
+// pushLiveActivitySilentWakes는 wake 발송 대상과 wake_attempted_at 기록을 *모두* 이
+// 함수 반환값(gapRows)에서만 파생시킨다 — 여기서 빠지면 wake도 attempted 기록도 없다.
+// 채널출생 제외는 *세대 일치(isLiveBornChannel)*일 때만 — 출생 채널이 교체되면 gap 복귀
+// (삼순 라운드2 blocker).
+{
+  const now = Date.parse("2026-07-23T19:00:00+09:00");
+  const W = 10 * 60 * 1000; // wake 창 10분 가정
+  const live = "20260723LGKT0";
+  const sched = "20260723OBSS0";
+  // 출생 세대: "A" = chanA(구채널), "B" = chanB(현 active), null = 레거시/비채널 발송.
+  const row = (user: string, game: string, born: "A" | "B" | null, createdAt: string | null = null) =>
+    ({
+      user_id: user, game_id: game, created_at: createdAt,
+      channel_born_environment: born ? "production" : null,
+      channel_born_channel_id: born === "A" ? "chanA" : born === "B" ? "chanB" : null,
+    });
+  // 현재 active 채널 = chanB (채널 A는 ChannelNotRegistered로 deleted 후 B로 재생성된 상황).
+  const activeB = new Set([`${live}|production|chanB`, `${sched}|production|chanB`]);
+
+  // 핵심 회귀: 유효 채널출생 단독 row(토큰/ACK 없음)는 wake 대상·attempted 기록에서 제외.
+  check("wakeGap: 유효 채널출생(세대 일치) 단독 row → 제외(wake·attempted 모두 없음)",
+    selectWakeGapRows([row("u1", live, "B")], new Set(), activeB, new Set(), now, W), []);
+  // 삼순 라운드2 회귀: 채널 A born → A 무효화(deleted) → B active — 구채널 출생 row는
+  // broadcast를 못 받으므로 wake gap으로 복귀해야 한다(boolean 영구 제외 금지).
+  check("wakeGap: [라운드2] 채널 A born + 현 active=B → gap 복귀(wake 대상)",
+    selectWakeGapRows([row("u1", live, "A")], new Set(), activeB, new Set(), now, W),
+    [row("u1", live, "A")]);
+  // 재제외(③): 구채널 출생 row도 이후 update 토큰 또는 새 채널 B ACK가 생기면
+  // updatableKeys(토큰∪유효 ACK 동일 경로)로 다시 제외된다.
+  check("wakeGap: [라운드2] 구채널 born + 이후 토큰/B ACK 등록 → 재제외",
+    selectWakeGapRows([row("u1", live, "A")], new Set([`u1|${live}`]), activeB, new Set(), now, W), []);
+  // 채널출생 아닌 순수 gap row(세대 null)는 여전히 대상 — 마이그레이션 이전 행 포함(보수적).
+  check("wakeGap: 토큰·ACK·채널출생 없는 row(null 세대) → 대상 유지",
+    selectWakeGapRows([row("u1", live, null)], new Set(), activeB, new Set(), now, W),
+    [row("u1", live, null)]);
+  // 혼합: 유효 채널출생 row만 정확히 빠진다(같은 경기 다른 유저 영향 없음).
+  check("wakeGap: 혼합 — 유효 채널출생 row만 제외, 구채널·null row는 gap 유지",
+    selectWakeGapRows([row("u1", live, "B"), row("u2", live, "A"), row("u3", live, null)], new Set(), activeB, new Set(), now, W),
+    [row("u2", live, "A"), row("u3", live, null)]);
+  // 기존 제외 조건 회귀: update 토큰/유효 ACK 보유 유저 제외 유지.
+  check("wakeGap: update 토큰/유효 ACK 보유 → 제외(기존 동작 보존)",
+    selectWakeGapRows([row("u1", live, null)], new Set([`u1|${live}`]), activeB, new Set(), now, W), []);
+  // scheduled 창 회귀: 발급 직후만 포함, 창 밖/created_at null 제외.
+  const fresh = new Date(now - W + 1000).toISOString();
+  const old = new Date(now - W - 1000).toISOString();
+  check("wakeGap: scheduled 창 이내 발급 row → 포함",
+    selectWakeGapRows([row("u1", sched, null, fresh)], new Set(), activeB, new Set([sched]), now, W),
+    [row("u1", sched, null, fresh)]);
+  check("wakeGap: scheduled 창 경과 row → 제외",
+    selectWakeGapRows([row("u1", sched, null, old)], new Set(), activeB, new Set([sched]), now, W), []);
+  check("wakeGap: scheduled + 유효 채널출생 → 창 이내여도 제외",
+    selectWakeGapRows([row("u1", sched, "B", fresh)], new Set(), activeB, new Set([sched]), now, W), []);
+  check("wakeGap: scheduled + 구채널 born → 창 이내면 gap 복귀(재제외 아님)",
+    selectWakeGapRows([row("u1", sched, "A", fresh)], new Set(), activeB, new Set([sched]), now, W),
+    [row("u1", sched, "A", fresh)]);
+}
+
+// ── isWakeWindowOpen — 채널 세대 기준 wake 창 재오픈(삼순 라운드3) ──
+// live 전환 20분 창이 닫혀도, 라이브 도중 채널이 늦게 생성/A→B 교체되면 그 시점
+// 기준으로 창을 다시 연다 — 구채널·레거시 카드 자동구제(2026-07-23 실사례: 19:07 시작
+// 경기의 늦은 채널 생성 시 이미 닫힌 창 때문에 구제 불가). 정책(20분 창)은 그대로.
+{
+  const W = 20 * 60 * 1000;
+  const now = Date.parse("2026-07-23T19:40:00+09:00");
+  const liveAt = now - 30 * 60 * 1000; // live 전환 30분 전 = 이벤트 창 마감 상황
+
+  // ① live+30분(이벤트 창 마감) 후 채널 A→B 교체(5분 전) → 창 재오픈.
+  check("wakeWindow: [라운드3①] live+30분 마감 + 채널 A→B 교체 5분 전 → 재오픈",
+    isWakeWindowOpen(now, liveAt, now - 5 * 60 * 1000, W), true);
+  // ① 통합: 재오픈된 창에서 구채널(A) 출생 세대 카드가 wake gap으로 복귀(라운드2 세대
+  // 일치 설계 그대로 — 창만 열리면 selectWakeGapRows가 구채널 row를 대상으로 복원).
+  {
+    const game = "20260723LGKT0";
+    const oldBorn = {
+      user_id: "u1", game_id: game, created_at: null,
+      channel_born_environment: "production", channel_born_channel_id: "chanA",
+    };
+    const activeB = new Set([`${game}|production|chanB`]);
+    check("wakeWindow: [라운드3① 통합] 재오픈 창 + 구채널(A) born row → wake gap 복귀",
+      isWakeWindowOpen(now, liveAt, now - 5 * 60 * 1000, W)
+        ? selectWakeGapRows([oldBorn], new Set(), activeB, new Set(), now, W)
+        : [],
+      [oldBorn]);
+  }
+  // ② 채널이 live 도중 늦게 *처음* 생성 → 생성 시각 기준 창 오픈.
+  check("wakeWindow: [라운드3②] live 도중 늦은 첫 채널 생성(1분 전) → 생성 시각 기준 오픈",
+    isWakeWindowOpen(now, liveAt, now - 60 * 1000, W), true);
+  // ③ 채널 변경 없음(세대도 live 직후 생성) + 20분 경과 → 기존대로 마감 유지.
+  check("wakeWindow: [라운드3③] 채널 변경 없음 + 20분 경과 → 마감 유지(스팸 방지)",
+    isWakeWindowOpen(now, liveAt, liveAt, W), false);
+  check("wakeWindow: 채널 세대 정보 없음(active 없음/created_at null) + 창 마감 → 마감 유지",
+    isWakeWindowOpen(now, liveAt, undefined, W), false);
+  check("wakeWindow: 채널 교체 후에도 20분+ 경과 → 재오픈 창도 마감(정책 유지)",
+    isWakeWindowOpen(now, liveAt, now - W - 1000, W), false);
+  // 기존 동작 회귀: 이벤트 창 이내 · 이벤트 row 없음(막 발생) → 오픈.
+  check("wakeWindow: 이벤트 창 이내(live+1분) → 오픈(기존 동작)",
+    isWakeWindowOpen(now, now - 60 * 1000, undefined, W), true);
+  check("wakeWindow: 이벤트 row 없음(막 전환) → 오픈(기존 안전 동작)",
+    isWakeWindowOpen(now, undefined, undefined, W), true);
+}
+
+// ── isLiveBornChannel — 채널출생 세대 일치(삼순 라운드2) — 어드민 updatable 합산과
+// wake 제외가 모두 이 함수 하나를 기준으로 삼는다(이중 기준 금지 계약).
+{
+  const game = "20260723LGKT0";
+  const activeKeys = new Set([`${game}|production|chanB`]);
+  const born = (env: string | null, chan: string | null) =>
+    ({ game_id: game, channel_born_environment: env, channel_born_channel_id: chan });
+  check("bornChannel: 현 active 세대 일치 → 유효",
+    isLiveBornChannel(born("production", "chanB"), activeKeys), true);
+  check("bornChannel: 구채널(chanA 출생, 현 active=chanB) → 불인정(gap 복귀)",
+    isLiveBornChannel(born("production", "chanA"), activeKeys), false);
+  check("bornChannel: 같은 channel_id지만 env 불일치 → 불인정",
+    isLiveBornChannel(born("sandbox", "chanB"), activeKeys), false);
+  check("bornChannel: 세대 미기록(null — 마이그레이션 이전 행) → 불인정(보수적)",
+    isLiveBornChannel(born(null, null), activeKeys), false);
+  check("bornChannel: active 채널 없는 경기 → 불인정",
+    isLiveBornChannel({ ...born("production", "chanB"), game_id: "20260723OBNC0" }, activeKeys), false);
+
+  // 어드민 updatable 통합 시나리오: 채널 A born → A deleted → B active.
+  // channelBornUsers는 isLiveBornChannel 통과 유저만 담는다(호출부 계약) — 구채널 출생
+  // 유저는 updatable 아님(①), 이후 B ACK/토큰 생기면 다시 updatable(③).
+  const rows = [born("production", "chanA"), born("production", "chanB")].map((b, i) =>
+    ({ ...b, user_id: `u${i + 1}` }));
+  const bornUsers = new Set(rows.filter((r) => isLiveBornChannel(r, activeKeys)).map((r) => r.user_id));
+  check("updatable: [라운드2] 구채널 born 유저는 updatable 아님(u2만 인정)",
+    countUpdatableUsers({ started: ["u1", "u2"], tokenUsers: new Set(), channelAckUsers: new Set(), channelBornUsers: bornUsers }), 1);
+  check("updatable: [라운드2] 구채널 born 유저도 이후 토큰/B ACK 등록 시 재인정 → 2",
+    countUpdatableUsers({ started: ["u1", "u2"], tokenUsers: new Set(["u1"]), channelAckUsers: new Set(), channelBornUsers: bornUsers }), 2);
+}
+
+// ── p2sSendPlan — 서버 자동 p2s 채널-우선/유보 (PR #808 R3, 삼순 blocker①) ──
+{
+  const none = new Set<never>();
+  const prodOnly = new Set(["production" as const]);
+  const both = new Set(["production" as const, "sandbox" as const]);
+  // 레거시 토큰(iOS17↓/build15↓) — 채널 무관, 기존 attempt 그대로 발송(채널 payload 없음).
+  check("레거시(build15/iOS17) + 채널 없음 → 기존대로 발송(channelRequired=false)",
+    p2sSendPlan({ os_major: 17, app_build: 15, env: "production" }, none),
+    { kind: "send", attempts: ["production"], channelRequired: false, truncated: false });
+  check("레거시 + 채널 있음이어도 channelRequired=false(레거시엔 채널 미첨부)",
+    p2sSendPlan({ os_major: 17, app_build: 15, env: null }, both),
+    { kind: "send", attempts: ["production", "sandbox"], channelRequired: false, truncated: false });
+  // channel-capable(iOS18+/build16+) — 채널 준비된 env로만 발송.
+  check("capable + 채널 전무 → defer(claim/발송 0, 다음 틱 재시도)",
+    p2sSendPlan({ os_major: 18, app_build: 16, env: "production" }, none),
+    { kind: "defer" });
+  check("capable(known prod) + prod 채널 준비 → prod로만 발송(channelRequired)",
+    p2sSendPlan({ os_major: 18, app_build: 16, env: "production" }, prodOnly),
+    { kind: "send", attempts: ["production"], channelRequired: true, truncated: false });
+  check("capable(known sandbox) + prod 채널만 → sandbox env 미준비 → defer",
+    p2sSendPlan({ os_major: 18, app_build: 16, env: "sandbox" }, prodOnly),
+    { kind: "defer" });
+  check("capable(env null) + prod 채널만 → prod attempt만(truncated: sandbox 제거)",
+    p2sSendPlan({ os_major: 18, app_build: 16, env: null }, prodOnly),
+    { kind: "send", attempts: ["production"], channelRequired: true, truncated: true });
+  check("capable(env null) + 양 env 채널 → 두 attempt, truncated 없음",
+    p2sSendPlan({ os_major: 18, app_build: 16, env: null }, both),
+    { kind: "send", attempts: ["production", "sandbox"], channelRequired: true, truncated: false });
+  check("경계: build16/iOS18 정확히 = capable(채널 없으면 defer)",
+    p2sSendPlan({ os_major: 18, app_build: 16, env: "production" }, none),
+    { kind: "defer" });
+  check("경계: build15는 미달 = 레거시 발송(defer 아님)",
+    p2sSendPlan({ os_major: 18, app_build: 15, env: "production" }, none),
+    { kind: "send", attempts: ["production"], channelRequired: false, truncated: false });
+}
+
+// ── resolveChannelUpdateDecision — 지명 catch-up p10 승격 (삼순 R2 blocker③) ──
+// fast-path가 유실 복구로 지명한 경기는 base 판정이 skip이든 p5든 반드시 p10 —
+// R1은 `!send`일 때만 승격해 relay lastPlay만 다른 base=p5 틱에서 catch-up이 p5로
+// 나가고(pending은 이미 clear) 놓친 단말이 2분 heartbeat까지 stale로 남았다.
+{
+  const HB = CHANNEL_HEARTBEAT_INTERVAL_MS;
+  const t = 10_000_000;
+  const same = {
+    scoreState: scoreStateOf(baseCs), fullStateHash: fullStateHashOf(baseCs),
+    lastScoreState: scoreStateOf(baseCs), lastStateHash: fullStateHashOf(baseCs),
+  };
+  // lastPlay만 다름 = 점수축 동일·전체축 변화 → base p5.
+  const lastPlayOnly = { ...baseCs, lastPlay: "박동원 안타" };
+  const p5Base = {
+    scoreState: scoreStateOf(lastPlayOnly), fullStateHash: fullStateHashOf(lastPlayOnly),
+    lastScoreState: scoreStateOf(baseCs), lastStateHash: fullStateHashOf(baseCs),
+  };
+  check("resolve: 지명 catch-up + base p5(lastPlay만) + fresh p10 → p10 승격(R2③ 핵심)",
+    resolveChannelUpdateDecision({ ...p5Base, lastP10AtMs: t - 30_000, nowMs: t, forceCatchup: true }),
+    { decision: { send: true, priority: "10" }, isHeartbeat: false, isForcedCatchup: true });
+  check("resolve: 지명 catch-up + 무변화 skip + fresh p10 → p10 승격",
+    resolveChannelUpdateDecision({ ...same, lastP10AtMs: t - 30_000, nowMs: t, forceCatchup: true }),
+    { decision: { send: true, priority: "10" }, isHeartbeat: false, isForcedCatchup: true });
+  check("resolve: 지명 catch-up + 자연 p10(점수 변화) → 그 발송이 겸함(이중 승격 아님)",
+    resolveChannelUpdateDecision({
+      scoreState: scoreStateOf({ ...baseCs, homeScore: 2 }),
+      fullStateHash: fullStateHashOf({ ...baseCs, homeScore: 2 }),
+      lastScoreState: scoreStateOf(baseCs), lastStateHash: fullStateHashOf(baseCs),
+      lastP10AtMs: t - 30_000, nowMs: t, forceCatchup: true,
+    }),
+    { decision: { send: true, priority: "10" }, isHeartbeat: false, isForcedCatchup: false });
+  check("resolve: 지명 catch-up + heartbeat 만료 p10 → heartbeat가 겸함(catchup 카운트 아님)",
+    resolveChannelUpdateDecision({ ...same, lastP10AtMs: t - HB, nowMs: t, forceCatchup: true }),
+    { decision: { send: true, priority: "10" }, isHeartbeat: true, isForcedCatchup: false });
+  check("resolve: 비지명 + base p5 + fresh p10 → p5 그대로(예산 경로 보존)",
+    resolveChannelUpdateDecision({ ...p5Base, lastP10AtMs: t - 30_000, nowMs: t, forceCatchup: false }),
+    { decision: { send: true, priority: "5" }, isHeartbeat: false, isForcedCatchup: false });
+  check("resolve: 비지명 + 무변화 + fresh p10 → skip 그대로",
+    resolveChannelUpdateDecision({ ...same, lastP10AtMs: t - 30_000, nowMs: t, forceCatchup: false }),
+    { decision: { send: false }, isHeartbeat: false, isForcedCatchup: false });
+}
+
+// ── runChannelBroadcastPass — 요청-절대 deadline 유계 종료·재-arm (삼순 R4 blocker②) ──
+// route와 동일한 채널 순회 루프(live-activity-channels가 위임하는 pass)에 fake clock/
+// 실패 send를 주입: 채널별 APNs send가 직렬 8s timeout이면 5경기×2 env = 80s로
+// maxDuration(75s) 504가 가능했다. deadline(60s) 초과 시 새 send를 시작하지 않고 명시
+// 종료 + 미발송 라이브 경기 전부 failedGameIds 보고(다음 틱 catch-up 재-arm 재료)를 고정.
+import { runChannelBroadcastPass } from "../../src/lib/notifications/live-activity-channel-broadcast-pass";
+import type { ChannelRow } from "../../src/lib/notifications/live-activity-channels";
+import type { KboRawGame } from "../../src/types/api";
+
+function liveGame(id: string): KboRawGame {
+  return {
+    G_ID: id, GAME_STATE_SC: "2", AWAY_NM: "LG", HOME_NM: "두산",
+    T_SCORE_CN: "1", B_SCORE_CN: "0", GAME_INN_NO: 4, GAME_TB_SC: "T",
+    OUT_CN: 1, BALL_CN: 0, STRIKE_CN: 0, CANCEL_SC_ID: "", S_NM: "잠실",
+  } as unknown as KboRawGame;
+}
+function channelRow(gameId: string, environment: "production" | "sandbox"): ChannelRow {
+  return {
+    game_id: gameId, environment, channel_id: `chan-${gameId}-${environment}`,
+    status: "active", last_score_state: null, last_state_hash: null, last_p10_at: null,
+    attempt_count: 0, next_retry_at: null,
+    created_at: new Date(0).toISOString(), ending_at: null,
+  };
+}
+function passDeps(clock: { now(): number }, send: (env: string) => Promise<{ ok: boolean; reason?: string }>) {
+  const updated: { gameId: string; patch: Record<string, unknown> }[] = [];
+  return {
+    updated,
+    deps: {
+      now: clock.now,
+      gameStatus: (g: KboRawGame) =>
+        (g.GAME_STATE_SC === "2" ? "live" : g.GAME_STATE_SC === "3" ? "final" : "other") as
+          "live" | "final" | "scheduled" | "other",
+      buildContentState: (g: KboRawGame, status: "live" | "final" | "scheduled") => ({
+        awayScore: parseInt(g.T_SCORE_CN ?? "0") || 0,
+        homeScore: parseInt(g.B_SCORE_CN ?? "0") || 0,
+        inning: g.GAME_INN_NO ?? 1, isTopInning: g.GAME_TB_SC === "T",
+        balls: g.BALL_CN ?? 0, strikes: g.STRIKE_CN ?? 0, outs: g.OUT_CN ?? 0,
+        onFirst: false, onSecond: false, onThird: false,
+        pitcherName: "", batterName: "", stadium: g.S_NM ?? "", status,
+      }),
+      send: (p: { env: "production" | "sandbox" }) => send(p.env),
+      deleteChannel: async () => true,
+      updateChannel: async (row: ChannelRow, patch: Record<string, unknown>) => {
+        updated.push({ gameId: row.game_id, patch });
+        return 1;
+      },
+    },
+  };
+}
+
+(async () => {
+  const GIDS = ["20260724LGOB0", "20260724NCSS0", "20260724KTHH0", "20260724SKHT0", "20260724WOLT0"];
+  // ── 삼순 R4② 지정 회귀: 5경기×2 env 전부 APNs timeout(건당 8s) ──
+  {
+    let nowMs = 0;
+    const { deps } = passDeps({ now: () => nowMs }, async () => {
+      nowMs += 8_000; // APNs http2 8s timeout 재현
+      return { ok: false, reason: "timeout" };
+    });
+    const channels = GIDS.flatMap((id) => [channelRow(id, "production"), channelRow(id, "sandbox")]);
+    const stats = await runChannelBroadcastPass(
+      channels, GIDS.map(liveGame), undefined, { deadlineAtMs: 60_000 }, deps,
+    );
+    check("pass R4②: 5경기×2 env 전부 timeout → 60s deadline 후 새 send 시작 안 함(명시 종료)",
+      nowMs <= 68_000, true);
+    check("pass R4②: maxDuration(75s) 전 종료", nowMs < 75_000, true);
+    check("pass R4②: deadline 초과 행은 발송 미시작으로 집계", stats.deadlineSkipped >= 1, true);
+    check("pass R4②: 미발송 포함 라이브 5경기 전부 재-arm 보고(failedGameIds)",
+      stats.failedGameIds.slice().sort().join(","), GIDS.slice().sort().join(","));
+    check("pass R4②: 성공 update 0 — hash 미전진(다음 분 자연 재시도 유지)", stats.updates, 0);
+  }
+  // ── 정상 경로 보존: deadline 여유 시 전부 발송 + p10 커서 전진 ──
+  {
+    let nowMs = 0;
+    const { deps, updated } = passDeps({ now: () => nowMs }, async () => {
+      nowMs += 100;
+      return { ok: true };
+    });
+    const channels = GIDS.flatMap((id) => [channelRow(id, "production"), channelRow(id, "sandbox")]);
+    const stats = await runChannelBroadcastPass(
+      channels, GIDS.map(liveGame), undefined, { deadlineAtMs: 60_000 }, deps,
+    );
+    check("pass: 정상 경로 — 10채널 전부 update(첫 틱 p10)", stats.updates, 10);
+    check("pass: 정상 경로 — 재-arm/deadline 스킵 없음",
+      stats.failedGameIds.length === 0 && stats.deadlineSkipped === 0, true);
+    check("pass: 성공 p10은 last_p10_at 커서 전진 기록",
+      updated.every((u) => "last_p10_at" in u.patch) && updated.length === 10, true);
+  }
+  // ── 혼합: 일부 경기만 직전 send가 느려 deadline 도달 → 나머지만 재-arm ──
+  {
+    let nowMs = 0;
+    let sends = 0;
+    const { deps } = passDeps({ now: () => nowMs }, async () => {
+      sends += 1;
+      if (sends <= 2) { nowMs += 100; return { ok: true }; } // g1 양 env 성공
+      nowMs += 30_000; // g2 production에서 대형 지연 → 이후 deadline 초과
+      return { ok: false, reason: "timeout" };
+    });
+    const channels = GIDS.slice(0, 3).flatMap((id) => [channelRow(id, "production"), channelRow(id, "sandbox")]);
+    const stats = await runChannelBroadcastPass(
+      channels, GIDS.slice(0, 3).map(liveGame), undefined, { deadlineAtMs: 30_000 }, deps,
+    );
+    check("pass: 혼합 — 성공 경기 제외, 실패+미발송 경기만 재-arm",
+      stats.failedGameIds.slice().sort().join(","),
+      GIDS.slice(1, 3).sort().join(","));
+    check("pass: 혼합 — 성공 2건(g1 양 env) 집계", stats.updates, 2);
+  }
+
+  console.log(`\nla-broadcast-policy-smoke: ${pass} PASS / ${fail} FAIL`);
+  if (fail > 0) process.exit(1);
+})().catch((e) => {
+  console.error("smoke crashed:", e);
+  process.exit(1);
+});

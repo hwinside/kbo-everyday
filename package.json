@@ -18,6 +18,7 @@
     "qa:admin-view": "tsx scripts/qa/admin-view-smoke.ts",
     "qa:app-rankings": "tsx scripts/qa/app-rankings-smoke.ts",
     "qa:retention-dates": "tsx scripts/qa/retention-gamedates-smoke.ts",
+    "qa:leaderboard-cache": "tsx scripts/qa/leaderboard-cache-smoke.ts",
     "qa:leaderboard-rollup": "bash scripts/qa/leaderboard-rollup-refresh-regression.sh",
     "qa:war-saber": "tsx scripts/qa/war-saber-smoke.ts",
     "qa:foreign-onboard": "node scripts/qa/foreign-onboard-smoke.mjs",
@@ -29,6 +30,7 @@
     "qa:lock-gate": "tsx scripts/qa/lock-card-gate-smoke.ts",
     "qa:ios-widget": "tsx scripts/qa/ios-widget-score-state-smoke.ts",
     "qa:la-ack-policy": "bash scripts/qa/la-channel-ack-policy-smoke.sh",
+    "qa:la-migration-policy": "bash scripts/qa/la-channel-migration-policy-smoke.sh",
     "qa:news-naver-url": "tsx scripts/qa/news-naver-url-smoke.ts",
     "qa:photo-filter": "tsx scripts/qa/photo-article-filter-smoke.ts",
     "qa:news-dedup": "tsx scripts/qa/news-dedup-title-smoke.ts",
@@ -102,7 +104,9 @@
     "qa:ios-story-keyboard": "node scripts/qa/browserstack-ios-story-comments-keyboard.mjs",
     "qa:ui:venue-diary": "node scripts/qa/ui-smoke-venue-diary.mjs",
     "qa:widget-fast": "tsx scripts/qa/widget-fast-refresh-smoke.ts",
-    "qa:game-cancel-status": "tsx --test scripts/qa/game-cancel-status-smoke.ts"
+    "qa:la-fastpath": "tsx scripts/qa/live-fast-path-smoke.ts",
+    "qa:game-cancel-status": "tsx --test scripts/qa/game-cancel-status-smoke.ts",
+    "qa:venue-story-seen": "tsx scripts/qa/venue-story-seen-smoke.ts"
   },
   "dependencies": {
     "@capacitor-firebase/messaging": "^8.3.0",
