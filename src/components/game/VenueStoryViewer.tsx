@@ -119,7 +119,7 @@ export default function VenueStoryViewer({
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
       elapsedRef.current = base + (performance.now() - startRef.current);
     };
-  }, [story, index, paused, menuOpen, commentsOpen, goNext]);
+  }, [story, index, paused, menuOpen, commentsOpen, inputFocused, goNext]);
 
   // 영상 재생/일시정지 동기화
   useEffect(() => {
@@ -136,7 +136,7 @@ export default function VenueStoryViewer({
         v.play().catch(() => {});
       });
     }
-  }, [story, index, paused, menuOpen, commentsOpen, muted]);
+  }, [story, index, paused, menuOpen, commentsOpen, inputFocused, muted]);
 
   const onVideoTime = () => {
     const v = videoRef.current;
