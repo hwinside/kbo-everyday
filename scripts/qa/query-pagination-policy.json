@@ -137,6 +137,7 @@
     "urgent_notice_deliveries": [["notice_key", "user_id"]],
     "urgent_notices": [["notice_key"]],
     "user_blocks": [["blocker_id", "blocked_id"]],
+    "v_leaderboard_writing": [["user_id"]],
     "watch_pings": [["ping_date", "platform", "ip_hash"]],
     "youtube_quota_ledger": [["quota_date"]],
     "admin_alert_state": [["job_name"]],
