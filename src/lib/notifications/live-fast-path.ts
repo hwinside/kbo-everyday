@@ -4,13 +4,20 @@ import type { WidgetSourceTrace } from "@/lib/notifications/widget-fast-loop";
 
 // 라이브 fast path 서브틱 오케스트레이션 — warmup cron 1회 호출 내부의 +15/+30/+45초
 // 서브틱에서 잠금화면 LA(레거시 per-토큰 → broadcast)·위젯(안드/iOS)·득점 푸시를
-// 재실행해 점수 변화→잠금화면 반영 지연을 평균 ~30초 → ~7초로 줄인다.
+// 재실행해 점수 변화→잠금화면 반영 지연을 줄인다.
+//
+// ── SLO 정의 (삼순 R1 blocker② — "최대 15초" 단일 문구 금지) ──
+// 이 루프가 보장하는 것은 **서버 감지→발송 시도 SLO**다: KBO 스코어보드 변화 감지 후
+// ≤15초(다음 서브틱) 안에 APNs/FCM 발송을 *시작*한다. broadcast는 No-Message-Stored +
+// expiration 0이라 APNs accepted가 단말 수신 확인이 아니므로 **단말 체감은 best-effort**:
+// 유실 시 다음 서브틱의 broadcast-only catch-up(아래) + 채널 2분 heartbeat
+// (live-activity-channel-policy.ts)로 stale 상한만 건다. 절대 전달 SLA는 구조적으로 불가.
 //
 // ── DB 부하 근거 (2026-07-22 Supabase conn pool 고갈 장애 재발 방지) ──
-// 서브틱은 KBO 스코어보드(무DB) 1회 fetch 후 *diff 없으면 어떤 DB 접근/APNs·FCM 발송도
-// 하지 않는다(cheap early-exit). 즉 DB 접근 횟수는 "분당 4회"가 아니라 "경기 상태가 실제로
-// 바뀐 틱 수"만큼만 늘어난다 — 어차피 다음 분 cron이 했을 작업을 앞당겨 실행하는 것이라
-// 하루 총 DB 작업량은 카드축 diff(타석 단위) 감지 횟수 수준으로 유지된다.
+// 서브틱은 KBO 스코어보드(무DB) 1회 fetch 후 *diff도 catch-up pending도 없으면* 어떤 DB
+// 접근/APNs·FCM 발송도 하지 않는다(cheap early-exit). catch-up은 무변화 첫 서브틱에서
+// broadcast-only 1회로 유계(채널 select 1 + 경기당 broadcast 1건 — per-토큰 fanout 없음)라
+// 하루 총 DB 작업량은 카드축 diff(타석 단위) 감지 횟수 + 분당 최대 1회 catch-up 수준.
 //
 // ── 중복 발송 가드 (서브틱 ↔ 본체 ↔ 다음 분 cron) ──
 // diff 게이트는 1차 방어일 뿐이고, 각 발송 경로의 기존 선점/dedupe가 서브틱에도 성립한다:
@@ -50,6 +57,11 @@ export function scoreAxisSignature(g: KboRawGame): string {
 export function liveCardSignature(g: KboRawGame): string {
   return [
     scoreAxisSignature(g),
+    // 볼카운트(B/S) — 카드가 표시하는 필드이므로 diff 축에 포함(삼순 R1 blocker③:
+    // 볼/스트라이크만 바뀐 서브틱이 no-op으로 스킵되던 누락 수정). 점수축은 아님 —
+    // 볼카운트 변화만으로 game-events fetch/득점 푸시가 돌지 않는다.
+    g.BALL_CN,
+    g.STRIKE_CN,
     g.OUT_CN,
     g.B1_BAT_ORDER_NO,
     g.B2_BAT_ORDER_NO,
@@ -65,6 +77,14 @@ export function liveCardSignature(g: KboRawGame): string {
 export interface LiveFastPathState {
   cardSigByGame: Map<string, string>;
   scoreSigByGame: Map<string, string>;
+  /**
+   * broadcast 유실 catch-up 대상(삼순 R1 blocker②) — 직전에 변화 broadcast를 발사한
+   * 라이브 경기. APNs accepted ≠ 단말 수신이므로, 다음 *무변화* 서브틱에서 1회
+   * current-state p10 broadcast를 강제 재발송한 뒤 비운다(유계 — 틱당 최대 1회).
+   * seed 시 라이브 경기 전체를 넣어 본체(cycle 0) broadcast 유실도 +15s 안에 커버.
+   * broadcast는 최신 상태 멱등이라 중복 무해 — 득점 푸시(FCM)는 이 경로에 절대 미포함.
+   */
+  catchupGameIds: Set<string>;
 }
 
 /**
@@ -73,11 +93,18 @@ export interface LiveFastPathState {
  * baseline → 첫 성공 서브틱이 전 경기를 "변화"로 보고 fast path를 1회 태워 그 분을 복구.
  */
 export function seedLiveFastPathState(games: KboRawGame[]): LiveFastPathState {
-  const state: LiveFastPathState = { cardSigByGame: new Map(), scoreSigByGame: new Map() };
+  const state: LiveFastPathState = {
+    cardSigByGame: new Map(),
+    scoreSigByGame: new Map(),
+    catchupGameIds: new Set(),
+  };
   for (const g of games) {
     if (!g.G_ID) continue;
     state.cardSigByGame.set(g.G_ID, liveCardSignature(g));
     state.scoreSigByGame.set(g.G_ID, scoreAxisSignature(g));
+    // 본체(cycle 0)가 이 스냅샷으로 broadcast를 쏘지만 그 발송이 유실될 수 있다 —
+    // 첫 무변화 서브틱이 1회 catch-up 재발송(위 catchupGameIds 주석).
+    if (g.GAME_STATE_SC === "2") state.catchupGameIds.add(g.G_ID);
   }
   return state;
 }
@@ -115,6 +142,16 @@ export interface LiveFastPathDeps {
   pushAndroid(games: KboRawGame[], trace: WidgetSourceTrace): Promise<unknown>;
   pushLegacyLa(games: KboRawGame[], lastPlayByGame: Map<string, string>): Promise<unknown>;
   pushBroadcast(games: KboRawGame[], lastPlayByGame: Map<string, string>): Promise<unknown>;
+  /**
+   * broadcast-only catch-up(삼순 R1 blocker②) — gameIds에 대해 무변화여도 p10
+   * current-state를 강제 재발송. 채널 hash-skip을 우회하는 force 경로
+   * (live-activity-channels.ts forceCurrentStateGameIds). 득점 푸시/레거시/위젯 미포함.
+   */
+  pushBroadcastCatchup(
+    games: KboRawGame[],
+    lastPlayByGame: Map<string, string>,
+    gameIds: string[],
+  ): Promise<unknown>;
   pushIosWidget(games: KboRawGame[], lastPlayByGame: Map<string, string>): Promise<unknown>;
   /** game-events self-fetch(이벤트 생성 diff 경로) — 점수축 변화 라이브 경기만. */
   fetchGameEvents(liveGameIds: string[]): Promise<Map<string, GameEvent[]>>;
@@ -122,7 +159,7 @@ export interface LiveFastPathDeps {
 }
 
 export type LiveFastPathTickResult =
-  | { skipped: "no_diff" }
+  | { skipped: "no_diff"; catchup?: { gameIds: string[]; result: unknown } }
   | {
       changedGameIds: string[];
       scoreChangedLiveGameIds: string[];
@@ -146,20 +183,6 @@ export async function runLiveFastPathTick(
   games: KboRawGame[],
   trace: WidgetSourceTrace,
 ): Promise<LiveFastPathTickResult> {
-  const diff = diffAndAdvance(state, games);
-  if (diff.changedGameIds.length === 0) return { skipped: "no_diff" };
-
-  const liveGameIds = games
-    .filter((g) => g.G_ID && g.GAME_STATE_SC === "2")
-    .map((g) => g.G_ID as string);
-
-  let lastPlayByGame = new Map<string, string>();
-  try {
-    lastPlayByGame = await deps.fetchRelayLines(liveGameIds);
-  } catch {
-    // relay 실패 → 카드에 중계 한 줄만 안 뜸(본체와 동일 격리).
-  }
-
   const guard = async (run: () => Promise<unknown>): Promise<unknown> => {
     try {
       return await run();
@@ -167,6 +190,42 @@ export async function runLiveFastPathTick(
       return { error: (e as Error).message };
     }
   };
+
+  const diff = diffAndAdvance(state, games);
+  if (diff.changedGameIds.length === 0) {
+    // 무변화 틱 — catch-up pending이 있으면 broadcast-only 재발송 1회(삼순 R1 blocker②:
+    // APNs accepted였지만 단말이 놓친 첫 발송을 다음 15초 서브틱이 복구). pending까지
+    // 없으면 진짜 no-op(DB/APNs/FCM 무접근 — conn pool 보호 불변식 유지).
+    const pending = [...state.catchupGameIds].filter((id) =>
+      games.some((g) => g.G_ID === id && g.GAME_STATE_SC === "2"),
+    );
+    state.catchupGameIds.clear();
+    if (pending.length === 0) return { skipped: "no_diff" };
+    let catchupLastPlay = new Map<string, string>();
+    try {
+      catchupLastPlay = await deps.fetchRelayLines(pending);
+    } catch {
+      // relay 실패 → 줄만 안 뜸(발송 경로는 그대로).
+    }
+    const result = await guard(() => deps.pushBroadcastCatchup(games, catchupLastPlay, pending));
+    return { skipped: "no_diff", catchup: { gameIds: pending, result } };
+  }
+
+  const liveGameIds = games
+    .filter((g) => g.G_ID && g.GAME_STATE_SC === "2")
+    .map((g) => g.G_ID as string);
+  // 이번에 변화 broadcast를 쏘는 라이브 경기 — 다음 무변화 서브틱의 catch-up 대상으로
+  // arm(merge — 직전 pending을 지우지 않아 연속 변화 틱에서도 유실 커버 유지).
+  for (const id of diff.changedGameIds) {
+    if (liveGameIds.includes(id)) state.catchupGameIds.add(id);
+  }
+
+  let lastPlayByGame = new Map<string, string>();
+  try {
+    lastPlayByGame = await deps.fetchRelayLines(liveGameIds);
+  } catch {
+    // relay 실패 → 카드에 중계 한 줄만 안 뜸(본체와 동일 격리).
+  }
 
   const [android, laSeq, score] = await Promise.all([
     guard(() => deps.pushAndroid(games, trace)),
@@ -196,5 +255,45 @@ export async function runLiveFastPathTick(
     iosWidget: laSeq.iosWidget,
     score,
     detectToSendMs: Math.max(0, deps.now() - trace.fetchedAtMs),
+  };
+}
+
+/**
+ * 서브틱 발송 게이트 — *LA 발송 축*의 완료만 기다린다(삼순 R1 blocker①).
+ *
+ * 기존(NO-GO): 서브틱이 warmup 본체 전체(game-events self-fetch/시작·순위·득점·요약·활약
+ * 알림 등)를 기다려, 본체가 52s deadline을 넘기면(운영 60s 504 재현) 서브틱 0회 실행.
+ * 수정: route가 LA 축(중계 한 줄 → 채널 ensure → 레거시 → broadcast → start → iOS 위젯)을
+ * 초기 KBO fetch 직후 독립 실행하고, 서브틱은 그 축의 완료 promise만 기다린다. 느린 본체
+ * (알림/집계)는 LA 상태를 건드리지 않으므로 stale-overwrite 방지는 LA 축 직렬화로 충분.
+ * 대기는 deadline까지 유계 — LA 축 자체가 deadline을 넘기면 la_axis_overrun으로 발송 금지
+ * (그 분은 다음 cron이 커버). 게이트가 한 번 열리면 이후 틱은 즉시 통과.
+ */
+export function gateFastPathOnLaAxis<T>(opts: {
+  laAxisDone: Promise<void>;
+  deadlineAtMs: number;
+  now(): number;
+  sleep(ms: number): Promise<void>;
+  runTick(games: KboRawGame[], trace: WidgetSourceTrace): Promise<T>;
+}): (games: KboRawGame[], trace: WidgetSourceTrace) => Promise<T | { skipped: "la_axis_overrun" }> {
+  let opened = false;
+  // 즉시 probe — laAxisDone이 이미 settle됐으면 sleep 타이머 없이 통과(race 배열 순서상
+  // settled promise의 콜백이 먼저 큐잉되어 결정적).
+  const probe = () =>
+    Promise.race([opts.laAxisDone.then(() => true), Promise.resolve().then(() => false)]);
+  return async (games, trace) => {
+    if (!opened) {
+      opened = await probe();
+      if (!opened) {
+        const remainingMs = opts.deadlineAtMs - opts.now();
+        if (remainingMs <= 0) return { skipped: "la_axis_overrun" };
+        opened = await Promise.race([
+          opts.laAxisDone.then(() => true),
+          opts.sleep(remainingMs).then(() => false),
+        ]);
+      }
+    }
+    if (!opened || opts.now() >= opts.deadlineAtMs) return { skipped: "la_axis_overrun" };
+    return opts.runTick(games, trace);
   };
 }

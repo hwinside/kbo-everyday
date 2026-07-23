@@ -166,11 +166,20 @@ export async function ensureLiveActivityChannels(
 export async function pushLiveActivityChannelBroadcasts(
   games: KboRawGame[],
   lastPlayByGame?: Map<string, string>,
+  opts?: {
+    /**
+     * 유실 catch-up(삼순 R1 blocker②) — 이 경기들은 무변화 skip 판정이어도 p10
+     * current-state를 1회 강제 재발송(broadcast는 최신 상태 멱등 — 중복 무해).
+     * 호출측(live-fast-path catch-up 틱)이 빈도를 유계한다.
+     */
+    forceCurrentStateGameIds?: ReadonlySet<string>;
+  },
 ): Promise<
-  | { updates: number; heartbeats: number; skipped: number; ends: number; deleted: number }
+  | { updates: number; heartbeats: number; catchups: number; skipped: number; ends: number; deleted: number }
   | { error: string }
 > {
-  if (!apnsConfigured()) return { updates: 0, heartbeats: 0, skipped: 0, ends: 0, deleted: 0 };
+  const zero = { updates: 0, heartbeats: 0, catchups: 0, skipped: 0, ends: 0, deleted: 0 };
+  if (!apnsConfigured()) return zero;
 
   // 오늘 경기 + (경기 목록에 없어진) 잔존 채널까지 전부 관리 대상.
   const { data: rows, error } = await supabase
@@ -179,7 +188,7 @@ export async function pushLiveActivityChannelBroadcasts(
     .neq("status", "deleted");
   if (error) return { error: error.message };
   const channels = (rows ?? []) as ChannelRow[];
-  if (channels.length === 0) return { updates: 0, heartbeats: 0, skipped: 0, ends: 0, deleted: 0 };
+  if (channels.length === 0) return zero;
 
   const jwt = await getProviderTokenSafe();
   if (!jwt) return { error: "apns provider token failed" };
@@ -188,6 +197,7 @@ export async function pushLiveActivityChannelBroadcasts(
   const now = Date.now();
   let updates = 0;
   let heartbeats = 0;
+  let catchups = 0;
   let skipped = 0;
   let ends = 0;
   let deleted = 0;
@@ -290,8 +300,17 @@ export async function pushLiveActivityChannelBroadcasts(
       // 단말이 놓치면 다음 변화까지 stale — 마지막 성공 p10 이후 ≥2분이면 무변화/p5
       // 틱이어도 p10 current-state 재발송. server-attempt SLO(절대 전달 SLA 아님).
       const lastP10AtMs = row.last_p10_at ? new Date(row.last_p10_at).getTime() : null;
-      const decision = applyChannelHeartbeat(baseDecision, lastP10AtMs, now);
+      const heartbeatDecision = applyChannelHeartbeat(baseDecision, lastP10AtMs, now);
+      // 유실 catch-up(삼순 R1 blocker②) — fast-path가 지명한 경기는 skip 판정이어도
+      // p10 current-state 1회 강제(2분 heartbeat보다 이른 ≤15s 재시도).
+      const forcedCatchup =
+        !heartbeatDecision.send &&
+        opts?.forceCurrentStateGameIds?.has(row.game_id) === true;
+      const decision = forcedCatchup
+        ? ({ send: true, priority: "10" } as const)
+        : heartbeatDecision;
       const isHeartbeat =
+        !forcedCatchup &&
         decision.send && decision.priority === "10" &&
         !(baseDecision.send && baseDecision.priority === "10");
       if (!decision.send) {
@@ -309,6 +328,7 @@ export async function pushLiveActivityChannelBroadcasts(
       if (res.ok) {
         updates += 1;
         if (isHeartbeat) heartbeats += 1;
+        if (forcedCatchup) catchups += 1;
         const patch: Record<string, unknown> = {
           last_score_state: scoreState,
           last_state_hash: fullHash,
@@ -333,5 +353,5 @@ export async function pushLiveActivityChannelBroadcasts(
     // scheduled: 카드가 아직 scheduled 프레임(p2s가 실음) — 첫 live 틱부터 broadcast.
   }
 
-  return { updates, heartbeats, skipped, ends, deleted };
+  return { updates, heartbeats, catchups, skipped, ends, deleted };
 }
