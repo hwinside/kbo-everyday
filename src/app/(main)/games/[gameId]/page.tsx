@@ -29,6 +29,7 @@ import type { LineupEntry } from "@/lib/hooks/useGameDetail";
 import { deriveGameState } from "@/lib/utils/game-derived";
 import { shouldKeepCancelledGameChat } from "@/lib/game-chat-visibility";
 import GameDetailHeader from "@/components/game/GameDetailHeader";
+import LiveActivityUpdateNudge from "@/components/game/LiveActivityUpdateNudge";
 import NonLiveScoreDisplay from "@/components/game/NonLiveScoreDisplay";
 import ScoreBar from "@/components/game/ScoreBar";
 import LinescoreTable from "@/components/game/LinescoreTable";
@@ -420,6 +421,9 @@ export default function GameDetailPage() {
           homeScore={d.homeScore}
         />
       )}
+
+      {/* ② 구버전(채널 미지원) iOS 앱 업데이트 녋지 — 라이브 맥락·세션당 1회(LA gap 감축). */}
+      <LiveActivityUpdateNudge isLive={d.isLive} />
 
       {/* Collapsible field area — toggle only visible during live + 크관 tab */}
       {d.isLive && activeTab === "kgwan" && (

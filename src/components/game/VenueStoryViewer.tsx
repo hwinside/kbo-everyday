@@ -181,13 +181,17 @@ export default function VenueStoryViewer({
 
   return createPortal(
     <motion.div
-      className="fixed inset-0 z-[60] bg-black flex flex-col select-none"
+      // 경기 페이지 상단 스코어 헤더가 z-[100]이라 그 위로 — 풀스크린 뷰어는 모든 UI를 덮어야 함
+      className="fixed inset-0 z-[120] bg-black flex flex-col select-none"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
     >
-      {/* 진행바 */}
-      <div className="absolute top-0 left-0 right-0 z-20 flex gap-1 px-2 pt-2 pointer-events-none">
+      {/* 진행바 — iOS 네이티브 상태바(시계/배터리)는 z-index로 못 덮으므로 safe-area 아래로 (삼순 #795 blocker) */}
+      <div
+        className="absolute top-0 left-0 right-0 z-20 flex gap-1 px-2 pointer-events-none"
+        style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + 8px)" }}
+      >
         {stories.map((s, i) => (
           <div key={s.id} className="flex-1 h-0.5 rounded-full bg-white/30 overflow-hidden">
             <div
@@ -198,8 +202,11 @@ export default function VenueStoryViewer({
         ))}
       </div>
 
-      {/* 헤더 */}
-      <div className="absolute top-4 left-0 right-0 z-20 flex items-center gap-2 px-3">
+      {/* 헤더 — 작성자/닫기도 상태바 아래로 */}
+      <div
+        className="absolute left-0 right-0 z-20 flex items-center gap-2 px-3"
+        style={{ top: "calc(env(safe-area-inset-top, 0px) + 16px)" }}
+      >
         <div className="w-8 h-8 rounded-full bg-white/20 overflow-hidden shrink-0">
           {story.author.avatarUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
