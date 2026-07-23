@@ -45,6 +45,7 @@ PSQL=("$PGBIN/psql" -h "$SOCKDIR" -p 59321 -U qa -d postgres -v ON_ERROR_STOP=1 
 "${PSQL[@]}" <<'SQL'
 CREATE ROLE anon NOLOGIN;
 CREATE ROLE authenticated NOLOGIN;
+CREATE ROLE service_role NOLOGIN;
 CREATE SCHEMA auth;
 CREATE TABLE auth.users (id UUID PRIMARY KEY);
 CREATE TABLE venue_stories (
