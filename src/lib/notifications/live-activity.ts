@@ -201,6 +201,16 @@ async function fetchChannelSubscriptions(
 export async function pushLiveActivityUpdates(
   games: KboRawGame[],
   lastPlayByGame?: Map<string, string>,
+  opts?: {
+    /**
+     * broadcast 직전에 떬 채널 상태 스냅샷 (삼순 R2 blocker① — 느린 fanout 분리).
+     * 제공 시 레거시 skip/priority 판정은 현재 채널 행이 아니라 이 스냅샷을 쓴다 —
+     * broadcast가 먼저 hash를 전진시켜도 레거시가 "이미 받음"으로 오인해 영구 skip되지
+     * 않는다(구빌드 11~15 카드 프리즈 방지). 스냅샷에 없는 경기의 채널 행은 스냅샷
+     * 이후 생성된 것 → 미사용(폴백 테이블/null → p10 발송 쪽으로 안전).
+     */
+    channelLastStateOverride?: Map<string, { score: string | null; hash: string | null }>;
+  },
 ): Promise<{ pushed: number; ended: number; cleaned: number } | { error: string }> {
   if (!apnsConfigured()) return { pushed: 0, ended: 0, cleaned: 0 };
 
@@ -269,8 +279,14 @@ export async function pushLiveActivityUpdates(
   }[]) {
     activeChanKeys.add(`${r.game_id}|${r.environment}|${r.channel_id}`);
     // 레거시 priority 판정용 직전 상태 — production 행 기준(채널 broadcast가 지난 틱에 기록).
-    if (r.environment === "production") {
+    // 스냅샷 override 제공 시 현재 행 값은 무시(broadcast가 이미 전진시켰을 수 있음 — 위 opts 주석).
+    if (r.environment === "production" && !opts?.channelLastStateOverride) {
       lastStateByGame.set(r.game_id, { score: r.last_score_state, hash: r.last_state_hash });
+    }
+  }
+  if (opts?.channelLastStateOverride) {
+    for (const [gid, st] of opts.channelLastStateOverride) {
+      lastStateByGame.set(gid, { score: st.score, hash: st.hash });
     }
   }
   // 채널 행이 없는 경기(Broadcast Capability 미활성/생성 실패)는 경기 단위 폴백 상태를

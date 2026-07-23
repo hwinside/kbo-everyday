@@ -101,7 +101,9 @@
     "qa:venue-player-comparison": "tsx scripts/qa/venue-player-comparison-smoke.ts",
     "qa:ui:venue-diary": "node scripts/qa/ui-smoke-venue-diary.mjs",
     "qa:widget-fast": "tsx scripts/qa/widget-fast-refresh-smoke.ts",
-    "qa:game-cancel-status": "tsx --test scripts/qa/game-cancel-status-smoke.ts"
+    "qa:la-fastpath": "tsx scripts/qa/live-fast-path-smoke.ts",
+    "qa:game-cancel-status": "tsx --test scripts/qa/game-cancel-status-smoke.ts",
+    "qa:venue-story-seen": "tsx scripts/qa/venue-story-seen-smoke.ts"
   },
   "dependencies": {
     "@capacitor-firebase/messaging": "^8.3.0",
