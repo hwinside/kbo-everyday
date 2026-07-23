@@ -63,6 +63,48 @@ export function applyChannelHeartbeat(
   return decision;
 }
 
+/** 채널 update 최종 판정 입력 — base diff + heartbeat + 지명 catch-up 합성. */
+export interface ChannelUpdateResolutionInput extends ChannelPushDecisionInput {
+  /** 마지막 성공 p10 broadcast 시각(ms). null = 미기록. */
+  lastP10AtMs: number | null;
+  nowMs: number;
+  /** fast-path 유실 catch-up 지명 경기 여부 (forceCurrentStateGameIds). */
+  forceCatchup: boolean;
+}
+
+export interface ChannelUpdateResolution {
+  decision: ChannelPushDecision;
+  /** heartbeat 승격 발송(관제 카운터용 — forced catch-up 아님). */
+  isHeartbeat: boolean;
+  /** 지명 catch-up으로 p10 승격된 발송(관제 catchups 카운터용). */
+  isForcedCatchup: boolean;
+}
+
+/**
+ * 채널 update 최종 판정 — base diff → heartbeat → 지명 catch-up 순 합성 (순수 함수,
+ * 배선은 live-activity-channels.ts).
+ *
+ * 지명 catch-up(삼순 R2 blocker③): fast-path가 유실 복구로 지명한 경기는 *자연 p10이
+ * 아닌 한* 항상 p10으로 승격한다. 기존(R1)에는 `!heartbeatDecision.send`일 때만 승격해,
+ * relay lastPlay만 달라진 base=p5 틱에서 catch-up이 p5로 나가고 pending은 이미 비워져
+ * 다음 p10 재시도도 없이 2분 heartbeat까지 stale로 남았다. p5는 예산 미소모라 놓친
+ * 단말을 복구하지 못하므로 catch-up 목적상 반드시 p10이어야 한다. 자연 p10(변화/
+ * heartbeat)이면 그 발송이 catch-up을 겸한다(성공 시 last_p10_at 전진 — 이중 승격 불필요).
+ */
+export function resolveChannelUpdateDecision(
+  i: ChannelUpdateResolutionInput,
+): ChannelUpdateResolution {
+  const base = decideChannelPush(i);
+  const heartbeat = applyChannelHeartbeat(base, i.lastP10AtMs, i.nowMs);
+  const naturalP10 = heartbeat.send && heartbeat.priority === "10";
+  const isForcedCatchup = i.forceCatchup && !naturalP10;
+  const decision: ChannelPushDecision = isForcedCatchup
+    ? { send: true, priority: "10" }
+    : heartbeat;
+  const isHeartbeat = naturalP10 && !(base.send && base.priority === "10");
+  return { decision, isHeartbeat, isForcedCatchup };
+}
+
 /** 레거시 per-토큰 update 발송 판정 입력 (#664 catch-up). */
 export interface LegacyTokenUpdateInput {
   /** 경기 단위 skip/priority 판정(decideChannelPush 결과). null = 판정 재료 없음. */
