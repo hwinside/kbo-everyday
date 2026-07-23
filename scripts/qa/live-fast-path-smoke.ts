@@ -103,6 +103,7 @@ type Calls = {
   relay: number; android: number; snapshot: number; legacyLa: number; broadcast: number;
   catchup: number; catchupIds: string[]; iosWidget: number; events: number; score: number;
   order: string[]; legacySnapshots: Map<string, LegacyLastState>[];
+  fanoutAxes: string[];
 };
 const SNAPSHOT_HASH = "pre-broadcast-hash";
 function makeDeps(over: Partial<LiveFastPathDeps> = {}): {
@@ -110,9 +111,10 @@ function makeDeps(over: Partial<LiveFastPathDeps> = {}): {
 } {
   const calls: Calls = {
     relay: 0, android: 0, snapshot: 0, legacyLa: 0, broadcast: 0, catchup: 0, catchupIds: [],
-    iosWidget: 0, events: 0, score: 0, order: [], legacySnapshots: [],
+    iosWidget: 0, events: 0, score: 0, order: [], legacySnapshots: [], fanoutAxes: [],
   };
   // 느린 fanout 큐 — 테스트에서는 명시적 drain 시점까지 실행하지 않는다(서브틱 비차단 계약).
+  // 삼순 R3①: android·score도 fanout 축으로 빠졌으므로 여기서 함께 큐잉·drain.
   const queued: (() => Promise<unknown>)[] = [];
   const deps: LiveFastPathDeps = {
     now: () => 1_000,
@@ -122,7 +124,7 @@ function makeDeps(over: Partial<LiveFastPathDeps> = {}): {
       calls.snapshot++; calls.order.push("snapshot");
       return new Map([["20260723LGOB0", { score: "pre", hash: SNAPSHOT_HASH }]]);
     },
-    enqueueLaFanout: (_label, run) => { queued.push(run); },
+    enqueueFanout: (axis, _label, run) => { calls.fanoutAxes.push(axis); queued.push(run); },
     pushLegacyLa: async (_gs, _lp, snapshot) => {
       calls.legacyLa++; calls.order.push("legacyLa"); calls.legacySnapshots.push(snapshot);
       return { pushed: 1 };
@@ -186,6 +188,42 @@ const TRACE = { sourceAtMs: 500, fetchedAtMs: 600 };
     check("tick: catch-up 성공 후엔 재시도 없음(유계)",
       (r3 as { catchup?: unknown }).catchup === undefined && calls.relay === 2, true);
   }
+  // 삼순 R3② — catch-up 호출은 성공했지만 개별 경기 APNs transient 실패(failedGameIds) →
+  // *실패 경기만* 재-arm(성공 경기는 clear 유지). updates=0이어도 stale이 안 남게.
+  {
+    const gA = "20260723LGOB0";
+    const gB = "20260723NCSS0";
+    const games2 = [game({ G_ID: gA }), game({ G_ID: gB })];
+    const { deps } = makeDeps({
+      pushBroadcastCatchup: async (_gs, _lp, ids) =>
+        // gB만 APNs 실패로 보고(updates는 성공 1건).
+        ({ updates: 1, catchups: 1, failedGameIds: ids.filter((id) => id === gB) }),
+    });
+    const st = seedLiveFastPathState(games2);
+    const r1 = await runLiveFastPathTick(deps, st, games2, TRACE);
+    check("tick R3②: catch-up 실패 경기(gB)만 재-arm 보고",
+      (r1 as { catchup?: { rearmedGameIds?: string[] } }).catchup?.rearmedGameIds?.join(","), gB);
+    const r2 = await runLiveFastPathTick(deps, st, games2, TRACE);
+    check("tick R3②: 다음 무변화 틱은 실패 경기(gB)만 catch-up 재발송(성공 gA는 clear)",
+      (r2 as { catchup?: { gameIds?: string[] } }).catchup?.gameIds?.join(","), gB);
+  }
+  // 삼순 R3② — 변화 틱 broadcast 발송 중 개별 APNs 실패(failedGameIds) → 해당 경기
+  // catch-up pending 재-arm(다음 무변화 틱 p10으로 수습).
+  {
+    const gid = "20260723LGOB0";
+    const { deps, drainFanout } = makeDeps({
+      pushBroadcast: async () => ({ updates: 0, failedGameIds: [gid] }),
+    });
+    const st = seedLiveFastPathState([game({ G_ID: gid })]);
+    const r1 = await runLiveFastPathTick(deps, st, [game({ G_ID: gid, B_SCORE_CN: "1" })], TRACE);
+    check("tick R3②: 변화 틱 broadcast 개별 실패 경기 보고",
+      (r1 as { broadcastFailedGameIds?: string[] }).broadcastFailedGameIds?.join(","), gid);
+    await drainFanout();
+    // 다음 무변화 틱에서 실패 경기가 catch-up으로 수습되는지(재-arm 확인).
+    const r2 = await runLiveFastPathTick(deps, st, [game({ G_ID: gid, B_SCORE_CN: "1" })], TRACE);
+    check("tick R3②: broadcast 실패 경기는 다음 무변화 틱 catch-up으로 수습",
+      (r2 as { catchup?: { gameIds?: string[] } }).catchup?.gameIds?.includes(gid), true);
+  }
   // 종료 경기(라이브 아님)만 남은 무변화 틱 → catch-up 대상 아님(진짜 no-op).
   {
     const { deps, calls } = makeDeps();
@@ -201,15 +239,22 @@ const TRACE = { sourceAtMs: 500, fetchedAtMs: 600 };
     const { deps, calls, drainFanout } = makeDeps();
     const st = seedLiveFastPathState([game()]);
     const r = await runLiveFastPathTick(deps, st, [game({ B_SCORE_CN: "1" })], TRACE);
-    check("tick: 득점 → 크리티컬(broadcast/android/score) 각 1회",
-      calls.broadcast === 1 && calls.android === 1 && calls.events === 1 && calls.score === 1, true);
+    check("tick: 득점 → broadcast만 await(1회)", calls.broadcast, 1);
+    check("tick: 삼순 R3① — android/score/la fanout은 틱 완료 시점에 미실행(broadcast 비차단)",
+      calls.android + calls.events + calls.score + calls.legacyLa + calls.iosWidget, 0);
+    check("tick: fanout 축 3계(android,score,la) 모두 enqueue",
+      calls.fanoutAxes.slice().sort().join(","), "android,la,score");
     check("tick: 스냅샷은 broadcast *전*에 뜬다(레거시 직전-틱 판정 재료)",
       calls.order.filter((o) => o === "snapshot" || o === "broadcast").join(","), "snapshot,broadcast");
-    check("tick: 느린 fanout(레거시/iOS)은 틱 완료 시점에 미실행(비차단 — R2①)",
-      calls.legacyLa + calls.iosWidget, 0);
-    check("tick: fanout queued 표기", (r as { laFanout?: string }).laFanout, "queued");
+    check("tick: android queued 표기", (r as { android?: string }).android, "queued");
+    check("tick: score queued 표기", (r as { score?: string }).score, "queued");
+    check("tick: laFanout queued 표기", (r as { laFanout?: string }).laFanout, "queued");
     await drainFanout();
-    check("tick: drain 후 레거시→iOS 순서 실행", calls.order.slice(-2).join(","), "legacyLa,iosWidget");
+    check("tick: drain 후 android/score/레거시/iOS 모두 실행",
+      calls.android === 1 && calls.events === 1 && calls.score === 1 &&
+        calls.legacyLa === 1 && calls.iosWidget === 1, true);
+    check("tick: la 축 근거 레거시→iOS 순서 실행",
+      calls.order.filter((o) => o === "legacyLa" || o === "iosWidget").join(","), "legacyLa,iosWidget");
     check("tick: 레거시는 broadcast-전 스냅샷을 주입받음(영구 skip 프리즈 방지 — R2①)",
       calls.legacySnapshots[0]?.get("20260723LGOB0")?.hash, SNAPSHOT_HASH);
     check("tick: detect→send 계측 존재", (r as { detectToSendMs?: number }).detectToSendMs, 400);
@@ -233,19 +278,22 @@ const TRACE = { sourceAtMs: 500, fetchedAtMs: 600 };
   }
   // 아웃/타자만 변화(점수축 비변화) → 카드 경로만, game-events fetch/득점 푸시 스킵.
   {
-    const { deps, calls } = makeDeps();
+    const { deps, calls, drainFanout } = makeDeps();
     const st = seedLiveFastPathState([game()]);
     const r = await runLiveFastPathTick(deps, st, [game({ OUT_CN: 2, T_P_NM: "오스틴" })], TRACE);
-    check("tick: 카드만 변화 → 발송 경로 실행", calls.broadcast === 1 && calls.android === 1, true);
-    check("tick: 카드만 변화 → 이벤트 fetch 0(원천 호출 서브틱당 1회 원칙)", calls.events, 0);
-    check("tick: 카드만 변화 → score skipped", ((r as { score?: unknown }).score as { skipped?: string })?.skipped, "no_score_diff");
+    check("tick: 카드만 변화 → broadcast await 실행", calls.broadcast, 1);
+    await drainFanout();
+    check("tick: 카드만 변화 → android는 fanout에서 실행", calls.android, 1);
+    check("tick: 카드만 변화 → 이벤트 fetch 0(원천 호출 서브틱당 1회 원칙 + score축 미enqueue)", calls.events, 0);
+    check("tick: 카드만 변화 → score skipped(점수축 비변화)", ((r as { score?: unknown }).score as { skipped?: string })?.skipped, "no_score_diff");
   }
   // relay 실패 격리 — 줄만 안 뜨고 발송 경로는 그대로.
   {
-    const { deps, calls } = makeDeps({ fetchRelayLines: async () => { throw new Error("relay down"); } });
+    const { deps, calls, drainFanout } = makeDeps({ fetchRelayLines: async () => { throw new Error("relay down"); } });
     const st = seedLiveFastPathState([game()]);
     await runLiveFastPathTick(deps, st, [game({ B_SCORE_CN: "1" })], TRACE);
     check("tick: relay 실패에도 broadcast 실행", calls.broadcast, 1);
+    await drainFanout();
     check("tick: relay 실패에도 score 실행", calls.score, 1);
   }
   // 스냅샷 실패 격리 — 빈 스냅샷 fallback(레거시 p10 과발송 쪽 안전), broadcast 그대로.
@@ -266,17 +314,18 @@ const TRACE = { sourceAtMs: 500, fetchedAtMs: 600 };
     const st = seedLiveFastPathState([game()]);
     await runLiveFastPathTick(deps, st, [game({ B_SCORE_CN: "1" })], TRACE);
     check("tick: legacyLa 오류 격리 → broadcast 실행", calls.broadcast, 1);
-    check("tick: legacyLa 오류 격리 → score 실행", calls.score, 1);
     await drainFanout();
-    check("tick: legacyLa 오류 격리 → iOS 위젯은 실행", calls.iosWidget, 1);
+    check("tick: legacyLa 오류 격리 → score 실행", calls.score, 1);
+    check("tick: legacyLa 오류 격리 → iOS 위젯은 실행(la 축 항목별 격리)", calls.iosWidget, 1);
   }
   // 이벤트 fetch 오류 → score 미실행(다음 분 cron이 claim 안 된 이벤트를 커버).
   {
-    const { deps, calls } = makeDeps({ fetchGameEvents: async () => { throw new Error("events down"); } });
+    const { deps, calls, drainFanout } = makeDeps({ fetchGameEvents: async () => { throw new Error("events down"); } });
     const st = seedLiveFastPathState([game()]);
     await runLiveFastPathTick(deps, st, [game({ B_SCORE_CN: "1" })], TRACE);
-    check("tick: 이벤트 fetch 오류 → notifyScore 미호출", calls.score, 0);
-    check("tick: 이벤트 fetch 오류에도 카드 경로 실행", calls.broadcast, 1);
+    check("tick: 이벤트 fetch 오류에도 카드(broadcast) 경로 실행", calls.broadcast, 1);
+    await drainFanout();
+    check("tick: 이벤트 fetch 오류 → notifyScore 미호출(다음 분 cron 커버)", calls.score, 0);
   }
   // fanout 큐 — enqueue 순서 직렬 실행 + 오류 격리(뒤 항목 계속).
   {
@@ -285,8 +334,11 @@ const TRACE = { sourceAtMs: 500, fetchedAtMs: 600 };
     q.enqueue("a", async () => { ran.push("a"); return "A"; });
     q.enqueue("b", async () => { throw new Error("boom"); });
     q.enqueue("c", async () => { ran.push("c"); return "C"; });
-    const results = await q.drain();
+    const drained = await q.drain();
+    const results = drained.results;
     check("queue: 직렬 순서", ran.join(","), "a,c");
+    check("queue: drain 완료 → timedOut=false, pending=0",
+      drained.timedOut === false && drained.pendingCount === 0, true);
     check("queue: 오류 격리 + 결과 캡처",
       results.map((r) => r.label).join(",") === "a,b,c" &&
         (results[1].result as { error?: string })?.error === "boom", true);
@@ -343,11 +395,70 @@ const TRACE = { sourceAtMs: 500, fetchedAtMs: 600 };
     check("orch: broadcast = cycle0 1회 + 서브틱 3회", broadcastAt.length, 4);
     check("orch: 각 서브틱 broadcast는 감지 시점(+15/+30/+45s) 즉시 시작(≤15s SLO)",
       broadcastAt.join(","), "0,15000,30000,45000");
-    check("orch: 느린 fanout은 큐에서 1회만 시작(직렬 — 뒤 항목이 gate를 못 막음 증명)",
+    check("orch: 느린 la fanout은 큐에서 1회만 시작(직렬 — 뒤 항목이 gate를 못 막음 증명)",
       legacyCalls === 1 && startCalls === 0 && iosCalls === 0, true);
-    check("orch: 득점 푸시도 서브틱당 1회(점수축 변화)", scorePush, 3);
-    // drainFanout은 의도적으로 호출하지 않음(영구 미완료 fanout 재현) — route에선
-    // maxDuration(75s)이 tail을 감싼다.
+    // 삼순 R3③ — la 축(cycle0 레거시)이 영구 미완료여도 drain은 deadline 유계로 잘라
+    // partial 반환(504 불가). android/score 축은 이미 완료. deadline은 마지막 서브틱(+45s)
+    // 이후로 두어 남은 예산 안에서 끊김을 재현.
+    const drained = await orch.drainFanout({
+      deadlineAtMs: 60_000, now: () => nowMs, sleep,
+    });
+    check("orch: 득점 푸시도 서브틱당 1회(점수축 변화 — score 축 drain 후)", scorePush, 3);
+    check("orch: drain은 la 축 영구 미완료를 deadline 유계로 잘라 timedOut(504 불가 — R3③)",
+      drained.timedOut === true && drained.pendingCount >= 1, true);
+    check("orch: drain deadline 후 nowMs가 deadline 도달(무제한 대기 아님)", nowMs >= 60_000, true);
+  }
+  // ── 삼순 R3① 축 분리 회귀 — Android/득점 tail이 영구 미완료여도 서브틱 broadcast는
+  // +15/+30/+45s에 즉시 실행됨을 route-동일 조립으로 검증(기존 R2 스모크는 느린 la fanout만
+  // 재현해 이 배선을 못 잡았음).
+  {
+    let nowMs = 0;
+    const sleep = async (ms: number) => { nowMs += ms; };
+    let score = 0;
+    const broadcastAt: number[] = [];
+    let androidStarts = 0;
+    let scoreStarts = 0;
+    const orch = startLaOrchestration({
+      now: () => nowMs,
+      sleep,
+      fetchLiveGames: async () => {
+        score += 1;
+        return {
+          ok: true,
+          games: [game({ B_SCORE_CN: String(score) })],
+          trace: { sourceAtMs: nowMs, fetchedAtMs: nowMs },
+        };
+      },
+      fetchRelayLines: async () => new Map(),
+      ensureChannels: async () => ({ created: 0 }),
+      snapshotLegacyState: async () => new Map(),
+      pushBroadcast: async () => { broadcastAt.push(nowMs); return { updates: 1 }; },
+      pushBroadcastCatchup: async () => ({ updates: 1 }),
+      pushLegacyLa: async () => ({ pushed: 1 }),
+      pushStarts: async () => ({ started: 0 }),
+      pushIosWidget: async () => ({ sent: 1 }),
+      // 삼순 R3① 재현 — Android 위젯 FCM tail 영구 미완료(>52s 등가).
+      pushAndroid: () => { androidStarts += 1; return new Promise(() => {}); },
+      fetchGameEvents: async (ids) => new Map<string, GameEvent[]>(ids.map((id) => [id, []])),
+      // 삼순 R3① 재현 — 득점 푸시(fetch→notify) tail 영구 미완료.
+      notifyScore: () => { scoreStarts += 1; return new Promise(() => {}); },
+    }, {
+      requestStartMs: 0,
+      deadlineAtMs: 52_000,
+      initialFetchOk: true,
+      games: [game()],
+      liveGameIds: ["20260723LGOB0"],
+    });
+    await orch.criticalPromise;
+    const ticks = await orch.runFastLoop();
+    check("orch R3①: Android/득점 tail 영구 미완료에도 서브틱 3회 전부 실행", ticks.length, 3);
+    check("orch R3①: 각 서브틱 broadcast는 +15/+30/+45s 즉시 시작(android/score tail 비차단)",
+      broadcastAt.join(","), "0,15000,30000,45000");
+    // 축 큐는 직렬(canonical dedupe/발송 순서 보장) — tick1의 android/score가 영구 미완료면
+    // tick2/3의 같은 축은 대기(la 축의 legacyCalls===1과 동일 tradeoff). 핵심은 이 tail이
+    // *broadcast 축을 못 막는다*는 것(위 broadcastAt 4회로 증명). 각 축 1회만 시작이 정상.
+    check("orch R3①: android/score 축은 직렬 — 각 1회만 시작(broadcast 비차단 tradeoff)",
+      androidStarts === 1 && scoreStarts === 1, true);
   }
   // 초기 broadcast 자체가 deadline까지 미완료 → 서브틱 발송 0 + initial_broadcast_overrun
   // (broadcast 축 순서 보장 = stale-overwrite 방지 유지, 시간 유계 대기 증명).

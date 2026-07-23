@@ -208,10 +208,25 @@ export async function pushLiveActivityChannelBroadcasts(
     forceCurrentStateGameIds?: ReadonlySet<string>;
   },
 ): Promise<
-  | { updates: number; heartbeats: number; catchups: number; skipped: number; ends: number; deleted: number }
+  | {
+      updates: number;
+      heartbeats: number;
+      catchups: number;
+      skipped: number;
+      ends: number;
+      deleted: number;
+      /**
+       * update broadcast APNs transient 실패(5xx/timeout 등, ChannelNotRegistered 제외)
+       * 경기 ID — 호출측(live-fast-path)이 이 경기만 catch-up pending으로 재-arm해
+       * updates=0이어도 stale이 2분 heartbeat까지 남지 않게 한다(삼순 R3 blocker②).
+       */
+      failedGameIds: string[];
+    }
   | { error: string }
 > {
-  const zero = { updates: 0, heartbeats: 0, catchups: 0, skipped: 0, ends: 0, deleted: 0 };
+  const zero = {
+    updates: 0, heartbeats: 0, catchups: 0, skipped: 0, ends: 0, deleted: 0, failedGameIds: [],
+  };
   if (!apnsConfigured()) return zero;
 
   // 오늘 경기 + (경기 목록에 없어진) 잔존 채널까지 전부 관리 대상.
@@ -234,6 +249,8 @@ export async function pushLiveActivityChannelBroadcasts(
   let skipped = 0;
   let ends = 0;
   let deleted = 0;
+  // update broadcast가 transient하게 실패한 라이브 경기(삼순 R3 blocker②) — 호출측 재-arm용.
+  const failedGameIds = new Set<string>();
 
   const markDeleted = async (row: ChannelRow) => {
     const ok = await deleteBroadcastChannel(row.environment, row.channel_id, jwt);
@@ -373,10 +390,15 @@ export async function pushLiveActivityChannelBroadcasts(
           .update({ status: "deleted", deleted_at: new Date().toISOString() })
           .match(channelMutationFence(row))
           .eq("status", "active");
+      } else {
+        // 그 외 실패 = APNs 5xx/timeout 등 transient(삼순 R3 blocker②) — 이 경기를
+        // 호출측이 catch-up pending으로 재-arm하도록 보고. last_state_hash를 전진시키지
+        // 않았으므로 다음 틱 자연 재시도도 가능하고, catch-up p10이 즉시 수습한다.
+        failedGameIds.add(row.game_id);
       }
     }
     // scheduled: 카드가 아직 scheduled 프레임(p2s가 실음) — 첫 live 틱부터 broadcast.
   }
 
-  return { updates, heartbeats, catchups, skipped, ends, deleted };
+  return { updates, heartbeats, catchups, skipped, ends, deleted, failedGameIds: [...failedGameIds] };
 }

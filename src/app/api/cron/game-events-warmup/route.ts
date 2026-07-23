@@ -18,7 +18,7 @@ import {
   FAST_LOOP_DEADLINE_MS,
   parseKboGameListPayload,
 } from "@/lib/notifications/widget-fast-loop";
-import { startLaOrchestration } from "@/lib/notifications/live-fast-path";
+import { startLaOrchestration, LA_FANOUT_DRAIN_DEADLINE_MS } from "@/lib/notifications/live-fast-path";
 import { runBeforeDeadline } from "@/lib/async-deadline";
 
 /**
@@ -365,15 +365,23 @@ export async function GET(req: NextRequest) {
   // 기준 절대값(FAST_LOOP_DEADLINE_MS)이라 위 warmup 본작업이 오래 걸려도 maxDuration(75s)/
   // 다음 크론 틱과 겹치지 않는다. 오케스트레이션은 widget-fast-loop.ts(테스트 커버) 참조.
   // LA 친리티컬/느린 fanout은 초기 fetch 직후 독립 실행됨(삼순 R2①) — 여기서 결과만 회수.
-  // drainFanout은 cycle0(레거시/start/iOS 위젯) + 서브틱 fanout 완료까지 대기 — 발송 tail은
-  // maxDuration(75s) 마진이 감싸고, 이 대기는 서브틱을 더 이상 막지 않는다(응답용 회수일 뿐).
-  const [laCritical, laFanout, androidWidget, fastRefresh] = await Promise.all([
+  // drainFanout은 la/android/score 축 fanout을 *요청 진입 기준 deadline*(LA_FANOUT_DRAIN_
+  // DEADLINE_MS=68s) 안에서만 대기하고, 초과 시 partial(timedOut)로 즉시 끊어 maxDuration
+  // (75s) 504를 구조적으로 불가능하게 한다(삼순 R3 blocker③). 미완료분은 다음 분 cron이
+  // 멱등 재발송(DB 선점/CAS/hash dedupe)으로 수습.
+  const drainDeadlineAtMs = requestStartMs + LA_FANOUT_DRAIN_DEADLINE_MS;
+  const [laCritical, laFanoutDrain, androidWidget, fastRefresh] = await Promise.all([
     laOrchestration.criticalPromise,
-    laOrchestration.drainFanout(),
+    laOrchestration.drainFanout({
+      deadlineAtMs: drainDeadlineAtMs,
+      now: () => Date.now(),
+      sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+    }),
     androidWidgetPromise,
     fastRefreshPromise,
   ]);
   const { lastPlayByGame, laChannels, laBroadcast } = laCritical;
+  const laFanout = laFanoutDrain.results;
   const cycle0Fanout = laFanout.find((f) => f.label === "cycle0")?.result as
     | { legacyLa?: unknown; liveActivityStart?: unknown; iosWidget?: unknown }
     | undefined;
@@ -398,8 +406,12 @@ export async function GET(req: NextRequest) {
     liveActivityWake,
     iosWidget,
     fastRefresh,
-    // 서브틱 느린 fanout 결과(레거시/iOS 위젯 — 큰 단위 관제용). cycle0은 위 필드로 평탄화.
+    // 서브틱 느린 fanout 결과(레거시/iOS 위젯/안드/득점 — 큰 단위 관제용). cycle0은 위
+    // 필드로 평탄화. drain이 deadline에 걸려 partial이면 timedOut/pending으로 다음 분 cron
+    // 수습 대상이 있음을 관제에 남긴다(삼순 R3 blocker③).
     laFanoutTicks: laFanout.filter((f) => f.label !== "cycle0"),
+    laFanoutTimedOut: laFanoutDrain.timedOut,
+    laFanoutPending: laFanoutDrain.pendingCount,
     lastPlays: Object.fromEntries(lastPlayByGame),
     results: results.map(r =>
       r.status === "fulfilled"
