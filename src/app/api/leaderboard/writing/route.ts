@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase/admin'
+import { getWritingLeaderboardRows } from '@/lib/events/leaderboard-cache'
 
 export const dynamic = 'force-dynamic'
 
@@ -18,23 +18,19 @@ export async function GET(request: Request) {
   const rawLimit = Number(searchParams.get('limit') ?? 100)
   const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(Math.trunc(rawLimit), 1), 500) : 100
 
-  const { data, error } = await supabaseAdmin
-    .from('v_leaderboard_writing')
-    .select('user_id, nickname, team_id, total_points, last_active_day')
-    // view 내 ORDER BY에 의존하지 않고 API에서 명시적 정렬
-    .order('total_points', { ascending: false })
-    .order('last_active_day', { ascending: true })
-    .limit(limit)
-
-  if (error) {
+  // 서버 메모리 60s 캐시 공유 (2026-07-22 장애 후속: view 재집계 mean ~316ms 흡수)
+  let rows
+  try {
+    rows = (await getWritingLeaderboardRows()).slice(0, limit)
+  } catch (e) {
     return NextResponse.json(
-      { error: 'leaderboard query failed', details: error.message },
+      { error: 'leaderboard query failed', details: e instanceof Error ? e.message : String(e) },
       { status: 500 },
     )
   }
 
   return NextResponse.json(
-    { rows: data ?? [], count: data?.length ?? 0 },
+    { rows, count: rows.length },
     {
       status: 200,
       headers: {

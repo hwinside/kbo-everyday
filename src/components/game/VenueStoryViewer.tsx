@@ -12,6 +12,7 @@ interface Props {
   stories: VenueStory[];
   startIndex: number;
   currentUserId: string | null;
+  onStorySeen?: (storyId: string | number) => void; // 표시된 스토리 본 처리 (트레이 본/안 본 구분용)
   onClose: () => void;
   onChanged: () => void; // 삭제/신고 후 목록 갱신
 }
@@ -29,6 +30,7 @@ export default function VenueStoryViewer({
   stories,
   startIndex,
   currentUserId,
+  onStorySeen,
   onClose,
   onChanged,
 }: Props) {
@@ -46,6 +48,12 @@ export default function VenueStoryViewer({
   const elapsedRef = useRef<number>(0);
 
   const story = stories[index];
+
+  // 표시된 스토리는 본 처리 (트레이 본/안 본 테두리·정렬용)
+  const storyId = story?.id;
+  useEffect(() => {
+    if (storyId != null) onStorySeen?.(storyId);
+  }, [storyId, onStorySeen]);
 
   const goNext = useCallback(() => {
     setIndex((i) => {
@@ -207,15 +215,33 @@ export default function VenueStoryViewer({
         className="absolute left-0 right-0 z-20 flex items-center gap-2 px-3"
         style={{ top: "calc(env(safe-area-inset-top, 0px) + 16px)" }}
       >
-        <div className="w-8 h-8 rounded-full bg-white/20 overflow-hidden shrink-0">
+        {/* story.id key로 remount — 이전 스토리에서 onError로 숨긴 img/flex 폴백이 다음 스토리에 남지 않게 (삼순 #805) */}
+        <div key={`avatar-${story.id}`} className="w-8 h-8 rounded-full bg-white/20 overflow-hidden shrink-0">
           {story.author.avatarUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={story.author.avatarUrl} alt="" className="w-full h-full object-cover" />
-          ) : (
-            <div className="w-full h-full flex items-center justify-center text-white text-xs">
-              {(story.author.nickname ?? "?").slice(0, 1)}
-            </div>
-          )}
+            <img
+              src={story.author.avatarUrl}
+              alt=""
+              className="w-full h-full object-cover"
+              // 구글 프로필 이미지는 referrer 달리면 403 → 깨진 아이콘 (NewsCarousel과 동일 패턴)
+              referrerPolicy="no-referrer"
+              // 로드 실패 시 깨진 이미지 대신 이니셜 폴백
+              onError={(e) => {
+                const img = e.currentTarget;
+                img.style.display = "none";
+                const fb = img.parentElement?.querySelector("[data-avatar-fallback]");
+                // hidden 제거만 하면 flex가 안 붙어 이니셜이 안 보임 → flex도 명시적으로 추가 (삼순 #805)
+                fb?.classList.remove("hidden");
+                fb?.classList.add("flex");
+              }}
+            />
+          ) : null}
+          <div
+            data-avatar-fallback
+            className={`w-full h-full items-center justify-center text-white text-xs ${story.author.avatarUrl ? "hidden" : "flex"}`}
+          >
+            {(story.author.nickname ?? "?").slice(0, 1)}
+          </div>
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5 min-w-0">

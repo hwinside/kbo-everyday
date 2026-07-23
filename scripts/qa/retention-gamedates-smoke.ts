@@ -18,13 +18,24 @@ import {
 } from "../../src/lib/retention/gamedates";
 import { computeVisitDistribution } from "../../src/lib/retention/compute";
 
-/** 최소 fake supabase: created_at gte/lte 필터 + not-null + range 페이징 지원 */
+/** 최소 fake supabase: created_at gte/lte 필터 + not-null + range/keyset(gt+order+limit) 페이징 지원 */
 type Row = Record<string, unknown>;
 function fakeSupabase(tables: Record<string, Row[]>): SupabaseClient {
   return {
     from(table: string) {
       const rows = tables[table] ?? [];
       const filters: ((r: Row) => boolean)[] = [];
+      let sortCol: string | null = null;
+      let limitN: number | null = null;
+      const result = () => {
+        let out = rows.filter((r) => filters.every((f) => f(r)));
+        if (sortCol !== null) {
+          const col = sortCol;
+          out = [...out].sort((a, b) => ((a[col] as number) > (b[col] as number) ? 1 : -1));
+        }
+        if (limitN !== null) out = out.slice(0, limitN);
+        return out;
+      };
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const builder: any = {
         select: () => builder,
@@ -44,17 +55,31 @@ function fakeSupabase(tables: Record<string, Row[]>): SupabaseClient {
           filters.push((r) => r[col] != null);
           return builder;
         },
+        gt: (col: string, v: unknown) => {
+          filters.push((r) => (r[col] as number) > (v as number));
+          return builder;
+        },
         like: (col: string, pattern: string) => {
           const prefix = pattern.replace(/%$/, "");
           filters.push((r) => String(r[col]).startsWith(prefix));
           return builder;
         },
-        order: () => builder,
+        order: (col: string) => {
+          sortCol = col;
+          return builder;
+        },
+        limit: (n: number) => {
+          limitN = n;
+          return builder;
+        },
         range: (from: number, to: number) =>
           Promise.resolve({
             data: rows.filter((r) => filters.every((f) => f(r))).slice(from, to + 1),
             error: null,
           }),
+        // keyset 경로(compute.ts fetchAllByKeyset)는 builder를 직접 await 하므로 thenable 필요
+        then: (resolve: (v: { data: Row[]; error: null }) => unknown) =>
+          Promise.resolve({ data: result(), error: null }).then(resolve),
       };
       return builder;
     },
@@ -172,7 +197,7 @@ async function main() {
     // 상한 없던 종전 코드엔 total=1로 오염되던 케이스 → 이제 빈 결과여야 함
     const sb = fakeSupabase({
       admin_page_views: [
-        { user_id: "userA", created_at: "2026-07-20T10:00:00+09:00" },
+        { id: 1, user_id: "userA", created_at: "2026-07-20T10:00:00+09:00" },
       ],
     });
     const rows = await computeVisitDistribution(sb, "2026-07-19");
@@ -184,7 +209,7 @@ async function main() {
       posts: [{ author_id: "userB", created_at: "2026-07-18T12:00:00+09:00" }],
       likes: [{ user_id: "userB", created_at: "2026-07-19T23:30:00+09:00" }],
       chat_messages: [{ user_id: "userB", created_at: "2026-07-21T09:00:00+09:00" }],
-      admin_page_views: [{ user_id: "userA", created_at: "2026-07-20T10:00:00+09:00" }],
+      admin_page_views: [{ id: 1, user_id: "userA", created_at: "2026-07-20T10:00:00+09:00" }],
     });
     const rows = await computeVisitDistribution(sb, "2026-07-19");
     const b2 = rows.find((r) => r.metric_key === "2");
