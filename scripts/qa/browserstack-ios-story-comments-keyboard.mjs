@@ -74,6 +74,23 @@ async function metrics(sessionId) {
   return wd('POST', '/execute/sync', { script: METRICS_SCRIPT, args: [] }, sessionId);
 }
 
+// 실기기 키보드 오픈/닫힘은 애니메이션+이벤트 지연이 있어 고정 sleep 대신
+// 조건 충족까지 폴링한다(최대 timeoutMs, 마지막 측정치 반환).
+async function waitMetrics(sessionId, predicate, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  let m = await metrics(sessionId);
+  while (!predicate(m) && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 1000));
+    m = await metrics(sessionId);
+  }
+  return m;
+}
+
+const kbOpen = (m) => m.visualViewport != null && m.innerHeight - m.visualViewport.height > 120;
+const composerAboveKeyboard = (m) =>
+  m.composer != null && m.visualViewport != null
+  && m.composer.bottom <= m.visualViewport.offsetTop + m.visualViewport.height + 4;
+
 async function main() {
   const created = await wd('POST', '/session', {
     capabilities: {
@@ -102,17 +119,44 @@ async function main() {
 
     const idle = await metrics(sessionId);
 
-    // 1) focus — 입력바 input 탭 → 키보드 오픈
+    // 1) focus — 입력바 input 을 네이티브 터치로 탭해 소프트웨어 키보드를 띄운다.
+    //    element click 은 programmatic focus 라 키보드가 안 뜨고, nativeWebTap 은
+    //    하단 고정 입력바에서 iOS17 하단 주소창을 오탭한다 → pointer actions(네이티브
+    //    좌표 = 웹 좌표 + 상단 크롬 오프셋)로 직접 탭하며, 오프셋은 후보군을
+    //    순회하며 inputFocused 로 자가보정한다(기기/OS 별 크롬 높이 차이 흡수).
+    if (!idle.composer) throw new Error('composer rect unavailable');
+    const tapX = Math.round(idle.composer.x + idle.composer.width * 0.4);
+    const webY = Math.round(idle.composer.y + idle.composer.height / 2);
+    let focused = null;
+    for (const topOffset of [59, 50, 70, 40, 80, 94, 100]) {
+      await wd('POST', '/actions', {
+        actions: [{
+          type: 'pointer',
+          id: 'finger1',
+          parameters: { pointerType: 'touch' },
+          actions: [
+            { type: 'pointerMove', duration: 0, x: tapX, y: webY + topOffset },
+            { type: 'pointerDown', button: 0 },
+            { type: 'pause', duration: 80 },
+            { type: 'pointerUp', button: 0 },
+          ],
+        }],
+      }, sessionId);
+      focused = await waitMetrics(
+        sessionId,
+        (m) => m.inputFocused && kbOpen(m) && composerAboveKeyboard(m),
+        6000,
+      );
+      if (focused.inputFocused) break;
+    }
+
+    // 2) type — 실제 키 입력(키보드 frame 유지 확인).
+    //    탭 후 리렌더로 element 참조가 stale 될 수 있어 포커스 후에 조회한다.
     const found = await wd('POST', '/element', {
       using: 'css selector',
       value: '[data-composer="venue-story"] input',
     }, sessionId);
     const elementId = found['element-6066-11e4-a52e-4f735466cecf'] || found.ELEMENT;
-    await wd('POST', `/element/${elementId}/click`, {}, sessionId);
-    await new Promise((r) => setTimeout(r, 2500));
-    const focused = await metrics(sessionId);
-
-    // 2) type — 실제 키 입력(키보드 frame 유지 확인)
     await wd('POST', `/element/${elementId}/value`, { text: 'QA 키보드 확인' }, sessionId);
     await new Promise((r) => setTimeout(r, 1200));
     const typed = await metrics(sessionId);
@@ -136,8 +180,11 @@ async function main() {
       script: 'if (document.activeElement && document.activeElement.blur) document.activeElement.blur();',
       args: [],
     }, sessionId);
-    await new Promise((r) => setTimeout(r, 2000));
-    const blurred = await metrics(sessionId);
+    const blurred = await waitMetrics(
+      sessionId,
+      (m) => !m.inputFocused && !kbOpen(m) && composerAboveKeyboard(m),
+      12000,
+    );
 
     const shot = await wd('GET', '/screenshot', null, sessionId);
     const outDir = path.resolve('e2e/screenshots');
@@ -147,11 +194,6 @@ async function main() {
 
     const result = { qaUrl, pngPath, idle, focused, typed, submitted, blurred };
     console.log(JSON.stringify(result, null, 2));
-
-    const kbOpen = (m) => m.visualViewport != null && m.innerHeight - m.visualViewport.height > 120;
-    const composerAboveKeyboard = (m) =>
-      m.composer != null && m.visualViewport != null
-      && m.composer.bottom <= m.visualViewport.offsetTop + m.visualViewport.height + 4;
 
     const pass = idle.hasComposer
       // focus: 키보드 frame(시각 뷰포트 축소) + 입력바가 키보드 위에 노출 + 실제 포커스
