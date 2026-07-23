@@ -125,6 +125,61 @@ function probeImage(file: File): Promise<{ width: number; height: number }> {
   });
 }
 
+/** XHR 최소 인터페이스 — 순수 로직 회귀 테스트용(scripts/qa/venue-upload-progress-smoke.ts) */
+export interface UploadXhrLike {
+  open(method: string, url: string): void;
+  setRequestHeader(name: string, value: string): void;
+  send(body: unknown): void;
+  status: number;
+  upload: {
+    onprogress:
+      | ((e: { lengthComputable: boolean; loaded: number; total: number }) => void)
+      | null;
+  };
+  onload: (() => void) | null;
+  onerror: (() => void) | null;
+  onabort: (() => void) | null;
+}
+
+/** supabase-js 폴백 판정 — 하나라도 없으면 XHR 경로 불가(진행률 없이 기존 경로) */
+export function shouldFallbackToSupabaseJs(env: {
+  base: string | undefined;
+  anonKey: string | undefined;
+  token: string | undefined;
+  hasXhr: boolean;
+}): boolean {
+  return !env.base || !env.anonKey || !env.token || !env.hasXhr;
+}
+
+/**
+ * XHR 업로드 배선 — **listener 전부를 open() 전에 선등록**한다.
+ * (MDN: 일부 구현은 open 이후 등록된 upload progress를 발화하지 않음 —
+ *  타깃이 iOS/Android WebView라 선등록 필수, 삼순 #795 blocker)
+ */
+export function runXhrUpload(
+  xhr: UploadXhrLike,
+  opts: {
+    url: string;
+    headers: Record<string, string>;
+    body: unknown;
+    onProgress?: (ratio: number) => void;
+  },
+): Promise<boolean> {
+  return new Promise((resolve) => {
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && e.total > 0) opts.onProgress?.(e.loaded / e.total);
+    };
+    xhr.onload = () => resolve(xhr.status >= 200 && xhr.status < 300);
+    xhr.onerror = () => resolve(false);
+    xhr.onabort = () => resolve(false);
+    xhr.open("POST", opts.url);
+    for (const [name, value] of Object.entries(opts.headers)) {
+      xhr.setRequestHeader(name, value);
+    }
+    xhr.send(opts.body);
+  });
+}
+
 /**
  * XHR 기반 storage 업로드 — supabase-js와 동일한 REST 경로(POST /storage/v1/object)에
  * upload progress 이벤트만 추가. fetch 기반 supabase-js는 업로드 진행률을 못 준다.
@@ -142,7 +197,14 @@ async function uploadWithProgress(
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   const session = await getSafeSession();
   const token = session?.access_token;
-  if (!base || !anonKey || !token || typeof XMLHttpRequest === "undefined") {
+  if (
+    shouldFallbackToSupabaseJs({
+      base,
+      anonKey,
+      token,
+      hasXhr: typeof XMLHttpRequest !== "undefined",
+    })
+  ) {
     const { error } = await supabase.storage.from(bucket).upload(path, data, {
       contentType,
       cacheControl: String(cacheControlSec),
@@ -150,22 +212,19 @@ async function uploadWithProgress(
     });
     return !error;
   }
-  return new Promise((resolve) => {
-    const xhr = new XMLHttpRequest();
-    // path 는 randPath/sanitizeExt 로 영숫자·-·_·.·/ 만 포함 — 인코딩 불필요(supabase-js도 raw)
-    xhr.open("POST", `${base}/storage/v1/object/${bucket}/${path}`);
-    xhr.setRequestHeader("authorization", `Bearer ${token}`);
-    xhr.setRequestHeader("apikey", anonKey);
-    xhr.setRequestHeader("x-upsert", "false");
-    xhr.setRequestHeader("cache-control", `max-age=${cacheControlSec}`);
-    xhr.setRequestHeader("content-type", contentType);
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable && e.total > 0) onProgress?.(e.loaded / e.total);
-    };
-    xhr.onload = () => resolve(xhr.status >= 200 && xhr.status < 300);
-    xhr.onerror = () => resolve(false);
-    xhr.onabort = () => resolve(false);
-    xhr.send(data);
+  // path 는 randPath/sanitizeExt 로 영숫자·-·_·.·/ 만 포함 — 인코딩 불필요(supabase-js도 raw)
+  // DOM XMLHttpRequest 는 UploadXhrLike 상위호환(onprogress 이벤트 타입만 더 넓음)
+  return runXhrUpload(new XMLHttpRequest() as unknown as UploadXhrLike, {
+    url: `${base}/storage/v1/object/${bucket}/${path}`,
+    headers: {
+      authorization: `Bearer ${token}`,
+      apikey: anonKey!,
+      "x-upsert": "false",
+      "cache-control": `max-age=${cacheControlSec}`,
+      "content-type": contentType,
+    },
+    body: data,
+    onProgress,
   });
 }
 

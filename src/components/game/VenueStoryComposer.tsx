@@ -117,6 +117,8 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   };
 
   const close = () => {
+    // 업로드 진행 중 닫기 금지 — XHR은 계속돼서 orphan 업로드가 남는다(삼순 #795 blocker)
+    if (submitting) return;
     reset();
     onClose();
   };
@@ -124,7 +126,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   const onPick = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     e.target.value = "";
-    if (!f) return;
+    if (!f || submitting) return;
     setError(null);
     const isVideo = f.type.startsWith("video/");
     const isImage = f.type.startsWith("image/");
@@ -261,7 +263,12 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
         >
           <div className="flex items-center justify-between px-4 py-3 border-b border-border">
             <span className="text-base font-semibold text-text-primary">직관 라이브 올리기</span>
-            <button onClick={close} aria-label="닫기" className="text-text-tertiary">
+            <button
+              onClick={close}
+              disabled={submitting}
+              aria-label="닫기"
+              className="text-text-tertiary disabled:opacity-40"
+            >
               <X size={22} />
             </button>
           </div>
@@ -299,7 +306,8 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
                 )}
                 <button
                   onClick={() => inputRef.current?.click()}
-                  className="absolute bottom-2 right-2 text-xs bg-black/60 text-white px-3 py-1.5 rounded-full"
+                  disabled={submitting}
+                  className="absolute bottom-2 right-2 text-xs bg-black/60 text-white px-3 py-1.5 rounded-full disabled:opacity-40"
                 >
                   다시 선택
                 </button>
