@@ -8,6 +8,7 @@ import {
   fullStateHashOf,
   p2sChannelEligible,
   p2sEnvAttempts,
+  p2sSendPlan,
   endRetryDelayMinutes,
   startTokenEnvPatch,
   channelMutationFence,
@@ -395,6 +396,42 @@ check("cursor: invalidToken + retryable 혼합(성공 無) → 보류",
     { send: true, priority: "10" });
   check("hb: 경계 직전(2분-1ms) → 유지(과다 발송 방지)",
     applyChannelHeartbeat({ send: false }, t - HB + 1, t), { send: false });
+}
+
+// ── p2sSendPlan — 서버 자동 p2s 채널-우선/유보 (PR #808 R3, 삼순 blocker①) ──
+{
+  const none = new Set<never>();
+  const prodOnly = new Set(["production" as const]);
+  const both = new Set(["production" as const, "sandbox" as const]);
+  // 레거시 토큰(iOS17↓/build15↓) — 채널 무관, 기존 attempt 그대로 발송(채널 payload 없음).
+  check("레거시(build15/iOS17) + 채널 없음 → 기존대로 발송(channelRequired=false)",
+    p2sSendPlan({ os_major: 17, app_build: 15, env: "production" }, none),
+    { kind: "send", attempts: ["production"], channelRequired: false, truncated: false });
+  check("레거시 + 채널 있음이어도 channelRequired=false(레거시엔 채널 미첨부)",
+    p2sSendPlan({ os_major: 17, app_build: 15, env: null }, both),
+    { kind: "send", attempts: ["production", "sandbox"], channelRequired: false, truncated: false });
+  // channel-capable(iOS18+/build16+) — 채널 준비된 env로만 발송.
+  check("capable + 채널 전무 → defer(claim/발송 0, 다음 틱 재시도)",
+    p2sSendPlan({ os_major: 18, app_build: 16, env: "production" }, none),
+    { kind: "defer" });
+  check("capable(known prod) + prod 채널 준비 → prod로만 발송(channelRequired)",
+    p2sSendPlan({ os_major: 18, app_build: 16, env: "production" }, prodOnly),
+    { kind: "send", attempts: ["production"], channelRequired: true, truncated: false });
+  check("capable(known sandbox) + prod 채널만 → sandbox env 미준비 → defer",
+    p2sSendPlan({ os_major: 18, app_build: 16, env: "sandbox" }, prodOnly),
+    { kind: "defer" });
+  check("capable(env null) + prod 채널만 → prod attempt만(truncated: sandbox 제거)",
+    p2sSendPlan({ os_major: 18, app_build: 16, env: null }, prodOnly),
+    { kind: "send", attempts: ["production"], channelRequired: true, truncated: true });
+  check("capable(env null) + 양 env 채널 → 두 attempt, truncated 없음",
+    p2sSendPlan({ os_major: 18, app_build: 16, env: null }, both),
+    { kind: "send", attempts: ["production", "sandbox"], channelRequired: true, truncated: false });
+  check("경계: build16/iOS18 정확히 = capable(채널 없으면 defer)",
+    p2sSendPlan({ os_major: 18, app_build: 16, env: "production" }, none),
+    { kind: "defer" });
+  check("경계: build15는 미달 = 레거시 발송(defer 아님)",
+    p2sSendPlan({ os_major: 18, app_build: 15, env: "production" }, none),
+    { kind: "send", attempts: ["production"], channelRequired: false, truncated: false });
 }
 
 console.log(`\nla-broadcast-policy-smoke: ${pass} PASS / ${fail} FAIL`);

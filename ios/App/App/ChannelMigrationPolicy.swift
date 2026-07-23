@@ -23,14 +23,16 @@ enum ChannelMigrationPolicy {
     // MARK: - fetch 이전 게이트 (activity 단위)
 
     /// 마이그레이션 시도 전 판정. 순서 고정(스모크가 고정) —
-    /// OS → foreground → marker → live → 성공이력 → in-flight.
+    /// OS → foreground → live → 성공이력 → in-flight.
+    /// R3(삼순 blocker②): marker 보유 카드도 통과시킨다 — marker가 *현재* active 채널과
+    /// 일치하는지는 fetch 이후 `resolve`가 판정(구채널 A 카드 → 현재 B 복구). 일치 판정은
+    /// alreadyMigrated 마킹으로 경기당 fetch 1회에 수렴한다.
     enum Preflight: Equatable {
         case proceed
         case skipOsUnsupported     // iOS 18 미만 — .channel 재생성 불가
         case skipNotForeground     // 삼순 R2 blocker③ — silent wake/백그라운드에선 local request 금지
-        case skipAlreadyChannel    // attributes.channelId marker 보유 = 이미 채널 카드
         case skipNotLive           // scheduled/final/종료된 activity — 라이브 경기만 대상
-        case skipAlreadyMigrated   // 이 프로세스에서 같은 경기 마이그레이션 성공 완료
+        case skipAlreadyMigrated   // 이 프로세스에서 같은 경기 현재-채널 수렴 확인 완료
         case skipInFlight          // 같은 경기 마이그레이션 진행 중(중복 방지)
     }
 
@@ -39,13 +41,13 @@ enum ChannelMigrationPolicy {
     ///     `Activity.request()`는 foreground 시작 계약 — silent wake
     ///     (`didReceiveRemoteNotification`) 컨텍스트에선 request 0건을 보장한다(삼순 R2 blocker③).
     ///   - isLive: contentState.status == .live && activityState == .active (실행측이 합성).
-    ///   - alreadyMigrated: *성공*한 경기만 기록 — 실패(채널 없음/GET 실패/request 실패)는
-    ///     기록하지 않아 다음 포그라운드 재시도가 허용된다(오늘처럼 채널이 늦게 생기는 케이스).
-    static func preflight(osAtLeast18: Bool, isForegroundActive: Bool, hasChannelMarker: Bool,
+    ///   - alreadyMigrated: *현재-채널 수렴 확인*(마이그레이션 성공 또는 marker == active 확인)된
+    ///     경기만 기록 — 실패(채널 없음/GET 실패/request 실패)는 기록하지 않아 다음 포그라운드
+    ///     재시도가 허용된다(오늘처럼 채널이 늦게 생기는 케이스).
+    static func preflight(osAtLeast18: Bool, isForegroundActive: Bool,
                           isLive: Bool, alreadyMigrated: Bool, inFlight: Bool) -> Preflight {
         if !osAtLeast18 { return .skipOsUnsupported }
         if !isForegroundActive { return .skipNotForeground }
-        if hasChannelMarker { return .skipAlreadyChannel }
         if !isLive { return .skipNotLive }
         if alreadyMigrated { return .skipAlreadyMigrated }
         if inFlight { return .skipInFlight }
@@ -71,15 +73,17 @@ enum ChannelMigrationPolicy {
 
     // MARK: - 실행 방식 — 삼순 R2 blocker② (중복 채널 카드 방지)
 
-    /// 같은 경기 active 채널 카드가 *이미 있으면* 신규 request 없이 legacy만 정리한다 —
+    /// 같은 경기의 *현재 active 채널* 카드가 이미 있으면 신규 request 없이 나머지만 정리한다 —
     /// crash/suspend로 남은 기존 중복이 채널 카드를 하나 더 만드는 퇴행 차단.
+    /// R3(삼순 blocker②): adopt 대상은 marker가 현재 active 채널과 *일치*하는 카드만 —
+    /// 구채널 marker 카드를 채택하면 stale 카드가 영구 생존한다(종전 "아무 채널 카드" 채택 폐기).
     enum MigrateMode: Equatable {
-        case adoptExistingChannelCard   // request 0건 — legacy end + 기존 채널 카드 재-ack(멱등)
-        case requestNewChannelCard      // 채널 카드 없음 — fetch 후 request, 성공 시에만 legacy end
+        case adoptExistingChannelCard   // request 0건 — 비현재 카드 end + 현재 채널 카드 재-ack(멱등)
+        case requestNewChannelCard      // 현재 채널 카드 없음 — request, 성공 시에만 기존 카드 end
     }
 
-    static func migrateMode(hasActiveSameGameChannelCard: Bool) -> MigrateMode {
-        hasActiveSameGameChannelCard ? .adoptExistingChannelCard : .requestNewChannelCard
+    static func migrateMode(hasActiveCurrentChannelCard: Bool) -> MigrateMode {
+        hasActiveCurrentChannelCard ? .adoptExistingChannelCard : .requestNewChannelCard
     }
 
     // MARK: - start() 정리 스윕 보존 선택 — 삼순 R2 blocker① (채널 카드 최우선 보존)
@@ -111,19 +115,22 @@ enum ChannelMigrationPolicy {
         }
     }
 
-    // MARK: - GET /api/live-activity/channel 결과 판정
+    // MARK: - GET /api/live-activity/channel 결과 판정 (카드 marker 대조 — R3 삼순 blocker②)
 
     /// ChannelAckPolicy.ChannelFetch 재사용 — active(자기 env 채널) / definitive nil / retryable.
-    enum FetchDecision: Equatable {
-        case migrate(String)       // active 채널 확보 — 채널 카드 재생성 진행
-        case retryNextForeground   // 채널 미존재(늦게 생길 수 있음)·GET 일시 실패 — 레거시 유지 no-op
+    enum FetchResolution: Equatable {
+        case alreadyCurrent        // marker == 현재 active 채널 — 수렴 완료(완료 마킹, request/adopt 0)
+        case migrate(String)       // marker 부재(레거시) 또는 구채널 marker — 현재 채널로 재생성
+        case retryNextForeground   // active 채널 미존재(늦게 생길 수 있음)·GET 일시 실패 — 카드 유지 no-op
     }
 
     /// 채널 부재(definitive nil)도 폐기가 아니라 재시도 유보 — 채널은 경기 중 늦게라도
     /// 생성될 수 있으므로(7/23 파서 장애: 19:07 생성) 다음 포그라운드에서 다시 본다.
-    static func onFetch(_ fetch: ChannelAckPolicy.ChannelFetch) -> FetchDecision {
+    /// 구채널 marker 카드도 active 채널 부재 시엔 그대로 유지 — 재생성 불가능한데 end만 하면
+    /// 카드 손실(안전 원칙 위반).
+    static func resolve(cardMarker: String?, fetch: ChannelAckPolicy.ChannelFetch) -> FetchResolution {
         switch fetch {
-        case .active(let id?): return .migrate(id)
+        case .active(let id?): return cardMarker == id ? .alreadyCurrent : .migrate(id)
         case .active(nil), .retryableFailure: return .retryNextForeground
         }
     }

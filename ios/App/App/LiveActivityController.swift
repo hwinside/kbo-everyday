@@ -538,7 +538,8 @@ final class LiveActivityController {
         let pre = ChannelMigrationPolicy.preflight(
             osAtLeast18: true,   // #available 게이트 통과 — 정책 표와의 정합용 명시 인자
             isForegroundActive: isForegroundActive,   // R2 blocker③ — silent wake 컨텍스트 차단
-            hasChannelMarker: activity.attributes.channelId != nil,
+            // R3(삼순 blocker②): marker 보유 카드도 대상 — 구채널 A → 현재 B 복구. marker가
+            // 현재 active 채널과 일치하는지는 fetch 이후 resolve()가 판정(일치면 수렴 마킹만).
             // scheduled 카드는 제외 — 라이브 진입 후 다음 포그라운드가 잡는다.
             isLive: activity.contentState.status == .live && activity.activityState == .active,
             alreadyMigrated: migratedGameIds.contains(gameId),
@@ -579,37 +580,47 @@ final class LiveActivityController {
         case .proceed:
             break
         }
-        // R2 blocker② — 같은 경기 active 채널 카드가 이미 있으면 신규 request 금지.
-        let existingChannel = Activity<KBOGameAttributes>.activities.first {
-            $0.attributes.gameId == gameId && $0.attributes.channelId != nil
-                && $0.activityState == .active
-        }
-        switch ChannelMigrationPolicy.migrateMode(hasActiveSameGameChannelCard: existingChannel != nil) {
-        case .adoptExistingChannelCard:
-            guard let existing = existingChannel,
-                  let channelId = existing.attributes.channelId else { return }
-            // 기존 채널 카드 재사용 — legacy만 정리(채널 카드가 살아 있으므로 카드 0장 불가).
-            for legacy in Activity<KBOGameAttributes>.activities
-            where legacy.attributes.gameId == gameId && legacy.attributes.channelId == nil {
-                await legacy.end(using: legacy.contentState, dismissalPolicy: .immediate)
+        // R3(삼순 blocker②): 현재 active 채널 id를 먼저 확보 — 이 카드의 marker와 대조해 현재 수렴/
+        // 구채널·레거시 재생성/유보를 판정한다. 카드 marker == 현재 id면 할 일 없음(수렴 마킹).
+        let cardMarker = activity.attributes.channelId
+        let resolution = ChannelMigrationPolicy.resolve(
+            cardMarker: cardMarker,
+            fetch: await fetchActiveChannel(gameId: gameId))
+        switch resolution {
+        case .retryNextForeground:
+            return   // active 채널 없음/GET 일시 실패 — 카드 유지, 다음 포그라운드 재시도
+        case .alreadyCurrent:
+            // 이 카드 marker가 이미 현재 채널 — 재생성 불요, 구독 SSOT만 보완하고 수렴 마킹.
+            if let channelId = cardMarker {
+                ackChannelActivity(gameId: gameId, channelId: channelId, activityId: activity.id)
             }
-            // 마킹은 legacy 정리 *완료 후* (삼순 R2 게이트 — 새 카드 active 확인·정리 끝난 뒤에만).
-            migrationLock.lock()
-            migratedGameIds.insert(gameId)
-            migrationLock.unlock()
-            if currentActivity?.attributes.gameId == gameId,
-               currentActivity?.attributes.channelId == nil {
-                currentActivity = existing
+            migrationLock.lock(); migratedGameIds.insert(gameId); migrationLock.unlock()
+            return
+        case .migrate(let channelId):
+            // 현재 채널로 재생성 대상 — (a) 레거시(marker nil) 또는 (b) 구채널 marker(A≠B) 카드.
+            // R2 blocker② 유지: 같은 경기 *현재 채널* 카드(marker == channelId)가 이미 있으면
+            // 신규 request 없이 그 카드를 채택하고 비현재(구채널·레거시) 카드만 정리한다.
+            let existingCurrent = Activity<KBOGameAttributes>.activities.first {
+                $0.attributes.gameId == gameId && $0.attributes.channelId == channelId
+                    && $0.activityState == .active
             }
-            // 재-ack는 멱등(ackedActivityIds 중복가드) — 구독 SSOT 누락만 보완.
-            ackChannelActivity(gameId: gameId, channelId: channelId, activityId: existing.id)
-            NSLog("[LiveActivity] adopted existing channel card, legacy cleaned (game=\(gameId))")
-        case .requestNewChannelCard:
-            switch ChannelMigrationPolicy.onFetch(await fetchActiveChannel(gameId: gameId)) {
-            case .retryNextForeground:
-                return   // 채널 없음/GET 일시 실패 — 레거시 유지, 다음 포그라운드 재시도
-            case .migrate(let channelId):
-                // end보다 request 먼저 — 재생성 실패 시 레거시 카드가 그대로 남는다.
+            switch ChannelMigrationPolicy.migrateMode(hasActiveCurrentChannelCard: existingCurrent != nil) {
+            case .adoptExistingChannelCard:
+                guard let existing = existingCurrent else { return }
+                // 비현재 카드(구채널 marker 포함 + 레거시) 정리 — 현재 채널 카드는 살려둔다(카드 0장 불가).
+                for other in Activity<KBOGameAttributes>.activities
+                where other.attributes.gameId == gameId && other.attributes.channelId != channelId {
+                    await other.end(using: other.contentState, dismissalPolicy: .immediate)
+                }
+                migrationLock.lock(); migratedGameIds.insert(gameId); migrationLock.unlock()
+                if currentActivity?.attributes.gameId == gameId,
+                   currentActivity?.attributes.channelId != channelId {
+                    currentActivity = existing
+                }
+                ackChannelActivity(gameId: gameId, channelId: channelId, activityId: existing.id)
+                NSLog("[LiveActivity] adopted current channel card, stale/legacy cleaned (game=\(gameId))")
+            case .requestNewChannelCard:
+                // end보다 request 먼저 — 재생성 실패 시 원본 카드(구채널/레거시)가 그대로 남는다.
                 var channelAttributes = activity.attributes
                 channelAttributes.channelId = channelId
                 let state = activity.contentState
@@ -619,25 +630,21 @@ final class LiveActivityController {
                         content: .init(state: state, staleDate: nil),
                         pushType: .channel(channelId)
                     )
-                    // 같은 경기 레거시 카드 전부 즉시 종료(원본 + 혹시 남은 중복) —
+                    // 같은 경기의 비현재 카드 전부 즉시 종료(원본 구채널/레거시 + 혹시 남은 중복).
                     // 현재 contentState 그대로 end라 잠금화면 정보 손실 없음.
-                    for legacy in Activity<KBOGameAttributes>.activities
-                    where legacy.attributes.gameId == gameId && legacy.attributes.channelId == nil {
-                        await legacy.end(using: state, dismissalPolicy: .immediate)
+                    for other in Activity<KBOGameAttributes>.activities
+                    where other.attributes.gameId == gameId && other.attributes.channelId != channelId {
+                        await other.end(using: state, dismissalPolicy: .immediate)
                     }
-                    // 마킹은 새 카드 active 확인(request 성공) + legacy 정리 완료 *후* (R2 게이트).
-                    migrationLock.lock()
-                    migratedGameIds.insert(gameId)
-                    migrationLock.unlock()
+                    migrationLock.lock(); migratedGameIds.insert(gameId); migrationLock.unlock()
                     if currentActivity?.attributes.gameId == gameId,
-                       currentActivity?.attributes.channelId == nil {
+                       currentActivity?.attributes.channelId != channelId {
                         currentActivity = newActivity
                     }
-                    // 구독 SSOT 기록 — 기존 ACK 경로 재사용(active 재검증·persist 큐 포함).
                     ackChannelActivity(gameId: gameId, channelId: channelId, activityId: newActivity.id)
-                    NSLog("[LiveActivity] migrated legacy → channel card (game=\(gameId), id=\(newActivity.id))")
+                    NSLog("[LiveActivity] migrated legacy/stale → current channel card (game=\(gameId), id=\(newActivity.id))")
                 } catch {
-                    NSLog("[LiveActivity] legacy→channel migration failed → keep legacy: \(error.localizedDescription)")
+                    NSLog("[LiveActivity] →current channel migration failed → keep card: \(error.localizedDescription)")
                 }
             }
         }
