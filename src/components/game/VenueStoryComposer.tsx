@@ -40,6 +40,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   const [picking, setPicking] = useState(false);
   const pickSessionRef = useRef<PickSession | null>(null);
   const pickCancelListenerRef = useRef<(() => void) | null>(null);
+  const pickTokenRef = useRef<number | null>(null);
   const pickSession = () =>
     (pickSessionRef.current ??= createPickSession(setPicking));
   const detachPickCancelListener = () => {
@@ -50,6 +51,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   };
   const cancelPick = () => {
     pickSession().cancel();
+    pickTokenRef.current = null;
     detachPickCancelListener();
   };
   const [error, setError] = useState<string | null>(null);
@@ -148,22 +150,28 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
     if (submitting) return;
     const input = inputRef.current;
     if (!input) return;
-    // 한 번에 하나의 in-flight 픽만 허용 — 준비 중 두 번째 픽커 경합 차단
-    if (!pickSession().open()) return;
+    // 한 번에 하나의 in-flight 픽만 허용 — 준비 중 두 번째 픽커 경합 차단. 토큰으로 이번 픽을 식뱄
+    const token = pickSession().open();
+    if (token == null) return;
     // Safari 16.4+는 픽커 취소 시 input에 'cancel' 이벤트를 준다 — 대기 오버레이 해제용.
     // 성공 선택 시엔 발화하지 않으므로 누적 방지를 위해 이전 listener를 먼저 제거한다
     detachPickCancelListener();
     const handler = () => cancelPick();
     pickCancelListenerRef.current = handler;
     input.addEventListener("cancel", handler, { once: true });
+    // 이번 open이 발급한 토큰을 change handler가 들고 있다가 검증한다(late/stale 구분)
+    pickTokenRef.current = token;
     input.click();
   };
 
   const onPick = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     e.target.value = "";
-    // 세션이 취소된 뒤 도착한 late change → 파일 무시(취소한 선택이 되살아나지 않게)
-    if (!pickSession().resolveChange()) return;
+    // 이 change를 유발한 open의 토큰. 취소/교체되면 activeToken과 어깋나 → 무시된다
+    const token = pickTokenRef.current;
+    pickTokenRef.current = null;
+    // 세션이 취소되거나 다른 픽으로 교체된 뒤 도착한 late/stale change → 파일 무시
+    if (!pickSession().resolveChange(token)) return;
     detachPickCancelListener();
     if (!f || submitting) return;
     setError(null);

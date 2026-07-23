@@ -220,7 +220,10 @@ export default function VenueStoryViewer({
               onError={(e) => {
                 const img = e.currentTarget;
                 img.style.display = "none";
-                img.parentElement?.querySelector("[data-avatar-fallback]")?.classList.remove("hidden");
+                const fb = img.parentElement?.querySelector("[data-avatar-fallback]");
+                // hidden 제거만 하면 flex가 안 붙어 이니셜이 안 보임 → flex도 명시적으로 추가 (삼순 #805)
+                fb?.classList.remove("hidden");
+                fb?.classList.add("flex");
               }}
             />
           ) : null}

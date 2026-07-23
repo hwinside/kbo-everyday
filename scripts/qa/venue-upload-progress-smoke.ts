@@ -149,8 +149,8 @@ async function main() {
 
     // 픽 대기 안내 배선 — iOS 영상 export 무피드백 구간 (7/23 리포트)
     console.log("[픽 대기 안내 배선 — openPicker/pick-session 연결]");
-    ok("openPicker가 pick-session으로 재진입 차단", /if \(!pickSession\(\)\.open\(\)\) return;/.test(src));
-    ok("onPick이 resolveChange로 late change 무시", /if \(!pickSession\(\)\.resolveChange\(\)\) return;/.test(src));
+    ok("openPicker가 pick-session 토큰 발급+재진입 차단", /const token = pickSession\(\)\.open\(\);\s*\n\s*if \(token == null\) return;/.test(src));
+    ok("onPick이 발급 토큰으로 resolveChange(late/stale 무시)", /const token = pickTokenRef\.current;[\s\S]{0,120}?if \(!pickSession\(\)\.resolveChange\(token\)\) return;/.test(src));
     ok("reset()이 in-flight 픽 invalidate(cancelPick)", /const reset = \(\) => \{[\s\S]{0,120}?cancelPick\(\);/.test(src));
     ok("cancel listener 누적 방지(선제거 후 등록)", /detachPickCancelListener\(\);\s*\n\s*const handler = \(\) => cancelPick\(\);/.test(src));
     ok("수동 취소 버튼도 cancelPick 사용", /onClick=\{cancelPick\}/.test(src));
@@ -158,7 +158,7 @@ async function main() {
     ok("대기 안내 UI는 업로드 중엔 미표시(picking && !submitting)", /picking && !submitting && \(/.test(src));
   }
 
-  console.log("[pick-session 상태 전이 회귀 — 삼순 #805 blocker 시나리오]");
+  console.log("[pick-session identity 회귀 — 삼순 #805 라운드3 시나리오]");
   {
     const { createPickSession } = await import("../../src/lib/venue-stories/pick-session");
 
@@ -166,36 +166,53 @@ async function main() {
     {
       const seen: boolean[] = [];
       const s = createPickSession((p) => seen.push(p));
-      ok("open 성공", s.open() === true && s.isPicking() === true);
+      const t = s.open();
+      ok("open 토큰 발급", typeof t === "number" && s.isPicking() === true);
       s.cancel();
       ok("수동 취소 후 picking 해제", s.isPicking() === false);
-      ok("late change 무시(resolveChange=false)", s.resolveChange() === false);
+      ok("취소 세션의 late change 무시(resolveChange=false)", s.resolveChange(t) === false);
       ok("상태 콜백 순서 true→false, 중복 없음", seen.length === 2 && seen[0] === true && seen[1] === false);
     }
 
-    // 시나리오 2: open → close(reset경로 cancel) → reopen 정상 + 이전 세션 change 무시 후 새 세션은 유효
+    // 시나리오 2 (삼순 핵심): idA open → cancel(idA) → idB open → resolve(idA)=false && B 유지 → resolve(idB)=true
     {
       const s = createPickSession();
-      s.open();
+      const idA = s.open();
+      s.cancel();
+      const idB = s.open();
+      ok("A/B 토큰이 서로 다름", idA !== idB && idA != null && idB != null);
+      ok("A의 late change는 B로 오인되지 않음(resolve(idA)=false)", s.resolveChange(idA) === false);
+      ok("A 무시 후에도 B 세션 유지", s.isPicking() === true);
+      ok("B의 정상 change는 유효(resolve(idB)=true)", s.resolveChange(idB) === true && s.isPicking() === false);
+    }
+
+    // 시나리오 3: close/reset(cancel) → reopen 정상, 이전 토큰 change는 무시
+    {
+      const s = createPickSession();
+      const idA = s.open();
       s.cancel(); // close/reset
-      ok("reopen 성공(스피너 잔존 없이 새 세션)", s.open() === true && s.isPicking() === true);
-      ok("새 세션 change는 유효(resolveChange=true)", s.resolveChange() === true && s.isPicking() === false);
+      const idB = s.open();
+      ok("reopen 성공(스피너 잔존 없이 새 세션)", idB != null && s.isPicking() === true);
+      ok("reopen 후 이전 토큰 change 무시", s.resolveChange(idA) === false && s.isPicking() === true);
+      ok("새 세션 change는 유효", s.resolveChange(idB) === true && s.isPicking() === false);
     }
 
-    // 시나리오 3: 준비 중 재진입 차단 — 한 번에 하나의 in-flight 픽만
+    // 시나리오 4: 준비 중 재진입 차단 — 한 번에 하나의 in-flight 픽만
     {
       const s = createPickSession();
-      ok("1차 open 허용", s.open() === true);
-      ok("준비 중 2차 open 차단", s.open() === false);
-      ok("차단돼도 기존 세션 유지", s.isPicking() === true && s.resolveChange() === true);
+      const idA = s.open();
+      ok("1차 open 허용", idA != null);
+      ok("준비 중 2차 open 차단(null)", s.open() === null);
+      ok("차단돼도 기존 세션 유지", s.isPicking() === true && s.resolveChange(idA) === true);
     }
 
-    // 시나리오 4: 성공 선택 후 재선택 사이클 반복 정상
+    // 시나리오 5: null/무효 토큰 방어 + 성공 후 재선택 사이클 반복
     {
       const s = createPickSession();
-      s.open(); s.resolveChange();
-      s.open(); s.resolveChange();
-      ok("재선택 사이클 반복 정상", s.isPicking() === false && s.open() === true);
+      ok("활성 세션 없을 때 resolveChange(null)=false", s.resolveChange(null) === false);
+      const t1 = s.open(); s.resolveChange(t1);
+      const t2 = s.open();
+      ok("재선택 사이클 반복 정상", s.isPicking() === true && s.resolveChange(t2) === true);
     }
   }
 
