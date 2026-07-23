@@ -76,12 +76,18 @@ check("schema: JSON null은 실패", parseKboGameListPayload(null) === null, tru
 check("schema: 행 G_ID 누락은 실패", parseKboGameListPayload({ game: [{ GAME_STATE_SC: "2", AWAY_NM: "LG", HOME_NM: "KT" }] }) === null, true);
 check("schema: 행 state 타입 손상은 실패", parseKboGameListPayload({ game: [{ G_ID: "G1", GAME_STATE_SC: 2, AWAY_NM: "LG", HOME_NM: "KT" }] }) === null, true);
 check("schema: 최소 유효 행 통과", parseKboGameListPayload({ game: [{ G_ID: "20260721LGKT0", GAME_STATE_SC: "2", AWAY_NM: "LG", HOME_NM: "KT" }] })?.length === 1, true);
-check("schema: unknown state 실패", parseKboGameListPayload({ game: [{ G_ID: "20260721LGKT0", GAME_STATE_SC: "BROKEN", AWAY_NM: "LG", HOME_NM: "KT" }] }) === null, true);
+check("schema: 비숫자 state 손상은 실패", parseKboGameListPayload({ game: [{ G_ID: "20260721LGKT0", GAME_STATE_SC: "BROKEN", AWAY_NM: "LG", HOME_NM: "KT" }] }) === null, true);
+check("schema: 빈 state 문자열은 실패", parseKboGameListPayload({ game: [{ G_ID: "20260721LGKT0", GAME_STATE_SC: "", AWAY_NM: "LG", HOME_NM: "KT" }] }) === null, true);
 check("schema: malformed game id 실패", parseKboGameListPayload({ game: [{ G_ID: "x", GAME_STATE_SC: "2", AWAY_NM: "LG", HOME_NM: "KT" }] }) === null, true);
 check("schema: 빈 원정 팀명 실패", parseKboGameListPayload({ game: [{ G_ID: "20260721LGKT0", GAME_STATE_SC: "2", AWAY_NM: "  ", HOME_NM: "KT" }] }) === null, true);
 check("schema: 빈 홈 팀명 실패", parseKboGameListPayload({ game: [{ G_ID: "20260721LGKT0", GAME_STATE_SC: "2", AWAY_NM: "LG", HOME_NM: "" }] }) === null, true);
-check("schema: state 1/2/3 domain 통과", ["1", "2", "3"].every((state) =>
+check("schema: state 1/2/3/4/5 domain 통과 (4=취소, 2026-07-23 사고)", ["1", "2", "3", "4", "5"].every((state) =>
   parseKboGameListPayload({ game: [{ G_ID: "20260721LGKT0", GAME_STATE_SC: state, AWAY_NM: "LG", HOME_NM: "KT" }] })?.length === 1), true);
+// 2026-07-23 사고 재현: 취소 경기(state "4") 1건 때문에 정상 라이브 경기까지 전체 null 처리되면 안 된다.
+check("schema: 취소(4) 혼재 payload도 전체 통과", parseKboGameListPayload({ game: [
+  { G_ID: "20260723NCLG0", GAME_STATE_SC: "2", AWAY_NM: "NC", HOME_NM: "LG" },
+  { G_ID: "20260723OBKT0", GAME_STATE_SC: "4", AWAY_NM: "두산", HOME_NM: "KT" },
+] })?.length === 2, true);
 
 // ---------------------------------------------------------------------------
 // fast-loop 오케스트레이션 (삼순 blocker①②) — fake clock으로 절대 deadline/오류 분기 검증.
