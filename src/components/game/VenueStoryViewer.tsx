@@ -44,6 +44,8 @@ export default function VenueStoryViewer({
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [commentsOpen, setCommentsOpen] = useState(false);
+  // 인스타식 하단 상시 입력바 — 입력 중(포커스)에도 재생 일시정지 (하린아빠 21:22 지시)
+  const [inputFocused, setInputFocused] = useState(false);
   const [comments, setComments] = useState<VenueStoryComment[] | null>(null);
   const [commentInput, setCommentInput] = useState("");
   const [commentBusy, setCommentBusy] = useState(false);
@@ -98,7 +100,7 @@ export default function VenueStoryViewer({
   // 이미지 자동 진행(RAF), 영상은 timeupdate 로 처리
   useEffect(() => {
     if (!story || story.mediaType !== "image") return;
-    if (paused || menuOpen || commentsOpen) return;
+    if (paused || menuOpen || commentsOpen || inputFocused) return;
     const hold = VENUE_STORY_IMAGE_HOLD_MS;
     startRef.current = performance.now();
     const base = elapsedRef.current;
@@ -124,7 +126,7 @@ export default function VenueStoryViewer({
     const v = videoRef.current;
     if (!v || !story || story.mediaType !== "video") return;
     v.muted = muted;
-    if (paused || menuOpen || commentsOpen) {
+    if (paused || menuOpen || commentsOpen || inputFocused) {
       v.pause();
     } else {
       v.play().catch(() => {
@@ -390,25 +392,55 @@ export default function VenueStoryViewer({
         />
       </div>
 
-      {/* 캡션 */}
+      {/* 캡션 — 하단 상시 입력바 위로 */}
       {story.caption && (
-        <div className="absolute bottom-6 left-0 right-0 pl-4 pr-20 z-20 pointer-events-none">
+        <div
+          className="absolute left-0 right-0 pl-4 pr-20 z-20 pointer-events-none"
+          style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 72px)" }}
+        >
           <p className="text-white text-sm bg-black/40 rounded-xl px-3 py-2 inline-block max-w-full break-words">
             {story.caption}
           </p>
         </div>
       )}
 
-      {/* 댓글 버튼 (개수 표시) */}
-      <button
-        onClick={() => setCommentsOpen(true)}
-        className="absolute right-3 z-20 flex items-center gap-1.5 text-white/90 bg-black/40 rounded-full px-3 py-2"
-        style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 16px)" }}
-        aria-label="댓글"
+      {/* 인스타식 하단 상시 댓글 입력바 (하린아빠 21:22 지시 — 인스타 UI와 동일하게 바로 아래쪽 배치) */}
+      <div
+        className="absolute left-0 right-0 z-20 flex items-center gap-2 px-3"
+        style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 12px)" }}
       >
-        <MessageCircle size={18} />
-        <span className="text-sm font-semibold">{comments?.length ?? 0}</span>
-      </button>
+        <input
+          value={commentInput}
+          onChange={(e) => setCommentInput(e.target.value)}
+          onFocus={() => setInputFocused(true)}
+          onBlur={() => setInputFocused(false)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.nativeEvent.isComposing) handleCommentSubmit();
+          }}
+          maxLength={VENUE_STORY_COMMENT_MAX_LENGTH}
+          placeholder="댓글 달기..."
+          className="flex-1 min-w-0 bg-black/40 border border-white/30 rounded-full px-4 py-2.5 text-sm text-white placeholder:text-white/60 outline-none"
+        />
+        {commentInput.trim().length > 0 ? (
+          <button
+            onClick={handleCommentSubmit}
+            disabled={commentBusy}
+            className="w-10 h-10 flex items-center justify-center text-white shrink-0 bg-black/40 rounded-full"
+            aria-label="댓글 등록"
+          >
+            {commentBusy ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
+          </button>
+        ) : (
+          <button
+            onClick={() => setCommentsOpen(true)}
+            className="h-10 px-3 flex items-center gap-1.5 text-white/90 bg-black/40 rounded-full shrink-0"
+            aria-label="댓글 목록"
+          >
+            <MessageCircle size={18} />
+            <span className="text-sm font-semibold">{comments?.length ?? 0}</span>
+          </button>
+        )}
+      </div>
 
       {/* 댓글 시트 — 열려있는 동안 재생 일시정지 */}
       {commentsOpen && (
