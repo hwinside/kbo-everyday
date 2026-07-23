@@ -422,3 +422,125 @@ export function isLiveChannelSubscription(
 ): boolean {
   return activeKeys.has(`${sub.game_id}|${sub.environment}|${sub.channel_id}`);
 }
+
+/** started row에 기록된 채널 출생 세대 — p2s 발송 성공 시점의 (environment, channel_id). */
+export interface ChannelBornRef {
+  game_id: string;
+  channel_born_environment: string | null;
+  channel_born_channel_id: string | null;
+}
+
+/**
+ * 채널 출생 세대 유효성 — 기록된 (game_id, environment, channel_id)가 *현재 active
+ * 채널과 정확 일치*할 때만 broadcast 수신으로 인정(삼순 라운드2 blocker). 채널 A로
+ * 태어난 카드는 A가 ChannelNotRegistered로 무효화되고 B로 재생성되면 B broadcast를
+ * 못 받으므로, 세대 불일치(구채널) 행은 gap/wake 대상으로 복귀해야 한다. 이후 update
+ * 토큰 또는 새 채널 ACK가 생기면 기존 로직(토큰∪유효 ACK)이 다시 제외한다.
+ * null(마이그레이션 이전 행 = 세대 미기록)은 보수적으로 불인정(gap 포함).
+ * 어드민 updatable 합산과 wake 제외 판정이 *모두 이 함수 하나*를 기준으로 삼는다
+ * (이중 기준 금지 계약).
+ */
+export function isLiveBornChannel(row: ChannelBornRef, activeKeys: Set<string>): boolean {
+  if (!row.channel_born_environment || !row.channel_born_channel_id) return false;
+  return activeKeys.has(
+    `${row.game_id}|${row.channel_born_environment}|${row.channel_born_channel_id}`,
+  );
+}
+
+/**
+ * '갱신 수신(updatable)' 유저 수 — started ∩ (update토큰 ∪ 유효 채널ACK ∪ 유효 채널출생).
+ * 채널출생(p2s payload에 channelId 내장 발송 성공 서버 기록)은 네이티브 ACK가 아직/영영
+ * 안 와도 broadcast로 갱신을 받으므로 updatable — ACK만 인정하면 gap 과대계상(2026-07-23
+ * 실측). ⚠️ channelBornUsers는 반드시 isLiveBornChannel(세대 일치) 통과 유저만 담아야
+ * 한다 — 출생 채널이 재생성으로 교체된 행을 그대로 세면 갱신 못 받는 카드를 수신으로
+ * 오인한다(삼순 라운드2 blocker). 과거 행은 세대 기록이 없어(backfill 불가) 종전과 동일 집계.
+ */
+export function countUpdatableUsers(i: {
+  started: Iterable<string>;
+  tokenUsers: Set<string>;
+  channelAckUsers: Set<string>;
+  channelBornUsers: Set<string>;
+}): number {
+  let n = 0;
+  for (const u of i.started) {
+    if (i.tokenUsers.has(u) || i.channelAckUsers.has(u) || i.channelBornUsers.has(u)) n += 1;
+  }
+  return n;
+}
+
+// ── 무음 wake 대상 선별 (③ wake 오염 제거, 삼순 재리뷰 2026-07-23) ──────
+// 유효 채널출생 카드는 broadcast로 갱신을 받아 wake가 불필요한데, 이를 wake 대상에
+// 넣으면 FCM 무음 wake가 낭비될 뿐 아니라 wake_attempted_at이 기록돼 어드민의
+// wake 구제 성공률 분모가 오염된다(시도할 필요가 없던 카드가 분모에 섞임).
+// gap 판정과 attempted 기록이 같은 행 집합에서 나오도록 순수 함수로 고정한다.
+
+export interface WakeGapRow extends ChannelBornRef {
+  user_id: string;
+  game_id: string;
+  created_at: string | null;
+}
+
+/**
+ * 무음 wake 대상 gap 행 선별 — wake 발송 대상과 wake_attempted_at 기록이 모두
+ * 이 반환값에서만 파생돼야 한다(분모 오염 방지 계약).
+ * - 유효 채널출생 행 제외(isLiveBornChannel — 어드민 updatable 합산과 동일 기준):
+ *   출생 채널이 지금도 active면 토큰/ACK 없이도 broadcast 수신 — wake 불필요·attempted
+ *   기록 금지. 출생 채널이 교체됐으면(세대 불일치) gap으로 복귀 = wake 대상(삼순 라운드2).
+ * - updatableKeys(`user|game` — update 토큰 or 유효 채널 ACK) 보유 행 제외.
+ * - scheduled 경기 행은 카드 발급(created_at) 후 wakeWindowMs 이내만(그 뒤는 live 전환 창이 백스톱).
+ */
+export function selectWakeGapRows<T extends WakeGapRow>(
+  rows: T[],
+  updatableKeys: Set<string>,
+  activeChannelKeys: Set<string>,
+  scheduledGameIds: Set<string>,
+  nowMs: number,
+  wakeWindowMs: number,
+): T[] {
+  return rows.filter((r) => {
+    if (isLiveBornChannel(r, activeChannelKeys)) return false;
+    if (updatableKeys.has(`${r.user_id}|${r.game_id}`)) return false;
+    if (scheduledGameIds.has(r.game_id)) {
+      return r.created_at !== null && nowMs - new Date(r.created_at).getTime() <= wakeWindowMs;
+    }
+    return true;
+  });
+}
+
+// ── 무음 wake 창 오픈 판정 (삼순 라운드3: 채널 세대 기준 재오픈) ──────────
+
+/**
+ * 무음 wake 창 오픈 여부 — live 전환/취소·종료 이벤트 시각 기준 windowMs 창에 더해,
+ * *해당 게임의 현재 active 채널 세대가 생성/변경된 시각*(live_activity_channels.created_at
+ * — 재생성 CAS 경로가 새 시각으로 다시 기록) 기준으로도 창을 재오픈한다(삼순 라운드3
+ * blocker): 라이브 도중 채널이 늦게 생성되거나 A→B로 교체되면 *그 시점 이후에야*
+ * 구채널/레거시 카드가 gap으로 복귀하는데, 이벤트 창(live 전환+20분)만 보면 이미 닫혀
+ * wake 자동구제가 불가능하다(2026-07-23 실사례: 19:07 시작 경기의 늦은 채널 생성).
+ * - eventSinceMs undefined(이벤트 row 없음 = 막 발생/알림 경로 이슈) → 오픈(기존 안전 동작).
+ * - 채널 변경 없이 두 창 모두 지난 경우 → 기존대로 마감(스팸/throttle 방지 유지).
+ */
+export function isWakeWindowOpen(
+  nowMs: number,
+  eventSinceMs: number | undefined,
+  channelGenerationMs: number | undefined,
+  windowMs: number,
+): boolean {
+  if (eventSinceMs === undefined) return true;
+  if (nowMs - eventSinceMs <= windowMs) return true;
+  return channelGenerationMs !== undefined && nowMs - channelGenerationMs <= windowMs;
+}
+
+// ── p2s stale 토큰 발송 제외 ─────────────────────────────────────────
+// gap 유저 41%가 updated_at 1~30일+ 미갱신 휴면 기기(2026-07-23 실측) — 앱을 오래 안 연
+// 기기는 p2s로 카드가 떠도 update 토큰 등록(wake/앱 오픈)이 사실상 안 일어나 갱신불가
+// 카드만 늘린다. 30일+ 미갱신 토큰은 발송 대상에서 제외한다(토큰 삭제는 아님 — 앱을
+// 다시 열어 updated_at이 갱신되면 즉시 발송 재개).
+export const STALE_START_TOKEN_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** p2s 토큰 stale 판정 — updated_at 30일+ 경과. null/파싱 불가는 stale 아님(발송 유지, 보수적). */
+export function isStaleStartToken(updatedAt: string | null, nowMs: number): boolean {
+  if (!updatedAt) return false;
+  const t = Date.parse(updatedAt);
+  if (!Number.isFinite(t)) return false;
+  return nowMs - t > STALE_START_TOKEN_MS;
+}
