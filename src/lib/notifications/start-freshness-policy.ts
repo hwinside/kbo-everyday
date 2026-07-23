@@ -9,8 +9,11 @@
 // 순간은 신선한 것으로 보고 기존 시간 윈도우가 커버한다.
 // scheduled→live 전환 연속 관측 허용 폭: warmup cron은 매분 돌므로 정상이면 마지막 "예정" 관측이
 // 1~2분 전이다. 배포/일시 장애로 몇 틱 빠져도 정시성을 잃지 않는 범위로 5분까지 허용.
-// 그 이상 벤 관측 공백 = 장애 복구 뒷북 위험 → 발송 금지(mark-only).
-export const SCHEDULED_SEEN_RECENT_MS = 5 * 60 * 1000;
+// 즉 **바로 직전 cron 틱의 "예정" 관측만 연속으로 인정**한다(60s + 실행 jitter 30s = 90s).
+// 한 틱이라도 건너뛴 공백은 장애 복구 뒷북 위험 → 발송 금지(mark-only).
+// (2026-07-23 삼순 #798 post-merge blocker: 5분 허용은 4분 cron/파서 장애 복구 뒷북을
+// 통과시켜 "늦았으면 미발송/정시성" 계약 위반 → 90초로 축소)
+export const SCHEDULED_SEEN_RECENT_MS = 90 * 1000;
 
 // 시작알림 발송 게이트 (2026-07-23 삼순 post-merge blocker 반영):
 // "최근 scheduled→live 전환을 연속 관측한 경우만 발송, 첫 관측이 이미 live거나 stale이면 mark-only".
