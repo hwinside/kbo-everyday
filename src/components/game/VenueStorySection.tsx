@@ -25,9 +25,11 @@ export default function VenueStorySection({ gameId }: Props) {
   // 않도록(인덱스 어긋남 방지) 뷰어 닫힐 때만 seenIds를 다시 로드한다.
   const [seenIds, setSeenIds] = useState<ReadonlySet<string>>(() => new Set());
 
+  // 계정(user.id) 스코프로 로드 — 계정 전환 시에도 즉시 해당 사용자 이력으로 격리 재로드
+  const userId = user?.id ?? null;
   useEffect(() => {
-    setSeenIds(loadSeenIds(gameId));
-  }, [gameId]);
+    setSeenIds(loadSeenIds(gameId, userId));
+  }, [gameId, userId]);
 
   const fetchStories = useCallback(async () => {
     try {
@@ -56,9 +58,9 @@ export default function VenueStorySection({ gameId }: Props) {
   const handleStorySeen = useCallback(
     (storyId: string | number) => {
       // 즉시 localStorage 기록만 하고, 트레이 재정렬(seenIds 상태 갱신)은 뷰어 닫힐 때.
-      markStorySeen(gameId, storyId);
+      markStorySeen(gameId, storyId, userId);
     },
-    [gameId],
+    [gameId, userId],
   );
 
   const handleUploadClick = () => {
@@ -161,7 +163,7 @@ export default function VenueStorySection({ gameId }: Props) {
           onClose={() => {
             setViewerIndex(null);
             // 닫힐 때만 재정렬/테두리 갱신 (뷰어 열려있는 동안 인덱스 어긋남 방지)
-            setSeenIds(loadSeenIds(gameId));
+            setSeenIds(loadSeenIds(gameId, userId));
           }}
           onChanged={fetchStories}
         />
