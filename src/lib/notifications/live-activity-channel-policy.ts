@@ -63,6 +63,48 @@ export function applyChannelHeartbeat(
   return decision;
 }
 
+/** 채널 update 최종 판정 입력 — base diff + heartbeat + 지명 catch-up 합성. */
+export interface ChannelUpdateResolutionInput extends ChannelPushDecisionInput {
+  /** 마지막 성공 p10 broadcast 시각(ms). null = 미기록. */
+  lastP10AtMs: number | null;
+  nowMs: number;
+  /** fast-path 유실 catch-up 지명 경기 여부 (forceCurrentStateGameIds). */
+  forceCatchup: boolean;
+}
+
+export interface ChannelUpdateResolution {
+  decision: ChannelPushDecision;
+  /** heartbeat 승격 발송(관제 카운터용 — forced catch-up 아님). */
+  isHeartbeat: boolean;
+  /** 지명 catch-up으로 p10 승격된 발송(관제 catchups 카운터용). */
+  isForcedCatchup: boolean;
+}
+
+/**
+ * 채널 update 최종 판정 — base diff → heartbeat → 지명 catch-up 순 합성 (순수 함수,
+ * 배선은 live-activity-channels.ts).
+ *
+ * 지명 catch-up(삼순 R2 blocker③): fast-path가 유실 복구로 지명한 경기는 *자연 p10이
+ * 아닌 한* 항상 p10으로 승격한다. 기존(R1)에는 `!heartbeatDecision.send`일 때만 승격해,
+ * relay lastPlay만 달라진 base=p5 틱에서 catch-up이 p5로 나가고 pending은 이미 비워져
+ * 다음 p10 재시도도 없이 2분 heartbeat까지 stale로 남았다. p5는 예산 미소모라 놓친
+ * 단말을 복구하지 못하므로 catch-up 목적상 반드시 p10이어야 한다. 자연 p10(변화/
+ * heartbeat)이면 그 발송이 catch-up을 겸한다(성공 시 last_p10_at 전진 — 이중 승격 불필요).
+ */
+export function resolveChannelUpdateDecision(
+  i: ChannelUpdateResolutionInput,
+): ChannelUpdateResolution {
+  const base = decideChannelPush(i);
+  const heartbeat = applyChannelHeartbeat(base, i.lastP10AtMs, i.nowMs);
+  const naturalP10 = heartbeat.send && heartbeat.priority === "10";
+  const isForcedCatchup = i.forceCatchup && !naturalP10;
+  const decision: ChannelPushDecision = isForcedCatchup
+    ? { send: true, priority: "10" }
+    : heartbeat;
+  const isHeartbeat = naturalP10 && !(base.send && base.priority === "10");
+  return { decision, isHeartbeat, isForcedCatchup };
+}
+
 /** 레거시 per-토큰 update 발송 판정 입력 (#664 catch-up). */
 export interface LegacyTokenUpdateInput {
   /** 경기 단위 skip/priority 판정(decideChannelPush 결과). null = 판정 재료 없음. */
@@ -243,11 +285,47 @@ export function p2sChannelEligible(token: {
 /**
  * p2s 발송 attempt 순서 — env는 게이트가 아니라 per-attempt 규칙 (v4 blocker①).
  * known이면 그 env 쌍만, null이면 prod 쌍 → (BadDeviceToken 시) sandbox 쌍.
- * 각 attempt에서 해당 env의 active 채널이 없으면 그 attempt는 채널 없이(기존 payload) 발송.
  * 불변식: 발송 host env == 포함 channelId env (교차 쌍 금지 — 쌍은 호출부가 이 순서로 구성).
+ * channel-capable 토큰의 채널 부재 처리(레거시 발송 금지·유보)는 p2sSendPlan이 담당한다
+ * (PR #808 R3 — 종전 "채널 없으면 그 attempt는 채널 없이 발송" 규칙 폐기).
  */
 export function p2sEnvAttempts(knownEnv: ApnsEnvironment | null): ApnsEnvironment[] {
   return knownEnv === null ? ["production", "sandbox"] : [knownEnv];
+}
+
+/**
+ * p2s 발송 계획 (PR #808 R3, 삼순 blocker① — 서버 자동 시작 경로의 레거시 fallback 차단).
+ *
+ * channel-capable(iOS18+/build16+) 토큰은 *active 채널이 준비된 env로만* 발송한다:
+ * - 준비된 env가 하나도 없으면 `defer` — 선점(claim)도 발송도 하지 않고 다음 틱이
+ *   재시도한다. 7/23 사고 입구(채널이 늦게 생긴 날, 자동 p2s가 채널 payload 없이 레거시
+ *   카드를 낳아 예산 스로틀에 갇힘)의 서버측 차단. 앱 내 start()의 deferStart와 대칭.
+ * - 준비된 env가 일부면 그 env로만 attempt(`truncated` 표시). env 미상(null) 토큰이
+ *   prod-only 채널에서 BadDeviceToken을 받으면 "sandbox 토큰인데 sandbox 채널이 아직
+ *   없다"일 수 있으므로, truncated의 마지막 BadDeviceToken은 토큰 무효 확정이 아니다 —
+ *   호출부는 삭제 대신 선점 해제(다음 틱 재시도)로 처리한다.
+ * 레거시 토큰(iOS17↓/build15↓/미보고)은 기존 그대로 — 채널 payload 없이 전체 attempt.
+ */
+export type P2sSendPlan =
+  | { kind: "defer" }
+  | { kind: "send"; attempts: ApnsEnvironment[]; channelRequired: boolean; truncated: boolean };
+
+export function p2sSendPlan(
+  token: { os_major: number | null; app_build: number | null; env: ApnsEnvironment | null },
+  channelEnvs: ReadonlySet<ApnsEnvironment>,
+): P2sSendPlan {
+  const attempts = p2sEnvAttempts(token.env);
+  if (!p2sChannelEligible(token)) {
+    return { kind: "send", attempts, channelRequired: false, truncated: false };
+  }
+  const withChannel = attempts.filter((e) => channelEnvs.has(e));
+  if (withChannel.length === 0) return { kind: "defer" };
+  return {
+    kind: "send",
+    attempts: withChannel,
+    channelRequired: true,
+    truncated: withChannel.length < attempts.length,
+  };
 }
 
 /**

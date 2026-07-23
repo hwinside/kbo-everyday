@@ -139,10 +139,10 @@ function makeLoopHarness(startAtMs: number, steps: FetchStep[]) {
 }
 
 async function runLoopTests() {
-  checkNum("loop: 초기 push deadline은 요청+18s", initialWidgetPushDeadlineAt(1_000, 47_000), 19_000);
+  checkNum("loop: 초기 push deadline은 요청+13s", initialWidgetPushDeadlineAt(1_000, 53_000), 14_000);
   check("loop: 초기 push deadline은 첫 fast tick보다 빠름",
     INITIAL_PUSH_DEADLINE_MS < FAST_LOOP_TARGETS_MS[0], true);
-  checkNum("loop: 더 이른 전체 deadline을 넘지 않음", initialWidgetPushDeadlineAt(1_000, 15_000), 15_000);
+  checkNum("loop: 더 이른 전체 deadline을 넘지 않음", initialWidgetPushDeadlineAt(1_000, 12_000), 12_000);
 
   // 실제 route wiring 경계: fake clock이 +18s initial abort → +20s fast 최신 1건을 만든다.
   {
@@ -202,34 +202,36 @@ async function runLoopTests() {
     advanceTo(46_000); // +46s 역변이도 pending initial을 정리해 assertion까지 도달시킨다.
     await pipelines.initialPromise;
     checkEq("loop: initial abort 후 fast 최신 1건만 발송", sendOrder.join(","), "2000");
-    checkNum("loop: initial AbortSignal은 +18s에 발화", initialAbortedAt, 18_000);
+    checkNum("loop: initial AbortSignal은 +13s에 발화", initialAbortedAt, 13_000);
     checkNum("loop: fast 시작 시 active initial 0", activeAtFast, 0);
     checkNum("loop: 종료 시 active 요청 0", active, 0);
   }
 
-  // 정상: warmup 5s 소요 → +20/+40s tick 모두 실행 (요청 진입 기준).
+  // 정상: warmup 5s 소요 → +15/+30/+45s 서브틱 모두 실행 (요청 진입 기준).
   {
     const h = makeLoopHarness(5_000, [{ ok: true, games: [LIVE_GAME] }]);
     const ticks = await runWidgetFastLoop(h.deps, { requestStartMs: 0 });
-    checkNum("loop: 정상 2 tick 실행", ticks.length, 2);
-    checkNum("loop: push 2회", h.counts().pushCalls, 2);
-    checkNum("loop: tick1은 요청+20s 시점", ticks[0].atMs, 20_000);
-    checkNum("loop: tick2는 요청+40s 시점", ticks[1].atMs, 40_000);
+    checkNum("loop: 정상 3 tick 실행", ticks.length, 3);
+    checkNum("loop: push 3회", h.counts().pushCalls, 3);
+    checkNum("loop: tick1은 요청+15s 시점", ticks[0].atMs, 15_000);
+    checkNum("loop: tick2는 요청+30s 시점", ticks[1].atMs, 30_000);
+    checkNum("loop: tick3는 요청+45s 시점", ticks[2].atMs, 45_000);
   }
-  // blocker①: 기존 warmup 작업이 47s 걸림(요청 진입 기준 deadline 46s 초과) → 루프 전체 미실행.
+  // blocker①: 기존 warmup 작업이 53s 걸림(요청 진입 기준 deadline 52s 초과) → 루프 전체 미실행.
   {
-    const h = makeLoopHarness(47_000, [{ ok: true, games: [LIVE_GAME] }]);
+    const h = makeLoopHarness(53_000, [{ ok: true, games: [LIVE_GAME] }]);
     const ticks = await runWidgetFastLoop(h.deps, { requestStartMs: 0 });
     checkNum("loop: deadline 초과 진입 → 0 tick", ticks.length, 0);
     checkNum("loop: deadline 초과 진입 → fetch 미시작", h.counts().fetchCalls, 0);
     checkNum("loop: deadline 초과 진입 → sleep 미시작", h.sleeps.length, 0);
   }
-  // blocker①: warmup 30s 지연 → 지난 tick은 즉시, 다음 tick은 예정 시점에 — 모두 deadline 안.
+  // blocker①: warmup 32s 지연 → 지난 tick(+15/+30)은 즉시, 다음 tick(+45)은 예정 시점에 — 모두 deadline 안.
   {
-    const h = makeLoopHarness(30_000, [{ ok: true, games: [LIVE_GAME] }]);
+    const h = makeLoopHarness(32_000, [{ ok: true, games: [LIVE_GAME] }]);
     const ticks = await runWidgetFastLoop(h.deps, { requestStartMs: 0 });
-    checkNum("loop: 30s 지연 → 2 tick(즉시+40s)", ticks.length, 2);
-    checkNum("loop: 지난 tick은 sleep 없이 즉시", ticks[0].atMs, 30_000);
+    checkNum("loop: 32s 지연 → 3 tick(즉시×2+45s)", ticks.length, 3);
+    checkNum("loop: 지난 tick은 sleep 없이 즉시", ticks[0].atMs, 32_000);
+    checkNum("loop: 마지막 tick은 예정 +45s 시점", ticks[2].atMs, 45_000);
   }
   // blocker①: tick 목표 시점이 deadline 밖이면 sleep 자체를 안 한다(다음 크론과 겹침 방지).
   {
@@ -252,8 +254,8 @@ async function runLoopTests() {
       { ok: true, games: [LIVE_GAME] },
     ]);
     const ticks = await runWidgetFastLoop(h.deps, { requestStartMs: 0 });
-    checkNum("loop: fetch 오류 → 다음 tick 재시도(2 tick)", ticks.length, 2);
-    checkNum("loop: 오류 tick은 push 없음, 재시도 tick만 push", h.counts().pushCalls, 1);
+    checkNum("loop: fetch 오류 → 다음 tick 재시도(3 tick)", ticks.length, 3);
+    checkNum("loop: 오류 tick은 push 없음, 재시도 tick만 push", h.counts().pushCalls, 2);
     const errResult = ticks[0].result as { error?: string; retryNextTick?: boolean };
     check("loop: 오류 tick 결과에 retry 표시", errResult.error === "live_fetch_failed" && errResult.retryNextTick === true, true);
   }

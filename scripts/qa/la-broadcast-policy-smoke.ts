@@ -8,6 +8,7 @@ import {
   fullStateHashOf,
   p2sChannelEligible,
   p2sEnvAttempts,
+  p2sSendPlan,
   endRetryDelayMinutes,
   startTokenEnvPatch,
   channelMutationFence,
@@ -17,6 +18,7 @@ import {
   startTokenChangePatch,
   shouldAdvanceFallbackCursor,
   applyChannelHeartbeat,
+  resolveChannelUpdateDecision,
   CHANNEL_HEARTBEAT_INTERVAL_MS,
   activeChannelKeySet,
   isLiveChannelSubscription,
@@ -565,5 +567,196 @@ check("cursor: invalidToken + retryable 혼합(성공 無) → 보류",
     countUpdatableUsers({ started: ["u1", "u2"], tokenUsers: new Set(["u1"]), channelAckUsers: new Set(), channelBornUsers: bornUsers }), 2);
 }
 
-console.log(`\nla-broadcast-policy-smoke: ${pass} PASS / ${fail} FAIL`);
-if (fail > 0) process.exit(1);
+// ── p2sSendPlan — 서버 자동 p2s 채널-우선/유보 (PR #808 R3, 삼순 blocker①) ──
+{
+  const none = new Set<never>();
+  const prodOnly = new Set(["production" as const]);
+  const both = new Set(["production" as const, "sandbox" as const]);
+  // 레거시 토큰(iOS17↓/build15↓) — 채널 무관, 기존 attempt 그대로 발송(채널 payload 없음).
+  check("레거시(build15/iOS17) + 채널 없음 → 기존대로 발송(channelRequired=false)",
+    p2sSendPlan({ os_major: 17, app_build: 15, env: "production" }, none),
+    { kind: "send", attempts: ["production"], channelRequired: false, truncated: false });
+  check("레거시 + 채널 있음이어도 channelRequired=false(레거시엔 채널 미첨부)",
+    p2sSendPlan({ os_major: 17, app_build: 15, env: null }, both),
+    { kind: "send", attempts: ["production", "sandbox"], channelRequired: false, truncated: false });
+  // channel-capable(iOS18+/build16+) — 채널 준비된 env로만 발송.
+  check("capable + 채널 전무 → defer(claim/발송 0, 다음 틱 재시도)",
+    p2sSendPlan({ os_major: 18, app_build: 16, env: "production" }, none),
+    { kind: "defer" });
+  check("capable(known prod) + prod 채널 준비 → prod로만 발송(channelRequired)",
+    p2sSendPlan({ os_major: 18, app_build: 16, env: "production" }, prodOnly),
+    { kind: "send", attempts: ["production"], channelRequired: true, truncated: false });
+  check("capable(known sandbox) + prod 채널만 → sandbox env 미준비 → defer",
+    p2sSendPlan({ os_major: 18, app_build: 16, env: "sandbox" }, prodOnly),
+    { kind: "defer" });
+  check("capable(env null) + prod 채널만 → prod attempt만(truncated: sandbox 제거)",
+    p2sSendPlan({ os_major: 18, app_build: 16, env: null }, prodOnly),
+    { kind: "send", attempts: ["production"], channelRequired: true, truncated: true });
+  check("capable(env null) + 양 env 채널 → 두 attempt, truncated 없음",
+    p2sSendPlan({ os_major: 18, app_build: 16, env: null }, both),
+    { kind: "send", attempts: ["production", "sandbox"], channelRequired: true, truncated: false });
+  check("경계: build16/iOS18 정확히 = capable(채널 없으면 defer)",
+    p2sSendPlan({ os_major: 18, app_build: 16, env: "production" }, none),
+    { kind: "defer" });
+  check("경계: build15는 미달 = 레거시 발송(defer 아님)",
+    p2sSendPlan({ os_major: 18, app_build: 15, env: "production" }, none),
+    { kind: "send", attempts: ["production"], channelRequired: false, truncated: false });
+}
+
+// ── resolveChannelUpdateDecision — 지명 catch-up p10 승격 (삼순 R2 blocker③) ──
+// fast-path가 유실 복구로 지명한 경기는 base 판정이 skip이든 p5든 반드시 p10 —
+// R1은 `!send`일 때만 승격해 relay lastPlay만 다른 base=p5 틱에서 catch-up이 p5로
+// 나가고(pending은 이미 clear) 놓친 단말이 2분 heartbeat까지 stale로 남았다.
+{
+  const HB = CHANNEL_HEARTBEAT_INTERVAL_MS;
+  const t = 10_000_000;
+  const same = {
+    scoreState: scoreStateOf(baseCs), fullStateHash: fullStateHashOf(baseCs),
+    lastScoreState: scoreStateOf(baseCs), lastStateHash: fullStateHashOf(baseCs),
+  };
+  // lastPlay만 다름 = 점수축 동일·전체축 변화 → base p5.
+  const lastPlayOnly = { ...baseCs, lastPlay: "박동원 안타" };
+  const p5Base = {
+    scoreState: scoreStateOf(lastPlayOnly), fullStateHash: fullStateHashOf(lastPlayOnly),
+    lastScoreState: scoreStateOf(baseCs), lastStateHash: fullStateHashOf(baseCs),
+  };
+  check("resolve: 지명 catch-up + base p5(lastPlay만) + fresh p10 → p10 승격(R2③ 핵심)",
+    resolveChannelUpdateDecision({ ...p5Base, lastP10AtMs: t - 30_000, nowMs: t, forceCatchup: true }),
+    { decision: { send: true, priority: "10" }, isHeartbeat: false, isForcedCatchup: true });
+  check("resolve: 지명 catch-up + 무변화 skip + fresh p10 → p10 승격",
+    resolveChannelUpdateDecision({ ...same, lastP10AtMs: t - 30_000, nowMs: t, forceCatchup: true }),
+    { decision: { send: true, priority: "10" }, isHeartbeat: false, isForcedCatchup: true });
+  check("resolve: 지명 catch-up + 자연 p10(점수 변화) → 그 발송이 겸함(이중 승격 아님)",
+    resolveChannelUpdateDecision({
+      scoreState: scoreStateOf({ ...baseCs, homeScore: 2 }),
+      fullStateHash: fullStateHashOf({ ...baseCs, homeScore: 2 }),
+      lastScoreState: scoreStateOf(baseCs), lastStateHash: fullStateHashOf(baseCs),
+      lastP10AtMs: t - 30_000, nowMs: t, forceCatchup: true,
+    }),
+    { decision: { send: true, priority: "10" }, isHeartbeat: false, isForcedCatchup: false });
+  check("resolve: 지명 catch-up + heartbeat 만료 p10 → heartbeat가 겸함(catchup 카운트 아님)",
+    resolveChannelUpdateDecision({ ...same, lastP10AtMs: t - HB, nowMs: t, forceCatchup: true }),
+    { decision: { send: true, priority: "10" }, isHeartbeat: true, isForcedCatchup: false });
+  check("resolve: 비지명 + base p5 + fresh p10 → p5 그대로(예산 경로 보존)",
+    resolveChannelUpdateDecision({ ...p5Base, lastP10AtMs: t - 30_000, nowMs: t, forceCatchup: false }),
+    { decision: { send: true, priority: "5" }, isHeartbeat: false, isForcedCatchup: false });
+  check("resolve: 비지명 + 무변화 + fresh p10 → skip 그대로",
+    resolveChannelUpdateDecision({ ...same, lastP10AtMs: t - 30_000, nowMs: t, forceCatchup: false }),
+    { decision: { send: false }, isHeartbeat: false, isForcedCatchup: false });
+}
+
+// ── runChannelBroadcastPass — 요청-절대 deadline 유계 종료·재-arm (삼순 R4 blocker②) ──
+// route와 동일한 채널 순회 루프(live-activity-channels가 위임하는 pass)에 fake clock/
+// 실패 send를 주입: 채널별 APNs send가 직렬 8s timeout이면 5경기×2 env = 80s로
+// maxDuration(75s) 504가 가능했다. deadline(60s) 초과 시 새 send를 시작하지 않고 명시
+// 종료 + 미발송 라이브 경기 전부 failedGameIds 보고(다음 틱 catch-up 재-arm 재료)를 고정.
+import { runChannelBroadcastPass } from "../../src/lib/notifications/live-activity-channel-broadcast-pass";
+import type { ChannelRow } from "../../src/lib/notifications/live-activity-channels";
+import type { KboRawGame } from "../../src/types/api";
+
+function liveGame(id: string): KboRawGame {
+  return {
+    G_ID: id, GAME_STATE_SC: "2", AWAY_NM: "LG", HOME_NM: "두산",
+    T_SCORE_CN: "1", B_SCORE_CN: "0", GAME_INN_NO: 4, GAME_TB_SC: "T",
+    OUT_CN: 1, BALL_CN: 0, STRIKE_CN: 0, CANCEL_SC_ID: "", S_NM: "잠실",
+  } as unknown as KboRawGame;
+}
+function channelRow(gameId: string, environment: "production" | "sandbox"): ChannelRow {
+  return {
+    game_id: gameId, environment, channel_id: `chan-${gameId}-${environment}`,
+    status: "active", last_score_state: null, last_state_hash: null, last_p10_at: null,
+    attempt_count: 0, next_retry_at: null,
+    created_at: new Date(0).toISOString(), ending_at: null,
+  };
+}
+function passDeps(clock: { now(): number }, send: (env: string) => Promise<{ ok: boolean; reason?: string }>) {
+  const updated: { gameId: string; patch: Record<string, unknown> }[] = [];
+  return {
+    updated,
+    deps: {
+      now: clock.now,
+      gameStatus: (g: KboRawGame) =>
+        (g.GAME_STATE_SC === "2" ? "live" : g.GAME_STATE_SC === "3" ? "final" : "other") as
+          "live" | "final" | "scheduled" | "other",
+      buildContentState: (g: KboRawGame, status: "live" | "final" | "scheduled") => ({
+        awayScore: parseInt(g.T_SCORE_CN ?? "0") || 0,
+        homeScore: parseInt(g.B_SCORE_CN ?? "0") || 0,
+        inning: g.GAME_INN_NO ?? 1, isTopInning: g.GAME_TB_SC === "T",
+        balls: g.BALL_CN ?? 0, strikes: g.STRIKE_CN ?? 0, outs: g.OUT_CN ?? 0,
+        onFirst: false, onSecond: false, onThird: false,
+        pitcherName: "", batterName: "", stadium: g.S_NM ?? "", status,
+      }),
+      send: (p: { env: "production" | "sandbox" }) => send(p.env),
+      deleteChannel: async () => true,
+      updateChannel: async (row: ChannelRow, patch: Record<string, unknown>) => {
+        updated.push({ gameId: row.game_id, patch });
+        return 1;
+      },
+    },
+  };
+}
+
+(async () => {
+  const GIDS = ["20260724LGOB0", "20260724NCSS0", "20260724KTHH0", "20260724SKHT0", "20260724WOLT0"];
+  // ── 삼순 R4② 지정 회귀: 5경기×2 env 전부 APNs timeout(건당 8s) ──
+  {
+    let nowMs = 0;
+    const { deps } = passDeps({ now: () => nowMs }, async () => {
+      nowMs += 8_000; // APNs http2 8s timeout 재현
+      return { ok: false, reason: "timeout" };
+    });
+    const channels = GIDS.flatMap((id) => [channelRow(id, "production"), channelRow(id, "sandbox")]);
+    const stats = await runChannelBroadcastPass(
+      channels, GIDS.map(liveGame), undefined, { deadlineAtMs: 60_000 }, deps,
+    );
+    check("pass R4②: 5경기×2 env 전부 timeout → 60s deadline 후 새 send 시작 안 함(명시 종료)",
+      nowMs <= 68_000, true);
+    check("pass R4②: maxDuration(75s) 전 종료", nowMs < 75_000, true);
+    check("pass R4②: deadline 초과 행은 발송 미시작으로 집계", stats.deadlineSkipped >= 1, true);
+    check("pass R4②: 미발송 포함 라이브 5경기 전부 재-arm 보고(failedGameIds)",
+      stats.failedGameIds.slice().sort().join(","), GIDS.slice().sort().join(","));
+    check("pass R4②: 성공 update 0 — hash 미전진(다음 분 자연 재시도 유지)", stats.updates, 0);
+  }
+  // ── 정상 경로 보존: deadline 여유 시 전부 발송 + p10 커서 전진 ──
+  {
+    let nowMs = 0;
+    const { deps, updated } = passDeps({ now: () => nowMs }, async () => {
+      nowMs += 100;
+      return { ok: true };
+    });
+    const channels = GIDS.flatMap((id) => [channelRow(id, "production"), channelRow(id, "sandbox")]);
+    const stats = await runChannelBroadcastPass(
+      channels, GIDS.map(liveGame), undefined, { deadlineAtMs: 60_000 }, deps,
+    );
+    check("pass: 정상 경로 — 10채널 전부 update(첫 틱 p10)", stats.updates, 10);
+    check("pass: 정상 경로 — 재-arm/deadline 스킵 없음",
+      stats.failedGameIds.length === 0 && stats.deadlineSkipped === 0, true);
+    check("pass: 성공 p10은 last_p10_at 커서 전진 기록",
+      updated.every((u) => "last_p10_at" in u.patch) && updated.length === 10, true);
+  }
+  // ── 혼합: 일부 경기만 직전 send가 느려 deadline 도달 → 나머지만 재-arm ──
+  {
+    let nowMs = 0;
+    let sends = 0;
+    const { deps } = passDeps({ now: () => nowMs }, async () => {
+      sends += 1;
+      if (sends <= 2) { nowMs += 100; return { ok: true }; } // g1 양 env 성공
+      nowMs += 30_000; // g2 production에서 대형 지연 → 이후 deadline 초과
+      return { ok: false, reason: "timeout" };
+    });
+    const channels = GIDS.slice(0, 3).flatMap((id) => [channelRow(id, "production"), channelRow(id, "sandbox")]);
+    const stats = await runChannelBroadcastPass(
+      channels, GIDS.slice(0, 3).map(liveGame), undefined, { deadlineAtMs: 30_000 }, deps,
+    );
+    check("pass: 혼합 — 성공 경기 제외, 실패+미발송 경기만 재-arm",
+      stats.failedGameIds.slice().sort().join(","),
+      GIDS.slice(1, 3).sort().join(","));
+    check("pass: 혼합 — 성공 2건(g1 양 env) 집계", stats.updates, 2);
+  }
+
+  console.log(`\nla-broadcast-policy-smoke: ${pass} PASS / ${fail} FAIL`);
+  if (fail > 0) process.exit(1);
+})().catch((e) => {
+  console.error("smoke crashed:", e);
+  process.exit(1);
+});
