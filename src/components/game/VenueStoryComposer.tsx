@@ -8,7 +8,11 @@ import { getSafeSession } from "@/lib/supabase/client";
 import { prepareVenueStoryMedia } from "@/lib/venue-stories/upload";
 import { getVenuePosition } from "@/lib/venue-stories/geo";
 import { haversineMeters } from "@/lib/venue-stories/stadiums";
-import { VENUE_STORY_CONSENT_VERSION, type VenueInfo } from "@/lib/venue-stories/types";
+import {
+  VENUE_STORY_CONSENT_VERSION,
+  VENUE_STORY_MAX_BYTES,
+  type VenueInfo,
+} from "@/lib/venue-stories/types";
 import { consentStorageKey } from "@/lib/venue-stories/auth-consent";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
 
@@ -124,6 +128,11 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
     const isImage = f.type.startsWith("image/");
     if (!isVideo && !isImage) {
       setError("이미지 또는 영상만 올릴 수 있어요");
+      return;
+    }
+    // 사이즈 초과는 픽 시점에 즉시 차단 — '올리기'까지 가지 않게 (upload.ts 검사는 최종 안전망으로 유지)
+    if (f.size > VENUE_STORY_MAX_BYTES) {
+      setError("파일이 너무 큽니다 (최대 50MB)");
       return;
     }
     if (previewUrl) URL.revokeObjectURL(previewUrl);
