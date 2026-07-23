@@ -645,6 +645,8 @@ final class LiveActivityController {
             NSLog("[LiveActivity] reconcile: recreated current channel card, non-current cleaned (game=\(gameId), removed=\(ended.count))")
         case .abortBackgroundPostFetch:
             NSLog("[LiveActivity] reconcile: backgrounded during channel fetch → abort, request/end 0 (game=\(gameId))")
+        case .abortBackgroundPreEffect:
+            NSLog("[LiveActivity] reconcile: backgrounded during fresh enumerate → abort before effects, request/end 0 (game=\(gameId))")
         case .cardsGonePostFetch:
             NSLog("[LiveActivity] reconcile: all cards dismissed/ended during channel fetch → no-op, request/end 0 (game=\(gameId))")
         case .abortBackgroundPreFetch, .abortLegacyGone, .retryNextForeground, .requestFailedKeepAll:

@@ -152,6 +152,7 @@ enum ChannelMigrationOrchestrator {
         case abortBackgroundPreFetch    // fetch 이전 background — effect 0, 다음 foreground 재시도
         case abortLegacyGone            // 카드 이미 정리(start 스윕 등) — 할 일 없음
         case abortBackgroundPostFetch   // R5 blocker① — fetch await 중 background 전환: request/end 0, 전 카드 유지
+        case abortBackgroundPreEffect   // R7 blocker — fresh enumerate await 중 background 전환: effect 직전 최종 게이트, request/adopt/end 0
         case cardsGonePostFetch         // R6 blocker — fetch await 중 카드 전부 dismiss/ended: request 0 · end 0(유령 카드 부활 금지)
         case retryNextForeground        // active 채널 부재/GET 일시 실패 — 전 카드 유지
         case adopted(keep: Int, ended: [Int])          // 현재 카드 재-ack 후 비현재 end
@@ -166,7 +167,9 @@ enum ChannelMigrationOrchestrator {
     ///     dismiss했거나 final/ended된 카드를 stale snapshot이 되살리는 유령 카드 부활 차단).
     ///     effect closure의 idx는 항상 마지막 enumerate 결과 기준.
     ///   - isForegroundActive: MainActor에서 `applicationState == .active` 조회 — *호출 시점마다
-    ///     재평가*된다(fetch 전 1회 + fetch 후 request/end 직전 1회, R5 blocker①).
+    ///     재평가*된다(fetch 전 1회 + fetch 직후 1회(R5 blocker①) + fresh enumerate 완료 후
+    ///     effect 직전 1회(R7 blocker) = 3회). await 경계마다 background 전환 가능성이 있으므로
+    ///     마지막 suspension point 이후 게이트가 request/adopt/end 0을 보장한다.
     ///   - fetchActiveChannel: GET /api/live-activity/channel 1회 조회.
     ///   - adoptCurrent: 현재 채널 카드(keep idx) 재-ack + currentActivity 승계.
     ///   - requestCurrent: 현재 채널로 `Activity.request` — 성공 여부 반환(실패 = end 금지).
@@ -197,6 +200,11 @@ enum ChannelMigrationOrchestrator {
         // 됐을 수 있다. plan/request/end는 fetch *완료 후* 재-enumerate한 fresh snapshot으로만
         // 계산한다 — 전부 종료됐으면 request 0 · end 0(no-op, 유령 카드 부활 금지).
         let cardChannelIds = await enumerateCards()
+        // R7 blocker — 두 번째 enumerate 역시 await 경계라, 그 동안 background로 전환됐을 수
+        // 있다. effect(request/adopt/end) 직전 최종 foreground 게이트 — background면 effect 0
+        // (전 카드 유지 = no-op), 다음 foreground가 재시도한다. recheck와 동일하게 background
+        // 판정이 카드 소실 판정보다 우선(순서 고정).
+        guard await isForegroundActive() else { return .abortBackgroundPreEffect }
         guard !cardChannelIds.isEmpty else { return .cardsGonePostFetch }
         switch ChannelMigrationPolicy.reconcile(cardChannelIds: cardChannelIds, fetch: fetch) {
         case .retryNextForeground:

@@ -25,6 +25,9 @@
 //  라운드6(삼순 R6 blocker 반영 — fetch 후 fresh snapshot):
 //   ⑬ plan/request/end는 fetch *완료 후* 재-enumerate한 live/active 카드 스냅샷 기준 —
 //     fetch 중 카드 전부 dismiss/ended면 request 0 · end 0(유령 카드 부활 금지)
+//  라운드7(삼순 R7 blocker 반영 — effect 직전 최종 foreground 게이트):
+//   ⑭ fresh enumerate를 await하는 동안 background 전환돼도 request/adopt/end 전부 0 —
+//     effect 직전 마지막 suspension point 이후 foreground를 한 번 더 재확인한다
 //
 //  실행: npm run qa:la-migration-policy (macOS/swiftc 필요)
 //
@@ -393,6 +396,66 @@ struct LaChannelMigrationPolicySmoke {
             check("R6(i): fetch 중 일부 dismiss → fresh snapshot idx로 adopt(keep 0) · end 0",
                   outcome == .adopted(keep: 0, ended: [])
                   && events == ["fetch", "adopt:0"])
+        }
+
+        // ── ⑭ R7 — fresh enumerate 중 background 전환: effect 직전 최종 foreground 게이트 ──
+        print("")
+        print("[⑭ R7 — fresh enumerate 중 background 전환 → request/adopt/end 전부 0]")
+        // (j) fg는 fetch 전(1)·fetch 후(2)엔 active, fresh enumerate를 await하는 동안 background
+        //     전환 → effect 직전 게이트(3번째 조회)가 잡는다. 게이트가 없으면 stale하지 않은
+        //     fresh snapshot으로도 background에서 request:chB → end:0가 실행됐다(R5 계약 재붕괴).
+        do {
+            var events: [String] = []
+            var fgCalls = 0
+            var enumCalls = 0
+            let outcome = await O.reconcile(
+                enumerateCards: {
+                    enumCalls += 1; events.append("enum\(enumCalls)")
+                    return [nil, "chA"]   // 카드는 그대로 — background 전환만 발생
+                },
+                isForegroundActive: { fgCalls += 1; return fgCalls <= 2 },   // 3번째(effect 직전) = background
+                fetchActiveChannel: { events.append("fetch"); return .active("chB") },
+                adoptCurrent: { events.append("adopt:\($0)") },
+                requestCurrent: { events.append("request:\($0)"); return true },
+                endCard: { events.append("end:\($0)") }
+            )
+            check("R7(j): fresh enumerate 중 background 전환 = abortBackgroundPreEffect",
+                  outcome == .abortBackgroundPreEffect)
+            check("R7(j): request 0 · adopt 0 · end 0 (전 카드 유지 = enum·fetch만 실행)",
+                  events == ["enum1", "fetch", "enum2"])
+            check("R7(j): foreground가 effect 직전까지 3회 재평가됨(마지막 게이트 실재)",
+                  fgCalls == 3)
+        }
+        // (k) adopt 경로도 동일 — enumerate 중 background면 adopt/end 0.
+        do {
+            var events: [String] = []
+            var fgCalls = 0
+            let outcome = await O.reconcile(
+                enumerateCards: { ["chB", "chA"] },
+                isForegroundActive: { fgCalls += 1; return fgCalls <= 2 },
+                fetchActiveChannel: { events.append("fetch"); return .active("chB") },
+                adoptCurrent: { events.append("adopt:\($0)") },
+                requestCurrent: { events.append("request:\($0)"); return true },
+                endCard: { events.append("end:\($0)") }
+            )
+            check("R7(k): adopt 경로도 effect 직전 게이트 — adopt 0 · end 0",
+                  outcome == .abortBackgroundPreEffect && events == ["fetch"])
+        }
+        // (l) 정상 흐름(계속 foreground)은 R7 게이트 추가 후에도 그대로 통과(회귀 없음).
+        do {
+            var fgCalls = 0
+            var events: [String] = []
+            let outcome = await O.reconcile(
+                enumerateCards: { [nil, "chA"] },
+                isForegroundActive: { fgCalls += 1; return true },
+                fetchActiveChannel: { events.append("fetch"); return .active("chB") },
+                adoptCurrent: { events.append("adopt:\($0)") },
+                requestCurrent: { events.append("request:\($0)"); return true },
+                endCard: { events.append("end:\($0)") }
+            )
+            check("R7(l): 계속 foreground = 기존 current-first 흐름 그대로(recreated)",
+                  outcome == .recreated(channelId: "chB", ended: [0, 1])
+                  && events == ["fetch", "request:chB", "end:0", "end:1"])
         }
 
         print("")
