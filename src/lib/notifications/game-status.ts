@@ -3,7 +3,7 @@ import { sendFcmToUsers, WIDGET_STREAM } from "@/lib/notifications/fcm";
 import { TEAMS } from "@/lib/constants/teams";
 import { fetchStandings, isKboGameCancelled } from "@/lib/crawler/kbo-api";
 import { decideEndStreakCount, type StreakDir } from "@/lib/notifications/end-streak-policy";
-import { isStartNotificationFresh } from "@/lib/notifications/start-freshness-policy";
+import { shouldSendStartNotification } from "@/lib/notifications/start-freshness-policy";
 import { fetchTeamFanIds } from "@/lib/notifications/audience";
 import type { KboRawGame } from "@/types/api";
 
@@ -11,9 +11,10 @@ import type { KboRawGame } from "@/types/api";
 // warmup cron(경기 시간대 매분)이 호출. 중복 발화 방지 = game_notify_state
 // 조건부 UPDATE 선점 — 다중 인스턴스가 동시에 돌아도 발송은 1회.
 
-// 시작 알림 허용 윈도우: 경기 예정시각 +90분(우천 지연 여유) 이내일 때만 "시작!" 발송.
-// cron/배포 장애가 한참 뒤 복구돼도 뒷북 "경기 시작!"이 안 가게 (삼순 리뷰 #210-2)
-const START_WINDOW_MS = 90 * 60 * 1000;
+// 시작 알림 정시-only 게이트 (2026-07-23 삼순 post-merge blocker 반영):
+// 기존 예정시각 +90분 catch-up 윈도우는 장애 복구 시 최대 90분 뒷북을 허용해 제거.
+// 대신 warmup cron이 "예정(state 1)" 관측 시각을 last_seen_scheduled_at에 기록하고,
+// scheduled→live 전환을 최근 연속 관측한 경우에만 발송한다(shouldSendStartNotification).
 
 export function teamIdByShortName(name: string): number | null {
   const t = TEAMS.find((t) => t.shortName === name);
@@ -161,6 +162,21 @@ export async function notifyGameStatusTransitions(games: KboRawGame[]): Promise<
   let ended = 0;
   let cancelled = 0;
 
+  // "예정" 상태 관측 기록 — 다음 틱에서 live 전환을 보면 이 시각이 정시성 근거가 된다.
+  const scheduledIds = games
+    .filter((g) => g.G_ID && g.GAME_STATE_SC === "1" && !isKboGameCancelled(g.CANCEL_SC_ID))
+    .map((g) => g.G_ID as string);
+  if (scheduledIds.length > 0) {
+    const nowIso = new Date().toISOString();
+    const { error: seenError } = await supabase
+      .from("game_notify_state")
+      .upsert(
+        scheduledIds.map((game_id) => ({ game_id, last_seen_scheduled_at: nowIso })),
+        { onConflict: "game_id" },
+      );
+    if (seenError) console.error("[game-status] scheduled-seen upsert failed:", seenError.message);
+  }
+
   for (const g of games) {
     const gameId = g.G_ID;
     if (!gameId) continue;
@@ -204,15 +220,25 @@ export async function notifyGameStatusTransitions(games: KboRawGame[]): Promise<
     }
 
     if (g.GAME_STATE_SC === "2") {
-      // 진행 중 — 시작 알림. 시간 윈도우 밖이거나 이미 경기가 진행된 뒤면(1회초 이후)
-      // 발송 없이 마킹만(뒷북 차단 — 2026-07-23 하린아빠 지시: 늦은 시작알림 금지 가드)
-      const startedAt = scheduledStartMs(g.G_DT, g.G_TM);
-      const notFresh = !isStartNotificationFresh({
+      // 진행 중 — 시작 알림. scheduled→live 전환을 최근 연속 관측한 경우에만 발송하고,
+      // 첫 관측이 이미 live(장애 복구·재배포)거나 관측이 stale이면 발송 없이 마킹만.
+      // (2026-07-23 하린아빠 지시 "정확한 시간에 가야 하는 알림만" + 삼순 post-merge blocker)
+      const { data: seenRow } = await supabase
+        .from("game_notify_state")
+        .select("start_notified, last_seen_scheduled_at")
+        .eq("game_id", gameId)
+        .maybeSingle();
+      if (seenRow?.start_notified) continue;
+      const lastSeenMs = seenRow?.last_seen_scheduled_at
+        ? Date.parse(seenRow.last_seen_scheduled_at)
+        : null;
+      const sendOk = shouldSendStartNotification({
+        lastSeenScheduledAtMs: Number.isFinite(lastSeenMs as number) ? lastSeenMs : null,
+        nowMs: Date.now(),
         inningNo: g.GAME_INN_NO,
         isTop: g.GAME_TB_SC ? g.GAME_TB_SC === "T" : null,
       });
-      const tooLate = notFresh || (startedAt !== null && Date.now() - startedAt > START_WINDOW_MS);
-      if (tooLate) {
+      if (!sendOk) {
         await markOnly(gameId, { start: true });
         continue;
       }
