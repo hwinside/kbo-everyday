@@ -1,5 +1,6 @@
 import { SupabaseClient } from "@supabase/supabase-js";
 import { toKSTDateString, addKSTDays } from "@/lib/utils/date-kst";
+import { fetchAllByKeyset } from "@/lib/db/paginate";
 
 interface MetricRow {
   date: string;
@@ -89,9 +90,24 @@ async function collectActivityDays(
     fetchAllPages<{ author_id: string; created_at: string }>(q("comments", "author_id, created_at")),
     fetchAllPages<{ user_id: string; created_at: string }>(q("likes", "user_id, created_at")),
     fetchAllPages<{ user_id: string; created_at: string }>(q("chat_messages", "user_id, created_at")),
-    fetchAllPages<{ user_id: string; created_at: string }>(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      q("admin_page_views", "user_id, created_at", (qb: any) => qb.not("user_id", "is", null)),
+    // admin_page_views는 수십만 행 규모 → OFFSET 페이징이 페이지마다 범위 앞부분을
+    // 재스캔해 O(n²) (pg_stat mean ~292ms, 2026-07-22 장애 후속 최적화) → id keyset으로 교체
+    fetchAllByKeyset<{ id: number; user_id: string; created_at: string }, number>(
+      async (cursor, limit) => {
+        let query = supabase
+          .from("admin_page_views")
+          .select("id, user_id, created_at")
+          .gte("created_at", since)
+          .lt("created_at", untilExclusive)
+          .not("user_id", "is", null)
+          .order("id", { ascending: true })
+          .limit(limit);
+        if (cursor !== null) query = query.gt("id", cursor);
+        const { data, error } = await query;
+        return { data: data as { id: number; user_id: string; created_at: string }[] | null, error };
+      },
+      (row) => row.id,
+      { label: "retention admin_page_views" },
     ),
   ]);
 
@@ -263,12 +279,21 @@ export async function computeActivationFunnel(
   );
 
   // ③ 서로 다른 경기 1개 이상 방문 (admin_page_views의 /games/{gameId} 상세 방문, 코호트 유저만)
-  const gameViews = await fetchAllPages<{ user_id: string; path: string }>(
-    () => supabase.from("admin_page_views").select("user_id, path")
-      .not("user_id", "is", null)
-      .like("path", "/games/2%")
-      .lte("created_at", until)
-      .order("created_at", { ascending: true }),
+  // OFFSET → id keyset (위 collectActivityDays와 동일 사유, 순서는 집계에 무관)
+  const gameViews = await fetchAllByKeyset<{ id: number; user_id: string; path: string }, number>(
+    async (cursor, limit) => {
+      let query = supabase.from("admin_page_views").select("id, user_id, path")
+        .not("user_id", "is", null)
+        .like("path", "/games/2%")
+        .lte("created_at", until)
+        .order("id", { ascending: true })
+        .limit(limit);
+      if (cursor !== null) query = query.gt("id", cursor);
+      const { data, error } = await query;
+      return { data: data as { id: number; user_id: string; path: string }[] | null, error };
+    },
+    (row) => row.id,
+    { label: "retention gameViews" },
   );
   const gamesByUser = new Map<string, Set<string>>();
   for (const v of gameViews) {

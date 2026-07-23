@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "generatedFrom": "fc00241901e9fb418a0141fc5e75e4d8a2f40f80",
+  "generatedFrom": "b5f284c89c9554b6a74692b0d0bf601a5f3806db",
   "violations": {
     "0034fe9a6a6cff327c64": {
       "count": 1,
@@ -982,13 +982,6 @@
       "subject": "retention_metrics",
       "detail": "add a bound, unique-key lookup, or query-guard annotation"
     },
-    "a3918aca32d651aaf9e9": {
-      "count": 1,
-      "kind": "ambiguous_growing_limit",
-      "file": "src/app/api/leaderboard/writing/route.ts",
-      "subject": "v_leaderboard_writing",
-      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
-    },
     "a5b3a985db5f9d4c37c5": {
       "count": 1,
       "kind": "unbounded_growing_select",
@@ -1016,13 +1009,6 @@
       "file": "src/app/api/cron/news-clipping/route.ts",
       "subject": "dm_conversations",
       "detail": "range pagination must include a full unique order (id)"
-    },
-    "acf3cc0c48f8b0d13e5e": {
-      "count": 1,
-      "kind": "unbounded_growing_select",
-      "file": "src/lib/retention/compute.ts",
-      "subject": "admin_page_views",
-      "detail": "add a bound, unique-key lookup, or query-guard annotation"
     },
     "adabe6bdb3e2fb260b44": {
       "count": 1,
