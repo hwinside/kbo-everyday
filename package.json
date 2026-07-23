@@ -97,6 +97,7 @@
     "qa:venue-transcode-worker": "tsx scripts/qa/venue-transcode-worker-smoke.ts",
     "qa:venue-attendance": "tsx scripts/qa/venue-attendance-smoke.ts",
     "qa:venue-player-comparison": "tsx scripts/qa/venue-player-comparison-smoke.ts",
+    "qa:venue-story-comments": "tsx scripts/qa/venue-story-comments-smoke.ts",
     "qa:ui:venue-diary": "node scripts/qa/ui-smoke-venue-diary.mjs",
     "qa:widget-fast": "tsx scripts/qa/widget-fast-refresh-smoke.ts",
     "qa:game-cancel-status": "tsx --test scripts/qa/game-cancel-status-smoke.ts"

@@ -3,9 +3,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
-import { X, Volume2, VolumeX, MoreVertical, Loader2 } from "lucide-react";
+import { X, Volume2, VolumeX, MoreVertical, Loader2, MessageCircle, Send, Trash2 } from "lucide-react";
 import { getSafeSession } from "@/lib/supabase/client";
 import { VENUE_STORY_IMAGE_HOLD_MS, type VenueStory } from "@/lib/venue-stories/types";
+import {
+  VENUE_STORY_COMMENT_MAX_LENGTH,
+  type VenueStoryComment,
+} from "@/lib/venue-stories/comments";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 
 interface Props {
@@ -39,6 +43,10 @@ export default function VenueStoryViewer({
   const [menuOpen, setMenuOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [commentsOpen, setCommentsOpen] = useState(false);
+  const [comments, setComments] = useState<VenueStoryComment[] | null>(null);
+  const [commentInput, setCommentInput] = useState("");
+  const [commentBusy, setCommentBusy] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const rafRef = useRef<number | null>(null);
@@ -66,12 +74,31 @@ export default function VenueStoryViewer({
     setProgress(0);
     elapsedRef.current = 0;
     startRef.current = performance.now();
+    setCommentsOpen(false);
+    setComments(null);
+    setCommentInput("");
   }, [index]);
+
+  // 스토리별 댓글 로드(개수 표시 + 시트 목록 공용)
+  useEffect(() => {
+    const storyId = story?.id;
+    if (storyId == null) return;
+    let cancelled = false;
+    fetch(`/api/venue-stories/${storyId}/comments`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (!cancelled && Array.isArray(data?.comments)) setComments(data.comments);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [story?.id]);
 
   // 이미지 자동 진행(RAF), 영상은 timeupdate 로 처리
   useEffect(() => {
     if (!story || story.mediaType !== "image") return;
-    if (paused || menuOpen) return;
+    if (paused || menuOpen || commentsOpen) return;
     const hold = VENUE_STORY_IMAGE_HOLD_MS;
     startRef.current = performance.now();
     const base = elapsedRef.current;
@@ -90,14 +117,14 @@ export default function VenueStoryViewer({
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
       elapsedRef.current = base + (performance.now() - startRef.current);
     };
-  }, [story, index, paused, menuOpen, goNext]);
+  }, [story, index, paused, menuOpen, commentsOpen, goNext]);
 
   // 영상 재생/일시정지 동기화
   useEffect(() => {
     const v = videoRef.current;
     if (!v || !story || story.mediaType !== "video") return;
     v.muted = muted;
-    if (paused || menuOpen) {
+    if (paused || menuOpen || commentsOpen) {
       v.pause();
     } else {
       v.play().catch(() => {
@@ -107,7 +134,7 @@ export default function VenueStoryViewer({
         v.play().catch(() => {});
       });
     }
-  }, [story, index, paused, menuOpen, muted]);
+  }, [story, index, paused, menuOpen, commentsOpen, muted]);
 
   const onVideoTime = () => {
     const v = videoRef.current;
@@ -143,6 +170,64 @@ export default function VenueStoryViewer({
       setToast("신고 실패");
     } finally {
       setBusy(false);
+    }
+  };
+
+  const handleCommentSubmit = async () => {
+    if (!story || commentBusy) return;
+    const content = commentInput.trim();
+    if (!content) return;
+    setCommentBusy(true);
+    try {
+      const session = await getSafeSession();
+      const token = session?.access_token;
+      if (!token) {
+        setToast("로그인이 필요해요");
+        return;
+      }
+      const res = await fetch(`/api/venue-stories/${story.id}/comments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ content }),
+      });
+      const data = await res.json();
+      if (data.error) {
+        setToast(data.error);
+      } else if (data.comment) {
+        setComments((prev) => [...(prev ?? []), data.comment]);
+        setCommentInput("");
+      }
+    } catch {
+      setToast("댓글 작성 실패");
+    } finally {
+      setCommentBusy(false);
+    }
+  };
+
+  const handleCommentDelete = async (commentId: number) => {
+    if (!story || commentBusy) return;
+    setCommentBusy(true);
+    try {
+      const session = await getSafeSession();
+      const token = session?.access_token;
+      if (!token) {
+        setToast("로그인이 필요해요");
+        return;
+      }
+      const res = await fetch(`/api/venue-stories/${story.id}/comments/${commentId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (data.error) {
+        setToast(data.error);
+      } else {
+        setComments((prev) => (prev ?? []).filter((c) => c.id !== commentId));
+      }
+    } catch {
+      setToast("삭제 실패");
+    } finally {
+      setCommentBusy(false);
     }
   };
 
@@ -307,10 +392,110 @@ export default function VenueStoryViewer({
 
       {/* 캡션 */}
       {story.caption && (
-        <div className="absolute bottom-6 left-0 right-0 px-4 z-20 pointer-events-none">
+        <div className="absolute bottom-6 left-0 right-0 pl-4 pr-20 z-20 pointer-events-none">
           <p className="text-white text-sm bg-black/40 rounded-xl px-3 py-2 inline-block max-w-full break-words">
             {story.caption}
           </p>
+        </div>
+      )}
+
+      {/* 댓글 버튼 (개수 표시) */}
+      <button
+        onClick={() => setCommentsOpen(true)}
+        className="absolute right-3 z-20 flex items-center gap-1.5 text-white/90 bg-black/40 rounded-full px-3 py-2"
+        style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 16px)" }}
+        aria-label="댓글"
+      >
+        <MessageCircle size={18} />
+        <span className="text-sm font-semibold">{comments?.length ?? 0}</span>
+      </button>
+
+      {/* 댓글 시트 — 열려있는 동안 재생 일시정지 */}
+      {commentsOpen && (
+        <div
+          className="absolute inset-0 z-30 flex items-end bg-black/50"
+          onClick={() => setCommentsOpen(false)}
+        >
+          <div
+            className="w-full max-w-lg mx-auto bg-bg-secondary rounded-t-3xl flex flex-col max-h-[70%]"
+            style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-4 pt-4 pb-2 flex items-center justify-between">
+              <p className="text-text-primary font-semibold text-sm">
+                댓글 {comments?.length ?? 0}
+              </p>
+              <button
+                onClick={() => setCommentsOpen(false)}
+                className="w-8 h-8 flex items-center justify-center text-text-secondary"
+                aria-label="댓글 닫기"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto px-4 py-1 flex flex-col gap-3 min-h-24">
+              {comments == null ? (
+                <div className="flex justify-center py-6">
+                  <Loader2 size={18} className="animate-spin text-text-secondary" />
+                </div>
+              ) : comments.length === 0 ? (
+                <p className="text-text-secondary text-sm text-center py-6">
+                  첫 댓글을 남겨보세요
+                </p>
+              ) : (
+                comments.map((c) => (
+                  <div key={c.id} className="flex items-start gap-2">
+                    <div className="w-7 h-7 rounded-full bg-white/10 overflow-hidden shrink-0">
+                      {c.author.avatarUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={c.author.avatarUrl} alt="" className="w-full h-full object-cover" />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-text-secondary text-[10px]">
+                          {(c.author.nickname ?? "?").slice(0, 1)}
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-text-secondary text-[11px]">
+                        {c.author.nickname ?? "익명"} · {timeAgo(c.createdAt)}
+                      </p>
+                      <p className="text-text-primary text-sm break-words">{c.content}</p>
+                    </div>
+                    {currentUserId != null && c.userId === currentUserId && (
+                      <button
+                        onClick={() => handleCommentDelete(c.id)}
+                        disabled={commentBusy}
+                        className="w-7 h-7 flex items-center justify-center text-text-secondary shrink-0"
+                        aria-label="댓글 삭제"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+            <div className="px-4 py-3 flex items-center gap-2 border-t border-white/5">
+              <input
+                value={commentInput}
+                onChange={(e) => setCommentInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.nativeEvent.isComposing) handleCommentSubmit();
+                }}
+                maxLength={VENUE_STORY_COMMENT_MAX_LENGTH}
+                placeholder="댓글 달기..."
+                className="flex-1 bg-white/5 rounded-full px-4 py-2 text-sm text-text-primary placeholder:text-text-secondary outline-none"
+              />
+              <button
+                onClick={handleCommentSubmit}
+                disabled={commentBusy || commentInput.trim().length === 0}
+                className="w-9 h-9 flex items-center justify-center text-accent disabled:text-text-secondary"
+                aria-label="댓글 등록"
+              >
+                {commentBusy ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
