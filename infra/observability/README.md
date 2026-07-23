@@ -11,7 +11,7 @@ This directory is the repository-owned control plane for production observabilit
 
 ## Compute-tier constants
 
-`supabase-active-connection-ratio-warning` divides by the deployed Postgres `max_connections` (160 on the current Large compute tier) — not the PgBouncer `max_client_conn` (800). Update the literal `160` in `alert-policies.json` if the compute tier changes.
+`supabase-active-connection-ratio-warning` divides by the live `max_connections_connection_count` metric (the deployed Postgres `max_connections`, currently 160 on the Large tier) — not the PgBouncer `max_client_conn` (800). Using the metric (verified live = 160) makes the ratio auto-follow compute-tier changes with no catalog edit.
 
 ## External setup order
 
