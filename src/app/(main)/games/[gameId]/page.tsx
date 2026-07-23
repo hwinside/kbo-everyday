@@ -520,10 +520,17 @@ export default function GameDetailPage() {
         />
       ) : (
         <>
-          {/* 직관 라이브 — WIP 실환경 QA 동안 관리자에게만 노출 */}
-          <AdminOnly>
+          {/* 직관 라이브 — WIP 실환경 QA 동안 관리자에게만 노출.
+              ?storyQaKeyboard=1 은 iOS 실기기 키보드 QA 하네스(삼순 #807 라운드3
+              blocker 2) — mock 뷰어만 열고 실데이터 fetch/쓰기 없음(서버 인가 불변). */}
+          {typeof window !== "undefined" &&
+          new URLSearchParams(window.location.search).get("storyQaKeyboard") === "1" ? (
             <VenueStorySection gameId={gameId} />
-          </AdminOnly>
+          ) : (
+            <AdminOnly>
+              <VenueStorySection gameId={gameId} />
+            </AdminOnly>
+          )}
 
           {/* Tabs */}
           <div className="flex border-b border-border mx-4">

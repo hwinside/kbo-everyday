@@ -49,6 +49,11 @@ export default function VenueStorySection({ gameId }: Props) {
   const [toast, setToast] = useState<string | null>(null);
 
   const fetchStories = useCallback(async () => {
+    if (storyQaKeyboard) {
+      // QA 하네스는 mock 뷰어만 사용 — 실데이터 조회 자체를 하지 않는다
+      setLoaded(true);
+      return;
+    }
     try {
       // 로그인 상태면 bearer 전달 → 서버가 차단 유저 필터(getVerifiedUserFromRequest 는 Bearer-only)
       const session = await getSafeSession();
@@ -63,7 +68,7 @@ export default function VenueStorySection({ gameId }: Props) {
     } finally {
       setLoaded(true);
     }
-  }, [gameId]);
+  }, [gameId, storyQaKeyboard]);
 
   useEffect(() => {
     fetchStories();
