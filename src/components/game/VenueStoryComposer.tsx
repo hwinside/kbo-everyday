@@ -14,6 +14,7 @@ import {
   type VenueInfo,
 } from "@/lib/venue-stories/types";
 import { consentStorageKey } from "@/lib/venue-stories/auth-consent";
+import { createPickController, type PickController } from "@/lib/venue-stories/pick-controller";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
 
 interface Props {
@@ -33,12 +34,36 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   const [caption, setCaption] = useState("");
   const [phase, setPhase] = useState<Phase>("idle");
   const [progress, setProgress] = useState(0); // 0~100, phase==="upload" 일 때만 유효
+  // iOS가 사진앱 영상을 export하느라 픽 후 change 이벤트까지 수 초간 무피드백 구간이 있다
+  // → 픽 대기 안내 오버레이 (하린아빠 7/23 21:05 리포트). 상태 전이는 pick-session 순수 모듈이 소유:
+  // 수동 취소/닫기 후 late change 무시 · 준비 중 재진입 차단 (삼순 #805 blocker)
+  const [picking, setPicking] = useState(false);
+  // controller의 onFile은 생성 시 1회 결속되므로, 최신 render closure를 ref로 우회한다
+  const handlePickedFileRef = useRef<(file: File | null) => void>(() => {});
+  const pickControllerRef = useRef<PickController | null>(null);
+  const pickController = () =>
+    (pickControllerRef.current ??= createPickController({
+      // 픽마다 **새 input 인스턴스** 생성 — 토큰이 이 인스턴스의 handler closure에 결속되어
+      // 이전 픽(A)의 late change/cancel이 새 픽(B)으로 오인될 수 없다 (삼순 #805 라운드4)
+      openNative: ({ onChange, onCancel }) => {
+        const input = document.createElement("input");
+        input.type = "file";
+        input.accept = "image/*,video/*";
+        input.addEventListener("change", () => onChange(input.files?.[0] ?? null), { once: true });
+        input.addEventListener("cancel", () => onCancel(), { once: true });
+        input.click();
+      },
+      onFile: (file) => handlePickedFileRef.current(file),
+      onStateChange: setPicking,
+    }));
+  const cancelPick = () => {
+    pickController().cancel();
+  };
   const [error, setError] = useState<string | null>(null);
   const [venue, setVenue] = useState<VenueInfo | null>(null);
   const [venueLoading, setVenueLoading] = useState(false);
   const [agreed, setAgreed] = useState(false);
   const [sessionUserId, setSessionUserId] = useState<string | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
 
   // UGC 가이드라인 동의 — 버전별 + **user-scoped** 기억(삼순 09:44 #3: 계정 전환 시 타 계정
   // 동의 상속 금지). userId 미상이면 기억하지 않는다. 서버가 최종 검증하므로 이건 UX 편의용.
@@ -106,6 +131,8 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   }, [isOpen, gameId]);
 
   const reset = () => {
+    // in-flight 픽 invalidate — 닫기/초기화 뒤 도착하는 late change는 무시된다
+    cancelPick();
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     setFile(null);
     setPreviewUrl(null);
@@ -123,9 +150,13 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
     onClose();
   };
 
-  const onPick = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0];
-    e.target.value = "";
+  const openPicker = () => {
+    if (submitting) return;
+    // 재진입/late-event 방어는 controller가 소유 (픽별 새 input + 토큰 closure 결속)
+    pickController().openPicker();
+  };
+
+  const handlePickedFile = (f: File | null) => {
     if (!f || submitting) return;
     setError(null);
     const isVideo = f.type.startsWith("video/");
@@ -144,6 +175,10 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
     setPreviewUrl(URL.createObjectURL(f));
     setPreviewType(isVideo ? "video" : "image");
   };
+  useEffect(() => {
+    // render마다 최신 closure로 갱신 — controller의 1회 결속 onFile이 stale state를 보지 않게
+    handlePickedFileRef.current = handlePickedFile;
+  });
 
   const submit = async () => {
     if (!file || submitting) return;
@@ -289,7 +324,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
 
             {!previewUrl ? (
               <button
-                onClick={() => inputRef.current?.click()}
+                onClick={openPicker}
                 disabled={submitting}
                 className="flex flex-col items-center justify-center gap-2 h-48 rounded-2xl border-2 border-dashed border-border text-text-tertiary active:bg-bg-tertiary disabled:opacity-40"
               >
@@ -306,7 +341,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
                   <img src={previewUrl} alt="" className="w-full h-full object-contain" />
                 )}
                 <button
-                  onClick={() => inputRef.current?.click()}
+                  onClick={openPicker}
                   disabled={submitting}
                   className="absolute bottom-2 right-2 text-xs bg-black/60 text-white px-3 py-1.5 rounded-full disabled:opacity-40"
                 >
@@ -315,14 +350,18 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
               </div>
             )}
 
-            <input
-              ref={inputRef}
-              type="file"
-              accept="image/*,video/*"
-              disabled={submitting}
-              className="hidden"
-              onChange={onPick}
-            />
+            {/* iOS 사진앱 영상 export 대기 구간 안내 — 픽커가 닫힌 뒤 change 이벤트까지 수 초간 무피드백이던 구간 (7/23 리포트) */}
+            {picking && !submitting && (
+              <div className="flex items-center justify-between gap-2 rounded-xl bg-bg-tertiary/60 px-3 py-2.5 text-sm text-text-secondary">
+                <span className="flex items-center gap-2">
+                  <Loader2 size={16} className="animate-spin shrink-0" />
+                  사진·영상 불러오는 중… 영상은 몇 초 걸릴 수 있어요
+                </span>
+                <button onClick={cancelPick} className="text-xs text-text-tertiary shrink-0">
+                  취소
+                </button>
+              </div>
+            )}
 
             <input
               type="text"
