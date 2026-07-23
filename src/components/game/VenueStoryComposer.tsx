@@ -34,8 +34,23 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   const [phase, setPhase] = useState<Phase>("idle");
   const [progress, setProgress] = useState(0); // 0~100, phase==="upload" 일 때만 유효
   // iOS가 사진앱 영상을 export하느라 픽 후 change 이벤트까지 수 초간 무피드백 구간이 있다
-  // → 픽 대기 안내 오버레이 (하린아빠 7/23 21:05 리포트)
+  // → 픽 대기 안내 오버레이 (하린아빠 7/23 21:05 리포트). 상태 전이는 pick-session 순수 모듈이 소유:
+  // 수동 취소/닫기 후 late change 무시 · 준비 중 재진입 차단 (삼순 #805 blocker)
   const [picking, setPicking] = useState(false);
+  const pickSessionRef = useRef<PickSession | null>(null);
+  const pickCancelListenerRef = useRef<(() => void) | null>(null);
+  const pickSession = () =>
+    (pickSessionRef.current ??= createPickSession(setPicking));
+  const detachPickCancelListener = () => {
+    const input = inputRef.current;
+    const handler = pickCancelListenerRef.current;
+    if (input && handler) input.removeEventListener("cancel", handler);
+    pickCancelListenerRef.current = null;
+  };
+  const cancelPick = () => {
+    pickSession().cancel();
+    detachPickCancelListener();
+  };
   const [error, setError] = useState<string | null>(null);
   const [venue, setVenue] = useState<VenueInfo | null>(null);
   const [venueLoading, setVenueLoading] = useState(false);
@@ -109,6 +124,8 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   }, [isOpen, gameId]);
 
   const reset = () => {
+    // in-flight 픽 invalidate — 닫기/초기화 뒤 도착하는 late change는 무시된다
+    cancelPick();
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     setFile(null);
     setPreviewUrl(null);
@@ -130,16 +147,23 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
     if (submitting) return;
     const input = inputRef.current;
     if (!input) return;
-    // Safari 16.4+는 픽커 취소 시 input에 'cancel' 이벤트를 준다 — 대기 오버레이 해제용
-    input.addEventListener("cancel", () => setPicking(false), { once: true });
+    // 한 번에 하나의 in-flight 픽만 허용 — 준비 중 두 번째 픽커 경합 차단
+    if (!pickSession().open()) return;
+    // Safari 16.4+는 픽커 취소 시 input에 'cancel' 이벤트를 준다 — 대기 오버레이 해제용.
+    // 성공 선택 시엔 발화하지 않으므로 누적 방지를 위해 이전 listener를 먼저 제거한다
+    detachPickCancelListener();
+    const handler = () => cancelPick();
+    pickCancelListenerRef.current = handler;
+    input.addEventListener("cancel", handler, { once: true });
     input.click();
-    setPicking(true);
   };
 
   const onPick = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setPicking(false);
     const f = e.target.files?.[0];
     e.target.value = "";
+    // 세션이 취소된 뒤 도착한 late change → 파일 무시(취소한 선택이 되살아나지 않게)
+    if (!pickSession().resolveChange()) return;
+    detachPickCancelListener();
     if (!f || submitting) return;
     setError(null);
     const isVideo = f.type.startsWith("video/");
@@ -345,7 +369,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
                   <Loader2 size={16} className="animate-spin shrink-0" />
                   사진·영상 불러오는 중… 영상은 몇 초 걸릴 수 있어요
                 </span>
-                <button onClick={() => setPicking(false)} className="text-xs text-text-tertiary shrink-0">
+                <button onClick={cancelPick} className="text-xs text-text-tertiary shrink-0">
                   취소
                 </button>
               </div>

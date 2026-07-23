@@ -147,13 +147,56 @@ async function main() {
     ok("caption input에 disabled 적용", /maxLength=\{200\}\s*\n\s*disabled=\{submitting\}/.test(src));
     ok("동의 checkbox에 disabled 적용", /onChange=\{toggleAgree\}\s*\n\s*disabled=\{submitting\}/.test(src));
 
-    // 픽 대기 안내 계약 — iOS 영상 export 무피드백 구간 (7/23 리포트)
-    console.log("[픽 대기 안내 계약 — openPicker/picking]");
-    ok("openPicker가 picking 상태 설정", /const openPicker = [\s\S]*?setPicking\(true\);/.test(src));
-    ok("픽커 취소(cancel) 시 picking 해제 등록", /addEventListener\("cancel", \(\) => setPicking\(false\), \{ once: true \}\)/.test(src));
-    ok("onPick 진입 시 picking 해제", /const onPick = [\s\S]{0,80}?setPicking\(false\);/.test(src));
+    // 픽 대기 안내 배선 — iOS 영상 export 무피드백 구간 (7/23 리포트)
+    console.log("[픽 대기 안내 배선 — openPicker/pick-session 연결]");
+    ok("openPicker가 pick-session으로 재진입 차단", /if \(!pickSession\(\)\.open\(\)\) return;/.test(src));
+    ok("onPick이 resolveChange로 late change 무시", /if \(!pickSession\(\)\.resolveChange\(\)\) return;/.test(src));
+    ok("reset()이 in-flight 픽 invalidate(cancelPick)", /const reset = \(\) => \{[\s\S]{0,120}?cancelPick\(\);/.test(src));
+    ok("cancel listener 누적 방지(선제거 후 등록)", /detachPickCancelListener\(\);\s*\n\s*const handler = \(\) => cancelPick\(\);/.test(src));
+    ok("수동 취소 버튼도 cancelPick 사용", /onClick=\{cancelPick\}/.test(src));
     ok("픽 CTA가 openPicker 사용(직접 click 잔존 0)", !src.includes("inputRef.current?.click()") && (src.match(/onClick=\{openPicker\}/g) ?? []).length === 2);
     ok("대기 안내 UI는 업로드 중엔 미표시(picking && !submitting)", /picking && !submitting && \(/.test(src));
+  }
+
+  console.log("[pick-session 상태 전이 회귀 — 삼순 #805 blocker 시나리오]");
+  {
+    const { createPickSession } = await import("../../src/lib/venue-stories/pick-session");
+
+    // 시나리오 1: open → 수동 취소 → late change 무시(취소한 선택이 되살아나면 안 됨)
+    {
+      const seen: boolean[] = [];
+      const s = createPickSession((p) => seen.push(p));
+      ok("open 성공", s.open() === true && s.isPicking() === true);
+      s.cancel();
+      ok("수동 취소 후 picking 해제", s.isPicking() === false);
+      ok("late change 무시(resolveChange=false)", s.resolveChange() === false);
+      ok("상태 콜백 순서 true→false, 중복 없음", seen.length === 2 && seen[0] === true && seen[1] === false);
+    }
+
+    // 시나리오 2: open → close(reset경로 cancel) → reopen 정상 + 이전 세션 change 무시 후 새 세션은 유효
+    {
+      const s = createPickSession();
+      s.open();
+      s.cancel(); // close/reset
+      ok("reopen 성공(스피너 잔존 없이 새 세션)", s.open() === true && s.isPicking() === true);
+      ok("새 세션 change는 유효(resolveChange=true)", s.resolveChange() === true && s.isPicking() === false);
+    }
+
+    // 시나리오 3: 준비 중 재진입 차단 — 한 번에 하나의 in-flight 픽만
+    {
+      const s = createPickSession();
+      ok("1차 open 허용", s.open() === true);
+      ok("준비 중 2차 open 차단", s.open() === false);
+      ok("차단돼도 기존 세션 유지", s.isPicking() === true && s.resolveChange() === true);
+    }
+
+    // 시나리오 4: 성공 선택 후 재선택 사이클 반복 정상
+    {
+      const s = createPickSession();
+      s.open(); s.resolveChange();
+      s.open(); s.resolveChange();
+      ok("재선택 사이클 반복 정상", s.isPicking() === false && s.open() === true);
+    }
   }
 
   console.log(`\n${pass} passed, ${fail} failed`);
