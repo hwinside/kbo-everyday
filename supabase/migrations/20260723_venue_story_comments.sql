@@ -2,14 +2,12 @@
 --
 -- 스토리별 짧은 댓글(최대 200자). 스토리는 경기 종료 후 만료 삭제되므로
 -- 댓글도 story FK ON DELETE CASCADE 로 함께 정리된다.
--- 접근 계약은 venue_stories 와 동일하게 API route(service_role)가 소유하되,
--- 방어선(defense-in-depth)으로 클라 RLS 정책도 명시한다:
---   SELECT: 미삭제(deleted_at IS NULL) 댓글은 누구나 조회
---   INSERT: 로그인 유저 본인(user_id = auth.uid())만, 200자 제한은 CHECK 로 강제
---   DELETE 계약: 물리 DELETE 대신 soft delete(deleted_at) — 본인/관리자 삭제 모두
---                API route(service_role)가 권한 검사 후 수행한다.
---   UPDATE 정책은 의도적으로 만들지 않는다 — authenticated UPDATE 를 열면
---   본인 row 의 content/story_id/created_at 임의 수정·undelete 까지 허용되는 과허용이 된다(삼순 #807 blocker).
+-- 접근 계약은 venue_stories 와 동일하게 API route(service_role) 전용이다.
+-- 클라 RLS 정책은 의도적으로 하나도 만들지 않는다(삼순 #807 blocker 1·2):
+--   INSERT 를 열면 클라가 API 밖에서 비활성·만료 스토리 작성·created_at 임의 지정·
+--   rate/trim/동일내용 가드를 전부 우회하고, SELECT 를 열면 만료·비활성 스토리의
+--   댓글도 route 수명주기 게이트 밖에서 열린다. 조회/작성/soft delete 모두
+--   API route 가 active+미만료 검사·어뷰징 가드·권한 검사 후 service_role 로 수행한다.
 
 CREATE TABLE IF NOT EXISTS venue_story_comments (
   id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -25,18 +23,5 @@ CREATE INDEX IF NOT EXISTS idx_venue_story_comments_story
   ON venue_story_comments (story_id, created_at DESC)
   WHERE deleted_at IS NULL;
 
+-- 클라 직접 접근 0 — RLS 활성화하되 정책은 두지 않는다(venue_stories 동일, service_role 전용).
 ALTER TABLE venue_story_comments ENABLE ROW LEVEL SECURITY;
-
--- 미삭제 댓글은 누구나 조회
-CREATE POLICY venue_story_comments_select ON venue_story_comments
-  FOR SELECT
-  USING (deleted_at IS NULL);
-
--- 로그인 유저 본인 명의로만 작성
-CREATE POLICY venue_story_comments_insert ON venue_story_comments
-  FOR INSERT
-  TO authenticated
-  WITH CHECK (auth.uid() = user_id AND deleted_at IS NULL);
-
--- UPDATE/DELETE 정책 없음(의도적): soft delete 는 API route(service_role)가
--- canDeleteComment 권한 검사 후 deleted_at 만 세팅한다. 클라 직접 UPDATE 불가.

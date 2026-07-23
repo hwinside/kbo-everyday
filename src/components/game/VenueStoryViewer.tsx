@@ -8,8 +8,10 @@ import { getSafeSession } from "@/lib/supabase/client";
 import { VENUE_STORY_IMAGE_HOLD_MS, type VenueStory } from "@/lib/venue-stories/types";
 import {
   VENUE_STORY_COMMENT_MAX_LENGTH,
+  scrollToLatest,
   type VenueStoryComment,
 } from "@/lib/venue-stories/comments";
+import { subscribeKeyboardInset } from "@/lib/venue-stories/keyboard-inset";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 
 interface Props {
@@ -104,6 +106,9 @@ export default function VenueStoryViewer({
   const [kbInset, setKbInset] = useState(0);
 
   const videoRef = useRef<HTMLVideoElement>(null);
+  // 최신 댓글 bottom scroll 대상 — 포커스 오버레이/댓글 시트 목록 컨테이너
+  const overlayListRef = useRef<HTMLDivElement>(null);
+  const sheetListRef = useRef<HTMLDivElement>(null);
   const rafRef = useRef<number | null>(null);
   const startRef = useRef<number>(0);
   const elapsedRef = useRef<number>(0);
@@ -156,23 +161,29 @@ export default function VenueStoryViewer({
     };
   }, [story?.id]);
 
-  // 키보드 회피 — 입력바 포커스/댓글 시트가 열려 있을 때만 구독(CommentSheet 패턴 재사용)
+  // 키보드 회피 — 입력바 포커스/댓글 시트가 열려 있을 때만 구독(CommentSheet 패턴 재사용).
+  // 계산/구독은 keyboard-inset.ts 순수 헬퍼 — 스모크가 모킹 visualViewport 로 회귀 검증(삼순 #807 blocker 4)
   useEffect(() => {
     if (!inputFocused && !commentsOpen) return;
     const vv = window.visualViewport;
     if (!vv) return;
-    const apply = () => {
-      setKbInset(Math.max(0, window.innerHeight - vv.height - vv.offsetTop));
-    };
-    apply();
-    vv.addEventListener("resize", apply);
-    vv.addEventListener("scroll", apply);
+    const unsubscribe = subscribeKeyboardInset(
+      vv,
+      () => window.innerHeight,
+      setKbInset,
+    );
     return () => {
-      vv.removeEventListener("resize", apply);
-      vv.removeEventListener("scroll", apply);
+      unsubscribe();
       setKbInset(0);
     };
   }, [inputFocused, commentsOpen]);
+
+  // 최신 댓글 bottom scroll(삼순 #807 blocker 5) — 정순(오래된→최신) 렌더라
+  // 오버레이/시트가 열릴 때·댓글이 로드/추가될 때 최신 댓글이 보이도록 맨 아래로.
+  useEffect(() => {
+    if (inputFocused) scrollToLatest(overlayListRef.current);
+    if (commentsOpen) scrollToLatest(sheetListRef.current);
+  }, [inputFocused, commentsOpen, comments]);
 
   // 이미지 자동 진행(RAF), 영상은 timeupdate 로 처리
   useEffect(() => {
@@ -495,7 +506,7 @@ export default function VenueStoryViewer({
           // 오버레이 터치로 입력 blur 되지 않게 (스크롤 중 오버레이가 사라지는 것 방지)
           onMouseDown={(e) => e.preventDefault()}
         >
-          <div className="overflow-y-auto flex flex-col gap-2 py-1">
+          <div ref={overlayListRef} className="overflow-y-auto flex flex-col gap-2 py-1">
             {comments == null ? (
               <div className="flex justify-center py-2">
                 <Loader2 size={16} className="animate-spin text-white/70" />
@@ -587,7 +598,10 @@ export default function VenueStoryViewer({
                 <X size={18} />
               </button>
             </div>
-            <div className="flex-1 overflow-y-auto px-4 py-1 flex flex-col gap-3 min-h-24">
+            <div
+              ref={sheetListRef}
+              className="flex-1 overflow-y-auto px-4 py-1 flex flex-col gap-3 min-h-24"
+            >
               {comments == null ? (
                 <div className="flex justify-center py-6">
                   <Loader2 size={18} className="animate-spin text-text-secondary" />

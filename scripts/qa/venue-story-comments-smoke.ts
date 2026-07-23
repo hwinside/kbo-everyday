@@ -1,6 +1,7 @@
 /**
- * 직관 라이브 스토리 댓글 스모크 — 입력 검증 / 삭제 권한(RLS 계약) / 댓글 수 집계
- * / 최신 100개 정순 반전(101개 회귀) / 어뷰징 가드 / migration RLS 정책 계약.
+ * 직관 라이브 스토리 댓글 스모크 — 입력 검증 / 삭제 권한(API 계약) / 댓글 수 집계
+ * / 최신 100개 정순 반전(101개 회귀) / 수명주기 게이트 / DB 권위 어뷰징 가드
+ * / iOS 키보드 인셋(모킹 visualViewport 회귀) / bottom scroll / migration RLS 계약.
  * 실행: npm run qa:venue-story-comments
  */
 import { readFileSync } from "node:fs";
@@ -11,13 +12,21 @@ import {
   countVisibleComments,
   toChronological,
   evaluateCommentRate,
+  evaluateCommentAbuse,
+  isStoryOpenForComments,
+  scrollToLatest,
   VENUE_STORY_COMMENT_MAX_LENGTH,
   VENUE_STORY_COMMENT_LIST_LIMIT,
   VENUE_STORY_COMMENT_COOLDOWN_MS,
   VENUE_STORY_COMMENT_WINDOW_MS,
   VENUE_STORY_COMMENT_MAX_IN_WINDOW,
+  VENUE_STORY_COMMENT_DUP_RECENT,
 } from "../../src/lib/venue-stories/comments";
-import { allowStoryComment } from "../../src/lib/venue-stories/comment-rate-limit";
+import {
+  computeKeyboardInset,
+  subscribeKeyboardInset,
+  type VisualViewportLike,
+} from "../../src/lib/venue-stories/keyboard-inset";
 
 let pass = 0;
 let fail = 0;
@@ -102,28 +111,120 @@ console.log("[어뷰징 가드 — 10초 간격 / 60초 내 3건]");
     VENUE_STORY_COMMENT_COOLDOWN_MS === 10_000 &&
     VENUE_STORY_COMMENT_WINDOW_MS === 60_000 &&
     VENUE_STORY_COMMENT_MAX_IN_WINDOW === 3);
-  // 서버 래퍼(유저별 상태) — 다른 유저는 서로 영향 없음
-  ok("래퍼: 첫 작성 허용", allowStoryComment("user-a", t0) === true);
-  ok("래퍼: 연속 작성 차단", allowStoryComment("user-a", t0 + 1_000) === false);
-  ok("래퍼: 타 유저 무관", allowStoryComment("user-b", t0 + 1_000) === true);
 }
 
-console.log("[migration RLS 정책 계약 — authenticated UPDATE 부재]");
+console.log("[DB 권위 어뷰징 가드 — 유저 최근 댓글 행 기반(evaluateCommentAbuse)]");
+{
+  const now = Date.parse("2026-07-23T12:00:00Z");
+  const iso = (msAgo: number) => new Date(now - msAgo).toISOString();
+  ok("과거 댓글 없음 → 허용", evaluateCommentAbuse([], "컬로가자", now).allowed === true);
+  ok("10초 미만 재작성 차단(DB created_at 기준)",
+    evaluateCommentAbuse([{ content: "a", created_at: iso(5_000) }], "b", now).allowed === false);
+  ok("10초 경과 후 허용",
+    evaluateCommentAbuse([{ content: "a", created_at: iso(10_000) }], "b", now).allowed === true);
+  ok("60초 내 3건 이상 차단(윈도우)",
+    evaluateCommentAbuse([
+      { content: "a", created_at: iso(15_000) },
+      { content: "b", created_at: iso(30_000) },
+      { content: "c", created_at: iso(45_000) },
+    ], "d", now).allowed === false);
+  ok("윈도우 밖 오래된 행은 rate 무관",
+    evaluateCommentAbuse([
+      { content: "a", created_at: iso(70_000) },
+      { content: "b", created_at: iso(80_000) },
+      { content: "c", created_at: iso(90_000) },
+    ], "d", now).allowed === true);
+  ok("최근 5건 내 동일내용 반복 차단(정규화 — 공백/런 변형 포함)", (() => {
+    const r = evaluateCommentAbuse(
+      [{ content: "ㄷㄷㄷ", created_at: iso(20_000) }], "ㄷ ㄷ ㄷㄷ", now);
+    return r.allowed === false && r.error === "같은 댓글은 반복해서 달 수 없어요";
+  })());
+  ok("다른 내용은 허용",
+    evaluateCommentAbuse([{ content: "ㄷㄷㄷ", created_at: iso(20_000) }], "오늘 직관 최고", now).allowed === true);
+  ok("rate 차단 메시지 계약(429)", (() => {
+    const r = evaluateCommentAbuse([{ content: "a", created_at: iso(1_000) }], "b", now);
+    return r.allowed === false && r.error === "잠시 후 다시 입력해 주세요";
+  })());
+  ok("dup 비교 상한 상수(최근 5건)", VENUE_STORY_COMMENT_DUP_RECENT === 5);
+}
+
+console.log("[수명주기 게이트 — GET/POST 공용(isStoryOpenForComments)]");
+{
+  const now = Date.parse("2026-07-23T12:00:00Z");
+  const future = new Date(now + 3600_000).toISOString();
+  const past = new Date(now - 1_000).toISOString();
+  ok("active + 미만료 허용",
+    isStoryOpenForComments({ status: "active", expires_at: future }, now) === true);
+  ok("만료 스토리 차단(GET 도 404)",
+    isStoryOpenForComments({ status: "active", expires_at: past }, now) === false);
+  ok("비활성(hidden) 스토리 차단",
+    isStoryOpenForComments({ status: "hidden", expires_at: future }, now) === false);
+  ok("없는 스토리(null) 차단", isStoryOpenForComments(null, now) === false);
+  ok("expires_at 비정상 값 fail-closed",
+    isStoryOpenForComments({ status: "active", expires_at: "invalid" }, now) === false);
+  ok("경계: 정확히 만료 시각은 차단",
+    isStoryOpenForComments({ status: "active", expires_at: new Date(now).toISOString() }, now) === false);
+}
+
+console.log("[iOS 키보드 인셋 — 모킹 visualViewport 회귀(삼순 #807 blocker 4)]");
+{
+  ok("순수 계산: idle(키보드 없음) = 0", computeKeyboardInset(800, 800, 0) === 0);
+  ok("순수 계산: 키보드 300px 오픈 = 300", computeKeyboardInset(800, 500, 0) === 300);
+  ok("순수 계산: visual viewport 상단 오프셋 반영", computeKeyboardInset(800, 500, 100) === 200);
+  ok("순수 계산: 음수 방지(clamp 0)", computeKeyboardInset(800, 900, 0) === 0);
+
+  // 모킹 visualViewport — focus→키보드 resize→submit 유지→blur(구독 해제) 시나리오
+  const listeners: Record<string, Set<() => void>> = { resize: new Set(), scroll: new Set() };
+  let vvHeight = 800;
+  let vvOffsetTop = 0;
+  const vv: VisualViewportLike = {
+    get height() { return vvHeight; },
+    get offsetTop() { return vvOffsetTop; },
+    addEventListener: (type, l) => listeners[type].add(l),
+    removeEventListener: (type, l) => listeners[type].delete(l),
+  };
+  const fire = (type: "resize" | "scroll") => listeners[type].forEach((l) => l());
+  const insets: number[] = [];
+  const unsubscribe = subscribeKeyboardInset(vv, () => 800, (i) => insets.push(i));
+  ok("구독 즉시 1회 적용(idle=0)", insets.length === 1 && insets[0] === 0);
+  vvHeight = 500; // iOS 키보드 오픈 → 시각 뷰포트 축소
+  fire("resize");
+  ok("키보드 resize 시 인셋 300 반영", insets[insets.length - 1] === 300);
+  vvOffsetTop = 50; // 포커스 유지 중 스크롤(시각 뷰포트 이동)
+  fire("scroll");
+  ok("visualViewport scroll 시 재계산(250)", insets[insets.length - 1] === 250);
+  vvHeight = 800; vvOffsetTop = 0; // 키보드 닫힘
+  fire("resize");
+  ok("키보드 닫혔 시 0 복귀", insets[insets.length - 1] === 0);
+  const count = insets.length;
+  unsubscribe(); // blur → effect cleanup
+  vvHeight = 400;
+  fire("resize");
+  fire("scroll");
+  ok("구독 해제 후 콜백 없음(blur 누수 방지)", insets.length === count);
+  ok("해제 후 리스너 잔류 0", listeners.resize.size === 0 && listeners.scroll.size === 0);
+}
+
+console.log("[최신 댓글 bottom scroll — 삼순 #807 blocker 5]");
+{
+  const el = { scrollTop: 0, scrollHeight: 1234 };
+  scrollToLatest(el);
+  ok("컨테이너를 맨 아래(scrollHeight)로 이동", el.scrollTop === 1234);
+  ok("null 안전(ref 미마운트)", (() => { scrollToLatest(null); return true; })());
+}
+
+console.log("[migration RLS 계약 — service_role 전용(정책 0개)]");
 {
   const sql = readFileSync(
     path.resolve(process.cwd(), "supabase/migrations/20260723_venue_story_comments.sql"),
     "utf8",
   );
   const policies = sql.match(/CREATE POLICY[\s\S]*?;/g) ?? [];
-  ok("UPDATE 정책 없음(soft delete 는 service_role API 전담)",
-    policies.every((p) => !/FOR\s+UPDATE/i.test(p)));
-  ok("DELETE 정책도 없음(물리 삭제 불가 계약)",
-    policies.every((p) => !/FOR\s+DELETE/i.test(p)));
-  ok("SELECT 정책 존재(미삭제 공개 조회)",
-    policies.some((p) => /FOR\s+SELECT/i.test(p) && /deleted_at IS NULL/i.test(p)));
-  ok("INSERT 정책 존재(authenticated 본인 명의)",
-    policies.some((p) => /FOR\s+INSERT/i.test(p) && /TO authenticated/i.test(p)));
-  ok("RLS 활성화 유지", /ENABLE ROW LEVEL SECURITY/.test(sql));
+  ok("클라 RLS 정책 0개 — direct INSERT/SELECT 우회 경로 없음(venue_stories 동일 계약)",
+    policies.length === 0);
+  ok("RLS 활성화 유지(정책 없음 + RLS on = 클라 전면 차단)",
+    /ALTER TABLE venue_story_comments ENABLE ROW LEVEL SECURITY/.test(sql));
+  ok("authenticated 대상 GRANT 없음", !/GRANT[\s\S]*?TO authenticated/i.test(sql));
 }
 
 console.log("[상수 계약]");

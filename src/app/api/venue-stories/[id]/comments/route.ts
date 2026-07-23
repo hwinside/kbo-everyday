@@ -4,14 +4,27 @@ import { getVerifiedUserFromRequest } from "@/lib/auth/verified-user";
 import {
   validateCommentContent,
   toChronological,
+  isStoryOpenForComments,
+  evaluateCommentAbuse,
   VENUE_STORY_COMMENT_LIST_LIMIT,
+  VENUE_STORY_COMMENT_DUP_RECENT,
   type VenueStoryComment,
 } from "@/lib/venue-stories/comments";
-import { allowStoryComment } from "@/lib/venue-stories/comment-rate-limit";
 
 function parseStoryId(id: string): number | null {
   const storyId = Number(id);
   return Number.isInteger(storyId) ? storyId : null;
+}
+
+/** 수명주기 게이트(GET/POST 공용) — active + 미만료 스토리만 댓글 조회/작성 허용 */
+async function loadOpenStory(storyId: number) {
+  const { data: story, error } = await supabase
+    .from("venue_stories")
+    .select("id, status, expires_at")
+    .eq("id", storyId)
+    .maybeSingle();
+  if (error) return { error: true as const, open: false };
+  return { error: false as const, open: isStoryOpenForComments(story) };
 }
 
 async function buildAuthorMap(userIds: string[]) {
@@ -44,6 +57,15 @@ export async function GET(
   const storyId = parseStoryId(id);
   if (storyId == null) {
     return NextResponse.json({ error: "잘못된 id" }, { status: 400 });
+  }
+
+  // 비활성·만료 스토리의 댓글은 GET 도 닫는다(삼순 #807 blocker 2 — POST 와 동일 게이트)
+  const gate = await loadOpenStory(storyId);
+  if (gate.error) {
+    return NextResponse.json({ error: "조회 실패" }, { status: 500 });
+  }
+  if (!gate.open) {
+    return NextResponse.json({ error: "없는 스토리" }, { status: 404 });
   }
 
   // 101개 이상이어도 "최신 100개"가 보이도록 DESC 로 자르고 응답에서 정순 반전.
@@ -118,28 +140,34 @@ export async function POST(
     return NextResponse.json({ error: check.error }, { status: 400 });
   }
 
-  // 어뷰징 가드 — 기존 댓글 정책과 동일(10초 간격 / 60초 내 3건), 차단 시 429
-  if (!allowStoryComment(verified.user.id)) {
-    return NextResponse.json(
-      { error: "잠시 후 다시 입력해 주세요" },
-      { status: 429 },
-    );
-  }
-
-  const { data: story, error: storyErr } = await supabase
-    .from("venue_stories")
-    .select("id, status, expires_at")
-    .eq("id", storyId)
-    .maybeSingle();
-  if (storyErr) {
+  const gate = await loadOpenStory(storyId);
+  if (gate.error) {
     return NextResponse.json({ error: "조회 실패" }, { status: 500 });
   }
-  if (
-    !story ||
-    story.status !== "active" ||
-    new Date(story.expires_at as string).getTime() <= Date.now()
-  ) {
+  if (!gate.open) {
     return NextResponse.json({ error: "없는 스토리" }, { status: 404 });
+  }
+
+  // 어뷰징 가드 — DB 권위(삼순 #807 blocker 3): 서버리스 인스턴스 메모리 대신
+  // 유저 최근 댓글 행으로 10초 간격/60초 내 3건 + 정규화 동일내용 반복(최근 5건) 차단.
+  // soft delete 된 행도 포함(삭제로 rate 리셋 불가). 정책 상수는 CommentSheet 와 동일.
+  // query-guard: bounded -- 유저 최근 댓글 5건만 조회(어뷰징 판정용)
+  const { data: recent, error: recentErr } = await supabase
+    .from("venue_story_comments")
+    .select("content, created_at")
+    .eq("user_id", verified.user.id)
+    .order("created_at", { ascending: false })
+    .limit(VENUE_STORY_COMMENT_DUP_RECENT);
+  if (recentErr) {
+    return NextResponse.json({ error: "조회 실패" }, { status: 500 });
+  }
+  const abuse = evaluateCommentAbuse(
+    (recent ?? []) as { content: string; created_at: string }[],
+    check.content,
+    Date.now(),
+  );
+  if (!abuse.allowed) {
+    return NextResponse.json({ error: abuse.error }, { status: 429 });
   }
 
   const { data: inserted, error: insErr } = await supabase

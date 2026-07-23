@@ -1,4 +1,5 @@
 // 직관 라이브 스토리 댓글 — 공유 타입 + 순수 로직(스모크 대상)
+import { normalizeForFloodKey } from "@/lib/utils/normalize-message";
 
 export const VENUE_STORY_COMMENT_MAX_LENGTH = 200;
 export const VENUE_STORY_COMMENT_LIST_LIMIT = 100; // 스토리당 조회 상한(안전 limit)
@@ -8,6 +9,8 @@ export const VENUE_STORY_COMMENT_LIST_LIMIT = 100; // 스토리당 조회 상한
 export const VENUE_STORY_COMMENT_COOLDOWN_MS = 10_000;
 export const VENUE_STORY_COMMENT_WINDOW_MS = 60_000;
 export const VENUE_STORY_COMMENT_MAX_IN_WINDOW = 3;
+// CommentSheet 와 동일 — 정규화 키 기준 최근 5건 내 같은 내용 반복 차단
+export const VENUE_STORY_COMMENT_DUP_RECENT = 5;
 
 /** GET /api/venue-stories/[id]/comments 응답 아이템 */
 export interface VenueStoryComment {
@@ -82,6 +85,62 @@ export function evaluateCommentRate(
     return { allowed: false, timestamps: recent };
   }
   return { allowed: true, timestamps: [...recent, now] };
+}
+
+/**
+ * 스토리 댓글 수명주기 게이트(GET/POST 공용) — active 상태 + 미만료 스토리만
+ * 댓글 조회/작성 가능. 만료·비활성·부재 스토리는 404 로 닫는다(삼순 #807 blocker 2).
+ */
+export function isStoryOpenForComments(
+  story: { status?: unknown; expires_at?: unknown } | null | undefined,
+  now = Date.now(),
+): boolean {
+  if (!story || story.status !== "active") return false;
+  const expires = new Date(story.expires_at as string).getTime();
+  return Number.isFinite(expires) && expires > now;
+}
+
+/** 어뷰징 판정 입력 — DB에서 조회한 유저 최근 댓글(최신순) */
+export interface RecentCommentRow {
+  content: string;
+  created_at: string;
+}
+
+/**
+ * DB 권위 어뷰징 판정(삼순 #807 blocker 3) — 서버리스 인스턴스 메모리가 아니라
+ * 유저의 최근 댓글 행(created_at/content)을 근거로 판정한다:
+ * (1) 10초 간격 / 60초 내 3건 rate 차단 (2) 정규화 키 기준 최근 5건 동일내용 반복 차단.
+ * 정책 상수는 기존 커뮤니티 CommentSheet 와 동일.
+ */
+export function evaluateCommentAbuse(
+  recentDesc: readonly RecentCommentRow[],
+  content: string,
+  now: number,
+): { allowed: true } | { allowed: false; error: string } {
+  const timestamps = recentDesc
+    .map((r) => new Date(r.created_at).getTime())
+    .filter((t) => Number.isFinite(t));
+  if (!evaluateCommentRate(timestamps, now).allowed) {
+    return { allowed: false, error: "잠시 후 다시 입력해 주세요" };
+  }
+  const key = normalizeForFloodKey(content);
+  const dup = recentDesc
+    .slice(0, VENUE_STORY_COMMENT_DUP_RECENT)
+    .some((r) => normalizeForFloodKey(r.content) === key);
+  if (dup) {
+    return { allowed: false, error: "같은 댓글은 반복해서 달 수 없어요" };
+  }
+  return { allowed: true };
+}
+
+/**
+ * 목록/오버레이 하단 스크롤(삼순 #807 blocker 5) — DESC→정순 반전 렌더에서
+ * 최신 댓글이 입력창 바로 위에 보이도록 컨테이너를 맨 아래로 내린다.
+ */
+export function scrollToLatest(
+  el: { scrollTop: number; readonly scrollHeight: number } | null,
+): void {
+  if (el) el.scrollTop = el.scrollHeight;
 }
 
 /** 노출 댓글 수 집계 — soft delete(deleted_at) 행 제외 */
