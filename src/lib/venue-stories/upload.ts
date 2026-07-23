@@ -1,6 +1,6 @@
 "use client";
 
-import { supabase } from "@/lib/supabase/client";
+import { supabase, getSafeSession } from "@/lib/supabase/client";
 import imageCompression from "browser-image-compression";
 import {
   VENUE_STORY_MAX_BYTES,
@@ -125,16 +125,59 @@ function probeImage(file: File): Promise<{ width: number; height: number }> {
   });
 }
 
+/**
+ * XHR 기반 storage 업로드 — supabase-js와 동일한 REST 경로(POST /storage/v1/object)에
+ * upload progress 이벤트만 추가. fetch 기반 supabase-js는 업로드 진행률을 못 준다.
+ * 토큰/환경 미비 시 supabase-js 폴백(진행률 없이 업로드는 성공).
+ */
+async function uploadWithProgress(
+  bucket: string,
+  path: string,
+  data: Blob | File,
+  contentType: string,
+  cacheControlSec: number,
+  onProgress?: (ratio: number) => void,
+): Promise<boolean> {
+  const base = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const session = await getSafeSession();
+  const token = session?.access_token;
+  if (!base || !anonKey || !token || typeof XMLHttpRequest === "undefined") {
+    const { error } = await supabase.storage.from(bucket).upload(path, data, {
+      contentType,
+      cacheControl: String(cacheControlSec),
+      upsert: false,
+    });
+    return !error;
+  }
+  return new Promise((resolve) => {
+    const xhr = new XMLHttpRequest();
+    // path 는 randPath/sanitizeExt 로 영숫자·-·_·.·/ 만 포함 — 인코딩 불필요(supabase-js도 raw)
+    xhr.open("POST", `${base}/storage/v1/object/${bucket}/${path}`);
+    xhr.setRequestHeader("authorization", `Bearer ${token}`);
+    xhr.setRequestHeader("apikey", anonKey);
+    xhr.setRequestHeader("x-upsert", "false");
+    xhr.setRequestHeader("cache-control", `max-age=${cacheControlSec}`);
+    xhr.setRequestHeader("content-type", contentType);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && e.total > 0) onProgress?.(e.loaded / e.total);
+    };
+    xhr.onload = () => resolve(xhr.status >= 200 && xhr.status < 300);
+    xhr.onerror = () => resolve(false);
+    xhr.onabort = () => resolve(false);
+    xhr.send(data);
+  });
+}
+
 async function uploadBlob(
   bucket: string,
   path: string,
   data: Blob | File,
   contentType: string,
+  onProgress?: (ratio: number) => void,
 ): Promise<string | null> {
-  const { error } = await supabase.storage
-    .from(bucket)
-    .upload(path, data, { contentType, cacheControl: "31536000", upsert: false });
-  if (error) return null;
+  const ok = await uploadWithProgress(bucket, path, data, contentType, 31536000, onProgress);
+  if (!ok) return null;
   const { data: urlData } = supabase.storage.from(bucket).getPublicUrl(path);
   return urlData.publicUrl;
 }
@@ -144,11 +187,16 @@ async function uploadToStaging(
   path: string,
   data: Blob | File,
   contentType: string,
+  onProgress?: (ratio: number) => void,
 ): Promise<boolean> {
-  const { error } = await supabase.storage
-    .from(VENUE_STORY_STAGING_BUCKET)
-    .upload(path, data, { contentType, cacheControl: "3600", upsert: false });
-  return !error;
+  return uploadWithProgress(
+    VENUE_STORY_STAGING_BUCKET,
+    path,
+    data,
+    contentType,
+    3600,
+    onProgress,
+  );
 }
 
 /**
@@ -158,6 +206,7 @@ async function uploadToStaging(
 export async function prepareVenueStoryMedia(
   file: File,
   gameId: string,
+  onProgress?: (ratio: number) => void,
 ): Promise<PreparedMedia | PrepareError> {
   const {
     data: { user },
@@ -187,8 +236,12 @@ export async function prepareVenueStoryMedia(
     }
     // 원본은 private staging 에만 — 서버 ffprobe 검증 통과 시 서버가 공개 버킷으로 승격(B+①)
     const mediaPath = randPath(gameId, user.id, sanitizeExt(file.name, "mp4"));
-    const uploaded = await uploadToStaging(mediaPath, file, file.type || "video/mp4");
+    // 본음이 용량 대부분 — 전체 진행률의 0~95% 구간으로 매핑(썸네일·메타 POST 잔여 5%)
+    const uploaded = await uploadToStaging(mediaPath, file, file.type || "video/mp4", (r) =>
+      onProgress?.(r * 0.95),
+    );
     if (!uploaded) return { error: "영상 업로드에 실패했어요" };
+    onProgress?.(0.95);
 
     let thumbUrl: string | null = null;
     if (probe.poster) {
@@ -228,8 +281,10 @@ export async function prepareVenueStoryMedia(
     randPath(gameId, user.id, "jpg"),
     compressed,
     "image/jpeg",
+    (r) => onProgress?.(r * 0.95),
   );
   if (!mediaUrl) return { error: "사진 업로드에 실패했어요" };
+  onProgress?.(0.95);
   return {
     mediaType: "image",
     mediaUrl,

@@ -32,6 +32,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   const [previewType, setPreviewType] = useState<"image" | "video" | null>(null);
   const [caption, setCaption] = useState("");
   const [phase, setPhase] = useState<Phase>("idle");
+  const [progress, setProgress] = useState(0); // 0~100, phase==="upload" 일 때만 유효
   const [error, setError] = useState<string | null>(null);
   const [venue, setVenue] = useState<VenueInfo | null>(null);
   const [venueLoading, setVenueLoading] = useState(false);
@@ -112,6 +113,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
     setCaption("");
     setError(null);
     setPhase("idle");
+    setProgress(0);
   };
 
   const close = () => {
@@ -186,8 +188,11 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
     }
 
     setPhase("upload");
+    setProgress(0);
     try {
-      const prepared = await prepareVenueStoryMedia(file, gameId);
+      const prepared = await prepareVenueStoryMedia(file, gameId, (r) =>
+        setProgress(Math.min(99, Math.round(r * 100))),
+      );
       if ("error" in prepared) {
         setError(prepared.error);
         setPhase("idle");
@@ -333,13 +338,26 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
 
             {error && <p className="text-sm text-red-400">{error}</p>}
 
+            {phase === "upload" && (
+              <div className="w-full h-1.5 rounded-full bg-bg-tertiary overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-brand-primary transition-[width] duration-200 ease-out"
+                  style={{ width: `${progress}%` }}
+                />
+              </div>
+            )}
+
             <button
               onClick={submit}
               disabled={!file || submitting || !!gateReason || !agreed}
               className="w-full py-3 rounded-xl bg-brand-primary text-white font-semibold flex items-center justify-center gap-2 disabled:opacity-40"
             >
               {submitting ? <Loader2 size={18} className="animate-spin" /> : null}
-              {phase === "geo" ? "직관 인증 중…" : phase === "upload" ? "올리는 중…" : "올리기"}
+              {phase === "geo"
+                ? "직관 인증 중…"
+                : phase === "upload"
+                  ? `올리는 중… ${progress}%`
+                  : "올리기"}
             </button>
           </div>
         </motion.div>
