@@ -4,9 +4,14 @@ This directory is the repository-owned control plane for production observabilit
 
 ## Components
 
-- `alert-policies.json`: canonical thresholds and expressions. Loki rules remain `schema-pending` until a real Log Drain sample confirms field names.
+- `alert-policies.json`: canonical thresholds and expressions. Loki rules remain `schema-pending` until a real Log Drain sample confirms field names. Every deployable ("ready") prometheus rule references only metrics present in `fixtures/live-metric-inventory.txt`.
+- `fixtures/live-metric-inventory.txt`: allowlist of metric names verified to exist in the hosted Supabase Prometheus scrape. Add a name only after confirming it via Grafana `label_values(__name__)`.
 - `worker/`: Cloudflare Worker that validates Grafana HMAC webhooks, durably queues bursts before processing them in bounded batches, serializes each incident in a Durable Object, posts directly to Slack and Telegram, requires an explicit POST for ACK, and escalates after three minutes without ACK.
-- `scripts/qa/observability-config-smoke.ts`: fails on missing safety rules, local-machine dependencies, duplicate IDs, or secret-like values.
+- `scripts/qa/observability-config-smoke.ts`: fails on missing safety rules, local-machine dependencies, duplicate IDs, secret-like values, or any ready prometheus rule that references a metric absent from the live inventory (the guard that would have caught the removed phantom `supavisor_pool_checkout_duration_local_bucket`).
+
+## Compute-tier constants
+
+`supabase-active-connection-ratio-warning` divides by the deployed Postgres `max_connections` (160 on the current Large compute tier) — not the PgBouncer `max_client_conn` (800). Update the literal `160` in `alert-policies.json` if the compute tier changes.
 
 ## External setup order
 
