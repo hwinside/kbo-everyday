@@ -17,6 +17,7 @@ import {
   startTokenChangePatch,
   shouldAdvanceFallbackCursor,
   applyChannelHeartbeat,
+  resolveChannelUpdateDecision,
   CHANNEL_HEARTBEAT_INTERVAL_MS,
   activeChannelKeySet,
   isLiveChannelSubscription,
@@ -395,6 +396,48 @@ check("cursor: invalidToken + retryable 혼합(성공 無) → 보류",
     { send: true, priority: "10" });
   check("hb: 경계 직전(2분-1ms) → 유지(과다 발송 방지)",
     applyChannelHeartbeat({ send: false }, t - HB + 1, t), { send: false });
+}
+
+// ── resolveChannelUpdateDecision — 지명 catch-up p10 승격 (삼순 R2 blocker③) ──
+// fast-path가 유실 복구로 지명한 경기는 base 판정이 skip이든 p5든 반드시 p10 —
+// R1은 `!send`일 때만 승격해 relay lastPlay만 다른 base=p5 틱에서 catch-up이 p5로
+// 나가고(pending은 이미 clear) 놓친 단말이 2분 heartbeat까지 stale로 남았다.
+{
+  const HB = CHANNEL_HEARTBEAT_INTERVAL_MS;
+  const t = 10_000_000;
+  const same = {
+    scoreState: scoreStateOf(baseCs), fullStateHash: fullStateHashOf(baseCs),
+    lastScoreState: scoreStateOf(baseCs), lastStateHash: fullStateHashOf(baseCs),
+  };
+  // lastPlay만 다름 = 점수축 동일·전체축 변화 → base p5.
+  const lastPlayOnly = { ...baseCs, lastPlay: "박동원 안타" };
+  const p5Base = {
+    scoreState: scoreStateOf(lastPlayOnly), fullStateHash: fullStateHashOf(lastPlayOnly),
+    lastScoreState: scoreStateOf(baseCs), lastStateHash: fullStateHashOf(baseCs),
+  };
+  check("resolve: 지명 catch-up + base p5(lastPlay만) + fresh p10 → p10 승격(R2③ 핵심)",
+    resolveChannelUpdateDecision({ ...p5Base, lastP10AtMs: t - 30_000, nowMs: t, forceCatchup: true }),
+    { decision: { send: true, priority: "10" }, isHeartbeat: false, isForcedCatchup: true });
+  check("resolve: 지명 catch-up + 무변화 skip + fresh p10 → p10 승격",
+    resolveChannelUpdateDecision({ ...same, lastP10AtMs: t - 30_000, nowMs: t, forceCatchup: true }),
+    { decision: { send: true, priority: "10" }, isHeartbeat: false, isForcedCatchup: true });
+  check("resolve: 지명 catch-up + 자연 p10(점수 변화) → 그 발송이 겸함(이중 승격 아님)",
+    resolveChannelUpdateDecision({
+      scoreState: scoreStateOf({ ...baseCs, homeScore: 2 }),
+      fullStateHash: fullStateHashOf({ ...baseCs, homeScore: 2 }),
+      lastScoreState: scoreStateOf(baseCs), lastStateHash: fullStateHashOf(baseCs),
+      lastP10AtMs: t - 30_000, nowMs: t, forceCatchup: true,
+    }),
+    { decision: { send: true, priority: "10" }, isHeartbeat: false, isForcedCatchup: false });
+  check("resolve: 지명 catch-up + heartbeat 만료 p10 → heartbeat가 겸함(catchup 카운트 아님)",
+    resolveChannelUpdateDecision({ ...same, lastP10AtMs: t - HB, nowMs: t, forceCatchup: true }),
+    { decision: { send: true, priority: "10" }, isHeartbeat: true, isForcedCatchup: false });
+  check("resolve: 비지명 + base p5 + fresh p10 → p5 그대로(예산 경로 보존)",
+    resolveChannelUpdateDecision({ ...p5Base, lastP10AtMs: t - 30_000, nowMs: t, forceCatchup: false }),
+    { decision: { send: true, priority: "5" }, isHeartbeat: false, isForcedCatchup: false });
+  check("resolve: 비지명 + 무변화 + fresh p10 → skip 그대로",
+    resolveChannelUpdateDecision({ ...same, lastP10AtMs: t - 30_000, nowMs: t, forceCatchup: false }),
+    { decision: { send: false }, isHeartbeat: false, isForcedCatchup: false });
 }
 
 console.log(`\nla-broadcast-policy-smoke: ${pass} PASS / ${fail} FAIL`);

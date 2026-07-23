@@ -8,8 +8,7 @@ import {
   type ApnsEnvironment,
 } from "@/lib/notifications/apns-broadcast";
 import {
-  decideChannelPush,
-  applyChannelHeartbeat,
+  resolveChannelUpdateDecision,
   scoreStateOf,
   fullStateHashOf,
   endRetryDelayMinutes,
@@ -44,6 +43,40 @@ export interface ChannelRow {
   next_retry_at: string | null;
   created_at: string;
   ending_at: string | null;
+}
+
+/** 레거시 판정용 직전 상태 스냅샷 항목 (snapshotChannelLastStates). */
+export interface ChannelLastState {
+  score: string | null;
+  hash: string | null;
+}
+
+/**
+ * broadcast 직전의 production 채널 상태 스냅샷 (삼순 R2 blocker① — 레거시 분리용).
+ * 레거시 per-토큰 판정은 "직전 틱" hash를 읽어야 하는데, broadcast가 먼저 돌면 hash가
+ * 이미 전진돼 레거시가 영구 skip된다(구빌드 카드 프리즈). 이 스냅샷을 broadcast *전*에
+ * 떠서 레거시에 주입(pushLiveActivityUpdates channelLastStateOverride)하면, 레거시를
+ * broadcast 뒤/병렬로 뽑아도(느린 fanout 분리) 직전-틱 판정이 그대로 유지된다.
+ */
+export async function snapshotChannelLastStates(
+  gameIds: string[],
+): Promise<Map<string, ChannelLastState>> {
+  const map = new Map<string, ChannelLastState>();
+  if (gameIds.length === 0 || !apnsConfigured()) return map;
+  // query-guard: bounded -- 하루 라이브 경기 gameIds(≤10이니)×production env로 PK 부분키 유계
+  const { data, error } = await supabase
+    .from("live_activity_channels")
+    .select("game_id, last_score_state, last_state_hash")
+    .in("game_id", gameIds)
+    .eq("environment", "production")
+    .eq("status", "active");
+  if (error) throw new Error(error.message);
+  for (const r of (data ?? []) as {
+    game_id: string; last_score_state: string | null; last_state_hash: string | null;
+  }[]) {
+    map.set(r.game_id, { score: r.last_score_state, hash: r.last_state_hash });
+  }
+  return map;
 }
 
 /** 지정 경기들의 active 채널 map — key `${gameId}|${env}`. (p2s payload·ACK 검증용) */
@@ -290,29 +323,21 @@ export async function pushLiveActivityChannelBroadcasts(
       );
       const scoreState = scoreStateOf(cs);
       const fullHash = fullStateHashOf(cs);
-      const baseDecision = decideChannelPush({
-        scoreState,
-        fullStateHash: fullHash,
-        lastScoreState: row.last_score_state,
-        lastStateHash: row.last_state_hash,
-      });
-      // heartbeat/catch-up(삼순 ②): No-Message-Stored+expiration 0 특성상 accepted 1건을
-      // 단말이 놓치면 다음 변화까지 stale — 마지막 성공 p10 이후 ≥2분이면 무변화/p5
-      // 틱이어도 p10 current-state 재발송. server-attempt SLO(절대 전달 SLA 아님).
+      // 판정 합성(base diff → 2분 heartbeat → 지명 catch-up)은 순수 함수로 — 매트릭스는
+      // qa:la-broadcast가 고정. 지명 catch-up(삼순 R2 blocker③)은 base가 skip이든 p5든
+      // 항상 p10으로 승격(relay lastPlay만 달라진 p5 틱이 catch-up을 삼켜 놓친 단말이
+      // 2분 heartbeat까지 stale로 남던 구멍 폐쇄). 자연 p10이면 그 발송이 겸한다.
       const lastP10AtMs = row.last_p10_at ? new Date(row.last_p10_at).getTime() : null;
-      const heartbeatDecision = applyChannelHeartbeat(baseDecision, lastP10AtMs, now);
-      // 유실 catch-up(삼순 R1 blocker②) — fast-path가 지명한 경기는 skip 판정이어도
-      // p10 current-state 1회 강제(2분 heartbeat보다 이른 ≤15s 재시도).
-      const forcedCatchup =
-        !heartbeatDecision.send &&
-        opts?.forceCurrentStateGameIds?.has(row.game_id) === true;
-      const decision = forcedCatchup
-        ? ({ send: true, priority: "10" } as const)
-        : heartbeatDecision;
-      const isHeartbeat =
-        !forcedCatchup &&
-        decision.send && decision.priority === "10" &&
-        !(baseDecision.send && baseDecision.priority === "10");
+      const { decision, isHeartbeat, isForcedCatchup: forcedCatchup } =
+        resolveChannelUpdateDecision({
+          scoreState,
+          fullStateHash: fullHash,
+          lastScoreState: row.last_score_state,
+          lastStateHash: row.last_state_hash,
+          lastP10AtMs,
+          nowMs: now,
+          forceCatchup: opts?.forceCurrentStateGameIds?.has(row.game_id) === true,
+        });
       if (!decision.send) {
         skipped += 1;
         continue;

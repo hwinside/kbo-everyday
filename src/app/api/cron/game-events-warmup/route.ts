@@ -6,20 +6,19 @@ import { notifyTeamRankChanges } from "@/lib/notifications/team-rank";
 import { notifyScoreEvents, notifyInningSummaries } from "@/lib/notifications/game-score";
 import { notifyPlayerHighlights } from "@/lib/notifications/player-highlight";
 import { pushLiveActivityUpdates, pushLiveActivityStarts, pushLiveActivitySilentWakes } from "@/lib/notifications/live-activity";
-import { ensureLiveActivityChannels, pushLiveActivityChannelBroadcasts } from "@/lib/notifications/live-activity-channels";
+import {
+  ensureLiveActivityChannels,
+  pushLiveActivityChannelBroadcasts,
+  snapshotChannelLastStates,
+} from "@/lib/notifications/live-activity-channels";
 import { pushAndroidWidgetLiveUpdates } from "@/lib/notifications/android-widget-live";
 import { pushIosWidgetLiveUpdates } from "@/lib/notifications/ios-widget-live";
 import {
-  runWidgetFastLoop,
   startWidgetRefreshPipelines,
   FAST_LOOP_DEADLINE_MS,
   parseKboGameListPayload,
 } from "@/lib/notifications/widget-fast-loop";
-import {
-  seedLiveFastPathState,
-  runLiveFastPathTick,
-  gateFastPathOnLaAxis,
-} from "@/lib/notifications/live-fast-path";
+import { startLaOrchestration } from "@/lib/notifications/live-fast-path";
 import { runBeforeDeadline } from "@/lib/async-deadline";
 
 /**
@@ -154,9 +153,6 @@ export async function GET(req: NextRequest) {
     | { games: number; sent: number; failed: number; cleaned: number; skipped: number; retryableFailed: number }
     | { error: string };
 
-  // 서브틱 diff baseline — cycle 0 스냅샷은 아래 본체 경로가 발송하므로 서브틱은 이후
-  // *달라진* 것만 처리. 초기 fetch 실패 시 빈 baseline → 첫 성공 서브틱이 그 분을 복구.
-  const fastPathState = seedLiveFastPathState(initialFetch.ok ? games : []);
   // 서브틱 fast path의 game-events self-fetch — 본체와 동일 경로(공개 도메인 baseUrl).
   // 점수축 변화 경기만 호출되므로 타석 단위 변화마다 이벤트 생성 fetch가 돌지 않는다.
   const fetchGameEventsForFastPath = async (gameIds: string[]): Promise<Map<string, GameEvent[]>> => {
@@ -200,151 +196,72 @@ export async function GET(req: NextRequest) {
     return out;
   };
 
-  // ── LA 우선 축 (삼순 R1 blocker① — 느린 본체가 서브틱을 굮기던 직렬화 교체) ──
-  // 잠금화면 LA 계약(서버 감지→발송 시도 SLO)은 느린 본체(game-events self-fetch·
-  // 시작/순위/득점/요약/활약 알림)와 무관해야 한다. 본체가 52s deadline을 넘겨도
-  // (운영 60s 504 재현) broadcast가 굮지 않도록, LA 발송 축(중계 한 줄 → 채널 ensure →
-  // 레거시 per-토큰 → broadcast → start → iOS 위젯)을 초기 KBO fetch 직후 독립 실행하고
-  // 서브틱은 *이 축의 완료만* 기다린다(gateFastPathOnLaAxis). stale-overwrite 방지는
-  // LA 발송 축 직렬화로 충분 — 본체의 알림/집계 경로는 LA 상태(채널 hash/위젯 커서)를
-  // 건드리지 않는다. 순서 불변식(레거시가 직전 hash를 읽은 뒤 broadcast가 전진)은
-  // 축 내부 순차 실행으로 그대로 유지된다.
-  type LaAxisResult = {
-    lastPlayByGame: Map<string, string>;
-    laChannels: { created: number } | { error: string };
-    liveActivity: { pushed: number; ended: number; cleaned: number } | { error: string };
-    laBroadcast:
-      | { updates: number; heartbeats: number; catchups: number; skipped: number; ends: number; deleted: number }
-      | { error: string };
-    liveActivityStart: { started: number } | { error: string };
-    iosWidget:
-      | { games: number; sent: number; failed: number; skipped: number; cleaned: number }
-      | { error: string };
-  };
-  const laAxisPromise: Promise<LaAxisResult> = (async () => {
-    // 잠금화면 LA "중계 한 줄" — 네이버 문자중계 최근 플레이(실패 격리, 줄만 안 뜸).
-    const lastPlayByGame = await fetchRelayLinesForFastPath(liveGameIds).catch(
-      () => new Map<string, string>(),
-    );
+  // ── LA 오케스트레이션 (삼순 R2 blocker①② — 조립은 startLaOrchestration 하나로) ──
+  // 친리티컬 패스(relay 한 줄 → 채널 ensure → 레거시용 직전-상태 스냅샷 → broadcast)를
+  // 초기 KBO fetch 직후 독립 실행하고, 서브틱 게이트는 *초기 broadcast 완료 직후* 열린다.
+  // 느린 fanout(레거시 per-토큰/start/iOS 위젯 FCM)은 직렬 큐로 분리 — tail>52s여도
+  // 서브틱 broadcast가 굶지 않는다. 레거시는 broadcast 전 스냅샷을 주입받아 직전-틱
+  // 판정을 유지(hash 순서 불변식 대체 — live-fast-path.ts 상단 주석).
+  // 이 조립 코드 자체가 qa:la-fastpath의 회귀 대상(삼순 R2 "실배선 미검증" 해소).
+  const laOrchestration = startLaOrchestration(
+    {
+      now: () => Date.now(),
+      sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+      fetchLiveGames: () =>
+        fetchKboLiveGames(date, Math.min(deadlineAtMs, Date.now() + 10_000)),
+      fetchRelayLines: fetchRelayLinesForFastPath,
+      ensureChannels: (gs) => ensureLiveActivityChannels(gs),
+      snapshotLegacyState: (ids) => snapshotChannelLastStates(ids),
+      pushBroadcast: (gs, lp) => pushLiveActivityChannelBroadcasts(gs, lp),
+      // 유실 catch-up — 무변화여도 해당 경기 p10 current-state 강제 재발송(p5/skip 승격 — 삼순 R2③).
+      pushBroadcastCatchup: (gs, lp, ids) =>
+        pushLiveActivityChannelBroadcasts(gs, lp, {
+          forceCurrentStateGameIds: new Set(ids),
+        }),
+      pushLegacyLa: (gs, lp, snapshot) =>
+        pushLiveActivityUpdates(gs, lp, { channelLastStateOverride: snapshot }),
+      pushStarts: (gs) => pushLiveActivityStarts(gs),
+      pushIosWidget: (gs, lp) => pushIosWidgetLiveUpdates(gs, lp),
+      pushAndroid: (gs, tr) =>
+        pushAndroidWidgetLiveUpdates(gs, baseUrl, {
+          dedupeAgainstLast: true,
+          deadlineAtMs,
+          sourceAtMs: tr.sourceAtMs,
+          fetchedAtMs: tr.fetchedAtMs,
+        }),
+      fetchGameEvents: fetchGameEventsForFastPath,
+      notifyScore: (gs, ev) => notifyScoreEvents(gs, ev),
+      // 계측 — diff 감지(KBO 응답 확보)→발송 완료 latency. 배포 후 효과 실측용.
+      onTickResult: (tick) => {
+        if ("detectToSendMs" in tick) {
+          console.log(
+            `[warmup] fast-path tick +${Date.now() - requestStartMs}ms changed=${tick.changedGameIds.join(",")}` +
+            ` scoreChanged=${tick.scoreChangedLiveGameIds.join(",") || "-"} detect→send ${tick.detectToSendMs}ms`,
+          );
+        } else if (tick.catchup) {
+          console.log(
+            `[warmup] fast-path catchup +${Date.now() - requestStartMs}ms games=${tick.catchup.gameIds.join(",")}`,
+          );
+        }
+      },
+    },
+    {
+      requestStartMs,
+      deadlineAtMs,
+      initialFetchOk: initialFetch.ok,
+      games,
+      liveGameIds,
+    },
+  );
 
-    // Broadcast 채널 준비 (스펙 v4 §서버 2) — start 윈도우 경기에 env별 채널 생성(멱등).
-    let laChannels: LaAxisResult["laChannels"] = { created: 0 };
-    try {
-      laChannels = await ensureLiveActivityChannels(games);
-    } catch (e) {
-      laChannels = { error: (e as Error).message };
-      console.error("[warmup] la channel ensure failed:", (e as Error).message);
-    }
-
-    // 레거시(per-토큰) 갱신 — 채널 행의 지난 틱 상태를 읽으므로 broadcast보다 먼저 실행.
-    let liveActivity: LaAxisResult["liveActivity"] = { pushed: 0, ended: 0, cleaned: 0 };
-    try {
-      liveActivity = await pushLiveActivityUpdates(games, lastPlayByGame);
-    } catch (e) {
-      liveActivity = { error: (e as Error).message };
-      console.error("[warmup] live activity push failed:", (e as Error).message);
-    }
-
-    // Broadcast 채널 갱신 (스펙 v4 §서버 5·6).
-    let laBroadcast: LaAxisResult["laBroadcast"] = {
-      updates: 0, heartbeats: 0, catchups: 0, skipped: 0, ends: 0, deleted: 0,
-    };
-    try {
-      laBroadcast = await pushLiveActivityChannelBroadcasts(games, lastPlayByGame);
-    } catch (e) {
-      laBroadcast = { error: (e as Error).message };
-      console.error("[warmup] la broadcast failed:", (e as Error).message);
-    }
-
-    // 잠금화면 LA 자동 시작 (W3b) — 게임 단위 1회 선점이라 중복 시작 없음.
-    let liveActivityStart: LaAxisResult["liveActivityStart"] = { started: 0 };
-    try {
-      liveActivityStart = await pushLiveActivityStarts(games);
-    } catch (e) {
-      liveActivityStart = { error: (e as Error).message };
-      console.error("[warmup] live activity start failed:", (e as Error).message);
-    }
-
-    // iOS 홈 위젯 무음 갱신 (1.0.9 build 17) — 자체 CAS 커서라 순서 무관이지만 본체 순서 유지.
-    let iosWidget: LaAxisResult["iosWidget"] = { games: 0, sent: 0, failed: 0, skipped: 0, cleaned: 0 };
-    try {
-      iosWidget = await pushIosWidgetLiveUpdates(games, lastPlayByGame);
-    } catch (e) {
-      iosWidget = { error: (e as Error).message };
-      console.error("[warmup] ios widget live update failed:", (e as Error).message);
-    }
-
-    return { lastPlayByGame, laChannels, liveActivity, laBroadcast, liveActivityStart, iosWidget };
-  })();
-  // 서브틱 게이트용 완료 신호 — 각 단계가 자체 try/catch라 reject는 없지만 방어적으로 흡수.
-  const laAxisDone: Promise<void> = laAxisPromise.then(() => undefined, () => undefined);
-
-  const shouldRetryFast = !initialFetch.ok || liveGameIds.length > 0;
   const { initialPromise: initialAndroidWidgetPromise, fastPromise: fastRefreshPromise } =
     startWidgetRefreshPipelines<AndroidWidgetResult>({
       pushInitial: pushAndroidWidgetLiveUpdates,
-      runFast: () => shouldRetryFast
-        ? runWidgetFastLoop(
-            {
-              now: () => Date.now(),
-              sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
-              fetchLiveGames: () =>
-                fetchKboLiveGames(date, Math.min(deadlineAtMs, Date.now() + 10_000)),
-              // 서브틱 fast path — diff도 catch-up pending도 없으면 DB/APNs/FCM 무접근 즉시
-              // 반환(conn pool 보호), 변화 시 안드 위젯 ∥ (레거시 LA → broadcast → iOS 위젯) ∥
-              // 득점 푸시 재실행, 무변화 첫 틱은 유실 대비 broadcast-only catch-up 1회(삼순 R1②).
-              // 시작알림/순위/요약/활약/autostart/wake는 분 단위 본체 전용(#798/#800 게이트 비간섭).
-              // 게이트: LA 축 완료만 대기(느린 본체 무관 — 삼순 R1①), deadline 유계.
-              pushWidgets: gateFastPathOnLaAxis({
-                laAxisDone,
-                deadlineAtMs,
-                now: () => Date.now(),
-                sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
-                runTick: async (freshGames, trace) => {
-                  const tick = await runLiveFastPathTick(
-                    {
-                      now: () => Date.now(),
-                      fetchRelayLines: fetchRelayLinesForFastPath,
-                      pushAndroid: (gs, tr) =>
-                        pushAndroidWidgetLiveUpdates(gs, baseUrl, {
-                          dedupeAgainstLast: true,
-                          deadlineAtMs,
-                          sourceAtMs: tr.sourceAtMs,
-                          fetchedAtMs: tr.fetchedAtMs,
-                        }),
-                      pushLegacyLa: (gs, lp) => pushLiveActivityUpdates(gs, lp),
-                      pushBroadcast: (gs, lp) => pushLiveActivityChannelBroadcasts(gs, lp),
-                      // 유실 catch-up — 무변화여도 해당 경기 p10 current-state 강제 재발송.
-                      pushBroadcastCatchup: (gs, lp, ids) =>
-                        pushLiveActivityChannelBroadcasts(gs, lp, {
-                          forceCurrentStateGameIds: new Set(ids),
-                        }),
-                      pushIosWidget: (gs, lp) => pushIosWidgetLiveUpdates(gs, lp),
-                      fetchGameEvents: fetchGameEventsForFastPath,
-                      notifyScore: (gs, ev) => notifyScoreEvents(gs, ev),
-                    },
-                    fastPathState,
-                    freshGames,
-                    trace,
-                  );
-                  // 계측 — diff 감지(KBO 응답 확보)→발송 완료 latency. 배포 후 효과 실측용.
-                  if ("detectToSendMs" in tick) {
-                    console.log(
-                      `[warmup] fast-path tick +${Date.now() - requestStartMs}ms changed=${tick.changedGameIds.join(",")}` +
-                      ` scoreChanged=${tick.scoreChangedLiveGameIds.join(",") || "-"} detect→send ${tick.detectToSendMs}ms`,
-                    );
-                  } else if (tick.catchup) {
-                    console.log(
-                      `[warmup] fast-path catchup +${Date.now() - requestStartMs}ms games=${tick.catchup.gameIds.join(",")}`,
-                    );
-                  }
-                  return tick;
-                },
-              }),
-            },
-            { requestStartMs },
-          )
-        : Promise.resolve([]),
+      // 서브틱 fast path — diff도 catch-up pending도 없으면 DB/APNs/FCM 무접근 즉시 반환
+      // (conn pool 보호), 변화 시 안드 위젯 ∥ broadcast(크리티컬) ∥ 득점 푸시 + 느린 fanout
+      // 큐잉, 무변화 첫 틱은 유실 대비 broadcast-only p10 catch-up 1회(삼순 R1②·R2③).
+      // 시작알림/순위/요약/활약/autostart/wake는 분 단위 본체 전용(#798/#800 게이트 비간섭).
+      runFast: () => laOrchestration.runFastLoop(),
     }, {
       requestStartMs,
       overallDeadlineAtMs: deadlineAtMs,
@@ -447,14 +364,22 @@ export async function GET(req: NextRequest) {
   // 상태가 바뀐 경기만 발사해 배터리/FCM 쿼터 부담을 막는다. deadline은 *요청 진입 시각*
   // 기준 절대값(FAST_LOOP_DEADLINE_MS)이라 위 warmup 본작업이 오래 걸려도 maxDuration(75s)/
   // 다음 크론 틱과 겹치지 않는다. 오케스트레이션은 widget-fast-loop.ts(테스트 커버) 참조.
-  // LA 축은 초기 fetch 직후 독립 실행됨(삼순 R1①) — 여기서 결과만 회수.
-  const [laAxis, androidWidget, fastRefresh] = await Promise.all([
-    laAxisPromise,
+  // LA 친리티컬/느린 fanout은 초기 fetch 직후 독립 실행됨(삼순 R2①) — 여기서 결과만 회수.
+  // drainFanout은 cycle0(레거시/start/iOS 위젯) + 서브틱 fanout 완료까지 대기 — 발송 tail은
+  // maxDuration(75s) 마진이 감싸고, 이 대기는 서브틱을 더 이상 막지 않는다(응답용 회수일 뿐).
+  const [laCritical, laFanout, androidWidget, fastRefresh] = await Promise.all([
+    laOrchestration.criticalPromise,
+    laOrchestration.drainFanout(),
     androidWidgetPromise,
     fastRefreshPromise,
   ]);
-  const { lastPlayByGame, laChannels, liveActivity, laBroadcast, liveActivityStart, iosWidget } =
-    laAxis;
+  const { lastPlayByGame, laChannels, laBroadcast } = laCritical;
+  const cycle0Fanout = laFanout.find((f) => f.label === "cycle0")?.result as
+    | { legacyLa?: unknown; liveActivityStart?: unknown; iosWidget?: unknown }
+    | undefined;
+  const liveActivity = cycle0Fanout?.legacyLa ?? { error: "la_fanout_missing" };
+  const liveActivityStart = cycle0Fanout?.liveActivityStart ?? { error: "la_fanout_missing" };
+  const iosWidget = cycle0Fanout?.iosWidget ?? { error: "la_fanout_missing" };
 
   return NextResponse.json({
     date,
@@ -473,6 +398,8 @@ export async function GET(req: NextRequest) {
     liveActivityWake,
     iosWidget,
     fastRefresh,
+    // 서브틱 느린 fanout 결과(레거시/iOS 위젯 — 큰 단위 관제용). cycle0은 위 필드로 평탄화.
+    laFanoutTicks: laFanout.filter((f) => f.label !== "cycle0"),
     lastPlays: Object.fromEntries(lastPlayByGame),
     results: results.map(r =>
       r.status === "fulfilled"
