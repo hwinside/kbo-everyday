@@ -14,7 +14,7 @@ import {
   type VenueInfo,
 } from "@/lib/venue-stories/types";
 import { consentStorageKey } from "@/lib/venue-stories/auth-consent";
-import { createPickSession, type PickSession } from "@/lib/venue-stories/pick-session";
+import { createPickController, type PickController } from "@/lib/venue-stories/pick-controller";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
 
 interface Props {
@@ -38,28 +38,32 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   // → 픽 대기 안내 오버레이 (하린아빠 7/23 21:05 리포트). 상태 전이는 pick-session 순수 모듈이 소유:
   // 수동 취소/닫기 후 late change 무시 · 준비 중 재진입 차단 (삼순 #805 blocker)
   const [picking, setPicking] = useState(false);
-  const pickSessionRef = useRef<PickSession | null>(null);
-  const pickCancelListenerRef = useRef<(() => void) | null>(null);
-  const pickTokenRef = useRef<number | null>(null);
-  const pickSession = () =>
-    (pickSessionRef.current ??= createPickSession(setPicking));
-  const detachPickCancelListener = () => {
-    const input = inputRef.current;
-    const handler = pickCancelListenerRef.current;
-    if (input && handler) input.removeEventListener("cancel", handler);
-    pickCancelListenerRef.current = null;
-  };
+  // controller의 onFile은 생성 시 1회 결속되므로, 최신 render closure를 ref로 우회한다
+  const handlePickedFileRef = useRef<(file: File | null) => void>(() => {});
+  const pickControllerRef = useRef<PickController | null>(null);
+  const pickController = () =>
+    (pickControllerRef.current ??= createPickController({
+      // 픽마다 **새 input 인스턴스** 생성 — 토큰이 이 인스턴스의 handler closure에 결속되어
+      // 이전 픽(A)의 late change/cancel이 새 픽(B)으로 오인될 수 없다 (삼순 #805 라운드4)
+      openNative: ({ onChange, onCancel }) => {
+        const input = document.createElement("input");
+        input.type = "file";
+        input.accept = "image/*,video/*";
+        input.addEventListener("change", () => onChange(input.files?.[0] ?? null), { once: true });
+        input.addEventListener("cancel", () => onCancel(), { once: true });
+        input.click();
+      },
+      onFile: (file) => handlePickedFileRef.current(file),
+      onStateChange: setPicking,
+    }));
   const cancelPick = () => {
-    pickSession().cancel();
-    pickTokenRef.current = null;
-    detachPickCancelListener();
+    pickController().cancel();
   };
   const [error, setError] = useState<string | null>(null);
   const [venue, setVenue] = useState<VenueInfo | null>(null);
   const [venueLoading, setVenueLoading] = useState(false);
   const [agreed, setAgreed] = useState(false);
   const [sessionUserId, setSessionUserId] = useState<string | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
 
   // UGC 가이드라인 동의 — 버전별 + **user-scoped** 기억(삼순 09:44 #3: 계정 전환 시 타 계정
   // 동의 상속 금지). userId 미상이면 기억하지 않는다. 서버가 최종 검증하므로 이건 UX 편의용.
@@ -148,31 +152,11 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
 
   const openPicker = () => {
     if (submitting) return;
-    const input = inputRef.current;
-    if (!input) return;
-    // 한 번에 하나의 in-flight 픽만 허용 — 준비 중 두 번째 픽커 경합 차단. 토큰으로 이번 픽을 식뱄
-    const token = pickSession().open();
-    if (token == null) return;
-    // Safari 16.4+는 픽커 취소 시 input에 'cancel' 이벤트를 준다 — 대기 오버레이 해제용.
-    // 성공 선택 시엔 발화하지 않으므로 누적 방지를 위해 이전 listener를 먼저 제거한다
-    detachPickCancelListener();
-    const handler = () => cancelPick();
-    pickCancelListenerRef.current = handler;
-    input.addEventListener("cancel", handler, { once: true });
-    // 이번 open이 발급한 토큰을 change handler가 들고 있다가 검증한다(late/stale 구분)
-    pickTokenRef.current = token;
-    input.click();
+    // 재진입/late-event 방어는 controller가 소유 (픽별 새 input + 토큰 closure 결속)
+    pickController().openPicker();
   };
 
-  const onPick = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0];
-    e.target.value = "";
-    // 이 change를 유발한 open의 토큰. 취소/교체되면 activeToken과 어깋나 → 무시된다
-    const token = pickTokenRef.current;
-    pickTokenRef.current = null;
-    // 세션이 취소되거나 다른 픽으로 교체된 뒤 도착한 late/stale change → 파일 무시
-    if (!pickSession().resolveChange(token)) return;
-    detachPickCancelListener();
+  const handlePickedFile = (f: File | null) => {
     if (!f || submitting) return;
     setError(null);
     const isVideo = f.type.startsWith("video/");
@@ -191,6 +175,10 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
     setPreviewUrl(URL.createObjectURL(f));
     setPreviewType(isVideo ? "video" : "image");
   };
+  useEffect(() => {
+    // render마다 최신 closure로 갱신 — controller의 1회 결속 onFile이 stale state를 보지 않게
+    handlePickedFileRef.current = handlePickedFile;
+  });
 
   const submit = async () => {
     if (!file || submitting) return;
@@ -361,15 +349,6 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
                 </button>
               </div>
             )}
-
-            <input
-              ref={inputRef}
-              type="file"
-              accept="image/*,video/*"
-              disabled={submitting}
-              className="hidden"
-              onChange={onPick}
-            />
 
             {/* iOS 사진앱 영상 export 대기 구간 안내 — 픽커가 닫힌 뒤 change 이벤트까지 수 초간 무피드백이던 구간 (7/23 리포트) */}
             {picking && !submitting && (

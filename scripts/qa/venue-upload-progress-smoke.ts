@@ -143,76 +143,93 @@ async function main() {
     ok("onPick이 submitting 중 무시", /if \(!f \|\| submitting\) return;/.test(src));
     const disabledCount = (src.match(/disabled=\{submitting\}/g) ?? []).length;
     // 닫기 버튼 + 선택 CTA + 다시선택 + hidden file input + caption + 동의 checkbox = 6곳
-    ok(`disabled={submitting} 6곳 이상 (현재 ${disabledCount})`, disabledCount >= 6);
+    ok(`disabled={submitting} 5곳 이상 — 정적 hidden input 제거로 6→5 (현재 ${disabledCount})`, disabledCount >= 5);
     ok("caption input에 disabled 적용", /maxLength=\{200\}\s*\n\s*disabled=\{submitting\}/.test(src));
     ok("동의 checkbox에 disabled 적용", /onChange=\{toggleAgree\}\s*\n\s*disabled=\{submitting\}/.test(src));
 
     // 픽 대기 안내 배선 — iOS 영상 export 무피드백 구간 (7/23 리포트)
     console.log("[픽 대기 안내 배선 — openPicker/pick-session 연결]");
-    ok("openPicker가 pick-session 토큰 발급+재진입 차단", /const token = pickSession\(\)\.open\(\);\s*\n\s*if \(token == null\) return;/.test(src));
-    ok("onPick이 발급 토큰으로 resolveChange(late/stale 무시)", /const token = pickTokenRef\.current;[\s\S]{0,120}?if \(!pickSession\(\)\.resolveChange\(token\)\) return;/.test(src));
+    ok("openPicker가 controller에 위임(공유 토큰 ref 없음)", /pickController\(\)\.openPicker\(\);/.test(src) && !src.includes("pickTokenRef"));
+    ok("픽마다 새 input 인스턴스 생성(공유 input 없음)", /document\.createElement\("input"\)/.test(src) && !src.includes("inputRef"));
+    ok("change/cancel handler가 인스턴스에 once 결속", /addEventListener\("change", \(\) => onChange\(input\.files\?\.\[0\] \?\? null\), \{ once: true \}\)/.test(src) && /addEventListener\("cancel", \(\) => onCancel\(\), \{ once: true \}\)/.test(src));
     ok("reset()이 in-flight 픽 invalidate(cancelPick)", /const reset = \(\) => \{[\s\S]{0,120}?cancelPick\(\);/.test(src));
-    ok("cancel listener 누적 방지(선제거 후 등록)", /detachPickCancelListener\(\);\s*\n\s*const handler = \(\) => cancelPick\(\);/.test(src));
+    ok("onFile 최신 closure 유지(ref 우회)", /handlePickedFileRef\.current = handlePickedFile;/.test(src));
     ok("수동 취소 버튼도 cancelPick 사용", /onClick=\{cancelPick\}/.test(src));
-    ok("픽 CTA가 openPicker 사용(직접 click 잔존 0)", !src.includes("inputRef.current?.click()") && (src.match(/onClick=\{openPicker\}/g) ?? []).length === 2);
+    ok("픽 CTA가 openPicker 사용(직접 click 잔존 0)", (src.match(/onClick=\{openPicker\}/g) ?? []).length === 2);
     ok("대기 안내 UI는 업로드 중엔 미표시(picking && !submitting)", /picking && !submitting && \(/.test(src));
   }
 
-  console.log("[pick-session identity 회귀 — 삼순 #805 라운드3 시나리오]");
+  console.log("[pick-controller identity 회귀 — production 배선 경유 (삼순 #805 라운드4)]");
   {
-    const { createPickSession } = await import("../../src/lib/venue-stories/pick-session");
+    const { createPickController } = await import("../../src/lib/venue-stories/pick-controller");
+    type Handlers = { onChange: (f: unknown) => void; onCancel: () => void };
+    const fileA = { name: "a.mov" };
+    const fileB = { name: "b.mov" };
 
-    // 시나리오 1: open → 수동 취소 → late change 무시(취소한 선택이 되살아나면 안 됨)
+    const make = () => {
+      const picks: Handlers[] = [];
+      const files: unknown[] = [];
+      const states: boolean[] = [];
+      const ctrl = createPickController({
+        openNative: (h) => picks.push(h as Handlers),
+        onFile: (f) => files.push(f),
+        onStateChange: (p) => states.push(p),
+      });
+      return { ctrl, picks, files, states };
+    };
+
+    // 삼순 핵심 시나리오: open A → cancel A → open B → A의 late change → B 유지, A 파일 무반영 → B change 유효
     {
-      const seen: boolean[] = [];
-      const s = createPickSession((p) => seen.push(p));
-      const t = s.open();
-      ok("open 토큰 발급", typeof t === "number" && s.isPicking() === true);
-      s.cancel();
-      ok("수동 취소 후 picking 해제", s.isPicking() === false);
-      ok("취소 세션의 late change 무시(resolveChange=false)", s.resolveChange(t) === false);
-      ok("상태 콜백 순서 true→false, 중복 없음", seen.length === 2 && seen[0] === true && seen[1] === false);
+      const { ctrl, picks, files } = make();
+      ok("A open", ctrl.openPicker() === true && picks.length === 1);
+      ctrl.cancel();
+      ok("B open(재열기)", ctrl.openPicker() === true && picks.length === 2);
+      picks[0].onChange(fileA); // A의 late change — A 인스턴스의 handler로만 도착
+      ok("A late change 무반영(파일 0)", files.length === 0);
+      ok("A late change 후에도 B 세션 유지", ctrl.isPicking() === true);
+      picks[1].onChange(fileB);
+      ok("B change 유효(fileB만 반영)", files.length === 1 && files[0] === fileB && ctrl.isPicking() === false);
     }
 
-    // 시나리오 2 (삼순 핵심): idA open → cancel(idA) → idB open → resolve(idA)=false && B 유지 → resolve(idB)=true
+    // A의 late cancel이 B를 죽이지 않아야 함
     {
-      const s = createPickSession();
-      const idA = s.open();
-      s.cancel();
-      const idB = s.open();
-      ok("A/B 토큰이 서로 다름", idA !== idB && idA != null && idB != null);
-      ok("A의 late change는 B로 오인되지 않음(resolve(idA)=false)", s.resolveChange(idA) === false);
-      ok("A 무시 후에도 B 세션 유지", s.isPicking() === true);
-      ok("B의 정상 change는 유효(resolve(idB)=true)", s.resolveChange(idB) === true && s.isPicking() === false);
+      const { ctrl, picks } = make();
+      ctrl.openPicker();
+      ctrl.cancel();
+      ctrl.openPicker();
+      picks[0].onCancel(); // A의 late cancel
+      ok("A late cancel이 B 세션을 죽이지 않음", ctrl.isPicking() === true);
+      picks[1].onCancel();
+      ok("B 자신의 cancel은 유효", ctrl.isPicking() === false);
     }
 
-    // 시나리오 3: close/reset(cancel) → reopen 정상, 이전 토큰 change는 무시
+    // 수동 취소 → late change 무시 + 상태 콜백 순서
     {
-      const s = createPickSession();
-      const idA = s.open();
-      s.cancel(); // close/reset
-      const idB = s.open();
-      ok("reopen 성공(스피너 잔존 없이 새 세션)", idB != null && s.isPicking() === true);
-      ok("reopen 후 이전 토큰 change 무시", s.resolveChange(idA) === false && s.isPicking() === true);
-      ok("새 세션 change는 유효", s.resolveChange(idB) === true && s.isPicking() === false);
+      const { ctrl, picks, files, states } = make();
+      ctrl.openPicker();
+      ctrl.cancel();
+      picks[0].onChange(fileA);
+      ok("취소 후 late change 무시", files.length === 0 && ctrl.isPicking() === false);
+      ok("상태 콜백 true→false 중복 없음", states.join(",") === "true,false");
     }
 
-    // 시나리오 4: 준비 중 재진입 차단 — 한 번에 하나의 in-flight 픽만
+    // 준비 중 재진입 차단 — native picker가 두 번 열리지 않음
     {
-      const s = createPickSession();
-      const idA = s.open();
-      ok("1차 open 허용", idA != null);
-      ok("준비 중 2차 open 차단(null)", s.open() === null);
-      ok("차단돼도 기존 세션 유지", s.isPicking() === true && s.resolveChange(idA) === true);
+      const { ctrl, picks } = make();
+      ok("1차 open 허용", ctrl.openPicker() === true);
+      ok("준비 중 2차 open 차단(native 미호출)", ctrl.openPicker() === false && picks.length === 1);
+      picks[0].onChange(fileA);
+      ok("차단돼도 기존 세션 정상 종결", ctrl.isPicking() === false);
     }
 
-    // 시나리오 5: null/무효 토큰 방어 + 성공 후 재선택 사이클 반복
+    // 성공 선택 후 재선택 사이클 반복 + 같은 인스턴스 중복 change 무시
     {
-      const s = createPickSession();
-      ok("활성 세션 없을 때 resolveChange(null)=false", s.resolveChange(null) === false);
-      const t1 = s.open(); s.resolveChange(t1);
-      const t2 = s.open();
-      ok("재선택 사이클 반복 정상", s.isPicking() === true && s.resolveChange(t2) === true);
+      const { ctrl, picks, files } = make();
+      ctrl.openPicker();
+      picks[0].onChange(fileA);
+      picks[0].onChange(fileA); // 중복 late fire
+      ok("같은 픽 중복 change는 1회만 반영", files.length === 1);
+      ok("재선택 사이클 정상", ctrl.openPicker() === true && picks.length === 2);
     }
   }
 

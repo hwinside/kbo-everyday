@@ -18,8 +18,11 @@
 export interface PickSession {
   /** 새 픽 시작. 성공 시 토큰, 진행 중이면 null. */
   open(): number | null;
-  /** 활성 세션 취소(수동 취소/닫기/reset). */
-  cancel(): void;
+  /**
+   * 활성 세션 취소(수동 취소/닫기/reset).
+   * token을 주면 그 토큰이 아직 활성일 때만 취소(다른 픽의 late cancel이 현재 세션을 죽이지 않게).
+   */
+  cancel(token?: number): void;
   /** change 도착 검증. 발급받은 토큰을 넘긴다. 일치 시 true+종료, 아니면 false. */
   resolveChange(token: number | null): boolean;
   isPicking(): boolean;
@@ -37,8 +40,10 @@ export function createPickSession(onStateChange?: (picking: boolean) => void): P
       emit(true);
       return activeToken;
     },
-    cancel() {
+    cancel(token?: number) {
       if (activeToken == null) return;
+      // 토큰 지정 시 자기 세션이 아니면 no-op (stale cancel 무시)
+      if (token != null && token !== activeToken) return;
       activeToken = null;
       emit(false);
     },

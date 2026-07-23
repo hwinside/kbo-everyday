@@ -207,7 +207,8 @@ export default function VenueStoryViewer({
         className="absolute left-0 right-0 z-20 flex items-center gap-2 px-3"
         style={{ top: "calc(env(safe-area-inset-top, 0px) + 16px)" }}
       >
-        <div className="w-8 h-8 rounded-full bg-white/20 overflow-hidden shrink-0">
+        {/* story.id key로 remount — 이전 스토리에서 onError로 숨긴 img/flex 폴백이 다음 스토리에 남지 않게 (삼순 #805) */}
+        <div key={`avatar-${story.id}`} className="w-8 h-8 rounded-full bg-white/20 overflow-hidden shrink-0">
           {story.author.avatarUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
