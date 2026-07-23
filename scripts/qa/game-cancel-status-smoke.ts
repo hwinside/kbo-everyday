@@ -1,7 +1,41 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { isKboGameCancelled } from "../../src/lib/crawler/kbo-status";
-import { isStartNotificationFresh } from "../../src/lib/notifications/start-freshness-policy";
+import {
+  isStartNotificationFresh,
+  shouldSendStartNotification,
+  SCHEDULED_SEEN_RECENT_MS,
+} from "../../src/lib/notifications/start-freshness-policy";
+
+// 2026-07-23 삼순 post-merge blocker — 정시-only 게이트 경계 회귀 4종
+// (정상 시작 / 이미 진행 / 장애 복구 / 우천 지연 실제 시작)
+const NOW = 1_784_800_000_000;
+test("정시 게이트: 정상 시작 — 1분 전 scheduled 관측 → 발송", () => {
+  assert.equal(shouldSendStartNotification({
+    lastSeenScheduledAtMs: NOW - 60_000, nowMs: NOW, inningNo: 1, isTop: true,
+  }), true);
+});
+test("정시 게이트: 첫 관측이 이미 live(scheduled 관측 이력 없음) → mark-only", () => {
+  assert.equal(shouldSendStartNotification({
+    lastSeenScheduledAtMs: null, nowMs: NOW, inningNo: 1, isTop: true,
+  }), false);
+});
+test("정시 게이트: 장애 복구 — 마지막 scheduled 관측이 stale(5분 초과) → mark-only", () => {
+  assert.equal(shouldSendStartNotification({
+    lastSeenScheduledAtMs: NOW - SCHEDULED_SEEN_RECENT_MS - 1_000, nowMs: NOW, inningNo: 1, isTop: true,
+  }), false);
+});
+test("정시 게이트: 우천 지연 실제 시작 — 지연 내내 scheduled 관측 지속하다 전환 직후 → 발송", () => {
+  // 예정 18:30 경기가 60분 지연돼도 cron은 매분 scheduled를 관측 — 전환 2분 전 관측이면 발송
+  assert.equal(shouldSendStartNotification({
+    lastSeenScheduledAtMs: NOW - 120_000, nowMs: NOW, inningNo: 1, isTop: true,
+  }), true);
+});
+test("정시 게이트: 최근 관측이어도 이미 진행된 경기(1회말+) → mark-only(이중 안전망)", () => {
+  assert.equal(shouldSendStartNotification({
+    lastSeenScheduledAtMs: NOW - 60_000, nowMs: NOW, inningNo: 3, isTop: false,
+  }), false);
+});
 
 // 2026-07-23 하린아빠 지시 — "이미 늦은 시작알림은 발송 안되게 가드": 이닝 진행도 기반 뒷북 차단.
 test("시작알림 신선도: 1회초는 발송(정상 개시·우천 지연 개시 포함)", () => {
