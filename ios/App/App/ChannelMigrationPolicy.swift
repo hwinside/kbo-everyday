@@ -137,3 +137,71 @@ enum ChannelMigrationPolicy {
     }
 
 }
+
+// MARK: - 실행 orchestrator — 삼순 R5 blocker (조립 코드 주입 가능 추출 + fetch 후 재게이트)
+
+/// `LiveActivityController.reconcileGameSerialized`의 request/end 조립 순서를 그대로 추출한
+/// 실행 orchestrator(Foundation 전용). 게이트·순서·실패 처리 등 흐름 제어는 전부 여기 한 곳에
+/// 있고, Controller는 ActivityKit/UIKit effect(포그라운드 조회·fetch·request·end·ack)만
+/// closure로 주입한다 — 스모크가 mock effect로 *동일한 조립 코드*를 실행해 배선 회귀를
+/// 고정한다(삼순 R5 blocker②: policy 순수함수만 검증하던 회귀의 공백 해소).
+enum ChannelMigrationOrchestrator {
+
+    /// reconcile 1회 실행 결과 — 실행측 로깅·스모크 검증용 관측치.
+    enum Outcome: Equatable {
+        case abortBackgroundPreFetch    // fetch 이전 background — effect 0, 다음 foreground 재시도
+        case abortLegacyGone            // 카드 이미 정리(start 스윕 등) — 할 일 없음
+        case abortBackgroundPostFetch   // R5 blocker① — fetch await 중 background 전환: request/end 0, 전 카드 유지
+        case retryNextForeground        // active 채널 부재/GET 일시 실패 — 전 카드 유지
+        case adopted(keep: Int, ended: [Int])          // 현재 카드 재-ack 후 비현재 end
+        case recreated(channelId: String, ended: [Int]) // request 성공 후 스냅샷 전 카드 end
+        case requestFailedKeepAll       // request 실패 — end 0, 전 카드 유지
+    }
+
+    /// - Parameters:
+    ///   - cardChannelIds: 직렬 구간 진입 시점의 game active 카드 marker 스냅샷(레거시 nil).
+    ///   - isForegroundActive: MainActor에서 `applicationState == .active` 조회 — *호출 시점마다
+    ///     재평가*된다(fetch 전 1회 + fetch 후 request/end 직전 1회, R5 blocker①).
+    ///   - fetchActiveChannel: GET /api/live-activity/channel 1회 조회.
+    ///   - adoptCurrent: 현재 채널 카드(keep idx) 재-ack + currentActivity 승계.
+    ///   - requestCurrent: 현재 채널로 `Activity.request` — 성공 여부 반환(실패 = end 금지).
+    ///   - endCard: 스냅샷 idx 카드 end(.immediate).
+    static func reconcile(
+        cardChannelIds: [String?],
+        isForegroundActive: () async -> Bool,
+        fetchActiveChannel: () async -> ChannelAckPolicy.ChannelFetch,
+        adoptCurrent: (Int) async -> Void,
+        requestCurrent: (String) async -> Bool,
+        endCard: (Int) async -> Void
+    ) async -> Outcome {
+        // 직렬 구간 재검증 — 락 대기 중 background 전환/카드 선정리(R2 blocker③).
+        switch ChannelMigrationPolicy.recheck(
+            isForegroundActive: await isForegroundActive(),
+            legacyStillActive: !cardChannelIds.isEmpty
+        ) {
+        case .abortBackground: return .abortBackgroundPreFetch
+        case .abortLegacyGone: return .abortLegacyGone
+        case .proceed: break
+        }
+        let fetch = await fetchActiveChannel()
+        // R5 blocker① — 채널 fetch를 await하는 동안 앱이 background로 전환됐을 수 있다.
+        // request/end 바로 전에 foreground를 재확인하고, background면 effect 0으로 중단
+        // (전 카드 유지 = no-op). 다음 foreground(didBecomeActive)가 reconcile을 재시도한다.
+        guard await isForegroundActive() else { return .abortBackgroundPostFetch }
+        switch ChannelMigrationPolicy.reconcile(cardChannelIds: cardChannelIds, fetch: fetch) {
+        case .retryNextForeground:
+            return .retryNextForeground
+        case .adoptCurrent(let keep, let end):
+            // 현재 카드 확보(재-ack) 확인 후에만 비현재 end — 카드 0장 불가.
+            await adoptCurrent(keep)
+            for idx in end { await endCard(idx) }
+            return .adopted(keep: keep, ended: end)
+        case .requestCurrent(let channelId, let end):
+            // current-first: request 성공 후에만 스냅샷 전 카드 end. 실패 시 전 카드 유지.
+            guard await requestCurrent(channelId) else { return .requestFailedKeepAll }
+            for idx in end { await endCard(idx) }
+            return .recreated(channelId: channelId, ended: end)
+        }
+    }
+
+}

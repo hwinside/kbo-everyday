@@ -568,73 +568,75 @@ final class LiveActivityController {
 
     /// 경기 직렬 큐 안에서 실행되는 game 단위 reconcile 본체 — 락 대기 중 변한 상태를 재검증한다.
     /// 직렬 구간이므로 같은 game의 start()/end()와 배타적 — liveCards 스냅샷은 이 구간 내 안정.
+    /// R5: 게이트·순서·실패 처리 조립은 ChannelMigrationOrchestrator 한 곳 — 여기서는
+    /// ActivityKit/UIKit effect만 주입한다(스모크가 mock effect로 동일 조립 코드를 실행).
     @available(iOS 18.0, *)
     private func reconcileGameSerialized(gameId: String) async {
-        // 직렬 구간 재검증 — 락 대기 중 start() 스윕이 카드를 정리했거나 앱이 background로
-        // 전환됐을 수 있다. request 직전 최종 게이트(R2 blocker③ — background request 0).
-        let foreground = await MainActor.run { UIApplication.shared.applicationState == .active }
         let liveCards = Activity<KBOGameAttributes>.activities.filter {
             $0.attributes.gameId == gameId && $0.activityState == .active
         }
-        switch ChannelMigrationPolicy.recheck(
-            isForegroundActive: foreground,
-            legacyStillActive: !liveCards.isEmpty   // active 카드 전부 사라졌으면 할 일 없음
-        ) {
-        case .abortBackground:
-            return   // 다음 foreground(didBecomeActive)가 재시도 — 마킹 없음
-        case .abortLegacyGone:
-            return   // start() 채널-우선 스윕 등이 이미 정리 — 할 일 없음
-        case .proceed:
-            break
-        }
-        // 현재 active 채널 1회 조회 후 game 단위 플랜 — 카드 marker 배열과 대조.
-        let fetch = await fetchActiveChannel(gameId: gameId)
         let cardChannelIds = liveCards.map { $0.attributes.channelId }
-        switch ChannelMigrationPolicy.reconcile(cardChannelIds: cardChannelIds, fetch: fetch) {
-        case .retryNextForeground:
-            return   // active 채널 없음/GET 일시 실패 — 전 카드 유지, 다음 포그라운드 재검사
-        case .adoptCurrent(let keep, let end):
-            // 현재 채널 카드 이미 존재 — 신규 request 0. 현재 카드 재-ack 후 비현재 전부 정리.
-            let currentCard = liveCards[keep]
-            guard let channelId = cardChannelIds[keep] else { return }   // keep은 항상 marker 보유
-            ackChannelActivity(gameId: gameId, channelId: channelId, activityId: currentCard.id)
-            if currentActivity?.attributes.gameId == gameId,
-               currentActivity?.attributes.channelId != channelId {
-                currentActivity = currentCard
-            }
-            // 현재 카드 확보 확인 후에만 비현재(구채널·레거시·중복) end — 카드 0장 불가.
-            for idx in end {
+        let outcome = await ChannelMigrationOrchestrator.reconcile(
+            cardChannelIds: cardChannelIds,
+            isForegroundActive: {
+                // MainActor에서 매 호출 재평가 — 직렬 구간 진입 직후 1회 + channel fetch를
+                // await한 뒤 request/end 직전 1회(R5 blocker① — fetch 중 background 전환
+                // 시 background local request 0 계약 보장).
+                await MainActor.run { UIApplication.shared.applicationState == .active }
+            },
+            fetchActiveChannel: {
+                // 현재 active 채널 1회 조회 — 카드 marker 배열과 대조해 game 단위 플랜.
+                await self.fetchActiveChannel(gameId: gameId)
+            },
+            adoptCurrent: { keep in
+                // 현재 채널 카드 이미 존재 — 신규 request 0. 현재 카드 재-ack.
+                let currentCard = liveCards[keep]
+                guard let channelId = cardChannelIds[keep] else { return }   // keep은 항상 marker 보유
+                self.ackChannelActivity(gameId: gameId, channelId: channelId, activityId: currentCard.id)
+                if self.currentActivity?.attributes.gameId == gameId,
+                   self.currentActivity?.attributes.channelId != channelId {
+                    self.currentActivity = currentCard
+                }
+            },
+            requestCurrent: { channelId in
+                // 현재 채널 카드 없음 — request 먼저(성공 시에만 orchestrator가 end 진행).
+                guard let template = liveCards.first else { return false }   // recheck에서 비어있지 않음 보장
+                var channelAttributes = template.attributes
+                channelAttributes.channelId = channelId
+                let state = template.contentState
+                do {
+                    let newActivity = try Activity.request(
+                        attributes: channelAttributes,
+                        content: .init(state: state, staleDate: nil),
+                        pushType: .channel(channelId)
+                    )
+                    if self.currentActivity?.attributes.gameId == gameId,
+                       self.currentActivity?.attributes.channelId != channelId {
+                        self.currentActivity = newActivity
+                    }
+                    self.ackChannelActivity(gameId: gameId, channelId: channelId, activityId: newActivity.id)
+                    return true
+                } catch {
+                    NSLog("[LiveActivity] reconcile: →current channel request failed → keep all cards: \(error.localizedDescription)")
+                    return false
+                }
+            },
+            endCard: { idx in
+                // 비현재(구채널·레거시·중복) end — orchestrator가 현재 카드 확보 후에만 호출.
+                // liveCards 스냅샷만 end하므로 방금 request한 새 카드는 살아남는다(카드 0장 불가).
                 let other = liveCards[idx]
                 await other.end(using: other.contentState, dismissalPolicy: .immediate)
             }
-            NSLog("[LiveActivity] reconcile: adopted current channel card, non-current cleaned (game=\(gameId), removed=\(end.count))")
-        case .requestCurrent(let channelId, let end):
-            // 현재 채널 카드 없음 — request 먼저(성공 시에만 end). 실패 시 전 카드 유지.
-            guard let template = liveCards.first else { return }   // recheck에서 비어있지 않음 보장
-            var channelAttributes = template.attributes
-            channelAttributes.channelId = channelId
-            let state = template.contentState
-            do {
-                let newActivity = try Activity.request(
-                    attributes: channelAttributes,
-                    content: .init(state: state, staleDate: nil),
-                    pushType: .channel(channelId)
-                )
-                if currentActivity?.attributes.gameId == gameId,
-                   currentActivity?.attributes.channelId != channelId {
-                    currentActivity = newActivity
-                }
-                ackChannelActivity(gameId: gameId, channelId: channelId, activityId: newActivity.id)
-                // 재생성 성공 후에만 비현재(전부 = 구채널·레거시) end — 카드 0장 불가.
-                // liveCards 스냅샷만 end하므로 방금 만든 newActivity는 살아남는다.
-                for idx in end {
-                    let other = liveCards[idx]
-                    await other.end(using: state, dismissalPolicy: .immediate)
-                }
-                NSLog("[LiveActivity] reconcile: recreated current channel card, non-current cleaned (game=\(gameId), id=\(newActivity.id), removed=\(end.count))")
-            } catch {
-                NSLog("[LiveActivity] reconcile: →current channel request failed → keep all cards: \(error.localizedDescription)")
-            }
+        )
+        switch outcome {
+        case .adopted(_, let ended):
+            NSLog("[LiveActivity] reconcile: adopted current channel card, non-current cleaned (game=\(gameId), removed=\(ended.count))")
+        case .recreated(_, let ended):
+            NSLog("[LiveActivity] reconcile: recreated current channel card, non-current cleaned (game=\(gameId), removed=\(ended.count))")
+        case .abortBackgroundPostFetch:
+            NSLog("[LiveActivity] reconcile: backgrounded during channel fetch → abort, request/end 0 (game=\(gameId))")
+        case .abortBackgroundPreFetch, .abortLegacyGone, .retryNextForeground, .requestFailedKeepAll:
+            break   // no-op 계열(전 카드 유지) — 다음 foreground가 재시도
         }
     }
 

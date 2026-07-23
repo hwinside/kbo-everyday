@@ -17,6 +17,10 @@
 //   ⑧ 영구 캐시 제거 — foreground마다 game 단위 재검사. B→C 연속 채널 교체도 다음 foreground가 잡음
 //   ⑨ [현재 B, 구채널 A/레거시] 순서 무관 — 현재 채널 1장만 남기고 비현재 전부 정리(카드 0장 불가)
 //   ⑩ current-first/stale-first 배선 — reconcile은 현재 확보(adopt/request) 후에만 비현재 end index 반환
+//  라운드5(삼순 R5 blocker 반영 — orchestration 실배선 회귀):
+//   ⑪ ChannelMigrationOrchestrator(Controller가 그대로 소비하는 조립 코드)를 mock
+//     request/end/fetch 주입으로 *실행* — fetch 중 background 전환 시 request/end 0,
+//     current-first 순서(request 성공 후 stale end), request 실패 시 end 0, B→C 수렴 고정
 //
 //  실행: npm run qa:la-migration-policy (macOS/swiftc 필요)
 //
@@ -33,8 +37,9 @@ struct LaChannelMigrationPolicySmoke {
         else { failed += 1; print("❌ FAIL \(name)") }
     }
 
-    static func main() {
+    static func main() async {
         typealias P = ChannelMigrationPolicy
+        typealias O = ChannelMigrationOrchestrator
 
         // ── ① preflight 게이트 표 (R4: game 단위 — 영구 성공 캐시 제거, 라이브 카드 유무 게이트) ──
         print("[① preflight — 포그·라이브카드 존재·비-inflight일 때 진행(영구 캐시 없음)]")
@@ -192,6 +197,152 @@ struct LaChannelMigrationPolicySmoke {
         // retry 경로: 어떤 카드도 end하지 않음(계획 자체가 no-op) → 카드 손실 0.
         check("retry: 계획이 no-op(비현재 end index 없음 — 카드 손실 0)",
               P.reconcile(cardChannelIds: ["chA", nil], fetch: .active(nil)) == .retryNextForeground)
+
+        // ── ⑪ R5 — orchestration 실배선 회귀 (mock request/end/fetch 주입 실행) ──
+        print("[⑪ R5 orchestration — Controller 조립 코드를 mock effect로 실행]")
+        // (a) R5 blocker① — fetch를 await하는 동안 background 전환: request/end/adopt 0, 전 카드 유지.
+        do {
+            var fgCalls = 0
+            var events: [String] = []
+            let outcome = await O.reconcile(
+                cardChannelIds: [nil, "chA"],
+                isForegroundActive: { fgCalls += 1; return fgCalls == 1 },   // fetch 전 active → fetch 후 background
+                fetchActiveChannel: { events.append("fetch"); return .active("chB") },
+                adoptCurrent: { events.append("adopt:\($0)") },
+                requestCurrent: { events.append("request:\($0)"); return true },
+                endCard: { events.append("end:\($0)") }
+            )
+            check("R5(a): fetch 중 background 전환 = abortBackgroundPostFetch",
+                  outcome == .abortBackgroundPostFetch)
+            check("R5(a): request 0 · end 0 · adopt 0 (전 카드 유지 = fetch만 실행)",
+                  events == ["fetch"])
+            check("R5(a): foreground 재게이트가 fetch 이후 실제 재평가됨(2회 조회)",
+                  fgCalls == 2)
+        }
+        // (b) 직렬 구간 진입 전부터 background — fetch 자체도 0회(기존 R2 계약 유지).
+        do {
+            var events: [String] = []
+            let outcome = await O.reconcile(
+                cardChannelIds: [nil],
+                isForegroundActive: { false },
+                fetchActiveChannel: { events.append("fetch"); return .active("chB") },
+                adoptCurrent: { events.append("adopt:\($0)") },
+                requestCurrent: { events.append("request:\($0)"); return true },
+                endCard: { events.append("end:\($0)") }
+            )
+            check("R5(b): 진입 시점 background = abortBackgroundPreFetch · effect 0(fetch도 0)",
+                  outcome == .abortBackgroundPreFetch && events.isEmpty)
+        }
+        // (c) 정상 흐름 current-first 순서 — request 성공 *후*에만 stale end(순서 고정).
+        do {
+            var events: [String] = []
+            let outcome = await O.reconcile(
+                cardChannelIds: [nil, "chA"],   // 레거시 + 구채널 A, 현재 B 카드 없음
+                isForegroundActive: { true },
+                fetchActiveChannel: { events.append("fetch"); return .active("chB") },
+                adoptCurrent: { events.append("adopt:\($0)") },
+                requestCurrent: { events.append("request:\($0)"); return true },
+                endCard: { events.append("end:\($0)") }
+            )
+            check("R5(c): fetch → request(B) 성공 → 그 다음에만 스냅샷 전 카드 end (current-first)",
+                  events == ["fetch", "request:chB", "end:0", "end:1"])
+            check("R5(c): outcome = recreated(B, ended [0,1])",
+                  outcome == .recreated(channelId: "chB", ended: [0, 1]))
+        }
+        // (d) request 실패 — end 0회, 전 카드 유지(카드만 죽고 끝나는 경로 없음).
+        do {
+            var events: [String] = []
+            let outcome = await O.reconcile(
+                cardChannelIds: [nil, "chA"],
+                isForegroundActive: { true },
+                fetchActiveChannel: { events.append("fetch"); return .active("chB") },
+                adoptCurrent: { events.append("adopt:\($0)") },
+                requestCurrent: { events.append("request:\($0)"); return false },   // Activity.request throw 상당
+                endCard: { events.append("end:\($0)") }
+            )
+            check("R5(d): request 실패 = requestFailedKeepAll · end 0(전 카드 유지)",
+                  outcome == .requestFailedKeepAll && events == ["fetch", "request:chB"])
+        }
+        // (e) [현재 B, 구채널 A] adopt 경로 — 재-ack 후 비현재 end, request 0. 역순도 동일.
+        do {
+            var events: [String] = []
+            let outcome = await O.reconcile(
+                cardChannelIds: ["chB", "chA"],
+                isForegroundActive: { true },
+                fetchActiveChannel: { events.append("fetch"); return .active("chB") },
+                adoptCurrent: { events.append("adopt:\($0)") },
+                requestCurrent: { events.append("request:\($0)"); return true },
+                endCard: { events.append("end:\($0)") }
+            )
+            check("R5(e): [B,A]+active B = adopt(keep 0) → A end · request 0",
+                  outcome == .adopted(keep: 0, ended: [1])
+                  && events == ["fetch", "adopt:0", "end:1"])
+            var eventsRev: [String] = []
+            let outcomeRev = await O.reconcile(
+                cardChannelIds: ["chA", "chB"],
+                isForegroundActive: { true },
+                fetchActiveChannel: { eventsRev.append("fetch"); return .active("chB") },
+                adoptCurrent: { eventsRev.append("adopt:\($0)") },
+                requestCurrent: { eventsRev.append("request:\($0)"); return true },
+                endCard: { eventsRev.append("end:\($0)") }
+            )
+            check("R5(e): 역순 [A,B]+active B = adopt(keep 1) → A(idx0) end · request 0",
+                  outcomeRev == .adopted(keep: 1, ended: [0])
+                  && eventsRev == ["fetch", "adopt:1", "end:0"])
+        }
+        // (f) foreground1 B → foreground2 C — mock 카드 저장소로 2회 실행, 매번 현재 1장/비현재 0장 수렴.
+        do {
+            var nextId = 0
+            var cards: [(id: Int, ch: String?)] = [(id: -1, ch: nil)]   // t0: 레거시 1장
+            func runForeground(active: String) async -> O.Outcome {
+                let snapshot = cards   // Controller의 liveCards 스냅샷 상당
+                return await O.reconcile(
+                    cardChannelIds: snapshot.map { $0.ch },
+                    isForegroundActive: { true },
+                    fetchActiveChannel: { .active(active) },
+                    adoptCurrent: { _ in },
+                    requestCurrent: { ch in cards.append((id: nextId, ch: ch)); nextId += 1; return true },
+                    endCard: { idx in cards.removeAll { $0.id == snapshot[idx].id } }
+                )
+            }
+            let o1 = await runForeground(active: "chB")
+            let afterB = cards
+            let o2 = await runForeground(active: "chC")
+            let afterC = cards
+            let o3 = await runForeground(active: "chC")   // 수렴 후 재실행 = adopt no-op
+            check("R5(f): foreground1(active B) = recreated → 카드 [B] 1장 수렴",
+                  o1 == .recreated(channelId: "chB", ended: [0])
+                  && afterB.map { $0.ch } == ["chB"])
+            check("R5(f): foreground2(active C) = recreated → B end, 카드 [C] 1장 수렴(영구 skip 없음)",
+                  o2 == .recreated(channelId: "chC", ended: [0])
+                  && afterC.map { $0.ch } == ["chC"])
+            check("R5(f): 수렴 후 재실행 = adopt(keep 0, end 없음) — request/end 0 no-op",
+                  o3 == .adopted(keep: 0, ended: []) && cards.map { $0.ch } == ["chC"])
+        }
+        // (g) 채널 부재/GET 실패 — orchestration 레벨에서도 effect 0(전 카드 유지) · 빈 카드 = legacyGone.
+        do {
+            var events: [String] = []
+            let retry = await O.reconcile(
+                cardChannelIds: ["chA"],
+                isForegroundActive: { true },
+                fetchActiveChannel: { events.append("fetch"); return .retryableFailure },
+                adoptCurrent: { events.append("adopt:\($0)") },
+                requestCurrent: { events.append("request:\($0)"); return true },
+                endCard: { events.append("end:\($0)") }
+            )
+            check("R5(g): GET 실패 = retryNextForeground · request/end 0",
+                  retry == .retryNextForeground && events == ["fetch"])
+            let gone = await O.reconcile(
+                cardChannelIds: [],
+                isForegroundActive: { true },
+                fetchActiveChannel: { events.append("fetch2"); return .active("chB") },
+                adoptCurrent: { _ in },
+                requestCurrent: { _ in true },
+                endCard: { _ in }
+            )
+            check("R5(g): 카드 이미 정리(0장) = abortLegacyGone · fetch 0",
+                  gone == .abortLegacyGone && !events.contains("fetch2"))
+        }
 
         print("")
         print("결과: PASS \(passed) / FAIL \(failed)")
