@@ -20,6 +20,9 @@ import {
   CHANNEL_HEARTBEAT_INTERVAL_MS,
   activeChannelKeySet,
   isLiveChannelSubscription,
+  countUpdatableUsers,
+  isStaleStartToken,
+  STALE_START_TOKEN_MS,
 } from "../../src/lib/notifications/live-activity-channel-policy";
 
 let pass = 0;
@@ -395,6 +398,36 @@ check("cursor: invalidToken + retryable 혼합(성공 無) → 보류",
     { send: true, priority: "10" });
   check("hb: 경계 직전(2분-1ms) → 유지(과다 발송 방지)",
     applyChannelHeartbeat({ send: false }, t - HB + 1, t), { send: false });
+}
+
+// ── countUpdatableUsers — gap 집계 교정(channel_born 합산, 2026-07-23) ──
+{
+  const started = ["a", "b", "c", "d"];
+  // 교정 전(channel_born 미합산): a=토큰, b=ACK → updatable 2, gap 2.
+  check("updatable: 토큰∪ACK만(기존 집계) → 2",
+    countUpdatableUsers({ started, tokenUsers: new Set(["a"]), channelAckUsers: new Set(["b"]), channelBornUsers: new Set() }), 2);
+  // 교정 후: c가 채널 내장 발송 → updatable 3, gap 1 (ACK 미도착이어도 수신).
+  check("updatable: channel_born 합산 → 3 (gap 과대계상 교정)",
+    countUpdatableUsers({ started, tokenUsers: new Set(["a"]), channelAckUsers: new Set(["b"]), channelBornUsers: new Set(["c"]) }), 3);
+  // 중복(토큰+ACK+내장 동일 유저)은 1로만 셈.
+  check("updatable: 토큰∩ACK∩내장 중복 유저 → 1",
+    countUpdatableUsers({ started: ["a"], tokenUsers: new Set(["a"]), channelAckUsers: new Set(["a"]), channelBornUsers: new Set(["a"]) }), 1);
+  // started 밖 유저(경기룸 방문으로만 뜼 LA)는 분자에 안 셈.
+  check("updatable: started 밖 토큰 유저 미집계",
+    countUpdatableUsers({ started: ["a"], tokenUsers: new Set(["z"]), channelAckUsers: new Set(), channelBornUsers: new Set() }), 0);
+}
+
+// ── isStaleStartToken — ④ 30일+ 휴면 p2s 발송 제외 ──
+{
+  const now = Date.parse("2026-07-23T12:00:00+09:00");
+  check("stale: 30일+1ms 경과 → true",
+    isStaleStartToken(new Date(now - STALE_START_TOKEN_MS - 1).toISOString(), now), true);
+  check("stale: 정확히 30일(경계) → false(발송 유지)",
+    isStaleStartToken(new Date(now - STALE_START_TOKEN_MS).toISOString(), now), false);
+  check("stale: 어제 갱신 → false",
+    isStaleStartToken(new Date(now - 24 * 60 * 60 * 1000).toISOString(), now), false);
+  check("stale: null → false(보수적 — 발송 유지)", isStaleStartToken(null, now), false);
+  check("stale: 파싱 불가 → false(보수적)", isStaleStartToken("not-a-date", now), false);
 }
 
 console.log(`\nla-broadcast-policy-smoke: ${pass} PASS / ${fail} FAIL`);

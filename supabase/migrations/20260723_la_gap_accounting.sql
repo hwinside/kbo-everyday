@@ -1,0 +1,17 @@
+-- Live Activity 갱신불가(gap) 집계 교정 + 무음 wake 계측 (2026-07-23).
+--
+-- ① channel_born: p2s 발송 시 payload에 input-push-channel(channelId)을 내장해 성공한
+--    유저 마킹. 채널 내장으로 태어난 카드(os18+/build16+)는 앱 wake 없이 broadcast로
+--    갱신을 받는데, 어드민 대시보드는 *네이티브 채널 ACK*만 updatable로 인정해
+--    build18 gap이 과대계상됐다(2026-07-23 실측 gap 1,727명 중 상당수 추정).
+--    발송 성공 시점에 서버가 직접 기록해 ACK 미도착과 무관하게 updatable로 합산한다.
+--    ⚠️ 과거 행은 어떤 payload로 발송됐는지 기록이 없어 backfill 불가 —
+--    이 마이그레이션 이후 발송분부터 정확해진다.
+--
+-- ③ wake_attempted_at: 무음 백그라운드 wake(pushLiveActivitySilentWakes) *첫* 시도 시각.
+--    시도 후 update 토큰/채널 ACK가 등록되면(=updatable 전환) 구제 성공으로 집계 —
+--    어드민 API가 wake 성공률을 노출한다. 새 테이블 없이 기존 선점 행에 붙여 최소 인프라.
+
+alter table public.live_activity_started_users
+  add column if not exists channel_born boolean not null default false,
+  add column if not exists wake_attempted_at timestamptz;

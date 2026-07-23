@@ -344,3 +344,37 @@ export function isLiveChannelSubscription(
 ): boolean {
   return activeKeys.has(`${sub.game_id}|${sub.environment}|${sub.channel_id}`);
 }
+
+/**
+ * '갱신 수신(updatable)' 유저 수 — started ∩ (update토큰 ∪ 유효 채널ACK ∪ channel_born).
+ * channel_born(p2s payload에 channelId 내장 발송 성공 서버 기록)은 네이티브 ACK가 아직/영영
+ * 안 와도 broadcast로 갱신을 받으므로 updatable — ACK만 인정하면 gap 과대계상(2026-07-23
+ * 실측). 과거 행은 channel_born 기록이 없어(backfill 불가) 종전과 동일하게 집계된다.
+ */
+export function countUpdatableUsers(i: {
+  started: Iterable<string>;
+  tokenUsers: Set<string>;
+  channelAckUsers: Set<string>;
+  channelBornUsers: Set<string>;
+}): number {
+  let n = 0;
+  for (const u of i.started) {
+    if (i.tokenUsers.has(u) || i.channelAckUsers.has(u) || i.channelBornUsers.has(u)) n += 1;
+  }
+  return n;
+}
+
+// ── p2s stale 토큰 발송 제외 ─────────────────────────────────────────
+// gap 유저 41%가 updated_at 1~30일+ 미갱신 휴면 기기(2026-07-23 실측) — 앱을 오래 안 연
+// 기기는 p2s로 카드가 떠도 update 토큰 등록(wake/앱 오픈)이 사실상 안 일어나 갱신불가
+// 카드만 늘린다. 30일+ 미갱신 토큰은 발송 대상에서 제외한다(토큰 삭제는 아님 — 앱을
+// 다시 열어 updated_at이 갱신되면 즉시 발송 재개).
+export const STALE_START_TOKEN_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** p2s 토큰 stale 판정 — updated_at 30일+ 경과. null/파싱 불가는 stale 아님(발송 유지, 보수적). */
+export function isStaleStartToken(updatedAt: string | null, nowMs: number): boolean {
+  if (!updatedAt) return false;
+  const t = Date.parse(updatedAt);
+  if (!Number.isFinite(t)) return false;
+  return nowMs - t > STALE_START_TOKEN_MS;
+}

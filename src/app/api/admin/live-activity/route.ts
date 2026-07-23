@@ -3,6 +3,7 @@ import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { isAdminAuthedRequest } from "@/lib/admin/pin";
 import {
   activeChannelKeySet,
+  countUpdatableUsers,
   isLiveChannelSubscription,
   type ActiveChannelRef,
 } from "@/lib/notifications/live-activity-channel-policy";
@@ -52,6 +53,14 @@ interface CardRow {
   user_id: string;
 }
 
+interface StartedRow extends CardRow {
+  // p2s payload에 channelId 내장 발송 성공(서버 기록) — ACK 없이도 broadcast 갱신 수신.
+  // ⚠️ 2026-07-23 마이그레이션 이전 발송 행은 항상 false(backfill 불가).
+  channel_born: boolean | null;
+  // 무음 wake 첫 시도 시각 — 구제 성공률(시도 후 updatable 전환) 집계용.
+  wake_attempted_at: string | null;
+}
+
 interface SubRow {
   game_id: string;
   user_id: string | null;
@@ -64,19 +73,22 @@ interface SubRow {
 // 반드시 range 페이지네이션으로 전량을 모은다. game_id 내림차순(오늘 날짜가 접두라
 // 최신이 먼저 옴)으로 정렬해서, 상한에 걸려도 과거 잔존행부터 잘리고 오늘 활성
 // 경기 행은 항상 먼저 채워지도록 보장한다. 상한 도달 시 truncated=true로 알린다.
-async function fetchAllRows(table: string): Promise<{ rows: CardRow[]; truncated: boolean }> {
+async function fetchAllRows<T extends CardRow>(
+  table: string,
+  columns = "game_id, user_id",
+): Promise<{ rows: T[]; truncated: boolean }> {
   const PAGE = 1000;
   const MAX_PAGES = 30; // 현재 실측 ~1,900행 대비 15배 여유(3만 행)
-  const rows: CardRow[] = [];
+  const rows: T[] = [];
   let truncated = false;
   for (let page = 0; page < MAX_PAGES; page++) {
     const { data, error } = await supabase
       .from(table)
-      .select("game_id, user_id")
+      .select(columns)
       .order("game_id", { ascending: false })
       .range(page * PAGE, page * PAGE + PAGE - 1);
     if (error) throw new Error(`${table}: ${error.message}`);
-    rows.push(...((data ?? []) as CardRow[]));
+    rows.push(...((data ?? []) as unknown as T[]));
     if (!data || data.length < PAGE) break;
     if (page === MAX_PAGES - 1) truncated = true;
   }
@@ -129,7 +141,10 @@ export async function GET(req: NextRequest) {
       supabase.from("live_activity_start_tokens").select("*", { count: "exact", head: true }),
       supabase.from("live_activity_start_tokens").select("*", { count: "exact", head: true }).gte("updated_at", since24h),
       supabase.from("live_activity_start_tokens").select("*", { count: "exact", head: true }).gte("updated_at", since7d),
-      fetchAllRows("live_activity_started_users"),
+      fetchAllRows<StartedRow>(
+        "live_activity_started_users",
+        "game_id, user_id, channel_born, wake_attempted_at",
+      ),
       fetchAllRows("live_activity_tokens"),
       fetchAllSubRows(),
       fetchActiveChannels(),
@@ -155,16 +170,23 @@ export async function GET(req: NextRequest) {
 
     // 경기별 집계: started(push-to-start로 뜬 카드) / tokens(update 토큰) /
     // channelUsers(현재 active 채널 ACK) / updatable(started ∩ (tokens ∪ channelUsers)).
-    const byGame = new Map<string, { started: Set<string>; tokens: Set<string>; channelUsers: Set<string>; channelDevices: Set<string> }>();
+    const byGame = new Map<string, { started: Set<string>; tokens: Set<string>; channelUsers: Set<string>; channelDevices: Set<string>; channelBorn: Set<string>; wakeAttempted: Set<string> }>();
     const entry = (gameId: string) => {
       let e = byGame.get(gameId);
       if (!e) {
-        e = { started: new Set(), tokens: new Set(), channelUsers: new Set(), channelDevices: new Set() };
+        e = { started: new Set(), tokens: new Set(), channelUsers: new Set(), channelDevices: new Set(), channelBorn: new Set(), wakeAttempted: new Set() };
         byGame.set(gameId, e);
       }
       return e;
     };
-    for (const r of startedRows) entry(r.game_id).started.add(r.user_id);
+    for (const r of startedRows) {
+      const e = entry(r.game_id);
+      e.started.add(r.user_id);
+      // channel_born = p2s 발송 시점에 서버가 기록한 '채널 내장 출생' 카드 — 네이티브 ACK와
+      // 무관하게 broadcast 갱신을 받으므로 updatable 합산(gap 과대계상 교정, 2026-07-23).
+      if (r.channel_born) e.channelBorn.add(r.user_id);
+      if (r.wake_attempted_at) e.wakeAttempted.add(r.user_id);
+    }
     for (const r of tokenRows) entry(r.game_id).tokens.add(r.user_id);
     for (const r of subRows) {
       const e = entry(r.game_id);
@@ -183,8 +205,17 @@ export async function GET(req: NextRequest) {
         const started = e.started.size;
         const tokens = e.tokens.size;
         const channelSubs = e.channelDevices.size;
-        const updatable = [...e.started].filter(u => e.tokens.has(u) || e.channelUsers.has(u)).length;
+        const updatable = countUpdatableUsers({
+          started: e.started,
+          tokenUsers: e.tokens,
+          channelAckUsers: e.channelUsers,
+          channelBornUsers: e.channelBorn,
+        });
         const gap = started - updatable;
+        // wake 구제 성공 = 무음 wake 시도 후 update 토큰/채널 ACK가 등록된 유저
+        // (channel_born은 애초에 gap이 아니라 wake 대상이 아니므로 성공 판정에서 제외).
+        const wakeAttempted = e.wakeAttempted.size;
+        const wakeRescued = [...e.wakeAttempted].filter(u => e.tokens.has(u) || e.channelUsers.has(u)).length;
         return {
           gameId,
           label: meta?.label ?? gameId,
@@ -193,8 +224,12 @@ export async function GET(req: NextRequest) {
           started,
           tokens,
           channelSubs,
+          // 채널 내장 출생 카드 수 — 별도 표기(오독 방지: ACK 없이도 updatable에 합산되는 분모).
+          channelBorn: e.channelBorn.size,
           updatable,
           gap,
+          wakeAttempted,
+          wakeRescued,
           isStale,
         };
       })
@@ -212,6 +247,8 @@ export async function GET(req: NextRequest) {
     const cards = active.reduce((s, g) => s + g.started, 0);
     const updatable = active.reduce((s, g) => s + g.updatable, 0);
     const residualGames = gamesOut.filter(g => !isActiveStatus(g.status));
+    const wakeAttempted = active.reduce((s, g) => s + g.wakeAttempted, 0);
+    const wakeRescued = active.reduce((s, g) => s + g.wakeRescued, 0);
 
     return NextResponse.json({
       pushToStart: {
@@ -225,6 +262,10 @@ export async function GET(req: NextRequest) {
         gap: cards - updatable,
         updateTokens: active.reduce((s, g) => s + g.tokens, 0),
         channelSubs: active.reduce((s, g) => s + g.channelSubs, 0),
+        channelBorn: active.reduce((s, g) => s + g.channelBorn, 0),
+        // 무음 wake 계측(③) — attempted=첫 시도 기록된 카드, rescued=시도 후 토큰/ACK 전환.
+        wakeAttempted,
+        wakeRescued,
         residualRows: residualGames.reduce((s, g) => s + g.started + g.tokens, 0),
         residualGameCount: residualGames.length,
         kboStatusAvailable,
