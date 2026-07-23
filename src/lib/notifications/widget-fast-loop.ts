@@ -4,16 +4,20 @@ import type { KboRawGame } from "@/types/api";
 // fake clock/주입 의존성으로 deadline·오류 분기를 테스트한다(삼순 #718 fast-loop NO-GO).
 
 /**
- * 요청 진입 시각 기준 *절대* deadline(ms) — maxDuration 60s에서 마지막 relay/FCM 청크가
- * 완료될 여유(~14s)를 남긴다. 기존 warmup 작업(알림/LA 등)이 오래 걸려도 +20/+40 tick이
- * 이 선을 넘으면 sleep/fetch/push를 시작하지 않아 다음 크론 틱(60s)과 겹치지 않는다
- * (삼순 blocker① — loop-상대 시각이 아닌 요청-절대 시각 기준).
+ * 요청 진입 시각 기준 *절대* deadline(ms) — 이 선을 넘으면 sleep/fetch/push를 *시작*하지
+ * 않아 다음 크론 틱(60s)과의 겹침을 최소화한다(삼순 blocker① — loop-상대 시각이 아닌
+ * 요청-절대 시각 기준). 마지막 +45s tick의 KBO fetch(≤10s cap이지만 deadline이 우선) 후
+ * 발송 시작까지 52s 안에서만 허용 — 발송 tail은 maxDuration(75s)이 감싼다(route 주석 참조).
+ * 겹침 잔여 구간의 중복 발송은 각 경로의 DB 선점/CAS/hash dedupe가 차단(live-fast-path.ts).
  */
-export const FAST_LOOP_DEADLINE_MS = 46_000;
-/** 요청 진입 시각 기준 추가 사이클 목표 시점 — cron(60s) 사이 ~20s 간격 갱신. */
-export const FAST_LOOP_TARGETS_MS: readonly number[] = [20_000, 40_000];
+export const FAST_LOOP_DEADLINE_MS = 52_000;
+/**
+ * 요청 진입 시각 기준 추가 사이클 목표 시점 — cron(60s) 사이 15s 간격 서브틱(+15/+30/+45).
+ * 점수 변화→잠금화면 반영 지연을 평균 ~30초 → ~7초로 단축(#718 2차 트랙, Vercel 내부 루프).
+ */
+export const FAST_LOOP_TARGETS_MS: readonly number[] = [15_000, 30_000, 45_000];
 /** 초기 snapshot은 첫 fast tick보다 2초 먼저 실제 요청까지 중단해 늦은 옛 상태 발송을 막는다. */
-export const INITIAL_PUSH_DEADLINE_MS = 18_000;
+export const INITIAL_PUSH_DEADLINE_MS = 13_000;
 
 export function initialWidgetPushDeadlineAt(
   requestStartMs: number,

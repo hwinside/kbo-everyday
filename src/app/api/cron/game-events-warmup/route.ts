@@ -15,6 +15,10 @@ import {
   FAST_LOOP_DEADLINE_MS,
   parseKboGameListPayload,
 } from "@/lib/notifications/widget-fast-loop";
+import {
+  seedLiveFastPathState,
+  runLiveFastPathTick,
+} from "@/lib/notifications/live-fast-path";
 import { runBeforeDeadline } from "@/lib/async-deadline";
 
 /**
@@ -31,9 +35,12 @@ import { runBeforeDeadline } from "@/lib/async-deadline";
 const CRON_SECRET = process.env.CRON_SECRET || "";
 const KBO_MAIN = "https://www.koreabaseball.com/ws/Main.asmx";
 
-// 함수 내부 fast-refresh 루프가 추가 사이클을 돌 수 있게 실행시간 상한을 늘린다(Vercel).
-// news-clipping(300s) 선례. wall-clock 가드로 다음 크론 틱(60s)과 겹침 방지.
-export const maxDuration = 60;
+// 함수 내부 fast-refresh 루프(+15/+30/+45s 서브틱)가 돌 수 있게 실행시간 상한을 늘린다
+// (Vercel Pro, news-clipping 300s 선례). 루프는 요청-절대 deadline(FAST_LOOP_DEADLINE_MS=52s)
+// 이후 어떤 작업도 *시작*하지 않고, 75s는 마지막 서브틱이 이미 시작한 LA/FCM 발송 tail의
+// 안전 마진(23s)이다. 다음 분 cron과의 짧은 겹침 구간 중복 발송은 DB 선점/CAS/hash
+// dedupe가 차단한다(live-fast-path.ts 주석 참조).
+export const maxDuration = 75;
 
 function getKSTDateStr(): string {
   const now = new Date();
@@ -146,6 +153,59 @@ export async function GET(req: NextRequest) {
     | { games: number; sent: number; failed: number; cleaned: number; skipped: number; retryableFailed: number }
     | { error: string };
 
+  // 서브틱 diff baseline — cycle 0 스냅샷은 아래 본체 경로가 발송하므로 서브틱은 이후
+  // *달라진* 것만 처리. 초기 fetch 실패 시 빈 baseline → 첫 성공 서브틱이 그 분을 복구.
+  const fastPathState = seedLiveFastPathState(initialFetch.ok ? games : []);
+  // 서브틱 fast path의 game-events self-fetch — 본체와 동일 경로(공개 도메인 baseUrl).
+  // 점수축 변화 경기만 호출되므로 타석 단위 변화마다 이벤트 생성 fetch가 돌지 않는다.
+  const fetchGameEventsForFastPath = async (gameIds: string[]): Promise<Map<string, GameEvent[]>> => {
+    const out = new Map<string, GameEvent[]>();
+    const settled = await Promise.allSettled(
+      gameIds.map(async (gameId) => {
+        const r = await fetch(`${baseUrl}/api/game-events?gameId=${gameId}`, {
+          cache: "no-store",
+          headers: { "User-Agent": "kbo-everyday-warmup/1.0" },
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (!r.ok) return null;
+        const json = await r.json().catch(() => null);
+        return { gameId, events: (json?.events ?? []) as GameEvent[] };
+      }),
+    );
+    for (const s of settled) {
+      if (s.status === "fulfilled" && s.value) out.set(s.value.gameId, s.value.events);
+    }
+    return out;
+  };
+  // 서브틱 fast path의 중계 한 줄 수집 — 본체와 동일 패턴(실패 격리, 줄만 안 뜨임).
+  const fetchRelayLinesForFastPath = async (gameIds: string[]): Promise<Map<string, string>> => {
+    const out = new Map<string, string>();
+    const settled = await Promise.allSettled(
+      gameIds.map(async (gameId) => {
+        const r = await fetch(`${baseUrl}/api/game-relay?gameId=${gameId}`, {
+          cache: "no-store",
+          headers: { "User-Agent": "kbo-everyday-warmup/1.0" },
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (!r.ok) return null;
+        const j = await r.json().catch(() => null);
+        const line = latestRelayLine(j);
+        return line ? { gameId, line } : null;
+      }),
+    );
+    for (const s of settled) {
+      if (s.status === "fulfilled" && s.value) out.set(s.value.gameId, s.value.line);
+    }
+    return out;
+  };
+
+  // 서브틱 ↔ 본체 직렬화 게이트 — 본체(cycle 0 스냅샷)의 LA/위젯 발송이 끝나기 전에
+  // 서브틱이 더 새 상태를 발송하면, 뒤늘게 도착한 본체 발송(옛 점수)이 hash를 되돌려
+  // 카드를 퇴행시키는 stale-overwrite race가 생긴다. 서브틱 발송은 본체 완료 후에만
+  // 시작(본체는 보통 <15s라 +15s 틱에 거의 무영향, 오래 걸리면 해당 틱만 지연/생략).
+  let resolveMainBody: () => void = () => {};
+  const mainBodyDone = new Promise<void>((resolve) => { resolveMainBody = resolve; });
+
   const shouldRetryFast = !initialFetch.ok || liveGameIds.length > 0;
   const { initialPromise: initialAndroidWidgetPromise, fastPromise: fastRefreshPromise } =
     startWidgetRefreshPipelines<AndroidWidgetResult>({
@@ -157,13 +217,43 @@ export async function GET(req: NextRequest) {
               sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
               fetchLiveGames: () =>
                 fetchKboLiveGames(date, Math.min(deadlineAtMs, Date.now() + 10_000)),
-              pushWidgets: (freshGames, trace) =>
-                pushAndroidWidgetLiveUpdates(freshGames, baseUrl, {
-                  dedupeAgainstLast: true,
-                  deadlineAtMs,
-                  sourceAtMs: trace.sourceAtMs,
-                  fetchedAtMs: trace.fetchedAtMs,
-                }),
+              // 서브틱 fast path — diff 없으면 DB/APNs/FCM 무접근 즉시 반환(conn pool 보호),
+              // 변화 시 안드 위젯 ∥ (레거시 LA → broadcast → iOS 위젯) ∥ 득점 푸시 재실행.
+              // 시작알림/순위/요약/활약/autostart/wake는 분 단위 본체 전용(#798/#800 게이트 비간섭).
+              pushWidgets: async (freshGames, trace) => {
+                // 직렬화 게이트(위 주석) — 본체 발송 완료 전에는 서브틱 발송을 시작하지 않는다.
+                await mainBodyDone;
+                if (Date.now() >= deadlineAtMs) return { skipped: "main_body_overrun" };
+                const tick = await runLiveFastPathTick(
+                  {
+                    now: () => Date.now(),
+                    fetchRelayLines: fetchRelayLinesForFastPath,
+                    pushAndroid: (gs, tr) =>
+                      pushAndroidWidgetLiveUpdates(gs, baseUrl, {
+                        dedupeAgainstLast: true,
+                        deadlineAtMs,
+                        sourceAtMs: tr.sourceAtMs,
+                        fetchedAtMs: tr.fetchedAtMs,
+                      }),
+                    pushLegacyLa: (gs, lp) => pushLiveActivityUpdates(gs, lp),
+                    pushBroadcast: (gs, lp) => pushLiveActivityChannelBroadcasts(gs, lp),
+                    pushIosWidget: (gs, lp) => pushIosWidgetLiveUpdates(gs, lp),
+                    fetchGameEvents: fetchGameEventsForFastPath,
+                    notifyScore: (gs, ev) => notifyScoreEvents(gs, ev),
+                  },
+                  fastPathState,
+                  freshGames,
+                  trace,
+                );
+                // 계측 — diff 감지(KBO 응답 확보)→발송 완료 latency. 배포 후 효과 실측용.
+                if ("detectToSendMs" in tick) {
+                  console.log(
+                    `[warmup] fast-path tick +${Date.now() - requestStartMs}ms changed=${tick.changedGameIds.join(",")}` +
+                    ` scoreChanged=${tick.scoreChangedLiveGameIds.join(",") || "-"} detect→send ${tick.detectToSendMs}ms`,
+                  );
+                }
+                return tick;
+              },
             },
             { requestStartMs },
           )
@@ -355,6 +445,8 @@ export async function GET(req: NextRequest) {
   // 상태가 바뀐 경기만 발사해 배터리/FCM 쿼터 부담을 막는다. deadline은 *요청 진입 시각*
   // 기준 절대값(FAST_LOOP_DEADLINE_MS)이라 위 warmup 본작업이 오래 걸려도 maxDuration(60s)/
   // 다음 크론 틱과 겹치지 않는다. 오케스트레이션은 widget-fast-loop.ts(테스트 커버) 참조.
+  // 본체 발송 완료 — 이 시점부터 서브틱 fast path가 발송을 시작할 수 있다(직렬화 게이트).
+  resolveMainBody();
   const [androidWidget, fastRefresh] = await Promise.all([
     androidWidgetPromise,
     fastRefreshPromise,

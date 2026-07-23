@@ -97,6 +97,7 @@
     "qa:venue-player-comparison": "tsx scripts/qa/venue-player-comparison-smoke.ts",
     "qa:ui:venue-diary": "node scripts/qa/ui-smoke-venue-diary.mjs",
     "qa:widget-fast": "tsx scripts/qa/widget-fast-refresh-smoke.ts",
+    "qa:la-fastpath": "tsx scripts/qa/live-fast-path-smoke.ts",
     "qa:game-cancel-status": "tsx --test scripts/qa/game-cancel-status-smoke.ts"
   },
   "dependencies": {
