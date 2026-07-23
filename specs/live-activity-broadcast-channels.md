@@ -49,6 +49,13 @@
 ### 관제 (Slice C, 소형)
 - `/admin/live-activity`(#578)에 경기별 채널 상태(env·status·broadcast 발송 수·구독 확인(subscription) 수) 1행 추가.
 
+### iOS 클라 (Slice D — 레거시 카드 포그라운드 마이그레이션, 2026-07-23 P0)
+> 배경: 7/23 아침 파서 장애로 채널이 19:07에야 생성 → 경기 시작 때 뜬 카드 전부 레거시(per-토큰)로 태어남. iOS는 기존 activity의 push 방식 변경 불가 + 레거시 갱신은 예산 스로틀 → 카드가 이닝 단위 지연, *앱을 열어도 복구 안 됨*(rescan이 update 토큰 재등록만 함).
+1. 매 포그라운드 `rescanActiveActivities()`에서 activity별 마이그레이션 판정 — 순수 정책 `ChannelMigrationPolicy`(스모크 `qa:la-migration-policy` 고정): iOS 18+ && marker(`attributes.channelId`) 부재(레거시) && 라이브(`status == .live` && `activityState == .active`) && 성공 이력·in-flight 없음 → GET `/api/live-activity/channel`로 자기 env active 채널 조회.
+2. **재생성 우선 순서(안전 원칙)**: active 채널 확보 시 *먼저* `Activity.request(pushType: .channel, attributes+marker)`로 현재 contentState 그대로 채널 카드를 재생성하고, **성공한 뒤에만** 같은 경기 레거시 카드를 `.immediate` end. fetch 실패/채널 부재/request 실패 = 레거시 유지 no-op — 어떤 경로에서도 카드만 사라지지 않는다.
+3. 재생성 성공 시 기존 ACK 경로(`ackChannelActivity` — active 재검증·persist 큐·device-auth) 재사용으로 구독 SSOT 기록. 서버 레거시 발송 제외(§서버 5 NOT EXISTS)도 그대로 작동해 per-토큰 발송이 자연 중단된다. 서버 변경 없음.
+4. 재시도 정책: 채널 부재(definitive)·GET 일시 실패도 폐기 아닌 유보 — 완료 마킹 없이 다음 포그라운드에서 재시도(채널이 늦게 생기는 7/23 케이스 커버). 성공만 경기당 1회 마킹, 동시 중복은 in-flight 가드.
+
 ## p2s `input-push-channel` 포함 규칙 (v4 통합 — per-attempt 단일 규칙)
 **게이트(토큰 단위)**: `os_major>=18 && app_build>=16`(둘 다 클라 명시 보고값). 미충족/미보고 → 기존 payload(레거시).
 **env는 게이트가 아니라 per-attempt 규칙** (v4 blocker① 모순 해소 — env=null 기존 토큰도 채널 경로 진입 가능):

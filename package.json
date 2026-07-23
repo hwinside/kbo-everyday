@@ -30,6 +30,7 @@
     "qa:lock-gate": "tsx scripts/qa/lock-card-gate-smoke.ts",
     "qa:ios-widget": "tsx scripts/qa/ios-widget-score-state-smoke.ts",
     "qa:la-ack-policy": "bash scripts/qa/la-channel-ack-policy-smoke.sh",
+    "qa:la-migration-policy": "bash scripts/qa/la-channel-migration-policy-smoke.sh",
     "qa:news-naver-url": "tsx scripts/qa/news-naver-url-smoke.ts",
     "qa:photo-filter": "tsx scripts/qa/photo-article-filter-smoke.ts",
     "qa:news-dedup": "tsx scripts/qa/news-dedup-title-smoke.ts",

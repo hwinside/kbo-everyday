@@ -468,6 +468,83 @@ final class LiveActivityController {
         if #available(iOS 16.2, *) {
             for activity in Activity<KBOGameAttributes>.activities {
                 observePushToken(activity, gameId: activity.attributes.gameId)
+                // 레거시(per-토큰) 라이브 카드 → broadcast 채널 카드 자동 교체(아래 MARK 섹션).
+                // 채널이 경기 시작 *후*에 생긴 날(7/23 파서 장애)은 토큰 재등록만으론 예산
+                // 스로틀을 못 벗어난다 — 포그라운드마다 마이그레이션 기회를 준다.
+                if #available(iOS 18.0, *) {
+                    migrateLegacyActivityIfNeeded(activity)
+                }
+            }
+        }
+    }
+
+    // MARK: - 레거시 per-토큰 → broadcast 채널 마이그레이션 (포그라운드 rescan)
+    //
+    // iOS는 기존 activity의 pushType을 바꿀 수 없다(재생성만 가능). 판정은
+    // ChannelMigrationPolicy(순수), 실행 순서는 *재생성 성공 후에만 레거시 end* —
+    // 채널 fetch 실패/채널 없음/request 실패 어느 경로에서도 레거시 카드는 그대로
+    // 남는다(카드만 죽고 끝나는 상황 원천 차단). 실패는 마킹하지 않아 다음 포그라운드가
+    // 재시도한다(채널이 늦게 생기는 케이스 커버).
+
+    /// 마이그레이션 *성공*한 경기(프로세스 단위) — 경기당 1회.
+    private var migratedGameIds = Set<String>()
+    /// 같은 경기 동시 시도 방지(in-flight 가드).
+    private var migrationInFlightGameIds = Set<String>()
+    private let migrationLock = NSLock()
+
+    @available(iOS 18.0, *)
+    private func migrateLegacyActivityIfNeeded(_ activity: Activity<KBOGameAttributes>) {
+        let gameId = activity.attributes.gameId
+        migrationLock.lock()
+        let pre = ChannelMigrationPolicy.preflight(
+            osAtLeast18: true,   // #available 게이트 통과 — 정책 표와의 정합용 명시 인자
+            hasChannelMarker: activity.attributes.channelId != nil,
+            // scheduled 카드는 제외 — 라이브 진입 후 다음 포그라운드 rescan이 잡는다.
+            isLive: activity.contentState.status == .live && activity.activityState == .active,
+            alreadyMigrated: migratedGameIds.contains(gameId),
+            inFlight: migrationInFlightGameIds.contains(gameId))
+        guard pre == .proceed else {
+            migrationLock.unlock()
+            return
+        }
+        migrationInFlightGameIds.insert(gameId)
+        migrationLock.unlock()
+        Task {
+            defer {
+                migrationLock.lock()
+                migrationInFlightGameIds.remove(gameId)
+                migrationLock.unlock()
+            }
+            switch ChannelMigrationPolicy.onFetch(await fetchActiveChannel(gameId: gameId)) {
+            case .retryNextForeground:
+                return   // 채널 없음/GET 일시 실패 — 레거시 유지, 다음 포그라운드 재시도
+            case .migrate(let channelId):
+                // end보다 request 먼저 — 재생성 실패 시 레거시 카드가 그대로 남는다.
+                var channelAttributes = activity.attributes
+                channelAttributes.channelId = channelId
+                let state = activity.contentState
+                do {
+                    let newActivity = try Activity.request(
+                        attributes: channelAttributes,
+                        content: .init(state: state, staleDate: nil),
+                        pushType: .channel(channelId)
+                    )
+                    migrationLock.lock()
+                    migratedGameIds.insert(gameId)
+                    migrationLock.unlock()
+                    // 같은 경기 레거시 카드 전부 즉시 종료(원본 + 혹시 남은 중복) —
+                    // 현재 contentState 그대로 end라 잠금화면 정보 손실 없음.
+                    for legacy in Activity<KBOGameAttributes>.activities
+                    where legacy.attributes.gameId == gameId && legacy.attributes.channelId == nil {
+                        await legacy.end(using: state, dismissalPolicy: .immediate)
+                    }
+                    if currentActivity?.id == activity.id { currentActivity = newActivity }
+                    // 구독 SSOT 기록 — 기존 ACK 경로 재사용(active 재검증·persist 큐 포함).
+                    ackChannelActivity(gameId: gameId, channelId: channelId, activityId: newActivity.id)
+                    NSLog("[LiveActivity] migrated legacy → channel card (game=\(gameId), id=\(newActivity.id))")
+                } catch {
+                    NSLog("[LiveActivity] legacy→channel migration failed → keep legacy: \(error.localizedDescription)")
+                }
             }
         }
     }
