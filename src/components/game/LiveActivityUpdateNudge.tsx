@@ -58,7 +58,7 @@ export default function LiveActivityUpdateNudge({ isLive }: { isLive: boolean })
   const [show, setShow] = useState(false);
 
   useEffect(() => {
-    if (!isLive) return;
+    if (!isLive) return; // 숨김은 렌더 가드(아래 !isLive)가 담당 — effect 내 동기 setState 금지(lint).
     let cancelled = false;
     (async () => {
       let dismissed = false;
@@ -77,7 +77,10 @@ export default function LiveActivityUpdateNudge({ isLive }: { isLive: boolean })
     };
   }, [isLive]);
 
-  if (!show) return null;
+  // live → final/취소 전환 시 즉시 숨김 — 종전에는 effect early return뿐이라 띄워둔
+  // 배너가 잔존했다(삼순 재현 2026-07-23: status=final 전환 후 배너 1건 유지 = 계약 위반).
+  // 렌더 가드라 전환 프레임부터 동기적으로 0건 보장(재라이브 시엔 effect가 재판정).
+  if (!show || !isLive) return null;
 
   const dismiss = () => {
     setShow(false);
@@ -94,10 +97,11 @@ export default function LiveActivityUpdateNudge({ isLive }: { isLive: boolean })
       <p className="flex-1 text-sm text-text-primary">
         앱을 업데이트하면 잠금화면 실시간 점수 갱신이 안정화돼요
       </p>
+      {/* hit target ≥44×44px(iOS HIG) — 음수 마진으로 시각 레이아웃은 종전 크기 유지 */}
       <button
         onClick={dismiss}
         aria-label="닫기"
-        className="shrink-0 p-1 text-text-tertiary active:opacity-60"
+        className="-my-2.5 -mr-3 flex h-11 w-11 shrink-0 items-center justify-center text-text-tertiary active:opacity-60"
       >
         <X size={16} />
       </button>
