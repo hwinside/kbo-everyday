@@ -8,7 +8,11 @@ import { getSafeSession } from "@/lib/supabase/client";
 import { prepareVenueStoryMedia } from "@/lib/venue-stories/upload";
 import { getVenuePosition } from "@/lib/venue-stories/geo";
 import { haversineMeters } from "@/lib/venue-stories/stadiums";
-import { VENUE_STORY_CONSENT_VERSION, type VenueInfo } from "@/lib/venue-stories/types";
+import {
+  VENUE_STORY_CONSENT_VERSION,
+  VENUE_STORY_MAX_BYTES,
+  type VenueInfo,
+} from "@/lib/venue-stories/types";
 import { consentStorageKey } from "@/lib/venue-stories/auth-consent";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
 
@@ -28,6 +32,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   const [previewType, setPreviewType] = useState<"image" | "video" | null>(null);
   const [caption, setCaption] = useState("");
   const [phase, setPhase] = useState<Phase>("idle");
+  const [progress, setProgress] = useState(0); // 0~100, phase==="upload" 일 때만 유효
   const [error, setError] = useState<string | null>(null);
   const [venue, setVenue] = useState<VenueInfo | null>(null);
   const [venueLoading, setVenueLoading] = useState(false);
@@ -108,9 +113,12 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
     setCaption("");
     setError(null);
     setPhase("idle");
+    setProgress(0);
   };
 
   const close = () => {
+    // 업로드 진행 중 닫기 금지 — XHR은 계속돼서 orphan 업로드가 남는다(삼순 #795 blocker)
+    if (submitting) return;
     reset();
     onClose();
   };
@@ -118,12 +126,17 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   const onPick = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     e.target.value = "";
-    if (!f) return;
+    if (!f || submitting) return;
     setError(null);
     const isVideo = f.type.startsWith("video/");
     const isImage = f.type.startsWith("image/");
     if (!isVideo && !isImage) {
       setError("이미지 또는 영상만 올릴 수 있어요");
+      return;
+    }
+    // 사이즈 초과는 픽 시점에 즉시 차단 — '올리기'까지 가지 않게 (upload.ts 검사는 최종 안전망으로 유지)
+    if (f.size > VENUE_STORY_MAX_BYTES) {
+      setError("파일이 너무 큽니다 (최대 50MB)");
       return;
     }
     if (previewUrl) URL.revokeObjectURL(previewUrl);
@@ -177,8 +190,11 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
     }
 
     setPhase("upload");
+    setProgress(0);
     try {
-      const prepared = await prepareVenueStoryMedia(file, gameId);
+      const prepared = await prepareVenueStoryMedia(file, gameId, (r) =>
+        setProgress(Math.min(99, Math.round(r * 100))),
+      );
       if ("error" in prepared) {
         setError(prepared.error);
         setPhase("idle");
@@ -247,7 +263,12 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
         >
           <div className="flex items-center justify-between px-4 py-3 border-b border-border">
             <span className="text-base font-semibold text-text-primary">직관 라이브 올리기</span>
-            <button onClick={close} aria-label="닫기" className="text-text-tertiary">
+            <button
+              onClick={close}
+              disabled={submitting}
+              aria-label="닫기"
+              className="text-text-tertiary disabled:opacity-40"
+            >
               <X size={22} />
             </button>
           </div>
@@ -269,7 +290,8 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
             {!previewUrl ? (
               <button
                 onClick={() => inputRef.current?.click()}
-                className="flex flex-col items-center justify-center gap-2 h-48 rounded-2xl border-2 border-dashed border-border text-text-tertiary active:bg-bg-tertiary"
+                disabled={submitting}
+                className="flex flex-col items-center justify-center gap-2 h-48 rounded-2xl border-2 border-dashed border-border text-text-tertiary active:bg-bg-tertiary disabled:opacity-40"
               >
                 <VideoIcon size={28} />
                 <span className="text-sm">현장 사진·영상 선택</span>
@@ -285,7 +307,8 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
                 )}
                 <button
                   onClick={() => inputRef.current?.click()}
-                  className="absolute bottom-2 right-2 text-xs bg-black/60 text-white px-3 py-1.5 rounded-full"
+                  disabled={submitting}
+                  className="absolute bottom-2 right-2 text-xs bg-black/60 text-white px-3 py-1.5 rounded-full disabled:opacity-40"
                 >
                   다시 선택
                 </button>
@@ -296,6 +319,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
               ref={inputRef}
               type="file"
               accept="image/*,video/*"
+              disabled={submitting}
               className="hidden"
               onChange={onPick}
             />
@@ -305,8 +329,9 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
               value={caption}
               onChange={(e) => setCaption(e.target.value)}
               maxLength={200}
+              disabled={submitting}
               placeholder="한 줄 코멘트 (선택)"
-              className="w-full px-3 py-2.5 rounded-xl bg-bg-tertiary text-sm text-text-primary placeholder:text-text-tertiary outline-none"
+              className="w-full px-3 py-2.5 rounded-xl bg-bg-tertiary text-sm text-text-primary placeholder:text-text-tertiary outline-none disabled:opacity-40"
             />
 
             <label className="flex items-start gap-2 text-[11px] text-text-tertiary leading-relaxed cursor-pointer select-none">
@@ -314,7 +339,8 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
                 type="checkbox"
                 checked={agreed}
                 onChange={toggleAgree}
-                className="mt-0.5 accent-brand-primary shrink-0"
+                disabled={submitting}
+                className="mt-0.5 accent-brand-primary shrink-0 disabled:opacity-40"
               />
               <span>
                 중계화면 무단 재촬영·타인 얼굴/초상권 침해·욕설/폭력·불법 촬영물을 올리지 않겠습니다.
@@ -324,13 +350,26 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
 
             {error && <p className="text-sm text-red-400">{error}</p>}
 
+            {phase === "upload" && (
+              <div className="w-full h-1.5 rounded-full bg-bg-tertiary overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-brand-primary transition-[width] duration-200 ease-out"
+                  style={{ width: `${progress}%` }}
+                />
+              </div>
+            )}
+
             <button
               onClick={submit}
               disabled={!file || submitting || !!gateReason || !agreed}
               className="w-full py-3 rounded-xl bg-brand-primary text-white font-semibold flex items-center justify-center gap-2 disabled:opacity-40"
             >
               {submitting ? <Loader2 size={18} className="animate-spin" /> : null}
-              {phase === "geo" ? "직관 인증 중…" : phase === "upload" ? "올리는 중…" : "올리기"}
+              {phase === "geo"
+                ? "직관 인증 중…"
+                : phase === "upload"
+                  ? `올리는 중… ${progress}%`
+                  : "올리기"}
             </button>
           </div>
         </motion.div>

@@ -1,6 +1,6 @@
 "use client";
 
-import { supabase } from "@/lib/supabase/client";
+import { supabase, getSafeSession } from "@/lib/supabase/client";
 import imageCompression from "browser-image-compression";
 import {
   VENUE_STORY_MAX_BYTES,
@@ -125,16 +125,118 @@ function probeImage(file: File): Promise<{ width: number; height: number }> {
   });
 }
 
+/** XHR 최소 인터페이스 — 순수 로직 회귀 테스트용(scripts/qa/venue-upload-progress-smoke.ts) */
+export interface UploadXhrLike {
+  open(method: string, url: string): void;
+  setRequestHeader(name: string, value: string): void;
+  send(body: unknown): void;
+  status: number;
+  upload: {
+    onprogress:
+      | ((e: { lengthComputable: boolean; loaded: number; total: number }) => void)
+      | null;
+  };
+  onload: (() => void) | null;
+  onerror: (() => void) | null;
+  onabort: (() => void) | null;
+}
+
+/** supabase-js 폴백 판정 — 하나라도 없으면 XHR 경로 불가(진행률 없이 기존 경로) */
+export function shouldFallbackToSupabaseJs(env: {
+  base: string | undefined;
+  anonKey: string | undefined;
+  token: string | undefined;
+  hasXhr: boolean;
+}): boolean {
+  return !env.base || !env.anonKey || !env.token || !env.hasXhr;
+}
+
+/**
+ * XHR 업로드 배선 — **listener 전부를 open() 전에 선등록**한다.
+ * (MDN: 일부 구현은 open 이후 등록된 upload progress를 발화하지 않음 —
+ *  타깃이 iOS/Android WebView라 선등록 필수, 삼순 #795 blocker)
+ */
+export function runXhrUpload(
+  xhr: UploadXhrLike,
+  opts: {
+    url: string;
+    headers: Record<string, string>;
+    body: unknown;
+    onProgress?: (ratio: number) => void;
+  },
+): Promise<boolean> {
+  return new Promise((resolve) => {
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && e.total > 0) opts.onProgress?.(e.loaded / e.total);
+    };
+    xhr.onload = () => resolve(xhr.status >= 200 && xhr.status < 300);
+    xhr.onerror = () => resolve(false);
+    xhr.onabort = () => resolve(false);
+    xhr.open("POST", opts.url);
+    for (const [name, value] of Object.entries(opts.headers)) {
+      xhr.setRequestHeader(name, value);
+    }
+    xhr.send(opts.body);
+  });
+}
+
+/**
+ * XHR 기반 storage 업로드 — supabase-js와 동일한 REST 경로(POST /storage/v1/object)에
+ * upload progress 이벤트만 추가. fetch 기반 supabase-js는 업로드 진행률을 못 준다.
+ * 토큰/환경 미비 시 supabase-js 폴백(진행률 없이 업로드는 성공).
+ */
+async function uploadWithProgress(
+  bucket: string,
+  path: string,
+  data: Blob | File,
+  contentType: string,
+  cacheControlSec: number,
+  onProgress?: (ratio: number) => void,
+): Promise<boolean> {
+  const base = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const session = await getSafeSession();
+  const token = session?.access_token;
+  if (
+    shouldFallbackToSupabaseJs({
+      base,
+      anonKey,
+      token,
+      hasXhr: typeof XMLHttpRequest !== "undefined",
+    })
+  ) {
+    const { error } = await supabase.storage.from(bucket).upload(path, data, {
+      contentType,
+      cacheControl: String(cacheControlSec),
+      upsert: false,
+    });
+    return !error;
+  }
+  // path 는 randPath/sanitizeExt 로 영숫자·-·_·.·/ 만 포함 — 인코딩 불필요(supabase-js도 raw)
+  // DOM XMLHttpRequest 는 UploadXhrLike 상위호환(onprogress 이벤트 타입만 더 넓음)
+  return runXhrUpload(new XMLHttpRequest() as unknown as UploadXhrLike, {
+    url: `${base}/storage/v1/object/${bucket}/${path}`,
+    headers: {
+      authorization: `Bearer ${token}`,
+      apikey: anonKey!,
+      "x-upsert": "false",
+      "cache-control": `max-age=${cacheControlSec}`,
+      "content-type": contentType,
+    },
+    body: data,
+    onProgress,
+  });
+}
+
 async function uploadBlob(
   bucket: string,
   path: string,
   data: Blob | File,
   contentType: string,
+  onProgress?: (ratio: number) => void,
 ): Promise<string | null> {
-  const { error } = await supabase.storage
-    .from(bucket)
-    .upload(path, data, { contentType, cacheControl: "31536000", upsert: false });
-  if (error) return null;
+  const ok = await uploadWithProgress(bucket, path, data, contentType, 31536000, onProgress);
+  if (!ok) return null;
   const { data: urlData } = supabase.storage.from(bucket).getPublicUrl(path);
   return urlData.publicUrl;
 }
@@ -144,11 +246,16 @@ async function uploadToStaging(
   path: string,
   data: Blob | File,
   contentType: string,
+  onProgress?: (ratio: number) => void,
 ): Promise<boolean> {
-  const { error } = await supabase.storage
-    .from(VENUE_STORY_STAGING_BUCKET)
-    .upload(path, data, { contentType, cacheControl: "3600", upsert: false });
-  return !error;
+  return uploadWithProgress(
+    VENUE_STORY_STAGING_BUCKET,
+    path,
+    data,
+    contentType,
+    3600,
+    onProgress,
+  );
 }
 
 /**
@@ -158,6 +265,7 @@ async function uploadToStaging(
 export async function prepareVenueStoryMedia(
   file: File,
   gameId: string,
+  onProgress?: (ratio: number) => void,
 ): Promise<PreparedMedia | PrepareError> {
   const {
     data: { user },
@@ -187,8 +295,12 @@ export async function prepareVenueStoryMedia(
     }
     // 원본은 private staging 에만 — 서버 ffprobe 검증 통과 시 서버가 공개 버킷으로 승격(B+①)
     const mediaPath = randPath(gameId, user.id, sanitizeExt(file.name, "mp4"));
-    const uploaded = await uploadToStaging(mediaPath, file, file.type || "video/mp4");
+    // 본음이 용량 대부분 — 전체 진행률의 0~95% 구간으로 매핑(썸네일·메타 POST 잔여 5%)
+    const uploaded = await uploadToStaging(mediaPath, file, file.type || "video/mp4", (r) =>
+      onProgress?.(r * 0.95),
+    );
     if (!uploaded) return { error: "영상 업로드에 실패했어요" };
+    onProgress?.(0.95);
 
     let thumbUrl: string | null = null;
     if (probe.poster) {
@@ -228,8 +340,10 @@ export async function prepareVenueStoryMedia(
     randPath(gameId, user.id, "jpg"),
     compressed,
     "image/jpeg",
+    (r) => onProgress?.(r * 0.95),
   );
   if (!mediaUrl) return { error: "사진 업로드에 실패했어요" };
+  onProgress?.(0.95);
   return {
     mediaType: "image",
     mediaUrl,
