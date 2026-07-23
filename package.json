@@ -18,6 +18,7 @@
     "qa:admin-view": "tsx scripts/qa/admin-view-smoke.ts",
     "qa:app-rankings": "tsx scripts/qa/app-rankings-smoke.ts",
     "qa:retention-dates": "tsx scripts/qa/retention-gamedates-smoke.ts",
+    "qa:leaderboard-rollup": "bash scripts/qa/leaderboard-rollup-refresh-regression.sh",
     "qa:war-saber": "tsx scripts/qa/war-saber-smoke.ts",
     "qa:foreign-onboard": "node scripts/qa/foreign-onboard-smoke.mjs",
     "qa:foreign-onboard-photo-gate": "node scripts/qa/foreign-onboard-photo-gate.mjs",

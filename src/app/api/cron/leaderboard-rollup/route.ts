@@ -22,12 +22,17 @@ export async function GET(req: NextRequest) {
   }
 
   const started = Date.now();
-  const { error } = await supabase.rpc("leaderboard_writing_rollup_refresh");
+  const { data, error } = await supabase.rpc("leaderboard_writing_rollup_refresh");
   if (error) {
     return NextResponse.json(
       { error: "rollup refresh failed", details: error.message },
       { status: 500 },
     );
+  }
+
+  // advisory try-lock 획득 실패(= 다른 refresh 진행 중) — 정상 경로, 이번 틱만 skip
+  if (data === "skipped_lock_busy") {
+    return NextResponse.json({ ok: true, skipped: true, tookMs: Date.now() - started });
   }
 
   return NextResponse.json({ ok: true, tookMs: Date.now() - started });

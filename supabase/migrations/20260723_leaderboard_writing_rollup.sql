@@ -39,14 +39,24 @@ ALTER TABLE leaderboard_writing_rollup ENABLE ROW LEVEL SECURITY;
 -- ============================================================
 -- CTE 본문은 기존 v_leaderboard_writing(20260428) 정의와 동일하되
 -- 내부자 제외 필터만 제거(뷰 읽기 시점에 적용 — 위 헤더 주석 참조).
+-- 삼순 리뷰 반영(2026-07-23):
+--   * advisory try-lock — cron 중복/수동 refresh 겹침 시 DELETE+INSERT PK 충돌 차단.
+--     락 획득 실패 시 'skipped_lock_busy' 반환하고 아무것도 안 바꾼다(xact 종료 시 자동 해제).
+--   * 기존 뷰의 `<> ALL(...)` 필터가 암묵적으로 걸러주던 NULL actor를 명시적
+--     IS NOT NULL로 보존 — 미래 NULL 1행이 rollup PK(NULL) insert로 전체 rollback되는 것 방지.
 
 CREATE OR REPLACE FUNCTION leaderboard_writing_rollup_refresh()
-RETURNS void
+RETURNS text
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
 AS $$
 BEGIN
+  -- 트랜잭션 스코프 advisory try-lock — 동시 호출은 하나만 진행, 나머지는 skip
+  IF NOT pg_try_advisory_xact_lock(hashtext('leaderboard_writing_rollup_refresh')) THEN
+    RETURN 'skipped_lock_busy';
+  END IF;
+
   -- 단일 트랜잭션(함수 전체) 내 스냅샷 교체 — 리더는 커밋 전까지 이전 스냅샷 조회
   DELETE FROM leaderboard_writing_rollup;
 
@@ -58,6 +68,7 @@ BEGIN
         (created_at AT TIME ZONE 'Asia/Seoul')::date AS day,
         LEAST(COUNT(*) * 1, 30) AS pts
       FROM chat_messages
+      WHERE user_id IS NOT NULL
       GROUP BY user_id, day
     ),
     comment_daily AS (
@@ -67,6 +78,7 @@ BEGIN
         LEAST(COUNT(*) * 2, 40) AS pts
       FROM comments
       WHERE is_hidden = FALSE
+        AND author_id IS NOT NULL
       GROUP BY author_id, day
     ),
     post_general_daily AS (
@@ -77,6 +89,7 @@ BEGIN
       FROM posts
       WHERE is_hidden = FALSE
         AND (content_type IS NULL OR content_type <> 'photo')
+        AND author_id IS NOT NULL
       GROUP BY author_id, day
     ),
     post_photo_daily AS (
@@ -87,6 +100,7 @@ BEGIN
       FROM posts
       WHERE is_hidden = FALSE
         AND content_type = 'photo'
+        AND author_id IS NOT NULL
       GROUP BY author_id, day
     ),
     stadium_seat_tip_bonus_daily AS (
@@ -98,6 +112,7 @@ BEGIN
       WHERE is_hidden = FALSE
         AND board_type = 'stadium'
         AND board_id LIKE 'stadium:%:seats'
+        AND author_id IS NOT NULL
       GROUP BY author_id, day
     ),
     ticket_transfer_bonus_daily AS (
@@ -106,6 +121,7 @@ BEGIN
         (created_at AT TIME ZONE 'Asia/Seoul')::date AS day,
         LEAST(COUNT(*) * 30, 30) AS pts
       FROM ticket_transfers
+      WHERE author_id IS NOT NULL
       GROUP BY author_id, day
     ),
     all_daily AS (
@@ -130,6 +146,8 @@ BEGIN
     MAX(day) AS last_active_day
   FROM capped_daily
   GROUP BY user_id;
+
+  RETURN 'refreshed';
 END;
 $$;
 
