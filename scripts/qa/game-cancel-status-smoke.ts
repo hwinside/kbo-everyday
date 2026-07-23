@@ -1,6 +1,25 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { isKboGameCancelled } from "../../src/lib/crawler/kbo-status";
+import { isStartNotificationFresh } from "../../src/lib/notifications/start-freshness-policy";
+
+// 2026-07-23 하린아빠 지시 — "이미 늦은 시작알림은 발송 안되게 가드": 이닝 진행도 기반 뒷북 차단.
+test("시작알림 신선도: 1회초는 발송(정상 개시·우천 지연 개시 포함)", () => {
+  assert.equal(isStartNotificationFresh({ inningNo: 1, isTop: true }), true);
+});
+test("시작알림 신선도: 1회말부터는 뒷북 → 발송 금지", () => {
+  assert.equal(isStartNotificationFresh({ inningNo: 1, isTop: false }), false);
+});
+test("시작알림 신선도: 2회 이상은 뒷북 → 발송 금지(장애 복구 버스트 차단)", () => {
+  assert.equal(isStartNotificationFresh({ inningNo: 2, isTop: true }), false);
+  assert.equal(isStartNotificationFresh({ inningNo: 7, isTop: false }), false);
+});
+test("시작알림 신선도: 이닝 정보 없음(개시 직후)은 fresh — 시간 윈도우가 커버", () => {
+  assert.equal(isStartNotificationFresh({ inningNo: null, isTop: null }), true);
+  assert.equal(isStartNotificationFresh({ inningNo: undefined, isTop: true }), true);
+  assert.equal(isStartNotificationFresh({ inningNo: 0, isTop: null }), true);
+  assert.equal(isStartNotificationFresh({ inningNo: 1, isTop: null }), true);
+});
 
 // 2026-07-23 회귀: KBO GetKboGameList가 예정 경기에 CANCEL_SC_ID를 빈 값/공백/미포함으로
 // 내려줄 때 `CANCEL_SC_ID !== "0"`가 true가 되어 정상 경기가 홈 경기카드에서 "경기 취소"로
