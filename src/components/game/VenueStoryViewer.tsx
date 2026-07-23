@@ -12,6 +12,7 @@ interface Props {
   stories: VenueStory[];
   startIndex: number;
   currentUserId: string | null;
+  onStorySeen?: (storyId: string | number) => void; // 표시된 스토리 본 처리 (트레이 본/안 본 구분용)
   onClose: () => void;
   onChanged: () => void; // 삭제/신고 후 목록 갱신
 }
@@ -29,6 +30,7 @@ export default function VenueStoryViewer({
   stories,
   startIndex,
   currentUserId,
+  onStorySeen,
   onClose,
   onChanged,
 }: Props) {
@@ -46,6 +48,12 @@ export default function VenueStoryViewer({
   const elapsedRef = useRef<number>(0);
 
   const story = stories[index];
+
+  // 표시된 스토리는 본 처리 (트레이 본/안 본 테두리·정렬용)
+  const storyId = story?.id;
+  useEffect(() => {
+    if (storyId != null) onStorySeen?.(storyId);
+  }, [storyId, onStorySeen]);
 
   const goNext = useCallback(() => {
     setIndex((i) => {
