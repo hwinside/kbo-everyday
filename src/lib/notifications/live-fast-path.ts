@@ -175,6 +175,17 @@ export interface LegacyLastState {
  */
 export const LA_FANOUT_DRAIN_DEADLINE_MS = 68_000;
 
+/**
+ * broadcast 축(친리티컬 패스) 자체의 요청-절대 deadline(ms) — 삼순 R4 blocker②.
+ * pushLiveActivityChannelBroadcasts는 채널별 APNs http2 8s timeout을 직렬 await하므로
+ * 5경기×2 env 전부 timeout이면 80s — maxDuration(75s) 504가 구조적으로 가능했다.
+ * route가 이 절대 deadline을 broadcast/catch-up/ensure 호출에 주입하면, pass는 매 행
+ * 처리 전 검사해 초과 시 새 발송을 시작하지 않고 명시 종료한다(마지막으로 시작된 send
+ * 1건만 최대 8s 초과 가능 → 상한 60+8=68s = drain deadline, 응답 마진 7s). 미발송
+ * 라이브 경기는 failedGameIds로 보고돼 이 모듈이 catch-up pending으로 재-arm한다.
+ */
+export const LA_BROADCAST_DEADLINE_MS = 60_000;
+
 /** 느린 fanout 실행 축 — 축 안에서는 직렬(틱 순서), 축끼리는 완전 독립. */
 export type LaFanoutAxis = "la" | "android" | "score";
 
@@ -522,6 +533,12 @@ export interface LaOrchestration {
    * score) 완료 대기·결과 회수. deadline 지정 시 *유계 대기* — 남은 예산 안에서만
    * 대기하고 초과 시 partial(timedOut=true)로 즉시 반환해 route가 504 전에 명시적으로
    * 종료하게 한다(삼순 R3 blocker③). 미지정(QA)이면 전체 완료까지 대기.
+   *
+   * ⚠️ route-순서 계약(삼순 R4 blocker①): route는 drain을 fast loop와 *동시에* 시작한다.
+   * 그래서 drain은 먼저 fast loop의 enqueue 종료(seal — runFastLoop settle)를 기다린 뒤
+   * pending을 검사한다. seal 이전에 pending이 순간 0이어도 종료하지 않으므로, +15/+30/
+   * +45스 틱이 뒤늦게 enqueue한 tail을 놓치고 laFanoutPending=0으로 오기록하는 race가
+   * 없다. seal 자체도 공동 deadline 안에서만 대기(초과 시 partial·timedOut).
    */
   drainFanout(opts?: {
     deadlineAtMs: number;
@@ -622,14 +639,27 @@ export function startLaOrchestration(
   // 초기 fetch 실패(재시도 필요) 또는 라이브 있음 → 서브틱 루프 가동.
   const shouldRetryFast = !opts.initialFetchOk || opts.liveGameIds.length > 0;
 
+  // fanout enqueue 종료(seal) — fast loop가 settle하면 더 이상 어느 축에도 새 항목이
+  // 들어오지 않는다(enqueue 원천 = cycle0 1회 + 서브틱들). drain은 이 seal을 먼저
+  // 기다려야 "이미 끝난 drain이 뒤늦은 틱 tail을 누락"하는 race가 없다(삼순 R4 ①).
+  // ⚠️ route는 반드시 runFastLoop를 호출한다(라이브 0이어도 즉시 [] → 즉시 seal).
+  let fanoutSealed = false;
+  let sealFanout!: () => void;
+  const fanoutSealedPromise = new Promise<void>((resolve) => {
+    sealFanout = () => {
+      fanoutSealed = true;
+      resolve();
+    };
+  });
+
   return {
     criticalPromise: critical.then(({ lastPlayByGame, laChannels, laBroadcast }) => ({
       lastPlayByGame,
       laChannels,
       laBroadcast,
     })),
-    runFastLoop: () =>
-      shouldRetryFast
+    runFastLoop: () => {
+      const loop = shouldRetryFast
         ? runWidgetFastLoop(
             {
               now: deps.now,
@@ -639,9 +669,26 @@ export function startLaOrchestration(
             },
             { requestStartMs: opts.requestStartMs },
           )
-        : Promise.resolve([]),
+        : Promise.resolve([] as FastLoopTick[]);
+      // 성공/실패 무관 settle = enqueue 종료(반환 promise의 reject는 그대로 전파).
+      void loop.then(sealFanout, sealFanout);
+      return loop;
+    },
     drainFanout: async (drainOpts) => {
-      // 축끼리를 병렬로 drain — 각자 남은 공동 deadline 예산 안에서 유계 대기.
+      // ① seal 대기 — fast loop의 enqueue가 끝나기 전에는 pending 순간-0을 완료로 보지
+      // 않는다(route가 drain을 fast loop와 동시 시작하는 실순서 재현 — 삼순 R4 ①).
+      // 이미 seal끬이면 아무것도 대기하지 않는다(fake-clock QA에서 sleep 부작용 방지).
+      if (!fanoutSealed) {
+        if (drainOpts) {
+          const remainingMs = drainOpts.deadlineAtMs - drainOpts.now();
+          if (remainingMs > 0) {
+            await Promise.race([fanoutSealedPromise, drainOpts.sleep(remainingMs)]);
+          }
+        } else {
+          await fanoutSealedPromise;
+        }
+      }
+      // ② 축끼리를 병렬로 drain — 각자 남은 공동 deadline 예산 안에서 유계 대기.
       const drained = await Promise.all([
         queues.la.drain(drainOpts),
         queues.android.drain(drainOpts),
@@ -649,7 +696,8 @@ export function startLaOrchestration(
       ]);
       return {
         results: drained.flatMap((d) => d.results),
-        timedOut: drained.some((d) => d.timedOut),
+        // seal 전 deadline 도달(= fast loop가 아직 enqueue 중일 수 있음)도 partial로 표시.
+        timedOut: drained.some((d) => d.timedOut) || !fanoutSealed,
         pendingCount: drained.reduce((n, d) => n + d.pendingCount, 0),
       };
     },

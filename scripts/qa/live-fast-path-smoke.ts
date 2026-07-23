@@ -207,6 +207,38 @@ const TRACE = { sourceAtMs: 500, fetchedAtMs: 600 };
     check("tick R3②: 다음 무변화 틱은 실패 경기(gB)만 catch-up 재발송(성공 gA는 clear)",
       (r2 as { catchup?: { gameIds?: string[] } }).catchup?.gameIds?.join(","), gB);
   }
+  // 삼순 R4② — 라이브 5경기×2 env APNs timeout pass가 failedGameIds 5개를 반환한
+  // 상황: 한 틱에 5경기만 유계 재-arm하고, 다음 무변화 틱에서 정확히 5경기 p10
+  // catch-up 1회 후 성공하면 모두 clear한다(대량 실패에서도 무한/누락 없음).
+  {
+    const ids = [
+      "20260723LGOB0", "20260723NCSS0", "20260723KTHH0",
+      "20260723SKHT0", "20260723WOLT0",
+    ];
+    const games5 = ids.map((id) => game({ G_ID: id }));
+    let attempt = 0;
+    const attemptedIds: string[][] = [];
+    const { deps } = makeDeps({
+      pushBroadcastCatchup: async (_gs, _lp, catchupIds) => {
+        attempt += 1;
+        attemptedIds.push([...catchupIds]);
+        return attempt === 1
+          ? { updates: 0, failedGameIds: [...catchupIds], deadlineSkipped: 2 }
+          : { updates: catchupIds.length * 2, failedGameIds: [], deadlineSkipped: 0 };
+      },
+    });
+    const st = seedLiveFastPathState(games5);
+    const r1 = await runLiveFastPathTick(deps, st, games5, TRACE);
+    check("tick R4②: 5경기 timeout 결과 → 5경기 전부 재-arm",
+      (r1 as { catchup?: { rearmedGameIds?: string[] } }).catchup?.rearmedGameIds?.length, 5);
+    const r2 = await runLiveFastPathTick(deps, st, games5, TRACE);
+    check("tick R4②: 다음 무변화 틱 p10 catch-up 대상 정확히 5경기",
+      (r2 as { catchup?: { gameIds?: string[] } }).catchup?.gameIds?.slice().sort().join(","),
+      ids.slice().sort().join(","));
+    const r3 = await runLiveFastPathTick(deps, st, games5, TRACE);
+    check("tick R4②: 대량 catch-up 성공 후 모두 clear(재-arm 유계 2회)",
+      (r3 as { catchup?: unknown }).catchup === undefined && attemptedIds.length === 2, true);
+  }
   // 삼순 R3② — 변화 틱 broadcast 발송 중 개별 APNs 실패(failedGameIds) → 해당 경기
   // catch-up pending 재-arm(다음 무변화 틱 p10으로 수습).
   {
@@ -459,6 +491,64 @@ const TRACE = { sourceAtMs: 500, fetchedAtMs: 600 };
     // *broadcast 축을 못 막는다*는 것(위 broadcastAt 4회로 증명). 각 축 1회만 시작이 정상.
     check("orch R3①: android/score 축은 직렬 — 각 1회만 시작(broadcast 비차단 tradeoff)",
       androidStarts === 1 && scoreStarts === 1, true);
+  }
+  // ── 삼순 R4① 실제 route 순서 회귀 ──
+  // route처럼 fastPromise를 만든 직후 drain을 동시에 시작한다. seal 전 drain sleep은
+  // 미완료로 두고, fast-loop의 15초 sleep만 fake clock으로 진행시켜 +15/+30/+45 틱이
+  // 뒤늦게 enqueue한 모든 축 tail을 drain 결과가 회수하는지 검증한다.
+  {
+    let nowMs = 0;
+    let score = 0;
+    const never = new Promise<void>(() => {});
+    const sleep = async (ms: number) => {
+      if (ms > 15_000) return never;
+      nowMs += ms;
+    };
+    const orch = startLaOrchestration({
+      now: () => nowMs,
+      sleep,
+      fetchLiveGames: async () => {
+        score += 1;
+        return {
+          ok: true,
+          games: [game({ B_SCORE_CN: String(score) })],
+          trace: { sourceAtMs: nowMs, fetchedAtMs: nowMs },
+        };
+      },
+      fetchRelayLines: async () => new Map(),
+      ensureChannels: async () => ({ created: 0 }),
+      snapshotLegacyState: async () => new Map(),
+      pushBroadcast: async () => ({ updates: 1 }),
+      pushBroadcastCatchup: async () => ({ updates: 1 }),
+      pushLegacyLa: async () => ({ pushed: 1 }),
+      pushStarts: async () => ({ started: 1 }),
+      pushIosWidget: async () => ({ sent: 1 }),
+      pushAndroid: async () => ({ sent: 1 }),
+      fetchGameEvents: async (ids) => new Map<string, GameEvent[]>(ids.map((id) => [id, []])),
+      notifyScore: async () => ({ scored: 1, conceded: 0 }),
+    }, {
+      requestStartMs: 0,
+      deadlineAtMs: 52_000,
+      initialFetchOk: true,
+      games: [game()],
+      liveGameIds: ["20260723LGOB0"],
+    });
+    // route 순서: startWidgetRefreshPipelines가 fastPromise를 먼저 시작하고, 응답 회수
+    // Promise.all에서 drain을 fastPromise와 함께 await한다.
+    const fastPromise = orch.runFastLoop();
+    const drainPromise = orch.drainFanout({
+      deadlineAtMs: 68_000,
+      now: () => nowMs,
+      sleep,
+    });
+    const [ticks, drained] = await Promise.all([fastPromise, drainPromise]);
+    const labels = drained.results.map((r) => r.label);
+    check("orch R4①: route 동시 drain에서도 fast-loop +15/+30/+45 3틱 완료",
+      ticks.length, 3);
+    check("orch R4①: seal 후 drain이 뒤늦은 la tail 3건 전부 회수",
+      labels.filter((label) => label.startsWith("tick:")).length >= 9, true);
+    check("orch R4①: 공동 deadline 전 전체 drain 완료 → pending 0 정확 기록",
+      drained.timedOut === false && drained.pendingCount === 0, true);
   }
   // 초기 broadcast 자체가 deadline까지 미완료 → 서브틱 발송 0 + initial_broadcast_overrun
   // (broadcast 축 순서 보장 = stale-overwrite 방지 유지, 시간 유계 대기 증명).

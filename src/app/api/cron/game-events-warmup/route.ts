@@ -18,7 +18,11 @@ import {
   FAST_LOOP_DEADLINE_MS,
   parseKboGameListPayload,
 } from "@/lib/notifications/widget-fast-loop";
-import { startLaOrchestration, LA_FANOUT_DRAIN_DEADLINE_MS } from "@/lib/notifications/live-fast-path";
+import {
+  startLaOrchestration,
+  LA_FANOUT_DRAIN_DEADLINE_MS,
+  LA_BROADCAST_DEADLINE_MS,
+} from "@/lib/notifications/live-fast-path";
 import { runBeforeDeadline } from "@/lib/async-deadline";
 
 /**
@@ -203,6 +207,12 @@ export async function GET(req: NextRequest) {
   // 서브틱 broadcast가 굶지 않는다. 레거시는 broadcast 전 스냅샷을 주입받아 직전-틱
   // 판정을 유지(hash 순서 불변식 대체 — live-fast-path.ts 상단 주석).
   // 이 조립 코드 자체가 qa:la-fastpath의 회귀 대상(삼순 R2 "실배선 미검증" 해소).
+  // broadcast 축(친리티컬 패스) 요청-절대 deadline(삼순 R4 blocker②) — 채널별 APNs 8s
+  // timeout 직렬(5경기×2 env 전부 실패 = 80s)이 maxDuration(75s)을 못 넘게, broadcast/
+  // catch-up/ensure 호출이 이 선을 넘으면 새 발송을 시작하지 않고 명시 종료한다(마지막
+  // in-flight send 1건만 +8s → 상한 68s = drain deadline). 미발송 라이브 경기는
+  // failedGameIds로 보고돼 fast path가 다음 틱 catch-up p10으로 재-arm한다.
+  const broadcastDeadlineAtMs = requestStartMs + LA_BROADCAST_DEADLINE_MS;
   const laOrchestration = startLaOrchestration(
     {
       now: () => Date.now(),
@@ -210,13 +220,16 @@ export async function GET(req: NextRequest) {
       fetchLiveGames: () =>
         fetchKboLiveGames(date, Math.min(deadlineAtMs, Date.now() + 10_000)),
       fetchRelayLines: fetchRelayLinesForFastPath,
-      ensureChannels: (gs) => ensureLiveActivityChannels(gs),
+      ensureChannels: (gs) =>
+        ensureLiveActivityChannels(gs, { deadlineAtMs: broadcastDeadlineAtMs }),
       snapshotLegacyState: (ids) => snapshotChannelLastStates(ids),
-      pushBroadcast: (gs, lp) => pushLiveActivityChannelBroadcasts(gs, lp),
+      pushBroadcast: (gs, lp) =>
+        pushLiveActivityChannelBroadcasts(gs, lp, { deadlineAtMs: broadcastDeadlineAtMs }),
       // 유실 catch-up — 무변화여도 해당 경기 p10 current-state 강제 재발송(p5/skip 승격 — 삼순 R2③).
       pushBroadcastCatchup: (gs, lp, ids) =>
         pushLiveActivityChannelBroadcasts(gs, lp, {
           forceCurrentStateGameIds: new Set(ids),
+          deadlineAtMs: broadcastDeadlineAtMs,
         }),
       pushLegacyLa: (gs, lp, snapshot) =>
         pushLiveActivityUpdates(gs, lp, { channelLastStateOverride: snapshot }),

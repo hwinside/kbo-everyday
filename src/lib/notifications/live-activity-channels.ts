@@ -7,14 +7,11 @@ import {
   sendBroadcastPush,
   type ApnsEnvironment,
 } from "@/lib/notifications/apns-broadcast";
+import { channelMutationFence } from "@/lib/notifications/live-activity-channel-policy";
 import {
-  resolveChannelUpdateDecision,
-  scoreStateOf,
-  fullStateHashOf,
-  endRetryDelayMinutes,
-  channelMutationFence,
-  CHANNEL_END_RETENTION_MS,
-} from "@/lib/notifications/live-activity-channel-policy";
+  runChannelBroadcastPass,
+  type ChannelBroadcastStats,
+} from "@/lib/notifications/live-activity-channel-broadcast-pass";
 import {
   buildLiveActivityContentState,
   liveActivityGameStatus,
@@ -100,6 +97,14 @@ export async function getActiveChannels(
  */
 export async function ensureLiveActivityChannels(
   games: KboRawGame[],
+  opts?: {
+    /**
+     * 요청-절대 deadline(epoch ms) — 초과 시 남은 채널 생성을 *시작하지 않고* 명시
+     * 종료(삼순 R4 blocker②: createBroadcastChannel도 http2 8s timeout 직렬이라 첫
+     * 분 5경기×2 env 전부 실패 시 80s 가능). 미생성분은 다음 분 cron이 멱등 재시도.
+     */
+    deadlineAtMs?: number;
+  },
 ): Promise<{ created: number } | { error: string }> {
   if (!apnsConfigured()) return { created: 0 };
   const targets = games.filter(
@@ -128,6 +133,7 @@ export async function ensureLiveActivityChannels(
   for (const gameId of gameIds) {
     for (const env of ENVS) {
       if (have.has(`${gameId}|${env}`)) continue;
+      if (opts?.deadlineAtMs != null && Date.now() >= opts.deadlineAtMs) return { created };
       const channelId = await createBroadcastChannel(env, jwt);
       if (!channelId) continue; // 실패 → 다음 틱 재시도 (멱등)
       const row = {
@@ -206,26 +212,17 @@ export async function pushLiveActivityChannelBroadcasts(
      * 호출측(live-fast-path catch-up 틱)이 빈도를 유계한다.
      */
     forceCurrentStateGameIds?: ReadonlySet<string>;
+    /**
+     * 요청-절대 deadline(epoch ms) — 삼순 R4 blocker②. 초과 시 새 발송을 시작하지 않고
+     * 명시 종료하며, 미발송 라이브 경기는 failedGameIds로 보고돼 호출측이 다음 틱에
+     * 재-arm한다(상세는 live-activity-channel-broadcast-pass.ts 상단 주석).
+     */
+    deadlineAtMs?: number;
   },
-): Promise<
-  | {
-      updates: number;
-      heartbeats: number;
-      catchups: number;
-      skipped: number;
-      ends: number;
-      deleted: number;
-      /**
-       * update broadcast APNs transient 실패(5xx/timeout 등, ChannelNotRegistered 제외)
-       * 경기 ID — 호출측(live-fast-path)이 이 경기만 catch-up pending으로 재-arm해
-       * updates=0이어도 stale이 2분 heartbeat까지 남지 않게 한다(삼순 R3 blocker②).
-       */
-      failedGameIds: string[];
-    }
-  | { error: string }
-> {
-  const zero = {
-    updates: 0, heartbeats: 0, catchups: 0, skipped: 0, ends: 0, deleted: 0, failedGameIds: [],
+): Promise<ChannelBroadcastStats | { error: string }> {
+  const zero: ChannelBroadcastStats = {
+    updates: 0, heartbeats: 0, catchups: 0, skipped: 0, ends: 0, deleted: 0,
+    failedGameIds: [], deadlineSkipped: 0,
   };
   if (!apnsConfigured()) return zero;
 
@@ -241,164 +238,33 @@ export async function pushLiveActivityChannelBroadcasts(
   const jwt = await getProviderTokenSafe();
   if (!jwt) return { error: "apns provider token failed" };
 
-  const gameById = new Map(games.filter((g) => g.G_ID).map((g) => [g.G_ID as string, g]));
-  const now = Date.now();
-  let updates = 0;
-  let heartbeats = 0;
-  let catchups = 0;
-  let skipped = 0;
-  let ends = 0;
-  let deleted = 0;
-  // update broadcast가 transient하게 실패한 라이브 경기(삼순 R3 blocker②) — 호출측 재-arm용.
-  const failedGameIds = new Set<string>();
-
-  const markDeleted = async (row: ChannelRow) => {
-    const ok = await deleteBroadcastChannel(row.environment, row.channel_id, jwt);
-    if (!ok) return; // 삭제 실패 → 다음 틱 재시도
-    // generation fence(삼순 재리뷰 blocker①): 그 사이 같은 PK가 새 채널로 재생성됐으면
-    // affected 0 = stale worker 결과 → no-op (새 채널 행을 deleted 처리하지 않음).
-    const { data: affected } = await supabase
-      .from("live_activity_channels")
-      .update({ status: "deleted", deleted_at: new Date().toISOString() })
-      .match(channelMutationFence(row))
-      .select("game_id");
-    if (affected && affected.length > 0) deleted += 1;
-  };
-
-  for (const row of channels) {
-    const g = gameById.get(row.game_id);
-    const status = g ? liveActivityGameStatus(g) : "other";
-    const isCancelled = g ? isKboGameCancelled(g.CANCEL_SC_ID) : false;
-
-    // ── 스테일 sweep: 오늘 경기 목록에 없고 24h 지난 채널은 정리(한도 방어). ──
-    if (!g && now - new Date(row.created_at).getTime() > 24 * 60 * 60 * 1000) {
-      await markDeleted(row);
-      continue;
-    }
-
-    // ── 종료/취소 → end broadcast + backoff 재시도 → 8h 후 DELETE ──
-    if (row.status === "ending" || status === "final" || isCancelled) {
-      const endingAtMs = row.ending_at ? new Date(row.ending_at).getTime() : now;
-      if (row.status === "ending" && now - endingAtMs > CHANNEL_END_RETENTION_MS) {
-        await markDeleted(row);
-        continue;
-      }
-      const due =
-        row.status !== "ending" || // 첫 end (즉시)
-        (row.next_retry_at !== null && now >= new Date(row.next_retry_at).getTime());
-      if (!due) continue;
-
-      const cs = g
-        ? buildLiveActivityContentState(
-            g,
-            isCancelled ? "scheduled" : "final",
-            undefined,
-            true,
-          )
-        : // 경기 목록에서 사라진 잔존 채널 — 최소 종료 프레임.
-          { status: "final" };
-      const res = await sendBroadcastPush({
-        env: row.environment,
-        channelId: row.channel_id,
-        event: "end",
-        contentState: cs as Record<string, unknown>,
-        priority: "10",
-        // 종료 15분 잔상(per-토큰 end와 동일 정책), 취소는 즉시 해제.
-        dismissalDate: isCancelled
-          ? Math.floor(now / 1000)
-          : Math.floor(now / 1000) + 15 * 60,
-        jwt,
-      });
-      if (res.ok) ends += 1;
-      else if (res.reason === "ChannelNotRegistered") {
-        // 채널이 이미 Apple 쪽에 없음 — 재시도 무의미, 행만 정리(deleteBroadcastChannel도
-        // 이 reason을 멱등 성공 처리하므로 markDeleted가 안전하게 통과).
-        await markDeleted(row);
-        continue;
-      }
-      const nextAttempt = row.attempt_count + 1;
-      const delayMin = endRetryDelayMinutes(nextAttempt);
-      await supabase
-        .from("live_activity_channels")
-        .update({
-          status: "ending",
-          ending_at: row.ending_at ?? new Date(now).toISOString(),
-          attempt_count: nextAttempt,
-          next_retry_at: new Date(now + delayMin * 60 * 1000).toISOString(),
-        })
-        .match(channelMutationFence(row)); // generation fence — 재생성 행 보호
-      continue;
-    }
-
-    // ── 라이브 → update broadcast (priority 10/5, 무변화 스킵) ──
-    if (status === "live" && g) {
-      const cs = buildLiveActivityContentState(
-        g,
-        "live",
-        lastPlayByGame?.get(row.game_id),
-        true, // 채널 구독자는 빌드 16+ 확정 → 항상 풀 카드
-      );
-      const scoreState = scoreStateOf(cs);
-      const fullHash = fullStateHashOf(cs);
-      // 판정 합성(base diff → 2분 heartbeat → 지명 catch-up)은 순수 함수로 — 매트릭스는
-      // qa:la-broadcast가 고정. 지명 catch-up(삼순 R2 blocker③)은 base가 skip이든 p5든
-      // 항상 p10으로 승격(relay lastPlay만 달라진 p5 틱이 catch-up을 삼켜 놓친 단말이
-      // 2분 heartbeat까지 stale로 남던 구멍 폐쇄). 자연 p10이면 그 발송이 겸한다.
-      const lastP10AtMs = row.last_p10_at ? new Date(row.last_p10_at).getTime() : null;
-      const { decision, isHeartbeat, isForcedCatchup: forcedCatchup } =
-        resolveChannelUpdateDecision({
-          scoreState,
-          fullStateHash: fullHash,
-          lastScoreState: row.last_score_state,
-          lastStateHash: row.last_state_hash,
-          lastP10AtMs,
-          nowMs: now,
-          forceCatchup: opts?.forceCurrentStateGameIds?.has(row.game_id) === true,
-        });
-      if (!decision.send) {
-        skipped += 1;
-        continue;
-      }
-      const res = await sendBroadcastPush({
-        env: row.environment,
-        channelId: row.channel_id,
-        event: "update",
-        contentState: cs,
-        priority: decision.priority,
-        jwt,
-      });
-      if (res.ok) {
-        updates += 1;
-        if (isHeartbeat) heartbeats += 1;
-        if (forcedCatchup) catchups += 1;
-        const patch: Record<string, unknown> = {
-          last_score_state: scoreState,
-          last_state_hash: fullHash,
-        };
-        // last_p10_at은 *성공한 p10*만 전진(transient 실패/p5는 미전진 — 삼순 ②).
-        if (decision.priority === "10") patch.last_p10_at = new Date(now).toISOString();
-        await supabase
+  // 채널 순회/판정/발송 루프는 io 주입형 pass로 분리(삼순 R4 blocker② 회귀 대상) —
+  // qa:la-broadcast가 fake clock/실패 send로 *동일 루프*의 deadline 유계 종료·재-arm을
+  // 검증한다. 실구현 io: APNs send/DELETE + generation fence 적용 supabase update.
+  return runChannelBroadcastPass(
+    channels,
+    games,
+    lastPlayByGame,
+    {
+      forceCurrentStateGameIds: opts?.forceCurrentStateGameIds,
+      deadlineAtMs: opts?.deadlineAtMs,
+    },
+    {
+      now: () => Date.now(),
+      gameStatus: liveActivityGameStatus,
+      buildContentState: (g, status, lastPlay, full) =>
+        buildLiveActivityContentState(g, status, lastPlay, full),
+      send: (p) => sendBroadcastPush({ ...p, jwt }),
+      deleteChannel: (env, channelId) => deleteBroadcastChannel(env, channelId, jwt),
+      updateChannel: async (row, patch, o) => {
+        let q = supabase
           .from("live_activity_channels")
           .update(patch)
-          .match(channelMutationFence(row)); // generation fence — 새 채널에 옛 hash 기록 방지
-      } else if (res.reason === "ChannelNotRegistered") {
-        // Apple 쪽에 채널이 없음(외부 삭제 등) — active 행을 무효화해 다음 틱
-        // ensureLiveActivityChannels의 deleted-CAS 경로가 새 채널로 재생성하게 한다(삼순 blocker②).
-        // generation fence 포함 — 그 사이 재생성된 새 채널 행은 건드리지 않는다.
-        await supabase
-          .from("live_activity_channels")
-          .update({ status: "deleted", deleted_at: new Date().toISOString() })
-          .match(channelMutationFence(row))
-          .eq("status", "active");
-      } else {
-        // 그 외 실패 = APNs 5xx/timeout 등 transient(삼순 R3 blocker②) — 이 경기를
-        // 호출측이 catch-up pending으로 재-arm하도록 보고. last_state_hash를 전진시키지
-        // 않았으므로 다음 틱 자연 재시도도 가능하고, catch-up p10이 즉시 수습한다.
-        failedGameIds.add(row.game_id);
-      }
-    }
-    // scheduled: 카드가 아직 scheduled 프레임(p2s가 실음) — 첫 live 틱부터 broadcast.
-  }
-
-  return { updates, heartbeats, catchups, skipped, ends, deleted, failedGameIds: [...failedGameIds] };
+          .match(channelMutationFence(row)); // generation fence — 재생성 행 보호
+        if (o?.requireActive) q = q.eq("status", "active");
+        const { data } = await q.select("game_id");
+        return data?.length ?? 0;
+      },
+    },
+  );
 }
