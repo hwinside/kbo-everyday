@@ -98,7 +98,7 @@
       "source": "prometheus",
       "severity": "warning",
       "for": "5m",
-      "expr": "100 * sum(pg_stat_database_num_backends{supabase_project_ref=\"${SUPABASE_PROJECT_REF}\"}) / 160 > 80"
+      "expr": "100 * sum(pg_stat_database_num_backends{supabase_project_ref=\"${SUPABASE_PROJECT_REF}\"}) / max(max_connections_connection_count{supabase_project_ref=\"${SUPABASE_PROJECT_REF}\"}) > 80"
     },
     {
       "id": "supabase-long-transaction-critical",

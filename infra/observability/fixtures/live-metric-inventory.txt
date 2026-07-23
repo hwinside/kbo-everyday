@@ -32,6 +32,7 @@ node_disk_io_time_seconds_total
 pg_up
 pg_stat_database_num_backends
 pg_stat_activity_xact_runtime
+max_connections_connection_count
 
 # --- pgbouncer / connection pooler ---
 pgbouncer_pools_client_waiting_connections
