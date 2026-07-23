@@ -567,17 +567,26 @@ final class LiveActivityController {
     }
 
     /// 경기 직렬 큐 안에서 실행되는 game 단위 reconcile 본체 — 락 대기 중 변한 상태를 재검증한다.
-    /// 직렬 구간이므로 같은 game의 start()/end()와 배타적 — liveCards 스냅샷은 이 구간 내 안정.
+    /// 직렬 구간이므로 같은 game의 start()/end()와는 배타적이지만, 사용자 dismiss·OS 종료는
+    /// 직렬 큐 밖에서 일어난다 — 그래서 카드 스냅샷은 고정하지 않고 orchestrator가 요구할 때마다
+    /// 재-enumerate한다(R6).
     /// R5: 게이트·순서·실패 처리 조립은 ChannelMigrationOrchestrator 한 곳 — 여기서는
     /// ActivityKit/UIKit effect만 주입한다(스모크가 mock effect로 동일 조립 코드를 실행).
     @available(iOS 18.0, *)
     private func reconcileGameSerialized(gameId: String) async {
-        let liveCards = Activity<KBOGameAttributes>.activities.filter {
-            $0.attributes.gameId == gameId && $0.activityState == .active
-        }
-        let cardChannelIds = liveCards.map { $0.attributes.channelId }
+        // R6: plan/request/end는 반드시 *최신* enumerate 결과 기준 — orchestrator가 channel
+        // fetch 완료 후 재-enumerate한 fresh snapshot으로 계산한다(fetch 중 사용자 dismiss/
+        // final·ended 카드를 stale snapshot이 새 채널 카드로 되살리는 유령 카드 부활 차단).
+        // effect closure의 idx는 항상 마지막 enumerate의 liveCards를 가리킨다.
+        var liveCards: [Activity<KBOGameAttributes>] = []
         let outcome = await ChannelMigrationOrchestrator.reconcile(
-            cardChannelIds: cardChannelIds,
+            enumerateCards: {
+                liveCards = Activity<KBOGameAttributes>.activities.filter {
+                    $0.attributes.gameId == gameId && $0.activityState == .active
+                        && $0.contentState.status == .live
+                }
+                return liveCards.map { $0.attributes.channelId }
+            },
             isForegroundActive: {
                 // MainActor에서 매 호출 재평가 — 직렬 구간 진입 직후 1회 + channel fetch를
                 // await한 뒤 request/end 직전 1회(R5 blocker① — fetch 중 background 전환
@@ -591,7 +600,7 @@ final class LiveActivityController {
             adoptCurrent: { keep in
                 // 현재 채널 카드 이미 존재 — 신규 request 0. 현재 카드 재-ack.
                 let currentCard = liveCards[keep]
-                guard let channelId = cardChannelIds[keep] else { return }   // keep은 항상 marker 보유
+                guard let channelId = currentCard.attributes.channelId else { return }   // keep은 항상 marker 보유
                 self.ackChannelActivity(gameId: gameId, channelId: channelId, activityId: currentCard.id)
                 if self.currentActivity?.attributes.gameId == gameId,
                    self.currentActivity?.attributes.channelId != channelId {
@@ -600,7 +609,7 @@ final class LiveActivityController {
             },
             requestCurrent: { channelId in
                 // 현재 채널 카드 없음 — request 먼저(성공 시에만 orchestrator가 end 진행).
-                guard let template = liveCards.first else { return false }   // recheck에서 비어있지 않음 보장
+                guard let template = liveCards.first else { return false }   // R6: fetch 후 fresh snapshot 비어있지 않음 보장(cardsGonePostFetch 가드)
                 var channelAttributes = template.attributes
                 channelAttributes.channelId = channelId
                 let state = template.contentState
@@ -623,7 +632,8 @@ final class LiveActivityController {
             },
             endCard: { idx in
                 // 비현재(구채널·레거시·중복) end — orchestrator가 현재 카드 확보 후에만 호출.
-                // liveCards 스냅샷만 end하므로 방금 request한 새 카드는 살아남는다(카드 0장 불가).
+                // idx는 fetch 후 fresh snapshot(liveCards) 기준 — 방금 request한 새 카드는
+                // snapshot에 없으므로 살아남는다(카드 0장 불가).
                 let other = liveCards[idx]
                 await other.end(using: other.contentState, dismissalPolicy: .immediate)
             }
@@ -635,6 +645,8 @@ final class LiveActivityController {
             NSLog("[LiveActivity] reconcile: recreated current channel card, non-current cleaned (game=\(gameId), removed=\(ended.count))")
         case .abortBackgroundPostFetch:
             NSLog("[LiveActivity] reconcile: backgrounded during channel fetch → abort, request/end 0 (game=\(gameId))")
+        case .cardsGonePostFetch:
+            NSLog("[LiveActivity] reconcile: all cards dismissed/ended during channel fetch → no-op, request/end 0 (game=\(gameId))")
         case .abortBackgroundPreFetch, .abortLegacyGone, .retryNextForeground, .requestFailedKeepAll:
             break   // no-op 계열(전 카드 유지) — 다음 foreground가 재시도
         }

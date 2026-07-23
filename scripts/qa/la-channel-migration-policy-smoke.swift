@@ -22,6 +22,10 @@
 //     request/end/fetch 주입으로 *실행* — fetch 중 background 전환 시 request/end 0,
 //     current-first 순서(request 성공 후 stale end), request 실패 시 end 0, B→C 수렴 고정
 //
+//  라운드6(삼순 R6 blocker 반영 — fetch 후 fresh snapshot):
+//   ⑬ plan/request/end는 fetch *완료 후* 재-enumerate한 live/active 카드 스냅샷 기준 —
+//     fetch 중 카드 전부 dismiss/ended면 request 0 · end 0(유령 카드 부활 금지)
+//
 //  실행: npm run qa:la-migration-policy (macOS/swiftc 필요)
 //
 
@@ -205,7 +209,7 @@ struct LaChannelMigrationPolicySmoke {
             var fgCalls = 0
             var events: [String] = []
             let outcome = await O.reconcile(
-                cardChannelIds: [nil, "chA"],
+                enumerateCards: { [nil, "chA"] },
                 isForegroundActive: { fgCalls += 1; return fgCalls == 1 },   // fetch 전 active → fetch 후 background
                 fetchActiveChannel: { events.append("fetch"); return .active("chB") },
                 adoptCurrent: { events.append("adopt:\($0)") },
@@ -223,7 +227,7 @@ struct LaChannelMigrationPolicySmoke {
         do {
             var events: [String] = []
             let outcome = await O.reconcile(
-                cardChannelIds: [nil],
+                enumerateCards: { [nil] },
                 isForegroundActive: { false },
                 fetchActiveChannel: { events.append("fetch"); return .active("chB") },
                 adoptCurrent: { events.append("adopt:\($0)") },
@@ -237,7 +241,7 @@ struct LaChannelMigrationPolicySmoke {
         do {
             var events: [String] = []
             let outcome = await O.reconcile(
-                cardChannelIds: [nil, "chA"],   // 레거시 + 구채널 A, 현재 B 카드 없음
+                enumerateCards: { [nil, "chA"] },   // 레거시 + 구채널 A, 현재 B 카드 없음
                 isForegroundActive: { true },
                 fetchActiveChannel: { events.append("fetch"); return .active("chB") },
                 adoptCurrent: { events.append("adopt:\($0)") },
@@ -253,7 +257,7 @@ struct LaChannelMigrationPolicySmoke {
         do {
             var events: [String] = []
             let outcome = await O.reconcile(
-                cardChannelIds: [nil, "chA"],
+                enumerateCards: { [nil, "chA"] },
                 isForegroundActive: { true },
                 fetchActiveChannel: { events.append("fetch"); return .active("chB") },
                 adoptCurrent: { events.append("adopt:\($0)") },
@@ -267,7 +271,7 @@ struct LaChannelMigrationPolicySmoke {
         do {
             var events: [String] = []
             let outcome = await O.reconcile(
-                cardChannelIds: ["chB", "chA"],
+                enumerateCards: { ["chB", "chA"] },
                 isForegroundActive: { true },
                 fetchActiveChannel: { events.append("fetch"); return .active("chB") },
                 adoptCurrent: { events.append("adopt:\($0)") },
@@ -279,7 +283,7 @@ struct LaChannelMigrationPolicySmoke {
                   && events == ["fetch", "adopt:0", "end:1"])
             var eventsRev: [String] = []
             let outcomeRev = await O.reconcile(
-                cardChannelIds: ["chA", "chB"],
+                enumerateCards: { ["chA", "chB"] },
                 isForegroundActive: { true },
                 fetchActiveChannel: { eventsRev.append("fetch"); return .active("chB") },
                 adoptCurrent: { eventsRev.append("adopt:\($0)") },
@@ -295,9 +299,9 @@ struct LaChannelMigrationPolicySmoke {
             var nextId = 0
             var cards: [(id: Int, ch: String?)] = [(id: -1, ch: nil)]   // t0: 레거시 1장
             func runForeground(active: String) async -> O.Outcome {
-                let snapshot = cards   // Controller의 liveCards 스냅샷 상당
+                var snapshot: [(id: Int, ch: String?)] = []   // Controller의 liveCards 상당 — enumerate마다 갱신(R6)
                 return await O.reconcile(
-                    cardChannelIds: snapshot.map { $0.ch },
+                    enumerateCards: { snapshot = cards; return snapshot.map { $0.ch } },
                     isForegroundActive: { true },
                     fetchActiveChannel: { .active(active) },
                     adoptCurrent: { _ in },
@@ -323,7 +327,7 @@ struct LaChannelMigrationPolicySmoke {
         do {
             var events: [String] = []
             let retry = await O.reconcile(
-                cardChannelIds: ["chA"],
+                enumerateCards: { ["chA"] },
                 isForegroundActive: { true },
                 fetchActiveChannel: { events.append("fetch"); return .retryableFailure },
                 adoptCurrent: { events.append("adopt:\($0)") },
@@ -333,7 +337,7 @@ struct LaChannelMigrationPolicySmoke {
             check("R5(g): GET 실패 = retryNextForeground · request/end 0",
                   retry == .retryNextForeground && events == ["fetch"])
             let gone = await O.reconcile(
-                cardChannelIds: [],
+                enumerateCards: { [] },
                 isForegroundActive: { true },
                 fetchActiveChannel: { events.append("fetch2"); return .active("chB") },
                 adoptCurrent: { _ in },
@@ -342,6 +346,53 @@ struct LaChannelMigrationPolicySmoke {
             )
             check("R5(g): 카드 이미 정리(0장) = abortLegacyGone · fetch 0",
                   gone == .abortLegacyGone && !events.contains("fetch2"))
+        }
+
+        // ── ⑬ R6 — fetch 중 카드 dismiss/ended: plan은 fetch 후 fresh snapshot 기준 ──
+        print("")
+        print("[⑬ R6 — fetch 중 카드 dismiss/ended → fresh snapshot으로 plan(유령 카드 부활 금지)]")
+        // (h) fetch 중 카드 전부 dismiss/ended — request 0 · end 0(no-op). stale snapshot이면
+        //     requestCurrent(chB)로 새 채널 카드를 되살렸을 케이스.
+        do {
+            var events: [String] = []
+            var enumCalls = 0
+            let outcome = await O.reconcile(
+                enumerateCards: {
+                    enumCalls += 1; events.append("enum\(enumCalls)")
+                    return enumCalls == 1 ? [nil, "chA"] : []   // fetch 중 전부 dismiss/ended
+                },
+                isForegroundActive: { true },
+                fetchActiveChannel: { events.append("fetch"); return .active("chB") },
+                adoptCurrent: { events.append("adopt:\($0)") },
+                requestCurrent: { events.append("request:\($0)"); return true },
+                endCard: { events.append("end:\($0)") }
+            )
+            check("R6(h): fetch 중 카드 전부 dismiss/ended = cardsGonePostFetch",
+                  outcome == .cardsGonePostFetch)
+            check("R6(h): request 0 · end 0 · adopt 0 (유령 카드 부활 금지)",
+                  events == ["enum1", "fetch", "enum2"])
+            check("R6(h): plan이 fetch *후* 재-enumerate 스냅샷 기준(enumerate 2회)",
+                  enumCalls == 2)
+        }
+        // (i) fetch 중 일부만 dismiss — fresh snapshot idx로 plan: 남은 현재 카드 adopt,
+        //     stale idx end 0(사라진 카드 end 시도 없음).
+        do {
+            var events: [String] = []
+            var enumCalls = 0
+            let outcome = await O.reconcile(
+                enumerateCards: {
+                    enumCalls += 1
+                    return enumCalls == 1 ? [nil, "chB"] : ["chB"]   // fetch 중 레거시(idx0)만 dismiss
+                },
+                isForegroundActive: { true },
+                fetchActiveChannel: { events.append("fetch"); return .active("chB") },
+                adoptCurrent: { events.append("adopt:\($0)") },
+                requestCurrent: { events.append("request:\($0)"); return true },
+                endCard: { events.append("end:\($0)") }
+            )
+            check("R6(i): fetch 중 일부 dismiss → fresh snapshot idx로 adopt(keep 0) · end 0",
+                  outcome == .adopted(keep: 0, ended: [])
+                  && events == ["fetch", "adopt:0"])
         }
 
         print("")
