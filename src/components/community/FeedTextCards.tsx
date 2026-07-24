@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useRef, useEffect } from "react";
 import Image from "next/image";
 import { getTeamById, getTeamBySlug, getTeamBgColor, type TeamData } from "@/lib/constants/teams";
 import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
@@ -109,9 +110,13 @@ export function getPostScopeLabel(post: Post): string {
 }
 
 /** 카드 B — 페북식 배경 텍스트 카드. 태그 기반으로 팀컬러 + 선수 Hero(우하단) 결정. */
-export function BrandedTextCard({ post, body }: { post: Post; body: string }) {
+export function BrandedTextCard({ post, body, long = false }: { post: Post; body: string; long?: boolean }) {
   const { team, heroKboId } = deriveBrandContext(post);
   const heroPath = getPlayerHeroPath(heroKboId);
+  // long=true(긴 글): 팀 BG는 짧은 글과 동일, 폰트만 작게(text-base), 11줄 초과 시에만 '더 보기'(하린아빠 지시 2026-07-24).
+  const [expanded, setExpanded] = useState(false);
+  const [clamped, setClamped] = useState(false);
+  const textRef = useRef<HTMLParagraphElement>(null);
 
   const gradient = team
     ? `linear-gradient(135deg, color-mix(in srgb, ${getTeamBgColor(team)} 35%, #1a1a1d) 0%, #1a1a1d 100%)`
@@ -120,6 +125,27 @@ export function BrandedTextCard({ post, body }: { post: Post; body: string }) {
   // OG-only 예외: URL은 본문에서 strip하고 OG 프리뷰를 카드 위에 노출(하린아빠 확정).
   const displayBody = stripUrls(body);
   const linked = hasLink(body);
+
+  // 긴 글은 11줄(line-clamp-[11]) 접힘 상태의 실제 overflow를 측정해 '더 보기' 노출(11줄 이하는 전문 노출).
+  // 회전·리사이즈·컨테이너 폭 변화로 줄 수가 바뀜수 있으므로 ResizeObserver로 재측정(삼순 blocker 반영).
+  useEffect(() => {
+    if (!long) return;
+    const el = textRef.current;
+    if (!el) return;
+    // 펼친 상태엔 clamp가 없어 overflow 측정 미의미(버튼도 숨김) → 접힘 상태에서만 재측정.
+    if (expanded) return;
+    const measure = () => setClamped(el.scrollHeight > el.clientHeight + 2);
+    let raf = requestAnimationFrame(measure);
+    const ro = new ResizeObserver(() => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(measure);
+    });
+    ro.observe(el);
+    return () => {
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+    };
+  }, [displayBody, long, expanded]);
 
   return (
     <div
@@ -156,9 +182,27 @@ export function BrandedTextCard({ post, body }: { post: Post; body: string }) {
       )}
       <div className="relative z-10 flex w-full flex-col items-center gap-3">
         {displayBody && (
-          <p className="whitespace-pre-line break-keep text-center text-xl font-bold leading-snug text-white line-clamp-5">
-            {displayBody}
-          </p>
+          <>
+            <p
+              ref={textRef}
+              className={`whitespace-pre-line break-keep text-center font-bold leading-snug text-white ${
+                long ? "text-base" : "text-xl"
+              } ${long ? (expanded ? "" : "line-clamp-[11]") : "line-clamp-5"}`}
+            >
+              {displayBody}
+            </p>
+            {long && clamped && !expanded && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setExpanded(true);
+                }}
+                className="text-sm text-white/70"
+              >
+                더 보기
+              </button>
+            )}
+          </>
         )}
         {linked && (
           <div className="w-full max-w-sm">
