@@ -181,6 +181,16 @@ export default function VenueStoryViewer({
     };
   }, [story?.id]);
 
+  // 뷰어 열린 동안 body 스크롤 잠금 — iOS에서 댓글 키보드를 띄우고 스크롤하면 배경(문서)이
+  // 영상과 함께 밀려 스크롤되던 문제 방지(하린아빠 A17 리포트). 컨테이너 overscroll-contain 과 병행.
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, []);
+
   // 키보드 회피 — 입력바 포커스/댓글 시트가 열려 있을 때만 구독(CommentSheet 패턴 재사용).
   // 계산/구독은 keyboard-inset.ts 순수 헬퍼 — 스모크가 모킹 visualViewport 로 회귀 검증(삼순 #807 blocker 4)
   useEffect(() => {
@@ -385,7 +395,7 @@ export default function VenueStoryViewer({
   return createPortal(
     <motion.div
       // 경기 페이지 상단 스코어 헤더가 z-[100]이라 그 위로 — 풀스크린 뷰어는 모든 UI를 덮어야 함
-      className="fixed inset-0 z-[120] bg-black flex flex-col select-none"
+      className="fixed inset-0 z-[120] bg-black flex flex-col select-none overflow-hidden overscroll-none"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}

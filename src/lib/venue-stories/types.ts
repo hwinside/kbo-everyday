@@ -55,6 +55,12 @@ export interface VenueStory {
     avatarUrl: string | null;
     teamId: number | null;
   };
+  /**
+   * 클라이언트 낚관 카드 전용(서버 응답에는 없음). 영상 업로드 직후 pending(검증 중)이라
+   * GET 목록(active만 조회)에서 빠지는 구간을 '처리중' 카드로 즉시 노출하기 위해 사용.
+   * active 승급 후 서버 목록이 반환하면 이 카드는 실제 카드로 교체된다.
+   */
+  processing?: boolean;
 }
 
 /** POST /api/venue-stories 요청 바디 */

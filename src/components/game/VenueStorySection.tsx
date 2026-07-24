@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Plus, Play } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Plus, Play, Loader2 } from "lucide-react";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { getSafeSession } from "@/lib/supabase/client";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
@@ -9,6 +9,11 @@ import VenueStoryComposer from "./VenueStoryComposer";
 import VenueStoryViewer from "./VenueStoryViewer";
 import type { VenueStory } from "@/lib/venue-stories/types";
 import { loadSeenIds, markStorySeen, orderBySeen } from "@/lib/venue-stories/seen";
+import {
+  buildProcessingStory,
+  mergePendingStories,
+  PENDING_POLL_DELAYS_MS,
+} from "@/lib/venue-stories/composer-helpers";
 
 interface Props {
   gameId: string;
@@ -58,6 +63,16 @@ export default function VenueStorySection({ gameId }: Props) {
     setSeenIds(loadSeenIds(gameId, userId));
   }, [gameId, userId]);
 
+  // 영상 업로드 직후 낙관 '처리중' 카드로 넣은 id 추적 — 서버가 active 로 반환하면 제거(교체 완료).
+  const pendingIdsRef = useRef<Set<number>>(new Set());
+  // pending → active 승급 감지용 재조회 타이머. 언마운트/새 업로드 시 정리.
+  const pollTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const clearPollTimers = useCallback(() => {
+    pollTimersRef.current.forEach(clearTimeout);
+    pollTimersRef.current = [];
+  }, []);
+  useEffect(() => clearPollTimers, [clearPollTimers]);
+
   const fetchStories = useCallback(async () => {
     if (storyQaKeyboard) {
       // QA 하네스는 mock 뷰어만 사용 — 실데이터 조회 자체를 하지 않는다
@@ -72,13 +87,24 @@ export default function VenueStorySection({ gameId }: Props) {
         headers: token ? { Authorization: `Bearer ${token}` } : undefined,
       });
       const data = await res.json();
-      setStories(Array.isArray(data.stories) ? data.stories : []);
+      const server: VenueStory[] = Array.isArray(data.stories) ? data.stories : [];
+      if (pendingIdsRef.current.size === 0) {
+        setStories(server);
+      } else {
+        // 서버가 낙관 id 를 active 로 반환하면 추적 해제(재생 가능한 실제 카드로 교체됨)
+        const serverIds = new Set(server.map((s) => s.id));
+        for (const id of [...pendingIdsRef.current]) {
+          if (serverIds.has(id)) pendingIdsRef.current.delete(id);
+        }
+        setStories((prev) => mergePendingStories(prev, server, pendingIdsRef.current));
+        if (pendingIdsRef.current.size === 0) clearPollTimers();
+      }
     } catch {
       // 무시 — 섹션은 조용히 비워둠
     } finally {
       setLoaded(true);
     }
-  }, [gameId, storyQaKeyboard]);
+  }, [gameId, storyQaKeyboard, clearPollTimers]);
 
   useEffect(() => {
     fetchStories();
@@ -95,21 +121,50 @@ export default function VenueStorySection({ gameId }: Props) {
     [gameId, userId],
   );
 
-  // 업로드 성공 피드백 — 모달만 조용히 사라져 "실패한 줄"로 오인되던 문제 방지(하린아빠 A17 리포트).
-  // 영상은 pending→검증 승급 구조라 간헐 트레이 즉시 반영이 늦을 수 있음 — status로 문구 분기.
+  // 업로드 성공 피드백 + pending 자동 반영(하린아빠 A17 리포트, 삼순 #839).
+  // 영상은 pending→ffprobe 검증→active 승급 구조라 GET(active만) 직후 1회로는 안 뜬다.
+  // → 낙관 '처리중' 카드를 즉시 트레이에 올리고 active 승급까지 폴링해 자동으로 실제 카드로 교체.
   const handleUploaded = useCallback(
-    (result: { mediaType: "video" | "image"; status: string | null }) => {
-      fetchStories();
+    (result: {
+      id: number | null;
+      mediaType: "video" | "image";
+      status: string | null;
+      thumbUrl: string | null;
+    }) => {
+      if (result.mediaType === "video" && result.status === "pending" && result.id != null) {
+        const optimistic = buildProcessingStory({
+          id: result.id,
+          gameId,
+          userId: userId ?? "",
+          mediaType: "video",
+          thumbUrl: result.thumbUrl,
+          author: { nickname: null, avatarUrl: null, teamId: null },
+        });
+        pendingIdsRef.current.add(result.id);
+        setStories((prev) => [optimistic, ...prev.filter((s) => s.id !== result.id)]);
+        setLoaded(true);
+        // 백오프 폴링 — active 승급 감지 시 fetchStories 가 실제(재생 가능) 카드로 교체
+        clearPollTimers();
+        for (const d of PENDING_POLL_DELAYS_MS) {
+          pollTimersRef.current.push(
+            setTimeout(() => {
+              if (pendingIdsRef.current.size > 0) fetchStories();
+            }, d),
+          );
+        }
+      } else {
+        fetchStories();
+      }
       const msg =
         result.mediaType === "video" && result.status === "pending"
-          ? "영상을 올렸어요! 검증 후 잠시 뒤 나타나요 🎬"
+          ? "영상을 올렸어요! 검증 후 잠시 뒤 자동으로 나타나요 🎬"
           : result.mediaType === "video"
             ? "영상을 올렸어요! 🎬"
             : "사진을 올렸어요! 📷";
       setToast(msg);
       setTimeout(() => setToast(null), 2200);
     },
-    [fetchStories],
+    [fetchStories, gameId, userId, clearPollTimers],
   );
 
   const handleUploadClick = () => {
@@ -150,7 +205,15 @@ export default function VenueStorySection({ gameId }: Props) {
           return (
             <button
               key={s.id}
-              onClick={() => setViewerIndex(i)}
+              onClick={() => {
+                // 처리중(pending) 낙관 카드는 공개 객체가 아직 없어 재생 불가 → 뷰어 진입 대신 안내
+                if (s.processing) {
+                  setToast("영상 검증 중이에요. 잠시 뒤 자동으로 재생돼요 🎬");
+                  setTimeout(() => setToast(null), 1800);
+                  return;
+                }
+                setViewerIndex(i);
+              }}
               className="shrink-0 w-[68px] flex flex-col items-center gap-1"
             >
               <div
@@ -174,10 +237,16 @@ export default function VenueStorySection({ gameId }: Props) {
                     {team.shortName}
                   </span>
                 )}
-                {s.mediaType === "video" && (
+                {s.mediaType === "video" && !s.processing && (
                   <span className="absolute bottom-1 right-1 w-5 h-5 rounded-full bg-black/60 flex items-center justify-center">
                     <Play size={11} className="text-white fill-white" />
                   </span>
+                )}
+                {s.processing && (
+                  <div className="absolute inset-0 bg-black/55 flex flex-col items-center justify-center gap-1">
+                    <Loader2 size={16} className="animate-spin text-white" />
+                    <span className="text-[9px] text-white font-medium">처리중</span>
+                  </div>
                 )}
               </div>
               <span className="text-[11px] text-text-secondary truncate w-full text-center">
