@@ -628,7 +628,13 @@ export default function VenueStoryViewer({
       <div
         data-composer="venue-story"
         className="absolute left-0 right-0 z-20 flex items-center gap-2 px-3"
-        style={{ bottom: `calc(env(safe-area-inset-bottom, 0px) + ${12 + kbInset}px)` }}
+        style={{
+          // 키보드가 열렸을 때는 시각 뷰포트 하단에 정확히 붙여 사이로 배경이 비치지 않게 한다.
+          // 닫힌 상태만 safe-area + 12px 여백을 유지한다.
+          bottom: inputFocused
+            ? `${kbInset}px`
+            : `calc(env(safe-area-inset-bottom, 0px) + 12px)`,
+        }}
       >
         <input
           value={commentInput}

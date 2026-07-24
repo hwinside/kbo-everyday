@@ -68,7 +68,7 @@ export interface VenueStory {
    */
   stalled?: boolean;
   /**
-   * 업로더 본인 상태 조회에서 서버가 terminal removed 로 판정한 낙관 카드.
+   * 업로더 본인 상태 조회에서 서버가 terminal removed 또는 cleanup 뒤 missing 으로 판정한 낙관 카드.
    * 탭하면 카드를 정리하고 컴포저를 다시 열어 재업로드할 수 있다.
    */
   failed?: boolean;

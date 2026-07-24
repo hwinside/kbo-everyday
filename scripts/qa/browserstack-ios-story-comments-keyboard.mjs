@@ -111,9 +111,19 @@ async function drag(sessionId, x, y1, y2) {
 }
 
 const kbOpen = (m) => m.visualViewport != null && m.innerHeight - m.visualViewport.height > 120;
-const composerAboveKeyboard = (m) =>
+const composerFlushWithKeyboard = (m) =>
   m.composer != null && m.visualViewport != null
-  && m.composer.bottom <= m.visualViewport.offsetTop + m.visualViewport.height + 4;
+  && Math.abs(
+    m.composer.bottom - (m.visualViewport.offsetTop + m.visualViewport.height)
+  ) <= 4;
+const sameRootAndViewer = (a, b) =>
+  a.viewer != null && b.viewer != null
+  && Math.abs(a.viewer.top - b.viewer.top) <= 1
+  && Math.abs(a.viewer.bottom - b.viewer.bottom) <= 1
+  && b.scrollY === a.scrollY
+  && b.pageYOffset === a.pageYOffset
+  && b.documentElementScrollTop === a.documentElementScrollTop
+  && b.bodyScrollTop === a.bodyScrollTop;
 
 async function main() {
   const created = await wd('POST', '/session', {
@@ -168,7 +178,7 @@ async function main() {
       }, sessionId);
       focused = await waitMetrics(
         sessionId,
-        (m) => m.inputFocused && kbOpen(m) && composerAboveKeyboard(m),
+        (m) => m.inputFocused && kbOpen(m) && composerFlushWithKeyboard(m),
         6000,
       );
       if (focused.inputFocused) break;
@@ -213,7 +223,7 @@ async function main() {
     }, sessionId);
     const blurred = await waitMetrics(
       sessionId,
-      (m) => !m.inputFocused && !kbOpen(m) && composerAboveKeyboard(m),
+      (m) => !m.inputFocused && !kbOpen(m),
       12000,
     );
 
@@ -228,23 +238,22 @@ async function main() {
 
     const pass = idle.hasComposer
       // focus: 키보드 frame(시각 뷰포트 축소) + 입력바가 키보드 위에 노출 + 실제 포커스
-      && focused.inputFocused && kbOpen(focused) && composerAboveKeyboard(focused)
+      && focused.inputFocused && kbOpen(focused) && composerFlushWithKeyboard(focused)
+      && sameRootAndViewer(idle, focused)
       // type: 값 반영 + 키보드 유지
-      && typed.inputValue === 'QA 키보드 확인' && kbOpen(typed) && composerAboveKeyboard(typed)
+      && typed.inputValue === 'QA 키보드 확인' && kbOpen(typed) && composerFlushWithKeyboard(typed)
+      && sameRootAndViewer(idle, typed)
       // native drag: 키보드·입력바 유지 + 뷰어 위치와 raw root scroll 불변 + 실제 lock style
-      && kbOpen(afterDrag) && composerAboveKeyboard(afterDrag)
-      && Math.abs(afterDrag.viewer.top - beforeDrag.viewer.top) <= 1
-      && Math.abs(afterDrag.viewer.bottom - beforeDrag.viewer.bottom) <= 1
-      && afterDrag.scrollY === beforeDrag.scrollY
-      && afterDrag.pageYOffset === beforeDrag.pageYOffset
-      && afterDrag.documentElementScrollTop === beforeDrag.documentElementScrollTop
-      && afterDrag.bodyScrollTop === beforeDrag.bodyScrollTop
+      && kbOpen(afterDrag) && composerFlushWithKeyboard(afterDrag)
+      && sameRootAndViewer(idle, afterDrag)
+      && sameRootAndViewer(beforeDrag, afterDrag)
       && afterDrag.bodyPosition === 'fixed'
       && afterDrag.htmlOverflow === 'hidden'
       // submit: 키보드 유지 중에도 입력바 가려지지 않음
-      && kbOpen(submitted) && composerAboveKeyboard(submitted)
+      && kbOpen(submitted) && composerFlushWithKeyboard(submitted)
+      && sameRootAndViewer(idle, submitted)
       // blur: 키보드 해제 + 인셋 복귀(입력바가 레이아웃 뷰포트 하단으로)
-      && !blurred.inputFocused && !kbOpen(blurred) && composerAboveKeyboard(blurred);
+      && !blurred.inputFocused && !kbOpen(blurred);
 
     await wd('POST', '/execute/sync', {
       script: 'browserstack_executor: ' + JSON.stringify({

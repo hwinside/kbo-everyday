@@ -4,6 +4,34 @@
 
 import type { VenueStory, VenueStoryMediaType } from "./types";
 
+export interface UploadStatus {
+  id: number;
+  status: string;
+}
+
+/** cleanup 뒤 사라진 요청 id도 missing terminal 상태로 완성한다. */
+export function completeRequestedUploadStatuses(
+  requestedIds: readonly number[],
+  rows: readonly UploadStatus[],
+): UploadStatus[] {
+  const returnedIds = new Set(rows.map((row) => row.id));
+  return [
+    ...rows,
+    ...requestedIds
+      .filter((id) => !returnedIds.has(id))
+      .map((id) => ({ id, status: "missing" })),
+  ];
+}
+
+/** 클라이언트가 pending 추적을 끝내고 재업로드 카드로 전환해야 하는 terminal 상태. */
+export function terminalUploadFailureIds(rows: readonly UploadStatus[]): Set<number> {
+  return new Set(
+    rows
+      .filter((row) => row.status === "removed" || row.status === "missing")
+      .map((row) => row.id),
+  );
+}
+
 /**
  * 이미지 data URL 읽기 결과를 어떻게 반영할지 판정한다.
  * - apply   : 최신 픽 + 읽기 성공 → file·preview 원자 반영

@@ -11,6 +11,7 @@ import type { VenueStory } from "@/lib/venue-stories/types";
 import { loadSeenIds, markStorySeen, orderBySeen } from "@/lib/venue-stories/seen";
 import {
   buildProcessingStory,
+  terminalUploadFailureIds,
   mergePendingStories,
   PENDING_POLL_DELAYS_MS,
 } from "@/lib/venue-stories/composer-helpers";
@@ -99,12 +100,10 @@ export default function VenueStorySection({ gameId }: Props) {
         ? data.uploadStatuses
         : [];
       const serverIds = new Set(server.map((s) => s.id));
-      const removedIds = new Set(
-        uploadStatuses.filter((row) => row.status === "removed").map((row) => row.id),
-      );
+      const failedStatusIds = terminalUploadFailureIds(uploadStatuses);
       for (const id of [...pendingIdsRef.current]) {
         if (serverIds.has(id)) pendingIdsRef.current.delete(id);
-        if (removedIds.has(id)) {
+        if (failedStatusIds.has(id)) {
           pendingIdsRef.current.delete(id);
           failedIdsRef.current.add(id);
         }

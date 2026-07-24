@@ -30,6 +30,7 @@ export interface SavedScrollState {
   body: Partial<CSSStyleDeclaration>;
   documentElementOverflow: string;
   scrollY: number;
+  releaseGuards: () => void;
 }
 
 /**
@@ -52,6 +53,7 @@ export function lockRootScroll(): SavedScrollState | null {
     },
     documentElementOverflow: document.documentElement.style.overflow,
     scrollY,
+    releaseGuards: () => {},
   };
   const s = computeScrollLockStyle(scrollY);
   body.style.position = s.position;
@@ -63,12 +65,32 @@ export function lockRootScroll(): SavedScrollState | null {
   body.style.overscrollBehavior = s.overscrollBehavior;
   // documentElement(html)도 잠가 iOS 가 root 대신 html 을 스크롤하는 경로 차단
   document.documentElement.style.overflow = "hidden";
+  // iOS Safari는 키보드 focus 순간 fixed body라도 root를 자동 스크롤할 수 있다.
+  // focus 애니메이션/키보드 열린 native drag 중 발생하는 모든 root 이동을 저장 위치로 되돌린다.
+  const restoreLockedScroll = () => {
+    if (window.scrollY !== scrollY || window.pageYOffset !== scrollY) {
+      window.scrollTo(0, scrollY);
+    }
+    if (document.documentElement.scrollTop !== scrollY) {
+      document.documentElement.scrollTop = scrollY;
+    }
+    if (document.body.scrollTop !== 0) {
+      document.body.scrollTop = 0;
+    }
+  };
+  window.addEventListener("scroll", restoreLockedScroll, { passive: true });
+  window.visualViewport?.addEventListener("scroll", restoreLockedScroll, { passive: true });
+  saved.releaseGuards = () => {
+    window.removeEventListener("scroll", restoreLockedScroll);
+    window.visualViewport?.removeEventListener("scroll", restoreLockedScroll);
+  };
   return saved;
 }
 
 /** lockRootScroll 이 반환한 상태로 원복하고 원래 scrollY 로 되돌린다. */
 export function unlockRootScroll(saved: SavedScrollState | null): void {
   if (!saved || typeof document === "undefined" || typeof window === "undefined") return;
+  saved.releaseGuards();
   const body = document.body;
   body.style.position = saved.body.position ?? "";
   body.style.top = saved.body.top ?? "";

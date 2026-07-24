@@ -23,6 +23,7 @@ import {
 import { decideListAuth } from "@/lib/venue-stories/auth-consent";
 import { validateVenueVideoRow } from "@/lib/venue-stories/video-validate-server";
 import { canBypassVenueGeofenceForQa } from "@/lib/admin/admin-users";
+import { completeRequestedUploadStatuses } from "@/lib/venue-stories/composer-helpers";
 
 // 영상 즉시 검증(다운로드 최대 50MiB + ffprobe)을 요청 안에서 수행
 export const maxDuration = 60;
@@ -99,6 +100,10 @@ export async function GET(req: NextRequest) {
       id: row.id as number,
       status: row.status as string,
     }));
+    // cleanup cron 이 removed 행을 storage 정리 뒤 DELETE 할 수 있다. 요청한 본인 낙관 id가
+    // 조회 결과에서 사라진 경우도 terminal failure 로 종결해 pending 카드가 무한 잔류하지 않게 한다.
+    // 다른 사용자의 id와 실제 미존재 id는 모두 missing 이라 소유권/존재 여부는 노출하지 않는다.
+    uploadStatuses = completeRequestedUploadStatuses(requestedStatusIds, uploadStatuses);
   }
 
   const { data: rows, error } = await supabase
