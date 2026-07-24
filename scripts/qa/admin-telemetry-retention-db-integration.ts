@@ -65,6 +65,14 @@ async function main() {
     CREATE ROLE authenticated;
     CREATE ROLE service_role;
 
+    -- Minimal auth.users stand-in: admin_user_game_lifetime must FK-cascade
+    -- on account deletion (삼순 R2 P1).
+    CREATE SCHEMA auth;
+    CREATE TABLE auth.users (id uuid PRIMARY KEY);
+    INSERT INTO auth.users (id) VALUES
+      ('11111111-1111-1111-1111-111111111111'),
+      ('44444444-4444-4444-4444-444444444444');
+
     CREATE TABLE admin_page_views (
       id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
       created_at timestamptz NOT NULL,
@@ -94,7 +102,9 @@ async function main() {
       ('2025-07-21T15:00:00Z', '/home', 'ios_native', 'boundary-device', NULL, '1.0.0'),
       ('2026-06-01T03:00:00Z', '/home', 'ios_native', 'new-device', NULL, '2.0.0'),
       ('2025-07-01T02:00:00Z', '/games/20250701SSLT', 'web', 'visitor-lifetime',
-       '44444444-4444-4444-4444-444444444444', NULL);
+       '44444444-4444-4444-4444-444444444444', NULL),
+      ('2025-07-01T03:00:00Z', '/games/20250701HTWO', 'web', 'visitor-ghost',
+       '55555555-5555-5555-5555-555555555555', NULL);
 
     INSERT INTO admin_page_dwell (
       created_at, visitor_id, platform, dwell_ms
@@ -149,8 +159,8 @@ async function main() {
     assert.deepEqual(
       initialPreview.expiredRollups,
       {
-        trafficDailyVisitors: 2,
-        pageViewUserDays: 1,
+        trafficDailyVisitors: 3,
+        pageViewUserDays: 2,
         dwellSessionSlices: 0,
         appVersionDevices: 1,
       },
@@ -167,6 +177,44 @@ async function main() {
       1,
       "backfill must materialize lifetime first game visits",
     );
+    assert.equal(
+      await scalar(
+        db,
+        `SELECT count(*)::int AS value FROM admin_user_game_lifetime
+         WHERE user_id = '55555555-5555-5555-5555-555555555555'`,
+      ),
+      0,
+      "backfill must exclude UUIDs of already-deleted accounts (삼순 R2 P1)",
+    );
+
+    await db.exec(`
+    BEGIN;
+    INSERT INTO admin_page_views (
+      created_at, path, platform, visitor_id, user_id, app_version
+    ) VALUES (
+      '2026-07-01T01:00:00Z', '/games/20260701LGOB', 'web', 'visitor-ghost',
+      '55555555-5555-5555-5555-555555555555', NULL
+    );
+  `);
+    assert.equal(
+      await scalar(
+        db,
+        `SELECT count(*)::int AS value FROM admin_page_views
+         WHERE created_at = '2026-07-01T01:00:00Z'`,
+      ),
+      1,
+      "raw page-view insert must survive a deleted-user lifetime FK race",
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `SELECT count(*)::int AS value FROM admin_user_game_lifetime
+         WHERE user_id = '55555555-5555-5555-5555-555555555555'`,
+      ),
+      0,
+      "trigger must not resurrect a deleted user's lifetime row (삼순 R2 P1)",
+    );
+    await db.exec("ROLLBACK;");
 
     const rawViewsBefore = await scalar(
       db,
@@ -627,6 +675,24 @@ async function main() {
       2,
       "lifetime rows must be untouched by retention execute",
     );
+
+    await db.exec(
+      "DELETE FROM auth.users WHERE id = '44444444-4444-4444-4444-444444444444'",
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `SELECT count(*)::int AS value FROM admin_user_game_lifetime
+         WHERE user_id = '44444444-4444-4444-4444-444444444444'`,
+      ),
+      0,
+      "auth.users deletion must cascade-delete the lifetime row (삼순 R2 P1)",
+    );
+    assert.equal(
+      await scalar(db, "SELECT count(*)::int AS value FROM admin_user_game_lifetime"),
+      1,
+      "cascade must remove only the deleted account's lifetime row",
+    );
     assert.equal(
       await scalar(
         db,
@@ -637,7 +703,7 @@ async function main() {
     );
 
     console.log(
-      "PASS PG17 retention DB regression: coverage gates, app-version purge, lifetime activation survival and transactional rollback",
+      "PASS PG17 retention DB regression: coverage gates, app-version purge, lifetime activation survival, deleted-account cascade/backfill exclusion and transactional rollback",
     );
   } finally {
     await db.close();

@@ -17,8 +17,11 @@ CREATE TABLE admin_page_view_user_days (
 -- Lifetime activation evidence must survive the 365-day user-day purge.
 -- computeActivationFunnel reads this table (not admin_page_view_user_days)
 -- so games_1plus cannot regress once old user-day rollups are deleted.
+-- Deleted accounts must not persist here (삼순 R2 P1): the FK cascades on
+-- auth user deletion (GoTrue admin deleteUser issues a hard SQL DELETE on
+-- auth.users, so ON DELETE CASCADE fires without app-code cleanup).
 CREATE TABLE admin_user_game_lifetime (
-  user_id            uuid PRIMARY KEY,
+  user_id            uuid PRIMARY KEY REFERENCES auth.users (id) ON DELETE CASCADE,
   first_game_id      text NOT NULL,
   first_game_day_kst date NOT NULL
 );
@@ -57,11 +60,15 @@ WHERE user_id IS NOT NULL
   AND NOT starts_with(path, '/_celeb')
 GROUP BY 1, 2;
 
+-- Backfill only users that still exist: historical user-day rollups can hold
+-- UUIDs of accounts deleted before this migration, and those must not be
+-- resurrected into a purge-exempt table (삼순 R2 P1).
 INSERT INTO admin_user_game_lifetime (user_id, first_game_id, first_game_day_kst)
-SELECT DISTINCT ON (user_id) user_id, game_ids[1], day_kst
-FROM admin_page_view_user_days
-WHERE cardinality(game_ids) > 0
-ORDER BY user_id, day_kst;
+SELECT DISTINCT ON (rollup.user_id) rollup.user_id, rollup.game_ids[1], rollup.day_kst
+FROM admin_page_view_user_days AS rollup
+JOIN auth.users AS active_user ON active_user.id = rollup.user_id
+WHERE cardinality(rollup.game_ids) > 0
+ORDER BY rollup.user_id, rollup.day_kst;
 
 CREATE OR REPLACE FUNCTION admin_page_views_track_user_day()
 RETURNS trigger
@@ -92,12 +99,18 @@ BEGIN
       END;
 
   IF v_game_id IS NOT NULL THEN
-    INSERT INTO admin_user_game_lifetime (user_id, first_game_id, first_game_day_kst)
-    VALUES (NEW.user_id, v_game_id, (NEW.created_at AT TIME ZONE 'Asia/Seoul')::date)
-    ON CONFLICT (user_id) DO UPDATE
-    SET first_game_id = EXCLUDED.first_game_id,
-        first_game_day_kst = EXCLUDED.first_game_day_kst
-    WHERE admin_user_game_lifetime.first_game_day_kst > EXCLUDED.first_game_day_kst;
+    BEGIN
+      INSERT INTO admin_user_game_lifetime (user_id, first_game_id, first_game_day_kst)
+      VALUES (NEW.user_id, v_game_id, (NEW.created_at AT TIME ZONE 'Asia/Seoul')::date)
+      ON CONFLICT (user_id) DO UPDATE
+      SET first_game_id = EXCLUDED.first_game_id,
+          first_game_day_kst = EXCLUDED.first_game_day_kst
+      WHERE admin_user_game_lifetime.first_game_day_kst > EXCLUDED.first_game_day_kst;
+    EXCEPTION WHEN foreign_key_violation THEN
+      -- Race with account deletion: never resurrect a deleted user's lifetime
+      -- row, and never fail the raw page-view insert because of it.
+      NULL;
+    END;
   END IF;
 
   RETURN NEW;
