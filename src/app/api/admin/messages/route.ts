@@ -258,58 +258,26 @@ export async function POST(request: NextRequest) {
     }
     const preview = lastMessagePreview(content, imageUrls);
 
-    // 기존 conversation 찾기
-    const [u1, u2] = [systemUserId, userId].sort();
-    const { data: existingConv } = await admin
-      .from("dm_conversations")
-      .select("id")
-      .eq("user1_id", u1)
-      .eq("user2_id", u2)
-      .maybeSingle();
+    // 대화 upsert + 메시지 INSERT + preview/origin 확정을 service_role 전용 RPC 한
+    // 트랜잭션으로 묶는다. 실패 시 전부 rollback → 빈/숨은 대화 미발생.
+    const { data: sendData, error: sendError } = await admin.rpc("admin_send_ops_message", {
+      p_system_user_id: systemUserId,
+      p_user_id: userId,
+      p_content: content,
+      p_image_urls: imageUrls,
+      p_preview: preview,
+      p_origin: isFeedback ? "feedback" : "dm",
+    });
 
-    let conversationId: string;
-
-    if (existingConv) {
-      conversationId = existingConv.id;
-    } else {
-      const { data: newConv, error: convError } = await admin
-        .from("dm_conversations")
-        .insert({
-          user1_id: u1,
-          user2_id: u2,
-          ...(isFeedback ? { origin: "feedback" } : {}),
-        })
-        .select("id")
-        .single();
-
-      if (convError || !newConv) {
-        return NextResponse.json({ error: "conv_create_failed" }, { status: 500 });
-      }
-      conversationId = newConv.id;
-    }
-
-    const { error: msgError } = await admin
-      .from("dm_messages")
-      .insert({
-        conversation_id: conversationId,
-        sender_id: systemUserId,
-        content,
-        image_urls: imageUrls,
-      });
-
-    if (msgError) {
+    if (sendError) {
       return NextResponse.json({ error: "send_failed" }, { status: 500 });
     }
 
-    await admin
-      .from("dm_conversations")
-      .update({
-        last_message: preview,
-        last_message_at: new Date().toISOString(),
-        // 기존 대화(broadcast 등)에 피드백 회신 시에도 수신함 노출을 위해 origin 마킹.
-        ...(isFeedback ? { origin: "feedback" } : {}),
-      })
-      .eq("id", conversationId);
+    const sendRow = Array.isArray(sendData) ? sendData[0] : sendData;
+    const conversationId = sendRow?.conversation_id as string | undefined;
+    if (!conversationId) {
+      return NextResponse.json({ error: "send_failed" }, { status: 500 });
+    }
 
     return NextResponse.json({ ok: true, conversationId });
   }

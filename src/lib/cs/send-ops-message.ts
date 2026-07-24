@@ -66,75 +66,33 @@ export async function sendOpsMessageToUser(
   if (!text.trim()) return { ok: false, reason: "empty_content" };
   const preview = text.trim().replace(/\s+/g, " ").substring(0, 100);
 
-  const [u1, u2] = [systemUserId, userId].sort();
+  // 대화 upsert + 메시지 INSERT + preview/origin 확정을 service_role 전용 RPC 한
+  // 트랜잭션으로 묶는다. 실패 시 전부 rollback → 빈 대화·숨은 대화가 남지
+  // 않고, 호출부는 error 를 받아 CS 원클릭 회신을 resolved 처리하지 않는다.
+  const { data, error } = await admin.rpc("admin_send_ops_message", {
+    p_system_user_id: systemUserId,
+    p_user_id: userId,
+    p_content: text,
+    p_preview: preview,
+    p_origin: origin === "feedback" ? "feedback" : "dm",
+    p_dedup_key: dedupKey ?? null,
+  });
 
-  const { data: existing } = await admin
-    .from("dm_conversations")
-    .select("id")
-    .eq("user1_id", u1)
-    .eq("user2_id", u2)
-    .maybeSingle();
-
-  let conversationId: string;
-  if (existing) {
-    conversationId = existing.id;
-  } else {
-    const { data: created, error: convError } = await admin
-      .from("dm_conversations")
-      .insert({
-        user1_id: u1,
-        user2_id: u2,
-        ...(origin === "feedback" ? { origin: "feedback" } : {}),
-      })
-      .select("id")
-      .single();
-    if (convError || !created) return { ok: false, reason: "conv_create_failed" };
-    conversationId = created.id;
-  }
-
-  const messageRow: Record<string, unknown> = {
-    conversation_id: conversationId,
-    sender_id: systemUserId,
-    content: text,
-  };
-  // dedupKey 지정 시 dm_messages.dedup_key 로 멱등 발송(같은 키 재발송 = UNIQUE 위반 → 이미 발송됨).
-  if (dedupKey) messageRow.dedup_key = dedupKey;
-
-  const { error: msgError } = await admin.from("dm_messages").insert(messageRow);
-  if (msgError) {
-    // 멱등: 같은 dedup_key 로 이미 발송된 건이면 성공으로 간주(발송 성공 후 crash → 재발송 방지).
-    // ⚠️ dedup_key 는 DB 트리거(guard_dm_message_dedup_key)로 service role 만 세팅 가능해
-    //    일반 유저 선점 위조가 불가하지만, belt-and-suspenders 로 기존 행이 진짜 운영팀
-    //    발신이고 같은 대화방·내용인지 검증한 후에만 성공 처리한다.
-    if (dedupKey && msgError.code === "23505") {
-      const verified = await verifyOpsMessageByDedupKey(
-        admin,
-        systemUserId,
-        userId,
-        dedupKey,
-        text,
-      );
-      if (verified.ok && verified.found && verified.conversationId === conversationId) {
+  if (error) {
+    // dedup_key 가 다른 대화/발신자와 충돌(위조 의심)이면 RPC 가 23505 로 rollback.
+    if (dedupKey && error.code === "23505") {
+      // belt-and-suspenders: 같은 대화·운영팀 발신으로 이미 있으면 멱등 성공으로 간주.
+      const verified = await verifyOpsMessageByDedupKey(admin, systemUserId, userId, dedupKey, text);
+      if (verified.ok && verified.found) {
         return { ok: true, conversationId: verified.conversationId };
       }
-      // 기존 행이 운영팀 발신이 아니면(이론상 불가) 위조 의심 → 실패로 처리해 재시도/관제.
-      return {
-        ok: false,
-        reason: verified.ok ? "dedup_key_conflict_foreign" : verified.reason,
-      };
+      return { ok: false, reason: verified.ok ? "dedup_key_conflict_foreign" : verified.reason };
     }
     return { ok: false, reason: "send_failed" };
   }
 
-  await admin
-    .from("dm_conversations")
-    .update({
-      last_message: preview,
-      last_message_at: new Date().toISOString(),
-      // 기존 대화(broadcast 등)에 피드백 회신 시에도 수신함 노출을 위해 origin 마킹.
-      ...(origin === "feedback" ? { origin: "feedback" } : {}),
-    })
-    .eq("id", conversationId);
-
+  const row = Array.isArray(data) ? data[0] : data;
+  const conversationId = row?.conversation_id as string | undefined;
+  if (!conversationId) return { ok: false, reason: "send_failed" };
   return { ok: true, conversationId };
 }
