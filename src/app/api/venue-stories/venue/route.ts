@@ -23,6 +23,8 @@ export async function GET(req: NextRequest) {
     radiusM: venue.coord?.radiusM ?? VENUE_GEOFENCE_DEFAULT_RADIUS_M,
     uploadOpen: venue.uploadOpen,
     reason: venue.reason,
+    cancelled: venue.cancelled,
+    gateKind: venue.gateKind,
   };
   return NextResponse.json(info);
 }

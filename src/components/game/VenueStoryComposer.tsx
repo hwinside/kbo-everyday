@@ -10,6 +10,7 @@ import { checkVenueMediaLimits } from "@/lib/venue-stories/media-limits";
 import { isVideoCompressSupported } from "@/lib/venue-stories/video-compress";
 import { getVenuePosition } from "@/lib/venue-stories/geo";
 import { haversineMeters } from "@/lib/venue-stories/stadiums";
+import { isVenueUploadBlocked } from "@/lib/venue-stories/geofence";
 import { VENUE_STORY_CONSENT_VERSION, type VenueInfo } from "@/lib/venue-stories/types";
 import { consentStorageKey } from "@/lib/venue-stories/auth-consent";
 import { createPickController, type PickController } from "@/lib/venue-stories/pick-controller";
@@ -51,8 +52,34 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
         const input = document.createElement("input");
         input.type = "file";
         input.accept = "image/*,video/*";
-        input.addEventListener("change", () => onChange(input.files?.[0] ?? null), { once: true });
-        input.addEventListener("cancel", () => onCancel(), { once: true });
+        // iOS WKWebView 버그: DOM에 **미부착된** file input은 영상 export가 필요한 픽에서
+        // change 이벤트를 안 쏘고 멈춘다 → 픽 스피너 영구 hang (하린아빠 7/25 04:36 리포트).
+        // 반드시 document에 붙여 click, 이벤트 처리 후 제거한다. (데스크톱/안드로이드는 무해)
+        input.style.cssText =
+          "position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0;pointer-events:none;";
+        document.body.appendChild(input);
+
+        let settled = false;
+        let watchdog: ReturnType<typeof setTimeout> | null = null;
+        const settle = (fn: () => void) => {
+          if (settled) return;
+          settled = true;
+          if (watchdog != null) clearTimeout(watchdog);
+          watchdog = null;
+          input.remove();
+          fn();
+        };
+        input.addEventListener(
+          "change",
+          () => {
+            const f = input.files?.[0] ?? null; // 제거 전에 파일 참조 확보
+            settle(() => onChange(f));
+          },
+          { once: true },
+        );
+        input.addEventListener("cancel", () => settle(() => onCancel()), { once: true });
+        // 그래도 iOS가 change/cancel을 끝내 안 쏘는 드문 케이스 방어 — 무한 스피너 대신 자동 취소
+        watchdog = setTimeout(() => settle(() => onCancel()), 90_000);
         input.click();
       },
       onFile: (file) => handlePickedFileRef.current(file),
@@ -206,9 +233,11 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
       return;
     }
 
-    // 업로드 가능 시간대 아님(경기 전/후, 취소, 미지원 구장) — 서버 사유 그대로 노출
-    if (venue && !venue.uploadOpen) {
-      setError(venue.reason ?? "지금은 올릴 수 없어요");
+    // 업로드 가능 시간대 아님(경기 전/후, 취소, 미지원 구장) — 서버 사유 그대로 노출.
+    // 관리자 QA는 시간창 마감(종료/시작전)만 우회 — 렌더 gateReason과 동일 조건(uploadBlocked).
+    // **취소 경기는 관리자도 여기서 차단** → media prepare 전에 막아 고아 객체 생성 방지(삼순 #832 왕복2).
+    if (uploadBlocked) {
+      setError(venue?.reason ?? "지금은 올릴 수 없어요");
       return;
     }
 
@@ -295,7 +324,17 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
 
   if (!isOpen || typeof document === "undefined") return null;
 
-  const gateReason = venue && !venue.uploadOpen ? venue.reason : null;
+  // 관리자 QA 모드는 시간창(시작 전·종료 후)만 우회한다. **취소 경기는 관리자도 차단**
+  // (삼순 #832 왕복2: 클라도 media prepare 전 차단해 고아 객체/불필요 전송 방지, 서버 403과 E2E 정합).
+  // 일반 유저는 그대로 마감 사유로 버튼 비활성. 서버도 동일 축(qaWindowBypass = qaBypass && !cancelled).
+  const uploadBlocked =
+    !!venue &&
+    isVenueUploadBlocked({
+      uploadOpen: venue.uploadOpen,
+      gateKind: venue.gateKind,
+      privileged: isAdmin,
+    });
+  const gateReason = uploadBlocked ? venue?.reason ?? null : null;
 
   return createPortal(
     <AnimatePresence>
@@ -349,6 +388,9 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
                 <VideoIcon size={28} />
                 <span className="text-sm">현장 사진·영상 선택</span>
                 <span className="text-[11px] text-text-tertiary/70">영상은 15초 이하 · 세로 추천</span>
+                {/* iOS 네이티브 모달은 우리 UI 위에 뜨므로 picking 오버레이가 그 구간을 덮지 못한다.
+                    피커 열기 전에 상시 안내해 "멈춘 게 아니다" 신호를 미리 준다(삼순 #832 왕복2 합의). */}
+                <span className="text-[11px] text-text-tertiary/60">영상은 기기에서 준비하는 데 몇 초 걸릴 수 있어요</span>
               </button>
             ) : (
               <div className="relative rounded-2xl overflow-hidden bg-black aspect-[9/16] max-h-[50dvh] flex items-center justify-center">

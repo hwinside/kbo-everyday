@@ -3,7 +3,7 @@
 
 import { fetchGames } from "@/lib/crawler/kbo-api";
 import { resolveStadiumByName, type StadiumCoord } from "./stadiums";
-import { evaluateUploadWindow } from "./geofence";
+import { evaluateUploadWindow, type UploadGateKind } from "./geofence";
 import {
   VENUE_UPLOAD_WINDOW_BEFORE_MIN,
   VENUE_UPLOAD_WINDOW_AFTER_HOURS,
@@ -19,6 +19,10 @@ export interface ResolvedVenue {
   uploadOpen: boolean;
   reason: string | null;
   expiresAtMs: number | null;
+  // 취소 경기 여부 — 관리자 QA도 취소 경기는 fail-closed(시간창만 우회 허용). 삼순 #832 범위.
+  cancelled: boolean;
+  // 업로드 차단 사유 종류 — 관리자 우회를 시간창만으로 좁히기 위해 클라/서버가 공유(삼순 #832 왕복3).
+  gateKind: UploadGateKind;
 }
 
 function gameDateFromId(gameId: string): string | null {
@@ -55,6 +59,8 @@ export async function resolveGameVenue(gameId: string): Promise<ResolvedVenue> {
     uploadOpen: false,
     reason,
     expiresAtMs: null,
+    cancelled: false,
+    gateKind: "no-time", // 경기 미확인/미존재 — 관리자도 fail-closed(시간창 사유 아님)
   });
 
   const date = gameDateFromId(gameId);
@@ -76,8 +82,9 @@ export async function resolveGameVenue(gameId: string): Promise<ResolvedVenue> {
   // 정상 만료(종료+24h)는 finalize cron 이 terminal CAS 성공 후에만 확정한다(삼순 09:44 #2).
   const expiresAtMs = startMs != null ? Date.parse(safetyCapExpiryIso(startMs)) : null;
 
-  const { uploadOpen, reason } = evaluateUploadWindow({
-    cancelled: game.status === "cancelled",
+  const cancelled = game.status === "cancelled";
+  const { uploadOpen, reason, gateKind } = evaluateUploadWindow({
+    cancelled,
     hasCoord: !!coord,
     startMs,
     now: Date.now(),
@@ -94,5 +101,7 @@ export async function resolveGameVenue(gameId: string): Promise<ResolvedVenue> {
     uploadOpen,
     reason,
     expiresAtMs,
+    cancelled,
+    gateKind,
   };
 }

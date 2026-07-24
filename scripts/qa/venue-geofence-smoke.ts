@@ -4,7 +4,11 @@
  * 배경: PR #689 삼순 NO-GO — 모든 경기 fail-closed(미매핑 구장/시간대 밖/저정확도/반경 밖/가짜 경기).
  */
 import { resolveStadiumByName } from "../../src/lib/venue-stories/stadiums";
-import { evaluateUploadWindow, evaluateGeofence } from "../../src/lib/venue-stories/geofence";
+import {
+  evaluateUploadWindow,
+  evaluateGeofence,
+  isVenueUploadBlocked,
+} from "../../src/lib/venue-stories/geofence";
 import {
   VENUE_GEOFENCE_DEFAULT_RADIUS_M,
   VENUE_GEOFENCE_MAX_RADIUS_M,
@@ -66,6 +70,18 @@ ok("반경 경계 밖 살짝(700m 구장 900m) → 차단", (() => {
   const p = { lat: daegu.lat + 900 / 111_000, lng: daegu.lng };
   return evaluateGeofence({ ...p, accuracy: 20, coord: daegu, maxAccuracy: VENUE_GEOFENCE_MAX_ACCURACY_M }).ok === false;
 })());
+
+// 삼순 #832 왕복2: 클라·서버 공유 업로드 차단 판정(관리자 시간창만 우회, 취소은 fail-closed)
+console.log("[isVenueUploadBlocked — 클라/서버 단일 소스 업로드 게이트]");
+ok("uploadOpen=true → 누구든 통과(일반)", isVenueUploadBlocked({ uploadOpen: true, gateKind: "open", privileged: false }) === false);
+ok("uploadOpen=true → 누구든 통과(관리자)", isVenueUploadBlocked({ uploadOpen: true, gateKind: "open", privileged: true }) === false);
+ok("일반 유저 종료후(after-window) → 차단", isVenueUploadBlocked({ uploadOpen: false, gateKind: "after-window", privileged: false }) === true);
+ok("관리자 종료후(after-window) → submit 허용(시간창 우회)", isVenueUploadBlocked({ uploadOpen: false, gateKind: "after-window", privileged: true }) === false);
+ok("관리자 시작전(before-window) → submit 허용(시간창 우회)", isVenueUploadBlocked({ uploadOpen: false, gateKind: "before-window", privileged: true }) === false);
+ok("관리자 취소 경기(cancelled) → 차단(media prepare 전, fail-closed)", isVenueUploadBlocked({ uploadOpen: false, gateKind: "cancelled", privileged: true }) === true);
+ok("관리자 미지원 구장(no-coord) → 차단(fail-closed)", isVenueUploadBlocked({ uploadOpen: false, gateKind: "no-coord", privileged: true }) === true);
+ok("관리자 시간미상(no-time) → 차단(fail-closed)", isVenueUploadBlocked({ uploadOpen: false, gateKind: "no-time", privileged: true }) === true);
+ok("일반 유저 취소 경기(cancelled) → 차단", isVenueUploadBlocked({ uploadOpen: false, gateKind: "cancelled", privileged: false }) === true);
 
 console.log(`\n결과: ${pass} pass / ${fail} fail`);
 if (fail > 0) process.exit(1);
