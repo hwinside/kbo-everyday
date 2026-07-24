@@ -35,6 +35,10 @@ export const VENUE_VIDEO_COMPRESS_DEADLINE_MS = 90_000;
  * conversion.execute() 를 deadline 안에서만 기다린다(순수 — venue-media-smoke 공유).
  * true = 완료, false = deadline 초과(cancel() 호출로 실제 작업 중단).
  * execute 자체 reject 는 그대로 throw — 호출부 catch 가 fallback 처리.
+ * cancel() 은 반드시 호출하되 critical path 밖(fire-and-forget) — mediabunny cancel() 은
+ * custom encoder 의 호출 큐 뒤에서 close() 를 기다리므로 encoder fault 시 cancel 자체가
+ * settle 하지 않을 수 있다(삼순 라운드2 blocker). settle 여부와 무관하게 즉시 false 를
+ * 반환해 호출부 fallback + submitting 해제를 보장한다.
  */
 export async function executeWithDeadline(
   conversion: { execute(): Promise<unknown>; cancel(): Promise<unknown> },
@@ -49,11 +53,11 @@ export async function executeWithDeadline(
     const winner = await Promise.race([exec, timedOut]);
     if (winner === false) {
       exec.catch(() => undefined); // 패배한 execute 의 late reject 무해화(unhandledrejection 방지)
-      try {
-        await conversion.cancel(); // 실제 인코더/디코더 중단 — 백그라운드 좀비 인코딩 방지
-      } catch {
-        /* noop — cancel 실패와 무관하게 fallback 진행 */
-      }
+      // 실제 인코더/디코더 중단 시도(백그라운드 좀비 인코딩 방지) — 단, await 금지.
+      // Promise.resolve().then 래핑으로 동기 throw 까지 흡수, catch 로 late reject 무해화.
+      Promise.resolve()
+        .then(() => conversion.cancel())
+        .catch(() => undefined); // cancel 실패/미settle 과 무관하게 fallback 은 이미 확정
       return false;
     }
     return true;
@@ -183,8 +187,14 @@ function ensureRealtimeEncoderRegistered(mb: typeof import("mediabunny")): void 
       const frame = sample.toVideoFrame();
       this.encoder.encode(frame, options);
       frame.close();
-      // 인코더 큐 backpressure — 메모리 폭주 방지
-      while (this.encoder.encodeQueueSize > 4) {
+      // 인코더 큐 backpressure — 메모리 폭주 방지. close()(→ encoder null)나 encoder
+      // fault(state 'closed') 시 탈출 — 상한 없이 돌면 mediabunny cancel() 이 이 호출 큐
+      // 뒤에서 영원히 대기해 취소가 settle 하지 못한다(삼순 라운드2 blocker).
+      while (
+        this.encoder &&
+        this.encoder.state === "configured" &&
+        this.encoder.encodeQueueSize > 4
+      ) {
         await new Promise((r) => setTimeout(r, 5));
       }
     }

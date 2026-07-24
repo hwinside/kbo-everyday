@@ -339,6 +339,35 @@ async function run() {
   const threw = await executeWithDeadline(failing, 5_000).then(() => false, () => true);
   ok("execute reject → 그대로 throw(호출부 catch 가 fallback 처리)", threw === true);
 
+  // 삼순 라운드2 blocker 회귀 — execute 와 cancel 이 *둘 다* settle 안 해도(encoder fault 시
+  // mediabunny cancel() 이 custom encoder close() 를 큐 뒤에서 영원히 기다리는 재현)
+  // deadline 후 fallback 으로 즉시 settle 해야 한다(삼순 독립 재현: 20ms deadline 이
+  // 200ms 뒤에도 still-pending 이었던 경로).
+  const doubleHung = {
+    cancelStarted: false,
+    execute: () => new Promise<void>(() => { /* settle 안 함 */ }),
+    cancel: () => {
+      doubleHung.cancelStarted = true;
+      return new Promise<void>(() => { /* cancel 도 settle 안 함 */ });
+    },
+  };
+  const doubleOutcome = await Promise.race([
+    executeWithDeadline(doubleHung, 20).then((v) => ({ settled: true as const, value: v })),
+    new Promise<{ settled: false }>((r) => setTimeout(() => r({ settled: false as const }), 200)),
+  ]);
+  ok("execute+cancel 모두 미settle → 200ms 안에 false 로 settle(UI 재잠김 없음)",
+    doubleOutcome.settled === true && doubleOutcome.value === false);
+  ok("미settle cancel 도 호출 자체는 됨(fire-and-forget — 좀비 인코딩 중단 시도 유지)",
+    doubleHung.cancelStarted === true);
+
+  // cancel 이 동기 throw 해도 fallback 은 그대로(false) — fire-and-forget 래핑 검증
+  const syncThrowCancel = {
+    execute: () => new Promise<void>(() => { /* settle 안 함 */ }),
+    cancel: (): Promise<unknown> => { throw new Error("cancel sync fault"); },
+  };
+  ok("cancel 동기 throw → 삼켜지고 false 반환(fallback 유지)",
+    (await executeWithDeadline(syncThrowCancel, 20)) === false);
+
   console.log(`\n결과: ${pass} pass / ${fail} fail`);
   if (fail > 0) process.exit(1);
 }
