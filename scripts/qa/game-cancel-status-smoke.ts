@@ -59,6 +59,32 @@ test("정시 게이트: 최근 관측이어도 이미 진행된 경기(1회말+)
   }), false);
 });
 
+// 2026-07-24 사고 회귀 — LG:한화 시작알림 mark-only 억제 재현.
+// 관측(fetch) 간격은 76초로 연속인데, 게이트 nowMs를 경기별 처리 시점(같은 틱 내 앞 경기
+// FCM 대량발송 후 +26초)으로 재면 102초 stale 오판 → 억제. 관측 시각 기준이면 정상 발송.
+test("2026-07-24 회귀: 관측 간격 76초(연속 틱) — 관측 시각 기준이면 발송", () => {
+  const seen = NOW - 76_000;
+  assert.equal(shouldSendStartNotification({
+    lastSeenScheduledAtMs: seen, nowMs: NOW, inningNo: 1, isTop: true,
+  }), true);
+});
+test("2026-07-24 회귀: 같은 관측을 처리 시점(+26초 지연)으로 재면 102초 → 오판 억제 (nowMs 계약 위반 사례)", () => {
+  const seen = NOW - 76_000;
+  assert.equal(shouldSendStartNotification({
+    lastSeenScheduledAtMs: seen, nowMs: NOW + 26_000, inningNo: 1, isTop: true,
+  }), false); // 그래서 호출부는 반드시 관측(fetch) 시각을 nowMs로 넘겨야 한다
+});
+
+// 게이트 배선 diff-check — 게이트 nowMs가 per-game Date.now()로 회귀하지 않게 소스 계약 고정.
+import { readFileSync } from "node:fs";
+test("배선: game-status 게이트는 observedAtMs를 쓰고, warmup route는 fetch 시각을 넘긴다", () => {
+  const gs = readFileSync("src/lib/notifications/game-status.ts", "utf8");
+  assert.match(gs, /nowMs:\s*observedAtMs/);
+  assert.doesNotMatch(gs, /nowMs:\s*Date\.now\(\)/);
+  const route = readFileSync("src/app/api/cron/game-events-warmup/route.ts", "utf8");
+  assert.match(route, /observedAtMs:\s*initialFetch\.trace\.fetchedAtMs/);
+});
+
 // 2026-07-23 하린아빠 지시 — "이미 늦은 시작알림은 발송 안되게 가드": 이닝 진행도 기반 뒷북 차단.
 test("시작알림 신선도: 1회초는 발송(정상 개시·우천 지연 개시 포함)", () => {
   assert.equal(isStartNotificationFresh({ inningNo: 1, isTop: true }), true);

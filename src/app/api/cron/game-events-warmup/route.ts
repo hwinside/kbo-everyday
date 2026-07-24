@@ -316,7 +316,12 @@ export async function GET(req: NextRequest) {
   // 실패해도 warmup 본연의 동작(이벤트 캐시)에 영향 없음.
   let gameNotify: { started: number; ended: number } | { error: string } = { started: 0, ended: 0 };
   try {
-    gameNotify = await notifyGameStatusTransitions(games);
+    // observedAtMs = 이 games를 fetch한 시각. 시작알림 90초 게이트는 관측 시각끼리 비교해야
+    // 하므로(연속 틱 관측 판정), 앞단 처리/FCM 발송 지연이 stale 오판을 만들지 않게 한다
+    // (2026-07-24 LG:한화 시작알림 억제 사고).
+    gameNotify = await notifyGameStatusTransitions(games, {
+      observedAtMs: initialFetch.trace.fetchedAtMs,
+    });
   } catch (e) {
     gameNotify = { error: (e as Error).message };
     console.error("[warmup] game status notify failed:", (e as Error).message);

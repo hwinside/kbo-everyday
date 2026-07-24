@@ -157,7 +157,21 @@ async function markOnly(gameId: string, flags: { start?: boolean; end?: boolean;
  *   (배포/도입 직후 과거 경기에 뒷북 알림 방지)
  * - cancelled(isKboGameCancelled) → "경기 취소" 알림 1회(우천 등). 예정시각 +90분 밖이면 마킹만(뒷북 차단).
  */
-export async function notifyGameStatusTransitions(games: KboRawGame[]): Promise<{ started: number; ended: number; cancelled: number }> {
+export async function notifyGameStatusTransitions(
+  games: KboRawGame[],
+  opts?: {
+    /**
+     * 이 games payload를 KBO에서 **관측(fetch)한 시각**. 시작알림 90초 게이트의 기준시각.
+     * (2026-07-24 사고: 게이트가 경기별 처리 시점 Date.now()를 쓰는 바람에, 같은 틱 안에서
+     * 앞 경기 FCM 대량발송 ~26초가 흐른 뒤 처리된 LG:한화가 관측간격 76초인데도 102초로
+     * 오판돼 정시 시작알림이 mark-only 억제됨. 게이트는 "직전 틱 예정 관측 → 이번 틱 live
+     * 관측"의 연속성을 판정하는 것이므로 관측 시각끼리 비교해야 한다.)
+     * 미지정 시 함수 진입 시각으로 1회 캡처(경기별 재측정 금지).
+     */
+    observedAtMs?: number;
+  },
+): Promise<{ started: number; ended: number; cancelled: number }> {
+  const observedAtMs = opts?.observedAtMs ?? Date.now();
   let started = 0;
   let ended = 0;
   let cancelled = 0;
@@ -167,7 +181,8 @@ export async function notifyGameStatusTransitions(games: KboRawGame[]): Promise<
     .filter((g) => g.G_ID && g.GAME_STATE_SC === "1" && !isKboGameCancelled(g.CANCEL_SC_ID))
     .map((g) => g.G_ID as string);
   if (scheduledIds.length > 0) {
-    const nowIso = new Date().toISOString();
+    // 관측 시각으로 기록 — 다음 틱 게이트가 관측 시각끼리(fetch↔fetch) 간격을 재도록.
+    const nowIso = new Date(observedAtMs).toISOString();
     const { error: seenError } = await supabase
       .from("game_notify_state")
       .upsert(
@@ -234,7 +249,7 @@ export async function notifyGameStatusTransitions(games: KboRawGame[]): Promise<
         : null;
       const sendOk = shouldSendStartNotification({
         lastSeenScheduledAtMs: Number.isFinite(lastSeenMs as number) ? lastSeenMs : null,
-        nowMs: Date.now(),
+        nowMs: observedAtMs,
         inningNo: g.GAME_INN_NO,
         isTop: g.GAME_TB_SC ? g.GAME_TB_SC === "T" : null,
       });
