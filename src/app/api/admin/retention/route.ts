@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { isAdminAuthedRequest } from "@/lib/admin/pin";
-import type { CohortHeatmapRow, RollingRetentionRow, FunnelStep, GamedayRetention, VisitDistBucket } from "@/lib/admin/types";
+import type { CohortHeatmapRow, RollingCurve, FunnelStep, GamedayRetention, VisitDistBucket } from "@/lib/admin/types";
 
 const FUNNEL_LABELS: Record<string, string> = {
   signup: "가입",
@@ -124,10 +124,10 @@ export async function GET(req: NextRequest) {
     dailyCohort = Array.from(grouped.values());
   }
 
-  // Rolling-window retention (주간 코호트, W1~W4 구간 1회+ — exact-day 노이즈 흡수 곡선)
-  let rolling: RollingRetentionRow[] = [];
+  // Rolling Retention (고정 horizon 14일+28일, [Dk,Dh] 구간 1회+ — exact-day 노이즈 흡수 단조 곡선)
+  let rolling: RollingCurve[] = [];
   if (type === "all" || type === "rolling") {
-    // query-guard: bounded -- 단일 date+metric_type=rolling 필터, 코호트 주차×윈도우4개 행만(수십행) 반환 — 기존 cohort 선택과 동일
+    // query-guard: bounded -- 단일 date+metric_type=rolling 필터, 코호트 주차×(horizon·anchor) 행만(수십행) 반환 — 기존 cohort 선택과 동일
     const { data } = await supabase
       .from("retention_metrics")
       .select("*")
@@ -136,24 +136,50 @@ export async function GET(req: NextRequest) {
       .gte("cohort_key", MIN_WEEKLY_COHORT_KEY)
       .order("cohort_key", { ascending: true });
 
-    const grouped = new Map<string, RollingRetentionRow>();
+    // 전체 주 인원(cohortSize) — cohort 지표 D1 total을 주차별로 룩업(부분 코호트 구분용).
+    // query-guard: bounded -- 단일 date+metric_type=cohort+metric_key=D1 필터, 주차 수만큼 반환
+    const { data: sizeRows } = await supabase
+      .from("retention_metrics")
+      .select("cohort_key, total")
+      .eq("date", latestDate)
+      .eq("metric_type", "cohort")
+      .eq("metric_key", "D1")
+      .gte("cohort_key", MIN_WEEKLY_COHORT_KEY);
+    const fullSize = new Map<string, number>();
+    for (const r of sizeRows ?? []) fullSize.set(r.cohort_key, Math.max(fullSize.get(r.cohort_key) ?? 0, r.total));
+
+    // horizon별 → 코호트별 rate/n 수집. metric_key = `h{horizon}_r{anchor}`.
+    const byHorizon = new Map<number, Map<string, { n: number; rates: Map<number, number> }>>();
     for (const row of data ?? []) {
-      if (!grouped.has(row.cohort_key)) {
-        // 미집계(미성숙) 앵커는 0%가 아니라 null → 차트에서 미표시(삼순 리뷰).
-        grouped.set(row.cohort_key, {
-          cohortKey: row.cohort_key,
-          cohortSize: row.total,
-          r1: null, r7: null, r14: null, r21: null, r28: null,
-        });
-      }
-      const entry = grouped.get(row.cohort_key)!;
-      const key = row.metric_key as "r1" | "r7" | "r14" | "r21" | "r28";
-      if (key in entry) {
-        (entry as unknown as Record<string, number | null>)[key] = row.rate;
-        entry.cohortSize = Math.max(entry.cohortSize, row.total);
-      }
+      const m = /^h(\d+)_r(\d+)$/.exec(row.metric_key);
+      if (!m) continue;
+      const horizon = Number(m[1]);
+      const anchor = Number(m[2]);
+      if (!byHorizon.has(horizon)) byHorizon.set(horizon, new Map());
+      const cohortMap = byHorizon.get(horizon)!;
+      if (!cohortMap.has(row.cohort_key)) cohortMap.set(row.cohort_key, { n: 0, rates: new Map() });
+      const entry = cohortMap.get(row.cohort_key)!;
+      entry.rates.set(anchor, row.rate);
+      entry.n = Math.max(entry.n, row.total);
     }
-    rolling = Array.from(grouped.values());
+
+    const HORIZON_ANCHORS: Record<number, number[]> = { 14: [1, 7, 14], 28: [1, 7, 14, 21, 28] };
+    rolling = [14, 28]
+      .filter((h) => byHorizon.has(h))
+      .map((horizon) => {
+        const anchors = HORIZON_ANCHORS[horizon];
+        const cohortMap = byHorizon.get(horizon)!;
+        const cohorts = Array.from(cohortMap.entries())
+          .sort(([a], [b]) => (a < b ? -1 : 1))
+          .map(([cohortKey, v]) => ({
+            cohortKey,
+            cohortSize: fullSize.get(cohortKey) ?? v.n,
+            n: v.n,
+            // 미집계(미성숙) anchor는 0%가 아니라 null → 차트에서 미표시(삼순 리뷰).
+            rates: anchors.map((a) => (v.rates.has(a) ? v.rates.get(a)! : null)),
+          }));
+        return { horizon, anchors, cohorts };
+      });
   }
 
   // Activation funnel

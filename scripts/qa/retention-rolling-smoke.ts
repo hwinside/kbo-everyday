@@ -1,11 +1,13 @@
 /**
- * 스모크: 28일 고정 Rolling Retention (computeCohortRetention 내 metric_type="rolling")
- *   — 2026-07-25 삼순 리뷰 반영 (주간 비겹침 W1~W4 → 단조 비보장 지적 → 28일 고정으로 교체).
- *   ① 앵커 귀속: R1=[D1,28]/R7=[D7,28]/R14=[D14,28]/R21=[D21,28]/R28=D28 중 1회+
- *   ② 단조 비증가 보장: R1≥R7≥R14≥R21≥R28 (구간 포함관계+동일 분모)
- *   ③ eligibility: D28 미성숙 코호트/유저는 R 전체에서 제외(동일 분모 유지)
- *   ④ "1회+" 멱등: 한 구간 내 다중 활동일도 1회
- *   ⑤ 추가 스캔 0: cohort와 같은 함수/스캔에서 rolling row 생성
+ * 스모크: 고정 horizon Rolling Retention (computeCohortRetention 내 metric_type="rolling")
+ *   — 2026-07-25 삼순 리뷰 2차 반영 (28일만 쓰면 W27 D28 미성숙으로 차트 빈다 →
+ *     14일+28일 두 horizon 병행, 실제 n 노출, 현재일·주내 혼합성숙 회귀).
+ *   ① 앵커 귀속: h{H}_r{k} = [Dk, DH] 중 1회+ (H∈{14,28})
+ *   ② 단조 비증가: 각 horizon 내 R1≥R7≥… (구간 포함관계+동일 분모)
+ *   ③ 14일 성숙/28일 미성숙: 지금 데이터로 h14만 노출, h28 빈 케이스(핵심 삼순 blocker)
+ *   ④ 현재일 경계: DH == targetDate 유저는 미성숙(>=)으로 제외
+ *   ⑤ 주내 혼합성숙: 같은 주 성숙 유저만 분모(동일 분모), n(total) 노출
+ *   ⑥ "1회+" 멱등 + cohort exact-day 동시 생성
  * 실행: npm run qa:retention-rolling
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -57,85 +59,97 @@ function check(label: string, got: unknown, want: unknown) {
 }
 
 type MetricRow = Awaited<ReturnType<typeof computeCohortRetention>>[number];
-function rolling(rows: MetricRow[], week: string, key: string) {
+function roll(rows: MetricRow[], week: string, key: string) {
   return rows.find((r) => r.metric_type === "rolling" && r.cohort_key === week && r.metric_key === key);
+}
+function rollingKeys(rows: MetricRow[]) {
+  return rows.filter((r) => r.metric_type === "rolling").map((r) => r.metric_key);
 }
 
 async function main() {
-  const TARGET = "2026-08-01"; // W27(06-30 가입)의 D28=07-28 < 08-01 → 성숙
   const p = (id: string, d: string) => ({ id, created_at: `${d}T09:00:00+09:00` });
   const act = (uid: string, d: string) => ({ author_id: uid, created_at: `${d}T20:00:00+09:00` });
+  const empties = { comments: [], likes: [], chat_messages: [], admin_page_views: [] };
 
-  // ── ①②④ 앵커 귀속 + 단조 + 멱등 ──
+  // ── ③④ 14일 성숙 / 28일 미성숙 (핵심 blocker 재현) + 단조 + 앵커 귀속 ──
   {
+    // signup 06-30, TARGET 07-16: D14=07-14<07-16 성숙 / D28=07-28>=07-16 미성숙
+    const TARGET = "2026-07-16";
     const sb = fakeSupabase({
-      profiles: [p("A", "2026-06-30"), p("B", "2026-06-30"), p("C", "2026-06-30"), p("D", "2026-06-30"), p("E", "2026-06-30")],
+      profiles: [p("A", "2026-06-30"), p("B", "2026-06-30"), p("C", "2026-06-30"), p("D", "2026-06-30")],
       posts: [
-        act("A", "2026-07-01"),                        // day1 → R1만
-        act("B", "2026-07-28"),                        // day28 → R1~R28 전부
-        act("C", "2026-07-15"),                        // day15 → R1/R7/R14 (R21은 15<21 제외)
-        act("E", "2026-07-10"), act("E", "2026-07-20"), // day10,20 둘 다 [D7,28] → 1회로만
-        // D = 무활동
+        act("A", "2026-07-10"),  // day10 → h14_r1,h14_r7 (r14=D14만이라 제외)
+        act("B", "2026-07-14"),  // day14 → h14_r1,r7,r14
+        act("C", "2026-07-03"),  // day3  → h14_r1만
+        // D 무활동
       ],
-      comments: [], likes: [], chat_messages: [], admin_page_views: [],
+      ...empties,
     });
     const rows = await computeCohortRetention(sb, TARGET);
     const week = rows.find((r) => r.metric_type === "rolling")?.cohort_key ?? "?";
-    check("cohort week >= W27", week >= "2026-W27", true);
-    // eligible=5 전 앵커 동일
-    check("R1 eligible=5", rolling(rows, week, "r1")?.total, 5);
-    check("R28 eligible=5 (동일 분모)", rolling(rows, week, "r28")?.total, 5);
-    // returned: R1=A,B,C,E=4 / R7=B,C,E=3 / R14=B,C,E(day20∈[14,28])=3 / R21=B=1 / R28=B=1
-    check("R1 returned=4 (A,B,C,E)", rolling(rows, week, "r1")?.value, 4);
-    check("R7 returned=3 (B,C,E)", rolling(rows, week, "r7")?.value, 3);
-    check("R14 returned=3 (B,C,E day20∈[14,28])", rolling(rows, week, "r14")?.value, 3);
-    check("R21 returned=1 (B)", rolling(rows, week, "r21")?.value, 1);
-    check("R28 returned=1 (B, day28)", rolling(rows, week, "r28")?.value, 1);
-    // 단조 비증가
-    const seq = ["r1", "r7", "r14", "r21", "r28"].map((k) => rolling(rows, week, k)!.rate);
-    check("monotone non-increasing R1≥R7≥R14≥R21≥R28", seq.every((v, i) => i === 0 || v <= seq[i - 1]), true);
-    check("E multi-day counted once in R7", rolling(rows, week, "r7")?.value, 3);
+    // h28은 미성숙이라 전무
+    check("28일 horizon 미성숙 → h28 없음", rollingKeys(rows).some((k) => k.startsWith("h28_")), false);
+    check("14일 horizon 노출 → h14 있음", rollingKeys(rows).some((k) => k.startsWith("h14_")), true);
+    check("h14_r1 eligible n=4", roll(rows, week, "h14_r1")?.total, 4);
+    check("h14_r1 returned=3 (A,B,C)", roll(rows, week, "h14_r1")?.value, 3);
+    check("h14_r7 returned=2 (A,B)", roll(rows, week, "h14_r7")?.value, 2);
+    check("h14_r14 returned=1 (B, day14)", roll(rows, week, "h14_r14")?.value, 1);
+    const seq = ["h14_r1", "h14_r7", "h14_r14"].map((k) => roll(rows, week, k)!.rate);
+    check("h14 monotone R1≥R7≥R14", seq.every((v, i) => i === 0 || v <= seq[i - 1]), true);
   }
 
-  // ── ③ eligibility: D28 미성숙 코호트는 rolling row 없음 ──
+  // ── ②⑥ 두 horizon 모두 성숙 + 멱등 + cohort 동시 생성 ──
   {
-    // 07-20 가입 → D28=08-17 >= 08-01 미성숙 → 해당 주 rolling 없음
+    const TARGET = "2026-08-01"; // signup 06-30 → D28=07-28<08-01 성숙
     const sb = fakeSupabase({
-      profiles: [p("F", "2026-07-20")],
-      posts: [act("F", "2026-07-22")],
-      comments: [], likes: [], chat_messages: [], admin_page_views: [],
+      profiles: [p("A", "2026-06-30"), p("B", "2026-06-30")],
+      posts: [
+        act("A", "2026-07-10"), act("A", "2026-07-25"), // day10,25 (25∈[21,28],[14,28] 등)
+        act("B", "2026-07-28"),                          // day28
+      ],
+      ...empties,
     });
     const rows = await computeCohortRetention(sb, TARGET);
-    check("immature cohort → no rolling rows", rows.filter((r) => r.metric_type === "rolling").length, 0);
+    const week = rows.find((r) => r.metric_type === "rolling")?.cohort_key ?? "?";
+    check("both horizons present (h14+h28)", ["h14_r1", "h28_r1", "h28_r28"].every((k) => roll(rows, week, k)), true);
+    // h28: A(10,25)/B(28). r1[1,28]:둘다 / r7[7,28]:둘다 / r14[14,28]:A(25),B(28) / r21[21,28]:A(25),B(28) / r28:B
+    check("h28_r1 returned=2", roll(rows, week, "h28_r1")?.value, 2);
+    check("h28_r14 returned=2 (A25,B28)", roll(rows, week, "h28_r14")?.value, 2);
+    check("h28_r28 returned=1 (B)", roll(rows, week, "h28_r28")?.value, 1);
+    const seq28 = ["h28_r1", "h28_r7", "h28_r14", "h28_r21", "h28_r28"].map((k) => roll(rows, week, k)!.rate);
+    check("h28 monotone R1≥R7≥R14≥R21≥R28", seq28.every((v, i) => i === 0 || v <= seq28[i - 1]), true);
+    check("A multi-day counted once in h28_r7", roll(rows, week, "h28_r7")?.value, 2);
+    // cohort exact-day 동시 생성(추가 스캔 없이)
+    check("cohort rows still produced", rows.some((r) => r.metric_type === "cohort"), true);
   }
 
-  // ── ③ 같은 주 내 미성숙 유저는 분모에서 제외(동일 분모 보장) ──
+  // ── ④ 현재일 경계: DH == targetDate 유저는 미성숙(>=)으로 제외 ──
   {
-    // 07-04(성숙 D28=08-01? 08-01은 target과 같아 >= 제외) → 07-03 가입 D28=07-31<08-01 성숙
-    // 같은 W27 주에 성숙 G(07-03)+미성숙 H(07-05: D28=08-02>=08-01)
+    const TARGET = "2026-07-16";
     const sb = fakeSupabase({
-      profiles: [p("G", "2026-07-03"), p("H", "2026-07-05")],
+      profiles: [p("E", "2026-07-01"), p("F", "2026-07-02")], // E:D14=07-15<16 성숙 / F:D14=07-16==16 미성숙
+      posts: [act("E", "2026-07-05"), act("F", "2026-07-05")],
+      ...empties,
+    });
+    const rows = await computeCohortRetention(sb, TARGET);
+    const week = rows.find((r) => r.metric_type === "rolling")?.cohort_key ?? "?";
+    check("current-day boundary: DH==target 제외 → n=1 (E만)", roll(rows, week, "h14_r1")?.total, 1);
+  }
+
+  // ── ⑤ 주내 혼합성숙: 같은 주 성숙 유저만 분모(n 노출) ──
+  {
+    const TARGET = "2026-08-01";
+    // 같은 W27? 06-30(D28=07-28 성숙) + 07-05(D28=08-02>=08-01 미성숙) — 둘 다 W27 근방
+    const sb = fakeSupabase({
+      profiles: [p("G", "2026-06-30"), p("H", "2026-07-05")],
       posts: [act("G", "2026-07-10"), act("H", "2026-07-10")],
-      comments: [], likes: [], chat_messages: [], admin_page_views: [],
+      ...empties,
     });
     const rows = await computeCohortRetention(sb, TARGET);
-    const week = rows.find((r) => r.metric_type === "rolling")?.cohort_key ?? "?";
-    check("mixed-maturity: only mature G counted (eligible=1)", rolling(rows, week, "r1")?.total, 1);
-    check("mixed-maturity: R1 returned=1 (G day7)", rolling(rows, week, "r1")?.value, 1);
-  }
-
-  // ── ⑤ cohort exact-day 회귀 동시 존재(추가 스캔 없이 같은 함수서 생성) ──
-  {
-    const sb = fakeSupabase({
-      profiles: [p("A", "2026-06-30")],
-      posts: [act("A", "2026-07-07")], // day7
-      comments: [], likes: [], chat_messages: [], admin_page_views: [],
-    });
-    const rows = await computeCohortRetention(sb, TARGET);
-    check("cohort(exact-day) rows still produced", rows.some((r) => r.metric_type === "cohort"), true);
-    check("rolling rows produced by same fn", rows.some((r) => r.metric_type === "rolling"), true);
-    const week = rows.find((r) => r.metric_type === "rolling")?.cohort_key ?? "?";
-    check("exact D7=1 (day7 활동)", rows.find((r) => r.metric_type === "cohort" && r.cohort_key === week && r.metric_key === "D7")?.value, 1);
+    // G(06-30 W27)만 h28 성숙, H(07-05)는 주가 다르거나 미성숙 → h28에서 G의 주만 n=1
+    const h28weeks = rows.filter((r) => r.metric_type === "rolling" && r.metric_key === "h28_r1");
+    const totalN = h28weeks.reduce((s, r) => s + r.total, 0);
+    check("mixed-maturity h28: 성숙 유저만 분모 총합 n=1", totalN, 1);
   }
 
   console.log(`retention-rolling smoke: ${pass} passed, ${fail} failed`);

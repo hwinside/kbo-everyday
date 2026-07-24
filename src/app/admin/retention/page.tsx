@@ -13,7 +13,7 @@ import {
   Line,
   Cell,
 } from "recharts";
-import type { CohortHeatmapRow, RollingRetentionRow, FunnelStep, GamedayRetention, VisitDistBucket } from "@/lib/admin/types";
+import type { CohortHeatmapRow, RollingCurve, FunnelStep, GamedayRetention, VisitDistBucket } from "@/lib/admin/types";
 import { addKSTDays } from "@/lib/utils/date-kst";
 
 function getPin(): string {
@@ -115,15 +115,16 @@ function isWeekNotYet(weekStr: string, dKey: string, targetDate: string): boolea
 }
 
 /** 28일 고정 Rolling Retention 앵커(삼순 리뷰). R1=[D1,D28]·R7=[D7,D28]·…·R28=D28 중 1회+. */
-const ROLLING_KEYS = ["r1", "r7", "r14", "r21", "r28"] as const;
-const ROLLING_LABELS: Record<string, string> = {
-  r1: "R1 (D1~28)", r7: "R7 (D7~28)", r14: "R14 (D14~28)", r21: "R21 (D21~28)", r28: "R28 (D28)",
-};
+/** anchor 숫자 → X축 라벨. horizon이 끝이면 [Dk, Dh], k==h면 D당일. */
+function rollingAnchorLabel(anchor: number, horizon: number): string {
+  return anchor === horizon ? `R${anchor} (D${anchor})` : `R${anchor} (D${anchor}~${horizon})`;
+}
+const ROLLING_LINE_COLORS = ["#22D3EE", "#6366F1", "#A855F7", "#EC4899", "#F59E0B", "#10B981", "#F87171"];
 
 interface RetentionData {
   cohort: CohortHeatmapRow[];
   dailyCohort: CohortHeatmapRow[];
-  rolling: RollingRetentionRow[];
+  rolling: RollingCurve[];
   funnel: FunnelStep[];
   gameday: GamedayRetention[];
   visitDist: VisitDistBucket[];
@@ -201,35 +202,36 @@ export default function RetentionPage() {
       </div>
 
       <div className="glass-card p-5">
-        <h2 className="text-sm font-semibold mb-1">28일 고정 Rolling Retention <span className="text-[10px] font-normal text-emerald-400">셀링자료용</span></h2>
-        <p className="text-[11px] text-gray-500 mb-4">가입 후 <span className="text-gray-300">[D_k, D28] 구간 중 1회 이상 활동</span>한 비율 (R1=D1~28, R7=D7~28, R14=D14~28, R21=D21~28, R28=D28 당일). 구간이 포함관계(⊃)이고 분모가 동일(28일 성숙 코호트)라 <span className="text-gray-300">R1≥R7≥R14≥R21≥R28 단조 비증가 보장</span> — 무경기일·올스타 브레이크 노이즈를 흡수한 깨끗한 π자 곡선. D28까지 성숙한 코호트만 표시(미성숙 구간은 미표시).</p>
-        {(() => {
-          const chartData = ROLLING_KEYS.map((k) => {
-            const pt: Record<string, number | string | null> = { window: ROLLING_LABELS[k] };
-            for (const row of data.rolling) {
-              // 미성숙(null) 앵커는 0이 아니라 null로 → connectNulls가 건너뜀.
-              pt[row.cohortKey] = row[k];
-            }
+        <h2 className="text-sm font-semibold mb-1">고정 horizon Rolling Retention <span className="text-[10px] font-normal text-emerald-400">셀링자료용</span></h2>
+        <p className="text-[11px] text-gray-500 mb-4">가입 후 <span className="text-gray-300">[D_k, D_horizon] 구간 중 1회 이상 활동</span>한 비율. 구간 포함관계(⊃)+동일 분모라 <span className="text-gray-300">R1≥R7≥… 단조 비증가 보장</span>(무경기일·올스타 브레이크 노이즈 흡수). <span className="text-amber-400">14일 horizon은 지금 바로, 28일은 코호트가 D28까지 성숙해야 노출</span>. 각 라인 <code>n</code>=성숙 분모(전체 주 인원 대비) — <span className="text-gray-300">n이 주 인원보다 작으면 부분 코호트</span>이므로 셀링 시 주의.</p>
+        {data.rolling.length === 0 ? (
+          <p className="text-gray-500 text-sm">성숙한 코호트가 아직 없습니다(14일 horizon도 미성숙).</p>
+        ) : data.rolling.map((curve) => {
+          const chartData = curve.anchors.map((a, ai) => {
+            const pt: Record<string, number | string | null> = { anchor: rollingAnchorLabel(a, curve.horizon) };
+            for (const c of curve.cohorts) pt[c.cohortKey] = c.rates[ai];
             return pt;
           });
-          const cohortKeys = data.rolling.map((r) => r.cohortKey);
-          const lineColors = ["#22D3EE", "#6366F1", "#A855F7", "#EC4899", "#F59E0B", "#10B981"];
-          return data.rolling.length === 0 ? (
-            <p className="text-gray-500 text-sm">D28까지 성숙한 코호트가 아직 없습니다.</p>
-          ) : (
-            <ResponsiveContainer width="100%" height={300}>
-              <LineChart data={chartData} margin={{ left: 10, right: 20 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                <XAxis dataKey="window" stroke="#8E8E93" fontSize={11} />
-                <YAxis domain={[0, 1]} tickFormatter={(v: number) => `${(v * 100).toFixed(0)}%`} stroke="#8E8E93" fontSize={11} />
-                <Tooltip {...chartTooltipStyle} formatter={(value, name) => [`${(Number(value) * 100).toFixed(1)}%`, name as string]} />
-                {cohortKeys.map((ck, i) => (
-                  <Line key={ck} type="monotone" dataKey={ck} stroke={lineColors[i % lineColors.length]} strokeWidth={2} name={ck} dot={{ r: 3 }} connectNulls />
-                ))}
-              </LineChart>
-            </ResponsiveContainer>
+          return (
+            <div key={curve.horizon} className="mb-4 last:mb-0">
+              <p className="text-xs text-gray-300 font-medium mb-1">{curve.horizon}일 horizon <span className="text-gray-500">(성숙 코호트 {curve.cohorts.length}개)</span></p>
+              <ResponsiveContainer width="100%" height={260}>
+                <LineChart data={chartData} margin={{ left: 10, right: 20 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                  <XAxis dataKey="anchor" stroke="#8E8E93" fontSize={11} />
+                  <YAxis domain={[0, 1]} tickFormatter={(v: number) => `${(v * 100).toFixed(0)}%`} stroke="#8E8E93" fontSize={11} />
+                  <Tooltip {...chartTooltipStyle} formatter={(value, name) => [`${(Number(value) * 100).toFixed(1)}%`, name as string]} />
+                  {curve.cohorts.map((c, i) => {
+                    const label = c.cohortSize > c.n ? `${c.cohortKey} n=${c.n}/${c.cohortSize}` : `${c.cohortKey} n=${c.n}`;
+                    return (
+                      <Line key={c.cohortKey} type="monotone" dataKey={c.cohortKey} stroke={ROLLING_LINE_COLORS[i % ROLLING_LINE_COLORS.length]} strokeWidth={2} name={label} dot={{ r: 3 }} connectNulls />
+                    );
+                  })}
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
           );
-        })()}
+        })}
       </div>
 
       <div className="glass-card p-5">
