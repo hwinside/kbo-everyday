@@ -75,15 +75,9 @@ test("2026-07-24 회귀: 같은 관측을 처리 시점(+26초 지연)으로 재
   }), false); // 그래서 호출부는 반드시 관측(fetch) 시각을 nowMs로 넘겨야 한다
 });
 
-// 게이트 배선 diff-check — 게이트 nowMs가 per-game Date.now()로 회귀하지 않게 소스 계약 고정.
-import { readFileSync } from "node:fs";
-test("배선: game-status 게이트는 observedAtMs를 쓰고, warmup route는 fetch 시각을 넘긴다", () => {
-  const gs = readFileSync("src/lib/notifications/game-status.ts", "utf8");
-  assert.match(gs, /nowMs:\s*observedAtMs/);
-  assert.doesNotMatch(gs, /nowMs:\s*Date\.now\(\)/);
-  const route = readFileSync("src/app/api/cron/game-events-warmup/route.ts", "utf8");
-  assert.match(route, /observedAtMs:\s*initialFetch\.trace\.fetchedAtMs/);
-});
+// ⚠️ 게이트 "프로덕션 배선" 회귀(앞 경기 FCM 지연 → 뒤 경기 LG 억제 여부)는 실제
+// notifyGameStatusTransitions() 실행 검증으로만 잡을 수 있으므로(삼순 기준③), 위 정책함수
+// 경계 테스트와 별도로 scripts/qa/game-status-start-wiring-smoke.ts 에서 다룬다(qa:start-wiring).
 
 // 2026-07-23 하린아빠 지시 — "이미 늦은 시작알림은 발송 안되게 가드": 이닝 진행도 기반 뒷북 차단.
 test("시작알림 신선도: 1회초는 발송(정상 개시·우천 지연 개시 포함)", () => {
