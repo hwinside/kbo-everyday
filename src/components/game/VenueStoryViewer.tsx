@@ -610,6 +610,16 @@ export default function VenueStoryViewer({
         </div>
       )}
 
+      {/* iOS 키보드-입력바 사이 gap으로 뒤 경기화면이 비치던 문제 방지(하린아빠 A17 리포트).
+          body scroll lock이 주 방어고, 이 opaque 백드롭은 입력바 아래~화면바닥을 검정으로 확실히 메운다. */}
+      {(inputFocused || commentsOpen) && (
+        <div
+          className="absolute inset-x-0 bottom-0 z-[15] bg-black pointer-events-none"
+          style={{ height: `calc(env(safe-area-inset-bottom, 0px) + ${kbInset + 60}px)` }}
+          aria-hidden
+        />
+      )}
+
       {/* 인스타식 하단 상시 댓글 입력바 (하린아빠 21:22 지시 — 인스타 UI와 동일하게 바로 아래쪽 배치).
           data-composer 는 iOS 실기기 키보드 QA(browserstack-ios-story-comments-keyboard.mjs) 마커. */}
       <div
