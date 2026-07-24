@@ -4,6 +4,7 @@ import { getVerifiedUserFromRequest } from "@/lib/auth/verified-user";
 import { resolveGameVenue } from "@/lib/venue-stories/venue-resolve";
 import { evaluateGeofence } from "@/lib/venue-stories/geofence";
 import { probeMediaObject } from "@/lib/venue-stories/media-probe";
+import { VENUE_IMAGE_TOO_HEAVY_MSG } from "@/lib/venue-stories/media-limits";
 import {
   parseStoragePublicUrl as parseVenueStorageUrl,
   ownsPath as ownsVenuePath,
@@ -237,9 +238,12 @@ export async function POST(req: NextRequest) {
   if (mediaType === "image") {
     const probe = await probeMediaObject(mediaUrl, mediaType, VENUE_STORY_MAX_BYTES);
     if (!probe.ok) {
+      // MB 숫자 노출 금지(삼순 #813 blocker) — Composer가 data.error를 그대로 노출한다.
+      // 이 branch는 사진 전용. 영상 초과분은 step 6 서버 검증(download ≤ 50MiB 강제)이
+      // fault→pending 비노출로 fail-close하며 크기 관련 유저 문구를 내보내지 않는다.
       const msg =
         probe.reason === "too_large"
-          ? "파일이 너무 큽니다 (최대 50MB)"
+          ? VENUE_IMAGE_TOO_HEAVY_MSG
           : "업로드된 미디어를 확인할 수 없어요";
       return NextResponse.json({ error: msg }, { status: 400 });
     }
