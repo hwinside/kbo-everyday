@@ -260,6 +260,7 @@ export async function POST(request: NextRequest) {
 
     // 대화 upsert + 메시지 INSERT + preview/origin 확정을 service_role 전용 RPC 한
     // 트랜잭션으로 묶는다. 실패 시 전부 rollback → 빈/숨은 대화 미발생.
+    // query-guard: bounded -- admin_send_ops_message 는 항상 정확히 1행(conversation_id) 반환.
     const { data: sendData, error: sendError } = await admin.rpc("admin_send_ops_message", {
       p_system_user_id: systemUserId,
       p_user_id: userId,
