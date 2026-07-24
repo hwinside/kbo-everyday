@@ -1265,12 +1265,12 @@ function LongTextCard({ body }: { body: string }) {
       {displayBody && (
         <>
           <p
-            className={`whitespace-pre-line break-words text-base leading-relaxed text-text-primary ${expanded || !isLong ? "" : "line-clamp-6"}`}
+            className={`whitespace-pre-line break-words text-sm leading-relaxed text-text-primary ${expanded || !isLong ? "" : "line-clamp-6"}`}
           >
             {displayBody}
           </p>
           {isLong && !expanded && (
-            <button onClick={() => setExpanded(true)} className="mt-0.5 text-base text-text-tertiary">
+            <button onClick={() => setExpanded(true)} className="mt-0.5 text-sm text-text-tertiary">
               더 보기
             </button>
           )}
