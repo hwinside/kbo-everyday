@@ -126,12 +126,25 @@ export function BrandedTextCard({ post, body, long = false }: { post: Post; body
   const displayBody = stripUrls(body);
   const linked = hasLink(body);
 
-  // 긴 글은 11줄 초과 여부를 측정해 '더 보기' 노출(11줄 이하는 전문 노출).
+  // 긴 글은 11줄(line-clamp-[11]) 접힘 상태의 실제 overflow를 측정해 '더 보기' 노출(11줄 이하는 전문 노출).
+  // 회전·리사이즈·컨테이너 폭 변화로 줄 수가 바뀜수 있으므로 ResizeObserver로 재측정(삼순 blocker 반영).
   useEffect(() => {
     if (!long) return;
     const el = textRef.current;
     if (!el) return;
-    requestAnimationFrame(() => setClamped(el.scrollHeight > el.clientHeight + 2));
+    // 펼친 상태엔 clamp가 없어 overflow 측정 미의미(버튼도 숨김) → 접힘 상태에서만 재측정.
+    if (expanded) return;
+    const measure = () => setClamped(el.scrollHeight > el.clientHeight + 2);
+    let raf = requestAnimationFrame(measure);
+    const ro = new ResizeObserver(() => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(measure);
+    });
+    ro.observe(el);
+    return () => {
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+    };
   }, [displayBody, long, expanded]);
 
   return (
