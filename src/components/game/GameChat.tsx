@@ -15,6 +15,7 @@ import { supabase } from "@/lib/supabase/client";
 import ReportSheet from "@/components/community/ReportSheet";
 import GifPicker, { isGifComment } from "@/components/community/GifPicker";
 import { buildCanonicalGiphyUrl } from "@/lib/community/giphy";
+import { shouldShowVenueBadge, type VenueAttendees } from "@/lib/venue-stories/chat-badge";
 
 interface GameChatProps {
   gameId: string;
@@ -75,6 +76,13 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   const [replyTo, setReplyTo] = useState<{ id: number; nickname: string } | null>(null);
   const [showReport, setShowReport] = useState(false);
   const [reportTargetId, setReportTargetId] = useState<number | null>(null);
+  // [직관] 배지 — 이 경기에 직관 스토리(status='active')를 올린 유저 id 집합.
+  // 경기당 1회 로드 후 client 매핑(메시지별 개별 조회 금지). Realtime 신규
+  // 메시지도 user_id 매핑이라 자동 적용. 실패 시 배지만 생략(채팅 무영향).
+  // [직관] 배지 명단은 반드시 *어느 경기의 명단인지*(gameId)와 함께 저장한다 —
+  // 유저가 여러 경기 크관을 오갈 때 이전 경기 명단이 새 경기 채팅에 오표시되는 것을
+  // 렌더 시점 gameId 일치 검사로 구조적으로 차단(fetch 응답 지연/경합에도 안전).
+  const [venueAttendees, setVenueAttendees] = useState<VenueAttendees | null>(null);
   const composerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -135,6 +143,20 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
       document.body.classList.remove("kbd-open");
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const fetchedGameId = gameId;
+    fetch(`/api/venue-stories/attendees?gameId=${encodeURIComponent(fetchedGameId)}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((d) => {
+        if (!cancelled && Array.isArray(d?.userIds)) {
+          setVenueAttendees({ gameId: fetchedGameId, ids: new Set(d.userIds as string[]) });
+        }
+      })
+      .catch(() => { /* 배지 로드 실패는 무시 — 채팅 기능 무영향 */ });
+    return () => { cancelled = true; };
+  }, [gameId]);
 
   // 무한 스크롤: list 끝(가장 오래된 메시지 아래) sentinel이 viewport에
   // 잡히면 이전 50개 추가 로드. 추가는 화면 *아래*로 자라므로 scroll
@@ -292,6 +314,11 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     const isGif = isGifComment(msg.content);
     return (
       <div className="min-w-0 flex-1">
+        {shouldShowVenueBadge(venueAttendees, gameId, msg.user_id) && (
+          <span className="inline-block text-[9px] font-bold text-accent-green border border-accent-green/40 rounded px-1 mr-1 align-[1px]">
+            직관
+          </span>
+        )}
         <span
           className={clsx("text-xs font-semibold mr-1 cursor-pointer hover:underline", isMe ? "text-accent" : "text-text-tertiary")}
           onClick={() => msg.user_id && window.location.assign(`/profile/${msg.user_id}`)}

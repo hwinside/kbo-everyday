@@ -13,6 +13,7 @@
     "qa:ui:dm-draft": "node scripts/qa/ui-smoke-dm-draft.mjs",
     "qa:dm-atomic": "node scripts/qa/dm-atomic-send-smoke.mjs",
     "qa:ui:gamechat-giphy": "node scripts/qa/ui-smoke-gamechat-giphy.mjs",
+    "qa:venue-chat-badge": "tsx scripts/qa/venue-chat-badge-smoke.ts",
     "qa:cancelled-chat": "tsx scripts/qa/cancelled-game-chat-smoke.ts",
     "qa:resolve-player": "tsx scripts/qa/resolve-player-smoke.ts",
     "qa:admin-view": "tsx scripts/qa/admin-view-smoke.ts",
