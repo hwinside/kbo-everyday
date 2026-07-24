@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { getVerifiedUserFromRequest } from "@/lib/auth/verified-user";
 import { resolveGameVenue } from "@/lib/venue-stories/venue-resolve";
-import { evaluateGeofence } from "@/lib/venue-stories/geofence";
+import { evaluateGeofence, isVenueUploadBlocked } from "@/lib/venue-stories/geofence";
 import { probeMediaObject } from "@/lib/venue-stories/media-probe";
 import { VENUE_IMAGE_TOO_HEAVY_MSG } from "@/lib/venue-stories/media-limits";
 import {
@@ -220,9 +220,14 @@ export async function POST(req: NextRequest) {
     );
   }
   // 관리자 QA는 시간창(시작 전·종료 후)만 우회. **취소 경기는 관리자도 fail-closed**
-  // — 취소는 실제 경기가 아니므로 QA 업로드 대상이 아니다(삼순 #832 범위 확인).
-  const qaWindowBypass = qaBypass && !venue.cancelled;
-  if (!venue.uploadOpen && !qaWindowBypass) {
+  // — 클라와 동일한 isVenueUploadBlocked 판정(단일 소스, 삼순 #832 왕복2).
+  if (
+    isVenueUploadBlocked({
+      uploadOpen: venue.uploadOpen,
+      cancelled: venue.cancelled,
+      privileged: qaBypass,
+    })
+  ) {
     return NextResponse.json(
       { error: venue.reason ?? "지금은 올릴 수 없어요" },
       { status: 403 },

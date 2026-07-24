@@ -83,4 +83,7 @@ export interface VenueInfo {
   radiusM: number;
   uploadOpen: boolean; // 업로드 가능 시간대인지
   reason: string | null; // uploadOpen=false 사유
+  // 취소 경기 여부 — 관리자 QA도 취소 경기는 fail-closed(시간창만 우회). 클라가 media prepare 전 차단해
+  // 고아 객체/불필요 전송을 막는다(삼순 #832 왕복2).
+  cancelled: boolean;
 }

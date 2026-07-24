@@ -159,9 +159,11 @@ async function main() {
     ok("90초 워치독 자동 취소(무한 스피너 방지)", /setTimeout\(\(\) => settle\(\(\) => onCancel\(\)\), 90_?000\)/.test(src));
     ok("settle이 input.remove()로 cleanup", /const settle = [\s\S]{0,200}?input\.remove\(\)/.test(src));
     ok("settle 중복 방지(settled guard)", /const settle = [\s\S]{0,120}?if \(settled\) return;/.test(src));
-    // 관리자 QA closed-window 우회 — 렌더 gateReason과 submit 게이트 둘 다 isAdmin 정렬(삼순 #832 blocker1)
-    ok("gateReason이 isAdmin 우회(관리자는 마감도 버튼 활성)", /const gateReason = !isAdmin && venue && !venue\.uploadOpen/.test(src));
-    ok("submit 게이트도 isAdmin 우회(버튼만 활성하고 막지 않음)", /if \(!isAdmin && venue && !venue\.uploadOpen\)/.test(src));
+    // 관리자 QA closed-window 우회 — 렌더 gateReason과 submit 게이트 둘 다 단일 헬퍼 uploadBlocked 사용
+    // (삼순 #832 blocker1 + 왕복2: isVenueUploadBlocked 헬퍼로 클라·서버 단일 소스, 취소는 관리자도 차단)
+    ok("uploadBlocked가 isVenueUploadBlocked 헬퍼 사용(privileged: isAdmin)", /const uploadBlocked =[\s\S]{0,120}?isVenueUploadBlocked\(\{[\s\S]{0,120}?privileged: isAdmin/.test(src));
+    ok("gateReason이 uploadBlocked 기반(헬퍼 판정 재사용)", /const gateReason = uploadBlocked \? venue\?\.reason \?\? null : null/.test(src));
+    ok("submit 게이트도 uploadBlocked 사용(버튼만 활성하고 막지 않음 방지)", /if \(uploadBlocked\) \{/.test(src));
     ok("reset()이 in-flight 픽 invalidate(cancelPick)", /const reset = \(\) => \{[\s\S]{0,120}?cancelPick\(\);/.test(src));
     ok("onFile 최신 closure 유지(ref 우회)", /handlePickedFileRef\.current = handlePickedFile;/.test(src));
     ok("수동 취소 버튼도 cancelPick 사용", /onClick=\{cancelPick\}/.test(src));

@@ -39,6 +39,23 @@ export function evaluateUploadWindow(i: UploadWindowInput): UploadWindowResult {
   return { uploadOpen: true, reason: null };
 }
 
+/**
+ * 업로드 차단 판정(클라·서버 단일 소스, 삼순 #832 왕복2).
+ * - uploadOpen 이면 통과.
+ * - uploadOpen=false: 일반 유저는 전부 차단. 관리자(privileged)는 **시간창만 우회** —
+ *   취소 경기는 관리자도 fail-closed(취소은 실제 경기가 아니므로 QA 대상 아님).
+ * 클라는 이 판정으로 media prepare 전 차단해 고아 객체/불필요 전송을 막고, 서버는 동일 판정으로 403.
+ */
+export function isVenueUploadBlocked(i: {
+  uploadOpen: boolean;
+  cancelled: boolean;
+  privileged: boolean;
+}): boolean {
+  if (i.uploadOpen) return false;
+  if (!i.privileged) return true; // 일반 유저: uploadOpen=false 전부 차단
+  return i.cancelled; // 관리자도 취소은 차단, 시간창(시작전·종료후)만 우회
+}
+
 export interface GeofenceInput {
   lat: number | null;
   lng: number | null;

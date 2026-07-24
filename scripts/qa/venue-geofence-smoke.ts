@@ -4,7 +4,11 @@
  * 배경: PR #689 삼순 NO-GO — 모든 경기 fail-closed(미매핑 구장/시간대 밖/저정확도/반경 밖/가짜 경기).
  */
 import { resolveStadiumByName } from "../../src/lib/venue-stories/stadiums";
-import { evaluateUploadWindow, evaluateGeofence } from "../../src/lib/venue-stories/geofence";
+import {
+  evaluateUploadWindow,
+  evaluateGeofence,
+  isVenueUploadBlocked,
+} from "../../src/lib/venue-stories/geofence";
 import {
   VENUE_GEOFENCE_DEFAULT_RADIUS_M,
   VENUE_GEOFENCE_MAX_RADIUS_M,
@@ -66,6 +70,15 @@ ok("반경 경계 밖 살짝(700m 구장 900m) → 차단", (() => {
   const p = { lat: daegu.lat + 900 / 111_000, lng: daegu.lng };
   return evaluateGeofence({ ...p, accuracy: 20, coord: daegu, maxAccuracy: VENUE_GEOFENCE_MAX_ACCURACY_M }).ok === false;
 })());
+
+// 삼순 #832 왕복2: 클라·서버 공유 업로드 차단 판정(관리자 시간창만 우회, 취소은 fail-closed)
+console.log("[isVenueUploadBlocked — 클라/서버 단일 소스 업로드 게이트]");
+ok("uploadOpen=true → 누구든 통과(일반)", isVenueUploadBlocked({ uploadOpen: true, cancelled: false, privileged: false }) === false);
+ok("uploadOpen=true → 누구든 통과(관리자)", isVenueUploadBlocked({ uploadOpen: true, cancelled: false, privileged: true }) === false);
+ok("일반 유저 마감(uploadOpen=false) → 차단", isVenueUploadBlocked({ uploadOpen: false, cancelled: false, privileged: false }) === true);
+ok("관리자 마감 경기(종료/시작전, 미취소) → submit 허용(시간창 우회)", isVenueUploadBlocked({ uploadOpen: false, cancelled: false, privileged: true }) === false);
+ok("관리자 취소 경기 → 차단(media prepare 전, fail-closed)", isVenueUploadBlocked({ uploadOpen: false, cancelled: true, privileged: true }) === true);
+ok("일반 유저 취소 경기 → 차단", isVenueUploadBlocked({ uploadOpen: false, cancelled: true, privileged: false }) === true);
 
 console.log(`\n결과: ${pass} pass / ${fail} fail`);
 if (fail > 0) process.exit(1);
