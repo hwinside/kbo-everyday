@@ -25,6 +25,17 @@ interface Props {
 
 type Phase = "idle" | "geo" | "upload";
 
+// 이미지 파일을 data URL로 읽는다. 안드로이드 WebView가 blob: 이미지를 렌더하지 못해
+// 프리뷰가 깨져 보이는 케이스 방지(data URL은 모든 WebView에서 안정 렌더).
+function readFileAsDataURL(f: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result as string);
+    r.onerror = () => reject(r.error ?? new Error("file read failed"));
+    r.readAsDataURL(f);
+  });
+}
+
 export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded }: Props) {
   const isAdmin = useIsAdmin();
   const [file, setFile] = useState<File | null>(null);
@@ -163,7 +174,8 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
     // in-flight 픽 invalidate — 닫기/초기화 뒤 도착하는 late change는 무시된다
     cancelPick();
     pickSeqRef.current++;
-    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    // data URL(이미지 프리뷰)은 revoke 불필 — blob(비디오)만 해제
+    if (previewUrl?.startsWith("blob:")) URL.revokeObjectURL(previewUrl);
     setFile(null);
     setPreviewUrl(null);
     setPreviewType(null);
@@ -213,11 +225,32 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
       setError(limitError);
       return;
     }
-    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    if (previewUrl?.startsWith("blob:")) URL.revokeObjectURL(previewUrl);
     setFile(f);
-    setPreviewUrl(URL.createObjectURL(f));
-    setPreviewType(isVideo ? "video" : "image");
+    // 이미지 프리뷰: 안드로이드 WebView가 일부 blob: 이미지 URL을 렌더하지 못해 깨져 보이는
+    // 케이스가 있다(iOS WKWebView는 정상). data URL은 모든 WebView에서 안정적으로 렌더된다.
+    // 영상은 blob 유지(비디오 엘리먼트는 blob을 잘 다루고, data URL은 용량이 과도).
+    if (isVideo) {
+      setPreviewUrl(URL.createObjectURL(f));
+      setPreviewType("video");
+    } else {
+      const dataUrl = await readFileAsDataURL(f);
+      if (seq !== pickSeqRef.current) return; // reset/새 픽이 끼어든 late read — 버림
+      setPreviewUrl(dataUrl);
+      setPreviewType("image");
+    }
   };
+  // 모달이 열린 동안 body 스크롤 잠금 — 안드로이드에서 모달 안 터치가 배경(body)으로
+  // 체이닝돼 뤡경만 스크롤되고 하단 '올리기' 버튼에 도달 못하던 문제 방지(하린아빠 A17 리포트).
+  useEffect(() => {
+    if (!isOpen) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [isOpen]);
+
   useEffect(() => {
     // render마다 최신 closure로 갱신 — controller의 1회 결속 onFile이 stale state를 보지 않게
     handlePickedFileRef.current = handlePickedFile;
@@ -346,7 +379,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
       >
         <div className="absolute inset-0 bg-black/60" onClick={close} />
         <motion.div
-          className="relative w-full max-w-lg mx-auto bg-bg-secondary rounded-t-3xl max-h-[90dvh] overflow-y-auto flex flex-col"
+          className="relative w-full max-w-lg mx-auto bg-bg-secondary rounded-t-3xl max-h-[90dvh] overflow-y-auto overscroll-contain flex flex-col"
           initial={{ y: "100%" }}
           animate={{ y: 0 }}
           exit={{ y: "100%" }}
