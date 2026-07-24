@@ -11,19 +11,17 @@ import { NON_BASEBALL_NEGATIVE } from "@/lib/news-relevance";
 
 // 팀 약칭만으로 team_id가 붙는 커뮤니티 영상은 추가 야구 문맥이 필요하다.
 // 특히 `LG`는 LG화학·LG전자 등 계열사 제목에도 흔해서 약칭 단독 매칭을 신뢰할 수 없다.
-const SHORTS_BASEBALL_CONTEXT = [
+// 야구 외 문맥에서 거의 안 쓰이는 키워드 — 하나만 있어도 야구 문맥으로 인정.
+const SHORTS_BASEBALL_CONTEXT_STRONG = [
   "프로야구",
   "kbo",
   "야구",
   "트윈스",
-  "선수",
-  "경기",
   "홈런",
   "안타",
   "타점",
   "투수",
   "타자",
-  "선발",
   "불펜",
   "마운드",
   "타석",
@@ -33,14 +31,7 @@ const SHORTS_BASEBALL_CONTEXT = [
   "도루",
   "병살",
   "끝내기",
-  "역전",
-  "승리",
-  "패배",
-  "우승",
-  "연승",
-  "연패",
   "라인업",
-  "감독",
   "포수",
   "내야",
   "외야",
@@ -50,13 +41,49 @@ const SHORTS_BASEBALL_CONTEXT = [
   "평균자책",
   "트레이드",
   "드래프트",
+];
+
+// 다의어 — 기업·일반 뉴스에도 흔해(신입사원 선발, 경기 침체, 시장에서 승리,
+// 잠실 아파트) 단독으로는 야구 문맥으로 인정하지 않고 2개 이상 조합만 인정.
+const SHORTS_BASEBALL_CONTEXT_WEAK = [
+  "선수",
+  "경기",
+  "선발",
+  "역전",
+  "승리",
+  "패배",
+  "우승",
+  "연승",
+  "연패",
+  "감독",
   "잠실",
+  "하이라이트",
+];
+
+// 야구 키워드가 비야구 복합어의 부분문자열로 걸리는 패턴 — 판정 전에 제거.
+// ("선수금"의 선수, "경기 침체"의 경기 등)
+const NON_BASEBALL_COMPOUNDS = [
+  "선수금",
+  "경기 침체",
+  "경기침체",
+  "경기 불황",
+  "경기불황",
+  "경기 회복",
+  "경기회복",
+  "경기 부양",
+  "경기부양",
+  "경기도",
 ];
 
 /** 제목에 팀 약칭 외의 야구 문맥이 있는지 판정 */
 export function hasBaseballShortContext(title: string): boolean {
-  const normalized = title.toLowerCase();
-  return SHORTS_BASEBALL_CONTEXT.some((keyword) => normalized.includes(keyword));
+  let normalized = title.toLowerCase();
+  for (const compound of NON_BASEBALL_COMPOUNDS) {
+    normalized = normalized.split(compound).join(" ");
+  }
+  if (SHORTS_BASEBALL_CONTEXT_STRONG.some((k) => normalized.includes(k))) return true;
+  const weakHits = SHORTS_BASEBALL_CONTEXT_WEAK.filter((k) => normalized.includes(k));
+  return weakHits.length >= 2;
 }
 
 // 제목에 등장하면 야구 숏츠가 아니라고 보는 키워드. 야구 헤드라인엔 등장하지

@@ -102,5 +102,25 @@ check(
   true,
 );
 
+// --- LG 계열사 다의어/부분문자열 오탐 (2026-07-24 삼순 리뷰 반례) ---
+for (const title of [
+  "LG화학 신입사원 선발",
+  "LG유플러스 선수금 지급",
+  "LG전자 경기 침체에도 승리",
+]) {
+  check(`계열사 오탐: 야구 문맥 아님 (${title})`, hasBaseballShortContext(title), false);
+  check(`계열사 오탐: 수집 team_id ETC (${title})`, detectTeamFromTitle(title) === "ETC", true);
+  check(
+    `계열사 오탐: 기존 LG 행 노출 차단 (${title})`,
+    isTeamShortRelevant(title, "LG"),
+    false,
+  );
+}
+check(
+  "정상: 다의어 2개 조합은 야구 문맥 (LG 잠실 역전승)",
+  detectTeamFromTitle("LG 잠실서 짜릿한 역전승") === "LG",
+  true,
+);
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail > 0) process.exit(1);
