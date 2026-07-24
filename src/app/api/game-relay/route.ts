@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { trackFallback } from "@/lib/monitoring/api-fallback-tracker";
 import { isAllStarGameId } from "@/lib/constants/teams";
+import { parseNaverPitch, type PitchDetail } from "@/lib/game/pitch-provider";
 
 // Vercel 서버리스에서 캐시 방지 (라이브 데이터는 항상 최신이어야 함)
 export const dynamic = "force-dynamic";
@@ -21,6 +22,8 @@ export interface PlayEvent {
     | "error"
     | "other";
   extras?: string[];
+  /** 이 타석의 투구 시퀀스 (구종·구속·결과). 구형 경기/누락 시 생략. */
+  pitches?: PitchDetail[];
 }
 
 export interface InningRelay {
@@ -211,6 +214,9 @@ interface NaverTextOption {
   type: number;
   speed?: string;
   stuff?: string;
+  pitchNum?: number;
+  pitchResult?: string;
+  currentGameState?: { ball?: string; strike?: string; out?: string };
   currentPlayersInfo?: {
     away?: NaverPlayerInfo;
     home?: NaverPlayerInfo;
@@ -257,9 +263,14 @@ function parseInningRelays(textRelays: NaverTextRelay[]): InningRelay[] {
 
   const innings: InningRelay[] = [];
   let current: InningRelay | null = null;
+  // type:1(투구)은 타석 결과(13/23)보다 먼저 도착하므로 buffer에 쌓았다가 결과 행에서
+  // 확정 타석에 붙인다(삼순 pendingAtBat 요구). 같은 relay.textOptions 안이든 여러 relay에
+  // 걸쳐 오든 동일하게 동작. 이닝 경계·결과 확정 시 비운다.
+  let pendingPitches: PitchDetail[] = [];
 
   for (const relay of chronological) {
     if (relay.titleStyle === "0") {
+      pendingPitches = [];
       // Inning header: "1회초 LG 공격"
       const match = relay.title.match(/(\d+)회(초|말)\s*(.+?)\s*공격/);
       if (match) {
@@ -302,7 +313,15 @@ function parseInningRelays(textRelays: NaverTextRelay[]): InningRelay[] {
           result: resultText,
           type: classifyResult(resultText),
         };
+        // 이 타석에 쌓인 투구 시퀀스를 붙인다. 사구 마지막 공 누락/자동고의4구(0구)/
+        // 대타 교체 빈 타석은 pendingPitches가 비어 자연히 pitches 생략(fail-safe).
+        if (pendingPitches.length > 0) play.pitches = pendingPitches;
+        pendingPitches = [];
         current.plays.push(play);
+      } else if (opt.type === 1) {
+        // 투구 1개 — 네이버 어댑터로 격리 파싱. 최소 정보(text)조차 없으면 null → skip.
+        const pitch = parseNaverPitch(opt);
+        if (pitch) pendingPitches.push(pitch);
       } else if (opt.type === 14 || opt.type === 24) {
         // Base running event — show scoring, steals, and home-ins
         // type 14 = 일반 주루, type 24 = 홈인/진루 등
