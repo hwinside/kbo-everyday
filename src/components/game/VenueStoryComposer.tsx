@@ -232,8 +232,11 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
       return;
     }
 
-    // 업로드 가능 시간대 아님(경기 전/후, 취소, 미지원 구장) — 서버 사유 그대로 노출
-    if (venue && !venue.uploadOpen) {
+    // 업로드 가능 시간대 아님(경기 전/후, 취소, 미지원 구장) — 서버 사유 그대로 노출.
+    // 관리자 QA는 시간창 마감(종료 경기)을 우회한다 — 렌더 gateReason과 동일 조건으로 정렬
+    // (삼순 #832 blocker1: 버튼만 활성화하고 submit에서 다시 막으면 진입 불가). 서버도 동일 우회.
+    // 단 취소/미매핑은 서버가 관리자도 fail-closed(취소 경기는 QA 대상 아님).
+    if (!isAdmin && venue && !venue.uploadOpen) {
       setError(venue.reason ?? "지금은 올릴 수 없어요");
       return;
     }

@@ -219,7 +219,10 @@ export async function POST(req: NextRequest) {
       { status: 403 },
     );
   }
-  if (!venue.uploadOpen && !qaBypass) {
+  // 관리자 QA는 시간창(시작 전·종료 후)만 우회. **취소 경기는 관리자도 fail-closed**
+  // — 취소는 실제 경기가 아니므로 QA 업로드 대상이 아니다(삼순 #832 범위 확인).
+  const qaWindowBypass = qaBypass && !venue.cancelled;
+  if (!venue.uploadOpen && !qaWindowBypass) {
     return NextResponse.json(
       { error: venue.reason ?? "지금은 올릴 수 없어요" },
       { status: 403 },

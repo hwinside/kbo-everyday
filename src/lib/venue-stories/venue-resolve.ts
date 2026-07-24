@@ -19,6 +19,8 @@ export interface ResolvedVenue {
   uploadOpen: boolean;
   reason: string | null;
   expiresAtMs: number | null;
+  // 취소 경기 여부 — 관리자 QA도 취소 경기는 fail-closed(시간창만 우회 허용). 삼순 #832 범위.
+  cancelled: boolean;
 }
 
 function gameDateFromId(gameId: string): string | null {
@@ -55,6 +57,7 @@ export async function resolveGameVenue(gameId: string): Promise<ResolvedVenue> {
     uploadOpen: false,
     reason,
     expiresAtMs: null,
+    cancelled: false,
   });
 
   const date = gameDateFromId(gameId);
@@ -76,8 +79,9 @@ export async function resolveGameVenue(gameId: string): Promise<ResolvedVenue> {
   // 정상 만료(종료+24h)는 finalize cron 이 terminal CAS 성공 후에만 확정한다(삼순 09:44 #2).
   const expiresAtMs = startMs != null ? Date.parse(safetyCapExpiryIso(startMs)) : null;
 
+  const cancelled = game.status === "cancelled";
   const { uploadOpen, reason } = evaluateUploadWindow({
-    cancelled: game.status === "cancelled",
+    cancelled,
     hasCoord: !!coord,
     startMs,
     now: Date.now(),
@@ -94,5 +98,6 @@ export async function resolveGameVenue(gameId: string): Promise<ResolvedVenue> {
     uploadOpen,
     reason,
     expiresAtMs,
+    cancelled,
   };
 }
