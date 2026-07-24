@@ -116,15 +116,18 @@ function TicketCard({ ticket, currentUserId, onStatusChange }: { ticket: TicketT
               <div className="flex items-center justify-between">
                 <span className="text-xs text-text-tertiary">{ticket.author_nickname ?? "익명"}</span>
                 <div className="flex items-center gap-2">
-                  {reportState === "done" ? (
-                    <span className="text-xs text-text-tertiary">✅ 신고 접수됨</span>
-                  ) : (
-                    <button
-                      onClick={(e) => { e.stopPropagation(); setReportError(""); setReportState("confirm"); }}
-                      className="text-xs text-red-400/70 hover:text-red-400"
-                    >
-                      🚨 웃돈 신고
-                    </button>
+                  {/* 본인 글은 신고 버튼 미노출(자기글 자가신고 차단) */}
+                  {ticket.author_id && currentUserId !== ticket.author_id && (
+                    reportState === "done" ? (
+                      <span className="text-xs text-text-tertiary">✅ 신고 접수됨</span>
+                    ) : (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setReportError(""); setReportState("confirm"); }}
+                        className="text-xs text-red-400/70 hover:text-red-400"
+                      >
+                        🚨 웃돈 신고
+                      </button>
+                    )
                   )}
                   {ticket.author_id && currentUserId !== ticket.author_id && (
                     <DMButton targetUserId={ticket.author_id} label="쪽지" size="sm" />
