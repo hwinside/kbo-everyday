@@ -1,6 +1,6 @@
 import { SupabaseClient } from "@supabase/supabase-js";
-import { toKSTDateString, addKSTDays } from "@/lib/utils/date-kst";
 import { fetchAllByKeyset } from "@/lib/db/paginate";
+import { toKSTDateString, addKSTDays } from "@/lib/utils/date-kst";
 
 interface MetricRow {
   date: string;
@@ -56,7 +56,7 @@ async function fetchAllPages<T>(queryFn: () => any): Promise<T[]> {
 }
 
 /**
- * 유저별 활동일 수집: posts, comments, likes, chat_messages, admin_page_views에서 활동일 추출.
+ * 유저별 활동일 수집: posts, comments, likes, chat_messages와 page-view 일별 rollup에서 추출.
  * broad revisit: 페이지 방문도 활동으로 포함.
  * untilExclusive(2026-07-21 추가, 삼순 리뷰): targetDate 익일 KST 00:00 exclusive 상한 —
  * backfill 시 미래 활동이 과거 행에 섞이는 것을 원천 차단(visit_dist는 일 수 카운트라 상한 필수,
@@ -78,6 +78,12 @@ async function collectActivityDays(
     visitDays.get(userId)!.add(day);
   }
 
+  function addVisitDay(userId: string | null | undefined, day: string) {
+    if (!userId) return;
+    if (!visitDays.has(userId)) visitDays.set(userId, new Set());
+    visitDays.get(userId)!.add(day);
+  }
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const q = (table: string, cols: string, extra?: (q: any) => any) => () => {
     let query = supabase.from(table).select(cols).gte("created_at", since).lt("created_at", untilExclusive).order("created_at", { ascending: true });
@@ -85,37 +91,32 @@ async function collectActivityDays(
     return query;
   };
 
-  const [posts, comments, likes, chats, pageViews] = await Promise.all([
+  const pageViewSinceDay = toKSTDateString(since);
+  const pageViewUntilDay = untilExclusive.slice(0, 10);
+  const [posts, comments, likes, chats, pageViewDays] = await Promise.all([
     fetchAllPages<{ author_id: string; created_at: string }>(q("posts", "author_id, created_at")),
     fetchAllPages<{ author_id: string; created_at: string }>(q("comments", "author_id, created_at")),
     fetchAllPages<{ user_id: string; created_at: string }>(q("likes", "user_id, created_at")),
     fetchAllPages<{ user_id: string; created_at: string }>(q("chat_messages", "user_id, created_at")),
-    // admin_page_views는 수십만 행 규모 → OFFSET 페이징이 페이지마다 범위 앞부분을
-    // 재스캔해 O(n²) (pg_stat mean ~292ms, 2026-07-22 장애 후속 최적화) → id keyset으로 교체
-    fetchAllByKeyset<{ id: number; user_id: string; created_at: string }, number>(
-      async (cursor, limit) => {
-        let query = supabase
-          .from("admin_page_views")
-          .select("id, user_id, created_at")
-          .gte("created_at", since)
-          .lt("created_at", untilExclusive)
-          .not("user_id", "is", null)
-          .order("id", { ascending: true })
-          .limit(limit);
-        if (cursor !== null) query = query.gt("id", cursor);
-        const { data, error } = await query;
-        return { data: data as { id: number; user_id: string; created_at: string }[] | null, error };
-      },
-      (row) => row.id,
-      { label: "retention admin_page_views" },
-    ),
+    // user-day rollup도 keyset 유지 (2026-07-22 장애 후속 — OFFSET 재스캔 O(n²) 방지, #801)
+    fetchAllByKeyset<{ id: number; user_id: string; day_kst: string }, number>(async (cursor, limit) => {
+      let query = supabase.from("admin_page_view_user_days")
+        .select("id, user_id, day_kst")
+        .gte("day_kst", pageViewSinceDay)
+        .lt("day_kst", pageViewUntilDay)
+        .order("id", { ascending: true })
+        .limit(limit);
+      if (cursor !== null) query = query.gt("id", cursor);
+      const { data, error } = await query;
+      return { data: data as { id: number; user_id: string; day_kst: string }[] | null, error };
+    }, (row) => row.id, { label: "retention page-view user days" }),
   ]);
 
   for (const r of posts) addVisit(r.author_id, r.created_at);
   for (const r of comments) addVisit(r.author_id, r.created_at);
   for (const r of likes) addVisit(r.user_id, r.created_at);
   for (const r of chats) addVisit(r.user_id, r.created_at);
-  for (const r of pageViews) addVisit(r.user_id, r.created_at);
+  for (const r of pageViewDays) addVisitDay(r.user_id, r.day_kst);
 
   return visitDays;
 }
@@ -278,33 +279,24 @@ export async function computeActivationFunnel(
       .map((p) => p.id),
   );
 
-  // ③ 서로 다른 경기 1개 이상 방문 (admin_page_views의 /games/{gameId} 상세 방문, 코호트 유저만)
-  // OFFSET → id keyset (위 collectActivityDays와 동일 사유, 순서는 집계에 무관)
-  const gameViews = await fetchAllByKeyset<{ id: number; user_id: string; path: string }, number>(
+  // ③ 서로 다른 경기 1개 이상 방문. user/day rollup은 365일 뒤 purge되므로
+  // purge와 분리 보존되는 사용자별 lifetime 최초 경기방문 상태를 읽는다 (PR #773).
+  // (keyset 유지 — #801 OFFSET 재스캔 O(n²) 방지 사유 동일)
+  const lifetimeGameVisits = await fetchAllByKeyset<{ user_id: string }, string>(
     async (cursor, limit) => {
-      let query = supabase.from("admin_page_views").select("id, user_id, path")
-        .not("user_id", "is", null)
-        .like("path", "/games/2%")
-        .lte("created_at", until)
-        .order("id", { ascending: true })
+      let query = supabase.from("admin_user_game_lifetime").select("user_id")
+        .lte("first_game_day_kst", targetDate)
+        .order("user_id", { ascending: true })
         .limit(limit);
-      if (cursor !== null) query = query.gt("id", cursor);
+      if (cursor !== null) query = query.gt("user_id", cursor);
       const { data, error } = await query;
-      return { data: data as { id: number; user_id: string; path: string }[] | null, error };
+      return { data: data as { user_id: string }[] | null, error };
     },
-    (row) => row.id,
-    { label: "retention gameViews" },
+    (row) => row.user_id,
+    { label: "activation lifetime game visits" },
   );
-  const gamesByUser = new Map<string, Set<string>>();
-  for (const v of gameViews) {
-    if (!cohortIds.has(v.user_id)) continue;
-    const m = v.path.match(/^\/games\/([0-9]{8}[A-Za-z0-9]+)/);
-    if (!m) continue;
-    if (!gamesByUser.has(v.user_id)) gamesByUser.set(v.user_id, new Set());
-    gamesByUser.get(v.user_id)!.add(m[1]);
-  }
   const games1Set = new Set(
-    [...gamesByUser.entries()].filter(([, games]) => games.size >= 1).map(([uid]) => uid),
+    lifetimeGameVisits.map((row) => row.user_id).filter((id) => cohortIds.has(id)),
   );
 
   // 활성화 완료 = ①②③ 모두 충족

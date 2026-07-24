@@ -41,6 +41,7 @@ export const JOB_DEFS: JobDef[] = [
   { name: "game-logs-ingest", label: "경기별 로그 적재", schedule: "매일 23:00/00:00/01:00", description: "종료 경기 박스스코어 → player_game_logs 멱등 적재 (경기별 탭/추이)", maxAgeHours: 30, tracked: true },
   { name: "daily-analysis", label: "일일 경기 분석", schedule: "매일 01:00", description: "Gemini 기반 순위/타이틀 변동 분석 리포트", maxAgeHours: 30, tracked: true },
   { name: "retention", label: "리텐션 집계", schedule: "매일 09:30", description: "코호트/활성화/경기일 리텐션 메트릭 집계", maxAgeHours: 30, tracked: true },
+  { name: "admin-telemetry-retention", label: "트래픽 원장 보존", schedule: "매일 07:30", description: "physical backup·rollup 정합 확인 후 raw 30일/집계 1년 보존", maxAgeHours: 30, tracked: true },
   { name: "daily-fallback-report", label: "API 장애 리포트", schedule: "매일 09:00", description: "전일 API 장애 집계 → 텔레그램 전송", maxAgeHours: 30, tracked: false },
   { name: "photos-check", label: "선수 사진 모니터링", schedule: "매주 일 06:00", description: "KBO CDN 선수 사진 존재 여부 확인", maxAgeHours: 192, tracked: true },
   { name: "roster-update", label: "로스터 업데이트", schedule: "매일 05:00", description: "GitHub Actions 크롤링 → 자동 PR+머지 (스탯/로스터 반영)", maxAgeHours: 30, tracked: false, dataFreshness: true },

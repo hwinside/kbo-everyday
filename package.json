@@ -18,6 +18,8 @@
     "qa:admin-view": "tsx scripts/qa/admin-view-smoke.ts",
     "qa:app-rankings": "tsx scripts/qa/app-rankings-smoke.ts",
     "qa:retention-dates": "tsx scripts/qa/retention-gamedates-smoke.ts",
+    "qa:admin-telemetry-retention": "tsx scripts/qa/admin-telemetry-retention-smoke.ts",
+    "qa:admin-telemetry-retention:db": "tsx scripts/qa/admin-telemetry-retention-db-integration.ts",
     "qa:leaderboard-cache": "tsx scripts/qa/leaderboard-cache-smoke.ts",
     "qa:leaderboard-rollup": "bash scripts/qa/leaderboard-rollup-refresh-regression.sh",
     "qa:war-saber": "tsx scripts/qa/war-saber-smoke.ts",
@@ -158,6 +160,7 @@
     "web-push": "^3.6.7"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.3.8",
     "@playwright/test": "^1.58.2",
     "@tailwindcss/postcss": "^4",
     "@types/canvas-confetti": "^1.9.0",

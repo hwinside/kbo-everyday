@@ -16,7 +16,10 @@ import {
   LOOKBACK_DAYS,
   MAX_RETRY_PASSES,
 } from "../../src/lib/retention/gamedates";
-import { computeVisitDistribution } from "../../src/lib/retention/compute";
+import {
+  computeActivationFunnel,
+  computeVisitDistribution,
+} from "../../src/lib/retention/compute";
 
 /** 최소 fake supabase: created_at gte/lte 필터 + not-null + range/keyset(gt+order+limit) 페이징 지원 */
 type Row = Record<string, unknown>;
@@ -25,16 +28,18 @@ function fakeSupabase(tables: Record<string, Row[]>): SupabaseClient {
     from(table: string) {
       const rows = tables[table] ?? [];
       const filters: ((r: Row) => boolean)[] = [];
-      let sortCol: string | null = null;
-      let limitN: number | null = null;
-      const result = () => {
-        let out = rows.filter((r) => filters.every((f) => f(r)));
-        if (sortCol !== null) {
-          const col = sortCol;
-          out = [...out].sort((a, b) => ((a[col] as number) > (b[col] as number) ? 1 : -1));
-        }
-        if (limitN !== null) out = out.slice(0, limitN);
-        return out;
+      let orderColumn: string | null = null;
+      let orderAscending = true;
+      let pageLimit: number | null = null;
+      const materialize = () => {
+        const filtered = rows.filter((r) => filters.every((f) => f(r)));
+        if (!orderColumn) return filtered;
+        return [...filtered].sort((left, right) => {
+          const a = left[orderColumn!];
+          const b = right[orderColumn!];
+          const compared = a === b ? 0 : a! > b! ? 1 : -1;
+          return orderAscending ? compared : -compared;
+        });
       };
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const builder: any = {
@@ -51,12 +56,12 @@ function fakeSupabase(tables: Record<string, Row[]>): SupabaseClient {
           filters.push((r) => new Date(String(r[col])).getTime() < new Date(v).getTime());
           return builder;
         },
-        not: (col: string) => {
-          filters.push((r) => r[col] != null);
+        gt: (col: string, v: string | number) => {
+          filters.push((r) => r[col]! > v);
           return builder;
         },
-        gt: (col: string, v: unknown) => {
-          filters.push((r) => (r[col] as number) > (v as number));
+        not: (col: string) => {
+          filters.push((r) => r[col] != null);
           return builder;
         },
         like: (col: string, pattern: string) => {
@@ -64,22 +69,26 @@ function fakeSupabase(tables: Record<string, Row[]>): SupabaseClient {
           filters.push((r) => String(r[col]).startsWith(prefix));
           return builder;
         },
-        order: (col: string) => {
-          sortCol = col;
+        order: (col: string, options?: { ascending?: boolean }) => {
+          orderColumn = col;
+          orderAscending = options?.ascending !== false;
           return builder;
         },
-        limit: (n: number) => {
-          limitN = n;
+        limit: (value: number) => {
+          pageLimit = value;
           return builder;
         },
         range: (from: number, to: number) =>
           Promise.resolve({
-            data: rows.filter((r) => filters.every((f) => f(r))).slice(from, to + 1),
+            data: materialize().slice(from, to + 1),
             error: null,
           }),
         // keyset 경로(compute.ts fetchAllByKeyset)는 builder를 직접 await 하므로 thenable 필요
-        then: (resolve: (v: { data: Row[]; error: null }) => unknown) =>
-          Promise.resolve({ data: result(), error: null }).then(resolve),
+        then: (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) =>
+          Promise.resolve({
+            data: materialize().slice(0, pageLimit ?? undefined),
+            error: null,
+          }).then(resolve, reject),
       };
       return builder;
     },
@@ -196,8 +205,8 @@ async function main() {
   {
     // 상한 없던 종전 코드엔 total=1로 오염되던 케이스 → 이제 빈 결과여야 함
     const sb = fakeSupabase({
-      admin_page_views: [
-        { id: 1, user_id: "userA", created_at: "2026-07-20T10:00:00+09:00" },
+      admin_page_view_user_days: [
+        { id: 1, user_id: "userA", day_kst: "2026-07-20" },
       ],
     });
     const rows = await computeVisitDistribution(sb, "2026-07-19");
@@ -209,7 +218,7 @@ async function main() {
       posts: [{ author_id: "userB", created_at: "2026-07-18T12:00:00+09:00" }],
       likes: [{ user_id: "userB", created_at: "2026-07-19T23:30:00+09:00" }],
       chat_messages: [{ user_id: "userB", created_at: "2026-07-21T09:00:00+09:00" }],
-      admin_page_views: [{ id: 1, user_id: "userA", created_at: "2026-07-20T10:00:00+09:00" }],
+      admin_page_view_user_days: [{ id: 1, user_id: "userA", day_kst: "2026-07-20" }],
     });
     const rows = await computeVisitDistribution(sb, "2026-07-19");
     const b2 = rows.find((r) => r.metric_key === "2");
@@ -229,6 +238,38 @@ async function main() {
     });
     const rows = await computeVisitDistribution(sb, "2026-07-21");
     check("same-day activity counted (regular run)", rows.find((r) => r.metric_key === "1")?.value, 1);
+  }
+  {
+    const sb = fakeSupabase({
+      profiles: [
+        { id: "userA", team_id: 1, favorite_players: ["p1"], created_at: "2026-07-01T10:00:00+09:00" },
+        { id: "userB", team_id: 2, favorite_players: ["p2"], created_at: "2026-07-02T10:00:00+09:00" },
+      ],
+      admin_user_game_lifetime: [
+        { user_id: "userA", first_game_id: "20260720LGOB", first_game_day_kst: "2026-07-20" },
+      ],
+    });
+    const rows = await computeActivationFunnel(sb, "2026-07-21");
+    check("lifetime game state feeds activation", rows.find((r) => r.metric_key === "games_1plus")?.value, 1);
+    check("activation still requires all three steps", rows.find((r) => r.metric_key === "activated")?.value, 1);
+  }
+  {
+    // 삼순 P1-2 회귀(PR #773): 365일 purge로 user-day rollup이 사라져도
+    // lifetime 상태로 활성화 증거가 유지되고, targetDate 이후 최초방문은 제외된다.
+    const sb = fakeSupabase({
+      profiles: [
+        { id: "userOld", team_id: 1, favorite_players: ["p1"], created_at: "2026-06-27T10:00:00+09:00" },
+        { id: "userLate", team_id: 2, favorite_players: ["p2"], created_at: "2026-06-28T10:00:00+09:00" },
+      ],
+      admin_user_game_lifetime: [
+        { user_id: "userOld", first_game_id: "20260628LGOB", first_game_day_kst: "2026-06-28" },
+        { user_id: "userLate", first_game_id: "20270722SSLT", first_game_day_kst: "2027-07-22" },
+      ],
+      admin_page_view_user_days: [], // 365일 purge 이후 과거 user-day는 비어 있음
+    });
+    const rows = await computeActivationFunnel(sb, "2027-07-21");
+    check("365d purge keeps lifetime games_1plus", rows.find((r) => r.metric_key === "games_1plus")?.value, 1);
+    check("365d purge keeps activated", rows.find((r) => r.metric_key === "activated")?.value, 1);
   }
   {
     // 삼순 3차 재현: 마지막 1초 fractional timestamp 포함 + 익일 00:00 exclusive 제외
