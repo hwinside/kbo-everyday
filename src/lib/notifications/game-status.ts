@@ -165,10 +165,14 @@ export type StartNotifyDeps = {
 };
 
 async function defaultStoreScheduledSeen(gameIds: string[], iso: string): Promise<void> {
-  const { error } = await supabase
-    .from("game_notify_state")
-    .upsert(gameIds.map((game_id) => ({ game_id, last_seen_scheduled_at: iso })), { onConflict: "game_id" });
-  if (error) console.error("[game-status] scheduled-seen upsert failed:", error.message);
+  // 원자 단조 저장(RPC): last_seen_scheduled_at = GREATEST(existing, observed). 겹친 75초 cron에서
+  // 뒤늘게 끝난 이전 invocation의 오래된 관측이 최신 last_seen을 뒤로 덮지 않게 한다
+  // (unconditional upsert = last-write-wins 버그, 삼순 #815 재리뷰 blocker).
+  const { error } = await supabase.rpc("mark_scheduled_seen", {
+    p_game_ids: gameIds,
+    p_observed_at: iso,
+  });
+  if (error) console.error("[game-status] scheduled-seen rpc failed:", error.message);
 }
 
 async function defaultReadStartState(
