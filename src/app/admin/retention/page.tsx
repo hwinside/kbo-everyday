@@ -202,8 +202,8 @@ export default function RetentionPage() {
       </div>
 
       <div className="glass-card p-5">
-        <h2 className="text-sm font-semibold mb-1">고정 horizon Rolling Retention</h2>
-        <p className="text-[11px] text-gray-500 mb-4">같은 주에 가입한 이용자 중 <span className="text-gray-300">이후 특정 구간에 한 번이라도 다시 방문한 비율</span>입니다. 예를 들어 14일 그래프에서 <span className="text-gray-300">R1(D1~14)</span>은 가입 첫날부터 14일째 사이 재방문율, <span className="text-gray-300">R7(D7~14)</span>은 7~14일째, <span className="text-gray-300">R14(D14)</span>은 14일째 당일의 재방문율이에요. 관찰 구간이 넓을수록 값이 크고 좁을수록 작아지므로 곡선은 R1≥R7≥R14로 완만히 내려가며, 구조상 다시 튀어오르지 않아 무경기일·올스타 브레이크 같은 일시적 변동에도 흔들리지 않습니다. <span className="text-amber-400">14일 기준은 지금 바로, 28일 기준은 해당 주 가입자가 28일을 모두 채운 뒤 표시</span>됩니다. 각 선의 <code>n</code>은 <span className="text-gray-300">실제 계산에 포함된 인원 수</span>로, 그 주 전체 가입자보다 작으면 아직 기간을 다 채우지 못한 일부만 반영된 값입니다.</p>
+        <h2 className="text-sm font-semibold mb-1">가입 후 재방문율 (Rolling Retention)</h2>
+        <p className="text-[11px] text-gray-500 mb-4">같은 주에 가입한 이용자가 <span className="text-gray-300">가입 후 특정 시점부터 기준일까지 한 번 이상 다시 방문한 비율</span>입니다. R1은 가입 다음 날부터, R7은 가입 후 7일째부터, R14는 가입 후 14일째부터의 재방문율을 뜻합니다. 뒤로 갈수록 관찰 기간이 짧아져 비율은 자연스럽게 낮아지며, 하루 단위 지표보다 경기 일정에 따른 일시적 변동을 덜 받습니다. <span className="text-amber-400">14일 기준은 가입 후 14일, 28일 기준은 28일이 지난 이용자부터 계산</span>합니다. <code>n=200/491</code>은 그 주 가입자 491명 중 기준 기간을 채워 실제 계산에 포함된 이용자가 200명이라는 뜻입니다.</p>
         {data.rolling.length === 0 ? (
           <p className="text-gray-500 text-sm">성숙한 코호트가 아직 없습니다(14일 horizon도 미성숙).</p>
         ) : data.rolling.map((curve) => {
