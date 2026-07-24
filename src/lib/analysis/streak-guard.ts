@@ -50,20 +50,25 @@ export function splitSentences(copy: string): string[] {
     .filter(Boolean);
 }
 
-// 절 안에서 해당 팀이 streak의 *주어(연속기록 보유 주체)*인지 조사로 판정.
+// 절 안에서 주제/주격 조사가 붙은 팀들의 (팀명, 위치) 목록.
 // "롯데도 KT에 패했지만 8연승"에서 롯데(도)는 주체, KT(에)는 상대팀이다.
-// 주제/주격 조사가 붙은 팀만 streak 소유자 후보로 보아, 상대팀(KT에/를/을 등)이
-// 대신 가짜 주장을 만족시키는 false-negative를 막는다.
+// 목적격(롯데를/을)·부사격(KT에)은 제외되어 가짜 주장을 만족시키지 못하게 한다.
 const SUBJECT_PARTICLE_RE = /^(?:은|는|이|가|도|까지|만|역시|마저)/;
-function hasSubjectParticle(clauseText: string, name: string): boolean {
-  let from = 0;
-  for (;;) {
-    const idx = clauseText.indexOf(name, from);
-    if (idx < 0) return false;
-    const after = clauseText.slice(idx + name.length);
-    if (SUBJECT_PARTICLE_RE.test(after)) return true;
-    from = idx + name.length;
+function subjectTeamOccurrences(
+  clauseText: string,
+  teamNames: string[],
+): { team: string; pos: number }[] {
+  const occ: { team: string; pos: number }[] = [];
+  for (const n of teamNames) {
+    let from = 0;
+    for (;;) {
+      const i = clauseText.indexOf(n, from);
+      if (i < 0) break;
+      if (SUBJECT_PARTICLE_RE.test(clauseText.slice(i + n.length))) occ.push({ team: n, pos: i });
+      from = i + n.length;
+    }
   }
+  return occ;
 }
 
 // 우리 분석 데이터는 단일일 delta만 제공한다 — "N년 만"/"N년만에" 같은 다년 이력 주장은
@@ -90,10 +95,11 @@ function clauseRanges(sentence: string): { start: number; end: number }[] {
 }
 
 // 한 문장이 연승/연패 데이터와 모순되면 true.
-// 규칙: 각 "N연승"/"N연패" 주장을 그 주장이 속한 *절*의 팀으로 먼저 검증.
-//   - 절 안에 팀명이 있으면 그 팀들 중 최소 1팀이 데이터상 동일 방향·횟수여야 함.
-//   - 절 안에 팀명이 없으면(주어 생략) 문장 전체 팀으로 폴백 검증(FP 방지).
-// 어느 쪽도 안 맞으면 데이터에 근거 없는 창작/모순 → true.
+// 규칙: 각 "N연승"/"N연패" 주장을 *단 하나의 주어 팀*으로 귀속해 검증한다.
+//   - 주어 = claim 앞에 위치한 가장 가까운 주제/주격 팀(한국어에서 streak 주체는 보통 claim 직전 주격어).
+//   - claim 앞에 주어 없으면 절 내 가장 가까운 주어(도치) → 그도 없으면 절/문장 팀 폴백(주어 생략, FP 방지).
+//   - 귀속된 주어 팀의 데이터가 주장 방향·횟수와 안 맞으면 모순 → true.
+// 주격 팀이 2개 이상이더라도 claim당 단일 주어로 좌어 다른 팀 streak가 가짜 claim을 통과시키지 못한다.
 export function sentenceContradictsStreak(
   sentence: string,
   facts: Map<string, StreakFact>,
@@ -111,15 +117,22 @@ export function sentenceContradictsStreak(
     const idx = c.index ?? 0;
     const range = ranges.find((r) => idx >= r.start && idx < r.end) ?? { start: 0, end: sentence.length };
     const clauseText = sentence.slice(range.start, range.end);
+    const claimPos = idx - range.start; // 절 내 상대 위치
     const clauseTeams = teamNames.filter((n) => clauseText.includes(n));
-    // 주어 귀속: 주제/주\uaꢴ 조사가 붙은 팀이 있으면 그 팀만 streak 주체로 본다.
-    // (상대팀 "KT에 패했지만"의 KT가 가짜 주장을 만족시키는 것을 차단).
-    const subjectTeams = clauseTeams.filter((n) => hasSubjectParticle(clauseText, n));
-    const scope = subjectTeams.length > 0
-      ? subjectTeams
-      : clauseTeams.length > 0
-        ? clauseTeams
-        : sentenceTeams;
+    // 주어 귀속: claim에 가장 가까운 앞선 주격/주제 팀 하나로만 귀속.
+    const subjOcc = subjectTeamOccurrences(clauseText, teamNames);
+    const before = subjOcc.filter((o) => o.pos < claimPos).sort((a, b) => b.pos - a.pos);
+    let scope: string[];
+    if (before.length > 0) {
+      scope = [before[0].team];
+    } else if (subjOcc.length > 0) {
+      const nearest = subjOcc
+        .slice()
+        .sort((a, b) => Math.abs(a.pos - claimPos) - Math.abs(b.pos - claimPos))[0];
+      scope = [nearest.team];
+    } else {
+      scope = clauseTeams.length > 0 ? clauseTeams : sentenceTeams;
+    }
     const matched = scope.some((n) => {
       const f = facts.get(n);
       return f !== undefined && f.dir === dir && f.count === count;

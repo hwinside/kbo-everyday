@@ -153,6 +153,15 @@ ok(
   "정상(주어 귀속): 롯데를 꺾고 KT가 8연승 (KT=주어, 데이터 일치)",
   hasStreakContradiction("롯데를 5대4로 꺾고 KT가 8연승을 질주했다.", snapshots, teamNames) === false,
 );
+// 삼순 왕복2 반례: 한 절에 주격 팀 2개 — claim은 가장 가까운 앞선 주어로만 귀속되어야 함.
+ok(
+  "삼순 왕복2: KT가 롯데를 꺾었지만 롯데는 8연승을 이어갔다 (모순, 주어=롯데)",
+  hasStreakContradiction("KT가 롯데를 꺾었지만 롯데는 8연승을 이어갔다.", snapshots, teamNames) === true,
+);
+ok(
+  "삼순 왕복2: KT가 1연패에 빠졌고 롯데는 8연승을 이어갔다 (두 claim 모두 모순)",
+  hasStreakContradiction("KT가 1연패에 빠졌고 롯데는 8연승을 이어갔다.", snapshots, teamNames) === true,
+);
 
 // === 삼순 NO-GO: 'N년 만' 다년 이력 환각 ===
 ok(
