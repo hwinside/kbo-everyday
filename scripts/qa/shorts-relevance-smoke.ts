@@ -375,5 +375,32 @@ for (const title of ["LG전 승리", "KIA LG전 하이라이트"]) {
   check(`야구 LG전 보존: 노출 유지 (${title})`, isTeamShortRelevant(title, "LG"), true);
 }
 
+// --- 라운드5 NO-GO: `LG전` 뒤 조사/구두점 경계 누수 (2026-07-24 삼순) ---
+// 공백형만 닫혀 있었고 `LG전은`·`LG전의`·`LG전,`처럼 조사/구두점이
+// 바로 붙으면 그 뒤 비야구 토큰(신입사원)을 못 보고 통과했다.
+for (const title of [
+  "LG전은 신입사원 선발 경쟁에서 승리",
+  "LG전의 신입사원 선발 경쟁에서 승리",
+  "LG전, 신입사원 선발 경쟁에서 승리",
+]) {
+  check(`LG전 조사/구두점: 야구 문맥 아님 (${title})`, hasLgBaseballContext(title), false);
+  check(`LG전 조사/구두점: 수집 team_id ETC (${title})`, detectTeamFromTitle(title) === "ETC", true);
+  check(
+    `LG전 조사/구두점: 보조쿼리 합류 게이트 차단 (${title})`,
+    detectAllTeamsFromTitle(title).includes("LG"),
+    false,
+  );
+  check(
+    `LG전 조사/구두점: 기존 LG 행 노출 차단 (${title})`,
+    isTeamShortRelevant(title, "LG"),
+    false,
+  );
+}
+// 조사 뒤가 야구 문맥이면(`LG전은 승리`·`LG전의 하이라이트`) 과차단 없이 보존한다.
+for (const title of ["LG전은 승리", "LG전의 하이라이트"]) {
+  check(`야구 LG전 조사 보존: 수집 team_id LG (${title})`, detectTeamFromTitle(title) === "LG", true);
+  check(`야구 LG전 조사 보존: 노출 유지 (${title})`, isTeamShortRelevant(title, "LG"), true);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail > 0) process.exit(1);

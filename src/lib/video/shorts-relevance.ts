@@ -85,7 +85,21 @@ const LG_GAME_RE = /(?:(?:^|[^a-z0-9])lg|엘지)전(?=\s*(?:[a-z]|$))/i;
 // 기업 접미 부정신호 우선 원칙(라운드2)에 따라 그 LG 언급을 제거한다 —
 // 뒤 토큰이 야구 키워드면(`LG전 승리`) 유지. 제거 후 독립 LG 언급이 남지
 // 않으면 어떤 긍정 신호(선발·승리 등 weak)로도 복원 불가.
-const LG_GAME_CORPORATE_RE = /(^|[^a-z0-9])((?:lg|엘지)전)(?=\s+[가-힣0-9])/gi;
+//
+// 2026-07-24 삼순 라운드5 NO-GO: 공백형(`LG전 신입사원`)만 닫혀 있고
+// 조사·구두점이 `전`에 바로 붙는 변형(`LG전은`·`LG전의`·`LG전,`)은 누수됐다.
+// `LG전` 뒤 조사/구두점을 정규화해 건너뛴 뒤 *다음 실제 토큰*으로 야구 여부를
+// 판정한다(`LG전은 승리`=보존, `LG전, 신입사원`=제거). 붙은 조사/구두점만
+// 스킵하고 뒤이은 단어는 건드리지 않아 `LG전 선수단`류 공백형은 그대로 유지.
+const LG_GAME_BOUNDARY =
+  "(?:에서|에게|으로|부터|까지|은|는|이|가|을|를|에|도|의|만|와|과|로|,|\\.|·|、)";
+const LG_GAME_CORPORATE_RE = new RegExp(
+  `(^|[^a-z0-9])((?:lg|엘지)전)(?=\\s+[가-힣0-9]|${LG_GAME_BOUNDARY})`,
+  "gi",
+);
+// `전`에 바로 붙은 조사/구두점(공백 없는 경계) + 이어지는 공백을 제거해
+// 다음 실제 토큰만 남긴다. 공백형은 붙은 조사가 없어 앞 공백만 지운다.
+const LG_GAME_BOUNDARY_STRIP_RE = new RegExp(`^(?:${LG_GAME_BOUNDARY})*\\s*`);
 
 function stripCorporateLgGame(text: string): string {
   return text.replace(
@@ -93,7 +107,7 @@ function stripCorporateLgGame(text: string): string {
     (full: string, lead: string, _token: string, offset: number) => {
       const rest = text
         .slice(offset + full.length)
-        .replace(/^\s+/, "")
+        .replace(LG_GAME_BOUNDARY_STRIP_RE, "")
         .toLowerCase();
       const isBaseballNext =
         SHORTS_BASEBALL_CONTEXT_STRONG.some((k) => rest.startsWith(k)) ||
