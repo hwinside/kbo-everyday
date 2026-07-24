@@ -6,7 +6,7 @@ import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { getKSTToday } from "@/lib/utils/date-kst";
-import { ChevronLeft, RefreshCw } from "lucide-react";
+import { ChevronLeft, RefreshCw, Star } from "lucide-react";
 import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
 import { getMyTeamId } from "@/lib/store/myteam";
 import DateSelector from "@/components/game/DateSelector";
@@ -35,6 +35,12 @@ const item = { hidden: { opacity: 0, y: 12 }, show: { opacity: 1, y: 0, transiti
 
 function formatDate(dateStr: string): string {
   return dateStr.replace(/-/g, "");
+}
+
+// "YYYY-MM-DD" → "7월 26일 (토)" 다음 경기 헤더용
+function formatNextGameLabel(dateStr: string): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString("ko-KR", { month: "long", day: "numeric", weekday: "short" });
 }
 
 function buildPreseasonFallback(date: string): GameData[] {
@@ -66,6 +72,8 @@ export default function GamesPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [myTeamId, setMyTeamId] = useState<number | null>(null);
+  // MY TEAM 이 오늘 경기가 없을 때 보여줄 다음 경기(날짜 명시)
+  const [nextMyGame, setNextMyGame] = useState<{ game: GameData; dateStr: string } | null>(null);
   // 구장 날씨 — key(날짜|구장세트)로 캐시해 날짜 전환 레이스에 이전 데이터가 붙지 않게 한다
   const [weather, setWeather] = useState<{ key: string; map: StadiumWeatherMap } | null>(null);
 
@@ -147,13 +155,65 @@ export default function GamesPage() {
     return () => clearInterval(interval);
   }, [games, selectedDate]);
 
+  // MY TEAM 이 오늘 경기가 없으면 다음 경기(최대 14일 이내) 탐색 — 오늘 날짜를 볼 때만
+  useEffect(() => {
+    if (myTeamId == null || loading || selectedDate !== today) { setNextMyGame(null); return; }
+    const hasMyGame = games.some(g => g.awayTeamId === myTeamId || g.homeTeamId === myTeamId);
+    if (hasMyGame) { setNextMyGame(null); return; }
+    let stale = false;
+    (async () => {
+      const [y, m, d] = today.split("-").map(Number);
+      for (let i = 1; i <= 14 && !stale; i++) {
+        const base = new Date(y, m - 1, d);
+        base.setDate(base.getDate() + i);
+        const iso = `${base.getFullYear()}-${String(base.getMonth() + 1).padStart(2, "0")}-${String(base.getDate()).padStart(2, "0")}`;
+        try {
+          const res = await fetch(`/api/games?date=${formatDate(iso)}`);
+          if (!res.ok) continue;
+          const data = await res.json();
+          const match = (data.games ?? []).find(
+            (g: { awayTeamId: number; homeTeamId: number; status: string }) =>
+              (g.awayTeamId === myTeamId || g.homeTeamId === myTeamId) && g.status !== "cancelled"
+          );
+          if (match && !stale) {
+            setNextMyGame({
+              dateStr: iso,
+              game: {
+                id: match.gameId,
+                awayTeamId: match.awayTeamId,
+                homeTeamId: match.homeTeamId,
+                awayScore: match.awayScore ?? null,
+                homeScore: match.homeScore ?? null,
+                status: match.status,
+                time: match.time,
+                stadium: match.stadium,
+                awayStarter: match.awayStarterName,
+                homeStarter: match.homeStarterName,
+                broadcastChannels: match.broadcastChannels,
+              },
+            });
+            return;
+          }
+        } catch { /* skip */ }
+      }
+      if (!stale) setNextMyGame(null);
+    })();
+    return () => { stale = true; };
+  }, [games, myTeamId, loading, selectedDate, today]);
+
   const gameWeather = (g: GameData) =>
     weather?.key.startsWith(`${selectedDate}|`) ? pickGameWeather(weather.map[g.stadium], g, selectedDate) : null;
 
-  const liveGames = games.filter(g => g.status === "live");
-  const finalGames = games.filter(g => g.status === "final");
-  const cancelledGames = games.filter(g => g.status === "cancelled");
-  const scheduledGames = games.filter(g => g.status === "scheduled");
+  // MY TEAM 오늘 경기는 상단 우선 카드 1장으로 노출하고, 아래 목록에서는 중복 제거
+  const myTeamGame = myTeamId != null
+    ? games.find(g => g.awayTeamId === myTeamId || g.homeTeamId === myTeamId) ?? null
+    : null;
+  const restGames = myTeamGame ? games.filter(g => g.id !== myTeamGame.id) : games;
+
+  const liveGames = restGames.filter(g => g.status === "live");
+  const finalGames = restGames.filter(g => g.status === "final");
+  const cancelledGames = restGames.filter(g => g.status === "cancelled");
+  const scheduledGames = restGames.filter(g => g.status === "scheduled");
 
   return (
     <div className="mx-auto max-w-lg">
@@ -190,6 +250,31 @@ export default function GamesPage() {
         <EmptyGameState selectedDate={selectedDate} />
       ) : (
         <motion.div variants={container} initial="hidden" animate="show" className="px-5 pb-24 space-y-6">
+          {myTeamGame && (
+            <div>
+              <h2
+                className="text-sm font-semibold mb-2 flex items-center gap-1"
+                style={{ color: myTeamId ? getTeamBorderColorById(myTeamId) : undefined }}
+              >
+                <Star size={14} className="fill-current" /> MY TEAM
+              </h2>
+              <motion.div variants={item}>
+                <CompactGameCard game={myTeamGame} isPreseason={isPreseason} myTeamId={myTeamId} weather={gameWeather(myTeamGame)} />
+              </motion.div>
+            </div>
+          )}
+
+          {!myTeamGame && nextMyGame && (
+            <div>
+              <h2 className="text-sm font-semibold text-text-tertiary mb-2 flex items-center gap-1">
+                <Star size={14} className="fill-current" /> MY TEAM · 다음 경기 {formatNextGameLabel(nextMyGame.dateStr)}
+              </h2>
+              <motion.div variants={item}>
+                <CompactGameCard game={nextMyGame.game} isPreseason={isPreseason} myTeamId={myTeamId} />
+              </motion.div>
+            </div>
+          )}
+
           {liveGames.length > 0 && (
             <div>
               <h2 className="text-sm font-semibold text-red-400 mb-2 flex items-center gap-1">

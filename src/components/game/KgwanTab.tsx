@@ -8,11 +8,12 @@ import Image from "next/image";
 import { getTeamById, isAllStarGame, isAllStarGameId } from "@/lib/constants/teams";
 import GameChat from "@/components/game/GameChat";
 import ContextualStatsBox from "@/components/game/ContextualStatsBox";
+import RelayPlayLine from "@/components/game/RelayPlayLine";
 import { useRouter } from "next/navigation";
 import type { GameEvent } from "@/types/game-events";
 import type { GamePlay } from "@/lib/types";
 import type { GameDetailResponse } from "@/app/api/game-detail/route";
-import type { GameRelayResponse, PlayEvent } from "@/app/api/game-relay/route";
+import type { GameRelayResponse } from "@/app/api/game-relay/route";
 
 interface KgwanTabProps {
   gameId: string;
@@ -208,7 +209,7 @@ function AIPreviewCard({ gameId, awayTeamId, homeTeamId, starterNames }: {
           <span className="text-sm">🔑</span>
           <span className="text-sm font-semibold text-text-primary">핵심 포인트</span>
         </div>
-        <p className="text-xs text-text-secondary leading-relaxed whitespace-pre-line">
+        <p className="text-sm text-text-secondary leading-relaxed whitespace-pre-line">
           {preview.keyMatchup}
         </p>
       </div>
@@ -289,20 +290,6 @@ function ScheduledView({ gameId, awayTeamId, homeTeamId, gameDate, gameStartTime
 }
 
 /* ===== Play type → emoji ===== */
-function playEmoji(type: PlayEvent["type"]): string {
-  switch (type) {
-    case "homerun": return "💥";
-    case "hit": return "🔵";
-    case "walk": return "🟡";
-    case "hbp": return "🟡";
-    case "strikeout": return "🔴";
-    case "out": return "⚪";
-    case "sacrifice": return "⚪";
-    case "error": return "⚠️";
-    default: return "⚾";
-  }
-}
-
 /* ===== Live: Relay + Chat ===== */
 function LiveView({ gameId, homeTeamId, awayTeamId, gameEvents, gameRelay }: {
   gameId: string;
@@ -385,20 +372,7 @@ function LiveView({ gameId, homeTeamId, awayTeamId, gameEvents, gameRelay }: {
                     {isExpanded && inn.plays.length > 0 && (
                       <div className="px-4 pb-2 space-y-1.5">
                         {inn.plays.map((play, idx) => (
-                          <div key={`${inningKey}-${idx}`} className="flex items-start gap-2">
-                            <span className="text-xs mt-0.5 w-4 text-center shrink-0">{playEmoji(play.type)}</span>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-xs text-text-primary leading-relaxed">
-                                <span className="font-semibold">{play.batterName}</span>
-                                <span className="text-text-secondary ml-1.5">{play.result}</span>
-                              </p>
-                              {play.extras && play.extras.length > 0 && (
-                                <p className="text-[11px] leading-relaxed mt-0.5" style={{ color: "var(--relay-sub-text)" }}>
-                                  └ {play.extras.join(" / ")}
-                                </p>
-                              )}
-                            </div>
-                          </div>
+                          <RelayPlayLine key={`${inningKey}-${idx}`} play={play} />
                         ))}
                       </div>
                     )}
@@ -427,20 +401,7 @@ function LiveView({ gameId, homeTeamId, awayTeamId, gameEvents, gameRelay }: {
                 {latestInning.plays.length > 0 && (
                   <div className="px-4 pb-2 space-y-1.5">
                     {latestInning.plays.map((play, idx) => (
-                      <div key={`${inningKey}-${idx}`} className="flex items-start gap-2">
-                        <span className="text-xs mt-0.5 w-4 text-center shrink-0">{playEmoji(play.type)}</span>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs text-text-primary leading-relaxed">
-                            <span className="font-semibold">{play.batterName}</span>
-                            <span className="text-text-secondary ml-1.5">{play.result}</span>
-                          </p>
-                          {play.extras && play.extras.length > 0 && (
-                            <p className="text-[11px] leading-relaxed mt-0.5" style={{ color: "var(--relay-sub-text)" }}>
-                              └ {play.extras.join(" / ")}
-                            </p>
-                          )}
-                        </div>
-                      </div>
+                      <RelayPlayLine key={`${inningKey}-${idx}`} play={play} />
                     ))}
                   </div>
                 )}
@@ -456,7 +417,7 @@ function LiveView({ gameId, homeTeamId, awayTeamId, gameEvents, gameRelay }: {
             <div className="w-1 bg-red-500 shrink-0 rounded-r" />
             <div className="flex-1 px-3 py-2 space-y-1">
               {gameEvents.slice(-5).map((ev) => (
-                <p key={ev.id} className="text-xs text-text-secondary leading-relaxed">
+                <p key={ev.id} className="text-sm text-text-secondary leading-relaxed">
                   <span className="text-text-tertiary mr-1.5">{ev.inning}회{ev.isTop ? "초" : "말"}</span>
                   {ev.text}
                 </p>
