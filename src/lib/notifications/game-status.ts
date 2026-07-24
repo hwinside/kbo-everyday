@@ -168,6 +168,7 @@ async function defaultStoreScheduledSeen(gameIds: string[], iso: string): Promis
   // 원자 단조 저장(RPC): last_seen_scheduled_at = GREATEST(existing, observed). 겹친 75초 cron에서
   // 뒤늘게 끝난 이전 invocation의 오래된 관측이 최신 last_seen을 뒤로 덮지 않게 한다
   // (unconditional upsert = last-write-wins 버그, 삼순 #815 재리뷰 blocker).
+  // query-guard: bounded -- KBO payload의 scheduled gameIds(당일 경기 ≤10)만 입력, RPC returns void
   const { error } = await supabase.rpc("mark_scheduled_seen", {
     p_game_ids: gameIds,
     p_observed_at: iso,
