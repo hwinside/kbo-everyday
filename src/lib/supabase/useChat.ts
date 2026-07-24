@@ -32,9 +32,14 @@ export interface ChatCounts {
   away: number;
 }
 
-// 카운트 head 쿼리 재조회(reconcile) 최소 간격 — 즉시성은 낙관적 증분이
-// 담당하므로 서버 재조회는 드리프트 교정용으로만 느슐하게(과도한 폴링 방지).
-const COUNTS_MIN_INTERVAL_MS = 15000;
+// 서버 reconcile 주기 — 즉시성은 낙관적 증분이 담당하므로 서버 재집계는
+// 드리프트 교정용으로만 느슨하게. jitter로 viewer 간 동기화 herd 분산.
+const COUNTS_RECONCILE_INTERVAL_MS = 60000;
+const COUNTS_RECONCILE_JITTER_MS = 15000;
+// 집계 실패 시 재시도 간격 — 실패는 interval 소비로 치지 않는다(성공 commit만 소비).
+const COUNTS_RETRY_MS = 5000;
+// 로드 범위 밖 삭제 이벤트 reconcile 디바운스 — 운영자 일괄 삭제 등 burst 흡수.
+const COUNTS_DELETE_RECONCILE_MS = 2000;
 
 // 낙관적 증분 추적자 — 서버 베이스라인 이후 도착분만 세고, id 기준 dedupe로
 // backfill/재구독 시 같은 메시지를 두 번 세지 않는다.
@@ -83,23 +88,113 @@ export function trackCountDeltas(
 
 const ZERO_DELTA: ChatCounts = { total: 0, home: 0, away: 0 };
 
+export type FetchRoomCounts = (
+  roomId: string,
+  homeTeamId: number,
+  awayTeamId: number
+) => Promise<ChatCounts | null>;
+
+/**
+ * 서버 집계 1세트 조회 — aggregate RPC(단일 쿼리) 우선, 미배포(PGRST202)/오류 시
+ * 기존 head count 3발 fallback. 어느 경로든 3값이 *전부* 성공했을 때만 세트를
+ * 반환하고, 하나라도 실패하면 null(부분값을 0으로 commit 금지 — fail-closed).
+ */
+export const fetchRoomCountsFromServer: FetchRoomCounts = async (
+  roomId,
+  homeTeamId,
+  awayTeamId
+) => {
+  try {
+    const rpc = await supabase
+      .rpc("get_chat_room_counts", {
+        p_room_id: roomId,
+        p_home_team_id: homeTeamId,
+        p_away_team_id: awayTeamId,
+      })
+      .single();
+    if (!rpc.error && rpc.data) {
+      const d = rpc.data as { total_count: number; home_count: number; away_count: number };
+      return {
+        total: Number(d.total_count) || 0,
+        home: Number(d.home_count) || 0,
+        away: Number(d.away_count) || 0,
+      };
+    }
+  } catch {
+    // fallthrough to head-count fallback
+  }
+  const baseCount = () =>
+    supabase
+      .from("chat_messages")
+      .select("id", { count: "exact", head: true })
+      .eq("room_id", roomId)
+      .is("deleted_at", null);
+  const teamCount = (teamId: number) =>
+    supabase
+      .from("chat_messages")
+      .select("id, profiles!user_id!inner(team_id)", { count: "exact", head: true })
+      .eq("room_id", roomId)
+      .is("deleted_at", null)
+      .eq("profiles.team_id", teamId);
+  const [totalRes, homeRes, awayRes] = await Promise.all([
+    baseCount(),
+    teamCount(homeTeamId),
+    teamCount(awayTeamId),
+  ]);
+  if (totalRes.error || homeRes.error || awayRes.error) {
+    const err = totalRes.error ?? homeRes.error ?? awayRes.error;
+    console.error("[useChatCounts] fetch error:", err?.message);
+    return null;
+  }
+  return {
+    total: totalRes.count ?? 0,
+    home: homeRes.count ?? 0,
+    away: awayRes.count ?? 0,
+  };
+};
+
+export interface UseChatCountsOptions {
+  // 로드 범위 밖 soft delete 등 로컬 -1 반영이 불가능한 이벤트의 reconcile
+  // 트리거 — 값이 증가하면 곧(디바운스 후) 서버 재집계.
+  reconcileKey?: number;
+  // 이하 테스트 주입용. 프로덕션은 기본값 사용.
+  fetchCounts?: FetchRoomCounts;
+  intervalMs?: number;
+  jitterMs?: number;
+  retryMs?: number;
+  deleteDebounceMs?: number;
+}
+
 /**
  * 방 누적 메시지 카운트(삭제 제외) + 홈/원정 최애팀 유저 글 수 — 실시간 느낌.
- * - 서버 count(head:true) 쿼리 3발 병렬 = 베이스라인 (로드된 페이지와 무관한 실제 누적치).
+ * - 서버 집계(aggregate RPC 1발, fallback 시 head 3발) = 베이스라인.
+ *   3값 전부 성공 시에만 한 세트 원자 commit — 부분 실패를 0으로 확정하지 않는다.
  * - 새 메시지 도착(본인 전송 + realtime/backfill 수신) 시 즉시 낙관적 +1,
- *   삭제 전이 시 -1. 서버 재조회(최소 15초 간격)는 드리프트 reconcile용.
+ *   로드된 메시지 삭제 전이 시 -1. 서버 재집계는 드리프트 reconcile 전용
+ *   (interval+jitter 루프 + 삭제 이벤트 트리거) — 메시지 렌더 lifecycle과 분리되어
+ *   INSERT가 진행 중 집계 요청을 취소하지 않는다(방 전환 stale 응답만 폐기).
  * - 삭제(soft delete)된 메시지는 UI에서 숨기므로 카운트에서도 제외해 일관성 유지.
  */
 export function useChatCounts(
   roomId: string,
   homeTeamId: number,
   awayTeamId: number,
-  messages: ChatMessage[]
+  messages: ChatMessage[],
+  opts?: UseChatCountsOptions
 ) {
+  const fetchImpl = opts?.fetchCounts ?? fetchRoomCountsFromServer;
+  const reconcileKey = opts?.reconcileKey ?? 0;
+  const intervalMs = opts?.intervalMs ?? COUNTS_RECONCILE_INTERVAL_MS;
+  const jitterMs = opts?.jitterMs ?? COUNTS_RECONCILE_JITTER_MS;
+  const retryMs = opts?.retryMs ?? COUNTS_RETRY_MS;
+  const deleteDebounceMs = opts?.deleteDebounceMs ?? COUNTS_DELETE_RECONCILE_MS;
+
   const [counts, setCounts] = useState<ChatCounts | null>(null);
   const [delta, setDelta] = useState<ChatCounts>(ZERO_DELTA);
-  // 마지막 조회 시각 — roomId별로 기록해 방 전환 시 디바운스 없이 즉시 조회.
-  const lastFetchRef = useRef<{ roomId: string; at: number }>({ roomId: "", at: 0 });
+  // 현재 유효한 방/파라미터 키 — 응답 도착 시 이 키와 다르면(방 전환) stale 폐기.
+  const keyRef = useRef("");
+  // 현재 방 reconcile 루프에 "곧 재집계" 요청을 전달하는 브릿지.
+  const reconcileNowRef = useRef<(delayMs: number) => void>(() => {});
   // roomId별 추적자 — 방 전환 시 effect 안에서 레이지하게 리셋 (렌더 중 ref 쓰기 금지).
   const trackerRef = useRef<{ roomId: string; tracker: ChatCountTracker }>({
     roomId: "",
@@ -115,10 +210,6 @@ export function useChatCounts(
   // (아래 낙관적 증분 effect에서 갱신 — 렌더 중 쓰기 금지).
   const messagesRef = useRef(messages);
 
-  // 재조회 트리거: 마지막(최신) 메시지 id. 전송/수신(append)시만 바뀌고
-  // loadMore(prepend)에는 불변 — 과거 페이지 로드로 재조회 안 함.
-  const refreshKey = messages.length > 0 ? messages[messages.length - 1].id : 0;
-
   // 방 전환 시 렌더 중 리셋 (React 권장 "adjusting state when props change" 패턴).
   const [prevRoomId, setPrevRoomId] = useState(roomId);
   if (prevRoomId !== roomId) {
@@ -127,69 +218,87 @@ export function useChatCounts(
     setDelta(ZERO_DELTA);
   }
 
+  // 서버 reconcile 루프 — 메시지 렌더 lifecycle과 분리.
+  // INSERT(messages 변화)로는 이 effect가 재실행되지 않으므로 진행 중 집계
+  // 요청이 취소되지 않고, 방/파라미터 전환 stale 응답만 keyRef로 폐기한다.
+  // 다음 예약(interval 소비)은 성공 commit 이후에만 기록 — 실패는 retryMs 후 재시도.
   useEffect(() => {
     if (!roomId) return;
-    let cancelled = false;
+    const key = `${roomId}|${homeTeamId}|${awayTeamId}`;
+    keyRef.current = key;
+    let disposed = false;
+    let running = false;
+    let rerun = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
 
-    const baseCount = () =>
-      supabase
-        .from("chat_messages")
-        .select("id", { count: "exact", head: true })
-        .eq("room_id", roomId)
-        .is("deleted_at", null);
+    const schedule = (delayMs: number) => {
+      if (disposed) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = null;
+        void run();
+      }, delayMs);
+    };
 
-    const teamCount = (teamId: number) =>
-      supabase
-        .from("chat_messages")
-        .select("id, profiles!user_id!inner(team_id)", { count: "exact", head: true })
-        .eq("room_id", roomId)
-        .is("deleted_at", null)
-        .eq("profiles.team_id", teamId);
-
-    const fetchCounts = async () => {
-      lastFetchRef.current = { roomId, at: Date.now() };
-      const [totalRes, homeRes, awayRes] = await Promise.all([
-        baseCount(),
-        teamCount(homeTeamId),
-        teamCount(awayTeamId),
-      ]);
-      if (cancelled) return;
-      if (totalRes.error) {
-        console.error("[useChatCounts] error:", totalRes.error.message);
+    const run = async () => {
+      if (running) {
+        // 진행 중 재집계 요청(삭제 트리거 등) — 완료 직후 한 번 더 실행.
+        rerun = true;
         return;
       }
-      setCounts({
-        total: totalRes.count ?? 0,
-        home: homeRes.error ? 0 : homeRes.count ?? 0,
-        away: awayRes.error ? 0 : awayRes.count ?? 0,
-      });
-      // 베이스라인 재설정 — 현재 로드된 메시지는 서버 count에 포함된 것으로 보고
-      // 이후 도착분만 낙관적 증분. 누적 delta는 reconcile되었으므로 0으로.
-      const msgs = messagesRef.current;
-      trackerRef.current = {
-        roomId,
-        tracker: {
-          baselineMaxId: msgs.reduce((mx, m) => (m.id > mx ? m.id : mx), 0),
-          known: new Map(msgs.map((m) => [m.id, { deleted: !!m.deleted_at, teamId: m.team_id }])),
-        },
-      };
-      setDelta(ZERO_DELTA);
+      running = true;
+      let committed = false;
+      try {
+        const fetched = await fetchImpl(roomId, homeTeamId, awayTeamId);
+        // 취소 대신 stale 판정: 방/파라미터가 그대로일 때만 commit.
+        if (!disposed && keyRef.current === key && fetched) {
+          // 3값 한 세트 원자 commit + 베이스라인 재설정 — 현재 로드된 메시지는
+          // 서버 count에 포함된 것으로 보고 이후 도착분만 낙관적 증분.
+          setCounts(fetched);
+          const msgs = messagesRef.current;
+          trackerRef.current = {
+            roomId,
+            tracker: {
+              baselineMaxId: msgs.reduce((mx, m) => (m.id > mx ? m.id : mx), 0),
+              known: new Map(
+                msgs.map((m) => [m.id, { deleted: !!m.deleted_at, teamId: m.team_id }])
+              ),
+            },
+          };
+          setDelta(ZERO_DELTA);
+          committed = true;
+        }
+      } finally {
+        running = false;
+      }
+      if (disposed) return;
+      if (rerun) {
+        rerun = false;
+        schedule(0);
+        return;
+      }
+      schedule(committed ? intervalMs + Math.random() * jitterMs : retryMs);
     };
 
-    const last = lastFetchRef.current;
-    const elapsed = last.roomId === roomId ? Date.now() - last.at : Infinity;
-    if (elapsed >= COUNTS_MIN_INTERVAL_MS) {
-      void fetchCounts();
-    } else {
-      timer = setTimeout(() => void fetchCounts(), COUNTS_MIN_INTERVAL_MS - elapsed);
-    }
-
+    reconcileNowRef.current = (delayMs: number) => {
+      if (running) rerun = true;
+      else schedule(delayMs);
+    };
+    schedule(0); // 초기 집계는 즉시
     return () => {
-      cancelled = true;
+      disposed = true;
       if (timer) clearTimeout(timer);
     };
-  }, [roomId, homeTeamId, awayTeamId, refreshKey]);
+  }, [roomId, homeTeamId, awayTeamId, fetchImpl, intervalMs, jitterMs, retryMs]);
+
+  // 삭제 이벤트 reconcile 트리거 — 로드 범위 밖 soft delete는 로컬 -1이
+  // 불가능(팀 분류 정보 없음)하므로 디바운스 후 서버 재집계로 총계·팀계 동기화.
+  const prevReconcileKeyRef = useRef(reconcileKey);
+  useEffect(() => {
+    if (prevReconcileKeyRef.current === reconcileKey) return;
+    prevReconcileKeyRef.current = reconcileKey;
+    reconcileNowRef.current(deleteDebounceMs);
+  }, [reconcileKey, deleteDebounceMs]);
 
   // 낙관적 즉시 증분: messages 변화마다 새 도착/삭제 전이분만 반영 (id dedupe).
   useEffect(() => {
@@ -251,6 +360,15 @@ export function useChat(roomId: string) {
   const loadingMoreRef = useRef(false);
   // 이미 fetch 시도한 (로드 안 된) 부모 메시지 id — 중복/무한 fetch 방지. 방 전환 시 리셋.
   const fetchedParentsRef = useRef<Set<number>>(new Set());
+  // 현재 로드된 메시지 id 집합 — realtime UPDATE가 로드 범위 밖 메시지인지 판별용.
+  const loadedIdsRef = useRef<Set<number>>(new Set());
+  // 로드 범위 밖 soft delete 관측 카운터 — useChatCounts reconcile 트리거.
+  // (로드된 메시지의 삭제는 messages 상태 전이 → trackCountDeltas가 로컬 -1 처리.)
+  const [countReconcileKey, setCountReconcileKey] = useState(0);
+
+  useEffect(() => {
+    loadedIdsRef.current = new Set(messages.map((m) => m.id));
+  }, [messages]);
 
   // 최근 메시지 로드
   useEffect(() => {
@@ -336,6 +454,14 @@ export function useChat(roomId: string) {
 
     const handleUpdate = (payload: { new: ChatMessage }) => {
       const updated = payload.new;
+      if (!loadedIdsRef.current.has(updated.id)) {
+        // 로드 범위 밖(기본 50개보다 오래된) 메시지의 soft delete — row가 없어
+        // 로컬 -1 불가(팀 분류 정보도 payload에 없음). reconcile 트리거로
+        // 총계·팀계 재동기화 — 삭제는 최신 id를 바꾸지 않아 이 트리거 없이는
+        // 조용한/종료된 방에서 카운트가 영구 stale된다.
+        if (updated.deleted_at) setCountReconcileKey((k) => k + 1);
+        return;
+      }
       setMessages((prev) =>
         prev.map((m) =>
           m.id === updated.id
@@ -711,5 +837,5 @@ export function useChat(roomId: string) {
     [user]
   );
 
-  return { messages, loading, loadingMore, hasMore, loadMore, sendMessage, deleteMyMessage, deleteAnyMessage, cooldown, cooldownReason, isLoggedIn: !!user };
+  return { messages, loading, loadingMore, hasMore, loadMore, sendMessage, deleteMyMessage, deleteAnyMessage, cooldown, cooldownReason, isLoggedIn: !!user, countReconcileKey };
 }

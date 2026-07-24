@@ -99,6 +99,15 @@ function freshTracker(baselineMaxId: number): ChatCountTracker {
   check("no increments before baseline", d, { total: 0, home: 0, away: 0 });
 }
 
+// 9) 로드 범위 밖 삭제(관측된 적 없는 id가 삭제 상태로만 등장) → 로컬 불변.
+//    이 케이스의 -1 반영은 useChat의 countReconcileKey → 서버 재집계 담당
+//    (hook probe S3에서 검증). tracker가 임의로 -1 하면 안 됨(팀 분류 불가).
+{
+  const t = freshTracker(100);
+  const d = trackCountDeltas(t, [{ id: 30, team_id: HOME, deleted_at: "2026-07-24" }], HOME, AWAY);
+  check("out-of-window delete is reconcile's job (no local change)", d, { total: 0, home: 0, away: 0 });
+}
+
 if (failed > 0) {
   console.error(`\n${failed} check(s) FAILED`);
   process.exit(1);

@@ -63,10 +63,12 @@ function getRoomId(gameId: string): string {
 
 export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatProps) {
   const roomId = getRoomId(gameId);
-  const { messages, loading, loadingMore, hasMore, loadMore, sendMessage, deleteMyMessage, deleteAnyMessage, cooldown, cooldownReason, isLoggedIn } = useChat(roomId);
+  const { messages, loading, loadingMore, hasMore, loadMore, sendMessage, deleteMyMessage, deleteAnyMessage, cooldown, cooldownReason, isLoggedIn, countReconcileKey } = useChat(roomId);
   const { homePct } = useMoodGauge(gameId, homeTeamId, awayTeamId);
   // 누적 카운트: 서버 count 베이스라인 + 새 도착 메시지 낙관적 즉시 증분(실시간 UX).
-  const chatCounts = useChatCounts(roomId, homeTeamId, awayTeamId, messages);
+  const chatCounts = useChatCounts(roomId, homeTeamId, awayTeamId, messages, {
+    reconcileKey: countReconcileKey,
+  });
   const { user, profile, loading: authLoading } = useAuth();
   const { blockedIds } = useBlockedIds();
   const canModerateChat = profile?.is_operator === true;
@@ -383,12 +385,13 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
           <span className="text-sm font-semibold text-text-primary">전체 채팅</span>
         </div>
         {(() => {
-          // 누적 총 메시지 수 + 홈/원정 최애유저 글 수 (서버 count, 로드분과 무관).
-          // 로딩 전에는 기존처럼 로드된 개수 fallback.
+          // 누적 총 메시지 수 + 홈/원정 최애유저 글 수 (서버 집계, 로드분과 무관).
+          // 집계 전/실패 시에는 fail-closed "—" 표시 — 로드된 개수(messages.length)를
+          // 총계처럼 보여주던 fallback은 오표시라 제거(삼순 라운드2 blocker).
           const home = getTeamById(homeTeamId);
           const away = getTeamById(awayTeamId);
           if (!chatCounts || !home || !away) {
-            return <span className="text-xs text-text-tertiary">{messages.length}개 메시지</span>;
+            return <span className="text-xs text-text-tertiary">메시지 집계 중…</span>;
           }
           return (
             <span className="text-xs text-text-tertiary">
