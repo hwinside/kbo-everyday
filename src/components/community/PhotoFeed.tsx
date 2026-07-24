@@ -1131,8 +1131,8 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
                     </span>
                   )}
                 </div>
-              ) : sourceLabel && !sourceLabel.playerName && !dupTeamLabel ? (
-                /* 선수 없음 → 비선수(팀/자유 등) 출처 라벨. 헤더와 같은 팀이면 위에서 숨김 처리됨. */
+              ) : sourceLabel && !sourceLabel.playerName && !dupTeamLabel && post.board_type !== "free" ? (
+                /* 선수 없음 → 비선수(팀 등) 출처 라벨. 헤더와 같은 팀이면 위에서 숨김 처리됨. 자유게시판은 배지 숨김(하린아빠 지시 2026-07-25). */
                 <div className="px-5 pb-2">
                   {sourceLabel.teamId ? (
                     <TeamBadge teamId={sourceLabel.teamId} size="xs" />
