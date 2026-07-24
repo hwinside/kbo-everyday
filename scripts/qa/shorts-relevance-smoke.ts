@@ -122,5 +122,30 @@ check(
   true,
 );
 
+// --- 강한 시그널 부분문자열/파생어 오탐 (2026-07-24 삼순 라운드2 반례) ---
+for (const title of [
+  "LG전자 안타까운 소식", // 안타까운 → 안타 파생어
+  "LG전자 타자기 역사", // 타자기 → 타자 파생어
+  "LG전자 에너지 세이브 캠페인", // 일반어 세이브 단독
+]) {
+  check(`파생어 오탐: 야구 문맥 아님 (${title})`, hasBaseballShortContext(title), false);
+  check(`파생어 오탐: 수집 team_id ETC (${title})`, detectTeamFromTitle(title) === "ETC", true);
+  check(
+    `파생어 오탐: 기존 LG 행 노출 차단 (${title})`,
+    isTeamShortRelevant(title, "LG"),
+    false,
+  );
+}
+
+// --- 경계 강화 후에도 정상 야구 제목은 통과 (recall 보존) ---
+check("정상: LG 안타 3개", detectTeamFromTitle("LG 안타 3개 몰아치기") === "LG", true);
+check("정상: LG 선발 타자", isTeamShortRelevant("LG 선발 타자 공개", "LG"), true);
+check("정상: 조사 결합 (안타를)", hasBaseballShortContext("LG 안타를 몰아친 날"), true);
+check("정상: 복합어 무안타", hasBaseballShortContext("LG 상대로 무안타 행진"), true);
+check("정상: 야구선수 연속 복합어", hasBaseballShortContext("LG 야구선수 근황"), true);
+check("정상: 투수들 파생 접미", hasBaseballShortContext("LG 투수들 무더위 속 호투"), true);
+check("정상: 홈런포 파생 접미", hasBaseballShortContext("LG 대포번지 홈런포 가동"), true);
+check("정상: KBO리그 복합어", hasBaseballShortContext("KBO리그 LG 근황"), true);
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail > 0) process.exit(1);

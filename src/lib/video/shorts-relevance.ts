@@ -36,7 +36,6 @@ const SHORTS_BASEBALL_CONTEXT_STRONG = [
   "내야",
   "외야",
   "등판",
-  "세이브",
   "타율",
   "평균자책",
   "트레이드",
@@ -44,10 +43,11 @@ const SHORTS_BASEBALL_CONTEXT_STRONG = [
 ];
 
 // 다의어 — 기업·일반 뉴스에도 흔해(신입사원 선발, 경기 침체, 시장에서 승리,
-// 잠실 아파트) 단독으로는 야구 문맥으로 인정하지 않고 2개 이상 조합만 인정.
+// 잠실 아파트, 에너지 세이브) 단독으로는 야구 문맥으로 인정하지 않고 2개 이상 조합만 인정.
 const SHORTS_BASEBALL_CONTEXT_WEAK = [
   "선수",
   "경기",
+  "세이브",
   "선발",
   "역전",
   "승리",
@@ -75,14 +75,83 @@ const NON_BASEBALL_COMPOUNDS = [
   "경기도",
 ];
 
+// 한국어는 \b 단어경계가 없어 키워드가 파생어의 부분문자열로 걸린다
+// (안타까운→안타, 타자기→타자, 트레이드마크→트레이드). 키워드 *뒤*가
+// 문장 끝·비한글이거나, 조사/야구 파생 접미 또는 또 다른 야구 키워드로
+// 이어질 때만 매칭으로 인정한다. 앞쪽은 무안타·만루홈런처럼 정상 합성어가
+// 많아 제한하지 않는다.
+const CONTEXT_ALLOWED_SUFFIXES = [
+  // 조사
+  "은",
+  "는",
+  "이",
+  "가",
+  "을",
+  "를",
+  "도",
+  "만",
+  "의",
+  "에",
+  "로",
+  "와",
+  "과",
+  "랑",
+  "서",
+  "까지",
+  "부터",
+  "보다",
+  "처럼",
+  "마다",
+  "조차",
+  "마저",
+  // 야구 파생 접미 (투수들·홈런왕·투수전·투수진·안타성·홈런쇼·특급·홈런포·
+  //  타격력·야구장·KBO리그·역전승·역전패)
+  "들",
+  "왕",
+  "전",
+  "진",
+  "성",
+  "쇼",
+  "급",
+  "포",
+  "력",
+  "장",
+  "리그",
+  "승",
+  "패",
+];
+
+const HANGUL_CHAR = /[가-힣]/;
+
+function matchesContextKeyword(normalized: string, keyword: string): boolean {
+  let idx = normalized.indexOf(keyword);
+  while (idx !== -1) {
+    const rest = normalized.slice(idx + keyword.length);
+    if (
+      rest === "" ||
+      !HANGUL_CHAR.test(rest[0]) ||
+      CONTEXT_ALLOWED_SUFFIXES.some((s) => rest.startsWith(s)) ||
+      SHORTS_BASEBALL_CONTEXT_STRONG.some((k) => rest.startsWith(k)) ||
+      SHORTS_BASEBALL_CONTEXT_WEAK.some((k) => rest.startsWith(k))
+    ) {
+      return true;
+    }
+    idx = normalized.indexOf(keyword, idx + 1);
+  }
+  return false;
+}
+
 /** 제목에 팀 약칭 외의 야구 문맥이 있는지 판정 */
 export function hasBaseballShortContext(title: string): boolean {
   let normalized = title.toLowerCase();
   for (const compound of NON_BASEBALL_COMPOUNDS) {
     normalized = normalized.split(compound).join(" ");
   }
-  if (SHORTS_BASEBALL_CONTEXT_STRONG.some((k) => normalized.includes(k))) return true;
-  const weakHits = SHORTS_BASEBALL_CONTEXT_WEAK.filter((k) => normalized.includes(k));
+  if (SHORTS_BASEBALL_CONTEXT_STRONG.some((k) => matchesContextKeyword(normalized, k)))
+    return true;
+  const weakHits = SHORTS_BASEBALL_CONTEXT_WEAK.filter((k) =>
+    matchesContextKeyword(normalized, k),
+  );
   return weakHits.length >= 2;
 }
 
