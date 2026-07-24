@@ -331,7 +331,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
     !!venue &&
     isVenueUploadBlocked({
       uploadOpen: venue.uploadOpen,
-      cancelled: venue.cancelled,
+      gateKind: venue.gateKind,
       privileged: isAdmin,
     });
   const gateReason = uploadBlocked ? venue?.reason ?? null : null;

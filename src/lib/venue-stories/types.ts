@@ -1,4 +1,6 @@
 // 직관 라이브 (Venue Stories) — 공유 타입 + 상수
+import type { UploadGateKind } from "./geofence";
+export type { UploadGateKind };
 
 export const VENUE_STORY_MAX_DURATION_MS = 15_000; // 영상 15초
 export const VENUE_STORY_DURATION_TOLERANCE_MS = 1_000; // 클라 duration 반올림 여유
@@ -86,4 +88,7 @@ export interface VenueInfo {
   // 취소 경기 여부 — 관리자 QA도 취소 경기는 fail-closed(시간창만 우회). 클라가 media prepare 전 차단해
   // 고아 객체/불필요 전송을 막는다(삼순 #832 왕복2).
   cancelled: boolean;
+  // 업로드 차단 사유 종류 — 관리자 우회를 시간창(before/after)만 허용하고
+  // cancelled/no-coord/no-time 은 관리자도 fail-closed 판정하기 위해 클라에 내린다(삼순 #832 왕복3).
+  gateKind: UploadGateKind;
 }

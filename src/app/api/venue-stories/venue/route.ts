@@ -24,6 +24,7 @@ export async function GET(req: NextRequest) {
     uploadOpen: venue.uploadOpen,
     reason: venue.reason,
     cancelled: venue.cancelled,
+    gateKind: venue.gateKind,
   };
   return NextResponse.json(info);
 }

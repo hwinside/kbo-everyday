@@ -224,7 +224,7 @@ export async function POST(req: NextRequest) {
   if (
     isVenueUploadBlocked({
       uploadOpen: venue.uploadOpen,
-      cancelled: venue.cancelled,
+      gateKind: venue.gateKind,
       privileged: qaBypass,
     })
   ) {
