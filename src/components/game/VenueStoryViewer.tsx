@@ -396,6 +396,7 @@ export default function VenueStoryViewer({
 
   return createPortal(
     <motion.div
+      data-venue-story-viewer
       // 경기 페이지 상단 스코어 헤더가 z-[100]이라 그 위로 — 풀스크린 뷰어는 모든 UI를 덮어야 함
       className="fixed inset-0 z-[120] bg-black flex flex-col select-none overflow-hidden overscroll-none"
       initial={{ opacity: 0 }}

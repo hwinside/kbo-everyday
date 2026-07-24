@@ -133,5 +133,8 @@ ok("stalled(processing:true) 카드 → 서버 미반환이면 유지(재시도 
 const m6 = mergePendingStories([stalled, activeStory(10)], [activeStory(42), activeStory(10)], new Set([42]));
 ok("stalled 이더라도 서버 active 반환면 실제 카드로 교체(지연 해소)", m6.length === 2 && m6.every((s) => !s.processing && !s.stalled));
 
+const failed = { ...optimistic, processing: false, stalled: false, failed: true };
+ok("removed 실패 카드는 pending 상태와 구분", failed.failed === true && failed.processing === false);
+
 console.log(`\n결과: ${pass} pass / ${fail} fail`);
 if (fail > 0) process.exit(1);

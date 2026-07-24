@@ -65,6 +65,8 @@ export default function VenueStorySection({ gameId }: Props) {
 
   // 영상 업로드 직후 낙관 '처리중' 카드로 넣은 id 추적 — 서버가 active 로 반환하면 제거(교체 완료).
   const pendingIdsRef = useRef<Set<number>>(new Set());
+  // 서버가 removed 로 확정한 본인 업로드 — 사용자가 실패 카드를 눌러 재업로드할 때까지 유지.
+  const failedIdsRef = useRef<Set<number>>(new Set());
   // pending → active 승급 감지용 재조회 타이머. 언마운트/새 업로드 시 정리.
   const pollTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   const clearPollTimers = useCallback(() => {
@@ -83,22 +85,42 @@ export default function VenueStorySection({ gameId }: Props) {
       // 로그인 상태면 bearer 전달 → 서버가 차단 유저 필터(getVerifiedUserFromRequest 는 Bearer-only)
       const session = await getSafeSession();
       const token = session?.access_token;
-      const res = await fetch(`/api/venue-stories?gameId=${encodeURIComponent(gameId)}`, {
+      const statusIds = [...pendingIdsRef.current];
+      const statusQuery =
+        statusIds.length > 0 ? `&statusIds=${encodeURIComponent(statusIds.join(","))}` : "";
+      const res = await fetch(`/api/venue-stories?gameId=${encodeURIComponent(gameId)}${statusQuery}`, {
         headers: token ? { Authorization: `Bearer ${token}` } : undefined,
       });
       const data = await res.json();
       const server: VenueStory[] = Array.isArray(data.stories) ? data.stories : [];
-      if (pendingIdsRef.current.size === 0) {
-        setStories(server);
-      } else {
-        // 서버가 낙관 id 를 active 로 반환하면 추적 해제(재생 가능한 실제 카드로 교체됨)
-        const serverIds = new Set(server.map((s) => s.id));
-        for (const id of [...pendingIdsRef.current]) {
-          if (serverIds.has(id)) pendingIdsRef.current.delete(id);
+      const uploadStatuses: Array<{ id: number; status: string }> = Array.isArray(
+        data.uploadStatuses,
+      )
+        ? data.uploadStatuses
+        : [];
+      const serverIds = new Set(server.map((s) => s.id));
+      const removedIds = new Set(
+        uploadStatuses.filter((row) => row.status === "removed").map((row) => row.id),
+      );
+      for (const id of [...pendingIdsRef.current]) {
+        if (serverIds.has(id)) pendingIdsRef.current.delete(id);
+        if (removedIds.has(id)) {
+          pendingIdsRef.current.delete(id);
+          failedIdsRef.current.add(id);
         }
-        setStories((prev) => mergePendingStories(prev, server, pendingIdsRef.current));
-        if (pendingIdsRef.current.size === 0) clearPollTimers();
       }
+      setStories((prev) => {
+        const failed = prev
+          .filter((story) => failedIdsRef.current.has(story.id))
+          .map((story) => ({
+            ...story,
+            processing: false,
+            stalled: false,
+            failed: true,
+          }));
+        return [...failed, ...mergePendingStories(prev, server, pendingIdsRef.current)];
+      });
+      if (pendingIdsRef.current.size === 0) clearPollTimers();
     } catch {
       // 무시 — 섹션은 조용히 비워둠
     } finally {
@@ -226,6 +248,14 @@ export default function VenueStorySection({ gameId }: Props) {
             <button
               key={s.id}
               onClick={() => {
+                if (s.failed) {
+                  failedIdsRef.current.delete(s.id);
+                  setStories((prev) => prev.filter((story) => story.id !== s.id));
+                  setComposerOpen(true);
+                  setToast("영상 처리에 실패했어요. 다시 선택해 주세요.");
+                  setTimeout(() => setToast(null), 2200);
+                  return;
+                }
                 // 처리중(pending) 낙관 카드는 공개 객체가 아직 없어 재생 불가 → 뷰어 진입 대신 안내
                 if (s.processing) {
                   if (s.stalled) {
@@ -282,6 +312,14 @@ export default function VenueStorySection({ gameId }: Props) {
                   <div className="absolute inset-0 bg-black/65 flex flex-col items-center justify-center gap-1 px-1">
                     <span className="text-[13px]">⏳</span>
                     <span className="text-[9px] text-white font-medium leading-tight text-center">지연·다시 시도</span>
+                  </div>
+                )}
+                {s.failed && (
+                  <div className="absolute inset-0 bg-black/70 flex flex-col items-center justify-center gap-1 px-1">
+                    <span className="text-[13px]">↻</span>
+                    <span className="text-[9px] text-white font-medium leading-tight text-center">
+                      실패·다시 올리기
+                    </span>
                   </div>
                 )}
               </div>

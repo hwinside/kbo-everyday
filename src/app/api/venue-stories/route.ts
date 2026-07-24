@@ -70,6 +70,37 @@ export async function GET(req: NextRequest) {
     blocked = b;
   }
 
+  // 업로드 직후 낙관 카드의 pending/active/removed 상태 조회. 일반 목록은 active 전용이라
+  // removed 를 pending 과 구분할 수 없으므로, 인증된 업로더 본인 행만 최대 게임당 상한(10개) 조회한다.
+  const requestedStatusIds = [
+    ...new Set(
+      (req.nextUrl.searchParams.get("statusIds") ?? "")
+        .split(",")
+        .map((value) => Number(value))
+        .filter((value) => Number.isSafeInteger(value) && value > 0),
+    ),
+  ].slice(0, VENUE_STORY_MAX_PER_USER_PER_GAME);
+  let uploadStatuses: Array<{ id: number; status: string }> = [];
+  if (requestedStatusIds.length > 0) {
+    if (auth.kind !== "user") {
+      return NextResponse.json({ error: "인증이 필요합니다" }, { status: 401 });
+    }
+    // query-guard: bounded -- statusIds 는 위에서 게임당 업로드 상한 10개로 제한
+    const { data: statusRows, error: statusError } = await supabase
+      .from("venue_stories")
+      .select("id, status")
+      .eq("game_id", gameId)
+      .eq("user_id", auth.userId)
+      .in("id", requestedStatusIds);
+    if (statusError) {
+      return NextResponse.json({ error: "상태 조회 실패" }, { status: 500 });
+    }
+    uploadStatuses = (statusRows ?? []).map((row) => ({
+      id: row.id as number,
+      status: row.status as string,
+    }));
+  }
+
   const { data: rows, error } = await supabase
     .from("venue_stories")
     .select(
@@ -128,7 +159,7 @@ export async function GET(req: NextRequest) {
     };
   });
 
-  return NextResponse.json({ stories });
+  return NextResponse.json({ stories, uploadStatuses });
 }
 
 // POST: 직관 스토리 생성 (소유권 바인딩 + 실제 경기/구장/시간 + 지오펜스 + 크기/MIME 서버 검증)

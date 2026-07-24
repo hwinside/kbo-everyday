@@ -67,6 +67,11 @@ export interface VenueStory {
    * 탭 시 재조회+폴링 재개 동선을 제공한다(삼순 #839 blocker 2). processing=true 를 유지해 병합 대상.
    */
   stalled?: boolean;
+  /**
+   * 업로더 본인 상태 조회에서 서버가 terminal removed 로 판정한 낙관 카드.
+   * 탭하면 카드를 정리하고 컴포저를 다시 열어 재업로드할 수 있다.
+   */
+  failed?: boolean;
 }
 
 /** POST /api/venue-stories 요청 바디 */
