@@ -21,10 +21,14 @@ import {
   type GameEvent,
   type GameHighlight,
 } from "@/lib/analysis/daily-delta";
+import {
+  hasStreakContradiction,
+  stripContradictorySentences,
+} from "@/lib/analysis/streak-guard";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
-const PROMPT_VERSION = 1;
+const PROMPT_VERSION = 2;
 
 const KBO_BASE = "https://www.koreabaseball.com";
 
@@ -160,6 +164,8 @@ function buildStandingsPrompt(delta: StandingsDelta, events: GameEvent[], teamNa
 3. 마크다운/HTML 문법 금지. ##, **, *, - 등 서식 없이 순수 텍스트로만 작성.
 4. 승률은 언급하지 마세요.
 5. 3연승/3연패 미만의 streak는 언급하지 마세요.
+5-1. 연승/연패는 오직 '현재 순위' 데이터에 "N연승 중"/"N연패 중"으로 명시된 팀만, 명시된 방향·숫자 그대로 언급하세요. 데이터에 연속기록이 없는 팀의 연승/연패를 절대 창작하지 마세요.
+5-2. 논리 모순 절대 금지: 경기에서 진(패한) 팀을 "연승"으로, 이긴(승리한) 팀을 "연패"로 서술하지 마세요. 패배는 연승을 끊고, 승리는 연패를 끊습니다. "패했지만 N연승을 이어갔다" 같은 문장은 명백한 오류이니 절대 쓰지 마세요.
 6. 상위권/중위권/하위권으로 나누지 말고, 순위 변동 팀 중심으로 서술. 변동 없는 팀은 생략.
 7. "순위표 해설"이 아니라 "KBO에서 무슨 일이 있었는지" 요약하는 느낌으로.
 8. 총론/도입부 없이 바로 핵심 사건부터 시작하는 것이 가장 좋습니다. 예: "KT가 키움을 5대0으로 완파하며 3연승을 달렸다" 처럼 바로 사건부터.
@@ -347,6 +353,26 @@ function sanitizeCopy(copy: string): string {
     .replace(/(^|\s)(어제|오늘)(은|는|이|가|의|도|만)?(,)?(?=\s|$)/g, "$1")
     .replace(/\s{2,}/g, " ")
     .trim();
+}
+
+// 순위 분석 생성 + streak 모순 검증 루프.
+// 가드 순수함수는 streak-guard.ts에 분리(supabase 부수효과 없이 유닛 테스트 가능). 모순 시 재생성(최대 EXTRA회), 끝까지 남으면 문장 제거.
+async function generateValidatedStandings(
+  prompt: string,
+  snapshots: StandingsSnapshot[],
+  teamNames: Map<number, string>,
+): Promise<string> {
+  const MAX_ATTEMPTS = 3;
+  let last = "";
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const raw = await callGemini(prompt);
+    last = raw;
+    if (!hasStreakContradiction(raw, snapshots, teamNames)) return raw;
+    console.warn(`[standings] streak 모순 검출 — 재생성 (attempt ${attempt}/${MAX_ATTEMPTS})`);
+  }
+  // 재생성 소진 후에도 모순 → 모순 문장만 제거해 안전하게 저장.
+  console.warn("[standings] 재생성 소진 — 모순 문장 제거 fallback 적용");
+  return stripContradictorySentences(last, snapshots, teamNames);
 }
 
 // ===== Core =====
@@ -603,7 +629,11 @@ export async function runDailyAnalysis(
       const promises: Promise<string>[] = [];
       // 순위 분석: 어제 순위 스냅샷이 있으면 생성
       promises.push(hasYesterdayStandings
-        ? callGemini(buildStandingsPrompt(standingsDelta, gameEvents, teamNames, gameHighlights, newsHeadlines, boxScores))
+        ? generateValidatedStandings(
+            buildStandingsPrompt(standingsDelta, gameEvents, teamNames, gameHighlights, newsHeadlines, boxScores),
+            todayStandingsSnapshots,
+            teamNames,
+          )
         : Promise.resolve(""));
       // 타자/투수 분석: 어제 스탯 스냅샷이 있으면 생성
       promises.push(hasYesterdayStats
