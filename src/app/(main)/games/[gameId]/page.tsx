@@ -38,7 +38,6 @@ import MatchupCard from "@/components/game/MatchupCard";
 import Diamond from "@/components/game/Diamond";
 import { ChevronUp, ChevronDown } from "lucide-react";
 import ScoreBoard from "@/components/game/ScoreBoard";
-import AdminOnly from "@/components/admin/AdminOnly";
 import VenueStorySection from "@/components/game/VenueStorySection";
 import GameChat from "@/components/game/GameChat";
 import { useChatRoomHasMessages } from "@/lib/supabase/useChatRoomHasMessages";
@@ -520,17 +519,11 @@ export default function GameDetailPage() {
         />
       ) : (
         <>
-          {/* 직관 라이브 — WIP 실환경 QA 동안 관리자에게만 노출.
-              ?storyQaKeyboard=1 은 iOS 실기기 키보드 QA 하네스(삼순 #807 라운드3
-              blocker 2) — mock 뷰어만 열고 실데이터 fetch/쓰기 없음(서버 인가 불변). */}
-          {typeof window !== "undefined" &&
-          new URLSearchParams(window.location.search).get("storyQaKeyboard") === "1" ? (
-            <VenueStorySection gameId={gameId} />
-          ) : (
-            <AdminOnly>
-              <VenueStorySection gameId={gameId} />
-            </AdminOnly>
-          )}
+          {/* 직관 라이브 — 전체 로그인 유저 공개 (iOS 1.0.11 심사 릴리즈와 함께 오픈).
+              업로드는 로그인+GPS 지오펜스 서버 검증, 구버전 앱(위치 플러그인 부재)은
+              업로드 시도 시 "앱 업데이트" 안내(geo.ts). ?storyQaKeyboard=1 QA 하네스는
+              VenueStorySection 내부에서 mock 뷰어로 처리(실데이터 fetch/쓰기 없음). */}
+          <VenueStorySection gameId={gameId} />
 
           {/* Tabs */}
           <div className="flex border-b border-border mx-4">
