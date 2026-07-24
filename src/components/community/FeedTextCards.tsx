@@ -160,10 +160,10 @@ export function BrandedTextCard({ post, body, long = false }: { post: Post; body
           width={200}
           height={240}
           unoptimized
-          // 히어로 전체 노크롭(object-contain) + 높이 75%(상단 헤드룸 25%) + 우하단 배치 + 50% 반투명
-          // → 구단 로고처럼 배경에 스며드는 반투명 인물 워터마크(하린아빠·삼순 확정 목업).
-          className="pointer-events-none absolute bottom-0 right-0 h-[75%] w-auto object-contain object-bottom"
-          style={{ opacity: 0.5 }}
+          // 히어로 전체 노크롭(object-contain) + 높이 85%(상단 헤드룸 15%) + 우하단 배치 + 30% 반투명
+          // → 구단 로고(opacity 0.2)처럼 배경에 스며드는 반투명 인물 워터마크(하린아빠 2차 피드백: 더 크게·더 투명).
+          className="pointer-events-none absolute bottom-0 right-0 h-[85%] w-auto object-contain object-bottom"
+          style={{ opacity: 0.3 }}
         />
       ) : team ? (
         <div className="absolute right-4 top-4 opacity-20">
