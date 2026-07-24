@@ -49,6 +49,10 @@ export async function verifyOpsMessageByDedupKey(
  * 운영팀 계정으로 유저에게 쪽지를 발송한다.
  * admin/messages 의 send_to_user 경로와 동일 로직(대화 upsert → 메시지 insert → last_message 갱신).
  * CS 원클릭 회신(/api/cs/approve)에서 재사용한다.
+ *
+ * origin='feedback' 지정 시 대화를 피드백 회신 대화로 마킹한다.
+ * → admin_dm_inbox_page RPC 가 유저 발신이 없어도 이 대화를 운영팀 수신함에 노출한다.
+ * (건의함 회신처럼 운영팀 발신만 존재하는 대화가 수신함에서 빠지던 문제 해결)
  */
 export async function sendOpsMessageToUser(
   admin: SupabaseAdmin,
@@ -56,6 +60,7 @@ export async function sendOpsMessageToUser(
   userId: string,
   content: string,
   dedupKey?: string,
+  origin?: "dm" | "feedback",
 ): Promise<SendOpsResult> {
   const text = content.replace(/\r\n/g, "\n").trimEnd();
   if (!text.trim()) return { ok: false, reason: "empty_content" };
@@ -76,7 +81,11 @@ export async function sendOpsMessageToUser(
   } else {
     const { data: created, error: convError } = await admin
       .from("dm_conversations")
-      .insert({ user1_id: u1, user2_id: u2 })
+      .insert({
+        user1_id: u1,
+        user2_id: u2,
+        ...(origin === "feedback" ? { origin: "feedback" } : {}),
+      })
       .select("id")
       .single();
     if (convError || !created) return { ok: false, reason: "conv_create_failed" };
@@ -119,7 +128,12 @@ export async function sendOpsMessageToUser(
 
   await admin
     .from("dm_conversations")
-    .update({ last_message: preview, last_message_at: new Date().toISOString() })
+    .update({
+      last_message: preview,
+      last_message_at: new Date().toISOString(),
+      // 기존 대화(broadcast 등)에 피드백 회신 시에도 수신함 노출을 위해 origin 마킹.
+      ...(origin === "feedback" ? { origin: "feedback" } : {}),
+    })
     .eq("id", conversationId);
 
   return { ok: true, conversationId };

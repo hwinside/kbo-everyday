@@ -18,6 +18,7 @@ type InboxRow = {
   unread_count: number | string;
   user_msg_count: number | string;
   sys_msg_count: number | string;
+  origin: string;
 };
 
 function normalizeContent(content: unknown) {
@@ -246,7 +247,10 @@ export async function POST(request: NextRequest) {
 
   // 개별 유저에게 쪽지 발송
   if (body.action === "send_to_user") {
-    const { userId } = body as { userId?: string };
+    const { userId, source } = body as { userId?: string; source?: string };
+    // 건의함(피드백) 페이지에서의 쪽지 회신은 source='feedback' 으로 대화를 마킹해
+    // 유저 발신이 없어도 운영팀 수신함(admin_dm_inbox_page)에 노출되게 한다.
+    const isFeedback = source === "feedback";
     const content = normalizeContent(body.content);
     const imageUrls = normalizeImageUrls(body.imageUrls);
     if (!userId || (!content.trim() && imageUrls.length === 0)) {
@@ -270,7 +274,11 @@ export async function POST(request: NextRequest) {
     } else {
       const { data: newConv, error: convError } = await admin
         .from("dm_conversations")
-        .insert({ user1_id: u1, user2_id: u2 })
+        .insert({
+          user1_id: u1,
+          user2_id: u2,
+          ...(isFeedback ? { origin: "feedback" } : {}),
+        })
         .select("id")
         .single();
 
@@ -298,6 +306,8 @@ export async function POST(request: NextRequest) {
       .update({
         last_message: preview,
         last_message_at: new Date().toISOString(),
+        // 기존 대화(broadcast 등)에 피드백 회신 시에도 수신함 노출을 위해 origin 마킹.
+        ...(isFeedback ? { origin: "feedback" } : {}),
       })
       .eq("id", conversationId);
 
