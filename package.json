@@ -15,6 +15,8 @@
     "qa:ui:gamechat-giphy": "node scripts/qa/ui-smoke-gamechat-giphy.mjs",
     "qa:venue-chat-badge": "tsx scripts/qa/venue-chat-badge-smoke.ts",
     "qa:cancelled-chat": "tsx scripts/qa/cancelled-game-chat-smoke.ts",
+    "qa:chat-count-delta": "tsx scripts/qa/chat-count-delta-smoke.ts",
+    "qa:chat-count-hook": "tsx scripts/qa/chat-count-hook-probe.ts",
     "qa:resolve-player": "tsx scripts/qa/resolve-player-smoke.ts",
     "qa:admin-view": "tsx scripts/qa/admin-view-smoke.ts",
     "qa:app-rankings": "tsx scripts/qa/app-rankings-smoke.ts",

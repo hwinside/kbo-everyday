@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { supabase } from "./client";
 import { useAuth } from "./AuthContext";
@@ -25,6 +25,354 @@ export interface ChatMessage {
 
 const PAGE_SIZE = 50;
 const DELETED_PLACEHOLDER = "삭제된 메시지입니다";
+
+export interface ChatCounts {
+  total: number;
+  home: number;
+  away: number;
+}
+
+// 서버 reconcile 주기 — 즉시성은 낙관적 증분이 담당하므로 서버 재집계는
+// 드리프트 교정용으로만 느슨하게. jitter로 viewer 간 동기화 herd 분산.
+const COUNTS_RECONCILE_INTERVAL_MS = 60000;
+const COUNTS_RECONCILE_JITTER_MS = 15000;
+// 집계 실패 시 재시도 간격 — 실패는 interval 소비로 치지 않는다(성공 commit만 소비).
+const COUNTS_RETRY_MS = 5000;
+// 로드 범위 밖 삭제 이벤트 reconcile 디바운스 — 운영자 일괄 삭제 등 burst 흡수.
+const COUNTS_DELETE_RECONCILE_MS = 2000;
+
+// 낙관적 증분 추적자 — 서버 베이스라인 이후 도착분만 세고, id 기준 dedupe로
+// backfill/재구독 시 같은 메시지를 두 번 세지 않는다.
+export interface ChatCountTracker {
+  // 베이스라인(서버 count) 포충 상한 id — 이보다 큰 id만 낙관적 +1 대상.
+  // 첫 서버 카운트 전에는 Infinity(증분 금지).
+  baselineMaxId: number;
+  // 관찰한 메시지 id → { 삭제 여부, 작성자 최애팀 }. 삭제 전이(-1) 감지용.
+  known: Map<number, { deleted: boolean; teamId?: number }>;
+}
+
+/**
+ * messages 스냅샷을 훑어 tracker에 없던 새 메시지/삭제 전이를 반영하고
+ * 이번 패스의 카운트 증감분을 반환한다 (순수 함수 + tracker 누적, 테스트 가능).
+ * - 새 id > baselineMaxId & 미삭제 → +1 (loadMore prepend된 과거 id는 베이스라인에 이미 포함이라 제외)
+ * - 이미 세었거나 베이스라인에 포함된 메시지가 삭제로 전이 → -1
+ * - 처음부터 삭제 상태로 관찰된 메시지는 카운트 불변 (서버 count도 이미 제외)
+ */
+export function trackCountDeltas(
+  tracker: ChatCountTracker,
+  messages: Pick<ChatMessage, "id" | "deleted_at" | "team_id">[],
+  homeTeamId: number,
+  awayTeamId: number
+): ChatCounts {
+  const d: ChatCounts = { total: 0, home: 0, away: 0 };
+  const bump = (teamId: number | undefined, sign: 1 | -1) => {
+    d.total += sign;
+    if (teamId === homeTeamId) d.home += sign;
+    else if (teamId === awayTeamId) d.away += sign;
+  };
+  for (const m of messages) {
+    const prev = tracker.known.get(m.id);
+    const deleted = !!m.deleted_at;
+    if (prev) {
+      if (!prev.deleted && deleted) {
+        prev.deleted = true;
+        bump(prev.teamId, -1);
+      }
+    } else {
+      tracker.known.set(m.id, { deleted, teamId: m.team_id });
+      if (m.id > tracker.baselineMaxId && !deleted) bump(m.team_id, 1);
+    }
+  }
+  return d;
+}
+
+const ZERO_DELTA: ChatCounts = { total: 0, home: 0, away: 0 };
+
+// 서버 집계 결과 + in-flight lost-update 방지용 스냅샷 fence.
+export interface ServerChatCounts extends ChatCounts {
+  // 이 스냅샷의 최대 메시지 id(삭제 포함). 이 id 이하만 서버 count에 반영됐고,
+  // 그보다 큰 id의 INSERT는 스냅샷 이후 도착이라 baseline commit 때 +1을 보존한다.
+  maxSeenId: number;
+  // 스냅샷 시각(ISO). deleted_at > snapshotAt 인 삭제는 스냅샷엔 alive로 집계됐으므로
+  // baseline commit 때 -1을 보존한다(로드된 메시지 DELETE race 방지).
+  snapshotAt: string;
+}
+
+export type FetchRoomCounts = (
+  roomId: string,
+  homeTeamId: number,
+  awayTeamId: number
+) => Promise<ServerChatCounts | null>;
+
+/**
+ * 서버 집계 1세트 조회 — aggregate RPC(단일 쿼리) 우선, 미배포(PGRST202)/오류 시
+ * 기존 head count 3발 fallback. 어느 경로든 3값이 *전부* 성공했을 때만 세트를
+ * 반환하고, 하나라도 실패하면 null(부분값을 0으로 commit 금지 — fail-closed).
+ */
+export const fetchRoomCountsFromServer: FetchRoomCounts = async (
+  roomId,
+  homeTeamId,
+  awayTeamId
+) => {
+  try {
+    const rpc = await supabase
+      .rpc("get_chat_room_counts", {
+        p_room_id: roomId,
+        p_home_team_id: homeTeamId,
+        p_away_team_id: awayTeamId,
+      })
+      .single();
+    if (!rpc.error && rpc.data) {
+      const d = rpc.data as {
+        total_count: number;
+        home_count: number;
+        away_count: number;
+        max_seen_id?: number | null;
+        snapshot_at?: string | null;
+      };
+      // 신 시그니처(max_seen_id/snapshot_at fence) 배포 전의 구 RPC는 이 두 컸럼이
+      // 없다 → fence 없이 commit하면 double-count 위험. 이 경우 head-count
+      // fallback(아래)으로 넘겨 fence를 직접 계산한다(배포 순서 안전).
+      if (d.max_seen_id != null && d.snapshot_at != null) {
+        return {
+          total: Number(d.total_count) || 0,
+          home: Number(d.home_count) || 0,
+          away: Number(d.away_count) || 0,
+          maxSeenId: Number(d.max_seen_id) || 0,
+          snapshotAt: d.snapshot_at,
+        };
+      }
+    }
+  } catch {
+    // fallthrough to head-count fallback
+  }
+  // fallback 경로도 fence를 반환해야 baseline commit이 in-flight 이벤트를 보존한다.
+  // snapshotAt은 카운트 쿼리 직전 시각, maxSeenId는 방 최대 id(삭제 포함).
+  const snapshotAt = new Date().toISOString();
+  const baseCount = () =>
+    supabase
+      .from("chat_messages")
+      .select("id", { count: "exact", head: true })
+      .eq("room_id", roomId)
+      .is("deleted_at", null);
+  const teamCount = (teamId: number) =>
+    supabase
+      .from("chat_messages")
+      .select("id, profiles!user_id!inner(team_id)", { count: "exact", head: true })
+      .eq("room_id", roomId)
+      .is("deleted_at", null)
+      .eq("profiles.team_id", teamId);
+  const maxIdRow = () =>
+    supabase
+      .from("chat_messages")
+      .select("id")
+      .eq("room_id", roomId)
+      .order("id", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+  const [totalRes, homeRes, awayRes, maxRes] = await Promise.all([
+    baseCount(),
+    teamCount(homeTeamId),
+    teamCount(awayTeamId),
+    maxIdRow(),
+  ]);
+  if (totalRes.error || homeRes.error || awayRes.error || maxRes.error) {
+    const err = totalRes.error ?? homeRes.error ?? awayRes.error ?? maxRes.error;
+    console.error("[useChatCounts] fetch error:", err?.message);
+    return null;
+  }
+  return {
+    total: totalRes.count ?? 0,
+    home: homeRes.count ?? 0,
+    away: awayRes.count ?? 0,
+    maxSeenId: Number((maxRes.data as { id?: number } | null)?.id) || 0,
+    snapshotAt,
+  };
+};
+
+export interface UseChatCountsOptions {
+  // 로드 범위 밖 soft delete 등 로컬 -1 반영이 불가능한 이벤트의 reconcile
+  // 트리거 — 값이 증가하면 곧(디바운스 후) 서버 재집계.
+  reconcileKey?: number;
+  // 이하 테스트 주입용. 프로덕션은 기본값 사용.
+  fetchCounts?: FetchRoomCounts;
+  intervalMs?: number;
+  jitterMs?: number;
+  retryMs?: number;
+  deleteDebounceMs?: number;
+}
+
+/**
+ * 방 누적 메시지 카운트(삭제 제외) + 홈/원정 최애팀 유저 글 수 — 실시간 느낌.
+ * - 서버 집계(aggregate RPC 1발, fallback 시 head 3발) = 베이스라인.
+ *   3값 전부 성공 시에만 한 세트 원자 commit — 부분 실패를 0으로 확정하지 않는다.
+ * - 새 메시지 도착(본인 전송 + realtime/backfill 수신) 시 즉시 낙관적 +1,
+ *   로드된 메시지 삭제 전이 시 -1. 서버 재집계는 드리프트 reconcile 전용
+ *   (interval+jitter 루프 + 삭제 이벤트 트리거) — 메시지 렌더 lifecycle과 분리되어
+ *   INSERT가 진행 중 집계 요청을 취소하지 않는다(방 전환 stale 응답만 폐기).
+ * - 삭제(soft delete)된 메시지는 UI에서 숨기므로 카운트에서도 제외해 일관성 유지.
+ */
+export function useChatCounts(
+  roomId: string,
+  homeTeamId: number,
+  awayTeamId: number,
+  messages: ChatMessage[],
+  opts?: UseChatCountsOptions
+) {
+  const fetchImpl = opts?.fetchCounts ?? fetchRoomCountsFromServer;
+  const reconcileKey = opts?.reconcileKey ?? 0;
+  const intervalMs = opts?.intervalMs ?? COUNTS_RECONCILE_INTERVAL_MS;
+  const jitterMs = opts?.jitterMs ?? COUNTS_RECONCILE_JITTER_MS;
+  const retryMs = opts?.retryMs ?? COUNTS_RETRY_MS;
+  const deleteDebounceMs = opts?.deleteDebounceMs ?? COUNTS_DELETE_RECONCILE_MS;
+
+  const [counts, setCounts] = useState<ChatCounts | null>(null);
+  const [delta, setDelta] = useState<ChatCounts>(ZERO_DELTA);
+  // 현재 유효한 방/파라미터 키 — 응답 도착 시 이 키와 다르면(방 전환) stale 폐기.
+  const keyRef = useRef("");
+  // 현재 방 reconcile 루프에 "곧 재집계" 요청을 전달하는 브릿지.
+  const reconcileNowRef = useRef<(delayMs: number) => void>(() => {});
+  // roomId별 추적자 — 방 전환 시 effect 안에서 레이지하게 리셋 (렌더 중 ref 쓰기 금지).
+  const trackerRef = useRef<{ roomId: string; tracker: ChatCountTracker }>({
+    roomId: "",
+    tracker: { baselineMaxId: Infinity, known: new Map() },
+  });
+  const trackerFor = useCallback((rid: string): ChatCountTracker => {
+    if (trackerRef.current.roomId !== rid) {
+      trackerRef.current = { roomId: rid, tracker: { baselineMaxId: Infinity, known: new Map() } };
+    }
+    return trackerRef.current.tracker;
+  }, []);
+  // fetch 완료 시점의 최신 messages로 베이스라인을 재설정하기 위한 ref
+  // (아래 낙관적 증분 effect에서 갱신 — 렌더 중 쓰기 금지).
+  const messagesRef = useRef(messages);
+
+  // 방 전환 시 렌더 중 리셋 (React 권장 "adjusting state when props change" 패턴).
+  const [prevRoomId, setPrevRoomId] = useState(roomId);
+  if (prevRoomId !== roomId) {
+    setPrevRoomId(roomId);
+    setCounts(null);
+    setDelta(ZERO_DELTA);
+  }
+
+  // 서버 reconcile 루프 — 메시지 렌더 lifecycle과 분리.
+  // INSERT(messages 변화)로는 이 effect가 재실행되지 않으므로 진행 중 집계
+  // 요청이 취소되지 않고, 방/파라미터 전환 stale 응답만 keyRef로 폐기한다.
+  // 다음 예약(interval 소비)은 성공 commit 이후에만 기록 — 실패는 retryMs 후 재시도.
+  useEffect(() => {
+    if (!roomId) return;
+    const key = `${roomId}|${homeTeamId}|${awayTeamId}`;
+    keyRef.current = key;
+    let disposed = false;
+    let running = false;
+    let rerun = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const schedule = (delayMs: number) => {
+      if (disposed) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = null;
+        void run();
+      }, delayMs);
+    };
+
+    const run = async () => {
+      if (running) {
+        // 진행 중 재집계 요청(삭제 트리거 등) — 완료 직후 한 번 더 실행.
+        rerun = true;
+        return;
+      }
+      running = true;
+      let committed = false;
+      try {
+        const fetched = await fetchImpl(roomId, homeTeamId, awayTeamId);
+        // 취소 대신 stale 판정: 방/파라미터가 그대로일 때만 commit.
+        if (!disposed && keyRef.current === key && fetched) {
+          // 3값 한 세트 원자 commit + 베이스라인 재설정. 서버 집계는 스냅샷
+          // 시점(fence) 기준이므로, 그 이후 도착한 INSERT/삭제가 commit으로 유실되지
+          // 않도록 fence 밖 이벤트의 delta를 보존한다(setDelta(0) 금지).
+          //   - id > maxSeenId              : 스냅샷 이후 INSERT → 서버 count 미포함 → alive면 +1
+          //   - id ≤ maxSeenId & 삭제 이후 : deleted_at > snapshotAt → 스냅샷엔 alive로
+          //     집계되었으나 그 뒤 삭제 → 서버 count가 아직 포함 → -1 보존
+          const fenceId = fetched.maxSeenId;
+          const snapMs = Date.parse(fetched.snapshotAt);
+          const msgs = messagesRef.current;
+          const nextKnown = new Map<number, { deleted: boolean; teamId?: number }>();
+          const residual: ChatCounts = { total: 0, home: 0, away: 0 };
+          const bump = (teamId: number | undefined, sign: 1 | -1) => {
+            residual.total += sign;
+            if (teamId === homeTeamId) residual.home += sign;
+            else if (teamId === awayTeamId) residual.away += sign;
+          };
+          for (const m of msgs) {
+            const deleted = !!m.deleted_at;
+            nextKnown.set(m.id, { deleted, teamId: m.team_id });
+            if (m.id > fenceId) {
+              if (!deleted) bump(m.team_id, 1);
+            } else if (deleted && m.deleted_at && Date.parse(m.deleted_at) > snapMs) {
+              bump(m.team_id, -1);
+            }
+          }
+          setCounts({ total: fetched.total, home: fetched.home, away: fetched.away });
+          trackerRef.current = { roomId, tracker: { baselineMaxId: fenceId, known: nextKnown } };
+          setDelta(residual);
+          committed = true;
+        }
+      } finally {
+        running = false;
+      }
+      if (disposed) return;
+      if (rerun) {
+        rerun = false;
+        schedule(0);
+        return;
+      }
+      schedule(committed ? intervalMs + Math.random() * jitterMs : retryMs);
+    };
+
+    reconcileNowRef.current = (delayMs: number) => {
+      if (running) rerun = true;
+      else schedule(delayMs);
+    };
+    schedule(0); // 초기 집계는 즉시
+    return () => {
+      disposed = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [roomId, homeTeamId, awayTeamId, fetchImpl, intervalMs, jitterMs, retryMs]);
+
+  // 삭제 이벤트 reconcile 트리거 — 로드 범위 밖 soft delete는 로컬 -1이
+  // 불가능(팀 분류 정보 없음)하므로 디바운스 후 서버 재집계로 총계·팀계 동기화.
+  const prevReconcileKeyRef = useRef(reconcileKey);
+  useEffect(() => {
+    if (prevReconcileKeyRef.current === reconcileKey) return;
+    prevReconcileKeyRef.current = reconcileKey;
+    reconcileNowRef.current(deleteDebounceMs);
+  }, [reconcileKey, deleteDebounceMs]);
+
+  // 낙관적 즉시 증분: messages 변화마다 새 도착/삭제 전이분만 반영 (id dedupe).
+  useEffect(() => {
+    messagesRef.current = messages;
+    const d = trackCountDeltas(trackerFor(roomId), messages, homeTeamId, awayTeamId);
+    if (d.total !== 0 || d.home !== 0 || d.away !== 0) {
+      setDelta((prev) => ({
+        total: prev.total + d.total,
+        home: prev.home + d.home,
+        away: prev.away + d.away,
+      }));
+    }
+  }, [roomId, messages, homeTeamId, awayTeamId, trackerFor]);
+
+  return useMemo<ChatCounts | null>(() => {
+    if (!counts) return null;
+    return {
+      total: Math.max(0, counts.total + delta.total),
+      home: Math.max(0, counts.home + delta.home),
+      away: Math.max(0, counts.away + delta.away),
+    };
+  }, [counts, delta]);
+}
 
 type ChatRow = ChatMessage & { profiles?: { nickname?: string; team_id?: number; grade?: string } };
 
@@ -63,6 +411,15 @@ export function useChat(roomId: string) {
   const loadingMoreRef = useRef(false);
   // 이미 fetch 시도한 (로드 안 된) 부모 메시지 id — 중복/무한 fetch 방지. 방 전환 시 리셋.
   const fetchedParentsRef = useRef<Set<number>>(new Set());
+  // 현재 로드된 메시지 id 집합 — realtime UPDATE가 로드 범위 밖 메시지인지 판별용.
+  const loadedIdsRef = useRef<Set<number>>(new Set());
+  // 로드 범위 밖 soft delete 관측 카운터 — useChatCounts reconcile 트리거.
+  // (로드된 메시지의 삭제는 messages 상태 전이 → trackCountDeltas가 로컬 -1 처리.)
+  const [countReconcileKey, setCountReconcileKey] = useState(0);
+
+  useEffect(() => {
+    loadedIdsRef.current = new Set(messages.map((m) => m.id));
+  }, [messages]);
 
   // 최근 메시지 로드
   useEffect(() => {
@@ -148,6 +505,14 @@ export function useChat(roomId: string) {
 
     const handleUpdate = (payload: { new: ChatMessage }) => {
       const updated = payload.new;
+      if (!loadedIdsRef.current.has(updated.id)) {
+        // 로드 범위 밖(기본 50개보다 오래된) 메시지의 soft delete — row가 없어
+        // 로컬 -1 불가(팀 분류 정보도 payload에 없음). reconcile 트리거로
+        // 총계·팀계 재동기화 — 삭제는 최신 id를 바꾸지 않아 이 트리거 없이는
+        // 조용한/종료된 방에서 카운트가 영구 stale된다.
+        if (updated.deleted_at) setCountReconcileKey((k) => k + 1);
+        return;
+      }
       setMessages((prev) =>
         prev.map((m) =>
           m.id === updated.id
@@ -523,5 +888,5 @@ export function useChat(roomId: string) {
     [user]
   );
 
-  return { messages, loading, loadingMore, hasMore, loadMore, sendMessage, deleteMyMessage, deleteAnyMessage, cooldown, cooldownReason, isLoggedIn: !!user };
+  return { messages, loading, loadingMore, hasMore, loadMore, sendMessage, deleteMyMessage, deleteAnyMessage, cooldown, cooldownReason, isLoggedIn: !!user, countReconcileKey };
 }
