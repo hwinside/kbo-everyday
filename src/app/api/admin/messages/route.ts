@@ -246,12 +246,14 @@ export async function POST(request: NextRequest) {
 
   // 개별 유저에게 쪽지 발송
   if (body.action === "send_to_user") {
-    const { userId } = body as { userId?: string };
+    const { userId } = body as { userId?: string; source?: string };
     const content = normalizeContent(body.content);
     const imageUrls = normalizeImageUrls(body.imageUrls);
     if (!userId || (!content.trim() && imageUrls.length === 0)) {
       return NextResponse.json({ error: "missing_params" }, { status: 400 });
     }
+    // 건의함(피드백) 회신은 유저 DM이 없어도 수신함에 노출되도록 대화 출처를 마킹한다.
+    const isFeedbackReply = body.source === "feedback";
     const preview = lastMessagePreview(content, imageUrls);
 
     // 기존 conversation 찾기
@@ -270,7 +272,7 @@ export async function POST(request: NextRequest) {
     } else {
       const { data: newConv, error: convError } = await admin
         .from("dm_conversations")
-        .insert({ user1_id: u1, user2_id: u2 })
+        .insert({ user1_id: u1, user2_id: u2, ...(isFeedbackReply ? { origin: "feedback" } : {}) })
         .select("id")
         .single();
 
