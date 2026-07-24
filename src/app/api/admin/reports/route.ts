@@ -6,7 +6,7 @@ import { isAdminAuthedRequest } from "@/lib/admin/pin";
 // 운영자 신고 조회 (2026-07-25) — reports 테이블은 그간 조회 UI가 없어 조용히 누적됐다.
 // ticket 웃돈 신고는 auto_blind 트리거(post/comment/chat 전용) 대상이 아니라 여기서만 확인 가능.
 export async function GET(req: NextRequest) {
-  if (!isAdminAuthedRequest(req)) {
+  if (!(await isAdminAuthedRequest(req))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

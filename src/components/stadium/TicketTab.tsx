@@ -12,6 +12,7 @@ import LoginSheet from "@/components/auth/LoginSheet";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { supabase } from "@/lib/supabase/client";
 import { useTickets, type TicketTransfer } from "@/lib/supabase/useTickets";
+import { canReportTicket, resolveReportSubmitOutcome } from "@/lib/tickets/report-guard";
 import { STADIUMS } from "@/lib/constants/stadiums";
 
 function PriceBadge({ price, original }: { price: number; original: number | null }) {
@@ -61,9 +62,11 @@ function TicketCard({ ticket, currentUserId, onStatusChange }: { ticket: TicketT
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
         body: JSON.stringify({ targetType: "ticket", targetId: ticket.id, reason: "웃돈 거래" }),
       });
-      const data = await res.json();
-      if (data.error) {
-        setReportError(data.error);
+      const data = await res.json().catch(() => ({}));
+      // non-2xx는 body 형태와 무관하게 실패 처리(5xx + {} 응답이 완료로 전환되는 것 차단)
+      const outcome = resolveReportSubmitOutcome({ ok: res.ok, body: data });
+      if (outcome.kind === "error") {
+        setReportError(outcome.message);
         setReportState("confirm");
         return;
       }
@@ -117,7 +120,7 @@ function TicketCard({ ticket, currentUserId, onStatusChange }: { ticket: TicketT
                 <span className="text-xs text-text-tertiary">{ticket.author_nickname ?? "익명"}</span>
                 <div className="flex items-center gap-2">
                   {/* 본인 글은 신고 버튼 미노출(자기글 자가신고 차단) */}
-                  {ticket.author_id && currentUserId !== ticket.author_id && (
+                  {canReportTicket({ ticketAuthorId: ticket.author_id, currentUserId }) && (
                     reportState === "done" ? (
                       <span className="text-xs text-text-tertiary">✅ 신고 접수됨</span>
                     ) : (
