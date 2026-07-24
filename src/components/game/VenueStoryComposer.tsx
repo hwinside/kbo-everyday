@@ -321,7 +321,9 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
 
   if (!isOpen || typeof document === "undefined") return null;
 
-  const gateReason = venue && !venue.uploadOpen ? venue.reason : null;
+  // 관리자 QA 모드는 종료·시간창 밖 경기에도 테스트 업로드가 가능해야 한다(지오펜스 우회와 동일 정책).
+  // 서버도 admin QA는 uploadOpen 게이트를 우회한다. 일반 유저는 그대로 마감 사유로 버튼 비활성.
+  const gateReason = !isAdmin && venue && !venue.uploadOpen ? venue.reason : null;
 
   return createPortal(
     <AnimatePresence>
