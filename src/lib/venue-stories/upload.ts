@@ -105,24 +105,67 @@ function probeVideo(
   });
 }
 
+/** 픽 게이트 probe 상한 — metadata/error 미발화 파일(fake/corrupt)에서 무한대기 방지(삼순 #813 blocker) */
+export const VENUE_PICK_PROBE_TIMEOUT_MS = 8_000;
+
+/** probeVideoDurationMs 가 쓰는 video element 최소 인터페이스 — 순수 회귀(fake video) 주입용 */
+export interface DurationProbeVideoLike {
+  preload: string;
+  muted: boolean;
+  onloadedmetadata: (() => void) | null;
+  onerror: (() => void) | null;
+  src: string;
+  readonly duration: number;
+  removeAttribute(name: string): void;
+  load?: () => void;
+}
+
 /**
  * 픽 게이트용 경량 duration probe(포스터 캡처 없음, metadata만).
- * 실패 시 null — 픽 게이트는 fail-open 으로 통과시키고 업로드 단계
+ * 실패/timeout 시 null — 픽 게이트는 fail-open 으로 통과시키고 업로드 단계
  * probeVideo/서버 검증이 fail-close 한다(정상 파일 이중 차단 방지).
+ * loadedmetadata/error 를 모두 발화하지 않는 파일이면 timeout 으로 settle 하고
+ * 핸들러 해제 + src 해제 + objectURL revoke 로 리소스를 회수한다.
+ * deps 는 순수 회귀(scripts/qa/venue-media-smoke.ts) 전용 주입 포인트.
  */
-export function probeVideoDurationMs(file: File): Promise<number | null> {
+export function probeVideoDurationMs(
+  file: File,
+  deps?: {
+    timeoutMs?: number;
+    createVideo?: () => DurationProbeVideoLike;
+    createObjectURL?: (f: File) => string;
+    revokeObjectURL?: (url: string) => void;
+  },
+): Promise<number | null> {
+  const timeoutMs = deps?.timeoutMs ?? VENUE_PICK_PROBE_TIMEOUT_MS;
+  const createVideo =
+    deps?.createVideo ?? (() => document.createElement("video") as DurationProbeVideoLike);
+  const createUrl = deps?.createObjectURL ?? ((f: File) => URL.createObjectURL(f));
+  const revokeUrl = deps?.revokeObjectURL ?? ((u: string) => URL.revokeObjectURL(u));
   return new Promise((resolve) => {
-    const url = URL.createObjectURL(file);
-    const video = document.createElement("video");
+    const url = createUrl(file);
+    const video = createVideo();
     video.preload = "metadata";
     video.muted = true;
     let settled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
     const done = (value: number | null) => {
       if (settled) return;
       settled = true;
-      URL.revokeObjectURL(url);
+      if (timer != null) clearTimeout(timer);
+      // 이벤트 cleanup — timeout 후 늦게 발화해도 no-op, 미디어 리소스 회수
+      video.onloadedmetadata = null;
+      video.onerror = null;
+      try {
+        video.removeAttribute("src");
+        video.load?.();
+      } catch {
+        /* noop — 해제 실패해도 resolve 는 진행 */
+      }
+      revokeUrl(url);
       resolve(value);
     };
+    timer = setTimeout(() => done(null), timeoutMs);
     video.onloadedmetadata = () => done(Math.round((video.duration || 0) * 1000));
     video.onerror = () => done(null);
     video.src = url;

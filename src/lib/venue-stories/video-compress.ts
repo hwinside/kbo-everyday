@@ -24,6 +24,43 @@ export const VENUE_VIDEO_MIN_BITRATE_BPS = 1_000_000;
 export const VENUE_VIDEO_MAX_EDGE_PX = 1920;
 /** 재시도 비트레이트 안전 마진(실측 초과율 보정에 곱해 오버슈트 재발 방지) */
 export const VENUE_VIDEO_RETRY_SAFETY = 0.85;
+/**
+ * 압축 1회 실행 상한 — 초과 시 conversion.cancel() 로 실제 중단(삼순 #814 blocker).
+ * 모바일 WebCodecs 가 background/encoder fault 로 settle 하지 않으면 submitting 이
+ * 화면을 영구 잠그는 것을 막는다. 초과 → null 반환 → #813 백스톱 문구 fallback.
+ */
+export const VENUE_VIDEO_COMPRESS_DEADLINE_MS = 90_000;
+
+/**
+ * conversion.execute() 를 deadline 안에서만 기다린다(순수 — venue-media-smoke 공유).
+ * true = 완료, false = deadline 초과(cancel() 호출로 실제 작업 중단).
+ * execute 자체 reject 는 그대로 throw — 호출부 catch 가 fallback 처리.
+ */
+export async function executeWithDeadline(
+  conversion: { execute(): Promise<unknown>; cancel(): Promise<unknown> },
+  deadlineMs: number,
+): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const timedOut = new Promise<false>((resolve) => {
+    timer = setTimeout(() => resolve(false), deadlineMs);
+  });
+  try {
+    const exec = conversion.execute().then(() => true as const);
+    const winner = await Promise.race([exec, timedOut]);
+    if (winner === false) {
+      exec.catch(() => undefined); // 패배한 execute 의 late reject 무해화(unhandledrejection 방지)
+      try {
+        await conversion.cancel(); // 실제 인코더/디코더 중단 — 백그라운드 좀비 인코딩 방지
+      } catch {
+        /* noop — cancel 실패와 무관하게 fallback 진행 */
+      }
+      return false;
+    }
+    return true;
+  } finally {
+    if (timer != null) clearTimeout(timer);
+  }
+}
 
 /** 자동압축 대상 판정 — duration 이 확인된 15초 게이트 통과 영상 중 바이트 백스톱 초과분만 */
 export function shouldAutoCompressVideo(input: {
@@ -82,9 +119,84 @@ export function computeScaledDimensions(
   return { width: even(width), height: even(height) };
 }
 
+/**
+ * 음수 first timestamp 보정 trim(순수 — venue-media-smoke 공유).
+ * ffmpeg/iPhone AAC 는 encoder priming 으로 오디오 first timestamp 가 음수(예: -23ms)일 수 있다.
+ * mediabunny 기본 start(0) 기준으로는 이게 '트리밍 필요'로 판정돼 오디오가 decode 경로로
+ * 빠지고, AudioDecoder 가 없는 iOS(<26)에서는 트랙이 discard 된다(실기기 BrowserStack
+ * 진단 2026-07-24: reason=undecodable_source_codec). 최소 ts 로 trim 시작점을 내려
+ * 패킷 복사 fast path 를 보장한다(전 트랙 동일 shift — A/V 싱크 보존).
+ */
+export function computeNegativeStartTrim(
+  firstTimestamps: number[],
+): { start: number } | null {
+  if (firstTimestamps.length === 0) return null;
+  const min = Math.min(...firstTimestamps);
+  return Number.isFinite(min) && min < 0 ? { start: min } : null;
+}
+
 /** WebCodecs 비디오 인터페이스 존재 여부 — 픽 게이트에서 자동압축 가능 환경 판정용(동기) */
 export function isVideoCompressSupported(): boolean {
   return typeof VideoEncoder !== "undefined" && typeof VideoDecoder !== "undefined";
+}
+
+/**
+ * bitrate 무시 버그 환경 판정 — AudioEncoder 부재(WebKit<26, iOS 17~25 세대)와 정확히 겹친다.
+ * 실기기 BrowserStack 진단(2026-07-24, iPhone iOS 17.3/17.5): 기본 latencyMode('quality')에서
+ * VideoEncoder 가 bitrate(12Mbps)를 완전히 무시해 ~337Mbps 로 출력(10초에 214MB).
+ * 'realtime' 모드는 bitrate 를 존중함을 같은 기기에서 확인(동일 설정 → ~8Mbps).
+ */
+function shouldForceRealtimeEncoder(): boolean {
+  return typeof VideoEncoder !== "undefined" && typeof AudioEncoder === "undefined";
+}
+
+let realtimeEncoderRegistered = false;
+
+/**
+ * WebKit<26 전용: native VideoEncoder 를 latencyMode 'realtime' 로 강제하는 custom encoder 를
+ * mediabunny 에 등록(supports 가 환경 게이트 — Chromium/WebKit26+ 는 기존 quality 경로 유지).
+ * 트레이드오프: realtime 모드는 부하/비트예산 초과 시 프레임을 드랍할 수 있다(일부 구간
+ * 저프레임 가능) — cap 초과 영상이 아예 차단되는 것보다 업로드 가능이 우선(#814).
+ */
+function ensureRealtimeEncoderRegistered(mb: typeof import("mediabunny")): void {
+  if (realtimeEncoderRegistered || !shouldForceRealtimeEncoder()) return;
+  realtimeEncoderRegistered = true;
+  const { CustomVideoEncoder, EncodedPacket, registerEncoder } = mb;
+  class RealtimeForcedAvcEncoder extends CustomVideoEncoder {
+    private encoder: VideoEncoder | null = null;
+    static supports(codec: string): boolean {
+      return codec === "avc" && shouldForceRealtimeEncoder();
+    }
+    init(): void {
+      this.encoder = new VideoEncoder({
+        output: (chunk, meta) =>
+          this.onPacket(EncodedPacket.fromEncodedChunk(chunk), meta ?? undefined),
+        error: (e) => this.onError(e),
+      });
+      this.encoder.configure({ ...this.config, latencyMode: "realtime" });
+    }
+    async encode(
+      sample: import("mediabunny").VideoSample,
+      options: VideoEncoderEncodeOptions,
+    ): Promise<void> {
+      if (!this.encoder) return;
+      const frame = sample.toVideoFrame();
+      this.encoder.encode(frame, options);
+      frame.close();
+      // 인코더 큐 backpressure — 메모리 폭주 방지
+      while (this.encoder.encodeQueueSize > 4) {
+        await new Promise((r) => setTimeout(r, 5));
+      }
+    }
+    async flush(): Promise<void> {
+      await this.encoder?.flush();
+    }
+    close(): void {
+      this.encoder?.close();
+      this.encoder = null;
+    }
+  }
+  registerEncoder(RealtimeForcedAvcEncoder);
 }
 
 /**
@@ -99,19 +211,27 @@ export async function compressVenueVideo(
     width: number;
     height: number;
     onProgress?: (ratio: number) => void;
+    /** 시도당 실행 상한(ms) — 회귀 주입용, 기본 VENUE_VIDEO_COMPRESS_DEADLINE_MS */
+    deadlineMs?: number;
   },
 ): Promise<File | null> {
   if (!isVideoCompressSupported()) return null;
   try {
     // dynamic import — 초기 번들 영향 0, cap 초과 영상에서만 로드
-    const { Input, Output, Conversion, Mp4OutputFormat, BufferTarget, BlobSource, ALL_FORMATS, canEncodeVideo } =
-      await import("mediabunny");
+    const mb = await import("mediabunny");
+    const { Input, Output, Conversion, Mp4OutputFormat, BufferTarget, BlobSource, ALL_FORMATS, canEncodeVideo } = mb;
+    ensureRealtimeEncoderRegistered(mb); // WebKit<26 bitrate 무시 버그 우회(realtime 강제)
     if (!(await canEncodeVideo("avc"))) return null;
 
     const dims = computeScaledDimensions(opts.width, opts.height);
     const attempt = async (bitrate: number): Promise<File | null> => {
       const input = new Input({ source: new BlobSource(file), formats: ALL_FORMATS });
       const output = new Output({ format: new Mp4OutputFormat(), target: new BufferTarget() });
+      // 음수 first timestamp(AAC priming) 보정 — 없으면 iOS 에서 오디오 트랙 discard 됨
+      const tracks = await input.getTracks();
+      const trim = computeNegativeStartTrim(
+        await Promise.all(tracks.map((t) => t.getFirstTimestamp())),
+      );
       const conversion = await Conversion.init({
         input,
         output,
@@ -121,12 +241,18 @@ export async function compressVenueVideo(
           forceTranscode: true,
           ...(dims ? { width: dims.width, height: dims.height, fit: "contain" as const } : {}),
         },
-        // audio 옵션 없음 = 원본 패킷 복사(passthrough) — iOS(AudioEncoder 부재) 전제
+        ...(trim ? { trim } : {}),
+        // audio 옵션 없음 = 원본 패킷 복사(passthrough) — iOS(AudioEncoder/Decoder 부재) 전제
       });
       // 트랙이 하나라도 드랍되면(예: 오디오 코덱을 mp4 에 못 담음) 무단 무음화 금지 → fallback
       if (!conversion.isValid || conversion.discardedTracks.length > 0) return null;
       conversion.onProgress = (p: number) => opts.onProgress?.(p);
-      await conversion.execute();
+      // 무기한 await 금지 — deadline 초과 시 cancel() 로 중단하고 fallback(삼순 #814 blocker)
+      const completed = await executeWithDeadline(
+        conversion,
+        opts.deadlineMs ?? VENUE_VIDEO_COMPRESS_DEADLINE_MS,
+      );
+      if (!completed) return null;
       const buffer = output.target.buffer;
       if (!buffer) return null;
       return new File([buffer], "venue-story.mp4", { type: "video/mp4" });

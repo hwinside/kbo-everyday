@@ -28,6 +28,8 @@ import {
   computeTargetVideoBitrate,
   computeRetryBitrate,
   computeScaledDimensions,
+  computeNegativeStartTrim,
+  executeWithDeadline,
   VENUE_VIDEO_COMPRESS_TARGET_BYTES,
   VENUE_VIDEO_AUDIO_RESERVE_BPS,
   VENUE_VIDEO_MAX_BITRATE_BPS,
@@ -242,6 +244,100 @@ async function run() {
   ok("최근(미래) → 보존", shouldDeleteOrphanFile({ isFolder: false, isReferenced: false, createdAt: new Date(Date.now() + 1000).toISOString(), cutoffMs: cutoff }) === false);
   ok("created_at 누락(null) → 삭제 안 함(fail-open 방지)", shouldDeleteOrphanFile({ isFolder: false, isReferenced: false, createdAt: null, cutoffMs: cutoff }) === false);
   ok("created_at 파싱 실패 → 삭제 안 함", shouldDeleteOrphanFile({ isFolder: false, isReferenced: false, createdAt: "not-a-date", cutoffMs: cutoff }) === false);
+
+  // 삼순 #813 blocker 회귀 — metadata/error 미발화 fake video 에서 픽 probe 가 무한대기하면 안 된다.
+  console.log("[probeVideoDurationMs — timeout/cleanup]");
+  // upload.ts 는 supabase browser client 를 모듈 스코프에서 생성 — 더미 env 후 dynamic import
+  process.env.NEXT_PUBLIC_SUPABASE_URL ||= "https://smoke.invalid";
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||= "smoke-anon-key";
+  const { probeVideoDurationMs } = await import("../../src/lib/venue-stories/upload");
+  type FakeMode = "silent" | "metadata" | "error" | "late-metadata";
+  class FakeVideo {
+    preload = "";
+    muted = false;
+    onloadedmetadata: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    duration: number;
+    removedSrc = false;
+    loaded = false;
+    private _src = "";
+    constructor(private mode: FakeMode, duration = 0) { this.duration = duration; }
+    get src() { return this._src; }
+    set src(v: string) {
+      this._src = v;
+      if (this.mode === "metadata") queueMicrotask(() => this.onloadedmetadata?.());
+      if (this.mode === "error") queueMicrotask(() => this.onerror?.());
+      if (this.mode === "late-metadata") setTimeout(() => this.onloadedmetadata?.(), 60);
+      // silent: loadedmetadata/error 모두 미발화 — 삼순 독립 재현 케이스
+    }
+    removeAttribute(name: string) { if (name === "src") this.removedSrc = true; }
+    load() { this.loaded = true; }
+  }
+  const fakeFile = new File([new Uint8Array(8)], "fake.mp4", { type: "video/mp4" });
+  const revokes: string[] = [];
+  const deps = (video: FakeVideo, timeoutMs: number) => ({
+    timeoutMs,
+    createVideo: () => video,
+    createObjectURL: () => "blob:fake",
+    revokeObjectURL: (u: string) => { revokes.push(u); },
+  });
+
+  const silent = new FakeVideo("silent");
+  const silentStart = Date.now();
+  const silentResult = await probeVideoDurationMs(fakeFile, deps(silent, 30));
+  ok("미발화 fake video → timeout 내 null settle(무한대기 없음)",
+    silentResult === null && Date.now() - silentStart < 5_000);
+  ok("timeout 후 이벤트 핸들러 cleanup", silent.onloadedmetadata === null && silent.onerror === null);
+  ok("timeout 후 src 해제 + load() 회수", silent.removedSrc === true && silent.loaded === true);
+  ok("timeout 후 objectURL revoke", revokes.length === 1);
+
+  const meta = new FakeVideo("metadata", 12.34);
+  ok("정상 metadata → duration(ms) 반환",
+    (await probeVideoDurationMs(fakeFile, deps(meta, 5_000))) === 12_340);
+  ok("성공 경로도 objectURL revoke", revokes.length === 2);
+
+  const errored = new FakeVideo("error");
+  ok("error 발화 → null(fail-open 계약 유지)",
+    (await probeVideoDurationMs(fakeFile, deps(errored, 5_000))) === null);
+
+  const late = new FakeVideo("late-metadata", 9);
+  const lateResult = await probeVideoDurationMs(fakeFile, deps(late, 20));
+  await new Promise((r) => setTimeout(r, 80)); // 늦은 loadedmetadata 발화 이후까지 대기
+  ok("timeout 이후 late metadata → 이미 null settle + 중복 revoke 없음",
+    lateResult === null && revokes.length === 4);
+
+  // iOS 오디오 보존 회귀 — 음수 first timestamp(AAC priming)면 trim 으로 보정해
+  // 패킷 복사 fast path 를 보장(실기기 discard reason=undecodable_source_codec 재발 방지).
+  console.log("[computeNegativeStartTrim — iOS 오디오 패킷 복사 보정]");
+  ok("음수 first ts(AAC priming -23ms) → 최소 ts 로 trim",
+    computeNegativeStartTrim([0, -0.023])?.start === -0.023);
+  ok("모두 0 이상 → trim 없음(기본 동작 유지)", computeNegativeStartTrim([0, 0.01]) === null);
+  ok("트랙 없음 → trim 없음", computeNegativeStartTrim([]) === null);
+  ok("비정상 ts(-Infinity) → trim 없음(fail-safe)",
+    computeNegativeStartTrim([-Infinity, 0]) === null);
+
+  // 삼순 #814 blocker 회귀 — 압축 실행은 deadline 안에서만 기다리고 초과 시 실제 cancel 한다.
+  console.log("[executeWithDeadline — 압축 실행 상한/취소]");
+  const hung = { cancelled: false,
+    execute: () => new Promise<void>(() => { /* settle 안 함 — 모바일 encoder fault 재현 */ }),
+    cancel: async () => { hung.cancelled = true; } };
+  const hungStart = Date.now();
+  const hungCompleted = await executeWithDeadline(hung, 30);
+  ok("미settle execute → deadline 초과로 false(화면 잠김 없음)",
+    hungCompleted === false && Date.now() - hungStart < 5_000);
+  ok("deadline 초과 시 conversion.cancel() 실제 호출(좀비 인코딩 방지)", hung.cancelled === true);
+
+  const fine = { cancelled: false,
+    execute: async () => undefined,
+    cancel: async () => { fine.cancelled = true; } };
+  ok("정상 완료 → true + cancel 미호출",
+    (await executeWithDeadline(fine, 5_000)) === true && fine.cancelled === false);
+
+  const failing = {
+    execute: async () => { throw new Error("encoder fault"); },
+    cancel: async () => undefined };
+  const threw = await executeWithDeadline(failing, 5_000).then(() => false, () => true);
+  ok("execute reject → 그대로 throw(호출부 catch 가 fallback 처리)", threw === true);
 
   console.log(`\n결과: ${pass} pass / ${fail} fail`);
   if (fail > 0) process.exit(1);

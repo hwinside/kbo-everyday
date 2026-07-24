@@ -83,6 +83,18 @@ try {
       tookMs: Math.round(performance.now() - t0),
     };
   });
+  // 삼순 #814 blocker 회귀 — deadline 초과 시 conversion.cancel() 로 실제 중단되고
+  // null fallback 으로 즉시 settle 해야 한다(submitting 영구 잠김 방지). 실바이너리 경로 검증.
+  const deadlineResult = await page.evaluate(async () => {
+    const mod = await import("/bundle.mjs");
+    const blob = await (await fetch("/big.mp4")).blob();
+    const file = new File([blob], "big.mp4", { type: "video/mp4" });
+    const t0 = performance.now();
+    const out = await mod.compressVenueVideo(file, {
+      durationMs: 10_000, width: 1080, height: 1920, deadlineMs: 1,
+    });
+    return { fellBack: out === null, tookMs: Math.round(performance.now() - t0) };
+  });
   await browser.close();
   server.close();
 
@@ -94,6 +106,8 @@ try {
   ok(`출력 ≤ 50MiB cap (${result.outputSize}B)`, result.ok && result.outputSize <= MAX_BYTES);
   ok(`출력 ≤ 45MB 목표 (${result.outputSize}B)`, result.ok && result.outputSize <= TARGET_BYTES);
   ok("출력 mp4", result.ok && result.type === "video/mp4");
+  ok(`deadline 초과 → cancel + null fallback 즉시 settle (${deadlineResult.tookMs}ms)`,
+    deadlineResult.fellBack === true && deadlineResult.tookMs < 30_000);
   console.log(`\n결과: ${fail === 0 ? "PASS" : `FAIL(${fail})`}`);
   process.exit(fail === 0 ? 0 : 1);
 } finally {

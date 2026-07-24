@@ -94,6 +94,8 @@
     "qa:venue-storage-path": "tsx scripts/qa/venue-storage-path-smoke.ts",
     "qa:venue-upload-progress": "tsx scripts/qa/venue-upload-progress-smoke.ts",
     "qa:venue-validate": "tsx scripts/qa/venue-validate-smoke.ts",
+    "qa:venue-user-copy": "tsx scripts/qa/venue-user-copy-smoke.ts",
+    "qa:ios-venue-compress": "node scripts/qa/browserstack-ios-venue-compress.mjs",
     "qa:venue-expiry": "tsx scripts/qa/venue-expiry-smoke.ts",
     "qa:venue-cleanup-keyset": "tsx scripts/qa/venue-cleanup-keyset-smoke.ts",
     "qa:venue-auth-consent": "tsx scripts/qa/venue-auth-consent-smoke.ts",
