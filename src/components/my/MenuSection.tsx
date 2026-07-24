@@ -1,13 +1,12 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { GraduationCap, ChevronRight, Sparkles } from "lucide-react";
+import { GraduationCap, ChevronRight } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 
 const MENU_ITEMS: { icon: LucideIcon; label: string; count?: number | null; detail?: string; href?: string }[] = [
   { icon: GraduationCap, label: "야구 쉽게 배우기", count: null, href: "/learn" },
-  { icon: Sparkles, label: "새 소식", count: null, href: "/whats-new" },
 ];
 
 export default function MenuSection() {
