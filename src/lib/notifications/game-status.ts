@@ -149,6 +149,44 @@ async function markOnly(gameId: string, flags: { start?: boolean; end?: boolean;
   }, { onConflict: "game_id" });
 }
 
+// ── 시작알림 경로 seam (테스트 주입용) ──────────────────────────────────────
+// 프로덕션은 아래 default를 그대로 쓴다. 테스트는 이 seam으로 "앞 경기 FCM 지연 → 뒤 경기
+// 시작알림 억제 여부"를 실제 notifyGameStatusTransitions() 실행으로 회귀 검증한다.
+export type StartNotifyDeps = {
+  storeScheduledSeen?: (gameIds: string[], iso: string) => Promise<void>;
+  readStartState?: (
+    gameId: string,
+  ) => Promise<{ start_notified: boolean | null; last_seen_scheduled_at: string | null } | null>;
+  claimStart?: (gameId: string) => Promise<boolean>;
+  unclaimStart?: (gameId: string) => Promise<void>;
+  markStart?: (gameId: string) => Promise<void>;
+  sendStart?: typeof sendFcmToUsers;
+  fansOf?: (teamIds: number[], opts?: { deadlineAtMs?: number }) => Promise<{ ids: string[]; ok: boolean }>;
+};
+
+async function defaultStoreScheduledSeen(gameIds: string[], iso: string): Promise<void> {
+  // 원자 단조 저장(RPC): last_seen_scheduled_at = GREATEST(existing, observed). 겹친 75초 cron에서
+  // 뒤늘게 끝난 이전 invocation의 오래된 관측이 최신 last_seen을 뒤로 덮지 않게 한다
+  // (unconditional upsert = last-write-wins 버그, 삼순 #815 재리뷰 blocker).
+  // query-guard: bounded -- KBO payload의 scheduled gameIds(당일 경기 ≤10)만 입력, RPC returns void
+  const { error } = await supabase.rpc("mark_scheduled_seen", {
+    p_game_ids: gameIds,
+    p_observed_at: iso,
+  });
+  if (error) console.error("[game-status] scheduled-seen rpc failed:", error.message);
+}
+
+async function defaultReadStartState(
+  gameId: string,
+): Promise<{ start_notified: boolean | null; last_seen_scheduled_at: string | null } | null> {
+  const { data } = await supabase
+    .from("game_notify_state")
+    .select("start_notified, last_seen_scheduled_at")
+    .eq("game_id", gameId)
+    .maybeSingle();
+  return data ?? null;
+}
+
 /**
  * 게임 목록을 보고 시작/종료 알림 발송.
  * - live && start 미발송 → 시작 알림
@@ -157,7 +195,34 @@ async function markOnly(gameId: string, flags: { start?: boolean; end?: boolean;
  *   (배포/도입 직후 과거 경기에 뒷북 알림 방지)
  * - cancelled(isKboGameCancelled) → "경기 취소" 알림 1회(우천 등). 예정시각 +90분 밖이면 마킹만(뒷북 차단).
  */
-export async function notifyGameStatusTransitions(games: KboRawGame[]): Promise<{ started: number; ended: number; cancelled: number }> {
+export async function notifyGameStatusTransitions(
+  games: KboRawGame[],
+  opts?: {
+    /**
+     * 이 games payload를 KBO에서 **관측(fetch)한 시각**. 시작알림 90초 게이트의 기준시각.
+     * (2026-07-24 사고: 게이트가 경기별 처리 시점 Date.now()를 쓰는 바람에, 같은 틱 안에서
+     * 앞 경기 FCM 대량발송 ~26초가 흐른 뒤 처리된 LG:한화가 관측간격 76초인데도 102초로
+     * 오판돼 정시 시작알림이 mark-only 억제됨. 게이트는 "직전 틱 예정 관측 → 이번 틱 live
+     * 관측"의 연속성을 판정하는 것이므로 관측 시각끼리 비교해야 한다.)
+     * 미지정 시 함수 진입 시각으로 1회 캡처(경기별 재측정 금지).
+     */
+    observedAtMs?: number;
+    /**
+     * 시작알림 경로 배선 회귀 테스트용 seam(프로덕션 미지정 → 실제 구현). 앞 경기 FCM 발송
+     * 지연이 뒤 경기 시작알림을 억제하지 않는지 이 함수 자체를 실행해 검증하기 위해
+     * DB/발송/팬조회를 주입한다(정책 함수 직접호출로는 배선을 잡지 못함, 삼순 리뷰 기준③).
+     */
+    startDeps?: StartNotifyDeps;
+  },
+): Promise<{ started: number; ended: number; cancelled: number }> {
+  const observedAtMs = opts?.observedAtMs ?? Date.now();
+  const storeScheduledSeen = opts?.startDeps?.storeScheduledSeen ?? defaultStoreScheduledSeen;
+  const readStartState = opts?.startDeps?.readStartState ?? defaultReadStartState;
+  const claimStart = opts?.startDeps?.claimStart ?? ((gameId: string) => claim(gameId, "start_notified"));
+  const unclaimStart = opts?.startDeps?.unclaimStart ?? ((gameId: string) => unclaim(gameId, "start_notified"));
+  const markStart = opts?.startDeps?.markStart ?? ((gameId: string) => markOnly(gameId, { start: true }));
+  const sendStart = opts?.startDeps?.sendStart ?? sendFcmToUsers;
+  const fansOfStart = opts?.startDeps?.fansOf ?? fansOfTeams;
   let started = 0;
   let ended = 0;
   let cancelled = 0;
@@ -167,14 +232,8 @@ export async function notifyGameStatusTransitions(games: KboRawGame[]): Promise<
     .filter((g) => g.G_ID && g.GAME_STATE_SC === "1" && !isKboGameCancelled(g.CANCEL_SC_ID))
     .map((g) => g.G_ID as string);
   if (scheduledIds.length > 0) {
-    const nowIso = new Date().toISOString();
-    const { error: seenError } = await supabase
-      .from("game_notify_state")
-      .upsert(
-        scheduledIds.map((game_id) => ({ game_id, last_seen_scheduled_at: nowIso })),
-        { onConflict: "game_id" },
-      );
-    if (seenError) console.error("[game-status] scheduled-seen upsert failed:", seenError.message);
+    // 관측 시각으로 기록 — 다음 틱 게이트가 관측 시각끼리(fetch↔fetch) 간격을 재도록.
+    await storeScheduledSeen(scheduledIds, new Date(observedAtMs).toISOString());
   }
 
   for (const g of games) {
@@ -223,34 +282,30 @@ export async function notifyGameStatusTransitions(games: KboRawGame[]): Promise<
       // 진행 중 — 시작 알림. scheduled→live 전환을 최근 연속 관측한 경우에만 발송하고,
       // 첫 관측이 이미 live(장애 복구·재배포)거나 관측이 stale이면 발송 없이 마킹만.
       // (2026-07-23 하린아빠 지시 "정확한 시간에 가야 하는 알림만" + 삼순 post-merge blocker)
-      const { data: seenRow } = await supabase
-        .from("game_notify_state")
-        .select("start_notified, last_seen_scheduled_at")
-        .eq("game_id", gameId)
-        .maybeSingle();
+      const seenRow = await readStartState(gameId);
       if (seenRow?.start_notified) continue;
       const lastSeenMs = seenRow?.last_seen_scheduled_at
         ? Date.parse(seenRow.last_seen_scheduled_at)
         : null;
       const sendOk = shouldSendStartNotification({
         lastSeenScheduledAtMs: Number.isFinite(lastSeenMs as number) ? lastSeenMs : null,
-        nowMs: Date.now(),
+        nowMs: observedAtMs,
         inningNo: g.GAME_INN_NO,
         isTop: g.GAME_TB_SC ? g.GAME_TB_SC === "T" : null,
       });
       if (!sendOk) {
-        await markOnly(gameId, { start: true });
+        await markStart(gameId);
         continue;
       }
-      if (await claim(gameId, "start_notified")) {
-        const fans = await fansOfTeams(teamIds);
-        if (!fans.ok) { await unclaim(gameId, "start_notified"); continue; } // 조회 실패 → 재시도
-        const res = await sendFcmToUsers(fans.ids, {
+      if (await claimStart(gameId)) {
+        const fans = await fansOfStart(teamIds);
+        if (!fans.ok) { await unclaimStart(gameId); continue; } // 조회 실패 → 재시도
+        const res = await sendStart(fans.ids, {
           title: "⚾ 경기 시작!",
           body: `${away} vs ${home} 경기가 시작됐어요. 크보팬에서 자세한 경기 내용을 확인해보세요!`,
           url,
         }, "game_start");
-        if (!res.ok) { await unclaim(gameId, "start_notified"); continue; } // 인프라 실패 → 재시도
+        if (!res.ok) { await unclaimStart(gameId); continue; } // 인프라 실패 → 재시도
         started += res.sent;
         // 잠금화면 ongoing card 시작 (앱 미진입 자동 표시, C2) — data-only, fire-and-forget.
         // 시작 알림은 이미 성공(started 카운트)이라 카드 실패해도 unclaim 안 함.
@@ -258,7 +313,7 @@ export async function notifyGameStatusTransitions(games: KboRawGame[]): Promise<
         const hScore = parseInt(g.B_SCORE_CN ?? "0") || 0;
         // 위젯(안드로이드)용 구조화 필드 — gameId에서 2자 팀코드 파싱(YYYYMMDD+AWAY+HOME+N).
         const codes = gameId.match(/^\d{8}([A-Z]{2})([A-Z]{2})\d$/);
-        await sendFcmToUsers(fans.ids, {
+        await sendStart(fans.ids, {
           title: `${away} ${aScore} : ${hScore} ${home}`,
           body: "경기 시작",
           url,
