@@ -39,6 +39,7 @@
     "qa:ios-news-webview": "zsh scripts/qa/ios-news-webview-typecheck.sh",
     "qa:ui:news-comment-report": "node scripts/qa/ui-smoke-news-comment-report.mjs",
     "qa:news-roundup": "tsx scripts/qa/news-roundup-filter-smoke.ts",
+    "qa:og-meta-stability": "tsx scripts/qa/og-meta-stability-smoke.ts",
     "qa:news-clip-title": "tsx scripts/qa/news-clipping-title-signal-smoke.ts",
     "qa:urgent-notice": "tsx scripts/qa/urgent-notice-smoke.ts",
     "qa:ticket-open": "tsx scripts/qa/ticket-open-smoke.ts",
