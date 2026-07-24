@@ -23,6 +23,16 @@ import {
   VENUE_STORY_MAX_DURATION_MS,
   VENUE_STORY_DURATION_TOLERANCE_MS,
 } from "../../src/lib/venue-stories/types";
+import {
+  shouldAutoCompressVideo,
+  computeTargetVideoBitrate,
+  computeRetryBitrate,
+  computeScaledDimensions,
+  VENUE_VIDEO_COMPRESS_TARGET_BYTES,
+  VENUE_VIDEO_AUDIO_RESERVE_BPS,
+  VENUE_VIDEO_MAX_BITRATE_BPS,
+  VENUE_VIDEO_MIN_BITRATE_BPS,
+} from "../../src/lib/venue-stories/video-compress";
 
 let pass = 0;
 let fail = 0;
@@ -81,6 +91,52 @@ ok("사진 50MB 초과 → 사진 문구(바이트 캡 유지)",
   checkVenueMediaLimits({ kind: "image", sizeBytes: MAX + 1, durationMs: null }) === VENUE_IMAGE_TOO_HEAVY_MSG);
 ok("사진 50MB 이하 → 통과(자동압축 경로)",
   checkVenueMediaLimits({ kind: "image", sizeBytes: MAX, durationMs: null }) === null);
+
+console.log("[영상 자동압축 정책 — video-compress]");
+ok("자동압축 가능 환경이면 cap 초과 영상 픽 게이트 통과",
+  checkVenueMediaLimits({ kind: "video", sizeBytes: MAX + 1, durationMs: 10_000, videoAutoCompressAvailable: true }) === null);
+ok("자동압축 가능해도 15초 초과는 여전히 차단",
+  checkVenueMediaLimits({ kind: "video", sizeBytes: MAX + 1, durationMs: OVER_MS, videoAutoCompressAvailable: true }) === VENUE_VIDEO_TOO_LONG_MSG);
+ok("사진에는 플래그 무의미(바이트 캡 유지)",
+  checkVenueMediaLimits({ kind: "image", sizeBytes: MAX + 1, durationMs: null, videoAutoCompressAvailable: true }) === VENUE_IMAGE_TOO_HEAVY_MSG);
+ok("압축 대상: cap 초과 + duration 확인됨",
+  shouldAutoCompressVideo({ sizeBytes: MAX + 1, durationMs: 10_000 }) === true);
+ok("압축 비대상: cap 이하",
+  shouldAutoCompressVideo({ sizeBytes: MAX, durationMs: 10_000 }) === false);
+ok("압축 비대상: duration 미상(null) — 서버 검증으로 fail-close",
+  shouldAutoCompressVideo({ sizeBytes: MAX + 1, durationMs: null }) === false);
+
+// 목표 비트레이트: 목표바이트*8/duration - 오디오 예약, [MIN,MAX] clamp
+{
+  const t15 = computeTargetVideoBitrate(15_000);
+  const raw15 = (VENUE_VIDEO_COMPRESS_TARGET_BYTES * 8 * 1000) / 15_000 - VENUE_VIDEO_AUDIO_RESERVE_BPS;
+  ok("15초 → raw 계산값이 MAX 초과라 clamp", raw15 > VENUE_VIDEO_MAX_BITRATE_BPS && t15 === VENUE_VIDEO_MAX_BITRATE_BPS);
+  ok("MAX 비트레이트 15초 + 오디오 예약이어도 목표바이트 이하(cap 보장)",
+    ((VENUE_VIDEO_MAX_BITRATE_BPS + VENUE_VIDEO_AUDIO_RESERVE_BPS) * 15) / 8 <= VENUE_VIDEO_COMPRESS_TARGET_BYTES);
+  const tLong = computeTargetVideoBitrate(600_000); // 비정상 긴 duration 이라도 화질 바닥 방어
+  ok("극단 duration → MIN 바닥 clamp", tLong === VENUE_VIDEO_MIN_BITRATE_BPS);
+}
+
+// 재시도: 실측 초과율 기반 감축, 바닥이면 포기(null → fallback 문구)
+{
+  const prev = 10_000_000;
+  const retry = computeRetryBitrate(prev, VENUE_VIDEO_COMPRESS_TARGET_BYTES * 1.2);
+  ok("초과 시 재시도 비트레이트 감축", retry != null && retry < prev);
+  ok("재시도도 MIN 바닥 이상", retry != null && retry >= VENUE_VIDEO_MIN_BITRATE_BPS);
+  ok("이미 MIN 이였으면 재시도 포기 → fallback 분기",
+    computeRetryBitrate(VENUE_VIDEO_MIN_BITRATE_BPS, VENUE_VIDEO_COMPRESS_TARGET_BYTES * 2) === null);
+  ok("actualBytes 0(비정상) → 재시도 포기", computeRetryBitrate(prev, 0) === null);
+}
+
+// 해상도 상한: 긴 변 1920, 짝수 정렬, 이하면 null(리사이즈 없음)
+{
+  ok("1080x1920 세로 → 리사이즈 불필요", computeScaledDimensions(1080, 1920) === null);
+  const d4k = computeScaledDimensions(2160, 3840);
+  ok("4K 세로 → 긴 변 1920으로 축소", d4k != null && d4k.height === 1920 && d4k.width === 1080);
+  const dOdd = computeScaledDimensions(1079, 2000);
+  ok("축소 치수 짝수 정렬(인코더 호환)", dOdd != null && dOdd.width % 2 === 0 && dOdd.height % 2 === 0);
+  ok("해상도 미상(0) → null(리사이즈 생략)", computeScaledDimensions(0, 0) === null);
+}
 
 // ── fake-fetch 로 probeMediaObject 계약 검증 ──
 function makeRes(opts: {

@@ -3,7 +3,8 @@
 import { supabase, getSafeSession } from "@/lib/supabase/client";
 import imageCompression from "browser-image-compression";
 import { VENUE_STORY_STAGING_BUCKET } from "./types";
-import { checkVenueMediaLimits } from "./media-limits";
+import { checkVenueMediaLimits, VENUE_VIDEO_TOO_HEAVY_MSG } from "./media-limits";
+import { shouldAutoCompressVideo, compressVenueVideo } from "./video-compress";
 
 export interface PreparedMedia {
   mediaType: "video" | "image";
@@ -282,10 +283,13 @@ async function uploadToStaging(
  * 직관 스토리 미디어를 검증·압축·업로드하고 생성에 필요한 메타를 반환.
  * 실패 시 { error } 반환(호출부가 토스트로 노출).
  */
+/** 진행 단계 — compress 는 cap 초과 영상 자동압축 구간(0~40%)에서만 온다 */
+export type UploadStage = "compress" | "upload";
+
 export async function prepareVenueStoryMedia(
   file: File,
   gameId: string,
-  onProgress?: (ratio: number) => void,
+  onProgress?: (ratio: number, stage?: UploadStage) => void,
 ): Promise<PreparedMedia | PrepareError> {
   const {
     data: { user },
@@ -303,21 +307,56 @@ export async function prepareVenueStoryMedia(
     } catch (e) {
       return { error: e instanceof Error ? e.message : "영상을 읽을 수 없습니다" };
     }
-    // duration(15초) 먼저 → bytes 백스톱 순서 (media-limits 순수 게이트)
-    const limitError = checkVenueMediaLimits({
+    // duration(15초) 게이트 먼저 — bytes 백스톱 초과는 아래 자동압축이 흡수하므로 여기선 통과
+    const durationError = checkVenueMediaLimits({
       kind: "video",
       sizeBytes: file.size,
+      durationMs: probe.durationMs,
+      videoAutoCompressAvailable: true,
+    });
+    if (durationError) return { error: durationError };
+
+    // cap 초과 영상 자동 재인코딩(0~40% 구간) — 실패/미지원이면 기존 #813 백스톱 문구로 fallback
+    let uploadable: File = file;
+    let compressed = false;
+    if (shouldAutoCompressVideo({ sizeBytes: file.size, durationMs: probe.durationMs })) {
+      const out = await compressVenueVideo(file, {
+        durationMs: probe.durationMs,
+        width: probe.width,
+        height: probe.height,
+        onProgress: (r) => onProgress?.(r * 0.4, "compress"),
+      });
+      if (!out) return { error: VENUE_VIDEO_TOO_HEAVY_MSG };
+      uploadable = out;
+      compressed = true;
+      // 메타/포스터는 실제 업로드되는 최종 파일 기준으로 재추출(해상도 변경 가능)
+      try {
+        probe = await probeVideo(out);
+      } catch (e) {
+        return { error: e instanceof Error ? e.message : "영상을 읽을 수 없습니다" };
+      }
+      onProgress?.(0.4, "upload");
+    }
+
+    // 최종 안전망 — 압축 결과물 기준, 자동압축 플래그 없이(초과 잔존 시 fail-close)
+    const limitError = checkVenueMediaLimits({
+      kind: "video",
+      sizeBytes: uploadable.size,
       durationMs: probe.durationMs,
     });
     if (limitError) return { error: limitError };
     // 원본은 private staging 에만 — 서버 ffprobe 검증 통과 시 서버가 공개 버킷으로 승격(B+①)
-    const mediaPath = randPath(gameId, user.id, sanitizeExt(file.name, "mp4"));
-    // 본음이 용량 대부분 — 전체 진행률의 0~95% 구간으로 매핑(썸네일·메타 POST 잔여 5%)
-    const uploaded = await uploadToStaging(mediaPath, file, file.type || "video/mp4", (r) =>
-      onProgress?.(r * 0.95),
+    const mediaPath = randPath(gameId, user.id, sanitizeExt(uploadable.name, "mp4"));
+    // 본음이 용량 대부분 — 압축 시 40~95%, 미압축 시 0~95% 구간 매핑(썸네일·메타 POST 잔여 5%)
+    const base = compressed ? 0.4 : 0;
+    const uploaded = await uploadToStaging(
+      mediaPath,
+      uploadable,
+      uploadable.type || "video/mp4",
+      (r) => onProgress?.(base + r * (0.95 - base), "upload"),
     );
     if (!uploaded) return { error: "영상 업로드에 실패했어요" };
-    onProgress?.(0.95);
+    onProgress?.(0.95, "upload");
 
     let thumbUrl: string | null = null;
     if (probe.poster) {

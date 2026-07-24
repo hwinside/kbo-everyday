@@ -25,6 +25,12 @@ export function checkVenueMediaLimits(input: {
   kind: "video" | "image";
   sizeBytes: number;
   durationMs: number | null;
+  /**
+   * 바이트 백스톱 초과 영상을 클라이언트 자동압축이 처리할 수 있는 환경(WebCodecs 지원).
+   * true 면 픽 게이트에서 heavy 차단 대신 통과시켜 업로드 단계 압축에 맡긴다.
+   * 압축 후 최종 안전망 검사는 이 플래그 없이 호출한다(upload.ts).
+   */
+  videoAutoCompressAvailable?: boolean;
 }): string | null {
   if (input.kind === "image") {
     return input.sizeBytes > VENUE_STORY_MAX_BYTES ? VENUE_IMAGE_TOO_HEAVY_MSG : null;
@@ -33,6 +39,8 @@ export function checkVenueMediaLimits(input: {
   if (input.durationMs > VENUE_STORY_MAX_DURATION_MS + VENUE_STORY_DURATION_TOLERANCE_MS) {
     return VENUE_VIDEO_TOO_LONG_MSG;
   }
-  if (input.sizeBytes > VENUE_STORY_MAX_BYTES) return VENUE_VIDEO_TOO_HEAVY_MSG;
+  if (input.sizeBytes > VENUE_STORY_MAX_BYTES && !input.videoAutoCompressAvailable) {
+    return VENUE_VIDEO_TOO_HEAVY_MSG;
+  }
   return null;
 }

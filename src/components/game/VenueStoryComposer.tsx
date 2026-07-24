@@ -7,6 +7,7 @@ import { X, Loader2, Video as VideoIcon, MapPin } from "lucide-react";
 import { getSafeSession } from "@/lib/supabase/client";
 import { prepareVenueStoryMedia, probeVideoDurationMs } from "@/lib/venue-stories/upload";
 import { checkVenueMediaLimits } from "@/lib/venue-stories/media-limits";
+import { isVideoCompressSupported } from "@/lib/venue-stories/video-compress";
 import { getVenuePosition } from "@/lib/venue-stories/geo";
 import { haversineMeters } from "@/lib/venue-stories/stadiums";
 import { VENUE_STORY_CONSENT_VERSION, type VenueInfo } from "@/lib/venue-stories/types";
@@ -31,6 +32,8 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   const [caption, setCaption] = useState("");
   const [phase, setPhase] = useState<Phase>("idle");
   const [progress, setProgress] = useState(0); // 0~100, phase==="upload" 일 때만 유효
+  // cap 초과 영상 자동압축 구간(0~40%) 라벨 분기용 — upload.ts 가 stage 를 알려준다
+  const [uploadStage, setUploadStage] = useState<"compress" | "upload">("upload");
   // iOS가 사진앱 영상을 export하느라 픽 후 change 이벤트까지 수 초간 무피드백 구간이 있다
   // → 픽 대기 안내 오버레이 (하린아빠 7/23 21:05 리포트). 상태 전이는 pick-session 순수 모듈이 소유:
   // 수동 취소/닫기 후 late change 무시 · 준비 중 재진입 차단 (삼순 #805 blocker)
@@ -141,6 +144,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
     setError(null);
     setPhase("idle");
     setProgress(0);
+    setUploadStage("upload");
   };
 
   const close = () => {
@@ -175,6 +179,8 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
       kind: isVideo ? "video" : "image",
       sizeBytes: f.size,
       durationMs,
+      // WebCodecs 지원 환경이면 cap 초과 영상을 차단 대신 업로드 단계 자동압축에 맡긴다
+      videoAutoCompressAvailable: isVideo && isVideoCompressSupported(),
     });
     if (limitError) {
       setError(limitError);
@@ -236,10 +242,12 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
 
     setPhase("upload");
     setProgress(0);
+    setUploadStage("upload");
     try {
-      const prepared = await prepareVenueStoryMedia(file, gameId, (r) =>
-        setProgress(Math.min(99, Math.round(r * 100))),
-      );
+      const prepared = await prepareVenueStoryMedia(file, gameId, (r, stage) => {
+        setProgress(Math.min(99, Math.round(r * 100)));
+        if (stage) setUploadStage(stage);
+      });
       if ("error" in prepared) {
         setError(prepared.error);
         setPhase("idle");
@@ -417,7 +425,9 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
               {phase === "geo"
                 ? "직관 인증 중…"
                 : phase === "upload"
-                  ? `올리는 중… ${progress}%`
+                  ? uploadStage === "compress"
+                    ? `영상 최적화 중… ${progress}%`
+                    : `올리는 중… ${progress}%`
                   : "올리기"}
             </button>
           </div>
