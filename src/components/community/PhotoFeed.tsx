@@ -1250,7 +1250,7 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
   );
 }
 
-/** 카드 C — 긴 텍스트. 3줄 클램프 + '더 보기' 인라인 펼침(상세 이동 없음). 링크 포함 시 OG 프리뷰. */
+/** 카드 C — 긴 텍스트. 6줄 클램프 + '더 보기' 인라인 펼침(상세 이동 없음). 링크 포함 시 OG 프리뷰. */
 function LongTextCard({ body }: { body: string }) {
   const [expanded, setExpanded] = useState(false);
   const [clamped, setClamped] = useState(false);
@@ -1272,7 +1272,7 @@ function LongTextCard({ body }: { body: string }) {
         <>
           <p
             ref={ref}
-            className={`whitespace-pre-line break-words text-base leading-relaxed text-text-primary ${expanded ? "" : "line-clamp-3"}`}
+            className={`whitespace-pre-line break-words text-base leading-relaxed text-text-primary ${expanded ? "" : "line-clamp-6"}`}
           >
             {displayBody}
           </p>
