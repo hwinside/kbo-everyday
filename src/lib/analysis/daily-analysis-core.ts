@@ -24,6 +24,7 @@ import {
 import {
   hasStreakContradiction,
   stripContradictorySentences,
+  renderStreakLabel,
 } from "@/lib/analysis/streak-guard";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
@@ -145,8 +146,8 @@ function buildStandingsPrompt(delta: StandingsDelta, events: GameEvent[], teamNa
   const teamDeltas = allDeltas.map((d) => {
     const name = teamNames.get(d.team_id) || `팀${d.team_id}`;
     const change = d.rankChange > 0 ? `↑${d.rankChange}` : d.rankChange < 0 ? `↓${Math.abs(d.rankChange)}` : "-";
-    const streakNum = parseInt(d.streak || "0");
-    const streakText = Math.abs(streakNum) >= 3 ? `${Math.abs(streakNum)}${streakNum > 0 ? "연승" : "연패"} 중` : "";
+    // 방향은 반드시 streak 문자열 내용으로 판정(parseInt 부호 의존 금지 — "8연패" → "8연승" 뒤집힘 버그).
+    const streakText = renderStreakLabel(d.streak);
     const isTie = (rankGroups.get(d.newRank) ?? 0) > 1;
     const newRankLabel = isTie ? `공동 ${d.newRank}위` : `${d.newRank}위`;
     const rankInfo = d.rankChange !== 0 ? `${d.oldRank}위→${newRankLabel}(${change})` : `${newRankLabel}(변동없음)`;
@@ -165,7 +166,8 @@ function buildStandingsPrompt(delta: StandingsDelta, events: GameEvent[], teamNa
 4. 승률은 언급하지 마세요.
 5. 3연승/3연패 미만의 streak는 언급하지 마세요.
 5-1. 연승/연패는 오직 '현재 순위' 데이터에 "N연승 중"/"N연패 중"으로 명시된 팀만, 명시된 방향·숫자 그대로 언급하세요. 데이터에 연속기록이 없는 팀의 연승/연패를 절대 창작하지 마세요.
-5-2. 논리 모순 절대 금지: 경기에서 진(패한) 팀을 "연승"으로, 이긴(승리한) 팀을 "연패"로 서술하지 마세요. 패배는 연승을 끊고, 승리는 연패를 끊습니다. "패했지만 N연승을 이어갔다" 같은 문장은 명백한 오류이니 절대 쓰지 마세요.
+5-2. 논리 모순 절대 금지: 경기에서 진(패한) 팀을 "연승"으로, 이긴(승리한) 팀을 "연패"로 서술하지 마세요. 패배는 연승을 끊고, 승리는 연패를 끊습니다. "패했지만 N연승을 이어갔다" 같은 문장은 명백한 오류이니 절대 쓰지 마세요. 연승/연패의 주어는 반드시 그 기록을 보유한 팀 본인이어야 합니다(상대팀이 아님).
+5-3. 다년 이력 창작 금지: "N년 만의 연승", "몇 년만에" 등 여러 시즘을 가로지르는 기록 주장을 절대 쓰지 마세요. 제공 데이터는 단일 경기 기준이므로 과거 연도 비교는 모두 근거 없는 창작입니다.
 6. 상위권/중위권/하위권으로 나누지 말고, 순위 변동 팀 중심으로 서술. 변동 없는 팀은 생략.
 7. "순위표 해설"이 아니라 "KBO에서 무슨 일이 있었는지" 요약하는 느낌으로.
 8. 총론/도입부 없이 바로 핵심 사건부터 시작하는 것이 가장 좋습니다. 예: "KT가 키움을 5대0으로 완파하며 3연승을 달렸다" 처럼 바로 사건부터.
