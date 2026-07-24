@@ -15,6 +15,7 @@ import { supabase } from "@/lib/supabase/client";
 import ReportSheet from "@/components/community/ReportSheet";
 import GifPicker, { isGifComment } from "@/components/community/GifPicker";
 import { buildCanonicalGiphyUrl } from "@/lib/community/giphy";
+import { shouldShowVenueBadge, type VenueAttendees } from "@/lib/venue-stories/chat-badge";
 
 interface GameChatProps {
   gameId: string;
@@ -81,7 +82,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   // [직관] 배지 명단은 반드시 *어느 경기의 명단인지*(gameId)와 함께 저장한다 —
   // 유저가 여러 경기 크관을 오갈 때 이전 경기 명단이 새 경기 채팅에 오표시되는 것을
   // 렌더 시점 gameId 일치 검사로 구조적으로 차단(fetch 응답 지연/경합에도 안전).
-  const [venueAttendees, setVenueAttendees] = useState<{ gameId: string; ids: Set<string> } | null>(null);
+  const [venueAttendees, setVenueAttendees] = useState<VenueAttendees | null>(null);
   const composerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -313,7 +314,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     const isGif = isGifComment(msg.content);
     return (
       <div className="min-w-0 flex-1">
-        {venueAttendees?.gameId === gameId && venueAttendees.ids.has(msg.user_id) && (
+        {shouldShowVenueBadge(venueAttendees, gameId, msg.user_id) && (
           <span className="inline-block text-[9px] font-bold text-accent-green border border-accent-green/40 rounded px-1 mr-1 align-[1px]">
             직관
           </span>
