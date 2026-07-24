@@ -21,6 +21,9 @@ export default function ScoreBar({
 }: ScoreBarProps) {
   const awayWinning = awayScore > homeScore;
   const homeWinning = homeScore > awayScore;
+  // 두 자리 이상 점수에서 팀명이 세로로 줄바꿈되지 않도록 폰트 크기를 양쪽 동일하게 축소
+  const maxScore = Math.max(awayScore, homeScore);
+  const scoreSize = maxScore >= 100 ? "text-[32px]" : maxScore >= 10 ? "text-[40px]" : "text-[48px]";
 
   return (
     <div
@@ -35,13 +38,13 @@ export default function ScoreBar({
       <div className="flex items-center justify-center gap-0">
         {/* Away side */}
         <div className="flex items-center gap-2.5 flex-1 justify-end">
-          <span className="text-lg font-bold text-text-primary">{awayTeam.shortName}</span>
+          <span className="text-lg font-bold text-text-primary whitespace-nowrap">{awayTeam.shortName}</span>
           <TeamLogo team={awayTeam} size={40} />
           <motion.span
             key={`sb-away-${awayScore}`}
             initial={{ scale: 1.3, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className={`text-[48px] font-extrabold tabular-nums leading-none ${awayWinning ? "text-[#4fc3f7]" : "text-text-primary"}`}
+            className={`${scoreSize} shrink-0 font-extrabold tabular-nums leading-none ${awayWinning ? "text-[#4fc3f7]" : "text-text-primary"}`}
           >
             {awayScore}
           </motion.span>
@@ -61,12 +64,12 @@ export default function ScoreBar({
             key={`sb-home-${homeScore}`}
             initial={{ scale: 1.3, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className={`text-[48px] font-extrabold tabular-nums leading-none ${homeWinning ? "text-[#4fc3f7]" : "text-text-primary"}`}
+            className={`${scoreSize} shrink-0 font-extrabold tabular-nums leading-none ${homeWinning ? "text-[#4fc3f7]" : "text-text-primary"}`}
           >
             {homeScore}
           </motion.span>
           <TeamLogo team={homeTeam} size={40} />
-          <span className="text-lg font-bold text-text-primary">{homeTeam.shortName}</span>
+          <span className="text-lg font-bold text-text-primary whitespace-nowrap">{homeTeam.shortName}</span>
         </div>
       </div>
     </div>
