@@ -70,18 +70,43 @@ const SHORTS_BASEBALL_CONTEXT_WEAK = [
   // (`공격`은 사이버 공격 등 기업 문맥 충돌이 있어 제외 — surgical)
   "수비",
   "방망이",
-  // `LG전`(대진 표기)은 그 자체로 야구 신호 — 접미 경계 규칙이 `LG전자`·
-  // `LG전선`(뒤이음 한글)은 거르고, 기업 접미 결합 문서는 상위 부정 신호가
-  // 먼저 처리한다. (2026-07-24 라운드4 전수 재검증 — `힐리어드 LG전 xwOBA`류)
-  "lg전",
-  "엘지전",
 ];
+
+// `LG전`(대진 표기, =LG와의 경기)은 야구 신호지만, `LG전자`의 부분문자열이자
+// 기업 축약형이라 경계·문맥 판정이 필수 (2026-07-24 삼순 라운드4 NO-GO #1).
+// 야구 신호로 인정하는 경계: `전` 뒤가 문장끝·구두점이거나 공백+영문 스탯 토큰
+// (`힐리어드 LG전 xwOBA`류). `전` 뒤가 한글이면(`LG전자`·`LG전 승리`) 여기선
+// 인정하지 않고, 뒤이음 야구 키워드(`LG전 승리`)는 기존 weak/strong 매칭이,
+// 기업 문맥(`LG전 2분기`·`LG전 신입사원`)은 아래 stripCorporateLgGame가 처리한다.
+const LG_GAME_RE = /(?:(?:^|[^a-z0-9])lg|엘지)전(?=\s*(?:[a-z]|$))/i;
+
+// 기업 축약형 `LG전`(=`LG전자`)이 뒤에 비야구 한글/숫자 토큰으로 이어지면
+// (`LG전 신입사원 선발 경쟁`·`LG전 2분기 영업이익`·`LG전 고객 서비스`)
+// 기업 접미 부정신호 우선 원칙(라운드2)에 따라 그 LG 언급을 제거한다 —
+// 뒤 토큰이 야구 키워드면(`LG전 승리`) 유지. 제거 후 독립 LG 언급이 남지
+// 않으면 어떤 긍정 신호(선발·승리 등 weak)로도 복원 불가.
+const LG_GAME_CORPORATE_RE = /(^|[^a-z0-9])((?:lg|엘지)전)(?=\s+[가-힣0-9])/gi;
+
+function stripCorporateLgGame(text: string): string {
+  return text.replace(
+    LG_GAME_CORPORATE_RE,
+    (full: string, lead: string, _token: string, offset: number) => {
+      const rest = text
+        .slice(offset + full.length)
+        .replace(/^\s+/, "")
+        .toLowerCase();
+      const isBaseballNext =
+        SHORTS_BASEBALL_CONTEXT_STRONG.some((k) => rest.startsWith(k)) ||
+        SHORTS_BASEBALL_CONTEXT_WEAK.some((k) => rest.startsWith(k));
+      return isBaseballNext ? full : `${lead} `;
+    },
+  );
+}
 
 // `LG` 바로 뒤에 계열사 접미가 결합하면 그 언급은 기업 뉴스 신호 —
 // 문서에 독립 LG 언급이 따로 없으면 팀 신호에서 제외한다 (삼순 라운드2 가이드).
 const LG_CORPORATE_SUFFIX =
   "(?:lg|엘지)\\s?(?:화학|전자|유플러스|u\\+|에너지솔루션|엔솔|디스플레이|이노텍|생활건강|헬로비전|씨엔에스|cns|전선|상사|하우시스|그룹)";
-const LG_CORPORATE_RE = new RegExp(LG_CORPORATE_SUFFIX, "i");
 const LG_CORPORATE_RE_G = new RegExp(LG_CORPORATE_SUFFIX, "gi");
 
 // 독립 LG 언급(영문 약칭 단어 경계 또는 한글 `엘지`)
@@ -211,12 +236,17 @@ export function hasLgBaseballContext(
 ): boolean {
   if (title.includes("트윈스")) return true;
   let target = title;
-  if (LG_CORPORATE_RE.test(title)) {
-    const stripped = title.replace(LG_CORPORATE_RE_G, " ");
+  // 부정신호 우선: 기업 접미(LG전자/화학...) + 기업 문맥 축약형 LG전 제거 후
+  // 독립 LG 언급이 남지 않으면 어느 긍정 신호로도 복원 불가.
+  const stripped = stripCorporateLgGame(title).replace(LG_CORPORATE_RE_G, " ");
+  if (stripped !== title) {
     if (!LG_STANDALONE_RE.test(stripped)) return false;
     target = stripped;
   }
   if (options.trustedChannel) return true;
+  // `LG전`(대진 표기)이 야구 경계로 끝나면 그 자체로 야구 신호 — 기업 문맥은
+  // 위 strip이 이미 제거. (`힐리어드 LG전 xwOBA`류 recall 보존)
+  if (LG_GAME_RE.test(target)) return true;
   return hasBaseballShortContext(target);
 }
 

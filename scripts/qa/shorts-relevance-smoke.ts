@@ -12,6 +12,7 @@ import {
   detectTeamFromTitle,
 } from "@/lib/video/team-detector";
 import { entriesToRows } from "@/lib/video/entries-to-rows";
+import { joinLgFeedRows, type ShortsRow } from "@/lib/video/shorts-feed-merge";
 import type { PoolChannel } from "@/lib/video/team-channels";
 import type { RssVideoEntry } from "@/lib/video/rss-parser";
 
@@ -268,6 +269,45 @@ check(
   true,
 );
 
+// --- 라운드4 NO-GO #2: 합류 행 노출 라벨 override (route→merge→response→카드) ---
+// 저장 team_id=키움 운영행이 team=LG 피드 조회 시 LG 라벨로 표시되는지.
+const HEROBOOK_STORED_ROW: ShortsRow = {
+  video_id: "79W-OwErIEA",
+  title: "한화 앞에서 선보인 LG의 행복수비☠️💔",
+  team_id: "키움", // 수집 계약(channelTeam 선확정) 그대로
+  channel_id: "UC_herobook_fixture",
+  published_at: "2026-07-20T00:00:00.000Z",
+};
+const joinResult = joinLgFeedRows([], [HEROBOOK_STORED_ROW], new Set());
+check(
+  "합류: 비-LG 저장행이 LG 피드에 합류",
+  joinResult.rows.some((r) => r.video_id === "79W-OwErIEA"),
+  true,
+);
+check(
+  "합류: 저장 team_id는 키움 유지 (수집 계약 불변)",
+  HEROBOOK_STORED_ROW.team_id === "키움",
+  true,
+);
+check(
+  "합류: 노출 라벨 override = LG",
+  joinResult.displayTeam.get("79W-OwErIEA") === "LG",
+  true,
+);
+// route의 items 맵과 동일한 override로 카드 라벨 검증
+const cardTeamId =
+  joinResult.displayTeam.get(HEROBOOK_STORED_ROW.video_id) ??
+  HEROBOOK_STORED_ROW.team_id;
+check("합류: 홈 카드 라벨 LG로 표시 (키움 배지 아님)", cardTeamId === "LG", true);
+// 반대 방향: 이미 LG 1차 조회에 있는 행은 중복 합류·override 안 함
+const dupBase: ShortsRow = { ...HEROBOOK_STORED_ROW, team_id: "LG" };
+const dupResult = joinLgFeedRows([dupBase], [HEROBOOK_STORED_ROW], new Set());
+check(
+  "합류: 중복 video_id는 override 안 함 (원본 team_id 유지)",
+  !dupResult.displayTeam.has("79W-OwErIEA") && dupResult.rows.length === 1,
+  true,
+);
+
 // 반대 방향 보존: 다중 팀 노출 게이트가 비-야구 LG 제목까지 LG 피드로 끓어오면 안 된다
 for (const title of [
   "LG전자 세탁기 신제품 리뷰", // 기업 접미 → 차단
@@ -307,6 +347,33 @@ check(
   hasLgBaseballContext("LG전자 수비 무상수리 안내"),
   false,
 );
+
+// --- 라운드4 NO-GO #1: `LG전` 축약형이 기업/경제 문맥과 결합한 오탐 (2026-07-24 삼순) ---
+// `LG전`은 `LG전자`의 부분문자열 — 뒤가 비야구 한글/숫자 기업 문맥이면
+// 같이 있는 weak(선발·승리)로도 복원 불가 (기업 접미 부정신호 우선).
+for (const title of [
+  "LG전 신입사원 선발 경쟁에서 승리", // 선발·승리 weak가 있어도 차단
+  "LG전 2분기 영업이익 역대 최대",
+  "LG전 고객 서비스 만족도 1위",
+]) {
+  check(`LG전 기업문맥: 야구 문맥 아님 (${title})`, hasLgBaseballContext(title), false);
+  check(`LG전 기업문맥: 수집 team_id ETC (${title})`, detectTeamFromTitle(title) === "ETC", true);
+  check(
+    `LG전 기업문맥: 보조쿼리 합류 게이트 차단 (${title})`,
+    detectAllTeamsFromTitle(title).includes("LG"),
+    false,
+  );
+  check(
+    `LG전 기업문맥: 기존 LG 행 노출 차단 (${title})`,
+    isTeamShortRelevant(title, "LG"),
+    false,
+  );
+}
+// 야구 `LG전`(=LG와의 경기)은 뒤가 야구 키워드/문장끝이면 보존된다.
+for (const title of ["LG전 승리", "KIA LG전 하이라이트"]) {
+  check(`야구 LG전 보존: 수집 team_id LG (${title})`, detectTeamFromTitle(title) === "LG", true);
+  check(`야구 LG전 보존: 노출 유지 (${title})`, isTeamShortRelevant(title, "LG"), true);
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail > 0) process.exit(1);

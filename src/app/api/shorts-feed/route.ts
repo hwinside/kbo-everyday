@@ -13,7 +13,7 @@ import { supabaseAdmin } from "@/lib/supabase/admin";
 import { DEFAULT_EXCLUDE_FLAGS, extractNoiseFlags } from "@/lib/video/noise-flags";
 import { loadPlayerAliases } from "@/lib/video/player-tagger";
 import { isTeamShortRelevant } from "@/lib/video/shorts-relevance";
-import { detectAllTeamsFromTitle } from "@/lib/video/team-detector";
+import { joinLgFeedRows } from "@/lib/video/shorts-feed-merge";
 import { getActiveChannels } from "@/lib/video/team-channels";
 
 export async function GET(req: NextRequest) {
@@ -128,28 +128,17 @@ export async function GET(req: NextRequest) {
   }
 
   // 다중 팀 노출 합류: 제목에 독립 LG 언급+야구 문맥이 있는 비-LG 행만 추가.
-  // team_id 계약은 그대로 두고(키움 피드 노출 유지) LG 피드에도 보여준다.
+  // team_id 계약(수집)은 그대로 두고, 합류 행의 노출 라벨만 요청 팀(LG)으로
+  // override해서 카드가 `키움` 배지로 보이는 오표시를 막는다 (삼순 라운드4 #2).
+  let lgDisplayTeam: Map<string, string> = new Map();
   if (lgTitlePromise) {
     const { data: lgRows, error: lgError } = await lgTitlePromise;
     if (lgError) {
       return NextResponse.json({ error: lgError.message }, { status: 500 });
     }
-    const seen = new Set((data ?? []).map((v) => v.video_id));
-    let appended = false;
-    for (const v of lgRows ?? []) {
-      if (seen.has(v.video_id)) continue;
-      const teams = detectAllTeamsFromTitle(v.title ?? "", {
-        trustedChannel: Boolean(v.channel_id && trustedForLg.has(v.channel_id)),
-      });
-      if (!teams.includes("LG")) continue;
-      seen.add(v.video_id);
-      (data ??= []).push(v);
-      appended = true;
-    }
-    // 합류 행이 맨 뒤에 붙지 않도록 최신순 재정렬
-    if (appended && data) {
-      data.sort((a, b) => (a.published_at < b.published_at ? 1 : -1));
-    }
+    const joined = joinLgFeedRows(data ?? [], lgRows ?? [], trustedForLg);
+    data = joined.rows;
+    lgDisplayTeam = joined.displayTeam;
   }
 
   // Filter out noisy content — DB flags + runtime title recheck
@@ -193,7 +182,7 @@ export async function GET(req: NextRequest) {
     sourceType: v.source_type,
     playerId: v.player_id,
     playerIds: v.player_ids ?? [],
-    teamId: v.team_id ?? null,
+    teamId: lgDisplayTeam.get(v.video_id) ?? v.team_id ?? null,
     playerName: v.player_id ? (playerNameMap.get(v.player_id) ?? null) : null,
   }));
 
