@@ -123,7 +123,7 @@ export function BrandedTextCard({ post, body }: { post: Post; body: string }) {
 
   return (
     <div
-      className="relative flex min-h-[200px] w-full items-center justify-center overflow-hidden px-8 py-10"
+      className="relative flex min-h-[100px] w-full items-center justify-center overflow-hidden px-8 py-5"
       style={{ background: gradient }}
     >
       {heroPath ? (
