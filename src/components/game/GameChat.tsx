@@ -78,7 +78,10 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   // [직관] 배지 — 이 경기에 직관 스토리(status='active')를 올린 유저 id 집합.
   // 경기당 1회 로드 후 client 매핑(메시지별 개별 조회 금지). Realtime 신규
   // 메시지도 user_id 매핑이라 자동 적용. 실패 시 배지만 생략(채팅 무영향).
-  const [venueUserIds, setVenueUserIds] = useState<Set<string>>(() => new Set());
+  // [직관] 배지 명단은 반드시 *어느 경기의 명단인지*(gameId)와 함께 저장한다 —
+  // 유저가 여러 경기 크관을 오갈 때 이전 경기 명단이 새 경기 채팅에 오표시되는 것을
+  // 렌더 시점 gameId 일치 검사로 구조적으로 차단(fetch 응답 지연/경합에도 안전).
+  const [venueAttendees, setVenueAttendees] = useState<{ gameId: string; ids: Set<string> } | null>(null);
   const composerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -142,10 +145,13 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
 
   useEffect(() => {
     let cancelled = false;
-    fetch(`/api/venue-stories/attendees?gameId=${encodeURIComponent(gameId)}`)
+    const fetchedGameId = gameId;
+    fetch(`/api/venue-stories/attendees?gameId=${encodeURIComponent(fetchedGameId)}`)
       .then((res) => (res.ok ? res.json() : null))
       .then((d) => {
-        if (!cancelled && Array.isArray(d?.userIds)) setVenueUserIds(new Set(d.userIds as string[]));
+        if (!cancelled && Array.isArray(d?.userIds)) {
+          setVenueAttendees({ gameId: fetchedGameId, ids: new Set(d.userIds as string[]) });
+        }
       })
       .catch(() => { /* 배지 로드 실패는 무시 — 채팅 기능 무영향 */ });
     return () => { cancelled = true; };
@@ -307,7 +313,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
     const isGif = isGifComment(msg.content);
     return (
       <div className="min-w-0 flex-1">
-        {venueUserIds.has(msg.user_id) && (
+        {venueAttendees?.gameId === gameId && venueAttendees.ids.has(msg.user_id) && (
           <span className="inline-block text-[9px] font-bold text-accent-green border border-accent-green/40 rounded px-1 mr-1 align-[1px]">
             직관
           </span>
