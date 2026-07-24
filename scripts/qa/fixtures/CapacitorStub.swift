@@ -18,6 +18,7 @@ public final class CAPPluginMethod {
 
 open class CAPPluginCall: NSObject {
     public func getString(_ name: String) -> String? { nil }
+    public func getInt(_ name: String) -> Int? { nil }
     public func reject(_ message: String) {}
     public func resolve() {}
 }
