@@ -207,12 +207,16 @@ BEGIN
     END IF;
   EXCEPTION WHEN unique_violation THEN
     IF p_dedup_key IS NULL THEN RAISE; END IF;
-    -- 같은 대화·운영팀 발신으로 이미 존재하면 멱등 성공, 아니면 위조 의심 → rollback
+    -- 멱등 성공은 같은 대화·운영팀 발신·**같은 payload(content+image)**까지 일치할 때만.
+    -- 기존 verifyOpsMessageByDedupKey 계약과 동일: 내용이 다르면(broadcast/blind-notify가
+    -- 다른 문안을 같은 키로 발송) 위조/오송 의심으로 23505 → 전체 rollback.
     IF NOT EXISTS (
       SELECT 1 FROM public.dm_messages m
       WHERE m.dedup_key = p_dedup_key
         AND m.conversation_id = v_conv
         AND m.sender_id = p_system_user_id
+        AND m.content = v_content
+        AND m.image_urls = v_image_urls
     ) THEN
       RAISE EXCEPTION USING errcode = '23505', message = 'dedup_key_conflict_foreign';
     END IF;

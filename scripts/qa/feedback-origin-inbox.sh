@@ -217,9 +217,22 @@ R=$(rpc_send "$SYS" "$U_E" '다른대화 키 도용' '다른대화 키 도용' '
 check "foreign dedup 충돌 시 예외(ERR)" "$R" "ERR"
 check "U_E 대화 메시지 증가 없음(rollback)" "$(msg_cnt "$U_E")" "$BEFORE_E"
 
+echo "[7b) dedup_key 같은 키 다른 내용 → 예외·rollback, 저장 원문 유지]"
+# case 7 에서 U_F 대화에 DK 로 '중복방지 메시지' 저장됨. 같은 키 다른 내용 발송 시도
+BEFORE_C=$("${PSQL[@]}" -c "SELECT content FROM dm_messages WHERE dedup_key='$DK'")
+R=$(rpc_send "$SYS" "$U_F" '변경된 문안' '변경된 문안' 'dm' "$DK")
+check "같은 dedup_key 다른 내용 → 예외(ERR)" "$R" "ERR"
+check "저장 내용 원문 유지(덮어쓰기 없음)" "$("${PSQL[@]}" -c "SELECT content FROM dm_messages WHERE dedup_key='$DK'")" "$BEFORE_C"
+check "dedup 메시지 여전히 1건(중복 INSERT 없음)" "$("${PSQL[@]}" -c "SELECT count(*) FROM dm_messages WHERE dedup_key='$DK'")" "1"
+
 echo "[9) origin CHECK 제약 · 롤 권한]"
-R=$("${PSQL[@]}" -c "INSERT INTO dm_conversations(user1_id,user2_id,origin) VALUES('$SYS','$U_A','bogus'); SELECT 'ok'" 2>&1 | tail -1)
-check "origin CHECK 위반 거부(dm/feedback 만)" "$([ "$R" = "ok" ] && echo bad || echo blocked)" "blocked"
+# 의도된 실패를 set -e 안전하게 if 로 명시 캡처(파이프라인 assignment 금지)
+if "${PSQL[@]}" -c "INSERT INTO dm_conversations(user1_id,user2_id,origin) VALUES('$SYS','$U_A','bogus')" >/dev/null 2>&1; then
+  R=bad
+else
+  R=blocked
+fi
+check "origin CHECK 위반 거부(dm/feedback 만)" "$R" "blocked"
 R=$("${PSQL[@]}" -c "SELECT has_function_privilege('anon','admin_send_ops_message(uuid,uuid,text,text[],text,text,text)','EXECUTE')")
 check "anon admin_send_ops_message EXECUTE 불가" "$R" "f"
 R=$("${PSQL[@]}" -c "SELECT has_function_privilege('service_role','admin_send_ops_message(uuid,uuid,text,text[],text,text,text)','EXECUTE')")
