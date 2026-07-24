@@ -95,6 +95,23 @@ export default function VenueStorySection({ gameId }: Props) {
     [gameId, userId],
   );
 
+  // 업로드 성공 피드백 — 모달만 조용히 사라져 "실패한 줄"로 오인되던 문제 방지(하린아빠 A17 리포트).
+  // 영상은 pending→검증 승급 구조라 간헐 트레이 즉시 반영이 늦을 수 있음 — status로 문구 분기.
+  const handleUploaded = useCallback(
+    (result: { mediaType: "video" | "image"; status: string | null }) => {
+      fetchStories();
+      const msg =
+        result.mediaType === "video" && result.status === "pending"
+          ? "영상을 올렸어요! 검증 후 잠시 뒤 나타나요 🎬"
+          : result.mediaType === "video"
+            ? "영상을 올렸어요! 🎬"
+            : "사진을 올렸어요! 📷";
+      setToast(msg);
+      setTimeout(() => setToast(null), 2200);
+    },
+    [fetchStories],
+  );
+
   const handleUploadClick = () => {
     if (!user) {
       setToast("로그인 후 이용해주세요");
@@ -183,7 +200,7 @@ export default function VenueStorySection({ gameId }: Props) {
         gameId={gameId}
         isOpen={composerOpen}
         onClose={() => setComposerOpen(false)}
-        onUploaded={fetchStories}
+        onUploaded={handleUploaded}
       />
 
       {/* #809 본/안 본 정렬(orderedStories) + #807 QA 키보드 하네스 모두 보존 */}

@@ -20,7 +20,7 @@ interface Props {
   gameId: string;
   isOpen: boolean;
   onClose: () => void;
-  onUploaded: () => void;
+  onUploaded: (result: { mediaType: "video" | "image"; status: string | null }) => void;
 }
 
 type Phase = "idle" | "geo" | "upload";
@@ -347,7 +347,9 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
         setPhase("idle");
         return;
       }
-      onUploaded();
+      // 업로드 성공 — mediaType과 상태(영상은 pending→검증 중일 수 있음)를 알려 성공 피드백을 보장.
+      // 지금까지는 모달만 조용히 닫혀 "실패한 줄"로 오인되던 문제(하린아빠 A17 리포트).
+      onUploaded({ mediaType: prepared.mediaType, status: data.status ?? null });
       close();
     } catch {
       setError("업로드에 실패했어요");
