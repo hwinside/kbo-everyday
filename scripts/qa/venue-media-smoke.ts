@@ -12,7 +12,17 @@ import {
   PROBE_HEAD_BYTES,
 } from "../../src/lib/venue-stories/media-probe";
 import { shouldDeleteOrphanFile } from "../../src/lib/venue-stories/cleanup-policy";
-import { VENUE_STORY_MAX_BYTES } from "../../src/lib/venue-stories/types";
+import {
+  checkVenueMediaLimits,
+  VENUE_VIDEO_TOO_LONG_MSG,
+  VENUE_VIDEO_TOO_HEAVY_MSG,
+  VENUE_IMAGE_TOO_HEAVY_MSG,
+} from "../../src/lib/venue-stories/media-limits";
+import {
+  VENUE_STORY_MAX_BYTES,
+  VENUE_STORY_MAX_DURATION_MS,
+  VENUE_STORY_DURATION_TOLERANCE_MS,
+} from "../../src/lib/venue-stories/types";
 
 let pass = 0;
 let fail = 0;
@@ -49,6 +59,28 @@ ok("head 없음 → bad_magic", decideProbe({ total: 1000, head: null, declaredT
 ok("garbage magic → bad_magic", decideProbe({ total: 1000, head: GARBAGE, declaredType: "image", maxBytes: MAX }).reason === "bad_magic");
 ok("declared video인데 실제 image → type_mismatch", decideProbe({ total: 1000, head: JPEG, declaredType: "video", maxBytes: MAX }).reason === "type_mismatch");
 ok("declared image인데 실제 video → type_mismatch", decideProbe({ total: 1000, head: MP4, declaredType: "image", maxBytes: MAX }).reason === "type_mismatch");
+
+// 영상 제한은 시간(15초)이 1차 기준, 50MB는 내부 백스톱 (하린아빠 2026-07-24 스펙)
+console.log("[checkVenueMediaLimits — 영상 duration 먼저 → bytes 백스톱]");
+const OVER_MS = VENUE_STORY_MAX_DURATION_MS + VENUE_STORY_DURATION_TOLERANCE_MS + 1;
+ok("영상 15초 이하 + 50MB 이하 → 통과",
+  checkVenueMediaLimits({ kind: "video", sizeBytes: MAX, durationMs: 10_000 }) === null);
+ok("영상 tolerance 이내(16초) → 통과",
+  checkVenueMediaLimits({ kind: "video", sizeBytes: 1_000, durationMs: VENUE_STORY_MAX_DURATION_MS + VENUE_STORY_DURATION_TOLERANCE_MS }) === null);
+ok("영상 15초 초과 → 길이 문구",
+  checkVenueMediaLimits({ kind: "video", sizeBytes: 1_000, durationMs: OVER_MS }) === VENUE_VIDEO_TOO_LONG_MSG);
+ok("영상 15초 초과 + 50MB 초과 → 길이 문구 우선(게이트 순서)",
+  checkVenueMediaLimits({ kind: "video", sizeBytes: MAX + 1, durationMs: OVER_MS }) === VENUE_VIDEO_TOO_LONG_MSG);
+ok("영상 15초 이하인데 50MB 초과 → 화질 문구(백스톱)",
+  checkVenueMediaLimits({ kind: "video", sizeBytes: MAX + 1, durationMs: 10_000 }) === VENUE_VIDEO_TOO_HEAVY_MSG);
+ok("영상 유저 문구에 MB 미노출",
+  !VENUE_VIDEO_TOO_LONG_MSG.includes("MB") && !VENUE_VIDEO_TOO_HEAVY_MSG.includes("MB"));
+ok("영상 probe 실패(durationMs null) + 50MB 초과 → 픽 게이트 fail-open(다음 단계 fail-close)",
+  checkVenueMediaLimits({ kind: "video", sizeBytes: MAX + 1, durationMs: null }) === null);
+ok("사진 50MB 초과 → 사진 문구(바이트 캡 유지)",
+  checkVenueMediaLimits({ kind: "image", sizeBytes: MAX + 1, durationMs: null }) === VENUE_IMAGE_TOO_HEAVY_MSG);
+ok("사진 50MB 이하 → 통과(자동압축 경로)",
+  checkVenueMediaLimits({ kind: "image", sizeBytes: MAX, durationMs: null }) === null);
 
 // ── fake-fetch 로 probeMediaObject 계약 검증 ──
 function makeRes(opts: {

@@ -5,14 +5,11 @@ import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Loader2, Video as VideoIcon, MapPin } from "lucide-react";
 import { getSafeSession } from "@/lib/supabase/client";
-import { prepareVenueStoryMedia } from "@/lib/venue-stories/upload";
+import { prepareVenueStoryMedia, probeVideoDurationMs } from "@/lib/venue-stories/upload";
+import { checkVenueMediaLimits } from "@/lib/venue-stories/media-limits";
 import { getVenuePosition } from "@/lib/venue-stories/geo";
 import { haversineMeters } from "@/lib/venue-stories/stadiums";
-import {
-  VENUE_STORY_CONSENT_VERSION,
-  VENUE_STORY_MAX_BYTES,
-  type VenueInfo,
-} from "@/lib/venue-stories/types";
+import { VENUE_STORY_CONSENT_VERSION, type VenueInfo } from "@/lib/venue-stories/types";
 import { consentStorageKey } from "@/lib/venue-stories/auth-consent";
 import { createPickController, type PickController } from "@/lib/venue-stories/pick-controller";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
@@ -40,6 +37,8 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   const [picking, setPicking] = useState(false);
   // controller의 onFile은 생성 시 1회 결속되므로, 최신 render closure를 ref로 우회한다
   const handlePickedFileRef = useRef<(file: File | null) => void>(() => {});
+  // 영상 duration probe가 async — reset/새 픽 이후 도착하는 late probe 결과는 무시한다
+  const pickSeqRef = useRef(0);
   const pickControllerRef = useRef<PickController | null>(null);
   const pickController = () =>
     (pickControllerRef.current ??= createPickController({
@@ -133,6 +132,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   const reset = () => {
     // in-flight 픽 invalidate — 닫기/초기화 뒤 도착하는 late change는 무시된다
     cancelPick();
+    pickSeqRef.current++;
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     setFile(null);
     setPreviewUrl(null);
@@ -156,7 +156,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
     pickController().openPicker();
   };
 
-  const handlePickedFile = (f: File | null) => {
+  const handlePickedFile = async (f: File | null) => {
     if (!f || submitting) return;
     setError(null);
     const isVideo = f.type.startsWith("video/");
@@ -165,9 +165,19 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
       setError("이미지 또는 영상만 올릴 수 있어요");
       return;
     }
-    // 사이즈 초과는 픽 시점에 즉시 차단 — '올리기'까지 가지 않게 (upload.ts 검사는 최종 안전망으로 유지)
-    if (f.size > VENUE_STORY_MAX_BYTES) {
-      setError("파일이 너무 큽니다 (최대 50MB)");
+    // 제한 초과는 픽 시점에 즉시 차단 — '올리기'까지 가지 않게 (upload.ts 검사는 최종 안전망).
+    // 영상은 duration(15초)이 1차 기준 — 유저는 방금 찍은 영상이 몇 MB인지 모른다(하린아빠 7/24).
+    // probe 실패(null)는 여기서 차단하지 않고 업로드 단계 검증으로 fail-close(이중 차단 방지).
+    const seq = ++pickSeqRef.current;
+    const durationMs = isVideo ? await probeVideoDurationMs(f) : null;
+    if (seq !== pickSeqRef.current) return; // reset/새 픽이 끼어든 late probe — 버림
+    const limitError = checkVenueMediaLimits({
+      kind: isVideo ? "video" : "image",
+      sizeBytes: f.size,
+      durationMs,
+    });
+    if (limitError) {
+      setError(limitError);
       return;
     }
     if (previewUrl) URL.revokeObjectURL(previewUrl);

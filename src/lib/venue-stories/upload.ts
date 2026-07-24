@@ -2,12 +2,8 @@
 
 import { supabase, getSafeSession } from "@/lib/supabase/client";
 import imageCompression from "browser-image-compression";
-import {
-  VENUE_STORY_MAX_BYTES,
-  VENUE_STORY_MAX_DURATION_MS,
-  VENUE_STORY_DURATION_TOLERANCE_MS,
-  VENUE_STORY_STAGING_BUCKET,
-} from "./types";
+import { VENUE_STORY_STAGING_BUCKET } from "./types";
+import { checkVenueMediaLimits } from "./media-limits";
 
 export interface PreparedMedia {
   mediaType: "video" | "image";
@@ -105,6 +101,30 @@ function probeVideo(
       }
     };
     video.onerror = () => fail("영상을 읽을 수 없습니다");
+  });
+}
+
+/**
+ * 픽 게이트용 경량 duration probe(포스터 캡처 없음, metadata만).
+ * 실패 시 null — 픽 게이트는 fail-open 으로 통과시키고 업로드 단계
+ * probeVideo/서버 검증이 fail-close 한다(정상 파일 이중 차단 방지).
+ */
+export function probeVideoDurationMs(file: File): Promise<number | null> {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const video = document.createElement("video");
+    video.preload = "metadata";
+    video.muted = true;
+    let settled = false;
+    const done = (value: number | null) => {
+      if (settled) return;
+      settled = true;
+      URL.revokeObjectURL(url);
+      resolve(value);
+    };
+    video.onloadedmetadata = () => done(Math.round((video.duration || 0) * 1000));
+    video.onerror = () => done(null);
+    video.src = url;
   });
 }
 
@@ -272,10 +292,6 @@ export async function prepareVenueStoryMedia(
   } = await supabase.auth.getUser();
   if (!user) return { error: "로그인이 필요합니다" };
 
-  if (file.size > VENUE_STORY_MAX_BYTES) {
-    return { error: "파일이 너무 큽니다 (최대 50MB)" };
-  }
-
   const isVideo = file.type.startsWith("video/");
   const isImage = file.type.startsWith("image/");
   if (!isVideo && !isImage) return { error: "이미지 또는 영상만 올릴 수 있어요" };
@@ -287,12 +303,13 @@ export async function prepareVenueStoryMedia(
     } catch (e) {
       return { error: e instanceof Error ? e.message : "영상을 읽을 수 없습니다" };
     }
-    if (
-      probe.durationMs >
-      VENUE_STORY_MAX_DURATION_MS + VENUE_STORY_DURATION_TOLERANCE_MS
-    ) {
-      return { error: "영상은 15초 이하만 올릴 수 있어요" };
-    }
+    // duration(15초) 먼저 → bytes 백스톱 순서 (media-limits 순수 게이트)
+    const limitError = checkVenueMediaLimits({
+      kind: "video",
+      sizeBytes: file.size,
+      durationMs: probe.durationMs,
+    });
+    if (limitError) return { error: limitError };
     // 원본은 private staging 에만 — 서버 ffprobe 검증 통과 시 서버가 공개 버킷으로 승격(B+①)
     const mediaPath = randPath(gameId, user.id, sanitizeExt(file.name, "mp4"));
     // 본음이 용량 대부분 — 전체 진행률의 0~95% 구간으로 매핑(썸네일·메타 POST 잔여 5%)
@@ -322,7 +339,13 @@ export async function prepareVenueStoryMedia(
     };
   }
 
-  // image
+  // image — 시간 개념이 없으니 바이트 캡 유지(자동압축은 캡 통과분에만 적용)
+  const imageLimitError = checkVenueMediaLimits({
+    kind: "image",
+    sizeBytes: file.size,
+    durationMs: null,
+  });
+  if (imageLimitError) return { error: imageLimitError };
   const { width, height } = await probeImage(file);
   let compressed: File = file;
   try {
