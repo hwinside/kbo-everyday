@@ -22,8 +22,16 @@ export default function ScoreBar({
   const awayWinning = awayScore > homeScore;
   const homeWinning = homeScore > awayScore;
   // 두 자리 이상 점수에서 팀명이 세로로 줄바꿈되지 않도록 폰트 크기를 양쪽 동일하게 축소
+  // max-[389px] compact: 320~389px 폭에서 간격·로고·팀명·점수를 동시 축소해 양팀 두 자리(14:10)도 px-4 안에 수납
   const maxScore = Math.max(awayScore, homeScore);
-  const scoreSize = maxScore >= 100 ? "text-[32px]" : maxScore >= 10 ? "text-[40px]" : "text-[48px]";
+  const scoreSize =
+    maxScore >= 100
+      ? "text-[32px] max-[389px]:text-[24px]"
+      : maxScore >= 10
+        ? "text-[40px] max-[389px]:text-[30px]"
+        : "text-[48px] max-[389px]:text-[40px]";
+  const compactLogo =
+    "max-[389px]:size-8! max-[389px]:p-0.5 max-[389px]:[&>img]:max-h-full max-[389px]:[&>img]:max-w-full";
 
   return (
     <div
@@ -35,11 +43,11 @@ export default function ScoreBar({
       }}
     >
       {/* Single row: logo name score : inning : score name logo */}
-      <div className="flex items-center justify-center gap-0">
+      <div data-testid="score-row" className="flex items-center justify-center gap-0">
         {/* Away side */}
-        <div className="flex items-center gap-2.5 flex-1 justify-end">
-          <span className="text-lg font-bold text-text-primary whitespace-nowrap">{awayTeam.shortName}</span>
-          <TeamLogo team={awayTeam} size={40} />
+        <div data-testid="score-away" className="flex items-center gap-2.5 max-[389px]:gap-1.5 flex-1 justify-end">
+          <span className="text-lg max-[389px]:text-sm font-bold text-text-primary whitespace-nowrap">{awayTeam.shortName}</span>
+          <TeamLogo team={awayTeam} size={40} className={compactLogo} />
           <motion.span
             key={`sb-away-${awayScore}`}
             initial={{ scale: 1.3, opacity: 0 }}
@@ -51,7 +59,7 @@ export default function ScoreBar({
         </div>
 
         {/* Center divider + inning */}
-        <div className="flex flex-col items-center mx-3">
+        <div className="flex flex-col items-center mx-3 max-[389px]:mx-2">
           <span className="text-xl text-text-tertiary font-light leading-none">:</span>
           <span className="text-[9px] font-semibold text-[#e53935] bg-[#e5393522] px-1.5 py-px rounded-md mt-1 whitespace-nowrap">
             {currentInning}
@@ -59,7 +67,7 @@ export default function ScoreBar({
         </div>
 
         {/* Home side */}
-        <div className="flex items-center gap-2.5 flex-1 justify-start">
+        <div data-testid="score-home" className="flex items-center gap-2.5 max-[389px]:gap-1.5 flex-1 justify-start">
           <motion.span
             key={`sb-home-${homeScore}`}
             initial={{ scale: 1.3, opacity: 0 }}
@@ -68,8 +76,8 @@ export default function ScoreBar({
           >
             {homeScore}
           </motion.span>
-          <TeamLogo team={homeTeam} size={40} />
-          <span className="text-lg font-bold text-text-primary whitespace-nowrap">{homeTeam.shortName}</span>
+          <TeamLogo team={homeTeam} size={40} className={compactLogo} />
+          <span className="text-lg max-[389px]:text-sm font-bold text-text-primary whitespace-nowrap">{homeTeam.shortName}</span>
         </div>
       </div>
     </div>
