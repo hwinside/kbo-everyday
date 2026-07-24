@@ -1,8 +1,9 @@
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { sendFcmToUsers, WIDGET_STREAM } from "@/lib/notifications/fcm";
 import { TEAMS } from "@/lib/constants/teams";
-import { fetchStandings } from "@/lib/crawler/kbo-api";
+import { fetchStandings, isKboGameCancelled } from "@/lib/crawler/kbo-api";
 import { decideEndStreakCount, type StreakDir } from "@/lib/notifications/end-streak-policy";
+import { shouldSendStartNotification } from "@/lib/notifications/start-freshness-policy";
 import { fetchTeamFanIds } from "@/lib/notifications/audience";
 import type { KboRawGame } from "@/types/api";
 
@@ -10,9 +11,10 @@ import type { KboRawGame } from "@/types/api";
 // warmup cron(경기 시간대 매분)이 호출. 중복 발화 방지 = game_notify_state
 // 조건부 UPDATE 선점 — 다중 인스턴스가 동시에 돌아도 발송은 1회.
 
-// 시작 알림 허용 윈도우: 경기 예정시각 +90분(우천 지연 여유) 이내일 때만 "시작!" 발송.
-// cron/배포 장애가 한참 뒤 복구돼도 뒷북 "경기 시작!"이 안 가게 (삼순 리뷰 #210-2)
-const START_WINDOW_MS = 90 * 60 * 1000;
+// 시작 알림 정시-only 게이트 (2026-07-23 삼순 post-merge blocker 반영):
+// 기존 예정시각 +90분 catch-up 윈도우는 장애 복구 시 최대 90분 뒷북을 허용해 제거.
+// 대신 warmup cron이 "예정(state 1)" 관측 시각을 last_seen_scheduled_at에 기록하고,
+// scheduled→live 전환을 최근 연속 관측한 경우에만 발송한다(shouldSendStartNotification).
 
 export function teamIdByShortName(name: string): number | null {
   const t = TEAMS.find((t) => t.shortName === name);
@@ -39,10 +41,13 @@ function kstDateIso(): string {
 }
 
 /** 양팀을 최애팀으로 둔 유저 id 목록. ok=false면 조회 실패(재시도 대상) */
-export async function fansOfTeams(teamIds: number[]): Promise<{ ids: string[]; ok: boolean }> {
+export async function fansOfTeams(
+  teamIds: number[],
+  opts?: { deadlineAtMs?: number },
+): Promise<{ ids: string[]; ok: boolean }> {
   if (teamIds.length === 0) return { ids: [], ok: true };
   try {
-    return { ids: await fetchTeamFanIds(teamIds), ok: true };
+    return { ids: await fetchTeamFanIds(teamIds, opts), ok: true };
   } catch (error) {
     console.error("[game-status] fans query failed:", (error as Error).message);
     return { ids: [], ok: false };
@@ -144,18 +149,92 @@ async function markOnly(gameId: string, flags: { start?: boolean; end?: boolean;
   }, { onConflict: "game_id" });
 }
 
+// ── 시작알림 경로 seam (테스트 주입용) ──────────────────────────────────────
+// 프로덕션은 아래 default를 그대로 쓴다. 테스트는 이 seam으로 "앞 경기 FCM 지연 → 뒤 경기
+// 시작알림 억제 여부"를 실제 notifyGameStatusTransitions() 실행으로 회귀 검증한다.
+export type StartNotifyDeps = {
+  storeScheduledSeen?: (gameIds: string[], iso: string) => Promise<void>;
+  readStartState?: (
+    gameId: string,
+  ) => Promise<{ start_notified: boolean | null; last_seen_scheduled_at: string | null } | null>;
+  claimStart?: (gameId: string) => Promise<boolean>;
+  unclaimStart?: (gameId: string) => Promise<void>;
+  markStart?: (gameId: string) => Promise<void>;
+  sendStart?: typeof sendFcmToUsers;
+  fansOf?: (teamIds: number[], opts?: { deadlineAtMs?: number }) => Promise<{ ids: string[]; ok: boolean }>;
+};
+
+async function defaultStoreScheduledSeen(gameIds: string[], iso: string): Promise<void> {
+  // 원자 단조 저장(RPC): last_seen_scheduled_at = GREATEST(existing, observed). 겹친 75초 cron에서
+  // 뒤늘게 끝난 이전 invocation의 오래된 관측이 최신 last_seen을 뒤로 덮지 않게 한다
+  // (unconditional upsert = last-write-wins 버그, 삼순 #815 재리뷰 blocker).
+  // query-guard: bounded -- KBO payload의 scheduled gameIds(당일 경기 ≤10)만 입력, RPC returns void
+  const { error } = await supabase.rpc("mark_scheduled_seen", {
+    p_game_ids: gameIds,
+    p_observed_at: iso,
+  });
+  if (error) console.error("[game-status] scheduled-seen rpc failed:", error.message);
+}
+
+async function defaultReadStartState(
+  gameId: string,
+): Promise<{ start_notified: boolean | null; last_seen_scheduled_at: string | null } | null> {
+  const { data } = await supabase
+    .from("game_notify_state")
+    .select("start_notified, last_seen_scheduled_at")
+    .eq("game_id", gameId)
+    .maybeSingle();
+  return data ?? null;
+}
+
 /**
  * 게임 목록을 보고 시작/종료 알림 발송.
  * - live && start 미발송 → 시작 알림
  * - final && end 미발송 → (start도 미발송이면 cron이 경기 중 못 본 것 — 종료만 발송)
  * - 처음 보는 게임이 이미 final이고 start/end 둘 다 미발송 → 발송 없이 마킹
  *   (배포/도입 직후 과거 경기에 뒷북 알림 방지)
- * - cancelled(CANCEL_SC_ID != "0") → "경기 취소" 알림 1회(우천 등). 예정시각 +90분 밖이면 마킹만(뒷북 차단).
+ * - cancelled(isKboGameCancelled) → "경기 취소" 알림 1회(우천 등). 예정시각 +90분 밖이면 마킹만(뒷북 차단).
  */
-export async function notifyGameStatusTransitions(games: KboRawGame[]): Promise<{ started: number; ended: number; cancelled: number }> {
+export async function notifyGameStatusTransitions(
+  games: KboRawGame[],
+  opts?: {
+    /**
+     * 이 games payload를 KBO에서 **관측(fetch)한 시각**. 시작알림 90초 게이트의 기준시각.
+     * (2026-07-24 사고: 게이트가 경기별 처리 시점 Date.now()를 쓰는 바람에, 같은 틱 안에서
+     * 앞 경기 FCM 대량발송 ~26초가 흐른 뒤 처리된 LG:한화가 관측간격 76초인데도 102초로
+     * 오판돼 정시 시작알림이 mark-only 억제됨. 게이트는 "직전 틱 예정 관측 → 이번 틱 live
+     * 관측"의 연속성을 판정하는 것이므로 관측 시각끼리 비교해야 한다.)
+     * 미지정 시 함수 진입 시각으로 1회 캡처(경기별 재측정 금지).
+     */
+    observedAtMs?: number;
+    /**
+     * 시작알림 경로 배선 회귀 테스트용 seam(프로덕션 미지정 → 실제 구현). 앞 경기 FCM 발송
+     * 지연이 뒤 경기 시작알림을 억제하지 않는지 이 함수 자체를 실행해 검증하기 위해
+     * DB/발송/팬조회를 주입한다(정책 함수 직접호출로는 배선을 잡지 못함, 삼순 리뷰 기준③).
+     */
+    startDeps?: StartNotifyDeps;
+  },
+): Promise<{ started: number; ended: number; cancelled: number }> {
+  const observedAtMs = opts?.observedAtMs ?? Date.now();
+  const storeScheduledSeen = opts?.startDeps?.storeScheduledSeen ?? defaultStoreScheduledSeen;
+  const readStartState = opts?.startDeps?.readStartState ?? defaultReadStartState;
+  const claimStart = opts?.startDeps?.claimStart ?? ((gameId: string) => claim(gameId, "start_notified"));
+  const unclaimStart = opts?.startDeps?.unclaimStart ?? ((gameId: string) => unclaim(gameId, "start_notified"));
+  const markStart = opts?.startDeps?.markStart ?? ((gameId: string) => markOnly(gameId, { start: true }));
+  const sendStart = opts?.startDeps?.sendStart ?? sendFcmToUsers;
+  const fansOfStart = opts?.startDeps?.fansOf ?? fansOfTeams;
   let started = 0;
   let ended = 0;
   let cancelled = 0;
+
+  // "예정" 상태 관측 기록 — 다음 틱에서 live 전환을 보면 이 시각이 정시성 근거가 된다.
+  const scheduledIds = games
+    .filter((g) => g.G_ID && g.GAME_STATE_SC === "1" && !isKboGameCancelled(g.CANCEL_SC_ID))
+    .map((g) => g.G_ID as string);
+  if (scheduledIds.length > 0) {
+    // 관측 시각으로 기록 — 다음 틱 게이트가 관측 시각끼리(fetch↔fetch) 간격을 재도록.
+    await storeScheduledSeen(scheduledIds, new Date(observedAtMs).toISOString());
+  }
 
   for (const g of games) {
     const gameId = g.G_ID;
@@ -170,7 +249,7 @@ export async function notifyGameStatusTransitions(games: KboRawGame[]): Promise<
     // dedup = cancel_notified 선점. 시작 알림과 달리 +90분 윈도우를 쓰지 않는다 — 우천 지연이
     // 90분을 넘겨 취소되는 "기다리다 취소"가 가장 중요한 알림이라(삼순 #287 블로커1). 대신
     // *과거 날짜*(배포 직후 지난 경기 백필)만 markOnly로 차단하고, 오늘(KST) 이후 경기 취소는 발송.
-    if (g.CANCEL_SC_ID !== "0") {
+    if (isKboGameCancelled(g.CANCEL_SC_ID)) {
       const isPastDay = g.G_DT != null && g.G_DT.length === 8 && g.G_DT < kstDateStr();
       if (isPastDay) { await markOnly(gameId, { cancel: true }); continue; }
       if (await claim(gameId, "cancel_notified")) {
@@ -200,22 +279,33 @@ export async function notifyGameStatusTransitions(games: KboRawGame[]): Promise<
     }
 
     if (g.GAME_STATE_SC === "2") {
-      // 진행 중 — 시작 알림. 시간 윈도우 밖이면 발송 없이 마킹만(뒷북 차단)
-      const startedAt = scheduledStartMs(g.G_DT, g.G_TM);
-      const tooLate = startedAt !== null && Date.now() - startedAt > START_WINDOW_MS;
-      if (tooLate) {
-        await markOnly(gameId, { start: true });
+      // 진행 중 — 시작 알림. scheduled→live 전환을 최근 연속 관측한 경우에만 발송하고,
+      // 첫 관측이 이미 live(장애 복구·재배포)거나 관측이 stale이면 발송 없이 마킹만.
+      // (2026-07-23 하린아빠 지시 "정확한 시간에 가야 하는 알림만" + 삼순 post-merge blocker)
+      const seenRow = await readStartState(gameId);
+      if (seenRow?.start_notified) continue;
+      const lastSeenMs = seenRow?.last_seen_scheduled_at
+        ? Date.parse(seenRow.last_seen_scheduled_at)
+        : null;
+      const sendOk = shouldSendStartNotification({
+        lastSeenScheduledAtMs: Number.isFinite(lastSeenMs as number) ? lastSeenMs : null,
+        nowMs: observedAtMs,
+        inningNo: g.GAME_INN_NO,
+        isTop: g.GAME_TB_SC ? g.GAME_TB_SC === "T" : null,
+      });
+      if (!sendOk) {
+        await markStart(gameId);
         continue;
       }
-      if (await claim(gameId, "start_notified")) {
-        const fans = await fansOfTeams(teamIds);
-        if (!fans.ok) { await unclaim(gameId, "start_notified"); continue; } // 조회 실패 → 재시도
-        const res = await sendFcmToUsers(fans.ids, {
+      if (await claimStart(gameId)) {
+        const fans = await fansOfStart(teamIds);
+        if (!fans.ok) { await unclaimStart(gameId); continue; } // 조회 실패 → 재시도
+        const res = await sendStart(fans.ids, {
           title: "⚾ 경기 시작!",
           body: `${away} vs ${home} 경기가 시작됐어요. 크보팬에서 자세한 경기 내용을 확인해보세요!`,
           url,
         }, "game_start");
-        if (!res.ok) { await unclaim(gameId, "start_notified"); continue; } // 인프라 실패 → 재시도
+        if (!res.ok) { await unclaimStart(gameId); continue; } // 인프라 실패 → 재시도
         started += res.sent;
         // 잠금화면 ongoing card 시작 (앱 미진입 자동 표시, C2) — data-only, fire-and-forget.
         // 시작 알림은 이미 성공(started 카운트)이라 카드 실패해도 unclaim 안 함.
@@ -223,7 +313,7 @@ export async function notifyGameStatusTransitions(games: KboRawGame[]): Promise<
         const hScore = parseInt(g.B_SCORE_CN ?? "0") || 0;
         // 위젯(안드로이드)용 구조화 필드 — gameId에서 2자 팀코드 파싱(YYYYMMDD+AWAY+HOME+N).
         const codes = gameId.match(/^\d{8}([A-Z]{2})([A-Z]{2})\d$/);
-        await sendFcmToUsers(fans.ids, {
+        await sendStart(fans.ids, {
           title: `${away} ${aScore} : ${hScore} ${home}`,
           body: "경기 시작",
           url,
@@ -267,7 +357,7 @@ export async function notifyGameStatusTransitions(games: KboRawGame[]): Promise<
       // 오늘 팀별 final 경기 수 — 더블헤더 2차전은 스냅샷이 1차전 결과를 모르므로 폴백 판정용.
       const finalsToday = new Map<number, number>();
       for (const gg of games) {
-        if (gg.CANCEL_SC_ID !== "0" || gg.GAME_STATE_SC !== "3") continue;
+        if (isKboGameCancelled(gg.CANCEL_SC_ID) || gg.GAME_STATE_SC !== "3") continue;
         for (const nm of [gg.AWAY_NM ?? "", gg.HOME_NM ?? ""]) {
           const id = teamIdByShortName(nm);
           if (id !== null) finalsToday.set(id, (finalsToday.get(id) ?? 0) + 1);

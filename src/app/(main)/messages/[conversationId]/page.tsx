@@ -26,15 +26,18 @@ const REPORT_CATEGORIES = [
 ] as const;
 
 const MAX_DM_IMAGES = 3;
+const SEND_ERROR = "현재 이 대화에서는 쪽지를 보낼 수 없어요.";
 
 export default function DMChatPage() {
   const params = useParams();
   const router = useRouter();
   const conversationId = params.conversationId as string;
+  const draftTargetId = conversationId.startsWith("new-") ? conversationId.slice(4) : null;
   const { user } = useAuth();
-  const { messages, loading, sendMessage } = useDMChat(conversationId);
+  const { messages, loading, sendMessage } = useDMChat(draftTargetId ? "" : conversationId);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState("");
   const [images, setImages] = useState<{ url: string; name: string }[]>([]);
   const [uploading, setUploading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -51,14 +54,17 @@ export default function DMChatPage() {
     if (!user || !conversationId) return;
 
     async function fetchOther() {
-      const { data: conv } = await supabase
-        .from("dm_conversations")
-        .select("user1_id, user2_id")
-        .eq("id", conversationId)
-        .single();
+      let oid = draftTargetId;
+      if (!oid) {
+        const { data: conv } = await supabase
+          .from("dm_conversations")
+          .select("user1_id, user2_id")
+          .eq("id", conversationId)
+          .single();
 
-      if (!conv) return;
-      const oid = conv.user1_id === user!.id ? conv.user2_id : conv.user1_id;
+        if (!conv) return;
+        oid = conv.user1_id === user!.id ? conv.user2_id : conv.user1_id;
+      }
       setOtherId(oid);
 
       const { data: prof } = await supabase
@@ -73,7 +79,7 @@ export default function DMChatPage() {
       }
     }
     fetchOther();
-  }, [user, conversationId]);
+  }, [user, conversationId, draftTargetId]);
 
   // Block hook
   const { block, isBlocked } = useBlockUser(otherId ?? "");
@@ -125,7 +131,8 @@ export default function DMChatPage() {
     for (const file of files.slice(0, remaining)) {
       const formData = new FormData();
       formData.append("file", file);
-      formData.append("conversationId", conversationId);
+      if (draftTargetId) formData.append("targetUserId", draftTargetId);
+      else formData.append("conversationId", conversationId);
       try {
         const res = await fetch("/api/dm/upload", {
           method: "POST",
@@ -156,11 +163,15 @@ export default function DMChatPage() {
     // 사진은 운영팀 대화에서만 전송 (유저↔유저는 텍스트만)
     const sendImages = isOperatorConv ? images : [];
     if ((!input.trim() && sendImages.length === 0) || sending || uploading) return;
+    setSendError("");
     setSending(true);
-    const ok = await sendMessage(input.trim(), sendImages.map((img) => img.url));
-    if (ok) {
+    const result = await sendMessage(input.trim(), sendImages.map((img) => img.url), draftTargetId ?? undefined);
+    if (result.ok && result.conversationId) {
       setInput("");
       setImages([]);
+      if (draftTargetId) router.replace(`/messages/${result.conversationId}`);
+    } else {
+      setSendError(SEND_ERROR);
     }
     setSending(false);
   };
@@ -343,6 +354,9 @@ export default function DMChatPage() {
         </div>
       ) : (
         <div className="px-5 py-3 border-t border-border bg-bg-secondary pb-safe">
+          {sendError && (
+            <p role="alert" className="mb-2 text-center text-xs text-red-500">{sendError}</p>
+          )}
           {isOperatorConv && images.length > 0 && (
             <div className="flex flex-wrap gap-2 mb-2">
               {images.map((image, index) => (
@@ -391,7 +405,7 @@ export default function DMChatPage() {
             <textarea
               ref={inputRef}
               value={input}
-              onChange={(e) => setInput(e.target.value)}
+              onChange={(e) => { setInput(e.target.value); setSendError(""); }}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                   e.preventDefault();
@@ -405,6 +419,7 @@ export default function DMChatPage() {
             <button
               onClick={handleSend}
               disabled={(!input.trim() && images.length === 0) || sending || uploading}
+              aria-label="쪽지 보내기"
               className="w-10 h-10 rounded-full bg-accent flex items-center justify-center disabled:opacity-30 transition-opacity flex-shrink-0"
             >
               <Send size={18} className="text-white" />

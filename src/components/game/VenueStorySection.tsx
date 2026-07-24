@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Plus, Play } from "lucide-react";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { getSafeSession } from "@/lib/supabase/client";
@@ -8,20 +8,62 @@ import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import VenueStoryComposer from "./VenueStoryComposer";
 import VenueStoryViewer from "./VenueStoryViewer";
 import type { VenueStory } from "@/lib/venue-stories/types";
+import { loadSeenIds, markStorySeen, orderBySeen } from "@/lib/venue-stories/seen";
 
 interface Props {
   gameId: string;
 }
 
+// iOS 실기기 키보드 QA(?storyQaKeyboard=1) 전용 mock — game-chat 의 chatQaKeyboard 패턴.
+// 실제 스토리/로그인 없이도 뷰어 입력바의 focus→키보드→submit→blur 를 검증한다.
+// src 없는 video 라 자동진행/종료가 없어 뷰어가 측정 동안 열려 있다(id -1 은
+// 서버에 없는 스토리 — 댓글 GET 404/POST 비로그인 차단이라 쓰기 부작용 0).
+function buildQaKeyboardStory(gameId: string): VenueStory {
+  return {
+    id: -1,
+    gameId,
+    userId: "00000000-0000-0000-0000-000000000000",
+    mediaType: "video",
+    mediaUrl: "data:video/mp4;base64,",
+    thumbUrl: null,
+    durationMs: null,
+    width: null,
+    height: null,
+    caption: null,
+    venueVerified: false,
+    createdAt: new Date().toISOString(),
+    author: { nickname: "QA", avatarUrl: null, teamId: null },
+  };
+}
+
 export default function VenueStorySection({ gameId }: Props) {
   const { user } = useAuth();
+  const storyQaKeyboard =
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("storyQaKeyboard") === "1";
   const [stories, setStories] = useState<VenueStory[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [composerOpen, setComposerOpen] = useState(false);
-  const [viewerIndex, setViewerIndex] = useState<number | null>(null);
+  const [viewerIndex, setViewerIndex] = useState<number | null>(
+    storyQaKeyboard ? 0 : null,
+  );
   const [toast, setToast] = useState<string | null>(null);
+  // 본/안 본 스토리 (인스타 동일 — 하린아빠 21:52 지시). 뷰어 열려있는 동안엔 재정렬하지
+  // 않도록(인덱스 어긋남 방지) 뷰어 닫힐 때만 seenIds를 다시 로드한다.
+  const [seenIds, setSeenIds] = useState<ReadonlySet<string>>(() => new Set());
+
+  // 계정(user.id) 스코프로 로드 — 계정 전환 시에도 즉시 해당 사용자 이력으로 격리 재로드
+  const userId = user?.id ?? null;
+  useEffect(() => {
+    setSeenIds(loadSeenIds(gameId, userId));
+  }, [gameId, userId]);
 
   const fetchStories = useCallback(async () => {
+    if (storyQaKeyboard) {
+      // QA 하네스는 mock 뷰어만 사용 — 실데이터 조회 자체를 하지 않는다
+      setLoaded(true);
+      return;
+    }
     try {
       // 로그인 상태면 bearer 전달 → 서버가 차단 유저 필터(getVerifiedUserFromRequest 는 Bearer-only)
       const session = await getSafeSession();
@@ -36,11 +78,22 @@ export default function VenueStorySection({ gameId }: Props) {
     } finally {
       setLoaded(true);
     }
-  }, [gameId]);
+  }, [gameId, storyQaKeyboard]);
 
   useEffect(() => {
     fetchStories();
   }, [fetchStories]);
+
+  // 안 본 스토리 좌측 전진배치. 뷰어/트레이가 같은 배열을 쓰므로 인덱스 일치.
+  const orderedStories = useMemo(() => orderBySeen(stories, seenIds), [stories, seenIds]);
+
+  const handleStorySeen = useCallback(
+    (storyId: string | number) => {
+      // 즉시 localStorage 기록만 하고, 트레이 재정렬(seenIds 상태 갱신)은 뷰어 닫힐 때.
+      markStorySeen(gameId, storyId, userId);
+    },
+    [gameId, userId],
+  );
 
   const handleUploadClick = () => {
     if (!user) {
@@ -74,7 +127,7 @@ export default function VenueStorySection({ gameId }: Props) {
           <span className="text-[11px] text-text-tertiary">올리기</span>
         </button>
 
-        {stories.map((s, i) => {
+        {orderedStories.map((s, i) => {
           const team = s.author.teamId != null ? getTeamById(s.author.teamId) : undefined;
           const teamColor = team ? getTeamBgColor(team, "dark") : null;
           return (
@@ -83,7 +136,11 @@ export default function VenueStorySection({ gameId }: Props) {
               onClick={() => setViewerIndex(i)}
               className="shrink-0 w-[68px] flex flex-col items-center gap-1"
             >
-              <div className="relative w-[68px] h-[104px] rounded-xl overflow-hidden bg-bg-tertiary ring-2 ring-red-500/60">
+              <div
+                className={`relative w-[68px] h-[104px] rounded-xl overflow-hidden bg-bg-tertiary ring-2 ${
+                  seenIds.has(String(s.id)) ? "ring-gray-500/50" : "ring-red-500/60"
+                }`}
+              >
                 {s.thumbUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={s.thumbUrl} alt="" className="w-full h-full object-cover" />
@@ -129,12 +186,18 @@ export default function VenueStorySection({ gameId }: Props) {
         onUploaded={fetchStories}
       />
 
-      {viewerIndex !== null && stories[viewerIndex] && (
+      {/* #809 본/안 본 정렬(orderedStories) + #807 QA 키보드 하네스 모두 보존 */}
+      {viewerIndex !== null && (storyQaKeyboard || orderedStories[viewerIndex]) && (
         <VenueStoryViewer
-          stories={stories}
+          stories={storyQaKeyboard ? [buildQaKeyboardStory(gameId)] : orderedStories}
           startIndex={viewerIndex}
           currentUserId={user?.id ?? null}
-          onClose={() => setViewerIndex(null)}
+          onStorySeen={handleStorySeen}
+          onClose={() => {
+            setViewerIndex(null);
+            // 닫힐 때만 재정렬/테두리 갱신 (뷰어 열려있는 동안 인덱스 어긋남 방지)
+            setSeenIds(loadSeenIds(gameId, userId));
+          }}
           onChanged={fetchStories}
         />
       )}

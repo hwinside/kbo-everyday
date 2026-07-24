@@ -6,14 +6,19 @@ async function checkPin(request: NextRequest): Promise<boolean> {
   return isAdminAuthedRequest(request);
 }
 
-// PostgREST caps a single response at 1000 rows and rejects oversized `.in()`
-// id lists. The 운영팀 계정 누적 대화가 3,000개를 넘어가면서 (1) 대화목록이 1,000개에서
-// 잘리고 (2) 1,000개 id를 한 번에 넣은 카운트 쿼리가 Bad Request로 실패 → 카운트가 전부
-// 0 → 수신함이 빈 채로 표시됐다. 아래 헬퍼들로 select는 페이지네이션, id 필터는 청크 분할한다.
-const PAGE_SIZE = 1000;
-const IN_CHUNK = 150;
+const INBOX_PAGE_SIZE = 50;
 
-type SupabaseAdmin = ReturnType<typeof getSupabaseAdmin>;
+type InboxRow = {
+  id: string;
+  other_user_id: string;
+  other_nickname: string;
+  other_team_id: number | null;
+  last_message: string | null;
+  last_message_at: string;
+  unread_count: number | string;
+  user_msg_count: number | string;
+  sys_msg_count: number | string;
+};
 
 function normalizeContent(content: unknown) {
   return typeof content === "string" ? content.replace(/\r\n/g, "\n").trimEnd() : "";
@@ -32,80 +37,27 @@ function lastMessagePreview(content: string, imageUrls: string[]) {
   return imageUrls.length > 0 ? "사진을 보냈습니다" : "";
 }
 
-// 1,000행 상한을 넘겨 운영팀의 모든 대화를 가져온다.
-async function fetchAllSystemConversations(admin: SupabaseAdmin, systemUserId: string) {
-  const all: Record<string, unknown>[] = [];
-  for (let from = 0; ; from += PAGE_SIZE) {
-    const { data, error } = await admin
-      .from("dm_conversations")
-      .select("*")
-      .or(`user1_id.eq.${systemUserId},user2_id.eq.${systemUserId}`)
-      .order("last_message_at", { ascending: false })
-      .range(from, from + PAGE_SIZE - 1);
-    if (error || !data || data.length === 0) break;
-    all.push(...data);
-    if (data.length < PAGE_SIZE) break;
+function parseCursor(request: NextRequest) {
+  const cursorAt = request.nextUrl.searchParams.get("cursorAt");
+  const cursorId = request.nextUrl.searchParams.get("cursorId");
+  if (!cursorAt && !cursorId) return { cursorAt: null, cursorId: null };
+  if (!cursorAt || !cursorId) return null;
+  if (!Number.isFinite(Date.parse(cursorAt))) return null;
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(cursorId)) {
+    return null;
   }
-  return all;
+  return { cursorAt: new Date(cursorAt).toISOString(), cursorId };
 }
 
-// conversation_id별 메시지 수를 id 청크 + 페이지네이션으로 집계한다.
-// kind: "user"=운영팀 외 sender, "sys"=운영팀 sender, "unread"=운영팀 외 + 안읽음
-async function countMessagesByConversation(
-  admin: SupabaseAdmin,
-  convIds: string[],
-  systemUserId: string,
-  kind: "user" | "sys" | "unread"
-) {
-  const map = new Map<string, number>();
-  for (let i = 0; i < convIds.length; i += IN_CHUNK) {
-    const slice = convIds.slice(i, i + IN_CHUNK);
-    for (let from = 0; ; from += PAGE_SIZE) {
-      let q = admin.from("dm_messages").select("conversation_id").in("conversation_id", slice);
-      if (kind === "sys") {
-        q = q.eq("sender_id", systemUserId);
-      } else {
-        q = q.neq("sender_id", systemUserId);
-        if (kind === "unread") q = q.eq("is_read", false);
-      }
-      const { data, error } = await q.range(from, from + PAGE_SIZE - 1);
-      if (error || !data || data.length === 0) break;
-      (data as { conversation_id: string }[]).forEach((r) => {
-        map.set(r.conversation_id, (map.get(r.conversation_id) ?? 0) + 1);
-      });
-      if (data.length < PAGE_SIZE) break;
-    }
-  }
-  return map;
-}
-
-// 안읽은 메시지(운영팀 외 sender + is_read=false) 총합을 id 청크별 head 카운트로 가볍게 집계한다.
-// 좌측 메뉴 배지용 — 대화별 분해 없이 합계만 필요하므로 row를 가져오지 않는다.
-async function countUnreadTotal(admin: SupabaseAdmin, convIds: string[], systemUserId: string) {
-  let total = 0;
-  for (let i = 0; i < convIds.length; i += IN_CHUNK) {
-    const slice = convIds.slice(i, i + IN_CHUNK);
-    const { count } = await admin
-      .from("dm_messages")
-      .select("*", { count: "exact", head: true })
-      .in("conversation_id", slice)
-      .neq("sender_id", systemUserId)
-      .eq("is_read", false);
-    total += count ?? 0;
-  }
+async function fetchUnreadTotal(admin: ReturnType<typeof getSupabaseAdmin>, systemUserId: string) {
+  // query-guard: bounded -- scalar RPC always returns exactly one BIGINT.
+  const { data, error } = await admin.rpc("admin_dm_unread_total", {
+    p_system_user_id: systemUserId,
+  });
+  if (error || data === null) throw new Error(error?.message ?? "missing unread total");
+  const total = Number(data);
+  if (!Number.isSafeInteger(total) || total < 0) throw new Error("invalid unread total");
   return total;
-}
-
-// 프로필을 id 청크로 나눠 batch fetch 한다.
-async function fetchProfilesByIds(admin: SupabaseAdmin, ids: string[]) {
-  const map = new Map<string, { id: string; nickname: string; team_id: number | null }>();
-  const unique = [...new Set(ids)];
-  for (let i = 0; i < unique.length; i += IN_CHUNK) {
-    const slice = unique.slice(i, i + IN_CHUNK);
-    const { data } = await admin.from("profiles").select("id, nickname, team_id").in("id", slice);
-    (data ?? []).forEach((p: { id: string; nickname: string; team_id: number | null }) => map.set(p.id, p));
-  }
-  return map;
 }
 
 // GET: 운영팀 계정의 대화 목록 + 메시지
@@ -125,10 +77,12 @@ export async function GET(request: NextRequest) {
 
   // 안읽은 쪽지 총 갯수 (어드민 좌측 메뉴 배지용)
   if (request.nextUrl.searchParams.get("count") === "unread") {
-    const convs = await fetchAllSystemConversations(admin, systemUserId);
-    const convIds = convs.map((c) => c.id as string);
-    const unreadTotal = convIds.length === 0 ? 0 : await countUnreadTotal(admin, convIds, systemUserId);
-    return NextResponse.json({ unreadTotal });
+    try {
+      return NextResponse.json({ unreadTotal: await fetchUnreadTotal(admin, systemUserId) });
+    } catch (error) {
+      console.error("[admin/messages] unread total failed:", error);
+      return NextResponse.json({ error: "fetch_unread_total_failed" }, { status: 500 });
+    }
   }
 
   // 발송 로그 조회 (발송함 탭)
@@ -233,67 +187,47 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ messages: enriched });
   }
 
-  // 대화 목록 조회 (1,000행 상한을 넘겨 전체 페이지네이션)
-  const convs = await fetchAllSystemConversations(admin, systemUserId);
-
-  if (convs.length === 0) {
-    return NextResponse.json({ conversations: [] });
+  const cursor = parseCursor(request);
+  if (!cursor) {
+    return NextResponse.json({ error: "invalid_cursor" }, { status: 400 });
   }
 
-  const convIds = convs.map((c) => c.id as string);
+  try {
+    // 수신 자격(유저 발신 1건+)을 SQL 내부에서 먼저 적용한 뒤 50건을 자른다.
+    // unreadTotal은 페이지와 독립적인 전역 집계이며, 둘 중 하나라도 실패하면 0으로 숨기지 않는다.
+    const [{ data, error }, unreadTotal] = await Promise.all([
+      // query-guard: bounded -- SQL RPC clamps p_limit to 101 rows.
+      admin.rpc("admin_dm_inbox_page", {
+        p_system_user_id: systemUserId,
+        p_cursor_at: cursor.cursorAt,
+        p_cursor_id: cursor.cursorId,
+        p_limit: INBOX_PAGE_SIZE + 1,
+      }),
+      fetchUnreadTotal(admin, systemUserId),
+    ]);
+    if (error || !data) throw new Error(error?.message ?? "missing inbox page");
 
-  // 각 대화의 유저 메시지 수 (운영팀이 아닌 sender) — id 청크 분할 집계
-  const userMsgCountMap = await countMessagesByConversation(admin, convIds, systemUserId, "user");
+    const rows = data as InboxRow[];
+    const hasMore = rows.length > INBOX_PAGE_SIZE;
+    const page = rows.slice(0, INBOX_PAGE_SIZE).map((row) => ({
+      ...row,
+      unread_count: Number(row.unread_count),
+      user_msg_count: Number(row.user_msg_count),
+      sys_msg_count: Number(row.sys_msg_count),
+    }));
+    const tail = page.at(-1);
 
-  // 각 대화의 운영팀 메시지 수
-  const sysMsgCountMap = await countMessagesByConversation(admin, convIds, systemUserId, "sys");
-
-  // unread counts (유저가 보낸 안읽음 메시지)
-  const unreadMap = await countMessagesByConversation(admin, convIds, systemUserId, "unread");
-
-  // 상대방 profiles batch fetch — id 청크 분할
-  const otherIds = convs.map((c) =>
-    c.user1_id === systemUserId ? (c.user2_id as string) : (c.user1_id as string)
-  );
-  const profileMap = await fetchProfilesByIds(admin, otherIds);
-
-  const allMapped = convs.map((raw) => {
-    const c = raw as {
-      id: string;
-      user1_id: string;
-      user2_id: string;
-      last_message: string | null;
-      last_message_at: string;
-    };
-    const otherId = c.user1_id === systemUserId ? c.user2_id : c.user1_id;
-    const prof = profileMap.get(otherId);
-    return {
-      id: c.id,
-      other_user_id: otherId,
-      other_nickname: prof?.nickname ?? "알 수 없음",
-      other_team_id: prof?.team_id ?? null,
-      last_message: c.last_message,
-      last_message_at: c.last_message_at,
-      unread_count: unreadMap.get(c.id) ?? 0,
-      user_msg_count: userMsgCountMap.get(c.id) ?? 0,
-      sys_msg_count: sysMsgCountMap.get(c.id) ?? 0,
-    };
-  });
-
-  // 탭별 필터링
-  let filtered = allMapped;
-  if (tab === "inbox") {
-    // 수신함: 유저가 보낸 메시지가 1개 이상인 대화만
-    filtered = allMapped.filter((c: { user_msg_count: number }) => c.user_msg_count > 0);
-  } else if (tab === "sent") {
-    // 발송함: 운영팀 메시지가 있고, 자동 환영 메시지만 있는 대화는 제외
-    // → 운영팀 메시지 있음 AND (유저 답장이 있거나 운영팀 메시지가 2개 이상 = 수동 발송이 있음)
-    filtered = allMapped.filter((c: { sys_msg_count: number; user_msg_count: number }) =>
-      c.sys_msg_count > 0 && (c.user_msg_count > 0 || c.sys_msg_count > 1)
-    );
+    return NextResponse.json({
+      conversations: page,
+      unreadTotal,
+      nextCursor: hasMore && tail
+        ? { lastMessageAt: tail.last_message_at, conversationId: tail.id }
+        : null,
+    });
+  } catch (error) {
+    console.error("[admin/messages] inbox page failed:", error);
+    return NextResponse.json({ error: "fetch_inbox_failed" }, { status: 500 });
   }
-
-  return NextResponse.json({ conversations: filtered });
 }
 
 // POST: 운영팀 계정으로 답장 또는 전체발송

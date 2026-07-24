@@ -117,8 +117,20 @@ async function main() {
   }));
 
   await page.goto(`${BASE_URL}/games/${GAME_ID}?chatDebug=1`, { waitUntil: "domcontentloaded" });
-  const gifButton = page.getByLabel("GIF");
+  const gifButton = page.locator('button[aria-label="GIF"]:visible').first();
   await gifButton.waitFor({ state: "visible" });
+
+  const composer = gifButton.locator('xpath=ancestor::*[@data-composer="game-chat"][1]');
+  const inputBox = await composer.locator('textarea[name="chat-message"]').boundingBox();
+  const gifButtonBox = await gifButton.boundingBox();
+  const sendButtonBox = await composer.locator("button:has(svg.lucide-send)").boundingBox();
+  const centerY = (box) => box.y + box.height / 2;
+  assert(
+    inputBox && gifButtonBox && sendButtonBox
+      && Math.abs(centerY(inputBox) - centerY(gifButtonBox)) <= 1
+      && Math.abs(centerY(inputBox) - centerY(sendButtonBox)) <= 1,
+    "작성창 GIF·입력·전송 버튼 중앙 정렬",
+  );
 
   await gifButton.click();
   await page.getByAltText("QA root GIF").click();

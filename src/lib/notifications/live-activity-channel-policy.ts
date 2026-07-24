@@ -63,6 +63,48 @@ export function applyChannelHeartbeat(
   return decision;
 }
 
+/** 채널 update 최종 판정 입력 — base diff + heartbeat + 지명 catch-up 합성. */
+export interface ChannelUpdateResolutionInput extends ChannelPushDecisionInput {
+  /** 마지막 성공 p10 broadcast 시각(ms). null = 미기록. */
+  lastP10AtMs: number | null;
+  nowMs: number;
+  /** fast-path 유실 catch-up 지명 경기 여부 (forceCurrentStateGameIds). */
+  forceCatchup: boolean;
+}
+
+export interface ChannelUpdateResolution {
+  decision: ChannelPushDecision;
+  /** heartbeat 승격 발송(관제 카운터용 — forced catch-up 아님). */
+  isHeartbeat: boolean;
+  /** 지명 catch-up으로 p10 승격된 발송(관제 catchups 카운터용). */
+  isForcedCatchup: boolean;
+}
+
+/**
+ * 채널 update 최종 판정 — base diff → heartbeat → 지명 catch-up 순 합성 (순수 함수,
+ * 배선은 live-activity-channels.ts).
+ *
+ * 지명 catch-up(삼순 R2 blocker③): fast-path가 유실 복구로 지명한 경기는 *자연 p10이
+ * 아닌 한* 항상 p10으로 승격한다. 기존(R1)에는 `!heartbeatDecision.send`일 때만 승격해,
+ * relay lastPlay만 달라진 base=p5 틱에서 catch-up이 p5로 나가고 pending은 이미 비워져
+ * 다음 p10 재시도도 없이 2분 heartbeat까지 stale로 남았다. p5는 예산 미소모라 놓친
+ * 단말을 복구하지 못하므로 catch-up 목적상 반드시 p10이어야 한다. 자연 p10(변화/
+ * heartbeat)이면 그 발송이 catch-up을 겸한다(성공 시 last_p10_at 전진 — 이중 승격 불필요).
+ */
+export function resolveChannelUpdateDecision(
+  i: ChannelUpdateResolutionInput,
+): ChannelUpdateResolution {
+  const base = decideChannelPush(i);
+  const heartbeat = applyChannelHeartbeat(base, i.lastP10AtMs, i.nowMs);
+  const naturalP10 = heartbeat.send && heartbeat.priority === "10";
+  const isForcedCatchup = i.forceCatchup && !naturalP10;
+  const decision: ChannelPushDecision = isForcedCatchup
+    ? { send: true, priority: "10" }
+    : heartbeat;
+  const isHeartbeat = naturalP10 && !(base.send && base.priority === "10");
+  return { decision, isHeartbeat, isForcedCatchup };
+}
+
 /** 레거시 per-토큰 update 발송 판정 입력 (#664 catch-up). */
 export interface LegacyTokenUpdateInput {
   /** 경기 단위 skip/priority 판정(decideChannelPush 결과). null = 판정 재료 없음. */
@@ -243,11 +285,47 @@ export function p2sChannelEligible(token: {
 /**
  * p2s 발송 attempt 순서 — env는 게이트가 아니라 per-attempt 규칙 (v4 blocker①).
  * known이면 그 env 쌍만, null이면 prod 쌍 → (BadDeviceToken 시) sandbox 쌍.
- * 각 attempt에서 해당 env의 active 채널이 없으면 그 attempt는 채널 없이(기존 payload) 발송.
  * 불변식: 발송 host env == 포함 channelId env (교차 쌍 금지 — 쌍은 호출부가 이 순서로 구성).
+ * channel-capable 토큰의 채널 부재 처리(레거시 발송 금지·유보)는 p2sSendPlan이 담당한다
+ * (PR #808 R3 — 종전 "채널 없으면 그 attempt는 채널 없이 발송" 규칙 폐기).
  */
 export function p2sEnvAttempts(knownEnv: ApnsEnvironment | null): ApnsEnvironment[] {
   return knownEnv === null ? ["production", "sandbox"] : [knownEnv];
+}
+
+/**
+ * p2s 발송 계획 (PR #808 R3, 삼순 blocker① — 서버 자동 시작 경로의 레거시 fallback 차단).
+ *
+ * channel-capable(iOS18+/build16+) 토큰은 *active 채널이 준비된 env로만* 발송한다:
+ * - 준비된 env가 하나도 없으면 `defer` — 선점(claim)도 발송도 하지 않고 다음 틱이
+ *   재시도한다. 7/23 사고 입구(채널이 늦게 생긴 날, 자동 p2s가 채널 payload 없이 레거시
+ *   카드를 낳아 예산 스로틀에 갇힘)의 서버측 차단. 앱 내 start()의 deferStart와 대칭.
+ * - 준비된 env가 일부면 그 env로만 attempt(`truncated` 표시). env 미상(null) 토큰이
+ *   prod-only 채널에서 BadDeviceToken을 받으면 "sandbox 토큰인데 sandbox 채널이 아직
+ *   없다"일 수 있으므로, truncated의 마지막 BadDeviceToken은 토큰 무효 확정이 아니다 —
+ *   호출부는 삭제 대신 선점 해제(다음 틱 재시도)로 처리한다.
+ * 레거시 토큰(iOS17↓/build15↓/미보고)은 기존 그대로 — 채널 payload 없이 전체 attempt.
+ */
+export type P2sSendPlan =
+  | { kind: "defer" }
+  | { kind: "send"; attempts: ApnsEnvironment[]; channelRequired: boolean; truncated: boolean };
+
+export function p2sSendPlan(
+  token: { os_major: number | null; app_build: number | null; env: ApnsEnvironment | null },
+  channelEnvs: ReadonlySet<ApnsEnvironment>,
+): P2sSendPlan {
+  const attempts = p2sEnvAttempts(token.env);
+  if (!p2sChannelEligible(token)) {
+    return { kind: "send", attempts, channelRequired: false, truncated: false };
+  }
+  const withChannel = attempts.filter((e) => channelEnvs.has(e));
+  if (withChannel.length === 0) return { kind: "defer" };
+  return {
+    kind: "send",
+    attempts: withChannel,
+    channelRequired: true,
+    truncated: withChannel.length < attempts.length,
+  };
 }
 
 /**
@@ -343,4 +421,262 @@ export function isLiveChannelSubscription(
   activeKeys: Set<string>,
 ): boolean {
   return activeKeys.has(`${sub.game_id}|${sub.environment}|${sub.channel_id}`);
+}
+
+/** started row에 기록된 채널 출생 세대 — p2s 발송 성공 시점의 (environment, channel_id). */
+export interface ChannelBornRef {
+  game_id: string;
+  channel_born_environment: string | null;
+  channel_born_channel_id: string | null;
+}
+
+/**
+ * 채널 출생 세대 유효성 — 기록된 (game_id, environment, channel_id)가 *현재 active
+ * 채널과 정확 일치*할 때만 broadcast 수신으로 인정(삼순 라운드2 blocker). 채널 A로
+ * 태어난 카드는 A가 ChannelNotRegistered로 무효화되고 B로 재생성되면 B broadcast를
+ * 못 받으므로, 세대 불일치(구채널) 행은 gap/wake 대상으로 복귀해야 한다. 이후 update
+ * 토큰 또는 새 채널 ACK가 생기면 기존 로직(토큰∪유효 ACK)이 다시 제외한다.
+ * null(마이그레이션 이전 행 = 세대 미기록)은 보수적으로 불인정(gap 포함).
+ * 어드민 updatable 합산과 wake 제외 판정이 *모두 이 함수 하나*를 기준으로 삼는다
+ * (이중 기준 금지 계약).
+ */
+export function isLiveBornChannel(row: ChannelBornRef, activeKeys: Set<string>): boolean {
+  if (!row.channel_born_environment || !row.channel_born_channel_id) return false;
+  return activeKeys.has(
+    `${row.game_id}|${row.channel_born_environment}|${row.channel_born_channel_id}`,
+  );
+}
+
+/**
+ * '갱신 수신(updatable)' 유저 수 — started ∩ (update토큰 ∪ 유효 채널ACK ∪ 유효 채널출생).
+ * 채널출생(p2s payload에 channelId 내장 발송 성공 서버 기록)은 네이티브 ACK가 아직/영영
+ * 안 와도 broadcast로 갱신을 받으므로 updatable — ACK만 인정하면 gap 과대계상(2026-07-23
+ * 실측). ⚠️ channelBornUsers는 반드시 isLiveBornChannel(세대 일치) 통과 유저만 담아야
+ * 한다 — 출생 채널이 재생성으로 교체된 행을 그대로 세면 갱신 못 받는 카드를 수신으로
+ * 오인한다(삼순 라운드2 blocker). 과거 행은 세대 기록이 없어(backfill 불가) 종전과 동일 집계.
+ */
+export function countUpdatableUsers(i: {
+  started: Iterable<string>;
+  tokenUsers: Set<string>;
+  channelAckUsers: Set<string>;
+  channelBornUsers: Set<string>;
+}): number {
+  let n = 0;
+  for (const u of i.started) {
+    if (i.tokenUsers.has(u) || i.channelAckUsers.has(u) || i.channelBornUsers.has(u)) n += 1;
+  }
+  return n;
+}
+
+// ── 무음 wake 대상 선별 (③ wake 오염 제거, 삼순 재리뷰 2026-07-23) ──────
+// 유효 채널출생 카드는 broadcast로 갱신을 받아 wake가 불필요한데, 이를 wake 대상에
+// 넣으면 FCM 무음 wake가 낭비될 뿐 아니라 wake_attempted_at이 기록돼 어드민의
+// wake 구제 성공률 분모가 오염된다(시도할 필요가 없던 카드가 분모에 섞임).
+// gap 판정과 attempted 기록이 같은 행 집합에서 나오도록 순수 함수로 고정한다.
+
+export interface WakeGapRow extends ChannelBornRef {
+  user_id: string;
+  game_id: string;
+  created_at: string | null;
+}
+
+/**
+ * 무음 wake 대상 gap 행 선별 — wake 발송 대상과 wake_attempted_at 기록이 모두
+ * 이 반환값에서만 파생돼야 한다(분모 오염 방지 계약).
+ * - 유효 채널출생 행 제외(isLiveBornChannel — 어드민 updatable 합산과 동일 기준):
+ *   출생 채널이 지금도 active면 토큰/ACK 없이도 broadcast 수신 — wake 불필요·attempted
+ *   기록 금지. 출생 채널이 교체됐으면(세대 불일치) gap으로 복귀 = wake 대상(삼순 라운드2).
+ * - updatableKeys(`user|game` — update 토큰 or 유효 채널 ACK) 보유 행 제외.
+ * - scheduled 경기 행은 카드 발급(created_at) 후 wakeWindowMs 이내만(그 뒤는 live 전환 창이 백스톱).
+ */
+export function selectWakeGapRows<T extends WakeGapRow>(
+  rows: T[],
+  updatableKeys: Set<string>,
+  activeChannelKeys: Set<string>,
+  scheduledGameIds: Set<string>,
+  nowMs: number,
+  wakeWindowMs: number,
+): T[] {
+  return rows.filter((r) => {
+    if (isLiveBornChannel(r, activeChannelKeys)) return false;
+    if (updatableKeys.has(`${r.user_id}|${r.game_id}`)) return false;
+    if (scheduledGameIds.has(r.game_id)) {
+      return r.created_at !== null && nowMs - new Date(r.created_at).getTime() <= wakeWindowMs;
+    }
+    return true;
+  });
+}
+
+// ── 무음 wake 창 오픈 판정 (삼순 라운드3: 채널 세대 기준 재오픈) ──────────
+
+/**
+ * 무음 wake 창 오픈 여부 — live 전환/취소·종료 이벤트 시각 기준 windowMs 창에 더해,
+ * *해당 게임의 현재 active 채널 세대가 생성/변경된 시각*(live_activity_channels.created_at
+ * — 재생성 CAS 경로가 새 시각으로 다시 기록) 기준으로도 창을 재오픈한다(삼순 라운드3
+ * blocker): 라이브 도중 채널이 늦게 생성되거나 A→B로 교체되면 *그 시점 이후에야*
+ * 구채널/레거시 카드가 gap으로 복귀하는데, 이벤트 창(live 전환+20분)만 보면 이미 닫혀
+ * wake 자동구제가 불가능하다(2026-07-23 실사례: 19:07 시작 경기의 늦은 채널 생성).
+ * - eventSinceMs undefined(이벤트 row 없음 = 막 발생/알림 경로 이슈) → 오픈(기존 안전 동작).
+ * - 채널 변경 없이 두 창 모두 지난 경우 → 기존대로 마감(스팸/throttle 방지 유지).
+ */
+export function isWakeWindowOpen(
+  nowMs: number,
+  eventSinceMs: number | undefined,
+  channelGenerationMs: number | undefined,
+  windowMs: number,
+): boolean {
+  if (eventSinceMs === undefined) return true;
+  if (nowMs - eventSinceMs <= windowMs) return true;
+  return channelGenerationMs !== undefined && nowMs - channelGenerationMs <= windowMs;
+}
+
+// ── p2s stale 토큰 발송 제외 ─────────────────────────────────────────
+// gap 유저 41%가 updated_at 1~30일+ 미갱신 휴면 기기(2026-07-23 실측) — 앱을 오래 안 연
+// 기기는 p2s로 카드가 떠도 update 토큰 등록(wake/앱 오픈)이 사실상 안 일어나 갱신불가
+// 카드만 늘린다. 30일+ 미갱신 토큰은 발송 대상에서 제외한다(토큰 삭제는 아님 — 앱을
+// 다시 열어 updated_at이 갱신되면 즉시 발송 재개).
+export const STALE_START_TOKEN_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** p2s 토큰 stale 판정 — updated_at 30일+ 경과. null/파싱 불가는 stale 아님(발송 유지, 보수적). */
+export function isStaleStartToken(updatedAt: string | null, nowMs: number): boolean {
+  if (!updatedAt) return false;
+  const t = Date.parse(updatedAt);
+  if (!Number.isFinite(t)) return false;
+  return nowMs - t > STALE_START_TOKEN_MS;
+}
+
+// ── 채널 출생 세대 마킹 — 재시도/부분실패 격리 (2026-07-24 사고 견고화) ──────
+//
+// 20260724WOHT0(최대 배치 경기, 18:01 피크): 발송 성공 2,017 중 channel_born 마킹이
+// 177(9%)만 기록 — 배치 update 실패(에러 무시)로 조용히 소실. 마킹 소실 = 어드민
+// '갱신 불가' 과대계상 + wake 대상 오포함. 이 헬퍼가 계약을 강제한다:
+//   ① 배치 실패 시 지수 백오프 재시도(최대 2회 — 과설계 금지)
+//   ② 최종 실패는 경기ID·env/채널·배치 인덱스·건수 포함 명시 로깅(조용한 소실 금지)
+//   ③ 한 배치가 실패해도 나머지 배치는 계속 진행(부분실패 격리)
+//   ④ retryDeadlineMs 경과 후엔 새 marking operation을 *시작 자체를 안 함*(첫 시도 포함
+//      즉시 skip+실패 집계) — deadline 후 첫 UPDATE들이 직렬로 8s statement timeout을
+//      기다리며 뒤 chunk를 굶기는 경로 차단(삼순 R2 blocker starvation 방지). 시작하는
+//      UPDATE도 남은 예산으로 AbortSignal.timeout 유계화 — 전체 marking wall-clock 상한
+//      = 예산(+백오프 sleep ≤1.5s). 마킹 skip은 발송을 막지 않는다(발송·선점 계약 불변,
+//      실패분은 로깅 집계 후 backfill-channel-born.ts로 구제).
+// updateBatch 주입으로 유닛 스모크에서 직접 검증한다(qa:la-born-marking).
+
+/** p2s 발송 성공 유저의 채널 출생 그룹 — (env, channelId)별 user 목록. */
+export interface ChannelBornGroup {
+  env: ApnsEnvironment;
+  channelId: string;
+  users: string[];
+}
+
+export const CHANNEL_BORN_BATCH_SIZE = 200;
+/** 배치당 최대 시도 횟수(최초 1 + 재시도 2). */
+export const CHANNEL_BORN_MAX_ATTEMPTS = 3;
+/** 재시도 백오프(ms) — attempt 1 실패 후 500, attempt 2 실패 후 1000. */
+export const CHANNEL_BORN_RETRY_BASE_MS = 500;
+/** start fanout 전체에서 마킹 *재시도*에 쓸 수 있는 총 예산(ms) — 소진 후 첫 시도만. */
+export const CHANNEL_BORN_RETRY_BUDGET_MS = 20_000;
+
+export async function markChannelBornGroups(params: {
+  gameId: string;
+  groups: Iterable<ChannelBornGroup>;
+  /**
+   * 배치 1건 DB 반영 — supabase update 결과({ error })를 그대로 반환. throw도 실패로 취급.
+   * opts.signal이 있으면 남은 예산으로 유계화된 AbortSignal — 실배선은 .abortSignal()로 전달.
+   */
+  updateBatch: (
+    group: ChannelBornGroup,
+    userIds: string[],
+    opts: { signal?: AbortSignal },
+  ) => PromiseLike<{ error: { message: string } | null }>;
+  logError?: (msg: string) => void;
+  sleep?: (ms: number) => Promise<void>;
+  /** 절대 시각(ms). 경과 후엔 새 UPDATE 시작 금지(첫 시도 포함 skip) + 진행 중 UPDATE도 남은 예산으로 abort. */
+  retryDeadlineMs?: number;
+  now?: () => number;
+}): Promise<{ batches: number; failedBatches: number; failedUsers: number }> {
+  const logError = params.logError ?? ((msg) => console.error(msg));
+  const sleep = params.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+  const now = params.now ?? (() => Date.now());
+  const retryDeadlineMs = params.retryDeadlineMs ?? Number.POSITIVE_INFINITY;
+  let batches = 0;
+  let failedBatches = 0;
+  let failedUsers = 0;
+  for (const group of params.groups) {
+    for (let i = 0; i < group.users.length; i += CHANNEL_BORN_BATCH_SIZE) {
+      const slice = group.users.slice(i, i + CHANNEL_BORN_BATCH_SIZE);
+      const batchIndex = Math.floor(i / CHANNEL_BORN_BATCH_SIZE);
+      batches += 1;
+      let lastError = "unknown";
+      let ok = false;
+      let attempts = 0;
+      for (let attempt = 1; attempt <= CHANNEL_BORN_MAX_ATTEMPTS; attempt++) {
+        // deadline 경과 후엔 새 marking operation을 *시작하지 않는다*(첫 시도 포함) —
+        // deadline 뒤 첫 UPDATE들이 직렬 8s timeout을 기다리며 뒤 배치/chunk를 굶기는
+        // 경로 차단(삼순 R2). skip된 배치는 실패로 집계·로깅 → backfill로 구제.
+        const remainingMs = retryDeadlineMs - now();
+        if (remainingMs <= 0) {
+          if (attempts === 0) lastError = "marking deadline exceeded (batch skipped)";
+          break;
+        }
+        attempts = attempt;
+        try {
+          // 시작하는 UPDATE도 남은 예산으로 유계화 — 8s statement timeout이 예산을
+          // 초과 잠식하지 않게(실배선은 supabase .abortSignal()로 전달).
+          const signal = Number.isFinite(retryDeadlineMs)
+            ? AbortSignal.timeout(Math.ceil(remainingMs))
+            : undefined;
+          const { error } = await params.updateBatch(group, slice, { signal });
+          if (!error) {
+            ok = true;
+            break;
+          }
+          lastError = error.message;
+        } catch (e) {
+          lastError = e instanceof Error ? e.message : String(e);
+        }
+        // 재시도 예산 소진 → 즉시 다음 배치로(굶김 방지 ④).
+        if (now() >= retryDeadlineMs) break;
+        if (attempt < CHANNEL_BORN_MAX_ATTEMPTS) {
+          await sleep(
+            Math.min(CHANNEL_BORN_RETRY_BASE_MS * 2 ** (attempt - 1), retryDeadlineMs - now()),
+          );
+        }
+      }
+      if (!ok) {
+        failedBatches += 1;
+        failedUsers += slice.length;
+        logError(
+          `[live-activity] channel_born marking failed: game=${params.gameId} ` +
+            `env=${group.env} channel=${group.channelId} batch=${batchIndex} ` +
+            `users=${slice.length} attempts=${attempts} error=${lastError}`,
+        );
+      }
+    }
+  }
+  return { batches, failedBatches, failedUsers };
+}
+
+// ── start fanout 유계 chunk + chunk당 즉시 내구 저장 (삼순 R1 blocker②) ──────────
+//
+// 18:02 실측: away 147명은 138 마킹, 직후 home 1,827명은 0 — 1,827건 APNs Promise.all
+// 뒤 tail에서만 마킹하다 fanout 68s deadline/함수 종료에 잘리면 재시도·로그 0으로
+// 전량 소실된다. 발송을 유계 chunk로 나누고 *다음 chunk 발송 시작 전에* 직전 chunk의
+// 마킹을 내구 저장한다 — 도중 cutoff되어도 이미 보낸 chunk의 마킹은 잔존(손실 상한 =
+// 마지막 미완료 chunk 1개). 순서 불변식(persist(k) → send(k+1))을 스모크가 검증한다.
+
+/** start p2s 발송 chunk 크기 — chunk당 APNs 동시 발송 + 마킹 1배치(≤200) 내구 저장. */
+export const START_SEND_CHUNK_SIZE = 100;
+
+export async function runStartSendChunks<T>(params: {
+  items: readonly T[];
+  chunkSize: number;
+  /** 항목 1건 발송 — 실패는 내부에서 집계(throw 금지 계약, 실배선은 자체 catch). */
+  sendOne: (item: T) => Promise<void>;
+  /** 직전 chunk 성공분 내구 저장 — 다음 chunk 발송 시작 전에 반드시 완료. */
+  persistChunk: () => Promise<void>;
+}): Promise<void> {
+  for (let i = 0; i < params.items.length; i += params.chunkSize) {
+    await Promise.all(params.items.slice(i, i + params.chunkSize).map(params.sendOne));
+    await params.persistChunk();
+  }
 }

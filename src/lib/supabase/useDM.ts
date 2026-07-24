@@ -31,6 +31,11 @@ export interface DMMessage {
   sender_team_id?: number | null;
 }
 
+interface AtomicDMSendResult {
+  conversation_id: string;
+  message_id: number;
+}
+
 // 대화 목록 (N+1 개선: batch fetch)
 export function useDMList() {
   const { user } = useAuth();
@@ -41,11 +46,14 @@ export function useDMList() {
   const load = useCallback(async () => {
     if (!user) return;
 
+    // query-guard: bounded -- 쪽지함은 최신 대화 500개 UI 페이지만 제공한다.
     const { data } = await supabase
       .from("dm_conversations")
       .select("*")
       .or(`user1_id.eq.${user.id},user2_id.eq.${user.id}`)
-      .order("last_message_at", { ascending: false });
+      .not("last_message", "is", null)
+      .order("last_message_at", { ascending: false })
+      .limit(500);
 
     if (!data || data.length === 0) { setConversations([]); setLoading(false); return; }
 
@@ -126,7 +134,7 @@ export function useDMList() {
 export function useDMChat(conversationId: string) {
   const { user } = useAuth();
   const [messages, setMessages] = useState<DMMessage[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(Boolean(conversationId));
 
   // 메시지 로드
   useEffect(() => {
@@ -222,75 +230,56 @@ export function useDMChat(conversationId: string) {
     return () => { supabase.removeChannel(channel); };
   }, [conversationId, user]);
 
-  // 메시지 전송 (차단 체크)
+  // 메시지 전송: 방 생성·메시지 INSERT·목록 preview를 DB 한 트랜잭션으로 처리한다.
   const sendMessage = useCallback(
-    async (content: string, imageUrls?: string[]) => {
+    async (content: string, imageUrls?: string[], targetUserIdOverride?: string) => {
       const trimmed = content.trim();
       const images = (imageUrls ?? []).filter((u) => typeof u === "string" && u.length > 0);
       // 텍스트 또는 사진 중 하나는 있어야 전송
-      if (!user || (!trimmed && images.length === 0)) return false;
+      if (!user || (!trimmed && images.length === 0)) return { ok: false, conversationId: null };
 
-      // 차단 여부 체크
-      const { data: conv } = await supabase
-        .from("dm_conversations")
-        .select("user1_id, user2_id")
-        .eq("id", conversationId)
-        .single();
-
-      if (conv) {
-        const otherId = conv.user1_id === user.id ? conv.user2_id : conv.user1_id;
-
-        // 내가 상대를 차단했거나, 상대가 나를 차단했는지
-        const { data: blocked } = await supabase
-          .from("user_blocks")
-          .select("id")
-          .or(`and(blocker_id.eq.${user.id},blocked_id.eq.${otherId}),and(blocker_id.eq.${otherId},blocked_id.eq.${user.id})`)
-          .limit(1);
-
-        if (blocked && blocked.length > 0) {
-          // 차단된 사용자에게 메시지를 보낼 수 없습니다.
-          return false;
-        }
+      let targetUserId = targetUserIdOverride;
+      if (!targetUserId && conversationId) {
+        const { data: conv } = await supabase
+          .from("dm_conversations")
+          .select("user1_id, user2_id")
+          .eq("id", conversationId)
+          .single();
+        if (!conv) return { ok: false, conversationId: null };
+        targetUserId = conv.user1_id === user.id ? conv.user2_id : conv.user1_id;
       }
+      if (!targetUserId) return { ok: false, conversationId: null };
 
+      // query-guard: bounded -- RPC는 방 id와 메시지 id 한 행만 반환한다.
       const { data: inserted, error } = await supabase
-        .from("dm_messages")
-        .insert({
-          conversation_id: conversationId,
-          sender_id: user.id,
-          content: trimmed,
-          ...(images.length > 0 ? { image_urls: images } : {}),
+        .rpc("send_dm_message_atomic", {
+          p_target_user_id: targetUserId,
+          p_content: trimmed,
+          p_image_urls: images,
         })
-        .select("id")
         .single();
+      const result = inserted as AtomicDMSendResult | null;
 
       if (!error) {
-        // last_message 업데이트 (사진만 보낸 경우 "[사진]" 표기)
-        const preview = trimmed || (images.length > 0 ? "[사진]" : "");
-        await supabase
-          .from("dm_conversations")
-          .update({ last_message: preview, last_message_at: new Date().toISOString() })
-          .eq("id", conversationId);
-
         // 운영팀 대화면 어드민 PWA 알림 트리거 (fire-and-forget — 실패해도 쪽지 발송에 영향 0, 2026-07-18)
         // messageId를 전달해 서버가 "정확히 그 행"을 검증 + 메시지당 1회 claim (replay 방지)
         if (
-          conv &&
-          inserted?.id &&
+          result?.message_id &&
           user.id !== OPERATOR_USER_ID &&
-          (conv.user1_id === OPERATOR_USER_ID || conv.user2_id === OPERATOR_USER_ID)
+          targetUserId === OPERATOR_USER_ID
         ) {
-          const messageId = inserted.id;
+          const messageId = result.message_id;
           void (async () => {
             try {
               const { data: { session } } = await supabase.auth.getSession();
               await fetch("/api/dm/notify-admin", {
                 method: "POST",
+                keepalive: true,
                 headers: {
                   "Content-Type": "application/json",
                   ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
                 },
-                body: JSON.stringify({ conversationId, messageId }),
+                body: JSON.stringify({ conversationId: result.conversation_id, messageId }),
               });
             } catch {
               /* ignore */
@@ -299,7 +288,7 @@ export function useDMChat(conversationId: string) {
         }
       }
 
-      return !error;
+      return { ok: !error, conversationId: result?.conversation_id ?? null };
     },
     [user, conversationId]
   );
@@ -307,40 +296,15 @@ export function useDMChat(conversationId: string) {
   return { messages, loading, sendMessage, isLoggedIn: !!user };
 }
 
-// 대화 시작 (or 기존 대화 찾기) — 차단 체크 포함
-export async function getOrCreateConversation(myId: string, otherId: string): Promise<string | null> {
-  // 차단 여부 체크
-  const { data: blocked } = await supabase
-    .from("user_blocks")
-    .select("id")
-    .or(`and(blocker_id.eq.${myId},blocked_id.eq.${otherId}),and(blocker_id.eq.${otherId},blocked_id.eq.${myId})`)
-    .limit(1);
-
-  if (blocked && blocked.length > 0) {
-    // 차단된 사용자와 대화할 수 없습니다.
-    return null;
-  }
-
-  // 정렬해서 저장 (user1 < user2)
+// 대화 화면 진입만으로 빈 방을 만들지 않도록 기존 방 조회와 생성을 분리한다.
+export async function getExistingConversation(myId: string, otherId: string): Promise<string | null> {
   const [u1, u2] = [myId, otherId].sort();
-
-  // 기존 대화 찾기
-  const { data: existing } = await supabase
+  const { data } = await supabase
     .from("dm_conversations")
     .select("id")
     .eq("user1_id", u1)
     .eq("user2_id", u2)
-    .single();
+    .maybeSingle();
 
-  if (existing) return existing.id;
-
-  // 새 대화 생성
-  const { data: created, error } = await supabase
-    .from("dm_conversations")
-    .insert({ user1_id: u1, user2_id: u2 })
-    .select("id")
-    .single();
-
-  if (error) { return null; }
-  return created?.id ?? null;
+  return data?.id ?? null;
 }

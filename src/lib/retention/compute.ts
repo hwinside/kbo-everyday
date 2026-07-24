@@ -98,6 +98,7 @@ async function collectActivityDays(
     fetchAllPages<{ author_id: string; created_at: string }>(q("comments", "author_id, created_at")),
     fetchAllPages<{ user_id: string; created_at: string }>(q("likes", "user_id, created_at")),
     fetchAllPages<{ user_id: string; created_at: string }>(q("chat_messages", "user_id, created_at")),
+    // user-day rollup도 keyset 유지 (2026-07-22 장애 후속 — OFFSET 재스캔 O(n²) 방지, #801)
     fetchAllByKeyset<{ id: number; user_id: string; day_kst: string }, number>(async (cursor, limit) => {
       let query = supabase.from("admin_page_view_user_days")
         .select("id, user_id, day_kst")
@@ -280,6 +281,7 @@ export async function computeActivationFunnel(
 
   // ③ 서로 다른 경기 1개 이상 방문. user/day rollup은 365일 뒤 purge되므로
   // purge와 분리 보존되는 사용자별 lifetime 최초 경기방문 상태를 읽는다 (PR #773).
+  // (keyset 유지 — #801 OFFSET 재스캔 O(n²) 방지 사유 동일)
   const lifetimeGameVisits = await fetchAllByKeyset<{ user_id: string }, string>(
     async (cursor, limit) => {
       let query = supabase.from("admin_user_game_lifetime").select("user_id")

@@ -1,4 +1,5 @@
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
+import { isKboGameCancelled } from "@/lib/crawler/kbo-status";
 import { resolveCurrentPlayers } from "@/lib/kbo-player-mapping";
 import { sendFcmToUsers, type PushPayload } from "@/lib/notifications/fcm";
 import { fansOfTeams, teamIdByShortName } from "@/lib/notifications/game-status";
@@ -43,7 +44,7 @@ export async function pushIosWidgetLiveUpdates(
 > {
   const liveGames = games.filter((g) => g.G_ID && g.GAME_STATE_SC === "2");
   const finishedIds = games
-    .filter((g) => g.G_ID && (g.GAME_STATE_SC === "3" || g.CANCEL_SC_ID !== "0"))
+    .filter((g) => g.G_ID && (g.GAME_STATE_SC === "3" || isKboGameCancelled(g.CANCEL_SC_ID)))
     .map((g) => g.G_ID as string);
 
   // 종료/취소 경기의 상태 행 정리(멱등) — 테이블을 작게 유지.

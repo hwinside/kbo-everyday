@@ -4,6 +4,11 @@ import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { DEFAULT_PREFS, type PrefKey } from "@/lib/notifications/prefs";
 import { fetchAllByKeyset } from "@/lib/db/paginate";
 import { deliverTokenChunks } from "@/lib/notifications/fcm-batch";
+import { isDeadlineExceeded, runBeforeDeadline } from "@/lib/async-deadline";
+import {
+  sendDeadlineFcmChunk,
+  type DeadlineFcmMessage,
+} from "@/lib/notifications/fcm-deadline-transport";
 
 // FCM 발송 공용 헬퍼 (push-notifications-v1 S3).
 // 디스패처(/api/notifications/dispatch)와 어드민 수동 발송(/api/admin/push/send-fcm)이 공용.
@@ -103,6 +108,16 @@ export interface SendResult {
    *  대상/토큰 0명은 정상이므로 ok:true (보낼 사람이 없을 뿐) */
   ok: boolean;
   lastError?: string | null;
+  /** transient FCM 응답·deadline 미시도로 다음 fast tick 재시도가 필요한 토큰 수. */
+  retryableFailed?: number;
+  sendStartedAtMs?: number;
+  sendCompletedAtMs?: number;
+}
+
+interface FcmSendOptions {
+  minAppBuild?: number;
+  /** 이 epoch ms 이후에는 prefs/token 조회나 새 FCM chunk를 시작하지 않는다. */
+  deadlineAtMs?: number;
 }
 
 export async function sendFcmToUsers(
@@ -110,7 +125,7 @@ export async function sendFcmToUsers(
   payload: PushPayload,
   prefKey?: PrefKey,
   platform?: "ios" | "android",
-  opts?: { minAppBuild?: number },
+  opts?: FcmSendOptions,
 ): Promise<SendResult> {
   if (userIds.length === 0) return { tokens: 0, sent: 0, failed: 0, cleaned: 0, skipped: 0, ok: true };
   try {
@@ -119,7 +134,14 @@ export async function sendFcmToUsers(
     // getFcm()의 JSON parse/init 또는 sendEachForMulticast throw 등 —
     // ok:false로 호출자(game-status unclaim)가 재시도하게 함 (삼순 #210 재리뷰 NO-GO)
     console.error("[fcm] send threw:", (e as Error).message);
-    return { tokens: 0, sent: 0, failed: 0, cleaned: 0, skipped: 0, ok: false };
+    const lastError = isDeadlineExceeded(e)
+      || (opts?.deadlineAtMs != null && e instanceof Error && e.name === "AbortError")
+      ? "deadline_exceeded"
+      : e instanceof Error ? e.message : "fcm_send_exception";
+    return {
+      tokens: 0, sent: 0, failed: 0, cleaned: 0, skipped: 0, ok: false,
+      lastError,
+    };
   }
 }
 
@@ -128,8 +150,11 @@ async function sendFcmToUsersInner(
   payload: PushPayload,
   prefKey?: PrefKey,
   platform?: "ios" | "android",
-  opts?: { minAppBuild?: number },
+  opts?: FcmSendOptions,
 ): Promise<SendResult> {
+  if (opts?.deadlineAtMs != null && Date.now() >= opts.deadlineAtMs) {
+    return { tokens: 0, sent: 0, failed: 0, cleaned: 0, skipped: 0, ok: false, lastError: "deadline_exceeded" };
+  }
   const fcm = getFcm();
   if (!fcm) return { tokens: 0, sent: 0, failed: 0, cleaned: 0, skipped: 0, ok: false }; // env 미설정 = 인프라 실패
 
@@ -143,10 +168,22 @@ async function sendFcmToUsersInner(
     const explicit = new Map<string, boolean>();
     for (let i = 0; i < targets.length; i += IN_CHUNK) {
       const slice = targets.slice(i, i + IN_CHUNK);
-      const { data: prefRows, error: prefErr } = await supabase
+      const remainingMs = opts?.deadlineAtMs == null ? null : opts.deadlineAtMs - Date.now();
+      if (remainingMs != null && remainingMs <= 0) {
+        return { tokens: 0, sent: 0, failed: 0, cleaned: 0, skipped: 0, ok: false, lastError: "deadline_exceeded" };
+      }
+      // query-guard: bounded -- outer loop caps every preference lookup to IN_CHUNK=200 user ids
+      const prefQuery = supabase
         .from("notification_prefs")
         .select(`user_id, ${prefKey}`)
         .in("user_id", slice);
+      if (remainingMs != null) {
+        prefQuery.abortSignal(AbortSignal.timeout(Math.max(1, remainingMs)));
+      }
+      const { data: prefRows, error: prefErr } = await runBeforeDeadline(
+        () => prefQuery,
+        opts?.deadlineAtMs,
+      );
       if (prefErr) {
         console.error("[fcm] prefs query failed:", prefErr.message);
         return { tokens: 0, sent: 0, failed: 0, cleaned: 0, skipped: 0, ok: false };
@@ -168,6 +205,8 @@ async function sendFcmToUsersInner(
     const slice = targets.slice(i, i + IN_CHUNK);
     const rows = await fetchAllByKeyset(
       async (cursor, limit) => {
+        const remainingMs = opts?.deadlineAtMs == null ? null : opts.deadlineAtMs - Date.now();
+        if (remainingMs != null && remainingMs <= 0) throw new Error("FCM device token targets: deadline_exceeded");
         let tokenQuery = supabase
           .from("device_push_tokens")
           .select("id, fcm_token")
@@ -177,7 +216,8 @@ async function sendFcmToUsersInner(
         if (platform) tokenQuery = tokenQuery.eq("platform", platform);
         if (opts?.minAppBuild != null) tokenQuery = tokenQuery.gte("app_build", opts.minAppBuild);
         if (cursor !== null) tokenQuery = tokenQuery.gt("id", cursor);
-        return tokenQuery;
+        if (remainingMs != null) tokenQuery = tokenQuery.abortSignal(AbortSignal.timeout(Math.max(1, remainingMs)));
+        return runBeforeDeadline(() => tokenQuery, opts?.deadlineAtMs);
       },
       (row) => row.id,
       { label: "FCM device token targets" },
@@ -186,12 +226,22 @@ async function sendFcmToUsersInner(
   }
   if (tokens.length === 0) return { tokens: 0, sent: 0, failed: 0, cleaned: 0, skipped, ok: true };
 
-  const delivery = await sendFcmToTokens(tokens, payload);
+  const delivery = await sendFcmToTokens(tokens, payload, { deadlineAtMs: opts?.deadlineAtMs });
   return { ...delivery, skipped };
 }
 
 /** 이미 전량 조회·검증한 토큰을 DB 재조회 없이 그대로 발송한다. */
-export async function sendFcmToTokens(tokens: string[], payload: PushPayload): Promise<SendResult> {
+export async function sendFcmToTokens(
+  tokens: string[],
+  payload: PushPayload,
+  opts?: { deadlineAtMs?: number },
+): Promise<SendResult> {
+  if (opts?.deadlineAtMs != null && Date.now() >= opts.deadlineAtMs) {
+    return {
+      tokens: tokens.length, sent: 0, failed: tokens.length, cleaned: 0, skipped: 0,
+      retryableFailed: tokens.length, ok: false, lastError: "deadline_exceeded",
+    };
+  }
   let fcm;
   try {
     fcm = getFcm();
@@ -211,7 +261,8 @@ export async function sendFcmToTokens(tokens: string[], payload: PushPayload): P
   }
 
   // 위젯 제어 스트림 send-time(ms) — 한 발송 내 모든 청크가 동일 w_ts를 갖도록 루프 밖에서 1회 계산.
-  const sendTsMs = String(Date.now());
+  const sendStartedAtMs = Date.now();
+  const sendTsMs = String(sendStartedAtMs);
   const delivery = await deliverTokenChunks(tokens, async (chunk) => {
     // data-only(ongoing card)는 notification 블록 생략 + title/body를 data에 실음.
     // (네이티브가 data.title/body를 읽어 잠금화면 카드/위젯에 표시 — 삼순 C2 조건)
@@ -234,6 +285,46 @@ export async function sendFcmToTokens(tokens: string[], payload: PushPayload): P
       ...(payload.collapseKey ? { collapseKey: payload.collapseKey } : {}),
       ...(payload.ttlSeconds != null ? { ttl: payload.ttlSeconds * 1000 } : {}),
     };
+    if (opts?.deadlineAtMs != null) {
+      const raw = process.env.FIREBASE_SERVICE_ACCOUNT;
+      const projectId = raw
+        ? (JSON.parse(raw) as { project_id?: string }).project_id
+        : undefined;
+      const credential = getApps()[0]?.options.credential;
+      if (!projectId || !credential) throw new Error("missing_fcm_deadline_transport_config");
+      const deadlineMessage: DeadlineFcmMessage = {
+        ...(payload.dataOnly ? {} : { notification: { title: payload.title, body: payload.body } }),
+        ...(Object.keys(dataBlock).length ? { data: dataBlock } : {}),
+        ...(Object.keys(androidCfg).length
+          ? {
+              android: {
+                ...(payload.dataOnly ? { priority: "HIGH" as const } : {}),
+                ...(payload.collapseKey ? { collapse_key: payload.collapseKey } : {}),
+                ...(payload.ttlSeconds != null ? { ttl: `${payload.ttlSeconds}s` } : {}),
+              },
+            }
+          : {}),
+        ...(payload.apnsBackground
+          ? {
+              apns: {
+                headers: {
+                  "apns-push-type": "background",
+                  "apns-priority": "5",
+                  ...(payload.apnsCollapseId ? { "apns-collapse-id": payload.apnsCollapseId } : {}),
+                  ...(payload.apnsExpirationSeconds != null
+                    ? { "apns-expiration": String(Math.floor(Date.now() / 1000) + payload.apnsExpirationSeconds) }
+                    : {}),
+                },
+                payload: { aps: { "content-available": 1 } },
+              },
+            }
+          : {}),
+      };
+      return sendDeadlineFcmChunk(chunk, deadlineMessage, opts.deadlineAtMs, {
+        projectId,
+        getAccessToken: async () => (await credential.getAccessToken()).access_token,
+      });
+    }
     return fcm.sendEachForMulticast({
       tokens: chunk,
       ...(payload.dataOnly ? {} : { notification: { title: payload.title, body: payload.body } }),
@@ -259,15 +350,23 @@ export async function sendFcmToTokens(tokens: string[], payload: PushPayload): P
           }
         : {}),
     });
-  });
+  }, 500, { deadlineAtMs: opts?.deadlineAtMs });
 
   // 4. 무효 토큰 정리
   const CLEANUP_CHUNK = 200;
   for (let i = 0; i < delivery.invalid.length; i += CLEANUP_CHUNK) {
-    const { error: cleanupError } = await supabase
+    if (opts?.deadlineAtMs != null && Date.now() >= opts.deadlineAtMs) break;
+    let cleanupQuery = supabase
       .from("device_push_tokens")
       .delete()
       .in("fcm_token", delivery.invalid.slice(i, i + CLEANUP_CHUNK));
+    if (opts?.deadlineAtMs != null) {
+      cleanupQuery = cleanupQuery.abortSignal(AbortSignal.timeout(Math.max(1, opts.deadlineAtMs - Date.now())));
+    }
+    const { error: cleanupError } = await runBeforeDeadline(
+      () => cleanupQuery,
+      opts?.deadlineAtMs,
+    );
     if (cleanupError) console.error("[fcm] invalid token cleanup failed:", cleanupError.message);
   }
 
@@ -279,5 +378,8 @@ export async function sendFcmToTokens(tokens: string[], payload: PushPayload): P
     skipped: 0,
     ok: delivery.ok,
     lastError: delivery.lastError,
+    retryableFailed: delivery.retryableFailed,
+    sendStartedAtMs,
+    sendCompletedAtMs: Date.now(),
   };
 }

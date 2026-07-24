@@ -1,0 +1,26 @@
+name = "keubo-observability"
+main = "src/index.ts"
+compatibility_date = "2026-07-22"
+
+[[durable_objects.bindings]]
+name = "INCIDENT_COORDINATOR"
+class_name = "IncidentCoordinator"
+
+[[durable_objects.bindings]]
+name = "ALERT_INGRESS"
+class_name = "AlertIngressCoordinator"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["IncidentCoordinator", "AlertIngressCoordinator"]
+
+[vars]
+SLACK_CHANNEL_ID = "REPLACE_WITH_INCIDENT_CHANNEL_ID"
+TELEGRAM_CHAT_ID = "REPLACE_WITH_CHAT_ID"
+PUBLIC_BASE_URL = "https://REPLACE_WITH_WORKER_HOST"
+
+# Store these only with `wrangler secret put`:
+# GRAFANA_HMAC_SECRET
+# ACK_LINK_SECRET
+# SLACK_BOT_TOKEN
+# TELEGRAM_BOT_TOKEN

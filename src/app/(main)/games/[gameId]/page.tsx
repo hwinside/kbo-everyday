@@ -27,7 +27,9 @@ import { generateRelayEvents } from "@/lib/relay-event-generator";
 import { latestRelayLine } from "@/lib/notifications/relay-line";
 import type { LineupEntry } from "@/lib/hooks/useGameDetail";
 import { deriveGameState } from "@/lib/utils/game-derived";
+import { shouldKeepCancelledGameChat } from "@/lib/game-chat-visibility";
 import GameDetailHeader from "@/components/game/GameDetailHeader";
+import LiveActivityUpdateNudge from "@/components/game/LiveActivityUpdateNudge";
 import NonLiveScoreDisplay from "@/components/game/NonLiveScoreDisplay";
 import ScoreBar from "@/components/game/ScoreBar";
 import LinescoreTable from "@/components/game/LinescoreTable";
@@ -38,6 +40,8 @@ import { ChevronUp, ChevronDown } from "lucide-react";
 import ScoreBoard from "@/components/game/ScoreBoard";
 import AdminOnly from "@/components/admin/AdminOnly";
 import VenueStorySection from "@/components/game/VenueStorySection";
+import GameChat from "@/components/game/GameChat";
+import { useChatRoomHasMessages } from "@/lib/supabase/useChatRoomHasMessages";
 import KgwanTab from "@/components/game/KgwanTab";
 import LineupTab from "@/components/game/LineupTab";
 import AllStarEntryRoster from "@/components/game/AllStarEntryRoster";
@@ -54,6 +58,24 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "lineup", label: "라인업" },
   { id: "stats", label: "기록" },
 ];
+
+function CancelledGameChat({
+  gameId,
+  homeTeamId,
+  awayTeamId,
+  hasGameProgress,
+}: {
+  gameId: string;
+  homeTeamId: number;
+  awayTeamId: number;
+  hasGameProgress: boolean;
+}) {
+  const { hasMessages, loading } = useChatRoomHasMessages(`game:${gameId}`);
+  if (loading && !hasGameProgress) return null;
+  if (!shouldKeepCancelledGameChat({ hasGameProgress, hasExistingMessages: hasMessages })) return null;
+
+  return <GameChat gameId={gameId} homeTeamId={homeTeamId} awayTeamId={awayTeamId} />;
+}
 
 /* boxScore → GameStats 변환 */
 function boxScoreToGameStats(
@@ -355,6 +377,14 @@ export default function GameDetailPage() {
   const tabIndicatorTeam = myTeamInGame ? getTeamById(myTeamId)! : homeTeam;
 
   const d = deriveGameState(liveGame, game, gameDetail);
+  const hasGameProgress = Boolean(
+    gameEvents.length > 0
+    || gameRelay?.innings.some((inning) => inning.plays.length > 0)
+    || /^\d+회(?:초|말)/.test(d.currentInning)
+    || d.awayScore > 0
+    || d.homeScore > 0
+    || hasBoxScoreData
+  );
 
   return (
     <PullToRefresh
@@ -391,6 +421,9 @@ export default function GameDetailPage() {
           homeScore={d.homeScore}
         />
       )}
+
+      {/* ② 구버전(채널 미지원) iOS 앱 업데이트 녋지 — 라이브 맥락·세션당 1회(LA gap 감축). */}
+      <LiveActivityUpdateNudge isLive={d.isLive} />
 
       {/* Collapsible field area — toggle only visible during live + 크관 tab */}
       {d.isLive && activeTab === "kgwan" && (
@@ -478,12 +511,26 @@ export default function GameDetailPage() {
         </div>
       )}
 
-      {d.derivedStatus !== "cancelled" && (
+      {d.derivedStatus === "cancelled" ? (
+        <CancelledGameChat
+          gameId={gameId}
+          homeTeamId={game.homeTeamId}
+          awayTeamId={game.awayTeamId}
+          hasGameProgress={hasGameProgress}
+        />
+      ) : (
         <>
-          {/* 직관 라이브 — WIP 실환경 QA 동안 관리자에게만 노출 */}
-          <AdminOnly>
+          {/* 직관 라이브 — WIP 실환경 QA 동안 관리자에게만 노출.
+              ?storyQaKeyboard=1 은 iOS 실기기 키보드 QA 하네스(삼순 #807 라운드3
+              blocker 2) — mock 뷰어만 열고 실데이터 fetch/쓰기 없음(서버 인가 불변). */}
+          {typeof window !== "undefined" &&
+          new URLSearchParams(window.location.search).get("storyQaKeyboard") === "1" ? (
             <VenueStorySection gameId={gameId} />
-          </AdminOnly>
+          ) : (
+            <AdminOnly>
+              <VenueStorySection gameId={gameId} />
+            </AdminOnly>
+          )}
 
           {/* Tabs */}
           <div className="flex border-b border-border mx-4">

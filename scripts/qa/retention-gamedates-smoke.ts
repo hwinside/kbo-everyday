@@ -21,7 +21,7 @@ import {
   computeVisitDistribution,
 } from "../../src/lib/retention/compute";
 
-/** 최소 fake supabase: created_at gte/lte 필터 + not-null + range 페이징 지원 */
+/** 최소 fake supabase: created_at gte/lte 필터 + not-null + range/keyset(gt+order+limit) 페이징 지원 */
 type Row = Record<string, unknown>;
 function fakeSupabase(tables: Record<string, Row[]>): SupabaseClient {
   return {
@@ -83,6 +83,7 @@ function fakeSupabase(tables: Record<string, Row[]>): SupabaseClient {
             data: materialize().slice(from, to + 1),
             error: null,
           }),
+        // keyset 경로(compute.ts fetchAllByKeyset)는 builder를 직접 await 하므로 thenable 필요
         then: (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) =>
           Promise.resolve({
             data: materialize().slice(0, pageLimit ?? undefined),

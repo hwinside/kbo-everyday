@@ -10,8 +10,11 @@ interface GameRow {
   started: number;
   tokens: number;
   channelSubs: number;
+  channelBorn: number;
   updatable: number;
   gap: number;
+  wakeAttempted: number;
+  wakeRescued: number;
   isStale: boolean;
 }
 
@@ -23,6 +26,9 @@ interface LaStatus {
     gap: number;
     updateTokens: number;
     channelSubs: number;
+    channelBorn: number;
+    wakeAttempted: number;
+    wakeRescued: number;
     residualRows: number;
     residualGameCount: number;
     kboStatusAvailable: boolean;
@@ -133,7 +139,7 @@ export default function LiveActivityMonitorPage() {
               <div className="text-sm text-gray-400 mb-1">자동발급 카드 중 갱신 수신</div>
               <div className="text-3xl font-bold text-green-400">{s.updatable}</div>
               <div className="text-xs text-gray-500 mt-1">
-                update 토큰 또는 채널 구독(build17+) · 토큰 {s.updateTokens}건 · 채널 {s.channelSubs}대
+                update 토큰 · 채널 구독 · 채널 내장 발송 — 토큰 {s.updateTokens}건 · 채널 {s.channelSubs}대 · 내장 {s.channelBorn}명
               </div>
             </div>
             <div className="bg-gray-800/50 rounded-lg p-4">
@@ -142,7 +148,10 @@ export default function LiveActivityMonitorPage() {
                 {s.gap}
                 <span className="text-base font-normal text-gray-500 ml-2">{gapPct}%</span>
               </div>
-              <div className="text-xs text-gray-500 mt-1">토큰 미등록 — 무음 wake 대상</div>
+              <div className="text-xs text-gray-500 mt-1">
+                토큰 미등록 — 무음 wake 시도 {s.wakeAttempted} · 구제 {s.wakeRescued}
+                {s.wakeAttempted > 0 ? ` (${Math.round((s.wakeRescued / s.wakeAttempted) * 100)}%)` : ""}
+              </div>
             </div>
             <div className="bg-gray-800/50 rounded-lg p-4">
               <div className="text-sm text-gray-400 mb-1">push-to-start 기기</div>
@@ -173,6 +182,7 @@ export default function LiveActivityMonitorPage() {
                     <th className="text-right py-3 px-4">카드</th>
                     <th className="text-right py-3 px-4">update 토큰</th>
                     <th className="text-right py-3 px-4">채널 구독</th>
+                    <th className="text-right py-3 px-4">채널 내장</th>
                     <th className="text-right py-3 px-4">갱신 수신</th>
                     <th className="text-right py-3 px-4">갱신 불가</th>
                   </tr>
@@ -192,6 +202,7 @@ export default function LiveActivityMonitorPage() {
                       <td className="py-3 px-4 text-right font-medium">{g.started}</td>
                       <td className="py-3 px-4 text-right text-gray-400">{g.tokens}</td>
                       <td className="py-3 px-4 text-right text-sky-400">{g.channelSubs > 0 ? g.channelSubs : <span className="text-gray-600">—</span>}</td>
+                      <td className="py-3 px-4 text-right text-sky-400">{g.channelBorn > 0 ? g.channelBorn : <span className="text-gray-600">—</span>}</td>
                       <td className="py-3 px-4 text-right text-green-400">{g.updatable}</td>
                       <td className="py-3 px-4 text-right">
                         {g.status === "live" || g.status === "scheduled" || g.status === "unknown" ? (
@@ -214,6 +225,8 @@ export default function LiveActivityMonitorPage() {
           <div>• <span className="text-gray-300">카드</span> = 서버 push-to-start로 잠금화면에 뜬 Live Activity (started_users). 경기룸 방문으로 포그라운드에서 뜬 카드는 update 토큰에만 잡힌다.</div>
           <div>• <span className="text-gray-300">갱신 불가(gap)</span> = 카드는 떴는데 update 토큰 미등록·채널 미구독 → 점수 갱신·종료 정리를 못 받는 상태. 발급/종료 후 20분 창의 무음 wake가 자동 구제하고, 그래도 남으면 앱 오픈 시 등록된다.</div>
           <div>• <span className="text-gray-300">채널 구독</span> = build17+(iOS18) 기기가 현재 active broadcast 채널에 붙었다고 네이티브가 ACK한 기기 수. 채널 재생성 전 stale ACK는 제외하며, 익명 ACK는 유저 매핑 불가라 갱신 수신에서 제외한다.</div>
+          <div>• <span className="text-gray-300">채널 내장</span> = p2s payload에 broadcast channelId를 내장해 발송 성공한 카드(서버 기록). 앱 wake 없이 채널로 갱신을 받으므로 네이티브 ACK 도착 전에도 갱신 수신에 합산한다. ⚠️ 2026-07-23 이전 발송분은 기록이 없어(backfill 불가) 과거 카드는 종전처럼 ACK 기준으로만 집계된다.</div>
+          <div>• <span className="text-gray-300">무음 wake 성공률</span> = 갱신불가 카드에 무음 푸시를 시도한 후 update 토큰/채널 ACK 등록으로 전환된 비율. 강제종료(스와이프 kill) 기기는 iOS가 안 깨워 구조적으로 실패한다.</div>
           <div>• <span className="text-gray-300">과거 잔존</span> = 오늘 경기 목록에 없는 지난 game_id의 발급 기록 행. iOS가 카드를 ~8시간 내 자동 만료시키므로 실제 좀비 카드가 아니라 서버 기록 잔재{s ? ` (현재 ${s.residualRows}행 / ${s.residualGameCount}경기)` : ""}.</div>
           <div>• <span className="text-gray-300">미상(활성 fallback)</span> = 오늘 game_id인데 KBO 일정 조회 실패나 목록 누락으로 상태를 확정 못한 경우. 요약에는 활성으로 포함해 집계 누락을 막는다.</div>
           <div>• <span className="text-gray-300">자동발급 카드 중 갱신 수신</span> = push-to-start 카드 중 update 토큰 보유 또는 현재 active 채널 구독이 확인된 카드(중복 제거). 경기룸 방문으로만 뜬 LA는 전체 update 토큰 수치에만 포함된다.</div>

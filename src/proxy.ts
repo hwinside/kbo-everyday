@@ -7,6 +7,24 @@ import {
 
 const CANONICAL_HOST = "keubo.fan";
 
+export function hasSupabaseAuthCookie(
+  cookieNames: readonly string[],
+  supabaseUrl: string | undefined,
+): boolean {
+  if (!supabaseUrl) return false;
+
+  try {
+    const projectRef = new URL(supabaseUrl).hostname.split(".")[0];
+    if (!projectRef) return false;
+    const cookiePrefix = `sb-${projectRef}-auth-token`;
+    return cookieNames.some(
+      (name) => name === cookiePrefix || name.startsWith(`${cookiePrefix}.`),
+    );
+  } catch {
+    return false;
+  }
+}
+
 /**
  * 워치(갤워치 Wear OS + 애플워치) 앱 사용 계측 (2026-07-19 하린아빠 요청).
  *
@@ -93,10 +111,22 @@ export async function proxy(request: NextRequest, event: NextFetchEvent) {
     return NextResponse.redirect(url, { status: 308 });
   }
 
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const hasAuthCookie = hasSupabaseAuthCookie(
+    request.cookies.getAll().map(({ name }) => name),
+    supabaseUrl,
+  );
+
+  // Public users do not have a session to refresh. Authenticated prefetches keep
+  // the local claims check so an expiring session can still rotate its cookies.
+  if (!hasAuthCookie) {
+    return NextResponse.next({ request });
+  }
+
   let supabaseResponse = NextResponse.next({ request });
 
   const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    supabaseUrl!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
@@ -116,8 +146,9 @@ export async function proxy(request: NextRequest, event: NextFetchEvent) {
     }
   );
 
-  // 세션 갱신 (중요!)
-  await supabase.auth.getUser();
+  // ES256 JWT는 JWKS로 로컬 검증한다. 만료 임박 세션 갱신은 getSession 경로에서 유지되며,
+  // 매 페이지/RSC 요청마다 /auth/v1/user를 호출하는 증폭은 제거한다.
+  await supabase.auth.getClaims();
 
   return supabaseResponse;
 }

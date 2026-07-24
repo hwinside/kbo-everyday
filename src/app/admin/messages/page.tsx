@@ -29,6 +29,11 @@ interface Conversation {
   unread_count: number;
 }
 
+interface InboxCursor {
+  lastMessageAt: string;
+  conversationId: string;
+}
+
 interface Message {
   id: number;
   conversation_id: string;
@@ -103,6 +108,10 @@ export default function AdminMessagesPage() {
   const [tab, setTab] = useState<Tab>("inbox");
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [nextCursor, setNextCursor] = useState<InboxCursor | null>(null);
+  const [unreadTotal, setUnreadTotal] = useState(0);
+  const [loadError, setLoadError] = useState(false);
   const [selectedConv, setSelectedConv] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [msgLoading, setMsgLoading] = useState(false);
@@ -113,6 +122,8 @@ export default function AdminMessagesPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const replyRef = useRef<HTMLTextAreaElement>(null);
   const replyFileInputRef = useRef<HTMLInputElement>(null);
+  const listRequestSerialRef = useRef(0);
+  const loadingMoreRef = useRef(false);
 
   const [broadcastLogs, setBroadcastLogs] = useState<BroadcastLog[]>([]);
   // 전체발송 상태
@@ -131,33 +142,93 @@ export default function AdminMessagesPage() {
 
   // 대화 목록 / 발송 로그 로드
   const loadConversations = useCallback(
-    async (targetTab: Tab) => {
-      if (targetTab === "broadcast") return;
-      setLoading(true);
+    async (
+      targetTab: Tab,
+      cursor: InboxCursor | null = null,
+      append = false,
+      silent = false
+    ) => {
+      // 더보기가 진행 중일 때 polling/focus refresh는 스킵한다.
+      // silent가 append request serial을 무효화하면 버튼이 영구 loading 상태에 남는다.
+      if (silent && loadingMoreRef.current) return;
+      const requestSerial = ++listRequestSerialRef.current;
+      if (targetTab === "broadcast") {
+        setLoading(false);
+        loadingMoreRef.current = false;
+        setLoadingMore(false);
+        return;
+      }
+      if (append) {
+        loadingMoreRef.current = true;
+        setLoadingMore(true);
+      } else if (!silent) {
+        setLoading(true);
+        loadingMoreRef.current = false;
+        setLoadingMore(false);
+        setLoadError(false);
+      }
       try {
-        const res = await fetch(`/api/admin/messages?tab=${targetTab}`, {
+        const params = new URLSearchParams({ tab: targetTab });
+        if (targetTab === "inbox" && cursor) {
+          params.set("cursorAt", cursor.lastMessageAt);
+          params.set("cursorId", cursor.conversationId);
+        }
+        const res = await fetch(`/api/admin/messages?${params}`, {
           headers: { "x-admin-pin": getPin() },
         });
-        if (res.ok) {
-          const json = await res.json();
-          if (targetTab === "sent") {
-            setBroadcastLogs(json.broadcastLogs || []);
-            setConversations([]);
-          } else {
-            setConversations(json.conversations || []);
-            setBroadcastLogs([]);
-          }
+        if (!res.ok) throw new Error("load failed");
+        const json = await res.json();
+        if (requestSerial !== listRequestSerialRef.current) return;
+        setLoadError(false);
+        if (targetTab === "sent") {
+          setBroadcastLogs(json.broadcastLogs || []);
+          setConversations([]);
+        } else {
+          const incoming = (json.conversations || []) as Conversation[];
+          setConversations((previous) => {
+            if (!append && !silent) return incoming;
+            if (append) {
+              const previousIds = new Set(previous.map((conversation) => conversation.id));
+              return [...previous, ...incoming.filter((conversation) => !previousIds.has(conversation.id))];
+            }
+            const incomingIds = new Set(incoming.map((conversation) => conversation.id));
+            const withoutDuplicates = previous.filter((conversation) => !incomingIds.has(conversation.id));
+            return [...incoming, ...withoutDuplicates];
+          });
+          if (!silent) setNextCursor(json.nextCursor || null);
+          setUnreadTotal(typeof json.unreadTotal === "number" ? json.unreadTotal : 0);
+          setBroadcastLogs([]);
         }
       } catch {
-        /* ignore */
+        if (requestSerial === listRequestSerialRef.current) setLoadError(true);
       }
-      setLoading(false);
+      if (requestSerial === listRequestSerialRef.current) {
+        if (append) {
+          loadingMoreRef.current = false;
+          setLoadingMore(false);
+        } else {
+          // silent refresh가 초기 request를 supersede한 경우에도 초기 spinner를 정리한다.
+          setLoading(false);
+        }
+      }
     },
     [getPin]
   );
 
+  // PIN 어드민은 Supabase 세션이 없으므로 실시간 채널 대신 가벼워진 첫 페이지를 주기적으로 교체한다.
+  // initial load effect보다 먼저 선언해 첫 request 중에도 focus listener가 항상 설치되게 한다.
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (tab !== "inbox" || selectedConv) return;
+    const refresh = () => loadConversations("inbox", null, false, true);
+    const interval = window.setInterval(refresh, 30000);
+    window.addEventListener("focus", refresh);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refresh);
+    };
+  }, [loadConversations, selectedConv, tab]);
+
+  useEffect(() => {
     loadConversations(tab);
   }, [tab, loadConversations]);
 
@@ -173,6 +244,7 @@ export default function AdminMessagesPage() {
       if (res.ok) {
         const json = await res.json();
         setMessages(json.messages || []);
+        setUnreadTotal((previous) => Math.max(0, previous - conv.unread_count));
         setConversations((prev) =>
           prev.map((item) => (item.id === conv.id ? { ...item, unread_count: 0 } : item))
         );
@@ -682,10 +754,9 @@ export default function AdminMessagesPage() {
             ) : (
               <>
                 {conversations.length}개 대화
-                {tab === "inbox" &&
-                  conversations.reduce((sum, c) => sum + c.unread_count, 0) > 0 && (
+                {tab === "inbox" && unreadTotal > 0 && (
                     <span className="ml-1 text-[#FF453A]">
-                      · {conversations.reduce((sum, c) => sum + c.unread_count, 0)}개 안 읽음
+                      · {unreadTotal}개 안 읽음
                     </span>
                   )}
               </>
@@ -695,6 +766,11 @@ export default function AdminMessagesPage() {
           {loading ? (
             <div className="flex items-center justify-center py-32">
               <Loader2 className="w-8 h-8 animate-spin text-[#6366F1]" />
+            </div>
+          ) : loadError && conversations.length === 0 ? (
+            <div className="glass-card p-12 text-center">
+              <AlertCircle className="w-12 h-12 text-[#FF453A] mx-auto mb-3" />
+              <p className="text-[#8E8E93]">쪽지함을 불러오지 못했습니다</p>
             </div>
           ) : conversations.length === 0 ? (
             <div className="glass-card p-12 text-center">
@@ -740,6 +816,16 @@ export default function AdminMessagesPage() {
                   </div>
                 </button>
               ))}
+              {nextCursor && (
+                <button
+                  type="button"
+                  onClick={() => loadConversations("inbox", nextCursor, true)}
+                  disabled={loadingMore}
+                  className="w-full rounded-xl border border-white/10 py-3 text-sm text-[#8E8E93] transition-colors hover:bg-white/5 hover:text-white disabled:opacity-50"
+                >
+                  {loadingMore ? "불러오는 중..." : "이전 대화 더 보기"}
+                </button>
+              )}
             </div>
           )}
         </>

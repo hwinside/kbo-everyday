@@ -163,23 +163,34 @@ export default function MyPage() {
         </header>
       </div>
 
-      {/* 반복 CS를 바탕으로 정리한 FAQ — 마이페이지 최상단 */}
-      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="mt-6">
+      {/* Profile card — 마이페이지 최상단 */}
+      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="mt-4">
+        <ProfileCard
+          user={user}
+          profile={profile}
+          team={team}
+          points={writingPoints}
+          onAvatarClick={() => user && setShowAvatarSelect(true)}
+          onNicknameClick={() => user && setShowNicknameEdit(true)}
+          onViewProfile={() => user && router.push(`/profile/${user.id}`)}
+          onHallOfFame={() => user && router.push("/my/hall-of-fame")}
+        />
+      </motion.div>
+
+      {/* 반복 CS를 바탕으로 정리한 FAQ — 기본은 접힌 상태 */}
+      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="mt-2">
         <FaqCard />
       </motion.div>
 
       {/* FAQ에서 답을 찾지 못한 로그인 유저가 바로 문의하도록 연결 */}
       {user && (
-        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="mt-3">
-          <GlassCard pressable className="flex items-center justify-between p-5" onClick={() => setShowFeedback(true)}>
-            <div className="flex items-center gap-4">
-              <MessageSquareHeart size={22} className="text-text-secondary" />
-              <div>
-                <span className="text-base text-text-primary">찾는 답변이 없나요?</span>
-                <p className="mt-0.5 text-xs text-text-tertiary">피드백 보내기에서 직접 문의해주세요</p>
-              </div>
+        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="mt-2">
+          <GlassCard pressable className="flex min-h-12 items-center justify-between !px-4 !py-0" onClick={() => setShowFeedback(true)}>
+            <div className="flex items-center gap-3">
+              <MessageSquareHeart size={20} className="text-text-secondary" />
+              <span className="text-base text-text-primary">찾는 답변이 없나요?</span>
             </div>
-            <ChevronRight size={22} className="text-text-tertiary" />
+            <ChevronRight size={20} className="text-text-tertiary" />
           </GlassCard>
         </motion.div>
       )}
@@ -196,20 +207,6 @@ export default function MyPage() {
           </GlassCard>
         </motion.div>
       )}
-
-      {/* Profile card */}
-      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="mt-3">
-        <ProfileCard
-          user={user}
-          profile={profile}
-          team={team}
-          points={writingPoints}
-          onAvatarClick={() => user && setShowAvatarSelect(true)}
-          onNicknameClick={() => user && setShowNicknameEdit(true)}
-          onViewProfile={() => user && router.push(`/profile/${user.id}`)}
-          onHallOfFame={() => user && router.push("/my/hall-of-fame")}
-        />
-      </motion.div>
 
       {/* 스토리 지오펜스 인증에서 자동 생성되는 본인 전용 직관 기록 */}
       <AdminOnly>

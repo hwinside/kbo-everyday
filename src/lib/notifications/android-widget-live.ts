@@ -1,4 +1,5 @@
 import { resolveCurrentPlayers } from "@/lib/kbo-player-mapping";
+import { isKboGameCancelled } from "@/lib/crawler/kbo-status";
 import { sendFcmToUsers, WIDGET_STREAM, type PushPayload } from "@/lib/notifications/fcm";
 import { fansOfTeams, teamIdByShortName } from "@/lib/notifications/game-status";
 import { latestRelayLine } from "@/lib/notifications/relay-line";
@@ -47,6 +48,45 @@ const START_WINDOW_MS = 90 * 60 * 1000;
 //  push-only 기기는 다음 pregame push로 복구). 지연 후 늦은 취소도 커버.
 const CANCEL_WINDOW_MS = 6 * 60 * 60 * 1000;
 
+// fast-refresh(warmup 함수 내부 루프)용 변화 감지 — 라이브 위젯을 sub-minute로
+// 갱신할 때 상태가 안 바뀌 경기는 추가 푸시를 건너뛰어 배터리/쿼터 부담을 막는다.
+// 모듈 레벨 in-memory 캐시라 같은 서버리스 인스턴스의 사이클 간(그리고 warm 재사용
+// 시 분 간)만 유효 — cold start면 비어서 무조건 발사(현행 동작 보존). 직전 payload.data 시그니처와 비교.
+const lastWidgetSig = new Map<string, string>();
+
+/** 테스트 전용 — fast-refresh dedupe 캐시 초기화(프로덕션 미사용). */
+export function __resetWidgetSigCacheForTest(): void {
+  lastWidgetSig.clear();
+}
+
+/** 주입 가능 의존성 — QA 스모크가 supabase/FCM/network 없이 분기를 검증(삼순 #718 테스트 요구). */
+export interface AndroidWidgetPushDeps {
+  fansOfTeamsImpl?: typeof fansOfTeams;
+  sendFcmImpl?: typeof sendFcmToUsers;
+  fetchImpl?: typeof fetch;
+}
+
+/** dedupe 판정(순수) — dedupe=true이고 직전 시그니처와 동일하면 skip. cycle 0(dedupe=false)은 항상 발사. */
+export function shouldSkipWidgetPush(prevSig: string | undefined, currentSig: string, dedupe: boolean): boolean {
+  return dedupe === true && prevSig !== undefined && prevSig === currentSig;
+}
+
+// dedupe에 포함하면 안 되는 순서/시간 메타 — 매 사이클 값이 바뀌면 무변화 skip이 깨진다(삼순).
+const WIDGET_SIG_OMIT = new Set(["w_source_at", "w_fetched_at"]);
+
+/**
+ * canonical 상태 시그니처 — 순서 메타(w_source_at)를 제외한 경기 필드만으로 계산.
+ * 워치 push bridge out-of-order 방어용 w_source_at를 payload에 싣으되, dedupe는 이 canonical로
+ * 판정해야 매 사이클 무변화 skip이 유지된다(JSON.stringify 전체를 쓰면 sourceAt로 깨짐).
+ */
+export function widgetStateSignature(data: Record<string, unknown>): string {
+  const canonical: Record<string, unknown> = {};
+  for (const k of Object.keys(data).sort()) {
+    if (!WIDGET_SIG_OMIT.has(k)) canonical[k] = data[k];
+  }
+  return JSON.stringify(canonical);
+}
+
 /**
  * Android 홈 위젯/잠금 알림 카드 신선화 + 경기 전 미리 표시.
  * warmup cron은 경기 시간대 매분 KBO 원천 데이터를 읽으므로:
@@ -54,18 +94,37 @@ const CANCEL_WINDOW_MS = 6 * 60 * 60 * 1000;
  *  - 예정(GAME_STATE_SC="1")이고 시작 30분 전 이내: '경기 예정' 매치업 카드를 미리 띄운다(iOS 패리티).
  * 네이티브 알림은 setOnlyAlertOnce라 같은 카드를 매분 갱신해도 재알림 없이 조용히 갱신된다.
  */
-export async function pushAndroidWidgetLiveUpdates(games: KboRawGame[], baseUrl: string): Promise<{
+export async function pushAndroidWidgetLiveUpdates(
+  games: KboRawGame[],
+  baseUrl: string,
+  opts?: {
+    dedupeAgainstLast?: boolean;
+    deadlineAtMs?: number;
+    sourceAtMs?: number;
+    fetchedAtMs?: number;
+  },
+  deps?: AndroidWidgetPushDeps,
+): Promise<{
   games: number;
   sent: number;
   failed: number;
   cleaned: number;
   skipped: number;
+  retryableFailed: number;
 }> {
+  const dedupe = opts?.dedupeAgainstLast === true;
+  const deadlineAtMs = opts?.deadlineAtMs;
+  const fansOf = deps?.fansOfTeamsImpl ?? fansOfTeams;
+  const sendFcm = deps?.sendFcmImpl ?? sendFcmToUsers;
+  const fetchFn = deps?.fetchImpl ?? fetch;
+  const sourceAtMs = opts?.sourceAtMs ?? Date.now();
+  const fetchedAtMs = opts?.fetchedAtMs ?? sourceAtMs;
   let pushed = 0;
   let sent = 0;
   let failed = 0;
   let cleaned = 0;
   let skipped = 0;
+  let retryableFailed = 0;
 
   // 라이브 경기 문자중계 최근 플레이 한 줄 — game-relay self-fetch(공개 도메인 baseUrl, 병렬,
   // 실패 격리). iOS 잠금 LA와 동일 소스/문구(relay-line.ts). 실패·누락 시 위젯에 줄만 안 뜸.
@@ -73,12 +132,16 @@ export async function pushAndroidWidgetLiveUpdates(games: KboRawGame[], baseUrl:
   const liveIds = games
     .filter((g) => g.G_ID && g.GAME_STATE_SC === "2")
     .map((g) => g.G_ID as string);
-  if (liveIds.length > 0) {
+  // deadline(요청 진입 기준 절대값)이 지나면 relay를 시작하지 않고, 진행 시에도 남은
+  // 시간만큼 abort timeout을 걸어 완료까지 deadline 안에 묶는다(삼순 blocker①).
+  const relayBudgetMs = deadlineAtMs != null ? deadlineAtMs - Date.now() : null;
+  if (liveIds.length > 0 && (relayBudgetMs == null || relayBudgetMs > 0)) {
     const relays = await Promise.allSettled(
       liveIds.map(async (gameId) => {
-        const r = await fetch(`${baseUrl}/api/game-relay?gameId=${gameId}`, {
+        const r = await fetchFn(`${baseUrl}/api/game-relay?gameId=${gameId}`, {
           cache: "no-store",
           headers: { "User-Agent": "kbo-everyday-widget/1.0" },
+          ...(relayBudgetMs != null ? { signal: AbortSignal.timeout(relayBudgetMs) } : {}),
         });
         if (!r.ok) return null;
         const j = await r.json().catch(() => null);
@@ -95,9 +158,11 @@ export async function pushAndroidWidgetLiveUpdates(games: KboRawGame[], baseUrl:
 
   for (const g of games) {
     if (!g.G_ID) continue;
+    // deadline 도달 — 남은 경기의 FCM 발사를 시작하지 않는다(다음 크론 틱과 겹침 방지).
+    if (deadlineAtMs != null && Date.now() >= deadlineAtMs) break;
 
     const isLive = g.GAME_STATE_SC === "2";
-    const isCancelled = g.CANCEL_SC_ID !== "0";
+    const isCancelled = isKboGameCancelled(g.CANCEL_SC_ID);
     // 취소: 예정시각 −30분 ~ +CANCEL_WINDOW_MS 창이면 '경기 취소' 카드를 밀어 앱 미오픈
     // 상태에서도 안드 위젯을 갱신(iOS 홈위젯은 백그라운드 갱신 불가라 안드 전용 이점). 창 후엔
     // 위젯이 마지막 상태 유지 → 앱 오픈으로 next 캐시된 기기는 익일 06:00 롤오버로 다음 경기
@@ -131,7 +196,7 @@ export async function pushAndroidWidgetLiveUpdates(games: KboRawGame[], baseUrl:
     const home = g.HOME_NM ?? "";
     const teamIds = [teamIdByShortName(away), teamIdByShortName(home)]
       .filter((v): v is number => v !== null);
-    const fans = await fansOfTeams(teamIds);
+    const fans = await fansOf(teamIds, { deadlineAtMs });
     if (!fans.ok) {
       failed += 1;
       continue;
@@ -168,6 +233,8 @@ export async function pushAndroidWidgetLiveUpdates(games: KboRawGame[], baseUrl:
           w_outs: "",
           w_diamond: "000",
           w_stadium: g.S_NM ?? "",
+          w_source_at: String(sourceAtMs),
+          w_fetched_at: String(fetchedAtMs),
         },
       };
     } else if (isLive) {
@@ -202,6 +269,9 @@ export async function pushAndroidWidgetLiveUpdates(games: KboRawGame[], baseUrl:
           w_diamond: diamond(g),
           w_stadium: g.S_NM ?? "",
           w_lastplay: lastPlayByGame.get(g.G_ID) ?? "",
+          // 워치 push bridge(#719) 순서 기준 — FCM 재정렬에도 강건. dedupe canonical에서는 제외.
+          w_source_at: String(sourceAtMs),
+          w_fetched_at: String(fetchedAtMs),
         },
       };
     } else {
@@ -229,16 +299,50 @@ export async function pushAndroidWidgetLiveUpdates(games: KboRawGame[], baseUrl:
           w_outs: "",
           w_diamond: "000",
           w_stadium: g.S_NM ?? "",
+          w_source_at: String(sourceAtMs),
+          w_fetched_at: String(fetchedAtMs),
         },
       };
     }
 
-    const res = await sendFcmToUsers(fans.ids, payload, "game_start");
+    // fast-refresh 추가 사이클 — canonical 상태(w_source_at 제외) 미변경이면 재발사 생략(배터리 보호).
+    const sig = widgetStateSignature(payload.data as Record<string, unknown>);
+    if (shouldSkipWidgetPush(lastWidgetSig.get(g.G_ID as string), sig, dedupe)) {
+      skipped += fans.ids.length;
+      continue;
+    }
+    // 안드 위젯/워치 브릿지 전용 data 푸시라 platform="android"로 iOS 토큰 조회를 제외한다
+    // (삼순 blocker④ — iOS는 별도 pushIosWidgetLiveUpdates가 담당, 무관 토큰 발송 제거).
+    const res = await sendFcm(
+      fans.ids,
+      payload,
+      "game_start",
+      "android",
+      { deadlineAtMs },
+    );
+    // FCM 인프라 성공(res.ok) 확인 후에만 시그니처 기록 — 실패 시 다음 사이클이 동일 상태를
+    // 재시도할 수 있게 한다(삼순 blocker③ — 실패 dedupe 오염 방지).
+    const transientFailed = res.retryableFailed ?? 0;
+    if (res.ok && transientFailed === 0) lastWidgetSig.set(g.G_ID as string, sig);
     sent += res.sent;
     failed += res.failed;
     cleaned += res.cleaned;
     skipped += res.skipped;
+    retryableFailed += transientFailed;
+    console.info("[widget-pipeline]", JSON.stringify({
+      gameId: g.G_ID,
+      sourceAtMs,
+      fetchedAtMs,
+      sendStartedAtMs: res.sendStartedAtMs ?? null,
+      sendCompletedAtMs: res.sendCompletedAtMs ?? null,
+      sourceToFetchMs: Math.max(0, fetchedAtMs - sourceAtMs),
+      fetchToSendMs: res.sendStartedAtMs == null ? null : Math.max(0, res.sendStartedAtMs - fetchedAtMs),
+      sent: res.sent,
+      failed: res.failed,
+      retryableFailed: transientFailed,
+      ok: res.ok,
+    }));
   }
 
-  return { games: pushed, sent, failed, cleaned, skipped };
+  return { games: pushed, sent, failed, cleaned, skipped, retryableFailed };
 }

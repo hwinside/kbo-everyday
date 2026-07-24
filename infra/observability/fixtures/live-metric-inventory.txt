@@ -1,0 +1,42 @@
+# Live metric inventory — hosted Supabase Prometheus scrape (Grafana Cloud).
+#
+# This is the allowlist of metric names that are actually present in the
+# production scrape, verified by independent Grafana `label_values(__name__)`
+# inspection of the hosted stack (2026-07-23). Every "ready" prometheus rule in
+# alert-policies.json (rules without a deploymentState) must reference only
+# metrics listed here. The config regression fails if a ready rule uses a
+# metric outside this inventory — this catches phantom metrics like the removed
+# `supavisor_pool_checkout_duration_local_bucket`, which never existed in the
+# real scrape and would have produced an alert that could never fire.
+#
+# Provenance: official Supabase Grafana integration metrics
+# (https://github.com/supabase/supabase-grafana/blob/main/docs/metrics.md)
+# confirmed against the live hosted stack. Add a metric here only after
+# confirming it appears in the live inventory; do not add speculative names.
+#
+# One metric base name per line. Blank lines and `#` comments are ignored.
+
+# --- node_exporter (host) ---
+node_cpu_seconds_total
+node_memory_MemTotal_bytes
+node_memory_MemFree_bytes
+node_memory_Buffers_bytes
+node_memory_Cached_bytes
+node_memory_SwapTotal_bytes
+node_memory_SwapFree_bytes
+node_filesystem_avail_bytes
+node_filesystem_size_bytes
+node_disk_io_time_seconds_total
+
+# --- postgres_exporter ---
+pg_up
+pg_stat_database_num_backends
+pg_stat_activity_xact_runtime
+max_connections_connection_count
+
+# --- pgbouncer / connection pooler ---
+pgbouncer_pools_client_waiting_connections
+pgbouncer_pools_client_maxwait_seconds
+
+# --- realtime / replication ---
+replication_realtime_lag_bytes

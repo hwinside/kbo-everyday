@@ -39,10 +39,13 @@ public class NativeLiveEnvelopeTest {
     public void gameLiveParsesGameIdFromUrlAndTimestamps() {
         NativeLiveEnvelope e = NativeLiveEnvelope.parse(
             map("kind", "game_live", "url", "/games/20260720LGKT0",
-                "w_ts", "1700000005000", "w_source_at", "1700000004000"), RECV);
+                "w_ts", "1700000005000", "w_source_at", "1700000004000",
+                "w_fetched_at", "1700000004500"), RECV);
         assertNotNull(e);
         assertEquals(NativeLiveEnvelope.KIND_LIVE, e.kind);
         assertEquals("20260720LGKT0", e.gameId);
+        assertEquals(1700000004000L, e.sourceAt);
+        assertEquals(1700000004500L, e.fetchedAt);
         assertEquals(1700000005000L, e.sourceTs); // w_ts
         assertEquals(1700000004000L, e.orderTs);   // w_source_at
         assertFalse(e.isTerminal());
@@ -54,6 +57,8 @@ public class NativeLiveEnvelopeTest {
             map("kind", "game_live", "url", "/games/G1"), RECV);
         assertNotNull(e);
         assertEquals(-1L, e.sourceTs);   // w_ts 없음 → 가드 비활성
+        assertEquals(RECV, e.sourceAt);
+        assertEquals(RECV, e.fetchedAt);
         assertEquals(RECV, e.orderTs);   // w_source_at 없음 → 수신 시각
     }
 

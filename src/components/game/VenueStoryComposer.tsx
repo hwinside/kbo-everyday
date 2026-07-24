@@ -5,11 +5,14 @@ import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Loader2, Video as VideoIcon, MapPin } from "lucide-react";
 import { getSafeSession } from "@/lib/supabase/client";
-import { prepareVenueStoryMedia } from "@/lib/venue-stories/upload";
+import { prepareVenueStoryMedia, probeVideoDurationMs } from "@/lib/venue-stories/upload";
+import { checkVenueMediaLimits } from "@/lib/venue-stories/media-limits";
+import { isVideoCompressSupported } from "@/lib/venue-stories/video-compress";
 import { getVenuePosition } from "@/lib/venue-stories/geo";
 import { haversineMeters } from "@/lib/venue-stories/stadiums";
 import { VENUE_STORY_CONSENT_VERSION, type VenueInfo } from "@/lib/venue-stories/types";
 import { consentStorageKey } from "@/lib/venue-stories/auth-consent";
+import { createPickController, type PickController } from "@/lib/venue-stories/pick-controller";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
 
 interface Props {
@@ -28,12 +31,41 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   const [previewType, setPreviewType] = useState<"image" | "video" | null>(null);
   const [caption, setCaption] = useState("");
   const [phase, setPhase] = useState<Phase>("idle");
+  const [progress, setProgress] = useState(0); // 0~100, phase==="upload" 일 때만 유효
+  // cap 초과 영상 자동압축 구간(0~40%) 라벨 분기용 — upload.ts 가 stage 를 알려준다
+  const [uploadStage, setUploadStage] = useState<"compress" | "upload">("upload");
+  // iOS가 사진앱 영상을 export하느라 픽 후 change 이벤트까지 수 초간 무피드백 구간이 있다
+  // → 픽 대기 안내 오버레이 (하린아빠 7/23 21:05 리포트). 상태 전이는 pick-session 순수 모듈이 소유:
+  // 수동 취소/닫기 후 late change 무시 · 준비 중 재진입 차단 (삼순 #805 blocker)
+  const [picking, setPicking] = useState(false);
+  // controller의 onFile은 생성 시 1회 결속되므로, 최신 render closure를 ref로 우회한다
+  const handlePickedFileRef = useRef<(file: File | null) => void>(() => {});
+  // 영상 duration probe가 async — reset/새 픽 이후 도착하는 late probe 결과는 무시한다
+  const pickSeqRef = useRef(0);
+  const pickControllerRef = useRef<PickController | null>(null);
+  const pickController = () =>
+    (pickControllerRef.current ??= createPickController({
+      // 픽마다 **새 input 인스턴스** 생성 — 토큰이 이 인스턴스의 handler closure에 결속되어
+      // 이전 픽(A)의 late change/cancel이 새 픽(B)으로 오인될 수 없다 (삼순 #805 라운드4)
+      openNative: ({ onChange, onCancel }) => {
+        const input = document.createElement("input");
+        input.type = "file";
+        input.accept = "image/*,video/*";
+        input.addEventListener("change", () => onChange(input.files?.[0] ?? null), { once: true });
+        input.addEventListener("cancel", () => onCancel(), { once: true });
+        input.click();
+      },
+      onFile: (file) => handlePickedFileRef.current(file),
+      onStateChange: setPicking,
+    }));
+  const cancelPick = () => {
+    pickController().cancel();
+  };
   const [error, setError] = useState<string | null>(null);
   const [venue, setVenue] = useState<VenueInfo | null>(null);
   const [venueLoading, setVenueLoading] = useState(false);
   const [agreed, setAgreed] = useState(false);
   const [sessionUserId, setSessionUserId] = useState<string | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
 
   // UGC 가이드라인 동의 — 버전별 + **user-scoped** 기억(삼순 09:44 #3: 계정 전환 시 타 계정
   // 동의 상속 금지). userId 미상이면 기억하지 않는다. 서버가 최종 검증하므로 이건 UX 편의용.
@@ -101,6 +133,9 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   }, [isOpen, gameId]);
 
   const reset = () => {
+    // in-flight 픽 invalidate — 닫기/초기화 뒤 도착하는 late change는 무시된다
+    cancelPick();
+    pickSeqRef.current++;
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     setFile(null);
     setPreviewUrl(null);
@@ -108,17 +143,25 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
     setCaption("");
     setError(null);
     setPhase("idle");
+    setProgress(0);
+    setUploadStage("upload");
   };
 
   const close = () => {
+    // 업로드 진행 중 닫기 금지 — XHR은 계속돼서 orphan 업로드가 남는다(삼순 #795 blocker)
+    if (submitting) return;
     reset();
     onClose();
   };
 
-  const onPick = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0];
-    e.target.value = "";
-    if (!f) return;
+  const openPicker = () => {
+    if (submitting) return;
+    // 재진입/late-event 방어는 controller가 소유 (픽별 새 input + 토큰 closure 결속)
+    pickController().openPicker();
+  };
+
+  const handlePickedFile = async (f: File | null) => {
+    if (!f || submitting) return;
     setError(null);
     const isVideo = f.type.startsWith("video/");
     const isImage = f.type.startsWith("image/");
@@ -126,11 +169,32 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
       setError("이미지 또는 영상만 올릴 수 있어요");
       return;
     }
+    // 제한 초과는 픽 시점에 즉시 차단 — '올리기'까지 가지 않게 (upload.ts 검사는 최종 안전망).
+    // 영상은 duration(15초)이 1차 기준 — 유저는 방금 찍은 영상이 몇 MB인지 모른다(하린아빠 7/24).
+    // probe 실패(null)는 여기서 차단하지 않고 업로드 단계 검증으로 fail-close(이중 차단 방지).
+    const seq = ++pickSeqRef.current;
+    const durationMs = isVideo ? await probeVideoDurationMs(f) : null;
+    if (seq !== pickSeqRef.current) return; // reset/새 픽이 끼어든 late probe — 버림
+    const limitError = checkVenueMediaLimits({
+      kind: isVideo ? "video" : "image",
+      sizeBytes: f.size,
+      durationMs,
+      // WebCodecs 지원 환경이면 cap 초과 영상을 차단 대신 업로드 단계 자동압축에 맡긴다
+      videoAutoCompressAvailable: isVideo && isVideoCompressSupported(),
+    });
+    if (limitError) {
+      setError(limitError);
+      return;
+    }
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     setFile(f);
     setPreviewUrl(URL.createObjectURL(f));
     setPreviewType(isVideo ? "video" : "image");
   };
+  useEffect(() => {
+    // render마다 최신 closure로 갱신 — controller의 1회 결속 onFile이 stale state를 보지 않게
+    handlePickedFileRef.current = handlePickedFile;
+  });
 
   const submit = async () => {
     if (!file || submitting) return;
@@ -177,8 +241,13 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
     }
 
     setPhase("upload");
+    setProgress(0);
+    setUploadStage("upload");
     try {
-      const prepared = await prepareVenueStoryMedia(file, gameId);
+      const prepared = await prepareVenueStoryMedia(file, gameId, (r, stage) => {
+        setProgress(Math.min(99, Math.round(r * 100)));
+        if (stage) setUploadStage(stage);
+      });
       if ("error" in prepared) {
         setError(prepared.error);
         setPhase("idle");
@@ -247,7 +316,12 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
         >
           <div className="flex items-center justify-between px-4 py-3 border-b border-border">
             <span className="text-base font-semibold text-text-primary">직관 라이브 올리기</span>
-            <button onClick={close} aria-label="닫기" className="text-text-tertiary">
+            <button
+              onClick={close}
+              disabled={submitting}
+              aria-label="닫기"
+              className="text-text-tertiary disabled:opacity-40"
+            >
               <X size={22} />
             </button>
           </div>
@@ -268,8 +342,9 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
 
             {!previewUrl ? (
               <button
-                onClick={() => inputRef.current?.click()}
-                className="flex flex-col items-center justify-center gap-2 h-48 rounded-2xl border-2 border-dashed border-border text-text-tertiary active:bg-bg-tertiary"
+                onClick={openPicker}
+                disabled={submitting}
+                className="flex flex-col items-center justify-center gap-2 h-48 rounded-2xl border-2 border-dashed border-border text-text-tertiary active:bg-bg-tertiary disabled:opacity-40"
               >
                 <VideoIcon size={28} />
                 <span className="text-sm">현장 사진·영상 선택</span>
@@ -284,29 +359,36 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
                   <img src={previewUrl} alt="" className="w-full h-full object-contain" />
                 )}
                 <button
-                  onClick={() => inputRef.current?.click()}
-                  className="absolute bottom-2 right-2 text-xs bg-black/60 text-white px-3 py-1.5 rounded-full"
+                  onClick={openPicker}
+                  disabled={submitting}
+                  className="absolute bottom-2 right-2 text-xs bg-black/60 text-white px-3 py-1.5 rounded-full disabled:opacity-40"
                 >
                   다시 선택
                 </button>
               </div>
             )}
 
-            <input
-              ref={inputRef}
-              type="file"
-              accept="image/*,video/*"
-              className="hidden"
-              onChange={onPick}
-            />
+            {/* iOS 사진앱 영상 export 대기 구간 안내 — 픽커가 닫힌 뒤 change 이벤트까지 수 초간 무피드백이던 구간 (7/23 리포트) */}
+            {picking && !submitting && (
+              <div className="flex items-center justify-between gap-2 rounded-xl bg-bg-tertiary/60 px-3 py-2.5 text-sm text-text-secondary">
+                <span className="flex items-center gap-2">
+                  <Loader2 size={16} className="animate-spin shrink-0" />
+                  사진·영상 불러오는 중… 영상은 몇 초 걸릴 수 있어요
+                </span>
+                <button onClick={cancelPick} className="text-xs text-text-tertiary shrink-0">
+                  취소
+                </button>
+              </div>
+            )}
 
             <input
               type="text"
               value={caption}
               onChange={(e) => setCaption(e.target.value)}
               maxLength={200}
+              disabled={submitting}
               placeholder="한 줄 코멘트 (선택)"
-              className="w-full px-3 py-2.5 rounded-xl bg-bg-tertiary text-sm text-text-primary placeholder:text-text-tertiary outline-none"
+              className="w-full px-3 py-2.5 rounded-xl bg-bg-tertiary text-sm text-text-primary placeholder:text-text-tertiary outline-none disabled:opacity-40"
             />
 
             <label className="flex items-start gap-2 text-[11px] text-text-tertiary leading-relaxed cursor-pointer select-none">
@@ -314,7 +396,8 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
                 type="checkbox"
                 checked={agreed}
                 onChange={toggleAgree}
-                className="mt-0.5 accent-brand-primary shrink-0"
+                disabled={submitting}
+                className="mt-0.5 accent-brand-primary shrink-0 disabled:opacity-40"
               />
               <span>
                 중계화면 무단 재촬영·타인 얼굴/초상권 침해·욕설/폭력·불법 촬영물을 올리지 않겠습니다.
@@ -324,13 +407,28 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
 
             {error && <p className="text-sm text-red-400">{error}</p>}
 
+            {phase === "upload" && (
+              <div className="w-full h-1.5 rounded-full bg-bg-tertiary overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-brand-primary transition-[width] duration-200 ease-out"
+                  style={{ width: `${progress}%` }}
+                />
+              </div>
+            )}
+
             <button
               onClick={submit}
               disabled={!file || submitting || !!gateReason || !agreed}
               className="w-full py-3 rounded-xl bg-brand-primary text-white font-semibold flex items-center justify-center gap-2 disabled:opacity-40"
             >
               {submitting ? <Loader2 size={18} className="animate-spin" /> : null}
-              {phase === "geo" ? "직관 인증 중…" : phase === "upload" ? "올리는 중…" : "올리기"}
+              {phase === "geo"
+                ? "직관 인증 중…"
+                : phase === "upload"
+                  ? uploadStage === "compress"
+                    ? `영상 최적화 중… ${progress}%`
+                    : `올리는 중… ${progress}%`
+                  : "올리기"}
             </button>
           </div>
         </motion.div>

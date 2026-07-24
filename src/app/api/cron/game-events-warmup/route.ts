@@ -6,9 +6,24 @@ import { notifyTeamRankChanges } from "@/lib/notifications/team-rank";
 import { notifyScoreEvents, notifyInningSummaries } from "@/lib/notifications/game-score";
 import { notifyPlayerHighlights } from "@/lib/notifications/player-highlight";
 import { pushLiveActivityUpdates, pushLiveActivityStarts, pushLiveActivitySilentWakes } from "@/lib/notifications/live-activity";
-import { ensureLiveActivityChannels, pushLiveActivityChannelBroadcasts } from "@/lib/notifications/live-activity-channels";
+import {
+  ensureLiveActivityChannels,
+  pushLiveActivityChannelBroadcasts,
+  snapshotChannelLastStates,
+} from "@/lib/notifications/live-activity-channels";
 import { pushAndroidWidgetLiveUpdates } from "@/lib/notifications/android-widget-live";
 import { pushIosWidgetLiveUpdates } from "@/lib/notifications/ios-widget-live";
+import {
+  startWidgetRefreshPipelines,
+  FAST_LOOP_DEADLINE_MS,
+  parseKboGameListPayload,
+} from "@/lib/notifications/widget-fast-loop";
+import {
+  startLaOrchestration,
+  LA_FANOUT_DRAIN_DEADLINE_MS,
+  LA_BROADCAST_DEADLINE_MS,
+} from "@/lib/notifications/live-fast-path";
+import { runBeforeDeadline } from "@/lib/async-deadline";
 
 /**
  * Warm up the in-memory prevState cache of /api/game-events for every
@@ -24,10 +39,59 @@ import { pushIosWidgetLiveUpdates } from "@/lib/notifications/ios-widget-live";
 const CRON_SECRET = process.env.CRON_SECRET || "";
 const KBO_MAIN = "https://www.koreabaseball.com/ws/Main.asmx";
 
+// 함수 내부 fast-refresh 루프(+15/+30/+45s 서브틱)가 돌 수 있게 실행시간 상한을 늘린다
+// (Vercel Pro, news-clipping 300s 선례). 루프는 요청-절대 deadline(FAST_LOOP_DEADLINE_MS=52s)
+// 이후 어떤 작업도 *시작*하지 않고, 75s는 마지막 서브틱이 이미 시작한 LA/FCM 발송 tail의
+// 안전 마진(23s)이다. 다음 분 cron과의 짧은 겹침 구간 중복 발송은 DB 선점/CAS/hash
+// dedupe가 차단한다(live-fast-path.ts 주석 참조).
+export const maxDuration = 75;
+
 function getKSTDateStr(): string {
   const now = new Date();
   const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
   return kst.toISOString().slice(0, 10).replace(/-/g, "");
+}
+
+// KBO 라이브 스코어보드 원천 — fast-refresh 루프가 매 사이클 신선한 games를 다시 읽도록 추출.
+// (2026-05-20: KBO가 Referer가 koreabaseball.com이 아닌 요청을 IE 에러 페이지로 막음.)
+// ok:false = HTTP/network 실패 — fast-loop가 "라이브 0(정상 종료)"과 구분해 다음 tick에
+// 재시도하도록 오류를 빈 배열로 축약하지 않는다(삼순 blocker②). deadlineAtMs 지정 시 abort로
+// fetch 완료도 deadline 안에 묶는다(미지정 = 기존 동작 그대로, 메인 경로 무변경).
+export async function fetchKboLiveGames(
+  date: string,
+  deadlineAtMs?: number,
+  fetchImpl: typeof fetch = fetch,
+): Promise<{
+  ok: boolean;
+  games: KboRawGame[];
+  trace: { sourceAtMs: number; fetchedAtMs: number };
+}> {
+  const sourceAtMs = Date.now();
+  try {
+    const remainingMs = deadlineAtMs == null ? null : deadlineAtMs - Date.now();
+    const r = await runBeforeDeadline(
+      () => fetchImpl(`${KBO_MAIN}/GetKboGameList`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)",
+          "Referer": "https://www.koreabaseball.com/Schedule/ScoreBoard.aspx",
+        },
+        body: `leId=1&srId=0,1,3,4,5,7,8,9&date=${date}`,
+        cache: "no-store",
+        ...(remainingMs != null ? { signal: AbortSignal.timeout(Math.max(1, remainingMs)) } : {}),
+      }),
+      deadlineAtMs,
+    );
+    if (!r.ok) return { ok: false, games: [], trace: { sourceAtMs, fetchedAtMs: Date.now() } };
+    const json = await runBeforeDeadline(() => r.json(), deadlineAtMs).catch(() => null);
+    const games = parseKboGameListPayload(json);
+    const fetchedAtMs = Date.now();
+    if (games === null) return { ok: false, games: [], trace: { sourceAtMs, fetchedAtMs } };
+    return { ok: true, games, trace: { sourceAtMs, fetchedAtMs } };
+  } catch {
+    return { ok: false, games: [], trace: { sourceAtMs, fetchedAtMs: Date.now() } };
+  }
 }
 
 // 잠금화면 Live Activity "중계 한 줄" 소스 — /api/game-relay 응답에서 최근 플레이 1줄 추출.
@@ -52,26 +116,23 @@ function latestRelayLine(relay: unknown): string | null {
 }
 
 export async function GET(req: NextRequest) {
+  // 요청 진입 시각 — fast-refresh 루프의 *절대* deadline 기준(삼순 blocker①: warmup 본작업이
+  // 지연돼도 +20/+40 tick이 요청 시작 60s를 넘어 다음 크론과 겹치지 않게 여기서 잡는다).
+  const requestStartMs = Date.now();
   const authHeader = req.headers.get("authorization");
   if (!CRON_SECRET || authHeader !== `Bearer ${CRON_SECRET}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const date = getKSTDateStr();
-
-  // 2026-05-20: KBO가 Referer가 koreabaseball.com이 아닌 요청을 IE 에러 페이지로 막음.
-  const liveRes = await fetch(`${KBO_MAIN}/GetKboGameList`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)",
-      "Referer": "https://www.koreabaseball.com/Schedule/ScoreBoard.aspx",
-    },
-    body: `leId=1&srId=0,1,3,4,5,7,8,9&date=${date}`,
-    cache: "no-store",
-  }).then(r => (r.ok ? r.json() : null)).catch(() => null);
-
-  const games: KboRawGame[] = liveRes?.game || [];
+  const deadlineAtMs = requestStartMs + FAST_LOOP_DEADLINE_MS;
+  // 손상 응답은 정상 "라이브 0"으로 보지 않는다. 본체 알림은 이번 틱 skip하되 fast-loop는
+  // +20/+40초 재시도해 일시 KBO parse/schema 오류를 다음 분까지 끌지 않는다.
+  const initialFetch = await fetchKboLiveGames(
+    date,
+    Math.min(deadlineAtMs, Date.now() + 10_000),
+  );
+  const games: KboRawGame[] = initialFetch.ok ? initialFetch.games : [];
   const liveGameIds = games
     .filter(g => g.GAME_STATE_SC === "2" && g.G_ID)
     .map(g => g.G_ID as string);
@@ -88,6 +149,148 @@ export async function GET(req: NextRequest) {
       : process.env.VERCEL_URL
         ? `https://${process.env.VERCEL_URL}`
         : req.nextUrl.origin);
+
+  // 초기 Android 발송과 추가 +20/+40초 loop를 KBO fetch 직후 동시에 시작한다.
+  // 초기 경로는 요청+18초에 실제 fans/prefs/token/FCM 요청까지 중단해 +20초의 최신
+  // snapshot보다 뒤늦게 옛 상태를 발송하지 않는다. fast loop는 전체 +46초 deadline을 쓴다.
+  type AndroidWidgetResult =
+    | { games: number; sent: number; failed: number; cleaned: number; skipped: number; retryableFailed: number }
+    | { error: string };
+
+  // 서브틱 fast path의 game-events self-fetch — 본체와 동일 경로(공개 도메인 baseUrl).
+  // 점수축 변화 경기만 호출되므로 타석 단위 변화마다 이벤트 생성 fetch가 돌지 않는다.
+  const fetchGameEventsForFastPath = async (gameIds: string[]): Promise<Map<string, GameEvent[]>> => {
+    const out = new Map<string, GameEvent[]>();
+    const settled = await Promise.allSettled(
+      gameIds.map(async (gameId) => {
+        const r = await fetch(`${baseUrl}/api/game-events?gameId=${gameId}`, {
+          cache: "no-store",
+          headers: { "User-Agent": "kbo-everyday-warmup/1.0" },
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (!r.ok) return null;
+        const json = await r.json().catch(() => null);
+        return { gameId, events: (json?.events ?? []) as GameEvent[] };
+      }),
+    );
+    for (const s of settled) {
+      if (s.status === "fulfilled" && s.value) out.set(s.value.gameId, s.value.events);
+    }
+    return out;
+  };
+  // 서브틱 fast path의 중계 한 줄 수집 — 본체와 동일 패턴(실패 격리, 줄만 안 뜨임).
+  const fetchRelayLinesForFastPath = async (gameIds: string[]): Promise<Map<string, string>> => {
+    const out = new Map<string, string>();
+    const settled = await Promise.allSettled(
+      gameIds.map(async (gameId) => {
+        const r = await fetch(`${baseUrl}/api/game-relay?gameId=${gameId}`, {
+          cache: "no-store",
+          headers: { "User-Agent": "kbo-everyday-warmup/1.0" },
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (!r.ok) return null;
+        const j = await r.json().catch(() => null);
+        const line = latestRelayLine(j);
+        return line ? { gameId, line } : null;
+      }),
+    );
+    for (const s of settled) {
+      if (s.status === "fulfilled" && s.value) out.set(s.value.gameId, s.value.line);
+    }
+    return out;
+  };
+
+  // ── LA 오케스트레이션 (삼순 R2 blocker①② — 조립은 startLaOrchestration 하나로) ──
+  // 친리티컬 패스(relay 한 줄 → 채널 ensure → 레거시용 직전-상태 스냅샷 → broadcast)를
+  // 초기 KBO fetch 직후 독립 실행하고, 서브틱 게이트는 *초기 broadcast 완료 직후* 열린다.
+  // 느린 fanout(레거시 per-토큰/start/iOS 위젯 FCM)은 직렬 큐로 분리 — tail>52s여도
+  // 서브틱 broadcast가 굶지 않는다. 레거시는 broadcast 전 스냅샷을 주입받아 직전-틱
+  // 판정을 유지(hash 순서 불변식 대체 — live-fast-path.ts 상단 주석).
+  // 이 조립 코드 자체가 qa:la-fastpath의 회귀 대상(삼순 R2 "실배선 미검증" 해소).
+  // broadcast 축(친리티컬 패스) 요청-절대 deadline(삼순 R4 blocker②) — 채널별 APNs 8s
+  // timeout 직렬(5경기×2 env 전부 실패 = 80s)이 maxDuration(75s)을 못 넘게, broadcast/
+  // catch-up/ensure 호출이 이 선을 넘으면 새 발송을 시작하지 않고 명시 종료한다(마지막
+  // in-flight send 1건만 +8s → 상한 68s = drain deadline). 미발송 라이브 경기는
+  // failedGameIds로 보고돼 fast path가 다음 틱 catch-up p10으로 재-arm한다.
+  const broadcastDeadlineAtMs = requestStartMs + LA_BROADCAST_DEADLINE_MS;
+  const laOrchestration = startLaOrchestration(
+    {
+      now: () => Date.now(),
+      sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+      fetchLiveGames: () =>
+        fetchKboLiveGames(date, Math.min(deadlineAtMs, Date.now() + 10_000)),
+      fetchRelayLines: fetchRelayLinesForFastPath,
+      ensureChannels: (gs) =>
+        ensureLiveActivityChannels(gs, { deadlineAtMs: broadcastDeadlineAtMs }),
+      snapshotLegacyState: (ids) => snapshotChannelLastStates(ids),
+      pushBroadcast: (gs, lp) =>
+        pushLiveActivityChannelBroadcasts(gs, lp, { deadlineAtMs: broadcastDeadlineAtMs }),
+      // 유실 catch-up — 무변화여도 해당 경기 p10 current-state 강제 재발송(p5/skip 승격 — 삼순 R2③).
+      pushBroadcastCatchup: (gs, lp, ids) =>
+        pushLiveActivityChannelBroadcasts(gs, lp, {
+          forceCurrentStateGameIds: new Set(ids),
+          deadlineAtMs: broadcastDeadlineAtMs,
+        }),
+      pushLegacyLa: (gs, lp, snapshot) =>
+        pushLiveActivityUpdates(gs, lp, { channelLastStateOverride: snapshot }),
+      pushStarts: (gs) => pushLiveActivityStarts(gs),
+      pushIosWidget: (gs, lp) => pushIosWidgetLiveUpdates(gs, lp),
+      pushAndroid: (gs, tr) =>
+        pushAndroidWidgetLiveUpdates(gs, baseUrl, {
+          dedupeAgainstLast: true,
+          deadlineAtMs,
+          sourceAtMs: tr.sourceAtMs,
+          fetchedAtMs: tr.fetchedAtMs,
+        }),
+      fetchGameEvents: fetchGameEventsForFastPath,
+      notifyScore: (gs, ev) => notifyScoreEvents(gs, ev),
+      // 계측 — diff 감지(KBO 응답 확보)→발송 완료 latency. 배포 후 효과 실측용.
+      onTickResult: (tick) => {
+        if ("detectToSendMs" in tick) {
+          console.log(
+            `[warmup] fast-path tick +${Date.now() - requestStartMs}ms changed=${tick.changedGameIds.join(",")}` +
+            ` scoreChanged=${tick.scoreChangedLiveGameIds.join(",") || "-"} detect→send ${tick.detectToSendMs}ms`,
+          );
+        } else if (tick.catchup) {
+          console.log(
+            `[warmup] fast-path catchup +${Date.now() - requestStartMs}ms games=${tick.catchup.gameIds.join(",")}`,
+          );
+        }
+      },
+    },
+    {
+      requestStartMs,
+      deadlineAtMs,
+      initialFetchOk: initialFetch.ok,
+      games,
+      liveGameIds,
+    },
+  );
+
+  const { initialPromise: initialAndroidWidgetPromise, fastPromise: fastRefreshPromise } =
+    startWidgetRefreshPipelines<AndroidWidgetResult>({
+      pushInitial: pushAndroidWidgetLiveUpdates,
+      // 서브틱 fast path — diff도 catch-up pending도 없으면 DB/APNs/FCM 무접근 즉시 반환
+      // (conn pool 보호), 변화 시 안드 위젯 ∥ broadcast(크리티컬) ∥ 득점 푸시 + 느린 fanout
+      // 큐잉, 무변화 첫 틱은 유실 대비 broadcast-only p10 catch-up 1회(삼순 R1②·R2③).
+      // 시작알림/순위/요약/활약/autostart/wake는 분 단위 본체 전용(#798/#800 게이트 비간섭).
+      runFast: () => laOrchestration.runFastLoop(),
+    }, {
+      requestStartMs,
+      overallDeadlineAtMs: deadlineAtMs,
+      initial: initialFetch.ok ? {
+        games,
+        baseUrl,
+        sourceAtMs: initialFetch.trace.sourceAtMs,
+        fetchedAtMs: initialFetch.trace.fetchedAtMs,
+      } : null,
+      initialSkipped: { error: "kbo_fetch_failed" },
+    });
+  const androidWidgetPromise = initialAndroidWidgetPromise.catch((e): AndroidWidgetResult => {
+    console.error("[warmup] android widget live update failed:", (e as Error).message);
+    return { error: (e as Error).message };
+  });
+
   const results = await Promise.allSettled(
     liveGameIds.map(gameId =>
       fetch(`${baseUrl}/api/game-events?gameId=${gameId}`, {
@@ -113,7 +316,12 @@ export async function GET(req: NextRequest) {
   // 실패해도 warmup 본연의 동작(이벤트 캐시)에 영향 없음.
   let gameNotify: { started: number; ended: number } | { error: string } = { started: 0, ended: 0 };
   try {
-    gameNotify = await notifyGameStatusTransitions(games);
+    // observedAtMs = 이 games를 fetch한 시각. 시작알림 90초 게이트는 관측 시각끼리 비교해야
+    // 하므로(연속 틱 관측 판정), 앞단 처리/FCM 발송 지연이 stale 오판을 만들지 않게 한다
+    // (2026-07-24 LG:한화 시작알림 억제 사고).
+    gameNotify = await notifyGameStatusTransitions(games, {
+      observedAtMs: initialFetch.trace.fetchedAtMs,
+    });
   } catch (e) {
     gameNotify = { error: (e as Error).message };
     console.error("[warmup] game status notify failed:", (e as Error).message);
@@ -147,18 +355,6 @@ export async function GET(req: NextRequest) {
     console.error("[warmup] inning summary notify failed:", (e as Error).message);
   }
 
-  // Android 홈 위젯/잠금 알림 카드 신선화 — 득점 이벤트가 없어도 warmup cron의
-  // 매분 KBO 원천 스냅샷으로 score/inning/out/runner/player 상태를 갱신한다.
-  let androidWidget:
-    | { games: number; sent: number; failed: number; cleaned: number; skipped: number }
-    | { error: string } = { games: 0, sent: 0, failed: 0, cleaned: 0, skipped: 0 };
-  try {
-    androidWidget = await pushAndroidWidgetLiveUpdates(games, baseUrl);
-  } catch (e) {
-    androidWidget = { error: (e as Error).message };
-    console.error("[warmup] android widget live update failed:", (e as Error).message);
-  }
-
   // 최애선수 활약(타자) 푸시 (push-notifications-v1 S5b) — 장타/홈런 batter 매칭.
   let highlightNotify: { highlighted: number } | { error: string } = { highlighted: 0 };
   try {
@@ -166,91 +362,6 @@ export async function GET(req: NextRequest) {
   } catch (e) {
     highlightNotify = { error: (e as Error).message };
     console.error("[warmup] highlight notify failed:", (e as Error).message);
-  }
-
-  // 잠금화면 Live Activity "중계 한 줄" 소스 — 라이브 경기의 네이버 문자중계 최근 플레이.
-  // game-events self-fetch와 동일 패턴(공개 도메인 baseUrl, 병렬, 실패 격리). game-relay는
-  // 서버 캐시가 있어 클라 폴링으로 대체로 warm. 실패/누락 시 그냥 생략 → 카드에 줄만 안 뜸.
-  const lastPlayByGame = new Map<string, string>();
-  try {
-    const relayResults = await Promise.allSettled(
-      liveGameIds.map(async (gameId) => {
-        const r = await fetch(`${baseUrl}/api/game-relay?gameId=${gameId}`, {
-          cache: "no-store",
-          headers: { "User-Agent": "kbo-everyday-warmup/1.0" },
-        });
-        if (!r.ok) return null;
-        const j = await r.json().catch(() => null);
-        const line = latestRelayLine(j);
-        return line ? { gameId, line } : null;
-      }),
-    );
-    for (const r of relayResults) {
-      if (r.status === "fulfilled" && r.value) lastPlayByGame.set(r.value.gameId, r.value.line);
-    }
-  } catch (e) {
-    console.error("[warmup] relay lastPlay fetch failed:", (e as Error).message);
-  }
-
-  // Broadcast 채널 준비 (스펙 v4 §서버 2) — start 윈도우 경기에 env별 채널 생성(멱등).
-  // p2s payload(input-push-channel)·인앱 채널 조회보다 먼저 존재해야 하므로 최우선 실행.
-  let laChannels: { created: number } | { error: string } = { created: 0 };
-  try {
-    laChannels = await ensureLiveActivityChannels(games);
-  } catch (e) {
-    laChannels = { error: (e as Error).message };
-    console.error("[warmup] la channel ensure failed:", (e as Error).message);
-  }
-
-  // 잠금화면 Live Activity 백그라운드 갱신 (W3a) — 같은 게임 목록 재사용.
-  // APNs 직접 푸시. 미설정(APNS env 없음) 시 no-op. 실패해도 warmup 본연에 영향 없음.
-  // 레거시(per-토큰) 갱신 — 채널 구독 확인 기기는 제외되고 아래 broadcast가 담당한다.
-  // 이 함수가 채널 행의 지난 틱 상태(priority 판정)를 읽으므로 broadcast보다 먼저 실행.
-  let liveActivity:
-    | { pushed: number; ended: number; cleaned: number }
-    | { error: string } = { pushed: 0, ended: 0, cleaned: 0 };
-  try {
-    // lastPlay(문자중계 한 줄) 재전달 — 단 payload 반영은 토큰 app_build 게이트(1.0.7+만
-    // 풀 카드, 이하 슬림)가 결정한다. 2026-07-07 인시던트 핫픽스(#555)의 버전 게이트 대체.
-    liveActivity = await pushLiveActivityUpdates(games, lastPlayByGame);
-  } catch (e) {
-    liveActivity = { error: (e as Error).message };
-    console.error("[warmup] live activity push failed:", (e as Error).message);
-  }
-
-  // Broadcast 채널 갱신 (스펙 v4 §서버 5·6) — 라이브 = 경기당 1건 update(10/5/스킵),
-  // 종료·취소 = end + backoff 재시도 → 8h 후 채널 DELETE. 구독 기기 전원 커버.
-  let laBroadcast:
-    | { updates: number; heartbeats: number; skipped: number; ends: number; deleted: number }
-    | { error: string } = { updates: 0, heartbeats: 0, skipped: 0, ends: 0, deleted: 0 };
-  try {
-    laBroadcast = await pushLiveActivityChannelBroadcasts(games, lastPlayByGame);
-  } catch (e) {
-    laBroadcast = { error: (e as Error).message };
-    console.error("[warmup] la broadcast failed:", (e as Error).message);
-  }
-
-  // 잠금화면 Live Activity 자동 시작 (W3b) — 최애팀 경기 라이브 전환 시 push-to-start.
-  // 게임 단위 1회 선점이라 매분 호출해도 중복 시작 없음. APNs 미설정 시 no-op.
-  let liveActivityStart: { started: number } | { error: string } = { started: 0 };
-  try {
-    liveActivityStart = await pushLiveActivityStarts(games);
-  } catch (e) {
-    liveActivityStart = { error: (e as Error).message };
-    console.error("[warmup] live activity start failed:", (e as Error).message);
-  }
-
-  // iOS 홈 위젯 무음 갱신 (1.0.9 build 17) — 라이브 스코어축 변화 시 iOS 팬 기기를 무음
-  // 푸시로 깨워 홈 위젯 스냅샷을 갱신(AppDelegate markLiveScore → reload). 앱 미실행 상태
-  // 스코어 반영(best-effort, 예산 내 — 잠금 LA만 3분 보장). lastPlay는 위에서 수집한 것 재사용.
-  let iosWidget:
-    | { games: number; sent: number; failed: number; skipped: number; cleaned: number }
-    | { error: string } = { games: 0, sent: 0, failed: 0, skipped: 0, cleaned: 0 };
-  try {
-    iosWidget = await pushIosWidgetLiveUpdates(games, lastPlayByGame);
-  } catch (e) {
-    iosWidget = { error: (e as Error).message };
-    console.error("[warmup] ios widget live update failed:", (e as Error).message);
   }
 
   // 잠금화면 Live Activity 무음 wake (Layer 2) — 카드는 떴는데 update 토큰이 없는 유저의
@@ -264,6 +375,37 @@ export async function GET(req: NextRequest) {
     liveActivityWake = { error: (e as Error).message };
     console.error("[warmup] live activity wake failed:", (e as Error).message);
   }
+
+  // 안드 홈위젯 fast-refresh (맥미니 의존 0, Vercel 함수 내부 루프) — 라이브 중계 위젯
+  // 지연을 ~60초(1분 크론) → ~20초로 단축. 추가 사이클은 *안드 위젯만* 재발사하고
+  // (득점/랭크/LA 등 알림 서브시스템은 위에서 1회만 — 중복 알림 방지), dedupe로
+  // 상태가 바뀐 경기만 발사해 배터리/FCM 쿼터 부담을 막는다. deadline은 *요청 진입 시각*
+  // 기준 절대값(FAST_LOOP_DEADLINE_MS)이라 위 warmup 본작업이 오래 걸려도 maxDuration(75s)/
+  // 다음 크론 틱과 겹치지 않는다. 오케스트레이션은 widget-fast-loop.ts(테스트 커버) 참조.
+  // LA 친리티컬/느린 fanout은 초기 fetch 직후 독립 실행됨(삼순 R2①) — 여기서 결과만 회수.
+  // drainFanout은 la/android/score 축 fanout을 *요청 진입 기준 deadline*(LA_FANOUT_DRAIN_
+  // DEADLINE_MS=68s) 안에서만 대기하고, 초과 시 partial(timedOut)로 즉시 끊어 maxDuration
+  // (75s) 504를 구조적으로 불가능하게 한다(삼순 R3 blocker③). 미완료분은 다음 분 cron이
+  // 멱등 재발송(DB 선점/CAS/hash dedupe)으로 수습.
+  const drainDeadlineAtMs = requestStartMs + LA_FANOUT_DRAIN_DEADLINE_MS;
+  const [laCritical, laFanoutDrain, androidWidget, fastRefresh] = await Promise.all([
+    laOrchestration.criticalPromise,
+    laOrchestration.drainFanout({
+      deadlineAtMs: drainDeadlineAtMs,
+      now: () => Date.now(),
+      sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+    }),
+    androidWidgetPromise,
+    fastRefreshPromise,
+  ]);
+  const { lastPlayByGame, laChannels, laBroadcast } = laCritical;
+  const laFanout = laFanoutDrain.results;
+  const cycle0Fanout = laFanout.find((f) => f.label === "cycle0")?.result as
+    | { legacyLa?: unknown; liveActivityStart?: unknown; iosWidget?: unknown }
+    | undefined;
+  const liveActivity = cycle0Fanout?.legacyLa ?? { error: "la_fanout_missing" };
+  const liveActivityStart = cycle0Fanout?.liveActivityStart ?? { error: "la_fanout_missing" };
+  const iosWidget = cycle0Fanout?.iosWidget ?? { error: "la_fanout_missing" };
 
   return NextResponse.json({
     date,
@@ -281,6 +423,13 @@ export async function GET(req: NextRequest) {
     liveActivityStart,
     liveActivityWake,
     iosWidget,
+    fastRefresh,
+    // 서브틱 느린 fanout 결과(레거시/iOS 위젯/안드/득점 — 큰 단위 관제용). cycle0은 위
+    // 필드로 평탄화. drain이 deadline에 걸려 partial이면 timedOut/pending으로 다음 분 cron
+    // 수습 대상이 있음을 관제에 남긴다(삼순 R3 blocker③).
+    laFanoutTicks: laFanout.filter((f) => f.label !== "cycle0"),
+    laFanoutTimedOut: laFanoutDrain.timedOut,
+    laFanoutPending: laFanoutDrain.pendingCount,
     lastPlays: Object.fromEntries(lastPlayByGame),
     results: results.map(r =>
       r.status === "fulfilled"
