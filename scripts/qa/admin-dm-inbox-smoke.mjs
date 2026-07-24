@@ -56,7 +56,10 @@ async function main() {
 
   const first = await fetchPage();
   check(first.rows.length <= PAGE_SIZE + 1, "page exceeded requested lookahead limit");
-  check(first.rows.every((row) => Number(row.user_msg_count) > 0), "inbox returned an ineligible conversation");
+  // origin='feedback' 대화는 유저 발신 0건이어도 노출된다(건의함 회신).
+  // 노출 자격 정확성은 admin-dm-inbox-feedback-origin.sh(PG17 fixture)가 고정하므로,
+  // 여기서는 count 필드가 음수가 아닌지만 불변으로 유지한다.
+  check(first.rows.every((row) => Number(row.user_msg_count) >= 0 && Number(row.sys_msg_count) >= 0), "inbox returned negative message counts");
   check(first.rows.every((row, index, rows) => index === 0 || isBefore(row, {
     lastMessageAt: rows[index - 1].last_message_at,
     conversationId: rows[index - 1].id,

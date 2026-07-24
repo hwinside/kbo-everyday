@@ -270,9 +270,12 @@ export async function POST(request: NextRequest) {
     if (existingConv) {
       conversationId = existingConv.id;
     } else {
+      // 신규 대화는 항상 origin='dm'(default)로 만든다. feedback 마킹은 회신 메시지
+      // INSERT 성공 후 last_message 갱신과 함께 확정해, 메시지 실패 시 빈 대화가
+      // 수신함에 노출되는 것을 막는다.
       const { data: newConv, error: convError } = await admin
         .from("dm_conversations")
-        .insert({ user1_id: u1, user2_id: u2, ...(isFeedbackReply ? { origin: "feedback" } : {}) })
+        .insert({ user1_id: u1, user2_id: u2 })
         .select("id")
         .single();
 
@@ -295,11 +298,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "send_failed" }, { status: 500 });
     }
 
+    // 회신 메시지 성공 후에만 출처를 확정한다. 피드백 회신이면 기존/신규 대화 구분
+    // 없이 origin='feedback'으로 승격(welcome-dm으로 미리 생긴 origin='dm' 대화도
+    // 수신함에 노출). 일반 dm 선발신은 origin을 건드리지 않아 기존 동작을 유지한다.
     await admin
       .from("dm_conversations")
       .update({
         last_message: preview,
         last_message_at: new Date().toISOString(),
+        ...(isFeedbackReply ? { origin: "feedback" } : {}),
       })
       .eq("id", conversationId);
 
