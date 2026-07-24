@@ -107,6 +107,7 @@
     "qa:la-fastpath": "tsx scripts/qa/live-fast-path-smoke.ts",
     "qa:game-cancel-status": "tsx --test scripts/qa/game-cancel-status-smoke.ts",
     "qa:start-wiring": "tsx --test scripts/qa/game-status-start-wiring-smoke.ts",
+    "qa:scheduled-seen-monotonic": "bash scripts/qa/notify-scheduled-seen-monotonic.sh",
     "qa:venue-story-seen": "tsx scripts/qa/venue-story-seen-smoke.ts"
   },
   "dependencies": {
