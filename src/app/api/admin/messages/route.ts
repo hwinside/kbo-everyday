@@ -18,6 +18,7 @@ type InboxRow = {
   unread_count: number | string;
   user_msg_count: number | string;
   sys_msg_count: number | string;
+  origin: string;
 };
 
 function normalizeContent(content: unknown) {
@@ -246,7 +247,10 @@ export async function POST(request: NextRequest) {
 
   // 개별 유저에게 쪽지 발송
   if (body.action === "send_to_user") {
-    const { userId } = body as { userId?: string };
+    const { userId, source } = body as { userId?: string; source?: string };
+    // 건의함(피드백) 페이지에서의 쪽지 회신은 source='feedback' 으로 대화를 마킹해
+    // 유저 발신이 없어도 운영팀 수신함(admin_dm_inbox_page)에 노출되게 한다.
+    const isFeedback = source === "feedback";
     const content = normalizeContent(body.content);
     const imageUrls = normalizeImageUrls(body.imageUrls);
     if (!userId || (!content.trim() && imageUrls.length === 0)) {
@@ -254,52 +258,27 @@ export async function POST(request: NextRequest) {
     }
     const preview = lastMessagePreview(content, imageUrls);
 
-    // 기존 conversation 찾기
-    const [u1, u2] = [systemUserId, userId].sort();
-    const { data: existingConv } = await admin
-      .from("dm_conversations")
-      .select("id")
-      .eq("user1_id", u1)
-      .eq("user2_id", u2)
-      .maybeSingle();
+    // 대화 upsert + 메시지 INSERT + preview/origin 확정을 service_role 전용 RPC 한
+    // 트랜잭션으로 묶는다. 실패 시 전부 rollback → 빈/숨은 대화 미발생.
+    // query-guard: bounded -- admin_send_ops_message 는 항상 정확히 1행(conversation_id) 반환.
+    const { data: sendData, error: sendError } = await admin.rpc("admin_send_ops_message", {
+      p_system_user_id: systemUserId,
+      p_user_id: userId,
+      p_content: content,
+      p_image_urls: imageUrls,
+      p_preview: preview,
+      p_origin: isFeedback ? "feedback" : "dm",
+    });
 
-    let conversationId: string;
-
-    if (existingConv) {
-      conversationId = existingConv.id;
-    } else {
-      const { data: newConv, error: convError } = await admin
-        .from("dm_conversations")
-        .insert({ user1_id: u1, user2_id: u2 })
-        .select("id")
-        .single();
-
-      if (convError || !newConv) {
-        return NextResponse.json({ error: "conv_create_failed" }, { status: 500 });
-      }
-      conversationId = newConv.id;
-    }
-
-    const { error: msgError } = await admin
-      .from("dm_messages")
-      .insert({
-        conversation_id: conversationId,
-        sender_id: systemUserId,
-        content,
-        image_urls: imageUrls,
-      });
-
-    if (msgError) {
+    if (sendError) {
       return NextResponse.json({ error: "send_failed" }, { status: 500 });
     }
 
-    await admin
-      .from("dm_conversations")
-      .update({
-        last_message: preview,
-        last_message_at: new Date().toISOString(),
-      })
-      .eq("id", conversationId);
+    const sendRow = Array.isArray(sendData) ? sendData[0] : sendData;
+    const conversationId = sendRow?.conversation_id as string | undefined;
+    if (!conversationId) {
+      return NextResponse.json({ error: "send_failed" }, { status: 500 });
+    }
 
     return NextResponse.json({ ok: true, conversationId });
   }

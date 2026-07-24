@@ -56,7 +56,11 @@ async function main() {
 
   const first = await fetchPage();
   check(first.rows.length <= PAGE_SIZE + 1, "page exceeded requested lookahead limit");
-  check(first.rows.every((row) => Number(row.user_msg_count) > 0), "inbox returned an ineligible conversation");
+  // 수신함 자격: 유저 발신 1건+ OR 건의함(피드백) 회신 대화(origin='feedback').
+  check(
+    first.rows.every((row) => Number(row.user_msg_count) > 0 || row.origin === "feedback"),
+    "inbox returned an ineligible conversation",
+  );
   check(first.rows.every((row, index, rows) => index === 0 || isBefore(row, {
     lastMessageAt: rows[index - 1].last_message_at,
     conversationId: rows[index - 1].id,
