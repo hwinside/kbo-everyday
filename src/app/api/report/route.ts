@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { supabaseErrorResponse } from "@/lib/supabase/error";
 import { getVerifiedUserFromRequest } from "@/lib/auth/verified-user";
+import { sendAdminPush } from "@/lib/admin/push";
+import { evaluateTicketReportGuard } from "@/lib/tickets/report-guard";
 
 // AI 필터 — 간단한 금칙어 체크 (추후 LLM 연동)
 const BLOCKED_WORDS = [
@@ -32,6 +34,23 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "필수 값 누락" }, { status: 400 });
   }
 
+  // 티켓 웃돈 신고: 대상 존재 + 본인 글 신고 차단(UI 우회 호출까지 방어, 2026-07-25)
+  if (targetType === "ticket") {
+    const { data: ticket, error: ticketErr } = await supabase
+      .from("ticket_transfers")
+      .select("author_id")
+      .eq("id", targetId)
+      .maybeSingle();
+    if (ticketErr) return supabaseErrorResponse(ticketErr);
+    const guard = evaluateTicketReportGuard({ ticket, reporterId: verified.user.id });
+    if (guard === "not_found") {
+      return NextResponse.json({ error: "대상을 찾을 수 없습니다" }, { status: 404 });
+    }
+    if (guard === "self") {
+      return NextResponse.json({ error: "본인 글은 신고할 수 없습니다" }, { status: 400 });
+    }
+  }
+
   const { error } = await supabase.from("reports").insert({
     reporter_id: verified.user.id,
     target_type: targetType,
@@ -44,6 +63,21 @@ export async function POST(req: NextRequest) {
     return supabaseErrorResponse(error, {
       "23505": { status: 409, message: "이미 신고한 게시물입니다" },
     });
+  }
+
+  // 티켓 신고는 auto_blind 트리거(post/comment/chat 전용) 대상이 아니라 조용히 누적되므로
+  // 운영자에게 즉시 알림(best-effort — 실패해도 신고 접수엔 영향 없음). 조회는 /admin/reports.
+  if (targetType === "ticket") {
+    try {
+      await sendAdminPush({
+        title: "티켓 웃돈 신고 접수",
+        body: `양도글 #${targetId} 신고 (사유: ${String(reason).slice(0, 40)})`,
+        url: "/admin/reports",
+        tag: "admin-report",
+      });
+    } catch {
+      /* ignore */
+    }
   }
 
   // 신고 3회 누적 시 자동 블라인드 + outbox 적재는 DB 트리거(auto_blind_on_report)가

@@ -49,6 +49,7 @@
     "qa:news-clip-title": "tsx scripts/qa/news-clipping-title-signal-smoke.ts",
     "qa:urgent-notice": "tsx scripts/qa/urgent-notice-smoke.ts",
     "qa:ticket-open": "tsx scripts/qa/ticket-open-smoke.ts",
+    "qa:ticket-report": "tsx scripts/qa/ticket-report-smoke.ts",
     "qa:watch-telemetry": "tsx scripts/qa/watch-telemetry-smoke.ts",
     "qa:proxy-auth-refresh": "tsx scripts/qa/proxy-auth-refresh-smoke.ts",
     "qa:mood-realtime-load": "tsx scripts/qa/mood-gauge-realtime-load-smoke.ts",

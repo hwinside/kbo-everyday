@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef } from "react";
+import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { Ticket, AlertTriangle, Loader2 } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
@@ -9,7 +10,9 @@ import TeamBadge from "@/components/ui/TeamBadge";
 import DMButton from "@/components/ui/DMButton";
 import LoginSheet from "@/components/auth/LoginSheet";
 import { useAuth } from "@/lib/supabase/AuthContext";
+import { supabase } from "@/lib/supabase/client";
 import { useTickets, type TicketTransfer } from "@/lib/supabase/useTickets";
+import { canReportTicket, resolveReportSubmitOutcome } from "@/lib/tickets/report-guard";
 import { STADIUMS } from "@/lib/constants/stadiums";
 
 function PriceBadge({ price, original }: { price: number; original: number | null }) {
@@ -40,6 +43,39 @@ function TicketStatusBadge({ status }: { status: string }) {
 
 function TicketCard({ ticket, currentUserId, onStatusChange }: { ticket: TicketTransfer; currentUserId?: string; onStatusChange?: (id: number, status: string) => Promise<{ error?: string }> }) {
   const [expanded, setExpanded] = useState(false);
+  const [reportState, setReportState] = useState<"idle" | "confirm" | "submitting" | "done">("idle");
+  const [reportError, setReportError] = useState("");
+
+  async function submitReport() {
+    setReportState("submitting");
+    setReportError("");
+    const { data: { session } } = await supabase.auth.getSession();
+    const accessToken = session?.access_token;
+    if (!accessToken) {
+      setReportError("신고하려면 로그인이 필요합니다");
+      setReportState("confirm");
+      return;
+    }
+    try {
+      const res = await fetch("/api/report", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ targetType: "ticket", targetId: ticket.id, reason: "웃돈 거래" }),
+      });
+      const data = await res.json().catch(() => ({}));
+      // non-2xx는 body 형태와 무관하게 실패 처리(5xx + {} 응답이 완료로 전환되는 것 차단)
+      const outcome = resolveReportSubmitOutcome({ ok: res.ok, body: data });
+      if (outcome.kind === "error") {
+        setReportError(outcome.message);
+        setReportState("confirm");
+        return;
+      }
+      setReportState("done");
+    } catch {
+      setReportError("신고 접수에 실패했어요. 잠시 후 다시 시도해주세요");
+      setReportState("confirm");
+    }
+  }
   const opponent = ticket.opponent_team_id ? getTeamById(ticket.opponent_team_id) : null;
   const team = getTeamById(ticket.team_id);
   const dateStr = new Date(ticket.game_date + "T00:00:00").toLocaleDateString("ko-KR", { month: "long", day: "numeric", weekday: "short" });
@@ -83,12 +119,19 @@ function TicketCard({ ticket, currentUserId, onStatusChange }: { ticket: TicketT
               <div className="flex items-center justify-between">
                 <span className="text-xs text-text-tertiary">{ticket.author_nickname ?? "익명"}</span>
                 <div className="flex items-center gap-2">
-                  <button
-                    onClick={(e) => { e.stopPropagation(); alert("웃돈 거래 신고가 접수되었습니다. 확인 후 조치하겠습니다."); }}
-                    className="text-xs text-red-400/70 hover:text-red-400"
-                  >
-                    🚨 웃돈 신고
-                  </button>
+                  {/* 본인 글은 신고 버튼 미노출(자기글 자가신고 차단) */}
+                  {canReportTicket({ ticketAuthorId: ticket.author_id, currentUserId }) && (
+                    reportState === "done" ? (
+                      <span className="text-xs text-text-tertiary">✅ 신고 접수됨</span>
+                    ) : (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setReportError(""); setReportState("confirm"); }}
+                        className="text-xs text-red-400/70 hover:text-red-400"
+                      >
+                        🚨 웃돈 신고
+                      </button>
+                    )
+                  )}
                   {ticket.author_id && currentUserId !== ticket.author_id && (
                     <DMButton targetUserId={ticket.author_id} label="쪽지" size="sm" />
                   )}
@@ -118,6 +161,36 @@ function TicketCard({ ticket, currentUserId, onStatusChange }: { ticket: TicketT
           </motion.div>
         )}
       </AnimatePresence>
+
+      {reportState !== "idle" && reportState !== "done" && typeof document !== "undefined" && createPortal(
+        <div className="fixed inset-0 z-[10000] flex items-center justify-center p-6" onClick={(e) => { e.stopPropagation(); if (reportState === "confirm") setReportState("idle"); }}>
+          <div className="absolute inset-0 bg-black/60" />
+          <div className="relative w-full max-w-xs bg-bg-secondary rounded-2xl p-5 text-center" onClick={(e) => e.stopPropagation()}>
+            <span className="text-3xl">🚨</span>
+            <h3 className="text-base font-bold text-text-primary mt-2">웃돈 거래 신고</h3>
+            <p className="text-xs text-text-secondary mt-1.5">이 양도글을 웃돈(정가 초과) 거래로 신고할까요?<br/>허위 신고 시 이용이 제한될 수 있습니다.</p>
+            {reportError && <p className="text-xs text-red-400 mt-2">{reportError}</p>}
+            <div className="flex gap-2 mt-4">
+              <button
+                onClick={(e) => { e.stopPropagation(); setReportState("idle"); }}
+                disabled={reportState === "submitting"}
+                className="flex-1 py-2 rounded-lg bg-bg-tertiary text-text-secondary text-sm font-semibold disabled:opacity-50"
+              >
+                취소
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); submitReport(); }}
+                disabled={reportState === "submitting"}
+                className="flex-1 py-2 rounded-lg bg-red-500/90 text-white text-sm font-semibold disabled:opacity-50 flex items-center justify-center gap-1.5"
+              >
+                {reportState === "submitting" ? <Loader2 size={14} className="animate-spin" /> : null}
+                신고하기
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
     </GlassCard>
   );
 }
