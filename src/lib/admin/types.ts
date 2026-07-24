@@ -126,6 +126,16 @@ export interface FunnelStep {
   rate: number;
 }
 
+/** 롤링 윈도우 리텐션 행: 가입 후 W1(1~7일)·W2(8~14)·W3(15~21)·W4(22~28) 각 구간 1회+ 재활동율 */
+export interface RollingRetentionRow {
+  cohortKey: string;
+  cohortSize: number;
+  w1: number;
+  w2: number;
+  w3: number;
+  w4: number;
+}
+
 /** 게임데이 리텐션 행 */
 export interface GamedayRetention {
   cohortKey: string;

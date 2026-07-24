@@ -13,7 +13,7 @@ import {
   Line,
   Cell,
 } from "recharts";
-import type { CohortHeatmapRow, FunnelStep, GamedayRetention, VisitDistBucket } from "@/lib/admin/types";
+import type { CohortHeatmapRow, RollingRetentionRow, FunnelStep, GamedayRetention, VisitDistBucket } from "@/lib/admin/types";
 import { addKSTDays } from "@/lib/utils/date-kst";
 
 function getPin(): string {
@@ -114,9 +114,23 @@ function isWeekNotYet(weekStr: string, dKey: string, targetDate: string): boolea
   return isDayIncomplete(weekToMonday(weekStr), dKey, targetDate);
 }
 
+/** 롤링 윈도우 윈도우 마지막 날 offset (eligibility 판정용) */
+const ROLLING_WINDOW_END: Record<string, number> = { w1: 7, w2: 14, w3: 21, w4: 28 };
+const ROLLING_KEYS = ["w1", "w2", "w3", "w4"] as const;
+const ROLLING_LABELS: Record<string, string> = {
+  w1: "1주차(1~7일)", w2: "2주차(8~14일)", w3: "3주차(15~21일)", w4: "4주차(22~28일)",
+};
+
+/** 롤링 윈도우도 윈도우 마지막 날이 오늘 이상이면(미완료) 숨김 — exact-day와 동일 기준(>=). */
+function isRollingNotYet(weekStr: string, wKey: string, targetDate: string): boolean {
+  const end = ROLLING_WINDOW_END[wKey] ?? 0;
+  return addKSTDays(weekToMonday(weekStr), end) >= targetDate;
+}
+
 interface RetentionData {
   cohort: CohortHeatmapRow[];
   dailyCohort: CohortHeatmapRow[];
+  rolling: RollingRetentionRow[];
   funnel: FunnelStep[];
   gameday: GamedayRetention[];
   visitDist: VisitDistBucket[];
@@ -194,8 +208,40 @@ export default function RetentionPage() {
       </div>
 
       <div className="glass-card p-5">
-        <h2 className="text-sm font-semibold mb-1">주간 코호트 리텐션 히트맵</h2>
-        <p className="text-[11px] text-gray-500 mb-4">D0 = 가입일 기준선(100%), D1~ = 재방문율. page_view 계측이 온전한 6/26 이후(2026-W27~) 코호트만 표시. 각 셀은 완료된 날 관측만 집계(진행 중인 오늘은 제외)해 최근 주도 왜곡 없이 표시.</p>
+        <h2 className="text-sm font-semibold mb-1">주차 롤링 윈도우 리텐션 <span className="text-[10px] font-normal text-emerald-400">셀링자료용</span></h2>
+        <p className="text-[11px] text-gray-500 mb-4">각 주차 구간 중 <span className="text-gray-300">1회 이상 활동</span>한 비율 (W1=가입 후 1~7일, W2=8~14일, W3=15~21일, W4=22~28일). 위 히트맵의 exact single-day(‘그 하루’)와 달리 구간 누적이라 <span className="text-gray-300">무경기일·올스타 브레이크 노이즈를 흡수</span>한 단조감소 곡선. 완전히 경과한 윈도우만 집계.</p>
+        {(() => {
+          const chartData = ROLLING_KEYS.map((k) => {
+            const pt: Record<string, number | string> = { window: ROLLING_LABELS[k] };
+            for (const row of data.rolling) {
+              if (isRollingNotYet(row.cohortKey, k, data.date!)) continue;
+              pt[row.cohortKey] = row[k];
+            }
+            return pt;
+          });
+          const cohortKeys = data.rolling.map((r) => r.cohortKey);
+          const lineColors = ["#22D3EE", "#6366F1", "#A855F7", "#EC4899", "#F59E0B", "#10B981"];
+          return data.rolling.length === 0 ? (
+            <p className="text-gray-500 text-sm">완료된 윈도우가 있는 코호트가 아직 없습니다.</p>
+          ) : (
+            <ResponsiveContainer width="100%" height={300}>
+              <LineChart data={chartData} margin={{ left: 10, right: 20 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                <XAxis dataKey="window" stroke="#8E8E93" fontSize={11} />
+                <YAxis domain={[0, 1]} tickFormatter={(v: number) => `${(v * 100).toFixed(0)}%`} stroke="#8E8E93" fontSize={11} />
+                <Tooltip {...chartTooltipStyle} formatter={(value, name) => [`${(Number(value) * 100).toFixed(1)}%`, name as string]} />
+                {cohortKeys.map((ck, i) => (
+                  <Line key={ck} type="monotone" dataKey={ck} stroke={lineColors[i % lineColors.length]} strokeWidth={2} name={ck} dot={{ r: 3 }} connectNulls />
+                ))}
+              </LineChart>
+            </ResponsiveContainer>
+          );
+        })()}
+      </div>
+
+      <div className="glass-card p-5">
+        <h2 className="text-sm font-semibold mb-1">주간 코호트 리텐션 히트맵 <span className="text-[10px] font-normal text-amber-400">exact single-day</span></h2>
+        <p className="text-[11px] text-gray-500 mb-4"><span className="text-amber-400">⚠ 각 칸은 ‘가입+정확히 N일째 그 하루’의 활동율(누적/윈도우 아님)</span> — D14는 ‘14일 이내’가 아니라 14일째 당일. 그래서 무경기일(올스타 브레이크 등)이 끼면 D7가 구조적으로 저조해 D14{">"}D7 역전이 나타남 → 상단 롤링 윈도우 뷰 참고. D0 = 가입일 기준선(100%). page_view 계측이 온전한 6/26 이후(2026-W27~) 코호트만 표시. 각 셀은 완료된 날 관측만 집계(진행 중인 오늘은 제외).</p>
         {visibleWeekly.length === 0 ? (
           <p className="text-gray-500 text-sm">완료된 관측이 있는 주가 아직 없습니다. 진행 중인 주는 완료되는 대로 표시됩니다.</p>
         ) : (

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { isAdminAuthedRequest } from "@/lib/admin/pin";
-import type { CohortHeatmapRow, FunnelStep, GamedayRetention, VisitDistBucket } from "@/lib/admin/types";
+import type { CohortHeatmapRow, RollingRetentionRow, FunnelStep, GamedayRetention, VisitDistBucket } from "@/lib/admin/types";
 
 const FUNNEL_LABELS: Record<string, string> = {
   signup: "가입",
@@ -124,6 +124,37 @@ export async function GET(req: NextRequest) {
     dailyCohort = Array.from(grouped.values());
   }
 
+  // Rolling-window retention (주간 코호트, W1~W4 구간 1회+ — exact-day 노이즈 흡수 곡선)
+  let rolling: RollingRetentionRow[] = [];
+  if (type === "all" || type === "rolling") {
+    // query-guard: bounded -- 단일 date+metric_type=rolling 필터, 코호트 주차×윈도우4개 행만(수십행) 반환 — 기존 cohort 선택과 동일
+    const { data } = await supabase
+      .from("retention_metrics")
+      .select("*")
+      .eq("date", latestDate)
+      .eq("metric_type", "rolling")
+      .gte("cohort_key", MIN_WEEKLY_COHORT_KEY)
+      .order("cohort_key", { ascending: true });
+
+    const grouped = new Map<string, RollingRetentionRow>();
+    for (const row of data ?? []) {
+      if (!grouped.has(row.cohort_key)) {
+        grouped.set(row.cohort_key, {
+          cohortKey: row.cohort_key,
+          cohortSize: row.total,
+          w1: 0, w2: 0, w3: 0, w4: 0,
+        });
+      }
+      const entry = grouped.get(row.cohort_key)!;
+      const key = row.metric_key as "w1" | "w2" | "w3" | "w4";
+      if (key in entry) {
+        (entry as unknown as Record<string, number>)[key] = row.rate;
+        entry.cohortSize = Math.max(entry.cohortSize, row.total);
+      }
+    }
+    rolling = Array.from(grouped.values());
+  }
+
   // Activation funnel
   let funnel: FunnelStep[] = [];
   if (type === "all" || type === "funnel") {
@@ -200,5 +231,5 @@ export async function GET(req: NextRequest) {
       .map((b) => ({ bucket: b, count: bucketMap.get(b)! }));
   }
 
-  return NextResponse.json({ cohort, dailyCohort, funnel, gameday, visitDist, date: latestDate });
+  return NextResponse.json({ cohort, dailyCohort, rolling, funnel, gameday, visitDist, date: latestDate });
 }

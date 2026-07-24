@@ -189,6 +189,92 @@ export async function computeCohortRetention(
 }
 
 /**
+ * 롤링 윈도우 리텐션 집계 (metric_type="rolling").
+ *
+ * 기존 cohort/daily_cohort는 exact single-day 지표 — "가입+정확히 N일째 그 하루에
+ * 활동했나"라 KBO 경기 일정(무경기일·올스타 브레이크·성수기)에 통째로 휘둘려
+ * 리텐션 곡선으로 오독되기 쉽다(2026-07-25 검증: 올스타 브레이크에 D7이 착지해
+ * D14>D7 역전). 롤링 윈도우는 "주차 구간 중 1회+ 활동"이라 무경기일 노이즈를
+ * 주 단위로 흡수하고, 포함관계는 아니지만 구간이 뒤로 갈수록 자연 단조감소하는
+ * 셀링 자료용 곡선을 만든다.
+ *
+ * 윈도우 정의(가입일=D0 기준, 양끝 포함):
+ *   w1 = 가입 후 1~7일 중 1회+
+ *   w2 = 8~14일 중 1회+
+ *   w3 = 15~21일 중 1회+
+ *   w4 = 22~28일 중 1회+
+ * eligible = 해당 윈도우 마지막 날이 완전히 지난(진행 중인 오늘 제외) 유저만.
+ */
+const ROLLING_WINDOWS: { key: string; start: number; end: number }[] = [
+  { key: "w1", start: 1, end: 7 },
+  { key: "w2", start: 8, end: 14 },
+  { key: "w3", start: 15, end: 21 },
+  { key: "w4", start: 22, end: 28 },
+];
+
+export async function computeRollingRetention(
+  supabase: SupabaseClient,
+  targetDate: string,
+): Promise<MetricRow[]> {
+  const sixtyDaysAgo = new Date(
+    new Date(targetDate + "T00:00:00+09:00").getTime() - 60 * 86400000,
+  ).toISOString();
+
+  // query-guard: bounded -- 가입 최근 60일 윈도우(.gte created_at)만 fetchAllPages로 페이징, 기존 cohort/daily 계산과 동일 계약
+  const profiles = await fetchAllPages<{ id: string; created_at: string }>(
+    () => supabase.from("profiles").select("id, created_at").gte("created_at", sixtyDaysAgo).order("created_at", { ascending: true }),
+  );
+
+  if (!profiles.length) return [];
+
+  const visitDays = await collectActivityDays(supabase, sixtyDaysAgo, addKSTDays(targetDate, 1) + "T00:00:00+09:00");
+
+  const cohorts = new Map<string, { id: string; signupDate: string }[]>();
+  for (const p of profiles) {
+    const signupDate = toKSTDateString(p.created_at);
+    const week = isoWeek(signupDate);
+    if (!cohorts.has(week)) cohorts.set(week, []);
+    cohorts.get(week)!.push({ id: p.id, signupDate });
+  }
+
+  const rows: MetricRow[] = [];
+  for (const [cohortKey, users] of cohorts) {
+    if (cohortKey < MIN_COHORT) continue;
+
+    for (const w of ROLLING_WINDOWS) {
+      let returned = 0;
+      let eligible = 0;
+      for (const u of users) {
+        // 윈도우 마지막 날이 아직 안 지났거나 '오늘'(진행 중)이면 eligible 제외 →
+        // 완료된 윈도우만 집계(exact-day 지표와 동일한 완료일 기준).
+        const windowEnd = addKSTDays(u.signupDate, w.end);
+        if (windowEnd >= targetDate) continue;
+        eligible++;
+        // 윈도우 [start, end] 중 하루라도 활동일이 있으면 잔존.
+        const days = visitDays.get(u.id);
+        if (days) {
+          for (let d = w.start; d <= w.end; d++) {
+            if (days.has(addKSTDays(u.signupDate, d))) { returned++; break; }
+          }
+        }
+      }
+      if (eligible > 0) {
+        rows.push({
+          date: targetDate,
+          metric_type: "rolling",
+          cohort_key: cohortKey,
+          metric_key: w.key,
+          total: eligible,
+          value: returned,
+          rate: Math.round((returned / eligible) * 10000) / 10000,
+        });
+      }
+    }
+  }
+  return rows;
+}
+
+/**
  * 일별 코호트 리텐션 집계: 가입일별 D1~D7/D14/D30 재활동율.
  * 주간 코호트와 병렬로 운영, metric_type="daily_cohort".
  */
