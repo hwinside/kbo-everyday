@@ -12,7 +12,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { DEFAULT_EXCLUDE_FLAGS, extractNoiseFlags } from "@/lib/video/noise-flags";
 import { loadPlayerAliases } from "@/lib/video/player-tagger";
-import { hasNonBaseballSignal } from "@/lib/video/shorts-relevance";
+import { isTeamShortRelevant } from "@/lib/video/shorts-relevance";
+import { joinLgFeedRows } from "@/lib/video/shorts-feed-merge";
+import { getActiveChannels } from "@/lib/video/team-channels";
 
 export async function GET(req: NextRequest) {
   const team = req.nextUrl.searchParams.get("team") || "_ALL";
@@ -34,6 +36,26 @@ export async function GET(req: NextRequest) {
 
   let data: any[] | null = null;
   let error: any = null;
+
+  // 다중 팀 노출 (2026-07-24 삼순 라운드4 — 운영 케이스 79W-OwErIEA):
+  // 비-LG affinity 채널(예: 히어로북, 키움)이 올린 명시적 LG 야구 제목은
+  // 수집 계약(channelTeam 선확정)을 유지한 채 team_id가 LG가 아니므로,
+  // team_id 선조회만으로는 LG 피드에서 영구 누락된다. 제목에 LG/엘지가
+  // 들어간 비-LG 행을 역조회해 아래 detectAllTeamsFromTitle 경계 게이트
+  // (독립 LG 언급 + 야구 문맥, SLG·기업 접미 오포집 차단)로 합류시킨다.
+  // 기존 오분류/선확정 행에도 소급 적용되므로 백필 불필요.
+  const lgTitlePromise =
+    team === "LG"
+      ? supabaseAdmin
+          .from("videos")
+          .select(selectCols)
+          .eq("is_short_candidate", true)
+          .neq("team_id", "LG")
+          .or("title.ilike.%lg%,title.ilike.%엘지%")
+          .gte("published_at", sinceDate)
+          .order("published_at", { ascending: false })
+          .limit(fetchLimit)
+      : null;
 
   if (team !== "_ALL" && playerIds.length > 0) {
     // Two queries: team-scoped + player-matched from any team (including ETC)
@@ -91,14 +113,46 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
+  // 검증 야구채널 신호(channel_pool tier 1 방송사/공식급 또는 해당 팀 affinity)를
+  // LG 야구 문맥 긍정 근거로 전달 (2026-07-24 삼순 라운드3 A안 —
+  // TVING `한화 vs LG` 팬덤중계류 recall 보존, 출처 불명 채널 제품 비교는 차단).
+  // (LG 피드 요청이거나 LG 행이 있을 때만 조회 — 다른 팀 피드에 불필요한 쿼리 방지)
+  let trustedForLg: ReadonlySet<string> = new Set();
+  if (team === "LG" || (data ?? []).some((v) => v.team_id === "LG")) {
+    const poolChannels = await getActiveChannels(supabaseAdmin);
+    trustedForLg = new Set(
+      poolChannels
+        .filter((c) => c.tier === 1 || c.team_affinity?.includes("LG"))
+        .map((c) => c.channel_id),
+    );
+  }
+
+  // 다중 팀 노출 합류: 제목에 독립 LG 언급+야구 문맥이 있는 비-LG 행만 추가.
+  // team_id 계약(수집)은 그대로 두고, 합류 행의 노출 라벨만 요청 팀(LG)으로
+  // override해서 카드가 `키움` 배지로 보이는 오표시를 막는다 (삼순 라운드4 #2).
+  let lgDisplayTeam: Map<string, string> = new Map();
+  if (lgTitlePromise) {
+    const { data: lgRows, error: lgError } = await lgTitlePromise;
+    if (lgError) {
+      return NextResponse.json({ error: lgError.message }, { status: 500 });
+    }
+    const joined = joinLgFeedRows(data ?? [], lgRows ?? [], trustedForLg);
+    data = joined.rows;
+    lgDisplayTeam = joined.displayTeam;
+  }
+
   // Filter out noisy content — DB flags + runtime title recheck
   // Runtime recheck catches videos ingested before new noise patterns were added
   const excludeSet = DEFAULT_EXCLUDE_FLAGS as ReadonlySet<string>;
   const filtered = (data ?? []).filter((v) => {
     const flags: string[] = Array.isArray(v.noise_flags) ? v.noise_flags : [];
     if (flags.some((f) => excludeSet.has(f))) return false;
-    // 정치·종교 등 비-야구 영상 차단 — 게이트 추가 전 수집된 기존 행도 즉시 제외
-    if (hasNonBaseballSignal(v.title ?? "")) return false;
+    // 기존 오분류 행도 즉시 차단: LG 약칭만 걸린 커뮤니티 영상은 야구 문맥 필수
+    if (!isTeamShortRelevant(v.title ?? "", v.team_id ?? null, {
+      hasPlayerTag: Boolean(v.player_id || v.player_ids?.length),
+      isOfficial: String(v.source_type ?? "").startsWith("official_"),
+      trustedChannel: Boolean(v.channel_id && trustedForLg.has(v.channel_id)),
+    })) return false;
     // Runtime title recheck for patterns added after ingestion
     const runtimeFlags = extractNoiseFlags(v.title, v.channel);
     return !runtimeFlags.some((f) => excludeSet.has(f as string));
@@ -128,7 +182,7 @@ export async function GET(req: NextRequest) {
     sourceType: v.source_type,
     playerId: v.player_id,
     playerIds: v.player_ids ?? [],
-    teamId: v.team_id ?? null,
+    teamId: lgDisplayTeam.get(v.video_id) ?? v.team_id ?? null,
     playerName: v.player_id ? (playerNameMap.get(v.player_id) ?? null) : null,
   }));
 

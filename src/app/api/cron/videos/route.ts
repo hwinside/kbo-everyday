@@ -13,23 +13,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { startJob, finishJob } from "@/lib/admin/job-logger";
-import {
-  OFFICIAL_CHANNEL_IDS,
-  getActiveChannels,
-  type PoolChannel,
-} from "@/lib/video/team-channels";
-import { fetchChannelRss, type RssVideoEntry } from "@/lib/video/rss-parser";
-import {
-  extractNoiseFlags,
-  isShortCandidate,
-} from "@/lib/video/noise-flags";
-import { upsertVideos, type VideoUpsertRow } from "@/lib/video/videos-repo";
-import {
-  loadPlayerAliases,
-  matchPlayers,
-  type PlayerAlias,
-} from "@/lib/video/player-tagger";
-import { detectTeamFromTitle } from "@/lib/video/team-detector";
+import { getActiveChannels, type PoolChannel } from "@/lib/video/team-channels";
+import { fetchChannelRss } from "@/lib/video/rss-parser";
+import { upsertVideos } from "@/lib/video/videos-repo";
+import { loadPlayerAliases } from "@/lib/video/player-tagger";
+import { entriesToRows } from "@/lib/video/entries-to-rows";
 import {
   fetchChannelUploadsViaApi,
   fetchVideoDurations,
@@ -45,58 +33,6 @@ const CONCURRENCY = 10;
 const FALLBACK_CAP = Number(process.env.YT_RSS_FALLBACK_PER_RUN ?? 100);
 
 export const maxDuration = 60;
-
-/**
- * Normalize fetched entries (RSS or playlistItems) into upsert rows.
- * Source-agnostic: both fetchers return the same `RssVideoEntry` shape.
- */
-function entriesToRows(
-  entries: RssVideoEntry[],
-  ch: PoolChannel,
-  playerAliases: PlayerAlias[],
-): VideoUpsertRow[] {
-  const isOfficial = OFFICIAL_CHANNEL_IDS.has(ch.channel_id);
-  const channelTeam = ch.team_affinity?.[0] ?? null;
-
-  return entries.map((e) => {
-    const noiseFlags = extractNoiseFlags(e.title, e.channel);
-    const isShort = isShortCandidate({ title: e.title });
-    // Precision 매칭: 공식 채널은 channelTeam, T1은 선수명 only 허용, T2+는 팀명+선수명 필수
-    const playerIds = matchPlayers(
-      e.title,
-      playerAliases,
-      isOfficial ? channelTeam : null,
-      isOfficial ? null : ch.tier,
-    );
-    // team_id: 채널 팀 > 매칭된 선수의 소속팀 > 제목 감지 > ETC
-    // 선수 소속팀 우선 → 대전 영상에서 상대팀으로 잘못 잡히는 것 방지
-    let teamId = channelTeam;
-    if (!teamId && playerIds.length > 0) {
-      const firstPlayer = playerAliases.find((p) => p.kbo_id === playerIds[0]);
-      teamId = firstPlayer?.team ?? null;
-    }
-    if (!teamId) teamId = detectTeamFromTitle(e.title);
-
-    const sourceType: VideoUpsertRow["source_type"] = isOfficial
-      ? isShort ? "official_short" : "official_long"
-      : isShort ? "community_short" : "community_long";
-
-    return {
-      video_id: e.video_id,
-      team_id: teamId,
-      player_id: playerIds[0] ?? null,
-      player_ids: playerIds,
-      title: e.title,
-      channel: e.channel,
-      channel_id: e.channel_id,
-      thumbnail: e.thumbnail,
-      published_at: e.published_at,
-      source_type: sourceType,
-      is_short_candidate: isShort,
-      noise_flags: noiseFlags,
-    };
-  });
-}
 
 export async function GET(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
