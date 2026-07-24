@@ -1250,33 +1250,26 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
   );
 }
 
-/** 카드 C — 긴 텍스트. 3줄 클램프 + '더 보기' 인라인 펼침(상세 이동 없음). 링크 포함 시 OG 프리뷰. */
+/** 카드 C — 긴 텍스트. 500자 초과 시에만 클램프 + '더 보기' 인라인 펼침(상세 이동 없음). 500자 이하는 전문 노출. 링크 포함 시 OG 프리뷰. */
 function LongTextCard({ body }: { body: string }) {
   const [expanded, setExpanded] = useState(false);
-  const [clamped, setClamped] = useState(false);
-  const ref = useRef<HTMLParagraphElement>(null);
   // 본문에서 URL은 strip하고 OG 카드로 대신 노출(짧은글 BrandedTextCard와 동일 규칙).
   // 기존엔 긴 글 분기에 OG 카드가 아예 없어 "텍스트 길고 링크 포함 글에서 OG 안뜸" 버그였음.
   const displayBody = stripUrls(body);
   const linked = hasLink(body);
-
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    requestAnimationFrame(() => setClamped(el.scrollHeight > el.clientHeight + 2));
-  }, [displayBody]);
+  // 500자 초과 글만 접고, 이하는 전문 그대로 노출(하린아빠 지시 2026-07-24).
+  const isLong = displayBody.length > 500;
 
   return (
     <div className="px-5 pt-1 pb-2">
       {displayBody && (
         <>
           <p
-            ref={ref}
-            className={`whitespace-pre-line break-words text-base leading-relaxed text-text-primary ${expanded ? "" : "line-clamp-3"}`}
+            className={`whitespace-pre-line break-words text-base leading-relaxed text-text-primary ${expanded || !isLong ? "" : "line-clamp-6"}`}
           >
             {displayBody}
           </p>
-          {clamped && !expanded && (
+          {isLong && !expanded && (
             <button onClick={() => setExpanded(true)} className="mt-0.5 text-base text-text-tertiary">
               더 보기
             </button>
