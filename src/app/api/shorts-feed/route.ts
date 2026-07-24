@@ -44,6 +44,7 @@ export async function GET(req: NextRequest) {
   // 들어간 비-LG 행을 역조회해 아래 detectAllTeamsFromTitle 경계 게이트
   // (독립 LG 언급 + 야구 문맥, SLG·기업 접미 오포집 차단)로 합류시킨다.
   // 기존 오분류/선확정 행에도 소급 적용되므로 백필 불필요.
+  // query-guard: bounded -- fetchLimit(=limit*3) 단일 오버페치 페이지, 페이지네이션 커서 없음 (형제 팀/플레이어 쿼리와 동일 계약)
   const lgTitlePromise =
     team === "LG"
       ? supabaseAdmin
