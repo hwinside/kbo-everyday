@@ -88,11 +88,21 @@ export function trackCountDeltas(
 
 const ZERO_DELTA: ChatCounts = { total: 0, home: 0, away: 0 };
 
+// 서버 집계 결과 + in-flight lost-update 방지용 스냅샷 fence.
+export interface ServerChatCounts extends ChatCounts {
+  // 이 스냅샷의 최대 메시지 id(삭제 포함). 이 id 이하만 서버 count에 반영됐고,
+  // 그보다 큰 id의 INSERT는 스냅샷 이후 도착이라 baseline commit 때 +1을 보존한다.
+  maxSeenId: number;
+  // 스냅샷 시각(ISO). deleted_at > snapshotAt 인 삭제는 스냅샷엔 alive로 집계됐으므로
+  // baseline commit 때 -1을 보존한다(로드된 메시지 DELETE race 방지).
+  snapshotAt: string;
+}
+
 export type FetchRoomCounts = (
   roomId: string,
   homeTeamId: number,
   awayTeamId: number
-) => Promise<ChatCounts | null>;
+) => Promise<ServerChatCounts | null>;
 
 /**
  * 서버 집계 1세트 조회 — aggregate RPC(단일 쿼리) 우선, 미배포(PGRST202)/오류 시
@@ -113,16 +123,32 @@ export const fetchRoomCountsFromServer: FetchRoomCounts = async (
       })
       .single();
     if (!rpc.error && rpc.data) {
-      const d = rpc.data as { total_count: number; home_count: number; away_count: number };
-      return {
-        total: Number(d.total_count) || 0,
-        home: Number(d.home_count) || 0,
-        away: Number(d.away_count) || 0,
+      const d = rpc.data as {
+        total_count: number;
+        home_count: number;
+        away_count: number;
+        max_seen_id?: number | null;
+        snapshot_at?: string | null;
       };
+      // 신 시그니처(max_seen_id/snapshot_at fence) 배포 전의 구 RPC는 이 두 컸럼이
+      // 없다 → fence 없이 commit하면 double-count 위험. 이 경우 head-count
+      // fallback(아래)으로 넘겨 fence를 직접 계산한다(배포 순서 안전).
+      if (d.max_seen_id != null && d.snapshot_at != null) {
+        return {
+          total: Number(d.total_count) || 0,
+          home: Number(d.home_count) || 0,
+          away: Number(d.away_count) || 0,
+          maxSeenId: Number(d.max_seen_id) || 0,
+          snapshotAt: d.snapshot_at,
+        };
+      }
     }
   } catch {
     // fallthrough to head-count fallback
   }
+  // fallback 경로도 fence를 반환해야 baseline commit이 in-flight 이벤트를 보존한다.
+  // snapshotAt은 카운트 쿼리 직전 시각, maxSeenId는 방 최대 id(삭제 포함).
+  const snapshotAt = new Date().toISOString();
   const baseCount = () =>
     supabase
       .from("chat_messages")
@@ -136,13 +162,22 @@ export const fetchRoomCountsFromServer: FetchRoomCounts = async (
       .eq("room_id", roomId)
       .is("deleted_at", null)
       .eq("profiles.team_id", teamId);
-  const [totalRes, homeRes, awayRes] = await Promise.all([
+  const maxIdRow = () =>
+    supabase
+      .from("chat_messages")
+      .select("id")
+      .eq("room_id", roomId)
+      .order("id", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+  const [totalRes, homeRes, awayRes, maxRes] = await Promise.all([
     baseCount(),
     teamCount(homeTeamId),
     teamCount(awayTeamId),
+    maxIdRow(),
   ]);
-  if (totalRes.error || homeRes.error || awayRes.error) {
-    const err = totalRes.error ?? homeRes.error ?? awayRes.error;
+  if (totalRes.error || homeRes.error || awayRes.error || maxRes.error) {
+    const err = totalRes.error ?? homeRes.error ?? awayRes.error ?? maxRes.error;
     console.error("[useChatCounts] fetch error:", err?.message);
     return null;
   }
@@ -150,6 +185,8 @@ export const fetchRoomCountsFromServer: FetchRoomCounts = async (
     total: totalRes.count ?? 0,
     home: homeRes.count ?? 0,
     away: awayRes.count ?? 0,
+    maxSeenId: Number((maxRes.data as { id?: number } | null)?.id) || 0,
+    snapshotAt,
   };
 };
 
@@ -252,20 +289,34 @@ export function useChatCounts(
         const fetched = await fetchImpl(roomId, homeTeamId, awayTeamId);
         // 취소 대신 stale 판정: 방/파라미터가 그대로일 때만 commit.
         if (!disposed && keyRef.current === key && fetched) {
-          // 3값 한 세트 원자 commit + 베이스라인 재설정 — 현재 로드된 메시지는
-          // 서버 count에 포함된 것으로 보고 이후 도착분만 낙관적 증분.
-          setCounts(fetched);
+          // 3값 한 세트 원자 commit + 베이스라인 재설정. 서버 집계는 스냅샷
+          // 시점(fence) 기준이므로, 그 이후 도착한 INSERT/삭제가 commit으로 유실되지
+          // 않도록 fence 밖 이벤트의 delta를 보존한다(setDelta(0) 금지).
+          //   - id > maxSeenId              : 스냅샷 이후 INSERT → 서버 count 미포함 → alive면 +1
+          //   - id ≤ maxSeenId & 삭제 이후 : deleted_at > snapshotAt → 스냅샷엔 alive로
+          //     집계되었으나 그 뒤 삭제 → 서버 count가 아직 포함 → -1 보존
+          const fenceId = fetched.maxSeenId;
+          const snapMs = Date.parse(fetched.snapshotAt);
           const msgs = messagesRef.current;
-          trackerRef.current = {
-            roomId,
-            tracker: {
-              baselineMaxId: msgs.reduce((mx, m) => (m.id > mx ? m.id : mx), 0),
-              known: new Map(
-                msgs.map((m) => [m.id, { deleted: !!m.deleted_at, teamId: m.team_id }])
-              ),
-            },
+          const nextKnown = new Map<number, { deleted: boolean; teamId?: number }>();
+          const residual: ChatCounts = { total: 0, home: 0, away: 0 };
+          const bump = (teamId: number | undefined, sign: 1 | -1) => {
+            residual.total += sign;
+            if (teamId === homeTeamId) residual.home += sign;
+            else if (teamId === awayTeamId) residual.away += sign;
           };
-          setDelta(ZERO_DELTA);
+          for (const m of msgs) {
+            const deleted = !!m.deleted_at;
+            nextKnown.set(m.id, { deleted, teamId: m.team_id });
+            if (m.id > fenceId) {
+              if (!deleted) bump(m.team_id, 1);
+            } else if (deleted && m.deleted_at && Date.parse(m.deleted_at) > snapMs) {
+              bump(m.team_id, -1);
+            }
+          }
+          setCounts({ total: fetched.total, home: fetched.home, away: fetched.away });
+          trackerRef.current = { roomId, tracker: { baselineMaxId: fenceId, known: nextKnown } };
+          setDelta(residual);
           committed = true;
         }
       } finally {

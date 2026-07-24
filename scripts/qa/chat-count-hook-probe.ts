@@ -8,6 +8,11 @@
  * S3) 로드 범위 밖 soft delete(reconcileKey 증가) → 서버 재집계 트리거 (blocker 3-①②)
  * S4) request budget: 같은 방 hook N개 mount + INSERT 연속 → 초기 N발 이후
  *     INSERT로 인한 추가 집계 쿼리 0 (blocker 3-③, herd 회귀 방지)
+ * S5) in-flight INSERT lost-update (라운드3 blocker): 서버 스냅샷(maxSeenId) 이후
+ *     도착한 INSERT가 응답 commit으로 유실되지 않고 +1 보존 (삼순 jsdom 시나리오
+ *     snapshot=10/4/6 → home INSERT(id>fence) → response 10/4/6 → 기대 11/5/6)
+ * S6) in-flight loaded DELETE lost-update (라운드3 blocker): 스냅샷 이후 삭제된
+ *     로드 메시지가 응답 commit으로 -1을 잃지 않고 보존 (deleted_at > snapshotAt)
  *
  * 실행: npm run qa:chat-count-hook
  */
@@ -29,10 +34,19 @@ async function main() {
   const { createRoot } = await import("react-dom/client");
   const { useChatCounts } = await import("../../src/lib/supabase/useChat");
   type ChatCounts = { total: number; home: number; away: number };
+  type ServerChatCounts = ChatCounts & { maxSeenId: number; snapshotAt: string };
   type Msg = { id: number; room_id: string; user_id: string; content: string; created_at: string; deleted_at?: string | null; team_id?: number };
 
   const HOME = 1;
   const AWAY = 2;
+  // 넉넉히 큰 fence — 현재 로드 메시지가 전부 스냅샷에 포함된(경계 밖 이벤트 없음) 응답.
+  const NO_FENCE = Number.MAX_SAFE_INTEGER;
+  const LATE = "2999-01-01T00:00:00.000Z"; // snapshotAt: 어떤 삭제도 이 이후가 아님(=삭제 보존 없음).
+  const snap = (
+    c: ChatCounts,
+    maxSeenId: number = NO_FENCE,
+    snapshotAt: string = LATE
+  ): ServerChatCounts => ({ ...c, maxSeenId, snapshotAt });
   let failed = 0;
   const check = (name: string, actual: unknown, expected: unknown) => {
     const a = JSON.stringify(actual);
@@ -64,9 +78,9 @@ async function main() {
 
   // 제어 가능한 fetcher — 호출마다 deferred를 쌓고, 테스트가 원하는 시점에 resolve.
   function makeFetcher() {
-    const calls: Array<{ resolve: (v: ChatCounts | null) => void }> = [];
+    const calls: Array<{ resolve: (v: ServerChatCounts | null) => void }> = [];
     const fetcher = () =>
-      new Promise<ChatCounts | null>((resolve) => {
+      new Promise<ServerChatCounts | null>((resolve) => {
         calls.push({ resolve });
       });
     return { calls, fetcher };
@@ -121,7 +135,8 @@ async function main() {
     // 응답 도착 전 첫 INSERT (messages 렌더 lifecycle 변화)
     h.update({ messages: [msg(101, HOME)], reconcileKey: 0 });
     await sleep(50);
-    calls[0].resolve({ total: 10, home: 4, away: 6 });
+    // fence=101: msg101은 스냅샷에 포함됨(중복 증분 금지) → 10/4/6 그대로.
+    calls[0].resolve(snap({ total: 10, home: 4, away: 6 }, 101));
     const ok = await waitFor(() => h.rendered() === JSON.stringify({ total: 10, home: 4, away: 6 }));
     check("INSERT에도 응답이 폐기되지 않고 commit", ok ? JSON.parse(h.rendered()) : h.rendered(), {
       total: 10,
@@ -150,7 +165,7 @@ async function main() {
     // 실패는 interval 소비가 아님 — retryMs(60ms) 내 재시도
     const retried = await waitFor(() => calls.length >= 2, 1000);
     check("retryMs 내 재시도", retried, true);
-    calls[1].resolve({ total: 10, home: 7, away: 3 });
+    calls[1].resolve(snap({ total: 10, home: 7, away: 3 }));
     await waitFor(() => h.rendered() !== "null");
     check("재시도 성공 시 한 세트 원자 commit", JSON.parse(h.rendered()), { total: 10, home: 7, away: 3 });
     h.unmount();
@@ -162,13 +177,13 @@ async function main() {
     const { calls, fetcher } = makeFetcher();
     const h = makeHost(fetcher, { intervalMs: 60000, retryMs: 60000, deleteDebounceMs: 20 });
     await waitFor(() => calls.length === 1);
-    calls[0].resolve({ total: 10, home: 7, away: 3 });
+    calls[0].resolve(snap({ total: 10, home: 7, away: 3 }));
     await waitFor(() => h.rendered() !== "null");
     // 로드 범위 밖 메시지 삭제 — messages 불변, reconcileKey만 증가 (useChat 계약)
     h.update({ messages: [], reconcileKey: 1 });
     const triggered = await waitFor(() => calls.length === 2, 1000);
     check("삭제 이벤트가 재집계 트리거", triggered, true);
-    calls[1].resolve({ total: 9, home: 6, away: 3 });
+    calls[1].resolve(snap({ total: 9, home: 6, away: 3 }));
     await waitFor(() => h.rendered() === JSON.stringify({ total: 9, home: 6, away: 3 }));
     check("재집계 결과로 총계·팀계 동기화", JSON.parse(h.rendered()), { total: 9, home: 6, away: 3 });
     h.unmount();
@@ -185,7 +200,8 @@ async function main() {
     ];
     await waitFor(() => calls.length === 3);
     check("초기 집계 = hook당 1발 (3발)", calls.length, 3);
-    calls.forEach((c) => c.resolve({ total: 5, home: 2, away: 3 }));
+    // fence=199: 이후 INSERT(id 200~) 는 낙관적 +1 대상.
+    calls.forEach((c) => c.resolve(snap({ total: 5, home: 2, away: 3 }, 199)));
     await sleep(50);
     // INSERT 5건 연속 — 서버 재집계 0건이어야 함 (낙관 증분이 즉시성 담당)
     for (let i = 1; i <= 5; i++) {
@@ -196,6 +212,61 @@ async function main() {
     check("INSERT 연속에도 추가 집계 쿼리 0", calls.length, 3);
     check("낙관적 증분 반영", JSON.parse(hosts[0].rendered()), { total: 10, home: 7, away: 3 });
     hosts.forEach((h) => h.unmount());
+  }
+
+  // ── S5: in-flight INSERT lost-update (삼순 라운드3 blocker) ────────────────
+  // 서버 count의 DB snapshot(=maxSeenId fence)이 10/4/6이고 그 뒤 홈팀 INSERT(id>fence)가
+  // 도착한 다음 count 응답이 도착 → 응답을 baseline로 잡되 fence 밖 INSERT는 +1 보존.
+  // 기대 11/5/6 (응답값 10/4/6 그대로가 아니라 fence 밖 도착분이 살아있어야 함).
+  console.log("S5) in-flight INSERT lost-update (snapshot 10/4/6 → home INSERT → response 10/4/6 → 기대 11/5/6)");
+  {
+    const { calls, fetcher } = makeFetcher();
+    const h = makeHost(fetcher, { intervalMs: 60000, retryMs: 60000, deleteDebounceMs: 10 });
+    await waitFor(() => calls.length === 1);
+    // 서버 snapshot 이후 도착한 홈팀 INSERT — fence(100)보다 큰 id 150.
+    h.update({ messages: [msg(150, HOME)], reconcileKey: 0 });
+    await sleep(30);
+    // 응답은 snapshot 시점 count(10/4/6) + fence=100(=msg150 미포함).
+    calls[0].resolve(snap({ total: 10, home: 4, away: 6 }, 100));
+    const ok = await waitFor(
+      () => h.rendered() === JSON.stringify({ total: 11, home: 5, away: 6 })
+    );
+    check("fence 밖 INSERT delta 보존(lost-update 방지)", ok ? JSON.parse(h.rendered()) : h.rendered(), {
+      total: 11,
+      home: 5,
+      away: 6,
+    });
+    check("보존은 서버 재조회 없이", calls.length, 1);
+    h.unmount();
+  }
+
+  // ── S6: in-flight loaded DELETE lost-update (삼순 라운드3 blocker) ───────────
+  // 로드된 메시지(id 50, AWAY)가 baseline이 잡힌 뒤, 재집계 in-flight 동안 삭제되면
+  // 응답 snapshot(삭제 이전)은 alive로 집계 → commit이 -1을 지우면 안 됨(deleted_at > snapshotAt).
+  console.log("S6) in-flight loaded DELETE lost-update (삭제 -1 보존)");
+  {
+    const { calls, fetcher } = makeFetcher();
+    const h = makeHost(fetcher, { intervalMs: 60000, retryMs: 60000, deleteDebounceMs: 10 });
+    await waitFor(() => calls.length === 1);
+    // 1차 baseline: 로드된 msg50(alive) 포함, fence=100, snapshot 시각 T0.
+    h.update({ messages: [msg(50, AWAY)], reconcileKey: 0 });
+    await sleep(20);
+    const T0 = "2026-07-24T12:00:00.000Z";
+    calls[0].resolve(snap({ total: 10, home: 6, away: 4 }, 100, T0));
+    await waitFor(() => h.rendered() === JSON.stringify({ total: 10, home: 6, away: 4 }));
+    // 2차 재집계 요청 동안(reconcileKey 증가로 트리거) msg50이 삭제됨 → 낙관적 -1(away).
+    const T_DEL = "2026-07-24T12:00:30.000Z"; // snapshot(T1)보다 나중.
+    h.update({ messages: [msg(50, AWAY, T_DEL)], reconcileKey: 1 });
+    await waitFor(() => h.rendered() === JSON.stringify({ total: 9, home: 6, away: 3 }));
+    check("삭제 즉시 낙관적 -1", JSON.parse(h.rendered()), { total: 9, home: 6, away: 3 });
+    // 2차 응답은 삭제 이전 snapshot(T1 < T_DEL)이라 msg50을 alive로 집계(10/6/4).
+    await waitFor(() => calls.length === 2, 1000);
+    const T1 = "2026-07-24T12:00:10.000Z";
+    calls[1].resolve(snap({ total: 10, home: 6, away: 4 }, 100, T1));
+    // commit이 -1을 보존해 9/6/3 유지(10/6/4로 되돌아가면 lost-update).
+    await sleep(60);
+    check("응답 commit 후에도 삭제 -1 보존", JSON.parse(h.rendered()), { total: 9, home: 6, away: 3 });
+    h.unmount();
   }
 
   if (failed > 0) {
