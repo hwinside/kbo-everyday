@@ -75,7 +75,10 @@ function entriesToRows(
       const firstPlayer = playerAliases.find((p) => p.kbo_id === playerIds[0]);
       teamId = firstPlayer?.team ?? null;
     }
-    if (!teamId) teamId = detectTeamFromTitle(e.title);
+    // 검증 야구채널(tier 1 방송사/공식급) 신호를 LG 야구 문맥 긍정 근거로 전달
+    // (2026-07-24 삼순 라운드3 A안 — TVING `한화 vs LG`류 recall 보존).
+    // team_affinity 보유 채널은 위 channelTeam 경로로 이미 확정되어 여기 안 온다.
+    if (!teamId) teamId = detectTeamFromTitle(e.title, { trustedChannel: ch.tier === 1 });
 
     const sourceType: VideoUpsertRow["source_type"] = isOfficial
       ? isShort ? "official_short" : "official_long"

@@ -76,10 +76,12 @@ const LG_CORPORATE_RE_G = new RegExp(LG_CORPORATE_SUFFIX, "gi");
 // 독립 LG 언급(영문 약칭 단어 경계 또는 한글 `엘지`)
 const LG_STANDALONE_RE = /(^|[^A-Za-z0-9])lg(?![A-Za-z0-9])|엘지/i;
 
-// 강한 긍정 신호: `vs`+타 KBO 구단, `LG팬` — 기업 문맥에서 안 나오는 야구
-// 시그널이라 단독 인정 (2026-07-24 삼순 라운드2 보존 요구).
-const KBO_OPPONENT_RE =
-  /한화|롯데|두산|삼성|키움|기아|이글스|자이언츠|베어스|타이거즈|라이온즈|랜더스|다이노스|위즈|히어로즈|에스에스지|엔씨|케이티|(?:^|[^a-z0-9])(?:kia|ssg|nc|kt)(?![a-z0-9])/i;
+// `vs` 결합 긍정 신호 — 상대가 *비기업 구단 별칭*(마스코트명)일 때만 단독 인정.
+// `한화/삼성/롯데` 같은 기업명 상대는 `LG 워시타워 vs 삼성 원바디`류 제품 비교도
+// 야구로 오인하므로(2026-07-24 삼순 라운드3), 별도 야구 시그널(strong/weak·LG팬)
+// 또는 검증 야구채널 신호와 결합해야 통과한다.
+const KBO_CLUB_ALIAS_RE =
+  /트윈스|이글스|자이언츠|베어스|타이거즈|라이온즈|랜더스|다이노스|위즈|히어로즈/;
 const VS_RE = /(?:^|[^a-z0-9])vs\.?(?![a-z0-9])|맞대결/i;
 const LG_FAN_RE = /(?:lg|엘지)\s?팬/i;
 
@@ -172,7 +174,7 @@ export function hasBaseballShortContext(title: string): boolean {
   }
   if (SHORTS_BASEBALL_CONTEXT_STRONG.some((k) => matchesContextKeyword(normalized, k)))
     return true;
-  if (VS_RE.test(normalized) && KBO_OPPONENT_RE.test(normalized)) return true;
+  if (VS_RE.test(normalized) && KBO_CLUB_ALIAS_RE.test(normalized)) return true;
   if (LG_FAN_RE.test(normalized)) return true;
   return SHORTS_BASEBALL_CONTEXT_WEAK.some((k) => matchesContextKeyword(normalized, k));
 }
@@ -181,19 +183,29 @@ export function hasBaseballShortContext(title: string): boolean {
  * LG 팀 야구 문맥 판정 — 기업 접미 부정 신호 우선 (2026-07-24 삼순 라운드2).
  *
  * `LG화학`·`LG 전자`처럼 기업 접미가 직접 결합한 언급은 팀 신호에서 제외하고,
- * 제거 후 독립 LG 언급이 남지 않으면 weak 키워드 조합으로도 복원 불가
- * (`LG전자 신입사원 선발 경쟁에서 승리` 봉인). 독립 LG 언급은 strong
- * 키워드·`vs`+상대 구단·`LG팬`·weak 1개로 통과
+ * 제거 후 독립 LG 언급이 남지 않으면 어떤 긍정 신호로도 복원 불가
+ * (`LG전자 신입사원 선발 경쟁에서 승리` 봉인 — 검증 채널이어도 기업 문서).
+ * 독립 LG 언급은 strong 키워드·`vs`+구단 별칭·`LG팬`·weak 1개로 통과
  * (승인 계약: "선수·경기 등 야구 문맥이 함께 있으면 통과").
+ *
+ * 라운드3(2026-07-24 삼순 A안): `trustedChannel`(검증 야구채널 = channel_pool
+ * tier 1 방송사/공식급 또는 team affinity 보유)을 긍정 신호로 인정 —
+ * TVING `한화 vs LG` 같은 title-only로는 부족한 정상 야구 숏츠를 채널
+ * 신호로 보존하고, 출처 불명 채널의 `LG 워시타워 vs 삼성` 제품 비교는 차단.
  */
-export function hasLgBaseballContext(title: string): boolean {
+export function hasLgBaseballContext(
+  title: string,
+  options: { trustedChannel?: boolean } = {},
+): boolean {
   if (title.includes("트윈스")) return true;
+  let target = title;
   if (LG_CORPORATE_RE.test(title)) {
     const stripped = title.replace(LG_CORPORATE_RE_G, " ");
     if (!LG_STANDALONE_RE.test(stripped)) return false;
-    return hasBaseballShortContext(stripped);
+    target = stripped;
   }
-  return hasBaseballShortContext(title);
+  if (options.trustedChannel) return true;
+  return hasBaseballShortContext(target);
 }
 
 // 제목에 등장하면 야구 숏츠가 아니라고 보는 키워드. 야구 헤드라인엔 등장하지
@@ -261,10 +273,14 @@ export function isPlayerShortRelevant(title: string, playerName: string): boolea
 export function isTeamShortRelevant(
   title: string,
   teamId: string | null,
-  options: { hasPlayerTag?: boolean; isOfficial?: boolean } = {},
+  options: {
+    hasPlayerTag?: boolean;
+    isOfficial?: boolean;
+    trustedChannel?: boolean;
+  } = {},
 ): boolean {
   if (hasNonBaseballSignal(title)) return false;
   if (teamId !== "LG") return true;
   if (options.hasPlayerTag || options.isOfficial) return true;
-  return hasLgBaseballContext(title);
+  return hasLgBaseballContext(title, { trustedChannel: options.trustedChannel });
 }

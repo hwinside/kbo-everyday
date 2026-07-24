@@ -19,17 +19,26 @@ const TEAM_PATTERNS: [string, RegExp][] = [
 
 const LG_NAME_PATTERN = /(^|[^A-Za-z0-9])LG(?![A-Za-z0-9])|엘지/i;
 
-function hasLgTeamSignal(title: string): boolean {
+/** 수집 채널 신호 — 검증 야구채널(tier 1 방송사/공식급 또는 team affinity)이면
+ *  LG 야구 문맥 긍정 신호로 인정 (2026-07-24 삼순 라운드3 A안). */
+export interface TeamDetectOptions {
+  trustedChannel?: boolean;
+}
+
+function hasLgTeamSignal(title: string, options: TeamDetectOptions): boolean {
   if (title.includes("트윈스")) return true;
-  return LG_NAME_PATTERN.test(title) && hasLgBaseballContext(title);
+  return LG_NAME_PATTERN.test(title) && hasLgBaseballContext(title, options);
 }
 
 /**
  * 제목에서 첫 번째 매칭되는 팀 shortName 반환.
  * 매칭 없으면 "ETC"
  */
-export function detectTeamFromTitle(title: string): string {
-  if (hasLgTeamSignal(title)) return "LG";
+export function detectTeamFromTitle(
+  title: string,
+  options: TeamDetectOptions = {},
+): string {
+  if (hasLgTeamSignal(title, options)) return "LG";
   for (const [team, re] of TEAM_PATTERNS) {
     if (re.test(title)) return team;
   }
@@ -39,9 +48,12 @@ export function detectTeamFromTitle(title: string): string {
 /**
  * 제목에서 매칭되는 모든 팀 반환 (동명이인 해소용)
  */
-export function detectAllTeamsFromTitle(title: string): string[] {
+export function detectAllTeamsFromTitle(
+  title: string,
+  options: TeamDetectOptions = {},
+): string[] {
   const teams: string[] = [];
-  if (hasLgTeamSignal(title)) teams.push("LG");
+  if (hasLgTeamSignal(title, options)) teams.push("LG");
   for (const [team, re] of TEAM_PATTERNS) {
     if (re.test(title)) teams.push(team);
   }

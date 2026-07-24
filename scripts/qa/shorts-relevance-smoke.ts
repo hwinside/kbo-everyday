@@ -165,8 +165,6 @@ for (const title of [
 
 // --- 라운드3: 정상 야구 보존 (2026-07-24 삼순 prod 과차단 13건 계열 — recall 회귀) ---
 for (const title of [
-  "한화 vs LG 팬덤중계",
-  "LG vs 롯데 팬덤중계",
   "3위로 추락한 LG 근황",
   "LG팬 전현무에 빨친 삼성팬",
   "LG 팀 분위기의 비결..?",
@@ -174,6 +172,48 @@ for (const title of [
   check(`과차단 회귀: 수집 team_id LG (${title})`, detectTeamFromTitle(title) === "LG", true);
   check(`과차단 회귀: 기존 LG 행 노출 유지 (${title})`, isTeamShortRelevant(title, "LG"), true);
 }
+// TVING 팬덤중계류 — title-only `vs+기업명 구단`은 더 이상 단독 인정 안 되고,
+// 검증 야구채널(tier 1) 신호로 보존된다 (2026-07-24 삼순 라운드3 A안).
+for (const title of ["한화 vs LG 팬덤중계", "LG vs 롯데 팬덤중계"]) {
+  check(
+    `과차단 회귀: 검증 채널 신호로 수집 team_id LG (${title})`,
+    detectTeamFromTitle(title, { trustedChannel: true }) === "LG",
+    true,
+  );
+  check(
+    `과차단 회귀: 검증 채널 신호로 노출 유지 (${title})`,
+    isTeamShortRelevant(title, "LG", { trustedChannel: true }),
+    true,
+  );
+}
+
+// --- 라운드3: title-only `vs+기업명 구단` 단독 인정 금지 (2026-07-24 삼순 반례) ---
+const WASHTOWER_TITLE =
+  "LG 워시타워 vs 삼성 원바디 핵심 비교! 어떤 걸 사야 할까?";
+for (const title of [
+  WASHTOWER_TITLE, // 실제 Shorts -UIQfhSHLjg (삼순 라운드3 반례)
+  "LG OLED vs 삼성 QLED 화질 비교", // 제품명 blocklist로 못 닫는 동일 family
+  "LG vs 삼성 주가 전망",
+]) {
+  check(`vs 기업명 단독: 야구 문맥 아님 (${title})`, hasLgBaseballContext(title), false);
+  check(`vs 기업명 단독: 수집 team_id LG 아님 (${title})`, detectTeamFromTitle(title) !== "LG", true);
+  check(
+    `vs 기업명 단독: 기존 LG 행 노출 차단 (${title})`,
+    isTeamShortRelevant(title, "LG"),
+    false,
+  );
+}
+// `vs`도 구단 *별칭* 또는 별도 야구 시그널과 결합하면 여전히 통과
+check("정상: vs+구단 별칭 (LG vs 라이온즈)", detectTeamFromTitle("LG vs 라이온즈 명승부") === "LG", true);
+check("정상: vs+구단 별칭 노출 유지", isTeamShortRelevant("LG vs 라이온즈 명승부", "LG"), true);
+check("정상: vs+기업명이어도 야구 시그널 동반 (한화 vs LG 하이라이트)", isTeamShortRelevant("한화 vs LG 하이라이트", "LG"), true);
+check("정상: vs+기업명+야구 시그널 수집 LG", detectTeamFromTitle("한화 vs LG 하이라이트") === "LG", true);
+// 검증 채널 신호가 있어도 기업 접미 부정 신호가 우선한다
+check(
+  "검증 채널이어도 기업 접미는 차단 (LG전자 신제품)",
+  isTeamShortRelevant("LG전자 신제품 공개 하이라이트", "LG", { trustedChannel: true }),
+  false,
+);
 for (const title of [
   "LG 경기 결과",
   "LG 선수 인터뷰",

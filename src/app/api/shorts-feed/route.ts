@@ -13,6 +13,7 @@ import { supabaseAdmin } from "@/lib/supabase/admin";
 import { DEFAULT_EXCLUDE_FLAGS, extractNoiseFlags } from "@/lib/video/noise-flags";
 import { loadPlayerAliases } from "@/lib/video/player-tagger";
 import { isTeamShortRelevant } from "@/lib/video/shorts-relevance";
+import { getActiveChannels } from "@/lib/video/team-channels";
 
 export async function GET(req: NextRequest) {
   const team = req.nextUrl.searchParams.get("team") || "_ALL";
@@ -91,6 +92,20 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
+  // 검증 야구채널 신호(channel_pool tier 1 방송사/공식급 또는 해당 팀 affinity)를
+  // LG 야구 문맥 긍정 근거로 전달 (2026-07-24 삼순 라운드3 A안 —
+  // TVING `한화 vs LG` 팬덤중계류 recall 보존, 출처 불명 채널 제품 비교는 차단).
+  // (LG 행이 있을 때만 조회 — 다른 팀 피드에 불필요한 쿼리 방지)
+  let trustedForLg: ReadonlySet<string> = new Set();
+  if ((data ?? []).some((v) => v.team_id === "LG")) {
+    const poolChannels = await getActiveChannels(supabaseAdmin);
+    trustedForLg = new Set(
+      poolChannels
+        .filter((c) => c.tier === 1 || c.team_affinity?.includes("LG"))
+        .map((c) => c.channel_id),
+    );
+  }
+
   // Filter out noisy content — DB flags + runtime title recheck
   // Runtime recheck catches videos ingested before new noise patterns were added
   const excludeSet = DEFAULT_EXCLUDE_FLAGS as ReadonlySet<string>;
@@ -101,6 +116,7 @@ export async function GET(req: NextRequest) {
     if (!isTeamShortRelevant(v.title ?? "", v.team_id ?? null, {
       hasPlayerTag: Boolean(v.player_id || v.player_ids?.length),
       isOfficial: String(v.source_type ?? "").startsWith("official_"),
+      trustedChannel: Boolean(v.channel_id && trustedForLg.has(v.channel_id)),
     })) return false;
     // Runtime title recheck for patterns added after ingestion
     const runtimeFlags = extractNoiseFlags(v.title, v.channel);
