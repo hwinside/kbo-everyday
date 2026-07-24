@@ -19,8 +19,7 @@ import ShareSheet, { type ShareSheetPost } from "@/components/community/ShareShe
 import PostViewBadge from "@/components/community/PostViewBadge";
 import { usePostImpression } from "@/lib/community/usePostImpression";
 import CommentSheet from "./CommentSheet";
-import LinkPreview from "./LinkPreview";
-import { stripUrls, hasLink, isShortText, BrandedTextCard } from "./FeedTextCards";
+import { isShortText, BrandedTextCard } from "./FeedTextCards";
 
 function findPlayerByName(name: string): { kboId: string; teamId: number } | null {
   for (const p of PLAYERS_ROSTER) {
@@ -1164,7 +1163,7 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
               ) : body && isShortText(body) ? (
                 <BrandedTextCard post={post} body={body} />
               ) : body ? (
-                <LongTextCard body={body} />
+                <BrandedTextCard post={post} body={body} long />
               ) : null}
 
               {/* Action bar */}
@@ -1246,41 +1245,6 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
         />
       )}
       <ShareSheet isOpen={shareTarget !== null} post={shareTarget} onClose={() => setShareTarget(null)} />
-    </div>
-  );
-}
-
-/** 카드 C — 긴 텍스트. 500자 초과 시에만 클램프 + '더 보기' 인라인 펼침(상세 이동 없음). 500자 이하는 전문 노출. 링크 포함 시 OG 프리뷰. */
-function LongTextCard({ body }: { body: string }) {
-  const [expanded, setExpanded] = useState(false);
-  // 본문에서 URL은 strip하고 OG 카드로 대신 노출(짧은글 BrandedTextCard와 동일 규칙).
-  // 기존엔 긴 글 분기에 OG 카드가 아예 없어 "텍스트 길고 링크 포함 글에서 OG 안뜸" 버그였음.
-  const displayBody = stripUrls(body);
-  const linked = hasLink(body);
-  // 500자 초과 글만 접고, 이하는 전문 그대로 노출(하린아빠 지시 2026-07-24).
-  const isLong = displayBody.length > 500;
-
-  return (
-    <div className="px-5 pt-1 pb-2">
-      {displayBody && (
-        <>
-          <p
-            className={`whitespace-pre-line break-words text-sm leading-relaxed text-text-primary ${expanded || !isLong ? "" : "line-clamp-6"}`}
-          >
-            {displayBody}
-          </p>
-          {isLong && !expanded && (
-            <button onClick={() => setExpanded(true)} className="mt-0.5 text-sm text-text-tertiary">
-              더 보기
-            </button>
-          )}
-        </>
-      )}
-      {linked && (
-        <div className="mt-2 max-w-sm">
-          <LinkPreview text={body} maxPreviews={1} stopPropagation />
-        </div>
-      )}
     </div>
   );
 }
