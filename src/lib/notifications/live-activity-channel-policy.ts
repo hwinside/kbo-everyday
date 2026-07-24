@@ -544,3 +544,139 @@ export function isStaleStartToken(updatedAt: string | null, nowMs: number): bool
   if (!Number.isFinite(t)) return false;
   return nowMs - t > STALE_START_TOKEN_MS;
 }
+
+// ── 채널 출생 세대 마킹 — 재시도/부분실패 격리 (2026-07-24 사고 견고화) ──────
+//
+// 20260724WOHT0(최대 배치 경기, 18:01 피크): 발송 성공 2,017 중 channel_born 마킹이
+// 177(9%)만 기록 — 배치 update 실패(에러 무시)로 조용히 소실. 마킹 소실 = 어드민
+// '갱신 불가' 과대계상 + wake 대상 오포함. 이 헬퍼가 계약을 강제한다:
+//   ① 배치 실패 시 지수 백오프 재시도(최대 2회 — 과설계 금지)
+//   ② 최종 실패는 경기ID·env/채널·배치 인덱스·건수 포함 명시 로깅(조용한 소실 금지)
+//   ③ 한 배치가 실패해도 나머지 배치는 계속 진행(부분실패 격리)
+//   ④ retryDeadlineMs 경과 후엔 새 marking operation을 *시작 자체를 안 함*(첫 시도 포함
+//      즉시 skip+실패 집계) — deadline 후 첫 UPDATE들이 직렬로 8s statement timeout을
+//      기다리며 뒤 chunk를 굶기는 경로 차단(삼순 R2 blocker starvation 방지). 시작하는
+//      UPDATE도 남은 예산으로 AbortSignal.timeout 유계화 — 전체 marking wall-clock 상한
+//      = 예산(+백오프 sleep ≤1.5s). 마킹 skip은 발송을 막지 않는다(발송·선점 계약 불변,
+//      실패분은 로깅 집계 후 backfill-channel-born.ts로 구제).
+// updateBatch 주입으로 유닛 스모크에서 직접 검증한다(qa:la-born-marking).
+
+/** p2s 발송 성공 유저의 채널 출생 그룹 — (env, channelId)별 user 목록. */
+export interface ChannelBornGroup {
+  env: ApnsEnvironment;
+  channelId: string;
+  users: string[];
+}
+
+export const CHANNEL_BORN_BATCH_SIZE = 200;
+/** 배치당 최대 시도 횟수(최초 1 + 재시도 2). */
+export const CHANNEL_BORN_MAX_ATTEMPTS = 3;
+/** 재시도 백오프(ms) — attempt 1 실패 후 500, attempt 2 실패 후 1000. */
+export const CHANNEL_BORN_RETRY_BASE_MS = 500;
+/** start fanout 전체에서 마킹 *재시도*에 쓸 수 있는 총 예산(ms) — 소진 후 첫 시도만. */
+export const CHANNEL_BORN_RETRY_BUDGET_MS = 20_000;
+
+export async function markChannelBornGroups(params: {
+  gameId: string;
+  groups: Iterable<ChannelBornGroup>;
+  /**
+   * 배치 1건 DB 반영 — supabase update 결과({ error })를 그대로 반환. throw도 실패로 취급.
+   * opts.signal이 있으면 남은 예산으로 유계화된 AbortSignal — 실배선은 .abortSignal()로 전달.
+   */
+  updateBatch: (
+    group: ChannelBornGroup,
+    userIds: string[],
+    opts: { signal?: AbortSignal },
+  ) => PromiseLike<{ error: { message: string } | null }>;
+  logError?: (msg: string) => void;
+  sleep?: (ms: number) => Promise<void>;
+  /** 절대 시각(ms). 경과 후엔 새 UPDATE 시작 금지(첫 시도 포함 skip) + 진행 중 UPDATE도 남은 예산으로 abort. */
+  retryDeadlineMs?: number;
+  now?: () => number;
+}): Promise<{ batches: number; failedBatches: number; failedUsers: number }> {
+  const logError = params.logError ?? ((msg) => console.error(msg));
+  const sleep = params.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+  const now = params.now ?? (() => Date.now());
+  const retryDeadlineMs = params.retryDeadlineMs ?? Number.POSITIVE_INFINITY;
+  let batches = 0;
+  let failedBatches = 0;
+  let failedUsers = 0;
+  for (const group of params.groups) {
+    for (let i = 0; i < group.users.length; i += CHANNEL_BORN_BATCH_SIZE) {
+      const slice = group.users.slice(i, i + CHANNEL_BORN_BATCH_SIZE);
+      const batchIndex = Math.floor(i / CHANNEL_BORN_BATCH_SIZE);
+      batches += 1;
+      let lastError = "unknown";
+      let ok = false;
+      let attempts = 0;
+      for (let attempt = 1; attempt <= CHANNEL_BORN_MAX_ATTEMPTS; attempt++) {
+        // deadline 경과 후엔 새 marking operation을 *시작하지 않는다*(첫 시도 포함) —
+        // deadline 뒤 첫 UPDATE들이 직렬 8s timeout을 기다리며 뒤 배치/chunk를 굶기는
+        // 경로 차단(삼순 R2). skip된 배치는 실패로 집계·로깅 → backfill로 구제.
+        const remainingMs = retryDeadlineMs - now();
+        if (remainingMs <= 0) {
+          if (attempts === 0) lastError = "marking deadline exceeded (batch skipped)";
+          break;
+        }
+        attempts = attempt;
+        try {
+          // 시작하는 UPDATE도 남은 예산으로 유계화 — 8s statement timeout이 예산을
+          // 초과 잠식하지 않게(실배선은 supabase .abortSignal()로 전달).
+          const signal = Number.isFinite(retryDeadlineMs)
+            ? AbortSignal.timeout(Math.ceil(remainingMs))
+            : undefined;
+          const { error } = await params.updateBatch(group, slice, { signal });
+          if (!error) {
+            ok = true;
+            break;
+          }
+          lastError = error.message;
+        } catch (e) {
+          lastError = e instanceof Error ? e.message : String(e);
+        }
+        // 재시도 예산 소진 → 즉시 다음 배치로(굶김 방지 ④).
+        if (now() >= retryDeadlineMs) break;
+        if (attempt < CHANNEL_BORN_MAX_ATTEMPTS) {
+          await sleep(
+            Math.min(CHANNEL_BORN_RETRY_BASE_MS * 2 ** (attempt - 1), retryDeadlineMs - now()),
+          );
+        }
+      }
+      if (!ok) {
+        failedBatches += 1;
+        failedUsers += slice.length;
+        logError(
+          `[live-activity] channel_born marking failed: game=${params.gameId} ` +
+            `env=${group.env} channel=${group.channelId} batch=${batchIndex} ` +
+            `users=${slice.length} attempts=${attempts} error=${lastError}`,
+        );
+      }
+    }
+  }
+  return { batches, failedBatches, failedUsers };
+}
+
+// ── start fanout 유계 chunk + chunk당 즉시 내구 저장 (삼순 R1 blocker②) ──────────
+//
+// 18:02 실측: away 147명은 138 마킹, 직후 home 1,827명은 0 — 1,827건 APNs Promise.all
+// 뒤 tail에서만 마킹하다 fanout 68s deadline/함수 종료에 잘리면 재시도·로그 0으로
+// 전량 소실된다. 발송을 유계 chunk로 나누고 *다음 chunk 발송 시작 전에* 직전 chunk의
+// 마킹을 내구 저장한다 — 도중 cutoff되어도 이미 보낸 chunk의 마킹은 잔존(손실 상한 =
+// 마지막 미완료 chunk 1개). 순서 불변식(persist(k) → send(k+1))을 스모크가 검증한다.
+
+/** start p2s 발송 chunk 크기 — chunk당 APNs 동시 발송 + 마킹 1배치(≤200) 내구 저장. */
+export const START_SEND_CHUNK_SIZE = 100;
+
+export async function runStartSendChunks<T>(params: {
+  items: readonly T[];
+  chunkSize: number;
+  /** 항목 1건 발송 — 실패는 내부에서 집계(throw 금지 계약, 실배선은 자체 catch). */
+  sendOne: (item: T) => Promise<void>;
+  /** 직전 chunk 성공분 내구 저장 — 다음 chunk 발송 시작 전에 반드시 완료. */
+  persistChunk: () => Promise<void>;
+}): Promise<void> {
+  for (let i = 0; i < params.items.length; i += params.chunkSize) {
+    await Promise.all(params.items.slice(i, i + params.chunkSize).map(params.sendOne));
+    await params.persistChunk();
+  }
+}
