@@ -51,8 +51,34 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
         const input = document.createElement("input");
         input.type = "file";
         input.accept = "image/*,video/*";
-        input.addEventListener("change", () => onChange(input.files?.[0] ?? null), { once: true });
-        input.addEventListener("cancel", () => onCancel(), { once: true });
+        // iOS WKWebView 버그: DOM에 **미부착된** file input은 영상 export가 필요한 픽에서
+        // change 이벤트를 안 쏘고 멈춘다 → 픽 스피너 영구 hang (하린아빠 7/25 04:36 리포트).
+        // 반드시 document에 붙여 click, 이벤트 처리 후 제거한다. (데스크톱/안드로이드는 무해)
+        input.style.cssText =
+          "position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0;pointer-events:none;";
+        document.body.appendChild(input);
+
+        let settled = false;
+        let watchdog: ReturnType<typeof setTimeout> | null = null;
+        const settle = (fn: () => void) => {
+          if (settled) return;
+          settled = true;
+          if (watchdog != null) clearTimeout(watchdog);
+          watchdog = null;
+          input.remove();
+          fn();
+        };
+        input.addEventListener(
+          "change",
+          () => {
+            const f = input.files?.[0] ?? null; // 제거 전에 파일 참조 확보
+            settle(() => onChange(f));
+          },
+          { once: true },
+        );
+        input.addEventListener("cancel", () => settle(() => onCancel()), { once: true });
+        // 그래도 iOS가 change/cancel을 끝내 안 쏘는 드문 케이스 방어 — 무한 스피너 대신 자동 취소
+        watchdog = setTimeout(() => settle(() => onCancel()), 90_000);
         input.click();
       },
       onFile: (file) => handlePickedFileRef.current(file),
