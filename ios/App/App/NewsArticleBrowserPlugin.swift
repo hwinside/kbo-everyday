@@ -77,14 +77,42 @@ final class NewsArticleBrowserViewController: UIViewController {
         fatalError("init(coder:) has not been implemented")
     }
 
+    override var preferredStatusBarStyle: UIStatusBarStyle { .lightContent }
+
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .systemBackground
+        overrideUserInterfaceStyle = .dark
+        view.backgroundColor = UIColor(red: 0x0A / 255, green: 0x0A / 255, blue: 0x0B / 255, alpha: 1)
+        configureSafeAreaBackground()
         configureToolbar()
         configureArticleWebView()
         configureCommentBarIfNeeded()
         configureCommentsOverlayIfNeeded()
         articleWebView.load(URLRequest(url: articleURL))
+    }
+
+    private func configureSafeAreaBackground() {
+        let chrome = UIColor(red: 0x14 / 255, green: 0x14 / 255, blue: 0x16 / 255, alpha: 1)
+        let topFill = UIView()
+        topFill.translatesAutoresizingMaskIntoConstraints = false
+        topFill.backgroundColor = chrome
+        topFill.isUserInteractionEnabled = false
+        view.addSubview(topFill)
+        let bottomFill = UIView()
+        bottomFill.translatesAutoresizingMaskIntoConstraints = false
+        bottomFill.backgroundColor = chrome
+        bottomFill.isUserInteractionEnabled = false
+        view.addSubview(bottomFill)
+        NSLayoutConstraint.activate([
+            topFill.topAnchor.constraint(equalTo: view.topAnchor),
+            topFill.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            topFill.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            topFill.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            bottomFill.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+            bottomFill.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            bottomFill.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            bottomFill.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
     }
 
     deinit {
@@ -233,7 +261,8 @@ final class NewsArticleBrowserViewController: UIViewController {
         titleLabel.font = .systemFont(ofSize: 15, weight: .semibold)
         titleLabel.isUserInteractionEnabled = false
 
-        commentCountLabel.text = "0"
+        commentCountLabel.text = nil
+        commentCountLabel.isHidden = true
         commentCountLabel.textColor = accent
         commentCountLabel.font = .systemFont(ofSize: 15, weight: .semibold)
         commentCountLabel.isUserInteractionEnabled = false
@@ -419,6 +448,7 @@ extension NewsArticleBrowserViewController: WKScriptMessageHandler {
         case "ready", "count":
             let count = (body["count"] as? NSNumber)?.intValue ?? 0
             commentCountLabel.text = "\(max(0, count))"
+            commentCountLabel.isHidden = false
         default:
             break
         }

@@ -212,7 +212,8 @@ public class NewsArticleBrowserActivity extends Activity {
         bar.addView(title);
 
         commentCountLabel = new TextView(this);
-        commentCountLabel.setText("0");
+        commentCountLabel.setText("");
+        commentCountLabel.setVisibility(View.GONE);
         commentCountLabel.setTextColor(Color.rgb(0xFF, 0x45, 0x3A));
         commentCountLabel.setTextSize(15);
         commentCountLabel.setTypeface(commentCountLabel.getTypeface(), android.graphics.Typeface.BOLD);
@@ -374,6 +375,7 @@ public class NewsArticleBrowserActivity extends Activity {
                     } else if ("ready".equals(type) || "count".equals(type)) {
                         int count = Math.max(0, message.optInt("count", 0));
                         commentCountLabel.setText(String.valueOf(count));
+                        commentCountLabel.setVisibility(View.VISIBLE);
                     }
                 } catch (Exception ignored) {
                     // Ignore malformed messages from the internal comments page.
