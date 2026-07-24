@@ -2,6 +2,7 @@
 // 2026-06-19 #cs 제보: 오스틴(LG) 검색에 종교 영상, 김영우 정치 뉴스가 숏츠에 노출.
 import {
   hasBaseballShortContext,
+  hasLgBaseballContext,
   hasNonBaseballSignal,
   isPlayerShortRelevant,
   isTeamShortRelevant,
@@ -108,7 +109,7 @@ for (const title of [
   "LG유플러스 선수금 지급",
   "LG전자 경기 침체에도 승리",
 ]) {
-  check(`계열사 오탐: 야구 문맥 아님 (${title})`, hasBaseballShortContext(title), false);
+  check(`계열사 오탐: 야구 문맥 아님 (${title})`, hasLgBaseballContext(title), false);
   check(`계열사 오탐: 수집 team_id ETC (${title})`, detectTeamFromTitle(title) === "ETC", true);
   check(
     `계열사 오탐: 기존 LG 행 노출 차단 (${title})`,
@@ -128,7 +129,7 @@ for (const title of [
   "LG전자 타자기 역사", // 타자기 → 타자 파생어
   "LG전자 에너지 세이브 캠페인", // 일반어 세이브 단독
 ]) {
-  check(`파생어 오탐: 야구 문맥 아님 (${title})`, hasBaseballShortContext(title), false);
+  check(`파생어 오탐: 야구 문맥 아님 (${title})`, hasLgBaseballContext(title), false);
   check(`파생어 오탐: 수집 team_id ETC (${title})`, detectTeamFromTitle(title) === "ETC", true);
   check(
     `파생어 오탐: 기존 LG 행 노출 차단 (${title})`,
@@ -146,6 +147,43 @@ check("정상: 야구선수 연속 복합어", hasBaseballShortContext("LG 야�
 check("정상: 투수들 파생 접미", hasBaseballShortContext("LG 투수들 무더위 속 호투"), true);
 check("정상: 홈런포 파생 접미", hasBaseballShortContext("LG 대포번지 홈런포 가동"), true);
 check("정상: KBO리그 복합어", hasBaseballShortContext("KBO리그 LG 근황"), true);
+
+// --- 라운드3: 기업 접미 부정 신호 (2026-07-24 삼순 라운드2 반례 — weak 조합 복원 불가) ---
+for (const title of [
+  "LG전자 신입사원 선발 경쟁에서 승리",
+  "LG유플러스 잠실 우승 기념 행사",
+  "LG 전자 신제품 공개 하이라이트",
+]) {
+  check(`기업 접미: 야구 문맥 아님 (${title})`, hasLgBaseballContext(title), false);
+  check(`기업 접미: 수집 team_id ETC (${title})`, detectTeamFromTitle(title) === "ETC", true);
+  check(
+    `기업 접미: 기존 LG 행 노출 차단 (${title})`,
+    isTeamShortRelevant(title, "LG"),
+    false,
+  );
+}
+
+// --- 라운드3: 정상 야구 보존 (2026-07-24 삼순 prod 과차단 13건 계열 — recall 회귀) ---
+for (const title of [
+  "한화 vs LG 팬덤중계",
+  "LG vs 롯데 팬덤중계",
+  "3위로 추락한 LG 근황",
+  "LG팬 전현무에 빨친 삼성팬",
+  "LG 팀 분위기의 비결..?",
+]) {
+  check(`과차단 회귀: 수집 team_id LG (${title})`, detectTeamFromTitle(title) === "LG", true);
+  check(`과차단 회귀: 기존 LG 행 노출 유지 (${title})`, isTeamShortRelevant(title, "LG"), true);
+}
+for (const title of [
+  "LG 경기 결과",
+  "LG 선수 인터뷰",
+  "LG 선발 공개",
+  "LG 감독 인터뷰",
+  "LG 하이라이트",
+  'LG를 무너뜨리는 "슈퍼 루키" 오재원', // prod 재현에서 발견한 과차단 사례
+]) {
+  check(`과차단 회귀: 단일 weak 통과 (${title})`, isTeamShortRelevant(title, "LG"), true);
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail > 0) process.exit(1);

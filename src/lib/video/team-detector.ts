@@ -3,7 +3,7 @@
  * 커뮤니티 채널 영상의 team_id 배정에 사용
  */
 
-import { hasBaseballShortContext } from "./shorts-relevance";
+import { hasLgBaseballContext } from "./shorts-relevance";
 
 const TEAM_PATTERNS: [string, RegExp][] = [
   ["두산", /두산|베어스/],
@@ -21,7 +21,7 @@ const LG_NAME_PATTERN = /(^|[^A-Za-z0-9])LG(?![A-Za-z0-9])|엘지/i;
 
 function hasLgTeamSignal(title: string): boolean {
   if (title.includes("트윈스")) return true;
-  return LG_NAME_PATTERN.test(title) && hasBaseballShortContext(title);
+  return LG_NAME_PATTERN.test(title) && hasLgBaseballContext(title);
 }
 
 /**

@@ -42,8 +42,11 @@ const SHORTS_BASEBALL_CONTEXT_STRONG = [
   "드래프트",
 ];
 
-// 다의어 — 기업·일반 뉴스에도 흔해(신입사원 선발, 경기 침체, 시장에서 승리,
-// 잠실 아파트, 에너지 세이브) 단독으로는 야구 문맥으로 인정하지 않고 2개 이상 조합만 인정.
+// 다의어 — 기업·일반 뉴스에도 등장(신입사원 선발, 경기 침체, 잠실 아파트).
+// 기업 접미 미결합 독립 `LG` 언급과 결합할 때만 야구 문맥으로 인정(1개면 충분).
+// 기업 접미 결합 문서는 몇 개 조합해도 복원 불가 — 2026-07-24 삼순 라운드2:
+// weak 2개 조합 기준은 `신입사원 선발 경쟁에서 승리`를 통과시키면서 정상
+// `LG 경기 결과`는 차단하는 양방향 결손이라 폐기.
 const SHORTS_BASEBALL_CONTEXT_WEAK = [
   "선수",
   "경기",
@@ -58,7 +61,27 @@ const SHORTS_BASEBALL_CONTEXT_WEAK = [
   "감독",
   "잠실",
   "하이라이트",
+  "근황",
+  "분위기",
+  "루키",
 ];
+
+// `LG` 바로 뒤에 계열사 접미가 결합하면 그 언급은 기업 뉴스 신호 —
+// 문서에 독립 LG 언급이 따로 없으면 팀 신호에서 제외한다 (삼순 라운드2 가이드).
+const LG_CORPORATE_SUFFIX =
+  "(?:lg|엘지)\\s?(?:화학|전자|유플러스|u\\+|에너지솔루션|엔솔|디스플레이|이노텍|생활건강|헬로비전|씨엔에스|cns|전선|상사|하우시스|그룹)";
+const LG_CORPORATE_RE = new RegExp(LG_CORPORATE_SUFFIX, "i");
+const LG_CORPORATE_RE_G = new RegExp(LG_CORPORATE_SUFFIX, "gi");
+
+// 독립 LG 언급(영문 약칭 단어 경계 또는 한글 `엘지`)
+const LG_STANDALONE_RE = /(^|[^A-Za-z0-9])lg(?![A-Za-z0-9])|엘지/i;
+
+// 강한 긍정 신호: `vs`+타 KBO 구단, `LG팬` — 기업 문맥에서 안 나오는 야구
+// 시그널이라 단독 인정 (2026-07-24 삼순 라운드2 보존 요구).
+const KBO_OPPONENT_RE =
+  /한화|롯데|두산|삼성|키움|기아|이글스|자이언츠|베어스|타이거즈|라이온즈|랜더스|다이노스|위즈|히어로즈|에스에스지|엔씨|케이티|(?:^|[^a-z0-9])(?:kia|ssg|nc|kt)(?![a-z0-9])/i;
+const VS_RE = /(?:^|[^a-z0-9])vs\.?(?![a-z0-9])|맞대결/i;
+const LG_FAN_RE = /(?:lg|엘지)\s?팬/i;
 
 // 야구 키워드가 비야구 복합어의 부분문자열로 걸리는 패턴 — 판정 전에 제거.
 // ("선수금"의 선수, "경기 침체"의 경기 등)
@@ -149,10 +172,28 @@ export function hasBaseballShortContext(title: string): boolean {
   }
   if (SHORTS_BASEBALL_CONTEXT_STRONG.some((k) => matchesContextKeyword(normalized, k)))
     return true;
-  const weakHits = SHORTS_BASEBALL_CONTEXT_WEAK.filter((k) =>
-    matchesContextKeyword(normalized, k),
-  );
-  return weakHits.length >= 2;
+  if (VS_RE.test(normalized) && KBO_OPPONENT_RE.test(normalized)) return true;
+  if (LG_FAN_RE.test(normalized)) return true;
+  return SHORTS_BASEBALL_CONTEXT_WEAK.some((k) => matchesContextKeyword(normalized, k));
+}
+
+/**
+ * LG 팀 야구 문맥 판정 — 기업 접미 부정 신호 우선 (2026-07-24 삼순 라운드2).
+ *
+ * `LG화학`·`LG 전자`처럼 기업 접미가 직접 결합한 언급은 팀 신호에서 제외하고,
+ * 제거 후 독립 LG 언급이 남지 않으면 weak 키워드 조합으로도 복원 불가
+ * (`LG전자 신입사원 선발 경쟁에서 승리` 봉인). 독립 LG 언급은 strong
+ * 키워드·`vs`+상대 구단·`LG팬`·weak 1개로 통과
+ * (승인 계약: "선수·경기 등 야구 문맥이 함께 있으면 통과").
+ */
+export function hasLgBaseballContext(title: string): boolean {
+  if (title.includes("트윈스")) return true;
+  if (LG_CORPORATE_RE.test(title)) {
+    const stripped = title.replace(LG_CORPORATE_RE_G, " ");
+    if (!LG_STANDALONE_RE.test(stripped)) return false;
+    return hasBaseballShortContext(stripped);
+  }
+  return hasBaseballShortContext(title);
 }
 
 // 제목에 등장하면 야구 숏츠가 아니라고 보는 키워드. 야구 헤드라인엔 등장하지
@@ -225,5 +266,5 @@ export function isTeamShortRelevant(
   if (hasNonBaseballSignal(title)) return false;
   if (teamId !== "LG") return true;
   if (options.hasPlayerTag || options.isOfficial) return true;
-  return hasBaseballShortContext(title);
+  return hasLgBaseballContext(title);
 }
