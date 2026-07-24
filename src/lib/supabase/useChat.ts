@@ -26,6 +26,94 @@ export interface ChatMessage {
 const PAGE_SIZE = 50;
 const DELETED_PLACEHOLDER = "삭제된 메시지입니다";
 
+export interface ChatCounts {
+  total: number;
+  home: number;
+  away: number;
+}
+
+// 카운트 head 쿼리 재조회 최소 간격 — 활발한 방에서 메시지마다 3연발 쿼리 방지.
+const COUNTS_MIN_INTERVAL_MS = 5000;
+
+/**
+ * 방 누적 메시지 카운트(삭제 제외) + 홈/원정 최애팀 유저 글 수.
+ * - 서버 count(head:true) 쿼리 3발 병렬 — 로드된 페이지와 무관한 실제 누적치.
+ * - refreshKey(최신 메시지 id 등)가 바뀌면 재조회하되 최소 5초 간격으로 디바운스.
+ * - 삭제(soft delete)된 메시지는 UI에서 완전히 숨기므로 카운트에서도 제외해 일관성 유지.
+ */
+export function useChatCounts(
+  roomId: string,
+  homeTeamId: number,
+  awayTeamId: number,
+  refreshKey: number
+) {
+  const [counts, setCounts] = useState<ChatCounts | null>(null);
+  // 마지막 조회 시각 — roomId별로 기록해 방 전환 시 디바운스 없이 즉시 조회.
+  const lastFetchRef = useRef<{ roomId: string; at: number }>({ roomId: "", at: 0 });
+
+  // 방 전환 시 렌더 중 리셋 (React 권장 "adjusting state when props change" 패턴).
+  const [prevRoomId, setPrevRoomId] = useState(roomId);
+  if (prevRoomId !== roomId) {
+    setPrevRoomId(roomId);
+    setCounts(null);
+  }
+
+  useEffect(() => {
+    if (!roomId) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const baseCount = () =>
+      supabase
+        .from("chat_messages")
+        .select("id", { count: "exact", head: true })
+        .eq("room_id", roomId)
+        .is("deleted_at", null);
+
+    const teamCount = (teamId: number) =>
+      supabase
+        .from("chat_messages")
+        .select("id, profiles!user_id!inner(team_id)", { count: "exact", head: true })
+        .eq("room_id", roomId)
+        .is("deleted_at", null)
+        .eq("profiles.team_id", teamId);
+
+    const fetchCounts = async () => {
+      lastFetchRef.current = { roomId, at: Date.now() };
+      const [totalRes, homeRes, awayRes] = await Promise.all([
+        baseCount(),
+        teamCount(homeTeamId),
+        teamCount(awayTeamId),
+      ]);
+      if (cancelled) return;
+      if (totalRes.error) {
+        console.error("[useChatCounts] error:", totalRes.error.message);
+        return;
+      }
+      setCounts({
+        total: totalRes.count ?? 0,
+        home: homeRes.error ? 0 : homeRes.count ?? 0,
+        away: awayRes.error ? 0 : awayRes.count ?? 0,
+      });
+    };
+
+    const last = lastFetchRef.current;
+    const elapsed = last.roomId === roomId ? Date.now() - last.at : Infinity;
+    if (elapsed >= COUNTS_MIN_INTERVAL_MS) {
+      void fetchCounts();
+    } else {
+      timer = setTimeout(() => void fetchCounts(), COUNTS_MIN_INTERVAL_MS - elapsed);
+    }
+
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [roomId, homeTeamId, awayTeamId, refreshKey]);
+
+  return counts;
+}
+
 type ChatRow = ChatMessage & { profiles?: { nickname?: string; team_id?: number; grade?: string } };
 
 function mapRow(r: ChatRow): ChatMessage {

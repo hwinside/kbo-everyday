@@ -7,7 +7,7 @@ import { clsx } from "clsx";
 import TeamBadge from "@/components/ui/TeamBadge";
 import { getTeamById, isAllStarGame } from "@/lib/constants/teams";
 import { allStarSideOfTeam } from "@/lib/constants/allstar-2026";
-import { useChat, type ChatMessage } from "@/lib/supabase/useChat";
+import { useChat, useChatCounts, type ChatMessage } from "@/lib/supabase/useChat";
 import { useMoodGauge } from "@/lib/supabase/useMoodGauge";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { useBlockedIds, blockUserById } from "@/lib/supabase/useBlock";
@@ -65,6 +65,10 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   const roomId = getRoomId(gameId);
   const { messages, loading, loadingMore, hasMore, loadMore, sendMessage, deleteMyMessage, deleteAnyMessage, cooldown, cooldownReason, isLoggedIn } = useChat(roomId);
   const { homePct } = useMoodGauge(gameId, homeTeamId, awayTeamId);
+  // 누적 카운트 재조회 트리거: 마지막(최신) 메시지 id. 전송/수신(append)시만
+  // 바뀌고 loadMore(prepend)에는 불변 — 과거 페이지 로드로 재조회 안 함.
+  const latestMessageId = messages.length > 0 ? messages[messages.length - 1].id : 0;
+  const chatCounts = useChatCounts(roomId, homeTeamId, awayTeamId, latestMessageId);
   const { user, profile, loading: authLoading } = useAuth();
   const { blockedIds } = useBlockedIds();
   const canModerateChat = profile?.is_operator === true;
@@ -380,7 +384,24 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
           <Users className="w-4 h-4 text-text-tertiary" />
           <span className="text-sm font-semibold text-text-primary">전체 채팅</span>
         </div>
-        <span className="text-xs text-text-tertiary">{messages.length}개 메시지</span>
+        {(() => {
+          // 누적 총 메시지 수 + 홈/원정 최애유저 글 수 (서버 count, 로드분과 무관).
+          // 로딩 전에는 기존처럼 로드된 개수 fallback.
+          const home = getTeamById(homeTeamId);
+          const away = getTeamById(awayTeamId);
+          if (!chatCounts || !home || !away) {
+            return <span className="text-xs text-text-tertiary">{messages.length}개 메시지</span>;
+          }
+          return (
+            <span className="text-xs text-text-tertiary">
+              총 {chatCounts.total}
+              <span className="mx-1">·</span>
+              <span style={{ color: away.colorLight }}>{away.shortName} {chatCounts.away}</span>
+              <span className="mx-1">·</span>
+              <span style={{ color: home.colorLight }}>{home.shortName} {chatCounts.home}</span>
+            </span>
+          );
+        })()}
       </div>
 
       {/* Mood gauge */}
