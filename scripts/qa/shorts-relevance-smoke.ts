@@ -11,6 +11,9 @@ import {
   detectAllTeamsFromTitle,
   detectTeamFromTitle,
 } from "@/lib/video/team-detector";
+import { entriesToRows } from "@/lib/video/entries-to-rows";
+import type { PoolChannel } from "@/lib/video/team-channels";
+import type { RssVideoEntry } from "@/lib/video/rss-parser";
 
 let pass = 0,
   fail = 0;
@@ -224,6 +227,86 @@ for (const title of [
 ]) {
   check(`과차단 회귀: 단일 weak 통과 (${title})`, isTeamShortRelevant(title, "LG"), true);
 }
+
+// --- 라운드4: 운영 실케이스 79W-OwErIEA — 비-LG affinity 채널 선확정 false negative ---
+// 채널 `히어로북`(tier=3, team_affinity=["키움"])의 명시적 LG 야구 제목.
+// 수집 계약(channelTeam 선확정 → team_id 키움)은 유지하면서, shorts-feed의
+// 다중 팀 노출 게이트(detectAllTeamsFromTitle ∋ LG)로 LG 피드에 합류해야 한다.
+const HEROBOOK_CHANNEL: PoolChannel = {
+  channel_id: "UC_herobook_fixture",
+  channel_name: "히어로북",
+  tier: 3,
+  team_affinity: ["키움"],
+};
+const HEROBOOK_ENTRY: RssVideoEntry = {
+  video_id: "79W-OwErIEA",
+  title: "한화 앞에서 선보인 LG의 행복수비☠️💔",
+  thumbnail: "",
+  channel: "히어로북",
+  channel_id: "UC_herobook_fixture",
+  published_at: "2026-07-20T00:00:00.000Z",
+};
+const [herobookRow] = entriesToRows([HEROBOOK_ENTRY], HEROBOOK_CHANNEL, []);
+check(
+  "운영케이스: 수집 계약 유지 — channelTeam 키움 선확정",
+  herobookRow.team_id === "키움",
+  true,
+);
+check(
+  "운영케이스: LG 피드 다중 팀 노출 게이트 통과 (trusted 아니어도)",
+  detectAllTeamsFromTitle(herobookRow.title).includes("LG"),
+  true,
+);
+check(
+  "운영케이스: 노출 단계 negative/노이즈 게이트 통과 (team_id=키움 그대로)",
+  isTeamShortRelevant(herobookRow.title, herobookRow.team_id),
+  true,
+);
+check(
+  "운영케이스: 수비 키워드 야구 문맥 인정 (파생 이모지 경계)",
+  hasLgBaseballContext(herobookRow.title),
+  true,
+);
+
+// 반대 방향 보존: 다중 팀 노출 게이트가 비-야구 LG 제목까지 LG 피드로 끓어오면 안 된다
+for (const title of [
+  "LG전자 세탁기 신제품 리뷰", // 기업 접미 → 차단
+  "LG 워시타워 vs 삼성 원바디 핵심 비교! 어떤 걸 사야 할까?", // vs 기업명 단독 → 차단
+  "SLG 1위 타자 분석", // ilike %lg% 과포집 — 독립 LG 언급 아님 → 차단
+]) {
+  check(
+    `다중 노출 게이트 차단 (${title})`,
+    detectAllTeamsFromTitle(title).includes("LG"),
+    false,
+  );
+}
+// 수비 키워드 추가가 기업 문맥을 열지 않는지 (접미 경계 + 기업 접미 부정 유지)
+check("수비 파생어 차단 (수비드)", hasLgBaseballContext("LG 수비드 쿠커 출시"), false);
+
+// 라운드4 전수 재검증에서 나온 추가 false negative 계열 (prod 실제 제목)
+check(
+  "전수검증 회귀: LG전 토큰 (힐리어드 LG전 xwOBA)",
+  detectAllTeamsFromTitle("힐리어드 LG전 xwOBA 0.606 | 7/19 KT LG 데이터 예측 #Shorts").includes("LG"),
+  true,
+);
+check(
+  "전수검증 회귀: 으로 조사 경계 (만루홈런으로)",
+  detectAllTeamsFromTitle("힐리어드 만루홈런으로 KT가 LG를 6대1로 잡았다 #Shorts").includes("LG"),
+  true,
+);
+check(
+  "전수검증 회귀: 방망이 (강백호의 방망이, 1위 엘지를 흔든 그 밤)",
+  detectAllTeamsFromTitle("강백호의 방망이, 1위 엘지를 흔든 그 밤").includes("LG"),
+  true,
+);
+// LG전 토큰이 기업 복합어로 샐지 않는지 (접미 경계 + 기업 접미 부정 유지)
+check("LG전자는 여전히 차단", hasLgBaseballContext("LG전자 신제품 공개"), false);
+check("LG전선도 차단", hasLgBaseballContext("LG전선 수주 공시"), false);
+check(
+  "기업 접미 우선 유지 (LG전자 수비 무상수리)",
+  hasLgBaseballContext("LG전자 수비 무상수리 안내"),
+  false,
+);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail > 0) process.exit(1);
