@@ -110,6 +110,33 @@ export default function VenueStorySection({ gameId }: Props) {
     fetchStories();
   }, [fetchStories]);
 
+  // pending 낙관 카드 백오프 폴링 + 소진 시 '지연' 전환(삼순 #839 blocker 2).
+  // active 승급 감지 시 fetchStories 가 실제 카드로 교체. 마지막 폴(~60초)까지도 안 뜨면
+  // 무한 '처리중' 대신 stalled('지연·다시 시도')로 바꿔 재시도 동선을 준다(검증 지연/실패 대응).
+  const startPendingPolling = useCallback(() => {
+    clearPollTimers();
+    for (const d of PENDING_POLL_DELAYS_MS) {
+      pollTimersRef.current.push(
+        setTimeout(() => {
+          if (pendingIdsRef.current.size > 0) fetchStories();
+        }, d),
+      );
+    }
+    const lastDelay = PENDING_POLL_DELAYS_MS[PENDING_POLL_DELAYS_MS.length - 1] ?? 60000;
+    pollTimersRef.current.push(
+      setTimeout(() => {
+        if (pendingIdsRef.current.size > 0) {
+          setStories((prev) =>
+            prev.map((s) =>
+              s.processing && pendingIdsRef.current.has(s.id) ? { ...s, stalled: true } : s,
+            ),
+          );
+          clearPollTimers();
+        }
+      }, lastDelay + 3000),
+    );
+  }, [fetchStories, clearPollTimers]);
+
   // 안 본 스토리 좌측 전진배치. 뷰어/트레이가 같은 배열을 쓰므로 인덱스 일치.
   const orderedStories = useMemo(() => orderBySeen(stories, seenIds), [stories, seenIds]);
 
@@ -143,15 +170,8 @@ export default function VenueStorySection({ gameId }: Props) {
         pendingIdsRef.current.add(result.id);
         setStories((prev) => [optimistic, ...prev.filter((s) => s.id !== result.id)]);
         setLoaded(true);
-        // 백오프 폴링 — active 승급 감지 시 fetchStories 가 실제(재생 가능) 카드로 교체
-        clearPollTimers();
-        for (const d of PENDING_POLL_DELAYS_MS) {
-          pollTimersRef.current.push(
-            setTimeout(() => {
-              if (pendingIdsRef.current.size > 0) fetchStories();
-            }, d),
-          );
-        }
+        // 백오프 폴링 — active 승급 감지 시 실제 카드 교체, 소진 시 지연 전환
+        startPendingPolling();
       } else {
         fetchStories();
       }
@@ -164,7 +184,7 @@ export default function VenueStorySection({ gameId }: Props) {
       setToast(msg);
       setTimeout(() => setToast(null), 2200);
     },
-    [fetchStories, gameId, userId, clearPollTimers],
+    [fetchStories, gameId, userId, startPendingPolling],
   );
 
   const handleUploadClick = () => {
@@ -208,7 +228,17 @@ export default function VenueStorySection({ gameId }: Props) {
               onClick={() => {
                 // 처리중(pending) 낙관 카드는 공개 객체가 아직 없어 재생 불가 → 뷰어 진입 대신 안내
                 if (s.processing) {
-                  setToast("영상 검증 중이에요. 잠시 뒤 자동으로 재생돼요 🎬");
+                  if (s.stalled) {
+                    // 검증 지연 — 재시도 동선: 지연 해제 + 재조회·폴링 재개
+                    setStories((prev) =>
+                      prev.map((x) => (x.id === s.id ? { ...x, stalled: false } : x)),
+                    );
+                    fetchStories();
+                    startPendingPolling();
+                    setToast("다시 확인 중이에요… 잠시만요 🎬");
+                  } else {
+                    setToast("영상 검증 중이에요. 잠시 뒤 자동으로 재생돼요 🎬");
+                  }
                   setTimeout(() => setToast(null), 1800);
                   return;
                 }
@@ -242,10 +272,16 @@ export default function VenueStorySection({ gameId }: Props) {
                     <Play size={11} className="text-white fill-white" />
                   </span>
                 )}
-                {s.processing && (
+                {s.processing && !s.stalled && (
                   <div className="absolute inset-0 bg-black/55 flex flex-col items-center justify-center gap-1">
                     <Loader2 size={16} className="animate-spin text-white" />
                     <span className="text-[9px] text-white font-medium">처리중</span>
+                  </div>
+                )}
+                {s.processing && s.stalled && (
+                  <div className="absolute inset-0 bg-black/65 flex flex-col items-center justify-center gap-1 px-1">
+                    <span className="text-[13px]">⏳</span>
+                    <span className="text-[9px] text-white font-medium leading-tight text-center">지연·다시 시도</span>
                   </div>
                 )}
               </div>

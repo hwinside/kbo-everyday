@@ -61,6 +61,12 @@ export interface VenueStory {
    * active 승급 후 서버 목록이 반환하면 이 카드는 실제 카드로 교체된다.
    */
   processing?: boolean;
+  /**
+   * 낙관 '처리중' 카드가 폴링 소진(최대 ~60초)까지도 active 로 승급되지 못한 상태.
+   * 서버 검증 지연/실패(status=removed) 가능성 — 무한 스피너 대신 '지연·다시 시도' 안내로 전환하고
+   * 탭 시 재조회+폴링 재개 동선을 제공한다(삼순 #839 blocker 2). processing=true 를 유지해 병합 대상.
+   */
+  stalled?: boolean;
 }
 
 /** POST /api/venue-stories 요청 바디 */

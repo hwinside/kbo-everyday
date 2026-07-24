@@ -12,6 +12,7 @@ import {
   mergePendingStories,
   PENDING_POLL_DELAYS_MS,
 } from "../../src/lib/venue-stories/composer-helpers";
+import { computeScrollLockStyle } from "../../src/lib/venue-stories/scroll-lock";
 import type { VenueStory } from "../../src/lib/venue-stories/types";
 
 let pass = 0;
@@ -113,6 +114,24 @@ ok("낙관+서버 동일 id → 서버 1건만(중복 0)", m4.length === 1 && m4
 console.log("PENDING_POLL_DELAYS_MS (백오프 재조회):");
 ok("증가하는 백오프(앞은 촘촘·뒤는 성기게)", PENDING_POLL_DELAYS_MS.every((d, i, a) => i === 0 || d > a[i - 1]));
 ok("첫 재조회 ≤ 3초(빠른 승급 즉시 반영)", PENDING_POLL_DELAYS_MS[0] <= 3000);
+
+// ── C) iOS root scroll lock 순수 스타일 계산(삼순 #839 blocker 3) ────────────────
+console.log("\ncomputeScrollLockStyle (iOS root scroll 잠금):");
+const sl0 = computeScrollLockStyle(0);
+ok("scrollY=0 → position:fixed·top:-0px·width:100%", sl0.position === "fixed" && sl0.top === "-0px" && sl0.width === "100%");
+ok("root scroll 차단 — overflow:hidden·overscroll:none", sl0.overflow === "hidden" && sl0.overscrollBehavior === "none");
+const sl250 = computeScrollLockStyle(250);
+ok("scrollY=250 → top:-250px(시각 점프 방지용 오프셋)", sl250.top === "-250px");
+ok("소수 scrollY 반올림(top 정수 px)", computeScrollLockStyle(123.7).top === "-124px");
+ok("음수 scrollY 방어(최소 0)", computeScrollLockStyle(-40).top === "-0px");
+
+// ── D) stalled(지연) 카드도 pending 병합 유지 — timeout 후에도 자연 새로고침에 유지되어야 재시도 가능 ─
+console.log("\nmergePendingStories (stalled 지연 카드 병합):");
+const stalled = { ...optimistic, stalled: true };
+const m5 = mergePendingStories([stalled, activeStory(10)], [activeStory(10)], new Set([42]));
+ok("stalled(processing:true) 카드 → 서버 미반환이면 유지(재시도 동선 보존)", m5.length === 2 && m5[0].id === 42 && m5[0].stalled === true);
+const m6 = mergePendingStories([stalled, activeStory(10)], [activeStory(42), activeStory(10)], new Set([42]));
+ok("stalled 이더라도 서버 active 반환면 실제 카드로 교체(지연 해소)", m6.length === 2 && m6.every((s) => !s.processing && !s.stalled));
 
 console.log(`\n결과: ${pass} pass / ${fail} fail`);
 if (fail > 0) process.exit(1);

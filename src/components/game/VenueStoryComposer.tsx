@@ -192,6 +192,10 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
     setPhase("idle");
     setProgress(0);
     setUploadStage("upload");
+    // 읽기 lock 해제 — 이미지 data URL 읽는 중(readingPreview=true) 모달을 닫으면 seq 증가로
+    // 늦은 read 는 discard(무동작)되므로, 여기서 잠금을 안 풀면 재오픈 뒤 openPicker/submit 이
+    // 영구 차단된다(삼순 #839 blocker 1). reset 이 최신 상태의 유일한 lock 소유자다.
+    setReadingPreview(false);
   };
 
   const close = () => {
@@ -291,7 +295,8 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   });
 
   const submit = async () => {
-    if (!file || submitting) return;
+    // readingPreview 중이면 file 만 활성·preview 미반영 상태일 수 있어 제출 잠금(버튼 disabled 와 이중 방어)
+    if (!file || submitting || readingPreview) return;
     setError(null);
 
     // UGC 가이드라인 동의 필수(업로드 시점 게이트)

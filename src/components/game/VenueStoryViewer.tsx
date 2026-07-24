@@ -13,6 +13,7 @@ import {
   type VenueStoryComment,
 } from "@/lib/venue-stories/comments";
 import { subscribeKeyboardInset } from "@/lib/venue-stories/keyboard-inset";
+import { lockRootScroll, unlockRootScroll } from "@/lib/venue-stories/scroll-lock";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 
 interface Props {
@@ -181,13 +182,14 @@ export default function VenueStoryViewer({
     };
   }, [story?.id]);
 
-  // 뷰어 열린 동안 body 스크롤 잠금 — iOS에서 댓글 키보드를 띄우고 스크롤하면 배경(문서)이
-  // 영상과 함께 밀려 스크롤되던 문제 방지(하린아빠 A17 리포트). 컨테이너 overscroll-contain 과 병행.
+  // 뷰어 열린 동안 root scroll 완전 잠금 — iOS WKWebView 는 키보드가 열린 상태의 native drag 가
+  // document/root(body·html)를 움직여 배경 경기방과 fixed viewer 가 함께 밀린다(하린아빠 iOS 리포트).
+  // body overflow:hidden 만으론 부족해 scrollY 저장 + position:fixed 로 root scroll 자체를 막고
+  // 해제 시 원위치 복원한다(scroll-lock.ts 순수 헬퍼, 회귀로 고정 — 삼순 #839 blocker 3).
   useEffect(() => {
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    const saved = lockRootScroll();
     return () => {
-      document.body.style.overflow = prev;
+      unlockRootScroll(saved);
     };
   }, []);
 
