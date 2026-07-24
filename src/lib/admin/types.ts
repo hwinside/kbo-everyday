@@ -126,14 +126,16 @@ export interface FunnelStep {
   rate: number;
 }
 
-/** 롤링 윈도우 리텐션 행: 가입 후 W1(1~7일)·W2(8~14)·W3(15~21)·W4(22~28) 각 구간 1회+ 재활동율 */
+/** 28일 고정 Rolling Retention 행: R1=[D1,D28]·R7=[D7,D28]·R14=[D14,D28]·R21=[D21,D28]·R28=D28 중 1회+.
+ *  구간 포함관계+동일 분모라 R1≥R7≥R14≥R21≥R28 단조 비증가. 미집계(미성숙)는 null. */
 export interface RollingRetentionRow {
   cohortKey: string;
   cohortSize: number;
-  w1: number;
-  w2: number;
-  w3: number;
-  w4: number;
+  r1: number | null;
+  r7: number | null;
+  r14: number | null;
+  r21: number | null;
+  r28: number | null;
 }
 
 /** 게임데이 리텐션 행 */

@@ -139,16 +139,17 @@ export async function GET(req: NextRequest) {
     const grouped = new Map<string, RollingRetentionRow>();
     for (const row of data ?? []) {
       if (!grouped.has(row.cohort_key)) {
+        // 미집계(미성숙) 앵커는 0%가 아니라 null → 차트에서 미표시(삼순 리뷰).
         grouped.set(row.cohort_key, {
           cohortKey: row.cohort_key,
           cohortSize: row.total,
-          w1: 0, w2: 0, w3: 0, w4: 0,
+          r1: null, r7: null, r14: null, r21: null, r28: null,
         });
       }
       const entry = grouped.get(row.cohort_key)!;
-      const key = row.metric_key as "w1" | "w2" | "w3" | "w4";
+      const key = row.metric_key as "r1" | "r7" | "r14" | "r21" | "r28";
       if (key in entry) {
-        (entry as unknown as Record<string, number>)[key] = row.rate;
+        (entry as unknown as Record<string, number | null>)[key] = row.rate;
         entry.cohortSize = Math.max(entry.cohortSize, row.total);
       }
     }

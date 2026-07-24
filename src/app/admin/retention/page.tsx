@@ -114,18 +114,11 @@ function isWeekNotYet(weekStr: string, dKey: string, targetDate: string): boolea
   return isDayIncomplete(weekToMonday(weekStr), dKey, targetDate);
 }
 
-/** 롤링 윈도우 윈도우 마지막 날 offset (eligibility 판정용) */
-const ROLLING_WINDOW_END: Record<string, number> = { w1: 7, w2: 14, w3: 21, w4: 28 };
-const ROLLING_KEYS = ["w1", "w2", "w3", "w4"] as const;
+/** 28일 고정 Rolling Retention 앵커(삼순 리뷰). R1=[D1,D28]·R7=[D7,D28]·…·R28=D28 중 1회+. */
+const ROLLING_KEYS = ["r1", "r7", "r14", "r21", "r28"] as const;
 const ROLLING_LABELS: Record<string, string> = {
-  w1: "1주차(1~7일)", w2: "2주차(8~14일)", w3: "3주차(15~21일)", w4: "4주차(22~28일)",
+  r1: "R1 (D1~28)", r7: "R7 (D7~28)", r14: "R14 (D14~28)", r21: "R21 (D21~28)", r28: "R28 (D28)",
 };
-
-/** 롤링 윈도우도 윈도우 마지막 날이 오늘 이상이면(미완료) 숨김 — exact-day와 동일 기준(>=). */
-function isRollingNotYet(weekStr: string, wKey: string, targetDate: string): boolean {
-  const end = ROLLING_WINDOW_END[wKey] ?? 0;
-  return addKSTDays(weekToMonday(weekStr), end) >= targetDate;
-}
 
 interface RetentionData {
   cohort: CohortHeatmapRow[];
@@ -208,13 +201,13 @@ export default function RetentionPage() {
       </div>
 
       <div className="glass-card p-5">
-        <h2 className="text-sm font-semibold mb-1">주차 롤링 윈도우 리텐션 <span className="text-[10px] font-normal text-emerald-400">셀링자료용</span></h2>
-        <p className="text-[11px] text-gray-500 mb-4">각 주차 구간 중 <span className="text-gray-300">1회 이상 활동</span>한 비율 (W1=가입 후 1~7일, W2=8~14일, W3=15~21일, W4=22~28일). 위 히트맵의 exact single-day(‘그 하루’)와 달리 구간 누적이라 <span className="text-gray-300">무경기일·올스타 브레이크 노이즈를 흡수</span>한 단조감소 곡선. 완전히 경과한 윈도우만 집계.</p>
+        <h2 className="text-sm font-semibold mb-1">28일 고정 Rolling Retention <span className="text-[10px] font-normal text-emerald-400">셀링자료용</span></h2>
+        <p className="text-[11px] text-gray-500 mb-4">가입 후 <span className="text-gray-300">[D_k, D28] 구간 중 1회 이상 활동</span>한 비율 (R1=D1~28, R7=D7~28, R14=D14~28, R21=D21~28, R28=D28 당일). 구간이 포함관계(⊃)이고 분모가 동일(28일 성숙 코호트)라 <span className="text-gray-300">R1≥R7≥R14≥R21≥R28 단조 비증가 보장</span> — 무경기일·올스타 브레이크 노이즈를 흡수한 깨끗한 π자 곡선. D28까지 성숙한 코호트만 표시(미성숙 구간은 미표시).</p>
         {(() => {
           const chartData = ROLLING_KEYS.map((k) => {
-            const pt: Record<string, number | string> = { window: ROLLING_LABELS[k] };
+            const pt: Record<string, number | string | null> = { window: ROLLING_LABELS[k] };
             for (const row of data.rolling) {
-              if (isRollingNotYet(row.cohortKey, k, data.date!)) continue;
+              // 미성숙(null) 앵커는 0이 아니라 null로 → connectNulls가 건너뜀.
               pt[row.cohortKey] = row[k];
             }
             return pt;
@@ -222,7 +215,7 @@ export default function RetentionPage() {
           const cohortKeys = data.rolling.map((r) => r.cohortKey);
           const lineColors = ["#22D3EE", "#6366F1", "#A855F7", "#EC4899", "#F59E0B", "#10B981"];
           return data.rolling.length === 0 ? (
-            <p className="text-gray-500 text-sm">완료된 윈도우가 있는 코호트가 아직 없습니다.</p>
+            <p className="text-gray-500 text-sm">D28까지 성숙한 코호트가 아직 없습니다.</p>
           ) : (
             <ResponsiveContainer width="100%" height={300}>
               <LineChart data={chartData} margin={{ left: 10, right: 20 }}>

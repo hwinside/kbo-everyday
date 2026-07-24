@@ -125,6 +125,32 @@ async function collectActivityDays(
  * 코호트 리텐션 집계: 가입 주차별 D1/D7/D14/D30 재활동율.
  * 활동 기준: posts/comments/likes/chat_messages에 해당 유저 레코드 존재.
  */
+/**
+ * 28일 고정 Rolling Retention 앵커(metric_type="rolling", 삼순 리뷰 반영 2026-07-25).
+ *
+ * 기존 cohort/daily_cohort exact single-day 지표("가입+정확히 N일째 그 하루")는
+ * KBO 무경기일(올스타 브레이크 등)에 통째로 휘둘려 D14>D7 역전처럼 리텐션
+ * 곡선으로 오독되기 쉽다. 주차 비겹침 구간(W1~W4)은 구간끼리 독립이라 단조감소가
+ * 보장되지 않는다(W2>W1 가능) — 삼순 리뷰. 대신 **28일 고정 기준** Rolling을 쓴다:
+ *   R1  = 가입 후 [D1, D28] 중 1회+
+ *   R7  = [D7, D28] 중 1회+
+ *   R14 = [D14, D28] 중 1회+
+ *   R21 = [D21, D28] 중 1회+
+ *   R28 = [D28, D28] = D28 당일 1회+
+ * 구간이 포함관계(⊃)이고 분모(eligible)가 R 전체 동일(가입+28일 경과한 성숙 코호트)이므로
+ * R1 ≥ R7 ≥ R14 ≥ R21 ≥ R28 단조 비증가가 수학적으로 보장된다(셀링 자료용 깨끗한 곡선).
+ * 예산/스캔 가드: 독립 스캔 없이 computeCohortRetention의 profiles+visitDays를 재사용해
+ * 추가 전수스캔 0(300초 cron 상한 영향 없음).
+ */
+const ROLLING_ANCHORS: { key: string; start: number }[] = [
+  { key: "r1", start: 1 },
+  { key: "r7", start: 7 },
+  { key: "r14", start: 14 },
+  { key: "r21", start: 21 },
+  { key: "r28", start: 28 },
+];
+const ROLLING_END = 28;
+
 export async function computeCohortRetention(
   supabase: SupabaseClient,
   targetDate: string,
@@ -184,86 +210,32 @@ export async function computeCohortRetention(
         });
       }
     }
-  }
-  return rows;
-}
 
-/**
- * 롤링 윈도우 리텐션 집계 (metric_type="rolling").
- *
- * 기존 cohort/daily_cohort는 exact single-day 지표 — "가입+정확히 N일째 그 하루에
- * 활동했나"라 KBO 경기 일정(무경기일·올스타 브레이크·성수기)에 통째로 휘둘려
- * 리텐션 곡선으로 오독되기 쉽다(2026-07-25 검증: 올스타 브레이크에 D7이 착지해
- * D14>D7 역전). 롤링 윈도우는 "주차 구간 중 1회+ 활동"이라 무경기일 노이즈를
- * 주 단위로 흡수하고, 포함관계는 아니지만 구간이 뒤로 갈수록 자연 단조감소하는
- * 셀링 자료용 곡선을 만든다.
- *
- * 윈도우 정의(가입일=D0 기준, 양끝 포함):
- *   w1 = 가입 후 1~7일 중 1회+
- *   w2 = 8~14일 중 1회+
- *   w3 = 15~21일 중 1회+
- *   w4 = 22~28일 중 1회+
- * eligible = 해당 윈도우 마지막 날이 완전히 지난(진행 중인 오늘 제외) 유저만.
- */
-const ROLLING_WINDOWS: { key: string; start: number; end: number }[] = [
-  { key: "w1", start: 1, end: 7 },
-  { key: "w2", start: 8, end: 14 },
-  { key: "w3", start: 15, end: 21 },
-  { key: "w4", start: 22, end: 28 },
-];
-
-export async function computeRollingRetention(
-  supabase: SupabaseClient,
-  targetDate: string,
-): Promise<MetricRow[]> {
-  const sixtyDaysAgo = new Date(
-    new Date(targetDate + "T00:00:00+09:00").getTime() - 60 * 86400000,
-  ).toISOString();
-
-  // query-guard: bounded -- 가입 최근 60일 윈도우(.gte created_at)만 fetchAllPages로 페이징, 기존 cohort/daily 계산과 동일 계약
-  const profiles = await fetchAllPages<{ id: string; created_at: string }>(
-    () => supabase.from("profiles").select("id, created_at").gte("created_at", sixtyDaysAgo).order("created_at", { ascending: true }),
-  );
-
-  if (!profiles.length) return [];
-
-  const visitDays = await collectActivityDays(supabase, sixtyDaysAgo, addKSTDays(targetDate, 1) + "T00:00:00+09:00");
-
-  const cohorts = new Map<string, { id: string; signupDate: string }[]>();
-  for (const p of profiles) {
-    const signupDate = toKSTDateString(p.created_at);
-    const week = isoWeek(signupDate);
-    if (!cohorts.has(week)) cohorts.set(week, []);
-    cohorts.get(week)!.push({ id: p.id, signupDate });
-  }
-
-  const rows: MetricRow[] = [];
-  for (const [cohortKey, users] of cohorts) {
-    if (cohortKey < MIN_COHORT) continue;
-
-    for (const w of ROLLING_WINDOWS) {
+    // 28일 고정 Rolling Retention — 같은 users/visitDays 재사용(추가 스캔 0).
+    // 성숙 코호트(가입+28일이 완전히 경과한 유저)만 분모 — R 전체 동일 분모라 단조 보장.
+    for (const a of ROLLING_ANCHORS) {
       let returned = 0;
       let eligible = 0;
       for (const u of users) {
-        // 윈도우 마지막 날이 아직 안 지났거나 '오늘'(진행 중)이면 eligible 제외 →
-        // 완료된 윈도우만 집계(exact-day 지표와 동일한 완료일 기준).
-        const windowEnd = addKSTDays(u.signupDate, w.end);
+        const windowEnd = addKSTDays(u.signupDate, ROLLING_END);
+        // D28까지 성숙하지 않은(진행 중 포함) 코호트는 R 전체에서 제외 → 동일 분모 유지.
         if (windowEnd >= targetDate) continue;
         eligible++;
-        // 윈도우 [start, end] 중 하루라도 활동일이 있으면 잔존.
+        // [start, 28] 구간 중 하루라도 활동일이 있으면 잔존(구간 누적, exact-day 아님).
         const days = visitDays.get(u.id);
         if (days) {
-          for (let d = w.start; d <= w.end; d++) {
+          for (let d = a.start; d <= ROLLING_END; d++) {
             if (days.has(addKSTDays(u.signupDate, d))) { returned++; break; }
           }
         }
       }
+      // 성숙 코호트가 없으면(eligible=0) row 자체를 만들지 않음 → 미집계를 0%로 그리지 않게(삼순 리뷰).
       if (eligible > 0) {
         rows.push({
           date: targetDate,
           metric_type: "rolling",
           cohort_key: cohortKey,
-          metric_key: w.key,
+          metric_key: a.key,
           total: eligible,
           value: returned,
           rate: Math.round((returned / eligible) * 10000) / 10000,
