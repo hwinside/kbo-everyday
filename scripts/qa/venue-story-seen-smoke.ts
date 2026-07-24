@@ -100,7 +100,8 @@ async function main() {
     const viewer = readFileSync(join(root, "src/components/game/VenueStoryViewer.tsx"), "utf-8");
     ok("트레이가 orderedStories 렌더", section.includes("orderedStories.map((s, i)"));
     ok("본 스토리 회색/안 본 빨강 테두리", /seenIds\.has\(String\(s\.id\)\) \? "ring-gray-500\/50" : "ring-red-500\/60"/.test(section));
-    ok("뷰어에 orderedStories 전달(인덱스 일치)", section.includes("stories={orderedStories}"));
+    // #807 QA 키보드 하네스 병합 후: production 경로는 여전히 orderedStories 전달
+    ok("뷰어에 orderedStories 전달(인덱스 일치)", section.includes("stories={orderedStories}") || section.includes(": orderedStories}"));
     ok("뷰어 닫힐 때만 재정렬(loadSeenIds 재로드, user scope)", /setViewerIndex\(null\);[\s\S]{0,200}?setSeenIds\(loadSeenIds\(gameId, userId\)\)/.test(section));
     ok("뷰어가 표시 스토리 본 처리(onStorySeen)", viewer.includes("onStorySeen?.(storyId)"));
     ok("로드가 user.id 스코프(계정 전환 시 재로드)", /setSeenIds\(loadSeenIds\(gameId, userId\)\);\s*\n\s*\}, \[gameId, userId\]\)/.test(section));
