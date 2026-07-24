@@ -4,6 +4,7 @@
  */
 import {
   markChannelBornGroups,
+  runStartSendChunks,
   CHANNEL_BORN_BATCH_SIZE,
   CHANNEL_BORN_MAX_ATTEMPTS,
   CHANNEL_BORN_RETRY_BASE_MS,
@@ -121,6 +122,72 @@ const sleepSpy = () => {
       done: ["chan-B"],
     });
     check("throw: 에러 메시지 로깅", logs.length === 1 && logs[0].includes("fetch failed"), true);
+  }
+
+  // ── ⑤ 재시도 예산 소진(deadline) — 배치당 1회만, 후속 배치 굶김 없음 (삼순 R1 blocker②) ──
+  {
+    const { sleeps, sleep } = sleepSpy();
+    let calls = 0;
+    const logs: string[] = [];
+    const stats = await markChannelBornGroups({
+      gameId: "20260724WOHT0",
+      groups: [group(CHANNEL_BORN_BATCH_SIZE * 3)], // 3배치 전부 실패(8s statement timeout 모사)
+      updateBatch: async () => {
+        calls += 1;
+        return { error: { message: "statement timeout" } };
+      },
+      retryDeadlineMs: 1_000,
+      now: () => 5_000, // 이미 예산 소진
+      logError: (m) => logs.push(m),
+      sleep,
+    });
+    check("deadline: 예산 소진 시 배치당 첫 시도 1회만(재시도/sleep 0)", { calls, sleeps }, { calls: 3, sleeps: [] });
+    check("deadline: 느린 실패 배치가 후속 배치를 안 굶김 — 3배치 모두 시도됨", stats, {
+      batches: 3, failedBatches: 3, failedUsers: 600,
+    });
+    check("deadline: 실제 시도 횟수로 로깅(attempts=1)", logs.every((l) => l.includes("attempts=1")), true);
+  }
+
+  // ── ⑥ 예산 남았으면 기존 재시도 그대로 (deadline 미도달 회귀) ──
+  {
+    let attempts = 0;
+    const stats = await markChannelBornGroups({
+      gameId: "20260724WOHT0",
+      groups: [group(10)],
+      updateBatch: async () => {
+        attempts += 1;
+        return attempts < 3 ? { error: { message: "transient" } } : { error: null };
+      },
+      retryDeadlineMs: 10_000,
+      now: () => 0,
+      sleep: async () => {},
+    });
+    check("deadline 미도달: 재시도로 회복", { attempts, stats }, {
+      attempts: 3,
+      stats: { batches: 1, failedBatches: 0, failedUsers: 0 },
+    });
+  }
+
+  // ── ⑦ 실배선 회귀: chunk당 즉시 내구 저장 — cutoff에도 앞 chunk 마킹 잔존 (삼순 R1 blocker②) ──
+  {
+    const events: string[] = [];
+    let persisted = 0;
+    await runStartSendChunks({
+      items: [0, 1, 2, 3, 4, 5],
+      chunkSize: 2,
+      sendOne: async (i) => {
+        // 3번째 chunk 발송 중 함수 cutoff(68s fanout deadline/종료) 모사 — 이후 코드 미실행.
+        if (i === 4) throw new Error("fanout deadline cutoff");
+        events.push(`send:${i}`);
+      },
+      persistChunk: async () => {
+        persisted += 1;
+        events.push(`persist:${persisted}`);
+      },
+    }).catch(() => {});
+    check("cutoff: 앞 2개 chunk 마킹은 이미 내구 저장(손실 상한 = 마지막 chunk 1개)", persisted, 2);
+    check("cutoff: 다음 chunk 발송 전 직전 chunk persist 선행(내구 순서 불변식)",
+      events, ["send:0", "send:1", "persist:1", "send:2", "send:3", "persist:2", "send:5"]);
   }
 
   console.log(`\nla-channel-born-marking-smoke: ${pass} PASS / ${fail} FAIL`);

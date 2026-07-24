@@ -41,11 +41,13 @@ async function fetchAll<T>(build: (from: number, to: number) => PromiseLike<{ da
 (async () => {
   for (const gameId of gameIds) {
     // 현재 active 채널 — stale ACK(교체 전 구채널) 배제 기준.
+    // query-guard: bounded -- 경기당 active 채널은 env(production/sandbox)별 1행 ≤2행, 상한 명시.
     const { data: chans, error: chanErr } = await supabase
       .from("live_activity_channels")
       .select("environment, channel_id")
       .eq("game_id", gameId)
-      .eq("status", "active");
+      .eq("status", "active")
+      .limit(10);
     if (chanErr) throw new Error(chanErr.message);
     const activeByEnv = new Map((chans ?? []).map((c) => [c.environment as string, c.channel_id as string]));
     if (activeByEnv.size === 0) {
@@ -55,21 +57,30 @@ async function fetchAll<T>(build: (from: number, to: number) => PromiseLike<{ da
 
     // 마킹 누락 카드.
     const unmarked = await fetchAll<{ user_id: string }>((from, to) =>
+      // query-guard: bounded-page -- fetchAll 30페이지×1000행 상한 + PK(game_id,user_id) 안정 정렬 페이지
       supabase
         .from("live_activity_started_users")
         .select("user_id")
         .eq("game_id", gameId)
         .is("channel_born_channel_id", null)
+        // PK(game_id, user_id) 전체 순서 고정 — 부분 순서 range는 page 누락/중복 위험(삼순 R1).
+        .order("game_id", { ascending: true })
         .order("user_id", { ascending: true })
         .range(from, to),
     );
 
     // 유효(active 채널 일치) 네이티브 ACK — user → env (production 우선).
     const subs = await fetchAll<{ user_id: string | null; environment: string; channel_id: string }>((from, to) =>
+      // query-guard: bounded-page -- fetchAll 30페이지×1000행 상한 + PK(game_id,environment,channel_id,device_key) 안정 정렬 페이지
       supabase
         .from("live_activity_channel_subscriptions")
         .select("user_id, environment, channel_id")
         .eq("game_id", gameId)
+        // PK(game_id, environment, channel_id, device_key) 전체 순서 고정 — 같은 device_key가
+        // env/구채널별로 중복 존재 가능해 device_key 단독 순서는 비결정적(삼순 R1).
+        .order("game_id", { ascending: true })
+        .order("environment", { ascending: true })
+        .order("channel_id", { ascending: true })
         .order("device_key", { ascending: true })
         .range(from, to),
     );
