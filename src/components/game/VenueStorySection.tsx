@@ -5,7 +5,7 @@ import { Plus, Play } from "lucide-react";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { getSafeSession } from "@/lib/supabase/client";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
-import { isNative } from "@/lib/capacitor/platform";
+import { isNativeRuntime } from "@/lib/capacitor/platform";
 import VenueStoryComposer from "./VenueStoryComposer";
 import VenueStoryViewer from "./VenueStoryViewer";
 import type { VenueStory } from "@/lib/venue-stories/types";
@@ -100,7 +100,9 @@ export default function VenueStorySection({ gameId }: Props) {
     // 직관 라이브 업로드는 앱 전용 — 웹/PWA는 iOS가 파일 픽 시점에 영상을 강제 export(트랜스코딩)해
     // 5~10초 무피드백 대기가 생긴다. 앱은 네이티브 픽커로 이 딜레이를 없앤다(하린아빠 7/25 05:09).
     // 클라 게이트(즉시). 서버 하드 게이트(앱 UA 마커 검사)는 네이티브 픽커 빌드에 함께.
-    if (!isNative) {
+    // 정적 isNative 만 보면 원격 로드 설치 앱이 web false-negative(PR #484) → isNativeRuntime()으로
+    // window.Capacitor 주입 브릿지까지 OR 판정(삼순 #833 blocker).
+    if (!isNativeRuntime()) {
       setToast("직관 라이브는 앱에서만 올릴 수 있어요");
       setTimeout(() => setToast(null), 2200);
       return;
