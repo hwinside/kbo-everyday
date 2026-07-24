@@ -20,6 +20,7 @@ public final class NewsArticleBrowserPlugin: CAPPlugin, CAPBridgedPlugin {
 
         let commentsURL = call.getString("commentsUrl")
             .flatMap(NewsArticleBrowserViewController.commentsURL)
+        let teamId = call.getInt("teamId")
 
         DispatchQueue.main.async { [weak self] in
             guard let presenter = self?.bridge?.viewController else {
@@ -28,7 +29,8 @@ public final class NewsArticleBrowserPlugin: CAPPlugin, CAPBridgedPlugin {
             }
             let controller = NewsArticleBrowserViewController(
                 articleURL: articleURL,
-                commentsURL: commentsURL
+                commentsURL: commentsURL,
+                teamId: teamId
             )
             controller.modalPresentationStyle = .fullScreen
             presenter.present(controller, animated: true) {
@@ -49,16 +51,19 @@ final class NewsArticleBrowserViewController: UIViewController {
 
     private let articleURL: URL
     private let commentsURL: URL?
+    private let teamId: Int?
     private let articleWebView: WKWebView
     private var commentsWebView: WKWebView?
     private let commentButton = UIButton(type: .system)
+    private let commentCountLabel = UILabel()
     private let backButton = UIButton(type: .system)
     private let forwardButton = UIButton(type: .system)
     private var loadErrorPresented = false
 
-    init(articleURL: URL, commentsURL: URL?) {
+    init(articleURL: URL, commentsURL: URL?, teamId: Int?) {
         self.articleURL = articleURL
         self.commentsURL = commentsURL
+        self.teamId = teamId
 
         let articleConfiguration = WKWebViewConfiguration()
         articleConfiguration.websiteDataStore = .default()
@@ -90,52 +95,95 @@ final class NewsArticleBrowserViewController: UIViewController {
     private func configureToolbar() {
         let toolbar = UIView()
         toolbar.translatesAutoresizingMaskIntoConstraints = false
-        toolbar.backgroundColor = .secondarySystemBackground
+        toolbar.backgroundColor = UIColor(red: 0x14 / 255, green: 0x14 / 255, blue: 0x16 / 255, alpha: 1)
         view.addSubview(toolbar)
 
         backButton.setImage(UIImage(systemName: "chevron.left"), for: .normal)
+        backButton.tintColor = .white
         backButton.accessibilityLabel = "뒤로"
+        backButton.translatesAutoresizingMaskIntoConstraints = false
         backButton.addTarget(self, action: #selector(goBack), for: .touchUpInside)
         forwardButton.setImage(UIImage(systemName: "chevron.right"), for: .normal)
+        forwardButton.tintColor = .white
         forwardButton.accessibilityLabel = "앞으로"
+        forwardButton.translatesAutoresizingMaskIntoConstraints = false
         forwardButton.addTarget(self, action: #selector(goForward), for: .touchUpInside)
-
-        let title = UILabel()
-        title.text = "뉴스 원문"
-        title.font = .preferredFont(forTextStyle: .headline)
-        title.textAlignment = .center
-
-        let compatibilityButton = UIButton(type: .system)
-        compatibilityButton.setTitle("호환 모드", for: .normal)
-        compatibilityButton.titleLabel?.font = .preferredFont(forTextStyle: .footnote)
-        compatibilityButton.addTarget(self, action: #selector(openCompatibilityMode), for: .touchUpInside)
 
         let closeButton = UIButton(type: .system)
         closeButton.setImage(UIImage(systemName: "xmark"), for: .normal)
+        closeButton.tintColor = .white
         closeButton.accessibilityLabel = "닫기"
+        closeButton.translatesAutoresizingMaskIntoConstraints = false
         closeButton.addTarget(self, action: #selector(closeBrowser), for: .touchUpInside)
 
-        let stack = UIStackView(arrangedSubviews: [backButton, forwardButton, title, compatibilityButton, closeButton])
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.alignment = .center
-        stack.spacing = 12
-        toolbar.addSubview(stack)
-        title.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let badge = makeBrandBadge()
+        let title = UILabel()
+        title.text = "뉴스 원문"
+        title.font = .systemFont(ofSize: 16, weight: .semibold)
+        title.textColor = .white
+
+        let center = UIStackView(arrangedSubviews: [badge, title])
+        center.translatesAutoresizingMaskIntoConstraints = false
+        center.axis = .horizontal
+        center.alignment = .center
+        center.spacing = 8
+
+        toolbar.addSubview(backButton)
+        toolbar.addSubview(forwardButton)
+        toolbar.addSubview(center)
+        toolbar.addSubview(closeButton)
 
         NSLayoutConstraint.activate([
             toolbar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             toolbar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             toolbar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             toolbar.heightAnchor.constraint(equalToConstant: 50),
-            stack.leadingAnchor.constraint(equalTo: toolbar.leadingAnchor, constant: 14),
-            stack.trailingAnchor.constraint(equalTo: toolbar.trailingAnchor, constant: -14),
-            stack.topAnchor.constraint(equalTo: toolbar.topAnchor),
-            stack.bottomAnchor.constraint(equalTo: toolbar.bottomAnchor),
+
+            backButton.leadingAnchor.constraint(equalTo: toolbar.leadingAnchor, constant: 12),
+            backButton.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor),
             backButton.widthAnchor.constraint(equalToConstant: 30),
+            forwardButton.leadingAnchor.constraint(equalTo: backButton.trailingAnchor, constant: 8),
+            forwardButton.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor),
             forwardButton.widthAnchor.constraint(equalToConstant: 30),
+
+            closeButton.trailingAnchor.constraint(equalTo: toolbar.trailingAnchor, constant: -14),
+            closeButton.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor),
             closeButton.widthAnchor.constraint(equalToConstant: 30),
+
+            center.centerXAnchor.constraint(equalTo: toolbar.centerXAnchor),
+            center.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor),
         ])
+    }
+
+    private func makeBrandBadge() -> UIView {
+        let badge = UIView()
+        badge.translatesAutoresizingMaskIntoConstraints = false
+        badge.backgroundColor = .white
+        badge.layer.cornerRadius = 12
+        badge.clipsToBounds = true
+
+        let imageView = UIImageView()
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        imageView.contentMode = .scaleAspectFit
+        imageView.image = brandBadgeImage()
+        badge.addSubview(imageView)
+
+        NSLayoutConstraint.activate([
+            badge.widthAnchor.constraint(equalToConstant: 24),
+            badge.heightAnchor.constraint(equalToConstant: 24),
+            imageView.centerXAnchor.constraint(equalTo: badge.centerXAnchor),
+            imageView.centerYAnchor.constraint(equalTo: badge.centerYAnchor),
+            imageView.widthAnchor.constraint(equalTo: badge.widthAnchor, constant: -6),
+            imageView.heightAnchor.constraint(equalTo: badge.heightAnchor, constant: -6),
+        ])
+        return badge
+    }
+
+    private func brandBadgeImage() -> UIImage? {
+        if let teamId, let logo = UIImage(named: "TeamLogo_\(teamId)") {
+            return logo
+        }
+        return UIImage(named: "NewsBrandMark")
     }
 
     private func configureArticleWebView() {
@@ -146,7 +194,7 @@ final class NewsArticleBrowserViewController: UIViewController {
         view.insertSubview(articleWebView, at: 0)
 
         let top = view.safeAreaLayoutGuide.topAnchor
-        let bottomConstant: CGFloat = commentsURL == nil ? 0 : -54
+        let bottomConstant: CGFloat = commentsURL == nil ? 0 : -56
         NSLayoutConstraint.activate([
             articleWebView.topAnchor.constraint(equalTo: top, constant: 50),
             articleWebView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -157,21 +205,86 @@ final class NewsArticleBrowserViewController: UIViewController {
 
     private func configureCommentBarIfNeeded() {
         guard commentsURL != nil else { return }
+        let accent = UIColor(red: 0xFF / 255, green: 0x45 / 255, blue: 0x3A / 255, alpha: 1)
         commentButton.translatesAutoresizingMaskIntoConstraints = false
-        commentButton.setTitle("  댓글", for: .normal)
-        commentButton.setImage(UIImage(systemName: "bubble.left"), for: .normal)
-        commentButton.titleLabel?.font = .preferredFont(forTextStyle: .headline)
-        commentButton.backgroundColor = .secondarySystemBackground
-        commentButton.layer.borderColor = UIColor.separator.cgColor
-        commentButton.layer.borderWidth = 0.5
+        commentButton.backgroundColor = UIColor(red: 0x14 / 255, green: 0x14 / 255, blue: 0x16 / 255, alpha: 1)
+        commentButton.accessibilityLabel = "크보팬 댓글"
         commentButton.addTarget(self, action: #selector(showComments), for: .touchUpInside)
+
+        let border = UIView()
+        border.translatesAutoresizingMaskIntoConstraints = false
+        border.backgroundColor = UIColor.white.withAlphaComponent(0.12)
+        border.isUserInteractionEnabled = false
+
+        let iconBadge = UIView()
+        iconBadge.translatesAutoresizingMaskIntoConstraints = false
+        iconBadge.backgroundColor = accent
+        iconBadge.layer.cornerRadius = 8
+        iconBadge.isUserInteractionEnabled = false
+        let icon = UIImageView(image: UIImage(systemName: "bubble.left.fill"))
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icon.tintColor = .white
+        icon.contentMode = .scaleAspectFit
+        iconBadge.addSubview(icon)
+
+        let titleLabel = UILabel()
+        titleLabel.text = "크보팬 댓글"
+        titleLabel.textColor = .white
+        titleLabel.font = .systemFont(ofSize: 15, weight: .semibold)
+        titleLabel.isUserInteractionEnabled = false
+
+        commentCountLabel.text = "0"
+        commentCountLabel.textColor = accent
+        commentCountLabel.font = .systemFont(ofSize: 15, weight: .semibold)
+        commentCountLabel.isUserInteractionEnabled = false
+
+        let chevron = UIImageView(image: UIImage(systemName: "chevron.right"))
+        chevron.translatesAutoresizingMaskIntoConstraints = false
+        chevron.tintColor = UIColor.white.withAlphaComponent(0.4)
+        chevron.contentMode = .scaleAspectFit
+        chevron.isUserInteractionEnabled = false
+
+        let labelStack = UIStackView(arrangedSubviews: [titleLabel, commentCountLabel])
+        labelStack.axis = .horizontal
+        labelStack.spacing = 6
+        labelStack.alignment = .center
+        labelStack.isUserInteractionEnabled = false
+
+        let spacer = UIView()
+        spacer.isUserInteractionEnabled = false
+        let row = UIStackView(arrangedSubviews: [iconBadge, labelStack, spacer, chevron])
+        row.translatesAutoresizingMaskIntoConstraints = false
+        row.axis = .horizontal
+        row.alignment = .center
+        row.spacing = 10
+        row.isUserInteractionEnabled = false
+
+        commentButton.addSubview(row)
+        commentButton.addSubview(border)
         view.addSubview(commentButton)
 
         NSLayoutConstraint.activate([
             commentButton.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             commentButton.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             commentButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
-            commentButton.heightAnchor.constraint(equalToConstant: 54),
+            commentButton.heightAnchor.constraint(equalToConstant: 56),
+
+            border.topAnchor.constraint(equalTo: commentButton.topAnchor),
+            border.leadingAnchor.constraint(equalTo: commentButton.leadingAnchor),
+            border.trailingAnchor.constraint(equalTo: commentButton.trailingAnchor),
+            border.heightAnchor.constraint(equalToConstant: 0.5),
+
+            row.leadingAnchor.constraint(equalTo: commentButton.leadingAnchor, constant: 16),
+            row.trailingAnchor.constraint(equalTo: commentButton.trailingAnchor, constant: -16),
+            row.centerYAnchor.constraint(equalTo: commentButton.centerYAnchor),
+
+            iconBadge.widthAnchor.constraint(equalToConstant: 30),
+            iconBadge.heightAnchor.constraint(equalToConstant: 30),
+            icon.centerXAnchor.constraint(equalTo: iconBadge.centerXAnchor),
+            icon.centerYAnchor.constraint(equalTo: iconBadge.centerYAnchor),
+            icon.widthAnchor.constraint(equalToConstant: 17),
+            icon.heightAnchor.constraint(equalToConstant: 17),
+            chevron.widthAnchor.constraint(equalToConstant: 12),
         ])
     }
 
@@ -305,7 +418,7 @@ extension NewsArticleBrowserViewController: WKScriptMessageHandler {
             commentsWebView?.isHidden = true
         case "ready", "count":
             let count = (body["count"] as? NSNumber)?.intValue ?? 0
-            commentButton.setTitle("  댓글 \(max(0, count))", for: .normal)
+            commentCountLabel.text = "\(max(0, count))"
         default:
             break
         }

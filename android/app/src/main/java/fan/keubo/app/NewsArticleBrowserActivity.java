@@ -5,6 +5,7 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Intent;
 import android.graphics.Color;
+import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.view.Gravity;
@@ -19,6 +20,7 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Button;
 import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
@@ -29,12 +31,14 @@ import org.json.JSONObject;
 public class NewsArticleBrowserActivity extends Activity {
     public static final String EXTRA_URL = "news_article_url";
     public static final String EXTRA_COMMENTS_URL = "news_comments_url";
+    public static final String EXTRA_TEAM_ID = "news_article_team_id";
 
     private WebView articleWebView;
     private WebView commentsWebView;
-    private Button commentButton;
+    private TextView commentCountLabel;
     private Uri articleUri;
     private String commentsUrl;
+    private int teamId;
     private boolean loadErrorPresented;
 
     public static boolean isHttpUrl(String rawValue) {
@@ -61,6 +65,7 @@ public class NewsArticleBrowserActivity extends Activity {
         commentsUrl = validCommentsUrl(
             getIntent().getStringExtra(EXTRA_COMMENTS_URL)
         );
+        teamId = getIntent().getIntExtra(EXTRA_TEAM_ID, 0);
         setContentView(createLayout(rawArticleUrl, commentsUrl));
     }
 
@@ -87,14 +92,9 @@ public class NewsArticleBrowserActivity extends Activity {
         ));
 
         if (commentsUrl != null) {
-            commentButton = new Button(this);
-            commentButton.setAllCaps(false);
-            commentButton.setText("💬  댓글");
-            commentButton.setTextSize(15);
-            commentButton.setOnClickListener(view -> showComments());
-            page.addView(commentButton, new LinearLayout.LayoutParams(
+            page.addView(createCommentBar(), new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(54)
+                ViewGroup.LayoutParams.WRAP_CONTENT
             ));
 
             commentsWebView = createCommentsWebView();
@@ -115,7 +115,7 @@ public class NewsArticleBrowserActivity extends Activity {
         LinearLayout toolbar = new LinearLayout(this);
         toolbar.setGravity(Gravity.CENTER_VERTICAL);
         toolbar.setPadding(dp(8), 0, dp(8), 0);
-        toolbar.setBackgroundColor(Color.rgb(28, 28, 30));
+        toolbar.setBackgroundColor(Color.rgb(0x14, 0x14, 0x16));
 
         Button back = toolbarButton("‹");
         back.setContentDescription("뒤로");
@@ -131,23 +131,108 @@ public class NewsArticleBrowserActivity extends Activity {
         });
         toolbar.addView(forward);
 
+        LinearLayout center = new LinearLayout(this);
+        center.setOrientation(LinearLayout.HORIZONTAL);
+        center.setGravity(Gravity.CENTER);
+
+        ImageView badge = new ImageView(this);
+        GradientDrawable badgeBg = new GradientDrawable();
+        badgeBg.setShape(GradientDrawable.OVAL);
+        badgeBg.setColor(Color.WHITE);
+        badge.setBackground(badgeBg);
+        badge.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        badge.setPadding(dp(3), dp(3), dp(3), dp(3));
+        badge.setImageResource(brandBadgeRes());
+        LinearLayout.LayoutParams badgeLp = new LinearLayout.LayoutParams(dp(24), dp(24));
+        badgeLp.rightMargin = dp(8);
+        center.addView(badge, badgeLp);
+
         TextView title = new TextView(this);
         title.setText("뉴스 원문");
         title.setTextColor(Color.WHITE);
         title.setTextSize(16);
-        title.setGravity(Gravity.CENTER);
-        toolbar.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1));
+        title.setTypeface(title.getTypeface(), android.graphics.Typeface.BOLD);
+        center.addView(title);
 
-        Button compatibility = toolbarButton("호환 모드");
-        compatibility.setTextSize(12);
-        compatibility.setOnClickListener(view -> openCompatibilityMode());
-        toolbar.addView(compatibility, new LinearLayout.LayoutParams(dp(76), ViewGroup.LayoutParams.MATCH_PARENT));
+        toolbar.addView(center, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1));
 
         Button close = toolbarButton("×");
         close.setContentDescription("닫기");
         close.setOnClickListener(view -> finish());
         toolbar.addView(close);
         return toolbar;
+    }
+
+    private int brandBadgeRes() {
+        if (teamId > 0) {
+            int id = getResources().getIdentifier(
+                "team_logo_" + teamId, "drawable", getPackageName());
+            if (id != 0) return id;
+        }
+        return getResources().getIdentifier(
+            "news_brand_mark", "drawable", getPackageName());
+    }
+
+    private View createCommentBar() {
+        LinearLayout container = new LinearLayout(this);
+        container.setOrientation(LinearLayout.VERTICAL);
+
+        View border = new View(this);
+        border.setBackgroundColor(Color.argb(31, 255, 255, 255));
+        container.addView(border, new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            Math.max(1, Math.round(0.5f * getResources().getDisplayMetrics().density))
+        ));
+
+        LinearLayout bar = new LinearLayout(this);
+        bar.setOrientation(LinearLayout.HORIZONTAL);
+        bar.setGravity(Gravity.CENTER_VERTICAL);
+        bar.setBackgroundColor(Color.rgb(0x14, 0x14, 0x16));
+        bar.setPadding(dp(16), 0, dp(16), 0);
+        bar.setOnClickListener(view -> showComments());
+
+        TextView icon = new TextView(this);
+        GradientDrawable iconBg = new GradientDrawable();
+        iconBg.setShape(GradientDrawable.RECTANGLE);
+        iconBg.setCornerRadius(dp(8));
+        iconBg.setColor(Color.rgb(0xFF, 0x45, 0x3A));
+        icon.setBackground(iconBg);
+        icon.setText("💬");
+        icon.setTextSize(14);
+        icon.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams iconLp = new LinearLayout.LayoutParams(dp(30), dp(30));
+        iconLp.rightMargin = dp(10);
+        bar.addView(icon, iconLp);
+
+        TextView title = new TextView(this);
+        title.setText("크보팬 댓글");
+        title.setTextColor(Color.WHITE);
+        title.setTextSize(15);
+        title.setTypeface(title.getTypeface(), android.graphics.Typeface.BOLD);
+        bar.addView(title);
+
+        commentCountLabel = new TextView(this);
+        commentCountLabel.setText("0");
+        commentCountLabel.setTextColor(Color.rgb(0xFF, 0x45, 0x3A));
+        commentCountLabel.setTextSize(15);
+        commentCountLabel.setTypeface(commentCountLabel.getTypeface(), android.graphics.Typeface.BOLD);
+        LinearLayout.LayoutParams countLp = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        countLp.leftMargin = dp(6);
+        bar.addView(commentCountLabel, countLp);
+
+        View spacer = new View(this);
+        bar.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1));
+
+        TextView chevron = new TextView(this);
+        chevron.setText("›");
+        chevron.setTextColor(Color.argb(102, 255, 255, 255));
+        chevron.setTextSize(22);
+        bar.addView(chevron);
+
+        container.addView(bar, new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(56)));
+        return container;
     }
 
     private Button toolbarButton(String label) {
@@ -288,7 +373,7 @@ public class NewsArticleBrowserActivity extends Activity {
                         commentsWebView.setVisibility(View.GONE);
                     } else if ("ready".equals(type) || "count".equals(type)) {
                         int count = Math.max(0, message.optInt("count", 0));
-                        commentButton.setText("💬  댓글 " + count);
+                        commentCountLabel.setText(String.valueOf(count));
                     }
                 } catch (Exception ignored) {
                     // Ignore malformed messages from the internal comments page.
