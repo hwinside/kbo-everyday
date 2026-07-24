@@ -553,9 +553,12 @@ export function isStaleStartToken(updatedAt: string | null, nowMs: number): bool
 //   ① 배치 실패 시 지수 백오프 재시도(최대 2회 — 과설계 금지)
 //   ② 최종 실패는 경기ID·env/채널·배치 인덱스·건수 포함 명시 로깅(조용한 소실 금지)
 //   ③ 한 배치가 실패해도 나머지 배치는 계속 진행(부분실패 격리)
-//   ④ retryDeadlineMs 경과 후엔 재시도·백오프 sleep을 생략(첫 시도는 항상 수행) —
-//      느린 실패 배치(8s statement timeout×3)가 뒤 배치를 굶기거나 함수 deadline을
-//      넘기지 않게(삼순 R1 blocker② starvation 방지).
+//   ④ retryDeadlineMs 경과 후엔 새 marking operation을 *시작 자체를 안 함*(첫 시도 포함
+//      즉시 skip+실패 집계) — deadline 후 첫 UPDATE들이 직렬로 8s statement timeout을
+//      기다리며 뒤 chunk를 굶기는 경로 차단(삼순 R2 blocker starvation 방지). 시작하는
+//      UPDATE도 남은 예산으로 AbortSignal.timeout 유계화 — 전체 marking wall-clock 상한
+//      = 예산(+백오프 sleep ≤1.5s). 마킹 skip은 발송을 막지 않는다(발송·선점 계약 불변,
+//      실패분은 로깅 집계 후 backfill-channel-born.ts로 구제).
 // updateBatch 주입으로 유닛 스모크에서 직접 검증한다(qa:la-born-marking).
 
 /** p2s 발송 성공 유저의 채널 출생 그룹 — (env, channelId)별 user 목록. */
@@ -576,14 +579,18 @@ export const CHANNEL_BORN_RETRY_BUDGET_MS = 20_000;
 export async function markChannelBornGroups(params: {
   gameId: string;
   groups: Iterable<ChannelBornGroup>;
-  /** 배치 1건 DB 반영 — supabase update 결과({ error })를 그대로 반환. throw도 실패로 취급. */
+  /**
+   * 배치 1건 DB 반영 — supabase update 결과({ error })를 그대로 반환. throw도 실패로 취급.
+   * opts.signal이 있으면 남은 예산으로 유계화된 AbortSignal — 실배선은 .abortSignal()로 전달.
+   */
   updateBatch: (
     group: ChannelBornGroup,
     userIds: string[],
+    opts: { signal?: AbortSignal },
   ) => PromiseLike<{ error: { message: string } | null }>;
   logError?: (msg: string) => void;
   sleep?: (ms: number) => Promise<void>;
-  /** 절대 시각(ms). 경과 후엔 배치당 첫 시도만 하고 재시도/sleep 생략(starvation 방지). */
+  /** 절대 시각(ms). 경과 후엔 새 UPDATE 시작 금지(첫 시도 포함 skip) + 진행 중 UPDATE도 남은 예산으로 abort. */
   retryDeadlineMs?: number;
   now?: () => number;
 }): Promise<{ batches: number; failedBatches: number; failedUsers: number }> {
@@ -603,9 +610,22 @@ export async function markChannelBornGroups(params: {
       let ok = false;
       let attempts = 0;
       for (let attempt = 1; attempt <= CHANNEL_BORN_MAX_ATTEMPTS; attempt++) {
+        // deadline 경과 후엔 새 marking operation을 *시작하지 않는다*(첫 시도 포함) —
+        // deadline 뒤 첫 UPDATE들이 직렬 8s timeout을 기다리며 뒤 배치/chunk를 굶기는
+        // 경로 차단(삼순 R2). skip된 배치는 실패로 집계·로깅 → backfill로 구제.
+        const remainingMs = retryDeadlineMs - now();
+        if (remainingMs <= 0) {
+          if (attempts === 0) lastError = "marking deadline exceeded (batch skipped)";
+          break;
+        }
         attempts = attempt;
         try {
-          const { error } = await params.updateBatch(group, slice);
+          // 시작하는 UPDATE도 남은 예산으로 유계화 — 8s statement timeout이 예산을
+          // 초과 잠식하지 않게(실배선은 supabase .abortSignal()로 전달).
+          const signal = Number.isFinite(retryDeadlineMs)
+            ? AbortSignal.timeout(Math.ceil(remainingMs))
+            : undefined;
+          const { error } = await params.updateBatch(group, slice, { signal });
           if (!error) {
             ok = true;
             break;
@@ -614,10 +634,12 @@ export async function markChannelBornGroups(params: {
         } catch (e) {
           lastError = e instanceof Error ? e.message : String(e);
         }
-        // 재시도 예산 소진 = 첫 시도로 종료(다음 배치로 즉시 진행 — 굶김 방지 ④).
+        // 재시도 예산 소진 → 즉시 다음 배치로(굶김 방지 ④).
         if (now() >= retryDeadlineMs) break;
         if (attempt < CHANNEL_BORN_MAX_ATTEMPTS) {
-          await sleep(CHANNEL_BORN_RETRY_BASE_MS * 2 ** (attempt - 1));
+          await sleep(
+            Math.min(CHANNEL_BORN_RETRY_BASE_MS * 2 ** (attempt - 1), retryDeadlineMs - now()),
+          );
         }
       }
       if (!ok) {

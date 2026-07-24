@@ -739,8 +739,10 @@ async function startForTeamSide(params: {
   // chunk당 내구 저장(삼순 R1 blocker②) — tail 일괄 마킹은 대용량 cohort(18:02 home 1,827명)
   // 에서 fanout 68s deadline/함수 종료에 통째로 잘려 재시도·로그 0으로 소실됐다.
   // 발송을 START_SEND_CHUNK_SIZE 단위로 나누고 다음 chunk 발송 전에 직전 chunk 성공분을
-  // 즉시 마킹 — cutoff 시에도 손실 상한 = 마지막 미완료 chunk 1개. 재시도는 fanout 전체
-  // 공유 예산(markRetryDeadlineMs) 안에서만 — 느린 실패 배치가 뒤 chunk를 굶기지 않는다.
+  // 즉시 마킹 — cutoff 시에도 손실 상한 = 마지막 미완료 chunk 1개. 마킹 전체는 fanout 공유
+  // 예산(markRetryDeadlineMs)으로 유계 — 예산 내 UPDATE는 남은 시간으로 abort, 예산 소진 후엔
+  // 새 UPDATE 시작 금지(즉시 skip+로깅, 삼순 R2) — 느린 실패 UPDATE가 뒤 chunk 발송/마킹을
+  // 굶기지 않는다. 마킹 skip은 발송을 막지 않는다(발송·선점 계약 불변).
   // 최종 실패분은 scripts/backfill-channel-born.ts로 구제.
   const persistChunkMarks = async () => {
     if (channelBornGroups.size === 0) return;
@@ -750,15 +752,19 @@ async function startForTeamSide(params: {
       gameId: params.gameId,
       groups,
       retryDeadlineMs: params.markRetryDeadlineMs,
-      updateBatch: (group, userIds) =>
-        supabase
+      // signal = 남은 마킹 예산으로 유계화된 AbortSignal(헬퍼가 생성) — 운영 8s statement
+      // timeout이 예산을 초과 잠식하지 않게 UPDATE 자체를 abort(삼순 R2 starvation 방지).
+      updateBatch: (group, userIds, opts) => {
+        const q = supabase
           .from("live_activity_started_users")
           .update({
             channel_born_environment: group.env,
             channel_born_channel_id: group.channelId,
           })
           .eq("game_id", params.gameId)
-          .in("user_id", userIds),
+          .in("user_id", userIds);
+        return opts.signal ? q.abortSignal(opts.signal) : q;
+      },
     });
   };
   await runStartSendChunks({

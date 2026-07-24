@@ -124,14 +124,14 @@ const sleepSpy = () => {
     check("throw: 에러 메시지 로깅", logs.length === 1 && logs[0].includes("fetch failed"), true);
   }
 
-  // ── ⑤ 재시도 예산 소진(deadline) — 배치당 1회만, 후속 배치 굶김 없음 (삼순 R1 blocker②) ──
+  // ── ⑤ 예산 소진(deadline) — 새 UPDATE 시작 자체 금지: 첫 시도 포함 즉시 skip (삼순 R2) ──
   {
     const { sleeps, sleep } = sleepSpy();
     let calls = 0;
     const logs: string[] = [];
     const stats = await markChannelBornGroups({
       gameId: "20260724WOHT0",
-      groups: [group(CHANNEL_BORN_BATCH_SIZE * 3)], // 3배치 전부 실패(8s statement timeout 모사)
+      groups: [group(CHANNEL_BORN_BATCH_SIZE * 3)], // 3배치 — 전부 시작 전 skip되어야 함
       updateBatch: async () => {
         calls += 1;
         return { error: { message: "statement timeout" } };
@@ -141,11 +141,61 @@ const sleepSpy = () => {
       logError: (m) => logs.push(m),
       sleep,
     });
-    check("deadline: 예산 소진 시 배치당 첫 시도 1회만(재시도/sleep 0)", { calls, sleeps }, { calls: 3, sleeps: [] });
-    check("deadline: 느린 실패 배치가 후속 배치를 안 굶김 — 3배치 모두 시도됨", stats, {
+    check("deadline: 예산 소진 시 새 UPDATE 시작 0회(직렬 대기 없음)", { calls, sleeps }, { calls: 0, sleeps: [] });
+    check("deadline: skip된 배치도 실패로 집계(backfill 대상)", stats, {
       batches: 3, failedBatches: 3, failedUsers: 600,
     });
-    check("deadline: 실제 시도 횟수로 로깅(attempts=1)", logs.every((l) => l.includes("attempts=1")), true);
+    check("deadline: skip 로깅(attempts=0 + 사유)",
+      logs.length === 3 &&
+        logs.every((l) => l.includes("attempts=0") && l.includes("deadline exceeded (batch skipped)")),
+      true);
+  }
+
+  // ── ⑤b 삼순 R2 실측 재현: deadline+10ms, 느린 실패 120ms×6 주입 → 직렬 대기 없이 즉시 skip ──
+  {
+    let calls = 0;
+    const slowFail = async () => {
+      calls += 1;
+      await new Promise((r) => setTimeout(r, 120));
+      return { error: { message: "statement timeout" } };
+    };
+    const t0 = Date.now();
+    const stats = await markChannelBornGroups({
+      gameId: "20260724WOHT0",
+      groups: users(6).map((_, i) => group(CHANNEL_BORN_BATCH_SIZE, `chan-${i}`)), // 6배치
+      updateBatch: slowFail,
+      retryDeadlineMs: Date.now() - 10, // deadline+10ms 경과 상태
+      logError: () => {},
+    });
+    const elapsed = Date.now() - t0;
+    check("R2 재현: 느린 실패 UPDATE 호출 0회", calls, 0);
+    check("R2 재현: 6배치 전부 즉시 skip 집계", stats, { batches: 6, failedBatches: 6, failedUsers: 1200 });
+    check(`R2 재현: wall-clock 유계(<100ms, 실측 ${elapsed}ms — 종전 731ms 직렬 대기)`, elapsed < 100, true);
+  }
+
+  // ── ⑤c 진행 중 UPDATE 유계화 — 남은 예산으로 AbortSignal 전달(8s timeout 잠식 방지) ──
+  {
+    // 예산 150ms 남은 상태에서 UPDATE가 8s를 끓 수 있어도 signal abort로 예산 내 종료.
+    const t0 = Date.now();
+    const stats = await markChannelBornGroups({
+      gameId: "20260724WOHT0",
+      groups: [group(10)],
+      updateBatch: (_g, _ids, opts) =>
+        new Promise((resolve) => {
+          // 8s statement timeout 모사 — signal abort 시에만 실패 반환(supabase 동작 동형).
+          const t = setTimeout(() => resolve({ error: { message: "8s timeout" } }), 8_000);
+          opts.signal?.addEventListener("abort", () => {
+            clearTimeout(t);
+            resolve({ error: { message: "AbortError: aborted" } });
+          });
+        }),
+      retryDeadlineMs: Date.now() + 150,
+      logError: () => {},
+      sleep: async () => {},
+    });
+    const elapsed = Date.now() - t0;
+    check("abort 유계: 실패 집계(예산 내 abort)", stats, { batches: 1, failedBatches: 1, failedUsers: 10 });
+    check(`abort 유계: wall-clock ≈예산(150ms), 8s 잠식 없음(실측 ${elapsed}ms < 1000ms)`, elapsed < 1_000, true);
   }
 
   // ── ⑥ 예산 남았으면 기존 재시도 그대로 (deadline 미도달 회귀) ──
@@ -188,6 +238,54 @@ const sleepSpy = () => {
     check("cutoff: 앞 2개 chunk 마킹은 이미 내구 저장(손실 상한 = 마지막 chunk 1개)", persisted, 2);
     check("cutoff: 다음 chunk 발송 전 직전 chunk persist 선행(내구 순서 불변식)",
       events, ["send:0", "send:1", "persist:1", "send:2", "send:3", "persist:2", "send:5"]);
+  }
+
+  // ── ⑧ 실조립 회귀(삼순 R2 핵심): runStartSendChunks → persistChunk에 느린 실패 UPDATE 주입 ──
+  // 실배선(live-activity.ts persistChunkMarks) 동형 조립: chunk당 마킹이 공유 deadline을
+  // 넘어서는 순간부터 새 UPDATE를 시작하지 않아 — 후속 chunk *발송*(사용자 처리)은 굶지 않고
+  // 계속되며, 전체 wall-clock이 예산 내 유계임을 실측 assert. 마킹 skip분은 실패 집계로
+  // backfill 계약 유지(발송·선점은 안 건드림 — 재발송 중복 없음).
+  {
+    const items = users(600); // 6 chunks × 100 (KIA 1,827명 = 19 chunks의 축소 모델)
+    const sent: string[] = [];
+    let updateCalls = 0;
+    let markedFailedUsers = 0;
+    let pending: string[] = [];
+    const markRetryDeadlineMs = Date.now() + 100; // 공유 예산 100ms — 첫 1–2 chunk 마킹 후 소진
+    const slowFailingUpdate = async () => {
+      updateCalls += 1;
+      await new Promise((r) => setTimeout(r, 120)); // 느린 실패 120ms(삼순 실측 시나리오)
+      return { error: { message: "statement timeout" } };
+    };
+    const t0 = Date.now();
+    await runStartSendChunks({
+      items,
+      chunkSize: 100,
+      sendOne: async (u) => {
+        sent.push(u);
+        pending.push(u);
+      },
+      persistChunk: async () => {
+        if (pending.length === 0) return;
+        const flush = pending;
+        pending = [];
+        const stats = await markChannelBornGroups({
+          gameId: "20260724WOHT0",
+          groups: [{ env: "production" as const, channelId: "chan-A", users: flush }],
+          retryDeadlineMs: markRetryDeadlineMs,
+          updateBatch: slowFailingUpdate,
+          logError: () => {},
+          sleep: async () => {},
+        });
+        markedFailedUsers += stats.failedUsers;
+      },
+    });
+    const elapsed = Date.now() - t0;
+    check("조립: 느린 마킹 실패에도 후속 chunk 사용자 발송 전수 진행(600/600)", sent.length, 600);
+    check("조립: 예산 소진 후 새 UPDATE 미시작 — 호출 수 유계(≤2: 19×8s 직렬 경로 제거)", updateCalls <= 2, true);
+    check("조립: skip된 마킹은 실패 집계로 backfill 계약 유지(조용한 소실 아님)",
+      markedFailedUsers >= 400, true);
+    check(`조립: 전체 wall-clock 유계 — 예산+슬럿(<1s, 실측 ${elapsed}ms; 종전 최악 19×8s=152s)`, elapsed < 1_000, true);
   }
 
   console.log(`\nla-channel-born-marking-smoke: ${pass} PASS / ${fail} FAIL`);
