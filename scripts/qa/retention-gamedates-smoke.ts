@@ -244,14 +244,31 @@ async function main() {
         { id: "userA", team_id: 1, favorite_players: ["p1"], created_at: "2026-07-01T10:00:00+09:00" },
         { id: "userB", team_id: 2, favorite_players: ["p2"], created_at: "2026-07-02T10:00:00+09:00" },
       ],
-      admin_page_view_user_days: [
-        { id: 1, user_id: "userA", day_kst: "2026-07-20", game_ids: ["20260720LGOB"] },
-        { id: 2, user_id: "userB", day_kst: "2026-07-20", game_ids: [] },
+      admin_user_game_lifetime: [
+        { user_id: "userA", first_game_id: "20260720LGOB", first_game_day_kst: "2026-07-20" },
       ],
     });
     const rows = await computeActivationFunnel(sb, "2026-07-21");
-    check("user-day game rollup feeds activation", rows.find((r) => r.metric_key === "games_1plus")?.value, 1);
+    check("lifetime game state feeds activation", rows.find((r) => r.metric_key === "games_1plus")?.value, 1);
     check("activation still requires all three steps", rows.find((r) => r.metric_key === "activated")?.value, 1);
+  }
+  {
+    // 삼순 P1-2 회귀(PR #773): 365일 purge로 user-day rollup이 사라져도
+    // lifetime 상태로 활성화 증거가 유지되고, targetDate 이후 최초방문은 제외된다.
+    const sb = fakeSupabase({
+      profiles: [
+        { id: "userOld", team_id: 1, favorite_players: ["p1"], created_at: "2026-06-27T10:00:00+09:00" },
+        { id: "userLate", team_id: 2, favorite_players: ["p2"], created_at: "2026-06-28T10:00:00+09:00" },
+      ],
+      admin_user_game_lifetime: [
+        { user_id: "userOld", first_game_id: "20260628LGOB", first_game_day_kst: "2026-06-28" },
+        { user_id: "userLate", first_game_id: "20270722SSLT", first_game_day_kst: "2027-07-22" },
+      ],
+      admin_page_view_user_days: [], // 365일 purge 이후 과거 user-day는 비어 있음
+    });
+    const rows = await computeActivationFunnel(sb, "2027-07-21");
+    check("365d purge keeps lifetime games_1plus", rows.find((r) => r.metric_key === "games_1plus")?.value, 1);
+    check("365d purge keeps activated", rows.find((r) => r.metric_key === "activated")?.value, 1);
   }
   {
     // 삼순 3차 재현: 마지막 1초 fractional timestamp 포함 + 익일 00:00 exclusive 제외

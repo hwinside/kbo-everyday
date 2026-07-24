@@ -27,6 +27,9 @@ for (const contract of [
   "v_today_kst - 30",
   "v_today_kst - 365",
   "admin_page_view_user_days",
+  "admin_user_game_lifetime",
+  "DELETE FROM admin_app_version_devices",
+  "appVersionDevices",
   "coverageMismatches",
   "LOCK TABLE admin_page_views, admin_page_dwell",
   "fresh physical backup reference required",
@@ -49,6 +52,11 @@ for (const contract of [
 ]) {
   assert(migration.includes(contract), `migration contract missing: ${contract}`);
 }
+
+assert(
+  !migration.includes("DELETE FROM admin_user_game_lifetime"),
+  "lifetime activation state must never be purged",
+);
 
 const dryRunIndex = migration.indexOf("IF NOT p_execute THEN");
 const deleteIndex = migration.indexOf("DELETE FROM admin_page_views WHERE created_at < v_raw_cutoff");

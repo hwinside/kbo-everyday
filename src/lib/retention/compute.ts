@@ -278,33 +278,23 @@ export async function computeActivationFunnel(
       .map((p) => p.id),
   );
 
-  // ③ 서로 다른 경기 1개 이상 방문. Raw 30일 purge 뒤에도 정확하도록
-  // user/day rollup의 game_ids를 읽는다.
-  const gameViewDays = await fetchAllByKeyset<{
-    id: number;
-    user_id: string;
-    game_ids: string[];
-  }, number>(async (cursor, limit) => {
-    let query = supabase.from("admin_page_view_user_days").select("id, user_id, game_ids")
-      .gte("day_kst", MIN_DAILY_COHORT)
-      .lte("day_kst", targetDate)
-      .order("id", { ascending: true })
-      .limit(limit);
-    if (cursor !== null) query = query.gt("id", cursor);
-    const { data, error } = await query;
-    return {
-      data: data as { id: number; user_id: string; game_ids: string[] }[] | null,
-      error,
-    };
-  }, (row) => row.id, { label: "activation game-view user days" });
-  const gamesByUser = new Map<string, Set<string>>();
-  for (const v of gameViewDays) {
-    if (!cohortIds.has(v.user_id)) continue;
-    if (!gamesByUser.has(v.user_id)) gamesByUser.set(v.user_id, new Set());
-    for (const gameId of v.game_ids ?? []) gamesByUser.get(v.user_id)!.add(gameId);
-  }
+  // ③ 서로 다른 경기 1개 이상 방문. user/day rollup은 365일 뒤 purge되므로
+  // purge와 분리 보존되는 사용자별 lifetime 최초 경기방문 상태를 읽는다 (PR #773).
+  const lifetimeGameVisits = await fetchAllByKeyset<{ user_id: string }, string>(
+    async (cursor, limit) => {
+      let query = supabase.from("admin_user_game_lifetime").select("user_id")
+        .lte("first_game_day_kst", targetDate)
+        .order("user_id", { ascending: true })
+        .limit(limit);
+      if (cursor !== null) query = query.gt("user_id", cursor);
+      const { data, error } = await query;
+      return { data: data as { user_id: string }[] | null, error };
+    },
+    (row) => row.user_id,
+    { label: "activation lifetime game visits" },
+  );
   const games1Set = new Set(
-    [...gamesByUser.entries()].filter(([, games]) => games.size >= 1).map(([uid]) => uid),
+    lifetimeGameVisits.map((row) => row.user_id).filter((id) => cohortIds.has(id)),
   );
 
   // 활성화 완료 = ①②③ 모두 충족

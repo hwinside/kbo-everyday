@@ -14,6 +14,15 @@ CREATE TABLE admin_page_view_user_days (
   PRIMARY KEY (day_kst, user_id)
 );
 
+-- Lifetime activation evidence must survive the 365-day user-day purge.
+-- computeActivationFunnel reads this table (not admin_page_view_user_days)
+-- so games_1plus cannot regress once old user-day rollups are deleted.
+CREATE TABLE admin_user_game_lifetime (
+  user_id            uuid PRIMARY KEY,
+  first_game_id      text NOT NULL,
+  first_game_day_kst date NOT NULL
+);
+
 CREATE TABLE admin_telemetry_retention_runs (
   id             bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   ran_at         timestamptz NOT NULL DEFAULT now(),
@@ -25,6 +34,7 @@ CREATE TABLE admin_telemetry_retention_runs (
 );
 
 ALTER TABLE admin_page_view_user_days ENABLE ROW LEVEL SECURITY;
+ALTER TABLE admin_user_game_lifetime ENABLE ROW LEVEL SECURITY;
 ALTER TABLE admin_telemetry_retention_runs ENABLE ROW LEVEL SECURITY;
 
 CREATE INDEX idx_admin_page_view_user_days_user_day
@@ -46,6 +56,12 @@ FROM admin_page_views
 WHERE user_id IS NOT NULL
   AND NOT starts_with(path, '/_celeb')
 GROUP BY 1, 2;
+
+INSERT INTO admin_user_game_lifetime (user_id, first_game_id, first_game_day_kst)
+SELECT DISTINCT ON (user_id) user_id, game_ids[1], day_kst
+FROM admin_page_view_user_days
+WHERE cardinality(game_ids) > 0
+ORDER BY user_id, day_kst;
 
 CREATE OR REPLACE FUNCTION admin_page_views_track_user_day()
 RETURNS trigger
@@ -75,6 +91,15 @@ BEGIN
         ELSE array_append(admin_page_view_user_days.game_ids, v_game_id)
       END;
 
+  IF v_game_id IS NOT NULL THEN
+    INSERT INTO admin_user_game_lifetime (user_id, first_game_id, first_game_day_kst)
+    VALUES (NEW.user_id, v_game_id, (NEW.created_at AT TIME ZONE 'Asia/Seoul')::date)
+    ON CONFLICT (user_id) DO UPDATE
+    SET first_game_id = EXCLUDED.first_game_id,
+        first_game_day_kst = EXCLUDED.first_game_day_kst
+    WHERE admin_user_game_lifetime.first_game_day_kst > EXCLUDED.first_game_day_kst;
+  END IF;
+
   RETURN NEW;
 END;
 $$;
@@ -99,6 +124,8 @@ DECLARE
   v_today_kst date := (p_now AT TIME ZONE 'Asia/Seoul')::date;
   v_raw_cutoff timestamptz := (((v_today_kst - 30)::text || 'T00:00:00+09:00')::timestamptz);
   v_rollup_cutoff date := v_today_kst - 365;
+  v_rollup_cutoff_ts timestamptz :=
+    (((v_today_kst - 365)::text || 'T00:00:00+09:00')::timestamptz);
   v_page_candidates bigint;
   v_dwell_candidates bigint;
   v_page_mismatches bigint;
@@ -109,6 +136,7 @@ DECLARE
   v_traffic_expired bigint;
   v_user_days_expired bigint;
   v_dwell_slices_expired bigint;
+  v_app_version_expired bigint;
 BEGIN
   SELECT count(*) INTO v_page_candidates
   FROM admin_page_views
@@ -314,6 +342,8 @@ BEGIN
   FROM admin_page_view_user_days WHERE day_kst < v_rollup_cutoff;
   SELECT count(*) INTO v_dwell_slices_expired
   FROM admin_dwell_session_slices WHERE day_kst < v_rollup_cutoff;
+  SELECT count(*) INTO v_app_version_expired
+  FROM admin_app_version_devices WHERE last_seen < v_rollup_cutoff_ts;
 
   RETURN jsonb_build_object(
     'rawCutoff', v_raw_cutoff,
@@ -332,7 +362,8 @@ BEGIN
     'expiredRollups', jsonb_build_object(
       'trafficDailyVisitors', v_traffic_expired,
       'pageViewUserDays', v_user_days_expired,
-      'dwellSessionSlices', v_dwell_slices_expired
+      'dwellSessionSlices', v_dwell_slices_expired,
+      'appVersionDevices', v_app_version_expired
     )
   );
 END;
@@ -361,6 +392,7 @@ DECLARE
   v_deleted_user_day_rollups bigint := 0;
   v_deleted_dwell_slices bigint := 0;
   v_deleted_dwell_sessions bigint := 0;
+  v_deleted_app_version_devices bigint := 0;
   v_deleted jsonb;
 BEGIN
   PERFORM pg_advisory_xact_lock(hashtextextended('admin_telemetry_retention', 0));
@@ -425,6 +457,9 @@ BEGIN
     WHERE slices.session_id = sessions.id
   );
   GET DIAGNOSTICS v_deleted_dwell_sessions = ROW_COUNT;
+  DELETE FROM admin_app_version_devices
+  WHERE last_seen < ((v_rollup_cutoff::text || 'T00:00:00+09:00')::timestamptz);
+  GET DIAGNOSTICS v_deleted_app_version_devices = ROW_COUNT;
 
   v_deleted := jsonb_build_object(
     'pageViews', v_deleted_page_views,
@@ -432,7 +467,8 @@ BEGIN
     'trafficDailyVisitors', v_deleted_traffic_rollups,
     'pageViewUserDays', v_deleted_user_day_rollups,
     'dwellSessionSlices', v_deleted_dwell_slices,
-    'dwellSessions', v_deleted_dwell_sessions
+    'dwellSessions', v_deleted_dwell_sessions,
+    'appVersionDevices', v_deleted_app_version_devices
   );
 
   INSERT INTO admin_telemetry_retention_runs (
@@ -457,3 +493,4 @@ GRANT EXECUTE ON FUNCTION admin_telemetry_retention_preview(timestamptz) TO serv
 GRANT EXECUTE ON FUNCTION admin_telemetry_retention_run(boolean, text, timestamptz) TO service_role;
 
 ANALYZE admin_page_view_user_days;
+ANALYZE admin_user_game_lifetime;
