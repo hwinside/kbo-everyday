@@ -149,7 +149,7 @@ export function BrandedTextCard({ post, body, long = false }: { post: Post; body
 
   return (
     <div
-      className="relative flex min-h-[200px] w-full items-center justify-center overflow-hidden px-8 py-10"
+      className="relative flex min-h-[100px] w-full items-center justify-center overflow-hidden px-8 py-5"
       style={{ background: gradient }}
     >
       {heroPath ? (
@@ -160,26 +160,16 @@ export function BrandedTextCard({ post, body, long = false }: { post: Post; body
           width={200}
           height={240}
           unoptimized
-          // 30% 축소(h 88%→62%) + 반투명 + 좌상단 페이드 마스크 → 팀 로고처럼 배경에 스며드는 느낌(①).
-          className="pointer-events-none absolute bottom-0 right-0 h-[62%] w-auto object-contain object-bottom"
-          style={{
-            opacity: 0.4,
-            maskImage: "linear-gradient(to top left, #000 50%, transparent 100%)",
-            WebkitMaskImage: "linear-gradient(to top left, #000 50%, transparent 100%)",
-          }}
+          // 히어로 전체 노크롭(object-contain) + 높이 75%(상단 헤드룸 25%) + 우하단 배치 + 50% 반투명
+          // → 구단 로고처럼 배경에 스며드는 반투명 인물 워터마크(하린아빠·삼순 확정 목업).
+          className="pointer-events-none absolute bottom-0 right-0 h-[75%] w-auto object-contain object-bottom"
+          style={{ opacity: 0.5 }}
         />
       ) : team ? (
         <div className="absolute right-4 top-4 opacity-20">
           <Image src={team.logoPath} alt="" width={88} height={88} unoptimized className="object-contain" />
         </div>
       ) : null}
-      {/* 하단 스크림 — 히어로처럼 컷아웃 바닥을 배경으로 페이드(딱 잘리는 느낌 제거). 선수 Hero가 있을 때만. */}
-      {heroPath && (
-        <div
-          className="pointer-events-none absolute inset-x-0 bottom-0 h-1/2"
-          style={{ background: "linear-gradient(to top, #1a1a1d 0%, transparent 100%)" }}
-        />
-      )}
       <div className="relative z-10 flex w-full flex-col items-center gap-3">
         {displayBody && (
           <>
