@@ -5537,10 +5537,10 @@
   {
     "name": "이형범",
     "kboId": "62951",
-    "teamId": 6,
+    "teamId": 9,
     "position": "투수",
     "backNo": "28",
-    "team": "KIA",
+    "team": "한화",
     "birthDate": "1994-02-27"
   },
   {
@@ -7301,10 +7301,10 @@
   {
     "name": "하주석",
     "kboId": "62700",
-    "teamId": 9,
+    "teamId": 6,
     "position": "내야수",
     "backNo": "16",
-    "team": "한화",
+    "team": "KIA",
     "birthDate": "1994-02-25"
   },
   {
