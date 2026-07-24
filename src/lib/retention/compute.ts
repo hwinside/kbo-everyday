@@ -125,6 +125,28 @@ async function collectActivityDays(
  * 코호트 리텐션 집계: 가입 주차별 D1/D7/D14/D30 재활동율.
  * 활동 기준: posts/comments/likes/chat_messages에 해당 유저 레코드 존재.
  */
+/**
+ * 고정 horizon Rolling Retention(metric_type="rolling", 삼순 리뷰 반영 2026-07-25).
+ *
+ * 기존 cohort/daily_cohort exact single-day 지표("가입+정확히 N일째 그 하루")는
+ * KBO 무경기일(올스타 브레이크 등)에 통째로 휘둘려 D14>D7 역전처럼 리텐션
+ * 곡선으로 오독되기 쉽다. 주차 비겹침 구간(W1~W4)은 독립이라 단조감소 미보장
+ * (삼순 리뷰). 대신 **고정 horizon** Rolling: 각 anchor k는 [Dk, D_horizon] 구간 중 1회+.
+ * 구간이 포함관계(⊃)이고 분모(eligible)가 같은 horizon 내 동일(가입+horizon 경과한
+ * 성숙 코호트)이므로 R1 ≥ R7 ≥ … 단조 비증가 수학 보장(셀링 자료용 깨끗한 곡선).
+ *
+ * **2개 horizon 병행(삼순 리뷰 2차)**: 28일만 쓰면 현재 최소 코호트(2026-W27)가 D28
+ * 미성숙이라 차트가 빈다. 그래서 **14일**(R1=[D1,D14]/R7=[D7,D14]/R14=D14, D14 성숙 코호트라
+ * 지금 바로 노출) + **28일**(R1~R28, 성숙 시)을 함께 생성. metric_key = `h{horizon}_r{anchor}`.
+ * total 필드 = 해당 horizon의 성숙 분모 n — 표시단이 "부분 코호트"(예: 6/29만 든 W27)를
+ * 구분하도록 n을 노출한다. 예산/스캔 가드: 독립 스캔 없이 computeCohortRetention의
+ * profiles+visitDays를 재사용해 추가 전수스캔 0(300초 cron 상한 영향 없음).
+ */
+const ROLLING_HORIZONS: { horizon: number; anchors: number[] }[] = [
+  { horizon: 14, anchors: [1, 7, 14] },
+  { horizon: 28, anchors: [1, 7, 14, 21, 28] },
+];
+
 export async function computeCohortRetention(
   supabase: SupabaseClient,
   targetDate: string,
@@ -182,6 +204,40 @@ export async function computeCohortRetention(
           value: returned,
           rate: Math.round((returned / eligible) * 10000) / 10000,
         });
+      }
+    }
+
+    // 고정 horizon Rolling Retention(14일+28일) — 같은 users/visitDays 재사용(추가 스캔 0).
+    // 각 horizon별로 성숙(가입+horizon 경과) 코호트만 분모 — horizon 내 동일 분모라 단조 보장.
+    for (const { horizon, anchors } of ROLLING_HORIZONS) {
+      for (const start of anchors) {
+        let returned = 0;
+        let eligible = 0;
+        for (const u of users) {
+          const windowEnd = addKSTDays(u.signupDate, horizon);
+          // D_horizon까지 성숙하지 않은(진행 중 포함) 코호트는 제외 → horizon 내 동일 분모 유지.
+          if (windowEnd >= targetDate) continue;
+          eligible++;
+          // [start, horizon] 구간 중 하루라도 활동일이 있으면 잔존(구간 누적, exact-day 아님).
+          const days = visitDays.get(u.id);
+          if (days) {
+            for (let d = start; d <= horizon; d++) {
+              if (days.has(addKSTDays(u.signupDate, d))) { returned++; break; }
+            }
+          }
+        }
+        // 성숙 코호트가 없으면(eligible=0) row 자체를 만들지 않음 → 미집계를 0%로 그리지 않게(삼순 리뷰).
+        if (eligible > 0) {
+          rows.push({
+            date: targetDate,
+            metric_type: "rolling",
+            cohort_key: cohortKey,
+            metric_key: `h${horizon}_r${start}`,
+            total: eligible,
+            value: returned,
+            rate: Math.round((returned / eligible) * 10000) / 10000,
+          });
+        }
       }
     }
   }

@@ -23,6 +23,7 @@
     "qa:retention-dates": "tsx scripts/qa/retention-gamedates-smoke.ts",
     "qa:admin-telemetry-retention": "tsx scripts/qa/admin-telemetry-retention-smoke.ts",
     "qa:admin-telemetry-retention:db": "tsx scripts/qa/admin-telemetry-retention-db-integration.ts",
+    "qa:retention-rolling": "tsx scripts/qa/retention-rolling-smoke.ts",
     "qa:leaderboard-cache": "tsx scripts/qa/leaderboard-cache-smoke.ts",
     "qa:leaderboard-rollup": "bash scripts/qa/leaderboard-rollup-refresh-regression.sh",
     "qa:war-saber": "tsx scripts/qa/war-saber-smoke.ts",

@@ -126,6 +126,22 @@ export interface FunnelStep {
   rate: number;
 }
 
+/** 고정 horizon Rolling Retention 한 코호트 점: anchor k는 [Dk, D_horizon] 구간 1회+ (단조 비증가).
+ *  n=성숙 분모(eligible), cohortSize=전체 주 인원 — 둘을 병기해 "부분 코호트" 구분(삼순 리뷰). */
+export interface RollingCohortPoint {
+  cohortKey: string;
+  cohortSize: number;          // 전체 주 가입 인원(성숙 여부 무관)
+  n: number;                   // 해당 horizon의 성숙 분모(eligible)
+  rates: (number | null)[];    // anchors 순서대로(미집계=null)
+}
+
+/** horizon별 Rolling 곡선(14일: anchors [1,7,14] / 28일: [1,7,14,21,28]). */
+export interface RollingCurve {
+  horizon: number;
+  anchors: number[];
+  cohorts: RollingCohortPoint[];
+}
+
 /** 게임데이 리텐션 행 */
 export interface GamedayRetention {
   cohortKey: string;

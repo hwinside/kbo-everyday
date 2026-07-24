@@ -68,6 +68,8 @@ export async function GET(req: NextRequest) {
       computeVisitDistribution(supabase, targetDate),
     ]);
 
+    // computeCohortRetention이 cohort + rolling(28일 고정) row를 함께 반환(같은 스캔 재사용).
+    const rollingCount = cohortRows.filter((r) => r.metric_type === "rolling").length;
     const allRows = [...cohortRows, ...dailyCohortRows, ...funnelRows, ...gamedayRows, ...visitDistRows];
 
     // 3) Upsert — ON CONFLICT 로 기존 행 덮어쓰기 (중간 실패 시 기존 데이터 보존)
@@ -82,7 +84,7 @@ export async function GET(req: NextRequest) {
     }
 
     const funnelLabel = backfill ? "skipped(backfill)" : String(funnelRows.length);
-    const summary = `cohort:${cohortRows.length} dailyCohort:${dailyCohortRows.length} funnel:${funnelLabel} gameday:${gamedayRows.length} visitDist:${visitDistRows.length} gameDates:${gameDates.length}`;
+    const summary = `cohort:${cohortRows.length - rollingCount} rolling:${rollingCount} dailyCohort:${dailyCohortRows.length} funnel:${funnelLabel} gameday:${gamedayRows.length} visitDist:${visitDistRows.length} gameDates:${gameDates.length}`;
     await finishJob(logId, "success", summary);
 
     return NextResponse.json({ ok: true, date: targetDate, summary });
