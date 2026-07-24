@@ -544,3 +544,78 @@ export function isStaleStartToken(updatedAt: string | null, nowMs: number): bool
   if (!Number.isFinite(t)) return false;
   return nowMs - t > STALE_START_TOKEN_MS;
 }
+
+// ── 채널 출생 세대 마킹 — 재시도/부분실패 격리 (2026-07-24 사고 견고화) ──────
+//
+// 20260724WOHT0(최대 배치 경기, 18:01 피크): 발송 성공 2,017 중 channel_born 마킹이
+// 177(9%)만 기록 — 배치 update 실패(에러 무시)로 조용히 소실. 마킹 소실 = 어드민
+// '갱신 불가' 과대계상 + wake 대상 오포함. 이 헬퍼가 계약을 강제한다:
+//   ① 배치 실패 시 지수 백오프 재시도(최대 2회 — 과설계 금지)
+//   ② 최종 실패는 경기ID·env/채널·배치 인덱스·건수 포함 명시 로깅(조용한 소실 금지)
+//   ③ 한 배치가 실패해도 나머지 배치는 계속 진행(부분실패 격리)
+// updateBatch 주입으로 유닛 스모크에서 직접 검증한다(qa:la-born-marking).
+
+/** p2s 발송 성공 유저의 채널 출생 그룹 — (env, channelId)별 user 목록. */
+export interface ChannelBornGroup {
+  env: ApnsEnvironment;
+  channelId: string;
+  users: string[];
+}
+
+export const CHANNEL_BORN_BATCH_SIZE = 200;
+/** 배치당 최대 시도 횟수(최초 1 + 재시도 2). */
+export const CHANNEL_BORN_MAX_ATTEMPTS = 3;
+/** 재시도 백오프(ms) — attempt 1 실패 후 500, attempt 2 실패 후 1000. */
+export const CHANNEL_BORN_RETRY_BASE_MS = 500;
+
+export async function markChannelBornGroups(params: {
+  gameId: string;
+  groups: Iterable<ChannelBornGroup>;
+  /** 배치 1건 DB 반영 — supabase update 결과({ error })를 그대로 반환. throw도 실패로 취급. */
+  updateBatch: (
+    group: ChannelBornGroup,
+    userIds: string[],
+  ) => PromiseLike<{ error: { message: string } | null }>;
+  logError?: (msg: string) => void;
+  sleep?: (ms: number) => Promise<void>;
+}): Promise<{ batches: number; failedBatches: number; failedUsers: number }> {
+  const logError = params.logError ?? ((msg) => console.error(msg));
+  const sleep = params.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+  let batches = 0;
+  let failedBatches = 0;
+  let failedUsers = 0;
+  for (const group of params.groups) {
+    for (let i = 0; i < group.users.length; i += CHANNEL_BORN_BATCH_SIZE) {
+      const slice = group.users.slice(i, i + CHANNEL_BORN_BATCH_SIZE);
+      const batchIndex = Math.floor(i / CHANNEL_BORN_BATCH_SIZE);
+      batches += 1;
+      let lastError = "unknown";
+      let ok = false;
+      for (let attempt = 1; attempt <= CHANNEL_BORN_MAX_ATTEMPTS; attempt++) {
+        try {
+          const { error } = await params.updateBatch(group, slice);
+          if (!error) {
+            ok = true;
+            break;
+          }
+          lastError = error.message;
+        } catch (e) {
+          lastError = e instanceof Error ? e.message : String(e);
+        }
+        if (attempt < CHANNEL_BORN_MAX_ATTEMPTS) {
+          await sleep(CHANNEL_BORN_RETRY_BASE_MS * 2 ** (attempt - 1));
+        }
+      }
+      if (!ok) {
+        failedBatches += 1;
+        failedUsers += slice.length;
+        logError(
+          `[live-activity] channel_born marking failed: game=${params.gameId} ` +
+            `env=${group.env} channel=${group.channelId} batch=${batchIndex} ` +
+            `users=${slice.length} attempts=${CHANNEL_BORN_MAX_ATTEMPTS} error=${lastError}`,
+        );
+      }
+    }
+  }
+  return { batches, failedBatches, failedUsers };
+}

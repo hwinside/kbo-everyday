@@ -16,6 +16,7 @@ import {
   fullStateHashOf,
   isStaleStartToken,
   isWakeWindowOpen,
+  markChannelBornGroups,
   selectWakeGapRows,
   p2sSendPlan,
   type P2sSendPlan,
@@ -815,20 +816,23 @@ async function startForTeamSide(params: {
       .eq("game_id", params.gameId)
       .eq("user_id", u);
   }
-  // 채널 출생 세대 마킹 — best-effort(발송은 이미 확정이므로 실패해도 재시도 안 함).
-  // 마킹 누락 = 그 유저만 종전처럼 네이티브 ACK 대기 집계(gap 과대계상 쪽 오차만 = 보수적).
-  for (const group of channelBornGroups.values()) {
-    for (let i = 0; i < group.users.length; i += 200) {
-      await supabase
+  // 채널 출생 세대 마킹 — 발송은 이미 확정이므로 마킹 실패가 발송을 되돌리진 않지만,
+  // 조용한 소실은 금지(2026-07-24 WOHT0 사고: 배치 update 에러 무시 → 2,017 중 177만
+  // 마킹 → 어드민 '갱신 불가' 1,036 과대계상). 재시도+명시 로깅+부분실패 격리는
+  // markChannelBornGroups가 강제한다. 최종 실패분은 scripts/backfill-channel-born.ts로 구제.
+  await markChannelBornGroups({
+    gameId: params.gameId,
+    groups: channelBornGroups.values(),
+    updateBatch: (group, userIds) =>
+      supabase
         .from("live_activity_started_users")
         .update({
           channel_born_environment: group.env,
           channel_born_channel_id: group.channelId,
         })
         .eq("game_id", params.gameId)
-        .in("user_id", group.users.slice(i, i + 200));
-    }
-  }
+        .in("user_id", userIds),
+  });
   return { sent, failed: transientFail && sent === 0 };
 }
 
