@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { supabase } from "./client";
 import { useAuth } from "./AuthContext";
@@ -32,30 +32,99 @@ export interface ChatCounts {
   away: number;
 }
 
-// 카운트 head 쿼리 재조회 최소 간격 — 활발한 방에서 메시지마다 3연발 쿼리 방지.
-const COUNTS_MIN_INTERVAL_MS = 5000;
+// 카운트 head 쿼리 재조회(reconcile) 최소 간격 — 즉시성은 낙관적 증분이
+// 담당하므로 서버 재조회는 드리프트 교정용으로만 느슐하게(과도한 폴링 방지).
+const COUNTS_MIN_INTERVAL_MS = 15000;
+
+// 낙관적 증분 추적자 — 서버 베이스라인 이후 도착분만 세고, id 기준 dedupe로
+// backfill/재구독 시 같은 메시지를 두 번 세지 않는다.
+export interface ChatCountTracker {
+  // 베이스라인(서버 count) 포충 상한 id — 이보다 큰 id만 낙관적 +1 대상.
+  // 첫 서버 카운트 전에는 Infinity(증분 금지).
+  baselineMaxId: number;
+  // 관찰한 메시지 id → { 삭제 여부, 작성자 최애팀 }. 삭제 전이(-1) 감지용.
+  known: Map<number, { deleted: boolean; teamId?: number }>;
+}
 
 /**
- * 방 누적 메시지 카운트(삭제 제외) + 홈/원정 최애팀 유저 글 수.
- * - 서버 count(head:true) 쿼리 3발 병렬 — 로드된 페이지와 무관한 실제 누적치.
- * - refreshKey(최신 메시지 id 등)가 바뀌면 재조회하되 최소 5초 간격으로 디바운스.
- * - 삭제(soft delete)된 메시지는 UI에서 완전히 숨기므로 카운트에서도 제외해 일관성 유지.
+ * messages 스냅샷을 훑어 tracker에 없던 새 메시지/삭제 전이를 반영하고
+ * 이번 패스의 카운트 증감분을 반환한다 (순수 함수 + tracker 누적, 테스트 가능).
+ * - 새 id > baselineMaxId & 미삭제 → +1 (loadMore prepend된 과거 id는 베이스라인에 이미 포함이라 제외)
+ * - 이미 세었거나 베이스라인에 포함된 메시지가 삭제로 전이 → -1
+ * - 처음부터 삭제 상태로 관찰된 메시지는 카운트 불변 (서버 count도 이미 제외)
+ */
+export function trackCountDeltas(
+  tracker: ChatCountTracker,
+  messages: Pick<ChatMessage, "id" | "deleted_at" | "team_id">[],
+  homeTeamId: number,
+  awayTeamId: number
+): ChatCounts {
+  const d: ChatCounts = { total: 0, home: 0, away: 0 };
+  const bump = (teamId: number | undefined, sign: 1 | -1) => {
+    d.total += sign;
+    if (teamId === homeTeamId) d.home += sign;
+    else if (teamId === awayTeamId) d.away += sign;
+  };
+  for (const m of messages) {
+    const prev = tracker.known.get(m.id);
+    const deleted = !!m.deleted_at;
+    if (prev) {
+      if (!prev.deleted && deleted) {
+        prev.deleted = true;
+        bump(prev.teamId, -1);
+      }
+    } else {
+      tracker.known.set(m.id, { deleted, teamId: m.team_id });
+      if (m.id > tracker.baselineMaxId && !deleted) bump(m.team_id, 1);
+    }
+  }
+  return d;
+}
+
+const ZERO_DELTA: ChatCounts = { total: 0, home: 0, away: 0 };
+
+/**
+ * 방 누적 메시지 카운트(삭제 제외) + 홈/원정 최애팀 유저 글 수 — 실시간 느낌.
+ * - 서버 count(head:true) 쿼리 3발 병렬 = 베이스라인 (로드된 페이지와 무관한 실제 누적치).
+ * - 새 메시지 도착(본인 전송 + realtime/backfill 수신) 시 즉시 낙관적 +1,
+ *   삭제 전이 시 -1. 서버 재조회(최소 15초 간격)는 드리프트 reconcile용.
+ * - 삭제(soft delete)된 메시지는 UI에서 숨기므로 카운트에서도 제외해 일관성 유지.
  */
 export function useChatCounts(
   roomId: string,
   homeTeamId: number,
   awayTeamId: number,
-  refreshKey: number
+  messages: ChatMessage[]
 ) {
   const [counts, setCounts] = useState<ChatCounts | null>(null);
+  const [delta, setDelta] = useState<ChatCounts>(ZERO_DELTA);
   // 마지막 조회 시각 — roomId별로 기록해 방 전환 시 디바운스 없이 즉시 조회.
   const lastFetchRef = useRef<{ roomId: string; at: number }>({ roomId: "", at: 0 });
+  // roomId별 추적자 — 방 전환 시 effect 안에서 레이지하게 리셋 (렌더 중 ref 쓰기 금지).
+  const trackerRef = useRef<{ roomId: string; tracker: ChatCountTracker }>({
+    roomId: "",
+    tracker: { baselineMaxId: Infinity, known: new Map() },
+  });
+  const trackerFor = useCallback((rid: string): ChatCountTracker => {
+    if (trackerRef.current.roomId !== rid) {
+      trackerRef.current = { roomId: rid, tracker: { baselineMaxId: Infinity, known: new Map() } };
+    }
+    return trackerRef.current.tracker;
+  }, []);
+  // fetch 완료 시점의 최신 messages로 베이스라인을 재설정하기 위한 ref
+  // (아래 낙관적 증분 effect에서 갱신 — 렌더 중 쓰기 금지).
+  const messagesRef = useRef(messages);
+
+  // 재조회 트리거: 마지막(최신) 메시지 id. 전송/수신(append)시만 바뀌고
+  // loadMore(prepend)에는 불변 — 과거 페이지 로드로 재조회 안 함.
+  const refreshKey = messages.length > 0 ? messages[messages.length - 1].id : 0;
 
   // 방 전환 시 렌더 중 리셋 (React 권장 "adjusting state when props change" 패턴).
   const [prevRoomId, setPrevRoomId] = useState(roomId);
   if (prevRoomId !== roomId) {
     setPrevRoomId(roomId);
     setCounts(null);
+    setDelta(ZERO_DELTA);
   }
 
   useEffect(() => {
@@ -95,6 +164,17 @@ export function useChatCounts(
         home: homeRes.error ? 0 : homeRes.count ?? 0,
         away: awayRes.error ? 0 : awayRes.count ?? 0,
       });
+      // 베이스라인 재설정 — 현재 로드된 메시지는 서버 count에 포함된 것으로 보고
+      // 이후 도착분만 낙관적 증분. 누적 delta는 reconcile되었으므로 0으로.
+      const msgs = messagesRef.current;
+      trackerRef.current = {
+        roomId,
+        tracker: {
+          baselineMaxId: msgs.reduce((mx, m) => (m.id > mx ? m.id : mx), 0),
+          known: new Map(msgs.map((m) => [m.id, { deleted: !!m.deleted_at, teamId: m.team_id }])),
+        },
+      };
+      setDelta(ZERO_DELTA);
     };
 
     const last = lastFetchRef.current;
@@ -111,7 +191,27 @@ export function useChatCounts(
     };
   }, [roomId, homeTeamId, awayTeamId, refreshKey]);
 
-  return counts;
+  // 낙관적 즉시 증분: messages 변화마다 새 도착/삭제 전이분만 반영 (id dedupe).
+  useEffect(() => {
+    messagesRef.current = messages;
+    const d = trackCountDeltas(trackerFor(roomId), messages, homeTeamId, awayTeamId);
+    if (d.total !== 0 || d.home !== 0 || d.away !== 0) {
+      setDelta((prev) => ({
+        total: prev.total + d.total,
+        home: prev.home + d.home,
+        away: prev.away + d.away,
+      }));
+    }
+  }, [roomId, messages, homeTeamId, awayTeamId, trackerFor]);
+
+  return useMemo<ChatCounts | null>(() => {
+    if (!counts) return null;
+    return {
+      total: Math.max(0, counts.total + delta.total),
+      home: Math.max(0, counts.home + delta.home),
+      away: Math.max(0, counts.away + delta.away),
+    };
+  }, [counts, delta]);
 }
 
 type ChatRow = ChatMessage & { profiles?: { nickname?: string; team_id?: number; grade?: string } };

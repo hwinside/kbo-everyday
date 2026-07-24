@@ -65,10 +65,8 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
   const roomId = getRoomId(gameId);
   const { messages, loading, loadingMore, hasMore, loadMore, sendMessage, deleteMyMessage, deleteAnyMessage, cooldown, cooldownReason, isLoggedIn } = useChat(roomId);
   const { homePct } = useMoodGauge(gameId, homeTeamId, awayTeamId);
-  // 누적 카운트 재조회 트리거: 마지막(최신) 메시지 id. 전송/수신(append)시만
-  // 바뀌고 loadMore(prepend)에는 불변 — 과거 페이지 로드로 재조회 안 함.
-  const latestMessageId = messages.length > 0 ? messages[messages.length - 1].id : 0;
-  const chatCounts = useChatCounts(roomId, homeTeamId, awayTeamId, latestMessageId);
+  // 누적 카운트: 서버 count 베이스라인 + 새 도착 메시지 낙관적 즉시 증분(실시간 UX).
+  const chatCounts = useChatCounts(roomId, homeTeamId, awayTeamId, messages);
   const { user, profile, loading: authLoading } = useAuth();
   const { blockedIds } = useBlockedIds();
   const canModerateChat = profile?.is_operator === true;
