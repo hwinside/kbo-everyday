@@ -19,8 +19,8 @@ android {
         minSdkVersion 30
         targetSdkVersion rootProject.ext.targetSdkVersion
         // Play는 앱 내 모든 APK/AAB에 고유 versionCode 요구 — 워치는 1000번대 분리.
-        versionCode 1005
-        versionName "1.0.15"
+        versionCode 1006
+        versionName "1.0.16"
     }
     signingConfigs {
         if (keystorePropsFile.exists()) {
