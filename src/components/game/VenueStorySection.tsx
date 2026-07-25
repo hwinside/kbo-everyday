@@ -21,6 +21,9 @@ interface Props {
   gameId: string;
 }
 
+// 트레이 자동 새로고침 주기(ms). 현장 업로드를 넘치지 않게 짧게, 단 과도한 재조회는 피한다.
+const VENUE_STORY_REFRESH_MS = 25000;
+
 // iOS 실기기 키보드 QA(?storyQaKeyboard=1) 전용 mock — game-chat 의 chatQaKeyboard 패턴.
 // 실제 스토리/로그인 없이도 뷰어 입력바의 focus→키보드→submit→blur 를 검증한다.
 // src 없는 video 라 자동진행/종료가 없어 뷰어가 측정 동안 열려 있다(id -1 은
@@ -131,6 +134,32 @@ export default function VenueStorySection({ gameId }: Props) {
   useEffect(() => {
     fetchStories();
   }, [fetchStories]);
+
+  // 트레이 자동 새로고침 — 크관을 계속 띄워두면 새로 올라온 스토리가 안 보인다는 하린아빠 리포트(7/25).
+  // 뷰어/컴포저가 열려 있는 동안엔 재정렬로 인덱스가 어긋나거나 업로드 흐름을 방해하므로 건너뛰고,
+  // 백그라운드(탭 숨김)에선 폴링을 멈춰 낭비를 줄이되 다시 보일 때 즉시 1회 새로고침한다.
+  const autoRefreshBlocked = viewerIndex !== null || composerOpen;
+  const autoRefreshBlockedRef = useRef(autoRefreshBlocked);
+  useEffect(() => {
+    autoRefreshBlockedRef.current = autoRefreshBlocked;
+  }, [autoRefreshBlocked]);
+  useEffect(() => {
+    if (storyQaKeyboard) return;
+    const refresh = () => {
+      if (autoRefreshBlockedRef.current) return;
+      if (typeof document !== "undefined" && document.hidden) return;
+      fetchStories();
+    };
+    const interval = setInterval(refresh, VENUE_STORY_REFRESH_MS);
+    const onVisible = () => {
+      if (typeof document !== "undefined" && !document.hidden) refresh();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [fetchStories, storyQaKeyboard]);
 
   // pending 낙관 카드 백오프 폴링 + 소진 시 '지연' 전환(삼순 #839 blocker 2).
   // active 승급 감지 시 fetchStories 가 실제 카드로 교체. 마지막 폴(~60초)까지도 안 뜨면
