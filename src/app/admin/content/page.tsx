@@ -36,6 +36,12 @@ interface ContentDay {
   chats: number;
 }
 
+interface VenueStoryDay {
+  date: string;
+  videos: number;
+  photos: number;
+}
+
 interface PopularPost {
   id: string;
   title: string;
@@ -63,6 +69,7 @@ interface ContentData {
   teamActivity: TeamActivity[];
   engagedDaily: EngagedDay[];
   contentDaily: ContentDay[];
+  venueStoryDaily?: VenueStoryDay[];
 }
 
 function getPin(): string | null {
@@ -143,7 +150,8 @@ function kstWindowDates(days: number): string[] {
 }
 
 // 콘텐츠 일별 카운트 차트 카드: 7일/30일(일별) / 누적(running sum 라인)
-function ContentTrendCard({
+// rows 는 { date, ...숫자필드 } 형식이면 무엇이든 받는다(콘텐츠/직관 스토리 공용).
+function ContentTrendCard<T extends { date: string }>({
   title,
   rows,
   series,
@@ -151,8 +159,8 @@ function ContentTrendCard({
   height,
 }: {
   title: string;
-  rows: ContentDay[];
-  series: { key: "posts" | "comments" | "photos" | "chats"; label: string; color: string }[];
+  rows: T[];
+  series: { key: Exclude<keyof T, "date">; label: string; color: string }[];
   dailyKind: "bar" | "line";
   height: number;
 }) {
@@ -165,8 +173,9 @@ function ContentTrendCard({
     chartData = rows.map((r) => {
       const point: Record<string, string | number> = { label: r.date.slice(5) };
       for (const s of series) {
-        running[s.key] = (running[s.key] ?? 0) + r[s.key];
-        point[s.label] = running[s.key];
+        const key = s.key as string;
+        running[key] = (running[key] ?? 0) + Number(r[s.key] ?? 0);
+        point[s.label] = running[key];
       }
       return point;
     });
@@ -175,7 +184,7 @@ function ContentTrendCard({
     chartData = kstWindowDates(period === "30d" ? 30 : 7).map((date) => {
       const row = byDate.get(date);
       const point: Record<string, string | number> = { label: date.slice(5) };
-      for (const s of series) point[s.label] = row?.[s.key] ?? 0;
+      for (const s of series) point[s.label] = Number(row?.[s.key] ?? 0);
       return point;
     });
   }
@@ -199,7 +208,7 @@ function ContentTrendCard({
             <Tooltip {...tooltipStyle} />
             {series.length > 1 && <Legend />}
             {series.map((s) => (
-              <Line key={s.key} type="monotone" dataKey={s.label} stroke={s.color} strokeWidth={2} dot={false} />
+              <Line key={String(s.key)} type="monotone" dataKey={s.label} stroke={s.color} strokeWidth={2} dot={false} />
             ))}
           </LineChart>
         </ResponsiveContainer>
@@ -213,7 +222,7 @@ function ContentTrendCard({
             {series.length > 1 && <Legend />}
             {series.map((s, i) => (
               <Bar
-                key={s.key}
+                key={String(s.key)}
                 dataKey={s.label}
                 stackId="a"
                 fill={s.color}
@@ -401,6 +410,7 @@ export default function AdminContentPage() {
   const popularPosts = data?.popularPosts ?? [];
   const teamActivity = data?.teamActivity ?? [];
   const contentDaily = data?.contentDaily ?? [];
+  const venueStoryDaily = data?.venueStoryDaily ?? [];
 
   const teamActivityData = teamActivity
     .filter((t) => TEAMS.some((team) => team.slug === t.board_id || String(team.id) === t.board_id))
@@ -445,6 +455,18 @@ export default function AdminContentPage() {
         series={[{ key: "photos", label: "사진", color: "#FFD60A" }]}
         dailyKind="line"
         height={240}
+      />
+
+      {/* 직관 스토리 업로드 추이(영상/사진) — 실제 GPS 인증 업로드만, 그날 업로드 수 영구 보존 */}
+      <ContentTrendCard
+        title="직관 스토리 업로드 추이"
+        rows={venueStoryDaily}
+        series={[
+          { key: "videos", label: "영상", color: "#BF5AF2" },
+          { key: "photos", label: "사진", color: "#5AC8FA" },
+        ]}
+        dailyKind="bar"
+        height={260}
       />
 
       {/* Team Activity Bar Chart */}
