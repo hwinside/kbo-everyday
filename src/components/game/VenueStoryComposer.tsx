@@ -18,6 +18,7 @@ import {
   ownsImagePreviewReadLock,
   resolveImagePreview,
 } from "@/lib/venue-stories/composer-helpers";
+import { readFileAsDataURL } from "@/lib/venue-stories/read-file";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
 
 interface Props {
@@ -33,17 +34,6 @@ interface Props {
 }
 
 type Phase = "idle" | "geo" | "upload";
-
-// 이미지 파일을 data URL로 읽는다. 안드로이드 WebView가 blob: 이미지를 렌더하지 못해
-// 프리뷰가 깨져 보이는 케이스 방지(data URL은 모든 WebView에서 안정 렌더).
-function readFileAsDataURL(f: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const r = new FileReader();
-    r.onload = () => resolve(r.result as string);
-    r.onerror = () => reject(r.error ?? new Error("file read failed"));
-    r.readAsDataURL(f);
-  });
-}
 
 export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded }: Props) {
   const isAdmin = useIsAdmin();
