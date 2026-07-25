@@ -12,7 +12,7 @@ import {
   shouldApplyCommentResponse,
   type VenueStoryComment,
 } from "@/lib/venue-stories/comments";
-import { subscribeKeyboardInset } from "@/lib/venue-stories/keyboard-inset";
+import { computeKeyboardInset } from "@/lib/venue-stories/keyboard-inset";
 import { lockRootScroll, unlockRootScroll } from "@/lib/venue-stories/scroll-lock";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 
@@ -96,28 +96,26 @@ export default function VenueStoryViewer({
   const [menuOpen, setMenuOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  // 댓글 모달(바텀시트) 오픈 여부 — 인라인 입력바 대신 탭→모달 방식(하린아빠 7/25 지시).
   const [commentsOpen, setCommentsOpen] = useState(false);
-  // 인스타식 하단 상시 입력바 — 입력 중(포커스)에도 재생 일시정지 (하린아빠 21:22 지시)
-  const [inputFocused, setInputFocused] = useState(false);
   const [comments, setComments] = useState<VenueStoryComment[] | null>(null);
   const [commentTotal, setCommentTotal] = useState<number | null>(null);
   const [commentInput, setCommentInput] = useState("");
   const [commentBusy, setCommentBusy] = useState(false);
+  // 모달 컴포저 포커스 → 시트를 시각 뷰포트 전체 높이로 확장(CommentSheet expanded 패턴).
+  const [composerFocused, setComposerFocused] = useState(false);
   // iOS 키보드 회피 — CommentSheet 와 동일한 state 기반 visualViewport 패턴.
-  // iOS Safari/WKWebView 는 키보드가 떠도 레이아웃 뷰포트가 그대로라
-  // absolute bottom+safe-area 만으로는 컴포저가 키보드에 덮인다 →
-  // 시각 뷰포트 차이(kbInset)를 state 로 끌어와 bottom 에 더해준다.
+  // iOS Safari/WKWebView 는 키보드가 떠도 레이아웃 뷰포트가 그대로라 absolute bottom+safe-area
+  // 만으로는 컴포저가 키보드에 덮인다 → 시각 뷰포트 차이(kbInset)로 시트 바닥을 키보드 위로 올리고
+  // (bottom=kbInset) 확장 높이를 시각 뷰포트(vvHeight)로 잡아 목록+컴포저가 키보드 위에 함께 보이게 한다.
   const [kbInset, setKbInset] = useState(0);
+  const [vvHeight, setVvHeight] = useState<number | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   // 전송 중 스토리 전환 오염 방지(삼순 #807 라운드3 blocker 3) — 현재 보이는 story id.
   // POST 응답 도착 시 요청 시점에 캡처한 id 와 비교해 불일치면 반영을 스킵한다.
   const storyIdRef = useRef<number | null>(null);
-  // 탭 순간 nav 잠금 여부 캡처 — pointerdown 은 input blur 보다 먼저 오므로
-  // 포커스 중 탭은 키보드만 닫고 이동은 막는다(blur 후 click 시점엔 state 가 풀려 있음).
-  const navSuppressRef = useRef(false);
-  // 최신 댓글 bottom scroll 대상 — 포커스 오버레이/댓글 시트 목록 컨테이너
-  const overlayListRef = useRef<HTMLDivElement>(null);
+  // 최신 댓글 bottom scroll 대상 — 댓글 시트 목록 컨테이너
   const sheetListRef = useRef<HTMLDivElement>(null);
   const rafRef = useRef<number | null>(null);
   const startRef = useRef<number>(0);
@@ -193,35 +191,40 @@ export default function VenueStoryViewer({
     };
   }, []);
 
-  // 키보드 회피 — 입력바 포커스/댓글 시트가 열려 있을 때만 구독(CommentSheet 패턴 재사용).
-  // 계산/구독은 keyboard-inset.ts 순수 헬퍼 — 스모크가 모킹 visualViewport 로 회귀 검증(삼순 #807 blocker 4)
+  // 키보드 회피 — 댓글 모달이 열려 있을 때만 visualViewport 를 구독한다.
+  // computeKeyboardInset(순수·스모크 회귀)로 인셋을, vv.height 로 확장 높이를 state 로 끌어온다
+  // (CommentSheet 와 동일한 bottom=kbInset / height=vvHeight 패턴).
   useEffect(() => {
-    if (!inputFocused && !commentsOpen) return;
+    if (!commentsOpen) return;
     const vv = window.visualViewport;
     if (!vv) return;
-    const unsubscribe = subscribeKeyboardInset(
-      vv,
-      () => window.innerHeight,
-      setKbInset,
-    );
-    return () => {
-      unsubscribe();
-      setKbInset(0);
+    const apply = () => {
+      setKbInset(computeKeyboardInset(window.innerHeight, vv.height, vv.offsetTop));
+      setVvHeight(vv.height);
     };
-  }, [inputFocused, commentsOpen]);
+    apply();
+    vv.addEventListener("resize", apply);
+    vv.addEventListener("scroll", apply);
+    return () => {
+      vv.removeEventListener("resize", apply);
+      vv.removeEventListener("scroll", apply);
+      setKbInset(0);
+      setVvHeight(null);
+      setComposerFocused(false);
+    };
+  }, [commentsOpen]);
 
   // 최신 댓글 bottom scroll(삼순 #807 blocker 5) — 정순(오래된→최신) 렌더라
-  // 오버레이/시트가 열릴 때·댓글이 로드/추가될 때 최신 댓글이 보이도록 맨 아래로.
+  // 시트가 열릴 때·댓글이 로드/추가될 때·확장될 때 최신 댓글이 보이도록 맨 아래로.
   useEffect(() => {
-    if (inputFocused) scrollToLatest(overlayListRef.current);
     if (commentsOpen) scrollToLatest(sheetListRef.current);
-  }, [inputFocused, commentsOpen, comments]);
+  }, [commentsOpen, comments, composerFocused]);
 
   // 이미지 자동 진행(RAF), 영상은 timeupdate 로 처리
   useEffect(() => {
     if (!story || story.mediaType !== "image") return;
-    // commentBusy: 전송 중 blur 로 inputFocused 가 먼저 풀려도 재생이 재개되지 않게 결속
-    if (paused || menuOpen || commentsOpen || inputFocused || commentBusy) return;
+    // commentBusy: 전송 중에는 모달이 닫혀도 재생이 재개되지 않게 결속
+    if (paused || menuOpen || commentsOpen || commentBusy) return;
     const hold = VENUE_STORY_IMAGE_HOLD_MS;
     startRef.current = performance.now();
     const base = elapsedRef.current;
@@ -240,14 +243,14 @@ export default function VenueStoryViewer({
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
       elapsedRef.current = base + (performance.now() - startRef.current);
     };
-  }, [story, index, paused, menuOpen, commentsOpen, inputFocused, commentBusy, goNext]);
+  }, [story, index, paused, menuOpen, commentsOpen, commentBusy, goNext]);
 
   // 영상 재생/일시정지 동기화
   useEffect(() => {
     const v = videoRef.current;
     if (!v || !story || story.mediaType !== "video") return;
     v.muted = muted;
-    if (paused || menuOpen || commentsOpen || inputFocused || commentBusy) {
+    if (paused || menuOpen || commentsOpen || commentBusy) {
       v.pause();
     } else {
       v.play().catch(() => {
@@ -257,7 +260,7 @@ export default function VenueStoryViewer({
         v.play().catch(() => {});
       });
     }
-  }, [story, index, paused, menuOpen, commentsOpen, inputFocused, commentBusy, muted]);
+  }, [story, index, paused, menuOpen, commentsOpen, commentBusy, muted]);
 
   const onVideoTime = () => {
     const v = videoRef.current;
@@ -527,16 +530,10 @@ export default function VenueStoryViewer({
           className="absolute inset-y-0 left-0 w-1/3"
           aria-label="이전"
           onClick={() => {
-            if (navSuppressRef.current || commentBusy) {
-              navSuppressRef.current = false;
-              return;
-            }
+            if (commentBusy) return;
             goPrev();
           }}
-          onPointerDown={() => {
-            navSuppressRef.current = commentBusy || inputFocused;
-            setPaused(true);
-          }}
+          onPointerDown={() => setPaused(true)}
           onPointerUp={() => setPaused(false)}
           onPointerLeave={() => setPaused(false)}
         />
@@ -544,16 +541,10 @@ export default function VenueStoryViewer({
           className="absolute inset-y-0 right-0 w-2/3"
           aria-label="다음"
           onClick={() => {
-            if (navSuppressRef.current || commentBusy) {
-              navSuppressRef.current = false;
-              return;
-            }
+            if (commentBusy) return;
             goNext();
           }}
-          onPointerDown={() => {
-            navSuppressRef.current = commentBusy || inputFocused;
-            setPaused(true);
-          }}
+          onPointerDown={() => setPaused(true)}
           onPointerUp={() => setPaused(false)}
           onPointerLeave={() => setPaused(false)}
         />
@@ -571,116 +562,43 @@ export default function VenueStoryViewer({
         </div>
       )}
 
-      {/* 입력창 포커스 시 기존 댓글을 입력바 위에 오버레이 (하린아빠 21:45 지시 — 인스타 DM과 달리 우리는 댓글을 보여줌) */}
-      {inputFocused && (
-        <div
-          className="absolute left-0 right-0 z-20 px-3 flex flex-col justify-end"
-          style={{
-            bottom: `calc(env(safe-area-inset-bottom, 0px) + ${64 + kbInset}px)`,
-            maxHeight: "38%",
-          }}
-          // 오버레이 터치로 입력 blur 되지 않게 (스크롤 중 오버레이가 사라지는 것 방지)
-          onMouseDown={(e) => e.preventDefault()}
-        >
-          <div ref={overlayListRef} className="overflow-y-auto flex flex-col gap-2 py-1">
-            {comments == null ? (
-              <div className="flex justify-center py-2">
-                <Loader2 size={16} className="animate-spin text-white/70" />
-              </div>
-            ) : comments.length === 0 ? (
-              <p className="text-white/70 text-xs bg-black/40 rounded-full px-3 py-1.5 self-start">
-                첫 댓글을 남겨보세요
-              </p>
-            ) : (
-              comments.map((c) => (
-                <div key={c.id} className="flex items-start gap-2 max-w-[85%]">
-                  <CommentAvatar
-                    avatarUrl={c.author.avatarUrl}
-                    nickname={c.author.nickname}
-                    className="w-6 h-6 rounded-full bg-white/20 overflow-hidden shrink-0"
-                    initialClassName="text-white text-[10px]"
-                  />
-                  <div className="bg-black/45 rounded-2xl px-3 py-1.5 min-w-0">
-                    <p className="text-white/70 text-[10px] leading-tight">
-                      {c.author.nickname ?? "익명"} · {timeAgo(c.createdAt)}
-                    </p>
-                    <p className="text-white text-[13px] break-words">{c.content}</p>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* iOS 키보드-입력바 사이 gap으로 뒤 경기화면이 비치던 문제 방지(하린아빠 A17 리포트).
-          body scroll lock이 주 방어고, 이 opaque 백드롭은 입력바 아래~화면바닥을 검정으로 확실히 메운다. */}
-      {(inputFocused || commentsOpen) && (
-        <div
-          className="absolute inset-x-0 bottom-0 z-[15] bg-black pointer-events-none"
-          style={{ height: `calc(env(safe-area-inset-bottom, 0px) + ${kbInset + 60}px)` }}
-          aria-hidden
-        />
-      )}
-
-      {/* 인스타식 하단 상시 댓글 입력바 (하린아빠 21:22 지시 — 인스타 UI와 동일하게 바로 아래쪽 배치).
-          data-composer 는 iOS 실기기 키보드 QA(browserstack-ios-story-comments-keyboard.mjs) 마커. */}
-      <div
-        data-composer="venue-story"
-        className="absolute left-0 right-0 z-20 flex items-center gap-2 px-3"
-        style={{
-          // 키보드가 열렸을 때는 시각 뷰포트 하단에 정확히 붙여 사이로 배경이 비치지 않게 한다.
-          // 닫힌 상태만 safe-area + 12px 여백을 유지한다.
-          bottom: inputFocused
-            ? `${kbInset}px`
-            : `calc(env(safe-area-inset-bottom, 0px) + 12px)`,
-        }}
+      {/* 하단 댓글 버튼 — 인라인 입력바 대신 탭하면 댓글 모달(바텀시트) 오픈(하린아빠 7/25 지시 —
+          인앱브라우저 기사 댓글 모달과 동일 UX). iOS 키보드 회피는 모달 셔(CommentSheet 패턴)에서 처리. */}
+      <button
+        data-open-comments
+        onClick={() => setCommentsOpen(true)}
+        className="absolute left-3 right-3 z-20 h-11 flex items-center gap-2 px-4 rounded-full bg-black/40 border border-white/25 text-white/80"
+        style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 12px)" }}
+        aria-label="댓글 목록"
       >
-        <input
-          value={commentInput}
-          onChange={(e) => setCommentInput(e.target.value)}
-          onFocus={() => setInputFocused(true)}
-          onBlur={() => setInputFocused(false)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.nativeEvent.isComposing) handleCommentSubmit();
-          }}
-          maxLength={VENUE_STORY_COMMENT_MAX_LENGTH}
-          placeholder="댓글 달기..."
-          className="flex-1 min-w-0 bg-black/40 border border-white/30 rounded-full px-4 py-2.5 text-sm text-white placeholder:text-white/60 outline-none"
-        />
-        {commentInput.trim().length > 0 ? (
-          <button
-            onClick={handleCommentSubmit}
-            disabled={commentBusy}
-            className="w-10 h-10 flex items-center justify-center text-white shrink-0 bg-black/40 rounded-full"
-            aria-label="댓글 등록"
-          >
-            {commentBusy ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
-          </button>
-        ) : (
-          <button
-            onClick={() => setCommentsOpen(true)}
-            className="h-10 px-3 flex items-center gap-1.5 text-white/90 bg-black/40 rounded-full shrink-0"
-            aria-label="댓글 목록"
-          >
-            <MessageCircle size={18} />
-            <span className="text-sm font-semibold">{commentTotal ?? 0}</span>
-          </button>
-        )}
-      </div>
+        <MessageCircle size={18} />
+        <span className="text-sm">
+          {commentTotal && commentTotal > 0 ? `댓글 ${commentTotal}개` : "댓글 달기..."}
+        </span>
+      </button>
 
-      {/* 댓글 시트 — 열려있는 동안 재생 일시정지 */}
+      {/* 댓글 모달(바텀시트) — 인앱브라우저 기사 댓글 모달과 동일한 CommentSheet 키보드 회피 셔 재사용.
+          시트를 bottom=kbInset 로 키보드 위에 올리고, 컴포저 포커스 시 height=vvHeight(시각 뷰포트 전체)로
+          확장해 목록+컴포저가 키보드 위에 함께 보이게 한다. 배경/영상은 뷰어 명세(root scroll lock)로 잠금. */}
       {commentsOpen && (
         <div
-          className="absolute inset-0 z-30 flex items-end bg-black/50"
+          className="absolute inset-0 z-30 bg-black/50"
           onClick={() => setCommentsOpen(false)}
         >
           <div
-            className="w-full max-w-lg mx-auto bg-bg-secondary rounded-t-3xl flex flex-col max-h-[70%]"
-            style={{ paddingBottom: `calc(env(safe-area-inset-bottom, 0px) + ${kbInset}px)` }}
+            className="absolute inset-x-0 mx-auto max-w-lg bg-bg-secondary rounded-t-3xl flex flex-col overflow-hidden"
+            style={{
+              bottom: kbInset,
+              height:
+                composerFocused && vvHeight != null
+                  ? `${vvHeight}px`
+                  : vvHeight != null
+                    ? `min(70dvh, ${vvHeight}px)`
+                    : "70dvh",
+            }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="px-4 pt-4 pb-2 flex items-center justify-between">
+            <div className="px-4 pt-4 pb-2 flex items-center justify-between shrink-0">
               <p className="text-text-primary font-semibold text-sm">
                 댓글 {commentTotal ?? 0}
               </p>
@@ -694,7 +612,7 @@ export default function VenueStoryViewer({
             </div>
             <div
               ref={sheetListRef}
-              className="flex-1 overflow-y-auto px-4 py-1 flex flex-col gap-3 min-h-24"
+              className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 py-1 flex flex-col gap-3"
             >
               {comments == null ? (
                 <div className="flex justify-center py-6">
@@ -733,21 +651,30 @@ export default function VenueStoryViewer({
                 ))
               )}
             </div>
-            <div className="px-4 py-3 flex items-center gap-2 border-t border-white/5">
+            {/* 컴포저 — 시트 맨 아래(border-box bottom 이 시트 바닥=키보드 위에 flush).
+                data-composer 는 iOS 실기기 키보드 QA(browserstack-ios-story-comments-keyboard.mjs) 마커. */}
+            <div
+              data-composer="venue-story"
+              className="shrink-0 px-4 py-3 flex items-center gap-2 border-t border-white/5"
+              style={{ paddingBottom: "calc(0.75rem + env(safe-area-inset-bottom, 0px))" }}
+            >
               <input
                 value={commentInput}
                 onChange={(e) => setCommentInput(e.target.value)}
+                onFocus={() => setComposerFocused(true)}
+                onBlur={() => setComposerFocused(false)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.nativeEvent.isComposing) handleCommentSubmit();
                 }}
                 maxLength={VENUE_STORY_COMMENT_MAX_LENGTH}
                 placeholder="댓글 달기..."
-                className="flex-1 bg-white/5 rounded-full px-4 py-2 text-sm text-text-primary placeholder:text-text-secondary outline-none"
+                className="flex-1 min-w-0 bg-white/5 rounded-full px-4 py-2 text-sm text-text-primary placeholder:text-text-secondary outline-none"
               />
               <button
+                onMouseDown={(e) => e.preventDefault()}
                 onClick={handleCommentSubmit}
                 disabled={commentBusy || commentInput.trim().length === 0}
-                className="w-9 h-9 flex items-center justify-center text-accent disabled:text-text-secondary"
+                className="w-9 h-9 flex items-center justify-center text-accent disabled:text-text-secondary shrink-0"
                 aria-label="댓글 등록"
               >
                 {commentBusy ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}

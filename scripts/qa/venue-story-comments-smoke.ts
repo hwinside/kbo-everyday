@@ -235,11 +235,17 @@ console.log("[전송 중 스토리 전환 오염 가드 — 삼순 #807 라운�
     /const submitStoryId = story\.id/.test(viewerSrc));
   ok("응답 반영 전 shouldApplyCommentResponse 가드 통과",
     /shouldApplyCommentResponse\(submitStoryId, storyIdRef\.current\)/.test(viewerSrc));
-  ok("좌/우 탭 이동이 commentBusy/포커스 잠금을 본다(pointerdown 캡처)",
-    (viewerSrc.match(/navSuppressRef\.current = commentBusy \|\| inputFocused/g) ?? []).length === 2 &&
-    (viewerSrc.match(/if \(navSuppressRef\.current \|\| commentBusy\)/g) ?? []).length === 2);
-  ok("iOS 실기기 QA 마커 data-composer=\"venue-story\" 부여",
+  ok("좌/우 탭 이동이 전송 중(commentBusy) 잠금을 본다",
+    (viewerSrc.match(/if \(commentBusy\) return;/g) ?? []).length === 2);
+  ok("인라인 입력바 제거 — 하단은 댓글 모달 오픈 버튼(data-open-comments)",
+    viewerSrc.includes("data-open-comments") &&
+    !/onFocus=\{\(\) => setInputFocused/.test(viewerSrc));
+  ok("댓글 버튼 탭 → 모달 오픈(setCommentsOpen(true))",
+    viewerSrc.includes("setCommentsOpen(true)"));
+  ok("iOS 실기기 QA 마커 data-composer=\"venue-story\" 는 모달 컴포저에 부여",
     viewerSrc.includes('data-composer="venue-story"'));
+  ok("모달 키보드 회피 — bottom=kbInset + height=vvHeight(CommentSheet 패턴)",
+    viewerSrc.includes("bottom: kbInset") && viewerSrc.includes("vvHeight"));
 }
 
 console.log("[rate limit 원자화 RPC 계약 — 삼순 #807 라운드3 blocker 1]");

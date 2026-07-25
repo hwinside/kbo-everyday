@@ -151,6 +151,15 @@ async function main() {
     await wd('POST', '/url', { url: qaUrl }, sessionId);
     await new Promise((r) => setTimeout(r, 6000));
 
+    // 0) 댓글 모달 오픈 — 하단 댓글 버튼(data-open-comments) 탭으로 바텀시트를 띄운다.
+    //    인라인 입력바가 아니라 모달(탭→모달) 방식이므로 컴포저는 모달이 열려야 DOM 에 마운트된다.
+    //    모달 오픈은 키보드가 필요 없어 programmatic click 로 충분.
+    await wd('POST', '/execute/sync', {
+      script: "const b = document.querySelector('[data-open-comments]'); if (b) b.click(); return Boolean(b);",
+      args: [],
+    }, sessionId);
+    await waitMetrics(sessionId, (m) => m.hasComposer, 6000);
+
     const idle = await metrics(sessionId);
 
     // 1) focus — 입력바 input 을 네이티브 터치로 탭해 소프트웨어 키보드를 띄운다.
