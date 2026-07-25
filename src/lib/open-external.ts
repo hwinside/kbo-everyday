@@ -42,7 +42,7 @@ function openInNewTab(url: string): void {
 }
 
 interface NewsArticleBrowserPlugin {
-  open(options: { url: string; commentsUrl?: string }): Promise<void>;
+  open(options: { url: string; commentsUrl?: string; teamId?: number }): Promise<void>;
 }
 
 const NewsArticleBrowser = registerPlugin<NewsArticleBrowserPlugin>(
@@ -80,9 +80,9 @@ async function openLegacyNativeBrowser(url: string): Promise<void> {
 }
 
 export async function openNewsArticleWithFallback(
-  options: { url: string; commentsUrl?: string },
-  coreOpen: (value: { url: string; commentsUrl?: string }) => Promise<void>,
-  injectedOpen: ((value: { url: string; commentsUrl?: string }) => Promise<void>) | undefined,
+  options: { url: string; commentsUrl?: string; teamId?: number },
+  coreOpen: (value: { url: string; commentsUrl?: string; teamId?: number }) => Promise<void>,
+  injectedOpen: ((value: { url: string; commentsUrl?: string; teamId?: number }) => Promise<void>) | undefined,
   legacyOpen: () => Promise<void>,
 ): Promise<void> {
   try {
@@ -126,9 +126,10 @@ export function openNewsArticle(
   }
 
   const commentsUrl = commentsEnabled ? buildNewsCommentsUrl(article) : undefined;
+  const teamId = article.teamId ?? undefined;
   const injectedPlugin = getInjectedCapacitor()?.Plugins?.NewsArticleBrowser;
   void openNewsArticleWithFallback(
-    { url: article.url, commentsUrl },
+    { url: article.url, commentsUrl, teamId },
     (options) => NewsArticleBrowser.open(options),
     injectedPlugin?.open
       ? (options) => injectedPlugin.open(options)

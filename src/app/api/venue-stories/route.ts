@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { getVerifiedUserFromRequest } from "@/lib/auth/verified-user";
 import { resolveGameVenue } from "@/lib/venue-stories/venue-resolve";
-import { evaluateGeofence } from "@/lib/venue-stories/geofence";
+import { evaluateGeofence, isVenueUploadBlocked } from "@/lib/venue-stories/geofence";
 import { probeMediaObject } from "@/lib/venue-stories/media-probe";
 import { VENUE_IMAGE_TOO_HEAVY_MSG } from "@/lib/venue-stories/media-limits";
 import {
@@ -23,6 +23,7 @@ import {
 import { decideListAuth } from "@/lib/venue-stories/auth-consent";
 import { validateVenueVideoRow } from "@/lib/venue-stories/video-validate-server";
 import { canBypassVenueGeofenceForQa } from "@/lib/admin/admin-users";
+import { completeRequestedUploadStatuses } from "@/lib/venue-stories/composer-helpers";
 
 // 영상 즉시 검증(다운로드 최대 50MiB + ffprobe)을 요청 안에서 수행
 export const maxDuration = 60;
@@ -68,6 +69,41 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "조회 실패" }, { status: 500 });
     }
     blocked = b;
+  }
+
+  // 업로드 직후 낙관 카드의 pending/active/removed 상태 조회. 일반 목록은 active 전용이라
+  // removed 를 pending 과 구분할 수 없으므로, 인증된 업로더 본인 행만 최대 게임당 상한(10개) 조회한다.
+  const requestedStatusIds = [
+    ...new Set(
+      (req.nextUrl.searchParams.get("statusIds") ?? "")
+        .split(",")
+        .map((value) => Number(value))
+        .filter((value) => Number.isSafeInteger(value) && value > 0),
+    ),
+  ].slice(0, VENUE_STORY_MAX_PER_USER_PER_GAME);
+  let uploadStatuses: Array<{ id: number; status: string }> = [];
+  if (requestedStatusIds.length > 0) {
+    if (auth.kind !== "user") {
+      return NextResponse.json({ error: "인증이 필요합니다" }, { status: 401 });
+    }
+    // query-guard: bounded -- statusIds 는 위에서 게임당 업로드 상한 10개로 제한
+    const { data: statusRows, error: statusError } = await supabase
+      .from("venue_stories")
+      .select("id, status")
+      .eq("game_id", gameId)
+      .eq("user_id", auth.userId)
+      .in("id", requestedStatusIds);
+    if (statusError) {
+      return NextResponse.json({ error: "상태 조회 실패" }, { status: 500 });
+    }
+    uploadStatuses = (statusRows ?? []).map((row) => ({
+      id: row.id as number,
+      status: row.status as string,
+    }));
+    // cleanup cron 이 removed 행을 storage 정리 뒤 DELETE 할 수 있다. 요청한 본인 낙관 id가
+    // 조회 결과에서 사라진 경우도 terminal failure 로 종결해 pending 카드가 무한 잔류하지 않게 한다.
+    // 다른 사용자의 id와 실제 미존재 id는 모두 missing 이라 소유권/존재 여부는 노출하지 않는다.
+    uploadStatuses = completeRequestedUploadStatuses(requestedStatusIds, uploadStatuses);
   }
 
   const { data: rows, error } = await supabase
@@ -128,7 +164,7 @@ export async function GET(req: NextRequest) {
     };
   });
 
-  return NextResponse.json({ stories });
+  return NextResponse.json({ stories, uploadStatuses });
 }
 
 // POST: 직관 스토리 생성 (소유권 바인딩 + 실제 경기/구장/시간 + 지오펜스 + 크기/MIME 서버 검증)
@@ -205,11 +241,29 @@ export async function POST(req: NextRequest) {
   }
 
   // 2) 실제 경기/구장/시간 검증 (fail-closed)
+  // 관리자 QA 계정은 지오펜스와 마찬가지로 업로드 시간창(종료·마감)도 우회한다 —
+  // 종료 경기에도 QA 업로드가 가능해야 한다(하린아빠 7/25 04:38 리포트: 종료 경기 올리기 비활성).
+  // 좌표·gameDate 미상은 QA도 fail-closed(경기 자체가 없거나 미매핑이면 검증 불가).
+  const qaBypass = canBypassVenueGeofenceForQa(verified.user.email);
   const venue = await resolveGameVenue(gameId);
   if (!venue.exists) {
     return NextResponse.json({ error: venue.reason ?? "경기를 확인할 수 없어요" }, { status: 404 });
   }
-  if (!venue.uploadOpen || !venue.coord || venue.expiresAtMs == null || !venue.gameDate) {
+  if (!venue.coord || venue.expiresAtMs == null || !venue.gameDate) {
+    return NextResponse.json(
+      { error: venue.reason ?? "지금은 올릴 수 없어요" },
+      { status: 403 },
+    );
+  }
+  // 관리자 QA는 시간창(시작 전·종료 후)만 우회. **취소 경기는 관리자도 fail-closed**
+  // — 클라와 동일한 isVenueUploadBlocked 판정(단일 소스, 삼순 #832 왕복2).
+  if (
+    isVenueUploadBlocked({
+      uploadOpen: venue.uploadOpen,
+      gateKind: venue.gateKind,
+      privileged: qaBypass,
+    })
+  ) {
     return NextResponse.json(
       { error: venue.reason ?? "지금은 올릴 수 없어요" },
       { status: 403 },
@@ -225,7 +279,7 @@ export async function POST(req: NextRequest) {
     coord: venue.coord,
     maxAccuracy: VENUE_GEOFENCE_MAX_ACCURACY_M,
   });
-  const qaBypass = canBypassVenueGeofenceForQa(verified.user.email);
+  // qaBypass 는 위(2단계)에서 이미 계산됨 — 지오펜스/시간창 우회 동일 관리자 권한
   if (!geo.ok && !qaBypass) {
     return NextResponse.json({ error: geo.reason ?? "직관 인증이 필요해요" }, { status: 403 });
   }

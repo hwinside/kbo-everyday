@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { MessageCircle, Heart, ChevronRight, PenSquare } from "lucide-react";
+import { MessageCircle, Heart, ChevronRight, ChevronDown, ChevronUp, PenSquare } from "lucide-react";
 import { useUnifiedFeed } from "@/lib/supabase/useUnifiedFeed";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { getPostDetailPath } from "@/lib/utils/post-share";
@@ -18,6 +18,9 @@ import type { Post } from "@/lib/supabase/usePosts";
 const HERO_APPROVED = new Set<string>(heroApprovedList as string[]);
 
 const HOME_LATEST_COUNT = 20;
+// 홈 최신글 접힘 기본 노출 수. 20개 전량은 목록만 ~1,520px라 스크롤 부담(삼순 리뷰).
+// 기본 5개만 노출하고 '15개 더 보기/접기'로 나머지를 토글한다.
+const HOME_LATEST_COLLAPSED = 5;
 
 // 홈 최신글에서 글을 열었다는 표식(sessionStorage, pending). 클릭 시점엔 아직
 // "뒤로가기로 돌아왔는지" 알 수 없으므로 대기 상태로만 남긴다.
@@ -331,6 +334,7 @@ export default function CommunityLatestPosts({ myTeamId, refreshNonce = 0 }: { m
   const { posts, loading, reload } = useUnifiedFeed({ kind: "all" }, HOME_LATEST_COUNT);
   const { user } = useAuth();
   const [writeMode, setWriteMode] = useState<WriteFlowMode>(null);
+  const [expanded, setExpanded] = useState(false);
   const sectionRef = useRef<HTMLElement | null>(null);
   const didFocusRef = useRef(false);
 
@@ -385,6 +389,8 @@ export default function CommunityLatestPosts({ myTeamId, refreshNonce = 0 }: { m
   if (loading || posts.length === 0) return null;
 
   const latest = posts.slice(0, HOME_LATEST_COUNT);
+  const visible = expanded ? latest : latest.slice(0, HOME_LATEST_COLLAPSED);
+  const hiddenCount = latest.length - HOME_LATEST_COLLAPSED;
 
   return (
     <section ref={sectionRef} className="scroll-mt-4">
@@ -399,10 +405,25 @@ export default function CommunityLatestPosts({ myTeamId, refreshNonce = 0 }: { m
       </div>
 
       <div className="divide-y divide-black/5 dark:divide-white/5">
-        {latest.map((post) => (
+        {visible.map((post) => (
           <PostRow key={post.id} post={post} />
         ))}
       </div>
+
+      {/* 기본 5개 노출, 나머지는 '더 보기/접기'로 토글(삼순 리뷰 — 20개 전량 스크롤 부담 완화). */}
+      {hiddenCount > 0 && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="mt-1 flex items-center justify-center gap-1 w-full py-2 text-[13px] font-medium text-text-secondary active:opacity-70 transition-opacity"
+        >
+          {expanded ? (
+            <>접기 <ChevronUp size={15} /></>
+          ) : (
+            <>{hiddenCount}개 더 보기 <ChevronDown size={15} /></>
+          )}
+        </button>
+      )}
 
       {/* '새 글 올리기' CTA — 내 팀 컬러 배경(미선택 시 앱 액센트). 커뮤니티로 이동하지 않고
           그 자리에서 글쓰기 모달을 연다(배경 전환 어색함 제거, 하린아빠 스펙). 더보기 바로 위. */}

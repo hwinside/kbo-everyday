@@ -258,7 +258,7 @@ export default function AdminFeedbackPage() {
           "Content-Type": "application/json",
           "x-admin-pin": getPin(),
         },
-        body: JSON.stringify({ action: "send_to_user", userId, content: content.trim() }),
+        body: JSON.stringify({ action: "send_to_user", userId, content: content.trim(), source: "feedback" }),
       });
       if (res.ok) {
         setDmSent((prev) => new Set(prev).add(feedbackId));

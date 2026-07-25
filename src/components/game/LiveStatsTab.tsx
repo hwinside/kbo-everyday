@@ -1,12 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { clsx } from "clsx";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import type { TeamData } from "@/lib/constants/teams";
-import type { GameRelayResponse, InningRelay, PlayEvent } from "@/lib/hooks/useGameRelay";
+import type { GameRelayResponse } from "@/lib/hooks/useGameRelay";
 import type { GameStats, BatterStat, PitcherStat } from "@/lib/constants/game-stats";
 import GameStatsTab from "./GameStatsTab";
+import RelayInningCard from "./RelayInningCard";
 
 interface LiveStatsTabProps {
   relay: GameRelayResponse;
@@ -15,58 +15,6 @@ interface LiveStatsTabProps {
   currentPitcher?: string | null;
   awayStarterName?: string;
   homeStarterName?: string;
-}
-
-function getPlayStyle(type: PlayEvent["type"]) {
-  switch (type) {
-    case "homerun":
-      return "text-accent font-semibold";
-    case "hit":
-      return "text-accent";
-    case "strikeout":
-      return "text-text-tertiary";
-    case "walk":
-    case "hbp":
-      return "text-text-secondary";
-    case "error":
-      return "text-red-400";
-    default:
-      return "text-text-secondary";
-  }
-}
-
-function getPlayEmoji(type: PlayEvent["type"]) {
-  if (type === "homerun") return " 🔥";
-  if (type === "hit") return " ⚾";
-  return "";
-}
-
-function getTeamColor(inning: InningRelay, awayTeam: TeamData, homeTeam: TeamData): string {
-  return inning.half === "top" ? awayTeam.colorPrimary : homeTeam.colorPrimary;
-}
-
-function getHalfLabel(half: "top" | "bottom"): string {
-  return half === "top" ? "초" : "말";
-}
-
-function countScoring(plays: PlayEvent[]): number {
-  let scores = 0;
-  for (const play of plays) {
-    if (play.extras) {
-      for (const extra of play.extras) {
-        if (extra.includes("홈까지 진루") || extra.includes("득점")) {
-          scores++;
-        }
-      }
-    }
-    if (play.type === "homerun") {
-      const hasExtraScore = play.extras?.some(
-        (e) => e.includes("홈까지 진루") || e.includes("득점")
-      );
-      if (!hasExtraScore) scores++;
-    }
-  }
-  return scores;
 }
 
 /** relay playerStats → GameStats 변환 */
@@ -136,82 +84,6 @@ function relayToGameStats(
   };
 }
 
-function InningPlays({
-  inning,
-  awayTeam,
-  homeTeam,
-}: {
-  inning: InningRelay;
-  awayTeam: TeamData;
-  homeTeam: TeamData;
-}) {
-  const teamColor = getTeamColor(inning, awayTeam, homeTeam);
-  const scores = countScoring(inning.plays);
-
-  return (
-    <div className="glass-card overflow-hidden">
-      {/* Inning header */}
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-border/30">
-        <div
-          className="w-1 h-4 rounded-full shrink-0"
-          style={{ backgroundColor: teamColor }}
-        />
-        <span className="text-sm font-semibold text-text-primary">
-          {inning.inning}회{getHalfLabel(inning.half)}
-        </span>
-        <span className="text-sm font-medium" style={{ color: teamColor }}>
-          {inning.teamName}
-        </span>
-        {scores > 0 && (
-          <span className="ml-auto text-xs font-bold text-accent bg-accent/10 px-1.5 py-0.5 rounded">
-            {scores}점
-          </span>
-        )}
-      </div>
-
-      {/* Plays */}
-      <div className="px-3 py-1.5">
-        {inning.plays.length === 0 ? (
-          <p className="text-xs text-text-tertiary py-1">기록 없음</p>
-        ) : (
-          inning.plays.map((play, i) => {
-            const isLast = i === inning.plays.length - 1;
-            const hasScoring = play.extras?.some(
-              (e) => e.includes("홈까지 진루") || e.includes("득점")
-            );
-
-            return (
-              <div
-                key={`${play.batterName}-${i}`}
-                className={clsx(
-                  "flex items-start gap-2 py-1.5",
-                  !isLast && "border-b border-border/20"
-                )}
-              >
-                <span className="text-text-tertiary text-xs mt-0.5 shrink-0 w-3 text-center">
-                  {isLast ? "└" : "├"}
-                </span>
-                <span className="text-sm text-text-primary font-medium shrink-0 min-w-[48px]">
-                  {play.batterName}
-                </span>
-                <span className={clsx("text-sm flex-1", getPlayStyle(play.type))}>
-                  {play.result}
-                  {getPlayEmoji(play.type)}
-                </span>
-                {hasScoring && (
-                  <span className="text-[10px] font-bold text-accent bg-accent/10 px-1 py-0.5 rounded shrink-0">
-                    +득점
-                  </span>
-                )}
-              </div>
-            );
-          })
-        )}
-      </div>
-    </div>
-  );
-}
-
 export default function LiveStatsTab({
   relay,
   awayTeam,
@@ -269,7 +141,7 @@ export default function LiveStatsTab({
             )}
 
             {!collapseInnings && orderedInnings.map((inning) => (
-              <InningPlays
+              <RelayInningCard
                 key={`${inning.inning}-${inning.half}`}
                 inning={inning}
                 awayTeam={awayTeam}

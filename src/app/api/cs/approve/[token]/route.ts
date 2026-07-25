@@ -220,7 +220,15 @@ export async function POST(
     return page("발송 실패", `<h1 class="err">회신 대상 검증에 실패했어요</h1><div class="card">잠시 후 다시 시도해주세요.</div>`);
   }
 
-  const res = await sendOpsMessageToUser(admin, systemUserId, claimed.user_id || "", claimed.body);
+  // 건의함(피드백) 회신은 대화에 운영팀 발신만 남아 수신함에서 빠지므로 origin='feedback' 마킹.
+  const res = await sendOpsMessageToUser(
+    admin,
+    systemUserId,
+    claimed.user_id || "",
+    claimed.body,
+    undefined,
+    claimed.kind === "feedback" ? "feedback" : undefined,
+  );
   if (!res.ok) {
     // 발송 실패 → 선점 롤백(재시도 가능하게)
     await admin

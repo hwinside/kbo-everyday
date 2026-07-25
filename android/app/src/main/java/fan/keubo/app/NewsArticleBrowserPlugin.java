@@ -20,11 +20,15 @@ public class NewsArticleBrowserPlugin extends Plugin {
         String commentsUrl = NewsArticleBrowserActivity.validCommentsUrl(
             call.getString("commentsUrl")
         );
+        Integer teamId = call.getInt("teamId");
         getActivity().runOnUiThread(() -> {
             Intent intent = new Intent(getActivity(), NewsArticleBrowserActivity.class);
             intent.putExtra(NewsArticleBrowserActivity.EXTRA_URL, url);
             if (commentsUrl != null) {
                 intent.putExtra(NewsArticleBrowserActivity.EXTRA_COMMENTS_URL, commentsUrl);
+            }
+            if (teamId != null) {
+                intent.putExtra(NewsArticleBrowserActivity.EXTRA_TEAM_ID, teamId.intValue());
             }
             getActivity().startActivity(intent);
             call.resolve();

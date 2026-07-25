@@ -1,4 +1,6 @@
 // 직관 라이브 (Venue Stories) — 공유 타입 + 상수
+import type { UploadGateKind } from "./geofence";
+export type { UploadGateKind };
 
 export const VENUE_STORY_MAX_DURATION_MS = 15_000; // 영상 15초
 export const VENUE_STORY_DURATION_TOLERANCE_MS = 1_000; // 클라 duration 반올림 여유
@@ -53,6 +55,23 @@ export interface VenueStory {
     avatarUrl: string | null;
     teamId: number | null;
   };
+  /**
+   * 클라이언트 낚관 카드 전용(서버 응답에는 없음). 영상 업로드 직후 pending(검증 중)이라
+   * GET 목록(active만 조회)에서 빠지는 구간을 '처리중' 카드로 즉시 노출하기 위해 사용.
+   * active 승급 후 서버 목록이 반환하면 이 카드는 실제 카드로 교체된다.
+   */
+  processing?: boolean;
+  /**
+   * 낙관 '처리중' 카드가 폴링 소진(최대 ~60초)까지도 active 로 승급되지 못한 상태.
+   * 서버 검증 지연/실패(status=removed) 가능성 — 무한 스피너 대신 '지연·다시 시도' 안내로 전환하고
+   * 탭 시 재조회+폴링 재개 동선을 제공한다(삼순 #839 blocker 2). processing=true 를 유지해 병합 대상.
+   */
+  stalled?: boolean;
+  /**
+   * 업로더 본인 상태 조회에서 서버가 terminal removed 또는 cleanup 뒤 missing 으로 판정한 낙관 카드.
+   * 탭하면 카드를 정리하고 컴포저를 다시 열어 재업로드할 수 있다.
+   */
+  failed?: boolean;
 }
 
 /** POST /api/venue-stories 요청 바디 */
@@ -83,4 +102,10 @@ export interface VenueInfo {
   radiusM: number;
   uploadOpen: boolean; // 업로드 가능 시간대인지
   reason: string | null; // uploadOpen=false 사유
+  // 취소 경기 여부 — 관리자 QA도 취소 경기는 fail-closed(시간창만 우회). 클라가 media prepare 전 차단해
+  // 고아 객체/불필요 전송을 막는다(삼순 #832 왕복2).
+  cancelled: boolean;
+  // 업로드 차단 사유 종류 — 관리자 우회를 시간창(before/after)만 허용하고
+  // cancelled/no-coord/no-time 은 관리자도 fail-closed 판정하기 위해 클라에 내린다(삼순 #832 왕복3).
+  gateKind: UploadGateKind;
 }
