@@ -567,7 +567,7 @@ async function startForTeamSide(params: {
   subscribedKeysByUser: Map<string, Set<string>>;
   /** 경기 예정 시작(ms) — 늦은 윈도우 per-토큰 게이트용. null = 파싱 불가. */
   gameStartMs: number | null;
-  /** channel_born 마킹 재시도 절대 deadline(ms) — fanout 전체 공유(starvation 방지). */
+  /** channel_born 마킹 재시도 절대 deadline(ms) — *경기별* 예산(그 경기 처리 시작 기준). */
   markRetryDeadlineMs: number;
 }): Promise<{ sent: number; failed: boolean }> {
   if (params.teamId === null) return { sent: 0, failed: false };
@@ -877,11 +877,6 @@ export async function pushLiveActivityStarts(
   const jwt = await getProviderTokenSafe();
   if (!jwt) return { error: "apns provider token failed" };
 
-  // channel_born 마킹 재시도 총 예산 — start fanout 전체(양측×전 경기) 공유. 소진 후엔
-  // 배치당 첫 시도만 하고 즉시 다음으로 — 느린 실패 배치(8s statement timeout 반복)가
-  // 뒤 chunk/경기 마킹을 굶기거나 fanout drain deadline(68s)을 잠식하지 않는다(삼순 R1).
-  const markRetryDeadlineMs = Date.now() + CHANNEL_BORN_RETRY_BUDGET_MS;
-
   // active broadcast 채널 + 유효 구독(스펙 v4) — p2s payload 구성·중복 start 제외용.
   // (live-activity-channels 모듈과의 순환 import를 피해 직접 조회.)
   const startGameIds = liveGames.map((g) => g.G_ID as string);
@@ -929,6 +924,15 @@ export async function pushLiveActivityStarts(
     const gameId = g.G_ID as string;
     const codes = gameId.match(/^\d{8}([A-Z]{2})([A-Z]{2})\d$/);
     if (!codes) continue;
+
+    // channel_born 마킹 재시도 예산은 *경기별*로 리셋한다(양측과 공유, 경기 간 독립).
+    // fanout 전체 공유 예산은 먼저 처리된 경기가 20초를 소진하면 뒤 경기 마킹이 전부
+    // deadline로 skip되는 굶김을 낳았다(2026-07-25 SSOB0만 1111 마킹, 나머지 2~5 실측).
+    // 경기별 리셋으로 각 경기가 자신의 20초 마킹 예산을 갖는다. #816 불변식(한 경기의
+    // 느린 마킹이 *그 경기 내* 발송/뒤 chunk를 굶기지 않음)은 per-game 예산으로 유지 —
+    // 경기는 순차 처리되므로 한 경기 마킹이 *다른* 경기 발송을 굶기는 구조가 아니다
+    // (이미 await로 경기간 직렬). 정상 경우 마킹 UPDATE는 경기당 sub-second라 예산 미도달.
+    const markRetryDeadlineMs = Date.now() + CHANNEL_BORN_RETRY_BUDGET_MS;
 
     // 늦은 자동시작 가드 — 게임 단위 skip을 *per-토큰 게이트*로 전환(2026-07-17 재설치 사고).
     // 시작+START_WINDOW_MS 경과 경기도 루프는 계속 돌되, decideStartReissue가 "경기 시작
