@@ -101,6 +101,7 @@
     "qa:roster-moves:db": "node scripts/qa/roster-moves-db-integration.mjs",
     "qa:player-search-backfill": "node scripts/qa/player-search-backfill-smoke.mjs",
     "qa:venue-geofence": "tsx scripts/qa/venue-geofence-smoke.ts",
+    "qa:venue-precheck": "tsx scripts/qa/venue-precheck-smoke.ts",
     "qa:venue-media": "tsx scripts/qa/venue-media-smoke.ts",
     "qa:venue-video-compress": "node scripts/qa/venue-video-compress-e2e.mjs",
     "qa:venue-storage-path": "tsx scripts/qa/venue-storage-path-smoke.ts",

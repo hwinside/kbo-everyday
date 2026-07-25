@@ -9,9 +9,19 @@ import { prepareVenueStoryMedia, probeVideoDurationMs } from "@/lib/venue-storie
 import { checkVenueMediaLimits } from "@/lib/venue-stories/media-limits";
 import { isVideoCompressSupported } from "@/lib/venue-stories/video-compress";
 import { getVenuePosition, type Position } from "@/lib/venue-stories/geo";
-import { haversineMeters } from "@/lib/venue-stories/stadiums";
-import { isVenueUploadBlocked } from "@/lib/venue-stories/geofence";
-import { VENUE_STORY_CONSENT_VERSION, type VenueInfo } from "@/lib/venue-stories/types";
+import { evaluateGeofence, isVenueUploadBlocked } from "@/lib/venue-stories/geofence";
+import {
+  classifyPrecheck,
+  isPrecheckReusable,
+  precheckGateReady,
+  VENUE_PRECHECK_REUSE_TTL_MS,
+  type PrecheckState,
+} from "@/lib/venue-stories/precheck";
+import {
+  VENUE_GEOFENCE_MAX_ACCURACY_M,
+  VENUE_STORY_CONSENT_VERSION,
+  type VenueInfo,
+} from "@/lib/venue-stories/types";
 import { consentStorageKey } from "@/lib/venue-stories/auth-consent";
 import { createPickController, type PickController } from "@/lib/venue-stories/pick-controller";
 import {
@@ -111,15 +121,11 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
 
   // GPS 선체크 — 모달 열릴 때 위치를 미리 측정해 경기장 밖이면 파일 선택 전에 안내한다
   // (하린아빠: 못 올리는 위치 유저가 촬영·선택·동의까지 다 밟고 마지막에 거절되는 UX 방지).
-  // 관리자 QA 계정은 선체크도 생략(구장 밖 테스트 허용). ok 일 때 측정값을 재사용해 중복 GPS 팝업 회피.
-  type PrecheckState = {
-    status: "idle" | "measuring" | "ok" | "out" | "failed";
-    distanceM?: number | null;
-    error?: string | null;
-  };
+  // 관리자 QA 계정은 선체크도 생략(구장 밖 테스트 허용). ok 일 때 측정값을 짧은 TTL 안에서만 재사용해
+  // 중복 GPS 팝업을 피하되, 만료 시 submit 에서 현재 위치를 재측정한다(삼순 NO-GO #3: stale 재사용 방지).
   const [precheck, setPrecheck] = useState<PrecheckState>({ status: "idle" });
   const [precheckNonce, setPrecheckNonce] = useState(0);
-  const precheckPosRef = useRef<Position | null>(null);
+  const precheckPosRef = useRef<{ pos: Position; at: number } | null>(null);
 
   // UGC 가이드라인 동의 — 버전별 + **user-scoped** 기억(삼순 09:44 #3: 계정 전환 시 타 계정
   // 동의 상속 금지). userId 미상이면 기억하지 않는다. 서버가 최종 검증하므로 이건 UX 편의용.
@@ -163,6 +169,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   const radiusKm = venue ? Math.round((venue.radiusM / 1000) * 10) / 10 : null;
 
   // 열릴 때 서버에서 구장/업로드 가능 시간대를 받아온다(서버가 최종 권위, 여기선 UX 게이트용).
+  // precheckNonce 도 dep — 구장 정보 확인 실패(venue=null) 시 "다시 확인"이 venue 를 재페치하게(삼순 NO-GO #2).
   useEffect(() => {
     if (!isOpen) return;
     let alive = true;
@@ -176,7 +183,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
         const data = (await res.json()) as VenueInfo;
         if (alive) setVenue(data);
       } catch {
-        // 무시 — 서버가 POST 에서 최종 판정
+        // 무시 — venue=null 유지 → 선체크가 fail-closed(failed)로 닫아 서버 403 전 차단
       } finally {
         if (alive) setVenueLoading(false);
       }
@@ -184,7 +191,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
     return () => {
       alive = false;
     };
-  }, [isOpen, gameId]);
+  }, [isOpen, gameId, precheckNonce]);
 
   // GPS 선체크: 모달 열림 + 비관리자 + 시간대 정상일 때 위치를 미리 측정한다.
   // 밖이면 파일 선택 UI 대신 안내 카드를 띄우고 제출을 막는다(제출 시 재측정 생략은 ok 값 재사용).
@@ -207,33 +214,39 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
       setPrecheck({ status: "idle" });
       return;
     }
-    // 좌표 판정 불가(미지원 구장 등)면 기존 흐름에 위임(제출 시 서버 최종 검증).
+    // 구장 정보 미확보(venue=null / 좌표 null)는 fail-closed — 파일 선택 열지 않고 "다시 시도" 안내(삼순 NO-GO #2).
     if (!venue || venue.lat == null || venue.lng == null) {
       precheckPosRef.current = null;
-      setPrecheck({ status: "ok" });
+      setPrecheck({ status: "failed", error: "구장 정보를 확인하지 못했어요. 다시 시도해주세요" });
       return;
     }
-    const vlat = venue.lat;
-    const vlng = venue.lng;
-    const vr = venue.radiusM;
+    const pv = {
+      lat: venue.lat,
+      lng: venue.lng,
+      radiusM: venue.radiusM,
+      stadiumName: venue.stadiumName,
+    };
     let alive = true;
     precheckPosRef.current = null;
     setPrecheck({ status: "measuring" });
     (async () => {
       const m = await getVenuePosition();
       if (!alive) return;
-      if ("error" in m) {
-        setPrecheck({ status: "failed", error: m.error });
-        return;
-      }
-      const dist = haversineMeters(m.lat, m.lng, vlat, vlng);
-      if (dist > vr) {
+      // 서버와 동일 축(evaluateGeofence + VENUE_GEOFENCE_MAX_ACCURACY_M)으로 판정 — 구장 안이지만
+      // 저정확도인 측정값을 파일 선택 전 failed 로 보낸다(삼순 NO-GO #1: accuracy 무시 방지).
+      const next = classifyPrecheck({
+        venue: pv,
+        measurement:
+          "error" in m ? { error: m.error } : { lat: m.lat, lng: m.lng, accuracy: m.accuracy },
+        maxAccuracy: VENUE_GEOFENCE_MAX_ACCURACY_M,
+      });
+      // ok 일 때만 측정값+시각을 저장 — submit 은 TTL 안에서만 재사용(삼순 NO-GO #3).
+      if (next.status === "ok" && !("error" in m)) {
+        precheckPosRef.current = { pos: m, at: Date.now() };
+      } else {
         precheckPosRef.current = null;
-        setPrecheck({ status: "out", distanceM: dist });
-        return;
       }
-      precheckPosRef.current = m;
-      setPrecheck({ status: "ok" });
+      setPrecheck(next);
     })();
     return () => {
       alive = false;
@@ -271,6 +284,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
 
   const openPicker = () => {
     if (submitting || readingPreview) return;
+    if (!precheckGateReady({ isAdmin, status: precheck.status })) return;
     // 재진입/late-event 방어는 controller가 소유 (픽별 새 input + 토큰 closure 결속)
     pickController().openPicker();
   };
@@ -395,9 +409,13 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
       accuracy: null,
     };
     if (!isAdmin) {
-      // 선체크가 통과(ok)했으면 그 측정값을 재사용해 중복 GPS 팝업을 피한다.
-      // 없으면(선체크 미완/재측정 등) 여기서 최종 측정 — 안전상 반경 재확인은 유지.
-      let measured = precheckPosRef.current;
+      // 선체크 ok 측정값은 짧은 TTL 안에서만 재사용(중복 GPS 팝업 회피). 모달을 열고 이동해
+      // 측정값이 만료됐거나 없으면 현재 위치를 재측정한다(삼순 NO-GO #3: stale 재사용 방지).
+      const cached = precheckPosRef.current;
+      let measured: Position | null =
+        cached && isPrecheckReusable(cached.at, Date.now(), VENUE_PRECHECK_REUSE_TTL_MS)
+          ? cached.pos
+          : null;
       if (!measured) {
         setPhase("geo");
         const m = await getVenuePosition();
@@ -409,16 +427,22 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
         measured = m;
       }
       pos = measured;
-      if (venue && venue.lat != null && venue.lng != null) {
-        const dist = haversineMeters(measured.lat, measured.lng, venue.lat, venue.lng);
-        if (dist > venue.radiusM) {
-          const where = venue.stadiumName ?? "경기장";
-          setError(
-            `직관 인증 실패 — ${where}${radiusKm ? ` 반경 ${radiusKm}km` : ""} 안에서만 올릴 수 있어요`,
-          );
-          setPhase("idle");
-          return;
-        }
+      // 최종 재검증 — 서버와 동일 축(evaluateGeofence: accuracy + 반경). 구장 정보/좌표 없으면
+      // coord=null 로 fail-closed(삼순 NO-GO #1·#2 일관). fresh·stale 모두 이 게이트를 통과해야 업로드.
+      const geo = evaluateGeofence({
+        lat: measured.lat,
+        lng: measured.lng,
+        accuracy: measured.accuracy,
+        coord:
+          venue && venue.lat != null && venue.lng != null
+            ? { lat: venue.lat, lng: venue.lng, radiusM: venue.radiusM, name: venue.stadiumName ?? "경기장" }
+            : null,
+        maxAccuracy: VENUE_GEOFENCE_MAX_ACCURACY_M,
+      });
+      if (!geo.ok) {
+        setError(geo.reason ?? "직관 인증에 실패했어요. 야외에서 다시 시도해주세요");
+        setPhase("idle");
+        return;
       }
     }
 
@@ -501,7 +525,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   const showPrecheckCard =
     !isAdmin &&
     !gateReason &&
-    (precheck.status === "measuring" || precheck.status === "out" || precheck.status === "failed");
+    !precheckGateReady({ isAdmin, status: precheck.status });
   const precheckDistKm =
     precheck.distanceM != null ? Math.max(0.1, Math.round(precheck.distanceM / 100) / 10) : null;
 
@@ -550,7 +574,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
 
             {showPrecheckCard ? (
               <div className="flex flex-col items-center justify-center gap-3 h-48 rounded-2xl border border-border bg-bg-tertiary/40 px-5 text-center">
-                {precheck.status === "measuring" ? (
+                {precheck.status === "idle" || precheck.status === "measuring" ? (
                   <>
                     <Loader2 size={26} className="animate-spin text-text-tertiary" />
                     <span className="text-sm text-text-secondary">위치 확인 중… 잠시만요</span>
@@ -587,7 +611,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
             ) : !previewUrl ? (
               <button
                 onClick={openPicker}
-                disabled={submitting}
+                disabled={submitting || !precheckGateReady({ isAdmin, status: precheck.status })}
                 className="flex flex-col items-center justify-center gap-2 h-48 rounded-2xl border-2 border-dashed border-border text-text-tertiary active:bg-bg-tertiary disabled:opacity-40"
               >
                 <VideoIcon size={28} />
@@ -607,7 +631,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
                 )}
                 <button
                   onClick={openPicker}
-                  disabled={submitting}
+                  disabled={submitting || !precheckGateReady({ isAdmin, status: precheck.status })}
                   className="absolute bottom-2 right-2 text-xs bg-black/60 text-white px-3 py-1.5 rounded-full disabled:opacity-40"
                 >
                   다시 선택
@@ -665,7 +689,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
 
             <button
               onClick={submit}
-              disabled={!file || submitting || readingPreview || !!gateReason || !agreed || (!isAdmin && precheck.status !== "ok")}
+              disabled={!file || submitting || readingPreview || !!gateReason || !agreed || !precheckGateReady({ isAdmin, status: precheck.status })}
               className="w-full py-3 rounded-xl bg-brand-primary text-white font-semibold flex items-center justify-center gap-2 disabled:opacity-40"
             >
               {submitting ? <Loader2 size={18} className="animate-spin" /> : null}
