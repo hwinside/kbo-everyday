@@ -117,7 +117,11 @@ async function main() {
   );
 
   const nativePage = read("src/app/native/news-comments/page.tsx");
-  assert.match(nativePage, /isNewsDiscussionAdmin/);
+  // 네이티브 댓글 오버레이는 로그인 유저 전용(admin-only 해제 = 전체 로그인 유저, 익명 아님).
+  // 미로그인은 웹/네이티브 CTA 단계에서 LoginSheet로 유도되므로 이 페이지까지 도달하면
+  // 로그인 상태다. admin 게이트(isNewsDiscussionAdmin)에서 유저 게이트(isNewsDiscussionUser)로 전환.
+  assert.match(nativePage, /isNewsDiscussionUser/);
+  assert.doesNotMatch(nativePage, /isNewsDiscussionAdmin/);
   assert.match(nativePage, /notFound\(\)/);
 
   console.log("news WebView comments smoke: 23 assertions passed");

@@ -6,8 +6,8 @@ import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import { readableTextColor } from "@/lib/utils/team";
 import type { NewsMock } from "@/lib/constants/news";
 import NewsCommentButton from "@/components/news/NewsCommentButton";
-import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { useNewsArticleBrowser } from "@/hooks/useNewsArticleBrowser";
+import { useAuth } from "@/lib/supabase/AuthContext";
 
 interface NewsCarouselProps {
   news: NewsMock[];
@@ -16,7 +16,7 @@ interface NewsCarouselProps {
 const AUTO_INTERVAL = 4000;
 
 export default function NewsCarousel({ news }: NewsCarouselProps) {
-  const isAdmin = useIsAdmin();
+  const { user } = useAuth();
   const { openArticle } = useNewsArticleBrowser();
   const [current, setCurrent] = useState(0);
   const [isUserPaused, setIsUserPaused] = useState(false);
@@ -32,8 +32,9 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
   const len = slides.length;
 
   // 홈 카드 댓글 수는 최대 10건을 한 번에 조회한다. 조회만으로 빈 댓글방을 만들지 않는다.
+  // 댓글은 로그인 유저 공개(admin-only 해제 = 전체 로그인 유저)라 미로그인은 count 조회 불필요.
   useEffect(() => {
-    if (!isAdmin) return;
+    if (!user) return;
     const articles = news.slice(0, 10)
       .filter((item) => item.sourceUrl && item.sourceUrl !== "#")
       .map((item) => ({
@@ -55,7 +56,7 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
       })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [isAdmin, news]);
+  }, [news, user]);
 
   // 최대 10개 og:image를 단일 batch로 비동기 조회(텍스트 렌더 비차단).
   useEffect(() => {
@@ -317,18 +318,16 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
                     </div>
                   </button>
                 </div>
-                {isAdmin && (
-                  <NewsCommentButton
-                    article={article}
-                    initialCount={commentCounts[String(item.id)] ?? 0}
-                    showCount
-                    onCountChange={(next) => setCommentCounts((previous) => ({
-                      ...previous,
-                      [String(item.id)]: next,
-                    }))}
-                    className="absolute bottom-2 right-5 z-20 bg-black/10 text-neutral-600 hover:bg-black/20 dark:bg-white/25 dark:text-white dark:hover:bg-white/40 backdrop-blur-sm"
-                  />
-                )}
+                <NewsCommentButton
+                  article={article}
+                  initialCount={commentCounts[String(item.id)] ?? 0}
+                  showCount
+                  onCountChange={(next) => setCommentCounts((previous) => ({
+                    ...previous,
+                    [String(item.id)]: next,
+                  }))}
+                  className="absolute bottom-2 right-5 z-20 bg-black/10 text-neutral-600 hover:bg-black/20 dark:bg-white/25 dark:text-white dark:hover:bg-white/40 backdrop-blur-sm"
+                />
               </div>
             );
           })}

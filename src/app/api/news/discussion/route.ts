@@ -6,7 +6,7 @@ import {
   type ParsedNewsDiscussionInput,
 } from "@/lib/news/discussion";
 import { allowNewsDiscussionRequest } from "@/lib/news/discussion-rate-limit";
-import { isNewsDiscussionAdmin } from "@/lib/news/discussion-admin";
+import { isNewsDiscussionUser } from "@/lib/news/discussion-auth";
 
 function requesterKey(req: NextRequest): string {
   return req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
@@ -32,8 +32,12 @@ async function visibleCommentCount(articleKey: string): Promise<number> {
 }
 
 export async function POST(req: NextRequest) {
-  if (!(await isNewsDiscussionAdmin())) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  // ensure(브릿지 생성/조회)는 로그인 유저 전용(admin-only 해제 = 전체 로그인 유저,
+  // PR #818 선례와 동일 계약). 익명을 열면 rate-limit 안에서 임의 기사 URL 로 post
+  // 브릿지를 무한 생성하는 bridge-spam 이 가능하다. 클라 CTA는 미로그인 시 LoginSheet를
+  // 선노출해 이 게이트(401)에 도달하지 않게 하고, 작성은 CommentSheet가 다시 막는다.
+  if (!(await isNewsDiscussionUser())) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY || !process.env.SYSTEM_USER_ID) {
     return NextResponse.json({ error: "discussion service unavailable" }, { status: 503 });

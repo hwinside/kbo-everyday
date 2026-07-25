@@ -1,15 +1,19 @@
 "use client";
 
 import { useCallback } from "react";
-import { useIsAdmin } from "@/hooks/useIsAdmin";
 import {
   handleNewsArticleAnchorClick,
   openNewsArticle,
 } from "@/lib/open-external";
+import { useAuth } from "@/lib/supabase/AuthContext";
 import type { NewsArticleDiscussion } from "@/lib/news/article-discussion";
 
+// 댓글은 로그인 유저에게 열린다(admin-only 해제 = 전체 로그인 유저, PR #818 선례
+// 동일 계약). 미로그인은 인앱 브라우저 댓글바를 배선하지 않고(commentsEnabled=false),
+// 인피드 CTA는 댓글 버튼이 LoginSheet로 유도한다. 대글 작성은 CommentSheet가 다시 막는다.
 export function useNewsArticleBrowser() {
-  const commentsEnabled = useIsAdmin();
+  const { user } = useAuth();
+  const commentsEnabled = Boolean(user);
 
   const openArticle = useCallback((article: NewsArticleDiscussion) => {
     openNewsArticle(article, commentsEnabled);
