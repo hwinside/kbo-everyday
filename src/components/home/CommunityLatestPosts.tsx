@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { MessageCircle, Heart, ChevronRight, ChevronDown, ChevronUp, PenSquare } from "lucide-react";
-import { useUnifiedFeed } from "@/lib/supabase/useUnifiedFeed";
+import { useUnifiedFeed, type FeedBoard } from "@/lib/supabase/useUnifiedFeed";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { getPostDetailPath } from "@/lib/utils/post-share";
 import { getTeamBySlug, getTeamById } from "@/lib/constants/teams";
@@ -331,7 +331,12 @@ function PostRow({ post }: { post: Post }) {
  * 신규 API·테이블 없이 useUnifiedFeed를 재사용한다.
  */
 export default function CommunityLatestPosts({ myTeamId, refreshNonce = 0 }: { myTeamId: number | null; refreshNonce?: number }) {
-  const { posts, loading, reload } = useUnifiedFeed({ kind: "all" }, HOME_LATEST_COUNT);
+  // 홈 최신글은 '최애팀 태그된 글'만 노출(하린아빠 스펙 2026-07-25). 전체글이 너무 많아진 데 대한 대응.
+  // 최애팀이 있으면 팀 피드(team_tags·해당 팀 선수 태그·레거시 팀/선수 보드 OR 쿼리)로 서버 필터,
+  // 최애팀 미선택(비로그인·온보딩 전)이면 필터 기준이 없으므로 기존처럼 전체글을 노출한다.
+  const myTeamSlug = myTeamId != null ? getTeamById(myTeamId)?.slug ?? null : null;
+  const board: FeedBoard = myTeamSlug ? { kind: "team", teamId: myTeamSlug } : { kind: "all" };
+  const { posts, loading, reload } = useUnifiedFeed(board, HOME_LATEST_COUNT);
   const { user } = useAuth();
   const [writeMode, setWriteMode] = useState<WriteFlowMode>(null);
   const [expanded, setExpanded] = useState(false);
