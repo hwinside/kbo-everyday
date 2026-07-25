@@ -524,7 +524,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
       >
         <div className="absolute inset-0 bg-black/60" onClick={close} />
         <motion.div
-          className="relative w-full max-w-lg mx-auto bg-bg-secondary rounded-t-3xl max-h-[90dvh] overflow-y-auto overscroll-contain flex flex-col"
+          className="relative w-full max-w-lg mx-auto bg-bg-secondary rounded-t-3xl max-h-[90dvh] overflow-hidden flex flex-col"
           initial={{ y: "100%" }}
           animate={{ y: 0 }}
           exit={{ y: "100%" }}
@@ -543,7 +543,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
             </button>
           </div>
 
-          <div className="p-4 flex flex-col gap-3">
+          <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 flex flex-col gap-3">
             <div className="flex items-center gap-1.5 text-[12px] text-text-tertiary bg-bg-tertiary/50 rounded-lg px-3 py-2">
               <MapPin size={13} className="text-red-400 shrink-0" />
               <span>
@@ -646,7 +646,12 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
               placeholder="한 줄 코멘트 (선택)"
               className="w-full px-3 py-2.5 rounded-xl bg-bg-tertiary text-sm text-text-primary placeholder:text-text-tertiary outline-none disabled:opacity-40"
             />
+          </div>
 
+          <div
+            className="shrink-0 border-t border-border p-4 flex flex-col gap-3"
+            style={{ paddingBottom: "max(env(safe-area-inset-bottom), 12px)" }}
+          >
             <label className="flex items-start gap-2 text-[11px] text-text-tertiary leading-relaxed cursor-pointer select-none">
               <input
                 type="checkbox"
