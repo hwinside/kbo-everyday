@@ -28,6 +28,7 @@ import {
   subscribeKeyboardInset,
   type VisualViewportLike,
 } from "../../src/lib/venue-stories/keyboard-inset";
+import { shouldCloseCommentSheetDrag } from "../../src/lib/venue-stories/comment-sheet-gesture";
 
 let pass = 0;
 let fail = 0;
@@ -246,6 +247,25 @@ console.log("[전송 중 스토리 전환 오염 가드 — 삼순 #807 라운�
     viewerSrc.includes('data-composer="venue-story"'));
   ok("모달 키보드 회피 — bottom=kbInset + height=vvHeight(CommentSheet 패턴)",
     viewerSrc.includes("bottom: kbInset") && viewerSrc.includes("vvHeight"));
+  ok("커뮤니티 CommentSheet 동일 부분 높이 60dvh",
+    viewerSrc.includes("min(60dvh") && viewerSrc.includes('"60dvh"'));
+  ok("커뮤니티 CommentSheet 동일 spring 열림/닫힘 모션",
+    viewerSrc.includes('type: "spring"') && viewerSrc.includes('commentsClosing ? "100%" : 0'));
+  ok("댓글 목록 스크롤 중에는 sheet drag close와 구분",
+    viewerSrc.includes('data-comment-scroll="true"'));
+
+  const layoutSrc = readFileSync(path.resolve(process.cwd(), "src/app/layout.tsx"), "utf8");
+  ok("전역 viewport meta는 기존 resizes-content 유지(Android 범위 확장 없음)",
+    layoutSrc.includes('interactiveWidget: "resizes-content"'));
+
+  ok("80px 초과 세로 drag → 닫기",
+    shouldCloseCommentSheetDrag({ armed: true, deltaX: 5, deltaY: 90 }));
+  ok("짧은 drag → 유지",
+    !shouldCloseCommentSheetDrag({ armed: true, deltaX: 5, deltaY: 60 }));
+  ok("가로 drag → 유지",
+    !shouldCloseCommentSheetDrag({ armed: true, deltaX: 90, deltaY: 100 }));
+  ok("목록 스크롤로 arm 안 됨 → 유지",
+    !shouldCloseCommentSheetDrag({ armed: false, deltaX: 0, deltaY: 120 }));
 }
 
 console.log("[rate limit 원자화 RPC 계약 — 삼순 #807 라운드3 blocker 1]");

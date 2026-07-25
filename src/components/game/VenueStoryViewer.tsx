@@ -13,6 +13,7 @@ import {
   type VenueStoryComment,
 } from "@/lib/venue-stories/comments";
 import { computeKeyboardInset } from "@/lib/venue-stories/keyboard-inset";
+import { shouldCloseCommentSheetDrag } from "@/lib/venue-stories/comment-sheet-gesture";
 import { lockRootScroll, unlockRootScroll } from "@/lib/venue-stories/scroll-lock";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import { isIosNativeRuntime } from "@/lib/capacitor/platform";
@@ -99,6 +100,7 @@ export default function VenueStoryViewer({
   const [toast, setToast] = useState<string | null>(null);
   // 댓글 모달(바텀시트) 오픈 여부 — 인라인 입력바 대신 탭→모달 방식(하린아빠 7/25 지시).
   const [commentsOpen, setCommentsOpen] = useState(false);
+  const [commentsClosing, setCommentsClosing] = useState(false);
   const [comments, setComments] = useState<VenueStoryComment[] | null>(null);
   const [commentTotal, setCommentTotal] = useState<number | null>(null);
   const [commentInput, setCommentInput] = useState("");
@@ -118,6 +120,9 @@ export default function VenueStoryViewer({
   const storyIdRef = useRef<number | null>(null);
   // 최신 댓글 bottom scroll 대상 — 댓글 시트 목록 컨테이너
   const sheetListRef = useRef<HTMLDivElement>(null);
+  const commentDragStartXRef = useRef(0);
+  const commentDragStartYRef = useRef(0);
+  const commentDragShouldCloseRef = useRef(false);
   const rafRef = useRef<number | null>(null);
   const startRef = useRef<number>(0);
   const elapsedRef = useRef<number>(0);
@@ -155,6 +160,7 @@ export default function VenueStoryViewer({
     elapsedRef.current = 0;
     startRef.current = performance.now();
     setCommentsOpen(false);
+    setCommentsClosing(false);
     setComments(null);
     setCommentTotal(null);
     setCommentInput("");
@@ -220,6 +226,44 @@ export default function VenueStoryViewer({
   useEffect(() => {
     if (commentsOpen) scrollToLatest(sheetListRef.current);
   }, [commentsOpen, comments, composerFocused]);
+
+  const requestCommentsClose = useCallback(() => {
+    setCommentsClosing(true);
+  }, []);
+
+  const handleCommentSheetTouchStart = useCallback((e: React.TouchEvent<HTMLDivElement>) => {
+    if (e.touches.length !== 1) return;
+    commentDragStartXRef.current = e.touches[0].clientX;
+    commentDragStartYRef.current = e.touches[0].clientY;
+    commentDragShouldCloseRef.current = false;
+  }, []);
+
+  const handleCommentSheetTouchMove = useCallback((e: React.TouchEvent<HTMLDivElement>) => {
+    if (e.touches.length !== 1) return;
+    const target = e.target;
+    if (!(target instanceof HTMLElement) || target.closest("input, textarea")) return;
+    const deltaX = Math.abs(e.touches[0].clientX - commentDragStartXRef.current);
+    const deltaY = e.touches[0].clientY - commentDragStartYRef.current;
+    if (deltaY < 18 || deltaY < deltaX * 1.2) return;
+    const scrollEl = target.closest("[data-comment-scroll='true']") as HTMLElement | null;
+    if (scrollEl && scrollEl.scrollTop > 2) return;
+    commentDragShouldCloseRef.current = true;
+    if (e.cancelable) e.preventDefault();
+  }, []);
+
+  const handleCommentSheetTouchEnd = useCallback((e: React.TouchEvent<HTMLDivElement>) => {
+    const touch = e.changedTouches[0];
+    if (!touch) return;
+    const deltaX = Math.abs(touch.clientX - commentDragStartXRef.current);
+    const deltaY = touch.clientY - commentDragStartYRef.current;
+    const shouldClose = shouldCloseCommentSheetDrag({
+      armed: commentDragShouldCloseRef.current,
+      deltaX,
+      deltaY,
+    });
+    commentDragShouldCloseRef.current = false;
+    if (shouldClose) requestCommentsClose();
+  }, [requestCommentsClose]);
 
   // 이미지 자동 진행(RAF), 영상은 timeupdate 로 처리
   useEffect(() => {
@@ -576,7 +620,10 @@ export default function VenueStoryViewer({
           인앱브라우저 기사 댓글 모달과 동일 UX). iOS 키보드 회피는 모달 셔(CommentSheet 패턴)에서 처리. */}
       <button
         data-open-comments
-        onClick={() => setCommentsOpen(true)}
+        onClick={() => {
+          setCommentsClosing(false);
+          setCommentsOpen(true);
+        }}
         className="absolute left-3 right-3 z-20 h-11 flex items-center gap-2 px-4 rounded-full bg-black/40 border border-white/25 text-white/80"
         style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 12px)" }}
         aria-label="댓글 목록"
@@ -587,63 +634,94 @@ export default function VenueStoryViewer({
         </span>
       </button>
 
-      {/* 댓글 모달(바텀시트) — 인앱브라우저 기사 댓글 모달과 동일한 CommentSheet 키보드 회피 셔 재사용.
-          시트를 bottom=kbInset 로 키보드 위에 올리고, 컴포저 포커스 시 height=vvHeight(시각 뷰포트 전체)로
-          확장해 목록+컴포저가 키보드 위에 함께 보이게 한다. 배경/영상은 뷰어 명세(root scroll lock)로 잠금. */}
+      {/* 댓글 모달(바텀시트) — 커뮤니티 댓글 모달(CommentSheet)과 동일한 디자인·키보드 회피 구조(하린아빠 7/25 지시).
+          ⚠️ position:fixed 로 뷰포트에 직접 앵커(과거 absolute-in-fixed 는 iOS 에서 키보드 회피가 어긋나 입력창이
+          키보드 뒤로 가렸다 — 하린아빠 iOS 리포트). bottom=kbInset 로 컴포저를 키보드 위로 올리고, 포커스 시
+          height=vvHeight 로 확장해 목록+컴포저가 키보드 위에 함께 보인다. 배경/영상은 뷰어 root scroll lock 으로 잠금. */}
       {commentsOpen && (
-        <div
-          className="absolute inset-0 z-30 bg-black/50"
-          onClick={() => setCommentsOpen(false)}
+        <motion.div
+          className="fixed inset-0 z-30 bg-black/60"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: commentsClosing ? 0 : 1 }}
+          transition={{ duration: 0.2 }}
+          onClick={requestCommentsClose}
         >
-          <div
-            className="absolute inset-x-0 mx-auto max-w-lg bg-bg-secondary rounded-t-3xl flex flex-col overflow-hidden"
+          <motion.div
+            className="fixed inset-x-0 z-30 flex flex-col bg-bg-secondary rounded-t-2xl overflow-hidden"
             style={{
               bottom: kbInset,
               height:
                 composerFocused && vvHeight != null
                   ? `${vvHeight}px`
                   : vvHeight != null
-                    ? `min(70dvh, ${vvHeight}px)`
-                    : "70dvh",
+                    ? `min(60dvh, ${vvHeight}px)`
+                    : "60dvh",
             }}
+            initial={{ y: "100%" }}
+            animate={{ y: commentsClosing ? "100%" : 0 }}
+            transition={{ type: "spring", damping: 28, stiffness: 300 }}
+            onAnimationComplete={() => {
+              if (commentsClosing) {
+                setCommentsOpen(false);
+                setCommentsClosing(false);
+              }
+            }}
+            onTouchStart={handleCommentSheetTouchStart}
+            onTouchMove={handleCommentSheetTouchMove}
+            onTouchEnd={handleCommentSheetTouchEnd}
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="px-4 pt-4 pb-2 flex items-center justify-between shrink-0">
-              <p className="text-text-primary font-semibold text-sm">
-                댓글 {commentTotal ?? 0}
-              </p>
+            {/* Drag handle (CommentSheet 동일) */}
+            <div className="flex justify-center pt-3 pb-2 shrink-0">
+              <div className="w-10 h-1 rounded-full bg-text-tertiary/40" />
+            </div>
+
+            {/* Header (CommentSheet 동일 — 가운데 제목 + 우상단 X) */}
+            <div className="relative px-4 pb-3 border-b border-border shrink-0">
+              <h3 className="text-base font-semibold text-text-primary text-center">댓글</h3>
               <button
-                onClick={() => setCommentsOpen(false)}
-                className="w-8 h-8 flex items-center justify-center text-text-secondary"
+                onClick={requestCommentsClose}
+                className="absolute right-4 top-0 p-1 text-text-tertiary hover:text-text-primary transition-colors"
                 aria-label="댓글 닫기"
               >
-                <X size={18} />
+                <X size={20} />
               </button>
             </div>
+
+            {/* Comment list (CommentSheet 동일 — px-4 py-3 space-y-4, 아바타 8x8) */}
             <div
               ref={sheetListRef}
-              className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 py-1 flex flex-col gap-3"
+              data-comment-scroll="true"
+              className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 py-3 space-y-4"
             >
               {comments == null ? (
-                <div className="flex justify-center py-6">
-                  <Loader2 size={18} className="animate-spin text-text-secondary" />
+                <div className="space-y-4">
+                  {[...Array(4)].map((_, i) => (
+                    <div key={i} className="flex gap-2.5 animate-pulse">
+                      <div className="w-8 h-8 rounded-full bg-bg-tertiary flex-shrink-0" />
+                      <div className="flex-1 space-y-1.5">
+                        <div className="h-3 bg-bg-tertiary rounded w-20" />
+                        <div className="h-3.5 bg-bg-tertiary rounded w-3/4" />
+                      </div>
+                    </div>
+                  ))}
                 </div>
               ) : comments.length === 0 ? (
-                <p className="text-text-secondary text-sm text-center py-6">
-                  첫 댓글을 남겨보세요
-                </p>
+                <div className="flex flex-col items-center justify-center py-16 text-text-tertiary">
+                  <p className="text-base">첫 댓글을 남겨보세요 💬</p>
+                </div>
               ) : (
                 comments.map((c) => (
-                  <div key={c.id} className="flex items-start gap-2">
+                  <div key={c.id} className="flex gap-2.5">
                     <CommentAvatar
                       avatarUrl={c.author.avatarUrl}
                       nickname={c.author.nickname}
-                      className="w-7 h-7 rounded-full bg-white/10 overflow-hidden shrink-0"
-                      initialClassName="text-text-secondary text-[10px]"
+                      className="w-8 h-8 rounded-full bg-bg-tertiary overflow-hidden flex-shrink-0"
+                      initialClassName="text-text-secondary text-xs"
                     />
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1 min-w-0">
-                        <span className="text-text-secondary text-[11px] truncate">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className="text-text-secondary text-xs truncate">
                           {c.author.nickname ?? "익명"}
                         </span>
                         {(() => {
@@ -659,17 +737,17 @@ export default function VenueStoryViewer({
                             </span>
                           );
                         })()}
-                        <span className="shrink-0 text-text-secondary text-[11px]">
+                        <span className="shrink-0 text-text-tertiary text-xs">
                           · {timeAgo(c.createdAt)}
                         </span>
                       </div>
-                      <p className="text-text-primary text-sm break-words">{c.content}</p>
+                      <p className="text-text-primary text-sm break-words mt-0.5">{c.content}</p>
                     </div>
                     {currentUserId != null && c.userId === currentUserId && (
                       <button
                         onClick={() => handleCommentDelete(c.id)}
                         disabled={commentBusy}
-                        className="w-7 h-7 flex items-center justify-center text-text-secondary shrink-0"
+                        className="w-7 h-7 flex items-center justify-center text-text-tertiary hover:text-text-primary shrink-0"
                         aria-label="댓글 삭제"
                       >
                         <Trash2 size={14} />
@@ -679,37 +757,42 @@ export default function VenueStoryViewer({
                 ))
               )}
             </div>
-            {/* 컴포저 — 시트 맨 아래(border-box bottom 이 시트 바닥=키보드 위에 flush).
+
+            {/* Input area (CommentSheet 동일 — border-t border-border, rounded-full bg-bg-tertiary 입력창 + 레드 전송버튼).
                 data-composer 는 iOS 실기기 키보드 QA(browserstack-ios-story-comments-keyboard.mjs) 마커. */}
             <div
               data-composer="venue-story"
-              className="shrink-0 px-4 py-3 flex items-center gap-2 border-t border-white/5"
-              style={{ paddingBottom: "calc(0.75rem + env(safe-area-inset-bottom, 0px))" }}
+              className="flex-none border-t border-border px-4 py-3"
+              style={{ paddingBottom: "calc(0.75rem + env(safe-area-inset-bottom))" }}
             >
-              <input
-                value={commentInput}
-                onChange={(e) => setCommentInput(e.target.value)}
-                onFocus={() => setComposerFocused(true)}
-                onBlur={() => setComposerFocused(false)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.nativeEvent.isComposing) handleCommentSubmit();
-                }}
-                maxLength={VENUE_STORY_COMMENT_MAX_LENGTH}
-                placeholder="댓글 달기..."
-                className="flex-1 min-w-0 bg-white/5 rounded-full px-4 py-2 text-sm text-text-primary placeholder:text-text-secondary outline-none"
-              />
-              <button
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={handleCommentSubmit}
-                disabled={commentBusy || commentInput.trim().length === 0}
-                className="w-9 h-9 flex items-center justify-center text-accent disabled:text-text-secondary shrink-0"
-                aria-label="댓글 등록"
-              >
-                {commentBusy ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
-              </button>
+              <div className="flex items-center gap-2">
+                <input
+                  value={commentInput}
+                  onChange={(e) => setCommentInput(e.target.value)}
+                  onFocus={() => setComposerFocused(true)}
+                  onBlur={() => setComposerFocused(false)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.nativeEvent.isComposing) handleCommentSubmit();
+                  }}
+                  maxLength={VENUE_STORY_COMMENT_MAX_LENGTH}
+                  placeholder="댓글을 입력하세요"
+                  className="flex-1 min-w-0 bg-bg-tertiary rounded-full px-4 py-2.5 text-sm text-text-primary placeholder:text-text-secondary outline-none border"
+                  style={{ borderColor: "rgba(255,255,255,0.15)" }}
+                />
+                <button
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={handleCommentSubmit}
+                  disabled={commentBusy || commentInput.trim().length === 0}
+                  className="flex items-center justify-center w-9 h-9 rounded-full text-white disabled:opacity-50 transition-opacity shrink-0"
+                  style={{ backgroundColor: "#FF453A" }}
+                  aria-label="댓글 등록"
+                >
+                  {commentBusy ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+                </button>
+              </div>
             </div>
-          </div>
-        </div>
+          </motion.div>
+        </motion.div>
       )}
 
       {/* 액션 시트 */}
