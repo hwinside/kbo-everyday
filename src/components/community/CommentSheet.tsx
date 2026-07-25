@@ -210,8 +210,10 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
   //   컴포저는 키보드 바로 위, 목록은 그 위에 함께 보인다.
   // ⚠️ 과거 b22f72cd는 동일 계산을 imperative(sheet.style.x)로 박았는데 React 리렌더가 인라인
   //   style을 덮어써 무효화됐다 → 이번엔 state→단일 style로 적용해 충돌 자체를 제거한다.
-  // resizes-content 지원 브라우저(Android)는 innerHeight도 축소 → kbInset≈0, vvHeight=축소분으로
-  //   동일하게 안전 동작한다.
+  // ⚠️ 뷰포트 meta 는 interactive-widget=resizes-visual 로 통일(layout.tsx) → 안드로이드도 iOS 처럼
+  //   키보드가 오버레이되고 visualViewport 만 축소된다. (과거 resizes-content 는 Android 15
+  //   edge-to-edge + adjustResize 미동작 시 innerHeight·vv 둘 다 안 줄어 kbInset=0 → 컴포저가
+  //   키보드에 가려지는 버그가 있었다. 하린아빠 A17 직관 스토리 댓글 리포트.)
   useEffect(() => {
     if (!shouldRender) return;
     const vv = window.visualViewport;

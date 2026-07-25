@@ -59,7 +59,14 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 1,
   viewportFit: "cover",
-  interactiveWidget: "resizes-content",
+  // 키보드 회피는 앱 전역이 visualViewport 수치(bottom=kbInset/height=vvHeight)로 처리한다
+  // (CommentSheet·VenueStoryViewer 등). 이 방식은 키보드가 *오버레이*되고 시각 뷰포트만 축소되는
+  // resizes-visual 시맨틱을 전제로 한다(iOS 기본 동작과 동일). resizes-content 는 안드로이드에서
+  // 레이아웃(innerHeight)을 축소시키려 하지만, Android 15 edge-to-edge + adjustResize 미동작 시
+  // innerHeight·visualViewport 둘 다 그대로라 kbInset=0 → 시트가 안 밀려 컴포저가 키보드에 가린다
+  // (하린아빠 A17 리포트). resizes-visual 로 통일하면 안드로이드도 iOS 와 동일하게 시각 뷰포트가
+  // 축소돼 기존 kbInset 계산이 정상 동작한다. iOS 는 interactive-widget 미지원이라 무영향.
+  interactiveWidget: "resizes-visual",
   themeColor: [
     { media: "(prefers-color-scheme: light)", color: "#F2F2F7" },
     { media: "(prefers-color-scheme: dark)", color: "#0A0A0B" },
