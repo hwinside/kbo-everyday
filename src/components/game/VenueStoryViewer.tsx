@@ -403,10 +403,12 @@ export default function VenueStoryViewer({
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
     >
-      {/* 진행바 — iOS 네이티브 상태바(시계/배터리)는 z-index로 못 덮으므로 safe-area 아래로 (삼순 #795 blocker) */}
+      {/* 진행바 — iOS 네이티브 상태바(시계/배터리)는 z-index로 못 덮으므로 safe-area 아래로 (삼순 #795 blocker).
+          원격 로드 WebView(server.url=keubo.fan)에서 env(safe-area-inset-top)이 0으로 잡히는 기기가 있어
+          상태바와 겹침(하린아빠 iOS 리포트) → 최소 44px 보장으로 항상 상태바 아래로 내린다. */}
       <div
         className="absolute top-0 left-0 right-0 z-20 flex gap-1 px-2 pointer-events-none"
-        style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + 8px)" }}
+        style={{ paddingTop: "calc(max(env(safe-area-inset-top, 0px), 44px) + 8px)" }}
       >
         {stories.map((s, i) => (
           <div key={s.id} className="flex-1 h-0.5 rounded-full bg-white/30 overflow-hidden">
@@ -418,10 +420,10 @@ export default function VenueStoryViewer({
         ))}
       </div>
 
-      {/* 헤더 — 작성자/닫기도 상태바 아래로 */}
+      {/* 헤더 — 작성자/닫기도 상태바 아래로. 진행바(+8px)와 겹치지 않게 +28px 로 간격 확보(하린아빠 리포트). */}
       <div
         className="absolute left-0 right-0 z-20 flex items-center gap-2 px-3"
-        style={{ top: "calc(env(safe-area-inset-top, 0px) + 16px)" }}
+        style={{ top: "calc(max(env(safe-area-inset-top, 0px), 44px) + 28px)" }}
       >
         {/* story.id key로 remount — 이전 스토리에서 onError로 숨긴 img/flex 폴백이 다음 스토리에 남지 않게 (삼순 #805) */}
         <div key={`avatar-${story.id}`} className="w-8 h-8 rounded-full bg-white/20 overflow-hidden shrink-0">

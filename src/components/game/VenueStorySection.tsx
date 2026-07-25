@@ -199,7 +199,7 @@ export default function VenueStorySection({ gameId }: Props) {
       }
       const msg =
         result.mediaType === "video" && result.status === "pending"
-          ? "영상을 올렸어요! 검증 후 잠시 뒤 자동으로 나타나요 🎬"
+          ? "영상을 올렸어요! 이 화면을 나가도 잠시 뒤 자동으로 올라와요 🎬"
           : result.mediaType === "video"
             ? "영상을 올렸어요! 🎬"
             : "사진을 올렸어요! 📷";
@@ -313,9 +313,10 @@ export default function VenueStorySection({ gameId }: Props) {
                   </span>
                 )}
                 {s.processing && !s.stalled && (
-                  <div className="absolute inset-0 bg-black/55 flex flex-col items-center justify-center gap-1">
+                  <div className="absolute inset-0 bg-black/55 flex flex-col items-center justify-center gap-0.5 px-1">
                     <Loader2 size={16} className="animate-spin text-white" />
-                    <span className="text-[9px] text-white font-medium">처리중</span>
+                    <span className="text-[9px] text-white font-medium leading-tight">처리중</span>
+                    <span className="text-[8px] text-white/70 leading-tight text-center">나가도 자동 게시돼요</span>
                   </div>
                 )}
                 {s.processing && s.stalled && (
