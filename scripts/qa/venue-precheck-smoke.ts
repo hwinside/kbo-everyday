@@ -4,6 +4,7 @@
  * 배경: PR #847 삼순 NO-GO 3건 — ①accuracy 무시(선체크 ok인데 서버 403) ②venue=null fail-open
  *       ③stale 위치 재사용. 선체크가 서버 evaluateGeofence 와 동일 축으로 판정하는지 직접 검증한다.
  */
+import { readFileSync } from "node:fs";
 import { resolveStadiumByName } from "../../src/lib/venue-stories/stadiums";
 import { evaluateGeofence } from "../../src/lib/venue-stories/geofence";
 import {
@@ -86,9 +87,25 @@ console.log("[precheckGateReady — 관리자 bypass / 일반 유저 ok 게이�
 ok("관리자 → 선체크 상태 무관 submit 허용(idle)", precheckGateReady({ isAdmin: true, status: "idle" }) === true);
 ok("관리자 → 선체크 failed 여도 submit 허용", precheckGateReady({ isAdmin: true, status: "failed" }) === true);
 ok("일반 유저 ok → submit 허용", precheckGateReady({ isAdmin: false, status: "ok" }) === true);
+ok("일반 유저 idle(최초 오픈·close→reopen) → picker/submit 차단", precheckGateReady({ isAdmin: false, status: "idle" }) === false);
 ok("일반 유저 measuring → submit 차단", precheckGateReady({ isAdmin: false, status: "measuring" }) === false);
 ok("일반 유저 out → submit 차단", precheckGateReady({ isAdmin: false, status: "out" }) === false);
 ok("일반 유저 failed → submit 차단", precheckGateReady({ isAdmin: false, status: "failed" }) === false);
+
+console.log("[picker wiring — idle 첫 렌더 race 이중 방어]");
+const composerSource = readFileSync(
+  new URL("../../src/components/game/VenueStoryComposer.tsx", import.meta.url),
+  "utf8",
+);
+const openPickerSource = composerSource.match(/const openPicker = \(\) => \{([\s\S]*?)\n  \};/)?.[1] ?? "";
+ok(
+  "openPicker 내부가 precheckGateReady로 이중 방어",
+  openPickerSource.includes("precheckGateReady({ isAdmin, status: precheck.status })"),
+);
+ok(
+  "idle 첫 렌더는 위치 확인 카드로 대체",
+  composerSource.includes('precheck.status === "idle" || precheck.status === "measuring"'),
+);
 
 console.log("[close·reopen late result — alive 가드 상태 판정]");
 // 모달 닫힘/재오픈 후 도착하는 늦은 측정 결과는 컴포넌트 effect 의 alive=false 로 폐기된다.

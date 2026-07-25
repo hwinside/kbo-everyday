@@ -284,6 +284,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
 
   const openPicker = () => {
     if (submitting || readingPreview) return;
+    if (!precheckGateReady({ isAdmin, status: precheck.status })) return;
     // 재진입/late-event 방어는 controller가 소유 (픽별 새 input + 토큰 closure 결속)
     pickController().openPicker();
   };
@@ -524,7 +525,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   const showPrecheckCard =
     !isAdmin &&
     !gateReason &&
-    (precheck.status === "measuring" || precheck.status === "out" || precheck.status === "failed");
+    !precheckGateReady({ isAdmin, status: precheck.status });
   const precheckDistKm =
     precheck.distanceM != null ? Math.max(0.1, Math.round(precheck.distanceM / 100) / 10) : null;
 
@@ -573,7 +574,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
 
             {showPrecheckCard ? (
               <div className="flex flex-col items-center justify-center gap-3 h-48 rounded-2xl border border-border bg-bg-tertiary/40 px-5 text-center">
-                {precheck.status === "measuring" ? (
+                {precheck.status === "idle" || precheck.status === "measuring" ? (
                   <>
                     <Loader2 size={26} className="animate-spin text-text-tertiary" />
                     <span className="text-sm text-text-secondary">위치 확인 중… 잠시만요</span>
@@ -610,7 +611,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
             ) : !previewUrl ? (
               <button
                 onClick={openPicker}
-                disabled={submitting}
+                disabled={submitting || !precheckGateReady({ isAdmin, status: precheck.status })}
                 className="flex flex-col items-center justify-center gap-2 h-48 rounded-2xl border-2 border-dashed border-border text-text-tertiary active:bg-bg-tertiary disabled:opacity-40"
               >
                 <VideoIcon size={28} />
@@ -630,7 +631,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
                 )}
                 <button
                   onClick={openPicker}
-                  disabled={submitting}
+                  disabled={submitting || !precheckGateReady({ isAdmin, status: precheck.status })}
                   className="absolute bottom-2 right-2 text-xs bg-black/60 text-white px-3 py-1.5 rounded-full disabled:opacity-40"
                 >
                   다시 선택
