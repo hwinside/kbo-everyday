@@ -1,0 +1,208 @@
+"use client";
+
+import { useState } from "react";
+import { clsx } from "clsx";
+import { ChevronDown } from "lucide-react";
+import { AnimatePresence, motion } from "framer-motion";
+import type { TeamData } from "@/lib/constants/teams";
+import type { InningRelay, PlayEvent } from "@/lib/hooks/useGameRelay";
+import type { PitchDetail } from "@/lib/game/pitch-provider";
+
+/**
+ * relay 이닝별 타석 카드 (실시간 + 종료경기 공용).
+ * LiveStatsTab / GameStatsTab이 각자 렌더하던 near-duplicate InningPlays를 하나로 합쳐
+ * 타석 pitch-by-pitch 펼쳐보기를 두 화면에서 동일하게 재사용한다(삼순 리뷰: 단일 컴포넌트).
+ */
+
+function getPlayStyle(type: PlayEvent["type"]) {
+  switch (type) {
+    case "homerun":
+      return "text-accent font-semibold";
+    case "hit":
+      return "text-accent";
+    case "strikeout":
+      return "text-text-tertiary";
+    case "walk":
+    case "hbp":
+      return "text-text-secondary";
+    case "error":
+      return "text-red-400";
+    default:
+      return "text-text-secondary";
+  }
+}
+
+function getPlayEmoji(type: PlayEvent["type"]) {
+  if (type === "homerun") return " 🔥";
+  if (type === "hit") return " ⚾";
+  return "";
+}
+
+function countScoring(plays: PlayEvent[]): number {
+  let scores = 0;
+  for (const play of plays) {
+    if (play.extras) {
+      for (const extra of play.extras) {
+        if (extra.includes("홈까지 진루") || extra.includes("득점")) scores++;
+      }
+    }
+    if (play.type === "homerun") {
+      const hasExtraScore = play.extras?.some(
+        (e) => e.includes("홈까지 진루") || e.includes("득점"),
+      );
+      if (!hasExtraScore) scores++;
+    }
+  }
+  return scores;
+}
+
+/** 구질 카테고리 → 배지 색. text 기반 파생(kind)이라 원문 code 의미 불안정과 무관. */
+function pitchKindClass(kind: PitchDetail["kind"]): string {
+  switch (kind) {
+    case "strike":
+      return "bg-red-500/15 text-red-400";
+    case "ball":
+      return "bg-emerald-500/15 text-emerald-400";
+    case "foul":
+      return "bg-bg-tertiary text-text-tertiary";
+    case "inplay":
+      return "bg-accent/15 text-accent";
+    default:
+      return "bg-bg-tertiary text-text-secondary";
+  }
+}
+
+/** 타석 투구 시퀀스 — 구종·구속·결과 pill. 소스 무관(PitchDetail[]). */
+function PitchSequence({ pitches }: { pitches: PitchDetail[] }) {
+  return (
+    <div className="mt-1 mb-1 ml-5 flex flex-col gap-1">
+      {pitches.map((p, i) => (
+        <div key={i} className="flex items-center gap-1.5 text-xs">
+          <span className="text-text-tertiary w-8 shrink-0 tabular-nums">
+            {p.num > 0 ? `${p.num}구` : "-"}
+          </span>
+          {p.stuff && (
+            <span className="text-text-secondary font-medium shrink-0">{p.stuff}</span>
+          )}
+          {p.speed > 0 && (
+            <span className="text-text-tertiary tabular-nums shrink-0">{p.speed}</span>
+          )}
+          <span
+            className={clsx(
+              "ml-auto shrink-0 rounded px-1.5 py-0.5 font-medium",
+              pitchKindClass(p.kind),
+            )}
+          >
+            {p.resultText}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function PlayRow({ play, isLast }: { play: PlayEvent; isLast: boolean }) {
+  const [expanded, setExpanded] = useState(false);
+  const hasScoring = play.extras?.some(
+    (e) => e.includes("홈까지 진루") || e.includes("득점"),
+  );
+  const hasPitches = !!play.pitches && play.pitches.length > 0;
+
+  return (
+    <div className={clsx(!isLast && "border-b border-border/20")}>
+      <button
+        type="button"
+        onClick={() => hasPitches && setExpanded((v) => !v)}
+        disabled={!hasPitches}
+        className={clsx(
+          "flex w-full items-start gap-2 py-1.5 text-left",
+          hasPitches && "active:opacity-70",
+        )}
+      >
+        <span className="text-text-tertiary text-xs mt-0.5 shrink-0 w-3 text-center">
+          {isLast ? "└" : "├"}
+        </span>
+        <span className="text-sm text-text-primary font-medium shrink-0 min-w-[48px]">
+          {play.batterName}
+        </span>
+        <span className={clsx("text-sm flex-1", getPlayStyle(play.type))}>
+          {play.result}
+          {getPlayEmoji(play.type)}
+        </span>
+        {hasScoring && (
+          <span className="text-[10px] font-bold text-accent bg-accent/10 px-1 py-0.5 rounded shrink-0 mt-0.5">
+            +득점
+          </span>
+        )}
+        {hasPitches && (
+          <ChevronDown
+            size={14}
+            className={clsx(
+              "shrink-0 mt-0.5 text-text-tertiary transition-transform",
+              expanded && "rotate-180",
+            )}
+          />
+        )}
+      </button>
+      <AnimatePresence initial={false}>
+        {expanded && hasPitches && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.18 }}
+            className="overflow-hidden"
+          >
+            <PitchSequence pitches={play.pitches!} />
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+export default function RelayInningCard({
+  inning,
+  awayTeam,
+  homeTeam,
+}: {
+  inning: InningRelay;
+  awayTeam: TeamData;
+  homeTeam: TeamData;
+}) {
+  const teamColor = inning.half === "top" ? awayTeam.colorPrimary : homeTeam.colorPrimary;
+  const halfLabel = inning.half === "top" ? "초" : "말";
+  const scores = countScoring(inning.plays);
+
+  return (
+    <div className="glass-card overflow-hidden">
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-border/30">
+        <div className="w-1 h-4 rounded-full shrink-0" style={{ backgroundColor: teamColor }} />
+        <span className="text-sm font-semibold text-text-primary">
+          {inning.inning}회{halfLabel}
+        </span>
+        <span className="text-sm font-medium" style={{ color: teamColor }}>
+          {inning.teamName}
+        </span>
+        {scores > 0 && (
+          <span className="ml-auto text-xs font-bold text-accent bg-accent/10 px-1.5 py-0.5 rounded">
+            {scores}점
+          </span>
+        )}
+      </div>
+      <div className="px-3 py-1.5">
+        {inning.plays.length === 0 ? (
+          <p className="text-xs text-text-tertiary py-1">기록 없음</p>
+        ) : (
+          inning.plays.map((play, i) => (
+            <PlayRow
+              key={`${play.batterName}-${i}`}
+              play={play}
+              isLast={i === inning.plays.length - 1}
+            />
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
