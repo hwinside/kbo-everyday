@@ -5,6 +5,8 @@
  *   상태 우선순위(live > scheduled > final > cancelled)로 가장 의미있는 경기를 골라야 한다.
  */
 import { pickMyTeamPriorityGame, type MyTeamGameLike } from "../../src/lib/utils/pick-myteam-game";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 let pass = 0;
 let fail = 0;
@@ -69,6 +71,26 @@ eq("동일 우선순위 → 먼저 나온 경기 유지", pickMyTeamPriorityGame
 eq("homeTeamId 매칭도 인식", pickMyTeamPriorityGame<G>([
   { id: "h", awayTeamId: KT, homeTeamId: LG, status: "live" },
 ], LG)?.id, "h");
+
+const gamesPage = readFileSync(
+  resolve(process.cwd(), "src/app/(main)/games/page.tsx"),
+  "utf8",
+);
+eq(
+  "다음 경기 스캔은 선택 날짜 로드 완료를 별도 추적",
+  gamesPage.includes("const [loadedDate, setLoadedDate]") &&
+    gamesPage.includes("setLoadedDate(date);") &&
+    gamesPage.includes("if (loadedDate !== selectedDate) return;"),
+  true,
+);
+const nextGameEffectDeps = gamesPage.match(
+  /MY TEAM 이 오늘 경기가 없으면[\s\S]*?\}, \[([^\]]+)\]\);/,
+)?.[1] ?? "";
+eq(
+  "30초 background loading 변화는 다음 경기 스캔 effect를 재실행하지 않음",
+  nextGameEffectDeps.includes("loadedDate") && !nextGameEffectDeps.includes("loading"),
+  true,
+);
 
 console.log(`\n${fail === 0 ? "✅" : "❌"} ${pass} passed / ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

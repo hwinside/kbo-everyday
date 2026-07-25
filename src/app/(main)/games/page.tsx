@@ -71,6 +71,7 @@ export default function GamesPage() {
   const [games, setGames] = useState<GameData[]>([]);
   const isPreseason = PRESEASON_DATES.includes(selectedDate);
   const [loading, setLoading] = useState(true);
+  const [loadedDate, setLoadedDate] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [myTeamId, setMyTeamId] = useState<number | null>(null);
   // MY TEAM 이 오늘 경기가 없을 때 보여줄 다음 경기(날짜 명시)
@@ -120,6 +121,7 @@ export default function GamesPage() {
         setGames([]);
       }
     }
+    setLoadedDate(date);
     setLoading(false);
   }
 
@@ -163,10 +165,13 @@ export default function GamesPage() {
 
   // MY TEAM 이 오늘 경기가 없으면 다음 경기(최대 14일 이내) 탐색 — 오늘 날짜를 볼 때만
   useEffect(() => {
-    if (myTeamId == null || loading || selectedDate !== today || hasMyTeamGameToday) {
+    if (myTeamId == null || selectedDate !== today || hasMyTeamGameToday) {
       setNextMyGame(null);
       return;
     }
+    // 최초 선택 날짜 로드가 끝난 뒤 한 번만 스캔한다. 30초 background refresh의
+    // loading true/false는 loadedDate를 바꾸지 않으므로 기존 카드·스캔을 유지한다.
+    if (loadedDate !== selectedDate) return;
     let stale = false;
     (async () => {
       const [y, m, d] = today.split("-").map(Number);
@@ -206,7 +211,7 @@ export default function GamesPage() {
       if (!stale) setNextMyGame(null);
     })();
     return () => { stale = true; };
-  }, [myTeamId, loading, selectedDate, today, hasMyTeamGameToday]);
+  }, [myTeamId, selectedDate, today, hasMyTeamGameToday, loadedDate]);
 
   const gameWeather = (g: GameData) =>
     weather?.key.startsWith(`${selectedDate}|`) ? pickGameWeather(weather.map[g.stadium], g, selectedDate) : null;
