@@ -209,7 +209,7 @@ function AIPreviewCard({ gameId, awayTeamId, homeTeamId, starterNames }: {
           <span className="text-sm">🔑</span>
           <span className="text-sm font-semibold text-text-primary">핵심 포인트</span>
         </div>
-        <p className="text-sm text-text-secondary leading-relaxed whitespace-pre-line">
+        <p className="text-xs text-text-secondary leading-relaxed whitespace-pre-line">
           {preview.keyMatchup}
         </p>
       </div>

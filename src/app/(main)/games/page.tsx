@@ -9,6 +9,7 @@ import { getKSTToday } from "@/lib/utils/date-kst";
 import { ChevronLeft, RefreshCw, Star } from "lucide-react";
 import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
 import { getMyTeamId } from "@/lib/store/myteam";
+import { pickMyTeamPriorityGame } from "@/lib/utils/pick-myteam-game";
 import DateSelector from "@/components/game/DateSelector";
 import CompactGameCard from "@/components/game/CompactGameCard";
 import EmptyGameState from "@/components/game/EmptyGameState";
@@ -210,10 +211,9 @@ export default function GamesPage() {
   const gameWeather = (g: GameData) =>
     weather?.key.startsWith(`${selectedDate}|`) ? pickGameWeather(weather.map[g.stadium], g, selectedDate) : null;
 
-  // MY TEAM 오늘 경기는 상단 우선 카드 1장으로 노출하고, 아래 목록에서는 중복 제거
-  const myTeamGame = myTeamId != null
-    ? games.find(g => g.awayTeamId === myTeamId || g.homeTeamId === myTeamId) ?? null
-    : null;
+  // MY TEAM 오늘 경기는 상단 우선 카드 1장으로 노출하고, 아래 목록에서는 중복 제거.
+  // 더블헤더면 상태 우선순위(live > scheduled > final > cancelled)로 가장 의미있는 경기를 고른다.
+  const myTeamGame = pickMyTeamPriorityGame(games, myTeamId);
   const restGames = myTeamGame ? games.filter(g => g.id !== myTeamGame.id) : games;
 
   const liveGames = restGames.filter(g => g.status === "live");
@@ -252,7 +252,7 @@ export default function GamesPage() {
           데이터를 불러올 수 없습니다
           <button onClick={() => loadGames(selectedDate)} className="block mx-auto mt-2 text-accent text-xs">다시 시도</button>
         </div>
-      ) : games.length === 0 ? (
+      ) : games.length === 0 && !nextMyGame ? (
         <EmptyGameState selectedDate={selectedDate} />
       ) : (
         <motion.div variants={container} initial="hidden" animate="show" className="px-5 pb-24 space-y-6">
