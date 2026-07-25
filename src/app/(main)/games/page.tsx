@@ -155,11 +155,17 @@ export default function GamesPage() {
     return () => clearInterval(interval);
   }, [games, selectedDate]);
 
+  // MY TEAM 오늘 경기 유무 — boolean 으로 좁혀 30초 auto-refresh(games 배열 재생성)에
+  // 다음 경기 스캔 effect 가 불필요하게 재실행되지 않게 한다.
+  const hasMyTeamGameToday =
+    myTeamId != null && games.some(g => g.awayTeamId === myTeamId || g.homeTeamId === myTeamId);
+
   // MY TEAM 이 오늘 경기가 없으면 다음 경기(최대 14일 이내) 탐색 — 오늘 날짜를 볼 때만
   useEffect(() => {
-    if (myTeamId == null || loading || selectedDate !== today) { setNextMyGame(null); return; }
-    const hasMyGame = games.some(g => g.awayTeamId === myTeamId || g.homeTeamId === myTeamId);
-    if (hasMyGame) { setNextMyGame(null); return; }
+    if (myTeamId == null || loading || selectedDate !== today || hasMyTeamGameToday) {
+      setNextMyGame(null);
+      return;
+    }
     let stale = false;
     (async () => {
       const [y, m, d] = today.split("-").map(Number);
@@ -199,7 +205,7 @@ export default function GamesPage() {
       if (!stale) setNextMyGame(null);
     })();
     return () => { stale = true; };
-  }, [games, myTeamId, loading, selectedDate, today]);
+  }, [myTeamId, loading, selectedDate, today, hasMyTeamGameToday]);
 
   const gameWeather = (g: GameData) =>
     weather?.key.startsWith(`${selectedDate}|`) ? pickGameWeather(weather.map[g.stadium], g, selectedDate) : null;
