@@ -8,12 +8,9 @@ export function shouldApplyAutomaticStoryRefresh(input: {
   blocked: boolean;
   hidden: boolean;
 }): boolean {
+  if (input.requestId !== input.latestRequestId) return false;
   if (!input.automatic) return true;
-  return (
-    input.requestId === input.latestRequestId &&
-    !input.blocked &&
-    !input.hidden
-  );
+  return !input.blocked && !input.hidden;
 }
 
 /**

@@ -222,13 +222,33 @@ ok(
   }),
 );
 ok(
-  "업로드/삭제 뒤 수동 갱신은 자동 폴링 차단 상태와 무관하게 적용",
+  "최신 업로드/삭제 수동 갱신은 자동 폴링 차단 상태와 무관하게 적용",
   shouldApplyAutomaticStoryRefresh({
     automatic: false,
-    requestId: 0,
+    requestId: 2,
     latestRequestId: 2,
     blocked: true,
     hidden: true,
+  }),
+);
+ok(
+  "구 수동응답은 최신 수동응답 뒤 폐기",
+  !shouldApplyAutomaticStoryRefresh({
+    automatic: false,
+    requestId: 1,
+    latestRequestId: 2,
+    blocked: false,
+    hidden: false,
+  }),
+);
+ok(
+  "구 수동응답은 최신 자동요청 뒤 폐기",
+  !shouldApplyAutomaticStoryRefresh({
+    automatic: false,
+    requestId: 1,
+    latestRequestId: 2,
+    blocked: false,
+    hidden: false,
   }),
 );
 
@@ -242,7 +262,7 @@ console.log("\n자동 응답 세대 무효화 (open→manual→close→late auto
   const autoRequestId = 1;
   // 2. viewer 열림 → 세대 bump
   generation++; // 2
-  // 3. 수동 M(삭제) 시작 → 세대 bump + 즉시 적용(automatic=false)
+  // 3. 수동 M(삭제) 시작 → 세대 bump + 최신 세대라 적용(automatic=false)
   generation++; // 3
   // 4. viewer 닫힘 (세대 불변)
   // 5. 늦은 A 도착 → blocked=false, hidden=false 지만 세대 stale
@@ -254,6 +274,34 @@ console.log("\n자동 응답 세대 무효화 (open→manual→close→late auto
     hidden: false,
   });
   ok("auto start → viewer open → manual apply → close → late auto resolve → 폐기(삭제 스토리 부활 0)", !applied);
+}
+{
+  // 구 수동 M1 → 최신 수동 M2 적용 → M1 늦게 도착
+  let generation = 1;
+  const manualRequestId = generation;
+  generation++; // M2 시작·적용
+  const applied = shouldApplyAutomaticStoryRefresh({
+    automatic: false,
+    requestId: manualRequestId,
+    latestRequestId: generation,
+    blocked: false,
+    hidden: false,
+  });
+  ok("manual M1 → newer manual M2 → late M1 resolve → 폐기", !applied);
+}
+{
+  // 구 수동 M1 → 최신 자동 A2 적용 → M1 늦게 도착
+  let generation = 1;
+  const manualRequestId = generation;
+  generation++; // A2 시작·적용
+  const applied = shouldApplyAutomaticStoryRefresh({
+    automatic: false,
+    requestId: manualRequestId,
+    latestRequestId: generation,
+    blocked: false,
+    hidden: false,
+  });
+  ok("manual M1 → newer auto A2 → late M1 resolve → 폐기", !applied);
 }
 {
   // 사진 업로드 경로: 자동 A 시작 → composer 열림 → 수동 갱신(신규 반영) → composer 닫힘 → 늦은 A

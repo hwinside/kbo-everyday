@@ -102,10 +102,10 @@ export default function VenueStorySection({ gameId }: Props) {
       setLoaded(true);
       return;
     }
-    // 자동/수동 모두 세대를 올린다. 수동은 requestId 0(항상 적용)이지만, 세대 증가로
-    // 직전 진행 중이던 자동 요청을 무효화한다.
+    // 자동/수동 모두 공용 세대를 올리고 자기 세대를 보존한다. 응답 commit 시 더 최신 요청이
+    // 시작됐으면 종류와 무관하게 폐기해 구 수동응답도 최신 목록을 덮지 못하게 한다.
     const generation = ++autoRefreshRequestRef.current;
-    const autoRequestId = automatic ? generation : 0;
+    const requestId = generation;
     try {
       // 로그인 상태면 bearer 전달 → 서버가 차단 유저 필터(getVerifiedUserFromRequest 는 Bearer-only)
       const session = await getSafeSession();
@@ -125,7 +125,7 @@ export default function VenueStorySection({ gameId }: Props) {
       const data = await res.json();
       if (!shouldApplyAutomaticStoryRefresh({
         automatic,
-        requestId: autoRequestId,
+        requestId,
         latestRequestId: autoRefreshRequestRef.current,
         blocked: autoRefreshBlockedRef.current,
         hidden: typeof document !== "undefined" && document.hidden,
