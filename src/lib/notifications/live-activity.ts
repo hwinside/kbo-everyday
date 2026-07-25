@@ -17,9 +17,10 @@ import {
   isStaleStartToken,
   isWakeWindowOpen,
   markChannelBornGroups,
+  createChannelBornMarkBudget,
+  runWithChannelBornMarkBudget,
   runStartSendChunks,
   selectWakeGapRows,
-  CHANNEL_BORN_RETRY_BUDGET_MS,
   START_SEND_CHUNK_SIZE,
   p2sSendPlan,
   type P2sSendPlan,
@@ -567,8 +568,8 @@ async function startForTeamSide(params: {
   subscribedKeysByUser: Map<string, Set<string>>;
   /** 경기 예정 시작(ms) — 늦은 윈도우 per-토큰 게이트용. null = 파싱 불가. */
   gameStartMs: number | null;
-  /** channel_born 마킹 재시도 절대 deadline(ms) — *경기별* 예산(그 경기 처리 시작 기준). */
-  markRetryDeadlineMs: number;
+  /** 전체 경기 fanout이 공유하는 실제 channel_born 마킹 대기 예산. */
+  channelBornMarkBudget: ReturnType<typeof createChannelBornMarkBudget>;
 }): Promise<{ sent: number; failed: boolean }> {
   if (params.teamId === null) return { sent: 0, failed: false };
   const fans = await fansOfTeams([params.teamId]);
@@ -739,33 +740,35 @@ async function startForTeamSide(params: {
   // chunk당 내구 저장(삼순 R1 blocker②) — tail 일괄 마킹은 대용량 cohort(18:02 home 1,827명)
   // 에서 fanout 68s deadline/함수 종료에 통째로 잘려 재시도·로그 0으로 소실됐다.
   // 발송을 START_SEND_CHUNK_SIZE 단위로 나누고 다음 chunk 발송 전에 직전 chunk 성공분을
-  // 즉시 마킹 — cutoff 시에도 손실 상한 = 마지막 미완료 chunk 1개. 마킹 전체는 fanout 공유
-  // 예산(markRetryDeadlineMs)으로 유계 — 예산 내 UPDATE는 남은 시간으로 abort, 예산 소진 후엔
-  // 새 UPDATE 시작 금지(즉시 skip+로깅, 삼순 R2) — 느린 실패 UPDATE가 뒤 chunk 발송/마킹을
+  // 즉시 마킹 — cutoff 시에도 손실 상한 = 마지막 미완료 chunk 1개. 마킹 전체는 fanout 전역
+  // 20초 예산으로 유계하되 쿼리/APNs 시간은 제외하고 실제 마킹 대기만 차감한다. 예산 소진
+  // 후엔 새 UPDATE 시작 금지(즉시 skip+로깅, 삼순 R2) — 느린 실패 UPDATE가 뒤 경기 발송을
   // 굶기지 않는다. 마킹 skip은 발송을 막지 않는다(발송·선점 계약 불변).
   // 최종 실패분은 scripts/backfill-channel-born.ts로 구제.
   const persistChunkMarks = async () => {
     if (channelBornGroups.size === 0) return;
     const groups = [...channelBornGroups.values()];
     channelBornGroups.clear();
-    await markChannelBornGroups({
-      gameId: params.gameId,
-      groups,
-      retryDeadlineMs: params.markRetryDeadlineMs,
-      // signal = 남은 마킹 예산으로 유계화된 AbortSignal(헬퍼가 생성) — 운영 8s statement
-      // timeout이 예산을 초과 잠식하지 않게 UPDATE 자체를 abort(삼순 R2 starvation 방지).
-      updateBatch: (group, userIds, opts) => {
-        const q = supabase
-          .from("live_activity_started_users")
-          .update({
-            channel_born_environment: group.env,
-            channel_born_channel_id: group.channelId,
-          })
-          .eq("game_id", params.gameId)
-          .in("user_id", userIds);
-        return opts.signal ? q.abortSignal(opts.signal) : q;
-      },
-    });
+    await runWithChannelBornMarkBudget(params.channelBornMarkBudget, (retryDeadlineMs) =>
+      markChannelBornGroups({
+        gameId: params.gameId,
+        groups,
+        retryDeadlineMs,
+        // signal = 남은 전역 마킹 예산으로 유계화된 AbortSignal(헬퍼가 생성) — 운영 8s
+        // statement timeout이 예산을 초과 잠식하지 않게 UPDATE 자체를 abort한다.
+        updateBatch: (group, userIds, opts) => {
+          const q = supabase
+            .from("live_activity_started_users")
+            .update({
+              channel_born_environment: group.env,
+              channel_born_channel_id: group.channelId,
+            })
+            .eq("game_id", params.gameId)
+            .in("user_id", userIds);
+          return opts.signal ? q.abortSignal(opts.signal) : q;
+        },
+      }),
+    );
   };
   await runStartSendChunks({
     items: toSend,
@@ -919,20 +922,15 @@ export async function pushLiveActivityStarts(
   }
 
   let started = 0;
+  // 전 경기 합산 실제 마킹 대기만 20초로 제한한다. 쿼리/APNs fanout 경과시간은
+  // runWithChannelBornMarkBudget 바깥이므로 예산을 먹지 않고, 느린 한 경기 마킹도
+  // 이 전역 상한을 넘겨 뒤 경기 발송을 굶길 수 없다.
+  const channelBornMarkBudget = createChannelBornMarkBudget();
 
   for (const g of liveGames) {
     const gameId = g.G_ID as string;
     const codes = gameId.match(/^\d{8}([A-Z]{2})([A-Z]{2})\d$/);
     if (!codes) continue;
-
-    // channel_born 마킹 재시도 예산은 *경기별*로 리셋한다(양측과 공유, 경기 간 독립).
-    // fanout 전체 공유 예산은 먼저 처리된 경기가 20초를 소진하면 뒤 경기 마킹이 전부
-    // deadline로 skip되는 굶김을 낳았다(2026-07-25 SSOB0만 1111 마킹, 나머지 2~5 실측).
-    // 경기별 리셋으로 각 경기가 자신의 20초 마킹 예산을 갖는다. #816 불변식(한 경기의
-    // 느린 마킹이 *그 경기 내* 발송/뒤 chunk를 굶기지 않음)은 per-game 예산으로 유지 —
-    // 경기는 순차 처리되므로 한 경기 마킹이 *다른* 경기 발송을 굶기는 구조가 아니다
-    // (이미 await로 경기간 직렬). 정상 경우 마킹 UPDATE는 경기당 sub-second라 예산 미도달.
-    const markRetryDeadlineMs = Date.now() + CHANNEL_BORN_RETRY_BUDGET_MS;
 
     // 늦은 자동시작 가드 — 게임 단위 skip을 *per-토큰 게이트*로 전환(2026-07-17 재설치 사고).
     // 시작+START_WINDOW_MS 경과 경기도 루프는 계속 돌되, decideStartReissue가 "경기 시작
@@ -977,12 +975,12 @@ export async function pushLiveActivityStarts(
     const awaySide = await startForTeamSide({
       gameId, teamId: teamIdByShortName(away), myTeamCode: awayCode,
       attributes, contentState, alert, jwt, channelByEnv, subscribedKeysByUser,
-      gameStartMs: startedAt, markRetryDeadlineMs,
+      gameStartMs: startedAt, channelBornMarkBudget,
     });
     const homeSide = await startForTeamSide({
       gameId, teamId: teamIdByShortName(home), myTeamCode: homeCode,
       attributes, contentState, alert, jwt, channelByEnv, subscribedKeysByUser,
-      gameStartMs: startedAt, markRetryDeadlineMs,
+      gameStartMs: startedAt, channelBornMarkBudget,
     });
     started += awaySide.sent + homeSide.sent;
     // 일시 실패분은 startForTeamSide에서 유저 단위로 선점 해제됨 → 다음 cron 재시도.
