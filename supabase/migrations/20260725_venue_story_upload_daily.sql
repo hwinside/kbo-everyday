@@ -50,10 +50,18 @@ $$;
 
 REVOKE ALL ON FUNCTION bump_venue_story_upload_daily() FROM PUBLIC, anon, authenticated;
 
--- 백필: 아직 정리되지 않고 남아있는 active + story_geofence 행을 현재 스냅샷으로 세팅한다.
+-- 백필 + 트리거 부착을 하나의 원자 cutover 로 묶는다(삼순 NO-GO #1).
+-- Supabase 는 각 migration 파일을 단일 트랜잭션으로 실행한다. 백필 SELECT 전에
+-- venue_stories 에 SHARE ROW EXCLUSIVE 락을 선점해 동시 INSERT/UPDATE(ROW EXCLUSIVE)를
+-- 트랜잭션 commit 까지 차단한다 → 백필 snapshot~트리거 생성 사이 gap 이 사라져
+-- "백필에도 없고 트리거도 못 타는 영구 누락" 사고를 원천 차단.
+LOCK TABLE venue_stories IN SHARE ROW EXCLUSIVE MODE;
+
+-- 백필: 아직 정리되지 않고 남아있는 active + story_geofence 행을 반영한다.
 -- (이미 삭제된 과거 행은 복원 불가 — 배포 시점 이후의 정확성이 목표.)
--- 트리거보다 먼저 실행해 이 백필과 트리거의 동시 insert 이중집계를 원천 차단한다
--- (트리거가 아직 없으므로 백필에 잡힌 기존 행은 트리거로 다시 세지 않는다).
+-- 멱등 재적용(삼순 NO-GO #2): DO NOTHING — 이미 롤업에 기록된 upload_day는
+-- 건드리지 않는다. cleanup 으로 일부 active 행만 남은 날짜를 현재 snapshot 값으로
+-- 덮어 누적값을 감소시키는 것을 차단(최초 적용엔 빈 테이블이라 정상 삽입, 재실행엔 보존).
 INSERT INTO venue_story_upload_daily (upload_day, media_type, uploads)
 SELECT (created_at AT TIME ZONE 'Asia/Seoul')::date, media_type, count(*)
   FROM venue_stories
@@ -61,8 +69,9 @@ SELECT (created_at AT TIME ZONE 'Asia/Seoul')::date, media_type, count(*)
    AND attendance_source = 'story_geofence'
  GROUP BY 1, 2
 ON CONFLICT (upload_day, media_type)
-DO UPDATE SET uploads = EXCLUDED.uploads;
+DO NOTHING;
 
+-- 락 보유 상태에서 트리거 부착 → 파일 끝(트랜잭션 commit) 까지 동시 쓰기 없음 → gap 0.
 DROP TRIGGER IF EXISTS trg_bump_venue_story_upload ON venue_stories;
 CREATE TRIGGER trg_bump_venue_story_upload
 AFTER INSERT OR UPDATE OF status ON venue_stories
