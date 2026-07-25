@@ -15,7 +15,7 @@ name: Transcode Community Videos
 
 on:
   schedule:
-    - cron: '*/30 * * * *' # 30분마다 복구 스캔 (GitHub 스케줄은 best-effort, 지연 가능 — 즉시성은 업로드 경로가 책임)
+    - cron: '*/5 * * * *' # 5분마다 복구 스캔 — 직관 라이브 영상 pending 대기시간 단축(즉시경로 ffprobe fault시 최대 대기 30분→5분). GitHub 스케줄은 best-effort라 지연 가능, 즉시성 근본해결은 업로드 경로 ffprobe(별도 트랙)
   workflow_dispatch: # 수동 실행
 
 # 동시 실행 금지 — 워커는 단일 인스턴스 가정(작업 claim 락 없음)이라
