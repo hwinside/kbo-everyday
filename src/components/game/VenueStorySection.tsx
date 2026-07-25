@@ -316,7 +316,7 @@ export default function VenueStorySection({ gameId }: Props) {
                   <div className="absolute inset-0 bg-black/55 flex flex-col items-center justify-center gap-0.5 px-1">
                     <Loader2 size={16} className="animate-spin text-white" />
                     <span className="text-[9px] text-white font-medium leading-tight">처리중</span>
-                    <span className="text-[8px] text-white/70 leading-tight text-center">최대 1분</span>
+                    <span className="text-[8px] text-white/70 leading-tight text-center">잠시 후 자동 게시</span>
                   </div>
                 )}
                 {s.processing && s.stalled && (
