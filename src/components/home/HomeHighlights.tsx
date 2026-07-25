@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Play } from "lucide-react";
+import { MessageCircle, Play } from "lucide-react";
 import { getFavoritePlayers } from "@/lib/store/favorites";
 import { TEAMS } from "@/lib/constants/teams";
 import ReelViewer from "@/components/home/ReelViewer";
 import { getShortsVisible, SHORTS_PREF_EVENT } from "@/lib/store/shorts-pref";
+import { youtubeShortsDiscussion } from "@/lib/news/youtube-shorts-discussion";
+import { useAuth } from "@/lib/supabase/AuthContext";
 
 /** team shortName lookup by various keys */
 const TEAM_LABEL: Record<string, string> = {};
@@ -13,6 +15,11 @@ for (const t of TEAMS) {
   TEAM_LABEL[String(t.id)] = t.shortName;
   TEAM_LABEL[t.shortName] = t.shortName;
   TEAM_LABEL[t.slug] = t.shortName;
+}
+
+function normalizeTeamId(value: string | number | null | undefined): number | null {
+  const teamId = Number(value);
+  return Number.isInteger(teamId) && teamId >= 1 && teamId <= 10 ? teamId : null;
 }
 
 interface VideoItem {
@@ -47,10 +54,12 @@ interface HomeHighlightsProps {
 }
 
 export default function HomeHighlights({ team, refreshNonce = 0 }: HomeHighlightsProps) {
+  const { user } = useAuth();
   const [reelIndex, setReelIndex] = useState<number | null>(null);
   const [videos, setVideos] = useState<VideoItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [shortsVisible, setShortsVisible] = useState(true);
+  const [commentCounts, setCommentCounts] = useState<Record<string, number>>({});
 
   // 마이페이지 '숏츠 표시' 토글 반영 (기기 로컬 설정, 변경 즉시 반영)
   useEffect(() => {
@@ -102,6 +111,37 @@ export default function HomeHighlights({ team, refreshNonce = 0 }: HomeHighlight
       }).catch(() => setLoading(false));
   }, [team, refreshNonce]);
 
+  useEffect(() => {
+    if (!user || videos.length === 0) return;
+    const articles = videos.slice(0, 10).map((video) => ({
+      lookupId: video.id,
+      ...youtubeShortsDiscussion({
+        videoId: video.id,
+        title: video.title,
+        thumbnailUrl: video.thumbnail,
+        teamId: normalizeTeamId(video.teamId),
+      }),
+    }));
+    if (articles.length === 0) return;
+
+    let cancelled = false;
+    fetch("/api/news/discussion/counts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ articles }),
+    })
+      .then((response) => response.ok ? response.json() : null)
+      .then((result) => {
+        if (!cancelled && result?.counts) setCommentCounts(result.counts);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [user, videos]);
+
+  const handleCommentCountChange = (videoId: string, count: number) => {
+    setCommentCounts((prev) => ({ ...prev, [videoId]: count }));
+  };
+
   if (loading || videos.length === 0 || !shortsVisible) return null;
 
   return (
@@ -121,6 +161,12 @@ export default function HomeHighlights({ team, refreshNonce = 0 }: HomeHighlight
               <div className="absolute inset-0 flex items-center justify-center">
                 <Play size={28} className="text-white fill-white opacity-80" />
               </div>
+              {user && (commentCounts[v.id] ?? 0) > 0 && (
+                <span className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-full bg-black/65 px-1.5 py-0.5 text-[11px] font-semibold text-white">
+                  <MessageCircle size={11} />
+                  {commentCounts[v.id]}
+                </span>
+              )}
               {v.label && (
                 <span className={`absolute top-2 left-2 px-1.5 py-0.5 rounded-full text-xs font-semibold text-white ${
                   v.isPlayerMatch ? "bg-rose-500/80" : v.hasPlayerTag ? "bg-amber-500/80" : "bg-blue-500/80"
@@ -140,6 +186,8 @@ export default function HomeHighlights({ team, refreshNonce = 0 }: HomeHighlight
         <ReelViewer
           videos={videos}
           startIndex={reelIndex}
+          commentCounts={commentCounts}
+          onCommentCountChange={handleCommentCountChange}
           onClose={() => setReelIndex(null)}
         />
       )}

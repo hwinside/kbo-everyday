@@ -1,9 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Play } from "lucide-react";
+import { MessageCircle, Play } from "lucide-react";
 import ReelViewer from "@/components/home/ReelViewer";
 import { handleExternalAnchorClick } from "@/lib/open-external";
+import { getTeamBySlug } from "@/lib/constants/teams";
+import { useAuth } from "@/lib/supabase/AuthContext";
+import { youtubeShortsDiscussion } from "@/lib/news/youtube-shorts-discussion";
 
 interface Video {
   id: string;
@@ -60,10 +63,13 @@ function formatUploadedAgo(publishedAt?: string): string | null {
 }
 
 export default function TeamVideos({ teamSlug }: { teamSlug: string }) {
+  const { user } = useAuth();
+  const teamId = getTeamBySlug(teamSlug)?.id ?? null;
   const [longVideos, setLongVideos] = useState<Video[]>([]);
   const [shortVideos, setShortVideos] = useState<Video[]>([]);
   const [reelIndex, setReelIndex] = useState<number | null>(null);
-
+  // 숏츠 videoId → 보이는 댓글 수. 뉴스 정책과 동일: 로그인 유저만 조회·0은 배지 숨김(거짓 0 금지).
+  const [commentCounts, setCommentCounts] = useState<Record<string, number>>({});
 
   useEffect(() => {
     fetch(`/api/team-videos?team=${teamSlug}&type=long`)
@@ -75,6 +81,50 @@ export default function TeamVideos({ teamSlug }: { teamSlug: string }) {
       .then(d => setShortVideos(d.items || []))
       .catch(() => {});
   }, [teamSlug]);
+
+  // 숏츠 댓글 수 batch 조회(뉴스 NewsCarousel 패턴). 로그인 유저만 — 미로그인은
+  // 조회 자체를 안 해 거짓 0 표기가 없다. counts API는 요청당 최대 10건이라 10개씩 chunk.
+  useEffect(() => {
+    if (!user || shortVideos.length === 0) return;
+    let cancelled = false;
+    const chunks: Video[][] = [];
+    for (let i = 0; i < shortVideos.length; i += 10) chunks.push(shortVideos.slice(i, i + 10));
+    Promise.all(
+      chunks.map((chunk) =>
+        fetch("/api/news/discussion/counts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            articles: chunk.map((v) => ({
+              lookupId: v.id,
+              ...youtubeShortsDiscussion({
+                videoId: v.id,
+                title: v.title,
+                thumbnailUrl: v.thumbnail,
+                teamId,
+              }),
+            })),
+          }),
+        })
+          .then((r) => (r.ok ? r.json() : null))
+          .catch(() => null),
+      ),
+    ).then((results) => {
+      if (cancelled) return;
+      const merged: Record<string, number> = {};
+      for (const result of results) {
+        if (result?.counts) Object.assign(merged, result.counts);
+      }
+      setCommentCounts(merged);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [shortVideos, teamId, user]);
+
+  const handleCommentCountChange = (videoId: string, count: number) => {
+    setCommentCounts((prev) => ({ ...prev, [videoId]: count }));
+  };
 
   return (
     <>
@@ -144,6 +194,12 @@ export default function TeamVideos({ teamSlug }: { teamSlug: string }) {
                     </div>
                   </div>
                   <DurationBadge seconds={v.durationSeconds} />
+                  {user && commentCounts[v.id] > 0 && (
+                    <div className="absolute bottom-1.5 left-1.5 flex items-center gap-0.5 rounded-full bg-black/70 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white">
+                      <MessageCircle size={11} />
+                      {commentCounts[v.id]}
+                    </div>
+                  )}
                 </div>
                 <p className="mt-1.5 text-[11px] text-text-secondary line-clamp-2 leading-snug text-left">
                   {v.title}
@@ -169,6 +225,9 @@ export default function TeamVideos({ teamSlug }: { teamSlug: string }) {
             publishedAt: v.publishedAt,
           }))}
           startIndex={reelIndex}
+          teamId={teamId}
+          commentCounts={commentCounts}
+          onCommentCountChange={handleCommentCountChange}
           onClose={() => setReelIndex(null)}
         />
       )}

@@ -43,6 +43,7 @@
     "qa:news-dedup": "tsx scripts/qa/news-dedup-title-smoke.ts",
     "qa:news-discussion": "tsx scripts/qa/news-discussion-smoke.ts",
     "qa:news-webview-comments": "tsx scripts/qa/news-webview-comments-smoke.ts",
+    "qa:shorts-comments-ui": "tsx scripts/qa/shorts-comments-ui-smoke.ts",
     "qa:ios-news-webview": "zsh scripts/qa/ios-news-webview-typecheck.sh",
     "qa:ui:news-comment-report": "node scripts/qa/ui-smoke-news-comment-report.mjs",
     "qa:news-roundup": "tsx scripts/qa/news-roundup-filter-smoke.ts",
