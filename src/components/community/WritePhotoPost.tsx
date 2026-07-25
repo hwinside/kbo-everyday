@@ -44,6 +44,11 @@ interface PlayerTag {
 
 const MAX_MEDIA_ITEMS = 5;
 
+// 안드로이드 WebView 는 갤러리 content:// 영상에서 <video> 가 loadedmetadata/error 를
+// 끝내 발화하지 않는 케이스가 있어(직관 라이브 #813/A17 리포트와 동일 원인) duration probe 가
+// 영구 hang → 픽 플로우가 죽은 것처럼 보인다. 반드시 timeout 으로 settle 시킨다.
+const VIDEO_PROBE_TIMEOUT_MS = 8_000;
+
 export default function WritePhotoPost({
   isOpen,
   onClose,
@@ -178,21 +183,41 @@ export default function WritePhotoPost({
 
   function checkVideoDuration(file: File): Promise<void> {
     return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
       const video = document.createElement("video");
       video.preload = "metadata";
-      video.src = URL.createObjectURL(file);
-      video.onloadedmetadata = () => {
-        URL.revokeObjectURL(video.src);
-        if (video.duration > 15) {
-          reject(new Error("15초 이하 영상만 업로드 가능합니다"));
-        } else {
-          resolve();
+      video.muted = true;
+      let settled = false;
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      // 종결 시 핸들러 해제 + src 제거 + objectURL revoke 로 디코더/미디어 리소스를 즉시 회수한다
+      // (늦게 발화하는 이벤트는 no-op). 안드로이드 WebView 미디어 리소스 잔류/hang 방지.
+      const done = (err?: Error) => {
+        if (settled) return;
+        settled = true;
+        if (timer != null) clearTimeout(timer);
+        video.onloadedmetadata = null;
+        video.onerror = null;
+        try {
+          video.removeAttribute("src");
+          video.load();
+        } catch {
+          /* noop — 해제 실패해도 settle 은 진행 */
         }
+        URL.revokeObjectURL(url);
+        if (err) reject(err);
+        else resolve();
       };
-      video.onerror = () => {
-        URL.revokeObjectURL(video.src);
-        reject(new Error("영상 파일을 읽을 수 없습니다"));
+      // loadedmetadata/error 둘 다 미발화하는 영상(안드 content:// hang)이면 timeout 으로 종결
+      timer = setTimeout(
+        () => done(new Error("영상 파일을 읽을 수 없습니다")),
+        VIDEO_PROBE_TIMEOUT_MS,
+      );
+      video.onloadedmetadata = () => {
+        if (video.duration > 15) done(new Error("15초 이하 영상만 업로드 가능합니다"));
+        else done();
       };
+      video.onerror = () => done(new Error("영상 파일을 읽을 수 없습니다"));
+      video.src = url;
     });
   }
 
@@ -393,7 +418,7 @@ export default function WritePhotoPost({
                         <div key={i} className="relative flex-shrink-0 w-28 h-28 rounded-xl overflow-hidden bg-bg-tertiary">
                           {item.type === "video" ? (
                             <>
-                              <video src={item.preview} className="w-full h-full object-cover" muted playsInline />
+                              <video src={item.preview} className="w-full h-full object-cover" preload="metadata" muted playsInline />
                               <div className="absolute inset-0 flex items-center justify-center">
                                 <div className="w-8 h-8 rounded-full bg-black/50 flex items-center justify-center">
                                   <Play size={16} className="text-white ml-0.5" fill="white" />
@@ -453,7 +478,7 @@ export default function WritePhotoPost({
                         <div key={i} className="relative flex-shrink-0">
                           <div className="w-28 h-28 rounded-xl overflow-hidden bg-bg-tertiary">
                             {item.type === "video" ? (
-                              <video src={item.preview} className="w-full h-full object-cover" muted playsInline />
+                              <video src={item.preview} className="w-full h-full object-cover" preload="metadata" muted playsInline />
                             ) : (
                               <Image src={item.preview} alt={`preview ${i}`} fill className="object-cover" />
                             )}
@@ -497,7 +522,7 @@ export default function WritePhotoPost({
                         <div key={i} className="relative aspect-square rounded-xl overflow-hidden bg-bg-tertiary">
                           {item.type === "video" ? (
                             <>
-                              <video src={item.preview} className="w-full h-full object-cover" muted playsInline />
+                              <video src={item.preview} className="w-full h-full object-cover" preload="metadata" muted playsInline />
                               <div className="absolute inset-0 flex items-center justify-center">
                                 <div className="w-8 h-8 rounded-full bg-black/50 flex items-center justify-center">
                                   <Play size={16} className="text-white ml-0.5" fill="white" />
