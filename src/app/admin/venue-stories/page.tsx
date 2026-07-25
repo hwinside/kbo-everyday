@@ -16,6 +16,14 @@ interface AdminStory {
   nickname: string;
 }
 
+interface StoryCounts {
+  total: number;
+  active: number;
+  pending: number;
+  removed: number;
+  today: number;
+}
+
 function getPin(): string {
   if (typeof window === "undefined") return "";
   return sessionStorage.getItem("admin_pin") || "";
@@ -23,6 +31,7 @@ function getPin(): string {
 
 export default function AdminVenueStoriesPage() {
   const [stories, setStories] = useState<AdminStory[]>([]);
+  const [counts, setCounts] = useState<StoryCounts | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -34,7 +43,10 @@ export default function AdminVenueStoriesPage() {
       });
       const data = await res.json();
       if (data.error) setError(data.error);
-      else setStories(data.stories ?? []);
+      else {
+        setStories(data.stories ?? []);
+        setCounts(data.counts ?? null);
+      }
     } catch {
       setError("불러오기 실패");
     } finally {
@@ -61,6 +73,22 @@ export default function AdminVenueStoriesPage() {
   return (
     <div className="p-4 max-w-3xl mx-auto text-white">
       <h1 className="text-lg font-bold mb-3">직관 라이브 모더레이션</h1>
+      {counts && (
+        <div className="grid grid-cols-5 gap-2 mb-4">
+          {[
+            { label: "총 업로드", value: counts.total, tone: "text-white" },
+            { label: "활성", value: counts.active, tone: "text-emerald-400" },
+            { label: "검수중", value: counts.pending, tone: "text-amber-400" },
+            { label: "내림", value: counts.removed, tone: "text-red-400" },
+            { label: "오늘", value: counts.today, tone: "text-sky-400" },
+          ].map((c) => (
+            <div key={c.label} className="bg-white/5 rounded-lg p-2 text-center">
+              <p className={`text-lg font-bold ${c.tone}`}>{c.value}</p>
+              <p className="text-[11px] text-gray-400">{c.label}</p>
+            </div>
+          ))}
+        </div>
+      )}
       {loading && <p className="text-sm text-gray-400">불러오는 중…</p>}
       {error && <p className="text-sm text-red-400">{error}</p>}
       <div className="flex flex-col gap-2">
