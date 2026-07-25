@@ -25,8 +25,8 @@ import {
 import { consentStorageKey } from "@/lib/venue-stories/auth-consent";
 import { createPickController, type PickController } from "@/lib/venue-stories/pick-controller";
 import {
-  ownsImagePreviewReadLock,
   resolveImagePreview,
+  venueStorySubmitReady,
 } from "@/lib/venue-stories/composer-helpers";
 import { readFileAsDataURL } from "@/lib/venue-stories/read-file";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
@@ -59,15 +59,10 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   // → 픽 대기 안내 오버레이 (하린아빠 7/23 21:05 리포트). 상태 전이는 pick-session 순수 모듈이 소유:
   // 수동 취소/닫기 후 late change 무시 · 준비 중 재진입 차단 (삼순 #805 blocker)
   const [picking, setPicking] = useState(false);
-  // 이미지 data URL 읽는 동안 제출 잠금 — 파일만 활성·프리뷰 없는 사이 업로드 방지(삼순 #839)
-  const [readingPreview, setReadingPreview] = useState(false);
   // controller의 onFile은 생성 시 1회 결속되므로, 최신 render closure를 ref로 우회한다
   const handlePickedFileRef = useRef<(file: File | null) => void>(() => {});
   // 영상 duration probe가 async — reset/새 픽 이후 도착하는 late probe 결과는 무시한다
   const pickSeqRef = useRef(0);
-  // readingPreview boolean만으로는 superseded read가 lock을 풀어야 하는지 구분할 수 없다.
-  // 현재 이미지 read의 seq를 소유권으로 두고, 소유자만 lock을 해제한다.
-  const previewReadSeqRef = useRef<number | null>(null);
   const pickControllerRef = useRef<PickController | null>(null);
   const pickController = () =>
     (pickControllerRef.current ??= createPickController({
@@ -267,10 +262,8 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
     setPhase("idle");
     setProgress(0);
     setUploadStage("upload");
-    // 읽기 lock/소유권 해제 — 이미지 data URL 읽는 중 모달을 닫으면 seq 증가로 늦은 read는
-    // discard된다. 여기서 둘 다 비우지 않으면 재오픈 뒤 openPicker/submit이 영구 차단된다.
-    previewReadSeqRef.current = null;
-    setReadingPreview(false);
+    // 이미지 late read 방어는 pickSeqRef 증가로 일원화 — 닫기/초기화 뒤 도착하는 read 는
+    // seq 불일치로 조용히 버려진다(별도 preview lock 없음 — #845 file·preview 분리).
     precheckPosRef.current = null;
     setPrecheck({ status: "idle" });
   };
@@ -283,7 +276,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   };
 
   const openPicker = () => {
-    if (submitting || readingPreview) return;
+    if (submitting) return;
     if (!precheckGateReady({ isAdmin, status: precheck.status })) return;
     // 재진입/late-event 방어는 controller가 소유 (픽별 새 input + 토큰 closure 결속)
     pickController().openPicker();
@@ -328,11 +321,15 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
       setPreviewType("video");
       return;
     }
-    // 이미지: 안드로이드 WebView가 blob: 이미지를 못 렌더하는 케이스 방지 → data URL.
-    // **file·preview를 읽기 완료 후에만 함께 반영** — A→B 재선택 시 파일은 B인데 프리뷰는 A인
-    // 불일치 방지(삼순 #839). 읽는 동안 제출 잠금(readingPreview), 실패/늦은 결과는 순수함수로 판정.
-    previewReadSeqRef.current = seq;
-    setReadingPreview(true);
+    // 이미지: 안드로이드 WebView가 blob: 이미지를 못 렌더하는 케이스 방지 → data URL(삼순 #839 유지).
+    // **file 은 read 전에 즉시 확정 — 제출 게이트는 file 기준, 프리뷰는 화면 표시용 UX일 뿐이다(#845).**
+    // data URL 은 비동기로 채운다. readingPreview lock 을 두지 않아 안드 포토피커 중복 change 에서
+    // lock 이 stuck 돼 '올리기'가 영구 비활성되던 문제를 근본 제거한다. late/재선택은 pickSeqRef 로
+    // 최신 픽만 반영(A→B 재선택 시 늦게 온 A read 는 discard → file·preview 모두 최신 B).
+    if (previewUrl?.startsWith("blob:")) URL.revokeObjectURL(previewUrl);
+    setFile(f);
+    setPreviewUrl(null); // 새 이미지 읽는 동안 이전(다른 픽) 프리뷰 제거 — 불일치 방지
+    setPreviewType("image");
     let dataUrl: string | null = null;
     try {
       dataUrl = await readFileAsDataURL(f);
@@ -344,28 +341,16 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
       currentSeq: pickSeqRef.current,
       read: dataUrl != null ? { ok: true, dataUrl } : { ok: false },
     });
-    const releaseReadLock = () => {
-      if (!ownsImagePreviewReadLock(seq, previewReadSeqRef.current)) return;
-      previewReadSeqRef.current = null;
-      setReadingPreview(false);
-    };
-    if (outcome === "discard") {
-      // 새 이미지 read가 lock을 인수했다면 건드리지 않는다. 반대로 seq만 바뀐
-      // 영상/취소 경로라면 이 read가 여전히 소유자이므로 반드시 해제한다.
-      releaseReadLock();
-      return;
-    }
+    if (outcome === "discard") return; // reset/새 픽이 끼어든 late read — 최신 선택 유지
     if (outcome === "error") {
-      releaseReadLock();
+      // 최신 픽인데 read 실패 → file 확정 취소(제출 불가로 되돌림) + 에러 노출
+      setFile(null);
+      setPreviewType(null);
       setError("사진을 불러오지 못했어요. 다시 선택해주세요");
       return;
     }
-    // apply — file·preview 원자 반영
-    if (previewUrl?.startsWith("blob:")) URL.revokeObjectURL(previewUrl);
-    setFile(f);
+    // apply — 프리뷰(data URL) 채움. file 은 이미 확정됨.
     setPreviewUrl(dataUrl!);
-    setPreviewType("image");
-    releaseReadLock();
   };
   // 모달이 열린 동안 body 스크롤 잠금 — 안드로이드에서 모달 안 터치가 배경(body)으로
   // 체이닝돼 뤡경만 스크롤되고 하단 '올리기' 버튼에 도달 못하던 문제 방지(하린아빠 A17 리포트).
@@ -384,8 +369,8 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   });
 
   const submit = async () => {
-    // readingPreview 중이면 file 만 활성·preview 미반영 상태일 수 있어 제출 잠금(버튼 disabled 와 이중 방어)
-    if (!file || submitting || readingPreview) return;
+    // 프리뷰(data URL) 읽기 여부는 제출 게이트가 아니다(#845) — file 확정 시 제출 가능.
+    if (!file || submitting) return;
     setError(null);
 
     // UGC 가이드라인 동의 필수(업로드 시점 게이트)
@@ -689,7 +674,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
 
             <button
               onClick={submit}
-              disabled={!file || submitting || readingPreview || !!gateReason || !agreed || !precheckGateReady({ isAdmin, status: precheck.status })}
+              disabled={!venueStorySubmitReady({ hasFile: !!file, submitting, gateBlocked: !!gateReason, agreed, precheckReady: precheckGateReady({ isAdmin, status: precheck.status }) })}
               className="w-full py-3 rounded-xl bg-brand-primary text-white font-semibold flex items-center justify-center gap-2 disabled:opacity-40"
             >
               {submitting ? <Loader2 size={18} className="animate-spin" /> : null}

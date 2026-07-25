@@ -9,6 +9,7 @@
 import {
   resolveImagePreview,
   ownsImagePreviewReadLock,
+  venueStorySubmitReady,
   buildProcessingStory,
   completeRequestedUploadStatuses,
   terminalUploadFailureIds,
@@ -62,6 +63,49 @@ ok(
 ok(
   "reset으로 lock 소유권이 사라지면 late read는 해제 동작 없음",
   !ownsImagePreviewReadLock(2, null),
+);
+
+// ── A2) venueStorySubmitReady: 제출 게이트는 file 기준(readingPreview 분리, #845) ─────
+console.log("venueStorySubmitReady (제출 게이트 = file 확정 기준, 프리뷰 read 무관):");
+const gateAllOpen = { hasFile: true, submitting: false, gateBlocked: false, agreed: true, precheckReady: true };
+ok(
+  "① file 확정+동의+게이트오픈 → 제출 가능(프리뷰 read 지연/중복 change 로 lock stuck 이더라도)",
+  venueStorySubmitReady(gateAllOpen) === true,
+);
+ok(
+  "① file 없으면 제출 불가(확정된 파일이 제출 게이트)",
+  venueStorySubmitReady({ ...gateAllOpen, hasFile: false }) === false,
+);
+ok(
+  "③ 영상 경로도 동일 — file 확정만으로 즉시 게이트 오픈(read 단계 없음, 무변경)",
+  venueStorySubmitReady(gateAllOpen) === true,
+);
+ok(
+  "④ read 실패로 file 미확정(hasFile=false) → 제출 불가",
+  venueStorySubmitReady({ ...gateAllOpen, hasFile: false }) === false,
+);
+ok(
+  "시간창/구장 차단(gateBlocked) → 제출 불가(게이트 로직 무변경 #847/#849)",
+  venueStorySubmitReady({ ...gateAllOpen, gateBlocked: true }) === false,
+);
+ok(
+  "동의 안 하면 제출 불가",
+  venueStorySubmitReady({ ...gateAllOpen, agreed: false }) === false,
+);
+ok(
+  "precheck 미통과(GPS 선체크) → 제출 불가",
+  venueStorySubmitReady({ ...gateAllOpen, precheckReady: false }) === false,
+);
+ok(
+  "업로드 중(submitting) → 제출 불가(이중 제출 방지)",
+  venueStorySubmitReady({ ...gateAllOpen, submitting: true }) === false,
+);
+
+// ② A→B 재선택: 늦게 온 A read 는 discard(최신 B file 유지) — resolveImagePreview 가 거버
+console.log("A→B 재선택 최신 file 기준(#845/#839):");
+ok(
+  "② A(seq2) read 완료 시 이미 B(seq3)가 최신 → A preview 반영 안함(discard), 제출은 최신 B file 기준",
+  resolveImagePreview({ pickSeq: 2, currentSeq: 3, read: { ok: true, dataUrl: "data:B" } }) === "discard",
 );
 
 // ── B) buildProcessingStory: 낙관 처리중 카드 ────────────────────────
