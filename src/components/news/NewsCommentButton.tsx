@@ -3,6 +3,8 @@
 import { useCallback, useState } from "react";
 import { Loader2, MessageCircle } from "lucide-react";
 import CommentSheet from "@/components/community/CommentSheet";
+import LoginSheet from "@/components/auth/LoginSheet";
+import { useAuth } from "@/lib/supabase/AuthContext";
 import type { NewsArticleDiscussion } from "@/lib/news/article-discussion";
 
 export type { NewsArticleDiscussion } from "@/lib/news/article-discussion";
@@ -31,8 +33,10 @@ export default function NewsCommentButton({
   className = "",
   onCountChange,
 }: NewsCommentButtonProps) {
+  const { user } = useAuth();
   const [postId, setPostId] = useState<number | null>(null);
   const [isOpen, setIsOpen] = useState(false);
+  const [showLogin, setShowLogin] = useState(false);
   const [loading, setLoading] = useState(false);
   const [count, setCount] = useState<number | null>(null);
   const displayedCount = count ?? initialCount ?? null;
@@ -54,6 +58,12 @@ export default function NewsCommentButton({
   const openComments = async (event: React.MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
     event.stopPropagation();
+    // 미로그인은 ensure(로그인 게이트) 호출 전에 LoginSheet를 선노출한다.
+  // 이렇게 해야 401→generic 실패로 끝나지 않고 로그인 후 댓글로 이어진다.
+    if (!user) {
+      setShowLogin(true);
+      return;
+    }
     if (loading) return;
     setLoading(true);
     try {
@@ -85,7 +95,8 @@ export default function NewsCommentButton({
         aria-label={showCount ? `댓글 ${displayedCount ?? 0}개` : "댓글 열기"}
       >
         {loading ? <Loader2 size={13} className="animate-spin" /> : <MessageCircle size={13} />}
-        <span>{showCount ? displayedCount ?? 0 : displayedCount === null ? "댓글" : displayedCount}</span>
+        {/* 미로그인은 count 미조회(삼순: UI 익명 호출 불필요)라 숫자 대신 "댓글" 표기—오표기 방지. */}
+        <span>{!user ? "댓글" : showCount ? displayedCount ?? 0 : displayedCount === null ? "댓글" : displayedCount}</span>
       </button>
       {isOpen && postId !== null && (
         <CommentSheet
@@ -97,6 +108,7 @@ export default function NewsCommentButton({
           onCommentDeleted={(_postId, removedCount = 1) => syncAfterMutation(-removedCount)}
         />
       )}
+      {showLogin && <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />}
     </>
   );
 }

@@ -117,11 +117,12 @@ async function main() {
   );
 
   const nativePage = read("src/app/native/news-comments/page.tsx");
-  // 네이티브 댓글 오버레이 페이지는 공개다(비로그인 포함) — 조회는 열리고 작성만
-  // CommentSheet(user 필수→LoginSheet)가 막는다. 로그인 전용 notFound() 게이트를 두면
-  // 비로그인 CTA 탭 시 빈 404로 끝나 LoginSheet에 도달하지 못한다(삼순 blocker).
-  assert.doesNotMatch(nativePage, /isNewsDiscussion(User|Admin)/);
-  assert.doesNotMatch(nativePage, /notFound\(\)/);
+  // 네이티브 댓글 오버레이는 로그인 유저 전용(admin-only 해제 = 전체 로그인 유저, 익명 아님).
+  // 미로그인은 웹/네이티브 CTA 단계에서 LoginSheet로 유도되므로 이 페이지까지 도달하면
+  // 로그인 상태다. admin 게이트(isNewsDiscussionAdmin)에서 유저 게이트(isNewsDiscussionUser)로 전환.
+  assert.match(nativePage, /isNewsDiscussionUser/);
+  assert.doesNotMatch(nativePage, /isNewsDiscussionAdmin/);
+  assert.match(nativePage, /notFound\(\)/);
 
   console.log("news WebView comments smoke: 23 assertions passed");
 }

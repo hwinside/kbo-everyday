@@ -6,6 +6,7 @@ import {
   type ParsedNewsDiscussionInput,
 } from "@/lib/news/discussion";
 import { allowNewsDiscussionRequest } from "@/lib/news/discussion-rate-limit";
+import { isNewsDiscussionUser } from "@/lib/news/discussion-auth";
 
 function requesterKey(req: NextRequest): string {
   return req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
@@ -31,11 +32,13 @@ async function visibleCommentCount(articleKey: string): Promise<number> {
 }
 
 export async function POST(req: NextRequest) {
-  // 기사 댓글 브릿지 ensure 는 공개다(비로그인 포함) — 커뮤니티 댓글과 동일 계약:
-  // 조회/브릿지 생성은 열되, 실제 댓글 작성은 CommentSheet(user 필수→LoginSheet)가 막는다.
-  // 남용 방지는 rate-limit + 입력검증 + author=SYSTEM_USER_ID + 최초 metadata immutable 로 한다.
-  // (게이트를 로그인 전용으로 두면 비로그인 CTA 탭이 401→generic 실패로 끝나 LoginSheet 에
-  //  도달하지 못하는 blocker 가 생긴다 — 삼순 리뷰.)
+  // ensure(브릿지 생성/조회)는 로그인 유저 전용(admin-only 해제 = 전체 로그인 유저,
+  // PR #818 선례와 동일 계약). 익명을 열면 rate-limit 안에서 임의 기사 URL 로 post
+  // 브릿지를 무한 생성하는 bridge-spam 이 가능하다. 클라 CTA는 미로그인 시 LoginSheet를
+  // 선노출해 이 게이트(401)에 도달하지 않게 하고, 작성은 CommentSheet가 다시 막는다.
+  if (!(await isNewsDiscussionUser())) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY || !process.env.SYSTEM_USER_ID) {
     return NextResponse.json({ error: "discussion service unavailable" }, { status: 503 });
   }
