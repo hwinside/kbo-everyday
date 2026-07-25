@@ -14,7 +14,11 @@ import { isVenueUploadBlocked } from "@/lib/venue-stories/geofence";
 import { VENUE_STORY_CONSENT_VERSION, type VenueInfo } from "@/lib/venue-stories/types";
 import { consentStorageKey } from "@/lib/venue-stories/auth-consent";
 import { createPickController, type PickController } from "@/lib/venue-stories/pick-controller";
-import { resolveImagePreview } from "@/lib/venue-stories/composer-helpers";
+import {
+  ownsImagePreviewReadLock,
+  resolveImagePreview,
+} from "@/lib/venue-stories/composer-helpers";
+import { readFileAsDataURL } from "@/lib/venue-stories/read-file";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
 
 interface Props {
@@ -30,17 +34,6 @@ interface Props {
 }
 
 type Phase = "idle" | "geo" | "upload";
-
-// 이미지 파일을 data URL로 읽는다. 안드로이드 WebView가 blob: 이미지를 렌더하지 못해
-// 프리뷰가 깨져 보이는 케이스 방지(data URL은 모든 WebView에서 안정 렌더).
-function readFileAsDataURL(f: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const r = new FileReader();
-    r.onload = () => resolve(r.result as string);
-    r.onerror = () => reject(r.error ?? new Error("file read failed"));
-    r.readAsDataURL(f);
-  });
-}
 
 export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded }: Props) {
   const isAdmin = useIsAdmin();
@@ -62,6 +55,9 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   const handlePickedFileRef = useRef<(file: File | null) => void>(() => {});
   // 영상 duration probe가 async — reset/새 픽 이후 도착하는 late probe 결과는 무시한다
   const pickSeqRef = useRef(0);
+  // readingPreview boolean만으로는 superseded read가 lock을 풀어야 하는지 구분할 수 없다.
+  // 현재 이미지 read의 seq를 소유권으로 두고, 소유자만 lock을 해제한다.
+  const previewReadSeqRef = useRef<number | null>(null);
   const pickControllerRef = useRef<PickController | null>(null);
   const pickController = () =>
     (pickControllerRef.current ??= createPickController({
@@ -192,9 +188,9 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
     setPhase("idle");
     setProgress(0);
     setUploadStage("upload");
-    // 읽기 lock 해제 — 이미지 data URL 읽는 중(readingPreview=true) 모달을 닫으면 seq 증가로
-    // 늦은 read 는 discard(무동작)되므로, 여기서 잠금을 안 풀면 재오픈 뒤 openPicker/submit 이
-    // 영구 차단된다(삼순 #839 blocker 1). reset 이 최신 상태의 유일한 lock 소유자다.
+    // 읽기 lock/소유권 해제 — 이미지 data URL 읽는 중 모달을 닫으면 seq 증가로 늦은 read는
+    // discard된다. 여기서 둘 다 비우지 않으면 재오픈 뒤 openPicker/submit이 영구 차단된다.
+    previewReadSeqRef.current = null;
     setReadingPreview(false);
   };
 
@@ -253,6 +249,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
     // 이미지: 안드로이드 WebView가 blob: 이미지를 못 렌더하는 케이스 방지 → data URL.
     // **file·preview를 읽기 완료 후에만 함께 반영** — A→B 재선택 시 파일은 B인데 프리뷰는 A인
     // 불일치 방지(삼순 #839). 읽는 동안 제출 잠금(readingPreview), 실패/늦은 결과는 순수함수로 판정.
+    previewReadSeqRef.current = seq;
     setReadingPreview(true);
     let dataUrl: string | null = null;
     try {
@@ -265,9 +262,19 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
       currentSeq: pickSeqRef.current,
       read: dataUrl != null ? { ok: true, dataUrl } : { ok: false },
     });
-    if (outcome === "discard") return; // 늦게 도착한(superseded) 결과 — 최신 선택 보존, 잠금도 건드리지 않음
-    if (outcome === "error") {
+    const releaseReadLock = () => {
+      if (!ownsImagePreviewReadLock(seq, previewReadSeqRef.current)) return;
+      previewReadSeqRef.current = null;
       setReadingPreview(false);
+    };
+    if (outcome === "discard") {
+      // 새 이미지 read가 lock을 인수했다면 건드리지 않는다. 반대로 seq만 바뀐
+      // 영상/취소 경로라면 이 read가 여전히 소유자이므로 반드시 해제한다.
+      releaseReadLock();
+      return;
+    }
+    if (outcome === "error") {
+      releaseReadLock();
       setError("사진을 불러오지 못했어요. 다시 선택해주세요");
       return;
     }
@@ -276,7 +283,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
     setFile(f);
     setPreviewUrl(dataUrl!);
     setPreviewType("image");
-    setReadingPreview(false);
+    releaseReadLock();
   };
   // 모달이 열린 동안 body 스크롤 잠금 — 안드로이드에서 모달 안 터치가 배경(body)으로
   // 체이닝돼 뤡경만 스크롤되고 하단 '올리기' 버튼에 도달 못하던 문제 방지(하린아빠 A17 리포트).

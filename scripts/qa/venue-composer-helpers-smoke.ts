@@ -8,6 +8,7 @@
  */
 import {
   resolveImagePreview,
+  ownsImagePreviewReadLock,
   buildProcessingStory,
   completeRequestedUploadStatuses,
   terminalUploadFailureIds,
@@ -15,6 +16,7 @@ import {
   PENDING_POLL_DELAYS_MS,
 } from "../../src/lib/venue-stories/composer-helpers";
 import { computeScrollLockStyle } from "../../src/lib/venue-stories/scroll-lock";
+import { readFileAsDataURL, type DataUrlReaderLike } from "../../src/lib/venue-stories/read-file";
 import type { VenueStory } from "../../src/lib/venue-stories/types";
 
 let pass = 0;
@@ -48,6 +50,18 @@ ok(
 ok(
   "늦은 픽 + 읽기 실패 → discard (지나간 픽의 실패는 조용히 무시, 최신 선택 유지)",
   resolveImagePreview({ pickSeq: 1, currentSeq: 3, read: { ok: false } }) === "discard",
+);
+ok(
+  "superseded read도 현재 lock 소유자면 해제(영상/취소로 seq만 바뀐 경우)",
+  ownsImagePreviewReadLock(2, 2),
+);
+ok(
+  "새 이미지 read가 lock을 인수했으면 이전 read가 해제하지 않음",
+  !ownsImagePreviewReadLock(2, 3),
+);
+ok(
+  "reset으로 lock 소유권이 사라지면 late read는 해제 동작 없음",
+  !ownsImagePreviewReadLock(2, null),
 );
 
 // ── B) buildProcessingStory: 낙관 처리중 카드 ────────────────────────
@@ -157,5 +171,93 @@ ok(
   terminalIds.has(42) && terminalIds.has(43) && terminalIds.has(44) && !terminalIds.has(41),
 );
 
-console.log(`\n결과: ${pass} pass / ${fail} fail`);
-if (fail > 0) process.exit(1);
+// ── E) readFileAsDataURL: 안드로이드 content:// hang → timeout 종결(하린아빠 A17) ────
+// 배경: onload/onerror 를 끝내 안 쏘는 File 이면 read await 가 영원히 멈춰 컴포저
+// readingPreview lock 이 영구 stuck → 프리뷰는 떠도 '올리기' 회색(영상은 무영향).
+// probeVideoDurationMs(삼순 #813)처럼 timeout 으로 반드시 settle 시켜야 lock 이 풀린다.
+async function runReadFileTests() {
+  console.log("\nreadFileAsDataURL (이미지 read timeout 종결):");
+
+  // 제어 가능한 fake FileReader + fake timer
+  function makeFakeReader() {
+    let onTimeout: (() => void) | null = null;
+    const r: DataUrlReaderLike & { _fire: (kind: "load" | "error", value?: string) => void; aborted: boolean } = {
+      onload: null,
+      onerror: null,
+      result: null,
+      error: null,
+      aborted: false,
+      readAsDataURL() {
+        /* 아무 것도 안 함 — 시나리오별로 _fire 로 수동 발화 */
+      },
+      abort() {
+        this.aborted = true;
+      },
+      _fire(kind, value) {
+        if (kind === "load") {
+          (this as { result: string | ArrayBuffer | null }).result = value ?? "";
+          this.onload?.();
+        } else {
+          (this as { error: DOMException | null }).error = new Error("boom") as unknown as DOMException;
+          this.onerror?.();
+        }
+      },
+    };
+    const timerBox: { fire: (() => void) | null } = { fire: null };
+    const deps = {
+      timeoutMs: 12_000,
+      createReader: () => r,
+      setTimer: (cb: () => void) => {
+        onTimeout = cb;
+        timerBox.fire = () => onTimeout?.();
+        return 1 as unknown as ReturnType<typeof setTimeout>;
+      },
+      clearTimer: () => {
+        timerBox.fire = null;
+      },
+    };
+    return { r, deps, timerBox };
+  }
+
+  // 1) onload 발화 → resolve
+  {
+    const { r, deps } = makeFakeReader();
+    const p = readFileAsDataURL(new Blob(["x"]), deps);
+    r._fire("load", "data:image/jpeg;base64,AAA");
+    const out = await p.then((v) => ({ ok: true as const, v }), () => ({ ok: false as const }));
+    ok("onload → data URL resolve", out.ok && out.v === "data:image/jpeg;base64,AAA");
+  }
+
+  // 2) onerror 발화 → reject
+  {
+    const { r, deps } = makeFakeReader();
+    const p = readFileAsDataURL(new Blob(["x"]), deps);
+    r._fire("error");
+    const rejected = await p.then(() => false, () => true);
+    ok("onerror → reject", rejected);
+  }
+
+  // 3) onload/onerror 둘 다 미발화 + timeout → reject + abort (hang 종결)
+  {
+    const { r, deps, timerBox } = makeFakeReader();
+    const p = readFileAsDataURL(new Blob(["x"]), deps);
+    timerBox.fire?.(); // 타임아웃 발화
+    const rejected = await p.then(() => false, () => true);
+    ok("onload/onerror 미발화 + timeout → reject (lock stuck 방지)", rejected);
+    ok("timeout 시 reader.abort() 호출(리소스 회수)", r.aborted === true);
+  }
+
+  // 4) timeout 후 늦게 onload 발화 → 이중 settle 없음(handler 해제)
+  {
+    const { r, deps, timerBox } = makeFakeReader();
+    const p = readFileAsDataURL(new Blob(["x"]), deps);
+    timerBox.fire?.();
+    await p.catch(() => {});
+    ok("timeout 후 onload/onerror handler 해제(늦은 발화 no-op)", r.onload === null && r.onerror === null);
+  }
+}
+
+void runReadFileTests().then(() => {
+  console.log(`\n결과: ${pass} pass / ${fail} fail`);
+  if (fail > 0) process.exit(1);
+});
