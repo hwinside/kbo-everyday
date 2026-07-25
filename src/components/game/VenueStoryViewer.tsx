@@ -642,9 +642,27 @@ export default function VenueStoryViewer({
                       initialClassName="text-text-secondary text-[10px]"
                     />
                     <div className="flex-1 min-w-0">
-                      <p className="text-text-secondary text-[11px]">
-                        {c.author.nickname ?? "익명"} · {timeAgo(c.createdAt)}
-                      </p>
+                      <div className="flex items-center gap-1 min-w-0">
+                        <span className="text-text-secondary text-[11px] truncate">
+                          {c.author.nickname ?? "익명"}
+                        </span>
+                        {(() => {
+                          const team =
+                            c.author.teamId != null ? getTeamById(c.author.teamId) : undefined;
+                          if (!team) return null;
+                          return (
+                            <span
+                              className="shrink-0 px-1 py-0.5 rounded text-[9px] font-bold text-white leading-none"
+                              style={{ backgroundColor: getTeamBgColor(team, "dark") }}
+                            >
+                              {team.shortName}
+                            </span>
+                          );
+                        })()}
+                        <span className="shrink-0 text-text-secondary text-[11px]">
+                          · {timeAgo(c.createdAt)}
+                        </span>
+                      </div>
                       <p className="text-text-primary text-sm break-words">{c.content}</p>
                     </div>
                     {currentUserId != null && c.userId === currentUserId && (
