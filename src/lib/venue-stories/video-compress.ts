@@ -1,8 +1,8 @@
 "use client";
 
 // 직관 스토리 영상 클라이언트 자동 재인코딩 (2026-07-24 하린아빠 "15초 + 영상 cap 자동압축").
-// 15초 이하인데 50MiB 백스톱을 넘는 영상을 차단 문구 대신 WebCodecs 재인코딩으로 cap 안에
-// 맞춘다(사진 imageCompression 과 동일 UX). 정책 함수는 순수 — scripts/qa/venue-media-smoke.ts 공유.
+// 15초 이하인데 즉시승급 공개 버킷 상한(20MiB)을 넘는 영상을 차단 문구 대신 WebCodecs 재인코딩으로
+// cap 안에 맞춘다(사진 imageCompression 과 동일 UX). 정책 함수는 순수 — scripts/qa/venue-media-smoke.ts 공유.
 //
 // 타깃 환경 제약(조사 2026-07-24):
 // - iOS Safari/WKWebView 16.4+ 는 VideoEncoder/VideoDecoder 만 지원, AudioEncoder 는 26+ 부터.
@@ -10,10 +10,10 @@
 // - mediabunny(MPL-2.0) Conversion 은 "copy whenever possible" — video 만 bitrate 로 강제
 //   transcode 하고 audio 옵션을 안 주면 AAC 패킷을 그대로 복사한다(AudioEncoder 불필요).
 // - 미지원/실패 환경은 null 반환 → 호출부가 기존 #813 백스톱 문구로 fallback.
-import { VENUE_STORY_MAX_BYTES } from "./types";
+import { VENUE_STORY_PUBLIC_VIDEO_MAX_BYTES } from "./types";
 
-/** 압축 목표 용량 — 50MiB 하드캡(Supabase Storage) 대비 여유 5MiB */
-export const VENUE_VIDEO_COMPRESS_TARGET_BYTES = 45 * 1024 * 1024;
+/** 압축 목표 용량 — 공개 videos 버킷 20MiB 상한 대비 여유 2MiB */
+export const VENUE_VIDEO_COMPRESS_TARGET_BYTES = 18 * 1024 * 1024;
 /** 오디오 트랙은 복사되지만 용량 예산에서 예약해 둘 대역 (iOS AAC 는 보통 96~160kbps) */
 export const VENUE_VIDEO_AUDIO_RESERVE_BPS = 128_000;
 /** 1080p H.264 상한 — 이 이상은 화질 이득 대비 용량 낭비 */
@@ -66,13 +66,15 @@ export async function executeWithDeadline(
   }
 }
 
-/** 자동압축 대상 판정 — duration 이 확인된 15초 게이트 통과 영상 중 바이트 백스톱 초과분만 */
+/** 자동압축 대상 판정 — duration 이 확인된 15초 게이트 통과 영상 중 즉시승급 상한 초과분만 */
 export function shouldAutoCompressVideo(input: {
   sizeBytes: number;
   durationMs: number | null;
 }): boolean {
   return (
-    input.durationMs != null && input.durationMs > 0 && input.sizeBytes > VENUE_STORY_MAX_BYTES
+    input.durationMs != null &&
+    input.durationMs > 0 &&
+    input.sizeBytes > VENUE_STORY_PUBLIC_VIDEO_MAX_BYTES
   );
 }
 
@@ -210,7 +212,7 @@ function ensureRealtimeEncoderRegistered(mb: typeof import("mediabunny")): void 
 }
 
 /**
- * cap 초과 영상을 H.264 mp4 로 재인코딩해 cap 이하 File 반환.
+ * 즉시승급 상한 초과 영상을 H.264 mp4 로 재인코딩해 공개 버킷 상한 이하 File 반환.
  * 실패/미지원/재시도 후에도 초과면 null — 호출부가 기존 백스톱 문구로 fallback.
  * onProgress: 0~1 (재시도 발생 시 0부터 다시 오를 수 있음 — 호출부는 단조 증가 가정 금지).
  */
@@ -271,12 +273,12 @@ export async function compressVenueVideo(
     const firstBitrate = computeTargetVideoBitrate(opts.durationMs);
     let result = await attempt(firstBitrate);
     if (!result) return null;
-    if (result.size <= VENUE_STORY_MAX_BYTES) return result;
+    if (result.size <= VENUE_STORY_PUBLIC_VIDEO_MAX_BYTES) return result;
 
     const retryBitrate = computeRetryBitrate(firstBitrate, result.size);
     if (retryBitrate == null) return null;
     result = await attempt(retryBitrate);
-    if (!result || result.size > VENUE_STORY_MAX_BYTES) return null;
+    if (!result || result.size > VENUE_STORY_PUBLIC_VIDEO_MAX_BYTES) return null;
     return result;
   } catch {
     return null; // 어떤 실패든 fallback (기존 게이트 문구가 안전망)

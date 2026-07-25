@@ -20,6 +20,7 @@ import {
 } from "../../src/lib/venue-stories/media-limits";
 import {
   VENUE_STORY_MAX_BYTES,
+  VENUE_STORY_PUBLIC_VIDEO_MAX_BYTES,
   VENUE_STORY_MAX_DURATION_MS,
   VENUE_STORY_DURATION_TOLERANCE_MS,
 } from "../../src/lib/venue-stories/types";
@@ -101,20 +102,20 @@ ok("자동압축 가능해도 15초 초과는 여전히 차단",
   checkVenueMediaLimits({ kind: "video", sizeBytes: MAX + 1, durationMs: OVER_MS, videoAutoCompressAvailable: true }) === VENUE_VIDEO_TOO_LONG_MSG);
 ok("사진에는 플래그 무의미(바이트 캡 유지)",
   checkVenueMediaLimits({ kind: "image", sizeBytes: MAX + 1, durationMs: null, videoAutoCompressAvailable: true }) === VENUE_IMAGE_TOO_HEAVY_MSG);
-ok("압축 대상: cap 초과 + duration 확인됨",
-  shouldAutoCompressVideo({ sizeBytes: MAX + 1, durationMs: 10_000 }) === true);
-ok("압축 비대상: cap 이하",
-  shouldAutoCompressVideo({ sizeBytes: MAX, durationMs: 10_000 }) === false);
+ok("압축 대상: 공개 버킷(20MiB) 초과 + duration 확인됨",
+  shouldAutoCompressVideo({ sizeBytes: VENUE_STORY_PUBLIC_VIDEO_MAX_BYTES + 1, durationMs: 10_000 }) === true);
+ok("압축 비대상: 공개 버킷 상한 이하",
+  shouldAutoCompressVideo({ sizeBytes: VENUE_STORY_PUBLIC_VIDEO_MAX_BYTES, durationMs: 10_000 }) === false);
 ok("압축 비대상: duration 미상(null) — 서버 검증으로 fail-close",
-  shouldAutoCompressVideo({ sizeBytes: MAX + 1, durationMs: null }) === false);
+  shouldAutoCompressVideo({ sizeBytes: VENUE_STORY_PUBLIC_VIDEO_MAX_BYTES + 1, durationMs: null }) === false);
 
 // 목표 비트레이트: 목표바이트*8/duration - 오디오 예약, [MIN,MAX] clamp
 {
   const t15 = computeTargetVideoBitrate(15_000);
   const raw15 = (VENUE_VIDEO_COMPRESS_TARGET_BYTES * 8 * 1000) / 15_000 - VENUE_VIDEO_AUDIO_RESERVE_BPS;
-  ok("15초 → raw 계산값이 MAX 초과라 clamp", raw15 > VENUE_VIDEO_MAX_BITRATE_BPS && t15 === VENUE_VIDEO_MAX_BITRATE_BPS);
-  ok("MAX 비트레이트 15초 + 오디오 예약이어도 목표바이트 이하(cap 보장)",
-    ((VENUE_VIDEO_MAX_BITRATE_BPS + VENUE_VIDEO_AUDIO_RESERVE_BPS) * 15) / 8 <= VENUE_VIDEO_COMPRESS_TARGET_BYTES);
+  ok("15초 → raw 계산값이 clamp 범위 안이면 그대로 사용", raw15 < VENUE_VIDEO_MAX_BITRATE_BPS && t15 === Math.round(raw15));
+  ok("15초 목표 비트레이트 + 오디오 예약이면 목표바이트 근처(cap 보장)",
+    ((t15 + VENUE_VIDEO_AUDIO_RESERVE_BPS) * 15) / 8 <= VENUE_VIDEO_COMPRESS_TARGET_BYTES + 1);
   const tLong = computeTargetVideoBitrate(600_000); // 비정상 긴 duration 이라도 화질 바닥 방어
   ok("극단 duration → MIN 바닥 clamp", tLong === VENUE_VIDEO_MIN_BITRATE_BPS);
 }
