@@ -14,16 +14,33 @@ import { isVenueUploadBlocked } from "@/lib/venue-stories/geofence";
 import { VENUE_STORY_CONSENT_VERSION, type VenueInfo } from "@/lib/venue-stories/types";
 import { consentStorageKey } from "@/lib/venue-stories/auth-consent";
 import { createPickController, type PickController } from "@/lib/venue-stories/pick-controller";
+import { resolveImagePreview } from "@/lib/venue-stories/composer-helpers";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
 
 interface Props {
   gameId: string;
   isOpen: boolean;
   onClose: () => void;
-  onUploaded: () => void;
+  onUploaded: (result: {
+    id: number | null;
+    mediaType: "video" | "image";
+    status: string | null;
+    thumbUrl: string | null;
+  }) => void;
 }
 
 type Phase = "idle" | "geo" | "upload";
+
+// 이미지 파일을 data URL로 읽는다. 안드로이드 WebView가 blob: 이미지를 렌더하지 못해
+// 프리뷰가 깨져 보이는 케이스 방지(data URL은 모든 WebView에서 안정 렌더).
+function readFileAsDataURL(f: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result as string);
+    r.onerror = () => reject(r.error ?? new Error("file read failed"));
+    r.readAsDataURL(f);
+  });
+}
 
 export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded }: Props) {
   const isAdmin = useIsAdmin();
@@ -39,6 +56,8 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   // → 픽 대기 안내 오버레이 (하린아빠 7/23 21:05 리포트). 상태 전이는 pick-session 순수 모듈이 소유:
   // 수동 취소/닫기 후 late change 무시 · 준비 중 재진입 차단 (삼순 #805 blocker)
   const [picking, setPicking] = useState(false);
+  // 이미지 data URL 읽는 동안 제출 잠금 — 파일만 활성·프리뷰 없는 사이 업로드 방지(삼순 #839)
+  const [readingPreview, setReadingPreview] = useState(false);
   // controller의 onFile은 생성 시 1회 결속되므로, 최신 render closure를 ref로 우회한다
   const handlePickedFileRef = useRef<(file: File | null) => void>(() => {});
   // 영상 duration probe가 async — reset/새 픽 이후 도착하는 late probe 결과는 무시한다
@@ -163,7 +182,8 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
     // in-flight 픽 invalidate — 닫기/초기화 뒤 도착하는 late change는 무시된다
     cancelPick();
     pickSeqRef.current++;
-    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    // data URL(이미지 프리뷰)은 revoke 불필 — blob(비디오)만 해제
+    if (previewUrl?.startsWith("blob:")) URL.revokeObjectURL(previewUrl);
     setFile(null);
     setPreviewUrl(null);
     setPreviewType(null);
@@ -172,6 +192,10 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
     setPhase("idle");
     setProgress(0);
     setUploadStage("upload");
+    // 읽기 lock 해제 — 이미지 data URL 읽는 중(readingPreview=true) 모달을 닫으면 seq 증가로
+    // 늦은 read 는 discard(무동작)되므로, 여기서 잠금을 안 풀면 재오픈 뒤 openPicker/submit 이
+    // 영구 차단된다(삼순 #839 blocker 1). reset 이 최신 상태의 유일한 lock 소유자다.
+    setReadingPreview(false);
   };
 
   const close = () => {
@@ -182,7 +206,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   };
 
   const openPicker = () => {
-    if (submitting) return;
+    if (submitting || readingPreview) return;
     // 재진입/late-event 방어는 controller가 소유 (픽별 새 input + 토큰 closure 결속)
     pickController().openPicker();
   };
@@ -213,18 +237,66 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
       setError(limitError);
       return;
     }
-    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    // 영상: blob 프리뷰 — file·preview·type 원자 반영(late면 방금 만든 blob만 revoke하고 빠짐).
+    if (isVideo) {
+      const url = URL.createObjectURL(f);
+      if (seq !== pickSeqRef.current) {
+        URL.revokeObjectURL(url);
+        return;
+      }
+      if (previewUrl?.startsWith("blob:")) URL.revokeObjectURL(previewUrl);
+      setFile(f);
+      setPreviewUrl(url);
+      setPreviewType("video");
+      return;
+    }
+    // 이미지: 안드로이드 WebView가 blob: 이미지를 못 렌더하는 케이스 방지 → data URL.
+    // **file·preview를 읽기 완료 후에만 함께 반영** — A→B 재선택 시 파일은 B인데 프리뷰는 A인
+    // 불일치 방지(삼순 #839). 읽는 동안 제출 잠금(readingPreview), 실패/늦은 결과는 순수함수로 판정.
+    setReadingPreview(true);
+    let dataUrl: string | null = null;
+    try {
+      dataUrl = await readFileAsDataURL(f);
+    } catch {
+      dataUrl = null;
+    }
+    const outcome = resolveImagePreview({
+      pickSeq: seq,
+      currentSeq: pickSeqRef.current,
+      read: dataUrl != null ? { ok: true, dataUrl } : { ok: false },
+    });
+    if (outcome === "discard") return; // 늦게 도착한(superseded) 결과 — 최신 선택 보존, 잠금도 건드리지 않음
+    if (outcome === "error") {
+      setReadingPreview(false);
+      setError("사진을 불러오지 못했어요. 다시 선택해주세요");
+      return;
+    }
+    // apply — file·preview 원자 반영
+    if (previewUrl?.startsWith("blob:")) URL.revokeObjectURL(previewUrl);
     setFile(f);
-    setPreviewUrl(URL.createObjectURL(f));
-    setPreviewType(isVideo ? "video" : "image");
+    setPreviewUrl(dataUrl!);
+    setPreviewType("image");
+    setReadingPreview(false);
   };
+  // 모달이 열린 동안 body 스크롤 잠금 — 안드로이드에서 모달 안 터치가 배경(body)으로
+  // 체이닝돼 뤡경만 스크롤되고 하단 '올리기' 버튼에 도달 못하던 문제 방지(하린아빠 A17 리포트).
+  useEffect(() => {
+    if (!isOpen) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [isOpen]);
+
   useEffect(() => {
     // render마다 최신 closure로 갱신 — controller의 1회 결속 onFile이 stale state를 보지 않게
     handlePickedFileRef.current = handlePickedFile;
   });
 
   const submit = async () => {
-    if (!file || submitting) return;
+    // readingPreview 중이면 file 만 활성·preview 미반영 상태일 수 있어 제출 잠금(버튼 disabled 와 이중 방어)
+    if (!file || submitting || readingPreview) return;
     setError(null);
 
     // UGC 가이드라인 동의 필수(업로드 시점 게이트)
@@ -314,7 +386,14 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
         setPhase("idle");
         return;
       }
-      onUploaded();
+      // 업로드 성공 — mediaType과 상태(영상은 pending→검증 중일 수 있음)를 알려 성공 피드백을 보장.
+      // 지금까지는 모달만 조용히 닫혀 "실패한 줄"로 오인되던 문제(하린아빠 A17 리포트).
+      onUploaded({
+        id: typeof data.id === "number" ? data.id : null,
+        mediaType: prepared.mediaType,
+        status: data.status ?? null,
+        thumbUrl: prepared.thumbUrl,
+      });
       close();
     } catch {
       setError("업로드에 실패했어요");
@@ -346,7 +425,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
       >
         <div className="absolute inset-0 bg-black/60" onClick={close} />
         <motion.div
-          className="relative w-full max-w-lg mx-auto bg-bg-secondary rounded-t-3xl max-h-[90dvh] overflow-y-auto flex flex-col"
+          className="relative w-full max-w-lg mx-auto bg-bg-secondary rounded-t-3xl max-h-[90dvh] overflow-y-auto overscroll-contain flex flex-col"
           initial={{ y: "100%" }}
           animate={{ y: 0 }}
           exit={{ y: "100%" }}
@@ -460,7 +539,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
 
             <button
               onClick={submit}
-              disabled={!file || submitting || !!gateReason || !agreed}
+              disabled={!file || submitting || readingPreview || !!gateReason || !agreed}
               className="w-full py-3 rounded-xl bg-brand-primary text-white font-semibold flex items-center justify-center gap-2 disabled:opacity-40"
             >
               {submitting ? <Loader2 size={18} className="animate-spin" /> : null}

@@ -13,6 +13,7 @@ import {
   type VenueStoryComment,
 } from "@/lib/venue-stories/comments";
 import { subscribeKeyboardInset } from "@/lib/venue-stories/keyboard-inset";
+import { lockRootScroll, unlockRootScroll } from "@/lib/venue-stories/scroll-lock";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 
 interface Props {
@@ -180,6 +181,17 @@ export default function VenueStoryViewer({
       cancelled = true;
     };
   }, [story?.id]);
+
+  // 뷰어 열린 동안 root scroll 완전 잠금 — iOS WKWebView 는 키보드가 열린 상태의 native drag 가
+  // document/root(body·html)를 움직여 배경 경기방과 fixed viewer 가 함께 밀린다(하린아빠 iOS 리포트).
+  // body overflow:hidden 만으론 부족해 scrollY 저장 + position:fixed 로 root scroll 자체를 막고
+  // 해제 시 원위치 복원한다(scroll-lock.ts 순수 헬퍼, 회귀로 고정 — 삼순 #839 blocker 3).
+  useEffect(() => {
+    const saved = lockRootScroll();
+    return () => {
+      unlockRootScroll(saved);
+    };
+  }, []);
 
   // 키보드 회피 — 입력바 포커스/댓글 시트가 열려 있을 때만 구독(CommentSheet 패턴 재사용).
   // 계산/구독은 keyboard-inset.ts 순수 헬퍼 — 스모크가 모킹 visualViewport 로 회귀 검증(삼순 #807 blocker 4)
@@ -384,8 +396,9 @@ export default function VenueStoryViewer({
 
   return createPortal(
     <motion.div
+      data-venue-story-viewer
       // 경기 페이지 상단 스코어 헤더가 z-[100]이라 그 위로 — 풀스크린 뷰어는 모든 UI를 덮어야 함
-      className="fixed inset-0 z-[120] bg-black flex flex-col select-none"
+      className="fixed inset-0 z-[120] bg-black flex flex-col select-none overflow-hidden overscroll-none"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
@@ -600,12 +613,28 @@ export default function VenueStoryViewer({
         </div>
       )}
 
+      {/* iOS 키보드-입력바 사이 gap으로 뒤 경기화면이 비치던 문제 방지(하린아빠 A17 리포트).
+          body scroll lock이 주 방어고, 이 opaque 백드롭은 입력바 아래~화면바닥을 검정으로 확실히 메운다. */}
+      {(inputFocused || commentsOpen) && (
+        <div
+          className="absolute inset-x-0 bottom-0 z-[15] bg-black pointer-events-none"
+          style={{ height: `calc(env(safe-area-inset-bottom, 0px) + ${kbInset + 60}px)` }}
+          aria-hidden
+        />
+      )}
+
       {/* 인스타식 하단 상시 댓글 입력바 (하린아빠 21:22 지시 — 인스타 UI와 동일하게 바로 아래쪽 배치).
           data-composer 는 iOS 실기기 키보드 QA(browserstack-ios-story-comments-keyboard.mjs) 마커. */}
       <div
         data-composer="venue-story"
         className="absolute left-0 right-0 z-20 flex items-center gap-2 px-3"
-        style={{ bottom: `calc(env(safe-area-inset-bottom, 0px) + ${12 + kbInset}px)` }}
+        style={{
+          // 키보드가 열렸을 때는 시각 뷰포트 하단에 정확히 붙여 사이로 배경이 비치지 않게 한다.
+          // 닫힌 상태만 safe-area + 12px 여백을 유지한다.
+          bottom: inputFocused
+            ? `${kbInset}px`
+            : `calc(env(safe-area-inset-bottom, 0px) + 12px)`,
+        }}
       >
         <input
           value={commentInput}

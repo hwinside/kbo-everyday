@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Plus, Play } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Plus, Play, Loader2 } from "lucide-react";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { getSafeSession } from "@/lib/supabase/client";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
@@ -9,6 +9,12 @@ import VenueStoryComposer from "./VenueStoryComposer";
 import VenueStoryViewer from "./VenueStoryViewer";
 import type { VenueStory } from "@/lib/venue-stories/types";
 import { loadSeenIds, markStorySeen, orderBySeen } from "@/lib/venue-stories/seen";
+import {
+  buildProcessingStory,
+  terminalUploadFailureIds,
+  mergePendingStories,
+  PENDING_POLL_DELAYS_MS,
+} from "@/lib/venue-stories/composer-helpers";
 
 interface Props {
   gameId: string;
@@ -58,6 +64,18 @@ export default function VenueStorySection({ gameId }: Props) {
     setSeenIds(loadSeenIds(gameId, userId));
   }, [gameId, userId]);
 
+  // 영상 업로드 직후 낙관 '처리중' 카드로 넣은 id 추적 — 서버가 active 로 반환하면 제거(교체 완료).
+  const pendingIdsRef = useRef<Set<number>>(new Set());
+  // 서버가 removed 로 확정한 본인 업로드 — 사용자가 실패 카드를 눌러 재업로드할 때까지 유지.
+  const failedIdsRef = useRef<Set<number>>(new Set());
+  // pending → active 승급 감지용 재조회 타이머. 언마운트/새 업로드 시 정리.
+  const pollTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const clearPollTimers = useCallback(() => {
+    pollTimersRef.current.forEach(clearTimeout);
+    pollTimersRef.current = [];
+  }, []);
+  useEffect(() => clearPollTimers, [clearPollTimers]);
+
   const fetchStories = useCallback(async () => {
     if (storyQaKeyboard) {
       // QA 하네스는 mock 뷰어만 사용 — 실데이터 조회 자체를 하지 않는다
@@ -68,21 +86,77 @@ export default function VenueStorySection({ gameId }: Props) {
       // 로그인 상태면 bearer 전달 → 서버가 차단 유저 필터(getVerifiedUserFromRequest 는 Bearer-only)
       const session = await getSafeSession();
       const token = session?.access_token;
-      const res = await fetch(`/api/venue-stories?gameId=${encodeURIComponent(gameId)}`, {
+      const statusIds = [...pendingIdsRef.current];
+      const statusQuery =
+        statusIds.length > 0 ? `&statusIds=${encodeURIComponent(statusIds.join(","))}` : "";
+      const res = await fetch(`/api/venue-stories?gameId=${encodeURIComponent(gameId)}${statusQuery}`, {
         headers: token ? { Authorization: `Bearer ${token}` } : undefined,
       });
       const data = await res.json();
-      setStories(Array.isArray(data.stories) ? data.stories : []);
+      const server: VenueStory[] = Array.isArray(data.stories) ? data.stories : [];
+      const uploadStatuses: Array<{ id: number; status: string }> = Array.isArray(
+        data.uploadStatuses,
+      )
+        ? data.uploadStatuses
+        : [];
+      const serverIds = new Set(server.map((s) => s.id));
+      const failedStatusIds = terminalUploadFailureIds(uploadStatuses);
+      for (const id of [...pendingIdsRef.current]) {
+        if (serverIds.has(id)) pendingIdsRef.current.delete(id);
+        if (failedStatusIds.has(id)) {
+          pendingIdsRef.current.delete(id);
+          failedIdsRef.current.add(id);
+        }
+      }
+      setStories((prev) => {
+        const failed = prev
+          .filter((story) => failedIdsRef.current.has(story.id))
+          .map((story) => ({
+            ...story,
+            processing: false,
+            stalled: false,
+            failed: true,
+          }));
+        return [...failed, ...mergePendingStories(prev, server, pendingIdsRef.current)];
+      });
+      if (pendingIdsRef.current.size === 0) clearPollTimers();
     } catch {
       // 무시 — 섹션은 조용히 비워둠
     } finally {
       setLoaded(true);
     }
-  }, [gameId, storyQaKeyboard]);
+  }, [gameId, storyQaKeyboard, clearPollTimers]);
 
   useEffect(() => {
     fetchStories();
   }, [fetchStories]);
+
+  // pending 낙관 카드 백오프 폴링 + 소진 시 '지연' 전환(삼순 #839 blocker 2).
+  // active 승급 감지 시 fetchStories 가 실제 카드로 교체. 마지막 폴(~60초)까지도 안 뜨면
+  // 무한 '처리중' 대신 stalled('지연·다시 시도')로 바꿔 재시도 동선을 준다(검증 지연/실패 대응).
+  const startPendingPolling = useCallback(() => {
+    clearPollTimers();
+    for (const d of PENDING_POLL_DELAYS_MS) {
+      pollTimersRef.current.push(
+        setTimeout(() => {
+          if (pendingIdsRef.current.size > 0) fetchStories();
+        }, d),
+      );
+    }
+    const lastDelay = PENDING_POLL_DELAYS_MS[PENDING_POLL_DELAYS_MS.length - 1] ?? 60000;
+    pollTimersRef.current.push(
+      setTimeout(() => {
+        if (pendingIdsRef.current.size > 0) {
+          setStories((prev) =>
+            prev.map((s) =>
+              s.processing && pendingIdsRef.current.has(s.id) ? { ...s, stalled: true } : s,
+            ),
+          );
+          clearPollTimers();
+        }
+      }, lastDelay + 3000),
+    );
+  }, [fetchStories, clearPollTimers]);
 
   // 안 본 스토리 좌측 전진배치. 뷰어/트레이가 같은 배열을 쓰므로 인덱스 일치.
   const orderedStories = useMemo(() => orderBySeen(stories, seenIds), [stories, seenIds]);
@@ -93,6 +167,45 @@ export default function VenueStorySection({ gameId }: Props) {
       markStorySeen(gameId, storyId, userId);
     },
     [gameId, userId],
+  );
+
+  // 업로드 성공 피드백 + pending 자동 반영(하린아빠 A17 리포트, 삼순 #839).
+  // 영상은 pending→ffprobe 검증→active 승급 구조라 GET(active만) 직후 1회로는 안 뜬다.
+  // → 낙관 '처리중' 카드를 즉시 트레이에 올리고 active 승급까지 폴링해 자동으로 실제 카드로 교체.
+  const handleUploaded = useCallback(
+    (result: {
+      id: number | null;
+      mediaType: "video" | "image";
+      status: string | null;
+      thumbUrl: string | null;
+    }) => {
+      if (result.mediaType === "video" && result.status === "pending" && result.id != null) {
+        const optimistic = buildProcessingStory({
+          id: result.id,
+          gameId,
+          userId: userId ?? "",
+          mediaType: "video",
+          thumbUrl: result.thumbUrl,
+          author: { nickname: null, avatarUrl: null, teamId: null },
+        });
+        pendingIdsRef.current.add(result.id);
+        setStories((prev) => [optimistic, ...prev.filter((s) => s.id !== result.id)]);
+        setLoaded(true);
+        // 백오프 폴링 — active 승급 감지 시 실제 카드 교체, 소진 시 지연 전환
+        startPendingPolling();
+      } else {
+        fetchStories();
+      }
+      const msg =
+        result.mediaType === "video" && result.status === "pending"
+          ? "영상을 올렸어요! 검증 후 잠시 뒤 자동으로 나타나요 🎬"
+          : result.mediaType === "video"
+            ? "영상을 올렸어요! 🎬"
+            : "사진을 올렸어요! 📷";
+      setToast(msg);
+      setTimeout(() => setToast(null), 2200);
+    },
+    [fetchStories, gameId, userId, startPendingPolling],
   );
 
   const handleUploadClick = () => {
@@ -133,7 +246,33 @@ export default function VenueStorySection({ gameId }: Props) {
           return (
             <button
               key={s.id}
-              onClick={() => setViewerIndex(i)}
+              onClick={() => {
+                if (s.failed) {
+                  failedIdsRef.current.delete(s.id);
+                  setStories((prev) => prev.filter((story) => story.id !== s.id));
+                  setComposerOpen(true);
+                  setToast("영상 처리에 실패했어요. 다시 선택해 주세요.");
+                  setTimeout(() => setToast(null), 2200);
+                  return;
+                }
+                // 처리중(pending) 낙관 카드는 공개 객체가 아직 없어 재생 불가 → 뷰어 진입 대신 안내
+                if (s.processing) {
+                  if (s.stalled) {
+                    // 검증 지연 — 재시도 동선: 지연 해제 + 재조회·폴링 재개
+                    setStories((prev) =>
+                      prev.map((x) => (x.id === s.id ? { ...x, stalled: false } : x)),
+                    );
+                    fetchStories();
+                    startPendingPolling();
+                    setToast("다시 확인 중이에요… 잠시만요 🎬");
+                  } else {
+                    setToast("영상 검증 중이에요. 잠시 뒤 자동으로 재생돼요 🎬");
+                  }
+                  setTimeout(() => setToast(null), 1800);
+                  return;
+                }
+                setViewerIndex(i);
+              }}
               className="shrink-0 w-[68px] flex flex-col items-center gap-1"
             >
               <div
@@ -157,10 +296,30 @@ export default function VenueStorySection({ gameId }: Props) {
                     {team.shortName}
                   </span>
                 )}
-                {s.mediaType === "video" && (
+                {s.mediaType === "video" && !s.processing && (
                   <span className="absolute bottom-1 right-1 w-5 h-5 rounded-full bg-black/60 flex items-center justify-center">
                     <Play size={11} className="text-white fill-white" />
                   </span>
+                )}
+                {s.processing && !s.stalled && (
+                  <div className="absolute inset-0 bg-black/55 flex flex-col items-center justify-center gap-1">
+                    <Loader2 size={16} className="animate-spin text-white" />
+                    <span className="text-[9px] text-white font-medium">처리중</span>
+                  </div>
+                )}
+                {s.processing && s.stalled && (
+                  <div className="absolute inset-0 bg-black/65 flex flex-col items-center justify-center gap-1 px-1">
+                    <span className="text-[13px]">⏳</span>
+                    <span className="text-[9px] text-white font-medium leading-tight text-center">지연·다시 시도</span>
+                  </div>
+                )}
+                {s.failed && (
+                  <div className="absolute inset-0 bg-black/70 flex flex-col items-center justify-center gap-1 px-1">
+                    <span className="text-[13px]">↻</span>
+                    <span className="text-[9px] text-white font-medium leading-tight text-center">
+                      실패·다시 올리기
+                    </span>
+                  </div>
                 )}
               </div>
               <span className="text-[11px] text-text-secondary truncate w-full text-center">
@@ -183,7 +342,7 @@ export default function VenueStorySection({ gameId }: Props) {
         gameId={gameId}
         isOpen={composerOpen}
         onClose={() => setComposerOpen(false)}
-        onUploaded={fetchStories}
+        onUploaded={handleUploaded}
       />
 
       {/* #809 본/안 본 정렬(orderedStories) + #807 QA 키보드 하네스 모두 보존 */}

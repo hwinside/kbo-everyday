@@ -52,6 +52,7 @@ async function wd(method, route, body, sessionId) {
 
 const METRICS_SCRIPT = `
   const composer = document.querySelector('[data-composer="venue-story"]');
+  const viewer = document.querySelector('[data-venue-story-viewer]');
   const input = composer ? composer.querySelector('input') : null;
   const rect = (el) => el ? JSON.parse(JSON.stringify(el.getBoundingClientRect())) : null;
   return {
@@ -60,8 +61,15 @@ const METRICS_SCRIPT = `
     inputFocused: Boolean(input && document.activeElement === input),
     inputValue: input ? input.value : null,
     composer: rect(composer),
+    viewer: rect(viewer),
     innerHeight: window.innerHeight,
     scrollY: window.scrollY,
+    pageYOffset: window.pageYOffset,
+    documentElementScrollTop: document.documentElement.scrollTop,
+    bodyScrollTop: document.body.scrollTop,
+    bodyPosition: document.body.style.position,
+    bodyTop: document.body.style.top,
+    htmlOverflow: document.documentElement.style.overflow,
     visualViewport: window.visualViewport ? {
       width: window.visualViewport.width,
       height: window.visualViewport.height,
@@ -86,10 +94,36 @@ async function waitMetrics(sessionId, predicate, timeoutMs) {
   return m;
 }
 
+async function drag(sessionId, x, y1, y2) {
+  await wd('POST', '/actions', {
+    actions: [{
+      type: 'pointer',
+      id: 'drag-finger',
+      parameters: { pointerType: 'touch' },
+      actions: [
+        { type: 'pointerMove', duration: 0, x, y: y1 },
+        { type: 'pointerDown', button: 0 },
+        { type: 'pointerMove', duration: 700, x, y: y2 },
+        { type: 'pointerUp', button: 0 },
+      ],
+    }],
+  }, sessionId);
+}
+
 const kbOpen = (m) => m.visualViewport != null && m.innerHeight - m.visualViewport.height > 120;
-const composerAboveKeyboard = (m) =>
+const composerFlushWithKeyboard = (m) =>
   m.composer != null && m.visualViewport != null
-  && m.composer.bottom <= m.visualViewport.offsetTop + m.visualViewport.height + 4;
+  && Math.abs(
+    m.composer.bottom - (m.visualViewport.offsetTop + m.visualViewport.height)
+  ) <= 4;
+const sameRootAndViewer = (a, b) =>
+  a.viewer != null && b.viewer != null
+  && Math.abs(a.viewer.top - b.viewer.top) <= 1
+  && Math.abs(a.viewer.bottom - b.viewer.bottom) <= 1
+  && b.scrollY === a.scrollY
+  && b.pageYOffset === a.pageYOffset
+  && b.documentElementScrollTop === a.documentElementScrollTop
+  && b.bodyScrollTop === a.bodyScrollTop;
 
 async function main() {
   const created = await wd('POST', '/session', {
@@ -144,7 +178,7 @@ async function main() {
       }, sessionId);
       focused = await waitMetrics(
         sessionId,
-        (m) => m.inputFocused && kbOpen(m) && composerAboveKeyboard(m),
+        (m) => m.inputFocused && kbOpen(m) && composerFlushWithKeyboard(m),
         6000,
       );
       if (focused.inputFocused) break;
@@ -161,7 +195,14 @@ async function main() {
     await new Promise((r) => setTimeout(r, 1200));
     const typed = await metrics(sessionId);
 
-    // 3) submit — 전송 버튼 탭(비로그인이라 서버 쓰기 없음 — 로그인 안내 토스트 경로).
+    // 3) keyboard-open native drag — JS scrollBy 가 아니라 실기기 touch drag 로 뷰어를
+    // 끌어도 viewer rect·raw document scroll 4종·root lock 이 그대로인지 검증한다.
+    const beforeDrag = typed;
+    await drag(sessionId, 180, 360, 590);
+    await new Promise((r) => setTimeout(r, 1200));
+    const afterDrag = await metrics(sessionId);
+
+    // 4) submit — 전송 버튼 탭(비로그인이라 서버 쓰기 없음 — 로그인 안내 토스트 경로).
     //    submit 후에도 composer 가 키보드 위에 유지되는지 확인.
     const submit = await wd('POST', '/element', {
       using: 'css selector',
@@ -175,14 +216,14 @@ async function main() {
     await new Promise((r) => setTimeout(r, 1500));
     const submitted = await metrics(sessionId);
 
-    // 4) blur — 키보드 닫힘 → 인셋 해제, composer 하단 복귀
+    // 5) blur — 키보드 닫힘 → 인셋 해제, composer 하단 복귀
     await wd('POST', '/execute/sync', {
       script: 'if (document.activeElement && document.activeElement.blur) document.activeElement.blur();',
       args: [],
     }, sessionId);
     const blurred = await waitMetrics(
       sessionId,
-      (m) => !m.inputFocused && !kbOpen(m) && composerAboveKeyboard(m),
+      (m) => !m.inputFocused && !kbOpen(m),
       12000,
     );
 
@@ -192,18 +233,27 @@ async function main() {
     const pngPath = path.join(outDir, 'browserstack-ios-story-comments-keyboard.png');
     await writeFile(pngPath, Buffer.from(shot, 'base64'));
 
-    const result = { qaUrl, pngPath, idle, focused, typed, submitted, blurred };
+    const result = { qaUrl, pngPath, idle, focused, typed, beforeDrag, afterDrag, submitted, blurred };
     console.log(JSON.stringify(result, null, 2));
 
     const pass = idle.hasComposer
       // focus: 키보드 frame(시각 뷰포트 축소) + 입력바가 키보드 위에 노출 + 실제 포커스
-      && focused.inputFocused && kbOpen(focused) && composerAboveKeyboard(focused)
+      && focused.inputFocused && kbOpen(focused) && composerFlushWithKeyboard(focused)
+      && sameRootAndViewer(idle, focused)
       // type: 값 반영 + 키보드 유지
-      && typed.inputValue === 'QA 키보드 확인' && kbOpen(typed) && composerAboveKeyboard(typed)
+      && typed.inputValue === 'QA 키보드 확인' && kbOpen(typed) && composerFlushWithKeyboard(typed)
+      && sameRootAndViewer(idle, typed)
+      // native drag: 키보드·입력바 유지 + 뷰어 위치와 raw root scroll 불변 + 실제 lock style
+      && kbOpen(afterDrag) && composerFlushWithKeyboard(afterDrag)
+      && sameRootAndViewer(idle, afterDrag)
+      && sameRootAndViewer(beforeDrag, afterDrag)
+      && afterDrag.bodyPosition === 'fixed'
+      && afterDrag.htmlOverflow === 'hidden'
       // submit: 키보드 유지 중에도 입력바 가려지지 않음
-      && kbOpen(submitted) && composerAboveKeyboard(submitted)
+      && kbOpen(submitted) && composerFlushWithKeyboard(submitted)
+      && sameRootAndViewer(idle, submitted)
       // blur: 키보드 해제 + 인셋 복귀(입력바가 레이아웃 뷰포트 하단으로)
-      && !blurred.inputFocused && !kbOpen(blurred) && composerAboveKeyboard(blurred);
+      && !blurred.inputFocused && !kbOpen(blurred);
 
     await wd('POST', '/execute/sync', {
       script: 'browserstack_executor: ' + JSON.stringify({
