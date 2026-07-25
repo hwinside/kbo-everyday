@@ -96,7 +96,7 @@ test("visible count SQL excludes blinded comments", () => {
   assert.match(migration, /REVOKE EXECUTE ON FUNCTION news_discussion_visible_counts\(text\[\]\)/);
 });
 
-test("discussion UI and APIs stay admin-only during production QA", () => {
+test("discussion UI is public and ensure is gated to logged-in users, counts stay public", () => {
   const button = readFileSync(
     new URL("../../src/components/news/NewsCommentButton.tsx", import.meta.url),
     "utf8",
@@ -109,9 +109,14 @@ test("discussion UI and APIs stay admin-only during production QA", () => {
     new URL("../../src/app/api/news/discussion/counts/route.ts", import.meta.url),
     "utf8",
   );
-  assert.match(button, /<AdminOnly>/);
-  assert.match(ensureRoute, /isNewsDiscussionAdmin/);
-  assert.match(countsRoute, /isNewsDiscussionAdmin/);
+  // 인피드 버튼은 더 이상 관리자 전용이 아니다.
+  assert.doesNotMatch(button, /<AdminOnly>/);
+  // ensure(브릿지 생성)는 로그인 유저 게이트로 남용을 막는다.
+  assert.match(ensureRoute, /isNewsDiscussionUser/);
+  assert.doesNotMatch(ensureRoute, /isNewsDiscussionAdmin/);
+  // 카운트는 공개 조회지만 rate-limit은 유지한다.
+  assert.doesNotMatch(countsRoute, /isNewsDiscussionAdmin/);
+  assert.match(countsRoute, /allowNewsDiscussionRequest/);
 });
 
 test("carousel article opener is not on the comment sheet React ancestor", () => {
@@ -121,7 +126,6 @@ test("carousel article opener is not on the comment sheet React ancestor", () =>
   );
   const slide = carousel.slice(carousel.indexOf('role="group"'), carousel.indexOf("{/* ── 다크"));
   assert.doesNotMatch(slide, /onClick/);
-  assert.match(carousel, /if \(!isAdmin\) return/);
 });
 
 console.log(`news discussion smoke: ${passed} passed`);

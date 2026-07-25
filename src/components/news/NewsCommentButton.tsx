@@ -2,7 +2,6 @@
 
 import { useCallback, useState } from "react";
 import { Loader2, MessageCircle } from "lucide-react";
-import AdminOnly from "@/components/admin/AdminOnly";
 import CommentSheet from "@/components/community/CommentSheet";
 import type { NewsArticleDiscussion } from "@/lib/news/article-discussion";
 
@@ -77,29 +76,27 @@ export default function NewsCommentButton({
   if (!isHttpUrl(article.url)) return null;
 
   return (
-    <AdminOnly>
-      <>
-        <button
-          type="button"
-          onClick={openComments}
-          disabled={loading}
-          className={`inline-flex min-h-7 items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-60 ${className}`}
-          aria-label={showCount ? `댓글 ${displayedCount ?? 0}개` : "댓글 열기"}
-        >
-          {loading ? <Loader2 size={13} className="animate-spin" /> : <MessageCircle size={13} />}
-          <span>{showCount ? displayedCount ?? 0 : displayedCount === null ? "댓글" : displayedCount}</span>
-        </button>
-        {isOpen && postId !== null && (
-          <CommentSheet
-            isOpen
-            onClose={() => setIsOpen(false)}
-            postId={postId}
-            teamId={article.teamId}
-            onCommentAdded={() => syncAfterMutation(1)}
-            onCommentDeleted={(_postId, removedCount = 1) => syncAfterMutation(-removedCount)}
-          />
-        )}
-      </>
-    </AdminOnly>
+    <>
+      <button
+        type="button"
+        onClick={openComments}
+        disabled={loading}
+        className={`inline-flex min-h-7 items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-60 ${className}`}
+        aria-label={showCount ? `댓글 ${displayedCount ?? 0}개` : "댓글 열기"}
+      >
+        {loading ? <Loader2 size={13} className="animate-spin" /> : <MessageCircle size={13} />}
+        <span>{showCount ? displayedCount ?? 0 : displayedCount === null ? "댓글" : displayedCount}</span>
+      </button>
+      {isOpen && postId !== null && (
+        <CommentSheet
+          isOpen
+          onClose={() => setIsOpen(false)}
+          postId={postId}
+          teamId={article.teamId}
+          onCommentAdded={() => syncAfterMutation(1)}
+          onCommentDeleted={(_postId, removedCount = 1) => syncAfterMutation(-removedCount)}
+        />
+      )}
+    </>
   );
 }

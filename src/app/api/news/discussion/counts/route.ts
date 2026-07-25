@@ -6,12 +6,9 @@ import {
   parseCountLookups,
 } from "@/lib/news/discussion";
 import { allowNewsDiscussionRequest } from "@/lib/news/discussion-rate-limit";
-import { isNewsDiscussionAdmin } from "@/lib/news/discussion-admin";
 
+// 댓글 개수는 공개 조회다(비로그인 포함). 남용 방지는 rate-limit이 담당한다.
 export async function POST(req: NextRequest) {
-  if (!(await isNewsDiscussionAdmin())) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
     return NextResponse.json({ error: "discussion service unavailable" }, { status: 503 });
   }

@@ -6,7 +6,7 @@ import {
   type ParsedNewsDiscussionInput,
 } from "@/lib/news/discussion";
 import { allowNewsDiscussionRequest } from "@/lib/news/discussion-rate-limit";
-import { isNewsDiscussionAdmin } from "@/lib/news/discussion-admin";
+import { isNewsDiscussionUser } from "@/lib/news/discussion-auth";
 
 function requesterKey(req: NextRequest): string {
   return req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
@@ -32,8 +32,8 @@ async function visibleCommentCount(articleKey: string): Promise<number> {
 }
 
 export async function POST(req: NextRequest) {
-  if (!(await isNewsDiscussionAdmin())) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (!(await isNewsDiscussionUser())) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY || !process.env.SYSTEM_USER_ID) {
     return NextResponse.json({ error: "discussion service unavailable" }, { status: 503 });

@@ -117,7 +117,7 @@ async function main() {
   );
 
   const nativePage = read("src/app/native/news-comments/page.tsx");
-  assert.match(nativePage, /isNewsDiscussionAdmin/);
+  assert.match(nativePage, /isNewsDiscussionUser/);
   assert.match(nativePage, /notFound\(\)/);
 
   console.log("news WebView comments smoke: 23 assertions passed");
