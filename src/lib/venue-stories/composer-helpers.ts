@@ -27,7 +27,12 @@ export function completeRequestedUploadStatuses(
 export function terminalUploadFailureIds(rows: readonly UploadStatus[]): Set<number> {
   return new Set(
     rows
-      .filter((row) => row.status === "removed" || row.status === "missing")
+      .filter(
+        (row) =>
+          row.status === "removed" ||
+          row.status === "missing" ||
+          row.status === "cleanup_failed",
+      )
       .map((row) => row.id),
   );
 }

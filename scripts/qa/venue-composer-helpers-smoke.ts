@@ -140,8 +140,12 @@ ok("removed/missing 실패 카드는 pending 상태와 구분", failed.failed ==
 
 console.log("\nupload status terminal 계약:");
 const completedStatuses = completeRequestedUploadStatuses(
-  [41, 42, 43],
-  [{ id: 41, status: "pending" }, { id: 42, status: "removed" }],
+  [41, 42, 43, 44],
+  [
+    { id: 41, status: "pending" },
+    { id: 42, status: "removed" },
+    { id: 44, status: "cleanup_failed" },
+  ],
 );
 ok(
   "cleanup DELETE로 응답에서 사라진 요청 id → missing 보완",
@@ -149,8 +153,8 @@ ok(
 );
 const terminalIds = terminalUploadFailureIds(completedStatuses);
 ok(
-  "removed/missing만 실패 종결, pending은 계속 추적",
-  terminalIds.has(42) && terminalIds.has(43) && !terminalIds.has(41),
+  "removed/missing/cleanup_failed는 실패 종결, pending은 계속 추적",
+  terminalIds.has(42) && terminalIds.has(43) && terminalIds.has(44) && !terminalIds.has(41),
 );
 
 console.log(`\n결과: ${pass} pass / ${fail} fail`);
