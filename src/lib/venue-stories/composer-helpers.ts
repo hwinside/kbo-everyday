@@ -59,6 +59,29 @@ export function resolveImagePreview(opts: {
 }
 
 /**
+ * 직관 스토리 제출 게이트 — '올리기' 버튼 disabled 와 handleSubmit 초기 가드가 공유하는 단일 판정.
+ * 핵심(#845): **프리뷰(data URL) 읽기 여부는 제출 게이트가 아니다.** file 이 확정되면 제출 가능해야 한다.
+ * 안드 포토피커 중복 change 로 이미지 프리뷰 read lock 이 stuck 돼도 file 만 있으면 '올리기'가
+ * 막히지 않도록, file 확정과 프리뷰 렌더를 분리한다(readingPreview 항 제거). 영상은 read 단계가
+ * 없어 픽 즉시 file 이 서므로 동일 게이트로 곧바로 열린다.
+ */
+export function venueStorySubmitReady(opts: {
+  hasFile: boolean;
+  submitting: boolean;
+  gateBlocked: boolean; // 시간창/구장 차단(gateReason)
+  agreed: boolean;
+  precheckReady: boolean; // GPS 선체크(관리자 무조건 통과)
+}): boolean {
+  return (
+    opts.hasFile &&
+    !opts.submitting &&
+    !opts.gateBlocked &&
+    opts.agreed &&
+    opts.precheckReady
+  );
+}
+
+/**
  * 완료된 이미지 read가 현재 preview lock의 소유자인지 판정한다.
  * superseded 결과라도 뒤 픽이 영상/취소라 새 이미지 read가 lock을 인수하지 않았을 수 있으므로,
  * 단순 discard만으로 lock을 방치하지 않고 소유자만 안전하게 해제한다.
