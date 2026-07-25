@@ -15,6 +15,7 @@ import {
 import { computeKeyboardInset } from "@/lib/venue-stories/keyboard-inset";
 import { lockRootScroll, unlockRootScroll } from "@/lib/venue-stories/scroll-lock";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
+import { isIosNativeRuntime } from "@/lib/capacitor/platform";
 
 interface Props {
   stories: VenueStory[];
@@ -396,6 +397,12 @@ export default function VenueStoryViewer({
 
   if (!story || typeof document === "undefined") return null;
   const isOwn = currentUserId != null && story.userId === currentUserId;
+  // iOS 원격로드 WKWebView 에서만 env(safe-area-inset-top)이 0으로 깨져 최소 44px 폴백이 필요하다.
+  // Android·웹/PWA는 env() 순수값 유지(삼순 #843 NO-GO — 전 플랫폼 44px 강제 회귀 방지).
+  // 원격 로드 설치 앱은 core 가 'web' false-negative 될 수 있어 주입 브릿지까지 보는 런타임 판정 사용(#484/#833).
+  const safeAreaInsetTop = isIosNativeRuntime()
+    ? "max(env(safe-area-inset-top, 0px), 44px)"
+    : "env(safe-area-inset-top, 0px)";
 
   return createPortal(
     <motion.div
@@ -408,10 +415,11 @@ export default function VenueStoryViewer({
     >
       {/* 진행바 — iOS 네이티브 상태바(시계/배터리)는 z-index로 못 덮으므로 safe-area 아래로 (삼순 #795 blocker).
           원격 로드 WebView(server.url=keubo.fan)에서 env(safe-area-inset-top)이 0으로 잡히는 기기가 있어
-          상태바와 겹침(하린아빠 iOS 리포트) → 최소 44px 보장으로 항상 상태바 아래로 내린다. */}
+          상태바와 겹침(하린아빠 iOS 리포트) → iOS 네이티브 런타임에서만 최소 44px 보장(safeAreaInsetTop).
+          Android·웹/PWA는 env() 순수값 유지(삼순 #843 NO-GO — 전 플랫폼 44px 강제 회귀 방지). */}
       <div
         className="absolute top-0 left-0 right-0 z-20 flex gap-1 px-2 pointer-events-none"
-        style={{ paddingTop: "calc(max(env(safe-area-inset-top, 0px), 44px) + 8px)" }}
+        style={{ paddingTop: `calc(${safeAreaInsetTop} + 8px)` }}
       >
         {stories.map((s, i) => (
           <div key={s.id} className="flex-1 h-0.5 rounded-full bg-white/30 overflow-hidden">
@@ -426,7 +434,7 @@ export default function VenueStoryViewer({
       {/* 헤더 — 작성자/닫기도 상태바 아래로. 진행바(+8px)와 겹치지 않게 +28px 로 간격 확보(하린아빠 리포트). */}
       <div
         className="absolute left-0 right-0 z-20 flex items-center gap-2 px-3"
-        style={{ top: "calc(max(env(safe-area-inset-top, 0px), 44px) + 28px)" }}
+        style={{ top: `calc(${safeAreaInsetTop} + 28px)` }}
       >
         {/* story.id key로 remount — 이전 스토리에서 onError로 숨긴 img/flex 폴백이 다음 스토리에 남지 않게 (삼순 #805) */}
         <div key={`avatar-${story.id}`} className="w-8 h-8 rounded-full bg-white/20 overflow-hidden shrink-0">
