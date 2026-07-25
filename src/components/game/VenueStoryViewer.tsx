@@ -13,6 +13,7 @@ import {
   type VenueStoryComment,
 } from "@/lib/venue-stories/comments";
 import { computeKeyboardInset } from "@/lib/venue-stories/keyboard-inset";
+import { shouldCloseCommentSheetDrag } from "@/lib/venue-stories/comment-sheet-gesture";
 import { lockRootScroll, unlockRootScroll } from "@/lib/venue-stories/scroll-lock";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import { isIosNativeRuntime } from "@/lib/capacitor/platform";
@@ -99,6 +100,7 @@ export default function VenueStoryViewer({
   const [toast, setToast] = useState<string | null>(null);
   // 댓글 모달(바텀시트) 오픈 여부 — 인라인 입력바 대신 탭→모달 방식(하린아빠 7/25 지시).
   const [commentsOpen, setCommentsOpen] = useState(false);
+  const [commentsClosing, setCommentsClosing] = useState(false);
   const [comments, setComments] = useState<VenueStoryComment[] | null>(null);
   const [commentTotal, setCommentTotal] = useState<number | null>(null);
   const [commentInput, setCommentInput] = useState("");
@@ -118,6 +120,9 @@ export default function VenueStoryViewer({
   const storyIdRef = useRef<number | null>(null);
   // 최신 댓글 bottom scroll 대상 — 댓글 시트 목록 컨테이너
   const sheetListRef = useRef<HTMLDivElement>(null);
+  const commentDragStartXRef = useRef(0);
+  const commentDragStartYRef = useRef(0);
+  const commentDragShouldCloseRef = useRef(false);
   const rafRef = useRef<number | null>(null);
   const startRef = useRef<number>(0);
   const elapsedRef = useRef<number>(0);
@@ -155,6 +160,7 @@ export default function VenueStoryViewer({
     elapsedRef.current = 0;
     startRef.current = performance.now();
     setCommentsOpen(false);
+    setCommentsClosing(false);
     setComments(null);
     setCommentTotal(null);
     setCommentInput("");
@@ -220,6 +226,44 @@ export default function VenueStoryViewer({
   useEffect(() => {
     if (commentsOpen) scrollToLatest(sheetListRef.current);
   }, [commentsOpen, comments, composerFocused]);
+
+  const requestCommentsClose = useCallback(() => {
+    setCommentsClosing(true);
+  }, []);
+
+  const handleCommentSheetTouchStart = useCallback((e: React.TouchEvent<HTMLDivElement>) => {
+    if (e.touches.length !== 1) return;
+    commentDragStartXRef.current = e.touches[0].clientX;
+    commentDragStartYRef.current = e.touches[0].clientY;
+    commentDragShouldCloseRef.current = false;
+  }, []);
+
+  const handleCommentSheetTouchMove = useCallback((e: React.TouchEvent<HTMLDivElement>) => {
+    if (e.touches.length !== 1) return;
+    const target = e.target;
+    if (!(target instanceof HTMLElement) || target.closest("input, textarea")) return;
+    const deltaX = Math.abs(e.touches[0].clientX - commentDragStartXRef.current);
+    const deltaY = e.touches[0].clientY - commentDragStartYRef.current;
+    if (deltaY < 18 || deltaY < deltaX * 1.2) return;
+    const scrollEl = target.closest("[data-comment-scroll='true']") as HTMLElement | null;
+    if (scrollEl && scrollEl.scrollTop > 2) return;
+    commentDragShouldCloseRef.current = true;
+    if (e.cancelable) e.preventDefault();
+  }, []);
+
+  const handleCommentSheetTouchEnd = useCallback((e: React.TouchEvent<HTMLDivElement>) => {
+    const touch = e.changedTouches[0];
+    if (!touch) return;
+    const deltaX = Math.abs(touch.clientX - commentDragStartXRef.current);
+    const deltaY = touch.clientY - commentDragStartYRef.current;
+    const shouldClose = shouldCloseCommentSheetDrag({
+      armed: commentDragShouldCloseRef.current,
+      deltaX,
+      deltaY,
+    });
+    commentDragShouldCloseRef.current = false;
+    if (shouldClose) requestCommentsClose();
+  }, [requestCommentsClose]);
 
   // 이미지 자동 진행(RAF), 영상은 timeupdate 로 처리
   useEffect(() => {
@@ -576,7 +620,10 @@ export default function VenueStoryViewer({
           인앱브라우저 기사 댓글 모달과 동일 UX). iOS 키보드 회피는 모달 셔(CommentSheet 패턴)에서 처리. */}
       <button
         data-open-comments
-        onClick={() => setCommentsOpen(true)}
+        onClick={() => {
+          setCommentsClosing(false);
+          setCommentsOpen(true);
+        }}
         className="absolute left-3 right-3 z-20 h-11 flex items-center gap-2 px-4 rounded-full bg-black/40 border border-white/25 text-white/80"
         style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 12px)" }}
         aria-label="댓글 목록"
@@ -592,11 +639,14 @@ export default function VenueStoryViewer({
           키보드 뒤로 가렸다 — 하린아빠 iOS 리포트). bottom=kbInset 로 컴포저를 키보드 위로 올리고, 포커스 시
           height=vvHeight 로 확장해 목록+컴포저가 키보드 위에 함께 보인다. 배경/영상은 뷰어 root scroll lock 으로 잠금. */}
       {commentsOpen && (
-        <div
+        <motion.div
           className="fixed inset-0 z-30 bg-black/60"
-          onClick={() => setCommentsOpen(false)}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: commentsClosing ? 0 : 1 }}
+          transition={{ duration: 0.2 }}
+          onClick={requestCommentsClose}
         >
-          <div
+          <motion.div
             className="fixed inset-x-0 z-30 flex flex-col bg-bg-secondary rounded-t-2xl overflow-hidden"
             style={{
               bottom: kbInset,
@@ -604,9 +654,21 @@ export default function VenueStoryViewer({
                 composerFocused && vvHeight != null
                   ? `${vvHeight}px`
                   : vvHeight != null
-                    ? `min(70dvh, ${vvHeight}px)`
-                    : "70dvh",
+                    ? `min(60dvh, ${vvHeight}px)`
+                    : "60dvh",
             }}
+            initial={{ y: "100%" }}
+            animate={{ y: commentsClosing ? "100%" : 0 }}
+            transition={{ type: "spring", damping: 28, stiffness: 300 }}
+            onAnimationComplete={() => {
+              if (commentsClosing) {
+                setCommentsOpen(false);
+                setCommentsClosing(false);
+              }
+            }}
+            onTouchStart={handleCommentSheetTouchStart}
+            onTouchMove={handleCommentSheetTouchMove}
+            onTouchEnd={handleCommentSheetTouchEnd}
             onClick={(e) => e.stopPropagation()}
           >
             {/* Drag handle (CommentSheet 동일) */}
@@ -618,7 +680,7 @@ export default function VenueStoryViewer({
             <div className="relative px-4 pb-3 border-b border-border shrink-0">
               <h3 className="text-base font-semibold text-text-primary text-center">댓글</h3>
               <button
-                onClick={() => setCommentsOpen(false)}
+                onClick={requestCommentsClose}
                 className="absolute right-4 top-0 p-1 text-text-tertiary hover:text-text-primary transition-colors"
                 aria-label="댓글 닫기"
               >
@@ -629,6 +691,7 @@ export default function VenueStoryViewer({
             {/* Comment list (CommentSheet 동일 — px-4 py-3 space-y-4, 아바타 8x8) */}
             <div
               ref={sheetListRef}
+              data-comment-scroll="true"
               className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 py-3 space-y-4"
             >
               {comments == null ? (
@@ -728,8 +791,8 @@ export default function VenueStoryViewer({
                 </button>
               </div>
             </div>
-          </div>
-        </div>
+          </motion.div>
+        </motion.div>
       )}
 
       {/* 액션 시트 */}
