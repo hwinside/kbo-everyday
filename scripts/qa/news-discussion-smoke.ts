@@ -96,7 +96,7 @@ test("visible count SQL excludes blinded comments", () => {
   assert.match(migration, /REVOKE EXECUTE ON FUNCTION news_discussion_visible_counts\(text\[\]\)/);
 });
 
-test("discussion UI is public and ensure is gated to logged-in users, counts stay public", () => {
+test("news discussion is public (read/ensure/count), write is gated by CommentSheet login", () => {
   const button = readFileSync(
     new URL("../../src/components/news/NewsCommentButton.tsx", import.meta.url),
     "utf8",
@@ -109,14 +109,31 @@ test("discussion UI is public and ensure is gated to logged-in users, counts sta
     new URL("../../src/app/api/news/discussion/counts/route.ts", import.meta.url),
     "utf8",
   );
-  // 인피드 버튼은 더 이상 관리자 전용이 아니다.
+  const commentSheet = readFileSync(
+    new URL("../../src/components/community/CommentSheet.tsx", import.meta.url),
+    "utf8",
+  );
+
+  // 인피드 버튼은 더 이상 관리자 전용이 아니다(전원 노출).
   assert.doesNotMatch(button, /<AdminOnly>/);
-  // ensure(브릿지 생성)는 로그인 유저 게이트로 남용을 막는다.
-  assert.match(ensureRoute, /isNewsDiscussionUser/);
-  assert.doesNotMatch(ensureRoute, /isNewsDiscussionAdmin/);
+
+  // === 익명 CTA 회귀(삼순 blocker) ===
+  // ensure(브릿지 생성/조회)는 공개다 — 로그인 게이트(isNewsDiscussion*)를 두면 비로그인
+  // CTA 탭이 401/404→generic 실패로 끝나 CommentSheet의 LoginSheet에 도달하지 못한다.
+  assert.doesNotMatch(ensureRoute, /isNewsDiscussion(User|Admin)/);
+  assert.doesNotMatch(ensureRoute, /unauthorized/);
+  // ensure 남용 방지는 rate-limit + 입력검증 + author=SYSTEM + 최초 metadata immutable 로 대체.
+  assert.match(ensureRoute, /allowNewsDiscussionRequest/);
+  assert.match(ensureRoute, /parseNewsDiscussionInput/);
+  assert.match(ensureRoute, /author_id:\s*process\.env\.SYSTEM_USER_ID/);
+
   // 카운트는 공개 조회지만 rate-limit은 유지한다.
-  assert.doesNotMatch(countsRoute, /isNewsDiscussionAdmin/);
+  assert.doesNotMatch(countsRoute, /isNewsDiscussion(User|Admin)/);
   assert.match(countsRoute, /allowNewsDiscussionRequest/);
+
+  // 작성 게이트는 CommentSheet가 담당: 미로그인 작성 시도면 LoginSheet 노출.
+  assert.match(commentSheet, /if \(!user\)\s*\{\s*setShowLogin\(true\)/);
+  assert.match(button, /CommentSheet/);
 });
 
 test("carousel article opener is not on the comment sheet React ancestor", () => {
@@ -126,6 +143,9 @@ test("carousel article opener is not on the comment sheet React ancestor", () =>
   );
   const slide = carousel.slice(carousel.indexOf('role="group"'), carousel.indexOf("{/* ── 다크"));
   assert.doesNotMatch(slide, /onClick/);
+  // 홈 카드 댓글수 조회는 admin 게이트 없이 전원 실행된다(공개 count).
+  assert.doesNotMatch(carousel, /if \(!isAdmin\) return/);
+  assert.doesNotMatch(carousel, /useIsAdmin/);
 });
 
 console.log(`news discussion smoke: ${passed} passed`);

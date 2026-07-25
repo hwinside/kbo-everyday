@@ -6,7 +6,6 @@ import {
   type ParsedNewsDiscussionInput,
 } from "@/lib/news/discussion";
 import { allowNewsDiscussionRequest } from "@/lib/news/discussion-rate-limit";
-import { isNewsDiscussionUser } from "@/lib/news/discussion-auth";
 
 function requesterKey(req: NextRequest): string {
   return req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
@@ -32,9 +31,11 @@ async function visibleCommentCount(articleKey: string): Promise<number> {
 }
 
 export async function POST(req: NextRequest) {
-  if (!(await isNewsDiscussionUser())) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
+  // 기사 댓글 브릿지 ensure 는 공개다(비로그인 포함) — 커뮤니티 댓글과 동일 계약:
+  // 조회/브릿지 생성은 열되, 실제 댓글 작성은 CommentSheet(user 필수→LoginSheet)가 막는다.
+  // 남용 방지는 rate-limit + 입력검증 + author=SYSTEM_USER_ID + 최초 metadata immutable 로 한다.
+  // (게이트를 로그인 전용으로 두면 비로그인 CTA 탭이 401→generic 실패로 끝나 LoginSheet 에
+  //  도달하지 못하는 blocker 가 생긴다 — 삼순 리뷰.)
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY || !process.env.SYSTEM_USER_ID) {
     return NextResponse.json({ error: "discussion service unavailable" }, { status: 503 });
   }
