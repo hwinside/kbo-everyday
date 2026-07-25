@@ -18,6 +18,7 @@ import {
 } from "../../src/lib/venue-stories/composer-helpers";
 import { computeScrollLockStyle } from "../../src/lib/venue-stories/scroll-lock";
 import { readFileAsDataURL, type DataUrlReaderLike } from "../../src/lib/venue-stories/read-file";
+import { shouldApplyAutomaticStoryRefresh } from "../../src/lib/venue-stories/refresh-policy";
 import type { VenueStory } from "../../src/lib/venue-stories/types";
 
 let pass = 0;
@@ -174,6 +175,58 @@ ok("낙관+서버 동일 id → 서버 1건만(중복 0)", m4.length === 1 && m4
 console.log("PENDING_POLL_DELAYS_MS (백오프 재조회):");
 ok("증가하는 백오프(앞은 촘촘·뒤는 성기게)", PENDING_POLL_DELAYS_MS.every((d, i, a) => i === 0 || d > a[i - 1]));
 ok("첫 재조회 ≤ 3초(빠른 승급 즉시 반영)", PENDING_POLL_DELAYS_MS[0] <= 3000);
+
+console.log("\nshouldApplyAutomaticStoryRefresh (트레이 자동 새로고침 응답 적용):");
+ok(
+  "자동 fetch 시작 뒤 viewer open → 응답 폐기(현재 재생 story id 보존)",
+  !shouldApplyAutomaticStoryRefresh({
+    automatic: true,
+    requestId: 1,
+    latestRequestId: 1,
+    blocked: true,
+    hidden: false,
+  }),
+);
+ok(
+  "겹친 자동 fetch의 늦은 구응답 → 폐기",
+  !shouldApplyAutomaticStoryRefresh({
+    automatic: true,
+    requestId: 1,
+    latestRequestId: 2,
+    blocked: false,
+    hidden: false,
+  }),
+);
+ok(
+  "탭이 숨겨진 뒤 도착한 자동응답 → 폐기",
+  !shouldApplyAutomaticStoryRefresh({
+    automatic: true,
+    requestId: 2,
+    latestRequestId: 2,
+    blocked: false,
+    hidden: true,
+  }),
+);
+ok(
+  "최신 자동응답 + 뷰어/컴포저 닫힘 + visible → 적용",
+  shouldApplyAutomaticStoryRefresh({
+    automatic: true,
+    requestId: 2,
+    latestRequestId: 2,
+    blocked: false,
+    hidden: false,
+  }),
+);
+ok(
+  "업로드/삭제 뒤 수동 갱신은 자동 폴링 차단 상태와 무관하게 적용",
+  shouldApplyAutomaticStoryRefresh({
+    automatic: false,
+    requestId: 0,
+    latestRequestId: 2,
+    blocked: true,
+    hidden: true,
+  }),
+);
 
 // ── C) iOS root scroll lock 순수 스타일 계산(삼순 #839 blocker 3) ────────────────
 console.log("\ncomputeScrollLockStyle (iOS root scroll 잠금):");

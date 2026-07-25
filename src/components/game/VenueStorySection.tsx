@@ -16,6 +16,7 @@ import {
   mergePendingStories,
   PENDING_POLL_DELAYS_MS,
 } from "@/lib/venue-stories/composer-helpers";
+import { shouldApplyAutomaticStoryRefresh } from "@/lib/venue-stories/refresh-policy";
 
 interface Props {
   gameId: string;
@@ -80,12 +81,18 @@ export default function VenueStorySection({ gameId }: Props) {
   }, []);
   useEffect(() => clearPollTimers, [clearPollTimers]);
 
-  const fetchStories = useCallback(async () => {
+  const autoRefreshBlocked = viewerIndex !== null || composerOpen;
+  const autoRefreshBlockedRef = useRef(autoRefreshBlocked);
+  autoRefreshBlockedRef.current = autoRefreshBlocked;
+  const autoRefreshRequestRef = useRef(0);
+
+  const fetchStories = useCallback(async (automatic = false) => {
     if (storyQaKeyboard) {
       // QA 하네스는 mock 뷰어만 사용 — 실데이터 조회 자체를 하지 않는다
       setLoaded(true);
       return;
     }
+    const autoRequestId = automatic ? ++autoRefreshRequestRef.current : 0;
     try {
       // 로그인 상태면 bearer 전달 → 서버가 차단 유저 필터(getVerifiedUserFromRequest 는 Bearer-only)
       const session = await getSafeSession();
@@ -96,7 +103,17 @@ export default function VenueStorySection({ gameId }: Props) {
       const res = await fetch(`/api/venue-stories?gameId=${encodeURIComponent(gameId)}${statusQuery}`, {
         headers: token ? { Authorization: `Bearer ${token}` } : undefined,
       });
+      if (!res.ok) throw new Error(`venue stories fetch failed: ${res.status}`);
       const data = await res.json();
+      if (!shouldApplyAutomaticStoryRefresh({
+        automatic,
+        requestId: autoRequestId,
+        latestRequestId: autoRefreshRequestRef.current,
+        blocked: autoRefreshBlockedRef.current,
+        hidden: typeof document !== "undefined" && document.hidden,
+      })) {
+        return;
+      }
       const server: VenueStory[] = Array.isArray(data.stories) ? data.stories : [];
       const uploadStatuses: Array<{ id: number; status: string }> = Array.isArray(
         data.uploadStatuses,
@@ -138,17 +155,12 @@ export default function VenueStorySection({ gameId }: Props) {
   // 트레이 자동 새로고침 — 크관을 계속 띄워두면 새로 올라온 스토리가 안 보인다는 하린아빠 리포트(7/25).
   // 뷰어/컴포저가 열려 있는 동안엔 재정렬로 인덱스가 어긋나거나 업로드 흐름을 방해하므로 건너뛰고,
   // 백그라운드(탭 숨김)에선 폴링을 멈춰 낭비를 줄이되 다시 보일 때 즉시 1회 새로고침한다.
-  const autoRefreshBlocked = viewerIndex !== null || composerOpen;
-  const autoRefreshBlockedRef = useRef(autoRefreshBlocked);
-  useEffect(() => {
-    autoRefreshBlockedRef.current = autoRefreshBlocked;
-  }, [autoRefreshBlocked]);
   useEffect(() => {
     if (storyQaKeyboard) return;
     const refresh = () => {
       if (autoRefreshBlockedRef.current) return;
       if (typeof document !== "undefined" && document.hidden) return;
-      fetchStories();
+      fetchStories(true);
     };
     const interval = setInterval(refresh, VENUE_STORY_REFRESH_MS);
     const onVisible = () => {
