@@ -13,13 +13,20 @@ import { loadSeenIds, markStorySeen, orderBySeen } from "@/lib/venue-stories/see
 import {
   buildProcessingStory,
   terminalUploadFailureIds,
-  mergePendingStories,
   PENDING_POLL_DELAYS_MS,
 } from "@/lib/venue-stories/composer-helpers";
+import {
+  shouldApplyAutomaticStoryRefresh,
+  shouldCommitStoryFetch,
+  buildCommittedStories,
+} from "@/lib/venue-stories/refresh-policy";
 
 interface Props {
   gameId: string;
 }
+
+// 트레이 자동 새로고침 주기(ms). 현장 업로드를 넘치지 않게 짧게, 단 과도한 재조회는 피한다.
+const VENUE_STORY_REFRESH_MS = 25000;
 
 // iOS 실기기 키보드 QA(?storyQaKeyboard=1) 전용 mock — game-chat 의 chatQaKeyboard 패턴.
 // 실제 스토리/로그인 없이도 뷰어 입력바의 focus→키보드→submit→blur 를 검증한다.
@@ -77,12 +84,28 @@ export default function VenueStorySection({ gameId }: Props) {
   }, []);
   useEffect(() => clearPollTimers, [clearPollTimers]);
 
-  const fetchStories = useCallback(async () => {
+  const autoRefreshBlocked = viewerIndex !== null || composerOpen;
+  const autoRefreshBlockedRef = useRef(autoRefreshBlocked);
+  autoRefreshBlockedRef.current = autoRefreshBlocked;
+  // 공용 monotonic 세대 카운터. 자동/수동 fetch 시작·뷰어/컴포저 열림이 모두 이 값을 올려,
+  // 앞서 진행 중인 자동 요청은 응답 commit 시점에 세대가 어긋나 폐기된다(삼순 왕복2 blocker).
+  // 이렇게 하면 '자동 A 시작 → 열림 → 수동 M 적용 → 닫힘 → 늦은 A 도착'에서 A가 M을 덮지 못한다.
+  const autoRefreshRequestRef = useRef(0);
+  // 뷰어/컴포저가 열리는 순간 진행 중인 자동 요청 세대를 무효화(수동 갱신 보호).
+  useEffect(() => {
+    if (autoRefreshBlocked) autoRefreshRequestRef.current++;
+  }, [autoRefreshBlocked]);
+
+  const fetchStories = useCallback(async (automatic = false) => {
     if (storyQaKeyboard) {
       // QA 하네스는 mock 뷰어만 사용 — 실데이터 조회 자체를 하지 않는다
       setLoaded(true);
       return;
     }
+    // 자동/수동 모두 공용 세대를 올리고 자기 세대를 보존한다. 응답 commit 시 더 최신 요청이
+    // 시작됐으면 종류와 무관하게 폐기해 구 수동응답도 최신 목록을 덮지 못하게 한다.
+    const generation = ++autoRefreshRequestRef.current;
+    const requestId = generation;
     try {
       // 로그인 상태면 bearer 전달 → 서버가 차단 유저 필터(getVerifiedUserFromRequest 는 Bearer-only)
       const session = await getSafeSession();
@@ -93,7 +116,22 @@ export default function VenueStorySection({ gameId }: Props) {
       const res = await fetch(`/api/venue-stories?gameId=${encodeURIComponent(gameId)}${statusQuery}`, {
         headers: token ? { Authorization: `Bearer ${token}` } : undefined,
       });
+      // 비정상 응답(401/500 등)은 마지막 정상 목록을 보존해야 한다 — throw 로 catch 진입,
+      // setStories 미호출(기존 목록 유지). 25초 반복 호출에서 일시 오류 1회가 트레이 소실로
+      // 노출되던 문제(삼순 blocker 2)를 막는다.
+      if (!shouldCommitStoryFetch(res.ok)) {
+        throw new Error(`venue stories fetch failed: ${res.status}`);
+      }
       const data = await res.json();
+      if (!shouldApplyAutomaticStoryRefresh({
+        automatic,
+        requestId,
+        latestRequestId: autoRefreshRequestRef.current,
+        blocked: autoRefreshBlockedRef.current,
+        hidden: typeof document !== "undefined" && document.hidden,
+      })) {
+        return;
+      }
       const server: VenueStory[] = Array.isArray(data.stories) ? data.stories : [];
       const uploadStatuses: Array<{ id: number; status: string }> = Array.isArray(
         data.uploadStatuses,
@@ -109,17 +147,9 @@ export default function VenueStorySection({ gameId }: Props) {
           failedIdsRef.current.add(id);
         }
       }
-      setStories((prev) => {
-        const failed = prev
-          .filter((story) => failedIdsRef.current.has(story.id))
-          .map((story) => ({
-            ...story,
-            processing: false,
-            stalled: false,
-            failed: true,
-          }));
-        return [...failed, ...mergePendingStories(prev, server, pendingIdsRef.current)];
-      });
+      setStories((prev) =>
+        buildCommittedStories(prev, server, failedIdsRef.current, pendingIdsRef.current),
+      );
       if (pendingIdsRef.current.size === 0) clearPollTimers();
     } catch {
       // 무시 — 섹션은 조용히 비워둠
@@ -131,6 +161,27 @@ export default function VenueStorySection({ gameId }: Props) {
   useEffect(() => {
     fetchStories();
   }, [fetchStories]);
+
+  // 트레이 자동 새로고침 — 크관을 계속 띄워두면 새로 올라온 스토리가 안 보인다는 하린아빠 리포트(7/25).
+  // 뷰어/컴포저가 열려 있는 동안엔 재정렬로 인덱스가 어긋나거나 업로드 흐름을 방해하므로 건너뛰고,
+  // 백그라운드(탭 숨김)에선 폴링을 멈춰 낭비를 줄이되 다시 보일 때 즉시 1회 새로고침한다.
+  useEffect(() => {
+    if (storyQaKeyboard) return;
+    const refresh = () => {
+      if (autoRefreshBlockedRef.current) return;
+      if (typeof document !== "undefined" && document.hidden) return;
+      fetchStories(true);
+    };
+    const interval = setInterval(refresh, VENUE_STORY_REFRESH_MS);
+    const onVisible = () => {
+      if (typeof document !== "undefined" && !document.hidden) refresh();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [fetchStories, storyQaKeyboard]);
 
   // pending 낙관 카드 백오프 폴링 + 소진 시 '지연' 전환(삼순 #839 blocker 2).
   // active 승급 감지 시 fetchStories 가 실제 카드로 교체. 마지막 폴(~60초)까지도 안 뜨면
