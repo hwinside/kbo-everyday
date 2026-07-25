@@ -172,6 +172,19 @@ export async function GET(req: NextRequest) {
     chats: Number(r.chats),
   }));
 
+  // 직관 스토리 업로드 일별 카운트(영상/사진, 전 기간 영구 롤업).
+  // venue_stories 는 cleanup cron 이 삭제하므로 라이브 테이블이 아닌 롤업 RPC 로 집계한다.
+  // RPC 실패 시 빈 배열 강등(다른 차트는 유지, 카드는 "데이터 없음" 표시).
+  const { data: venueRows, error: venueError } = await supabase.rpc("admin_venue_story_daily");
+  if (venueError) console.error("[admin/content] venue story RPC:", venueError.message);
+  const venueStoryDaily = ((venueRows ?? []) as {
+    day: string; videos: number; photos: number;
+  }[]).map((r) => ({
+    date: r.day,
+    videos: Number(r.videos),
+    photos: Number(r.photos),
+  }));
+
   // Popular posts top 10
   const { data: popularPosts, error: popularError } = await supabase
     .from("posts")
@@ -199,5 +212,6 @@ export async function GET(req: NextRequest) {
     teamActivity,
     engagedDaily,
     contentDaily,
+    venueStoryDaily,
   });
 }

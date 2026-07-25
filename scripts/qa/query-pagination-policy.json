@@ -95,6 +95,7 @@
     "venue_attendance",
     "venue_stories",
     "venue_story_comments",
+    "venue_story_upload_daily",
     "video_transcode_jobs",
     "videos",
     "watch_pings",
@@ -162,6 +163,7 @@
   },
   "boundedRpcAllowlist": {
     "admin_telemetry_retention_run": "returns one retention execution summary object",
+    "admin_venue_story_daily": "one aggregated row per KST day (slow-growing daily rollup), same pattern as admin_content_daily",
     "create_admin_broadcast_job": "creates one job and returns its id",
     "create_venue_story_v2": "creates one story and returns one row",
     "dead_letter_report_blind_notice": "state transition for one notice",

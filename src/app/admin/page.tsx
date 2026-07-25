@@ -26,6 +26,8 @@ import {
   TrendingUp,
   MessagesSquare,
   Heart,
+  Video,
+  Image as ImageIcon,
 } from "lucide-react";
 import type { FeedbackItem } from "@/lib/admin/types";
 import { getTeamById } from "@/lib/constants/teams";
@@ -67,6 +69,8 @@ interface ContentResponse {
     chatUserCount?: number;
     likeUserCount?: number;
   }[];
+  // 직관 스토리 업로드 일별(영상/사진) 영구 롤업 — 개요 오늘 KPI 용.
+  venueStoryDaily?: { date: string; videos: number; photos: number }[];
 }
 
 interface StatsResponse {
@@ -471,6 +475,12 @@ export default function AdminOverviewPage() {
   const todayChats = todayEntry?.chats ?? 0;
   const todayLikes = todayEntry?.likes ?? 0;
 
+  // 직관 스토리 오늘 업로드(영상/사진) — 전 기간 롤업에서 KST 오늘 분.
+  const venueStoryDaily = data?.content?.venueStoryDaily ?? [];
+  const todayVenue = venueStoryDaily.find((d) => d.date === todayKSTStr);
+  const todayVenueVideos = todayVenue?.videos ?? 0;
+  const todayVenuePhotos = todayVenue?.photos ?? 0;
+
   const generalPostUserCount = todayEntry?.generalPostUserCount ?? 0;
   const commentUserCount = todayEntry?.commentUserCount ?? 0;
   const photoUserCount = todayEntry?.photoUserCount ?? 0;
@@ -518,6 +528,8 @@ export default function AdminOverviewPage() {
     { label: "오늘 사진", value: withUsers(todayPhotos, photoUserCount), icon: <Camera className="w-4 h-4 text-[#FF9F0A]" />, detailType: "photos" },
     { label: "오늘 채팅(크관)", value: withUsers(todayChats, chatUserCount), icon: <MessagesSquare className="w-4 h-4 text-[#32D4EB]" />, detailType: "chats" },
     { label: "오늘 좋아요", value: withUsers(todayLikes, likeUserCount), icon: <Heart className="w-4 h-4 text-[#FF375F]" /> },
+    { label: "오늘 직관 영상", value: todayVenueVideos, icon: <Video className="w-4 h-4 text-[#BF5AF2]" /> },
+    { label: "오늘 직관 사진", value: todayVenuePhotos, icon: <ImageIcon className="w-4 h-4 text-[#5AC8FA]" /> },
     { label: "오늘 건의", value: todayFeedback, icon: <AlertTriangle className="w-4 h-4 text-[#FF453A]" /> },
     { label: "크롤러 실패", value: crawlerErrors, icon: <Bot className="w-4 h-4 text-[#FF453A]" /> },
   ];
