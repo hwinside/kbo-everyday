@@ -121,6 +121,8 @@
     "qa:venue-story-comments": "tsx scripts/qa/venue-story-comments-smoke.ts",
     "qa:venue-story-comment-rpc": "bash scripts/qa/venue-story-comment-rpc-concurrency.sh",
     "qa:ios-story-keyboard": "node scripts/qa/browserstack-ios-story-comments-keyboard.mjs",
+    "qa:pick-myteam-game": "tsx scripts/qa/pick-myteam-game-smoke.ts",
+    "qa:ui:relay-font": "node scripts/qa/ui-smoke-relay-font.mjs",
     "qa:ui:score-layout": "node scripts/qa/ui-smoke-score-layout.mjs",
     "qa:ui:venue-diary": "node scripts/qa/ui-smoke-venue-diary.mjs",
     "qa:widget-fast": "tsx scripts/qa/widget-fast-refresh-smoke.ts",
