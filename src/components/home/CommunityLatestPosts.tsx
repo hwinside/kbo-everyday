@@ -334,8 +334,11 @@ export default function CommunityLatestPosts({ myTeamId, refreshNonce = 0 }: { m
   // 홈 최신글은 '최애팀 태그된 글'만 노출(하린아빠 스펙 2026-07-25). 전체글이 너무 많아진 데 대한 대응.
   // 최애팀이 있으면 팀 피드(team_tags·해당 팀 선수 태그·레거시 팀/선수 보드 OR 쿼리)로 서버 필터,
   // 최애팀 미선택(비로그인·온보딩 전)이면 필터 기준이 없으므로 기존처럼 전체글을 노출한다.
-  const myTeamSlug = myTeamId != null ? getTeamById(myTeamId)?.slug ?? null : null;
+  const myTeam = myTeamId != null ? getTeamById(myTeamId) : null;
+  const myTeamSlug = myTeam?.slug ?? null;
   const board: FeedBoard = myTeamSlug ? { kind: "team", teamId: myTeamSlug } : { kind: "all" };
+  // 최애팀 필터 적용 중임을 타이틀에 명시: '커뮤니티 최신글(LG)'. 미선택 시 괄호 없음.
+  const sectionTitle = myTeam ? `커뮤니티 최신글(${myTeam.shortName})` : "커뮤니티 최신글";
   const { posts, loading, reload } = useUnifiedFeed(board, HOME_LATEST_COUNT);
   const { user } = useAuth();
   const [writeMode, setWriteMode] = useState<WriteFlowMode>(null);
@@ -400,7 +403,7 @@ export default function CommunityLatestPosts({ myTeamId, refreshNonce = 0 }: { m
   return (
     <section ref={sectionRef} className="scroll-mt-4">
       <div className="flex items-center justify-between mb-1">
-        <h2 className="text-lg font-semibold leading-[26px] text-text-primary">💬 커뮤니티 최신글</h2>
+        <h2 className="text-lg font-semibold leading-[26px] text-text-primary">💬 {sectionTitle}</h2>
         <Link
           href="/community/all-posts"
           className="flex items-center text-xs text-text-tertiary active:opacity-70 transition-opacity"
