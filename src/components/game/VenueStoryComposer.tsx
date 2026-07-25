@@ -543,7 +543,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
             </button>
           </div>
 
-          <div className="flex-1 overflow-y-auto overscroll-contain p-4 flex flex-col gap-3">
+          <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 flex flex-col gap-3">
             <div className="flex items-center gap-1.5 text-[12px] text-text-tertiary bg-bg-tertiary/50 rounded-lg px-3 py-2">
               <MapPin size={13} className="text-red-400 shrink-0" />
               <span>
