@@ -205,16 +205,28 @@ export function useDMChat(conversationId: string) {
         },
         async (payload) => {
           const msg = payload.new as DMMessage;
+          // 낙관 append(발신자 본인 echo)로 이미 넣은 행이면 중복 방지
+          let alreadyPresent = false;
+          setMessages((prev) => {
+            alreadyPresent = prev.some((m) => m.id === msg.id);
+            return prev;
+          });
+          if (alreadyPresent) return;
+
           const { data: prof } = await supabase
             .from("profiles")
             .select("nickname, team_id")
             .eq("id", msg.sender_id)
             .single();
 
-          setMessages((prev) => [
-            ...prev,
-            { ...msg, sender_nickname: prof?.nickname ?? "익명", sender_team_id: prof?.team_id },
-          ]);
+          setMessages((prev) =>
+            prev.some((m) => m.id === msg.id)
+              ? prev
+              : [
+                  ...prev,
+                  { ...msg, sender_nickname: prof?.nickname ?? "익명", sender_team_id: prof?.team_id },
+                ]
+          );
 
           // 읽음 처리 (내가 아닌 메시지)
           if (user && msg.sender_id !== user.id) {
@@ -261,6 +273,22 @@ export function useDMChat(conversationId: string) {
       const result = inserted as AtomicDMSendResult | null;
 
       if (!error) {
+        // 낙관 append — 발신 즉시 내 메시지를 대화창에 반영 (Realtime echo가 본인에게 지연/누락되는 경우 대비).
+        // RPC가 준 message_id로 dedup하므로 Realtime echo와 중복되지 않는다.
+        if (result?.message_id && conversationId && result.conversation_id === conversationId) {
+          const optimistic: DMMessage = {
+            id: result.message_id,
+            conversation_id: result.conversation_id,
+            sender_id: user.id,
+            content: trimmed,
+            image_urls: images.length > 0 ? images : null,
+            is_read: false,
+            created_at: new Date().toISOString(),
+          };
+          setMessages((prev) =>
+            prev.some((m) => m.id === optimistic.id) ? prev : [...prev, optimistic]
+          );
+        }
         // 운영팀 대화면 어드민 PWA 알림 트리거 (fire-and-forget — 실패해도 쪽지 발송에 영향 0, 2026-07-18)
         // messageId를 전달해 서버가 "정확히 그 행"을 검증 + 메시지당 1회 claim (replay 방지)
         if (
