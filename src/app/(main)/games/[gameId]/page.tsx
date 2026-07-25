@@ -38,7 +38,6 @@ import MatchupCard from "@/components/game/MatchupCard";
 import Diamond from "@/components/game/Diamond";
 import { ChevronUp, ChevronDown } from "lucide-react";
 import ScoreBoard from "@/components/game/ScoreBoard";
-import AdminOnly from "@/components/admin/AdminOnly";
 import VenueStorySection from "@/components/game/VenueStorySection";
 import GameChat from "@/components/game/GameChat";
 import { useChatRoomHasMessages } from "@/lib/supabase/useChatRoomHasMessages";
@@ -520,17 +519,9 @@ export default function GameDetailPage() {
         />
       ) : (
         <>
-          {/* 직관 라이브 — WIP 실환경 QA 동안 관리자에게만 노출.
-              ?storyQaKeyboard=1 은 iOS 실기기 키보드 QA 하네스(삼순 #807 라운드3
-              blocker 2) — mock 뷰어만 열고 실데이터 fetch/쓰기 없음(서버 인가 불변). */}
-          {typeof window !== "undefined" &&
-          new URLSearchParams(window.location.search).get("storyQaKeyboard") === "1" ? (
-            <VenueStorySection gameId={gameId} />
-          ) : (
-            <AdminOnly>
-              <VenueStorySection gameId={gameId} />
-            </AdminOnly>
-          )}
+          {/* 직관 라이브 — 전체 공개 롤아웃(2026-07-25 iOS/Android 출시 후 AdminOnly 게이트 해제).
+              업로드는 VenueStorySection 내부에서 네이티브 런타임+GPS+로그인 게이트, 열람은 익명 허용. */}
+          <VenueStorySection gameId={gameId} />
 
           {/* Tabs */}
           <div className="flex border-b border-border mx-4">
