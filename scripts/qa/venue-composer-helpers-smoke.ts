@@ -18,7 +18,11 @@ import {
 } from "../../src/lib/venue-stories/composer-helpers";
 import { computeScrollLockStyle } from "../../src/lib/venue-stories/scroll-lock";
 import { readFileAsDataURL, type DataUrlReaderLike } from "../../src/lib/venue-stories/read-file";
-import { shouldApplyAutomaticStoryRefresh } from "../../src/lib/venue-stories/refresh-policy";
+import {
+  shouldApplyAutomaticStoryRefresh,
+  shouldCommitStoryFetch,
+  buildCommittedStories,
+} from "../../src/lib/venue-stories/refresh-policy";
 import type { VenueStory } from "../../src/lib/venue-stories/types";
 
 let pass = 0;
@@ -227,6 +231,75 @@ ok(
     hidden: true,
   }),
 );
+
+// ── 삼순 왕복2 blocker: 열렸다 닫힌 사이 구 자동응답이 수동 갱신을 덮는 race ──────────────
+// 공용 monotonic 세대 카운터를 모델링: 자동 fetch 시작·viewer/composer 열림·수동 fetch 시작이
+// 모두 세대를 올린다. 늦게 도착한 자동응답은 자기 세대가 stale 이라 폐기되어야 한다.
+console.log("\n자동 응답 세대 무효화 (open→manual→close→late auto):");
+{
+  // 1. 자동 A 시작 → generation=1 (A.requestId=1)
+  let generation = 1;
+  const autoRequestId = 1;
+  // 2. viewer 열림 → 세대 bump
+  generation++; // 2
+  // 3. 수동 M(삭제) 시작 → 세대 bump + 즉시 적용(automatic=false)
+  generation++; // 3
+  // 4. viewer 닫힘 (세대 불변)
+  // 5. 늦은 A 도착 → blocked=false, hidden=false 지만 세대 stale
+  const applied = shouldApplyAutomaticStoryRefresh({
+    automatic: true,
+    requestId: autoRequestId,
+    latestRequestId: generation,
+    blocked: false,
+    hidden: false,
+  });
+  ok("auto start → viewer open → manual apply → close → late auto resolve → 폐기(삭제 스토리 부활 0)", !applied);
+}
+{
+  // 사진 업로드 경로: 자동 A 시작 → composer 열림 → 수동 갱신(신규 반영) → composer 닫힘 → 늦은 A
+  let generation = 1;
+  const autoRequestId = 1;
+  generation++; // composer open → 2
+  generation++; // 사진 업로드 뒤 수동 fetch → 3
+  const applied = shouldApplyAutomaticStoryRefresh({
+    automatic: true,
+    requestId: autoRequestId,
+    latestRequestId: generation,
+    blocked: false,
+    hidden: false,
+  });
+  ok("auto start → photo upload/manual apply → composer close → late auto resolve → 폐기(신규 스토리 소실 0)", !applied);
+}
+
+// ── 삼순 왕복2 blocker: non-2xx 목록 보존을 실제 commit 정책 harness 로 고정 ──────────────
+// 컴포넌트 commit 순서(shouldCommitStoryFetch 게이트 → buildCommittedStories)를 그대로 모델링.
+console.log("\nfetch commit 정책 (200 반영 / 401·500 보존):");
+{
+  const prev = [activeStory(1), activeStory(2)];
+  const server = [activeStory(2), activeStory(3)];
+  // 200 → 신규 목록 반영
+  const next = shouldCommitStoryFetch(true)
+    ? buildCommittedStories(prev, server, new Set(), new Set())
+    : prev;
+  ok("200 → 서버 신규 목록 반영", next.map((s) => s.id).join(",") === "2,3");
+}
+{
+  const prev = [activeStory(1), activeStory(2)];
+  // 401 → setStories 미호출(기존 목록 그대로 보존)
+  const next = shouldCommitStoryFetch(false)
+    ? buildCommittedStories(prev, [], new Set(), new Set())
+    : prev;
+  ok("401 → 기존 정상 목록 보존(빈 배열로 지워지지 않음)", next === prev && next.length === 2);
+}
+{
+  const prev = [activeStory(7)];
+  // 500 → 보존
+  const next = shouldCommitStoryFetch(false)
+    ? buildCommittedStories(prev, [], new Set(), new Set())
+    : prev;
+  ok("500 → 기존 목록 보존", next === prev && next[0].id === 7);
+}
+ok("shouldCommitStoryFetch: 2xx=true / non-2xx=false", shouldCommitStoryFetch(true) && !shouldCommitStoryFetch(false));
 
 // ── C) iOS root scroll lock 순수 스타일 계산(삼순 #839 blocker 3) ────────────────
 console.log("\ncomputeScrollLockStyle (iOS root scroll 잠금):");

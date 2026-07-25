@@ -13,10 +13,13 @@ import { loadSeenIds, markStorySeen, orderBySeen } from "@/lib/venue-stories/see
 import {
   buildProcessingStory,
   terminalUploadFailureIds,
-  mergePendingStories,
   PENDING_POLL_DELAYS_MS,
 } from "@/lib/venue-stories/composer-helpers";
-import { shouldApplyAutomaticStoryRefresh } from "@/lib/venue-stories/refresh-policy";
+import {
+  shouldApplyAutomaticStoryRefresh,
+  shouldCommitStoryFetch,
+  buildCommittedStories,
+} from "@/lib/venue-stories/refresh-policy";
 
 interface Props {
   gameId: string;
@@ -84,7 +87,14 @@ export default function VenueStorySection({ gameId }: Props) {
   const autoRefreshBlocked = viewerIndex !== null || composerOpen;
   const autoRefreshBlockedRef = useRef(autoRefreshBlocked);
   autoRefreshBlockedRef.current = autoRefreshBlocked;
+  // 공용 monotonic 세대 카운터. 자동/수동 fetch 시작·뷰어/컴포저 열림이 모두 이 값을 올려,
+  // 앞서 진행 중인 자동 요청은 응답 commit 시점에 세대가 어긋나 폐기된다(삼순 왕복2 blocker).
+  // 이렇게 하면 '자동 A 시작 → 열림 → 수동 M 적용 → 닫힘 → 늦은 A 도착'에서 A가 M을 덮지 못한다.
   const autoRefreshRequestRef = useRef(0);
+  // 뷰어/컴포저가 열리는 순간 진행 중인 자동 요청 세대를 무효화(수동 갱신 보호).
+  useEffect(() => {
+    if (autoRefreshBlocked) autoRefreshRequestRef.current++;
+  }, [autoRefreshBlocked]);
 
   const fetchStories = useCallback(async (automatic = false) => {
     if (storyQaKeyboard) {
@@ -92,7 +102,10 @@ export default function VenueStorySection({ gameId }: Props) {
       setLoaded(true);
       return;
     }
-    const autoRequestId = automatic ? ++autoRefreshRequestRef.current : 0;
+    // 자동/수동 모두 세대를 올린다. 수동은 requestId 0(항상 적용)이지만, 세대 증가로
+    // 직전 진행 중이던 자동 요청을 무효화한다.
+    const generation = ++autoRefreshRequestRef.current;
+    const autoRequestId = automatic ? generation : 0;
     try {
       // 로그인 상태면 bearer 전달 → 서버가 차단 유저 필터(getVerifiedUserFromRequest 는 Bearer-only)
       const session = await getSafeSession();
@@ -103,7 +116,12 @@ export default function VenueStorySection({ gameId }: Props) {
       const res = await fetch(`/api/venue-stories?gameId=${encodeURIComponent(gameId)}${statusQuery}`, {
         headers: token ? { Authorization: `Bearer ${token}` } : undefined,
       });
-      if (!res.ok) throw new Error(`venue stories fetch failed: ${res.status}`);
+      // 비정상 응답(401/500 등)은 마지막 정상 목록을 보존해야 한다 — throw 로 catch 진입,
+      // setStories 미호출(기존 목록 유지). 25초 반복 호출에서 일시 오류 1회가 트레이 소실로
+      // 노출되던 문제(삼순 blocker 2)를 막는다.
+      if (!shouldCommitStoryFetch(res.ok)) {
+        throw new Error(`venue stories fetch failed: ${res.status}`);
+      }
       const data = await res.json();
       if (!shouldApplyAutomaticStoryRefresh({
         automatic,
@@ -129,17 +147,9 @@ export default function VenueStorySection({ gameId }: Props) {
           failedIdsRef.current.add(id);
         }
       }
-      setStories((prev) => {
-        const failed = prev
-          .filter((story) => failedIdsRef.current.has(story.id))
-          .map((story) => ({
-            ...story,
-            processing: false,
-            stalled: false,
-            failed: true,
-          }));
-        return [...failed, ...mergePendingStories(prev, server, pendingIdsRef.current)];
-      });
+      setStories((prev) =>
+        buildCommittedStories(prev, server, failedIdsRef.current, pendingIdsRef.current),
+      );
       if (pendingIdsRef.current.size === 0) clearPollTimers();
     } catch {
       // 무시 — 섹션은 조용히 비워둠
