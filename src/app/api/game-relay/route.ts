@@ -208,7 +208,7 @@ interface NaverBatterRecord {
   posName: string;
 }
 
-interface NaverTextOption {
+export interface NaverTextOption {
   seqno: number;
   text: string;
   type: number;
@@ -224,7 +224,7 @@ interface NaverTextOption {
   batterRecord?: NaverBatterRecord;
 }
 
-interface NaverTextRelay {
+export interface NaverTextRelay {
   title: string;
   titleStyle: string;
   textOptions?: NaverTextOption[];
@@ -257,7 +257,9 @@ interface NaverRelayResponse {
   };
 }
 
-function parseInningRelays(textRelays: NaverTextRelay[]): InningRelay[] {
+// 회귀 테스트(scripts/qa/pitch-inning-parser-smoke.ts)가 production 경로를 직접
+// 고정할 수 있도록 export 한다(어댑터/별도 map 시뮬레이션이 아닌 실제 함수).
+export function parseInningRelays(textRelays: NaverTextRelay[]): InningRelay[] {
   // textRelays comes in reverse order (newest first) — flip to chronological
   const chronological = [...textRelays].reverse();
 
@@ -299,9 +301,22 @@ function parseInningRelays(textRelays: NaverTextRelay[]): InningRelay[] {
     // skip.
 
     for (const opt of relay.textOptions) {
-      if (opt.type === 13 || opt.type === 23) {
+      if (opt.type === 8) {
+        // 새 타석 시작 마커("5번타자 한준수"/"대타 문정빈" 등). 직전 타석이 정상
+        // terminal(13/23) 없이 끝났다면(외부 relay 스키마 변형) 남은 투구가 다음
+        // 타석에 붙는 오염을 막기 위해 fail-closed reset 한다. terminal 소비 경로와
+        // 함께 타석 경계에서 pendingPitches 잔류를 0으로 만드는 두 번째 방어선.
+        pendingPitches = [];
+      } else if (opt.type === 13 || opt.type === 23) {
         // At-bat result: "홍창기 : 우익수 앞 1루타"
         // type 13 = 일반 타석 결과, type 23 = 희생플라이/아웃/볼넷 등
+        // terminal 마커는 "타석 종료" 신호이므로 result 파싱 성공 여부와 무관하게
+        // 여기서 소비한 투구 버퍼를 확정적으로 비운다(fail-closed). malformed(빈/무
+        // 구분자) result 에서 reset 을 건너뛰면 앞 타석 투구가 다음 정상 타석에
+        // 섞이는 오염이 난다(삼순 리뷰 blocker).
+        const consumedPitches = pendingPitches;
+        pendingPitches = [];
+
         const parts = opt.text.split(" : ");
         if (parts.length < 2) continue;
         const batterName = parts[0].trim();
@@ -314,9 +329,8 @@ function parseInningRelays(textRelays: NaverTextRelay[]): InningRelay[] {
           type: classifyResult(resultText),
         };
         // 이 타석에 쌓인 투구 시퀀스를 붙인다. 사구 마지막 공 누락/자동고의4구(0구)/
-        // 대타 교체 빈 타석은 pendingPitches가 비어 자연히 pitches 생략(fail-safe).
-        if (pendingPitches.length > 0) play.pitches = pendingPitches;
-        pendingPitches = [];
+        // 대타 교체 빈 타석은 consumedPitches가 비어 자연히 pitches 생략(fail-safe).
+        if (consumedPitches.length > 0) play.pitches = consumedPitches;
         current.plays.push(play);
       } else if (opt.type === 1) {
         // 투구 1개 — 네이버 어댑터로 격리 파싱. 최소 정보(text)조차 없으면 null → skip.

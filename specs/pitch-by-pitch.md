@@ -1,6 +1,6 @@
 # Spec — Pitch-by-Pitch 투구 중계 (구종·구속·볼카운트·승부과정 펼쳐보기)
 
-> Status: DRAFT (CHECKPOINT 대기 — 하린아빠 컨펌 후 Implement)
+> Status: Slice 1 IMPLEMENTED (PR #842, 삼순 리뷰 게이트 진행 중)
 > Origin: 건의함 "파도"(Android 1.0.15) 2번+4번 / 하린아빠 GO 2026-07-25
 > Owner: 삼식이 (구현) · 삼순이 (리뷰 게이트)
 
@@ -59,19 +59,27 @@
 
 ## 6. 기술 설계
 
-### 6.1 타입 확장 (`game-relay/route.ts`)
+### 6.1 타입 (구현 확정 — `src/lib/game/pitch-provider.ts`)
+
+⚠️ 구현 시 초기 초안(`pitchNum`/`result` code)에서 변경됨. 삼순 리뷰 실측
+(종료 9경기 2,726구)에서 원문 `pitchResult` code 의미가 불안정(예: `H`가
+헛스윙 아닌 인플레이 타격)해 **code 의존을 버리고 `text` 파생 `kind`** 로 교체:
+
 ```ts
-interface PitchDetail {
-  pitchNum: number;
-  stuff: string;      // 구종
-  speed: number;      // 구속 km/h (0=미측정)
-  result: "S"|"B"|"F"|"H"|"T"|"W"|"?";
-  resultText: string; // "헛스윙" 등 (text에서 파생)
-  count?: { ball: number; strike: number; out: number };
+export interface PitchDetail {
+  num: number;        // 타석 내 투구 번호 (1부터)
+  stuff: string;      // 구종. 미측정 시 빈 문자열
+  speed: number;      // 구속 km/h. 미측정/누락 시 0
+  resultText: string; // 사람이 읽는 결과 텍스트 ("볼"/"헛스윙"/"타격"/"파울")
+  kind: "ball"|"strike"|"foul"|"inplay"|"other"; // 색상/아이콘용, text 파생(code 미신뢰)
+  count?: { ball: number; strike: number; out: number }; // Slice 2 볼카운트 배지용
 }
-// PlayEvent에 추가
-interface PlayEvent { ...; pitches?: PitchDetail[]; }
+// PlayEvent 에 추가
+export interface PlayEvent { ...; pitches?: PitchDetail[]; }
 ```
+
+파싱 진입점은 네이버 어댑터 `parseNaverPitch(opt)` (소스 격리). `type:1` 외/빈
+`text` 는 `null` 로 생략(fail-safe).
 
 ### 6.2 파싱
 - `parseInningRelays`에서 `type:1` opt를 현재 타석(마지막 push된 play)의 `pitches[]`에 누적.
@@ -83,11 +91,12 @@ interface PlayEvent { ...; pitches?: PitchDetail[]; }
 - 구종·구속·결과 pill 렌더. 다크모드 토큰 준수.
 
 ## 7. Verification (Goal-Driven)
-- [ ] 실경기 relay fixture로 파싱 유닛테스트: 타석별 pitches 순번·구종·구속 정확
-- [ ] fail-safe: pitch 필드 없는 과거 경기(구형)에서 타석 결과는 그대로 노출
-- [ ] `qa:query-guard` / tsc / eslint 0
-- [ ] End-User QA: 실기기에서 라이브 경기 타석 펼치기 → 투구 시퀀스 표시, 과거 경기도 동일
-- [ ] API 라운드트립 증가 0 (기존 payload 재사용) 확인
+- [x] 어댑터 파싱 회귀 `qa:pitch-parser` 14/14: 타구/볼/파울/번트헛스윙(V)·code 오분류 방지·fail-safe
+- [x] **production `parseInningRelays` 타석 경계 회귀 `qa:pitch-inning-parser` 11/11**: malformed terminal/terminal 부재/빈 batter 뒤 정상 타석에 앞 타석 투구 미오염 + 새 타석(type:8) fail-closed reset + 정상 attach 유지 (fix 제거 시 5개 실패로 회귀성 실증)
+- [x] fail-safe: pitch 필드 없는 구형 경기는 pitches 생략·타석 결과 그대로 노출(T6/T7)
+- [x] `qa:query-guard` 220/0/0 / tsc 0 / 대상 eslint 0
+- [ ] End-User QA: 실기기에서 라이브 경기 타석 펼치기 → 투구 시퀀스 표시, 과거 경기도 동일 (머지·배포 후)
+- [x] API 라운드트립 증가 0 (기존 relay payload 재사용, 신규 fetch 0)
 
 ## 8. Rollout
 Slice 1 구현 → 테스트 → 삼순 리뷰 게이트 → 하린아빠 머지 승인 → 배포 → End-User QA → 위키 반영.
