@@ -59,6 +59,18 @@ export function resolveImagePreview(opts: {
 }
 
 /**
+ * 완료된 이미지 read가 현재 preview lock의 소유자인지 판정한다.
+ * superseded 결과라도 뒤 픽이 영상/취소라 새 이미지 read가 lock을 인수하지 않았을 수 있으므로,
+ * 단순 discard만으로 lock을 방치하지 않고 소유자만 안전하게 해제한다.
+ */
+export function ownsImagePreviewReadLock(
+  completedSeq: number,
+  activeReadSeq: number | null,
+): boolean {
+  return activeReadSeq === completedSeq;
+}
+
+/**
  * 영상 업로드 직후(pending) 트레이에 즉시 띄울 낙관 '처리중' 카드를 만든다.
  * 서버 GET 은 active 만 조회하므로, 검증 승급 전까지 이 카드가 "올렸는데 안 뜬다"를 막는다.
  */

@@ -8,6 +8,7 @@
  */
 import {
   resolveImagePreview,
+  ownsImagePreviewReadLock,
   buildProcessingStory,
   completeRequestedUploadStatuses,
   terminalUploadFailureIds,
@@ -48,6 +49,18 @@ ok(
 ok(
   "늦은 픽 + 읽기 실패 → discard (지나간 픽의 실패는 조용히 무시, 최신 선택 유지)",
   resolveImagePreview({ pickSeq: 1, currentSeq: 3, read: { ok: false } }) === "discard",
+);
+ok(
+  "superseded read도 현재 lock 소유자면 해제(영상/취소로 seq만 바뀐 경우)",
+  ownsImagePreviewReadLock(2, 2),
+);
+ok(
+  "새 이미지 read가 lock을 인수했으면 이전 read가 해제하지 않음",
+  !ownsImagePreviewReadLock(2, 3),
+);
+ok(
+  "reset으로 lock 소유권이 사라지면 late read는 해제 동작 없음",
+  !ownsImagePreviewReadLock(2, null),
 );
 
 // ── B) buildProcessingStory: 낙관 처리중 카드 ────────────────────────
