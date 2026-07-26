@@ -11,6 +11,7 @@ import {
   finalizedExpiryIso,
   safetyCapExpiryIso,
   classifyCleanupRow,
+  shouldPhysicallyDeleteCleanupRow,
 } from "../../src/lib/venue-stories/expiry-policy";
 import {
   VENUE_STORY_EXPIRY_HOURS_AFTER_END,
@@ -71,6 +72,9 @@ ok(
   "종료 확정 + 종료+24h 경과 → expired_after_end(정상 만료)",
   classifyCleanupRow({ status: "active", gameEndedAt: new Date(T0).toISOString(), expiresAtMs: T0 + 24 * H, nowMs: T0 + 24 * H + 1 }) === "expired_after_end",
 );
+ok("정상 만료 → 물리삭제 금지", shouldPhysicallyDeleteCleanupRow("expired_after_end") === false);
+ok("운영/신고 제재 → 물리삭제 유지", shouldPhysicallyDeleteCleanupRow("flagged") === true);
+ok("안전상한 장애 정리 → 물리삭제 유지", shouldPhysicallyDeleteCleanupRow("stale_cap") === true);
 ok(
   "pending 도 terminal 전 expiry 삭제 금지",
   classifyCleanupRow({ status: "pending", gameEndedAt: null, expiresAtMs: T0 + 72 * H, nowMs: T0 + 10 * H }) === "keep",

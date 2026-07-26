@@ -9,7 +9,10 @@ import {
   collectReferencedPaths,
   type RefPageRow,
 } from "@/lib/venue-stories/cleanup-policy";
-import { classifyCleanupRow } from "@/lib/venue-stories/expiry-policy";
+import {
+  classifyCleanupRow,
+  shouldPhysicallyDeleteCleanupRow,
+} from "@/lib/venue-stories/expiry-policy";
 
 const CRON_SECRET = process.env.CRON_SECRET || "";
 // staging 버킷도 orphan 스캔 대상(생성 API 도달 전 이탈한 업로드 잔여 정리)
@@ -71,7 +74,8 @@ async function removeRowObjects(r: Row): Promise<boolean> {
 
 /**
  * 직관 스토리 정리 cron:
- *  1) 만료·removed·cleanup_failed 행 → storage 먼저 제거 후 행 삭제. storage 실패 시 cleanup_failed 로 남겨 재시도.
+ *  1) 정상 만료는 공개만 종료하고 보존. removed·cleanup_failed·stale_cap은
+ *     storage 먼저 제거 후 행 삭제. storage 실패 시 cleanup_failed 로 남겨 재시도.
  *  2) orphan 스캔: 어떤 행도 참조하지 않는 오래된 venue-stories/ 오브젝트(생성 API 실패 잔여) 제거.
  */
 export async function GET(req: NextRequest) {
@@ -85,7 +89,7 @@ export async function GET(req: NextRequest) {
 
   // ── 1) 대상 행 정리 ──
   // 만료 계약(삼순 09:44 #2): terminal(game_ended_at 확정) 전에는 expiry 삭제 금지.
-  //  - expired_after_end: 종료 확정 + 종료+24h 경과 → 정상 삭제
+  //  - expired_after_end: 종료 확정 + 종료+24h 경과 → 공개 종료, 물리삭제 금지
   //  - stale_cap: 종료 미확정인데 안전상한(시작+72h) 도달 = finalize 장애 → 누수 방지 삭제 + 관제(5xx)
   const { data: rows, error } = await supabase
     .from("venue_stories")
@@ -107,7 +111,7 @@ export async function GET(req: NextRequest) {
       expiresAtMs: r.expires_at ? Date.parse(r.expires_at) : null,
       nowMs,
     });
-    if (cls === "keep") continue; // terminal 전 — 삭제 금지
+    if (!shouldPhysicallyDeleteCleanupRow(cls)) continue;
     const ok = await removeRowObjects(r);
     if (ok) {
       const { error: delErr } = await supabase.from("venue_stories").delete().eq("id", r.id);
