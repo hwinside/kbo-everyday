@@ -108,7 +108,9 @@ export interface PlayEvent { ...; pitches?: PitchDetail[]; }
 - [x] `qa:query-guard` 220/0/0 / tsc 0 / 대상 eslint 0
 - [ ] End-User QA: 실기기에서 라이브 경기 타석 펼치기 → 투구 시퀀스 표시, 과거 경기도 동일 (머지·배포 후)
 - [x] API 라운드트립 증가 0 (기존 relay payload 재사용, 신규 fetch 0)
-- [x] 진행 중 타석 API/경계 회귀 18/18 + 크관 320/390px 실제 DOM UI 회귀 18/18
+- [x] 진행 중 타석 API/경계 회귀 18/18 + 크관 320/390px 현재 카드 intersection/새 공 자동 복귀 UI 회귀
+- [x] hidden 중 live→final 전환 후 visible 복귀 relay fetch 회귀
+- [x] terminal relay 뒤 stale `currentBatter` 미합성 + 새 type:8 0구 current card 유지 회귀
 
 ## 8. Rollout
 Slice 1 구현 → 테스트 → 삼순 리뷰 게이트 → 하린아빠 머지 승인 → 배포 → End-User QA → 위키 반영.

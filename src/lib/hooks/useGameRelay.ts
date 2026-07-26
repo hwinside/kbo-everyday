@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { GameRelayResponse } from "@/app/api/game-relay/route";
+import { planFinalFetch, afterFinalFetch } from "@/lib/hooks/final-relay-fetch";
 
 export type { GameRelayResponse, InningRelay, PlayEvent, MatchupStats, RelayPlayerStats, RelayBatterStat, RelayPitcherStat } from "@/app/api/game-relay/route";
 
@@ -18,12 +19,13 @@ export function useGameRelay(
   const finalFetchedRef = useRef(false);
   const inFlightRef = useRef(false);
 
-  const fetchRelay = useCallback(async () => {
-    if (!gameId) return;
-    if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
-    if (inFlightRef.current) return;
+  const fetchRelay = useCallback(async (): Promise<boolean> => {
+    if (!gameId) return false;
+    if (typeof document !== "undefined" && document.visibilityState === "hidden") return false;
+    if (inFlightRef.current) return false;
     inFlightRef.current = true;
     setIsLoading(true);
+    let succeeded = false;
     try {
       const params = new URLSearchParams({ gameId });
       if (currentInning > 0) params.set("inning", String(currentInning));
@@ -31,6 +33,7 @@ export function useGameRelay(
       if (res.ok && mountedRef.current) {
         const json = (await res.json()) as GameRelayResponse;
         setData(json);
+        succeeded = true;
       }
     } catch {
       // Silently fail — UI shows fallback
@@ -38,6 +41,7 @@ export function useGameRelay(
       inFlightRef.current = false;
       if (mountedRef.current) setIsLoading(false);
     }
+    return succeeded;
   }, [gameId, currentInning]);
 
   useEffect(() => {
@@ -58,10 +62,24 @@ export function useGameRelay(
       };
     }
 
-    // 종료 경기: 한 번만 fetch (relay 데이터로 스탯 탭 fallback)
-    if (isFinal && !finalFetchedRef.current) {
-      finalFetchedRef.current = true;
-      fetchRelay();
+    if (isFinal) {
+      // 삼순 blocker 2: hidden 중 live→final 전환이면 첫 시도가 skip 되므로 finalFetched 를
+      // 미리 고정하지 않고(afterFinalFetch: 성공 때만 latch), visible 복귀 시 재시도한다.
+      const fetchFinalRelay = async () => {
+        const visible = typeof document === "undefined" || document.visibilityState !== "hidden";
+        if (planFinalFetch({ finalFetched: finalFetchedRef.current, visible }) === "skip") return;
+        const ok = await fetchRelay();
+        finalFetchedRef.current = afterFinalFetch(finalFetchedRef.current, ok);
+      };
+      fetchFinalRelay();
+      const onVisibilityChange = () => {
+        if (document.visibilityState === "visible") fetchFinalRelay();
+      };
+      document.addEventListener("visibilitychange", onVisibilityChange);
+      return () => {
+        mountedRef.current = false;
+        document.removeEventListener("visibilitychange", onVisibilityChange);
+      };
     }
 
     return () => { mountedRef.current = false; };

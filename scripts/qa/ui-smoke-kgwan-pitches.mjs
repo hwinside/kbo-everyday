@@ -26,6 +26,13 @@ try {
 
     const current = page.locator('[data-qa="current-at-bat"]');
     check(`${tag} 현재 타석 자동 펼침`, await current.count() === 1);
+    const currentVisible = async () => current.evaluate((element) => {
+      const root = element.closest('[data-qa="relay-root"]');
+      const cardRect = element.getBoundingClientRect();
+      const rootRect = root.getBoundingClientRect();
+      return cardRect.top >= rootRect.top && cardRect.bottom <= rootRect.bottom;
+    });
+    check(`${tag} 초기 현재 타석 viewport 노출`, await currentVisible());
     check(`${tag} 현재 투구 4줄`, await current.locator('[data-qa^="live-pitch-"]').count() === 4);
     check(`${tag} 최신 공 accent 1개`, await current.locator('[data-qa="live-pitch-latest"]').count() === 1);
 
@@ -33,6 +40,21 @@ try {
     check(`${tag} 이전 타석 기본 접힘`, await completed.locator('[data-qa^="live-pitch-"]').count() === 0);
     await completed.locator("button").click();
     check(`${tag} 이전 타석 탭 펼침`, await completed.locator('[data-qa^="live-pitch-"]').count() === 3);
+
+    await page.locator('[data-qa="relay-root"]').evaluate((root) => {
+      root.scrollTop = root.scrollHeight;
+    });
+    check(`${tag} 완료 타석 탐색 중 현재 카드 이탈`, !(await currentVisible()));
+    await page.locator('[data-qa="add-live-pitch"]').evaluate((button) => button.click());
+    await page.waitForFunction(() => {
+      const root = document.querySelector('[data-qa="relay-root"]');
+      const current = document.querySelector('[data-qa="current-at-bat"]');
+      if (!root || !current) return false;
+      const rootRect = root.getBoundingClientRect();
+      const cardRect = current.getBoundingClientRect();
+      return cardRect.top >= rootRect.top && cardRect.bottom <= rootRect.bottom;
+    });
+    check(`${tag} 새 공 갱신 후 현재 카드 자동 노출`, await currentVisible());
 
     const updatedText = await current.locator('[data-qa="relay-updated-at"]').innerText();
     check(`${tag} 실제 갱신 age 표시`, /^(방금|\d+초 전|\d+분 전) 갱신$/.test(updatedText), updatedText);

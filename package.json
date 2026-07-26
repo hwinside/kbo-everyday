@@ -125,6 +125,8 @@
     "qa:pick-myteam-game": "tsx scripts/qa/pick-myteam-game-smoke.ts",
     "qa:ui:relay-font": "node scripts/qa/ui-smoke-relay-font.mjs",
     "qa:ui:kgwan-pitches": "node scripts/qa/ui-smoke-kgwan-pitches.mjs",
+    "qa:ui:game-relay-hook": "node scripts/qa/ui-smoke-game-relay-hook.mjs",
+    "qa:kgwan-live-state": "tsx scripts/qa/kgwan-live-state-smoke.ts",
     "qa:ui:score-layout": "node scripts/qa/ui-smoke-score-layout.mjs",
     "qa:ui:venue-diary": "node scripts/qa/ui-smoke-venue-diary.mjs",
     "qa:widget-fast": "tsx scripts/qa/widget-fast-refresh-smoke.ts",

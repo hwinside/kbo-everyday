@@ -15,6 +15,7 @@ import type { GameEvent } from "@/types/game-events";
 import type { GamePlay } from "@/lib/types";
 import type { GameDetailResponse } from "@/app/api/game-detail/route";
 import type { GameRelayResponse } from "@/app/api/game-relay/route";
+import { resolveCurrentAtBat } from "@/lib/game/current-at-bat";
 
 interface KgwanTabProps {
   gameId: string;
@@ -322,7 +323,6 @@ function LiveView({
 }) {
   const [expandedInning, setExpandedInning] = useState<string | null>(null);
   const [showPreviousInnings, setShowPreviousInnings] = useState(false);
-  const relayEndRef = useRef<HTMLDivElement>(null);
 
   // 네이버 relay가 있으면 이닝별 상세 표시, 없으면 diff 이벤트 fallback
   const hasRelay = gameRelay && gameRelay.innings.length > 0;
@@ -340,15 +340,11 @@ function LiveView({
   // 최신 이닝과 이전 이닝 분리
   const latestInning = orderedInnings.length > 0 ? orderedInnings[orderedInnings.length - 1] : null;
   const previousInnings = orderedInnings.slice(0, -1);
-  const currentAtBat = latestInning?.currentAtBat
-    ?? (currentBatter ? { batterName: currentBatter, pitches: [] } : null);
-
-  // 최신 이닝(아래)으로 자동 스크롤
-  useEffect(() => {
-    if (relayEndRef.current && orderedInnings.length > 0) {
-      relayEndRef.current.scrollIntoView({ behavior: "smooth" });
-    }
-  }, [orderedInnings.length]);
+  const currentAtBat = resolveCurrentAtBat({
+    hasRelay: Boolean(hasRelay),
+    latestInning,
+    currentBatter,
+  });
 
   return (
     <div className="flex flex-col h-full">
@@ -431,6 +427,7 @@ function LiveView({
                     strikes={strikes}
                     outs={outs}
                     updatedAt={gameRelay?.updatedAt}
+                    scrollOnUpdate
                   />
                 )}
 
@@ -449,7 +446,6 @@ function LiveView({
               </div>
             );
           })()}
-          <div ref={relayEndRef} />
         </div>
       ) : gameEvents.length > 0 ? (
         /* Fallback: diff 기반 이벤트 (relay 없을 때) */

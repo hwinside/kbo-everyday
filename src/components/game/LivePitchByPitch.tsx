@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { clsx } from "clsx";
 import type { PitchDetail } from "@/lib/game/pitch-provider";
 
@@ -85,6 +85,7 @@ export default function CurrentAtBatCard({
   strikes,
   outs,
   updatedAt,
+  scrollOnUpdate = false,
 }: {
   batterName: string;
   pitcherName?: string | null;
@@ -93,12 +94,19 @@ export default function CurrentAtBatCard({
   strikes: number;
   outs: number;
   updatedAt?: string;
+  scrollOnUpdate?: boolean;
 }) {
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const cardRef = useRef<HTMLElement>(null);
   useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 1_000);
     return () => window.clearInterval(timer);
   }, []);
+  useEffect(() => {
+    if (scrollOnUpdate) {
+      cardRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }, [batterName, pitches.length, scrollOnUpdate]);
 
   const latestCount = pitches[pitches.length - 1]?.count;
   const count = useMemo(() => ({
@@ -109,6 +117,7 @@ export default function CurrentAtBatCard({
 
   return (
     <section
+      ref={cardRef}
       data-qa="current-at-bat"
       className="mx-3 mb-2 overflow-hidden rounded-2xl border border-accent/30 bg-bg-secondary shadow-sm"
     >
