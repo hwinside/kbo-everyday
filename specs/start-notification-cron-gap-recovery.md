@@ -46,12 +46,13 @@ idle ──(발송 자격 O, lease 선점)──▶ sending(lease_owner, claimed
   │                              (send 성공)──▶ sent(start_sent_at)
   │                                     │
   │                              (send 실패)──▶ idle (lease 만료 → 재시도)
+  │                              (deadline partial)──▶ sending (lease 만료 후 회수)
   │
   └──(첫 타석 창 지남 = R1 불충족, 뒷북)──▶ suppressed(reason='past_first_at_bat')
 ```
 
 - **`sent`(=`start_sent_at IS NOT NULL`)만** downstream(활약알림) 순서 게이트의 근거.
-- `sending` lease: 겹친 cron invocation(75초 maxDuration 중첩) 중복발송 방지. **lease deadline = 45s**(크래시 후 회수 가능, 발송 중 정상 토큰 수면보다 길게).
+- `sending` lease: 겹친 cron invocation(75초 maxDuration 중첩) 중복발송 방지. **lease = 120s**로 정상 invocation 봉투보다 45초 길게 잡아, A가 발송 중인 T+60 cron B의 재선점을 차단한다. start fanout deadline은 DB가 발급한 `lease_until - 10s`로 묶고, deadline partial은 `sending`을 유지한다.
 - **신규 컴럼(확정)**: `game_notify_state`에 `start_state`('idle'|'sending'|'sent'|'suppressed'), `start_sent_at`, `start_lease_until`, `start_lease_owner`, `start_suppressed_reason`, `start_fanout_cursor`(청크 재개용) 추가. 기존 `start_notified`는 read-compat만(live-activity wake가 읽음) — 마이그레이션에서 과거 행 `start_state='sent'` 백필, 이후 SSOT는 `start_state`.
 - `suppressed`: 정당하게 시작알림을 안 보내기로 확정한 상태(첫 타석 종료 후 재개). downstream 게이트를 **defer가 아니라 통과**시키는 신호.
 - 하위호환: 기존 `start_notified=true` 행은 마이그레이션에서 `sent`(과거 발송분)로 간주 or 재평가 제외.
@@ -96,7 +97,7 @@ idle ──(발송 자격 O, lease 선점)──▶ sending(lease_owner, claimed
 
 ## 4. 엣지 케이스 / 리스크
 
-- **겹친 cron(75초 maxDuration 중첩)**: `sending` lease로 중복발송 차단. lease 만료 회수 시 재발송이 실제 중복 안 되게 idempotency(예: 같은 게임 `start_sent_at` 존재 시 no-op) 유지.
+- **겹친 cron(75초 maxDuration 중첩)**: 120초 `sending` lease로 살아 있는 invocation의 중복발송을 차단한다. S1 exact-once 보장은 **fanout이 lease 안에 완료되는 정상 경로**까지다. 크래시/maxDuration 절단으로 일부 청크만 발송된 뒤 lease가 만료되면 다음 tick 재시도에서 일부 중복 또는 미완 누락이 남을 수 있으며, 이는 S3의 durable 청크커서 재개로 해소한다.
 - **활약알림 영구 defer 위험**: start가 `idle`에 영원히 머무르면 downstream이 영원히 defer → 유실. 방지: R1 창이 닫히는 순간 반드시 `sending`도 `suppressed`도 아닌 상태가 남지 않게 — "창 닫힘 감지 시 `idle`→`suppressed` 강제 전이"를 warmup가 보장.
 - **우천 지연 시작**: 실제 개시 시점에 1회초로 관측되므로 R1 창 안 → 정상 발송(기존 정책 유지).
 - **라인업 늦게 확정**: 1번타자 식별 전엔 발송 보류. self-heal이 확정 후 tick에 발송. 단 창이 그 사이 닫히면 `suppressed`(뒷북 방지 우선).
@@ -108,7 +109,9 @@ idle ──(발송 자격 O, lease 선점)──▶ sending(lease_owner, claimed
 - (R1) 첫 타석 판정: 1번타자 진행중=발송, 2번타자·1아웃·1:0·이닝교체=suppressed. 라인업 미확정=defer.
 - (R2/R3) downstream 게이트: start `idle`일 때 리드오프 안타 highlight가 **claim 안 됨(defer)** → 다음 tick start `sent` 후 발송됨(유실0, 순서). start `suppressed`면 highlight 즉시 발송.
 - cron 공백 시뮬레이션: 17:59 예정관측 → 18:02 첫 관측(공백)에서 (창 열림)발송 / (창 닫힘)suppressed+highlight 발송.
-- 겹친 invocation 중복발송 0.
+- 겹친 invocation: A fanout이 45초를 넘겨도 120초 lease 안이면 T+60 B는 재선점하지 않아 정상경로 중복발송 0.
+- fanout deadline(`lease_until - 10s`) 초과 시 미시도 청크를 남기고 `sending` 유지.
+- 크래시로 남은 `sending`은 120초 lease 만료 후 tick에서만 재선점.
 - `qa:query-guard` / tsc / eslint / 대상 스모크 통과.
 
 ## 6. 운영룰 (별도, 코드 아님)
@@ -137,7 +140,7 @@ idle ──(발송 자격 O, lease 선점)──▶ sending(lease_owner, claimed
 
 ## 9. 슬라이싱 (얕은 수직 슬라이스, 빅뱅 금지)
 
-- **S1 (P0 코어)**: 상태머신(신규 컬럼+마이그레이션) + (R1) payload 첫타석창 판정 → 신선도게이트 교체 + self-heal(warmup 재평가) + lease. → 오늘 같은 전원미수신 재발 차단.
+- **S1 (P0 코어)**: 상태머신(신규 컬럼+마이그레이션) + (R1) payload 첫타석창 판정 → 신선도게이트 교체 + self-heal(warmup 재평가) + lease. lease 내 완료 정상경로 exact-once로 오늘 같은 전원미수신 재발 차단.
 - **S2 (R2/R3)**: downstream 1-tick 분리 defer 게이트(서버) + 앱 holdback(클라이언트).
-- **S3 (성능)**: 병렬 fanout + maxDuration 300s + 청크커서 durability.
+- **S3 (성능)**: 병렬 fanout + maxDuration 300s + 청크커서 durability(크래시/절단 partial의 중복·누락 해소).
 - 각 슬라이스 독립 PR → 삼순 리뷰 게이트(3왕복 자동루프). S1이 인시던트 직결 P0라 우선.

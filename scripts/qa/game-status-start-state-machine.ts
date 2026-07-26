@@ -15,13 +15,12 @@ import { test } from "node:test";
 import type { KboRawGame } from "../../src/types/api";
 import type { StartNotifyDeps, StartStateRow } from "../../src/lib/notifications/game-status";
 import { isWithinFirstAtBatWindow } from "../../src/lib/notifications/start-freshness-policy";
+import { deliverTokenChunks } from "../../src/lib/notifications/fcm-batch";
 
 const loadNotify = () =>
   import("../../src/lib/notifications/game-status").then((m) => m.notifyGameStatusTransitions);
 
 const OBSERVED_AT = 1_784_800_000_000;
-const LEASE_MS = 45_000;
-
 const BASE: KboRawGame = {
   G_ID: "20260726HHLG0", G_DT: "20260726", G_TM: "18:00", S_NM: "잠실",
   AWAY_ID: "", HOME_ID: "", AWAY_NM: "한화", HOME_NM: "LG",
@@ -73,12 +72,13 @@ function makeStore(seed?: Record<string, Partial<Row>>) {
       const r = ensure(id);
       const expired = r.start_state === "sending" && r.start_lease_until != null && r.start_lease_until < now;
       if (r.start_state === "idle" || expired) {
+        const { START_LEASE_SECONDS } = await import("../../src/lib/notifications/game-status");
         r.start_state = "sending";
-        r.start_lease_until = now + LEASE_MS;
+        r.start_lease_until = now + START_LEASE_SECONDS * 1_000;
         r.start_lease_owner = owner;
-        return true;
+        return r.start_lease_until;
       }
-      return false;
+      return null;
     },
     markStartSent: async (id, owner) => {
       const r = ensure(id);
@@ -167,6 +167,94 @@ test("lease 유효 중 = 중복 발송 skip(다른 invocation 소유)", async ()
   assert.equal(s.rows.get(gid)!.start_lease_owner, "other", "남의 lease 안 뺏음");
 });
 
+test("겹친 invocation: A가 45s 넘게 발송 중이어도 T+60 B는 재선점하지 않아 exact-once", async () => {
+  const s = makeStore();
+  let startSends = 0;
+  let unblockA!: () => void;
+  let aStarted!: () => void;
+  const aSending = new Promise<void>((resolve) => { aStarted = resolve; });
+  const aBlocked = new Promise<void>((resolve) => { unblockA = resolve; });
+  s.deps.sendStart = async (ids, payload) => {
+    if (!payload.dataOnly) {
+      startSends += 1;
+      if (startSends === 1) {
+        aStarted();
+        await aBlocked;
+      }
+    }
+    return { ok: true, sent: ids.length };
+  };
+
+  const invocationA = s.tick([live({})], OBSERVED_AT);
+  await aSending;
+  await s.tick([live({})], OBSERVED_AT + 60_000);
+  assert.equal(startSends, 1, "T+60 B는 A의 120s lease를 재선점하지 않음");
+  unblockA();
+  await invocationA;
+  assert.equal(startSends, 1, "사용자 시작알림 exact-once");
+  assert.equal(s.rows.get(gid)!.start_state, "sent");
+});
+
+test("발송 deadline에서 chunk를 중단하고 lease 만료 전 sending 유지", async () => {
+  const s = makeStore();
+  s.deps.fansOf = async () => ({
+    ids: Array.from({ length: 1_000 }, (_, i) => `u${i}`),
+    ok: true,
+  });
+  let attempted = 0;
+  let wiredDeadline: number | undefined;
+  s.deps.sendStart = async (ids, payload, _pref, _platform, opts) => {
+    if (payload.dataOnly) return { ok: true, sent: ids.length };
+    wiredDeadline = opts?.deadlineAtMs;
+    assert.ok(wiredDeadline != null, "lease 기반 deadlineAtMs 배선");
+    let clock = wiredDeadline - 1;
+    const delivery = await deliverTokenChunks(ids, async (chunk) => {
+      attempted += chunk.length;
+      clock += 2;
+      return { successCount: chunk.length, failureCount: 0, responses: chunk.map(() => ({})) };
+    }, 500, { deadlineAtMs: wiredDeadline, now: () => clock });
+    return { ...delivery, cleaned: 0, skipped: 0 };
+  };
+
+  const res = await s.tick([live({})], OBSERVED_AT);
+  const { START_LEASE_SECONDS, START_SEND_DEADLINE_MARGIN_MS } =
+    await import("../../src/lib/notifications/game-status");
+  assert.equal(
+    wiredDeadline,
+    OBSERVED_AT + START_LEASE_SECONDS * 1_000 - START_SEND_DEADLINE_MARGIN_MS,
+    "deadline = DB lease_until - 안전마진",
+  );
+  assert.equal(attempted, 500, "deadline 뒤 두 번째 chunk는 시작하지 않음");
+  assert.equal(res.started, 0, "partial은 sent로 집계하지 않음");
+  assert.equal(s.rows.get(gid)!.start_state, "sending", "deadline partial은 lease를 release하지 않음");
+});
+
+test("크래시/partial sending은 유효 lease 동안 skip하고 만료 후 tick에서 재-claim", async () => {
+  const s = makeStore();
+  let attempts = 0;
+  s.deps.sendStart = async (ids, payload) => {
+    if (payload.dataOnly) return { ok: true, sent: ids.length };
+    attempts += 1;
+    if (attempts === 1) {
+      return {
+        ok: false, sent: 0, tokens: 0, failed: ids.length, cleaned: 0, skipped: 0,
+        lastError: "deadline_exceeded",
+      };
+    }
+    s.sent.push(gameIdFromUrl(payload.url));
+    return { ok: true, sent: ids.length };
+  };
+  const { START_LEASE_SECONDS } = await import("../../src/lib/notifications/game-status");
+
+  await s.tick([live({})], OBSERVED_AT);
+  assert.equal(s.rows.get(gid)!.start_state, "sending", "절단 뒤 sending 잔존");
+  await s.tick([live({})], OBSERVED_AT + 60_000);
+  assert.equal(attempts, 1, "유효 lease 중 다음 cron은 재선점 안 함");
+  await s.tick([live({})], OBSERVED_AT + START_LEASE_SECONDS * 1_000 + 1);
+  assert.equal(attempts, 2, "lease 만료 후 tick에서 재선점");
+  assert.equal(s.rows.get(gid)!.start_state, "sent");
+});
+
 test("lease 만료 sending = 회수 후 발송(sent)", async () => {
   const s = makeStore({ [gid]: { start_state: "sending", start_lease_until: OBSERVED_AT - 1_000, start_lease_owner: "old" } });
   await s.tick([live({})], OBSERVED_AT);
@@ -185,10 +273,17 @@ test("창 닫힘 강제전이: idle→suppressed / 만료 sending→suppressed /
   const b = makeStore({ [gid]: { start_state: "sending", start_lease_until: OBSERVED_AT - 1_000, start_lease_owner: "old" } });
   await b.tick([live({ OUT_CN: 1 })], OBSERVED_AT);
   assert.equal(b.rows.get(gid)!.start_state, "suppressed", "만료 sending→suppressed");
-  // 유효 sending + 창밖 → 보존(발송 중이므로 yank 금지), 미발송
-  const c = makeStore({ [gid]: { start_state: "sending", start_lease_until: OBSERVED_AT + 30_000, start_lease_owner: "live" } });
-  await c.tick([live({ OUT_CN: 1 })], OBSERVED_AT);
-  assert.equal(c.rows.get(gid)!.start_state, "sending", "유효 sending은 suppressed로 안 뺏음");
+  // 새 120s lease의 T+60 유효 sending + 창밖 → 보존, 만료 뒤 tick에서만 suppressed
+  const { START_LEASE_SECONDS } = await import("../../src/lib/notifications/game-status");
+  const c = makeStore({ [gid]: {
+    start_state: "sending",
+    start_lease_until: OBSERVED_AT + START_LEASE_SECONDS * 1_000,
+    start_lease_owner: "live",
+  } });
+  await c.tick([live({ OUT_CN: 1 })], OBSERVED_AT + 60_000);
+  assert.equal(c.rows.get(gid)!.start_state, "sending", "T+60 유효 sending은 suppressed로 안 뺏음");
+  await c.tick([live({ OUT_CN: 1 })], OBSERVED_AT + START_LEASE_SECONDS * 1_000 + 1);
+  assert.equal(c.rows.get(gid)!.start_state, "suppressed", "새 lease 만료 뒤에만 suppressed 회수");
 });
 
 test("cron 공백(17:59 예정 → 18:02 첫 관측): 창 열림=발송 / 창 닫힘=suppressed", async () => {

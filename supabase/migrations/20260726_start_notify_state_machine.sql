@@ -5,7 +5,10 @@
 -- 상태 머신으로 승격한다: idle → sending(lease) → sent | suppressed.
 --   - start_state 가 새 SSOT. sent(=start_sent_at IS NOT NULL) 만 downstream(활약알림) 순서
 --     게이트 근거가 된다(S2에서 사용).
---   - sending lease: 겹친 cron invocation 중복발송 방지(deadline 45s — 크래시 후 회수).
+--   - sending lease: 겹친 cron invocation 중복발송 방지. 앱의 120s lease는 warmup
+--     maxDuration(75s)보다 길어 정상 invocation이 살아 있는 동안 T+60 cron 재선점을 막는다.
+--     fanout은 lease_until 10s 전에 중단하고 deadline partial은 sending으로 남긴다.
+--     크래시/절단 뒤 청크 중복·누락 없는 재개는 S3(start_fanout_cursor) 범위다.
 --   - suppressed: 첫 타석 창을 지나 정당하게 시작알림을 안 보내기로 확정한 상태.
 -- start_notified 컬럼은 read-compat로 유지(live-activity wake가 읽음) — sent/suppressed 전이
 -- 시 true로 세팅해 기존 종료알림·LA wake 동작을 그대로 보존한다.

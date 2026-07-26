@@ -17,6 +17,8 @@ import type { KboRawGame } from "@/types/api";
 // 3.5분에 5경기 전원 mark-only 억제되는 결손이 있어 상태 머신+첫타석창으로 교체했다.
 // mark_scheduled_seen(last_seen_scheduled_at) 관측 기록은 유지하되 발송 게이트로는 쓰지 않는다.
 // warmup이 매 tick idle/lease만료 sending을 재평가(self-heal)해 창 열림이면 발송, 닫힘이면 suppressed.
+// S1 exact-once 범위는 "lease 안에 fanout이 끝나는 정상 invocation"이다. 크래시/maxDuration
+// 절단 뒤 청크 단위 재개·중복/누락 해소는 start_fanout_cursor를 쓰는 S3에서 다룬다.
 
 export function teamIdByShortName(name: string): number | null {
   const t = TEAMS.find((t) => t.shortName === name);
@@ -156,7 +158,11 @@ async function markOnly(gameId: string, flags: { start?: boolean; end?: boolean;
 // (idle→sending→sent / idle→suppressed / lease 회수)를 실제 notifyGameStatusTransitions()
 // 실행으로 회귀 검증한다. 시작알림 발송 게이트는 90초 연속관측이 아니라 "첫 타석 창"이다
 // (spec S1, 2026-07-26 인시던트).
-export const START_LEASE_SECONDS = 45;
+// warmup maxDuration(75s)보다 길어야 살아 있는 invocation A의 fanout 도중 T+60 cron B가
+// lease를 재선점하지 못한다. 120s는 정상 실행 봉투보다 45s 여유를 두면서 크래시 회수도
+// 다음 만료 후 tick에서 가능하게 하는 값이다.
+export const START_LEASE_SECONDS = 120;
+export const START_SEND_DEADLINE_MARGIN_MS = 10_000;
 
 export type StartStateRow = {
   start_state: "idle" | "sending" | "sent" | "suppressed" | null;
@@ -168,8 +174,8 @@ export type StartStateRow = {
 export type StartNotifyDeps = {
   storeScheduledSeen?: (gameIds: string[], iso: string) => Promise<void>;
   readStartState?: (gameId: string) => Promise<StartStateRow | null>;
-  /** idle 또는 lease 만료 sending을 sending으로 선점(내 owner). 성공=true. */
-  claimStartLease?: (gameId: string, owner: string) => Promise<boolean>;
+  /** idle/만료 sending을 선점하고 DB가 발급한 lease 만료 epoch ms 반환. 실패=null. */
+  claimStartLease?: (gameId: string, owner: string) => Promise<number | null>;
   /** sending(내 owner) → sent. */
   markStartSent?: (gameId: string, owner: string) => Promise<void>;
   /** 발송 실패 시 sending(내 owner) → idle 복귀. */
@@ -209,7 +215,7 @@ async function ensureStartStateRow(gameId: string): Promise<void> {
   if (error) console.error("[game-status] start state upsert failed:", error.message);
 }
 
-async function defaultClaimStartLease(gameId: string, owner: string): Promise<boolean> {
+async function defaultClaimStartLease(gameId: string, owner: string): Promise<number | null> {
   await ensureStartStateRow(gameId);
   // query-guard: bounded -- game_notify_state.game_id PK 단일행 lease CAS 선점, RPC는 boolean 반환
   const { data, error } = await supabase.rpc("claim_start_lease", {
@@ -219,9 +225,24 @@ async function defaultClaimStartLease(gameId: string, owner: string): Promise<bo
   });
   if (error) {
     console.error("[game-status] claim_start_lease failed:", error.message);
-    return false;
+    return null;
   }
-  return data === true;
+  if (data !== true) return null;
+
+  // 발송 deadline은 앱 시계로 추정하지 않고 DB now()로 발급된 실제 lease_until에 묶는다.
+  // owner까지 확인해 잘못된/누락된 lease로 fanout을 시작하지 않는다.
+  const claimed = await defaultReadStartState(gameId);
+  const leaseUntilMs = claimed?.start_lease_until == null ? NaN : Date.parse(claimed.start_lease_until);
+  if (
+    claimed?.start_state !== "sending" ||
+    claimed.start_lease_owner !== owner ||
+    !Number.isFinite(leaseUntilMs)
+  ) {
+    console.error("[game-status] claimed start lease could not be read back:", gameId);
+    await defaultReleaseStartLease(gameId, owner);
+    return null;
+  }
+  return leaseUntilMs;
 }
 
 async function defaultMarkStartSent(gameId: string, owner: string): Promise<void> {
@@ -368,14 +389,19 @@ export async function notifyGameStatusTransitions(
       }
       // 창 안 — 발송. 유효 lease를 가진 다른 invocation이 있으면 중복 방지로 skip.
       if (leaseValid) continue;
-      if (await claimStartLease(gameId, startOwner)) {
+      const leaseUntilMs = await claimStartLease(gameId, startOwner);
+      if (leaseUntilMs != null) {
+        // 새 FCM chunk가 자기 lease를 넘겨 시작되지 않도록 10s 전에 끊는다. deadline partial은
+        // sending을 유지해 lease 만료 전 다른 invocation과 동시발송하는 창을 만들지 않는다.
+        const deadlineAtMs = leaseUntilMs - START_SEND_DEADLINE_MARGIN_MS;
         const fans = await fansOfStart(teamIds);
         if (!fans.ok) { await releaseStartLease(gameId, startOwner); continue; } // 조회 실패 → idle 복귀
         const res = await sendStart(fans.ids, {
           title: "⚾ 경기 시작!",
           body: `${away} vs ${home} 경기가 시작됐어요. 크보팬에서 자세한 경기 내용을 확인해보세요!`,
           url,
-        }, "game_start");
+        }, "game_start", undefined, { deadlineAtMs });
+        if (!res.ok && res.lastError === "deadline_exceeded") continue; // partial: lease 만료까지 sending 유지
         if (!res.ok) { await releaseStartLease(gameId, startOwner); continue; } // 인프라 실패 → idle 복귀
         await markStartSent(gameId, startOwner); // sending→sent (+start_notified read-compat)
         started += res.sent;
@@ -400,7 +426,7 @@ export async function notifyGameStatusTransitions(
             w_status: "LIVE",
             w_stadium: g.S_NM ?? "",
           },
-        }, "game_start");
+        }, "game_start", undefined, { deadlineAtMs });
       }
     } else if (g.GAME_STATE_SC === "3") {
       // 종료 — 한 번도 안 본 게임(시작 미발송)이면 뒷북 방지로 마킹만

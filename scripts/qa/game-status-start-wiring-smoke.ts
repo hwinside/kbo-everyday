@@ -65,7 +65,11 @@ test("배선: 두 in-window live 경기 모두 발송(판정은 payload 창, 처
     readStartState: async (id) => ({
       start_state: state.get(id) ?? "idle", start_sent_at: null, start_lease_until: null, start_lease_owner: null,
     }),
-    claimStartLease: async (id) => { if ((state.get(id) ?? "idle") !== "idle") return false; state.set(id, "sending"); return true; },
+    claimStartLease: async (id) => {
+      if ((state.get(id) ?? "idle") !== "idle") return null;
+      state.set(id, "sending");
+      return OBSERVED_AT + 120_000;
+    },
     markStartSent: async (id) => { state.set(id, "sent"); },
     releaseStartLease: async (id) => { state.set(id, "idle"); },
     suppressStart: async () => {},
@@ -92,7 +96,7 @@ test("배선: 예정 관측 기록은 처리시점이 아니라 관측시각으�
   const deps: StartNotifyDeps = {
     storeScheduledSeen: async (ids, iso) => { stored = { ids, iso }; },
     readStartState: async () => null,
-    claimStartLease: async () => true,
+    claimStartLease: async () => OBSERVED_AT + 120_000,
     markStartSent: async () => {},
     releaseStartLease: async () => {},
     suppressStart: async () => {},
@@ -130,7 +134,7 @@ test("배선: 프로덕션 기본 예정저장은 mark_scheduled_seen RPC(원자
       // storeScheduledSeen 미주입 → 프로덕션 defaultStoreScheduledSeen 경로 실행.
       startDeps: {
         readStartState: async () => null,
-        claimStartLease: async () => false, // 발송 경로는 이 테스트 관심 밖 — 선점 실패로 조기 종료
+        claimStartLease: async () => null, // 발송 경로는 이 테스트 관심 밖 — 선점 실패로 조기 종료
         markStartSent: async () => {},
         releaseStartLease: async () => {},
         suppressStart: async () => {},
@@ -156,14 +160,28 @@ test("배선: 시작알림 기본 경로는 lease CAS RPC(claim_start_lease → 
     from: (...a: unknown[]) => unknown;
   };
   const rpcCalls: string[] = [];
+  let claimedOwner: string | null = null;
+  let sentDeadline: number | undefined;
   const origRpc = client.rpc;
   const origFrom = client.from;
-  client.rpc = (name) => {
+  client.rpc = (name, args) => {
     rpcCalls.push(name);
-    if (name === "claim_start_lease") return Promise.resolve({ data: true, error: null });
+    if (name === "claim_start_lease") {
+      claimedOwner = (args as { p_owner: string }).p_owner;
+      assert.equal((args as { p_lease_seconds: number }).p_lease_seconds, 120, "lease는 maxDuration 75s보다 긴 120s");
+      return Promise.resolve({ data: true, error: null });
+    }
     return Promise.resolve({ data: null, error: null });
   };
-  client.from = () => chainStub({ data: null, error: null }); // readStartState/ensure → 네트워크 차단
+  client.from = () => chainStub({
+    data: claimedOwner == null ? null : {
+      start_state: "sending",
+      start_sent_at: null,
+      start_lease_until: new Date(OBSERVED_AT + 120_000).toISOString(),
+      start_lease_owner: claimedOwner,
+    },
+    error: null,
+  }); // readStartState/ensure/claim lease read-back → 네트워크 차단
   try {
     const notify = await loadNotify();
     const res = await notify([liveGame({ G_ID: "20260726HHLG0", AWAY_NM: "한화", HOME_NM: "LG" })], {
@@ -171,12 +189,16 @@ test("배선: 시작알림 기본 경로는 lease CAS RPC(claim_start_lease → 
       // claimStartLease/markStartSent 미주입 → 프로덕션 default(RPC) 경로 실행. 발송/팬만 주입.
       startDeps: {
         fansOf: async () => ({ ids: ["u1"], ok: true }),
-        sendStart: async () => ({ ok: true, sent: 1 }),
+        sendStart: async (_ids, payload, _pref, _platform, opts) => {
+          if (!payload.dataOnly) sentDeadline = opts?.deadlineAtMs;
+          return { ok: true, sent: 1 };
+        },
       },
     });
     assert.ok(rpcCalls.includes("claim_start_lease"), "claim_start_lease RPC 호출");
     assert.ok(rpcCalls.includes("mark_start_sent"), "발송 성공 후 mark_start_sent RPC 호출");
     assert.ok(rpcCalls.indexOf("claim_start_lease") < rpcCalls.indexOf("mark_start_sent"), "claim → mark 순서");
+    assert.equal(sentDeadline, OBSERVED_AT + 110_000, "발송 deadline = DB lease_until - 10s");
     assert.equal(res.started, 1);
   } finally {
     client.rpc = origRpc;
