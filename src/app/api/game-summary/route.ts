@@ -21,6 +21,10 @@ import {
   winnerFieldMismatch,
   type SummaryFingerprint,
 } from "@/lib/game-summary/cache-validation";
+import {
+  writeSummaryCacheWithFence,
+  type SummaryCacheWriteResult,
+} from "@/lib/game-summary/cache-write-fence";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
@@ -422,15 +426,59 @@ async function getCached(gameId: string): Promise<{ summary: Record<string, unkn
   }
 }
 
-async function saveCache(gameId: string, summary: Record<string, unknown>) {
+async function saveCache(
+  gameId: string,
+  summary: Record<string, unknown>,
+  generationStartedAt: number,
+): Promise<SummaryCacheWriteResult> {
+  const key = cacheKey(gameId);
   try {
-    await supabase
-      .from("game_summaries")
-      .upsert(
-        { game_id: cacheKey(gameId), summary, prompt_version: PROMPT_VERSION, created_at: new Date().toISOString() },
-        { onConflict: "game_id" }
-      );
-  } catch { /* ignore */ }
+    return await writeSummaryCacheWithFence({
+      async read() {
+        const { data, error } = await supabase
+          .from("game_summaries")
+          .select("created_at, summary")
+          .eq("game_id", key)
+          .maybeSingle();
+        if (error) throw error;
+        if (!data) return null;
+        const storedSummary = data.summary as Record<string, unknown> | null;
+        const storedGeneration = storedSummary?._cacheGenerationStartedAt;
+        return {
+          createdAt: data.created_at ?? null,
+          generationStartedAt: typeof storedGeneration === "number" ? storedGeneration : null,
+        };
+      },
+      async insert(write) {
+        const { error } = await supabase.from("game_summaries").insert({
+          game_id: key,
+          summary: { ...summary, _cacheGenerationStartedAt: write.generationStartedAt },
+          prompt_version: PROMPT_VERSION,
+          created_at: write.createdAt,
+        });
+        if (!error) return "saved";
+        return error.code === "23505" ? "conflict" : "error";
+      },
+      async updateIfVersion(expectedCreatedAt, write) {
+        let query = supabase
+          .from("game_summaries")
+          .update({
+            summary: { ...summary, _cacheGenerationStartedAt: write.generationStartedAt },
+            prompt_version: PROMPT_VERSION,
+            created_at: write.createdAt,
+          })
+          .eq("game_id", key);
+        query = expectedCreatedAt == null
+          ? query.is("created_at", null)
+          : query.eq("created_at", expectedCreatedAt);
+        const { data, error } = await query.select("game_id").maybeSingle();
+        if (error) return "error";
+        return data ? "saved" : "conflict";
+      },
+    }, generationStartedAt);
+  } catch {
+    return "error";
+  }
 }
 
 // ===== Normalize =====
@@ -463,6 +511,7 @@ function normalizeSummary(s: Record<string, unknown>): Record<string, unknown> {
 function publicSummary(s: Record<string, unknown>): Record<string, unknown> {
   const copy = structuredClone(s);
   delete copy._cacheFingerprint;
+  delete copy._cacheGenerationStartedAt;
   delete copy._cachedAwayScore;
   delete copy._cachedHomeScore;
   return normalizeSummary(copy);
@@ -499,6 +548,7 @@ export async function POST(req: NextRequest) {
   }
   // 올스타전은 AI 경기 요약 생성 안 함 (#544 AI 비활성화와 일관).
   if (isAllStarGameId(requestBody.gameId)) return NextResponse.json({ summary: null, source: "allstar" });
+  const generationStartedAt = Math.round((performance.timeOrigin + performance.now()) * 1_000);
 
   // 공개 POST body의 팀/스코어/이닝/박스스코어는 캐시 입력으로 신뢰하지 않는다.
   // gameId만 받아 KBO 경기목록+스코어보드+박스스코어를 서버에서 독립 재조회한다.
@@ -696,7 +746,18 @@ export async function POST(req: NextRequest) {
 
       // DB JSON 내부에만 보관하고 API 응답에서는 별도 fingerprint 필드로 분리한다.
       summary._cacheFingerprint = generationFingerprint;
-      await saveCache(body.gameId, summary);
+      const saveResult = await saveCache(body.gameId, summary, generationStartedAt);
+      if (saveResult !== "saved") {
+        return NextResponse.json(
+          {
+            error: saveResult === "superseded"
+              ? "newer-generation-already-saved"
+              : "cache-write-failed",
+            source: "cache-write-fence",
+          },
+          { status: saveResult === "superseded" ? 409 : 503 },
+        );
+      }
       return NextResponse.json({
         summary: publicSummary(summary),
         fingerprint: generationFingerprint,

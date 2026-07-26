@@ -591,15 +591,22 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
                   np: p.pitchCount, result: p.decision || undefined,
                 })),
               };
-              // Fire-and-forget background re-generation (outdated 재생성은 기존 캐시 노출 중이므로 에러 처리 생략)
-              fetch("/api/game-summary", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(payload),
-                signal: controller.signal,
-              }).then(res => res.json()).then(data => {
-                if (data.summary) setLlmSummary(data.summary);
-              }).catch(() => {});
+              try {
+                const res = await fetch("/api/game-summary", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify(payload),
+                  signal: controller.signal,
+                });
+                const data = await res.json();
+                if (!res.ok || !data.summary) throw new Error("regeneration-failed");
+                setLlmSummary(data.summary);
+              } finally {
+                regeneratingRef.current = false;
+              }
+            } else {
+              regeneratingRef.current = false;
+              setLlmError("parse");
             }
           }
           return;
@@ -710,7 +717,22 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
         const res = await fetch(`/api/game-summary?gameId=${gameId}`);
         const data = await res.json();
         if (cancelled) return;
-        if (data.summary) {
+        const currentFingerprint: SummaryFingerprint | null = linescore
+          ? createSummaryFingerprint(
+              linescore.away.R,
+              linescore.home.R,
+              linescore.away.innings,
+              linescore.home.innings,
+            )
+          : null;
+        const currentCache =
+          data.summary &&
+          !data.outdated &&
+          !shouldHideStaleCache(
+            data.fingerprint as SummaryFingerprint | null | undefined,
+            currentFingerprint,
+          );
+        if (currentCache) {
           setLlmSummary(data.summary);
           setLlmError(null);
           cachePollStartedAtRef.current = null;
@@ -730,7 +752,7 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [isAllStar, llmError, llmSummary, hasRealBoxScore, gameId]);
+  }, [isAllStar, llmError, llmSummary, hasRealBoxScore, gameId, linescore]);
 
 
   // LLM 요약만 사용 (fallback/숏버전 폐기)

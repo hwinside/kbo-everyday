@@ -14,6 +14,9 @@ import {
   type CanonicalGameState,
   type SummaryFingerprint,
 } from "../../src/lib/game-summary/cache-validation";
+import {
+  writeSummaryCacheWithFence,
+} from "../../src/lib/game-summary/cache-write-fence";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -134,5 +137,48 @@ ok("stale/legacy 판단 전에 llmSummary에 캐시를 넣지 않음",
   cacheBranch.indexOf("const hideStale") < cacheBranch.indexOf("setLlmSummary(cacheData.summary)") &&
   cacheBranch.includes("if (!hideStale && !cacheData.outdated)"));
 
-console.log(`\n${pass}/${pass + fail} passed`);
-if (fail > 0) process.exit(1);
+async function runAtomicChecks() {
+  console.log("[⑥ atomic cache write + poll fail-close]");
+  let reads = 0;
+  const oldResult = await writeSummaryCacheWithFence({
+    async read() {
+      reads++;
+      if (reads === 1) {
+        return {
+          createdAt: "2026-07-26T13:00:00.000Z",
+          generationStartedAt: 100,
+        };
+      }
+      return {
+        createdAt: "2026-07-26T13:00:01.000Z",
+        generationStartedAt: 300,
+      };
+    },
+    async insert() {
+      return "error";
+    },
+    async updateIfVersion() {
+      // A가 old row를 읽은 직후 B가 먼저 저장해 A의 CAS가 실패한 interleaving.
+      return "conflict";
+    },
+  }, 200);
+  ok("A-check → B-save → A-save 에서 old A write reject", oldResult === "superseded" && reads === 2);
+
+  const pollSource = componentSource.slice(componentSource.indexOf("const pollCache = async"));
+  ok("poll도 outdated + fingerprint current 검증 후에만 렌더",
+    pollSource.includes("!data.outdated") &&
+    pollSource.includes("shouldHideStaleCache(") &&
+    pollSource.indexOf("shouldHideStaleCache(") < pollSource.indexOf("setLlmSummary(data.summary)"));
+  ok("background regeneration 실패 시 retry fence 복구",
+    componentSource.includes("finally {") &&
+    componentSource.includes("regeneratingRef.current = false;") &&
+    componentSource.includes('setLlmError("network")'));
+}
+
+runAtomicChecks().then(() => {
+  console.log(`\n${pass}/${pass + fail} passed`);
+  if (fail > 0) process.exit(1);
+}).catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
