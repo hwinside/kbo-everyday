@@ -309,6 +309,9 @@ ALTER TABLE public.profiles
     FOREIGN KEY (invited_by) REFERENCES public.profiles (id) ON DELETE SET NULL;
 
 ALTER TABLE public.reports
+  ALTER COLUMN reporter_id DROP NOT NULL;
+
+ALTER TABLE public.reports
   DROP CONSTRAINT reports_reporter_id_fkey,
   ADD CONSTRAINT reports_reporter_id_fkey
     FOREIGN KEY (reporter_id) REFERENCES public.profiles (id) ON DELETE SET NULL;

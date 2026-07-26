@@ -28,6 +28,14 @@ const adminMessagesRoute = readFileSync(
   "src/app/api/admin/messages/route.ts",
   "utf8",
 );
+const adminReportsRoute = readFileSync(
+  "src/app/api/admin/reports/route.ts",
+  "utf8",
+);
+const adminReportsPage = readFileSync(
+  "src/app/admin/reports/page.tsx",
+  "utf8",
+);
 
 // Own, non-evidence rows cascade: a departed user's feedback and block edges
 // carry no shared/other-party record, so removing them on deletion is correct.
@@ -46,6 +54,10 @@ for (const constraint of [
 check(
   "telemetry is anonymized instead of blocking deletion",
   /admin_page_views_user_id_fkey[\s\S]*?ON DELETE SET NULL/.test(migration),
+);
+check(
+  "reports reporter_id is nullable before SET NULL",
+  /ALTER TABLE public\.reports\s+ALTER COLUMN reporter_id DROP NOT NULL/.test(migration),
 );
 
 // SHARED evidence must survive one party's deletion — anonymize (SET NULL),
@@ -145,6 +157,15 @@ check(
 check(
   "admin reply rejects departed recipient",
   adminMessagesRoute.includes('"recipient_deleted"'),
+);
+check(
+  "admin reports exclude NULL ids from profile lookup",
+  adminReportsRoute.includes('.filter((id): id is string => id !== null)'),
+);
+check(
+  "admin reports render a departed reporter without slicing NULL",
+  adminReportsPage.includes("r.reporter_id === null") &&
+    adminReportsPage.includes("탈퇴한 사용자"),
 );
 
 console.log(`\nAccount deletion contract smoke: ${pass} PASS / ${fail} FAIL`);
