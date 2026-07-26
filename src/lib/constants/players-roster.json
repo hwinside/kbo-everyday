@@ -6678,6 +6678,15 @@
     "birthDate": "2001-02-05"
   },
   {
+    "name": "짐머맨",
+    "kboId": "56799",
+    "teamId": 9,
+    "position": "투수",
+    "backNo": "12",
+    "team": "한화",
+    "birthDate": "1995-02-09"
+  },
+  {
     "name": "차승준",
     "kboId": "55435",
     "teamId": 8,
