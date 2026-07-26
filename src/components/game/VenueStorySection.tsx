@@ -16,9 +16,11 @@ import {
   PENDING_POLL_DELAYS_MS,
 } from "@/lib/venue-stories/composer-helpers";
 import {
+  applyVenueStoryUrlRefresh,
   shouldApplyAutomaticStoryRefresh,
   shouldCommitStoryFetch,
   buildCommittedStories,
+  type VenueStoryUrlRefresh,
 } from "@/lib/venue-stories/refresh-policy";
 
 interface Props {
@@ -221,6 +223,34 @@ export default function VenueStorySection({ gameId }: Props) {
     [gameId, userId],
   );
 
+  const refreshViewerStoryUrl = useCallback(
+    async (storyId: number) => {
+      if (storyQaKeyboard || storyId <= 0) return;
+      try {
+        const session = await getSafeSession();
+        const token = session?.access_token;
+        const res = await fetch(
+          `/api/venue-stories?gameId=${encodeURIComponent(gameId)}&refreshStoryId=${storyId}`,
+          { headers: token ? { Authorization: `Bearer ${token}` } : undefined },
+        );
+        if (!res.ok) return;
+        const data = await res.json();
+        const refresh = data.urlRefresh as VenueStoryUrlRefresh | null;
+        if (
+          !refresh ||
+          refresh.id !== storyId ||
+          typeof refresh.mediaUrl !== "string"
+        ) {
+          return;
+        }
+        setStories((prev) => applyVenueStoryUrlRefresh(prev, refresh));
+      } catch {
+        // 마지막 정상 URL 보존 — 다음 tick/스토리 진입에서 재시도
+      }
+    },
+    [gameId, storyQaKeyboard],
+  );
+
   // 업로드 성공 피드백 + pending 자동 반영(하린아빠 A17 리포트, 삼순 #839).
   // 영상은 pending→ffprobe 검증→active 승급 구조라 GET(active만) 직후 1회로는 안 뜬다.
   // → 낙관 '처리중' 카드를 즉시 트레이에 올리고 active 승급까지 폴링해 자동으로 실제 카드로 교체.
@@ -415,6 +445,7 @@ export default function VenueStorySection({ gameId }: Props) {
           startIndex={viewerIndex}
           currentUserId={user?.id ?? null}
           onStorySeen={handleStorySeen}
+          onRefreshUrl={refreshViewerStoryUrl}
           onClose={() => {
             setViewerIndex(null);
             // 닫힐 때만 재정렬/테두리 갱신 (뷰어 열려있는 동안 인덱스 어긋남 방지)

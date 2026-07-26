@@ -17,12 +17,17 @@ import { shouldCloseCommentSheetDrag } from "@/lib/venue-stories/comment-sheet-g
 import { lockRootScroll, unlockRootScroll } from "@/lib/venue-stories/scroll-lock";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import { isIosNativeRuntime } from "@/lib/capacitor/platform";
+import {
+  shouldRefreshVenueStoryUrl,
+  VENUE_STORY_URL_REFRESH_MS,
+} from "@/lib/venue-stories/refresh-policy";
 
 interface Props {
   stories: VenueStory[];
   startIndex: number;
   currentUserId: string | null;
   onStorySeen?: (storyId: string | number) => void; // 표시된 스토리 본 처리 (트레이 본/안 본 구분용)
+  onRefreshUrl?: (storyId: number) => void | Promise<void>;
   onClose: () => void;
   onChanged: () => void; // 삭제/신고 후 목록 갱신
 }
@@ -88,6 +93,7 @@ export default function VenueStoryViewer({
   startIndex,
   currentUserId,
   onStorySeen,
+  onRefreshUrl,
   onClose,
   onChanged,
 }: Props) {
@@ -126,6 +132,8 @@ export default function VenueStoryViewer({
   const rafRef = useRef<number | null>(null);
   const startRef = useRef<number>(0);
   const elapsedRef = useRef<number>(0);
+  const refreshedStoryIdRef = useRef<number | null>(null);
+  const lastUrlRefreshAtRef = useRef(0);
 
   const story = stories[index];
 
@@ -139,6 +147,31 @@ export default function VenueStoryViewer({
   useEffect(() => {
     if (storyId != null) onStorySeen?.(storyId);
   }, [storyId, onStorySeen]);
+
+  // 목록 최초 발급 URL의 나이를 신뢰하지 않고 현재 스토리 진입 즉시 단건 재발급한다.
+  // 같은 스토리에서 댓글/메뉴로 5분 이상 멈춰도 4분마다 URL만 갱신해 current ID·순번은 보존한다.
+  useEffect(() => {
+    if (storyId == null || storyId <= 0 || !onRefreshUrl) return;
+    const refresh = () => {
+      const now = Date.now();
+      if (
+        !shouldRefreshVenueStoryUrl({
+          storyId,
+          previousStoryId: refreshedStoryIdRef.current,
+          lastRefreshAt: lastUrlRefreshAtRef.current,
+          now,
+        })
+      ) {
+        return;
+      }
+      refreshedStoryIdRef.current = storyId;
+      lastUrlRefreshAtRef.current = now;
+      void onRefreshUrl(storyId);
+    };
+    refresh();
+    const interval = setInterval(refresh, VENUE_STORY_URL_REFRESH_MS);
+    return () => clearInterval(interval);
+  }, [storyId, onRefreshUrl]);
 
   const goNext = useCallback(() => {
     setIndex((i) => {

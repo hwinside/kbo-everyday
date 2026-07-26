@@ -1,6 +1,40 @@
 import type { VenueStory } from "./types";
 import { mergePendingStories } from "./composer-helpers";
 
+// 공개 signed URL(최대 5분)이 뷰어 체류 중 만료되기 전에 현재 스토리만 재발급한다.
+// 단건 refresh API는 캐시를 우회해 새 URL을 발급하므로 4분마다 갱신해 1분 여유를 둔다.
+export const VENUE_STORY_URL_REFRESH_MS = 240_000;
+
+export interface VenueStoryUrlRefresh {
+  id: number;
+  mediaUrl: string;
+  thumbUrl: string | null;
+}
+
+export function shouldRefreshVenueStoryUrl(input: {
+  storyId: number;
+  previousStoryId: number | null;
+  lastRefreshAt: number;
+  now: number;
+}): boolean {
+  return (
+    input.storyId !== input.previousStoryId ||
+    input.now - input.lastRefreshAt >= VENUE_STORY_URL_REFRESH_MS
+  );
+}
+
+/** 현재 ID·순번·메타데이터는 그대로 두고 signed URL만 교체한다. */
+export function applyVenueStoryUrlRefresh(
+  stories: VenueStory[],
+  refresh: VenueStoryUrlRefresh,
+): VenueStory[] {
+  return stories.map((story) =>
+    story.id === refresh.id
+      ? { ...story, mediaUrl: refresh.mediaUrl, thumbUrl: refresh.thumbUrl }
+      : story,
+  );
+}
+
 export function shouldApplyAutomaticStoryRefresh(input: {
   automatic: boolean;
   requestId: number;

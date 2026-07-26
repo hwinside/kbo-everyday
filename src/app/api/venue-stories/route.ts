@@ -60,6 +60,17 @@ export async function GET(req: NextRequest) {
   if (!gameId) {
     return NextResponse.json({ error: "gameId 필요" }, { status: 400 });
   }
+  const refreshStoryIdParam = req.nextUrl.searchParams.get("refreshStoryId");
+  const refreshStoryId =
+    refreshStoryIdParam == null || refreshStoryIdParam === ""
+      ? null
+      : Number(refreshStoryIdParam);
+  if (
+    refreshStoryId != null &&
+    (!Number.isSafeInteger(refreshStoryId) || refreshStoryId <= 0)
+  ) {
+    return NextResponse.json({ error: "refreshStoryId가 올바르지 않습니다" }, { status: 400 });
+  }
 
   // 로그인 유저면 차단 목록으로 필터. 차단 조회 실패는 fail-closed(노출 차단).
   // invalid bearer 는 익명 강등 금지(차단 필터가 꺼짐) → 401 거부(삼순 09:44 #3).
@@ -112,40 +123,26 @@ export async function GET(req: NextRequest) {
     uploadStatuses = completeRequestedUploadStatuses(requestedStatusIds, uploadStatuses);
   }
 
-  const { data: rows, error } = await supabase
+  // query-guard: bounded -- 일반 목록은 created_at DESC 100행, URL refresh는 exact id 1행으로 아래 분기에서 제한
+  let storiesQuery = supabase
     .from("venue_stories")
     .select(
       "id, game_id, user_id, media_type, media_url, media_bucket, media_path, thumb_url, thumb_bucket, thumb_path, duration_ms, width, height, caption, venue_verified, created_at, expires_at",
     )
     .eq("game_id", gameId)
     .eq("status", "active")
-    .gt("expires_at", new Date().toISOString())
-    .order("created_at", { ascending: false })
-    .limit(100);
+    .gt("expires_at", new Date().toISOString());
+  storiesQuery =
+    refreshStoryId == null
+      ? storiesQuery.order("created_at", { ascending: false }).limit(100)
+      : storiesQuery.eq("id", refreshStoryId).limit(1);
+  const { data: rows, error } = await storiesQuery;
 
   if (error) {
     return NextResponse.json({ error: "조회 실패" }, { status: 500 });
   }
 
   const list = (rows ?? []).filter((r) => !blocked.has(r.user_id as string));
-  const userIds = [...new Set(list.map((r) => r.user_id as string))];
-  const profileMap = new Map<
-    string,
-    { nickname: string | null; avatar_url: string | null; team_id: number | null }
-  >();
-  if (userIds.length > 0) {
-    const { data: profiles } = await supabase
-      .from("profiles")
-      .select("id, nickname, avatar_url, team_id")
-      .in("id", userIds);
-    for (const p of profiles ?? []) {
-      profileMap.set(p.id as string, {
-        nickname: (p.nickname as string) ?? null,
-        avatar_url: (p.avatar_url as string) ?? null,
-        team_id: (p.team_id as number) ?? null,
-      });
-    }
-  }
 
   // A안 A1: 공개 트레이/뷰어는 private venue-media 만 서버 발급 signed URL 로 서빙한다.
   // 한 요청의 모든 미노출 media/thumb 경로를 버킷별 배치로 묶어 발급 콜 수를 최소화한다.
@@ -166,7 +163,61 @@ export async function GET(req: NextRequest) {
         expiresAt: r.expires_at as string | null,
       },
     ]),
+    // 뷰어 단건 갱신은 기존 최대 4분 캐시를 재사용하면 남은 유효시간이 짧을 수 있다.
+    // 매 진입/tick마다 새 URL을 mint해 21번째 영상·61번째 사진·5분 pause 경계를 닫는다.
+    refreshStoryId == null ? undefined : { cache: new Map() },
   );
+
+  // 뷰어 체류 중 URL-only 재발급. 목록/순번/현재 ID를 다시 commit하지 않도록 현재 active 행의
+  // signed URL만 반환한다. removed·expired·차단·서명 실패는 null(fail-closed).
+  if (refreshStoryId != null) {
+    const row = list[0];
+    if (!row) return NextResponse.json({ urlRefresh: null });
+    const mediaUrl = resolveServeUrl(
+      {
+        bucket: row.media_bucket as string | null,
+        path: row.media_path as string | null,
+        url: (row.media_url as string) ?? null,
+      },
+      signed,
+      { publicServe: true },
+    );
+    if (mediaUrl == null) return NextResponse.json({ urlRefresh: null });
+    return NextResponse.json({
+      urlRefresh: {
+        id: row.id as number,
+        mediaUrl,
+        thumbUrl: resolveServeUrl(
+          {
+            bucket: row.thumb_bucket as string | null,
+            path: row.thumb_path as string | null,
+            url: (row.thumb_url as string) ?? null,
+          },
+          signed,
+          { publicServe: true },
+        ),
+      },
+    });
+  }
+
+  const userIds = [...new Set(list.map((r) => r.user_id as string))];
+  const profileMap = new Map<
+    string,
+    { nickname: string | null; avatar_url: string | null; team_id: number | null }
+  >();
+  if (userIds.length > 0) {
+    const { data: profiles } = await supabase
+      .from("profiles")
+      .select("id, nickname, avatar_url, team_id")
+      .in("id", userIds);
+    for (const p of profiles ?? []) {
+      profileMap.set(p.id as string, {
+        nickname: (p.nickname as string) ?? null,
+        avatar_url: (p.avatar_url as string) ?? null,
+        team_id: (p.team_id as number) ?? null,
+      });
+    }
+  }
 
   // fail-closed: private ref 서명 실패/venue-staging(공개 mint 불가)면 media 가 null → 해당 story 제외.
   // 레거시 공개 행은 저장 URL 로 null 이 아니므로 그대로 노출(호환). raw 저장 경로 폴백 없음.

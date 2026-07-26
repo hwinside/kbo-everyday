@@ -821,13 +821,6 @@
       "subject": "comment_likes",
       "detail": "add a bound, unique-key lookup, or query-guard annotation"
     },
-    "8fafff0c3ed5cb128220": {
-      "count": 1,
-      "kind": "ambiguous_growing_limit",
-      "file": "src/app/api/venue-stories/route.ts",
-      "subject": "venue_stories",
-      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
-    },
     "904253dc0a8afc37f5a6": {
       "count": 1,
       "kind": "unbounded_growing_select",

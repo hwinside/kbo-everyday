@@ -22,6 +22,12 @@ import {
   VENUE_ACTIVE_SIGNED_URL_CACHE_MS,
   type VenueBatchSigner,
 } from "../../src/lib/venue-stories/media-url";
+import {
+  applyVenueStoryUrlRefresh,
+  shouldRefreshVenueStoryUrl,
+  VENUE_STORY_URL_REFRESH_MS,
+} from "../../src/lib/venue-stories/refresh-policy";
+import type { VenueStory } from "../../src/lib/venue-stories/types";
 
 let pass = 0;
 let fail = 0;
@@ -46,6 +52,66 @@ const P = "venue-stories/G1/U1/a.jpg";
 const P2 = "venue-stories/G1/U1/b.mp4";
 
 async function main() {
+  console.log("[뷰어 URL-only 재발급 — 21영상·61사진·5분 pause]");
+  {
+    let previousStoryId: number | null = null;
+    let lastRefreshAt = 0;
+    const visit = (storyId: number, now: number) => {
+      const refresh = shouldRefreshVenueStoryUrl({
+        storyId,
+        previousStoryId,
+        lastRefreshAt,
+        now,
+      });
+      if (refresh) {
+        previousStoryId = storyId;
+        lastRefreshAt = now;
+      }
+      return refresh;
+    };
+    ok(
+      "21번째 영상도 진입 시 새 URL 발급",
+      Array.from({ length: 21 }, (_, index) => visit(index + 1, index * 15_000)).every(Boolean),
+    );
+    previousStoryId = null;
+    lastRefreshAt = 0;
+    ok(
+      "61번째 사진도 진입 시 새 URL 발급",
+      Array.from({ length: 61 }, (_, index) => visit(index + 1, index * 5_000)).every(Boolean),
+    );
+    previousStoryId = 61;
+    lastRefreshAt = 0;
+    ok(
+      "같은 사진 5분 pause 중 4분에 재발급",
+      shouldRefreshVenueStoryUrl({
+        storyId: 61,
+        previousStoryId,
+        lastRefreshAt,
+        now: VENUE_STORY_URL_REFRESH_MS,
+      }),
+    );
+
+    const stories = [
+      {
+        id: 1,
+        mediaUrl: "old://1",
+        thumbUrl: "old-thumb://1",
+      },
+      {
+        id: 2,
+        mediaUrl: "old://2",
+        thumbUrl: null,
+      },
+    ] as VenueStory[];
+    const refreshed = applyVenueStoryUrlRefresh(stories, {
+      id: 2,
+      mediaUrl: "new://2",
+      thumbUrl: "new-thumb://2",
+    });
+    ok("URL-only 갱신은 ID·순번 보존", refreshed.map((story) => story.id).join(",") === "1,2");
+    ok("현재 ID URL만 교체", refreshed[0] === stories[0] && refreshed[1].mediaUrl === "new://2");
+  }
+
   console.log("[isPrivateVenueBucket]");
   ok("venue-media = private", isPrivateVenueBucket("venue-media"));
   ok("venue-staging = private", isPrivateVenueBucket("venue-staging"));
