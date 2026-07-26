@@ -1,7 +1,8 @@
 const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
 const DAILY_RUN_MINUTE = 10 * 60;
 const RUN_WINDOW_MINUTES = 30;
-const PREGAME_LEAD_MINUTES = 2 * 60;
+// 경기 전 실행 리드타임(분) — 첫 경기 2시간 전 + 1시간 전 각각 30분 윈도우.
+const PREGAME_LEAD_MINUTES_LIST = [2 * 60, 1 * 60];
 
 export interface RosterScheduleGame {
   time: string;
@@ -9,8 +10,9 @@ export interface RosterScheduleGame {
 }
 
 export type PregameRunDecision =
-  | { run: true; reason: "pregame"; firstGameTime: string; targetTime: string }
-  | { run: false; reason: "no-games" | "outside-pregame-window"; firstGameTime?: string; targetTime?: string };
+  | { run: true; reason: "pregame"; firstGameTime: string; targetTime: string; targetTimes: string[] }
+  | { run: false; reason: "no-games" }
+  | { run: false; reason: "outside-pregame-window"; firstGameTime: string; targetTimes: string[] };
 
 function kstMinuteOfDay(now: Date): number {
   const kst = new Date(now.getTime() + KST_OFFSET_MS);
@@ -38,7 +40,10 @@ export function isDailyRosterMovesWindow(now: Date): boolean {
   return minute >= DAILY_RUN_MINUTE && minute < DAILY_RUN_MINUTE + RUN_WINDOW_MINUTES;
 }
 
-/** 취소되지 않은 당일 첫 경기의 시작 2시간 전 30분 윈도우인지 판정한다. */
+/**
+ * 취소되지 않은 당일 첫 경기 기준으로, 시작 2시간 전 또는 1시간 전 30분 윈도우인지 판정한다.
+ * 리드타임 중 하나라도 현재 30분 윈도우에 걸리면 run:true(가장 이른 매칭 targetTime 보고).
+ */
 export function getPregameRosterMovesDecision(
   games: RosterScheduleGame[],
   now: Date,
@@ -51,20 +56,31 @@ export function getPregameRosterMovesDecision(
 
   if (!firstGameMinute) return { run: false, reason: "no-games" };
 
-  const targetMinute = firstGameMinute.minute - PREGAME_LEAD_MINUTES;
   const currentMinute = kstMinuteOfDay(now);
-  const context = {
-    firstGameTime: firstGameMinute.time,
-    targetTime: formatTime(targetMinute),
-  };
+  // 리드타임별 목표 시각(분). 음수(자정 이전) 목표는 제외한다.
+  const targetMinutes = PREGAME_LEAD_MINUTES_LIST.map((lead) => firstGameMinute.minute - lead)
+    .filter((minute) => minute >= 0)
+    .sort((a, b) => a - b);
+  const targetTimes = targetMinutes.map(formatTime);
 
-  if (
-    targetMinute >= 0 &&
-    currentMinute >= targetMinute &&
-    currentMinute < targetMinute + RUN_WINDOW_MINUTES
-  ) {
-    return { run: true, reason: "pregame", ...context };
+  const matched = targetMinutes.find(
+    (target) => currentMinute >= target && currentMinute < target + RUN_WINDOW_MINUTES,
+  );
+
+  if (matched !== undefined) {
+    return {
+      run: true,
+      reason: "pregame",
+      firstGameTime: firstGameMinute.time,
+      targetTime: formatTime(matched),
+      targetTimes,
+    };
   }
 
-  return { run: false, reason: "outside-pregame-window", ...context };
+  return {
+    run: false,
+    reason: "outside-pregame-window",
+    firstGameTime: firstGameMinute.time,
+    targetTimes,
+  };
 }

@@ -410,12 +410,22 @@ const eveningGames = [
 check(
   "일정: 첫 경기 17:00의 2시간 전 15:00 KST 실행",
   getPregameRosterMovesDecision(eveningGames, new Date("2026-07-21T06:00:00Z")),
-  { run: true, reason: "pregame", firstGameTime: "17:00", targetTime: "15:00" },
+  { run: true, reason: "pregame", firstGameTime: "17:00", targetTime: "15:00", targetTimes: ["15:00", "16:00"] },
 );
 check(
-  "일정: pregame 30분 윈도우 밖은 skip",
+  "일정: 첫 경기 17:00의 1시간 전 16:00 KST도 실행",
+  getPregameRosterMovesDecision(eveningGames, new Date("2026-07-21T07:00:00Z")),
+  { run: true, reason: "pregame", firstGameTime: "17:00", targetTime: "16:00", targetTimes: ["15:00", "16:00"] },
+);
+check(
+  "일정: 2시간·1시간 전 사이 틈(15:30 KST)은 skip",
   getPregameRosterMovesDecision(eveningGames, new Date("2026-07-21T06:30:00Z")),
-  { run: false, reason: "outside-pregame-window", firstGameTime: "17:00", targetTime: "15:00" },
+  { run: false, reason: "outside-pregame-window", firstGameTime: "17:00", targetTimes: ["15:00", "16:00"] },
+);
+check(
+  "일정: 1시간 전 윈도우 밖(16:30 KST)은 skip",
+  getPregameRosterMovesDecision(eveningGames, new Date("2026-07-21T07:30:00Z")),
+  { run: false, reason: "outside-pregame-window", firstGameTime: "17:00", targetTimes: ["15:00", "16:00"] },
 );
 check(
   "일정: 취소 경기는 제외하고 다음 첫 경기 기준",
@@ -423,7 +433,7 @@ check(
     [{ time: "14:00", status: "cancelled" }, { time: "17:00", status: "scheduled" }],
     new Date("2026-07-21T06:00:00Z"),
   ),
-  { run: true, reason: "pregame", firstGameTime: "17:00", targetTime: "15:00" },
+  { run: true, reason: "pregame", firstGameTime: "17:00", targetTime: "15:00", targetTimes: ["15:00", "16:00"] },
 );
 check(
   "일정: 경기 없음은 skip",
