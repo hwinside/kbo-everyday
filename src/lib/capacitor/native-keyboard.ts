@@ -5,16 +5,18 @@
 // 자동스크롤을 끄고, 플러그인이 주는 정확한 키보드 높이로 시트를 직접 배치한다.
 // 플러그인이 없는 기존 바이너리·웹/PWA는 기존 visualViewport 경로를 유지한다.
 //
-// 동시성 계약(삼순 #883 왕복3 blocker 반영) — resize/scroll 을 전역 단일 lease 로 관리한다.
-//   ① setScroll(true) 는 호출 "성공 여부 불명"도 롤백 대상 — await 직전에 applied 플래그를 세워,
-//      네이티브 side effect 가 적용됐는데 응답이 reject 돼도 restore 가 setScroll(false)로 되돌린다.
-//   ② 복원 통지는 실제 성공 후에만 — setScroll(false)가 성공해 native 가 진짜 enable 된 뒤에만
-//      notify(false). 실패하면 상태를 유지하고 bounded retry 한다. 호출부 guard(root scroll)도 전역
-//      상태 getter 를 읽어, 복원 성공 전에는 조기 재활성화되지 않는다.
-//   ③ setResizeMode(baseline) 실패는 baseline 을 소비하지 않고 pending 으로 유지 → 다음 open 이
-//      오염된 현재값(none)을 새 baseline 으로 재캡처하지 않는다(baseline poisoning 차단).
-//   ④ scroll 도 resize 와 동일한 전역 refCount lease — 두 오버레이가 active 인데 하나를 release 해도
-//      refCount>0 이면 setScroll(false)를 호출하지 않아 나머지 오버레이의 native scroll 제어가 유지된다.
+// 동시성 계약(삼순 #883 왕복4 blocker 반영) — resize/scroll 을 전역 refCount lease + idempotent reconcile 로 관리.
+//   ⭐ 근본: reject 뒤 실제 native 상태(적용 전 실패 vs 적용 후 응답 실패)를 보장 못 하므로, 낙관적
+//      applied-flag 으로 skip 하지 않는다. want=true 면 항상 setResizeMode(None)+setScroll(true)를
+//      재발행(idempotent) → restore applied-then-reject 로 native 가 baseline 으로 돌아갔어도 reopen 이
+//      desired 를 확실히 재적용한다.
+//   ② 복원 통지는 실제 성공 후에만 — setScroll(false)+setResizeMode(baseline) 둘 다 성공해야 nativeScrollActive=false.
+//      실패하면 상태 유지 + bounded retry. guard(root scroll)는 전역 getter 를 읽어 복원 전 조기 재활성화 안 됨.
+//   ②-B terminal fail-safe: retry 예산 소진까지 복원 실패하면 lease 를 버리고 web guard 재활성화·상태
+//      리셋 → 영구 잔류(resize none+scroll disabled+guard true)를 막고 다음 open 이 처음부터 재초기화된다.
+//   ③ baseline 은 lease 미보유(null)일 때만 캡처 → 복원 pending 으로 held 면 오염값(none) 재캡처 안 함.
+//   ④ scroll 도 resize 와 동일한 전역 refCount lease — 두 오버레이 active 중 하나 release 해도 refCount>0 이면
+//      restore 가 안 돌아 나머지 오버레이의 native scroll 제어가 유지된다.
 
 import { Capacitor, type PluginListenerHandle } from "@capacitor/core";
 import {
@@ -84,13 +86,14 @@ export interface BeginOverlayKeyboardOptions {
   bridge?: KeyboardBridge;
 }
 
-// ── 전역 lease 매니저 상태(② 전역 상태 getter + ③④ 단일 lease) ─────────────────
+// ── 전역 lease 매니저 상태 ─────────────────────────────────────────────────
+// 삼순 왕복4: 낙관적 applied-flag 는 "적용 전 실패 / 적용 후 응답 실패"를 구분 못해 reject 시 실제
+// native 상태와 어긋난다. 따라서 flag skip 최적화를 버리고 desired 상태를 매 reconcile 마다
+// idempotent 하게 재수렴한다. baseline 은 lease 보유 여부(null 아님)로만 판단한다.
 let opChain: Promise<void> = Promise.resolve();
 let refCount = 0; // 활성 오버레이 수(scroll/resize 공통 lease)
-let baseline: ResizeMode | null = null; // 캡처한 원래 resize mode(복원 성공까지 유지)
-let resizeNoneApplied = false; // setResizeMode(None) 시도됨 → baseline 복원으로만 해제
-let scrollDisabledApplied = false; // setScroll(true) 시도됨(성공/불명) → setScroll(false)로만 해제
-let nativeScrollActive = false; // guard 가 읽는 "native scroll 이 진짜 disabled" 확정 상태
+let baseline: ResizeMode | null = null; // 캡처한 원래 resize mode. null=lease 미보유(복원 완료/terminal)
+let nativeScrollActive = false; // guard 가 읽는 "native scroll 을 우리가 제어 중" 상태
 let restoreRetries = 0;
 let activeBridge: KeyboardBridge = realBridge;
 const RESTORE_MAX_RETRIES = 3;
@@ -108,67 +111,69 @@ function enqueue<T>(op: () => Promise<T>): Promise<T> {
 
 /**
  * 전역 desired(refCount>0)로 native 상태를 수렴시킨다. apply 성공 시 true, 실패 시 false 반환.
- * restore 경로는 항상 true 반환(부분 실패는 내부 bounded retry 로 처리).
+ * 핵심(삼순 왕복4): reject 뒤 실제 native 상태를 모르므로, want=true 면 flag 로 skip 하지 않고 항상
+ * setResizeMode(None)+setScroll(true)를 재발행한다(idempotent). 이로써 restore 응답 실패(applied-then-reject)
+ * 뒤 reopen 이 desired 를 확실히 재적용한다. restore(refCount 0)는 성공 확인 또는 terminal fail-safe 까지 수렴.
  */
 async function reconcile(): Promise<boolean> {
   const b = activeBridge;
   const want = refCount > 0;
 
   if (want) {
-    if (resizeNoneApplied && scrollDisabledApplied) return true; // 이미 적용
     try {
-      // ③ 복원 pending(resizeNoneApplied)일 땐 baseline 을 재캡처하지 않는다.
-      if (baseline === null && !resizeNoneApplied) {
+      // baseline 은 lease 미보유(null)일 때만 캡처 — held 면 재캡처 안 함(baseline poisoning 차단).
+      if (baseline === null) {
         try {
           baseline = (await b.getResizeMode()).mode;
         } catch {
           baseline = KeyboardResize.Native;
         }
       }
-      if (!resizeNoneApplied) {
-        resizeNoneApplied = true; // await 직전 표시 — reject 여도 롤백 대상
-        await b.setResizeMode({ mode: KeyboardResize.None });
-      }
-      if (!scrollDisabledApplied) {
-        scrollDisabledApplied = true; // ① await 직전 표시(성공 여부 불명도 롤백 대상)
-        await b.setScroll({ isDisabled: true });
-      }
+      // flag skip 없이 항상 desired 재발행(reject 뒤 native 불명 → reopen 이 확실히 재수렴).
+      await b.setResizeMode({ mode: KeyboardResize.None });
+      await b.setScroll({ isDisabled: true });
       nativeScrollActive = true; // scroll+resize apply 확정 후에만 활성 통지
+      restoreRetries = 0;
       return true;
     } catch {
       return false; // 호출부가 dec+restore+fallback 처리
     }
   }
 
-  // restore — refCount 0. 성공한 primitive 만 해제하고 실패는 bounded retry.
-  if (!resizeNoneApplied && !scrollDisabledApplied) return true;
+  // restore — refCount 0. baseline 미보유면 되돌릴 것 없음.
+  if (baseline === null) {
+    nativeScrollActive = false;
+    restoreRetries = 0;
+    return true;
+  }
   let ok = true;
-  if (scrollDisabledApplied) {
-    try {
-      await b.setScroll({ isDisabled: false });
-      scrollDisabledApplied = false;
-      nativeScrollActive = false; // ② 실제 enable 성공 후에만 guard 재활성화 통지
-    } catch {
-      ok = false; // native 는 아직 disabled — nativeScrollActive 유지
-    }
+  try {
+    await b.setScroll({ isDisabled: false });
+  } catch {
+    ok = false;
   }
-  if (resizeNoneApplied) {
-    try {
-      await b.setResizeMode({ mode: baseline ?? KeyboardResize.Native });
-      resizeNoneApplied = false;
-      baseline = null; // 성공 시에만 baseline 소비
-    } catch {
-      ok = false; // ③ baseline 유지 → 다음 open 이 오염값 재캡처 안 함
-    }
+  try {
+    await b.setResizeMode({ mode: baseline });
+  } catch {
+    ok = false;
   }
-  if (!ok && refCount === 0 && restoreRetries < RESTORE_MAX_RETRIES) {
+  if (ok) {
+    baseline = null; // 성공 확인 → lease 해제
+    nativeScrollActive = false; // 실제 enable 성공 후에만 guard 재활성화
+    restoreRetries = 0;
+    return true;
+  }
+  if (restoreRetries < RESTORE_MAX_RETRIES) {
+    // 복원 성공 전이므로 nativeScrollActive 유지(조기 false 통지 금지) + bounded retry.
     restoreRetries += 1;
     setTimeout(() => {
-      if (refCount === 0 && (resizeNoneApplied || scrollDisabledApplied)) {
-        void enqueue(reconcile);
-      }
+      if (refCount === 0 && baseline !== null) void enqueue(reconcile);
     }, RESTORE_RETRY_MS);
-  } else if (ok) {
+  } else {
+    // terminal fail-safe: retry 예산 소진 → 영구 잔류 방지. lease 를 버리고 web guard 재활성화,
+    // 다음 open 은 baseline 재캡처해 처음부터 재초기화(retry budget 도 리셋).
+    baseline = null;
+    nativeScrollActive = false;
     restoreRetries = 0;
   }
   return true;
@@ -184,8 +189,6 @@ export function __resetOverlayKeyboardStateForTest(): void {
   opChain = Promise.resolve();
   refCount = 0;
   baseline = null;
-  resizeNoneApplied = false;
-  scrollDisabledApplied = false;
   nativeScrollActive = false;
   restoreRetries = 0;
   activeBridge = realBridge;

@@ -301,7 +301,7 @@ console.log("[전송 중 스토리 전환 오염 가드 — 삼순 #807 라운�
   ok("native-keyboard: keyboardWillShow/Hide 로 정확한 키보드 높이 구독",
     kbSrc.includes('"keyboardWillShow"') && kbSrc.includes('"keyboardWillHide"'));
   ok("native-keyboard: release 시 baseline resize mode 원복+자동스크롤 재활성화 — 다른 화면 입력창 미오염",
-    kbSrc.includes("setResizeMode({ mode: baseline ?? KeyboardResize.Native })") &&
+    kbSrc.includes("setResizeMode({ mode: baseline })") &&
     kbSrc.includes("setScroll({ isDisabled: false })"));
   ok("native-keyboard: 웹/PWA·안드·구빌드는 no-op(iOS+plugin availability 게이트)",
     kbSrc.includes("isIosNativeRuntime()") &&
@@ -322,14 +322,15 @@ console.log("[전송 중 스토리 전환 오염 가드 — 삼순 #807 라운�
     kbSrc.includes("Promise.allSettled") &&
     kbSrc.includes('r.status === "fulfilled"') &&
     kbSrc.includes('r.status === "rejected"'));
-  ok("① setScroll(true) await 직전 applied 표시(성공 여부 불명도 롤백 대상)",
-    /scrollDisabledApplied = true;\s*\/\/[^\n]*\n\s*await b\.setScroll\(\{ isDisabled: true \}\)/.test(kbSrc));
-  ok("② 복원 성공 후에만 nativeScrollActive=false(복원 전 조기 통지 금지) + bounded retry",
-    kbSrc.includes("nativeScrollActive = false;") &&
+  ok("want=true 는 flag skip 없이 항상 desired 재발행(idempotent reconcile — reopen 재적용)",
+    /await b\.setResizeMode\(\{ mode: KeyboardResize\.None \}\);\s*\n\s*await b\.setScroll\(\{ isDisabled: true \}\)/.test(kbSrc));
+  ok("② 복원 둘 다 성공(ok) 후에만 baseline 소비+nativeScrollActive=false + bounded retry",
+    /if \(ok\) \{[\s\S]*?baseline = null;[\s\S]*?nativeScrollActive = false;/.test(kbSrc) &&
     kbSrc.includes("RESTORE_MAX_RETRIES") &&
     kbSrc.includes("restoreRetries"));
-  ok("③ setResizeMode(baseline) 성공 시에만 baseline 소비(poisoning 차단)",
-    /resizeNoneApplied = false;\s*\n\s*baseline = null;/.test(kbSrc));
+  ok("②-B terminal fail-safe(retry 소진 → lease 버리고 guard 복귀·상태 리셋)",
+    /terminal fail-safe/.test(kbSrc) &&
+    /\} else \{\s*\n[\s\S]*?baseline = null;\s*\n\s*nativeScrollActive = false;\s*\n\s*restoreRetries = 0;/.test(kbSrc));
   ok("④ guard 는 전역 getter isNativeKeyboardScrollActive 로 읽음(handle-local 아님)",
     kbSrc.includes("export function isNativeKeyboardScrollActive(") &&
     viewerSrc.includes("isNativeKeyboardActive: () => isNativeKeyboardScrollActive()"));

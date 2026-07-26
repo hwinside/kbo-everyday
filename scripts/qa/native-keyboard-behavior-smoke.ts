@@ -44,6 +44,8 @@ function makeBridge(opts: {
   failSetScrollDisable?: boolean; // setScroll(true) 응답 reject(적용은 됨)
   failSetScrollEnable?: boolean; // setScroll(false) 응답 reject(적용은 됨)
   failSetResizeRestore?: boolean; // setResizeMode(baseline) 응답 reject(적용은 됨)
+  // "reject-before-apply": side effect 없이 reject(실제 native 미변경)
+  rejectScrollEnableBeforeApply?: boolean; // setScroll(false) 적용 전 실패(native 여전히 disabled)
   startResizeMode?: string;
 } = {}) {
   const calls: Call[] = [];
@@ -68,6 +70,10 @@ function makeBridge(opts: {
     },
     setScroll: async ({ isDisabled }) => {
       calls.push({ op: "setScroll", arg: isDisabled });
+      // reject-before-apply: side effect 없이 먼저 reject(native 미변경)
+      if (!isDisabled && opts.rejectScrollEnableBeforeApply) {
+        throw new Error("setScroll(false) rejected before apply (native still disabled)");
+      }
       nativeScrollDisabled = isDisabled; // side effect 적용
       if (isDisabled && opts.failSetScrollDisable) {
         throw new Error("setScroll(true) rejected (applied-then-reject)");
@@ -219,6 +225,70 @@ async function main() {
     await settle();
     ok("마지막 release 에서만 native scroll enable", b.nativeScrollDisabled === false);
     ok("마지막 release 후 guard 비활성", isNativeKeyboardScrollActive() === false);
+  }
+
+  // ── 삼순 왕복4-A: restore applied-then-reject 뒤 reopen 이 desired 재적용 ──────────
+  console.log("[왕복4-A restore applied-then-reject → reopen 이 None+disable 재적용]");
+  {
+    __resetOverlayKeyboardStateForTest();
+    // setScroll(false)는 정상, setResizeMode(baseline) 만 applied-then-reject
+    const b = makeBridge({ startResizeMode: "native", failSetResizeRestore: true });
+    const h1 = beginOverlayKeyboard({ onHeight: () => {}, onFallback: () => {}, bridge: b.bridge });
+    await settle();
+    ok("apply 후 native None + disabled", b.nativeResizeMode === "none" && b.nativeScrollDisabled);
+    h1.release();
+    await settle(3);
+    // restore: setScroll(false) 성공(enabled), setResizeMode(native) applied-then-reject
+    //   → 실제 native = resize native + scroll enabled
+    ok("restore 후 native resize=baseline(native), scroll enabled(실제 상태)",
+      b.nativeResizeMode === "native" && b.nativeScrollDisabled === false);
+    const noneBefore = b.calls.filter((c) => c.op === "setResizeMode" && c.arg === "none").length;
+    const disBefore = b.calls.filter((c) => c.op === "setScroll" && c.arg === true).length;
+    // reopen — flag 낙관 skip 없이 desired 재적용해야
+    const h2 = beginOverlayKeyboard({ onHeight: () => {}, onFallback: () => {}, bridge: b.bridge });
+    await settle();
+    ok("★ reopen 이 setResizeMode(None) 재호출(응답실패 무시하고 재수렴)",
+      b.calls.filter((c) => c.op === "setResizeMode" && c.arg === "none").length === noneBefore + 1);
+    ok("★ reopen 이 setScroll(true) 재호출",
+      b.calls.filter((c) => c.op === "setScroll" && c.arg === true).length === disBefore + 1);
+    ok("★ reopen 후 native 실제 None+disabled 재적용됨",
+      b.nativeResizeMode === "none" && b.nativeScrollDisabled === true);
+    ok("reopen 후 guard 활성", isNativeKeyboardScrollActive() === true);
+    h2.release();
+    await settle(3);
+  }
+
+  // ── 삼순 왕복4-B: reject-before-apply retry 소진 → terminal fail-safe(영구 잔류 방지) ──
+  console.log("[왕복4-B reject-before-apply retry 소진 → terminal fail-safe]");
+  {
+    __resetOverlayKeyboardStateForTest();
+    // setScroll(false)가 항상 apply 전 reject → native 여전히 disabled
+    const b = makeBridge({ startResizeMode: "native", rejectScrollEnableBeforeApply: true });
+    const h = beginOverlayKeyboard({ onHeight: () => {}, onFallback: () => {}, bridge: b.bridge });
+    await settle();
+    ok("apply 후 guard 활성 + native disabled", isNativeKeyboardScrollActive() && b.nativeScrollDisabled);
+    h.release();
+    await settle(3);
+    // 첫 restore setScroll(false) reject-before-apply → guard 유지(복원 성공 전 false 금지)
+    ok("retry 중 guard 활성 유지(조기 false 금지)", isNativeKeyboardScrollActive() === true);
+    await wait(300); // bounded retry 3회 소진
+    await settle();
+    // ★ terminal fail-safe: 영구 잔류 금지 — guard false 로 전환(다음 화면 오염 해제)
+    ok("★ retry 소진 후 terminal fail-safe: guard 비활성(영구 잔류 해제)",
+      isNativeKeyboardScrollActive() === false);
+    const enableCalls = b.calls.filter((c) => c.op === "setScroll" && c.arg === false).length;
+    ok("bounded retry 유계(setScroll(false) 시도 ≤ 1+최대재시도)",
+      enableCalls >= 2 && enableCalls <= 4);
+    // 다음 open 은 retry budget 리셋 상태로 정상 재초기화
+    const b2calls = b.calls.length;
+    const h2 = beginOverlayKeyboard({ onHeight: () => {}, onFallback: () => {}, bridge: b.bridge });
+    await settle();
+    ok("★ 다음 open 정상 재초기화(None+disable 재발행)",
+      b.calls.filter((c, i) => i >= b2calls && c.op === "setResizeMode" && c.arg === "none").length === 1 &&
+      isNativeKeyboardScrollActive() === true);
+    h2.release();
+    await wait(300);
+    await settle();
   }
 
   console.log(`\n결과: ${pass} pass / ${fail} fail`);
