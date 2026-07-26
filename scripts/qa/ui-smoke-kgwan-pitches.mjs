@@ -42,6 +42,15 @@ try {
     check(`${tag} 현재 투구 4줄`, await current.locator('[data-qa^="live-pitch-"]').count() === 4);
     check(`${tag} 최신 공 accent 1개`, await current.locator('[data-qa="live-pitch-latest"]').count() === 1);
 
+    // 볼카운트 도트 배지 (전광판식) — fixture balls=2/strikes=2/outs=1 → B●●○ / S●● / O●○
+    check(`${tag} 카운트 배지 존재`, await current.locator('[data-qa="count-badge"]').count() === 1);
+    check(`${tag} B 도트 3칸`, await current.locator('[data-qa="count-b"] [data-filled]').count() === 3);
+    check(`${tag} B 채움 2`, await current.locator('[data-qa="count-b"] [data-filled="true"]').count() === 2);
+    check(`${tag} S 도트 2칸`, await current.locator('[data-qa="count-s"] [data-filled]').count() === 2);
+    check(`${tag} S 채움 2`, await current.locator('[data-qa="count-s"] [data-filled="true"]').count() === 2);
+    check(`${tag} O 도트 2칸`, await current.locator('[data-qa="count-o"] [data-filled]').count() === 2);
+    check(`${tag} O 채움 1`, await current.locator('[data-qa="count-o"] [data-filled="true"]').count() === 1);
+
     const completed = page.locator('[data-qa="completed-at-bat"]').first();
     check(`${tag} 이전 타석 기본 접힘`, await completed.locator('[data-qa^="live-pitch-"]').count() === 0);
     await completed.locator("button").click();

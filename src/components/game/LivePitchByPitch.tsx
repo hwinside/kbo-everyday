@@ -80,6 +80,40 @@ function formatUpdatedAge(updatedAt: string | undefined, nowMs: number): string 
   return `${Math.floor(seconds / 60)}분 전 갱신`;
 }
 
+/**
+ * 볼카운트 도트 배지 — 야구 전광판식. 채운 개수만큼 색이 들어온다(B 3칸/S 2칸/O 2칸).
+ * 한섯아빠 요청: 텍스트 `B0 S2 O1` → 도트 `B ●●○ / S ●○ / O ●○`.
+ */
+function CountDots({
+  label,
+  filled,
+  total,
+  colorClass,
+}: {
+  label: string;
+  filled: number;
+  total: number;
+  colorClass: string;
+}) {
+  return (
+    <span data-qa={`count-${label.toLowerCase()}`} className="flex items-center gap-1">
+      <span className="text-[10px] font-bold text-text-tertiary">{label}</span>
+      <span className="flex gap-0.5">
+        {Array.from({ length: total }, (_, i) => (
+          <span
+            key={i}
+            data-filled={i < filled}
+            className={clsx(
+              "h-2 w-2 rounded-full",
+              i < filled ? colorClass : "bg-bg-tertiary ring-1 ring-inset ring-border",
+            )}
+          />
+        ))}
+      </span>
+    </span>
+  );
+}
+
 export default function CurrentAtBatCard({
   batterName,
   pitcherName,
@@ -139,10 +173,10 @@ export default function CurrentAtBatCard({
             <span className="min-w-0 truncate text-xs font-semibold text-text-secondary">{pitcherName}</span>
           </>
         )}
-        <div className="ml-auto flex shrink-0 gap-1 text-[10px] font-bold tabular-nums">
-          <span className="rounded bg-bg-tertiary px-1.5 py-1 text-emerald-400">B{count.balls}</span>
-          <span className="rounded bg-bg-tertiary px-1.5 py-1 text-amber-400">S{count.strikes}</span>
-          <span className="rounded bg-bg-tertiary px-1.5 py-1 text-red-400">O{count.outs}</span>
+        <div data-qa="count-badge" className="ml-auto flex shrink-0 items-center gap-2">
+          <CountDots label="B" filled={Math.min(count.balls, 3)} total={3} colorClass="bg-emerald-400" />
+          <CountDots label="S" filled={Math.min(count.strikes, 2)} total={2} colorClass="bg-amber-400" />
+          <CountDots label="O" filled={Math.min(count.outs, 2)} total={2} colorClass="bg-red-400" />
         </div>
       </div>
 
