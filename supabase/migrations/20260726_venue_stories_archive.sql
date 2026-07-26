@@ -7,7 +7,7 @@
 --
 -- 이 migration 은:
 --  1) status 에 'archived' 추가(공개 종료→보관 전환 상태).
---  2) archived_at(보관 전환 시각) / removed_at(removed 격리 시작 시각) 컬럼 추가.
+--  2) archived_at(보관 전환 시각) / removed_at(removed 격리 시작 시각) / cleanup_failed_at(정리 실패 시각=영구실패 TTL 기준) 컬럼 추가.
 --  3) 다이어리 조회 인덱스(본인 active+archived, 경기 최신순).
 --  4) 레거시 removed_at null 백필(격리 시계 시작) + report RPC 가 status='removed' 전이 시 removed_at=now() 기록.
 --
@@ -28,7 +28,8 @@ ALTER TABLE venue_stories
 --   아래 백필로 격리 시계를 시작시킨다(이후 전이 경로도 report RPC/admin/검증실패 모두 removed_at 을 기록).
 ALTER TABLE venue_stories
   ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ,
-  ADD COLUMN IF NOT EXISTS removed_at  TIMESTAMPTZ;
+  ADD COLUMN IF NOT EXISTS removed_at  TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS cleanup_failed_at TIMESTAMPTZ;  -- cleanup_failed(정리 실패) 전이 시각 = 영구실패 TTL(7일) 기준. storage remove 가 이 기간 넘게 반복 실패하면 강제 행 삭제(무한 재시도 중단, blocker 2).
 
 -- 레거시/검증실패 백필: 기존 status='removed' 이면서 removed_at 이 비어있는 행은 격리 시계가 없어
 -- cleanup 이 영원히 no-op(quarantine_keep) → 누수. removed_at=now() 로 격리 시작 → 30일 후 삭제되게 한다.
@@ -36,6 +37,13 @@ ALTER TABLE venue_stories
 UPDATE venue_stories
    SET removed_at = now()
  WHERE status = 'removed' AND removed_at IS NULL;
+
+-- 레거시 cleanup_failed 백필: status='cleanup_failed' 인데 cleanup_failed_at 이 비어있으면 영구실패 TTL 시계가 없어
+-- removed 출신 30일경과 행이 storage 반복 실패 시 무한 재시도된다. cleanup_failed_at=now() 로 TTL 시계를 시작한다.
+-- 안전/멱등: 조건부(WHERE cleanup_failed_at IS NULL)라 재실행 시 0행. 이미 채워진 시계는 보존.
+UPDATE venue_stories
+   SET cleanup_failed_at = now()
+ WHERE status = 'cleanup_failed' AND cleanup_failed_at IS NULL;
 
 -- ── 3) 다이어리 조회 인덱스 ───────────────────────────────────────────
 -- 본인(user_id)의 active+archived 미디어를 경기 날짜 최신순으로 조회(S2 다이어리 API ORDER BY game_date DESC).

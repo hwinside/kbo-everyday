@@ -20,7 +20,9 @@
 
 ### 2.2 삭제 유지 대상 (다이어리 미보관)
 - **`removed`(신고 임계/어드민/검증실패)**: 즉시 영구삭제 **금지** → 다이어리 미노출 상태로 **30일 격리 후 삭제**(오신고 복구 여지). `removed_at` 기준.
-- **`cleanup_failed` / orphan / `stale_cap`**: 장애 상태 → 격리·재처리. 복구 성공 시 `archived`, **소유불명·영구실패만 TTL 후 삭제**.
+- **`cleanup_failed` / `stale_cap`**: 장애 상태 → 격리·재처리. 복구 성공 시 `archived`, **소유불명·영구실패만 TTL 후 삭제**.
+  - `cleanup_failed` 출신 판별(status 가 이전 상태를 덮음): `removed_at` 있으면 removed 출신(30일·영구실패 TTL 후 삭제), `removed_at` 없고 `game_ended_at` 있으면 정상만료 출신(→ `archived` 복구, storage 삭제 금지), `game_ended_at` 없으면 stale 계열(격리+관제). 영구실패 TTL = `cleanup_failed_at`+7일.
+- **orphan** = DB 행이 없는 storage 잔여물(생성 API 실패로 남은 업로드 미완결 오브젝트). 유저가 적궹 업로드한 보관 대상 미디어가 아니므로(이미 보관되는 archived/active 행은 참조로 보호됨) → **S1은 기존 즉시삭제 유지**. orphan 격리·재처리는 별도 슬라이스(재승인 대기) — S1 범위 제외.
 
 ### 2.3 보관 기한 / 라이프사이클
 - **계정 유지 중 무기한 보관** (하린아빠 명시).
@@ -63,7 +65,7 @@ CREATE INDEX IF NOT EXISTS idx_venue_stories_diary
 
 ## 5. 슬라이스 계획 (얇은 수직, 각 슬라이스 = 삼순 리뷰 게이트)
 
-- **S1 (백엔드 보관 전환)**: migration(status archived·archived_at·removed_at·index) + cleanup route 수정(`expired_after_end`→archived 전환, `removed` 30일 격리, 장애건 격리/재처리) + expiry-policy 분류 확장 + 순수함수 회귀 테스트. **공개면 무변경**(active만 노출이라 자동). DB 변경이라 삼순 리뷰 + 하린아빠 머지 승인 필수.
+- **S1 (백엔드 보관 전환)**: migration(status archived·archived_at·removed_at·cleanup_failed_at·index) + cleanup route 수정(`expired_after_end`→archived 전환, `removed` 30일 격리, `cleanup_failed` 출신 분기 복구/TTL 삭제, stale_cap 배치 제외·별도 count 관제) + expiry-policy 분류 확장 + 순수함수 회귀 테스트. **공개면 무변경**(active만 노출이라 자동). **orphan 즉시삭제는 S1 그대로 유지**(격리·재처리는 별도 슬라이스·재승인). DB 변경이라 삼순 리뷰 + 하린아빠 머지 승인 필수.
 - **S2 (다이어리 미디어 API)**: `/api/me/venue-attendance` 응답에 경기별 내 미디어(archived+active) 배열 추가 or 신규 `/api/me/venue-diary/media`. 본인 검증·signed URL·경기별 그룹.
 - **S3 (UI 목록)**: `VenueDiaryCard`에 보조 지표·`🔒 나만 보기` 1회·경기 row 썸네일 6+N.
 - **S4 (UI 상세 캐러셀 + 삭제)**: 캐러셀 뷰어(순번/스와이프/도트) + `⋯` 본인 삭제 + 읽기전용 댓글.
