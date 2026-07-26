@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { TEAMS, isAllStarGameId } from "@/lib/constants/teams";
-import { fetchStandings, buildRankMap } from "@/lib/crawler/kbo-api";
+import { fetchStandings, buildRankMap, fetchGames, type KboGame } from "@/lib/crawler/kbo-api";
 import { STANDINGS_ACCURACY_RULES, STANDINGS_UNAVAILABLE_RULES } from "@/lib/ai/standings-guard";
 import { computeSeriesSnapshot, serializeSeriesSnapshot } from "@/lib/series/snapshot";
 import { loserClaimedWin } from "@/lib/game-summary/winner-check";
 import { hasBaseRunnerContradiction } from "@/lib/game-summary/consistency-check";
+import { canonicalGate, isFingerprintStale, winnerFieldMismatch } from "@/lib/game-summary/cache-validation";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
@@ -380,10 +381,50 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "BoxScore data appears incomplete (all zeros)" }, { status: 422 });
   }
 
-  // 캐시 확인
+  // 서버 독립 canonical 검증 (삼순 #888 blocker①) — POST 는 무인증이고 client body 스코어를
+  // 그대로 신뢰하면 누구나 mid-game/임의 스코어로 shared cache 를 poisoning 할 수 있다.
+  // KBO canonical 경기 상태(status 기반 — 이닝 하드코딩 금지, 콜드/더블헤더/홈리드 9말생략/연장 대응)와
+  // 스코어를 독립 조회해 body 와 대조한다. fail-close: 조회 실패·미확정·불일치면 생성/캐시 거부.
+  const meta0 = parseGameMeta(body.gameId);
+  let canonical: KboGame | undefined;
+  if (!isAllStarGameId(body.gameId)) {
+    if (!meta0) {
+      return NextResponse.json({ error: "Invalid gameId", source: "invalid-gameid" }, { status: 400 });
+    }
+    try {
+      const games = await fetchGames(meta0.dateStr);
+      canonical = games.find((g) => g.gameId === body.gameId);
+    } catch {
+      canonical = undefined;
+    }
+    const gate = canonicalGate(canonical, body.awayScore, body.homeScore);
+    if (gate.reason !== "ok") {
+      // fail-close: canonical 미확보(503)·미확정(409)·스코어 불일치(422)면 생성/캐시 거부.
+      return NextResponse.json(
+        {
+          error: gate.reason,
+          source: gate.reason,
+          status: canonical?.status,
+          canonicalAway: canonical?.awayScore,
+          canonicalHome: canonical?.homeScore,
+        },
+        { status: gate.httpStatus },
+      );
+    }
+  }
+  // 이후는 canonical(신뢰 소스) 스코어를 사용한다.
+  const finalAwayScore = canonical ? (canonical.awayScore ?? body.awayScore) : body.awayScore;
+  const finalHomeScore = canonical ? (canonical.homeScore ?? body.homeScore) : body.homeScore;
+
+  // 캐시 확인 — prompt_version 뿐 아니라 canonical 스코어 fingerprint 불일치(stale)도 재생성 트리거.
   const cached = await getCached(body.gameId);
   if (cached && !cached.outdated) {
-    return NextResponse.json({ summary: normalizeSummary(cached.summary), source: "cache" });
+    const cAway = cached.summary._cachedAwayScore as number | undefined;
+    const cHome = cached.summary._cachedHomeScore as number | undefined;
+    if (!isFingerprintStale(cAway, cHome, finalAwayScore, finalHomeScore)) {
+      return NextResponse.json({ summary: normalizeSummary(cached.summary), source: "cache" });
+    }
+    // fingerprint stale → 아래에서 canonical 스코어로 재생성(stale 캐시 반환 금지).
   }
 
   // 맥락 데이터 병렬 조회 (실패해도 진행)
@@ -472,21 +513,19 @@ export async function POST(req: NextRequest) {
       // (2026-06-05 한화 9:2 롯데 / 삼성 2:5 KIA 등 다수 경기 "AI 분석 지연").
       // 헤드라인은 단문·구조적이라 신뢰 가능하고, 본문의 구조적 승패 오류는
       // winner 필드 검증(아래)이 백스톱으로 잡는다.
-      let winnerMismatch = false;
-      if (body.awayScore !== body.homeScore) {
-        const actualWinner = body.awayScore > body.homeScore ? body.awayTeam : body.homeTeam;
-        const actualLoser = body.awayScore > body.homeScore ? body.homeTeam : body.awayTeam;
-        // 헤드라인에서 패팀을 승자로 서술했는지 검증 (winner-check 헬퍼).
-        // "롯데, KIA 꺾고 승리"처럼 승팀이 패팀을 타동사로 제압하는 정상 헤드라인은 통과.
-        const loserWrong = loserClaimedWin(summary.headline || "", actualWinner, actualLoser);
-        // winner 필드 검증 (구조화된 값 — 본문 승패 오류의 백스톱)
-        const llmWinner = summary.winner;
-        const winnerFieldWrong = llmWinner && llmWinner !== "무승부" && llmWinner !== actualWinner;
-
-        if (loserWrong || winnerFieldWrong) {
-          console.error(`Winner mismatch (attempt ${attempt}): actual=${actualWinner}, headline="${summary.headline}", llmWinner=${llmWinner}`);
-          winnerMismatch = true;
-        }
+      const llmWinner = summary.winner as string | undefined;
+      // winner 필드/무승부 문구 검증(cache-validation, blocker③) + 헤드라인 패팀=승자 서술(winner-check).
+      let winnerMismatch = winnerFieldMismatch(
+        finalAwayScore, finalHomeScore, body.awayTeam, body.homeTeam, llmWinner, summary.headline,
+      );
+      if (!winnerMismatch && finalAwayScore !== finalHomeScore) {
+        const actualWinner = finalAwayScore > finalHomeScore ? body.awayTeam : body.homeTeam;
+        const actualLoser = finalAwayScore > finalHomeScore ? body.homeTeam : body.awayTeam;
+        // "롯데, KIA 꼺고 승리"처럼 승팀이 패팀을 타동사로 제압하는 정상 헤드라인은 통과.
+        winnerMismatch = loserClaimedWin(summary.headline || "", actualWinner, actualLoser);
+      }
+      if (winnerMismatch) {
+        console.error(`Winner mismatch (attempt ${attempt}): score=${finalAwayScore}-${finalHomeScore}, headline="${summary.headline}", llmWinner=${llmWinner}`);
       }
 
       if (winnerMismatch) {
@@ -538,8 +577,9 @@ export async function POST(req: NextRequest) {
       // stale 캐시를 감지·자동 재생성할 수 있게 하는 백스톱이다.
       // (2026-07-26 사고: 8회초 4-4 시점 스냅샷으로 캐시된 요약이 최종 14-4로
       //  갱신되지 않고 계속 노출됨 — outdated가 prompt_version만 보던 한계.)
-      summary._cachedAwayScore = body.awayScore;
-      summary._cachedHomeScore = body.homeScore;
+      // canonical(신뢰 소스) 스코어를 fingerprint 로 저장 — client body 가 아니라 canonical 을 신뢰.
+      summary._cachedAwayScore = finalAwayScore;
+      summary._cachedHomeScore = finalHomeScore;
 
       await saveCache(body.gameId, summary);
       return NextResponse.json({ summary, source: "generated" });

@@ -6,6 +6,7 @@ import { ChevronDown, ChevronUp } from "lucide-react";
 import { clsx } from "clsx";
 import Image from "next/image";
 import { getTeamById, isAllStarGame, isAllStarGameId } from "@/lib/constants/teams";
+import { shouldHideStaleCache } from "@/lib/game-summary/cache-validation";
 import GameChat from "@/components/game/GameChat";
 import ContextualStatsBox from "@/components/game/ContextualStatsBox";
 import VenueStorySection from "@/components/game/VenueStorySection";
@@ -534,20 +535,18 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
         const cacheRes = await fetch(`/api/game-summary?gameId=${gameId}`, { signal: controller.signal });
         const cacheData = await cacheRes.json();
         if (cacheData.summary) {
-          setLlmSummary(cacheData.summary);
-          // 캐시된 요약의 생성 당시 스코어가 현재 최종 스코어와 다르면 stale 캐시
-          // (중간/지연 스냅샷으로 요약이 굳어진 경우) → 재생성 트리거.
-          // 2026-07-26 사고: 8회초 4-4 스냅샷 요약이 최종 14-4로 갱신 안 되던 문제.
+          // 삼순 #888 blocker②: stale/legacy(스코어 fingerprint 불일치·부재) 캐시는 잘못된 요약이므로
+          // 먼저 노출하지 말고 숨김 + 재생성한다. (2026-07-26 4-4 무승부 stale 요약 선노출 사고)
           const curAwayR = linescore?.away.R ?? boxScore?.awayBatters.reduce((s, b) => s + b.runs, 0);
           const curHomeR = linescore?.home.R ?? boxScore?.homeBatters.reduce((s, b) => s + b.runs, 0);
           const cachedAwayR = cacheData.summary._cachedAwayScore as number | undefined;
           const cachedHomeR = cacheData.summary._cachedHomeScore as number | undefined;
-          const scoreStale =
-            cachedAwayR != null && cachedHomeR != null &&
-            curAwayR != null && curHomeR != null &&
-            (cachedAwayR !== curAwayR || cachedHomeR !== curHomeR);
-          // If outdated OR score-stale, trigger background re-generation (don't block UI)
-          if ((cacheData.outdated || scoreStale) && hasRealBoxScore && boxScore && !regeneratingRef.current) {
+          const finalScoreKnown = !!hasRealBoxScore && curAwayR != null && curHomeR != null;
+          // final 스코어를 아는데 fingerprint 불일치/부재(legacy)면 캐시 신뢰 불가 → 숨김(노출 금지).
+          const hideStale = shouldHideStaleCache(finalScoreKnown, cachedAwayR, cachedHomeR, curAwayR, curHomeR);
+          if (!hideStale) setLlmSummary(cacheData.summary);
+          // outdated(프롬프트 버전) OR stale/legacy(hideStale) → 재생성.
+          if ((cacheData.outdated || hideStale) && hasRealBoxScore && boxScore && !regeneratingRef.current) {
             regeneratingRef.current = true; // prevent re-entry on re-render
             // linescore.R 우선, boxScore 합산 fallback (승패 뒤집힘 방지)
             const homeR = linescore?.home.R ?? boxScore.homeBatters.reduce((s, b) => s + b.runs, 0);
