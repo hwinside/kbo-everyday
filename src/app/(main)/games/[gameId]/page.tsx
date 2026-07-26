@@ -570,6 +570,11 @@ export default function GameDetailPage() {
                     }}
                     lineupConfirmed={!!d.detailLineup && d.detailLineup.isToday === true}
                     gameRelay={gameRelay}
+                    currentPitcher={d.currentPitcher}
+                    currentBatter={d.currentBatter}
+                    balls={d.currentBalls}
+                    strikes={d.currentStrikes}
+                    outs={d.currentOuts}
                   />
                 </motion.div>
               )}

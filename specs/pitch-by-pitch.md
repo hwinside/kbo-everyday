@@ -1,6 +1,6 @@
 # Spec — Pitch-by-Pitch 투구 중계 (구종·구속·볼카운트·승부과정 펼쳐보기)
 
-> Status: Slice 1 IMPLEMENTED (PR #842, 삼순 리뷰 게이트 진행 중)
+> Status: Slice 1 MERGED (#842) · Live Slice 승인/구현 중 (하린아빠 "굿. 이대로 진행" 2026-07-26)
 > Origin: 건의함 "파도"(Android 1.0.15) 2번+4번 / 하린아빠 GO 2026-07-25
 > Owner: 삼식이 (구현) · 삼순이 (리뷰 게이트)
 
@@ -50,6 +50,17 @@
 - 현재 타석 진행 중 볼카운트(S-B-O) 배지.
 - 타석/경기 단위 구종 카운트 요약(예: `직구 12 · 슬라 8 · 포크 5`).
 
+### Live Slice — 크관 현재 타석 자동 중계 [승인 범위]
+- `parseInningRelays`가 terminal 전 최신 `type:8` 타자 + `type:1` 투구를
+  `latestInning.currentAtBat`으로 반환한다. terminal 도달 시 완료 `plays`로 단일 이동.
+- 크관 최신 이닝은 현재 타석을 기본 펼침하고, 새 공마다
+  `N구 · 구종 · 구속 · 결과 · 투구 후 B/S`를 추가하며 최신 공을 accent 처리한다.
+- 이전 완료 타석은 `결과 · 총 N구 · chevron` 접힘, 탭 시 같은 투구 목록을 펼친다.
+- relay는 기존 라이브 5초 polling + 서버 4초 공유 캐시를 유지한다. 탭 hidden 시 요청을
+  건너뛰고 visible 복귀 즉시 갱신하며, UI는 API의 마지막 성공 fetch 시각만 표시한다.
+- relay 영역 `max-h-[40vh]`를 유지해 채팅 공간을 보존한다. 진행 중 데이터가 없으면
+  기존 완료 타석/게임 이벤트 fallback을 그대로 사용한다.
+
 ### Slice 3 (선택) — 안타→타점 연결, 주자 진루 시각화 [백로그]
 - 4번 건의의 "안타가 몇 타점" 표기. relay `type:14/24` + currentGameState.base 재사용.
 
@@ -97,6 +108,9 @@ export interface PlayEvent { ...; pitches?: PitchDetail[]; }
 - [x] `qa:query-guard` 220/0/0 / tsc 0 / 대상 eslint 0
 - [ ] End-User QA: 실기기에서 라이브 경기 타석 펼치기 → 투구 시퀀스 표시, 과거 경기도 동일 (머지·배포 후)
 - [x] API 라운드트립 증가 0 (기존 relay payload 재사용, 신규 fetch 0)
+- [x] 진행 중 타석 API/경계 회귀 18/18 + 크관 320/390px 현재 카드 intersection/새 공 자동 복귀 UI 회귀
+- [x] hidden 중 live→final 전환 후 visible 복귀 relay fetch 회귀
+- [x] terminal relay 뒤 stale `currentBatter` 미합성 + 새 type:8 0구 current card 유지 회귀
 
 ## 8. Rollout
 Slice 1 구현 → 테스트 → 삼순 리뷰 게이트 → 하린아빠 머지 승인 → 배포 → End-User QA → 위키 반영.

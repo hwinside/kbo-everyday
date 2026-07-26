@@ -1,4 +1,10 @@
+"use client";
+
+import { useState } from "react";
+import { ChevronDown } from "lucide-react";
+import { clsx } from "clsx";
 import type { PlayEvent } from "@/app/api/game-relay/route";
+import { LivePitchList } from "@/components/game/LivePitchByPitch";
 
 /**
  * 실시간 문자중계 한 타석(플레이) 렌더 — 크관 탭(KgwanTab) 이전/현재 이닝 공용.
@@ -22,20 +28,41 @@ export function playEmoji(type: PlayEvent["type"]): string {
 }
 
 export default function RelayPlayLine({ play }: { play: PlayEvent }) {
+  const [expanded, setExpanded] = useState(false);
+  const hasPitches = !!play.pitches?.length;
+
   return (
-    <div className="flex items-start gap-2">
-      <span className="text-xs mt-0.5 w-4 text-center shrink-0">{playEmoji(play.type)}</span>
-      <div className="flex-1 min-w-0">
-        <p data-qa="relay-body" className="text-sm text-text-primary leading-relaxed">
-          <span className="font-semibold">{play.batterName}</span>
-          <span className="text-text-secondary ml-1.5">{play.result}</span>
-        </p>
-        {play.extras && play.extras.length > 0 && (
-          <p data-qa="relay-aux" className="text-xs leading-relaxed mt-0.5" style={{ color: "var(--relay-sub-text)" }}>
-            └ {play.extras.join(" / ")}
+    <div data-qa="completed-at-bat" className="border-b border-border/20 last:border-b-0">
+      <button
+        type="button"
+        disabled={!hasPitches}
+        onClick={() => hasPitches && setExpanded((value) => !value)}
+        className={clsx("flex w-full items-start gap-2 py-2 text-left", hasPitches && "active:opacity-70")}
+      >
+        <span className="text-xs mt-0.5 w-4 text-center shrink-0">{playEmoji(play.type)}</span>
+        <div className="flex-1 min-w-0">
+          <p data-qa="relay-body" className="text-sm text-text-primary leading-relaxed">
+            <span className="font-semibold">{play.batterName}</span>
+            <span className="text-text-secondary ml-1.5">{play.result}</span>
           </p>
+          {play.extras && play.extras.length > 0 && (
+            <p data-qa="relay-aux" className="text-xs leading-relaxed mt-0.5" style={{ color: "var(--relay-sub-text)" }}>
+              └ {play.extras.join(" / ")}
+            </p>
+          )}
+        </div>
+        {hasPitches && (
+          <span className="mt-0.5 flex shrink-0 items-center gap-1 text-[10px] text-text-tertiary">
+            총 {play.pitches!.length}구
+            <ChevronDown size={13} className={clsx("transition-transform", expanded && "rotate-180")} />
+          </span>
         )}
-      </div>
+      </button>
+      {expanded && hasPitches && (
+        <div className="mb-2 ml-5 rounded-lg bg-bg-secondary px-1">
+          <LivePitchList pitches={play.pitches!} />
+        </div>
+      )}
     </div>
   );
 }
