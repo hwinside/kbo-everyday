@@ -10,7 +10,7 @@ import { getCanonicalPlayerHref, resolvePlayerIdentity } from "@/lib/utils/resol
 import { TEAMS } from "@/lib/constants/teams";
 import { getFavoritePlayers } from "@/lib/store/favorites";
 import { STAT_DEFS, type StatType } from "@/lib/stats/title-defs";
-import { rankByStat, type RankedRow } from "@/lib/stats/title-rankings";
+import { rankByStat, parseIP, type RankedRow } from "@/lib/stats/title-rankings";
 import { calcBatterSaber, calcPitcherSaber } from "@/lib/utils/sabermetrics-calc";
 import playerPositions from "@/lib/constants/player-positions.json";
 
@@ -63,19 +63,6 @@ function qualNote(view: View, activeStat: string, isDefense: boolean): string | 
   return view === "pitcher" ? "5경기 이상" : "10경기 이상";
 }
 
-/** "7 1/3" | number → 실이닝 소수. 파싱 실패 0. (title-rankings parseIP와 동일 규칙) */
-function parseIP(ip: unknown): number {
-  if (typeof ip === "number") return ip;
-  const s = String(ip ?? "").trim();
-  const m = s.match(/^(\d+)(?:\s+(\d+)\/(\d+))?$/);
-  if (!m) {
-    const n = Number(s);
-    return isNaN(n) ? 0 : n;
-  }
-  const whole = parseInt(m[1]) || 0;
-  const frac = m[2] && m[3] ? parseInt(m[2]) / parseInt(m[3]) : 0;
-  return whole + frac;
-}
 /** "7 1/3" → "7⅓" 보기 좋게. */
 function ipLabel(ip: unknown): string {
   return String(ip ?? "0").replace(" 1/3", "⅓").replace(" 2/3", "⅔");
@@ -110,11 +97,11 @@ function buildUnqualGate(view: View, activeStat: string, isDefense: boolean, sco
     const hasFlag = league.some((p) => p.qualifiedRate !== undefined && p.qualifiedRate !== null);
     const teamLabel = "소속팀 경기수 기준";
     if (view === "pitcher") {
-      const qIPs = league.filter((p) => Number(p.qualifiedRate) === 1).map((p) => parseIP(p.ip));
+      const qIPs = league.filter((p) => Number(p.qualifiedRate) === 1).map((p) => parseIP(p.ip as string | number));
       const reqIP = qIPs.length ? Math.round(Math.min(...qIPs)) : null;
       return {
-        qualified: hasFlag ? (p) => Number(p.qualifiedRate) === 1 : (p) => parseIP(p.ip) >= 12,
-        hasRecord: (p) => parseIP(p.ip) > 0,
+        qualified: hasFlag ? (p) => Number(p.qualifiedRate) === 1 : (p) => parseIP(p.ip as string | number) >= 12,
+        hasRecord: (p) => parseIP(p.ip as string | number) > 0,
         rowProgress: (p) => `${ipLabel(p.ip)}이닝`,
         note: `규정이닝(${teamLabel}${reqIP ? `, 약 ${reqIP}이닝` : ""}) 미달 — 도달 시 순위에 자동 노출됩니다`,
       };
@@ -184,6 +171,7 @@ function computeSaber(p: Row, view: StatType, key: string): number {
     return calcPitcherSaber({
       era: (p.era as string | number) ?? 0, ip: (p.ip as string | number) ?? 0,
       so: Number(p.so) || 0, bb: Number(p.bb) || 0, hr: Number(p.hr) || 0, hits: Number(p.h) || 0,
+      r: p.r != null ? Number(p.r) : undefined, er: p.er != null ? Number(p.er) : undefined, // RA9 WAR용 실측 실점
       games: Number(p.games) || 0, wins: Number(p.wins) || 0, losses: Number(p.losses) || 0,
       saves: Number(p.saves) || 0, whip: (p.whip as string | number) ?? 0,
     }).WAR;
@@ -341,6 +329,8 @@ export default function RecordRoom({ scopeTeamId }: { scopeTeamId?: number }) {
     if (SABER_DEFS[activeStat]) return Number((p as Row & { __saber?: number }).__saber) || 0;
     if (!def) return 0;
     if (activeStat === "doubles") return (Number(p.doubles) || 0) + (Number(p.triples) || 0);
+    // 이닝(ip)은 KBO 분수 표기("115 2/3") → Number()로 읽으면 0. parseIP로 실이닝 표시.
+    if (def.key === "ip") return parseIP(p.ip as string | number);
     return Number(p[def.key] ?? 0) || 0;
   };
   const fmt = (v: number) => {

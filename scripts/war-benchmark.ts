@@ -25,24 +25,42 @@ type NaverHitter = {
 type NaverPitcher = {
   playerId: string; playerName: string; teamShortName: string; pitcherWar: number | null;
   pitcherEra: number; pitcherInning: number | string; pitcherKk: number; pitcherBb: number;
-  pitcherHr: number; pitcherHit: number; pitcherGameCount: number;
+  pitcherHr: number; pitcherHit: number; pitcherR: number; pitcherEr: number; pitcherGameCount: number;
   pitcherWin: number; pitcherLose: number; pitcherSave: number; pitcherWhip: number; isQualified: boolean;
 };
 
-async function fetchAll<T extends { playerId: string }>(playerType: string): Promise<T[]> {
+export const NAVER_PAGE_SIZE = 500; // 리그 전체(약 300명 미만) 1페이지 커버
+// type별 최소 coverage — KBO 현재 규모(타자 300+/투수 250+)에서 '첫 100명만 반환' 버그를 확실히 거부.
+// 즉 정상 수집은 반드시 이 값보다 많아야 하며, 100 근처에서 멈추면 fail-close.
+export const NAVER_MIN_COVERAGE: Record<string, number> = { HITTER: 150, PITCHER: 150 };
+
+/** 네이버 stats 단일 대형페이지 수집 + 커버리지 fail-close. fetcher 주입으로 테스트 가능.
+ * ⚠️ 네이버 endpoint는 page 파라미터를 무시하고 매 호출 첫 pageSize명만 반환한다
+ * (과거 page=1..20 순회는 byId.size===before로 조기종료돼 첫 100명만 남아 표본 오염).
+ * 따라서 단일 대형페이지로 받고, type별 최소 coverage 미달이면 fail-close. */
+export async function collectNaverPlayers<T extends { playerId: string }>(
+  playerType: string,
+  fetcher: (page: number, size: number) => Promise<T[]>,
+  minCoverage: number = NAVER_MIN_COVERAGE[playerType] ?? 150,
+): Promise<T[]> {
   const byId = new Map<string, T>();
-  for (let page = 1; page <= 20; page++) {
-    const r = await fetch(`${BASE}/${SEASON}/players?playerType=${playerType}&gameType=REGULAR_SEASON&page=${page}&pageSize=100`,
-      { headers: { "User-Agent": "Mozilla/5.0", Referer: "https://m.sports.naver.com/" } });
-    if (!r.ok) break;
-    const j = await r.json();
-    const rows: T[] = j?.result?.seasonPlayerStats ?? [];
-    if (!rows.length) break;
-    const before = byId.size;
-    for (const x of rows) if (x.playerId && !byId.has(x.playerId)) byId.set(x.playerId, x);
-    if (byId.size === before) break;
-  }
+  const rows = await fetcher(1, NAVER_PAGE_SIZE);
+  for (const x of rows) if (x.playerId && !byId.has(x.playerId)) byId.set(x.playerId, x);
+  // fail-close 1: 수집량이 pageSize에 꿉 차면 endpoint가 잘렸을 가능성(더 큰 pageSize 필요).
+  if (byId.size >= NAVER_PAGE_SIZE) throw new Error(`[war-benchmark] ${playerType} 수집량(${byId.size})이 pageSize(${NAVER_PAGE_SIZE}) 근접 — 페이지네이션 미지원 의심, fail-close`);
+  // fail-close 2: type별 최소 coverage 미달 → '첫 100명만 반환' 버그 재발(예: pageSize 무시하고 100만 반환).
+  if (byId.size < minCoverage) throw new Error(`[war-benchmark] ${playerType} 수집량(${byId.size}) < 최소 coverage(${minCoverage}) — 첫 100명 버그 재발 의심, fail-close`);
   return [...byId.values()];
+}
+
+async function fetchAll<T extends { playerId: string }>(playerType: string): Promise<T[]> {
+  return collectNaverPlayers<T>(playerType, async (_page, size) => {
+    const r = await fetch(`${BASE}/${SEASON}/players?playerType=${playerType}&gameType=REGULAR_SEASON&page=1&pageSize=${size}`,
+      { headers: { "User-Agent": "Mozilla/5.0", Referer: "https://m.sports.naver.com/" } });
+    if (!r.ok) throw new Error(`[war-benchmark] naver ${playerType} fetch ${r.status}`);
+    const j = await r.json();
+    return (j?.result?.seasonPlayerStats ?? []) as T[];
+  });
 }
 
 type Diff = { name: string; team: string; ours: number; naver: number; d: number };
@@ -85,20 +103,45 @@ async function main() {
     return { name: h.playerName, team: h.teamShortName, ours, naver: h.hitterWar as number, d: ours - (h.hitterWar as number) };
   });
 
-  // 투수
-  const pitchers = (await fetchAll<NaverPitcher>("PITCHER")).filter((p) => typeof p.pitcherWar === "number" && p.isQualified);
-  const pDiffs: Diff[] = pitchers.map((p) => {
+  // 투수 — UI 노출군(5경기 이상)을 캘리브레이션 표본으로 사용. 규정이닝만 쓰면
+  // 저이닝 불펜(실제 노출군 다수)에서 전역 절편이 바닥값처럼 작동해 정확도가 악화된다.
+  const parseInn = (v: number | string): number => {
+    if (typeof v === "number") return v;
+    const m = String(v).trim().match(/^(\d+)(?:\s+(\d+)\/(\d+))?$/);
+    if (!m) return parseFloat(String(v)) || 0;
+    return (parseInt(m[1]) || 0) + (m[2] && m[3] ? parseInt(m[2]) / parseInt(m[3]) : 0);
+  };
+  const toDiff = (p: NaverPitcher): Diff => {
     const ours = calcPitcherSaber({
       era: p.pitcherEra, ip: p.pitcherInning, so: p.pitcherKk, bb: p.pitcherBb, hr: p.pitcherHr,
-      hits: p.pitcherHit, games: p.pitcherGameCount, wins: p.pitcherWin, losses: p.pitcherLose,
+      hits: p.pitcherHit, r: p.pitcherR, er: p.pitcherEr, games: p.pitcherGameCount, wins: p.pitcherWin, losses: p.pitcherLose,
       saves: p.pitcherSave, whip: p.pitcherWhip,
     }).WAR;
     return { name: p.playerName, team: p.teamShortName, ours, naver: p.pitcherWar as number, d: ours - (p.pitcherWar as number) };
-  });
+  };
+  const allPitchers = (await fetchAll<NaverPitcher>("PITCHER")).filter((p) => typeof p.pitcherWar === "number");
+  const exposurePitchers = allPitchers.filter((p) => (p.pitcherGameCount || 0) >= 5); // UI 노출군(rankByStat 투수 5경기)
+  const pDiffs: Diff[] = exposurePitchers.map(toDiff); // 캘리브레이션·주 리포트 = 노출군
+  const qualDiffs: Diff[] = allPitchers.filter((p) => p.isQualified).map(toDiff);
+  const lowInnDiffs: Diff[] = exposurePitchers.filter((p) => parseInn(p.pitcherInning) < 12).map(toDiff);
 
-  console.log(`[war-benchmark] season=${SEASON} 자격타자=${bDiffs.length} 자격투수=${pDiffs.length} (네이버 WAR 보유)`);
+  console.log(`[war-benchmark] season=${SEASON} 자격타자=${bDiffs.length} 투수(노출군 5G+)=${pDiffs.length} 규정투수=${qualDiffs.length} 저이닝(<12IP)=${lowInnDiffs.length}`);
   report("타자 예상 WAR vs 네이버 WAR", bDiffs, "포지션/수비 보강 후보");
-  report("투수 예상 WAR vs 네이버 WAR", pDiffs, "FIP 외 요인");
+  report("투수 예상 WAR vs 네이버 WAR (노출군 5G+ = 캘리브레이션 표본)", pDiffs, "RA9 외 요인");
+  report("  └ 참고: 규정이닝 투수", qualDiffs, "규정군");
+  report("  └ 참고: 저이닝 <12IP 노출군", lowInnDiffs, "저이닝 절편 확인");
 }
 
-main().catch((e) => { console.error(e); process.exit(1); });
+// direct-run guard: 이 파일을 직접 실행할 때만 벤치마크(네이버 네트워크 호출) 수행.
+// import(예: war-benchmark-coverage-smoke)만 하면 main()이 돌지 않아 side-effect·비결정성 없음.
+const isDirectRun = (() => {
+  try {
+    const invoked = process.argv[1] ? new URL(`file://${process.argv[1]}`).pathname : "";
+    return import.meta.url === `file://${invoked}` || (!!invoked && import.meta.url.endsWith(invoked.split("/").pop() ?? "\0"));
+  } catch {
+    return false;
+  }
+})();
+if (isDirectRun) {
+  main().catch((e) => { console.error(e); process.exit(1); });
+}

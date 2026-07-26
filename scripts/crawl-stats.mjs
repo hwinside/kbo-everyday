@@ -127,13 +127,22 @@ async function scrapeTable(page) {
 
 async function scrapeAllPages(page) {
   const allRows = [];
+  // 페이지 그룹 이동(btnNext) 시 동일 페이지가 재렌더돼 같은 행이 중복 수집되는 경우가 있다.
+  // 행 전체 시그니처(텍스트+링크 = 선수 고유)로 정확 중복만 제거 — 동명이인은 playerId 링크가 달라 보존.
+  const seen = new Set();
   let pageNum = 1;
 
   while (true) {
     const rows = await scrapeTable(page);
     if (rows.length === 0) break;
-    allRows.push(...rows);
-    console.log(`    Page ${pageNum}: ${rows.length} rows (total: ${allRows.length})`);
+    const fresh = rows.filter((r) => {
+      const sig = `${(r.texts || []).join("\u0001")}\u0002${(r.hrefs || []).join("\u0001")}`;
+      if (seen.has(sig)) return false;
+      seen.add(sig);
+      return true;
+    });
+    allRows.push(...fresh);
+    console.log(`    Page ${pageNum}: ${rows.length} rows (${fresh.length} new, total: ${allRows.length})`);
 
     const targetPageText = String(pageNum + 1);
     const nextVisibleBtn = await page.locator('a[id*="ucPager_btnNo"]').filter({ hasText: targetPageText }).first();

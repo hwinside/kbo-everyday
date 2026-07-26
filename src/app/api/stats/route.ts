@@ -196,9 +196,10 @@ function parsePitcherRow(c: string[], roster: RosterPlayer[]): PlayerStat {
 }
 
 async function fetchPitcherStats(): Promise<PlayerStat[]> {
-  // ERA_RT는 규정이닝 투수만 반환 (시즌초 17명 등), SV/HOLD/W/KK는 전체 30명
-  // 여러 정렬로 크롤링 후 병합해야 세이브/홀드 리더가 빠지지 않음
-  const sortKeys = ["ERA_RT", "SV_CN", "HOLD_CN", "W_CN", "KK_CN"];
+  // ERA_RT는 규정이닝 투수만 반환 (시즌초 17명 등), SV/HOLD/W/KK/INN2는 전체 30명
+  // 여러 정렬로 크롤링 후 병합해야 세이브/홀드/이닝 리더가 빠지지 않음.
+  // INN2_CN(이닝) 미포함 시 규정이닝 미달 이닝이터(선발 기량투수)가 라이브 집합에서 전부 누락된다.
+  const sortKeys = ["ERA_RT", "SV_CN", "HOLD_CN", "W_CN", "KK_CN", "INN2_CN"];
   const roster = playersRoster as RosterPlayer[];
   const merged = new Map<string, PlayerStat>(); // key: name+team
   const qualifiedKeys = new Set<string>(); // ERA_RT 페이지에 나오는 규정이닝 충족 선수
