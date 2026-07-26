@@ -59,6 +59,9 @@ try {
 
     const completed = page.locator('[data-qa="completed-at-bat"]').first();
     check(`${tag} 지난 타석 타순 표시`, await completed.locator('[data-qa="completed-bat-order"]').innerText() === "1번");
+    // 미상(batOrder 없는) 완료 타석은 타순 숨김 — fixture 완료 타석 4개 중 2개만 batOrder(1/2번), 나머지는 미표시.
+    check(`${tag} 완료 타석 4개`, await page.locator('[data-qa="completed-at-bat"]').count() === 4);
+    check(`${tag} 미상 타순 숨김(표시 2개)`, await page.locator('[data-qa="completed-at-bat"] [data-qa="completed-bat-order"]').count() === 2);
     check(`${tag} 이전 타석 기본 접힘`, await completed.locator('[data-qa^="live-pitch-"]').count() === 0);
     await completed.locator("button").click();
     check(`${tag} 이전 타석 탭 펼침`, await completed.locator('[data-qa^="live-pitch-"]').count() === 3);

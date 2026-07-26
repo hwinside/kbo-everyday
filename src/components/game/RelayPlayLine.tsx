@@ -43,7 +43,7 @@ export default function RelayPlayLine({ play }: { play: PlayEvent }) {
         <div className="flex-1 min-w-0">
           <p data-qa="relay-body" className="text-sm text-text-primary leading-relaxed">
             <span className="font-semibold">
-              {play.batOrder && (
+              {play.batOrder != null && play.batOrder >= 1 && play.batOrder <= 9 && (
                 <span data-qa="completed-bat-order" className="mr-1 text-accent">
                   {play.batOrder}번
                 </span>

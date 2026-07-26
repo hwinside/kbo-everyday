@@ -168,7 +168,7 @@ export default function CurrentAtBatCard({
         <span className="shrink-0 rounded-md bg-accent px-1.5 py-1 text-[10px] font-black text-black">
           현재 타석
         </span>
-        {batOrder && (
+        {batOrder != null && batOrder >= 1 && batOrder <= 9 && (
           <span data-qa="current-bat-order" className="shrink-0 text-[10px] font-semibold text-text-tertiary">
             {batOrder}번
           </span>
