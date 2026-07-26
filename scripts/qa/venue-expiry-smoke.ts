@@ -11,6 +11,8 @@ import {
   finalizedExpiryIso,
   safetyCapExpiryIso,
   classifyCleanupRow,
+  isCleanupActionable,
+  VENUE_STORY_REMOVED_QUARANTINE_DAYS,
 } from "../../src/lib/venue-stories/expiry-policy";
 import {
   VENUE_STORY_EXPIRY_HOURS_AFTER_END,
@@ -72,47 +74,50 @@ ok(
   classifyCleanupRow({ status: "active", gameEndedAt: new Date(T0).toISOString(), expiresAtMs: T0 + 24 * H, nowMs: T0 + 24 * H + 1 }) === "expired_after_end",
 );
 {
-  // S1(#869): 만료 scan 은 archived 를 제외하고 active/pending 만료 + removed/cleanup_failed 만 후보로 조회하며
-  // id 오름차순→500 제한 순서로 결정적 배치한다(archived 누적 starvation 방지, 삼순 #868 하드닝).
+  // S1(#869 재작업): 만료 scan 은 조회(WHERE) 단계에서 "이번 실행에 실제 처리 가능한 행"만 뽑는다(isCleanupActionable):
+  //   active/pending 만료 ⊕ cleanup_failed ⊕ removed(removed_at ≤ now-30d). archived / 30일미만·null removed 는 제외.
+  //   id 오름차순→500 제한(archived·격리 starvation 방지, 삼순 NO-GO blocker 1 근본 해소).
   const nowIso = new Date(T0).toISOString();
+  const quarantineCutoffIso = new Date(T0 - VENUE_STORY_REMOVED_QUARANTINE_DAYS * 24 * H).toISOString();
   const route = readFileSync(
     resolve(__dirname, "../../src/app/api/cron/venue-stories-cleanup/route.ts"),
     "utf-8",
   );
   const filterAt = route.indexOf(
-    ".or(`and(expires_at.lte.${nowIso},status.in.(active,pending)),status.in.(removed,cleanup_failed)`)",
+    "`and(status.in.(active,pending),expires_at.lte.${nowIso}),status.eq.cleanup_failed,and(status.eq.removed,removed_at.lte.${quarantineCutoffIso})`",
   );
   const orderAt = route.indexOf('.order("id", { ascending: true })', filterAt);
   const limitAt = route.indexOf(".limit(500)", orderAt);
   ok(
-    "route는 active/pending 만료+removed/cleanup_failed 필터→id 정렬→500 제한 순서로 조회(starvation 방지)",
+    "route는 실행가능 행(active/pending 만료 + cleanup_failed + removed@≥now-30d)만 필터→id 정렬→500 제한으로 조회(starvation 근본 방지)",
     filterAt >= 0 && orderAt > filterAt && limitAt > orderAt,
   );
-  // 보관 전환된 archived 행은 scan 에서 제외되어 removed/cleanup_failed 삭제 대상을 굴리지 않음.
-  const archivedPool = Array.from({ length: 500 }, (_, index) => ({
-    id: index + 1,
-    status: "archived",
-    gameEndedAt: nowIso,
-    expiresAtMs: T0 - 1,
+  void nowIso;
+  void quarantineCutoffIso;
+  // 반례 고정(production route filter 기준): 저-id 격리 removed(30일미만) 500 ⊕ archived ⊕ 실행가능 3건.
+  //   isCleanupActionable 필터 → 500건은 제외되고 뒤 archive/cleanup_failed/격리만료 removed 가 선택된다.
+  const under30 = T0 - 29 * 24 * H; // 격리 30일 미만
+  const over30 = T0 - 31 * 24 * H; // 격리 30일 경과
+  type Cand = { id: number; status: string; expiresAtMs: number | null; removedAtMs: number | null };
+  const quarantined500: Cand[] = Array.from({ length: 500 }, (_, i) => ({
+    id: i + 1, status: "removed", expiresAtMs: null, removedAtMs: under30,
   }));
-  const scanTargets = [
-    { id: 501, status: "active", gameEndedAt: nowIso, expiresAtMs: T0 - 1 }, // → archive
-    { id: 502, status: "removed", gameEndedAt: nowIso, expiresAtMs: T0 + H }, // → delete/격리
-    { id: 503, status: "cleanup_failed", gameEndedAt: null, expiresAtMs: null }, // → delete 재시도
+  const archived500: Cand[] = Array.from({ length: 500 }, (_, i) => ({
+    id: 1000 + i, status: "archived", expiresAtMs: T0 - 1, removedAtMs: null,
+  }));
+  const scanTargets: Cand[] = [
+    { id: 9001, status: "active", expiresAtMs: T0 - 1, removedAtMs: null }, // → archive
+    { id: 9002, status: "cleanup_failed", expiresAtMs: null, removedAtMs: null }, // → reprocess
+    { id: 9003, status: "removed", expiresAtMs: null, removedAtMs: over30 }, // → 격리 만료 delete
   ];
-  const selected = [...archivedPool, ...scanTargets]
-    .filter((row) => (
-      row.status === "removed"
-      || row.status === "cleanup_failed"
-      || ((row.status === "active" || row.status === "pending")
-        && row.expiresAtMs != null && row.expiresAtMs <= T0)
-    ))
+  const selected = [...quarantined500, ...archived500, ...scanTargets]
+    .filter((row) => isCleanupActionable({ status: row.status, expiresAtMs: row.expiresAtMs, removedAtMs: row.removedAtMs, nowMs: T0 }))
     .sort((a, b) => a.id - b.id)
     .slice(0, 500)
     .map((row) => row.id);
   ok(
-    "archived 500건이 scan 에서 제외돼 active(archive)/removed/cleanup_failed 선택을 막지 않음",
-    selected.join(",") === "501,502,503",
+    "격리 removed 500 + archived 500 이 scan 에서 제외돼 archive/reprocess/격리만료 removed 만 선택(batch starvation 제거)",
+    selected.join(",") === "9001,9002,9003",
   );
 }
 ok(

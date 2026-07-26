@@ -9,9 +9,9 @@
 --  1) status 에 'archived' 추가(공개 종료→보관 전환 상태).
 --  2) archived_at(보관 전환 시각) / removed_at(removed 격리 시작 시각) 컬럼 추가.
 --  3) 다이어리 조회 인덱스(본인 active+archived, 경기 최신순).
---  4) report RPC 가 신고 임계로 status='removed' 전이할 때 removed_at=now() 를 함께 기록.
+--  4) 레거시 removed_at null 백필(격리 시계 시작) + report RPC 가 status='removed' 전이 시 removed_at=now() 기록.
 --
--- 전부 멱등(IF NOT EXISTS / DROP IF EXISTS / CREATE OR REPLACE). production 선적용 금지(리뷰 후).
+-- 전부 멱등(IF NOT EXISTS / DROP IF EXISTS / CREATE OR REPLACE / 조건부 UPDATE). production 선적용 금지(리뷰 후).
 
 -- ── 1) status CHECK 재정의: 'archived' 추가 ───────────────────────────
 -- 기존 제약을 drop 후 재생성(멱등). 20260718 의 인라인 CHECK 제약명은
@@ -23,17 +23,26 @@ ALTER TABLE venue_stories
 
 -- ── 2) 보관/격리 타임스탬프 ───────────────────────────────────────────
 -- archived_at: expired_after_end 정상 만료 → 보관 전환 시각(공개 종료 시점).
--- removed_at : removed(신고 임계/어드민) 격리 시작 시각. 30일 경과 후 삭제(오신고 복구 여지).
---   null = 격리 대상 아님(레거시/검증실패 removed 는 즉시 정리 유지 — cleanup 이 null→delete).
+-- removed_at : removed(신고 임계/어드민/검증실패) 격리 시작 시각. 30일 경과 후에만 삭제(오신고/오판 복구 여지).
+--   스펙 §2.2: 모든 removed 는 즉시삭제 금지·30일 격리. removed_at null(레거시) 은 cleanup 이 quarantine_keep(no-op)하므로
+--   아래 백필로 격리 시계를 시작시킨다(이후 전이 경로도 report RPC/admin/검증실패 모두 removed_at 을 기록).
 ALTER TABLE venue_stories
   ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS removed_at  TIMESTAMPTZ;
 
+-- 레거시/검증실패 백필: 기존 status='removed' 이면서 removed_at 이 비어있는 행은 격리 시계가 없어
+-- cleanup 이 영원히 no-op(quarantine_keep) → 누수. removed_at=now() 로 격리 시작 → 30일 후 삭제되게 한다.
+-- 안전/멱등: 조건부(WHERE removed_at IS NULL)라 재실행 시 0행. 이미 채워진 격리 시계는 보존.
+UPDATE venue_stories
+   SET removed_at = now()
+ WHERE status = 'removed' AND removed_at IS NULL;
+
 -- ── 3) 다이어리 조회 인덱스 ───────────────────────────────────────────
--- 본인(user_id)의 active+archived 미디어를 경기 최신순으로 조회(S2 다이어리 API 용).
--- game_id 는 'YYYYMMDD...' 로 날짜가 prefix 라 DESC = 경기 최신순(별도 game_date 컬럼 없음).
+-- 본인(user_id)의 active+archived 미디어를 경기 날짜 최신순으로 조회(S2 다이어리 API ORDER BY game_date DESC).
+-- game_date DATE 컬럼은 20260721_venue_attendance.sql 에서 추가됨. 주 정렬=game_date DESC(경기 날짜 최신순),
+-- game_id DESC 는 같은 날 간 보조/legacy fallback 정렬.
 CREATE INDEX IF NOT EXISTS idx_venue_stories_diary
-  ON venue_stories (user_id, game_id DESC)
+  ON venue_stories (user_id, game_date DESC, game_id DESC)
   WHERE status IN ('active', 'archived');
 
 -- ── 4) report RPC: removed 전이 시 removed_at 세팅 ────────────────────

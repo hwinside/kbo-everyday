@@ -9,7 +9,11 @@ import {
   collectReferencedPaths,
   type RefPageRow,
 } from "@/lib/venue-stories/cleanup-policy";
-import { classifyCleanupRow, resolveCleanupAction } from "@/lib/venue-stories/expiry-policy";
+import {
+  classifyCleanupRow,
+  resolveCleanupAction,
+  VENUE_STORY_REMOVED_QUARANTINE_DAYS,
+} from "@/lib/venue-stories/expiry-policy";
 
 const CRON_SECRET = process.env.CRON_SECRET || "";
 // staging 버킷도 orphan 스캔 대상(생성 API 도달 전 이탈한 업로드 잔여 정리)
@@ -72,10 +76,12 @@ async function removeRowObjects(r: Row): Promise<boolean> {
 
 /**
  * 직관 스토리 정리 cron:
- *  1) 대상 행 분기(resolveCleanupAction):
+ *  1) 대상 행 분기(resolveCleanupAction, 스펙 §2.2):
  *     - archive: 정상 만료(active) → storage/댓글 보존, status='archived'+archived_at(다이어리 보관).
- *     - delete: stale_cap/cleanup_failed/removed(30일 경과·레거시) → storage 먼저 제거 후 행 삭제(실패 시 cleanup_failed 재시도).
- *     - quarantine_keep: removed 30일 미만 / archived → no-op(미노출 격리 및 보관 보호).
+ *     - delete: 정상만료 미검증(pending)/격리 30일 경과 removed → storage 제거 후 행 삭제(실패 시 cleanup_failed).
+ *     - reprocess: cleanup_failed → storage 재삭제 재시도(성공 시 삭제, 실패는 계속 재시도 — 즉시 영구삭제 금지).
+ *     - quarantine_keep: removed 30일 미만·removed_at 미상 / stale_cap(장애) / archived → no-op(미노출 격리 및 보관 보호).
+ *       ※ stale_cap 은 quarantine_keep 이지만 존재 자체를 staleCap 으로 count해 5xx 관제한다.
  *  2) orphan 스캔: 어떤 행도 참조하지 않는 오래된 venue-stories/ 오브젝트(생성 API 실패 잔여) 제거.
  *     참조 집합은 status 필터 없이 전 행에서 수집하므로 archived 행의 storage 도 참조로 보호된다(orphan 오삭제 없음).
  */
@@ -92,16 +98,28 @@ export async function GET(req: NextRequest) {
   // 만료 계약(삼순 09:44 #2): terminal(game_ended_at 확정) 전에는 expiry 삭제 금지.
   //  - expired_after_end(active): 종료 확정 + 종료+24h 경과 → 보관 전환(archive, 다이어리)
   //  - expired_after_end(pending 등 미검증): 누수 방지 삭제(기존 동작)
-  //  - stale_cap: 종료 미확정인데 안전상한(시작+72h) 도달 = finalize 장애 → 누수 방지 삭제 + 관제(5xx)
-  //  - removed: removed_at 기준 30일 격리 후 삭제(오신고 복구 여지) / cleanup_failed: storage 삭제 재시도
-  // 만료 branch 는 active/pending 만 대상 — archived(보관 완료)는 expires_at 이 과거라도
-  // 재처리하지 않도록 제외한다(archived 누적 시 limit 500 starvation·재-archive 방지).
+  //  - stale_cap: 종료 미확정인데 안전상한(시작+72h) 도달 = finalize 장애 → 즉시삭제 금지, 격리 + 관제(5xx)
+  //  - removed: removed_at 기준 30일 격리 후에만 삭제(오신고/검증실패 복구 여지) / cleanup_failed: storage 재삭제 재시도
+  //
+  // ⚠️ starvation 방지(삼순 NO-GO blocker 1): 조회(WHERE) 단계에서 "이번 실행에 실제 처리 가능한 행"만 뽑는다.
+  //   30일 미만·removed_at 미상 removed 는 이번 실행 no-op(격리 유지)이므로 애초에 SELECT 에서 제외 —
+  //   그렇지 않으면 저-id 격리 removed 500건이 limit 을 점유해 뒤의 archive/cleanup_failed/30일경과 removed 가
+  //   최대 30일 굶는다. archived 도 제외(보관 완료, 재-archive 금지).
+  //   이 필터 경계 = isCleanupActionable(expiry-policy) 와 동일 SSOT(회귀 qa:venue-cleanup-action 로 고정).
+  //     ① active/pending + expires_at ≤ now  (정상 만료 archive / stale_cap 관제)
+  //     ② cleanup_failed                     (reprocess)
+  //     ③ removed + removed_at ≤ now-30d      (격리 만료 delete; null/30일미만은 lte 불일치로 자동 제외)
   // id 오름차순 정렬로 결정적 배치 — 오래된 후보부터 처리해 장기 backlog starvation 방지(삼순 #868).
+  const quarantineCutoffIso = new Date(
+    nowMs - VENUE_STORY_REMOVED_QUARANTINE_DAYS * 86400_000,
+  ).toISOString();
   // query-guard: bounded -- cleanup 배치는 실행당 최대 500행만 처리하고 남은 행은 다음 cron 이 이어서 정리(orphan cursor 와 동일 계약)
   const { data: rows, error } = await supabase
     .from("venue_stories")
     .select("id, status, game_ended_at, expires_at, removed_at, media_bucket, media_path, thumb_bucket, thumb_path")
-    .or(`and(expires_at.lte.${nowIso},status.in.(active,pending)),status.in.(removed,cleanup_failed)`)
+    .or(
+      `and(status.in.(active,pending),expires_at.lte.${nowIso}),status.eq.cleanup_failed,and(status.eq.removed,removed_at.lte.${quarantineCutoffIso})`,
+    )
     .order("id", { ascending: true })
     .limit(500);
   if (error) {
@@ -111,7 +129,7 @@ export async function GET(req: NextRequest) {
   let deleted = 0;
   let archived = 0; // 정상 만료 → 보관 전환(다이어리)
   let retryLater = 0;
-  let staleCapDeleted = 0; // finalize 장애 신호 — 0 이 아니면 관제(5xx)
+  let staleCap = 0; // finalize 장애 신호(안전상한 도달 격리) — 0 이 아니면 관제(5xx)
   let faults = 0; // storage/delete/update 오류 — 있으면 최종 5xx 로 관제
   for (const r of (rows ?? []) as Row[]) {
     const cls = classifyCleanupRow({
@@ -127,7 +145,9 @@ export async function GET(req: NextRequest) {
       removedAtMs: r.removed_at ? Date.parse(r.removed_at) : null,
       nowMs,
     });
-    if (action === "quarantine_keep") continue; // removed 30일 미만 격리 — 미노출 유지, 삭제 안 함
+    // stale_cap = finalize 장애 신호. 즉시삭제하지 않고(quarantine_keep) 격리 유지하되, 존재 자체를 관제(5xx)한다.
+    if (cls === "stale_cap") staleCap++;
+    if (action === "quarantine_keep") continue; // removed 30일 미만 / stale_cap / archived — 미노출 격리 유지, 삭제 안 함
     if (action === "archive") {
       // 보관 전환: storage 원본/댓글(FK CASCADE) 보존, 행만 status='archived' + archived_at.
       // 공개면은 status='active' 만 노출하므로 archived 는 자동 비공개(=하루 뒤 종료 유지).
@@ -144,7 +164,8 @@ export async function GET(req: NextRequest) {
       }
       continue;
     }
-    // action === "delete" — storage 먼저 제거 후 행 삭제(기존 동작).
+    // action === "delete"(정상만료 미검증 / 격리 30일 경과 removed) 또는 "reprocess"(cleanup_failed 재시도)
+    //   — 둘 다 storage 먼저 제거 후 행 삭제. 실패 시 cleanup_failed 로 남겨 다음 실행이 재시도(영구삭제 금지).
     const ok = await removeRowObjects(r);
     if (ok) {
       const { error: delErr } = await supabase.from("venue_stories").delete().eq("id", r.id);
@@ -153,7 +174,6 @@ export async function GET(req: NextRequest) {
         faults++;
       } else {
         deleted++;
-        if (cls === "stale_cap") staleCapDeleted++;
       }
     } else {
       const { error: updErr } = await supabase
@@ -183,7 +203,7 @@ export async function GET(req: NextRequest) {
   if (referenced == null) {
     // 참조 집합을 완전히 못 만들면 orphan 삭제는 위험(오탐) — 스캔 중단+5xx 관제
     return NextResponse.json(
-      { deleted, archived, retryLater, staleCapDeleted, orphanRemoved: 0, orphanSkipped: "ref_query_error" },
+      { deleted, archived, retryLater, staleCap, orphanRemoved: 0, orphanSkipped: "ref_query_error" },
       { status: 500 },
     );
   }
@@ -274,12 +294,12 @@ export async function GET(req: NextRequest) {
     if (bucketFault) faults++;
   }
 
-  if (faults > 0 || staleCapDeleted > 0) {
-    // staleCapDeleted > 0 = finalize 장애 신호(안전상한 도달) — 삭제는 수행했지만 관제를 위해 5xx
+  if (faults > 0 || staleCap > 0) {
+    // staleCap > 0 = finalize 장애 신호(안전상한 도달) — 즉시삭제는 하지 않고 격리하되 관제를 위해 5xx
     return NextResponse.json(
-      { deleted, archived, retryLater, staleCapDeleted, orphanRemoved, faults },
+      { deleted, archived, retryLater, staleCap, orphanRemoved, faults },
       { status: 500 },
     );
   }
-  return NextResponse.json({ deleted, archived, retryLater, staleCapDeleted, orphanRemoved });
+  return NextResponse.json({ deleted, archived, retryLater, staleCap, orphanRemoved });
 }
