@@ -21,11 +21,6 @@ import {
   winnerFieldMismatch,
   type SummaryFingerprint,
 } from "@/lib/game-summary/cache-validation";
-import {
-  writeSummaryCacheWithFence,
-  type SummaryCacheWriteResult,
-} from "@/lib/game-summary/cache-write-fence";
-
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
 const PROMPT_VERSION = 13; // v13: 순위 환각 방지 가드(공식 순위표 기준 규칙 + 조회 실패 fallback) — 기존 캐시 재생성
@@ -426,56 +421,34 @@ async function getCached(gameId: string): Promise<{ summary: Record<string, unkn
   }
 }
 
+type GenerationToken = string | number;
+
+async function claimGeneration(gameId: string): Promise<GenerationToken | null> {
+  try {
+    const { data, error } = await supabase.rpc("claim_game_summary_generation", {
+      p_game_id: cacheKey(gameId),
+    });
+    if (error || (typeof data !== "string" && typeof data !== "number")) return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
 async function saveCache(
   gameId: string,
   summary: Record<string, unknown>,
-  generationStartedAt: number,
-): Promise<SummaryCacheWriteResult> {
-  const key = cacheKey(gameId);
+  generationToken: GenerationToken,
+): Promise<"saved" | "superseded" | "error"> {
   try {
-    return await writeSummaryCacheWithFence({
-      async read() {
-        const { data, error } = await supabase
-          .from("game_summaries")
-          .select("created_at, summary")
-          .eq("game_id", key)
-          .maybeSingle();
-        if (error) throw error;
-        if (!data) return null;
-        const storedSummary = data.summary as Record<string, unknown> | null;
-        const storedGeneration = storedSummary?._cacheGenerationStartedAt;
-        return {
-          createdAt: data.created_at ?? null,
-          generationStartedAt: typeof storedGeneration === "number" ? storedGeneration : null,
-        };
-      },
-      async insert(write) {
-        const { error } = await supabase.from("game_summaries").insert({
-          game_id: key,
-          summary: { ...summary, _cacheGenerationStartedAt: write.generationStartedAt },
-          prompt_version: PROMPT_VERSION,
-          created_at: write.createdAt,
-        });
-        if (!error) return "saved";
-        return error.code === "23505" ? "conflict" : "error";
-      },
-      async updateIfVersion(expectedCreatedAt, write) {
-        let query = supabase
-          .from("game_summaries")
-          .update({
-            summary: { ...summary, _cacheGenerationStartedAt: write.generationStartedAt },
-            prompt_version: PROMPT_VERSION,
-            created_at: write.createdAt,
-          })
-          .eq("game_id", key);
-        query = expectedCreatedAt == null
-          ? query.is("created_at", null)
-          : query.eq("created_at", expectedCreatedAt);
-        const { data, error } = await query.select("game_id").maybeSingle();
-        if (error) return "error";
-        return data ? "saved" : "conflict";
-      },
-    }, generationStartedAt);
+    const { data, error } = await supabase.rpc("save_game_summary_if_current", {
+      p_game_id: cacheKey(gameId),
+      p_generation_token: generationToken,
+      p_summary: summary,
+      p_prompt_version: PROMPT_VERSION,
+    });
+    if (error) return "error";
+    return data === true ? "saved" : "superseded";
   } catch {
     return "error";
   }
@@ -511,7 +484,6 @@ function normalizeSummary(s: Record<string, unknown>): Record<string, unknown> {
 function publicSummary(s: Record<string, unknown>): Record<string, unknown> {
   const copy = structuredClone(s);
   delete copy._cacheFingerprint;
-  delete copy._cacheGenerationStartedAt;
   delete copy._cachedAwayScore;
   delete copy._cachedHomeScore;
   return normalizeSummary(copy);
@@ -548,8 +520,6 @@ export async function POST(req: NextRequest) {
   }
   // 올스타전은 AI 경기 요약 생성 안 함 (#544 AI 비활성화와 일관).
   if (isAllStarGameId(requestBody.gameId)) return NextResponse.json({ summary: null, source: "allstar" });
-  const generationStartedAt = Math.round((performance.timeOrigin + performance.now()) * 1_000);
-
   // 공개 POST body의 팀/스코어/이닝/박스스코어는 캐시 입력으로 신뢰하지 않는다.
   // gameId만 받아 KBO 경기목록+스코어보드+박스스코어를 서버에서 독립 재조회한다.
   const canonicalSource = await fetchCanonicalSummarySource(requestBody.gameId, true);
@@ -585,6 +555,16 @@ export async function POST(req: NextRequest) {
       });
     }
     // legacy 또는 fingerprint stale → 아래에서 canonical 데이터로 재생성한다.
+  }
+
+  // DB sequence claim이 서버리스 인스턴스 간 생성 순서를 선형화한다.
+  // 이후 더 새 claim이 생기면 save RPC의 row-lock token 확인에서 이 요청은 superseded 된다.
+  const generationToken = await claimGeneration(body.gameId);
+  if (generationToken == null) {
+    return NextResponse.json(
+      { error: "generation-claim-failed", source: "generation-claim" },
+      { status: 503 },
+    );
   }
 
   // 맥락 데이터 병렬 조회 (실패해도 진행)
@@ -746,7 +726,7 @@ export async function POST(req: NextRequest) {
 
       // DB JSON 내부에만 보관하고 API 응답에서는 별도 fingerprint 필드로 분리한다.
       summary._cacheFingerprint = generationFingerprint;
-      const saveResult = await saveCache(body.gameId, summary, generationStartedAt);
+      const saveResult = await saveCache(body.gameId, summary, generationToken);
       if (saveResult !== "saved") {
         return NextResponse.json(
           {

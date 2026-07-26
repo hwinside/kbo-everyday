@@ -14,9 +14,6 @@ import {
   type CanonicalGameState,
   type SummaryFingerprint,
 } from "../../src/lib/game-summary/cache-validation";
-import {
-  writeSummaryCacheWithFence,
-} from "../../src/lib/game-summary/cache-write-fence";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -138,46 +135,42 @@ ok("stale/legacy 판단 전에 llmSummary에 캐시를 넣지 않음",
   cacheBranch.includes("if (!hideStale && !cacheData.outdated)"));
 
 async function runAtomicChecks() {
-  console.log("[⑥ atomic cache write + poll fail-close]");
-  let stored = {
-    createdAt: "2026-07-26T13:00:00.000Z",
-    generationStartedAt: 100,
-  };
-  let releaseOldRead!: () => void;
-  const oldReadCaptured = new Promise<void>((resolve) => { releaseOldRead = resolve; });
-  let continueOldWrite!: () => void;
-  const oldWriteMayContinue = new Promise<void>((resolve) => { continueOldWrite = resolve; });
+  console.log("[⑥ DB-linearized generation + poll fail-close]");
+  const migrationSource = readFileSync(
+    resolve(process.cwd(), "supabase/migrations/20260726_game_summary_generation_fence.sql"),
+    "utf8",
+  );
+  ok("generation claim은 DB sequence로 발급",
+    migrationSource.includes("nextval('public.game_summary_generation_seq')") &&
+    migrationSource.includes("game_summary_generation_claims.generation_token < excluded.generation_token"));
+  ok("save는 claim row lock + current token exact-match 후 upsert",
+    migrationSource.includes("for update;") &&
+    migrationSource.includes("v_current_token is distinct from p_generation_token") &&
+    migrationSource.includes("on conflict (game_id) do update"));
+  ok("route는 stale cache 판정 뒤 DB claim, save는 같은 token RPC",
+    postSource.indexOf("claimGeneration(body.gameId)") > postSource.indexOf("isFingerprintStale(") &&
+    postSource.includes("saveCache(body.gameId, summary, generationToken)"));
 
-  function competingStore(blockAfterFirstRead = false) {
-    let firstRead = true;
-    return {
-      async read() {
-        const snapshot = { ...stored };
-        if (blockAfterFirstRead && firstRead) {
-          firstRead = false;
-          releaseOldRead();
-          await oldWriteMayContinue;
-        }
-        return snapshot;
-      },
-      async insert() {
-        return "conflict" as const;
-      },
-      async updateIfVersion(expectedCreatedAt: string | null, write: { createdAt: string; generationStartedAt: number }) {
-        if (stored.createdAt !== expectedCreatedAt) return "conflict" as const;
-        stored = { ...write };
-        return "saved" as const;
-      },
+  function simulateDbClaims(oldClientClock: number, newClientClock: number) {
+    void oldClientClock;
+    void newClientClock;
+    let sequence = 0;
+    let currentToken = 0;
+    const claim = () => {
+      currentToken = ++sequence;
+      return currentToken;
     };
+    const save = (token: number) => token === currentToken;
+    const oldToken = claim();
+    const newToken = claim();
+    return { oldSaved: save(oldToken), newSaved: save(newToken) };
   }
-
-  const oldWrite = writeSummaryCacheWithFence(competingStore(true), 200);
-  await oldReadCaptured;
-  const newWrite = await writeSummaryCacheWithFence(competingStore(), 300);
-  continueOldWrite();
-  const oldResult = await oldWrite;
-  ok("A-check → B-save → A-save competing writes에서 old A reject",
-    newWrite === "saved" && oldResult === "superseded" && stored.generationStartedAt === 300);
+  const equalClock = simulateDbClaims(200, 200);
+  ok("equal client clocks에서도 DB claim 순서로 old reject",
+    !equalClock.oldSaved && equalClock.newSaved);
+  const reversedClock = simulateDbClaims(300, 200);
+  ok("cross-instance reversed clock에서도 DB claim 순서로 old reject",
+    !reversedClock.oldSaved && reversedClock.newSaved);
 
   const pollSource = componentSource.slice(componentSource.indexOf("const pollCache = async"));
   ok("poll도 outdated + fingerprint current 검증 후에만 렌더",
