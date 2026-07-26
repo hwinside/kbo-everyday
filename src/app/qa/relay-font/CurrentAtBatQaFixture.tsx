@@ -31,7 +31,14 @@ export default function CurrentAtBatQaFixture() {
         data-qa="add-live-pitch"
         onClick={() => setPitches((current) => [
           ...current,
-          { num: 5, stuff: "포크", speed: 134, resultText: "헛스윙", kind: "strike", count: { ball: 2, strike: 3, out: 1 } },
+          {
+            num: current.length + 1,
+            stuff: "포크",
+            speed: 134,
+            resultText: "헛스윙",
+            kind: "strike",
+            count: { ball: 2, strike: 3, out: 1 },
+          },
         ])}
       >
         새 투구 추가

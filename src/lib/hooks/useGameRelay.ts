@@ -18,30 +18,38 @@ export function useGameRelay(
   const mountedRef = useRef(true);
   const finalFetchedRef = useRef(false);
   const inFlightRef = useRef(false);
+  const inFlightPromiseRef = useRef<Promise<boolean> | null>(null);
 
-  const fetchRelay = useCallback(async (): Promise<boolean> => {
-    if (!gameId) return false;
-    if (typeof document !== "undefined" && document.visibilityState === "hidden") return false;
-    if (inFlightRef.current) return false;
-    inFlightRef.current = true;
-    setIsLoading(true);
-    let succeeded = false;
-    try {
-      const params = new URLSearchParams({ gameId });
-      if (currentInning > 0) params.set("inning", String(currentInning));
-      const res = await fetch(`/api/game-relay?${params}`);
-      if (res.ok && mountedRef.current) {
-        const json = (await res.json()) as GameRelayResponse;
-        setData(json);
-        succeeded = true;
-      }
-    } catch {
-      // Silently fail — UI shows fallback
-    } finally {
-      inFlightRef.current = false;
-      if (mountedRef.current) setIsLoading(false);
+  const fetchRelay = useCallback((): Promise<boolean> => {
+    if (!gameId) return Promise.resolve(false);
+    if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+      return Promise.resolve(false);
     }
-    return succeeded;
+    if (inFlightRef.current) return Promise.resolve(false);
+    const request = (async () => {
+      inFlightRef.current = true;
+      setIsLoading(true);
+      let succeeded = false;
+      try {
+        const params = new URLSearchParams({ gameId });
+        if (currentInning > 0) params.set("inning", String(currentInning));
+        const res = await fetch(`/api/game-relay?${params}`);
+        if (res.ok && mountedRef.current) {
+          const json = (await res.json()) as GameRelayResponse;
+          setData(json);
+          succeeded = true;
+        }
+      } catch {
+        // Silently fail — UI shows fallback
+      } finally {
+        inFlightRef.current = false;
+        inFlightPromiseRef.current = null;
+        if (mountedRef.current) setIsLoading(false);
+      }
+      return succeeded;
+    })();
+    inFlightPromiseRef.current = request;
+    return request;
   }, [gameId, currentInning]);
 
   useEffect(() => {
@@ -63,13 +71,28 @@ export function useGameRelay(
     }
 
     if (isFinal) {
+      let cancelled = false;
+      let finalFetchQueued = false;
       // 삼순 blocker 2: hidden 중 live→final 전환이면 첫 시도가 skip 되므로 finalFetched 를
-      // 미리 고정하지 않고(afterFinalFetch: 성공 때만 latch), visible 복귀 시 재시도한다.
+      // 미리 고정하지 않는다. live 요청이 진행 중이면 완료 뒤 종료 스냅샷을 한 번 더 받는다.
       const fetchFinalRelay = async () => {
         const visible = typeof document === "undefined" || document.visibilityState !== "hidden";
-        if (planFinalFetch({ finalFetched: finalFetchedRef.current, visible }) === "skip") return;
-        const ok = await fetchRelay();
-        finalFetchedRef.current = afterFinalFetch(finalFetchedRef.current, ok);
+        if (
+          finalFetchQueued
+          || planFinalFetch({ finalFetched: finalFetchedRef.current, visible }) === "skip"
+        ) return;
+        finalFetchQueued = true;
+        try {
+          await inFlightPromiseRef.current;
+          if (
+            cancelled
+            || (typeof document !== "undefined" && document.visibilityState === "hidden")
+          ) return;
+          const ok = await fetchRelay();
+          finalFetchedRef.current = afterFinalFetch(finalFetchedRef.current, ok);
+        } finally {
+          finalFetchQueued = false;
+        }
       };
       fetchFinalRelay();
       const onVisibilityChange = () => {
@@ -77,6 +100,7 @@ export function useGameRelay(
       };
       document.addEventListener("visibilitychange", onVisibilityChange);
       return () => {
+        cancelled = true;
         mountedRef.current = false;
         document.removeEventListener("visibilitychange", onVisibilityChange);
       };

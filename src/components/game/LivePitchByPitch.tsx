@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type Ref } from "react";
 import { clsx } from "clsx";
 import type { PitchDetail } from "@/lib/game/pitch-provider";
 
@@ -26,9 +26,11 @@ function countLabel(pitch: PitchDetail): string {
 export function LivePitchList({
   pitches,
   highlightLatest = false,
+  latestRowRef,
 }: {
   pitches: PitchDetail[];
   highlightLatest?: boolean;
+  latestRowRef?: Ref<HTMLDivElement>;
 }) {
   return (
     <div className="divide-y divide-border/30">
@@ -36,6 +38,7 @@ export function LivePitchList({
         const latest = highlightLatest && index === pitches.length - 1;
         return (
           <div
+            ref={latest ? latestRowRef : undefined}
             key={`${pitch.num}-${index}`}
             data-qa={latest ? "live-pitch-latest" : "live-pitch-row"}
             className={clsx(
@@ -98,13 +101,17 @@ export default function CurrentAtBatCard({
 }) {
   const [nowMs, setNowMs] = useState(() => Date.now());
   const cardRef = useRef<HTMLElement>(null);
+  const latestPitchRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 1_000);
     return () => window.clearInterval(timer);
   }, []);
   useEffect(() => {
     if (scrollOnUpdate) {
-      cardRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      (latestPitchRef.current ?? cardRef.current)?.scrollIntoView({
+        behavior: "smooth",
+        block: "nearest",
+      });
     }
   }, [batterName, pitches.length, scrollOnUpdate]);
 
@@ -141,7 +148,7 @@ export default function CurrentAtBatCard({
 
       {pitches.length > 0 ? (
         <div className="px-2 py-1">
-          <LivePitchList pitches={pitches} highlightLatest />
+          <LivePitchList pitches={pitches} highlightLatest latestRowRef={latestPitchRef} />
         </div>
       ) : (
         <p className="px-4 py-4 text-center text-xs text-text-tertiary">

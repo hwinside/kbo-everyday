@@ -32,6 +32,12 @@ try {
       const rootRect = root.getBoundingClientRect();
       return cardRect.top >= rootRect.top && cardRect.bottom <= rootRect.bottom;
     });
+    const latestVisible = async () => current.locator('[data-qa="live-pitch-latest"]').evaluate((element) => {
+      const root = element.closest('[data-qa="relay-root"]');
+      const rowRect = element.getBoundingClientRect();
+      const rootRect = root.getBoundingClientRect();
+      return rowRect.top >= rootRect.top && rowRect.bottom <= rootRect.bottom;
+    });
     check(`${tag} 초기 현재 타석 viewport 노출`, await currentVisible());
     check(`${tag} 현재 투구 4줄`, await current.locator('[data-qa^="live-pitch-"]').count() === 4);
     check(`${tag} 최신 공 accent 1개`, await current.locator('[data-qa="live-pitch-latest"]').count() === 1);
@@ -45,16 +51,18 @@ try {
       root.scrollTop = root.scrollHeight;
     });
     check(`${tag} 완료 타석 탐색 중 현재 카드 이탈`, !(await currentVisible()));
-    await page.locator('[data-qa="add-live-pitch"]').evaluate((button) => button.click());
+    for (let pitch = 5; pitch <= 7; pitch++) {
+      await page.locator('[data-qa="add-live-pitch"]').evaluate((button) => button.click());
+    }
     await page.waitForFunction(() => {
       const root = document.querySelector('[data-qa="relay-root"]');
-      const current = document.querySelector('[data-qa="current-at-bat"]');
-      if (!root || !current) return false;
+      const latest = document.querySelector('[data-qa="live-pitch-latest"]');
+      if (!root || !latest) return false;
       const rootRect = root.getBoundingClientRect();
-      const cardRect = current.getBoundingClientRect();
-      return cardRect.top >= rootRect.top && cardRect.bottom <= rootRect.bottom;
+      const rowRect = latest.getBoundingClientRect();
+      return rowRect.top >= rootRect.top && rowRect.bottom <= rootRect.bottom;
     });
-    check(`${tag} 새 공 갱신 후 현재 카드 자동 노출`, await currentVisible());
+    check(`${tag} 7구 갱신 후 최신 공 자동 노출`, await latestVisible());
 
     const updatedText = await current.locator('[data-qa="relay-updated-at"]').innerText();
     check(`${tag} 실제 갱신 age 표시`, /^(방금|\d+초 전|\d+분 전) 갱신$/.test(updatedText), updatedText);
