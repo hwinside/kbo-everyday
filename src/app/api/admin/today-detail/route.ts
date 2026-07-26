@@ -3,9 +3,27 @@ import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { isAdminAuthedRequest } from "@/lib/admin/pin";
 
 /**
- * GET /api/admin/today-detail?type=posts|comments|photos|chats
+ * GET /api/admin/today-detail?type=posts|comments|photos|chats|venue_videos|venue_photos
  * 오늘 KST 기준 상세 목록 반환
  */
+
+/** teamId(1-10) ↔ KBO 2자 코드 → 짧은 팀명. gameId(YYYYMMDD{AWAY}{HOME}N) 라벨용. */
+const KBO_CODE_TO_SHORT: Record<string, string> = {
+  LG: "LG", OB: "두산", KT: "KT", SK: "SSG", NC: "NC",
+  HT: "KIA", LT: "롯데", SS: "삼성", HH: "한화", WO: "키움",
+};
+
+/** gameId → "7.26 한화 vs LG"처럼 사람이 읽는 경기 라벨. 파싱 실패 시 원본 gameId. */
+function gameLabel(gameId: string, stadium?: string | null): string {
+  const m = gameId.match(/^(\d{4})(\d{2})(\d{2})([A-Z]{2})([A-Z]{2})\d$/);
+  if (!m) return stadium ? `${gameId} · ${stadium}` : gameId;
+  const [, , mo, d, away, home] = m;
+  const awayName = KBO_CODE_TO_SHORT[away] ?? away;
+  const homeName = KBO_CODE_TO_SHORT[home] ?? home;
+  const dateStr = `${Number(mo)}.${Number(d)}`;
+  const base = `${dateStr} ${awayName} vs ${homeName}`;
+  return stadium ? `${base} · ${stadium}` : base;
+}
 
 function postLink(boardType: unknown, boardId: unknown, postId: unknown, newsUrl?: string): string {
   if (boardType === "announcement") return "/whats-new"; // 새소식 댓글용 브리지 포스트
@@ -42,7 +60,7 @@ export async function GET(req: NextRequest) {
   }
 
   const type = req.nextUrl.searchParams.get("type");
-  if (!type || !["posts", "comments", "photos", "chats"].includes(type)) {
+  if (!type || !["posts", "comments", "photos", "chats", "venue_videos", "venue_photos"].includes(type)) {
     return NextResponse.json({ error: "invalid type" }, { status: 400 });
   }
 
@@ -171,6 +189,57 @@ export async function GET(req: NextRequest) {
         title: "",
         content: typeof m.content === "string" ? m.content : "",
         link: gameId ? `/games/${gameId}` : "",
+      };
+    });
+
+    return NextResponse.json({ items, topAuthors: topAuthors(items) });
+  }
+
+  if (type === "venue_videos" || type === "venue_photos") {
+    const mediaType = type === "venue_videos" ? "video" : "image";
+    // query-guard: bounded -- 오늘 KST 범위(created_at gte/lte) + media_type 필터, created_at desc 고정 200건 상한(페이지네이션 없음).
+    const { data, error } = await supabase
+      .from("venue_stories")
+      .select("id, game_id, media_type, media_url, thumb_url, caption, stadium_name, created_at, user_id")
+      .eq("media_type", mediaType)
+      .gte("created_at", start)
+      .lte("created_at", end)
+      .order("created_at", { ascending: false })
+      .limit(200);
+
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+    const rows = data ?? [];
+    const userIds = [...new Set(rows.map((r: { user_id: string }) => r.user_id))];
+    const nickMap = new Map<string, string>();
+    if (userIds.length > 0) {
+      // query-guard: bounded -- rows≤200의 distinct user_id(≤200) unique-key(id) 조회.
+      const { data: profiles } = await supabase
+        .from("profiles")
+        .select("id, nickname")
+        .in("id", userIds);
+      for (const p of (profiles ?? []) as { id: string; nickname: string }[]) {
+        nickMap.set(p.id, p.nickname ?? "익명");
+      }
+    }
+
+    const items = rows.map((r: Record<string, unknown>) => {
+      const gameId = String(r.game_id ?? "");
+      const label = gameLabel(gameId, r.stadium_name as string | null);
+      const caption = typeof r.caption === "string" && r.caption ? r.caption : "";
+      // 미리보기: 영상은 thumb_url 우선(없으면 생략), 사진은 media_url.
+      const preview =
+        mediaType === "video"
+          ? (r.thumb_url as string | null) ?? null
+          : (r.media_url as string | null) ?? null;
+      return {
+        id: r.id as number,
+        time: r.created_at as string,
+        nickname: nickMap.get(r.user_id as string) ?? "익명",
+        title: label,
+        content: caption,
+        link: gameId ? `/games/${gameId}` : "",
+        imageUrls: preview ? [preview] : [],
       };
     });
 
