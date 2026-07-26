@@ -1,5 +1,12 @@
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
-import { sendFcmToUsers, WIDGET_STREAM, endClearGroupFlag } from "@/lib/notifications/fcm";
+import {
+  sendFcmToUsers,
+  WIDGET_STREAM,
+  endClearGroupFlag,
+  type PushPayload,
+  type SendResult,
+} from "@/lib/notifications/fcm";
+import type { PrefKey } from "@/lib/notifications/prefs";
 import { TEAMS } from "@/lib/constants/teams";
 import { fetchStandings, isKboGameCancelled } from "@/lib/crawler/kbo-api";
 import { decideEndStreakCount, type StreakDir } from "@/lib/notifications/end-streak-policy";
@@ -162,6 +169,53 @@ async function markOnly(gameId: string, flags: { start?: boolean; end?: boolean;
     ...(flags.cancel ? { cancel_notified: true } : {}),
     updated_at: new Date().toISOString(),
   }, { onConflict: "game_id" });
+}
+
+/**
+ * 종료/취소 clear data-only payload — 정상 종료·취소 두 경로의 단일 소스(삼순 Blocker 1).
+ * terminal 스트림(별도 collapse key + 24h TTL) + apnsBackground(iOS 무음 wake) 위에:
+ *  - w_final="1": FINAL tombstone. native가 이 플래그 이후 같은 경기 LIVE를 w_ts(send-time)와
+ *    무관하게 거부하게 해 "FINAL 뒤 늦게 도착한 LIVE가 9회로 부활"를 닫는다(삼순 추가
+ *    회귀). 서버는 마커만 싣고 native 준수는 S2.
+ *  - n_clear_group: 종료 시 그 경기 이벤트 배너 일괄 cancel 신호(20개 누적 정리, 소비 S2).
+ *  - scores 있으면 w_as/w_hs 동봉(현재 위젯이 이 경기일 때만 자가 markFinal). 취소는 scores 없음.
+ * w_ts(seq)는 fcm.ts가 kind=game_end(WIDGET_CONTROL_KINDS)에 자동 부여.
+ */
+export function buildTerminalClearPayload(
+  gameId: string,
+  scores?: { awayScore: number; homeScore: number },
+): PushPayload {
+  return {
+    title: "",
+    body: "",
+    dataOnly: true,
+    apnsBackground: true,
+    ...WIDGET_STREAM.terminal,
+    data: {
+      kind: "game_end",
+      gameId,
+      ...(scores ? { w_as: String(scores.awayScore), w_hs: String(scores.homeScore) } : {}),
+      w_final: "1",
+      ...endClearGroupFlag(gameId),
+    },
+  };
+}
+
+/** 정상 종료·취소 production 경로가 공유하는 terminal clear 발송 seam. */
+export async function sendTerminalClear(
+  userIds: string[],
+  gameId: string,
+  scores?: { awayScore: number; homeScore: number },
+  opts?: {
+    prefKey?: PrefKey;
+    send?: typeof sendFcmToUsers;
+  },
+): Promise<SendResult> {
+  return (opts?.send ?? sendFcmToUsers)(
+    userIds,
+    buildTerminalClearPayload(gameId, scores),
+    opts?.prefKey,
+  );
 }
 
 // ── 시작알림 경로 seam (테스트 주입용) ──────────────────────────────────────
@@ -429,16 +483,7 @@ export async function notifyGameStatusTransitions(
         // 30분 전 pregame push(android-widget-live)가 올린 '경기 예정' 카드가 취소 후 잠금화면/
         // 위젯에 잔존하지 않게 clear — data-only game_end로 KboMessagingService가 카드+위젯 제거.
         // cancel_notified 선점 안에서 1회만 발송. 카드 없던 유저에겐 no-op이라 안전. fire-and-forget.
-        await sendFcmToUsers(fans.ids, {
-          title: "",
-          body: "",
-          url,
-          dataOnly: true,
-          // terminal — 위젯 스트림 정책(별도 collapse key + 긴 TTL, 삼순 #649 blocker①).
-          ...WIDGET_STREAM.terminal,
-          // n_clear_group — 취소 시에도 해당 경기 이벤트 배너 그룹 일괄 cancel(S1; 소비는 S1b).
-          data: { kind: "game_end", ...endClearGroupFlag(gameId) },
-        }, "game_start");
+        await sendTerminalClear(fans.ids, gameId, undefined, { prefKey: "game_start" });
       }
       continue;
     }
@@ -616,22 +661,11 @@ export async function notifyGameStatusTransitions(
       const endFans = await fansOfTeams(teamIds);
       let clearOk = endFans.ok;
       if (endFans.ok && endFans.ids.length > 0) {
-        const clearRes = await sendFcmToUsers(endFans.ids, {
-          title: "",
-          body: "",
-          dataOnly: true,
-          // iOS 무음 백그라운드 wake(content-available) — iOS 홈위젯은 서버 푸시로 직접
-          // 갱신되지 않아(플랫폼 제약) 앱을 닫으면 마지막 LIVE 스냅샷에 얼어붙는다. game_end로
-          // 앱을 백그라운드에서 깨워 AppDelegate가 홈위젯을 '경기 종료 + 최종 스코어'로 전환
-          // (markFinal)하게 한다. 최종 스코어(w_as/w_hs)+gameId 동봉 — 현재 위젯이 이 경기를
-          // 표시 중일 때만 반영(다른/다음 경기 덮어쓰기 방지). Android는 KboMessagingService가
-          // game_end로 이미 처리하며 apns 블록·추가 필드는 무영향(kind만 사용).
-          apnsBackground: true,
-          // terminal — 위젯 스트림 공통 정책(단일 collapse key + 긴 TTL, 삼순 #649 blocker①).
-          // android 전용 필드라 iOS apns 무음 wake 동작엔 무영향.
-          ...WIDGET_STREAM.terminal,
-          data: { kind: "game_end", gameId, w_as: String(awayScore), w_hs: String(homeScore) },
-        });
+        const clearRes = await sendTerminalClear(
+          endFans.ids,
+          gameId,
+          { awayScore, homeScore },
+        );
         clearOk = clearRes.ok;
       }
 

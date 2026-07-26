@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { sendFcmToTokens, eventBannerGroupData } from "@/lib/notifications/fcm";
+import { sendFcmToTokens, gameEventNotificationPolicy } from "@/lib/notifications/fcm";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { isKboGameCancelled } from "@/lib/crawler/kbo-status";
 import { teamIdByShortName } from "@/lib/notifications/game-status";
@@ -136,8 +136,8 @@ async function drainHighlightSnapshot(
       title: snapshot.title,
       body: snapshot.body,
       url: snapshot.url,
-      // 이벤트 배너 경기별 그룹/태그(S1) — game_end 시 일괄 cancel·누적 정리용(eventId=안정 tag). 소비는 S1b.
-      data: eventBannerGroupData(snapshot.gameId, snapshot.eventId),
+      // Android background에서도 시스템 tag로 경기별 최신 1건 교체.
+      ...gameEventNotificationPolicy(snapshot.gameId),
     }, { deadlineAtMs: transportDeadlineAtMs });
     const settleResults = mapHighlightSettlements(
       claimedTokens,

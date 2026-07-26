@@ -61,6 +61,13 @@ export interface PushPayload {
    */
   collapseKey?: string;
   /**
+   * Android 시스템 트레이 notification tag — 같은 tag의 알림은 새 항목을 만들지 않고
+   * 기존 항목을 *교체*한다(system-drawn). notification+data hybrid 메시지에서도
+   * background/terminated에서 OS가 트레이를 그릴 때 적용되므로 native 변경 없이
+   * 서버만으로 "경기별 최신 1건 교체"가 된다(이벤트 배너 20개 누적 차단, P0). Android 전용.
+   */
+  androidNotificationTag?: string;
+  /**
    * Android FCM TTL(초). 이 시간 내 배달 못 하면 폐기한다(admin SDK는 ms라 ×1000 변환).
    * 라이브 스코어처럼 다음 틱이 곧 덮어쓰는 data는 짧은 TTL(예 90s)을 줘서, 오래된
    * 상태가 뒤늦게 배달돼 최신값(또는 game_end)을 덮어쓰는 걸 막는다. Android 전용.
@@ -78,9 +85,9 @@ export interface PushPayload {
  * 최신 1건만 남게 한다. terminal(종료/취소 clear)은 *별도* key(kbo_widget_end)로 보내, live 스트림의
  * collapse에 묻히거나 밀려나지 않게 한다(P0 인시던트: 종료됐는데 위젯이 9회로 얼어붙어 안 사라짐).
  * (딥슬립 유실 복구용 escalating blind resend는 S1-b에서 이 terminal 버킷 위에 얹는다.)
- * 두 key로 나뉘어도 신·구 상태 순서 역전은 w_ts(seq 가드, WIDGET_CONTROL_KINDS)가 차단한다 —
- * live의 옛 배달은 game_end보다 send-time(w_ts)이 작아 네이티브가 폐기하므로, 별도 버킷에서
- * 뒤늦게 도착해도 종료 상태를 되살리지 못한다. key는 2개라 FCM 4개/기기 한도 안이다.
+ * 서로 다른 key 사이의 순서는 FCM이 보장하지 않는다. 그래서 terminal payload는 w_final
+ * tombstone을 싣고, S2 native가 같은 경기의 후속 LIVE를 send-time과 무관하게 거부한다.
+ * key는 2개라 FCM 4개/기기 한도 안이다.
  * TTL 분리: live tick은 다음 틱이 곧 덮어쓰므로 90s에 폐기(뒤늦은 배달이 terminal을 덮지 않게),
  * terminal은 장시간 오프라인 복귀에도 마지막 상태가 배달되도록 24h — 이후엔 다음 경기
  * pregame/live push가 live 스트림 key로 자연 대체한다.
@@ -97,23 +104,56 @@ export const WIDGET_STREAM = {
  */
 export const WIDGET_CONTROL_KINDS = new Set(["game_live", "game_cancel", "game_end"]);
 
-/**
- * 이벤트 배너(안타/홈런/득점·실점·이닝요약) data payload에 싣는 경기별 그룹/태그 계약(S1).
- * n_group=game:{gameId}은 경기 단위 묶음, n_tag는 개별 배너 주소(중복 교체/개별 취소용).
- * 네이티브가 이 값으로 배너를 그룹핑하고 game_end 시 일괄 cancel(아래 endClearGroupFlag)한다
- * — 현재 P0: tag/group이 없어 매 건 새 알림으로 20개씩 누적. 네이티브 소비(그룹 표시·일괄
- * 취소 실행)는 S1b(앱 변경). 서버는 계약 필드만 싣는다(구버전 네이티브는 무시 — 무해).
- */
-export function eventBannerGroupData(gameId: string, tag: string): Record<string, string> {
-  return { n_group: `game:${gameId}`, n_tag: tag };
+/** 이벤트 배너의 경기별 고정 주소. Android 시스템 트레이에서도 같은 경기 알림을 교체한다. */
+export function gameNotifyTag(gameId: string): string {
+  return `game:${gameId}`;
 }
 
 /**
- * game_end(종료/취소 clear) data payload에 싣는 그룹 일괄 cancel 플래그(S1). 네이티브는 이
- * 플래그를 받으면 같은 n_group의 이벤트 배너를 모두 cancel한다(누적 정리). 소비는 S1b.
+ * 이벤트 배너의 서버/네이티브 공통 경기별 1개화 정책.
+ * Android background/terminated에서는 시스템 notification tag가 교체하고,
+ * foreground에서는 native가 같은 n_group/n_tag 주소를 사용할 수 있다.
+ */
+export function gameEventNotificationPolicy(
+  gameId: string,
+): Pick<PushPayload, "androidNotificationTag" | "data"> {
+  const tag = gameNotifyTag(gameId);
+  return {
+    androidNotificationTag: tag,
+    data: { n_group: tag, n_tag: tag },
+  };
+}
+
+/**
+ * game_end(종료/취소 clear) data payload에 싣는 그룹 일괄 cancel 플래그(S1). 네이티브는
+ * 이 플래그를 받으면 같은 경기 주소의 이벤트 배너를 cancel한다(누적 정리). 소비는 S2.
  */
 export function endClearGroupFlag(gameId: string): Record<string, string> {
-  return { n_clear_group: `game:${gameId}` };
+  return { n_clear_group: gameNotifyTag(gameId) };
+}
+
+/** Firebase Admin SDK용 Android delivery 설정. */
+export function buildAndroidConfig(payload: PushPayload) {
+  return {
+    ...(payload.dataOnly ? { priority: "high" as const } : {}),
+    ...(payload.collapseKey ? { collapseKey: payload.collapseKey } : {}),
+    ...(payload.ttlSeconds != null ? { ttl: payload.ttlSeconds * 1000 } : {}),
+    ...(payload.androidNotificationTag
+      ? { notification: { tag: payload.androidNotificationTag } }
+      : {}),
+  };
+}
+
+/** FCM HTTP v1 deadline transport용 Android delivery 설정. */
+export function buildDeadlineAndroidConfig(payload: PushPayload) {
+  return {
+    ...(payload.dataOnly ? { priority: "HIGH" as const } : {}),
+    ...(payload.collapseKey ? { collapse_key: payload.collapseKey } : {}),
+    ...(payload.ttlSeconds != null ? { ttl: `${payload.ttlSeconds}s` } : {}),
+    ...(payload.androidNotificationTag
+      ? { notification: { tag: payload.androidNotificationTag } }
+      : {}),
+  };
 }
 
 /**
@@ -306,11 +346,7 @@ export async function sendFcmToTokens(
     // Android 설정 — data-only는 high priority(Doze 우회), collapseKey/ttl은 지정 시만.
     // 라이브 위젯처럼 매분 갱신되는 푸시에 (경기별 collapseKey + 짧은 ttl)을 주면 옛 상태
     // 백로그 대신 최신 1건만 배달된다. admin SDK의 ttl은 밀리초 단위.
-    const androidCfg = {
-      ...(payload.dataOnly ? { priority: "high" as const } : {}),
-      ...(payload.collapseKey ? { collapseKey: payload.collapseKey } : {}),
-      ...(payload.ttlSeconds != null ? { ttl: payload.ttlSeconds * 1000 } : {}),
-    };
+    const androidCfg = buildAndroidConfig(payload);
     if (opts?.deadlineAtMs != null) {
       const raw = process.env.FIREBASE_SERVICE_ACCOUNT;
       const projectId = raw
@@ -323,11 +359,7 @@ export async function sendFcmToTokens(
         ...(Object.keys(dataBlock).length ? { data: dataBlock } : {}),
         ...(Object.keys(androidCfg).length
           ? {
-              android: {
-                ...(payload.dataOnly ? { priority: "HIGH" as const } : {}),
-                ...(payload.collapseKey ? { collapse_key: payload.collapseKey } : {}),
-                ...(payload.ttlSeconds != null ? { ttl: `${payload.ttlSeconds}s` } : {}),
-              },
+              android: buildDeadlineAndroidConfig(payload),
             }
           : {}),
         ...(payload.apnsBackground || payload.apnsCollapseId || payload.apnsExpirationSeconds != null

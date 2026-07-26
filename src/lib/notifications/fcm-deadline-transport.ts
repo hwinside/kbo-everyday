@@ -8,6 +8,7 @@ export interface DeadlineFcmMessage {
     priority?: "HIGH" | "NORMAL";
     collapse_key?: string;
     ttl?: string;
+    notification?: { tag: string };
   };
   apns?: {
     headers?: Record<string, string>;
