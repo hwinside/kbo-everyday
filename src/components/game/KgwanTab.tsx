@@ -422,6 +422,22 @@ function LiveView({
                   <span className="text-[10px] text-text-tertiary ml-auto">{totalPlays}타석</span>
                 </div>
 
+                {/* 시간순 배치: 완료 타석(오래된→최신)을 위에, 현재 타석 카드를 맨
+                   아래에 둔다. 위→아래로 타순이 자연스럽게 이어진다(예: 7번→8번→현재
+                   9번). scrollOnUpdate 는 최신 투구(맨 아래)로 스크롤되어 자연스럽다. */}
+                {latestInning.plays.length > 0 && (
+                  <div className="px-4 pb-2">
+                    {currentAtBat && (
+                      <p className="pb-1 pt-0.5 text-[10px] font-semibold text-text-tertiary">
+                        이전 완료 타석 · 눌러서 투구 보기
+                      </p>
+                    )}
+                    {latestInning.plays.map((play, idx) => (
+                      <RelayPlayLine key={`${inningKey}-${idx}`} play={play} />
+                    ))}
+                  </div>
+                )}
+
                 {currentAtBat && (
                   <CurrentAtBatCard
                     batterName={currentAtBat.batterName}
@@ -434,19 +450,6 @@ function LiveView({
                     updatedAt={gameRelay?.updatedAt}
                     scrollOnUpdate
                   />
-                )}
-
-                {latestInning.plays.length > 0 && (
-                  <div className="px-4 pb-2">
-                    {currentAtBat && (
-                      <p className="pb-1 pt-0.5 text-[10px] font-semibold text-text-tertiary">
-                        이전 완료 타석 · 눌러서 투구 보기
-                      </p>
-                    )}
-                    {latestInning.plays.map((play, idx) => (
-                      <RelayPlayLine key={`${inningKey}-${idx}`} play={play} />
-                    ))}
-                  </div>
                 )}
               </div>
             );
