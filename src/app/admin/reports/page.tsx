@@ -13,7 +13,7 @@ interface TicketSummary {
 
 interface ReportRow {
   id: number;
-  reporter_id: string;
+  reporter_id: string | null;
   reporter_nickname: string | null;
   target_type: string;
   target_id: number;
@@ -126,8 +126,14 @@ export default function AdminReportsPage() {
                 </p>
                 <p className="text-[10px] text-[#636366] mt-1">
                   신고자{" "}
-                  {r.reporter_nickname && <span className="text-[#AEAEB2] mr-1">{r.reporter_nickname}</span>}
-                  <span className="font-mono">{r.reporter_id.slice(0, 8)}</span>
+                  {r.reporter_id === null ? (
+                    <span className="text-[#AEAEB2]">탈퇴한 사용자</span>
+                  ) : (
+                    <>
+                      {r.reporter_nickname && <span className="text-[#AEAEB2] mr-1">{r.reporter_nickname}</span>}
+                      <span className="font-mono">{r.reporter_id.slice(0, 8)}</span>
+                    </>
+                  )}
                 </p>
                 {r.detail && <p className="text-xs text-[#8E8E93] mt-1">{r.detail}</p>}
               </div>

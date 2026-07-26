@@ -10,7 +10,7 @@ const INBOX_PAGE_SIZE = 50;
 
 type InboxRow = {
   id: string;
-  other_user_id: string;
+  other_user_id: string | null;
   other_nickname: string;
   other_team_id: number | null;
   last_message: string | null;
@@ -154,7 +154,7 @@ export async function GET(request: NextRequest) {
       .from("dm_messages")
       .update({ is_read: true })
       .eq("conversation_id", conversationId)
-      .neq("sender_id", systemUserId)
+      .or(`sender_id.neq.${systemUserId},sender_id.is.null`)
       .eq("is_read", false);
 
     if (markReadError) {
@@ -169,19 +169,29 @@ export async function GET(request: NextRequest) {
       .limit(200);
 
     // sender profiles batch fetch
-    const senderIds = [...new Set((messages ?? []).map((m: { sender_id: string }) => m.sender_id))];
-    const { data: profiles } = await admin
-      .from("profiles")
-      .select("id, nickname, team_id")
-      .in("id", senderIds);
+    const senderIds = [
+      ...new Set(
+        (messages ?? [])
+          .map((m: { sender_id: string | null }) => m.sender_id)
+          .filter((id): id is string => id !== null),
+      ),
+    ];
+    const { data: profiles } = senderIds.length > 0
+      ? await admin
+          .from("profiles")
+          .select("id, nickname, team_id")
+          .in("id", senderIds)
+      : { data: [] };
 
     const profileMap = new Map(
       (profiles ?? []).map((p: { id: string; nickname: string; team_id: number | null }) => [p.id, p])
     );
 
-    const enriched = (messages ?? []).map((m: { sender_id: string; [key: string]: unknown }) => ({
+    const enriched = (messages ?? []).map((m: { sender_id: string | null; [key: string]: unknown }) => ({
       ...m,
-      sender_nickname: profileMap.get(m.sender_id)?.nickname ?? "알 수 없음",
+      sender_nickname: m.sender_id
+        ? (profileMap.get(m.sender_id)?.nickname ?? "알 수 없음")
+        : "탈퇴한 사용자",
       is_system: m.sender_id === systemUserId,
     }));
 
@@ -343,13 +353,17 @@ export async function POST(request: NextRequest) {
   // 운영팀 대화인지 검증
   const { data: conv } = await admin
     .from("dm_conversations")
-    .select("id")
+    .select("id, user1_id, user2_id")
     .eq("id", conversationId)
     .or(`user1_id.eq.${systemUserId},user2_id.eq.${systemUserId}`)
     .maybeSingle();
 
   if (!conv) {
     return NextResponse.json({ error: "not_found_or_unauthorized" }, { status: 403 });
+  }
+  const recipientId = conv.user1_id === systemUserId ? conv.user2_id : conv.user1_id;
+  if (!recipientId) {
+    return NextResponse.json({ error: "recipient_deleted" }, { status: 409 });
   }
 
   const { error: msgError } = await admin

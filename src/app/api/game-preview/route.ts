@@ -81,7 +81,7 @@ async function getStarterStats(name: string, teamId: number): Promise<string | n
       .select("name, era, wins, losses, ip, so, games, whip")
       .eq("name", name)
       .eq("team", teamName)
-      .single();
+      .maybeSingle(); // cache/optional lookup: no-rowuB294 uC815uC0C1 u2014 406 uBC29uC9C0
     if (data) {
       return `${data.name}: ERA ${data.era}, ${data.wins}승${data.losses}패, ${data.ip}이닝, ${data.so}삼진, ${data.games}경기${data.whip ? `, WHIP ${data.whip}` : ""}`;
     }
@@ -843,7 +843,7 @@ async function getCached(gameId: string): Promise<{ summary: Record<string, unkn
       .from("game_summaries")
       .select("summary, prompt_version")
       .eq("game_id", cacheKey(gameId))
-      .single();
+      .maybeSingle(); // cache/optional lookup: no-rowuB294 uC815uC0C1 u2014 406 uBC29uC9C0
     if (!data?.summary) return null;
     const outdated = (data.prompt_version ?? 0) < PREVIEW_VERSION;
     return { summary: data.summary as Record<string, unknown>, outdated };

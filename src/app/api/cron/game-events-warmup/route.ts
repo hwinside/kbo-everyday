@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { KboRawGame } from "@/types/api";
 import type { GameEvent } from "@/types/game-events";
+import type { StartPlateAppearanceEvidence } from "@/lib/notifications/start-freshness-policy";
+import { fetchInitialGameEventsBounded } from "@/lib/notifications/start-evidence-fetch";
 import { notifyGameStatusTransitions } from "@/lib/notifications/game-status";
 import { notifyTeamRankChanges } from "@/lib/notifications/team-rank";
 import { notifyScoreEvents, notifyInningSummaries } from "@/lib/notifications/game-score";
@@ -39,13 +41,12 @@ import { runBeforeDeadline } from "@/lib/async-deadline";
 
 const CRON_SECRET = process.env.CRON_SECRET || "";
 const KBO_MAIN = "https://www.koreabaseball.com/ws/Main.asmx";
+const INITIAL_GAME_EVENTS_TIMEOUT_MS = 3_000;
 
-// 함수 내부 fast-refresh 루프(+15/+30/+45s 서브틱)가 돌 수 있게 실행시간 상한을 늘린다
-// (Vercel Pro, news-clipping 300s 선례). 루프는 요청-절대 deadline(FAST_LOOP_DEADLINE_MS=52s)
-// 이후 어떤 작업도 *시작*하지 않고, 75s는 마지막 서브틱이 이미 시작한 LA/FCM 발송 tail의
-// 안전 마진(23s)이다. 다음 분 cron과의 짧은 겹침 구간 중복 발송은 DB 선점/CAS/hash
-// dedupe가 차단한다(live-fast-path.ts 주석 참조).
-export const maxDuration = 75;
+// Vercel Pro 실행 상한은 300s로 올려 플랫폼 강제절단 여유를 확보한다. 내부 fast-loop/fanout은
+// 기존 요청-절대 52s/68s deadline을 그대로 유지해 다음 분 cron과의 겹침을 늘리지 않는다.
+// 겹친 invocation의 중복 발송은 DB 선점/CAS/hash dedupe가 차단한다.
+export const maxDuration = 300;
 
 function getKSTDateStr(): string {
   const now = new Date();
@@ -127,6 +128,7 @@ export async function GET(req: NextRequest) {
 
   const date = getKSTDateStr();
   const deadlineAtMs = requestStartMs + FAST_LOOP_DEADLINE_MS;
+  const currentTickStartMs = Math.floor(requestStartMs / 60_000) * 60_000;
   // 손상 응답은 정상 "라이브 0"으로 보지 않는다. 본체 알림은 이번 틱 skip하되 fast-loop는
   // +20/+40초 재시도해 일시 KBO parse/schema 오류를 다음 분까지 끌지 않는다.
   const initialFetch = await fetchKboLiveGames(
@@ -150,6 +152,34 @@ export async function GET(req: NextRequest) {
       : process.env.VERCEL_URL
         ? `https://${process.env.VERCEL_URL}`
         : req.nextUrl.origin);
+
+  // 시작알림의 authoritative 첫 타석 근거와 highlight payload를 초기 KBO fetch 직후
+  // 즉시 수집한다. 아래 LA/widget 파이프라인 조립과 병렬로 진행하되 highlight는 이
+  // promise에서 이어지는 start accepted barrier가 끝난 뒤에만 release된다.
+  const initialGameEventsPromise = fetchInitialGameEventsBounded(
+    liveGameIds,
+    async (gameId, evidenceDeadlineAtMs) => {
+      const remainingMs = Math.max(1, evidenceDeadlineAtMs - Date.now());
+      const r = await fetch(`${baseUrl}/api/game-events?gameId=${gameId}`, {
+        cache: "no-store",
+        headers: { "User-Agent": "kbo-everyday-warmup/1.0" },
+        signal: AbortSignal.timeout(remainingMs),
+      });
+      const json = r.ok
+        ? await runBeforeDeadline(() => r.json(), evidenceDeadlineAtMs).catch(() => null)
+        : null;
+      const events = (json?.events ?? []) as GameEvent[];
+      return {
+        gameId,
+        ok: r.ok,
+        status: r.status,
+        events,
+        eventCount: r.ok ? events.length : null,
+        startPlateAppearance: (json?.startPlateAppearance ?? null) as StartPlateAppearanceEvidence | null,
+      };
+    },
+    INITIAL_GAME_EVENTS_TIMEOUT_MS,
+  );
 
   // 초기 Android 발송과 추가 +20/+40초 loop를 KBO fetch 직후 동시에 시작한다.
   // 초기 경로는 요청+18초에 실제 fans/prefs/token/FCM 요청까지 중단해 +20초의 최신
@@ -300,36 +330,33 @@ export async function GET(req: NextRequest) {
     return { error: (e as Error).message };
   });
 
-  const results = await Promise.allSettled(
-    liveGameIds.map(gameId =>
-      fetch(`${baseUrl}/api/game-events?gameId=${gameId}`, {
-        cache: "no-store",
-        headers: { "User-Agent": "kbo-everyday-warmup/1.0" },
-      }).then(async r => {
-        const json = r.ok ? await r.json().catch(() => null) : null;
-        const events = (json?.events ?? []) as GameEvent[];
-        return { gameId, ok: r.ok, status: r.status, events, eventCount: r.ok ? events.length : null };
-      }),
-    ),
-  );
+  const results = await initialGameEventsPromise;
 
   // self-fetch로 받은 game-events를 gameId별로 모음 (S5 득점 알림용)
   const eventsByGame = new Map<string, GameEvent[]>();
+  const startPlateAppearanceByGame = new Map<string, StartPlateAppearanceEvidence>();
   for (const r of results) {
-    if (r.status === "fulfilled" && r.value.ok) {
-      eventsByGame.set(r.value.gameId, r.value.events);
+    if (r.ok) {
+      eventsByGame.set(r.gameId, r.events);
+      if (r.startPlateAppearance) {
+        startPlateAppearanceByGame.set(r.gameId, r.startPlateAppearance);
+      }
     }
   }
 
   // 경기 시작/종료 푸시 (push-notifications-v1 S4) — 같은 게임 목록을 재사용.
   // 실패해도 warmup 본연의 동작(이벤트 캐시)에 영향 없음.
-  let gameNotify: { started: number; ended: number } | { error: string } = { started: 0, ended: 0 };
+  let gameNotify:
+    | { started: number; ended: number }
+    | { error: string } = { started: 0, ended: 0 };
   try {
     // observedAtMs = 이 games를 fetch한 시각. 시작알림 90초 게이트는 관측 시각끼리 비교해야
     // 하므로(연속 틱 관측 판정), 앞단 처리/FCM 발송 지연이 stale 오판을 만들지 않게 한다
     // (2026-07-24 LG:한화 시작알림 억제 사고).
     gameNotify = await notifyGameStatusTransitions(games, {
       observedAtMs: initialFetch.trace.fetchedAtMs,
+      deadlineAtMs,
+      startPlateAppearanceByGame,
     });
   } catch (e) {
     gameNotify = { error: (e as Error).message };
@@ -367,7 +394,10 @@ export async function GET(req: NextRequest) {
   // 최애선수 활약(타자) 푸시 (push-notifications-v1 S5b) — 장타/홈런 batter 매칭.
   let highlightNotify: { highlighted: number } | { error: string } = { highlighted: 0 };
   try {
-    highlightNotify = await notifyPlayerHighlights(games, eventsByGame);
+    highlightNotify = await notifyPlayerHighlights(games, eventsByGame, {
+      startAcceptedBeforeMs: currentTickStartMs,
+      deadlineAtMs,
+    });
   } catch (e) {
     highlightNotify = { error: (e as Error).message };
     console.error("[warmup] highlight notify failed:", (e as Error).message);
@@ -389,12 +419,12 @@ export async function GET(req: NextRequest) {
   // 지연을 ~60초(1분 크론) → ~20초로 단축. 추가 사이클은 *안드 위젯만* 재발사하고
   // (득점/랭크/LA 등 알림 서브시스템은 위에서 1회만 — 중복 알림 방지), dedupe로
   // 상태가 바뀐 경기만 발사해 배터리/FCM 쿼터 부담을 막는다. deadline은 *요청 진입 시각*
-  // 기준 절대값(FAST_LOOP_DEADLINE_MS)이라 위 warmup 본작업이 오래 걸려도 maxDuration(75s)/
+  // 기준 절대값(FAST_LOOP_DEADLINE_MS)이라 위 warmup 본작업이 오래 걸려도 내부 68s budget/
   // 다음 크론 틱과 겹치지 않는다. 오케스트레이션은 widget-fast-loop.ts(테스트 커버) 참조.
   // LA 친리티컬/느린 fanout은 초기 fetch 직후 독립 실행됨(삼순 R2①) — 여기서 결과만 회수.
   // drainFanout은 la/android/score 축 fanout을 *요청 진입 기준 deadline*(LA_FANOUT_DRAIN_
-  // DEADLINE_MS=68s) 안에서만 대기하고, 초과 시 partial(timedOut)로 즉시 끊어 maxDuration
-  // (75s) 504를 구조적으로 불가능하게 한다(삼순 R3 blocker③). 미완료분은 다음 분 cron이
+  // DEADLINE_MS=68s) 안에서만 대기하고, 초과 시 partial(timedOut)로 즉시 끊어 내부 budget
+  // 초과 대기를 구조적으로 막는다(삼순 R3 blocker③). 미완료분은 다음 분 cron이
   // 멱등 재발송(DB 선점/CAS/hash dedupe)으로 수습.
   const drainDeadlineAtMs = requestStartMs + LA_FANOUT_DRAIN_DEADLINE_MS;
   const [laCritical, laFanoutDrain, androidWidget, fastRefresh, channelBornReconcile] = await Promise.all([
@@ -442,10 +472,11 @@ export async function GET(req: NextRequest) {
     laFanoutTimedOut: laFanoutDrain.timedOut,
     laFanoutPending: laFanoutDrain.pendingCount,
     lastPlays: Object.fromEntries(lastPlayByGame),
-    results: results.map(r =>
-      r.status === "fulfilled"
-        ? { gameId: r.value.gameId, ok: r.value.ok, status: r.value.status, eventCount: r.value.eventCount }
-        : { error: String(r.reason) },
-    ),
+    results: results.map(r => ({
+      gameId: r.gameId,
+      ok: r.ok,
+      status: r.status,
+      eventCount: r.eventCount,
+    })),
   }, { status: channelBornReconcile.ok ? 200 : 500 });
 }

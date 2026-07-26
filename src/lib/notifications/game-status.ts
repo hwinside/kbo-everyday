@@ -3,22 +3,33 @@ import { sendFcmToUsers, WIDGET_STREAM } from "@/lib/notifications/fcm";
 import { TEAMS } from "@/lib/constants/teams";
 import { fetchStandings, isKboGameCancelled } from "@/lib/crawler/kbo-api";
 import { decideEndStreakCount, type StreakDir } from "@/lib/notifications/end-streak-policy";
-import { isWithinFirstAtBatWindow } from "@/lib/notifications/start-freshness-policy";
-import { randomUUID } from "node:crypto";
+import {
+  shouldSendStartNotification,
+  type StartPlateAppearanceEvidence,
+} from "@/lib/notifications/start-freshness-policy";
 import { fetchTeamFanIds } from "@/lib/notifications/audience";
 import type { KboRawGame } from "@/types/api";
+import {
+  deliverGameStartBatch,
+  deliverGameStartSnapshot,
+  finalizeGameStartSnapshot,
+  openGameStartSnapshot,
+  START_DELIVERY_ATTEMPT_MS,
+  type GameStartDeliveryBatchResult,
+  type GameStartDeliveryResult,
+  type GameStartDeliveryTarget,
+} from "@/lib/notifications/game-start-delivery";
+
+const START_DELIVERY_BATCH_CONCURRENCY_PER_GAME = 2;
 
 // 경기 시작/종료 알림 (push-notifications-v1 S4).
 // warmup cron(경기 시간대 매분)이 호출. 중복 발화 방지 = game_notify_state
 // 조건부 UPDATE 선점 — 다중 인스턴스가 동시에 돌아도 발송은 1회.
 
-// 시작 알림 발송 게이트 = (R1) "1회초 첫 타석 끝나기 전" payload 창 + 상태 머신(spec S1,
-// 2026-07-26 인시던트). 기존 90초 연속관측 게이트(shouldSendStartNotification)는 cron 공백
-// 3.5분에 5경기 전원 mark-only 억제되는 결손이 있어 상태 머신+첫타석창으로 교체했다.
-// mark_scheduled_seen(last_seen_scheduled_at) 관측 기록은 유지하되 발송 게이트로는 쓰지 않는다.
-// warmup이 매 tick idle/lease만료 sending을 재평가(self-heal)해 창 열림이면 발송, 닫힘이면 suppressed.
-// S1 exact-once 범위는 "lease 안에 fanout이 끝나는 정상 invocation"이다. 크래시/maxDuration
-// 절단 뒤 청크 단위 재개·중복/누락 해소는 start_fanout_cursor를 쓰는 S3에서 다룬다.
+// 시작 알림 정시-only 게이트 (2026-07-23 삼순 post-merge blocker 반영):
+// 기존 예정시각 +90분 catch-up 윈도우는 장애 복구 시 최대 90분 뒷북을 허용해 제거.
+// 대신 warmup cron이 "예정(state 1)" 관측 시각을 last_seen_scheduled_at에 기록하고,
+// scheduled→live 전환을 최근 연속 관측한 경우에만 발송한다(shouldSendStartNotification).
 
 export function teamIdByShortName(name: string): number | null {
   const t = TEAMS.find((t) => t.shortName === name);
@@ -153,37 +164,36 @@ async function markOnly(gameId: string, flags: { start?: boolean; end?: boolean;
   }, { onConflict: "game_id" });
 }
 
-// ── 시작알림 상태 머신 seam (테스트 주입용) ─────────────────────────────────
-// 프로덕션은 아래 default(RPC 기반 원자 CAS)를 그대로 쓴다. 테스트는 이 seam으로 상태 전이
-// (idle→sending→sent / idle→suppressed / lease 회수)를 실제 notifyGameStatusTransitions()
-// 실행으로 회귀 검증한다. 시작알림 발송 게이트는 90초 연속관측이 아니라 "첫 타석 창"이다
-// (spec S1, 2026-07-26 인시던트).
-// warmup maxDuration(75s)보다 길어야 살아 있는 invocation A의 fanout 도중 T+60 cron B가
-// lease를 재선점하지 못한다. 120s는 정상 실행 봉투보다 45s 여유를 두면서 크래시 회수도
-// 다음 만료 후 tick에서 가능하게 하는 값이다.
-export const START_LEASE_SECONDS = 120;
-export const START_SEND_DEADLINE_MARGIN_MS = 10_000;
-
-export type StartStateRow = {
-  start_state: "idle" | "sending" | "sent" | "suppressed" | null;
-  start_sent_at: string | null;
-  start_lease_until: string | null;
-  start_lease_owner: string | null;
-};
-
+// ── 시작알림 경로 seam (테스트 주입용) ──────────────────────────────────────
+// 프로덕션은 아래 default를 그대로 쓴다. 테스트는 이 seam으로 "앞 경기 FCM 지연 → 뒤 경기
+// 시작알림 억제 여부"를 실제 notifyGameStatusTransitions() 실행으로 회귀 검증한다.
 export type StartNotifyDeps = {
   storeScheduledSeen?: (gameIds: string[], iso: string) => Promise<void>;
-  readStartState?: (gameId: string) => Promise<StartStateRow | null>;
-  /** idle/만료 sending을 선점하고 DB가 발급한 lease 만료 epoch ms 반환. 실패=null. */
-  claimStartLease?: (gameId: string, owner: string) => Promise<number | null>;
-  /** sending(내 owner) → sent. */
-  markStartSent?: (gameId: string, owner: string) => Promise<void>;
-  /** 발송 실패 시 sending(내 owner) → idle 복귀. */
-  releaseStartLease?: (gameId: string, owner: string) => Promise<void>;
-  /** 첫 타석 창 지남 → suppressed 강제 전이(idle/lease만료 sending만). */
-  suppressStart?: (gameId: string, reason: string) => Promise<void>;
+  readStartState?: (
+    gameId: string,
+  ) => Promise<{
+    start_notified: boolean | null;
+    last_seen_scheduled_at: string | null;
+    start_snapshot_at?: string | null;
+  } | null>;
+  claimStart?: (gameId: string) => Promise<boolean>;
+  unclaimStart?: (gameId: string) => Promise<void>;
+  markStart?: (gameId: string) => Promise<void>;
   sendStart?: typeof sendFcmToUsers;
   fansOf?: (teamIds: number[], opts?: { deadlineAtMs?: number }) => Promise<{ ids: string[]; ok: boolean }>;
+  deliverStart?: (args: {
+    gameId: string;
+    teamIds: number[];
+    observedAtMs: number;
+    payload: { title: string; body: string; url: string };
+    attemptDeadlineAtMs?: number;
+  }) => Promise<GameStartDeliveryResult>;
+  openStart?: (args: GameStartDeliveryTarget) => Promise<number>;
+  deliverStartBatch?: (args: GameStartDeliveryTarget & {
+    snapshotDeadlineAtMs: number;
+    attemptDeadlineAtMs: number;
+  }) => Promise<GameStartDeliveryBatchResult>;
+  finalizeStart?: (gameId: string, fcmAcceptedDelta?: number) => Promise<GameStartDeliveryResult>;
 };
 
 async function defaultStoreScheduledSeen(gameIds: string[], iso: string): Promise<void> {
@@ -198,70 +208,21 @@ async function defaultStoreScheduledSeen(gameIds: string[], iso: string): Promis
   if (error) console.error("[game-status] scheduled-seen rpc failed:", error.message);
 }
 
-async function defaultReadStartState(gameId: string): Promise<StartStateRow | null> {
-  const { data } = await supabase
+async function defaultReadStartState(
+  gameId: string,
+): Promise<{
+  start_notified: boolean | null;
+  last_seen_scheduled_at: string | null;
+  start_snapshot_at?: string | null;
+} | null> {
+  const { data, error } = await supabase
     .from("game_notify_state")
-    .select("start_state, start_sent_at, start_lease_until, start_lease_owner")
+    .select("start_notified, last_seen_scheduled_at, start_snapshot_at")
     .eq("game_id", gameId)
+    .abortSignal(AbortSignal.timeout(5_000))
     .maybeSingle();
-  return (data as StartStateRow | null) ?? null;
-}
-
-/** 상태 머신 CAS RPC 전에 행 존재 보장(cron 공백으로 scheduled 관측을 놓친 경기는 행이 없다). */
-async function ensureStartStateRow(gameId: string): Promise<void> {
-  const { error } = await supabase
-    .from("game_notify_state")
-    .upsert({ game_id: gameId }, { onConflict: "game_id", ignoreDuplicates: true });
-  if (error) console.error("[game-status] start state upsert failed:", error.message);
-}
-
-async function defaultClaimStartLease(gameId: string, owner: string): Promise<number | null> {
-  await ensureStartStateRow(gameId);
-  // query-guard: bounded -- game_notify_state.game_id PK 단일행 lease CAS 선점, RPC는 boolean 반환
-  const { data, error } = await supabase.rpc("claim_start_lease", {
-    p_game_id: gameId,
-    p_owner: owner,
-    p_lease_seconds: START_LEASE_SECONDS,
-  });
-  if (error) {
-    console.error("[game-status] claim_start_lease failed:", error.message);
-    return null;
-  }
-  if (data !== true) return null;
-
-  // 발송 deadline은 앱 시계로 추정하지 않고 DB now()로 발급된 실제 lease_until에 묶는다.
-  // owner까지 확인해 잘못된/누락된 lease로 fanout을 시작하지 않는다.
-  const claimed = await defaultReadStartState(gameId);
-  const leaseUntilMs = claimed?.start_lease_until == null ? NaN : Date.parse(claimed.start_lease_until);
-  if (
-    claimed?.start_state !== "sending" ||
-    claimed.start_lease_owner !== owner ||
-    !Number.isFinite(leaseUntilMs)
-  ) {
-    console.error("[game-status] claimed start lease could not be read back:", gameId);
-    await defaultReleaseStartLease(gameId, owner);
-    return null;
-  }
-  return leaseUntilMs;
-}
-
-async function defaultMarkStartSent(gameId: string, owner: string): Promise<void> {
-  // query-guard: bounded -- game_notify_state.game_id PK 단일행 상태전이(sending→sent), RPC는 void 반환
-  const { error } = await supabase.rpc("mark_start_sent", { p_game_id: gameId, p_owner: owner });
-  if (error) console.error("[game-status] mark_start_sent failed:", error.message);
-}
-
-async function defaultReleaseStartLease(gameId: string, owner: string): Promise<void> {
-  // query-guard: bounded -- game_notify_state.game_id PK 단일행 상태전이(sending→idle), RPC는 void 반환
-  const { error } = await supabase.rpc("release_start_lease", { p_game_id: gameId, p_owner: owner });
-  if (error) console.error("[game-status] release_start_lease failed:", error.message);
-}
-
-async function defaultSuppressStart(gameId: string, reason: string): Promise<void> {
-  await ensureStartStateRow(gameId);
-  // query-guard: bounded -- game_notify_state.game_id PK 단일행 상태전이(idle/expired→suppressed), RPC는 void 반환
-  const { error } = await supabase.rpc("suppress_start", { p_game_id: gameId, p_reason: reason });
-  if (error) console.error("[game-status] suppress_start failed:", error.message);
+  if (error) throw new Error(`start state read: ${error.message}`);
+  return data ?? null;
 }
 
 /**
@@ -284,6 +245,10 @@ export async function notifyGameStatusTransitions(
      * 미지정 시 함수 진입 시각으로 1회 캡처(경기별 재측정 금지).
      */
     observedAtMs?: number;
+    /** 시작알림 batch가 새 FCM transport를 시작할 수 있는 요청-절대 마감. */
+    deadlineAtMs?: number;
+    /** game-events가 BoxScore lineup/current batter로 확정한 첫 타석 근거. */
+    startPlateAppearanceByGame?: ReadonlyMap<string, StartPlateAppearanceEvidence>;
     /**
      * 시작알림 경로 배선 회귀 테스트용 seam(프로덕션 미지정 → 실제 구현). 앞 경기 FCM 발송
      * 지연이 뒤 경기 시작알림을 억제하지 않는지 이 함수 자체를 실행해 검증하기 위해
@@ -291,18 +256,19 @@ export async function notifyGameStatusTransitions(
      */
     startDeps?: StartNotifyDeps;
   },
-): Promise<{ started: number; ended: number; cancelled: number }> {
+): Promise<{
+  started: number;
+  ended: number;
+  cancelled: number;
+}> {
   const observedAtMs = opts?.observedAtMs ?? Date.now();
   const storeScheduledSeen = opts?.startDeps?.storeScheduledSeen ?? defaultStoreScheduledSeen;
   const readStartState = opts?.startDeps?.readStartState ?? defaultReadStartState;
-  const claimStartLease = opts?.startDeps?.claimStartLease ?? defaultClaimStartLease;
-  const markStartSent = opts?.startDeps?.markStartSent ?? defaultMarkStartSent;
-  const releaseStartLease = opts?.startDeps?.releaseStartLease ?? defaultReleaseStartLease;
-  const suppressStart = opts?.startDeps?.suppressStart ?? defaultSuppressStart;
+  const claimStart = opts?.startDeps?.claimStart ?? ((gameId: string) => claim(gameId, "start_notified"));
+  const unclaimStart = opts?.startDeps?.unclaimStart ?? ((gameId: string) => unclaim(gameId, "start_notified"));
+  const markStart = opts?.startDeps?.markStart ?? ((gameId: string) => markOnly(gameId, { start: true }));
   const sendStart = opts?.startDeps?.sendStart ?? sendFcmToUsers;
   const fansOfStart = opts?.startDeps?.fansOf ?? fansOfTeams;
-  // 이 invocation의 lease 소유자 — 겹친 cron에서 자신이 선점한 sending만 mark/release 하도록.
-  const startOwner = randomUUID();
   let started = 0;
   let ended = 0;
   let cancelled = 0;
@@ -316,9 +282,127 @@ export async function notifyGameStatusTransitions(
     await storeScheduledSeen(scheduledIds, new Date(observedAtMs).toISOString());
   }
 
+  // 프로덕션 ledger 경로는 모든 live 경기 snapshot을 먼저 고정한 뒤 게임별 1 batch씩
+  // round-robin한다. 첫 경기의 느린 FCM이 공용 route budget 전체를 독점하지 않게 각
+  // transport를 8초로 bound한다. legacy sendStart/deliverStart seam은 기존 테스트만 사용.
+  const useFairStartDrain = opts?.startDeps?.sendStart == null && opts?.startDeps?.deliverStart == null;
+  const ledgerHandled = new Set<string>();
+  if (useFairStartDrain) {
+    const openStart = opts?.startDeps?.openStart ?? openGameStartSnapshot;
+    const deliverStartBatch = opts?.startDeps?.deliverStartBatch ?? deliverGameStartBatch;
+    const finalizeStart = opts?.startDeps?.finalizeStart ?? finalizeGameStartSnapshot;
+    const opened: Array<{
+      target: GameStartDeliveryTarget;
+      snapshotDeadlineAtMs: number;
+      acceptedDelta: number;
+    }> = [];
+
+    for (const g of games) {
+      const gameId = g.G_ID;
+      if (!gameId || g.GAME_STATE_SC !== "2" || isKboGameCancelled(g.CANCEL_SC_ID)) continue;
+      ledgerHandled.add(gameId);
+      let seenRow: Awaited<ReturnType<typeof readStartState>>;
+      try {
+        seenRow = await readStartState(gameId);
+      } catch (error) {
+        console.error(`[game-status] start state read failed game=${gameId}:`, (error as Error).message);
+        continue;
+      }
+      if (seenRow?.start_notified) {
+        if (seenRow.start_snapshot_at) {
+          await finalizeStart(gameId);
+        }
+        continue;
+      }
+      const lastSeenMs = seenRow?.last_seen_scheduled_at
+        ? Date.parse(seenRow.last_seen_scheduled_at)
+        : null;
+      const plateAppearance = opts?.startPlateAppearanceByGame?.get(gameId)
+        ?? (opts?.startPlateAppearanceByGame === undefined && opts?.startDeps
+          ? { completedPlateAppearances: 0, currentBatterIsLeadoff: true }
+          : null);
+      // game-events/KBO/DB 근거 fetch timeout은 "첫 타석 종료"가 아니다. cutoff 안에서는
+      // 상태를 열거나 mark-only로 닫지 않고 다음 cron이 이 경기만 재시도한다.
+      if (!seenRow?.start_snapshot_at && plateAppearance === null) continue;
+      const sendOk = Boolean(seenRow?.start_snapshot_at) || shouldSendStartNotification({
+        lastSeenScheduledAtMs: Number.isFinite(lastSeenMs as number) ? lastSeenMs : null,
+        scheduledStartAtMs: scheduledStartMs(g.G_DT, g.G_TM),
+        nowMs: observedAtMs,
+        inningNo: g.GAME_INN_NO,
+        isTop: g.GAME_TB_SC ? g.GAME_TB_SC === "T" : null,
+        // 테스트 seam은 기존 배선 회귀의 첫 타석 fixture를 유지한다. 프로덕션(default deps)은
+        // game-events 근거가 없으면 null로 fail-close한다.
+        plateAppearance,
+      });
+      if (!sendOk) {
+        await markStart(gameId);
+        continue;
+      }
+      const away = g.AWAY_NM ?? "";
+      const home = g.HOME_NM ?? "";
+      const teamIds = [teamIdByShortName(away), teamIdByShortName(home)]
+        .filter((v): v is number => v !== null);
+      const target: GameStartDeliveryTarget = {
+        gameId,
+        teamIds,
+        observedAtMs,
+        payload: {
+          title: "⚾ 경기 시작!",
+          body: `${away} vs ${home} 경기가 시작됐어요. 크보팬에서 자세한 경기 내용을 확인해보세요!`,
+          url: `/games/${gameId}`,
+        },
+      };
+      const snapshotDeadlineAtMs = await openStart(target);
+      opened.push({ target, snapshotDeadlineAtMs, acceptedDelta: 0 });
+    }
+
+    const routeDeadlineAtMs = opts?.deadlineAtMs
+      ?? opened.reduce((latest, item) => Math.max(latest, item.snapshotDeadlineAtMs), observedAtMs);
+    let active = opened;
+    while (active.length > 0 && Date.now() < routeDeadlineAtMs) {
+      const round = await Promise.all(active.map(async (item) => {
+        const nowMs = Date.now();
+        const attemptDeadlineAtMs = Math.min(
+          routeDeadlineAtMs,
+          item.snapshotDeadlineAtMs,
+          nowMs + START_DELIVERY_ATTEMPT_MS,
+        );
+        if (attemptDeadlineAtMs <= nowMs) return { item, claimed: 0, pending: 0 };
+        const batches = await Promise.all(Array.from(
+          { length: START_DELIVERY_BATCH_CONCURRENCY_PER_GAME },
+          () => deliverStartBatch({
+            ...item.target,
+            snapshotDeadlineAtMs: item.snapshotDeadlineAtMs,
+            attemptDeadlineAtMs,
+          }),
+        ));
+        const claimed = batches.reduce((sum, batch) => sum + batch.claimed, 0);
+        const pending = Math.max(...batches.map((batch) => batch.pending), 0);
+        item.acceptedDelta += batches.reduce((sum, batch) => sum + batch.fcmAcceptedDelta, 0);
+        return { item, claimed, pending };
+      }));
+      active = round
+        .filter(({ claimed, pending }) => claimed > 0 && pending > 0)
+        .map(({ item }) => item);
+    }
+
+    for (const item of opened) {
+      const delivery = await finalizeStart(item.target.gameId, item.acceptedDelta);
+      started += delivery.fcmAcceptedDelta;
+      console.log(
+        `[game-status] start delivery game=${item.target.gameId}` +
+        ` fcmAcceptedDelta=${delivery.fcmAcceptedDelta} fcmAcceptedTotal=${delivery.fcmAcceptedTotal}` +
+        ` deviceDelivered=${delivery.deviceDelivered ?? "unknown"}` +
+        ` pending=${delivery.pending} permanentFailed=${delivery.permanentFailed}` +
+        ` expired=${delivery.expired} snapshotCompleted=${delivery.snapshotCompleted}`,
+      );
+    }
+  }
+
   for (const g of games) {
     const gameId = g.G_ID;
     if (!gameId) continue;
+    if (g.GAME_STATE_SC === "2" && ledgerHandled.has(gameId)) continue;
 
     const away = g.AWAY_NM ?? "";
     const home = g.HOME_NM ?? "";
@@ -359,51 +443,66 @@ export async function notifyGameStatusTransitions(
     }
 
     if (g.GAME_STATE_SC === "2") {
-      // 진행 중 — 시작 알림 상태 머신. 발송 게이트 = (R1) "1회초 첫 타석 끝나기 전" payload 창.
-      // (spec S1, 2026-07-26 인시던트 — 90초 연속관측 게이트를 상태머신+첫타석창+lease로 교체)
-      const state = await readStartState(gameId);
-      if (state?.start_state === "sent" || state?.start_state === "suppressed") continue; // terminal
-      const within = isWithinFirstAtBatWindow({
+      // 진행 중 — 시작 알림. scheduled→live 전환을 최근 연속 관측한 경우에만 발송하고,
+      // 첫 관측이 이미 live(장애 복구·재배포)거나 관측이 stale이면 발송 없이 마킹만.
+      // (2026-07-23 하린아빠 지시 "정확한 시간에 가야 하는 알림만" + 삼순 post-merge blocker)
+      const seenRow = await readStartState(gameId);
+      if (seenRow?.start_notified) continue;
+      const lastSeenMs = seenRow?.last_seen_scheduled_at
+        ? Date.parse(seenRow.last_seen_scheduled_at)
+        : null;
+      // 이미 최초 snapshot이 열린 게임은 scheduled→live freshness를 다시 판정하지 않는다.
+      // 다음 분 cron은 그 고정 snapshot의 transient/미처리 행만 90초 deadline 안에서 drain한다.
+      // 여기서 stale mark-only를 타면 snapshot 완료 전 global start_notified가 닫히는 회귀다.
+      const sendOk = Boolean(seenRow?.start_snapshot_at) || shouldSendStartNotification({
+        lastSeenScheduledAtMs: Number.isFinite(lastSeenMs as number) ? lastSeenMs : null,
+        scheduledStartAtMs: scheduledStartMs(g.G_DT, g.G_TM),
+        nowMs: observedAtMs,
         inningNo: g.GAME_INN_NO,
         isTop: g.GAME_TB_SC ? g.GAME_TB_SC === "T" : null,
-        outs: g.OUT_CN,
-        awayScore: parseInt(g.T_SCORE_CN ?? "0") || 0,
-        homeScore: parseInt(g.B_SCORE_CN ?? "0") || 0,
-        runnerOnBase:
-          (g.B1_BAT_ORDER_NO ?? 0) > 0 ||
-          (g.B2_BAT_ORDER_NO ?? 0) > 0 ||
-          (g.B3_BAT_ORDER_NO ?? 0) > 0,
+        plateAppearance: opts?.startPlateAppearanceByGame?.get(gameId)
+          ?? (opts?.startDeps ? { completedPlateAppearances: 0, currentBatterIsLeadoff: true } : null),
       });
-      // 유효 lease(다른 invocation이 발송 중) 여부 — 관측시각 기준. DB CAS가 최종 권위이고
-      // 이 값은 중복작업/suppress 오전이를 피하기 위한 앱측 최적화이다.
-      const leaseValid =
-        state?.start_state === "sending" &&
-        state.start_lease_until != null &&
-        Date.parse(state.start_lease_until) > observedAtMs;
-      if (!within) {
-        // 첫 타석 창 닫힘 — idle 또는 lease 만료 sending을 suppressed로 강제 전이.
-        // 활약알림 downstream 게이트가 idle에 영원히 defer되는 것을 방지(spec §4). 유효 sending은
-        // 발송 중이므로 건드리지 않고(그 발송이 sent로 마무리) skip.
-        if (!leaseValid) await suppressStart(gameId, "past_first_at_bat");
+      if (!sendOk) {
+        await markStart(gameId);
         continue;
       }
-      // 창 안 — 발송. 유효 lease를 가진 다른 invocation이 있으면 중복 방지로 skip.
-      if (leaseValid) continue;
-      const leaseUntilMs = await claimStartLease(gameId, startOwner);
-      if (leaseUntilMs != null) {
-        // 새 FCM chunk가 자기 lease를 넘겨 시작되지 않도록 10s 전에 끊는다. deadline partial은
-        // sending을 유지해 lease 만료 전 다른 invocation과 동시발송하는 창을 만들지 않는다.
-        const deadlineAtMs = leaseUntilMs - START_SEND_DEADLINE_MARGIN_MS;
+      // 프로덕션: 최초 eligible device snapshot을 고정한 뒤 token별 ledger+lease로 발송한다.
+      // snapshot 전량이 accepted/permanent/expired terminal이 되기 전에는 game 단위
+      // start_notified를 닫지 않는다. 신규/교체 토큰은 이후 cron에서 catch-up하지 않는다.
+      const deliverStart = opts?.startDeps?.deliverStart
+        ?? (opts?.startDeps?.sendStart ? null : deliverGameStartSnapshot);
+      if (deliverStart) {
+        const delivery = await deliverStart({
+          gameId,
+          teamIds,
+          observedAtMs,
+          attemptDeadlineAtMs: opts?.deadlineAtMs,
+          payload: {
+            title: "⚾ 경기 시작!",
+            body: `${away} vs ${home} 경기가 시작됐어요. 크보팬에서 자세한 경기 내용을 확인해보세요!`,
+            url,
+          },
+        });
+        started += delivery.fcmAcceptedDelta;
+        console.log(
+          `[game-status] start delivery game=${gameId}` +
+          ` fcmAcceptedDelta=${delivery.fcmAcceptedDelta} fcmAcceptedTotal=${delivery.fcmAcceptedTotal}` +
+          ` deviceDelivered=${delivery.deviceDelivered ?? "unknown"}` +
+          ` pending=${delivery.pending} permanentFailed=${delivery.permanentFailed}` +
+          ` expired=${delivery.expired} snapshotCompleted=${delivery.snapshotCompleted}`,
+        );
+        continue;
+      }
+      if (await claimStart(gameId)) {
         const fans = await fansOfStart(teamIds);
-        if (!fans.ok) { await releaseStartLease(gameId, startOwner); continue; } // 조회 실패 → idle 복귀
+        if (!fans.ok) { await unclaimStart(gameId); continue; } // 조회 실패 → 재시도
         const res = await sendStart(fans.ids, {
           title: "⚾ 경기 시작!",
           body: `${away} vs ${home} 경기가 시작됐어요. 크보팬에서 자세한 경기 내용을 확인해보세요!`,
           url,
-        }, "game_start", undefined, { deadlineAtMs });
-        if (!res.ok && res.lastError === "deadline_exceeded") continue; // partial: lease 만료까지 sending 유지
-        if (!res.ok) { await releaseStartLease(gameId, startOwner); continue; } // 인프라 실패 → idle 복귀
-        await markStartSent(gameId, startOwner); // sending→sent (+start_notified read-compat)
+        }, "game_start");
+        if (!res.ok) { await unclaimStart(gameId); continue; } // 인프라 실패 → 재시도
         started += res.sent;
         // 잠금화면 ongoing card 시작 (앱 미진입 자동 표시, C2) — data-only, fire-and-forget.
         // 시작 알림은 이미 성공(started 카운트)이라 카드 실패해도 unclaim 안 함.
@@ -426,7 +525,7 @@ export async function notifyGameStatusTransitions(
             w_status: "LIVE",
             w_stadium: g.S_NM ?? "",
           },
-        }, "game_start", undefined, { deadlineAtMs });
+        }, "game_start");
       }
     } else if (g.GAME_STATE_SC === "3") {
       // 종료 — 한 번도 안 본 게임(시작 미발송)이면 뒷북 방지로 마킹만

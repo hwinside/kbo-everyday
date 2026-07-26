@@ -1,12 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { TEAMS, isAllStarGameId } from "@/lib/constants/teams";
-import { fetchStandings, buildRankMap } from "@/lib/crawler/kbo-api";
+import {
+  fetchStandings,
+  buildRankMap,
+  fetchGames,
+  fetchBoxScore,
+  fetchGameLinescore,
+  type KboGame,
+  type GameLinescore,
+} from "@/lib/crawler/kbo-api";
 import { STANDINGS_ACCURACY_RULES, STANDINGS_UNAVAILABLE_RULES } from "@/lib/ai/standings-guard";
 import { computeSeriesSnapshot, serializeSeriesSnapshot } from "@/lib/series/snapshot";
 import { loserClaimedWin } from "@/lib/game-summary/winner-check";
 import { hasBaseRunnerContradiction } from "@/lib/game-summary/consistency-check";
-
+import {
+  canonicalGate,
+  isFingerprintStale,
+  shouldSaveGeneratedSummary,
+  winnerFieldMismatch,
+  type SummaryFingerprint,
+} from "@/lib/game-summary/cache-validation";
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
 const PROMPT_VERSION = 13; // v13: 순위 환각 방지 가드(공식 순위표 기준 규칙 + 조회 실패 fallback) — 기존 캐시 재생성
@@ -48,6 +62,97 @@ function parseGameMeta(gameId: string): { dateStr: string; awayTeamId: number; h
     awayTeamId: KBO_CODE_TO_ID[m[2]] || 0,
     homeTeamId: KBO_CODE_TO_ID[m[3]] || 0,
   };
+}
+
+function toBoxScoreInput(game: KboGame, linescore: GameLinescore, boxScore: Awaited<ReturnType<typeof fetchBoxScore>>): BoxScoreInput | null {
+  if (!boxScore) return null;
+  return {
+    gameId: game.gameId,
+    awayTeam: getTeamShortName(game.awayTeamId),
+    homeTeam: getTeamShortName(game.homeTeamId),
+    awayScore: linescore.away.R,
+    homeScore: linescore.home.R,
+    linescore,
+    awayBatters: boxScore.awayBatters.map((b) => ({
+      name: b.name, ab: b.atBats, r: b.runs, h: b.hits,
+      rbi: b.rbi, hr: b.hr, bb: b.bb, so: b.so, avg: b.avg || "",
+    })),
+    homeBatters: boxScore.homeBatters.map((b) => ({
+      name: b.name, ab: b.atBats, r: b.runs, h: b.hits,
+      rbi: b.rbi, hr: b.hr, bb: b.bb, so: b.so, avg: b.avg || "",
+    })),
+    awayPitchers: boxScore.awayPitchers.map((p) => ({
+      name: p.name, ip: p.inningsPitched, h: p.hits, r: p.runs,
+      er: p.earnedRuns, bb: p.walks, so: p.strikeouts, hr: p.hr,
+      np: p.pitchCount, result: p.decision || undefined,
+    })),
+    homePitchers: boxScore.homePitchers.map((p) => ({
+      name: p.name, ip: p.inningsPitched, h: p.hits, r: p.runs,
+      er: p.earnedRuns, bb: p.walks, so: p.strikeouts, hr: p.hr,
+      np: p.pitchCount, result: p.decision || undefined,
+    })),
+  };
+}
+
+async function fetchCanonicalSummarySource(gameId: string, includeBoxScore: boolean): Promise<{
+  game?: KboGame;
+  linescore: GameLinescore | null;
+  input: BoxScoreInput | null;
+  fingerprint: SummaryFingerprint | null;
+  reason: string;
+  httpStatus: number;
+}> {
+  const meta = parseGameMeta(gameId);
+  if (!meta) {
+    return { linescore: null, input: null, fingerprint: null, reason: "invalid-gameid", httpStatus: 400 };
+  }
+
+  try {
+    const [games, linescore, boxScore] = await Promise.all([
+      fetchGames(meta.dateStr),
+      fetchGameLinescore(gameId),
+      includeBoxScore ? fetchBoxScore(gameId, meta.dateStr.slice(0, 4)) : Promise.resolve(null),
+    ]);
+    const game = games.find((candidate) => candidate.gameId === gameId);
+    const gate = canonicalGate(game, linescore);
+    if (gate.reason !== "ok" || !gate.fingerprint) {
+      return {
+        game,
+        linescore,
+        input: null,
+        fingerprint: null,
+        reason: gate.reason,
+        httpStatus: gate.httpStatus,
+      };
+    }
+    const input = includeBoxScore ? toBoxScoreInput(game!, linescore!, boxScore) : null;
+    if (includeBoxScore && !input) {
+      return {
+        game,
+        linescore,
+        input: null,
+        fingerprint: gate.fingerprint,
+        reason: "canonical-boxscore-unavailable",
+        httpStatus: 503,
+      };
+    }
+    return {
+      game,
+      linescore,
+      input,
+      fingerprint: gate.fingerprint,
+      reason: "ok",
+      httpStatus: 200,
+    };
+  } catch {
+    return {
+      linescore: null,
+      input: null,
+      fingerprint: null,
+      reason: "canonical-unavailable",
+      httpStatus: 503,
+    };
+  }
 }
 
 // ===== Context helpers (server-side) =====
@@ -307,7 +412,7 @@ async function getCached(gameId: string): Promise<{ summary: Record<string, unkn
       .from("game_summaries")
       .select("summary, prompt_version")
       .eq("game_id", cacheKey(gameId))
-      .single();
+      .maybeSingle(); // cache/optional lookup: no-rowuB294 uC815uC0C1 u2014 406 uBC29uC9C0
     if (!data?.summary) return null;
     const outdated = (data.prompt_version ?? 0) < PROMPT_VERSION;
     return { summary: data.summary as Record<string, unknown>, outdated };
@@ -316,18 +421,54 @@ async function getCached(gameId: string): Promise<{ summary: Record<string, unkn
   }
 }
 
-async function saveCache(gameId: string, summary: Record<string, unknown>) {
+type GenerationToken = string | number;
+
+async function claimGeneration(gameId: string): Promise<GenerationToken | null> {
   try {
-    await supabase
-      .from("game_summaries")
-      .upsert(
-        { game_id: cacheKey(gameId), summary, prompt_version: PROMPT_VERSION, created_at: new Date().toISOString() },
-        { onConflict: "game_id" }
-      );
-  } catch { /* ignore */ }
+    const { data, error } = await supabase.rpc("claim_game_summary_generation", {
+      p_game_id: cacheKey(gameId),
+    });
+    if (error || (typeof data !== "string" && typeof data !== "number")) return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+async function saveCache(
+  gameId: string,
+  summary: Record<string, unknown>,
+  generationToken: GenerationToken,
+): Promise<"saved" | "superseded" | "error"> {
+  try {
+    const { data, error } = await supabase.rpc("save_game_summary_if_current", {
+      p_game_id: cacheKey(gameId),
+      p_generation_token: generationToken,
+      p_summary: summary,
+      p_prompt_version: PROMPT_VERSION,
+    });
+    if (error) return "error";
+    return data === true ? "saved" : "superseded";
+  } catch {
+    return "error";
+  }
 }
 
 // ===== Normalize =====
+
+function cacheFingerprint(s: Record<string, unknown>): SummaryFingerprint | null {
+  const value = s._cacheFingerprint as SummaryFingerprint | undefined;
+  if (
+    value?.status !== "final" ||
+    !Number.isFinite(value.awayScore) ||
+    !Number.isFinite(value.homeScore) ||
+    !Array.isArray(value.awayInnings) ||
+    !Array.isArray(value.homeInnings)
+  ) {
+    return null;
+  }
+  return value;
+}
 
 function normalizeSummary(s: Record<string, unknown>): Record<string, unknown> {
   const gf = s.gameFlow as Record<string, unknown> | undefined;
@@ -338,6 +479,14 @@ function normalizeSummary(s: Record<string, unknown>): Record<string, unknown> {
     if (!s.mvpPitcher && gf.mvpPitcher) { s.mvpPitcher = gf.mvpPitcher; delete gf.mvpPitcher; }
   }
   return s;
+}
+
+function publicSummary(s: Record<string, unknown>): Record<string, unknown> {
+  const copy = structuredClone(s);
+  delete copy._cacheFingerprint;
+  delete copy._cachedAwayScore;
+  delete copy._cachedHomeScore;
+  return normalizeSummary(copy);
 }
 
 // ===== Route handlers =====
@@ -351,7 +500,8 @@ export async function GET(req: NextRequest) {
   const cached = await getCached(gameId);
   if (cached) {
     return NextResponse.json({
-      summary: normalizeSummary(cached.summary),
+      summary: publicSummary(cached.summary),
+      fingerprint: cacheFingerprint(cached.summary),
       source: "cache",
       outdated: cached.outdated,
     });
@@ -364,14 +514,25 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "GEMINI_API_KEY not configured" }, { status: 500 });
   }
 
-  const body: BoxScoreInput = await req.json();
-  if (!body.gameId || !body.awayTeam || !body.homeTeam) {
-    return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
+  const requestBody = await req.json() as Partial<BoxScoreInput>;
+  if (!requestBody.gameId) {
+    return NextResponse.json({ error: "gameId required" }, { status: 400 });
   }
   // 올스타전은 AI 경기 요약 생성 안 함 (#544 AI 비활성화와 일관).
-  if (isAllStarGameId(body.gameId)) return NextResponse.json({ summary: null, source: "allstar" });
+  if (isAllStarGameId(requestBody.gameId)) return NextResponse.json({ summary: null, source: "allstar" });
+  // 공개 POST body의 팀/스코어/이닝/박스스코어는 캐시 입력으로 신뢰하지 않는다.
+  // gameId만 받아 KBO 경기목록+스코어보드+박스스코어를 서버에서 독립 재조회한다.
+  const canonicalSource = await fetchCanonicalSummarySource(requestBody.gameId, true);
+  if (canonicalSource.reason !== "ok" || !canonicalSource.input || !canonicalSource.fingerprint) {
+    return NextResponse.json(
+      { error: canonicalSource.reason, source: canonicalSource.reason },
+      { status: canonicalSource.httpStatus },
+    );
+  }
+  const body = canonicalSource.input;
+  const generationFingerprint = canonicalSource.fingerprint;
 
-  // Sanity check
+  // Canonical boxscore sanity check
   const allBatters = [...(body.awayBatters || []), ...(body.homeBatters || [])];
   const allPitchers = [...(body.awayPitchers || []), ...(body.homePitchers || [])];
   const totalAB = allBatters.reduce((s, b) => s + (b.ab || 0), 0);
@@ -380,10 +541,30 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "BoxScore data appears incomplete (all zeros)" }, { status: 422 });
   }
 
-  // 캐시 확인
+  const finalAwayScore = generationFingerprint.awayScore;
+  const finalHomeScore = generationFingerprint.homeScore;
+
+  // prompt_version + final status/score/innings fingerprint가 모두 일치할 때만 캐시를 반환한다.
   const cached = await getCached(body.gameId);
   if (cached && !cached.outdated) {
-    return NextResponse.json({ summary: normalizeSummary(cached.summary), source: "cache" });
+    if (!isFingerprintStale(cacheFingerprint(cached.summary), generationFingerprint)) {
+      return NextResponse.json({
+        summary: publicSummary(cached.summary),
+        fingerprint: generationFingerprint,
+        source: "cache",
+      });
+    }
+    // legacy 또는 fingerprint stale → 아래에서 canonical 데이터로 재생성한다.
+  }
+
+  // DB sequence claim이 서버리스 인스턴스 간 생성 순서를 선형화한다.
+  // 이후 더 새 claim이 생기면 save RPC의 row-lock token 확인에서 이 요청은 superseded 된다.
+  const generationToken = await claimGeneration(body.gameId);
+  if (generationToken == null) {
+    return NextResponse.json(
+      { error: "generation-claim-failed", source: "generation-claim" },
+      { status: 503 },
+    );
   }
 
   // 맥락 데이터 병렬 조회 (실패해도 진행)
@@ -472,21 +653,19 @@ export async function POST(req: NextRequest) {
       // (2026-06-05 한화 9:2 롯데 / 삼성 2:5 KIA 등 다수 경기 "AI 분석 지연").
       // 헤드라인은 단문·구조적이라 신뢰 가능하고, 본문의 구조적 승패 오류는
       // winner 필드 검증(아래)이 백스톱으로 잡는다.
-      let winnerMismatch = false;
-      if (body.awayScore !== body.homeScore) {
-        const actualWinner = body.awayScore > body.homeScore ? body.awayTeam : body.homeTeam;
-        const actualLoser = body.awayScore > body.homeScore ? body.homeTeam : body.awayTeam;
-        // 헤드라인에서 패팀을 승자로 서술했는지 검증 (winner-check 헬퍼).
-        // "롯데, KIA 꺾고 승리"처럼 승팀이 패팀을 타동사로 제압하는 정상 헤드라인은 통과.
-        const loserWrong = loserClaimedWin(summary.headline || "", actualWinner, actualLoser);
-        // winner 필드 검증 (구조화된 값 — 본문 승패 오류의 백스톱)
-        const llmWinner = summary.winner;
-        const winnerFieldWrong = llmWinner && llmWinner !== "무승부" && llmWinner !== actualWinner;
-
-        if (loserWrong || winnerFieldWrong) {
-          console.error(`Winner mismatch (attempt ${attempt}): actual=${actualWinner}, headline="${summary.headline}", llmWinner=${llmWinner}`);
-          winnerMismatch = true;
-        }
+      const llmWinner = summary.winner as string | undefined;
+      // winner 필드/무승부 문구 검증(cache-validation, blocker③) + 헤드라인 패팀=승자 서술(winner-check).
+      let winnerMismatch = winnerFieldMismatch(
+        finalAwayScore, finalHomeScore, body.awayTeam, body.homeTeam, llmWinner, summary.headline,
+      );
+      if (!winnerMismatch && finalAwayScore !== finalHomeScore) {
+        const actualWinner = finalAwayScore > finalHomeScore ? body.awayTeam : body.homeTeam;
+        const actualLoser = finalAwayScore > finalHomeScore ? body.homeTeam : body.awayTeam;
+        // "롯데, KIA 꼺고 승리"처럼 승팀이 패팀을 타동사로 제압하는 정상 헤드라인은 통과.
+        winnerMismatch = loserClaimedWin(summary.headline || "", actualWinner, actualLoser);
+      }
+      if (winnerMismatch) {
+        console.error(`Winner mismatch (attempt ${attempt}): score=${finalAwayScore}-${finalHomeScore}, headline="${summary.headline}", llmWinner=${llmWinner}`);
       }
 
       if (winnerMismatch) {
@@ -533,8 +712,37 @@ export async function POST(req: NextRequest) {
       // winner 필드는 내부 검증용이므로 클라이언트에 보내기 전 제거
       delete summary.winner;
 
-      await saveCache(body.gameId, summary);
-      return NextResponse.json({ summary, source: "generated" });
+      // LLM 호출 중 canonical이 바뀌었으면 이전 요청이 최신 캐시를 덮지 못하게 저장을 거부한다.
+      const latestCanonical = await fetchCanonicalSummarySource(body.gameId, false);
+      if (
+        latestCanonical.reason !== "ok" ||
+        !shouldSaveGeneratedSummary(generationFingerprint, latestCanonical.fingerprint)
+      ) {
+        return NextResponse.json(
+          { error: "canonical-changed-during-generation", source: "canonical-race" },
+          { status: 409 },
+        );
+      }
+
+      // DB JSON 내부에만 보관하고 API 응답에서는 별도 fingerprint 필드로 분리한다.
+      summary._cacheFingerprint = generationFingerprint;
+      const saveResult = await saveCache(body.gameId, summary, generationToken);
+      if (saveResult !== "saved") {
+        return NextResponse.json(
+          {
+            error: saveResult === "superseded"
+              ? "newer-generation-already-saved"
+              : "cache-write-failed",
+            source: "cache-write-fence",
+          },
+          { status: saveResult === "superseded" ? 409 : 503 },
+        );
+      }
+      return NextResponse.json({
+        summary: publicSummary(summary),
+        fingerprint: generationFingerprint,
+        source: "generated",
+      });
     } catch (err) {
       console.error(`Game summary generation error (attempt ${attempt}):`, err);
       if (attempt === MAX_ATTEMPTS) {

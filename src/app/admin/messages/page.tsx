@@ -21,7 +21,7 @@ type Tab = "inbox" | "sent" | "broadcast";
 
 interface Conversation {
   id: string;
-  other_user_id: string;
+  other_user_id: string | null;
   other_nickname: string;
   other_team_id: number | null;
   last_message: string | null;
@@ -37,7 +37,7 @@ interface InboxCursor {
 interface Message {
   id: number;
   conversation_id: string;
-  sender_id: string;
+  sender_id: string | null;
   sender_nickname: string;
   content: string;
   image_urls?: string[] | null;
@@ -296,7 +296,7 @@ export default function AdminMessagesPage() {
 
   // 답장 전송
   async function handleSend() {
-    if (!selectedConv || (!replyText.trim() && replyImages.length === 0) || sending || uploadingImage)
+    if (!selectedConv?.other_user_id || (!replyText.trim() && replyImages.length === 0) || sending || uploadingImage)
       return;
     setSending(true);
     try {
@@ -469,7 +469,12 @@ export default function AdminMessagesPage() {
         </div>
 
         {/* 답장 입력 */}
-        <div className="glass-card p-3 space-y-2">
+        {!selectedConv.other_user_id && (
+          <div className="glass-card p-3 text-center text-sm text-[#8E8E93]">
+            탈퇴한 사용자와의 대화는 읽기만 가능합니다.
+          </div>
+        )}
+        <div className={selectedConv.other_user_id ? "glass-card p-3 space-y-2" : "hidden"}>
           {replyImages.length > 0 && (
             <div className="flex flex-wrap gap-2">
               {replyImages.map((image, index) => (
