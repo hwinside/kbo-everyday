@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "generatedFrom": "27a08241b585255a34b4692811aaa7d0001f8f97",
+  "generatedFrom": "d499bf6048ee5cf5f3b4329f491b9b9df47df77a",
   "violations": {
     "0034fe9a6a6cff327c64": {
       "count": 1,
@@ -1106,13 +1106,6 @@
       "kind": "unbounded_growing_select",
       "file": "src/app/api/cron/roster-moves/route.ts",
       "subject": "roster_snapshots",
-      "detail": "add a bound, unique-key lookup, or query-guard annotation"
-    },
-    "c07f5f9c351a0cd3ec55": {
-      "count": 1,
-      "kind": "unbounded_growing_select",
-      "file": "src/lib/supabase/useUnreadDMCount.ts",
-      "subject": "dm_conversations",
       "detail": "add a bound, unique-key lookup, or query-guard annotation"
     },
     "c09a27262f8a1158edf4": {

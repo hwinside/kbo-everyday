@@ -69,9 +69,31 @@ check(
 // ---- Authenticated RPC boundary ----
 const deletionMigration = read("supabase/migrations/20260727_auth_user_delete_cascades.sql");
 check(
-  "dm_unread_counts: 함수 내부에서 입력 cardinality 500 상한 강제",
-  /CREATE OR REPLACE FUNCTION public\.dm_unread_counts[\s\S]*?COALESCE\(cardinality\(p_conversation_ids\), 0\) > 500[\s\S]*?RAISE EXCEPTION 'too_many_conversation_ids'[\s\S]*?ERRCODE = '22023'[\s\S]*?RETURN QUERY/.test(
+  "dm_unread_counts: 501개 이상은 오류 없이 empty fail-close",
+  /CREATE OR REPLACE FUNCTION public\.dm_unread_counts[\s\S]*?COALESCE\(cardinality\(p_conversation_ids\), 0\) > 500[\s\S]*?THEN\s+RETURN;\s+END IF;[\s\S]*?RETURN QUERY/.test(
     deletionMigration,
+  ),
+);
+const unreadHook = read("src/lib/supabase/useUnreadDMCount.ts");
+check(
+  "useUnreadDMCount: 최신 대화를 정렬해 실제 500개만 RPC에 전달",
+  /\.order\("last_message_at", \{ ascending: false \}\)[\s\S]{0,80}?\.limit\(500\)/.test(
+    unreadHook,
+  ),
+);
+const preservationAssert = read(
+  "scripts/qa/dm-deletion-preservation.assert.sql",
+);
+check(
+  "dm_unread_counts E2E: 500개 경계는 기존 대화 결과를 허용",
+  /ARRAY\[conv\][\s\S]{0,100}?generate_series\(1, 499\)[\s\S]{0,100}?\)\s*=\s*1/.test(
+    preservationAssert,
+  ),
+);
+check(
+  "dm_unread_counts E2E: 501개는 오류 없이 빈 결과로 차단",
+  /ARRAY\[conv\][\s\S]{0,100}?generate_series\(1, 500\)[\s\S]{0,100}?\)\s*=\s*0/.test(
+    preservationAssert,
   ),
 );
 

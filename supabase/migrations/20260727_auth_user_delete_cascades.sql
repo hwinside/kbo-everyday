@@ -113,8 +113,7 @@ SET search_path = public, pg_temp
 AS $$
 BEGIN
   IF COALESCE(cardinality(p_conversation_ids), 0) > 500 THEN
-    RAISE EXCEPTION 'too_many_conversation_ids'
-      USING ERRCODE = '22023';
+    RETURN;
   END IF;
 
   RETURN QUERY

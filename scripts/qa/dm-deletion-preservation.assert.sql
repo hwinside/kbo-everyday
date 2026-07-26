@@ -104,16 +104,23 @@ BEGIN
     WHERE conversation_id = conv
   ) = 1, 'authenticated unread RPC omitted anonymous sender';
 
-  BEGIN
-    PERFORM 1
+  ASSERT (
+    SELECT count(*)
     FROM public.dm_unread_counts(
-      ARRAY(SELECT gen_random_uuid() FROM generate_series(1, 501))
-    );
-    RAISE EXCEPTION 'dm_unread_counts accepted more than 500 ids';
-  EXCEPTION
-    WHEN invalid_parameter_value THEN
-      NULL;
-  END;
+      ARRAY[conv] || ARRAY(
+        SELECT gen_random_uuid() FROM generate_series(1, 499)
+      )
+    )
+  ) = 1, 'dm_unread_counts rejected the 500-id boundary';
+
+  ASSERT (
+    SELECT count(*)
+    FROM public.dm_unread_counts(
+      ARRAY[conv] || ARRAY(
+        SELECT gen_random_uuid() FROM generate_series(1, 500)
+      )
+    )
+  ) = 0, 'dm_unread_counts did not fail-close above 500 ids';
 
   UPDATE public.dm_messages
   SET is_read = TRUE

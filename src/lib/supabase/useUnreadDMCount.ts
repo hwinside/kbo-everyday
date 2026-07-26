@@ -11,17 +11,19 @@ export function useUnreadDMCount() {
   const load = useCallback(async () => {
     if (!user) { setCount(0); return; }
 
-    // 내가 참여한 대화 목록
+    // query-guard: bounded -- 미읽음 배지는 최신 대화 500개만 집계하며 RPC도 동일 상한을 강제한다.
     const { data: convs } = await supabase
       .from("dm_conversations")
       .select("id")
-      .or(`user1_id.eq.${user.id},user2_id.eq.${user.id}`);
+      .or(`user1_id.eq.${user.id},user2_id.eq.${user.id}`)
+      .order("last_message_at", { ascending: false })
+      .limit(500);
 
     if (!convs || convs.length === 0) { setCount(0); return; }
 
     const convIds = convs.map((c: { id: string }) => c.id);
 
-    // query-guard: bounded -- p_conversation_ids는 RPC가 500개로 제한하며 현재 사용자 대화당 1행만 반환
+    // query-guard: bounded -- RPC는 요청 대화당 최대 한 행을 반환하고 501개 이상은 빈 결과로 fail-close
     const { data: unreadRows } = await supabase
       .rpc("dm_unread_counts", { p_conversation_ids: convIds });
 
