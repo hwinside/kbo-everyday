@@ -18,7 +18,12 @@ import {
 
 const CRON_SECRET = process.env.CRON_SECRET || "";
 // staging 버킷도 orphan 스캔 대상(생성 API 도달 전 이탈한 업로드 잔여 정리)
-const BUCKETS = ["videos", "photos", VENUE_STORY_STAGING_BUCKET] as const;
+const BUCKETS = [
+  "videos",
+  "photos",
+  VENUE_STORY_STAGING_BUCKET,
+  VENUE_STORY_ARCHIVE_BUCKET,
+] as const;
 const ORPHAN_MAX_GAME_FOLDERS = 40; // 실행당 bucket별 orphan 스캔 상한(durable cursor 로 이어짐)
 const STORAGE_PAGE = 100; // storage list 페이지 크기
 
@@ -51,30 +56,63 @@ interface Row {
   expires_at: string | null;
   removed_at: string | null;
   cleanup_failed_at: string | null;
+  archive_verified_at: string | null;
   media_bucket: string | null;
   media_path: string | null;
   thumb_bucket: string | null;
   thumb_path: string | null;
 }
 
-/**
- * 한 객체를 public 버킷(videos/photos)에서 private venue-archive 버킷으로 copy(같은 key).
- * 이미 대상에 존재하면(이전 부분 실행 잔여) 성공으로 간주 = 멱등(원본 remove 전에 copy 성공을 반드시 검증).
- */
-async function ensureCopiedToArchive(bucket: string, path: string): Promise<boolean> {
-  const { error } = await supabase.storage
-    .from(bucket)
-    .copy(path, path, { destinationBucket: VENUE_STORY_ARCHIVE_BUCKET });
-  if (!error) return true;
-  // copy 실패 — 이전 부분 실행에서 이미 복사됐을 수 있어 대상 존재를 확인(멱등). 없으면 진짜 실패(false).
+interface StorageObjectMeta {
+  name: string;
+  metadata?: { size?: number } | null;
+}
+
+/** 정확한 key의 저장 byte 수. 조회 오류/미존재/size 미상은 null(fail-closed). */
+async function getObjectSize(bucket: string, path: string): Promise<number | null> {
   const slash = path.lastIndexOf("/");
   const dir = slash >= 0 ? path.slice(0, slash) : "";
   const name = slash >= 0 ? path.slice(slash + 1) : path;
-  // query-guard: bounded-page -- 단일 객체 존재 확인(search=name, limit 1)
-  const { data } = await supabase.storage
-    .from(VENUE_STORY_ARCHIVE_BUCKET)
-    .list(dir, { limit: 1, search: name });
-  return !!data?.some((o) => o.name === name);
+  // query-guard: bounded-page -- search 결과 중 exact name을 찾는 bounded 페이지
+  const { data, error } = await supabase.storage
+    .from(bucket)
+    .list(dir, { limit: STORAGE_PAGE, search: name });
+  if (error) return null;
+  const found = (data as StorageObjectMeta[] | null)?.find((o) => o.name === name);
+  const size = found?.metadata?.size;
+  return typeof size === "number" && Number.isFinite(size) && size >= 0 ? size : null;
+}
+
+/**
+ * 한 객체를 public 버킷(videos/photos)에서 private venue-archive 버킷으로 copy(같은 key).
+ * 원본/사본 byte 수가 정확히 같을 때만 성공이다. 같은 파일명 존재만으로 성공 처리하지 않는다.
+ * 이전 부분 실행에서 사본이 이미 있으면 byte 일치로 멱등 성공한다.
+ */
+async function ensureCopiedToArchive(bucket: string, path: string): Promise<boolean> {
+  if (bucket === VENUE_STORY_ARCHIVE_BUCKET) return false;
+  const sourceSize = await getObjectSize(bucket, path);
+  if (sourceSize == null) return false;
+  await supabase.storage
+    .from(bucket)
+    .copy(path, path, { destinationBucket: VENUE_STORY_ARCHIVE_BUCKET });
+  // copy 성공/이미 존재 오류 모두 대상 byte를 다시 읽어 검증한다.
+  // 다른 오류여도 이전 실행의 완전한 사본이 있으면 멱등 성공 가능하다.
+  let archiveSize = await getObjectSize(VENUE_STORY_ARCHIVE_BUCKET, path);
+  if (archiveSize != null && archiveSize === sourceSize) return true;
+
+  // 같은 key의 불완전/다른 byte 사본은 active→archiving CAS 전에만 교체한다.
+  // (archiving 재개 경로는 이 함수를 호출하지 않으므로 이미 검증된 사본을 건드리지 않는다.)
+  if (archiveSize != null) {
+    const { error: removeErr } = await supabase.storage
+      .from(VENUE_STORY_ARCHIVE_BUCKET)
+      .remove([path]);
+    if (removeErr) return false;
+  }
+  await supabase.storage
+    .from(bucket)
+    .copy(path, path, { destinationBucket: VENUE_STORY_ARCHIVE_BUCKET });
+  archiveSize = await getObjectSize(VENUE_STORY_ARCHIVE_BUCKET, path);
+  return archiveSize != null && archiveSize === sourceSize;
 }
 
 /** 행의 media/thumb 객체를 venue-archive 로 copy(검증). 존재하는 객체 전부 성공 시 true. */
@@ -107,10 +145,29 @@ async function removeRowObjects(r: Row): Promise<boolean> {
   return ok;
 }
 
+/** archive 전환 중 원래 public 객체만 제거. private 사본은 절대 대상에 넣지 않는다. */
+async function removePublicRowObjects(r: Row): Promise<boolean> {
+  const byBucket = new Map<"videos" | "photos", string[]>();
+  const push = (b?: string | null, p?: string | null) => {
+    if ((b !== "videos" && b !== "photos") || !p) return;
+    const arr = byBucket.get(b) ?? [];
+    arr.push(p);
+    byBucket.set(b, arr);
+  };
+  push(r.media_bucket, r.media_path);
+  push(r.thumb_bucket, r.thumb_path);
+  let ok = true;
+  for (const [bucket, paths] of byBucket) {
+    const { error } = await supabase.storage.from(bucket).remove(paths);
+    if (error) ok = false;
+  }
+  return ok;
+}
+
 /**
  * 직관 스토리 정리 cron:
  *  1) 대상 행 분기(resolveCleanupAction, 스펙 §2.2):
- *     - archive: 정상 만료(active) → storage/댓글 보존, status='archived'+archived_at(다이어리 보관).
+ *     - archive: 정상 만료(active) → private copy 검증·archiving 중간상태·public 제거 후 archived(댓글/원본 보관).
  *     - delete: 정상만료 미검증(pending)/격리 30일 경과 removed/cleanup_failed removed출신 → storage 제거 후 행 삭제(실패 시 cleanup_failed).
  *     - force_delete: cleanup_failed removed출신이 영구실패 TTL(cleanup_failed_at+7일) 경과 → storage 성공 무관 행 강제 삭제(무한 재시도 중단).
  *     - quarantine_keep: removed 30일 미만·removed_at 미상 / stale_cap(장애) / cleanup_failed 출신불명 / archived → no-op(미노출 격리 및 보관 보호).
@@ -153,9 +210,9 @@ export async function GET(req: NextRequest) {
   // query-guard: bounded -- cleanup 배치는 실행당 최대 500행만 처리하고 남은 행은 다음 cron 이 이어서 정리(orphan cursor 와 동일 계약)
   const { data: rows, error } = await supabase
     .from("venue_stories")
-    .select("id, status, game_ended_at, expires_at, removed_at, cleanup_failed_at, media_bucket, media_path, thumb_bucket, thumb_path")
+    .select("id, status, game_ended_at, expires_at, removed_at, cleanup_failed_at, archive_verified_at, media_bucket, media_path, thumb_bucket, thumb_path")
     .or(
-      `and(status.in.(active,pending),expires_at.lte.${nowIso},game_ended_at.not.is.null),and(status.eq.cleanup_failed,removed_at.lte.${quarantineCutoffIso}),and(status.eq.removed,removed_at.lte.${quarantineCutoffIso})`,
+      `and(status.in.(active,pending),expires_at.lte.${nowIso},game_ended_at.not.is.null),status.eq.archiving,and(status.eq.cleanup_failed,removed_at.lte.${quarantineCutoffIso}),and(status.eq.removed,removed_at.lte.${quarantineCutoffIso})`,
     )
     .order("id", { ascending: true })
     .limit(500);
@@ -176,7 +233,7 @@ export async function GET(req: NextRequest) {
       expiresAtMs: r.expires_at ? Date.parse(r.expires_at) : null,
       nowMs,
     });
-    if (cls === "keep") continue; // terminal 전 — 삭제 금지
+    if (cls === "keep" && r.status !== "archiving") continue; // terminal 전 — 삭제 금지. archiving 중간상태는 반드시 재개.
     const action = resolveCleanupAction({
       cls,
       status: r.status,
@@ -191,36 +248,86 @@ export async function GET(req: NextRequest) {
       // 무인증 접근을 끊는다(status 만 바꾸면 videos/photos public URL 이 만료 후에도 열림 = "나만 보기" 위반).
       // 댓글은 FK CASCADE 라 행 보존만으로 자동 유지. 공개면은 status='active' 만 노출하므로 archived 는 자동 비공개.
       //
-      // 안전 순서(부분실패 내성, 데이터 유실 0 최우선):
-      //   ① public → venue-archive **copy**(검증). 실패 시 이번 실행 skip → 공개 객체·행(active) 보존, 다음 cron 재시도.
-      //   ② DB update(bucket=venue-archive, path 동일 + status=archived + archived_at) CAS. 실패 시 원본 remove 금지(정합 유지).
-      //   ③ 원본 public 객체 **remove**(best-effort). 실패해도 행은 이미 archive 참조 → orphan 스캔이 후속 정리(유실 없음).
-      const copied = await copyRowToArchive(r);
-      if (!copied) {
+      // 안전 상태머신(부분실패·동시전이 내성):
+      //   active: ① byte 검증 copy → ② CAS active→archiving. CAS 0행이면 원본 제거 금지.
+      //   archiving: ③ public remove → ④ CAS archiving→archived + private bucket 전환.
+      // 어느 단계에서 실패해도 archiving이 다음 cron 배치에 다시 들어오므로 공개 원본이 방치되지 않는다.
+      if (r.status === "active") {
+        const copied = await copyRowToArchive(r);
+        if (!copied) {
+          retryLater++;
+          faults++;
+          continue;
+        }
+        const { data: claimed, error: claimErr } = await supabase
+          .from("venue_stories")
+          .update({ status: "archiving", archive_verified_at: nowIso })
+          .eq("id", r.id)
+          .eq("status", "active")
+          .select("id")
+          .maybeSingle();
+        if (claimErr || !claimed) {
+          // CAS 0행 = 동시 active→removed/delete 등. 사본은 남겨도 원본/DB는 절대 건드리지 않는다.
+          retryLater++;
+          if (claimErr) faults++;
+          continue;
+        }
+      } else if (r.status !== "archiving") {
+        // 정책/쿼리 불일치 방어: archive 액션은 active/archiving 외 상태에서 절대 storage를 건드리지 않는다.
         retryLater++;
-        faults++; // copy 실패 — 공개 객체/행(active) 보존, 재시도
+        faults++;
         continue;
       }
-      const { error: updErr } = await supabase
+
+      // migration으로 들어온 legacy archived+public 행은 verified_at이 없다.
+      // 이 경우 public 제거 전에 동일한 byte 검증을 수행하고 CAS로 증거를 기록한다.
+      if (r.status === "archiving" && !r.archive_verified_at) {
+        const copied = await copyRowToArchive(r);
+        if (!copied) {
+          retryLater++;
+          faults++;
+          continue;
+        }
+        const { data: verified, error: verifyErr } = await supabase
+          .from("venue_stories")
+          .update({ archive_verified_at: nowIso })
+          .eq("id", r.id)
+          .eq("status", "archiving")
+          .is("archive_verified_at", null)
+          .select("id")
+          .maybeSingle();
+        if (verifyErr || !verified) {
+          retryLater++;
+          if (verifyErr) faults++;
+          continue;
+        }
+      }
+
+      const publicRemoved = await removePublicRowObjects(r);
+      if (!publicRemoved) {
+        // status=archiving 유지 → 다음 cron에서 다시 제거 시도. archived로 전환하지 않는다.
+        retryLater++;
+        faults++;
+        continue;
+      }
+      const { data: finalized, error: finalizeErr } = await supabase
         .from("venue_stories")
         .update({
           status: "archived",
           archived_at: nowIso,
-          // 버킷만 venue-archive 로 이동(path 동일 key). 객체가 없던 컬럼은 원값 유지.
           media_bucket: r.media_bucket && r.media_path ? VENUE_STORY_ARCHIVE_BUCKET : r.media_bucket,
           thumb_bucket: r.thumb_bucket && r.thumb_path ? VENUE_STORY_ARCHIVE_BUCKET : r.thumb_bucket,
         })
         .eq("id", r.id)
-        .eq("status", r.status); // CAS — 동시 removed/삭제 전이와 경합 방지
-      if (updErr) {
+        .eq("status", "archiving")
+        .select("id")
+        .maybeSingle();
+      if (finalizeErr || !finalized) {
         retryLater++;
-        faults++; // DB update 실패 — 원본 remove 안 함(정합). 다음 실행: copy 는 멱등(이미 존재), update 재시도.
+        faults++;
         continue;
       }
       archived++;
-      // ③ 원본 public 객체 제거. r.*_bucket 은 in-memory 원본(videos/photos) 그대로라 archive 사본은 건드리지 않는다.
-      const removed = await removeRowObjects(r);
-      if (!removed) faults++; // 공개 원본 잔존 — orphan 스캔(96h)이 정리, 데이터 유실 없음
       continue;
     }
     if (action === "force_delete") {

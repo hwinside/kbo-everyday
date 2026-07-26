@@ -4,6 +4,7 @@ import {
   buildDiaryList,
   collectSignPaths,
   encodeDiaryCursor,
+  isDiaryRowStorageSafe,
   paginateDiaryGames,
   parseDiaryCursor,
   pickMediaRef,
@@ -97,7 +98,7 @@ function media(overrides: Partial<VenueStoryMediaRow> = {}): VenueStoryMediaRow 
   const aThumb = pickThumbRef(archived);
   assert.equal(aThumb?.kind, "signed", "archived 사진 썸네일 → signed ref");
   assert.deepEqual(aThumb, { kind: "signed", bucket: VENUE_STORY_ARCHIVE_BUCKET, path: "venue-stories/G/u/a.jpg" });
-  assert.equal(pickMediaRef(archived).kind, "signed", "archived 원본 → signed ref(공개 URL 아님)");
+  assert.equal(pickMediaRef(archived)?.kind, "signed", "archived 원본 → signed ref(공개 URL 아님)");
 
   const archivedVideo = media({
     status: "archived",
@@ -110,6 +111,16 @@ function media(overrides: Partial<VenueStoryMediaRow> = {}): VenueStoryMediaRow 
   });
   const vThumb = pickThumbRef(archivedVideo);
   assert.deepEqual(vThumb, { kind: "signed", bucket: VENUE_STORY_ARCHIVE_BUCKET, path: "venue-stories/G/u/v.jpg" }, "archived 영상 썸네일 → signed");
+
+  const brokenArchived = media({
+    status: "archived",
+    media_bucket: "photos",
+    media_path: "venue-stories/G/u/leaked.jpg",
+    media_url: "https://cdn.example/storage/v1/object/public/photos/leaked.jpg",
+  });
+  assert.equal(pickMediaRef(brokenArchived), null, "archived+public bucket 원본 → fail-closed(null)");
+  assert.equal(pickThumbRef(brokenArchived), null, "archived+public bucket 썸네일 → fail-closed(null)");
+  assert.equal(isDiaryRowStorageSafe(brokenArchived), false, "archived+public bucket invariant 위반");
 }
 
 // 4) 커서 인코딩/파싱 라운드트립
@@ -167,7 +178,18 @@ function fakeListDeps(table: VenueStoryMediaRow[], calls: { userId: string; limi
 // user_id 를 VenueStoryMediaRow 에 부착(테이블 전용 확장)
 type Row = VenueStoryMediaRow & { user_id: string };
 function row(o: Partial<Row> & { id: number; game_id: string; game_date: string; user_id: string }): Row {
-  return { ...media(o), user_id: o.user_id, ...o } as Row;
+  const built = { ...media(o), user_id: o.user_id, ...o } as Row;
+  if (o.status === "archived" && !Object.prototype.hasOwnProperty.call(o, "media_bucket")) {
+    built.media_bucket = VENUE_STORY_ARCHIVE_BUCKET;
+  }
+  if (
+    o.status === "archived" &&
+    built.thumb_path &&
+    !Object.prototype.hasOwnProperty.call(o, "thumb_bucket")
+  ) {
+    built.thumb_bucket = VENUE_STORY_ARCHIVE_BUCKET;
+  }
+  return built;
 }
 
 // ① 미인증 401
@@ -176,6 +198,31 @@ tests.push(async () => {
   ok("① 목록 미인증 401", !res.ok && res.status === 401);
   const dRes = await buildDiaryDetail({} as DiaryDetailDeps, { userId: null, gameId: "G" });
   ok("① 상세 미인증 401", !dRes.ok && dRes.status === 401);
+});
+
+// ⑦-b archived+public bucket은 signed 대체 없이 API 전체가 fail-closed(503)
+tests.push(async () => {
+  const leaked = row({
+    id: 77,
+    game_id: "20260720LEAK",
+    game_date: "2026-07-20",
+    user_id: "me",
+    status: "archived",
+    media_bucket: "videos",
+    media_path: "venue-stories/LEAK/me/v.mp4",
+    media_url: "https://cdn/storage/v1/object/public/videos/v.mp4",
+  });
+  const list = await buildDiaryList(fakeListDeps([leaked]), {
+    userId: "me",
+    season: 2026,
+    cursor: null,
+  });
+  ok("⑦-b 목록 archived+public bucket → 503 fail-closed", !list.ok && list.status === 503);
+  const detail = await buildDiaryDetail(fakeDetailDeps([leaked], []), {
+    userId: "me",
+    gameId: leaked.game_id,
+  });
+  ok("⑦-b 상세 archived+public bucket → 503 fail-closed", !detail.ok && detail.status === 503);
 });
 
 // ②③ 타인 소유행/비다이어리 상태 미노출

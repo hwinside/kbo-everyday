@@ -27,6 +27,37 @@ VALUES (
 )
 ON CONFLICT (id) DO NOTHING;
 
+-- 기존 동명 버킷이 잘못 public=true로 존재해도 반드시 private로 수렴(fail-closed).
+UPDATE storage.buckets
+   SET public = false,
+       file_size_limit = 52428800,
+       allowed_mime_types = ARRAY[
+         'video/mp4', 'video/quicktime', 'video/webm', 'video/x-m4v',
+         'image/jpeg', 'image/png', 'image/webp'
+       ]
+ WHERE id = 'venue-archive';
+
+-- ── archive 이동 중간상태 ───────────────────────────────────────────
+-- copy 검증 후 public remove 전에 `archiving`으로 CAS 전이한다.
+-- public remove/최종 DB update 중간에 실패해도 다음 cleanup이 이 상태를 다시 집어 재개하므로
+-- archived 행이 공개 객체를 장시간 남기거나 CAS 0행에서 타 상태 원본을 지우지 않는다.
+ALTER TABLE venue_stories DROP CONSTRAINT IF EXISTS venue_stories_status_check;
+ALTER TABLE venue_stories
+  ADD COLUMN IF NOT EXISTS archive_verified_at TIMESTAMPTZ;
+ALTER TABLE venue_stories
+  ADD CONSTRAINT venue_stories_status_check
+  CHECK (status IN ('pending', 'active', 'removed', 'cleanup_failed', 'archiving', 'archived'));
+
+-- 과거 코드가 status=archived만 먼저 기록해 public bucket을 참조하게 남긴 행은
+-- 다이어리에서 fail-closed로 숨긴 채 cleanup 상태머신이 private 이동을 재개한다.
+UPDATE venue_stories
+   SET status = 'archiving'
+ WHERE status = 'archived'
+   AND (
+     (media_path IS NOT NULL AND media_bucket IS DISTINCT FROM 'venue-archive')
+     OR (thumb_path IS NOT NULL AND thumb_bucket IS DISTINCT FROM 'venue-archive')
+   );
+
 -- ── storage RLS: 공개 정책 없음 = service_role 전용 ─────────────────
 -- SELECT/INSERT/UPDATE/DELETE 정책을 하나도 만들지 않는다 → authenticated/anon 직접 접근 불가(private).
 -- copy(이동)·remove·signed URL 발급은 전부 service_role(cleanup cron·다이어리 API, RLS bypass)이 수행한다.

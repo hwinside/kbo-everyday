@@ -82,6 +82,19 @@ function isPrivateBucket(bucket: string | null): boolean {
  * private(archived) → signed ref(경로만), public(active) → 저장된 공개 URL. archived 에 공개 URL 을 절대 쓰지 않는다.
  */
 export function pickThumbRef(row: VenueStoryMediaRow): MediaUrlRef | null {
+  if (row.status === "archived") {
+    if (row.thumb_path) {
+      return row.thumb_bucket === VENUE_STORY_ARCHIVE_BUCKET
+        ? { kind: "signed", bucket: row.thumb_bucket, path: row.thumb_path }
+        : null;
+    }
+    if (row.media_type === "image" && row.media_path) {
+      return row.media_bucket === VENUE_STORY_ARCHIVE_BUCKET
+        ? { kind: "signed", bucket: row.media_bucket, path: row.media_path }
+        : null;
+    }
+    return null;
+  }
   if (row.thumb_path && row.thumb_bucket) {
     if (isPrivateBucket(row.thumb_bucket)) {
       return { kind: "signed", bucket: row.thumb_bucket, path: row.thumb_path };
@@ -97,8 +110,13 @@ export function pickThumbRef(row: VenueStoryMediaRow): MediaUrlRef | null {
   return null;
 }
 
-/** 상세 원본 URL ref. private(archived) → signed, 아니면 저장된 공개 URL. */
-export function pickMediaRef(row: VenueStoryMediaRow): MediaUrlRef {
+/** 상세 원본 URL ref. archived+private만 signed, archived+public/missing은 null(fail-closed). */
+export function pickMediaRef(row: VenueStoryMediaRow): MediaUrlRef | null {
+  if (row.status === "archived") {
+    return row.media_bucket === VENUE_STORY_ARCHIVE_BUCKET && row.media_path
+      ? { kind: "signed", bucket: row.media_bucket, path: row.media_path }
+      : null;
+  }
   if (row.media_bucket && row.media_path && isPrivateBucket(row.media_bucket)) {
     return { kind: "signed", bucket: row.media_bucket, path: row.media_path };
   }
@@ -108,10 +126,21 @@ export function pickMediaRef(row: VenueStoryMediaRow): MediaUrlRef {
 /** 상세 썸네일 URL ref(없으면 null). private → signed, 아니면 공개 URL. */
 export function pickDetailThumbRef(row: VenueStoryMediaRow): MediaUrlRef | null {
   if (!row.thumb_path || !row.thumb_bucket) return null;
+  if (row.status === "archived" && row.thumb_bucket !== VENUE_STORY_ARCHIVE_BUCKET) {
+    return null;
+  }
   if (isPrivateBucket(row.thumb_bucket)) {
     return { kind: "signed", bucket: row.thumb_bucket, path: row.thumb_path };
   }
   return row.thumb_url ? { kind: "public", url: row.thumb_url } : null;
+}
+
+/** archived 행은 모든 존재 객체가 private archive bucket을 가리켜야만 응답 가능하다. */
+export function isDiaryRowStorageSafe(row: VenueStoryMediaRow): boolean {
+  if (row.status !== "archived") return true;
+  if (!row.media_path || row.media_bucket !== VENUE_STORY_ARCHIVE_BUCKET) return false;
+  if (row.thumb_path && row.thumb_bucket !== VENUE_STORY_ARCHIVE_BUCKET) return false;
+  return true;
 }
 
 // ── 목록 모드(경기 단위 keyset) ────────────────────────────────────────
@@ -307,12 +336,14 @@ export interface DiaryMediaItem {
 }
 
 /** 상세 미디어 ref 변환(created_at ASC 정렬 입력 가정 — 캐러셀 정순). */
-export function buildDiaryMediaRefItem(row: VenueStoryMediaRow): DiaryMediaItemRef {
+export function buildDiaryMediaRefItem(row: VenueStoryMediaRow): DiaryMediaItemRef | null {
+  const mediaRef = pickMediaRef(row);
+  if (!mediaRef) return null;
   return {
     id: row.id,
     gameId: row.game_id,
     mediaType: row.media_type,
-    mediaRef: pickMediaRef(row),
+    mediaRef,
     thumbRef: pickDetailThumbRef(row),
     caption: row.caption,
     venueVerified: row.venue_verified ?? false,
@@ -400,13 +431,18 @@ export async function buildDiaryList(
     limit: VENUE_DIARY_LIST_ROW_FETCH,
   });
   if (rows == null) return { ok: false, status: 500, body: { error: "미디어 조회 실패" } };
+  if (rows.some((row) => !isDiaryRowStorageSafe(row))) {
+    return { ok: false, status: 503, body: { error: "미디어 보관 처리 중" } };
+  }
 
   const { games: refGames, nextCursor, hasMore } = paginateDiaryGames(rows);
   const signPaths = collectSignPaths(refGames);
   let signed = new Map<string, string>();
   if (signPaths.length > 0) {
     const result = await deps.signArchiveUrls(signPaths);
-    if (result == null) return { ok: false, status: 500, body: { error: "미디어 조회 실패" } };
+    if (result == null || signPaths.some((path) => !result.has(path))) {
+      return { ok: false, status: 500, body: { error: "미디어 조회 실패" } };
+    }
     signed = result;
   }
   const games = materializeGames(refGames, signed);
@@ -446,12 +482,19 @@ export async function buildDiaryDetail(
     limit: VENUE_DIARY_MEDIA_PER_GAME_CAP,
   });
   if (rows == null) return { ok: false, status: 500, body: { error: "미디어 조회 실패" } };
+  if (rows.some((row) => !isDiaryRowStorageSafe(row))) {
+    return { ok: false, status: 503, body: { error: "미디어 보관 처리 중" } };
+  }
 
   const refItems = rows.map(buildDiaryMediaRefItem);
+  if (refItems.some((item) => item == null)) {
+    return { ok: false, status: 503, body: { error: "미디어 보관 처리 중" } };
+  }
+  const safeRefItems = refItems as DiaryMediaItemRef[];
 
   // story별 bounded 댓글(각 story 최신 100개 + total) — 전역 limit 500 이 특정 story 를 굶기던 문제 제거(Blocker 2).
   const blocks: { rowsDesc: DiaryCommentRow[]; total: number }[] = [];
-  for (const it of refItems) {
+  for (const it of safeRefItems) {
     const block = await deps.fetchStoryComments({
       storyId: it.id,
       limit: VENUE_DIARY_COMMENT_LIST_LIMIT,
@@ -465,15 +508,17 @@ export async function buildDiaryDetail(
   if (authorFor == null) return { ok: false, status: 500, body: { error: "댓글 조회 실패" } };
 
   // archive signed URL(원본+썸네일)
-  const signPaths = collectDetailSignPaths(refItems);
+  const signPaths = collectDetailSignPaths(safeRefItems);
   let signed = new Map<string, string>();
   if (signPaths.length > 0) {
     const result = await deps.signArchiveUrls(signPaths);
-    if (result == null) return { ok: false, status: 500, body: { error: "미디어 조회 실패" } };
+    if (result == null || signPaths.some((path) => !result.has(path))) {
+      return { ok: false, status: 500, body: { error: "미디어 조회 실패" } };
+    }
     signed = result;
   }
 
-  const media: DiaryMediaItem[] = refItems.map((it, i) => ({
+  const media: DiaryMediaItem[] = safeRefItems.map((it, i) => ({
     id: it.id,
     gameId: it.gameId,
     mediaType: it.mediaType,

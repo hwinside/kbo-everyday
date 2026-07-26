@@ -38,9 +38,10 @@ async function signArchiveUrls(paths: string[]): Promise<Map<string, string> | n
   if (error || !data) return null;
   const map = new Map<string, string>();
   for (const row of data) {
-    if (!row.error && row.path && row.signedUrl) map.set(row.path, row.signedUrl);
+    if (row.error || !row.path || !row.signedUrl) return null;
+    map.set(row.path, row.signedUrl);
   }
-  return map;
+  return map.size === new Set(paths).size ? map : null;
 }
 
 /** 조회한 유저 id 집합으로 profiles 를 한 번에 로드해 authorFor 클로저를 만든다. */

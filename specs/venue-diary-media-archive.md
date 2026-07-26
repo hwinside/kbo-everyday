@@ -14,7 +14,8 @@
 ## 2. 확정 정책 (삼순 GO)
 
 ### 2.1 보관 전환 (정상 만료)
-- `classifyCleanupRow` → `expired_after_end`(종료 확정 + 종료+24h 경과) 행은 **삭제하지 않고 `status='archived'`로 전환**.
+- `classifyCleanupRow` → `expired_after_end`(종료 확정 + 종료+24h 경과) 행은 **삭제하지 않고 private archive로 이동 후 `status='archived'`로 전환**.
+- 이동은 `copy byte 검증 → archive_verified_at 기록 + CAS active→archiving → public remove → CAS archiving→archived` 상태머신이다. 중간 실패는 `archiving`으로 다음 cron에서 재개하고, CAS 0행이면 원본을 제거하지 않는다. legacy archived+public 행도 verified_at이 없으면 재검증 전에는 public 객체를 제거하지 않는다.
 - storage 원본(media/thumb) **보존**. 댓글은 `venue_story_comments` FK `ON DELETE CASCADE`라 **행을 지우지 않으면 자동 보존**.
 - 공개면(경기별 트레이/뷰어)은 `status='active'`만 노출 → archived는 공개에서 자동 제외 = "하루 뒤 비공개" 유지.
 
@@ -51,9 +52,9 @@
 ## 4. 데이터 모델 변경
 
 ```sql
--- venue_stories.status: 'archived' 추가
+-- venue_stories.status: 'archiving', 'archived' 추가
 ALTER TABLE venue_stories DROP CONSTRAINT ... ; -- status check 재정의
---   CHECK (status IN ('pending','active','removed','cleanup_failed','archived'))
+--   CHECK (status IN ('pending','active','removed','cleanup_failed','archiving','archived'))
 ALTER TABLE venue_stories
   ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ,   -- 공개 종료→보관 전환 시각
   ADD COLUMN IF NOT EXISTS removed_at TIMESTAMPTZ,         -- removed 격리 시작 시각(30일 TTL)
@@ -68,7 +69,7 @@ CREATE INDEX IF NOT EXISTS idx_venue_stories_diary
 ## 5. 슬라이스 계획 (얇은 수직, 각 슬라이스 = 삼순 리뷰 게이트)
 
 - **S1 (백엔드 보관 전환)**: migration(status archived·archived_at·removed_at·cleanup_failed_at·index) + cleanup route 수정(`expired_after_end`→archived 전환, `removed` 30일 격리, removed 출신 `cleanup_failed` 30일·영구실패 TTL 삭제, 출신불명 cleanup_failed·stale_cap 배치 제외·별도 count 관제) + expiry-policy 분류 확장 + 순수함수 회귀 테스트. **공개면 무변경**(active만 노출이라 자동). **orphan은 §2.2의 96시간·참조 0·오류 fail-closed 조건 아래 기존 즉시삭제 유지**(격리·재처리는 별도 슬라이스). DB 변경이라 삼순 리뷰 + 하린아빠 머지 승인 필수.
-- **S2 (다이어리 미디어 API)**: `/api/me/venue-attendance` 응답에 경기별 내 미디어(archived+active) 배열 추가 or 신규 `/api/me/venue-diary/media`. 본인 검증·signed URL·경기별 그룹.
+- **S2 (다이어리 미디어 API + private 이동 보강)**: 신규 `/api/me/venue-diary/media`. 본인 검증, 경기 keyset/정확 count, story별 댓글 상한+total. archived 객체는 private `venue-archive`만 허용하고 짧은 signed URL로 제공한다. archived+public bucket은 503 fail-closed. cleanup은 `archiving` 중간상태로 private 이동을 멱등 재개한다.
 - **S3 (UI 목록)**: `VenueDiaryCard`에 보조 지표·`🔒 나만 보기` 1회·경기 row 썸네일 6+N.
 - **S4 (UI 상세 캐러셀 + 삭제)**: 캐러셀 뷰어(순번/스와이프/도트) + `⋯` 본인 삭제 + 읽기전용 댓글.
 - **S5 (비용 가드/관제)**: 월별 저장량·증가율·임계 알림 훅.

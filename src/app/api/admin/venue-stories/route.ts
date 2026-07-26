@@ -61,13 +61,19 @@ export async function POST(req: NextRequest) {
   if (!Number.isInteger(storyId)) {
     return NextResponse.json({ error: "잘못된 id" }, { status: 400 });
   }
-  const { error } = await supabase
+  const { data: removed, error } = await supabase
     .from("venue_stories")
     // removed_at 기록 → cleanup 이 removed_at 기준 30일 격리 후 삭제(오신고 복구 여지).
     .update({ status: "removed", removed_at: new Date().toISOString() })
-    .eq("id", storyId);
+    .eq("id", storyId)
+    .in("status", ["active", "pending"])
+    .select("id")
+    .maybeSingle();
   if (error) {
     return NextResponse.json({ error: "처리 실패" }, { status: 500 });
+  }
+  if (!removed) {
+    return NextResponse.json({ error: "보관 처리 중이거나 이미 내려간 스토리입니다" }, { status: 409 });
   }
   return NextResponse.json({ success: true });
 }

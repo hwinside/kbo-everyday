@@ -42,14 +42,14 @@ export const VENUE_STORY_CLEANUP_FAILED_TTL_DAYS = 7;
 
 /** cleanup 행에 실제로 취할 액션. classifyCleanupRow 결과를 소비해 결정한다. */
 export type CleanupAction =
-  | "archive" // 정상 만료 active → status='archived'(storage/댓글 보존, 다이어리 보관)
+  | "archive" // 정상 만료 active 또는 중간상태 archiving → private 이동 상태머신 진행
   | "delete" // storage 제거 후 행 삭제(성공 시). 정상만료 미검증 누수방지 / 격리 30일 경과 removed / cleanup_failed removed출신 재시도. 실패 시 cleanup_failed 로 남겨 재시도
   | "force_delete" // 영구실패 TTL(cleanup_failed_at+7일) 경과 → storage remove 성공 여부와 무관하게 행 강제 삭제(무한 재시도 중단)
   | "quarantine_keep"; // 미노출 격리 유지 — 이번엔 아무 것도 안 함(removed 30일 미만 / stale_cap / archived / cleanup_failed 출신 불명)
 
 /**
  * cleanup 대상 행에 취할 액션 결정(순수 정책, 스펙 §2.2 승인 계약).
- *  - expired_after_end + active → archive (보관). active 외(pending 등 미검증)는 delete(누수 방지).
+ *  - expired_after_end + active/archiving → archive (보관 상태머신). pending 등 미검증은 delete(누수 방지).
  *  - stale_cap → quarantine_keep (finalize 장애 = 즉시삭제 금지, 격리 유지 + 관제(5xx)). ※route 가 stale_cap 을 별도 카운트해 5xx.
  *  - flagged(cleanup_failed) → removed_at 존재 시에만 removed 출신으로 확정해 30일·TTL 후 삭제.
  *      removed_at null은 active/pending 어느 출신인지 복원할 수 없으므로 자동 archive/delete 금지, 격리+관제.
@@ -67,9 +67,12 @@ export function resolveCleanupAction(opts: {
   nowMs: number;
 }): CleanupAction {
   const { cls, status, removedAtMs, cleanupFailedAtMs, nowMs } = opts;
+  if (status === "archiving") return "archive";
   // 보관된 행은 어떤 분류든 삭제 금지(방어). 다이어리 보관 원본을 cleanup 이 지우면 안 된다.
   if (status === "archived") return "quarantine_keep";
-  if (cls === "expired_after_end") return status === "active" ? "archive" : "delete";
+  if (cls === "expired_after_end") {
+    return status === "active" || status === "archiving" ? "archive" : "delete";
+  }
   if (cls === "stale_cap") return "quarantine_keep"; // 장애 → 즉시삭제 금지, 격리 + 관제(route 5xx)
   if (cls === "flagged") {
     if (status === "cleanup_failed") {
@@ -119,7 +122,8 @@ function resolveCleanupFailedAction(opts: {
  * 이유(삼순 blocker 1): no-op 될 행(30일 미만·미상 removed, stale_cap, archived)이
  * `id ASC → limit 500` 배치를 점유하면 뒤의 archive/삭제 대상이 영구 starvation 된다. 그래서
  * 조회 단계에서 실행 가능 행만 뽑는다.
- *  - active/pending 이며 expires_at 경과 이고 **game_ended_at 확정**(종료 확정) → 정상 만료 archive 후보.
+ *  - active/pending 이며 expires_at 경과 이고 **game_ended_at 확정**(종료 확정) → 정상 만료 후보.
+ *  - archiving → 이전 실행 중간실패 복구 후보(반드시 다시 선택).
  *      ※ game_ended_at NULL(=stale_cap, finalize 장애 안전상한 도달)은 quarantine_keep no-op 이므로 배치에서 제외
  *      (삼순 blocker 1: 저-id stale_cap 500이 limit 을 점유해 뒤 archive/removed 가 굶는 starvation). stale_cap 은 route 가 별도 count 로 관제.
  *  - cleanup_failed 는 removed_at 이 30일 경과한 removed 출신만 삭제 재시도 대상.
@@ -135,6 +139,7 @@ export function isCleanupActionable(opts: {
   nowMs: number;
 }): boolean {
   const { status, expiresAtMs, gameEndedAtMs, removedAtMs, nowMs } = opts;
+  if (status === "archiving") return true;
   if (
     (status === "active" || status === "pending") &&
     expiresAtMs != null &&

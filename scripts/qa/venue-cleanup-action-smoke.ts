@@ -142,6 +142,10 @@ console.log("[cleanup_failed → removed출신 TTL 삭제 / 출신불명 격리]
 
 console.log("[archived 안전장치 — cleanup 이 절대 삭제 금지]");
 {
+  ok(
+    "archiving 중간상태 → archive 상태머신 재개",
+    resolveCleanupAction({ cls: "keep", status: "archiving", removedAtMs: null, gameEndedAtMs: null, cleanupFailedAtMs: null, nowMs: T0 }) === "archive",
+  );
   // 방어: 어떤 분류로 들어와도 status='archived' 면 quarantine_keep(삭제 금지).
   ok(
     "archived + expired_after_end 분류여도 → quarantine_keep (다이어리 영구 보관 보호)",
@@ -209,6 +213,10 @@ console.log("[isCleanupActionable — 조회(WHERE) 경계 = starvation 방지(�
   ok(
     "archived → 조회 제외(보관 완료, 재-archive 금지)",
     isCleanupActionable({ status: "archived", expiresAtMs: now - H, gameEndedAtMs: now - 25 * H, removedAtMs: null, nowMs: now }) === false,
+  );
+  ok(
+    "archiving → 만료값과 무관하게 조회(중간실패 재개)",
+    isCleanupActionable({ status: "archiving", expiresAtMs: null, gameEndedAtMs: null, removedAtMs: null, nowMs: now }) === true,
   );
 
   // 핵심 반례: 저-id stale_cap 500 + 출신불명 cleanup_failed 500 + 격리 removed 500 + 실행가능 후보 3.
