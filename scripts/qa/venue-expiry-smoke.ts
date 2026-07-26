@@ -11,8 +11,6 @@ import {
   finalizedExpiryIso,
   safetyCapExpiryIso,
   classifyCleanupRow,
-  cleanupCandidateFilter,
-  shouldPhysicallyDeleteCleanupRow,
 } from "../../src/lib/venue-stories/expiry-policy";
 import {
   VENUE_STORY_EXPIRY_HOURS_AFTER_END,
@@ -73,49 +71,47 @@ ok(
   "종료 확정 + 종료+24h 경과 → expired_after_end(정상 만료)",
   classifyCleanupRow({ status: "active", gameEndedAt: new Date(T0).toISOString(), expiresAtMs: T0 + 24 * H, nowMs: T0 + 24 * H + 1 }) === "expired_after_end",
 );
-ok("정상 만료 → 물리삭제 금지", shouldPhysicallyDeleteCleanupRow("expired_after_end") === false);
-ok("운영/신고 제재 → 물리삭제 유지", shouldPhysicallyDeleteCleanupRow("flagged") === true);
-ok("안전상한 장애 정리 → 물리삭제 유지", shouldPhysicallyDeleteCleanupRow("stale_cap") === true);
 {
+  // S1(#869): 만료 scan 은 archived 를 제외하고 active/pending 만료 + removed/cleanup_failed 만 후보로 조회하며
+  // id 오름차순→500 제한 순서로 결정적 배치한다(archived 누적 starvation 방지, 삼순 #868 하드닝).
   const nowIso = new Date(T0).toISOString();
-  ok(
-    "cleanup 조회는 정상 만료를 제외하고 flagged/stale_cap만 선택",
-    cleanupCandidateFilter(nowIso)
-      === `status.in.(removed,cleanup_failed),and(game_ended_at.is.null,expires_at.lte.${nowIso})`,
-  );
   const route = readFileSync(
     resolve(__dirname, "../../src/app/api/cron/venue-stories-cleanup/route.ts"),
     "utf-8",
   );
-  const filterAt = route.indexOf(".or(cleanupCandidateFilter(nowIso))");
+  const filterAt = route.indexOf(
+    ".or(`and(expires_at.lte.${nowIso},status.in.(active,pending)),status.in.(removed,cleanup_failed)`)",
+  );
   const orderAt = route.indexOf('.order("id", { ascending: true })', filterAt);
   const limitAt = route.indexOf(".limit(500)", orderAt);
   ok(
-    "route는 정상 만료 제외 필터→id 정렬→500 제한 순서로 조회(starvation 방지)",
+    "route는 active/pending 만료+removed/cleanup_failed 필터→id 정렬→500 제한 순서로 조회(starvation 방지)",
     filterAt >= 0 && orderAt > filterAt && limitAt > orderAt,
   );
-  const preserved = Array.from({ length: 500 }, (_, index) => ({
+  // 보관 전환된 archived 행은 scan 에서 제외되어 removed/cleanup_failed 삭제 대상을 굴리지 않음.
+  const archivedPool = Array.from({ length: 500 }, (_, index) => ({
     id: index + 1,
-    status: "active",
+    status: "archived",
     gameEndedAt: nowIso,
     expiresAtMs: T0 - 1,
   }));
-  const deletionTargets = [
-    { id: 501, status: "removed", gameEndedAt: nowIso, expiresAtMs: T0 + H },
-    { id: 502, status: "cleanup_failed", gameEndedAt: null, expiresAtMs: null },
-    { id: 503, status: "active", gameEndedAt: null, expiresAtMs: T0 - 1 },
+  const scanTargets = [
+    { id: 501, status: "active", gameEndedAt: nowIso, expiresAtMs: T0 - 1 }, // → archive
+    { id: 502, status: "removed", gameEndedAt: nowIso, expiresAtMs: T0 + H }, // → delete/격리
+    { id: 503, status: "cleanup_failed", gameEndedAt: null, expiresAtMs: null }, // → delete 재시도
   ];
-  const selected = [...preserved, ...deletionTargets]
+  const selected = [...archivedPool, ...scanTargets]
     .filter((row) => (
       row.status === "removed"
       || row.status === "cleanup_failed"
-      || (row.gameEndedAt == null && row.expiresAtMs != null && row.expiresAtMs <= T0)
+      || ((row.status === "active" || row.status === "pending")
+        && row.expiresAtMs != null && row.expiresAtMs <= T0)
     ))
     .sort((a, b) => a.id - b.id)
     .slice(0, 500)
     .map((row) => row.id);
   ok(
-    "보존 정상만료 500건이 removed/cleanup_failed/stale_cap 선택을 막지 않음",
+    "archived 500건이 scan 에서 제외돼 active(archive)/removed/cleanup_failed 선택을 막지 않음",
     selected.join(",") === "501,502,503",
   );
 }

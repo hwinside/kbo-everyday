@@ -114,6 +114,7 @@
     "qa:venue-safe-area": "tsx scripts/qa/venue-safe-area-inset-smoke.ts",
     "qa:ios-venue-compress": "node scripts/qa/browserstack-ios-venue-compress.mjs",
     "qa:venue-expiry": "tsx scripts/qa/venue-expiry-smoke.ts",
+    "qa:venue-cleanup-action": "tsx scripts/qa/venue-cleanup-action-smoke.ts",
     "qa:venue-cleanup-keyset": "tsx scripts/qa/venue-cleanup-keyset-smoke.ts",
     "qa:venue-auth-consent": "tsx scripts/qa/venue-auth-consent-smoke.ts",
     "qa:venue-transcode-worker": "tsx scripts/qa/venue-transcode-worker-smoke.ts",

@@ -63,7 +63,8 @@ export async function POST(req: NextRequest) {
   }
   const { error } = await supabase
     .from("venue_stories")
-    .update({ status: "removed" })
+    // removed_at 기록 → cleanup 이 removed_at 기준 30일 격리 후 삭제(오신고 복구 여지).
+    .update({ status: "removed", removed_at: new Date().toISOString() })
     .eq("id", storyId);
   if (error) {
     return NextResponse.json({ error: "처리 실패" }, { status: 500 });

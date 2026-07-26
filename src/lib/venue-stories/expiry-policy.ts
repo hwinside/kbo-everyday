@@ -33,14 +33,46 @@ export type CleanupRowClass =
   | "stale_cap" // 종료 미확정인데 안전상한(시작+72h) 도달 — 장애 정책 삭제 + 관제
   | "keep"; // terminal 전 + 상한 미도달 — 삭제 금지
 
-/** 정상 만료는 공개만 종료하고, 물리삭제는 운영/장애 정리 대상에만 허용한다. */
-export function shouldPhysicallyDeleteCleanupRow(cls: CleanupRowClass): boolean {
-  return cls === "flagged" || cls === "stale_cap";
-}
+// removed(신고 임계/어드민) 격리 기간 — 이 기간 경과 후에만 영구삭제(오신고 복구 여지).
+export const VENUE_STORY_REMOVED_QUARANTINE_DAYS = 30;
 
-/** 보존 정상만료 행이 limit을 점유하지 않도록 물리삭제 후보만 조회한다. */
-export function cleanupCandidateFilter(nowIso: string): string {
-  return `status.in.(removed,cleanup_failed),and(game_ended_at.is.null,expires_at.lte.${nowIso})`;
+/** cleanup 행에 실제로 취할 액션. classifyCleanupRow 결과를 소비해 결정한다. */
+export type CleanupAction =
+  | "archive" // 정상 만료 → 삭제 대신 status='archived'(storage/댓글 보존, 다이어리 보관)
+  | "delete" // storage+행 삭제(장애 누수 방지 / 격리 만료 removed / 검증실패 등)
+  | "quarantine_keep"; // 미노출 격리 유지 — 이번엔 아무 것도 안 함(removed 30일 미만 등)
+
+/**
+ * cleanup 대상 행에 취할 액션 결정(순수 정책, 스펙 §2).
+ *  - expired_after_end + active → archive (보관). active 외(pending 등 미검증)는 delete(누수 방지, 기존 동작).
+ *  - stale_cap → delete (finalize 장애 누수 방지 + 관제, S1 기존 동작 유지).
+ *  - flagged(cleanup_failed) → delete (storage 삭제 재시도, 기존 동작).
+ *      TODO(S 후속): 장애건 소유불명·영구실패 판정 후 TTL 삭제 고도화.
+ *  - flagged(removed) → removed_at 기준 30일 경과 시 delete, 아니면 quarantine_keep.
+ *      removed_at null(레거시/검증실패 removed) 은 격리 대상 아님 → delete(기존 즉시 정리 유지).
+ *  - archived → quarantine_keep (보관된 행은 cleanup 이 절대 삭제하지 않는다 — 다이어리 영구 보관 안전장치).
+ */
+export function resolveCleanupAction(opts: {
+  cls: CleanupRowClass;
+  status: string;
+  removedAtMs: number | null;
+  nowMs: number;
+}): CleanupAction {
+  const { cls, status, removedAtMs, nowMs } = opts;
+  // 보관된 행은 어떤 분류든 삭제 금지(방어). 다이어리 보관 원본을 cleanup 이 지우면 안 된다.
+  if (status === "archived") return "quarantine_keep";
+  if (cls === "expired_after_end") return status === "active" ? "archive" : "delete";
+  if (cls === "stale_cap") return "delete";
+  if (cls === "flagged") {
+    if (status === "cleanup_failed") return "delete"; // storage 삭제 재시도(기존 동작)
+    if (status === "removed") {
+      // removed_at 미상 = 격리 대상 아님(레거시/검증실패) → 기존처럼 즉시 삭제.
+      if (removedAtMs == null || !Number.isFinite(removedAtMs)) return "delete";
+      const ageMs = nowMs - removedAtMs;
+      return ageMs >= VENUE_STORY_REMOVED_QUARANTINE_DAYS * 86400_000 ? "delete" : "quarantine_keep";
+    }
+  }
+  return "quarantine_keep"; // keep 등 그 외 — 아무 것도 안 함(route 에서 keep 은 이미 skip).
 }
 
 /**
