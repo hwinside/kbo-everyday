@@ -33,6 +33,10 @@ const hub = 'https://hub-cloud.browserstack.com/wd/hub';
 const auth = `Basic ${Buffer.from(`${username}:${accessKey}`).toString('base64')}`;
 const qaUrl = process.env.QA_URL
   || 'https://kbo-everyday-git-feat-venue-story-comments-hwinsides-projects.vercel.app/games/20260502NCLG0?storyQaKeyboard=1';
+const reportedQaUrl = qaUrl.replace(
+  /([?&]x-vercel-protection-bypass=)[^&]+/,
+  '$1[REDACTED]',
+);
 
 async function wd(method, route, body, sessionId) {
   const res = await fetch(`${hub}${sessionId ? `/session/${sessionId}` : ''}${route}`, {
@@ -53,15 +57,27 @@ async function wd(method, route, body, sessionId) {
 const METRICS_SCRIPT = `
   const composer = document.querySelector('[data-composer="venue-story"]');
   const viewer = document.querySelector('[data-venue-story-viewer]');
+  const overlay = document.querySelector('[data-venue-story-comment-overlay]');
   const input = composer ? composer.querySelector('input') : null;
   const rect = (el) => el ? JSON.parse(JSON.stringify(el.getBoundingClientRect())) : null;
+  const composerRect = rect(composer);
+  const hit = composerRect
+    ? document.elementFromPoint(
+        composerRect.left + composerRect.width / 2,
+        composerRect.top + composerRect.height / 2,
+      )
+    : null;
   return {
     ua: navigator.userAgent,
     hasComposer: Boolean(composer),
     inputFocused: Boolean(input && document.activeElement === input),
     inputValue: input ? input.value : null,
-    composer: rect(composer),
+    composer: composerRect,
     viewer: rect(viewer),
+    overlayOnBody: Boolean(overlay && overlay.parentElement === document.body),
+    viewerZIndex: viewer ? Number(getComputedStyle(viewer).zIndex) : null,
+    overlayZIndex: overlay ? Number(getComputedStyle(overlay).zIndex) : null,
+    composerHit: Boolean(hit && composer && composer.contains(hit)),
     innerHeight: window.innerHeight,
     scrollY: window.scrollY,
     pageYOffset: window.pageYOffset,
@@ -130,6 +146,7 @@ async function main() {
     capabilities: {
       alwaysMatch: {
         browserName: 'safari',
+        'appium:nativeWebTap': true,
         'bstack:options': {
           projectName: 'kbo-everyday',
           buildName: `venue-story-comments-keyboard-${new Date().toISOString().slice(0, 10)}`,
@@ -204,10 +221,11 @@ async function main() {
     await new Promise((r) => setTimeout(r, 1200));
     const typed = await metrics(sessionId);
 
-    // 3) keyboard-open native drag — JS scrollBy 가 아니라 실기기 touch drag 로 뷰어를
-    // 끌어도 viewer rect·raw document scroll 4종·root lock 이 그대로인지 검증한다.
+    // 3) keyboard-open native scroll — JS scrollBy 가 아니라 댓글 목록을 실기기 touch로
+    // 위쪽 스크롤한다. 아래쪽 80px+ drag는 제품의 의도된 sheet-close gesture라 QA에 쓰면 안 된다.
+    // 스크롤 뒤에도 viewer rect·raw document scroll 4종·root lock 이 그대로인지 검증한다.
     const beforeDrag = typed;
-    await drag(sessionId, 180, 360, 590);
+    await drag(sessionId, 180, 590, 360);
     await new Promise((r) => setTimeout(r, 1200));
     const afterDrag = await metrics(sessionId);
 
@@ -242,10 +260,24 @@ async function main() {
     const pngPath = path.join(outDir, 'browserstack-ios-story-comments-keyboard.png');
     await writeFile(pngPath, Buffer.from(shot, 'base64'));
 
-    const result = { qaUrl, pngPath, idle, focused, typed, beforeDrag, afterDrag, submitted, blurred };
+    const result = {
+      qaUrl: reportedQaUrl,
+      pngPath,
+      idle,
+      focused,
+      typed,
+      beforeDrag,
+      afterDrag,
+      submitted,
+      blurred,
+    };
     console.log(JSON.stringify(result, null, 2));
 
     const pass = idle.hasComposer
+      // body sibling stacking: overlay가 viewer보다 위이며 컴포저 중앙 hit target을 실제 소유
+      && idle.overlayOnBody
+      && idle.overlayZIndex > idle.viewerZIndex
+      && idle.composerHit
       // focus: 키보드 frame(시각 뷰포트 축소) + 입력바가 키보드 위에 노출 + 실제 포커스
       && focused.inputFocused && kbOpen(focused) && composerFlushWithKeyboard(focused)
       && sameRootAndViewer(idle, focused)

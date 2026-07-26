@@ -637,17 +637,26 @@ export default function VenueStoryViewer({
       {/* 댓글 모달(바텀시트) — 커뮤니티 댓글 모달(CommentSheet)과 동일한 디자인·키보드 회피 구조(하린아빠 7/25 지시).
           ⚠️ position:fixed 로 뷰포트에 직접 앵커(과거 absolute-in-fixed 는 iOS 에서 키보드 회피가 어긋나 입력창이
           키보드 뒤로 가렸다 — 하린아빠 iOS 리포트). bottom=kbInset 로 컴포저를 키보드 위로 올리고, 포커스 시
-          height=vvHeight 로 확장해 목록+컴포저가 키보드 위에 함께 보인다. 배경/영상은 뷰어 root scroll lock 으로 잠금. */}
-      {commentsOpen && (
-        <motion.div
-          className="fixed inset-0 z-30 bg-black/60"
+          height=vvHeight 로 확장해 목록+컴포저가 키보드 위에 함께 보인다. 배경/영상은 뷰어 root scroll lock 으로 잠금.
+          ⚠️⚠️ 이 시트는 뷰어 motion.div(framer-motion opacity/exit + AnimatePresence) 서브트리 밖, document.body 로
+          직접 포털한다. 뷰어 컨테이너가 만드는 containing block/트랜스폼 컨텍스트 안에 position:fixed 시트가 갇히면
+          iOS 실기기에서 키보드가 뜰 때 bottom=kbInset 이 시각 뷰포트가 아니라 갇힌 조상 기준으로 잡혀 컴포저/목록이
+          키보드 뒤로 사라진다(#863 BrowserStack Safari 는 통과했으나 실기기 재현 — 하린아빠 iOS 리포트 7/26).
+          정상 동작하는 커뮤니티 CommentSheet 와 동일하게 body 포털로 escape 한다.
+          body sibling 이 된 뒤에는 뷰어 root(z-120)보다 반드시 위여야 하므로 overlay tier를 z-130으로 둔다.
+          댓글이 열린 동안 뷰어 내부 메뉴/토스트(z-30/40)는 의도적으로 댓글 overlay 아래에 잠긴다. */}
+      {commentsOpen &&
+        createPortal(
+          <motion.div
+          data-venue-story-comment-overlay
+          className="fixed inset-0 z-[130] bg-black/60"
           initial={{ opacity: 0 }}
           animate={{ opacity: commentsClosing ? 0 : 1 }}
           transition={{ duration: 0.2 }}
           onClick={requestCommentsClose}
         >
           <motion.div
-            className="fixed inset-x-0 z-30 flex flex-col bg-bg-secondary rounded-t-2xl overflow-hidden"
+            className="fixed inset-x-0 z-[1] flex flex-col bg-bg-secondary rounded-t-2xl overflow-hidden"
             style={{
               bottom: kbInset,
               height:
@@ -792,8 +801,9 @@ export default function VenueStoryViewer({
               </div>
             </div>
           </motion.div>
-        </motion.div>
-      )}
+          </motion.div>,
+          document.body,
+        )}
 
       {/* 액션 시트 */}
       {menuOpen && (
