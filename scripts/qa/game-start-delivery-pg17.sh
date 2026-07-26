@@ -429,4 +429,22 @@ FAIR_CLAIM=$("${PSQL[@]}" -c "SELECT count(*) FROM claim_player_highlight_tokens
   '30000000-0000-0000-0000-000000000012',20,500)")
 [ "$FAIR_CLAIM" = "1" ] || { echo "FAIL: eligible 51st snapshot claim=$FAIR_CLAIM" >&2; exit 1; }
 
+# audience timeout incomplete 50개도 durable attempt rotation 뒤 51번째 recovery를 가리지 않는다.
+"${PSQL[@]}" <<SQL >/dev/null
+INSERT INTO player_highlight_event_snapshots
+  (event_id,game_id,player_id,pref_key,start_team_ids,push_title,push_body,push_url,
+   snapshot_completed,deadline_at,created_at)
+SELECT
+  'incomplete-'||lpad(n::text,2,'0'),'$HIGHLIGHT_GAME','12345','fav_player_highlight',
+  ARRAY[1,2],'incomplete','incomplete','/games/$HIGHLIGHT_GAME',
+  false,now()+interval '30 minutes',now()-interval '10 minutes'
+FROM generate_series(1,51) n;
+SQL
+INCOMPLETE_FIRST=$("${PSQL[@]}" -c "SELECT count(*) FROM list_due_player_highlight_snapshots(50) WHERE event_id LIKE 'incomplete-%'")
+INCOMPLETE_51=$("${PSQL[@]}" -c "SELECT count(*) FROM list_due_player_highlight_snapshots(50) WHERE event_id='incomplete-51'")
+[ "$INCOMPLETE_FIRST" = "50" ] && [ "$INCOMPLETE_51" = "1" ] || {
+  echo "FAIL: incomplete round-robin first=$INCOMPLETE_FIRST recoverable51=$INCOMPLETE_51" >&2
+  exit 1
+}
+
 echo "PASS PG17 start/highlight ledgers: fair due drain, bounded source-independent retries, token fences"

@@ -12,6 +12,7 @@ import type { GameEvent, GameEventType } from "@/types/game-events";
 import {
   drainDueHighlightSnapshots,
   mapHighlightSettlements,
+  persistHighlightSnapshotBeforeAudience,
   shouldProcessHighlightEvent,
   type ClaimedHighlightToken,
 } from "@/lib/notifications/player-highlight-delivery";
@@ -223,34 +224,14 @@ export async function notifyPlayerHighlights(
       const dedupId = isStrikeout ? `${ev.id}#fav-so` : `${ev.id}#fav`;
       if (phantom === "suppress") continue;
 
-      // query-guard: bounded -- player highlight event PK 단일행 조회. freshness는 신규 snapshot에만
-      // 적용하고 기존 frozen snapshot은 10분 source-event cutoff 이후에도 deadline까지 drain한다.
-      const { data: existingSnapshot, error: snapshotError } = await supabase
-        .from("player_highlight_event_snapshots")
-        .select("snapshot_completed")
-        .eq("event_id", dedupId)
-        .maybeSingle();
-      if (snapshotError) continue;
-      const hasFrozenSnapshot = existingSnapshot != null;
-      const snapshotCompleted = Boolean(existingSnapshot?.snapshot_completed);
+      // 기존 frozen snapshot은 아래 source-independent due drain이 담당한다. live source에서는
+      // 신규 freshness만 판정해 과거 history를 새 durable row로 만들지 않는다.
       if (!shouldProcessHighlightEvent({
         eventAtMs: evMs,
         nowMs: Date.now(),
         freshnessMs: FRESH_MS,
-        hasFrozenSnapshot,
+        hasFrozenSnapshot: false,
       })) continue;
-
-      // 이 선수를 최애선수로 둔 유저 (favorite_players: [{playerId: kboId}])
-      let userIds: string[] = [];
-      if (!snapshotCompleted) {
-        try {
-          userIds = await fetchFavoritePlayerFanIds(resolved.kboId, {
-            deadlineAtMs: opts?.deadlineAtMs,
-          });
-        } catch {
-          continue;
-        }
-      }
       // 타점(detail.rbi)이 있으면 "{라벨}{으로/로} N타점 획득!", 0타점이면 "{라벨}!" (하린아빠 확정)
       const label = HIGHLIGHT_LABEL[ev.type] ?? "활약";
       // 홈런/장타가 교차폴링으로 자기 rbi 0이면 유령 단타의 타점을 물려받아 "홈런으로 N타점"으로 합침.
@@ -269,7 +250,7 @@ export async function notifyPlayerHighlights(
       // 올스타전 알림은 [올스타전] 태그 prefix (하린아빠 지시 2026-07-11).
       const title = isAllStar ? `[올스타전] ${baseTitle}` : baseTitle;
       const prefKey = isStrikeout ? "fav_player_strikeout" : "fav_player_highlight";
-      highlighted += await drainHighlightSnapshot({
+      const snapshot: DurableHighlightSnapshot = {
         eventId: dedupId,
         gameId,
         playerId: resolved.kboId,
@@ -278,8 +259,38 @@ export async function notifyPlayerHighlights(
         title,
         body: `${away} vs ${home}`,
         url,
-        snapshotCompleted,
-      }, userIds, startAcceptedBeforeMs, opts?.deadlineAtMs);
+        snapshotCompleted: false,
+      };
+      // 마지막 live play가 이 tick 직후 final로 source에서 사라져도 복구할 수 있도록
+      // audience lookup보다 payload snapshot을 먼저 durable upsert한다. fan 조회와 claim은
+      // 아래 due 단일 경로에서 snapshot별 deadline으로만 실행한다.
+      const persisted = await persistHighlightSnapshotBeforeAudience({
+        snapshot,
+        deadlineAtMs: opts?.deadlineAtMs,
+        persist: async (fresh, signal) => {
+          const { error } = await supabase
+            .from("player_highlight_event_snapshots")
+            .upsert({
+              event_id: fresh.eventId,
+              game_id: fresh.gameId,
+              player_id: fresh.playerId,
+              pref_key: fresh.prefKey,
+              start_team_ids: fresh.startTeamIds,
+              push_title: fresh.title,
+              push_body: fresh.body,
+              push_url: fresh.url,
+              snapshot_completed: false,
+            }, {
+              onConflict: "event_id",
+              ignoreDuplicates: true,
+            })
+            .abortSignal(signal);
+          if (error) throw new Error(`highlight snapshot persist: ${error.message}`);
+        },
+      });
+      if (!persisted) {
+        throw new Error(`highlight snapshot persist deadline: ${dedupId}`);
+      }
     }
   }
 

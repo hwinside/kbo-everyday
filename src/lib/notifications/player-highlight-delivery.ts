@@ -78,3 +78,31 @@ export async function drainDueHighlightSnapshots<T>(params: {
   }
   return accepted;
 }
+
+export async function persistHighlightSnapshotBeforeAudience<T>(params: {
+  snapshot: T;
+  persist: (snapshot: T, signal: AbortSignal) => PromiseLike<void>;
+  deadlineAtMs?: number;
+  timeoutMs?: number;
+}): Promise<boolean> {
+  const persistenceDeadlineAtMs = Math.min(
+    params.deadlineAtMs ?? Number.POSITIVE_INFINITY,
+    Date.now() + (params.timeoutMs ?? 3_000),
+  );
+  const controller = new AbortController();
+  const abortTimer = setTimeout(
+    () => controller.abort(),
+    Math.max(0, persistenceDeadlineAtMs - Date.now()),
+  );
+  try {
+    await runBeforeDeadline(
+      () => params.persist(params.snapshot, controller.signal),
+      persistenceDeadlineAtMs,
+    );
+    return true;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(abortTimer);
+  }
+}

@@ -9,6 +9,7 @@ import {
 import {
   drainDueHighlightSnapshots,
   mapHighlightSettlements,
+  persistHighlightSnapshotBeforeAudience,
   shouldProcessHighlightEvent,
 } from "../../src/lib/notifications/player-highlight-delivery";
 
@@ -246,6 +247,56 @@ test("첫 due fan query hang을 bounded timeout으로 격리하고 다음 snapsh
   });
   assert.equal(accepted, 1);
   assert.deepEqual(drained, ["next"]);
+});
+
+test("마지막 live play는 fan lookup 전에 durable 저장되어 final 이후 due resume", async () => {
+  const due: Array<{ id: string; snapshotCompleted: boolean }> = [];
+  const snapshot = { id: "last-play", snapshotCompleted: false };
+  const persisted = await persistHighlightSnapshotBeforeAudience({
+    snapshot,
+    persist: async (row) => {
+      due.push(row);
+    },
+    timeoutMs: 10,
+  });
+  assert.equal(persisted, true);
+
+  const firstDrain = await drainDueHighlightSnapshots({
+    snapshots: due,
+    needsAudience: (row) => !row.snapshotCompleted,
+    fetchAudience: async () => new Promise<string[]>(() => {}),
+    drain: async () => {
+      assert.fail("fan lookup이 hang이면 snapshot을 완료하면 안 됨");
+    },
+    audienceTimeoutMs: 10,
+  });
+  assert.equal(firstDrain, 0);
+  assert.deepEqual(due, [snapshot], "eventsByGame이 비어도 durable due row가 남아야 함");
+
+  const resumed = await drainDueHighlightSnapshots({
+    snapshots: due,
+    needsAudience: (row) => !row.snapshotCompleted,
+    fetchAudience: async () => ["fan-1"],
+    drain: async (row, userIds) => {
+      assert.deepEqual(userIds, ["fan-1"]);
+      row.snapshotCompleted = true;
+      return 1;
+    },
+  });
+  assert.equal(resumed, 1);
+  assert.equal(due[0]?.snapshotCompleted, true);
+});
+
+test("live source는 snapshot persist 후 due 단일 fan 경로로 수렴", () => {
+  const persistAt = highlightSource.indexOf(".upsert({");
+  const dueAt = highlightSource.indexOf('"list_due_player_highlight_snapshots"');
+  const fanAt = highlightSource.indexOf("fetchFavoritePlayerFanIds(");
+  assert.ok(persistAt >= 0 && persistAt < dueAt && dueAt < fanAt);
+  assert.doesNotMatch(highlightSource.slice(0, dueAt), /fetchFavoritePlayerFanIds\(/);
+  assert.match(migration, /audience_attempts integer not null default 0/);
+  assert.match(migration, /audience_next_attempt_at timestamptz not null default now\(\)/);
+  assert.match(migration, /order by s\.snapshot_completed desc,\s*s\.audience_attempts/);
+  assert.match(migration, /audience_next_attempt_at = now\(\) \+ interval '45 seconds'/);
 });
 
 test("highlight 10분 freshness는 신규 snapshot만 차단하고 frozen retry는 11분 gap 뒤에도 drain", () => {

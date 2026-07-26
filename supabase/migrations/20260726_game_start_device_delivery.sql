@@ -86,6 +86,8 @@ create table if not exists player_highlight_event_snapshots (
   push_body text not null,
   push_url text not null,
   snapshot_completed boolean not null default false,
+  audience_attempts integer not null default 0,
+  audience_next_attempt_at timestamptz not null default now(),
   deadline_at timestamptz not null default (now() + interval '30 minutes'),
   created_at timestamptz not null default now(),
   completed_at timestamptz
@@ -615,6 +617,67 @@ begin
      and n.status in ('waiting', 'leased', 'transient');
 
   return query
+  with selected as materialized (
+    select
+      s.event_id,
+      s.game_id,
+      s.player_id,
+      s.pref_key,
+      s.start_team_ids,
+      s.push_title,
+      s.push_body,
+      s.push_url,
+      s.snapshot_completed,
+      s.audience_attempts,
+      s.created_at
+    from player_highlight_event_snapshots s
+    where s.deadline_at > now()
+      and (
+        (
+          not s.snapshot_completed
+          and s.audience_next_attempt_at <= now()
+        )
+        or exists (
+          select 1
+          from notified_player_highlight_tokens n
+          join device_push_tokens d
+            on d.id = n.token_id
+           and encode(extensions.digest(d.fcm_token, 'sha256'), 'hex') = n.token_hash
+          where n.event_id = s.event_id
+            and (
+              n.status in ('waiting', 'transient')
+              or (n.status = 'leased' and n.lease_until < now())
+            )
+            and n.next_attempt_at <= now()
+            and (
+              not n.start_required
+              or exists (
+                select 1
+                from game_start_delivery_ledger l
+                where l.game_id = s.game_id
+                  and l.token_id = n.token_id
+                  and l.token_hash = n.token_hash
+                  and l.status = 'accepted'
+                  and l.fcm_accepted_at < p_start_accepted_before
+              )
+            )
+        )
+      )
+    -- completed+claimable work outranks incomplete recovery. Incomplete audience failures
+    -- rotate durably by attempts, so the same 50 rows cannot hide a recoverable 51st forever.
+    order by s.snapshot_completed desc, s.audience_attempts, s.created_at, s.event_id
+    for update of s skip locked
+    limit greatest(1, least(p_limit, 50))
+  ),
+  bumped as (
+    update player_highlight_event_snapshots s
+       set audience_attempts = s.audience_attempts + 1,
+           audience_next_attempt_at = now() + interval '45 seconds'
+      from selected x
+     where s.event_id = x.event_id
+       and not x.snapshot_completed
+    returning s.event_id
+  )
   select
     s.event_id,
     s.game_id,
@@ -625,40 +688,9 @@ begin
     s.push_body,
     s.push_url,
     s.snapshot_completed
-  from player_highlight_event_snapshots s
-  where s.deadline_at > now()
-    and (
-      not s.snapshot_completed
-      or exists (
-        select 1
-        from notified_player_highlight_tokens n
-        join device_push_tokens d
-          on d.id = n.token_id
-         and encode(extensions.digest(d.fcm_token, 'sha256'), 'hex') = n.token_hash
-        where n.event_id = s.event_id
-          and (
-            n.status in ('waiting', 'transient')
-            or (n.status = 'leased' and n.lease_until < now())
-          )
-          and n.next_attempt_at <= now()
-          and (
-            not n.start_required
-            or exists (
-              select 1
-              from game_start_delivery_ledger l
-              where l.game_id = s.game_id
-                and l.token_id = n.token_id
-                and l.token_hash = n.token_hash
-                and l.status = 'accepted'
-                and l.fcm_accepted_at < p_start_accepted_before
-            )
-          )
-      )
-    )
-  -- completed+claimable work outranks incomplete recovery. start-blocked/deleted credentials
-  -- do not occupy the bounded page and starve a later deliverable snapshot.
-  order by s.snapshot_completed desc, s.created_at, s.event_id
-  limit greatest(1, least(p_limit, 50));
+  from selected s
+  left join bumped b on b.event_id = s.event_id
+  order by s.snapshot_completed desc, s.audience_attempts, s.created_at, s.event_id;
 end;
 $$;
 
