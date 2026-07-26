@@ -51,8 +51,14 @@ try {
     check(`${tag} S 채움 2`, await current.locator('[data-qa="count-s"] [data-filled="true"]').count() === 2);
     check(`${tag} O 도트 2칸`, await current.locator('[data-qa="count-o"] [data-filled]').count() === 2);
     check(`${tag} O 채움 1`, await current.locator('[data-qa="count-o"] [data-filled="true"]').count() === 1);
+    check(
+      `${tag} B/S/O 순서`,
+      await current.locator('[data-qa="count-badge"] > span').evaluateAll((nodes) =>
+        nodes.map((node) => node.getAttribute("data-qa")).join(",") === "count-b,count-s,count-o"),
+    );
 
     const completed = page.locator('[data-qa="completed-at-bat"]').first();
+    check(`${tag} 지난 타석 타순 표시`, await completed.locator('[data-qa="completed-bat-order"]').innerText() === "1번");
     check(`${tag} 이전 타석 기본 접힘`, await completed.locator('[data-qa^="live-pitch-"]').count() === 0);
     await completed.locator("button").click();
     check(`${tag} 이전 타석 탭 펼침`, await completed.locator('[data-qa^="live-pitch-"]').count() === 3);

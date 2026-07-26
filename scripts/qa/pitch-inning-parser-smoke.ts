@@ -45,6 +45,21 @@ function parse(chronological: NaverTextRelay[]) {
 }
 
 const inningHeader: NaverTextRelay = { title: "3회말 KIA 공격", titleStyle: "0" };
+const batterRecord = (name: string, batOrder: number) => ({
+  name,
+  batOrder,
+  ab: 0,
+  hit: 0,
+  hr: 0,
+  bb: 0,
+  so: 0,
+  rbi: 0,
+  run: 0,
+  pa: 0,
+  todayHra: 0,
+  seasonHra: 0,
+  posName: "대타",
+});
 
 // ── T1: malformed terminal 뒤 정상 타석 오염 방지 (핵심 blocker) ──
 // A 타석: type:8 소개 → 투구 2개 → terminal 이 malformed(구분자 없음) → continue.
@@ -239,6 +254,7 @@ const inningHeader: NaverTextRelay = { title: "3회말 KIA 공격", titleStyle: 
   ]);
   check("T6 완료 후 currentAtBat 제거", innings[0]?.currentAtBat == null, JSON.stringify(innings[0]?.currentAtBat));
   check("T6 완료 타석 pitches 단일 귀속", innings[0]?.plays[0]?.pitches?.length === 1, JSON.stringify(innings[0]?.plays));
+  check("T6 완료 타석 타순 유지", innings[0]?.plays[0]?.batOrder === 5, JSON.stringify(innings[0]?.plays[0]));
 }
 
 // ── T7: 새 type:8 경계가 진행 중 타석 identity/pitches 를 함께 교체 ──
@@ -257,14 +273,60 @@ const inningHeader: NaverTextRelay = { title: "3회말 KIA 공격", titleStyle: 
       title: "대타 김현수",
       titleStyle: "8",
       textOptions: [
-        { seqno: 3, type: 8, text: "대타 김현수" },
+        { seqno: 3, type: 8, text: "대타 김현수", batterRecord: batterRecord("김현수", 6) },
         { seqno: 4, type: 1, text: "1구 볼", pitchNum: 1, stuff: "포크", speed: "132" },
       ],
     },
   ]);
   const current = innings[0]?.currentAtBat;
   check("T7 새 타자 identity로 교체", current?.batterName === "김현수", JSON.stringify(current));
+  check("T7 대타가 원 batting-order slot 유지", current?.batOrder === 6, JSON.stringify(current));
   check("T7 앞 타석 투구 미오염", current?.pitches.length === 1 && current.pitches[0]?.stuff === "포크", JSON.stringify(current?.pitches));
+}
+
+// ── T8: 타순 미확정/비정상 값은 직전 타순을 오염시키지 않고 숨김 ──
+{
+  const innings = parse([
+    inningHeader,
+    {
+      title: "9번타자 박해민",
+      titleStyle: "8",
+      textOptions: [
+        { seqno: 1, type: 8, text: "9번타자 박해민" },
+        { seqno: 2, type: 1, text: "1구 파울", pitchNum: 1, stuff: "직구", speed: "146" },
+      ],
+    },
+    {
+      title: "대타 미확정선수",
+      titleStyle: "8",
+      textOptions: [
+        { seqno: 3, type: 8, text: "대타 미확정선수", batterRecord: batterRecord("미확정선수", 10) },
+        { seqno: 4, type: 1, text: "1구 볼", pitchNum: 1, stuff: "커브", speed: "121" },
+      ],
+    },
+  ]);
+  const current = innings[0]?.currentAtBat;
+  check("T8 타순 미확정 타자 identity 유지", current?.batterName === "미확정선수", JSON.stringify(current));
+  check("T8 비정상 타순 숨김", current?.batOrder == null, JSON.stringify(current));
+}
+
+// ── T9: 대타 완료 타석도 교체된 batting-order slot 유지 ──
+{
+  const innings = parse([
+    inningHeader,
+    {
+      title: "대타 이천웅",
+      titleStyle: "8",
+      textOptions: [
+        { seqno: 1, type: 8, text: "대타 이천웅", batterRecord: batterRecord("이천웅", 7) },
+        { seqno: 2, type: 1, text: "1구 타격", pitchNum: 1, stuff: "직구", speed: "145" },
+        { seqno: 3, type: 13, text: "이천웅 : 중견수 앞 1루타" },
+      ],
+    },
+  ]);
+  const play = innings[0]?.plays[0];
+  check("T9 대타 완료 타석 identity 유지", play?.batterName === "이천웅", JSON.stringify(play));
+  check("T9 대타 완료 타석 slot 유지", play?.batOrder === 7, JSON.stringify(play));
 }
 
 console.log(`\npitch-inning-parser-smoke: ${pass} passed, ${fail} failed`);
