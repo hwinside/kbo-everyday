@@ -33,6 +33,9 @@ export const VENUE_STORY_EXPIRY_HOURS_AFTER_END = 24; // 종료 확정 후 만�
 // 통과 시에만 공개 videos 버킷으로 승격(원본 즉시 공개) → 720p 는 백그라운드 교체.
 export const VENUE_STORY_STAGING_BUCKET = "venue-staging";
 export const VENUE_STORY_PUBLIC_VIDEO_BUCKET = "videos";
+// private archive 버킷(다이어리 보관본). archived 전환 시 원본/썸네일을 여기로 이동하고,
+// 다이어리 API 는 본인 인증 후 짧은 signed URL 만 발급한다(공개 URL 미노출). migration 20260727.
+export const VENUE_STORY_ARCHIVE_BUCKET = "venue-archive";
 
 export type VenueStoryMediaType = "video" | "image";
 

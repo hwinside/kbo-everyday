@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import {
+  VENUE_STORY_ARCHIVE_BUCKET,
   VENUE_STORY_SAFETY_CAP_HOURS_AFTER_START,
   VENUE_STORY_STAGING_BUCKET,
 } from "@/lib/venue-stories/types";
@@ -54,6 +55,37 @@ interface Row {
   media_path: string | null;
   thumb_bucket: string | null;
   thumb_path: string | null;
+}
+
+/**
+ * 한 객체를 public 버킷(videos/photos)에서 private venue-archive 버킷으로 copy(같은 key).
+ * 이미 대상에 존재하면(이전 부분 실행 잔여) 성공으로 간주 = 멱등(원본 remove 전에 copy 성공을 반드시 검증).
+ */
+async function ensureCopiedToArchive(bucket: string, path: string): Promise<boolean> {
+  const { error } = await supabase.storage
+    .from(bucket)
+    .copy(path, path, { destinationBucket: VENUE_STORY_ARCHIVE_BUCKET });
+  if (!error) return true;
+  // copy 실패 — 이전 부분 실행에서 이미 복사됐을 수 있어 대상 존재를 확인(멱등). 없으면 진짜 실패(false).
+  const slash = path.lastIndexOf("/");
+  const dir = slash >= 0 ? path.slice(0, slash) : "";
+  const name = slash >= 0 ? path.slice(slash + 1) : path;
+  // query-guard: bounded-page -- 단일 객체 존재 확인(search=name, limit 1)
+  const { data } = await supabase.storage
+    .from(VENUE_STORY_ARCHIVE_BUCKET)
+    .list(dir, { limit: 1, search: name });
+  return !!data?.some((o) => o.name === name);
+}
+
+/** 행의 media/thumb 객체를 venue-archive 로 copy(검증). 존재하는 객체 전부 성공 시 true. */
+async function copyRowToArchive(r: Row): Promise<boolean> {
+  if (r.media_bucket && r.media_path) {
+    if (!(await ensureCopiedToArchive(r.media_bucket, r.media_path))) return false;
+  }
+  if (r.thumb_bucket && r.thumb_path) {
+    if (!(await ensureCopiedToArchive(r.thumb_bucket, r.thumb_path))) return false;
+  }
+  return true;
 }
 
 /** 한 행의 storage 오브젝트 제거. 전부 성공 시 true. */
@@ -155,19 +187,40 @@ export async function GET(req: NextRequest) {
     // stale_cap 관제는 배치와 분리(아래 별도 count) — stale_cap active/pending 는 이제 조회에서 제외되어 여기 오지 않는다.
     if (action === "quarantine_keep") continue; // 방어: 배치 필터 밖 no-op/archived — 미노출 격리 유지, 삭제 안 함
     if (action === "archive") {
-      // 보관 전환: storage 원본/댓글(FK CASCADE) 보존, 행만 status='archived' + archived_at.
-      // 공개면은 status='active' 만 노출하므로 archived 는 자동 비공개(=하루 뒤 종료 유지).
+      // 보관 전환(A안, 삼순 Blocker 1): archived 는 private venue-archive 버킷으로 **이동**해 공개 URL
+      // 무인증 접근을 끊는다(status 만 바꾸면 videos/photos public URL 이 만료 후에도 열림 = "나만 보기" 위반).
+      // 댓글은 FK CASCADE 라 행 보존만으로 자동 유지. 공개면은 status='active' 만 노출하므로 archived 는 자동 비공개.
+      //
+      // 안전 순서(부분실패 내성, 데이터 유실 0 최우선):
+      //   ① public → venue-archive **copy**(검증). 실패 시 이번 실행 skip → 공개 객체·행(active) 보존, 다음 cron 재시도.
+      //   ② DB update(bucket=venue-archive, path 동일 + status=archived + archived_at) CAS. 실패 시 원본 remove 금지(정합 유지).
+      //   ③ 원본 public 객체 **remove**(best-effort). 실패해도 행은 이미 archive 참조 → orphan 스캔이 후속 정리(유실 없음).
+      const copied = await copyRowToArchive(r);
+      if (!copied) {
+        retryLater++;
+        faults++; // copy 실패 — 공개 객체/행(active) 보존, 재시도
+        continue;
+      }
       const { error: updErr } = await supabase
         .from("venue_stories")
-        .update({ status: "archived", archived_at: nowIso })
+        .update({
+          status: "archived",
+          archived_at: nowIso,
+          // 버킷만 venue-archive 로 이동(path 동일 key). 객체가 없던 컬럼은 원값 유지.
+          media_bucket: r.media_bucket && r.media_path ? VENUE_STORY_ARCHIVE_BUCKET : r.media_bucket,
+          thumb_bucket: r.thumb_bucket && r.thumb_path ? VENUE_STORY_ARCHIVE_BUCKET : r.thumb_bucket,
+        })
         .eq("id", r.id)
         .eq("status", r.status); // CAS — 동시 removed/삭제 전이와 경합 방지
       if (updErr) {
         retryLater++;
-        faults++; // 상태갱신 실패 — 다음 실행 재시도 + 관제
-      } else {
-        archived++;
+        faults++; // DB update 실패 — 원본 remove 안 함(정합). 다음 실행: copy 는 멱등(이미 존재), update 재시도.
+        continue;
       }
+      archived++;
+      // ③ 원본 public 객체 제거. r.*_bucket 은 in-memory 원본(videos/photos) 그대로라 archive 사본은 건드리지 않는다.
+      const removed = await removeRowObjects(r);
+      if (!removed) faults++; // 공개 원본 잔존 — orphan 스캔(96h)이 정리, 데이터 유실 없음
       continue;
     }
     if (action === "force_delete") {
