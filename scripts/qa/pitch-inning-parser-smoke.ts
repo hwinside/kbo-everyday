@@ -186,6 +186,104 @@ const inningHeader: NaverTextRelay = { title: "3회말 KIA 공격", titleStyle: 
   check("T4 빈 batter 앞 타석 투구 미오염 (오지환 pitches=1)", oh?.pitches?.length === 1, JSON.stringify(oh?.pitches?.map((p) => p.num)));
 }
 
+// ── T5: 진행 중 타석(terminal 없이 투구만 누적) → in-progress play 로 노출 ──
+// 마지막 타석이 type:8 소개 + 투구 2개 뒤 terminal 없이 스트림 종료(라이브 현재 타석).
+// parseInningRelays 는 이 타석을 inProgress:true 로 마지막 이닝에 노출해야 한다.
+{
+  const relaysLive: NaverTextRelay[] = [
+    inningHeader,
+    {
+      title: "1번타자 최원준",
+      titleStyle: "8",
+      textOptions: [
+        { seqno: 1, type: 8, text: "1번타자 최원준", batterRecord: { name: "최원준" } as never },
+        { seqno: 2, type: 1, text: "1구 헛스윙", pitchNum: 1, stuff: "직구", speed: "149", currentGameState: { ball: "0", strike: "1", out: "0" } },
+        { seqno: 3, type: 1, text: "2구 볼", pitchNum: 2, stuff: "슬라이더", speed: "136", currentGameState: { ball: "1", strike: "1", out: "0" } },
+        // terminal 없음 — 현재 진행 중 타석.
+      ],
+    },
+  ];
+  const innings = parse(relaysLive);
+  const plays = innings[innings.length - 1]?.plays ?? [];
+  const live = plays.find((p) => p.inProgress);
+  check("T5 진행 중 타석 in-progress 노출", !!live && live.batterName === "최원준", JSON.stringify(plays.map((p) => ({ n: p.batterName, ip: p.inProgress }))));
+  check("T5 진행 중 타석 투구 2구 누적", live?.pitches?.length === 2, `pitches=${live?.pitches?.length}`);
+  check(
+    "T5 진행 중 타석 마지막 투구 볼카운트 스냅샷(1-1)",
+    live?.pitches?.[1]?.count?.ball === 1 && live?.pitches?.[1]?.count?.strike === 1,
+    JSON.stringify(live?.pitches?.[1]?.count),
+  );
+}
+
+// ── T6: 완료 타석(terminal 소비) 뒤엔 in-progress 잔여 없음 ──
+{
+  const relaysDone: NaverTextRelay[] = [
+    inningHeader,
+    {
+      title: "2번타자 김도영",
+      titleStyle: "8",
+      textOptions: [
+        { seqno: 1, type: 8, text: "2번타자 김도영", batterRecord: { name: "김도영" } as never },
+        { seqno: 2, type: 1, text: "1구 타격", pitchNum: 1, stuff: "포크", speed: "132", currentGameState: { ball: "0", strike: "0", out: "0" } },
+        { seqno: 3, type: 13, text: "김도영 : 중견수 앞 안타" },
+      ],
+    },
+  ];
+  const innings = parse(relaysDone);
+  const plays = innings[innings.length - 1]?.plays ?? [];
+  check("T6 완료 타석 뒤 in-progress 잔여 0", plays.every((p) => !p.inProgress), JSON.stringify(plays.map((p) => p.inProgress)));
+  check("T6 완료 타석은 정상 result 유지", plays[0]?.result === "중견수 앞 안타", plays[0]?.result);
+}
+
+// ── T7: 이닝 헤더가 pending 리셋 → 앞 이닝 잔여가 다음 이닝 in-progress 로 새지 않음 ──
+{
+  const relaysCross: NaverTextRelay[] = [
+    { title: "1회초 LG 공격", titleStyle: "0" },
+    {
+      title: "9번타자 박동원",
+      titleStyle: "8",
+      textOptions: [
+        { seqno: 1, type: 8, text: "9번타자 박동원", batterRecord: { name: "박동원" } as never },
+        { seqno: 2, type: 1, text: "1구 볼", pitchNum: 1, stuff: "직구", speed: "148", currentGameState: { ball: "1", strike: "0", out: "0" } },
+        // terminal 없이 이닝 종료(스키마 변형) → 다음 이닝 헤더가 리셋해야.
+      ],
+    },
+    { title: "1회말 KIA 공격", titleStyle: "0" },
+    {
+      title: "1번타자 최원준",
+      titleStyle: "8",
+      textOptions: [
+        { seqno: 3, type: 8, text: "1번타자 최원준", batterRecord: { name: "최원준" } as never },
+        { seqno: 4, type: 1, text: "1구 헛스윙", pitchNum: 1, stuff: "슬라이더", speed: "137", currentGameState: { ball: "0", strike: "1", out: "0" } },
+      ],
+    },
+  ];
+  const innings = parse(relaysCross);
+  const last = innings[innings.length - 1];
+  const live = last?.plays.find((p) => p.inProgress);
+  check("T7 마지막 이닝 in-progress 는 현재 이닝 타자(최원준)", live?.batterName === "최원준", JSON.stringify(innings.map((i) => ({ inn: i.inning, half: i.half, live: i.plays.filter((p) => p.inProgress).map((p) => p.batterName) }))));
+  const firstInnLive = innings[0]?.plays.some((p) => p.inProgress);
+  check("T7 앞 이닝(박동원)은 in-progress 로 새지 않음", firstInnLive === false, `firstInnLive=${firstInnLive}`);
+}
+
+// ── T8: 새 타자 소개 직후 투구 0구면 in-progress 미노출(다음 폴링 대기) ──
+{
+  const relaysZero: NaverTextRelay[] = [
+    inningHeader,
+    {
+      title: "3번타자 나성범",
+      titleStyle: "8",
+      textOptions: [
+        { seqno: 1, type: 8, text: "3번타자 나성범", batterRecord: { name: "나성범" } as never },
+        // 아직 투구 없음(방금 타석 진입).
+      ],
+    },
+  ];
+  const innings = parse(relaysZero);
+  const plays = innings[innings.length - 1]?.plays ?? [];
+  check("T8 0구 진입 타석은 in-progress 미노출", plays.every((p) => !p.inProgress) && plays.length === 0, JSON.stringify(plays.map((p) => p.batterName)));
+}
+
 console.log(`\npitch-inning-parser-smoke: ${pass} passed, ${fail} failed`);
 if (fail > 0) process.exit(1);
 }

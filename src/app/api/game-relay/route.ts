@@ -24,6 +24,11 @@ export interface PlayEvent {
   extras?: string[];
   /** 이 타석의 투구 시퀀스 (구종·구속·결과). 구형 경기/누락 시 생략. */
   pitches?: PitchDetail[];
+  /**
+   * 진행 중인 타석(terminal 미도달) 마커. true면 result 는 placeholder이고
+   * 문자중계에서 현재 타석으로 볼카운트·투구가 실시간 누적된다. 종료 경기엔 없음.
+   */
+  inProgress?: boolean;
 }
 
 export interface InningRelay {
@@ -269,10 +274,14 @@ export function parseInningRelays(textRelays: NaverTextRelay[]): InningRelay[] {
   // 확정 타석에 붙인다(삼순 pendingAtBat 요구). 같은 relay.textOptions 안이든 여러 relay에
   // 걸쳐 오든 동일하게 동작. 이닝 경계·결과 확정 시 비운다.
   let pendingPitches: PitchDetail[] = [];
+  // 진행 중인 타자 이름(type:8 마커의 batterRecord.name). terminal(13/23)에서 비운다.
+  // 루프 끝에 이 값과 pendingPitches 가 남아 있으면 = 미종료 현재 타석 → in-progress play 로 노출.
+  let pendingBatter: string | null = null;
 
   for (const relay of chronological) {
     if (relay.titleStyle === "0") {
       pendingPitches = [];
+      pendingBatter = null;
       // Inning header: "1회초 LG 공격"
       const match = relay.title.match(/(\d+)회(초|말)\s*(.+?)\s*공격/);
       if (match) {
@@ -307,6 +316,9 @@ export function parseInningRelays(textRelays: NaverTextRelay[]): InningRelay[] {
         // 타석에 붙는 오염을 막기 위해 fail-closed reset 한다. terminal 소비 경로와
         // 함께 타석 경계에서 pendingPitches 잔류를 0으로 만드는 두 번째 방어선.
         pendingPitches = [];
+        // 새 타석 마커의 batterRecord.name 이 있으면 현재 타자로 기록(대타·대주자 밀종 안전).
+        // 이름이 없으면 in-progress 를 만들지 않기 위해 null 로 둔다(fail-safe).
+        pendingBatter = opt.batterRecord?.name?.trim() || null;
       } else if (opt.type === 13 || opt.type === 23) {
         // At-bat result: "홍창기 : 우익수 앞 1루타"
         // type 13 = 일반 타석 결과, type 23 = 희생플라이/아웃/볼넷 등
@@ -316,6 +328,7 @@ export function parseInningRelays(textRelays: NaverTextRelay[]): InningRelay[] {
         // 섞이는 오염이 난다(삼순 리뷰 blocker).
         const consumedPitches = pendingPitches;
         pendingPitches = [];
+        pendingBatter = null;
 
         const parts = opt.text.split(" : ");
         if (parts.length < 2) continue;
@@ -333,6 +346,8 @@ export function parseInningRelays(textRelays: NaverTextRelay[]): InningRelay[] {
         if (consumedPitches.length > 0) play.pitches = consumedPitches;
         current.plays.push(play);
       } else if (opt.type === 1) {
+        // 투구 1개 생기면 현재 타자가 확정(type:8 누락 변종 대비) — 타자명 생기면 이어받지 않음.
+        // (parseNaverPitch 는 타자명을 안 줌 → pendingBatter 가 SSOT. 없으면 pitch만 누적.)
         // 투구 1개 — 네이버 어댑터로 격리 파싱. 최소 정보(text)조차 없으면 null → skip.
         const pitch = parseNaverPitch(opt);
         if (pitch) pendingPitches.push(pitch);
@@ -354,6 +369,20 @@ export function parseInningRelays(textRelays: NaverTextRelay[]): InningRelay[] {
         }
       }
     }
+  }
+
+  // 루프 종료 시점에 미종료 타석(terminal 없이 투구만 눈 현재 타석)이 남아 있으면
+  // 마지막 이닝의 진행 중 타석으로 노출한다(문자중계 라이브 피드). 타자명과 투구가
+  // 둘 다 있을 때만 — 0구 진입(방금 타석 진입, 투구 전)은 다음 폴링에서 보이므로 생략.
+  // terminal 이 pendingBatter·pendingPitches 를 둘 다 비우므로 완료 타석은 절대 여기 안 걸린다.
+  if (current && pendingBatter && pendingPitches.length > 0) {
+    current.plays.push({
+      batterName: pendingBatter,
+      result: "타석 진행 중",
+      type: "other",
+      pitches: pendingPitches,
+      inProgress: true,
+    });
   }
 
   return innings;

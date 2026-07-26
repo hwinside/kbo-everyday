@@ -401,7 +401,13 @@ function LiveView({ gameId, homeTeamId, awayTeamId, gameEvents, gameRelay }: {
                 {latestInning.plays.length > 0 && (
                   <div className="px-4 pb-2 space-y-1.5">
                     {latestInning.plays.map((play, idx) => (
-                      <RelayPlayLine key={`${inningKey}-${idx}`} play={play} />
+                      <RelayPlayLine
+                        key={`${inningKey}-${idx}`}
+                        play={play}
+                        // 현재 이닝 최신 타석(마지막)은 구종·구속을 자동으로 펼쳐 라이브 체감↑.
+                        // 진행 중 타석(inProgress)은 RelayPlayLine 내부에서 항상 자동 펼침.
+                        defaultExpanded={idx === latestInning.plays.length - 1}
+                      />
                     ))}
                   </div>
                 )}

@@ -6,7 +6,7 @@ import { ChevronDown } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import type { TeamData } from "@/lib/constants/teams";
 import type { InningRelay, PlayEvent } from "@/lib/hooks/useGameRelay";
-import type { PitchDetail } from "@/lib/game/pitch-provider";
+import PitchSequence from "@/components/game/PitchSequence";
 
 /**
  * relay 이닝별 타석 카드 (실시간 + 종료경기 공용).
@@ -54,51 +54,6 @@ function countScoring(plays: PlayEvent[]): number {
     }
   }
   return scores;
-}
-
-/** 구질 카테고리 → 배지 색. text 기반 파생(kind)이라 원문 code 의미 불안정과 무관. */
-function pitchKindClass(kind: PitchDetail["kind"]): string {
-  switch (kind) {
-    case "strike":
-      return "bg-red-500/15 text-red-400";
-    case "ball":
-      return "bg-emerald-500/15 text-emerald-400";
-    case "foul":
-      return "bg-bg-tertiary text-text-tertiary";
-    case "inplay":
-      return "bg-accent/15 text-accent";
-    default:
-      return "bg-bg-tertiary text-text-secondary";
-  }
-}
-
-/** 타석 투구 시퀀스 — 구종·구속·결과 pill. 소스 무관(PitchDetail[]). */
-function PitchSequence({ pitches }: { pitches: PitchDetail[] }) {
-  return (
-    <div className="mt-1 mb-1 ml-5 flex flex-col gap-1">
-      {pitches.map((p, i) => (
-        <div key={i} className="flex items-center gap-1.5 text-xs">
-          <span className="text-text-tertiary w-8 shrink-0 tabular-nums">
-            {p.num > 0 ? `${p.num}구` : "-"}
-          </span>
-          {p.stuff && (
-            <span className="text-text-secondary font-medium shrink-0">{p.stuff}</span>
-          )}
-          {p.speed > 0 && (
-            <span className="text-text-tertiary tabular-nums shrink-0">{p.speed}</span>
-          )}
-          <span
-            className={clsx(
-              "ml-auto shrink-0 rounded px-1.5 py-0.5 font-medium",
-              pitchKindClass(p.kind),
-            )}
-          >
-            {p.resultText}
-          </span>
-        </div>
-      ))}
-    </div>
-  );
 }
 
 function PlayRow({ play, isLast }: { play: PlayEvent; isLast: boolean }) {
