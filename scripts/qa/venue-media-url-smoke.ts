@@ -26,9 +26,12 @@ import {
   applyVenueStoryUrlRefresh,
   shouldRefreshVenueStoryUrl,
   venueStoryUrlRetryDelay,
+  mintWithTimeout,
+  startVenueStoryUrlRefresh,
   VENUE_STORY_URL_REFRESH_MS,
   VENUE_STORY_URL_RETRY_MS,
   VENUE_STORY_URL_RETRY_COOLDOWN_MS,
+  VENUE_STORY_URL_MINT_TIMEOUT_MS,
 } from "../../src/lib/venue-stories/refresh-policy";
 import type { VenueStory } from "../../src/lib/venue-stories/types";
 
@@ -140,6 +143,230 @@ async function main() {
     });
     ok("URL-only 갱신은 ID·순번 보존", refreshed.map((story) => story.id).join(",") === "1,2");
     ok("현재 ID URL만 교체", refreshed[0] === stories[0] && refreshed[1].mediaUrl === "new://2");
+  }
+
+  // 삼순: 49/0 helper 는 수동 시간 갱신이라 production 콜백/timer 경로를 안 돌렸다.
+  // 아래는 실제 mintWithTimeout + startVenueStoryUrlRefresh 를 fake clock 으로 구동해
+  // never-settle→timeout/abort→10초 retry 성공·전환 abort·오염0 을 실행형으로 고정한다.
+  console.log("[실행 회귀 — never-settle timeout → 10초 retry 성공·전환 abort·오염0]");
+  {
+    type Timer = { id: number; at: number; fn: () => void };
+    function makeClock() {
+      let now = 0;
+      let seq = 1;
+      const timers = new Map<number, Timer>();
+      const setTimer = (fn: () => void, ms: number) => {
+        const id = seq++;
+        timers.set(id, { id, at: now + Math.max(0, ms), fn });
+        return id;
+      };
+      const clearTimer = (id: number) => {
+        timers.delete(id);
+      };
+      const flush = async () => {
+        for (let i = 0; i < 30; i++) await Promise.resolve();
+      };
+      const advance = async (ms: number) => {
+        const target = now + ms;
+        let guard = 0;
+        while (guard++ < 100000) {
+          let next: Timer | null = null;
+          for (const t of timers.values()) {
+            if (t.at <= target && (next === null || t.at < next.at)) next = t;
+          }
+          if (!next) break;
+          timers.delete(next.id);
+          now = next.at;
+          next.fn();
+          await flush();
+        }
+        now = target;
+      };
+      return { setTimer, clearTimer, advance, flush, nowFn: () => now };
+    }
+
+    // behaviors: 호출 순서대로 'never'(abort 전까지 미settle) | 'success' | 'fail'.
+    // refresh 는 loop 이 소유한 controller 를 받아 그 signal 로 mintWithTimeout 을 구동하고,
+    // apply(=applied 기록) 전에 controller.signal.aborted 를 확인해 늦은 성공결과 유입을 막는다(production 동일 계약).
+    function makeMint(clock: ReturnType<typeof makeClock>, behaviors: string[]) {
+      let call = 0;
+      const aborts: number[] = [];
+      const applied: number[] = [];
+      // 늦게 settle 된 never-run 을 외부에서 깨우기 위한 resolver
+      let lateResolve: (() => void) | null = null;
+      const refresh = async (storyId: number, controller: AbortController) => {
+        const behavior = behaviors[Math.min(call, behaviors.length - 1)];
+        call += 1;
+        return mintWithTimeout<boolean, number>(
+          async (mintSignal) => {
+            if (behavior === "never") {
+              await new Promise<void>((resolve) => {
+                lateResolve = resolve;
+                mintSignal.addEventListener("abort", () => {
+                  aborts.push(storyId);
+                  resolve();
+                });
+              });
+              // abort/늦은 resolve 로 깨어나도 apply 전 aborted 확인(오염0 방어)
+              if (controller.signal.aborted) return false;
+              applied.push(storyId);
+              return true;
+            }
+            if (behavior === "success") {
+              if (controller.signal.aborted) return false;
+              applied.push(storyId);
+              return true;
+            }
+            return false;
+          },
+          false,
+          {
+            timeoutMs: VENUE_STORY_URL_MINT_TIMEOUT_MS,
+            setTimer: clock.setTimer,
+            clearTimer: clock.clearTimer,
+            controller,
+          },
+        );
+      };
+      return {
+        refresh,
+        aborts,
+        applied,
+        calls: () => call,
+        wakeLate: () => {
+          lateResolve?.();
+          lateResolve = null;
+        },
+      };
+    }
+
+    // ① never-settle → mint timeout(abort) → 10초 retry 성공
+    {
+      const clock = makeClock();
+      const mint = makeMint(clock, ["never", "success"]);
+      const current = 61;
+      let prevId: number | null = null;
+      let lastAt = 0;
+      const stop = startVenueStoryUrlRefresh<number>({
+        storyId: 61,
+        isCurrentStory: () => current === 61,
+        refresh: mint.refresh,
+        now: clock.nowFn,
+        setTimer: clock.setTimer,
+        clearTimer: clock.clearTimer,
+        getPreviousStoryId: () => prevId,
+        setPreviousStoryId: (v) => {
+          prevId = v;
+        },
+        getLastRefreshAt: () => lastAt,
+        setLastRefreshAt: (v) => {
+          lastAt = v;
+        },
+      });
+      await clock.flush();
+      // 첫 mint 가 안 끝남 → 8초에 timeout·abort·false→ 10초 retry 예약
+      await clock.advance(VENUE_STORY_URL_MINT_TIMEOUT_MS);
+      ok("never-settle mint 는 timeout 시 abort 된다", mint.aborts.length === 1 && mint.aborts[0] === 61);
+      ok("mint 실패는 last-success 미선기록", prevId === null && lastAt === 0);
+      ok("timeout(8s) < 10초 retry — in-flight 가 영구 정지하지 않음", mint.calls() === 1);
+      // 10초 경과 → retry 가 실행되고 이번엔 성공
+      await clock.advance(VENUE_STORY_URL_RETRY_MS);
+      ok("10초 retry 실행·성공", mint.calls() === 2 && mint.applied.length === 1 && mint.applied[0] === 61);
+      ok("성공 후 last-success 기록(prev·lastAt)", prevId === 61 && lastAt > 0);
+      ok("8s timeout+10s retry=18s 로 5분(300s) 만료 전 복구", lastAt <= 5 * 60_000);
+      stop();
+    }
+
+    // ② cleanup/전환 즉시 abort · 오염0: cleanup(stop) 호출 즉시 in-flight controller 가 abort 되고,
+    //     그 뒤 늦게 resolve 되어도 state apply·재예약 0 (timeout 이 아니라 cleanup 이 abort 을 유발).
+    {
+      const clock = makeClock();
+      const mint = makeMint(clock, ["never"]);
+      const current = 5;
+      let prevId: number | null = null;
+      let lastAt = 0;
+      const stop = startVenueStoryUrlRefresh<number>({
+        storyId: 5,
+        isCurrentStory: () => current === 5,
+        refresh: mint.refresh,
+        now: clock.nowFn,
+        setTimer: clock.setTimer,
+        clearTimer: clock.clearTimer,
+        getPreviousStoryId: () => prevId,
+        setPreviousStoryId: (v) => {
+          prevId = v;
+        },
+        getLastRefreshAt: () => lastAt,
+        setLastRefreshAt: (v) => {
+          lastAt = v;
+        },
+      });
+      await clock.flush(); // A(5) mint in-flight(never)
+      ok("cleanup 전에는 아직 abort 안 됨", mint.aborts.length === 0);
+      // 시간을 timeout(8s) 까지 진행시키지 않고(=timeout abort 배제) 즉시 cleanup
+      stop();
+      ok("cleanup 이 in-flight controller 를 즉시 abort(timeout 아님)", mint.aborts.length === 1 && mint.aborts[0] === 5 && clock.nowFn() === 0);
+      // cleanup 뒤 늦게 mint 가 resolve 되어도(지각 늦은 성공) state apply 0
+      mint.wakeLate();
+      await clock.flush();
+      ok("cleanup 뒤 늦은 resolve 는 state apply 0(오염0)", prevId === null && lastAt === 0 && mint.applied.length === 0);
+      // cleanup 뒤 재예약 0 — 시간 많이 진행해도 추가 mint 호출 0
+      await clock.advance(VENUE_STORY_URL_RETRY_MS * 3);
+      ok("cleanup 뒤 재예약·재시도 0(mint 1회만)", mint.calls() === 1);
+    }
+
+    // ②-b 스토리 전환(isCurrentStory=false) + timeout abort — A in-flight 중 B 전환 후 timeout 으로 abort,
+    //      A 결과 미반영·이전 스토리 재예약 0.
+    {
+      const clock = makeClock();
+      const mint = makeMint(clock, ["never"]);
+      let current = 5;
+      let prevId: number | null = null;
+      let lastAt = 0;
+      const stop = startVenueStoryUrlRefresh<number>({
+        storyId: 5,
+        isCurrentStory: () => current === 5,
+        refresh: mint.refresh,
+        now: clock.nowFn,
+        setTimer: clock.setTimer,
+        clearTimer: clock.clearTimer,
+        getPreviousStoryId: () => prevId,
+        setPreviousStoryId: (v) => {
+          prevId = v;
+        },
+        getLastRefreshAt: () => lastAt,
+        setLastRefreshAt: (v) => {
+          lastAt = v;
+        },
+      });
+      await clock.flush();
+      current = 6; // A(5) in-flight 중 B(6)로 전환(아직 cleanup 전)
+      await clock.advance(VENUE_STORY_URL_MINT_TIMEOUT_MS); // timeout 으로 abort
+      ok("전환+timeout 시 in-flight abort", mint.aborts.length === 1 && mint.aborts[0] === 5);
+      ok("전환 후 이전 스토리 mint 결과 미반영(오염0)", prevId === null && lastAt === 0 && mint.applied.length === 0);
+      await clock.advance(VENUE_STORY_URL_RETRY_MS * 2);
+      ok("전환 후 이전 스토리로는 재시도 0(mint 1회만)", mint.calls() === 1);
+      stop();
+    }
+
+    // ③ mintWithTimeout 단위: run 이 settle 하면 timer 를 즉시 정리하고 실제 값 반환
+    {
+      const clock = makeClock();
+      const controller = new AbortController();
+      const p = mintWithTimeout<boolean, number>(
+        async () => true,
+        false,
+        {
+          timeoutMs: VENUE_STORY_URL_MINT_TIMEOUT_MS,
+          setTimer: clock.setTimer,
+          clearTimer: clock.clearTimer,
+          controller,
+        },
+      );
+      await clock.flush();
+      ok("run 성공은 즉시 true(timeout 미대기)", (await p) === true);
+      ok("성공 시 controller 는 abort 되지 않음", controller.signal.aborted === false);
+    }
   }
 
   console.log("[isPrivateVenueBucket]");

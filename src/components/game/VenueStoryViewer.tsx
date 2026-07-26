@@ -17,19 +17,14 @@ import { shouldCloseCommentSheetDrag } from "@/lib/venue-stories/comment-sheet-g
 import { lockRootScroll, unlockRootScroll } from "@/lib/venue-stories/scroll-lock";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import { isIosNativeRuntime } from "@/lib/capacitor/platform";
-import {
-  shouldRefreshVenueStoryUrl,
-  venueStoryUrlRetryDelay,
-  VENUE_STORY_URL_REFRESH_MS,
-  VENUE_STORY_URL_RETRY_COOLDOWN_MS,
-} from "@/lib/venue-stories/refresh-policy";
+import { startVenueStoryUrlRefresh } from "@/lib/venue-stories/refresh-policy";
 
 interface Props {
   stories: VenueStory[];
   startIndex: number;
   currentUserId: string | null;
   onStorySeen?: (storyId: string | number) => void; // 표시된 스토리 본 처리 (트레이 본/안 본 구분용)
-  onRefreshUrl?: (storyId: number) => Promise<boolean>;
+  onRefreshUrl?: (storyId: number, controller: AbortController) => Promise<boolean>;
   onClose: () => void;
   onChanged: () => void; // 삭제/신고 후 목록 갱신
 }
@@ -151,62 +146,26 @@ export default function VenueStoryViewer({
   }, [storyId, onStorySeen]);
 
   // 목록 최초 발급 URL의 나이를 신뢰하지 않고 현재 스토리 진입 즉시 단건 재발급한다.
-  // 성공 후에만 last-success 를 기록한다. 실패는 10초 bounded retry, 전환·중복 요청은 guard 한다.
+  // 순수·주입형 루프(startVenueStoryUrlRefresh)를 그대로 사용해 테스트가 동일 코드를 실행한다.
   useEffect(() => {
     if (storyId == null || storyId <= 0 || !onRefreshUrl) return;
-    let cancelled = false;
-    let inFlight = false;
-    let failedAttempts = 0;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const isCurrentStory = () => !cancelled && storyIdRef.current === storyId;
-    const schedule = (delayMs: number) => {
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => void refresh(), delayMs);
-    };
-    const refresh = async () => {
-      if (!isCurrentStory() || inFlight) return;
-      const now = Date.now();
-      if (
-        !shouldRefreshVenueStoryUrl({
-          storyId,
-          previousStoryId: refreshedStoryIdRef.current,
-          lastRefreshAt: lastUrlRefreshAtRef.current,
-          now,
-        })
-      ) {
-        schedule(
-          Math.max(1, lastUrlRefreshAtRef.current + VENUE_STORY_URL_REFRESH_MS - now),
-        );
-        return;
-      }
-      inFlight = true;
-      let success = false;
-      try {
-        success = await onRefreshUrl(storyId);
-      } catch {
-        success = false;
-      } finally {
-        inFlight = false;
-      }
-      // A 요청 중 B로 전환된 경우 A 성공/실패 모두 현재 스토리 상태에 반영하지 않는다.
-      if (!isCurrentStory()) return;
-      if (success) {
-        refreshedStoryIdRef.current = storyId;
-        lastUrlRefreshAtRef.current = Date.now();
-        failedAttempts = 0;
-        schedule(VENUE_STORY_URL_REFRESH_MS);
-        return;
-      }
-      failedAttempts += 1;
-      const delay = venueStoryUrlRetryDelay(failedAttempts);
-      if (delay === VENUE_STORY_URL_RETRY_COOLDOWN_MS) failedAttempts = 0;
-      schedule(delay);
-    };
-    void refresh();
-    return () => {
-      cancelled = true;
-      if (timer) clearTimeout(timer);
-    };
+    const refresh = onRefreshUrl;
+    return startVenueStoryUrlRefresh({
+      storyId,
+      isCurrentStory: () => storyIdRef.current === storyId,
+      refresh,
+      now: () => Date.now(),
+      setTimer: (fn, ms) => setTimeout(fn, ms),
+      clearTimer: (handle) => clearTimeout(handle),
+      getPreviousStoryId: () => refreshedStoryIdRef.current,
+      setPreviousStoryId: (value) => {
+        refreshedStoryIdRef.current = value;
+      },
+      getLastRefreshAt: () => lastUrlRefreshAtRef.current,
+      setLastRefreshAt: (value) => {
+        lastUrlRefreshAtRef.current = value;
+      },
+    });
   }, [storyId, onRefreshUrl]);
 
   const goNext = useCallback(() => {

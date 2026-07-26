@@ -20,6 +20,8 @@ import {
   shouldApplyAutomaticStoryRefresh,
   shouldCommitStoryFetch,
   buildCommittedStories,
+  mintWithTimeout,
+  VENUE_STORY_URL_MINT_TIMEOUT_MS,
   type VenueStoryUrlRefresh,
 } from "@/lib/venue-stories/refresh-policy";
 
@@ -224,31 +226,46 @@ export default function VenueStorySection({ gameId }: Props) {
   );
 
   const refreshViewerStoryUrl = useCallback(
-    async (storyId: number) => {
+    async (storyId: number, controller: AbortController) => {
       if (storyQaKeyboard || storyId <= 0) return false;
-      try {
-        const session = await getSafeSession();
-        const token = session?.access_token;
-        const res = await fetch(
-          `/api/venue-stories?gameId=${encodeURIComponent(gameId)}&refreshStoryId=${storyId}`,
-          { headers: token ? { Authorization: `Bearer ${token}` } : undefined },
-        );
-        if (!res.ok) return false;
-        const data = await res.json();
-        const refresh = data.urlRefresh as VenueStoryUrlRefresh | null;
-        if (
-          !refresh ||
-          refresh.id !== storyId ||
-          typeof refresh.mediaUrl !== "string"
-        ) {
-          return false;
-        }
-        setStories((prev) => applyVenueStoryUrlRefresh(prev, refresh));
-        return true;
-      } catch {
-        // 마지막 정상 URL 보존 — 호출부의 bounded retry에서 재시도
-        return false;
-      }
+      // controller 는 loop 가 소유 — cleanup/전환 시 즉시 abort, timeout 도 같은 controller 를 abort 한다.
+      // getSafeSession/fetch/json 이 안 끝나도 mintWithTimeout 이 timeout 으로 abort해 반드시 settle,
+      // apply 전에 signal.aborted 를 확인해 전환 뒤 늦은 성공결과 유입을 막는다(오염0).
+      return mintWithTimeout(
+        async (mintSignal) => {
+          const session = await getSafeSession();
+          const token = session?.access_token;
+          const res = await fetch(
+            `/api/venue-stories?gameId=${encodeURIComponent(gameId)}&refreshStoryId=${storyId}`,
+            {
+              headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+              signal: mintSignal,
+            },
+          );
+          if (!res.ok) return false;
+          const data = await res.json();
+          const refresh = data.urlRefresh as VenueStoryUrlRefresh | null;
+          if (
+            !refresh ||
+            refresh.id !== storyId ||
+            typeof refresh.mediaUrl !== "string"
+          ) {
+            return false;
+          }
+          // 전환/cleanup 으로 abort 되었으면 늦은 성공결과를 state 에 반영하지 않는다.
+          if (controller.signal.aborted) return false;
+          setStories((prev) => applyVenueStoryUrlRefresh(prev, refresh));
+          return true;
+        },
+        false,
+        {
+          timeoutMs: VENUE_STORY_URL_MINT_TIMEOUT_MS,
+          setTimer: (fn, ms) => setTimeout(fn, ms),
+          clearTimer: (handle) => clearTimeout(handle),
+          // loop 소유 controller 를 mint timeout 에 직결 — 전환 즉시 abort 가 mint fetch 까지 전파된다.
+          controller,
+        },
+      );
     },
     [gameId, storyQaKeyboard],
   );
