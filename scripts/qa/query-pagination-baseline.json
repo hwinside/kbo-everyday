@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "generatedFrom": "20e32ac0448346d53e7e62a02acd773f201711aa",
+  "generatedFrom": "b486f290314b5f9ef69555ca19938693c58a3efa",
   "violations": {
     "0034fe9a6a6cff327c64": {
       "count": 1,
@@ -1218,13 +1218,6 @@
       "kind": "unbounded_growing_select",
       "file": "src/app/api/roster/route.ts",
       "subject": "players_roster",
-      "detail": "add a bound, unique-key lookup, or query-guard annotation"
-    },
-    "d17998d6cdd781126272": {
-      "count": 1,
-      "kind": "unbounded_growing_select",
-      "file": "src/app/api/cron/prewarm-summaries/route.ts",
-      "subject": "game_summaries",
       "detail": "add a bound, unique-key lookup, or query-guard annotation"
     },
     "d19110b9c37dde5c096a": {

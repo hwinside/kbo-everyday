@@ -407,6 +407,65 @@ export interface BoxScoreResult {
   homePitchers: BoxScorePitcherRecord[];
 }
 
+export interface GameLinescoreSide {
+  innings: (number | null)[];
+  R: number;
+  H: number;
+  E: number;
+}
+
+export interface GameLinescore {
+  status: "scheduled" | "live" | "final" | "cancelled";
+  away: GameLinescoreSide;
+  home: GameLinescoreSide;
+}
+
+/** KBO Schedule GetScoreBoard 응답의 공용 이닝표 파서. game-detail과 summary가 같은 계약을 쓴다. */
+export function parseGameLinescoreResponse(data: unknown): GameLinescore | null {
+  if (!Array.isArray(data) || data.length < 2 || !data[1]) return null;
+  const meta = Array.isArray(data[0]) && data[0].length > 0 ? data[0][0] : null;
+  const cancelName = String(meta?.CANCEL_SC_NM ?? "");
+  const status: GameLinescore["status"] =
+    cancelName.includes("취소") || cancelName.includes("우천")
+      ? "cancelled"
+      : String(meta?.END_TM ?? "").trim()
+        ? "final"
+        : Number(meta?.T_SCORE_CN ?? 0) > 0 || Number(meta?.B_SCORE_CN ?? 0) > 0
+          ? "live"
+          : "scheduled";
+
+  let parsed: { rows?: { row: { Text: string }[] }[] };
+  try {
+    const raw = Array.isArray(data[1]) && data[1].length > 0 ? data[1][0] : data[1];
+    parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+  } catch {
+    return null;
+  }
+  if (!parsed?.rows || parsed.rows.length < 2) return null;
+
+  function parseRow(row: { Text: string }[]): GameLinescoreSide {
+    const cells = row.map((cell) => bsSafeStr(cell.Text));
+    // 검증된 game-detail 계약: 앞 2칸(승패/팀), 뒤 4칸(R/H/E/BB)을 제외한다.
+    const innings = cells.slice(2, cells.length - 4).map((value) => {
+      const stripped = bsStripHtml(value);
+      if (!stripped || stripped === "-") return null;
+      return bsSafeInt(stripped);
+    });
+    const tail = cells.slice(cells.length - 4);
+    return {
+      innings,
+      R: bsSafeInt(bsStripHtml(tail[0] ?? "")),
+      H: bsSafeInt(bsStripHtml(tail[1] ?? "")),
+      E: bsSafeInt(bsStripHtml(tail[2] ?? "")),
+    };
+  }
+
+  const awayRow = parsed.rows[0]?.row;
+  const homeRow = parsed.rows[1]?.row;
+  if (!awayRow || !homeRow) return null;
+  return { status, away: parseRow(awayRow), home: parseRow(homeRow) };
+}
+
 function bsSafeInt(v: unknown): number {
   if (v == null || v === "" || v === "&nbsp;") return 0;
   const n = parseInt(String(v), 10);
@@ -573,6 +632,32 @@ export async function fetchBoxScore(gameId: string, seasonId?: string): Promise<
       errorMessage: error.message,
     });
 
+    return null;
+  }
+}
+
+/** 이닝별 스코어 조회 (특정 경기). 종료 직후 빈 이닝표면 null을 반환해 settle 재시도를 유도한다. */
+export async function fetchGameLinescore(gameId: string, seasonId?: string): Promise<GameLinescore | null> {
+  try {
+    const sid = seasonId || gameId.slice(0, 4);
+    const body = `leId=1&srId=0&seasonId=${sid}&gameId=${gameId}`;
+    const res = await fetch(`${KBO_SCHEDULE_BASE}/GetScoreBoard`, {
+      method: "POST",
+      headers: SCHEDULE_HEADERS,
+      body,
+      signal: AbortSignal.timeout(10000),
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+
+    const data = await res.json();
+    const linescore = parseGameLinescoreResponse(data);
+    if (!linescore) return null;
+    const hasInningBreakdown =
+      linescore.away.innings.some((value) => value !== null) ||
+      linescore.home.innings.some((value) => value !== null);
+    return hasInningBreakdown ? linescore : null;
+  } catch {
     return null;
   }
 }

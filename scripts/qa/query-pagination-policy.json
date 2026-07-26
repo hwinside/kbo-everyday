@@ -43,6 +43,7 @@
     "dm_reports",
     "event_leaderboard_snapshot",
     "feedback",
+    "game_summary_generation_claims",
     "game_summaries",
     "game_event_state",
     "game_notify_state",
@@ -164,6 +165,7 @@
   "boundedRpcAllowlist": {
     "admin_telemetry_retention_run": "returns one retention execution summary object",
     "admin_venue_story_daily": "one aggregated row per KST day (slow-growing daily rollup), same pattern as admin_content_daily",
+    "claim_game_summary_generation": "claims one game and returns one monotonic generation token",
     "create_admin_broadcast_job": "creates one job and returns its id",
     "create_venue_story_v2": "creates one story and returns one row",
     "dead_letter_report_blind_notice": "state transition for one notice",
@@ -177,6 +179,7 @@
     "replace_team_roster_day": "bounded replacement for one team and date",
     "report_venue_story": "creates one report",
     "reserve_youtube_quota": "returns one atomic quota decision",
+    "save_game_summary_if_current": "conditionally saves one game summary and returns one boolean",
     "upsert_naver_identity": "upserts one authenticated identity"
   }
 }
