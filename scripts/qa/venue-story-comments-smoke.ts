@@ -253,6 +253,15 @@ console.log("[전송 중 스토리 전환 오염 가드 — 삼순 #807 라운�
     viewerSrc.includes('type: "spring"') && viewerSrc.includes('commentsClosing ? "100%" : 0'));
   ok("댓글 목록 스크롤 중에는 sheet drag close와 구분",
     viewerSrc.includes('data-comment-scroll="true"'));
+  // ⭐ iOS 키보드 가림/스크롤 UI 깨짐 재발 방지(#877): 댓글 시트가 뷰어 motion.div 서브트리 안에 nested 되면
+  // 뷰어 컨테이너가 만드는 containing block 안에 position:fixed 시트가 갇혀 bottom=kbInset 이 시각 뷰포트가
+  // 아닌 갇힌 조상 기준으로 잡혀 키보드 뒤로 사라지고 스크롤 시 헤더/배경이 깨진다 — 커뮤니티 CommentSheet처럼
+  // 댓글 시트를 document.body 로 포털해 escape 해야 한다. commentsOpen 블록이 createPortal(document.body) 로 감싸였는지 확인.
+  ok("댓글 시트가 뷰어 서브트리 밖 document.body 로 포털 escape(containing-block 함정 회피, #877)",
+    /commentsOpen &&\s*\n?\s*createPortal\(/.test(viewerSrc));
+  ok("뷰어 자체 + 댓글 시트 둘 다 document.body 포털(포털 타겟 2개)",
+    (viewerSrc.match(/createPortal\(/g) ?? []).length >= 2 &&
+    (viewerSrc.match(/document\.body/g) ?? []).length >= 2);
 
   const layoutSrc = readFileSync(path.resolve(process.cwd(), "src/app/layout.tsx"), "utf8");
   ok("전역 viewport meta는 기존 resizes-content 유지(Android 범위 확장 없음)",
