@@ -1038,13 +1038,6 @@
       "subject": "venue_stories",
       "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
     },
-    "b7b911575d964e3522e8": {
-      "count": 1,
-      "kind": "ambiguous_growing_limit",
-      "file": "src/app/api/cron/venue-stories-cleanup/route.ts",
-      "subject": "venue_stories",
-      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
-    },
     "b92aaa410db720d5029f": {
       "count": 1,
       "kind": "unbounded_rpc",

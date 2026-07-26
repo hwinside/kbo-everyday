@@ -56,15 +56,17 @@
 ALTER TABLE venue_stories DROP CONSTRAINT ... ; -- status check 재정의
 --   CHECK (status IN ('pending','active','removed','cleanup_failed','archiving','archived'))
 ALTER TABLE venue_stories
-  ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ,   -- 공개 종료→보관 전환 시각
+  ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ,        -- 공개 종료→보관 전환 시각
   ADD COLUMN IF NOT EXISTS removed_at TIMESTAMPTZ,         -- removed 격리 시작 시각(30일 TTL)
-  ADD COLUMN IF NOT EXISTS cleanup_failed_at TIMESTAMPTZ;  -- 정리 실패 시각(removed 출신 영구실패 TTL)
--- 다이어리 조회 인덱스: 본인 archived+active 미디어 최신순
+  ADD COLUMN IF NOT EXISTS cleanup_failed_at TIMESTAMPTZ, -- 정리 실패 시각(removed 출신 영구실패 TTL)
+  ADD COLUMN IF NOT EXISTS archive_verified_at TIMESTAMPTZ; -- private 사본 byte 검증 시각(active→archiving CAS 증거; finalize 재검증 기준)
+-- 다이어리 조회 인덱스: 본인 archived+active 미디어 최신순(주 정렬 game_date DESC, 같은 날 보조키 game_id DESC)
 CREATE INDEX IF NOT EXISTS idx_venue_stories_diary
-  ON venue_stories (user_id, game_date DESC)
+  ON venue_stories (user_id, game_date DESC, game_id DESC)
   WHERE status IN ('active','archived');
 ```
 - report RPC / removed 전이 지점에 `removed_at = now()` 세팅.
+- `archive_verified_at` 은 보관 이동 상태머신(active→archiving CAS 시 byte 검증 증거)에 기록되며, orphan 스캔은 `archiving` 행의 venue-archive 사본 path 를 참조집합에 합성해 보호하고, finalize 는 archive_verified_at 이 있어도 private 사본 존재를 재검증한다(삼순 재리뷰 Blocker 1).
 
 ## 5. 슬라이스 계획 (얇은 수직, 각 슬라이스 = 삼순 리뷰 게이트)
 

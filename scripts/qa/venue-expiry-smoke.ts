@@ -105,21 +105,13 @@ ok(
     "출신불명 cleanup_failed 관제 = 별도 bounded count(head:true, removed_at IS NULL) 유지",
     unknownCleanupFailedAt >= 0 && unknownRemovedAt > unknownCleanupFailedAt,
   );
-  const byteVerifyAt = route.indexOf("archiveSize === sourceSize");
-  const claimAt = route.indexOf('.update({ status: "archiving", archive_verified_at: nowIso })');
-  const claimMatchAt = route.indexOf("if (claimErr || !claimed)", claimAt);
-  const publicRemoveAt = route.indexOf("removePublicRowObjects(r)", claimMatchAt);
-  const removeFailureAt = route.indexOf("if (!publicRemoved)", publicRemoveAt);
-  const finalizeAt = route.indexOf('status: "archived"', removeFailureAt);
-  ok(
-    "archive 상태머신 = byte 검증 → CAS active→archiving 0행 차단 → public remove 성공 → archived finalize",
-    byteVerifyAt >= 0 &&
-      claimAt > byteVerifyAt &&
-      claimMatchAt > claimAt &&
-      publicRemoveAt > claimMatchAt &&
-      removeFailureAt > publicRemoveAt &&
-      finalizeAt > removeFailureAt,
-  );
+  // archive copy/CAS/remove/finalize 상태머신은 route 문자열 등장 순서가 아니라 archive-machine 을 mock storage/db 로
+  // **실제 실행**하는 회귀(qa:venue-archive-machine)가 상태 전이·부작용을 assert 한다(삼순 재리뷰 Blocker 2).
+  // 여기서는 route 가 분리된 DI 상태머신을 실제로 호출하는지만 연결 검증한다(문자열 순서 미검사).
+  const usesArchiveMachine =
+    route.includes("archiveStoryObjects(archiveDeps, r)") &&
+    route.includes('res.outcome === "archived"');
+  ok("archive 액션은 DI archive-machine(archiveStoryObjects)로 위임(실행형 회귀=qa:venue-archive-machine)", usesArchiveMachine);
   void nowIso;
   void quarantineCutoffIso;
   // 반례 고정: 저-id stale_cap 500 ⊕ 출신불명 cleanup_failed 500 ⊕ 격리 removed 500 ⊕ archived 500 ⊕ 실행가능 3건.
