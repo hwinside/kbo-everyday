@@ -29,22 +29,38 @@ type NaverPitcher = {
   pitcherWin: number; pitcherLose: number; pitcherSave: number; pitcherWhip: number; isQualified: boolean;
 };
 
-async function fetchAll<T extends { playerId: string }>(playerType: string): Promise<T[]> {
+export const NAVER_PAGE_SIZE = 500; // 리그 전체(약 300명 미만) 1페이지 커버
+// type별 최소 coverage — KBO 현재 규모(타자 300+/투수 250+)에서 '첫 100명만 반환' 버그를 확실히 거부.
+// 즉 정상 수집은 반드시 이 값보다 많아야 하며, 100 근처에서 멈추면 fail-close.
+export const NAVER_MIN_COVERAGE: Record<string, number> = { HITTER: 150, PITCHER: 150 };
+
+/** 네이버 stats 단일 대형페이지 수집 + 커버리지 fail-close. fetcher 주입으로 테스트 가능.
+ * ⚠️ 네이버 endpoint는 page 파라미터를 무시하고 매 호출 첫 pageSize명만 반환한다
+ * (과거 page=1..20 순회는 byId.size===before로 조기종료돼 첫 100명만 남아 표본 오염).
+ * 따라서 단일 대형페이지로 받고, type별 최소 coverage 미달이면 fail-close. */
+export async function collectNaverPlayers<T extends { playerId: string }>(
+  playerType: string,
+  fetcher: (page: number, size: number) => Promise<T[]>,
+  minCoverage: number = NAVER_MIN_COVERAGE[playerType] ?? 150,
+): Promise<T[]> {
   const byId = new Map<string, T>();
-  // ⚠️ 네이버 endpoint는 page 파라미터를 무시하고 매 호출 첫 pageSize명만 반환한다
-  // (page=1..20 순회해도 첫 100명만 중복 수집 → byId.size===before에서 조기종료되며
-  //  전체 271명 중 첫 100명만 남아 컴리브레이션 표본이 오염된다). pageSize를 크게 주어 단일 페이지로 수집.
-  const PAGE_SIZE = 500; // 리그 전체(약 300명 미만) 1페이지 커버
-  const r = await fetch(`${BASE}/${SEASON}/players?playerType=${playerType}&gameType=REGULAR_SEASON&page=1&pageSize=${PAGE_SIZE}`,
-    { headers: { "User-Agent": "Mozilla/5.0", Referer: "https://m.sports.naver.com/" } });
-  if (!r.ok) throw new Error(`[war-benchmark] naver ${playerType} fetch ${r.status}`);
-  const j = await r.json();
-  const rows: T[] = j?.result?.seasonPlayerStats ?? [];
+  const rows = await fetcher(1, NAVER_PAGE_SIZE);
   for (const x of rows) if (x.playerId && !byId.has(x.playerId)) byId.set(x.playerId, x);
-  // fail-close: 수집량이 pageSize에 꿉 차면 endpoint가 잘렸을 가능성 → 캐지. 또 반환이 교지게 적으면 오집.
-  if (byId.size >= PAGE_SIZE) throw new Error(`[war-benchmark] ${playerType} 수집량(${byId.size})이 pageSize(${PAGE_SIZE}) 근접 — 페이지네이션 미지원 의심, fail-close`);
-  if (byId.size < 60) throw new Error(`[war-benchmark] ${playerType} 수집량(${byId.size}) 비정상 적음 — 첫 100명 버그 재발 의심, fail-close`);
+  // fail-close 1: 수집량이 pageSize에 꿉 차면 endpoint가 잘렸을 가능성(더 큰 pageSize 필요).
+  if (byId.size >= NAVER_PAGE_SIZE) throw new Error(`[war-benchmark] ${playerType} 수집량(${byId.size})이 pageSize(${NAVER_PAGE_SIZE}) 근접 — 페이지네이션 미지원 의심, fail-close`);
+  // fail-close 2: type별 최소 coverage 미달 → '첫 100명만 반환' 버그 재발(예: pageSize 무시하고 100만 반환).
+  if (byId.size < minCoverage) throw new Error(`[war-benchmark] ${playerType} 수집량(${byId.size}) < 최소 coverage(${minCoverage}) — 첫 100명 버그 재발 의심, fail-close`);
   return [...byId.values()];
+}
+
+async function fetchAll<T extends { playerId: string }>(playerType: string): Promise<T[]> {
+  return collectNaverPlayers<T>(playerType, async (_page, size) => {
+    const r = await fetch(`${BASE}/${SEASON}/players?playerType=${playerType}&gameType=REGULAR_SEASON&page=1&pageSize=${size}`,
+      { headers: { "User-Agent": "Mozilla/5.0", Referer: "https://m.sports.naver.com/" } });
+    if (!r.ok) throw new Error(`[war-benchmark] naver ${playerType} fetch ${r.status}`);
+    const j = await r.json();
+    return (j?.result?.seasonPlayerStats ?? []) as T[];
+  });
 }
 
 type Diff = { name: string; team: string; ours: number; naver: number; d: number };

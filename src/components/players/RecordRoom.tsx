@@ -10,7 +10,7 @@ import { getCanonicalPlayerHref, resolvePlayerIdentity } from "@/lib/utils/resol
 import { TEAMS } from "@/lib/constants/teams";
 import { getFavoritePlayers } from "@/lib/store/favorites";
 import { STAT_DEFS, type StatType } from "@/lib/stats/title-defs";
-import { rankByStat, type RankedRow } from "@/lib/stats/title-rankings";
+import { rankByStat, parseIP, type RankedRow } from "@/lib/stats/title-rankings";
 import { calcBatterSaber, calcPitcherSaber } from "@/lib/utils/sabermetrics-calc";
 import playerPositions from "@/lib/constants/player-positions.json";
 
@@ -97,11 +97,11 @@ function buildUnqualGate(view: View, activeStat: string, isDefense: boolean, sco
     const hasFlag = league.some((p) => p.qualifiedRate !== undefined && p.qualifiedRate !== null);
     const teamLabel = "소속팀 경기수 기준";
     if (view === "pitcher") {
-      const qIPs = league.filter((p) => Number(p.qualifiedRate) === 1).map((p) => parseIP(p.ip));
+      const qIPs = league.filter((p) => Number(p.qualifiedRate) === 1).map((p) => parseIP(p.ip as string | number));
       const reqIP = qIPs.length ? Math.round(Math.min(...qIPs)) : null;
       return {
-        qualified: hasFlag ? (p) => Number(p.qualifiedRate) === 1 : (p) => parseIP(p.ip) >= 12,
-        hasRecord: (p) => parseIP(p.ip) > 0,
+        qualified: hasFlag ? (p) => Number(p.qualifiedRate) === 1 : (p) => parseIP(p.ip as string | number) >= 12,
+        hasRecord: (p) => parseIP(p.ip as string | number) > 0,
         rowProgress: (p) => `${ipLabel(p.ip)}이닝`,
         note: `규정이닝(${teamLabel}${reqIP ? `, 약 ${reqIP}이닝` : ""}) 미달 — 도달 시 순위에 자동 노출됩니다`,
       };
