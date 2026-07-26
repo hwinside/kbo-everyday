@@ -25,6 +25,7 @@ import {
 } from "../../src/lib/venue-stories/comments";
 import {
   computeKeyboardInset,
+  computeLockedKeyboardInset,
   subscribeKeyboardInset,
   type VisualViewportLike,
 } from "../../src/lib/venue-stories/keyboard-inset";
@@ -175,6 +176,19 @@ console.log("[iOS 키보드 인셋 — 모킹 visualViewport 회귀(삼순 #807 
   ok("순수 계산: visual viewport 상단 오프셋 반영", computeKeyboardInset(800, 500, 100) === 200);
   ok("순수 계산: 음수 방지(clamp 0)", computeKeyboardInset(800, 900, 0) === 0);
 
+  // scroll-lock 전용 인셋(offsetTop 무시) — 직관 스토리 댓글창 iOS 키보드 숨김 버그 근본 회귀.
+  // 기존 computeKeyboardInset 은 offsetTop 을 빼 과소 계산(500면 200)해 입력창이 키보드 뒤로 숨었다.
+  // Locked 버전은 body position:fixed 에서 iOS 가 튀기는 offsetTop 을 무시하고 키보드 높이만큼만 올린다.
+  ok("locked 순수: idle = 0", computeLockedKeyboardInset(800, 800) === 0);
+  ok("locked 순수: 키보드 300px 오픈 = 300", computeLockedKeyboardInset(800, 500) === 300);
+  ok("locked 순수: offsetTop 무시 — vv 상단 오프셋 있어도 키보드 높이 그대로(300)",
+    computeLockedKeyboardInset(800, 500) === 300);
+  ok("locked 순수: 음수 방지(clamp 0)", computeLockedKeyboardInset(800, 900) === 0);
+  // 근본 버그 재현 대조: 동일 상황(innerHeight=800, vv.height=500, offsetTop=100)에서
+  // 기존 함수는 200(과소→입력창 100px 숨김), locked 함수는 300(정확). fix 되돌리면 이 대조가 깨진다.
+  ok("근본 버그 대조: locked(300) > 기존(200) — offsetTop 튀김으로 인한 과소 인셋 해소",
+    computeLockedKeyboardInset(800, 500) === 300 && computeKeyboardInset(800, 500, 100) === 200);
+
   // 모킹 visualViewport — focus→키보드 resize→submit 유지→blur(구독 해제) 시나리오
   const listeners: Record<string, Set<() => void>> = { resize: new Set(), scroll: new Set() };
   let vvHeight = 800;
@@ -247,6 +261,11 @@ console.log("[전송 중 스토리 전환 오염 가드 — 삼순 #807 라운�
     viewerSrc.includes('data-composer="venue-story"'));
   ok("모달 키보드 회피 — bottom=kbInset + height=vvHeight(CommentSheet 패턴)",
     viewerSrc.includes("bottom: kbInset") && viewerSrc.includes("vvHeight"));
+  ok("scroll-lock 뷰어는 offsetTop 무시 인셋(computeLockedKeyboardInset) 사용",
+    viewerSrc.includes("computeLockedKeyboardInset(window.innerHeight, vv.height)") &&
+    !viewerSrc.includes("computeKeyboardInset("));
+  ok("height 확장 게이트가 kbInset>0 도 본다(포커스/인셋 레이스 제거)",
+    /\(composerFocused \|\| kbInset > 0\) && vvHeight != null/.test(viewerSrc));
   ok("커뮤니티 CommentSheet 동일 부분 높이 60dvh",
     viewerSrc.includes("min(60dvh") && viewerSrc.includes('"60dvh"'));
   ok("커뮤니티 CommentSheet 동일 spring 열림/닫힘 모션",

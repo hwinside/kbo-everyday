@@ -12,7 +12,7 @@ import {
   shouldApplyCommentResponse,
   type VenueStoryComment,
 } from "@/lib/venue-stories/comments";
-import { computeKeyboardInset } from "@/lib/venue-stories/keyboard-inset";
+import { computeLockedKeyboardInset } from "@/lib/venue-stories/keyboard-inset";
 import { shouldCloseCommentSheetDrag } from "@/lib/venue-stories/comment-sheet-gesture";
 import { lockRootScroll, unlockRootScroll } from "@/lib/venue-stories/scroll-lock";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
@@ -199,14 +199,17 @@ export default function VenueStoryViewer({
   }, []);
 
   // 키보드 회피 — 댓글 모달이 열려 있을 때만 visualViewport 를 구독한다.
-  // computeKeyboardInset(순수·스모크 회귀)로 인셋을, vv.height 로 확장 높이를 state 로 끌어온다
-  // (CommentSheet 와 동일한 bottom=kbInset / height=vvHeight 패턴).
+  // computeLockedKeyboardInset(순수·스모크 회귀)로 인셋을, vv.height 로 확장 높이를 state 로 끌어온다
+  // (bottom=kbInset / height=vvHeight 패턴 — CommentSheet 와 달리 root scroll lock 컨텍스트라 offsetTop 무시).
   useEffect(() => {
     if (!commentsOpen) return;
     const vv = window.visualViewport;
     if (!vv) return;
     const apply = () => {
-      setKbInset(computeKeyboardInset(window.innerHeight, vv.height, vv.offsetTop));
+      // 이 뷰어는 lockRootScroll 로 body 가 position:fixed 라 iOS 가 offsetTop 을 비정상(튰는) 값으로
+      // 보고해 offsetTop 을 빼는 인셋은 과소 계산된다 → 입력창이 키보드 뒤로 숨는 간헐 버그.
+      // scroll-lock 전용 인셋(offsetTop 무시)으로 시트를 키보드 높이만큼만 안정적으로 올린다.
+      setKbInset(computeLockedKeyboardInset(window.innerHeight, vv.height));
       setVvHeight(vv.height);
     };
     apply();
@@ -650,8 +653,11 @@ export default function VenueStoryViewer({
             className="fixed inset-x-0 z-30 flex flex-col bg-bg-secondary rounded-t-2xl overflow-hidden"
             style={{
               bottom: kbInset,
+              // 확장 게이트 = composerFocused 또는 kbInset>0(키보드 실재). onFocus 로 composerFocused 가 먼저
+              // 켜져도, 또는 kbInset 이 먼저 올라와도 어느 쪽이든 확장되며 bottom(kbInset)과 height(vvHeight)는
+              // 동일 apply() 스냅샷에서 나와 원자적 → 포커스/인셋 갱신 순서 레이스로 입력창이 밀리는 H1 제거.
               height:
-                composerFocused && vvHeight != null
+                (composerFocused || kbInset > 0) && vvHeight != null
                   ? `${vvHeight}px`
                   : vvHeight != null
                     ? `min(60dvh, ${vvHeight}px)`
