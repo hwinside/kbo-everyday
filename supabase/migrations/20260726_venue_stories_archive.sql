@@ -29,7 +29,7 @@ ALTER TABLE venue_stories
 ALTER TABLE venue_stories
   ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS removed_at  TIMESTAMPTZ,
-  ADD COLUMN IF NOT EXISTS cleanup_failed_at TIMESTAMPTZ;  -- cleanup_failed(정리 실패) 전이 시각 = 영구실패 TTL(7일) 기준. storage remove 가 이 기간 넘게 반복 실패하면 강제 행 삭제(무한 재시도 중단, blocker 2).
+  ADD COLUMN IF NOT EXISTS cleanup_failed_at TIMESTAMPTZ;  -- cleanup_failed 전이 시각. removed 출신만 영구실패 TTL(7일) 기준으로 사용하고, 출신불명은 자동 삭제하지 않는다.
 
 -- 레거시/검증실패 백필: 기존 status='removed' 이면서 removed_at 이 비어있는 행은 격리 시계가 없어
 -- cleanup 이 영원히 no-op(quarantine_keep) → 누수. removed_at=now() 로 격리 시작 → 30일 후 삭제되게 한다.
@@ -38,8 +38,8 @@ UPDATE venue_stories
    SET removed_at = now()
  WHERE status = 'removed' AND removed_at IS NULL;
 
--- 레거시 cleanup_failed 백필: status='cleanup_failed' 인데 cleanup_failed_at 이 비어있으면 영구실패 TTL 시계가 없어
--- removed 출신 30일경과 행이 storage 반복 실패 시 무한 재시도된다. cleanup_failed_at=now() 로 TTL 시계를 시작한다.
+-- 레거시 cleanup_failed 백필: status='cleanup_failed' 인데 cleanup_failed_at 이 비어있으면 장애 발생 시각을 알 수 없다.
+-- cleanup_failed_at=now() 로 관제/TTL 시계를 시작하되, removed_at null 출신불명은 이 값만으로 자동 삭제하지 않는다.
 -- 안전/멱등: 조건부(WHERE cleanup_failed_at IS NULL)라 재실행 시 0행. 이미 채워진 시계는 보존.
 UPDATE venue_stories
    SET cleanup_failed_at = now()

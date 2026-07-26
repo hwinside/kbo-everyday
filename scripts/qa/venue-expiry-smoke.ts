@@ -62,7 +62,7 @@ ok(
   classifyCleanupRow({ status: "active", gameEndedAt: null, expiresAtMs: T0 + 72 * H, nowMs: T0 + 31 * H }) === "keep",
 );
 ok(
-  "종료 미확정 + 안전상한(72h) 도달 → stale_cap(장애 정책 삭제 + 관제)",
+  "종료 미확정 + 안전상한(72h) 도달 → stale_cap(장애 격리 + 관제)",
   classifyCleanupRow({ status: "active", gameEndedAt: null, expiresAtMs: T0 + 72 * H, nowMs: T0 + 72 * H + 1 }) === "stale_cap",
 );
 ok(
@@ -75,8 +75,8 @@ ok(
 );
 {
   // S1(#869 재작업): 만료 scan 은 조회(WHERE) 단계에서 "이번 실행에 실제 처리 가능한 행"만 뽑는다(isCleanupActionable):
-  //   active/pending 만료 + game_ended_at 확정 ⊕ cleanup_failed ⊕ removed(removed_at ≤ now-30d).
-  //   archived / 30일미만·null removed / stale_cap(game_ended_at null) 는 제외. id 오름차순→500 제한(starvation 근본 해소, 삼순 NO-GO blocker 1).
+  //   active/pending 만료 + game_ended_at 확정 ⊕ cleanup_failed/removed(removed_at ≤ now-30d).
+  //   archived / 30일미만·null removed·cleanup_failed / stale_cap(game_ended_at null) 는 제외. id 오름차순→500 제한.
   const nowIso = new Date(T0).toISOString();
   const quarantineCutoffIso = new Date(T0 - VENUE_STORY_REMOVED_QUARANTINE_DAYS * 24 * H).toISOString();
   const route = readFileSync(
@@ -84,12 +84,12 @@ ok(
     "utf-8",
   );
   const filterAt = route.indexOf(
-    "`and(status.in.(active,pending),expires_at.lte.${nowIso},game_ended_at.not.is.null),status.eq.cleanup_failed,and(status.eq.removed,removed_at.lte.${quarantineCutoffIso})`",
+    "`and(status.in.(active,pending),expires_at.lte.${nowIso},game_ended_at.not.is.null),and(status.eq.cleanup_failed,removed_at.lte.${quarantineCutoffIso}),and(status.eq.removed,removed_at.lte.${quarantineCutoffIso})`",
   );
   const orderAt = route.indexOf('.order("id", { ascending: true })', filterAt);
   const limitAt = route.indexOf(".limit(500)", orderAt);
   ok(
-    "route는 실행가능 행(active/pending 만료+game_ended_at 확정 + cleanup_failed + removed@≥now-30d)만 필터→id 정렬→500 제한(stale_cap 배제, starvation 근본 방지)",
+    "route는 실행가능 행(active/pending 정상만료 + removed출신 cleanup_failed@≥30d + removed@≥30d)만 필터→id 정렬→500 제한",
     filterAt >= 0 && orderAt > filterAt && limitAt > orderAt,
   );
   // stale_cap 관제는 배치와 분리된 별도 count(head:true)로 유지됨을 확인(삼순 blocker 1).
@@ -99,10 +99,16 @@ ok(
     "stale_cap 관제 = 별도 bounded count(head:true, game_ended_at IS NULL) 유지(삭제/전이 없이 5xx 신호만)",
     staleCapHeadAt >= 0 && staleCapCountAt >= 0,
   );
+  const unknownCleanupFailedAt = route.indexOf('.eq("status", "cleanup_failed")');
+  const unknownRemovedAt = route.indexOf('.is("removed_at", null)', unknownCleanupFailedAt);
+  ok(
+    "출신불명 cleanup_failed 관제 = 별도 bounded count(head:true, removed_at IS NULL) 유지",
+    unknownCleanupFailedAt >= 0 && unknownRemovedAt > unknownCleanupFailedAt,
+  );
   void nowIso;
   void quarantineCutoffIso;
-  // 반례 고정(production route filter 기준): 저-id stale_cap(game_ended_at null) 500 ⊕ 격리 removed(30일미만) 500 ⊕ archived 500 ⊕ 실행가능 3건.
-  //   isCleanupActionable 필터 → 1500 no-op 은 제외되고 뒤 archive/cleanup_failed/격리만료 removed 가 선택된다(삼순 probe selected=500,targetIdsSelected=[] 반례).
+  // 반례 고정: 저-id stale_cap 500 ⊕ 출신불명 cleanup_failed 500 ⊕ 격리 removed 500 ⊕ archived 500 ⊕ 실행가능 3건.
+  // isCleanupActionable 필터 → 2000 no-op 은 제외되고 뒤 실행대상 3건만 선택된다.
   const under30 = T0 - 29 * 24 * H; // 격리 30일 미만
   const over30 = T0 - 31 * 24 * H; // 격리 30일 경과
   type Cand = { id: number; status: string; expiresAtMs: number | null; gameEndedAtMs: number | null; removedAtMs: number | null };
@@ -115,18 +121,21 @@ ok(
   const archived500: Cand[] = Array.from({ length: 500 }, (_, i) => ({
     id: 2000 + i, status: "archived", expiresAtMs: T0 - 1, gameEndedAtMs: T0 - 25 * H, removedAtMs: null,
   }));
+  const unknownCleanupFailed500: Cand[] = Array.from({ length: 500 }, (_, i) => ({
+    id: 3000 + i, status: "cleanup_failed", expiresAtMs: null, gameEndedAtMs: T0 - 25 * H, removedAtMs: null,
+  }));
   const scanTargets: Cand[] = [
     { id: 9001, status: "active", expiresAtMs: T0 - 1, gameEndedAtMs: T0 - 25 * H, removedAtMs: null }, // → archive
-    { id: 9002, status: "cleanup_failed", expiresAtMs: null, gameEndedAtMs: null, removedAtMs: null }, // → 출신 분기
+    { id: 9002, status: "cleanup_failed", expiresAtMs: null, gameEndedAtMs: null, removedAtMs: over30 }, // → removed 출신 삭제
     { id: 9003, status: "removed", expiresAtMs: null, gameEndedAtMs: null, removedAtMs: over30 }, // → 격리 만료 delete
   ];
-  const selected = [...staleCap500, ...quarantined500, ...archived500, ...scanTargets]
+  const selected = [...staleCap500, ...quarantined500, ...archived500, ...unknownCleanupFailed500, ...scanTargets]
     .filter((row) => isCleanupActionable({ status: row.status, expiresAtMs: row.expiresAtMs, gameEndedAtMs: row.gameEndedAtMs, removedAtMs: row.removedAtMs, nowMs: T0 }))
     .sort((a, b) => a.id - b.id)
     .slice(0, 500)
     .map((row) => row.id);
   ok(
-    "stale_cap 500 + 격리 removed 500 + archived 500 이 scan 에서 제외돼 archive/cleanup_failed/격리만료 removed 만 선택(batch starvation 제거)",
+    "stale_cap/출신불명 cleanup_failed/격리 removed/archived 각 500건 제외 후 실행대상 3건만 선택",
     selected.join(",") === "9001,9002,9003",
   );
 }
@@ -139,7 +148,7 @@ ok(
   classifyCleanupRow({ status: "removed", gameEndedAt: null, expiresAtMs: T0 + 72 * H, nowMs: T0 }) === "flagged",
 );
 ok(
-  "cleanup_failed 재시도 대상",
+  "cleanup_failed → flagged(후속 출신 판정 대상)",
   classifyCleanupRow({ status: "cleanup_failed", gameEndedAt: null, expiresAtMs: null, nowMs: T0 }) === "flagged",
 );
 ok(

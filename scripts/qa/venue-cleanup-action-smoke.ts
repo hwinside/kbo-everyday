@@ -3,7 +3,7 @@
  * 실행: npm run qa:venue-cleanup-action
  *  - resolveCleanupAction: 분류(classifyCleanupRow) → archive / delete / force_delete / quarantine_keep 매핑(스펙 §2.2 승인 계약).
  *  - 스펙 §2.2: expired_after_end(active)→archive / removed 30일 격리(null·미만→keep) / stale_cap→keep+관제.
- *    cleanup_failed → 출신 판별(removed_at/game_ended_at): 정상만료출신→archive 복구 / removed출신→30일·TTL 후 delete·force_delete / stale출신→격리(blocker 2).
+ *    cleanup_failed → removed_at 있는 removed출신만 30일·TTL 후 delete·force_delete / removed_at null 출신불명은 game_ended_at 무관 격리+관제.
  *  - isCleanupActionable: cleanup 배치 조회(WHERE) 경계 = starvation 방지 반례 고정(삼순 NO-GO blocker 1: stale_cap·격리 배제).
  */
 import {
@@ -96,7 +96,7 @@ console.log("[removed 30일 격리 경계]");
   );
 }
 
-console.log("[cleanup_failed → 출신 판별 분기(blocker 2): archived 복구 / removed출신 TTL 삭제 / stale 격리]");
+console.log("[cleanup_failed → removed출신 TTL 삭제 / 출신불명 격리]");
 {
   const cls = classifyCleanupRow({ status: "cleanup_failed", gameEndedAt: null, expiresAtMs: null, nowMs: T0 });
   ok("cleanup_failed 분류 = flagged", cls === "flagged");
@@ -129,14 +129,13 @@ console.log("[cleanup_failed → 출신 판별 분기(blocker 2): archived 복�
     "cleanup_failed + removed_at(30일 경과) + cleanup_failed_at null(레거시) → delete(재시도, TTL 미확정이라 강제삭제 안 함)",
     resolveCleanupAction({ cls, status: "cleanup_failed", removedAtMs: removedOver30, gameEndedAtMs: null, cleanupFailedAtMs: null, nowMs: now }) === "delete",
   );
-  // ── 정상만료 출신(removed_at null + game_ended_at 존재) → archived 복구 ──
+  // ── 출신 불명(removed_at null): game_ended_at 만으로 active/pending 구분 불가 → 격리 ──
   ok(
-    "cleanup_failed + removed_at null + game_ended_at 존재 → archive (정상만료 복구, storage 삭제 금지)",
-    resolveCleanupAction({ cls, status: "cleanup_failed", removedAtMs: null, gameEndedAtMs: T0, cleanupFailedAtMs: now - 100 * DAY, nowMs: now }) === "archive",
+    "cleanup_failed + removed_at null + game_ended_at 존재 → quarantine_keep (자동 archive/delete 금지)",
+    resolveCleanupAction({ cls, status: "cleanup_failed", removedAtMs: null, gameEndedAtMs: T0, cleanupFailedAtMs: now - 100 * DAY, nowMs: now }) === "quarantine_keep",
   );
-  // ── stale 계열(removed_at null + game_ended_at null) → 격리 + 관제 ──
   ok(
-    "cleanup_failed + removed_at null + game_ended_at null → quarantine_keep (stale 격리+관제)",
+    "cleanup_failed + removed_at null + game_ended_at null → quarantine_keep (출신불명 격리+관제)",
     resolveCleanupAction({ cls, status: "cleanup_failed", removedAtMs: null, gameEndedAtMs: null, cleanupFailedAtMs: now - 100 * DAY, nowMs: now }) === "quarantine_keep",
   );
 }
@@ -181,10 +180,18 @@ console.log("[isCleanupActionable — 조회(WHERE) 경계 = starvation 방지(�
     "active 만료 전(expires_at > now) → 조회 제외",
     isCleanupActionable({ status: "active", expiresAtMs: now + H, gameEndedAtMs: now - 25 * H, removedAtMs: null, nowMs: now }) === false,
   );
-  // cleanup_failed → 재처리/복구 대상(항상 조회)
+  // cleanup_failed → removed 출신·30일 경과만 실행 배치, 출신불명/30일미만은 별도 격리+관제
   ok(
-    "cleanup_failed → actionable(출신 분기 처리)",
-    isCleanupActionable({ status: "cleanup_failed", expiresAtMs: null, gameEndedAtMs: null, removedAtMs: null, nowMs: now }) === true,
+    "cleanup_failed + removed_at null(출신불명) → 조회 제외(별도 count 관제)",
+    isCleanupActionable({ status: "cleanup_failed", expiresAtMs: null, gameEndedAtMs: null, removedAtMs: null, nowMs: now }) === false,
+  );
+  ok(
+    "cleanup_failed + removed_at 30일 미만 → 조회 제외(격리 유지)",
+    isCleanupActionable({ status: "cleanup_failed", expiresAtMs: null, gameEndedAtMs: null, removedAtMs: under30, nowMs: now }) === false,
+  );
+  ok(
+    "cleanup_failed + removed_at 30일 경과 → actionable(delete/force_delete)",
+    isCleanupActionable({ status: "cleanup_failed", expiresAtMs: null, gameEndedAtMs: null, removedAtMs: over30, nowMs: now }) === true,
   );
   // removed: 30일 경과만 조회, 30일 미만·null은 no-op → SELECT 에서 제외(배치 점유 방지)
   ok(
@@ -204,8 +211,8 @@ console.log("[isCleanupActionable — 조회(WHERE) 경계 = starvation 방지(�
     isCleanupActionable({ status: "archived", expiresAtMs: now - H, gameEndedAtMs: now - 25 * H, removedAtMs: null, nowMs: now }) === false,
   );
 
-  // 핵심 반례(삼순 probe: selected=500/targetIdsSelected=[]): 저-id stale_cap 500 + 격리 removed 500 + 실행가능 후보 3.
-  // 조회 단계(isCleanupActionable) 필터 → id 정렬 → limit 500 이므로 1000건 no-op 이 뒤 후보를 굶지 않음.
+  // 핵심 반례: 저-id stale_cap 500 + 출신불명 cleanup_failed 500 + 격리 removed 500 + 실행가능 후보 3.
+  // 조회 단계(isCleanupActionable) 필터 → id 정렬 → limit 500 이므로 1500건 no-op 이 뒤 후보를 굶지 않음.
   type Cand = { id: number; status: string; expiresAtMs: number | null; gameEndedAtMs: number | null; removedAtMs: number | null };
   const staleCap500: Cand[] = Array.from({ length: 500 }, (_, i) => ({
     id: i + 1, status: "active", expiresAtMs: now - H, gameEndedAtMs: null, removedAtMs: null, // game_ended_at null = stale_cap
@@ -213,18 +220,21 @@ console.log("[isCleanupActionable — 조회(WHERE) 경계 = starvation 방지(�
   const quarantined500: Cand[] = Array.from({ length: 500 }, (_, i) => ({
     id: 500 + i + 1, status: "removed", expiresAtMs: null, gameEndedAtMs: null, removedAtMs: under30, // 30일 미만 격리
   }));
+  const unknownCleanupFailed500: Cand[] = Array.from({ length: 500 }, (_, i) => ({
+    id: 1000 + i + 1, status: "cleanup_failed", expiresAtMs: null, gameEndedAtMs: now - 25 * H, removedAtMs: null,
+  }));
   const actionables: Cand[] = [
     { id: 9001, status: "active", expiresAtMs: now - H, gameEndedAtMs: now - 25 * H, removedAtMs: null }, // archive
-    { id: 9002, status: "cleanup_failed", expiresAtMs: null, gameEndedAtMs: null, removedAtMs: null }, // 출신 분기
+    { id: 9002, status: "cleanup_failed", expiresAtMs: null, gameEndedAtMs: null, removedAtMs: over30 }, // removed 출신 delete/force_delete
     { id: 9003, status: "removed", expiresAtMs: null, gameEndedAtMs: null, removedAtMs: over30 }, // 격리 만료 delete
   ];
-  const selected = [...staleCap500, ...quarantined500, ...actionables]
+  const selected = [...staleCap500, ...quarantined500, ...unknownCleanupFailed500, ...actionables]
     .filter((r) => isCleanupActionable({ status: r.status, expiresAtMs: r.expiresAtMs, gameEndedAtMs: r.gameEndedAtMs, removedAtMs: r.removedAtMs, nowMs: now }))
     .sort((a, b) => a.id - b.id)
     .slice(0, 500)
     .map((r) => r.id);
   ok(
-    "stale_cap 500 + 격리 removed 500 은 SELECT 에서 제외되고 archive/cleanup_failed/격리만료 removed 3건만 선택(500건 batch starvation 제거)",
+    "stale_cap 500 + 출신불명 cleanup_failed 500 + 격리 removed 500 은 제외되고 실행대상 3건만 선택",
     selected.join(",") === "9001,9002,9003",
   );
 }
