@@ -53,9 +53,12 @@ async function main() {
   check("ACK must match active environment", /ack\.environment = a\.environment/.test(migration));
   check("ACK must match active channel id", /ack\.channel_id = a\.channel_id/.test(migration));
   check("only active generations participate", /c\.status = 'active'/.test(migration));
-  check("already-marked rows are fenced twice", (migration.match(/s\.channel_born_channel_id is null/g) ?? []).length >= 2);
-  check("channel rotation is serialized", /for share/i.test(migration));
-  check("SQL statement has a wall-clock timeout", /statement_timeout', '5000'/.test(migration));
+  check("already-marked rows are fenced", (migration.match(/channel_born_channel_id is null/g) ?? []).length >= 2);
+  check("rotating channels are skipped, not waited on", /for share skip locked/i.test(migration));
+  check("target rows are locked with skip-locked to avoid stalls", /for update of s skip locked/i.test(migration));
+  // 주석(-- ...)을 벗겨 실행 SQL만 검사 — 헤더가 statement_timeout 불가 사유를 설명하므로.
+  const migrationCode = migration.replace(/--.*$/gm, "");
+  check("no self-armed statement_timeout call (cannot bound outer stmt)", !/set_config\(\s*'statement_timeout'|set\s+statement_timeout/i.test(migrationCode));
   check("pagination batch has a hard cap", /least\(greatest\(coalesce\(p_limit, 1000\), 1\), 1000\)/.test(migration));
   check("has_more reads one bounded lookahead row", /limit \(v_limit \+ 1\)/.test(migration));
 

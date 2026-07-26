@@ -37,6 +37,7 @@
     "qa:la-nudge": "tsx scripts/qa/la-update-nudge-smoke.ts",
     "qa:la-born-marking": "tsx scripts/qa/la-channel-born-marking-smoke.ts",
     "qa:la-born-reconcile": "tsx scripts/qa/la-channel-born-reconcile-smoke.ts",
+    "qa:la-born-reconcile-pg": "node scripts/qa/la-channel-born-reconcile-pg.mjs",
     "qa:lock-gate": "tsx scripts/qa/lock-card-gate-smoke.ts",
     "qa:ios-widget": "tsx scripts/qa/ios-widget-score-state-smoke.ts",
     "qa:la-ack-policy": "bash scripts/qa/la-channel-ack-policy-smoke.sh",

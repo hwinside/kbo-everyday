@@ -6,9 +6,20 @@
 -- 불변식:
 -- ① 현재 active (game, environment, channel_id)와 정확 일치하는 ACK만 증거로 인정.
 -- ② channel_born_channel_id IS NULL인 행만 갱신 — 이미 마킹된 행은 절대 덮지 않음.
--- ③ active 행을 SHARE lock한 같은 statement에서 후보선정+UPDATE — 동시 채널 회전은
---    직렬화되어, 회전 후 구채널 ACK를 새 마킹으로 기록하는 race 차단.
--- ④ 실행당 최대 1,000(서버 입력도 1,000 cap), SQL 5초 timeout — 다음 분이 이어서 수렴.
+-- ③ active 행을 SHARE lock한 뒤 후보선정+UPDATE — 동시 채널 회전 중이면 그 active 행은
+--    SKIP LOCKED로 건너뛰어(그 경기만 이번 tick 제외) 회전 후 구채널 ACK를 새 마킹으로
+--    기록하는 race를 차단한다. 회전이 commit된 다음 tick이 정상 마킹한다.
+--
+-- 유계 보장 (삼순 R1 blocker — statement_timeout 자기-arm 불가 대체):
+--   plpgsql 함수 body의 `set statement_timeout`은 이미 시작된 outer 문(=이 RPC 호출)의
+--   타이머를 재-arm하지 못한다(PG17 실증). 그래서 시간제한에 의존하지 않고 구조적으로
+--   유계로 만든다:
+--     · 실행당 후보/갱신 ≤ v_limit(≤1,000) — 인덱스 기반 select/update, 상한 고정.
+--     · 모든 lock 획득에 SKIP LOCKED — active 채널(FOR SHARE)·대상 started_users
+--       (FOR UPDATE) 어디서도 concurrent locker를 "대기"하지 않는다. 잠긴 행은 즉시
+--       건너뛰고 다음 tick이 이어서 수렴한다. 따라서 lock 경합이 있어도 이 RPC는
+--       무한/장시간 블록 없이 유계 시간에 반환한다.
+--   클라이언트 AbortSignal(5초)은 방어적 상한일 뿐, DB backend 종료 보장은 위 구조가 진다.
 
 create or replace function public.reconcile_live_activity_channel_born(
   p_limit integer default 1000
@@ -27,8 +38,6 @@ declare
   v_limit integer := least(greatest(coalesce(p_limit, 1000), 1), 1000);
   v_active_count integer;
 begin
-  perform set_config('statement_timeout', '5000', true);
-
   select count(*)::integer
     into v_active_count
     from public.live_activity_channels
@@ -42,11 +51,12 @@ begin
 
   return query
   with active as materialized (
+    -- 회전 중(FOR UPDATE 보유)인 active 행은 건너뛴다 — 대기 대신 다음 tick 위임.
     select c.game_id, c.environment, c.channel_id
       from public.live_activity_channels c
      where c.status = 'active'
      order by c.game_id, c.environment
-     for share
+     for share skip locked
   ),
   candidates as materialized (
     select distinct on (s.game_id, s.user_id)
@@ -77,15 +87,29 @@ begin
      order by game_id, user_id
      limit v_limit
   ),
+  -- 갱신 대상 행을 SKIP LOCKED로 미리 잠근다 — concurrent 마킹이 잡고 있는 행은 건너뛰어
+  -- UPDATE가 절대 대기하지 않게 하고(유계 보장), 이미 잠긴 행은 다음 tick이 처리한다.
+  locked as materialized (
+    select s.game_id, s.user_id
+      from public.live_activity_started_users s
+      join selected sel
+        on sel.game_id = s.game_id
+       and sel.user_id = s.user_id
+     where s.channel_born_channel_id is null
+     for update of s skip locked
+  ),
   updated as (
-    update public.live_activity_started_users s
-       set channel_born_environment = selected.environment,
-           channel_born_channel_id = selected.channel_id
-      from selected
-     where s.game_id = selected.game_id
-       and s.user_id = selected.user_id
-       and s.channel_born_channel_id is null
-    returning s.game_id
+    update public.live_activity_started_users tgt
+       set channel_born_environment = sel.environment,
+           channel_born_channel_id = sel.channel_id
+      from selected sel
+      join locked l
+        on l.game_id = sel.game_id
+       and l.user_id = sel.user_id
+     where tgt.game_id = l.game_id
+       and tgt.user_id = l.user_id
+       and tgt.channel_born_channel_id is null
+    returning tgt.game_id
   )
   select
     v_active_count,
