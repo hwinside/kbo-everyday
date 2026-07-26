@@ -31,7 +31,8 @@ export async function fetchSharePost(postId: number): Promise<SharePost | null> 
         "id, board_type, board_id, content_type, title, content, image_urls, video_urls, is_hidden, author_team_id_snapshot, profiles(nickname, team_id)"
       )
       .eq("id", postId)
-      .single();
+      // maybeSingle: 없는/삭제된 글은 0행이 정상이므로 406 대신 null 반환
+      .maybeSingle();
 
     if (!data) return null;
 
