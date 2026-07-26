@@ -20,6 +20,7 @@ import { isIosNativeRuntime } from "@/lib/capacitor/platform";
 import {
   beginOverlayKeyboard,
   supportsNativeKeyboardOverlay,
+  isNativeKeyboardScrollActive,
 } from "@/lib/capacitor/native-keyboard";
 
 interface Props {
@@ -112,9 +113,8 @@ export default function VenueStoryViewer({
   // 모달 컴포저 포커스 → 시트를 시각 뷰포트 전체 높이로 확장(CommentSheet expanded 패턴).
   const [composerFocused, setComposerFocused] = useState(false);
   // iOS 네이티브 키보드 오버레이 — 브릿지 실패 시 web visualViewport 폴백으로 전환(nativeKbFallback).
-  // nativeActiveRef 는 scroll-lock guard 가 이중보정을 피하도록 native 스크롤 제어 활성 여부를 노출한다.
+  // native scroll 활성 여부는 전역 getter(isNativeKeyboardScrollActive)로 읽어 scroll-lock guard 이중보정을 피한다.
   const [nativeKbFallback, setNativeKbFallback] = useState(false);
-  const nativeActiveRef = useRef(false);
   // iOS 키보드 회피 — CommentSheet 와 동일한 state 기반 visualViewport 패턴.
   // iOS Safari/WKWebView 는 키보드가 떠도 레이아웃 뷰포트가 그대로라 absolute bottom+safe-area
   // 만으로는 컴포저가 키보드에 덮인다 → 시각 뷰포트 차이(kbInset)로 시트 바닥을 키보드 위로 올리고
@@ -201,9 +201,10 @@ export default function VenueStoryViewer({
   // 해제 시 원위치 복원한다(scroll-lock.ts 순수 헬퍼, 회귀로 고정 — 삼순 #839 blocker 3).
   useEffect(() => {
     // native 키보드 오버레이가 스크롤을 직접 제어 중이면 restoreLockedScroll guard 를 no-op 으로 두어
-    // 이중보정(시트/배경 진동)을 피한다(삼순 #883 blocker ④). native 비활성/fallback/웹은 guard 정상 동작.
+    // 이중보정(시트/배경 진동)을 피한다(삼순 #883 blocker ④). native 스크롤 제어는 복원 성공 후에만
+    // 해제되므로(전역 getter), 지연 restore 중에도 guard 가 조기 재활성화되지 않는다. fallback/웹은 정상 동작.
     const saved = lockRootScroll({
-      isNativeKeyboardActive: () => nativeActiveRef.current,
+      isNativeKeyboardActive: () => isNativeKeyboardScrollActive(),
     });
     return () => {
       unlockRootScroll(saved);
@@ -226,18 +227,13 @@ export default function VenueStoryViewer({
           setVvHeight(height > 0 ? Math.max(0, window.innerHeight - height) : null);
         },
         onFallback: () => {
-          // 브릿지 실패 — native 활성 해제 후 web visualViewport 경로로 복귀(effect 재실행).
-          nativeActiveRef.current = false;
+          // 브릿지 실패 — web visualViewport 경로로 복귀(effect 재실행). native 활성 상태는 매니저가 관리.
           setKbInset(0);
           setVvHeight(null);
           setNativeKbFallback(true);
         },
-        onActiveChange: (active) => {
-          nativeActiveRef.current = active;
-        },
       });
       return () => {
-        nativeActiveRef.current = false;
         handle.release();
         setKbInset(0);
         setVvHeight(null);

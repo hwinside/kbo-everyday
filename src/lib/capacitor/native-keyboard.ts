@@ -5,15 +5,16 @@
 // 자동스크롤을 끄고, 플러그인이 주는 정확한 키보드 높이로 시트를 직접 배치한다.
 // 플러그인이 없는 기존 바이너리·웹/PWA는 기존 visualViewport 경로를 유지한다.
 //
-// 동시성 계약(삼순 #883 blocker 반영):
-// ① listener 부분실패 handle 유실 방지 — addListener 를 allSettled 로 받아 성공한 handle 을
-//    반드시 수거하고, 하나라도 실패하면 수거분을 제거한 뒤 fallback 으로 전환한다.
-// ② close→reopen 전역 race — @capacitor/keyboard 는 전역 싱글턴이라 두 오버레이가 겹치면
-//    setResizeMode/setScroll 이 서로 덮어써 baseline(previousResizeMode)이 오염된다. 모든 브릿지
-//    조작을 모듈 단일 opChain 으로 직렬화하고, baseline 은 활성 오버레이 0→1 전이에서 한 번만
-//    캡처해 1→0 전이에서 복원한다(refcount). 중첩 오버레이는 baseline 을 다시 읽지 않는다.
-// ③ restore 부분실패 격리 — setScroll 복원이 throw 해도 setResizeMode 복원이 반드시 실행되도록
-//    각 브릿지 호출을 독립 try/catch 로 감싼다.
+// 동시성 계약(삼순 #883 왕복3 blocker 반영) — resize/scroll 을 전역 단일 lease 로 관리한다.
+//   ① setScroll(true) 는 호출 "성공 여부 불명"도 롤백 대상 — await 직전에 applied 플래그를 세워,
+//      네이티브 side effect 가 적용됐는데 응답이 reject 돼도 restore 가 setScroll(false)로 되돌린다.
+//   ② 복원 통지는 실제 성공 후에만 — setScroll(false)가 성공해 native 가 진짜 enable 된 뒤에만
+//      notify(false). 실패하면 상태를 유지하고 bounded retry 한다. 호출부 guard(root scroll)도 전역
+//      상태 getter 를 읽어, 복원 성공 전에는 조기 재활성화되지 않는다.
+//   ③ setResizeMode(baseline) 실패는 baseline 을 소비하지 않고 pending 으로 유지 → 다음 open 이
+//      오염된 현재값(none)을 새 baseline 으로 재캡처하지 않는다(baseline poisoning 차단).
+//   ④ scroll 도 resize 와 동일한 전역 refCount lease — 두 오버레이가 active 인데 하나를 release 해도
+//      refCount>0 이면 setScroll(false)를 호출하지 않아 나머지 오버레이의 native scroll 제어가 유지된다.
 
 import { Capacitor, type PluginListenerHandle } from "@capacitor/core";
 import {
@@ -79,51 +80,130 @@ export interface BeginOverlayKeyboardOptions {
    * web visualViewport 폴백으로 복귀해야 한다. release 이후에는 호출하지 않는다.
    */
   onFallback: () => void;
-  /**
-   * native 오버레이가 스크롤을 실제로 직접 제어하기 시작/종료할 때 토글. true=setScroll(disabled)
-   * 적용됨, false=복원 시작. scroll-lock 의 restoreLockedScroll guard 가 이 값으로 이중보정을 피한다.
-   */
-  onActiveChange?: (active: boolean) => void;
   /** 테스트 전용 브릿지 주입. 미지정 시 실제 @capacitor/keyboard 브릿지. */
   bridge?: KeyboardBridge;
 }
 
-// ── 모듈 전역 상태(② refcount baseline + 직렬화 chain) ─────────────────────────
+// ── 전역 lease 매니저 상태(② 전역 상태 getter + ③④ 단일 lease) ─────────────────
 let opChain: Promise<void> = Promise.resolve();
-let activeCount = 0;
-let baselineResizeMode: ResizeMode = KeyboardResize.Native;
+let refCount = 0; // 활성 오버레이 수(scroll/resize 공통 lease)
+let baseline: ResizeMode | null = null; // 캡처한 원래 resize mode(복원 성공까지 유지)
+let resizeNoneApplied = false; // setResizeMode(None) 시도됨 → baseline 복원으로만 해제
+let scrollDisabledApplied = false; // setScroll(true) 시도됨(성공/불명) → setScroll(false)로만 해제
+let nativeScrollActive = false; // guard 가 읽는 "native scroll 이 진짜 disabled" 확정 상태
+let restoreRetries = 0;
+let activeBridge: KeyboardBridge = realBridge;
+const RESTORE_MAX_RETRIES = 3;
+const RESTORE_RETRY_MS = 30;
 
 /** 모든 브릿지 조작을 단일 chain 으로 직렬화한다(전역 race 차단). */
-function enqueue(op: () => Promise<void>): Promise<void> {
+function enqueue<T>(op: () => Promise<T>): Promise<T> {
   const next = opChain.then(op, op);
-  opChain = next.catch(() => {});
+  opChain = next.then(
+    () => {},
+    () => {},
+  );
   return next;
 }
 
-/** 테스트 훅 — 전역 refcount/baseline/chain 을 초기화한다. */
+/**
+ * 전역 desired(refCount>0)로 native 상태를 수렴시킨다. apply 성공 시 true, 실패 시 false 반환.
+ * restore 경로는 항상 true 반환(부분 실패는 내부 bounded retry 로 처리).
+ */
+async function reconcile(): Promise<boolean> {
+  const b = activeBridge;
+  const want = refCount > 0;
+
+  if (want) {
+    if (resizeNoneApplied && scrollDisabledApplied) return true; // 이미 적용
+    try {
+      // ③ 복원 pending(resizeNoneApplied)일 땐 baseline 을 재캡처하지 않는다.
+      if (baseline === null && !resizeNoneApplied) {
+        try {
+          baseline = (await b.getResizeMode()).mode;
+        } catch {
+          baseline = KeyboardResize.Native;
+        }
+      }
+      if (!resizeNoneApplied) {
+        resizeNoneApplied = true; // await 직전 표시 — reject 여도 롤백 대상
+        await b.setResizeMode({ mode: KeyboardResize.None });
+      }
+      if (!scrollDisabledApplied) {
+        scrollDisabledApplied = true; // ① await 직전 표시(성공 여부 불명도 롤백 대상)
+        await b.setScroll({ isDisabled: true });
+      }
+      nativeScrollActive = true; // scroll+resize apply 확정 후에만 활성 통지
+      return true;
+    } catch {
+      return false; // 호출부가 dec+restore+fallback 처리
+    }
+  }
+
+  // restore — refCount 0. 성공한 primitive 만 해제하고 실패는 bounded retry.
+  if (!resizeNoneApplied && !scrollDisabledApplied) return true;
+  let ok = true;
+  if (scrollDisabledApplied) {
+    try {
+      await b.setScroll({ isDisabled: false });
+      scrollDisabledApplied = false;
+      nativeScrollActive = false; // ② 실제 enable 성공 후에만 guard 재활성화 통지
+    } catch {
+      ok = false; // native 는 아직 disabled — nativeScrollActive 유지
+    }
+  }
+  if (resizeNoneApplied) {
+    try {
+      await b.setResizeMode({ mode: baseline ?? KeyboardResize.Native });
+      resizeNoneApplied = false;
+      baseline = null; // 성공 시에만 baseline 소비
+    } catch {
+      ok = false; // ③ baseline 유지 → 다음 open 이 오염값 재캡처 안 함
+    }
+  }
+  if (!ok && refCount === 0 && restoreRetries < RESTORE_MAX_RETRIES) {
+    restoreRetries += 1;
+    setTimeout(() => {
+      if (refCount === 0 && (resizeNoneApplied || scrollDisabledApplied)) {
+        void enqueue(reconcile);
+      }
+    }, RESTORE_RETRY_MS);
+  } else if (ok) {
+    restoreRetries = 0;
+  }
+  return true;
+}
+
+/** guard(root scroll)용 — native scroll 이 실제 disabled 로 확정된 상태인지. */
+export function isNativeKeyboardScrollActive(): boolean {
+  return nativeScrollActive;
+}
+
+/** 테스트 훅 — 전역 lease/상태/chain 을 초기화한다. */
 export function __resetOverlayKeyboardStateForTest(): void {
   opChain = Promise.resolve();
-  activeCount = 0;
-  baselineResizeMode = KeyboardResize.Native;
+  refCount = 0;
+  baseline = null;
+  resizeNoneApplied = false;
+  scrollDisabledApplied = false;
+  nativeScrollActive = false;
+  restoreRetries = 0;
+  activeBridge = realBridge;
 }
 
 /**
  * iOS 네이티브 댓글 시트용 키보드 모드를 활성화한다.
- * resize:none + native scroll disabled 상태에서 keyboardWillShow/Hide 높이를 전달한다.
- *
- * 모든 setup/restore 는 전역 opChain 으로 직렬화되어, close→reopen 이 겹쳐도 baseline 오염과
- * handle race 가 발생하지 않는다.
+ * resize:none + native scroll disabled 는 전역 lease 로, 높이 리스너는 인스턴스별로 관리한다.
  */
 export function beginOverlayKeyboard(
   options: BeginOverlayKeyboardOptions,
 ): OverlayKeyboardHandle {
-  const { onHeight, onFallback, onActiveChange } = options;
-  const bridge = options.bridge ?? realBridge;
+  const { onHeight, onFallback } = options;
+  if (options.bridge) activeBridge = options.bridge;
 
   let released = false;
   let subscriptions: PluginListenerHandle[] = [];
-  let counted = false; // 이 인스턴스가 activeCount 를 증가시켰는지
-  let scrollDisabled = false; // 이 인스턴스가 setScroll(disabled) 를 적용했는지
+  let joined = false; // 이 인스턴스가 refCount 를 증가시켰는지
 
   const removeSubscriptions = async (): Promise<void> => {
     if (subscriptions.length === 0) return;
@@ -132,95 +212,48 @@ export function beginOverlayKeyboard(
     await Promise.allSettled(pending.map((s) => s.remove()));
   };
 
-  // doRestore — 이 인스턴스 몫만 되돌린다(enqueue 하지 않는 raw 버전). setup 은 이미 opChain
-  // 안에서 실행되므로 직접 호출하고(재-enqueue 시 자기 뒤에 append 되어 deadlock), release 는
-  // enqueue(doRestore) 로 감싼다. ③ 각 브릿지 호출을 독립 try/catch 로 격리해 앞 호출이 throw
-  // 해도 뒤 호출(resize 복원)이 반드시 실행된다. 여러 번 불려도 idempotent.
-  const doRestore = async (): Promise<void> => {
-    await removeSubscriptions();
-
-    if (scrollDisabled) {
-      onActiveChange?.(false);
-      try {
-        await bridge.setScroll({ isDisabled: false });
-      } catch {
-        /* scroll 복원 실패는 격리 — resize 복원은 아래에서 반드시 시도 */
-      }
-      scrollDisabled = false;
-    }
-
-    // ② baseline 은 마지막 오버레이(1→0)에서만 복원한다.
-    if (counted) {
-      activeCount = Math.max(0, activeCount - 1);
-      counted = false;
-      if (activeCount === 0) {
-        try {
-          await bridge.setResizeMode({ mode: baselineResizeMode });
-        } catch {
-          /* 복원 실패는 무시(다음 오버레이/GC 로 정리) */
-        }
-      }
-    }
+  const leaveLease = async (): Promise<void> => {
+    if (!joined) return;
+    joined = false;
+    refCount = Math.max(0, refCount - 1);
+    await reconcile();
   };
 
-  // setup — 직렬화 chain 안에서 실행. 각 await 뒤 released 재확인.
   enqueue(async () => {
     if (released) return;
 
-    // ② baseline 은 0→1 전이에서만 캡처(중첩 오버레이는 오염된 현재값을 읽지 않음).
-    if (activeCount === 0) {
-      try {
-        baselineResizeMode = (await bridge.getResizeMode()).mode;
-      } catch {
-        baselineResizeMode = KeyboardResize.Native;
-      }
-    }
-    activeCount += 1;
-    counted = true;
-    if (released) {
-      await doRestore();
-      return;
-    }
-
-    // ① listener 부분실패 handle 유실 방지 — allSettled 로 성공분을 수거.
+    // ① 높이 리스너 부분실패 handle 유실 방지 — allSettled 로 성공분 수거.
     const results = await Promise.allSettled([
-      bridge.addListener("keyboardWillShow", ({ keyboardHeight }) => {
+      activeBridge.addListener("keyboardWillShow", ({ keyboardHeight }) => {
         if (!released) onHeight(Math.max(0, Math.round(keyboardHeight)));
       }),
-      bridge.addListener("keyboardWillHide", () => {
+      activeBridge.addListener("keyboardWillHide", () => {
         if (!released) onHeight(0);
       }),
     ]);
     for (const r of results) {
       if (r.status === "fulfilled") subscriptions.push(r.value);
     }
-    if (results.some((r) => r.status === "rejected")) {
-      // 부분 실패 — 수거한 handle 제거 + baseline refcount 되돌린 뒤 fallback.
-      await doRestore();
+    if (results.some((r) => r.status === "rejected") || released) {
+      await removeSubscriptions();
+      if (results.some((r) => r.status === "rejected") && !released) onFallback();
+      return;
+    }
+
+    // 전역 lease 참여 + native 상태 수렴.
+    refCount += 1;
+    joined = true;
+    const ok = await reconcile();
+    if (!ok) {
+      // apply 실패 — 이 인스턴스만 빠지고(다른 오버레이 유지) web 폴백으로 전환.
+      await removeSubscriptions();
+      await leaveLease();
       if (!released) onFallback();
       return;
     }
     if (released) {
-      await doRestore();
-      return;
-    }
-
-    try {
-      await bridge.setResizeMode({ mode: KeyboardResize.None });
-      if (released) {
-        await doRestore();
-        return;
-      }
-      await bridge.setScroll({ isDisabled: true });
-      scrollDisabled = true;
-      onActiveChange?.(true);
-      if (released) {
-        await doRestore();
-        return;
-      }
-    } catch {
-      await doRestore();
-      if (!released) onFallback();
+      await removeSubscriptions();
+      await leaveLease();
     }
   });
 
@@ -229,7 +262,10 @@ export function beginOverlayKeyboard(
       if (released) return;
       released = true;
       onHeight(0);
-      void enqueue(doRestore);
+      void enqueue(async () => {
+        await removeSubscriptions();
+        await leaveLease();
+      });
     },
   };
 }

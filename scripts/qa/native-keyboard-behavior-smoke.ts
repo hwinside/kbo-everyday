@@ -1,14 +1,16 @@
-// Behavioral 회귀 — iOS 네이티브 키보드 오버레이 동시성(삼순 #883 왕복2 blocker).
-// 문자열 검사가 아니라 실제 beginOverlayKeyboard 를 fake bridge 로 구동해 관찰 가능한 동작을 검증한다.
-//   ① listener 부분실패 시 성공 handle 을 반드시 remove + fallback 전환(handle 유실 0)
-//   ② close→reopen 겹침에서 baseline resize mode 오염 없이 최종 Native 로 복원
-//   ③ restore 에서 setScroll 이 throw 해도 setResizeMode(baseline) 복원이 실행됨
-//
-// jsdom/브라우저 불필요 — 순수 Promise 오케스트레이션만 검증한다.
+// Behavioral 회귀 — iOS 네이티브 키보드 오버레이 전역 lease(삼순 #883 왕복3 blocker).
+// 문자열 검사가 아니라 실제 beginOverlayKeyboard 를 fake bridge 로 구동해, delayed/rejected 주입으로
+// 상태 정합을 검증한다. fake bridge 는 "applied-then-reject"(네이티브 side effect 는 적용됐는데 응답만
+// reject)를 모델링해 실제 native scroll/resize 상태를 추적한다.
+//   ① setScroll(true) applied-then-reject → fallback 뒤 native disabled 잔류 0
+//   ② setScroll(false) restore reject → native active 인데 guard 조기 재활성화 금지(isNativeKeyboardScrollActive)
+//   ③ setResizeMode(baseline) restore reject → 다음 open 이 오염값(none) 재캡처 안 함(baseline poisoning 0)
+//   ④ 2 active 중 1 release → 남은 오버레이의 native scroll 유지(scroll 도 전역 refCount lease)
 
 import type { PluginListenerHandle } from "@capacitor/core";
 import {
   beginOverlayKeyboard,
+  isNativeKeyboardScrollActive,
   __resetOverlayKeyboardStateForTest,
   type KeyboardBridge,
 } from "../../src/lib/capacitor/native-keyboard";
@@ -25,9 +27,9 @@ function ok(label: string, cond: boolean) {
   }
 }
 
-const flush = () => new Promise((r) => setTimeout(r, 0));
-async function settle(times = 12) {
-  for (let i = 0; i < times; i += 1) await flush();
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+async function settle(times = 14) {
+  for (let i = 0; i < times; i += 1) await wait(0);
 }
 
 interface Call {
@@ -35,32 +37,43 @@ interface Call {
   arg?: unknown;
 }
 
-// 관찰 가능한 fake bridge. 실패를 주입할 수 있고 remove 호출을 기록한다.
+// 관찰 가능한 fake bridge — 실제 native scroll/resize 상태를 추적하고 실패를 주입한다.
 function makeBridge(opts: {
   failListener?: "show" | "hide" | null;
-  failSetScrollRestore?: boolean; // setScroll({isDisabled:false}) 만 throw
+  // "applied-then-reject": native side effect 는 적용하고 promise 만 reject
+  failSetScrollDisable?: boolean; // setScroll(true) 응답 reject(적용은 됨)
+  failSetScrollEnable?: boolean; // setScroll(false) 응답 reject(적용은 됨)
+  failSetResizeRestore?: boolean; // setResizeMode(baseline) 응답 reject(적용은 됨)
   startResizeMode?: string;
-}) {
+} = {}) {
   const calls: Call[] = [];
+  const capturedBaselines: string[] = [];
   let removed = 0;
   let created = 0;
-  let currentResizeMode = opts.startResizeMode ?? "native";
+  let nativeResizeMode = opts.startResizeMode ?? "native";
+  let nativeScrollDisabled = false;
 
-  const capturedBaselines: string[] = [];
   const bridge: KeyboardBridge = {
     getResizeMode: async () => {
       calls.push({ op: "getResizeMode" });
-      capturedBaselines.push(currentResizeMode);
-      return { mode: currentResizeMode as never };
+      capturedBaselines.push(nativeResizeMode);
+      return { mode: nativeResizeMode as never };
     },
     setResizeMode: async ({ mode }) => {
       calls.push({ op: "setResizeMode", arg: mode });
-      currentResizeMode = mode as unknown as string;
+      nativeResizeMode = mode as unknown as string; // side effect 적용
+      if (mode !== "none" && opts.failSetResizeRestore) {
+        throw new Error("setResizeMode restore rejected (applied-then-reject)");
+      }
     },
     setScroll: async ({ isDisabled }) => {
       calls.push({ op: "setScroll", arg: isDisabled });
-      if (!isDisabled && opts.failSetScrollRestore) {
-        throw new Error("setScroll restore failed (injected)");
+      nativeScrollDisabled = isDisabled; // side effect 적용
+      if (isDisabled && opts.failSetScrollDisable) {
+        throw new Error("setScroll(true) rejected (applied-then-reject)");
+      }
+      if (!isDisabled && opts.failSetScrollEnable) {
+        throw new Error("setScroll(false) rejected (applied-then-reject)");
       }
     },
     addListener: async (eventName) => {
@@ -83,111 +96,129 @@ function makeBridge(opts: {
   return {
     bridge,
     calls,
+    capturedBaselines,
     get removed() {
       return removed;
     },
     get created() {
       return created;
     },
-    get resizeMode() {
-      return currentResizeMode;
+    get nativeResizeMode() {
+      return nativeResizeMode;
     },
-    get capturedBaselines() {
-      return capturedBaselines;
+    get nativeScrollDisabled() {
+      return nativeScrollDisabled;
     },
   };
 }
 
 async function main() {
-  // ── ① listener 부분실패 → 성공 handle remove + fallback ──────────────────
+  // ── 기본: 정상 apply/release ────────────────────────────────────────────
+  console.log("[기본 apply/release 정합]");
+  {
+    __resetOverlayKeyboardStateForTest();
+    const b = makeBridge();
+    const h = beginOverlayKeyboard({ onHeight: () => {}, onFallback: () => {}, bridge: b.bridge });
+    await settle();
+    ok("apply 후 native resize None + scroll disabled", b.nativeResizeMode === "none" && b.nativeScrollDisabled);
+    ok("apply 후 guard 활성(isNativeKeyboardScrollActive true)", isNativeKeyboardScrollActive() === true);
+    h.release();
+    await settle();
+    ok("release 후 native resize baseline(native) + scroll enabled", b.nativeResizeMode === "native" && !b.nativeScrollDisabled);
+    ok("release 후 guard 비활성", isNativeKeyboardScrollActive() === false);
+  }
+
+  // ── ① listener 부분실패 → handle 수거 + fallback ─────────────────────────
   console.log("[① listener 부분실패 handle 유실 방지]");
   {
     __resetOverlayKeyboardStateForTest();
     const b = makeBridge({ failListener: "hide" });
     let fallback = 0;
-    const handle = beginOverlayKeyboard({
-      onHeight: () => {},
-      onFallback: () => {
-        fallback += 1;
-      },
-      bridge: b.bridge,
-    });
+    beginOverlayKeyboard({ onHeight: () => {}, onFallback: () => (fallback += 1), bridge: b.bridge });
     await settle();
-    ok("성공한 listener(show) handle 이 remove 됨(유실 0)", b.created === 1 && b.removed === 1);
-    ok("부분실패 시 onFallback 1회 호출", fallback === 1);
-    ok("부분실패 시 setScroll(disabled) 미적용(native 활성 안 됨)",
-      !b.calls.some((c) => c.op === "setScroll" && c.arg === true));
-    ok("baseline resize mode 복원(최종 native)", b.resizeMode === "native");
-    handle.release();
-    await settle();
-    ok("release 후 추가 fallback 없음", fallback === 1);
+    ok("성공 handle(show) remove(유실 0)", b.created === 1 && b.removed === 1);
+    ok("onFallback 1회 + native scroll 미적용", fallback === 1 && !b.nativeScrollDisabled);
   }
 
-  // ── ② close→reopen 전역 race → baseline 오염 없음 ─────────────────────────
-  console.log("[② close→reopen 겹침 baseline 오염 방지]");
+  // ── ① setScroll(true) applied-then-reject → fallback 뒤 disabled 잔류 0 ───
+  console.log("[① setScroll(true) applied-then-reject 롤백]");
   {
     __resetOverlayKeyboardStateForTest();
-    const b = makeBridge({ startResizeMode: "native" });
-    // 첫 오버레이 열고 setup 완료
-    const h1 = beginOverlayKeyboard({ onHeight: () => {}, onFallback: () => {}, bridge: b.bridge });
+    const b = makeBridge({ failSetScrollDisable: true });
+    let fallback = 0;
+    beginOverlayKeyboard({ onHeight: () => {}, onFallback: () => (fallback += 1), bridge: b.bridge });
     await settle();
-    ok("setup 후 resize None 적용", b.resizeMode === "none");
-    // 겹침: release(h1) 직후 곧바로 reopen(h2) — 전역 chain 으로 직렬화돼야
-    h1.release();
-    const h2 = beginOverlayKeyboard({ onHeight: () => {}, onFallback: () => {}, bridge: b.bridge });
-    await settle();
-    // h2 활성 동안 resize 는 none
-    ok("reopen 활성 중 resize None 유지", b.resizeMode === "none");
-    // ★ 핵심 불변식: baseline 은 절대 오염된 값(none)으로 캡처되지 않는다.
-    ok("baseline 캡처값이 절대 'none' 아님(오염 0)",
-      b.capturedBaselines.length > 0 && b.capturedBaselines.every((m) => m !== "none"));
-    h2.release();
-    await settle();
-    ok("마지막 오버레이 종료 시 baseline(native)로 복원", b.resizeMode === "native");
+    ok("응답 reject(적용됨) → onFallback 1회", fallback === 1);
+    ok("★ native scroll disabled 잔류 0(setScroll(false)로 롤백)", b.nativeScrollDisabled === false);
+    ok("resize 도 baseline(native)로 롤백", b.nativeResizeMode === "native");
+    ok("guard 비활성(조기 활성 안 됨)", isNativeKeyboardScrollActive() === false);
   }
 
-  // ②-b 진짜 중첩(refcount>1): h1 활성 중 h2 열림 → h2 는 오염된 none 을 baseline 으로 읽지 않아야.
+  // ── ② setScroll(false) restore reject → guard 조기 재활성화 금지 ──────────
+  console.log("[② restore setScroll(false) reject — guard 조기 재활성화 금지]");
   {
     __resetOverlayKeyboardStateForTest();
-    const b = makeBridge({ startResizeMode: "native" });
-    const h1 = beginOverlayKeyboard({ onHeight: () => {}, onFallback: () => {}, bridge: b.bridge });
+    const b = makeBridge({ failSetScrollEnable: true });
+    const h = beginOverlayKeyboard({ onHeight: () => {}, onFallback: () => {}, bridge: b.bridge });
     await settle();
-    const h2 = beginOverlayKeyboard({ onHeight: () => {}, onFallback: () => {}, bridge: b.bridge });
-    await settle();
-    ok("중첩 시 baseline 캡처 1회만(activeCount>0 이면 재캡처 skip)",
-      b.calls.filter((c) => c.op === "getResizeMode").length === 1);
-    h2.release();
-    await settle();
-    ok("중첩 해제 첫 release 에선 아직 native 복원 안 함(refcount 잔여)", b.resizeMode === "none");
-    h1.release();
-    await settle();
-    ok("마지막 release 에서만 baseline(native) 복원", b.resizeMode === "native");
-  }
-
-  // ── ③ setScroll 복원 실패 시 setResizeMode 복원 미실행 방지 ────────────────
-  console.log("[③ restore 부분실패 격리 — scroll throw 여도 resize 복원]");
-  {
-    __resetOverlayKeyboardStateForTest();
-    const b = makeBridge({ startResizeMode: "native", failSetScrollRestore: true });
-    let active: boolean | null = null;
-    const h = beginOverlayKeyboard({
-      onHeight: () => {},
-      onFallback: () => {},
-      onActiveChange: (a) => {
-        active = a;
-      },
-      bridge: b.bridge,
-    });
-    await settle();
-    ok("setup 후 native 활성(onActiveChange true)", active === true);
-    ok("setup 후 resize None", b.resizeMode === "none");
+    ok("apply 후 guard 활성", isNativeKeyboardScrollActive() === true);
     h.release();
+    await settle(2); // retry 이전 첫 restore 시점
+    // setScroll(false) 응답이 reject → nativeScrollActive 유지(false 통지 금지)
+    ok("★ restore reject 시 guard 활성 유지(복원 성공 전 false 통지 금지)", isNativeKeyboardScrollActive() === true);
+    await wait(200); // bounded retry 경과
     await settle();
-    // setScroll(false) 는 throw 하지만 setResizeMode(native) 는 반드시 실행돼야
-    ok("scroll 복원 throw 에도 resize baseline(native) 복원됨", b.resizeMode === "native");
-    ok("scroll 복원 실패해도 onActiveChange(false) 통지", active === false);
-    ok("setResizeMode 복원 호출이 실제 존재",
-      b.calls.some((c) => c.op === "setResizeMode" && c.arg === "native"));
+    // fake bridge 는 setScroll(false) 를 매번 reject → retry 소진 후에도 native 는 enable(적용은 됨)
+    ok("bounded retry 소진 후 native scroll 은 enable(적용됨)", b.nativeScrollDisabled === false);
+    const enableCalls = b.calls.filter((c) => c.op === "setScroll" && c.arg === false).length;
+    ok("bounded retry 유계(setScroll(false) 호출 ≤ 1+최대재시도)", enableCalls >= 2 && enableCalls <= 4);
+  }
+
+  // ── ③ resize restore reject → baseline poisoning 0 ───────────────────────
+  console.log("[③ resize restore reject — baseline poisoning 방지]");
+  {
+    __resetOverlayKeyboardStateForTest();
+    const b = makeBridge({ startResizeMode: "native", failSetResizeRestore: true });
+    const h1 = beginOverlayKeyboard({ onHeight: () => {}, onFallback: () => {}, bridge: b.bridge });
+    await settle();
+    ok("첫 apply 후 resize None", b.nativeResizeMode === "none");
+    h1.release();
+    await settle(2);
+    // setResizeMode(baseline=native) 적용은 되지만 응답 reject → resizeNoneApplied 유지, baseline 보존
+    // 다음 open 은 baseline 을 재캡처하지 않아야(오염된 현재값 무시)
+    const capturesBefore = b.capturedBaselines.length;
+    const h2 = beginOverlayKeyboard({ onHeight: () => {}, onFallback: () => {}, bridge: b.bridge });
+    await settle();
+    ok("★ 다음 open 이 baseline 재캡처 안 함(pending 유지)", b.capturedBaselines.length === capturesBefore);
+    h2.release();
+    await wait(200);
+    await settle();
+    // 모든 캡처된 baseline 이 'none' 아님(poisoning 0)
+    ok("★ 캡처 baseline 절대 'none' 아님(poisoning 0)",
+      b.capturedBaselines.length > 0 && b.capturedBaselines.every((m) => m !== "none"));
+  }
+
+  // ── ④ 2 active 중 1 release → 남은 오버레이 native scroll 유지 ────────────
+  console.log("[④ 2 active 중 1 release — scroll 전역 refCount lease]");
+  {
+    __resetOverlayKeyboardStateForTest();
+    const b = makeBridge({ startResizeMode: "native" });
+    const h1 = beginOverlayKeyboard({ onHeight: () => {}, onFallback: () => {}, bridge: b.bridge });
+    await settle();
+    const h2 = beginOverlayKeyboard({ onHeight: () => {}, onFallback: () => {}, bridge: b.bridge });
+    await settle();
+    ok("2 active — native scroll disabled", b.nativeScrollDisabled === true);
+    h1.release();
+    await settle();
+    ok("★ 1 release 후에도 native scroll disabled 유지(refCount>0)", b.nativeScrollDisabled === true);
+    ok("★ 1 release 후 resize None 유지", b.nativeResizeMode === "none");
+    ok("★ 1 release 후 guard 활성 유지", isNativeKeyboardScrollActive() === true);
+    ok("setScroll(false) 미호출(마지막 release 전)",
+      !b.calls.some((c) => c.op === "setScroll" && c.arg === false));
+    h2.release();
+    await settle();
+    ok("마지막 release 에서만 native scroll enable", b.nativeScrollDisabled === false);
+    ok("마지막 release 후 guard 비활성", isNativeKeyboardScrollActive() === false);
   }
 
   console.log(`\n결과: ${pass} pass / ${fail} fail`);

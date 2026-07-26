@@ -301,7 +301,7 @@ console.log("[전송 중 스토리 전환 오염 가드 — 삼순 #807 라운�
   ok("native-keyboard: keyboardWillShow/Hide 로 정확한 키보드 높이 구독",
     kbSrc.includes('"keyboardWillShow"') && kbSrc.includes('"keyboardWillHide"'));
   ok("native-keyboard: release 시 baseline resize mode 원복+자동스크롤 재활성화 — 다른 화면 입력창 미오염",
-    kbSrc.includes("setResizeMode({ mode: baselineResizeMode })") &&
+    kbSrc.includes("setResizeMode({ mode: baseline ?? KeyboardResize.Native })") &&
     kbSrc.includes("setScroll({ isDisabled: false })"));
   ok("native-keyboard: 웹/PWA·안드·구빌드는 no-op(iOS+plugin availability 게이트)",
     kbSrc.includes("isIosNativeRuntime()") &&
@@ -312,21 +312,27 @@ console.log("[전송 중 스토리 전환 오염 가드 — 삼순 #807 라운�
     path.resolve(process.cwd(), "src/lib/venue-stories/scroll-lock.ts"),
     "utf8",
   );
-  // ② quick open→close async race: 모든 브릿지 조작을 전역 opChain 으로 직렬화하고 release 는
-  //   enqueue(doRestore) 로 감싸 setup 뒤에 실행 → native scroll off/resize:none 잔류 방지.
-  //   구체적 동시성 동작은 native-keyboard-behavior-smoke 가 fake bridge 로 behavioral 검증.
-  ok("② 전역 opChain 직렬화 + release=enqueue(doRestore)",
-    kbSrc.includes("function enqueue(") &&
-    kbSrc.includes("opChain = next.catch") &&
-    kbSrc.includes("void enqueue(doRestore)"));
-  ok("② 각 단계 후 released 재확인 + refcount baseline(activeCount)",
-    kbSrc.includes("activeCount") && kbSrc.includes("baselineResizeMode") &&
-    (kbSrc.match(/if \(released\)/g) ?? []).length >= 3);
-  // ① listener 부분실패 handle 유실 방지 — allSettled 로 수거 후 제거+fallback.
+  // ②③④ 전역 lease reconciler: resize/scroll 을 전역 refCount lease 로 관리. 구체적 동시성/로백/
+  //   baseline poisoning 동작은 native-keyboard-behavior-smoke 가 fake bridge 로 behavioral 검증.
+  ok("전역 opChain 직렬화 + refCount lease + reconcile",
+    kbSrc.includes("function enqueue<") &&
+    kbSrc.includes("let refCount") &&
+    kbSrc.includes("async function reconcile("));
   ok("① listener allSettled 로 성공 handle 수거(부분실패 유실 0)",
     kbSrc.includes("Promise.allSettled") &&
     kbSrc.includes('r.status === "fulfilled"') &&
     kbSrc.includes('r.status === "rejected"'));
+  ok("① setScroll(true) await 직전 applied 표시(성공 여부 불명도 롤백 대상)",
+    /scrollDisabledApplied = true;\s*\/\/[^\n]*\n\s*await b\.setScroll\(\{ isDisabled: true \}\)/.test(kbSrc));
+  ok("② 복원 성공 후에만 nativeScrollActive=false(복원 전 조기 통지 금지) + bounded retry",
+    kbSrc.includes("nativeScrollActive = false;") &&
+    kbSrc.includes("RESTORE_MAX_RETRIES") &&
+    kbSrc.includes("restoreRetries"));
+  ok("③ setResizeMode(baseline) 성공 시에만 baseline 소비(poisoning 차단)",
+    /resizeNoneApplied = false;\s*\n\s*baseline = null;/.test(kbSrc));
+  ok("④ guard 는 전역 getter isNativeKeyboardScrollActive 로 읽음(handle-local 아님)",
+    kbSrc.includes("export function isNativeKeyboardScrollActive(") &&
+    viewerSrc.includes("isNativeKeyboardActive: () => isNativeKeyboardScrollActive()"));
   // ③ 브릿지 부분실패: restore 후 onFallback 으로 web visualViewport 경로 복귀.
   ok("③ 부분실패 시 onFallback → web 폴백 전환(nativeKbFallback 게이트)",
     kbSrc.includes("onFallback()") &&
@@ -336,8 +342,8 @@ console.log("[전송 중 스토리 전환 오염 가드 — 삼순 #807 라운�
   ok("④ native 활성 시 scroll-lock restoreLockedScroll guard no-op(isNativeKeyboardActive)",
     scrollLockSrc.includes("isNativeKeyboardActive") &&
     scrollLockSrc.includes("options?.isNativeKeyboardActive?.()") &&
-    kbSrc.includes("onActiveChange") &&
-    viewerSrc.includes("isNativeKeyboardActive: () => nativeActiveRef.current"));
+    kbSrc.includes("export function isNativeKeyboardScrollActive(") &&
+    viewerSrc.includes("isNativeKeyboardActive: () => isNativeKeyboardScrollActive()"));
   ok("④ guard 는 항상 등록되어 native fallback/웹 경로는 정상 보호",
     scrollLockSrc.includes('window.addEventListener("scroll", restoreLockedScroll') &&
     scrollLockSrc.includes("window.visualViewport?.addEventListener(\"scroll\", restoreLockedScroll"));
