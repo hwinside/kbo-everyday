@@ -63,19 +63,6 @@ function qualNote(view: View, activeStat: string, isDefense: boolean): string | 
   return view === "pitcher" ? "5경기 이상" : "10경기 이상";
 }
 
-/** "7 1/3" | number → 실이닝 소수. 파싱 실패 0. (title-rankings parseIP와 동일 규칙) */
-function parseIP(ip: unknown): number {
-  if (typeof ip === "number") return ip;
-  const s = String(ip ?? "").trim();
-  const m = s.match(/^(\d+)(?:\s+(\d+)\/(\d+))?$/);
-  if (!m) {
-    const n = Number(s);
-    return isNaN(n) ? 0 : n;
-  }
-  const whole = parseInt(m[1]) || 0;
-  const frac = m[2] && m[3] ? parseInt(m[2]) / parseInt(m[3]) : 0;
-  return whole + frac;
-}
 /** "7 1/3" → "7⅓" 보기 좋게. */
 function ipLabel(ip: unknown): string {
   return String(ip ?? "0").replace(" 1/3", "⅓").replace(" 2/3", "⅔");
