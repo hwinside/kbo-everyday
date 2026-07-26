@@ -11,6 +11,7 @@ import {
 } from "@/lib/venue-stories/cleanup-policy";
 import {
   classifyCleanupRow,
+  cleanupCandidateFilter,
   shouldPhysicallyDeleteCleanupRow,
 } from "@/lib/venue-stories/expiry-policy";
 
@@ -91,10 +92,12 @@ export async function GET(req: NextRequest) {
   // 만료 계약(삼순 09:44 #2): terminal(game_ended_at 확정) 전에는 expiry 삭제 금지.
   //  - expired_after_end: 종료 확정 + 종료+24h 경과 → 공개 종료, 물리삭제 금지
   //  - stale_cap: 종료 미확정인데 안전상한(시작+72h) 도달 = finalize 장애 → 누수 방지 삭제 + 관제(5xx)
+  // query-guard: bounded -- 물리삭제 후보만 id 순으로 회당 500건 처리하며 성공 행은 제거되어 backlog가 전진한다.
   const { data: rows, error } = await supabase
     .from("venue_stories")
     .select("id, status, game_ended_at, expires_at, media_bucket, media_path, thumb_bucket, thumb_path")
-    .or(`expires_at.lte.${nowIso},status.in.(removed,cleanup_failed)`)
+    .or(cleanupCandidateFilter(nowIso))
+    .order("id", { ascending: true })
     .limit(500);
   if (error) {
     return NextResponse.json({ error: "조회 실패" }, { status: 500 });

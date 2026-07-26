@@ -11,6 +11,7 @@ import {
   finalizedExpiryIso,
   safetyCapExpiryIso,
   classifyCleanupRow,
+  cleanupCandidateFilter,
   shouldPhysicallyDeleteCleanupRow,
 } from "../../src/lib/venue-stories/expiry-policy";
 import {
@@ -75,6 +76,49 @@ ok(
 ok("정상 만료 → 물리삭제 금지", shouldPhysicallyDeleteCleanupRow("expired_after_end") === false);
 ok("운영/신고 제재 → 물리삭제 유지", shouldPhysicallyDeleteCleanupRow("flagged") === true);
 ok("안전상한 장애 정리 → 물리삭제 유지", shouldPhysicallyDeleteCleanupRow("stale_cap") === true);
+{
+  const nowIso = new Date(T0).toISOString();
+  ok(
+    "cleanup 조회는 정상 만료를 제외하고 flagged/stale_cap만 선택",
+    cleanupCandidateFilter(nowIso)
+      === `status.in.(removed,cleanup_failed),and(game_ended_at.is.null,expires_at.lte.${nowIso})`,
+  );
+  const route = readFileSync(
+    resolve(__dirname, "../../src/app/api/cron/venue-stories-cleanup/route.ts"),
+    "utf-8",
+  );
+  const filterAt = route.indexOf(".or(cleanupCandidateFilter(nowIso))");
+  const orderAt = route.indexOf('.order("id", { ascending: true })', filterAt);
+  const limitAt = route.indexOf(".limit(500)", orderAt);
+  ok(
+    "route는 정상 만료 제외 필터→id 정렬→500 제한 순서로 조회(starvation 방지)",
+    filterAt >= 0 && orderAt > filterAt && limitAt > orderAt,
+  );
+  const preserved = Array.from({ length: 500 }, (_, index) => ({
+    id: index + 1,
+    status: "active",
+    gameEndedAt: nowIso,
+    expiresAtMs: T0 - 1,
+  }));
+  const deletionTargets = [
+    { id: 501, status: "removed", gameEndedAt: nowIso, expiresAtMs: T0 + H },
+    { id: 502, status: "cleanup_failed", gameEndedAt: null, expiresAtMs: null },
+    { id: 503, status: "active", gameEndedAt: null, expiresAtMs: T0 - 1 },
+  ];
+  const selected = [...preserved, ...deletionTargets]
+    .filter((row) => (
+      row.status === "removed"
+      || row.status === "cleanup_failed"
+      || (row.gameEndedAt == null && row.expiresAtMs != null && row.expiresAtMs <= T0)
+    ))
+    .sort((a, b) => a.id - b.id)
+    .slice(0, 500)
+    .map((row) => row.id);
+  ok(
+    "보존 정상만료 500건이 removed/cleanup_failed/stale_cap 선택을 막지 않음",
+    selected.join(",") === "501,502,503",
+  );
+}
 ok(
   "pending 도 terminal 전 expiry 삭제 금지",
   classifyCleanupRow({ status: "pending", gameEndedAt: null, expiresAtMs: T0 + 72 * H, nowMs: T0 + 10 * H }) === "keep",

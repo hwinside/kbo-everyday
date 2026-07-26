@@ -38,6 +38,11 @@ export function shouldPhysicallyDeleteCleanupRow(cls: CleanupRowClass): boolean 
   return cls === "flagged" || cls === "stale_cap";
 }
 
+/** 보존 정상만료 행이 limit을 점유하지 않도록 물리삭제 후보만 조회한다. */
+export function cleanupCandidateFilter(nowIso: string): string {
+  return `status.in.(removed,cleanup_failed),and(game_ended_at.is.null,expires_at.lte.${nowIso})`;
+}
+
 /**
  * cleanup 대상 행 분류. terminal(game_ended_at 확정) 전에는 expiry 삭제를 금지하고,
  * 안전상한 도달만 stale_cap(장애 정책)으로 구분해 관제와 함께 처리한다.
