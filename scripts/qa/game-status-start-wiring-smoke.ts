@@ -245,6 +245,158 @@ test("start 관제 started는 snapshot 누계가 아니라 이번 invocation acc
   assert.equal(result.started, 7);
 });
 
+test("17:59:15 scheduled → 18:02:46 live 1회초는 mark-only 대신 snapshot/delivery를 연다", async () => {
+  const notify = await loadNotify();
+  const liveAt = Date.UTC(2026, 6, 26, 9, 2, 46); // KST 18:02:46
+  const opened: string[] = [];
+  const delivered: string[] = [];
+  const marked: string[] = [];
+  const realNow = Date.now;
+  Date.now = () => liveAt;
+  try {
+    const result = await notify([liveGame({
+      G_ID: "20260726LGHH0",
+      G_DT: "20260726",
+      G_TM: "18:00",
+      AWAY_NM: "LG",
+      HOME_NM: "한화",
+      GAME_INN_NO: 1,
+      GAME_TB_SC: "T",
+    })], {
+      observedAtMs: liveAt,
+      deadlineAtMs: liveAt + 52_000,
+      startDeps: {
+        storeScheduledSeen: async () => {},
+        readStartState: async () => ({
+          start_notified: false,
+          last_seen_scheduled_at: new Date(liveAt - 211_000).toISOString(),
+        }),
+        markStart: async (id) => { marked.push(id); },
+        openStart: async ({ gameId }) => {
+          opened.push(gameId);
+          return liveAt + 90_000;
+        },
+        deliverStartBatch: async ({ gameId }) => {
+          delivered.push(gameId);
+          return {
+            claimed: 1,
+            snapshotCompleted: true,
+            fcmAcceptedDelta: 1,
+            fcmAcceptedTotal: 1,
+            deviceDelivered: null,
+            pending: 0,
+            permanentFailed: 0,
+            expired: 0,
+          };
+        },
+        finalizeStart: async (_gameId, delta = 0) => ({
+          snapshotCompleted: true,
+          fcmAcceptedDelta: delta,
+          fcmAcceptedTotal: delta,
+          deviceDelivered: null,
+          pending: 0,
+          permanentFailed: 0,
+          expired: 0,
+        }),
+      },
+    });
+    assert.deepEqual(opened, ["20260726LGHH0"]);
+    assert.deepEqual(delivered, ["20260726LGHH0"]);
+    assert.deepEqual(marked, []);
+    assert.equal(result.started, 1);
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+test("오늘 5경기 13,454행은 snapshot-first round-robin으로 첫 slow/transient에도 전량 drain", async () => {
+  const notify = await loadNotify();
+  const gameIds = ["G1", "G2", "G3", "G4", "G5"];
+  const sizes = [3_419, 2_233, 1_191, 3_492, 3_119];
+  const remaining = new Map(gameIds.map((id, index) => [id, sizes[index]]));
+  const accepted = new Map(gameIds.map((id) => [id, 0]));
+  const opened: string[] = [];
+  const firstAttempted = new Set<string>();
+  let clock = OBSERVED_AT;
+  let firstSlowTransient = true;
+  const realNow = Date.now;
+  Date.now = () => clock;
+  try {
+    const result = await notify(gameIds.map((gameId, index) => liveGame({
+      G_ID: gameId,
+      G_DT: "20260724",
+      G_TM: "18:30",
+      AWAY_NM: index % 2 === 0 ? "한화" : "LG",
+      HOME_NM: index % 2 === 0 ? "LG" : "한화",
+    })), {
+      observedAtMs: OBSERVED_AT,
+      deadlineAtMs: OBSERVED_AT + 52_000,
+      startDeps: {
+        storeScheduledSeen: async () => {},
+        readStartState: async () => ({
+          start_notified: false,
+          last_seen_scheduled_at: new Date(OBSERVED_AT - 60_000).toISOString(),
+        }),
+        markStart: async () => {},
+        openStart: async ({ gameId }) => {
+          opened.push(gameId);
+          return OBSERVED_AT + 90_000;
+        },
+        deliverStartBatch: async ({ gameId, attemptDeadlineAtMs }) => {
+          assert.equal(opened.length, 5, "첫 FCM batch 전에 5경기 snapshot을 모두 열어야 한다");
+          assert.ok(clock < OBSERVED_AT + 52_000, "route deadline 뒤 신규 batch 금지");
+          assert.ok(attemptDeadlineAtMs <= clock + 8_000, "게임별 transport budget은 8초 이하");
+          firstAttempted.add(gameId);
+          if (gameId === "G1" && firstSlowTransient) {
+            firstSlowTransient = false;
+            clock += 8_000;
+            return {
+              claimed: 500,
+              snapshotCompleted: false,
+              fcmAcceptedDelta: 0,
+              fcmAcceptedTotal: 0,
+              deviceDelivered: null,
+              pending: remaining.get(gameId)!,
+              permanentFailed: 0,
+              expired: 0,
+            };
+          }
+          const delta = Math.min(500, remaining.get(gameId)!);
+          remaining.set(gameId, remaining.get(gameId)! - delta);
+          accepted.set(gameId, accepted.get(gameId)! + delta);
+          clock += 100;
+          return {
+            claimed: delta,
+            snapshotCompleted: remaining.get(gameId) === 0,
+            fcmAcceptedDelta: delta,
+            fcmAcceptedTotal: accepted.get(gameId)!,
+            deviceDelivered: null,
+            pending: remaining.get(gameId)!,
+            permanentFailed: 0,
+            expired: 0,
+          };
+        },
+        finalizeStart: async (gameId, delta = 0) => ({
+          snapshotCompleted: remaining.get(gameId) === 0,
+          fcmAcceptedDelta: delta,
+          fcmAcceptedTotal: accepted.get(gameId)!,
+          deviceDelivered: null,
+          pending: remaining.get(gameId)!,
+          permanentFailed: 0,
+          expired: 0,
+        }),
+      },
+    });
+    assert.deepEqual(opened, gameIds);
+    assert.deepEqual([...firstAttempted], gameIds);
+    assert.ok([...remaining.values()].every((count) => count === 0));
+    assert.equal(result.started, sizes.reduce((sum, count) => sum + count, 0));
+    assert.ok(clock < OBSERVED_AT + 52_000);
+  } finally {
+    Date.now = realNow;
+  }
+});
+
 // 마이그레이션 계약 — 저장이 앱-레벨 read-modify-write(레이시)가 아니라 DB 원자 단조여야 한다.
 test("마이그레이션 계약: mark_scheduled_seen RPC는 ON CONFLICT + GREATEST 원자 단조 저장", () => {
   const sql = readFileSync("supabase/migrations/20260724_notify_scheduled_seen_monotonic.sql", "utf8").toLowerCase();

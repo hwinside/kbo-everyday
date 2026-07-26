@@ -7,8 +7,14 @@ import { shouldSendStartNotification } from "@/lib/notifications/start-freshness
 import { fetchTeamFanIds } from "@/lib/notifications/audience";
 import type { KboRawGame } from "@/types/api";
 import {
+  deliverGameStartBatch,
   deliverGameStartSnapshot,
+  finalizeGameStartSnapshot,
+  openGameStartSnapshot,
+  START_DELIVERY_ATTEMPT_MS,
+  type GameStartDeliveryBatchResult,
   type GameStartDeliveryResult,
+  type GameStartDeliveryTarget,
 } from "@/lib/notifications/game-start-delivery";
 
 // 경기 시작/종료 알림 (push-notifications-v1 S4).
@@ -177,6 +183,12 @@ export type StartNotifyDeps = {
     payload: { title: string; body: string; url: string };
     attemptDeadlineAtMs?: number;
   }) => Promise<GameStartDeliveryResult>;
+  openStart?: (args: GameStartDeliveryTarget) => Promise<number>;
+  deliverStartBatch?: (args: GameStartDeliveryTarget & {
+    snapshotDeadlineAtMs: number;
+    attemptDeadlineAtMs: number;
+  }) => Promise<GameStartDeliveryBatchResult>;
+  finalizeStart?: (gameId: string, fcmAcceptedDelta?: number) => Promise<GameStartDeliveryResult>;
 };
 
 async function defaultStoreScheduledSeen(gameIds: string[], iso: string): Promise<void> {
@@ -257,9 +269,100 @@ export async function notifyGameStatusTransitions(
     await storeScheduledSeen(scheduledIds, new Date(observedAtMs).toISOString());
   }
 
+  // 프로덕션 ledger 경로는 모든 live 경기 snapshot을 먼저 고정한 뒤 게임별 1 batch씩
+  // round-robin한다. 첫 경기의 느린 FCM이 공용 route budget 전체를 독점하지 않게 각
+  // transport를 8초로 bound한다. legacy sendStart/deliverStart seam은 기존 테스트만 사용.
+  const useFairStartDrain = opts?.startDeps?.sendStart == null && opts?.startDeps?.deliverStart == null;
+  const ledgerHandled = new Set<string>();
+  if (useFairStartDrain) {
+    const openStart = opts?.startDeps?.openStart ?? openGameStartSnapshot;
+    const deliverStartBatch = opts?.startDeps?.deliverStartBatch ?? deliverGameStartBatch;
+    const finalizeStart = opts?.startDeps?.finalizeStart ?? finalizeGameStartSnapshot;
+    const opened: Array<{
+      target: GameStartDeliveryTarget;
+      snapshotDeadlineAtMs: number;
+      acceptedDelta: number;
+    }> = [];
+
+    for (const g of games) {
+      const gameId = g.G_ID;
+      if (!gameId || g.GAME_STATE_SC !== "2" || isKboGameCancelled(g.CANCEL_SC_ID)) continue;
+      const seenRow = await readStartState(gameId);
+      ledgerHandled.add(gameId);
+      if (seenRow?.start_notified) continue;
+      const lastSeenMs = seenRow?.last_seen_scheduled_at
+        ? Date.parse(seenRow.last_seen_scheduled_at)
+        : null;
+      const sendOk = Boolean(seenRow?.start_snapshot_at) || shouldSendStartNotification({
+        lastSeenScheduledAtMs: Number.isFinite(lastSeenMs as number) ? lastSeenMs : null,
+        scheduledStartAtMs: scheduledStartMs(g.G_DT, g.G_TM),
+        nowMs: observedAtMs,
+        inningNo: g.GAME_INN_NO,
+        isTop: g.GAME_TB_SC ? g.GAME_TB_SC === "T" : null,
+      });
+      if (!sendOk) {
+        await markStart(gameId);
+        continue;
+      }
+      const away = g.AWAY_NM ?? "";
+      const home = g.HOME_NM ?? "";
+      const teamIds = [teamIdByShortName(away), teamIdByShortName(home)]
+        .filter((v): v is number => v !== null);
+      const target: GameStartDeliveryTarget = {
+        gameId,
+        teamIds,
+        observedAtMs,
+        payload: {
+          title: "⚾ 경기 시작!",
+          body: `${away} vs ${home} 경기가 시작됐어요. 크보팬에서 자세한 경기 내용을 확인해보세요!`,
+          url: `/games/${gameId}`,
+        },
+      };
+      const snapshotDeadlineAtMs = await openStart(target);
+      opened.push({ target, snapshotDeadlineAtMs, acceptedDelta: 0 });
+    }
+
+    const routeDeadlineAtMs = opts?.deadlineAtMs
+      ?? opened.reduce((latest, item) => Math.max(latest, item.snapshotDeadlineAtMs), observedAtMs);
+    let active = opened;
+    while (active.length > 0 && Date.now() < routeDeadlineAtMs) {
+      const nextRound: typeof active = [];
+      for (const item of active) {
+        const nowMs = Date.now();
+        const attemptDeadlineAtMs = Math.min(
+          routeDeadlineAtMs,
+          item.snapshotDeadlineAtMs,
+          nowMs + START_DELIVERY_ATTEMPT_MS,
+        );
+        if (attemptDeadlineAtMs <= nowMs) continue;
+        const batch = await deliverStartBatch({
+          ...item.target,
+          snapshotDeadlineAtMs: item.snapshotDeadlineAtMs,
+          attemptDeadlineAtMs,
+        });
+        item.acceptedDelta += batch.fcmAcceptedDelta;
+        if (batch.claimed > 0 && batch.pending > 0) nextRound.push(item);
+      }
+      active = nextRound;
+    }
+
+    for (const item of opened) {
+      const delivery = await finalizeStart(item.target.gameId, item.acceptedDelta);
+      started += delivery.fcmAcceptedDelta;
+      console.log(
+        `[game-status] start delivery game=${item.target.gameId}` +
+        ` fcmAcceptedDelta=${delivery.fcmAcceptedDelta} fcmAcceptedTotal=${delivery.fcmAcceptedTotal}` +
+        ` deviceDelivered=${delivery.deviceDelivered ?? "unknown"}` +
+        ` pending=${delivery.pending} permanentFailed=${delivery.permanentFailed}` +
+        ` expired=${delivery.expired} snapshotCompleted=${delivery.snapshotCompleted}`,
+      );
+    }
+  }
+
   for (const g of games) {
     const gameId = g.G_ID;
     if (!gameId) continue;
+    if (g.GAME_STATE_SC === "2" && ledgerHandled.has(gameId)) continue;
 
     const away = g.AWAY_NM ?? "";
     const home = g.HOME_NM ?? "";
@@ -313,6 +416,7 @@ export async function notifyGameStatusTransitions(
       // 여기서 stale mark-only를 타면 snapshot 완료 전 global start_notified가 닫히는 회귀다.
       const sendOk = Boolean(seenRow?.start_snapshot_at) || shouldSendStartNotification({
         lastSeenScheduledAtMs: Number.isFinite(lastSeenMs as number) ? lastSeenMs : null,
+        scheduledStartAtMs: scheduledStartMs(g.G_DT, g.G_TM),
         nowMs: observedAtMs,
         inningNo: g.GAME_INN_NO,
         isTop: g.GAME_TB_SC ? g.GAME_TB_SC === "T" : null,

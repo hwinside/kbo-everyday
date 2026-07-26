@@ -105,6 +105,7 @@ $$;
 create or replace function claim_game_start_deliveries(
   p_game_id text,
   p_lease_token uuid,
+  p_lease_seconds integer default 20,
   p_limit integer default 500
 )
 returns table (
@@ -141,9 +142,9 @@ as $$
        set status = 'leased',
            attempts = l.attempts + 1,
            lease_token = p_lease_token,
-           -- attempt transport는 고정 snapshot deadline까지 갈 수 있다. lease를 그보다
-           -- 15초 길게 잡아 settle grace까지 같은 행의 중첩 FCM send를 차단한다.
-           lease_until = l.deadline_at + interval '15 seconds',
+           -- 호출부의 FCM transport는 8초로 bound된다. 20초 lease가 send+settle을
+           -- 감싸 중첩 발송을 막고, crash 시 다음 1분 cron에는 만료돼 90초 안 재claim된다.
+           lease_until = now() + make_interval(secs => greatest(10, least(p_lease_seconds, 30))),
            updated_at = now()
       from candidates c
      where l.id = c.id
@@ -258,10 +259,10 @@ end;
 $$;
 
 revoke all on function snapshot_game_start_deliveries(text, integer[], timestamptz, timestamptz) from anon, authenticated, public;
-revoke all on function claim_game_start_deliveries(text, uuid, integer) from anon, authenticated, public;
+revoke all on function claim_game_start_deliveries(text, uuid, integer, integer) from anon, authenticated, public;
 revoke all on function settle_game_start_deliveries(uuid[], uuid, text, text) from anon, authenticated, public;
 revoke all on function finalize_game_start_deliveries(text) from anon, authenticated, public;
 grant execute on function snapshot_game_start_deliveries(text, integer[], timestamptz, timestamptz) to service_role;
-grant execute on function claim_game_start_deliveries(text, uuid, integer) to service_role;
+grant execute on function claim_game_start_deliveries(text, uuid, integer, integer) to service_role;
 grant execute on function settle_game_start_deliveries(uuid[], uuid, text, text) to service_role;
 grant execute on function finalize_game_start_deliveries(text) to service_role;

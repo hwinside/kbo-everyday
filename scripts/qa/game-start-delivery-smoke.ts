@@ -26,7 +26,8 @@ test("최초 snapshot 고정 + 신규/교체 토큰 catch-up 금지", () => {
 test("lease fencing + transient-only deadline retry", () => {
   assert.match(migration, /for update skip locked/);
   assert.match(migration, /lease_token = p_lease_token/);
-  assert.match(migration, /lease_until = l\.deadline_at \+ interval '15 seconds'/);
+  assert.match(migration, /p_lease_seconds integer default 20/);
+  assert.match(migration, /lease_until = now\(\) \+ make_interval/);
   assert.match(migration, /l\.status in \('pending', 'transient'\)/);
   assert.match(migration, /l\.attempts < 2/);
   assert.match(migration, /case l\.status when 'pending' then 0 when 'transient' then 1 else 2 end/);
@@ -101,7 +102,7 @@ test("T+60 retry도 최초 persisted deadline T+90을 단일 시계로 사용", 
   );
 });
 
-test("slow worker의 T+20 중첩 claim은 lease가 T+105까지 살아 FCM send 1회", async () => {
+test("8초 transport를 20초 lease가 감싸 overlap send 1회, crash 뒤 deadline 전 재claim", async () => {
   let status: "pending" | "leased" | "accepted" = "pending";
   let leaseUntil = 0;
   let nowMs = 0;
@@ -109,18 +110,27 @@ test("slow worker의 T+20 중첩 claim은 lease가 T+105까지 살아 FCM send 1
   const claim = async () => {
     if (status === "pending" || (status === "leased" && leaseUntil < nowMs)) {
       status = "leased";
-      leaseUntil = 105_000;
+      leaseUntil = nowMs + 20_000;
       return [{ id: "token-1" }];
     }
     return [];
   };
   const workerA = await claim();
-  nowMs = 20_000;
-  const workerB = await claim();
-  assert.equal(workerB.length, 0, "20초 중첩 worker는 lease 중인 행을 claim할 수 없다");
   sends += workerA.length;
+  nowMs = 8_000;
   status = "accepted";
+  nowMs = 10_000;
+  const workerB = await claim();
+  assert.equal(workerB.length, 0, "transport 종료 전후 overlap은 terminal 행을 재claim할 수 없다");
   assert.equal(sends, 1);
+
+  status = "pending";
+  nowMs = 0;
+  await claim(); // claim 직후 worker crash: send 0, settle 0
+  nowMs = 10_000;
+  assert.equal((await claim()).length, 0, "lease 안에서는 crash 행도 overlap claim 불가");
+  nowMs = 21_000;
+  assert.equal((await claim()).length, 1, "20초 lease 만료 뒤 90초 deadline 전 재claim");
 });
 
 test("accepted는 invocation delta와 snapshot 누계를 분리하고 device 도달은 unknown", () => {
