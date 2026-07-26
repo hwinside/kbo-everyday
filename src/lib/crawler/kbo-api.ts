@@ -407,6 +407,19 @@ export interface BoxScoreResult {
   homePitchers: BoxScorePitcherRecord[];
 }
 
+export interface GameLinescoreSide {
+  innings: (number | null)[];
+  R: number;
+  H: number;
+  E: number;
+}
+
+export interface GameLinescore {
+  status: "scheduled" | "live" | "final" | "cancelled";
+  away: GameLinescoreSide;
+  home: GameLinescoreSide;
+}
+
 function bsSafeInt(v: unknown): number {
   if (v == null || v === "" || v === "&nbsp;") return 0;
   const n = parseInt(String(v), 10);
@@ -573,6 +586,69 @@ export async function fetchBoxScore(gameId: string, seasonId?: string): Promise<
       errorMessage: error.message,
     });
 
+    return null;
+  }
+}
+
+/** 이닝별 스코어 조회 (특정 경기). 종료 직후 빈 이닝표면 null을 반환해 settle 재시도를 유도한다. */
+export async function fetchGameLinescore(gameId: string, seasonId?: string): Promise<GameLinescore | null> {
+  try {
+    const sid = seasonId || gameId.slice(0, 4);
+    const body = `leId=1&srId=0&seasonId=${sid}&gameId=${gameId}`;
+    const res = await fetch(`${KBO_BASE}/GetScoreBoard`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "User-Agent": KBO_BROWSER_UA,
+        Referer: KBO_BASE,
+      },
+      body,
+      signal: AbortSignal.timeout(10000),
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+
+    const data = await res.json();
+    if (!Array.isArray(data) || data.length < 2 || !data[1]) return null;
+    const meta = Array.isArray(data[0]) && data[0].length > 0 ? data[0][0] : null;
+    const cancelName = String(meta?.CANCEL_SC_NM ?? "");
+    const status: GameLinescore["status"] =
+      cancelName.includes("취소") || cancelName.includes("우천")
+        ? "cancelled"
+        : String(meta?.END_TM ?? "").trim()
+          ? "final"
+          : Number(meta?.T_SCORE_CN ?? 0) > 0 || Number(meta?.B_SCORE_CN ?? 0) > 0
+            ? "live"
+            : "scheduled";
+    const raw = Array.isArray(data[1]) && data[1].length > 0 ? data[1][0] : data[1];
+    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+    if (!parsed?.rows || parsed.rows.length < 2) return null;
+
+    function parseRow(row: { Text: string }[]): GameLinescoreSide {
+      const cells = row.map((cell) => cell.Text?.trim());
+      const innings = cells.slice(1, cells.length - 3).map((value) => {
+        if (!value || value === "-" || value === "&nbsp;") return null;
+        const n = parseInt(value, 10);
+        return Number.isNaN(n) ? null : n;
+      });
+      return {
+        innings,
+        R: parseInt(cells[cells.length - 3] || "0", 10) || 0,
+        H: parseInt(cells[cells.length - 2] || "0", 10) || 0,
+        E: parseInt(cells[cells.length - 1] || "0", 10) || 0,
+      };
+    }
+
+    const linescore = {
+      status,
+      away: parseRow(parsed.rows[0].row),
+      home: parseRow(parsed.rows[1].row),
+    };
+    const hasInningBreakdown =
+      linescore.away.innings.some((value) => value !== null) ||
+      linescore.home.innings.some((value) => value !== null);
+    return hasInningBreakdown ? linescore : null;
+  } catch {
     return null;
   }
 }

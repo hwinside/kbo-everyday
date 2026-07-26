@@ -11,7 +11,7 @@ export type CanonicalGateReason =
   | "invalid-gameid"
   | "canonical-unavailable"
   | "not-final"
-  | "score-mismatch";
+  | "canonical-not-settled";
 
 export interface CanonicalGameState {
   status: "scheduled" | "live" | "final" | "cancelled";
@@ -19,56 +19,114 @@ export interface CanonicalGameState {
   homeScore: number | null;
 }
 
+export interface SummaryFingerprint {
+  status: "final";
+  awayScore: number;
+  homeScore: number;
+  awayInnings: (number | null)[];
+  homeInnings: (number | null)[];
+}
+
+function normalizedInnings(values: (number | null)[]): (number | null)[] {
+  const normalized = [...values];
+  while (normalized.at(-1) === null) normalized.pop();
+  return normalized;
+}
+
+export function createSummaryFingerprint(
+  awayScore: number,
+  homeScore: number,
+  awayInnings: (number | null)[],
+  homeInnings: (number | null)[],
+): SummaryFingerprint {
+  return {
+    status: "final",
+    awayScore,
+    homeScore,
+    awayInnings: normalizedInnings(awayInnings),
+    homeInnings: normalizedInnings(homeInnings),
+  };
+}
+
 /**
- * 서버 독립 canonical 게이트 (blocker①). KBO canonical 경기상태로 client body 를 검증한다.
- * fail-close: canonical 미확보·미확정(final 아님)·body 스코어 불일치면 생성/캐시를 거부.
+ * 서버 독립 canonical 게이트 (blocker①). 경기목록과 스코어보드가 같은 종료 결과로
+ * 수렴한 경우에만 fingerprint를 만든다.
+ * fail-close: canonical 미확보·미확정(final 아님)·두 원천 불일치면 생성/캐시를 거부.
  * 이닝 수(9회 등) 하드코딩 금지 — status 필드로만 종료를 판정(콜드/더블헤더/홈리드 9말생략/연장 대응).
  */
 export function canonicalGate(
   canonical: CanonicalGameState | undefined,
-  bodyAwayScore: number,
-  bodyHomeScore: number,
-): { reason: CanonicalGateReason; httpStatus: number } {
+  linescore: {
+    status: "scheduled" | "live" | "final" | "cancelled";
+    away: { R: number; innings: (number | null)[] };
+    home: { R: number; innings: (number | null)[] };
+  } | null | undefined,
+): { reason: CanonicalGateReason; httpStatus: number; fingerprint?: SummaryFingerprint } {
   if (!canonical) return { reason: "canonical-unavailable", httpStatus: 503 };
   if (canonical.status !== "final") return { reason: "not-final", httpStatus: 409 };
   if (
     canonical.awayScore == null ||
     canonical.homeScore == null ||
-    canonical.awayScore !== bodyAwayScore ||
-    canonical.homeScore !== bodyHomeScore
+    !linescore ||
+    linescore.status !== "final" ||
+    canonical.awayScore !== linescore.away.R ||
+    canonical.homeScore !== linescore.home.R
   ) {
-    return { reason: "score-mismatch", httpStatus: 422 };
+    return { reason: "canonical-not-settled", httpStatus: 409 };
   }
-  return { reason: "ok", httpStatus: 200 };
+  return {
+    reason: "ok",
+    httpStatus: 200,
+    fingerprint: createSummaryFingerprint(
+      canonical.awayScore,
+      canonical.homeScore,
+      linescore.away.innings,
+      linescore.home.innings,
+    ),
+  };
 }
 
-/**
- * 캐시 fingerprint 가 현재 final 스코어와 다르거나 부재(legacy)면 stale (blocker②).
- * stale 이면 서버는 캐시 반환 대신 재생성, 클라이언트는 노출 대신 숨김+재생성해야 한다.
- */
-export function isFingerprintStale(
-  cachedAwayScore: number | null | undefined,
-  cachedHomeScore: number | null | undefined,
-  finalAwayScore: number,
-  finalHomeScore: number,
+export function fingerprintsEqual(
+  left: SummaryFingerprint | null | undefined,
+  right: SummaryFingerprint | null | undefined,
 ): boolean {
-  if (cachedAwayScore == null || cachedHomeScore == null) return true; // legacy fingerprint 없음
-  return cachedAwayScore !== finalAwayScore || cachedHomeScore !== finalHomeScore;
+  if (!left || !right) return false;
+  return (
+    left.status === right.status &&
+    left.awayScore === right.awayScore &&
+    left.homeScore === right.homeScore &&
+    left.awayInnings.length === right.awayInnings.length &&
+    left.homeInnings.length === right.homeInnings.length &&
+    left.awayInnings.every((value, index) => value === right.awayInnings[index]) &&
+    left.homeInnings.every((value, index) => value === right.homeInnings[index])
+  );
+}
+
+/** fingerprint 부재(legacy) 또는 final status+score+innings 불일치면 stale. */
+export function isFingerprintStale(
+  cached: SummaryFingerprint | null | undefined,
+  current: SummaryFingerprint | null | undefined,
+): boolean {
+  return !fingerprintsEqual(cached, current);
 }
 
 /**
- * 클라이언트: final 스코어를 알 때(finalScoreKnown) fingerprint 불일치/부재면 캐시를 숨긴다 (blocker②).
- * 비-final 맥락(스코어 미확정)에서는 기존 캐시를 노출한다(진행 중 화면 등).
+ * FinalView에서는 검증 가능한 current fingerprint가 없거나 캐시가 legacy/stale면 숨긴다.
+ * 서버 POST가 canonical을 재조회해 current cache 또는 새 요약만 돌려준다.
  */
 export function shouldHideStaleCache(
-  finalScoreKnown: boolean,
-  cachedAwayScore: number | null | undefined,
-  cachedHomeScore: number | null | undefined,
-  finalAwayScore: number | null | undefined,
-  finalHomeScore: number | null | undefined,
+  cached: SummaryFingerprint | null | undefined,
+  current: SummaryFingerprint | null | undefined,
 ): boolean {
-  if (!finalScoreKnown || finalAwayScore == null || finalHomeScore == null) return false;
-  return isFingerprintStale(cachedAwayScore, cachedHomeScore, finalAwayScore, finalHomeScore);
+  return isFingerprintStale(cached, current);
+}
+
+/** 생성 시작 fingerprint와 save 직전 canonical이 같을 때만 저장(old-last overwrite 차단). */
+export function shouldSaveGeneratedSummary(
+  generationFingerprint: SummaryFingerprint,
+  latestFingerprint: SummaryFingerprint | null | undefined,
+): boolean {
+  return fingerprintsEqual(generationFingerprint, latestFingerprint);
 }
 
 const DRAW_CLAIM_RE = /무승부|비겼|비긴|동점으로\s*(?:마무리|끝|경기를 마)/;

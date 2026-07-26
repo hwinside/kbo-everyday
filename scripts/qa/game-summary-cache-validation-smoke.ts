@@ -1,21 +1,21 @@
 #!/usr/bin/env tsx
 /**
- * QA: AI 경기 요약 캐시/생성 게이트 회귀 (삼순 #888 blocker①②③).
- *
- * 2026-07-26 사고: LG-한화 라이브 8회 4-4 스냅샷으로 recap 생성·캐시 → 최종 14-4로
- * 갱신됐는데 캐시 not-outdated 라 ~48분간 "4-4 무승부" 오답 노출.
- *
- * 시나리오: live/8회초·final stale body·홈팀 리드 9회말 null·연장·콜드/더블헤더·
- *          임의 POST poison·legacy cache·score mismatch 에서 stale 0초 노출.
+ * QA: AI 경기 요약 canonical/fingerprint/race 회귀 (#888).
  */
 
 import {
   canonicalGate,
+  createSummaryFingerprint,
+  fingerprintsEqual,
   isFingerprintStale,
   shouldHideStaleCache,
+  shouldSaveGeneratedSummary,
   winnerFieldMismatch,
   type CanonicalGameState,
+  type SummaryFingerprint,
 } from "../../src/lib/game-summary/cache-validation";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 let pass = 0;
 let fail = 0;
@@ -24,58 +24,103 @@ function ok(desc: string, cond: boolean) {
   else { fail++; console.log(`✗ ${desc}`); }
 }
 
-const g = (status: CanonicalGameState["status"], a: number | null, h: number | null): CanonicalGameState =>
-  ({ status, awayScore: a, homeScore: h });
+const game = (
+  status: CanonicalGameState["status"],
+  awayScore: number | null,
+  homeScore: number | null,
+): CanonicalGameState => ({ status, awayScore, homeScore });
 
-// ── blocker①: canonicalGate (fail-close) ────────────────────────────────────
-console.log("[① canonicalGate — 서버 독립 검증 fail-close]");
-ok("live 8회초(미확정) → 409 not-final", canonicalGate(g("live", 4, 4), 4, 4).reason === "not-final");
-ok("scheduled → 409 not-final", canonicalGate(g("scheduled", null, null), 0, 0).reason === "not-final");
-ok("cancelled → 409 not-final", canonicalGate(g("cancelled", 0, 0), 0, 0).reason === "not-final");
-ok("canonical 미확보 → 503", canonicalGate(undefined, 4, 4).reason === "canonical-unavailable");
-ok("final + body 스코어 불일치(stale 4-4 vs canonical 14-4) → 422", canonicalGate(g("final", 4, 14), 4, 4).reason === "score-mismatch");
-ok("final + 임의 POST poison(9-9) → 422", canonicalGate(g("final", 4, 14), 9, 9).reason === "score-mismatch");
-ok("final + body 일치 → ok", canonicalGate(g("final", 14, 4), 14, 4).reason === "ok");
-// 콜드/더블헤더/홈리드 9말생략/연장은 status='final'+정확 스코어로만 판정(이닝 하드코딩 없음)
-ok("콜드게임 5-0 final(6회 종료) → status 기반 ok", canonicalGate(g("final", 0, 5), 0, 5).reason === "ok");
-ok("홈팀 리드 9말 생략 3-2 final → ok", canonicalGate(g("final", 2, 3), 2, 3).reason === "ok");
-ok("연장 12회 6-5 final → ok", canonicalGate(g("final", 5, 6), 5, 6).reason === "ok");
-ok("httpStatus 매핑: not-final=409", canonicalGate(g("live", 1, 0), 1, 0).httpStatus === 409);
-ok("httpStatus 매핑: score-mismatch=422", canonicalGate(g("final", 1, 0), 0, 0).httpStatus === 422);
-ok("httpStatus 매핑: unavailable=503", canonicalGate(undefined, 0, 0).httpStatus === 503);
+const linescore = (
+  awayScore: number,
+  homeScore: number,
+  awayInnings: (number | null)[],
+  homeInnings: (number | null)[],
+  status: CanonicalGameState["status"] = "final",
+) => ({
+  status,
+  away: { R: awayScore, innings: awayInnings },
+  home: { R: homeScore, innings: homeInnings },
+});
 
-// ── blocker②: isFingerprintStale + shouldHideStaleCache ──────────────────────
-console.log("[② fingerprint stale + hide-before-regenerate]");
-ok("fingerprint 일치 → not stale", isFingerprintStale(14, 4, 14, 4) === false);
-ok("fingerprint 불일치(4-4 캐시 vs 14-4 최종) → stale", isFingerprintStale(4, 4, 14, 4) === true);
-ok("legacy fingerprint 없음(null) → stale", isFingerprintStale(undefined, undefined, 14, 4) === true);
-ok("legacy 한쪽만 null → stale", isFingerprintStale(4, undefined, 4, 4) === true);
-// hide: final 스코어를 알 때 stale/legacy면 숨김
-ok("final known + stale(4-4 캐시) → hide", shouldHideStaleCache(true, 4, 4, 14, 4) === true);
-ok("final known + legacy(null) → hide", shouldHideStaleCache(true, null, null, 14, 4) === true);
-ok("final known + fingerprint 일치 → 노출(hide 안 함)", shouldHideStaleCache(true, 14, 4, 14, 4) === false);
-ok("final 미확정(스코어 unknown) → 노출(진행 중 화면)", shouldHideStaleCache(false, 4, 4, null, null) === false);
-ok("final known 이나 스코어 null → 노출(비교 불가)", shouldHideStaleCache(true, 4, 4, null, 4) === false);
+const fp = (
+  awayScore: number,
+  homeScore: number,
+  awayInnings: (number | null)[],
+  homeInnings: (number | null)[],
+): SummaryFingerprint => createSummaryFingerprint(awayScore, homeScore, awayInnings, homeInnings);
 
-// ── blocker③: winnerFieldMismatch (무승부 loophole) ──────────────────────────
-console.log("[③ winner 필드/무승부 문구 검증]");
-// non-draw: winner 필드 exact 일치 (한화 home 14 승, LG away 4 — gameId LGHH: away=LG, home=한화)
-ok("non-draw + llmWinner='무승부'(오답) → mismatch (loophole 닫힘)",
-  winnerFieldMismatch(4, 14, "LG", "한화", "무승부", "한화 14-4 대승") === true);
-ok("non-draw + 헤드라인 '4-4 무승부'(2026-07-26 사고) → mismatch",
-  winnerFieldMismatch(4, 14, "LG", "한화", "한화", "LG, 박동원 동점포로 한화와 4-4 무승부") === true);
-ok("non-draw + 헤드라인 '동점으로 마무리' → mismatch",
-  winnerFieldMismatch(3, 5, "KT", "롯데", "롯데", "치열한 접전 동점으로 마무리") === true);
-ok("non-draw + winner exact 일치 + 정상 헤드라인 → pass",
-  winnerFieldMismatch(4, 14, "LG", "한화", "한화", "한화, 8회 10득점 폭발 LG에 14-4 대승") === false);
-ok("non-draw + winner 반대 팀 → mismatch",
-  winnerFieldMismatch(4, 14, "LG", "한화", "LG", "한화 14-4 대승") === true);
-ok("non-draw + winner 필드 부재 + 정상 헤드라인 → pass(헤드라인 검사는 호출부 loserClaimedWin)",
-  winnerFieldMismatch(4, 14, "LG", "한화", undefined, "한화 대승") === false);
-// draw: winner='무승부'만 허용
-ok("draw + llmWinner='무승부' → pass", winnerFieldMismatch(4, 4, "LG", "한화", "무승부", "4-4 무승부") === false);
-ok("draw + llmWinner=특정팀(오답) → mismatch(역방향)", winnerFieldMismatch(4, 4, "LG", "한화", "한화", "무승부") === true);
-ok("draw + winner 부재 → pass", winnerFieldMismatch(4, 4, "LG", "한화", undefined, "4-4 무승부") === false);
+console.log("[① canonical final+score+innings settle gate]");
+ok("live 8회초 → not-final", canonicalGate(game("live", 4, 4), linescore(4, 4, [0,0,0,0,0,0,2,2], [0,0,1,3], "live")).reason === "not-final");
+ok("scheduled → not-final", canonicalGate(game("scheduled", null, null), null).reason === "not-final");
+ok("cancelled → not-final", canonicalGate(game("cancelled", 0, 0), linescore(0, 0, [], [])).reason === "not-final");
+ok("경기목록 미확보 → unavailable", canonicalGate(undefined, null).reason === "canonical-unavailable");
+ok("final이나 이닝표 미확보 → not-settled", canonicalGate(game("final", 4, 14), null).reason === "canonical-not-settled");
+ok("경기목록 4-14 / 스코어보드 4-4 → not-settled", canonicalGate(game("final", 4, 14), linescore(4, 4, [0,0,0,0,0,0,2,2], [0,0,1,3])).reason === "canonical-not-settled");
+ok("경기목록 final이나 스코어보드 END_TM 전 → not-settled",
+  canonicalGate(game("final", 4, 4), linescore(4, 4, [0,0,0,0,0,0,2,2], [0,0,1,3], "live")).reason === "canonical-not-settled");
+
+const final414 = canonicalGate(
+  game("final", 4, 14),
+  linescore(4, 14, [0,0,0,0,0,0,2,2,0], [0,0,1,3,0,0,0,10,null]),
+);
+ok("두 원천 final 4-14 수렴 → fingerprint", final414.reason === "ok" && final414.fingerprint?.homeScore === 14);
+ok("홈리드 9회말 생략은 trailing null 정규화로 8개 이닝 보존", final414.fingerprint?.homeInnings.length === 8);
+ok("콜드 6회 final → 이닝 하드코딩 없이 통과",
+  canonicalGate(game("final", 0, 5), linescore(0, 5, [0,0,0,0,0,0], [2,0,0,3,0,null])).reason === "ok");
+ok("연장 12회 final → 통과",
+  canonicalGate(game("final", 5, 6), linescore(5, 6, Array(12).fill(0), Array(12).fill(0))).reason === "ok");
+ok("더블헤더는 exact gameId별 canonical을 받으면 동일 게이트 통과",
+  canonicalGate(game("final", 3, 2), linescore(3, 2, Array(9).fill(0), Array(9).fill(0))).reason === "ok");
+
+console.log("[② full fingerprint stale/legacy/UI 0-frame]");
+const mid44 = fp(4, 4, [0,0,0,0,0,0,2,2], [0,0,1,3]);
+const final44 = fp(4, 4, [0,0,0,0,0,0,2,2,0], [0,0,1,3,0,0,0,0,null]);
+const final414fp = final414.fingerprint!;
+ok("동일 fingerprint → current", fingerprintsEqual(final414fp, structuredClone(final414fp)));
+ok("중간/최종 동일 4-4라도 innings 차이 → stale", isFingerprintStale(mid44, final44));
+ok("4-4 → 4-14 score+innings 차이 → stale", isFingerprintStale(mid44, final414fp));
+ok("legacy fingerprint 없음 → stale", isFingerprintStale(null, final414fp));
+ok("legacy cache는 UI에 넣기 전 hide", shouldHideStaleCache(null, final414fp));
+ok("stale cache는 UI에 넣기 전 hide", shouldHideStaleCache(mid44, final414fp));
+ok("client linescore 미확보여도 검증 불가 cache는 hide", shouldHideStaleCache(final414fp, null));
+ok("current cache만 노출", !shouldHideStaleCache(final414fp, structuredClone(final414fp)));
+
+console.log("[③ old-last overwrite race]");
+ok("생성 시작/저장 직전 fingerprint 동일 → save", shouldSaveGeneratedSummary(final414fp, structuredClone(final414fp)));
+ok("늦은 4-4 생성이 최신 4-14를 덮는 save → 차단", !shouldSaveGeneratedSummary(mid44, final414fp));
+ok("같은 4-4여도 final innings가 변했으면 old save → 차단", !shouldSaveGeneratedSummary(mid44, final44));
+ok("저장 직전 canonical 재조회 실패 → 차단", !shouldSaveGeneratedSummary(final414fp, null));
+
+console.log("[④ winner exact-match]");
+ok("non-draw + winner=무승부 → mismatch",
+  winnerFieldMismatch(4, 14, "LG", "한화", "무승부", "한화 14-4 대승"));
+ok("non-draw + 헤드라인 무승부 → mismatch",
+  winnerFieldMismatch(4, 14, "LG", "한화", "한화", "LG와 한화 4-4 무승부"));
+ok("non-draw + exact winner → pass",
+  !winnerFieldMismatch(4, 14, "LG", "한화", "한화", "한화 14-4 대승"));
+ok("draw + 특정 팀 winner → mismatch",
+  winnerFieldMismatch(4, 4, "LG", "한화", "한화", "4-4 무승부"));
+ok("draw + winner=무승부 → pass",
+  !winnerFieldMismatch(4, 4, "LG", "한화", "무승부", "4-4 무승부"));
+
+console.log("[⑤ production control-flow probes]");
+const routeSource = readFileSync(resolve(process.cwd(), "src/app/api/game-summary/route.ts"), "utf8");
+const componentSource = readFileSync(resolve(process.cwd(), "src/components/game/KgwanTab.tsx"), "utf8");
+const postSource = routeSource.slice(routeSource.indexOf("export async function POST"));
+ok("공개 POST는 request body에서 gameId만 사용",
+  !/requestBody\.(?:awayTeam|homeTeam|awayScore|homeScore|linescore|awayBatters|homeBatters|awayPitchers|homePitchers)/.test(postSource));
+ok("POST 생성 입력은 canonical 경기+이닝+박스스코어 재조회",
+  postSource.includes("fetchCanonicalSummarySource(requestBody.gameId, true)"));
+ok("save 직전 canonical fingerprint 재검증",
+  postSource.includes("fetchCanonicalSummarySource(body.gameId, false)") &&
+  postSource.includes("shouldSaveGeneratedSummary(generationFingerprint, latestCanonical.fingerprint)"));
+const cacheBranch = componentSource.slice(
+  componentSource.indexOf("if (cacheData.summary)"),
+  componentSource.indexOf("// outdated(프롬프트 버전) OR stale/legacy"),
+);
+ok("stale/legacy 판단 전에 llmSummary에 캐시를 넣지 않음",
+  cacheBranch.indexOf("const hideStale") < cacheBranch.indexOf("setLlmSummary(cacheData.summary)") &&
+  cacheBranch.includes("if (!hideStale && !cacheData.outdated)"));
 
 console.log(`\n${pass}/${pass + fail} passed`);
-if (fail > 0) { console.error(`FAIL: ${fail} case(s)`); process.exit(1); }
+if (fail > 0) process.exit(1);

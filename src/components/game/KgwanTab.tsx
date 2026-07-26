@@ -6,7 +6,11 @@ import { ChevronDown, ChevronUp } from "lucide-react";
 import { clsx } from "clsx";
 import Image from "next/image";
 import { getTeamById, isAllStarGame, isAllStarGameId } from "@/lib/constants/teams";
-import { shouldHideStaleCache } from "@/lib/game-summary/cache-validation";
+import {
+  createSummaryFingerprint,
+  shouldHideStaleCache,
+  type SummaryFingerprint,
+} from "@/lib/game-summary/cache-validation";
 import GameChat from "@/components/game/GameChat";
 import ContextualStatsBox from "@/components/game/ContextualStatsBox";
 import VenueStorySection from "@/components/game/VenueStorySection";
@@ -535,16 +539,21 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
         const cacheRes = await fetch(`/api/game-summary?gameId=${gameId}`, { signal: controller.signal });
         const cacheData = await cacheRes.json();
         if (cacheData.summary) {
-          // 삼순 #888 blocker②: stale/legacy(스코어 fingerprint 불일치·부재) 캐시는 잘못된 요약이므로
-          // 먼저 노출하지 말고 숨김 + 재생성한다. (2026-07-26 4-4 무승부 stale 요약 선노출 사고)
-          const curAwayR = linescore?.away.R ?? boxScore?.awayBatters.reduce((s, b) => s + b.runs, 0);
-          const curHomeR = linescore?.home.R ?? boxScore?.homeBatters.reduce((s, b) => s + b.runs, 0);
-          const cachedAwayR = cacheData.summary._cachedAwayScore as number | undefined;
-          const cachedHomeR = cacheData.summary._cachedHomeScore as number | undefined;
-          const finalScoreKnown = !!hasRealBoxScore && curAwayR != null && curHomeR != null;
-          // final 스코어를 아는데 fingerprint 불일치/부재(legacy)면 캐시 신뢰 불가 → 숨김(노출 금지).
-          const hideStale = shouldHideStaleCache(finalScoreKnown, cachedAwayR, cachedHomeR, curAwayR, curHomeR);
-          if (!hideStale) setLlmSummary(cacheData.summary);
+          // final status+score+innings fingerprint가 일치하지 않거나 legacy면 1프레임도 노출하지 않는다.
+          const currentFingerprint: SummaryFingerprint | null = linescore
+            ? createSummaryFingerprint(
+                linescore.away.R,
+                linescore.home.R,
+                linescore.away.innings,
+                linescore.home.innings,
+              )
+            : null;
+          const hideStale = shouldHideStaleCache(
+            cacheData.fingerprint as SummaryFingerprint | null | undefined,
+            currentFingerprint,
+          );
+          // outdated도 같은 controller의 재생성 POST가 state cleanup으로 abort되지 않도록 생성 완료 전 숨긴다.
+          if (!hideStale && !cacheData.outdated) setLlmSummary(cacheData.summary);
           // outdated(프롬프트 버전) OR stale/legacy(hideStale) → 재생성.
           if ((cacheData.outdated || hideStale) && hasRealBoxScore && boxScore && !regeneratingRef.current) {
             regeneratingRef.current = true; // prevent re-entry on re-render

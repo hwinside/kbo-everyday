@@ -1,12 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { TEAMS, isAllStarGameId } from "@/lib/constants/teams";
-import { fetchStandings, buildRankMap, fetchGames, type KboGame } from "@/lib/crawler/kbo-api";
+import {
+  fetchStandings,
+  buildRankMap,
+  fetchGames,
+  fetchBoxScore,
+  fetchGameLinescore,
+  type KboGame,
+  type GameLinescore,
+} from "@/lib/crawler/kbo-api";
 import { STANDINGS_ACCURACY_RULES, STANDINGS_UNAVAILABLE_RULES } from "@/lib/ai/standings-guard";
 import { computeSeriesSnapshot, serializeSeriesSnapshot } from "@/lib/series/snapshot";
 import { loserClaimedWin } from "@/lib/game-summary/winner-check";
 import { hasBaseRunnerContradiction } from "@/lib/game-summary/consistency-check";
-import { canonicalGate, isFingerprintStale, winnerFieldMismatch } from "@/lib/game-summary/cache-validation";
+import {
+  canonicalGate,
+  isFingerprintStale,
+  shouldSaveGeneratedSummary,
+  winnerFieldMismatch,
+  type SummaryFingerprint,
+} from "@/lib/game-summary/cache-validation";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
@@ -49,6 +63,97 @@ function parseGameMeta(gameId: string): { dateStr: string; awayTeamId: number; h
     awayTeamId: KBO_CODE_TO_ID[m[2]] || 0,
     homeTeamId: KBO_CODE_TO_ID[m[3]] || 0,
   };
+}
+
+function toBoxScoreInput(game: KboGame, linescore: GameLinescore, boxScore: Awaited<ReturnType<typeof fetchBoxScore>>): BoxScoreInput | null {
+  if (!boxScore) return null;
+  return {
+    gameId: game.gameId,
+    awayTeam: getTeamShortName(game.awayTeamId),
+    homeTeam: getTeamShortName(game.homeTeamId),
+    awayScore: linescore.away.R,
+    homeScore: linescore.home.R,
+    linescore,
+    awayBatters: boxScore.awayBatters.map((b) => ({
+      name: b.name, ab: b.atBats, r: b.runs, h: b.hits,
+      rbi: b.rbi, hr: b.hr, bb: b.bb, so: b.so, avg: b.avg || "",
+    })),
+    homeBatters: boxScore.homeBatters.map((b) => ({
+      name: b.name, ab: b.atBats, r: b.runs, h: b.hits,
+      rbi: b.rbi, hr: b.hr, bb: b.bb, so: b.so, avg: b.avg || "",
+    })),
+    awayPitchers: boxScore.awayPitchers.map((p) => ({
+      name: p.name, ip: p.inningsPitched, h: p.hits, r: p.runs,
+      er: p.earnedRuns, bb: p.walks, so: p.strikeouts, hr: p.hr,
+      np: p.pitchCount, result: p.decision || undefined,
+    })),
+    homePitchers: boxScore.homePitchers.map((p) => ({
+      name: p.name, ip: p.inningsPitched, h: p.hits, r: p.runs,
+      er: p.earnedRuns, bb: p.walks, so: p.strikeouts, hr: p.hr,
+      np: p.pitchCount, result: p.decision || undefined,
+    })),
+  };
+}
+
+async function fetchCanonicalSummarySource(gameId: string, includeBoxScore: boolean): Promise<{
+  game?: KboGame;
+  linescore: GameLinescore | null;
+  input: BoxScoreInput | null;
+  fingerprint: SummaryFingerprint | null;
+  reason: string;
+  httpStatus: number;
+}> {
+  const meta = parseGameMeta(gameId);
+  if (!meta) {
+    return { linescore: null, input: null, fingerprint: null, reason: "invalid-gameid", httpStatus: 400 };
+  }
+
+  try {
+    const [games, linescore, boxScore] = await Promise.all([
+      fetchGames(meta.dateStr),
+      fetchGameLinescore(gameId),
+      includeBoxScore ? fetchBoxScore(gameId, meta.dateStr.slice(0, 4)) : Promise.resolve(null),
+    ]);
+    const game = games.find((candidate) => candidate.gameId === gameId);
+    const gate = canonicalGate(game, linescore);
+    if (gate.reason !== "ok" || !gate.fingerprint) {
+      return {
+        game,
+        linescore,
+        input: null,
+        fingerprint: null,
+        reason: gate.reason,
+        httpStatus: gate.httpStatus,
+      };
+    }
+    const input = includeBoxScore ? toBoxScoreInput(game!, linescore!, boxScore) : null;
+    if (includeBoxScore && !input) {
+      return {
+        game,
+        linescore,
+        input: null,
+        fingerprint: gate.fingerprint,
+        reason: "canonical-boxscore-unavailable",
+        httpStatus: 503,
+      };
+    }
+    return {
+      game,
+      linescore,
+      input,
+      fingerprint: gate.fingerprint,
+      reason: "ok",
+      httpStatus: 200,
+    };
+  } catch {
+    return {
+      linescore: null,
+      input: null,
+      fingerprint: null,
+      reason: "canonical-unavailable",
+      httpStatus: 503,
+    };
+  }
 }
 
 // ===== Context helpers (server-side) =====
@@ -330,6 +435,20 @@ async function saveCache(gameId: string, summary: Record<string, unknown>) {
 
 // ===== Normalize =====
 
+function cacheFingerprint(s: Record<string, unknown>): SummaryFingerprint | null {
+  const value = s._cacheFingerprint as SummaryFingerprint | undefined;
+  if (
+    value?.status !== "final" ||
+    !Number.isFinite(value.awayScore) ||
+    !Number.isFinite(value.homeScore) ||
+    !Array.isArray(value.awayInnings) ||
+    !Array.isArray(value.homeInnings)
+  ) {
+    return null;
+  }
+  return value;
+}
+
 function normalizeSummary(s: Record<string, unknown>): Record<string, unknown> {
   const gf = s.gameFlow as Record<string, unknown> | undefined;
   if (gf) {
@@ -339,6 +458,14 @@ function normalizeSummary(s: Record<string, unknown>): Record<string, unknown> {
     if (!s.mvpPitcher && gf.mvpPitcher) { s.mvpPitcher = gf.mvpPitcher; delete gf.mvpPitcher; }
   }
   return s;
+}
+
+function publicSummary(s: Record<string, unknown>): Record<string, unknown> {
+  const copy = structuredClone(s);
+  delete copy._cacheFingerprint;
+  delete copy._cachedAwayScore;
+  delete copy._cachedHomeScore;
+  return normalizeSummary(copy);
 }
 
 // ===== Route handlers =====
@@ -352,7 +479,8 @@ export async function GET(req: NextRequest) {
   const cached = await getCached(gameId);
   if (cached) {
     return NextResponse.json({
-      summary: normalizeSummary(cached.summary),
+      summary: publicSummary(cached.summary),
+      fingerprint: cacheFingerprint(cached.summary),
       source: "cache",
       outdated: cached.outdated,
     });
@@ -365,14 +493,26 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "GEMINI_API_KEY not configured" }, { status: 500 });
   }
 
-  const body: BoxScoreInput = await req.json();
-  if (!body.gameId || !body.awayTeam || !body.homeTeam) {
-    return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
+  const requestBody = await req.json() as Partial<BoxScoreInput>;
+  if (!requestBody.gameId) {
+    return NextResponse.json({ error: "gameId required" }, { status: 400 });
   }
   // 올스타전은 AI 경기 요약 생성 안 함 (#544 AI 비활성화와 일관).
-  if (isAllStarGameId(body.gameId)) return NextResponse.json({ summary: null, source: "allstar" });
+  if (isAllStarGameId(requestBody.gameId)) return NextResponse.json({ summary: null, source: "allstar" });
 
-  // Sanity check
+  // 공개 POST body의 팀/스코어/이닝/박스스코어는 캐시 입력으로 신뢰하지 않는다.
+  // gameId만 받아 KBO 경기목록+스코어보드+박스스코어를 서버에서 독립 재조회한다.
+  const canonicalSource = await fetchCanonicalSummarySource(requestBody.gameId, true);
+  if (canonicalSource.reason !== "ok" || !canonicalSource.input || !canonicalSource.fingerprint) {
+    return NextResponse.json(
+      { error: canonicalSource.reason, source: canonicalSource.reason },
+      { status: canonicalSource.httpStatus },
+    );
+  }
+  const body = canonicalSource.input;
+  const generationFingerprint = canonicalSource.fingerprint;
+
+  // Canonical boxscore sanity check
   const allBatters = [...(body.awayBatters || []), ...(body.homeBatters || [])];
   const allPitchers = [...(body.awayPitchers || []), ...(body.homePitchers || [])];
   const totalAB = allBatters.reduce((s, b) => s + (b.ab || 0), 0);
@@ -381,50 +521,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "BoxScore data appears incomplete (all zeros)" }, { status: 422 });
   }
 
-  // 서버 독립 canonical 검증 (삼순 #888 blocker①) — POST 는 무인증이고 client body 스코어를
-  // 그대로 신뢰하면 누구나 mid-game/임의 스코어로 shared cache 를 poisoning 할 수 있다.
-  // KBO canonical 경기 상태(status 기반 — 이닝 하드코딩 금지, 콜드/더블헤더/홈리드 9말생략/연장 대응)와
-  // 스코어를 독립 조회해 body 와 대조한다. fail-close: 조회 실패·미확정·불일치면 생성/캐시 거부.
-  const meta0 = parseGameMeta(body.gameId);
-  let canonical: KboGame | undefined;
-  if (!isAllStarGameId(body.gameId)) {
-    if (!meta0) {
-      return NextResponse.json({ error: "Invalid gameId", source: "invalid-gameid" }, { status: 400 });
-    }
-    try {
-      const games = await fetchGames(meta0.dateStr);
-      canonical = games.find((g) => g.gameId === body.gameId);
-    } catch {
-      canonical = undefined;
-    }
-    const gate = canonicalGate(canonical, body.awayScore, body.homeScore);
-    if (gate.reason !== "ok") {
-      // fail-close: canonical 미확보(503)·미확정(409)·스코어 불일치(422)면 생성/캐시 거부.
-      return NextResponse.json(
-        {
-          error: gate.reason,
-          source: gate.reason,
-          status: canonical?.status,
-          canonicalAway: canonical?.awayScore,
-          canonicalHome: canonical?.homeScore,
-        },
-        { status: gate.httpStatus },
-      );
-    }
-  }
-  // 이후는 canonical(신뢰 소스) 스코어를 사용한다.
-  const finalAwayScore = canonical ? (canonical.awayScore ?? body.awayScore) : body.awayScore;
-  const finalHomeScore = canonical ? (canonical.homeScore ?? body.homeScore) : body.homeScore;
+  const finalAwayScore = generationFingerprint.awayScore;
+  const finalHomeScore = generationFingerprint.homeScore;
 
-  // 캐시 확인 — prompt_version 뿐 아니라 canonical 스코어 fingerprint 불일치(stale)도 재생성 트리거.
+  // prompt_version + final status/score/innings fingerprint가 모두 일치할 때만 캐시를 반환한다.
   const cached = await getCached(body.gameId);
   if (cached && !cached.outdated) {
-    const cAway = cached.summary._cachedAwayScore as number | undefined;
-    const cHome = cached.summary._cachedHomeScore as number | undefined;
-    if (!isFingerprintStale(cAway, cHome, finalAwayScore, finalHomeScore)) {
-      return NextResponse.json({ summary: normalizeSummary(cached.summary), source: "cache" });
+    if (!isFingerprintStale(cacheFingerprint(cached.summary), generationFingerprint)) {
+      return NextResponse.json({
+        summary: publicSummary(cached.summary),
+        fingerprint: generationFingerprint,
+        source: "cache",
+      });
     }
-    // fingerprint stale → 아래에서 canonical 스코어로 재생성(stale 캐시 반환 금지).
+    // legacy 또는 fingerprint stale → 아래에서 canonical 데이터로 재생성한다.
   }
 
   // 맥락 데이터 병렬 조회 (실패해도 진행)
@@ -572,17 +682,26 @@ export async function POST(req: NextRequest) {
       // winner 필드는 내부 검증용이므로 클라이언트에 보내기 전 제거
       delete summary.winner;
 
-      // 생성 당시 스코어를 캐시에 기록한다. 최종 스코어가 나중에 바뀌면(중간/지연
-      // 스냅샷으로 요약이 생성된 경우) 클라이언트가 현재 linescore와 비교해
-      // stale 캐시를 감지·자동 재생성할 수 있게 하는 백스톱이다.
-      // (2026-07-26 사고: 8회초 4-4 시점 스냅샷으로 캐시된 요약이 최종 14-4로
-      //  갱신되지 않고 계속 노출됨 — outdated가 prompt_version만 보던 한계.)
-      // canonical(신뢰 소스) 스코어를 fingerprint 로 저장 — client body 가 아니라 canonical 을 신뢰.
-      summary._cachedAwayScore = finalAwayScore;
-      summary._cachedHomeScore = finalHomeScore;
+      // LLM 호출 중 canonical이 바뀌었으면 이전 요청이 최신 캐시를 덮지 못하게 저장을 거부한다.
+      const latestCanonical = await fetchCanonicalSummarySource(body.gameId, false);
+      if (
+        latestCanonical.reason !== "ok" ||
+        !shouldSaveGeneratedSummary(generationFingerprint, latestCanonical.fingerprint)
+      ) {
+        return NextResponse.json(
+          { error: "canonical-changed-during-generation", source: "canonical-race" },
+          { status: 409 },
+        );
+      }
 
+      // DB JSON 내부에만 보관하고 API 응답에서는 별도 fingerprint 필드로 분리한다.
+      summary._cacheFingerprint = generationFingerprint;
       await saveCache(body.gameId, summary);
-      return NextResponse.json({ summary, source: "generated" });
+      return NextResponse.json({
+        summary: publicSummary(summary),
+        fingerprint: generationFingerprint,
+        source: "generated",
+      });
     } catch (err) {
       console.error(`Game summary generation error (attempt ${attempt}):`, err);
       if (attempt === MAX_ATTEMPTS) {
