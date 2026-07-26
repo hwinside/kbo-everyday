@@ -4,7 +4,9 @@ import type { StartPlateAppearanceEvidence } from "@/lib/notifications/start-fre
 export type GameStartWatchdogState = {
   game_id: string;
   start_notified: boolean | null;
+  last_seen_scheduled_at: string | null;
   start_snapshot_at: string | null;
+  start_snapshot_deadline_at: string | null;
 };
 
 export type GameStartWatchdogResult = {
@@ -31,6 +33,7 @@ type GameStartWatchdogDeps = {
       observedAtMs: number;
       deadlineAtMs: number;
       startPlateAppearanceByGame: ReadonlyMap<string, StartPlateAppearanceEvidence>;
+      preloadedStartStates: ReadonlyMap<string, Omit<GameStartWatchdogState, "game_id">>;
     },
   ) => Promise<{ started: number }>;
   isCancelled: (cancelCode: string | null | undefined) => boolean;
@@ -73,6 +76,22 @@ export async function runGameStartWatchdog(
     observedAtMs: fetched.observedAtMs,
     deadlineAtMs,
     startPlateAppearanceByGame: evidence,
+    preloadedStartStates: new Map(liveIds.map((gameId) => {
+      const state = stateByGame.get(gameId);
+      return [gameId, state
+        ? {
+            start_notified: state.start_notified,
+            last_seen_scheduled_at: state.last_seen_scheduled_at,
+            start_snapshot_at: state.start_snapshot_at,
+            start_snapshot_deadline_at: state.start_snapshot_deadline_at,
+          }
+        : {
+            start_notified: false,
+            last_seen_scheduled_at: null,
+            start_snapshot_at: null,
+            start_snapshot_deadline_at: null,
+          }];
+    })),
   });
   return {
     scheduled: relevant.length - live.length,

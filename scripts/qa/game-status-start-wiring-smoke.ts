@@ -597,6 +597,68 @@ test("배선: 프로덕션 기본 저장은 mark_scheduled_seen RPC(원자 단�
   }
 });
 
+test("watchdog actual wiring: bulk state 재사용 + 첫 snapshot slow 격리 + deadline 뒤 신규 작업 0", async () => {
+  const notify = await loadNotify();
+  const startedAt = Date.now();
+  const deadlineAtMs = startedAt + 5;
+  const gameIds = ["20260727LGKT0", "20260727OBHH0"];
+  const games = [
+    liveGame({ G_ID: gameIds[0], G_DT: "20260727", AWAY_NM: "LG", HOME_NM: "KT" }),
+    liveGame({ G_ID: gameIds[1], G_DT: "20260727", AWAY_NM: "두산", HOME_NM: "한화" }),
+  ];
+  const preloadedStartStates = new Map(gameIds.map((gameId) => [gameId, {
+    start_notified: false,
+    last_seen_scheduled_at: new Date(startedAt - 60_000).toISOString(),
+    start_snapshot_at: null,
+    start_snapshot_deadline_at: null,
+  }]));
+  const evidence = new Map(gameIds.map((gameId) => [gameId, {
+    completedPlateAppearances: 0,
+    currentBatterIsLeadoff: true,
+  }]));
+  let stateReads = 0;
+  let batches = 0;
+  let finalizes = 0;
+  const opened: string[] = [];
+
+  const result = await notify(games, {
+    observedAtMs: startedAt,
+    deadlineAtMs,
+    preloadedStartStates,
+    startPlateAppearanceByGame: evidence,
+    startDeps: {
+      storeScheduledSeen: async () => {},
+      readStartState: async () => {
+        stateReads += 1;
+        throw new Error("watchdog must reuse bulk state");
+      },
+      markStart: async () => {},
+      openStart: async ({ gameId, requestDeadlineAtMs }) => {
+        assert.equal(requestDeadlineAtMs, deadlineAtMs, "snapshot RPC가 route 절대 deadline을 받는다");
+        opened.push(gameId);
+        if (gameId === gameIds[0]) {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        return startedAt + 90_000;
+      },
+      deliverStartBatch: async () => {
+        batches += 1;
+        throw new Error("deadline 뒤 batch 시작 금지");
+      },
+      finalizeStart: async () => {
+        finalizes += 1;
+        throw new Error("deadline 뒤 finalize 시작 금지");
+      },
+    },
+  });
+
+  assert.equal(stateReads, 0, "게임별 state 재조회 0 — route bulk map 재사용");
+  assert.deepEqual(new Set(opened), new Set(gameIds), "첫 snapshot slow여도 두 경기 open은 병렬 시작");
+  assert.equal(batches, 0, "deadline 도달 뒤 FCM/claim batch 시작 0");
+  assert.equal(finalizes, 0, "deadline 도달 뒤 finalize RPC 시작 0");
+  assert.equal(result.started, 0);
+});
+
 // 실행 동작은 qa:la-born-marking이 검증한다. 여기서는 production 함수가 그 검증된
 // actual-marking budget helper를 경기 루프 밖에서 1회 만들고 양 팀에 전달하는지만 고정한다.
 test("배선: channel_born actual-marking 전역 예산 helper를 전 경기·양 팀이 공유", () => {

@@ -154,31 +154,43 @@ async function fetchSnapshotStreaks(): Promise<Map<number, string | null> | null
 }
 
 /** 도입 직후/과거 경기 보호 — 발송 없이 플래그만 마킹 */
-async function markOnly(gameId: string, flags: { start?: boolean; end?: boolean; cancel?: boolean }): Promise<void> {
-  await supabase.from("game_notify_state").upsert({
+async function markOnly(
+  gameId: string,
+  flags: { start?: boolean; end?: boolean; cancel?: boolean },
+  deadlineAtMs?: number,
+): Promise<void> {
+  const remainingMs = deadlineAtMs == null ? null : deadlineAtMs - Date.now();
+  if (remainingMs != null && remainingMs <= 0) throw new Error("mark only: deadline_exceeded");
+  let query = supabase.from("game_notify_state").upsert({
     game_id: gameId,
     ...(flags.start ? { start_notified: true } : {}),
     ...(flags.end ? { end_notified: true } : {}),
     ...(flags.cancel ? { cancel_notified: true } : {}),
     updated_at: new Date().toISOString(),
   }, { onConflict: "game_id" });
+  if (remainingMs != null) query = query.abortSignal(AbortSignal.timeout(remainingMs));
+  await query;
 }
 
 // ── 시작알림 경로 seam (테스트 주입용) ──────────────────────────────────────
 // 프로덕션은 아래 default를 그대로 쓴다. 테스트는 이 seam으로 "앞 경기 FCM 지연 → 뒤 경기
 // 시작알림 억제 여부"를 실제 notifyGameStatusTransitions() 실행으로 회귀 검증한다.
+export type StartStateRow = {
+  start_notified: boolean | null;
+  last_seen_scheduled_at: string | null;
+  start_snapshot_at?: string | null;
+  start_snapshot_deadline_at?: string | null;
+};
+
 export type StartNotifyDeps = {
-  storeScheduledSeen?: (gameIds: string[], iso: string) => Promise<void>;
+  storeScheduledSeen?: (gameIds: string[], iso: string, deadlineAtMs?: number) => Promise<void>;
   readStartState?: (
     gameId: string,
-  ) => Promise<{
-    start_notified: boolean | null;
-    last_seen_scheduled_at: string | null;
-    start_snapshot_at?: string | null;
-  } | null>;
+    deadlineAtMs?: number,
+  ) => Promise<StartStateRow | null>;
   claimStart?: (gameId: string) => Promise<boolean>;
   unclaimStart?: (gameId: string) => Promise<void>;
-  markStart?: (gameId: string) => Promise<void>;
+  markStart?: (gameId: string, deadlineAtMs?: number) => Promise<void>;
   sendStart?: typeof sendFcmToUsers;
   fansOf?: (teamIds: number[], opts?: { deadlineAtMs?: number }) => Promise<{ ids: string[]; ok: boolean }>;
   deliverStart?: (args: {
@@ -188,38 +200,53 @@ export type StartNotifyDeps = {
     payload: { title: string; body: string; url: string };
     attemptDeadlineAtMs?: number;
   }) => Promise<GameStartDeliveryResult>;
-  openStart?: (args: GameStartDeliveryTarget) => Promise<number>;
+  openStart?: (
+    args: GameStartDeliveryTarget & { requestDeadlineAtMs?: number },
+  ) => Promise<number>;
   deliverStartBatch?: (args: GameStartDeliveryTarget & {
     snapshotDeadlineAtMs: number;
     attemptDeadlineAtMs: number;
   }) => Promise<GameStartDeliveryBatchResult>;
-  finalizeStart?: (gameId: string, fcmAcceptedDelta?: number) => Promise<GameStartDeliveryResult>;
+  finalizeStart?: (
+    gameId: string,
+    fcmAcceptedDelta?: number,
+    deadlineAtMs?: number,
+  ) => Promise<GameStartDeliveryResult>;
 };
 
-async function defaultStoreScheduledSeen(gameIds: string[], iso: string): Promise<void> {
+async function defaultStoreScheduledSeen(
+  gameIds: string[],
+  iso: string,
+  deadlineAtMs?: number,
+): Promise<void> {
+  const remainingMs = deadlineAtMs == null ? null : deadlineAtMs - Date.now();
+  if (remainingMs != null && remainingMs <= 0) throw new Error("scheduled seen: deadline_exceeded");
   // 원자 단조 저장(RPC): last_seen_scheduled_at = GREATEST(existing, observed). 겹친 75초 cron에서
   // 뒤늘게 끝난 이전 invocation의 오래된 관측이 최신 last_seen을 뒤로 덮지 않게 한다
   // (unconditional upsert = last-write-wins 버그, 삼순 #815 재리뷰 blocker).
   // query-guard: bounded -- KBO payload의 scheduled gameIds(당일 경기 ≤10)만 입력, RPC returns void
-  const { error } = await supabase.rpc("mark_scheduled_seen", {
+  let query = supabase.rpc("mark_scheduled_seen", {
     p_game_ids: gameIds,
     p_observed_at: iso,
   });
+  if (remainingMs != null) query = query.abortSignal(AbortSignal.timeout(remainingMs));
+  const { error } = await query;
   if (error) console.error("[game-status] scheduled-seen rpc failed:", error.message);
 }
 
 async function defaultReadStartState(
   gameId: string,
-): Promise<{
-  start_notified: boolean | null;
-  last_seen_scheduled_at: string | null;
-  start_snapshot_at?: string | null;
-} | null> {
+  deadlineAtMs?: number,
+): Promise<StartStateRow | null> {
+  const remainingMs = deadlineAtMs == null
+    ? 5_000
+    : Math.min(5_000, deadlineAtMs - Date.now());
+  if (remainingMs <= 0) throw new Error("start state read: deadline_exceeded");
   const { data, error } = await supabase
     .from("game_notify_state")
-    .select("start_notified, last_seen_scheduled_at, start_snapshot_at")
+    .select("start_notified, last_seen_scheduled_at, start_snapshot_at, start_snapshot_deadline_at")
     .eq("game_id", gameId)
-    .abortSignal(AbortSignal.timeout(5_000))
+    .abortSignal(AbortSignal.timeout(remainingMs))
     .maybeSingle();
   if (error) throw new Error(`start state read: ${error.message}`);
   return data ?? null;
@@ -247,6 +274,8 @@ export async function notifyGameStatusTransitions(
     observedAtMs?: number;
     /** 시작알림 batch가 새 FCM transport를 시작할 수 있는 요청-절대 마감. */
     deadlineAtMs?: number;
+    /** watchdog이 한 번에 읽은 상태. 제공 시 게임별 state 재조회 없이 그대로 사용한다. */
+    preloadedStartStates?: ReadonlyMap<string, StartStateRow>;
     /** game-events가 BoxScore lineup/current batter로 확정한 첫 타석 근거. */
     startPlateAppearanceByGame?: ReadonlyMap<string, StartPlateAppearanceEvidence>;
     /**
@@ -266,7 +295,8 @@ export async function notifyGameStatusTransitions(
   const readStartState = opts?.startDeps?.readStartState ?? defaultReadStartState;
   const claimStart = opts?.startDeps?.claimStart ?? ((gameId: string) => claim(gameId, "start_notified"));
   const unclaimStart = opts?.startDeps?.unclaimStart ?? ((gameId: string) => unclaim(gameId, "start_notified"));
-  const markStart = opts?.startDeps?.markStart ?? ((gameId: string) => markOnly(gameId, { start: true }));
+  const markStart = opts?.startDeps?.markStart
+    ?? ((gameId: string, deadlineAtMs?: number) => markOnly(gameId, { start: true }, deadlineAtMs));
   const sendStart = opts?.startDeps?.sendStart ?? sendFcmToUsers;
   const fansOfStart = opts?.startDeps?.fansOf ?? fansOfTeams;
   let started = 0;
@@ -279,7 +309,13 @@ export async function notifyGameStatusTransitions(
     .map((g) => g.G_ID as string);
   if (scheduledIds.length > 0) {
     // 관측 시각으로 기록 — 다음 틱 게이트가 관측 시각끼리(fetch↔fetch) 간격을 재도록.
-    await storeScheduledSeen(scheduledIds, new Date(observedAtMs).toISOString());
+    if (opts?.deadlineAtMs == null || Date.now() < opts.deadlineAtMs) {
+      await storeScheduledSeen(
+        scheduledIds,
+        new Date(observedAtMs).toISOString(),
+        opts?.deadlineAtMs,
+      );
+    }
   }
 
   // 프로덕션 ledger 경로는 모든 live 경기 snapshot을 먼저 고정한 뒤 게임별 1 batch씩
@@ -297,23 +333,35 @@ export async function notifyGameStatusTransitions(
       acceptedDelta: number;
     }> = [];
 
-    for (const g of games) {
-      const gameId = g.G_ID;
-      if (!gameId || g.GAME_STATE_SC !== "2" || isKboGameCancelled(g.CANCEL_SC_ID)) continue;
-      ledgerHandled.add(gameId);
-      let seenRow: Awaited<ReturnType<typeof readStartState>>;
+    const routeDeadlineAtMs = opts?.deadlineAtMs
+      ?? Date.now() + 300_000;
+    const liveGames = games.filter((game) =>
+      Boolean(game.G_ID)
+      && game.GAME_STATE_SC === "2"
+      && !isKboGameCancelled(game.CANCEL_SC_ID));
+    for (const game of liveGames) ledgerHandled.add(game.G_ID as string);
+
+    // watchdog은 bulk state를 재사용한다. 일반 warmup도 게임별 조회를 병렬 격리해 첫 DB
+    // hang이 나머지 경기의 snapshot open을 굶기지 않는다.
+    const stateRows = await Promise.all(liveGames.map(async (game) => {
+      const gameId = game.G_ID as string;
+      const preloaded = opts?.preloadedStartStates?.get(gameId);
+      if (preloaded !== undefined) return { game, seenRow: preloaded };
+      if (Date.now() >= routeDeadlineAtMs) return { game, seenRow: null, failed: true };
       try {
-        seenRow = await readStartState(gameId);
+        return {
+          game,
+          seenRow: await readStartState(gameId, routeDeadlineAtMs),
+        };
       } catch (error) {
         console.error(`[game-status] start state read failed game=${gameId}:`, (error as Error).message);
-        continue;
+        return { game, seenRow: null, failed: true };
       }
-      if (seenRow?.start_notified) {
-        if (seenRow.start_snapshot_at) {
-          await finalizeStart(gameId);
-        }
-        continue;
-      }
+    }));
+
+    const openResults = await Promise.all(stateRows.map(async ({ game, seenRow, failed }) => {
+      const gameId = game.G_ID as string;
+      if (failed || seenRow?.start_notified || Date.now() >= routeDeadlineAtMs) return null;
       const lastSeenMs = seenRow?.last_seen_scheduled_at
         ? Date.parse(seenRow.last_seen_scheduled_at)
         : null;
@@ -322,29 +370,30 @@ export async function notifyGameStatusTransitions(
           ? { completedPlateAppearances: 0, currentBatterIsLeadoff: true }
           : null);
       // game-events/KBO/DB 근거 fetch timeout은 "첫 타석 종료"가 아니다. cutoff 안에서는
-      // 상태를 열거나 mark-only로 닫지 않고 다음 cron이 이 경기만 재시도한다.
-      if (!seenRow?.start_snapshot_at && plateAppearance === null) continue;
+      // 상태를 열거나 mark-only로 닫지 않고 다음 tick에 이 경기만 재시도한다.
+      if (!seenRow?.start_snapshot_at && plateAppearance === null) return null;
       const sendOk = Boolean(seenRow?.start_snapshot_at) || shouldSendStartNotification({
         lastSeenScheduledAtMs: Number.isFinite(lastSeenMs as number) ? lastSeenMs : null,
-        scheduledStartAtMs: scheduledStartMs(g.G_DT, g.G_TM),
+        scheduledStartAtMs: scheduledStartMs(game.G_DT, game.G_TM),
         nowMs: observedAtMs,
-        inningNo: g.GAME_INN_NO,
-        isTop: g.GAME_TB_SC ? g.GAME_TB_SC === "T" : null,
-        // 테스트 seam은 기존 배선 회귀의 첫 타석 fixture를 유지한다. 프로덕션(default deps)은
-        // game-events 근거가 없으면 null로 fail-close한다.
+        inningNo: game.GAME_INN_NO,
+        isTop: game.GAME_TB_SC ? game.GAME_TB_SC === "T" : null,
         plateAppearance,
       });
       if (!sendOk) {
-        await markStart(gameId);
-        continue;
+        try {
+          await markStart(gameId, routeDeadlineAtMs);
+        } catch (error) {
+          console.error(`[game-status] start mark failed game=${gameId}:`, (error as Error).message);
+        }
+        return null;
       }
-      const away = g.AWAY_NM ?? "";
-      const home = g.HOME_NM ?? "";
-      const teamIds = [teamIdByShortName(away), teamIdByShortName(home)]
-        .filter((v): v is number => v !== null);
+      const away = game.AWAY_NM ?? "";
+      const home = game.HOME_NM ?? "";
       const target: GameStartDeliveryTarget = {
         gameId,
-        teamIds,
+        teamIds: [teamIdByShortName(away), teamIdByShortName(home)]
+          .filter((value): value is number => value !== null),
         observedAtMs,
         payload: {
           title: "⚾ 경기 시작!",
@@ -352,12 +401,31 @@ export async function notifyGameStatusTransitions(
           url: `/games/${gameId}`,
         },
       };
-      const snapshotDeadlineAtMs = await openStart(target);
-      opened.push({ target, snapshotDeadlineAtMs, acceptedDelta: 0 });
-    }
 
-    const routeDeadlineAtMs = opts?.deadlineAtMs
-      ?? opened.reduce((latest, item) => Math.max(latest, item.snapshotDeadlineAtMs), observedAtMs);
+      const persistedDeadlineAtMs = seenRow?.start_snapshot_deadline_at
+        ? Date.parse(seenRow.start_snapshot_deadline_at)
+        : null;
+      if (seenRow?.start_snapshot_at && Number.isFinite(persistedDeadlineAtMs as number)) {
+        return {
+          target,
+          snapshotDeadlineAtMs: persistedDeadlineAtMs as number,
+          acceptedDelta: 0,
+        };
+      }
+      if (Date.now() >= routeDeadlineAtMs) return null;
+      try {
+        const snapshotDeadlineAtMs = await openStart({
+          ...target,
+          requestDeadlineAtMs: routeDeadlineAtMs,
+        });
+        return { target, snapshotDeadlineAtMs, acceptedDelta: 0 };
+      } catch (error) {
+        console.error(`[game-status] start snapshot failed game=${gameId}:`, (error as Error).message);
+        return null;
+      }
+    }));
+    opened.push(...openResults.filter((item): item is NonNullable<typeof item> => item !== null));
+
     let active = opened;
     while (active.length > 0 && Date.now() < routeDeadlineAtMs) {
       const round = await Promise.all(active.map(async (item) => {
@@ -370,11 +438,30 @@ export async function notifyGameStatusTransitions(
         if (attemptDeadlineAtMs <= nowMs) return { item, claimed: 0, pending: 0 };
         const batches = await Promise.all(Array.from(
           { length: START_DELIVERY_BATCH_CONCURRENCY_PER_GAME },
-          () => deliverStartBatch({
-            ...item.target,
-            snapshotDeadlineAtMs: item.snapshotDeadlineAtMs,
-            attemptDeadlineAtMs,
-          }),
+          async () => {
+            try {
+              return await deliverStartBatch({
+                ...item.target,
+                snapshotDeadlineAtMs: item.snapshotDeadlineAtMs,
+                attemptDeadlineAtMs,
+              });
+            } catch (error) {
+              console.error(
+                `[game-status] start batch failed game=${item.target.gameId}:`,
+                (error as Error).message,
+              );
+              return {
+                claimed: 0,
+                snapshotCompleted: false,
+                fcmAcceptedDelta: 0,
+                fcmAcceptedTotal: 0,
+                deviceDelivered: null,
+                pending: 0,
+                permanentFailed: 0,
+                expired: 0,
+              } satisfies GameStartDeliveryBatchResult;
+            }
+          },
         ));
         const claimed = batches.reduce((sum, batch) => sum + batch.claimed, 0);
         const pending = Math.max(...batches.map((batch) => batch.pending), 0);
@@ -386,17 +473,26 @@ export async function notifyGameStatusTransitions(
         .map(({ item }) => item);
     }
 
-    for (const item of opened) {
-      const delivery = await finalizeStart(item.target.gameId, item.acceptedDelta);
-      started += delivery.fcmAcceptedDelta;
-      console.log(
-        `[game-status] start delivery game=${item.target.gameId}` +
-        ` fcmAcceptedDelta=${delivery.fcmAcceptedDelta} fcmAcceptedTotal=${delivery.fcmAcceptedTotal}` +
-        ` deviceDelivered=${delivery.deviceDelivered ?? "unknown"}` +
-        ` pending=${delivery.pending} permanentFailed=${delivery.permanentFailed}` +
-        ` expired=${delivery.expired} snapshotCompleted=${delivery.snapshotCompleted}`,
-      );
-    }
+    await Promise.all(opened.map(async (item) => {
+      if (Date.now() >= routeDeadlineAtMs) return;
+      try {
+        const delivery = await finalizeStart(
+          item.target.gameId,
+          item.acceptedDelta,
+          routeDeadlineAtMs,
+        );
+        started += delivery.fcmAcceptedDelta;
+        console.log(
+          `[game-status] start delivery game=${item.target.gameId}` +
+          ` fcmAcceptedDelta=${delivery.fcmAcceptedDelta} fcmAcceptedTotal=${delivery.fcmAcceptedTotal}` +
+          ` deviceDelivered=${delivery.deviceDelivered ?? "unknown"}` +
+          ` pending=${delivery.pending} permanentFailed=${delivery.permanentFailed}` +
+          ` expired=${delivery.expired} snapshotCompleted=${delivery.snapshotCompleted}`,
+        );
+      } catch (error) {
+        console.error(`[game-status] start finalize failed game=${item.target.gameId}:`, (error as Error).message);
+      }
+    }));
   }
 
   for (const g of games) {

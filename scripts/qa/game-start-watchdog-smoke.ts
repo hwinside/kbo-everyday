@@ -20,7 +20,13 @@ async function main() {
   const result = await runGameStartWatchdog({
     fetchGames: async () => ({ ok: true, games, observedAtMs: 1234 }),
     readStartStates: async () => [
-      { game_id: "20260727OBHH0", start_notified: true, start_snapshot_at: "2026-07-27T09:00:00Z" },
+      {
+        game_id: "20260727OBHH0",
+        start_notified: true,
+        last_seen_scheduled_at: "2026-07-27T08:59:00Z",
+        start_snapshot_at: "2026-07-27T09:00:00Z",
+        start_snapshot_deadline_at: "2026-07-27T09:01:30Z",
+      },
     ],
     fetchStartEvidence: async (ids) => {
       evidenceCalls.push(ids);
@@ -33,6 +39,11 @@ async function main() {
       notifyCalls.push(selected);
       assert.equal(params.observedAtMs, 1234);
       assert.equal(params.startPlateAppearanceByGame.size, 1);
+      assert.equal(params.preloadedStartStates.size, 2);
+      assert.equal(
+        params.preloadedStartStates.get("20260727OBHH0")?.start_snapshot_deadline_at,
+        "2026-07-27T09:01:30Z",
+      );
       return { started: 7 };
     },
     isCancelled: () => false,

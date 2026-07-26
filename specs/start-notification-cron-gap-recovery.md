@@ -38,8 +38,12 @@ PR #882가 다음 correctness 기반을 먼저 배포했다.
 
 - 요청 전체 deadline 14초, KBO 목록 fetch 4초, 첫 타석 근거 fetch 경기별 최대 3초
 - scheduled/live·비취소 경기만 기존 상태 전이 함수에 전달
+- watchdog의 bounded bulk state(`last_seen_scheduled_at`, snapshot deadline 포함)를 실제
+  start 경로가 재사용해 게임별 5초 순차 read를 제거
 - `start_notified=true` 또는 이미 snapshot이 열린 경기는 game-events 근거를 재조회하지 않음
 - 신규 live 후보만 authoritative 첫 타석 근거를 읽고, null/timeout이면 기존 정책대로 fail-close
+- 신규 snapshot open은 경기별 병렬·remaining-budget abort, claim/dispatch/settle/finalize도
+  같은 route 절대 deadline을 사용하며 deadline 뒤 새 DB/FCM 작업을 시작하지 않음
 - 발송은 #882의 snapshot/claim/settle/finalize를 그대로 사용해 중첩 watchdog과 Vercel cron 간 중복 차단
 
 ## 4. 실패 계약

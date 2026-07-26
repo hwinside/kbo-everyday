@@ -56,7 +56,9 @@ async function handle(req: NextRequest) {
         // query-guard: bounded -- KBO 당일 live gameIds(최대 10)만 단일 IN 조회.
         const query = supabaseAdmin
           .from("game_notify_state")
-          .select("game_id, start_notified, start_snapshot_at")
+          .select(
+            "game_id, start_notified, last_seen_scheduled_at, start_snapshot_at, start_snapshot_deadline_at",
+          )
           .in("game_id", gameIds)
           .abortSignal(AbortSignal.timeout(remainingMs));
         const { data, error } = await query;

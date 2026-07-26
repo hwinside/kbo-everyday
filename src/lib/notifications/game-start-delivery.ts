@@ -45,6 +45,13 @@ export type GameStartDeliveryTarget = {
   payload: PushPayload;
 };
 
+function remainingMs(deadlineAtMs: number | undefined, operation: string): number | null {
+  if (deadlineAtMs == null) return null;
+  const remaining = deadlineAtMs - Date.now();
+  if (remaining <= 0) throw new Error(`${operation}: deadline_exceeded`);
+  return remaining;
+}
+
 const EMPTY: GameStartDeliveryResult = {
   snapshotCompleted: false,
   fcmAcceptedDelta: 0,
@@ -58,11 +65,15 @@ const EMPTY: GameStartDeliveryResult = {
 export async function finalizeGameStartSnapshot(
   gameId: string,
   fcmAcceptedDelta = 0,
+  requestDeadlineAtMs?: number,
 ): Promise<GameStartDeliveryResult> {
+  const remaining = remainingMs(requestDeadlineAtMs, "start delivery finalize");
   // query-guard: bounded -- 단일 game_id 집계 결과를 정확히 1행 반환한다.
-  const { data, error } = await supabase.rpc("finalize_game_start_deliveries", {
+  let query = supabase.rpc("finalize_game_start_deliveries", {
     p_game_id: gameId,
   });
+  if (remaining != null) query = query.abortSignal(AbortSignal.timeout(remaining));
+  const { data, error } = await query;
   if (error) throw new Error(`start delivery finalize: ${error.message}`);
   const row = (data?.[0] ?? null) as {
     snapshot_completed?: boolean;
@@ -85,15 +96,20 @@ export async function finalizeGameStartSnapshot(
 }
 
 /** 모든 대상 경기의 snapshot을 발송 시작 전에 먼저 열 수 있도록 생성과 drain을 분리한다. */
-export async function openGameStartSnapshot(args: GameStartDeliveryTarget): Promise<number> {
+export async function openGameStartSnapshot(
+  args: GameStartDeliveryTarget & { requestDeadlineAtMs?: number },
+): Promise<number> {
+  const remaining = remainingMs(args.requestDeadlineAtMs, "start delivery snapshot");
   const proposedDeadlineAtMs = args.observedAtMs + SNAPSHOT_DEADLINE_MS;
   // query-guard: bounded -- 단일 game snapshot의 persisted deadline scalar 1개만 반환한다.
-  const { data: snapshotDeadline, error: snapshotError } = await supabase.rpc("snapshot_game_start_deliveries", {
+  let query = supabase.rpc("snapshot_game_start_deliveries", {
     p_game_id: args.gameId,
     p_team_ids: args.teamIds,
     p_snapshot_at: new Date(args.observedAtMs).toISOString(),
     p_deadline_at: new Date(proposedDeadlineAtMs).toISOString(),
   });
+  if (remaining != null) query = query.abortSignal(AbortSignal.timeout(remaining));
+  const { data: snapshotDeadline, error: snapshotError } = await query;
   if (snapshotError) throw new Error(`start delivery snapshot: ${snapshotError.message}`);
   const deadlineAtMs = Date.parse(String(snapshotDeadline ?? ""));
   if (!Number.isFinite(deadlineAtMs)) throw new Error("start delivery snapshot: invalid persisted deadline");
@@ -107,23 +123,28 @@ export async function deliverGameStartBatch(args: GameStartDeliveryTarget & {
 }): Promise<GameStartDeliveryBatchResult> {
   const attemptDeadlineAtMs = Math.min(args.snapshotDeadlineAtMs, args.attemptDeadlineAtMs);
   if (Date.now() >= attemptDeadlineAtMs) {
-    return { ...(await finalizeGameStartSnapshot(args.gameId)), claimed: 0 };
+    return { ...EMPTY, claimed: 0 };
   }
 
   const leaseToken = randomUUID();
   // transport는 8초 이내로 bound하고 lease는 20초로 감싸 중첩 send를 막되,
   // worker crash 뒤 다음 1분 cron이 최초 90초 deadline 안에서 재claim할 수 있게 한다.
   // query-guard: bounded -- SQL RPC가 p_limit을 최대 500행으로 clamp한다.
-  const { data, error: claimError } = await supabase.rpc("claim_game_start_deliveries", {
+  const claimRemainingMs = remainingMs(attemptDeadlineAtMs, "start delivery claim")!;
+  const claimQuery = supabase.rpc("claim_game_start_deliveries", {
     p_game_id: args.gameId,
     p_lease_token: leaseToken,
     p_lease_seconds: START_DELIVERY_LEASE_SECONDS,
     p_limit: 500,
-  });
+  }).abortSignal(AbortSignal.timeout(claimRemainingMs));
+  const { data, error: claimError } = await claimQuery;
   if (claimError) throw new Error(`start delivery claim: ${claimError.message}`);
   const claimed = (data ?? []) as ClaimedDelivery[];
   if (claimed.length === 0) {
-    return { ...(await finalizeGameStartSnapshot(args.gameId)), claimed: 0 };
+    return {
+      ...(await finalizeGameStartSnapshot(args.gameId, 0, attemptDeadlineAtMs)),
+      claimed: 0,
+    };
   }
 
   const window = gameStartDeliveryWindow(
@@ -135,7 +156,10 @@ export async function deliverGameStartBatch(args: GameStartDeliveryTarget & {
     ),
   );
   if (!window) {
-    return { ...(await finalizeGameStartSnapshot(args.gameId)), claimed: claimed.length };
+    return {
+      ...(await finalizeGameStartSnapshot(args.gameId, 0, attemptDeadlineAtMs)),
+      claimed: claimed.length,
+    };
   }
   // 외부 FCM 부작용 직전 durable intent. 성공한 행은 snapshot deadline까지 재claim하지
   // 않는 at-most-once 정책이라, accepted 직후 worker crash/settle stall도 중복 발송 0이다.
@@ -190,7 +214,7 @@ export async function deliverGameStartBatch(args: GameStartDeliveryTarget & {
   const fcmAcceptedDelta = Number(settled ?? 0);
 
   return {
-    ...(await finalizeGameStartSnapshot(args.gameId, fcmAcceptedDelta)),
+    ...(await finalizeGameStartSnapshot(args.gameId, fcmAcceptedDelta, attemptDeadlineAtMs)),
     claimed: claimed.length,
   };
 }
@@ -202,7 +226,10 @@ export async function deliverGameStartBatch(args: GameStartDeliveryTarget & {
 export async function deliverGameStartSnapshot(args: GameStartDeliveryTarget & {
   attemptDeadlineAtMs?: number;
 }): Promise<GameStartDeliveryResult> {
-  const snapshotDeadlineAtMs = await openGameStartSnapshot(args);
+  const snapshotDeadlineAtMs = await openGameStartSnapshot({
+    ...args,
+    requestDeadlineAtMs: args.attemptDeadlineAtMs,
+  });
   const drainDeadlineAtMs = Math.min(
     snapshotDeadlineAtMs,
     args.attemptDeadlineAtMs ?? snapshotDeadlineAtMs,
@@ -224,5 +251,5 @@ export async function deliverGameStartSnapshot(args: GameStartDeliveryTarget & {
     },
     process: async () => 0,
   });
-  return finalizeGameStartSnapshot(args.gameId, acceptedDelta);
+  return finalizeGameStartSnapshot(args.gameId, acceptedDelta, drainDeadlineAtMs);
 }
