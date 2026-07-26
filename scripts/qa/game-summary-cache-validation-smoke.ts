@@ -98,10 +98,22 @@ ok("non-draw + 헤드라인 무승부 → mismatch",
   winnerFieldMismatch(4, 14, "LG", "한화", "한화", "LG와 한화 4-4 무승부"));
 ok("non-draw + exact winner → pass",
   !winnerFieldMismatch(4, 14, "LG", "한화", "한화", "한화 14-4 대승"));
+ok("non-draw + winner 부재 → mismatch",
+  winnerFieldMismatch(4, 14, "LG", "한화", undefined, "한화 14-4 대승"));
+ok("non-draw + winner null → mismatch",
+  winnerFieldMismatch(4, 14, "LG", "한화", null, "한화 14-4 대승"));
+ok("non-draw + winner 빈 문자열 → mismatch",
+  winnerFieldMismatch(4, 14, "LG", "한화", "", "한화 14-4 대승"));
 ok("draw + 특정 팀 winner → mismatch",
   winnerFieldMismatch(4, 4, "LG", "한화", "한화", "4-4 무승부"));
 ok("draw + winner=무승부 → pass",
   !winnerFieldMismatch(4, 4, "LG", "한화", "무승부", "4-4 무승부"));
+ok("draw + winner 부재 → mismatch",
+  winnerFieldMismatch(4, 4, "LG", "한화", undefined, "4-4 무승부"));
+ok("draw + winner null → mismatch",
+  winnerFieldMismatch(4, 4, "LG", "한화", null, "4-4 무승부"));
+ok("draw + winner 빈 문자열 → mismatch",
+  winnerFieldMismatch(4, 4, "LG", "한화", "", "4-4 무승부"));
 
 console.log("[⑤ production control-flow probes]");
 const routeSource = readFileSync(resolve(process.cwd(), "src/app/api/game-summary/route.ts"), "utf8");

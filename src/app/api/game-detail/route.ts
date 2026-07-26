@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { fetchGames } from "@/lib/crawler/kbo-api";
+import { fetchGames, parseGameLinescoreResponse } from "@/lib/crawler/kbo-api";
 import { isAllStarGameId } from "@/lib/constants/teams";
 import type { BroadcastChannel } from "@/lib/broadcast-channels";
 import { resolvePlayer } from "@/lib/utils/resolve-player";
@@ -190,55 +190,13 @@ function parseScoreBoard(data: unknown[]): {
     duration: safeStr(m.USE_TM) || null,
   } : null;
 
-  // data[1] = linescore JSON string (may not exist for pre-game)
-  if (data.length < 2 || !data[1]) {
-    return { meta, linescore: null, status };
-  }
-
-  let linescoreData: { rows: { row: { Text: string }[] }[] };
-  try {
-    const raw = Array.isArray(data[1]) && data[1].length > 0 ? data[1][0] : data[1];
-    linescoreData = typeof raw === "string" ? JSON.parse(raw) : raw;
-  } catch {
-    return { meta, linescore: null, status };
-  }
-
-  if (!linescoreData?.rows || linescoreData.rows.length < 2) {
-    return { meta, linescore: null, status };
-  }
-
-  function parseLinescoreRow(row: { Text: string }[]): { innings: (number | null)[]; R: number; H: number; E: number } {
-    // Skip first 2 columns (승/패 + 팀로고), last 4 columns = R,H,E,BB
-    const cells = row.map(c => safeStr(c.Text));
-    const inningCells = cells.slice(2, cells.length - 4);
-    const innings = inningCells.map(c => {
-      const stripped = stripHtml(c);
-      if (stripped === "" || stripped === "-") return null;
-      return safeInt(stripped);
-    });
-    const tail = cells.slice(cells.length - 4);
-    return {
-      innings,
-      R: safeInt(stripHtml(tail[0])),
-      H: safeInt(stripHtml(tail[1])),
-      E: safeInt(stripHtml(tail[2])),
-    };
-  }
-
-  const awayRow = linescoreData.rows[0]?.row;
-  const homeRow = linescoreData.rows[1]?.row;
-
-  if (!awayRow || !homeRow) {
-    return { meta, linescore: null, status };
-  }
-
+  const sharedLinescore = parseGameLinescoreResponse(data);
   return {
     meta,
-    linescore: {
-      away: parseLinescoreRow(awayRow),
-      home: parseLinescoreRow(homeRow),
-    },
-    status,
+    linescore: sharedLinescore
+      ? { away: sharedLinescore.away, home: sharedLinescore.home }
+      : null,
+    status: sharedLinescore?.status ?? status,
   };
 }
 

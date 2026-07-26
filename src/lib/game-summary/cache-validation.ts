@@ -149,11 +149,10 @@ export function winnerFieldMismatch(
   const head = headline ?? "";
   if (finalAwayScore !== finalHomeScore) {
     const actualWinner = finalAwayScore > finalHomeScore ? awayTeam : homeTeam;
-    if (llmWinner && llmWinner !== actualWinner) return true; // "무승부" 포함 exact 불일치
+    if (llmWinner !== actualWinner) return true; // 부재/빈값/"무승부" 포함 exact 불일치
     if (DRAW_CLAIM_RE.test(head)) return true; // non-draw 인데 무승부/동점 마무리 서술
     return false;
   }
   // 실제 무승부
-  if (llmWinner && llmWinner !== "무승부") return true;
-  return false;
+  return llmWinner !== "무승부";
 }
