@@ -225,7 +225,7 @@ export default function VenueStorySection({ gameId }: Props) {
 
   const refreshViewerStoryUrl = useCallback(
     async (storyId: number) => {
-      if (storyQaKeyboard || storyId <= 0) return;
+      if (storyQaKeyboard || storyId <= 0) return false;
       try {
         const session = await getSafeSession();
         const token = session?.access_token;
@@ -233,7 +233,7 @@ export default function VenueStorySection({ gameId }: Props) {
           `/api/venue-stories?gameId=${encodeURIComponent(gameId)}&refreshStoryId=${storyId}`,
           { headers: token ? { Authorization: `Bearer ${token}` } : undefined },
         );
-        if (!res.ok) return;
+        if (!res.ok) return false;
         const data = await res.json();
         const refresh = data.urlRefresh as VenueStoryUrlRefresh | null;
         if (
@@ -241,11 +241,13 @@ export default function VenueStorySection({ gameId }: Props) {
           refresh.id !== storyId ||
           typeof refresh.mediaUrl !== "string"
         ) {
-          return;
+          return false;
         }
         setStories((prev) => applyVenueStoryUrlRefresh(prev, refresh));
+        return true;
       } catch {
-        // 마지막 정상 URL 보존 — 다음 tick/스토리 진입에서 재시도
+        // 마지막 정상 URL 보존 — 호출부의 bounded retry에서 재시도
+        return false;
       }
     },
     [gameId, storyQaKeyboard],

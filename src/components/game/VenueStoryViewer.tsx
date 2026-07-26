@@ -19,7 +19,9 @@ import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import { isIosNativeRuntime } from "@/lib/capacitor/platform";
 import {
   shouldRefreshVenueStoryUrl,
+  venueStoryUrlRetryDelay,
   VENUE_STORY_URL_REFRESH_MS,
+  VENUE_STORY_URL_RETRY_COOLDOWN_MS,
 } from "@/lib/venue-stories/refresh-policy";
 
 interface Props {
@@ -27,7 +29,7 @@ interface Props {
   startIndex: number;
   currentUserId: string | null;
   onStorySeen?: (storyId: string | number) => void; // 표시된 스토리 본 처리 (트레이 본/안 본 구분용)
-  onRefreshUrl?: (storyId: number) => void | Promise<void>;
+  onRefreshUrl?: (storyId: number) => Promise<boolean>;
   onClose: () => void;
   onChanged: () => void; // 삭제/신고 후 목록 갱신
 }
@@ -149,10 +151,20 @@ export default function VenueStoryViewer({
   }, [storyId, onStorySeen]);
 
   // 목록 최초 발급 URL의 나이를 신뢰하지 않고 현재 스토리 진입 즉시 단건 재발급한다.
-  // 같은 스토리에서 댓글/메뉴로 5분 이상 멈춰도 4분마다 URL만 갱신해 current ID·순번은 보존한다.
+  // 성공 후에만 last-success 를 기록한다. 실패는 10초 bounded retry, 전환·중복 요청은 guard 한다.
   useEffect(() => {
     if (storyId == null || storyId <= 0 || !onRefreshUrl) return;
-    const refresh = () => {
+    let cancelled = false;
+    let inFlight = false;
+    let failedAttempts = 0;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const isCurrentStory = () => !cancelled && storyIdRef.current === storyId;
+    const schedule = (delayMs: number) => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => void refresh(), delayMs);
+    };
+    const refresh = async () => {
+      if (!isCurrentStory() || inFlight) return;
       const now = Date.now();
       if (
         !shouldRefreshVenueStoryUrl({
@@ -162,15 +174,39 @@ export default function VenueStoryViewer({
           now,
         })
       ) {
+        schedule(
+          Math.max(1, lastUrlRefreshAtRef.current + VENUE_STORY_URL_REFRESH_MS - now),
+        );
         return;
       }
-      refreshedStoryIdRef.current = storyId;
-      lastUrlRefreshAtRef.current = now;
-      void onRefreshUrl(storyId);
+      inFlight = true;
+      let success = false;
+      try {
+        success = await onRefreshUrl(storyId);
+      } catch {
+        success = false;
+      } finally {
+        inFlight = false;
+      }
+      // A 요청 중 B로 전환된 경우 A 성공/실패 모두 현재 스토리 상태에 반영하지 않는다.
+      if (!isCurrentStory()) return;
+      if (success) {
+        refreshedStoryIdRef.current = storyId;
+        lastUrlRefreshAtRef.current = Date.now();
+        failedAttempts = 0;
+        schedule(VENUE_STORY_URL_REFRESH_MS);
+        return;
+      }
+      failedAttempts += 1;
+      const delay = venueStoryUrlRetryDelay(failedAttempts);
+      if (delay === VENUE_STORY_URL_RETRY_COOLDOWN_MS) failedAttempts = 0;
+      schedule(delay);
     };
-    refresh();
-    const interval = setInterval(refresh, VENUE_STORY_URL_REFRESH_MS);
-    return () => clearInterval(interval);
+    void refresh();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
   }, [storyId, onRefreshUrl]);
 
   const goNext = useCallback(() => {

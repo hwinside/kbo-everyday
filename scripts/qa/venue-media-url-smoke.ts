@@ -25,7 +25,10 @@ import {
 import {
   applyVenueStoryUrlRefresh,
   shouldRefreshVenueStoryUrl,
+  venueStoryUrlRetryDelay,
   VENUE_STORY_URL_REFRESH_MS,
+  VENUE_STORY_URL_RETRY_MS,
+  VENUE_STORY_URL_RETRY_COOLDOWN_MS,
 } from "../../src/lib/venue-stories/refresh-policy";
 import type { VenueStory } from "../../src/lib/venue-stories/types";
 
@@ -89,6 +92,33 @@ async function main() {
         lastRefreshAt,
         now: VENUE_STORY_URL_REFRESH_MS,
       }),
+    );
+    // 4분 mint 실패는 last-success 를 선기록하지 않는다. 10초 retry 성공 뒤에만 기록하면
+    // 최초 URL의 5분 만료 전에 복구되고, 다음 정규 tick도 성공 시각 기준으로 잡힌다.
+    ok(
+      "4분 mint 1회 실패 뒤 10초 retry도 즉시 due",
+      venueStoryUrlRetryDelay(1) === VENUE_STORY_URL_RETRY_MS &&
+        shouldRefreshVenueStoryUrl({
+          storyId: 61,
+          previousStoryId,
+          lastRefreshAt,
+          now: VENUE_STORY_URL_REFRESH_MS + VENUE_STORY_URL_RETRY_MS,
+        }),
+    );
+    lastRefreshAt = VENUE_STORY_URL_REFRESH_MS + VENUE_STORY_URL_RETRY_MS;
+    ok(
+      "retry 성공 기록 후 5분 시점은 새 URL 유효·재발급 불필요",
+      !shouldRefreshVenueStoryUrl({
+        storyId: 61,
+        previousStoryId,
+        lastRefreshAt,
+        now: 5 * 60_000,
+      }),
+    );
+    ok(
+      "연속 실패는 3회 bounded 후 1분 cooldown",
+      venueStoryUrlRetryDelay(2) === VENUE_STORY_URL_RETRY_MS &&
+        venueStoryUrlRetryDelay(3) === VENUE_STORY_URL_RETRY_COOLDOWN_MS,
     );
 
     const stories = [
