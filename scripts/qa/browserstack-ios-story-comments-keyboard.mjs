@@ -53,15 +53,27 @@ async function wd(method, route, body, sessionId) {
 const METRICS_SCRIPT = `
   const composer = document.querySelector('[data-composer="venue-story"]');
   const viewer = document.querySelector('[data-venue-story-viewer]');
+  const overlay = document.querySelector('[data-venue-story-comment-overlay]');
   const input = composer ? composer.querySelector('input') : null;
   const rect = (el) => el ? JSON.parse(JSON.stringify(el.getBoundingClientRect())) : null;
+  const composerRect = rect(composer);
+  const hit = composerRect
+    ? document.elementFromPoint(
+        composerRect.left + composerRect.width / 2,
+        composerRect.top + composerRect.height / 2,
+      )
+    : null;
   return {
     ua: navigator.userAgent,
     hasComposer: Boolean(composer),
     inputFocused: Boolean(input && document.activeElement === input),
     inputValue: input ? input.value : null,
-    composer: rect(composer),
+    composer: composerRect,
     viewer: rect(viewer),
+    overlayOnBody: Boolean(overlay && overlay.parentElement === document.body),
+    viewerZIndex: viewer ? Number(getComputedStyle(viewer).zIndex) : null,
+    overlayZIndex: overlay ? Number(getComputedStyle(overlay).zIndex) : null,
+    composerHit: Boolean(hit && composer && composer.contains(hit)),
     innerHeight: window.innerHeight,
     scrollY: window.scrollY,
     pageYOffset: window.pageYOffset,
@@ -137,6 +149,7 @@ async function main() {
           deviceName: process.env.BS_DEVICE || 'iPhone 15',
           osVersion: process.env.BS_OS_VERSION || '17',
           realMobile: 'true',
+          nativeWebTap: 'true',
           debug: 'true',
           networkLogs: 'true',
           consoleLogs: 'info',
@@ -246,6 +259,10 @@ async function main() {
     console.log(JSON.stringify(result, null, 2));
 
     const pass = idle.hasComposer
+      // body sibling stacking: overlay가 viewer보다 위이며 컴포저 중앙 hit target을 실제 소유
+      && idle.overlayOnBody
+      && idle.overlayZIndex > idle.viewerZIndex
+      && idle.composerHit
       // focus: 키보드 frame(시각 뷰포트 축소) + 입력바가 키보드 위에 노출 + 실제 포커스
       && focused.inputFocused && kbOpen(focused) && composerFlushWithKeyboard(focused)
       && sameRootAndViewer(idle, focused)

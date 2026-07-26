@@ -262,6 +262,9 @@ console.log("[전송 중 스토리 전환 오염 가드 — 삼순 #807 라운�
   ok("뷰어 자체 + 댓글 시트 둘 다 document.body 포털(포털 타겟 2개)",
     (viewerSrc.match(/createPortal\(/g) ?? []).length >= 2 &&
     (viewerSrc.match(/document\.body/g) ?? []).length >= 2);
+  ok("body sibling 댓글 overlay가 뷰어 z-120보다 높은 shared overlay tier z-130",
+    viewerSrc.includes("data-venue-story-comment-overlay") &&
+    viewerSrc.includes('className="fixed inset-0 z-[130] bg-black/60"'));
 
   const layoutSrc = readFileSync(path.resolve(process.cwd(), "src/app/layout.tsx"), "utf8");
   ok("전역 viewport meta는 기존 resizes-content 유지(Android 범위 확장 없음)",
