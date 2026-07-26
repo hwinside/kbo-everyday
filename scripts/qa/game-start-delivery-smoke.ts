@@ -12,6 +12,7 @@ const migration = readFileSync(
   "utf8",
 ).toLowerCase();
 const source = readFileSync("src/lib/notifications/game-start-delivery.ts", "utf8");
+const gameStatusSource = readFileSync("src/lib/notifications/game-status.ts", "utf8");
 
 test("최초 snapshot 고정 + 신규/교체 토큰 catch-up 금지", () => {
   assert.match(migration, /start_snapshot_at is null/);
@@ -165,4 +166,26 @@ test("FCM token별 accepted/transient/permanent 결과를 원장에 매핑할 �
       { token: "bad", status: "permanent_failed" },
     ],
   );
+});
+
+test("highlight token barrier: ON+accepted/OFF만 release, pending·invalid는 다른 token을 막지 않는다", () => {
+  const fixtures = [
+    { token: "accepted", gameStart: true, startStatus: "accepted", release: true },
+    { token: "pending", gameStart: true, startStatus: "transient", release: false },
+    { token: "off", gameStart: false, startStatus: null, release: true },
+    { token: "invalid", gameStart: true, startStatus: "permanent_failed", release: false },
+    { token: "mark-only", gameStart: true, startStatus: null, release: false },
+  ] as const;
+  const released = fixtures
+    .filter((row) => !row.gameStart || row.startStatus === "accepted")
+    .map((row) => row.token);
+  assert.deepEqual(released, ["accepted", "off"]);
+  assert.match(migration, /claim_player_highlight_tokens/);
+  assert.match(migration, /not n\.start_required/);
+  assert.match(migration, /l\.status\s*=\s*'accepted'/);
+  assert.match(migration, /insert into notified_score_events/);
+  assert.match(migration, /exists\s*\(\s*select 1 from notified_score_events/);
+  assert.match(migration, /n\.status\s*=\s*'waiting'/);
+  assert.match(migration, /limit greatest\(1,\s*least\(p_limit,\s*500\)\)/);
+  assert.doesNotMatch(gameStatusSource, /highlightBlockedGameIds/);
 });

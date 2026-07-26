@@ -332,8 +332,8 @@ export async function GET(req: NextRequest) {
   // 경기 시작/종료 푸시 (push-notifications-v1 S4) — 같은 게임 목록을 재사용.
   // 실패해도 warmup 본연의 동작(이벤트 캐시)에 영향 없음.
   let gameNotify:
-    | { started: number; ended: number; highlightBlockedGameIds?: string[] }
-    | { error: string } = { started: 0, ended: 0, highlightBlockedGameIds: [] };
+    | { started: number; ended: number }
+    | { error: string } = { started: 0, ended: 0 };
   try {
     // observedAtMs = 이 games를 fetch한 시각. 시작알림 90초 게이트는 관측 시각끼리 비교해야
     // 하므로(연속 틱 관측 판정), 앞단 처리/FCM 발송 지연이 stale 오판을 만들지 않게 한다
@@ -379,13 +379,7 @@ export async function GET(req: NextRequest) {
   // 최애선수 활약(타자) 푸시 (push-notifications-v1 S5b) — 장타/홈런 batter 매칭.
   let highlightNotify: { highlighted: number } | { error: string } = { highlighted: 0 };
   try {
-    highlightNotify = await notifyPlayerHighlights(games, eventsByGame, {
-      startBlockedGameIds: new Set(
-        "highlightBlockedGameIds" in gameNotify
-          ? gameNotify.highlightBlockedGameIds ?? []
-          : liveGameIds,
-      ),
-    });
+    highlightNotify = await notifyPlayerHighlights(games, eventsByGame);
   } catch (e) {
     highlightNotify = { error: (e as Error).message };
     console.error("[warmup] highlight notify failed:", (e as Error).message);

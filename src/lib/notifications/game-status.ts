@@ -260,8 +260,6 @@ export async function notifyGameStatusTransitions(
   started: number;
   ended: number;
   cancelled: number;
-  /** start가 아직 accepted barrier를 통과하지 못해 highlight를 release하면 안 되는 경기. */
-  highlightBlockedGameIds: string[];
 }> {
   const observedAtMs = opts?.observedAtMs ?? Date.now();
   const storeScheduledSeen = opts?.startDeps?.storeScheduledSeen ?? defaultStoreScheduledSeen;
@@ -274,7 +272,6 @@ export async function notifyGameStatusTransitions(
   let started = 0;
   let ended = 0;
   let cancelled = 0;
-  const highlightBlockedGameIds = new Set<string>();
 
   // "예정" 상태 관측 기록 — 다음 틱에서 live 전환을 보면 이 시각이 정시성 근거가 된다.
   const scheduledIds = games
@@ -309,15 +306,11 @@ export async function notifyGameStatusTransitions(
         seenRow = await readStartState(gameId);
       } catch (error) {
         console.error(`[game-status] start state read failed game=${gameId}:`, (error as Error).message);
-        highlightBlockedGameIds.add(gameId);
         continue;
       }
       if (seenRow?.start_notified) {
         if (seenRow.start_snapshot_at) {
-          const delivery = await finalizeStart(gameId);
-          if (delivery.pending > 0 || delivery.permanentFailed > 0 || delivery.expired > 0) {
-            highlightBlockedGameIds.add(gameId);
-          }
+          await finalizeStart(gameId);
         }
         continue;
       }
@@ -390,9 +383,6 @@ export async function notifyGameStatusTransitions(
     for (const item of opened) {
       const delivery = await finalizeStart(item.target.gameId, item.acceptedDelta);
       started += delivery.fcmAcceptedDelta;
-      if (delivery.pending > 0 || delivery.permanentFailed > 0 || delivery.expired > 0) {
-        highlightBlockedGameIds.add(item.target.gameId);
-      }
       console.log(
         `[game-status] start delivery game=${item.target.gameId}` +
         ` fcmAcceptedDelta=${delivery.fcmAcceptedDelta} fcmAcceptedTotal=${delivery.fcmAcceptedTotal}` +
@@ -651,5 +641,5 @@ export async function notifyGameStatusTransitions(
     }
   }
 
-  return { started, ended, cancelled, highlightBlockedGameIds: [...highlightBlockedGameIds] };
+  return { started, ended, cancelled };
 }

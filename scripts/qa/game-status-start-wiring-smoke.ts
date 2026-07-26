@@ -466,15 +466,24 @@ test("첫 타석 종료·2번 타자 진입 근거는 snapshot을 열지 않고 
   assert.deepEqual(opened, []);
 });
 
-test("warmup 배선: 초기 fetch 직후 start 근거 수집, start barrier 뒤 highlight release", () => {
+test("warmup 배선: 초기 fetch 직후 start 근거 수집, token별 start barrier 뒤 highlight release", () => {
   const route = readFileSync("src/app/api/cron/game-events-warmup/route.ts", "utf8");
+  const highlight = readFileSync("src/lib/notifications/player-highlight.ts", "utf8");
+  const migration = readFileSync("supabase/migrations/20260726_game_start_device_delivery.sql", "utf8");
   const initialEvents = route.indexOf("const initialGameEventsPromise");
   const laStart = route.indexOf("const laOrchestration = startLaOrchestration");
   const startNotify = route.indexOf("gameNotify = await notifyGameStatusTransitions");
   const highlightNotify = route.indexOf("highlightNotify = await notifyPlayerHighlights");
   assert.ok(initialEvents >= 0 && initialEvents < laStart, "game-events/start 근거 fetch는 초기 KBO fetch 직후 시작");
   assert.ok(startNotify >= 0 && startNotify < highlightNotify, "start accepted barrier 뒤 highlight 발송");
-  assert.match(route, /startBlockedGameIds:\s*new Set/);
+  assert.doesNotMatch(route, /startBlockedGameIds/, "game-global barrier 금지");
+  assert.match(highlight, /claim_player_highlight_tokens/);
+  assert.match(highlight, /sendFcmToTokens\(tokens/);
+  assert.match(migration, /not n\.start_required/);
+  assert.match(migration, /l\.status\s*=\s*'accepted'/);
+  assert.match(migration, /primary key\s*\(event_id,\s*token_id,\s*token_hash\)/);
+  assert.match(migration, /on conflict\s*\(event_id,\s*token_id,\s*token_hash\)\s*do nothing/);
+  assert.match(migration, /insert into notified_score_events/);
 });
 
 // 마이그레이션 계약 — 저장이 앱-레벨 read-modify-write(레이시)가 아니라 DB 원자 단조여야 한다.

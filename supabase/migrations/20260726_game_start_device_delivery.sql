@@ -48,6 +48,33 @@ create index if not exists idx_game_start_delivery_claim
 alter table game_start_delivery_ledger enable row level security;
 -- 정책 없음: service_role cron 전용.
 
+-- 최애선수 이벤트는 token별 start barrier를 통과한 device만 독립적으로 1회 선점한다.
+-- game-global dedup은 accepted/OFF token의 즉시 release와 pending token의 후속 release를
+-- 동시에 만족할 수 없으므로 별도 device 원장을 둔다.
+create table if not exists notified_player_highlight_tokens (
+  event_id text not null,
+  game_id text not null,
+  token_id bigint not null,
+  token_hash text not null,
+  start_required boolean not null,
+  status text not null default 'waiting' check (status in ('waiting', 'claimed')),
+  claimed_at timestamptz,
+  created_at timestamptz not null default now(),
+  primary key (event_id, token_id, token_hash)
+);
+
+alter table notified_player_highlight_tokens enable row level security;
+
+create table if not exists player_highlight_event_snapshots (
+  event_id text primary key,
+  game_id text not null,
+  snapshot_completed boolean not null default false,
+  created_at timestamptz not null default now(),
+  completed_at timestamptz
+);
+
+alter table player_highlight_event_snapshots enable row level security;
+
 create or replace function snapshot_game_start_deliveries(
   p_game_id text,
   p_team_ids integer[],
@@ -358,15 +385,145 @@ begin
 end;
 $$;
 
+create or replace function claim_player_highlight_tokens(
+  p_event_id text,
+  p_game_id text,
+  p_user_ids uuid[],
+  p_pref_key text,
+  p_finalize_snapshot boolean default true,
+  p_limit integer default 500
+)
+returns table (fcm_token text)
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_snapshot_completed boolean;
+begin
+  if p_pref_key not in ('fav_player_highlight', 'fav_player_strikeout') then
+    raise exception 'invalid player highlight preference';
+  end if;
+
+  insert into player_highlight_event_snapshots (
+    event_id, game_id, snapshot_completed, completed_at
+  )
+  select
+    p_event_id,
+    p_game_id,
+    exists (
+      select 1 from notified_score_events e where e.event_id = p_event_id
+    ),
+    case
+      when exists (select 1 from notified_score_events e where e.event_id = p_event_id)
+        then now()
+      else null
+    end
+  on conflict (event_id) do nothing;
+
+  select snapshot_completed
+    into v_snapshot_completed
+    from player_highlight_event_snapshots
+   where event_id = p_event_id
+     and game_id = p_game_id;
+
+  if not coalesce(v_snapshot_completed, false) then
+    -- fan ids는 호출부가 200명씩 append한다. snapshot 완료 전까지만 토큰을 받으므로
+    -- 이후 최애선수를 추가한 유저에게 과거 이벤트가 뒤늦게 가지 않는다.
+    insert into notified_player_highlight_tokens (
+      event_id, game_id, token_id, token_hash, start_required
+    )
+    select
+      p_event_id,
+      p_game_id,
+      d.id,
+      encode(extensions.digest(d.fcm_token, 'sha256'), 'hex'),
+      coalesce(np.game_start, true)
+    from device_push_tokens d
+    left join notification_prefs np on np.user_id = d.user_id
+    where d.user_id = any(p_user_ids)
+      and case p_pref_key
+        when 'fav_player_highlight' then coalesce(np.fav_player_highlight, true)
+        when 'fav_player_strikeout' then coalesce(np.fav_player_strikeout, true)
+        else false
+      end
+    on conflict (event_id, token_id, token_hash) do nothing;
+  end if;
+
+  if p_finalize_snapshot and not coalesce(v_snapshot_completed, false) then
+    update player_highlight_event_snapshots
+       set snapshot_completed = true,
+           completed_at = now()
+     where event_id = p_event_id
+       and game_id = p_game_id
+       and snapshot_completed = false;
+
+    -- 기존 global event namespace도 snapshot 완료 시 함께 마킹해 배포 전 이벤트와
+    -- 신규 token 원장의 audience freeze 의미를 연결한다.
+    insert into notified_score_events (event_id, game_id)
+    values (p_event_id, p_game_id)
+    on conflict (event_id) do nothing;
+    v_snapshot_completed := true;
+  end if;
+
+  if not coalesce(v_snapshot_completed, false) then
+    return;
+  end if;
+
+  return query
+  with eligible as (
+    select n.event_id, n.token_id, n.token_hash, d.fcm_token
+    from notified_player_highlight_tokens n
+    join device_push_tokens d
+      on d.id = n.token_id
+     and encode(extensions.digest(d.fcm_token, 'sha256'), 'hex') = n.token_hash
+    where n.event_id = p_event_id
+      and n.game_id = p_game_id
+      and n.status = 'waiting'
+      and (
+        -- game_start OFF는 start 계약의 명시적 bypass다.
+        not n.start_required
+        or exists (
+          -- ON token은 같은 token id+credential hash의 FCM accepted 뒤에만 release한다.
+          -- pending/transient/permanent/expired 및 mark-only(no ledger)는 해당 token만 보류한다.
+          select 1
+          from game_start_delivery_ledger l
+          where l.game_id = p_game_id
+            and l.token_id = n.token_id
+            and l.token_hash = n.token_hash
+            and l.status = 'accepted'
+        )
+      )
+    for update of n skip locked
+    limit greatest(1, least(p_limit, 500))
+  ),
+  claimed as (
+    update notified_player_highlight_tokens n
+       set status = 'claimed',
+           claimed_at = now()
+      from eligible e
+     where n.event_id = e.event_id
+       and n.token_id = e.token_id
+       and n.token_hash = e.token_hash
+    returning n.token_id, n.token_hash
+  )
+  select e.fcm_token
+  from eligible e
+  join claimed c using (token_id, token_hash);
+end;
+$$;
+
 revoke all on function snapshot_game_start_deliveries(text, integer[], timestamptz, timestamptz) from anon, authenticated, public;
 revoke all on function claim_game_start_deliveries(text, uuid, integer, integer) from anon, authenticated, public;
 revoke all on function mark_game_start_deliveries_dispatching(uuid[], uuid) from anon, authenticated, public;
 revoke all on function settle_game_start_deliveries(uuid[], uuid, text, text) from anon, authenticated, public;
 revoke all on function settle_game_start_delivery_batch(jsonb, uuid) from anon, authenticated, public;
 revoke all on function finalize_game_start_deliveries(text) from anon, authenticated, public;
+revoke all on function claim_player_highlight_tokens(text, text, uuid[], text, boolean, integer) from anon, authenticated, public;
 grant execute on function snapshot_game_start_deliveries(text, integer[], timestamptz, timestamptz) to service_role;
 grant execute on function claim_game_start_deliveries(text, uuid, integer, integer) to service_role;
 grant execute on function mark_game_start_deliveries_dispatching(uuid[], uuid) to service_role;
 grant execute on function settle_game_start_deliveries(uuid[], uuid, text, text) to service_role;
 grant execute on function settle_game_start_delivery_batch(jsonb, uuid) to service_role;
 grant execute on function finalize_game_start_deliveries(text) to service_role;
+grant execute on function claim_player_highlight_tokens(text, text, uuid[], text, boolean, integer) to service_role;
