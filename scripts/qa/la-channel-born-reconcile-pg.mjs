@@ -149,15 +149,26 @@ try {
   await new Promise((res) => lockRow.on("exit", res)); // A 종료(ROLLBACK) 대기
   check("previously-locked row heals on next tick", reconcile().healed === 1 && bornCount("G4") === 5);
 
-  // ===== Test 5: active 채널 회전(FOR UPDATE) 중 → 그 경기 skip, 유계 반환 =====
+  // ===== Test 5: 2환경 game 중 한 active 채널 회전 → game 전체 skip, 유계 반환 =====
   seedGame("G5", "C5", [1, 2, 3]);
+  psql(`insert into live_activity_channels(game_id,environment,channel_id,status) values ('G5','sandbox','C5_SANDBOX','active')`);
+  for (const n of [1, 2, 3]) {
+    psql(`insert into live_activity_channel_subscriptions(game_id,device_key,environment,channel_id,user_id)
+          values ('G5','s${n}','sandbox','C5_SANDBOX','${uid("G5", n)}')`);
+  }
   const lockChan = holdLock(`select 1 from live_activity_channels where game_id='G5' and environment='production' for update`, 6);
   await sleep(1200);
   r = reconcile();
   check("rotating channel does not stall reconcile (<2500ms)", r.ms < 2500);
-  check("rotating game is fully skipped this tick", r.healed === 0 && bornCount("G5") === 0);
+  check("one locked environment skips the whole game (no sandbox fallback)", r.healed === 0 && bornCount("G5") === 0);
   await new Promise((res) => lockChan.on("exit", res));
-  check("rotated game heals on next tick", reconcile().healed === 3 && bornCount("G5") === 3);
+  r = reconcile();
+  check(
+    "released game heals on next tick with production-preferred generation",
+    r.healed === 3 &&
+      bornCount("G5") === 3 &&
+      psql(`select count(*) from live_activity_started_users where game_id='G5' and channel_born_environment='production' and channel_born_channel_id='C5'`) === "3",
+  );
 
   // ===== Test 7: batch 경계 starvation — 1,001 eligible 중 정렬상 앞 1,000 locked =====
   // 잠금이 LIMIT '이후'에 적용되면 앞 1,000 locked prefix만 재선정돼 healed=0으로

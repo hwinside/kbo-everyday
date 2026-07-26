@@ -57,6 +57,7 @@ async function main() {
   const migrationCode = migration.replace(/--.*$/gm, "");
   check("already-marked rows are fenced", (migration.match(/channel_born_channel_id is null/g) ?? []).length >= 2);
   check("rotating channels are skipped, not waited on", /for share skip locked/i.test(migration));
+  check("partially locked environment sets exclude the whole game", /acquired\.generation_count = expected\.generation_count/i.test(migrationCode));
   check("target rows are locked with skip-locked to avoid stalls", /for update of s skip locked/i.test(migration));
   // 잠금을 batch LIMIT '이전'에 적용 — 잠긴 prefix로 배치가 막혀 뒤 unlocked 행이 starve되는 회귀 차단(R2).
   check("target lock (skip-locked) is applied before the batch LIMIT", /for update of s skip locked\s+limit \(v_limit \+ 1\)/i.test(migrationCode));

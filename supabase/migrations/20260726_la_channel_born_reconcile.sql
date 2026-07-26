@@ -6,9 +6,10 @@
 -- 불변식:
 -- ① 현재 active (game, environment, channel_id)와 정확 일치하는 ACK만 증거로 인정.
 -- ② channel_born_channel_id IS NULL인 행만 갱신 — 이미 마킹된 행은 절대 덮지 않음.
--- ③ active 행을 SHARE lock한 뒤 후보선정+UPDATE — 동시 채널 회전 중이면 그 active 행은
---    SKIP LOCKED로 건너뛰어(그 경기만 이번 tick 제외) 회전 후 구채널 ACK를 새 마킹으로
---    기록하는 race를 차단한다. 회전이 commit된 다음 tick이 정상 마킹한다.
+-- ③ game별 active 환경을 전부 SHARE lock한 뒤 후보선정+UPDATE — 한 환경이라도 동시
+--    채널 회전 중이면 확보한 환경 수가 snapshot 기대 수보다 작으므로 그 game 전체를
+--    이번 tick에서 제외한다. 회전 후 구채널 ACK를 다른 환경 세대로 영구 마킹하는
+--    race를 차단하고, 회전이 commit된 다음 tick이 정상 마킹한다.
 --
 -- 유계 보장 (삼순 R1 blocker — statement_timeout 자기-arm 불가 대체):
 --   plpgsql 함수 body의 `set statement_timeout`은 이미 시작된 outer 문(=이 RPC 호출)의
@@ -50,13 +51,37 @@ begin
   end if;
 
   return query
-  with active as materialized (
-    -- 회전 중(FOR UPDATE 보유)인 active 행은 건너뛴다 — 대기 대신 다음 tick 위임.
+  with active_expected as materialized (
+    -- statement snapshot에서 game별 active 환경 수를 먼저 고정한다. 아래 SKIP LOCKED로
+    -- 실제 확보한 수가 이 기대값보다 작으면 한 환경이라도 회전 중인 game이다.
+    select c.game_id, count(*)::integer as generation_count
+      from public.live_activity_channels c
+     where c.status = 'active'
+     group by c.game_id
+  ),
+  active_locked as materialized (
+    -- 회전 중(FOR UPDATE 보유)인 환경 행은 건너뛴다 — 대기 대신 다음 tick 위임.
     select c.game_id, c.environment, c.channel_id
       from public.live_activity_channels c
      where c.status = 'active'
      order by c.game_id, c.environment
      for share skip locked
+  ),
+  active_locked_counts as materialized (
+    select l.game_id, count(*)::integer as generation_count
+      from active_locked l
+     group by l.game_id
+  ),
+  active as materialized (
+    -- game×2환경 중 하나만 확보한 부분집합은 절대 reconcile하지 않는다. snapshot의
+    -- active 환경을 모두 SHARE lock한 완전한 game만 이후 exact ACK 판정에 참여한다.
+    select l.game_id, l.environment, l.channel_id
+      from active_locked l
+      join active_expected expected
+        on expected.game_id = l.game_id
+      join active_locked_counts acquired
+        on acquired.game_id = l.game_id
+       and acquired.generation_count = expected.generation_count
   ),
   -- 잠금(SKIP LOCKED)을 batch LIMIT '이전'에 적용한다(삼순 R2). started_users를 직접
   -- 스캔하며 잠긴 행을 건너뛰고 unlocked 후보로 배치를 채우므로, 앞 v_limit개가 잠겨
