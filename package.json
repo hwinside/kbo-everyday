@@ -59,6 +59,7 @@
     "qa:proxy-auth-refresh": "tsx scripts/qa/proxy-auth-refresh-smoke.ts",
     "qa:account-deletion-contract": "tsx scripts/qa/account-deletion-contract-smoke.ts",
     "qa:dm-preservation": "bash scripts/qa/dm-deletion-preservation-e2e.sh",
+    "qa:nullable-dm-guards": "tsx scripts/qa/nullable-dm-guards-smoke.ts",
     "qa:rpc-error-contract": "tsx scripts/qa/rpc-error-contract-smoke.ts",
     "qa:mood-realtime-load": "tsx scripts/qa/mood-gauge-realtime-load-smoke.ts",
     "qa:gif-collector-matching": "tsx scripts/qa/gif-collector-matching-smoke.ts",
