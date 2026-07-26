@@ -1,14 +1,14 @@
-// 2026-07-24 LG:한화 시작알림 억제 사고 — 시작알림 게이트 "프로덕션 배선" 회귀(실행 검증).
+// 시작알림 "프로덕션 배선" 회귀(실행 검증) — 소스 grep이 아니라 실제
+// notifyGameStatusTransitions() 실행으로 기본(미주입) 경로가 올바른 RPC/저장을 타는지 본다.
 //
-// 삼순 리뷰 기준③: 정책 함수(shouldSendStartNotification) 직접호출만으론 부족하다. 실제
-// notifyGameStatusTransitions()를 두 개의 live 경기로 실행하고, 앞 경기 FCM 대량발송이 26초
-// 지연돼(처리 시점 Date.now()가 전진) 뒤 경기(LG)가 처리될 때에도, 시작알림이 **관측(fetch)
-// 시각** 기준으로 정상 발송되는지 확인한다. 게이트가 관측시각(observedAtMs) 대신 경기별
-// 처리시점 Date.now()로 회귀하면, LG는 관측간격 76초인데도 102초 stale로 오판돼 mark-only
-// 억제되고 — 이 테스트가 그 회귀를 잡아낸다.
+// 2026-07-26 인시던트 수정(S1)으로 발송 게이트가 90초 연속관측 → (R1) "첫 타석 창" 상태
+// 머신으로 교체됐다. 따라서 발송/억제 판정 자체의 회귀는 game-status-start-state-machine.ts가
+// 담당하고, 이 파일은 (a) 예정 관측 저장이 관측시각 기준 원자 단조 RPC인지, (b) 시작알림
+// 기본 경로가 lease CAS RPC(claim_start_lease → mark_start_sent)를 타는지, (c) 마이그레이션
+// SQL 계약, (d) channel_born 예산 배선만 고정한다.
 //
 // game-status.ts는 import 시 supabase admin 싱글톤을 생성하므로 더미 env를 먼저 세팅하고
-// dynamic import한다(실제 네트워크는 startDeps 주입으로 전혀 타지 않는다).
+// dynamic import한다(실제 네트워크는 startDeps 주입/클라이언트 스텁으로 타지 않는다).
 process.env.NEXT_PUBLIC_SUPABASE_URL ??= "http://localhost:54321";
 process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??= "test-anon-key";
 
@@ -18,14 +18,13 @@ import { readFileSync } from "node:fs";
 import type { KboRawGame } from "../../src/types/api";
 import type { StartNotifyDeps } from "../../src/lib/notifications/game-status";
 
-// tsx는 CJS로 트랜스파일하므로 top-level await 불가 → 각 테스트에서 lazy dynamic import.
 const loadNotify = () =>
   import("../../src/lib/notifications/game-status").then((m) => m.notifyGameStatusTransitions);
 
 const OBSERVED_AT = 1_784_800_000_000;
 
 const BASE: KboRawGame = {
-  G_ID: "", G_DT: "20260724", G_TM: "18:30", S_NM: "잠실",
+  G_ID: "", G_DT: "20260726", G_TM: "18:00", S_NM: "잠실",
   AWAY_ID: "", HOME_ID: "", AWAY_NM: "", HOME_NM: "",
   T_SCORE_CN: "0", B_SCORE_CN: "0",
   GAME_INN_NO: 1, GAME_TB_SC: "T", GAME_STATE_SC: "2", CANCEL_SC_ID: "0",
@@ -35,163 +34,87 @@ const BASE: KboRawGame = {
   B_P_NM: "", T_P_NM: "", T_RANK_NO: 0, B_RANK_NO: 0,
 };
 const liveGame = (over: Partial<KboRawGame>): KboRawGame => ({ ...BASE, ...over });
-
+const schedGame = (over: Partial<KboRawGame>): KboRawGame => liveGame({ GAME_STATE_SC: "1", ...over });
 const gameIdFromUrl = (url: string | undefined): string => (url ?? "").replace("/games/", "");
 
-// game_notify_state.last_seen_scheduled_at 저장소 모델. `monotonic`은 마이그레이션 RPC
-// mark_scheduled_seen()의 GREATEST(existing, observed) 의미를 그대로 반영한다(과거 방향
-// 갱신 무시). `!monotonic`은 회귀 사례(unconditional upsert = last-write-wins)를 재현한다.
-function makeStore(monotonic: boolean) {
-  const seen = new Map<string, number>(); // gameId → last_seen_scheduled_at(ms)
-  const started = new Set<string>();
-  const sent: string[] = [];
-  const marked: string[] = [];
-  const deps: StartNotifyDeps = {
-    storeScheduledSeen: async (ids, iso) => {
-      const ms = Date.parse(iso);
-      for (const id of ids) {
-        const prev = seen.get(id);
-        seen.set(id, monotonic && prev !== undefined ? Math.max(prev, ms) : ms);
-      }
+// supabase-js .from() 체인 스텁 — 어떤 메서드 체인이든 {data,error} 로 await 가능.
+function chainStub(result: { data?: unknown; error?: unknown }) {
+  const p = Promise.resolve(result);
+  const proxy: unknown = new Proxy(function () {}, {
+    get(_t, prop) {
+      if (prop === "then") return p.then.bind(p);
+      if (prop === "catch") return p.catch.bind(p);
+      if (prop === "finally") return p.finally.bind(p);
+      return () => proxy;
     },
-    readStartState: async (id) => ({
-      start_notified: started.has(id),
-      last_seen_scheduled_at: seen.has(id) ? new Date(seen.get(id)!).toISOString() : null,
-    }),
-    claimStart: async (id) => { if (started.has(id)) return false; started.add(id); return true; },
-    unclaimStart: async (id) => { started.delete(id); },
-    markStart: async (id) => { marked.push(id); },
-    fansOf: async () => ({ ids: ["u1"], ok: true }),
-    sendStart: async (ids, payload) => { sent.push(gameIdFromUrl(payload.url)); return { ok: true, sent: ids.length }; },
-  };
-  return { deps, sent, marked };
+    apply() { return proxy; },
+  });
+  return proxy;
 }
 
-const schedGame = (over: Partial<KboRawGame>): KboRawGame => liveGame({ GAME_STATE_SC: "1", ...over });
-
-test("배선 회귀: 앞 경기 FCM 26초 지연이 뒤 경기(LG) 시작알림을 억제하지 않는다 (관측시각 기준)", async () => {
-  // 두 경기 모두 직전 틱에서 76초 전 '예정'을 관측(관측상 연속 → 정상 발송 대상).
-  const seenIso = new Date(OBSERVED_AT - 76_000).toISOString();
-  // 앞 경기(삼성:KIA) → 뒤 경기(한화:LG) 순으로 처리.
-  const games = [
-    liveGame({ G_ID: "20260724SSKI0", AWAY_NM: "삼성", HOME_NM: "KIA" }),
-    liveGame({ G_ID: "20260724HHLG0", AWAY_NM: "한화", HOME_NM: "LG" }),
-  ];
-
-  const sentGameIds: string[] = [];
-  const markedGameIds: string[] = [];
-  // 실제 코드가 관측시각 대신 Date.now()로 회귀하면 이 clock을 읽어 오판하도록, Date.now를 제어.
+// 앞 경기 처리 지연이 뒤 경기 시작알림 판정을 오염시키지 않는지(게이트가 payload 창 기반이라
+// 처리시점 Date.now()에 무관) — 두 in-window live 경기 모두 발송돼야 한다.
+test("배선: 두 in-window live 경기 모두 발송(판정은 payload 창, 처리 지연 무관)", async () => {
+  const sent: string[] = [];
+  const state = new Map<string, "idle" | "sending" | "sent">();
   let clock = OBSERVED_AT;
   const realNow = Date.now;
   Date.now = () => clock;
-  let firstSend = true;
-
   const deps: StartNotifyDeps = {
     storeScheduledSeen: async () => {},
-    readStartState: async () => ({ start_notified: false, last_seen_scheduled_at: seenIso }),
-    claimStart: async () => true,
-    unclaimStart: async () => {},
-    markStart: async (gameId) => { markedGameIds.push(gameId); },
+    readStartState: async (id) => ({
+      start_state: state.get(id) ?? "idle", start_sent_at: null, start_lease_until: null, start_lease_owner: null,
+    }),
+    claimStartLease: async (id) => { if ((state.get(id) ?? "idle") !== "idle") return false; state.set(id, "sending"); return true; },
+    markStartSent: async (id) => { state.set(id, "sent"); },
+    releaseStartLease: async (id) => { state.set(id, "idle"); },
+    suppressStart: async () => {},
     fansOf: async () => ({ ids: ["u1"], ok: true }),
-    sendStart: async (ids, payload) => {
-      sentGameIds.push(gameIdFromUrl(payload.url));
-      // 앞 경기의 첫 발송(메인 "⚾ 경기 시작!")이 26초 걸린 것으로 시뮬레이션 → 처리시점 전진.
-      if (firstSend) { firstSend = false; clock += 26_000; }
-      return { ok: true, sent: ids.length };
-    },
+    sendStart: async (ids, payload) => { sent.push(gameIdFromUrl(payload.url)); clock += 26_000; return { ok: true, sent: ids.length }; },
   };
-
   try {
-    const notifyGameStatusTransitions = await loadNotify();
-    const res = await notifyGameStatusTransitions(games, { observedAtMs: OBSERVED_AT, startDeps: deps });
-    // 앞 경기(삼성:KIA)는 물론, clock이 +26초 전진한 뒤 처리된 LG도 관측시각 기준으로 발송돼야 한다.
-    assert.ok(sentGameIds.includes("20260724HHLG0"), "LG 경기 시작알림이 발송돼야 한다(관측시각 76초=연속)");
-    assert.ok(!markedGameIds.includes("20260724HHLG0"), "LG가 mark-only로 억제되면 안 된다(게이트가 Date.now()로 회귀한 사고)");
-    assert.ok(sentGameIds.includes("20260724SSKI0"), "앞 경기(삼성:KIA)도 발송돼야 한다");
-    assert.equal(res.started, 2, "두 경기 모두 시작 발송 카운트");
+    const notify = await loadNotify();
+    const res = await notify([
+      liveGame({ G_ID: "20260726SSKI0", AWAY_NM: "삼성", HOME_NM: "KIA" }),
+      liveGame({ G_ID: "20260726HHLG0", AWAY_NM: "한화", HOME_NM: "LG" }),
+    ], { observedAtMs: OBSERVED_AT, startDeps: deps });
+    assert.ok(sent.includes("20260726SSKI0") && sent.includes("20260726HHLG0"), "두 경기 모두 발송");
+    assert.equal(res.started, 2);
   } finally {
     Date.now = realNow;
   }
 });
 
-test("배선 회귀: 예정 관측 기록(last_seen_scheduled_at)은 처리시점이 아니라 관측시각으로 저장된다", async () => {
-  // Date.now()를 관측시각과 크게 다른 값으로 고정 → 저장값이 Date.now()가 아니라 observedAtMs여야.
+test("배선: 예정 관측 기록은 처리시점이 아니라 관측시각으로 저장", async () => {
   let stored: { ids: string[]; iso: string } | null = null;
   const realNow = Date.now;
   Date.now = () => OBSERVED_AT + 999_000; // 처리시점이 관측보다 999초 뒤였다고 가정
   const deps: StartNotifyDeps = {
     storeScheduledSeen: async (ids, iso) => { stored = { ids, iso }; },
     readStartState: async () => null,
-    claimStart: async () => true,
-    unclaimStart: async () => {},
-    markStart: async () => {},
+    claimStartLease: async () => true,
+    markStartSent: async () => {},
+    releaseStartLease: async () => {},
+    suppressStart: async () => {},
     fansOf: async () => ({ ids: [], ok: true }),
     sendStart: async () => ({ ok: true, sent: 0 }),
   };
   try {
-    const notifyGameStatusTransitions = await loadNotify();
-    const games = [liveGame({ G_ID: "20260724HTNC0", AWAY_NM: "KT", HOME_NM: "NC", GAME_STATE_SC: "1" })];
-    await notifyGameStatusTransitions(games, { observedAtMs: OBSERVED_AT, startDeps: deps });
+    const notify = await loadNotify();
+    await notify([schedGame({ G_ID: "20260726HTNC0", AWAY_NM: "KT", HOME_NM: "NC" })],
+      { observedAtMs: OBSERVED_AT, startDeps: deps });
     assert.ok(stored, "예정 경기 관측이 기록돼야 한다");
     assert.equal(stored!.iso, new Date(OBSERVED_AT).toISOString(), "관측시각으로 저장(처리시점 Date.now() 아님)");
-    assert.deepEqual(stored!.ids, ["20260724HTNC0"]);
+    assert.deepEqual(stored!.ids, ["20260726HTNC0"]);
   } finally {
     Date.now = realNow;
   }
 });
 
-// ── 겹친 cron 단조(monotonic) 저장 순서 회귀 (삼순 #815 재리뷰 blocker) ──────────────
-// 시나리오: scheduled@t60 저장 → (겹친 이전 invocation이 뒤늦게) scheduled@t0 저장 →
-// live@t120 판정. 오래된 t0가 최신 t60을 뒤로 덮으면(last-write-wins), live@t120이
-// 관측간격을 120초로 오판해 mark-only 억제한다. 단조 저장이면 t60이 유지돼 60초=정상 발송.
-const GID = "20260724HHLG0"; // 한화:LG
-const T0 = OBSERVED_AT;
-const T60 = OBSERVED_AT + 60_000;
-const T120 = OBSERVED_AT + 120_000;
-
-async function driveOverlappingSequence(monotonic: boolean) {
-  const notify = await loadNotify();
-  const s = makeStore(monotonic);
-  // tick1: 예정 관측 @t60 (최신)
-  await notify([schedGame({ G_ID: GID, AWAY_NM: "한화", HOME_NM: "LG" })], { observedAtMs: T60, startDeps: s.deps });
-  // tick2: 겹친 이전 invocation이 뒤늦게 끝나 자기 관측 @t0(과거)으로 write
-  await notify([schedGame({ G_ID: GID, AWAY_NM: "한화", HOME_NM: "LG" })], { observedAtMs: T0, startDeps: s.deps });
-  // tick3: live 전환 관측 @t120
-  await notify([liveGame({ G_ID: GID, AWAY_NM: "한화", HOME_NM: "LG", GAME_STATE_SC: "2", GAME_INN_NO: 1, GAME_TB_SC: "T" })],
-    { observedAtMs: T120, startDeps: s.deps });
-  return s;
-}
-
-test("단조 저장 회귀: 겹친 cron에서 뒤늦은 과거 관측이 최신값을 덮지 않아 live@t120 시작알림 정상 발송", async () => {
-  const s = await driveOverlappingSequence(true); // GREATEST(t60, t0)=t60 유지 → gap 60s ≤ 90s
-  assert.ok(s.sent.includes(GID), "단조 저장이면 last_seen=t60 유지 → LG 시작알림 발송");
-  assert.ok(!s.marked.includes(GID), "mark-only 억제되면 안 됨");
-});
-
-test("단조 저장 회귀(음성 대조): last-write-wins면 과거 t0가 최신을 덮어 live@t120이 stale 오판·억제", async () => {
-  const s = await driveOverlappingSequence(false); // 덮어써 last_seen=t0 → gap 120s > 90s
-  assert.ok(s.marked.includes(GID), "덮어쓰기면 stale(120s) 오판 → mark-only 억제(회귀 재현)");
-  assert.ok(!s.sent.includes(GID), "억제 시 발송 없음");
-});
-
-// 마이그레이션 계약 — 저장이 앱-레벨 read-modify-write(레이시)가 아니라 DB 원자 단조여야 한다.
-test("마이그레이션 계약: mark_scheduled_seen RPC는 ON CONFLICT + GREATEST 원자 단조 저장", () => {
-  const sql = readFileSync("supabase/migrations/20260724_notify_scheduled_seen_monotonic.sql", "utf8").toLowerCase();
-  assert.match(sql, /create or replace function\s+mark_scheduled_seen/);
-  assert.match(sql, /on conflict\s*\(game_id\)\s*do update/);
-  assert.match(sql, /greatest\(\s*game_notify_state\.last_seen_scheduled_at\s*,\s*excluded\.last_seen_scheduled_at\s*\)/);
-  assert.match(sql, /grant execute on function mark_scheduled_seen\(text\[\], timestamptz\) to service_role/);
-  // 과거 방향으로 무조건 덮는 last-write-wins 패턴이 없어야 한다.
-  assert.doesNotMatch(sql, /set last_seen_scheduled_at\s*=\s*excluded\.last_seen_scheduled_at\s*;/);
-});
-
-// 배선 실행 검증 — 프로덕션 기본 저장(storeScheduledSeen 미주입)이 naive .from().upsert()가
-// 아니라 원자 단조 RPC mark_scheduled_seen 을 호출하는지, admin 싱글톤 .rpc/.from 을 스파이해
-// 실제 notifyGameStatusTransitions() 실행으로 확인한다(소스 grep 아님).
-test("배선: 프로덕션 기본 저장은 mark_scheduled_seen RPC(원자 단조) 호출 — naive upsert 아님", async () => {
+test("배선: 프로덕션 기본 예정저장은 mark_scheduled_seen RPC(원자 단조) — naive upsert 아님", async () => {
   const admin = await import("../../src/lib/supabase/admin");
   const client = admin.supabaseAdmin as unknown as {
-    rpc: (name: string, args: unknown) => Promise<{ data: null; error: null }>;
+    rpc: (name: string, args: unknown) => Promise<{ data: unknown; error: null }>;
     from: (...a: unknown[]) => unknown;
   };
   const rpcCalls: Array<{ name: string; args: unknown }> = [];
@@ -202,31 +125,94 @@ test("배선: 프로덕션 기본 저장은 mark_scheduled_seen RPC(원자 단�
   client.from = (...a: unknown[]) => { fromCalled = true; return origFrom.apply(client, a as []); };
   try {
     const notify = await loadNotify();
-    await notify([schedGame({ G_ID: "20260724HTNC0", AWAY_NM: "KT", HOME_NM: "NC" })], {
+    await notify([schedGame({ G_ID: "20260726HTNC0", AWAY_NM: "KT", HOME_NM: "NC" })], {
       observedAtMs: OBSERVED_AT,
-      // storeScheduledSeen 는 일부러 미주입 → 프로덕션 defaultStoreScheduledSeen 경로 실행.
+      // storeScheduledSeen 미주입 → 프로덕션 defaultStoreScheduledSeen 경로 실행.
       startDeps: {
         readStartState: async () => null,
-        claimStart: async () => true,
-        unclaimStart: async () => {},
-        markStart: async () => {},
+        claimStartLease: async () => false, // 발송 경로는 이 테스트 관심 밖 — 선점 실패로 조기 종료
+        markStartSent: async () => {},
+        releaseStartLease: async () => {},
+        suppressStart: async () => {},
         fansOf: async () => ({ ids: [], ok: true }),
         sendStart: async () => ({ ok: true, sent: 0 }),
       },
     });
     const call = rpcCalls.find((c) => c.name === "mark_scheduled_seen");
-    assert.ok(call, "기본 저장은 mark_scheduled_seen RPC 호출");
-    assert.deepEqual((call!.args as { p_game_ids: string[] }).p_game_ids, ["20260724HTNC0"]);
+    assert.ok(call, "기본 예정저장은 mark_scheduled_seen RPC 호출");
+    assert.deepEqual((call!.args as { p_game_ids: string[] }).p_game_ids, ["20260726HTNC0"]);
     assert.equal((call!.args as { p_observed_at: string }).p_observed_at, new Date(OBSERVED_AT).toISOString());
-    assert.equal(fromCalled, false, "naive .from().upsert() 경로가 아니라 원자 RPC만 사용");
+    assert.equal(fromCalled, false, "예정저장은 naive .from().upsert() 경로가 아니라 원자 RPC만");
   } finally {
     client.rpc = origRpc;
     client.from = origFrom;
   }
 });
 
-// 실행 동작은 qa:la-born-marking이 검증한다. 여기서는 production 함수가 그 검증된
-// actual-marking budget helper를 경기 루프 밖에서 1회 만들고 양 팀에 전달하는지만 고정한다.
+test("배선: 시작알림 기본 경로는 lease CAS RPC(claim_start_lease → mark_start_sent) 호출", async () => {
+  const admin = await import("../../src/lib/supabase/admin");
+  const client = admin.supabaseAdmin as unknown as {
+    rpc: (name: string, args: unknown) => Promise<{ data: unknown; error: null }>;
+    from: (...a: unknown[]) => unknown;
+  };
+  const rpcCalls: string[] = [];
+  const origRpc = client.rpc;
+  const origFrom = client.from;
+  client.rpc = (name) => {
+    rpcCalls.push(name);
+    if (name === "claim_start_lease") return Promise.resolve({ data: true, error: null });
+    return Promise.resolve({ data: null, error: null });
+  };
+  client.from = () => chainStub({ data: null, error: null }); // readStartState/ensure → 네트워크 차단
+  try {
+    const notify = await loadNotify();
+    const res = await notify([liveGame({ G_ID: "20260726HHLG0", AWAY_NM: "한화", HOME_NM: "LG" })], {
+      observedAtMs: OBSERVED_AT,
+      // claimStartLease/markStartSent 미주입 → 프로덕션 default(RPC) 경로 실행. 발송/팬만 주입.
+      startDeps: {
+        fansOf: async () => ({ ids: ["u1"], ok: true }),
+        sendStart: async () => ({ ok: true, sent: 1 }),
+      },
+    });
+    assert.ok(rpcCalls.includes("claim_start_lease"), "claim_start_lease RPC 호출");
+    assert.ok(rpcCalls.includes("mark_start_sent"), "발송 성공 후 mark_start_sent RPC 호출");
+    assert.ok(rpcCalls.indexOf("claim_start_lease") < rpcCalls.indexOf("mark_start_sent"), "claim → mark 순서");
+    assert.equal(res.started, 1);
+  } finally {
+    client.rpc = origRpc;
+    client.from = origFrom;
+  }
+});
+
+// ── 마이그레이션 SQL 계약 ──────────────────────────────────────────────────
+test("마이그레이션 계약: mark_scheduled_seen RPC는 ON CONFLICT + GREATEST 원자 단조 저장", () => {
+  const sql = readFileSync("supabase/migrations/20260724_notify_scheduled_seen_monotonic.sql", "utf8").toLowerCase();
+  assert.match(sql, /create or replace function\s+mark_scheduled_seen/);
+  assert.match(sql, /on conflict\s*\(game_id\)\s*do update/);
+  assert.match(sql, /greatest\(\s*game_notify_state\.last_seen_scheduled_at\s*,\s*excluded\.last_seen_scheduled_at\s*\)/);
+});
+
+test("마이그레이션 계약: 상태 머신 컬럼·CAS RPC·백필이 멱등적으로 정의됨", () => {
+  const sql = readFileSync("supabase/migrations/20260726_start_notify_state_machine.sql", "utf8").toLowerCase();
+  // 신규 컬럼(멱등)
+  for (const col of ["start_state", "start_sent_at", "start_lease_until", "start_lease_owner", "start_suppressed_reason", "start_fanout_cursor"]) {
+    assert.match(sql, new RegExp(`add column if not exists ${col}`), `${col} IF NOT EXISTS`);
+  }
+  assert.match(sql, /start_state text not null default 'idle'/);
+  assert.match(sql, /check \(start_state in \('idle', 'sending', 'sent', 'suppressed'\)\)/);
+  // 백필: start_notified=true → sent
+  assert.match(sql, /set start_state = 'sent'[\s\S]*where start_notified = true and start_state <> 'sent'/);
+  // CAS RPC 4종
+  for (const fn of ["claim_start_lease", "mark_start_sent", "release_start_lease", "suppress_start"]) {
+    assert.match(sql, new RegExp(`create or replace function\\s+${fn}`), `${fn} 정의`);
+    assert.match(sql, new RegExp(`grant execute on function ${fn}`), `${fn} service_role grant`);
+  }
+  // lease 선점은 idle 또는 만료 sending만
+  assert.match(sql, /start_state = 'idle'\s*or \(start_state = 'sending' and start_lease_until < now\(\)\)/);
+  // read-compat: sent/suppressed 시 start_notified=true 유지
+  assert.match(sql, /start_notified = true/);
+});
+
 test("배선: channel_born actual-marking 전역 예산 helper를 전 경기·양 팀이 공유", () => {
   const src = readFileSync("src/lib/notifications/live-activity.ts", "utf8");
   const fnStart = src.indexOf("export async function pushLiveActivityStarts");
