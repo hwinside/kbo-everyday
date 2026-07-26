@@ -191,8 +191,18 @@ export default function VenueStoryViewer({
   // document/root(body·html)를 움직여 배경 경기방과 fixed viewer 가 함께 밀린다(하린아빠 iOS 리포트).
   // body overflow:hidden 만으론 부족해 scrollY 저장 + position:fixed 로 root scroll 자체를 막고
   // 해제 시 원위치 복원한다(scroll-lock.ts 순수 헬퍼, 회귀로 고정 — 삼순 #839 blocker 3).
+  //
+  // ⚠️ 단, 댓글 모달이 열린 동안에는 viewer 전용 강제 scroll-restore(visualViewport.scroll → window.scrollTo)를
+  // 억제한다. 이 강제 복원 루프가 키보드 열린 상태에서 매 visualViewport.scroll 마다 window.scrollTo 를 반복
+  // 호출해 실기기에서 모달 진동(지터)을 만들었다(하린아빠 7/26 iOS). 기사 CommentSheet 는 이 루프 없이 body
+  // position:fixed modal lock 만으로 정상 동작 → 댓글 열린 중엔 CommentSheet 와 동일 semantics 로 전환한다
+  // (배경 위치 복원은 body position:fixed(top:-scrollY)로 그대로 보존). commentsOpenRef 로 최신값을 읽는다.
+  const commentsOpenRef = useRef(false);
   useEffect(() => {
-    const saved = lockRootScroll();
+    commentsOpenRef.current = commentsOpen;
+  }, [commentsOpen]);
+  useEffect(() => {
+    const saved = lockRootScroll(() => commentsOpenRef.current);
     return () => {
       unlockRootScroll(saved);
     };

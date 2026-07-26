@@ -28,6 +28,9 @@ import {
   subscribeKeyboardInset,
   type VisualViewportLike,
 } from "../../src/lib/venue-stories/keyboard-inset";
+import {
+  shouldRestoreLockedScroll,
+} from "../../src/lib/venue-stories/scroll-lock";
 import { shouldCloseCommentSheetDrag } from "../../src/lib/venue-stories/comment-sheet-gesture";
 
 let pass = 0;
@@ -274,6 +277,29 @@ console.log("[전송 중 스토리 전환 오염 가드 — 삼순 #807 라운�
   ok("댓글 백드롭이 스크롤/오버스크롤 전파 차단(touchAction:none + onTouchMove preventDefault) — 배경 밀림 방지",
     viewerSrc.includes('touchAction: "none"') &&
     /onTouchMove=\{\(e\) => \{\s*\n?\s*if \(e\.cancelable\) e\.preventDefault\(\);/.test(viewerSrc));
+
+  // ⭐ 삼순 #884 왕복1 NO-GO 반영: 댓글 열린 중에도 viewer 전용 강제 scroll-restore(visualViewport.scroll →
+  // window.scrollTo)가 살아있으면 키보드 열린 상태에서 매 scroll 이벤트마다 반복 복원 → 지터. 기사 CommentSheet 엔
+  // 이 루프가 없다. shouldRestoreLockedScroll 가 suppressed(=댓글 오픈)일 때 강제 복원을 하지 않는지 런타임 검증.
+  ok("[런타임] 댓글 오픈(suppressed) 중엔 root 강제 scroll-restore 억제(scrollY 달라도 복원 안 함)",
+    shouldRestoreLockedScroll({ suppressed: true, windowScrollY: 999, savedScrollY: 0 }) === false &&
+    shouldRestoreLockedScroll({ suppressed: true, windowScrollY: 0, savedScrollY: 0 }) === false);
+  ok("[런타임] 댓글 닫힌(스토리만 보는 중, not suppressed)에서는 root 이탈 시 복원 유지(#839 배경 밀림 방지)",
+    shouldRestoreLockedScroll({ suppressed: false, windowScrollY: 999, savedScrollY: 0 }) === true &&
+    shouldRestoreLockedScroll({ suppressed: false, windowScrollY: 0, savedScrollY: 0 }) === false);
+  ok("[런타임] lockRootScroll 이 commentsOpen getter 로 강제 복원 억제(commentsOpenRef 배선)",
+    viewerSrc.includes("lockRootScroll(() => commentsOpenRef.current)") &&
+    viewerSrc.includes("commentsOpenRef.current = commentsOpen"));
+  {
+    // 실제 scroll-lock.ts 소스가 suppressed 분기를 restoreLockedScroll 에 적용했는지(가드 살아있음) 확인.
+    const scrollLockSrc = readFileSync(
+      path.join(process.cwd(), "src/lib/venue-stories/scroll-lock.ts"),
+      "utf8",
+    );
+    ok("scroll-lock 가 isCommentModalOpen getter 로 restoreLockedScroll 억제 분기 적용",
+      scrollLockSrc.includes("isCommentModalOpen") &&
+      scrollLockSrc.includes("shouldRestoreLockedScroll"));
+  }
 
   const layoutSrc = readFileSync(path.resolve(process.cwd(), "src/app/layout.tsx"), "utf8");
   ok("전역 viewport meta는 기존 resizes-content 유지(Android 범위 확장 없음)",

@@ -34,10 +34,34 @@ export interface SavedScrollState {
 }
 
 /**
+ * root scroll 강제 복원(window.scrollTo)을 이번 scroll 이벤트에서 수행할지 결정(순수).
+ * suppressed(=댓글 모달 오픈 중)이면 복원하지 않는다 — 이 강제 복원 루프가 키보드 열린 상태의
+ * visualViewport.scroll 마다 window.scrollTo 를 반복 호출해 iOS 에서 지터를 만든다. 댓글이 열리면
+ * 뷰어는 hidden 이고 배경 위치는 이미 body position:fixed(top:-scrollY)로 고정돼 있으므로 강제 복원
+ * 루프가 불필요하고 오히려 해롭다(기사 CommentSheet 는 이 루프가 없다 — modal lock 만). 하린아빠 7/26 iOS.
+ */
+export function shouldRestoreLockedScroll(opts: {
+  suppressed: boolean;
+  windowScrollY: number;
+  savedScrollY: number;
+}): boolean {
+  if (opts.suppressed) return false;
+  return opts.windowScrollY !== opts.savedScrollY;
+}
+
+/**
  * root scroll 을 잠그고 복원용 상태를 반환한다(SSR-safe: window/document 없으면 no-op).
  * iOS 에서 position:fixed 로 body 를 고정하므로 시각적 점프를 막기 위해 top 에 -scrollY 를 준다.
  */
-export function lockRootScroll(): SavedScrollState | null {
+/**
+ * @param isCommentModalOpen 댓글 모달이 열려 있는지 읽는 getter. 열려 있으면 강제 scroll-restore 를
+ *   억제해 기사 CommentSheet 와 동일한 modal lock semantics 로 동작한다(배경 위치 복원은 그대로 유지).
+ *   getter 로 받는 이유: lockRootScroll 은 마운트 시 1회만 호출되고 이후 commentsOpen 변화를 리스너가
+ *   실시간으로 읽어야 하기 때문(클로저에 값 캡처 X).
+ */
+export function lockRootScroll(
+  isCommentModalOpen?: () => boolean,
+): SavedScrollState | null {
   if (typeof document === "undefined" || typeof window === "undefined") return null;
   const scrollY = window.scrollY || window.pageYOffset || 0;
   const body = document.body;
@@ -68,9 +92,16 @@ export function lockRootScroll(): SavedScrollState | null {
   // iOS Safari는 키보드 focus 순간 fixed body라도 root를 자동 스크롤할 수 있다.
   // focus 애니메이션/키보드 열린 native drag 중 발생하는 모든 root 이동을 저장 위치로 되돌린다.
   const restoreLockedScroll = () => {
-    if (window.scrollY !== scrollY || window.pageYOffset !== scrollY) {
-      window.scrollTo(0, scrollY);
+    // 댓글 모달 오픈 중에는 강제 복원 억제 — CommentSheet 와 동일한 modal lock semantics(지터 제거).
+    // 배경 위치는 body position:fixed(top:-scrollY)로 이미 고정돼 있어 복원 루프 없어도 안전.
+    if (!shouldRestoreLockedScroll({
+      suppressed: isCommentModalOpen?.() ?? false,
+      windowScrollY: window.scrollY,
+      savedScrollY: scrollY,
+    })) {
+      return;
     }
+    window.scrollTo(0, scrollY);
     if (document.documentElement.scrollTop !== scrollY) {
       document.documentElement.scrollTop = scrollY;
     }
