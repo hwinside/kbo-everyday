@@ -34,19 +34,37 @@ export interface SavedScrollState {
 }
 
 /**
- * root scroll 강제 복원(window.scrollTo)을 이번 scroll 이벤트에서 수행할지 결정(순수).
- * suppressed(=댓글 모달 오픈 중)이면 복원하지 않는다 — 이 강제 복원 루프가 키보드 열린 상태의
- * visualViewport.scroll 마다 window.scrollTo 를 반복 호출해 iOS 에서 지터를 만든다. 댓글이 열리면
- * 뷰어는 hidden 이고 배경 위치는 이미 body position:fixed(top:-scrollY)로 고정돼 있으므로 강제 복원
- * 루프가 불필요하고 오히려 해롭다(기사 CommentSheet 는 이 루프가 없다 — modal lock 만). 하린아빠 7/26 iOS.
+ * root scroll 강제 복원 계획을 계산한다(순수). scroll 이벤트마다 호출되어 window/html/body 각각의
+ * 이탈을 독립적으로 복원할지 결정한다.
+ *
+ * - suppressed(=댓글 모달 오픈 중)이면 전체 no-op. 이 강제 복원 루프가 키보드 열린 상태의
+ *   visualViewport.scroll 마다 window.scrollTo 를 반복 호출해 iOS 지터를 만든다. 댓글 열리면 뷰어는
+ *   hidden, 배경 위치는 body position:fixed(top:-scrollY)로 이미 고정 → 억제해도 안전(기사 CommentSheet 동일).
+ * - suppressed 가 아니면(스토리만 보는 중) #839 배경 밀림 방지 위해 window(scrollY||pageYOffset)/html/body 이탈을
+ *   각각 독립 복원한다(window.scrollY 하나만 보고 short-circuit 하지 않음 — 삼순 #884 왕복2 blocker).
  */
-export function shouldRestoreLockedScroll(opts: {
+export interface ScrollRestorePlan {
+  scrollTo: boolean;
+  htmlScrollTop: number | null;
+  bodyScrollTop: number | null;
+}
+export function computeScrollRestore(opts: {
   suppressed: boolean;
   windowScrollY: number;
+  pageYOffset: number;
+  htmlScrollTop: number;
+  bodyScrollTop: number;
   savedScrollY: number;
-}): boolean {
-  if (opts.suppressed) return false;
-  return opts.windowScrollY !== opts.savedScrollY;
+}): ScrollRestorePlan {
+  if (opts.suppressed) {
+    return { scrollTo: false, htmlScrollTop: null, bodyScrollTop: null };
+  }
+  return {
+    scrollTo:
+      opts.windowScrollY !== opts.savedScrollY || opts.pageYOffset !== opts.savedScrollY,
+    htmlScrollTop: opts.htmlScrollTop !== opts.savedScrollY ? opts.savedScrollY : null,
+    bodyScrollTop: opts.bodyScrollTop !== 0 ? 0 : null,
+  };
 }
 
 /**
@@ -92,21 +110,24 @@ export function lockRootScroll(
   // iOS Safari는 키보드 focus 순간 fixed body라도 root를 자동 스크롤할 수 있다.
   // focus 애니메이션/키보드 열린 native drag 중 발생하는 모든 root 이동을 저장 위치로 되돌린다.
   const restoreLockedScroll = () => {
-    // 댓글 모달 오픈 중에는 강제 복원 억제 — CommentSheet 와 동일한 modal lock semantics(지터 제거).
-    // 배경 위치는 body position:fixed(top:-scrollY)로 이미 고정돼 있어 복원 루프 없어도 안전.
-    if (!shouldRestoreLockedScroll({
+    // 댓글 모달 오픈 중이면 전체 no-op(CommentSheet modal lock semantics). 아니면 window/html/body
+    // 각 이탈을 독립 복원(#839 배경 밀림 방지). 계획은 computeScrollRestore 순수함수로 계산해 회귀 고정.
+    const plan = computeScrollRestore({
       suppressed: isCommentModalOpen?.() ?? false,
       windowScrollY: window.scrollY,
+      pageYOffset: window.pageYOffset,
+      htmlScrollTop: document.documentElement.scrollTop,
+      bodyScrollTop: document.body.scrollTop,
       savedScrollY: scrollY,
-    })) {
-      return;
+    });
+    if (plan.scrollTo) {
+      window.scrollTo(0, scrollY);
     }
-    window.scrollTo(0, scrollY);
-    if (document.documentElement.scrollTop !== scrollY) {
-      document.documentElement.scrollTop = scrollY;
+    if (plan.htmlScrollTop !== null) {
+      document.documentElement.scrollTop = plan.htmlScrollTop;
     }
-    if (document.body.scrollTop !== 0) {
-      document.body.scrollTop = 0;
+    if (plan.bodyScrollTop !== null) {
+      document.body.scrollTop = plan.bodyScrollTop;
     }
   };
   window.addEventListener("scroll", restoreLockedScroll, { passive: true });
