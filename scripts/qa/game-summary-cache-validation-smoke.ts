@@ -139,30 +139,45 @@ ok("stale/legacy 판단 전에 llmSummary에 캐시를 넣지 않음",
 
 async function runAtomicChecks() {
   console.log("[⑥ atomic cache write + poll fail-close]");
-  let reads = 0;
-  const oldResult = await writeSummaryCacheWithFence({
-    async read() {
-      reads++;
-      if (reads === 1) {
-        return {
-          createdAt: "2026-07-26T13:00:00.000Z",
-          generationStartedAt: 100,
-        };
-      }
-      return {
-        createdAt: "2026-07-26T13:00:01.000Z",
-        generationStartedAt: 300,
-      };
-    },
-    async insert() {
-      return "error";
-    },
-    async updateIfVersion() {
-      // A가 old row를 읽은 직후 B가 먼저 저장해 A의 CAS가 실패한 interleaving.
-      return "conflict";
-    },
-  }, 200);
-  ok("A-check → B-save → A-save 에서 old A write reject", oldResult === "superseded" && reads === 2);
+  let stored = {
+    createdAt: "2026-07-26T13:00:00.000Z",
+    generationStartedAt: 100,
+  };
+  let releaseOldRead!: () => void;
+  const oldReadCaptured = new Promise<void>((resolve) => { releaseOldRead = resolve; });
+  let continueOldWrite!: () => void;
+  const oldWriteMayContinue = new Promise<void>((resolve) => { continueOldWrite = resolve; });
+
+  function competingStore(blockAfterFirstRead = false) {
+    let firstRead = true;
+    return {
+      async read() {
+        const snapshot = { ...stored };
+        if (blockAfterFirstRead && firstRead) {
+          firstRead = false;
+          releaseOldRead();
+          await oldWriteMayContinue;
+        }
+        return snapshot;
+      },
+      async insert() {
+        return "conflict" as const;
+      },
+      async updateIfVersion(expectedCreatedAt: string | null, write: { createdAt: string; generationStartedAt: number }) {
+        if (stored.createdAt !== expectedCreatedAt) return "conflict" as const;
+        stored = { ...write };
+        return "saved" as const;
+      },
+    };
+  }
+
+  const oldWrite = writeSummaryCacheWithFence(competingStore(true), 200);
+  await oldReadCaptured;
+  const newWrite = await writeSummaryCacheWithFence(competingStore(), 300);
+  continueOldWrite();
+  const oldResult = await oldWrite;
+  ok("A-check → B-save → A-save competing writes에서 old A reject",
+    newWrite === "saved" && oldResult === "superseded" && stored.generationStartedAt === 300);
 
   const pollSource = componentSource.slice(componentSource.indexOf("const pollCache = async"));
   ok("poll도 outdated + fingerprint current 검증 후에만 렌더",
