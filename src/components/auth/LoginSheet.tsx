@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Check } from "lucide-react";
@@ -26,6 +27,11 @@ export default function LoginSheet({ isOpen, onClose }: LoginSheetProps) {
   // Remember which provider the user clicked so "계속 시도" in the modal can
   // still fall through to the provider they originally chose.
   const pendingProviderRef = useRef<Provider | null>(null);
+  // position:fixed 오버레이가 transform 조상(예: 뉴스 캐러셀 translateX)에 갇히지 않도록
+  // document.body로 포털한다. CommentSheet와 동일한 SSR 마운트 가드 패턴.
+  const [mounted, setMounted] = useState(false);
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { setMounted(true); }, []);
 
   useEffect(() => {
     if (!isOpen) {
@@ -75,7 +81,7 @@ export default function LoginSheet({ isOpen, onClose }: LoginSheetProps) {
     if (provider) runProvider(provider);
   }, [runProvider]);
 
-  return (
+  const overlay = (
     <>
       <AnimatePresence>
         {isOpen && (
@@ -193,4 +199,7 @@ export default function LoginSheet({ isOpen, onClose }: LoginSheetProps) {
       />
     </>
   );
+
+  if (!mounted) return null;
+  return createPortal(overlay, document.body);
 }
