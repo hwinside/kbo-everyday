@@ -25,7 +25,7 @@ type NaverHitter = {
 type NaverPitcher = {
   playerId: string; playerName: string; teamShortName: string; pitcherWar: number | null;
   pitcherEra: number; pitcherInning: number | string; pitcherKk: number; pitcherBb: number;
-  pitcherHr: number; pitcherHit: number; pitcherGameCount: number;
+  pitcherHr: number; pitcherHit: number; pitcherR: number; pitcherEr: number; pitcherGameCount: number;
   pitcherWin: number; pitcherLose: number; pitcherSave: number; pitcherWhip: number; isQualified: boolean;
 };
 
@@ -90,7 +90,7 @@ async function main() {
   const pDiffs: Diff[] = pitchers.map((p) => {
     const ours = calcPitcherSaber({
       era: p.pitcherEra, ip: p.pitcherInning, so: p.pitcherKk, bb: p.pitcherBb, hr: p.pitcherHr,
-      hits: p.pitcherHit, games: p.pitcherGameCount, wins: p.pitcherWin, losses: p.pitcherLose,
+      hits: p.pitcherHit, r: p.pitcherR, er: p.pitcherEr, games: p.pitcherGameCount, wins: p.pitcherWin, losses: p.pitcherLose,
       saves: p.pitcherSave, whip: p.pitcherWhip,
     }).WAR;
     return { name: p.playerName, team: p.teamShortName, ours, naver: p.pitcherWar as number, d: ours - (p.pitcherWar as number) };

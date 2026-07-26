@@ -184,6 +184,7 @@ function computeSaber(p: Row, view: StatType, key: string): number {
     return calcPitcherSaber({
       era: (p.era as string | number) ?? 0, ip: (p.ip as string | number) ?? 0,
       so: Number(p.so) || 0, bb: Number(p.bb) || 0, hr: Number(p.hr) || 0, hits: Number(p.h) || 0,
+      r: p.r != null ? Number(p.r) : undefined, er: p.er != null ? Number(p.er) : undefined, // RA9 WAR용 실측 실점
       games: Number(p.games) || 0, wins: Number(p.wins) || 0, losses: Number(p.losses) || 0,
       saves: Number(p.saves) || 0, whip: (p.whip as string | number) ?? 0,
     }).WAR;
