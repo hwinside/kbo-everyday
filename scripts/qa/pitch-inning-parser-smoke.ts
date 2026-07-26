@@ -218,6 +218,7 @@ const inningHeader: NaverTextRelay = { title: "3회말 KIA 공격", titleStyle: 
   ]);
   const current = innings[0]?.currentAtBat;
   check("T5 진행 중 타자명 반환", current?.batterName === "오스틴", JSON.stringify(current));
+  check("T5 진행 중 타순 반환", current?.batOrder === 4, JSON.stringify(current));
   check("T5 진행 중 투구 2개 순서 보존", current?.pitches.length === 2 && current.pitches[1]?.num === 2, JSON.stringify(current?.pitches));
   check("T5 최신 투구 후 B/S/O 보존", current?.pitches[1]?.count?.ball === 1 && current.pitches[1]?.count?.strike === 1 && current.pitches[1]?.count?.out === 1);
 }

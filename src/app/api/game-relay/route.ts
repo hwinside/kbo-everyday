@@ -34,6 +34,8 @@ export interface InningRelay {
   /** 아직 결과(13/23)가 오지 않은 최신 타석. 라이브 화면 전용이며 완료 시 plays로 이동한다. */
   currentAtBat?: {
     batterName: string;
+    /** 라인업 타순(몇 번 타자). type:8 "N번타자" 마커 또는 batterRecord.batOrder. 대타/미상 시 생략. */
+    batOrder?: number;
     pitches: PitchDetail[];
   };
 }
@@ -277,11 +279,13 @@ export function parseInningRelays(textRelays: NaverTextRelay[]): InningRelay[] {
   // 걸쳐 오든 동일하게 동작. 이닝 경계·결과 확정 시 비운다.
   let pendingPitches: PitchDetail[] = [];
   let pendingBatterName: string | null = null;
+  let pendingBatOrder: number | null = null;
 
   for (const relay of chronological) {
     if (relay.titleStyle === "0") {
       pendingPitches = [];
       pendingBatterName = null;
+      pendingBatOrder = null;
       // Inning header: "1회초 LG 공격"
       const match = relay.title.match(/(\d+)회(초|말)\s*(.+?)\s*공격/);
       if (match) {
@@ -319,6 +323,11 @@ export function parseInningRelays(textRelays: NaverTextRelay[]): InningRelay[] {
         const startText = opt.text.trim();
         const startMatch = /^(?:\d+번타자|대타|대주자)\s+(.+)$/.exec(startText);
         pendingBatterName = opt.batterRecord?.name?.trim() || startMatch?.[1]?.trim() || null;
+        // 타순: batterRecord.batOrder(1~9) 우선, 없으면 "N번타자" 접두 숫자. 대타는 교체된 타순 승계(record에 있음).
+        const recOrder = opt.batterRecord?.batOrder;
+        const orderMatch = /^(\d+)번타자/.exec(startText);
+        const parsedOrder = recOrder ?? (orderMatch ? parseInt(orderMatch[1], 10) : 0);
+        pendingBatOrder = parsedOrder >= 1 && parsedOrder <= 9 ? parsedOrder : null;
       } else if (opt.type === 13 || opt.type === 23) {
         // At-bat result: "홍창기 : 우익수 앞 1루타"
         // type 13 = 일반 타석 결과, type 23 = 희생플라이/아웃/볼넷 등
@@ -329,6 +338,7 @@ export function parseInningRelays(textRelays: NaverTextRelay[]): InningRelay[] {
         const consumedPitches = pendingPitches;
         pendingPitches = [];
         pendingBatterName = null;
+        pendingBatOrder = null;
 
         const parts = opt.text.split(" : ");
         if (parts.length < 2) continue;
@@ -372,6 +382,7 @@ export function parseInningRelays(textRelays: NaverTextRelay[]): InningRelay[] {
   if (current && pendingBatterName) {
     current.currentAtBat = {
       batterName: pendingBatterName,
+      ...(pendingBatOrder ? { batOrder: pendingBatOrder } : {}),
       pitches: pendingPitches,
     };
   }

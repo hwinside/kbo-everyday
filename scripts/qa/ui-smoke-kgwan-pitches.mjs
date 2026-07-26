@@ -26,6 +26,7 @@ try {
 
     const current = page.locator('[data-qa="current-at-bat"]');
     check(`${tag} 현재 타석 자동 펼침`, await current.count() === 1);
+    check(`${tag} 현재 타자 타순 표시`, await current.locator('[data-qa="current-bat-order"]').innerText() === "4번");
     const currentVisible = async () => current.evaluate((element) => {
       const root = element.closest('[data-qa="relay-root"]');
       const cardRect = element.getBoundingClientRect();

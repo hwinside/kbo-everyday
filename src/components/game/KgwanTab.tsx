@@ -421,6 +421,7 @@ function LiveView({
                 {currentAtBat && (
                   <CurrentAtBatCard
                     batterName={currentAtBat.batterName}
+                    batOrder={currentAtBat.batOrder}
                     pitcherName={currentPitcher}
                     pitches={currentAtBat.pitches}
                     balls={balls}

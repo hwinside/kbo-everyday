@@ -82,7 +82,7 @@ function formatUpdatedAge(updatedAt: string | undefined, nowMs: number): string 
 
 /**
  * 볼카운트 도트 배지 — 야구 전광판식. 채운 개수만큼 색이 들어온다(B 3칸/S 2칸/O 2칸).
- * 한섯아빠 요청: 텍스트 `B0 S2 O1` → 도트 `B ●●○ / S ●○ / O ●○`.
+ * 하린아빠 요청: 텍스트 `B0 S2 O1` → 도트 `B ●●○ / S ●○ / O ●○`.
  */
 function CountDots({
   label,
@@ -116,6 +116,7 @@ function CountDots({
 
 export default function CurrentAtBatCard({
   batterName,
+  batOrder,
   pitcherName,
   pitches,
   balls,
@@ -125,6 +126,7 @@ export default function CurrentAtBatCard({
   scrollOnUpdate = false,
 }: {
   batterName: string;
+  batOrder?: number;
   pitcherName?: string | null;
   pitches: PitchDetail[];
   balls: number;
@@ -166,6 +168,11 @@ export default function CurrentAtBatCard({
         <span className="shrink-0 rounded-md bg-accent px-1.5 py-1 text-[10px] font-black text-black">
           현재 타석
         </span>
+        {batOrder && (
+          <span data-qa="current-bat-order" className="shrink-0 text-[10px] font-semibold text-text-tertiary">
+            {batOrder}번
+          </span>
+        )}
         <span className="min-w-0 truncate text-sm font-bold text-text-primary">{batterName}</span>
         {pitcherName && (
           <>
