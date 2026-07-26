@@ -53,9 +53,6 @@ function getKSTDateStr(): string {
   return kst.toISOString().slice(0, 10).replace(/-/g, "");
 }
 
-// 기존 QA import 호환. 실제 구현은 watchdog과 공유하는 lib가 SSOT다.
-export { fetchKboLiveGames };
-
 // 잠금화면 Live Activity "중계 한 줄" 소스 — /api/game-relay 응답에서 최근 플레이 1줄 추출.
 // innings는 시간순 오름차순(parseInningRelays), plays도 오름차순 → 마지막 non-empty 이닝의
 // 마지막 play = 최신. 예: "안재석 삼진 아웃"(이닝은 상단 LIVE 표기와 중복이라 제외). 실패 시 null(카드 무영향).
