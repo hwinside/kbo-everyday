@@ -29,9 +29,19 @@ export function safetyCapExpiryIso(startMs: number): string {
 
 export type CleanupRowClass =
   | "flagged" // removed/cleanup_failed — 즉시 정리 대상
-  | "expired_after_end" // 종료 확정 + 종료+24h 경과 — 정상 만료 삭제
+  | "expired_after_end" // 종료 확정 + 종료+24h 경과 — 공개 종료, 미디어 보존
   | "stale_cap" // 종료 미확정인데 안전상한(시작+72h) 도달 — 장애 정책 삭제 + 관제
   | "keep"; // terminal 전 + 상한 미도달 — 삭제 금지
+
+/** 정상 만료는 공개만 종료하고, 물리삭제는 운영/장애 정리 대상에만 허용한다. */
+export function shouldPhysicallyDeleteCleanupRow(cls: CleanupRowClass): boolean {
+  return cls === "flagged" || cls === "stale_cap";
+}
+
+/** 보존 정상만료 행이 limit을 점유하지 않도록 물리삭제 후보만 조회한다. */
+export function cleanupCandidateFilter(nowIso: string): string {
+  return `status.in.(removed,cleanup_failed),and(game_ended_at.is.null,expires_at.lte.${nowIso})`;
+}
 
 /**
  * cleanup 대상 행 분류. terminal(game_ended_at 확정) 전에는 expiry 삭제를 금지하고,
