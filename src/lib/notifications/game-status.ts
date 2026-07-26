@@ -317,6 +317,13 @@ export async function notifyGameStatusTransitions(
       const lastSeenMs = seenRow?.last_seen_scheduled_at
         ? Date.parse(seenRow.last_seen_scheduled_at)
         : null;
+      const plateAppearance = opts?.startPlateAppearanceByGame?.get(gameId)
+        ?? (opts?.startPlateAppearanceByGame === undefined && opts?.startDeps
+          ? { completedPlateAppearances: 0, currentBatterIsLeadoff: true }
+          : null);
+      // game-events/KBO/DB 근거 fetch timeout은 "첫 타석 종료"가 아니다. cutoff 안에서는
+      // 상태를 열거나 mark-only로 닫지 않고 다음 cron이 이 경기만 재시도한다.
+      if (!seenRow?.start_snapshot_at && plateAppearance === null) continue;
       const sendOk = Boolean(seenRow?.start_snapshot_at) || shouldSendStartNotification({
         lastSeenScheduledAtMs: Number.isFinite(lastSeenMs as number) ? lastSeenMs : null,
         scheduledStartAtMs: scheduledStartMs(g.G_DT, g.G_TM),
@@ -325,8 +332,7 @@ export async function notifyGameStatusTransitions(
         isTop: g.GAME_TB_SC ? g.GAME_TB_SC === "T" : null,
         // 테스트 seam은 기존 배선 회귀의 첫 타석 fixture를 유지한다. 프로덕션(default deps)은
         // game-events 근거가 없으면 null로 fail-close한다.
-        plateAppearance: opts?.startPlateAppearanceByGame?.get(gameId)
-          ?? (opts?.startDeps ? { completedPlateAppearances: 0, currentBatterIsLeadoff: true } : null),
+        plateAppearance,
       });
       if (!sendOk) {
         await markStart(gameId);

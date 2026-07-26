@@ -388,6 +388,7 @@ $$;
 create or replace function claim_player_highlight_tokens(
   p_event_id text,
   p_game_id text,
+  p_start_team_ids integer[],
   p_user_ids uuid[],
   p_pref_key text,
   p_finalize_snapshot boolean default true,
@@ -438,8 +439,11 @@ begin
       p_game_id,
       d.id,
       encode(extensions.digest(d.fcm_token, 'sha256'), 'hex'),
-      coalesce(np.game_start, true)
+      -- barrier는 이 token이 해당 경기 시작알림 audience(양 팀 팬+ON)일 때만 필요하다.
+      -- 타팀 선수 팬은 start ledger가 없어도 활약알림을 정상 release한다.
+      coalesce(np.game_start, true) and p.team_id = any(p_start_team_ids)
     from device_push_tokens d
+    join profiles p on p.id = d.user_id
     left join notification_prefs np on np.user_id = d.user_id
     where d.user_id = any(p_user_ids)
       and case p_pref_key
@@ -519,11 +523,11 @@ revoke all on function mark_game_start_deliveries_dispatching(uuid[], uuid) from
 revoke all on function settle_game_start_deliveries(uuid[], uuid, text, text) from anon, authenticated, public;
 revoke all on function settle_game_start_delivery_batch(jsonb, uuid) from anon, authenticated, public;
 revoke all on function finalize_game_start_deliveries(text) from anon, authenticated, public;
-revoke all on function claim_player_highlight_tokens(text, text, uuid[], text, boolean, integer) from anon, authenticated, public;
+revoke all on function claim_player_highlight_tokens(text, text, integer[], uuid[], text, boolean, integer) from anon, authenticated, public;
 grant execute on function snapshot_game_start_deliveries(text, integer[], timestamptz, timestamptz) to service_role;
 grant execute on function claim_game_start_deliveries(text, uuid, integer, integer) to service_role;
 grant execute on function mark_game_start_deliveries_dispatching(uuid[], uuid) to service_role;
 grant execute on function settle_game_start_deliveries(uuid[], uuid, text, text) to service_role;
 grant execute on function settle_game_start_delivery_batch(jsonb, uuid) to service_role;
 grant execute on function finalize_game_start_deliveries(text) to service_role;
-grant execute on function claim_player_highlight_tokens(text, text, uuid[], text, boolean, integer) to service_role;
+grant execute on function claim_player_highlight_tokens(text, text, integer[], uuid[], text, boolean, integer) to service_role;

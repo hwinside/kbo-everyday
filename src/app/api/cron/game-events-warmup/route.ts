@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import type { KboRawGame } from "@/types/api";
 import type { GameEvent } from "@/types/game-events";
 import type { StartPlateAppearanceEvidence } from "@/lib/notifications/start-freshness-policy";
+import { fetchInitialGameEventsBounded } from "@/lib/notifications/start-evidence-fetch";
 import { notifyGameStatusTransitions } from "@/lib/notifications/game-status";
 import { notifyTeamRankChanges } from "@/lib/notifications/team-rank";
 import { notifyScoreEvents, notifyInningSummaries } from "@/lib/notifications/game-score";
@@ -39,6 +40,7 @@ import { runBeforeDeadline } from "@/lib/async-deadline";
 
 const CRON_SECRET = process.env.CRON_SECRET || "";
 const KBO_MAIN = "https://www.koreabaseball.com/ws/Main.asmx";
+const INITIAL_GAME_EVENTS_TIMEOUT_MS = 3_000;
 
 // 함수 내부 fast-refresh 루프(+15/+30/+45s 서브틱)가 돌 수 있게 실행시간 상한을 늘린다
 // (Vercel Pro, news-clipping 300s 선례). 루프는 요청-절대 deadline(FAST_LOOP_DEADLINE_MS=52s)
@@ -154,24 +156,29 @@ export async function GET(req: NextRequest) {
   // 시작알림의 authoritative 첫 타석 근거와 highlight payload를 초기 KBO fetch 직후
   // 즉시 수집한다. 아래 LA/widget 파이프라인 조립과 병렬로 진행하되 highlight는 이
   // promise에서 이어지는 start accepted barrier가 끝난 뒤에만 release된다.
-  const initialGameEventsPromise = Promise.allSettled(
-    liveGameIds.map(gameId =>
-      fetch(`${baseUrl}/api/game-events?gameId=${gameId}`, {
+  const initialGameEventsPromise = fetchInitialGameEventsBounded(
+    liveGameIds,
+    async (gameId, evidenceDeadlineAtMs) => {
+      const remainingMs = Math.max(1, evidenceDeadlineAtMs - Date.now());
+      const r = await fetch(`${baseUrl}/api/game-events?gameId=${gameId}`, {
         cache: "no-store",
         headers: { "User-Agent": "kbo-everyday-warmup/1.0" },
-      }).then(async r => {
-        const json = r.ok ? await r.json().catch(() => null) : null;
-        const events = (json?.events ?? []) as GameEvent[];
-        return {
-          gameId,
-          ok: r.ok,
-          status: r.status,
-          events,
-          eventCount: r.ok ? events.length : null,
-          startPlateAppearance: (json?.startPlateAppearance ?? null) as StartPlateAppearanceEvidence | null,
-        };
-      }),
-    ),
+        signal: AbortSignal.timeout(remainingMs),
+      });
+      const json = r.ok
+        ? await runBeforeDeadline(() => r.json(), evidenceDeadlineAtMs).catch(() => null)
+        : null;
+      const events = (json?.events ?? []) as GameEvent[];
+      return {
+        gameId,
+        ok: r.ok,
+        status: r.status,
+        events,
+        eventCount: r.ok ? events.length : null,
+        startPlateAppearance: (json?.startPlateAppearance ?? null) as StartPlateAppearanceEvidence | null,
+      };
+    },
+    INITIAL_GAME_EVENTS_TIMEOUT_MS,
   );
 
   // 초기 Android 발송과 추가 +20/+40초 loop를 KBO fetch 직후 동시에 시작한다.
@@ -321,10 +328,10 @@ export async function GET(req: NextRequest) {
   const eventsByGame = new Map<string, GameEvent[]>();
   const startPlateAppearanceByGame = new Map<string, StartPlateAppearanceEvidence>();
   for (const r of results) {
-    if (r.status === "fulfilled" && r.value.ok) {
-      eventsByGame.set(r.value.gameId, r.value.events);
-      if (r.value.startPlateAppearance) {
-        startPlateAppearanceByGame.set(r.value.gameId, r.value.startPlateAppearance);
+    if (r.ok) {
+      eventsByGame.set(r.gameId, r.events);
+      if (r.startPlateAppearance) {
+        startPlateAppearanceByGame.set(r.gameId, r.startPlateAppearance);
       }
     }
   }
@@ -452,10 +459,11 @@ export async function GET(req: NextRequest) {
     laFanoutTimedOut: laFanoutDrain.timedOut,
     laFanoutPending: laFanoutDrain.pendingCount,
     lastPlays: Object.fromEntries(lastPlayByGame),
-    results: results.map(r =>
-      r.status === "fulfilled"
-        ? { gameId: r.value.gameId, ok: r.value.ok, status: r.value.status, eventCount: r.value.eventCount }
-        : { error: String(r.reason) },
-    ),
+    results: results.map(r => ({
+      gameId: r.gameId,
+      ok: r.ok,
+      status: r.status,
+      eventCount: r.eventCount,
+    })),
   });
 }

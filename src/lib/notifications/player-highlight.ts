@@ -73,6 +73,8 @@ export async function notifyPlayerHighlights(
     if (!g || isKboGameCancelled(g.CANCEL_SC_ID)) continue;
     const away = g.AWAY_NM ?? "";
     const home = g.HOME_NM ?? "";
+    const startTeamIds = [teamIdByShortName(away), teamIdByShortName(home)]
+      .filter((id): id is number => id !== null);
     const url = `/games/${gameId}`;
     // 올스타전 여부 — 선수 resolve 방식(이름 유일 매칭)과 [올스타전] 알림 태그에 사용.
     const isAllStar = isAllStarGameId(gameId);
@@ -129,8 +131,6 @@ export async function notifyPlayerHighlights(
       } catch {
         continue;
       }
-      if (userIds.length === 0) continue;
-
       // 타점(detail.rbi)이 있으면 "{라벨}{으로/로} N타점 획득!", 0타점이면 "{라벨}!" (하린아빠 확정)
       const label = HIGHLIGHT_LABEL[ev.type] ?? "활약";
       // 홈런/장타가 교차폴링으로 자기 rbi 0이면 유령 단타의 타점을 물려받아 "홈런으로 N타점"으로 합침.
@@ -155,6 +155,7 @@ export async function notifyPlayerHighlights(
         const { data, error } = await supabase.rpc("claim_player_highlight_tokens", {
           p_event_id: dedupId,
           p_game_id: gameId,
+          p_start_team_ids: startTeamIds,
           p_user_ids: fanIds,
           p_pref_key: prefKey,
           p_finalize_snapshot: finalizeSnapshot,
@@ -170,6 +171,11 @@ export async function notifyPlayerHighlights(
 
       // 이벤트 당시 팬/토큰을 200명씩 snapshot한 뒤 token별 barrier를 최대 500개씩 claim한다.
       // 후속 tick은 snapshot에 남은 waiting token 중 새로 accepted된 것만 release한다.
+      // 팬 0명도 빈 terminal snapshot을 남겨, 이벤트 뒤 최애 추가자에게 과거 알림이 가지 않게 한다.
+      if (userIds.length === 0) {
+        await claimBatch([], true);
+        continue;
+      }
       for (let i = 0; i < userIds.length; i += 200) {
         const end = Math.min(i + 200, userIds.length);
         await claimBatch(userIds.slice(i, end), end === userIds.length);

@@ -15,6 +15,7 @@ process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??= "test-anon-key";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { readFileSync } from "node:fs";
+import { fetchInitialGameEventsBounded } from "../../src/lib/notifications/start-evidence-fetch";
 import type { KboRawGame } from "../../src/types/api";
 import type { StartNotifyDeps } from "../../src/lib/notifications/game-status";
 
@@ -480,10 +481,61 @@ test("warmup 배선: 초기 fetch 직후 start 근거 수집, token별 start bar
   assert.match(highlight, /claim_player_highlight_tokens/);
   assert.match(highlight, /sendFcmToTokens\(tokens/);
   assert.match(migration, /not n\.start_required/);
+  assert.match(migration, /p\.team_id\s*=\s*any\(p_start_team_ids\)/);
   assert.match(migration, /l\.status\s*=\s*'accepted'/);
   assert.match(migration, /primary key\s*\(event_id,\s*token_id,\s*token_hash\)/);
   assert.match(migration, /on conflict\s*\(event_id,\s*token_id,\s*token_hash\)\s*do nothing/);
   assert.match(migration, /insert into notified_score_events/);
+});
+
+test("5경기 중 1 game-events hang은 짧은 deadline으로 격리되어 나머지 4경기 근거를 보존", async () => {
+  const gameIds = ["g1", "g2", "g3", "g4", "hang"];
+  const startedAt = Date.now();
+  const results = await fetchInitialGameEventsBounded(
+    gameIds,
+    async (gameId) => {
+      if (gameId === "hang") return new Promise(() => {});
+      return {
+        gameId,
+        ok: true,
+        status: 200,
+        events: [],
+        eventCount: 0,
+        startPlateAppearance: {
+          completedPlateAppearances: 0,
+          currentBatterIsLeadoff: true,
+        },
+      };
+    },
+    30,
+  );
+  assert.ok(Date.now() - startedAt < 250, "hang 한 경기가 전체 시작 경로를 묶으면 안 됨");
+  assert.equal(results.filter((r) => r.ok).length, 4);
+  assert.deepEqual(results.filter((r) => !r.ok).map((r) => r.gameId), ["hang"]);
+});
+
+test("첫 PA 근거 timeout은 mark-only로 닫지 않고 다음 cron 재시도 상태를 유지", async () => {
+  const notify = await loadNotify();
+  const marked: string[] = [];
+  const opened: string[] = [];
+  const gameId = "20260726LGHH0";
+  await notify([
+    liveGame({ G_ID: gameId, AWAY_NM: "LG", HOME_NM: "한화" }),
+  ], {
+    observedAtMs: OBSERVED_AT,
+    startPlateAppearanceByGame: new Map(),
+    startDeps: {
+      readStartState: async () => ({
+        start_notified: false,
+        start_snapshot_at: null,
+        last_seen_scheduled_at: new Date(OBSERVED_AT - 60_000).toISOString(),
+      }),
+      markStart: async (id) => { marked.push(id); },
+      openStart: async ({ gameId: id }) => { opened.push(id); return OBSERVED_AT + 90_000; },
+    },
+  });
+  assert.deepEqual(marked, []);
+  assert.deepEqual(opened, []);
 });
 
 // 마이그레이션 계약 — 저장이 앱-레벨 read-modify-write(레이시)가 아니라 DB 원자 단조여야 한다.

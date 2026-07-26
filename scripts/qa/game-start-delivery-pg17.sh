@@ -48,13 +48,19 @@ CREATE TABLE profiles (
 );
 CREATE TABLE notification_prefs (
   user_id uuid PRIMARY KEY,
-  game_start boolean
+  game_start boolean,
+  fav_player_highlight boolean,
+  fav_player_strikeout boolean
 );
 CREATE TABLE device_push_tokens (
   id bigint PRIMARY KEY,
   user_id uuid NOT NULL,
   platform text NOT NULL,
   fcm_token text NOT NULL
+);
+CREATE TABLE notified_score_events (
+  event_id text PRIMARY KEY,
+  game_id text NOT NULL
 );
 SQL
 "${PSQL[@]}" -f "$MIGRATION" >/dev/null
@@ -144,4 +150,62 @@ IMMEDIATE_RETRY=$("${PSQL[@]}" -c "SELECT count(*) FROM claim_game_start_deliver
 NEXT_TICK_RETRY=$("${PSQL[@]}" -c "SELECT count(*) FROM claim_game_start_deliveries('$GAME','$LEASE_C',45,1)")
 [ "$NEXT_TICK_RETRY" = "1" ] || { echo "FAIL: transient missing next-tick retry=$NEXT_TICK_RETRY" >&2; exit 1; }
 
-echo "PASS PG17 game-start ledger: overlap 0, crash retry 1, post-accept reclaim 0, transient backoff 1"
+# highlight token barrier: same-team ON만 start accepted가 필요하다. OFF와 cross-team ON은 bypass,
+# pending/permanent same-team token 하나가 다른 token release를 막지 않는다.
+HIGHLIGHT_GAME=20260726KTLT0
+"${PSQL[@]}" <<SQL >/dev/null
+INSERT INTO profiles(id, team_id) VALUES
+ ('10000000-0000-0000-0000-000000000010',1),
+ ('10000000-0000-0000-0000-000000000011',1),
+ ('10000000-0000-0000-0000-000000000012',1),
+ ('10000000-0000-0000-0000-000000000013',9),
+ ('10000000-0000-0000-0000-000000000014',1);
+INSERT INTO notification_prefs(user_id, game_start, fav_player_highlight) VALUES
+ ('10000000-0000-0000-0000-000000000010',true,true),
+ ('10000000-0000-0000-0000-000000000011',true,true),
+ ('10000000-0000-0000-0000-000000000012',false,true),
+ ('10000000-0000-0000-0000-000000000013',true,true),
+ ('10000000-0000-0000-0000-000000000014',true,true);
+INSERT INTO device_push_tokens(id,user_id,platform,fcm_token) VALUES
+ (10,'10000000-0000-0000-0000-000000000010','ios','accepted'),
+ (11,'10000000-0000-0000-0000-000000000011','ios','pending'),
+ (12,'10000000-0000-0000-0000-000000000012','ios','off'),
+ (13,'10000000-0000-0000-0000-000000000013','ios','cross-team'),
+ (14,'10000000-0000-0000-0000-000000000014','ios','invalid');
+INSERT INTO game_start_delivery_ledger
+ (game_id,token_id,token_hash,user_id,platform,fcm_token,status,deadline_at)
+SELECT '$HIGHLIGHT_GAME',d.id,encode(extensions.digest(d.fcm_token,'sha256'),'hex'),
+       d.user_id,d.platform,null,
+       CASE d.id WHEN 10 THEN 'accepted' WHEN 14 THEN 'permanent_failed' ELSE 'pending' END,
+       now()+interval '5 minutes'
+FROM device_push_tokens d WHERE d.id IN (10,11,14);
+SQL
+RELEASED=$("${PSQL[@]}" -c "SELECT count(*) FROM claim_player_highlight_tokens(
+  'event#fav','$HIGHLIGHT_GAME',ARRAY[1,2]::integer[],
+  ARRAY[
+    '10000000-0000-0000-0000-000000000010',
+    '10000000-0000-0000-0000-000000000011',
+    '10000000-0000-0000-0000-000000000012',
+    '10000000-0000-0000-0000-000000000013',
+    '10000000-0000-0000-0000-000000000014'
+  ]::uuid[],'fav_player_highlight',true,500)")
+[ "$RELEASED" = "3" ] || { echo "FAIL: token barrier released=$RELEASED expected=3" >&2; exit 1; }
+CLAIMED_IDS=$("${PSQL[@]}" -c "SELECT string_agg(token_id::text,',' ORDER BY token_id) FROM notified_player_highlight_tokens WHERE event_id='event#fav' AND status='claimed'")
+[ "$CLAIMED_IDS" = "10,12,13" ] || { echo "FAIL: token barrier claimed=$CLAIMED_IDS" >&2; exit 1; }
+WAITING_IDS=$("${PSQL[@]}" -c "SELECT string_agg(token_id::text,',' ORDER BY token_id) FROM notified_player_highlight_tokens WHERE event_id='event#fav' AND status='waiting'")
+[ "$WAITING_IDS" = "11,14" ] || { echo "FAIL: token barrier waiting=$WAITING_IDS" >&2; exit 1; }
+
+# 팬 0명 이벤트도 terminal snapshot을 만들고, 이후 팬이 생겨도 과거 알림을 snapshot하지 않는다.
+EMPTY_FIRST=$("${PSQL[@]}" -c "SELECT count(*) FROM claim_player_highlight_tokens(
+  'empty#fav','$HIGHLIGHT_GAME',ARRAY[1,2]::integer[],ARRAY[]::uuid[],
+  'fav_player_highlight',true,500)")
+EMPTY_LATE=$("${PSQL[@]}" -c "SELECT count(*) FROM claim_player_highlight_tokens(
+  'empty#fav','$HIGHLIGHT_GAME',ARRAY[1,2]::integer[],
+  ARRAY['10000000-0000-0000-0000-000000000010']::uuid[],
+  'fav_player_highlight',true,500)")
+[ "$EMPTY_FIRST" = "0" ] && [ "$EMPTY_LATE" = "0" ] || {
+  echo "FAIL: empty audience freeze first=$EMPTY_FIRST late=$EMPTY_LATE" >&2
+  exit 1
+}
+
+echo "PASS PG17 game-start ledger + token barrier: overlap 0, crash retry 1, post-accept reclaim 0, transient backoff 1, release 3, empty freeze 0"
