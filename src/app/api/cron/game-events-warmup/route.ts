@@ -43,12 +43,10 @@ const CRON_SECRET = process.env.CRON_SECRET || "";
 const KBO_MAIN = "https://www.koreabaseball.com/ws/Main.asmx";
 const INITIAL_GAME_EVENTS_TIMEOUT_MS = 3_000;
 
-// 함수 내부 fast-refresh 루프(+15/+30/+45s 서브틱)가 돌 수 있게 실행시간 상한을 늘린다
-// (Vercel Pro, news-clipping 300s 선례). 루프는 요청-절대 deadline(FAST_LOOP_DEADLINE_MS=52s)
-// 이후 어떤 작업도 *시작*하지 않고, 75s는 마지막 서브틱이 이미 시작한 LA/FCM 발송 tail의
-// 안전 마진(23s)이다. 다음 분 cron과의 짧은 겹침 구간 중복 발송은 DB 선점/CAS/hash
-// dedupe가 차단한다(live-fast-path.ts 주석 참조).
-export const maxDuration = 75;
+// Vercel Pro 실행 상한은 300s로 올려 플랫폼 강제절단 여유를 확보한다. 내부 fast-loop/fanout은
+// 기존 요청-절대 52s/68s deadline을 그대로 유지해 다음 분 cron과의 겹침을 늘리지 않는다.
+// 겹친 invocation의 중복 발송은 DB 선점/CAS/hash dedupe가 차단한다.
+export const maxDuration = 300;
 
 function getKSTDateStr(): string {
   const now = new Date();
@@ -130,6 +128,7 @@ export async function GET(req: NextRequest) {
 
   const date = getKSTDateStr();
   const deadlineAtMs = requestStartMs + FAST_LOOP_DEADLINE_MS;
+  const currentTickStartMs = Math.floor(requestStartMs / 60_000) * 60_000;
   // 손상 응답은 정상 "라이브 0"으로 보지 않는다. 본체 알림은 이번 틱 skip하되 fast-loop는
   // +20/+40초 재시도해 일시 KBO parse/schema 오류를 다음 분까지 끌지 않는다.
   const initialFetch = await fetchKboLiveGames(
@@ -396,7 +395,7 @@ export async function GET(req: NextRequest) {
   let highlightNotify: { highlighted: number } | { error: string } = { highlighted: 0 };
   try {
     highlightNotify = await notifyPlayerHighlights(games, eventsByGame, {
-      startAcceptedBeforeMs: requestStartMs,
+      startAcceptedBeforeMs: currentTickStartMs,
       deadlineAtMs,
     });
   } catch (e) {
@@ -420,12 +419,12 @@ export async function GET(req: NextRequest) {
   // 지연을 ~60초(1분 크론) → ~20초로 단축. 추가 사이클은 *안드 위젯만* 재발사하고
   // (득점/랭크/LA 등 알림 서브시스템은 위에서 1회만 — 중복 알림 방지), dedupe로
   // 상태가 바뀐 경기만 발사해 배터리/FCM 쿼터 부담을 막는다. deadline은 *요청 진입 시각*
-  // 기준 절대값(FAST_LOOP_DEADLINE_MS)이라 위 warmup 본작업이 오래 걸려도 maxDuration(75s)/
+  // 기준 절대값(FAST_LOOP_DEADLINE_MS)이라 위 warmup 본작업이 오래 걸려도 내부 68s budget/
   // 다음 크론 틱과 겹치지 않는다. 오케스트레이션은 widget-fast-loop.ts(테스트 커버) 참조.
   // LA 친리티컬/느린 fanout은 초기 fetch 직후 독립 실행됨(삼순 R2①) — 여기서 결과만 회수.
   // drainFanout은 la/android/score 축 fanout을 *요청 진입 기준 deadline*(LA_FANOUT_DRAIN_
-  // DEADLINE_MS=68s) 안에서만 대기하고, 초과 시 partial(timedOut)로 즉시 끊어 maxDuration
-  // (75s) 504를 구조적으로 불가능하게 한다(삼순 R3 blocker③). 미완료분은 다음 분 cron이
+  // DEADLINE_MS=68s) 안에서만 대기하고, 초과 시 partial(timedOut)로 즉시 끊어 내부 budget
+  // 초과 대기를 구조적으로 막는다(삼순 R3 blocker③). 미완료분은 다음 분 cron이
   // 멱등 재발송(DB 선점/CAS/hash dedupe)으로 수습.
   const drainDeadlineAtMs = requestStartMs + LA_FANOUT_DRAIN_DEADLINE_MS;
   const [laCritical, laFanoutDrain, androidWidget, fastRefresh, channelBornReconcile] = await Promise.all([

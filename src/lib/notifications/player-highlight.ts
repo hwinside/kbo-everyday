@@ -67,11 +67,97 @@ const ALLSTAR_2026_DUP_KBOID: Record<string, string> = {
   최원준: "66606",
 };
 
+type DurableHighlightSnapshot = {
+  eventId: string;
+  gameId: string;
+  playerId: string;
+  prefKey: "fav_player_highlight" | "fav_player_strikeout";
+  startTeamIds: number[];
+  title: string;
+  body: string;
+  url: string;
+  snapshotCompleted: boolean;
+};
+
+async function drainHighlightSnapshot(
+  snapshot: DurableHighlightSnapshot,
+  userIds: string[],
+  startAcceptedBeforeMs: number,
+  deadlineAtMs?: number,
+): Promise<number> {
+  let acceptedTotal = 0;
+  let firstClaim = true;
+
+  while (deadlineAtMs == null || Date.now() < deadlineAtMs) {
+    const leaseToken = randomUUID();
+    // 한 RPC transaction에서 audience 전체 insert + snapshot 완료를 함께 수행한다.
+    // worker crash는 transaction 전체 rollback이고, incomplete row는 playerId로 audience를
+    // 다시 전량 열거하므로 일부 chunk만 completed로 굳는 창이 없다.
+    // query-guard: bounded -- SQL이 반환 claim을 p_limit 최대 500행으로 clamp한다.
+    const { data, error } = await supabase.rpc("claim_player_highlight_tokens", {
+      p_event_id: snapshot.eventId,
+      p_game_id: snapshot.gameId,
+      p_player_id: snapshot.playerId,
+      p_start_team_ids: snapshot.startTeamIds,
+      p_user_ids: firstClaim ? userIds : [],
+      p_pref_key: snapshot.prefKey,
+      p_push_title: snapshot.title,
+      p_push_body: snapshot.body,
+      p_push_url: snapshot.url,
+      p_finalize_snapshot: true,
+      p_start_accepted_before: new Date(startAcceptedBeforeMs).toISOString(),
+      p_lease_token: leaseToken,
+      p_lease_seconds: 20,
+      p_limit: 500,
+    });
+    if (error) throw new Error(`highlight token barrier: ${error.message}`);
+    firstClaim = false;
+
+    const claimedTokens: ClaimedHighlightToken[] = [];
+    for (const row of data ?? []) {
+      const claimed = row as { token_id?: number; token_hash?: string; fcm_token?: string };
+      if (claimed.token_id != null && claimed.token_hash && claimed.fcm_token) {
+        claimedTokens.push({
+          tokenId: claimed.token_id,
+          tokenHash: claimed.token_hash,
+          fcmToken: claimed.fcm_token,
+        });
+      }
+    }
+    if (claimedTokens.length === 0) break;
+
+    const transportDeadlineAtMs = Math.min(
+      deadlineAtMs ?? Date.now() + 8_000,
+      Date.now() + 8_000,
+    );
+    const res = await sendFcmToTokens(claimedTokens.map((row) => row.fcmToken), {
+      title: snapshot.title,
+      body: snapshot.body,
+      url: snapshot.url,
+    }, { deadlineAtMs: transportDeadlineAtMs });
+    const settleResults = mapHighlightSettlements(
+      claimedTokens,
+      res.outcomes ?? [],
+      res.lastError ?? null,
+    );
+    // query-guard: bounded -- claim RPC 최대 500행의 token별 FCM 결과를 단일 settle한다.
+    const { data: accepted, error: settleError } = await supabase.rpc(
+      "settle_player_highlight_tokens",
+      { p_results: settleResults, p_lease_token: leaseToken },
+    );
+    if (settleError) throw new Error(`highlight token settle: ${settleError.message}`);
+    acceptedTotal += Number(accepted ?? 0);
+    if (claimedTokens.length < 500) break;
+  }
+
+  return acceptedTotal;
+}
+
 export async function notifyPlayerHighlights(
   games: KboRawGame[],
   eventsByGame: Map<string, GameEvent[]>,
   opts?: {
-    /** 같은 warmup tick에서 accepted된 start는 다음 tick까지 highlight release 금지. */
+    /** 현재 nominal minute 시작. 이 bucket 안에서 accepted된 start는 다음 minute까지 release 금지. */
     startAcceptedBeforeMs?: number;
     /** 이 시각 이후 새 FCM transport를 시작하지 않는다. */
     deadlineAtMs?: number;
@@ -145,6 +231,7 @@ export async function notifyPlayerHighlights(
         .maybeSingle();
       if (snapshotError) continue;
       const hasFrozenSnapshot = existingSnapshot != null;
+      const snapshotCompleted = Boolean(existingSnapshot?.snapshot_completed);
       if (!shouldProcessHighlightEvent({
         eventAtMs: evMs,
         nowMs: Date.now(),
@@ -154,7 +241,7 @@ export async function notifyPlayerHighlights(
 
       // 이 선수를 최애선수로 둔 유저 (favorite_players: [{playerId: kboId}])
       let userIds: string[] = [];
-      if (!hasFrozenSnapshot) {
+      if (!snapshotCompleted) {
         try {
           userIds = await fetchFavoritePlayerFanIds(resolved.kboId);
         } catch {
@@ -179,76 +266,60 @@ export async function notifyPlayerHighlights(
       // 올스타전 알림은 [올스타전] 태그 prefix (하린아빠 지시 2026-07-11).
       const title = isAllStar ? `[올스타전] ${baseTitle}` : baseTitle;
       const prefKey = isStrikeout ? "fav_player_strikeout" : "fav_player_highlight";
-      const claimedTokens: ClaimedHighlightToken[] = [];
-      const leaseToken = randomUUID();
-      const claimBatch = async (fanIds: string[], finalizeSnapshot: boolean): Promise<number> => {
-        // query-guard: bounded -- SQL이 p_limit을 최대 500행으로 clamp한다.
-        const { data, error } = await supabase.rpc("claim_player_highlight_tokens", {
-          p_event_id: dedupId,
-          p_game_id: gameId,
-          p_start_team_ids: startTeamIds,
-          p_user_ids: fanIds,
-          p_pref_key: prefKey,
-          p_finalize_snapshot: finalizeSnapshot,
-          p_start_accepted_before: new Date(startAcceptedBeforeMs).toISOString(),
-          p_lease_token: leaseToken,
-          p_lease_seconds: 20,
-          p_limit: 500,
-        });
-        if (error) throw new Error(`highlight token barrier: ${error.message}`);
-        for (const row of data ?? []) {
-          const claimed = row as { token_id?: number; token_hash?: string; fcm_token?: string };
-          if (claimed.token_id != null && claimed.token_hash && claimed.fcm_token) {
-            claimedTokens.push({
-              tokenId: claimed.token_id,
-              tokenHash: claimed.token_hash,
-              fcmToken: claimed.fcm_token,
-            });
-          }
-        }
-        return data?.length ?? 0;
-      };
-
-      // 이벤트 당시 팬/토큰을 200명씩 snapshot한 뒤 token별 barrier를 최대 500개씩 claim한다.
-      // 후속 tick은 snapshot에 남은 waiting token 중 새로 accepted된 것만 release한다.
-      // 기존 snapshot이면 현재 최애 팬 조회 결과와 무관하게 frozen token을 drain한다.
-      // 신규 팬 0명도 빈 terminal snapshot을 남겨 이후 최애 추가자의 과거 알림을 막는다.
-      if (userIds.length === 0) {
-        await claimBatch([], true);
-      } else {
-        for (let i = 0; i < userIds.length; i += 200) {
-          const end = Math.min(i + 200, userIds.length);
-          await claimBatch(userIds.slice(i, end), end === userIds.length);
-        }
-      }
-      while (claimedTokens.length > 0 && claimedTokens.length % 500 === 0) {
-        const claimed = await claimBatch([], true);
-        if (claimed < 500) break;
-      }
-      if (claimedTokens.length === 0) continue;
-
-      const transportDeadlineAtMs = Math.min(
-        opts?.deadlineAtMs ?? Date.now() + 8_000,
-        Date.now() + 8_000,
-      );
-      const res = await sendFcmToTokens(claimedTokens.map((row) => row.fcmToken), {
+      highlighted += await drainHighlightSnapshot({
+        eventId: dedupId,
+        gameId,
+        playerId: resolved.kboId,
+        prefKey,
+        startTeamIds,
         title,
         body: `${away} vs ${home}`,
         url,
-      }, { deadlineAtMs: transportDeadlineAtMs });
-      const settleResults = mapHighlightSettlements(
-        claimedTokens,
-        res.outcomes ?? [],
-        res.lastError ?? null,
-      );
-      // query-guard: bounded -- claim RPC 최대 500행의 token별 FCM 결과를 단일 settle한다.
-      const { data: accepted, error: settleError } = await supabase.rpc(
-        "settle_player_highlight_tokens",
-        { p_results: settleResults, p_lease_token: leaseToken },
-      );
-      if (settleError) throw new Error(`highlight token settle: ${settleError.message}`);
-      highlighted += Number(accepted ?? 0);
+        snapshotCompleted,
+      }, userIds, startAcceptedBeforeMs, opts?.deadlineAtMs);
     }
+  }
+
+  // source-independent drain: 경기가 final이 되거나 eventsByGame이 비어도 frozen payload로
+  // incomplete snapshot resume, transient retry, deadline terminalization을 계속한다.
+  // query-guard: bounded -- RPC가 생성시각 순 최대 50개 snapshot만 반환한다.
+  const { data: dueSnapshots, error: dueError } = await supabase.rpc(
+    "list_due_player_highlight_snapshots",
+    { p_limit: 50 },
+  );
+  if (dueError) throw new Error(`highlight due snapshots: ${dueError.message}`);
+  for (const row of dueSnapshots ?? []) {
+    if (opts?.deadlineAtMs != null && Date.now() >= opts.deadlineAtMs) break;
+    const due = row as {
+      event_id: string;
+      game_id: string;
+      player_id: string;
+      pref_key: "fav_player_highlight" | "fav_player_strikeout";
+      start_team_ids: number[];
+      push_title: string;
+      push_body: string;
+      push_url: string;
+      snapshot_completed: boolean;
+    };
+    let userIds: string[] = [];
+    if (!due.snapshot_completed) {
+      try {
+        userIds = await fetchFavoritePlayerFanIds(due.player_id);
+      } catch {
+        continue;
+      }
+    }
+    highlighted += await drainHighlightSnapshot({
+      eventId: due.event_id,
+      gameId: due.game_id,
+      playerId: due.player_id,
+      prefKey: due.pref_key,
+      startTeamIds: due.start_team_ids,
+      title: due.push_title,
+      body: due.push_body,
+      url: due.push_url,
+      snapshotCompleted: due.snapshot_completed,
+    }, userIds, startAcceptedBeforeMs, opts?.deadlineAtMs);
   }
 
   return { highlighted };

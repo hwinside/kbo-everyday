@@ -78,6 +78,13 @@ alter table notified_player_highlight_tokens enable row level security;
 create table if not exists player_highlight_event_snapshots (
   event_id text primary key,
   game_id text not null,
+  player_id text not null,
+  pref_key text not null
+    check (pref_key in ('fav_player_highlight', 'fav_player_strikeout')),
+  start_team_ids integer[] not null,
+  push_title text not null,
+  push_body text not null,
+  push_url text not null,
   snapshot_completed boolean not null default false,
   deadline_at timestamptz not null default (now() + interval '30 minutes'),
   created_at timestamptz not null default now(),
@@ -406,7 +413,11 @@ create or replace function claim_player_highlight_tokens(
   p_start_accepted_before timestamptz,
   p_lease_token uuid,
   p_lease_seconds integer default 20,
-  p_limit integer default 500
+  p_limit integer default 500,
+  p_player_id text default '',
+  p_push_title text default '',
+  p_push_body text default '',
+  p_push_url text default ''
 )
 returns table (token_id bigint, token_hash text, fcm_token text)
 language plpgsql
@@ -421,11 +432,19 @@ begin
   end if;
 
   insert into player_highlight_event_snapshots (
-    event_id, game_id, snapshot_completed, deadline_at, completed_at
+    event_id, game_id, player_id, pref_key, start_team_ids,
+    push_title, push_body, push_url,
+    snapshot_completed, deadline_at, completed_at
   )
   select
     p_event_id,
     p_game_id,
+    p_player_id,
+    p_pref_key,
+    p_start_team_ids,
+    p_push_title,
+    p_push_body,
+    p_push_url,
     exists (
       select 1 from notified_score_events e where e.event_id = p_event_id
     ),
@@ -536,9 +555,9 @@ begin
             and l.token_id = n.token_id
             and l.token_hash = n.token_hash
             and l.status = 'accepted'
-            -- 이번 warmup invocation에서 accepted된 start와 같은 tick에는 release하지 않는다.
-            -- 요청 진입 시각 이전 accepted만 허용해 서버 1-tick 분리를 고정한다.
-            and l.fcm_accepted_at < p_start_accepted_before - interval '45 seconds'
+            -- 현재 분 tick 이전에 accepted된 start만 허용한다. 겹친 invocation이 같은
+            -- nominal minute 안에서 50초 뒤 실행돼도 highlight를 먼저 풀지 않는다.
+            and l.fcm_accepted_at < p_start_accepted_before
         )
       )
     for update of n skip locked
@@ -560,6 +579,64 @@ begin
   select e.token_id, e.token_hash, e.fcm_token
   from eligible e
   join claimed c using (token_id, token_hash);
+end;
+$$;
+
+create or replace function list_due_player_highlight_snapshots(
+  p_limit integer default 50
+)
+returns table (
+  event_id text,
+  game_id text,
+  player_id text,
+  pref_key text,
+  start_team_ids integer[],
+  push_title text,
+  push_body text,
+  push_url text,
+  snapshot_completed boolean
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  -- source game/event가 live payload에서 사라져도 deadline terminalization은 계속된다.
+  update notified_player_highlight_tokens n
+     set status = 'expired',
+         lease_token = null,
+         lease_until = null,
+         last_error = coalesce(last_error, 'highlight_deadline_exceeded'),
+         updated_at = now()
+    from player_highlight_event_snapshots s
+   where s.event_id = n.event_id
+     and s.deadline_at <= now()
+     and n.status in ('waiting', 'leased', 'transient');
+
+  return query
+  select
+    s.event_id,
+    s.game_id,
+    s.player_id,
+    s.pref_key,
+    s.start_team_ids,
+    s.push_title,
+    s.push_body,
+    s.push_url,
+    s.snapshot_completed
+  from player_highlight_event_snapshots s
+  where s.deadline_at > now()
+    and (
+      not s.snapshot_completed
+      or exists (
+        select 1
+        from notified_player_highlight_tokens n
+        where n.event_id = s.event_id
+          and n.status in ('waiting', 'leased', 'transient')
+      )
+    )
+  order by s.created_at, s.event_id
+  limit greatest(1, least(p_limit, 50));
 end;
 $$;
 
@@ -618,7 +695,8 @@ revoke all on function mark_game_start_deliveries_dispatching(uuid[], uuid) from
 revoke all on function settle_game_start_deliveries(uuid[], uuid, text, text) from anon, authenticated, public;
 revoke all on function settle_game_start_delivery_batch(jsonb, uuid) from anon, authenticated, public;
 revoke all on function finalize_game_start_deliveries(text) from anon, authenticated, public;
-revoke all on function claim_player_highlight_tokens(text, text, integer[], uuid[], text, boolean, timestamptz, uuid, integer, integer) from anon, authenticated, public;
+revoke all on function claim_player_highlight_tokens(text, text, integer[], uuid[], text, boolean, timestamptz, uuid, integer, integer, text, text, text, text) from anon, authenticated, public;
+revoke all on function list_due_player_highlight_snapshots(integer) from anon, authenticated, public;
 revoke all on function settle_player_highlight_tokens(jsonb, uuid) from anon, authenticated, public;
 grant execute on function snapshot_game_start_deliveries(text, integer[], timestamptz, timestamptz) to service_role;
 grant execute on function claim_game_start_deliveries(text, uuid, integer, integer) to service_role;
@@ -626,5 +704,6 @@ grant execute on function mark_game_start_deliveries_dispatching(uuid[], uuid) t
 grant execute on function settle_game_start_deliveries(uuid[], uuid, text, text) to service_role;
 grant execute on function settle_game_start_delivery_batch(jsonb, uuid) to service_role;
 grant execute on function finalize_game_start_deliveries(text) to service_role;
-grant execute on function claim_player_highlight_tokens(text, text, integer[], uuid[], text, boolean, timestamptz, uuid, integer, integer) to service_role;
+grant execute on function claim_player_highlight_tokens(text, text, integer[], uuid[], text, boolean, timestamptz, uuid, integer, integer, text, text, text, text) to service_role;
+grant execute on function list_due_player_highlight_snapshots(integer) to service_role;
 grant execute on function settle_player_highlight_tokens(jsonb, uuid) to service_role;

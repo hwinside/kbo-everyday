@@ -481,11 +481,16 @@ test("warmup 배선: 초기 fetch 직후 start 근거 수집, token별 start bar
   assert.match(highlight, /claim_player_highlight_tokens/);
   assert.match(highlight, /sendFcmToTokens\(claimedTokens\.map/);
   assert.match(highlight, /settle_player_highlight_tokens/);
-  assert.match(route, /startAcceptedBeforeMs:\s*requestStartMs/);
+  assert.match(route, /currentTickStartMs\s*=\s*Math\.floor\(requestStartMs\s*\/\s*60_000\)\s*\*\s*60_000/);
+  assert.match(route, /startAcceptedBeforeMs:\s*currentTickStartMs/);
+  assert.match(route, /export const maxDuration\s*=\s*300/);
   assert.match(migration, /not n\.start_required/);
   assert.match(migration, /p\.team_id\s*=\s*any\(p_start_team_ids\)/);
   assert.match(migration, /l\.status\s*=\s*'accepted'/);
   assert.match(migration, /l\.fcm_accepted_at\s*<\s*p_start_accepted_before/);
+  assert.doesNotMatch(migration, /p_start_accepted_before\s*-\s*interval '45 seconds'/);
+  assert.match(migration, /list_due_player_highlight_snapshots/);
+  assert.match(highlight, /fetchFavoritePlayerFanIds\(due\.player_id\)/);
   assert.match(migration, /primary key\s*\(event_id,\s*token_id,\s*token_hash\)/);
   assert.match(migration, /on conflict on constraint notified_player_highlight_tokens_pkey do nothing/);
   assert.match(migration, /insert into notified_score_events/);

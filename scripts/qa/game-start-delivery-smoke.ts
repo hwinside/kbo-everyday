@@ -189,6 +189,7 @@ test("highlight token barrier: ON+accepted/OFF만 release, pending·invalid는 �
   assert.match(migration, /not n\.start_required/);
   assert.match(migration, /l\.status\s*=\s*'accepted'/);
   assert.match(migration, /l\.fcm_accepted_at\s*<\s*p_start_accepted_before/);
+  assert.doesNotMatch(migration, /p_start_accepted_before\s*-\s*interval '45 seconds'/);
   assert.match(migration, /insert into notified_score_events/);
   assert.match(migration, /exists\s*\(\s*select 1 from notified_score_events/);
   assert.match(migration, /n\.status in \('waiting', 'transient'\)/);
@@ -198,6 +199,11 @@ test("highlight token barrier: ON+accepted/OFF만 release, pending·invalid는 �
   assert.match(highlightSource, /settle_player_highlight_tokens/);
   assert.match(highlightSource, /mapHighlightSettlements/);
   assert.match(migration, /limit greatest\(1,\s*least\(p_limit,\s*500\)\)/);
+  assert.match(migration, /list_due_player_highlight_snapshots/);
+  assert.match(migration, /push_title text not null/);
+  assert.match(migration, /player_id text not null/);
+  assert.match(highlightSource, /fetchFavoritePlayerFanIds\(due\.player_id\)/);
+  assert.doesNotMatch(highlightSource, /userIds\.slice\(/);
   assert.doesNotMatch(gameStatusSource, /highlightBlockedGameIds/);
 });
 

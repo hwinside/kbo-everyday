@@ -293,4 +293,102 @@ EMPTY_LATE=$("${PSQL[@]}" -c "SELECT count(*) FROM claim_player_highlight_tokens
   exit 1
 }
 
-echo "PASS PG17 start/highlight ledgers: 45s holdback, token settle/retry, 3rd transient/crash, deadline expiry, empty freeze"
+# 부분 snapshot crash 상태도 player_id로 원래 audience를 전량 재열거해 누락 없이 완료한다.
+"${PSQL[@]}" <<SQL >/dev/null
+INSERT INTO player_highlight_event_snapshots
+  (event_id,game_id,player_id,pref_key,start_team_ids,push_title,push_body,push_url,
+   snapshot_completed,deadline_at)
+VALUES
+  ('partial#fav','$HIGHLIGHT_GAME','12345','fav_player_highlight',ARRAY[1,2],
+   'title','body','/games/$HIGHLIGHT_GAME',false,now()+interval '30 minutes');
+INSERT INTO notified_player_highlight_tokens
+  (event_id,game_id,token_id,token_hash,start_required)
+SELECT 'partial#fav','$HIGHLIGHT_GAME',d.id,
+       encode(extensions.digest(d.fcm_token,'sha256'),'hex'),true
+FROM device_push_tokens d WHERE d.id=10;
+SELECT count(*) FROM claim_player_highlight_tokens(
+  p_event_id=>'partial#fav',
+  p_game_id=>'$HIGHLIGHT_GAME',
+  p_start_team_ids=>ARRAY[1,2]::integer[],
+  p_user_ids=>ARRAY[
+    '10000000-0000-0000-0000-000000000010',
+    '10000000-0000-0000-0000-000000000011'
+  ]::uuid[],
+  p_pref_key=>'fav_player_highlight',
+  p_finalize_snapshot=>true,
+  p_start_accepted_before=>date_trunc('minute',now())+interval '1 minute',
+  p_lease_token=>'30000000-0000-0000-0000-000000000009',
+  p_player_id=>'12345',
+  p_push_title=>'title',
+  p_push_body=>'body',
+  p_push_url=>'/games/$HIGHLIGHT_GAME'
+);
+SQL
+PARTIAL_RESUMED=$("${PSQL[@]}" -c "SELECT snapshot_completed::text||':'||(
+  SELECT string_agg(token_id::text,',' ORDER BY token_id)
+  FROM notified_player_highlight_tokens n WHERE n.event_id=s.event_id
+) FROM player_highlight_event_snapshots s WHERE event_id='partial#fav'")
+[ "$PARTIAL_RESUMED" = "true:10,11" ] || {
+  echo "FAIL: partial snapshot resume=$PARTIAL_RESUMED" >&2
+  exit 1
+}
+
+# start accepted는 nominal minute bucket을 넘어야 release된다: 같은 minute overlap 0, 다음 minute 1.
+"${PSQL[@]}" -c "UPDATE game_start_delivery_ledger
+  SET fcm_accepted_at=date_trunc('minute',now())+interval '5 seconds'
+  WHERE game_id='$HIGHLIGHT_GAME' AND token_id=15" >/dev/null
+SAME_MINUTE=$("${PSQL[@]}" -c "SELECT count(*) FROM claim_player_highlight_tokens(
+  p_event_id=>'tick#fav',
+  p_game_id=>'$HIGHLIGHT_GAME',
+  p_start_team_ids=>ARRAY[1,2]::integer[],
+  p_user_ids=>ARRAY['10000000-0000-0000-0000-000000000015']::uuid[],
+  p_pref_key=>'fav_player_highlight',
+  p_finalize_snapshot=>true,
+  p_start_accepted_before=>date_trunc('minute',now()),
+  p_lease_token=>'30000000-0000-0000-0000-000000000010',
+  p_player_id=>'12345',
+  p_push_title=>'title',
+  p_push_body=>'body',
+  p_push_url=>'/games/$HIGHLIGHT_GAME'
+)")
+NEXT_MINUTE=$("${PSQL[@]}" -c "SELECT count(*) FROM claim_player_highlight_tokens(
+  p_event_id=>'tick#fav',
+  p_game_id=>'$HIGHLIGHT_GAME',
+  p_start_team_ids=>ARRAY[1,2]::integer[],
+  p_user_ids=>ARRAY[]::uuid[],
+  p_pref_key=>'fav_player_highlight',
+  p_finalize_snapshot=>true,
+  p_start_accepted_before=>date_trunc('minute',now())+interval '1 minute',
+  p_lease_token=>'30000000-0000-0000-0000-000000000011',
+  p_player_id=>'12345',
+  p_push_title=>'title',
+  p_push_body=>'body',
+  p_push_url=>'/games/$HIGHLIGHT_GAME'
+)")
+[ "$SAME_MINUTE" = "0" ] && [ "$NEXT_MINUTE" = "1" ] || {
+  echo "FAIL: tick bucket same=$SAME_MINUTE next=$NEXT_MINUTE" >&2
+  exit 1
+}
+
+# source event/game이 사라져도 due snapshot은 durable payload로 조회되고 deadline 뒤 expired 처리된다.
+"${PSQL[@]}" <<SQL >/dev/null
+INSERT INTO player_highlight_event_snapshots
+  (event_id,game_id,player_id,pref_key,start_team_ids,push_title,push_body,push_url,
+   snapshot_completed,deadline_at,completed_at)
+VALUES
+  ('final#fav','$HIGHLIGHT_GAME','12345','fav_player_highlight',ARRAY[1,2],
+   'final title','final body','/games/$HIGHLIGHT_GAME',true,now()+interval '30 minutes',now());
+INSERT INTO notified_player_highlight_tokens
+  (event_id,game_id,token_id,token_hash,start_required,status,next_attempt_at)
+SELECT 'final#fav','$HIGHLIGHT_GAME',d.id,
+       encode(extensions.digest(d.fcm_token,'sha256'),'hex'),false,'transient',now()-interval '1 second'
+FROM device_push_tokens d WHERE d.id=12;
+SQL
+FINAL_DUE=$("${PSQL[@]}" -c "SELECT count(*) FROM list_due_player_highlight_snapshots(50) WHERE event_id='final#fav'")
+[ "$FINAL_DUE" = "1" ] || { echo "FAIL: final source-independent due=$FINAL_DUE" >&2; exit 1; }
+"${PSQL[@]}" -c "UPDATE player_highlight_event_snapshots SET deadline_at=now()-interval '1 second' WHERE event_id='final#fav'" >/dev/null
+"${PSQL[@]}" -c "SELECT count(*) FROM list_due_player_highlight_snapshots(50)" >/dev/null
+FINAL_EXPIRED=$("${PSQL[@]}" -c "SELECT status FROM notified_player_highlight_tokens WHERE event_id='final#fav'")
+[ "$FINAL_EXPIRED" = "expired" ] || { echo "FAIL: final deadline state=$FINAL_EXPIRED" >&2; exit 1; }
+
+echo "PASS PG17 start/highlight ledgers: minute tick barrier, atomic snapshot resume, source-independent drain, token retries"
