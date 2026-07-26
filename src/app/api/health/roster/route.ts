@@ -11,7 +11,7 @@ import playersRoster from "@/lib/constants/players-roster.json";
 
 export const dynamic = "force-dynamic"; // no-cache
 
-const EXPECTED_ROSTER_COUNT = 876; // 2026-07-20 Player/Search.aspx 사진검증 1회 백필 포함
+const EXPECTED_ROSTER_COUNT = 877; // 2026-07-26 한화 신규 외인 짐머맨(56799) 온보딩 +1 (876→877)
 const MIN_PER_TEAM = 30;
 const KNOWN_TEAMS = [
   "KIA", "두산", "롯데", "삼성", "SSG", "NC", "한화", "키움", "LG", "KT",
