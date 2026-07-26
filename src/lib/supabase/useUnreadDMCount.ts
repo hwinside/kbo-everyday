@@ -21,7 +21,7 @@ export function useUnreadDMCount() {
 
     const convIds = convs.map((c: { id: string }) => c.id);
 
-    // query-guard: bounded -- p_conversation_ids는 현재 사용자의 대화이며 RPC는 대화당 집계 1행만 반환
+    // query-guard: bounded -- p_conversation_ids는 RPC가 500개로 제한하며 현재 사용자 대화당 1행만 반환
     const { data: unreadRows } = await supabase
       .rpc("dm_unread_counts", { p_conversation_ids: convIds });
 

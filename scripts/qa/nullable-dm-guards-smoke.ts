@@ -66,6 +66,15 @@ check(
     reportsPage.includes("탈퇴"),
 );
 
+// ---- Authenticated RPC boundary ----
+const deletionMigration = read("supabase/migrations/20260727_auth_user_delete_cascades.sql");
+check(
+  "dm_unread_counts: 함수 내부에서 입력 cardinality 500 상한 강제",
+  /CREATE OR REPLACE FUNCTION public\.dm_unread_counts[\s\S]*?COALESCE\(cardinality\(p_conversation_ids\), 0\) > 500[\s\S]*?RAISE EXCEPTION 'too_many_conversation_ids'[\s\S]*?ERRCODE = '22023'[\s\S]*?RETURN QUERY/.test(
+    deletionMigration,
+  ),
+);
+
 // ---- Admin viewpoint: messages route ----
 const adminMsg = read("src/app/api/admin/messages/route.ts");
 check(

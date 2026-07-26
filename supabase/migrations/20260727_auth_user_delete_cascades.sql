@@ -106,11 +106,18 @@ RETURNS TABLE (
   conversation_id UUID,
   unread_count BIGINT
 )
-LANGUAGE SQL
+LANGUAGE plpgsql
 STABLE
 SECURITY INVOKER
 SET search_path = public, pg_temp
 AS $$
+BEGIN
+  IF COALESCE(cardinality(p_conversation_ids), 0) > 500 THEN
+    RAISE EXCEPTION 'too_many_conversation_ids'
+      USING ERRCODE = '22023';
+  END IF;
+
+  RETURN QUERY
   SELECT
     message.conversation_id,
     COUNT(*)::BIGINT AS unread_count
@@ -125,6 +132,7 @@ AS $$
     AND message.is_read = FALSE
     AND message.sender_id IS DISTINCT FROM auth.uid()
   GROUP BY message.conversation_id;
+END;
 $$;
 
 REVOKE ALL ON FUNCTION public.dm_unread_counts(UUID[])

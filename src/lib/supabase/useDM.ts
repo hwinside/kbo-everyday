@@ -82,7 +82,7 @@ export function useDMList() {
 
     // batch fetch unread counts — RPC 결과는 요청 대화당 최대 1행(목록 상한 500).
     const convIds = data.map((c: { id: string }) => c.id);
-    // query-guard: bounded -- p_conversation_ids가 최대 500개이며 RPC는 대화당 집계 1행만 반환
+    // query-guard: bounded -- p_conversation_ids는 클라이언트·RPC 양쪽에서 500개로 제한되고 대화당 1행만 반환
     const { data: unreadRows } = await supabase
       .rpc("dm_unread_counts", { p_conversation_ids: convIds });
 

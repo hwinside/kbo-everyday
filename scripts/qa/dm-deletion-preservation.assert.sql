@@ -104,6 +104,17 @@ BEGIN
     WHERE conversation_id = conv
   ) = 1, 'authenticated unread RPC omitted anonymous sender';
 
+  BEGIN
+    PERFORM 1
+    FROM public.dm_unread_counts(
+      ARRAY(SELECT gen_random_uuid() FROM generate_series(1, 501))
+    );
+    RAISE EXCEPTION 'dm_unread_counts accepted more than 500 ids';
+  EXCEPTION
+    WHEN invalid_parameter_value THEN
+      NULL;
+  END;
+
   UPDATE public.dm_messages
   SET is_read = TRUE
   WHERE conversation_id = conv
