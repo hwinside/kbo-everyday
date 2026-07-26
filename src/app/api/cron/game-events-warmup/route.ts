@@ -25,6 +25,7 @@ import {
   LA_FANOUT_DRAIN_DEADLINE_MS,
   LA_BROADCAST_DEADLINE_MS,
 } from "@/lib/notifications/live-fast-path";
+import { reconcileChannelBornFromAcks } from "@/lib/notifications/live-activity-channel-born-reconcile";
 import { runBeforeDeadline } from "@/lib/async-deadline";
 
 /**
@@ -297,6 +298,14 @@ export async function GET(req: NextRequest) {
       liveGameIds,
     },
   );
+  // channel_born 장부 self-heal — 채널 ensure/broadcast critical path가 끝난 뒤에만 시작해
+  // active 행 SHARE lock이 APNs fanout을 기다리게 하지 않는다. legacy/start fanout과는
+  // 독립 병렬이며 exact-match ACK RPC가 5초/1,000행으로 유계된다. 실패도 fanout은
+  // 끝까지 진행하고 마지막 응답 5xx+구조화 metrics로 cron alert에 노출한다.
+  const channelBornReconcilePromise = laOrchestration.criticalPromise.then(
+    () => reconcileChannelBornFromAcks(),
+    () => reconcileChannelBornFromAcks(),
+  );
 
   const { initialPromise: initialAndroidWidgetPromise, fastPromise: fastRefreshPromise } =
     startWidgetRefreshPipelines<AndroidWidgetResult>({
@@ -386,7 +395,10 @@ export async function GET(req: NextRequest) {
   // 최애선수 활약(타자) 푸시 (push-notifications-v1 S5b) — 장타/홈런 batter 매칭.
   let highlightNotify: { highlighted: number } | { error: string } = { highlighted: 0 };
   try {
-    highlightNotify = await notifyPlayerHighlights(games, eventsByGame);
+    highlightNotify = await notifyPlayerHighlights(games, eventsByGame, {
+      startAcceptedBeforeMs: requestStartMs,
+      deadlineAtMs,
+    });
   } catch (e) {
     highlightNotify = { error: (e as Error).message };
     console.error("[warmup] highlight notify failed:", (e as Error).message);
@@ -416,7 +428,7 @@ export async function GET(req: NextRequest) {
   // (75s) 504를 구조적으로 불가능하게 한다(삼순 R3 blocker③). 미완료분은 다음 분 cron이
   // 멱등 재발송(DB 선점/CAS/hash dedupe)으로 수습.
   const drainDeadlineAtMs = requestStartMs + LA_FANOUT_DRAIN_DEADLINE_MS;
-  const [laCritical, laFanoutDrain, androidWidget, fastRefresh] = await Promise.all([
+  const [laCritical, laFanoutDrain, androidWidget, fastRefresh, channelBornReconcile] = await Promise.all([
     laOrchestration.criticalPromise,
     laOrchestration.drainFanout({
       deadlineAtMs: drainDeadlineAtMs,
@@ -425,6 +437,7 @@ export async function GET(req: NextRequest) {
     }),
     androidWidgetPromise,
     fastRefreshPromise,
+    channelBornReconcilePromise,
   ]);
   const { lastPlayByGame, laChannels, laBroadcast } = laCritical;
   const laFanout = laFanoutDrain.results;
@@ -450,6 +463,7 @@ export async function GET(req: NextRequest) {
     laBroadcast,
     liveActivityStart,
     liveActivityWake,
+    channelBornReconcile,
     iosWidget,
     fastRefresh,
     // 서브틱 느린 fanout 결과(레거시/iOS 위젯/안드/득점 — 큰 단위 관제용). cycle0은 위
@@ -465,5 +479,5 @@ export async function GET(req: NextRequest) {
       status: r.status,
       eventCount: r.eventCount,
     })),
-  });
+  }, { status: channelBornReconcile.ok ? 200 : 500 });
 }

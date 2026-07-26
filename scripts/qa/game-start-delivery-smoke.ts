@@ -6,6 +6,7 @@ import {
   drainGameStartDeliveryBatches,
   gameStartDeliveryWindow,
 } from "../../src/lib/notifications/game-start-delivery-policy";
+import { mapHighlightSettlements } from "../../src/lib/notifications/player-highlight-delivery";
 
 const migration = readFileSync(
   "supabase/migrations/20260726_game_start_device_delivery.sql",
@@ -13,6 +14,7 @@ const migration = readFileSync(
 ).toLowerCase();
 const source = readFileSync("src/lib/notifications/game-start-delivery.ts", "utf8");
 const gameStatusSource = readFileSync("src/lib/notifications/game-status.ts", "utf8");
+const highlightSource = readFileSync("src/lib/notifications/player-highlight.ts", "utf8");
 
 test("최초 snapshot 고정 + 신규/교체 토큰 catch-up 금지", () => {
   assert.match(migration, /start_snapshot_at is null/);
@@ -183,9 +185,36 @@ test("highlight token barrier: ON+accepted/OFF만 release, pending·invalid는 �
   assert.match(migration, /claim_player_highlight_tokens/);
   assert.match(migration, /not n\.start_required/);
   assert.match(migration, /l\.status\s*=\s*'accepted'/);
+  assert.match(migration, /l\.fcm_accepted_at\s*<\s*p_start_accepted_before/);
   assert.match(migration, /insert into notified_score_events/);
   assert.match(migration, /exists\s*\(\s*select 1 from notified_score_events/);
-  assert.match(migration, /n\.status\s*=\s*'waiting'/);
+  assert.match(migration, /n\.status in \('waiting', 'transient'\)/);
+  assert.match(migration, /n\.status = 'leased' and n\.lease_until < now\(\)/);
+  assert.match(migration, /settle_player_highlight_tokens/);
+  assert.match(migration, /now\(\) \+ interval '45 seconds'/);
+  assert.match(highlightSource, /settle_player_highlight_tokens/);
+  assert.match(highlightSource, /mapHighlightSettlements/);
   assert.match(migration, /limit greatest\(1,\s*least\(p_limit,\s*500\)\)/);
   assert.doesNotMatch(gameStatusSource, /highlightBlockedGameIds/);
+});
+
+test("highlight FCM ok=true 안의 token별 transient/permanent를 terminal 성공으로 오인하지 않는다", () => {
+  const settled = mapHighlightSettlements(
+    [
+      { tokenId: 1, tokenHash: "h1", fcmToken: "ok" },
+      { tokenId: 2, tokenHash: "h2", fcmToken: "retry" },
+      { tokenId: 3, tokenHash: "h3", fcmToken: "bad" },
+      { tokenId: 4, tokenHash: "h4", fcmToken: "unattempted" },
+    ],
+    [
+      { token: "ok", status: "accepted", errorCode: null },
+      { token: "retry", status: "transient", errorCode: "messaging/server-unavailable" },
+      { token: "bad", status: "permanent_failed", errorCode: "messaging/sender-id-mismatch" },
+    ],
+    "deadline_exceeded",
+  );
+  assert.deepEqual(
+    settled.map((row) => row.status),
+    ["accepted", "transient", "permanent_failed", "transient"],
+  );
 });

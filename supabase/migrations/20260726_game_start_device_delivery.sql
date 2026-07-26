@@ -57,11 +57,21 @@ create table if not exists notified_player_highlight_tokens (
   token_id bigint not null,
   token_hash text not null,
   start_required boolean not null,
-  status text not null default 'waiting' check (status in ('waiting', 'claimed')),
-  claimed_at timestamptz,
+  status text not null default 'waiting'
+    check (status in ('waiting', 'leased', 'transient', 'accepted', 'permanent_failed')),
+  attempts integer not null default 0,
+  next_attempt_at timestamptz not null default now(),
+  lease_token uuid,
+  lease_until timestamptz,
+  accepted_at timestamptz,
+  last_error text,
   created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
   primary key (event_id, token_id, token_hash)
 );
+
+create index if not exists idx_player_highlight_token_claim
+  on notified_player_highlight_tokens (event_id, status, next_attempt_at, lease_until, token_id);
 
 alter table notified_player_highlight_tokens enable row level security;
 
@@ -391,10 +401,13 @@ create or replace function claim_player_highlight_tokens(
   p_start_team_ids integer[],
   p_user_ids uuid[],
   p_pref_key text,
-  p_finalize_snapshot boolean default true,
+  p_finalize_snapshot boolean,
+  p_start_accepted_before timestamptz,
+  p_lease_token uuid,
+  p_lease_seconds integer default 20,
   p_limit integer default 500
 )
-returns table (fcm_token text)
+returns table (token_id bigint, token_hash text, fcm_token text)
 language plpgsql
 security definer
 set search_path = public, extensions
@@ -451,7 +464,7 @@ begin
         when 'fav_player_strikeout' then coalesce(np.fav_player_strikeout, true)
         else false
       end
-    on conflict (event_id, token_id, token_hash) do nothing;
+    on conflict on constraint notified_player_highlight_tokens_pkey do nothing;
   end if;
 
   if p_finalize_snapshot and not coalesce(v_snapshot_completed, false) then
@@ -483,7 +496,12 @@ begin
      and encode(extensions.digest(d.fcm_token, 'sha256'), 'hex') = n.token_hash
     where n.event_id = p_event_id
       and n.game_id = p_game_id
-      and n.status = 'waiting'
+      and (
+        n.status in ('waiting', 'transient')
+        or (n.status = 'leased' and n.lease_until < now())
+      )
+      and n.attempts < 3
+      and n.next_attempt_at <= now()
       and (
         -- game_start OFF는 start 계약의 명시적 bypass다.
         not n.start_required
@@ -496,6 +514,9 @@ begin
             and l.token_id = n.token_id
             and l.token_hash = n.token_hash
             and l.status = 'accepted'
+            -- 이번 warmup invocation에서 accepted된 start와 같은 tick에는 release하지 않는다.
+            -- 요청 진입 시각 이전 accepted만 허용해 서버 1-tick 분리를 고정한다.
+            and l.fcm_accepted_at < p_start_accepted_before
         )
       )
     for update of n skip locked
@@ -503,17 +524,69 @@ begin
   ),
   claimed as (
     update notified_player_highlight_tokens n
-       set status = 'claimed',
-           claimed_at = now()
+       set status = 'leased',
+           attempts = n.attempts + 1,
+           lease_token = p_lease_token,
+           lease_until = now() + make_interval(secs => greatest(1, p_lease_seconds)),
+           updated_at = now()
       from eligible e
      where n.event_id = e.event_id
        and n.token_id = e.token_id
        and n.token_hash = e.token_hash
     returning n.token_id, n.token_hash
   )
-  select e.fcm_token
+  select e.token_id, e.token_hash, e.fcm_token
   from eligible e
   join claimed c using (token_id, token_hash);
+end;
+$$;
+
+create or replace function settle_player_highlight_tokens(
+  p_results jsonb,
+  p_lease_token uuid
+)
+returns integer
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_accepted integer;
+begin
+  with incoming as (
+    select
+      (r->>'token_id')::bigint as token_id,
+      r->>'token_hash' as token_hash,
+      r->>'status' as status,
+      nullif(r->>'error', '') as error
+    from jsonb_array_elements(p_results) r
+  ),
+  settled as (
+    update notified_player_highlight_tokens n
+       set status = case
+             when i.status = 'accepted' then 'accepted'
+             when i.status = 'transient' and n.attempts < 3 then 'transient'
+             else 'permanent_failed'
+           end,
+           next_attempt_at = case
+             when i.status = 'transient' and n.attempts < 3
+               then now() + interval '45 seconds'
+             else n.next_attempt_at
+           end,
+           accepted_at = case when i.status = 'accepted' then now() else n.accepted_at end,
+           last_error = i.error,
+           lease_token = null,
+           lease_until = null,
+           updated_at = now()
+      from incoming i
+     where n.token_id = i.token_id
+       and n.token_hash = i.token_hash
+       and n.status = 'leased'
+       and n.lease_token = p_lease_token
+    returning n.status
+  )
+  select count(*) filter (where status = 'accepted') into v_accepted from settled;
+  return coalesce(v_accepted, 0);
 end;
 $$;
 
@@ -523,11 +596,13 @@ revoke all on function mark_game_start_deliveries_dispatching(uuid[], uuid) from
 revoke all on function settle_game_start_deliveries(uuid[], uuid, text, text) from anon, authenticated, public;
 revoke all on function settle_game_start_delivery_batch(jsonb, uuid) from anon, authenticated, public;
 revoke all on function finalize_game_start_deliveries(text) from anon, authenticated, public;
-revoke all on function claim_player_highlight_tokens(text, text, integer[], uuid[], text, boolean, integer) from anon, authenticated, public;
+revoke all on function claim_player_highlight_tokens(text, text, integer[], uuid[], text, boolean, timestamptz, uuid, integer, integer) from anon, authenticated, public;
+revoke all on function settle_player_highlight_tokens(jsonb, uuid) from anon, authenticated, public;
 grant execute on function snapshot_game_start_deliveries(text, integer[], timestamptz, timestamptz) to service_role;
 grant execute on function claim_game_start_deliveries(text, uuid, integer, integer) to service_role;
 grant execute on function mark_game_start_deliveries_dispatching(uuid[], uuid) to service_role;
 grant execute on function settle_game_start_deliveries(uuid[], uuid, text, text) to service_role;
 grant execute on function settle_game_start_delivery_batch(jsonb, uuid) to service_role;
 grant execute on function finalize_game_start_deliveries(text) to service_role;
-grant execute on function claim_player_highlight_tokens(text, text, integer[], uuid[], text, boolean, integer) to service_role;
+grant execute on function claim_player_highlight_tokens(text, text, integer[], uuid[], text, boolean, timestamptz, uuid, integer, integer) to service_role;
+grant execute on function settle_player_highlight_tokens(jsonb, uuid) to service_role;

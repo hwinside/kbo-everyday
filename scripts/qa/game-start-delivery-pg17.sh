@@ -159,27 +159,32 @@ INSERT INTO profiles(id, team_id) VALUES
  ('10000000-0000-0000-0000-000000000011',1),
  ('10000000-0000-0000-0000-000000000012',1),
  ('10000000-0000-0000-0000-000000000013',9),
- ('10000000-0000-0000-0000-000000000014',1);
+ ('10000000-0000-0000-0000-000000000014',1),
+ ('10000000-0000-0000-0000-000000000015',1);
 INSERT INTO notification_prefs(user_id, game_start, fav_player_highlight) VALUES
  ('10000000-0000-0000-0000-000000000010',true,true),
  ('10000000-0000-0000-0000-000000000011',true,true),
  ('10000000-0000-0000-0000-000000000012',false,true),
  ('10000000-0000-0000-0000-000000000013',true,true),
- ('10000000-0000-0000-0000-000000000014',true,true);
+ ('10000000-0000-0000-0000-000000000014',true,true),
+ ('10000000-0000-0000-0000-000000000015',true,true);
 INSERT INTO device_push_tokens(id,user_id,platform,fcm_token) VALUES
  (10,'10000000-0000-0000-0000-000000000010','ios','accepted'),
  (11,'10000000-0000-0000-0000-000000000011','ios','pending'),
  (12,'10000000-0000-0000-0000-000000000012','ios','off'),
  (13,'10000000-0000-0000-0000-000000000013','ios','cross-team'),
- (14,'10000000-0000-0000-0000-000000000014','ios','invalid');
+ (14,'10000000-0000-0000-0000-000000000014','ios','invalid'),
+ (15,'10000000-0000-0000-0000-000000000015','ios','same-tick');
 INSERT INTO game_start_delivery_ledger
- (game_id,token_id,token_hash,user_id,platform,fcm_token,status,deadline_at)
+ (game_id,token_id,token_hash,user_id,platform,fcm_token,status,deadline_at,fcm_accepted_at)
 SELECT '$HIGHLIGHT_GAME',d.id,encode(extensions.digest(d.fcm_token,'sha256'),'hex'),
        d.user_id,d.platform,null,
-       CASE d.id WHEN 10 THEN 'accepted' WHEN 14 THEN 'permanent_failed' ELSE 'pending' END,
-       now()+interval '5 minutes'
-FROM device_push_tokens d WHERE d.id IN (10,11,14);
+       CASE d.id WHEN 10 THEN 'accepted' WHEN 15 THEN 'accepted' WHEN 14 THEN 'permanent_failed' ELSE 'pending' END,
+       now()+interval '5 minutes',
+       CASE d.id WHEN 10 THEN now()-interval '1 minute' WHEN 15 THEN now() ELSE null END
+FROM device_push_tokens d WHERE d.id IN (10,11,14,15);
 SQL
+HIGHLIGHT_LEASE=30000000-0000-0000-0000-000000000001
 RELEASED=$("${PSQL[@]}" -c "SELECT count(*) FROM claim_player_highlight_tokens(
   'event#fav','$HIGHLIGHT_GAME',ARRAY[1,2]::integer[],
   ARRAY[
@@ -187,25 +192,54 @@ RELEASED=$("${PSQL[@]}" -c "SELECT count(*) FROM claim_player_highlight_tokens(
     '10000000-0000-0000-0000-000000000011',
     '10000000-0000-0000-0000-000000000012',
     '10000000-0000-0000-0000-000000000013',
-    '10000000-0000-0000-0000-000000000014'
-  ]::uuid[],'fav_player_highlight',true,500)")
+    '10000000-0000-0000-0000-000000000014',
+    '10000000-0000-0000-0000-000000000015'
+  ]::uuid[],'fav_player_highlight',true,now()-interval '10 seconds',
+  '$HIGHLIGHT_LEASE',20,500)")
 [ "$RELEASED" = "3" ] || { echo "FAIL: token barrier released=$RELEASED expected=3" >&2; exit 1; }
-CLAIMED_IDS=$("${PSQL[@]}" -c "SELECT string_agg(token_id::text,',' ORDER BY token_id) FROM notified_player_highlight_tokens WHERE event_id='event#fav' AND status='claimed'")
-[ "$CLAIMED_IDS" = "10,12,13" ] || { echo "FAIL: token barrier claimed=$CLAIMED_IDS" >&2; exit 1; }
+LEASED_IDS=$("${PSQL[@]}" -c "SELECT string_agg(token_id::text,',' ORDER BY token_id) FROM notified_player_highlight_tokens WHERE event_id='event#fav' AND status='leased'")
+[ "$LEASED_IDS" = "10,12,13" ] || { echo "FAIL: token barrier leased=$LEASED_IDS" >&2; exit 1; }
 WAITING_IDS=$("${PSQL[@]}" -c "SELECT string_agg(token_id::text,',' ORDER BY token_id) FROM notified_player_highlight_tokens WHERE event_id='event#fav' AND status='waiting'")
-[ "$WAITING_IDS" = "11,14" ] || { echo "FAIL: token barrier waiting=$WAITING_IDS" >&2; exit 1; }
+[ "$WAITING_IDS" = "11,14,15" ] || { echo "FAIL: token barrier waiting=$WAITING_IDS" >&2; exit 1; }
+
+# token별 FCM 결과 settle: accepted/permanent는 terminal, transient만 45초 backoff 후 재시도.
+"${PSQL[@]}" <<SQL >/dev/null
+SELECT settle_player_highlight_tokens(
+  jsonb_agg(jsonb_build_object(
+    'token_id',token_id,
+    'token_hash',token_hash,
+    'status',case token_id when 10 then 'accepted' when 12 then 'transient' else 'permanent_failed' end,
+    'error',case token_id when 12 then 'messaging/server-unavailable' else null end
+  )),
+  '$HIGHLIGHT_LEASE'
+)
+FROM notified_player_highlight_tokens
+WHERE event_id='event#fav' AND status='leased';
+SQL
+SETTLED=$("${PSQL[@]}" -c "SELECT string_agg(token_id||':'||status,',' ORDER BY token_id) FROM notified_player_highlight_tokens WHERE event_id='event#fav' AND token_id IN (10,12,13)")
+[ "$SETTLED" = "10:accepted,12:transient,13:permanent_failed" ] || { echo "FAIL: highlight settle=$SETTLED" >&2; exit 1; }
+HIGHLIGHT_RETRY_LEASE=30000000-0000-0000-0000-000000000002
+HIGHLIGHT_IMMEDIATE=$("${PSQL[@]}" -c "SELECT count(*) FROM claim_player_highlight_tokens(
+  'event#fav','$HIGHLIGHT_GAME',ARRAY[1,2]::integer[],ARRAY[]::uuid[],
+  'fav_player_highlight',true,now()-interval '10 seconds','$HIGHLIGHT_RETRY_LEASE',20,500)")
+[ "$HIGHLIGHT_IMMEDIATE" = "0" ] || { echo "FAIL: highlight transient retried immediately=$HIGHLIGHT_IMMEDIATE" >&2; exit 1; }
+"${PSQL[@]}" -c "UPDATE notified_player_highlight_tokens SET next_attempt_at=now()-interval '1 second' WHERE event_id='event#fav' AND token_id=12" >/dev/null
+HIGHLIGHT_RETRY=$("${PSQL[@]}" -c "SELECT count(*) FROM claim_player_highlight_tokens(
+  'event#fav','$HIGHLIGHT_GAME',ARRAY[1,2]::integer[],ARRAY[]::uuid[],
+  'fav_player_highlight',true,now()-interval '10 seconds','$HIGHLIGHT_RETRY_LEASE',20,500)")
+[ "$HIGHLIGHT_RETRY" = "1" ] || { echo "FAIL: highlight transient missing retry=$HIGHLIGHT_RETRY" >&2; exit 1; }
 
 # 팬 0명 이벤트도 terminal snapshot을 만들고, 이후 팬이 생겨도 과거 알림을 snapshot하지 않는다.
 EMPTY_FIRST=$("${PSQL[@]}" -c "SELECT count(*) FROM claim_player_highlight_tokens(
   'empty#fav','$HIGHLIGHT_GAME',ARRAY[1,2]::integer[],ARRAY[]::uuid[],
-  'fav_player_highlight',true,500)")
+  'fav_player_highlight',true,now(),'30000000-0000-0000-0000-000000000003',20,500)")
 EMPTY_LATE=$("${PSQL[@]}" -c "SELECT count(*) FROM claim_player_highlight_tokens(
   'empty#fav','$HIGHLIGHT_GAME',ARRAY[1,2]::integer[],
   ARRAY['10000000-0000-0000-0000-000000000010']::uuid[],
-  'fav_player_highlight',true,500)")
+  'fav_player_highlight',true,now(),'30000000-0000-0000-0000-000000000004',20,500)")
 [ "$EMPTY_FIRST" = "0" ] && [ "$EMPTY_LATE" = "0" ] || {
   echo "FAIL: empty audience freeze first=$EMPTY_FIRST late=$EMPTY_LATE" >&2
   exit 1
 }
 
-echo "PASS PG17 game-start ledger + token barrier: overlap 0, crash retry 1, post-accept reclaim 0, transient backoff 1, release 3, empty freeze 0"
+echo "PASS PG17 start/highlight ledgers: start overlap/crash/backoff, 1-tick barrier, token settle/retry, empty freeze"

@@ -479,12 +479,15 @@ test("warmup 배선: 초기 fetch 직후 start 근거 수집, token별 start bar
   assert.ok(startNotify >= 0 && startNotify < highlightNotify, "start accepted barrier 뒤 highlight 발송");
   assert.doesNotMatch(route, /startBlockedGameIds/, "game-global barrier 금지");
   assert.match(highlight, /claim_player_highlight_tokens/);
-  assert.match(highlight, /sendFcmToTokens\(tokens/);
+  assert.match(highlight, /sendFcmToTokens\(claimedTokens\.map/);
+  assert.match(highlight, /settle_player_highlight_tokens/);
+  assert.match(route, /startAcceptedBeforeMs:\s*requestStartMs/);
   assert.match(migration, /not n\.start_required/);
   assert.match(migration, /p\.team_id\s*=\s*any\(p_start_team_ids\)/);
   assert.match(migration, /l\.status\s*=\s*'accepted'/);
+  assert.match(migration, /l\.fcm_accepted_at\s*<\s*p_start_accepted_before/);
   assert.match(migration, /primary key\s*\(event_id,\s*token_id,\s*token_hash\)/);
-  assert.match(migration, /on conflict\s*\(event_id,\s*token_id,\s*token_hash\)\s*do nothing/);
+  assert.match(migration, /on conflict on constraint notified_player_highlight_tokens_pkey do nothing/);
   assert.match(migration, /insert into notified_score_events/);
 });
 

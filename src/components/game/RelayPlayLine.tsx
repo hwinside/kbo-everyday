@@ -42,7 +42,14 @@ export default function RelayPlayLine({ play }: { play: PlayEvent }) {
         <span className="text-xs mt-0.5 w-4 text-center shrink-0">{playEmoji(play.type)}</span>
         <div className="flex-1 min-w-0">
           <p data-qa="relay-body" className="text-sm text-text-primary leading-relaxed">
-            <span className="font-semibold">{play.batterName}</span>
+            <span className="font-semibold">
+              {play.batOrder != null && play.batOrder >= 1 && play.batOrder <= 9 && (
+                <span data-qa="completed-bat-order" className="mr-1 text-accent">
+                  {play.batOrder}번
+                </span>
+              )}
+              {play.batterName}
+            </span>
             <span className="text-text-secondary ml-1.5">{play.result}</span>
           </p>
           {play.extras && play.extras.length > 0 && (

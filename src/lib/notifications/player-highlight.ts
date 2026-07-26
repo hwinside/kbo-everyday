@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { sendFcmToTokens } from "@/lib/notifications/fcm";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { isKboGameCancelled } from "@/lib/crawler/kbo-status";
@@ -8,6 +9,10 @@ import { isAllStarGameId } from "@/lib/constants/teams";
 import { fetchFavoritePlayerFanIds } from "@/lib/notifications/audience";
 import type { KboRawGame } from "@/types/api";
 import type { GameEvent, GameEventType } from "@/types/game-events";
+import {
+  mapHighlightSettlements,
+  type ClaimedHighlightToken,
+} from "@/lib/notifications/player-highlight-delivery";
 
 // 최애선수 활약(타자) 알림 (push-notifications-v1 S5b).
 // warmup cron이 game-events에서 받는 장타/홈런 이벤트의 타자를 최애선수로 둔
@@ -64,8 +69,15 @@ const ALLSTAR_2026_DUP_KBOID: Record<string, string> = {
 export async function notifyPlayerHighlights(
   games: KboRawGame[],
   eventsByGame: Map<string, GameEvent[]>,
+  opts?: {
+    /** 같은 warmup tick에서 accepted된 start는 다음 tick까지 highlight release 금지. */
+    startAcceptedBeforeMs?: number;
+    /** 이 시각 이후 새 FCM transport를 시작하지 않는다. */
+    deadlineAtMs?: number;
+  },
 ): Promise<{ highlighted: number }> {
   let highlighted = 0;
+  const startAcceptedBeforeMs = opts?.startAcceptedBeforeMs ?? Date.now();
   const gameById = new Map(games.map((g) => [g.G_ID, g]));
 
   for (const [gameId, events] of eventsByGame) {
@@ -149,7 +161,8 @@ export async function notifyPlayerHighlights(
       // 올스타전 알림은 [올스타전] 태그 prefix (하린아빠 지시 2026-07-11).
       const title = isAllStar ? `[올스타전] ${baseTitle}` : baseTitle;
       const prefKey = isStrikeout ? "fav_player_strikeout" : "fav_player_highlight";
-      const tokens: string[] = [];
+      const claimedTokens: ClaimedHighlightToken[] = [];
+      const leaseToken = randomUUID();
       const claimBatch = async (fanIds: string[], finalizeSnapshot: boolean): Promise<number> => {
         // query-guard: bounded -- SQL이 p_limit을 최대 500행으로 clamp한다.
         const { data, error } = await supabase.rpc("claim_player_highlight_tokens", {
@@ -159,12 +172,21 @@ export async function notifyPlayerHighlights(
           p_user_ids: fanIds,
           p_pref_key: prefKey,
           p_finalize_snapshot: finalizeSnapshot,
+          p_start_accepted_before: new Date(startAcceptedBeforeMs).toISOString(),
+          p_lease_token: leaseToken,
+          p_lease_seconds: 20,
           p_limit: 500,
         });
         if (error) throw new Error(`highlight token barrier: ${error.message}`);
         for (const row of data ?? []) {
-          const token = (row as { fcm_token?: string }).fcm_token;
-          if (token) tokens.push(token);
+          const claimed = row as { token_id?: number; token_hash?: string; fcm_token?: string };
+          if (claimed.token_id != null && claimed.token_hash && claimed.fcm_token) {
+            claimedTokens.push({
+              tokenId: claimed.token_id,
+              tokenHash: claimed.token_hash,
+              fcmToken: claimed.fcm_token,
+            });
+          }
         }
         return data?.length ?? 0;
       };
@@ -180,21 +202,33 @@ export async function notifyPlayerHighlights(
         const end = Math.min(i + 200, userIds.length);
         await claimBatch(userIds.slice(i, end), end === userIds.length);
       }
-      while (tokens.length > 0 && tokens.length % 500 === 0) {
+      while (claimedTokens.length > 0 && claimedTokens.length % 500 === 0) {
         const claimed = await claimBatch([], true);
         if (claimed < 500) break;
       }
-      if (tokens.length === 0) continue;
+      if (claimedTokens.length === 0) continue;
 
-      const res = await sendFcmToTokens(tokens, {
+      const transportDeadlineAtMs = Math.min(
+        opts?.deadlineAtMs ?? Date.now() + 8_000,
+        Date.now() + 8_000,
+      );
+      const res = await sendFcmToTokens(claimedTokens.map((row) => row.fcmToken), {
         title,
         body: `${away} vs ${home}`,
         url,
-      });
-      // claim RPC가 외부 부작용 직전 durable intent다. transport 결과가 모호한 경우에도
-      // 같은 token/event를 재발송하지 않는 at-most-once 정책으로 중복을 차단한다.
-      if (!res.ok) continue;
-      highlighted += res.sent;
+      }, { deadlineAtMs: transportDeadlineAtMs });
+      const settleResults = mapHighlightSettlements(
+        claimedTokens,
+        res.outcomes ?? [],
+        res.lastError ?? null,
+      );
+      // query-guard: bounded -- claim RPC 최대 500행의 token별 FCM 결과를 단일 settle한다.
+      const { data: accepted, error: settleError } = await supabase.rpc(
+        "settle_player_highlight_tokens",
+        { p_results: settleResults, p_lease_token: leaseToken },
+      );
+      if (settleError) throw new Error(`highlight token settle: ${settleError.message}`);
+      highlighted += Number(accepted ?? 0);
     }
   }
 

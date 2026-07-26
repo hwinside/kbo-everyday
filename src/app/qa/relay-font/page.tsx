@@ -25,8 +25,8 @@ const COMPLETED_PITCHES: PitchDetail[] = [
 ];
 
 const PLAYS: PlayEvent[] = [
-  { batterName: "김혜성", result: "중견수 방면 1루타", type: "hit", extras: ["1루주자 홈까지 진루 / 득점"], pitches: COMPLETED_PITCHES },
-  { batterName: "에드먼", result: "우월 3점 홈런", type: "homerun", extras: ["구자욱 홈인 / 오재일 홈인 / 3타점"] },
+  { batterName: "김혜성", batOrder: 1, result: "중견수 방면 1루타", type: "hit", extras: ["1루주자 홈까지 진루 / 득점"], pitches: COMPLETED_PITCHES },
+  { batterName: "에드먼", batOrder: 2, result: "우월 3점 홈런", type: "homerun", extras: ["구자욱 홈인 / 오재일 홈인 / 3타점"] },
   { batterName: "구자욱", result: "삼진 아웃 (헛스윙)", type: "strikeout", extras: [] },
   { batterName: "이재현", result: "볼넷으로 걸어나감", type: "walk", extras: ["만루 상황 전개"] },
 ];

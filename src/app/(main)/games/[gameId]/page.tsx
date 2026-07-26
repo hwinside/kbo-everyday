@@ -38,7 +38,6 @@ import MatchupCard from "@/components/game/MatchupCard";
 import Diamond from "@/components/game/Diamond";
 import { ChevronUp, ChevronDown } from "lucide-react";
 import ScoreBoard from "@/components/game/ScoreBoard";
-import VenueStorySection from "@/components/game/VenueStorySection";
 import GameChat from "@/components/game/GameChat";
 import { useChatRoomHasMessages } from "@/lib/supabase/useChatRoomHasMessages";
 import KgwanTab from "@/components/game/KgwanTab";
@@ -519,10 +518,6 @@ export default function GameDetailPage() {
         />
       ) : (
         <>
-          {/* 직관 라이브 — 전체 공개 롤아웃(2026-07-25 iOS/Android 출시 후 AdminOnly 게이트 해제).
-              업로드는 VenueStorySection 내부에서 네이티브 런타임+GPS+로그인 게이트, 열람은 익명 허용. */}
-          <VenueStorySection gameId={gameId} />
-
           {/* Tabs */}
           <div className="flex border-b border-border mx-4">
             {TABS.map((tab) => (

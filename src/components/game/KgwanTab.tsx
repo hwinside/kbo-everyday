@@ -8,6 +8,7 @@ import Image from "next/image";
 import { getTeamById, isAllStarGame, isAllStarGameId } from "@/lib/constants/teams";
 import GameChat from "@/components/game/GameChat";
 import ContextualStatsBox from "@/components/game/ContextualStatsBox";
+import VenueStorySection from "@/components/game/VenueStorySection";
 import RelayPlayLine from "@/components/game/RelayPlayLine";
 import CurrentAtBatCard from "@/components/game/LivePitchByPitch";
 import { useRouter } from "next/navigation";
@@ -279,6 +280,9 @@ function ScheduledView({ gameId, awayTeamId, homeTeamId, gameDate, gameStartTime
       {/* AI 경기 예측 */}
       <AIPreviewCard gameId={gameId} awayTeamId={awayTeamId} homeTeamId={homeTeamId} starterNames={starterNames} />
 
+      {/* 직관 라이브 — 전체 채팅 바로 위 */}
+      <VenueStorySection gameId={gameId} />
+
       {/* Pre-game chat opens 2 hours before first pitch */}
       {isChatOpen ? (
         <GameChat gameId={gameId} homeTeamId={homeTeamId} awayTeamId={awayTeamId} />
@@ -418,19 +422,9 @@ function LiveView({
                   <span className="text-[10px] text-text-tertiary ml-auto">{totalPlays}타석</span>
                 </div>
 
-                {currentAtBat && (
-                  <CurrentAtBatCard
-                    batterName={currentAtBat.batterName}
-                    pitcherName={currentPitcher}
-                    pitches={currentAtBat.pitches}
-                    balls={balls}
-                    strikes={strikes}
-                    outs={outs}
-                    updatedAt={gameRelay?.updatedAt}
-                    scrollOnUpdate
-                  />
-                )}
-
+                {/* 시간순 배치: 완료 타석(오래된→최신)을 위에, 현재 타석 카드를 맨
+                   아래에 둔다. 위→아래로 타순이 자연스럽게 이어진다(예: 7번→8번→현재
+                   9번). scrollOnUpdate 는 최신 투구(맨 아래)로 스크롤되어 자연스럽다. */}
                 {latestInning.plays.length > 0 && (
                   <div className="px-4 pb-2">
                     {currentAtBat && (
@@ -442,6 +436,20 @@ function LiveView({
                       <RelayPlayLine key={`${inningKey}-${idx}`} play={play} />
                     ))}
                   </div>
+                )}
+
+                {currentAtBat && (
+                  <CurrentAtBatCard
+                    batterName={currentAtBat.batterName}
+                    batOrder={currentAtBat.batOrder}
+                    pitcherName={currentPitcher}
+                    pitches={currentAtBat.pitches}
+                    balls={balls}
+                    strikes={strikes}
+                    outs={outs}
+                    updatedAt={gameRelay?.updatedAt}
+                    scrollOnUpdate
+                  />
                 )}
               </div>
             );
@@ -466,6 +474,10 @@ function LiveView({
 
       {/* Contextual stats box — 문자중계와 채팅 사이 상황별 맞춤 스탯 */}
       <ContextualStatsBox gameId={gameId} enabled />
+
+      {/* 직관 라이브 — 상황별 스탯(오지환 vs) 아래, 전체 채팅 바로 위. 업로드는
+          VenueStorySection 내부에서 네이티브 런타임+GPS+로그인 게이트, 열람은 익명 허용. */}
+      <VenueStorySection gameId={gameId} />
 
       {/* Chat */}
       <GameChat gameId={gameId} homeTeamId={homeTeamId} awayTeamId={awayTeamId} />
@@ -912,6 +924,9 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
           </div>
         )}
       </div>
+
+      {/* 직관 라이브 — 전체 채팅 바로 위 */}
+      <VenueStorySection gameId={gameId} />
 
       {/* Post-game chat */}
       <GameChat gameId={gameId} homeTeamId={homeTeamId} awayTeamId={awayTeamId} />
