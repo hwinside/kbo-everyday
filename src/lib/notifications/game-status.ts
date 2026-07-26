@@ -175,6 +175,7 @@ export type StartNotifyDeps = {
     teamIds: number[];
     observedAtMs: number;
     payload: { title: string; body: string; url: string };
+    attemptDeadlineAtMs?: number;
   }) => Promise<GameStartDeliveryResult>;
 };
 
@@ -225,6 +226,8 @@ export async function notifyGameStatusTransitions(
      * 미지정 시 함수 진입 시각으로 1회 캡처(경기별 재측정 금지).
      */
     observedAtMs?: number;
+    /** 시작알림 batch가 새 FCM transport를 시작할 수 있는 요청-절대 마감. */
+    deadlineAtMs?: number;
     /**
      * 시작알림 경로 배선 회귀 테스트용 seam(프로덕션 미지정 → 실제 구현). 앞 경기 FCM 발송
      * 지연이 뒤 경기 시작알림을 억제하지 않는지 이 함수 자체를 실행해 검증하기 위해
@@ -328,16 +331,18 @@ export async function notifyGameStatusTransitions(
           gameId,
           teamIds,
           observedAtMs,
+          attemptDeadlineAtMs: opts?.deadlineAtMs,
           payload: {
             title: "⚾ 경기 시작!",
             body: `${away} vs ${home} 경기가 시작됐어요. 크보팬에서 자세한 경기 내용을 확인해보세요!`,
             url,
           },
         });
-        started += delivery.fcmAccepted;
+        started += delivery.fcmAcceptedDelta;
         console.log(
           `[game-status] start delivery game=${gameId}` +
-          ` fcmAccepted=${delivery.fcmAccepted} deviceDelivered=${delivery.deviceDelivered}` +
+          ` fcmAcceptedDelta=${delivery.fcmAcceptedDelta} fcmAcceptedTotal=${delivery.fcmAcceptedTotal}` +
+          ` deviceDelivered=${delivery.deviceDelivered ?? "unknown"}` +
           ` pending=${delivery.pending} permanentFailed=${delivery.permanentFailed}` +
           ` expired=${delivery.expired} snapshotCompleted=${delivery.snapshotCompleted}`,
         );

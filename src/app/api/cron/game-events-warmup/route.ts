@@ -321,6 +321,7 @@ export async function GET(req: NextRequest) {
     // (2026-07-24 LG:한화 시작알림 억제 사고).
     gameNotify = await notifyGameStatusTransitions(games, {
       observedAtMs: initialFetch.trace.fetchedAtMs,
+      deadlineAtMs,
     });
   } catch (e) {
     gameNotify = { error: (e as Error).message };

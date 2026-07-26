@@ -199,8 +199,9 @@ test("device snapshot이 열린 게임은 다음 cron의 freshness stale 판정�
         delivered.push(gameId);
         return {
           snapshotCompleted: false,
-          fcmAccepted: 0,
-          deviceDelivered: 0,
+          fcmAcceptedDelta: 0,
+          fcmAcceptedTotal: 0,
+          deviceDelivered: null,
           pending: 1,
           permanentFailed: 0,
           expired: 0,
@@ -211,6 +212,37 @@ test("device snapshot이 열린 게임은 다음 cron의 freshness stale 판정�
   assert.deepEqual(delivered, [GID], "기존 snapshot drain 경로를 계속 타야 한다");
   assert.deepEqual(marked, [], "snapshot 완료 전 mark-only global 종결 금지");
   assert.equal(result.started, 0);
+});
+
+test("start 관제 started는 snapshot 누계가 아니라 이번 invocation accepted delta만 합산", async () => {
+  const notify = await loadNotify();
+  const result = await notify([liveGame({
+    G_ID: GID,
+    AWAY_NM: "한화",
+    HOME_NM: "LG",
+    GAME_INN_NO: 1,
+    GAME_TB_SC: "T",
+  })], {
+    observedAtMs: T120,
+    startDeps: {
+      storeScheduledSeen: async () => {},
+      readStartState: async () => ({
+        start_notified: false,
+        last_seen_scheduled_at: new Date(T60).toISOString(),
+        start_snapshot_at: new Date(T60).toISOString(),
+      }),
+      deliverStart: async () => ({
+        snapshotCompleted: false,
+        fcmAcceptedDelta: 7,
+        fcmAcceptedTotal: 100,
+        deviceDelivered: null,
+        pending: 1,
+        permanentFailed: 0,
+        expired: 0,
+      }),
+    },
+  });
+  assert.equal(result.started, 7);
 });
 
 // 마이그레이션 계약 — 저장이 앱-레벨 read-modify-write(레이시)가 아니라 DB 원자 단조여야 한다.

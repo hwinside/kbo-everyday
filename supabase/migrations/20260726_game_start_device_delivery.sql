@@ -50,13 +50,14 @@ create or replace function snapshot_game_start_deliveries(
   p_snapshot_at timestamptz,
   p_deadline_at timestamptz
 )
-returns boolean
+returns timestamptz
 language plpgsql
 security definer
 set search_path = public, extensions
 as $$
 declare
   v_created boolean := false;
+  v_deadline timestamptz;
 begin
   insert into game_notify_state (game_id)
   values (p_game_id)
@@ -72,7 +73,11 @@ begin
 
   v_created := found;
   if not v_created then
-    return false;
+    select start_snapshot_deadline_at
+      into v_deadline
+      from game_notify_state
+     where game_id = p_game_id;
+    return v_deadline;
   end if;
 
   insert into game_start_delivery_ledger (
@@ -93,14 +98,13 @@ begin
     and coalesce(np.game_start, true)
   on conflict (game_id, event_type, token_id, token_hash) do nothing;
 
-  return true;
+  return p_deadline_at;
 end;
 $$;
 
 create or replace function claim_game_start_deliveries(
   p_game_id text,
   p_lease_token uuid,
-  p_lease_seconds integer default 20,
   p_limit integer default 500
 )
 returns table (
@@ -124,8 +128,11 @@ as $$
         l.status in ('pending', 'transient')
         or (l.status = 'leased' and l.lease_until < now())
       )
+      -- 1분 cron + 90초 snapshot에서 최초 시도 1회, transient 재시도 1회로 제한한다.
+      and l.attempts < 2
       and l.fcm_token is not null
-    order by l.id
+    -- 최초 미시도 전량이 transient retry에 굶지 않게 pending을 항상 먼저 drain한다.
+    order by case l.status when 'pending' then 0 when 'transient' then 1 else 2 end, l.id
     for update skip locked
     limit greatest(1, least(p_limit, 500))
   ),
@@ -134,7 +141,9 @@ as $$
        set status = 'leased',
            attempts = l.attempts + 1,
            lease_token = p_lease_token,
-           lease_until = now() + make_interval(secs => greatest(1, least(p_lease_seconds, 60))),
+           -- attempt transport는 고정 snapshot deadline까지 갈 수 있다. lease를 그보다
+           -- 15초 길게 잡아 settle grace까지 같은 행의 중첩 FCM send를 차단한다.
+           lease_until = l.deadline_at + interval '15 seconds',
            updated_at = now()
       from candidates c
      where l.id = c.id
@@ -210,14 +219,18 @@ begin
            fcm_token = null,
            updated_at = now()
      where game_id = p_game_id
-       and status in ('pending', 'leased', 'transient');
+       and (
+         status in ('pending', 'transient')
+         or (status = 'leased' and lease_until < now())
+       );
   end if;
 
   return query
   with counts as (
     select
       count(*) filter (where status = 'accepted')::bigint as accepted,
-      count(*) filter (where device_delivered_at is not null)::bigint as device_delivered,
+      -- device ACK writer 도입 전에는 0이 아니라 미계측(NULL)이다.
+      null::bigint as device_delivered,
       count(*) filter (where status in ('pending', 'leased', 'transient'))::bigint as pending,
       count(*) filter (where status = 'permanent_failed')::bigint as permanent_failed,
       count(*) filter (where status = 'expired')::bigint as expired
@@ -245,10 +258,10 @@ end;
 $$;
 
 revoke all on function snapshot_game_start_deliveries(text, integer[], timestamptz, timestamptz) from anon, authenticated, public;
-revoke all on function claim_game_start_deliveries(text, uuid, integer, integer) from anon, authenticated, public;
+revoke all on function claim_game_start_deliveries(text, uuid, integer) from anon, authenticated, public;
 revoke all on function settle_game_start_deliveries(uuid[], uuid, text, text) from anon, authenticated, public;
 revoke all on function finalize_game_start_deliveries(text) from anon, authenticated, public;
 grant execute on function snapshot_game_start_deliveries(text, integer[], timestamptz, timestamptz) to service_role;
-grant execute on function claim_game_start_deliveries(text, uuid, integer, integer) to service_role;
+grant execute on function claim_game_start_deliveries(text, uuid, integer) to service_role;
 grant execute on function settle_game_start_deliveries(uuid[], uuid, text, text) to service_role;
 grant execute on function finalize_game_start_deliveries(text) to service_role;

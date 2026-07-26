@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { sendFcmToTokens, type PushPayload } from "@/lib/notifications/fcm";
+import {
+  drainGameStartDeliveryBatches,
+  gameStartDeliveryWindow,
+} from "@/lib/notifications/game-start-delivery-policy";
 
 const SNAPSHOT_DEADLINE_MS = 90_000;
 
@@ -15,8 +19,12 @@ type ClaimedDelivery = {
 
 export type GameStartDeliveryResult = {
   snapshotCompleted: boolean;
-  fcmAccepted: number;
-  deviceDelivered: number;
+  /** 이번 invocation에서 fencing을 통과해 accepted로 새로 전이한 수. */
+  fcmAcceptedDelta: number;
+  /** snapshot 전체의 accepted 누계. */
+  fcmAcceptedTotal: number;
+  /** device ACK writer 도입 전에는 미계측(null). */
+  deviceDelivered: number | null;
   pending: number;
   permanentFailed: number;
   expired: number;
@@ -24,14 +32,15 @@ export type GameStartDeliveryResult = {
 
 const EMPTY: GameStartDeliveryResult = {
   snapshotCompleted: false,
-  fcmAccepted: 0,
-  deviceDelivered: 0,
+  fcmAcceptedDelta: 0,
+  fcmAcceptedTotal: 0,
+  deviceDelivered: null,
   pending: 0,
   permanentFailed: 0,
   expired: 0,
 };
 
-async function finalize(gameId: string): Promise<GameStartDeliveryResult> {
+async function finalize(gameId: string, fcmAcceptedDelta = 0): Promise<GameStartDeliveryResult> {
   // query-guard: bounded -- 단일 game_id 집계 결과를 정확히 1행 반환한다.
   const { data, error } = await supabase.rpc("finalize_game_start_deliveries", {
     p_game_id: gameId,
@@ -45,11 +54,12 @@ async function finalize(gameId: string): Promise<GameStartDeliveryResult> {
     permanent_failed?: number;
     expired?: number;
   } | null;
-  if (!row) return EMPTY;
+  if (!row) return { ...EMPTY, fcmAcceptedDelta };
   return {
     snapshotCompleted: Boolean(row.snapshot_completed),
-    fcmAccepted: Number(row.accepted ?? 0),
-    deviceDelivered: Number(row.device_delivered ?? 0),
+    fcmAcceptedDelta,
+    fcmAcceptedTotal: Number(row.accepted ?? 0),
+    deviceDelivered: row.device_delivered == null ? null : Number(row.device_delivered),
     pending: Number(row.pending ?? 0),
     permanentFailed: Number(row.permanent_failed ?? 0),
     expired: Number(row.expired ?? 0),
@@ -65,73 +75,87 @@ export async function deliverGameStartSnapshot(args: {
   teamIds: number[];
   observedAtMs: number;
   payload: PushPayload;
+  /** Vercel invocation의 요청-절대 작업 마감. snapshot deadline보다 짧을 수 있다. */
+  attemptDeadlineAtMs?: number;
 }): Promise<GameStartDeliveryResult> {
-  const deadlineAtMs = args.observedAtMs + SNAPSHOT_DEADLINE_MS;
+  const proposedDeadlineAtMs = args.observedAtMs + SNAPSHOT_DEADLINE_MS;
   // query-guard: bounded -- 단일 game snapshot 생성 여부 boolean 1개만 반환한다.
-  const { error: snapshotError } = await supabase.rpc("snapshot_game_start_deliveries", {
+  const { data: snapshotDeadline, error: snapshotError } = await supabase.rpc("snapshot_game_start_deliveries", {
     p_game_id: args.gameId,
     p_team_ids: args.teamIds,
     p_snapshot_at: new Date(args.observedAtMs).toISOString(),
-    p_deadline_at: new Date(deadlineAtMs).toISOString(),
+    p_deadline_at: new Date(proposedDeadlineAtMs).toISOString(),
   });
   if (snapshotError) throw new Error(`start delivery snapshot: ${snapshotError.message}`);
+  const deadlineAtMs = Date.parse(String(snapshotDeadline ?? ""));
+  if (!Number.isFinite(deadlineAtMs)) throw new Error("start delivery snapshot: invalid persisted deadline");
 
-  if (Date.now() >= deadlineAtMs) return finalize(args.gameId);
+  const drainDeadlineAtMs = Math.min(deadlineAtMs, args.attemptDeadlineAtMs ?? deadlineAtMs);
+  if (Date.now() >= drainDeadlineAtMs) return finalize(args.gameId);
 
-  const leaseToken = randomUUID();
-  // query-guard: bounded -- SQL RPC가 p_limit을 최대 500행으로 clamp한다.
-  const { data, error: claimError } = await supabase.rpc("claim_game_start_deliveries", {
-    p_game_id: args.gameId,
-    p_lease_token: leaseToken,
-    p_lease_seconds: 20,
-    p_limit: 500,
-  });
-  if (claimError) throw new Error(`start delivery claim: ${claimError.message}`);
-  const claimed = (data ?? []) as ClaimedDelivery[];
-  if (claimed.length === 0) return finalize(args.gameId);
-
-  const remainingSeconds = Math.max(1, Math.ceil((deadlineAtMs - Date.now()) / 1000));
-  const delivery = await sendFcmToTokens(
-    claimed.map((row) => row.fcm_token),
-    {
-      ...args.payload,
-      collapseKey: `game_start_${args.gameId}`,
-      ttlSeconds: Math.min(90, remainingSeconds),
-      apnsCollapseId: `game-start-${args.gameId}`.slice(0, 64),
-      apnsExpirationSeconds: Math.min(90, remainingSeconds),
+  let leaseToken = "";
+  const fcmAcceptedDelta = await drainGameStartDeliveryBatches<ClaimedDelivery>({
+    deadlineAtMs: drainDeadlineAtMs,
+    claim: async () => {
+      leaseToken = randomUUID();
+      // query-guard: bounded -- SQL RPC가 p_limit을 최대 500행으로 clamp한다.
+      const { data, error } = await supabase.rpc("claim_game_start_deliveries", {
+        p_game_id: args.gameId,
+        p_lease_token: leaseToken,
+        p_limit: 500,
+      });
+      if (error) throw new Error(`start delivery claim: ${error.message}`);
+      return (data ?? []) as ClaimedDelivery[];
     },
-    { deadlineAtMs },
-  );
+    process: async (claimed) => {
+      const window = gameStartDeliveryWindow(deadlineAtMs, Date.now(), drainDeadlineAtMs);
+      if (!window) return 0;
+      const delivery = await sendFcmToTokens(
+        claimed.map((row) => row.fcm_token),
+        {
+          ...args.payload,
+          collapseKey: `game_start_${args.gameId}`,
+          ttlSeconds: window.ttlSeconds,
+          apnsCollapseId: `game-start-${args.gameId}`.slice(0, 64),
+          apnsExpirationSeconds: window.apnsExpirationSeconds,
+        },
+        { deadlineAtMs: window.deadlineAtMs },
+      );
 
-  const byToken = new Map((delivery.outcomes ?? []).map((outcome) => [outcome.token, outcome]));
-  const groups = {
-    accepted: [] as string[],
-    transient: [] as string[],
-    permanent_failed: [] as string[],
-  };
-  const errors = new Map<string, string>();
-  for (const row of claimed) {
-    const outcome = byToken.get(row.fcm_token);
-    const status = outcome?.status === "accepted"
-      ? "accepted"
-      : outcome?.status === "transient" || !outcome
-        ? "transient"
-        : "permanent_failed";
-    groups[status].push(row.id);
-    if (outcome?.errorCode) errors.set(status, outcome.errorCode);
-  }
+      const byToken = new Map((delivery.outcomes ?? []).map((outcome) => [outcome.token, outcome]));
+      const groups = {
+        accepted: [] as string[],
+        transient: [] as string[],
+        permanent_failed: [] as string[],
+      };
+      const errors = new Map<string, string>();
+      for (const row of claimed) {
+        const outcome = byToken.get(row.fcm_token);
+        const status = outcome?.status === "accepted"
+          ? "accepted"
+          : outcome?.status === "transient" || !outcome
+            ? "transient"
+            : "permanent_failed";
+        groups[status].push(row.id);
+        if (outcome?.errorCode) errors.set(status, outcome.errorCode);
+      }
 
-  for (const [status, ids] of Object.entries(groups)) {
-    if (ids.length === 0) continue;
-    // query-guard: bounded -- 위 claim 최대 500행의 상태 전이 건수 scalar 1개만 반환한다.
-    const { error } = await supabase.rpc("settle_game_start_deliveries", {
-      p_ids: ids,
-      p_lease_token: leaseToken,
-      p_status: status,
-      p_error: errors.get(status) ?? null,
-    });
-    if (error) throw new Error(`start delivery settle(${status}): ${error.message}`);
-  }
+      let accepted = 0;
+      for (const [status, ids] of Object.entries(groups)) {
+        if (ids.length === 0) continue;
+        // query-guard: bounded -- 위 claim 최대 500행의 상태 전이 건수 scalar 1개만 반환한다.
+        const { data, error } = await supabase.rpc("settle_game_start_deliveries", {
+          p_ids: ids,
+          p_lease_token: leaseToken,
+          p_status: status,
+          p_error: errors.get(status) ?? null,
+        });
+        if (error) throw new Error(`start delivery settle(${status}): ${error.message}`);
+        if (status === "accepted") accepted += Number(data ?? 0);
+      }
+      return accepted;
+    },
+  });
 
-  return finalize(args.gameId);
+  return finalize(args.gameId, fcmAcceptedDelta);
 }
