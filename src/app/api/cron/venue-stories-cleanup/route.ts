@@ -2,11 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import {
   VENUE_STORY_SAFETY_CAP_HOURS_AFTER_START,
-  VENUE_STORY_STAGING_BUCKET,
+  VENUE_STORY_ORPHAN_SWEEP_BUCKETS,
 } from "@/lib/venue-stories/types";
 import {
   shouldDeleteOrphanFile,
   collectReferencedPaths,
+  resolveOrphanCursorUpdate,
   type RefPageRow,
 } from "@/lib/venue-stories/cleanup-policy";
 import {
@@ -16,8 +17,10 @@ import {
 } from "@/lib/venue-stories/expiry-policy";
 
 const CRON_SECRET = process.env.CRON_SECRET || "";
-// staging 버킷도 orphan 스캔 대상(생성 API 도달 전 이탈한 업로드 잔여 정리)
-const BUCKETS = ["videos", "photos", VENUE_STORY_STAGING_BUCKET] as const;
+// orphan 스캔 대상 버킷 — 레거시(videos/photos) + staging + venue-media(삼순 blocker 3).
+// venue-media 편입으로 POST/CAS/worker 실패 잔여(참조 없는 객체)가 무기한 누적되지 않는다.
+// 정상 참조(active/archived 행의 venue-media path)는 referenced 집합 보호로 오삭제 0.
+const BUCKETS = VENUE_STORY_ORPHAN_SWEEP_BUCKETS;
 const ORPHAN_MAX_GAME_FOLDERS = 40; // 실행당 bucket별 orphan 스캔 상한(durable cursor 로 이어짐)
 const STORAGE_PAGE = 100; // storage list 페이지 크기
 
@@ -335,12 +338,22 @@ export async function GET(req: NextRequest) {
       if (games.length < STORAGE_PAGE) break; // 마지막 페이지
     }
 
-    // cursor 갱신: 완전 처리된 마지막 폴더명으로만 전진. 전 구간 도달했으면 리셋(null).
-    const nextAfter = reachedEnd ? null : lastCompletedName;
-    if (lastCompletedName != null || reachedEnd) {
+    // cursor 갱신: fault면 기존값 불변. 정상 처리 중 limit 도달은 마지막 완료 폴더까지 전진,
+    // 전 구간 도달은 null로 리셋한다.
+    const cursorUpdate = resolveOrphanCursorUpdate({
+      currentAfterName: afterName,
+      lastCompletedName,
+      reachedEnd,
+      bucketFault,
+    });
+    if (cursorUpdate.shouldWrite) {
       const { error: curErr } = await supabase
         .from("venue_cleanup_cursor")
-        .upsert({ bucket, after_name: nextAfter, updated_at: new Date().toISOString() });
+        .upsert({
+          bucket,
+          after_name: cursorUpdate.nextAfter,
+          updated_at: new Date().toISOString(),
+        });
       if (curErr) faults++; // cursor 저장 실패도 관제
     }
     if (bucketFault) faults++;

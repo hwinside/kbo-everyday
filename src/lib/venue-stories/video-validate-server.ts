@@ -23,7 +23,7 @@ import {
 } from "./video-validate";
 import {
   VENUE_STORY_MAX_BYTES,
-  VENUE_STORY_PUBLIC_VIDEO_BUCKET,
+  VENUE_STORY_PRIVATE_MEDIA_BUCKET,
 } from "./types";
 
 const FFPROBE_TIMEOUT_MS = 20_000;
@@ -101,8 +101,9 @@ function realDeps(): ValidateDeps {
     async publishOriginal(stagingPath, filePath) {
       try {
         const buf = await fs.readFile(filePath);
+        // A안 A1: 검증 통과 원본을 공개 videos 대신 private venue-media 로 승격(서빙은 signed URL).
         const { error } = await supabase.storage
-          .from(VENUE_STORY_PUBLIC_VIDEO_BUCKET)
+          .from(VENUE_STORY_PRIVATE_MEDIA_BUCKET)
           .upload(stagingPath, buf, {
             contentType: contentTypeForPath(stagingPath),
             cacheControl: "31536000",
@@ -118,7 +119,7 @@ function realDeps(): ValidateDeps {
         .from("venue_stories")
         .update({
           status: "active",
-          media_bucket: VENUE_STORY_PUBLIC_VIDEO_BUCKET,
+          media_bucket: VENUE_STORY_PRIVATE_MEDIA_BUCKET,
           duration_ms: meta.durationMs,
           width: meta.width,
           height: meta.height,

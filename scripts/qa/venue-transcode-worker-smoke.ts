@@ -370,6 +370,41 @@ async function run() {
     }
   }
 
+  console.log("[J] A안 A1: active private(venue-media) 원본 → storage.download 경유(media_url 다운로드 아님)");
+  {
+    const work = mkdtempSync(join(tmpdir(), "vt-test-"));
+    try {
+      const state: DbRowState = { id: 6, status: "active", needs_transcode: true, transcode_attempts: 0 };
+      // media_bucket=venue-media(private): 공개 URL 없음 → runner.downloadToFile 를 쓰면 실패해야 정상.
+      const row = {
+        id: 6,
+        status: "active",
+        needs_transcode: true,
+        media_url: "https://mock/storage/v1/object/public/venue-media/venue-stories/G1/U1/v.mp4",
+        media_bucket: "venue-media",
+        media_path: "venue-stories/G1/U1/v.mp4",
+        transcode_attempts: 0,
+      };
+      const storage = makeMockStorage({ downloadData: Buffer.alloc(1000, 0xab) });
+      const res = await processVenueJob(row, {
+        db: makeMockDb(state),
+        storage,
+        // downloadToFile 가 호출되면 throw — private 경로는 storage.download 를 써야 하므로 호출되면 안 됨
+        runner: makeMockRunner(work, { downloadThrows: true }),
+        inPath: join(work, "in.mp4"),
+        outPath: join(work, "out.mp4"),
+      });
+      ok("J: result=done(private storage.download 경유 성공)", res.result === "done");
+      ok(
+        "J: 720p 출력도 venue-media(private) 버킷으로 업로드(공개 videos 아님)",
+        Object.keys(storage._uploaded).some((k) => k.startsWith("venue-media/")) &&
+          !Object.keys(storage._uploaded).some((k) => k.startsWith("videos/")),
+      );
+    } finally {
+      rmSync(work, { recursive: true, force: true });
+    }
+  }
+
   console.log(`\n결과: ${pass} pass / ${fail} fail`);
   if (fail > 0) process.exit(1);
 }

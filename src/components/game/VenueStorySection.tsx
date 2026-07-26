@@ -16,9 +16,13 @@ import {
   PENDING_POLL_DELAYS_MS,
 } from "@/lib/venue-stories/composer-helpers";
 import {
+  applyVenueStoryUrlRefresh,
   shouldApplyAutomaticStoryRefresh,
   shouldCommitStoryFetch,
   buildCommittedStories,
+  mintWithTimeout,
+  VENUE_STORY_URL_MINT_TIMEOUT_MS,
+  type VenueStoryUrlRefresh,
 } from "@/lib/venue-stories/refresh-policy";
 
 interface Props {
@@ -221,6 +225,51 @@ export default function VenueStorySection({ gameId }: Props) {
     [gameId, userId],
   );
 
+  const refreshViewerStoryUrl = useCallback(
+    async (storyId: number, controller: AbortController) => {
+      if (storyQaKeyboard || storyId <= 0) return false;
+      // controller 는 loop 가 소유 — cleanup/전환 시 즉시 abort, timeout 도 같은 controller 를 abort 한다.
+      // getSafeSession/fetch/json 이 안 끝나도 mintWithTimeout 이 timeout 으로 abort해 반드시 settle,
+      // apply 전에 signal.aborted 를 확인해 전환 뒤 늦은 성공결과 유입을 막는다(오염0).
+      return mintWithTimeout(
+        async (mintSignal) => {
+          const session = await getSafeSession();
+          const token = session?.access_token;
+          const res = await fetch(
+            `/api/venue-stories?gameId=${encodeURIComponent(gameId)}&refreshStoryId=${storyId}`,
+            {
+              headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+              signal: mintSignal,
+            },
+          );
+          if (!res.ok) return false;
+          const data = await res.json();
+          const refresh = data.urlRefresh as VenueStoryUrlRefresh | null;
+          if (
+            !refresh ||
+            refresh.id !== storyId ||
+            typeof refresh.mediaUrl !== "string"
+          ) {
+            return false;
+          }
+          // 전환/cleanup 으로 abort 되었으면 늦은 성공결과를 state 에 반영하지 않는다.
+          if (controller.signal.aborted) return false;
+          setStories((prev) => applyVenueStoryUrlRefresh(prev, refresh));
+          return true;
+        },
+        false,
+        {
+          timeoutMs: VENUE_STORY_URL_MINT_TIMEOUT_MS,
+          setTimer: (fn, ms) => setTimeout(fn, ms),
+          clearTimer: (handle) => clearTimeout(handle),
+          // loop 소유 controller 를 mint timeout 에 직결 — 전환 즉시 abort 가 mint fetch 까지 전파된다.
+          controller,
+        },
+      );
+    },
+    [gameId, storyQaKeyboard],
+  );
+
   // 업로드 성공 피드백 + pending 자동 반영(하린아빠 A17 리포트, 삼순 #839).
   // 영상은 pending→ffprobe 검증→active 승급 구조라 GET(active만) 직후 1회로는 안 뜬다.
   // → 낙관 '처리중' 카드를 즉시 트레이에 올리고 active 승급까지 폴링해 자동으로 실제 카드로 교체.
@@ -415,6 +464,7 @@ export default function VenueStorySection({ gameId }: Props) {
           startIndex={viewerIndex}
           currentUserId={user?.id ?? null}
           onStorySeen={handleStorySeen}
+          onRefreshUrl={refreshViewerStoryUrl}
           onClose={() => {
             setViewerIndex(null);
             // 닫힐 때만 재정렬/테두리 갱신 (뷰어 열려있는 동안 인덱스 어긋남 방지)

@@ -17,12 +17,14 @@ import { shouldCloseCommentSheetDrag } from "@/lib/venue-stories/comment-sheet-g
 import { lockRootScroll, unlockRootScroll } from "@/lib/venue-stories/scroll-lock";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import { isIosNativeRuntime } from "@/lib/capacitor/platform";
+import { startVenueStoryUrlRefresh } from "@/lib/venue-stories/refresh-policy";
 
 interface Props {
   stories: VenueStory[];
   startIndex: number;
   currentUserId: string | null;
   onStorySeen?: (storyId: string | number) => void; // 표시된 스토리 본 처리 (트레이 본/안 본 구분용)
+  onRefreshUrl?: (storyId: number, controller: AbortController) => Promise<boolean>;
   onClose: () => void;
   onChanged: () => void; // 삭제/신고 후 목록 갱신
 }
@@ -88,6 +90,7 @@ export default function VenueStoryViewer({
   startIndex,
   currentUserId,
   onStorySeen,
+  onRefreshUrl,
   onClose,
   onChanged,
 }: Props) {
@@ -126,6 +129,8 @@ export default function VenueStoryViewer({
   const rafRef = useRef<number | null>(null);
   const startRef = useRef<number>(0);
   const elapsedRef = useRef<number>(0);
+  const refreshedStoryIdRef = useRef<number | null>(null);
+  const lastUrlRefreshAtRef = useRef(0);
 
   const story = stories[index];
 
@@ -139,6 +144,29 @@ export default function VenueStoryViewer({
   useEffect(() => {
     if (storyId != null) onStorySeen?.(storyId);
   }, [storyId, onStorySeen]);
+
+  // 목록 최초 발급 URL의 나이를 신뢰하지 않고 현재 스토리 진입 즉시 단건 재발급한다.
+  // 순수·주입형 루프(startVenueStoryUrlRefresh)를 그대로 사용해 테스트가 동일 코드를 실행한다.
+  useEffect(() => {
+    if (storyId == null || storyId <= 0 || !onRefreshUrl) return;
+    const refresh = onRefreshUrl;
+    return startVenueStoryUrlRefresh({
+      storyId,
+      isCurrentStory: () => storyIdRef.current === storyId,
+      refresh,
+      now: () => Date.now(),
+      setTimer: (fn, ms) => setTimeout(fn, ms),
+      clearTimer: (handle) => clearTimeout(handle),
+      getPreviousStoryId: () => refreshedStoryIdRef.current,
+      setPreviousStoryId: (value) => {
+        refreshedStoryIdRef.current = value;
+      },
+      getLastRefreshAt: () => lastUrlRefreshAtRef.current,
+      setLastRefreshAt: (value) => {
+        lastUrlRefreshAtRef.current = value;
+      },
+    });
+  }, [storyId, onRefreshUrl]);
 
   const goNext = useCallback(() => {
     setIndex((i) => {

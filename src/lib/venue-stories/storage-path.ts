@@ -10,7 +10,9 @@
 // → raw/decoded 양쪽에서 `%` 자체를 전면 거부(우리 업로더 파일명은 strict allowlist 라 percent 불필요)
 //   + decode 는 try/catch 로 감싸 URIError 를 거부(null)로 처리.
 
-export const VENUE_ALLOWED_BUCKETS = new Set(["videos", "photos"]);
+// videos/photos = 레거시 공개 버킷(A3 이관 전까지 호환). venue-media = A안 신규 private 버킷
+// (클라이언트가 getPublicUrl 형태로 예약 경로 URL 을 보내오면 파싱만 허용 — 서빙은 signed URL).
+export const VENUE_ALLOWED_BUCKETS = new Set(["videos", "photos", "venue-media"]);
 
 // 업로더 key 규격: venue-stories/{gameId}/{uuid}/{filename} — filename 은 strict allowlist
 const VENUE_KEY_RE = /^venue-stories\/([A-Za-z0-9_-]+)\/([0-9a-fA-F-]{36})\/[A-Za-z0-9._-]+$/;
