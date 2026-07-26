@@ -23,6 +23,13 @@ export const SCHEDULED_SEEN_RECENT_MS = 90 * 1000;
 /** 정규 scheduled tick이 끊겨도 예정시각 직후 1회초 상단이면 복구를 허용하는 상한. */
 export const SCHEDULED_START_RECOVERY_MS = 3 * 60 * 1000;
 
+export type StartPlateAppearanceEvidence = {
+  /** 원정 1번 타자의 완료 타석 수. authoritative source가 없으면 null. */
+  completedPlateAppearances: number | null;
+  /** 현재 타자가 원정 1번 타자인지. lineup/current batter 미상이면 null. */
+  currentBatterIsLeadoff: boolean | null;
+};
+
 // 시작알림 발송 게이트 (2026-07-23 삼순 post-merge blocker 반영):
 // "최근 scheduled→live 전환을 연속 관측한 경우만 발송, 첫 관측이 이미 live거나 stale이면 mark-only".
 // - lastSeenScheduledAtMs === null: 이 경기를 "예정" 상태로 본 적이 없음 = 첫 관측이 이미 live
@@ -36,9 +43,14 @@ export function shouldSendStartNotification(params: {
   nowMs: number;
   inningNo: number | null | undefined;
   isTop: boolean | null | undefined;
+  plateAppearance?: StartPlateAppearanceEvidence | null;
 }): boolean {
   if (params.lastSeenScheduledAtMs === null) return false;
-  if (!isStartNotificationFresh({ inningNo: params.inningNo, isTop: params.isTop })) return false;
+  if (!isStartNotificationFresh({
+    inningNo: params.inningNo,
+    isTop: params.isTop,
+    plateAppearance: params.plateAppearance,
+  })) return false;
   if (params.nowMs - params.lastSeenScheduledAtMs <= SCHEDULED_SEEN_RECENT_MS) return true;
   if (params.scheduledStartAtMs == null) return false;
   const scheduledLagMs = params.nowMs - params.scheduledStartAtMs;
@@ -50,10 +62,14 @@ export function isStartNotificationFresh(params: {
   inningNo: number | null | undefined;
   /** GAME_TB_SC === "T" 여부. 미제공이면 null(판단 보류 → fresh) */
   isTop: boolean | null | undefined;
+  /** 첫 타석 완료/현재 타자 근거. 누락·모순이면 fail-close. */
+  plateAppearance?: StartPlateAppearanceEvidence | null;
 }): boolean {
   const inning = typeof params.inningNo === "number" ? params.inningNo : null;
-  if (inning === null) return true;
+  if (inning === null) return false;
   if (inning > 1) return false;
   if (inning === 1 && params.isTop === false) return false; // 1회말 = 이미 수십 분 경과
-  return true;
+  if (inning !== 1 || params.isTop !== true) return false;
+  return params.plateAppearance?.completedPlateAppearances === 0
+    && params.plateAppearance.currentBatterIsLeadoff === true;
 }

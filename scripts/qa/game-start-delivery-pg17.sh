@@ -60,24 +60,23 @@ SQL
 "${PSQL[@]}" -f "$MIGRATION" >/dev/null
 
 GAME=20260726LGHH0
-DEADLINE='2026-07-26T12:30:00Z'
 "${PSQL[@]}" <<SQL
 INSERT INTO game_notify_state(game_id, start_snapshot_at, start_snapshot_deadline_at)
-VALUES ('$GAME', now(), timestamptz '$DEADLINE');
+VALUES ('$GAME', now(), now() + interval '5 minutes');
 INSERT INTO game_start_delivery_ledger
   (id, game_id, token_id, token_hash, user_id, platform, fcm_token, deadline_at)
 VALUES
   ('00000000-0000-0000-0000-000000000001', '$GAME', 1, 'h1',
-   '10000000-0000-0000-0000-000000000001', 'android', 'token-1', timestamptz '$DEADLINE');
+   '10000000-0000-0000-0000-000000000001', 'android', 'token-1', now() + interval '5 minutes');
 SQL
 
 LEASE_A=20000000-0000-0000-0000-000000000001
 LEASE_B=20000000-0000-0000-0000-000000000002
 LEASE_C=20000000-0000-0000-0000-000000000003
 
-# row1: worker A가 20초 lease로 claim. overlap worker B는 0행이어야 한다.
-A=$("${PSQL[@]}" -c "SELECT count(*) FROM claim_game_start_deliveries('$GAME','$LEASE_A',20,1)")
-B=$("${PSQL[@]}" -c "SELECT count(*) FROM claim_game_start_deliveries('$GAME','$LEASE_B',20,1)")
+# row1: worker A가 45초 lease로 claim. overlap worker B는 0행이어야 한다.
+A=$("${PSQL[@]}" -c "SELECT count(*) FROM claim_game_start_deliveries('$GAME','$LEASE_A',45,1)")
+B=$("${PSQL[@]}" -c "SELECT count(*) FROM claim_game_start_deliveries('$GAME','$LEASE_B',45,1)")
 [ "$A" = "1" ] && [ "$B" = "0" ] || {
   echo "FAIL: active lease overlap A=$A B=$B" >&2
   exit 1
@@ -85,7 +84,7 @@ B=$("${PSQL[@]}" -c "SELECT count(*) FROM claim_game_start_deliveries('$GAME','$
 
 # row1 settle 뒤 terminal 행도 재claim되지 않는다.
 "${PSQL[@]}" -c "SELECT settle_game_start_deliveries(ARRAY['00000000-0000-0000-0000-000000000001']::uuid[],'$LEASE_A','accepted',null)" >/dev/null
-TERMINAL=$("${PSQL[@]}" -c "SELECT count(*) FROM claim_game_start_deliveries('$GAME','$LEASE_C',20,2)")
+TERMINAL=$("${PSQL[@]}" -c "SELECT count(*) FROM claim_game_start_deliveries('$GAME','$LEASE_C',45,2)")
 [ "$TERMINAL" = "0" ] || { echo "FAIL: accepted/active rows reclaimed=$TERMINAL" >&2; exit 1; }
 
 # row2는 worker B claim 뒤 crash(미settle). lease 만료를 시계 전진으로 재현하면 deadline 전 재claim된다.
@@ -94,15 +93,55 @@ INSERT INTO game_start_delivery_ledger
   (id, game_id, token_id, token_hash, user_id, platform, fcm_token, deadline_at)
 VALUES
   ('00000000-0000-0000-0000-000000000002', '$GAME', 2, 'h2',
-   '10000000-0000-0000-0000-000000000002', 'ios', 'token-2', timestamptz '$DEADLINE');
-SELECT count(*) FROM claim_game_start_deliveries('$GAME','$LEASE_B',20,1);
+   '10000000-0000-0000-0000-000000000002', 'ios', 'token-2', now() + interval '5 minutes');
+SELECT count(*) FROM claim_game_start_deliveries('$GAME','$LEASE_B',45,1);
 SQL
 CRASHED=$("${PSQL[@]}" -c "SELECT count(*) FROM game_start_delivery_ledger WHERE id='00000000-0000-0000-0000-000000000002' AND status='leased' AND lease_token='$LEASE_B'")
 [ "$CRASHED" = "1" ] || { echo "FAIL: crash setup lease missing" >&2; exit 1; }
 "${PSQL[@]}" -c "UPDATE game_start_delivery_ledger SET lease_until=now()-interval '1 second' WHERE id='00000000-0000-0000-0000-000000000002'" >/dev/null
-RECOVERED=$("${PSQL[@]}" -c "SELECT count(*) FROM claim_game_start_deliveries('$GAME','$LEASE_C',20,2)")
+RECOVERED=$("${PSQL[@]}" -c "SELECT count(*) FROM claim_game_start_deliveries('$GAME','$LEASE_C',45,2)")
 [ "$RECOVERED" = "1" ] || { echo "FAIL: crashed lease was not reclaimed before deadline" >&2; exit 1; }
 ATTEMPTS=$("${PSQL[@]}" -c "SELECT attempts FROM game_start_delivery_ledger WHERE id='00000000-0000-0000-0000-000000000002'")
 [ "$ATTEMPTS" = "2" ] || { echo "FAIL: crash retry attempts=$ATTEMPTS" >&2; exit 1; }
 
-echo "PASS PG17 game-start ledger: active overlap 0, terminal reclaim 0, crash retry 1, attempts 2"
+# row3: durable dispatch intent 뒤에는 accepted→settle stall/worker crash가 나도 재claim하지 않는다.
+"${PSQL[@]}" <<SQL >/dev/null
+INSERT INTO game_start_delivery_ledger
+  (id, game_id, token_id, token_hash, user_id, platform, fcm_token, deadline_at)
+VALUES
+  ('00000000-0000-0000-0000-000000000003', '$GAME', 3, 'h3',
+   '10000000-0000-0000-0000-000000000003', 'android', 'token-3', now() + interval '5 minutes');
+SELECT count(*) FROM claim_game_start_deliveries('$GAME','$LEASE_A',45,1);
+SELECT mark_game_start_deliveries_dispatching(
+  ARRAY['00000000-0000-0000-0000-000000000003']::uuid[], '$LEASE_A'
+);
+UPDATE game_start_delivery_ledger
+   SET lease_until=now()-interval '1 second'
+ WHERE id='00000000-0000-0000-0000-000000000003';
+SQL
+POST_ACCEPT_RECLAIM=$("${PSQL[@]}" -c "SELECT count(*) FROM claim_game_start_deliveries('$GAME','$LEASE_C',45,1)")
+[ "$POST_ACCEPT_RECLAIM" = "0" ] || {
+  echo "FAIL: dispatch-intent row reclaimed after accepted/settle stall=$POST_ACCEPT_RECLAIM" >&2
+  exit 1
+}
+
+# row4: transient settle은 45초 backoff라 같은 invocation에서 즉시 재소진되지 않는다.
+"${PSQL[@]}" <<SQL >/dev/null
+INSERT INTO game_start_delivery_ledger
+  (id, game_id, token_id, token_hash, user_id, platform, fcm_token, deadline_at)
+VALUES
+  ('00000000-0000-0000-0000-000000000004', '$GAME', 4, 'h4',
+   '10000000-0000-0000-0000-000000000004', 'ios', 'token-4', now() + interval '5 minutes');
+SELECT count(*) FROM claim_game_start_deliveries('$GAME','$LEASE_A',45,1);
+SELECT settle_game_start_delivery_batch(
+  '[{"id":"00000000-0000-0000-0000-000000000004","status":"transient","error":"timeout"}]'::jsonb,
+  '$LEASE_A'
+);
+SQL
+IMMEDIATE_RETRY=$("${PSQL[@]}" -c "SELECT count(*) FROM claim_game_start_deliveries('$GAME','$LEASE_C',45,1)")
+[ "$IMMEDIATE_RETRY" = "0" ] || { echo "FAIL: transient retried immediately=$IMMEDIATE_RETRY" >&2; exit 1; }
+"${PSQL[@]}" -c "UPDATE game_start_delivery_ledger SET next_attempt_at=now()-interval '1 second' WHERE id='00000000-0000-0000-0000-000000000004'" >/dev/null
+NEXT_TICK_RETRY=$("${PSQL[@]}" -c "SELECT count(*) FROM claim_game_start_deliveries('$GAME','$LEASE_C',45,1)")
+[ "$NEXT_TICK_RETRY" = "1" ] || { echo "FAIL: transient missing next-tick retry=$NEXT_TICK_RETRY" >&2; exit 1; }
+
+echo "PASS PG17 game-start ledger: overlap 0, crash retry 1, post-accept reclaim 0, transient backoff 1"

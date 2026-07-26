@@ -3,7 +3,10 @@ import { sendFcmToUsers, WIDGET_STREAM } from "@/lib/notifications/fcm";
 import { TEAMS } from "@/lib/constants/teams";
 import { fetchStandings, isKboGameCancelled } from "@/lib/crawler/kbo-api";
 import { decideEndStreakCount, type StreakDir } from "@/lib/notifications/end-streak-policy";
-import { shouldSendStartNotification } from "@/lib/notifications/start-freshness-policy";
+import {
+  shouldSendStartNotification,
+  type StartPlateAppearanceEvidence,
+} from "@/lib/notifications/start-freshness-policy";
 import { fetchTeamFanIds } from "@/lib/notifications/audience";
 import type { KboRawGame } from "@/types/api";
 import {
@@ -16,6 +19,8 @@ import {
   type GameStartDeliveryResult,
   type GameStartDeliveryTarget,
 } from "@/lib/notifications/game-start-delivery";
+
+const START_DELIVERY_BATCH_CONCURRENCY_PER_GAME = 2;
 
 // 경기 시작/종료 알림 (push-notifications-v1 S4).
 // warmup cron(경기 시간대 매분)이 호출. 중복 발화 방지 = game_notify_state
@@ -210,11 +215,13 @@ async function defaultReadStartState(
   last_seen_scheduled_at: string | null;
   start_snapshot_at?: string | null;
 } | null> {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("game_notify_state")
     .select("start_notified, last_seen_scheduled_at, start_snapshot_at")
     .eq("game_id", gameId)
+    .abortSignal(AbortSignal.timeout(5_000))
     .maybeSingle();
+  if (error) throw new Error(`start state read: ${error.message}`);
   return data ?? null;
 }
 
@@ -240,6 +247,8 @@ export async function notifyGameStatusTransitions(
     observedAtMs?: number;
     /** 시작알림 batch가 새 FCM transport를 시작할 수 있는 요청-절대 마감. */
     deadlineAtMs?: number;
+    /** game-events가 BoxScore lineup/current batter로 확정한 첫 타석 근거. */
+    startPlateAppearanceByGame?: ReadonlyMap<string, StartPlateAppearanceEvidence>;
     /**
      * 시작알림 경로 배선 회귀 테스트용 seam(프로덕션 미지정 → 실제 구현). 앞 경기 FCM 발송
      * 지연이 뒤 경기 시작알림을 억제하지 않는지 이 함수 자체를 실행해 검증하기 위해
@@ -247,7 +256,13 @@ export async function notifyGameStatusTransitions(
      */
     startDeps?: StartNotifyDeps;
   },
-): Promise<{ started: number; ended: number; cancelled: number }> {
+): Promise<{
+  started: number;
+  ended: number;
+  cancelled: number;
+  /** start가 아직 accepted barrier를 통과하지 못해 highlight를 release하면 안 되는 경기. */
+  highlightBlockedGameIds: string[];
+}> {
   const observedAtMs = opts?.observedAtMs ?? Date.now();
   const storeScheduledSeen = opts?.startDeps?.storeScheduledSeen ?? defaultStoreScheduledSeen;
   const readStartState = opts?.startDeps?.readStartState ?? defaultReadStartState;
@@ -259,6 +274,7 @@ export async function notifyGameStatusTransitions(
   let started = 0;
   let ended = 0;
   let cancelled = 0;
+  const highlightBlockedGameIds = new Set<string>();
 
   // "예정" 상태 관측 기록 — 다음 틱에서 live 전환을 보면 이 시각이 정시성 근거가 된다.
   const scheduledIds = games
@@ -287,9 +303,24 @@ export async function notifyGameStatusTransitions(
     for (const g of games) {
       const gameId = g.G_ID;
       if (!gameId || g.GAME_STATE_SC !== "2" || isKboGameCancelled(g.CANCEL_SC_ID)) continue;
-      const seenRow = await readStartState(gameId);
       ledgerHandled.add(gameId);
-      if (seenRow?.start_notified) continue;
+      let seenRow: Awaited<ReturnType<typeof readStartState>>;
+      try {
+        seenRow = await readStartState(gameId);
+      } catch (error) {
+        console.error(`[game-status] start state read failed game=${gameId}:`, (error as Error).message);
+        highlightBlockedGameIds.add(gameId);
+        continue;
+      }
+      if (seenRow?.start_notified) {
+        if (seenRow.start_snapshot_at) {
+          const delivery = await finalizeStart(gameId);
+          if (delivery.pending > 0 || delivery.permanentFailed > 0 || delivery.expired > 0) {
+            highlightBlockedGameIds.add(gameId);
+          }
+        }
+        continue;
+      }
       const lastSeenMs = seenRow?.last_seen_scheduled_at
         ? Date.parse(seenRow.last_seen_scheduled_at)
         : null;
@@ -299,6 +330,10 @@ export async function notifyGameStatusTransitions(
         nowMs: observedAtMs,
         inningNo: g.GAME_INN_NO,
         isTop: g.GAME_TB_SC ? g.GAME_TB_SC === "T" : null,
+        // 테스트 seam은 기존 배선 회귀의 첫 타석 fixture를 유지한다. 프로덕션(default deps)은
+        // game-events 근거가 없으면 null로 fail-close한다.
+        plateAppearance: opts?.startPlateAppearanceByGame?.get(gameId)
+          ?? (opts?.startDeps ? { completedPlateAppearances: 0, currentBatterIsLeadoff: true } : null),
       });
       if (!sendOk) {
         await markStart(gameId);
@@ -326,29 +361,38 @@ export async function notifyGameStatusTransitions(
       ?? opened.reduce((latest, item) => Math.max(latest, item.snapshotDeadlineAtMs), observedAtMs);
     let active = opened;
     while (active.length > 0 && Date.now() < routeDeadlineAtMs) {
-      const nextRound: typeof active = [];
-      for (const item of active) {
+      const round = await Promise.all(active.map(async (item) => {
         const nowMs = Date.now();
         const attemptDeadlineAtMs = Math.min(
           routeDeadlineAtMs,
           item.snapshotDeadlineAtMs,
           nowMs + START_DELIVERY_ATTEMPT_MS,
         );
-        if (attemptDeadlineAtMs <= nowMs) continue;
-        const batch = await deliverStartBatch({
-          ...item.target,
-          snapshotDeadlineAtMs: item.snapshotDeadlineAtMs,
-          attemptDeadlineAtMs,
-        });
-        item.acceptedDelta += batch.fcmAcceptedDelta;
-        if (batch.claimed > 0 && batch.pending > 0) nextRound.push(item);
-      }
-      active = nextRound;
+        if (attemptDeadlineAtMs <= nowMs) return { item, claimed: 0, pending: 0 };
+        const batches = await Promise.all(Array.from(
+          { length: START_DELIVERY_BATCH_CONCURRENCY_PER_GAME },
+          () => deliverStartBatch({
+            ...item.target,
+            snapshotDeadlineAtMs: item.snapshotDeadlineAtMs,
+            attemptDeadlineAtMs,
+          }),
+        ));
+        const claimed = batches.reduce((sum, batch) => sum + batch.claimed, 0);
+        const pending = Math.max(...batches.map((batch) => batch.pending), 0);
+        item.acceptedDelta += batches.reduce((sum, batch) => sum + batch.fcmAcceptedDelta, 0);
+        return { item, claimed, pending };
+      }));
+      active = round
+        .filter(({ claimed, pending }) => claimed > 0 && pending > 0)
+        .map(({ item }) => item);
     }
 
     for (const item of opened) {
       const delivery = await finalizeStart(item.target.gameId, item.acceptedDelta);
       started += delivery.fcmAcceptedDelta;
+      if (delivery.pending > 0 || delivery.permanentFailed > 0 || delivery.expired > 0) {
+        highlightBlockedGameIds.add(item.target.gameId);
+      }
       console.log(
         `[game-status] start delivery game=${item.target.gameId}` +
         ` fcmAcceptedDelta=${delivery.fcmAcceptedDelta} fcmAcceptedTotal=${delivery.fcmAcceptedTotal}` +
@@ -420,6 +464,8 @@ export async function notifyGameStatusTransitions(
         nowMs: observedAtMs,
         inningNo: g.GAME_INN_NO,
         isTop: g.GAME_TB_SC ? g.GAME_TB_SC === "T" : null,
+        plateAppearance: opts?.startPlateAppearanceByGame?.get(gameId)
+          ?? (opts?.startDeps ? { completedPlateAppearances: 0, currentBatterIsLeadoff: true } : null),
       });
       if (!sendOk) {
         await markStart(gameId);
@@ -605,5 +651,5 @@ export async function notifyGameStatusTransitions(
     }
   }
 
-  return { started, ended, cancelled };
+  return { started, ended, cancelled, highlightBlockedGameIds: [...highlightBlockedGameIds] };
 }

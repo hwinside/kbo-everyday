@@ -63,11 +63,13 @@ const ALLSTAR_2026_DUP_KBOID: Record<string, string> = {
 export async function notifyPlayerHighlights(
   games: KboRawGame[],
   eventsByGame: Map<string, GameEvent[]>,
+  opts?: { startBlockedGameIds?: ReadonlySet<string> },
 ): Promise<{ highlighted: number }> {
   let highlighted = 0;
   const gameById = new Map(games.map((g) => [g.G_ID, g]));
 
   for (const [gameId, events] of eventsByGame) {
+    if (opts?.startBlockedGameIds?.has(gameId)) continue;
     const g = gameById.get(gameId);
     if (!g || isKboGameCancelled(g.CANCEL_SC_ID)) continue;
     const away = g.AWAY_NM ?? "";

@@ -27,8 +27,12 @@ create table if not exists game_start_delivery_ledger (
   status text not null default 'pending'
     check (status in ('pending', 'leased', 'transient', 'accepted', 'permanent_failed', 'expired')),
   attempts integer not null default 0,
+  next_attempt_at timestamptz not null default now(),
   lease_token uuid,
   lease_until timestamptz,
+  -- FCM 외부 부작용 직전 durable intent. 값이 있으면 accepted 여부가 모호해도 재발송하지 않는다
+  -- (at-most-once 선택); claim 직후 intent 전 crash만 deadline 안 재claim한다.
+  dispatch_started_at timestamptz,
   deadline_at timestamptz not null,
   fcm_accepted_at timestamptz,
   device_delivered_at timestamptz,
@@ -39,7 +43,7 @@ create table if not exists game_start_delivery_ledger (
 );
 
 create index if not exists idx_game_start_delivery_claim
-  on game_start_delivery_ledger (game_id, status, lease_until, id);
+  on game_start_delivery_ledger (game_id, status, next_attempt_at, lease_until, id);
 
 alter table game_start_delivery_ledger enable row level security;
 -- 정책 없음: service_role cron 전용.
@@ -105,7 +109,7 @@ $$;
 create or replace function claim_game_start_deliveries(
   p_game_id text,
   p_lease_token uuid,
-  p_lease_seconds integer default 20,
+  p_lease_seconds integer default 45,
   p_limit integer default 500
 )
 returns table (
@@ -125,9 +129,14 @@ as $$
     from game_start_delivery_ledger l
     where l.game_id = p_game_id
       and l.deadline_at > now()
+      and l.next_attempt_at <= now()
       and (
         l.status in ('pending', 'transient')
-        or (l.status = 'leased' and l.lease_until < now())
+        or (
+          l.status = 'leased'
+          and l.dispatch_started_at is null
+          and l.lease_until < now()
+        )
       )
       -- 1분 cron + 90초 snapshot에서 최초 시도 1회, transient 재시도 1회로 제한한다.
       and l.attempts < 2
@@ -142,15 +151,41 @@ as $$
        set status = 'leased',
            attempts = l.attempts + 1,
            lease_token = p_lease_token,
-           -- 호출부의 FCM transport는 8초로 bound된다. 20초 lease가 send+settle을
-           -- 감싸 중첩 발송을 막고, crash 시 다음 1분 cron에는 만료돼 90초 안 재claim된다.
-           lease_until = now() + make_interval(secs => greatest(10, least(p_lease_seconds, 30))),
+           -- 호출부의 FCM transport는 8초, send+settle attempt는 14초로 bound된다.
+           -- 45초 lease는 pre-dispatch crash가 다음 1분 cron에서 deadline 안 재claim되게 한다.
+           lease_until = now() + make_interval(secs => greatest(20, least(p_lease_seconds, 45))),
            updated_at = now()
       from candidates c
      where l.id = c.id
     returning l.id, l.token_id, l.token_hash, l.platform, l.fcm_token, l.deadline_at
   )
   select * from claimed;
+$$;
+
+create or replace function mark_game_start_deliveries_dispatching(
+  p_ids uuid[],
+  p_lease_token uuid
+)
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_count integer;
+begin
+  update game_start_delivery_ledger
+     set dispatch_started_at = now(),
+         -- 외부 FCM accepted→DB settle 모호 구간은 snapshot deadline까지 재claim 금지.
+         lease_until = deadline_at,
+         updated_at = now()
+   where id = any(p_ids)
+     and status = 'leased'
+     and lease_token = p_lease_token
+     and dispatch_started_at is null;
+  get diagnostics v_count = row_count;
+  return v_count;
+end;
 $$;
 
 create or replace function settle_game_start_deliveries(
@@ -175,6 +210,15 @@ begin
      set status = p_status,
          fcm_accepted_at = case when p_status = 'accepted' then now() else fcm_accepted_at end,
          last_error = p_error,
+         next_attempt_at = case
+           when p_status = 'transient'
+             then least(deadline_at, now() + interval '45 seconds')
+           else next_attempt_at
+         end,
+         dispatch_started_at = case
+           when p_status = 'transient' then null
+           else dispatch_started_at
+         end,
          fcm_token = case
            when p_status in ('accepted', 'permanent_failed') then null
            else fcm_token
@@ -187,6 +231,62 @@ begin
      and lease_token = p_lease_token;
   get diagnostics v_count = row_count;
   return v_count;
+end;
+$$;
+
+-- 한 FCM batch의 accepted/transient/permanent 결과를 단일 transaction/RPC로 settle한다.
+-- 3개 순차 RPC가 lease 전체를 소진해 accepted 행이 재claim되는 경계를 제거한다.
+create or replace function settle_game_start_delivery_batch(
+  p_results jsonb,
+  p_lease_token uuid
+)
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_accepted integer;
+begin
+  with result_rows as (
+    select
+      (r->>'id')::uuid as id,
+      r->>'status' as status,
+      nullif(r->>'error', '') as error
+    from jsonb_array_elements(p_results) r
+    where r->>'status' in ('accepted', 'transient', 'permanent_failed')
+  ),
+  changed as (
+    update game_start_delivery_ledger l
+       set status = r.status,
+           fcm_accepted_at = case when r.status = 'accepted' then now() else l.fcm_accepted_at end,
+           last_error = r.error,
+           next_attempt_at = case
+             when r.status = 'transient'
+               then least(l.deadline_at, now() + interval '45 seconds')
+             else l.next_attempt_at
+           end,
+           dispatch_started_at = case
+             when r.status = 'transient' then null
+             else l.dispatch_started_at
+           end,
+           fcm_token = case
+             when r.status in ('accepted', 'permanent_failed') then null
+             else l.fcm_token
+           end,
+           lease_token = null,
+           lease_until = null,
+           updated_at = now()
+      from result_rows r
+     where l.id = r.id
+       and l.status = 'leased'
+       and l.lease_token = p_lease_token
+    returning r.status
+  )
+  select count(*) filter (where status = 'accepted')
+    into v_accepted
+    from changed;
+  return coalesce(v_accepted, 0);
 end;
 $$;
 
@@ -260,9 +360,13 @@ $$;
 
 revoke all on function snapshot_game_start_deliveries(text, integer[], timestamptz, timestamptz) from anon, authenticated, public;
 revoke all on function claim_game_start_deliveries(text, uuid, integer, integer) from anon, authenticated, public;
+revoke all on function mark_game_start_deliveries_dispatching(uuid[], uuid) from anon, authenticated, public;
 revoke all on function settle_game_start_deliveries(uuid[], uuid, text, text) from anon, authenticated, public;
+revoke all on function settle_game_start_delivery_batch(jsonb, uuid) from anon, authenticated, public;
 revoke all on function finalize_game_start_deliveries(text) from anon, authenticated, public;
 grant execute on function snapshot_game_start_deliveries(text, integer[], timestamptz, timestamptz) to service_role;
 grant execute on function claim_game_start_deliveries(text, uuid, integer, integer) to service_role;
+grant execute on function mark_game_start_deliveries_dispatching(uuid[], uuid) to service_role;
 grant execute on function settle_game_start_deliveries(uuid[], uuid, text, text) to service_role;
+grant execute on function settle_game_start_delivery_batch(jsonb, uuid) to service_role;
 grant execute on function finalize_game_start_deliveries(text) to service_role;

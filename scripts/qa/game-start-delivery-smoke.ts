@@ -26,12 +26,19 @@ test("최초 snapshot 고정 + 신규/교체 토큰 catch-up 금지", () => {
 test("lease fencing + transient-only deadline retry", () => {
   assert.match(migration, /for update skip locked/);
   assert.match(migration, /lease_token = p_lease_token/);
-  assert.match(migration, /p_lease_seconds integer default 20/);
+  assert.match(migration, /p_lease_seconds integer default 45/);
   assert.match(migration, /lease_until = now\(\) \+ make_interval/);
   assert.match(migration, /l\.status in \('pending', 'transient'\)/);
   assert.match(migration, /l\.attempts < 2/);
   assert.match(migration, /case l\.status when 'pending' then 0 when 'transient' then 1 else 2 end/);
   assert.match(migration, /l\.deadline_at > now\(\)/);
+  assert.match(migration, /l\.next_attempt_at <= now\(\)/);
+  assert.match(migration, /now\(\) \+ interval '45 seconds'/);
+  assert.match(migration, /settle_game_start_delivery_batch/);
+  assert.match(migration, /dispatch_started_at timestamptz/);
+  assert.match(migration, /mark_game_start_deliveries_dispatching/);
+  assert.match(migration, /l\.dispatch_started_at is null/);
+  assert.match(source, /mark_game_start_deliveries_dispatching/);
   assert.match(migration, /status in \('pending', 'leased', 'transient'\)/);
   assert.match(migration, /status = 'expired'/);
 });
@@ -102,7 +109,7 @@ test("T+60 retry도 최초 persisted deadline T+90을 단일 시계로 사용", 
   );
 });
 
-test("8초 transport를 20초 lease가 감싸 overlap send 1회, crash 뒤 deadline 전 재claim", async () => {
+test("bounded transport lease는 overlap을 막고 pre-dispatch crash는 deadline 전 재claim", async () => {
   let status: "pending" | "leased" | "accepted" = "pending";
   let leaseUntil = 0;
   let nowMs = 0;
@@ -110,7 +117,7 @@ test("8초 transport를 20초 lease가 감싸 overlap send 1회, crash 뒤 deadl
   const claim = async () => {
     if (status === "pending" || (status === "leased" && leaseUntil < nowMs)) {
       status = "leased";
-      leaseUntil = nowMs + 20_000;
+      leaseUntil = nowMs + 45_000;
       return [{ id: "token-1" }];
     }
     return [];
@@ -129,8 +136,8 @@ test("8초 transport를 20초 lease가 감싸 overlap send 1회, crash 뒤 deadl
   await claim(); // claim 직후 worker crash: send 0, settle 0
   nowMs = 10_000;
   assert.equal((await claim()).length, 0, "lease 안에서는 crash 행도 overlap claim 불가");
-  nowMs = 21_000;
-  assert.equal((await claim()).length, 1, "20초 lease 만료 뒤 90초 deadline 전 재claim");
+  nowMs = 46_000;
+  assert.equal((await claim()).length, 1, "45초 lease 만료 뒤 90초 deadline 전 재claim");
 });
 
 test("accepted는 invocation delta와 snapshot 누계를 분리하고 device 도달은 unknown", () => {

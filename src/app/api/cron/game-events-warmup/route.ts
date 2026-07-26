@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { KboRawGame } from "@/types/api";
 import type { GameEvent } from "@/types/game-events";
+import type { StartPlateAppearanceEvidence } from "@/lib/notifications/start-freshness-policy";
 import { notifyGameStatusTransitions } from "@/lib/notifications/game-status";
 import { notifyTeamRankChanges } from "@/lib/notifications/team-rank";
 import { notifyScoreEvents, notifyInningSummaries } from "@/lib/notifications/game-score";
@@ -150,6 +151,29 @@ export async function GET(req: NextRequest) {
         ? `https://${process.env.VERCEL_URL}`
         : req.nextUrl.origin);
 
+  // 시작알림의 authoritative 첫 타석 근거와 highlight payload를 초기 KBO fetch 직후
+  // 즉시 수집한다. 아래 LA/widget 파이프라인 조립과 병렬로 진행하되 highlight는 이
+  // promise에서 이어지는 start accepted barrier가 끝난 뒤에만 release된다.
+  const initialGameEventsPromise = Promise.allSettled(
+    liveGameIds.map(gameId =>
+      fetch(`${baseUrl}/api/game-events?gameId=${gameId}`, {
+        cache: "no-store",
+        headers: { "User-Agent": "kbo-everyday-warmup/1.0" },
+      }).then(async r => {
+        const json = r.ok ? await r.json().catch(() => null) : null;
+        const events = (json?.events ?? []) as GameEvent[];
+        return {
+          gameId,
+          ok: r.ok,
+          status: r.status,
+          events,
+          eventCount: r.ok ? events.length : null,
+          startPlateAppearance: (json?.startPlateAppearance ?? null) as StartPlateAppearanceEvidence | null,
+        };
+      }),
+    ),
+  );
+
   // 초기 Android 발송과 추가 +20/+40초 loop를 KBO fetch 직후 동시에 시작한다.
   // 초기 경로는 요청+18초에 실제 fans/prefs/token/FCM 요청까지 중단해 +20초의 최신
   // snapshot보다 뒤늦게 옛 상태를 발송하지 않는다. fast loop는 전체 +46초 deadline을 쓴다.
@@ -291,30 +315,25 @@ export async function GET(req: NextRequest) {
     return { error: (e as Error).message };
   });
 
-  const results = await Promise.allSettled(
-    liveGameIds.map(gameId =>
-      fetch(`${baseUrl}/api/game-events?gameId=${gameId}`, {
-        cache: "no-store",
-        headers: { "User-Agent": "kbo-everyday-warmup/1.0" },
-      }).then(async r => {
-        const json = r.ok ? await r.json().catch(() => null) : null;
-        const events = (json?.events ?? []) as GameEvent[];
-        return { gameId, ok: r.ok, status: r.status, events, eventCount: r.ok ? events.length : null };
-      }),
-    ),
-  );
+  const results = await initialGameEventsPromise;
 
   // self-fetch로 받은 game-events를 gameId별로 모음 (S5 득점 알림용)
   const eventsByGame = new Map<string, GameEvent[]>();
+  const startPlateAppearanceByGame = new Map<string, StartPlateAppearanceEvidence>();
   for (const r of results) {
     if (r.status === "fulfilled" && r.value.ok) {
       eventsByGame.set(r.value.gameId, r.value.events);
+      if (r.value.startPlateAppearance) {
+        startPlateAppearanceByGame.set(r.value.gameId, r.value.startPlateAppearance);
+      }
     }
   }
 
   // 경기 시작/종료 푸시 (push-notifications-v1 S4) — 같은 게임 목록을 재사용.
   // 실패해도 warmup 본연의 동작(이벤트 캐시)에 영향 없음.
-  let gameNotify: { started: number; ended: number } | { error: string } = { started: 0, ended: 0 };
+  let gameNotify:
+    | { started: number; ended: number; highlightBlockedGameIds?: string[] }
+    | { error: string } = { started: 0, ended: 0, highlightBlockedGameIds: [] };
   try {
     // observedAtMs = 이 games를 fetch한 시각. 시작알림 90초 게이트는 관측 시각끼리 비교해야
     // 하므로(연속 틱 관측 판정), 앞단 처리/FCM 발송 지연이 stale 오판을 만들지 않게 한다
@@ -322,6 +341,7 @@ export async function GET(req: NextRequest) {
     gameNotify = await notifyGameStatusTransitions(games, {
       observedAtMs: initialFetch.trace.fetchedAtMs,
       deadlineAtMs,
+      startPlateAppearanceByGame,
     });
   } catch (e) {
     gameNotify = { error: (e as Error).message };
@@ -359,7 +379,13 @@ export async function GET(req: NextRequest) {
   // 최애선수 활약(타자) 푸시 (push-notifications-v1 S5b) — 장타/홈런 batter 매칭.
   let highlightNotify: { highlighted: number } | { error: string } = { highlighted: 0 };
   try {
-    highlightNotify = await notifyPlayerHighlights(games, eventsByGame);
+    highlightNotify = await notifyPlayerHighlights(games, eventsByGame, {
+      startBlockedGameIds: new Set(
+        "highlightBlockedGameIds" in gameNotify
+          ? gameNotify.highlightBlockedGameIds ?? []
+          : liveGameIds,
+      ),
+    });
   } catch (e) {
     highlightNotify = { error: (e as Error).message };
     console.error("[warmup] highlight notify failed:", (e as Error).message);

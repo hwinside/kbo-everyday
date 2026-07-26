@@ -251,6 +251,7 @@ test("17:59:15 scheduled → 18:02:46 live 1회초는 mark-only 대신 snapshot/
   const opened: string[] = [];
   const delivered: string[] = [];
   const marked: string[] = [];
+  let claimed = false;
   const realNow = Date.now;
   Date.now = () => liveAt;
   try {
@@ -277,6 +278,13 @@ test("17:59:15 scheduled → 18:02:46 live 1회초는 mark-only 대신 snapshot/
           return liveAt + 90_000;
         },
         deliverStartBatch: async ({ gameId }) => {
+          if (claimed) {
+            return {
+              claimed: 0, snapshotCompleted: true, fcmAcceptedDelta: 0, fcmAcceptedTotal: 1,
+              deviceDelivered: null, pending: 0, permanentFailed: 0, expired: 0,
+            };
+          }
+          claimed = true;
           delivered.push(gameId);
           return {
             claimed: 1,
@@ -309,7 +317,7 @@ test("17:59:15 scheduled → 18:02:46 live 1회초는 mark-only 대신 snapshot/
   }
 });
 
-test("오늘 5경기 13,454행은 snapshot-first round-robin으로 첫 slow/transient에도 전량 drain", async () => {
+test("오늘 5경기 13,454행은 bounded parallel + batch p95 1.4초·첫 8초 transient에도 전량 drain", async () => {
   const notify = await loadNotify();
   const gameIds = ["G1", "G2", "G3", "G4", "G5"];
   const sizes = [3_419, 2_233, 1_191, 3_492, 3_119];
@@ -345,8 +353,15 @@ test("오늘 5경기 13,454행은 snapshot-first round-robin으로 첫 slow/tran
         deliverStartBatch: async ({ gameId, attemptDeadlineAtMs }) => {
           assert.equal(opened.length, 5, "첫 FCM batch 전에 5경기 snapshot을 모두 열어야 한다");
           assert.ok(clock < OBSERVED_AT + 52_000, "route deadline 뒤 신규 batch 금지");
-          assert.ok(attemptDeadlineAtMs <= clock + 8_000, "게임별 transport budget은 8초 이하");
+          assert.ok(attemptDeadlineAtMs <= clock + 14_000, "send+settle attempt budget은 14초 이하");
           firstAttempted.add(gameId);
+          if (remaining.get(gameId) === 0) {
+            return {
+              claimed: 0, snapshotCompleted: true, fcmAcceptedDelta: 0,
+              fcmAcceptedTotal: accepted.get(gameId)!, deviceDelivered: null,
+              pending: 0, permanentFailed: 0, expired: 0,
+            };
+          }
           if (gameId === "G1" && firstSlowTransient) {
             firstSlowTransient = false;
             clock += 8_000;
@@ -364,7 +379,9 @@ test("오늘 5경기 13,454행은 snapshot-first round-robin으로 첫 slow/tran
           const delta = Math.min(500, remaining.get(gameId)!);
           remaining.set(gameId, remaining.get(gameId)! - delta);
           accepted.set(gameId, accepted.get(gameId)! + delta);
-          clock += 100;
+          // 28개 FCM batch 전체에 운영 p95 1.4초를 적용한다(첫 transient만 8초 worst case).
+          // fake clock은 병렬 호출도 보수적으로 직렬 합산하므로 52초 통과는 실제보다 엄격하다.
+          clock += 1_400;
           return {
             claimed: delta,
             snapshotCompleted: remaining.get(gameId) === 0,
@@ -395,6 +412,69 @@ test("오늘 5경기 13,454행은 snapshot-first round-robin으로 첫 slow/tran
   } finally {
     Date.now = realNow;
   }
+});
+
+test("DB start-state 조회 실패는 mark/open 없이 fail-close하고 다음 cron에 재시도", async () => {
+  const notify = await loadNotify();
+  const marked: string[] = [];
+  const opened: string[] = [];
+  const gameId = "20260726LGHH0";
+  const result = await notify([liveGame({
+    G_ID: gameId, AWAY_NM: "LG", HOME_NM: "한화",
+  })], {
+    observedAtMs: OBSERVED_AT,
+    startPlateAppearanceByGame: new Map([[
+      gameId,
+      { completedPlateAppearances: 0, currentBatterIsLeadoff: true },
+    ]]),
+    startDeps: {
+      storeScheduledSeen: async () => {},
+      readStartState: async () => { throw new Error("db timeout"); },
+      markStart: async (id) => { marked.push(id); },
+      openStart: async ({ gameId: id }) => { opened.push(id); return OBSERVED_AT + 90_000; },
+    },
+  });
+  assert.deepEqual(marked, []);
+  assert.deepEqual(opened, []);
+  assert.equal(result.started, 0);
+});
+
+test("첫 타석 종료·2번 타자 진입 근거는 snapshot을 열지 않고 mark-only", async () => {
+  const notify = await loadNotify();
+  const marked: string[] = [];
+  const opened: string[] = [];
+  const gameId = "20260726LGHH0";
+  await notify([liveGame({
+    G_ID: gameId, AWAY_NM: "LG", HOME_NM: "한화",
+  })], {
+    observedAtMs: OBSERVED_AT,
+    startPlateAppearanceByGame: new Map([[
+      gameId,
+      { completedPlateAppearances: 1, currentBatterIsLeadoff: false },
+    ]]),
+    startDeps: {
+      storeScheduledSeen: async () => {},
+      readStartState: async () => ({
+        start_notified: false,
+        last_seen_scheduled_at: new Date(OBSERVED_AT - 60_000).toISOString(),
+      }),
+      markStart: async (id) => { marked.push(id); },
+      openStart: async ({ gameId: id }) => { opened.push(id); return OBSERVED_AT + 90_000; },
+    },
+  });
+  assert.deepEqual(marked, [gameId]);
+  assert.deepEqual(opened, []);
+});
+
+test("warmup 배선: 초기 fetch 직후 start 근거 수집, start barrier 뒤 highlight release", () => {
+  const route = readFileSync("src/app/api/cron/game-events-warmup/route.ts", "utf8");
+  const initialEvents = route.indexOf("const initialGameEventsPromise");
+  const laStart = route.indexOf("const laOrchestration = startLaOrchestration");
+  const startNotify = route.indexOf("gameNotify = await notifyGameStatusTransitions");
+  const highlightNotify = route.indexOf("highlightNotify = await notifyPlayerHighlights");
+  assert.ok(initialEvents >= 0 && initialEvents < laStart, "game-events/start 근거 fetch는 초기 KBO fetch 직후 시작");
+  assert.ok(startNotify >= 0 && startNotify < highlightNotify, "start accepted barrier 뒤 highlight 발송");
+  assert.match(route, /startBlockedGameIds:\s*new Set/);
 });
 
 // 마이그레이션 계약 — 저장이 앱-레벨 read-modify-write(레이시)가 아니라 DB 원자 단조여야 한다.

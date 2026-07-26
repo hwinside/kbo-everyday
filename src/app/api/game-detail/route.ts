@@ -67,6 +67,8 @@ export interface BatterRecord {
   sb: number;
   avg: string;
   isSubstitute: boolean;
+  /** KBO 타석 결과 셀 수(안타/아웃/볼넷/HBP/희생/실책 포함). 라이브 첫 타석 cutoff용. */
+  plateAppearances?: number;
 }
 
 export interface PitcherRecord {
@@ -355,6 +357,7 @@ function parseBoxScore(data: unknown): GameDetailResponse["boxScore"] {
         sb: sbLookup.get(stripHtml(cells[2] || "")) || 0,
         avg: stripHtml(tail[4]) || ".000",
         isSubstitute,
+        plateAppearances: atBatResults.length,
       };
     }).filter(b => b.name !== "").map(b => {
       // KBO sometimes returns player IDs instead of names

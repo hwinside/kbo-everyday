@@ -7,8 +7,10 @@ import {
 } from "@/lib/notifications/game-start-delivery-policy";
 
 const SNAPSHOT_DEADLINE_MS = 90_000;
-export const START_DELIVERY_ATTEMPT_MS = 8_000;
-const START_DELIVERY_LEASE_SECONDS = 20;
+export const START_DELIVERY_TRANSPORT_MS = 8_000;
+export const START_DELIVERY_ATTEMPT_MS = 14_000;
+const START_DELIVERY_SETTLE_RESERVE_MS = 4_000;
+const START_DELIVERY_LEASE_SECONDS = 45;
 
 type ClaimedDelivery = {
   id: string;
@@ -127,10 +129,27 @@ export async function deliverGameStartBatch(args: GameStartDeliveryTarget & {
   const window = gameStartDeliveryWindow(
     args.snapshotDeadlineAtMs,
     Date.now(),
-    attemptDeadlineAtMs,
+    Math.min(
+      attemptDeadlineAtMs - START_DELIVERY_SETTLE_RESERVE_MS,
+      Date.now() + START_DELIVERY_TRANSPORT_MS,
+    ),
   );
   if (!window) {
     return { ...(await finalizeGameStartSnapshot(args.gameId)), claimed: claimed.length };
+  }
+  // 외부 FCM 부작용 직전 durable intent. 성공한 행은 snapshot deadline까지 재claim하지
+  // 않는 at-most-once 정책이라, accepted 직후 worker crash/settle stall도 중복 발송 0이다.
+  // claim 직후 이 RPC 전 crash는 dispatch_started_at=null이라 다음 cron이 재claim한다.
+  const dispatchRemainingMs = attemptDeadlineAtMs - Date.now();
+  if (dispatchRemainingMs <= 0) throw new Error("start delivery dispatch intent: deadline_exceeded");
+  const dispatchQuery = supabase.rpc("mark_game_start_deliveries_dispatching", {
+    p_ids: claimed.map((row) => row.id),
+    p_lease_token: leaseToken,
+  }).abortSignal(AbortSignal.timeout(Math.max(1, dispatchRemainingMs)));
+  const { data: dispatching, error: dispatchError } = await dispatchQuery;
+  if (dispatchError) throw new Error(`start delivery dispatch intent: ${dispatchError.message}`);
+  if (Number(dispatching ?? 0) !== claimed.length) {
+    throw new Error("start delivery dispatch intent: fencing mismatch");
   }
   const delivery = await sendFcmToTokens(
     claimed.map((row) => row.fcm_token),
@@ -145,12 +164,7 @@ export async function deliverGameStartBatch(args: GameStartDeliveryTarget & {
   );
 
   const byToken = new Map((delivery.outcomes ?? []).map((outcome) => [outcome.token, outcome]));
-  const groups = {
-    accepted: [] as string[],
-    transient: [] as string[],
-    permanent_failed: [] as string[],
-  };
-  const errors = new Map<string, string>();
+  const results: Array<{ id: string; status: string; error: string | null }> = [];
   for (const row of claimed) {
     const outcome = byToken.get(row.fcm_token);
     const status = outcome?.status === "accepted"
@@ -158,23 +172,22 @@ export async function deliverGameStartBatch(args: GameStartDeliveryTarget & {
       : outcome?.status === "transient" || !outcome
         ? "transient"
         : "permanent_failed";
-    groups[status].push(row.id);
-    if (outcome?.errorCode) errors.set(status, outcome.errorCode);
+    results.push({ id: row.id, status, error: outcome?.errorCode ?? null });
   }
 
-  let fcmAcceptedDelta = 0;
-  for (const [status, ids] of Object.entries(groups)) {
-    if (ids.length === 0) continue;
-    // query-guard: bounded -- 위 claim 최대 500행의 상태 전이 건수 scalar 1개만 반환한다.
-    const { data: settled, error } = await supabase.rpc("settle_game_start_deliveries", {
-      p_ids: ids,
-      p_lease_token: leaseToken,
-      p_status: status,
-      p_error: errors.get(status) ?? null,
-    });
-    if (error) throw new Error(`start delivery settle(${status}): ${error.message}`);
-    if (status === "accepted") fcmAcceptedDelta += Number(settled ?? 0);
+  const settleRemainingMs = attemptDeadlineAtMs - Date.now();
+  if (settleRemainingMs <= 0) {
+    throw new Error("start delivery settle: deadline_exceeded");
   }
+  // query-guard: bounded -- claim 최대 500행을 단일 transaction/RPC로 원자 settle한다.
+  // HTTP도 attempt 절대마감으로 abort해 45초 lease 안에 반드시 종결한다.
+  const settleQuery = supabase.rpc("settle_game_start_delivery_batch", {
+    p_results: results,
+    p_lease_token: leaseToken,
+  }).abortSignal(AbortSignal.timeout(Math.max(1, settleRemainingMs)));
+  const { data: settled, error: settleError } = await settleQuery;
+  if (settleError) throw new Error(`start delivery settle: ${settleError.message}`);
+  const fcmAcceptedDelta = Number(settled ?? 0);
 
   return {
     ...(await finalizeGameStartSnapshot(args.gameId, fcmAcceptedDelta)),
