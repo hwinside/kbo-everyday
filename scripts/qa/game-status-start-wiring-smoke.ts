@@ -490,7 +490,7 @@ test("warmup 배선: 초기 fetch 직후 start 근거 수집, token별 start bar
   assert.match(migration, /l\.fcm_accepted_at\s*<\s*p_start_accepted_before/);
   assert.doesNotMatch(migration, /p_start_accepted_before\s*-\s*interval '45 seconds'/);
   assert.match(migration, /list_due_player_highlight_snapshots/);
-  assert.match(highlight, /fetchFavoritePlayerFanIds\(due\.player_id\)/);
+  assert.match(highlight, /fetchFavoritePlayerFanIds\(\s*due\.player_id/);
   assert.match(migration, /primary key\s*\(event_id,\s*token_id,\s*token_hash\)/);
   assert.match(migration, /on conflict on constraint notified_player_highlight_tokens_pkey do nothing/);
   assert.match(migration, /insert into notified_score_events/);

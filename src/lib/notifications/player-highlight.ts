@@ -10,6 +10,7 @@ import { fetchFavoritePlayerFanIds } from "@/lib/notifications/audience";
 import type { KboRawGame } from "@/types/api";
 import type { GameEvent, GameEventType } from "@/types/game-events";
 import {
+  drainDueHighlightSnapshots,
   mapHighlightSettlements,
   shouldProcessHighlightEvent,
   type ClaimedHighlightToken,
@@ -243,7 +244,9 @@ export async function notifyPlayerHighlights(
       let userIds: string[] = [];
       if (!snapshotCompleted) {
         try {
-          userIds = await fetchFavoritePlayerFanIds(resolved.kboId);
+          userIds = await fetchFavoritePlayerFanIds(resolved.kboId, {
+            deadlineAtMs: opts?.deadlineAtMs,
+          });
         } catch {
           continue;
         }
@@ -282,34 +285,34 @@ export async function notifyPlayerHighlights(
 
   // source-independent drain: 경기가 final이 되거나 eventsByGame이 비어도 frozen payload로
   // incomplete snapshot resume, transient retry, deadline terminalization을 계속한다.
-  // query-guard: bounded -- RPC가 생성시각 순 최대 50개 snapshot만 반환한다.
+  // query-guard: bounded -- RPC가 현재 claim 가능하거나 incomplete인 snapshot만 최대 50개 반환한다.
   const { data: dueSnapshots, error: dueError } = await supabase.rpc(
     "list_due_player_highlight_snapshots",
-    { p_limit: 50 },
+    {
+      p_limit: 50,
+      p_start_accepted_before: new Date(startAcceptedBeforeMs).toISOString(),
+    },
   );
   if (dueError) throw new Error(`highlight due snapshots: ${dueError.message}`);
-  for (const row of dueSnapshots ?? []) {
-    if (opts?.deadlineAtMs != null && Date.now() >= opts.deadlineAtMs) break;
-    const due = row as {
-      event_id: string;
-      game_id: string;
-      player_id: string;
-      pref_key: "fav_player_highlight" | "fav_player_strikeout";
-      start_team_ids: number[];
-      push_title: string;
-      push_body: string;
-      push_url: string;
-      snapshot_completed: boolean;
-    };
-    let userIds: string[] = [];
-    if (!due.snapshot_completed) {
-      try {
-        userIds = await fetchFavoritePlayerFanIds(due.player_id);
-      } catch {
-        continue;
-      }
-    }
-    highlighted += await drainHighlightSnapshot({
+  type DueSnapshot = {
+    event_id: string;
+    game_id: string;
+    player_id: string;
+    pref_key: "fav_player_highlight" | "fav_player_strikeout";
+    start_team_ids: number[];
+    push_title: string;
+    push_body: string;
+    push_url: string;
+    snapshot_completed: boolean;
+  };
+  highlighted += await drainDueHighlightSnapshots({
+    snapshots: (dueSnapshots ?? []) as DueSnapshot[],
+    needsAudience: (due) => !due.snapshot_completed,
+    fetchAudience: (due, deadlineAtMs) => fetchFavoritePlayerFanIds(
+      due.player_id,
+      { deadlineAtMs },
+    ),
+    drain: (due, userIds) => drainHighlightSnapshot({
       eventId: due.event_id,
       gameId: due.game_id,
       playerId: due.player_id,
@@ -319,8 +322,9 @@ export async function notifyPlayerHighlights(
       body: due.push_body,
       url: due.push_url,
       snapshotCompleted: due.snapshot_completed,
-    }, userIds, startAcceptedBeforeMs, opts?.deadlineAtMs);
-  }
+    }, userIds, startAcceptedBeforeMs, opts?.deadlineAtMs),
+    deadlineAtMs: opts?.deadlineAtMs,
+  });
 
   return { highlighted };
 }

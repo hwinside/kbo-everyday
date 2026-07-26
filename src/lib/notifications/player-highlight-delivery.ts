@@ -1,4 +1,5 @@
 import type { TokenDeliveryOutcome } from "@/lib/notifications/fcm-batch";
+import { runBeforeDeadline } from "@/lib/async-deadline";
 
 export type ClaimedHighlightToken = {
   tokenId: number;
@@ -44,4 +45,36 @@ export function mapHighlightSettlements(
       error: outcome?.errorCode ?? lastError,
     };
   });
+}
+
+export async function drainDueHighlightSnapshots<T>(params: {
+  snapshots: T[];
+  needsAudience: (snapshot: T) => boolean;
+  fetchAudience: (snapshot: T, deadlineAtMs: number) => Promise<string[]>;
+  drain: (snapshot: T, userIds: string[]) => Promise<number>;
+  deadlineAtMs?: number;
+  audienceTimeoutMs?: number;
+}): Promise<number> {
+  let accepted = 0;
+  for (const snapshot of params.snapshots) {
+    if (params.deadlineAtMs != null && Date.now() >= params.deadlineAtMs) break;
+
+    let userIds: string[] = [];
+    if (params.needsAudience(snapshot)) {
+      const audienceDeadlineAtMs = Math.min(
+        params.deadlineAtMs ?? Number.POSITIVE_INFINITY,
+        Date.now() + (params.audienceTimeoutMs ?? 3_000),
+      );
+      try {
+        userIds = await runBeforeDeadline(
+          () => params.fetchAudience(snapshot, audienceDeadlineAtMs),
+          audienceDeadlineAtMs,
+        );
+      } catch {
+        continue;
+      }
+    }
+    accepted += await params.drain(snapshot, userIds);
+  }
+  return accepted;
 }

@@ -391,4 +391,42 @@ FINAL_DUE=$("${PSQL[@]}" -c "SELECT count(*) FROM list_due_player_highlight_snap
 FINAL_EXPIRED=$("${PSQL[@]}" -c "SELECT status FROM notified_player_highlight_tokens WHERE event_id='final#fav'")
 [ "$FINAL_EXPIRED" = "expired" ] || { echo "FAIL: final deadline state=$FINAL_EXPIRED" >&2; exit 1; }
 
-echo "PASS PG17 start/highlight ledgers: minute tick barrier, atomic snapshot resume, source-independent drain, token retries"
+# start-blocked oldest 50개가 뒤의 source-independent 발송 가능 snapshot을 가리지 않는다.
+"${PSQL[@]}" <<SQL >/dev/null
+INSERT INTO player_highlight_event_snapshots
+  (event_id,game_id,player_id,pref_key,start_team_ids,push_title,push_body,push_url,
+   snapshot_completed,deadline_at,completed_at,created_at)
+SELECT
+  'blocked-'||lpad(n::text,2,'0'),'$HIGHLIGHT_GAME','12345','fav_player_highlight',
+  ARRAY[1,2],'blocked','blocked','/games/$HIGHLIGHT_GAME',
+  true,now()+interval '30 minutes',now(),now()-interval '20 minutes'
+FROM generate_series(1,50) n;
+INSERT INTO notified_player_highlight_tokens
+  (event_id,game_id,token_id,token_hash,start_required,status,next_attempt_at)
+SELECT s.event_id,'$HIGHLIGHT_GAME',11,
+       encode(extensions.digest('pending','sha256'),'hex'),true,'waiting',now()
+FROM player_highlight_event_snapshots s
+WHERE s.event_id LIKE 'blocked-%';
+
+INSERT INTO player_highlight_event_snapshots
+  (event_id,game_id,player_id,pref_key,start_team_ids,push_title,push_body,push_url,
+   snapshot_completed,deadline_at,completed_at,created_at)
+VALUES
+  ('eligible-51#fav','$HIGHLIGHT_GAME','12345','fav_player_highlight',ARRAY[1,2],
+   'eligible','eligible','/games/$HIGHLIGHT_GAME',
+   true,now()+interval '5 seconds',now(),now());
+INSERT INTO notified_player_highlight_tokens
+  (event_id,game_id,token_id,token_hash,start_required,status,next_attempt_at)
+VALUES
+  ('eligible-51#fav','$HIGHLIGHT_GAME',12,
+   encode(extensions.digest('off','sha256'),'hex'),false,'waiting',now());
+SQL
+FAIR_DUE=$("${PSQL[@]}" -c "SELECT count(*) FROM list_due_player_highlight_snapshots(50) WHERE event_id='eligible-51#fav'")
+[ "$FAIR_DUE" = "1" ] || { echo "FAIL: blocked 50 starved eligible snapshot=$FAIR_DUE" >&2; exit 1; }
+FAIR_CLAIM=$("${PSQL[@]}" -c "SELECT count(*) FROM claim_player_highlight_tokens(
+  'eligible-51#fav','$HIGHLIGHT_GAME',ARRAY[1,2]::integer[],ARRAY[]::uuid[],
+  'fav_player_highlight',true,date_trunc('minute',now()),
+  '30000000-0000-0000-0000-000000000012',20,500)")
+[ "$FAIR_CLAIM" = "1" ] || { echo "FAIL: eligible 51st snapshot claim=$FAIR_CLAIM" >&2; exit 1; }
+
+echo "PASS PG17 start/highlight ledgers: fair due drain, bounded source-independent retries, token fences"

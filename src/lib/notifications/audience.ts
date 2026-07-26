@@ -35,8 +35,15 @@ export function fetchTeamFanIds(teamIds: number[], opts?: { deadlineAtMs?: numbe
   });
 }
 
-export function fetchFavoritePlayerFanIds(kboId: string): Promise<string[]> {
+export function fetchFavoritePlayerFanIds(
+  kboId: string,
+  opts?: { deadlineAtMs?: number },
+): Promise<string[]> {
   return fetchProfileIds(`favorite player fans (${kboId})`, async (cursor, limit) => {
+    const remainingMs = opts?.deadlineAtMs == null ? null : opts.deadlineAtMs - Date.now();
+    if (remainingMs != null && remainingMs <= 0) {
+      throw new Error("favorite player fans: deadline_exceeded");
+    }
     let query = supabase
       .from("profiles")
       .select("id")
@@ -44,7 +51,8 @@ export function fetchFavoritePlayerFanIds(kboId: string): Promise<string[]> {
       .order("id", { ascending: true })
       .limit(limit);
     if (cursor !== null) query = query.gt("id", cursor);
-    const { data, error } = await query;
+    if (remainingMs != null) query = query.abortSignal(AbortSignal.timeout(Math.max(1, remainingMs)));
+    const { data, error } = await runBeforeDeadline(() => query, opts?.deadlineAtMs);
     return { data: data as ProfileIdRow[] | null, error };
   });
 }

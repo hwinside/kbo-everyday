@@ -583,7 +583,8 @@ end;
 $$;
 
 create or replace function list_due_player_highlight_snapshots(
-  p_limit integer default 50
+  p_limit integer default 50,
+  p_start_accepted_before timestamptz default date_trunc('minute', now())
 )
 returns table (
   event_id text,
@@ -631,11 +632,32 @@ begin
       or exists (
         select 1
         from notified_player_highlight_tokens n
+        join device_push_tokens d
+          on d.id = n.token_id
+         and encode(extensions.digest(d.fcm_token, 'sha256'), 'hex') = n.token_hash
         where n.event_id = s.event_id
-          and n.status in ('waiting', 'leased', 'transient')
+          and (
+            n.status in ('waiting', 'transient')
+            or (n.status = 'leased' and n.lease_until < now())
+          )
+          and n.next_attempt_at <= now()
+          and (
+            not n.start_required
+            or exists (
+              select 1
+              from game_start_delivery_ledger l
+              where l.game_id = s.game_id
+                and l.token_id = n.token_id
+                and l.token_hash = n.token_hash
+                and l.status = 'accepted'
+                and l.fcm_accepted_at < p_start_accepted_before
+            )
+          )
       )
     )
-  order by s.created_at, s.event_id
+  -- completed+claimable work outranks incomplete recovery. start-blocked/deleted credentials
+  -- do not occupy the bounded page and starve a later deliverable snapshot.
+  order by s.snapshot_completed desc, s.created_at, s.event_id
   limit greatest(1, least(p_limit, 50));
 end;
 $$;
@@ -696,7 +718,7 @@ revoke all on function settle_game_start_deliveries(uuid[], uuid, text, text) fr
 revoke all on function settle_game_start_delivery_batch(jsonb, uuid) from anon, authenticated, public;
 revoke all on function finalize_game_start_deliveries(text) from anon, authenticated, public;
 revoke all on function claim_player_highlight_tokens(text, text, integer[], uuid[], text, boolean, timestamptz, uuid, integer, integer, text, text, text, text) from anon, authenticated, public;
-revoke all on function list_due_player_highlight_snapshots(integer) from anon, authenticated, public;
+revoke all on function list_due_player_highlight_snapshots(integer, timestamptz) from anon, authenticated, public;
 revoke all on function settle_player_highlight_tokens(jsonb, uuid) from anon, authenticated, public;
 grant execute on function snapshot_game_start_deliveries(text, integer[], timestamptz, timestamptz) to service_role;
 grant execute on function claim_game_start_deliveries(text, uuid, integer, integer) to service_role;
@@ -705,5 +727,5 @@ grant execute on function settle_game_start_deliveries(uuid[], uuid, text, text)
 grant execute on function settle_game_start_delivery_batch(jsonb, uuid) to service_role;
 grant execute on function finalize_game_start_deliveries(text) to service_role;
 grant execute on function claim_player_highlight_tokens(text, text, integer[], uuid[], text, boolean, timestamptz, uuid, integer, integer, text, text, text, text) to service_role;
-grant execute on function list_due_player_highlight_snapshots(integer) to service_role;
+grant execute on function list_due_player_highlight_snapshots(integer, timestamptz) to service_role;
 grant execute on function settle_player_highlight_tokens(jsonb, uuid) to service_role;

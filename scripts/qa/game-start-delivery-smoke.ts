@@ -7,6 +7,7 @@ import {
   gameStartDeliveryWindow,
 } from "../../src/lib/notifications/game-start-delivery-policy";
 import {
+  drainDueHighlightSnapshots,
   mapHighlightSettlements,
   shouldProcessHighlightEvent,
 } from "../../src/lib/notifications/player-highlight-delivery";
@@ -202,7 +203,7 @@ test("highlight token barrier: ON+accepted/OFF만 release, pending·invalid는 �
   assert.match(migration, /list_due_player_highlight_snapshots/);
   assert.match(migration, /push_title text not null/);
   assert.match(migration, /player_id text not null/);
-  assert.match(highlightSource, /fetchFavoritePlayerFanIds\(due\.player_id\)/);
+  assert.match(highlightSource, /fetchFavoritePlayerFanIds\(\s*due\.player_id/);
   assert.doesNotMatch(highlightSource, /userIds\.slice\(/);
   assert.doesNotMatch(gameStatusSource, /highlightBlockedGameIds/);
 });
@@ -226,6 +227,25 @@ test("highlight FCM ok=true 안의 token별 transient/permanent를 terminal 성�
     settled.map((row) => row.status),
     ["accepted", "transient", "permanent_failed", "transient"],
   );
+});
+
+test("첫 due fan query hang을 bounded timeout으로 격리하고 다음 snapshot을 drain", async () => {
+  const drained: string[] = [];
+  const accepted = await drainDueHighlightSnapshots({
+    snapshots: [
+      { id: "hung", snapshotCompleted: false },
+      { id: "next", snapshotCompleted: true },
+    ],
+    needsAudience: (snapshot) => !snapshot.snapshotCompleted,
+    fetchAudience: async () => new Promise<string[]>(() => {}),
+    drain: async (snapshot) => {
+      drained.push(snapshot.id);
+      return 1;
+    },
+    audienceTimeoutMs: 10,
+  });
+  assert.equal(accepted, 1);
+  assert.deepEqual(drained, ["next"]);
 });
 
 test("highlight 10분 freshness는 신규 snapshot만 차단하고 frozen retry는 11분 gap 뒤에도 drain", () => {
