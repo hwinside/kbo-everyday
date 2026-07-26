@@ -25,6 +25,8 @@ console.log("[parseStoragePublicUrl — 정상]");
 const okUrl = parseStoragePublicUrl(pub(`videos/venue-stories/${GAME}/${ME}/1700-ab.mp4`), BASE);
 ok("정상 videos 경로 파싱", okUrl?.bucket === "videos" && okUrl.path === `venue-stories/${GAME}/${ME}/1700-ab.mp4`);
 ok("photos 버킷 허용", parseStoragePublicUrl(pub(`photos/venue-stories/${GAME}/${ME}/x.jpg`), BASE)?.bucket === "photos");
+// A안 A1: venue-media(private) 경로도 파싱 허용 — 클라이언트 getPublicUrl 형태 URL 을 bucket+path 로 도출(서빙은 signed URL).
+ok("venue-media 버킷 허용(A1)", parseStoragePublicUrl(pub(`venue-media/venue-stories/${GAME}/${ME}/x.jpg`), BASE)?.bucket === "venue-media");
 
 console.log("[parseStoragePublicUrl — 우회 차단]");
 ok("허용 안 된 버킷 → null", parseStoragePublicUrl(pub(`avatars/venue-stories/${GAME}/${ME}/x.jpg`), BASE) === null);

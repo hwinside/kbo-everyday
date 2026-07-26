@@ -30,9 +30,13 @@ export const VENUE_STORY_SAFETY_CAP_HOURS_AFTER_START = 72; // 종료 미감지 
 export const VENUE_STORY_EXPIRY_HOURS_AFTER_END = 24; // 종료 확정 후 만료까지
 
 // 영상 원본 private staging 버킷(B+①): 서버 ffprobe 검증 통과 전까지 공개 URL 미부여.
-// 통과 시에만 공개 videos 버킷으로 승격(원본 즉시 공개) → 720p 는 백그라운드 교체.
 export const VENUE_STORY_STAGING_BUCKET = "venue-staging";
+// (레거시) A안 이전 승격 대상 공개 버킷. A3 이관 전까지 남은 레거시 행이 이 버킷을 가리킨다.
 export const VENUE_STORY_PUBLIC_VIDEO_BUCKET = "videos";
+// A안(하린아빠 승인) venue story 전용 private 미디어 버킷 — 신규 미디어(사진·영상 원본·포스터)는
+// 처음부터 여기(public=false)에 저장하고, 공개 트레이/뷰어(active)도 서버 발급 signed URL 로 서빙한다.
+// archive 는 DB status 만 바꾸므로(객체 이동 0) 유실 경로가 원천 제거된다.
+export const VENUE_STORY_PRIVATE_MEDIA_BUCKET = "venue-media";
 
 export type VenueStoryMediaType = "video" | "image";
 

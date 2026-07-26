@@ -17,9 +17,15 @@ import {
   VENUE_GEOFENCE_MAX_ACCURACY_M,
   VENUE_STORY_CONSENT_VERSION,
   VENUE_STORY_STAGING_BUCKET,
-  VENUE_STORY_PUBLIC_VIDEO_BUCKET,
+  VENUE_STORY_PRIVATE_MEDIA_BUCKET,
   type VenueStory,
 } from "@/lib/venue-stories/types";
+import {
+  signPrivateRefs,
+  resolveServeUrl,
+  signVenueObject,
+  isPrivateVenueBucket,
+} from "@/lib/venue-stories/media-url";
 import { decideListAuth } from "@/lib/venue-stories/auth-consent";
 import { validateVenueVideoRow } from "@/lib/venue-stories/video-validate-server";
 import { canBypassVenueGeofenceForQa } from "@/lib/admin/admin-users";
@@ -109,7 +115,7 @@ export async function GET(req: NextRequest) {
   const { data: rows, error } = await supabase
     .from("venue_stories")
     .select(
-      "id, game_id, user_id, media_type, media_url, thumb_url, duration_ms, width, height, caption, venue_verified, created_at",
+      "id, game_id, user_id, media_type, media_url, media_bucket, media_path, thumb_url, thumb_bucket, thumb_path, duration_ms, width, height, caption, venue_verified, created_at",
     )
     .eq("game_id", gameId)
     .eq("status", "active")
@@ -141,6 +147,16 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // A안 A1: private venue-media/staging 버킷 미디어는 서버 발급 signed URL 로 서빙한다.
+  // 한 요청의 모든 미노출 media/thumb 경로를 버킷별 배치로 묶어 발급 콜 수를 최소화(캐싱 50분).
+  // 레거시 공개 버킷(videos/photos) 행은 저장된 공개 URL 그대로(A3 이관 전까지 혼재 허용).
+  const signed = await signPrivateRefs(
+    list.flatMap((r) => [
+      { bucket: r.media_bucket as string | null, path: r.media_path as string | null },
+      { bucket: r.thumb_bucket as string | null, path: r.thumb_path as string | null },
+    ]),
+  );
+
   const stories: VenueStory[] = list.map((r) => {
     const prof = profileMap.get(r.user_id as string);
     return {
@@ -148,8 +164,23 @@ export async function GET(req: NextRequest) {
       gameId: r.game_id as string,
       userId: r.user_id as string,
       mediaType: r.media_type as "video" | "image",
-      mediaUrl: r.media_url as string,
-      thumbUrl: (r.thumb_url as string) ?? null,
+      mediaUrl:
+        resolveServeUrl(
+          {
+            bucket: r.media_bucket as string | null,
+            path: r.media_path as string | null,
+            url: (r.media_url as string) ?? null,
+          },
+          signed,
+        ) ?? (r.media_url as string),
+      thumbUrl: resolveServeUrl(
+        {
+          bucket: r.thumb_bucket as string | null,
+          path: r.thumb_path as string | null,
+          url: (r.thumb_url as string) ?? null,
+        },
+        signed,
+      ),
       durationMs: (r.duration_ms as number) ?? null,
       width: (r.width as number) ?? null,
       height: (r.height as number) ?? null,
@@ -290,7 +321,17 @@ export async function POST(req: NextRequest) {
   // 만들 수 있다. 아래 step 6이 service_role 직접 download(50MiB 상한) + ffprobe를 수행하므로
   // 영상은 그 단일 권위 검증 경로만 사용한다(검증 전 pending/비노출 불변식 유지).
   if (mediaType === "image") {
-    const probe = await probeMediaObject(mediaUrl, mediaType, VENUE_STORY_MAX_BYTES);
+    // A안 A1: private venue-media 저장 이미지는 공개 URL 이 없으므로 서버 signed URL 을 발급해 probe 한다.
+    // 레거시 공개 버킷은 기존대로 mediaUrl(공개) 그대로 fetch.
+    let imageReadUrl = mediaUrl;
+    if (isPrivateVenueBucket(media.bucket)) {
+      const signed = await signVenueObject(media.bucket, media.path);
+      if (!signed) {
+        return NextResponse.json({ error: "업로드된 미디어를 확인할 수 없어요" }, { status: 400 });
+      }
+      imageReadUrl = signed;
+    }
+    const probe = await probeMediaObject(imageReadUrl, mediaType, VENUE_STORY_MAX_BYTES);
     if (!probe.ok) {
       // MB 숫자 노출 금지(삼순 #813 blocker) — Composer가 data.error를 그대로 노출한다.
       // 이 branch는 사진 전용. 영상 초과분은 step 6 서버 검증(download ≤ 50MiB 강제)이
@@ -307,7 +348,14 @@ export async function POST(req: NextRequest) {
   let thumbBucketOut: string | null = thumb?.bucket ?? null;
   let thumbPathOut: string | null = thumb?.path ?? null;
   if (thumb && thumbUrl) {
-    const tprobe = await probeMediaObject(thumbUrl, "image", VENUE_STORY_MAX_BYTES);
+    // private 버킷 포스터도 signed URL 로 probe(레거시 공개 버킷은 공개 URL 그대로).
+    let thumbReadUrl: string | null = thumbUrl;
+    if (isPrivateVenueBucket(thumb.bucket)) {
+      thumbReadUrl = await signVenueObject(thumb.bucket, thumb.path);
+    }
+    const tprobe = thumbReadUrl
+      ? await probeMediaObject(thumbReadUrl, "image", VENUE_STORY_MAX_BYTES)
+      : { ok: false as const, size: null };
     if (!tprobe.ok) {
       thumbUrlOut = null;
       thumbBucketOut = null;
@@ -330,8 +378,10 @@ export async function POST(req: NextRequest) {
   const initialStatus = isVideo ? "pending" : "active";
   const needsTranscode = isVideo;
   // 영상 media_url 은 승격 후 공개될 최종 URL(공개 videos 버킷, 같은 path) — pending 동안 객체 미존재(비노출)
+  // 영상 media_url 은 승격 후 private venue-media 객체를 가리키는 durable 참조값(NOT NULL 충족용).
+  // 서빙은 media_bucket 기준으로 signed URL 을 발급하므로 이 값 자체는 공개 URL 로 사용되지 않는다.
   const finalMediaUrl = isVideo
-    ? supabase.storage.from(VENUE_STORY_PUBLIC_VIDEO_BUCKET).getPublicUrl(media.path).data.publicUrl
+    ? supabase.storage.from(VENUE_STORY_PRIVATE_MEDIA_BUCKET).getPublicUrl(media.path).data.publicUrl
     : mediaUrl;
   const { data: rpcData, error } = await supabase.rpc("create_venue_story_v2", {
     p_game_id: gameId,

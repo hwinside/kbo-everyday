@@ -2,7 +2,7 @@
 
 import { supabase, getSafeSession } from "@/lib/supabase/client";
 import imageCompression from "browser-image-compression";
-import { VENUE_STORY_STAGING_BUCKET } from "./types";
+import { VENUE_STORY_STAGING_BUCKET, VENUE_STORY_PRIVATE_MEDIA_BUCKET } from "./types";
 import { checkVenueMediaLimits, VENUE_VIDEO_TOO_HEAVY_MSG } from "./media-limits";
 import { shouldAutoCompressVideo, compressVenueVideo } from "./video-compress";
 
@@ -22,7 +22,9 @@ export interface PrepareError {
   error: string;
 }
 
-const IMAGE_BUCKET = "photos";
+// A안 A1: 사진·영상 포스터를 private venue-media 버킷에 저장(처음부터 비공개). 공개 서빙은 서버 signed URL.
+// getPublicUrl 형태 URL 을 여전히 반환하면 서버가 소유경로를 파싱(bucket+path 도출)하고 durable 기록한다.
+const IMAGE_BUCKET = VENUE_STORY_PRIVATE_MEDIA_BUCKET;
 
 /** 확장자는 서버 strict allowlist([A-Za-z0-9._-]) 통과하도록 영숫자만 남긴다. */
 function sanitizeExt(name: string, fallback: string): string {

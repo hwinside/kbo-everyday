@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "generatedFrom": "20e32ac0448346d53e7e62a02acd773f201711aa",
+  "generatedFrom": "775efba384c04187aa68c096397a04f3e675aa76",
   "violations": {
     "0034fe9a6a6cff327c64": {
       "count": 1,
@@ -317,20 +317,6 @@
       "subject": "likes",
       "detail": "add a bound, unique-key lookup, or query-guard annotation"
     },
-    "36a528bc115516445676": {
-      "count": 1,
-      "kind": "ambiguous_growing_limit",
-      "file": "src/app/api/admin/venue-stories/route.ts",
-      "subject": "venue_stories",
-      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
-    },
-    "37b9930a6b5670e26a47": {
-      "count": 1,
-      "kind": "ambiguous_growing_limit",
-      "file": "src/app/api/venue-stories/route.ts",
-      "subject": "venue_stories",
-      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
-    },
     "38a334a2dd70292520a3": {
       "count": 1,
       "kind": "ambiguous_growing_limit",
@@ -547,6 +533,13 @@
       "file": "src/app/api/daily-analysis/route.ts",
       "subject": "daily_analysis",
       "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "5d38cab39ab6ef446983": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/app/api/venue-stories/route.ts",
+      "subject": "venue_stories",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
     },
     "5ecdae3b56eadfe8cf58": {
       "count": 1,
@@ -917,6 +910,13 @@
       "kind": "ambiguous_growing_limit",
       "file": "src/app/api/cron/videos-shorts/route.ts",
       "subject": "player_stats_pitcher",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
+    "996ec3d40d9ad0ad01a5": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/app/api/admin/venue-stories/route.ts",
+      "subject": "venue_stories",
       "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
     },
     "9cac00fcdf1a5fc4b555": {

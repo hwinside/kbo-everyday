@@ -8,7 +8,10 @@ import { basename } from "path";
 
 const VENUE_MAX_DURATION_MS = 16000; // 15초 + 여유
 const VENUE_MAX_BYTES = 50 * 1024 * 1024;
-const PUBLIC_VIDEO_BUCKET = "videos";
+// A안 A1: 신규 영상은 private venue-media 로 승격·보관(공개 videos 아님). 서빙은 서버 signed URL.
+const VENUE_PRIVATE_MEDIA_BUCKET = "venue-media";
+// private venue 버킷: 공개 URL 이 없으므로 media_url 다운로드 대신 storage API 로 받는다.
+const PRIVATE_VENUE_BUCKETS = new Set(["venue-media", "venue-staging"]);
 const MAX_ATTEMPTS_DEFAULT = 3;
 
 /** 원본 media_path → 같은 폴더의 720p 최적화본 path */
@@ -56,13 +59,16 @@ function fmtMB(bytes) {
 export async function processVenueJob(row, deps) {
   const { db, storage, runner, inPath, outPath, maxAttempts = MAX_ATTEMPTS_DEFAULT } = deps;
   const isPending = row.status === "pending";
+  // A안 A1: pending staging 뿐 아니라 active private(venue-media) 원본도 공개 URL 이 없다
+  // → storage API 로 다운로드. 레거시 공개 버킷(videos) active 만 media_url 다운로드.
+  const usePrivateDownload = isPending || PRIVATE_VENUE_BUCKETS.has(row.media_bucket);
 
   try {
     let inBytes;
-    if (isPending) {
-      // pending 원본은 private staging — 공개 URL 이 없으므로 storage API 로 다운로드
+    if (usePrivateDownload) {
+      // private 원본(staging/venue-media) — 공개 URL 이 없으므로 storage API 로 다운로드
       const { data: blob, error: dlErr } = await storage.from(row.media_bucket).download(row.media_path);
-      if (dlErr || !blob) throw new Error(`staging download 실패: ${dlErr?.message || "empty"}`);
+      if (dlErr || !blob) throw new Error(`private download 실패: ${dlErr?.message || "empty"}`);
       const buf = Buffer.from(await blob.arrayBuffer());
       writeFileSync(inPath, buf);
       inBytes = buf.length;
@@ -91,7 +97,8 @@ export async function processVenueJob(row, deps) {
 
     runner.transcode(inPath, outPath);
     const outBytes = statSync(outPath).size;
-    const targetBucket = isPending ? PUBLIC_VIDEO_BUCKET : row.media_bucket;
+    // pending 승격은 private venue-media 로(공개 videos 아님). active 는 기존 버킷 유지(레거시 videos / 신규 venue-media).
+    const targetBucket = isPending ? VENUE_PRIVATE_MEDIA_BUCKET : row.media_bucket;
     const newPath = venueOptimizedPath(row.media_path);
     const buf = readFileSync(outPath);
     const { error: upErr } = await storage
