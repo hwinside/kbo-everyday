@@ -175,6 +175,22 @@ function normalizeBatOrder(value: unknown): number | null {
   return Number.isInteger(order) && order >= 1 && order <= 9 ? order : null;
 }
 
+/**
+ * 현재 타자의 라인업 타순을 record API 박스스코어(현재 라인업)에서 이름으로 재해석한다.
+ * record 박스스코어는 대타·대주자 등 교체를 반영한 "지금 라인업"이므로, relay 마커(대타는
+ * "N번타자" 접두가 없음)보다 교체 선수 타순에 더 정확하다. 매칭 실패/범위 밖이면 null →
+ * 호출부가 parser 값(batterRecord.batOrder)으로 fallback 한다(오표기 대신 안전).
+ */
+export function resolveBatOrderFromLineup(
+  batterName: string | undefined,
+  batters: RelayBatterStat[] | undefined,
+): number | null {
+  const name = batterName?.trim();
+  if (!name || !batters) return null;
+  const hit = batters.find((b) => b.name?.trim() === name);
+  return hit ? normalizeBatOrder(hit.batOrder) : null;
+}
+
 interface NaverGamePlayerStats {
   kk: number;
   hit: number;
@@ -891,6 +907,16 @@ export async function GET(req: NextRequest) {
 
     // Extract player stats: prefer record API (has pitcher names), fallback to relay parsing
     const playerStats = extractPlayerStatsFromRecord(recordData) ?? extractPlayerStats(combined);
+
+    // 현재 타자 타순은 record API 라인업(교체 반영된 현재 라인업)을 SSOT로 재해석한다 —
+    // 대타("대타 X"는 "N번타자" 접두가 없음)·대주자 교체에도 올바른 타순이 나오도록.
+    // 매칭 실패 시 parser 값(batterRecord.batOrder)을 그대로 유지(fail-safe, 오표기 방지).
+    for (const inn of innings) {
+      if (!inn.currentAtBat) continue;
+      const sideBatters = inn.half === "top" ? playerStats.awayBatters : playerStats.homeBatters;
+      const lineupOrder = resolveBatOrderFromLineup(inn.currentAtBat.batterName, sideBatters);
+      if (lineupOrder != null) inn.currentAtBat.batOrder = lineupOrder;
+    }
 
     // Build linescore from naver relay data
     const trd = firstData.result?.textRelayData;

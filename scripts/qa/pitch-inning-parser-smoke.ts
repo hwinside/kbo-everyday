@@ -37,7 +37,7 @@ function check(name: string, cond: boolean, detail?: string) {
 async function main() {
 // route.ts 는 동적 import 로 로드(top-level await 미지원 cjs 회피). env 주입 후 로드되므로
 // supabase admin 싱글톤이 더미 env 로 문제없이 생성된다(실제 호출 없음).
-const { parseInningRelays } = await import("@/app/api/game-relay/route");
+const { parseInningRelays, resolveBatOrderFromLineup } = await import("@/app/api/game-relay/route");
 
 /** chronological relay 배열을 production 이 받는 newest-first 로 뒤집어 파싱. */
 function parse(chronological: NaverTextRelay[]) {
@@ -327,6 +327,20 @@ const batterRecord = (name: string, batOrder: number) => ({
   const play = innings[0]?.plays[0];
   check("T9 대타 완료 타석 identity 유지", play?.batterName === "이천웅", JSON.stringify(play));
   check("T9 대타 완료 타석 slot 유지", play?.batOrder === 7, JSON.stringify(play));
+}
+
+// ── T10: record API 라인업 override — 교체 선수 타순을 현재 라인업(record 박스스코어)에서 재해석 ──
+// 대타가 5번 slot 을 넘겨받은 현재 라인업을 이름으로 조회해 정확한 타순을 돌려줘야 한다.
+{
+  const lineup = [
+    { name: "김상수", batOrder: 5, posName: "지명타자", pa: 2, ab: 2, hit: 1, hr: 0, bb: 0, so: 0, rbi: 0, run: 0, seasonAvg: 0.3, todayAvg: 0.5 },
+    { name: "이현재", batOrder: 1, posName: "중견수", pa: 3, ab: 3, hit: 1, hr: 0, bb: 0, so: 1, rbi: 0, run: 1, seasonAvg: 0.28, todayAvg: 0.33 },
+  ];
+  check("T10 교체 선수 이름으로 라인업 타순 조회", resolveBatOrderFromLineup("김상수", lineup) === 5);
+  check("T10 공백 trim 매칭", resolveBatOrderFromLineup(" 이현재 ", lineup) === 1);
+  check("T10 미등록 이름은 null(fallback 유도)", resolveBatOrderFromLineup("박무명", lineup) === null);
+  check("T10 빈 이름/라인업은 null", resolveBatOrderFromLineup("", lineup) === null && resolveBatOrderFromLineup("김상수", undefined) === null);
+  check("T10 범위 밖 batOrder는 null", resolveBatOrderFromLineup("X", [{ name: "X", batOrder: 0, posName: "", pa: 0, ab: 0, hit: 0, hr: 0, bb: 0, so: 0, rbi: 0, run: 0, seasonAvg: 0, todayAvg: 0 }]) === null);
 }
 
 console.log(`\npitch-inning-parser-smoke: ${pass} passed, ${fail} failed`);
