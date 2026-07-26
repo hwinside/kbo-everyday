@@ -535,8 +535,19 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
         const cacheData = await cacheRes.json();
         if (cacheData.summary) {
           setLlmSummary(cacheData.summary);
-          // If outdated, trigger background re-generation (don't block UI)
-          if (cacheData.outdated && hasRealBoxScore && boxScore && !regeneratingRef.current) {
+          // 캐시된 요약의 생성 당시 스코어가 현재 최종 스코어와 다르면 stale 캐시
+          // (중간/지연 스냅샷으로 요약이 굳어진 경우) → 재생성 트리거.
+          // 2026-07-26 사고: 8회초 4-4 스냅샷 요약이 최종 14-4로 갱신 안 되던 문제.
+          const curAwayR = linescore?.away.R ?? boxScore?.awayBatters.reduce((s, b) => s + b.runs, 0);
+          const curHomeR = linescore?.home.R ?? boxScore?.homeBatters.reduce((s, b) => s + b.runs, 0);
+          const cachedAwayR = cacheData.summary._cachedAwayScore as number | undefined;
+          const cachedHomeR = cacheData.summary._cachedHomeScore as number | undefined;
+          const scoreStale =
+            cachedAwayR != null && cachedHomeR != null &&
+            curAwayR != null && curHomeR != null &&
+            (cachedAwayR !== curAwayR || cachedHomeR !== curHomeR);
+          // If outdated OR score-stale, trigger background re-generation (don't block UI)
+          if ((cacheData.outdated || scoreStale) && hasRealBoxScore && boxScore && !regeneratingRef.current) {
             regeneratingRef.current = true; // prevent re-entry on re-render
             // linescore.R 우선, boxScore 합산 fallback (승패 뒤집힘 방지)
             const homeR = linescore?.home.R ?? boxScore.homeBatters.reduce((s, b) => s + b.runs, 0);

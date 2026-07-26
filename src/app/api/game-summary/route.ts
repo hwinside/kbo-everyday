@@ -533,6 +533,14 @@ export async function POST(req: NextRequest) {
       // winner 필드는 내부 검증용이므로 클라이언트에 보내기 전 제거
       delete summary.winner;
 
+      // 생성 당시 스코어를 캐시에 기록한다. 최종 스코어가 나중에 바뀌면(중간/지연
+      // 스냅샷으로 요약이 생성된 경우) 클라이언트가 현재 linescore와 비교해
+      // stale 캐시를 감지·자동 재생성할 수 있게 하는 백스톱이다.
+      // (2026-07-26 사고: 8회초 4-4 시점 스냅샷으로 캐시된 요약이 최종 14-4로
+      //  갱신되지 않고 계속 노출됨 — outdated가 prompt_version만 보던 한계.)
+      summary._cachedAwayScore = body.awayScore;
+      summary._cachedHomeScore = body.homeScore;
+
       await saveCache(body.gameId, summary);
       return NextResponse.json({ summary, source: "generated" });
     } catch (err) {
