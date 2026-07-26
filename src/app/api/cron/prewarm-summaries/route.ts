@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase/admin";
-import { fetchGames, fetchBoxScore } from "@/lib/crawler/kbo-api";
+import { fetchGames, fetchBoxScore, fetchGameLinescore } from "@/lib/crawler/kbo-api";
 import { TEAMS } from "@/lib/constants/teams";
 
 const CRON_SECRET = process.env.CRON_SECRET || "";
-const PROMPT_VERSION = 13; // must match game-summary route (v13: 순위 환각 방지 가드)
 
 // ===== Helpers =====
 
@@ -16,62 +14,6 @@ function getKSTDateStr(): string {
 
 function teamShortName(teamId: number): string {
   return TEAMS.find((t) => t.id === teamId)?.shortName || `팀${teamId}`;
-}
-
-// KBO ScoreBoard API for linescore
-const KBO_BASE = "https://www.koreabaseball.com";
-const HEADERS = {
-  "Content-Type": "application/x-www-form-urlencoded",
-  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-  Referer: KBO_BASE,
-};
-
-interface LinescoreSide {
-  innings: (number | null)[];
-  R: number;
-  H: number;
-  E: number;
-}
-
-async function fetchLinescore(gameId: string): Promise<{ away: LinescoreSide; home: LinescoreSide } | null> {
-  try {
-    const seasonId = gameId.slice(0, 4);
-    const body = `leId=1&srId=0&seasonId=${seasonId}&gameId=${gameId}`;
-    const res = await fetch(`${KBO_BASE}/GetScoreBoard`, {
-      method: "POST",
-      headers: HEADERS,
-      body,
-      next: { revalidate: 0 },
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (!Array.isArray(data) || data.length < 2 || !data[1]) return null;
-
-    const raw = Array.isArray(data[1]) && data[1].length > 0 ? data[1][0] : data[1];
-    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
-    if (!parsed?.rows || parsed.rows.length < 2) return null;
-
-    function parseRow(row: { Text: string }[]): LinescoreSide {
-      // row: [team, inn1, inn2, ..., R, H, E]
-      const cells = row.map((c) => c.Text?.trim());
-      const R = parseInt(cells[cells.length - 3] || "0") || 0;
-      const H = parseInt(cells[cells.length - 2] || "0") || 0;
-      const E = parseInt(cells[cells.length - 1] || "0") || 0;
-      const innings = cells.slice(1, cells.length - 3).map((v) => {
-        if (!v || v === "-" || v === "&nbsp;") return null;
-        const n = parseInt(v);
-        return isNaN(n) ? null : n;
-      });
-      return { innings, R, H, E };
-    }
-
-    return {
-      away: parseRow(parsed.rows[0].row),
-      home: parseRow(parsed.rows[1].row),
-    };
-  } catch {
-    return null;
-  }
 }
 
 // ===== Main =====
@@ -94,31 +36,17 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ok: true, message: "No final games today", results });
     }
 
-    // 2. Check which games already have current-version cache
-    const gameIds = finalGames.map((g) => g.gameId);
-    const { data: cached } = await supabaseAdmin
-      .from("game_summaries")
-      .select("game_id, prompt_version")
-      .in("game_id", gameIds);
-
-    const cachedMap = new Map((cached ?? []).map((c) => [c.game_id, c.prompt_version]));
-
-    // 3. Pre-warm missing/outdated summaries
+    // 2. 모든 종료 경기를 POST한다. API가 prompt version+fingerprint가 current면 즉시 cache를
+    // 반환하고, legacy/stale이면 재생성한다(버전만 보고 skip하면 legacy가 영구 잔존).
     const appUrl =
       process.env.NEXT_PUBLIC_BASE_URL ||
       (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "https://keubo.fan");
 
     for (const game of finalGames) {
-      const cachedVersion = cachedMap.get(game.gameId);
-      if (cachedVersion != null && cachedVersion >= PROMPT_VERSION) {
-        results.push({ gameId: game.gameId, status: "skip", reason: "cache current" });
-        continue;
-      }
-
       // Fetch boxscore + linescore
       const [boxScore, linescore] = await Promise.all([
         fetchBoxScore(game.gameId),
-        fetchLinescore(game.gameId),
+        fetchGameLinescore(game.gameId),
       ]);
 
       if (!boxScore) {

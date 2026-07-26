@@ -76,11 +76,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         headers: {
           apikey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
           Authorization: `Bearer ${accessToken}`,
-          Accept: "application/vnd.pgrst.object+json",
         },
       });
       if (res.ok) {
-        const data = await res.json();
+        const rows = await res.json();
+        const data = Array.isArray(rows) ? rows[0] : null;
         if (data && data.id) {
           setProfile(data);
           syncProfileToLocal(data);
@@ -95,7 +95,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .from("profiles")
         .select("*")
         .eq("id", userId)
-        .single();
+        .maybeSingle();
       if (!error && data) {
         setProfile(data);
         syncProfileToLocal(data);
@@ -103,7 +103,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // 1회 retry (1초 후) - 네트워크 일시 실패 대비
         console.warn("[AuthContext] profile load failed, retrying in 1s...", error?.message);
         await new Promise(r => setTimeout(r, 1000));
-        const retry = await supabase.from("profiles").select("*").eq("id", userId).single();
+        const retry = await supabase.from("profiles").select("*").eq("id", userId).maybeSingle();
         if (!retry.error && retry.data) {
           setProfile(retry.data);
           syncProfileToLocal(retry.data);

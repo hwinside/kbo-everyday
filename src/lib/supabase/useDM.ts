@@ -8,7 +8,7 @@ import { OPERATOR_USER_ID } from "@/lib/constants/operator";
 
 export interface DMConversation {
   id: string;
-  other_user_id: string;
+  other_user_id: string | null;
   other_nickname: string;
   other_team_id: number | null;
   other_avatar_url: string | null;
@@ -20,7 +20,7 @@ export interface DMConversation {
 export interface DMMessage {
   id: number;
   conversation_id: string;
-  sender_id: string;
+  sender_id: string | null;
   content: string;
   image_urls?: string[] | null;
   /** 구조화 쪽지 (뉴스클리핑 등) — payload->>'type'으로 렌더 분기 */
@@ -58,42 +58,47 @@ export function useDMList() {
     if (!data || data.length === 0) { setConversations([]); setLoading(false); return; }
 
     // 상대방 ID 추출
-    const otherIds = data.map((conv: { user1_id: string; user2_id: string }) =>
-      conv.user1_id === user.id ? conv.user2_id : conv.user1_id
-    );
+    const otherIds = [
+      ...new Set(
+        data
+          .map((conv: { user1_id: string | null; user2_id: string | null }) =>
+            conv.user1_id === user.id ? conv.user2_id : conv.user1_id
+          )
+          .filter((id): id is string => id !== null),
+      ),
+    ];
 
     // batch fetch profiles
-    const { data: profiles } = await supabase
-      .from("profiles")
-      .select("id, nickname, team_id, avatar_url")
-      .in("id", otherIds);
+    const { data: profiles } = otherIds.length > 0
+      ? await supabase
+          .from("profiles")
+          .select("id, nickname, team_id, avatar_url")
+          .in("id", otherIds)
+      : { data: [] };
 
     const profileMap = new Map(
       (profiles ?? []).map((p: { id: string; nickname: string; team_id: number | null; avatar_url: string | null }) => [p.id, p])
     );
 
-    // batch fetch unread counts — 한 쿼리로 모든 대화의 안 읽은 메시지 카운트
+    // batch fetch unread counts — RPC 결과는 요청 대화당 최대 1행(목록 상한 500).
     const convIds = data.map((c: { id: string }) => c.id);
+    // query-guard: bounded -- p_conversation_ids는 클라이언트·RPC 양쪽에서 500개로 제한되고 대화당 1행만 반환
     const { data: unreadRows } = await supabase
-      .from("dm_messages")
-      .select("conversation_id")
-      .in("conversation_id", convIds)
-      .eq("is_read", false)
-      .neq("sender_id", user.id);
+      .rpc("dm_unread_counts", { p_conversation_ids: convIds });
 
     const unreadMap = new Map<string, number>();
-    (unreadRows ?? []).forEach((r: { conversation_id: string }) => {
-      unreadMap.set(r.conversation_id, (unreadMap.get(r.conversation_id) ?? 0) + 1);
+    (unreadRows ?? []).forEach((r: { conversation_id: string; unread_count: number | string }) => {
+      unreadMap.set(r.conversation_id, Number(r.unread_count));
     });
 
     const mapped: DMConversation[] = data
-      .map((conv: { id: string; user1_id: string; user2_id: string; last_message: string | null; last_message_at: string }) => {
+      .map((conv: { id: string; user1_id: string | null; user2_id: string | null; last_message: string | null; last_message_at: string }) => {
         const otherId = conv.user1_id === user.id ? conv.user2_id : conv.user1_id;
-        const prof = profileMap.get(otherId);
+        const prof = otherId ? profileMap.get(otherId) : undefined;
         return {
           id: conv.id,
           other_user_id: otherId,
-          other_nickname: prof?.nickname ?? "알 수 없음",
+          other_nickname: otherId ? (prof?.nickname ?? "알 수 없음") : "탈퇴한 사용자",
           other_team_id: prof?.team_id ?? null,
           other_avatar_url: prof?.avatar_url ?? null,
           last_message: conv.last_message,
@@ -102,7 +107,9 @@ export function useDMList() {
         };
       })
       // 차단된 유저 대화 필터링
-      .filter((conv: DMConversation) => !blockedIds.has(conv.other_user_id));
+      .filter((conv: DMConversation) =>
+        conv.other_user_id === null || !blockedIds.has(conv.other_user_id)
+      );
 
     setConversations(mapped);
     setLoading(false);
@@ -150,21 +157,29 @@ export function useDMChat(conversationId: string) {
 
       if (data) {
         // batch fetch sender profiles
-        const senderIds = [...new Set(data.map((m: DMMessage) => m.sender_id))];
-        const { data: profiles } = await supabase
-          .from("profiles")
-          .select("id, nickname, team_id")
-          .in("id", senderIds);
+        const senderIds = [
+          ...new Set(
+            data
+              .map((m: DMMessage) => m.sender_id)
+              .filter((id): id is string => id !== null),
+          ),
+        ];
+        const { data: profiles } = senderIds.length > 0
+          ? await supabase
+              .from("profiles")
+              .select("id, nickname, team_id")
+              .in("id", senderIds)
+          : { data: [] };
 
         const profileMap = new Map(
           (profiles ?? []).map((p: { id: string; nickname: string; team_id: number | null }) => [p.id, p])
         );
 
         const mapped = data.reverse().map((m: DMMessage) => {
-          const prof = profileMap.get(m.sender_id);
+          const prof = m.sender_id ? profileMap.get(m.sender_id) : undefined;
           return {
             ...m,
-            sender_nickname: prof?.nickname ?? "익명",
+            sender_nickname: m.sender_id ? (prof?.nickname ?? "익명") : "탈퇴한 사용자",
             sender_team_id: prof?.team_id,
           };
         });
@@ -185,7 +200,7 @@ export function useDMChat(conversationId: string) {
       .update({ is_read: true })
       .eq("conversation_id", conversationId)
       .eq("is_read", false)
-      .neq("sender_id", user.id)
+      .or(`sender_id.neq.${user.id},sender_id.is.null`)
       .then(() => {});
   }, [user, conversationId, messages.length]);
 
@@ -213,18 +228,26 @@ export function useDMChat(conversationId: string) {
           });
           if (alreadyPresent) return;
 
-          const { data: prof } = await supabase
-            .from("profiles")
-            .select("nickname, team_id")
-            .eq("id", msg.sender_id)
-            .single();
+          const { data: prof } = msg.sender_id
+            ? await supabase
+                .from("profiles")
+                .select("nickname, team_id")
+                .eq("id", msg.sender_id)
+                .maybeSingle()
+            : { data: null };
 
           setMessages((prev) =>
             prev.some((m) => m.id === msg.id)
               ? prev
               : [
                   ...prev,
-                  { ...msg, sender_nickname: prof?.nickname ?? "익명", sender_team_id: prof?.team_id },
+                  {
+                    ...msg,
+                    sender_nickname: msg.sender_id
+                      ? (prof?.nickname ?? "익명")
+                      : "탈퇴한 사용자",
+                    sender_team_id: prof?.team_id,
+                  },
                 ]
           );
 
@@ -256,7 +279,7 @@ export function useDMChat(conversationId: string) {
           .from("dm_conversations")
           .select("user1_id, user2_id")
           .eq("id", conversationId)
-          .single();
+          .maybeSingle();
         if (!conv) return { ok: false, conversationId: null };
         targetUserId = conv.user1_id === user.id ? conv.user2_id : conv.user1_id;
       }

@@ -3,9 +3,27 @@ import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { isAdminAuthedRequest } from "@/lib/admin/pin";
 
 /**
- * GET /api/admin/today-detail?type=posts|comments|photos|chats
+ * GET /api/admin/today-detail?type=posts|comments|photos|chats|venue_videos|venue_photos
  * 오늘 KST 기준 상세 목록 반환
  */
+
+/** teamId(1-10) ↔ KBO 2자 코드 → 짧은 팀명. gameId(YYYYMMDD{AWAY}{HOME}N) 라벨용. */
+const KBO_CODE_TO_SHORT: Record<string, string> = {
+  LG: "LG", OB: "두산", KT: "KT", SK: "SSG", NC: "NC",
+  HT: "KIA", LT: "롯데", SS: "삼성", HH: "한화", WO: "키움",
+};
+
+/** gameId → "7.26 한화 vs LG"처럼 사람이 읽는 경기 라벨. 파싱 실패 시 원본 gameId. */
+function gameLabel(gameId: string, stadium?: string | null): string {
+  const m = gameId.match(/^(\d{4})(\d{2})(\d{2})([A-Z]{2})([A-Z]{2})\d$/);
+  if (!m) return stadium ? `${gameId} · ${stadium}` : gameId;
+  const [, , mo, d, away, home] = m;
+  const awayName = KBO_CODE_TO_SHORT[away] ?? away;
+  const homeName = KBO_CODE_TO_SHORT[home] ?? home;
+  const dateStr = `${Number(mo)}.${Number(d)}`;
+  const base = `${dateStr} ${awayName} vs ${homeName}`;
+  return stadium ? `${base} · ${stadium}` : base;
+}
 
 function postLink(boardType: unknown, boardId: unknown, postId: unknown, newsUrl?: string): string {
   if (boardType === "announcement") return "/whats-new"; // 새소식 댓글용 브리지 포스트
@@ -30,9 +48,13 @@ function getTodayKSTRange() {
   const now = new Date();
   const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
   const dateStr = kst.toISOString().slice(0, 10);
+  // 다음날 00:00:00 KST (exclusive upper) — 23:59:59.xxx fractional 누락 방지.
+  const nextKst = new Date(kst.getTime() + 24 * 60 * 60 * 1000);
+  const nextDateStr = nextKst.toISOString().slice(0, 10);
   return {
     start: `${dateStr}T00:00:00+09:00`,
     end: `${dateStr}T23:59:59+09:00`,
+    endExclusive: `${nextDateStr}T00:00:00+09:00`,
   };
 }
 
@@ -42,11 +64,11 @@ export async function GET(req: NextRequest) {
   }
 
   const type = req.nextUrl.searchParams.get("type");
-  if (!type || !["posts", "comments", "photos", "chats"].includes(type)) {
+  if (!type || !["posts", "comments", "photos", "chats", "venue_videos", "venue_photos"].includes(type)) {
     return NextResponse.json({ error: "invalid type" }, { status: 400 });
   }
 
-  const { start, end } = getTodayKSTRange();
+  const { start, end, endExclusive } = getTodayKSTRange();
 
   if (type === "posts") {
     const { data, error } = await supabase
@@ -171,6 +193,71 @@ export async function GET(req: NextRequest) {
         title: "",
         content: typeof m.content === "string" ? m.content : "",
         link: gameId ? `/games/${gameId}` : "",
+      };
+    });
+
+    return NextResponse.json({ items, topAuthors: topAuthors(items) });
+  }
+
+  if (type === "venue_videos" || type === "venue_photos") {
+    const mediaType = type === "venue_videos" ? "video" : "image";
+    // 카드(venue_story_upload_daily 롤업)와 1:1 정합: upload_counted_at 마커가 있는
+    // 행(=처음 active+story_geofence 전이)만 조회. pending/검증실패/admin_qa/legacy는 마커 NULL 로 제외,
+    // 이후 removed/archived 로 바뀌어도 마커 보존(롤업 무차감과 대칭).
+    // query-guard: bounded -- 오늘 KST 범위(created_at gte/lt exclusive) + media_type + counted 필터, created_at desc 고정 200건 상한(페이지네이션 없음).
+    const { data, error } = await supabase
+      .from("venue_stories")
+      .select("id, game_id, media_type, media_url, thumb_url, caption, stadium_name, created_at, user_id, status")
+      .eq("media_type", mediaType)
+      .not("upload_counted_at", "is", null)
+      .gte("created_at", start)
+      .lt("created_at", endExclusive)
+      .order("created_at", { ascending: false })
+      .limit(200);
+
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+    const rows = data ?? [];
+    const userIds = [...new Set(rows.map((r: { user_id: string }) => r.user_id))];
+    const nickMap = new Map<string, string>();
+    if (userIds.length > 0) {
+      // query-guard: bounded -- rows≤200의 distinct user_id(≤200) unique-key(id) 조회.
+      const { data: profiles } = await supabase
+        .from("profiles")
+        .select("id, nickname")
+        .in("id", userIds);
+      for (const p of (profiles ?? []) as { id: string; nickname: string }[]) {
+        nickMap.set(p.id, p.nickname ?? "익명");
+      }
+    }
+
+    // counted 행이어도 이후 상태 변화(신고삭제/보관)를 숨기지 않고 배지로 명시(삼순: 조용히 섞지 않기).
+    const statusBadge: Record<string, string> = {
+      active: "",
+      archived: "[보관]",
+      removed: "[삭제됨]",
+      cleanup_failed: "[정리실패]",
+    };
+
+    const items = rows.map((r: Record<string, unknown>) => {
+      const gameId = String(r.game_id ?? "");
+      const label = gameLabel(gameId, r.stadium_name as string | null);
+      const badge = statusBadge[String(r.status ?? "")] ?? "";
+      const caption = typeof r.caption === "string" && r.caption ? r.caption : "";
+      const content = badge ? (caption ? `${badge} ${caption}` : badge) : caption;
+      // 미리보기: 영상은 thumb_url 우선(없으면 생략), 사진은 media_url.
+      const preview =
+        mediaType === "video"
+          ? (r.thumb_url as string | null) ?? null
+          : (r.media_url as string | null) ?? null;
+      return {
+        id: r.id as number,
+        time: r.created_at as string,
+        nickname: nickMap.get(r.user_id as string) ?? "익명",
+        title: label,
+        content,
+        link: gameId ? `/games/${gameId}` : "",
+        imageUrls: preview ? [preview] : [],
       };
     });
 

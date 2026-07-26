@@ -466,7 +466,7 @@ async function getCached(gameId: string): Promise<{ summary: Record<string, unkn
       .from("game_summaries")
       .select("summary, prompt_version")
       .eq("game_id", cacheKey(gameId))
-      .single();
+      .maybeSingle(); // cache/optional lookup: no-rowuB294 uC815uC0C1 u2014 406 uBC29uC9C0
     if (!data?.summary) return null;
     const outdated = (data.prompt_version ?? 0) < ANALYSIS_VERSION;
     return { summary: data.summary as Record<string, unknown>, outdated };

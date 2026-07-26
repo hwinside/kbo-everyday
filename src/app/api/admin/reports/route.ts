@@ -27,7 +27,13 @@ export async function GET(req: NextRequest) {
   const rows = data ?? [];
 
   // 신고자 닉네임 보강
-  const reporterIds = [...new Set(rows.map((r) => r.reporter_id))];
+  const reporterIds = [
+    ...new Set(
+      rows
+        .map((r) => r.reporter_id)
+        .filter((id): id is string => id !== null),
+    ),
+  ];
   // query-guard: bounded -- rows≤200의 distinct reporter_id(≤200) unique-key(id) 조회.
   const { data: profiles } = reporterIds.length > 0
     ? await supabase.from("profiles").select("id, nickname").in("id", reporterIds)

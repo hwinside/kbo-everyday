@@ -1,13 +1,21 @@
-import { sendFcmToUsers } from "@/lib/notifications/fcm";
+import { randomUUID } from "node:crypto";
+import { sendFcmToTokens } from "@/lib/notifications/fcm";
+import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { isKboGameCancelled } from "@/lib/crawler/kbo-status";
 import { teamIdByShortName } from "@/lib/notifications/game-status";
-import { claimEvent, unclaimEvent } from "@/lib/notifications/game-score";
 import { resolvePhantomSingle, inheritHitRbi } from "@/lib/notifications/score-dedupe";
 import { resolvePlayer, resolveUniquePlayerByName } from "@/lib/utils/resolve-player";
 import { isAllStarGameId } from "@/lib/constants/teams";
 import { fetchFavoritePlayerFanIds } from "@/lib/notifications/audience";
 import type { KboRawGame } from "@/types/api";
 import type { GameEvent, GameEventType } from "@/types/game-events";
+import {
+  drainDueHighlightSnapshots,
+  mapHighlightSettlements,
+  persistHighlightSnapshotBeforeAudience,
+  shouldProcessHighlightEvent,
+  type ClaimedHighlightToken,
+} from "@/lib/notifications/player-highlight-delivery";
 
 // 최애선수 활약(타자) 알림 (push-notifications-v1 S5b).
 // warmup cron이 game-events에서 받는 장타/홈런 이벤트의 타자를 최애선수로 둔
@@ -42,13 +50,14 @@ const HIGHLIGHT_PARTICLE: Partial<Record<GameEventType, string>> = {
   at_bat_hit: "로",
 };
 
-// freshness 컷오프 (삼순 #274 NO-GO 패턴): 신규 dedup namespace에 진입하는 빈번 이벤트는
+// freshness 컷오프 (삼순 #274 NO-GO 패턴): 신규 dedup namespace에 진입하는 이벤트는
 // 배포/활성화 직후 warmup이 넘기는 *전체 경기 history*의 과거분이 한꺼번에 claim·발송되는
 // backlog 플러시 위험이 있다(#271 inning-summary와 동일). 적용 대상:
 //  - at_bat_strikeout(#fav-so, 기본 on)
-//  - at_bat_hit(#fav, 신규 추가 + 단타는 빈번) ← 없으면 배포 즉시 진행 경기의 과거 안타 일괄 발송
-// 매분 cron이 갓 잡힌 이벤트를 1~2분 내 처리하므로 FRESH_MS(10분) 밖은 skip.
-// 기존 장타(at_bat_double/triple/homerun, #fav)는 prod 안전성 유지 위해 컷오프 미적용.
+//  - 모든 타자 활약(#fav): token별 dedup 원장으로 전환되어 기존 global event claim을
+//    재사용할 수 없으므로 장타까지 포함해야 배포 중 진행 경기의 과거분 재발송을 막는다.
+// 매분 cron이 갓 잡힌 이벤트를 1~2분 내 처리하고 start pending은 90초 안에 종결되므로
+// FRESH_MS(10분) 밖은 skip한다.
 const FRESH_MS = 10 * 60 * 1000;
 
 // 2026 올스타 참가선수 중 우리 로스터에 동명이인이 있어 이름만으로 특정 불가한 선수 →
@@ -60,11 +69,104 @@ const ALLSTAR_2026_DUP_KBOID: Record<string, string> = {
   최원준: "66606",
 };
 
+type DurableHighlightSnapshot = {
+  eventId: string;
+  gameId: string;
+  playerId: string;
+  prefKey: "fav_player_highlight" | "fav_player_strikeout";
+  startTeamIds: number[];
+  title: string;
+  body: string;
+  url: string;
+  snapshotCompleted: boolean;
+};
+
+async function drainHighlightSnapshot(
+  snapshot: DurableHighlightSnapshot,
+  userIds: string[],
+  startAcceptedBeforeMs: number,
+  deadlineAtMs?: number,
+): Promise<number> {
+  let acceptedTotal = 0;
+  let firstClaim = true;
+
+  while (deadlineAtMs == null || Date.now() < deadlineAtMs) {
+    const leaseToken = randomUUID();
+    // 한 RPC transaction에서 audience 전체 insert + snapshot 완료를 함께 수행한다.
+    // worker crash는 transaction 전체 rollback이고, incomplete row는 playerId로 audience를
+    // 다시 전량 열거하므로 일부 chunk만 completed로 굳는 창이 없다.
+    // query-guard: bounded -- SQL이 반환 claim을 p_limit 최대 500행으로 clamp한다.
+    const { data, error } = await supabase.rpc("claim_player_highlight_tokens", {
+      p_event_id: snapshot.eventId,
+      p_game_id: snapshot.gameId,
+      p_player_id: snapshot.playerId,
+      p_start_team_ids: snapshot.startTeamIds,
+      p_user_ids: firstClaim ? userIds : [],
+      p_pref_key: snapshot.prefKey,
+      p_push_title: snapshot.title,
+      p_push_body: snapshot.body,
+      p_push_url: snapshot.url,
+      p_finalize_snapshot: true,
+      p_start_accepted_before: new Date(startAcceptedBeforeMs).toISOString(),
+      p_lease_token: leaseToken,
+      p_lease_seconds: 20,
+      p_limit: 500,
+    });
+    if (error) throw new Error(`highlight token barrier: ${error.message}`);
+    firstClaim = false;
+
+    const claimedTokens: ClaimedHighlightToken[] = [];
+    for (const row of data ?? []) {
+      const claimed = row as { token_id?: number; token_hash?: string; fcm_token?: string };
+      if (claimed.token_id != null && claimed.token_hash && claimed.fcm_token) {
+        claimedTokens.push({
+          tokenId: claimed.token_id,
+          tokenHash: claimed.token_hash,
+          fcmToken: claimed.fcm_token,
+        });
+      }
+    }
+    if (claimedTokens.length === 0) break;
+
+    const transportDeadlineAtMs = Math.min(
+      deadlineAtMs ?? Date.now() + 8_000,
+      Date.now() + 8_000,
+    );
+    const res = await sendFcmToTokens(claimedTokens.map((row) => row.fcmToken), {
+      title: snapshot.title,
+      body: snapshot.body,
+      url: snapshot.url,
+    }, { deadlineAtMs: transportDeadlineAtMs });
+    const settleResults = mapHighlightSettlements(
+      claimedTokens,
+      res.outcomes ?? [],
+      res.lastError ?? null,
+    );
+    // query-guard: bounded -- claim RPC 최대 500행의 token별 FCM 결과를 단일 settle한다.
+    const { data: accepted, error: settleError } = await supabase.rpc(
+      "settle_player_highlight_tokens",
+      { p_results: settleResults, p_lease_token: leaseToken },
+    );
+    if (settleError) throw new Error(`highlight token settle: ${settleError.message}`);
+    acceptedTotal += Number(accepted ?? 0);
+    if (claimedTokens.length < 500) break;
+  }
+
+  return acceptedTotal;
+}
+
 export async function notifyPlayerHighlights(
   games: KboRawGame[],
   eventsByGame: Map<string, GameEvent[]>,
+  opts?: {
+    /** 현재 nominal minute 시작. 이 bucket 안에서 accepted된 start는 다음 minute까지 release 금지. */
+    startAcceptedBeforeMs?: number;
+    /** 이 시각 이후 새 FCM transport를 시작하지 않는다. */
+    deadlineAtMs?: number;
+  },
 ): Promise<{ highlighted: number }> {
   let highlighted = 0;
+  const startAcceptedBeforeMs = opts?.startAcceptedBeforeMs ?? Date.now();
   const gameById = new Map(games.map((g) => [g.G_ID, g]));
 
   for (const [gameId, events] of eventsByGame) {
@@ -72,6 +174,8 @@ export async function notifyPlayerHighlights(
     if (!g || isKboGameCancelled(g.CANCEL_SC_ID)) continue;
     const away = g.AWAY_NM ?? "";
     const home = g.HOME_NM ?? "";
+    const startTeamIds = [teamIdByShortName(away), teamIdByShortName(home)]
+      .filter((id): id is number => id !== null);
     const url = `/games/${gameId}`;
     // 올스타전 여부 — 선수 resolve 방식(이름 유일 매칭)과 [올스타전] 알림 태그에 사용.
     const isAllStar = isAllStarGameId(gameId);
@@ -82,12 +186,8 @@ export async function notifyPlayerHighlights(
       const isStrikeout = ev.type === "at_bat_strikeout";
       if (!HIGHLIGHT_TYPES.has(ev.type) && !isStrikeout) continue;
 
-      // 삼진·단타(신규 dedup 진입 + 빈번): 배포 전/이전 이닝의 과거분 skip → backlog
-      // 일괄 발송 방지(삼순 #274 패턴). 기존 장타는 prod 안전성 위해 컷오프 미적용.
-      if (isStrikeout || ev.type === "at_bat_hit") {
-        const evMs = Date.parse(ev.timestamp);
-        if (Number.isFinite(evMs) && Date.now() - evMs > FRESH_MS) continue;
-      }
+      // token별 dedup namespace 배포 전/이전 이닝의 과거분 skip → backlog 일괄 발송 방지.
+      const evMs = Date.parse(ev.timestamp);
 
       // 교차-폴링 유령 단타: 적시(rbi>0) 단타는 H 카운트 선반영으로 생긴 홈런/장타일 수 있어
       // 한 폴링 확인한다(고객 2026-06-27 오스틴 만루홈런 "안타로 4타점" 오발송).
@@ -121,23 +221,17 @@ export async function notifyPlayerHighlights(
           );
       if (!resolved) continue;
 
-      // dedup 키 선점을 팬 조회 *전*에 먼저 — 이벤트 발생 당시 기준으로 마킹해야
-      // 경기 중 누가 그 선수를 최애로 추가해도 과거 알림이 뒤늦게 안 감(삼순 #214-③).
-      // 활약/삼진은 별개 타입이라 suffix로 키 분리.
       const dedupId = isStrikeout ? `${ev.id}#fav-so` : `${ev.id}#fav`;
-      if (!(await claimEvent(dedupId, gameId))) continue; // 이미 발송됨/보류
-      if (phantom === "suppress") continue; // 유령 단타 — 같은 타석 홈런/장타 알림이 대체(claim으로 종결)
+      if (phantom === "suppress") continue;
 
-      // 이 선수를 최애선수로 둔 유저 (favorite_players: [{playerId: kboId}])
-      let userIds: string[];
-      try {
-        userIds = await fetchFavoritePlayerFanIds(resolved.kboId);
-      } catch {
-        await unclaimEvent(dedupId);
-        continue;
-      } // 조회 실패 → 선점 해제 후 재시도
-      if (userIds.length === 0) continue; // 최애로 둔 유저 없음 — claim 유지(과거 알림 방지)
-
+      // 기존 frozen snapshot은 아래 source-independent due drain이 담당한다. live source에서는
+      // 신규 freshness만 판정해 과거 history를 새 durable row로 만들지 않는다.
+      if (!shouldProcessHighlightEvent({
+        eventAtMs: evMs,
+        nowMs: Date.now(),
+        freshnessMs: FRESH_MS,
+        hasFrozenSnapshot: false,
+      })) continue;
       // 타점(detail.rbi)이 있으면 "{라벨}{으로/로} N타점 획득!", 0타점이면 "{라벨}!" (하린아빠 확정)
       const label = HIGHLIGHT_LABEL[ev.type] ?? "활약";
       // 홈런/장타가 교차폴링으로 자기 rbi 0이면 유령 단타의 타점을 물려받아 "홈런으로 N타점"으로 합침.
@@ -155,15 +249,93 @@ export async function notifyPlayerHighlights(
             : `⚾ ${resolved.name} ${label}!`;
       // 올스타전 알림은 [올스타전] 태그 prefix (하린아빠 지시 2026-07-11).
       const title = isAllStar ? `[올스타전] ${baseTitle}` : baseTitle;
-      const res = await sendFcmToUsers(userIds, {
+      const prefKey = isStrikeout ? "fav_player_strikeout" : "fav_player_highlight";
+      const snapshot: DurableHighlightSnapshot = {
+        eventId: dedupId,
+        gameId,
+        playerId: resolved.kboId,
+        prefKey,
+        startTeamIds,
         title,
         body: `${away} vs ${home}`,
         url,
-      }, isStrikeout ? "fav_player_strikeout" : "fav_player_highlight");
-      if (!res.ok) { await unclaimEvent(dedupId); continue; } // 인프라 실패 → 재시도
-      highlighted += res.sent;
+        snapshotCompleted: false,
+      };
+      // 마지막 live play가 이 tick 직후 final로 source에서 사라져도 복구할 수 있도록
+      // audience lookup보다 payload snapshot을 먼저 durable upsert한다. fan 조회와 claim은
+      // 아래 due 단일 경로에서 snapshot별 deadline으로만 실행한다.
+      const persisted = await persistHighlightSnapshotBeforeAudience({
+        snapshot,
+        deadlineAtMs: opts?.deadlineAtMs,
+        persist: async (fresh, signal) => {
+          const { error } = await supabase
+            .from("player_highlight_event_snapshots")
+            .upsert({
+              event_id: fresh.eventId,
+              game_id: fresh.gameId,
+              player_id: fresh.playerId,
+              pref_key: fresh.prefKey,
+              start_team_ids: fresh.startTeamIds,
+              push_title: fresh.title,
+              push_body: fresh.body,
+              push_url: fresh.url,
+              snapshot_completed: false,
+            }, {
+              onConflict: "event_id",
+              ignoreDuplicates: true,
+            })
+            .abortSignal(signal);
+          if (error) throw new Error(`highlight snapshot persist: ${error.message}`);
+        },
+      });
+      if (!persisted) {
+        throw new Error(`highlight snapshot persist deadline: ${dedupId}`);
+      }
     }
   }
+
+  // source-independent drain: 경기가 final이 되거나 eventsByGame이 비어도 frozen payload로
+  // incomplete snapshot resume, transient retry, deadline terminalization을 계속한다.
+  // query-guard: bounded -- RPC가 현재 claim 가능하거나 incomplete인 snapshot만 최대 50개 반환한다.
+  const { data: dueSnapshots, error: dueError } = await supabase.rpc(
+    "list_due_player_highlight_snapshots",
+    {
+      p_limit: 50,
+      p_start_accepted_before: new Date(startAcceptedBeforeMs).toISOString(),
+    },
+  );
+  if (dueError) throw new Error(`highlight due snapshots: ${dueError.message}`);
+  type DueSnapshot = {
+    event_id: string;
+    game_id: string;
+    player_id: string;
+    pref_key: "fav_player_highlight" | "fav_player_strikeout";
+    start_team_ids: number[];
+    push_title: string;
+    push_body: string;
+    push_url: string;
+    snapshot_completed: boolean;
+  };
+  highlighted += await drainDueHighlightSnapshots({
+    snapshots: (dueSnapshots ?? []) as DueSnapshot[],
+    needsAudience: (due) => !due.snapshot_completed,
+    fetchAudience: (due, deadlineAtMs) => fetchFavoritePlayerFanIds(
+      due.player_id,
+      { deadlineAtMs },
+    ),
+    drain: (due, userIds) => drainHighlightSnapshot({
+      eventId: due.event_id,
+      gameId: due.game_id,
+      playerId: due.player_id,
+      prefKey: due.pref_key,
+      startTeamIds: due.start_team_ids,
+      title: due.push_title,
+      body: due.push_body,
+      url: due.push_url,
+      snapshotCompleted: due.snapshot_completed,
+    }, userIds, startAcceptedBeforeMs, opts?.deadlineAtMs),
+    deadlineAtMs: opts?.deadlineAtMs,
+  });
 
   return { highlighted };
 }

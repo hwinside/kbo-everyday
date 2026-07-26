@@ -29,7 +29,7 @@ export async function GET(request: NextRequest) {
       .from("profiles")
       .select("*")
       .eq("id", user.id)
-      .single();
+      .maybeSingle();
 
     return NextResponse.json({ profile });
   } catch (e) {

@@ -247,7 +247,7 @@ export async function POST(
       .from("dm_messages")
       .update({ is_read: true })
       .eq("conversation_id", res.conversationId)
-      .neq("sender_id", systemUserId)
+      .or(`sender_id.neq.${systemUserId},sender_id.is.null`)
       .eq("is_read", false);
   }
 

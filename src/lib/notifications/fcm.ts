@@ -4,6 +4,7 @@ import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { DEFAULT_PREFS, type PrefKey } from "@/lib/notifications/prefs";
 import { fetchAllByKeyset } from "@/lib/db/paginate";
 import { deliverTokenChunks } from "@/lib/notifications/fcm-batch";
+import type { TokenDeliveryOutcome } from "@/lib/notifications/fcm-batch";
 import { isDeadlineExceeded, runBeforeDeadline } from "@/lib/async-deadline";
 import {
   sendDeadlineFcmChunk,
@@ -112,6 +113,8 @@ export interface SendResult {
   retryableFailed?: number;
   sendStartedAtMs?: number;
   sendCompletedAtMs?: number;
+  /** 토큰별 FCM 접수/실패 결과. device 실도달과는 다른 서버 접수 지표다. */
+  outcomes?: TokenDeliveryOutcome[];
 }
 
 interface FcmSendOptions {
@@ -304,18 +307,18 @@ export async function sendFcmToTokens(
               },
             }
           : {}),
-        ...(payload.apnsBackground
+        ...(payload.apnsBackground || payload.apnsCollapseId || payload.apnsExpirationSeconds != null
           ? {
               apns: {
                 headers: {
-                  "apns-push-type": "background",
-                  "apns-priority": "5",
+                  "apns-push-type": payload.apnsBackground ? "background" : "alert",
+                  "apns-priority": payload.apnsBackground ? "5" : "10",
                   ...(payload.apnsCollapseId ? { "apns-collapse-id": payload.apnsCollapseId } : {}),
                   ...(payload.apnsExpirationSeconds != null
                     ? { "apns-expiration": String(Math.floor(Date.now() / 1000) + payload.apnsExpirationSeconds) }
                     : {}),
                 },
-                payload: { aps: { "content-available": 1 } },
+                payload: { aps: payload.apnsBackground ? { "content-available": 1 } : {} },
               },
             }
           : {}),
@@ -332,12 +335,12 @@ export async function sendFcmToTokens(
       ...(Object.keys(androidCfg).length ? { android: androidCfg } : {}),
       // iOS 무음 백그라운드 푸시(Layer 2) — 배너 없이 앱을 깨워 LA 토큰 등록. content-available:1
       // + apns-push-type:background + priority 5(무음 필수). Android엔 apns 블록 무영향.
-      ...(payload.apnsBackground
+      ...(payload.apnsBackground || payload.apnsCollapseId || payload.apnsExpirationSeconds != null
         ? {
             apns: {
               headers: {
-                "apns-push-type": "background",
-                "apns-priority": "5",
+                "apns-push-type": payload.apnsBackground ? "background" : "alert",
+                "apns-priority": payload.apnsBackground ? "5" : "10",
                 // 지연 배달 백로그 방지(삼순 #674 blocker③) — 같은 collapse-id는 최신 1건만,
                 // 짧은 expiration은 미배달 stale을 폐기(다음 발송이 공 덮어쓰는 스트림 전용).
                 ...(payload.apnsCollapseId ? { "apns-collapse-id": payload.apnsCollapseId } : {}),
@@ -345,7 +348,7 @@ export async function sendFcmToTokens(
                   ? { "apns-expiration": String(Math.floor(Date.now() / 1000) + payload.apnsExpirationSeconds) }
                   : {}),
               },
-              payload: { aps: { "content-available": 1 } },
+              payload: { aps: payload.apnsBackground ? { "content-available": 1 } : {} },
             },
           }
         : {}),
@@ -381,5 +384,6 @@ export async function sendFcmToTokens(
     retryableFailed: delivery.retryableFailed,
     sendStartedAtMs,
     sendCompletedAtMs: Date.now(),
+    outcomes: delivery.outcomes,
   };
 }

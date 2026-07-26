@@ -114,7 +114,7 @@ export async function getOrCreateProfile(userId: string, defaults?: { nickname: 
     .from("profiles")
     .select("*")
     .eq("id", userId)
-    .single();
+    .maybeSingle();
 
   if (profile) return profile;
 
