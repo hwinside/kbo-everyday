@@ -1,3 +1,4 @@
+import { createServerClient } from "@supabase/ssr";
 import {
   NextResponse,
   type NextRequest,
@@ -5,6 +6,49 @@ import {
 } from "next/server";
 
 const CANONICAL_HOST = "keubo.fan";
+
+export function hasSupabaseAuthCookie(
+  cookieNames: readonly string[],
+  supabaseUrl: string | undefined,
+): boolean {
+  if (!supabaseUrl) return false;
+
+  try {
+    const projectRef = new URL(supabaseUrl).hostname.split(".")[0];
+    if (!projectRef) return false;
+    const cookiePrefix = `sb-${projectRef}-auth-token`;
+    return cookieNames.some(
+      (name) => name === cookiePrefix || name.startsWith(`${cookiePrefix}.`),
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 서버측 세션 갱신은 오직 최상위 문서(top-level document) 네비게이션에서만 수행한다.
+ *
+ * 배경(2026-07-27, PR #890 리뷰):
+ *  - 매 RSC/prefetch 요청마다 getClaims()로 세션을 갱신하면, 한 페이지가 유발하는 다수의
+ *    동시 RSC/prefetch가 같은 refresh token을 두고 경합 → GoTrue refresh-token rate limit
+ *    (403/429)을 유발한다. (24h 실측 4,728×403 + 679×429)
+ *  - 그렇다고 서버 갱신을 전면 제거하면, access token 만료 + refresh token 유효 상태에서
+ *    fresh navigation 시 서버 렌더가 익명으로 보이는 회귀가 생긴다.
+ *  => 절충: 실제 문서 네비게이션(sec-fetch-dest: document)에서만 갱신해 서버 auth gate와
+ *     cookie rotation을 유지하고, RSC/prefetch(빈 dest·RSC 헤더)는 건너뛰어 경합을 없앤다.
+ */
+export function isTopLevelDocumentNavigation(request: NextRequest): boolean {
+  // Next.js RSC/prefetch 요청은 절대 서버 갱신을 트리거하면 안 된다(토큰 경합의 근원).
+  if (request.headers.get("rsc")) return false;
+  if (request.headers.get("next-router-prefetch")) return false;
+
+  const dest = request.headers.get("sec-fetch-dest");
+  // 실제 브라우저 문서 네비게이션만 'document'. RSC fetch 는 'empty'.
+  if (dest) return dest === "document";
+
+  // 헤더 부재(구형/일부 WebView)면 보수적으로 top-level 로 간주해 로그인 유지를 우선한다.
+  return true;
+}
 
 /**
  * 워치(갤워치 Wear OS + 애플워치) 앱 사용 계측 (2026-07-19 하린아빠 요청).
@@ -92,10 +136,51 @@ export async function proxy(request: NextRequest, event: NextFetchEvent) {
     return NextResponse.redirect(url, { status: 308 });
   }
 
-  // Auth session refresh is owned by the browser client. Running it here makes
-  // every RSC/prefetch request race on the same refresh token and can trip
-  // GoTrue's refresh-token rate limit.
-  return NextResponse.next({ request });
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const hasAuthCookie = hasSupabaseAuthCookie(
+    request.cookies.getAll().map(({ name }) => name),
+    supabaseUrl,
+  );
+
+  // Public users have no session to refresh.
+  if (!hasAuthCookie) {
+    return NextResponse.next({ request });
+  }
+
+  // Only real document navigations refresh the session. RSC/prefetch requests
+  // skip it so concurrent prefetches never race the same refresh token (403/429).
+  if (!isTopLevelDocumentNavigation(request)) {
+    return NextResponse.next({ request });
+  }
+
+  let supabaseResponse = NextResponse.next({ request });
+
+  const supabase = createServerClient(
+    supabaseUrl!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() {
+          return request.cookies.getAll();
+        },
+        setAll(cookiesToSet) {
+          cookiesToSet.forEach(({ name, value }) =>
+            request.cookies.set(name, value)
+          );
+          supabaseResponse = NextResponse.next({ request });
+          cookiesToSet.forEach(({ name, value, options }) =>
+            supabaseResponse.cookies.set(name, value, options)
+          );
+        },
+      },
+    }
+  );
+
+  // ES256 JWT는 JWKS로 로컬 검증한다. 만료 임박 세션 갱신은 getClaims 경로에서 유지되며,
+  // 매 RSC/prefetch 요청마다 갱신을 트리거하던 증폭은 top-level 게이트로 제거한다.
+  await supabase.auth.getClaims();
+
+  return supabaseResponse;
 }
 
 export const config = {

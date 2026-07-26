@@ -9,29 +9,46 @@ ALTER TABLE public.admin_page_views
   ADD CONSTRAINT admin_page_views_user_id_fkey
     FOREIGN KEY (user_id) REFERENCES auth.users (id) ON DELETE SET NULL;
 
+-- DMs and abuse reports are SHARED evidence: a single user's deletion must not
+-- erase the other participant's conversation history, nor destroy abuse-report
+-- evidence. Preserve the rows and anonymize the departed user's identity
+-- (SET NULL) instead of cascading. Columns are currently NOT NULL, so relax
+-- them first (DROP NOT NULL is a no-op if already nullable).
+ALTER TABLE public.dm_conversations
+  ALTER COLUMN user1_id DROP NOT NULL,
+  ALTER COLUMN user2_id DROP NOT NULL;
+
 ALTER TABLE public.dm_conversations
   DROP CONSTRAINT dm_conversations_user1_id_fkey,
   DROP CONSTRAINT dm_conversations_user2_id_fkey,
   ADD CONSTRAINT dm_conversations_user1_id_fkey
-    FOREIGN KEY (user1_id) REFERENCES auth.users (id) ON DELETE CASCADE,
+    FOREIGN KEY (user1_id) REFERENCES auth.users (id) ON DELETE SET NULL,
   ADD CONSTRAINT dm_conversations_user2_id_fkey
-    FOREIGN KEY (user2_id) REFERENCES auth.users (id) ON DELETE CASCADE;
+    FOREIGN KEY (user2_id) REFERENCES auth.users (id) ON DELETE SET NULL;
+
+ALTER TABLE public.dm_messages
+  ALTER COLUMN sender_id DROP NOT NULL;
 
 ALTER TABLE public.dm_messages
   DROP CONSTRAINT dm_messages_sender_id_fkey,
   ADD CONSTRAINT dm_messages_sender_id_fkey
-    FOREIGN KEY (sender_id) REFERENCES auth.users (id) ON DELETE CASCADE;
+    FOREIGN KEY (sender_id) REFERENCES auth.users (id) ON DELETE SET NULL;
 
 ALTER TABLE public.dm_reports
-  DROP CONSTRAINT dm_reports_conversation_id_fkey,
+  ALTER COLUMN reporter_id DROP NOT NULL,
+  ALTER COLUMN reported_user_id DROP NOT NULL;
+
+-- conversation_id keeps CASCADE, but conversations are now preserved (SET NULL
+-- above), so a participant's deletion no longer removes the conversation or its
+-- reports. reporter_id/reported_user_id anonymize so the report record and its
+-- linked conversation evidence survive.
+ALTER TABLE public.dm_reports
   DROP CONSTRAINT dm_reports_reporter_id_fkey,
   DROP CONSTRAINT dm_reports_reported_user_id_fkey,
-  ADD CONSTRAINT dm_reports_conversation_id_fkey
-    FOREIGN KEY (conversation_id) REFERENCES public.dm_conversations (id) ON DELETE CASCADE,
   ADD CONSTRAINT dm_reports_reporter_id_fkey
-    FOREIGN KEY (reporter_id) REFERENCES auth.users (id) ON DELETE CASCADE,
+    FOREIGN KEY (reporter_id) REFERENCES auth.users (id) ON DELETE SET NULL,
   ADD CONSTRAINT dm_reports_reported_user_id_fkey
-    FOREIGN KEY (reported_user_id) REFERENCES auth.users (id) ON DELETE CASCADE;
+    FOREIGN KEY (reported_user_id) REFERENCES auth.users (id) ON DELETE SET NULL;
 
 ALTER TABLE public.feedback
   DROP CONSTRAINT feedback_user_id_fkey,

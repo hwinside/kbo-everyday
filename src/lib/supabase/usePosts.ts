@@ -146,7 +146,7 @@ export function usePostDetail(postId: number) {
         .from("posts")
         .select("*, profiles(nickname, team_id, grade)")
         .eq("id", postId)
-        .single();
+        .maybeSingle(); // 삭제/미존재 글은 정상 no-row — .single()의 PGRST116 406을 유발하지 않는다.
 
       if (p) {
         const prof = p.profiles as unknown as Record<string, unknown> | null;
