@@ -38,6 +38,46 @@ export function shouldSendStartNotification(params: {
   return isStartNotificationFresh({ inningNo: params.inningNo, isTop: params.isTop });
 }
 
+/**
+ * (R1) "1회초 첫 타석이 끝나기 전" 판정 — payload-only (spec §3.2, 2026-07-26 인시던트).
+ *
+ * 첫 타석이 *끝나면* 반드시 아웃↑ / 주자 발생 / 득점 중 하나가 payload에 남는다. 따라서 아래
+ * 상태가 유지되는 동안만 "첫 타석 미종결"이 정확히 성립한다:
+ *   1회 && 초(top) && 0아웃 && 양팀 0:0 && 1·2·3루 주자 없음.
+ * (원정 1번타자 식별 없이 상태만으로 판정 — 라인업/record 추가 fetch 불필요, 외부 fetch 실패로
+ *  알림이 붕 뜨는 리스크 제거.)
+ *
+ * 루상 주자 신뢰성: KboRawGame.B{1,2,3}_BAT_ORDER_NO 를 코드베이스 전역이 `>0 = 해당 루 점유`로
+ * 파싱한다(game-events/game-live/contextual-stats/kbo-api 동일 규약) → 신뢰성 있는 payload
+ * 필드라 spec §3.2 각주의 안전근사(0아웃+0:0 only)가 아니라 **완전 판정**을 구현했다.
+ * (호출부에서 runnerOnBase = B1|B2|B3_BAT_ORDER_NO 중 하나라도 >0 로 합산해 전달.)
+ *
+ * 이닝 미보고(inningNo=null): scheduled→live 전환 첫 관측 순간 KBO가 GAME_INN_NO를 아직 안
+ * 채운 경우로, 0아웃·0:0·주자없음이면 개시 직후로 보고 창 안으로 인정(spec §3.2 "이닝 정보 없는
+ * 개시 직후는 신선"). 실제 라이브 payload는 항상 이닝을 채우므로 이 경로는 개시 순간에 한정되고,
+ * isTop===false(말)는 이닝 보고 여부와 무관하게 거부해 1회말/후반 오탐을 막는다.
+ */
+export function isWithinFirstAtBatWindow(params: {
+  /** KBO GAME_INN_NO. 개시 직후 미제공이면 null */
+  inningNo: number | null | undefined;
+  /** GAME_TB_SC === "T"(초) 여부. 미제공이면 null */
+  isTop: boolean | null | undefined;
+  /** OUT_CN */
+  outs: number | null | undefined;
+  awayScore: number | null | undefined;
+  homeScore: number | null | undefined;
+  /** B1|B2|B3_BAT_ORDER_NO 중 하나라도 >0 (루상 주자 존재) */
+  runnerOnBase: boolean | null | undefined;
+}): boolean {
+  const inning = typeof params.inningNo === "number" ? params.inningNo : null;
+  if (inning !== null && inning !== 1) return false; // 2회 이상 = 첫 타석 지남
+  if (params.isTop === false) return false; // 말(bottom) = 초 첫 타석 종료 이후
+  if ((params.outs ?? 0) > 0) return false; // 아웃 발생 = 타석 종결 흔적
+  if ((params.awayScore ?? 0) !== 0 || (params.homeScore ?? 0) !== 0) return false; // 득점 = 종결
+  if (params.runnerOnBase === true) return false; // 출루 = 종결
+  return true;
+}
+
 export function isStartNotificationFresh(params: {
   /** KBO GAME_INN_NO — 개시 직후 등 미제공이면 null */
   inningNo: number | null | undefined;
