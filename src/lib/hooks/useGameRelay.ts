@@ -16,9 +16,13 @@ export function useGameRelay(
   const [isLoading, setIsLoading] = useState(false);
   const mountedRef = useRef(true);
   const finalFetchedRef = useRef(false);
+  const inFlightRef = useRef(false);
 
   const fetchRelay = useCallback(async () => {
     if (!gameId) return;
+    if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
     setIsLoading(true);
     try {
       const params = new URLSearchParams({ gameId });
@@ -31,6 +35,7 @@ export function useGameRelay(
     } catch {
       // Silently fail — UI shows fallback
     } finally {
+      inFlightRef.current = false;
       if (mountedRef.current) setIsLoading(false);
     }
   }, [gameId, currentInning]);
@@ -42,9 +47,14 @@ export function useGameRelay(
       finalFetchedRef.current = false;
       fetchRelay();
       const timer = setInterval(fetchRelay, interval);
+      const onVisibilityChange = () => {
+        if (document.visibilityState === "visible") fetchRelay();
+      };
+      document.addEventListener("visibilitychange", onVisibilityChange);
       return () => {
         mountedRef.current = false;
         clearInterval(timer);
+        document.removeEventListener("visibilitychange", onVisibilityChange);
       };
     }
 

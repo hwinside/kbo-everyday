@@ -9,6 +9,7 @@ import { getTeamById, isAllStarGame, isAllStarGameId } from "@/lib/constants/tea
 import GameChat from "@/components/game/GameChat";
 import ContextualStatsBox from "@/components/game/ContextualStatsBox";
 import RelayPlayLine from "@/components/game/RelayPlayLine";
+import CurrentAtBatCard from "@/components/game/LivePitchByPitch";
 import { useRouter } from "next/navigation";
 import type { GameEvent } from "@/types/game-events";
 import type { GamePlay } from "@/lib/types";
@@ -33,6 +34,11 @@ interface KgwanTabProps {
   starterNames?: { away: string; home: string };
   lineupConfirmed?: boolean;
   gameRelay?: GameRelayResponse | null;
+  currentPitcher?: string | null;
+  currentBatter?: string | null;
+  balls?: number;
+  strikes?: number;
+  outs?: number;
 }
 
 /* ===== AI Preview Card (inline in KgwanTab) ===== */
@@ -291,12 +297,28 @@ function ScheduledView({ gameId, awayTeamId, homeTeamId, gameDate, gameStartTime
 
 /* ===== Play type → emoji ===== */
 /* ===== Live: Relay + Chat ===== */
-function LiveView({ gameId, homeTeamId, awayTeamId, gameEvents, gameRelay }: {
+function LiveView({
+  gameId,
+  homeTeamId,
+  awayTeamId,
+  gameEvents,
+  gameRelay,
+  currentPitcher,
+  currentBatter,
+  balls = 0,
+  strikes = 0,
+  outs = 0,
+}: {
   gameId: string;
   homeTeamId: number;
   awayTeamId: number;
   gameEvents: GameEvent[];
   gameRelay?: GameRelayResponse | null;
+  currentPitcher?: string | null;
+  currentBatter?: string | null;
+  balls?: number;
+  strikes?: number;
+  outs?: number;
 }) {
   const [expandedInning, setExpandedInning] = useState<string | null>(null);
   const [showPreviousInnings, setShowPreviousInnings] = useState(false);
@@ -318,6 +340,8 @@ function LiveView({ gameId, homeTeamId, awayTeamId, gameEvents, gameRelay }: {
   // 최신 이닝과 이전 이닝 분리
   const latestInning = orderedInnings.length > 0 ? orderedInnings[orderedInnings.length - 1] : null;
   const previousInnings = orderedInnings.slice(0, -1);
+  const currentAtBat = latestInning?.currentAtBat
+    ?? (currentBatter ? { batterName: currentBatter, pitches: [] } : null);
 
   // 최신 이닝(아래)으로 자동 스크롤
   useEffect(() => {
@@ -398,8 +422,25 @@ function LiveView({ gameId, homeTeamId, awayTeamId, gameEvents, gameRelay }: {
                   <span className="text-[10px] text-text-tertiary ml-auto">{totalPlays}타석</span>
                 </div>
 
+                {currentAtBat && (
+                  <CurrentAtBatCard
+                    batterName={currentAtBat.batterName}
+                    pitcherName={currentPitcher}
+                    pitches={currentAtBat.pitches}
+                    balls={balls}
+                    strikes={strikes}
+                    outs={outs}
+                    updatedAt={gameRelay?.updatedAt}
+                  />
+                )}
+
                 {latestInning.plays.length > 0 && (
-                  <div className="px-4 pb-2 space-y-1.5">
+                  <div className="px-4 pb-2">
+                    {currentAtBat && (
+                      <p className="pb-1 pt-0.5 text-[10px] font-semibold text-text-tertiary">
+                        이전 완료 타석 · 눌러서 투구 보기
+                      </p>
+                    )}
                     {latestInning.plays.map((play, idx) => (
                       <RelayPlayLine key={`${inningKey}-${idx}`} play={play} />
                     ))}
@@ -922,6 +963,11 @@ export default function KgwanTab({
   starterNames,
   lineupConfirmed,
   gameRelay,
+  currentPitcher,
+  currentBatter,
+  balls,
+  strikes,
+  outs,
 }: KgwanTabProps) {
   // 올스타전은 잠금/위젯 실시간 중계 미지원(네이티브 미대응) → 크관 상단 상시 안내.
   // 정규경기는 null이라 프래그먼트 출력이 기존과 동일(회귀 없음).
@@ -940,7 +986,18 @@ export default function KgwanTab({
     return (
       <>
         {allStarNotice}
-        <LiveView gameId={gameId} homeTeamId={homeTeamId} awayTeamId={awayTeamId} gameEvents={gameEvents} gameRelay={gameRelay} />
+        <LiveView
+          gameId={gameId}
+          homeTeamId={homeTeamId}
+          awayTeamId={awayTeamId}
+          gameEvents={gameEvents}
+          gameRelay={gameRelay}
+          currentPitcher={currentPitcher}
+          currentBatter={currentBatter}
+          balls={balls}
+          strikes={strikes}
+          outs={outs}
+        />
       </>
     );
   }

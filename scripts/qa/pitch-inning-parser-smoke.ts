@@ -186,6 +186,86 @@ const inningHeader: NaverTextRelay = { title: "3회말 KIA 공격", titleStyle: 
   check("T4 빈 batter 앞 타석 투구 미오염 (오지환 pitches=1)", oh?.pitches?.length === 1, JSON.stringify(oh?.pitches?.map((p) => p.num)));
 }
 
+// ── T5: 진행 중 타석 계약 — terminal 전 type:8 + pitches 를 currentAtBat 으로 반환 ──
+{
+  const innings = parse([
+    inningHeader,
+    {
+      title: "4번타자 오스틴",
+      titleStyle: "8",
+      textOptions: [
+        { seqno: 1, type: 8, text: "4번타자 오스틴" },
+        {
+          seqno: 2,
+          type: 1,
+          text: "1구 스트라이크",
+          pitchNum: 1,
+          stuff: "직구",
+          speed: "149",
+          currentGameState: { ball: "0", strike: "1", out: "1" },
+        },
+        {
+          seqno: 3,
+          type: 1,
+          text: "2구 볼",
+          pitchNum: 2,
+          stuff: "커브",
+          speed: "126",
+          currentGameState: { ball: "1", strike: "1", out: "1" },
+        },
+      ],
+    },
+  ]);
+  const current = innings[0]?.currentAtBat;
+  check("T5 진행 중 타자명 반환", current?.batterName === "오스틴", JSON.stringify(current));
+  check("T5 진행 중 투구 2개 순서 보존", current?.pitches.length === 2 && current.pitches[1]?.num === 2, JSON.stringify(current?.pitches));
+  check("T5 최신 투구 후 B/S/O 보존", current?.pitches[1]?.count?.ball === 1 && current.pitches[1]?.count?.strike === 1 && current.pitches[1]?.count?.out === 1);
+}
+
+// ── T6: terminal 도달 시 currentAtBat 제거 + 완료 타석으로 단일 이동 ──
+{
+  const innings = parse([
+    inningHeader,
+    {
+      title: "5번타자 문보경",
+      titleStyle: "8",
+      textOptions: [
+        { seqno: 1, type: 8, text: "5번타자 문보경" },
+        { seqno: 2, type: 1, text: "1구 타격", pitchNum: 1, stuff: "직구", speed: "151" },
+        { seqno: 3, type: 13, text: "문보경 : 우익수 앞 1루타" },
+      ],
+    },
+  ]);
+  check("T6 완료 후 currentAtBat 제거", innings[0]?.currentAtBat == null, JSON.stringify(innings[0]?.currentAtBat));
+  check("T6 완료 타석 pitches 단일 귀속", innings[0]?.plays[0]?.pitches?.length === 1, JSON.stringify(innings[0]?.plays));
+}
+
+// ── T7: 새 type:8 경계가 진행 중 타석 identity/pitches 를 함께 교체 ──
+{
+  const innings = parse([
+    inningHeader,
+    {
+      title: "6번타자 박동원",
+      titleStyle: "8",
+      textOptions: [
+        { seqno: 1, type: 8, text: "6번타자 박동원" },
+        { seqno: 2, type: 1, text: "1구 파울", pitchNum: 1, stuff: "직구", speed: "147" },
+      ],
+    },
+    {
+      title: "대타 김현수",
+      titleStyle: "8",
+      textOptions: [
+        { seqno: 3, type: 8, text: "대타 김현수" },
+        { seqno: 4, type: 1, text: "1구 볼", pitchNum: 1, stuff: "포크", speed: "132" },
+      ],
+    },
+  ]);
+  const current = innings[0]?.currentAtBat;
+  check("T7 새 타자 identity로 교체", current?.batterName === "김현수", JSON.stringify(current));
+  check("T7 앞 타석 투구 미오염", current?.pitches.length === 1 && current.pitches[0]?.stuff === "포크", JSON.stringify(current?.pitches));
+}
+
 console.log(`\npitch-inning-parser-smoke: ${pass} passed, ${fail} failed`);
 if (fail > 0) process.exit(1);
 }

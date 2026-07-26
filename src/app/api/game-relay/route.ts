@@ -31,6 +31,11 @@ export interface InningRelay {
   half: "top" | "bottom";
   teamName: string;
   plays: PlayEvent[];
+  /** 아직 결과(13/23)가 오지 않은 최신 타석. 라이브 화면 전용이며 완료 시 plays로 이동한다. */
+  currentAtBat?: {
+    batterName: string;
+    pitches: PitchDetail[];
+  };
 }
 
 export interface MatchupStats {
@@ -114,6 +119,8 @@ export interface GameRelayResponse {
   gameId: string;
   currentInning: number;
   innings: InningRelay[];
+  /** 마지막 성공한 네이버 relay fetch 시각. 캐시 응답도 원 fetch 시각을 유지한다. */
+  updatedAt?: string;
   matchup?: MatchupStats;
   playerStats?: RelayPlayerStats;
   linescore?: RelayLinescore;
@@ -269,10 +276,12 @@ export function parseInningRelays(textRelays: NaverTextRelay[]): InningRelay[] {
   // 확정 타석에 붙인다(삼순 pendingAtBat 요구). 같은 relay.textOptions 안이든 여러 relay에
   // 걸쳐 오든 동일하게 동작. 이닝 경계·결과 확정 시 비운다.
   let pendingPitches: PitchDetail[] = [];
+  let pendingBatterName: string | null = null;
 
   for (const relay of chronological) {
     if (relay.titleStyle === "0") {
       pendingPitches = [];
+      pendingBatterName = null;
       // Inning header: "1회초 LG 공격"
       const match = relay.title.match(/(\d+)회(초|말)\s*(.+?)\s*공격/);
       if (match) {
@@ -307,6 +316,9 @@ export function parseInningRelays(textRelays: NaverTextRelay[]): InningRelay[] {
         // 타석에 붙는 오염을 막기 위해 fail-closed reset 한다. terminal 소비 경로와
         // 함께 타석 경계에서 pendingPitches 잔류를 0으로 만드는 두 번째 방어선.
         pendingPitches = [];
+        const startText = opt.text.trim();
+        const startMatch = /^(?:\d+번타자|대타|대주자)\s+(.+)$/.exec(startText);
+        pendingBatterName = opt.batterRecord?.name?.trim() || startMatch?.[1]?.trim() || null;
       } else if (opt.type === 13 || opt.type === 23) {
         // At-bat result: "홍창기 : 우익수 앞 1루타"
         // type 13 = 일반 타석 결과, type 23 = 희생플라이/아웃/볼넷 등
@@ -316,6 +328,7 @@ export function parseInningRelays(textRelays: NaverTextRelay[]): InningRelay[] {
         // 섞이는 오염이 난다(삼순 리뷰 blocker).
         const consumedPitches = pendingPitches;
         pendingPitches = [];
+        pendingBatterName = null;
 
         const parts = opt.text.split(" : ");
         if (parts.length < 2) continue;
@@ -354,6 +367,13 @@ export function parseInningRelays(textRelays: NaverTextRelay[]): InningRelay[] {
         }
       }
     }
+  }
+
+  if (current && pendingBatterName) {
+    current.currentAtBat = {
+      batterName: pendingBatterName,
+      pitches: pendingPitches,
+    };
   }
 
   return innings;
@@ -897,6 +917,7 @@ export async function GET(req: NextRequest) {
       gameId,
       currentInning: maxInning,
       innings,
+      updatedAt: new Date().toISOString(),
       matchup: matchupWithCareer,
       playerStats,
       linescore,
