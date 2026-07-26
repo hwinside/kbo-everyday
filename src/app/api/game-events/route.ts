@@ -8,6 +8,7 @@ import type { KboRawGame } from "@/types/api";
 import { resolveCurrentPlayers } from "@/lib/kbo-player-mapping";
 import { isKboGameCancelled } from "@/lib/crawler/kbo-status";
 import { supabaseAdmin } from "@/lib/supabase/admin";
+import { deriveStartPlateAppearanceEvidence } from "@/lib/notifications/start-plate-appearance";
 
 // State is persisted in Supabase (table: game_event_state) so all Vercel
 // serverless instances share a single source of truth. Previous in-memory
@@ -82,6 +83,7 @@ function parseBoxScoreMinimal(data: unknown): GameDetailResponse["boxScore"] {
         hr, h2b, h3b, bb, so, sb: 0,
         avg: stripHtml(tail[4]) || ".000",
         isSubstitute,
+        plateAppearances: atBatResults.length,
       };
     }).filter(b => b.name !== "");
   }
@@ -279,7 +281,12 @@ export async function GET(req: NextRequest) {
       batter: currentLive.currentBatter || "",
     };
 
-    return NextResponse.json({ events: history, currentState });
+    const startPlateAppearance = deriveStartPlateAppearanceEvidence(
+      currentBoxScore?.awayBatters,
+      currentLive.currentBatter,
+    );
+
+    return NextResponse.json({ events: history, currentState, startPlateAppearance });
   } catch (e: unknown) {
     // Best-effort fallback — if Supabase itself is down, the original error
     // would have surfaced from the supabase client too, so wrap defensively
