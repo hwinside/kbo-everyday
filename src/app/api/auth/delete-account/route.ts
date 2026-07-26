@@ -33,10 +33,10 @@ export async function POST() {
 
   const admin = getSupabaseAdmin();
 
-  // Delete user data (profile, posts, etc.) — cascade handles most via FK
-  await admin.from("profiles").delete().eq("id", user.id);
-
-  // Delete the auth user itself
+  // The auth user is the deletion root. Public tables either cascade their
+  // user-owned rows or anonymize telemetry through database constraints.
+  // Do not delete the profile first: a failed auth deletion must not leave a
+  // signed-in user without a profile.
   const { error } = await admin.auth.admin.deleteUser(user.id);
 
   if (error) {

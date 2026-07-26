@@ -71,7 +71,7 @@ export default function DMChatPage() {
         .from("profiles")
         .select("nickname, team_id")
         .eq("id", oid)
-        .single();
+        .maybeSingle();
 
       if (prof) {
         setOtherName(prof.nickname ?? "상대방");
