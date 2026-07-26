@@ -2,7 +2,10 @@
 # venue_stories.upload_counted_at 마커 ↔ venue_story_upload_daily 롤업 1:1 정합 통합 회귀
 # (삼순 PR #885 NO-GO 지정 필수 회귀).
 #
-# 임시 로컬 Postgres 에 upload_daily(롤업) + counted_marker(마커) migration 을 실제 적용한 뒤,
+# 임시 로컬 Postgres 에 upload_daily(롤업) + counted_marker(마커) migration 을 실제 적용한다.
+# marker 적용 전에 실제 운영 순서(daily → counted active → removed/archived → marker)를 재현해
+# 복원 불가능한 cutover가 명시적으로 abort하고 transaction 전체가 rollback되는지 먼저 검증한다.
+# 그 뒤 정합 상태에서 marker migration 을 적용하고,
 # 삼순이 지정한 경계 케이스마다 (마커 있는 행 수) == (롤업 uploads) 를 검증한다:
 #   1) image INSERT active(story_geofence) → 마커 O, 롤업 +1
 #   2) video pending → 마커 X / active 승격 → 마커 O
@@ -63,9 +66,8 @@ CREATE TABLE venue_stories (
 );
 SQL
 
-# 두 migration 을 각각 단일 트랜잭션으로 적용(순서: 롤업 → 마커).
+# 롤업 migration 먼저 적용.
 "${PSQL[@]}" -1 -f "$MIG_DAILY" >/dev/null
-"${PSQL[@]}" -1 -f "$MIG_MARK" >/dev/null
 
 pass=0; fail=0
 check() { if [ "$2" = "$3" ]; then pass=$((pass+1)); echo "  ✅ $1"; else fail=$((fail+1)); echo "  ❌ $1 (got: $2 / want: $3)"; fi; }
@@ -74,6 +76,22 @@ mark() { "${PSQL[@]}" -c "SELECT count(*) FROM venue_stories WHERE upload_counte
 markid() { "${PSQL[@]}" -c "SELECT CASE WHEN upload_counted_at IS NULL THEN 'null' ELSE 'set' END FROM venue_stories WHERE id=$1"; }
 
 D=2026-07-25
+
+echo "[0) 실제 cutover 순서: counted → removed/archived → marker = fail-close]"
+"${PSQL[@]}" -c "INSERT INTO venue_stories (status, attendance_source, media_type, created_at) VALUES ('active','story_geofence','image','$D 10:00:00+09'), ('active','story_geofence','video','$D 10:30:00+09')" >/dev/null
+"${PSQL[@]}" -c "UPDATE venue_stories SET status='removed' WHERE media_type='image'; UPDATE venue_stories SET status='archived' WHERE media_type='video';" >/dev/null
+MIGRATION_LOG="$WORK/cutover-failure.log"
+if "${PSQL[@]}" -1 -f "$MIG_MARK" >"$MIGRATION_LOG" 2>&1; then
+  check "불일치 migration abort" "success" "failure"
+else
+  check "불일치 migration abort" "failure" "failure"
+fi
+COLUMN_EXISTS=$("${PSQL[@]}" -c "SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='venue_stories' AND column_name='upload_counted_at'")
+check "abort 시 ALTER COLUMN 포함 transaction rollback" "$COLUMN_EXISTS" "0"
+
+# 다음 정상 cutover 회귀를 위해 롤업·원본을 함께 초기화한다.
+"${PSQL[@]}" -c "TRUNCATE venue_stories, venue_story_upload_daily RESTART IDENTITY" >/dev/null
+"${PSQL[@]}" -1 -f "$MIG_MARK" >/dev/null
 
 echo "[1) image INSERT active → 마커 O]"
 "${PSQL[@]}" -c "INSERT INTO venue_stories (status, attendance_source, media_type, created_at) VALUES ('active','story_geofence','image','$D 12:00:00+09')" >/dev/null
@@ -131,6 +149,14 @@ check "정합: 26일 mark==roll image" "$(mark 2026-07-26 image)" "$(roll 2026-0
 echo "[9) 전 구간 정합 불변식 재확인]"
 check "최종 25일 video mark==roll" "$(mark $D video)" "$(roll $D video)"
 check "최종 26일 video mark==roll" "$(mark 2026-07-26 video)" "$(roll 2026-07-26 video)"
+
+echo "[10) marker migration 멱등 재적용]"
+if "${PSQL[@]}" -1 -f "$MIG_MARK" >/dev/null 2>&1; then
+  check "removed/archived 마커 포함 재적용 성공" "success" "success"
+else
+  check "removed/archived 마커 포함 재적용 성공" "failure" "success"
+fi
+check "재적용 후 25일 image 정합" "$(mark $D image)" "$(roll $D image)"
 
 echo ""
 echo "venue-story-counted-marker: $pass pass, $fail fail"
