@@ -26,6 +26,7 @@ try {
 
     const current = page.locator('[data-qa="current-at-bat"]');
     check(`${tag} 현재 타석 자동 펼침`, await current.count() === 1);
+    check(`${tag} 현재 타자 타순 표시`, await current.locator('[data-qa="current-bat-order"]').innerText() === "4번");
     const currentVisible = async () => current.evaluate((element) => {
       const root = element.closest('[data-qa="relay-root"]');
       const cardRect = element.getBoundingClientRect();
@@ -42,7 +43,27 @@ try {
     check(`${tag} 현재 투구 4줄`, await current.locator('[data-qa^="live-pitch-"]').count() === 4);
     check(`${tag} 최신 공 accent 1개`, await current.locator('[data-qa="live-pitch-latest"]').count() === 1);
 
+    // 볼카운트 도트 배지 (전광판식) — fixture balls=2/strikes=2/outs=1 → B●●○ / S●● / O●○
+    check(`${tag} 카운트 배지 존재`, await current.locator('[data-qa="count-badge"]').count() === 1);
+    check(`${tag} B 도트 3칸`, await current.locator('[data-qa="count-b"] [data-filled]').count() === 3);
+    check(`${tag} B 채움 2`, await current.locator('[data-qa="count-b"] [data-filled="true"]').count() === 2);
+    check(`${tag} S 도트 2칸`, await current.locator('[data-qa="count-s"] [data-filled]').count() === 2);
+    check(`${tag} S 채움 2`, await current.locator('[data-qa="count-s"] [data-filled="true"]').count() === 2);
+    check(`${tag} O 도트 2칸`, await current.locator('[data-qa="count-o"] [data-filled]').count() === 2);
+    check(`${tag} O 채움 1`, await current.locator('[data-qa="count-o"] [data-filled="true"]').count() === 1);
+    check(
+      `${tag} B/S/O 순서`,
+      await current.locator('[data-qa="count-badge"] > span').evaluateAll((nodes) =>
+        nodes.map((node) => node.getAttribute("data-qa")).join(",") === "count-b,count-s,count-o"),
+    );
+
     const completed = page.locator('[data-qa="completed-at-bat"]').first();
+    check(`${tag} 지난 타석 타순 표시`, await completed.locator('[data-qa="completed-bat-order"]').innerText() === "1번");
+    // 미상(batOrder 없는) 완료 타석은 타순 숨김. fixture는 PLAYS 4개를 이닝마다 렌더하므로
+    // page 전역이 아니라 첫 이닝([data-qa="relay-plays"])으로 scope: 완료 4개 중 batOrder(1/2번) 2개만 표시.
+    const firstInningPlays = page.locator('[data-qa="relay-plays"]').first();
+    check(`${tag} 첫 이닝 완료 타석 4개`, await firstInningPlays.locator('[data-qa="completed-at-bat"]').count() === 4);
+    check(`${tag} 미상 타순 숨김(첫 이닝 표시 2개)`, await firstInningPlays.locator('[data-qa="completed-bat-order"]').count() === 2);
     check(`${tag} 이전 타석 기본 접힘`, await completed.locator('[data-qa^="live-pitch-"]').count() === 0);
     await completed.locator("button").click();
     check(`${tag} 이전 타석 탭 펼침`, await completed.locator('[data-qa^="live-pitch-"]').count() === 3);

@@ -10,6 +10,8 @@ export const dynamic = "force-dynamic";
 
 export interface PlayEvent {
   batterName: string;
+  /** 라인업 타순(1~9). 확인되지 않으면 오표기 방지를 위해 생략한다. */
+  batOrder?: number;
   result: string;
   type:
     | "hit"
@@ -34,6 +36,8 @@ export interface InningRelay {
   /** 아직 결과(13/23)가 오지 않은 최신 타석. 라이브 화면 전용이며 완료 시 plays로 이동한다. */
   currentAtBat?: {
     batterName: string;
+    /** 라인업 타순(몇 번 타자). type:8 "N번타자" 마커 또는 batterRecord.batOrder. 대타/미상 시 생략. */
+    batOrder?: number;
     pitches: PitchDetail[];
   };
 }
@@ -166,6 +170,27 @@ function classifyResult(text: string): PlayEvent["type"] {
   return "other";
 }
 
+function normalizeBatOrder(value: unknown): number | null {
+  const order = typeof value === "number" ? value : Number(value);
+  return Number.isInteger(order) && order >= 1 && order <= 9 ? order : null;
+}
+
+/**
+ * 현재 타자의 라인업 타순을 record API 박스스코어(현재 라인업)에서 이름으로 재해석한다.
+ * record 박스스코어는 대타·대주자 등 교체를 반영한 "지금 라인업"이므로, relay 마커(대타는
+ * "N번타자" 접두가 없음)보다 교체 선수 타순에 더 정확하다. 매칭 실패/범위 밖이면 null →
+ * 호출부가 parser 값(batterRecord.batOrder)으로 fallback 한다(오표기 대신 안전).
+ */
+export function resolveBatOrderFromLineup(
+  batterName: string | undefined,
+  batters: RelayBatterStat[] | undefined,
+): number | null {
+  const name = batterName?.trim();
+  if (!name || !batters) return null;
+  const hit = batters.find((b) => b.name?.trim() === name);
+  return hit ? normalizeBatOrder(hit.batOrder) : null;
+}
+
 interface NaverGamePlayerStats {
   kk: number;
   hit: number;
@@ -277,11 +302,13 @@ export function parseInningRelays(textRelays: NaverTextRelay[]): InningRelay[] {
   // 걸쳐 오든 동일하게 동작. 이닝 경계·결과 확정 시 비운다.
   let pendingPitches: PitchDetail[] = [];
   let pendingBatterName: string | null = null;
+  let pendingBatOrder: number | null = null;
 
   for (const relay of chronological) {
     if (relay.titleStyle === "0") {
       pendingPitches = [];
       pendingBatterName = null;
+      pendingBatOrder = null;
       // Inning header: "1회초 LG 공격"
       const match = relay.title.match(/(\d+)회(초|말)\s*(.+?)\s*공격/);
       if (match) {
@@ -319,6 +346,12 @@ export function parseInningRelays(textRelays: NaverTextRelay[]): InningRelay[] {
         const startText = opt.text.trim();
         const startMatch = /^(?:\d+번타자|대타|대주자)\s+(.+)$/.exec(startText);
         pendingBatterName = opt.batterRecord?.name?.trim() || startMatch?.[1]?.trim() || null;
+        // 타순: batterRecord.batOrder(1~9) 우선, 없으면 "N번타자" 접두 숫자.
+        // 대타/교체는 batterRecord가 들고 있는 원 batting-order slot을 그대로 쓴다.
+        // 양쪽 모두 없거나 범위가 잘못되면 오표기 대신 숨긴다(fail-safe).
+        const recOrder = normalizeBatOrder(opt.batterRecord?.batOrder);
+        const orderMatch = /^(\d+)번타자/.exec(startText);
+        pendingBatOrder = recOrder ?? normalizeBatOrder(orderMatch?.[1]);
       } else if (opt.type === 13 || opt.type === 23) {
         // At-bat result: "홍창기 : 우익수 앞 1루타"
         // type 13 = 일반 타석 결과, type 23 = 희생플라이/아웃/볼넷 등
@@ -327,8 +360,10 @@ export function parseInningRelays(textRelays: NaverTextRelay[]): InningRelay[] {
         // 구분자) result 에서 reset 을 건너뛰면 앞 타석 투구가 다음 정상 타석에
         // 섞이는 오염이 난다(삼순 리뷰 blocker).
         const consumedPitches = pendingPitches;
+        const consumedBatOrder = pendingBatOrder;
         pendingPitches = [];
         pendingBatterName = null;
+        pendingBatOrder = null;
 
         const parts = opt.text.split(" : ");
         if (parts.length < 2) continue;
@@ -338,6 +373,7 @@ export function parseInningRelays(textRelays: NaverTextRelay[]): InningRelay[] {
 
         const play: PlayEvent = {
           batterName,
+          ...(consumedBatOrder ? { batOrder: consumedBatOrder } : {}),
           result: resultText,
           type: classifyResult(resultText),
         };
@@ -372,6 +408,7 @@ export function parseInningRelays(textRelays: NaverTextRelay[]): InningRelay[] {
   if (current && pendingBatterName) {
     current.currentAtBat = {
       batterName: pendingBatterName,
+      ...(pendingBatOrder ? { batOrder: pendingBatOrder } : {}),
       pitches: pendingPitches,
     };
   }
@@ -870,6 +907,16 @@ export async function GET(req: NextRequest) {
 
     // Extract player stats: prefer record API (has pitcher names), fallback to relay parsing
     const playerStats = extractPlayerStatsFromRecord(recordData) ?? extractPlayerStats(combined);
+
+    // 현재 타자 타순은 record API 라인업(교체 반영된 현재 라인업)을 SSOT로 재해석한다 —
+    // 대타("대타 X"는 "N번타자" 접두가 없음)·대주자 교체에도 올바른 타순이 나오도록.
+    // 매칭 실패 시 parser 값(batterRecord.batOrder)을 그대로 유지(fail-safe, 오표기 방지).
+    for (const inn of innings) {
+      if (!inn.currentAtBat) continue;
+      const sideBatters = inn.half === "top" ? playerStats.awayBatters : playerStats.homeBatters;
+      const lineupOrder = resolveBatOrderFromLineup(inn.currentAtBat.batterName, sideBatters);
+      if (lineupOrder != null) inn.currentAtBat.batOrder = lineupOrder;
+    }
 
     // Build linescore from naver relay data
     const trd = firstData.result?.textRelayData;

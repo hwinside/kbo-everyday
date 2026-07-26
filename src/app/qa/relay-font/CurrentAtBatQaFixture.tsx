@@ -18,6 +18,7 @@ export default function CurrentAtBatQaFixture() {
     <>
       <CurrentAtBatCard
         batterName="오스틴"
+        batOrder={4}
         pitcherName="원태인"
         pitches={pitches}
         balls={2}
