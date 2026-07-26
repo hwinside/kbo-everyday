@@ -3,7 +3,9 @@
  * 실행: npx tsx scripts/qa/la-channel-born-marking-smoke.ts  (npm run qa:la-born-marking)
  */
 import {
+  createChannelBornMarkBudget,
   markChannelBornGroups,
+  runWithChannelBornMarkBudget,
   runStartSendChunks,
   CHANNEL_BORN_BATCH_SIZE,
   CHANNEL_BORN_MAX_ATTEMPTS,
@@ -240,52 +242,84 @@ const sleepSpy = () => {
       events, ["send:0", "send:1", "persist:1", "send:2", "send:3", "persist:2", "send:5"]);
   }
 
-  // ── ⑧ 실조립 회귀(삼순 R2 핵심): runStartSendChunks → persistChunk에 느린 실패 UPDATE 주입 ──
-  // 실배선(live-activity.ts persistChunkMarks) 동형 조립: chunk당 마킹이 공유 deadline을
-  // 넘어서는 순간부터 새 UPDATE를 시작하지 않아 — 후속 chunk *발송*(사용자 처리)은 굶지 않고
-  // 계속되며, 전체 wall-clock이 예산 내 유계임을 실측 assert. 마킹 skip분은 실패 집계로
-  // backfill 계약 유지(발송·선점은 안 건드림 — 재발송 중복 없음).
+  // ── ⑧ 전역 실제-마킹 예산 실행 회귀(삼순 #852 NO-GO) ──
+  // 쿼리/APNs 시간은 예산에서 제외하고, 5경기 전체가 실제 마킹 대기 1개 예산만 공유한다.
+  // 느린 마킹이 예산을 다 써도 뒤 경기 APNs 발송은 전수 진행하며 이후 마킹은 즉시 skip된다.
   {
-    const items = users(600); // 6 chunks × 100 (KIA 1,827명 = 19 chunks의 축소 모델)
+    let clock = 0;
+    const budget = createChannelBornMarkBudget(100);
+    let updateCalls = 0;
+    for (let game = 0; game < 5; game++) {
+      clock += 30_000; // 경기별 쿼리+APNs 30초 — 마킹 예산보다 길어도 차감되면 안 됨.
+      await runWithChannelBornMarkBudget(
+        budget,
+        (retryDeadlineMs) => markChannelBornGroups({
+          gameId: `game-${game}`,
+          groups: [{ env: "production" as const, channelId: "chan-A", users: [`u-${game}`] }],
+          retryDeadlineMs,
+          now: () => clock,
+          updateBatch: async () => {
+            updateCalls += 1;
+            clock += 1;
+            return { error: null };
+          },
+          logError: () => {},
+          sleep: async () => {},
+        }),
+        () => clock,
+      );
+    }
+    check("조립: 경기별 APNs 30초 뒤에도 각 경기 마킹 첫 시도 발생", updateCalls, 5);
+    check("조립: 쿼리/APNs 150초는 예산 제외, 실제 마킹 5ms만 차감", budget.remainingMs, 95);
+  }
+
+  {
+    let clock = 0;
+    const budget = createChannelBornMarkBudget(100);
     const sent: string[] = [];
     let updateCalls = 0;
     let markedFailedUsers = 0;
-    let pending: string[] = [];
-    const markRetryDeadlineMs = Date.now() + 100; // 공유 예산 100ms — 첫 1–2 chunk 마킹 후 소진
-    const slowFailingUpdate = async () => {
-      updateCalls += 1;
-      await new Promise((r) => setTimeout(r, 120)); // 느린 실패 120ms(삼순 실측 시나리오)
-      return { error: { message: "statement timeout" } };
-    };
-    const t0 = Date.now();
-    await runStartSendChunks({
-      items,
-      chunkSize: 100,
-      sendOne: async (u) => {
-        sent.push(u);
-        pending.push(u);
-      },
-      persistChunk: async () => {
-        if (pending.length === 0) return;
-        const flush = pending;
-        pending = [];
-        const stats = await markChannelBornGroups({
-          gameId: "20260724WOHT0",
-          groups: [{ env: "production" as const, channelId: "chan-A", users: flush }],
-          retryDeadlineMs: markRetryDeadlineMs,
-          updateBatch: slowFailingUpdate,
-          logError: () => {},
-          sleep: async () => {},
-        });
-        markedFailedUsers += stats.failedUsers;
-      },
-    });
-    const elapsed = Date.now() - t0;
-    check("조립: 느린 마킹 실패에도 후속 chunk 사용자 발송 전수 진행(600/600)", sent.length, 600);
-    check("조립: 예산 소진 후 새 UPDATE 미시작 — 호출 수 유계(≤2: 19×8s 직렬 경로 제거)", updateCalls <= 2, true);
-    check("조립: skip된 마킹은 실패 집계로 backfill 계약 유지(조용한 소실 아님)",
-      markedFailedUsers >= 400, true);
-    check(`조립: 전체 wall-clock 유계 — 예산+슬럿(<1s, 실측 ${elapsed}ms; 종전 최악 19×8s=152s)`, elapsed < 1_000, true);
+    for (let game = 0; game < 5; game++) {
+      let pending: string[] = [];
+      await runStartSendChunks({
+        items: users(100, `g${game}-`),
+        chunkSize: 100,
+        sendOne: async (u) => {
+          sent.push(u);
+          pending.push(u);
+        },
+        persistChunk: async () => {
+          const flush = pending;
+          pending = [];
+          const stats = await runWithChannelBornMarkBudget(
+            budget,
+            (retryDeadlineMs) => markChannelBornGroups({
+              gameId: `game-${game}`,
+              groups: [{ env: "production" as const, channelId: "chan-A", users: flush }],
+              retryDeadlineMs,
+              now: () => clock,
+              updateBatch: async () => {
+                updateCalls += 1;
+                // 첫 UPDATE가 남은 전역 예산 100ms를 전부 사용하고 실패한 상황.
+                clock = retryDeadlineMs;
+                return { error: { message: "statement timeout" } };
+              },
+              logError: () => {},
+              sleep: async () => {},
+            }),
+            () => clock,
+          );
+          markedFailedUsers += stats.failedUsers;
+        },
+      });
+    }
+    check("조립: 한 경기 느린 마킹 실패에도 5경기 APNs send 전수 진행", sent.length, 500);
+    check("조립: 전역 예산 소진 후 새 UPDATE 미시작", updateCalls, 1);
+    check("조립: skip된 마킹은 실패 집계로 backfill 계약 유지",
+      markedFailedUsers, 500);
+    check("조립: 전 경기 실제 마킹 대기 총합은 전역 예산 이하",
+      { spentMs: 100 - budget.remainingMs, remainingMs: budget.remainingMs },
+      { spentMs: 100, remainingMs: 0 });
   }
 
   console.log(`\nla-channel-born-marking-smoke: ${pass} PASS / ${fail} FAIL`);

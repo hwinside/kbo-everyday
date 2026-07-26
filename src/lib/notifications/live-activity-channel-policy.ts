@@ -573,8 +573,37 @@ export const CHANNEL_BORN_BATCH_SIZE = 200;
 export const CHANNEL_BORN_MAX_ATTEMPTS = 3;
 /** 재시도 백오프(ms) — attempt 1 실패 후 500, attempt 2 실패 후 1000. */
 export const CHANNEL_BORN_RETRY_BASE_MS = 500;
-/** start fanout 전체에서 마킹 *재시도*에 쓸 수 있는 총 예산(ms) — 소진 후 첫 시도만. */
+/** start fanout 전체에서 실제 channel_born 마킹 대기에 쓸 수 있는 총 예산(ms). */
 export const CHANNEL_BORN_RETRY_BUDGET_MS = 20_000;
+
+export interface ChannelBornMarkBudget {
+  remainingMs: number;
+}
+
+export function createChannelBornMarkBudget(
+  totalMs = CHANNEL_BORN_RETRY_BUDGET_MS,
+): ChannelBornMarkBudget {
+  return { remainingMs: Math.max(0, totalMs) };
+}
+
+/**
+ * APNs/쿼리 시간은 제외하고 실제 마킹 작업의 wall-clock만 전역 예산에서 차감한다.
+ * 호출부는 순차 실행 계약(start chunk persist)을 지키므로 별도 동시성 잠금은 불필요하다.
+ */
+export async function runWithChannelBornMarkBudget<T>(
+  budget: ChannelBornMarkBudget,
+  task: (retryDeadlineMs: number) => Promise<T>,
+  now: () => number = () => Date.now(),
+): Promise<T> {
+  const startedAt = now();
+  const retryDeadlineMs = startedAt + budget.remainingMs;
+  try {
+    return await task(retryDeadlineMs);
+  } finally {
+    const elapsedMs = Math.max(0, now() - startedAt);
+    budget.remainingMs = Math.max(0, budget.remainingMs - elapsedMs);
+  }
+}
 
 export async function markChannelBornGroups(params: {
   gameId: string;

@@ -224,3 +224,21 @@ test("배선: 프로덕션 기본 저장은 mark_scheduled_seen RPC(원자 단�
     client.from = origFrom;
   }
 });
+
+// 실행 동작은 qa:la-born-marking이 검증한다. 여기서는 production 함수가 그 검증된
+// actual-marking budget helper를 경기 루프 밖에서 1회 만들고 양 팀에 전달하는지만 고정한다.
+test("배선: channel_born actual-marking 전역 예산 helper를 전 경기·양 팀이 공유", () => {
+  const src = readFileSync("src/lib/notifications/live-activity.ts", "utf8");
+  const fnStart = src.indexOf("export async function pushLiveActivityStarts");
+  assert.ok(fnStart >= 0, "pushLiveActivityStarts 존재");
+  const fnBody = src.slice(fnStart);
+  const loopIdx = fnBody.indexOf("for (const g of liveGames)");
+  const budgetIdx = fnBody.indexOf("const channelBornMarkBudget = createChannelBornMarkBudget()");
+  assert.ok(loopIdx >= 0, "경기 루프 존재");
+  assert.ok(budgetIdx >= 0 && budgetIdx < loopIdx, "전역 actual-marking 예산은 경기 루프 전 1회 생성");
+  assert.equal(
+    fnBody.match(/gameStartMs: startedAt, channelBornMarkBudget/g)?.length,
+    2,
+    "away/home 양쪽에 같은 전역 예산 전달",
+  );
+});
