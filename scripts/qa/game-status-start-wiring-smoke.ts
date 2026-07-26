@@ -174,6 +174,45 @@ test("단조 저장 회귀(음성 대조): last-write-wins면 과거 t0가 최�
   assert.ok(!s.sent.includes(GID), "억제 시 발송 없음");
 });
 
+test("device snapshot이 열린 게임은 다음 cron의 freshness stale 판정으로 global mark-only 종결하지 않는다", async () => {
+  const notify = await loadNotify();
+  const marked: string[] = [];
+  const delivered: string[] = [];
+  const game = liveGame({
+    G_ID: GID,
+    AWAY_NM: "한화",
+    HOME_NM: "LG",
+    GAME_INN_NO: 2,
+    GAME_TB_SC: "B",
+  });
+  const result = await notify([game], {
+    observedAtMs: T120 + 120_000,
+    startDeps: {
+      storeScheduledSeen: async () => {},
+      readStartState: async () => ({
+        start_notified: false,
+        last_seen_scheduled_at: new Date(T0).toISOString(),
+        start_snapshot_at: new Date(T60).toISOString(),
+      }),
+      markStart: async (id) => { marked.push(id); },
+      deliverStart: async ({ gameId }) => {
+        delivered.push(gameId);
+        return {
+          snapshotCompleted: false,
+          fcmAccepted: 0,
+          deviceDelivered: 0,
+          pending: 1,
+          permanentFailed: 0,
+          expired: 0,
+        };
+      },
+    },
+  });
+  assert.deepEqual(delivered, [GID], "기존 snapshot drain 경로를 계속 타야 한다");
+  assert.deepEqual(marked, [], "snapshot 완료 전 mark-only global 종결 금지");
+  assert.equal(result.started, 0);
+});
+
 // 마이그레이션 계약 — 저장이 앱-레벨 read-modify-write(레이시)가 아니라 DB 원자 단조여야 한다.
 test("마이그레이션 계약: mark_scheduled_seen RPC는 ON CONFLICT + GREATEST 원자 단조 저장", () => {
   const sql = readFileSync("supabase/migrations/20260724_notify_scheduled_seen_monotonic.sql", "utf8").toLowerCase();
