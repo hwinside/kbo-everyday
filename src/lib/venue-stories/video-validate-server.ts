@@ -133,7 +133,8 @@ function realDeps(): ValidateDeps {
     async rejectRow(id) {
       const { data, error } = await supabase
         .from("venue_stories")
-        .update({ status: "removed" })
+        // 검증실패 removed 도 즉시삭제 금지·30일 격리(스펙 §2.2) — removed_at 으로 격리 시계 시작.
+        .update({ status: "removed", removed_at: new Date().toISOString() })
         .eq("id", id)
         .eq("status", "pending") // CAS
         .select("id");

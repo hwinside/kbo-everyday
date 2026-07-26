@@ -76,7 +76,8 @@ export async function processVenueJob(row, deps) {
     if (meta.durationMs > VENUE_MAX_DURATION_MS || inBytes > VENUE_MAX_BYTES) {
       let rmQuery = db
         .from("venue_stories")
-        .update({ status: "removed", transcode_attempts: row.transcode_attempts + 1 })
+        // 검증실패 removed 도 즉시삭제 금지·30일 격리(스펙 §2.2) — removed_at 으로 격리 시계 시작.
+        .update({ status: "removed", removed_at: new Date().toISOString(), transcode_attempts: row.transcode_attempts + 1 })
         .eq("id", row.id);
       if (isPending) rmQuery = rmQuery.eq("status", "pending"); // CAS — 즉시 경로와 중복 claim 방지
       const { data: rmRows, error: rmErr } = await rmQuery.select("id");
@@ -142,7 +143,12 @@ export async function processVenueJob(row, deps) {
       catchStatus = attempts >= maxAttempts ? "removed" : "pending";
       failQuery = db
         .from("venue_stories")
-        .update({ transcode_attempts: attempts, status: catchStatus })
+        // 재시도 소진로 removed 전이 시에만 removed_at 기록(격리 시계 시작). pending 유지면 건드리지 않음.
+        .update({
+          transcode_attempts: attempts,
+          status: catchStatus,
+          ...(catchStatus === "removed" ? { removed_at: new Date().toISOString() } : {}),
+        })
         .eq("id", row.id)
         .eq("status", "pending"); // CAS: 즉시경로가 이미 active로 승격했으면 0-row skip
     } else {
