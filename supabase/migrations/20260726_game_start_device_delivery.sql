@@ -58,7 +58,7 @@ create table if not exists notified_player_highlight_tokens (
   token_hash text not null,
   start_required boolean not null,
   status text not null default 'waiting'
-    check (status in ('waiting', 'leased', 'transient', 'accepted', 'permanent_failed')),
+    check (status in ('waiting', 'leased', 'transient', 'accepted', 'permanent_failed', 'expired')),
   attempts integer not null default 0,
   next_attempt_at timestamptz not null default now(),
   lease_token uuid,
@@ -79,6 +79,7 @@ create table if not exists player_highlight_event_snapshots (
   event_id text primary key,
   game_id text not null,
   snapshot_completed boolean not null default false,
+  deadline_at timestamptz not null default (now() + interval '30 minutes'),
   created_at timestamptz not null default now(),
   completed_at timestamptz
 );
@@ -420,7 +421,7 @@ begin
   end if;
 
   insert into player_highlight_event_snapshots (
-    event_id, game_id, snapshot_completed, completed_at
+    event_id, game_id, snapshot_completed, deadline_at, completed_at
   )
   select
     p_event_id,
@@ -428,6 +429,7 @@ begin
     exists (
       select 1 from notified_score_events e where e.event_id = p_event_id
     ),
+    now() + interval '30 minutes',
     case
       when exists (select 1 from notified_score_events e where e.event_id = p_event_id)
         then now()
@@ -487,6 +489,21 @@ begin
     return;
   end if;
 
+  -- source event freshness와 무관한 durable deadline. cron 공백 뒤 재개 시에도 이 함수가
+  -- 기존 snapshot을 drain하며, deadline이 지난 미종결 행만 명시 expired로 닫는다.
+  update notified_player_highlight_tokens n
+     set status = 'expired',
+         lease_token = null,
+         lease_until = null,
+         last_error = coalesce(last_error, 'highlight_deadline_exceeded'),
+         updated_at = now()
+    from player_highlight_event_snapshots s
+   where n.event_id = p_event_id
+     and n.game_id = p_game_id
+     and s.event_id = n.event_id
+     and s.deadline_at <= now()
+     and n.status in ('waiting', 'leased', 'transient');
+
   return query
   with eligible as (
     select n.event_id, n.token_id, n.token_hash, d.fcm_token
@@ -500,8 +517,13 @@ begin
         n.status in ('waiting', 'transient')
         or (n.status = 'leased' and n.lease_until < now())
       )
-      and n.attempts < 3
       and n.next_attempt_at <= now()
+      and exists (
+        select 1
+        from player_highlight_event_snapshots s
+        where s.event_id = n.event_id
+          and s.deadline_at > now()
+      )
       and (
         -- game_start OFF는 start 계약의 명시적 bypass다.
         not n.start_required
@@ -516,7 +538,7 @@ begin
             and l.status = 'accepted'
             -- 이번 warmup invocation에서 accepted된 start와 같은 tick에는 release하지 않는다.
             -- 요청 진입 시각 이전 accepted만 허용해 서버 1-tick 분리를 고정한다.
-            and l.fcm_accepted_at < p_start_accepted_before
+            and l.fcm_accepted_at < p_start_accepted_before - interval '45 seconds'
         )
       )
     for update of n skip locked
@@ -565,11 +587,11 @@ begin
     update notified_player_highlight_tokens n
        set status = case
              when i.status = 'accepted' then 'accepted'
-             when i.status = 'transient' and n.attempts < 3 then 'transient'
+             when i.status = 'transient' then 'transient'
              else 'permanent_failed'
            end,
            next_attempt_at = case
-             when i.status = 'transient' and n.attempts < 3
+             when i.status = 'transient'
                then now() + interval '45 seconds'
              else n.next_attempt_at
            end,

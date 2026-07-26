@@ -11,6 +11,7 @@ import type { KboRawGame } from "@/types/api";
 import type { GameEvent, GameEventType } from "@/types/game-events";
 import {
   mapHighlightSettlements,
+  shouldProcessHighlightEvent,
   type ClaimedHighlightToken,
 } from "@/lib/notifications/player-highlight-delivery";
 
@@ -99,7 +100,6 @@ export async function notifyPlayerHighlights(
 
       // token별 dedup namespace 배포 전/이전 이닝의 과거분 skip → backlog 일괄 발송 방지.
       const evMs = Date.parse(ev.timestamp);
-      if (Number.isFinite(evMs) && Date.now() - evMs > FRESH_MS) continue;
 
       // 교차-폴링 유령 단타: 적시(rbi>0) 단타는 H 카운트 선반영으로 생긴 홈런/장타일 수 있어
       // 한 폴링 확인한다(고객 2026-06-27 오스틴 만루홈런 "안타로 4타점" 오발송).
@@ -136,12 +136,30 @@ export async function notifyPlayerHighlights(
       const dedupId = isStrikeout ? `${ev.id}#fav-so` : `${ev.id}#fav`;
       if (phantom === "suppress") continue;
 
+      // query-guard: bounded -- player highlight event PK 단일행 조회. freshness는 신규 snapshot에만
+      // 적용하고 기존 frozen snapshot은 10분 source-event cutoff 이후에도 deadline까지 drain한다.
+      const { data: existingSnapshot, error: snapshotError } = await supabase
+        .from("player_highlight_event_snapshots")
+        .select("snapshot_completed")
+        .eq("event_id", dedupId)
+        .maybeSingle();
+      if (snapshotError) continue;
+      const hasFrozenSnapshot = existingSnapshot != null;
+      if (!shouldProcessHighlightEvent({
+        eventAtMs: evMs,
+        nowMs: Date.now(),
+        freshnessMs: FRESH_MS,
+        hasFrozenSnapshot,
+      })) continue;
+
       // 이 선수를 최애선수로 둔 유저 (favorite_players: [{playerId: kboId}])
-      let userIds: string[];
-      try {
-        userIds = await fetchFavoritePlayerFanIds(resolved.kboId);
-      } catch {
-        continue;
+      let userIds: string[] = [];
+      if (!hasFrozenSnapshot) {
+        try {
+          userIds = await fetchFavoritePlayerFanIds(resolved.kboId);
+        } catch {
+          continue;
+        }
       }
       // 타점(detail.rbi)이 있으면 "{라벨}{으로/로} N타점 획득!", 0타점이면 "{라벨}!" (하린아빠 확정)
       const label = HIGHLIGHT_LABEL[ev.type] ?? "활약";
@@ -193,14 +211,15 @@ export async function notifyPlayerHighlights(
 
       // 이벤트 당시 팬/토큰을 200명씩 snapshot한 뒤 token별 barrier를 최대 500개씩 claim한다.
       // 후속 tick은 snapshot에 남은 waiting token 중 새로 accepted된 것만 release한다.
-      // 팬 0명도 빈 terminal snapshot을 남겨, 이벤트 뒤 최애 추가자에게 과거 알림이 가지 않게 한다.
+      // 기존 snapshot이면 현재 최애 팬 조회 결과와 무관하게 frozen token을 drain한다.
+      // 신규 팬 0명도 빈 terminal snapshot을 남겨 이후 최애 추가자의 과거 알림을 막는다.
       if (userIds.length === 0) {
         await claimBatch([], true);
-        continue;
-      }
-      for (let i = 0; i < userIds.length; i += 200) {
-        const end = Math.min(i + 200, userIds.length);
-        await claimBatch(userIds.slice(i, end), end === userIds.length);
+      } else {
+        for (let i = 0; i < userIds.length; i += 200) {
+          const end = Math.min(i + 200, userIds.length);
+          await claimBatch(userIds.slice(i, end), end === userIds.length);
+        }
       }
       while (claimedTokens.length > 0 && claimedTokens.length % 500 === 0) {
         const claimed = await claimBatch([], true);

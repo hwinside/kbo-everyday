@@ -6,7 +6,10 @@ import {
   drainGameStartDeliveryBatches,
   gameStartDeliveryWindow,
 } from "../../src/lib/notifications/game-start-delivery-policy";
-import { mapHighlightSettlements } from "../../src/lib/notifications/player-highlight-delivery";
+import {
+  mapHighlightSettlements,
+  shouldProcessHighlightEvent,
+} from "../../src/lib/notifications/player-highlight-delivery";
 
 const migration = readFileSync(
   "supabase/migrations/20260726_game_start_device_delivery.sql",
@@ -216,5 +219,27 @@ test("highlight FCM ok=true 안의 token별 transient/permanent를 terminal 성�
   assert.deepEqual(
     settled.map((row) => row.status),
     ["accepted", "transient", "permanent_failed", "transient"],
+  );
+});
+
+test("highlight 10분 freshness는 신규 snapshot만 차단하고 frozen retry는 11분 gap 뒤에도 drain", () => {
+  const nowMs = 1_000_000;
+  const oldEventAtMs = nowMs - 11 * 60_000;
+  assert.equal(shouldProcessHighlightEvent({
+    eventAtMs: oldEventAtMs,
+    nowMs,
+    freshnessMs: 10 * 60_000,
+    hasFrozenSnapshot: false,
+  }), false);
+  assert.equal(shouldProcessHighlightEvent({
+    eventAtMs: oldEventAtMs,
+    nowMs,
+    freshnessMs: 10 * 60_000,
+    hasFrozenSnapshot: true,
+  }), true);
+  assert.doesNotMatch(
+    highlightSource,
+    /if\s*\(userIds\.length === 0\)\s*\{[\s\S]{0,160}continue/,
+    "현재 팬 0명이어도 frozen snapshot claim 결과를 send/settle해야 함",
   );
 });

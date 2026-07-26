@@ -181,7 +181,7 @@ SELECT '$HIGHLIGHT_GAME',d.id,encode(extensions.digest(d.fcm_token,'sha256'),'he
        d.user_id,d.platform,null,
        CASE d.id WHEN 10 THEN 'accepted' WHEN 15 THEN 'accepted' WHEN 14 THEN 'permanent_failed' ELSE 'pending' END,
        now()+interval '5 minutes',
-       CASE d.id WHEN 10 THEN now()-interval '1 minute' WHEN 15 THEN now() ELSE null END
+       CASE d.id WHEN 10 THEN now()-interval '2 minutes' WHEN 15 THEN now() ELSE null END
 FROM device_push_tokens d WHERE d.id IN (10,11,14,15);
 SQL
 HIGHLIGHT_LEASE=30000000-0000-0000-0000-000000000001
@@ -229,6 +229,57 @@ HIGHLIGHT_RETRY=$("${PSQL[@]}" -c "SELECT count(*) FROM claim_player_highlight_t
   'fav_player_highlight',true,now()-interval '10 seconds','$HIGHLIGHT_RETRY_LEASE',20,500)")
 [ "$HIGHLIGHT_RETRY" = "1" ] || { echo "FAIL: highlight transient missing retry=$HIGHLIGHT_RETRY" >&2; exit 1; }
 
+# 3회 연속 transient도 permanent로 오분류하지 않고 snapshot deadline까지 재시도한다.
+"${PSQL[@]}" -c "SELECT settle_player_highlight_tokens(
+  jsonb_build_array(jsonb_build_object(
+    'token_id',12,
+    'token_hash',(SELECT token_hash FROM notified_player_highlight_tokens WHERE event_id='event#fav' AND token_id=12),
+    'status','transient',
+    'error','messaging/server-unavailable'
+  )),
+  '$HIGHLIGHT_RETRY_LEASE'
+)" >/dev/null
+"${PSQL[@]}" -c "UPDATE notified_player_highlight_tokens SET next_attempt_at=now()-interval '1 second' WHERE event_id='event#fav' AND token_id=12" >/dev/null
+HIGHLIGHT_THIRD_LEASE=30000000-0000-0000-0000-000000000005
+THIRD_CLAIM=$("${PSQL[@]}" -c "SELECT count(*) FROM claim_player_highlight_tokens(
+  'event#fav','$HIGHLIGHT_GAME',ARRAY[1,2]::integer[],ARRAY[]::uuid[],
+  'fav_player_highlight',true,now()-interval '10 seconds','$HIGHLIGHT_THIRD_LEASE',20,500)")
+[ "$THIRD_CLAIM" = "1" ] || { echo "FAIL: third transient claim=$THIRD_CLAIM" >&2; exit 1; }
+"${PSQL[@]}" -c "SELECT settle_player_highlight_tokens(
+  jsonb_build_array(jsonb_build_object(
+    'token_id',12,
+    'token_hash',(SELECT token_hash FROM notified_player_highlight_tokens WHERE event_id='event#fav' AND token_id=12),
+    'status','transient',
+    'error','messaging/server-unavailable'
+  )),
+  '$HIGHLIGHT_THIRD_LEASE'
+)" >/dev/null
+THIRD_STATE=$("${PSQL[@]}" -c "SELECT status||':'||attempts FROM notified_player_highlight_tokens WHERE event_id='event#fav' AND token_id=12")
+[ "$THIRD_STATE" = "transient:3" ] || { echo "FAIL: third transient state=$THIRD_STATE" >&2; exit 1; }
+
+# 세 번째 pre-send crash도 lease 만료 뒤 deadline 안에서 reclaim된다(attempt cap 없음).
+"${PSQL[@]}" -c "UPDATE notified_player_highlight_tokens SET attempts=2, next_attempt_at=now()-interval '1 second' WHERE event_id='event#fav' AND token_id=15" >/dev/null
+HIGHLIGHT_CRASH_LEASE=30000000-0000-0000-0000-000000000006
+THIRD_CRASH=$("${PSQL[@]}" -c "SELECT count(*) FROM claim_player_highlight_tokens(
+  'event#fav','$HIGHLIGHT_GAME',ARRAY[1,2]::integer[],ARRAY[]::uuid[],
+  'fav_player_highlight',true,now()+interval '2 minutes','$HIGHLIGHT_CRASH_LEASE',20,500)")
+[ "$THIRD_CRASH" = "1" ] || { echo "FAIL: third-attempt crash setup=$THIRD_CRASH" >&2; exit 1; }
+"${PSQL[@]}" -c "UPDATE notified_player_highlight_tokens SET lease_until=now()-interval '1 second' WHERE event_id='event#fav' AND token_id=15" >/dev/null
+HIGHLIGHT_RECOVER_LEASE=30000000-0000-0000-0000-000000000007
+CRASH_RECOVERED=$("${PSQL[@]}" -c "SELECT count(*) FROM claim_player_highlight_tokens(
+  'event#fav','$HIGHLIGHT_GAME',ARRAY[1,2]::integer[],ARRAY[]::uuid[],
+  'fav_player_highlight',true,now()+interval '2 minutes','$HIGHLIGHT_RECOVER_LEASE',20,500)")
+[ "$CRASH_RECOVERED" = "1" ] || { echo "FAIL: third-attempt crash recovery=$CRASH_RECOVERED" >&2; exit 1; }
+
+# snapshot deadline을 넘긴 미종결 row는 leased/transient로 고착되지 않고 expired terminal.
+"${PSQL[@]}" -c "UPDATE player_highlight_event_snapshots SET deadline_at=now()-interval '1 second' WHERE event_id='event#fav'" >/dev/null
+DEADLINE_CLAIM=$("${PSQL[@]}" -c "SELECT count(*) FROM claim_player_highlight_tokens(
+  'event#fav','$HIGHLIGHT_GAME',ARRAY[1,2]::integer[],ARRAY[]::uuid[],
+  'fav_player_highlight',true,now()+interval '2 minutes','30000000-0000-0000-0000-000000000008',20,500)")
+[ "$DEADLINE_CLAIM" = "0" ] || { echo "FAIL: highlight deadline claim=$DEADLINE_CLAIM" >&2; exit 1; }
+DEADLINE_STATES=$("${PSQL[@]}" -c "SELECT count(*) FROM notified_player_highlight_tokens WHERE event_id='event#fav' AND status='expired'")
+[ "$DEADLINE_STATES" = "4" ] || { echo "FAIL: highlight deadline expired=$DEADLINE_STATES expected=4" >&2; exit 1; }
+
 # 팬 0명 이벤트도 terminal snapshot을 만들고, 이후 팬이 생겨도 과거 알림을 snapshot하지 않는다.
 EMPTY_FIRST=$("${PSQL[@]}" -c "SELECT count(*) FROM claim_player_highlight_tokens(
   'empty#fav','$HIGHLIGHT_GAME',ARRAY[1,2]::integer[],ARRAY[]::uuid[],
@@ -242,4 +293,4 @@ EMPTY_LATE=$("${PSQL[@]}" -c "SELECT count(*) FROM claim_player_highlight_tokens
   exit 1
 }
 
-echo "PASS PG17 start/highlight ledgers: start overlap/crash/backoff, 1-tick barrier, token settle/retry, empty freeze"
+echo "PASS PG17 start/highlight ledgers: 45s holdback, token settle/retry, 3rd transient/crash, deadline expiry, empty freeze"

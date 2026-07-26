@@ -13,6 +13,17 @@ export type HighlightSettlement = {
   error: string | null;
 };
 
+export function shouldProcessHighlightEvent(params: {
+  eventAtMs: number;
+  nowMs: number;
+  freshnessMs: number;
+  hasFrozenSnapshot: boolean;
+}): boolean {
+  return params.hasFrozenSnapshot
+    || !Number.isFinite(params.eventAtMs)
+    || params.nowMs - params.eventAtMs <= params.freshnessMs;
+}
+
 /** FCM의 ok 집계값과 무관하게 token별 결과를 durable 원장 상태로 변환한다. */
 export function mapHighlightSettlements(
   claimed: ClaimedHighlightToken[],
