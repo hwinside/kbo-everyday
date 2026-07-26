@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "generatedFrom": "775efba384c04187aa68c096397a04f3e675aa76",
+  "generatedFrom": "b486f290314b5f9ef69555ca19938693c58a3efa",
   "violations": {
     "0034fe9a6a6cff327c64": {
       "count": 1,
@@ -534,13 +534,6 @@
       "subject": "daily_analysis",
       "detail": "add a bound, unique-key lookup, or query-guard annotation"
     },
-    "5d38cab39ab6ef446983": {
-      "count": 1,
-      "kind": "ambiguous_growing_limit",
-      "file": "src/app/api/venue-stories/route.ts",
-      "subject": "venue_stories",
-      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
-    },
     "5ecdae3b56eadfe8cf58": {
       "count": 1,
       "kind": "ambiguous_growing_limit",
@@ -827,6 +820,13 @@
       "file": "src/lib/supabase/usePosts.ts",
       "subject": "comment_likes",
       "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
+    "8fafff0c3ed5cb128220": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/app/api/venue-stories/route.ts",
+      "subject": "venue_stories",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
     },
     "904253dc0a8afc37f5a6": {
       "count": 1,

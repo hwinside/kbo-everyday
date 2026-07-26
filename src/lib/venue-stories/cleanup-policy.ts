@@ -48,3 +48,20 @@ export function shouldDeleteOrphanFile(opts: {
   if (parsed > cutoffMs) return false; // 아직 최근이면 다음 실행에
   return true;
 }
+
+/** orphan bucket 스캔 종료 상태에서 durable cursor 갱신 여부/값을 결정한다. */
+export function resolveOrphanCursorUpdate(opts: {
+  currentAfterName: string | null;
+  lastCompletedName: string | null;
+  reachedEnd: boolean;
+  bucketFault: boolean;
+}): { shouldWrite: boolean; nextAfter: string | null } {
+  const { currentAfterName, lastCompletedName, reachedEnd, bucketFault } = opts;
+  // list/remove fault면 기존 cursor를 그대로 둔다. 재스캔은 허용하되 실패 지점 skip은 금지.
+  if (bucketFault) return { shouldWrite: false, nextAfter: currentAfterName };
+  if (reachedEnd) return { shouldWrite: true, nextAfter: null };
+  if (lastCompletedName != null) {
+    return { shouldWrite: true, nextAfter: lastCompletedName };
+  }
+  return { shouldWrite: false, nextAfter: currentAfterName };
+}

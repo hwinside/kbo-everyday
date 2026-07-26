@@ -38,6 +38,17 @@ export const VENUE_STORY_PUBLIC_VIDEO_BUCKET = "videos";
 // archive 는 DB status 만 바꾸므로(객체 이동 0) 유실 경로가 원천 제거된다.
 export const VENUE_STORY_PRIVATE_MEDIA_BUCKET = "venue-media";
 
+// cleanup orphan 스윗 대상 버킷(생성 API 도달 전 이탈한 업로드 잔여 정리).
+// A1 부터 사진/포스터 직접 업로드·검증 publish·transcode 업로드가 DB insert/CAS 전에 일어나므로
+// POST 실패·CAS 0행·DB fault 때 venue-media 미참조 객체가 생길 수 있다 → 96h orphan 스윗 편입(삼순 blocker 3).
+// 정상 참조(active/archived 행의 media_bucket=venue-media path)는 참조집합 보호로 오삭제 0.
+export const VENUE_STORY_ORPHAN_SWEEP_BUCKETS = [
+  VENUE_STORY_PUBLIC_VIDEO_BUCKET, // "videos"(레거시)
+  "photos", // 레거시 공개 사진 버킷
+  VENUE_STORY_STAGING_BUCKET, // "venue-staging"(영상 원본 staging)
+  VENUE_STORY_PRIVATE_MEDIA_BUCKET, // "venue-media"(A안 private 미디어)
+] as const;
+
 export type VenueStoryMediaType = "video" | "image";
 
 /** GET /api/venue-stories 응답 아이템 */

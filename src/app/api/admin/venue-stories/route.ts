@@ -32,6 +32,7 @@ export async function GET(req: NextRequest) {
   }
 
   // A안 A1: private venue-media/staging 객체는 signed URL 로 모더레이션 미리보기(레거시 공개 버킷은 공개 URL).
+  // admin 은 검증 전 원본 미리보기가 필요해 venue-staging 도 mint 허용(publicServe 기본 false).
   const signed = await signPrivateRefs(
     list.flatMap((r) => [
       { bucket: r.media_bucket as string | null, path: r.media_path as string | null },
@@ -43,15 +44,15 @@ export async function GET(req: NextRequest) {
     id: r.id,
     gameId: r.game_id,
     mediaType: r.media_type,
-    mediaUrl:
-      resolveServeUrl(
-        {
-          bucket: r.media_bucket as string | null,
-          path: r.media_path as string | null,
-          url: (r.media_url as string) ?? null,
-        },
-        signed,
-      ) ?? (r.media_url as string),
+    // fail-closed: private 객체 서명 실패 시 null — raw 저장 경로(공개 접근 형태) 폴백 금지(유출 방지).
+    mediaUrl: resolveServeUrl(
+      {
+        bucket: r.media_bucket as string | null,
+        path: r.media_path as string | null,
+        url: (r.media_url as string) ?? null,
+      },
+      signed,
+    ),
     thumbUrl: resolveServeUrl(
       {
         bucket: r.thumb_bucket as string | null,
