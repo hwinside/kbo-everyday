@@ -53,11 +53,13 @@ async function main() {
   check("ACK must match active environment", /ack\.environment = a\.environment/.test(migration));
   check("ACK must match active channel id", /ack\.channel_id = a\.channel_id/.test(migration));
   check("only active generations participate", /c\.status = 'active'/.test(migration));
+  // 주석(-- ...)을 벗겨 실행 SQL만 검사 — 헤더가 statement_timeout 불가 사유를 설명하므로.
+  const migrationCode = migration.replace(/--.*$/gm, "");
   check("already-marked rows are fenced", (migration.match(/channel_born_channel_id is null/g) ?? []).length >= 2);
   check("rotating channels are skipped, not waited on", /for share skip locked/i.test(migration));
   check("target rows are locked with skip-locked to avoid stalls", /for update of s skip locked/i.test(migration));
-  // 주석(-- ...)을 벗겨 실행 SQL만 검사 — 헤더가 statement_timeout 불가 사유를 설명하므로.
-  const migrationCode = migration.replace(/--.*$/gm, "");
+  // 잠금을 batch LIMIT '이전'에 적용 — 잠긴 prefix로 배치가 막혀 뒤 unlocked 행이 starve되는 회귀 차단(R2).
+  check("target lock (skip-locked) is applied before the batch LIMIT", /for update of s skip locked\s+limit \(v_limit \+ 1\)/i.test(migrationCode));
   check("no self-armed statement_timeout call (cannot bound outer stmt)", !/set_config\(\s*'statement_timeout'|set\s+statement_timeout/i.test(migrationCode));
   check("pagination batch has a hard cap", /least\(greatest\(coalesce\(p_limit, 1000\), 1\), 1000\)/.test(migration));
   check("has_more reads one bounded lookahead row", /limit \(v_limit \+ 1\)/.test(migration));

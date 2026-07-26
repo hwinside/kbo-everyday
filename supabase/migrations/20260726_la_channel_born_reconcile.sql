@@ -58,56 +58,65 @@ begin
      order by c.game_id, c.environment
      for share skip locked
   ),
-  candidates as materialized (
-    select distinct on (s.game_id, s.user_id)
-           s.game_id,
-           s.user_id,
-           a.environment,
-           a.channel_id
-      from public.live_activity_started_users s
-      join active a
-        on a.game_id = s.game_id
-      join public.live_activity_channel_subscriptions ack
-        on ack.game_id = s.game_id
-       and ack.user_id = s.user_id
-       and ack.environment = a.environment
-       and ack.channel_id = a.channel_id
-     where s.channel_born_channel_id is null
-     order by
-       s.game_id,
-       s.user_id,
-       (a.environment = 'production') desc,
-       a.environment,
-       a.channel_id
-     limit (v_limit + 1)
-  ),
-  selected as materialized (
-    select *
-      from candidates
-     order by game_id, user_id
-     limit v_limit
-  ),
-  -- 갱신 대상 행을 SKIP LOCKED로 미리 잠근다 — concurrent 마킹이 잡고 있는 행은 건너뛰어
-  -- UPDATE가 절대 대기하지 않게 하고(유계 보장), 이미 잠긴 행은 다음 tick이 처리한다.
+  -- 잠금(SKIP LOCKED)을 batch LIMIT '이전'에 적용한다(삼순 R2). started_users를 직접
+  -- 스캔하며 잠긴 행을 건너뛰고 unlocked 후보로 배치를 채우므로, 앞 v_limit개가 잠겨
+  -- 있어도 그 뒤 unlocked 정상 행이 같은 tick에 heal된다(배치 경계 starvation 차단).
+  -- 자격 = '현재 active (env,channel)과 정확 일치하는 ACK 존재'(stale/구채널 ACK 제외).
+  -- started_users PK가 (game,user)라 s는 (game,user)당 1행 → 여기샠 distinct 불필요.
   locked as materialized (
     select s.game_id, s.user_id
       from public.live_activity_started_users s
-      join selected sel
-        on sel.game_id = s.game_id
-       and sel.user_id = s.user_id
      where s.channel_born_channel_id is null
+       and exists (
+         select 1
+           from active a
+           join public.live_activity_channel_subscriptions ack
+             on ack.game_id = s.game_id
+            and ack.user_id = s.user_id
+            and ack.environment = a.environment
+            and ack.channel_id = a.channel_id
+          where a.game_id = s.game_id
+       )
+     order by s.game_id, s.user_id
      for update of s skip locked
+     limit (v_limit + 1)
+  ),
+  -- 잠근 대상 행에 대해서만 기록할 (env,channel) 결정 — 복수 ACK면 production 우선.
+  resolved as materialized (
+    select distinct on (l.game_id, l.user_id)
+           l.game_id,
+           l.user_id,
+           a.environment,
+           a.channel_id
+      from locked l
+      join active a
+        on a.game_id = l.game_id
+      join public.live_activity_channel_subscriptions ack
+        on ack.game_id = l.game_id
+       and ack.user_id = l.user_id
+       and ack.environment = a.environment
+       and ack.channel_id = a.channel_id
+     order by
+       l.game_id,
+       l.user_id,
+       (a.environment = 'production') desc,
+       a.environment,
+       a.channel_id
+  ),
+  -- +1 lookahead(잠긴 행 제외 후에도 남는 unlocked 후보)로 has_more 판정, heal은 v_limit.
+  selected as materialized (
+    select *
+      from resolved
+     order by game_id, user_id
+     limit v_limit
   ),
   updated as (
     update public.live_activity_started_users tgt
        set channel_born_environment = sel.environment,
            channel_born_channel_id = sel.channel_id
       from selected sel
-      join locked l
-        on l.game_id = sel.game_id
-       and l.user_id = sel.user_id
-     where tgt.game_id = l.game_id
-       and tgt.user_id = l.user_id
+     where tgt.game_id = sel.game_id
+       and tgt.user_id = sel.user_id
        and tgt.channel_born_channel_id is null
     returning tgt.game_id
   )
@@ -115,7 +124,7 @@ begin
     v_active_count,
     (select count(*)::integer from selected),
     (select count(*)::integer from updated),
-    (select count(*) > v_limit from candidates);
+    (select count(*) > v_limit from locked);
 end;
 $$;
 

@@ -159,6 +159,29 @@ try {
   await new Promise((res) => lockChan.on("exit", res));
   check("rotated game heals on next tick", reconcile().healed === 3 && bornCount("G5") === 3);
 
+  // ===== Test 7: batch 경계 starvation — 1,001 eligible 중 정렬상 앞 1,000 locked =====
+  // 잠금이 LIMIT '이후'에 적용되면 앞 1,000 locked prefix만 재선정돼 healed=0으로
+  // 무한 반복, 뒤 unlocked 행 starve. lock-before-limit이면 같은 tick에 heal.
+  // g=1..1001 → user_id 마지막 12hex = '0000'||'0007'||lpad(g,4) → 정렬상 g 오름차순.
+  const g7uid = "('00000000-0000-0000-0000-' || '0000' || '0007' || lpad(g::text,4,'0'))::uuid";
+  psql(`insert into live_activity_channels(game_id,environment,channel_id,status) values ('G7','production','C7','active')`);
+  psql(`insert into live_activity_started_users(game_id,user_id)
+        select 'G7', ${g7uid} from generate_series(1,1001) g`);
+  psql(`insert into live_activity_channel_subscriptions(game_id,device_key,environment,channel_id,user_id)
+        select 'G7', 'd7_'||g, 'production', 'C7', ${g7uid} from generate_series(1,1001) g`);
+  const boundaryUid = psql(`select ('00000000-0000-0000-0000-' || '0000' || '0007' || lpad(1001::text,4,'0'))::text`);
+  // 정렬상 앞 1,000행(user_id < 1001번째) FOR UPDATE로 6초 보유.
+  const lockPrefix = holdLock(`select 1 from live_activity_started_users where game_id='G7' and user_id < '${boundaryUid}' for update`, 6);
+  await sleep(1500); // 1,000행 lock 획득 시간
+  r = reconcile();
+  check("batch boundary: reconcile still returns bounded under 1000 locked (<2500ms)", r.ms < 2500);
+  check("batch boundary: unlocked tail row heals in the SAME tick (no starvation)", r.healed === 1);
+  check("batch boundary: the single unlocked row is the 1001st", psql(`select channel_born_channel_id from live_activity_started_users where game_id='G7' and user_id='${boundaryUid}'`) === "C7");
+  check("batch boundary: locked prefix stays unmarked this tick", bornCount("G7") === 1);
+  await new Promise((res) => lockPrefix.on("exit", res));
+  r = reconcile();
+  check("batch boundary: prefix fully heals after release", bornCount("G7") === 1001 && r.healed === 1000);
+
   // ===== Test 6: active 세대 상한 초과 시 실패로 드러냄 =====
   for (let i = 0; i < 34; i++) psql(`insert into live_activity_channels(game_id,environment,channel_id,status) values ('BND${i}','production','x','active')`);
   let raised = false;
