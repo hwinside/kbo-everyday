@@ -342,6 +342,8 @@ export default function RecordRoom({ scopeTeamId }: { scopeTeamId?: number }) {
     if (SABER_DEFS[activeStat]) return Number((p as Row & { __saber?: number }).__saber) || 0;
     if (!def) return 0;
     if (activeStat === "doubles") return (Number(p.doubles) || 0) + (Number(p.triples) || 0);
+    // 이닝(ip)은 KBO 분수 표기("115 2/3") → Number()로 읽으면 0. parseIP로 실이닝 표시.
+    if (def.key === "ip") return parseIP(p.ip as string | number);
     return Number(p[def.key] ?? 0) || 0;
   };
   const fmt = (v: number) => {

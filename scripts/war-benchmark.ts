@@ -85,20 +85,33 @@ async function main() {
     return { name: h.playerName, team: h.teamShortName, ours, naver: h.hitterWar as number, d: ours - (h.hitterWar as number) };
   });
 
-  // 투수
-  const pitchers = (await fetchAll<NaverPitcher>("PITCHER")).filter((p) => typeof p.pitcherWar === "number" && p.isQualified);
-  const pDiffs: Diff[] = pitchers.map((p) => {
+  // 투수 — UI 노출군(5경기 이상)을 캘리브레이션 표본으로 사용. 규정이닝만 쓰면
+  // 저이닝 불펜(실제 노출군 다수)에서 전역 절편이 바닥값처럼 작동해 정확도가 악화된다.
+  const parseInn = (v: number | string): number => {
+    if (typeof v === "number") return v;
+    const m = String(v).trim().match(/^(\d+)(?:\s+(\d+)\/(\d+))?$/);
+    if (!m) return parseFloat(String(v)) || 0;
+    return (parseInt(m[1]) || 0) + (m[2] && m[3] ? parseInt(m[2]) / parseInt(m[3]) : 0);
+  };
+  const toDiff = (p: NaverPitcher): Diff => {
     const ours = calcPitcherSaber({
       era: p.pitcherEra, ip: p.pitcherInning, so: p.pitcherKk, bb: p.pitcherBb, hr: p.pitcherHr,
       hits: p.pitcherHit, r: p.pitcherR, er: p.pitcherEr, games: p.pitcherGameCount, wins: p.pitcherWin, losses: p.pitcherLose,
       saves: p.pitcherSave, whip: p.pitcherWhip,
     }).WAR;
     return { name: p.playerName, team: p.teamShortName, ours, naver: p.pitcherWar as number, d: ours - (p.pitcherWar as number) };
-  });
+  };
+  const allPitchers = (await fetchAll<NaverPitcher>("PITCHER")).filter((p) => typeof p.pitcherWar === "number");
+  const exposurePitchers = allPitchers.filter((p) => (p.pitcherGameCount || 0) >= 5); // UI 노출군(rankByStat 투수 5경기)
+  const pDiffs: Diff[] = exposurePitchers.map(toDiff); // 캘리브레이션·주 리포트 = 노출군
+  const qualDiffs: Diff[] = allPitchers.filter((p) => p.isQualified).map(toDiff);
+  const lowInnDiffs: Diff[] = exposurePitchers.filter((p) => parseInn(p.pitcherInning) < 12).map(toDiff);
 
-  console.log(`[war-benchmark] season=${SEASON} 자격타자=${bDiffs.length} 자격투수=${pDiffs.length} (네이버 WAR 보유)`);
+  console.log(`[war-benchmark] season=${SEASON} 자격타자=${bDiffs.length} 투수(노출군 5G+)=${pDiffs.length} 규정투수=${qualDiffs.length} 저이닝(<12IP)=${lowInnDiffs.length}`);
   report("타자 예상 WAR vs 네이버 WAR", bDiffs, "포지션/수비 보강 후보");
-  report("투수 예상 WAR vs 네이버 WAR", pDiffs, "FIP 외 요인");
+  report("투수 예상 WAR vs 네이버 WAR (노출군 5G+ = 캘리브레이션 표본)", pDiffs, "RA9 외 요인");
+  report("  └ 참고: 규정이닝 투수", qualDiffs, "규정군");
+  report("  └ 참고: 저이닝 <12IP 노출군", lowInnDiffs, "저이닝 절편 확인");
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });

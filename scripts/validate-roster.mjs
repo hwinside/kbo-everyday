@@ -24,7 +24,7 @@ const FLAGS_DIR = path.resolve(__dirname, "../public/flags");
 // ============================================================================
 // 기대값 (스펙 §3.1)
 // ============================================================================
-const EXPECTED_COUNT = 875; // 2026-07-21: 교야마 마사야(AQ008) stale 중복 항목 제거(실제 등록명 쿄야마/56548로 통합). 876: 07-20 Player/Search.aspx 전수 dry-run 미출전/퓨처스 33명 1회 백필.
+const EXPECTED_COUNT = 876; // 2026-07-26: 실제 roster SSOT(876)로 정규화 — 875는 stale baseline이었다(실 파일은 07-20 백필분 876 유지). 이력: 07-21 쿄야마(AQ008) stale 중복 통합, 07-20 Player/Search.aspx 전수 dry-run 미출전/퓨처스 33명 1회 백필.
 const MIN_PER_TEAM = 30;
 const BACKNO_REGEX = /^(\d{1,3}|-|\?)$/; // 숫자 1~3자리 | "-" | "?"
 const KNOWN_TEAMS = new Set([

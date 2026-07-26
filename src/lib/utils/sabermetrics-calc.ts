@@ -11,7 +11,7 @@ const LEAGUE = {
 // 네이버 WAR 대비 최소제곱 캘리브레이션(naver ≈ a*ours + b). scripts/war-benchmark.ts로 주기 재산출.
 // 2026 기준: 타자 MAE 0.29→0.27, 투수 MAE 0.37→0.31(투수 bias -0.20 보정).
 const BATTER_WAR_CAL = { a: 0.909, b: 0.216 };
-const PITCHER_WAR_CAL = { a: 0.819, b: 0.802 };
+const PITCHER_WAR_CAL = { a: 1.002, b: 0.398 };
 
 // 포지션 보정(시즌 ~600PA 기준 runs) — 네이버 position enum 기준
 const POS_ADJ: Record<string, number> = {

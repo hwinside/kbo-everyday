@@ -25,7 +25,8 @@ const TITLE_PRIORITY: string[] = [
   "so_batter", "games_batter", "games_pitcher",
 ];
 
-function parseIP(ip: string | number): number {
+/** "115 2/3" | number → 실이닝 소수. 파싱 실패 0. 정렬값·표시값 공용 SSOT(분수이닝 0 버그 방지). */
+export function parseIP(ip: string | number): number {
   if (typeof ip === "number") return ip;
   const s = String(ip).trim();
   const match = s.match(/^(\d+)(?:\s+(\d+)\/(\d+))?$/);
@@ -65,6 +66,8 @@ export function rankByStat(rows: StatRow[], statKey: string): RankedRow[] {
     if (statKey === "doubles") {
       return (Number(p["doubles"]) || 0) + (Number(p["triples"]) || 0);
     }
+    // 이닝(ip)은 KBO 분수 표기("115 2/3") → Number()로 읽으면 0. parseIP로 실이닝 정렬.
+    if (def.key === "ip") return parseIP((p["ip"] as string | number) ?? 0);
     return Number(p[def.key] ?? 0) || 0;
   };
 
