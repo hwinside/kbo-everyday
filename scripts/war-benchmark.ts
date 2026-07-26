@@ -132,4 +132,16 @@ async function main() {
   report("  └ 참고: 저이닝 <12IP 노출군", lowInnDiffs, "저이닝 절편 확인");
 }
 
-main().catch((e) => { console.error(e); process.exit(1); });
+// direct-run guard: 이 파일을 직접 실행할 때만 벤치마크(네이버 네트워크 호출) 수행.
+// import(예: war-benchmark-coverage-smoke)만 하면 main()이 돌지 않아 side-effect·비결정성 없음.
+const isDirectRun = (() => {
+  try {
+    const invoked = process.argv[1] ? new URL(`file://${process.argv[1]}`).pathname : "";
+    return import.meta.url === `file://${invoked}` || (!!invoked && import.meta.url.endsWith(invoked.split("/").pop() ?? "\0"));
+  } catch {
+    return false;
+  }
+})();
+if (isDirectRun) {
+  main().catch((e) => { console.error(e); process.exit(1); });
+}
