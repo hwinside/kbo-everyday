@@ -74,16 +74,20 @@ export interface PushPayload {
  * 반드시 이걸 spread해야 한다 — 한 경로라도 빠지면 그 메시지는 FCM 기본(비collapse·최대 4주
  * 보관)으로 남아, 절전 복귀 시 옛 LIVE가 game_end *뒤에* 도착해 위젯을 되살릴 수 있다(삼순 #649).
  *
- * 단일 stream key: 위젯은 기기당 한 경기 상태만 보관하므로 경기별 키가 아닌 단일 키로 묶어야
- * 미배달분 전체에서 최신 1건만 남고(신·구 경기 간 순서 역전 차단), collapse key 4개/기기
- * 한도도 1개로 고정된다.
+ * stream key 분리: live tick은 경기별 아닌 단일 key(kbo_widget_stream)로 묶어 미배달 백로그가
+ * 최신 1건만 남게 한다. terminal(종료/취소 clear)은 *별도* key(kbo_widget_end)로 보내, live 스트림의
+ * collapse에 묻히거나 밀려나지 않게 한다(P0 인시던트: 종료됐는데 위젯이 9회로 얼어붙어 안 사라짐).
+ * (딥슬립 유실 복구용 escalating blind resend는 S1-b에서 이 terminal 버킷 위에 얹는다.)
+ * 두 key로 나뉘어도 신·구 상태 순서 역전은 w_ts(seq 가드, WIDGET_CONTROL_KINDS)가 차단한다 —
+ * live의 옛 배달은 game_end보다 send-time(w_ts)이 작아 네이티브가 폐기하므로, 별도 버킷에서
+ * 뒤늦게 도착해도 종료 상태를 되살리지 못한다. key는 2개라 FCM 4개/기기 한도 안이다.
  * TTL 분리: live tick은 다음 틱이 곧 덮어쓰므로 90s에 폐기(뒤늦은 배달이 terminal을 덮지 않게),
- * terminal(종료/취소)은 장시간 오프라인 복귀에도 마지막 상태가 배달되도록 24h — 이후엔 다음
- * 경기 pregame/live push가 같은 스트림 키로 자연 대체한다.
+ * terminal은 장시간 오프라인 복귀에도 마지막 상태가 배달되도록 24h — 이후엔 다음 경기
+ * pregame/live push가 live 스트림 key로 자연 대체한다.
  */
 export const WIDGET_STREAM = {
   live: { collapseKey: "kbo_widget_stream", ttlSeconds: 90 },
-  terminal: { collapseKey: "kbo_widget_stream", ttlSeconds: 24 * 60 * 60 },
+  terminal: { collapseKey: "kbo_widget_end", ttlSeconds: 24 * 60 * 60 },
 } as const;
 
 /**
@@ -92,6 +96,25 @@ export const WIDGET_STREAM = {
  * send-time이라 같은 경기에서 더 작은/같은 값은 옛 배달로 보고 버린다.
  */
 export const WIDGET_CONTROL_KINDS = new Set(["game_live", "game_cancel", "game_end"]);
+
+/**
+ * 이벤트 배너(안타/홈런/득점·실점·이닝요약) data payload에 싣는 경기별 그룹/태그 계약(S1).
+ * n_group=game:{gameId}은 경기 단위 묶음, n_tag는 개별 배너 주소(중복 교체/개별 취소용).
+ * 네이티브가 이 값으로 배너를 그룹핑하고 game_end 시 일괄 cancel(아래 endClearGroupFlag)한다
+ * — 현재 P0: tag/group이 없어 매 건 새 알림으로 20개씩 누적. 네이티브 소비(그룹 표시·일괄
+ * 취소 실행)는 S1b(앱 변경). 서버는 계약 필드만 싣는다(구버전 네이티브는 무시 — 무해).
+ */
+export function eventBannerGroupData(gameId: string, tag: string): Record<string, string> {
+  return { n_group: `game:${gameId}`, n_tag: tag };
+}
+
+/**
+ * game_end(종료/취소 clear) data payload에 싣는 그룹 일괄 cancel 플래그(S1). 네이티브는 이
+ * 플래그를 받으면 같은 n_group의 이벤트 배너를 모두 cancel한다(누적 정리). 소비는 S1b.
+ */
+export function endClearGroupFlag(gameId: string): Record<string, string> {
+  return { n_clear_group: `game:${gameId}` };
+}
 
 /**
  * 대상 유저들에게 FCM 발송.

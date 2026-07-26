@@ -1,6 +1,6 @@
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { isKboGameCancelled } from "@/lib/crawler/kbo-status";
-import { sendFcmToUsers, WIDGET_STREAM } from "@/lib/notifications/fcm";
+import { sendFcmToUsers, WIDGET_STREAM, eventBannerGroupData } from "@/lib/notifications/fcm";
 import { teamIdByShortName, fansOfTeams } from "@/lib/notifications/game-status";
 import { isHomerunCoveredRun, resolveHomerunScore, inheritHitRbi } from "@/lib/notifications/score-dedupe";
 import type { KboRawGame } from "@/types/api";
@@ -121,7 +121,11 @@ export async function notifyScoreEvents(
             ...(cPitcher ? [`투수 ${cPitcher}`] : []),
             scoreLine,
           ].join(" · ");
-          const cRes = await sendFcmToUsers(cFans.ids, { title: cTitle, body: cBody, url }, "my_team_concede");
+          const cRes = await sendFcmToUsers(cFans.ids, {
+            title: cTitle, body: cBody, url,
+            // 이벤트 배너 경기별 그룹/태그(S1) — game_end 시 일괄 cancel·누적 정리용. 소비는 S1b.
+            data: eventBannerGroupData(gameId, `${ev.id}-concede`),
+          }, "my_team_concede");
           if (!cRes.ok) await unclaimEvent(`${ev.id}-concede`); // 인프라 실패 → 재시도
           else conceded += cRes.sent;
         }
@@ -143,7 +147,11 @@ export async function notifyScoreEvents(
           : `⚾ ${scoringTeamName} 득점!`;
       const body = isHr && batter ? `${batter} · ${scoreLine}` : scoreLine;
 
-      const res = await sendFcmToUsers(fans.ids, { title, body, url }, "my_team_score");
+      const res = await sendFcmToUsers(fans.ids, {
+        title, body, url,
+        // 이벤트 배너 경기별 그룹/태그(S1) — game_end 시 일괄 cancel·누적 정리용. 소비는 S1b.
+        data: eventBannerGroupData(gameId, ev.id),
+      }, "my_team_score");
       if (!res.ok) { await unclaimEvent(ev.id); continue; } // 인프라 실패 → 재시도
       scored += res.sent;
 
@@ -249,7 +257,11 @@ export async function notifyInningSummaries(
       ).length;
       const res = await sendFcmToUsers(
         fans.ids,
-        { title: `⚾ ${ev.inning}회${half} 요약`, body: `${ev.inning}회${half} ${hits}안타 ${runs}득점.`, url },
+        {
+          title: `⚾ ${ev.inning}회${half} 요약`, body: `${ev.inning}회${half} ${hits}안타 ${runs}득점.`, url,
+          // 이벤트 배너 경기별 그룹/태그(S1) — game_end 시 일괄 cancel·누적 정리용. 소비는 S1b.
+          data: eventBannerGroupData(gameId, `${ev.id}-summary`),
+        },
         "my_team_score_inning_summary",
       );
       if (!res.ok) { await unclaimEvent(`${ev.id}-summary`); continue; } // 인프라 실패 → 재시도

@@ -1,5 +1,5 @@
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
-import { sendFcmToUsers, WIDGET_STREAM } from "@/lib/notifications/fcm";
+import { sendFcmToUsers, WIDGET_STREAM, endClearGroupFlag } from "@/lib/notifications/fcm";
 import { TEAMS } from "@/lib/constants/teams";
 import { fetchStandings, isKboGameCancelled } from "@/lib/crawler/kbo-api";
 import { decideEndStreakCount, type StreakDir } from "@/lib/notifications/end-streak-policy";
@@ -434,9 +434,10 @@ export async function notifyGameStatusTransitions(
           body: "",
           url,
           dataOnly: true,
-          // terminal — 위젯 스트림 공통 정책(단일 collapse key + 긴 TTL, 삼순 #649 blocker①).
+          // terminal — 위젯 스트림 정책(별도 collapse key + 긴 TTL, 삼순 #649 blocker①).
           ...WIDGET_STREAM.terminal,
-          data: { kind: "game_end" },
+          // n_clear_group — 취소 시에도 해당 경기 이벤트 배너 그룹 일괄 cancel(S1; 소비는 S1b).
+          data: { kind: "game_end", ...endClearGroupFlag(gameId) },
         }, "game_start");
       }
       continue;
