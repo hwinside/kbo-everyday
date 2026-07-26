@@ -33,11 +33,23 @@ export interface SavedScrollState {
   releaseGuards: () => void;
 }
 
+export interface LockRootScrollOptions {
+  /**
+   * 호출 시점에 iOS 네이티브 키보드 오버레이(@capacitor/keyboard setScroll(disabled))가 root 스크롤을
+   * 직접 제어 중인지 반환하는 getter. 참이면 restoreLockedScroll guard 를 no-op 으로 두어
+   * 네이티브 제어와 visualViewport scroll 복원의 이중보정(시트/배경 진동)을 막는다(삼순 #883 ④).
+   * guard 자체는 항상 등록되므로 native fallback/웹 경로에서는 그대로 동작한다.
+   */
+  isNativeKeyboardActive?: () => boolean;
+}
+
 /**
  * root scroll 을 잠그고 복원용 상태를 반환한다(SSR-safe: window/document 없으면 no-op).
  * iOS 에서 position:fixed 로 body 를 고정하므로 시각적 점프를 막기 위해 top 에 -scrollY 를 준다.
  */
-export function lockRootScroll(): SavedScrollState | null {
+export function lockRootScroll(
+  options?: LockRootScrollOptions,
+): SavedScrollState | null {
   if (typeof document === "undefined" || typeof window === "undefined") return null;
   const scrollY = window.scrollY || window.pageYOffset || 0;
   const body = document.body;
@@ -67,7 +79,10 @@ export function lockRootScroll(): SavedScrollState | null {
   document.documentElement.style.overflow = "hidden";
   // iOS Safari는 키보드 focus 순간 fixed body라도 root를 자동 스크롤할 수 있다.
   // focus 애니메이션/키보드 열린 native drag 중 발생하는 모든 root 이동을 저장 위치로 되돌린다.
+  // ⚠️ native 키보드 오버레이가 스크롤을 직접 제어 중이면(isNativeKeyboardActive) guard 를 no-op 으로
+    //   두어 이중보정(시트 진동)을 막는다. guard 는 항상 등록해 native fallback/웹 경로는 보호한다(삼순 #883 ④).
   const restoreLockedScroll = () => {
+    if (options?.isNativeKeyboardActive?.()) return;
     if (window.scrollY !== scrollY || window.pageYOffset !== scrollY) {
       window.scrollTo(0, scrollY);
     }

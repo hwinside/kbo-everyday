@@ -111,6 +111,10 @@ export default function VenueStoryViewer({
   const [commentBusy, setCommentBusy] = useState(false);
   // 모달 컴포저 포커스 → 시트를 시각 뷰포트 전체 높이로 확장(CommentSheet expanded 패턴).
   const [composerFocused, setComposerFocused] = useState(false);
+  // iOS 네이티브 키보드 오버레이 — 브릿지 실패 시 web visualViewport 폴백으로 전환(nativeKbFallback).
+  // nativeActiveRef 는 scroll-lock guard 가 이중보정을 피하도록 native 스크롤 제어 활성 여부를 노출한다.
+  const [nativeKbFallback, setNativeKbFallback] = useState(false);
+  const nativeActiveRef = useRef(false);
   // iOS 키보드 회피 — CommentSheet 와 동일한 state 기반 visualViewport 패턴.
   // iOS Safari/WKWebView 는 키보드가 떠도 레이아웃 뷰포트가 그대로라 absolute bottom+safe-area
   // 만으로는 컴포저가 키보드에 덮인다 → 시각 뷰포트 차이(kbInset)로 시트 바닥을 키보드 위로 올리고
@@ -196,7 +200,11 @@ export default function VenueStoryViewer({
   // body overflow:hidden 만으론 부족해 scrollY 저장 + position:fixed 로 root scroll 자체를 막고
   // 해제 시 원위치 복원한다(scroll-lock.ts 순수 헬퍼, 회귀로 고정 — 삼순 #839 blocker 3).
   useEffect(() => {
-    const saved = lockRootScroll();
+    // native 키보드 오버레이가 스크롤을 직접 제어 중이면 restoreLockedScroll guard 를 no-op 으로 두어
+    // 이중보정(시트/배경 진동)을 피한다(삼순 #883 blocker ④). native 비활성/fallback/웹은 guard 정상 동작.
+    const saved = lockRootScroll({
+      isNativeKeyboardActive: () => nativeActiveRef.current,
+    });
     return () => {
       unlockRootScroll(saved);
     };
@@ -211,12 +219,25 @@ export default function VenueStoryViewer({
     // resize:'none' + setScroll(disabled) 로 WKWebView 자동 스크롤/리사이즈를 끄므로
     // 배경(경기방) 밀림·시트 진동이 사라진다(#863/#877 실기기 재발의 근본 해소). 높이=키보드높이,
     // vvHeight=키보드 위 가시영역(innerHeight-키보드높이)로 잡아 목록+컴포저가 키보드 위에 함께 보인다.
-    if (supportsNativeKeyboardOverlay()) {
-      const handle = beginOverlayKeyboard((height) => {
-        setKbInset(height);
-        setVvHeight(height > 0 ? Math.max(0, window.innerHeight - height) : null);
+    if (supportsNativeKeyboardOverlay() && !nativeKbFallback) {
+      const handle = beginOverlayKeyboard({
+        onHeight: (height) => {
+          setKbInset(height);
+          setVvHeight(height > 0 ? Math.max(0, window.innerHeight - height) : null);
+        },
+        onFallback: () => {
+          // 브릿지 실패 — native 활성 해제 후 web visualViewport 경로로 복귀(effect 재실행).
+          nativeActiveRef.current = false;
+          setKbInset(0);
+          setVvHeight(null);
+          setNativeKbFallback(true);
+        },
+        onActiveChange: (active) => {
+          nativeActiveRef.current = active;
+        },
       });
       return () => {
+        nativeActiveRef.current = false;
         handle.release();
         setKbInset(0);
         setVvHeight(null);
@@ -241,7 +262,7 @@ export default function VenueStoryViewer({
       setVvHeight(null);
       setComposerFocused(false);
     };
-  }, [commentsOpen]);
+  }, [commentsOpen, nativeKbFallback]);
 
   // 최신 댓글 bottom scroll(삼순 #807 blocker 5) — 정순(오래된→최신) 렌더라
   // 시트가 열릴 때·댓글이 로드/추가될 때·확장될 때 최신 댓글이 보이도록 맨 아래로.

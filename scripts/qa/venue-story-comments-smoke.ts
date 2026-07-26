@@ -306,6 +306,33 @@ console.log("[전송 중 스토리 전환 오염 가드 — 삼순 #807 라운�
   ok("native-keyboard: 웹/PWA·안드·구빌드는 no-op(iOS+plugin availability 게이트)",
     kbSrc.includes("isIosNativeRuntime()") &&
     kbSrc.includes('isPluginAvailable("Keyboard")'));
+
+  // ⭐ #883 재작업(삼순 NO-GO 4-blocker) 회귀 — 텍스트 계약
+  const scrollLockSrc = readFileSync(
+    path.resolve(process.cwd(), "src/lib/venue-stories/scroll-lock.ts"),
+    "utf8",
+  );
+  // ② quick open→close async race: setup 과 release(restore)를 단일 chain 으로 직렬화해
+  //   release 가 setup 완료 뒤에 restore 를 실행 → native scroll off/resize:none 잔류 방지.
+  ok("② setup↔release 단일 chain 직렬화(release는 setup 뒤 restore)",
+    kbSrc.includes("chain = chain.then(restore)"));
+  ok("② 각 단계 후 released 재확인 + 적용분(resizeChanged/scrollDisabled)만 restore",
+    kbSrc.includes("resizeChanged") && kbSrc.includes("scrollDisabled") &&
+    (kbSrc.match(/if \(released\)/g) ?? []).length >= 3);
+  // ③ 브릿지 부분실패: restore 후 onFallback 으로 web visualViewport 경로 복귀.
+  ok("③ 부분실패 시 onFallback → web 폴백 전환(nativeKbFallback 게이트)",
+    kbSrc.includes("onFallback()") &&
+    viewerSrc.includes("setNativeKbFallback(true)") &&
+    /supportsNativeKeyboardOverlay\(\) && !nativeKbFallback/.test(viewerSrc));
+  // ④ native 활성 중에는 scroll-lock guard 를 no-op 으로 두어 이중보정(시트 진동) 제거.
+  ok("④ native 활성 시 scroll-lock restoreLockedScroll guard no-op(isNativeKeyboardActive)",
+    scrollLockSrc.includes("isNativeKeyboardActive") &&
+    scrollLockSrc.includes("options?.isNativeKeyboardActive?.()") &&
+    kbSrc.includes("onActiveChange") &&
+    viewerSrc.includes("isNativeKeyboardActive: () => nativeActiveRef.current"));
+  ok("④ guard 는 항상 등록되어 native fallback/웹 경로는 정상 보호",
+    scrollLockSrc.includes('window.addEventListener("scroll", restoreLockedScroll') &&
+    scrollLockSrc.includes("window.visualViewport?.addEventListener(\"scroll\", restoreLockedScroll"));
 }
 
 console.log("[rate limit 원자화 RPC 계약 — 삼순 #807 라운드3 blocker 1]");
