@@ -18,6 +18,16 @@ const migration = readFileSync(
   "utf8",
 );
 const route = readFileSync("src/app/api/auth/delete-account/route.ts", "utf8");
+const useDM = readFileSync("src/lib/supabase/useDM.ts", "utf8");
+const unreadDM = readFileSync("src/lib/supabase/useUnreadDMCount.ts", "utf8");
+const conversationPage = readFileSync(
+  "src/app/(main)/messages/[conversationId]/page.tsx",
+  "utf8",
+);
+const adminMessagesRoute = readFileSync(
+  "src/app/api/admin/messages/route.ts",
+  "utf8",
+);
 
 // Own, non-evidence rows cascade: a departed user's feedback and block edges
 // carry no shared/other-party record, so removing them on deletion is correct.
@@ -92,6 +102,49 @@ check(
 check(
   "route deletes the auth root once",
   (route.match(/admin\.auth\.admin\.deleteUser/g) || []).length === 1,
+);
+check(
+  "dm_reports keeps its conversation evidence link",
+  !migration.includes("DROP CONSTRAINT dm_reports_conversation_id_fkey"),
+);
+check(
+  "RLS blocks new messages after either participant departs",
+  /CREATE POLICY dm_msg_insert[\s\S]*?conversation\.user1_id IS NOT NULL[\s\S]*?conversation\.user2_id IS NOT NULL/.test(
+    migration,
+  ),
+);
+check(
+  "RLS proves message sender belongs to the conversation",
+  /CREATE POLICY dm_msg_insert[\s\S]*?conversation\.user1_id = auth\.uid\(\)[\s\S]*?conversation\.user2_id = auth\.uid\(\)/.test(
+    migration,
+  ),
+);
+check(
+  "admin unread SQL counts NULL sender as not-system",
+  (migration.match(/sender_id IS DISTINCT FROM p_system_user_id/g) || []).length >= 4,
+);
+check(
+  "DM client excludes NULL ids from profile batch lookup",
+  useDM.includes('.filter((id): id is string => id !== null)'),
+);
+check(
+  "DM client labels anonymized participants",
+  useDM.includes('"탈퇴한 사용자"'),
+);
+check(
+  "DM unread queries include anonymized senders",
+  useDM.includes('"dm_unread_counts"') &&
+    unreadDM.includes('"dm_unread_counts"') &&
+    migration.includes("message.sender_id IS DISTINCT FROM auth.uid()"),
+);
+check(
+  "conversation page guards NULL before profile lookup",
+  conversationPage.includes('if (!oid) {') &&
+    conversationPage.includes('setOtherName("탈퇴한 사용자")'),
+);
+check(
+  "admin reply rejects departed recipient",
+  adminMessagesRoute.includes('"recipient_deleted"'),
 );
 
 console.log(`\nAccount deletion contract smoke: ${pass} PASS / ${fail} FAIL`);

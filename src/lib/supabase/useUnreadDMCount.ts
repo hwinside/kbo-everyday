@@ -21,14 +21,17 @@ export function useUnreadDMCount() {
 
     const convIds = convs.map((c: { id: string }) => c.id);
 
-    const { count: unread } = await supabase
-      .from("dm_messages")
-      .select("*", { count: "exact", head: true })
-      .in("conversation_id", convIds)
-      .eq("is_read", false)
-      .neq("sender_id", user.id);
+    // query-guard: bounded -- p_conversation_ids는 현재 사용자의 대화이며 RPC는 대화당 집계 1행만 반환
+    const { data: unreadRows } = await supabase
+      .rpc("dm_unread_counts", { p_conversation_ids: convIds });
 
-    setCount(unread ?? 0);
+    setCount(
+      (unreadRows ?? []).reduce(
+        (total: number, row: { unread_count: number | string }) =>
+          total + Number(row.unread_count),
+        0,
+      ),
+    );
   }, [user]);
 
   useEffect(() => { load(); }, [load]); // eslint-disable-line react-hooks/set-state-in-effect
