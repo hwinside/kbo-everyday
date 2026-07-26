@@ -528,8 +528,8 @@ export default function AdminOverviewPage() {
     { label: "오늘 사진", value: withUsers(todayPhotos, photoUserCount), icon: <Camera className="w-4 h-4 text-[#FF9F0A]" />, detailType: "photos" },
     { label: "오늘 채팅(크관)", value: withUsers(todayChats, chatUserCount), icon: <MessagesSquare className="w-4 h-4 text-[#32D4EB]" />, detailType: "chats" },
     { label: "오늘 좋아요", value: withUsers(todayLikes, likeUserCount), icon: <Heart className="w-4 h-4 text-[#FF375F]" /> },
-    { label: "오늘 직관 영상", value: todayVenueVideos, icon: <Video className="w-4 h-4 text-[#BF5AF2]" /> },
-    { label: "오늘 직관 사진", value: todayVenuePhotos, icon: <ImageIcon className="w-4 h-4 text-[#5AC8FA]" /> },
+    { label: "오늘 직관 영상", value: todayVenueVideos, icon: <Video className="w-4 h-4 text-[#BF5AF2]" />, detailType: "venue_videos" },
+    { label: "오늘 직관 사진", value: todayVenuePhotos, icon: <ImageIcon className="w-4 h-4 text-[#5AC8FA]" />, detailType: "venue_photos" },
     { label: "오늘 건의", value: todayFeedback, icon: <AlertTriangle className="w-4 h-4 text-[#FF453A]" /> },
     { label: "크롤러 실패", value: crawlerErrors, icon: <Bot className="w-4 h-4 text-[#FF453A]" /> },
   ];
