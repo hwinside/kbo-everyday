@@ -17,6 +17,10 @@ import { shouldCloseCommentSheetDrag } from "@/lib/venue-stories/comment-sheet-g
 import { lockRootScroll, unlockRootScroll } from "@/lib/venue-stories/scroll-lock";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import { isIosNativeRuntime } from "@/lib/capacitor/platform";
+import {
+  beginOverlayKeyboard,
+  supportsNativeKeyboardOverlay,
+} from "@/lib/capacitor/native-keyboard";
 
 interface Props {
   stories: VenueStory[];
@@ -203,6 +207,24 @@ export default function VenueStoryViewer({
   // (CommentSheet 와 동일한 bottom=kbInset / height=vvHeight 패턴).
   useEffect(() => {
     if (!commentsOpen) return;
+    // iOS 네이티브: @capacitor/keyboard 의 정확한 키보드 높이로 시트를 올린다.
+    // resize:'none' + setScroll(disabled) 로 WKWebView 자동 스크롤/리사이즈를 끄므로
+    // 배경(경기방) 밀림·시트 진동이 사라진다(#863/#877 실기기 재발의 근본 해소). 높이=키보드높이,
+    // vvHeight=키보드 위 가시영역(innerHeight-키보드높이)로 잡아 목록+컴포저가 키보드 위에 함께 보인다.
+    if (supportsNativeKeyboardOverlay()) {
+      const handle = beginOverlayKeyboard((height) => {
+        setKbInset(height);
+        setVvHeight(height > 0 ? Math.max(0, window.innerHeight - height) : null);
+      });
+      return () => {
+        handle.release();
+        setKbInset(0);
+        setVvHeight(null);
+        setComposerFocused(false);
+      };
+    }
+
+    // 웹/PWA·안드로이드 폴백 — visualViewport 기반(기존 경로).
     const vv = window.visualViewport;
     if (!vv) return;
     const apply = () => {

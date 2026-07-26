@@ -278,6 +278,34 @@ console.log("[전송 중 스토리 전환 오염 가드 — 삼순 #807 라운�
     !shouldCloseCommentSheetDrag({ armed: true, deltaX: 90, deltaY: 100 }));
   ok("목록 스크롤로 arm 안 됨 → 유지",
     !shouldCloseCommentSheetDrag({ armed: false, deltaX: 0, deltaY: 120 }));
+
+  // ⭐ iOS 네이티브 키보드 경로(#877 후속, @capacitor/keyboard): visualViewport 추론은 실기기 WKWebView에서
+  // 기본 자동스크롤과 충돌해 배경 밀림/지터를 일으킨다(#863/#877 재발). iOS 네이티브에서는
+  // beginOverlayKeyboard(resize:'none'+자동스크롤 OFF+정확한 키보드높이)로 전환하고 웹/안드는 visualViewport 폴백.
+  ok("iOS 네이티브 키보드 오버레이 경로 배선(supportsNativeKeyboardOverlay/beginOverlayKeyboard)",
+    viewerSrc.includes("supportsNativeKeyboardOverlay(") &&
+    viewerSrc.includes("beginOverlayKeyboard("));
+  ok("visualViewport 폴백은 네이티브 경로 이후에 유지(웹/안드)",
+    viewerSrc.indexOf("supportsNativeKeyboardOverlay(") <
+    viewerSrc.indexOf("window.visualViewport"));
+
+  // 네이티브 키보드 헬퍼 계약 — resize:'none'+자동스크롤 OFF로 WKWebView 기본 동작을 꺼야 배경이 안 밀린다.
+  const kbSrc = readFileSync(
+    path.resolve(process.cwd(), "src/lib/capacitor/native-keyboard.ts"),
+    "utf8",
+  );
+  ok("native-keyboard: resize none 로 webview 리사이즈 OFF",
+    kbSrc.includes("setResizeMode({ mode: KeyboardResize.None })"));
+  ok("native-keyboard: setScroll(disabled) 로 WKWebView 자동스크롤 OFF(배경 밀림 차단)",
+    kbSrc.includes("setScroll({ isDisabled: true })"));
+  ok("native-keyboard: keyboardWillShow/Hide 로 정확한 키보드 높이 구독",
+    kbSrc.includes('"keyboardWillShow"') && kbSrc.includes('"keyboardWillHide"'));
+  ok("native-keyboard: release 시 이전 resize mode 원복+자동스크롤 재활성화 — 다른 화면 입력창 미오염",
+    kbSrc.includes("setResizeMode({ mode: previousResizeMode })") &&
+    kbSrc.includes("setScroll({ isDisabled: false })"));
+  ok("native-keyboard: 웹/PWA·안드·구빌드는 no-op(iOS+plugin availability 게이트)",
+    kbSrc.includes("isIosNativeRuntime()") &&
+    kbSrc.includes('isPluginAvailable("Keyboard")'));
 }
 
 console.log("[rate limit 원자화 RPC 계약 — 삼순 #807 라운드3 blocker 1]");
