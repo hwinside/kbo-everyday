@@ -48,9 +48,13 @@ function getTodayKSTRange() {
   const now = new Date();
   const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
   const dateStr = kst.toISOString().slice(0, 10);
+  // 다음날 00:00:00 KST (exclusive upper) — 23:59:59.xxx fractional 누락 방지.
+  const nextKst = new Date(kst.getTime() + 24 * 60 * 60 * 1000);
+  const nextDateStr = nextKst.toISOString().slice(0, 10);
   return {
     start: `${dateStr}T00:00:00+09:00`,
     end: `${dateStr}T23:59:59+09:00`,
+    endExclusive: `${nextDateStr}T00:00:00+09:00`,
   };
 }
 
@@ -64,7 +68,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "invalid type" }, { status: 400 });
   }
 
-  const { start, end } = getTodayKSTRange();
+  const { start, end, endExclusive } = getTodayKSTRange();
 
   if (type === "posts") {
     const { data, error } = await supabase
@@ -197,13 +201,17 @@ export async function GET(req: NextRequest) {
 
   if (type === "venue_videos" || type === "venue_photos") {
     const mediaType = type === "venue_videos" ? "video" : "image";
-    // query-guard: bounded -- 오늘 KST 범위(created_at gte/lte) + media_type 필터, created_at desc 고정 200건 상한(페이지네이션 없음).
+    // 카드(venue_story_upload_daily 롤업)와 1:1 정합: upload_counted_at 마커가 있는
+    // 행(=처음 active+story_geofence 전이)만 조회. pending/검증실패/admin_qa/legacy는 마커 NULL 로 제외,
+    // 이후 removed/archived 로 바뀌어도 마커 보존(롤업 무차감과 대칭).
+    // query-guard: bounded -- 오늘 KST 범위(created_at gte/lt exclusive) + media_type + counted 필터, created_at desc 고정 200건 상한(페이지네이션 없음).
     const { data, error } = await supabase
       .from("venue_stories")
-      .select("id, game_id, media_type, media_url, thumb_url, caption, stadium_name, created_at, user_id")
+      .select("id, game_id, media_type, media_url, thumb_url, caption, stadium_name, created_at, user_id, status")
       .eq("media_type", mediaType)
+      .not("upload_counted_at", "is", null)
       .gte("created_at", start)
-      .lte("created_at", end)
+      .lt("created_at", endExclusive)
       .order("created_at", { ascending: false })
       .limit(200);
 
@@ -223,10 +231,20 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    // counted 행이어도 이후 상태 변화(신고삭제/보관)를 숨기지 않고 배지로 명시(삼순: 조용히 섞지 않기).
+    const statusBadge: Record<string, string> = {
+      active: "",
+      archived: "[보관]",
+      removed: "[삭제됨]",
+      cleanup_failed: "[정리실패]",
+    };
+
     const items = rows.map((r: Record<string, unknown>) => {
       const gameId = String(r.game_id ?? "");
       const label = gameLabel(gameId, r.stadium_name as string | null);
+      const badge = statusBadge[String(r.status ?? "")] ?? "";
       const caption = typeof r.caption === "string" && r.caption ? r.caption : "";
+      const content = badge ? (caption ? `${badge} ${caption}` : badge) : caption;
       // 미리보기: 영상은 thumb_url 우선(없으면 생략), 사진은 media_url.
       const preview =
         mediaType === "video"
@@ -237,7 +255,7 @@ export async function GET(req: NextRequest) {
         time: r.created_at as string,
         nickname: nickMap.get(r.user_id as string) ?? "익명",
         title: label,
-        content: caption,
+        content,
         link: gameId ? `/games/${gameId}` : "",
         imageUrls: preview ? [preview] : [],
       };
