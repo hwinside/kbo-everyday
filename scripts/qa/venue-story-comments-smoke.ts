@@ -264,7 +264,16 @@ console.log("[전송 중 스토리 전환 오염 가드 — 삼순 #807 라운�
     (viewerSrc.match(/document\.body/g) ?? []).length >= 2);
   ok("body sibling 댓글 overlay가 뷰어 z-120보다 높은 shared overlay tier z-130",
     viewerSrc.includes("data-venue-story-comment-overlay") &&
-    viewerSrc.includes('className="fixed inset-0 z-[130] bg-black/60"'));
+    viewerSrc.includes("z-[130] bg-black/60"));
+  // ⭐ 기사(뉴스) 댓글 CommentSheet 는 iOS 웹에서 깔끔하게 동작하는데 스토리만 안 되는 이유 =
+  // 스토리 댓글은 풀스크린 뷰어(fixed inset-0 z-120, 비디오 레이어) 위에서 열려 iOS WKWebView 기본
+  // 키보드 회피를 방해받기 때문(하린아빠 iOS 리포트 7/26). 댓글 열릴 때 뷰어 레이어를 hidden 처리해
+  // CommentSheet 와 동일 환경으로 만들고, 백드롭은 CommentSheet 처럼 스크롤 전파를 차단한다.
+  ok("댓글 열릴 때 풀스크린 뷰어 레이어를 hidden 처리(iOS 키보드 회피 방해 제거, 기사 댓글과 동일 환경)",
+    /commentsOpen \? " hidden" : ""/.test(viewerSrc));
+  ok("댓글 백드롭이 스크롤/오버스크롤 전파 차단(touchAction:none + onTouchMove preventDefault) — 배경 밀림 방지",
+    viewerSrc.includes('touchAction: "none"') &&
+    /onTouchMove=\{\(e\) => \{\s*\n?\s*if \(e\.cancelable\) e\.preventDefault\(\);/.test(viewerSrc));
 
   const layoutSrc = readFileSync(path.resolve(process.cwd(), "src/app/layout.tsx"), "utf8");
   ok("전역 viewport meta는 기존 resizes-content 유지(Android 범위 확장 없음)",
