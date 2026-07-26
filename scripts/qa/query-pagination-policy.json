@@ -108,6 +108,7 @@
   "boundedTables": [
     "admin_alert_state",
     "channel_discovery_lock",
+    "game_start_watchdog_config",
     "push_dispatch_config",
     "team_rank_notify_state",
     "venue_cleanup_cursor"
@@ -158,6 +159,7 @@
     "admin_alert_state": [["job_name"]],
     "game_event_state": [["game_id"]],
     "game_notify_state": [["game_id"]],
+    "game_start_watchdog_config": [["id"]],
     "game_start_delivery_ledger": [["id"], ["game_id", "event_type", "token_id", "token_hash"]],
     "ios_widget_push_state": [["game_id"]],
     "live_activity_game_push_state": [["game_id"]],
