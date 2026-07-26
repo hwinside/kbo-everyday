@@ -300,8 +300,8 @@ console.log("[전송 중 스토리 전환 오염 가드 — 삼순 #807 라운�
     kbSrc.includes("setScroll({ isDisabled: true })"));
   ok("native-keyboard: keyboardWillShow/Hide 로 정확한 키보드 높이 구독",
     kbSrc.includes('"keyboardWillShow"') && kbSrc.includes('"keyboardWillHide"'));
-  ok("native-keyboard: release 시 이전 resize mode 원복+자동스크롤 재활성화 — 다른 화면 입력창 미오염",
-    kbSrc.includes("setResizeMode({ mode: previousResizeMode })") &&
+  ok("native-keyboard: release 시 baseline resize mode 원복+자동스크롤 재활성화 — 다른 화면 입력창 미오염",
+    kbSrc.includes("setResizeMode({ mode: baselineResizeMode })") &&
     kbSrc.includes("setScroll({ isDisabled: false })"));
   ok("native-keyboard: 웹/PWA·안드·구빌드는 no-op(iOS+plugin availability 게이트)",
     kbSrc.includes("isIosNativeRuntime()") &&
@@ -312,13 +312,21 @@ console.log("[전송 중 스토리 전환 오염 가드 — 삼순 #807 라운�
     path.resolve(process.cwd(), "src/lib/venue-stories/scroll-lock.ts"),
     "utf8",
   );
-  // ② quick open→close async race: setup 과 release(restore)를 단일 chain 으로 직렬화해
-  //   release 가 setup 완료 뒤에 restore 를 실행 → native scroll off/resize:none 잔류 방지.
-  ok("② setup↔release 단일 chain 직렬화(release는 setup 뒤 restore)",
-    kbSrc.includes("chain = chain.then(restore)"));
-  ok("② 각 단계 후 released 재확인 + 적용분(resizeChanged/scrollDisabled)만 restore",
-    kbSrc.includes("resizeChanged") && kbSrc.includes("scrollDisabled") &&
+  // ② quick open→close async race: 모든 브릿지 조작을 전역 opChain 으로 직렬화하고 release 는
+  //   enqueue(doRestore) 로 감싸 setup 뒤에 실행 → native scroll off/resize:none 잔류 방지.
+  //   구체적 동시성 동작은 native-keyboard-behavior-smoke 가 fake bridge 로 behavioral 검증.
+  ok("② 전역 opChain 직렬화 + release=enqueue(doRestore)",
+    kbSrc.includes("function enqueue(") &&
+    kbSrc.includes("opChain = next.catch") &&
+    kbSrc.includes("void enqueue(doRestore)"));
+  ok("② 각 단계 후 released 재확인 + refcount baseline(activeCount)",
+    kbSrc.includes("activeCount") && kbSrc.includes("baselineResizeMode") &&
     (kbSrc.match(/if \(released\)/g) ?? []).length >= 3);
+  // ① listener 부분실패 handle 유실 방지 — allSettled 로 수거 후 제거+fallback.
+  ok("① listener allSettled 로 성공 handle 수거(부분실패 유실 0)",
+    kbSrc.includes("Promise.allSettled") &&
+    kbSrc.includes('r.status === "fulfilled"') &&
+    kbSrc.includes('r.status === "rejected"'));
   // ③ 브릿지 부분실패: restore 후 onFallback 으로 web visualViewport 경로 복귀.
   ok("③ 부분실패 시 onFallback → web 폴백 전환(nativeKbFallback 게이트)",
     kbSrc.includes("onFallback()") &&
