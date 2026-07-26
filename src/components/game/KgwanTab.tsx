@@ -8,6 +8,7 @@ import Image from "next/image";
 import { getTeamById, isAllStarGame, isAllStarGameId } from "@/lib/constants/teams";
 import GameChat from "@/components/game/GameChat";
 import ContextualStatsBox from "@/components/game/ContextualStatsBox";
+import VenueStorySection from "@/components/game/VenueStorySection";
 import RelayPlayLine from "@/components/game/RelayPlayLine";
 import CurrentAtBatCard from "@/components/game/LivePitchByPitch";
 import { useRouter } from "next/navigation";
@@ -279,6 +280,9 @@ function ScheduledView({ gameId, awayTeamId, homeTeamId, gameDate, gameStartTime
       {/* AI 경기 예측 */}
       <AIPreviewCard gameId={gameId} awayTeamId={awayTeamId} homeTeamId={homeTeamId} starterNames={starterNames} />
 
+      {/* 직관 라이브 — 전체 채팅 바로 위 */}
+      <VenueStorySection gameId={gameId} />
+
       {/* Pre-game chat opens 2 hours before first pitch */}
       {isChatOpen ? (
         <GameChat gameId={gameId} homeTeamId={homeTeamId} awayTeamId={awayTeamId} />
@@ -466,6 +470,10 @@ function LiveView({
 
       {/* Contextual stats box — 문자중계와 채팅 사이 상황별 맞춤 스탯 */}
       <ContextualStatsBox gameId={gameId} enabled />
+
+      {/* 직관 라이브 — 상황별 스탯(오지환 vs) 아래, 전체 채팅 바로 위. 업로드는
+          VenueStorySection 내부에서 네이티브 런타임+GPS+로그인 게이트, 열람은 익명 허용. */}
+      <VenueStorySection gameId={gameId} />
 
       {/* Chat */}
       <GameChat gameId={gameId} homeTeamId={homeTeamId} awayTeamId={awayTeamId} />
@@ -912,6 +920,9 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
           </div>
         )}
       </div>
+
+      {/* 직관 라이브 — 전체 채팅 바로 위 */}
+      <VenueStorySection gameId={gameId} />
 
       {/* Post-game chat */}
       <GameChat gameId={gameId} homeTeamId={homeTeamId} awayTeamId={awayTeamId} />
