@@ -2,7 +2,6 @@ import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import {
   sendFcmToUsers,
   WIDGET_STREAM,
-  endClearGroupFlag,
   type PushPayload,
   type SendResult,
 } from "@/lib/notifications/fcm";
@@ -177,7 +176,6 @@ async function markOnly(gameId: string, flags: { start?: boolean; end?: boolean;
  *  - w_final="1": FINAL tombstone. native가 이 플래그 이후 같은 경기 LIVE를 w_ts(send-time)와
  *    무관하게 거부하게 해 "FINAL 뒤 늦게 도착한 LIVE가 9회로 부활"를 닫는다(삼순 추가
  *    회귀). 서버는 마커만 싣고 native 준수는 S2.
- *  - n_clear_group: 종료 시 그 경기 이벤트 배너 일괄 cancel 신호(20개 누적 정리, 소비 S2).
  *  - scores 있으면 w_as/w_hs 동봉(현재 위젯이 이 경기일 때만 자가 markFinal). 취소는 scores 없음.
  * w_ts(seq)는 fcm.ts가 kind=game_end(WIDGET_CONTROL_KINDS)에 자동 부여.
  */
@@ -196,7 +194,6 @@ export function buildTerminalClearPayload(
       gameId,
       ...(scores ? { w_as: String(scores.awayScore), w_hs: String(scores.homeScore) } : {}),
       w_final: "1",
-      ...endClearGroupFlag(gameId),
     },
   };
 }

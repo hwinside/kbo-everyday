@@ -61,13 +61,6 @@ export interface PushPayload {
    */
   collapseKey?: string;
   /**
-   * Android 시스템 트레이 notification tag — 같은 tag의 알림은 새 항목을 만들지 않고
-   * 기존 항목을 *교체*한다(system-drawn). notification+data hybrid 메시지에서도
-   * background/terminated에서 OS가 트레이를 그릴 때 적용되므로 native 변경 없이
-   * 서버만으로 "경기별 최신 1건 교체"가 된다(이벤트 배너 20개 누적 차단, P0). Android 전용.
-   */
-  androidNotificationTag?: string;
-  /**
    * Android FCM TTL(초). 이 시간 내 배달 못 하면 폐기한다(admin SDK는 ms라 ×1000 변환).
    * 라이브 스코어처럼 다음 틱이 곧 덮어쓰는 data는 짧은 TTL(예 90s)을 줘서, 오래된
    * 상태가 뒤늦게 배달돼 최신값(또는 game_end)을 덮어쓰는 걸 막는다. Android 전용.
@@ -104,43 +97,12 @@ export const WIDGET_STREAM = {
  */
 export const WIDGET_CONTROL_KINDS = new Set(["game_live", "game_cancel", "game_end"]);
 
-/** 이벤트 배너의 경기별 고정 주소. Android 시스템 트레이에서도 같은 경기 알림을 교체한다. */
-export function gameNotifyTag(gameId: string): string {
-  return `game:${gameId}`;
-}
-
-/**
- * 이벤트 배너의 서버/네이티브 공통 경기별 1개화 정책.
- * Android background/terminated에서는 시스템 notification tag가 교체하고,
- * foreground에서는 native가 같은 n_group/n_tag 주소를 사용할 수 있다.
- */
-export function gameEventNotificationPolicy(
-  gameId: string,
-): Pick<PushPayload, "androidNotificationTag" | "data"> {
-  const tag = gameNotifyTag(gameId);
-  return {
-    androidNotificationTag: tag,
-    data: { n_group: tag, n_tag: tag },
-  };
-}
-
-/**
- * game_end(종료/취소 clear) data payload에 싣는 그룹 일괄 cancel 플래그(S1). 네이티브는
- * 이 플래그를 받으면 같은 경기 주소의 이벤트 배너를 cancel한다(누적 정리). 소비는 S2.
- */
-export function endClearGroupFlag(gameId: string): Record<string, string> {
-  return { n_clear_group: gameNotifyTag(gameId) };
-}
-
 /** Firebase Admin SDK용 Android delivery 설정. */
 export function buildAndroidConfig(payload: PushPayload) {
   return {
     ...(payload.dataOnly ? { priority: "high" as const } : {}),
     ...(payload.collapseKey ? { collapseKey: payload.collapseKey } : {}),
     ...(payload.ttlSeconds != null ? { ttl: payload.ttlSeconds * 1000 } : {}),
-    ...(payload.androidNotificationTag
-      ? { notification: { tag: payload.androidNotificationTag } }
-      : {}),
   };
 }
 
@@ -150,9 +112,6 @@ export function buildDeadlineAndroidConfig(payload: PushPayload) {
     ...(payload.dataOnly ? { priority: "HIGH" as const } : {}),
     ...(payload.collapseKey ? { collapse_key: payload.collapseKey } : {}),
     ...(payload.ttlSeconds != null ? { ttl: `${payload.ttlSeconds}s` } : {}),
-    ...(payload.androidNotificationTag
-      ? { notification: { tag: payload.androidNotificationTag } }
-      : {}),
   };
 }
 
