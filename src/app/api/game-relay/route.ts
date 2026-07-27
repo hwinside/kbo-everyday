@@ -751,20 +751,131 @@ const NAVER_API_BASE =
 
 /**
  * In-memory response cache (module-level, persists for the lambda warm period
- * ~5–15min). The relay-bridged celebration path on the client polls at 5s
+ * ~5–15min). The relay-bridged celebration path on the client polls at 3s
  * cadence; without caching, N concurrent viewers of the same game would mean
- * N upstream Naver fetches every 5s. With a 4s TTL keyed by (naverGameId,
- * inningHint), warm-lambda viewers share a single upstream call per ~4s
+ * N upstream Naver fetches every 3s. With a 2s TTL keyed by (naverGameId,
+ * inningHint), warm-lambda viewers share a single upstream call per ~2s
  * window. Cold-start spawns a fresh instance with empty cache → up to one
  * Naver call per cold lambda, which is bounded by Vercel concurrency.
+ *
+ * TTL is kept just below the 3s poll so a client's own successive polls
+ * always land a fresh upstream fetch (celebration freshness), while bursts
+ * of concurrent viewers within the same 2s window still coalesce to one
+ * upstream call (load bound). 4s→2s roughly doubles worst-case upstream
+ * rate; accepted trade-off for cutting celebration fire lag.
  *
  * Only successful responses are cached; HTTP/network errors fall through so
  * the next poll retries fresh.
  */
 const responseCache = new Map<string, { data: GameRelayResponse; expiresAt: number }>();
-const CACHE_TTL_MS = 4_000;
+const CACHE_TTL_MS = 2_000;
 
-function combineRelayInningsNewestFirst(inningRelays: NaverTextRelay[][]): NaverTextRelay[] {
+/**
+ * Per-fetch timeout for inning 2..N relay fetches and the record fetch.
+ * The inning-1 fetch keeps its own 10s bound (it also determines the current
+ * inning). Kept at 8s: long enough that a merely-slow Naver response still
+ * lands within one poll window, short enough that a genuinely hung upstream
+ * releases the Promise.all instead of stalling the whole relay (and thus the
+ * celebration) response indefinitely.
+ */
+const RELAY_INNING_TIMEOUT_MS = 8_000;
+
+/**
+ * Per-inning last-good raw relay snapshot, keyed by `${naverGameId}-${inning}`.
+ *
+ * WHY: relay event IDs (celebration dedupe key) embed a *game-wide* cumulative
+ * index — `${gameId}-${type}-${inningKey}-${batter}-${cumIdx}` (see
+ * relay-event-generator). If a per-inning fetch times out and we substitute `[]`
+ * for that inning, every later same-(batter,type) event renumbers (e.g. a 5회
+ * hit that was `-2` becomes `-1`), and when the inning recovers it flips back —
+ * the client then sees a "new" id and re-fires / duplicates the celebration.
+ *
+ * FIX: on timeout/HTTP failure for an inning we reuse its last successful
+ * snapshot instead of `[]`, so past innings never vanish and cumIdx stays
+ * stable. A snapshot is only overwritten by a *successful* fetch (data only
+ * grows more complete within a game). Module-level, so it persists across warm
+ * invocations; bounded by (#live games × ≤15 innings) during the warm period.
+ */
+const inningSnapshotCache = new Map<string, NaverTextRelay[]>();
+
+function evictInningSnapshotsIfLarge(): void {
+  if (inningSnapshotCache.size <= 400) return;
+  // Simple bound: drop oldest ~half (Map preserves insertion order).
+  let drop = Math.floor(inningSnapshotCache.size / 2);
+  for (const k of inningSnapshotCache.keys()) {
+    if (drop-- <= 0) break;
+    inningSnapshotCache.delete(k);
+  }
+}
+
+/**
+ * Resolve one inning's relays against the last-good snapshot cache (pure).
+ *
+ * Relay play sequences are append-only within a game: a completed at-bat never
+ * disappears and events only accumulate. So a *shorter* array than the last-good
+ * snapshot for the same inning is treated as a transient upstream truncation
+ * (partial 200), NOT a real update — adopting it would drop tail plays and
+ * renumber game-wide cumIdx (duplicate celebrations on recovery). We keep the
+ * longer snapshot instead.
+ *
+ * - `fetched` non-null AND (no snapshot OR length ≥ snapshot) → adopt + cache
+ *   (`degraded:false`). A legit not-yet-started inning ([]) with no prior
+ *   snapshot adopts normally.
+ * - `fetched` non-null but SHORTER than snapshot → keep snapshot
+ *   (`degraded:true`, monotonic guard; do not shrink cache).
+ * - `fetched === null` (failed/timeout):
+ *     • snapshot present → reuse it (`degraded:true`, stale-but-consistent).
+ *     • snapshot ABSENT → `unrecoverable:true`. No prior data to keep cumIdx
+ *       stable, so `[]` would reintroduce the blocker (ID -2→-1→-2, current
+ *       inning UI vanish) on a cold instance / post-eviction first failure.
+ *       Caller MUST return non-2xx (client keeps existing data / retries).
+ */
+export function resolveInningWithSnapshot(
+  cache: Map<string, NaverTextRelay[]>,
+  key: string,
+  fetched: NaverTextRelay[] | null,
+): { relays: NaverTextRelay[]; degraded: boolean; unrecoverable: boolean } {
+  const snap = cache.get(key);
+  if (fetched !== null) {
+    // Monotonic/completeness guard: never let a shorter fetch shrink a known
+    // longer snapshot (transient truncation). Equal/longer adopts.
+    if (snap !== undefined && fetched.length < snap.length) {
+      return { relays: snap, degraded: true, unrecoverable: false };
+    }
+    cache.set(key, fetched);
+    return { relays: fetched, degraded: false, unrecoverable: false };
+  }
+  if (snap !== undefined) {
+    return { relays: snap, degraded: true, unrecoverable: false };
+  }
+  return { relays: [], degraded: true, unrecoverable: true };
+}
+
+/**
+ * Executed relay-resolution policy shared by GET and the regression smoke.
+ * Resolves every inning's fetch result against the per-inning last-good
+ * snapshot cache, index 0 = inning 1. A failed inning (null) reuses its prior
+ * successful relays so past innings never vanish and relay event IDs (game-wide
+ * cumIdx) stay stable; a cold/no-snapshot failure surfaces via anyUnrecoverable
+ * so the caller returns non-2xx instead of publishing a shrunk 200.
+ */
+export function resolveAllInnings(
+  cache: Map<string, NaverTextRelay[]>,
+  naverGameId: string,
+  fetchedByInning: (NaverTextRelay[] | null)[],
+): { relays: NaverTextRelay[][]; anyDegraded: boolean; anyUnrecoverable: boolean } {
+  let anyDegraded = false;
+  let anyUnrecoverable = false;
+  const relays = fetchedByInning.map((raw, idx) => {
+    const r = resolveInningWithSnapshot(cache, `${naverGameId}-${idx + 1}`, raw);
+    if (r.degraded) anyDegraded = true;
+    if (r.unrecoverable) anyUnrecoverable = true;
+    return r.relays;
+  });
+  return { relays, anyDegraded, anyUnrecoverable };
+}
+
+export function combineRelayInningsNewestFirst(inningRelays: NaverTextRelay[][]): NaverTextRelay[] {
   // Each Naver inning payload is newest-first. parseInningRelays reverses the
   // full array once, so concatenate inning bundles newest inning first; the
   // parser then sees 1회 → current inning in chronological order.
@@ -830,13 +941,13 @@ export async function GET(req: NextRequest) {
         statusCode: firstRes.status,
         errorMessage: `HTTP ${firstRes.status} ${firstRes.statusText}`,
       });
+      // inning-1 fetch failed = we have no current-inning info and no relays.
+      // Return non-2xx so the client's useGameRelay (setData only on res.ok)
+      // keeps its existing relay data and celebration trigger source instead of
+      // being wiped to an empty 200 (which blanks the UI and stalls celebrations).
       return NextResponse.json(
-        {
-          gameId,
-          currentInning: 0,
-          innings: [],
-        } satisfies GameRelayResponse,
-        { status: 200 }
+        { error: "relay_upstream_http_error" },
+        { status: 503 },
       );
     }
 
@@ -848,13 +959,21 @@ export async function GET(req: NextRequest) {
     // Cap at 15 innings (extended games)
     const maxInning = Math.min(currentInning, 15);
 
-    // Fetch all innings in parallel (inning 1 already fetched)
-    const inningPromises: Promise<NaverTextRelay[]>[] = [];
+    // Fetch all innings in parallel (inning 1 already fetched).
+    // A promise resolves to null ONLY on fetch failure (HTTP not-ok / network /
+    // timeout); a successful fetch with no plays resolves to [] (legit empty).
+    // This lets resolveInningWithSnapshot tell "failed → keep last-good" apart
+    // from "succeeded but empty → adopt".
+    const inningPromises: Promise<NaverTextRelay[] | null>[] = [];
 
-    // Use the already-fetched inning 1 data
+    // Use the already-fetched inning 1 data. A malformed 200 (result present but
+    // textRelays missing / not an array) is a schema failure, NOT a legit empty
+    // inning — resolve to null so the snapshot/unrecoverable path applies instead
+    // of silently shrinking inning 1 to [] (which flips game-wide cumIdx).
+    const firstRelaysRaw = firstData.result?.textRelayData?.textRelays;
     inningPromises.push(
       Promise.resolve(
-        firstData.result?.textRelayData?.textRelays ?? []
+        Array.isArray(firstRelaysRaw) ? firstRelaysRaw : null,
       )
     );
 
@@ -865,13 +984,29 @@ export async function GET(req: NextRequest) {
             "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)",
           },
           cache: "no-store",
+          // Bound each per-inning fetch so a single slow/hung Naver upstream
+          // can't stall the whole Promise.all — that stall was the tail cause
+          // of celebrations arriving 1–2min late (relay response never lands,
+          // so the BoxScore-diff fallback fires much later). On timeout the
+          // per-inning .catch yields [] and the next 5s poll recovers.
+          signal: AbortSignal.timeout(RELAY_INNING_TIMEOUT_MS),
         })
-          .then((r) => (r.ok ? r.json() : null))
-          .then(
-            (data: NaverRelayResponse | null) =>
-              data?.result?.textRelayData?.textRelays ?? []
-          )
-          .catch(() => [] as NaverTextRelay[])
+          .then((r) => {
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            return r.json() as Promise<NaverRelayResponse>;
+          })
+          .then((data: NaverRelayResponse) => {
+            // Malformed 200 (textRelays missing / not an array) is a schema
+            // failure, not a legit empty inning → null so the snapshot path
+            // applies. `?? []` would have shrunk this inning and flipped cumIdx.
+            const relays = data?.result?.textRelayData?.textRelays;
+            return Array.isArray(relays) ? relays : null;
+          })
+          // Failure (timeout / HTTP not-ok / network / schema) → null so the
+          // resolver falls back to this inning's last-good snapshot instead of
+          // dropping its plays (which would renumber game-wide cumIdx and
+          // duplicate celebrations on recovery).
+          .catch(() => null)
       );
     }
 
@@ -881,6 +1016,10 @@ export async function GET(req: NextRequest) {
       {
         headers: { "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)" },
         cache: "no-store",
+        // Same bound as per-inning fetches: record API is only used for
+        // pitcher/batter names+stats, not celebration firing, so a hung
+        // record fetch must never block the relay (celebration) response.
+        signal: AbortSignal.timeout(RELAY_INNING_TIMEOUT_MS),
       }
     )
       .then((r) => (r.ok ? r.json() : null))
@@ -891,7 +1030,25 @@ export async function GET(req: NextRequest) {
       recordPromise,
     ]);
 
-    const allTextRelays = allTextRelaysResult;
+    // Resolve each inning against its last-good snapshot (pure, executed policy).
+    const { relays: allTextRelays, anyDegraded: anyInningDegraded, anyUnrecoverable: anyInningUnrecoverable } =
+      resolveAllInnings(inningSnapshotCache, naverGameId, allTextRelaysResult);
+    evictInningSnapshotsIfLarge();
+
+    // Cold instance / post-eviction first failure: an inning failed AND we have
+    // no last-good snapshot for it. Substituting [] here would renumber game-wide
+    // cumIdx and drop the current inning's plays (the original blocker). Return
+    // non-2xx instead so the client keeps its existing relay data (celebration
+    // IDs stay stable) and retries on the next 3s poll. Nothing is cached.
+    if (anyInningUnrecoverable) {
+      await trackFallback("naver-relay", "timeout", {
+        errorMessage: "inning fetch failed with no last-good snapshot (cold/evicted)",
+      });
+      return NextResponse.json(
+        { error: "relay_upstream_unrecoverable" },
+        { status: 503 },
+      );
+    }
 
     // Combine all text relays with global newest-first ordering. Keeping
     // inning bundles in ascending order would make parseInningRelays reverse
@@ -970,7 +1127,13 @@ export async function GET(req: NextRequest) {
       linescore,
     };
 
-    setCachedResponse(cacheKey, response);
+    // Only cache a fully-fresh response. If any inning fell back to a stale
+    // snapshot (degraded), skip caching so the very next poll retries the
+    // failed upstream immediately instead of serving stale data for the full
+    // TTL — the current client still gets a consistent (stable-id) response.
+    if (!anyInningDegraded) {
+      setCachedResponse(cacheKey, response);
+    }
     return NextResponse.json(response);
   } catch (e) {
     const error = e as Error;
@@ -987,13 +1150,13 @@ export async function GET(req: NextRequest) {
       errorMessage: error.message,
     });
 
+    // Any uncaught failure (inning-1 timeout/network, JSON parse, etc.) returns
+    // non-2xx — NOT an empty 200. An empty 200 would wipe the client's existing
+    // relay data (setData only fires on res.ok) and blank the celebration
+    // trigger source; non-2xx keeps the last good data and retries next poll.
     return NextResponse.json(
-      {
-        gameId,
-        currentInning: 0,
-        innings: [],
-      } satisfies GameRelayResponse,
-      { status: 200 }
+      { error: `relay_upstream_${reason}` },
+      { status: 503 },
     );
   }
 }

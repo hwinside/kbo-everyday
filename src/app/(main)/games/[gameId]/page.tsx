@@ -181,10 +181,11 @@ export default function GameDetailPage() {
   const shouldPollGameEvents = (liveGame?.isLive ?? false) || liveIsFinal;
   const { events: gameEvents } = useGameEvents(gameId, shouldPollGameEvents, 15000);
   // Relay polls 5s while live (celebration trigger source), 30s otherwise
-  // (display-only). The 5s cadence keeps the relay-bridged celebration path
-  // within ~6s of the actual KBO play; the route caches Naver responses for
-  // 4s in-memory so KBO upstream load stays bounded across concurrent viewers.
-  const relayPollInterval = liveGame?.isLive ? 5000 : 30000;
+  // (display-only). The 3s cadence keeps the relay-bridged celebration path
+  // within ~5s of the actual KBO play (was 5s → worst-case fire lag dropped
+  // ~4s); the route caches Naver responses for 2s in-memory so KBO upstream
+  // load stays bounded across concurrent viewers.
+  const relayPollInterval = liveGame?.isLive ? 3000 : 30000;
   const { data: gameRelay } = useGameRelay(gameId, liveGame?.isLive ?? false, relayPollInterval, liveGame?.inning ?? 0, liveIsFinal);
   const clientEventStateRef = useRef<PrevGameState | null>(null);
 
