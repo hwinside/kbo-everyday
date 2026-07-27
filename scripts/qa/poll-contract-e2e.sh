@@ -54,6 +54,8 @@ CREATE TABLE IF NOT EXISTS public.posts (
   id bigserial PRIMARY KEY, author_id uuid,
   board_type text NOT NULL DEFAULT 'team', board_id text NOT NULL,
   title text NOT NULL, content text NOT NULL,
+  team_tags jsonb NOT NULL DEFAULT '[]'::jsonb,
+  player_tags jsonb NOT NULL DEFAULT '[]'::jsonb,
   created_at timestamptz DEFAULT now(), updated_at timestamptz);
 SQL
 
@@ -82,4 +84,5 @@ else
   echo "FAIL ⑥ concurrency: voter_count=$VC option=$OC total=$TV (expected 20/20/20)"; exit 1
 fi
 
-echo "[poll-e2e] ALL PASS ✅"
+echo "[poll-e2e] DB harness PASS ✅ (①②④⑤⑦⑧⑨ + ⑨-2 2-step bypass + 축1축2 tag-write + ⑥ 20-way concurrency)"
+echo "[poll-e2e] route contracts ③(closed non-voter results) ⑩(private,no-store) + 축2 ref-validation → scripts/qa/poll-route-e2e.ts (npm run qa:poll-route)"

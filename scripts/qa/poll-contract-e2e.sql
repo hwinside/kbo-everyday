@@ -218,4 +218,56 @@ BEGIN
   INSERT INTO auth.users(id) VALUES ('22222222-2222-2222-2222-222222222222') ON CONFLICT DO NOTHING;
 END $$;
 
-SELECT 'DB E2E COMPLETE (①②④⑤⑦⑧⑨ + validations)' AS status;
+-- ---------- ⑨-2 첫 투표 후 posts 2-step 우회(board_type 변경) 차단 (삼순 NO-GO 축1) ----------
+-- 구 구현은 board_type<>'poll' 이면 잠금 분기를 통과시켜, 첫 투표 후
+--   UPDATE posts SET board_type='free'  (분기 탈출) → UPDATE posts SET title=...
+-- 2-step 으로 title/content 를 바꿀 수 있었다. 잠금을 poll_polls 존재 기준으로
+-- 바꿔 board_type 변경 자체가 거부되므로 1단계부터 실패해야 한다.
+DO $$
+DECLARE v_pid bigint;
+BEGIN
+  v_pid := current_setting('poll.pid')::bigint; -- has votes (first_vote_at set)
+  BEGIN UPDATE posts SET board_type='free' WHERE id=v_pid;
+    RAISE EXCEPTION 'FAIL ⑨-2: board_type change accepted (2-step bypass open)';
+    EXCEPTION WHEN check_violation THEN NULL; END;
+  BEGIN UPDATE posts SET board_id='free' WHERE id=v_pid;
+    RAISE EXCEPTION 'FAIL ⑨-2: board_id change accepted'; EXCEPTION WHEN check_violation THEN NULL; END;
+  BEGIN UPDATE posts SET team_tags='["hacked"]'::jsonb WHERE id=v_pid;
+    RAISE EXCEPTION 'FAIL ⑨-2: team_tags change accepted'; EXCEPTION WHEN check_violation THEN NULL; END;
+  BEGIN UPDATE posts SET player_tags='["1:hacked"]'::jsonb WHERE id=v_pid;
+    RAISE EXCEPTION 'FAIL ⑨-2: player_tags change accepted'; EXCEPTION WHEN check_violation THEN NULL; END;
+  -- 전체 2-step 을 단일 트랜잭션에서 시도해도 1단계(board_type)부터 실패함을 명시.
+  BEGIN
+    UPDATE posts SET board_type='free' WHERE id=v_pid;
+    UPDATE posts SET title='hacked-2step' WHERE id=v_pid;
+    RAISE EXCEPTION 'FAIL ⑨-2: 2-step board_type→title bypass accepted';
+    EXCEPTION WHEN check_violation THEN NULL; END;
+  IF (SELECT board_type FROM posts WHERE id=v_pid) <> 'poll'
+     OR (SELECT title FROM posts WHERE id=v_pid) = 'hacked-2step' THEN
+    RAISE EXCEPTION 'FAIL ⑨-2: post mutated after bypass attempt'; END IF;
+  RAISE NOTICE 'PASS ⑨-2 2-step bypass blocked (board_type/board_id/title/tags immutable after first vote)';
+END $$;
+
+-- ---------- 축2 create_poll 이 canonical team_tags/player_tags 를 posts 에 원자 기입 ----------
+-- 라우트가 파생·검증한 태그를 create_poll 이 posts 에 그대로 적재하는지(현 [] 밖에
+-- 안 들어가던 결함). ref 삼각검증/파생 자체는 route-level E2E(poll-route-e2e.ts)가 고정.
+DO $$
+DECLARE v_pid bigint; v_tt jsonb; v_pt jsonb;
+BEGIN
+  v_pid := create_poll('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','team tags?',null,false,now()+interval '1 day',
+    '[{"kind":"team","ref_id":"lg"},{"kind":"team","ref_id":"doosan"}]'::jsonb,
+    '["lg","doosan"]'::jsonb, '[]'::jsonb);
+  SELECT team_tags, player_tags INTO v_tt, v_pt FROM posts WHERE id=v_pid;
+  IF v_tt <> '["lg","doosan"]'::jsonb OR v_pt <> '[]'::jsonb THEN
+    RAISE EXCEPTION 'FAIL 축2: team poll tags tt=% pt=%', v_tt, v_pt; END IF;
+
+  v_pid := create_poll('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','player tags?',null,false,now()+interval '1 day',
+    '[{"kind":"player","ref_id":"53006"},{"kind":"player","ref_id":"56769"}]'::jsonb,
+    '["kt","hanwha"]'::jsonb, '["53006:강건","56769:강건우"]'::jsonb);
+  SELECT team_tags, player_tags INTO v_tt, v_pt FROM posts WHERE id=v_pid;
+  IF v_tt <> '["kt","hanwha"]'::jsonb OR v_pt <> '["53006:강건","56769:강건우"]'::jsonb THEN
+    RAISE EXCEPTION 'FAIL 축2: player poll tags tt=% pt=%', v_tt, v_pt; END IF;
+  RAISE NOTICE 'PASS 축2 create_poll writes canonical team_tags/player_tags into posts atomically';
+END $$;
+
+SELECT 'DB E2E COMPLETE (①②④⑤⑦⑧⑨ + ⑨-2 2-step bypass + 축1축2 tags/validations; ③⑩ in poll-route-e2e.ts + ⑥ concurrency in .sh)' AS status;

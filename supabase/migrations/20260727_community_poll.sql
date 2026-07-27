@@ -199,8 +199,14 @@ CREATE TRIGGER poll_votes_recalc_del
   FOR EACH STATEMENT EXECUTE FUNCTION public.poll_votes_recalc_stmt();
 
 -- ------------------------------------------------------------
--- 5) 편집 잠금 (§4.2) — posts BEFORE UPDATE: poll 글이 first_vote_at 세팅 후
---    title/content 변경 거부. 비-poll 글은 즉시 통과(오버헤드 최소).
+-- 5) 편집 잠금 (§4.2) — posts BEFORE UPDATE.
+--    잠금 기준은 board_type 이 아니라 "poll_polls 행 존재 + first_vote_at 세팅".
+--    board_type 분기로 판정하면 첫 투표 후 board_type 을 'free' 로 바꾼 뒤
+--    (그 UPDATE 는 분기 통과) title 을 바꾸는 2-step 우회가 뚫린다. 그래서
+--    poll 소속 여부는 poll_polls(post_id) 로만 판정하고, 잠금 시 board_type·
+--    board_id·title·content·team_tags·player_tags 를 전부 불변으로 못박는다
+--    (board_type 변경 자체도 잠금 대상 → 우회 진입점 제거).
+--    poll_polls 행이 없는 비-poll 글은 즉시 통과(오버헤드 최소).
 -- ------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.poll_posts_edit_lock()
 RETURNS trigger
@@ -210,13 +216,19 @@ SET search_path = public
 AS $$
 DECLARE v_first timestamptz;
 BEGIN
-  IF NEW.board_type <> 'poll' AND OLD.board_type <> 'poll' THEN
-    RETURN NEW; -- poll 무관 글 → 통과
-  END IF;
+  -- poll 글은 poll_polls 행 존재로 판정(board_type 무관 → 2-step 우회 차단).
   SELECT first_vote_at INTO v_first FROM poll_polls WHERE post_id = OLD.id;
+  IF NOT FOUND THEN
+    RETURN NEW; -- poll_polls 행 없음 → 비-poll 글 → 통과
+  END IF;
   IF v_first IS NOT NULL
-     AND (NEW.title IS DISTINCT FROM OLD.title OR NEW.content IS DISTINCT FROM OLD.content) THEN
-    RAISE EXCEPTION 'poll post is locked after first vote (title/content immutable)'
+     AND (NEW.board_type  IS DISTINCT FROM OLD.board_type
+       OR NEW.board_id    IS DISTINCT FROM OLD.board_id
+       OR NEW.title       IS DISTINCT FROM OLD.title
+       OR NEW.content     IS DISTINCT FROM OLD.content
+       OR NEW.team_tags   IS DISTINCT FROM OLD.team_tags
+       OR NEW.player_tags IS DISTINCT FROM OLD.player_tags) THEN
+    RAISE EXCEPTION 'poll post is locked after first vote (board_type/board_id/title/content/tags immutable)'
       USING ERRCODE = 'check_violation';
   END IF;
   RETURN NEW;
@@ -323,14 +335,21 @@ CREATE TRIGGER poll_polls_edit_lock_trg
 -- ------------------------------------------------------------
 -- 8) RPC create_poll — posts+poll_polls+poll_options 단일 트랜잭션 생성
 --    p_options: jsonb 배열 [{kind, ref_id, label, image}] (작성순 = 배열순)
+--    p_team_tags/p_player_tags: route 가 canonical(teams.ts slug / roster kboId:name)
+--      검증·파생해 전달하는 기존 커뮤니티 태그 배열. posts.team_tags/player_tags 에
+--      원자적으로 채워 팀·선수 피드에 즉시 노출(etc 옵션은 태그 미반영).
 -- ------------------------------------------------------------
+-- 시그니처 확장(6→8 args) → 구 6-arg 오버로드 잔존 방지 위해 먼저 DROP(멱등).
+DROP FUNCTION IF EXISTS public.create_poll(uuid, text, text, boolean, timestamptz, jsonb);
 CREATE OR REPLACE FUNCTION public.create_poll(
   p_author_id     uuid,
   p_title         text,
   p_content       text,
   p_allow_multiple boolean,
   p_closes_at     timestamptz,
-  p_options       jsonb
+  p_options       jsonb,
+  p_team_tags     jsonb DEFAULT '[]'::jsonb,
+  p_player_tags   jsonb DEFAULT '[]'::jsonb
 )
 RETURNS bigint
 LANGUAGE plpgsql
@@ -381,8 +400,16 @@ BEGIN
     RAISE EXCEPTION 'team and player options cannot coexist in one poll' USING ERRCODE = 'check_violation';
   END IF;
 
-  INSERT INTO posts (author_id, board_type, board_id, title, content, created_at)
-  VALUES (p_author_id, 'poll', 'poll', btrim(p_title), COALESCE(NULLIF(btrim(COALESCE(p_content, '')), ''), ''), v_now)
+  IF p_team_tags IS NOT NULL AND jsonb_typeof(p_team_tags) <> 'array' THEN
+    RAISE EXCEPTION 'team_tags must be a json array' USING ERRCODE = 'check_violation';
+  END IF;
+  IF p_player_tags IS NOT NULL AND jsonb_typeof(p_player_tags) <> 'array' THEN
+    RAISE EXCEPTION 'player_tags must be a json array' USING ERRCODE = 'check_violation';
+  END IF;
+
+  INSERT INTO posts (author_id, board_type, board_id, title, content, team_tags, player_tags, created_at)
+  VALUES (p_author_id, 'poll', 'poll', btrim(p_title), COALESCE(NULLIF(btrim(COALESCE(p_content, '')), ''), ''),
+          COALESCE(p_team_tags, '[]'::jsonb), COALESCE(p_player_tags, '[]'::jsonb), v_now)
   RETURNING id INTO v_post_id;
 
   INSERT INTO poll_polls (post_id, allow_multiple, closes_at, created_at)
@@ -500,24 +527,24 @@ $$;
 -- 10) RPC EXECUTE 권한 — PUBLIC/anon/authenticated REVOKE, service_role 만 허용
 -- ------------------------------------------------------------
 REVOKE ALL ON FUNCTION public.poll_recalc(bigint) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.create_poll(uuid, text, text, boolean, timestamptz, jsonb) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.create_poll(uuid, text, text, boolean, timestamptz, jsonb, jsonb, jsonb) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.cast_poll_vote(bigint, uuid, bigint[]) FROM PUBLIC;
 
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
     REVOKE ALL ON FUNCTION public.poll_recalc(bigint) FROM anon;
-    REVOKE ALL ON FUNCTION public.create_poll(uuid, text, text, boolean, timestamptz, jsonb) FROM anon;
+    REVOKE ALL ON FUNCTION public.create_poll(uuid, text, text, boolean, timestamptz, jsonb, jsonb, jsonb) FROM anon;
     REVOKE ALL ON FUNCTION public.cast_poll_vote(bigint, uuid, bigint[]) FROM anon;
   END IF;
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
     REVOKE ALL ON FUNCTION public.poll_recalc(bigint) FROM authenticated;
-    REVOKE ALL ON FUNCTION public.create_poll(uuid, text, text, boolean, timestamptz, jsonb) FROM authenticated;
+    REVOKE ALL ON FUNCTION public.create_poll(uuid, text, text, boolean, timestamptz, jsonb, jsonb, jsonb) FROM authenticated;
     REVOKE ALL ON FUNCTION public.cast_poll_vote(bigint, uuid, bigint[]) FROM authenticated;
   END IF;
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
     GRANT EXECUTE ON FUNCTION public.poll_recalc(bigint) TO service_role;
-    GRANT EXECUTE ON FUNCTION public.create_poll(uuid, text, text, boolean, timestamptz, jsonb) TO service_role;
+    GRANT EXECUTE ON FUNCTION public.create_poll(uuid, text, text, boolean, timestamptz, jsonb, jsonb, jsonb) TO service_role;
     GRANT EXECUTE ON FUNCTION public.cast_poll_vote(bigint, uuid, bigint[]) TO service_role;
   END IF;
 END $$;
