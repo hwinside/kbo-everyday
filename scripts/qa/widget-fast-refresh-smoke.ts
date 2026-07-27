@@ -22,7 +22,7 @@ import {
 import { sendFcmToUsers } from "../../src/lib/notifications/fcm";
 import { deliverTokenChunks } from "../../src/lib/notifications/fcm-batch";
 import { sendDeadlineFcmChunk } from "../../src/lib/notifications/fcm-deadline-transport";
-import { fetchKboLiveGames } from "../../src/app/api/cron/game-events-warmup/route";
+import { fetchKboLiveGames } from "../../src/lib/notifications/kbo-live-games";
 import type { fansOfTeams } from "../../src/lib/notifications/game-status";
 import { supabaseAdmin } from "../../src/lib/supabase/admin";
 import type { KboRawGame } from "../../src/types/api";

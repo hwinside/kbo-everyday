@@ -18,8 +18,8 @@ import { pushIosWidgetLiveUpdates } from "@/lib/notifications/ios-widget-live";
 import {
   startWidgetRefreshPipelines,
   FAST_LOOP_DEADLINE_MS,
-  parseKboGameListPayload,
 } from "@/lib/notifications/widget-fast-loop";
+import { fetchKboLiveGames } from "@/lib/notifications/kbo-live-games";
 import {
   startLaOrchestration,
   LA_FANOUT_DRAIN_DEADLINE_MS,
@@ -40,7 +40,6 @@ import { runBeforeDeadline } from "@/lib/async-deadline";
  */
 
 const CRON_SECRET = process.env.CRON_SECRET || "";
-const KBO_MAIN = "https://www.koreabaseball.com/ws/Main.asmx";
 const INITIAL_GAME_EVENTS_TIMEOUT_MS = 3_000;
 
 // Vercel Pro 실행 상한은 300s로 올려 플랫폼 강제절단 여유를 확보한다. 내부 fast-loop/fanout은
@@ -52,48 +51,6 @@ function getKSTDateStr(): string {
   const now = new Date();
   const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
   return kst.toISOString().slice(0, 10).replace(/-/g, "");
-}
-
-// KBO 라이브 스코어보드 원천 — fast-refresh 루프가 매 사이클 신선한 games를 다시 읽도록 추출.
-// (2026-05-20: KBO가 Referer가 koreabaseball.com이 아닌 요청을 IE 에러 페이지로 막음.)
-// ok:false = HTTP/network 실패 — fast-loop가 "라이브 0(정상 종료)"과 구분해 다음 tick에
-// 재시도하도록 오류를 빈 배열로 축약하지 않는다(삼순 blocker②). deadlineAtMs 지정 시 abort로
-// fetch 완료도 deadline 안에 묶는다(미지정 = 기존 동작 그대로, 메인 경로 무변경).
-export async function fetchKboLiveGames(
-  date: string,
-  deadlineAtMs?: number,
-  fetchImpl: typeof fetch = fetch,
-): Promise<{
-  ok: boolean;
-  games: KboRawGame[];
-  trace: { sourceAtMs: number; fetchedAtMs: number };
-}> {
-  const sourceAtMs = Date.now();
-  try {
-    const remainingMs = deadlineAtMs == null ? null : deadlineAtMs - Date.now();
-    const r = await runBeforeDeadline(
-      () => fetchImpl(`${KBO_MAIN}/GetKboGameList`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)",
-          "Referer": "https://www.koreabaseball.com/Schedule/ScoreBoard.aspx",
-        },
-        body: `leId=1&srId=0,1,3,4,5,7,8,9&date=${date}`,
-        cache: "no-store",
-        ...(remainingMs != null ? { signal: AbortSignal.timeout(Math.max(1, remainingMs)) } : {}),
-      }),
-      deadlineAtMs,
-    );
-    if (!r.ok) return { ok: false, games: [], trace: { sourceAtMs, fetchedAtMs: Date.now() } };
-    const json = await runBeforeDeadline(() => r.json(), deadlineAtMs).catch(() => null);
-    const games = parseKboGameListPayload(json);
-    const fetchedAtMs = Date.now();
-    if (games === null) return { ok: false, games: [], trace: { sourceAtMs, fetchedAtMs } };
-    return { ok: true, games, trace: { sourceAtMs, fetchedAtMs } };
-  } catch {
-    return { ok: false, games: [], trace: { sourceAtMs, fetchedAtMs: Date.now() } };
-  }
 }
 
 // 잠금화면 Live Activity "중계 한 줄" 소스 — /api/game-relay 응답에서 최근 플레이 1줄 추출.
