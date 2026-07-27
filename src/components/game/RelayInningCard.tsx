@@ -38,24 +38,6 @@ function getPlayEmoji(type: PlayEvent["type"]) {
   return "";
 }
 
-function countScoring(plays: PlayEvent[]): number {
-  let scores = 0;
-  for (const play of plays) {
-    if (play.extras) {
-      for (const extra of play.extras) {
-        if (extra.includes("홈까지 진루") || extra.includes("득점")) scores++;
-      }
-    }
-    if (play.type === "homerun") {
-      const hasExtraScore = play.extras?.some(
-        (e) => e.includes("홈까지 진루") || e.includes("득점"),
-      );
-      if (!hasExtraScore) scores++;
-    }
-  }
-  return scores;
-}
-
 /** 구질 카테고리 → 배지 색. text 기반 파생(kind)이라 원문 code 의미 불안정과 무관. */
 function pitchKindClass(kind: PitchDetail["kind"]): string {
   switch (kind) {
@@ -171,16 +153,13 @@ export default function RelayInningCard({
   awayTeam: TeamData;
   homeTeam: TeamData;
   /**
-   * 해당 초/말의 실제 이닝 득점(linescore 기준). 응답에 있으면 이 값을 그대로 노출한다.
-   * relay 문구 추정(countScoring)은 원문이 `홈인`이면 누락되고 주자 있는 홈런도 1점만
-   * 잡히는 버그가 있어(파도 제보 7/26), linescore 값이 있으면 항상 우선한다.
-   * undefined(linescore 미제공/캐시 등)일 때만 추정값으로 폴백한다.
+   * 해당 초/말의 실제 이닝 득점(linescore 기준).
+   * undefined/null이면 문구로 추정하지 않고 배지를 숨긴다.
    */
   runs?: number | null;
 }) {
   const teamColor = inning.half === "top" ? awayTeam.colorPrimary : homeTeam.colorPrimary;
   const halfLabel = inning.half === "top" ? "초" : "말";
-  const scores = runs != null ? runs : countScoring(inning.plays);
 
   return (
     <div className="glass-card overflow-hidden">
@@ -192,9 +171,9 @@ export default function RelayInningCard({
         <span className="text-sm font-medium" style={{ color: teamColor }}>
           {inning.teamName}
         </span>
-        {scores > 0 && (
+        {runs != null && runs > 0 && (
           <span className="ml-auto text-xs font-bold text-accent bg-accent/10 px-1.5 py-0.5 rounded">
-            {scores}점
+            {runs}점
           </span>
         )}
       </div>
