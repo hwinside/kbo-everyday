@@ -764,6 +764,16 @@ const NAVER_API_BASE =
 const responseCache = new Map<string, { data: GameRelayResponse; expiresAt: number }>();
 const CACHE_TTL_MS = 4_000;
 
+/**
+ * Per-fetch timeout for inning 2..N relay fetches and the record fetch.
+ * The inning-1 fetch keeps its own 10s bound (it also determines the current
+ * inning). Kept at 8s: long enough that a merely-slow Naver response still
+ * lands within one poll window, short enough that a genuinely hung upstream
+ * releases the Promise.all instead of stalling the whole relay (and thus the
+ * celebration) response indefinitely.
+ */
+const RELAY_INNING_TIMEOUT_MS = 8_000;
+
 function combineRelayInningsNewestFirst(inningRelays: NaverTextRelay[][]): NaverTextRelay[] {
   // Each Naver inning payload is newest-first. parseInningRelays reverses the
   // full array once, so concatenate inning bundles newest inning first; the
@@ -865,6 +875,12 @@ export async function GET(req: NextRequest) {
             "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)",
           },
           cache: "no-store",
+          // Bound each per-inning fetch so a single slow/hung Naver upstream
+          // can't stall the whole Promise.all — that stall was the tail cause
+          // of celebrations arriving 1–2min late (relay response never lands,
+          // so the BoxScore-diff fallback fires much later). On timeout the
+          // per-inning .catch yields [] and the next 5s poll recovers.
+          signal: AbortSignal.timeout(RELAY_INNING_TIMEOUT_MS),
         })
           .then((r) => (r.ok ? r.json() : null))
           .then(
@@ -881,6 +897,10 @@ export async function GET(req: NextRequest) {
       {
         headers: { "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)" },
         cache: "no-store",
+        // Same bound as per-inning fetches: record API is only used for
+        // pitcher/batter names+stats, not celebration firing, so a hung
+        // record fetch must never block the relay (celebration) response.
+        signal: AbortSignal.timeout(RELAY_INNING_TIMEOUT_MS),
       }
     )
       .then((r) => (r.ok ? r.json() : null))
