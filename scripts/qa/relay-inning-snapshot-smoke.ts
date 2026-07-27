@@ -172,17 +172,56 @@ async function main() {
   const s4 = resolveInningWithSnapshot(c, "g-3", []);
   check("pure: 성공-빈배열(정상 미시작 이닝) → degraded=false·unrecoverable=false", !s4.degraded && !s4.unrecoverable && s4.relays.length === 0);
 
-  // ---- (d) cold instance / eviction 첫 실패 = unrecoverable → non-2xx wiring ----
-  // 스냅샷이 없는 상태에서 이닝 실패 시 GET 이 [] 로 200 publish 하면 원 blocker
-  // (cold Vercel/eviction 첫 실패에서 ID 흔들림·UI 소실)가 재현된다. 그래서
-  //  ① resolver 가 unrecoverable=true 를 신호하고
-  //  ② GET 이 anyInningUnrecoverable 일 때 non-2xx 로 단락(캐시 안 함)
-  // 하는지를 production 소스로 고정한다.
+  // (3) monotonic/completeness guard: fetched 가 스냅샷보다 짧으면(transient
+  //     truncation) 덮어쓰지 않고 스냅샷 유지(append-only 전제).
+  const cm = new Map<string, NaverTextRelay[]>();
+  const long2 = [...inn2, { title: "", titleStyle: "8", textOptions: [{ seqno: 2, type: 13, text: "두번째 : 안타" }] } as unknown as NaverTextRelay];
+  resolveInningWithSnapshot(cm, "g-m", long2);            // 길이 3 스냅샷 적재
+  const shorter = resolveInningWithSnapshot(cm, "g-m", inn2); // 길이 2 (짧음)
+  check(
+    "pure: 짧은 fetch → 스냅샷 유지·degraded=true (truncation 덮어쓰기 방지)",
+    shorter.degraded && shorter.relays === long2 && cm.get("g-m") === long2,
+  );
+  const equalOrLonger = resolveInningWithSnapshot(cm, "g-m", long2);
+  check("pure: 동일/긴 fetch → adopt·degraded=false", !equalOrLonger.degraded && cm.get("g-m") === long2);
+
+  // ---- (d) executed production policy: resolveAllInnings 결과 계약 ----
+  // 삼순 요구: source-regex 대신 실제 production 함수를 실행해 outcome 을 고정.
+  const { resolveAllInnings } = await import("@/app/api/game-relay/route");
+
+  // d-1) cold/no-snapshot 이닝 실패 → anyUnrecoverable=true (GET 이 503 단락)
+  const coldOut = resolveAllInnings(new Map(), GAME_ID, [inn2, null, inn5]);
+  check("(d-1) cold/no-snapshot 실패 → anyUnrecoverable=true", coldOut.anyUnrecoverable);
+
+  // d-2) warm(스냅샷 보유) 이닝 실패 → degraded=true, unrecoverable=false, relays 보존
+  const warmCache = new Map<string, NaverTextRelay[]>();
+  resolveAllInnings(warmCache, GAME_ID, [inn2, inn2, inn5]); // 전 이닝 스냅샷 적재
+  const warmOut = resolveAllInnings(warmCache, GAME_ID, [inn2, null, inn5]); // 2회 실패
+  check(
+    "(d-2) warm 실패 → degraded=true·unrecoverable=false + 2회 relays 보존",
+    warmOut.anyDegraded && !warmOut.anyUnrecoverable && warmOut.relays[1].length > 0,
+  );
+
+  // d-3) malformed 200(textRelays 배열 아님)은 라우트에서 null 로 변환됨을 가정.
+  //      resolveAllInnings 입력이 null 이면 cold 에선 unrecoverable, warm 에선 degraded.
+  const malCold = resolveAllInnings(new Map(), GAME_ID, [null]);
+  check("(d-3) malformed inning1(cold) → unrecoverable", malCold.anyUnrecoverable);
+
+  // (2) 라우트가 malformed textRelays 를 null 로 분류하는지 소스 계약(Array.isArray)
   const here0 = dirname(fileURLToPath(import.meta.url));
   const routeSrc0 = readFileSync(resolve(here0, "../../src/app/api/game-relay/route.ts"), "utf8");
   check(
-    "(d) unrecoverable(=degraded+cache miss) 신호를 GET 이 추적",
-    /anyInningUnrecoverable/.test(routeSrc0),
+    "(2) malformed textRelays(Array.isArray 아님)를 null(=failure)로 분류",
+    /Array\.isArray\(\s*(?:relays|firstRelaysRaw)\s*\)\s*\?\s*(?:relays|firstRelaysRaw)\s*:\s*null/.test(routeSrc0),
+  );
+  check(
+    "(1) firstRes non-ok → non-2xx(503) (empty 200 아님)",
+    /if\s*\(\s*!firstRes\.ok\s*\)\s*\{[\s\S]*?status:\s*503[\s\S]*?\}/.test(routeSrc0),
+  );
+  check(
+    "(1) outer catch(timeout/network/JSON) → non-2xx(503) (empty 200 아님)",
+    /catch\s*\(e\)[\s\S]*?status:\s*503[\s\S]*?\}\s*\}/.test(routeSrc0) &&
+      !/catch\s*\(e\)[\s\S]*?innings:\s*\[\][\s\S]*?status:\s*200/.test(routeSrc0),
   );
   check(
     "(d) anyInningUnrecoverable → non-2xx(503) 단락 + publish/cache 안 함",
@@ -196,11 +235,7 @@ async function main() {
   );
 
   // ---- (c) route 최대 wall-clock bound production wiring ----
-  const here = dirname(fileURLToPath(import.meta.url));
-  const routeSrc = readFileSync(
-    resolve(here, "../../src/app/api/game-relay/route.ts"),
-    "utf8",
-  );
+  const routeSrc = routeSrc0;
   const timeoutCount = (routeSrc.match(/AbortSignal\.timeout\(/g) || []).length;
   check(
     "(c) 모든 upstream fetch 에 AbortSignal.timeout wiring (inning1 + inning2..N + record ≥3)",
