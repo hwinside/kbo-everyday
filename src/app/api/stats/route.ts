@@ -26,6 +26,9 @@ interface PlayerStat {
   [key: string]: string | number;
 }
 
+type RunnerStat = { sb: number; cs: number };
+type RunnerSource = "live" | "static-fallback";
+
 async function fetchHtml(url: string): Promise<string> {
   const res = await fetch(url, {
     headers: {
@@ -160,7 +163,12 @@ export async function fetchAllRunnerRows(fetchImpl: typeof fetch = fetch): Promi
   }
 }
 
-async function fetchBatterStats(): Promise<PlayerStat[]> {
+async function fetchBatterStats(): Promise<{
+  stats: PlayerStat[];
+  runnerMap: Map<string, RunnerStat>;
+  runnerSource: RunnerSource;
+  runnerUpdatedAt: string;
+}> {
   // Basic1: 순위(0) 선수명(1) 팀명(2) AVG(3) G(4) PA(5) AB(6) R(7) H(8) 2B(9) 3B(10) HR(11) TB(12) RBI(13) SAC(14) SF(15)
   // Basic2: 순위(0) 선수명(1) 팀명(2) AVG(3) BB(4) IBB(5) HBP(6) SO(7) GDP(8) SLG(9) OBP(10) OPS(11) MH(12) RISP(13) PH-BA(14)
   // Runner: 순위(0) 선수명(1) 팀명(2) G(3) SBA(4) SB(5) CS(6) SB%(7) OOB(8) PKO(9)
@@ -226,7 +234,7 @@ async function fetchBatterStats(): Promise<PlayerStat[]> {
 
   // Runner 전 페이지 live 수집이 완전히 성공했을 때만 사용한다. 일부 페이지만 성공한 결과와
   // static을 선수별로 섞지 않고, WebForms 수집이 실패한 요청에 한해 static 전체를 최종 fallback.
-  const runnerMap = new Map<string, { sb: number; cs: number }>();
+  const runnerMap = new Map<string, RunnerStat>();
   if (runnerResult.live) {
     for (const c of runnerResult.rows) {
       const key = `${(c[1] || "").trim()}::${(c[2] || "").trim()}`;
@@ -242,13 +250,12 @@ async function fetchBatterStats(): Promise<PlayerStat[]> {
     }
   }
 
-  return rows.map((c, i) => {
+  const stats = rows.map((c, i) => {
     const name = (c[1] || "").trim();
     const team = (c[2] || "").trim();
     const lookupKey = `${name}::${team}`;
     const found = resolvePlayer({ name, team }, roster, { context: "api/stats:batter" });
     const b2 = basic2Map.get(lookupKey);
-    const runner = runnerMap.get(lookupKey);
     return {
       rank: i + 1,
       name,
@@ -276,12 +283,28 @@ async function fetchBatterStats(): Promise<PlayerStat[]> {
       obp: b2?.obp || ".000",
       ops: b2?.ops || ".000",
       // Runner stats
-      sb: runner?.sb ?? 0,
-      cs: runner?.cs ?? 0,
+      sb: 0,
+      cs: 0,
       kboId: found?.kboId || "",
       playerId: found?.kboId || "",
       qualifiedRate: qualifiedKeys.has(`${name}::${team}`) ? 1 : 0,
     };
+  });
+  return {
+    stats,
+    runnerMap,
+    runnerSource: runnerResult.live ? "live" : "static-fallback",
+    runnerUpdatedAt: runnerResult.live ? new Date().toISOString() : statsMeta.battersGeneratedAt,
+  };
+}
+
+export function applyRunnerStats<T extends PlayerStat>(
+  stats: T[],
+  runnerMap: Map<string, RunnerStat>,
+): T[] {
+  return stats.map((player) => {
+    const runner = runnerMap.get(`${player.name.trim()}::${player.team.trim()}`);
+    return { ...player, sb: runner?.sb ?? 0, cs: runner?.cs ?? 0 };
   });
 }
 
@@ -361,6 +384,8 @@ interface StatsResult {
   count: number;
   source?: string;
   updatedAt?: string; // ISO. 라이브(타자/투수)=fetch 시각 / 수비=일일 크롤 시각(meta)
+  runnerSource?: RunnerSource;
+  runnerUpdatedAt?: string;
 }
 
 const cache: Record<string, { data: StatsResult; ts: number }> = {};
@@ -405,11 +430,34 @@ export async function GET(req: NextRequest) {
   if (cached) return NextResponse.json(cached);
 
   try {
-    const live = type === "pitcher" ? await fetchPitcherStats() : await fetchBatterStats();
-    const stats = full
-      ? mergeFullEntry(live, (type === "pitcher" ? pitcherStats2026 : batterStats2026) as unknown as PlayerStat[])
-      : live;
-    const result: StatsResult = { stats, type, count: stats.length, source: "live", updatedAt: new Date().toISOString() };
+    let stats: PlayerStat[];
+    let runnerSource: RunnerSource | undefined;
+    let runnerUpdatedAt: string | undefined;
+    if (type === "pitcher") {
+      const live = await fetchPitcherStats();
+      stats = full
+        ? mergeFullEntry(live, pitcherStats2026 as unknown as PlayerStat[])
+        : live;
+    } else {
+      const live = await fetchBatterStats();
+      const merged = full
+        ? mergeFullEntry(live.stats, batterStats2026 as unknown as PlayerStat[])
+        : live.stats;
+      // full=1로 static에서 추가된 선수도 같은 전페이지 live Runner map으로 마지막에 보정한다.
+      stats = applyRunnerStats(merged, live.runnerMap);
+      runnerSource = live.runnerSource;
+      runnerUpdatedAt = live.runnerUpdatedAt;
+    }
+    const now = new Date().toISOString();
+    const result: StatsResult = {
+      stats,
+      type,
+      count: stats.length,
+      source: runnerSource === "static-fallback" ? "live+static-runner-fallback" : "live",
+      // 혼합 응답은 가장 오래된 구성요소 시각을 대표 freshness로 노출한다.
+      updatedAt: runnerSource === "static-fallback" ? runnerUpdatedAt : now,
+      ...(runnerSource ? { runnerSource, runnerUpdatedAt } : {}),
+    };
     setCache(cacheKey, result);
     return NextResponse.json(result);
   } catch (e: unknown) {

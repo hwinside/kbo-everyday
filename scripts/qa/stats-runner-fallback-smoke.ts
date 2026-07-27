@@ -1,6 +1,8 @@
 import assert from "node:assert";
 import test from "node:test";
-import { fetchAllRunnerRows } from "../../src/app/api/stats/route";
+import { NextRequest } from "next/server";
+import { fetchAllRunnerRows, GET } from "../../src/app/api/stats/route";
+import statsMeta from "../../src/lib/constants/stats-2026-meta.json";
 
 const PAGER_PREFIX = "ctl00$ctl00$ctl00$cphContents$cphContents$cphContents$ucPager$";
 
@@ -22,9 +24,14 @@ function pageHtml(page: number): string {
   const count = page === 11 ? 29 : 30;
   const rows = Array.from({ length: count }, (_, index) => {
     const isKim = page === 2 && index === 0;
-    return `<tr><td>${(page - 1) * 30 + index + 1}</td><td>${isKim ? "김도영" : `선수${page}-${index}`}</td>` +
-      `<td>${isKim ? "KIA" : "팀"}</td><td>1</td><td>1</td><td>${isKim ? 6 : 0}</td>` +
-      `<td>${isKim ? 1 : 0}</td><td>0</td><td>0</td><td>0</td></tr>`;
+    const isStaticOnly = page === 3 && index === 0;
+    const name = isKim ? "김도영" : isStaticOnly ? "전다민" : `선수${page}-${index}`;
+    const team = isKim ? "KIA" : isStaticOnly ? "두산" : "팀";
+    const sb = isKim ? 6 : isStaticOnly ? 9 : 0;
+    const cs = isKim ? 1 : isStaticOnly ? 4 : 0;
+    return `<tr><td>${(page - 1) * 30 + index + 1}</td><td>${name}</td>` +
+      `<td>${team}</td><td>1</td><td>1</td><td>${sb}</td>` +
+      `<td>${cs}</td><td>0</td><td>0</td><td>0</td></tr>`;
   }).join("");
   return `<form><input type="hidden" name="__VIEWSTATE" value="vs-${page}" />` +
     `<input type="hidden" name="__VIEWSTATEGENERATOR" value="vg" />` +
@@ -70,4 +77,66 @@ test("중간 POST 실패 시 부분 rows를 성공으로 반환하지 않는다"
     });
   }) as typeof fetch;
   await assert.rejects(fetchAllRunnerRows(fakeFetch), /Runner page 4 POST HTTP 503/);
+});
+
+function basicHtml(): string {
+  return `<tbody><tr><td>1</td><td>라이브선수</td><td>LG</td><td>.300</td>` +
+    `<td>10</td><td>40</td><td>35</td><td>5</td><td>10</td><td>1</td><td>0</td>` +
+    `<td>1</td><td>14</td><td>7</td><td>0</td><td>0</td></tr></tbody>`;
+}
+
+function routeFetch(options: { runnerPostFails?: boolean }): typeof fetch {
+  let runnerPage = 1;
+  return (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    if (!url.includes("/Record/Player/Runner/Basic.aspx")) {
+      return new Response(basicHtml(), { status: 200 });
+    }
+    if ((init?.method ?? "GET") === "POST") {
+      if (options.runnerPostFails) return new Response("fail", { status: 503 });
+      runnerPage += 1;
+    }
+    return new Response(pageHtml(runnerPage), {
+      status: 200,
+      headers: runnerPage === 1 ? { "set-cookie": "ASP.NET_SessionId=route-test; path=/" } : {},
+    });
+  }) as typeof fetch;
+}
+
+test("actual GET full=1이 static-only 선수도 live Runner 값으로 보정하고 source를 노출한다", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = routeFetch({});
+  try {
+    const response = await GET(new NextRequest(
+      `http://localhost/api/stats?type=batter&full=1&season=qa-live-${Date.now()}`,
+    ));
+    const body = await response.json();
+    const player = body.stats.find((row: { name: string; team: string }) =>
+      row.name === "전다민" && row.team === "두산");
+    assert.deepStrictEqual({ sb: player?.sb, cs: player?.cs }, { sb: 9, cs: 4 });
+    assert.strictEqual(body.runnerSource, "live");
+    assert.ok(Date.now() - Date.parse(body.runnerUpdatedAt) < 5_000);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("actual GET은 Runner 중간 실패 시 static 전체 fallback과 stale timestamp를 사실대로 노출한다", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = routeFetch({ runnerPostFails: true });
+  try {
+    const response = await GET(new NextRequest(
+      `http://localhost/api/stats?type=batter&full=1&season=qa-fallback-${Date.now()}`,
+    ));
+    const body = await response.json();
+    const player = body.stats.find((row: { name: string; team: string }) =>
+      row.name === "전다민" && row.team === "두산");
+    assert.deepStrictEqual({ sb: player?.sb, cs: player?.cs }, { sb: 1, cs: 0 });
+    assert.strictEqual(body.source, "live+static-runner-fallback");
+    assert.strictEqual(body.updatedAt, statsMeta.battersGeneratedAt);
+    assert.strictEqual(body.runnerSource, "static-fallback");
+    assert.strictEqual(body.runnerUpdatedAt, statsMeta.battersGeneratedAt);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
