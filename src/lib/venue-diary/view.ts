@@ -276,3 +276,197 @@ export function buildDiaryHomeGames(input: {
     };
   });
 }
+
+// ── 목록 cursor 전페이지 병합(Blocker 1) ─────────────────────────────────────
+// A2 목록 API 는 30경기 keyset(nextCursor/hasMore)로 응답한다. 첫 페이지만 쓰면 31번째+ 경기가
+// 홈에서 영구 미노출되고 N/10 count 가 0 으로 틀린다 → hasMore 동안 cursor 로 순차 fetch 해 병합한다.
+
+/** 한 시즌 목록 페이지(서버 응답 shape). */
+export interface DiaryMediaPage {
+  games: DiaryMediaGroupInput[];
+  nextCursor: string | null;
+  hasMore: boolean;
+}
+
+/**
+ * cursor 페이징 무한루프 방지 상한. 경기당 유저 상한 10, 페이지당 30경기이므로
+ * 40페이지(=1200경기)면 단일 시즌 현실 표본을 크게 상회한다(방어선).
+ */
+export const VENUE_DIARY_MAX_LIST_PAGES = 40;
+
+/**
+ * 다음 cursor 페이지를 계속 fetch 할지 판정한다(무한루프 가드).
+ * hasMore=true·유효 cursor·상한 미만일 때만 진행한다.
+ */
+export function shouldFetchNextDiaryPage(input: {
+  hasMore: boolean;
+  nextCursor: string | null;
+  pagesFetched: number;
+  maxPages?: number;
+}): boolean {
+  const max = input.maxPages ?? VENUE_DIARY_MAX_LIST_PAGES;
+  return (
+    input.hasMore &&
+    typeof input.nextCursor === "string" &&
+    input.nextCursor.length > 0 &&
+    input.pagesFetched < max
+  );
+}
+
+/**
+ * cursor 로 순차 fetch 한 페이지들을 순서 보존 병합하고 gameId 중복을 제거한다(첫 등장 우선).
+ * 서버가 (game_date DESC, game_id DESC) 안정 정렬을 하므로 페이지 경계 중복만 방어한다.
+ */
+export function mergeDiaryMediaPages(
+  pages: ReadonlyArray<{ games: ReadonlyArray<DiaryMediaGroupInput> }>,
+): DiaryMediaGroupInput[] {
+  const seen = new Set<string>();
+  const merged: DiaryMediaGroupInput[] = [];
+  for (const page of pages) {
+    for (const game of page.games) {
+      if (seen.has(game.gameId)) continue;
+      seen.add(game.gameId);
+      merged.push(game);
+    }
+  }
+  return merged;
+}
+
+// ── signed URL 4분 재발급 apply(Blocker 1) ──────────────────────────────────
+// A2 signed URL TTL=5분. 뷰어 체류·목록 노출 중 만료 전 재발급하되 id/순서/카운트/댓글은 보존하고
+// URL(mediaUrl/thumbUrl)만 교체한다. 재발급 루프는 refresh-policy.startVenueStoryUrlRefresh 를 재사용한다.
+
+export interface DiaryDetailUrlRefresh {
+  id: number;
+  mediaUrl: string;
+  thumbUrl: string | null;
+}
+
+/** 상세 뷰어: 기존 미디어의 id/순서/댓글은 그대로 두고 signed URL 만 최신값으로 교체(late apply 안전). */
+export function applyDiaryDetailUrlRefresh<
+  T extends { id: number; mediaUrl: string; thumbUrl: string | null },
+>(media: ReadonlyArray<T>, fresh: ReadonlyArray<DiaryDetailUrlRefresh>): T[] {
+  const byId = new Map(fresh.map((m) => [m.id, m]));
+  return media.map((m) => {
+    const next = byId.get(m.id);
+    return next ? { ...m, mediaUrl: next.mediaUrl, thumbUrl: next.thumbUrl } : m;
+  });
+}
+
+/** 홈 목록: 경기별 썸네일 thumbUrl 만 최신 첫 페이지 값으로 교체(id/순서/카운트 보존). */
+export function applyDiaryThumbUrlRefresh(
+  groups: ReadonlyArray<DiaryMediaGroupInput>,
+  fresh: ReadonlyArray<DiaryMediaGroupInput>,
+): DiaryMediaGroupInput[] {
+  const freshThumbById = new Map<number, string>();
+  for (const g of fresh) {
+    for (const t of g.thumbnails) freshThumbById.set(t.id, t.thumbUrl);
+  }
+  return groups.map((g) => ({
+    ...g,
+    thumbnails: g.thumbnails.map((t) => {
+      const url = freshThumbById.get(t.id);
+      return url != null ? { ...t, thumbUrl: url } : t;
+    }),
+  }));
+}
+
+// ── 명시적 업로드 CTA + caption 소스(Blocker 2) ──────────────────────────────
+// 파일 선택은 queued 까지만. 동의 완료 + 제출 시점 caption 을 읽는 명시적 CTA 로만 전송을 시작한다.
+
+/** 실제 전송할 항목만(queued/failed). done/uploading/processing 은 재전송하지 않는다. */
+export function diaryUploadTargets<T extends { state: DiaryUploadItemState }>(
+  items: ReadonlyArray<T>,
+): T[] {
+  return items.filter(
+    (i) => i.state.phase === "queued" || i.state.phase === "failed",
+  );
+}
+
+/** 업로드 시작 가능 여부: 동의 완료 + 전송 대상(queued/failed) 존재. */
+export function diaryCanStartUpload(
+  items: ReadonlyArray<DiaryUploadItemState>,
+  agreed: boolean,
+): boolean {
+  return agreed && items.some((i) => i.phase === "queued" || i.phase === "failed");
+}
+
+/** POST body 의 caption 소스 — 선택 순간 closure 가 아니라 제출 시점 입력값을 정규화해 넘긴다. */
+export function diaryCaptionForSubmit(raw: string): string | null {
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+/**
+ * 하단 기본 버튼 상태.
+ *  - 전송 대상(queued/failed)이 남고 업로드 중이 아니면 명시적 업로드 CTA(action=upload).
+ *  - 그 외(업로드/처리 중·완료·빈 상태)는 기존 배치 CTA(action=close).
+ */
+export interface DiaryBottomCta {
+  action: "upload" | "close";
+  kind: "idle" | "wait" | "go" | "start";
+  label: string;
+  subLabel: string | null;
+  disabled: boolean;
+}
+
+export function diaryBottomCta(
+  items: ReadonlyArray<DiaryUploadItemState>,
+  agreed: boolean,
+): DiaryBottomCta {
+  const uploading = items.some((i) => i.phase === "uploading");
+  const pending = items.filter(
+    (i) => i.phase === "queued" || i.phase === "failed",
+  ).length;
+  if (pending > 0 && !uploading) {
+    return {
+      action: "upload",
+      kind: "start",
+      label: agreed ? `${pending}개 올리기` : "가이드라인에 동의해주세요",
+      subLabel: null,
+      disabled: !agreed,
+    };
+  }
+  const base = diaryUploadCta(items);
+  return {
+    action: "close",
+    kind: base.kind,
+    label: base.kind === "idle" ? "완료" : base.label,
+    subLabel: base.subLabel,
+    disabled: base.kind === "wait",
+  };
+}
+
+// ── uploading 이탈 경고 / pending 안전 카피(Blocker 3) ────────────────────────
+// uploading(XHR/fetch 진행 중)에는 이탈 경고 + actual guard, 서버 pending/processing 에만 "나가도 계속".
+
+export interface DiaryLeaveNotice {
+  tone: "warn" | "safe";
+  text: string;
+  /** 실제 이탈 가드(close/back/beforeunload confirm) 필요 여부. uploading 일 때만 true. */
+  guard: boolean;
+}
+
+export function diaryLeaveNotice(
+  items: ReadonlyArray<DiaryUploadItemState>,
+): DiaryLeaveNotice {
+  if (items.some((i) => i.phase === "uploading")) {
+    return {
+      tone: "warn",
+      text: "🔒 올리는 중이에요. 지금 나가면 업로드가 중단돼요.",
+      guard: true,
+    };
+  }
+  if (items.some((i) => i.phase === "processing")) {
+    return {
+      tone: "safe",
+      text: "🔒 사진·영상은 비공개로 저장돼요. 영상 처리는 나가도 계속돼요.",
+      guard: false,
+    };
+  }
+  return {
+    tone: "safe",
+    text: "🔒 올린 사진·영상은 비공개로 저장돼 나만 볼 수 있어요.",
+    guard: false,
+  };
+}

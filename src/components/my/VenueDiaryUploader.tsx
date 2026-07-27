@@ -9,8 +9,11 @@ import { prepareVenueStoryMedia } from "@/lib/venue-stories/upload";
 import { VENUE_STORY_CONSENT_VERSION } from "@/lib/venue-stories/types";
 import { consentStorageKey } from "@/lib/venue-stories/auth-consent";
 import {
+  diaryBottomCta,
+  diaryCaptionForSubmit,
+  diaryLeaveNotice,
   diaryUploadBadge,
-  diaryUploadCta,
+  diaryUploadTargets,
   VENUE_DIARY_MEDIA_CAP,
   type DiaryUploadItemState,
 } from "@/lib/venue-diary/view";
@@ -39,8 +42,8 @@ interface Props {
   isOpen: boolean;
   onBack: () => void;
   onClose: () => void;
-  /** 하나라도 저장 성공하면 호출(홈 목록 갱신용). */
-  onUploaded: () => void;
+  /** 하나라도 저장 성공하면 호출(홈 목록 갱신용). 영상 pending 은 archived 승급 poll 트리거. */
+  onUploaded: (result: { mediaType: "image" | "video"; status: string }) => void;
 }
 
 const RESULT_STYLE: Record<"W" | "L" | "D", string> = {
@@ -60,6 +63,16 @@ export default function VenueDiaryUploader({ game, isOpen, onBack, onClose, onUp
   const [error, setError] = useState<string | null>(null);
   const [sessionUserId, setSessionUserId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // 제출 시점 caption 을 읽는 소스(선택 순간 closure 고정 방지 — Blocker 2).
+  const captionRef = useRef("");
+  useEffect(() => {
+    captionRef.current = caption;
+  }, [caption]);
+  // beforeunload/close 가드가 최신 항목 상태를 읽도록 ref 로 미러링(Blocker 3).
+  const itemsRef = useRef<UploadItem[]>([]);
+  useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
 
   const consentKey = consentStorageKey(VENUE_STORY_CONSENT_VERSION, sessionUserId);
 
@@ -101,6 +114,19 @@ export default function VenueDiaryUploader({ game, isOpen, onBack, onClose, onUp
     };
   }, [isOpen]);
 
+  // uploading(XHR/fetch 진행 중)일 때만 새로고침/탭 종료 이탈을 실제로 막는다(Blocker 3 actual guard).
+  useEffect(() => {
+    if (!isOpen) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (diaryLeaveNotice(itemsRef.current.map((i) => i.state)).guard) {
+        e.preventDefault();
+        e.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [isOpen]);
+
   const savedCount = useMemo(
     () => items.filter((i) => i.state.phase === "done").length,
     [items],
@@ -108,7 +134,9 @@ export default function VenueDiaryUploader({ game, isOpen, onBack, onClose, onUp
   const usedCount = game.existingCount + savedCount;
   const remaining = Math.max(0, VENUE_DIARY_MEDIA_CAP - game.existingCount);
   const locked = remaining <= 0;
-  const cta = diaryUploadCta(items.map((i) => i.state));
+  const itemStates = items.map((i) => i.state);
+  const bottom = diaryBottomCta(itemStates, agreed);
+  const leaveNotice = diaryLeaveNotice(itemStates);
 
   const toggleAgree = () => {
     setAgreed((prev) => {
@@ -137,6 +165,8 @@ export default function VenueDiaryUploader({ game, isOpen, onBack, onClose, onUp
       return;
     }
     setError(null);
+    // 이미 저장 완료된 항목은 재전송하지 않는다(Blocker 2).
+    if (item.state.phase === "done") return;
     updateItem(item.key, { phase: "uploading", percent: 0 });
     try {
       const prepared = await prepareVenueStoryMedia(item.file, game.gameId, (r) => {
@@ -166,7 +196,8 @@ export default function VenueDiaryUploader({ game, isOpen, onBack, onClose, onUp
           durationMs: prepared.durationMs,
           width: prepared.width,
           height: prepared.height,
-          caption: caption.trim() || null,
+          // 선택 순간이 아니라 제출 시점 caption 을 읽는다(Blocker 2 closure 고정 방지).
+          caption: diaryCaptionForSubmit(captionRef.current),
           consentVersion: VENUE_STORY_CONSENT_VERSION,
         }),
       });
@@ -176,7 +207,7 @@ export default function VenueDiaryUploader({ game, isOpen, onBack, onClose, onUp
         updateItem(item.key, { phase: "failed" });
         return;
       }
-      onUploaded();
+      onUploaded({ mediaType: prepared.mediaType, status: data.status ?? "archived" });
       // 영상 pending → 처리 중, 그 외 → 완료
       updateItem(item.key, {
         phase: data.status === "pending" ? "processing" : "done",
@@ -215,13 +246,22 @@ export default function VenueDiaryUploader({ game, isOpen, onBack, onClose, onUp
     if (picked.length > slots) {
       setError(`남은 ${slots}개까지만 추가했어요`);
     }
+    // 선택은 queued 까지만. 실제 업로드는 동의 완료 후 명시적 CTA(startUpload)로만 시작한다(Blocker 2).
     setItems((prev) => [...prev, ...accepted]);
-    // 선택 즉시 순차 업로드 시작(외부 API 부하 방지 — 병렬 대신 순차)
-    void (async () => {
-      for (const item of accepted) {
-        await processItem(item);
-      }
-    })();
+  };
+
+  // 명시적 업로드 CTA — 동의 완료 + 제출 시점 caption 으로 queued/failed 항목만 순차 전송(done 재전송 안 함).
+  const startUpload = async () => {
+    if (!agreed) {
+      setError("업로드 가이드라인에 동의해주세요");
+      return;
+    }
+    const targets = diaryUploadTargets(itemsRef.current);
+    if (targets.length === 0) return;
+    setError(null);
+    for (const item of targets) {
+      await processItem(item);
+    }
   };
 
   const removeItem = (key: string) => {
@@ -232,12 +272,24 @@ export default function VenueDiaryUploader({ game, isOpen, onBack, onClose, onUp
     });
   };
 
+  // uploading 중 이탈은 실제로 막는다(confirm). pending/processing/완료/빈 상태는 자유롭게 닫힘.
+  const confirmLeaveIfUploading = (): boolean => {
+    if (!diaryLeaveNotice(itemsRef.current.map((i) => i.state)).guard) return true;
+    return window.confirm("업로드가 진행 중이에요. 지금 나가면 중단돼요. 나가시겠어요?");
+  };
+
   const close = () => {
+    if (!confirmLeaveIfUploading()) return;
     items.forEach((i) => URL.revokeObjectURL(i.previewUrl));
     setItems([]);
     setCaption("");
     setError(null);
     onClose();
+  };
+
+  const handleBack = () => {
+    if (!confirmLeaveIfUploading()) return;
+    onBack();
   };
 
   if (!isOpen || typeof document === "undefined") return null;
@@ -260,7 +312,7 @@ export default function VenueDiaryUploader({ game, isOpen, onBack, onClose, onUp
           onClick={(e) => e.stopPropagation()}
         >
           <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-            <button onClick={onBack} aria-label="뒤로" className="text-text-tertiary">
+            <button onClick={handleBack} aria-label="뒤로" className="text-text-tertiary">
               <ChevronLeft size={22} />
             </button>
             <span className="text-base font-semibold text-text-primary">기록 추가</span>
@@ -283,7 +335,7 @@ export default function VenueDiaryUploader({ game, isOpen, onBack, onClose, onUp
                   )}
                 </p>
               </div>
-              <button onClick={onBack} className="text-xs font-bold text-accent">
+              <button onClick={handleBack} className="text-xs font-bold text-accent">
                 변경
               </button>
             </div>
@@ -388,8 +440,14 @@ export default function VenueDiaryUploader({ game, isOpen, onBack, onClose, onUp
               className="w-full px-3 py-2.5 rounded-xl bg-bg-tertiary text-sm text-text-primary placeholder:text-text-tertiary outline-none"
             />
 
-            <div className="rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-2.5 text-[11.5px] leading-relaxed text-amber-300">
-              🔒 올린 사진·영상은 비공개로 저장돼 나만 볼 수 있어요. 나가도 업로드·처리는 계속돼요.
+            <div
+              className={`rounded-xl border px-3 py-2.5 text-[11.5px] leading-relaxed ${
+                leaveNotice.tone === "warn"
+                  ? "border-red-500/30 bg-red-500/10 text-red-300"
+                  : "border-amber-500/25 bg-amber-500/10 text-amber-300"
+              }`}
+            >
+              {leaveNotice.text}
             </div>
           </div>
 
@@ -411,21 +469,25 @@ export default function VenueDiaryUploader({ game, isOpen, onBack, onClose, onUp
             </label>
 
             {error && <p className="text-sm text-red-400">{error}</p>}
-            {cta.subLabel && (
-              <p className="text-center text-[11px] text-amber-400">{cta.subLabel}</p>
+            {bottom.subLabel && (
+              <p className="text-center text-[11px] text-amber-400">{bottom.subLabel}</p>
             )}
 
             <button
-              onClick={close}
-              className={`w-full py-3.5 rounded-xl font-bold text-white ${
-                cta.kind === "go"
+              onClick={() => {
+                if (bottom.action === "upload") void startUpload();
+                else close();
+              }}
+              disabled={bottom.disabled}
+              className={`w-full py-3.5 rounded-xl font-bold text-white disabled:opacity-50 ${
+                bottom.kind === "go" || bottom.kind === "start"
                   ? "bg-brand-primary"
-                  : cta.kind === "wait"
+                  : bottom.kind === "wait"
                     ? "bg-brand-primary/40"
                     : "bg-bg-tertiary text-text-tertiary"
               }`}
             >
-              {cta.kind === "idle" ? "완료" : cta.label}
+              {bottom.label}
             </button>
           </div>
         </motion.div>

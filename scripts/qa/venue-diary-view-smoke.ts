@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import {
+  applyDiaryDetailUrlRefresh,
+  applyDiaryThumbUrlRefresh,
   buildDiaryHomeGames,
+  diaryBottomCta,
+  diaryCanStartUpload,
+  diaryCaptionForSubmit,
   diaryGameSourceLabel,
+  diaryLeaveNotice,
   diaryMediaSourceLabel,
   diaryPickCaption,
   diaryPickLocked,
@@ -9,8 +15,12 @@ import {
   diaryShowsComments,
   diaryUploadBadge,
   diaryUploadCta,
+  diaryUploadTargets,
+  mergeDiaryMediaPages,
   mergeVenueSummaries,
+  shouldFetchNextDiaryPage,
   VENUE_DIARY_HOME_THUMBNAILS,
+  VENUE_DIARY_MAX_LIST_PAGES,
   VENUE_DIARY_MEDIA_CAP,
   type DiaryMediaGroupInput,
   type DiaryUploadItemState,
@@ -191,6 +201,168 @@ import {
   const empty = mergeVenueSummaries([]);
   assert.equal(empty.attendanceCount, 0);
   assert.equal(empty.winRate, null, "표본 0 → null");
+}
+
+// 8) Blocker 1 — 목록 cursor 전페이지 병합 + 무한루프 가드
+{
+  const mk = (gameId: string): DiaryMediaGroupInput => ({
+    gameId,
+    gameDate: "2026-07-01",
+    stadiumName: "잠실",
+    counts: { image: 1, video: 0, total: 1 },
+    thumbnails: [
+      { id: Number(gameId.replace(/\D/g, "")) || 0, mediaType: "image", thumbUrl: `u/${gameId}`, venueVerified: false },
+    ],
+  });
+  // 페이지 경계 중복(G3)은 첫 등장만 남기고 순서 보존
+  const merged = mergeDiaryMediaPages([
+    { games: [mk("G1"), mk("G2"), mk("G3")] },
+    { games: [mk("G3"), mk("G4")] },
+  ]);
+  assert.deepEqual(
+    merged.map((g) => g.gameId),
+    ["G1", "G2", "G3", "G4"],
+    "cursor 병합 — 순서 보존 + gameId 중복 0",
+  );
+
+  // hasMore & 유효 cursor & 상한 미만일 때만 계속
+  assert.equal(
+    shouldFetchNextDiaryPage({ hasMore: true, nextCursor: "2026-07-01|G30", pagesFetched: 1 }),
+    true,
+  );
+  assert.equal(
+    shouldFetchNextDiaryPage({ hasMore: false, nextCursor: "2026-07-01|G30", pagesFetched: 1 }),
+    false,
+    "hasMore=false 면 중단",
+  );
+  assert.equal(
+    shouldFetchNextDiaryPage({ hasMore: true, nextCursor: null, pagesFetched: 1 }),
+    false,
+    "cursor 없으면 중단",
+  );
+  assert.equal(
+    shouldFetchNextDiaryPage({
+      hasMore: true,
+      nextCursor: "c",
+      pagesFetched: VENUE_DIARY_MAX_LIST_PAGES,
+    }),
+    false,
+    "상한 도달면 중단(무한루프 가드)",
+  );
+}
+
+// 9) Blocker 1 — signed URL 재발급 apply(id/순서 보존, URL만 교체)
+{
+  const media = [
+    { id: 1, mediaUrl: "old-1", thumbUrl: "t-1", caption: "a" },
+    { id: 2, mediaUrl: "old-2", thumbUrl: null, caption: "b" },
+  ];
+  const refreshed = applyDiaryDetailUrlRefresh(media, [
+    { id: 1, mediaUrl: "new-1", thumbUrl: "nt-1" },
+    { id: 9, mediaUrl: "ghost", thumbUrl: null },
+  ]);
+  assert.equal(refreshed[0].mediaUrl, "new-1", "id 일치 URL 교체");
+  assert.equal(refreshed[0].thumbUrl, "nt-1");
+  assert.equal(refreshed[0].caption, "a", "메타(caption) 보존");
+  assert.equal(refreshed[1].mediaUrl, "old-2", "fresh 없는 id 는 그대로");
+  assert.deepEqual(
+    refreshed.map((m) => m.id),
+    [1, 2],
+    "순서 보존",
+  );
+
+  const groups: DiaryMediaGroupInput[] = [
+    {
+      gameId: "G1",
+      gameDate: "2026-07-01",
+      stadiumName: "잠실",
+      counts: { image: 2, video: 0, total: 2 },
+      thumbnails: [
+        { id: 11, mediaType: "image", thumbUrl: "old-11", venueVerified: false },
+        { id: 12, mediaType: "image", thumbUrl: "old-12", venueVerified: false },
+      ],
+    },
+  ];
+  const freshGroups: DiaryMediaGroupInput[] = [
+    {
+      gameId: "G1",
+      gameDate: "2026-07-01",
+      stadiumName: "잠실",
+      counts: { image: 2, video: 0, total: 2 },
+      thumbnails: [
+        { id: 11, mediaType: "image", thumbUrl: "new-11", venueVerified: false },
+      ],
+    },
+  ];
+  const rt = applyDiaryThumbUrlRefresh(groups, freshGroups);
+  assert.equal(rt[0].thumbnails[0].thumbUrl, "new-11", "썸네일 thumbUrl 교체");
+  assert.equal(rt[0].thumbnails[1].thumbUrl, "old-12", "fresh 없는 썸네일 보존");
+  assert.equal(rt[0].counts.total, 2, "카운트 보존");
+}
+
+// 10) Blocker 2 — 명시적 업로드 CTA / caption 소스 / 전송 대상
+{
+  const queued: DiaryUploadItemState[] = [{ phase: "queued" }, { phase: "queued" }];
+  // 동의 전: 시작 불가 + CTA 비활성
+  assert.equal(diaryCanStartUpload(queued, false), false, "동의 전 시작 불가");
+  const before = diaryBottomCta(queued, false);
+  assert.equal(before.action, "upload");
+  assert.equal(before.disabled, true, "동의 전 CTA disabled");
+  // 동의 후: 시작 가능 + 명시적 업로드 CTA
+  assert.equal(diaryCanStartUpload(queued, true), true);
+  const after = diaryBottomCta(queued, true);
+  assert.equal(after.action, "upload");
+  assert.equal(after.kind, "start");
+  assert.equal(after.disabled, false);
+  assert.equal(after.label, "2개 올리기");
+
+  // 업로드 중이면 진행 대기(close action, wait)
+  const uploading: DiaryUploadItemState[] = [{ phase: "uploading", percent: 20 }, { phase: "queued" }];
+  const mid = diaryBottomCta(uploading, true);
+  assert.equal(mid.action, "close");
+  assert.equal(mid.kind, "wait");
+  assert.equal(mid.disabled, true);
+
+  // 전부 완료면 close/go
+  const done = diaryBottomCta([{ phase: "done" }, { phase: "done" }], true);
+  assert.equal(done.action, "close");
+  assert.equal(done.kind, "go");
+
+  // 전송 대상: queued/failed 만, done 재전송 안 함
+  const items = [
+    { key: "a", state: { phase: "done" } as DiaryUploadItemState },
+    { key: "b", state: { phase: "queued" } as DiaryUploadItemState },
+    { key: "c", state: { phase: "failed" } as DiaryUploadItemState },
+  ];
+  assert.deepEqual(
+    diaryUploadTargets(items).map((i) => i.key),
+    ["b", "c"],
+    "queued/failed 만 전송 — done 제외",
+  );
+
+  // caption 소스: 제출 시점 값 trim, 빈 문자열은 null
+  assert.equal(diaryCaptionForSubmit("  방문 메모  "), "방문 메모");
+  assert.equal(diaryCaptionForSubmit("   "), null);
+  assert.equal(diaryCaptionForSubmit(""), null);
+}
+
+// 11) Blocker 3 — uploading 이탈 경고 / pending 안전 카피
+{
+  // uploading: 경고 tone + actual guard
+  const up = diaryLeaveNotice([{ phase: "uploading", percent: 10 }, { phase: "done" }]);
+  assert.equal(up.tone, "warn");
+  assert.equal(up.guard, true, "uploading 중에만 actual guard");
+
+  // processing: 안전(나가도 계속) + guard 없음
+  const proc = diaryLeaveNotice([{ phase: "processing", mediaType: "video" }, { phase: "done" }]);
+  assert.equal(proc.tone, "safe");
+  assert.equal(proc.guard, false);
+  assert.ok(proc.text.includes("계속"), "processing 은 '나가도 계속' 카피");
+
+  // 빈/완료: 안전 + guard 없음 + 이탈 경고 카피 아님
+  const idle = diaryLeaveNotice([{ phase: "done" }]);
+  assert.equal(idle.guard, false);
+  assert.ok(!idle.text.includes("중단"), "완료 상태는 중단 경고 아님");
 }
 
 console.log("venue-diary-view-smoke: OK");

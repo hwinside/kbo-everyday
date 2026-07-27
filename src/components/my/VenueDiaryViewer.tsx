@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
 import { X, MoreVertical, Loader2, Trash2, Images } from "lucide-react";
 import { getSafeSession } from "@/lib/supabase/client";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
-import { diaryMediaSourceLabel, diaryShowsComments } from "@/lib/venue-diary/view";
+import { applyDiaryDetailUrlRefresh, diaryMediaSourceLabel, diaryShowsComments } from "@/lib/venue-diary/view";
+import { startVenueStoryUrlRefresh } from "@/lib/venue-stories/refresh-policy";
 
 interface DiaryComment {
   id: number;
@@ -70,6 +71,13 @@ export default function VenueDiaryViewer({ gameId, header, isOpen, onClose, onCh
   const [menuOpen, setMenuOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  // signed URL(5분 만료) 4분 재발급 루프용 — 현재 열린 gameId 소유권 가드(late apply 0).
+  const gameIdRef = useRef(gameId);
+  const refreshedTokenRef = useRef<number | null>(null);
+  const lastUrlRefreshAtRef = useRef(0);
+  useEffect(() => {
+    gameIdRef.current = gameId;
+  }, [gameId]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -96,6 +104,51 @@ export default function VenueDiaryViewer({ gameId, header, isOpen, onClose, onCh
     return () => {
       alive = false;
     };
+  }, [isOpen, gameId]);
+
+  // 체류 중 signed URL 메디어 만료 전 detail refetch 로 mediaUrl/thumbUrl 재발급.
+  // A1 검증된 순수 루프(startVenueStoryUrlRefresh)를 그대로 쓰고, controller 는 루프가 소유해
+  // cleanup/경기 전환 시 in-flight abort, 전환 후 도착한 응답은 gameId 소유권 가드로 무시한다.
+  useEffect(() => {
+    if (!isOpen || !gameId) return;
+    const token = 1;
+    // 초기 fetch 가 이미 fresh URL 을 주므로 즉시 재발급하지 않고 4분 후부터.
+    refreshedTokenRef.current = token;
+    lastUrlRefreshAtRef.current = Date.now();
+    return startVenueStoryUrlRefresh({
+      storyId: token,
+      isCurrentStory: () => gameIdRef.current === gameId,
+      refresh: async (_id, controller) => {
+        const session = await getSafeSession();
+        const t = session?.access_token;
+        const res = await fetch(
+          `/api/me/venue-diary/media?gameId=${encodeURIComponent(gameId)}`,
+          {
+            headers: t ? { Authorization: `Bearer ${t}` } : undefined,
+            cache: "no-store",
+            signal: controller.signal,
+          },
+        );
+        if (!res.ok) return false;
+        const data = (await res.json()) as { media?: DiaryMedia[] };
+        const fresh = Array.isArray(data.media) ? data.media : [];
+        // 전환/cleanup 로 abort 되었거나 gameId 가 바뀌었으면 늦은 응답을 반영하지 않는다.
+        if (controller.signal.aborted || gameIdRef.current !== gameId) return false;
+        setMedia((prev) => (prev == null ? prev : applyDiaryDetailUrlRefresh(prev, fresh)));
+        return true;
+      },
+      now: () => Date.now(),
+      setTimer: (fn, ms) => setTimeout(fn, ms),
+      clearTimer: (handle) => clearTimeout(handle),
+      getPreviousStoryId: () => refreshedTokenRef.current,
+      setPreviousStoryId: (v) => {
+        refreshedTokenRef.current = v;
+      },
+      getLastRefreshAt: () => lastUrlRefreshAtRef.current,
+      setLastRefreshAt: (v) => {
+        lastUrlRefreshAtRef.current = v;
+      },
+    });
   }, [isOpen, gameId]);
 
   useEffect(() => {

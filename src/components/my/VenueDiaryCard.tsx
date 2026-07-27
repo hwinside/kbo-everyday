@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CalendarDays, Play, Plus, RefreshCw, Trophy } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { getTeamById } from "@/lib/constants/teams";
@@ -11,12 +11,17 @@ import type {
   VenueDiaryItem,
 } from "@/lib/venue-attendance/summary";
 import {
+  applyDiaryThumbUrlRefresh,
   buildDiaryHomeGames,
+  mergeDiaryMediaPages,
   mergeVenueSummaries,
+  shouldFetchNextDiaryPage,
   type DiaryAttendanceInput,
   type DiaryHomeGame,
   type DiaryMediaGroupInput,
 } from "@/lib/venue-diary/view";
+import { startVenueStoryUrlRefresh } from "@/lib/venue-stories/refresh-policy";
+import { PENDING_POLL_DELAYS_MS } from "@/lib/venue-stories/composer-helpers";
 import VenueDiaryAddGameSheet from "@/components/my/VenueDiaryAddGameSheet";
 import VenueDiaryUploader, {
   type DiaryUploadGame,
@@ -35,6 +40,8 @@ interface AttendanceResponse {
 interface MediaListResponse {
   season: number;
   games: DiaryMediaGroupInput[];
+  nextCursor: string | null;
+  hasMore: boolean;
 }
 
 /** 세그먼트: 최신 시즌 · 직전 시즌 · 전체(두 시즌 합산). */
@@ -70,22 +77,70 @@ function matchLabel(game: DiaryHomeGame): string {
   return `${away} vs ${home}`;
 }
 
+/**
+ * A2 목록(keyset)의 30경기/페이지를 hasMore 동안 cursor로 순차 fetch해 전 페이지를 병합한다.
+ * shouldFetchNextDiaryPage 가 무한루프 상한을 강제한다(31번째+ 경기 미노출·N/10 0 오표시 방지).
+ */
+async function fetchDiaryMediaAllPages(
+  token: string,
+  season: number,
+): Promise<DiaryMediaGroupInput[] | null> {
+  const pages: { games: DiaryMediaGroupInput[] }[] = [];
+  let cursor: string | null = null;
+  for (let page = 0; ; page += 1) {
+    const url = `/api/me/venue-diary/media?season=${season}${
+      cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""
+    }`;
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as MediaListResponse;
+    pages.push({ games: data.games ?? [] });
+    if (
+      !shouldFetchNextDiaryPage({
+        hasMore: data.hasMore === true,
+        nextCursor: data.nextCursor ?? null,
+        pagesFetched: page + 1,
+      })
+    ) {
+      break;
+    }
+    cursor = data.nextCursor;
+  }
+  return mergeDiaryMediaPages(pages);
+}
+
+/** 썸네일 재발급용 첫 페이지만 조회(abort 가능). */
+async function fetchDiaryFirstPage(
+  token: string,
+  season: number,
+  signal: AbortSignal,
+): Promise<DiaryMediaGroupInput[] | null> {
+  const res = await fetch(`/api/me/venue-diary/media?season=${season}`, {
+    headers: { Authorization: `Bearer ${token}` },
+    cache: "no-store",
+    signal,
+  });
+  if (!res.ok) return null;
+  const data = (await res.json()) as MediaListResponse;
+  return data.games ?? [];
+}
+
 async function fetchSeason(
   token: string,
   season: number,
-): Promise<{ attendance: AttendanceResponse; media: MediaListResponse } | null> {
-  const [aRes, mRes] = await Promise.all([
+): Promise<{ attendance: AttendanceResponse; mediaGroups: DiaryMediaGroupInput[] } | null> {
+  const [aRes, mediaGroups] = await Promise.all([
     fetch(`/api/me/venue-attendance?season=${season}`, {
       headers: { Authorization: `Bearer ${token}` },
       cache: "no-store",
     }),
-    fetch(`/api/me/venue-diary/media?season=${season}`, {
-      headers: { Authorization: `Bearer ${token}` },
-      cache: "no-store",
-    }),
+    fetchDiaryMediaAllPages(token, season),
   ]);
-  if (!aRes.ok || !mRes.ok) return null;
-  return { attendance: await aRes.json(), media: await mRes.json() };
+  if (!aRes.ok || mediaGroups == null) return null;
+  return { attendance: await aRes.json(), mediaGroups };
 }
 
 export default function VenueDiaryCard() {
@@ -129,7 +184,7 @@ export default function VenueDiaryCard() {
           homeTeam: g.homeTeam,
         })),
       );
-      const mediaGroups = ok.flatMap((r) => r.media.games);
+      const mediaGroups = ok.flatMap((r) => r.mediaGroups);
       setLoaded({ key, summary, diaryGameCount, attendanceGames, mediaGroups });
     } catch {
       setFailed(true);
@@ -141,6 +196,79 @@ export default function VenueDiaryCard() {
   useEffect(() => {
     if (user) void load();
   }, [load, user]);
+
+  // 영상 pending 은 목록(active|archived)에 아직 없다 → archived 승급까지 백오프 재조회로 홈·count 갱신.
+  const pollTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const clearPolls = useCallback(() => {
+    pollTimersRef.current.forEach((t) => clearTimeout(t));
+    pollTimersRef.current = [];
+  }, []);
+  useEffect(() => () => clearPolls(), [clearPolls]);
+
+  const handleUploaded = useCallback(
+    (result?: { mediaType?: string; status?: string }) => {
+      void load();
+      if (result?.mediaType === "video" && result?.status === "pending") {
+        clearPolls();
+        for (const d of PENDING_POLL_DELAYS_MS) {
+          pollTimersRef.current.push(setTimeout(() => void load(), d));
+        }
+      }
+    },
+    [load, clearPolls],
+  );
+
+  // 홈 목록 썸네일 signed URL(5분 만료) 4분 이내 재발급 — 첫 페이지 refetch 후 thumbUrl 만 교체.
+  // A1 검증된 순수 루프(startVenueStoryUrlRefresh)를 그대로 쓰고, loaded key(user:season) 소유권 가드로
+  // 전환 후 늦게 도착한 응답은 반영하지 않는다(late apply 0).
+  const loadedKey = loaded?.key ?? null;
+  const loadedKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    loadedKeyRef.current = loadedKey;
+  }, [loadedKey]);
+  const thumbRefreshedRef = useRef<number | null>(null);
+  const thumbLastRefreshAtRef = useRef(0);
+  useEffect(() => {
+    if (!loadedKey || !user) return;
+    const seasons = season === "all" ? [CURRENT_SEASON, PREV_SEASON] : [season];
+    const token = 1;
+    // 초기 load 가 이미 fresh URL 을 주므로 즉시 재발급하지 않고 4분 후부터.
+    thumbRefreshedRef.current = token;
+    thumbLastRefreshAtRef.current = Date.now();
+    return startVenueStoryUrlRefresh({
+      storyId: token,
+      isCurrentStory: () => loadedKeyRef.current === loadedKey,
+      refresh: async (_id, controller) => {
+        const session = await getSafeSession();
+        const t = session?.access_token;
+        if (!t) return false;
+        const results = await Promise.all(
+          seasons.map((s) => fetchDiaryFirstPage(t, s, controller.signal)),
+        );
+        if (results.some((r) => r == null)) return false;
+        // 전환/cleanup 로 abort 되었거나 key 가 바뀌었으면 늦은 응답을 반영하지 않는다.
+        if (controller.signal.aborted || loadedKeyRef.current !== loadedKey) return false;
+        const fresh = results.flatMap((r) => r ?? []);
+        setLoaded((prev) =>
+          prev && prev.key === loadedKey
+            ? { ...prev, mediaGroups: applyDiaryThumbUrlRefresh(prev.mediaGroups, fresh) }
+            : prev,
+        );
+        return true;
+      },
+      now: () => Date.now(),
+      setTimer: (fn, ms) => setTimeout(fn, ms),
+      clearTimer: (handle) => clearTimeout(handle),
+      getPreviousStoryId: () => thumbRefreshedRef.current,
+      setPreviousStoryId: (v) => {
+        thumbRefreshedRef.current = v;
+      },
+      getLastRefreshAt: () => thumbLastRefreshAtRef.current,
+      setLastRefreshAt: (v) => {
+        thumbLastRefreshAtRef.current = v;
+      },
+    });
+  }, [loadedKey, user, season]);
 
   const homeGames = useMemo(
     () =>
@@ -371,7 +499,7 @@ export default function VenueDiaryCard() {
             setAddOpen(true);
           }}
           onClose={() => setUploadGame(null)}
-          onUploaded={() => void load()}
+          onUploaded={handleUploaded}
         />
       )}
 
