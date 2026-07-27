@@ -2,13 +2,16 @@ import assert from "node:assert/strict";
 import {
   applyDiaryDetailUrlRefresh,
   applyDiaryThumbUrlRefresh,
+  buildDiaryCountsMap,
   buildDiaryHomeGames,
+  classifyDiaryPendingPoll,
   diaryBottomCta,
   diaryCanStartUpload,
   diaryCaptionForSubmit,
   diaryGameSourceLabel,
   diaryLeaveNotice,
   diaryMediaSourceLabel,
+  diaryPendingTerminalPhase,
   diaryPickCaption,
   diaryPickLocked,
   diaryPickState,
@@ -16,15 +19,65 @@ import {
   diaryUploadBadge,
   diaryUploadCta,
   diaryUploadTargets,
+  makeDiaryThumbRefresh,
   mergeDiaryMediaPages,
   mergeVenueSummaries,
   shouldFetchNextDiaryPage,
+  startDiaryPendingPoll,
   VENUE_DIARY_HOME_THUMBNAILS,
   VENUE_DIARY_MAX_LIST_PAGES,
   VENUE_DIARY_MEDIA_CAP,
   type DiaryMediaGroupInput,
+  type DiaryPendingProbe,
+  type DiaryPendingTerminal,
   type DiaryUploadItemState,
 } from "../../src/lib/venue-diary/view";
+import {
+  startVenueStoryUrlRefresh,
+  VENUE_STORY_URL_REFRESH_MS,
+  VENUE_STORY_URL_RETRY_MS,
+  VENUE_STORY_URL_MINT_TIMEOUT_MS,
+} from "../../src/lib/venue-stories/refresh-policy";
+
+// 가상 클럭 — loop 타이머와 mint timeout 타이머를 같은 시간축에서 구동해 8s abort→10s retry 를 재현.
+class Clock {
+  now = 0;
+  private seq = 0;
+  private tasks = new Map<number, { at: number; fn: () => void }>();
+  set = (fn: () => void, ms: number): number => {
+    const id = ++this.seq;
+    this.tasks.set(id, { at: this.now + ms, fn });
+    return id;
+  };
+  clear = (id: number): void => {
+    this.tasks.delete(id);
+  };
+  async advance(ms: number): Promise<void> {
+    const target = this.now + ms;
+    for (;;) {
+      let nextId = -1;
+      let nextAt = Infinity;
+      for (const [id, t] of this.tasks) {
+        if (t.at <= target && t.at < nextAt) {
+          nextAt = t.at;
+          nextId = id;
+        }
+      }
+      if (nextId === -1) break;
+      const task = this.tasks.get(nextId)!;
+      this.tasks.delete(nextId);
+      this.now = task.at;
+      task.fn();
+      // 마이크로태스크 플러시(Promise.race/await 체인 해소)
+      for (let i = 0; i < 12; i += 1) await Promise.resolve();
+    }
+    this.now = target;
+  }
+}
+
+async function flush(): Promise<void> {
+  for (let i = 0; i < 12; i += 1) await Promise.resolve();
+}
 
 // 1) 경기 카드 라벨: 썸네일 중 하나라도 GPS 인증이면 GPS 인증, 아니면 직접 추가
 {
@@ -365,4 +418,254 @@ import {
   assert.ok(!idle.text.includes("중단"), "완료 상태는 중단 경고 아님");
 }
 
-console.log("venue-diary-view-smoke: OK");
+async function runAsyncRegressions() {
+// 12) Blocker 1 (actual-wiring) — never-settle refresh → 8s mint abort → 10s retry 성공.
+//     컴포넌트가 쓰는 바로 그 makeDiaryThumbRefresh + mintWithTimeout + startVenueStoryUrlRefresh 를 실행.
+{
+  const run = async () => {
+    const clock = new Clock();
+    let sessionMode: "hang" | "ok" = "hang";
+    let applied: DiaryMediaGroupInput[] | null = null;
+    let fetchAllCalls = 0;
+
+    const groupFor = (tag: string): DiaryMediaGroupInput => ({
+      gameId: "G1",
+      gameDate: "2026-07-01",
+      stadiumName: "잠실",
+      counts: { image: 1, video: 0, total: 1 },
+      thumbnails: [{ id: 1, mediaType: "image", thumbUrl: `${tag}-1`, venueVerified: false }],
+    });
+
+    const refresh = makeDiaryThumbRefresh({
+      seasons: [2026],
+      // getSafeSession 가 non-settle 인 실제 버그 재현: hang 면 영원히 pending.
+      getToken: () =>
+        sessionMode === "hang"
+          ? new Promise<string | null>(() => {})
+          : Promise.resolve("tok"),
+      fetchAllPages: async () => {
+        fetchAllCalls += 1;
+        return [groupFor("new")];
+      },
+      isCurrent: () => true,
+      apply: (fresh) => {
+        applied = fresh;
+      },
+      timers: {
+        timeoutMs: VENUE_STORY_URL_MINT_TIMEOUT_MS,
+        setTimer: clock.set,
+        clearTimer: clock.clear,
+      },
+    });
+
+    let previousStoryId: number | null = 1;
+    let lastRefreshAt = clock.now;
+    let calls = 0;
+    const wrappedRefresh = (storyId: number, controller: AbortController) => {
+      calls += 1;
+      return refresh(storyId, controller);
+    };
+
+    const cancel = startVenueStoryUrlRefresh<number>({
+      storyId: 1,
+      isCurrentStory: () => true,
+      refresh: wrappedRefresh,
+      now: () => clock.now,
+      setTimer: clock.set,
+      clearTimer: clock.clear,
+      makeController: () => new AbortController(),
+      getPreviousStoryId: () => previousStoryId,
+      setPreviousStoryId: (v) => {
+        previousStoryId = v;
+      },
+      getLastRefreshAt: () => lastRefreshAt,
+      setLastRefreshAt: (v) => {
+        lastRefreshAt = v;
+      },
+    });
+    await flush();
+
+    // 초기 lastRefreshAt=now → 4분 뒤 첫 refresh 예약. 아직 호출 전.
+    assert.equal(calls, 0, "초기엔 refresh 미호출(4분 간격)");
+
+    // 4분 경과 → refresh 호출, getToken hang → 8s에 mint abort → settle(false).
+    await clock.advance(VENUE_STORY_URL_REFRESH_MS);
+    assert.equal(calls, 1, "4분 후 refresh 1회 호출(never-settle)");
+    assert.equal(applied, null, "never-settle 은 apply 안 됨");
+
+    // 8s mint timeout 경과 → abort→false→retry(10s) 예약. session 복구.
+    await clock.advance(VENUE_STORY_URL_MINT_TIMEOUT_MS);
+    sessionMode = "ok";
+    // 10s retry 경과 → refresh 재호출 → 이번엔 settle → apply.
+    await clock.advance(VENUE_STORY_URL_RETRY_MS);
+    assert.ok(calls >= 2, `8s abort 후 10s retry 로 refresh 재호출(calls=${calls})`);
+    assert.ok(applied != null, "retry settle 후 apply 됨(never-settle→timeout→retry 성공)");
+    assert.equal(fetchAllCalls, 1, "settle 된 retry 에서만 전페이지 fetch");
+    assert.equal((applied as DiaryMediaGroupInput[])[0].thumbnails[0].thumbUrl, "new-1");
+
+    cancel();
+  };
+  await run();
+}
+
+// 13) Blocker 2 (actual-wiring) — refresh 가 전페이지(31경기)를 재발급 → 31번째도 new-* 로 갱신.
+{
+  const run = async () => {
+    const clock = new Clock();
+    // 로드된 홈 목록: 31경기(cursor 2페이지). 각 경기 썸네일 id=경기번호.
+    const loaded: DiaryMediaGroupInput[] = Array.from({ length: 31 }, (_, i) => ({
+      gameId: `G${i + 1}`,
+      gameDate: "2026-07-01",
+      stadiumName: "잠실",
+      counts: { image: 1, video: 0, total: 1 },
+      thumbnails: [
+        { id: i + 1, mediaType: "image", thumbUrl: `old-${i + 1}`, venueVerified: false },
+      ],
+    }));
+    let current = loaded;
+
+    const refresh = makeDiaryThumbRefresh({
+      seasons: [2026],
+      getToken: async () => "tok",
+      // 전페이지: 모든 31경기 썸네일을 new-* 로 발급(첫 페이지만이 아니라 전체).
+      fetchAllPages: async () =>
+        loaded.map((g) => ({
+          ...g,
+          thumbnails: g.thumbnails.map((t) => ({ ...t, thumbUrl: `new-${t.id}` })),
+        })),
+      isCurrent: () => true,
+      apply: (fresh) => {
+        current = applyDiaryThumbUrlRefresh(current, fresh);
+      },
+      timers: { setTimer: clock.set, clearTimer: clock.clear },
+    });
+
+    const ok = await refresh(1, new AbortController());
+    await flush();
+    assert.equal(ok, true, "전페이지 refresh 성공");
+    assert.equal(current[0].thumbnails[0].thumbUrl, "new-1", "1번째 갱신");
+    assert.equal(current[29].thumbnails[0].thumbUrl, "new-30", "30번째 갱신");
+    // 핵심 회귀: 첨 페이지만 받던 기존은 old-31 잔존 → 전페이지라 31번째도 new-31.
+    assert.equal(current[30].thumbnails[0].thumbUrl, "new-31", "31번째도 new-* 로 갱신(2페이지 만료 방지)");
+  };
+  await run();
+}
+
+// 14) Blocker 3 (actual-wiring) — id 추적 pending poll: archived/removed/timeout 각 경로 terminal + phase.
+{
+  // 순수 분류기
+  assert.equal(
+    classifyDiaryPendingPoll({ probe: { found: true }, attemptsLeft: 5 }),
+    "archived",
+  );
+  assert.equal(
+    classifyDiaryPendingPoll({ probe: { found: false, removed: true }, attemptsLeft: 5 }),
+    "removed",
+  );
+  assert.equal(
+    classifyDiaryPendingPoll({ probe: { found: false }, attemptsLeft: 0 }),
+    "timeout",
+  );
+  assert.equal(
+    classifyDiaryPendingPoll({ probe: { found: false }, attemptsLeft: 2 }),
+    null,
+    "아직 시도 남음 → 계속",
+  );
+  assert.equal(classifyDiaryPendingPoll({ probe: null, attemptsLeft: 3 }), null, "probe 실패 → 계속");
+  assert.equal(diaryPendingTerminalPhase("archived"), "done");
+  assert.equal(diaryPendingTerminalPhase("removed"), "failed");
+  assert.equal(diaryPendingTerminalPhase("timeout"), "stalled");
+
+  // 루프 actual-wiring: 각 terminal 경로에서 onTerminal 1회 + 타이머 중단.
+  const runPoll = async (
+    probes: Array<DiaryPendingProbe | null>,
+  ): Promise<{ terminal: DiaryPendingTerminal | null; ticks: number }> => {
+    const clock = new Clock();
+    let i = 0;
+    let terminal: DiaryPendingTerminal | null = null;
+    let terminalCalls = 0;
+    const delays = [10, 20, 30];
+    const cancel = startDiaryPendingPoll<number>({
+      delays,
+      probe: async () => probes[Math.min(i++, probes.length - 1)] ?? null,
+      onTerminal: (t) => {
+        terminal = t;
+        terminalCalls += 1;
+      },
+      setTimer: clock.set,
+      clearTimer: clock.clear,
+    });
+    await clock.advance(200);
+    cancel();
+    assert.ok(terminalCalls <= 1, "terminal 콜백은 최대 1회");
+    return { terminal, ticks: i };
+  };
+
+  // archived: 2번째 tick에서 found → archived, 이후 poll 중단.
+  const a = await runPoll([{ found: false }, { found: true }, { found: true }]);
+  assert.equal(a.terminal, "archived", "found → archived");
+  assert.equal(a.ticks, 2, "found 즉시 종료(3번째 tick 없음)");
+
+  // removed: removed=true → removed.
+  const r = await runPoll([{ found: false }, { found: false, removed: true }]);
+  assert.equal(r.terminal, "removed", "removed → removed");
+
+  // timeout: 끝까지 found 안 됨 → timeout.
+  const t = await runPoll([{ found: false }, { found: false }, { found: false }]);
+  assert.equal(t.terminal, "timeout", "소진 → timeout");
+  assert.equal(t.ticks, 3, "delays 길이만큼 poll");
+}
+
+// 15) Blocker 4 — 2026 counts 소스로 10/10 경기는 2025 탭에서도 잠김(locked) 유지.
+{
+  const groups2026: DiaryMediaGroupInput[] = [
+    {
+      gameId: "20260718LGDS",
+      gameDate: "2026-07-18",
+      stadiumName: "잠실",
+      counts: { image: 6, video: 4, total: 10 },
+      thumbnails: [],
+    },
+    {
+      gameId: "20260720LGDS",
+      gameDate: "2026-07-20",
+      stadiumName: "잠실",
+      counts: { image: 2, video: 0, total: 2 },
+      thumbnails: [],
+    },
+  ];
+  const counts = buildDiaryCountsMap(groups2026);
+  // AddGameSheet 가 이 2026 counts 를 받으면 10/10 경기는 locked, 2/10 은 add.
+  assert.equal(counts.get("20260718LGDS"), 10);
+  assert.equal(diaryPickLocked(diaryPickState(counts.get("20260718LGDS") ?? 0)), true, "2026 10/10 → 잠김");
+  assert.deepEqual(diaryPickState(counts.get("20260720LGDS") ?? 0), {
+    kind: "add",
+    count: 2,
+    cap: VENUE_DIARY_MEDIA_CAP,
+  });
+  // 버그 재현: 2025 탭 mediaGroups(2026 gameId 없음)로 counts 만들면 0→선택가능(오표시).
+  const counts2025Tab = buildDiaryCountsMap([
+    {
+      gameId: "20250801LGDS",
+      gameDate: "2025-08-01",
+      stadiumName: "잠실",
+      counts: { image: 1, video: 0, total: 1 },
+      thumbnails: [],
+    },
+  ]);
+  assert.equal(counts2025Tab.get("20260718LGDS"), undefined);
+  assert.deepEqual(
+    diaryPickState(counts2025Tab.get("20260718LGDS") ?? 0),
+    { kind: "pick" },
+    "2025 counts 로는 2026 10/10 경기가 0→선택가능으로 오표시(버그) → 그래서 2026 counts 필수",
+  );
+}
+
+}
+
+runAsyncRegressions()
+  .then(() => console.log("venue-diary-view-smoke: OK"))
+  .catch((e) => {
+    console.error(e);
+    process.exit(1);
+  });

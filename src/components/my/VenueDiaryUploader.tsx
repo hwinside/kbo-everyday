@@ -12,11 +12,14 @@ import {
   diaryBottomCta,
   diaryCaptionForSubmit,
   diaryLeaveNotice,
+  diaryPendingTerminalPhase,
   diaryUploadBadge,
   diaryUploadTargets,
+  startDiaryPendingPoll,
   VENUE_DIARY_MEDIA_CAP,
   type DiaryUploadItemState,
 } from "@/lib/venue-diary/view";
+import { PENDING_POLL_DELAYS_MS } from "@/lib/venue-stories/composer-helpers";
 
 export interface DiaryUploadGame {
   gameId: string;
@@ -43,7 +46,12 @@ interface Props {
   onBack: () => void;
   onClose: () => void;
   /** 하나라도 저장 성공하면 호출(홈 목록 갱신용). 영상 pending 은 archived 승급 poll 트리거. */
-  onUploaded: (result: { mediaType: "image" | "video"; status: string }) => void;
+  onUploaded: (result: {
+    id: number | null;
+    gameId: string;
+    mediaType: "image" | "video";
+    status: string;
+  }) => void;
 }
 
 const RESULT_STYLE: Record<"W" | "L" | "D", string> = {
@@ -73,6 +81,15 @@ export default function VenueDiaryUploader({ game, isOpen, onBack, onClose, onUp
   useEffect(() => {
     itemsRef.current = items;
   }, [items]);
+  // pending 영상 terminal poll cancel 함수들 — 언마운트/닫힐 시 모두 중단(Blocker 3).
+  const pendingPollsRef = useRef<Array<() => void>>([]);
+  useEffect(
+    () => () => {
+      pendingPollsRef.current.forEach((cancel) => cancel());
+      pendingPollsRef.current = [];
+    },
+    [],
+  );
 
   const consentKey = consentStorageKey(VENUE_STORY_CONSENT_VERSION, sessionUserId);
 
@@ -159,6 +176,32 @@ export default function VenueDiaryUploader({ game, isOpen, onBack, onClose, onUp
     );
   };
 
+  // POST 반환 story id 를 상세 GET(active|archived)에서 추적해 terminal(승급) 까지 poll,
+  // 항목을 processing→done(archived)/failed(removed)/stalled(timeout)로 전환한다(Blocker 3).
+  const startPendingItemPoll = (itemKey: string, storyId: number) => {
+    const cancel = startDiaryPendingPoll({
+      delays: PENDING_POLL_DELAYS_MS,
+      probe: async () => {
+        const session = await getSafeSession();
+        const token = session?.access_token;
+        if (!token) return null;
+        const res = await fetch(
+          `/api/me/venue-diary/media?gameId=${encodeURIComponent(game.gameId)}`,
+          { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" },
+        );
+        if (!res.ok) return null;
+        const data = (await res.json()) as { media?: { id: number }[] };
+        return { found: (data.media ?? []).some((m) => m.id === storyId) };
+      },
+      onTerminal: (terminal) => {
+        updateItem(itemKey, { phase: diaryPendingTerminalPhase(terminal) });
+      },
+      setTimer: (fn, ms) => setTimeout(fn, ms),
+      clearTimer: (handle) => clearTimeout(handle),
+    });
+    pendingPollsRef.current.push(cancel);
+  };
+
   const processItem = async (item: UploadItem) => {
     if (!agreed) {
       setError("업로드 가이드라인에 동의해주세요");
@@ -207,11 +250,21 @@ export default function VenueDiaryUploader({ game, isOpen, onBack, onClose, onUp
         updateItem(item.key, { phase: "failed" });
         return;
       }
-      onUploaded({ mediaType: prepared.mediaType, status: data.status ?? "archived" });
-      // 영상 pending → 처리 중, 그 외 → 완료
-      updateItem(item.key, {
-        phase: data.status === "pending" ? "processing" : "done",
+      const storyId = typeof data.id === "number" ? data.id : null;
+      const status = data.status ?? "archived";
+      onUploaded({
+        id: storyId,
+        gameId: game.gameId,
+        mediaType: prepared.mediaType,
+        status,
       });
+      // 영상 pending → 처리 중(id 추적 terminal poll 시작), 그 외 → 완료
+      if (status === "pending" && storyId != null) {
+        updateItem(item.key, { phase: "processing", storyId });
+        startPendingItemPoll(item.key, storyId);
+      } else {
+        updateItem(item.key, { phase: "done" });
+      }
     } catch {
       setError("업로드에 실패했어요");
       updateItem(item.key, { phase: "failed" });
@@ -403,6 +456,11 @@ export default function VenueDiaryUploader({ game, isOpen, onBack, onClose, onUp
                         <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center gap-1 text-amber-400 text-[10px] font-bold text-center px-1">
                           <Loader2 size={20} className="animate-spin" />
                           영상<br />처리 중
+                        </div>
+                      ) : item.state.phase === "stalled" ? (
+                        <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center gap-1 text-amber-300 text-[10px] font-bold text-center px-1">
+                          <AlertTriangle size={16} />
+                          처리 지연<br />나중에 확인
                         </div>
                       ) : item.state.phase === "failed" ? (
                         <button

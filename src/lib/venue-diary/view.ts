@@ -4,6 +4,10 @@
 // 컴포넌트에서 떼어내 순수 함수로 고정한다. 계약은 /api/me/venue-diary/media, /api/me/venue-attendance.
 
 import { VENUE_STORY_MAX_PER_USER_PER_GAME } from "@/lib/venue-stories/types";
+import {
+  mintWithTimeout,
+  VENUE_STORY_URL_MINT_TIMEOUT_MS,
+} from "@/lib/venue-stories/refresh-policy";
 
 /** 홈 경기 카드에 붙는 썸네일 최대 장수(목업 ①: 6장 + `+N`). */
 export const VENUE_DIARY_HOME_THUMBNAILS = 6;
@@ -85,13 +89,16 @@ export type DiaryUploadPhase =
   | "uploading"
   | "processing"
   | "done"
-  | "failed";
+  | "failed"
+  | "stalled";
 
 export interface DiaryUploadItemState {
   phase: DiaryUploadPhase;
   /** uploading 일 때 0~100. */
   percent?: number;
   mediaType?: "image" | "video";
+  /** POST 반환 story id — pending 영상 terminal 추적용(Blocker 3). */
+  storyId?: number;
 }
 
 export interface DiaryUploadBadge {
@@ -110,6 +117,8 @@ export function diaryUploadBadge(item: DiaryUploadItemState): DiaryUploadBadge {
     }
     case "processing":
       return { kind: "processing", label: "영상 처리 중" };
+    case "stalled":
+      return { kind: "stalled", label: "처리 지연 · 나중에 확인" };
     case "failed":
       return { kind: "failed", label: "실패 · 다시 시도" };
     default:
@@ -469,4 +478,181 @@ export function diaryLeaveNotice(
     text: "🔒 올린 사진·영상은 비공개로 저장돼 나만 볼 수 있어요.",
     guard: false,
   };
+}
+
+// ── signed URL 4분 재발급 callback — A1 mintWithTimeout bounded(Blocker 1) ─────────────
+// getSafeSession/fetch/json 이 1회라도 non-settle 이면 startVenueStoryUrlRefresh 의 inFlight 가 영구
+// 고정되고 retry timer 가 안 잡힌다 → 세션 취득까지 포함한 전체 mint 를 mintWithTimeout(8s, loop
+// controller) 로 감싸 반드시 settle시킨다(VenueStorySection A1 production 패턴 동일).
+// getToken/fetch/apply 를 주입받아 컴포넌트와 테스트가 동일 콜백 경로를 실행한다(actual-wiring).
+
+export interface DiaryBoundedRefreshTimers<H = unknown> {
+  timeoutMs?: number;
+  setTimer: (fn: () => void, ms: number) => H;
+  clearTimer: (handle: H) => void;
+}
+
+/**
+ * 홈 목록 썸네일 signed URL 재발급 refresh 콜백(Blocker 1+2). 현재 로드한 cursor 전페이지를
+ * 재발급해 31번째+ 썸네일도 만료 전 갱신한다(fetchAllPages = 전페이지). 전체 mint 는
+ * mintWithTimeout 로 bounded.
+ */
+export function makeDiaryThumbRefresh<H = unknown>(deps: {
+  seasons: ReadonlyArray<number>;
+  getToken: () => Promise<string | null>;
+  fetchAllPages: (
+    token: string,
+    season: number,
+    signal: AbortSignal,
+  ) => Promise<DiaryMediaGroupInput[] | null>;
+  isCurrent: () => boolean;
+  apply: (fresh: DiaryMediaGroupInput[]) => void;
+  timers: DiaryBoundedRefreshTimers<H>;
+}): (storyId: number, controller: AbortController) => Promise<boolean> {
+  return (_storyId, controller) =>
+    mintWithTimeout(
+      async (signal) => {
+        const token = await deps.getToken();
+        if (!token) return false;
+        const results = await Promise.all(
+          deps.seasons.map((s) => deps.fetchAllPages(token, s, signal)),
+        );
+        if (results.some((r) => r == null)) return false;
+        // 전환/cleanup 로 abort 되었거나 소유권이 바뀌었으면 늦은 응답을 반영하지 않는다.
+        if (signal.aborted || !deps.isCurrent()) return false;
+        deps.apply(results.flatMap((r) => r ?? []));
+        return true;
+      },
+      false,
+      {
+        timeoutMs: deps.timers.timeoutMs ?? VENUE_STORY_URL_MINT_TIMEOUT_MS,
+        setTimer: deps.timers.setTimer,
+        clearTimer: deps.timers.clearTimer,
+        controller,
+      },
+    );
+}
+
+/**
+ * 상세 뷰어 signed URL 재발급 refresh 콜백(Blocker 1). fetchMedia 는 gameId 를 closure 로 가진다.
+ * 전체 mint 를 mintWithTimeout 로 bounded 해 never-settle 에도 8s에 settle→retry 된다.
+ */
+export function makeDiaryDetailRefresh<H = unknown>(deps: {
+  getToken: () => Promise<string | null>;
+  fetchMedia: (
+    token: string | null,
+    signal: AbortSignal,
+  ) => Promise<DiaryDetailUrlRefresh[] | null>;
+  isCurrent: () => boolean;
+  apply: (fresh: DiaryDetailUrlRefresh[]) => void;
+  timers: DiaryBoundedRefreshTimers<H>;
+}): (storyId: number, controller: AbortController) => Promise<boolean> {
+  return (_storyId, controller) =>
+    mintWithTimeout(
+      async (signal) => {
+        const token = await deps.getToken();
+        const fresh = await deps.fetchMedia(token, signal);
+        if (fresh == null) return false;
+        if (signal.aborted || !deps.isCurrent()) return false;
+        deps.apply(fresh);
+        return true;
+      },
+      false,
+      {
+        timeoutMs: deps.timers.timeoutMs ?? VENUE_STORY_URL_MINT_TIMEOUT_MS,
+        setTimer: deps.timers.setTimer,
+        clearTimer: deps.timers.clearTimer,
+        controller,
+      },
+    );
+}
+
+// ── pending 영상 id 추적 terminal poll(Blocker 3) ─────────────────────────────
+// POST 반환 story id 를 추적해 pending→archived/removed/timeout terminal 까지 polling 한다.
+// 현재는 고정 지연 60초 뒤 blindly 종료 → uploader 항목이 processing에 영구 멈췄다.
+// probe 는 상세 GET(active|archived)에서 id 존재 여부를 반환 — found=archived 승급.
+
+export type DiaryPendingTerminal = "archived" | "removed" | "timeout";
+
+/** 한 번의 poll 관측. found=목록에 id 등장(승급), removed=명시적 제거/거부 관측. */
+export interface DiaryPendingProbe {
+  found: boolean;
+  removed?: boolean;
+}
+
+/**
+ * poll 관측 + 남은 시도 횟수로 terminal 을 판정한다(순수).
+ * found→archived, removed→removed, 둘 다 아니고 시도 소진→timeout, 그 외는 계속(null).
+ */
+export function classifyDiaryPendingPoll(input: {
+  probe: DiaryPendingProbe | null;
+  attemptsLeft: number;
+}): DiaryPendingTerminal | null {
+  if (input.probe?.found) return "archived";
+  if (input.probe?.removed) return "removed";
+  if (input.attemptsLeft <= 0) return "timeout";
+  return null;
+}
+
+/** terminal → uploader 항목 phase: archived→done, removed→failed, timeout→stalled. */
+export function diaryPendingTerminalPhase(
+  terminal: DiaryPendingTerminal,
+): DiaryUploadPhase {
+  return terminal === "archived"
+    ? "done"
+    : terminal === "removed"
+      ? "failed"
+      : "stalled";
+}
+
+/**
+ * pending 영상 terminal poll 루프(순수·주입형). delays 순서대로 probe 해 terminal 까지 돌고,
+ * terminal 에서 onTerminal 을 호출한 뒤 멈춘다(타이머 중단). 반환값은 cancel 함수.
+ * setTimer/clearTimer 를 주입받아 컴포넌트와 테스트가 동일 코드를 실행한다(actual-wiring).
+ */
+export function startDiaryPendingPoll<H = unknown>(deps: {
+  delays: ReadonlyArray<number>;
+  probe: () => Promise<DiaryPendingProbe | null>;
+  onTerminal: (terminal: DiaryPendingTerminal) => void;
+  setTimer: (fn: () => void, ms: number) => H;
+  clearTimer: (handle: H) => void;
+}): () => void {
+  let cancelled = false;
+  let timer: H | null = null;
+  let index = 0;
+  const schedule = () => {
+    if (timer != null) deps.clearTimer(timer);
+    timer = deps.setTimer(() => void step(), deps.delays[index] ?? 0);
+  };
+  const step = async () => {
+    if (cancelled) return;
+    const probe = await deps.probe();
+    if (cancelled) return;
+    const attemptsLeft = deps.delays.length - (index + 1);
+    const terminal = classifyDiaryPendingPoll({ probe, attemptsLeft });
+    if (terminal) {
+      deps.onTerminal(terminal);
+      return;
+    }
+    index += 1;
+    if (index < deps.delays.length) schedule();
+  };
+  if (deps.delays.length > 0) schedule();
+  return () => {
+    cancelled = true;
+    if (timer != null) deps.clearTimer(timer);
+  };
+}
+
+// ── 경기별 N/10 counts(Blocker 4) ─────────────────────────────────────
+// AddGameSheet 는 경기 선택이 2026 고정이므로 항상 2026 counts 를 써야 한다. 현재 홈 탭(2025)의
+// mediaGroups 로 counts 를 만들면 2026 기존 10/10 경기가 0/10·선택가능으로 오표시된다.
+
+/** 경기 미디어 그룹들을 gameId→total 개수 Map 으로 만든다(N/10 오버레이 소스). */
+export function buildDiaryCountsMap(
+  groups: ReadonlyArray<DiaryMediaGroupInput>,
+): Map<string, number> {
+  const map = new Map<string, number>();
+  for (const g of groups) map.set(g.gameId, g.counts.total);
+  return map;
 }

@@ -6,7 +6,12 @@ import { motion } from "framer-motion";
 import { X, MoreVertical, Loader2, Trash2, Images } from "lucide-react";
 import { getSafeSession } from "@/lib/supabase/client";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
-import { applyDiaryDetailUrlRefresh, diaryMediaSourceLabel, diaryShowsComments } from "@/lib/venue-diary/view";
+import {
+  applyDiaryDetailUrlRefresh,
+  diaryMediaSourceLabel,
+  diaryShowsComments,
+  makeDiaryDetailRefresh,
+} from "@/lib/venue-diary/view";
 import { startVenueStoryUrlRefresh } from "@/lib/venue-stories/refresh-policy";
 
 interface DiaryComment {
@@ -118,25 +123,31 @@ export default function VenueDiaryViewer({ gameId, header, isOpen, onClose, onCh
     return startVenueStoryUrlRefresh({
       storyId: token,
       isCurrentStory: () => gameIdRef.current === gameId,
-      refresh: async (_id, controller) => {
-        const session = await getSafeSession();
-        const t = session?.access_token;
-        const res = await fetch(
-          `/api/me/venue-diary/media?gameId=${encodeURIComponent(gameId)}`,
-          {
-            headers: t ? { Authorization: `Bearer ${t}` } : undefined,
-            cache: "no-store",
-            signal: controller.signal,
-          },
-        );
-        if (!res.ok) return false;
-        const data = (await res.json()) as { media?: DiaryMedia[] };
-        const fresh = Array.isArray(data.media) ? data.media : [];
-        // 전환/cleanup 로 abort 되었거나 gameId 가 바뀌었으면 늦은 응답을 반영하지 않는다.
-        if (controller.signal.aborted || gameIdRef.current !== gameId) return false;
-        setMedia((prev) => (prev == null ? prev : applyDiaryDetailUrlRefresh(prev, fresh)));
-        return true;
-      },
+      // getSafeSession/fetch 가 non-settle 이면 inFlight 가 영구 고정되므로 전체 mint 를
+      // mintWithTimeout(8s, loop controller)로 감싸 반드시 settle→retry 된다(Blocker 1).
+      refresh: makeDiaryDetailRefresh({
+        getToken: async () => (await getSafeSession())?.access_token ?? null,
+        fetchMedia: async (t, signal) => {
+          const res = await fetch(
+            `/api/me/venue-diary/media?gameId=${encodeURIComponent(gameId)}`,
+            {
+              headers: t ? { Authorization: `Bearer ${t}` } : undefined,
+              cache: "no-store",
+              signal,
+            },
+          );
+          if (!res.ok) return null;
+          const data = (await res.json()) as { media?: DiaryMedia[] };
+          return Array.isArray(data.media) ? data.media : [];
+        },
+        isCurrent: () => gameIdRef.current === gameId,
+        apply: (fresh) =>
+          setMedia((prev) => (prev == null ? prev : applyDiaryDetailUrlRefresh(prev, fresh))),
+        timers: {
+          setTimer: (fn, ms) => setTimeout(fn, ms),
+          clearTimer: (handle) => clearTimeout(handle),
+        },
+      }),
       now: () => Date.now(),
       setTimer: (fn, ms) => setTimeout(fn, ms),
       clearTimer: (handle) => clearTimeout(handle),

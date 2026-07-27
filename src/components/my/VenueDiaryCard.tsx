@@ -12,10 +12,13 @@ import type {
 } from "@/lib/venue-attendance/summary";
 import {
   applyDiaryThumbUrlRefresh,
+  buildDiaryCountsMap,
   buildDiaryHomeGames,
+  makeDiaryThumbRefresh,
   mergeDiaryMediaPages,
   mergeVenueSummaries,
   shouldFetchNextDiaryPage,
+  startDiaryPendingPoll,
   type DiaryAttendanceInput,
   type DiaryHomeGame,
   type DiaryMediaGroupInput,
@@ -84,6 +87,7 @@ function matchLabel(game: DiaryHomeGame): string {
 async function fetchDiaryMediaAllPages(
   token: string,
   season: number,
+  signal?: AbortSignal,
 ): Promise<DiaryMediaGroupInput[] | null> {
   const pages: { games: DiaryMediaGroupInput[] }[] = [];
   let cursor: string | null = null;
@@ -94,6 +98,7 @@ async function fetchDiaryMediaAllPages(
     const res = await fetch(url, {
       headers: { Authorization: `Bearer ${token}` },
       cache: "no-store",
+      signal,
     });
     if (!res.ok) return null;
     const data = (await res.json()) as MediaListResponse;
@@ -112,20 +117,18 @@ async function fetchDiaryMediaAllPages(
   return mergeDiaryMediaPages(pages);
 }
 
-/** 썸네일 재발급용 첫 페이지만 조회(abort 가능). */
-async function fetchDiaryFirstPage(
+/** 상세 GET(active|archived) 에서 해당 경기 미디어 id 집합을 조회 — pending 영상 승급 확인용. */
+async function fetchDiaryGameMediaIds(
   token: string,
-  season: number,
-  signal: AbortSignal,
-): Promise<DiaryMediaGroupInput[] | null> {
-  const res = await fetch(`/api/me/venue-diary/media?season=${season}`, {
-    headers: { Authorization: `Bearer ${token}` },
-    cache: "no-store",
-    signal,
-  });
+  gameId: string,
+): Promise<Set<number> | null> {
+  const res = await fetch(
+    `/api/me/venue-diary/media?gameId=${encodeURIComponent(gameId)}`,
+    { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" },
+  );
   if (!res.ok) return null;
-  const data = (await res.json()) as MediaListResponse;
-  return data.games ?? [];
+  const data = (await res.json()) as { media?: { id: number }[] };
+  return new Set((data.media ?? []).map((m) => m.id));
 }
 
 async function fetchSeason(
@@ -197,25 +200,48 @@ export default function VenueDiaryCard() {
     if (user) void load();
   }, [load, user]);
 
-  // 영상 pending 은 목록(active|archived)에 아직 없다 → archived 승급까지 백오프 재조회로 홈·count 갱신.
-  const pollTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
-  const clearPolls = useCallback(() => {
-    pollTimersRef.current.forEach((t) => clearTimeout(t));
-    pollTimersRef.current = [];
-  }, []);
-  useEffect(() => () => clearPolls(), [clearPolls]);
+  // 영상 pending 은 목록(active|archived)에 아직 없다 → POST 반환 id 를 추적해 archived 승급(terminal)
+  // 까지 polling. 고정 60초 blindly 종료 대신 id 확인 즉시 홈·count 갱신·타이머 중단(Blocker 3).
+  const pendingPollRef = useRef<(() => void) | null>(null);
+  useEffect(() => () => pendingPollRef.current?.(), []);
 
   const handleUploaded = useCallback(
-    (result?: { mediaType?: string; status?: string }) => {
+    (result?: {
+      id?: number | null;
+      gameId?: string;
+      mediaType?: string;
+      status?: string;
+    }) => {
       void load();
-      if (result?.mediaType === "video" && result?.status === "pending") {
-        clearPolls();
-        for (const d of PENDING_POLL_DELAYS_MS) {
-          pollTimersRef.current.push(setTimeout(() => void load(), d));
-        }
+      if (
+        result?.mediaType === "video" &&
+        result?.status === "pending" &&
+        result.id != null &&
+        result.gameId
+      ) {
+        pendingPollRef.current?.();
+        const storyId = result.id;
+        const gameId = result.gameId;
+        pendingPollRef.current = startDiaryPendingPoll({
+          delays: PENDING_POLL_DELAYS_MS,
+          probe: async () => {
+            const session = await getSafeSession();
+            const t = session?.access_token;
+            if (!t) return null;
+            const ids = await fetchDiaryGameMediaIds(t, gameId);
+            return ids == null ? null : { found: ids.has(storyId) };
+          },
+          onTerminal: (terminal) => {
+            pendingPollRef.current = null;
+            // archived 승급 감지 즉시 홈·count 갱신(timeout/removed 는 홈 미노출 유지).
+            if (terminal === "archived") void load();
+          },
+          setTimer: (fn, ms) => setTimeout(fn, ms),
+          clearTimer: (handle) => clearTimeout(handle),
+        });
       }
     },
-    [load, clearPolls],
+    [load],
   );
 
   // 홈 목록 썸네일 signed URL(5분 만료) 4분 이내 재발급 — 첫 페이지 refetch 후 thumbUrl 만 교체.
@@ -238,24 +264,25 @@ export default function VenueDiaryCard() {
     return startVenueStoryUrlRefresh({
       storyId: token,
       isCurrentStory: () => loadedKeyRef.current === loadedKey,
-      refresh: async (_id, controller) => {
-        const session = await getSafeSession();
-        const t = session?.access_token;
-        if (!t) return false;
-        const results = await Promise.all(
-          seasons.map((s) => fetchDiaryFirstPage(t, s, controller.signal)),
-        );
-        if (results.some((r) => r == null)) return false;
-        // 전환/cleanup 로 abort 되었거나 key 가 바뀌었으면 늦은 응답을 반영하지 않는다.
-        if (controller.signal.aborted || loadedKeyRef.current !== loadedKey) return false;
-        const fresh = results.flatMap((r) => r ?? []);
-        setLoaded((prev) =>
-          prev && prev.key === loadedKey
-            ? { ...prev, mediaGroups: applyDiaryThumbUrlRefresh(prev.mediaGroups, fresh) }
-            : prev,
-        );
-        return true;
-      },
+      // getSafeSession/fetch 가 non-settle 이면 inFlight 가 영구 고정되므로 전체 mint 를
+      // mintWithTimeout(8s, loop controller)로 감싸 반드시 settle→retry 된다(Blocker 1).
+      // 전페이지(fetchDiaryMediaAllPages)를 재발급해 31번째+ 썸네일도 갱신한다(Blocker 2).
+      refresh: makeDiaryThumbRefresh({
+        seasons,
+        getToken: async () => (await getSafeSession())?.access_token ?? null,
+        fetchAllPages: fetchDiaryMediaAllPages,
+        isCurrent: () => loadedKeyRef.current === loadedKey,
+        apply: (fresh) =>
+          setLoaded((prev) =>
+            prev && prev.key === loadedKey
+              ? { ...prev, mediaGroups: applyDiaryThumbUrlRefresh(prev.mediaGroups, fresh) }
+              : prev,
+          ),
+        timers: {
+          setTimer: (fn, ms) => setTimeout(fn, ms),
+          clearTimer: (handle) => clearTimeout(handle),
+        },
+      }),
       now: () => Date.now(),
       setTimer: (fn, ms) => setTimeout(fn, ms),
       clearTimer: (handle) => clearTimeout(handle),
@@ -281,11 +308,26 @@ export default function VenueDiaryCard() {
     [loaded],
   );
 
-  const countsByGame = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const g of loaded?.mediaGroups ?? []) map.set(g.gameId, g.counts.total);
-    return map;
-  }, [loaded]);
+  // AddGameSheet 경기 선택은 2026 고정 → 현재 탭(2025 등)과 무관하게 항상 2026 counts 를 쓴다.
+  // 2025 탭에서 열어도 2026 기존 10/10 경기가 0/10으로 오표시되지 않도록 별도 fetch(Blocker 4).
+  const [addCounts, setAddCounts] = useState<Map<string, number>>(new Map());
+  useEffect(() => {
+    if (!addOpen || !user) return;
+    let alive = true;
+    const controller = new AbortController();
+    (async () => {
+      const session = await getSafeSession();
+      const token = session?.access_token;
+      if (!token) return;
+      const groups = await fetchDiaryMediaAllPages(token, CURRENT_SEASON, controller.signal);
+      if (!alive || groups == null) return;
+      setAddCounts(buildDiaryCountsMap(groups));
+    })();
+    return () => {
+      alive = false;
+      controller.abort();
+    };
+  }, [addOpen, user]);
 
   const favoriteTeamId = profile?.team_id ?? null;
 
@@ -481,7 +523,7 @@ export default function VenueDiaryCard() {
       <VenueDiaryAddGameSheet
         isOpen={addOpen}
         favoriteTeamId={favoriteTeamId}
-        countsByGame={countsByGame}
+        countsByGame={addCounts}
         onBack={() => setAddOpen(false)}
         onClose={() => setAddOpen(false)}
         onPick={(game) => {
