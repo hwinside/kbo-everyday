@@ -132,6 +132,7 @@
     "qa:venue-transcode-worker": "tsx scripts/qa/venue-transcode-worker-smoke.ts",
     "qa:venue-attendance": "tsx scripts/qa/venue-attendance-smoke.ts",
     "qa:venue-diary-media": "tsx scripts/qa/venue-diary-media-smoke.ts",
+    "qa:venue-diary-view": "tsx scripts/qa/venue-diary-view-smoke.ts",
     "qa:venue-player-comparison": "tsx scripts/qa/venue-player-comparison-smoke.ts",
     "qa:venue-story-comments": "tsx scripts/qa/venue-story-comments-smoke.ts",
     "qa:venue-story-comment-rpc": "bash scripts/qa/venue-story-comment-rpc-concurrency.sh",
