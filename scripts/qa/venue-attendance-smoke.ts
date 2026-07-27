@@ -17,6 +17,7 @@ function row(overrides: Partial<VenueAttendanceRow> = {}): VenueAttendanceRow {
     favorite_team_id_snapshot: 1,
     stadium_name: "잠실",
     recorded_at: "2026-07-21T10:00:00Z",
+    source: "story_geofence",
     ...overrides,
   };
 }
@@ -88,6 +89,10 @@ assert.deepEqual(summary, {
   winRate: 1 / 3,
 });
 assert.equal(summarizeVenueAttendance([pending]).winRate, null, "종료 경기 0건은 승률 미표시");
+const manual = buildVenueDiaryItem(row({ source: "diary_manual" }), game());
+assert.equal(manual.source, "diary_manual", "직접 추가 source 응답");
+assert.equal(manual.venueVerified, false, "직접 추가는 GPS 인증과 분리");
+assert.equal(win.venueVerified, true, "GPS source만 인증");
 
 const migration = readFileSync(
   resolve(process.cwd(), "supabase/migrations/20260721_venue_attendance.sql"),
@@ -110,6 +115,32 @@ assert.match(
   diaryRoute,
   /if \(profileResult\.error\) \{[\s\S]*?status: 500/,
   "프로필 DB 오류를 최애선수 없음으로 오인하지 않고 5xx 처리",
+);
+assert.match(
+  diaryRoute,
+  /\.in\("source", \["story_geofence", "diary_manual"\]\)/,
+  "다이어리 기록에는 GPS+직접 추가 모두 조회(경기수 집계용)",
+);
+// 삼순 정정 + 하린아빠 확정: 승률·인증 직관수는 GPS 인증(story_geofence) 건만.
+assert.match(
+  diaryRoute,
+  /const certifiedGames = games\.filter\(\(game\) => game\.source === "story_geofence"\)/,
+  "인증 통계용 GPS 전용 집합 분리",
+);
+assert.match(
+  diaryRoute,
+  /summary: summarizeVenueAttendance\(certifiedGames\)/,
+  "summary(승률·인증 직관수·배지)는 GPS 인증 건만 집계 — 직접 추가 제외",
+);
+assert.match(
+  diaryRoute,
+  /diaryGameCount: games\.length/,
+  "다이어리 기록 경기수는 직접 추가 포함 전체",
+);
+assert.doesNotMatch(
+  diaryRoute,
+  /summary: summarizeVenueAttendance\(games\)(?!\.)/,
+  "all-source 승률을 summary로 노출하지 않음(승률 조작 방지)",
 );
 
 async function testDeadline() {

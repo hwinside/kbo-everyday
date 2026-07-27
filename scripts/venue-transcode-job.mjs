@@ -59,6 +59,8 @@ function fmtMB(bytes) {
 export async function processVenueJob(row, deps) {
   const { db, storage, runner, inPath, outPath, maxAttempts = MAX_ATTEMPTS_DEFAULT } = deps;
   const isPending = row.status === "pending";
+  const pendingTargetStatus =
+    row.attendance_source === "diary_manual" ? "archived" : "active";
   // A안 A1: pending staging 뿐 아니라 active private(venue-media) 원본도 공개 URL 이 없다
   // → storage API 로 다운로드. 레거시 공개 버킷(videos) active 만 media_url 다운로드.
   const usePrivateDownload = isPending || PRIVATE_VENUE_BUCKETS.has(row.media_bucket);
@@ -118,14 +120,22 @@ export async function processVenueJob(row, deps) {
         duration_ms: meta.durationMs,
         // active 경로는 status 재기록 금지 — 처리 중 신고/어드민이 removed로 내린 상태 보존
         // (불변식: worker 최적화 update는 removed 영상을 절대 되살리지 않는다)
-        ...(isPending ? { status: "active" } : {}),
+        ...(isPending ? {
+          status: pendingTargetStatus,
+          ...(pendingTargetStatus === "archived"
+            ? { archived_at: new Date().toISOString() }
+            : {}),
+        } : {}),
         needs_transcode: false,
         transcode_attempts: row.transcode_attempts + 1,
       })
-      .eq("id", row.id)
-      .eq("needs_transcode", true); // CAS: 이미 완료됐거나 재처리 불필요 행 방지
+      .eq("id", row.id);
     if (isPending) updQuery = updQuery.eq("status", "pending");
-    else updQuery = updQuery.eq("status", "active");
+    else {
+      updQuery = updQuery
+        .eq("status", "active")
+        .eq("needs_transcode", true); // active 최적화 CAS: 이미 완료된 행 재처리 방지
+    }
     const { data: updRows, error: updErr } = await updQuery.select("id");
     if (updErr) throw new Error(`row 갱신 실패: ${updErr.message}`);
     if ((updRows ?? []).length === 0) {
@@ -138,7 +148,7 @@ export async function processVenueJob(row, deps) {
     if (row.media_path !== newPath) {
       try { await storage.from(row.media_bucket).remove([row.media_path]); } catch {}
     }
-    console.log(`  ✅ venue ${row.id} ${fmtMB(inBytes)}→${fmtMB(outBytes)} active${isPending ? "(복구승격)" : ""}`);
+    console.log(`  ✅ venue ${row.id} ${fmtMB(inBytes)}→${fmtMB(outBytes)} ${isPending ? `${pendingTargetStatus}(복구승격)` : "active"}`);
     return { result: "done", inBytes, outBytes, isPending };
 
   } catch (e) {

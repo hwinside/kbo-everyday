@@ -43,9 +43,10 @@ export async function GET(req: NextRequest) {
   }
 
   // ── pending 영상 배치 검증(즉시 경로 fault 복구) ──
+  // query-guard: bounded -- 운영 복구 1회당 고정 BATCH 영상만 처리
   const { data: rows, error } = await supabase
     .from("venue_stories")
-    .select("id, media_bucket, media_path")
+    .select("id, media_bucket, media_path, attendance_source")
     .eq("media_type", "video")
     .eq("status", "pending")
     .order("created_at", { ascending: true })
@@ -63,6 +64,8 @@ export async function GET(req: NextRequest) {
       id: r.id as number,
       media_bucket: r.media_bucket as string,
       media_path: r.media_path as string,
+    }, {
+      promoteStatus: r.attendance_source === "diary_manual" ? "archived" : "active",
     });
     if (res.outcome === "promoted") promoted++;
     else if (res.outcome === "rejected") rejected++;

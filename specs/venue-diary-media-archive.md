@@ -46,6 +46,18 @@ DB `status`로만 결정한다. 공개 트레이·뷰어는 active 행에 한해
 
 ### A2 — 다이어리 백엔드
 - 다이어리 미디어 API: 본인 검증 + signed URL 로 archived+active 미디어 경기별 반환.
+- 과거 경기 직접 추가: 로그인 본인이 **2026 시즌 종료(final) 경기**를 선택해 GPS 없이
+  사진/영상을 추가할 수 있다. 서버가 실제 KBO 경기 상태, private storage 경로 소유권,
+  이미지 MIME/크기와 영상 구조/길이를 검증한다.
+- 직접 추가 미디어는 `attendance_source='diary_manual'`, `status='archived'`로 저장해
+  공개 트레이·뷰어·댓글 작성면에는 단 한 번도 노출하지 않는다. 영상 검증 대기 중에도
+  `pending`으로 비공개이며 검증 성공 시 `archived`로만 전환한다.
+- 게임당 10개 상한은 active+pending+archived 전체를 advisory lock 안에서 원자적으로 센다.
+- **집계 분리 (삼순 정정 + 하린아빠 확정 2026-07-27)**: 직접 추가(`diary_manual`)는 아무 종료 경기나
+  골라 올릴 수 있어 승률 조작이 가능하므로, **인증 직관수·승·무·패/승률·채팅 배지는 GPS 인증(story_geofence)
+  건만 집계**한다(`/api/me/venue-attendance` 응답 `summary`). 직접 추가는 **다이어리 기록 경기수(`diaryGameCount`)
+  와 미디어 목록에만 포함**하고 승무패 집계에서는 제외한다. `games[]`는 전체를 source·venueVerified와
+  함께 반환해 A4 UI가 구분 표시한다. 동일 경기의 기존 GPS 인증은 수동 기록으로 절대 강등하지 않는다.
 - current main의 status-only archive·removed 30일 격리·cleanup_failed·stale_cap 관제 계약을 그대로 사용한다.
 
 ### A3 — 레거시 데이터 이관 + 서빙 통일
@@ -86,6 +98,10 @@ DB `status`로만 결정한다. 공개 트레이·뷰어는 active 행에 한해
 ## 7. 검증 기준 (Goal-Driven)
 
 - **A1**: private 서명 실패·경로 누락 fail-closed, 공개 venue-staging mint 차단, active TTL 5분/`expires_at` cap/캐시 안전성, venue-media orphan 96시간 스윕과 참조 보호 회귀. 실동선: 업로드→venue-media(private) 저장→공개 트레이 signed URL 노출→뷰어 재생 정상, 레거시 public 행 병존, 타 기능 버킷 무영향.
-- **A2**: current main status-only archive의 원본·댓글 잔존을 유지하고, archived 다이어리 API 노출을 검증.
+- **A2**: current main status-only archive의 원본·댓글 잔존을 유지하고, archived 다이어리 API
+  노출을 검증한다. owner-only/2026 final-only/GPS 불필요, 타인 경로·예정·진행·취소 경기 거부,
+  직접 추가 source 반환, 공개면 0, active+pending+archived 동시성 상한 10을 회귀로 고정한다.
+  상세 댓글 작성자 profile은 UUID 100개 단위로 분할 조회해 10 story×100 unique commenter에서도
+  PostgREST URL/필터 한도를 넘지 않고, 한 batch 실패 시 상세 전체를 fail-closed한다.
 - **E2E(A4)**: 실 로그인 유저가 어제 스토리 업로드 → 24h 후 공개 트레이 미노출 + `/my` 다이어리 열람 + 본인 삭제.
 - **Surgical / 회귀 0**: 공개 스토리/트레이/업로드/재생 경로 회귀 0 최우선.

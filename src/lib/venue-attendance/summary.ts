@@ -10,6 +10,7 @@ export interface VenueAttendanceRow {
   favorite_team_id_snapshot: number | null;
   stadium_name: string | null;
   recorded_at: string;
+  source: "story_geofence" | "diary_manual";
 }
 
 export interface VenueDiaryItem {
@@ -19,6 +20,8 @@ export interface VenueDiaryItem {
   stadium: string | null;
   favoriteTeamId: number | null;
   recordedAt: string;
+  source: "story_geofence" | "diary_manual";
+  venueVerified: boolean;
   status: AttendanceDisplayStatus;
   result: AttendanceResult | null;
   awayTeam: { id: number; name: string; score: number | null } | null;
@@ -64,6 +67,8 @@ export function buildVenueDiaryItem(
     stadium: game?.stadium ?? row.stadium_name,
     favoriteTeamId: row.favorite_team_id_snapshot,
     recordedAt: row.recorded_at,
+    source: row.source,
+    venueVerified: row.source === "story_geofence",
     status: game?.status ?? "unavailable",
     result,
     awayTeam: game

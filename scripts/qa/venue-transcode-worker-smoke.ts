@@ -17,6 +17,7 @@
  *  (G) pending 재시도 소진 → catch status=removed
  *  (H) active duration 초과 → removed
  *  (I) active catch CAS DB 오류 → updateError
+ *  (K) diary_manual pending 복구 → archived (active 공개 금지)
  */
 import { writeFileSync, mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
@@ -400,6 +401,41 @@ async function run() {
         Object.keys(storage._uploaded).some((k) => k.startsWith("venue-media/")) &&
           !Object.keys(storage._uploaded).some((k) => k.startsWith("videos/")),
       );
+    } finally {
+      rmSync(work, { recursive: true, force: true });
+    }
+  }
+
+  console.log("[K] diary_manual pending 복구 — status pending→archived");
+  {
+    const work = mkdtempSync(join(tmpdir(), "vt-test-"));
+    try {
+      const state: DbRowState = {
+        id: 7,
+        status: "pending",
+        needs_transcode: false,
+        transcode_attempts: 0,
+      };
+      const row = {
+        id: 7,
+        status: "pending",
+        needs_transcode: false,
+        attendance_source: "diary_manual",
+        media_url: "",
+        media_bucket: "venue-staging",
+        media_path: "venue-stories/G1/U1/manual.mp4",
+        transcode_attempts: 0,
+      };
+      const res = await processVenueJob(row, {
+        db: makeMockDb(state),
+        storage: makeMockStorage({ downloadData: Buffer.alloc(1000, 0xab) }),
+        runner: makeMockRunner(work),
+        inPath: join(work, "in.mp4"),
+        outPath: join(work, "out.mp4"),
+      });
+      ok("K: result=done", res.result === "done");
+      ok("K: 직접 추가 영상은 active 아닌 archived", state.status === "archived");
+      ok("K: archived_at 기록", typeof state.archived_at === "string");
     } finally {
       rmSync(work, { recursive: true, force: true });
     }

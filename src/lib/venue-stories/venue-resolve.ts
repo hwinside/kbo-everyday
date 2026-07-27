@@ -12,6 +12,7 @@ import { safetyCapExpiryIso } from "./expiry-policy";
 
 export interface ResolvedVenue {
   exists: boolean;
+  status: "scheduled" | "live" | "final" | "cancelled" | null;
   gameDate: string | null; // YYYY-MM-DD
   stadiumName: string | null;
   coord: StadiumCoord | null;
@@ -52,6 +53,7 @@ function parseStartMs(dateYmd: string, timeStr: string): number | null {
 export async function resolveGameVenue(gameId: string): Promise<ResolvedVenue> {
   const fail = (reason: string): ResolvedVenue => ({
     exists: false,
+    status: null,
     gameDate: null,
     stadiumName: null,
     coord: null,
@@ -94,6 +96,7 @@ export async function resolveGameVenue(gameId: string): Promise<ResolvedVenue> {
 
   return {
     exists: true,
+    status: game.status,
     gameDate: `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}`,
     stadiumName: game.stadium ?? null,
     coord,
