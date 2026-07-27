@@ -243,7 +243,20 @@ async function fetchBatterStats(): Promise<{
         cs: parseInt(c[6]) || 0,
       });
     }
-  } else {
+  }
+  // HTTP 200이어도 pager가 조기 종료될 수 있다. 최종 full 후보(live union + static 전체)를
+  // Runner map이 모두 덮지 못하면 부분 live 전체를 폐기하고 static fallback으로 전환한다.
+  const requiredRunnerKeys = new Set([
+    ...rows.map((c) => `${(c[1] || "").trim()}::${(c[2] || "").trim()}`),
+    ...(batterStats2026 as unknown as PlayerStat[]).map(
+      (player) => `${String(player.name || "").trim()}::${String(player.team || "").trim()}`,
+    ),
+  ]);
+  const runnerLiveAccepted =
+    runnerResult.live &&
+    [...requiredRunnerKeys].every((key) => key !== "::" && runnerMap.has(key));
+  if (!runnerLiveAccepted) {
+    runnerMap.clear();
     for (const p of batterStats2026 as unknown as PlayerStat[]) {
       const key = `${String(p.name || "").trim()}::${String(p.team || "").trim()}`;
       if (key !== "::") runnerMap.set(key, { sb: Number(p.sb) || 0, cs: Number(p.cs) || 0 });
@@ -293,8 +306,8 @@ async function fetchBatterStats(): Promise<{
   return {
     stats,
     runnerMap,
-    runnerSource: runnerResult.live ? "live" : "static-fallback",
-    runnerUpdatedAt: runnerResult.live ? new Date().toISOString() : statsMeta.battersGeneratedAt,
+    runnerSource: runnerLiveAccepted ? "live" : "static-fallback",
+    runnerUpdatedAt: runnerLiveAccepted ? new Date().toISOString() : statsMeta.battersGeneratedAt,
   };
 }
 
@@ -304,7 +317,11 @@ export function applyRunnerStats<T extends PlayerStat>(
 ): T[] {
   return stats.map((player) => {
     const runner = runnerMap.get(`${player.name.trim()}::${player.team.trim()}`);
-    return { ...player, sb: runner?.sb ?? 0, cs: runner?.cs ?? 0 };
+    return {
+      ...player,
+      sb: runner?.sb ?? (Number(player.sb) || 0),
+      cs: runner?.cs ?? (Number(player.cs) || 0),
+    };
   });
 }
 

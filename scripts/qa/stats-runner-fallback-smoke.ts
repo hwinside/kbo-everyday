@@ -3,12 +3,13 @@ import test from "node:test";
 import { NextRequest } from "next/server";
 import { fetchAllRunnerRows, GET } from "../../src/app/api/stats/route";
 import statsMeta from "../../src/lib/constants/stats-2026-meta.json";
+import batterStats2026 from "../../src/lib/constants/stats-2026-batters.json";
 
 const PAGER_PREFIX = "ctl00$ctl00$ctl00$cphContents$cphContents$cphContents$ucPager$";
 
-function pageHtml(page: number): string {
+function pageHtml(page: number, terminalPage = 11, coverStatic = false): string {
   const first = Math.floor((page - 1) / 5) * 5 + 1;
-  const last = Math.min(first + 4, 11);
+  const last = Math.min(first + 4, terminalPage);
   const links = [];
   for (let p = first; p <= last; p += 1) {
     links.push(
@@ -16,19 +17,21 @@ function pageHtml(page: number): string {
         `href="javascript:__doPostBack(&#39;${PAGER_PREFIX}btnNo${p - first + 1}&#39;,&#39;&#39;)">${p}</a>`,
     );
   }
-  if (page < 11) {
+  if (page < terminalPage) {
     links.push(
       `<a href="javascript:__doPostBack(&#39;${PAGER_PREFIX}btnNext&#39;,&#39;&#39;)">next</a>`,
     );
   }
-  const count = page === 11 ? 29 : 30;
+  const count = page === 11 && terminalPage === 11 ? 29 : 30;
   const rows = Array.from({ length: count }, (_, index) => {
+    const globalIndex = (page - 1) * 30 + index;
+    const staticPlayer = coverStatic ? batterStats2026[globalIndex] : undefined;
     const isKim = page === 2 && index === 0;
     const isStaticOnly = page === 3 && index === 0;
-    const name = isKim ? "김도영" : isStaticOnly ? "전다민" : `선수${page}-${index}`;
-    const team = isKim ? "KIA" : isStaticOnly ? "두산" : "팀";
-    const sb = isKim ? 6 : isStaticOnly ? 9 : 0;
-    const cs = isKim ? 1 : isStaticOnly ? 4 : 0;
+    const name = staticPlayer?.name ?? (isKim ? "김도영" : isStaticOnly ? "전다민" : `선수${page}-${index}`);
+    const team = staticPlayer?.team ?? (isKim ? "KIA" : isStaticOnly ? "두산" : "팀");
+    const sb = name === "전다민" && team === "두산" ? 9 : staticPlayer?.sb ?? (isKim ? 6 : isStaticOnly ? 9 : 0);
+    const cs = name === "전다민" && team === "두산" ? 4 : staticPlayer?.cs ?? (isKim ? 1 : isStaticOnly ? 4 : 0);
     return `<tr><td>${(page - 1) * 30 + index + 1}</td><td>${name}</td>` +
       `<td>${team}</td><td>1</td><td>1</td><td>${sb}</td>` +
       `<td>${cs}</td><td>0</td><td>0</td><td>0</td></tr>`;
@@ -80,12 +83,12 @@ test("중간 POST 실패 시 부분 rows를 성공으로 반환하지 않는다"
 });
 
 function basicHtml(): string {
-  return `<tbody><tr><td>1</td><td>라이브선수</td><td>LG</td><td>.300</td>` +
+  return `<tbody><tr><td>1</td><td>박재엽</td><td>롯데</td><td>.300</td>` +
     `<td>10</td><td>40</td><td>35</td><td>5</td><td>10</td><td>1</td><td>0</td>` +
     `<td>1</td><td>14</td><td>7</td><td>0</td><td>0</td></tr></tbody>`;
 }
 
-function routeFetch(options: { runnerPostFails?: boolean }): typeof fetch {
+function routeFetch(options: { runnerPostFails?: boolean; runnerEarlyEndAt?: number }): typeof fetch {
   let runnerPage = 1;
   return (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
@@ -96,7 +99,7 @@ function routeFetch(options: { runnerPostFails?: boolean }): typeof fetch {
       if (options.runnerPostFails) return new Response("fail", { status: 503 });
       runnerPage += 1;
     }
-    return new Response(pageHtml(runnerPage), {
+    return new Response(pageHtml(runnerPage, options.runnerEarlyEndAt ?? 11, true), {
       status: 200,
       headers: runnerPage === 1 ? { "set-cookie": "ASP.NET_SessionId=route-test; path=/" } : {},
     });
@@ -136,6 +139,24 @@ test("actual GET은 Runner 중간 실패 시 static 전체 fallback과 stale tim
     assert.strictEqual(body.updatedAt, statsMeta.battersGeneratedAt);
     assert.strictEqual(body.runnerSource, "static-fallback");
     assert.strictEqual(body.runnerUpdatedAt, statsMeta.battersGeneratedAt);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("actual GET은 page 9 HTTP 200 조기 종료를 live로 채택하지 않고 static 전체로 전환한다", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = routeFetch({ runnerEarlyEndAt: 9 });
+  try {
+    const response = await GET(new NextRequest(
+      `http://localhost/api/stats?type=batter&full=1&season=qa-early-end-${Date.now()}`,
+    ));
+    const body = await response.json();
+    const player = body.stats.find((row: { name: string; team: string }) =>
+      row.name === "최원준" && row.team === "KT");
+    assert.strictEqual(body.runnerSource, "static-fallback");
+    assert.strictEqual(body.updatedAt, statsMeta.battersGeneratedAt);
+    assert.deepStrictEqual({ sb: player?.sb, cs: player?.cs }, { sb: 17, cs: 8 });
   } finally {
     globalThis.fetch = originalFetch;
   }
