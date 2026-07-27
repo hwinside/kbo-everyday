@@ -429,6 +429,27 @@ public class GameNotificationPlugin extends Plugin {
         call.resolve();
     }
 
+    /** 위젯 탭 동작 모드 조회 — {mode:"open"|"refresh", refreshSupported:true}.
+     *  refreshSupported는 성공한 네이티브 응답에서만 온다(안드=항상 true) — JS가 명시
+     *  refreshSupported만 신뢰해 구빌드(메서드 부재)를 fail-closed 처리한다(삼순 ④). */
+    @PluginMethod
+    public void getWidgetTapMode(PluginCall call) {
+        JSObject ret = new JSObject();
+        ret.put("mode", WidgetTapMode.isRefreshOnly(getContext())
+            ? WidgetTapMode.MODE_REFRESH : WidgetTapMode.MODE_OPEN);
+        ret.put("refreshSupported", true);
+        call.resolve(ret);
+    }
+
+    /** 위젯 탭 동작 모드 저장 — open|refresh만 허용(그 외 open fallback).
+     *  저장 즉후 설치된 4종 위젯을 즉시 재렌더 → 첫 탭부터 새 모드 적용(삼순 ③). */
+    @PluginMethod
+    public void setWidgetTapMode(PluginCall call) {
+        WidgetTapMode.setMode(getContext(), call.getString("mode", WidgetTapMode.MODE_OPEN));
+        WidgetTapMode.applyToAllWidgets(getContext());
+        call.resolve();
+    }
+
     /** 최애선수 목록 동기화 — 선수 카드 위젯 config(선수 선택 목록)가 읽는다.
      *  json = [{playerId,name,teamId,position,number}] (FavoritePlayer 직렬화). */
     @PluginMethod

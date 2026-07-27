@@ -418,6 +418,8 @@ struct KBOPlayerCardEntryView: View {
                 PlayerCardEmpty(message: msg)
             }
         }
+        // '새로고침만' 모드(iOS17+)면 콘텐츠를 새로고침 인텐트로 감싸다(config 선수선택 intent와 별개). 배경은 바깥 유지.
+        .widgetTapRefreshWrap()
         .widgetBG { PCColor.card }
     }
 }

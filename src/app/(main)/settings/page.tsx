@@ -12,6 +12,7 @@ import FeedbackSheet from "@/components/feedback/FeedbackSheet";
 import NotificationCard from "@/components/my/NotificationCard";
 import NotificationPrefsCard from "@/components/my/NotificationPrefsCard";
 import LockScreenCard from "@/components/my/LockScreenCard";
+import WidgetTapModeCard from "@/components/my/WidgetTapModeCard";
 import ThemeToggleCard from "@/components/my/ThemeToggleCard";
 import HomeSectionsCard from "@/components/my/HomeSectionsCard";
 import NewsPrefsCard from "@/components/my/NewsPrefsCard";
@@ -51,6 +52,11 @@ export default function SettingsPage() {
       {/* 잠금화면 설정 (네이티브 전용 — 실시간 중계 토글·카드 스타일·다시 표시, 컴포넌트 내부 가드) */}
       <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }} className="mt-3">
         <LockScreenCard />
+      </motion.div>
+
+      {/* 위젯 탭 동작 (안드 네이티브 전용 — 앱 열기 / 새로고침만, 컴포넌트 내부 가드) */}
+      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.07 }} className="mt-3">
+        <WidgetTapModeCard />
       </motion.div>
 
       {/* 홈 화면 섹션 구성 (기기 로컬) — 숏츠 포함 6섹션 on/off */}

@@ -323,8 +323,11 @@ struct KBOTeamRankWidgetEntryView: View {
                 }
             }
         }
+        // 마진(padding)을 래핑 안에 두어 외곽 마진 탭까지 Button label에 포함 —
+        // '새로고침만' 모드(iOS17+)에서 외곽 마진 탭이 앱을 열지 않도록. 배경은 바깥 유지.
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
+        .widgetTapRefreshWrap()
         .widgetBG { RankColor.bg }
     }
 

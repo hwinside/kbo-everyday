@@ -29,6 +29,8 @@ public class LiveActivityPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "writeWidgetSnapshot", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setFavPlayers", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setMyTeam", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "getWidgetTapMode", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setWidgetTapMode", returnType: CAPPluginReturnPromise),
     ]
 
     /// 브리지 로드 시 — *포그라운드 JS 멀티캐스트* 콜백만 연결한다(조건4).
@@ -206,6 +208,42 @@ public class LiveActivityPlugin: CAPPlugin, CAPBridgedPlugin {
             WidgetCenter.shared.reloadAllTimelines()
         }
         call.resolve()
+    }
+
+    /// 홈 위젯 탭 동작 모드를 App Group(widget_tap_mode)에 기록 — 'open'(탭 시 앱 실행, 기본)
+    /// | 'refresh'(앱 안 열고 위젯만 재렌더). 위젯 익스텐션이 이 값을 읽어 탭 인텐트를 분기한다.
+    /// refresh 새로고침 인텐트(Button intent)는 iOS 17+ 전용 — 구버전(iOS16 이하)에선 요청이
+    /// refresh여도 open으로 normalize해 *저장 자체를 막는다*(삼순 #904 왕복2 ①: capability probe
+    /// 완료 전 UI fail-open 타이밍에도 미지원 OS가 refresh를 절대 저장하지 않게 하는 네이티브 방어선).
+    /// resolve에 실제 저장된 mode를 실어 호출부가 정규화 결과를 반영할 수 있게 한다.
+    @objc func setWidgetTapMode(_ call: CAPPluginCall) {
+        let raw = call.getString("mode") ?? "open"
+        var mode = raw == "refresh" ? "refresh" : "open"
+        if mode == "refresh" {
+            if #available(iOS 17, *) {
+                // refresh 지원 — 그대로 저장
+            } else {
+                mode = "open" // iOS16 이하: refresh 미지원 → open으로 normalize 저장
+            }
+        }
+        UserDefaults(suiteName: WidgetSnapshotStore.appGroupId)?.set(mode, forKey: "widget_tap_mode")
+        if #available(iOS 14.0, *) {
+            WidgetCenter.shared.reloadAllTimelines()
+        }
+        call.resolve(["mode": mode])
+    }
+
+    /// 저장된 홈 위젯 탭 동작 모드 조회. 미설정 기본 'open'. refreshSupported는 '새로고침만'
+    /// 옵션의 실제 동작 가능 여부(위젯 Button intent = iOS 17+)로, 설정 UI가 iOS16 이하에서
+    /// 해당 옵션을 정직하게 비활성/안내하도록 capability를 함께 반환한다.
+    @objc func getWidgetTapMode(_ call: CAPPluginCall) {
+        let mode = UserDefaults(suiteName: WidgetSnapshotStore.appGroupId)?.string(forKey: "widget_tap_mode") ?? "open"
+        let refreshSupported: Bool
+        if #available(iOS 17, *) { refreshSupported = true } else { refreshSupported = false }
+        // reason: 미지원 사유를 명시 분리 — iOS는 OS 버전 게이트라 항상 "ios_version"(삼순 #904
+        // 왕복2 ②: 카드가 안드 구빌드에 iOS 문구를 잘못 노출하지 않도록 사유를 응답에 실어보냄).
+        let reason = refreshSupported ? "none" : "ios_version"
+        call.resolve(["mode": mode, "refreshSupported": refreshSupported, "reason": reason])
     }
 
     @available(iOS 16.1, *)

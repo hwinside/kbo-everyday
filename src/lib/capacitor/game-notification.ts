@@ -1,8 +1,14 @@
 "use client";
 
 import { registerPlugin } from "@capacitor/core";
-import { isAndroid, isIOS } from "./platform";
-import { syncIosWidgetFavPlayers, syncIosWidgetMyTeam } from "../native-live-activity";
+import { isAndroid, isIOS, isNativeRuntime, isIosNativeRuntime } from "./platform";
+import {
+  syncIosWidgetFavPlayers,
+  syncIosWidgetMyTeam,
+  getIosWidgetTapMode,
+  setIosWidgetTapMode,
+  type WidgetTapModeReason,
+} from "../native-live-activity";
 import { supabase } from "../supabase/client";
 import {
   createLockCardGateFence,
@@ -57,6 +63,21 @@ interface GameNotificationPlugin {
   setLiveUpdateOptIn(opts: { enabled: boolean }): Promise<void>;
   setLockCardEnabled(opts: { enabled: boolean }): Promise<void>;
   getLockCardGateState(): Promise<{ enabled: boolean }>;
+  getWidgetTapMode(): Promise<{ mode: WidgetTapMode; refreshSupported?: boolean }>;
+  setWidgetTapMode(opts: { mode: WidgetTapMode }): Promise<void>;
+}
+
+/** 홈 위젯 탭 동작 — 'open'(탭 시 앱 실행, 기본) | 'refresh'(앱 안 열고 위젯만 재렌더). */
+export type WidgetTapMode = "open" | "refresh";
+
+/** 홈 위젯 탭 동작 상태. refreshSupported = '새로고침만' 옵션이 실제 동작하는지
+ *  (안드는 항상 true, iOS는 위젯 새로고침 인텐트가 iOS 17+ 전용이라 iOS17+에서만 true).
+ *  reason = 미지원 사유(카드 안내 문구 분기용) — none | ios_version(iOS<17) | app_update(구빌드). */
+export type { WidgetTapModeReason };
+export interface WidgetTapModeState {
+  mode: WidgetTapMode;
+  refreshSupported: boolean;
+  reason: WidgetTapModeReason;
 }
 
 /** Android 16+(One UI 8.5) 잠금화면 라이브 카드(Promoted Ongoing) 지원/opt-in 상태. */
@@ -250,6 +271,75 @@ export async function setLiveUpdateOptIn(enabled: boolean): Promise<boolean> {
     return true;
   } catch {
     return false;
+  }
+}
+
+// 원격 로드 dual-instance 우회 — registerPlugin(정적 core) 호출 실패 시 주입 브릿지
+// (window.Capacitor.Plugins.GameNotification) 직접 호출로 대체(native-live-activity getAppBuild 패턴 미러).
+interface InjectedGameNotification {
+  getWidgetTapMode?: () => Promise<{ mode?: WidgetTapMode; refreshSupported?: boolean }>;
+  setWidgetTapMode?: (opts: { mode: WidgetTapMode }) => Promise<void>;
+}
+function injectedGameNotification(): InjectedGameNotification | undefined {
+  if (typeof window === "undefined") return undefined;
+  return (window as unknown as {
+    Capacitor?: { Plugins?: { GameNotification?: InjectedGameNotification } };
+  }).Capacitor?.Plugins?.GameNotification;
+}
+
+/** 홈 위젯 탭 동작 모드 조회(디바이스 로컬). iOS는 LiveActivity 브릿지, 안드는 GameNotification.
+ *  플러폼 분기는 정적 isIOS/isAndroid 대신 런타임 판정(원격 로드 web 오판 방지, 삼순 #833).
+ *  capability(refreshSupported)는 성공한 네이티브 응답에서만 — 메서드 부재/throw(구빌드)는
+ *  {open, refreshSupported:false} fail-closed(삼순 ④: 구빌드 오탐 금지). */
+export async function getWidgetTapMode(): Promise<WidgetTapModeState> {
+  if (isIosNativeRuntime()) return getIosWidgetTapMode();
+  if (!isNativeRuntime()) return { mode: "open", refreshSupported: false, reason: "none" };
+  // 안드로이드 네이티브 — 성공 응답은 항상 지원(refreshSupported:true, reason:none).
+  const fromSuccess = (r?: { mode?: string; refreshSupported?: boolean }): WidgetTapModeState => {
+    const refreshSupported = r?.refreshSupported === true; // 안드 네이티브가 명시 반환해야 지원 간주
+    return {
+      mode: r?.mode === "refresh" ? "refresh" : "open",
+      refreshSupported,
+      reason: refreshSupported ? "none" : "app_update",
+    };
+  };
+  try {
+    return fromSuccess(await GameNotification.getWidgetTapMode());
+  } catch {
+    // dual-instance 우회: 주입 브릿지 직접 호출
+    const inj = injectedGameNotification();
+    if (inj?.getWidgetTapMode) {
+      try {
+        return fromSuccess(await inj.getWidgetTapMode());
+      } catch {
+        /* fall through → fail-closed */
+      }
+    }
+    // 메서드 부재 = 구 안드 빌드 → 런타임 플랫폼(android) 기반 앱 업데이트 안내(삼순 ②)
+    return { mode: "open", refreshSupported: false, reason: "app_update" };
+  }
+}
+
+/** 홈 위젯 탭 동작 모드 저장(디바이스 로컬). iOS는 LiveActivity, 안드는 GameNotification.
+ *  성공 여부 반환 — 저장 실패(구빌드/브릿지) 시 카드가 이전 선택으로 롤백(삼순 ④). */
+export async function setWidgetTapMode(mode: WidgetTapMode): Promise<boolean> {
+  if (isIosNativeRuntime()) return setIosWidgetTapMode(mode);
+  if (!isNativeRuntime()) return false;
+  try {
+    await GameNotification.setWidgetTapMode({ mode });
+    return true;
+  } catch {
+    // dual-instance 우회: 주입 브릿지 직접 호출
+    const inj = injectedGameNotification();
+    if (inj?.setWidgetTapMode) {
+      try {
+        await inj.setWidgetTapMode({ mode });
+        return true;
+      } catch {
+        /* fall through */
+      }
+    }
+    return false; // 구빌드/브릿지 실패 → 카드 롤백
   }
 }
 

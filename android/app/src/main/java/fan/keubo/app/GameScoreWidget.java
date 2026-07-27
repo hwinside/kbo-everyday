@@ -1,11 +1,9 @@
 package fan.keubo.app;
 
-import android.app.PendingIntent;
 import android.appwidget.AppWidgetManager;
 import android.appwidget.AppWidgetProvider;
 import android.content.ComponentName;
 import android.content.Context;
-import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
@@ -172,16 +170,11 @@ public class GameScoreWidget extends AppWidgetProvider {
 
     @Override
     public void onUpdate(Context context, AppWidgetManager mgr, int[] appWidgetIds) {
-        // 카드 탭 → 앱 실행 (딥링크는 알림 카드가 담당, 위젯은 앱 홈)
-        Intent launch = context.getPackageManager()
-            .getLaunchIntentForPackage(context.getPackageName());
-        PendingIntent pi = PendingIntent.getActivity(
-            context, 0, launch,
-            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-
+        // 카드 탭 → 탭 모드에 따라 앱 실행 or 위젯 self 재렌더(WidgetTapMode).
         for (int id : appWidgetIds) {
             RemoteViews v = buildCard(context);
-            v.setOnClickPendingIntent(R.id.widget_root, pi);
+            v.setOnClickPendingIntent(R.id.widget_root,
+                WidgetTapMode.tapIntent(context, GameScoreWidget.class, id));
             mgr.updateAppWidget(id, v);
         }
     }

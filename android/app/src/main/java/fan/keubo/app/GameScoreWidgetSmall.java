@@ -1,10 +1,8 @@
 package fan.keubo.app;
 
-import android.app.PendingIntent;
 import android.appwidget.AppWidgetManager;
 import android.appwidget.AppWidgetProvider;
 import android.content.Context;
-import android.content.Intent;
 import android.widget.RemoteViews;
 
 /**
@@ -16,15 +14,10 @@ public class GameScoreWidgetSmall extends AppWidgetProvider {
 
     @Override
     public void onUpdate(Context context, AppWidgetManager mgr, int[] appWidgetIds) {
-        Intent launch = context.getPackageManager()
-            .getLaunchIntentForPackage(context.getPackageName());
-        PendingIntent pi = PendingIntent.getActivity(
-            context, 0, launch,
-            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-
         for (int id : appWidgetIds) {
             RemoteViews v = GameScoreWidget.buildSmallCard(context);
-            v.setOnClickPendingIntent(R.id.widget_small_root, pi);
+            v.setOnClickPendingIntent(R.id.widget_small_root,
+                WidgetTapMode.tapIntent(context, GameScoreWidgetSmall.class, id));
             mgr.updateAppWidget(id, v);
         }
     }

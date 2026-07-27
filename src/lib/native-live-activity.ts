@@ -1,4 +1,5 @@
 import { registerPlugin, Capacitor } from "@capacitor/core";
+import { isIosNativeRuntime } from "@/lib/capacitor/platform";
 import { supabase } from "@/lib/supabase/client";
 import { getMyTeamId } from "@/lib/store/myteam";
 import { parseGameIdCodes, pickMyTeamStartableGame } from "@/lib/notifications/la-autostart-policy";
@@ -51,6 +52,8 @@ interface LiveActivityPlugin {
   writeWidgetSnapshot(input: WidgetSnapshotInput): Promise<void>;
   setFavPlayers(opts: { json: string }): Promise<void>;
   setMyTeam(opts: { code: string }): Promise<void>;
+  getWidgetTapMode(): Promise<{ mode: string; refreshSupported: boolean }>;
+  setWidgetTapMode(opts: { mode: "open" | "refresh" }): Promise<void>;
   addListener(
     eventName: "liveActivityPushToken",
     listenerFunc: (data: { gameId: string; token: string }) => void,
@@ -376,6 +379,73 @@ export async function syncIosWidgetMyTeam(code: string): Promise<void> {
     await LiveActivity.setMyTeam({ code });
   } catch {
     /* silent — 부가 기능 */
+  }
+}
+
+// 원격 로드 dual-instance 우회 — registerPlugin(정적 core) 호출 실패 시 주입 브릿지
+// (window.Capacitor.Plugins.LiveActivity) 직접 호출로 대체(getAppBuild App 플러그인 패턴 미러).
+interface InjectedTapModePlugin {
+  getWidgetTapMode?: () => Promise<{ mode?: string; refreshSupported?: boolean; reason?: string }>;
+  setWidgetTapMode?: (opts: { mode: "open" | "refresh" }) => Promise<void>;
+}
+
+/** 위젯 탭 '새로고침만' 미지원 사유 — none(지원) | ios_version(iOS<17) | app_update(구빌드 메서드 부재).
+ *  카드가 사유별로 다른 안내 문구를 노출한다(삼순 #904 왕복2 ②: 안드 구빌드에 iOS 문구 오노출 방지). */
+export type WidgetTapModeReason = "none" | "ios_version" | "app_update";
+function injectedLiveActivity(): InjectedTapModePlugin | undefined {
+  if (typeof window === "undefined") return undefined;
+  return (window as unknown as {
+    Capacitor?: { Plugins?: { LiveActivity?: InjectedTapModePlugin } };
+  }).Capacitor?.Plugins?.LiveActivity;
+}
+
+/** iOS 홈 위젯 탭 동작 모드 조회 — mode('open'|'refresh', 기본 open) + refreshSupported(위젯
+ *  새로고침 인텐트 = iOS 17+). 비iOS/구빌드(메서드 부재)는 open + refreshSupported false.
+ *  게이트는 정적 isNativeIOS 대신 isIosNativeRuntime() — 원격 로드 앱 web 오판 방지(삼순 #833). */
+export async function getIosWidgetTapMode(): Promise<{ mode: "open" | "refresh"; refreshSupported: boolean; reason: WidgetTapModeReason }> {
+  if (!isIosNativeRuntime()) return { mode: "open", refreshSupported: false, reason: "none" };
+  // 성공 응답: iOS는 OS 버전 게이트라 미지원 사유 = ios_version(응답 reason 우선).
+  const fromSuccess = (r?: { mode?: string; refreshSupported?: boolean; reason?: string }) => {
+    const refreshSupported = r?.refreshSupported === true;
+    // iOS 미지원은 오직 OS 버전(iOS<17) 사유 — 성공 응답이면 항상 ios_version.
+    const reason: WidgetTapModeReason = refreshSupported ? "none" : "ios_version";
+    return { mode: (r?.mode === "refresh" ? "refresh" : "open") as "open" | "refresh", refreshSupported, reason };
+  };
+  try {
+    return fromSuccess(await LiveActivity.getWidgetTapMode());
+  } catch {
+    // dual-instance 우회: 주입 브릿지 직접 호출
+    const inj = injectedLiveActivity();
+    if (inj?.getWidgetTapMode) {
+      try {
+        return fromSuccess(await inj.getWidgetTapMode());
+      } catch {
+        /* fall through → fail-closed */
+      }
+    }
+    // 메서드 부재 = 구 iOS 빌드 → 앱 업데이트 안내(iOS 버전 문제 아님, 삼순 ②)
+    return { mode: "open", refreshSupported: false, reason: "app_update" };
+  }
+}
+
+/** iOS 홈 위젯 탭 동작 모드 저장(App Group widget_tap_mode). 성공 여부 반환(저장 실패 시
+ *  카드 롤백용, 삼순 ④). 구빌드/브릿지 실패는 주입 브릿지 폴백 후 false. */
+export async function setIosWidgetTapMode(mode: "open" | "refresh"): Promise<boolean> {
+  if (!isIosNativeRuntime()) return false;
+  try {
+    await LiveActivity.setWidgetTapMode({ mode });
+    return true;
+  } catch {
+    const inj = injectedLiveActivity();
+    if (inj?.setWidgetTapMode) {
+      try {
+        await inj.setWidgetTapMode({ mode });
+        return true;
+      } catch {
+        /* fall through */
+      }
+    }
+    return false; // 구빌드/브릿지 실패 → 카드 롤백
   }
 }
 
