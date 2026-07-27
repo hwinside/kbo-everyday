@@ -20,6 +20,16 @@ interface PlayerStat {
   [key: string]: string | number;
 }
 
+// 러너(도루/도루실패) 값 병합: 라이브 러너페이지(top30) 우선, 없으면 일일 크롤 static 폴백.
+// KBO 러너페이지는 30행만 반환 → 30위권 밖 선수가 0으로 표기되던 버그를 폴백으로 차단.
+export function resolveRunnerStat(
+  live: { sb: number; cs: number } | undefined,
+  fallback: { sb: number; cs: number } | undefined,
+): { sb: number; cs: number } {
+  const r = live ?? fallback;
+  return { sb: r?.sb ?? 0, cs: r?.cs ?? 0 };
+}
+
 async function fetchHtml(url: string): Promise<string> {
   const res = await fetch(url, {
     headers: {
@@ -114,6 +124,10 @@ async function fetchBatterStats(): Promise<PlayerStat[]> {
   }
 
   // Runner lookup: name+team → { sb, cs }
+  // KBO 러너 페이지는 단일 SB_CN 정렬 1페이지(30행)만 fetch 가능(Vercel 서버리스=Playwright
+  // 페이지네이션 불가). 30위권 밖 선수는 라이브 러너맵에 없어 sb/cs가 0으로 표기되는 버그가
+  // 있었다(김도영 등 도루 6개↓ 전원 0). 라이브에 없는 선수는 일일 크롤 static JSON(전 페이지
+  // 크롤=전 선수 수록)의 sb/cs로 폴백한다. 도루 상위권(변동 큰)은 라이브 실시간 유지.
   const runnerMap = new Map<string, { sb: number; cs: number }>();
   for (const c of runnerRows) {
     const key = `${(c[1] || "").trim()}::${(c[2] || "").trim()}`;
@@ -122,6 +136,12 @@ async function fetchBatterStats(): Promise<PlayerStat[]> {
       cs: parseInt(c[6]) || 0,
     });
   }
+  // static 폴백맵 (일일 크롤, 전 선수 sb/cs 수록)
+  const staticRunnerMap = new Map<string, { sb: number; cs: number }>();
+  for (const p of batterStats2026 as unknown as PlayerStat[]) {
+    const key = `${String(p.name || "").trim()}::${String(p.team || "").trim()}`;
+    if (key !== "::") staticRunnerMap.set(key, { sb: Number(p.sb) || 0, cs: Number(p.cs) || 0 });
+  }
 
   return rows.map((c, i) => {
     const name = (c[1] || "").trim();
@@ -129,7 +149,8 @@ async function fetchBatterStats(): Promise<PlayerStat[]> {
     const lookupKey = `${name}::${team}`;
     const found = resolvePlayer({ name, team }, roster, { context: "api/stats:batter" });
     const b2 = basic2Map.get(lookupKey);
-    const runner = runnerMap.get(lookupKey);
+    // 라이브 러너맵 우선(실시간), 없으면 static 일일값 폴백(0 표기 방지)
+    const runner = resolveRunnerStat(runnerMap.get(lookupKey), staticRunnerMap.get(lookupKey));
     return {
       rank: i + 1,
       name,
@@ -157,8 +178,8 @@ async function fetchBatterStats(): Promise<PlayerStat[]> {
       obp: b2?.obp || ".000",
       ops: b2?.ops || ".000",
       // Runner stats
-      sb: runner?.sb || 0,
-      cs: runner?.cs || 0,
+      sb: runner.sb,
+      cs: runner.cs,
       kboId: found?.kboId || "",
       playerId: found?.kboId || "",
       qualifiedRate: qualifiedKeys.has(`${name}::${team}`) ? 1 : 0,
