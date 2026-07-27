@@ -751,18 +751,24 @@ const NAVER_API_BASE =
 
 /**
  * In-memory response cache (module-level, persists for the lambda warm period
- * ~5–15min). The relay-bridged celebration path on the client polls at 5s
+ * ~5–15min). The relay-bridged celebration path on the client polls at 3s
  * cadence; without caching, N concurrent viewers of the same game would mean
- * N upstream Naver fetches every 5s. With a 4s TTL keyed by (naverGameId,
- * inningHint), warm-lambda viewers share a single upstream call per ~4s
+ * N upstream Naver fetches every 3s. With a 2s TTL keyed by (naverGameId,
+ * inningHint), warm-lambda viewers share a single upstream call per ~2s
  * window. Cold-start spawns a fresh instance with empty cache → up to one
  * Naver call per cold lambda, which is bounded by Vercel concurrency.
+ *
+ * TTL is kept just below the 3s poll so a client's own successive polls
+ * always land a fresh upstream fetch (celebration freshness), while bursts
+ * of concurrent viewers within the same 2s window still coalesce to one
+ * upstream call (load bound). 4s→2s roughly doubles worst-case upstream
+ * rate; accepted trade-off for cutting celebration fire lag.
  *
  * Only successful responses are cached; HTTP/network errors fall through so
  * the next poll retries fresh.
  */
 const responseCache = new Map<string, { data: GameRelayResponse; expiresAt: number }>();
-const CACHE_TTL_MS = 4_000;
+const CACHE_TTL_MS = 2_000;
 
 /**
  * Per-fetch timeout for inning 2..N relay fetches and the record fetch.
