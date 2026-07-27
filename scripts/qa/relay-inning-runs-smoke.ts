@@ -12,18 +12,16 @@
  * Fix: 추정 카운트를 버리고 응답에 이미 있는 linescore.away/home.innings[n-1]를
  *      해당 초/말 카드에 그대로 연결한다.
  *
- * Assertions
- * ----------
- *   T1: top(초) → away.innings[n-1] 반환.
- *   T2: bottom(말) → home.innings[n-1] 반환 (7/26 8회말 10점 재현).
- *   T3: 실제 득점 0인 이닝(무득점) → 0 반환 (undefined/폴백 아님).
- *   T4: linescore 없음 → undefined (카드가 추정카운트 폴백).
- *   T5: linescore 있으나 해당 이닝 배열 밖 → undefined.
- *   T6: 해당 이닝 값이 null(미기록) → undefined.
+ * Component/UI assertions cover 4회말 3점, 8회말 10점, 0점, linescore 없음,
+ * null, 10회+, and scoring-looking relay text without a linescore.
  */
 
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import RelayInningCard from "../../src/components/game/RelayInningCard";
 import { inningRuns } from "../../src/lib/game/inning-runs";
 import type { GameRelayResponse, InningRelay } from "../../src/app/api/game-relay/route";
+import type { TeamData } from "../../src/lib/constants/teams";
 
 let pass = 0;
 let fail = 0;
@@ -37,48 +35,90 @@ function assert(name: string, cond: boolean) {
   }
 }
 
-function inning(inn: number, half: "top" | "bottom"): InningRelay {
-  return { inning: inn, half, teamName: "", plays: [] } as unknown as InningRelay;
+function inning(
+  inn: number,
+  half: "top" | "bottom",
+  scoringLookingText = false,
+): InningRelay {
+  return {
+    inning: inn,
+    half,
+    teamName: half === "top" ? "LG" : "한화",
+    plays: scoringLookingText
+      ? [{
+          batterName: "테스트",
+          result: "주자 진루",
+          type: "other",
+          extras: ["1루주자 홈까지 진루", "득점"],
+        }]
+      : [],
+  };
 }
 
-// 7/26 LG(away)-한화(home) 재현: away 1회초 0..., home 4회말 3점, 8회말 10점
-const relay: GameRelayResponse = {
-  gameId: "20260726LGHH0",
-  currentInning: 8,
-  innings: [],
-  linescore: {
-    away: { innings: [1, 0, 0, 0, 0, 0, 0, 0], R: 4, H: 8, E: 0 },
-    home: { innings: [0, 0, 0, 3, 0, 0, 0, 10], R: 14, H: 15, E: 0 },
-  },
-} as unknown as GameRelayResponse;
+const awayTeam = {
+  id: 1,
+  name: "LG 트윈스",
+  shortName: "LG",
+  colorPrimary: "#C60C30",
+} as TeamData;
+const homeTeam = {
+  id: 10,
+  name: "한화 이글스",
+  shortName: "한화",
+  colorPrimary: "#FF6600",
+} as TeamData;
 
-console.log("\u2014 T1: top(\ucd08) \u2192 away.innings[n-1]");
-assert("1\ud68c\ucd08 = 1", inningRuns(relay, inning(1, "top")) === 1);
+function renderCard(
+  linescore: GameRelayResponse["linescore"] | null | undefined,
+  targetInning: InningRelay,
+): string {
+  return renderToStaticMarkup(
+    React.createElement(RelayInningCard, {
+      inning: targetInning,
+      awayTeam,
+      homeTeam,
+      runs: inningRuns(linescore, targetInning),
+    }),
+  );
+}
 
-console.log("\u2014 T2: bottom(\ub9d0) \u2192 home.innings[n-1] (8\ud68c\ub9d0 10\uc810)");
-assert("8\ud68c\ub9d0 = 10 (\ucd94\uc815 3\uc774 \uc544\ub2cc \uc2e4\uc81c 10)", inningRuns(relay, inning(8, "bottom")) === 10);
-assert("4\ud68c\ub9d0 = 3 (\ucd94\uc815 0\uc774 \uc544\ub2cc \uc2e4\uc81c 3)", inningRuns(relay, inning(4, "bottom")) === 3);
+function hasBadge(markup: string): boolean {
+  return markup.includes("ml-auto text-xs font-bold");
+}
 
-console.log("\u2014 T3: \ubb34\ub4dd\uc810 \uc774\ub2dd \u2192 0 (undefined \uc544\ub2d8)");
-assert("2\ud68c\ucd08 = 0", inningRuns(relay, inning(2, "top")) === 0);
+// 7/26 LG(away)-한화(home) 재현 + 연장 10회
+const linescore = {
+  away: { innings: [1, 0, 0, 0, 0, 0, 0, 0, 0, 0], R: 4, H: 8, E: 0 },
+  home: { innings: [0, 0, 0, 3, 0, 0, 0, 10, 0, 2], R: 16, H: 15, E: 0 },
+};
 
-console.log("\u2014 T4: linescore \uc5c6\uc74c \u2192 undefined (\ud3f4\ubc31)");
-const noLs = { gameId: "x", currentInning: 1, innings: [] } as unknown as GameRelayResponse;
-assert("undefined", inningRuns(noLs, inning(1, "top")) === undefined);
-assert("relay null \u2192 undefined", inningRuns(null, inning(1, "top")) === undefined);
+console.log("— UI: linescore 실값 배지");
+const fourthBottom = renderCard(linescore, inning(4, "bottom"));
+assert("4회말 카드 = 3점", hasBadge(fourthBottom) && fourthBottom.includes(">3점<"));
+const eighthBottom = renderCard(linescore, inning(8, "bottom"));
+assert("8회말 카드 = 10점", hasBadge(eighthBottom) && eighthBottom.includes(">10점<"));
+const tenthBottom = renderCard(linescore, inning(10, "bottom"));
+assert("10회말 카드 = 2점", hasBadge(tenthBottom) && tenthBottom.includes(">2점<"));
 
-console.log("\u2014 T5: \ubc30\uc5f4 \ubc16 \uc774\ub2dd \u2192 undefined");
-assert("9\ud68c\ucd08(\ubbf8\uae30\ub85d) = undefined", inningRuns(relay, inning(9, "top")) === undefined);
+console.log("— UI: 0/없음/null은 배지 숨김");
+assert("0점 이닝 배지 없음", !hasBadge(renderCard(linescore, inning(2, "top"))));
+assert(
+  "linescore 없음 + 득점 문구도 배지 없음",
+  !hasBadge(renderCard(undefined, inning(1, "top", true))),
+);
 
-console.log("\u2014 T6: \ud574\ub2f9 \uc774\ub2dd null \u2192 undefined");
 const withNull = {
-  ...relay,
-  linescore: {
-    away: { innings: [null], R: 0, H: 0, E: 0 },
-    home: { innings: [null], R: 0, H: 0, E: 0 },
-  },
-} as unknown as GameRelayResponse;
-assert("1\ud68c\ucd08 null = undefined", inningRuns(withNull, inning(1, "top")) === undefined);
+  away: { innings: [null], R: 0, H: 0, E: 0 },
+  home: { innings: [null], R: 0, H: 0, E: 0 },
+};
+assert(
+  "null 이닝 + 득점 문구도 배지 없음",
+  !hasBadge(renderCard(withNull, inning(1, "bottom", true))),
+);
+assert(
+  "배열 밖 11회 + 득점 문구도 배지 없음",
+  !hasBadge(renderCard(linescore, inning(11, "bottom", true))),
+);
 
 console.log("");
 if (fail > 0) {

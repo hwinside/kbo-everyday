@@ -7,7 +7,7 @@ import type { GameRelayResponse } from "@/lib/hooks/useGameRelay";
 import type { GameStats, BatterStat, PitcherStat } from "@/lib/constants/game-stats";
 import GameStatsTab from "./GameStatsTab";
 import RelayInningCard from "./RelayInningCard";
-import { inningRuns } from "@/lib/game/inning-runs";
+import { inningRuns, type InningLinescore } from "@/lib/game/inning-runs";
 
 interface LiveStatsTabProps {
   relay: GameRelayResponse;
@@ -16,6 +16,7 @@ interface LiveStatsTabProps {
   currentPitcher?: string | null;
   awayStarterName?: string;
   homeStarterName?: string;
+  linescore?: InningLinescore | null;
 }
 
 /** relay playerStats → GameStats 변환 */
@@ -92,6 +93,7 @@ export default function LiveStatsTab({
   currentPitcher,
   awayStarterName,
   homeStarterName,
+  linescore,
 }: LiveStatsTabProps) {
   const [collapseInnings, setCollapseInnings] = useState(false);
 
@@ -147,7 +149,7 @@ export default function LiveStatsTab({
                 inning={inning}
                 awayTeam={awayTeam}
                 homeTeam={homeTeam}
-                runs={inningRuns(relay, inning)}
+                runs={inningRuns(linescore, inning)}
               />
             ))}
           </div>
