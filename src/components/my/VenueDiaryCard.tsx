@@ -14,6 +14,8 @@ import {
   applyDiaryThumbUrlRefresh,
   buildDiaryCountsMap,
   buildDiaryHomeGames,
+  diaryCountsOwnerKey,
+  diaryCountsReady,
   makeDiaryThumbRefresh,
   mergeDiaryMediaPages,
   mergeVenueSummaries,
@@ -23,7 +25,11 @@ import {
   type DiaryHomeGame,
   type DiaryMediaGroupInput,
 } from "@/lib/venue-diary/view";
-import { startVenueStoryUrlRefresh } from "@/lib/venue-stories/refresh-policy";
+import {
+  mintWithTimeout,
+  startVenueStoryUrlRefresh,
+  VENUE_STORY_URL_MINT_TIMEOUT_MS,
+} from "@/lib/venue-stories/refresh-policy";
 import { PENDING_POLL_DELAYS_MS } from "@/lib/venue-stories/composer-helpers";
 import VenueDiaryAddGameSheet from "@/components/my/VenueDiaryAddGameSheet";
 import VenueDiaryUploader, {
@@ -323,35 +329,62 @@ export default function VenueDiaryCard() {
   // 2026 counts 확정 전에는 fail-closed(선택 비활성), 실패 시 0 폴백 금지→재시도. open/user 전환마다
   // stale counts 를 초기화해 다른 유저·이전 세션 잔존을 막는다(Blocker 4).
   const [addCounts, setAddCounts] = useState<Map<string, number>>(new Map());
-  const [countsReady, setCountsReady] = useState(false);
+  // countsOwner = 이 counts 가 어느 (userId, openSeq) 에 대한 것인지. 렌더 단계에서 현재 key 와
+  // 불일치하면 즉시 fail-closed(diaryCountsReady) → 재오픈/유저 전환 첫 렌더 stale counts 차단.
+  const [countsOwner, setCountsOwner] = useState<string | null>(null);
   const [countsError, setCountsError] = useState(false);
   const [countsReload, setCountsReload] = useState(0);
+  const [openSeq, setOpenSeq] = useState(0);
+  const currentCountsKey =
+    user && addOpen ? diaryCountsOwnerKey(user.id, openSeq) : null;
+  const countsReady = diaryCountsReady(countsOwner, currentCountsKey);
+  // 열기 액션에서 counts state 를 동기 초기화한 뒤 open → 같은 커밋에 배칭돼 첫 렌더부터 fail-closed.
+  const openAddSheet = useCallback(() => {
+    setAddCounts(new Map());
+    setCountsOwner(null);
+    setCountsError(false);
+    setOpenSeq((s) => s + 1);
+    setAddOpen(true);
+  }, []);
   useEffect(() => {
     if (!addOpen || !user) return;
+    const ownerKey = diaryCountsOwnerKey(user.id, openSeq);
     let alive = true;
     const controller = new AbortController();
     setAddCounts(new Map());
-    setCountsReady(false);
+    setCountsOwner(null);
     setCountsError(false);
     (async () => {
-      try {
-        const session = await getSafeSession();
-        const token = session?.access_token;
-        if (!token) throw new Error("missing session");
-        const groups = await fetchDiaryMediaAllPages(token, CURRENT_SEASON, controller.signal);
-        if (!alive) return;
-        if (groups == null) throw new Error("counts failed");
-        setAddCounts(buildDiaryCountsMap(groups));
-        setCountsReady(true);
-      } catch {
-        if (alive && !controller.signal.aborted) setCountsError(true);
+      // getSafeSession/fetch/json 이 non-settle 이어도 mintWithTimeout 이 8s 에 abort→settle 시켜
+      // '확인 중' 영구정지 대신 countsError(재시도 UI)로 도달한다.
+      const groups = await mintWithTimeout<DiaryMediaGroupInput[] | null, number>(
+        async (signal) => {
+          const session = await getSafeSession();
+          const token = session?.access_token;
+          if (!token) throw new Error("missing session");
+          return fetchDiaryMediaAllPages(token, CURRENT_SEASON, signal);
+        },
+        null,
+        {
+          timeoutMs: VENUE_STORY_URL_MINT_TIMEOUT_MS,
+          setTimer: (fn, ms) => window.setTimeout(fn, ms),
+          clearTimer: (h) => window.clearTimeout(h),
+          controller,
+        },
+      );
+      if (!alive || controller.signal.aborted) return;
+      if (groups == null) {
+        setCountsError(true);
+        return;
       }
+      setAddCounts(buildDiaryCountsMap(groups));
+      setCountsOwner(ownerKey);
     })();
     return () => {
       alive = false;
       controller.abort();
     };
-  }, [addOpen, user, countsReload]);
+  }, [addOpen, user, openSeq, countsReload]);
 
   const favoriteTeamId = profile?.team_id ?? null;
 
@@ -441,7 +474,7 @@ export default function VenueDiaryCard() {
 
               {/* 지난 경기 추가하기 */}
               <button
-                onClick={() => setAddOpen(true)}
+                onClick={openAddSheet}
                 className="mt-3.5 flex w-full items-center justify-center gap-2 rounded-2xl bg-brand-primary py-3.5 text-[14.5px] font-extrabold text-white shadow-lg shadow-brand-primary/30"
               >
                 <Plus size={18} /> 지난 경기 추가하기
@@ -565,7 +598,7 @@ export default function VenueDiaryCard() {
           isOpen={uploadGame != null}
           onBack={() => {
             setUploadGame(null);
-            setAddOpen(true);
+            openAddSheet();
           }}
           onClose={() => setUploadGame(null)}
           onUploaded={handleUploaded}

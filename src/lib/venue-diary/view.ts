@@ -683,3 +683,21 @@ export function diaryAddSelectDisabled(
   if (!countsReady) return true;
   return diaryPickLocked(diaryPickState(count));
 }
+
+// counts 는 특정 (userId, open 세션)에 결속된다. 재오픈/유저 전환 첫 렌더에서 이전 세션의
+// countsReady=true·이전 Map 을 그대로 넘기면 fail-open(2026 10/10 을 0/10 로 오표시)이 된다.
+// effect 초기화는 렌더 뒤라 첫 렌더를 못 막으므로, 렌더 단계에서 owner key 불일치면 즉시
+// fail-closed 한다(Blocker: 재오픈/유저 전환 stale counts).
+
+/** counts 소유 key: 이 counts 가 어느 유저·어느 open 세션에 대한 것인지. */
+export function diaryCountsOwnerKey(userId: string, openSeq: number): string {
+  return `${userId}:${openSeq}`;
+}
+
+/** owner 가 현재 열린 (userId, openSeq) key 와 정확히 일치할 때만 ready(렌더 단계 fail-closed). */
+export function diaryCountsReady(
+  owner: string | null,
+  currentKey: string | null,
+): boolean {
+  return owner != null && currentKey != null && owner === currentKey;
+}

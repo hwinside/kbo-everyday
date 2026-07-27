@@ -6,6 +6,8 @@ import {
   buildDiaryHomeGames,
   classifyDiaryPendingPoll,
   diaryAddSelectDisabled,
+  diaryCountsOwnerKey,
+  diaryCountsReady,
   diaryBottomCta,
   diaryCanStartUpload,
   diaryCaptionForSubmit,
@@ -742,6 +744,42 @@ async function runAsyncRegressions() {
   assert.equal(diaryAddSelectDisabled(true, 0), false, "확정 후 0개 선택 가능");
   assert.equal(diaryAddSelectDisabled(true, 2), false, "확정 후 부분은 추가 가능");
   assert.equal(diaryAddSelectDisabled(true, 10), true, "확정 후 10/10 은 잠김");
+
+  // ── counts owner-key: 재오픈/유저 전환 첫 렌더 stale counts fail-closed ──
+  // 시나리오: user A 로 open(seq1) → counts 확정(owner=A:1) → 닫기 → 재오픈(seq2).
+  // 재오픈 첫 렌더는 currentKey=A:2 인데 owner 는 아직 A:1 → 불일치 → ready=false(선택 차단).
+  const openerA1 = diaryCountsOwnerKey("userA", 1);
+  assert.equal(
+    diaryCountsReady(openerA1, diaryCountsOwnerKey("userA", 1)),
+    true,
+    "counts 확정된 같은 (user, open) 세션은 ready",
+  );
+  assert.equal(
+    diaryCountsReady(openerA1, diaryCountsOwnerKey("userA", 2)),
+    false,
+    "재오픈(openSeq 증가) 첫 렌더는 이전 counts owner 와 불일치 → fail-closed",
+  );
+  assert.equal(
+    diaryCountsReady(openerA1, diaryCountsOwnerKey("userB", 1)),
+    false,
+    "유저 전환 첫 렌더는 다른 user 라 불일치 → fail-closed(다른 유저 counts 잔존 0)",
+  );
+  assert.equal(
+    diaryCountsReady(null, diaryCountsOwnerKey("userA", 1)),
+    false,
+    "counts 미확정(owner=null)은 항상 fail-closed",
+  );
+  assert.equal(
+    diaryCountsReady(openerA1, null),
+    false,
+    "sheet 닫힘(currentKey=null)이면 ready 아님",
+  );
+  // fail-closed key 불일치 시엔 10/10 이든 뭐든 전부 선택 차단(diaryAddSelectDisabled 와 결합).
+  assert.equal(
+    diaryAddSelectDisabled(diaryCountsReady(openerA1, diaryCountsOwnerKey("userA", 2)), 2),
+    true,
+    "재오픈 첫 렌더는 2/10 경기도 선택 차단(이전 세션 count 노출 0)",
+  );
 }
 
 // 15) Blocker 4 — 2026 counts 소스로 10/10 경기는 2025 탭에서도 잠김(locked) 유지.
