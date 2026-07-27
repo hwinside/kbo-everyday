@@ -3249,6 +3249,15 @@
     "birthDate": "2000-03-18"
   },
   {
+    "name": "보스",
+    "kboId": "56402",
+    "teamId": 8,
+    "position": "투수",
+    "backNo": "43",
+    "team": "삼성",
+    "birthDate": "1992-06-26"
+  },
+  {
     "name": "블레인",
     "kboId": "FP023",
     "teamId": 5,
