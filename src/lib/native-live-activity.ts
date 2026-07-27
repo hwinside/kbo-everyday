@@ -51,6 +51,8 @@ interface LiveActivityPlugin {
   writeWidgetSnapshot(input: WidgetSnapshotInput): Promise<void>;
   setFavPlayers(opts: { json: string }): Promise<void>;
   setMyTeam(opts: { code: string }): Promise<void>;
+  getWidgetTapMode(): Promise<{ mode: string; refreshSupported: boolean }>;
+  setWidgetTapMode(opts: { mode: "open" | "refresh" }): Promise<void>;
   addListener(
     eventName: "liveActivityPushToken",
     listenerFunc: (data: { gameId: string; token: string }) => void,
@@ -376,6 +378,31 @@ export async function syncIosWidgetMyTeam(code: string): Promise<void> {
     await LiveActivity.setMyTeam({ code });
   } catch {
     /* silent — 부가 기능 */
+  }
+}
+
+/** iOS 홈 위젯 탭 동작 모드 조회 — mode('open'|'refresh', 기본 open) + refreshSupported(위젯
+ *  새로고침 인텐트 = iOS 17+). 비iOS/구빌드(메서드 부재)는 open + refreshSupported false. */
+export async function getIosWidgetTapMode(): Promise<{ mode: "open" | "refresh"; refreshSupported: boolean }> {
+  if (!isNativeIOS()) return { mode: "open", refreshSupported: false };
+  try {
+    const r = await LiveActivity.getWidgetTapMode();
+    return {
+      mode: r?.mode === "refresh" ? "refresh" : "open",
+      refreshSupported: r?.refreshSupported === true,
+    };
+  } catch {
+    return { mode: "open", refreshSupported: false }; // 메서드 부재 = 구빌드
+  }
+}
+
+/** iOS 홈 위젯 탭 동작 모드 저장(App Group widget_tap_mode). 구빌드/브릿지 실패는 silent. */
+export async function setIosWidgetTapMode(mode: "open" | "refresh"): Promise<void> {
+  if (!isNativeIOS()) return;
+  try {
+    await LiveActivity.setWidgetTapMode({ mode });
+  } catch {
+    /* silent — 구빌드/브릿지 실패(탭 동작은 기존 open 유지) */
   }
 }
 

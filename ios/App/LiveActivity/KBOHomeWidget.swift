@@ -242,6 +242,13 @@ struct KBOHomeWidgetEntryView: View {
     let entry: GameWidgetEntry
 
     var body: some View {
+        // '새로고침만' 모드(iOS17+)면 콘텐츠 전체를 새로고침 인텐트 버튼으로 감싼다(앱 미실행).
+        // containerBackground는 content 각 분기에 그대로 유지 — WidgetKit이 래핑과 무관하게 인식.
+        content.widgetTapRefreshWrap()
+    }
+
+    @ViewBuilder
+    private var content: some View {
         if let snap = entry.snapshot {
             let scheduled = snap.resolvedStatus == "scheduled" || snap.resolvedStatus == "cancelled"
             switch family {

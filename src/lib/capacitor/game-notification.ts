@@ -2,7 +2,12 @@
 
 import { registerPlugin } from "@capacitor/core";
 import { isAndroid, isIOS } from "./platform";
-import { syncIosWidgetFavPlayers, syncIosWidgetMyTeam } from "../native-live-activity";
+import {
+  syncIosWidgetFavPlayers,
+  syncIosWidgetMyTeam,
+  getIosWidgetTapMode,
+  setIosWidgetTapMode,
+} from "../native-live-activity";
 import { supabase } from "../supabase/client";
 import {
   createLockCardGateFence,
@@ -63,6 +68,13 @@ interface GameNotificationPlugin {
 
 /** 홈 위젯 탭 동작 — 'open'(탭 시 앱 실행, 기본) | 'refresh'(앱 안 열고 위젯만 재렌더). */
 export type WidgetTapMode = "open" | "refresh";
+
+/** 홈 위젯 탭 동작 상태. refreshSupported = '새로고침만' 옵션이 실제 동작하는지
+ *  (안드는 항상 true, iOS는 위젯 새로고침 인텐트가 iOS 17+ 전용이라 iOS17+에서만 true). */
+export interface WidgetTapModeState {
+  mode: WidgetTapMode;
+  refreshSupported: boolean;
+}
 
 /** Android 16+(One UI 8.5) 잠금화면 라이브 카드(Promoted Ongoing) 지원/opt-in 상태. */
 export interface LiveUpdateState {
@@ -258,19 +270,25 @@ export async function setLiveUpdateOptIn(enabled: boolean): Promise<boolean> {
   }
 }
 
-/** 홈 위젯 탭 동작 모드 조회(디바이스 로컬, 안드 전용). 비안드/구빌드(메서드 부재)는 기본 'open'. */
-export async function getWidgetTapMode(): Promise<WidgetTapMode> {
-  if (!isAndroid) return "open";
+/** 홈 위젯 탭 동작 모드 조회(디바이스 로컬). iOS는 LiveActivity 브릿지, 안드는 GameNotification.
+ *  비네이티브/구빌드(메서드 부재)는 기본 'open'. refreshSupported는 안드 항상 true, iOS는 iOS17+에서만 true. */
+export async function getWidgetTapMode(): Promise<WidgetTapModeState> {
+  if (isIOS) return getIosWidgetTapMode();
+  if (!isAndroid) return { mode: "open", refreshSupported: false };
   try {
     const r = await GameNotification.getWidgetTapMode();
-    return r?.mode === "refresh" ? "refresh" : "open";
+    return {
+      mode: r?.mode === "refresh" ? "refresh" : "open",
+      refreshSupported: true, // 안드는 항상 지원(undefined→true 정규화)
+    };
   } catch {
-    return "open"; // 메서드 부재 = 구빌드
+    return { mode: "open", refreshSupported: true }; // 메서드 부재=구빌드, 그래도 안드는 지원 정규화
   }
 }
 
-/** 홈 위젯 탭 동작 모드 저장(디바이스 로컬, 안드 전용). 구빌드/브릿지 실패는 silent. */
+/** 홈 위젯 탭 동작 모드 저장(디바이스 로컬). iOS는 LiveActivity, 안드는 GameNotification. 구빌드/브릿지 실패는 silent. */
 export async function setWidgetTapMode(mode: WidgetTapMode): Promise<void> {
+  if (isIOS) { await setIosWidgetTapMode(mode); return; }
   if (!isAndroid) return;
   try {
     await GameNotification.setWidgetTapMode({ mode });

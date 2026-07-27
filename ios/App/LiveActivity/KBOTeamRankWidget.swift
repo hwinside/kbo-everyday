@@ -323,6 +323,8 @@ struct KBOTeamRankWidgetEntryView: View {
                 }
             }
         }
+        // '새로고침만' 모드(iOS17+)면 콘텐츠를 새로고침 인텐트로 감싸고, 마진/배경은 바깥에 유지.
+        .widgetTapRefreshWrap()
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
         .widgetBG { RankColor.bg }
