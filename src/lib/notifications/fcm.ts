@@ -74,16 +74,20 @@ export interface PushPayload {
  * 반드시 이걸 spread해야 한다 — 한 경로라도 빠지면 그 메시지는 FCM 기본(비collapse·최대 4주
  * 보관)으로 남아, 절전 복귀 시 옛 LIVE가 game_end *뒤에* 도착해 위젯을 되살릴 수 있다(삼순 #649).
  *
- * 단일 stream key: 위젯은 기기당 한 경기 상태만 보관하므로 경기별 키가 아닌 단일 키로 묶어야
- * 미배달분 전체에서 최신 1건만 남고(신·구 경기 간 순서 역전 차단), collapse key 4개/기기
- * 한도도 1개로 고정된다.
+ * stream key 분리: live tick은 경기별 아닌 단일 key(kbo_widget_stream)로 묶어 미배달 백로그가
+ * 최신 1건만 남게 한다. terminal(종료/취소 clear)은 *별도* key(kbo_widget_end)로 보내, live 스트림의
+ * collapse에 묻히거나 밀려나지 않게 한다(P0 인시던트: 종료됐는데 위젯이 9회로 얼어붙어 안 사라짐).
+ * (딥슬립 유실 복구용 escalating blind resend는 S1-b에서 이 terminal 버킷 위에 얹는다.)
+ * 서로 다른 key 사이의 순서는 FCM이 보장하지 않는다. 그래서 terminal payload는 w_final
+ * tombstone을 싣고, S2 native가 같은 경기의 후속 LIVE를 send-time과 무관하게 거부한다.
+ * key는 2개라 FCM 4개/기기 한도 안이다.
  * TTL 분리: live tick은 다음 틱이 곧 덮어쓰므로 90s에 폐기(뒤늦은 배달이 terminal을 덮지 않게),
- * terminal(종료/취소)은 장시간 오프라인 복귀에도 마지막 상태가 배달되도록 24h — 이후엔 다음
- * 경기 pregame/live push가 같은 스트림 키로 자연 대체한다.
+ * terminal은 장시간 오프라인 복귀에도 마지막 상태가 배달되도록 24h — 이후엔 다음 경기
+ * pregame/live push가 live 스트림 key로 자연 대체한다.
  */
 export const WIDGET_STREAM = {
   live: { collapseKey: "kbo_widget_stream", ttlSeconds: 90 },
-  terminal: { collapseKey: "kbo_widget_stream", ttlSeconds: 24 * 60 * 60 },
+  terminal: { collapseKey: "kbo_widget_end", ttlSeconds: 24 * 60 * 60 },
 } as const;
 
 /**
@@ -92,6 +96,24 @@ export const WIDGET_STREAM = {
  * send-time이라 같은 경기에서 더 작은/같은 값은 옛 배달로 보고 버린다.
  */
 export const WIDGET_CONTROL_KINDS = new Set(["game_live", "game_cancel", "game_end"]);
+
+/** Firebase Admin SDK용 Android delivery 설정. */
+export function buildAndroidConfig(payload: PushPayload) {
+  return {
+    ...(payload.dataOnly ? { priority: "high" as const } : {}),
+    ...(payload.collapseKey ? { collapseKey: payload.collapseKey } : {}),
+    ...(payload.ttlSeconds != null ? { ttl: payload.ttlSeconds * 1000 } : {}),
+  };
+}
+
+/** FCM HTTP v1 deadline transport용 Android delivery 설정. */
+export function buildDeadlineAndroidConfig(payload: PushPayload) {
+  return {
+    ...(payload.dataOnly ? { priority: "HIGH" as const } : {}),
+    ...(payload.collapseKey ? { collapse_key: payload.collapseKey } : {}),
+    ...(payload.ttlSeconds != null ? { ttl: `${payload.ttlSeconds}s` } : {}),
+  };
+}
 
 /**
  * 대상 유저들에게 FCM 발송.
@@ -283,11 +305,7 @@ export async function sendFcmToTokens(
     // Android 설정 — data-only는 high priority(Doze 우회), collapseKey/ttl은 지정 시만.
     // 라이브 위젯처럼 매분 갱신되는 푸시에 (경기별 collapseKey + 짧은 ttl)을 주면 옛 상태
     // 백로그 대신 최신 1건만 배달된다. admin SDK의 ttl은 밀리초 단위.
-    const androidCfg = {
-      ...(payload.dataOnly ? { priority: "high" as const } : {}),
-      ...(payload.collapseKey ? { collapseKey: payload.collapseKey } : {}),
-      ...(payload.ttlSeconds != null ? { ttl: payload.ttlSeconds * 1000 } : {}),
-    };
+    const androidCfg = buildAndroidConfig(payload);
     if (opts?.deadlineAtMs != null) {
       const raw = process.env.FIREBASE_SERVICE_ACCOUNT;
       const projectId = raw
@@ -300,11 +318,7 @@ export async function sendFcmToTokens(
         ...(Object.keys(dataBlock).length ? { data: dataBlock } : {}),
         ...(Object.keys(androidCfg).length
           ? {
-              android: {
-                ...(payload.dataOnly ? { priority: "HIGH" as const } : {}),
-                ...(payload.collapseKey ? { collapse_key: payload.collapseKey } : {}),
-                ...(payload.ttlSeconds != null ? { ttl: `${payload.ttlSeconds}s` } : {}),
-              },
+              android: buildDeadlineAndroidConfig(payload),
             }
           : {}),
         ...(payload.apnsBackground || payload.apnsCollapseId || payload.apnsExpirationSeconds != null
