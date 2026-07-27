@@ -3,6 +3,7 @@ package fan.keubo.app;
 import android.app.PendingIntent;
 import android.appwidget.AppWidgetManager;
 import android.appwidget.AppWidgetProvider;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 
@@ -51,5 +52,30 @@ public final class WidgetTapMode {
         }
         Intent launch = context.getPackageManager().getLaunchIntentForPackage(context.getPackageName());
         return PendingIntent.getActivity(context, appWidgetId, launch, flags);
+    }
+
+    /** 홈 위젯 provider 4종 — 모드 변경 즉시 재렌더 대상(설치된 인스턴스만). */
+    private static final Class<?>[] PROVIDERS = {
+        GameScoreWidget.class,
+        GameScoreWidgetSmall.class,
+        PlayerCardWidget.class,
+        TeamRankWidget.class,
+    };
+
+    /** setMode 직후 호출 — 설치된 4종 위젯 provider의 모든 인스턴스를 즉시 재렌더한다
+     *  (self ACTION_APPWIDGET_UPDATE broadcast → onUpdate가 새 모드로 tapIntent 재빌드).
+     *  이게 없으면 prefs만 바뀌고 기존 PendingIntent가 남아 첫 탭이 옛 모드로 동작(삼순 ③).
+     *  설치 인스턴스가 없는 provider는 broadcast를 보내지 않는다(빈 id 배열 skip). */
+    static void applyToAllWidgets(Context context) {
+        AppWidgetManager mgr = AppWidgetManager.getInstance(context);
+        if (mgr == null) return;
+        for (Class<?> provider : PROVIDERS) {
+            int[] ids = mgr.getAppWidgetIds(new ComponentName(context, provider));
+            if (ids == null || ids.length == 0) continue;
+            Intent update = new Intent(context, provider);
+            update.setAction(AppWidgetManager.ACTION_APPWIDGET_UPDATE);
+            update.putExtra(AppWidgetManager.EXTRA_APPWIDGET_IDS, ids);
+            context.sendBroadcast(update);
+        }
     }
 }

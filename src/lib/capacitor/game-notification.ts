@@ -1,7 +1,7 @@
 "use client";
 
 import { registerPlugin } from "@capacitor/core";
-import { isAndroid, isIOS } from "./platform";
+import { isAndroid, isIOS, isNativeRuntime, isIosNativeRuntime } from "./platform";
 import {
   syncIosWidgetFavPlayers,
   syncIosWidgetMyTeam,
@@ -62,7 +62,7 @@ interface GameNotificationPlugin {
   setLiveUpdateOptIn(opts: { enabled: boolean }): Promise<void>;
   setLockCardEnabled(opts: { enabled: boolean }): Promise<void>;
   getLockCardGateState(): Promise<{ enabled: boolean }>;
-  getWidgetTapMode(): Promise<{ mode: WidgetTapMode }>;
+  getWidgetTapMode(): Promise<{ mode: WidgetTapMode; refreshSupported?: boolean }>;
   setWidgetTapMode(opts: { mode: WidgetTapMode }): Promise<void>;
 }
 
@@ -270,30 +270,71 @@ export async function setLiveUpdateOptIn(enabled: boolean): Promise<boolean> {
   }
 }
 
+// 원격 로드 dual-instance 우회 — registerPlugin(정적 core) 호출 실패 시 주입 브릿지
+// (window.Capacitor.Plugins.GameNotification) 직접 호출로 대체(native-live-activity getAppBuild 패턴 미러).
+interface InjectedGameNotification {
+  getWidgetTapMode?: () => Promise<{ mode?: WidgetTapMode; refreshSupported?: boolean }>;
+  setWidgetTapMode?: (opts: { mode: WidgetTapMode }) => Promise<void>;
+}
+function injectedGameNotification(): InjectedGameNotification | undefined {
+  if (typeof window === "undefined") return undefined;
+  return (window as unknown as {
+    Capacitor?: { Plugins?: { GameNotification?: InjectedGameNotification } };
+  }).Capacitor?.Plugins?.GameNotification;
+}
+
 /** 홈 위젯 탭 동작 모드 조회(디바이스 로컬). iOS는 LiveActivity 브릿지, 안드는 GameNotification.
- *  비네이티브/구빌드(메서드 부재)는 기본 'open'. refreshSupported는 안드 항상 true, iOS는 iOS17+에서만 true. */
+ *  플러폼 분기는 정적 isIOS/isAndroid 대신 런타임 판정(원격 로드 web 오판 방지, 삼순 #833).
+ *  capability(refreshSupported)는 성공한 네이티브 응답에서만 — 메서드 부재/throw(구빌드)는
+ *  {open, refreshSupported:false} fail-closed(삼순 ④: 구빌드 오탐 금지). */
 export async function getWidgetTapMode(): Promise<WidgetTapModeState> {
-  if (isIOS) return getIosWidgetTapMode();
-  if (!isAndroid) return { mode: "open", refreshSupported: false };
+  if (isIosNativeRuntime()) return getIosWidgetTapMode();
+  if (!isNativeRuntime()) return { mode: "open", refreshSupported: false };
+  // 안드로이드 네이티브
   try {
     const r = await GameNotification.getWidgetTapMode();
     return {
       mode: r?.mode === "refresh" ? "refresh" : "open",
-      refreshSupported: true, // 안드는 항상 지원(undefined→true 정규화)
+      refreshSupported: r?.refreshSupported === true, // 안드 네이티브가 명시 반환해야 지원 간주
     };
   } catch {
-    return { mode: "open", refreshSupported: true }; // 메서드 부재=구빌드, 그래도 안드는 지원 정규화
+    // dual-instance 우회: 주입 브릿지 직접 호출
+    const inj = injectedGameNotification();
+    if (inj?.getWidgetTapMode) {
+      try {
+        const r = await inj.getWidgetTapMode();
+        return {
+          mode: r?.mode === "refresh" ? "refresh" : "open",
+          refreshSupported: r?.refreshSupported === true,
+        };
+      } catch {
+        /* fall through → fail-closed */
+      }
+    }
+    return { mode: "open", refreshSupported: false }; // 메서드 부재 = 구빌드 → fail-closed
   }
 }
 
-/** 홈 위젯 탭 동작 모드 저장(디바이스 로컬). iOS는 LiveActivity, 안드는 GameNotification. 구빌드/브릿지 실패는 silent. */
-export async function setWidgetTapMode(mode: WidgetTapMode): Promise<void> {
-  if (isIOS) { await setIosWidgetTapMode(mode); return; }
-  if (!isAndroid) return;
+/** 홈 위젯 탭 동작 모드 저장(디바이스 로컬). iOS는 LiveActivity, 안드는 GameNotification.
+ *  성공 여부 반환 — 저장 실패(구빌드/브릿지) 시 카드가 이전 선택으로 롤백(삼순 ④). */
+export async function setWidgetTapMode(mode: WidgetTapMode): Promise<boolean> {
+  if (isIosNativeRuntime()) return setIosWidgetTapMode(mode);
+  if (!isNativeRuntime()) return false;
   try {
     await GameNotification.setWidgetTapMode({ mode });
+    return true;
   } catch {
-    // silent — 구빌드/브릿 실패(탭 동작은 기존 open 유지)
+    // dual-instance 우회: 주입 브릿지 직접 호출
+    const inj = injectedGameNotification();
+    if (inj?.setWidgetTapMode) {
+      try {
+        await inj.setWidgetTapMode({ mode });
+        return true;
+      } catch {
+        /* fall through */
+      }
+    }
+    return false; // 구빌드/브릿지 실패 → 카드 롤백
   }
 }
 

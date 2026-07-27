@@ -16,10 +16,14 @@ import SwiftUI
 import WidgetKit
 import AppIntents
 
+/// App Group 식별자 — 익스텐션 로컬 리터럴(KBOHomeWidget kAppGroup 등과 동일 값).
+/// WidgetSnapshotStore는 App 타깃 전용이라 익스텐션엔 없어 참조 불가 → 파일 로컬 상수로 소유한다.
+private let kTapModeAppGroup = "group.fan.keubo.app"
+
 /// 홈 위젯 탭 동작이 '새로고침만'(refresh)인지 여부 — App Group에서 읽는다.
 /// 미설정/‘open’은 false → 위젯 탭 시 기존 동작(앱 열림). 저장은 LiveActivityPlugin.setWidgetTapMode.
 func widgetTapRefreshOnly() -> Bool {
-    UserDefaults(suiteName: WidgetSnapshotStore.appGroupId)?
+    UserDefaults(suiteName: kTapModeAppGroup)?
         .string(forKey: "widget_tap_mode") == "refresh"
 }
 

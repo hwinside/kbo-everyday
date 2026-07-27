@@ -1,4 +1,5 @@
 import { registerPlugin, Capacitor } from "@capacitor/core";
+import { isIosNativeRuntime } from "@/lib/capacitor/platform";
 import { supabase } from "@/lib/supabase/client";
 import { getMyTeamId } from "@/lib/store/myteam";
 import { parseGameIdCodes, pickMyTeamStartableGame } from "@/lib/notifications/la-autostart-policy";
@@ -381,10 +382,24 @@ export async function syncIosWidgetMyTeam(code: string): Promise<void> {
   }
 }
 
+// 원격 로드 dual-instance 우회 — registerPlugin(정적 core) 호출 실패 시 주입 브릿지
+// (window.Capacitor.Plugins.LiveActivity) 직접 호출로 대체(getAppBuild App 플러그인 패턴 미러).
+interface InjectedTapModePlugin {
+  getWidgetTapMode?: () => Promise<{ mode?: string; refreshSupported?: boolean }>;
+  setWidgetTapMode?: (opts: { mode: "open" | "refresh" }) => Promise<void>;
+}
+function injectedLiveActivity(): InjectedTapModePlugin | undefined {
+  if (typeof window === "undefined") return undefined;
+  return (window as unknown as {
+    Capacitor?: { Plugins?: { LiveActivity?: InjectedTapModePlugin } };
+  }).Capacitor?.Plugins?.LiveActivity;
+}
+
 /** iOS 홈 위젯 탭 동작 모드 조회 — mode('open'|'refresh', 기본 open) + refreshSupported(위젯
- *  새로고침 인텐트 = iOS 17+). 비iOS/구빌드(메서드 부재)는 open + refreshSupported false. */
+ *  새로고침 인텐트 = iOS 17+). 비iOS/구빌드(메서드 부재)는 open + refreshSupported false.
+ *  게이트는 정적 isNativeIOS 대신 isIosNativeRuntime() — 원격 로드 앱 web 오판 방지(삼순 #833). */
 export async function getIosWidgetTapMode(): Promise<{ mode: "open" | "refresh"; refreshSupported: boolean }> {
-  if (!isNativeIOS()) return { mode: "open", refreshSupported: false };
+  if (!isIosNativeRuntime()) return { mode: "open", refreshSupported: false };
   try {
     const r = await LiveActivity.getWidgetTapMode();
     return {
@@ -392,17 +407,41 @@ export async function getIosWidgetTapMode(): Promise<{ mode: "open" | "refresh";
       refreshSupported: r?.refreshSupported === true,
     };
   } catch {
+    // dual-instance 우회: 주입 브릿지 직접 호출
+    const inj = injectedLiveActivity();
+    if (inj?.getWidgetTapMode) {
+      try {
+        const r = await inj.getWidgetTapMode();
+        return {
+          mode: r?.mode === "refresh" ? "refresh" : "open",
+          refreshSupported: r?.refreshSupported === true,
+        };
+      } catch {
+        /* fall through → fail-closed */
+      }
+    }
     return { mode: "open", refreshSupported: false }; // 메서드 부재 = 구빌드
   }
 }
 
-/** iOS 홈 위젯 탭 동작 모드 저장(App Group widget_tap_mode). 구빌드/브릿지 실패는 silent. */
-export async function setIosWidgetTapMode(mode: "open" | "refresh"): Promise<void> {
-  if (!isNativeIOS()) return;
+/** iOS 홈 위젯 탭 동작 모드 저장(App Group widget_tap_mode). 성공 여부 반환(저장 실패 시
+ *  카드 롤백용, 삼순 ④). 구빌드/브릿지 실패는 주입 브릿지 폴백 후 false. */
+export async function setIosWidgetTapMode(mode: "open" | "refresh"): Promise<boolean> {
+  if (!isIosNativeRuntime()) return false;
   try {
     await LiveActivity.setWidgetTapMode({ mode });
+    return true;
   } catch {
-    /* silent — 구빌드/브릿지 실패(탭 동작은 기존 open 유지) */
+    const inj = injectedLiveActivity();
+    if (inj?.setWidgetTapMode) {
+      try {
+        await inj.setWidgetTapMode({ mode });
+        return true;
+      } catch {
+        /* fall through */
+      }
+    }
+    return false; // 구빌드/브릿지 실패 → 카드 롤백
   }
 }
 

@@ -31,4 +31,19 @@ public class WidgetTapModeTest {
         assertFalse(WidgetTapMode.resolveRefreshOnly("garbage"));
         assertFalse(WidgetTapMode.resolveRefreshOnly(""));
     }
+
+    /**
+     * 삼순 ③ 회귀 — 탭 PendingIntent 종류(activity=open vs broadcast=refresh) 결정이
+     * 저장 모드에 *즉시* 종속됨을 고정한다. tapIntent가 isRefreshOnly(=resolveRefreshOnly)
+     * 단일 판정으로 분기하므로, 저장값이 바뀌면 다음 tapIntent 종류가 곧바로 뒤집힌다.
+     * (setter가 applyToAllWidgets로 즉시 재렌더를 트리거해 첫 탭부터 새 모드 적용.)
+     */
+    @Test
+    public void modeSwitchImmediatelyFlipsIntentKind() {
+        // open → refresh 전환: activity(false) → broadcast(true)
+        assertFalse(WidgetTapMode.resolveRefreshOnly(WidgetTapMode.MODE_OPEN));
+        assertTrue(WidgetTapMode.resolveRefreshOnly(WidgetTapMode.MODE_REFRESH));
+        // refresh → open 역전환: broadcast(true) → activity(false)
+        assertFalse(WidgetTapMode.resolveRefreshOnly(WidgetTapMode.MODE_OPEN));
+    }
 }

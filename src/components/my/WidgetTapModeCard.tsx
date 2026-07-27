@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { LayoutGrid, ChevronDown, ChevronUp } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
-import { isNative, isAndroid, isIOS } from "@/lib/capacitor/platform";
+import { isNativeRuntime } from "@/lib/capacitor/platform";
 import { getWidgetTapMode, setWidgetTapMode, type WidgetTapMode } from "@/lib/capacitor/game-notification";
 
 /**
@@ -19,7 +19,7 @@ export default function WidgetTapModeCard() {
 
   // 펼칠 때 현재 저장된 모드 로드(안드/iOS — 브릿지 실패 시 'open' 유지).
   useEffect(() => {
-    if (!expanded || !(isAndroid || isIOS)) return;
+    if (!expanded || !isNativeRuntime()) return;
     let cancelled = false;
     void (async () => {
       const s = await getWidgetTapMode();
@@ -34,12 +34,14 @@ export default function WidgetTapModeCard() {
   const choose = useCallback(async (next: WidgetTapMode) => {
     if (next === mode) return;
     if (next === "refresh" && !refreshSupported) return; // 미지원 옵션 방어
-    setMode(next);
-    await setWidgetTapMode(next);
+    const prev = mode;
+    setMode(next); // 낙관적 반영
+    const ok = await setWidgetTapMode(next);
+    if (!ok) setMode(prev); // 저장 실패(구빌드/브릿지) → 이전 선택 롤백(삼순 ④)
   }, [mode, refreshSupported]);
 
-  // 안드로이드/iOS 네이티브 전용 — 웹엔 노출하지 않는다.
-  if (!isNative || !(isAndroid || isIOS)) return null;
+  // 안드로이드/iOS 네이티브 전용 — 웹엔 노출하지 않는다(원격 로드 런타임 판정, 삼순 #833).
+  if (!isNativeRuntime()) return null;
 
   return (
     <GlassCard className="p-5">
