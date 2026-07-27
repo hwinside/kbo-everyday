@@ -343,25 +343,20 @@ export async function notifyGameStatusTransitions(
 
     // watchdog은 bulk state를 재사용한다. 일반 warmup도 게임별 조회를 병렬 격리해 첫 DB
     // hang이 나머지 경기의 snapshot open을 굶기지 않는다.
-    const stateRows = await Promise.all(liveGames.map(async (game) => {
+    const prepareStart = async (game: KboRawGame) => {
       const gameId = game.G_ID as string;
       const preloaded = opts?.preloadedStartStates?.get(gameId);
-      if (preloaded !== undefined) return { game, seenRow: preloaded };
-      if (Date.now() >= routeDeadlineAtMs) return { game, seenRow: null, failed: true };
-      try {
-        return {
-          game,
-          seenRow: await readStartState(gameId, routeDeadlineAtMs),
-        };
-      } catch (error) {
-        console.error(`[game-status] start state read failed game=${gameId}:`, (error as Error).message);
-        return { game, seenRow: null, failed: true };
+      let seenRow: StartStateRow | null | undefined = preloaded;
+      if (seenRow === undefined) {
+        if (Date.now() >= routeDeadlineAtMs) return null;
+        try {
+          seenRow = await readStartState(gameId, routeDeadlineAtMs);
+        } catch (error) {
+          console.error(`[game-status] start state read failed game=${gameId}:`, (error as Error).message);
+          return null;
+        }
       }
-    }));
-
-    const openResults = await Promise.all(stateRows.map(async ({ game, seenRow, failed }) => {
-      const gameId = game.G_ID as string;
-      if (failed || seenRow?.start_notified || Date.now() >= routeDeadlineAtMs) return null;
+      if (seenRow?.start_notified || Date.now() >= routeDeadlineAtMs) return null;
       const lastSeenMs = seenRow?.last_seen_scheduled_at
         ? Date.parse(seenRow.last_seen_scheduled_at)
         : null;
@@ -423,11 +418,45 @@ export async function notifyGameStatusTransitions(
         console.error(`[game-status] start snapshot failed game=${gameId}:`, (error as Error).message);
         return null;
       }
-    }));
-    opened.push(...openResults.filter((item): item is NonNullable<typeof item> => item !== null));
+    };
 
-    let active = opened;
-    while (active.length > 0 && Date.now() < routeDeadlineAtMs) {
+    const ready: typeof opened = [];
+    let pendingPreparations = liveGames.length;
+    let wakeReady: (() => void) | null = null;
+    const signalReady = () => {
+      wakeReady?.();
+      wakeReady = null;
+    };
+    const preparations = liveGames.map(async (game) => {
+      try {
+        const item = await prepareStart(game);
+        if (item) {
+          opened.push(item);
+          ready.push(item);
+        }
+      } catch (error) {
+        console.error(
+          `[game-status] start preparation failed game=${game.G_ID ?? "unknown"}:`,
+          (error as Error).message,
+        );
+      } finally {
+        pendingPreparations -= 1;
+        signalReady();
+      }
+    });
+
+    while ((pendingPreparations > 0 || ready.length > 0) && Date.now() < routeDeadlineAtMs) {
+      if (ready.length === 0) {
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, Math.max(1, routeDeadlineAtMs - Date.now()));
+          wakeReady = () => {
+            clearTimeout(timer);
+            resolve();
+          };
+        });
+        continue;
+      }
+      const active = ready.splice(0);
       const round = await Promise.all(active.map(async (item) => {
         const nowMs = Date.now();
         const attemptDeadlineAtMs = Math.min(
@@ -468,10 +497,11 @@ export async function notifyGameStatusTransitions(
         item.acceptedDelta += batches.reduce((sum, batch) => sum + batch.fcmAcceptedDelta, 0);
         return { item, claimed, pending };
       }));
-      active = round
+      ready.push(...round
         .filter(({ claimed, pending }) => claimed > 0 && pending > 0)
-        .map(({ item }) => item);
+        .map(({ item }) => item));
     }
+    void Promise.allSettled(preparations);
 
     await Promise.all(opened.map(async (item) => {
       if (Date.now() >= routeDeadlineAtMs) return;

@@ -617,8 +617,8 @@ test("watchdog actual wiring: bulk state 재사용 + 첫 snapshot slow 격리 + 
     currentBatterIsLeadoff: true,
   }]));
   let stateReads = 0;
-  let batches = 0;
-  let finalizes = 0;
+  const batchStartedAt: number[] = [];
+  const finalizeStartedAt: number[] = [];
   const opened: string[] = [];
 
   const result = await notify(games, {
@@ -642,21 +642,106 @@ test("watchdog actual wiring: bulk state 재사용 + 첫 snapshot slow 격리 + 
         return startedAt + 90_000;
       },
       deliverStartBatch: async () => {
-        batches += 1;
-        throw new Error("deadline 뒤 batch 시작 금지");
+        batchStartedAt.push(Date.now());
+        return {
+          claimed: 0,
+          snapshotCompleted: true,
+          fcmAcceptedDelta: 0,
+          fcmAcceptedTotal: 0,
+          deviceDelivered: null,
+          pending: 0,
+          permanentFailed: 0,
+          expired: 0,
+        };
       },
       finalizeStart: async () => {
-        finalizes += 1;
-        throw new Error("deadline 뒤 finalize 시작 금지");
+        finalizeStartedAt.push(Date.now());
+        return {
+          claimed: 0,
+          snapshotCompleted: true,
+          fcmAcceptedDelta: 0,
+          fcmAcceptedTotal: 0,
+          deviceDelivered: null,
+          pending: 0,
+          permanentFailed: 0,
+          expired: 0,
+        };
       },
     },
   });
 
   assert.equal(stateReads, 0, "게임별 state 재조회 0 — route bulk map 재사용");
   assert.deepEqual(new Set(opened), new Set(gameIds), "첫 snapshot slow여도 두 경기 open은 병렬 시작");
-  assert.equal(batches, 0, "deadline 도달 뒤 FCM/claim batch 시작 0");
-  assert.equal(finalizes, 0, "deadline 도달 뒤 finalize RPC 시작 0");
+  assert.ok(batchStartedAt.every((at) => at < deadlineAtMs), "deadline 도달 뒤 FCM/claim batch 시작 0");
+  assert.ok(finalizeStartedAt.every((at) => at < deadlineAtMs), "deadline 도달 뒤 finalize RPC 시작 0");
   assert.equal(result.started, 0);
+});
+
+test("watchdog actual wiring: 한 snapshot이 deadline까지 hang해도 FAST 경기는 즉시 drain", async () => {
+  const notify = await loadNotify();
+  const startedAt = Date.now();
+  const deadlineAtMs = startedAt + 80;
+  const gameIds = ["HANG", "FAST"];
+  const games = gameIds.map((gameId) => liveGame({
+    G_ID: gameId,
+    G_DT: "20260727",
+    AWAY_NM: "LG",
+    HOME_NM: "KT",
+  }));
+  const preloadedStartStates = new Map(gameIds.map((gameId) => [gameId, {
+    start_notified: false,
+    last_seen_scheduled_at: new Date(startedAt - 60_000).toISOString(),
+    start_snapshot_at: null,
+    start_snapshot_deadline_at: null,
+  }]));
+  const evidence = new Map(gameIds.map((gameId) => [gameId, {
+    completedPlateAppearances: 0,
+    currentBatterIsLeadoff: true,
+  }]));
+  const batches: string[] = [];
+
+  await notify(games, {
+    observedAtMs: startedAt,
+    deadlineAtMs,
+    preloadedStartStates,
+    startPlateAppearanceByGame: evidence,
+    startDeps: {
+      storeScheduledSeen: async () => {},
+      markStart: async () => {},
+      openStart: async ({ gameId, requestDeadlineAtMs }) => {
+        if (gameId === "HANG") {
+          await new Promise((resolve) => setTimeout(resolve, requestDeadlineAtMs! - Date.now()));
+          throw new Error("deadline");
+        }
+        return startedAt + 90_000;
+      },
+      deliverStartBatch: async ({ gameId }) => {
+        batches.push(gameId);
+        return {
+          claimed: 1,
+          snapshotCompleted: true,
+          fcmAcceptedDelta: 1,
+          fcmAcceptedTotal: 1,
+          deviceDelivered: null,
+          pending: 0,
+          permanentFailed: 0,
+          expired: 0,
+        };
+      },
+      finalizeStart: async () => ({
+        snapshotCompleted: true,
+        fcmAcceptedDelta: 1,
+        fcmAcceptedTotal: 1,
+        deviceDelivered: null,
+        pending: 0,
+        permanentFailed: 0,
+        expired: 0,
+      }),
+    },
+  });
+
+  assert.equal(batches.length, 2, "FAST 경기는 게임별 batch concurrency 2로 즉시 drain");
+  assert.ok(batches.every((gameId) => gameId === "FAST"), "HANG 경기 batch는 시작하지 않는다");
 });
 
 // 실행 동작은 qa:la-born-marking이 검증한다. 여기서는 production 함수가 그 검증된
