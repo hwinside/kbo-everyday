@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { isAdminAuthedRequest } from "@/lib/admin/pin";
+import { signPrivateRefs, resolveServeUrl } from "@/lib/venue-stories/media-url";
 
 // GET: 최근 직관 스토리 목록(어드민 모더레이션)
 export async function GET(req: NextRequest) {
@@ -10,7 +11,7 @@ export async function GET(req: NextRequest) {
   const { data: rows, error } = await supabase
     .from("venue_stories")
     .select(
-      "id, game_id, user_id, media_type, media_url, thumb_url, caption, status, report_count, stadium_name, created_at",
+      "id, game_id, user_id, media_type, media_url, media_bucket, media_path, thumb_url, thumb_bucket, thumb_path, caption, status, report_count, stadium_name, created_at",
     )
     .in("status", ["active", "pending"])
     .order("created_at", { ascending: false })
@@ -30,12 +31,36 @@ export async function GET(req: NextRequest) {
     for (const p of profiles ?? []) nickMap.set(p.id as string, (p.nickname as string) ?? "");
   }
 
+  // A안 A1: private venue-media/staging 객체는 signed URL 로 모더레이션 미리보기(레거시 공개 버킷은 공개 URL).
+  // admin 은 검증 전 원본 미리보기가 필요해 venue-staging 도 mint 허용(publicServe 기본 false).
+  const signed = await signPrivateRefs(
+    list.flatMap((r) => [
+      { bucket: r.media_bucket as string | null, path: r.media_path as string | null },
+      { bucket: r.thumb_bucket as string | null, path: r.thumb_path as string | null },
+    ]),
+  );
+
   const stories = list.map((r) => ({
     id: r.id,
     gameId: r.game_id,
     mediaType: r.media_type,
-    mediaUrl: r.media_url,
-    thumbUrl: r.thumb_url,
+    // fail-closed: private 객체 서명 실패 시 null — raw 저장 경로(공개 접근 형태) 폴백 금지(유출 방지).
+    mediaUrl: resolveServeUrl(
+      {
+        bucket: r.media_bucket as string | null,
+        path: r.media_path as string | null,
+        url: (r.media_url as string) ?? null,
+      },
+      signed,
+    ),
+    thumbUrl: resolveServeUrl(
+      {
+        bucket: r.thumb_bucket as string | null,
+        path: r.thumb_path as string | null,
+        url: (r.thumb_url as string) ?? null,
+      },
+      signed,
+    ),
     caption: r.caption,
     status: r.status,
     reportCount: r.report_count,

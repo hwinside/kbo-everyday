@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "generatedFrom": "20e32ac0448346d53e7e62a02acd773f201711aa",
+  "generatedFrom": "d46ded32818f8dc6b85ef690ce3968862f6fff08",
   "violations": {
     "0034fe9a6a6cff327c64": {
       "count": 1,
@@ -316,20 +316,6 @@
       "file": "src/app/(main)/whats-new/page.tsx",
       "subject": "likes",
       "detail": "add a bound, unique-key lookup, or query-guard annotation"
-    },
-    "36a528bc115516445676": {
-      "count": 1,
-      "kind": "ambiguous_growing_limit",
-      "file": "src/app/api/admin/venue-stories/route.ts",
-      "subject": "venue_stories",
-      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
-    },
-    "37b9930a6b5670e26a47": {
-      "count": 1,
-      "kind": "ambiguous_growing_limit",
-      "file": "src/app/api/venue-stories/route.ts",
-      "subject": "venue_stories",
-      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
     },
     "38a334a2dd70292520a3": {
       "count": 1,
@@ -919,6 +905,13 @@
       "subject": "player_stats_pitcher",
       "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
     },
+    "996ec3d40d9ad0ad01a5": {
+      "count": 1,
+      "kind": "ambiguous_growing_limit",
+      "file": "src/app/api/admin/venue-stories/route.ts",
+      "subject": "venue_stories",
+      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
+    },
     "9cac00fcdf1a5fc4b555": {
       "count": 1,
       "kind": "unbounded_growing_select",
@@ -1108,20 +1101,6 @@
       "subject": "roster_snapshots",
       "detail": "add a bound, unique-key lookup, or query-guard annotation"
     },
-    "bf2fa26e8f843ecf2a48": {
-      "count": 1,
-      "kind": "unbounded_growing_select",
-      "file": "src/lib/supabase/useDM.ts",
-      "subject": "dm_messages",
-      "detail": "add a bound, unique-key lookup, or query-guard annotation"
-    },
-    "c07f5f9c351a0cd3ec55": {
-      "count": 1,
-      "kind": "unbounded_growing_select",
-      "file": "src/lib/supabase/useUnreadDMCount.ts",
-      "subject": "dm_conversations",
-      "detail": "add a bound, unique-key lookup, or query-guard annotation"
-    },
     "c09a27262f8a1158edf4": {
       "count": 1,
       "kind": "unbounded_growing_select",
@@ -1218,13 +1197,6 @@
       "kind": "unbounded_growing_select",
       "file": "src/app/api/roster/route.ts",
       "subject": "players_roster",
-      "detail": "add a bound, unique-key lookup, or query-guard annotation"
-    },
-    "d17998d6cdd781126272": {
-      "count": 1,
-      "kind": "unbounded_growing_select",
-      "file": "src/app/api/cron/prewarm-summaries/route.ts",
-      "subject": "game_summaries",
       "detail": "add a bound, unique-key lookup, or query-guard annotation"
     },
     "d19110b9c37dde5c096a": {

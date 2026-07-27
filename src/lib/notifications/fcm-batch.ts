@@ -13,7 +13,14 @@ export interface TokenBatchResult {
   retryableFailed: number;
   ok: boolean;
   lastError: string | null;
+  outcomes: TokenDeliveryOutcome[];
 }
+
+export type TokenDeliveryOutcome = {
+  token: string;
+  status: "accepted" | "transient" | "invalid" | "permanent_failed";
+  errorCode: string | null;
+};
 
 const INVALID_TOKEN_CODES = new Set([
   "messaging/registration-token-not-registered",
@@ -47,6 +54,7 @@ export async function deliverTokenChunks(
   let retryableFailed = 0;
   let lastError: string | null = null;
   const invalid: string[] = [];
+  const outcomes: TokenDeliveryOutcome[] = [];
   const now = opts?.now ?? Date.now;
 
   for (let i = 0; i < tokens.length; i += chunkSize) {
@@ -56,6 +64,9 @@ export async function deliverTokenChunks(
       retryableFailed += unattempted;
       ok = false;
       lastError = "deadline_exceeded";
+      for (const token of tokens.slice(i)) {
+        outcomes.push({ token, status: "transient", errorCode: lastError });
+      }
       break;
     }
     const chunk = tokens.slice(i, i + chunkSize);
@@ -65,16 +76,28 @@ export async function deliverTokenChunks(
       failed += response.failureCount;
       response.responses.forEach((item, index) => {
         const code = item.error?.code ?? "";
-        if (INVALID_TOKEN_CODES.has(code)) invalid.push(chunk[index]);
-        else if (TRANSIENT_TOKEN_CODES.has(code)) retryableFailed += 1;
+        if (!code) {
+          outcomes.push({ token: chunk[index], status: "accepted", errorCode: null });
+        } else if (INVALID_TOKEN_CODES.has(code)) {
+          invalid.push(chunk[index]);
+          outcomes.push({ token: chunk[index], status: "invalid", errorCode: code });
+        } else if (TRANSIENT_TOKEN_CODES.has(code)) {
+          retryableFailed += 1;
+          outcomes.push({ token: chunk[index], status: "transient", errorCode: code });
+        } else {
+          outcomes.push({ token: chunk[index], status: "permanent_failed", errorCode: code });
+        }
       });
     } catch (error) {
       ok = false;
       failed += chunk.length;
       retryableFailed += chunk.length;
       lastError = error instanceof Error ? error.message : "fcm_chunk_exception";
+      for (const token of chunk) {
+        outcomes.push({ token, status: "transient", errorCode: lastError });
+      }
     }
   }
 
-  return { tokens: tokens.length, sent, failed, invalid, retryableFailed, ok, lastError };
+  return { tokens: tokens.length, sent, failed, invalid, retryableFailed, ok, lastError, outcomes };
 }

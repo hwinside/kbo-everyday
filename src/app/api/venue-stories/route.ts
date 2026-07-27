@@ -17,9 +17,15 @@ import {
   VENUE_GEOFENCE_MAX_ACCURACY_M,
   VENUE_STORY_CONSENT_VERSION,
   VENUE_STORY_STAGING_BUCKET,
-  VENUE_STORY_PUBLIC_VIDEO_BUCKET,
+  VENUE_STORY_PRIVATE_MEDIA_BUCKET,
   type VenueStory,
 } from "@/lib/venue-stories/types";
+import {
+  resolveServeUrl,
+  signVenueObject,
+  isPrivateVenueBucket,
+  signActivePrivateRefs,
+} from "@/lib/venue-stories/media-url";
 import { decideListAuth } from "@/lib/venue-stories/auth-consent";
 import { validateVenueVideoRow } from "@/lib/venue-stories/video-validate-server";
 import { canBypassVenueGeofenceForQa } from "@/lib/admin/admin-users";
@@ -53,6 +59,17 @@ export async function GET(req: NextRequest) {
   const gameId = req.nextUrl.searchParams.get("gameId");
   if (!gameId) {
     return NextResponse.json({ error: "gameId 필요" }, { status: 400 });
+  }
+  const refreshStoryIdParam = req.nextUrl.searchParams.get("refreshStoryId");
+  const refreshStoryId =
+    refreshStoryIdParam == null || refreshStoryIdParam === ""
+      ? null
+      : Number(refreshStoryIdParam);
+  if (
+    refreshStoryId != null &&
+    (!Number.isSafeInteger(refreshStoryId) || refreshStoryId <= 0)
+  ) {
+    return NextResponse.json({ error: "refreshStoryId가 올바르지 않습니다" }, { status: 400 });
   }
 
   // 로그인 유저면 차단 목록으로 필터. 차단 조회 실패는 fail-closed(노출 차단).
@@ -106,22 +123,83 @@ export async function GET(req: NextRequest) {
     uploadStatuses = completeRequestedUploadStatuses(requestedStatusIds, uploadStatuses);
   }
 
-  const { data: rows, error } = await supabase
+  // query-guard: bounded -- 일반 목록은 created_at DESC 100행, URL refresh는 exact id 1행으로 아래 분기에서 제한
+  let storiesQuery = supabase
     .from("venue_stories")
     .select(
-      "id, game_id, user_id, media_type, media_url, thumb_url, duration_ms, width, height, caption, venue_verified, created_at",
+      "id, game_id, user_id, media_type, media_url, media_bucket, media_path, thumb_url, thumb_bucket, thumb_path, duration_ms, width, height, caption, venue_verified, created_at, expires_at",
     )
     .eq("game_id", gameId)
     .eq("status", "active")
-    .gt("expires_at", new Date().toISOString())
-    .order("created_at", { ascending: false })
-    .limit(100);
+    .gt("expires_at", new Date().toISOString());
+  storiesQuery =
+    refreshStoryId == null
+      ? storiesQuery.order("created_at", { ascending: false }).limit(100)
+      : storiesQuery.eq("id", refreshStoryId).limit(1);
+  const { data: rows, error } = await storiesQuery;
 
   if (error) {
     return NextResponse.json({ error: "조회 실패" }, { status: 500 });
   }
 
   const list = (rows ?? []).filter((r) => !blocked.has(r.user_id as string));
+
+  // A안 A1: 공개 트레이/뷰어는 private venue-media 만 서버 발급 signed URL 로 서빙한다.
+  // 한 요청의 모든 미노출 media/thumb 경로를 버킷별 배치로 묶어 발급 콜 수를 최소화한다.
+  // 레거시 공개 버킷(videos/photos) 행은 저장된 공개 URL 그대로(A3 이관 전까지 혼재 허용).
+  //
+  // 삼순 blocker 2: 공개 signed URL 은 짧은 TTL(≤5m)이고 각 행의 expires_at 잔여시간
+  // 이하로 cap 한다. 같은 effective TTL 은 묶어 배치 발급하고 캐시는 TTL 보다 짧게 둔다.
+  const signed = await signActivePrivateRefs(
+    list.flatMap((r) => [
+      {
+        bucket: r.media_bucket as string | null,
+        path: r.media_path as string | null,
+        expiresAt: r.expires_at as string | null,
+      },
+      {
+        bucket: r.thumb_bucket as string | null,
+        path: r.thumb_path as string | null,
+        expiresAt: r.expires_at as string | null,
+      },
+    ]),
+    // 뷰어 단건 갱신은 기존 최대 4분 캐시를 재사용하면 남은 유효시간이 짧을 수 있다.
+    // 매 진입/tick마다 새 URL을 mint해 21번째 영상·61번째 사진·5분 pause 경계를 닫는다.
+    refreshStoryId == null ? undefined : { cache: new Map() },
+  );
+
+  // 뷰어 체류 중 URL-only 재발급. 목록/순번/현재 ID를 다시 commit하지 않도록 현재 active 행의
+  // signed URL만 반환한다. removed·expired·차단·서명 실패는 null(fail-closed).
+  if (refreshStoryId != null) {
+    const row = list[0];
+    if (!row) return NextResponse.json({ urlRefresh: null });
+    const mediaUrl = resolveServeUrl(
+      {
+        bucket: row.media_bucket as string | null,
+        path: row.media_path as string | null,
+        url: (row.media_url as string) ?? null,
+      },
+      signed,
+      { publicServe: true },
+    );
+    if (mediaUrl == null) return NextResponse.json({ urlRefresh: null });
+    return NextResponse.json({
+      urlRefresh: {
+        id: row.id as number,
+        mediaUrl,
+        thumbUrl: resolveServeUrl(
+          {
+            bucket: row.thumb_bucket as string | null,
+            path: row.thumb_path as string | null,
+            url: (row.thumb_url as string) ?? null,
+          },
+          signed,
+          { publicServe: true },
+        ),
+      },
+    });
+  }
+
   const userIds = [...new Set(list.map((r) => r.user_id as string))];
   const profileMap = new Map<
     string,
@@ -141,15 +219,37 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  const stories: VenueStory[] = list.map((r) => {
+  // fail-closed: private ref 서명 실패/venue-staging(공개 mint 불가)면 media 가 null → 해당 story 제외.
+  // 레거시 공개 행은 저장 URL 로 null 이 아니므로 그대로 노출(호환). raw 저장 경로 폴백 없음.
+  const stories: VenueStory[] = [];
+  for (const r of list) {
     const prof = profileMap.get(r.user_id as string);
-    return {
+    const mediaUrl = resolveServeUrl(
+      {
+        bucket: r.media_bucket as string | null,
+        path: r.media_path as string | null,
+        url: (r.media_url as string) ?? null,
+      },
+      signed,
+      { publicServe: true },
+    );
+    // private 서빙 실패/차단 → 공개 노출 금지(story 제외). raw 저장 URL 폴백 절대 금지.
+    if (mediaUrl == null) continue;
+    stories.push({
       id: r.id as number,
       gameId: r.game_id as string,
       userId: r.user_id as string,
       mediaType: r.media_type as "video" | "image",
-      mediaUrl: r.media_url as string,
-      thumbUrl: (r.thumb_url as string) ?? null,
+      mediaUrl,
+      thumbUrl: resolveServeUrl(
+        {
+          bucket: r.thumb_bucket as string | null,
+          path: r.thumb_path as string | null,
+          url: (r.thumb_url as string) ?? null,
+        },
+        signed,
+        { publicServe: true },
+      ),
       durationMs: (r.duration_ms as number) ?? null,
       width: (r.width as number) ?? null,
       height: (r.height as number) ?? null,
@@ -161,8 +261,8 @@ export async function GET(req: NextRequest) {
         avatarUrl: prof?.avatar_url ?? null,
         teamId: prof?.team_id ?? null,
       },
-    };
-  });
+    });
+  }
 
   return NextResponse.json({ stories, uploadStatuses });
 }
@@ -290,7 +390,17 @@ export async function POST(req: NextRequest) {
   // 만들 수 있다. 아래 step 6이 service_role 직접 download(50MiB 상한) + ffprobe를 수행하므로
   // 영상은 그 단일 권위 검증 경로만 사용한다(검증 전 pending/비노출 불변식 유지).
   if (mediaType === "image") {
-    const probe = await probeMediaObject(mediaUrl, mediaType, VENUE_STORY_MAX_BYTES);
+    // A안 A1: private venue-media 저장 이미지는 공개 URL 이 없으므로 서버 signed URL 을 발급해 probe 한다.
+    // 레거시 공개 버킷은 기존대로 mediaUrl(공개) 그대로 fetch.
+    let imageReadUrl = mediaUrl;
+    if (isPrivateVenueBucket(media.bucket)) {
+      const signed = await signVenueObject(media.bucket, media.path);
+      if (!signed) {
+        return NextResponse.json({ error: "업로드된 미디어를 확인할 수 없어요" }, { status: 400 });
+      }
+      imageReadUrl = signed;
+    }
+    const probe = await probeMediaObject(imageReadUrl, mediaType, VENUE_STORY_MAX_BYTES);
     if (!probe.ok) {
       // MB 숫자 노출 금지(삼순 #813 blocker) — Composer가 data.error를 그대로 노출한다.
       // 이 branch는 사진 전용. 영상 초과분은 step 6 서버 검증(download ≤ 50MiB 강제)이
@@ -307,7 +417,14 @@ export async function POST(req: NextRequest) {
   let thumbBucketOut: string | null = thumb?.bucket ?? null;
   let thumbPathOut: string | null = thumb?.path ?? null;
   if (thumb && thumbUrl) {
-    const tprobe = await probeMediaObject(thumbUrl, "image", VENUE_STORY_MAX_BYTES);
+    // private 버킷 포스터도 signed URL 로 probe(레거시 공개 버킷은 공개 URL 그대로).
+    let thumbReadUrl: string | null = thumbUrl;
+    if (isPrivateVenueBucket(thumb.bucket)) {
+      thumbReadUrl = await signVenueObject(thumb.bucket, thumb.path);
+    }
+    const tprobe = thumbReadUrl
+      ? await probeMediaObject(thumbReadUrl, "image", VENUE_STORY_MAX_BYTES)
+      : { ok: false as const, size: null };
     if (!tprobe.ok) {
       thumbUrlOut = null;
       thumbBucketOut = null;
@@ -330,8 +447,10 @@ export async function POST(req: NextRequest) {
   const initialStatus = isVideo ? "pending" : "active";
   const needsTranscode = isVideo;
   // 영상 media_url 은 승격 후 공개될 최종 URL(공개 videos 버킷, 같은 path) — pending 동안 객체 미존재(비노출)
+  // 영상 media_url 은 승격 후 private venue-media 객체를 가리키는 durable 참조값(NOT NULL 충족용).
+  // 서빙은 media_bucket 기준으로 signed URL 을 발급하므로 이 값 자체는 공개 URL 로 사용되지 않는다.
   const finalMediaUrl = isVideo
-    ? supabase.storage.from(VENUE_STORY_PUBLIC_VIDEO_BUCKET).getPublicUrl(media.path).data.publicUrl
+    ? supabase.storage.from(VENUE_STORY_PRIVATE_MEDIA_BUCKET).getPublicUrl(media.path).data.publicUrl
     : mediaUrl;
   const { data: rpcData, error } = await supabase.rpc("create_venue_story_v2", {
     p_game_id: gameId,

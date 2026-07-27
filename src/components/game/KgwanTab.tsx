@@ -6,6 +6,11 @@ import { ChevronDown, ChevronUp } from "lucide-react";
 import { clsx } from "clsx";
 import Image from "next/image";
 import { getTeamById, isAllStarGame, isAllStarGameId } from "@/lib/constants/teams";
+import {
+  createSummaryFingerprint,
+  shouldHideStaleCache,
+  type SummaryFingerprint,
+} from "@/lib/game-summary/cache-validation";
 import GameChat from "@/components/game/GameChat";
 import ContextualStatsBox from "@/components/game/ContextualStatsBox";
 import VenueStorySection from "@/components/game/VenueStorySection";
@@ -422,19 +427,9 @@ function LiveView({
                   <span className="text-[10px] text-text-tertiary ml-auto">{totalPlays}타석</span>
                 </div>
 
-                {currentAtBat && (
-                  <CurrentAtBatCard
-                    batterName={currentAtBat.batterName}
-                    pitcherName={currentPitcher}
-                    pitches={currentAtBat.pitches}
-                    balls={balls}
-                    strikes={strikes}
-                    outs={outs}
-                    updatedAt={gameRelay?.updatedAt}
-                    scrollOnUpdate
-                  />
-                )}
-
+                {/* 시간순 배치: 완료 타석(오래된→최신)을 위에, 현재 타석 카드를 맨
+                   아래에 둔다. 위→아래로 타순이 자연스럽게 이어진다(예: 7번→8번→현재
+                   9번). scrollOnUpdate 는 최신 투구(맨 아래)로 스크롤되어 자연스럽다. */}
                 {latestInning.plays.length > 0 && (
                   <div className="px-4 pb-2">
                     {currentAtBat && (
@@ -446,6 +441,20 @@ function LiveView({
                       <RelayPlayLine key={`${inningKey}-${idx}`} play={play} />
                     ))}
                   </div>
+                )}
+
+                {currentAtBat && (
+                  <CurrentAtBatCard
+                    batterName={currentAtBat.batterName}
+                    batOrder={currentAtBat.batOrder}
+                    pitcherName={currentPitcher}
+                    pitches={currentAtBat.pitches}
+                    balls={balls}
+                    strikes={strikes}
+                    outs={outs}
+                    updatedAt={gameRelay?.updatedAt}
+                    scrollOnUpdate
+                  />
                 )}
               </div>
             );
@@ -534,9 +543,23 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
         const cacheRes = await fetch(`/api/game-summary?gameId=${gameId}`, { signal: controller.signal });
         const cacheData = await cacheRes.json();
         if (cacheData.summary) {
-          setLlmSummary(cacheData.summary);
-          // If outdated, trigger background re-generation (don't block UI)
-          if (cacheData.outdated && hasRealBoxScore && boxScore && !regeneratingRef.current) {
+          // final status+score+innings fingerprint가 일치하지 않거나 legacy면 1프레임도 노출하지 않는다.
+          const currentFingerprint: SummaryFingerprint | null = linescore
+            ? createSummaryFingerprint(
+                linescore.away.R,
+                linescore.home.R,
+                linescore.away.innings,
+                linescore.home.innings,
+              )
+            : null;
+          const hideStale = shouldHideStaleCache(
+            cacheData.fingerprint as SummaryFingerprint | null | undefined,
+            currentFingerprint,
+          );
+          // outdated도 같은 controller의 재생성 POST가 state cleanup으로 abort되지 않도록 생성 완료 전 숨긴다.
+          if (!hideStale && !cacheData.outdated) setLlmSummary(cacheData.summary);
+          // outdated(프롬프트 버전) OR stale/legacy(hideStale) → 재생성.
+          if ((cacheData.outdated || hideStale) && hasRealBoxScore && boxScore && !regeneratingRef.current) {
             regeneratingRef.current = true; // prevent re-entry on re-render
             // linescore.R 우선, boxScore 합산 fallback (승패 뒤집힘 방지)
             const homeR = linescore?.home.R ?? boxScore.homeBatters.reduce((s, b) => s + b.runs, 0);
@@ -572,15 +595,22 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
                   np: p.pitchCount, result: p.decision || undefined,
                 })),
               };
-              // Fire-and-forget background re-generation (outdated 재생성은 기존 캐시 노출 중이므로 에러 처리 생략)
-              fetch("/api/game-summary", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(payload),
-                signal: controller.signal,
-              }).then(res => res.json()).then(data => {
-                if (data.summary) setLlmSummary(data.summary);
-              }).catch(() => {});
+              try {
+                const res = await fetch("/api/game-summary", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify(payload),
+                  signal: controller.signal,
+                });
+                const data = await res.json();
+                if (!res.ok || !data.summary) throw new Error("regeneration-failed");
+                setLlmSummary(data.summary);
+              } finally {
+                regeneratingRef.current = false;
+              }
+            } else {
+              regeneratingRef.current = false;
+              setLlmError("parse");
             }
           }
           return;
@@ -691,7 +721,22 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
         const res = await fetch(`/api/game-summary?gameId=${gameId}`);
         const data = await res.json();
         if (cancelled) return;
-        if (data.summary) {
+        const currentFingerprint: SummaryFingerprint | null = linescore
+          ? createSummaryFingerprint(
+              linescore.away.R,
+              linescore.home.R,
+              linescore.away.innings,
+              linescore.home.innings,
+            )
+          : null;
+        const currentCache =
+          data.summary &&
+          !data.outdated &&
+          !shouldHideStaleCache(
+            data.fingerprint as SummaryFingerprint | null | undefined,
+            currentFingerprint,
+          );
+        if (currentCache) {
           setLlmSummary(data.summary);
           setLlmError(null);
           cachePollStartedAtRef.current = null;
@@ -711,7 +756,7 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [isAllStar, llmError, llmSummary, hasRealBoxScore, gameId]);
+  }, [isAllStar, llmError, llmSummary, hasRealBoxScore, gameId, linescore]);
 
 
   // LLM 요약만 사용 (fallback/숏버전 폐기)

@@ -28,6 +28,9 @@ import {
   subscribeKeyboardInset,
   type VisualViewportLike,
 } from "../../src/lib/venue-stories/keyboard-inset";
+import {
+  computeScrollRestore,
+} from "../../src/lib/venue-stories/scroll-lock";
 import { shouldCloseCommentSheetDrag } from "../../src/lib/venue-stories/comment-sheet-gesture";
 
 let pass = 0;
@@ -264,7 +267,59 @@ console.log("[전송 중 스토리 전환 오염 가드 — 삼순 #807 라운�
     (viewerSrc.match(/document\.body/g) ?? []).length >= 2);
   ok("body sibling 댓글 overlay가 뷰어 z-120보다 높은 shared overlay tier z-130",
     viewerSrc.includes("data-venue-story-comment-overlay") &&
-    viewerSrc.includes('className="fixed inset-0 z-[130] bg-black/60"'));
+    viewerSrc.includes("z-[130] bg-black/60"));
+  // ⭐ 기사(뉴스) 댓글 CommentSheet 는 iOS 웹에서 깔끔하게 동작하는데 스토리만 안 되는 이유 =
+  // 스토리 댓글은 풀스크린 뷰어(fixed inset-0 z-120, 비디오 레이어) 위에서 열려 iOS WKWebView 기본
+  // 키보드 회피를 방해받기 때문(하린아빠 iOS 리포트 7/26). 댓글 열릴 때 뷰어 레이어를 hidden 처리해
+  // CommentSheet 와 동일 환경으로 만들고, 백드롭은 CommentSheet 처럼 스크롤 전파를 차단한다.
+  ok("댓글 열릴 때 풀스크린 뷰어 레이어를 hidden 처리(iOS 키보드 회피 방해 제거, 기사 댓글과 동일 환경)",
+    /commentsOpen \? " hidden" : ""/.test(viewerSrc));
+  ok("댓글 백드롭이 스크롤/오버스크롤 전파 차단(touchAction:none + onTouchMove preventDefault) — 배경 밀림 방지",
+    viewerSrc.includes('touchAction: "none"') &&
+    /onTouchMove=\{\(e\) => \{\s*\n?\s*if \(e\.cancelable\) e\.preventDefault\(\);/.test(viewerSrc));
+
+  // ⭐ 삼순 #884 왕복1+왕복2 NO-GO 반영: 댓글 열린 중에도 viewer 전용 강제 scroll-restore(visualViewport.scroll →
+  // window.scrollTo)가 살아있으면 키보드 열린 상태에서 매 scroll 이벤트마다 반복 복원 → 지터. 기사 CommentSheet 엔
+  // 이 루프가 없다. computeScrollRestore 가 suppressed(=댓글 오픈)면 전체 no-op, 아니면 window/html/body 각
+  // 이탈을 독립 복원하는지(왕복2 blocker: window.scrollY 하나만 보고 short-circuit 금지) 런타임 검증.
+  ok("[런타임] 댓글 오픈(suppressed) 중엔 전체 no-op(window/html/body 모두 이탈해도 복원 안 함)", (() => {
+    const p = computeScrollRestore({ suppressed: true, windowScrollY: 999, pageYOffset: 999, htmlScrollTop: 88, bodyScrollTop: 77, savedScrollY: 0 });
+    return p.scrollTo === false && p.htmlScrollTop === null && p.bodyScrollTop === null;
+  })());
+  ok("[런타임] not suppressed · 전체 정상(이탈 0)이면 복원 액션 없음", (() => {
+    const p = computeScrollRestore({ suppressed: false, windowScrollY: 0, pageYOffset: 0, htmlScrollTop: 0, bodyScrollTop: 0, savedScrollY: 0 });
+    return p.scrollTo === false && p.htmlScrollTop === null && p.bodyScrollTop === null;
+  })());
+  // 왕복2 핵심: window.scrollY 는 정상이어도 pageYOffset/html/body 중 하나만 이탈한 경로가 독립 복원되는지.
+  ok("[런타임] not suppressed · pageYOffset-only 이탈 → scrollTo 복원(window.scrollY 정상이어도)", (() => {
+    const p = computeScrollRestore({ suppressed: false, windowScrollY: 0, pageYOffset: 999, htmlScrollTop: 0, bodyScrollTop: 0, savedScrollY: 0 });
+    return p.scrollTo === true && p.htmlScrollTop === null && p.bodyScrollTop === null;
+  })());
+  ok("[런타임] not suppressed · html-only 이탈 → htmlScrollTop 만 독립 복원", (() => {
+    const p = computeScrollRestore({ suppressed: false, windowScrollY: 0, pageYOffset: 0, htmlScrollTop: 120, bodyScrollTop: 0, savedScrollY: 0 });
+    return p.scrollTo === false && p.htmlScrollTop === 0 && p.bodyScrollTop === null;
+  })());
+  ok("[런타임] not suppressed · body-only 이탈 → bodyScrollTop 만 독립 복원", (() => {
+    const p = computeScrollRestore({ suppressed: false, windowScrollY: 0, pageYOffset: 0, htmlScrollTop: 0, bodyScrollTop: 45, savedScrollY: 0 });
+    return p.scrollTo === false && p.htmlScrollTop === null && p.bodyScrollTop === 0;
+  })());
+  ok("[런타임] lockRootScroll 이 commentsOpen getter 로 강제 복원 억제(commentsOpenRef 배선)",
+    viewerSrc.includes("lockRootScroll(() => commentsOpenRef.current)") &&
+    viewerSrc.includes("commentsOpenRef.current = commentsOpen"));
+  {
+    // 실제 scroll-lock.ts 소스가 (1) suppressed 분기를 computeScrollRestore 로 계산해 적용하고
+    // (2) scroll/visualViewport.scroll listener 에 restoreLockedScroll 을 실제 배선했는지 확인(가드 살아있음).
+    const scrollLockSrc = readFileSync(
+      path.join(process.cwd(), "src/lib/venue-stories/scroll-lock.ts"),
+      "utf8",
+    );
+    ok("scroll-lock 가 isCommentModalOpen getter + computeScrollRestore 로 restoreLockedScroll 계산",
+      scrollLockSrc.includes("isCommentModalOpen") &&
+      scrollLockSrc.includes("computeScrollRestore"));
+    ok("scroll-lock 가 window.scroll + visualViewport.scroll 두 listener 에 restoreLockedScroll 배선",
+      /window\.addEventListener\("scroll", restoreLockedScroll/.test(scrollLockSrc) &&
+      /visualViewport\?\.addEventListener\("scroll", restoreLockedScroll/.test(scrollLockSrc));
+  }
 
   const layoutSrc = readFileSync(path.resolve(process.cwd(), "src/app/layout.tsx"), "utf8");
   ok("전역 viewport meta는 기존 resizes-content 유지(Android 범위 확장 없음)",

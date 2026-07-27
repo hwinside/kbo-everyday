@@ -49,6 +49,7 @@ export default function DMChatPage() {
   const [otherName, setOtherName] = useState("상대방");
   const [otherTeamId, setOtherTeamId] = useState<number | null>(null);
   const [otherId, setOtherId] = useState<string | null>(null);
+  const [otherResolved, setOtherResolved] = useState(false);
 
   useEffect(() => {
     if (!user || !conversationId) return;
@@ -60,18 +61,30 @@ export default function DMChatPage() {
           .from("dm_conversations")
           .select("user1_id, user2_id")
           .eq("id", conversationId)
-          .single();
+          .maybeSingle();
 
-        if (!conv) return;
+        if (!conv) {
+          setOtherName("탈퇴한 사용자");
+          setOtherTeamId(null);
+          setOtherResolved(true);
+          return;
+        }
         oid = conv.user1_id === user!.id ? conv.user2_id : conv.user1_id;
       }
       setOtherId(oid);
+      setOtherResolved(true);
+
+      if (!oid) {
+        setOtherName("탈퇴한 사용자");
+        setOtherTeamId(null);
+        return;
+      }
 
       const { data: prof } = await supabase
         .from("profiles")
         .select("nickname, team_id")
         .eq("id", oid)
-        .single();
+        .maybeSingle();
 
       if (prof) {
         setOtherName(prof.nickname ?? "상대방");
@@ -217,9 +230,15 @@ export default function DMChatPage() {
             ) : null}
             <h1 className="text-lg font-semibold leading-[26px] text-text-primary truncate">{otherName}</h1>
           </div>
-          <p className="text-[10px] text-text-tertiary">{isNoReplyConv ? "자동 발송 전용" : "1:1 쪽지"}</p>
+          <p className="text-[10px] text-text-tertiary">
+            {!otherId && otherResolved
+              ? "읽기 전용"
+              : isNoReplyConv
+                ? "자동 발송 전용"
+                : "1:1 쪽지"}
+          </p>
         </div>
-        <div className="relative">
+        <div className={otherId ? "relative" : "hidden"}>
           <button onClick={() => setShowMenu(!showMenu)} className="p-1.5 rounded-full hover:bg-bg-tertiary transition-colors">
             <EllipsisVertical size={20} className="text-text-secondary" />
           </button>
@@ -278,7 +297,9 @@ export default function DMChatPage() {
           messages.map((msg, i) => {
             const isMe = msg.sender_id === user?.id;
             // 클리핑 카드는 클리퍼/운영팀 발신만 신뢰 — 일반 유저가 payload를 흉내내도 텍스트로 렌더 (PR #619 리뷰 blocker 2)
-            const trustedSender = NEWS_CLIPPER_IDS.has(msg.sender_id) || msg.sender_id === OPERATOR_USER_ID;
+            const trustedSender =
+              msg.sender_id !== null &&
+              (NEWS_CLIPPER_IDS.has(msg.sender_id) || msg.sender_id === OPERATOR_USER_ID);
             const clipping = trustedSender && isNewsClippingPayload(msg.payload) ? msg.payload : null;
             return (
               <motion.div
@@ -344,7 +365,11 @@ export default function DMChatPage() {
 
       {/* Input — 회신 불가 계정(클리퍼/긴급공지)은 입력창 비활성화 (자동 발송 전용, 하린아빠 확정).
           상대 확정 전에는 composer 미렌더 — 회신불가 판정 전 일반 입력창이 잠깐 뜨는 레이스 차단 */}
-      {!otherId ? null : isNoReplyConv ? (
+      {!otherResolved ? null : !otherId ? (
+        <div className="px-5 py-3 border-t border-border bg-bg-secondary pb-safe text-center text-sm text-text-tertiary">
+          탈퇴한 사용자와의 대화는 읽기만 가능합니다.
+        </div>
+      ) : isNoReplyConv ? (
         <div className="px-5 py-3 border-t border-border bg-bg-secondary pb-safe text-center text-sm text-text-tertiary">
           {noReplyBannerLabel(otherId)}
         </div>

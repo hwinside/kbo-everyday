@@ -17,12 +17,14 @@ import { shouldCloseCommentSheetDrag } from "@/lib/venue-stories/comment-sheet-g
 import { lockRootScroll, unlockRootScroll } from "@/lib/venue-stories/scroll-lock";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import { isIosNativeRuntime } from "@/lib/capacitor/platform";
+import { startVenueStoryUrlRefresh } from "@/lib/venue-stories/refresh-policy";
 
 interface Props {
   stories: VenueStory[];
   startIndex: number;
   currentUserId: string | null;
   onStorySeen?: (storyId: string | number) => void; // 표시된 스토리 본 처리 (트레이 본/안 본 구분용)
+  onRefreshUrl?: (storyId: number, controller: AbortController) => Promise<boolean>;
   onClose: () => void;
   onChanged: () => void; // 삭제/신고 후 목록 갱신
 }
@@ -88,6 +90,7 @@ export default function VenueStoryViewer({
   startIndex,
   currentUserId,
   onStorySeen,
+  onRefreshUrl,
   onClose,
   onChanged,
 }: Props) {
@@ -126,6 +129,8 @@ export default function VenueStoryViewer({
   const rafRef = useRef<number | null>(null);
   const startRef = useRef<number>(0);
   const elapsedRef = useRef<number>(0);
+  const refreshedStoryIdRef = useRef<number | null>(null);
+  const lastUrlRefreshAtRef = useRef(0);
 
   const story = stories[index];
 
@@ -139,6 +144,29 @@ export default function VenueStoryViewer({
   useEffect(() => {
     if (storyId != null) onStorySeen?.(storyId);
   }, [storyId, onStorySeen]);
+
+  // 목록 최초 발급 URL의 나이를 신뢰하지 않고 현재 스토리 진입 즉시 단건 재발급한다.
+  // 순수·주입형 루프(startVenueStoryUrlRefresh)를 그대로 사용해 테스트가 동일 코드를 실행한다.
+  useEffect(() => {
+    if (storyId == null || storyId <= 0 || !onRefreshUrl) return;
+    const refresh = onRefreshUrl;
+    return startVenueStoryUrlRefresh({
+      storyId,
+      isCurrentStory: () => storyIdRef.current === storyId,
+      refresh,
+      now: () => Date.now(),
+      setTimer: (fn, ms) => setTimeout(fn, ms),
+      clearTimer: (handle) => clearTimeout(handle),
+      getPreviousStoryId: () => refreshedStoryIdRef.current,
+      setPreviousStoryId: (value) => {
+        refreshedStoryIdRef.current = value;
+      },
+      getLastRefreshAt: () => lastUrlRefreshAtRef.current,
+      setLastRefreshAt: (value) => {
+        lastUrlRefreshAtRef.current = value;
+      },
+    });
+  }, [storyId, onRefreshUrl]);
 
   const goNext = useCallback(() => {
     setIndex((i) => {
@@ -191,8 +219,18 @@ export default function VenueStoryViewer({
   // document/root(body·html)를 움직여 배경 경기방과 fixed viewer 가 함께 밀린다(하린아빠 iOS 리포트).
   // body overflow:hidden 만으론 부족해 scrollY 저장 + position:fixed 로 root scroll 자체를 막고
   // 해제 시 원위치 복원한다(scroll-lock.ts 순수 헬퍼, 회귀로 고정 — 삼순 #839 blocker 3).
+  //
+  // ⚠️ 단, 댓글 모달이 열린 동안에는 viewer 전용 강제 scroll-restore(visualViewport.scroll → window.scrollTo)를
+  // 억제한다. 이 강제 복원 루프가 키보드 열린 상태에서 매 visualViewport.scroll 마다 window.scrollTo 를 반복
+  // 호출해 실기기에서 모달 진동(지터)을 만들었다(하린아빠 7/26 iOS). 기사 CommentSheet 는 이 루프 없이 body
+  // position:fixed modal lock 만으로 정상 동작 → 댓글 열린 중엔 CommentSheet 와 동일 semantics 로 전환한다
+  // (배경 위치 복원은 body position:fixed(top:-scrollY)로 그대로 보존). commentsOpenRef 로 최신값을 읽는다.
+  const commentsOpenRef = useRef(false);
   useEffect(() => {
-    const saved = lockRootScroll();
+    commentsOpenRef.current = commentsOpen;
+  }, [commentsOpen]);
+  useEffect(() => {
+    const saved = lockRootScroll(() => commentsOpenRef.current);
     return () => {
       unlockRootScroll(saved);
     };
@@ -452,7 +490,13 @@ export default function VenueStoryViewer({
     <motion.div
       data-venue-story-viewer
       // 경기 페이지 상단 스코어 헤더가 z-[100]이라 그 위로 — 풀스크린 뷰어는 모든 UI를 덮어야 함
-      className="fixed inset-0 z-[120] bg-black flex flex-col select-none overflow-hidden overscroll-none"
+      // ⚠️ 댓글이 열리면 뷰어 레이어를 hidden(display:none) 처리해 기사(뉴스) 댓글 CommentSheet 와
+      // 동일한 환경으로 만든다. 풀스크린 fixed 뷰어(비디오 레이어)가 남아있으면 iOS WKWebView 가
+      // 포커스된 입력창을 키보드 위로 올리려는 기본 동작을 방해해 입력창이 가리고 배경이 밀린다(하린아빠 iOS 리포트).
+      // 댓글 오버레이는 별도 body 포털이라 뷰어를 숨겨도 그대로 보이고, 백드롭(bg-black/60)가 이미 배경을 덮어 체감 동일.
+      className={`fixed inset-0 z-[120] bg-black flex flex-col select-none overflow-hidden overscroll-none${
+        commentsOpen ? " hidden" : ""
+      }`}
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
@@ -650,10 +694,16 @@ export default function VenueStoryViewer({
           <motion.div
           data-venue-story-comment-overlay
           className="fixed inset-0 z-[130] bg-black/60"
+          // 백드롭에서 뒷 콘텐츠로 스크롤/오버스크롤 전파 차단(CommentSheet 동일) — 키보드 열린 상태에서
+          // 백드롭 드래그가 배경(경기방)을 밀어내리는 것을 막는다(하린아빠 iOS 리포트: 스크롤 시 배경 내려감).
+          style={{ touchAction: "none", overscrollBehavior: "none" }}
           initial={{ opacity: 0 }}
           animate={{ opacity: commentsClosing ? 0 : 1 }}
           transition={{ duration: 0.2 }}
           onClick={requestCommentsClose}
+          onTouchMove={(e) => {
+            if (e.cancelable) e.preventDefault();
+          }}
         >
           <motion.div
             className="fixed inset-x-0 z-[1] flex flex-col bg-bg-secondary rounded-t-2xl overflow-hidden"

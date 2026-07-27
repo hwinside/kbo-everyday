@@ -74,7 +74,7 @@ export default function ProfilePage() {
         .from("profiles")
         .select("*")
         .eq("id", userId)
-        .single();
+        .maybeSingle();
       if (p) {
         // 실시간 카운트 조회 (캐시 컬럼이 0일 수 있으므로)
         const [postsCount, commentsCount, likesCount] = await Promise.all([
