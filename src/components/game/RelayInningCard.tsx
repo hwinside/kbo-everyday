@@ -165,14 +165,22 @@ export default function RelayInningCard({
   inning,
   awayTeam,
   homeTeam,
+  runs,
 }: {
   inning: InningRelay;
   awayTeam: TeamData;
   homeTeam: TeamData;
+  /**
+   * 해당 초/말의 실제 이닝 득점(linescore 기준). 응답에 있으면 이 값을 그대로 노출한다.
+   * relay 문구 추정(countScoring)은 원문이 `홈인`이면 누락되고 주자 있는 홈런도 1점만
+   * 잡히는 버그가 있어(파도 제보 7/26), linescore 값이 있으면 항상 우선한다.
+   * undefined(linescore 미제공/캐시 등)일 때만 추정값으로 폴백한다.
+   */
+  runs?: number | null;
 }) {
   const teamColor = inning.half === "top" ? awayTeam.colorPrimary : homeTeam.colorPrimary;
   const halfLabel = inning.half === "top" ? "초" : "말";
-  const scores = countScoring(inning.plays);
+  const scores = runs != null ? runs : countScoring(inning.plays);
 
   return (
     <div className="glass-card overflow-hidden">
