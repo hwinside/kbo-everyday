@@ -1,6 +1,6 @@
 # 커뮤니티 투표(Poll) 기능 — Spec
 
-> 상태: DRAFT v2 (삼순 NO-GO 4건 반영, 재리뷰 대기) · 작성 2026-07-27 · 요청자 하린아빠(#product `1785148197.626789`)
+> 상태: DRAFT v3 (삼순 NO-GO 3 blocker 반영, 재리뷰 대기) · 작성 2026-07-27 · 요청자 하린아빠(#product `1785148197.626789`)
 > 담당: 구현 삼식이 / 리뷰 삼순이
 
 ## 1. 목표
@@ -72,12 +72,19 @@
 
 ## 4. RLS / 은닉 (보안 핵심 — 삼순 반영)
 
-- `poll_options`·`poll_votes`·`poll_polls` **집계 컬럼은 anon·authenticated 직접 SELECT 0**(RLS deny). 옵션의 라벨/순서 등 비민감 메타만 별도 정책으로 노출하거나, 전량 RPC 경유.
+- **`poll_polls`·`poll_options`·`poll_votes` 3테이블 direct SELECT 전면 차단**(anon·authenticated 0행). RLS는 컬럼 단위로 못 숨기므로 "옵션 메타만 노출" 방식 폐기 — 라벨/순서/집계 **전량 route(service-role) 경유**. 클라는 poll 테이블 직접 select 불가.
 - 투표/생성/결과 **RPC는 EXECUTE 서버 전용**(service-role). 클라가 RPC 직접 호출 불가.
 - 결과 GET route는 **검증된 JWT의 uid로 `voted ∥ closed` 판정** 후에만 수치 반환. 미투표·진행중이면 `voter_count`(참여수)만.
-- 활성(진행중) 응답 헤더 **`Cache-Control: private, no-store`** (CDN·프록시 캐시로 결과 누출 방지).
+- **응답 캐시 정책**: 활성(진행중)뿐 아니라 **사용자별 `mySelection`이 담긴 상세 응답은 마감 후에도 `Cache-Control: private, no-store`** (유저별 응답의 CDN·프록시 캐시 공유 차단). 순수 공개 집계만 담긴 경로만 공용 캐시 허용.
 - **OG/썸네일의 "상위 선지"는 득표순 금지 → 작성순(position)** 노출(진행중 우회 노출 차단).
 - 클라 시간 불신: write는 서버 `now() < closes_at` fail-closed 재검증.
+
+### 4.1 집계 정합성 (삼순 blocker#1)
+- `auth.users` 삭제 시 votes는 CASCADE로 지워지지만 **캐시 컬럼 `vote_count`/`voter_count`는 자동 보정 안 됨** → stale. 대응: **`poll_votes` AFTER DELETE trigger가 poll-row lock 하에 해당 poll 집계를 재계산**(RPC 경로와 동일한 SSOT 재계산 함수 공유). 대안으로 캐시 미사용 실시간 COUNT도 가능하나, 목록 성능 위해 trigger 재계산 채택.
+- account/post 삭제 후 `voter_count`=남은 고유 유저 수, `vote_count`=남은 표수로 수렴함을 E2E로 검증.
+
+### 4.2 첫 투표 후 편집 잠금 (삼순 blocker#2)
+- `first_vote_at` 앱 레벨 잠금만으론 작성자가 **`posts` 직접 UPDATE로 우회 가능**. → **DB trigger/policy로 강제**: poll 글은 `first_vote_at IS NOT NULL`이면 `title`/`content` 및 poll 설정(`allow_multiple`, options) 변경을 DB에서 거부(BEFORE UPDATE trigger). 클라 직접 UPDATE 우회 E2E(direct-update 거부) 추가.
 
 ## 5. API / RPC
 
@@ -99,7 +106,7 @@
 ## 7. 검증 (Goal-Driven) — S1에 RLS·동시성·cascade E2E 포함
 
 - 단위/스모크: 옵션 2~10 경계, 팀+선수 공존 거부·기타 혼합 허용, closes_at 범위, 단일/복수 정책, 마감 전후 write 거부, first_vote 후 편집 잠금.
-- **RLS/동시성 E2E(2계정)**: ①미투표자 진행중 수치 못 읽음 ②투표 후 읽힘 ③마감 후 미투표자도 읽힘 ④마감 후 write 거부 ⑤변경 시 이전표 소멸·중복0 ⑥**동시 투표 2계정 → voter_count/vote_count stale 없음(poll-row lock)** ⑦타 poll 옵션 투표 복합 FK 거부 ⑧post/계정 삭제 CASCADE 후 집계·목록 정합.
+- **RLS/동시성 E2E(2계정)**: ①미투표자 진행중 수치 못 읽음(3테이블 direct SELECT 0 포함) ②투표 후 읽힘 ③마감 후 미투표자도 읽힘 ④마감 후 write 거부 ⑤변경 시 이전표 소멸·중복0 ⑥**동시 투표 2계정 → voter_count/vote_count stale 없음(poll-row lock)** ⑦타 poll 옵션 투표 복합 FK 거부 ⑧post/계정 삭제 CASCADE 후 **trigger 재집계로 집계·목록 정합**(blocker#1) ⑨**첫 투표 후 작성자 posts 직접 UPDATE 거부**(blocker#2) ⑩mySelection 담긴 응답 `private,no-store` 헤더 확인.
 - **End-User Level QA(S4, 실 로그인)**: 작성→목록 썸네일/배지/n명→투표→중간결과→변경→마감표시, 팀/선수 로고·사진 SSOT 자동 반영.
 - query-guard·tsc·eslint·prod build PASS.
 
@@ -117,4 +124,6 @@
 - 마감 허용범위 10분~30일 — 삼순 GO.
 - 팀+선수 공존만 금지(기타 혼합 허용), 총합 2~10 — 하린아빠 확정.
 - 렌더는 ref_id SSOT + 스냅샷 fallback — 삼순.
-- 첫 투표 후 편집 잠금 — 삼순.
+- 첫 투표 후 편집 잠금 — 삼순. **DB trigger로 강제**(앱 잠금만으로 posts 직접 UPDATE 우회 방지).
+- 집계 캐시는 `poll_votes` DELETE trigger + poll-row lock 재계산으로 account/post 삭제 후에도 정합 — 삼순.
+- 3테이블 direct SELECT 전면 차단, mySelection 응답 항상 `private,no-store` — 삼순.
