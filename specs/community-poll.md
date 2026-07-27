@@ -127,3 +127,9 @@
 - 첫 투표 후 편집 잠금 — 삼순. **DB trigger로 강제**(앱 잠금만으로 posts 직접 UPDATE 우회 방지).
 - 집계 캐시는 `poll_votes` DELETE trigger + poll-row lock 재계산으로 account/post 삭제 후에도 정합 — 삼순.
 - 3테이블 direct SELECT 전면 차단, mySelection 응답 항상 `private,no-store` — 삼순.
+
+## 10. S1 구현 시 반영 (삼순 GO 부기 — 구현 리뷰 게이트 확인, 스펙 blocker 아님)
+
+1. poll-row lock 획득 후 **별도 statement로 재집계**(같은 statement 내 lock+집계 회피).
+2. option 잠금은 UPDATE뿐 아니라 **INSERT/DELETE도 차단**(첫 투표 후 선지 추가·삭제 우회 방지).
+3. §5 GET의 `(활성)` 캐시 문구는 §4 기준(mySelection 담긴 응답은 마감 후에도 `private,no-store`)으로 정정.
