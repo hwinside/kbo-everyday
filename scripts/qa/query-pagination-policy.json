@@ -110,6 +110,7 @@
   "boundedTables": [
     "admin_alert_state",
     "channel_discovery_lock",
+    "game_event_ledger_activation",
     "game_start_watchdog_config",
     "push_dispatch_config",
     "team_rank_notify_state",

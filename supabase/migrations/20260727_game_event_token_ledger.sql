@@ -67,6 +67,20 @@ create index if not exists idx_game_event_token_claim
 
 alter table notified_game_event_tokens enable row level security;
 
+-- ledger activation/cutover 경계(삼순 4차 NO-GO #1). 시간 freshness heuristic 대신 "이 원장이
+-- 언제부터 이벤트를 소유하는가"를 명시한다. 단일행(id=true) — claim RPC 최초 호출이 activated_at을
+-- now()로 자가부트스트랩한다. migration 적용 시각이 아닌 신 코드 최초 진입 시각이 경계가 되어
+-- (migration 선적용~코드 배포 사이 구 코드가 만든 marker는 activation 이전이므로 legacy로 판정) cutover
+-- 재발송 창을 닫는다.
+create table if not exists game_event_ledger_activation (
+  id boolean primary key default true,
+  activated_at timestamptz not null default now(),
+  constraint game_event_ledger_activation_singleton check (id)
+);
+
+alter table game_event_ledger_activation enable row level security;
+-- 정책 없음: service_role cron 전용.
+
 -- 이벤트 audience를 원장에 freeze하고(최초 1회) claimable 토큰 배치를 lease해 돌려준다.
 -- 최초 호출(=snapshot 생성자)만 팀팬을 열거해 token 행을 만든다. 이후 호출/다중 인스턴스는
 -- on-conflict-nothing으로 no-op이고 claimable 토큰만 skip-locked로 나눠 lease한다.
@@ -97,6 +111,9 @@ set search_path = public, extensions
 as $$
 declare
   v_created boolean;
+  v_activation timestamptz;
+  v_has_snapshot boolean;
+  v_marker_created timestamptz;
   v_deadline timestamptz := coalesce(p_source_ts, now()) + interval '6 hours';
 begin
   if p_pref_key not in ('my_team_score', 'my_team_concede', 'my_team_score_inning_summary') then
@@ -104,6 +121,33 @@ begin
   end if;
   if p_sub not in ('score', 'concede', 'inning-summary') then
     raise exception 'invalid game_event sub';
+  end if;
+
+  -- activation 경계 자가부트스트랩(멱둥): 이 원장을 처음 호출하는 신 코드가 경계를 고정한다.
+  -- 그 이전에 구 코드(claimEvent)가 만든 marker는 전부 activated_at 이전이라 legacy로 분류된다.
+  insert into game_event_ledger_activation (id) values (true) on conflict (id) do nothing;
+  select activated_at into v_activation from game_event_ledger_activation where id;
+
+  -- ledger-상태 기반 진입 gate(시간 freshness heuristic 폐기, 삼순 4차 NO-GO #1).
+  -- snapshot이 이미 있으면 원장이 이미 이 이벤트를 소유한 것이니 그대로 재개(claim)한다.
+  v_has_snapshot := exists (select 1 from game_event_delivery_snapshots where event_id = p_event_id);
+  if not v_has_snapshot then
+    -- snapshot 없음: 원장 진입(snapshot 생성) 여부를 marker/source vs activation으로 판정.
+    select created_at into v_marker_created from notified_score_events where event_id = p_event_id;
+    if found then
+      -- marker는 있고 snapshot은 없다.
+      if v_marker_created < v_activation then
+        -- pre-cutover legacy marker: 구 코드가 이미 발송함 → 신규 원장 재발송 0. snapshot 생성 안 함.
+        return;
+      end if;
+      -- else: post-activation marker-only orphan → source age 무관하게 아래서 snapshot 생성(복구).
+    else
+      -- marker도 snapshot도 없음: 진짜 신규(source_ts ≥ activation)만 원장 진입. activation 이전 source는
+      -- 배포-시 과거분 backlog이므로 skip(일괄 발송 방지). source_ts null(fail-closed)은 진입 허용.
+      if p_source_ts is not null and p_source_ts < v_activation then
+        return;
+      end if;
+    end if;
   end if;
 
   -- audience는 즉시 freeze(완료)한다 — score-family는 start barrier가 없고 팬 집합이 지금 확정이다.

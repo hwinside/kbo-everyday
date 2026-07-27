@@ -21,11 +21,17 @@ const SCORE_EVENT_TYPES = new Set<string>(["run_scored", "at_bat_homerun"]);
 
 // token 원장 전환(NO-GO #1): marker(notified_score_events)를 최초 진입 gate로 쓰던 것을 폐기하고
 // claim_game_event_tokens RPC를 live 진입점으로 삼는다(marker는 claim RPC가 관측용으로만 기록).
-// marker gate가 사라져 backlog 보호도 사라지므로, highlights/#271과 동일하게 source-timestamp
-// freshness로 배포·진행경기 과거분의 일괄 재발송을 막는다. 크래시 orphan은 1~2틱(≤FRESH_MS)에
-// 재개되고, 그보다 오래된 미종결 토큰은 source-independent due-drain(deadline=source+6h)이 계속
-// 재개하므로 at-least-once는 유지된다.
-const SCORE_FRESH_MS = 10 * 60 * 1000;
+//
+// 배포·backlog 보호는 시간 heuristic(구 SCORE_FRESH_MS 10분 gate)이 아니라 원장의 명시적
+// activation/cutover 경계로 한다(삼순 4차 NO-GO #1). 시간 gate는 (a) source age>10분인 marker-only
+// orphan(crash로 snapshot 못 만든 이벤트)을 영구 skip해 다시 유실시켰고 (b) cutover 중에 legacy가
+// 이미 보낸 최근 10분 marker를 새 코드가 재발송할 창을 못 닫았다. 대신 claim_game_event_tokens RPC가
+// game_event_ledger_activation(최초 원장 사용 시각) 기준으로 진입을 판정한다:
+//   · pre-activation legacy marker-only(marker.created_at < activation, snapshot 없음) → 재발송 0(legacy가 이미 보냄)
+//   · post-activation marker-only orphan(marker.created_at ≥ activation) → source age 무관 snapshot 생성·복구
+//   · marker 없음 + source_ts < activation(배포 전 backlog) → 진입 안 함(일괄 발송 방지)
+//   · marker 없음 + source_ts ≥ activation(진짜 신규) → 정상 진입
+// 미종결 토큰은 source-independent due-drain(deadline=source+6h)이 계속 재개하므로 at-least-once 유지.
 
 /**
  * event_id 선점 — 멱등 INSERT에 성공한(첫 발송) 호출만 true.
@@ -77,11 +83,10 @@ export async function notifyScoreEvents(
       // 스펙 NO-GO #2/#4). 같은 ev의 score/concede가 동일 값을 갖는다. deliverScoreFamilyEvent가
       // 내부에서 deriveGameEventExpiresAtMsOrNull(sourceEpochMs)로 fail-closed 유도한다(파싱 불가면
       // null → data-only 미첨부 notification-only). token 원장이 재시도 간 동일 source_ts를 재사용.
+      // n_expires_at 앵커 = source event timestamp. 배포·backlog 과거분 재발송 방지는 기존 시간
+      // freshness gate가 아니라 claim_game_event_tokens RPC의 activation 경계가 담당한다(삼순 4차 NO-GO #1 closure).
+      // 따라서 live는 이벤트 나이와 무관하게 claim RPC까지 전달하고, 재발송/백로그 판정은 원장이 한다.
       const sourceEpochMs = Date.parse(ev.timestamp);
-      // freshness gate (NO-GO #1): marker 진입 gate 폐기로 잃은 backlog 보호를 대체한다.
-      // 오래된 이벤트(이전 이닝·배포 전)는 live에서 skip → claim RPC로 과거분을 새로 굽지 않는다.
-      // 파싱 불가(NaN)면 나이 판정 불가라 기존대로 처리(fail-closed notification-only 발송).
-      if (Number.isFinite(sourceEpochMs) && Date.now() - sourceEpochMs > SCORE_FRESH_MS) continue;
 
       // 득점팀 판정. run_scored는 generator가 detail.scoringSide로 팀을 확정해줌
       // (isTop 추론은 이닝교대 lag/양팀 동시득점에 취약 — 삼순 #213-②).
@@ -247,13 +252,10 @@ export async function notifyInningSummaries(
 ): Promise<{ summarized: number }> {
   let summarized = 0;
   const gameById = new Map(games.map((g) => [g.G_ID, g]));
-  // future-only 컷오프: warmup이 받는 events는 *전체 경기 history*라, 기능 배포/활성화
-  // 직후 과거 inning_end가 한꺼번에 claim·발송되는 backlog 플러시를 막아야 한다(삼순 #271
-  // NO-GO). 매분 도는 cron이 갓 끝난 이닝을 1~2분 내 처리하므로, inning_end timestamp가
-  // FRESH_MS보다 오래된(=이전 이닝/배포 전) 것은 skip → 최근 종료 이닝만 요약.
-  const FRESH_MS = 10 * 60 * 1000;
-  const nowMs = Date.now();
-
+  // backlog 보호(배포 직후 과거 inning_end 일괄 발송 방지)는 구 FRESH_MS 10분 시간 gate가 아니라
+  // claim_game_event_tokens RPC의 activation 경계가 담당한다(삼순 4차 NO-GO #1 closure, score와 동일 원장).
+  // 시간 gate는 score와 동일하게 marker-only orphan(source age>10분)을 영구 유실시켰으므로 폐기한다 —
+  // inning-summary도 pre-activation legacy/backlog는 원장이 skip, post-activation orphan은 source age 무관 복구.
   for (const [gameId, events] of eventsByGame) {
     const g = gameById.get(gameId);
     if (!g || isKboGameCancelled(g.CANCEL_SC_ID)) continue;
@@ -263,9 +265,8 @@ export async function notifyInningSummaries(
 
     for (const ev of events) {
       if (ev.type !== "inning_end") continue;
-      // 오래된 inning_end(이전 이닝·배포 전) skip — 배포 시 과거 요약 일괄 발송 방지.
+      // n_expires_at 앵커 = inning_end source timestamp. backlog/cutover 방지는 claim RPC activation 경계가 한다.
       const evMs = Date.parse(ev.timestamp);
-      if (Number.isFinite(evMs) && nowMs - evMs > FRESH_MS) continue;
       // 초(isTop) = 원정 공격, 말 = 홈 공격.
       const side: "away" | "home" = ev.isTop ? "away" : "home";
       const scoringTeamName = side === "away" ? away : home;

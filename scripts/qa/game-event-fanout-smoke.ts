@@ -412,9 +412,13 @@ async function verifyMetaNeverSettleDeadline(): Promise<void> {
   }
 }
 
-// ── 14. deliverScoreFamilyEvent/due-drain deadline·lease 결속 (삼순 3차 NO-GO #2 실행 회귀) ──
+// ── 14. deliverScoreFamilyEvent/due-drain deadline·lease 결속 (삼순 4차 NO-GO #2 실행 회귀) ──
+// 삼순 4차 지적: 기존 "claim never-settle"이 실제 never-settle이 아니라 즉시 {data:[]} 반환 + abortSignal
+// 부착 여부만 확인 → false-green. 여기서는 (1) 진짜 pending Promise를 주입하고 abortSignal이 실제 reject를
+// 유발해 함수가 lease(20s) 훨씬 전에 종료·FCM 0을 실증, (2) settle never-settle → bounded abort를 실행으로
+// 잠근다. "abortSignal 붙었나" assertion을 실행 결과(deadline 내 종료 + send/settle 도달 카운트)로 교체.
 async function verifyScoreFamilyDeadline(): Promise<void> {
-  console.log("[game-event-fanout] deliverScoreFamilyEvent — deadline 뒤 신규 claim 0 + claim/settle/due RPC abortSignal 결속");
+  console.log("[game-event-fanout] deliverScoreFamilyEvent — 실 지연 주입: claim/settle never-settle abort·FCM 0·bounded 종료");
   process.env.NEXT_PUBLIC_SUPABASE_URL = "https://sf-smoke.supabase.co";
   process.env.SUPABASE_SERVICE_ROLE_KEY = "sf-smoke-key";
   const [{ deliverScoreFamilyEvent, drainDueScoreFamilyEvents }, { supabaseAdmin }] = await Promise.all([
@@ -423,52 +427,97 @@ async function verifyScoreFamilyDeadline(): Promise<void> {
   ]);
   const admin = supabaseAdmin as unknown as { rpc: (fn: string, args?: unknown) => unknown };
   const originalRpc = admin.rpc;
+  // AbortSignal.timeout()은 unref'd 타이머라 실 IO가 없는 테스트에서는 event loop가 비어 abort 전 프로세스가
+  // 종료될 수 있다(실 코드는 DB 소켓으로 loop 유지). 대기 구간 동안 loop를 살려둔다(ref'd timer).
+  const keepAlive = setInterval(() => {}, 250);
+
+  // supabase-js abortSignal 계약을 충실히 모사: 시그널 abort 시 reject, 그 외엔 영원히 pending(진짜 never-settle).
+  const abortableNeverSettle = () => ({
+    abortSignal: (sig: AbortSignal) => new Promise((_res, reject) => {
+      if (sig.aborted) { reject(new Error("AbortError: aborted")); return; }
+      sig.addEventListener("abort", () => reject(new Error("AbortError: aborted")), { once: true });
+    }),
+  });
 
   try {
-    // (a) deadline이 이미 지난 상태 → 루프 최초 guard에서 즉시 break, claim RPC 0회.
+    // (a) request deadline이 이미 지난 상태 → 루프 최초 guard에서 즉시 break, 신규 claim RPC 0회.
     let claimCallsA = 0;
     admin.rpc = (fn: string) => {
       if (fn === "claim_game_event_tokens") claimCallsA += 1;
-      const b: Record<string, unknown> = {};
-      b.abortSignal = () => b;
-      b.then = (res: (v: unknown) => void) => res({ data: [], error: null });
-      return b;
+      return { abortSignal: () => Promise.resolve({ data: [], error: null }) };
     };
     const rA = await deliverScoreFamilyEvent({
       eventId: "ev-past", gameId: "g", sub: "score", prefKey: "my_team_score",
       teamId: 1, title: "t", body: "b", url: "/x", sourceEpochMs: Date.now(), deadlineAtMs: Date.now() - 1,
     });
-    check("score-family: deadline 뒤 신규 claim 0회(+52s 재claim 방지)", claimCallsA === 0 && rA.accepted === 0);
+    check("score-family: request deadline 이후 같은 invocation 신규 claim 0회", claimCallsA === 0 && rA.accepted === 0);
 
-    // (b) claim RPC에 abortSignal이 반드시 결속(never-settle lease 초과 방지).
-    let claimAbortAttached = false;
+    // (b) claim promise never-settle(진짜 pending) → attempt 마감 abortSignal이 실제 reject를 유발해
+    //     lease(20s) 훨씬 전에 종료. claim 1회만(다음 분 overlap 0). send/settle 미도달 → FCM 0.
     let claimCallsB = 0;
+    let settleCallsB = 0;
     admin.rpc = (fn: string) => {
-      const b: Record<string, unknown> = {};
-      b.abortSignal = () => { if (fn === "claim_game_event_tokens") claimAbortAttached = true; return b; };
-      b.then = (res: (v: unknown) => void) => {
-        if (fn === "claim_game_event_tokens") { claimCallsB += 1; return res({ data: [], error: null }); }
-        return res({ data: 0, error: null });
-      };
-      return b;
+      if (fn === "claim_game_event_tokens") { claimCallsB += 1; return abortableNeverSettle(); }
+      if (fn === "settle_game_event_tokens") { settleCallsB += 1; return { abortSignal: () => Promise.resolve({ data: 0, error: null }) }; }
+      return { abortSignal: () => Promise.resolve({ data: [], error: null }) };
     };
-    const rB = await deliverScoreFamilyEvent({
-      eventId: "ev-live", gameId: "g", sub: "score", prefKey: "my_team_score",
-      teamId: 1, title: "t", body: "b", url: "/x", sourceEpochMs: Date.now(), deadlineAtMs: Date.now() + 5000,
-    });
-    check("score-family: claim RPC에 abortSignal 결속(lease 초과 차단)", claimAbortAttached === true && claimCallsB === 1 && rB.accepted === 0);
+    const t0 = Date.now();
+    let threwB: Error | null = null;
+    // deadlineAtMs = t0+800 → attemptDeadline=t0+800 → AbortSignal.timeout(≈800ms)가 claim을 reject.
+    try {
+      await deliverScoreFamilyEvent({
+        eventId: "ev-hang", gameId: "g", sub: "score", prefKey: "my_team_score",
+        teamId: 1, title: "t", body: "b", url: "/x", sourceEpochMs: Date.now(), deadlineAtMs: t0 + 800,
+      });
+    } catch (e) { threwB = e as Error; }
+    const elapsedB = Date.now() - t0;
+    // abort는 query promise를 reject하므로 throw된 에러 = 원(abort) 에러. 단계(claim vs settle) 구분은 call 카운트로.
+    check("claim never-settle: abort로 실제 reject·throw(경로 종료)", threwB != null && /abort/i.test(threwB.message));
+    check("claim never-settle: lease(20s) 훨씬 전 종료(≈800ms, 무한 hang 0)", elapsedB >= 700 && elapsedB < 5000);
+    check("claim never-settle: 신규 claim 1회만(다음 분 overlap 0)", claimCallsB === 1);
+    check("claim never-settle: claim 단계에서 abort → FCM/settle 미도달(새 발송 0)", settleCallsB === 0);
 
-    // (c) due-drain: list_due RPC에 abortSignal 결속·정상 반환.
-    let dueAbortAttached = false;
+    // (c) settle never-settle(진짜 pending) → bounded abort. claim은 토큰 1개 반환, transport deadline은
+    //     이미 지나 send가 deadline_exceeded로 즉시 반환(네트워크 0), settle에서 abort로 bounded 종료.
+    let claimCallsC = 0;
+    let settleCallsC = 0;
     admin.rpc = (fn: string) => {
-      const b: Record<string, unknown> = {};
-      b.abortSignal = () => { if (fn === "list_due_game_event_snapshots") dueAbortAttached = true; return b; };
-      b.then = (res: (v: unknown) => void) => res({ data: [], error: null });
-      return b;
+      if (fn === "claim_game_event_tokens") {
+        claimCallsC += 1;
+        return { abortSignal: () => Promise.resolve({ data: [{ token_id: 1, token_hash: "h", fcm_token: "tok", platform: "ios", app_build: null }], error: null }) };
+      }
+      if (fn === "settle_game_event_tokens") { settleCallsC += 1; return abortableNeverSettle(); }
+      return { abortSignal: () => Promise.resolve({ data: [], error: null }) };
     };
-    const rC = await drainDueScoreFamilyEvents({ deadlineAtMs: Date.now() + 5000 });
-    check("score-family due: list_due abortSignal 결속·정상 반환", dueAbortAttached === true && rC.accepted === 0);
+    const t1 = Date.now();
+    let threwC: Error | null = null;
+    // deadlineAtMs = t1+2500 → transportDeadline<=now(전송 즉시 deadline_exceeded, 네트워크 0) →
+    // settleTimeoutMs≈2500 → settle abortSignal.timeout이 bounded 종료 유발.
+    try {
+      await deliverScoreFamilyEvent({
+        eventId: "ev-settle-hang", gameId: "g", sub: "score", prefKey: "my_team_score",
+        teamId: 1, title: "t", body: "b", url: "/x", sourceEpochMs: Date.now(), deadlineAtMs: t1 + 2500,
+      });
+    } catch (e) { threwC = e as Error; }
+    const elapsedC = Date.now() - t1;
+    check("settle never-settle: claim 1회 후 settle 도달(send 경로 관통)", claimCallsC === 1 && settleCallsC === 1);
+    check("settle never-settle: bounded abort로 throw(무한 hang 0, lease 내)", threwC != null && /abort/i.test(threwC.message) && elapsedC >= 2000 && elapsedC < 8000);
+    // 계약(accepted-before-settle crash): settle이 abort로 checkpoint를 못 남기면 토큰은 leased로 남아
+    // lease 만료 후 재claim → 재발송(at-least-once, prod dedup 없어 중복 위험). 이 재발송 창은
+    // game-event-delivery-pg17.sh (f) accepted-before-settle에서 원장 상태로 회귀 고정한다.
+
+    // (d) due-drain: list_due RPC에 abortSignal 결속·정상 반환(회귀 유지).
+    let dueAbortAttached = false;
+    admin.rpc = (fn: string) => ({
+      abortSignal: (sig: AbortSignal) => {
+        if (fn === "list_due_game_event_snapshots") { dueAbortAttached = sig instanceof AbortSignal; }
+        return Promise.resolve({ data: [], error: null });
+      },
+    });
+    const rD = await drainDueScoreFamilyEvents({ deadlineAtMs: Date.now() + 5000 });
+    check("score-family due: list_due abortSignal 결속·정상 반환", dueAbortAttached === true && rD.accepted === 0);
   } finally {
+    clearInterval(keepAlive);
     admin.rpc = originalRpc;
   }
 }

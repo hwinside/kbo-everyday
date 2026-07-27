@@ -51,7 +51,7 @@ CREATE TABLE device_push_tokens (
   app_build integer,
   fcm_token text NOT NULL
 );
-CREATE TABLE notified_score_events (event_id text PRIMARY KEY, game_id text NOT NULL);
+CREATE TABLE notified_score_events (event_id text PRIMARY KEY, game_id text NOT NULL, created_at timestamptz NOT NULL DEFAULT now());
 SQL
 "${PSQL[@]}" -f "$MIGRATION" >/dev/null
 
@@ -146,8 +146,14 @@ INSERT INTO profiles(id,team_id) VALUES ('10000000-0000-0000-0000-0000000000c1',
 INSERT INTO device_push_tokens(id,user_id,platform,app_build,fcm_token) VALUES
  (21,'10000000-0000-0000-0000-0000000000c1','ios',null,'tok-c1');
 SQL
+# activation gate상 과거 source backlog는 진입 자체를 막으므로(아래 별도 테스트), deadline terminal
+# 메커니즘은 fresh source로 진입해 토큰을 만든 뒤 snapshot.deadline_at를 과거로 밀어 검증한다.
+DL_FRESH=$("${PSQL[@]}" -c "SELECT count(*) FROM claim_game_event_tokens(
+  'ev-old','$DGAME','score',7,'my_team_score','t','b','/games/$DGAME',now(),'43000000-0000-0000-0000-000000000001',20,500)")
+[ "$DL_FRESH" = "1" ] || { echo "FAIL: deadline setup fresh claim=$DL_FRESH expected=1" >&2; exit 1; }
+"${PSQL[@]}" -c "UPDATE game_event_delivery_snapshots SET deadline_at=now()-interval '1 second' WHERE event_id='ev-old'" >/dev/null
 DEADLINE_CLAIM=$("${PSQL[@]}" -c "SELECT count(*) FROM claim_game_event_tokens(
-  'ev-old','$DGAME','score',7,'my_team_score','t','b','/games/$DGAME',now()-interval '7 hours','43000000-0000-0000-0000-000000000001',20,500)")
+  'ev-old','$DGAME','score',7,'my_team_score','t','b','/games/$DGAME',now(),'43000000-0000-0000-0000-000000000002',20,500)")
 [ "$DEADLINE_CLAIM" = "0" ] || { echo "FAIL: past-deadline claim released tokens=$DEADLINE_CLAIM" >&2; exit 1; }
 DEADLINE_STATE=$("${PSQL[@]}" -c "SELECT status FROM notified_game_event_tokens WHERE event_id='ev-old' AND token_id=21")
 [ "$DEADLINE_STATE" = "expired" ] || { echo "FAIL: past-deadline token state=$DEADLINE_STATE" >&2; exit 1; }
@@ -199,4 +205,71 @@ ORPH_CLAIM=$("${PSQL[@]}" -c "SELECT string_agg(token_id::text,',' ORDER BY toke
 ORPH_SNAP_AFTER=$("${PSQL[@]}" -c "SELECT count(*) FROM game_event_delivery_snapshots WHERE event_id='ev-orphan' AND snapshot_completed")
 [ "$ORPH_SNAP_AFTER" = "1" ] || { echo "FAIL: marker-only orphan snapshot not created=$ORPH_SNAP_AFTER" >&2; exit 1; }
 
-echo "PASS PG17 game_event ledger: pref freeze, accepted-no-resend, bucket checkpoint, deadline terminal, source-independent due, marker-only orphan recovery"
+# ── #1 P0 activation/cutover 경계(삼순 4차 NO-GO #1) — 시간 heuristic 폐기 후 재발송/복구 계약 ──
+# activation을 명시적으로 고정(코드 배포 시각 = 경계)해 pre/post-cutover를 결정적으로 검증한다.
+"${PSQL[@]}" -c "INSERT INTO game_event_ledger_activation(id,activated_at) VALUES (true, now())
+  ON CONFLICT (id) DO UPDATE SET activated_at=EXCLUDED.activated_at" >/dev/null
+ACTV_GAME=20260727OBWO0
+"${PSQL[@]}" <<SQL >/dev/null
+INSERT INTO profiles(id,team_id) VALUES ('10000000-0000-0000-0000-0000000000f1',2);
+INSERT INTO device_push_tokens(id,user_id,platform,app_build,fcm_token) VALUES
+ (51,'10000000-0000-0000-0000-0000000000f1','ios',null,'tok-f1');
+SQL
+
+# (a) pre-cutover legacy marker-only: marker.created_at < activation, snapshot 없음 → 재발송 0, snapshot 미생성.
+"${PSQL[@]}" -c "INSERT INTO notified_score_events(event_id,game_id,created_at) VALUES
+ ('ev-legacy','$ACTV_GAME', now()-interval '1 hour')" >/dev/null
+LEG_CLAIM=$("${PSQL[@]}" -c "SELECT count(*) FROM claim_game_event_tokens(
+  'ev-legacy','$ACTV_GAME','score',2,'my_team_score','t','b','/games/$ACTV_GAME',now()-interval '1 hour','46000000-0000-0000-0000-000000000001',20,500)")
+[ "$LEG_CLAIM" = "0" ] || { echo "FAIL: pre-cutover legacy resend leak claim=$LEG_CLAIM expected=0" >&2; exit 1; }
+LEG_SNAP=$("${PSQL[@]}" -c "SELECT count(*) FROM game_event_delivery_snapshots WHERE event_id='ev-legacy'")
+[ "$LEG_SNAP" = "0" ] || { echo "FAIL: pre-cutover legacy created snapshot=$LEG_SNAP (must be 0)" >&2; exit 1; }
+LEG_TOK=$("${PSQL[@]}" -c "SELECT count(*) FROM notified_game_event_tokens WHERE event_id='ev-legacy'")
+[ "$LEG_TOK" = "0" ] || { echo "FAIL: pre-cutover legacy created tokens=$LEG_TOK (must be 0)" >&2; exit 1; }
+
+# (b) post-cutover marker-only orphan, source age > 10분: marker.created_at >= activation → source 무관 복구.
+"${PSQL[@]}" -c "INSERT INTO notified_score_events(event_id,game_id,created_at) VALUES
+ ('ev-orphan2','$ACTV_GAME', now())" >/dev/null
+ORPH2_CLAIM=$("${PSQL[@]}" -c "SELECT string_agg(token_id::text,',' ORDER BY token_id) FROM claim_game_event_tokens(
+  'ev-orphan2','$ACTV_GAME','score',2,'my_team_score','t','b','/games/$ACTV_GAME',now()-interval '35 minutes','46000000-0000-0000-0000-000000000002',20,500)")
+[ "$ORPH2_CLAIM" = "51" ] || { echo "FAIL: post-cutover orphan(age>10m) not recovered claim=$ORPH2_CLAIM expected=51" >&2; exit 1; }
+ORPH2_SNAP=$("${PSQL[@]}" -c "SELECT count(*) FROM game_event_delivery_snapshots WHERE event_id='ev-orphan2' AND snapshot_completed")
+[ "$ORPH2_SNAP" = "1" ] || { echo "FAIL: post-cutover orphan snapshot not created=$ORPH2_SNAP" >&2; exit 1; }
+
+# (c) marker 없음 + source < activation(배포 전 backlog) → 진입 안 함(일괄 발송 방지).
+BL_CLAIM=$("${PSQL[@]}" -c "SELECT count(*) FROM claim_game_event_tokens(
+  'ev-backlog','$ACTV_GAME','score',2,'my_team_score','t','b','/games/$ACTV_GAME',now()-interval '20 minutes','46000000-0000-0000-0000-000000000003',20,500)")
+[ "$BL_CLAIM" = "0" ] || { echo "FAIL: pre-activation backlog entered ledger claim=$BL_CLAIM expected=0" >&2; exit 1; }
+BL_SNAP=$("${PSQL[@]}" -c "SELECT count(*) FROM game_event_delivery_snapshots WHERE event_id='ev-backlog'")
+[ "$BL_SNAP" = "0" ] || { echo "FAIL: pre-activation backlog created snapshot=$BL_SNAP (must be 0)" >&2; exit 1; }
+
+# (d) marker 없음 + source >= activation(진짜 신규) → 정상 진입.
+NEW_CLAIM=$("${PSQL[@]}" -c "SELECT string_agg(token_id::text,',' ORDER BY token_id) FROM claim_game_event_tokens(
+  'ev-new','$ACTV_GAME','score',2,'my_team_score','t','b','/games/$ACTV_GAME',now()+interval '1 second','46000000-0000-0000-0000-000000000004',20,500)")
+[ "$NEW_CLAIM" = "51" ] || { echo "FAIL: genuine-new post-activation not entered claim=$NEW_CLAIM expected=51" >&2; exit 1; }
+
+# (e) post-cutover 정상 accepted → 다음 invocation 재발송 0(원장이 판정, source 무관).
+"${PSQL[@]}" -c "SELECT settle_game_event_tokens('[
+  {\"token_id\":51,\"token_hash\":\"$("${PSQL[@]}" -c "SELECT token_hash FROM notified_game_event_tokens WHERE event_id='ev-new' AND token_id=51")\",\"status\":\"accepted\",\"error\":null}
+]'::jsonb,'46000000-0000-0000-0000-000000000004')" >/dev/null
+ACC_RECLAIM=$("${PSQL[@]}" -c "SELECT count(*) FROM claim_game_event_tokens(
+  'ev-new','$ACTV_GAME','score',2,'my_team_score','t','b','/games/$ACTV_GAME',now(),'46000000-0000-0000-0000-000000000005',20,500)")
+[ "$ACC_RECLAIM" = "0" ] || { echo "FAIL: post-cutover accepted resend leak reclaim=$ACC_RECLAIM expected=0" >&2; exit 1; }
+
+# (f) accepted-before-settle crash 재발송 위험 계약(#2): FCM accepted 뒤 settle 못 하고 crash하면
+# 토큰이 leased로 남고 lease 만료 후 재claim되어 재발송된다(at-least-once, prod dedup 없어 중복 위험).
+# 이 창을 명시적으로 회귀 고정한다 — bucket checkpoint(위 ev2)로 '앞 버킷'은 보호되지만, 발송 성공 후
+# settle 유실된 토큰 자체는 재발송 대상임을 문서화.
+CS_GAME=20260727SSNC0
+"${PSQL[@]}" <<SQL >/dev/null
+INSERT INTO profiles(id,team_id) VALUES ('10000000-0000-0000-0000-0000000000f2',8);
+INSERT INTO device_push_tokens(id,user_id,platform,app_build,fcm_token) VALUES
+ (61,'10000000-0000-0000-0000-0000000000f2','ios',null,'tok-g1');
+SQL
+"${PSQL[@]}" -c "SELECT count(*) FROM claim_game_event_tokens('ev-cs','$CS_GAME','score',8,'my_team_score','t','b','/games/$CS_GAME',now(),'47000000-0000-0000-0000-000000000001',20,500)" >/dev/null
+# 발송은 성공했으나 settle 직전 crash → 토큰 leased 유지. lease 만료.
+"${PSQL[@]}" -c "UPDATE notified_game_event_tokens SET lease_until=now()-interval '1 second' WHERE event_id='ev-cs' AND token_id=61" >/dev/null
+CS_RECLAIM=$("${PSQL[@]}" -c "SELECT string_agg(token_id::text,',') FROM claim_game_event_tokens('ev-cs','$CS_GAME','score',8,'my_team_score','t','b','/games/$CS_GAME',now(),'47000000-0000-0000-0000-000000000002',20,500)")
+[ "$CS_RECLAIM" = "61" ] || { echo "FAIL: accepted-before-settle crash reclaim=$CS_RECLAIM expected=61(at-least-once resend window)" >&2; exit 1; }
+
+echo "PASS PG17 game_event ledger: pref freeze, accepted-no-resend, bucket checkpoint, deadline terminal, source-independent due, marker-only orphan recovery, activation cutover(pre/post/backlog/new/accepted), accepted-before-settle window"
