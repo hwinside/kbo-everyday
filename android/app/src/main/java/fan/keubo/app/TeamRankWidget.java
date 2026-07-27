@@ -1,11 +1,9 @@
 package fan.keubo.app;
 
-import android.app.PendingIntent;
 import android.appwidget.AppWidgetManager;
 import android.appwidget.AppWidgetProvider;
 import android.content.ComponentName;
 import android.content.Context;
-import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
@@ -94,15 +92,10 @@ public class TeamRankWidget extends AppWidgetProvider {
     }
 
     private static void renderIds(Context context, AppWidgetManager mgr, int[] appWidgetIds) {
-        Intent launch = context.getPackageManager()
-            .getLaunchIntentForPackage(context.getPackageName());
-        PendingIntent pi = PendingIntent.getActivity(
-            context, 0, launch,
-            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-
         for (int id : appWidgetIds) {
             RemoteViews v = buildViews(context, mgr, id);
-            v.setOnClickPendingIntent(R.id.widget_rank_root, pi);
+            v.setOnClickPendingIntent(R.id.widget_rank_root,
+                WidgetTapMode.tapIntent(context, TeamRankWidget.class, id));
             mgr.updateAppWidget(id, v);
         }
     }
@@ -111,11 +104,8 @@ public class TeamRankWidget extends AppWidgetProvider {
     public void onAppWidgetOptionsChanged(Context context, AppWidgetManager mgr,
                                           int appWidgetId, Bundle newOptions) {
         RemoteViews v = buildViews(context, mgr, appWidgetId);
-        Intent launch = context.getPackageManager()
-            .getLaunchIntentForPackage(context.getPackageName());
-        v.setOnClickPendingIntent(R.id.widget_rank_root, PendingIntent.getActivity(
-            context, 0, launch,
-            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE));
+        v.setOnClickPendingIntent(R.id.widget_rank_root,
+            WidgetTapMode.tapIntent(context, TeamRankWidget.class, appWidgetId));
         mgr.updateAppWidget(appWidgetId, v);
     }
 

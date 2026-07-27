@@ -429,6 +429,22 @@ public class GameNotificationPlugin extends Plugin {
         call.resolve();
     }
 
+    /** 위젯 탭 동작 모드 조회 — {mode:"open"|"refresh"}. */
+    @PluginMethod
+    public void getWidgetTapMode(PluginCall call) {
+        JSObject ret = new JSObject();
+        ret.put("mode", WidgetTapMode.isRefreshOnly(getContext())
+            ? WidgetTapMode.MODE_REFRESH : WidgetTapMode.MODE_OPEN);
+        call.resolve(ret);
+    }
+
+    /** 위젯 탭 동작 모드 저장 — open|refresh만 허용(그 외 open fallback). */
+    @PluginMethod
+    public void setWidgetTapMode(PluginCall call) {
+        WidgetTapMode.setMode(getContext(), call.getString("mode", WidgetTapMode.MODE_OPEN));
+        call.resolve();
+    }
+
     /** 최애선수 목록 동기화 — 선수 카드 위젯 config(선수 선택 목록)가 읽는다.
      *  json = [{playerId,name,teamId,position,number}] (FavoritePlayer 직렬화). */
     @PluginMethod

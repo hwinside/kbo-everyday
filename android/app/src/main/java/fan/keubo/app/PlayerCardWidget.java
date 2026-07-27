@@ -1,11 +1,9 @@
 package fan.keubo.app;
 
-import android.app.PendingIntent;
 import android.appwidget.AppWidgetManager;
 import android.appwidget.AppWidgetProvider;
 import android.content.ComponentName;
 import android.content.Context;
-import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -121,12 +119,10 @@ public class PlayerCardWidget extends AppWidgetProvider {
     }
 
     private static void renderIds(Context ctx, AppWidgetManager mgr, int[] ids) {
-        Intent launch = ctx.getPackageManager().getLaunchIntentForPackage(ctx.getPackageName());
-        PendingIntent pi = PendingIntent.getActivity(
-            ctx, 0, launch, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         for (int id : ids) {
             RemoteViews v = buildViews(ctx, mgr, id);
-            v.setOnClickPendingIntent(R.id.widget_player_root, pi);
+            v.setOnClickPendingIntent(R.id.widget_player_root,
+                WidgetTapMode.tapIntent(ctx, PlayerCardWidget.class, id));
             mgr.updateAppWidget(id, v);
         }
     }

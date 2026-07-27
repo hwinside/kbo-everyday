@@ -57,7 +57,12 @@ interface GameNotificationPlugin {
   setLiveUpdateOptIn(opts: { enabled: boolean }): Promise<void>;
   setLockCardEnabled(opts: { enabled: boolean }): Promise<void>;
   getLockCardGateState(): Promise<{ enabled: boolean }>;
+  getWidgetTapMode(): Promise<{ mode: WidgetTapMode }>;
+  setWidgetTapMode(opts: { mode: WidgetTapMode }): Promise<void>;
 }
+
+/** 홈 위젯 탭 동작 — 'open'(탭 시 앱 실행, 기본) | 'refresh'(앱 안 열고 위젯만 재렌더). */
+export type WidgetTapMode = "open" | "refresh";
 
 /** Android 16+(One UI 8.5) 잠금화면 라이브 카드(Promoted Ongoing) 지원/opt-in 상태. */
 export interface LiveUpdateState {
@@ -250,6 +255,27 @@ export async function setLiveUpdateOptIn(enabled: boolean): Promise<boolean> {
     return true;
   } catch {
     return false;
+  }
+}
+
+/** 홈 위젯 탭 동작 모드 조회(디바이스 로컬, 안드 전용). 비안드/구빌드(메서드 부재)는 기본 'open'. */
+export async function getWidgetTapMode(): Promise<WidgetTapMode> {
+  if (!isAndroid) return "open";
+  try {
+    const r = await GameNotification.getWidgetTapMode();
+    return r?.mode === "refresh" ? "refresh" : "open";
+  } catch {
+    return "open"; // 메서드 부재 = 구빌드
+  }
+}
+
+/** 홈 위젯 탭 동작 모드 저장(디바이스 로컬, 안드 전용). 구빌드/브릿지 실패는 silent. */
+export async function setWidgetTapMode(mode: WidgetTapMode): Promise<void> {
+  if (!isAndroid) return;
+  try {
+    await GameNotification.setWidgetTapMode({ mode });
+  } catch {
+    // silent — 구빌드/브릿 실패(탭 동작은 기존 open 유지)
   }
 }
 
