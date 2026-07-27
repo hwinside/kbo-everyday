@@ -53,9 +53,11 @@ DB `status`로만 결정한다. 공개 트레이·뷰어는 active 행에 한해
   공개 트레이·뷰어·댓글 작성면에는 단 한 번도 노출하지 않는다. 영상 검증 대기 중에도
   `pending`으로 비공개이며 검증 성공 시 `archived`로만 전환한다.
 - 게임당 10개 상한은 active+pending+archived 전체를 advisory lock 안에서 원자적으로 센다.
-  직접 추가 기록은 개인 다이어리 승·무·패/승률에는 포함하지만 GPS 인증 수치·채팅 배지와
-  구분할 수 있도록 durable source를 API에 반환한다. 동일 경기의 기존 GPS 인증은 수동 기록으로
-  절대 강등하지 않는다.
+- **집계 분리 (삼순 정정 + 하린아빠 확정 2026-07-27)**: 직접 추가(`diary_manual`)는 아무 종료 경기나
+  골라 올릴 수 있어 승률 조작이 가능하므로, **인증 직관수·승·무·패/승률·채팅 배지는 GPS 인증(story_geofence)
+  건만 집계**한다(`/api/me/venue-attendance` 응답 `summary`). 직접 추가는 **다이어리 기록 경기수(`diaryGameCount`)
+  와 미디어 목록에만 포함**하고 승무패 집계에서는 제외한다. `games[]`는 전체를 source·venueVerified와
+  함께 반환해 A4 UI가 구분 표시한다. 동일 경기의 기존 GPS 인증은 수동 기록으로 절대 강등하지 않는다.
 - current main의 status-only archive·removed 30일 격리·cleanup_failed·stale_cap 관제 계약을 그대로 사용한다.
 
 ### A3 — 레거시 데이터 이관 + 서빙 통일

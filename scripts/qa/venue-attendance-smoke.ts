@@ -119,12 +119,28 @@ assert.match(
 assert.match(
   diaryRoute,
   /\.in\("source", \["story_geofence", "diary_manual"\]\)/,
-  "개인 승률에는 GPS+직접 추가 모두 포함",
+  "다이어리 기록에는 GPS+직접 추가 모두 조회(경기수 집계용)",
+);
+// 삼순 정정 + 하린아빠 확정: 승률·인증 직관수는 GPS 인증(story_geofence) 건만.
+assert.match(
+  diaryRoute,
+  /const certifiedGames = games\.filter\(\(game\) => game\.source === "story_geofence"\)/,
+  "인증 통계용 GPS 전용 집합 분리",
 );
 assert.match(
   diaryRoute,
-  /certifiedSummary:[\s\S]*game\.source === "story_geofence"/,
-  "GPS 인증 통계는 직접 추가와 분리",
+  /summary: summarizeVenueAttendance\(certifiedGames\)/,
+  "summary(승률·인증 직관수·배지)는 GPS 인증 건만 집계 — 직접 추가 제외",
+);
+assert.match(
+  diaryRoute,
+  /diaryGameCount: games\.length/,
+  "다이어리 기록 경기수는 직접 추가 포함 전체",
+);
+assert.doesNotMatch(
+  diaryRoute,
+  /summary: summarizeVenueAttendance\(games\)(?!\.)/,
+  "all-source 승률을 summary로 노출하지 않음(승률 조작 방지)",
 );
 
 async function testDeadline() {
