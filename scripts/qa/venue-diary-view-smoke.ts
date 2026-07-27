@@ -5,6 +5,7 @@ import {
   buildDiaryCountsMap,
   buildDiaryHomeGames,
   classifyDiaryPendingPoll,
+  diaryAddSelectDisabled,
   diaryBottomCta,
   diaryCanStartUpload,
   diaryCaptionForSubmit,
@@ -551,16 +552,13 @@ async function runAsyncRegressions() {
   await run();
 }
 
-// 14) Blocker 3 (actual-wiring) — id 추적 pending poll: archived/removed/timeout 각 경로 terminal + phase.
+// 14) Blocker 3 (actual-wiring) — id 추적 pending poll: bounded probe + archived/timeout terminal + phase.
+//     removed 는 상세 GET(active|archived)에서 도달 불가라 계약에서 제거됨(허위계약 0).
 {
-  // 순수 분류기
+  // 순수 분류기 — found→archived, 소진→timeout, 그 외 계속(null). removed 분기 없음.
   assert.equal(
     classifyDiaryPendingPoll({ probe: { found: true }, attemptsLeft: 5 }),
     "archived",
-  );
-  assert.equal(
-    classifyDiaryPendingPoll({ probe: { found: false, removed: true }, attemptsLeft: 5 }),
-    "removed",
   );
   assert.equal(
     classifyDiaryPendingPoll({ probe: { found: false }, attemptsLeft: 0 }),
@@ -572,8 +570,8 @@ async function runAsyncRegressions() {
     "아직 시도 남음 → 계속",
   );
   assert.equal(classifyDiaryPendingPoll({ probe: null, attemptsLeft: 3 }), null, "probe 실패 → 계속");
+  assert.equal(classifyDiaryPendingPoll({ probe: null, attemptsLeft: 0 }), "timeout", "관측 실패로 소진 → timeout");
   assert.equal(diaryPendingTerminalPhase("archived"), "done");
-  assert.equal(diaryPendingTerminalPhase("removed"), "failed");
   assert.equal(diaryPendingTerminalPhase("timeout"), "stalled");
 
   // 루프 actual-wiring: 각 terminal 경로에서 onTerminal 1회 + 타이머 중단.
@@ -594,6 +592,7 @@ async function runAsyncRegressions() {
       },
       setTimer: clock.set,
       clearTimer: clock.clear,
+      probeTimeoutMs: 8000,
     });
     await clock.advance(200);
     cancel();
@@ -606,14 +605,143 @@ async function runAsyncRegressions() {
   assert.equal(a.terminal, "archived", "found → archived");
   assert.equal(a.ticks, 2, "found 즉시 종료(3번째 tick 없음)");
 
-  // removed: removed=true → removed.
-  const r = await runPoll([{ found: false }, { found: false, removed: true }]);
-  assert.equal(r.terminal, "removed", "removed → removed");
-
   // timeout: 끝까지 found 안 됨 → timeout.
   const t = await runPoll([{ found: false }, { found: false }, { found: false }]);
   assert.equal(t.terminal, "timeout", "소진 → timeout");
   assert.equal(t.ticks, 3, "delays 길이만큼 poll");
+}
+
+// 14b) Blocker 3 (bounded probe) — throw/never-settle 에서 영구정지 0: 다음 tick 재개 + cleanup abort.
+{
+  // throw → 다음 tick 예약(unhandled 0, 영구정지 0): 1번째 probe throw, 2번째 found → archived.
+  {
+    const clock = new Clock();
+    let calls = 0;
+    let terminal: DiaryPendingTerminal | null = null;
+    const cancel = startDiaryPendingPoll<number>({
+      delays: [10, 20, 30],
+      probe: async () => {
+        calls += 1;
+        if (calls === 1) throw new Error("probe boom");
+        return { found: true };
+      },
+      onTerminal: (tm) => {
+        terminal = tm;
+      },
+      setTimer: clock.set,
+      clearTimer: clock.clear,
+      probeTimeoutMs: 8000,
+    });
+    await clock.advance(100);
+    cancel();
+    assert.ok(calls >= 2, `throw 후 다음 tick 재개(calls=${calls})`);
+    assert.equal(terminal, "archived", "throw→다음 tick→found→archived");
+  }
+
+  // never-settle → 8s mint abort → 다음 tick 재개.
+  {
+    const clock = new Clock();
+    let calls = 0;
+    let aborts = 0;
+    let terminal: DiaryPendingTerminal | null = null;
+    const cancel = startDiaryPendingPoll<number>({
+      delays: [10, 20, 30],
+      probe: (signal) => {
+        calls += 1;
+        if (calls === 1) {
+          signal.addEventListener("abort", () => {
+            aborts += 1;
+          });
+          return new Promise<DiaryPendingProbe | null>(() => {}); // 영원히 pending
+        }
+        return Promise.resolve({ found: true });
+      },
+      onTerminal: (tm) => {
+        terminal = tm;
+      },
+      setTimer: clock.set,
+      clearTimer: clock.clear,
+      probeTimeoutMs: 8000,
+    });
+    await clock.advance(10); // tick1: probe hang
+    assert.equal(calls, 1);
+    assert.equal(terminal, null, "never-settle: 아직 terminal 아님");
+    await clock.advance(8000); // 8s mint timeout → abort → null → 다음 tick 예약
+    assert.equal(aborts, 1, "never-settle 은 8s 에 abort(다음 timer 소실 0)");
+    await clock.advance(30);
+    cancel();
+    assert.ok(calls >= 2, `8s abort 후 다음 tick 재개(calls=${calls})`);
+    assert.equal(terminal, "archived", "never-settle→8s abort→다음 tick→archived");
+  }
+
+  // cleanup abort: in-flight probe 를 즉시 abort + 이후 tick/terminal 없음.
+  {
+    const clock = new Clock();
+    let aborts = 0;
+    let terminalCalls = 0;
+    const cancel = startDiaryPendingPoll<number>({
+      delays: [10, 20],
+      probe: (signal) => {
+        signal.addEventListener("abort", () => {
+          aborts += 1;
+        });
+        return new Promise<DiaryPendingProbe | null>(() => {});
+      },
+      onTerminal: () => {
+        terminalCalls += 1;
+      },
+      setTimer: clock.set,
+      clearTimer: clock.clear,
+      probeTimeoutMs: 8000,
+    });
+    await clock.advance(10); // tick1: probe in-flight
+    cancel(); // cleanup 이 activeController 를 abort
+    assert.equal(aborts, 1, "cleanup 이 in-flight probe 를 abort");
+    await clock.advance(20000);
+    assert.equal(terminalCalls, 0, "cleanup 후 terminal 없음(누수 0)");
+  }
+
+  // 복수 pending 영상 역순 승급(id별 소유권): 뒤 영상 먼저·앞 영상 늦게 → 둘 다 archived 반영.
+  {
+    const clock = new Clock();
+    const terminals = new Map<number, DiaryPendingTerminal>();
+    const mkPoll = (storyId: number, foundAtTick: number) => {
+      let i = 0;
+      return startDiaryPendingPoll<number>({
+        delays: [10, 20, 30],
+        probe: async () => {
+          i += 1;
+          return { found: i >= foundAtTick };
+        },
+        onTerminal: (t) => {
+          terminals.set(storyId, t);
+        },
+        setTimer: clock.set,
+        clearTimer: clock.clear,
+        probeTimeoutMs: 8000,
+      });
+    };
+    const cancelA = mkPoll(101, 3); // 앞 영상: tick3 늦은 승급
+    const cancelB = mkPoll(202, 1); // 뒤 영상: tick1 먼저 승급
+    await clock.advance(200);
+    cancelA();
+    cancelB();
+    assert.equal(terminals.get(202), "archived", "뒤 영상 먼저 승급");
+    assert.equal(terminals.get(101), "archived", "앞 영상 늦은 승급도 반영(단일슬롯 뒤섞임 0)");
+    assert.equal(terminals.size, 2, "두 poll 독립 종결");
+  }
+}
+
+// 14c) Blocker 4 — fail-closed 선택 게이트: counts 미확정이면 어떤 count 도 선택 불가.
+{
+  // 미확정(로딩/오류): 0/2/10 모두 disabled → 0 폴백으로 10/10 을 선택가능 오노출 0.
+  assert.equal(diaryAddSelectDisabled(false, 0), true, "counts 미확정이면 0개도 선택 불가");
+  assert.equal(diaryAddSelectDisabled(false, 2), true);
+  assert.equal(diaryAddSelectDisabled(false, 10), true, "미확정 10/10 을 선택가능으로 오노출 0");
+  // 확정 후: 상한만 잠김, 그 외 선택 가능.
+  assert.equal(diaryAddSelectDisabled(true, 0), false, "확정 후 0개 선택 가능");
+  assert.equal(diaryAddSelectDisabled(true, 2), false, "확정 후 부분은 추가 가능");
+  assert.equal(diaryAddSelectDisabled(true, 10), true, "확정 후 10/10 은 잠김");
 }
 
 // 15) Blocker 4 — 2026 counts 소스로 10/10 경기는 2025 탭에서도 잠김(locked) 유지.

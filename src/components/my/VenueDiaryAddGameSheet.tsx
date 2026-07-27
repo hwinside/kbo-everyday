@@ -3,11 +3,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, ChevronLeft, Search, Loader2, Lock } from "lucide-react";
+import { X, ChevronLeft, Search, Loader2, Lock, RefreshCw } from "lucide-react";
 import { TEAMS, getTeamById } from "@/lib/constants/teams";
 import {
+  diaryAddSelectDisabled,
   diaryPickCaption,
-  diaryPickLocked,
   diaryPickState,
 } from "@/lib/venue-diary/view";
 import type { DiaryUploadGame } from "@/components/my/VenueDiaryUploader";
@@ -30,6 +30,11 @@ interface Props {
   favoriteTeamId: number | null;
   /** gameId → 이미 올린 미디어 개수(N/10 오버레이). */
   countsByGame: Map<string, number>;
+  /** 2026 counts 확정 여부. false 면 선택 fail-closed(로딩/오류). */
+  countsReady: boolean;
+  /** counts fetch 실패 여부(0 폴백 금지 → 재시도 노출). */
+  countsError: boolean;
+  onRetryCounts: () => void;
   onBack: () => void;
   onClose: () => void;
   onPick: (game: DiaryUploadGame) => void;
@@ -59,6 +64,9 @@ export default function VenueDiaryAddGameSheet({
   isOpen,
   favoriteTeamId,
   countsByGame,
+  countsReady,
+  countsError,
+  onRetryCounts,
   onBack,
   onClose,
   onPick,
@@ -255,10 +263,27 @@ export default function VenueDiaryAddGameSheet({
                 이 달에 종료된 경기가 없어요
               </div>
             ) : (
-              finalGames.map((day) => {
+              <>
+                {/* fail-closed: 2026 counts 확정 전에는 올린 개수를 불러오는 중(선택 비활성), 실패하면
+                    0 폴백 대신 재시도 버튼을 노출한다(Blocker 4). */}
+                {!countsReady &&
+                  (countsError ? (
+                    <button
+                      type="button"
+                      onClick={onRetryCounts}
+                      className="flex items-center justify-center gap-2 rounded-xl border border-border bg-bg-tertiary px-3 py-2.5 text-xs font-bold text-text-secondary"
+                    >
+                      <RefreshCw size={13} /> 올린 개수를 불러오지 못했어요 · 다시 시도
+                    </button>
+                  ) : (
+                    <div className="flex items-center justify-center gap-2 rounded-xl border border-border bg-bg-tertiary px-3 py-2.5 text-xs font-bold text-text-tertiary">
+                      <Loader2 size={13} className="animate-spin" /> 올린 개수 확인 중…
+                    </div>
+                  ))}
+                {finalGames.map((day) => {
                 const count = countsByGame.get(day.gameId) ?? 0;
                 const pick = diaryPickState(count);
-                const locked = diaryPickLocked(pick);
+                const selectDisabled = diaryAddSelectDisabled(countsReady, count);
                 const caption = diaryPickCaption(pick);
                 const resultColor =
                   day.result === "W"
@@ -269,11 +294,11 @@ export default function VenueDiaryAddGameSheet({
                 return (
                   <button
                     key={day.gameId}
-                    onClick={() => !locked && handlePick(day)}
-                    disabled={locked}
+                    onClick={() => !selectDisabled && handlePick(day)}
+                    disabled={selectDisabled}
                     className={`flex items-center justify-between rounded-2xl bg-bg-tertiary/60 border px-4 py-3 text-left ${
                       pick.kind === "add" ? "border-accent/40" : "border-border"
-                    } ${locked ? "opacity-80" : "active:bg-bg-tertiary"}`}
+                    } ${selectDisabled ? "opacity-80" : "active:bg-bg-tertiary"}`}
                   >
                     <div className="flex flex-col gap-0.5 min-w-0">
                       <span className="text-[11px] font-bold text-text-tertiary">
@@ -288,7 +313,11 @@ export default function VenueDiaryAddGameSheet({
                         {caption ?? (day.result ? (day.result === "W" ? "승" : day.result === "L" ? "패" : "무") : "종료")}
                       </span>
                     </div>
-                    {pick.kind === "pick" ? (
+                    {!countsReady ? (
+                      <span className="shrink-0 rounded-lg border border-border px-3 py-2 text-xs font-bold text-text-tertiary">
+                        {countsError ? "확인 실패" : "확인 중…"}
+                      </span>
+                    ) : pick.kind === "pick" ? (
                       <span className="shrink-0 rounded-lg bg-brand-primary px-3 py-2 text-xs font-bold text-white">
                         선택
                       </span>
@@ -304,7 +333,8 @@ export default function VenueDiaryAddGameSheet({
                     )}
                   </button>
                 );
-              })
+                })}
+              </>
             )}
 
             <div className="mt-1 rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-2.5 text-[11.5px] leading-relaxed text-amber-300">

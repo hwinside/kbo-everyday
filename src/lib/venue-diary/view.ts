@@ -568,65 +568,78 @@ export function makeDiaryDetailRefresh<H = unknown>(deps: {
 }
 
 // ── pending 영상 id 추적 terminal poll(Blocker 3) ─────────────────────────────
-// POST 반환 story id 를 추적해 pending→archived/removed/timeout terminal 까지 polling 한다.
-// 현재는 고정 지연 60초 뒤 blindly 종료 → uploader 항목이 processing에 영구 멈췄다.
+// POST 반환 story id 를 추적해 pending→archived/timeout terminal 까지 polling 한다.
+// 고정 지연 60초 뒤 blindly 종료하던 것을 id 승급 관측으로 바꾼다(uploader 항목 영구 processing 방지).
 // probe 는 상세 GET(active|archived)에서 id 존재 여부를 반환 — found=archived 승급.
+// 상세 GET 은 active|archived 만 주므로 실제 관측값은 found(archived) / not-found(계속) 뿐이다.
+// production 도달 불가인 `removed` terminal 은 허위계약이라 제거했다(삼순 3차 B3).
 
-export type DiaryPendingTerminal = "archived" | "removed" | "timeout";
+export type DiaryPendingTerminal = "archived" | "timeout";
 
-/** 한 번의 poll 관측. found=목록에 id 등장(승급), removed=명시적 제거/거부 관측. */
+/** 한 번의 poll 관측. found=상세 GET(active|archived)에 id 등장(승급). null 은 관측 실패(계속). */
 export interface DiaryPendingProbe {
   found: boolean;
-  removed?: boolean;
 }
 
 /**
  * poll 관측 + 남은 시도 횟수로 terminal 을 판정한다(순수).
- * found→archived, removed→removed, 둘 다 아니고 시도 소진→timeout, 그 외는 계속(null).
+ * found→archived, 못 찾고 시도 소진→timeout, 그 외는 계속(null).
  */
 export function classifyDiaryPendingPoll(input: {
   probe: DiaryPendingProbe | null;
   attemptsLeft: number;
 }): DiaryPendingTerminal | null {
   if (input.probe?.found) return "archived";
-  if (input.probe?.removed) return "removed";
   if (input.attemptsLeft <= 0) return "timeout";
   return null;
 }
 
-/** terminal → uploader 항목 phase: archived→done, removed→failed, timeout→stalled. */
+/** terminal → uploader 항목 phase: archived→done, timeout→stalled. */
 export function diaryPendingTerminalPhase(
   terminal: DiaryPendingTerminal,
 ): DiaryUploadPhase {
-  return terminal === "archived"
-    ? "done"
-    : terminal === "removed"
-      ? "failed"
-      : "stalled";
+  return terminal === "archived" ? "done" : "stalled";
 }
 
 /**
  * pending 영상 terminal poll 루프(순수·주입형). delays 순서대로 probe 해 terminal 까지 돌고,
  * terminal 에서 onTerminal 을 호출한 뒤 멈춘다(타이머 중단). 반환값은 cancel 함수.
- * setTimer/clearTimer 를 주입받아 컴포넌트와 테스트가 동일 코드를 실행한다(actual-wiring).
+ *
+ * poll 1회도 반드시 bounded settle 시킨다: probe 를 mintWithTimeout(per-poll AbortController)로 감싸
+ * probe 가 throw 하거나 never-settle 이어도 null 로 떨어져 다음 tick 이 예약된다(영구정지 0, 삼순 3차 B3).
+ * cleanup 은 activeController.abort() 로 in-flight probe 를 즉시 끊는다.
+ * setTimer/clearTimer/makeController 를 주입받아 컴포넌트와 테스트가 동일 코드를 실행한다(actual-wiring).
  */
 export function startDiaryPendingPoll<H = unknown>(deps: {
   delays: ReadonlyArray<number>;
-  probe: () => Promise<DiaryPendingProbe | null>;
+  probe: (signal: AbortSignal) => Promise<DiaryPendingProbe | null>;
   onTerminal: (terminal: DiaryPendingTerminal) => void;
   setTimer: (fn: () => void, ms: number) => H;
   clearTimer: (handle: H) => void;
+  makeController?: () => AbortController;
+  probeTimeoutMs?: number;
 }): () => void {
   let cancelled = false;
   let timer: H | null = null;
+  let activeController: AbortController | null = null;
   let index = 0;
+  const makeController = deps.makeController ?? (() => new AbortController());
+  const timeoutMs = deps.probeTimeoutMs ?? VENUE_STORY_URL_MINT_TIMEOUT_MS;
   const schedule = () => {
     if (timer != null) deps.clearTimer(timer);
     timer = deps.setTimer(() => void step(), deps.delays[index] ?? 0);
   };
   const step = async () => {
     if (cancelled) return;
-    const probe = await deps.probe();
+    const controller = makeController();
+    activeController = controller;
+    // probe 전체(getSafeSession→fetch→json)를 8s bounded: throw→catch→null, never-settle→abort→null.
+    const probe = await mintWithTimeout<DiaryPendingProbe | null, H>(
+      (signal) => deps.probe(signal),
+      null,
+      { timeoutMs, setTimer: deps.setTimer, clearTimer: deps.clearTimer, controller },
+    );
+    if (activeController === controller) activeController = null;
     if (cancelled) return;
     const attemptsLeft = deps.delays.length - (index + 1);
     const terminal = classifyDiaryPendingPoll({ probe, attemptsLeft });
@@ -641,6 +654,7 @@ export function startDiaryPendingPoll<H = unknown>(deps: {
   return () => {
     cancelled = true;
     if (timer != null) deps.clearTimer(timer);
+    if (activeController != null) activeController.abort();
   };
 }
 
@@ -655,4 +669,17 @@ export function buildDiaryCountsMap(
   const map = new Map<string, number>();
   for (const g of groups) map.set(g.gameId, g.counts.total);
   return map;
+}
+
+/**
+ * AddGameSheet 경기 선택 비활성 판정(fail-closed, Blocker 4). 2026 counts 가 확정(countsReady)되기
+ * 전에는 어떤 경기도 선택 불가 — 미확정 count 를 0 으로 오인해 10/10 경기를 선택가능으로
+ * 노출하고 업로드 후 서버 10cap 실패하는 fail-open 을 막는다. 확정 후에만 상한(locked)을 반영.
+ */
+export function diaryAddSelectDisabled(
+  countsReady: boolean,
+  count: number,
+): boolean {
+  if (!countsReady) return true;
+  return diaryPickLocked(diaryPickState(count));
 }

@@ -121,10 +121,11 @@ async function fetchDiaryMediaAllPages(
 async function fetchDiaryGameMediaIds(
   token: string,
   gameId: string,
+  signal?: AbortSignal,
 ): Promise<Set<number> | null> {
   const res = await fetch(
     `/api/me/venue-diary/media?gameId=${encodeURIComponent(gameId)}`,
-    { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" },
+    { headers: { Authorization: `Bearer ${token}` }, cache: "no-store", signal },
   );
   if (!res.ok) return null;
   const data = (await res.json()) as { media?: { id: number }[] };
@@ -201,9 +202,16 @@ export default function VenueDiaryCard() {
   }, [load, user]);
 
   // 영상 pending 은 목록(active|archived)에 아직 없다 → POST 반환 id 를 추적해 archived 승급(terminal)
-  // 까지 polling. 고정 60초 blindly 종료 대신 id 확인 즉시 홈·count 갱신·타이머 중단(Blocker 3).
-  const pendingPollRef = useRef<(() => void) | null>(null);
-  useEffect(() => () => pendingPollRef.current?.(), []);
+  // 까지 polling. storyId별 poll 소유권(Map)으로 복수 pending 영상을 동시 추적 — 새 영상이 이전
+  // poll 을 cancel 해 앞 영상 늦은 승급이 홈/count 에 미반영되는 단일슬롯 뒤섞임을 막는다(Blocker 3).
+  const pendingPollsRef = useRef<Map<number, () => void>>(new Map());
+  useEffect(
+    () => () => {
+      pendingPollsRef.current.forEach((cancel) => cancel());
+      pendingPollsRef.current.clear();
+    },
+    [],
+  );
 
   const handleUploaded = useCallback(
     (result?: {
@@ -219,26 +227,28 @@ export default function VenueDiaryCard() {
         result.id != null &&
         result.gameId
       ) {
-        pendingPollRef.current?.();
         const storyId = result.id;
         const gameId = result.gameId;
-        pendingPollRef.current = startDiaryPendingPoll({
+        // 같은 storyId 재업로드면 그 storyId 의 이전 poll 만 취소(다른 영상 poll 은 유지).
+        pendingPollsRef.current.get(storyId)?.();
+        const cancel = startDiaryPendingPoll({
           delays: PENDING_POLL_DELAYS_MS,
-          probe: async () => {
+          probe: async (signal) => {
             const session = await getSafeSession();
             const t = session?.access_token;
             if (!t) return null;
-            const ids = await fetchDiaryGameMediaIds(t, gameId);
+            const ids = await fetchDiaryGameMediaIds(t, gameId, signal);
             return ids == null ? null : { found: ids.has(storyId) };
           },
           onTerminal: (terminal) => {
-            pendingPollRef.current = null;
-            // archived 승급 감지 즉시 홈·count 갱신(timeout/removed 는 홈 미노출 유지).
+            pendingPollsRef.current.delete(storyId);
+            // archived 승급 감지 즉시 홈·count 갱신(timeout 은 홈 미노출 유지).
             if (terminal === "archived") void load();
           },
           setTimer: (fn, ms) => setTimeout(fn, ms),
           clearTimer: (handle) => clearTimeout(handle),
         });
+        pendingPollsRef.current.set(storyId, cancel);
       }
     },
     [load],
@@ -310,24 +320,38 @@ export default function VenueDiaryCard() {
 
   // AddGameSheet 경기 선택은 2026 고정 → 현재 탭(2025 등)과 무관하게 항상 2026 counts 를 쓴다.
   // 2025 탭에서 열어도 2026 기존 10/10 경기가 0/10으로 오표시되지 않도록 별도 fetch(Blocker 4).
+  // 2026 counts 확정 전에는 fail-closed(선택 비활성), 실패 시 0 폴백 금지→재시도. open/user 전환마다
+  // stale counts 를 초기화해 다른 유저·이전 세션 잔존을 막는다(Blocker 4).
   const [addCounts, setAddCounts] = useState<Map<string, number>>(new Map());
+  const [countsReady, setCountsReady] = useState(false);
+  const [countsError, setCountsError] = useState(false);
+  const [countsReload, setCountsReload] = useState(0);
   useEffect(() => {
     if (!addOpen || !user) return;
     let alive = true;
     const controller = new AbortController();
+    setAddCounts(new Map());
+    setCountsReady(false);
+    setCountsError(false);
     (async () => {
-      const session = await getSafeSession();
-      const token = session?.access_token;
-      if (!token) return;
-      const groups = await fetchDiaryMediaAllPages(token, CURRENT_SEASON, controller.signal);
-      if (!alive || groups == null) return;
-      setAddCounts(buildDiaryCountsMap(groups));
+      try {
+        const session = await getSafeSession();
+        const token = session?.access_token;
+        if (!token) throw new Error("missing session");
+        const groups = await fetchDiaryMediaAllPages(token, CURRENT_SEASON, controller.signal);
+        if (!alive) return;
+        if (groups == null) throw new Error("counts failed");
+        setAddCounts(buildDiaryCountsMap(groups));
+        setCountsReady(true);
+      } catch {
+        if (alive && !controller.signal.aborted) setCountsError(true);
+      }
     })();
     return () => {
       alive = false;
       controller.abort();
     };
-  }, [addOpen, user]);
+  }, [addOpen, user, countsReload]);
 
   const favoriteTeamId = profile?.team_id ?? null;
 
@@ -524,6 +548,9 @@ export default function VenueDiaryCard() {
         isOpen={addOpen}
         favoriteTeamId={favoriteTeamId}
         countsByGame={addCounts}
+        countsReady={countsReady}
+        countsError={countsError}
+        onRetryCounts={() => setCountsReload((n) => n + 1)}
         onBack={() => setAddOpen(false)}
         onClose={() => setAddOpen(false)}
         onPick={(game) => {

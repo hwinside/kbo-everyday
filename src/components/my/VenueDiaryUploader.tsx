@@ -177,17 +177,17 @@ export default function VenueDiaryUploader({ game, isOpen, onBack, onClose, onUp
   };
 
   // POST 반환 story id 를 상세 GET(active|archived)에서 추적해 terminal(승급) 까지 poll,
-  // 항목을 processing→done(archived)/failed(removed)/stalled(timeout)로 전환한다(Blocker 3).
+  // 항목을 processing→done(archived)/stalled(timeout)로 전환한다(Blocker 3).
   const startPendingItemPoll = (itemKey: string, storyId: number) => {
     const cancel = startDiaryPendingPoll({
       delays: PENDING_POLL_DELAYS_MS,
-      probe: async () => {
+      probe: async (signal) => {
         const session = await getSafeSession();
         const token = session?.access_token;
         if (!token) return null;
         const res = await fetch(
           `/api/me/venue-diary/media?gameId=${encodeURIComponent(game.gameId)}`,
-          { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" },
+          { headers: { Authorization: `Bearer ${token}` }, cache: "no-store", signal },
         );
         if (!res.ok) return null;
         const data = (await res.json()) as { media?: { id: number }[] };
