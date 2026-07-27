@@ -19,6 +19,10 @@ import {
   type VenueStoryMediaRow,
 } from "../../src/lib/venue-diary/media";
 import { venueSignCacheKey } from "../../src/lib/venue-stories/media-url";
+import {
+  decideManualDiaryGame,
+  VENUE_DIARY_MANUAL_SOURCE,
+} from "../../src/lib/venue-diary/manual-upload";
 
 function media(overrides: Partial<VenueStoryMediaRow> = {}): VenueStoryMediaRow {
   return {
@@ -30,6 +34,7 @@ function media(overrides: Partial<VenueStoryMediaRow> = {}): VenueStoryMediaRow 
     thumb_url: null,
     caption: null,
     venue_verified: true,
+    attendance_source: "story_geofence",
     stadium_name: "잠실",
     status: "active",
     created_at: "2026-07-24T10:00:00Z",
@@ -106,6 +111,7 @@ function dbMedia(overrides: Partial<VenueStoryMediaDbRow> = {}): VenueStoryMedia
   assert.equal(item.thumbUrl, "https://cdn/vt.jpg");
   assert.equal(item.caption, "직관!");
   assert.equal(item.venueVerified, false, "null → false fail-safe");
+  assert.equal(item.source, "story_geofence", "durable source 응답");
 }
 
 // 5) 댓글 그룹핑: story_id 별 분리 + DESC 입력을 정순(오래된→최신)으로 반전 + 작성자 매핑
@@ -211,8 +217,8 @@ function dbMedia(overrides: Partial<VenueStoryMediaDbRow> = {}): VenueStoryMedia
   assert.match(route, /getVerifiedUserFromRequest\(req\)/, "검증된 bearer 사용자만 허용");
   assert.equal(
     route.match(/\.eq\("user_id", userId\)/g)?.length,
-    2,
-    "목록·상세 모두 verified owner로 고정",
+    3,
+    "목록·상세·영상 claim 확인 모두 verified owner로 고정",
   );
   assert.doesNotMatch(
     route,
@@ -316,6 +322,118 @@ assert.equal(isValidDiaryGameId("20260726WOHT0"), true);
 assert.equal(isValidDiaryGameId("G_1-2"), true);
 assert.equal(isValidDiaryGameId("G,or(status.eq.active)"), false, "PostgREST filter injection 차단");
 assert.equal(parseDiaryCursor("2026-07-01|G,or(status.eq.active)"), null);
+
+// 9) 과거 직접 추가: 실제 2026 final만, durable source/비공개/전체 보존 상한 계약
+assert.deepEqual(
+  decideManualDiaryGame({
+    exists: true,
+    gameDate: "2026-07-24",
+    status: "final",
+  }),
+  { ok: true },
+  "2026 final 허용",
+);
+for (const status of ["scheduled", "live", "cancelled"] as const) {
+  assert.equal(
+    decideManualDiaryGame({ exists: true, gameDate: "2026-07-24", status }).ok,
+    false,
+    `${status} 거부`,
+  );
+}
+assert.equal(
+  decideManualDiaryGame({
+    exists: true,
+    gameDate: "2025-07-24",
+    status: "final",
+  }).ok,
+  false,
+  "2026 외 시즌 거부",
+);
+assert.equal(VENUE_DIARY_MANUAL_SOURCE, "diary_manual");
+
+const manualMigration = readFileSync(
+  new URL(
+    "../../supabase/migrations/20260727_venue_diary_manual_upload.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
+assert.match(
+  manualMigration,
+  /pg_advisory_xact_lock[\s\S]*status IN \('active', 'pending', 'archived'\)/,
+  "동시성 lock 안에서 보존 상태 전체 상한",
+);
+assert.equal(
+  manualMigration.match(/status IN \('active', 'pending', 'archived'\)/g)?.length,
+  3,
+  "partial index+직접 추가 RPC+라이브 RPC가 동일 보존 상한 사용",
+);
+assert.match(
+  manualMigration,
+  /v_status := CASE WHEN p_media_type = 'video' THEN 'pending' ELSE 'archived' END/,
+  "사진은 즉시 archived, 영상은 검증 전 pending",
+);
+assert.match(
+  manualMigration,
+  /false, 'diary_manual'/,
+  "수동 기록은 venue_verified=false + durable source",
+);
+assert.match(
+  manualMigration,
+  /attendance_source <> 'diary_manual'[\s\S]*status <> 'archived'[\s\S]*media_bucket = 'venue-media'/,
+  "미검증 staging 영상의 archived 오염을 DB constraint로 차단",
+);
+assert.match(
+  manualMigration,
+  /GREATEST\(p_expires_at, now\(\) \+ interval '7 days'\)/,
+  "pending 영상은 7일 복구창 확보",
+);
+assert.match(
+  manualMigration,
+  /archived_at, game_ended_at[\s\S]*CASE WHEN v_status = 'archived' THEN now\(\) ELSE NULL END,[\s\S]*now\(\)/,
+  "실제 final 검증 시각을 기록해 finalizer 재계산 대상에서 제외",
+);
+assert.match(
+  manualMigration,
+  /venue_attendance\.source = 'diary_manual'[\s\S]*EXCLUDED\.source = 'story_geofence'/,
+  "GPS 인증만 수동 기록을 승격하고 반대 강등은 금지",
+);
+const diaryRoute = readFileSync(
+  new URL("../../src/app/api/me/venue-diary/media/route.ts", import.meta.url),
+  "utf8",
+);
+const diaryPost =
+  diaryRoute.match(/export async function POST[\s\S]*?(?=\/\*\* 조회한 유저)/)?.[0] ?? "";
+assert.match(diaryRoute, /decideManualDiaryGame\(venue\)/, "KBO actual final 검증");
+assert.doesNotMatch(
+  diaryPost,
+  /\b(lat|lng|accuracy)\b/,
+  "직접 추가 POST는 GPS 입력 불필요",
+);
+assert.match(
+  diaryPost,
+  /ownsPath\(parsed\.path, gameId, userId\)/,
+  "사진 경로를 verified owner에 바인딩",
+);
+assert.match(
+  diaryPost,
+  /parsed\.bucket !== VENUE_STORY_PRIVATE_MEDIA_BUCKET/,
+  "신규 직접 추가 사진은 private venue-media만 허용",
+);
+assert.match(
+  diaryRoute,
+  /validateVenueVideoRow\([\s\S]*promoteStatus: "archived"/,
+  "직접 추가 영상은 검증 성공 후 archived로만 승격",
+);
+const publicRoute = readFileSync(
+  new URL("../../src/app/api/venue-stories/route.ts", import.meta.url),
+  "utf8",
+);
+assert.match(
+  publicRoute,
+  /\.eq\("status", "active"\)[\s\S]*\.gt\("expires_at"/,
+  "공개 트레이는 active만 조회해 diary_manual archived 노출 0",
+);
 
 testStoryCommentBounds()
   .then(() => console.log("venue-diary-media-smoke: OK"))

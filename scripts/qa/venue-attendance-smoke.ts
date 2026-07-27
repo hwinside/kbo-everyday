@@ -17,6 +17,7 @@ function row(overrides: Partial<VenueAttendanceRow> = {}): VenueAttendanceRow {
     favorite_team_id_snapshot: 1,
     stadium_name: "잠실",
     recorded_at: "2026-07-21T10:00:00Z",
+    source: "story_geofence",
     ...overrides,
   };
 }
@@ -88,6 +89,10 @@ assert.deepEqual(summary, {
   winRate: 1 / 3,
 });
 assert.equal(summarizeVenueAttendance([pending]).winRate, null, "종료 경기 0건은 승률 미표시");
+const manual = buildVenueDiaryItem(row({ source: "diary_manual" }), game());
+assert.equal(manual.source, "diary_manual", "직접 추가 source 응답");
+assert.equal(manual.venueVerified, false, "직접 추가는 GPS 인증과 분리");
+assert.equal(win.venueVerified, true, "GPS source만 인증");
 
 const migration = readFileSync(
   resolve(process.cwd(), "supabase/migrations/20260721_venue_attendance.sql"),
@@ -110,6 +115,16 @@ assert.match(
   diaryRoute,
   /if \(profileResult\.error\) \{[\s\S]*?status: 500/,
   "프로필 DB 오류를 최애선수 없음으로 오인하지 않고 5xx 처리",
+);
+assert.match(
+  diaryRoute,
+  /\.in\("source", \["story_geofence", "diary_manual"\]\)/,
+  "개인 승률에는 GPS+직접 추가 모두 포함",
+);
+assert.match(
+  diaryRoute,
+  /certifiedSummary:[\s\S]*game\.source === "story_geofence"/,
+  "GPS 인증 통계는 직접 추가와 분리",
 );
 
 async function testDeadline() {

@@ -335,9 +335,10 @@ async function processVenueStories() {
     return { done: 0, removed: 0, failed: (pendingCount ?? 0) > 0 ? (pendingCount ?? 1) : 0, updateErrors: 0, ffprobeMissing: true };
   }
   // pending(즉시 경로 fault 잔여, staging 원본) + active·needs_transcode(720p 대기) 동시 스캔
+  // query-guard: bounded -- 워커 1회당 고정 LIMIT 영상만 처리
   const { data: rows, error } = await supabase
     .from("venue_stories")
-    .select("id, status, media_url, media_bucket, media_path, transcode_attempts")
+    .select("id, status, media_url, media_bucket, media_path, transcode_attempts, attendance_source")
     .eq("media_type", "video")
     .or("and(status.eq.active,needs_transcode.eq.true),status.eq.pending")
     .lt("transcode_attempts", MAX_ATTEMPTS)

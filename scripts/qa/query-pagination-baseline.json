@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "generatedFrom": "d46ded32818f8dc6b85ef690ce3968862f6fff08",
+  "generatedFrom": "9daa2787b945580e3ded74506264f67708d87cd4",
   "violations": {
     "0034fe9a6a6cff327c64": {
       "count": 1,
@@ -702,13 +702,6 @@
       "subject": "admin_broadcast_logs",
       "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
     },
-    "7eed39f3a3014b4f6e8b": {
-      "count": 1,
-      "kind": "ambiguous_growing_limit",
-      "file": "scripts/transcode-videos.mjs",
-      "subject": "venue_stories",
-      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
-    },
     "7f24d30185ab5f06de89": {
       "count": 1,
       "kind": "unbounded_growing_select",
@@ -1024,13 +1017,6 @@
       "subject": "posts",
       "detail": "range pagination must include a full unique order (id)"
     },
-    "b50a0138702f8366ba0d": {
-      "count": 1,
-      "kind": "ambiguous_growing_limit",
-      "file": "src/app/api/cron/venue-stories-validate/route.ts",
-      "subject": "venue_stories",
-      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
-    },
     "b7b911575d964e3522e8": {
       "count": 1,
       "kind": "ambiguous_growing_limit",
@@ -1211,13 +1197,6 @@
       "kind": "ambiguous_growing_limit",
       "file": "src/lib/supabase/useUnifiedFeed.ts",
       "subject": "posts",
-      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
-    },
-    "d6186fd106ef9d7d7811": {
-      "count": 1,
-      "kind": "ambiguous_growing_limit",
-      "file": "src/app/api/me/venue-attendance/route.ts",
-      "subject": "venue_attendance",
       "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
     },
     "dbfc8ce19adc4627ca1f": {

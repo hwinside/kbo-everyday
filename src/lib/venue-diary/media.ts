@@ -72,6 +72,7 @@ export interface VenueStoryMediaDbRow {
   thumb_path: string | null;
   caption: string | null;
   venue_verified: boolean | null;
+  attendance_source: string;
   stadium_name: string | null;
   status: string;
   created_at: string;
@@ -87,6 +88,7 @@ export interface VenueStoryMediaRow {
   thumb_url: string | null;
   caption: string | null;
   venue_verified: boolean | null;
+  attendance_source: string;
   stadium_name: string | null;
   status: string;
   created_at: string;
@@ -126,6 +128,7 @@ export function resolveDiaryServeRow(
     thumb_url: thumbUrl,
     caption: row.caption,
     venue_verified: row.venue_verified,
+    attendance_source: row.attendance_source,
     stadium_name: row.stadium_name,
     status: row.status,
     created_at: row.created_at,
@@ -155,6 +158,7 @@ export interface DiaryMediaThumb {
   /** 썸네일 우선, 없으면 사진 원본 serve URL. */
   thumbUrl: string;
   venueVerified: boolean;
+  source: string;
 }
 
 /** 목록 모드 경기별 미디어 요약(경기 row 에 오버레이). */
@@ -176,6 +180,7 @@ export interface DiaryMediaItem {
   thumbUrl: string | null;
   caption: string | null;
   venueVerified: boolean;
+  source: string;
   stadiumName: string | null;
   createdAt: string;
 }
@@ -238,6 +243,7 @@ export function groupStoriesByGame(
         mediaType: row.media_type,
         thumbUrl,
         venueVerified: row.venue_verified ?? false,
+        source: row.attendance_source,
       });
     }
   }
@@ -278,6 +284,7 @@ export function buildDiaryMediaItem(row: VenueStoryMediaRow): DiaryMediaItem {
     thumbUrl: row.thumb_url,
     caption: row.caption,
     venueVerified: row.venue_verified ?? false,
+    source: row.attendance_source,
     stadiumName: row.stadium_name,
     createdAt: row.created_at,
   };

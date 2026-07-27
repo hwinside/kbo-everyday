@@ -80,7 +80,9 @@ export async function runFfprobe(filePath: string): Promise<FfprobeMeta | null |
   }
 }
 
-function realDeps(): ValidateDeps {
+export type VenueVideoPromoteStatus = "active" | "archived";
+
+function realDeps(promoteStatus: VenueVideoPromoteStatus): ValidateDeps {
   return {
     async download(bucket, path) {
       try {
@@ -118,12 +120,16 @@ function realDeps(): ValidateDeps {
       const { data, error } = await supabase
         .from("venue_stories")
         .update({
-          status: "active",
+          status: promoteStatus,
           media_bucket: VENUE_STORY_PRIVATE_MEDIA_BUCKET,
           duration_ms: meta.durationMs,
           width: meta.width,
           height: meta.height,
-          needs_transcode: true, // 720p 백그라운드 교체 대상
+          // 직접 추가 영상은 diary-only archived로 종결하며 공개 최적화 워커 대상이 아니다.
+          needs_transcode: promoteStatus === "active",
+          ...(promoteStatus === "archived"
+            ? { archived_at: new Date().toISOString() }
+            : {}),
         })
         .eq("id", id)
         .eq("status", "pending") // CAS — 복구 워커와 중복 claim 방지
@@ -156,8 +162,11 @@ function realDeps(): ValidateDeps {
 }
 
 /** pending 영상 행 1건 즉시 검증(업로드 요청 내 인라인 + 복구 경로 공용). */
-export async function validateVenueVideoRow(row: PendingVideoRow): Promise<ValidateOutcome> {
-  return validateAndPromoteVideo(realDeps(), row);
+export async function validateVenueVideoRow(
+  row: PendingVideoRow,
+  options: { promoteStatus?: VenueVideoPromoteStatus } = {},
+): Promise<ValidateOutcome> {
+  return validateAndPromoteVideo(realDeps(options.promoteStatus ?? "active"), row);
 }
 
 /**
@@ -171,7 +180,7 @@ export async function dryRunProbeObject(
   | { ok: boolean; engine: "ffprobe"; bytes: number; meta: FfprobeMeta | null; reason?: string }
   | { error: string }
 > {
-  const deps = realDeps();
+  const deps = realDeps("active");
   const dl = await deps.download(bucket, path);
   if (dl == null) return { error: "download_failed" };
   try {

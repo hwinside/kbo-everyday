@@ -1,7 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getVerifiedUserFromRequest } from "@/lib/auth/verified-user";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
+import { resolveGameVenue } from "@/lib/venue-stories/venue-resolve";
+import { probeMediaObject } from "@/lib/venue-stories/media-probe";
+import { VENUE_IMAGE_TOO_HEAVY_MSG } from "@/lib/venue-stories/media-limits";
 import {
+  parseStoragePublicUrl,
+  ownsPath,
+} from "@/lib/venue-stories/storage-path";
+import {
+  VENUE_STORY_CONSENT_VERSION,
+  VENUE_STORY_DURATION_TOLERANCE_MS,
+  VENUE_STORY_MAX_BYTES,
+  VENUE_STORY_MAX_DURATION_MS,
+  VENUE_STORY_MAX_PER_USER_PER_GAME,
+  VENUE_STORY_PRIVATE_MEDIA_BUCKET,
+  VENUE_STORY_STAGING_BUCKET,
+} from "@/lib/venue-stories/types";
+import {
+  isPrivateVenueBucket,
+  signVenueObject,
   signPrivateRefs,
   VENUE_ACTIVE_SIGNED_URL_CACHE_MS,
   VENUE_ACTIVE_SIGNED_URL_TTL_SEC,
@@ -22,16 +40,21 @@ import {
   type DiaryMediaComment,
   type VenueStoryMediaDbRow,
 } from "@/lib/venue-diary/media";
+import {
+  decideManualDiaryGame,
+  VENUE_DIARY_MANUAL_SOURCE,
+} from "@/lib/venue-diary/manual-upload";
+import { validateVenueVideoRow } from "@/lib/venue-stories/video-validate-server";
 
-// 미디어 조회만 수행하는 읽기 전용 API — 무거운 트랜스코딩/검증 없음.
-export const maxDuration = 30;
+// GET 조회 + POST 영상 즉시 ffprobe 검증.
+export const maxDuration = 60;
 
 // 다이어리에 노출할 상태(공개 종료 후 보관본 포함). 공개면과 달리 archived 도 본인은 열람.
 const DIARY_STATUSES = ["active", "archived"] as const;
 
 // private venue-media는 bucket/path로 signed URL을 발급하고, 레거시 public URL은 그대로 사용한다.
 const MEDIA_COLUMNS =
-  "id, game_id, game_date, media_type, media_url, media_bucket, media_path, thumb_url, thumb_bucket, thumb_path, caption, venue_verified, stadium_name, status, created_at";
+  "id, game_id, game_date, media_type, media_url, media_bucket, media_path, thumb_url, thumb_bucket, thumb_path, caption, venue_verified, attendance_source, stadium_name, status, created_at";
 
 async function resolveDiaryRows(dbRows: VenueStoryMediaDbRow[]) {
   // archived는 expires_at이 과거라 active cap을 적용할 수 없다. 본인 인증 응답에서도
@@ -52,6 +75,249 @@ function currentKstYear(): number {
       new Date(),
     ),
   );
+}
+
+/**
+ * 종료 경기 직접 추가. GPS를 받지 않으며, 서버가 owner/path/final/file을 검증한 뒤
+ * image는 archived, video는 pending→archived로만 저장한다.
+ */
+export async function POST(req: NextRequest) {
+  const verified = await getVerifiedUserFromRequest(req);
+  if (!verified) {
+    return NextResponse.json({ error: "인증이 필요합니다" }, { status: 401 });
+  }
+  const userId = verified.user.id;
+
+  let body: Record<string, unknown>;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "잘못된 요청" }, { status: 400 });
+  }
+
+  const gameId = typeof body.gameId === "string" ? body.gameId.trim() : "";
+  const mediaType = body.mediaType;
+  const mediaUrl = typeof body.mediaUrl === "string" ? body.mediaUrl : "";
+  const mediaPath = typeof body.mediaPath === "string" ? body.mediaPath : "";
+  const thumbUrl = typeof body.thumbUrl === "string" ? body.thumbUrl : null;
+  const durationMs =
+    typeof body.durationMs === "number" ? Math.round(body.durationMs) : null;
+  const width = typeof body.width === "number" ? Math.round(body.width) : null;
+  const height = typeof body.height === "number" ? Math.round(body.height) : null;
+  const caption =
+    typeof body.caption === "string" ? body.caption.trim().slice(0, 200) : null;
+  const consentVersion =
+    typeof body.consentVersion === "number" ? body.consentVersion : null;
+
+  if (!isValidDiaryGameId(gameId) || gameId.length < 8) {
+    return NextResponse.json({ error: "gameId 형식 오류" }, { status: 400 });
+  }
+  if (mediaType !== "video" && mediaType !== "image") {
+    return NextResponse.json({ error: "mediaType 오류" }, { status: 400 });
+  }
+  if (
+    consentVersion == null ||
+    !Number.isInteger(consentVersion) ||
+    consentVersion !== VENUE_STORY_CONSENT_VERSION
+  ) {
+    return NextResponse.json(
+      { error: "업로드 가이드라인 동의가 필요해요" },
+      { status: 400 },
+    );
+  }
+
+  let media: { bucket: string; path: string };
+  if (mediaType === "video") {
+    if (!mediaPath || !ownsPath(mediaPath, gameId, userId)) {
+      return NextResponse.json({ error: "미디어 경로 권한 오류" }, { status: 403 });
+    }
+    media = { bucket: VENUE_STORY_STAGING_BUCKET, path: mediaPath };
+  } else {
+    const parsed = parseStoragePublicUrl(
+      mediaUrl,
+      process.env.NEXT_PUBLIC_SUPABASE_URL,
+    );
+    if (
+      !parsed ||
+      parsed.bucket !== VENUE_STORY_PRIVATE_MEDIA_BUCKET ||
+      !ownsPath(parsed.path, gameId, userId)
+    ) {
+      return NextResponse.json({ error: "미디어 경로 권한 오류" }, { status: 403 });
+    }
+    media = parsed;
+  }
+
+  let thumb: { bucket: string; path: string } | null = null;
+  if (thumbUrl) {
+    thumb = parseStoragePublicUrl(
+      thumbUrl,
+      process.env.NEXT_PUBLIC_SUPABASE_URL,
+    );
+    if (
+      !thumb ||
+      thumb.bucket !== VENUE_STORY_PRIVATE_MEDIA_BUCKET ||
+      !ownsPath(thumb.path, gameId, userId)
+    ) {
+      return NextResponse.json({ error: "썸네일 경로 권한 오류" }, { status: 403 });
+    }
+  }
+
+  // 날짜 prefix만 신뢰하지 않고 KBO actual status=final을 매 요청 확인한다.
+  const venue = await resolveGameVenue(gameId);
+  const eligibility = decideManualDiaryGame(venue);
+  if (!eligibility.ok) {
+    return NextResponse.json(
+      { error: eligibility.error },
+      { status: eligibility.status },
+    );
+  }
+
+  if (mediaType === "image") {
+    const readUrl = isPrivateVenueBucket(media.bucket)
+      ? await signVenueObject(media.bucket, media.path)
+      : null;
+    const probe = readUrl
+      ? await probeMediaObject(readUrl, "image", VENUE_STORY_MAX_BYTES)
+      : { ok: false as const, size: null };
+    if (!probe.ok) {
+      return NextResponse.json(
+        {
+          error:
+            "reason" in probe && probe.reason === "too_large"
+              ? VENUE_IMAGE_TOO_HEAVY_MSG
+              : "업로드된 미디어를 확인할 수 없어요",
+        },
+        { status: 400 },
+      );
+    }
+  }
+
+  let thumbUrlOut: string | null = thumbUrl;
+  let thumbBucketOut: string | null = thumb?.bucket ?? null;
+  let thumbPathOut: string | null = thumb?.path ?? null;
+  if (thumb) {
+    const readUrl = await signVenueObject(thumb.bucket, thumb.path);
+    const probe = readUrl
+      ? await probeMediaObject(readUrl, "image", VENUE_STORY_MAX_BYTES)
+      : { ok: false as const, size: null };
+    if (!probe.ok) {
+      thumbUrlOut = null;
+      thumbBucketOut = null;
+      thumbPathOut = null;
+    }
+  }
+
+  if (
+    mediaType === "video" &&
+    durationMs != null &&
+    durationMs > VENUE_STORY_MAX_DURATION_MS + VENUE_STORY_DURATION_TOLERANCE_MS
+  ) {
+    return NextResponse.json(
+      { error: "영상은 15초 이하만 올릴 수 있어요" },
+      { status: 400 },
+    );
+  }
+
+  const finalMediaUrl =
+    mediaType === "video"
+      ? supabase.storage
+          .from(VENUE_STORY_PRIVATE_MEDIA_BUCKET)
+          .getPublicUrl(media.path).data.publicUrl
+      : mediaUrl;
+  // query-guard: bounded -- RPC는 단일 story id/status JSON만 반환
+  const { data: rpcData, error } = await supabase.rpc(
+    "create_venue_diary_manual_story",
+    {
+      p_game_id: gameId,
+      p_user_id: userId,
+      p_media_type: mediaType,
+      p_media_url: finalMediaUrl,
+      p_media_bucket: media.bucket,
+      p_media_path: media.path,
+      p_thumb_url: thumbUrlOut,
+      p_thumb_bucket: thumbBucketOut,
+      p_thumb_path: thumbPathOut,
+      p_duration_ms: durationMs,
+      p_width: width,
+      p_height: height,
+      p_caption: caption,
+      p_stadium_name: venue.stadiumName,
+      p_expires_at: new Date(venue.expiresAtMs ?? Date.now()).toISOString(),
+      p_max_per_game: VENUE_STORY_MAX_PER_USER_PER_GAME,
+      p_consent_version: consentVersion,
+      p_game_date: venue.gameDate,
+    },
+  );
+  if (error) {
+    return NextResponse.json({ error: "저장 실패" }, { status: 500 });
+  }
+  const result = (rpcData ?? {}) as {
+    ok?: boolean;
+    error?: string;
+    id?: number;
+    status?: string;
+  };
+  if (result.ok === false) {
+    if (result.error === "limit") {
+      return NextResponse.json(
+        { error: "이 경기에 올릴 수 있는 개수를 초과했어요" },
+        { status: 429 },
+      );
+    }
+    return NextResponse.json({ error: "저장 실패" }, { status: 500 });
+  }
+  if (typeof result.id !== "number") {
+    return NextResponse.json({ error: "저장 실패" }, { status: 500 });
+  }
+
+  if (mediaType === "video") {
+    const validated = await validateVenueVideoRow(
+      {
+        id: result.id,
+        media_bucket: media.bucket,
+        media_path: media.path,
+      },
+      { promoteStatus: "archived" },
+    );
+    if (validated.outcome === "rejected") {
+      return NextResponse.json(
+        {
+          error:
+            validated.reason === "duration_exceeded"
+              ? "영상은 15초 이하만 올릴 수 있어요"
+              : "영상을 확인할 수 없어요. 다시 시도해주세요",
+        },
+        { status: 400 },
+      );
+    }
+    if (validated.outcome === "already_claimed") {
+      const { data: claimed } = await supabase
+        .from("venue_stories")
+        .select("status")
+        .eq("id", result.id)
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (claimed?.status !== "archived") {
+        return NextResponse.json(
+          { error: "영상을 확인할 수 없어요. 다시 시도해주세요" },
+          { status: 400 },
+        );
+      }
+    }
+    return NextResponse.json({
+      success: true,
+      id: result.id,
+      status: validated.outcome === "fault" ? "pending" : "archived",
+      source: VENUE_DIARY_MANUAL_SOURCE,
+    });
+  }
+
+  return NextResponse.json({
+    success: true,
+    id: result.id,
+    status: "archived",
+    source: VENUE_DIARY_MANUAL_SOURCE,
+  });
 }
 
 /** 조회한 유저 id 집합으로 profiles 를 한 번에 로드해 authorFor 클로저를 만든다. */

@@ -81,14 +81,15 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "season 형식 오류" }, { status: 400 });
   }
 
+  // query-guard: bounded -- 본인 시즌 직관 기록 UI 상한 200경기
   const [attendanceResult, profileResult] = await Promise.all([
     supabase
       .from("venue_attendance")
       .select(
-        "id, game_id, game_date, favorite_team_id_snapshot, stadium_name, recorded_at",
+        "id, game_id, game_date, favorite_team_id_snapshot, stadium_name, recorded_at, source",
       )
       .eq("user_id", verified.user.id)
-      .eq("source", "story_geofence")
+      .in("source", ["story_geofence", "diary_manual"])
       .gte("game_date", `${requestedSeason}-01-01`)
       .lt("game_date", `${requestedSeason + 1}-01-01`)
       .order("game_date", { ascending: false })
@@ -130,6 +131,9 @@ export async function GET(req: NextRequest) {
     {
       season: requestedSeason,
       summary: summarizeVenueAttendance(games),
+      certifiedSummary: summarizeVenueAttendance(
+        games.filter((game) => game.source === "story_geofence"),
+      ),
       games,
     },
     { headers: { "Cache-Control": "private, no-store" } },
