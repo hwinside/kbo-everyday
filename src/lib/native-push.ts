@@ -2,7 +2,7 @@
 
 import { isNative, platform } from "@/lib/capacitor/platform";
 import { supabase } from "@/lib/supabase/client";
-import { normalizeAppBuild } from "@/lib/notifications/app-build";
+import { appBuildFromNativeInfo } from "@/lib/notifications/app-build";
 
 // 네이티브(iOS/Android) FCM 푸시 토큰 유틸.
 // 웹 Web Push는 기존 usePushNotification 경로 유지 — 여기는 native 전용.
@@ -128,7 +128,7 @@ export async function registerTokenWithServer(fcmToken: string): Promise<boolean
   try {
     const { App } = await import("@capacitor/app");
     const info = await App.getInfo();
-    appBuild = normalizeAppBuild(info?.build);
+    appBuild = appBuildFromNativeInfo(info);
   } catch {
     // 판별 실패 = null(구버전 취급) — 등록 자체는 계속
   }

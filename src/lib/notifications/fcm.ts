@@ -499,16 +499,32 @@ export async function sendGameEventToTokens(
   const metaByToken = new Map<string, TokenMeta>();
   const META_CHUNK = 100; // URL 길이 한도(fcm_token ~160자) 방지용 분할
   for (let i = 0; i < fcmTokens.length; i += META_CHUNK) {
+    // deadline(삼순 2차 NO-GO 문서 #2): 각 bounded meta 조회를 8초 transport deadline에 결속한다.
+    // never-settle이면 abortSignal + runBeforeDeadline이 deadline에 abort → 20초 lease를 넘겨
+    // 다른 worker가 같은 token을 재claim(중복 발송)하는 창을 없앤다. deadline 도달 시 새 chunk를
+    // 시작하지 않고 남은 토큰은 fail-safe notification 버킷(meta 미상 = null)으로 발송한다.
+    if (opts?.deadlineAtMs != null && Date.now() >= opts.deadlineAtMs) break;
     const chunk = fcmTokens.slice(i, i + META_CHUNK);
+    const remainingMs = opts?.deadlineAtMs == null ? null : opts.deadlineAtMs - Date.now();
     // query-guard: bounded -- fcm_token IN chunk capped at META_CHUNK=100 per iteration
-    const { data: rows, error } = await supabase
+    let metaQuery = supabase
       .from("device_push_tokens")
       .select("fcm_token, platform, app_build")
       .in("fcm_token", chunk);
-    if (error) {
-      // meta 조회 실패 = 전량 fail-safe notification 버킷 취급(data-only로 잘못 보내지 않음).
-      console.error("[fcm] game_event token meta lookup failed:", error.message);
-      continue;
+    if (remainingMs != null) metaQuery = metaQuery.abortSignal(AbortSignal.timeout(Math.max(1, remainingMs)));
+    let rows: { fcm_token: string; platform: string | null; app_build: number | null }[] | null;
+    try {
+      const res = await runBeforeDeadline(() => metaQuery, opts?.deadlineAtMs);
+      if (res.error) {
+        // meta 조회 실패 = 전량 fail-safe notification 버킷 취급(data-only로 잘못 보내지 않음).
+        console.error("[fcm] game_event token meta lookup failed:", res.error.message);
+        continue;
+      }
+      rows = res.data as typeof rows;
+    } catch (e) {
+      // deadline/abort → meta 수집 중단. 남은 토큰은 fail-safe notification 버킷으로 발송한다.
+      console.error("[fcm] game_event token meta lookup deadline:", (e as Error).message);
+      break;
     }
     for (const r of rows ?? []) {
       const row = r as { fcm_token: string; platform: string | null; app_build: number | null };

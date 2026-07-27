@@ -9,3 +9,10 @@ export function normalizeAppBuild(raw: unknown): number | null {
   const n = Number(raw);
   return Number.isFinite(n) && n > 0 ? Math.trunc(n) : null;
 }
+
+// Capacitor App.getInfo() 결과 → app_build 신호 추출(native-push.ts 클라 전송측이 실제 호출하는 매핑).
+// 버전 게이트 신호가 info.build 필드에서 온다는 것 + normalizeAppBuild 규칙을 함께 잠근다
+// (register-device route의 body.appBuild과 동일 규칙 — 서버/클라 양측 wiring lock, 삼순 2차 NO-GO #3).
+export function appBuildFromNativeInfo(info: { build?: unknown } | null | undefined): number | null {
+  return normalizeAppBuild(info?.build);
+}

@@ -25,7 +25,7 @@ import {
 } from "../../src/lib/notifications/fcm-android-config";
 import { mapHighlightSettlements, type ClaimedHighlightToken } from "../../src/lib/notifications/player-highlight-delivery";
 import type { TokenDeliveryOutcome } from "../../src/lib/notifications/fcm-batch";
-import { normalizeAppBuild } from "../../src/lib/notifications/app-build";
+import { normalizeAppBuild, appBuildFromNativeInfo } from "../../src/lib/notifications/app-build";
 
 let pass = 0;
 let fail = 0;
@@ -263,5 +263,66 @@ console.log("[game-event-fanout] normalizeAppBuild — register-device route + n
   check("MIN 임계값 그대로 보존", normalizeAppBuild(MIN_GAME_EVENT_ANDROID_BUILD) === MIN_GAME_EVENT_ANDROID_BUILD);
 }
 
-console.log(`\n[game-event-fanout] ${pass} passed, ${fail} failed`);
-if (fail > 0) process.exit(1);
+// ── 10. native-push App.getInfo().build → appBuild 실함수 매핑(NO-GO #3 client wiring) ──
+console.log("[game-event-fanout] appBuildFromNativeInfo — native-push가 실제 호출하는 getInfo().build 매핑");
+{
+  check("getInfo build 정수 → 그대로", appBuildFromNativeInfo({ build: 210 }) === 210);
+  check("getInfo build 문자열 → 정수(Capacitor는 string 반환)", appBuildFromNativeInfo({ build: "210" }) === 210);
+  check("getInfo build 0/누락 → null(구버전)", appBuildFromNativeInfo({ build: 0 }) === null && appBuildFromNativeInfo({}) === null);
+  check("info null(getInfo 실패) → null", appBuildFromNativeInfo(null) === null);
+  // 서버 route와 동일 규칙(양측 잠금): 같은 입력에 같은 결과.
+  check("client/route 동일 규칙", appBuildFromNativeInfo({ build: "abc" }) === normalizeAppBuild("abc"));
+}
+
+// ── 11. register-device route 실배선: body.appBuild → normalizeAppBuild → app_build 저장(helper-only 탈피) ──
+async function verifyRegisterDeviceWiring(): Promise<void> {
+  console.log("[game-event-fanout] register-device route — body.appBuild가 app_build로 저장되는 실경로");
+  process.env.NEXT_PUBLIC_SUPABASE_URL = "https://appbuild-smoke.supabase.co";
+  process.env.SUPABASE_SERVICE_ROLE_KEY = "appbuild-smoke-key";
+  const { supabaseAdmin } = await import("../../src/lib/supabase/admin");
+  const admin = supabaseAdmin as unknown as {
+    auth: { getUser: (t: string) => Promise<unknown> };
+    from: (t: string) => unknown;
+  };
+  // getVerifiedUserFromRequest가 붙는 동일 싱글톤이라 auth.getUser 모킹이 적용된다.
+  admin.auth = { getUser: async () => ({ data: { user: { id: "user-1" } }, error: null }) };
+  let captured: { payload: Record<string, unknown>; options: unknown } | null = null;
+  admin.from = (table: string) => {
+    if (table === "device_push_tokens") {
+      return {
+        upsert: async (payload: Record<string, unknown>, options: unknown) => {
+          captured = { payload, options };
+          return { error: null };
+        },
+      };
+    }
+    throw new Error("urgent-notice path skipped in smoke"); // route try/catch가 삼킴
+  };
+  const { POST } = await import("../../src/app/api/push/register-device/route");
+  async function post(appBuild: unknown): Promise<Record<string, unknown> | null> {
+    captured = null;
+    const req = new Request("https://x/api/push/register-device", {
+      method: "POST",
+      headers: { authorization: "Bearer tok", "content-type": "application/json" },
+      body: JSON.stringify({ fcmToken: "fcm-abc", platform: "android", appBuild }),
+    });
+    await POST(req as never);
+    return captured?.payload ?? null;
+  }
+  const p210 = await post("210");
+  check("route: body.appBuild '210' → app_build 210 저장", p210?.app_build === 210);
+  check("route: fcm_token/platform 그대로 저장", p210?.fcm_token === "fcm-abc" && p210?.platform === "android");
+  const p0 = await post(0);
+  check("route: body.appBuild 0 → app_build null(fail-closed)", p0?.app_build === null);
+  const pMissing = await post(undefined);
+  check("route: appBuild 미보고 → app_build null", pMissing?.app_build === null);
+  const p1209 = await post("120.9");
+  check("route 저장값 == normalizeAppBuild(동일 규칙)", p1209?.app_build === normalizeAppBuild("120.9"));
+}
+
+verifyRegisterDeviceWiring()
+  .catch((e) => { fail += 1; console.error("  FAIL register-device wiring threw:", e); })
+  .finally(() => {
+    console.log(`\n[game-event-fanout] ${pass} passed, ${fail} failed`);
+    if (fail > 0) process.exit(1);
+  });
