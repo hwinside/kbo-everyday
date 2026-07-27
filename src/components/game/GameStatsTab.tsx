@@ -12,6 +12,7 @@ import type {
 } from "@/lib/constants/game-stats";
 import type { GameRelayResponse } from "@/lib/hooks/useGameRelay";
 import RelayInningCard from "./RelayInningCard";
+import { inningRuns } from "@/lib/game/inning-runs";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import playersRoster from "@/lib/constants/players-roster.json";
 
@@ -246,6 +247,7 @@ export default function GameStatsTab({
                 inning={inning}
                 awayTeam={awayTeam}
                 homeTeam={homeTeam}
+                runs={inningRuns(relay, inning)}
               />
             ))}
           </div>

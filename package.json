@@ -83,6 +83,7 @@
     "qa:channel-discovery": "tsx scripts/qa/channel-discovery-smoke.ts",
     "qa:youtube-quota": "tsx scripts/qa/youtube-quota-smoke.ts",
     "qa:naver-relay-counts": "tsx scripts/qa/naver-relay-counts-smoke.ts",
+    "qa:relay-inning-runs": "tsx scripts/qa/relay-inning-runs-smoke.ts",
     "qa:pitch-parser": "tsx scripts/qa/pitch-parser-smoke.ts",
     "qa:pitch-inning-parser": "tsx scripts/qa/pitch-inning-parser-smoke.ts",
     "qa:foreign-photo": "tsx scripts/qa/foreign-photo-coverage.ts",

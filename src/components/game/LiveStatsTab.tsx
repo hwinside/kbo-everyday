@@ -7,6 +7,7 @@ import type { GameRelayResponse } from "@/lib/hooks/useGameRelay";
 import type { GameStats, BatterStat, PitcherStat } from "@/lib/constants/game-stats";
 import GameStatsTab from "./GameStatsTab";
 import RelayInningCard from "./RelayInningCard";
+import { inningRuns } from "@/lib/game/inning-runs";
 
 interface LiveStatsTabProps {
   relay: GameRelayResponse;
@@ -146,6 +147,7 @@ export default function LiveStatsTab({
                 inning={inning}
                 awayTeam={awayTeam}
                 homeTeam={homeTeam}
+                runs={inningRuns(relay, inning)}
               />
             ))}
           </div>
