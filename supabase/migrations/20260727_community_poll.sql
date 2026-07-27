@@ -228,7 +228,14 @@ BEGIN
     RETURN NEW;
   END IF;
 
-  IF (OLD.board_type = 'poll' OR NEW.board_type = 'poll')
+  -- board_type/board_id 를 실제로 바꾸는 UPDATE 만 poll 타입 불변 가드 대상.
+  -- 그 변경이 poll 에 관여(OLD 또는 NEW 가 poll)하면 GUC 플래그 없을 때 거부한다
+  -- (non-poll→poll·poll→free·board 이동 차단, 첫 투표 후 2-step 우회도 여기서 막힘).
+  -- board_type/board_id 를 안 건드리는 UPDATE(신고·카운터·투표 전 편집)는 아래
+  -- first_vote lock 로직으로 넘겨, 정상 운영 UPDATE 가 23514 로 막히지 않게 한다.
+  IF (NEW.board_type IS DISTINCT FROM OLD.board_type
+       OR NEW.board_id IS DISTINCT FROM OLD.board_id)
+     AND (OLD.board_type = 'poll' OR NEW.board_type = 'poll')
      AND current_setting('kbo.poll_write', true) IS DISTINCT FROM '1' THEN
     RAISE EXCEPTION 'poll posts cannot be written directly'
       USING ERRCODE = 'check_violation';

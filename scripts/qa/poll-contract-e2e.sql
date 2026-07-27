@@ -320,4 +320,76 @@ BEGIN
   RAISE NOTICE 'PASS 축2 create_poll writes canonical team_tags/player_tags into posts atomically';
 END $$;
 
-SELECT 'DB E2E COMPLETE (①②④⑤⑦⑧⑨ + direct poll-post write + duplicate ref RPC + tags/validations; ③⑩ hidden/snapshot route checks in poll-route-e2e.ts + ⑥ concurrency in .sh)' AS status;
+-- ---------- 운영경로 회귀 (삼순 P0 교차회귀): poll 글의 신고/카운터/투표전 편집 허용 ----------
+-- 직전 회귀: poll_posts_edit_lock UPDATE 분기가 OLD∥NEW board_type='poll' 이면 GUC 없을 때
+-- 모든 UPDATE 를 23514 로 거부 → 신고(report_count/is_hidden)·카운터(click/impression/like/comment)·
+-- 투표 전 title/content 수정까지 전부 막힐. 가드를 board_type/board_id 변경에만 좁혀
+-- 이들 정상 운영 UPDATE 가 통과하는지 실 PG17 로 고정한다(shim 에 운영 컬럼/트리거 반영함).
+-- ⚠ create_poll 은 kbo.poll_write 를 transaction-local 로 세우므로, 아래 phantom/타입변경
+--   거부 assert 가 유효하려면 poll 생성과 assert 가 같은 트랜잭션에 있으면 안 된다.
+--   따라서 pre-vote poll 은 top-level 문장(autocommit)으로 만들어 pid 를 GUC 에 보관하고,
+--   아래 DO 블록 안에서는 create_poll 을 호출하지 않는다(깨끗한 GUC 상태).
+SELECT create_poll(
+  'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','pre-vote editable?',null,false,
+  now()+interval '1 day','[{"kind":"etc","label":"a"},{"kind":"etc","label":"b"}]'::jsonb
+) AS oppath_pid \gset
+SELECT set_config('poll.oppath_pid', :'oppath_pid', false);
+DO $$
+DECLARE v_pid bigint; v_new_pid bigint := current_setting('poll.oppath_pid')::bigint; v_free bigint;
+        v_rc int; v_hidden boolean; v_cvc int; v_ivc int; v_lc int; v_cc int;
+BEGIN
+  -- (1) 투표 전(first_vote_at NULL) poll 글: title/content 수정 성공해야 함
+  UPDATE posts SET title='edited-before-vote' WHERE id=v_new_pid;
+  UPDATE posts SET content='edited-content-before-vote' WHERE id=v_new_pid;
+  IF (SELECT title FROM posts WHERE id=v_new_pid) <> 'edited-before-vote' THEN
+    RAISE EXCEPTION 'FAIL 운영: pre-vote title edit did not persist'; END IF;
+
+  -- (2) 신고 경로: reports 3회 INSERT → auto_blind 트리거가 posts 를 UPDATE → report_count=3, is_hidden=true
+  INSERT INTO reports(target_type,target_id,reporter_id) VALUES
+    ('post',v_new_pid,'11111111-1111-1111-1111-111111111111'),
+    ('post',v_new_pid,'22222222-2222-2222-2222-222222222222'),
+    ('post',v_new_pid,'33333333-3333-3333-3333-333333333333');
+  SELECT report_count, is_hidden INTO v_rc, v_hidden FROM posts WHERE id=v_new_pid;
+  IF v_rc <> 3 OR v_hidden IS NOT TRUE THEN
+    RAISE EXCEPTION 'FAIL 운영: poll report path blocked (report_count=% is_hidden=%)', v_rc, v_hidden; END IF;
+
+  -- (3) 조회/좋아요/댓글 카운터 UPDATE 성공해야 함(board_type/board_id 미변경)
+  UPDATE posts SET click_view_count = click_view_count + 1 WHERE id=v_new_pid;
+  UPDATE posts SET impression_view_count = impression_view_count + 1 WHERE id=v_new_pid;
+  UPDATE posts SET like_count = like_count + 1 WHERE id=v_new_pid;
+  UPDATE posts SET comment_count = comment_count + 1 WHERE id=v_new_pid;
+  SELECT click_view_count, impression_view_count, like_count, comment_count
+    INTO v_cvc, v_ivc, v_lc, v_cc FROM posts WHERE id=v_new_pid;
+  IF v_cvc<>1 OR v_ivc<>1 OR v_lc<>1 OR v_cc<>1 THEN
+    RAISE EXCEPTION 'FAIL 운영: poll counter update blocked (cvc=% ivc=% lc=% cc=%)', v_cvc,v_ivc,v_lc,v_cc; END IF;
+
+  -- (4) 첫 투표 후엔 title/content 구조 수정 여전히 거부(잠금 계약 유지)
+  v_pid := current_setting('poll.pid')::bigint; -- has votes
+  BEGIN UPDATE posts SET title='post-vote-hack' WHERE id=v_pid;
+    RAISE EXCEPTION 'FAIL 운영: post-vote title edit accepted'; EXCEPTION WHEN check_violation THEN NULL; END;
+  -- 투표 후에도 운영 카운터/신고는 허용(잠금 목록 밖)
+  UPDATE posts SET like_count = like_count + 1 WHERE id=v_pid;
+  INSERT INTO reports(target_type,target_id,reporter_id)
+    VALUES ('post',v_pid,'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+  IF (SELECT report_count FROM posts WHERE id=v_pid) < 1 THEN
+    RAISE EXCEPTION 'FAIL 운영: post-vote report_count not incremented'; END IF;
+
+  -- (5) 운영 컬럼 존재 상태에서도 phantom/타입변경은 계속 거부되어야 함
+  BEGIN
+    INSERT INTO posts(author_id,board_type,board_id,title,content)
+    VALUES ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','poll','poll','phantom2','');
+    RAISE EXCEPTION 'FAIL 운영: phantom poll INSERT accepted'; EXCEPTION WHEN check_violation THEN NULL; END;
+  INSERT INTO posts(author_id,board_type,board_id,title,content)
+    VALUES ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','team','lg','ordinary2','')
+    RETURNING id INTO v_free;
+  BEGIN UPDATE posts SET board_type='poll', board_id='poll' WHERE id=v_free;
+    RAISE EXCEPTION 'FAIL 운영: non-poll→poll accepted'; EXCEPTION WHEN check_violation THEN NULL; END;
+  BEGIN UPDATE posts SET board_type='free' WHERE id=v_new_pid;
+    RAISE EXCEPTION 'FAIL 운영: poll→free accepted'; EXCEPTION WHEN check_violation THEN NULL; END;
+  BEGIN UPDATE posts SET board_id='free' WHERE id=v_new_pid;
+    RAISE EXCEPTION 'FAIL 운영: poll board_id change accepted'; EXCEPTION WHEN check_violation THEN NULL; END;
+
+  RAISE NOTICE 'PASS 운영경로: pre-vote title/content edit + report(report_count=3,is_hidden) + view/like/comment counters allowed; post-vote struct edit blocked; phantom/non-poll→poll/poll→free/board_id still rejected';
+END $$;
+
+SELECT 'DB E2E COMPLETE (①②④⑤⑦⑧⑨ + direct poll-post write + duplicate ref RPC + tags/validations + 운영경로(신고/카운터/투표전편집) 회귀; ③⑩ hidden/snapshot route checks in poll-route-e2e.ts + ⑥ concurrency in .sh)' AS status;

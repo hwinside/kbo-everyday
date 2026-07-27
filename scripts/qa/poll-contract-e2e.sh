@@ -56,9 +56,43 @@ CREATE TABLE IF NOT EXISTS public.posts (
   title text NOT NULL, content text NOT NULL,
   team_tags jsonb NOT NULL DEFAULT '[]'::jsonb,
   player_tags jsonb NOT NULL DEFAULT '[]'::jsonb,
+  -- 운영 카운터/블라인드 컬럼(실제 posts 스키마 반영: 20260720_report_blind_notice,
+  -- 20260721_post_view_counts + base like_count/comment_count). 이 컬럼들에 대한
+  -- 정상 UPDATE 가 poll_posts_edit_lock 회귀로 막히지 않는지 실 PG17 로 고정한다.
+  report_count integer NOT NULL DEFAULT 0,
+  is_hidden boolean NOT NULL DEFAULT false,
+  click_view_count integer NOT NULL DEFAULT 0,
+  impression_view_count integer NOT NULL DEFAULT 0,
+  like_count integer NOT NULL DEFAULT 0,
+  comment_count integer NOT NULL DEFAULT 0,
   created_at timestamptz DEFAULT now(), updated_at timestamptz);
 GRANT SELECT, INSERT, UPDATE ON public.posts TO authenticated;
 GRANT USAGE, SELECT ON SEQUENCE public.posts_id_seq TO authenticated;
+
+-- 신고 → 자동 블라인드 경로(실제 20260720_report_blind_notice auto_blind_on_report
+-- post 분기 최소 반영: report_count += 1, 임계 3 도달 시 is_hidden 전환). 이 경로가
+-- posts 를 UPDATE 하므로 poll 글에도 정상 동작해야(회귀 검출용) 한다.
+CREATE TABLE IF NOT EXISTS public.reports (
+  id bigserial PRIMARY KEY,
+  target_type text NOT NULL,
+  target_id bigint NOT NULL,
+  reporter_id uuid,
+  created_at timestamptz DEFAULT now(),
+  UNIQUE (target_type, target_id, reporter_id));
+CREATE OR REPLACE FUNCTION public.auto_blind_on_report()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $fn$
+BEGIN
+  IF NEW.target_type = 'post' THEN
+    UPDATE posts SET report_count = report_count + 1 WHERE id = NEW.target_id;
+    UPDATE posts SET is_hidden = true
+      WHERE id = NEW.target_id AND is_hidden = false AND report_count >= 3;
+  END IF;
+  RETURN NEW;
+END;
+$fn$;
+DROP TRIGGER IF EXISTS trg_auto_blind ON public.reports;
+CREATE TRIGGER trg_auto_blind AFTER INSERT ON public.reports
+  FOR EACH ROW EXECUTE FUNCTION public.auto_blind_on_report();
 SQL
 
 echo "[poll-e2e] apply migration ..."
@@ -88,5 +122,5 @@ else
   echo "FAIL ⑥ concurrency: voter_count=$VC option=$OC total=$TV (expected 20/20/20)"; exit 1
 fi
 
-echo "[poll-e2e] DB harness PASS ✅ (①②④⑤⑦⑧⑨ + direct poll-post write guard + duplicate ref RPC guard + tag-write + ⑥ 20-way concurrency; migration reapplied)"
+echo "[poll-e2e] DB harness PASS ✅ (①②④⑤⑦⑧⑨ + direct poll-post write guard + duplicate ref RPC guard + tag-write + 운영경로(신고·카운터·투표전편집) 회귀 + ⑥ 20-way concurrency; migration reapplied)"
 echo "[poll-e2e] route contracts ③/⑩ + hidden GET/OG + canonical snapshot/duplicate ref → scripts/qa/poll-route-e2e.ts (npm run qa:poll-route)"
