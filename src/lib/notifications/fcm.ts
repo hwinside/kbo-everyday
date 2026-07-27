@@ -10,6 +10,11 @@ import {
   sendDeadlineFcmChunk,
   type DeadlineFcmMessage,
 } from "@/lib/notifications/fcm-deadline-transport";
+import {
+  composeGameEventFanout,
+  type GameEventEmit,
+  type TokenMeta,
+} from "@/lib/notifications/game-event-fanout";
 
 // FCM 발송 공용 헬퍼 (push-notifications-v1 S3).
 // 디스패처(/api/notifications/dispatch)와 어드민 수동 발송(/api/admin/push/send-fcm)이 공용.
@@ -143,6 +148,12 @@ interface FcmSendOptions {
   minAppBuild?: number;
   /** 이 epoch ms 이후에는 prefs/token 조회나 새 FCM chunk를 시작하지 않는다. */
   deadlineAtMs?: number;
+  /**
+   * 지정 시 S2 이벤트 배너 3분할 fanout(§S2-5): 조회한 토큰을 버전 게이트로 나눠
+   * iOS/구Android는 넘겨받은 `payload`(notification), 신Android(app_build>=MIN)는
+   * data-only `game_event`로 emit한다. 미지정이면 기존 단일 payload 발송(불변).
+   */
+  gameEvent?: GameEventEmit;
 }
 
 export async function sendFcmToUsers(
@@ -225,7 +236,9 @@ async function sendFcmToUsersInner(
   if (targets.length === 0) return { tokens: 0, sent: 0, failed: 0, cleaned: 0, skipped, ok: true };
 
   // 2. 디바이스 토큰 (동일하게 분할 조회)
+  // gameEvent fanout일 때만 platform/app_build까지 읽어 버킷 분할에 쓴다(그 외엔 fcm_token만).
   const tokens: string[] = [];
+  const metas: TokenMeta[] = [];
   for (let i = 0; i < targets.length; i += IN_CHUNK) {
     const slice = targets.slice(i, i + IN_CHUNK);
     const rows = await fetchAllByKeyset(
@@ -234,7 +247,7 @@ async function sendFcmToUsersInner(
         if (remainingMs != null && remainingMs <= 0) throw new Error("FCM device token targets: deadline_exceeded");
         let tokenQuery = supabase
           .from("device_push_tokens")
-          .select("id, fcm_token")
+          .select("id, fcm_token, platform, app_build")
           .in("user_id", slice)
           .order("id", { ascending: true })
           .limit(limit);
@@ -247,10 +260,23 @@ async function sendFcmToUsersInner(
       (row) => row.id,
       { label: "FCM device token targets" },
     );
-    for (const row of rows) tokens.push(row.fcm_token);
+    for (const row of rows) {
+      tokens.push(row.fcm_token);
+      if (opts?.gameEvent) {
+        metas.push({
+          fcmToken: row.fcm_token,
+          platform: (row as { platform?: string | null }).platform ?? null,
+          appBuild: (row as { app_build?: number | null }).app_build ?? null,
+        });
+      }
+    }
   }
   if (tokens.length === 0) return { tokens: 0, sent: 0, failed: 0, cleaned: 0, skipped, ok: true };
 
+  if (opts?.gameEvent) {
+    const delivery = await deliverGameEventBuckets(metas, payload, opts.gameEvent, { deadlineAtMs: opts?.deadlineAtMs });
+    return { ...delivery, skipped };
+  }
   const delivery = await sendFcmToTokens(tokens, payload, { deadlineAtMs: opts?.deadlineAtMs });
   return { ...delivery, skipped };
 }
@@ -400,4 +426,108 @@ export async function sendFcmToTokens(
     sendCompletedAtMs: Date.now(),
     outcomes: delivery.outcomes,
   };
+}
+
+// ─── S2 Slice0: 이벤트 배너 3분할 fanout 발송 헬퍼 ──────────────────────────────
+
+/** 여러 버킷 SendResult를 하나로 합친다(token별 outcome는 concat — fcm_token 키로 settle 매핑 유지). */
+function mergeSendResults(results: SendResult[]): SendResult {
+  if (results.length === 0) {
+    return { tokens: 0, sent: 0, failed: 0, cleaned: 0, skipped: 0, ok: true };
+  }
+  const outcomes: TokenDeliveryOutcome[] = [];
+  let lastError: string | null | undefined;
+  let started: number | undefined;
+  let completed: number | undefined;
+  const merged: SendResult = {
+    tokens: 0, sent: 0, failed: 0, cleaned: 0, skipped: 0, ok: true, retryableFailed: 0,
+  };
+  for (const r of results) {
+    merged.tokens += r.tokens;
+    merged.sent += r.sent;
+    merged.failed += r.failed;
+    merged.cleaned += r.cleaned;
+    merged.skipped += r.skipped;
+    merged.retryableFailed = (merged.retryableFailed ?? 0) + (r.retryableFailed ?? 0);
+    merged.ok = merged.ok && r.ok;
+    if (!lastError && r.lastError) lastError = r.lastError;
+    if (r.outcomes) outcomes.push(...r.outcomes);
+    if (r.sendStartedAtMs != null) started = started == null ? r.sendStartedAtMs : Math.min(started, r.sendStartedAtMs);
+    if (r.sendCompletedAtMs != null) completed = completed == null ? r.sendCompletedAtMs : Math.max(completed, r.sendCompletedAtMs);
+  }
+  return {
+    ...merged,
+    lastError,
+    outcomes: outcomes.length ? outcomes : undefined,
+    sendStartedAtMs: started,
+    sendCompletedAtMs: completed,
+  };
+}
+
+/**
+ * 토큰 meta를 버전 게이트로 3분할해 발송: notification 버킷(iOS/구Android) + data-only
+ * `game_event` 버킷(신Android). 두 버킷은 각각 sendFcmToTokens로 보내고 결과를 병합한다.
+ * Slice0에서 MIN이 inert라 data-only 버킷은 프로덕션에서 항상 비어 있다(notification만 발송).
+ */
+export async function deliverGameEventBuckets(
+  metas: TokenMeta[],
+  notification: PushPayload,
+  gameEvent: GameEventEmit,
+  opts?: { deadlineAtMs?: number },
+): Promise<SendResult> {
+  const wTsMs = gameEvent.wTsMs ?? Date.now();
+  const plan = composeGameEventFanout(
+    metas,
+    { title: notification.title, body: notification.body, url: notification.url ?? "" },
+    gameEvent,
+    wTsMs,
+  );
+  const results: SendResult[] = [];
+  if (plan.notificationTokens.length > 0) {
+    results.push(await sendFcmToTokens(plan.notificationTokens, plan.notificationPayload, { deadlineAtMs: opts?.deadlineAtMs }));
+  }
+  if (plan.dataOnlyTokens.length > 0) {
+    results.push(await sendFcmToTokens(plan.dataOnlyTokens, plan.dataOnlyPayload, { deadlineAtMs: opts?.deadlineAtMs }));
+  }
+  return mergeSendResults(results);
+}
+
+/**
+ * fcm_token 목록만 가진 경로(최애선수 highlight due drain)용 fanout — device_push_tokens에서
+ * platform/app_build를 bounded 조회해 meta를 복원한 뒤 deliverGameEventBuckets로 발송한다.
+ * fcm_token은 register-device에서 onConflict unique라 1:1(누락 토큰은 fail-safe notification 버킷).
+ */
+export async function sendGameEventToTokens(
+  fcmTokens: string[],
+  notification: PushPayload,
+  gameEvent: GameEventEmit,
+  opts?: { deadlineAtMs?: number },
+): Promise<SendResult> {
+  if (fcmTokens.length === 0) return { tokens: 0, sent: 0, failed: 0, cleaned: 0, skipped: 0, ok: true };
+  const metaByToken = new Map<string, TokenMeta>();
+  const META_CHUNK = 100; // URL 길이 한도(fcm_token ~160자) 방지용 분할
+  for (let i = 0; i < fcmTokens.length; i += META_CHUNK) {
+    const chunk = fcmTokens.slice(i, i + META_CHUNK);
+    // query-guard: bounded -- fcm_token IN chunk capped at META_CHUNK=100 per iteration
+    const { data: rows, error } = await supabase
+      .from("device_push_tokens")
+      .select("fcm_token, platform, app_build")
+      .in("fcm_token", chunk);
+    if (error) {
+      // meta 조회 실패 = 전량 fail-safe notification 버킷 취급(data-only로 잘못 보내지 않음).
+      console.error("[fcm] game_event token meta lookup failed:", error.message);
+      continue;
+    }
+    for (const r of rows ?? []) {
+      const row = r as { fcm_token: string; platform: string | null; app_build: number | null };
+      metaByToken.set(row.fcm_token, {
+        fcmToken: row.fcm_token,
+        platform: row.platform,
+        appBuild: row.app_build,
+      });
+    }
+  }
+  const metas: TokenMeta[] = fcmTokens.map((t) =>
+    metaByToken.get(t) ?? { fcmToken: t, platform: null, appBuild: null });
+  return deliverGameEventBuckets(metas, notification, gameEvent, opts);
 }

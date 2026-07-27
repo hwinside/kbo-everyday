@@ -1,6 +1,7 @@
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { isKboGameCancelled } from "@/lib/crawler/kbo-status";
 import { sendFcmToUsers, WIDGET_STREAM } from "@/lib/notifications/fcm";
+import { deriveGameEventExpiresAtMs } from "@/lib/notifications/game-event-fanout";
 import { teamIdByShortName, fansOfTeams } from "@/lib/notifications/game-status";
 import { isHomerunCoveredRun, resolveHomerunScore, inheritHitRbi } from "@/lib/notifications/score-dedupe";
 import type { KboRawGame } from "@/types/api";
@@ -63,6 +64,11 @@ export async function notifyScoreEvents(
     for (const ev of events) {
       if (!SCORE_EVENT_TYPES.has(ev.type)) continue;
 
+      // S2 Slice0: n_expires_at 앵커 = source event timestamp(재시도 불변 — now 재계산 금지,
+      // 스펙 NO-GO #4). 같은 ev의 score/concede가 동일 값을 갖는다. 파싱 불가 시에만 now 폴백.
+      const evSourceMs = Number.isFinite(Date.parse(ev.timestamp)) ? Date.parse(ev.timestamp) : Date.now();
+      const evExpiresAtMs = deriveGameEventExpiresAtMs(evSourceMs);
+
       // 득점팀 판정. run_scored는 generator가 detail.scoringSide로 팀을 확정해줌
       // (isTop 추론은 이닝교대 lag/양팀 동시득점에 취약 — 삼순 #213-②).
       // at_bat_homerun은 batterDiff 경로라 isTop이 이미 이닝교대 보정돼 있음.
@@ -121,7 +127,12 @@ export async function notifyScoreEvents(
             ...(cPitcher ? [`투수 ${cPitcher}`] : []),
             scoreLine,
           ].join(" · ");
-          const cRes = await sendFcmToUsers(cFans.ids, { title: cTitle, body: cBody, url }, "my_team_concede");
+          const cRes = await sendFcmToUsers(cFans.ids, { title: cTitle, body: cBody, url }, "my_team_concede", undefined, {
+            gameEvent: {
+              gameId, eventId: `${ev.id}-concede`, sub: "concede",
+              title: cTitle, body: cBody, url, nExpiresAtMs: evExpiresAtMs,
+            },
+          });
           if (!cRes.ok) await unclaimEvent(`${ev.id}-concede`); // 인프라 실패 → 재시도
           else conceded += cRes.sent;
         }
@@ -143,7 +154,12 @@ export async function notifyScoreEvents(
           : `⚾ ${scoringTeamName} 득점!`;
       const body = isHr && batter ? `${batter} · ${scoreLine}` : scoreLine;
 
-      const res = await sendFcmToUsers(fans.ids, { title, body, url }, "my_team_score");
+      const res = await sendFcmToUsers(fans.ids, { title, body, url }, "my_team_score", undefined, {
+        gameEvent: {
+          gameId, eventId: ev.id, sub: "score",
+          title, body, url, nExpiresAtMs: evExpiresAtMs,
+        },
+      });
       if (!res.ok) { await unclaimEvent(ev.id); continue; } // 인프라 실패 → 재시도
       scored += res.sent;
 
@@ -247,10 +263,21 @@ export async function notifyInningSummaries(
       const hits = events.filter(
         (e) => e.inning === ev.inning && e.isTop === ev.isTop && INNING_HIT_TYPES.has(e.type),
       ).length;
+      const summaryTitle = `⚾ ${ev.inning}회${half} 요약`;
+      const summaryBody = `${ev.inning}회${half} ${hits}안타 ${runs}득점.`;
+      // n_expires_at 앵커 = inning_end source timestamp(불변). 위 evMs 재사용.
+      const summaryExpiresAtMs = deriveGameEventExpiresAtMs(Number.isFinite(evMs) ? evMs : Date.now());
       const res = await sendFcmToUsers(
         fans.ids,
-        { title: `⚾ ${ev.inning}회${half} 요약`, body: `${ev.inning}회${half} ${hits}안타 ${runs}득점.`, url },
+        { title: summaryTitle, body: summaryBody, url },
         "my_team_score_inning_summary",
+        undefined,
+        {
+          gameEvent: {
+            gameId, eventId: `${ev.id}-summary`, sub: "inning-summary",
+            title: summaryTitle, body: summaryBody, url, nExpiresAtMs: summaryExpiresAtMs,
+          },
+        },
       );
       if (!res.ok) { await unclaimEvent(`${ev.id}-summary`); continue; } // 인프라 실패 → 재시도
       summarized += res.sent;
