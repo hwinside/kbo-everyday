@@ -12,7 +12,7 @@ import type {
 } from "@/lib/constants/game-stats";
 import type { GameRelayResponse } from "@/lib/hooks/useGameRelay";
 import RelayInningCard from "./RelayInningCard";
-import { inningRuns } from "@/lib/game/inning-runs";
+import { inningRuns, type InningLinescore } from "@/lib/game/inning-runs";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import playersRoster from "@/lib/constants/players-roster.json";
 
@@ -22,6 +22,7 @@ interface GameStatsTabProps {
   homeTeam: TeamData;
   isLive?: boolean;
   relay?: GameRelayResponse | null;
+  linescore?: InningLinescore | null;
 }
 
 type Side = "away" | "home";
@@ -169,6 +170,7 @@ export default function GameStatsTab({
   homeTeam,
   isLive,
   relay,
+  linescore,
 }: GameStatsTabProps) {
   void isLive; // Reserved for future live-specific styling
   const [collapseInnings, setCollapseInnings] = useState(true);
@@ -247,7 +249,7 @@ export default function GameStatsTab({
                 inning={inning}
                 awayTeam={awayTeam}
                 homeTeam={homeTeam}
-                runs={inningRuns(relay, inning)}
+                runs={inningRuns(linescore, inning)}
               />
             ))}
           </div>

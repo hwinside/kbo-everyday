@@ -363,6 +363,7 @@ export default function GameDetailPage() {
   const gameStats = staticGameStats ?? (hasBoxScoreData
     ? boxScoreToGameStats(gameId, gameDetail.boxScore!, game.awayTeamId, game.homeTeamId)
     : null);
+  const linescore = gameDetail?.linescore ?? gameRelay?.linescore ?? null;
 
   const isTopInning = game.inning?.includes("초");
   const battingTeamColor = isTopInning
@@ -635,7 +636,13 @@ export default function GameDetailPage() {
           {activeTab === "stats" && (
             <motion.div key="stats" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
               {gameStats ? (
-                <GameStatsTab stats={gameStats} awayTeam={awayTeam} homeTeam={homeTeam} relay={gameRelay} />
+                <GameStatsTab
+                  stats={gameStats}
+                  awayTeam={awayTeam}
+                  homeTeam={homeTeam}
+                  relay={gameRelay}
+                  linescore={linescore}
+                />
               ) : liveGame?.isLive && gameRelay && gameRelay.innings.length > 0 ? (
                 <LiveStatsTab
                   relay={gameRelay}
@@ -644,6 +651,7 @@ export default function GameDetailPage() {
                   currentPitcher={d.currentPitcher}
                   awayStarterName={liveGame?.awayStarterName || ""}
                   homeStarterName={liveGame?.homeStarterName || ""}
+                  linescore={linescore}
                 />
               ) : (
                 <div className="flex flex-col items-center justify-center h-32 gap-2">
