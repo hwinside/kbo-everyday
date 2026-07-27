@@ -420,63 +420,48 @@ export async function notifyGameStatusTransitions(
       }
     };
 
-    const ready: typeof opened = [];
-    let pendingPreparations = liveGames.length;
-    let wakeReady: (() => void) | null = null;
-    const signalReady = () => {
-      wakeReady?.();
-      wakeReady = null;
-    };
-    const preparations = liveGames.map(async (game) => {
+    // 각 경기를 독립 파이프라인(prepare → drain → finalize)으로 완전히 분리한다.
+    // 한 경기의 DB open/전송이 route deadline까지 hang해도 다른 경기의 fanout이
+    // 공용 Promise.all에 묶여 굶지 않도록, 경기 간 join 지점을 없앤다. 각 단계는
+    // routeDeadline 잔여 예산으로 스스로 abort한다.
+    const startedByGame = new Map<string, number>();
+    const runGamePipeline = async (game: KboRawGame) => {
+      let item: (typeof opened)[number] | null = null;
       try {
-        const item = await prepareStart(game);
-        if (item) {
-          opened.push(item);
-          ready.push(item);
-        }
+        item = await prepareStart(game);
       } catch (error) {
         console.error(
           `[game-status] start preparation failed game=${game.G_ID ?? "unknown"}:`,
           (error as Error).message,
         );
-      } finally {
-        pendingPreparations -= 1;
-        signalReady();
+        return;
       }
-    });
+      if (!item) return;
+      opened.push(item);
+      const current = item;
 
-    while ((pendingPreparations > 0 || ready.length > 0) && Date.now() < routeDeadlineAtMs) {
-      if (ready.length === 0) {
-        await new Promise<void>((resolve) => {
-          const timer = setTimeout(resolve, Math.max(1, routeDeadlineAtMs - Date.now()));
-          wakeReady = () => {
-            clearTimeout(timer);
-            resolve();
-          };
-        });
-        continue;
-      }
-      const active = ready.splice(0);
-      const round = await Promise.all(active.map(async (item) => {
+      // 이 경기만의 drain 루프. pending이 남고 claim이 진행되는 동안만 반복하며,
+      // 각 batch attempt는 잔여 route budget으로 bound된다.
+      while (Date.now() < routeDeadlineAtMs) {
         const nowMs = Date.now();
         const attemptDeadlineAtMs = Math.min(
           routeDeadlineAtMs,
-          item.snapshotDeadlineAtMs,
+          current.snapshotDeadlineAtMs,
           nowMs + START_DELIVERY_ATTEMPT_MS,
         );
-        if (attemptDeadlineAtMs <= nowMs) return { item, claimed: 0, pending: 0 };
+        if (attemptDeadlineAtMs <= nowMs) break;
         const batches = await Promise.all(Array.from(
           { length: START_DELIVERY_BATCH_CONCURRENCY_PER_GAME },
           async () => {
             try {
               return await deliverStartBatch({
-                ...item.target,
-                snapshotDeadlineAtMs: item.snapshotDeadlineAtMs,
+                ...current.target,
+                snapshotDeadlineAtMs: current.snapshotDeadlineAtMs,
                 attemptDeadlineAtMs,
               });
             } catch (error) {
               console.error(
-                `[game-status] start batch failed game=${item.target.gameId}:`,
+                `[game-status] start batch failed game=${current.target.gameId}:`,
                 (error as Error).message,
               );
               return {
@@ -494,35 +479,32 @@ export async function notifyGameStatusTransitions(
         ));
         const claimed = batches.reduce((sum, batch) => sum + batch.claimed, 0);
         const pending = Math.max(...batches.map((batch) => batch.pending), 0);
-        item.acceptedDelta += batches.reduce((sum, batch) => sum + batch.fcmAcceptedDelta, 0);
-        return { item, claimed, pending };
-      }));
-      ready.push(...round
-        .filter(({ claimed, pending }) => claimed > 0 && pending > 0)
-        .map(({ item }) => item));
-    }
-    void Promise.allSettled(preparations);
+        current.acceptedDelta += batches.reduce((sum, batch) => sum + batch.fcmAcceptedDelta, 0);
+        if (!(claimed > 0 && pending > 0)) break;
+      }
 
-    await Promise.all(opened.map(async (item) => {
       if (Date.now() >= routeDeadlineAtMs) return;
       try {
         const delivery = await finalizeStart(
-          item.target.gameId,
-          item.acceptedDelta,
+          current.target.gameId,
+          current.acceptedDelta,
           routeDeadlineAtMs,
         );
-        started += delivery.fcmAcceptedDelta;
+        startedByGame.set(current.target.gameId, delivery.fcmAcceptedDelta);
         console.log(
-          `[game-status] start delivery game=${item.target.gameId}` +
+          `[game-status] start delivery game=${current.target.gameId}` +
           ` fcmAcceptedDelta=${delivery.fcmAcceptedDelta} fcmAcceptedTotal=${delivery.fcmAcceptedTotal}` +
           ` deviceDelivered=${delivery.deviceDelivered ?? "unknown"}` +
           ` pending=${delivery.pending} permanentFailed=${delivery.permanentFailed}` +
           ` expired=${delivery.expired} snapshotCompleted=${delivery.snapshotCompleted}`,
         );
       } catch (error) {
-        console.error(`[game-status] start finalize failed game=${item.target.gameId}:`, (error as Error).message);
+        console.error(`[game-status] start finalize failed game=${current.target.gameId}:`, (error as Error).message);
       }
-    }));
+    };
+
+    await Promise.allSettled(liveGames.map((game) => runGamePipeline(game)));
+    for (const delta of startedByGame.values()) started += delta;
   }
 
   for (const g of games) {
