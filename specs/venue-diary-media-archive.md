@@ -99,5 +99,7 @@ DB `status`로만 결정한다. 공개 트레이·뷰어는 active 행에 한해
 - **A2**: current main status-only archive의 원본·댓글 잔존을 유지하고, archived 다이어리 API
   노출을 검증한다. owner-only/2026 final-only/GPS 불필요, 타인 경로·예정·진행·취소 경기 거부,
   직접 추가 source 반환, 공개면 0, active+pending+archived 동시성 상한 10을 회귀로 고정한다.
+  상세 댓글 작성자 profile은 UUID 100개 단위로 분할 조회해 10 story×100 unique commenter에서도
+  PostgREST URL/필터 한도를 넘지 않고, 한 batch 실패 시 상세 전체를 fail-closed한다.
 - **E2E(A4)**: 실 로그인 유저가 어제 스토리 업로드 → 24h 후 공개 트레이 미노출 + `/my` 다이어리 열람 + 본인 삭제.
 - **Surgical / 회귀 0**: 공개 스토리/트레이/업로드/재생 경로 회귀 0 최우선.

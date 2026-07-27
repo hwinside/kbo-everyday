@@ -30,6 +30,7 @@ import {
   groupCommentsByStory,
   isValidDiaryGameId,
   loadDiaryCommentBlocks,
+  loadDiaryProfilesInBatches,
   paginateDiaryGames,
   parseDiaryCursor,
   resolveDiaryServeRow,
@@ -326,13 +327,16 @@ async function buildAuthorLookup(
 ): Promise<((userId: string) => DiaryMediaComment["author"]) | null> {
   const map = new Map<string, DiaryMediaComment["author"]>();
   if (userIds.length > 0) {
-    // query-guard: bounded -- 경기 미디어 상한×story별 댓글 상한에서 나온 유니크 user id
-    const { data: profiles, error } = await supabase
-      .from("profiles")
-      .select("id, nickname, avatar_url, team_id")
-      .in("id", userIds);
-    if (error) return null;
-    for (const p of profiles ?? []) {
+    const profiles = await loadDiaryProfilesInBatches(userIds, async (batch) => {
+      // query-guard: bounded -- Production URL 안전 상한 100 UUID 배치
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("id, nickname, avatar_url, team_id")
+        .in("id", batch);
+      return error ? null : (data ?? []);
+    });
+    if (profiles == null) return null;
+    for (const p of profiles) {
       map.set(p.id as string, {
         nickname: (p.nickname as string) ?? null,
         avatarUrl: (p.avatar_url as string) ?? null,

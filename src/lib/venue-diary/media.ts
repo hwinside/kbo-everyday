@@ -31,6 +31,9 @@ export const VENUE_DIARY_MEDIA_PER_GAME_CAP = 60;
 /** 상세 모드 story별 최신 댓글 목록 상한(라이브 댓글 계약과 동일). */
 export const VENUE_DIARY_COMMENT_LIST_LIMIT = 100;
 
+/** PostgREST URL/필터 길이 안전 상한. Production 실측에서 400 UUID 단건 .in()은 실패. */
+export const VENUE_DIARY_PROFILE_BATCH_SIZE = 100;
+
 /** 목록 커서 — 마지막으로 완전히 반환한 경기의 (game_date, game_id). */
 export interface DiaryListCursor {
   gameDate: string;
@@ -324,6 +327,26 @@ export async function loadDiaryCommentBlocks(
   );
   if (blocks.some((block) => block == null)) return null;
   return blocks.filter((block): block is DiaryStoryCommentBlock => block != null);
+}
+
+/**
+ * 댓글 작성자 profile을 작은 UUID 배치로 로드한다.
+ * 상세 최악치(10 story × 100 unique authors)도 단일 `.in(1000)` URL을 만들지 않는다.
+ */
+export async function loadDiaryProfilesInBatches<T>(
+  userIds: readonly string[],
+  fetchBatch: (batch: string[]) => Promise<T[] | null>,
+  batchSize: number = VENUE_DIARY_PROFILE_BATCH_SIZE,
+): Promise<T[] | null> {
+  if (!Number.isInteger(batchSize) || batchSize <= 0) return null;
+  const unique = [...new Set(userIds)];
+  const batches: string[][] = [];
+  for (let offset = 0; offset < unique.length; offset += batchSize) {
+    batches.push(unique.slice(offset, offset + batchSize));
+  }
+  const pages = await Promise.all(batches.map(fetchBatch));
+  if (pages.some((page) => page == null)) return null;
+  return pages.flatMap((page) => page ?? []);
 }
 
 export function groupCommentsByStory(

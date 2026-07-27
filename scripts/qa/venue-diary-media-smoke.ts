@@ -7,11 +7,13 @@ import {
   groupStoriesByGame,
   isValidDiaryGameId,
   loadDiaryCommentBlocks,
+  loadDiaryProfilesInBatches,
   paginateDiaryGames,
   parseDiaryCursor,
   resolveDiaryServeRow,
   VENUE_DIARY_GAMES_PER_PAGE,
   VENUE_DIARY_LIST_ROW_FETCH,
+  VENUE_DIARY_PROFILE_BATCH_SIZE,
   VENUE_DIARY_THUMBNAILS_PER_GAME,
   type DiaryCommentRow,
   type DiaryMediaComment,
@@ -318,6 +320,35 @@ async function testStoryCommentBounds() {
   assert.equal(blocks[1].total, 5);
 }
 
+// 10) actual-wiring: 10 story×100 unique commenter도 profile `.in()`은 100 UUID씩만 호출
+async function testProfileBatchBounds() {
+  const userIds = Array.from(
+    { length: 10 },
+    (_, story) =>
+      Array.from({ length: 100 }, (_, author) => `u-${story}-${author}`),
+  ).flat();
+  const calls: string[][] = [];
+  const profiles = await loadDiaryProfilesInBatches(userIds, async (batch) => {
+    calls.push(batch);
+    return batch.map((id) => ({ id }));
+  });
+  assert.equal(VENUE_DIARY_PROFILE_BATCH_SIZE, 100);
+  assert.equal(calls.length, 10, "1,000 unique UUID를 10개 batch로 분리");
+  assert.ok(calls.every((batch) => batch.length <= 100), "모든 .in batch ≤100");
+  assert.equal(profiles?.length, 1_000, "batch 결과 병합 누락 0");
+
+  const deduped = await loadDiaryProfilesInBatches(
+    [...userIds.slice(0, 100), ...userIds.slice(0, 100)],
+    async (batch) => batch,
+  );
+  assert.equal(deduped?.length, 100, "중복 UUID는 호출 전 제거");
+  assert.equal(
+    await loadDiaryProfilesInBatches(["u"], async () => null),
+    null,
+    "한 batch 실패도 fail-closed",
+  );
+}
+
 assert.equal(isValidDiaryGameId("20260726WOHT0"), true);
 assert.equal(isValidDiaryGameId("G_1-2"), true);
 assert.equal(isValidDiaryGameId("G,or(status.eq.active)"), false, "PostgREST filter injection 차단");
@@ -435,7 +466,7 @@ assert.match(
   "공개 트레이는 active만 조회해 diary_manual archived 노출 0",
 );
 
-testStoryCommentBounds()
+Promise.all([testStoryCommentBounds(), testProfileBatchBounds()])
   .then(() => console.log("venue-diary-media-smoke: OK"))
   .catch((error) => {
     console.error(error);
