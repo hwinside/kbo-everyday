@@ -35,6 +35,26 @@ export function deriveGameEventExpiresAtMs(sourceEpochMs: number): number {
 }
 
 /**
+ * fail-closed 변형(스펙 NO-GO #2): 안정 source(유한 epoch ms)가 없으면 **null**을 돌려
+ * 호출자가 `now` 재계산으로 매 재시도마다 다른 만료를 굽는 것을 금지한다. null이면 호출자는
+ * data-only `game_event`를 붙이지 않고 기존 notification 경로로만 발송한다(구버전 fanout 유지).
+ */
+export function deriveGameEventExpiresAtMsOrNull(sourceEpochMs: number): number | null {
+  return Number.isFinite(sourceEpochMs) ? sourceEpochMs + GAME_EVENT_TTL_MS : null;
+}
+
+/**
+ * 이벤트 발송 결과가 재시도(선점 해제)돼야 하는지(스펙 NO-GO #3 — at-least-once).
+ * `res.ok=false`(청크 throw/deadline/init 실패)뿐 아니라 **token별 transient(retryableFailed>0)**
+ * 도 재시도 대상이다. 기존엔 transient가 남아도 event-global claim이 유지돼 그 토큰이 영구
+ * 미재시도였다(= at-least-once 아님). token 원장이 있는 fav/fav-so는 원장이 selective retry를
+ * 담당하므로 이 gate는 event-global claim(score/concede/inning-summary)에서 쓴다.
+ */
+export function shouldRetryGameEventSend(res: { ok: boolean; retryableFailed?: number }): boolean {
+  return !res.ok || (res.retryableFailed ?? 0) > 0;
+}
+
+/**
  * 이 토큰이 data-only `game_event` 대상인지(신Android) 판정.
  * - iOS → false(notification 유지, APNs 경로 불변)
  * - Android `app_build` null/구버전(< MIN) → false(fail-safe, notification 유지)
@@ -113,9 +133,20 @@ export interface GameEventFanoutPlan {
   /** iOS + 구Android(app_build null/<MIN) — 기존 notification payload 그대로. */
   notificationTokens: string[];
   notificationPayload: GameEventNotification;
-  /** 신Android(app_build>=MIN) — notification 블록 없는 data-only `game_event`. */
+  /**
+   * 신Android(app_build>=MIN) — notification 블록 없는 data-only `game_event`.
+   * ⚠️ 이미 만료(now >= n_expires_at)면 **비어 있다**(FCM 호출 전 drop, NO-GO #1). 만료분은
+   * notification 버킷으로 옮기지 않는다 — stale 이벤트는 어느 경로로도 렌더하지 않는다(스펙 §S2-1).
+   */
   dataOnlyTokens: string[];
-  dataOnlyPayload: GameEventNotification & { dataOnly: true; data: Record<string, string> };
+  dataOnlyPayload: GameEventNotification & {
+    dataOnly: true;
+    data: Record<string, string>;
+    /** 발송시각 기준 남은 절대시간(초) = ceil((n_expires_at - now)/1000). Admin/HTTP 양 transport 공용. */
+    ttlSeconds: number;
+  };
+  /** now >= n_expires_at 라 data-only를 drop했는지(회귀 가시성). */
+  dataOnlyExpired: boolean;
 }
 
 /**
@@ -127,8 +158,13 @@ export function composeGameEventFanout(
   notification: GameEventNotification,
   gameEvent: GameEventEmit,
   wTsMs: number,
+  nowMs: number,
 ): GameEventFanoutPlan {
   const { notificationTokens, dataOnlyTokens } = partitionGameEventTokens(metas);
+  // TTL은 *발송시각*(nowMs) 기준으로 매번 계산한다 — payload의 n_expires_at 불변성과는 별개 축.
+  // n_expires_at은 최초 1회 확정 절대값(재시도 불변), TTL은 그 절대값까지 "지금부터 남은 초".
+  const ttlSeconds = Math.max(0, Math.ceil((gameEvent.nExpiresAtMs - nowMs) / 1000));
+  const dataOnlyExpired = ttlSeconds <= 0; // now >= n_expires_at → FCM 호출 전 drop(NO-GO #1)
   return {
     notificationTokens,
     notificationPayload: {
@@ -136,13 +172,16 @@ export function composeGameEventFanout(
       body: notification.body,
       url: notification.url,
     },
-    dataOnlyTokens,
+    // 만료면 data-only 대상 토큰을 전부 drop(notification 버킷으로 옮기지 않음).
+    dataOnlyTokens: dataOnlyExpired ? [] : dataOnlyTokens,
     dataOnlyPayload: {
       title: gameEvent.title,
       body: gameEvent.body,
       url: gameEvent.url,
       dataOnly: true,
       data: buildGameEventData(gameEvent, wTsMs),
+      ttlSeconds,
     },
+    dataOnlyExpired,
   };
 }

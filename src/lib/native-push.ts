@@ -2,6 +2,7 @@
 
 import { isNative, platform } from "@/lib/capacitor/platform";
 import { supabase } from "@/lib/supabase/client";
+import { normalizeAppBuild } from "@/lib/notifications/app-build";
 
 // 네이티브(iOS/Android) FCM 푸시 토큰 유틸.
 // 웹 Web Push는 기존 usePushNotification 경로 유지 — 여기는 native 전용.
@@ -122,12 +123,12 @@ export async function registerTokenWithServer(fcmToken: string): Promise<boolean
 
   // 앱 빌드 번호 동봉(실패 시 null) — 서버가 빌드 게이트 필터에 사용(widget_live는 17+만,
   // 삼순 #674 blocker⑤). 원격로드 JS라 구빌드도 다음 앱 실행 시 자연스럽게 재보고된다.
+  // 서버(register-device)와 동일 normalizeAppBuild 규칙로 정규화 — 버전 게이트 신호 양측 잠금(NO-GO #4).
   let appBuild: number | null = null;
   try {
     const { App } = await import("@capacitor/app");
     const info = await App.getInfo();
-    const b = Number(info?.build);
-    if (Number.isFinite(b) && b > 0) appBuild = Math.trunc(b);
+    appBuild = normalizeAppBuild(info?.build);
   } catch {
     // 판별 실패 = null(구버전 취급) — 등록 자체는 계속
   }

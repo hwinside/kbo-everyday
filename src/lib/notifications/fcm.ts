@@ -15,6 +15,10 @@ import {
   type GameEventEmit,
   type TokenMeta,
 } from "@/lib/notifications/game-event-fanout";
+import {
+  buildAndroidConfig,
+  buildDeadlineAndroidConfig,
+} from "@/lib/notifications/fcm-android-config";
 
 // FCM 발송 공용 헬퍼 (push-notifications-v1 S3).
 // 디스패처(/api/notifications/dispatch)와 어드민 수동 발송(/api/admin/push/send-fcm)이 공용.
@@ -102,23 +106,8 @@ export const WIDGET_STREAM = {
  */
 export const WIDGET_CONTROL_KINDS = new Set(["game_live", "game_cancel", "game_end"]);
 
-/** Firebase Admin SDK용 Android delivery 설정. */
-export function buildAndroidConfig(payload: PushPayload) {
-  return {
-    ...(payload.dataOnly ? { priority: "high" as const } : {}),
-    ...(payload.collapseKey ? { collapseKey: payload.collapseKey } : {}),
-    ...(payload.ttlSeconds != null ? { ttl: payload.ttlSeconds * 1000 } : {}),
-  };
-}
-
-/** FCM HTTP v1 deadline transport용 Android delivery 설정. */
-export function buildDeadlineAndroidConfig(payload: PushPayload) {
-  return {
-    ...(payload.dataOnly ? { priority: "HIGH" as const } : {}),
-    ...(payload.collapseKey ? { collapse_key: payload.collapseKey } : {}),
-    ...(payload.ttlSeconds != null ? { ttl: `${payload.ttlSeconds}s` } : {}),
-  };
-}
+// Android delivery config 빌더는 fcm-android-config.ts(순수)로 분리 — QA 스모크가 supabase 의존
+// 없이 동일 함수로 TTL을 검증한다(NO-GO #1). buildAndroidConfig/buildDeadlineAndroidConfig import.
 
 /**
  * 대상 유저들에게 FCM 발송.
@@ -476,11 +465,14 @@ export async function deliverGameEventBuckets(
   opts?: { deadlineAtMs?: number },
 ): Promise<SendResult> {
   const wTsMs = gameEvent.wTsMs ?? Date.now();
+  // TTL은 발송시각(nowMs) 기준으로 계산해 data-only payload에 실린다(NO-GO #1). 이미 만료면
+  // plan.dataOnlyTokens가 비어 data-only 버킷은 아래 guard에서 skip(FCM 호출 전 drop).
   const plan = composeGameEventFanout(
     metas,
     { title: notification.title, body: notification.body, url: notification.url ?? "" },
     gameEvent,
     wTsMs,
+    Date.now(),
   );
   const results: SendResult[] = [];
   if (plan.notificationTokens.length > 0) {
