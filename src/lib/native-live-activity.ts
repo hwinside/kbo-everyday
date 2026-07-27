@@ -385,9 +385,13 @@ export async function syncIosWidgetMyTeam(code: string): Promise<void> {
 // 원격 로드 dual-instance 우회 — registerPlugin(정적 core) 호출 실패 시 주입 브릿지
 // (window.Capacitor.Plugins.LiveActivity) 직접 호출로 대체(getAppBuild App 플러그인 패턴 미러).
 interface InjectedTapModePlugin {
-  getWidgetTapMode?: () => Promise<{ mode?: string; refreshSupported?: boolean }>;
+  getWidgetTapMode?: () => Promise<{ mode?: string; refreshSupported?: boolean; reason?: string }>;
   setWidgetTapMode?: (opts: { mode: "open" | "refresh" }) => Promise<void>;
 }
+
+/** 위젯 탭 '새로고침만' 미지원 사유 — none(지원) | ios_version(iOS<17) | app_update(구빌드 메서드 부재).
+ *  카드가 사유별로 다른 안내 문구를 노출한다(삼순 #904 왕복2 ②: 안드 구빌드에 iOS 문구 오노출 방지). */
+export type WidgetTapModeReason = "none" | "ios_version" | "app_update";
 function injectedLiveActivity(): InjectedTapModePlugin | undefined {
   if (typeof window === "undefined") return undefined;
   return (window as unknown as {
@@ -398,29 +402,29 @@ function injectedLiveActivity(): InjectedTapModePlugin | undefined {
 /** iOS 홈 위젯 탭 동작 모드 조회 — mode('open'|'refresh', 기본 open) + refreshSupported(위젯
  *  새로고침 인텐트 = iOS 17+). 비iOS/구빌드(메서드 부재)는 open + refreshSupported false.
  *  게이트는 정적 isNativeIOS 대신 isIosNativeRuntime() — 원격 로드 앱 web 오판 방지(삼순 #833). */
-export async function getIosWidgetTapMode(): Promise<{ mode: "open" | "refresh"; refreshSupported: boolean }> {
-  if (!isIosNativeRuntime()) return { mode: "open", refreshSupported: false };
+export async function getIosWidgetTapMode(): Promise<{ mode: "open" | "refresh"; refreshSupported: boolean; reason: WidgetTapModeReason }> {
+  if (!isIosNativeRuntime()) return { mode: "open", refreshSupported: false, reason: "none" };
+  // 성공 응답: iOS는 OS 버전 게이트라 미지원 사유 = ios_version(응답 reason 우선).
+  const fromSuccess = (r?: { mode?: string; refreshSupported?: boolean; reason?: string }) => {
+    const refreshSupported = r?.refreshSupported === true;
+    // iOS 미지원은 오직 OS 버전(iOS<17) 사유 — 성공 응답이면 항상 ios_version.
+    const reason: WidgetTapModeReason = refreshSupported ? "none" : "ios_version";
+    return { mode: (r?.mode === "refresh" ? "refresh" : "open") as "open" | "refresh", refreshSupported, reason };
+  };
   try {
-    const r = await LiveActivity.getWidgetTapMode();
-    return {
-      mode: r?.mode === "refresh" ? "refresh" : "open",
-      refreshSupported: r?.refreshSupported === true,
-    };
+    return fromSuccess(await LiveActivity.getWidgetTapMode());
   } catch {
     // dual-instance 우회: 주입 브릿지 직접 호출
     const inj = injectedLiveActivity();
     if (inj?.getWidgetTapMode) {
       try {
-        const r = await inj.getWidgetTapMode();
-        return {
-          mode: r?.mode === "refresh" ? "refresh" : "open",
-          refreshSupported: r?.refreshSupported === true,
-        };
+        return fromSuccess(await inj.getWidgetTapMode());
       } catch {
         /* fall through → fail-closed */
       }
     }
-    return { mode: "open", refreshSupported: false }; // 메서드 부재 = 구빌드
+    // 메서드 부재 = 구 iOS 빌드 → 앱 업데이트 안내(iOS 버전 문제 아님, 삼순 ②)
+    return { mode: "open", refreshSupported: false, reason: "app_update" };
   }
 }
 

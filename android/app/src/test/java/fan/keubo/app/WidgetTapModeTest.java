@@ -3,6 +3,9 @@ package fan.keubo.app;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
+import java.util.Arrays;
+import java.util.List;
+
 import org.junit.Test;
 
 /**
@@ -45,5 +48,23 @@ public class WidgetTapModeTest {
         assertTrue(WidgetTapMode.resolveRefreshOnly(WidgetTapMode.MODE_REFRESH));
         // refresh → open 역전환: broadcast(true) → activity(false)
         assertFalse(WidgetTapMode.resolveRefreshOnly(WidgetTapMode.MODE_OPEN));
+    }
+
+    /**
+     * 삼순 #904 왕복2 ④ 회귀 — 모드 변경 즉시 재렌더 대상 provider 목록이 홈 위젯 4종을
+     * 전부 포함하고 비어있지 않음을 고정한다. applyToAllWidgets가 WIDGET_PROVIDERS를 직접
+     * 순회하므로, 이 상수가 지워지거나 provider가 빠지면 컴파일/이 테스트가 깨진다
+     * (resolver 복제만 검사하던 기존 테스트의 사각지대 보완).
+     */
+    @Test
+    public void widgetProvidersCoverAllFourAndNonEmpty() {
+        Class<?>[] providers = WidgetTapMode.WIDGET_PROVIDERS;
+        assertTrue("provider 목록이 비어있으면 안 됨", providers.length > 0);
+        List<Class<?>> list = Arrays.asList(providers);
+        assertTrue(list.contains(GameScoreWidget.class));
+        assertTrue(list.contains(GameScoreWidgetSmall.class));
+        assertTrue(list.contains(PlayerCardWidget.class));
+        assertTrue(list.contains(TeamRankWidget.class));
+        assertTrue("홈 위젯 4종 전부 포함", list.size() >= 4);
     }
 }

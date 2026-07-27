@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { LayoutGrid, ChevronDown, ChevronUp } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { isNativeRuntime } from "@/lib/capacitor/platform";
-import { getWidgetTapMode, setWidgetTapMode, type WidgetTapMode } from "@/lib/capacitor/game-notification";
+import { getWidgetTapMode, setWidgetTapMode, type WidgetTapMode, type WidgetTapModeReason } from "@/lib/capacitor/game-notification";
 
 /**
  * 마이페이지 > 위젯 탭 동작 — 홈 위젯을 탭했을 때 앱을 열지, 위젯만 최신 상태로 다시 표시할지
@@ -15,7 +15,9 @@ import { getWidgetTapMode, setWidgetTapMode, type WidgetTapMode } from "@/lib/ca
 export default function WidgetTapModeCard() {
   const [expanded, setExpanded] = useState(false);
   const [mode, setMode] = useState<WidgetTapMode>("open");
-  const [refreshSupported, setRefreshSupported] = useState(true);
+  const [refreshSupported, setRefreshSupported] = useState(false); // fail-closed 초기값(삼순 ①)
+  const [reason, setReason] = useState<WidgetTapModeReason>("none");
+  const [loaded, setLoaded] = useState(false); // probe 완료 전에는 두 옵션 모두 비활성
 
   // 펼칠 때 현재 저장된 모드 로드(안드/iOS — 브릿지 실패 시 'open' 유지).
   useEffect(() => {
@@ -26,19 +28,29 @@ export default function WidgetTapModeCard() {
       if (!cancelled) {
         setMode(s.mode);
         setRefreshSupported(s.refreshSupported);
+        setReason(s.reason);
+        setLoaded(true);
       }
     })();
     return () => { cancelled = true; };
   }, [expanded]);
 
   const choose = useCallback(async (next: WidgetTapMode) => {
+    if (!loaded) return; // probe 완료 전 선택 차단(fail-closed, 삼순 ①)
     if (next === mode) return;
     if (next === "refresh" && !refreshSupported) return; // 미지원 옵션 방어
     const prev = mode;
     setMode(next); // 낙관적 반영
     const ok = await setWidgetTapMode(next);
     if (!ok) setMode(prev); // 저장 실패(구빌드/브릿지) → 이전 선택 롤백(삼순 ④)
-  }, [mode, refreshSupported]);
+  }, [loaded, mode, refreshSupported]);
+
+  // 미지원 '새로고침만' 안내 문구 — reason별 분기(안드 구빌드에 iOS 문구 노출 금지, 삼순 ②).
+  const refreshHint = refreshSupported
+    ? "앱을 열지 않고 위젯을 최신 상태로 다시 표시"
+    : reason === "ios_version"
+      ? "iOS 17 이상에서 지원"
+      : "앱을 업데이트하면 사용할 수 있어요";
 
   // 안드로이드/iOS 네이티브 전용 — 웹엔 노출하지 않는다(원격 로드 런타임 판정, 삼순 #833).
   if (!isNativeRuntime()) return null;
@@ -57,31 +69,37 @@ export default function WidgetTapModeCard() {
       </button>
 
       {expanded && (
-        <div className="mt-4 grid grid-cols-2 gap-2">
-          <button
-            onClick={() => void choose("open")}
-            aria-pressed={mode === "open"}
-            className={`rounded-xl border px-3 py-3 text-left transition-colors ${mode === "open" ? "border-accent bg-accent/10" : "border-white/10 bg-bg-tertiary"}`}
-          >
-            <span className={`text-sm font-medium ${mode === "open" ? "text-accent" : "text-text-primary"}`}>앱 열기</span>
-            <p className="text-xs text-text-tertiary mt-0.5">탭하면 앱을 실행 (기본)</p>
-          </button>
-          <button
-            onClick={() => void choose("refresh")}
-            disabled={!refreshSupported}
-            aria-pressed={mode === "refresh"}
-            className={`rounded-xl border px-3 py-3 text-left transition-colors ${
-              !refreshSupported
-                ? "border-white/10 bg-bg-tertiary opacity-50 cursor-not-allowed"
-                : mode === "refresh" ? "border-accent bg-accent/10" : "border-white/10 bg-bg-tertiary"
-            }`}
-          >
-            <span className={`text-sm font-medium ${mode === "refresh" && refreshSupported ? "text-accent" : "text-text-primary"}`}>새로고침만</span>
-            <p className="text-xs text-text-tertiary mt-0.5">
-              {refreshSupported ? "앱을 열지 않고 위젯을 최신 상태로 다시 표시" : "iOS 17 이상에서 지원"}
-            </p>
-          </button>
-        </div>
+        <>
+          {!loaded && <p className="mt-4 text-xs text-text-tertiary">현재 설정을 불러오는 중…</p>}
+          <div className="mt-4 grid grid-cols-2 gap-2">
+            <button
+              onClick={() => void choose("open")}
+              disabled={!loaded}
+              aria-pressed={mode === "open"}
+              className={`rounded-xl border px-3 py-3 text-left transition-colors ${
+                !loaded
+                  ? "border-white/10 bg-bg-tertiary opacity-50 cursor-not-allowed"
+                  : mode === "open" ? "border-accent bg-accent/10" : "border-white/10 bg-bg-tertiary"
+              }`}
+            >
+              <span className={`text-sm font-medium ${loaded && mode === "open" ? "text-accent" : "text-text-primary"}`}>앱 열기</span>
+              <p className="text-xs text-text-tertiary mt-0.5">탭하면 앱을 실행 (기본)</p>
+            </button>
+            <button
+              onClick={() => void choose("refresh")}
+              disabled={!loaded || !refreshSupported}
+              aria-pressed={mode === "refresh"}
+              className={`rounded-xl border px-3 py-3 text-left transition-colors ${
+                !loaded || !refreshSupported
+                  ? "border-white/10 bg-bg-tertiary opacity-50 cursor-not-allowed"
+                  : mode === "refresh" ? "border-accent bg-accent/10" : "border-white/10 bg-bg-tertiary"
+              }`}
+            >
+              <span className={`text-sm font-medium ${loaded && mode === "refresh" && refreshSupported ? "text-accent" : "text-text-primary"}`}>새로고침만</span>
+              <p className="text-xs text-text-tertiary mt-0.5">{refreshHint}</p>
+            </button>
+          </div>
+        </>
       )}
     </GlassCard>
   );

@@ -7,6 +7,7 @@ import {
   syncIosWidgetMyTeam,
   getIosWidgetTapMode,
   setIosWidgetTapMode,
+  type WidgetTapModeReason,
 } from "../native-live-activity";
 import { supabase } from "../supabase/client";
 import {
@@ -70,10 +71,13 @@ interface GameNotificationPlugin {
 export type WidgetTapMode = "open" | "refresh";
 
 /** 홈 위젯 탭 동작 상태. refreshSupported = '새로고침만' 옵션이 실제 동작하는지
- *  (안드는 항상 true, iOS는 위젯 새로고침 인텐트가 iOS 17+ 전용이라 iOS17+에서만 true). */
+ *  (안드는 항상 true, iOS는 위젯 새로고침 인텐트가 iOS 17+ 전용이라 iOS17+에서만 true).
+ *  reason = 미지원 사유(카드 안내 문구 분기용) — none | ios_version(iOS<17) | app_update(구빌드). */
+export type { WidgetTapModeReason };
 export interface WidgetTapModeState {
   mode: WidgetTapMode;
   refreshSupported: boolean;
+  reason: WidgetTapModeReason;
 }
 
 /** Android 16+(One UI 8.5) 잠금화면 라이브 카드(Promoted Ongoing) 지원/opt-in 상태. */
@@ -289,29 +293,30 @@ function injectedGameNotification(): InjectedGameNotification | undefined {
  *  {open, refreshSupported:false} fail-closed(삼순 ④: 구빌드 오탐 금지). */
 export async function getWidgetTapMode(): Promise<WidgetTapModeState> {
   if (isIosNativeRuntime()) return getIosWidgetTapMode();
-  if (!isNativeRuntime()) return { mode: "open", refreshSupported: false };
-  // 안드로이드 네이티브
-  try {
-    const r = await GameNotification.getWidgetTapMode();
+  if (!isNativeRuntime()) return { mode: "open", refreshSupported: false, reason: "none" };
+  // 안드로이드 네이티브 — 성공 응답은 항상 지원(refreshSupported:true, reason:none).
+  const fromSuccess = (r?: { mode?: string; refreshSupported?: boolean }): WidgetTapModeState => {
+    const refreshSupported = r?.refreshSupported === true; // 안드 네이티브가 명시 반환해야 지원 간주
     return {
       mode: r?.mode === "refresh" ? "refresh" : "open",
-      refreshSupported: r?.refreshSupported === true, // 안드 네이티브가 명시 반환해야 지원 간주
+      refreshSupported,
+      reason: refreshSupported ? "none" : "app_update",
     };
+  };
+  try {
+    return fromSuccess(await GameNotification.getWidgetTapMode());
   } catch {
     // dual-instance 우회: 주입 브릿지 직접 호출
     const inj = injectedGameNotification();
     if (inj?.getWidgetTapMode) {
       try {
-        const r = await inj.getWidgetTapMode();
-        return {
-          mode: r?.mode === "refresh" ? "refresh" : "open",
-          refreshSupported: r?.refreshSupported === true,
-        };
+        return fromSuccess(await inj.getWidgetTapMode());
       } catch {
         /* fall through → fail-closed */
       }
     }
-    return { mode: "open", refreshSupported: false }; // 메서드 부재 = 구빌드 → fail-closed
+    // 메서드 부재 = 구 안드 빌드 → 런타임 플랫폼(android) 기반 앱 업데이트 안내(삼순 ②)
+    return { mode: "open", refreshSupported: false, reason: "app_update" };
   }
 }
 

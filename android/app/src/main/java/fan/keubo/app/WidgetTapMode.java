@@ -54,8 +54,10 @@ public final class WidgetTapMode {
         return PendingIntent.getActivity(context, appWidgetId, launch, flags);
     }
 
-    /** 홈 위젯 provider 4종 — 모드 변경 즉시 재렌더 대상(설치된 인스턴스만). */
-    private static final Class<?>[] PROVIDERS = {
+    /** 홈 위젯 provider 4종 — 모드 변경 즉시 재렌더 대상(설치된 인스턴스만).
+     *  package-visible 상수로 노출해 setter(applyToAllWidgets)가 이 목록을 직접 참조하고,
+     *  유닛테스트가 4종 완전성을 고정한다(삼순 #904 왕복2 ④: 목록을 지우면 컴파일/테스트 깨짐). */
+    static final Class<?>[] WIDGET_PROVIDERS = {
         GameScoreWidget.class,
         GameScoreWidgetSmall.class,
         PlayerCardWidget.class,
@@ -69,7 +71,7 @@ public final class WidgetTapMode {
     static void applyToAllWidgets(Context context) {
         AppWidgetManager mgr = AppWidgetManager.getInstance(context);
         if (mgr == null) return;
-        for (Class<?> provider : PROVIDERS) {
+        for (Class<?> provider : WIDGET_PROVIDERS) {
             int[] ids = mgr.getAppWidgetIds(new ComponentName(context, provider));
             if (ids == null || ids.length == 0) continue;
             Intent update = new Intent(context, provider);
