@@ -10,9 +10,11 @@
  *   ② 투표 후 결과 + mySelection 공개
  *   ③ 마감 후 미투표자도 결과 공개
  *   ⑩ mySelection 담긴 유저별 응답 Cache-Control: private, no-store
+ *   신고 블라인드 poll: 상세 GET 404 + OG 에서 poll 메타/비밀 콘텐츠 비노출
  *   축2 canonical ref 검증: 잘못된 team/player ref → 400 (rpc 미호출),
  *       정상 생성 시 create_poll 로 넘어가는 p_team_tags/p_player_tags 가
- *       teams.ts slug / "kboId:이름" canonical 값.
+ *       teams.ts slug / "kboId:이름" canonical 값이며 snapshot 도 서버 SSOT 값.
+ *       같은 kind+ref_id 중복은 route 400, RPC 미호출.
  */
 process.env.NEXT_PUBLIC_SUPABASE_URL = "https://poll-route-regression.supabase.co";
 process.env.SUPABASE_SERVICE_ROLE_KEY = "fake-service-role-key";
@@ -48,12 +50,15 @@ function seedPoll(opts: {
   votes?: { userId: string; optionIdx: number }[];
   firstVoteAt?: string | null;
   voterCount?: number;
+  hidden?: boolean;
+  title?: string;
 }): number[] {
   store.posts.set(opts.postId, {
     id: opts.postId,
-    title: `poll ${opts.postId}`,
+    title: opts.title ?? `poll ${opts.postId}`,
     content: "body",
     board_type: "poll",
+    is_hidden: opts.hidden ?? false,
   });
   store.poll_polls.set(opts.postId, {
     post_id: opts.postId,
@@ -87,6 +92,7 @@ function seedPoll(opts: {
 let lastRpc: { name: string; body: Record<string, unknown> } | null = null;
 let rpcCount = 0;
 let createdPostId = 900;
+const restReads = new Map<string, number>();
 const realFetch = globalThis.fetch;
 
 function eqFilters(u: URL): Record<string, string> {
@@ -130,6 +136,7 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     if (name === "create_poll") return json(++createdPostId); // scalar bigint
     return json(null);
   }
+  restReads.set(name, (restReads.get(name) ?? 0) + 1);
 
   const f = eqFilters(u);
   if (name === "posts") {
@@ -179,6 +186,7 @@ async function main(): Promise<void> {
   };
   try {
     const { GET } = await import("../../src/app/api/polls/[postId]/route");
+    const { GET: GET_OG } = await import("../../src/app/api/og/poll/[postId]/route");
     const { POST } = await import("../../src/app/api/polls/route");
 
     // seed: 진행중(미투표자용) — user 미투표
@@ -250,6 +258,38 @@ async function main(): Promise<void> {
     ok("③ closed non-voter sees numbers", b3.options.every((o) => typeof o.voteCount === "number"));
     ok("⑩ closed response private,no-store", r3.headers.get("Cache-Control") === "private, no-store");
 
+    // 신고 블라인드: 공용 helper 에서 즉시 null → 상세 404, OG 는 fallback만 렌더하고
+    // poll_polls/options 를 조회하지 않아 질문/선지 콘텐츠가 유입될 수 없다.
+    seedPoll({
+      postId: 3,
+      closesAt: future,
+      options: [
+        { kind: "etc", label: "HIDDEN_SECRET_OPTION" },
+        { kind: "etc", label: "other" },
+      ],
+      hidden: true,
+      title: "HIDDEN_SECRET_TITLE",
+    });
+    const hiddenGet = await callGet(GET as never, 3);
+    ok("hidden poll detail GET → 404", hiddenGet.status === 404);
+    const pollReadsBeforeOg = restReads.get("poll_polls") ?? 0;
+    const optionReadsBeforeOg = restReads.get("poll_options") ?? 0;
+    const hiddenOg = await GET_OG(new Request("https://keubo.fan/api/og/poll/3"), {
+      params: Promise.resolve({ postId: "3" }),
+    });
+    const hiddenOgBytes = Buffer.from(await hiddenOg.arrayBuffer());
+    ok("hidden poll OG returns fallback image", hiddenOg.status === 200 && hiddenOgBytes.length > 0);
+    ok(
+      "hidden poll OG does not read poll metadata/options",
+      (restReads.get("poll_polls") ?? 0) === pollReadsBeforeOg &&
+        (restReads.get("poll_options") ?? 0) === optionReadsBeforeOg,
+    );
+    ok(
+      "hidden poll OG bytes exclude secret text",
+      !hiddenOgBytes.includes(Buffer.from("HIDDEN_SECRET_TITLE")) &&
+        !hiddenOgBytes.includes(Buffer.from("HIDDEN_SECRET_OPTION")),
+    );
+
     // ---------- 축2: canonical ref 검증 + tag 파생 ----------
     const mkPost = (options: unknown[]) =>
       new Request("https://keubo.fan/api/polls", {
@@ -279,7 +319,12 @@ async function main(): Promise<void> {
     rpcCount = 0;
     lastRpc = null;
     const good1 = await POST(mkPost([
-      { kind: "team", refId: "lg" },
+      {
+        kind: "team",
+        refId: "lg",
+        label: "두산 베어스",
+        image: "https://attacker.invalid/logo.svg",
+      },
       { kind: "team", refId: "doosan" },
     ]) as never);
     ok("축2 valid team poll → 201", good1.status === 201);
@@ -289,13 +334,38 @@ async function main(): Promise<void> {
       const pt = (lastRpc?.body.p_player_tags as string[]) ?? [];
       ok("축2 team poll p_team_tags = [doosan,lg]", JSON.stringify(tt) === JSON.stringify(["doosan", "lg"]));
       ok("축2 team poll p_player_tags = []", pt.length === 0);
+      const opts = (lastRpc?.body.p_options as {
+        ref_id: string;
+        label: string;
+        image: string | null;
+      }[]) ?? [];
+      const lg = opts.find((o) => o.ref_id === "lg");
+      ok(
+        "snapshot spoof ignored: lg → canonical name/logo",
+        lg?.label === "LG 트윈스" && lg.image === "/logos/lg.svg",
+      );
     }
+
+    // 동일 canonical ref 중복 → 400, RPC 미호출
+    rpcCount = 0;
+    lastRpc = null;
+    const dup = await POST(mkPost([
+      { kind: "team", refId: "lg" },
+      { kind: "team", refId: "lg" },
+    ]) as never);
+    ok("duplicate canonical team ref → 400", dup.status === 400);
+    ok("duplicate canonical team ref → rpc not called", rpcCount === 0 && lastRpc === null);
 
     // 정상 player poll → 201 + canonical player_tags("kboId:이름") + 소속팀 union team_tags
     rpcCount = 0;
     lastRpc = null;
     const good2 = await POST(mkPost([
-      { kind: "player", refId: "53006" }, // 강건 (KT)
+      {
+        kind: "player",
+        refId: "53006",
+        label: "공격자",
+        image: "https://attacker.invalid/player.jpg",
+      }, // 강건 (KT)
       { kind: "player", refId: "56769" }, // 강건우 (한화)
     ]) as never);
     ok("축2 valid player poll → 201", good2.status === 201);
@@ -307,9 +377,21 @@ async function main(): Promise<void> {
         JSON.stringify(pt) === JSON.stringify(["53006:강건", "56769:강건우"]),
       );
       ok("축2 player poll team_tags union = [hanwha,kt]", JSON.stringify(tt) === JSON.stringify(["hanwha", "kt"]));
+      const opts = (lastRpc?.body.p_options as {
+        ref_id: string;
+        label: string;
+        image: string | null;
+      }[]) ?? [];
+      const player = opts.find((o) => o.ref_id === "53006");
+      ok(
+        "player snapshot spoof ignored: canonical roster name/photo",
+        player?.label === "강건" && player.image === "/players/53006.jpg",
+      );
     }
 
-    console.log(`\npoll route E2E: ${pass} PASS (①②③⑩ route contracts + 축2 canonical ref/tags)`);
+    console.log(
+      `\npoll route E2E: ${pass} PASS (①②③⑩ + hidden GET/OG + canonical snapshots/tags + duplicate refs)`,
+    );
   } finally {
     globalThis.fetch = realFetch;
   }

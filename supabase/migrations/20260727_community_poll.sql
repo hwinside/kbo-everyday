@@ -199,7 +199,10 @@ CREATE TRIGGER poll_votes_recalc_del
   FOR EACH STATEMENT EXECUTE FUNCTION public.poll_votes_recalc_stmt();
 
 -- ------------------------------------------------------------
--- 5) 편집 잠금 (§4.2) — posts BEFORE UPDATE.
+-- 5) poll posts 직접 쓰기 차단 + 편집 잠금 (§4.2) — posts BEFORE INSERT/UPDATE.
+--    create_poll 만 transaction-local GUC 를 세우고 poll post 를 INSERT 할 수 있다.
+--    RPC 밖 phantom INSERT, non-poll→poll 전환, poll→non-poll/board 변경을 첫 표
+--    전부터 차단한다. 첫 투표 후 title/content/tags 잠금 계약도 그대로 유지한다.
 --    잠금 기준은 board_type 이 아니라 "poll_polls 행 존재 + first_vote_at 세팅".
 --    board_type 분기로 판정하면 첫 투표 후 board_type 을 'free' 로 바꾼 뒤
 --    (그 UPDATE 는 분기 통과) title 을 바꾸는 2-step 우회가 뚫린다. 그래서
@@ -216,6 +219,21 @@ SET search_path = public
 AS $$
 DECLARE v_first timestamptz;
 BEGIN
+  IF TG_OP = 'INSERT' THEN
+    IF NEW.board_type = 'poll'
+       AND current_setting('kbo.poll_write', true) IS DISTINCT FROM '1' THEN
+      RAISE EXCEPTION 'poll posts must be created through create_poll'
+        USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+  END IF;
+
+  IF (OLD.board_type = 'poll' OR NEW.board_type = 'poll')
+     AND current_setting('kbo.poll_write', true) IS DISTINCT FROM '1' THEN
+    RAISE EXCEPTION 'poll posts cannot be written directly'
+      USING ERRCODE = 'check_violation';
+  END IF;
+
   -- poll 글은 poll_polls 행 존재로 판정(board_type 무관 → 2-step 우회 차단).
   SELECT first_vote_at INTO v_first FROM poll_polls WHERE post_id = OLD.id;
   IF NOT FOUND THEN
@@ -237,7 +255,7 @@ $$;
 
 DROP TRIGGER IF EXISTS poll_posts_edit_lock_trg ON public.posts;
 CREATE TRIGGER poll_posts_edit_lock_trg
-  BEFORE UPDATE ON public.posts
+  BEFORE INSERT OR UPDATE ON public.posts
   FOR EACH ROW EXECUTE FUNCTION public.poll_posts_edit_lock();
 
 -- ------------------------------------------------------------
@@ -368,6 +386,9 @@ DECLARE
   v_label     text;
   v_now       timestamptz := now();
 BEGIN
+  -- 이 트랜잭션의 create_poll 내부 posts INSERT 에만 허용 플래그를 부여한다.
+  PERFORM set_config('kbo.poll_write', '1', true);
+
   IF p_author_id IS NULL THEN
     RAISE EXCEPTION 'author required' USING ERRCODE = 'check_violation';
   END IF;
@@ -398,6 +419,17 @@ BEGIN
   FROM jsonb_array_elements(p_options) elem;
   IF v_has_team AND v_has_player THEN
     RAISE EXCEPTION 'team and player options cannot coexist in one poll' USING ERRCODE = 'check_violation';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM jsonb_array_elements(p_options) elem
+    WHERE elem->>'kind' IN ('team', 'player')
+    GROUP BY elem->>'kind', elem->>'ref_id'
+    HAVING count(*) > 1
+  ) THEN
+    RAISE EXCEPTION 'duplicate team/player ref_id option'
+      USING ERRCODE = 'check_violation';
   END IF;
 
   IF p_team_tags IS NOT NULL AND jsonb_typeof(p_team_tags) <> 'array' THEN

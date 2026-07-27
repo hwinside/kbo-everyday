@@ -50,8 +50,59 @@ BEGIN
     '[{"kind":"team"},{"kind":"team","ref_id":"ob"}]'::jsonb);
     RAISE EXCEPTION 'FAIL: team missing ref_id accepted'; EXCEPTION WHEN check_violation THEN NULL; END;
 
-  RAISE NOTICE 'PASS create_poll validations (coexist/mix/count/closes/etc/ref_id)';
+  BEGIN PERFORM create_poll('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','x',null,false,now()+interval '1 day',
+    '[{"kind":"team","ref_id":"lg"},{"kind":"team","ref_id":"lg"}]'::jsonb);
+    RAISE EXCEPTION 'FAIL: duplicate team ref_id accepted'; EXCEPTION WHEN check_violation THEN NULL; END;
+
+  RAISE NOTICE 'PASS create_poll validations (coexist/mix/count/closes/etc/ref_id/duplicate ref)';
 END $$;
+
+-- ---------- poll posts direct write guard (삼순 2차 blocker #1) ----------
+-- create_poll 은 별도 autocommit transaction 에서 정상 성공해야 하고, 이후 authenticated
+-- direct path 에서는 투표 전 poll→free 변경과 child 없는 phantom poll INSERT 모두 거부한다.
+SELECT create_poll(
+  'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','pre-vote immutable?',null,false,
+  now()+interval '1 day',
+  '[{"kind":"etc","label":"a"},{"kind":"etc","label":"b"}]'::jsonb
+) AS direct_guard_pid \gset
+SELECT set_config('poll.direct_guard_pid', :'direct_guard_pid', false);
+
+SET ROLE authenticated;
+DO $$
+DECLARE
+  v_pid bigint := current_setting('poll.direct_guard_pid')::bigint;
+  v_free bigint;
+BEGIN
+  BEGIN
+    UPDATE posts SET board_type='free' WHERE id=v_pid;
+    RAISE EXCEPTION 'FAIL direct guard: pre-vote poll→free accepted';
+  EXCEPTION WHEN check_violation THEN NULL; END;
+
+  BEGIN
+    UPDATE posts SET board_id='free' WHERE id=v_pid;
+    RAISE EXCEPTION 'FAIL direct guard: pre-vote poll board_id change accepted';
+  EXCEPTION WHEN check_violation THEN NULL; END;
+
+  BEGIN
+    INSERT INTO posts(author_id,board_type,board_id,title,content)
+    VALUES ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','poll','poll','phantom','');
+    RAISE EXCEPTION 'FAIL direct guard: phantom poll INSERT accepted';
+  EXCEPTION WHEN check_violation THEN NULL; END;
+
+  INSERT INTO posts(author_id,board_type,board_id,title,content)
+  VALUES ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','team','lg','ordinary','')
+  RETURNING id INTO v_free;
+  BEGIN
+    UPDATE posts SET board_type='poll', board_id='poll' WHERE id=v_free;
+    RAISE EXCEPTION 'FAIL direct guard: non-poll→poll accepted';
+  EXCEPTION WHEN check_violation THEN NULL; END;
+
+  IF (SELECT board_type FROM posts WHERE id=v_pid) <> 'poll' THEN
+    RAISE EXCEPTION 'FAIL direct guard: legitimate poll type mutated';
+  END IF;
+  RAISE NOTICE 'PASS direct guard: create_poll succeeded; authenticated pre-vote type/board change + phantom INSERT + non-poll→poll rejected';
+END $$;
+RESET ROLE;
 
 -- ---------- ① RLS: direct SELECT + RPC EXECUTE 차단 ----------
 DO $$
@@ -184,8 +235,7 @@ BEGIN
     RAISE EXCEPTION 'FAIL ⑨: option delete accepted'; EXCEPTION WHEN check_violation THEN NULL; END;
   BEGIN UPDATE poll_polls SET allow_multiple=true WHERE post_id=v_pid;
     RAISE EXCEPTION 'FAIL ⑨: allow_multiple update accepted'; EXCEPTION WHEN check_violation THEN NULL; END;
-  UPDATE posts SET updated_at=now() WHERE id=v_pid; -- non-structural → allowed
-  RAISE NOTICE 'PASS ⑨ edit-lock: title/content, option add/remove/struct, poll settings blocked; non-structural allowed';
+  RAISE NOTICE 'PASS ⑨ edit-lock: title/content, option add/remove/struct, poll settings blocked';
 END $$;
 
 -- ---------- ⑧ cascade 재집계 (계정/글 삭제) ----------
@@ -270,4 +320,4 @@ BEGIN
   RAISE NOTICE 'PASS 축2 create_poll writes canonical team_tags/player_tags into posts atomically';
 END $$;
 
-SELECT 'DB E2E COMPLETE (①②④⑤⑦⑧⑨ + ⑨-2 2-step bypass + 축1축2 tags/validations; ③⑩ in poll-route-e2e.ts + ⑥ concurrency in .sh)' AS status;
+SELECT 'DB E2E COMPLETE (①②④⑤⑦⑧⑨ + direct poll-post write + duplicate ref RPC + tags/validations; ③⑩ hidden/snapshot route checks in poll-route-e2e.ts + ⑥ concurrency in .sh)' AS status;

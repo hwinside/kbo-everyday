@@ -40,10 +40,11 @@ export async function fetchPollCore(
 ): Promise<PollCore | null> {
   const { data: post } = await admin
     .from("posts")
-    .select("id, title, content, board_type")
+    .select("id, title, content, board_type, is_hidden")
     .eq("id", postId)
     .maybeSingle();
-  if (!post || post.board_type !== "poll") return null;
+  // 신고 블라인드(is_hidden=true)는 일반 게시글/OG 와 동일하게 배제 → GET 404·OG 비노출.
+  if (!post || post.board_type !== "poll" || post.is_hidden === true) return null;
 
   const { data: poll } = await admin
     .from("poll_polls")

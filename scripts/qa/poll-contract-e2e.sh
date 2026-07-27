@@ -57,9 +57,13 @@ CREATE TABLE IF NOT EXISTS public.posts (
   team_tags jsonb NOT NULL DEFAULT '[]'::jsonb,
   player_tags jsonb NOT NULL DEFAULT '[]'::jsonb,
   created_at timestamptz DEFAULT now(), updated_at timestamptz);
+GRANT SELECT, INSERT, UPDATE ON public.posts TO authenticated;
+GRANT USAGE, SELECT ON SEQUENCE public.posts_id_seq TO authenticated;
 SQL
 
 echo "[poll-e2e] apply migration ..."
+psql -q -f "$MIG" >/dev/null
+echo "[poll-e2e] reapply migration (idempotency) ..."
 psql -q -f "$MIG" >/dev/null
 
 echo "[poll-e2e] run assertions ..."
@@ -84,5 +88,5 @@ else
   echo "FAIL ⑥ concurrency: voter_count=$VC option=$OC total=$TV (expected 20/20/20)"; exit 1
 fi
 
-echo "[poll-e2e] DB harness PASS ✅ (①②④⑤⑦⑧⑨ + ⑨-2 2-step bypass + 축1축2 tag-write + ⑥ 20-way concurrency)"
-echo "[poll-e2e] route contracts ③(closed non-voter results) ⑩(private,no-store) + 축2 ref-validation → scripts/qa/poll-route-e2e.ts (npm run qa:poll-route)"
+echo "[poll-e2e] DB harness PASS ✅ (①②④⑤⑦⑧⑨ + direct poll-post write guard + duplicate ref RPC guard + tag-write + ⑥ 20-way concurrency; migration reapplied)"
+echo "[poll-e2e] route contracts ③/⑩ + hidden GET/OG + canonical snapshot/duplicate ref → scripts/qa/poll-route-e2e.ts (npm run qa:poll-route)"
