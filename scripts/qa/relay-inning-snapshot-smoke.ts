@@ -161,16 +161,39 @@ async function main() {
     !inningsBcold.find((i) => i.inning === 5 && i.plays.length > 0),
   );
 
-  // resolveInningWithSnapshot 순수 계약 3종
+  // resolveInningWithSnapshot 순수 계약 4종 (unrecoverable 포함)
   const c = new Map<string, NaverTextRelay[]>();
   const s1 = resolveInningWithSnapshot(c, "g-1", inn2);
-  check("pure: 성공 fetch → degraded=false + 캐시 적재", !s1.degraded && c.get("g-1") === inn2);
+  check("pure: 성공 fetch → degraded=false·unrecoverable=false + 캐시 적재", !s1.degraded && !s1.unrecoverable && c.get("g-1") === inn2);
   const s2 = resolveInningWithSnapshot(c, "g-1", null);
-  check("pure: 실패+스냅샷 → 스냅샷 반환 + degraded=true", s2.degraded && s2.relays === inn2);
+  check("pure: 실패+스냅샷 → 스냅샷 반환 + degraded=true·unrecoverable=false", s2.degraded && !s2.unrecoverable && s2.relays === inn2);
   const s3 = resolveInningWithSnapshot(c, "g-2", null);
-  check("pure: 실패+스냅샷없음 → [] + degraded=true", s3.degraded && s3.relays.length === 0);
+  check("pure: 실패+스냅샷없음 → [] + degraded=true·unrecoverable=true", s3.degraded && s3.unrecoverable && s3.relays.length === 0);
   const s4 = resolveInningWithSnapshot(c, "g-3", []);
-  check("pure: 성공-빈배열(정상 미시작 이닝) → degraded=false", !s4.degraded && s4.relays.length === 0);
+  check("pure: 성공-빈배열(정상 미시작 이닝) → degraded=false·unrecoverable=false", !s4.degraded && !s4.unrecoverable && s4.relays.length === 0);
+
+  // ---- (d) cold instance / eviction 첫 실패 = unrecoverable → non-2xx wiring ----
+  // 스냅샷이 없는 상태에서 이닝 실패 시 GET 이 [] 로 200 publish 하면 원 blocker
+  // (cold Vercel/eviction 첫 실패에서 ID 흔들림·UI 소실)가 재현된다. 그래서
+  //  ① resolver 가 unrecoverable=true 를 신호하고
+  //  ② GET 이 anyInningUnrecoverable 일 때 non-2xx 로 단락(캐시 안 함)
+  // 하는지를 production 소스로 고정한다.
+  const here0 = dirname(fileURLToPath(import.meta.url));
+  const routeSrc0 = readFileSync(resolve(here0, "../../src/app/api/game-relay/route.ts"), "utf8");
+  check(
+    "(d) unrecoverable(=degraded+cache miss) 신호를 GET 이 추적",
+    /anyInningUnrecoverable/.test(routeSrc0),
+  );
+  check(
+    "(d) anyInningUnrecoverable → non-2xx(503) 단락 + publish/cache 안 함",
+    /if\s*\(\s*anyInningUnrecoverable\s*\)\s*\{[\s\S]*?status:\s*503[\s\S]*?\}/.test(routeSrc0),
+  );
+  // 클라(useGameRelay)가 non-2xx 를 기존 data 유지로 처리하는지 계약 고정
+  const hookSrc = readFileSync(resolve(here0, "../../src/lib/hooks/useGameRelay.ts"), "utf8");
+  check(
+    "(d) 클라: res.ok 일 때만 setData → non-2xx 는 기존 relay data 유지",
+    /if\s*\(\s*res\.ok\b[\s\S]*?\)\s*\{[\s\S]*?setData\(/.test(hookSrc),
+  );
 
   // ---- (c) route 최대 wall-clock bound production wiring ----
   const here = dirname(fileURLToPath(import.meta.url));

@@ -811,23 +811,30 @@ function evictInningSnapshotsIfLarge(): void {
 /**
  * Resolve one inning's relays against the last-good snapshot cache (pure).
  * - `fetched` is the successfully parsed relay array (may be legitimately empty
- *   for a not-yet-started current inning) → cache it, not degraded.
- * - `fetched === null` means the fetch failed/timed out → fall back to the
- *   snapshot if present (degraded, stale-but-consistent) else `[]` (degraded,
- *   no prior data). Either way `degraded` is true so the caller can skip caching
- *   the partial response and retry fresh on the next poll.
+ *   for a not-yet-started current inning) → cache it, `degraded:false`.
+ * - `fetched === null` means the fetch failed/timed out:
+ *     • snapshot present → reuse it (`degraded:true`, stale-but-consistent).
+ *     • snapshot ABSENT → `unrecoverable:true`. There is no prior data to keep
+ *       cumIdx stable, so substituting `[]` would reintroduce the original
+ *       blocker (ID -2→-1→-2 renumber, current-inning UI vanish) on a cold
+ *       Vercel instance / post-eviction first failure. The caller MUST NOT
+ *       publish a 2xx in this case — it returns non-2xx so the client keeps its
+ *       existing data (or retries on next poll for a first load).
  */
 export function resolveInningWithSnapshot(
   cache: Map<string, NaverTextRelay[]>,
   key: string,
   fetched: NaverTextRelay[] | null,
-): { relays: NaverTextRelay[]; degraded: boolean } {
+): { relays: NaverTextRelay[]; degraded: boolean; unrecoverable: boolean } {
   if (fetched !== null) {
     cache.set(key, fetched);
-    return { relays: fetched, degraded: false };
+    return { relays: fetched, degraded: false, unrecoverable: false };
   }
   const snap = cache.get(key);
-  return { relays: snap ?? [], degraded: true };
+  if (snap !== undefined) {
+    return { relays: snap, degraded: true, unrecoverable: false };
+  }
+  return { relays: [], degraded: true, unrecoverable: true };
 }
 
 export function combineRelayInningsNewestFirst(inningRelays: NaverTextRelay[][]): NaverTextRelay[] {
@@ -983,17 +990,34 @@ export async function GET(req: NextRequest) {
     // and relay event IDs (game-wide cumIdx) stay stable across a transient
     // upstream stall. index 0 = inning 1, index i = inning i+1.
     let anyInningDegraded = false;
+    let anyInningUnrecoverable = false;
     const allTextRelays = allTextRelaysResult.map((raw, idx) => {
       const inningNum = idx + 1;
-      const { relays, degraded } = resolveInningWithSnapshot(
+      const { relays, degraded, unrecoverable } = resolveInningWithSnapshot(
         inningSnapshotCache,
         `${naverGameId}-${inningNum}`,
         raw,
       );
       if (degraded) anyInningDegraded = true;
+      if (unrecoverable) anyInningUnrecoverable = true;
       return relays;
     });
     evictInningSnapshotsIfLarge();
+
+    // Cold instance / post-eviction first failure: an inning failed AND we have
+    // no last-good snapshot for it. Substituting [] here would renumber game-wide
+    // cumIdx and drop the current inning's plays (the original blocker). Return
+    // non-2xx instead so the client keeps its existing relay data (celebration
+    // IDs stay stable) and retries on the next 3s poll. Nothing is cached.
+    if (anyInningUnrecoverable) {
+      await trackFallback("naver-relay", "timeout", {
+        errorMessage: "inning fetch failed with no last-good snapshot (cold/evicted)",
+      });
+      return NextResponse.json(
+        { error: "relay_upstream_unrecoverable" },
+        { status: 503 },
+      );
+    }
 
     // Combine all text relays with global newest-first ordering. Keeping
     // inning bundles in ascending order would make parseInningRelays reverse
