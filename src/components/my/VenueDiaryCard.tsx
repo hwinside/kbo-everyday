@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { CalendarDays, ChevronDown, MapPin, RefreshCw, Trophy } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { CalendarDays, Play, Plus, RefreshCw, Trophy } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { getTeamById } from "@/lib/constants/teams";
 import { useAuth } from "@/lib/supabase/AuthContext";
@@ -10,270 +10,610 @@ import type {
   VenueAttendanceSummary,
   VenueDiaryItem,
 } from "@/lib/venue-attendance/summary";
-import type {
-  FavoritePlayerPerformance,
-  PlayerPerformanceLine,
-} from "@/lib/venue-attendance/player-comparison";
+import {
+  applyDiaryThumbUrlRefresh,
+  buildDiaryCountsMap,
+  buildDiaryHomeGames,
+  diaryCountsOwnerKey,
+  diaryCountsReady,
+  makeDiaryThumbRefresh,
+  mergeDiaryMediaPages,
+  mergeVenueSummaries,
+  shouldFetchNextDiaryPage,
+  startDiaryPendingPoll,
+  type DiaryAttendanceInput,
+  type DiaryHomeGame,
+  type DiaryMediaGroupInput,
+} from "@/lib/venue-diary/view";
+import {
+  mintWithTimeout,
+  startVenueStoryUrlRefresh,
+  VENUE_STORY_URL_MINT_TIMEOUT_MS,
+} from "@/lib/venue-stories/refresh-policy";
+import { PENDING_POLL_DELAYS_MS } from "@/lib/venue-stories/composer-helpers";
+import VenueDiaryAddGameSheet from "@/components/my/VenueDiaryAddGameSheet";
+import VenueDiaryUploader, {
+  type DiaryUploadGame,
+} from "@/components/my/VenueDiaryUploader";
+import VenueDiaryViewer, {
+  type DiaryViewerHeader,
+} from "@/components/my/VenueDiaryViewer";
 
-interface VenueDiaryResponse {
+interface AttendanceResponse {
   season: number;
   summary: VenueAttendanceSummary;
-  games: Array<VenueDiaryItem & { favoritePlayers: FavoritePlayerPerformance[] }>;
+  diaryGameCount: number;
+  games: VenueDiaryItem[];
 }
 
-function formatGameDate(date: string): string {
-  return new Intl.DateTimeFormat("ko-KR", {
-    month: "long",
-    day: "numeric",
-    weekday: "short",
-    timeZone: "Asia/Seoul",
-  }).format(new Date(`${date}T12:00:00+09:00`));
+interface MediaListResponse {
+  season: number;
+  games: DiaryMediaGroupInput[];
+  nextCursor: string | null;
+  hasMore: boolean;
 }
 
-function teamLabel(team: { id: number; name: string } | null): string {
-  if (!team) return "경기 정보 확인 중";
+/** 세그먼트: 최신 시즌 · 직전 시즌 · 전체(두 시즌 합산). */
+const CURRENT_SEASON = 2026;
+const PREV_SEASON = 2025;
+type SeasonKey = typeof CURRENT_SEASON | typeof PREV_SEASON | "all";
+
+function teamShort(team: { id: number; name: string } | null): string {
+  if (!team) return "";
   return getTeamById(team.id)?.shortName ?? team.name;
 }
 
-function statusLabel(item: VenueDiaryItem): string {
-  if (item.status === "scheduled") return "예정";
-  if (item.status === "live") return "진행 중";
-  if (item.status === "cancelled") return "취소";
-  if (item.status === "unavailable") return "결과 확인 중";
-  if (item.awayTeam?.score == null || item.homeTeam?.score == null) return "종료";
-  return `${item.awayTeam.score} : ${item.homeTeam.score}`;
+function formatGameDate(date: string | null): string {
+  if (!date) return "";
+  return new Intl.DateTimeFormat("ko-KR", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    timeZone: "Asia/Seoul",
+  })
+    .format(new Date(`${date}T12:00:00+09:00`))
+    .replace(/\. /g, ".")
+    .replace(/\.$/, "");
 }
 
-const RESULT_STYLE = {
-  W: "bg-blue-500/15 text-blue-500",
-  L: "bg-red-500/15 text-red-500",
-  D: "bg-gray-500/15 text-text-secondary",
-} as const;
-
-const EVALUATION_LABEL = {
-  above: { text: "평균 이상", className: "bg-blue-500/15 text-blue-500" },
-  similar: { text: "평균 비슷", className: "bg-gray-500/15 text-text-secondary" },
-  below: { text: "아쉬움", className: "bg-orange-500/15 text-orange-500" },
-} as const;
-
-function innings(outs: number | undefined): string {
-  const value = outs ?? 0;
-  return `${Math.floor(value / 3)}${value % 3 ? `.${value % 3}` : ""}`;
+function matchLabel(game: DiaryHomeGame): string {
+  const away = teamShort(game.awayTeam);
+  const home = teamShort(game.homeTeam);
+  if (!away || !home) return "경기 정보 확인 중";
+  const as = game.awayTeam?.score;
+  const hs = game.homeTeam?.score;
+  if (as != null && hs != null) return `${away} ${as} : ${hs} ${home}`;
+  return `${away} vs ${home}`;
 }
 
-function performanceText(line: PlayerPerformanceLine): string {
-  const stats = line.today;
-  if (line.type === "batter") {
-    return `${stats.ab ?? 0}타수 ${stats.h ?? 0}안타 ${stats.hr ?? 0}홈런 ${stats.rbi ?? 0}타점`;
+/**
+ * A2 목록(keyset)의 30경기/페이지를 hasMore 동안 cursor로 순차 fetch해 전 페이지를 병합한다.
+ * shouldFetchNextDiaryPage 가 무한루프 상한을 강제한다(31번째+ 경기 미노출·N/10 0 오표시 방지).
+ */
+async function fetchDiaryMediaAllPages(
+  token: string,
+  season: number,
+  signal?: AbortSignal,
+): Promise<DiaryMediaGroupInput[] | null> {
+  const pages: { games: DiaryMediaGroupInput[] }[] = [];
+  let cursor: string | null = null;
+  for (let page = 0; ; page += 1) {
+    const url = `/api/me/venue-diary/media?season=${season}${
+      cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""
+    }`;
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+      signal,
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as MediaListResponse;
+    pages.push({ games: data.games ?? [] });
+    if (
+      !shouldFetchNextDiaryPage({
+        hasMore: data.hasMore === true,
+        nextCursor: data.nextCursor ?? null,
+        pagesFetched: page + 1,
+      })
+    ) {
+      break;
+    }
+    cursor = data.nextCursor;
   }
-  return `${innings(stats.ipOuts)}이닝 ${stats.er ?? 0}자책 ${stats.strikeouts ?? 0}K`;
+  return mergeDiaryMediaPages(pages);
 }
 
-function averagePerformanceText(line: PlayerPerformanceLine): string | null {
-  if (!line.average) return null;
-  if (line.type === "batter") {
-    return `${line.average.ab?.toFixed(1)}타수 ${line.average.h?.toFixed(1)}안타 ${line.average.hr?.toFixed(1)}홈런 ${line.average.rbi?.toFixed(1)}타점`;
-  }
-  return `${line.average.innings?.toFixed(1)}이닝 ${line.average.er?.toFixed(1)}자책 ${line.average.strikeouts?.toFixed(1)}K`;
+/** 상세 GET(active|archived) 에서 해당 경기 미디어 id 집합을 조회 — pending 영상 승급 확인용. */
+async function fetchDiaryGameMediaIds(
+  token: string,
+  gameId: string,
+  signal?: AbortSignal,
+): Promise<Set<number> | null> {
+  const res = await fetch(
+    `/api/me/venue-diary/media?gameId=${encodeURIComponent(gameId)}`,
+    { headers: { Authorization: `Bearer ${token}` }, cache: "no-store", signal },
+  );
+  if (!res.ok) return null;
+  const data = (await res.json()) as { media?: { id: number }[] };
+  return new Set((data.media ?? []).map((m) => m.id));
 }
 
-function metricText(line: PlayerPerformanceLine, value: number): string {
-  return line.type === "batter" ? value.toFixed(3).replace(/^0\./, ".") : value.toFixed(2);
+async function fetchSeason(
+  token: string,
+  season: number,
+): Promise<{ attendance: AttendanceResponse; mediaGroups: DiaryMediaGroupInput[] } | null> {
+  const [aRes, mediaGroups] = await Promise.all([
+    fetch(`/api/me/venue-attendance?season=${season}`, {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    }),
+    fetchDiaryMediaAllPages(token, season),
+  ]);
+  if (!aRes.ok || mediaGroups == null) return null;
+  return { attendance: await aRes.json(), mediaGroups };
 }
 
 export default function VenueDiaryCard() {
-  const { user } = useAuth();
-  const [loaded, setLoaded] = useState<{ userId: string; data: VenueDiaryResponse } | null>(null);
-  const [loadingFor, setLoadingFor] = useState<string | null>(null);
-  const [failedFor, setFailedFor] = useState<string | null>(null);
-  const [showAll, setShowAll] = useState(false);
-  const [expandedGameId, setExpandedGameId] = useState<string | null>(null);
+  const { user, profile } = useAuth();
+  const [season, setSeason] = useState<SeasonKey>(CURRENT_SEASON);
+  const [loaded, setLoaded] = useState<{
+    key: string;
+    summary: VenueAttendanceSummary;
+    diaryGameCount: number;
+    attendanceGames: DiaryAttendanceInput[];
+    mediaGroups: DiaryMediaGroupInput[];
+  } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  const [addOpen, setAddOpen] = useState(false);
+  const [uploadGame, setUploadGame] = useState<DiaryUploadGame | null>(null);
+  const [viewer, setViewer] = useState<{ gameId: string; header: DiaryViewerHeader } | null>(null);
 
   const load = useCallback(async () => {
     if (!user) return;
-    const requestedUserId = user.id;
-    setLoadingFor(requestedUserId);
-    setFailedFor(null);
+    const key = `${user.id}:${season}`;
+    setLoading(true);
+    setFailed(false);
     try {
       const session = await getSafeSession();
-      if (!session?.access_token) throw new Error("missing session");
-      const response = await fetch("/api/me/venue-attendance", {
-        headers: { Authorization: `Bearer ${session.access_token}` },
-        cache: "no-store",
-      });
-      if (!response.ok) throw new Error("request failed");
-      setLoaded({ userId: requestedUserId, data: await response.json() });
+      const token = session?.access_token;
+      if (!token) throw new Error("missing session");
+      const seasons = season === "all" ? [CURRENT_SEASON, PREV_SEASON] : [season];
+      const results = await Promise.all(seasons.map((s) => fetchSeason(token, s)));
+      if (results.some((r) => r == null)) throw new Error("request failed");
+      const ok = results.filter((r): r is NonNullable<typeof r> => r != null);
+
+      const summary = mergeVenueSummaries(ok.map((r) => r.attendance.summary));
+      const diaryGameCount = ok.reduce((sum, r) => sum + r.attendance.diaryGameCount, 0);
+      const attendanceGames = ok.flatMap((r) =>
+        r.attendance.games.map((g) => ({
+          gameId: g.gameId,
+          result: g.result,
+          awayTeam: g.awayTeam,
+          homeTeam: g.homeTeam,
+        })),
+      );
+      const mediaGroups = ok.flatMap((r) => r.mediaGroups);
+      setLoaded({ key, summary, diaryGameCount, attendanceGames, mediaGroups });
     } catch {
-      setFailedFor(requestedUserId);
+      setFailed(true);
     } finally {
-      setLoadingFor((current) => current === requestedUserId ? null : current);
+      setLoading(false);
     }
-  }, [user]);
+  }, [user, season]);
 
   useEffect(() => {
     if (user) void load();
   }, [load, user]);
 
+  // 영상 pending 은 목록(active|archived)에 아직 없다 → POST 반환 id 를 추적해 archived 승급(terminal)
+  // 까지 polling. storyId별 poll 소유권(Map)으로 복수 pending 영상을 동시 추적 — 새 영상이 이전
+  // poll 을 cancel 해 앞 영상 늦은 승급이 홈/count 에 미반영되는 단일슬롯 뒤섞임을 막는다(Blocker 3).
+  const pendingPollsRef = useRef<Map<number, () => void>>(new Map());
+  useEffect(
+    () => () => {
+      pendingPollsRef.current.forEach((cancel) => cancel());
+      pendingPollsRef.current.clear();
+    },
+    [],
+  );
+
+  const handleUploaded = useCallback(
+    (result?: {
+      id?: number | null;
+      gameId?: string;
+      mediaType?: string;
+      status?: string;
+    }) => {
+      void load();
+      if (
+        result?.mediaType === "video" &&
+        result?.status === "pending" &&
+        result.id != null &&
+        result.gameId
+      ) {
+        const storyId = result.id;
+        const gameId = result.gameId;
+        // 같은 storyId 재업로드면 그 storyId 의 이전 poll 만 취소(다른 영상 poll 은 유지).
+        pendingPollsRef.current.get(storyId)?.();
+        const cancel = startDiaryPendingPoll({
+          delays: PENDING_POLL_DELAYS_MS,
+          probe: async (signal) => {
+            const session = await getSafeSession();
+            const t = session?.access_token;
+            if (!t) return null;
+            const ids = await fetchDiaryGameMediaIds(t, gameId, signal);
+            return ids == null ? null : { found: ids.has(storyId) };
+          },
+          onTerminal: (terminal) => {
+            pendingPollsRef.current.delete(storyId);
+            // archived 승급 감지 즉시 홈·count 갱신(timeout 은 홈 미노출 유지).
+            if (terminal === "archived") void load();
+          },
+          setTimer: (fn, ms) => setTimeout(fn, ms),
+          clearTimer: (handle) => clearTimeout(handle),
+        });
+        pendingPollsRef.current.set(storyId, cancel);
+      }
+    },
+    [load],
+  );
+
+  // 홈 목록 썸네일 signed URL(5분 만료) 4분 이내 재발급 — 첫 페이지 refetch 후 thumbUrl 만 교체.
+  // A1 검증된 순수 루프(startVenueStoryUrlRefresh)를 그대로 쓰고, loaded key(user:season) 소유권 가드로
+  // 전환 후 늦게 도착한 응답은 반영하지 않는다(late apply 0).
+  const loadedKey = loaded?.key ?? null;
+  const loadedKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    loadedKeyRef.current = loadedKey;
+  }, [loadedKey]);
+  const thumbRefreshedRef = useRef<number | null>(null);
+  const thumbLastRefreshAtRef = useRef(0);
+  useEffect(() => {
+    if (!loadedKey || !user) return;
+    const seasons = season === "all" ? [CURRENT_SEASON, PREV_SEASON] : [season];
+    const token = 1;
+    // 초기 load 가 이미 fresh URL 을 주므로 즉시 재발급하지 않고 4분 후부터.
+    thumbRefreshedRef.current = token;
+    thumbLastRefreshAtRef.current = Date.now();
+    return startVenueStoryUrlRefresh({
+      storyId: token,
+      isCurrentStory: () => loadedKeyRef.current === loadedKey,
+      // getSafeSession/fetch 가 non-settle 이면 inFlight 가 영구 고정되므로 전체 mint 를
+      // mintWithTimeout(8s, loop controller)로 감싸 반드시 settle→retry 된다(Blocker 1).
+      // 전페이지(fetchDiaryMediaAllPages)를 재발급해 31번째+ 썸네일도 갱신한다(Blocker 2).
+      refresh: makeDiaryThumbRefresh({
+        seasons,
+        getToken: async () => (await getSafeSession())?.access_token ?? null,
+        fetchAllPages: fetchDiaryMediaAllPages,
+        isCurrent: () => loadedKeyRef.current === loadedKey,
+        apply: (fresh) =>
+          setLoaded((prev) =>
+            prev && prev.key === loadedKey
+              ? { ...prev, mediaGroups: applyDiaryThumbUrlRefresh(prev.mediaGroups, fresh) }
+              : prev,
+          ),
+        timers: {
+          setTimer: (fn, ms) => setTimeout(fn, ms),
+          clearTimer: (handle) => clearTimeout(handle),
+        },
+      }),
+      now: () => Date.now(),
+      setTimer: (fn, ms) => setTimeout(fn, ms),
+      clearTimer: (handle) => clearTimeout(handle),
+      getPreviousStoryId: () => thumbRefreshedRef.current,
+      setPreviousStoryId: (v) => {
+        thumbRefreshedRef.current = v;
+      },
+      getLastRefreshAt: () => thumbLastRefreshAtRef.current,
+      setLastRefreshAt: (v) => {
+        thumbLastRefreshAtRef.current = v;
+      },
+    });
+  }, [loadedKey, user, season]);
+
+  const homeGames = useMemo(
+    () =>
+      loaded
+        ? buildDiaryHomeGames({
+            mediaGroups: loaded.mediaGroups,
+            attendanceGames: loaded.attendanceGames,
+          })
+        : [],
+    [loaded],
+  );
+
+  // AddGameSheet 경기 선택은 2026 고정 → 현재 탭(2025 등)과 무관하게 항상 2026 counts 를 쓴다.
+  // 2025 탭에서 열어도 2026 기존 10/10 경기가 0/10으로 오표시되지 않도록 별도 fetch(Blocker 4).
+  // 2026 counts 확정 전에는 fail-closed(선택 비활성), 실패 시 0 폴백 금지→재시도. open/user 전환마다
+  // stale counts 를 초기화해 다른 유저·이전 세션 잔존을 막는다(Blocker 4).
+  const [addCounts, setAddCounts] = useState<Map<string, number>>(new Map());
+  // countsOwner = 이 counts 가 어느 (userId, openSeq) 에 대한 것인지. 렌더 단계에서 현재 key 와
+  // 불일치하면 즉시 fail-closed(diaryCountsReady) → 재오픈/유저 전환 첫 렌더 stale counts 차단.
+  const [countsOwner, setCountsOwner] = useState<string | null>(null);
+  const [countsError, setCountsError] = useState(false);
+  const [countsReload, setCountsReload] = useState(0);
+  const [openSeq, setOpenSeq] = useState(0);
+  const currentCountsKey =
+    user && addOpen ? diaryCountsOwnerKey(user.id, openSeq) : null;
+  const countsReady = diaryCountsReady(countsOwner, currentCountsKey);
+  // 열기 액션에서 counts state 를 동기 초기화한 뒤 open → 같은 커밋에 배칭돼 첫 렌더부터 fail-closed.
+  const openAddSheet = useCallback(() => {
+    setAddCounts(new Map());
+    setCountsOwner(null);
+    setCountsError(false);
+    setOpenSeq((s) => s + 1);
+    setAddOpen(true);
+  }, []);
+  useEffect(() => {
+    if (!addOpen || !user) return;
+    const ownerKey = diaryCountsOwnerKey(user.id, openSeq);
+    let alive = true;
+    const controller = new AbortController();
+    setAddCounts(new Map());
+    setCountsOwner(null);
+    setCountsError(false);
+    (async () => {
+      // getSafeSession/fetch/json 이 non-settle 이어도 mintWithTimeout 이 8s 에 abort→settle 시켜
+      // '확인 중' 영구정지 대신 countsError(재시도 UI)로 도달한다.
+      const groups = await mintWithTimeout<DiaryMediaGroupInput[] | null, number>(
+        async (signal) => {
+          const session = await getSafeSession();
+          const token = session?.access_token;
+          if (!token) throw new Error("missing session");
+          return fetchDiaryMediaAllPages(token, CURRENT_SEASON, signal);
+        },
+        null,
+        {
+          timeoutMs: VENUE_STORY_URL_MINT_TIMEOUT_MS,
+          setTimer: (fn, ms) => window.setTimeout(fn, ms),
+          clearTimer: (h) => window.clearTimeout(h),
+          controller,
+        },
+      );
+      if (!alive || controller.signal.aborted) return;
+      if (groups == null) {
+        setCountsError(true);
+        return;
+      }
+      setAddCounts(buildDiaryCountsMap(groups));
+      setCountsOwner(ownerKey);
+    })();
+    return () => {
+      alive = false;
+      controller.abort();
+    };
+  }, [addOpen, user, openSeq, countsReload]);
+
+  const favoriteTeamId = profile?.team_id ?? null;
+
   if (!user) return null;
 
-  const data = loaded?.userId === user.id ? loaded.data : null;
-  const loading = loadingFor === user.id;
-  const failed = failedFor === user.id;
-
-  const visibleGames = showAll ? data?.games ?? [] : data?.games.slice(0, 5) ?? [];
-  const hiddenCount = Math.max(0, (data?.games.length ?? 0) - 5);
+  const data = loaded?.key === `${user.id}:${season}` ? loaded : null;
+  const summary = data?.summary;
 
   return (
-    <GlassCard className="mt-3 p-0 overflow-hidden">
-      <div className="p-5">
-        <div className="flex items-center justify-between">
+    <>
+      <GlassCard className="mt-3 p-0 overflow-hidden">
+        <div className="p-5">
           <div className="flex items-center gap-2">
             <CalendarDays size={19} className="text-accent" />
-            <h2 className="text-base font-semibold text-text-primary">직관 다이어리</h2>
+            <h2 className="text-lg font-bold text-text-primary">직관 다이어리</h2>
           </div>
-          <span className="text-xs text-text-tertiary">{data?.season ?? "올 시즌"}</span>
+          <p className="mt-1 text-xs text-text-tertiary">내가 직관한 경기의 기록과 사진·영상</p>
+
+          {/* 나만 보기 안내(1회) */}
+          <div className="mt-3 flex items-center gap-2 rounded-xl border border-blue-500/25 bg-blue-500/10 px-3 py-2.5 text-[12px] font-semibold text-blue-300">
+            🔒 여기 사진·영상은 <b className="text-blue-200">나만 보기</b> — 공개 피드엔 올라가지 않아요
+          </div>
+
+          {/* 시즌 세그먼트 */}
+          <div className="mt-3 flex gap-1.5 rounded-xl bg-bg-tertiary p-1">
+            {([CURRENT_SEASON, PREV_SEASON, "all"] as const).map((key) => (
+              <button
+                key={String(key)}
+                onClick={() => setSeason(key)}
+                className={`flex-1 rounded-lg py-2 text-[13px] font-bold ${
+                  season === key ? "bg-brand-primary text-white" : "text-text-tertiary"
+                }`}
+              >
+                {key === "all" ? "전체" : key}
+              </button>
+            ))}
+          </div>
+
+          {loading && !data ? (
+            <div className="mt-4 h-32 animate-pulse rounded-2xl bg-bg-tertiary" />
+          ) : failed && !data ? (
+            <button
+              type="button"
+              onClick={() => void load()}
+              className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-bg-tertiary py-4 text-sm text-text-secondary"
+            >
+              <RefreshCw size={15} /> 기록을 불러오지 못했어요 · 다시 시도
+            </button>
+          ) : data && summary ? (
+            <>
+              {/* GPS 인증 요약 카드 */}
+              <div className="mt-3.5 rounded-2xl border border-[#33202a] bg-gradient-to-br from-[#20141b] to-[#141417] p-4">
+                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-1 text-[11px] font-extrabold text-emerald-400">
+                  ✓ GPS 인증 직관
+                </span>
+                <div className="mt-3.5 flex items-end gap-5">
+                  <div>
+                    <p className="text-3xl font-extrabold tracking-tight text-text-primary">
+                      {summary.attendanceCount}
+                    </p>
+                    <p className="text-[11px] font-semibold text-text-tertiary">인증 직관</p>
+                  </div>
+                  <div>
+                    <p className="text-3xl font-extrabold tracking-tight text-amber-400">
+                      {summary.winRate == null ? "–" : `${(summary.winRate * 100).toFixed(1)}%`}
+                    </p>
+                    <p className="text-[11px] font-semibold text-text-tertiary">승률</p>
+                  </div>
+                </div>
+                <div className="mt-3 flex gap-3 border-t border-[#2c1f27] pt-3 text-[13px] font-bold">
+                  <span className="text-blue-400">{summary.wins}승</span>
+                  <span className="text-accent">{summary.losses}패</span>
+                  <span className="text-text-secondary">{summary.draws}무</span>
+                </div>
+              </div>
+
+              {/* 다이어리 기록 경기수(직접 추가 포함) */}
+              <div className="mt-2.5 flex items-center justify-between rounded-2xl border border-border bg-bg-tertiary px-4 py-3">
+                <span className="text-[12.5px] text-text-secondary">
+                  📔 다이어리 기록 경기수{" "}
+                  <span className="text-text-tertiary">(직접 추가 포함)</span>
+                </span>
+                <span className="text-[15px] font-extrabold text-text-primary">
+                  {data.diaryGameCount}경기
+                </span>
+              </div>
+
+              {/* 지난 경기 추가하기 */}
+              <button
+                onClick={openAddSheet}
+                className="mt-3.5 flex w-full items-center justify-center gap-2 rounded-2xl bg-brand-primary py-3.5 text-[14.5px] font-extrabold text-white shadow-lg shadow-brand-primary/30"
+              >
+                <Plus size={18} /> 지난 경기 추가하기
+              </button>
+            </>
+          ) : null}
         </div>
 
-        {loading && !data ? (
-          <div className="mt-5 grid grid-cols-2 gap-3 animate-pulse">
-            <div className="h-20 rounded-2xl bg-bg-tertiary" />
-            <div className="h-20 rounded-2xl bg-bg-tertiary" />
-          </div>
-        ) : failed && !data ? (
-          <button
-            type="button"
-            onClick={() => void load()}
-            className="mt-5 flex w-full items-center justify-center gap-2 rounded-2xl bg-bg-tertiary py-4 text-sm text-text-secondary"
-          >
-            <RefreshCw size={15} /> 기록을 불러오지 못했어요 · 다시 시도
-          </button>
-        ) : data ? (
-          <>
-            <div className="mt-4 grid grid-cols-2 gap-3">
-              <div className="rounded-2xl bg-bg-tertiary p-4">
-                <p className="text-xs text-text-tertiary">{data.season} 시즌 직관</p>
-                <p className="mt-1 text-2xl font-bold text-text-primary">
-                  {data.summary.attendanceCount}<span className="ml-1 text-sm font-medium">경기</span>
+        {/* 경기별 기록 */}
+        {data && (
+          <div className="px-5 pb-5">
+            <p className="mb-2 mt-1 px-1 text-[13px] font-extrabold text-text-secondary">경기별 기록</p>
+            {homeGames.length === 0 ? (
+              <div className="rounded-2xl border border-border py-8 text-center">
+                <Trophy size={22} className="mx-auto text-text-tertiary" />
+                <p className="mt-2 text-sm font-medium text-text-secondary">아직 기록이 없어요</p>
+                <p className="mt-1 text-xs text-text-tertiary">
+                  직관 스토리를 올리거나 지난 경기를 추가해보세요
                 </p>
               </div>
-              <div className="rounded-2xl bg-bg-tertiary p-4">
-                <p className="text-xs text-text-tertiary">직관 승률</p>
-                <p className="mt-1 text-2xl font-bold text-accent">
-                  {data.summary.winRate == null
-                    ? "–"
-                    : `${(data.summary.winRate * 100).toFixed(1)}%`}
-                </p>
-                <p className="mt-0.5 text-[11px] text-text-tertiary">종료 경기 기준</p>
-              </div>
-            </div>
-
-            <div className="mt-3 grid grid-cols-3 divide-x divide-border rounded-2xl border border-border py-3 text-center">
-              <div><span className="text-sm font-bold text-blue-500">{data.summary.wins}</span><span className="ml-1 text-xs text-text-tertiary">승</span></div>
-              <div><span className="text-sm font-bold text-red-500">{data.summary.losses}</span><span className="ml-1 text-xs text-text-tertiary">패</span></div>
-              <div><span className="text-sm font-bold text-text-secondary">{data.summary.draws}</span><span className="ml-1 text-xs text-text-tertiary">무</span></div>
-            </div>
-          </>
-        ) : null}
-      </div>
-
-      {data && data.games.length === 0 && (
-        <div className="border-t border-border px-5 py-6 text-center">
-          <Trophy size={24} className="mx-auto text-text-tertiary" />
-          <p className="mt-2 text-sm font-medium text-text-secondary">아직 직관 기록이 없어요</p>
-          <p className="mt-1 text-xs text-text-tertiary">구장에서 직관 스토리를 올리면 자동으로 기록돼요</p>
-        </div>
-      )}
-
-      {visibleGames.length > 0 && (
-        <div className="border-t border-border">
-          {visibleGames.map((item) => {
-            const expanded = expandedGameId === item.gameId;
-            const hasPlayers = item.favoritePlayers.length > 0;
-            return (
-              <div key={item.id} className="border-b border-border last:border-b-0">
-                <button
-                  type="button"
-                  onClick={() => hasPlayers && setExpandedGameId(expanded ? null : item.gameId)}
-                  className="flex w-full items-center gap-3 px-5 py-4 text-left"
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-text-tertiary">{formatGameDate(item.date)}</span>
-                      {item.result && (
-                        <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${RESULT_STYLE[item.result]}`}>
-                          {item.result === "W" ? "승" : item.result === "L" ? "패" : "무"}
+            ) : (
+              <div className="flex flex-col gap-3">
+                {homeGames.map((game) => (
+                  <button
+                    key={game.gameId}
+                    onClick={() =>
+                      setViewer({
+                        gameId: game.gameId,
+                        header: {
+                          matchLabel: matchLabel(game),
+                          dateLabel: `${formatGameDate(game.gameDate)}${game.stadiumName ? ` · ${game.stadiumName}` : ""}`,
+                          result: game.result,
+                        },
+                      })
+                    }
+                    className="rounded-2xl border border-border bg-bg-tertiary p-3 text-left active:opacity-90"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-[11.5px] font-bold text-text-tertiary">
+                          {formatGameDate(game.gameDate)}
+                          {game.stadiumName ? ` · ${game.stadiumName}` : ""}
+                        </p>
+                        <p className="mt-0.5 flex items-center gap-1.5 text-[15px] font-extrabold text-text-primary">
+                          {matchLabel(game)}
+                          <span
+                            className={`rounded-md px-1.5 py-0.5 text-[10.5px] font-extrabold ${
+                              game.label.kind === "gps"
+                                ? "bg-emerald-500/15 text-emerald-400"
+                                : "bg-white/10 text-text-secondary"
+                            }`}
+                          >
+                            {game.label.text}
+                          </span>
+                        </p>
+                      </div>
+                      {game.result && (
+                        <span
+                          className={`shrink-0 rounded-lg px-2 py-0.5 text-[11px] font-extrabold ${
+                            game.result === "W"
+                              ? "bg-blue-500/15 text-blue-400"
+                              : game.result === "L"
+                                ? "bg-accent/15 text-accent"
+                                : "bg-gray-500/15 text-text-secondary"
+                          }`}
+                        >
+                          {game.result === "W" ? "승" : game.result === "L" ? "패" : "무"}
                         </span>
                       )}
                     </div>
-                    <p className="mt-1 truncate text-sm font-semibold text-text-primary">
-                      {teamLabel(item.awayTeam)} <span className="mx-1 text-text-tertiary">vs</span> {teamLabel(item.homeTeam)}
-                    </p>
-                    <p className="mt-1 flex items-center gap-1 truncate text-xs text-text-tertiary">
-                      <MapPin size={12} /> {item.stadium ?? "구장 확인 중"}
-                    </p>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-1">
-                    <span className="text-sm font-semibold text-text-secondary">{statusLabel(item)}</span>
-                    {hasPlayers && <ChevronDown size={15} className={expanded ? "rotate-180" : ""} />}
-                  </div>
-                </button>
 
-                {expanded && hasPlayers && (
-                  <div className="mx-5 mb-4 rounded-2xl bg-bg-tertiary p-4">
-                    <p className="text-xs font-semibold text-text-primary">내 최애선수 오늘 활약</p>
-                    <div className="mt-3 space-y-3">
-                      {item.favoritePlayers.map((player) => (
-                        <div key={player.playerId} className="border-t border-border/50 pt-3 first:border-0 first:pt-0">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-sm font-semibold text-text-primary">{player.name}</span>
-                            {player.state === "pending" && <span className="text-[11px] text-text-tertiary">기록 확인 중</span>}
+                    {game.thumbnails.length > 0 && (
+                      <div className="mt-3 grid grid-cols-4 gap-1.5">
+                        {game.thumbnails.map((t) => (
+                          <div
+                            key={t.id}
+                            className="relative aspect-square overflow-hidden rounded-lg bg-bg-secondary"
+                          >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={t.thumbUrl} alt="" className="h-full w-full object-cover" />
+                            {t.mediaType === "video" && (
+                              <span className="absolute inset-0 flex items-center justify-center text-white">
+                                <Play size={14} fill="currentColor" />
+                              </span>
+                            )}
                           </div>
-                          {player.lines.map((line) => (
-                            <div key={line.type} className="mt-2">
-                              <div className="flex items-center gap-2">
-                                <span className="text-[11px] font-medium text-text-tertiary">{line.type === "batter" ? "타자" : "투수"}</span>
-                                {line.evaluation && (
-                                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${EVALUATION_LABEL[line.evaluation].className}`}>
-                                    {EVALUATION_LABEL[line.evaluation].text}
-                                  </span>
-                                )}
-                                {line.state === "sample_limited" && (
-                                  <span className="text-[10px] text-text-tertiary">비교 표본 부족</span>
-                                )}
-                              </div>
-                              <p className="mt-1 text-xs text-text-secondary">오늘 · {performanceText(line)}</p>
-                              {line.todayMetric != null && line.averageMetric != null && (
-                                <p className="mt-0.5 text-[11px] text-text-tertiary">
-                                  경기 {line.metricLabel} {metricText(line, line.todayMetric)} · 경기 전 시즌 {metricText(line, line.averageMetric)}
-                                </p>
-                              )}
-                              {averagePerformanceText(line) && (
-                                <p className="mt-0.5 text-[11px] text-text-tertiary">
-                                  경기 전 평균 · {averagePerformanceText(line)}
-                                </p>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                        ))}
+                        {game.extraCount > 0 && (
+                          <div className="flex aspect-square items-center justify-center rounded-lg bg-bg-secondary text-sm font-extrabold text-text-secondary">
+                            +{game.extraCount}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </button>
+                ))}
               </div>
-            );
-          })}
-          {hiddenCount > 0 && (
-            <button
-              type="button"
-              onClick={() => setShowAll((value) => !value)}
-              className="flex w-full items-center justify-center gap-1 border-t border-border py-3 text-xs font-medium text-text-secondary"
-            >
-              {showAll ? "접기" : `${hiddenCount}경기 더 보기`}
-              <ChevronDown size={14} className={showAll ? "rotate-180" : ""} />
-            </button>
-          )}
-        </div>
+            )}
+          </div>
+        )}
+      </GlassCard>
+
+      <VenueDiaryAddGameSheet
+        isOpen={addOpen}
+        favoriteTeamId={favoriteTeamId}
+        countsByGame={addCounts}
+        countsReady={countsReady}
+        countsError={countsError}
+        onRetryCounts={() => setCountsReload((n) => n + 1)}
+        onBack={() => setAddOpen(false)}
+        onClose={() => setAddOpen(false)}
+        onPick={(game) => {
+          setAddOpen(false);
+          setUploadGame(game);
+        }}
+      />
+
+      {uploadGame && (
+        <VenueDiaryUploader
+          game={uploadGame}
+          isOpen={uploadGame != null}
+          onBack={() => {
+            setUploadGame(null);
+            openAddSheet();
+          }}
+          onClose={() => setUploadGame(null)}
+          onUploaded={handleUploaded}
+        />
       )}
-    </GlassCard>
+
+      {viewer && (
+        <VenueDiaryViewer
+          gameId={viewer.gameId}
+          header={viewer.header}
+          isOpen={viewer != null}
+          onClose={() => setViewer(null)}
+          onChanged={() => void load()}
+        />
+      )}
+    </>
   );
 }
