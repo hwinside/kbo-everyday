@@ -150,7 +150,8 @@
     "qa:venue-story-seen": "tsx scripts/qa/venue-story-seen-smoke.ts",
     "qa:game-summary-cache": "tsx scripts/qa/game-summary-cache-validation-smoke.ts",
     "qa:game-summary-kbo": "tsx scripts/qa/game-summary-kbo-integration.ts",
-    "qa:notif-terminal-group": "tsx scripts/qa/notif-terminal-group-smoke.ts"
+    "qa:notif-terminal-group": "tsx scripts/qa/notif-terminal-group-smoke.ts",
+    "qa:relay-inning-snapshot": "tsx scripts/qa/relay-inning-snapshot-smoke.ts"
   },
   "dependencies": {
     "@capacitor-firebase/messaging": "^8.3.0",

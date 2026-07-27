@@ -780,7 +780,57 @@ const CACHE_TTL_MS = 2_000;
  */
 const RELAY_INNING_TIMEOUT_MS = 8_000;
 
-function combineRelayInningsNewestFirst(inningRelays: NaverTextRelay[][]): NaverTextRelay[] {
+/**
+ * Per-inning last-good raw relay snapshot, keyed by `${naverGameId}-${inning}`.
+ *
+ * WHY: relay event IDs (celebration dedupe key) embed a *game-wide* cumulative
+ * index — `${gameId}-${type}-${inningKey}-${batter}-${cumIdx}` (see
+ * relay-event-generator). If a per-inning fetch times out and we substitute `[]`
+ * for that inning, every later same-(batter,type) event renumbers (e.g. a 5회
+ * hit that was `-2` becomes `-1`), and when the inning recovers it flips back —
+ * the client then sees a "new" id and re-fires / duplicates the celebration.
+ *
+ * FIX: on timeout/HTTP failure for an inning we reuse its last successful
+ * snapshot instead of `[]`, so past innings never vanish and cumIdx stays
+ * stable. A snapshot is only overwritten by a *successful* fetch (data only
+ * grows more complete within a game). Module-level, so it persists across warm
+ * invocations; bounded by (#live games × ≤15 innings) during the warm period.
+ */
+const inningSnapshotCache = new Map<string, NaverTextRelay[]>();
+
+function evictInningSnapshotsIfLarge(): void {
+  if (inningSnapshotCache.size <= 400) return;
+  // Simple bound: drop oldest ~half (Map preserves insertion order).
+  let drop = Math.floor(inningSnapshotCache.size / 2);
+  for (const k of inningSnapshotCache.keys()) {
+    if (drop-- <= 0) break;
+    inningSnapshotCache.delete(k);
+  }
+}
+
+/**
+ * Resolve one inning's relays against the last-good snapshot cache (pure).
+ * - `fetched` is the successfully parsed relay array (may be legitimately empty
+ *   for a not-yet-started current inning) → cache it, not degraded.
+ * - `fetched === null` means the fetch failed/timed out → fall back to the
+ *   snapshot if present (degraded, stale-but-consistent) else `[]` (degraded,
+ *   no prior data). Either way `degraded` is true so the caller can skip caching
+ *   the partial response and retry fresh on the next poll.
+ */
+export function resolveInningWithSnapshot(
+  cache: Map<string, NaverTextRelay[]>,
+  key: string,
+  fetched: NaverTextRelay[] | null,
+): { relays: NaverTextRelay[]; degraded: boolean } {
+  if (fetched !== null) {
+    cache.set(key, fetched);
+    return { relays: fetched, degraded: false };
+  }
+  const snap = cache.get(key);
+  return { relays: snap ?? [], degraded: true };
+}
+
+export function combineRelayInningsNewestFirst(inningRelays: NaverTextRelay[][]): NaverTextRelay[] {
   // Each Naver inning payload is newest-first. parseInningRelays reverses the
   // full array once, so concatenate inning bundles newest inning first; the
   // parser then sees 1회 → current inning in chronological order.
@@ -864,8 +914,12 @@ export async function GET(req: NextRequest) {
     // Cap at 15 innings (extended games)
     const maxInning = Math.min(currentInning, 15);
 
-    // Fetch all innings in parallel (inning 1 already fetched)
-    const inningPromises: Promise<NaverTextRelay[]>[] = [];
+    // Fetch all innings in parallel (inning 1 already fetched).
+    // A promise resolves to null ONLY on fetch failure (HTTP not-ok / network /
+    // timeout); a successful fetch with no plays resolves to [] (legit empty).
+    // This lets resolveInningWithSnapshot tell "failed → keep last-good" apart
+    // from "succeeded but empty → adopt".
+    const inningPromises: Promise<NaverTextRelay[] | null>[] = [];
 
     // Use the already-fetched inning 1 data
     inningPromises.push(
@@ -888,12 +942,19 @@ export async function GET(req: NextRequest) {
           // per-inning .catch yields [] and the next 5s poll recovers.
           signal: AbortSignal.timeout(RELAY_INNING_TIMEOUT_MS),
         })
-          .then((r) => (r.ok ? r.json() : null))
+          .then((r) => {
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            return r.json() as Promise<NaverRelayResponse>;
+          })
           .then(
-            (data: NaverRelayResponse | null) =>
-              data?.result?.textRelayData?.textRelays ?? []
+            (data: NaverRelayResponse) =>
+              data?.result?.textRelayData?.textRelays ?? [],
           )
-          .catch(() => [] as NaverTextRelay[])
+          // Failure (timeout / HTTP not-ok / network) → null so the resolver
+          // falls back to this inning's last-good snapshot instead of dropping
+          // its plays (which would renumber game-wide cumIdx and duplicate
+          // celebrations on recovery).
+          .catch(() => null)
       );
     }
 
@@ -917,7 +978,22 @@ export async function GET(req: NextRequest) {
       recordPromise,
     ]);
 
-    const allTextRelays = allTextRelaysResult;
+    // Resolve each inning against its last-good snapshot. A failed inning
+    // (null) reuses the prior successful relays so past innings never vanish
+    // and relay event IDs (game-wide cumIdx) stay stable across a transient
+    // upstream stall. index 0 = inning 1, index i = inning i+1.
+    let anyInningDegraded = false;
+    const allTextRelays = allTextRelaysResult.map((raw, idx) => {
+      const inningNum = idx + 1;
+      const { relays, degraded } = resolveInningWithSnapshot(
+        inningSnapshotCache,
+        `${naverGameId}-${inningNum}`,
+        raw,
+      );
+      if (degraded) anyInningDegraded = true;
+      return relays;
+    });
+    evictInningSnapshotsIfLarge();
 
     // Combine all text relays with global newest-first ordering. Keeping
     // inning bundles in ascending order would make parseInningRelays reverse
@@ -996,7 +1072,13 @@ export async function GET(req: NextRequest) {
       linescore,
     };
 
-    setCachedResponse(cacheKey, response);
+    // Only cache a fully-fresh response. If any inning fell back to a stale
+    // snapshot (degraded), skip caching so the very next poll retries the
+    // failed upstream immediately instead of serving stale data for the full
+    // TTL — the current client still gets a consistent (stable-id) response.
+    if (!anyInningDegraded) {
+      setCachedResponse(cacheKey, response);
+    }
     return NextResponse.json(response);
   } catch (e) {
     const error = e as Error;
