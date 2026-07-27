@@ -180,4 +180,23 @@ DUE=$("${PSQL[@]}" -c "SELECT count(*) FROM list_due_game_event_snapshots(50) WH
 DUE_AFTER=$("${PSQL[@]}" -c "SELECT count(*) FROM list_due_game_event_snapshots(50) WHERE event_id='ev1'")
 [ "$DUE_AFTER" = "0" ] || { echo "FAIL: past-deadline still due=$DUE_AFTER" >&2; exit 1; }
 
-echo "PASS PG17 game_event ledger: pref freeze, accepted-no-resend, bucket checkpoint, deadline terminal, source-independent due"
+# ── #1 P0 marker-only orphan: marker(notified_score_events)만 있고 snapshot 없는 crash 잔재 ──
+# 구 marker-gate는 marker 존재만으로 live를 영구 skip해 snapshot도 못 만들어 영구 유실시켰다.
+# claim RPC를 live 진입점으로 전환하면 marker 유무와 무관하게 snapshot 생성 + 토큰 claim(발송 재개).
+OGAME=20260727HTLG0
+"${PSQL[@]}" <<SQL >/dev/null
+INSERT INTO profiles(id,team_id) VALUES ('10000000-0000-0000-0000-0000000000e1',9);
+INSERT INTO device_push_tokens(id,user_id,platform,app_build,fcm_token) VALUES
+ (41,'10000000-0000-0000-0000-0000000000e1','ios',null,'tok-e1');
+-- crash 잔재: marker만 선기록되고 snapshot/token은 없는 상태(구 marker-gate가 영구 skip시키던 케이스).
+INSERT INTO notified_score_events(event_id,game_id) VALUES ('ev-orphan','$OGAME');
+SQL
+ORPH_SNAP_BEFORE=$("${PSQL[@]}" -c "SELECT count(*) FROM game_event_delivery_snapshots WHERE event_id='ev-orphan'")
+[ "$ORPH_SNAP_BEFORE" = "0" ] || { echo "FAIL: orphan precondition snapshot exists=$ORPH_SNAP_BEFORE" >&2; exit 1; }
+ORPH_CLAIM=$("${PSQL[@]}" -c "SELECT string_agg(token_id::text,',' ORDER BY token_id) FROM claim_game_event_tokens(
+  'ev-orphan','$OGAME','score',9,'my_team_score','t','b','/games/$OGAME',now(),'45000000-0000-0000-0000-000000000001',20,500)")
+[ "$ORPH_CLAIM" = "41" ] || { echo "FAIL: marker-only orphan not recovered — claim=$ORPH_CLAIM expected=41" >&2; exit 1; }
+ORPH_SNAP_AFTER=$("${PSQL[@]}" -c "SELECT count(*) FROM game_event_delivery_snapshots WHERE event_id='ev-orphan' AND snapshot_completed")
+[ "$ORPH_SNAP_AFTER" = "1" ] || { echo "FAIL: marker-only orphan snapshot not created=$ORPH_SNAP_AFTER" >&2; exit 1; }
+
+echo "PASS PG17 game_event ledger: pref freeze, accepted-no-resend, bucket checkpoint, deadline terminal, source-independent due, marker-only orphan recovery"

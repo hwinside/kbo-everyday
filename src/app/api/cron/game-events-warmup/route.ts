@@ -231,7 +231,9 @@ export async function GET(req: NextRequest) {
           fetchedAtMs: tr.fetchedAtMs,
         }),
       fetchGameEvents: fetchGameEventsForFastPath,
-      notifyScore: (gs, ev) => notifyScoreEvents(gs, ev),
+      // deadline 관통(NO-GO #2): fast-loop score도 request 절대마감을 전달해 이벤트당
+      // claim 루프가 +52s를 넘겨 다음 분 invocation과 겹치지 않게 한다.
+      notifyScore: (gs, ev) => notifyScoreEvents(gs, ev, { deadlineAtMs }),
       // 계측 — diff 감지(KBO 응답 확보)→발송 완료 latency. 배포 후 효과 실측용.
       onTickResult: (tick) => {
         if ("detectToSendMs" in tick) {
@@ -333,7 +335,7 @@ export async function GET(req: NextRequest) {
   // 내 팀 득점 푸시 (push-notifications-v1 S5a) — game-events의 득점 이벤트 기반.
   let scoreNotify: { scored: number; conceded: number } | { error: string } = { scored: 0, conceded: 0 };
   try {
-    scoreNotify = await notifyScoreEvents(games, eventsByGame);
+    scoreNotify = await notifyScoreEvents(games, eventsByGame, { deadlineAtMs });
   } catch (e) {
     scoreNotify = { error: (e as Error).message };
     console.error("[warmup] score notify failed:", (e as Error).message);
@@ -342,7 +344,7 @@ export async function GET(req: NextRequest) {
   // 이닝 득점 요약 푸시 (S5 — my_team_score_inning_summary). 이닝 종료 시 묶음 1건.
   let summaryNotify: { summarized: number } | { error: string } = { summarized: 0 };
   try {
-    summaryNotify = await notifyInningSummaries(games, eventsByGame);
+    summaryNotify = await notifyInningSummaries(games, eventsByGame, { deadlineAtMs });
   } catch (e) {
     summaryNotify = { error: (e as Error).message };
     console.error("[warmup] inning summary notify failed:", (e as Error).message);

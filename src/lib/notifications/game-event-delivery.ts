@@ -53,6 +53,23 @@ const MAX_CLAIM_ITERATIONS = 20;
 const CLAIM_BATCH = 500;
 // transport는 8초 안에 bound한다(원장 lease 20초보다 짧게 유지 → lease 초과 재claim 방지).
 const TRANSPORT_BUDGET_MS = 8_000;
+// 원장 claim lease(초). claim RPC가 설정하는 lease_until = now()+CLAIM_LEASE_SECONDS.
+const CLAIM_LEASE_SECONDS = 20;
+// 한 claim→send→settle 사이클을 lease(20s)보다 짧은 attempt 예산 안에 종결해, lease 초과 응답이
+// 다른 worker 재claim과 겹쳐 같은 토큰을 중복 발송하는 창을 없앨다(game-start-delivery 패턴 복제).
+const ATTEMPT_BUDGET_MS = 16_000;
+// transport 뒤 settle RPC가 attempt 예산 안에 끝나도록 남기는 예비 시간.
+const SETTLE_RESERVE_MS = 3_000;
+// settle은 durability checkpoint라 FCM 발송 직후에 반드시 기록되어야 한다 — deadline이 임박해도
+// 최소 예산(2s)은 확보해 abort로 checkpoint를 잃지(=다음 tick 재발송) 않게 한다.
+const SETTLE_MIN_MS = 2_000;
+
+/** RPC abort 예산(ms). deadline 초과면 throw — claim/due는 아직 FCM 발송 전이라 안전. */
+function remainingMs(deadlineAtMs: number, operation: string): number {
+  const remaining = deadlineAtMs - Date.now();
+  if (remaining <= 0) throw new Error(`${operation}: deadline_exceeded`);
+  return remaining;
+}
 
 function toClaimedRows(data: unknown): ClaimedRow[] {
   const rows: ClaimedRow[] = [];
@@ -82,6 +99,7 @@ async function settleBucket(
   bucket: ClaimedRow[],
   res: SendResult,
   leaseToken: string,
+  attemptDeadlineAtMs: number,
 ): Promise<number> {
   if (bucket.length === 0) return 0;
   const settlements = mapHighlightSettlements(
@@ -89,11 +107,16 @@ async function settleBucket(
     res.outcomes ?? [],
     res.lastError ?? null,
   );
+  // settle은 durability checkpoint라 abort 예산을 lease 내 attempt 마감까지 주되 최소(2s)는 확보해
+  // FCM 발송 후 checkpoint를 잃지 않는다(HTTP는 lease보다 짧게 abort → lease 초과 재claim 창 제거).
+  const settleTimeoutMs = Math.max(SETTLE_MIN_MS, attemptDeadlineAtMs - Date.now());
   // query-guard: bounded -- settle는 claim 배치(최대 500 토큰)의 결과만 단일 RPC로 처리한다.
-  const { data: accepted, error } = await supabase.rpc("settle_game_event_tokens", {
-    p_results: settlements,
-    p_lease_token: leaseToken,
-  });
+  const { data: accepted, error } = await supabase
+    .rpc("settle_game_event_tokens", {
+      p_results: settlements,
+      p_lease_token: leaseToken,
+    })
+    .abortSignal(AbortSignal.timeout(settleTimeoutMs));
   if (error) throw new Error(`game_event token settle: ${error.message}`);
   return Number(accepted ?? 0);
 }
@@ -107,9 +130,12 @@ async function sendAndSettleBuckets(
   d: ScoreFamilyDelivery,
   nExpiresAtMs: number | null,
   leaseToken: string,
+  attemptDeadlineAtMs: number,
 ): Promise<number> {
+  // 두 버킷 모두 하나의 attempt 마감(=lease보다 짧음)을 공유한다 — bucket2에 새 8초 예산을 주지
+  // 않아 한 claim(=한 lease)의 전체 send가 lease 안에 끝난다(NO-GO #2 lease 중복 창 제거).
   const transportDeadlineAtMs = Math.min(
-    d.deadlineAtMs ?? Date.now() + TRANSPORT_BUDGET_MS,
+    attemptDeadlineAtMs - SETTLE_RESERVE_MS,
     Date.now() + TRANSPORT_BUDGET_MS,
   );
   const notification = { title: d.title, body: d.body, url: d.url };
@@ -121,7 +147,7 @@ async function sendAndSettleBuckets(
       notification,
       { deadlineAtMs: transportDeadlineAtMs },
     );
-    return settleBucket(claimed, res, leaseToken);
+    return settleBucket(claimed, res, leaseToken, attemptDeadlineAtMs);
   }
 
   const byToken = new Map(claimed.map((c) => [c.fcm_token, c]));
@@ -158,6 +184,7 @@ async function sendAndSettleBuckets(
       plan.notificationTokens.map((t) => byToken.get(t)).filter((c): c is ClaimedRow => c != null),
       res,
       leaseToken,
+      attemptDeadlineAtMs,
     );
   }
   // 버킷2(data-only: 신Android). deadline_at == n_expires_at 불변식상 claim 시점에 미만료라
@@ -170,6 +197,7 @@ async function sendAndSettleBuckets(
       plan.dataOnlyTokens.map((t) => byToken.get(t)).filter((c): c is ClaimedRow => c != null),
       res,
       leaseToken,
+      attemptDeadlineAtMs,
     );
   }
   return accepted;
@@ -191,26 +219,36 @@ export async function deliverScoreFamilyEvent(
   let accepted = 0;
   for (let i = 0; i < MAX_CLAIM_ITERATIONS; i += 1) {
     if (d.deadlineAtMs != null && Date.now() >= d.deadlineAtMs) break;
+    // attempt 마감 = request deadline과 lease보다 짧은 ATTEMPT_BUDGET 중 이른 것.
+    // 이 마감에 claim/send/settle를 모두 결속해 lease(20s) 초과 응답을 원차 차단한다.
+    const attemptDeadlineAtMs = Math.min(
+      d.deadlineAtMs ?? Date.now() + ATTEMPT_BUDGET_MS,
+      Date.now() + ATTEMPT_BUDGET_MS,
+    );
     const leaseToken = randomUUID();
     // query-guard: bounded -- claim RPC가 반환 배치를 p_limit(최대 500)로 clamp한다.
-    const { data, error } = await supabase.rpc("claim_game_event_tokens", {
-      p_event_id: d.eventId,
-      p_game_id: d.gameId,
-      p_sub: d.sub,
-      p_team_id: d.teamId,
-      p_pref_key: d.prefKey,
-      p_push_title: d.title,
-      p_push_body: d.body,
-      p_push_url: d.url,
-      p_source_ts: sourceTsIso,
-      p_lease_token: leaseToken,
-      p_lease_seconds: 20,
-      p_limit: CLAIM_BATCH,
-    });
+    // abortSignal: never-settle claim이 lease(20s)를 넘기기 전 attempt 마감에 abort해,
+    // lease 초과 응답이 다른 worker 재claim과 겹치는 중복 발송 창을 없앱다(NO-GO #2).
+    const { data, error } = await supabase
+      .rpc("claim_game_event_tokens", {
+        p_event_id: d.eventId,
+        p_game_id: d.gameId,
+        p_sub: d.sub,
+        p_team_id: d.teamId,
+        p_pref_key: d.prefKey,
+        p_push_title: d.title,
+        p_push_body: d.body,
+        p_push_url: d.url,
+        p_source_ts: sourceTsIso,
+        p_lease_token: leaseToken,
+        p_lease_seconds: CLAIM_LEASE_SECONDS,
+        p_limit: CLAIM_BATCH,
+      })
+      .abortSignal(AbortSignal.timeout(remainingMs(attemptDeadlineAtMs, "game_event token claim")));
     if (error) throw new Error(`game_event token claim: ${error.message}`);
     const claimed = toClaimedRows(data);
     if (claimed.length === 0) break;
-    accepted += await sendAndSettleBuckets(claimed, d, nExpiresAtMs, leaseToken);
+    accepted += await sendAndSettleBuckets(claimed, d, nExpiresAtMs, leaseToken, attemptDeadlineAtMs);
     if (claimed.length < CLAIM_BATCH) break;
   }
   return { accepted };
@@ -223,8 +261,15 @@ export async function deliverScoreFamilyEvent(
 export async function drainDueScoreFamilyEvents(
   opts?: { deadlineAtMs?: number },
 ): Promise<{ accepted: number }> {
+  // abortSignal: due-list도 request deadline·ATTEMPT_BUDGET 중 이른 마감에 abort해 hung DB 응답을 원차 차단.
+  const dueDeadlineAtMs = Math.min(
+    opts?.deadlineAtMs ?? Date.now() + ATTEMPT_BUDGET_MS,
+    Date.now() + ATTEMPT_BUDGET_MS,
+  );
   // query-guard: bounded -- RPC가 due snapshot을 최대 50개(p_limit)로 clamp한다.
-  const { data, error } = await supabase.rpc("list_due_game_event_snapshots", { p_limit: 50 });
+  const { data, error } = await supabase
+    .rpc("list_due_game_event_snapshots", { p_limit: 50 })
+    .abortSignal(AbortSignal.timeout(remainingMs(dueDeadlineAtMs, "game_event due snapshots")));
   if (error) throw new Error(`game_event due snapshots: ${error.message}`);
 
   type DueRow = {

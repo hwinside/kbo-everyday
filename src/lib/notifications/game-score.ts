@@ -19,6 +19,14 @@ import type { GameEvent } from "@/types/game-events";
 // (이닝 묶음 요약 = my_team_score_inning_summary는 후속 슬라이스)
 const SCORE_EVENT_TYPES = new Set<string>(["run_scored", "at_bat_homerun"]);
 
+// token 원장 전환(NO-GO #1): marker(notified_score_events)를 최초 진입 gate로 쓰던 것을 폐기하고
+// claim_game_event_tokens RPC를 live 진입점으로 삼는다(marker는 claim RPC가 관측용으로만 기록).
+// marker gate가 사라져 backlog 보호도 사라지므로, highlights/#271과 동일하게 source-timestamp
+// freshness로 배포·진행경기 과거분의 일괄 재발송을 막는다. 크래시 orphan은 1~2틱(≤FRESH_MS)에
+// 재개되고, 그보다 오래된 미종결 토큰은 source-independent due-drain(deadline=source+6h)이 계속
+// 재개하므로 at-least-once는 유지된다.
+const SCORE_FRESH_MS = 10 * 60 * 1000;
+
 /**
  * event_id 선점 — 멱등 INSERT에 성공한(첫 발송) 호출만 true.
  * 이미 선점된 event_id는 충돌 예외를 만들지 않고 no-op → false. 기타 에러도 보류(다음 cron).
@@ -70,6 +78,10 @@ export async function notifyScoreEvents(
       // 내부에서 deriveGameEventExpiresAtMsOrNull(sourceEpochMs)로 fail-closed 유도한다(파싱 불가면
       // null → data-only 미첨부 notification-only). token 원장이 재시도 간 동일 source_ts를 재사용.
       const sourceEpochMs = Date.parse(ev.timestamp);
+      // freshness gate (NO-GO #1): marker 진입 gate 폐기로 잃은 backlog 보호를 대체한다.
+      // 오래된 이벤트(이전 이닝·배포 전)는 live에서 skip → claim RPC로 과거분을 새로 굽지 않는다.
+      // 파싱 불가(NaN)면 나이 판정 불가라 기존대로 처리(fail-closed notification-only 발송).
+      if (Number.isFinite(sourceEpochMs) && Date.now() - sourceEpochMs > SCORE_FRESH_MS) continue;
 
       // 득점팀 판정. run_scored는 generator가 detail.scoringSide로 팀을 확정해줌
       // (isTop 추론은 이닝교대 lag/양팀 동시득점에 취약 — 삼순 #213-②).
@@ -109,12 +121,11 @@ export async function notifyScoreEvents(
       const batter = ev.detail?.batter;
 
       // 내 팀 실점 알림 (my_team_concede, 옵트인 — 고객 제안 2026-07-07). 같은 득점
-      // 이벤트를 실점팀 팬 관점으로 발송. dedupe는 득점 알림과 별도 키(`-concede`)로
-      // 선점해 양쪽 재시도가 독립되게 한다 — 득점팀 claim(아래) 뒤에 두면 이미 발송된
-      // 이벤트의 실점 측 재시도가 continue에 막혀 영구 유실된다.
+      // 이벤트를 실점팀 팬 관점으로 발송. dedupe/재발송 판정은 token 원장이 `${ev.id}-concede`
+      // eventId로 득점(`${ev.id}`)과 독립 관리하므로 두 알림 재시도가 서로 막지 않는다(NO-GO #1).
       const concedeTeamName = scoringTeamName === away ? home : away;
       const concedeTeamId = teamIdByShortName(concedeTeamName);
-      if (concedeTeamId !== null && (await claimEvent(`${ev.id}-concede`, gameId))) {
+      if (concedeTeamId !== null) {
         // 실점 투수 (하린아빠 요청 2026-07-07). 홈런은 detail.pitcher(타석 시점 확정),
         // run_scored는 detail에 없어 snapshot.pitcher(diff 시점 마운드 투수) 폴백.
         // 이닝교대 lag 시 공백/오귀속 가능성은 기존 batter 표기와 동일 수준 — 없으면 생략.
@@ -127,7 +138,7 @@ export async function notifyScoreEvents(
         ].join(" · ");
         // durable 토큰 원장 발송(NO-GO #1/#2): claim RPC가 실점팀 팬 audience를 freeze, token별
         // accepted/permanent settle + transient/미시도만 재claim(due-drain 재개). accepted 재발송 0.
-        // 인프라 실패는 event-global marker를 해제해 다음 cron 재시도(snapshot은 트랜잭션 롤백 or 재개).
+        // 인프라 실패는 예외로 이번 실점 알림만 skip(marker gate 없음) — 다음 cron이 claim RPC로 재개한다.
         try {
           const cDel = await deliverScoreFamilyEvent({
             eventId: `${ev.id}-concede`, gameId, sub: "concede", prefKey: "my_team_concede",
@@ -137,11 +148,8 @@ export async function notifyScoreEvents(
           conceded += cDel.accepted;
         } catch (e) {
           console.error("[game-score] concede delivery failed:", (e as Error).message);
-          await unclaimEvent(`${ev.id}-concede`);
         }
       }
-
-      if (!(await claimEvent(ev.id, gameId))) continue; // 이미 발송됨/보류 (event-global marker)
 
       // 만루홈런 → "그랜드슬램" 강조 (하린아빠 요청 2026-06-27, 삼순 확정).
       // 가드 = isHr(at_bat_homerun) + resolvedRbi===4. 홈런 자기 rbi가 교차폴링으로 0이면
@@ -156,19 +164,24 @@ export async function notifyScoreEvents(
 
       // durable 토큰 원장 발송(NO-GO #1/#2): claim RPC가 득점팀 팬 audience를 freeze, token별
       // accepted/permanent settle + transient/미시도만 재claim(다음 tick/due-drain 재개). accepted 재발송 0.
-      // 인프라 실패는 event-global marker를 해제해 다음 cron 재시도(snapshot은 트랜잭션 롤백 or 재개).
+      // claim RPC가 live 진입점(marker gate 폐기) — 실패는 예외로 이번 이벤트만 skip하고 다음 cron 재개.
+      let scoreAccepted = 0;
       try {
         const del = await deliverScoreFamilyEvent({
           eventId: ev.id, gameId, sub: "score", prefKey: "my_team_score",
           teamId, title, body, url, sourceEpochMs,
           deadlineAtMs: opts?.deadlineAtMs,
         });
+        scoreAccepted = del.accepted;
         scored += del.accepted;
       } catch (e) {
         console.error("[game-score] score delivery failed:", (e as Error).message);
-        await unclaimEvent(ev.id);
         continue;
       }
+
+      // 위젯 카드 갱신은 이번 tick에 새로 발송된 토큰이 있을 때만(NO-GO #1: marker 진입 gate
+      // 폐기로 이벤트가 매 tick 재진입 → 이미 전량 accepted면 재발송 0이므로 카드도 재푸시 안 함).
+      if (scoreAccepted === 0) continue;
 
       // 잠금화면 ongoing card 스코어 갱신 (C2b) — 득점팀뿐 아니라 *양팀 팬* 카드를
       // 신선화(게임 관전자 모두). data-only, fire-and-forget(득점 알림은 이미 성공이라
@@ -270,8 +283,6 @@ export async function notifyInningSummaries(
       const runs = endScore - startScore;
       if (runs <= 0) continue; // 그 half 무득점 → 요약 없음
 
-      if (!(await claimEvent(`${ev.id}-summary`, gameId))) continue; // 이미 발송됨/보류 (event-global marker)
-
       const half = ev.isTop ? "초" : "말";
       // 그 half(inning+isTop)의 안타 수.
       const hits = events.filter(
@@ -292,7 +303,6 @@ export async function notifyInningSummaries(
         summarized += del.accepted;
       } catch (e) {
         console.error("[game-score] inning-summary delivery failed:", (e as Error).message);
-        await unclaimEvent(`${ev.id}-summary`);
       }
     }
   }

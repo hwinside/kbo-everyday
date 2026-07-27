@@ -320,8 +320,168 @@ async function verifyRegisterDeviceWiring(): Promise<void> {
   check("route 저장값 == normalizeAppBuild(동일 규칙)", p1209?.app_build === normalizeAppBuild("120.9"));
 }
 
-verifyRegisterDeviceWiring()
-  .catch((e) => { fail += 1; console.error("  FAIL register-device wiring threw:", e); })
+// ── 12. native-push registerTokenWithServer 실배선: App.getInfo().build → fetch body.appBuild ──
+// (삼순 3차 NO-GO #3 client wiring) — 지금까지 appBuildFromNativeInfo() 단위 호출만 검증해
+// getInfo→body 매핑이 끊겨도 통과했다. 실 함수를 주입 seam으로 호출해 body 조립 경로를 잠근다.
+async function verifyNativePushWiring(): Promise<void> {
+  console.log("[game-event-fanout] native-push registerTokenWithServer — App.getInfo().build → body.appBuild 실배선");
+  process.env.NEXT_PUBLIC_SUPABASE_URL = "https://appbuild-smoke.supabase.co";
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "anon-smoke-key";
+  const { registerTokenWithServer } = await import("../../src/lib/native-push");
+  let captured: Record<string, unknown> | null = null;
+  const fetchImpl = (async (_url: unknown, init: { body: string }) => {
+    captured = JSON.parse(init.body) as Record<string, unknown>;
+    return { ok: true } as Response;
+  }) as unknown as typeof fetch;
+
+  const ok = await registerTokenWithServer("fcm-xyz", {
+    getAccessToken: async () => "access-tok",
+    getAppInfo: async () => ({ build: "210" }),
+    fetchImpl, platform: "android",
+  });
+  check("native-push: getInfo().build '210' → body.appBuild 210(실배선)", captured?.appBuild === 210);
+  check("native-push: fcmToken/platform도 body에 실림", captured?.fcmToken === "fcm-xyz" && captured?.platform === "android");
+  check("native-push: 등록 성공 반환", ok === true);
+
+  // getInfo throw(브릿지 없음) → appBuild null(fail-closed)로도 등록 진행
+  captured = null;
+  await registerTokenWithServer("fcm-2", {
+    getAccessToken: async () => "t",
+    getAppInfo: async () => { throw new Error("no native bridge"); },
+    fetchImpl, platform: "ios",
+  });
+  check("native-push: getInfo throw → body.appBuild null(구버전 fail-closed)", captured?.appBuild === null && captured?.platform === "ios");
+
+  // getInfo build 0/누락 → null (route와 동일 normalizeAppBuild 규칙)
+  captured = null;
+  await registerTokenWithServer("fcm-3", {
+    getAccessToken: async () => "t", getAppInfo: async () => ({ build: 0 }), fetchImpl, platform: "android",
+  });
+  check("native-push: getInfo build 0 → body.appBuild null(route 동일 규칙)", captured?.appBuild === normalizeAppBuild(0));
+
+  // 세션 없음 → fetch 미호출·false (네트워크/getInfo 접근 전 종료)
+  let fetchCalled = false;
+  const fx = (async () => { fetchCalled = true; return { ok: true } as Response; }) as unknown as typeof fetch;
+  const r = await registerTokenWithServer("fcm-4", { getAccessToken: async () => null, fetchImpl: fx });
+  check("native-push: 세션 없음 → fetch 미호출·false", r === false && fetchCalled === false);
+}
+
+// ── 13. sendGameEventToTokens meta never-settle → deadline abort·FCM 0 (삼순 3차 NO-GO #3 실행 회귀) ──
+// PR이 보고만 하고 실행 회귀가 없던 "meta never-settle → deadline 종료·lease 중복 0"을 실측 잠금.
+async function verifyMetaNeverSettleDeadline(): Promise<void> {
+  console.log("[game-event-fanout] sendGameEventToTokens — meta never-settle 주입 → deadline abort·새 FCM 0");
+  process.env.NEXT_PUBLIC_SUPABASE_URL = "https://meta-smoke.supabase.co";
+  process.env.SUPABASE_SERVICE_ROLE_KEY = "meta-smoke-key";
+  const [{ sendGameEventToTokens }, { supabaseAdmin }] = await Promise.all([
+    import("../../src/lib/notifications/fcm"),
+    import("../../src/lib/supabase/admin"),
+  ]);
+  const admin = supabaseAdmin as unknown as { from: (t: string) => unknown };
+  const originalFrom = admin.from;
+
+  // device_push_tokens meta 조회가 영원히 settle 안 되는 상황 주입. abortSignal이 붙고
+  // runBeforeDeadline이 deadline에 reject → 메타 수집 break → 남은 토큰은 fail-safe notification.
+  let abortSignalAttached = false;
+  admin.from = (table: string) => {
+    if (table !== "device_push_tokens") throw new Error(`unexpected table ${table}`);
+    const b: Record<string, unknown> = {};
+    b.select = () => b;
+    b.in = () => b;
+    b.abortSignal = () => { abortSignalAttached = true; return b; };
+    // never-settle: onFulfilled/onRejected를 절대 호출하지 않아 runBeforeDeadline 타임아웃이 이긴다.
+    b.then = () => new Promise(() => {});
+    return b;
+  };
+
+  try {
+    const t0 = Date.now();
+    const deadlineAtMs = t0 + 300; // 300ms 안에 반드시 종료(무한 hang 방지 실증)
+    const res = await sendGameEventToTokens(
+      ["tok-1", "tok-2", "tok-3"],
+      { title: "t", body: "b", url: "/x" },
+      { gameId: "g", eventId: "g#fav", sub: "fav", title: "t", body: "b", url: "/x", nExpiresAtMs: deriveGameEventExpiresAtMs(t0) },
+      { deadlineAtMs },
+    );
+    const elapsed = Date.now() - t0;
+    check("meta never-settle: abortSignal이 meta query에 결속됨", abortSignalAttached === true);
+    check("meta never-settle: deadline(≈300ms) 내 종료(무한 hang 0)", elapsed < 3000);
+    check("meta never-settle: 새 FCM 발송 0(deadline 초과 → send skip)", res.sent === 0);
+    check("meta never-settle: ok=false(deadline_exceeded 표식)", res.ok === false);
+  } finally {
+    admin.from = originalFrom;
+  }
+}
+
+// ── 14. deliverScoreFamilyEvent/due-drain deadline·lease 결속 (삼순 3차 NO-GO #2 실행 회귀) ──
+async function verifyScoreFamilyDeadline(): Promise<void> {
+  console.log("[game-event-fanout] deliverScoreFamilyEvent — deadline 뒤 신규 claim 0 + claim/settle/due RPC abortSignal 결속");
+  process.env.NEXT_PUBLIC_SUPABASE_URL = "https://sf-smoke.supabase.co";
+  process.env.SUPABASE_SERVICE_ROLE_KEY = "sf-smoke-key";
+  const [{ deliverScoreFamilyEvent, drainDueScoreFamilyEvents }, { supabaseAdmin }] = await Promise.all([
+    import("../../src/lib/notifications/game-event-delivery"),
+    import("../../src/lib/supabase/admin"),
+  ]);
+  const admin = supabaseAdmin as unknown as { rpc: (fn: string, args?: unknown) => unknown };
+  const originalRpc = admin.rpc;
+
+  try {
+    // (a) deadline이 이미 지난 상태 → 루프 최초 guard에서 즉시 break, claim RPC 0회.
+    let claimCallsA = 0;
+    admin.rpc = (fn: string) => {
+      if (fn === "claim_game_event_tokens") claimCallsA += 1;
+      const b: Record<string, unknown> = {};
+      b.abortSignal = () => b;
+      b.then = (res: (v: unknown) => void) => res({ data: [], error: null });
+      return b;
+    };
+    const rA = await deliverScoreFamilyEvent({
+      eventId: "ev-past", gameId: "g", sub: "score", prefKey: "my_team_score",
+      teamId: 1, title: "t", body: "b", url: "/x", sourceEpochMs: Date.now(), deadlineAtMs: Date.now() - 1,
+    });
+    check("score-family: deadline 뒤 신규 claim 0회(+52s 재claim 방지)", claimCallsA === 0 && rA.accepted === 0);
+
+    // (b) claim RPC에 abortSignal이 반드시 결속(never-settle lease 초과 방지).
+    let claimAbortAttached = false;
+    let claimCallsB = 0;
+    admin.rpc = (fn: string) => {
+      const b: Record<string, unknown> = {};
+      b.abortSignal = () => { if (fn === "claim_game_event_tokens") claimAbortAttached = true; return b; };
+      b.then = (res: (v: unknown) => void) => {
+        if (fn === "claim_game_event_tokens") { claimCallsB += 1; return res({ data: [], error: null }); }
+        return res({ data: 0, error: null });
+      };
+      return b;
+    };
+    const rB = await deliverScoreFamilyEvent({
+      eventId: "ev-live", gameId: "g", sub: "score", prefKey: "my_team_score",
+      teamId: 1, title: "t", body: "b", url: "/x", sourceEpochMs: Date.now(), deadlineAtMs: Date.now() + 5000,
+    });
+    check("score-family: claim RPC에 abortSignal 결속(lease 초과 차단)", claimAbortAttached === true && claimCallsB === 1 && rB.accepted === 0);
+
+    // (c) due-drain: list_due RPC에 abortSignal 결속·정상 반환.
+    let dueAbortAttached = false;
+    admin.rpc = (fn: string) => {
+      const b: Record<string, unknown> = {};
+      b.abortSignal = () => { if (fn === "list_due_game_event_snapshots") dueAbortAttached = true; return b; };
+      b.then = (res: (v: unknown) => void) => res({ data: [], error: null });
+      return b;
+    };
+    const rC = await drainDueScoreFamilyEvents({ deadlineAtMs: Date.now() + 5000 });
+    check("score-family due: list_due abortSignal 결속·정상 반환", dueAbortAttached === true && rC.accepted === 0);
+  } finally {
+    admin.rpc = originalRpc;
+  }
+}
+
+async function main(): Promise<void> {
+  await verifyRegisterDeviceWiring();
+  await verifyNativePushWiring();
+  await verifyMetaNeverSettleDeadline();
+  await verifyScoreFamilyDeadline();
+}
+
+main()
+  .catch((e) => { fail += 1; console.error("  FAIL async wiring suite threw:", e); })
   .finally(() => {
     console.log(`\n[game-event-fanout] ${pass} passed, ${fail} failed`);
     if (fail > 0) process.exit(1);
