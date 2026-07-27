@@ -1,11 +1,12 @@
 # S2 — 크보팬 P0 알림/위젯 native 본체 (경기별 그룹 + 종료 후 보존)
 
-> **SSOT: 이 스펙 문서 + (추후) Notion 링크 `<Notion SSOT: TBD>`.**
-> Branch: `feat/notif-s2-native-grouping` · Base HEAD: `047149a7e87d0c829c21cd8503c900719041ca79`
-> 이 PR = **native 본체만**. 서버 축 중 **#894(S1-a, squash f402daa5b)에 실제 포함된 것 = terminal 전용 collapse key 분리 + `w_final` tombstone 뿐**이다.
+> **SSOT: 이 스펙 문서.** Notion `<Notion SSOT: TBD>` — **스펙 삼순 GO 후 Notion SSOT 게시 예정**(리뷰 중에는 승격하지 않는다. GO 전 TBD 유지).
+> Branch: `feat/notif-s2-native-grouping` · Base HEAD: `a9d5dd89a`(current main 기준 rebase 완료).
+> **범위(삼순 3차 NO-GO #1): #896은 spec-only PR** — 이 branch에는 **구현 commit을 얹지 않는다**(스펙 문서 편집만). 각 Slice(0~5, §⑤)는 **별도 PR**로 올려 각각 삼순 리뷰 게이트를 탄다. (PR #896 본문 정합은 삼식이가 처리.)
+> 이 PR = **native 본체 스펙만**. 서버 축 중 **#894(S1-a, squash f402daa5b)에 실제 포함된 것 = terminal 전용 collapse key 분리 + `w_final` tombstone 뿐**이다.
 > ⚠️ 정정(삼순 2차 NO-GO #1): **`n_expires_at`(이벤트 절대 만료)·버전 게이트 3분할 fanout·`terminal=final|cancelled` 필드는 #894에 없다 — 전부 S2 서버 후속**(§③ 서버 파트)이다. 이전 표기에서 `n_expires_at`을 "#894 반영분"으로 묶었던 것은 오류이므로 S2 서버 후속으로 정정한다.
 > 이 문서의 "서버 파트"(§③)는 S2 성립을 위해 서버가 **추가로** 해야 할 사항을 명시할 뿐, 여기서 서버 코드를 건드리지 않는다.
-> **이 문서는 스펙 초안이다. 앱 코드(.java/.ts) 구현은 후속 슬라이스 PR에서 진행한다.**
+> **이 문서는 스펙이다. 앱 코드(.java/.ts)·서버 코드 구현은 전부 후속 Slice PR(별도)에서 진행하며, 이 spec-only branch에는 어떤 구현 commit도 얹지 않는다.**
 
 ## 하린아빠 확정(B안)
 "지나간 알림도 트레이에 다 보존"(한참 뒤 폰 여는 유저) = **개별 이벤트 알림을 다 유지 + 경기별로 그룹**. 경기가 종료돼도 **지난 이벤트 알림은 트레이에 남는다** — 종료는 *라이브 카드/위젯의 수렴* 신호일 뿐, 이벤트 알림을 지우는 신호가 아니다.
@@ -69,7 +70,7 @@
 ### S2-1. 이벤트 배너 data-only 전환 + native 렌더 (경기별 그룹, 6h 보존)
 - **서버(파트, ③에 명시)**: 신버전(Android `app_build >= min`) 단말에는 이벤트 배너를 `notification` payload 없이 **data-only**로 전송. data에 최소:
   - `kind="game_event"`, `gameId`, `eventId`(안타/홈런/득점 등 이벤트 고유키), `title`, `body`, `url`(딥링크), `w_ts`
-  - **`sub`(구독 namespace)** = `score`/`concede`/`inning-summary`/`fav` 중 하나 — 같은 플레이(raw play id)라도 서로 다른 구독 알림이 서로를 덮지 않도록 알림 identity에 포함(NO-GO #3).
+  - **`sub`(구독 namespace)** = `score`/`concede`/`inning-summary`/`fav`/`fav-so` 중 하나(서버 실측 5종, §S2-1b) — 같은 플레이(raw play id)라도 서로 다른 구독 알림이 서로를 덮지 않도록 알림 identity에 포함(NO-GO #3).
   - **`n_expires_at`**(절대 만료 epoch ms = 이벤트 발생/게시 시각 + 6h) — 수신시각 기준이 아닌 **절대 만료시각**(NO-GO #2).
 - **native**: `NativeLiveEnvelope.parse`에 `KIND_EVENT="game_event"`를 **추가**(현재 위젯 3종만 인식하고 나머지는 null 반환하므로 지금은 그냥 빠짐). `onMessageReceived`가 이벤트 kind를 감지하면 위젯 상태머신(`NativeLiveState.apply`)을 타지 않고 **전용 렌더 경로**로 분기.
 - **만료 가드(NO-GO #2)**: 렌더 진입 시 `now >= n_expires_at`이면 **drop**(늦게 배달된 stale 이벤트가 유령 summary를 부활시키지 못하게). 유효하면 child에 `setTimeoutAfter(max(0, n_expires_at - now))` 적용(수신시각 + 6h가 아니라 절대 만료까지 남은 시간).
@@ -77,23 +78,37 @@
   - **`active non-expired child >= 1`일 때만 summary가 존재**한다. 자식 0이면 summary는 없어야 한다(생성 금지).
   - **`summary.setTimeoutAfter = max(0, (maxₐ active child.expiresAt) - now)`** — 개별 이벤트 expiresAt이 아니라 **현재 활성 child들의 최대 expiresAt**을 기준. child 추가/및/만료로 registry가 바뀌면 summary timeout도 이 값으로 재산출 갱신.
   - **terminal(종료)은 빈 registry면 no-op/cancel** — registry가 비었거나 전부 dismiss된 경기에서 terminal 갱신이 summary를 **새로 생성/부활시키지 않는다**(§S2-2·§S2-4 계약).
-- **개별 swipe 배선(NO-GO #2)**: child마다 **per-child `deleteIntent`(PendingIntent → BroadcastReceiver)** 를 달아, 유저가 개별 스와이프하면 receiver가 registry를 **원자 갱신**(해당 id 제거) → 남은 active child 0이면 **summary cancel까지 실제 배선**. dismiss/만료/prune 세 경로 모두 이 불변을 지킨다.
+- **개별 swipe 배선(NO-GO #2)**: child마다 **per-child `deleteIntent`(PendingIntent → BroadcastReceiver)** 를 달아, 유저가 개별 스와이프하면 receiver가 registry를 **원자 갱신**(해당 id 제거) + **dismissed tombstone 기록** → 남은 active child 0이면 **summary cancel까지 실제 배선**. `deleteIntent`는 **dismiss에만 발화**하므로(timeout 미발화), 만료/prune에 의한 summary 수렴은 **진입점 reconcile**(§S2-2 (a)(b))이 담당한다 — dismiss(deleteIntent)·진입점 reconcile 두 경로가 이 불변을 지킨다.
 - **렌더**: 신규 클래스 `EventNotifications`(정적 헬퍼) 또는 `GameNotificationPlugin`에 `postEvent(ctx, gameId, sub, eventId, title, body, path, expiresAt)` 추가. `NotificationCompat.Builder`로:
   - `setGroup("game:" + gameId)` — 경기별 그룹.
-  - 개별 알림 id = **`sub + gameId + eventId` 안정 해시**(namespace 포함, 중복 배달 시 동일 id로 덮어써 중복 방지, 서로 다른 이벤트/구독은 각각 트레이 유지). 예: `("evt:"+sub+":"+gameId+":"+eventId).hashCode()`(충돌 우려 시 FNV 등 안정 해시).
+  - 개별 알림 id = **`fnv1a32(canonicalKey)`**, canonicalKey=`sub+":"+gameId+":"+eventId`(§S2-1b 계약, namespace 포함, 중복 배달 시 동일 id로 덮어써 중복 방지, 서로 다른 이벤트/구독은 각각 트레이 유지). 해시 충돌은 registry의 `canonicalKey` 대조 + `(id+1)&0x7fffffff` 재해싱(§S2-1b).
   - **그룹 summary 알림**(id = `("grp:"+gameId).hashCode()`, `setGroupSummary(true)` + `InboxStyle`/카운트) 1개를 함께 게시 → 여러 배너가 하나로 접힘(Android 그룹 계약: 자식 2개+summary 필요). summary `setTimeoutAfter = max(0, (maxₐ active child.expiresAt)-now)`(개별 이벤트 아닌 **활성 child 최대 expiresAt** 기준, 위 summary 수명 계약).
   - **그룹 이중 alert 가드(NO-GO #4)**: child 채널이 `IMPORTANCE_HIGH`(heads-up)라 child+summary를 매 이벤트 함께 notify하면 소리/heads-up이 2회 터질 수 있다. → **child와 summary 양쪽에 `setGroupAlertBehavior(GROUP_ALERT_CHILDREN)`** 계약 명시(alert는 child만, summary는 음소거/heads-up 없이 집계만). 같은 event 재전송은 동일 id로 덮어쓰며 `setOnlyAlertOnce(true)`로 추가 alert 0(§S2-5 native 멱등 계약과 정합).
   - **summary의 명시적 "모두 지우기" 액션**: summary에 탭/버튼 액션을 달아 유저가 명시적으로 누르면 해당 경기 그룹 child+summary를 일괄 cancel(§S2-2). 자동 정리 아님.
   - 이벤트 전용 **채널 신설**(`game_event`, `IMPORTANCE_HIGH`, heads-up). 기존 `game_live_card`(ongoing, 7001)와 분리 — 채널 importance/역할 충돌 방지.
 - **active registry(NO-GO #2)**: 경기별 활성 이벤트를 prefs(`kbo_event_notif`, key=`gameId`)에 **`{id, postedAt, expiresAt}` 리스트(JSON)** 로 기록(초안의 eventId CSV 폐기). 게시/취소/만료 시 갱신하고, 게시·복귀 등 기회가 있을 때 `now >= expiresAt`인 항목을 **opportunistic prune**(만료 회수 + 자식 0이면 summary도 cancel).
+- **dismissed tombstone(삼순 3차 NO-GO #2 — dismiss 후 동일 retry 부활 차단)**: `setOnlyAlertOnce`는 **현재 표시중인 알림 update만 무음화**한다 — 유저가 swipe로 dismiss한 뒤 서버 at-least-once retry가 오면 **새로 repost되고 재-alert된다**(더 이상 active registry에 없어 dedupe도 못 막음). → active registry와 **별도로 `dismissed tombstone {stableKey, expiresAt}`를 prefs(`kbo_event_tomb`, key=`gameId`)에 절대만료(6h)까지 보존**한다. stableKey = `sub+gameId+eventId`(§S2-5 canonical key). **렌더 진입 시 tombstone에 해당 stableKey가 있고 `now < expiresAt`이면 repost 금지**(child·summary 모두 부활 안 함). tombstone 항목도 절대만료(6h) 경과 시 opportunistic prune으로 회수 → 6h 지난 뒤 도착한 동일 key는 새 이벤트로 간주해 정상 표시(6h TTL이 재전송 부활 범위를 한정). per-child `deleteIntent` receiver가 dismiss를 감지하면 registry에서 제거함과 **동시에 tombstone에 stableKey 기록**한다.
+  - **회귀 계약**: `post → user dismiss → same eventId retry` = **visible 0 / alert 0**(트레이 child 미부활, 소리/heads-up 0). tombstone 절대만료 후 도착한 동일 key는 어차피 FCM TTL(=6h)로 전송단 차단(§③-3).
 - **효과**: 지나간 안타/홈런/득점이 **각각 트레이에 다 남되(최대 6h)** 경기별 그룹으로 접혀 20개가 벽처럼 쌓이지 않음. 종료돼도 이벤트는 남는다.
+
+### S2-1b. canonical event key 확정 (서버 실측, 삼순 3차 NO-GO #5)
+**서버 실측 결과** (`src/lib/notifications/game-score.ts`, `player-highlight.ts` 읽기):
+- 서버는 **이미 안정 dedup key를 가지고 있다**. `notified_score_events(event_id PK)`에 `claimEvent(eventId)` 멱등 upsert로 dedupe. 안정성 근거: run_scored는 `ev.id`가 `${away}-${home}` **점수상태 단위**라 다중 인스턴스·재시도가 **동일 id를 mint(race-safe)** — 즉 재전송 불변. dedupe 설계 자체가 `ev.id` 안정을 전제로 한다.
+- **`sub` namespace는 서버 dedup suffix와 1:1**(실측): score=`ev.id` / concede=`${ev.id}-concede` / inning-summary=`${ev.id}-summary` / fav(타자 활약)=`${ev.id}#fav` / **fav-so(투수 삼진)=`${ev.id}#fav-so`**. ⇒ `sub` enum 개정: **`score`/`concede`/`inning-summary`/`fav`/`fav-so`** (초안 4종 → **5종**, 삼진 누락 방지).
+- ⚠️ **그러나 현재 이 안정 key는 FCM payload로 단말에 전달되지 않는다** — score/concede/highlight/strikeout/inning-summary 모두 `{title, body, url}` **notification payload만** 보내고 `eventId`/`gameId`/`sub`를 data에 실지 않는다(`game_live` 카드만 구조화 data, 그마저도 eventId 없음). ⇒ **Slice 0 서버파트 = 안정 key 생성이 아니라 기존 `ev.id`+`sub`을 data-only payload로 emit 추가**(배선 변경, 새 key 발명 아님).
+
+**canonical event key 계약(확정)**:
+- **생성식**: `canonicalKey = sub + ":" + gameId + ":" + eventId` (eventId = 서버 `ev.id`, sub = 위 5종 enum). 이 문자열이 dedupe·registry·tombstone·collapse 모든 계층의 SSOT identity.
+- **재전송 불변성**: 서버 `ev.id`가 재시도마다 동일(실측 근거). 따라 native at-most-one visible child(§S2-5)가 성립 — 몇 번 배달되든 canonicalKey 동일.
+- **32-bit notification ID hash 충돌 해소**: Android `notify(id:int)`는 32-bit. `id = fnv1a32(canonicalKey)`(`String.hashCode()`는 충돌률 높아 **FNV-1a 32-bit 권장**). **충돌 해소 규칙**: registry는 `{id, canonicalKey, postedAt, expiresAt}`를 함께 저장 → 게시 전 같은 `id`가 이미 registry에 있고 `canonicalKey`가 다르면(해시 충돌) `id = (id + 1) & 0x7fffffff`로 회피 재해싱 → 동일 canonicalKey면 같은 id 재사용(멱등 덮쓰기). summary id = `fnv1a32("grp:"+gameId)` 동일 규칙. group key `"game:"+gameId`는 문자열 그대로(해시 불필요).
 
 ### S2-2. 종료 = 라이브/위젯 수렴 (이벤트는 보존)
 > ⚠️ NO-GO #1 반영: 초안의 "종료 시 그 경기 그룹 일괄 cancel"은 **삭제**. 종료 분기는 이벤트 child를 건드리지 않는다.
 - **terminal 구분(삼순 2차 NO-GO #5)**: #894 공용 clear는 정상·취소 모두 `kind=game_end`(정상만 `w_as`/`w_hs`, 취소는 score 없음). 서버(S2 서버 파트)가 **`terminal=final|cancelled` 명시 필드**를 실어 보내고, native는 이 필드로 분기:
   - `terminal=final` → group summary를 **최종 스코어**(필요 팀명/`w_as`/`w_hs`)로 idempotent 갱신.
   - `terminal=cancelled` → group summary를 **`경기 취소`**로 idempotent 갱신(score 없음). 취소도 child는 **6h 보존**.
-  - **공통 가드**: 둘 다 **활성 child가 0이면 summary 생성 금지**(빈 registry면 no-op/cancel — 위 summary 수명 계약·§S2-4).
+  - **`terminal` 필드 missing = native-first rollout legacy fallback(삼순 3차 NO-GO #4)**: 앱을 서버보다 먼저 배포하는 기간엔 신 native가 **기존 `game_end`(terminal 필드 없음)**를 받는다. 이때 **core terminal side effect(잠금 라이브 카드 7001 clear · 위젯 FINAL 수렴 · `w_final` tombstone)는 절대 skip 금지** — core 수렴은 **무조건 수행**한다(§S2-4 idempotent 계약과 동일). 단 **summary는 안전하게 no-op**(terminal 구분 불가니 final-score로 잘못 갱신하지 않고 기존 summary 유지). (옵션: `game_end`가 `w_as`/`w_hs`를 실으면 backward inference로 final 취급 가능 — 모호하면 no-op.) child는 6h 보존.
+  - **공통 가드**: final/cancelled/legacy 모두 **활성 child가 0이면 summary 생성 금지**(빈 registry면 no-op/cancel — 위 summary 수명 계약·§S2-4).
 - `onMessageReceived`의 `game_end` 분기(§S2-4의 idempotent 계약)에서:
   - 잠금 라이브 카드(7001) `clear()` — 유지.
   - 위젯 `markFinal`(FINAL 수렴) + tombstone(§S2-3).
@@ -102,7 +117,12 @@
   1. `setTimeoutAfter(max(0, expiresAt-now))` **자동 만료**(6h 절대 상한).
   2. **사용자 dismiss**(개별 스와이프) 또는 **summary의 명시적 "모두 지우기" 액션**(그 경기 그룹 일괄 cancel + summary cancel).
   3. opportunistic prune(만료분 회수).
-- **summary 유령 방지**: 자식이 0이 되면(전부 dismiss/만료) summary도 반드시 cancel — **per-child `deleteIntent` receiver · 만료 콜백 · opportunistic prune 세 경로 모두**에서 registry 원자 갱신 후 0개 판정 시 cancel(§S2-1 summary 수명 계약). terminal 갱신도 빈 registry면 summary 부활 금지.
+- **summary 유령 방지(삼순 3차 NO-GO #3 — "만료 콜백" 폐기)**: Android `deleteIntent`는 **사용자 dismiss 때만 발화**한다 — `setTimeoutAfter` timeout/`cancel()`에는 **발화하지 않는다**(repo `GameNotificationPlugin` 주석도 동일). 따라서 "child timeout 시 registry 원자 갱신·summary cancel"을 기대하는 **"만료 콜백" 개념은 실현 불가 → 폐기**한다. 대신 **모든 event/terminal/onResume 진입점에서 reconcile**로 정합을 맞춘다:
+  - **(a) 절대시각 기준 registry prune**: 진입 시 `now >= expiresAt`인 child를 registry에서 제거(이미 트레이에서는 `setTimeoutAfter`가 자연 회수).
+  - **(b) `getActiveNotifications()` 트레이 reconcile**: 실제 트레이의 active id 집합과 registry를 대조 → 트레이에 없는 registry 항목 제거, registry 밖 유령 child 회수. 이것으로 timeout/OS 회수로 사라진 child를 다음 진입점에서 따라잡는다.
+  - **summary 자체 만료**: summary는 자신의 `setTimeoutAfter=max(0,(maxₐ active child.expiresAt)-now)`로 만료 + 위 reconcile로 정합. reconcile 후 active child 0이면 summary cancel, terminal 갱신도 빈 registry면 summary 부활 금지.
+  - **옵션(정확 시각 cleanup이 꼭 필요하면)**: 별도 `AlarmManager`/`WorkManager` 예약으로 정확 시각에 prune을 트리거할 수 있으나, **기본값은 진입점 reconcile**(배터리·복잡도 최소). 모든 사용자 dismiss 경로는 per-child `deleteIntent` receiver가 즉시 registry·tombstone 원자 갱신.
+  - **회귀 계약**: `child 자동만료(setTimeoutAfter) → 다음 진입점 reconcile 후 registry/count/summary 정합`(유령 summary/잔여 count 0).
 
 ### S2-3. 위젯 종료 잔류(9회 고착) 해소
 - **경기별 단일 위젯 상태**는 이미 prefs 단일 슬롯(`kbo_game_widget`)이라 구조 유지. 문제는 **종료 신호 유실 시 복구 부재**.
@@ -117,7 +137,8 @@
 - **계약**: 같은 경기의 **valid terminal**(gameId 일치 + 유효)은 `decideTerminal`이 **`APPLIED`이든 `NO_CHANGE`이든** 다음을 **idempotent 실행**:
   - 잠금 라이브 카드(7001) clear
   - 위젯 FINAL 수렴 + `KEY_FINALIZED_GAME` tombstone 기록
-  - group summary 갱신 — `terminal=final`면 최종 스코어, `terminal=cancelled`면 `경기 취소`로 idempotent 갱신(재실행해도 동일 결과). **활성 child가 0이면 summary를 생성/부활하지 않는다**(빈 registry no-op/cancel — §S2-1 summary 수명 계약).
+  - group summary 갱신 — `terminal=final`면 최종 스코어, `terminal=cancelled`면 `경기 취소`로 idempotent 갱신(재실행해도 동일 결과). **`terminal` 필드 missing(legacy `game_end`)면 summary는 no-op**(위 core 3개는 그대로 수행, §S2-2 legacy fallback). **활성 child가 0이면 summary를 생성/부활하지 않는다**(빈 registry no-op/cancel — §S2-1 summary 수명 계약).
+  - 즉 **valid terminal이면 `terminal` 필드 유무와 무관하게 core 수렴(7001 clear·FINAL·tombstone)는 항상 실행**되고, summary만 terminal 구분에 따라 final/cancelled/no-op으로 갈린다. 회귀: `new client + old final/cancel payload(terminal 필드 없음)` → core 수렴 OK · summary 오작동 0.
 - **부수효과 0인 경우**: `STALE`(저-seq)·`INVALID`(모호 동률)·**다른 경기**의 terminal. 이 3종만 아무것도 하지 않는다.
 - 네트워크 복구 1회 재조회(§S2-3)는 이 idempotent 종료 처리의 **최종 안전망**이자 완료기준 항목.
 
@@ -145,7 +166,7 @@
 ---
 
 ## ③ 서버 파트 필요사항 (이 PR 밖, S2 성립 전제)
-1. **이벤트 배너 data-only 전환**: Android `app_build >= min` 단말에 `game_event` data-only 전송 — `eventId`/`gameId`/`sub`/`w_ts`/**`n_expires_at`(절대 만료, S2 서버 후속 — #894에 없음)** 포함. (구버전/iOS는 notification 유지.)
+1. **이벤트 배너 data-only 전환 + canonical key emit(NO-GO #5)**: Android `app_build >= min` 단말에 `game_event` data-only 전송 — `eventId`(=서버 안정 `ev.id`)/`gameId`/`sub`(`score`/`concede`/`inning-summary`/`fav`/`fav-so`)/`w_ts`/**`n_expires_at`(절대 만료, S2 서버 후속 — #894에 없음)** 포함. ⚠️ 실측상 서버는 안정 `ev.id`/`sub` dedup key를 **이미 보유**하나 현재 FCM payload에 **실지 않는다**(notification `{title,body,url}` 만) → 이 파트는 **새 key 발급이 아니라 기존 key를 data-only로 emit 추가**(Slice 0). (구버전/iOS는 notification 유지.)
 2. **버전 게이트 fanout 3분할 + at-least-once/at-most-one 멱등**: §S2-5 — iOS/구Android/신Android 분기. 서버 at-least-once 재시도 + native at-most-one visible child. 성공/실패 token ledger로 crash window 잠금.
 2b. **`terminal=final|cancelled` 명시 필드(S2 서버 후속, NO-GO #5)**: #894 공용 `game_end`(정상·취소 모두 같은 kind)에 terminal 구분 필드 추가 — `final`은 필요 팀/점수(`w_as`/`w_hs`), `cancelled`는 score 없음. native가 summary 문구(최종스코어 vs `경기 취소`)를 가르는 데 사용. #894에는 없고 S2 서버에서 추가.
 3. **`n_expires_at` + FCM TTL**: 서버가 절대 만료(발생+6h)를 싣고, **FCM TTL도 남은시간(`expiresAt - now`)으로 제한** → 만료 임박 메시지가 뒤늦게 살아 배달되는 것을 전송단에서도 차단.
@@ -164,15 +185,17 @@
 - **fanout 재시도 중복**: 서버 at-least-once 재시도로 같은 event가 여러 번 배달될 수 있음 → native at-most-one visible child(안정 key registry/dedupe + `setOnlyAlertOnce`/duplicate drop)로 보이는 child 1개 유지(§S2-5). 부분발송 후 crash → token ledger 회귀 테스트.
 - **그룹 이중 alert(NO-GO #4)**: IMPORTANCE_HIGH child+summary 동시 notify 시 소리/heads-up 2회 → `GROUP_ALERT_CHILDREN`로 alert를 child로만 집중, 같은 event 재전송은 `setOnlyAlertOnce`(§S2-1).
 - **취소 terminal(NO-GO #5)**: `game_end` 공용 kind라 취소 경기가 final-score summary로 잘못 갱신될 위험 → 서버 `terminal=final|cancelled` 명시 필드로 분기(final=최종스코어, cancelled=`경기 취소`), 둘 다 활성 child 0이면 summary 생성 금지.
-- **active registry 정합**: 게시/취소 사이 프로세스 종료로 registry와 실제 트레이가 어긋날 수 있음 → registry는 `{id,expiresAt}` 기반 opportunistic prune + `setTimeoutAfter`가 최종 회수. 종료는 registry를 지우지 않음(이벤트 보존).
+- **active registry 정합**: 게시/취소 사이 프로세스 종료로 registry와 실제 트레이가 어긋날 수 있음 → 진입점 reconcile(registry prune + `getActiveNotifications()`, §S2-2)가 정합 회복, `setTimeoutAfter`가 트레이 최종 회수. `deleteIntent`는 dismiss에만 발화하므로 자동만료 수렴은 전적으로 reconcile이 담당(NO-GO #3). 종료는 registry를 지우지 않음(이벤트 보존).
+- **native-first rollout(NO-GO #4)**: 앱이 서버보다 먼저 배포된 기간 신 native가 legacy `game_end`(terminal 필드 없음) 수신 → **core 수렴(7001 clear·FINAL·`w_final`) 절대 skip 금지**, summary만 no-op(또는 `w_as`/`w_hs` 있으면 backward inference). core 유실 = 9회 고착 재발.
+- **dismiss 부활(NO-GO #2)**: `setOnlyAlertOnce`는 표시중 update만 무음화 → dismiss 후 retry가 repost/재-alert. → dismissed tombstone(6h) + 렌더 진입 시 tombstone 검사로 repost 차단, FCM TTL 6h로 전송단 보강.
 
 ---
 
 ## ⑤ 슬라이스 제안 (얇은 수직 슬라이스 — 빅뱅 금지)
-1. **Slice 0 (신호 검증 + 임계값)**: 기존 `appBuild`→`app_build` 경로가 실제로 채워지는지 검증(회귀 테스트) + Android `versionCode` `min` 상수 고정 + 서버 3분할 fanout 스켈레톤(멱등키 포함). **새 신호 발명 없음**, 렌더 변경 없음, 회귀 위험 0.
-2. **Slice 1 (렌더 + 만료 가드 + summary 수명)**: `KIND_EVENT` 파싱 + `postEvent`(그룹/summary/`sub` namespace id/채널) + `n_expires_at` drop·child `setTimeoutAfter(max(0,expiresAt-now))` + **summary `setTimeoutAfter=maxₐ active child.expiresAt`** + `{id,postedAt,expiresAt}` registry + **per-child `deleteIntent` receiver(swipe→0개면 summary cancel)** + **`GROUP_ALERT_CHILDREN`+`setOnlyAlertOnce` 이중 alert 가드**. **서버는 아직 notification 유지** → 신버전 소수 단말 data-only 테스트 채널로만 검증. 트레이 6h 보존·그룹 접힘·active child 0이면 summary 없음 확인.
-3. **Slice 2 (종료 = 수렴, 보존 유지)**: `game_end`(**`terminal=final|cancelled` 분기**) → 라이브 카드 clear + 위젯 FINAL + **summary idempotent 갱신**(final=최종스코어 / cancelled=`경기 취소`, 활성 child 0면 생성 금지, 이벤트 child 유지) + summary "모두 지우기" 명시 액션 + opportunistic prune. **종료(정상·취소) 후에도 이벤트가 남는지** 확인.
-4. **Slice 3 (위젯 tombstone + idempotent terminal + 재수렴)**: `w_final` 게이트 + terminal side effect를 `APPLIED`·`NO_CHANGE` 모두 idempotent 실행(STALE/INVALID/타경기 0) + `onResume`/네트워크 복구 single-flight 재수렴. 9회 고착·false-green 해소 확인.
+1. **Slice 0 (신호 검증 + 임계값 + canonical key emit)**: 기존 `appBuild`→`app_build` 경로 검증(회귀 테스트) + Android `versionCode` `min` 상수 고정 + 서버 3분할 fanout 스켈레톤 + **서버가 기존 안정 `ev.id`+`sub`를 data-only payload로 emit 추가**(§S2-1b — 새 key 발명 아닌 기존 dedup key 배선). **native 렌더 변경 없음**, 회귀 위험 0.
+2. **Slice 1 (렌더 + 만료 가드 + summary 수명 + dismiss tombstone + reconcile)**: `KIND_EVENT` 파싱 + `postEvent`(그룹/summary/`fnv1a32(canonicalKey)` id/채널) + `n_expires_at` drop·child `setTimeoutAfter(max(0,expiresAt-now))` + **summary `setTimeoutAfter=maxₐ active child.expiresAt`** + `{id,canonicalKey,postedAt,expiresAt}` registry + **`dismissed tombstone{stableKey,expiresAt}`(6h) — 렌더 진입 시 tombstone이면 repost 금지**(NO-GO #2) + **per-child `deleteIntent` receiver(swipe→registry 제거+tombstone 기록→0개면 summary cancel)** + **진입점 reconcile(registry prune + `getActiveNotifications()`)** — "만료 콜백" 없이 자동만료 수렴(NO-GO #3) + **`GROUP_ALERT_CHILDREN`+`setOnlyAlertOnce` 이중 alert 가드**. **서버는 아직 notification 유지** → 신버전 소수 단말 data-only 테스트 채널로만 검증. 트레이 6h 보존·그룹 접힘·dismiss 부활 차단·active child 0이면 summary 없음 확인.
+3. **Slice 2 (종료 = 수렴, 보존 유지)**: `game_end`(**`terminal=final|cancelled` 분기 + `terminal` missing legacy fallback**) → 라이브 카드 clear + 위젯 FINAL + **summary idempotent 갱신**(final=최종스코어 / cancelled=`경기 취소` / **legacy(필드 없음)=summary no-op·core 수렴은 수행**, 활성 child 0면 생성 금지, 이벤트 child 유지) + summary "모두 지우기" 명시 액션 + 진입점 reconcile. **종료(정상·취소·legacy) 후에도 이벤트가 남는지** 확인.
+4. **Slice 3 (위젯 tombstone + idempotent terminal + 재수렴)**: `w_final` 게이트 + terminal side effect를 `APPLIED`·`NO_CHANGE` 모두 idempotent 실행(STALE/INVALID/타경기 0, **`terminal` 필드 유무 무관하게 core 수렴 skip 0 — legacy fallback**) + `onResume`/네트워크 복구 single-flight 재수렴. 9회 고착·false-green·legacy core skip 해소 확인.
 5. **Slice 4 (foreground suppress)**: `FOREGROUND_SUPPRESSED_KINDS`에 `game_event` 추가(native 렌더 활성 빌드). foreground 이중노출 0 확인.
 6. **Slice 5 (게이트 전환)**: 서버가 Android `>=min`에 실제 data-only 전환. 구버전/iOS notification 유지 회귀 테스트. 단계적 롤아웃.
 
@@ -191,6 +214,9 @@
 - **버전 게이트 회귀 0**: Android `app_build null/<min` 및 iOS → notification 유지(배너 유실/그룹 미동작 없음).
 - **fanout at-most-one visible child(A17)**: **같은 event 재전송(server at-least-once) = 트레이 child 1개 · 소리/heads-up 0회 추가**(dedupe + `setOnlyAlertOnce` + `GROUP_ALERT_CHILDREN`), **새 event = 정확히 1회 alert**. 부분발송 후 crash → token ledger 회귀로 중복 child 0.
 - **취소 terminal(A17)**: `terminal=cancelled` 수신 시 summary=`경기 취소`(score 없음) idempotent 갱신, `final`은 최종스코어. 둘 다 활성 child 0이면 summary 생성 안 됨, child는 6h 보존.
+- **dismiss 부활 차단(NO-GO #2)**: `post → user dismiss → same eventId retry` = **visible 0 / alert 0**(dismissed tombstone 6h 보존, 렌더 진입 시 repost 금지). 6h 경과 후 동일 key는 FCM TTL(6h)로 전송단 차단.
+- **자동만료 reconcile(NO-GO #3)**: `child 자동만료(setTimeoutAfter) → 다음 event/terminal/onResume 진입점에서 registry prune + `getActiveNotifications()` reconcile 후 registry/count/summary 정합`("만료 콜백" 없이 진입점에서 수렴, 유령 summary 0).
+- **native-first legacy fallback(NO-GO #4)**: `new client + old game_end(terminal 필드 없음)` → **core 수렴(7001 clear·위젯 FINAL·`w_final` tombstone) 정상 수행 · summary 오작동 0**(summary no-op). core side effect skip 0.
 - **foreground 이중노출 0**: `game_event` foreground 수신 시 native heads-up 단일 표시(JS 배너 suppress).
 - **네트워크 복구(필수)**: 앱 복귀/네트워크 복구 시 single-flight 재조회 1회로 위젯 상태 정합 회복(폴링 아님).
 - **강제중지 후(완료기준 명시)**: 강제중지 중에는 Android 제약상 재기동 전 **FCM 수신 자체가 차단** → 완료기준 = **앱 복귀 시 위젯 상태만 1회 수렴(single-flight 재조회)**. **강제중지 중 놓친 개별 이벤트 배너는 미보장**(bounded replay는 비목표 — 비용 대비 엣지). 정상 상태(화면OFF/Doze)에선 6h 이벤트 보존 목표 유지.
@@ -202,7 +228,7 @@
 ## 불확실 / 결정 필요 지점
 1. ~~`setTimeoutAfter` 상한 값~~ → **해결: 6시간(절대 만료 `n_expires_at` 기준).**
 2. **재수렴 GET 엔드포인트**: 위젯 복구용 경량 최신 경기 상태 조회 API가 이미 있는지(없으면 서버 파트 추가). single-flight/debounce 파라미터(디바운스 창) 확정 필요.
-3. **`sub` namespace 값 집합**: `score/concede/inning-summary/fav`가 서버 구독 종류와 1:1인지 확인(구독 종류 추가 시 identity 규칙 확장).
+3. ~~`sub` namespace 값 집합~~ → **해결(실측, §S2-1b): 서버 dedup suffix와 1:1 = 5종**(`score`/`concede`/`inning-summary`/`fav`=`#fav`/`fav-so`=`#fav-so`). 초안 4종에서 삼진(`fav-so`) 누락을 추가. 구독 종류 신규 시 identity 규칙 확장.
 4. ~~fanout 멱등 구현 방식~~ → **해결(NO-GO #3): 서버 at-least-once 재시도 + native at-most-one visible child**(안정 key registry/dedupe + `setOnlyAlertOnce`/duplicate drop, 성공/실패 token ledger crash-window 회귀). 남은 세부: token ledger 저장소(서버) 구현 기술 선택.
-5. **eventId 안정성**: 서버가 이벤트별 안정 `eventId`를 재전송 시 동일값으로 발급하는지 — 없으면 서버 파트에 "안정 eventId 발급" 추가.
+5. ~~eventId 안정성~~ → **해결(서버 실측, §S2-1b): 서버는 안정 `ev.id`를 이미 발급**(run_scored=점수상태 단위 race-safe, `notified_score_events` dedupe가 안정성 전제). **단, FCM payload에는 미전달** → Slice 0 서버파트가 `ev.id`+`sub`을 data-only로 **emit 추가**(새 발급 아닌 배선). 남은 불확실: inning-summary/fav-so는 아직 data-only 렌더 대상에 포함할지(구독별 rollout 범위)는 서버파트 결정 필요.
 6. **foreground suppress 빌드 분기**: `game_event`를 무조건 suppress할지, "native 렌더 활성" 플래그 조건부로 할지(구버전에서 JS가 여전히 그려야 하는 케이스와의 경계).
