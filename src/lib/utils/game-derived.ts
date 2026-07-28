@@ -11,6 +11,46 @@ interface GameBase {
 }
 
 const FIELD_POSITIONS = ["C", "1B", "2B", "3B", "SS", "LF", "CF", "RF"] as const;
+const FIELD_POSITION_SET = new Set<string>(FIELD_POSITIONS);
+
+// 단일 수비 위치 문자 → 필드 코드. 한자/한글 약어(一二三·유좌중우·포) + 숫자.
+const POS_CHAR_TO_FIELD: Record<string, string> = {
+  "포": "C", "一": "1B", "二": "2B", "三": "3B",
+  "유": "SS", "좌": "LF", "중": "CF", "우": "RF",
+  "1": "1B", "2": "2B", "3": "3B",
+};
+// 한글 풀네임 → 필드 코드.
+const POS_FULL_TO_FIELD: Record<string, string> = {
+  "포수": "C", "1루수": "1B", "2루수": "2B", "3루수": "3B",
+  "유격수": "SS", "좌익수": "LF", "중견수": "CF", "우익수": "RF",
+};
+
+/**
+ * BoxScore/라인업의 포지션 값을 *최종 수비 위치 코드*로 정규화한다.
+ *
+ * 소스가 제각각이라 정규화 없이는 매칭이 샌다:
+ *  - KBO HTML 파서: 이미 코드(C/1B/…) 또는 지명(DH)
+ *  - Naver fallback 파서: 원시 약어(一/二/三, 포/유/좌/중/우) 그대로
+ *  - 대타·대주 후 수비 진입: 복합 약어(타二, 주중, 주우, 중우 …) → *마지막 문자가
+ *    최종 수비 위치*. 대타/대주(타/주) 접두는 무시하고 실제 수비 위치만 취한다.
+ *
+ * 투수(P/투)·지명타자(DH/지)·순수 대타·대주(타/주 단독)는 필드 수비수가 아니므로
+ * null을 반환한다(필드뷰에서 제외, 투수는 currentPitcher로 별도 렌더).
+ */
+function normalizeFieldPosition(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const t = raw.trim();
+  if (!t) return null;
+  if (FIELD_POSITION_SET.has(t)) return t;              // 이미 필드 코드
+  if (t === "P" || t === "DH" || t === "투" || t === "지" || t === "투수" || t === "지명타자") return null;
+  if (POS_FULL_TO_FIELD[t]) return POS_FULL_TO_FIELD[t]; // 한글 풀네임
+  // 복합/단일 약어 — 뒤에서부터 첫 수비 위치 문자(= 최종 이동 위치) 채택.
+  for (let i = t.length - 1; i >= 0; i--) {
+    const code = POS_CHAR_TO_FIELD[t[i]];
+    if (code) return code;
+  }
+  return null;
+}
 
 /**
  * 필드뷰 수비 다이어그램용 수비수 목록을 만든다.
@@ -33,14 +73,14 @@ function toDefenders(
     let current: BatterRecord | null = null;
     if (boxBatters) {
       for (const b of boxBatters) {
-        if (b.position === pos && b.name) current = b;
+        if (b.name && normalizeFieldPosition(b.position) === pos) current = b;
       }
     }
     if (current) {
       return [{ order: current.order, name: current.name, position: pos, avg: current.avg ?? "", teamId }];
     }
     // 2) 선발 라인업 폴백 — BoxScore 미수신 또는 해당 포지션 미노출.
-    const entry = lineupEntries?.find(e => e.position === pos);
+    const entry = lineupEntries?.find(e => normalizeFieldPosition(e.position) === pos);
     if (entry) {
       return [{ order: entry.order, name: entry.name, position: pos, avg: "", teamId }];
     }
