@@ -1,8 +1,12 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import type { GameRelayResponse } from "@/app/api/game-relay/route";
+import type { GameRelayResponse, InningRelay } from "@/app/api/game-relay/route";
 import { planFinalFetch, afterFinalFetch } from "@/lib/hooks/final-relay-fetch";
+import { mergeDeltaInnings, shouldApplyRelayResponse, shouldReleaseInFlight } from "@/lib/game/relay-delta";
+
+// delta(증분) 폴링: 매 N번째 폴링마다 한 번은 full로 받아 지난 이닝의 드문 정정을 self-heal 한다.
+const FULL_REFRESH_EVERY = 10;
 
 export type { GameRelayResponse, InningRelay, PlayEvent, MatchupStats, RelayPlayerStats, RelayBatterStat, RelayPitcherStat } from "@/app/api/game-relay/route";
 
@@ -19,6 +23,17 @@ export function useGameRelay(
   const finalFetchedRef = useRef(false);
   const inFlightRef = useRef(false);
   const inFlightPromiseRef = useRef<Promise<boolean> | null>(null);
+  // 누적 이닝 병합 캐시(`${inning}-${half}` 키). delta 응답은 이 캐시 위에 병합한다.
+  const inningsRef = useRef<Map<string, InningRelay>>(new Map());
+  const pollCountRef = useRef(0);
+  // 현재 활성 gameId. gameId 전환 직후 이전 경기의 in-flight 응답이 늦게 도착해
+  // 새 경기 state 를 오염시키는 것을 막기 위해 setData 전 이 값과 비교한다(삼순 blocker ②).
+  const activeGameIdRef = useRef<string | undefined>(gameId);
+  // 요청마다 발급하는 단조증가 seq. gameId 전환·후행 요청이 증가시켜, 늦게 끝난 이전 요청이
+  // 공용 in-flight/promise/loading 을 clear 하거나 setData 하지 못하게 fencing 한다(삼순 blocker ②).
+  const requestSeqRef = useRef(0);
+  // 현재 in-flight 요청의 abort 핸들. gameId 전환 시 즉시 abort 해 B full 을 막힘없이 시작시킨다.
+  const abortRef = useRef<AbortController | null>(null);
 
   const fetchRelay = useCallback((): Promise<boolean> => {
     if (!gameId) return Promise.resolve(false);
@@ -26,31 +41,92 @@ export function useGameRelay(
       return Promise.resolve(false);
     }
     if (inFlightRef.current) return Promise.resolve(false);
+    const requestGameId = gameId;
+    // 이 요청의 신분증. inFlight 가드 통과 후에만 증가시켜(중복 폴 조기 반환은 seq 미소모)
+    // parse/finally 재확인의 기준으로 쓴다. gameId 전환·후행 요청이 이 값을 다시 올리면 stale 이 된다.
+    const mySeq = ++requestSeqRef.current;
+    const controller = new AbortController();
+    abortRef.current = controller;
     const request = (async () => {
       inFlightRef.current = true;
       setIsLoading(true);
       let succeeded = false;
       try {
-        const params = new URLSearchParams({ gameId });
+        const cache = inningsRef.current;
+        // full 조건: 보유한 이닝이 없거나(첫 로드) 주기적 self-heal 차례.
+        const n = pollCountRef.current++;
+        const wantFull = cache.size === 0 || n % FULL_REFRESH_EVERY === 0;
+
+        const params = new URLSearchParams({ gameId: requestGameId });
         if (currentInning > 0) params.set("inning", String(currentInning));
-        const res = await fetch(`/api/game-relay?${params}`);
-        if (res.ok && mountedRef.current) {
+        if (!wantFull) {
+          // 보유한 최대 이닝 번호만 delta로 요청(서버가 since-1부터 내려줌).
+          let maxInn = 0;
+          for (const inn of cache.values()) if (inn.inning > maxInn) maxInn = inn.inning;
+          if (maxInn > 0) params.set("since", String(maxInn));
+        }
+
+        const res = await fetch(`/api/game-relay?${params}`, { signal: controller.signal });
+        if (res.ok) {
           const json = (await res.json()) as GameRelayResponse;
-          setData(json);
-          succeeded = true;
+          // parse 후 재확인: gameId 가 headers 통과와 body 파싱 사이에 전환됐을 수 있다(late-body).
+          // seq 일치 + 활성 gameId 일치 + 마운트 상태일 때만 setData(삼순 blocker ②).
+          if (shouldApplyRelayResponse({
+            mounted: mountedRef.current,
+            requestSeq: mySeq,
+            currentSeq: requestSeqRef.current,
+            requestGameId,
+            activeGameId: activeGameIdRef.current,
+          })) {
+            // innings만 병합(delta면 과거 이닝 유지, full이면 재구성), matchup/linescore/
+            // currentInning 등 라이브 필드는 최신 응답 그대로 유지.
+            const mergedInnings = mergeDeltaInnings(cache, json.innings, json.partial === true);
+            const merged: GameRelayResponse = {
+              ...json,
+              innings: mergedInnings,
+              partial: false,
+            };
+            setData(merged);
+            succeeded = true;
+          }
         }
       } catch {
-        // Silently fail — UI shows fallback
+        // Silently fail(abort/network) — UI shows fallback
       } finally {
-        inFlightRef.current = false;
-        inFlightPromiseRef.current = null;
-        if (mountedRef.current) setIsLoading(false);
+        // fence: 후행 요청이 이미 공용 상태를 소유했으면(seq 증가) 늦게 끝난 요청은 clear 하지 않는다.
+        if (shouldReleaseInFlight(mySeq, requestSeqRef.current)) {
+          inFlightRef.current = false;
+          inFlightPromiseRef.current = null;
+          if (mountedRef.current) setIsLoading(false);
+        }
       }
       return succeeded;
     })();
     inFlightPromiseRef.current = request;
     return request;
   }, [gameId, currentInning]);
+
+  // gameId 전환 시 누적 이닝 캐시·폴링 카운터·표시 데이터를 초기화한다. 이것이 없으면
+  // 새 경기 첫 폴링이 이전 경기의 캐시(size>0) 때문에 since 를 보내 이전 경기 이닝 위에
+  // delta 를 병합한다(교차 오염). 선언 순서상 폴링 effect 보다 먼저 실행된다.
+  useEffect(() => {
+    activeGameIdRef.current = gameId;
+    // 이전 경기의 in-flight 요청을 즉시 abort 하고 seq 를 올려 무효화한다. 이로써 (1) B full 이
+    // A 완료를 기다리지 않고 바로 시작하고(inFlightRef 해제), (2) 늦게 끝난 A 의 finally/late-body
+    // 가 B 상태를 훼손하지 못하게 한다(삼순 blocker ② (a)(b)).
+    abortRef.current?.abort();
+    abortRef.current = null;
+    requestSeqRef.current++;
+    inFlightRef.current = false;
+    inFlightPromiseRef.current = null;
+    inningsRef.current = new Map();
+    pollCountRef.current = 0;
+    finalFetchedRef.current = false;
+    setData(null);
+    // abort 된 이전 요청의 finally 는 fencing 되어 loading 을 clear 하지 않으므로 여기서 직접 내린다
+    // (B 가 live 면 즉시 다시 true, 비-live 면 spinner 가 A 에 갇히지 않게 한다).
+    setIsLoading(false);
+  }, [gameId]);
 
   useEffect(() => {
     mountedRef.current = true;
