@@ -925,9 +925,11 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
     const ids = pollIdsKey ? pollIdsKey.split(",").map(Number) : [];
     if (ids.length === 0) return; // 남은 요약은 메모리에만 잔존(poll 아닌 글은 조회 안 함 — 내림)
     let alive = true;
-    fetchPollSummaries(ids).then((s) => {
-      if (alive) setPollSummaries(s);
-    });
+    fetchPollSummaries(ids)
+      .then((s) => {
+        if (alive) setPollSummaries((prev) => ({ ...prev, ...s })); // 부분 결과도 누적 merge(실패 chunk 카드만 로딩)
+      })
+      .catch(() => {}); // fetchPollSummaries 는 chunk별 격리로 reject 안 하지만 방어적 catch
     return () => {
       alive = false;
     };

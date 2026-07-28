@@ -133,26 +133,42 @@ export function chunkSummaryIds(postIds: number[]): number[][] {
   return chunks;
 }
 
+/** 단일 chunk 요약 — non-OK/네트워크 throw 를 격리해 다른 chunk 를 굶기지 않게 한다.
+ *  bounded 재시도(기본 1회) 후에도 실패하면 빈 결과를 돌려(never rejects) — 호출측 Promise.all 이
+ *  전체 reject 되어 모든 카드가 영구 로딩에 빠지는 것을 방지. 실패 chunk 카드만 로딩 유지. */
+async function fetchSummaryChunk(
+  chunk: number[],
+  retries = 1,
+): Promise<Record<number, PollSummary>> {
+  try {
+    const res = await fetch("/api/polls/summaries", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ postIds: chunk }),
+    });
+    if (!res.ok) {
+      if (retries > 0) return fetchSummaryChunk(chunk, retries - 1);
+      return {};
+    }
+    const j = (await res.json()) as { summaries?: Record<number, PollSummary> };
+    return j.summaries ?? {};
+  } catch {
+    // 네트워크 throw → 다른 chunk 를 굶기지 않도록 격리. bounded 재시도 후 빈 결과.
+    if (retries > 0) return fetchSummaryChunk(chunk, retries - 1);
+    return {};
+  }
+}
+
 /** 목록 카드용 poll 요약 배치 조회(인증 불필). hidden/비-poll 은 맵에서 제외된다.
  *  무한스크롤로 100개를 넘게 누적된 poll id 도 100개 단위 chunk 후 merge 해
- *  101번째 이후 카드가 영구 로딩에 멈추지 않게 한다. */
+ *  101번째 이후 카드가 영구 로딩에 멈추지 않게 한다. 각 chunk 는 독립 격리(하나 실패해도
+ *  나머지는 merge). */
 export async function fetchPollSummaries(
   postIds: number[],
 ): Promise<Record<number, PollSummary>> {
   const chunks = chunkSummaryIds(postIds);
   if (chunks.length === 0) return {};
-  const results = await Promise.all(
-    chunks.map(async (chunk) => {
-      const res = await fetch("/api/polls/summaries", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ postIds: chunk }),
-      });
-      if (!res.ok) return {} as Record<number, PollSummary>;
-      const j = (await res.json()) as { summaries?: Record<number, PollSummary> };
-      return j.summaries ?? {};
-    }),
-  );
+  const results = await Promise.all(chunks.map((chunk) => fetchSummaryChunk(chunk)));
   return Object.assign({}, ...results) as Record<number, PollSummary>;
 }
 

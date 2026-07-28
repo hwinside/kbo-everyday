@@ -17,8 +17,10 @@ import "./_smoke-env"; // supabase client 싱글톤(poll-client 트랜지티브 
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import React from "react";
+import React, { act } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { createRoot } from "react-dom/client";
+import { JSDOM } from "jsdom";
 import {
   chunkSummaryIds,
   SUMMARIES_CHUNK,
@@ -140,27 +142,59 @@ async function fetchMockSection() {
     ok("merge 결과 250개 전량", Object.keys(merged).length === 250);
     ok("101번째·250번째 카드까지 누락 없음", !!merged[101] && !!merged[250] && merged[250].voterCount === 250);
 
-    // 개별 chunk 실패(!ok)는 {} 로 merge — 나머지 카드 살림(영구 로딩 방지).
+    // 개별 chunk 가 !ok 로 재시도까지 실패하면 {} 로 merge — 나머지 카드 살림(영구 로딩 방지).
     calls.length = 0;
-    let n = 0;
+    const okAttempts: number[] = [];
     globalThis.fetch = (async (_input: unknown, init?: { body?: string }) => {
-      n++;
       const body = JSON.parse(init?.body ?? "{}") as { postIds: number[] };
-      if (n === 2) return { ok: false, json: async () => ({}) } as Response; // 2번째 chunk 실패
+      const first = body.postIds[0];
+      okAttempts.push(first);
+      // 2번째 chunk(id 101부터)는 재시도 포함 항상 !ok.
+      if (first === 101) return { ok: false, json: async () => ({}) } as Response;
       const summaries: Record<number, PollSummary> = {};
       for (const id of body.postIds)
         summaries[id] = { postId: id, closesAt: "", closed: true, voterCount: 0, optionCount: 0, options: [] };
       return { ok: true, json: async () => ({ summaries }) } as Response;
     }) as typeof fetch;
     const partial = await fetchPollSummaries(Array.from({ length: 150 }, (_, i) => i + 1));
-    ok("1개 chunk 실패해도 나머지 merge(1..100 살아있음)", !!partial[1] && !!partial[100] && !partial[101]);
+    ok("1개 chunk !ok(재시도까지) 제외, 나머지 merge(1..100 살아있음)", !!partial[1] && !!partial[100] && !partial[101]);
+    ok("!ok chunk 도 bounded 재시도(101 두 번), 정상 chunk 는 1회", okAttempts.filter((f) => f === 101).length === 2 && okAttempts.filter((f) => f === 1).length === 1);
+
+    // 삼순 4차 P1 — chunk 1개가 네트워크 throw 해도 Promise.all 전체 reject 안 되고 나머지 카드 살림.
+    // (이전 구현은 throw 가 전체 batch 를 reject 해 모든 카드가 영구 로딩이었음.)
+    calls.length = 0;
+    const attempts: number[] = []; // chunk별 시도 횟수(2번째 chunk 는 throw로 1회 재시도 = 2)
+    globalThis.fetch = (async (_input: unknown, init?: { body?: string }) => {
+      const body = JSON.parse(init?.body ?? "{}") as { postIds: number[] };
+      const first = body.postIds[0];
+      attempts.push(first);
+      // 두 번째 chunk(id 101부터)는 항상 throw → bounded 재시도(1)도 throw → 빈 결과.
+      if (first === 101) throw new TypeError("simulated network failure");
+      const summaries: Record<number, PollSummary> = {};
+      for (const id of body.postIds)
+        summaries[id] = { postId: id, closesAt: "", closed: true, voterCount: id, optionCount: 0, options: [] };
+      return { ok: true, json: async () => ({ summaries }) } as Response;
+    }) as typeof fetch;
+    let threw = false;
+    let throwPartial: Record<number, PollSummary> = {};
+    try {
+      throwPartial = await fetchPollSummaries(Array.from({ length: 250 }, (_, i) => i + 1));
+    } catch {
+      threw = true;
+    }
+    ok("chunk throw 가 전체 reject 로 전파되지 않음(never rejects)", !threw);
+    ok("throw 한 chunk(101~200) 제외, 나머지 chunk(1~100·201~250) merge", !!throwPartial[1] && !!throwPartial[100] && !throwPartial[101] && !!throwPartial[201] && !!throwPartial[250]);
+    ok("실패 chunk 는 bounded 재시도(101 두 번 시도), 정상 chunk 는 1회", attempts.filter((f) => f === 101).length === 2 && attempts.filter((f) => f === 1).length === 1);
   } finally {
     globalThis.fetch = origFetch;
   }
 }
 
-// ---------- 4) 4목록 배선 source guard: poll → summary → PollCardBody ----------
+// ---------- 4) 실제 4페이지 query→renderer 배선 guard (삼순 4차 P1) ----------
+// 이전 가드는 공용 컴포넌트만 읽어 선수 페이지가 poll 을 차단해도 PASS 됐다.
+// 자유·전체글·팀·선수 실제 page 의 query→posts→renderer 연결을 직접 읽어 끊기면 실패하게 한다.
 {
+  // — 공통 컴포넌트 배선 (poll → summary → PollCardBody) —
   const postList = readSrc("components/community/PostList.tsx");
   ok("PostList: fetchPollSummaries import", /import\s*\{[^}]*fetchPollSummaries/.test(postList));
   ok("PostList: fetchPollSummaries(pollIds) 호출", postList.includes("fetchPollSummaries(pollIds)"));
@@ -170,17 +204,37 @@ async function fetchMockSection() {
   );
 
   const postCard = readSrc("components/community/PostCard.tsx");
-  ok("PostCard: PollCardBody import", postCard.includes('import PollCardBody'));
   ok("PostCard: <PollCardBody summary={pollSummary}> 렌더", postCard.includes("<PollCardBody summary={pollSummary}"));
 
   const photoFeed = readSrc("components/community/PhotoFeed.tsx");
-  ok("PhotoFeed: fetchPollSummaries import", /import\s*\{[^}]*fetchPollSummaries/.test(photoFeed));
-  ok("PhotoFeed: PollCardBody import", photoFeed.includes("import PollCardBody"));
-  ok("PhotoFeed: board_type poll 분기", photoFeed.includes('post.board_type === "poll"'));
-  ok("PhotoFeed: fetchPollSummaries(ids) 호출", photoFeed.includes("fetchPollSummaries(ids)"));
-  ok("PhotoFeed: <PollCardBody summary={summary}> 렌더", photoFeed.includes("<PollCardBody summary={summary}"));
+  ok("PhotoFeed: board_type poll 분기 + 전용카드 렌더", photoFeed.includes('post.board_type === "poll"') && photoFeed.includes("<PollCardBody summary={summary}"));
+  ok("PhotoFeed: fetchPollSummaries(ids) 배치 조회", photoFeed.includes("fetchPollSummaries(ids)"));
 
-  // 전체글/팀 피드의 board_type 집합에 'poll' 가 들어가 있어야 PhotoFeed 까지 poll 글이 도달.
+  // — 자유게시판(free): usePosts('poll','poll') 병합 → PostList —
+  const freePage = readSrc("app/(main)/community/free/page.tsx");
+  ok("free page: usePosts('poll','poll') 병합", /usePosts\(\s*["']poll["']\s*,\s*["']poll["']\s*\)/.test(freePage));
+  ok("free page: pollRaw 를 poll 로 병합", /pollRaw\.map\(\(p\) => toPost\(p, "poll"\)\)/.test(freePage));
+  ok("free page: <PostList> 로 렌더", /<PostList\b/.test(freePage));
+
+  // — 선수 페이지(player): player_tags cross-board → PhotoFeed. poll 을 배제하면 실패 —
+  const playerPage = readSrc("app/(main)/community/players/[playerId]/page.tsx");
+  ok("player page: player_tags contains cross-board query", playerPage.includes('.contains("player_tags"'));
+  // cross-board tag query 는 board_type='player' 반복만 제외 — poll 을 따로 막으면(예: .neq("board_type","poll"))
+  // 이 guard 가 즉시 실패해야 한다(삼순 독립 mutation 재현 커버).
+  ok(
+    "player page: poll 을 배제하는 board_type 필터 없음",
+    !/\.neq\(\s*["']board_type["']\s*,\s*["']poll["']\s*\)/.test(playerPage) &&
+      !/\.eq\(\s*["']board_type["']\s*,\s*["']player["']\s*\)[\s\S]{0,400}contains\("player_tags"/.test(playerPage),
+  );
+  ok("player page: <PhotoFeed> 로 렌더", /<PhotoFeed\b/.test(playerPage));
+
+  // — 전체글(all)·팀(team): useUnifiedFeed → PhotoFeed —
+  const allPage = readSrc("app/(main)/community/all-posts/page.tsx");
+  ok("all-posts page: useUnifiedFeed({kind:'all'}) → <PhotoFeed>", /useUnifiedFeed\(\s*\{\s*kind:\s*"all"/.test(allPage) && /<PhotoFeed\b/.test(allPage));
+  const teamPage = readSrc("app/(main)/community/teams/[teamId]/page.tsx");
+  ok("team page: useUnifiedFeed({kind:'team'}) → <PhotoFeed>", /useUnifiedFeed\(\s*\{\s*kind:\s*"team"/.test(teamPage) && /<PhotoFeed\b/.test(teamPage));
+
+  // useUnifiedFeed all 분기 board_type 집합에 poll 포함(전체글 도달성). 끊기면 실패.
   const unified = readSrc("lib/supabase/useUnifiedFeed.ts");
   ok(
     "useUnifiedFeed: 전체글 board_type 집합에 poll 포함",
@@ -240,9 +294,61 @@ function renderBadge(summary: PollSummary): string {
   );
 }
 
+// ---------- 6) 배지 effect 실행 회귀 (jsdom mount + act) — 삼순 4차 P1 ----------
+// SSR 정적 렌더만으론 boundaryClosed→배지 연결을 끊어도 PASS 되는 false-green 해소.
+// 지난 closesAt poll 을 실제 mount 해 effect/0ms timer 후 '진행중→마감' 전환을 실행 검증.
+async function badgeEffectSection() {
+  const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost/" });
+  const g = globalThis as unknown as Record<string, unknown>;
+  const restore = {
+    window: g.window,
+    document: g.document,
+    navigator: g.navigator,
+    act: g.IS_REACT_ACT_ENVIRONMENT,
+  };
+  g.IS_REACT_ACT_ENVIRONMENT = true;
+  g.window = dom.window;
+  g.document = dom.window.document;
+  if (!("navigator" in g) || !g.navigator) g.navigator = dom.window.navigator;
+
+  // 각 poll 은 독립 container/root 에 마운트(컴포넌트 state 블리딩 방지 — 실제로도 카드는 post별 독립 인스턴스).
+  async function mountBadge(summary: PollSummary): Promise<string> {
+    const c = dom.window.document.createElement("div");
+    dom.window.document.body.appendChild(c);
+    const r = createRoot(c);
+    await act(async () => {
+      r.render(React.createElement(PollCardBody, { summary }));
+    });
+    await act(async () => {
+      await new Promise((res) => setTimeout(res, 20)); // effect + 0ms boundary timer flush
+    });
+    const text = c.textContent ?? "";
+    await act(async () => {
+      r.unmount();
+    });
+    return text;
+  }
+  try {
+    // closed=false + closesAt 과거 → effect/0ms timer 후 '마감'. boundaryClosed→배지 연결을 끊으면 '진행중'으로 남아 실패.
+    const pastText = await mountBadge(badgeSummary(false, -1000));
+    ok("past closesAt effect 후 → '마감' 전환(boundaryClosed→배지 실배선)", pastText.includes("마감") && !pastText.includes("진행중"));
+
+    // 동일하게 closed=false 이지만 closesAt 미래 → effect 후에도 '진행중'(경계 미도달). 둘의 차이는 closesAt 뿐.
+    const futureText = await mountBadge(badgeSummary(false, 3600_000));
+    ok("미래 마감 poll 은 effect 후에도 '진행중' 유지", futureText.includes("진행중") && !futureText.includes("마감"));
+  } finally {
+    // 글로벌 복원(다른 섹션이 jsdom 상태에 오염되지 않게).
+    if (restore.window === undefined) delete g.window; else g.window = restore.window;
+    if (restore.document === undefined) delete g.document; else g.document = restore.document;
+    if (restore.navigator === undefined) delete g.navigator; else g.navigator = restore.navigator;
+    if (restore.act === undefined) delete g.IS_REACT_ACT_ENVIRONMENT; else g.IS_REACT_ACT_ENVIRONMENT = restore.act;
+  }
+}
+
 // fetch mock 섹션은 비동기 → top-level await 대신 async IIFE(스크립트 런너 cjs 호환).
 void (async () => {
   await fetchMockSection();
+  await badgeEffectSection();
   console.log(`\npoll card smoke: ${pass} PASS${fail ? `, ${fail} FAIL` : ""}`);
   if (fail) process.exit(1);
 })();

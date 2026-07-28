@@ -38,9 +38,11 @@ export default function PostList({ posts, playerLabels, sourceLabels }: PostList
   useEffect(() => {
     if (pollIds.length === 0) return; // 남은 요약은 메모리에만 잔존(poll 아닌 글은 조회 안 함)
     let alive = true;
-    fetchPollSummaries(pollIds).then((s) => {
-      if (alive) setPollSummaries(s);
-    });
+    fetchPollSummaries(pollIds)
+      .then((s) => {
+        if (alive) setPollSummaries((prev) => ({ ...prev, ...s })); // 부분 결과도 누적 merge(실패 chunk 카드만 로딩)
+      })
+      .catch(() => {}); // fetchPollSummaries 는 chunk별 격리로 reject 안 하지만 방어적 catch
     return () => {
       alive = false;
     };
