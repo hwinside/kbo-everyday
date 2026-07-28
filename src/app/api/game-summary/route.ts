@@ -11,6 +11,7 @@ import {
   type GameLinescore,
 } from "@/lib/crawler/kbo-api";
 import { fetchNaverLinescore, hasInningBreakdown } from "@/lib/crawler/naver-record";
+import { trackFallback } from "@/lib/monitoring/api-fallback-tracker";
 import { STANDINGS_ACCURACY_RULES, STANDINGS_UNAVAILABLE_RULES } from "@/lib/ai/standings-guard";
 import { computeSeriesSnapshot, serializeSeriesSnapshot } from "@/lib/series/snapshot";
 import { loserClaimedWin } from "@/lib/game-summary/winner-check";
@@ -121,9 +122,21 @@ async function fetchCanonicalSummarySource(gameId: string, includeBoxScore: bool
     // scoreBoard로 이닝표를 fallback한다(스코어 R 교차검증은 canonicalGate가 그대로 수행).
     let linescore = kboLinescore;
     if (game?.status === "final" && !hasInningBreakdown(linescore)) {
+      // KBO GetScoreBoard 이닝표 열화(2026-07-28 종료경기 AI요약 전면 중단 사고) 실시간 감지.
+      // fallback 이벤트를 기존 api_fallback_events 인프라에 기록 → 5분 내 임계치 초과 시
+      // 텔레그램 자동 경보 + 일일 리포트 반영. 다음 열화를 유저 제보 전에 알기 위한 배선이다.
+      // 경보는 best-effort — 요약 생성 지연/실패에 절대 영향 주지 않도록 fire-and-forget.
       const naver = await fetchNaverLinescore(gameId);
       if (naver) {
         linescore = { status: "final", away: naver.away, home: naver.home };
+        void trackFallback("kbo-scoreboard-linescore", "schema-error", {
+          errorMessage: `${gameId}: KBO 이닝표 결측 → Naver record fallback 성공`,
+        }).catch(() => {});
+      } else {
+        // Naver 우회로도 이닝표를 못 줌 = 전면장애 재발 + 백업 소스 소실 → 사람 개입 신호.
+        void trackFallback("kbo-scoreboard-linescore", "schema-error", {
+          errorMessage: `${gameId}: KBO 이닝표 결측 + Naver fallback 실패 → canonical-not-settled 예상`,
+        }).catch(() => {});
       }
     }
     const gate = canonicalGate(game, linescore);
