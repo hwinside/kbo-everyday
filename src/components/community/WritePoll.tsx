@@ -490,6 +490,7 @@ export default function WritePoll({ isOpen, onClose, onCreated }: WritePollProps
         players={[]}
         onSelect={addPlayer}
         overlayZClassName="z-[10002]"
+        title="어느 선수를 추가할까요?"
       />
     </AnimatePresence>
   );
