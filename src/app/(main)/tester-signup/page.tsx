@@ -130,7 +130,7 @@ export default function TesterSignupPage() {
 
   const header = (
     <div className="sticky top-0 z-30 -mx-5 border-b border-border bg-bg-primary px-5" style={{ paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
-    <div className="mb-6 flex items-center gap-3">
+    <div className="min-h-[44px] flex items-center gap-3">
       <button onClick={goBack} aria-label="뒤로가기" className="flex h-11 w-11 items-center justify-center -ml-2.5 text-text-secondary">
         <ArrowLeft size={22} />
       </button>
@@ -145,7 +145,7 @@ export default function TesterSignupPage() {
   // 플랫폼 판정 전 또는 인증 로딩 중
   if (eligible === null || authLoading || (user && checking)) {
     return (
-      <div className="min-h-screen px-5 pt-4 pb-24">
+      <div className="min-h-screen px-5 pb-24">
         {header}
         <div className="mt-20 flex justify-center">
           <Loader2 className="animate-spin text-text-tertiary" size={24} />
@@ -157,7 +157,7 @@ export default function TesterSignupPage() {
   // 안드로이드 모바일웹이 아닌 경우 — iOS/데스크톱/앱 접근 차단
   if (!eligible) {
     return (
-      <div className="min-h-screen px-5 pt-4 pb-24">
+      <div className="min-h-screen px-5 pb-24">
         {header}
         <div className="mt-16 flex flex-col items-center gap-3 text-center">
           <Smartphone size={40} className="text-text-tertiary" />
@@ -176,7 +176,7 @@ export default function TesterSignupPage() {
 
   if (!user) {
     return (
-      <div className="min-h-screen px-5 pt-4 pb-24">
+      <div className="min-h-screen px-5 pb-24">
         {header}
         <div className="mt-16 space-y-4 text-center">
           <p className="text-sm text-text-secondary">테스터 신청은 로그인 후 가능해요.</p>
@@ -194,7 +194,7 @@ export default function TesterSignupPage() {
 
   if (done) {
     return (
-      <div className="min-h-screen px-5 pt-4 pb-24">
+      <div className="min-h-screen px-5 pb-24">
         {header}
         <div className="mt-16 flex flex-col items-center gap-4 text-center">
           <CheckCircle2 size={48} className="text-green-400" />
@@ -218,7 +218,7 @@ export default function TesterSignupPage() {
   }
 
   return (
-    <div className="min-h-screen px-5 pt-4 pb-24">
+    <div className="min-h-screen px-5 pb-24">
       {header}
       <div className="space-y-5">
         <div className="rounded-2xl bg-bg-secondary p-5">

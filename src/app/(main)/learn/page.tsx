@@ -102,7 +102,7 @@ export default function LearnPage() {
   return (
     <div className="min-h-screen bg-bg-primary pb-24">
       <div className="sticky top-0 z-30 border-b border-border bg-bg-primary" style={{ paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
-      <header className="px-5 py-2">
+      <header className="px-5 min-h-[44px] flex items-center">
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
             {selectedChapter ? (

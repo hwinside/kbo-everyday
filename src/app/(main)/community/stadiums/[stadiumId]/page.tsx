@@ -103,7 +103,7 @@ export default function StadiumDetailPage() {
     <div className="min-h-screen bg-bg-primary pb-24">
       {/* Sticky Header */}
       <div className="sticky top-0 z-30 border-b bg-bg-primary" style={{ borderColor: primaryTeam?.colorPrimary ? getTeamBorderColor(primaryTeam.colorPrimary, primaryTeam.colorLight) : undefined }}>
-        <div className="flex items-center gap-3 px-4 py-3">
+        <div className="flex items-center gap-3 px-4 min-h-[44px]">
           <button onClick={() => router.back()}>
             <ChevronLeft size={24} className="text-text-secondary" />
           </button>
@@ -161,7 +161,7 @@ export default function StadiumDetailPage() {
         className="sticky top-0 z-20 bg-bg-primary/95 backdrop-blur-xl border-b"
         style={{ paddingTop: "env(safe-area-inset-top, 0px)", borderColor: primaryTeam?.colorPrimary ? getTeamBorderColor(primaryTeam.colorPrimary, primaryTeam.colorLight) : 'var(--color-border)' }}
       >
-        <div className="mx-auto max-w-lg px-5 py-3 flex items-center gap-2 overflow-x-auto hide-scrollbar">
+        <div className="mx-auto max-w-lg px-5 min-h-[44px] flex items-center gap-2 overflow-x-auto hide-scrollbar">
           <SectionChip
             active={active === "info"}
             onClick={() => setActive("info")}

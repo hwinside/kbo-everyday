@@ -103,7 +103,7 @@ export default function LeaderboardPage() {
     <div className="min-h-screen bg-[#0A0A0B] text-white pb-24">
       {/* Header */}
       <div className="sticky top-0 z-10 bg-[#0A0A0B]/90 backdrop-blur border-b border-white/10">
-        <div className="max-w-screen-sm mx-auto px-5 py-2 flex items-center gap-3">
+        <div className="max-w-screen-sm mx-auto px-5 min-h-[44px] flex items-center gap-3">
           <button
             onClick={() => router.back()}
             className="p-1 -ml-1"

@@ -92,7 +92,7 @@ export default function EventInvitePage() {
   return (
     <div className="min-h-screen text-gray-900 dark:text-white">
       <div className="sticky top-0 z-30 border-b border-border bg-bg-primary" style={{ paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
-      <div className="max-w-screen-sm mx-auto px-5 py-4 flex items-center gap-2">
+      <div className="max-w-screen-sm mx-auto px-5 min-h-[44px] flex items-center gap-2">
         <button
           onClick={goBack}
           className="p-2 -ml-2 rounded-lg hover:bg-gray-900/5 dark:bg-white/5"
