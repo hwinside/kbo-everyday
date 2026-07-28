@@ -439,39 +439,39 @@ export default function VenueDiaryCard() {
             </button>
           ) : data && summary ? (
             <>
-              {/* GPS 인증 요약 카드 */}
+              {/* GPS 인증 요약 카드 — 3열(인증 직관 / 승률 / 다이어리) + 승·패·무 보조줄 */}
               <div className="mt-3.5 rounded-2xl border border-[#33202a] bg-gradient-to-br from-[#20141b] to-[#141417] p-4">
                 <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-1 text-[11px] font-extrabold text-emerald-400">
                   ✓ GPS 인증 직관
                 </span>
-                <div className="mt-3.5 flex items-end gap-5">
-                  <div>
-                    <p className="text-3xl font-extrabold tracking-tight text-text-primary">
+                <div className="mt-3.5 grid grid-cols-3 gap-2">
+                  <div className="min-w-0">
+                    <p className="whitespace-nowrap text-2xl font-extrabold tracking-tight text-text-primary">
                       {summary.attendanceCount}
                     </p>
-                    <p className="text-[11px] font-semibold text-text-tertiary">인증 직관</p>
+                    <p className="mt-0.5 text-[11px] font-semibold text-text-tertiary">인증 직관</p>
                   </div>
-                  <div>
-                    <p className="text-3xl font-extrabold tracking-tight text-amber-400">
+                  <div className="min-w-0">
+                    <p className="whitespace-nowrap text-2xl font-extrabold tracking-tight text-amber-400">
                       {summary.winRate == null ? "–" : `${(summary.winRate * 100).toFixed(1)}%`}
                     </p>
-                    <p className="text-[11px] font-semibold text-text-tertiary">승률</p>
+                    <p className="mt-0.5 text-[11px] font-semibold text-text-tertiary">승률</p>
+                  </div>
+                  <div className="min-w-0">
+                    <p className="whitespace-nowrap text-2xl font-extrabold tracking-tight text-text-primary">
+                      {data.diaryGameCount}
+                    </p>
+                    <p className="mt-0.5 text-[11px] font-semibold text-text-tertiary">다이어리</p>
                   </div>
                 </div>
-                <div className="mt-3 flex gap-3 border-t border-[#2c1f27] pt-3 text-[13px] font-bold">
-                  <span className="text-blue-400">{summary.wins}승</span>
-                  <span className="text-accent">{summary.losses}패</span>
-                  <span className="text-text-secondary">{summary.draws}무</span>
-                </div>
-
-                {/* 다이어리 기록 경기수(직접 추가 포함) — GPS 카드 하단에 병합 */}
                 <div className="mt-3 flex items-center justify-between gap-2 border-t border-[#2c1f27] pt-3">
-                  <span className="min-w-0 text-[12.5px] text-text-secondary">
-                    📔 다이어리 기록{" "}
-                    <span className="text-text-tertiary">· 직접 추가 포함</span>
-                  </span>
-                  <span className="shrink-0 whitespace-nowrap text-[15px] font-extrabold text-text-primary">
-                    {data.diaryGameCount}경기
+                  <div className="flex gap-3 text-[13px] font-bold">
+                    <span className="text-blue-400">{summary.wins}승</span>
+                    <span className="text-accent">{summary.losses}패</span>
+                    <span className="text-text-secondary">{summary.draws}무</span>
+                  </div>
+                  <span className="shrink-0 whitespace-nowrap text-[11px] text-text-tertiary">
+                    다이어리 · 직접 추가 포함
                   </span>
                 </div>
               </div>
