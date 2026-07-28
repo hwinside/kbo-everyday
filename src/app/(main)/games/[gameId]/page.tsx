@@ -29,6 +29,7 @@ import type { LineupEntry } from "@/lib/hooks/useGameDetail";
 import { deriveGameState } from "@/lib/utils/game-derived";
 import { shouldKeepCancelledGameChat } from "@/lib/game-chat-visibility";
 import GameDetailHeader from "@/components/game/GameDetailHeader";
+import BroadcastBadges from "@/components/game/BroadcastBadges";
 import LiveActivityUpdateNudge from "@/components/game/LiveActivityUpdateNudge";
 import NonLiveScoreDisplay from "@/components/game/NonLiveScoreDisplay";
 import ScoreBar from "@/components/game/ScoreBar";
@@ -386,17 +387,17 @@ export default function GameDetailPage() {
     || hasBoxScoreData
   );
 
+  const matchupTitle = `${awayTeam.shortName} vs ${homeTeam.shortName}`;
+
   return (
+    <div className="min-h-[100dvh] bg-bg-primary max-w-[640px] mx-auto w-full">
+      {/* 헤더는 스크롤 컨테이너(PullToRefresh) 밖 page-root에 두어 sticky top-0가 페이지 스크롤 기준으로 고정되게 한다 */}
+      <GameDetailHeader title={matchupTitle} />
+
     <PullToRefresh
       onRefresh={handleRefresh}
-      className="flex flex-col min-h-[100dvh] bg-bg-primary overflow-y-auto pb-[104px] max-w-[640px] mx-auto w-full"
+      className="flex flex-col pb-[104px]"
     >
-      <GameDetailHeader
-        status={d.derivedStatus}
-        time={gameDetail?.meta?.startTime || liveGame?.time || game.time}
-        stadium={gameDetail?.meta?.stadium || liveGame?.stadium || game.stadium}
-        broadcastChannels={gameDetail?.meta?.broadcastChannels}
-      />
 
       {d.derivedStatus === "cancelled" ? (
         <div className="px-5 py-5">
@@ -420,6 +421,25 @@ export default function GameDetailPage() {
           awayScore={d.awayScore}
           homeScore={d.homeScore}
         />
+      )}
+
+      {/* 헤더에서 내린 경기 정보줄: 상태(예정/경기 중/종료)·예정 시간·중계 방송사·구장 */}
+      {d.derivedStatus !== "cancelled" && (
+        <div className="flex w-full flex-wrap items-center justify-center gap-x-2 gap-y-1 px-5 pt-1.5 pb-1 text-[13px] text-text-tertiary">
+          {d.derivedStatus === "scheduled" ? (
+            <>
+              {(gameDetail?.meta?.startTime || liveGame?.time || game.time) && (
+                <span>{gameDetail?.meta?.startTime || liveGame?.time || game.time} 예정</span>
+              )}
+              <BroadcastBadges channels={gameDetail?.meta?.broadcastChannels} />
+            </>
+          ) : (
+            <span>{d.derivedStatus === "live" ? "경기 중" : "경기 종료"}</span>
+          )}
+          {(gameDetail?.meta?.stadium || liveGame?.stadium || game.stadium) && (
+            <span>{gameDetail?.meta?.stadium || liveGame?.stadium || game.stadium}</span>
+          )}
+        </div>
       )}
 
       {/* ② 구버전(채널 미지원) iOS 앱 업데이트 녋지 — 라이브 맥락·세션당 1회(LA gap 감축). */}
@@ -687,5 +707,6 @@ export default function GameDetailPage() {
       {/* Celebration overlay (homerun etc.) */}
       <CelebrationOverlay event={celebration} onDone={dismiss} />
     </PullToRefresh>
+    </div>
   );
 }

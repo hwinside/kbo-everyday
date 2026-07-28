@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useSafeBack } from "@/lib/hooks/useSafeBack";
 import { ChevronLeft, Trophy } from "lucide-react";
 import { clsx } from "clsx";
 import GlassCard from "@/components/ui/GlassCard";
@@ -102,7 +102,7 @@ async function getAuthHeaders(): Promise<Record<string, string>> {
 }
 
 export default function HallOfFamePage() {
-  const router = useRouter();
+  const goBack = useSafeBack("/my");
   const { user, profile } = useAuth();
   const months = monthRange();
 
@@ -212,17 +212,19 @@ export default function HallOfFamePage() {
     <div className="mx-auto max-w-lg px-5 pb-24">
       {/* Header */}
       <div
-        className="border-b -mx-5 px-5"
+        className="sticky top-0 z-30 border-b -mx-5 px-5 bg-bg-primary"
         style={{
           borderColor: profile?.team_id
             ? getTeamBorderColorById(profile.team_id)
             : "var(--color-border)",
+          paddingTop: "env(safe-area-inset-top, 0px)",
+          marginTop: "calc(env(safe-area-inset-top, 0px) * -1)",
         }}
       >
-        <header className="py-3 flex items-center gap-3">
+        <header className="min-h-[44px] flex items-center gap-3">
           <button
-            onClick={() => router.back()}
-            className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors"
+            onClick={goBack}
+            className="flex h-11 w-11 items-center justify-center rounded-full text-text-secondary hover:bg-bg-tertiary transition-colors -ml-2.5"
             aria-label="뒤로"
           >
             <ChevronLeft size={24} />

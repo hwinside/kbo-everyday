@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ExternalLink, ChevronLeft, Images } from "lucide-react";
+import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
 import { getTeamBySlug } from "@/lib/constants/teams";
 import GlassCard from "@/components/ui/GlassCard";
 import { useNewsPhotoFilter } from "@/hooks/useNewsPhotoFilter";
@@ -60,28 +61,33 @@ export default function TeamNewsPage() {
 
   return (
     <div className="mx-auto max-w-lg pb-24">
-      <header className="flex items-center gap-2 px-5 py-4">
-        <button onClick={() => { if (window.history.length > 1) router.back(); else router.push(`/teams/${teamSlug}`); }} className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors">
+      <div className="sticky top-0 z-30 border-b border-border bg-bg-primary" style={{ paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
+      <header className="flex items-center gap-2 px-5 min-h-[44px]">
+        <button onClick={() => { if (window.history.length > 1) router.back(); else router.push(`/teams/${teamSlug}`); }} aria-label="뒤로가기" className="flex h-11 w-11 items-center justify-center rounded-full text-text-secondary hover:bg-bg-tertiary transition-colors">
           <ChevronLeft size={24} />
         </button>
-        <h1 className="text-lg font-bold text-text-primary">
+        <h1 className="truncate text-lg font-bold text-text-primary flex-1">
           {team.shortName} 뉴스
         </h1>
-        {/* 사진기사 숨김 토글 — 마이페이지 '뉴스 설정'과 동일 상태 공유 (발견성 보강) */}
-        <button
-          onClick={() => setPhotoFilterEnabled(!photoFilterOn)}
-          className={`ml-auto flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
-            photoFilterOn ? "bg-accent text-white" : "bg-bg-tertiary text-text-secondary"
-          }`}
-          aria-pressed={photoFilterOn}
-          aria-label={`사진기사 ${photoFilterOn ? "표시" : "숨기기"}`}
-        >
-          <Images size={14} />
-          사진기사 {photoFilterOn ? "숨김" : "표시"}
-        </button>
+        <HeaderProfileLink />
       </header>
+      </div>
 
       <div className="px-5">
+        {/* 사진기사 숨김 토글 — 헤더에서 바디로 이동. 마이페이지 '뉴스 설정'과 동일 상태 공유 */}
+        <div className="flex justify-end pt-3">
+          <button
+            onClick={() => setPhotoFilterEnabled(!photoFilterOn)}
+            className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+              photoFilterOn ? "bg-accent text-white" : "bg-bg-tertiary text-text-secondary"
+            }`}
+            aria-pressed={photoFilterOn}
+            aria-label={`사진기사 ${photoFilterOn ? "표시" : "숨기기"}`}
+          >
+            <Images size={14} />
+            사진기사 {photoFilterOn ? "숨김" : "표시"}
+          </button>
+        </div>
         {loading ? (
           <div className="py-20 text-center text-sm text-text-tertiary">
             로딩 중...
