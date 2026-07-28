@@ -68,6 +68,13 @@ export default function PollCardBody({ summary }: { summary: PollSummary }) {
   useEffect(() => {
     if (summary.closed || boundaryClosed) return;
     // 렌더 중 Date.now 호출 없이 effect 안에서만 경계 판정(순수 함수 재사용). 동기 setState 대신 타이머.
+    // 마운트 시점에 이미 마감 경계를 넘겼으면(목록을 오래 열어둔 뒤 진입 등)
+    // isPollEffectiveClosed 로 바로 마감 전환 — 배지가 진행중으로 stale 하게 남지 않게 한다.
+    // (동기 setState 대신 0ms 타이머로 예약해 cascading render 회피.)
+    if (isPollEffectiveClosed(summary, Date.now())) {
+      const t0 = setTimeout(() => setBoundaryClosed(true), 0);
+      return () => clearTimeout(t0);
+    }
     const plan = pollBoundaryTimer(summary, Date.now());
     if (plan.kind === "closed") return;
     if (plan.kind === "hop") {
