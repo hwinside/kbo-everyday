@@ -12,6 +12,8 @@
 
 import {
   extractInstagramImageUrls,
+  extractInstagramImageUrlsFromSrcset,
+  mergeInstagramImageSlides,
   extractInstagramVideoUrls,
   extractThreadsImageUrls,
   extractMlbparkImageUrls,
@@ -166,6 +168,157 @@ check(
   inferMediaExt("application/octet-stream", "https://x.com/a.webp?q=1") === "webp",
 );
 check("content-type image/jpeg → jpg (회귀)", inferMediaExt("image/jpeg", "https://x.com/a") === "jpg");
+
+// ── extractInstagramImageUrlsFromSrcset: 원본 비율(non-square-crop) 우선 추출 (하린아빠 제보 2026-07-28) ──
+
+// 13) 실 IG embed srcset 구조: 원본 비율(tt6/pNxN)과 정사각 크롭(stp=c0..._sNxN) 혼재 →
+//     정사각 크롭 제외 + 폭 1080 이하 최대(=1080 pad) 선택. 640 정사각 crop을 집지 않는 것이 핵심.
+{
+  const base = "https://scontent-icn2-1.cdninstagram.com/v/t51.82787-15/758289230_n.jpg";
+  const html =
+    `<img class="EmbeddedMediaImage" alt="Instagram post" ` +
+    `src="${base}?stp=dst-jpg_e35_tt6&amp;oe=1" ` +
+    `srcset="${base}?stp=dst-jpg_e35_tt6&amp;oe=1 2592w,` +
+    `${base}?stp=dst-jpg_e35_p1080x1080_tt6&amp;oe=2 1080w,` +
+    `${base}?stp=dst-jpg_e35_p640x640_tt6&amp;oe=3 640w,` +
+    `${base}?stp=c0.259.2592.2592a_dst-jpg_e35_s1080x1080_tt6&amp;oe=4 1080w,` +
+    `${base}?stp=c0.259.2592.2592a_dst-jpg_e35_s640x640_sh2.08_tt6&amp;oe=5 640w" />`;
+  const r = extractInstagramImageUrlsFromSrcset(html, 5);
+  check(
+    "IG srcset: 정사각 크롭(c0..) 제외 + 1080 이하 최대(1080 pad) 선택 + &amp; 디코드",
+    r.length === 1 &&
+      r[0].type === "image" &&
+      r[0].url === `${base}?stp=dst-jpg_e35_p1080x1080_tt6&oe=2`,
+    `got ${JSON.stringify(r)}`,
+  );
+}
+
+// 14) 원본 비율 변형이 전부 1080 초과(2592만)면 그거라도 — 정사각 크롭보다 원본 비율 우선.
+{
+  const base = "https://scontent.cdninstagram.com/v/t51.82787-15/x_n.jpg";
+  const html =
+    `<img class="EmbeddedMediaImage" srcset="${base}?stp=dst-jpg_e35_tt6&amp;oe=1 2592w,` +
+    `${base}?stp=c0.0.2592.2592a_dst-jpg_s640x640&amp;oe=2 640w" />`;
+  const r = extractInstagramImageUrlsFromSrcset(html, 5);
+  check(
+    "IG srcset: 원본 비율이 2592만 있으면(1080 이하 없음) 2592 선택 (정사각 640 배제)",
+    r.length === 1 && r[0].url === `${base}?stp=dst-jpg_e35_tt6&oe=1`,
+    `got ${JSON.stringify(r)}`,
+  );
+}
+
+// 15) 아바타(t51.*-19) srcset은 제외.
+{
+  const html =
+    `<img class="EmbeddedMediaImage" srcset="https://scontent.cdninstagram.com/v/t51.82787-19/avatar_n.jpg?stp=dst-jpg_s150x150&amp;oe=1 150w" />`;
+  check(
+    "IG srcset: 프로필 아바타(t51.*-19) 제외 → 빈 배열",
+    extractInstagramImageUrlsFromSrcset(html, 5).length === 0,
+    `got ${JSON.stringify(extractInstagramImageUrlsFromSrcset(html, 5))}`,
+  );
+}
+
+// 16) 모든 변형이 정사각 크롭뿐이면 → 원본 비율 후보 0 → 빈 배열(호출부가 display_url 폴백).
+{
+  const base = "https://scontent.cdninstagram.com/v/t51.82787-15/y_n.jpg";
+  const html =
+    `<img class="EmbeddedMediaImage" srcset="${base}?stp=c0.0.1080.1080a_dst-jpg_s1080x1080&amp;oe=1 1080w,` +
+    `${base}?stp=c0.0.1080.1080a_dst-jpg_s640x640&amp;oe=2 640w" />`;
+  check(
+    "IG srcset: 정사각 크롭만 있으면 빈 배열 (display_url 폴백 위임)",
+    extractInstagramImageUrlsFromSrcset(html, 5).length === 0,
+    `got ${JSON.stringify(extractInstagramImageUrlsFromSrcset(html, 5))}`,
+  );
+}
+
+// 17) non-Meta 호스트 srcset 제외.
+{
+  const html = `<img srcset="https://example.com/a.jpg 1080w" />`;
+  check(
+    "IG srcset: 비-Meta 호스트 제외 → 빈 배열",
+    extractInstagramImageUrlsFromSrcset(html, 5).length === 0,
+  );
+}
+
+// 18) max=0이면 빈 배열.
+{
+  const html = `<img class="EmbeddedMediaImage" srcset="https://scontent.cdninstagram.com/v/t51.82787-15/z_n.jpg?stp=dst-jpg_e35_tt6 2592w" />`;
+  check("IG srcset: max=0이면 빈 배열", extractInstagramImageUrlsFromSrcset(html, 0).length === 0);
+}
+
+// 19) srcset은 있지만 EmbeddedMediaImage 클래스가 아닌 img(embed 하단 다른 게시물 썸네일) → 제외.
+{
+  const base = "https://scontent.cdninstagram.com/v/t51.82787-15/other_post_n.jpg";
+  const html =
+    `<img class="EmbeddedMediaImage" srcset="${base}?stp=dst-jpg_e35_p1080x1080_tt6&amp;oe=1 1080w" />` +
+    `<img class="SomeFooterThumb" srcset="https://scontent.cdninstagram.com/v/t51.82787-15/footer_n.jpg?stp=dst-jpg_e35_p240x240_tt6&amp;oe=2 240w" />`;
+  const r = extractInstagramImageUrlsFromSrcset(html, 5);
+  check(
+    "IG srcset: EmbeddedMediaImage만 수집(하단 다른 게시물 썸네일 오염 차단)",
+    r.length === 1 && r[0].url.includes("other_post_n.jpg") && !r.some((x) => x.url.includes("footer_n")),
+    `got ${JSON.stringify(r)}`,
+  );
+}
+
+// ── mergeInstagramImageSlides: publisher 조합 경로 (캐러셀 slide 보존 + cover만 원본비율 교체) — 삼순 NO-GO 반영 ──
+
+const img = (u: string): { url: string; type: "image" } => ({ url: u, type: "image" });
+
+// 20) 캐러셀 cover+2 slides(display_url 3장) + srcset cover 1장 → 3장 유지, [0]만 원본비율 cover로 교체.
+{
+  const display = [img("https://ig/cover_sq.jpg"), img("https://ig/slide2.jpg"), img("https://ig/slide3.jpg")];
+  const cover = [img("https://ig/cover_full_p1080.jpg")];
+  const r = mergeInstagramImageSlides(display, cover, 5);
+  check(
+    "merge: 캐러셀 3장 보존 + cover만 원본비율로 교체 (회귀 방지)",
+    r.length === 3 &&
+      r[0].url === "https://ig/cover_full_p1080.jpg" &&
+      r[1].url === "https://ig/slide2.jpg" &&
+      r[2].url === "https://ig/slide3.jpg",
+    `got ${JSON.stringify(r)}`,
+  );
+}
+
+// 21) display_url 없음(단일글·embed 포맷 변경) + srcset cover 1장 → srcset만 1장.
+{
+  const r = mergeInstagramImageSlides([], [img("https://ig/cover_full.jpg")], 5);
+  check(
+    "merge: display_url 없으면 srcset cover만 (제보된 단일글 케이스)",
+    r.length === 1 && r[0].url === "https://ig/cover_full.jpg",
+    `got ${JSON.stringify(r)}`,
+  );
+}
+
+// 22) display_url 있고 srcset 0장(embed 마크업 변경) → display_url 그대로 (기존 동작 회귀 없음).
+{
+  const display = [img("https://ig/a.jpg"), img("https://ig/b.jpg")];
+  const r = mergeInstagramImageSlides(display, [], 5);
+  check(
+    "merge: srcset 0장이면 display_url 그대로 (폴백, 기존 계약 유지)",
+    r.length === 2 && r[0].url === "https://ig/a.jpg" && r[1].url === "https://ig/b.jpg",
+    `got ${JSON.stringify(r)}`,
+  );
+}
+
+// 23) max cap: display_url 6장 + srcset cover → 5장(MAX), [0] 교체.
+{
+  const display = [1, 2, 3, 4, 5, 6].map((n) => img(`https://ig/s${n}.jpg`));
+  const r = mergeInstagramImageSlides(display, [img("https://ig/cover.jpg")], 5);
+  check(
+    "merge: display_url 6장 → max=5 cap + cover 교체",
+    r.length === 5 && r[0].url === "https://ig/cover.jpg" && r[4].url === "https://ig/s5.jpg",
+    `got ${JSON.stringify(r)}`,
+  );
+}
+
+// 24) 둘 다 비어 있으면 빈 배열 / max=0 가드.
+{
+  check("merge: 둘 다 비어있으면 빈 배열", mergeInstagramImageSlides([], [], 5).length === 0);
+  check(
+    "merge: max=0이면 빈 배열",
+    mergeInstagramImageSlides([img("https://ig/a.jpg")], [img("https://ig/c.jpg")], 0).length === 0,
+  );
+}
 
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);
