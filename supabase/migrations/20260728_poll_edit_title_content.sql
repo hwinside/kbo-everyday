@@ -55,6 +55,9 @@ BEGIN
     RETURN NEW; -- poll_polls 행 없음 → 비-poll 글 → 통과
   END IF;
 
+  -- 여기부터는 poll 글의 UPDATE(poll_polls 행 존재). 첫 투표 여부와 무관하게
+  -- "질문·설명만 수정" 계약을 전 생애주기에 강제한다(삼순 지적: pre-vote 비텍스트 개방 차단).
+
   -- (a) poll 글의 title/content 유효성을 DB 에서 강제(서버 route 우회 방어).
   --     생성 계약(create_poll)과 동일하게 질문 필수 + 길이 상한.
   IF NEW.title IS NULL OR btrim(NEW.title) = '' THEN
@@ -70,20 +73,30 @@ BEGIN
       USING ERRCODE = 'check_violation';
   END IF;
 
-  -- (b) 첫 투표 후 잠금: 작성자 제어 필드 중 title/content 만 수정 허용.
-  --     board_type/board_id/team_tags/player_tags(선지 파생) + content_type/image_urls/
-  --     video_urls/seat_info 를 전부 불변화(voted poll 무결성). 본 목록 밖 컬럼
-  --     (운영 카운터·블라인드·updated_at 등)은 허용.
-  IF v_first IS NOT NULL
-     AND (NEW.board_type   IS DISTINCT FROM OLD.board_type
-       OR NEW.board_id     IS DISTINCT FROM OLD.board_id
-       OR NEW.team_tags    IS DISTINCT FROM OLD.team_tags
-       OR NEW.player_tags  IS DISTINCT FROM OLD.player_tags
-       OR NEW.content_type IS DISTINCT FROM OLD.content_type
-       OR NEW.image_urls   IS DISTINCT FROM OLD.image_urls
-       OR NEW.video_urls   IS DISTINCT FROM OLD.video_urls
-       OR NEW.seat_info    IS DISTINCT FROM OLD.seat_info) THEN
-    RAISE EXCEPTION 'poll post is locked after first vote (only title/content editable)'
+  -- (b) 첫 투표 후 잠금 — **allowlist** 방식(삼순 NO-GO 반영, denylist → allowlist).
+  --     작성자가 직접 UPDATE 로 바꿀 수 있는 필드는 title/content 만 허용하고,
+  --     그 외 모든 컬럼(현재 스키마 + 향후 추가될 game_id/hashtags/author_team_id_snapshot/
+  --     created_at 등 전부)은 불변이어야 한다. 단, 서버(service_role/SECURITY DEFINER)가
+  --     수행하는 운영 갱신(신고 카운터·자동 블라인드·조회/좋아요/댓글 카운터·updated_at)은
+  --     허용해야 하므로 이 키들만 allowlist 에서 제외하고 나머지 jsonb 전체를 비교한다.
+  --     → schema-agnostic: 새 컬럼이 추가돼도 allowlist 에 명시하지 않는 한 자동으로 잠긴다.
+  --     첫 투표 전·후 모두 적용(poll 글은 create_poll RPC 만 선지·태그·미디어를 쓰므로
+  --     작성자 직접 UPDATE 로는 title/content 외 어떠한 필드도 바뀜 수 없다).
+  --     board_type/board_id 이동(2-step 우회)은 위 GUC 가드 + allowlist 이중으로 차단.
+  -- 작성자 편집 허용(title/content) + 서버 운영 갱신(카운터·블라인드·updated_at) 키를
+  -- 양쪽 jsonb 에서 제거한 뒤 나머지가 완전 동일해야 통과. 하나라도 다르면 거부.
+  IF (to_jsonb(NEW)
+        - 'title' - 'content' - 'updated_at'
+        - 'report_count' - 'is_hidden'
+        - 'click_view_count' - 'impression_view_count'
+        - 'like_count' - 'comment_count')
+     IS DISTINCT FROM
+     (to_jsonb(OLD)
+        - 'title' - 'content' - 'updated_at'
+        - 'report_count' - 'is_hidden'
+        - 'click_view_count' - 'impression_view_count'
+        - 'like_count' - 'comment_count') THEN
+    RAISE EXCEPTION 'poll post is locked: only title/content editable (options/tags/media/board immutable)'
       USING ERRCODE = 'check_violation';
   END IF;
   RETURN NEW;

@@ -255,7 +255,7 @@ export default function PollBlock({ postId, onRequireLogin }: PollBlockProps) {
         <p className="text-[11px] text-text-tertiary mt-1">투표하면 중간 결과를 볼 수 있어요</p>
       )}
       {detail.voted && !effectiveClosed && (
-        <p className="text-[11px] text-text-tertiary mt-1">첫 투표 이후에는 질문·선지를 수정할 수 없어요</p>
+        <p className="text-[11px] text-text-tertiary mt-1">투표가 시작되면 선지·마감은 수정할 수 없어요(질문·설명은 수정 가능)</p>
       )}
     </div>
   );

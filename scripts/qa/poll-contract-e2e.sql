@@ -68,6 +68,9 @@ SELECT create_poll(
 SELECT set_config('poll.direct_guard_pid', :'direct_guard_pid', false);
 
 SET ROLE authenticated;
+-- posts owner UPDATE RLS(harness) 통과를 위해 작성자 identity 설정 → 그래야 트리거가 발화해
+-- board_type/board_id 변경·phantom INSERT 를 check_violation 으로 거부하는지 검증된다.
+SELECT set_config('request.jwt.claim.sub', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', false);
 DO $$
 DECLARE
   v_pid bigint := current_setting('poll.direct_guard_pid')::bigint;
@@ -273,11 +276,50 @@ BEGIN
      OR (SELECT image_urls::text FROM posts WHERE id=v_pid) LIKE '%attacker.invalid%'
      OR (SELECT seat_info::text FROM posts WHERE id=v_pid) LIKE '%forged%' THEN
     RAISE EXCEPTION 'FAIL N3: non-text field mutated despite reject'; END IF;
+  -- 삼순 NO-GO(2): allowlist 가 denylist 를 대체했으므로, 명시 바깥에 있던 스키마
+  -- 컬럼(game_id/hashtags/author_team_id_snapshot/created_at 등)도 voted poll 에서 불변이어야 함.
+  BEGIN UPDATE posts SET game_id='20260728HACK' WHERE id=v_pid;
+    RAISE EXCEPTION 'FAIL N3: game_id change on voted poll accepted';
+    EXCEPTION WHEN check_violation THEN NULL; END;
+  BEGIN UPDATE posts SET hashtags='["hacked"]'::jsonb WHERE id=v_pid;
+    RAISE EXCEPTION 'FAIL N3: hashtags change on voted poll accepted';
+    EXCEPTION WHEN check_violation THEN NULL; END;
+  BEGIN UPDATE posts SET author_team_id_snapshot=99 WHERE id=v_pid;
+    RAISE EXCEPTION 'FAIL N3: author_team_id_snapshot change on voted poll accepted';
+    EXCEPTION WHEN check_violation THEN NULL; END;
+  BEGIN UPDATE posts SET created_at=now()-interval '10 years' WHERE id=v_pid;
+    RAISE EXCEPTION 'FAIL N3: created_at change on voted poll accepted';
+    EXCEPTION WHEN check_violation THEN NULL; END;
   -- title/content 는 그래도 수정 가능(계약 유지).
   UPDATE posts SET title='q-after-probe', content='c-after-probe' WHERE id=v_pid;
   IF (SELECT title FROM posts WHERE id=v_pid) <> 'q-after-probe' THEN
     RAISE EXCEPTION 'FAIL N3: title still editable after probe'; END IF;
-  RAISE NOTICE 'PASS N3 voted poll non-text fields immutable; title/content still editable';
+  RAISE NOTICE 'PASS N3 voted poll: non-text + schema-drift(game_id/hashtags/snapshot/created_at) fields immutable; title/content editable';
+END $$;
+
+-- ---------- N3b pre-vote 글도 비텍스트 불변(삼순 지적: 첫 투표 전 개방 차단) ----------
+-- 삼순 NO-GO(2): 기존 denylist 는 first_vote_at IS NOT NULL 일 때만 비교해 투표 전엔
+-- 작성자가 직접 UPDATE 로 content_type/image_urls 를 바꿀 수 있었다. allowlist 는 투표 여부
+-- 무관하게 title/content 외 불변이므로 pre-vote 에서도 비텍스트 변경은 거부되어야 한다.
+DO $$
+DECLARE v_pid bigint;
+BEGIN
+  v_pid := create_poll('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','pre-vote lock?',null,false,
+    now()+interval '1 day','[{"kind":"etc","label":"a"},{"kind":"etc","label":"b"}]'::jsonb);
+  -- 투표 전이라도 title/content 는 수정 가능.
+  UPDATE posts SET title='q-edit-prevote', content='c-edit-prevote' WHERE id=v_pid;
+  IF (SELECT title FROM posts WHERE id=v_pid) <> 'q-edit-prevote' THEN
+    RAISE EXCEPTION 'FAIL N3b: pre-vote title edit did not persist'; END IF;
+  -- 비텍스트는 투표 전에도 불변.
+  BEGIN UPDATE posts SET content_type='photo' WHERE id=v_pid;
+    RAISE EXCEPTION 'FAIL N3b: pre-vote content_type change accepted';
+    EXCEPTION WHEN check_violation THEN NULL; END;
+  BEGIN UPDATE posts SET image_urls='["https://attacker.invalid/pv.jpg"]'::jsonb WHERE id=v_pid;
+    RAISE EXCEPTION 'FAIL N3b: pre-vote image_urls change accepted';
+    EXCEPTION WHEN check_violation THEN NULL; END;
+  IF (SELECT content_type FROM posts WHERE id=v_pid) = 'photo' THEN
+    RAISE EXCEPTION 'FAIL N3b: pre-vote non-text mutated'; END IF;
+  RAISE NOTICE 'PASS N3b pre-vote poll: non-text fields immutable; title/content editable';
 END $$;
 
 -- ---------- N4 title/content 유효성 DB 강제(서버 route 우회 방어) ----------
@@ -460,5 +502,53 @@ BEGIN
 
   RAISE NOTICE 'PASS 운영경로: pre/post-vote title/content edit + report(report_count=3,is_hidden) + view/like/comment counters allowed; phantom/non-poll→poll/poll→free/board_id still rejected';
 END $$;
+
+-- ---------- N5 2계정 RLS 실행형 회귀(삼순 NO-GO(3): 작성자 성공·타인 불변) ----------
+-- 삼순가 지적한 "2계정 기준" 실행형: 작성자(author)는 title/content 저장 성공,
+-- 타인(other)은 posts owner UPDATE RLS 로 0 rows(응답 무변). auth.uid()=request.jwt.claim.sub GUC.
+-- create_poll 자체는 service-role(SECURITY DEFINER) 이므로 authenticated 로 바꾸기 전 생성.
+SELECT create_poll(
+  'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','rls 2-account?',null,false,
+  now()+interval '1 day','[{"kind":"etc","label":"a"},{"kind":"etc","label":"b"}]'::jsonb
+) AS rls_pid \gset
+SELECT set_config('poll.rls_pid', :'rls_pid', false);
+
+-- (1) 타인(other=2222...) — RLS 로 UPDATE 0 rows, 데이터 불변.
+SET ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '22222222-2222-2222-2222-222222222222', false);
+DO $$
+DECLARE v_pid bigint := current_setting('poll.rls_pid')::bigint; v_n int;
+BEGIN
+  WITH u AS (UPDATE posts SET title='other-hacked', content='other-hacked' WHERE id=v_pid RETURNING 1)
+  SELECT count(*) INTO v_n FROM u;
+  IF v_n <> 0 THEN RAISE EXCEPTION 'FAIL N5: other-user UPDATE affected % rows (RLS should block)', v_n; END IF;
+END $$;
+RESET ROLE;
+-- 타인 UPDATE 가 실제로 반영 안 됐는지 service-role 로 확인.
+DO $$
+DECLARE v_pid bigint := current_setting('poll.rls_pid')::bigint;
+BEGIN
+  IF (SELECT title FROM posts WHERE id=v_pid) = 'other-hacked' THEN
+    RAISE EXCEPTION 'FAIL N5: other-user mutated poll title despite RLS'; END IF;
+END $$;
+
+-- (2) 작성자(author=aaaa...) — title/content 저장 성공.
+SET ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', false);
+DO $$
+DECLARE v_pid bigint := current_setting('poll.rls_pid')::bigint; v_n int;
+BEGIN
+  WITH u AS (UPDATE posts SET title='author-edited', content='author-desc' WHERE id=v_pid RETURNING 1)
+  SELECT count(*) INTO v_n FROM u;
+  IF v_n <> 1 THEN RAISE EXCEPTION 'FAIL N5: author UPDATE affected % rows (expected 1)', v_n; END IF;
+  IF (SELECT title FROM posts WHERE id=v_pid) <> 'author-edited' THEN
+    RAISE EXCEPTION 'FAIL N5: author title edit did not persist'; END IF;
+  -- 작성자라도 비텍스트 필드는 allowlist 트리거로 차단(RLS 통과해도 트리거가 막음).
+  BEGIN UPDATE posts SET image_urls='["https://attacker.invalid/rls.jpg"]'::jsonb WHERE id=v_pid;
+    RAISE EXCEPTION 'FAIL N5: author non-text field change accepted';
+    EXCEPTION WHEN check_violation THEN NULL; END;
+END $$;
+RESET ROLE;
+DO $$ BEGIN RAISE NOTICE 'PASS N5 2-account RLS: other-user UPDATE 0 rows (blocked); author title/content persists; author non-text still trigger-blocked'; END $$;
 
 SELECT 'DB E2E COMPLETE (①②④⑤⑦⑧⑨ + direct poll-post write + duplicate ref RPC + tags/validations + 운영경로(신고/카운터/투표전편집) 회귀; ③⑩ hidden/snapshot route checks in poll-route-e2e.ts + ⑥ concurrency in .sh)' AS status;
