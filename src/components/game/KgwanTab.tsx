@@ -24,6 +24,8 @@ import type { GameRelayResponse } from "@/app/api/game-relay/route";
 import { resolveCurrentAtBat } from "@/lib/game/current-at-bat";
 
 interface KgwanTabProps {
+  /** 당겨서 새로고침 epoch — 증가 시 종료 요약(FinalView)이 GET 재조회(오류 카드 stuck 해소). */
+  refreshEpoch?: number;
   gameId: string;
   homeTeamId: number;
   awayTeamId: number;
@@ -491,7 +493,7 @@ function LiveView({
 }
 
 /* ===== Final: AI Summary + Chat ===== */
-function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
+function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore, refreshEpoch }: {
   gameId: string;
   homeTeamId: number;
   awayTeamId: number;
@@ -500,6 +502,7 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
     away: { innings: (number | null)[]; R: number; H: number; E: number };
     home: { innings: (number | null)[]; R: number; H: number; E: number };
   } | null;
+  refreshEpoch?: number;
 }) {
   const homeTeam = getTeamById(homeTeamId)!;
   const awayTeam = getTeamById(awayTeamId)!;
@@ -696,7 +699,10 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore }: {
       clearTimeout(timeoutId);
       controller.abort();
     };
-  }, [isAllStar, hasRealBoxScore, boxScore, gameId, llmSummary, awayTeam, homeTeam, linescore, retryNonce]);
+    // refreshEpoch: 당겨서 새로고침 시 증가 → llmSummary 미로딩(오류/로딩) 상태면 이 이펙트가
+    // 재실행되어 setLlmError(null)+GET 재조회. 요약이 이미 로딩됐으면 상단 early-return → 무동작
+    // (채팅 등 다른 client state 는 건드리지 않음 — 최소 범위).
+  }, [isAllStar, hasRealBoxScore, boxScore, gameId, llmSummary, awayTeam, homeTeam, linescore, retryNonce, refreshEpoch]);
 
   // 최초 생성이 30초를 넘기거나 일시 실패해도 서버 쪽 생성이 뒤늦게 캐시에 저장될 수 있다.
   // 이 경우 사용자에게 에러 카드로 고정하지 않고 잠시 캐시를 자동 확인한다.
@@ -1020,6 +1026,7 @@ export default function KgwanTab({
   balls,
   strikes,
   outs,
+  refreshEpoch,
 }: KgwanTabProps) {
   // 올스타전은 잠금/위젯 실시간 중계 미지원(네이티브 미대응) → 크관 상단 상시 안내.
   // 정규경기는 null이라 프래그먼트 출력이 기존과 동일(회귀 없음).
@@ -1067,7 +1074,7 @@ export default function KgwanTab({
   return (
     <>
       {allStarNotice}
-      <FinalView gameId={gameId} homeTeamId={homeTeamId} awayTeamId={awayTeamId} boxScore={boxScore} linescore={linescore} />
+      <FinalView gameId={gameId} homeTeamId={homeTeamId} awayTeamId={awayTeamId} boxScore={boxScore} linescore={linescore} refreshEpoch={refreshEpoch} />
     </>
   );
 }

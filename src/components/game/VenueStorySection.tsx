@@ -345,7 +345,7 @@ export default function VenueStorySection({ gameId }: Props) {
           onClick={handleUploadClick}
           className="shrink-0 w-[68px] flex flex-col items-center gap-1"
         >
-          <div className="w-[68px] h-[104px] rounded-xl border-2 border-dashed border-border flex items-center justify-center bg-bg-tertiary/50 active:bg-bg-tertiary">
+          <div className="w-[68px] h-[68px] rounded-full border-2 border-dashed border-border flex items-center justify-center bg-bg-tertiary/50 active:bg-bg-tertiary">
             <Plus size={22} className="text-text-tertiary" />
           </div>
           <span className="text-[11px] text-text-tertiary">올리기</span>
@@ -387,7 +387,7 @@ export default function VenueStorySection({ gameId }: Props) {
               className="shrink-0 w-[68px] flex flex-col items-center gap-1"
             >
               <div
-                className={`relative w-[68px] h-[104px] rounded-xl overflow-hidden bg-bg-tertiary ring-2 ${
+                className={`relative w-[68px] h-[68px] rounded-full overflow-hidden bg-bg-tertiary ring-2 ${
                   seenIds.has(String(s.id)) ? "ring-gray-500/50" : "ring-red-500/60"
                 }`}
               >

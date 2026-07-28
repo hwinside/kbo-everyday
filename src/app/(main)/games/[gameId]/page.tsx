@@ -177,6 +177,8 @@ export default function GameDetailPage() {
   const [isFieldCollapsed, setIsFieldCollapsed] = useState(false);
   const { game: liveGame, refetch: refetchLive } = useLiveGame(gameId, 10000);
   const { data: gameDetail, refetch: refetchDetail } = useGameDetail(gameId, 30000);
+  // 당겨서 새로고침 시 증가 → KgwanTab 종료 요약이 GET 재조회(오류 카드 stuck 해소). 채팅 등 다른 state 무관.
+  const [summaryRefreshEpoch, setSummaryRefreshEpoch] = useState(0);
   const liveIsFinal = !!liveGame && !liveGame.isLive && (liveGame.awayScore > 0 || liveGame.homeScore > 0);
   // Keep game-events polling through the live → final transition so game_end/victory can be emitted.
   const shouldPollGameEvents = (liveGame?.isLive ?? false) || liveIsFinal;
@@ -342,7 +344,14 @@ export default function GameDetailPage() {
 
   // useCallback must be called before any early returns (React hooks rules)
   const handleRefresh = useCallback(async () => {
-    await Promise.all([refetchLive(), refetchDetail()]);
+    // 요약 오류 카드가 pull-refresh 후에도 stuck 되던 문제: epoch 증가로 GET 재조회 유도.
+    // live/detail refetch 중 하나가 reject 도 AI요약 재조회는 막히면 안 되므로(동일 stuck),
+    // finally 로 epoch bump 를 독립 보장한다.
+    try {
+      await Promise.all([refetchLive(), refetchDetail()]);
+    } finally {
+      setSummaryRefreshEpoch((e) => e + 1);
+    }
   }, [refetchLive, refetchDetail]);
   if (!game) {
     return (
@@ -581,6 +590,7 @@ export default function GameDetailPage() {
                     teamColor={battingTeamColor}
                     boxScore={gameDetail?.boxScore ?? null}
                     linescore={gameDetail?.linescore ?? gameRelay?.linescore ?? null}
+                    refreshEpoch={summaryRefreshEpoch}
                     starterNames={{
                       away: liveGame?.awayStarterName || (gameDetail?.boxScore?.awayPitchers?.[0]?.name && !/^선수\(\d+\)$/.test(gameDetail.boxScore.awayPitchers[0].name) ? gameDetail.boxScore.awayPitchers[0].name : ""),
                       home: liveGame?.homeStarterName || (gameDetail?.boxScore?.homePitchers?.[0]?.name && !/^선수\(\d+\)$/.test(gameDetail.boxScore.homePitchers[0].name) ? gameDetail.boxScore.homePitchers[0].name : ""),

@@ -55,9 +55,17 @@ ok("scheduled → not-final", canonicalGate(game("scheduled", null, null), null)
 ok("cancelled → not-final", canonicalGate(game("cancelled", 0, 0), linescore(0, 0, [], [])).reason === "not-final");
 ok("경기목록 미확보 → unavailable", canonicalGate(undefined, null).reason === "canonical-unavailable");
 ok("final이나 이닝표 미확보 → not-settled", canonicalGate(game("final", 4, 14), null).reason === "canonical-not-settled");
-ok("경기목록 4-14 / 스코어보드 4-4 → not-settled", canonicalGate(game("final", 4, 14), linescore(4, 4, [0,0,0,0,0,0,2,2], [0,0,1,3])).reason === "canonical-not-settled");
-ok("경기목록 final이나 스코어보드 END_TM 전 → not-settled",
-  canonicalGate(game("final", 4, 4), linescore(4, 4, [0,0,0,0,0,0,2,2], [0,0,1,3], "live")).reason === "canonical-not-settled");
+ok("경기목록 4-14 / 스코어보드 4-4 → not-settled(스코어 exact 교차검증이 stale-live 방지)", canonicalGate(game("final", 4, 14), linescore(4, 4, [0,0,0,0,0,0,2,2], [0,0,1,3])).reason === "canonical-not-settled");
+// 2026-07-28 KBO GetScoreBoard가 END_TM을 더 이상 안 내려줌 → 종료 경기 스코어보드 status가
+// 계속 "live"로 파싱됨. 종료 판정의 authoritative 신호는 경기목록 canonical.status(GAME_STATE_SC=3).
+// 스코어보드 status가 live여도 경기목록 final + 스코어 exact 일치면 통과(#888 stale-live 방지는
+// score 교차검증이 담당 — 라이브 중엔 경기목록 status가 live라 canonical.status 게이트에서 먼저 걸림).
+ok("경기목록 final + 스코어보드 END_TM 결측(status live) + 스코어 일치 → ok",
+  canonicalGate(game("final", 3, 5), linescore(3, 5, [0,0,1,0,0,0,2,0,0], [0,0,0,2,1,0,2,0,null], "live")).reason === "ok");
+ok("경기목록 final + 스코어보드 END_TM 결측 + 스코어 불일치(9회말 진행 중) → not-settled",
+  canonicalGate(game("final", 3, 5), linescore(3, 4, [0,0,1,0,0,0,2,0,0], [0,0,0,2,1,0,1,0,null], "live")).reason === "canonical-not-settled");
+ok("경기목록 final이나 스코어보드 취소(우천) → not-settled",
+  canonicalGate(game("final", 3, 5), linescore(3, 5, [0,0,1,0,0,0,2,0,0], [0,0,0,2,1,0,2,0,null], "cancelled")).reason === "canonical-not-settled");
 
 const final414 = canonicalGate(
   game("final", 4, 14),
