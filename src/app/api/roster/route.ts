@@ -9,7 +9,7 @@ export const revalidate = 300; // 5분 ISR 캐시
 // Roster SSOT Fortress (specs/roster-ssot-fortress.md v0.2)
 // ============================================================================
 // 원칙: "Static only roster admission, Supabase extension only"
-// - src/lib/constants/players-roster.json = roster SSOT (현재 877명, 단일 진실 소스)
+// - src/lib/constants/players-roster.json = roster SSOT (현재 878명, 단일 진실 소스)
 // - Supabase players_roster = extension field only (core field 보호)
 // - 신규 선수는 반드시 static JSON PR 경유 (Supabase 단독 추가 불가)
 //
@@ -19,7 +19,7 @@ export const revalidate = 300; // 5분 ISR 캐시
 //   photoUrl (향후 확장 예정)
 // ============================================================================
 
-const EXPECTED_ROSTER_COUNT = 877; // 2026-07-26 한화 신규 외인 짐머맨(56799) 온보딩 +1 (876→877)
+const EXPECTED_ROSTER_COUNT = 878; // 2026-07-28 신규 외인 보스(56402) 온보딩 +1 (877→878)
 
 interface RosterPlayer {
   kboId: string;
