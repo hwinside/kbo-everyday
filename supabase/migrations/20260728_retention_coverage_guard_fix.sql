@@ -13,10 +13,16 @@
 --
 -- Fix: a rollup-only user-day (raw side absent) is legitimate ONLY when the
 -- account was deleted (user_id absent from auth.users) AND the day's deleted
--- demand fits within the non-celeb NULL-user raw page-view pool it was
--- anonymized into. This keeps FAILing (PR #765 blocker):
+-- demand EXACTLY reconciles with the non-celeb NULL-user raw page-view pool it
+-- was anonymized into -- both the page-view count (deleted_demand = anon_pv)
+-- and the game-id set (exact @>/<@). auth.users absence alone is not proof of
+-- deletion (arbitrary/corrupt UUIDs satisfy it too), so an under-pool fit
+-- (demand < pool) is rejected: a fabricated missing-auth user-day injected
+-- within a day's anonymized headroom must NOT be excused. This keeps FAILing
+-- (PR #765 blocker):
 --   * a rollup-only row whose user still exists (real coverage loss),
---   * fabricated rollup rows whose demand exceeds the anonymized pool,
+--   * fabricated rollup rows whose demand exceeds OR undershoots the pool,
+--   * fabricated rows whose game-id set diverges from the anonymized pool,
 --   * raw-only rows and value/game-id mismatches (unchanged).
 -- The other four coverage checks (pageViews/pageDwell/pageDwellSessions/
 -- pageDwellDistribution) are visitor-keyed, not user-keyed: account deletion
@@ -109,9 +115,15 @@ BEGIN
     FROM admin_page_view_user_days AS rolled
     JOIN candidate_days AS candidates USING (day_kst)
   ), null_user_pool AS (
-    -- Anonymized raw page views a deleted account's rollup could have come from.
+    -- Anonymized raw page views a deleted account's rollup could have come from,
+    -- with the game-id set they touched, for an exact day-level reconciliation.
     SELECT (created_at AT TIME ZONE 'Asia/Seoul')::date AS day_kst,
-           count(*)::bigint AS anon_pv
+           count(*)::bigint AS anon_pv,
+           COALESCE(
+             array_agg(DISTINCT substring(path FROM '^/games/([0-9]{8}[A-Za-z0-9]+)'))
+               FILTER (WHERE substring(path FROM '^/games/([0-9]{8}[A-Za-z0-9]+)') IS NOT NULL),
+             '{}'::text[]
+           ) AS anon_game_ids
     FROM admin_page_views
     WHERE created_at < v_raw_cutoff
       AND user_id IS NULL
@@ -127,7 +139,8 @@ BEGIN
                SELECT 1 FROM auth.users AS u WHERE u.id = rolled.user_id
              )
            ) AS deleted_account,
-           COALESCE(rolled.page_views, 0) AS rolled_page_views
+           COALESCE(rolled.page_views, 0) AS rolled_page_views,
+           COALESCE(rolled.game_ids, '{}'::text[]) AS rolled_game_ids
     FROM raw_user_days AS raw
     FULL JOIN rolled_user_days AS rolled
       USING (day_kst, user_id)
@@ -138,26 +151,44 @@ BEGIN
          rolled.game_ids @> raw.game_ids
          AND rolled.game_ids <@ raw.game_ids
        )
+  ), deleted_demand_by_day AS (
+    -- Aggregate the whole day's deleted-account rollup demand and game-id set
+    -- so it can be exact-matched against the anonymized NULL-user raw pool.
+    SELECT rows.day_kst,
+           sum(rows.rolled_page_views)::bigint AS deleted_demand,
+           COALESCE(
+             array_agg(DISTINCT game_id) FILTER (WHERE game_id IS NOT NULL),
+             '{}'::text[]
+           ) AS deleted_game_ids
+    FROM user_day_mismatch_rows AS rows
+    LEFT JOIN LATERAL unnest(rows.rolled_game_ids) AS game_id ON true
+    WHERE rows.deleted_account
+    GROUP BY rows.day_kst
   ), user_day_classified AS (
     SELECT rows.day_kst,
            rows.rollup_only,
            rows.deleted_account,
-           sum(rows.rolled_page_views)
-             FILTER (WHERE rows.deleted_account)
-             OVER (PARTITION BY rows.day_kst) AS deleted_demand,
-           COALESCE(pool.anon_pv, 0) AS anon_pv
+           COALESCE(demand.deleted_demand, 0) AS deleted_demand,
+           COALESCE(demand.deleted_game_ids, '{}'::text[]) AS deleted_game_ids,
+           COALESCE(pool.anon_pv, 0) AS anon_pv,
+           COALESCE(pool.anon_game_ids, '{}'::text[]) AS anon_game_ids
     FROM user_day_mismatch_rows AS rows
+    LEFT JOIN deleted_demand_by_day AS demand USING (day_kst)
     LEFT JOIN null_user_pool AS pool USING (day_kst)
   )
   SELECT count(*) INTO v_user_day_mismatches
   FROM user_day_classified
   WHERE NOT (
-    -- Exclude only fully-reconciled deleted-account rollup rows: the whole
-    -- day's deleted demand must fit inside its anonymized raw pool, else every
-    -- such row on that day is kept as a mismatch (fail-closed).
+    -- Exclude only EXACTLY-reconciled deleted-account rollup rows: the whole
+    -- day's deleted demand must equal its anonymized raw pool on both the
+    -- page-view count AND the game-id set. auth.users absence is not deletion
+    -- proof, so an under-pool fit (demand < pool) leaves every such row as a
+    -- mismatch (fail-closed) rather than excusing headroom-sized fabrications.
     rollup_only
     AND deleted_account
-    AND deleted_demand <= anon_pv
+    AND deleted_demand = anon_pv
+    AND deleted_game_ids @> anon_game_ids
+    AND deleted_game_ids <@ anon_game_ids
   );
 
   WITH raw_dwell AS (

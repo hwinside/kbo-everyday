@@ -6,13 +6,17 @@
 // reported as a coverage mismatch on days whose raw is still purge-eligible,
 // permanently blocking the fail-closed retention purge.
 //
-// This test proves, on PostgreSQL 17 (PGlite), the three cases 삼순 required:
-//   1. Reconciled deleted-account rollup-only rows pass coverage (0 mismatch)
-//      where the same seed FAILS under the pre-fix function.
+// This test proves, on PostgreSQL 17 (PGlite), the cases 삼순 required:
+//   1. EXACTLY-reconciled deleted-account rollup-only rows pass coverage
+//      (0 mismatch) where the same seed FAILS under the pre-fix function.
 //   2. Fabricated rollup-only rows on a candidate day still FAIL coverage and
 //      the run() purge rolls back raw + audit — for a still-existing user AND
 //      for deleted-account demand that exceeds its anonymized raw pool.
 //   3. Raw-only rows and value mismatches still FAIL coverage.
+//   4. An UNDER-pool missing-auth fabricated user-day (demand < pool, with a
+//      fake game-id) still FAILS coverage and rolls back — the exact-equality
+//      fix (= not <=) refuses to excuse headroom-sized fabrications that the
+//      auth.users-absence test alone would wave through (reopening PR #765).
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -25,6 +29,9 @@ const LIVE_A = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 const LIVE_B = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
 const DELETED_D = "dddddddd-dddd-dddd-dddd-dddddddddddd";
 const DELETED_BIG = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee";
+// A missing-auth UUID an attacker could fabricate: absent from auth.users,
+// but never actually a deleted account (no anonymized raw backs it).
+const FAKE_UNDER = "ffffffff-ffff-ffff-ffff-ffffffffffff";
 
 function migration(name: string) {
   return readFileSync(resolve("supabase/migrations", name), "utf8");
@@ -199,6 +206,38 @@ async function main() {
       await scalar(db, "SELECT count(*)::int AS value FROM admin_page_views"),
       rawBefore,
       "S2b: live-user rollup-only failure must preserve raw page views",
+    );
+    await db.exec("ROLLBACK;");
+
+    // --- Scenario 4: UNDER-pool missing-auth fabrication FAILS -------------
+    // The pre-fix `<=` excused any missing-auth rollup demand that fit inside
+    // the day's anonymized pool. Here the legit deleted-account rollup (D, 3
+    // page views = pool 3) is replaced by a fabricated missing-auth user-day
+    // of just 1 page view + a fake game-id, so whole-day deleted demand (1) is
+    // strictly UNDER the pool (3). Absence from auth.users is not proof of
+    // deletion, so exact-equality (= not <=) must keep it as a mismatch and
+    // roll the purge back — otherwise headroom-sized fabrications reopen #765.
+    await db.exec("BEGIN;");
+    await db.exec(`DELETE FROM admin_page_view_user_days WHERE user_id = '${DELETED_D}';`);
+    await db.exec(`
+      INSERT INTO admin_page_view_user_days (day_kst, user_id, page_views, game_ids)
+      VALUES ('2026-06-10', '${FAKE_UNDER}', 1, '{20260610FAKE}');
+    `);
+    assert.equal(
+      (await coverage(db)).userDays,
+      1,
+      "S4: under-pool missing-auth fabricated user-day must fail (exact = not <=)",
+    );
+    await expectCoverageRaise(db);
+    assert.equal(
+      await scalar(db, "SELECT count(*)::int AS value FROM admin_page_views"),
+      rawBefore,
+      "S4: under-pool fabrication coverage failure must preserve raw page views",
+    );
+    assert.equal(
+      await scalar(db, "SELECT count(*)::int AS value FROM admin_telemetry_retention_runs"),
+      auditBefore,
+      "S4: under-pool fabrication must not leave an audit success row",
     );
     await db.exec("ROLLBACK;");
 
