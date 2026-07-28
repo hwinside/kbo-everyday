@@ -254,16 +254,16 @@ function postTypeBadge(post: Post): { Icon: typeof FileText; label: string } {
   return { Icon: FileText, label: "일반글" };
 }
 
+/** 제목 왼쪽 인라인 글 유형 아이콘. 썸네일 오버레이는 선수 얼굴을 가려 제목 앞으로 이동(하린아빠). */
 function PostTypeIcon({ post }: { post: Post }) {
   const { Icon, label } = postTypeBadge(post);
   return (
-    <span
+    <Icon
+      size={16}
+      strokeWidth={2.25}
       aria-label={label}
-      title={label}
-      className="absolute bottom-0.5 right-0.5 inline-flex items-center justify-center w-6 h-6 rounded-lg bg-black/60 text-white ring-1 ring-white/20"
-    >
-      <Icon size={15} strokeWidth={2.25} />
-    </span>
+      className="shrink-0 text-text-secondary"
+    />
   );
 }
 
@@ -282,9 +282,8 @@ function PostRow({ post }: { post: Post }) {
       }}
       className="flex items-center gap-3 py-2.5 active:opacity-70 transition-opacity"
     >
-      {/* 썸네일 56x56 — 선수 히어로샷/팀 로고는 팀컬러 그라데이션 배경(선수페이지 동일).
-          우하단에 글 유형 아이콘(일반글/사진/동영상/투표) 오버레이. */}
-      <div className="relative w-14 h-14 shrink-0 rounded-xl overflow-hidden bg-bg-tertiary">
+      {/* 썸네일 56x56 — 선수 히어로샷/팀 로고는 팀컬러 그라데이션 배경(선수페이지 동일) */}
+      <div className="w-14 h-14 shrink-0 rounded-xl overflow-hidden bg-bg-tertiary">
         {thumb.kind === "none" || thumb.kind === "kbo" || imgFailed ? (
           // 크보팬 라벨(다팀/무팀) 글은 말풍선 아이콘 타일. 크보팬 로고는 라벨과
           // 중복이고, 본문 미리보기는 우측 텍스트와 중복이라 중립 말풍선 채택(하린아빠 결정).
@@ -327,14 +326,17 @@ function PostRow({ post }: { post: Post }) {
             onError={() => setImgFailed(true)}
           />
         )}
-        <PostTypeIcon post={post} />
       </div>
 
       {/* 본문 요약 + 메타 */}
       <div className="flex-1 min-w-0">
-        <p className="text-[14px] leading-[20px] font-medium text-text-primary line-clamp-1">
-          {summary || "(내용 없음)"}
-        </p>
+        {/* 글 유형 아이콘을 제목 왼쪽에 인라인 배치(오버레이가 선수 얼굴 가림 → 이동). */}
+        <div className="flex items-center gap-1">
+          <PostTypeIcon post={post} />
+          <p className="text-[14px] leading-[20px] font-medium text-text-primary line-clamp-1">
+            {summary || "(내용 없음)"}
+          </p>
+        </div>
         <div className="flex items-center gap-1.5 mt-1 text-[11px] leading-[16px] text-text-tertiary">
           <PostLabel post={post} />
           <span className="shrink-0">{timeAgo(post.created_at)}</span>
