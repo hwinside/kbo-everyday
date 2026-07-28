@@ -260,9 +260,9 @@ function PostTypeIcon({ post }: { post: Post }) {
     <span
       aria-label={label}
       title={label}
-      className="absolute bottom-0.5 right-0.5 inline-flex items-center justify-center w-4 h-4 rounded-md bg-black/60 text-white ring-1 ring-white/20"
+      className="absolute bottom-0.5 right-0.5 inline-flex items-center justify-center w-6 h-6 rounded-lg bg-black/60 text-white ring-1 ring-white/20"
     >
-      <Icon size={10} strokeWidth={2.25} />
+      <Icon size={15} strokeWidth={2.25} />
     </span>
   );
 }
