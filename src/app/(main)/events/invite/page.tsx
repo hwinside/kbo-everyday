@@ -95,7 +95,7 @@ export default function EventInvitePage() {
       <div className="max-w-screen-sm mx-auto px-5 min-h-[44px] flex items-center gap-2">
         <button
           onClick={goBack}
-          className="p-2 -ml-2 rounded-lg hover:bg-gray-900/5 dark:bg-white/5"
+          className="flex h-11 w-11 items-center justify-center -ml-2.5 rounded-lg hover:bg-gray-900/5 dark:bg-white/5"
           aria-label="뒤로"
         >
           <ChevronLeft size={20} />

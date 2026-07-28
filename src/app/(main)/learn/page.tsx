@@ -106,7 +106,7 @@ export default function LearnPage() {
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
             {selectedChapter ? (
-              <button onClick={() => { setSelectedChapter(null); setLessonIndex(0); }} className="flex items-center gap-1 text-text-secondary">
+              <button onClick={() => { setSelectedChapter(null); setLessonIndex(0); }} aria-label="목록으로" className="flex h-11 min-h-[44px] items-center gap-1 -ml-1 text-text-secondary">
                 <ArrowLeft size={20} />
                 <span className="text-sm">목록으로</span>
               </button>

@@ -10,6 +10,7 @@ import { getTeamBorderColor } from "@/lib/utils/team-border-color";
 
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { useSafeBack } from "@/lib/hooks/useSafeBack";
 import Image from "next/image";
 import Link from "next/link";
 import { ChevronLeft, MapPin, Ticket, UtensilsCrossed, Armchair, MessageCircle, PenLine, Car, TrainFront, Bus, CalendarDays, X } from "lucide-react";
@@ -60,6 +61,7 @@ function EmptyState({ icon, title, subtitle }: { icon: React.ReactNode; title: s
 export default function StadiumDetailPage() {
   const { stadiumId } = useParams();
   const router = useRouter();
+  const goBack = useSafeBack("/community/stadiums");
   const { user } = useAuth();
   const [showLogin, setShowLogin] = useState(false);
   const [showWrite, setShowWrite] = useState(false);
@@ -102,12 +104,12 @@ export default function StadiumDetailPage() {
   return (
     <div className="min-h-screen bg-bg-primary pb-24">
       {/* Sticky Header */}
-      <div className="sticky top-0 z-30 border-b bg-bg-primary" style={{ borderColor: primaryTeam?.colorPrimary ? getTeamBorderColor(primaryTeam.colorPrimary, primaryTeam.colorLight) : undefined }}>
+      <div className="sticky top-0 z-30 border-b bg-bg-primary" style={{ borderColor: primaryTeam?.colorPrimary ? getTeamBorderColor(primaryTeam.colorPrimary, primaryTeam.colorLight) : undefined, paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
         <div className="flex items-center gap-3 px-4 min-h-[44px]">
-          <button onClick={() => router.back()}>
-            <ChevronLeft size={24} className="text-text-secondary" />
+          <button onClick={goBack} aria-label="뒤로가기" className="flex h-11 w-11 items-center justify-center rounded-full text-text-secondary hover:bg-bg-tertiary transition-colors -ml-2.5">
+            <ChevronLeft size={24} />
           </button>
-          <span className="text-lg font-semibold text-text-primary">구장</span>
+          <span className="min-w-0 flex-1 truncate text-lg font-semibold text-text-primary">구장</span>
         </div>
       </div>
 
@@ -158,8 +160,8 @@ export default function StadiumDetailPage() {
 
       {/* Sticky section chips */}
       <div
-        className="sticky top-0 z-20 bg-bg-primary/95 backdrop-blur-xl border-b"
-        style={{ paddingTop: "env(safe-area-inset-top, 0px)", borderColor: primaryTeam?.colorPrimary ? getTeamBorderColor(primaryTeam.colorPrimary, primaryTeam.colorLight) : 'var(--color-border)' }}
+        className="bg-bg-primary/95 backdrop-blur-xl border-b"
+        style={{ borderColor: primaryTeam?.colorPrimary ? getTeamBorderColor(primaryTeam.colorPrimary, primaryTeam.colorLight) : 'var(--color-border)' }}
       >
         <div className="mx-auto max-w-lg px-5 min-h-[44px] flex items-center gap-2 overflow-x-auto hide-scrollbar">
           <SectionChip
