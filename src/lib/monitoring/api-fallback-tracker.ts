@@ -156,6 +156,89 @@ async function saveToSupabase(event: FallbackEvent) {
   }
 }
 
+// ============================================================================
+// Durable 열화 감지·경보 (장애대책 슬라이스1 — 삼순 NO-GO 반영)
+//
+// 위 trackFallback 의 count/cooldown 은 in-memory 라 서버리스 인스턴스별 독립이다.
+// 분산 호출에서 임계치 판정이 깨지는 경로(요약 열화 감지 등)는 아래 durable 경로를 쓴다.
+// count/cooldown/claim 을 단일 원자 RPC(record_api_fallback_and_claim)로 판정하므로
+// 인스턴스 분산에도 "임계치 초과 시 경보 1회"를 보장한다.
+// ============================================================================
+
+export interface DegradationAlertPolicy {
+  windowMinutes: number;
+  threshold: number;
+  cooldownMinutes: number;
+}
+
+/**
+ * Durable API 열화 추적 + 원자적 경보 claim.
+ * RPC 가 should_alert=true 를 돌려줄 때만 텔레그램을 보낸다. **절대 throw 하지 않는다** —
+ * 호출측(요약 생성 등)의 응답을 경보 실패가 막지 못하게 한다(next/server `after` 안에서 실행 권장).
+ */
+export async function trackApiDegradation(
+  apiName: string,
+  reason: FallbackEvent["reason"],
+  options: { statusCode?: number; errorMessage?: string },
+  policy: DegradationAlertPolicy,
+): Promise<void> {
+  try {
+    const { data, error } = await supabase.rpc("record_api_fallback_and_claim", {
+      p_api_name: apiName,
+      p_reason: reason,
+      p_status_code: options.statusCode ?? null,
+      p_error_message: options.errorMessage ?? null,
+      p_window_minutes: policy.windowMinutes,
+      p_threshold: policy.threshold,
+      p_cooldown_minutes: policy.cooldownMinutes,
+    });
+    if (error) {
+      console.error("[API Degradation] RPC failed:", error.message);
+      return;
+    }
+    if (data === true) {
+      await sendDegradationTelegramAlert(apiName, reason, options, policy);
+    }
+  } catch (err) {
+    console.error(
+      "[API Degradation] unexpected error:",
+      err instanceof Error ? err.message : String(err),
+    );
+  }
+}
+
+async function sendDegradationTelegramAlert(
+  apiName: string,
+  reason: string,
+  options: { statusCode?: number; errorMessage?: string },
+  policy: DegradationAlertPolicy,
+) {
+  const botToken = process.env.TELEGRAM_BOT_TOKEN;
+  const chatId = process.env.TELEGRAM_CHAT_ID || "6796048731"; // 하린아빠
+  if (!botToken) {
+    console.warn("[API Degradation] TELEGRAM_BOT_TOKEN not set, skipping alert");
+    return;
+  }
+  const detail = options.errorMessage ? `\n\n${options.errorMessage.slice(0, 300)}` : "";
+  const message = `
+🚨 외부 API 열화 감지
+
+**${apiName}** (${reason})
+최근 ${policy.windowMinutes}분 내 ${policy.threshold}회 이상 fallback${detail}
+
+시간: ${new Date().toLocaleString("ko-KR", { timeZone: "Asia/Seoul" })}
+  `.trim();
+  try {
+    await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: chatId, text: message, parse_mode: "Markdown" }),
+    });
+  } catch (error) {
+    console.error("[API Degradation] Failed to send Telegram alert:", error);
+  }
+}
+
 /**
  * 현재 상태 조회 (디버깅/대시보드용)
  */
