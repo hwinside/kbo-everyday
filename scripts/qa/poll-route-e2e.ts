@@ -210,7 +210,7 @@ async function main(): Promise<void> {
     }
   };
   try {
-    const { GET } = await import("../../src/app/api/polls/[postId]/route");
+    const { GET, PATCH } = await import("../../src/app/api/polls/[postId]/route");
     const { GET: GET_OG } = await import("../../src/app/api/og/poll/[postId]/route");
     const { POST } = await import("../../src/app/api/polls/route");
     const { POST: POST_SUMMARIES } = await import("../../src/app/api/polls/summaries/route");
@@ -515,6 +515,36 @@ async function main(): Promise<void> {
     lastRpc = null;
     const modClean = await POST(mkModPost({ title: "오늘 누가 MVP?", content: "자유롭게 투표하세요" }) as never);
     ok("모더레이션 정상 입력 → 201", modClean.status === 201 && rpcCount === 1);
+
+    // ---------- PATCH /api/polls/[postId] 서버 검증(삼순 NO-GO P1-1: 클라이언트 우회 방어) ----------
+    // 아래 분기는 DB 접근 전에 반환되는 순수 검증/모더레이션 경로. 비텍스트 필드 불변·작성자
+    // 소유권·길이 DB 강제는 poll-contract-e2e.sql N3/N4(트리거) 가 authoritative 로 증명한다.
+    const mkPatch = (body: Record<string, unknown>, token?: string) =>
+      new Request("https://keubo.fan/api/polls/1", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(body),
+      });
+    const callPatch = (body: Record<string, unknown>, token?: string) =>
+      PATCH(mkPatch(body, token) as never, { params: Promise.resolve({ postId: "1" }) });
+
+    const pNoAuth = await callPatch({ title: "Q?", content: "c" });
+    ok("PATCH 미인증 → 401", pNoAuth.status === 401);
+
+    const pEmpty = await callPatch({ title: "   ", content: "c" }, VALID_TOKEN);
+    ok("PATCH 빈 질문 → 400", pEmpty.status === 400);
+
+    const pLongTitle = await callPatch({ title: "x".repeat(201), content: "c" }, VALID_TOKEN);
+    ok("PATCH 질문>200 → 400", pLongTitle.status === 400);
+
+    const pLongContent = await callPatch({ title: "Q?", content: "y".repeat(2001) }, VALID_TOKEN);
+    ok("PATCH 설명>2000 → 400", pLongContent.status === 400);
+
+    const pMod = await callPatch({ title: `누가 ${BAD} 최고?`, content: "c" }, VALID_TOKEN);
+    ok("PATCH 모더레이션 금칙어 → 400", pMod.status === 400);
 
     // ---------- S3: 목록 카드용 배치 요약(summaries) — hidden 제외·득표수 미포함·작성순 ----------
     const mkSummaries = (postIds: unknown) =>

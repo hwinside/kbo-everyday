@@ -57,6 +57,12 @@ CREATE TABLE IF NOT EXISTS public.posts (
   title text NOT NULL, content text NOT NULL,
   team_tags jsonb NOT NULL DEFAULT '[]'::jsonb,
   player_tags jsonb NOT NULL DEFAULT '[]'::jsonb,
+  -- 작성자 제어 비텍스트 필드(실제 posts 스키마 반영). poll_posts_edit_lock 이 voted poll 에서
+  -- 이 컬럼들의 변경을 차단하는지 실 PG17 로 고정(삼순 NO-GO probe N3).
+  content_type text NOT NULL DEFAULT 'text',
+  image_urls jsonb NOT NULL DEFAULT '[]'::jsonb,
+  video_urls jsonb NOT NULL DEFAULT '[]'::jsonb,
+  seat_info jsonb,
   -- 운영 카운터/블라인드 컬럼(실제 posts 스키마 반영: 20260720_report_blind_notice,
   -- 20260721_post_view_counts + base like_count/comment_count). 이 컬럼들에 대한
   -- 정상 UPDATE 가 poll_posts_edit_lock 회귀로 막히지 않는지 실 PG17 로 고정한다.

@@ -7,6 +7,7 @@ import { ChevronLeft, Heart, MessageCircle, Share2, Send, Flag, Ban, MoreHorizon
 import TeamBadge from "@/components/ui/TeamBadge";
 import { getAvatarPath } from "@/lib/constants/avatars";
 import { usePostDetail, createComment, toggleLike, toggleCommentLike, updatePost, deletePost, updateComment, deleteComment, uploadCommentImage } from "@/lib/supabase/usePosts";
+import { editPollPost } from "@/lib/community/poll-client";
 import ReportSheet from "@/components/community/ReportSheet";
 import LinkPreview from "@/components/community/LinkPreview";
 import { isShortText, BrandedTextCard, getPostScopeLabel } from "@/components/community/FeedTextCards";
@@ -109,6 +110,8 @@ export default function PostDetail({ postId }: PostDetailProps) {
   const [postEditing, setPostEditing] = useState(false);
   const [editContent, setEditContent] = useState("");
   const [editTitle, setEditTitle] = useState(""); // 투표글 전용 질문 필드(설명=editContent 재사용)
+  // 투표글 설명 textarea 자동 세로 확장(WritePoll 과 동일 UX). ~10줄 cap 후 내부 스크롤.
+  const editPollContentRef = useRef<HTMLTextAreaElement>(null);
   const [savingPost, setSavingPost] = useState(false);
   const [deletingPost, setDeletingPost] = useState(false);
   const [postPatch, setPostPatch] = useState<{ title?: string; content?: string; updated_at?: string }>({});
@@ -119,6 +122,24 @@ export default function PostDetail({ postId }: PostDetailProps) {
   const [cmtLightboxSrc, setCmtLightboxSrc] = useState<string | null>(null);
   const [cmtEditInput, setCmtEditInput] = useState("");
   const [cmtSaving, setCmtSaving] = useState(false);
+
+  // 투표글 설명 textarea auto-grow: editContent 변경·편집 진입 시 height 재계산(생성 화면과 동일).
+  // ref 가 마운트된 때(=투표글 편집 블록 렌더링)만 동작 → early-return 앞에 무조건 호출(hooks 규칙).
+  useEffect(() => {
+    if (!postEditing) return;
+    const el = editPollContentRef.current;
+    if (!el) return;
+    const CONTENT_MAX_PX = 240; // 약 10줄
+    el.style.height = "auto";
+    const next = el.scrollHeight;
+    if (next > CONTENT_MAX_PX) {
+      el.style.height = `${CONTENT_MAX_PX}px`;
+      el.style.overflowY = "auto";
+    } else {
+      el.style.height = `${next}px`;
+      el.style.overflowY = "hidden";
+    }
+  }, [editContent, postEditing]);
 
   if (loading) return <div className="flex items-center justify-center h-screen text-text-secondary">로딩 중...</div>;
   if (!post) return <div className="flex items-center justify-center h-screen text-text-secondary">게시글을 찾을 수 없습니다</div>;
@@ -151,14 +172,17 @@ export default function PostDetail({ postId }: PostDetailProps) {
     if (isPoll) {
       const t = editTitle.trim();
       if (!t) { alert("질문을 입력해주세요"); return; }
+      if (t.length > 200) { alert("질문은 200자 이하여야 해요"); return; }
+      if (editContent.length > 2000) { alert("설명은 2000자 이하여야 해요"); return; }
       setSavingPost(true);
       try {
-        // 투표글: 질문(title)·설명(content)만 저장. 선지·마감·태그는 서버 편집잠금이 지킨다.
-        await updatePost(post!.id, { title: t, content: editContent });
+        // 투표글: 질문(title)·설명(content)만 서버 route(PATCH)로 저장.
+        // 인증·작성자·검증·모더레이션은 서버, 비텍스트 필드 불변은 DB 트리거가 backstop.
+        await editPollPost(post!.id, { title: t, content: editContent });
         setPostPatch({ title: t, content: editContent, updated_at: new Date().toISOString() });
         setPostEditing(false);
-      } catch {
-        alert("투표 수정에 실패했어요");
+      } catch (e) {
+        alert(e instanceof Error ? e.message : "투표 수정에 실패했어요");
       } finally {
         setSavingPost(false);
       }
@@ -519,14 +543,17 @@ export default function PostDetail({ postId }: PostDetailProps) {
               value={editTitle}
               onChange={e => setEditTitle(e.target.value)}
               placeholder="질문"
+              maxLength={200}
               className="w-full bg-bg-secondary rounded-lg px-3 py-2 text-sm font-semibold text-text-primary outline-none border border-border"
             />
             <textarea
+              ref={editPollContentRef}
               value={editContent}
               onChange={e => setEditContent(e.target.value)}
               placeholder="설명 (선택)"
-              rows={4}
-              className="w-full bg-bg-secondary rounded-lg px-3 py-2 text-sm text-text-primary outline-none border border-border resize-y"
+              rows={2}
+              maxLength={2000}
+              className="w-full bg-bg-secondary rounded-lg px-3 py-2 text-sm text-text-primary outline-none border border-border resize-none"
             />
             <p className="text-xs text-text-tertiary">질문·설명만 수정할 수 있어요. 투표가 시작되면 선지와 마감 시간은 변경할 수 없습니다.</p>
             <div className="flex items-center gap-2">

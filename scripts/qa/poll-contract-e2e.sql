@@ -243,6 +243,67 @@ BEGIN
   RAISE NOTICE 'PASS ⑨ edit-policy: title/content editable; option add/remove/struct, allow_multiple, closes_at blocked';
 END $$;
 
+-- ---------- N3 삼순 NO-GO probe: voted poll 비텍스트 작성자 필드 불변 ----------
+-- 삼순이 PG17+RLS probe 로 재현한 경로: 첫 투표 후 작성자가 직접 UPDATE 로
+-- content_type/image_urls/seat_info/video_urls 를 바꿔 voted poll 무결성 훼손.
+-- 트리거가 title/content 이외 작성자 제어 필드를 전부 check_violation 으로 거부해야 한다.
+DO $$
+DECLARE v_pid bigint;
+BEGIN
+  v_pid := current_setting('poll.pid')::bigint; -- has votes (first_vote_at set)
+  BEGIN UPDATE posts SET content_type='photo' WHERE id=v_pid;
+    RAISE EXCEPTION 'FAIL N3: content_type change on voted poll accepted';
+    EXCEPTION WHEN check_violation THEN NULL; END;
+  BEGIN UPDATE posts SET image_urls='["https://attacker.invalid/x.jpg"]'::jsonb WHERE id=v_pid;
+    RAISE EXCEPTION 'FAIL N3: image_urls change on voted poll accepted';
+    EXCEPTION WHEN check_violation THEN NULL; END;
+  BEGIN UPDATE posts SET video_urls='["https://attacker.invalid/v.mp4"]'::jsonb WHERE id=v_pid;
+    RAISE EXCEPTION 'FAIL N3: video_urls change on voted poll accepted';
+    EXCEPTION WHEN check_violation THEN NULL; END;
+  BEGIN UPDATE posts SET seat_info='{"zone":"forged"}'::jsonb WHERE id=v_pid;
+    RAISE EXCEPTION 'FAIL N3: seat_info change on voted poll accepted';
+    EXCEPTION WHEN check_violation THEN NULL; END;
+  -- 결합 UPDATE(삼순 원 probe 형태: 한 번에 여러 비텍스트 필드)도 거부.
+  BEGIN UPDATE posts SET content_type='photo', image_urls='["https://attacker.invalid/x.jpg"]'::jsonb,
+                         seat_info='{"zone":"forged"}'::jsonb WHERE id=v_pid;
+    RAISE EXCEPTION 'FAIL N3: combined non-text field change on voted poll accepted';
+    EXCEPTION WHEN check_violation THEN NULL; END;
+  -- 비텍스트 필드는 전혀 바뀌지 않았어야 함.
+  IF (SELECT content_type FROM posts WHERE id=v_pid) = 'photo'
+     OR (SELECT image_urls::text FROM posts WHERE id=v_pid) LIKE '%attacker.invalid%'
+     OR (SELECT seat_info::text FROM posts WHERE id=v_pid) LIKE '%forged%' THEN
+    RAISE EXCEPTION 'FAIL N3: non-text field mutated despite reject'; END IF;
+  -- title/content 는 그래도 수정 가능(계약 유지).
+  UPDATE posts SET title='q-after-probe', content='c-after-probe' WHERE id=v_pid;
+  IF (SELECT title FROM posts WHERE id=v_pid) <> 'q-after-probe' THEN
+    RAISE EXCEPTION 'FAIL N3: title still editable after probe'; END IF;
+  RAISE NOTICE 'PASS N3 voted poll non-text fields immutable; title/content still editable';
+END $$;
+
+-- ---------- N4 title/content 유효성 DB 강제(서버 route 우회 방어) ----------
+DO $$
+DECLARE v_pid bigint;
+BEGIN
+  v_pid := current_setting('poll.pid')::bigint;
+  BEGIN UPDATE posts SET title='' WHERE id=v_pid;
+    RAISE EXCEPTION 'FAIL N4: empty title accepted';
+    EXCEPTION WHEN check_violation THEN NULL; END;
+  BEGIN UPDATE posts SET title='   ' WHERE id=v_pid;
+    RAISE EXCEPTION 'FAIL N4: whitespace-only title accepted';
+    EXCEPTION WHEN check_violation THEN NULL; END;
+  BEGIN UPDATE posts SET title=repeat('x',201) WHERE id=v_pid;
+    RAISE EXCEPTION 'FAIL N4: title>200 accepted';
+    EXCEPTION WHEN check_violation THEN NULL; END;
+  BEGIN UPDATE posts SET content=repeat('y',2001) WHERE id=v_pid;
+    RAISE EXCEPTION 'FAIL N4: content>2000 accepted';
+    EXCEPTION WHEN check_violation THEN NULL; END;
+  -- 경계값은 허용(<=200, <=2000).
+  UPDATE posts SET title=repeat('x',200), content=repeat('y',2000) WHERE id=v_pid;
+  IF char_length((SELECT title FROM posts WHERE id=v_pid)) <> 200 THEN
+    RAISE EXCEPTION 'FAIL N4: 200-char title not persisted'; END IF;
+  RAISE NOTICE 'PASS N4 poll title required + title<=200 + content<=2000 enforced in DB';
+END $$;
+
 -- ---------- ⑧ cascade 재집계 (계정/글 삭제) ----------
 DO $$
 DECLARE v_pid bigint; o1 bigint; o2 bigint; bv int; av int; ao2 int;
