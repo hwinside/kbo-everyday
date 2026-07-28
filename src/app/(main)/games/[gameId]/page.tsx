@@ -392,7 +392,7 @@ export default function GameDetailPage() {
   return (
     <div className="min-h-[100dvh] bg-bg-primary max-w-[640px] mx-auto w-full">
       {/* 헤더는 스크롤 컨테이너(PullToRefresh) 밖 page-root에 두어 sticky top-0가 페이지 스크롤 기준으로 고정되게 한다 */}
-      <GameDetailHeader status={d.derivedStatus} title={matchupTitle} />
+      <GameDetailHeader title={matchupTitle} />
 
     <PullToRefresh
       onRefresh={handleRefresh}

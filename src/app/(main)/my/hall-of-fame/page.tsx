@@ -221,10 +221,10 @@ export default function HallOfFamePage() {
           marginTop: "calc(env(safe-area-inset-top, 0px) * -1)",
         }}
       >
-        <header className="py-2 flex items-center gap-3">
+        <header className="min-h-[44px] flex items-center gap-3">
           <button
             onClick={goBack}
-            className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors"
+            className="flex h-11 w-11 items-center justify-center rounded-full text-text-secondary hover:bg-bg-tertiary transition-colors -ml-2.5"
             aria-label="뒤로"
           >
             <ChevronLeft size={24} />

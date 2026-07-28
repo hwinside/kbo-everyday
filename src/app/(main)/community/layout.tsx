@@ -137,7 +137,7 @@ export default function CommunityLayout({
         >
           <div className="mx-auto max-w-lg">
             {/* Header (루트 메뉴들과 동일 규격) */}
-            <div className="flex items-center gap-3 px-5 py-2 border-b" style={{ borderColor: headerBorderColor || 'var(--color-border)' }}>
+            <div className="flex items-center gap-3 px-5 min-h-[44px] border-b" style={{ borderColor: headerBorderColor || 'var(--color-border)' }}>
               <button
                 onClick={handleBack}
                 className="flex h-11 w-11 items-center justify-center rounded-full text-text-secondary hover:bg-bg-tertiary transition-colors"

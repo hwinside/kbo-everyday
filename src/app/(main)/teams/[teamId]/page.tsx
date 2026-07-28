@@ -76,7 +76,7 @@ export default function TeamHubPage() {
         className="sticky top-0 z-30 border-b px-5 bg-bg-primary"
         style={{ borderColor: getTeamBorderColorById(team.id), paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}
       >
-        <header className="flex items-center gap-3 py-2">
+        <header className="flex items-center gap-3 min-h-[44px]">
           <button
             onClick={goBack}
             className="flex h-11 w-11 items-center justify-center rounded-full text-text-secondary transition-colors hover:bg-bg-tertiary"

@@ -11,10 +11,11 @@ export default function PlayerRecordsPage() {
   return (
     <div className="mx-auto max-w-lg px-5">
       <div className="sticky top-0 z-30 border-b -mx-5 px-5 bg-bg-primary" style={{ borderColor: "var(--color-border)", paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
-        <header className="py-2 flex items-center gap-3">
+        <header className="min-h-[44px] flex items-center gap-3">
           <button
             onClick={goBack}
-            className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors"
+            aria-label="뒤로가기"
+            className="flex h-11 w-11 items-center justify-center rounded-full text-text-secondary hover:bg-bg-tertiary transition-colors -ml-2.5"
           >
             <ChevronLeft size={24} />
           </button>

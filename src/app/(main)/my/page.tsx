@@ -143,10 +143,10 @@ export default function MyPage() {
   return (
     <div className="mx-auto max-w-lg px-5 pb-24">
       <div className="sticky top-0 z-30 border-b -mx-5 px-5 bg-bg-primary" style={{ borderColor: profile?.team_id ? getTeamBorderColorById(profile.team_id) : 'var(--color-border)', paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
-        <header className="py-2 flex items-center gap-3">
+        <header className="min-h-[44px] flex items-center gap-3">
           <button onClick={goBack} aria-label="뒤로가기" className="flex h-11 w-11 items-center justify-center rounded-full text-text-secondary hover:bg-bg-tertiary transition-colors"><ChevronLeft size={24} /></button>
           <h1 className="text-lg font-semibold leading-[26px] text-text-primary flex-1">마이페이지</h1>
-          <button onClick={() => router.push("/settings")} aria-label="설정" className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors"><Settings size={22} /></button>
+          <button onClick={() => router.push("/settings")} aria-label="설정" className="flex h-11 w-11 items-center justify-center rounded-full text-text-secondary hover:bg-bg-tertiary transition-colors -mr-2.5"><Settings size={22} /></button>
         </header>
       </div>
 

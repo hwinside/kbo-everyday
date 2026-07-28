@@ -49,7 +49,7 @@ export default function MessagesPage() {
     return (
       <div className="min-h-screen bg-bg-primary pb-24">
         <div className="sticky top-0 z-30 border-b border-border bg-bg-primary" style={{ paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
-        <div className="px-5 pb-3 flex items-center gap-3">
+        <div className="px-5 min-h-[44px] flex items-center gap-3">
           <button onClick={goBack} aria-label="뒤로가기" className="flex h-11 w-11 items-center justify-center -ml-2">
             <ArrowLeft size={24} className="text-text-primary" />
           </button>
@@ -71,7 +71,7 @@ export default function MessagesPage() {
   return (
     <div className="min-h-screen bg-bg-primary pb-24">
       <div className="sticky top-0 z-30 border-b border-border bg-bg-primary" style={{ paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
-      <div className="px-5 pb-3 flex items-center gap-3">
+      <div className="px-5 min-h-[44px] flex items-center gap-3">
         <button onClick={goBack} aria-label="뒤로가기" className="flex h-11 w-11 items-center justify-center -ml-2">
           <ArrowLeft size={24} className="text-text-primary" />
         </button>

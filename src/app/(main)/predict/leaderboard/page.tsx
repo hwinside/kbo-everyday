@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { ChevronLeft, Trophy, Medal } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { useSafeBack } from "@/lib/hooks/useSafeBack";
 import GlassCard from "@/components/ui/GlassCard";
 import TeamBadge from "@/components/ui/TeamBadge";
 import { useAuth } from "@/lib/supabase/AuthContext";
@@ -35,17 +36,18 @@ const MEDAL_COLORS = ["text-amber-400", "text-gray-300", "text-amber-700"];
 
 export default function LeaderboardPage() {
   const router = useRouter();
+  const goBack = useSafeBack("/predict");
   const { profile } = useAuth();
   const myTeamBorder = profile?.team_id ? getTeamBorderColorById(profile.team_id) : undefined;
 
   return (
     <div className="min-h-screen bg-bg-primary pb-24">
-      <div className="sticky top-0 z-30 pt-safe border-b bg-bg-primary/80 backdrop-blur-xl" style={{ borderColor: myTeamBorder || 'var(--color-border)' }}>
-        <div className="flex items-center gap-3 px-5 py-2">
-          <button onClick={() => router.back()}>
-            <ChevronLeft size={24} className="text-text-secondary" />
+      <div className="sticky top-0 z-30 border-b bg-bg-primary/80 backdrop-blur-xl" style={{ borderColor: myTeamBorder || 'var(--color-border)', paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
+        <div className="flex items-center gap-3 px-5 min-h-[44px]">
+          <button onClick={goBack} aria-label="뒤로가기" className="flex h-11 w-11 items-center justify-center rounded-full text-text-secondary hover:bg-bg-tertiary transition-colors -ml-2.5">
+            <ChevronLeft size={24} />
           </button>
-          <span className="text-base font-semibold text-text-primary">🏆 예측 리더보드</span>
+          <span className="min-w-0 flex-1 truncate text-lg font-bold text-text-primary">🏆 예측 리더보드</span>
         </div>
       </div>
 
