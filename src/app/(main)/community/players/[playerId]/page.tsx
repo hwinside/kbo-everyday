@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useSafeBack } from "@/lib/hooks/useSafeBack";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { ArrowLeft, Share2, PenLine } from "lucide-react";
 import Link from "next/link";
@@ -100,6 +100,7 @@ export default function PlayerBoardPage() {
 
   const [player, setPlayer] = useState<PlayerData | null>(null);
   const [loading, setLoading] = useState(true);
+  const router = useRouter();
   const goBack = useSafeBack("/community");
   const [activeTab, setActiveTab] = useState<"stats" | "games" | "board">("stats");
   const [showEntry, setShowEntry] = useState(false);
