@@ -103,7 +103,7 @@ export default function LearnPage() {
     <div className="min-h-screen bg-bg-primary pb-24">
       <div className="sticky top-0 z-30 border-b border-border bg-bg-primary" style={{ paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
       <header className="px-5 min-h-[44px] flex items-center">
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex w-full items-center justify-between gap-3">
           <div className="min-w-0">
             {selectedChapter ? (
               <button onClick={() => { setSelectedChapter(null); setLessonIndex(0); }} aria-label="목록으로" className="flex h-11 min-h-[44px] items-center gap-1 -ml-1 text-text-secondary">
