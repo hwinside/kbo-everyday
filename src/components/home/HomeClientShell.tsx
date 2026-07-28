@@ -660,10 +660,10 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
         </div>
         <div className="flex items-center gap-1">
           {user ? (
-            <Link href="/messages" className="relative rounded-full p-2 text-text-secondary hover:bg-bg-tertiary transition-colors">
+            <Link href="/messages" aria-label="쪽지" className="relative flex h-11 w-11 items-center justify-center rounded-full text-text-secondary hover:bg-bg-tertiary transition-colors">
               <MessageCircle size={22} />
               {unreadDMCount > 0 && (
-                <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-red-500 flex items-center justify-center text-[10px] font-bold text-white leading-none">
+                <span className="absolute top-1 right-1 min-w-[16px] h-4 px-1 rounded-full bg-red-500 flex items-center justify-center text-[10px] font-bold text-white leading-none">
                   {unreadDMCount > 9 ? "9+" : unreadDMCount}
                 </span>
               )}
@@ -671,12 +671,12 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
           ) : (
             <button
               onClick={() => setShowLogin(true)}
-              className="px-4 py-2 rounded-full bg-accent text-white text-sm font-semibold transition-transform active:scale-95"
+              className="px-4 min-h-11 rounded-full bg-accent text-white text-sm font-semibold transition-transform active:scale-95"
             >
               회원가입
             </button>
           )}
-          <Link href="/my" className="rounded-full p-2 hover:bg-bg-tertiary transition-colors">
+          <Link href="/my" aria-label="마이페이지" className="flex h-11 w-11 items-center justify-center rounded-full hover:bg-bg-tertiary transition-colors">
             <HeaderAvatar user={user} profile={profile} />
           </Link>
         </div>
