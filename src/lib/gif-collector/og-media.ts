@@ -174,6 +174,94 @@ export function extractInstagramImageUrls(html: string, max: number): OgMedia[] 
   return out;
 }
 
+/**
+ * IG scontent 이미지 URL이 *정사각(중앙/상단) 크롭* 변형인지 판별.
+ *
+ * IG CDN은 stp 파라미터로 변형을 지정한다. 크롭 변형은 `stp=c<offset>...` (예: `c0.259.2592.2592a_...s1080x1080`)
+ * 처럼 c로 시작하는 crop 지정이 붙는다. 원본 비율 변형은 `stp=dst-jpg_e35_tt6`(무크롭) 또는
+ * `stp=..._p1080x1080`(p=박스에 맞춰 축소, 비율 보존)처럼 c 크롭 지정이 없다.
+ * → stp 값이 `c` + 숫자로 시작하면 정사각 크롭본(짤림)으로 본다.
+ */
+function isInstagramSquareCropUrl(url: string): boolean {
+  const m = url.match(/[?&]stp=([^&]+)/i);
+  if (!m) return false;
+  return /^c\d/i.test(m[1]);
+}
+
+// srcset 항목 `URL 1080w` 의 폭(px). 없으면 0.
+function parseSrcsetWidth(descriptor: string): number {
+  const m = descriptor.trim().match(/(\d+)w$/);
+  return m ? parseInt(m[1], 10) : 0;
+}
+
+/**
+ * Instagram 임베드(/embed/·/embed/captioned/) 페이지의 `<img srcset=...>` 에서
+ * *원본 비율* 이미지를 추출한다.
+ *
+ * 배경: 기존 extractInstagramImageUrls는 contextJSON의 `display_url` 하나를 집는데,
+ * IG가 이 값으로 정사각 크롭본(예: 세로 2592x3110 뉴스카드를 상단 640x640으로 잘라낸 것)을
+ * 주는 경우가 있어 사진이 잘려서 저장됐다(하린아빠 제보 2026-07-28). 게다가 IG가 embed
+ * 포맷을 바꿔 display_url JSON이 사라진 케이스도 확인됨.
+ *
+ * embed의 `<img class="EmbeddedMediaImage" srcset="url1 2592w, url2 1080w, ...">`에는
+ * 같은 사진의 여러 해상도가 서명(oh/oe) 포함으로 들어있다. 이 중 정사각 크롭(stp=c..)이 아닌
+ * *원본 비율* 변형만 골라, 폭 1080 이하 최대(없으면 최소 상위)로 고른다. IG 서명은 URL 전체
+ * (stp 포함)로 계산되므로 stp를 임의 변형하면 403 — 반드시 srcset에 실제로 주어진 URL만 쓴다.
+ *
+ * 주의: 캐러셀(여러 장) 게시물이어도 embed <img>는 커버 한 장만 노출한다. 짤콜렉터가 다루는
+ * 뉴스카드는 대부분 단일 이미지라 커버로 충분.
+ *
+ * 중요: 반드시 본문 미디어(`class="EmbeddedMediaImage"`) img로 스코프한다. embed 페이지 하단에는
+ * 같은 계정의 *다른 게시물* 썸네일(srcset 포함)이 썯여 있어, 전체 <img srcset>를 긁으면 엉뚱한
+ * 사진까지 수집된다(실데이터 확인 2026-07-28). 클래스가 바뀌면 0건 반환 → 호출부가 display_url/og:image로 안전 폴백.
+ * IG가 마크업을 바꾸면 먼저 깨진다.
+ */
+export function extractInstagramImageUrlsFromSrcset(html: string, max: number): OgMedia[] {
+  if (max <= 0) return [];
+  const out: OgMedia[] = [];
+  const seen = new Set<string>();
+  // 본문 커버 이미지만: EmbeddedMediaImage 클래스 + srcset 보유 <img>. 속성 순서 무관하게 금지.
+  const imgRe = /<img\b[^>]*>/gi;
+  const PREFERRED_MAX_WIDTH = 1080;
+  let m: RegExpExecArray | null;
+  while ((m = imgRe.exec(html)) !== null && out.length < max) {
+    const tag = m[0];
+    if (!/\bclass=["'][^"']*\bEmbeddedMediaImage\b[^"']*["']/i.test(tag)) continue;
+    const ssMatch = tag.match(/\bsrcset=["']([^"']+)["']/i);
+    if (!ssMatch) continue;
+    const srcset = decodeHtmlEntities(ssMatch[1]);
+    const candidates = srcset
+      .split(",")
+      .map((part) => {
+        const trimmed = part.trim();
+        const sp = trimmed.lastIndexOf(" ");
+        const url = sp === -1 ? trimmed : trimmed.slice(0, sp);
+        return { url, width: parseSrcsetWidth(trimmed) };
+      })
+      .filter((c) => /^https?:\/\//i.test(c.url))
+      .filter((c) => /(?:cdninstagram\.com|fbcdn\.net)/i.test(c.url))
+      .filter((c) => !isMetaProfilePic(c.url))
+      .filter((c) => !isInstagramSquareCropUrl(c.url)); // 정사각 크롭본 제외 = 원본 비율만
+    if (candidates.length === 0) continue;
+    // 폭 1080 이하 중 최대. 그런 게 없으면(전부 1080 초과) 그 중 최소(1080에 가장 근접).
+    const within = candidates.filter((c) => c.width > 0 && c.width <= PREFERRED_MAX_WIDTH);
+    let best: { url: string; width: number };
+    if (within.length > 0) {
+      best = within.reduce((a, b) => (b.width > a.width ? b : a));
+    } else {
+      const positive = candidates.filter((c) => c.width > 0);
+      best = positive.length > 0
+        ? positive.reduce((a, b) => (b.width < a.width ? b : a))
+        : candidates[0];
+    }
+    const key = best.url.split("?")[0];
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ url: best.url, type: "image" });
+  }
+  return out;
+}
+
 function isMlbparkEmoticon(url: string): boolean {
   try {
     const u = new URL(url);

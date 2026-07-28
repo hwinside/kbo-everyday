@@ -29,6 +29,7 @@ import {
   extractMediaList,
   extractInstagramVideoUrls,
   extractInstagramImageUrls,
+  extractInstagramImageUrlsFromSrcset,
   extractThreadsImageUrls,
   extractMlbparkImageUrls,
   inferMediaExt,
@@ -88,6 +89,11 @@ async function fetchMediaList(sourceUrl: string): Promise<{ media: OgMedia[]; so
     if (embedHtml) {
       const igVideos = extractInstagramVideoUrls(embedHtml, MAX_MEDIA_ITEMS);
       if (igVideos.length > 0) return { media: igVideos, sourceHtml: html };
+      // 사진: 원본 비율 우선(<img srcset>의 non-crop 최대 변형). contextJSON display_url은 IG가
+      // 정사각 크롭본을 주는 경우가 있어 사진이 잘림(하린아빠 제보 2026-07-28) + 최근 IG embed
+      // 포맷 변경으로 display_url JSON이 사라지는 케이스도 있어 srcset을 1순위로 둔다.
+      const igSrcsetImages = extractInstagramImageUrlsFromSrcset(embedHtml, MAX_MEDIA_ITEMS);
+      if (igSrcsetImages.length > 0) return { media: igSrcsetImages, sourceHtml: html };
       const igImages = extractInstagramImageUrls(embedHtml, MAX_MEDIA_ITEMS);
       if (igImages.length > 0) return { media: igImages, sourceHtml: html };
     }
