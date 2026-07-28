@@ -12,7 +12,10 @@ import {
   shouldApplyCommentResponse,
   type VenueStoryComment,
 } from "@/lib/venue-stories/comments";
-import { computeKeyboardInset } from "@/lib/venue-stories/keyboard-inset";
+import {
+  computeKeyboardInset,
+  isVenueStoryKeyboardOpen,
+} from "@/lib/venue-stories/keyboard-inset";
 import { shouldCloseCommentSheetDrag } from "@/lib/venue-stories/comment-sheet-gesture";
 import { lockRootScroll, unlockRootScroll } from "@/lib/venue-stories/scroll-lock";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
@@ -133,6 +136,7 @@ export default function VenueStoryViewer({
   const lastUrlRefreshAtRef = useRef(0);
 
   const story = stories[index];
+  const keyboardOpen = isVenueStoryKeyboardOpen(composerFocused, kbInset);
 
   // #807 전송 중 스토리 전환 오염 가드용 현재 story.id 추적
   const storyId = story?.id;
@@ -489,13 +493,16 @@ export default function VenueStoryViewer({
   return createPortal(
     <motion.div
       data-venue-story-viewer
+      data-story-id={story.id}
       // 경기 페이지 상단 스코어 헤더가 z-[100]이라 그 위로 — 풀스크린 뷰어는 모든 UI를 덮어야 함
-      // ⚠️ 댓글이 열리면 뷰어 레이어를 hidden(display:none) 처리해 기사(뉴스) 댓글 CommentSheet 와
-      // 동일한 환경으로 만든다. 풀스크린 fixed 뷰어(비디오 레이어)가 남아있으면 iOS WKWebView 가
-      // 포커스된 입력창을 키보드 위로 올리려는 기본 동작을 방해해 입력창이 가리고 배경이 밀린다(하린아빠 iOS 리포트).
-      // 댓글 오버레이는 별도 body 포털이라 뷰어를 숨겨도 그대로 보이고, 백드롭(bg-black/60)가 이미 배경을 덮어 체감 동일.
+      // ⚠️ 댓글 시트가 뜨면 인스타 스토리처럼 영상을 뒤에 그대로 보여준다(하린아빠 7/28 리포트 —
+      // 이전엔 commentsOpen 되자마자 뷰어를 통째 hidden 처리해 영상이 사라져 이상했다).
+      // 단, focus 직후부터 visualViewport 인셋이 0으로 복귀할 때까지를 실제 keyboard-open 수명으로
+      // 보고 뷰어를 hidden 한다. onBlur가 먼저 와도 kbInset이 남은 닫힘 애니메이션 동안 fixed 비디오
+      // 레이어가 재등장하지 않아 입력창 가림·배경 밀림/지터 경로를 다시 열지 않는다.
+      // 댓글 오버레이는 별도 body 포털이라 뷰어가 보여도 그 위(z-130)로 정상 렌더된다.
       className={`fixed inset-0 z-[120] bg-black flex flex-col select-none overflow-hidden overscroll-none${
-        commentsOpen ? " hidden" : ""
+        commentsOpen && keyboardOpen ? " hidden" : ""
       }`}
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
@@ -605,6 +612,7 @@ export default function VenueStoryViewer({
         {story.mediaType === "video" ? (
           <video
             ref={videoRef}
+            data-story-media="video"
             src={story.mediaUrl}
             className="max-h-full max-w-full w-full h-full object-contain"
             playsInline
@@ -693,6 +701,7 @@ export default function VenueStoryViewer({
         createPortal(
           <motion.div
           data-venue-story-comment-overlay
+          data-keyboard-open={keyboardOpen ? "true" : "false"}
           className="fixed inset-0 z-[130] bg-black/60"
           // 백드롭에서 뒷 콘텐츠로 스크롤/오버스크롤 전파 차단(CommentSheet 동일) — 키보드 열린 상태에서
           // 백드롭 드래그가 배경(경기방)을 밀어내리는 것을 막는다(하린아빠 iOS 리포트: 스크롤 시 배경 내려감).
@@ -706,11 +715,12 @@ export default function VenueStoryViewer({
           }}
         >
           <motion.div
+            data-venue-story-comment-sheet
             className="fixed inset-x-0 z-[1] flex flex-col bg-bg-secondary rounded-t-2xl overflow-hidden"
             style={{
               bottom: kbInset,
               height:
-                composerFocused && vvHeight != null
+                keyboardOpen && vvHeight != null
                   ? `${vvHeight}px`
                   : vvHeight != null
                     ? `min(60dvh, ${vvHeight}px)`
