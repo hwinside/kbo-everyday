@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useSafeBack } from "@/lib/hooks/useSafeBack";
 import {
   ChevronLeft,
   Trophy,
@@ -45,6 +46,7 @@ const RESULT_PATH = "/whats-new";
 
 export default function EventInvitePage() {
   const router = useRouter();
+  const goBack = useSafeBack("/");
   const { user } = useAuth();
   const eventEnded = Date.now() >= EVENT_END_MS;
   const [topInvite, setTopInvite] = useState<InviteRow[]>([]);
@@ -92,7 +94,7 @@ export default function EventInvitePage() {
       <div className="sticky top-0 z-30 border-b border-border bg-bg-primary" style={{ paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
       <div className="max-w-screen-sm mx-auto px-5 py-4 flex items-center gap-2">
         <button
-          onClick={() => router.back()}
+          onClick={goBack}
           className="p-2 -ml-2 rounded-lg hover:bg-gray-900/5 dark:bg-white/5"
           aria-label="뒤로"
         >

@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { useSafeBack } from "@/lib/hooks/useSafeBack";
 import { ArrowLeft, MessageCircle, Settings, X, ShieldBan } from "lucide-react";
 import { useDMList } from "@/lib/supabase/useDM";
 import { useBlockList } from "@/lib/supabase/useBlock";
@@ -24,6 +25,7 @@ function timeAgo(dateStr: string) {
 
 export default function MessagesPage() {
   const router = useRouter();
+  const goBack = useSafeBack("/");
   const { user } = useAuth();
   const { conversations, loading } = useDMList();
   const { blockedUsers, loading: blocksLoading, refresh: refreshBlocks } = useBlockList();
@@ -48,7 +50,7 @@ export default function MessagesPage() {
       <div className="min-h-screen bg-bg-primary pb-24">
         <div className="sticky top-0 z-30 border-b border-border bg-bg-primary" style={{ paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
         <div className="px-5 pb-3 flex items-center gap-3">
-          <button onClick={() => router.back()} className="p-1">
+          <button onClick={goBack} className="p-1">
             <ArrowLeft size={24} className="text-text-primary" />
           </button>
           <h1 className="text-lg font-semibold leading-[26px] text-text-primary">쪽지</h1>
@@ -70,7 +72,7 @@ export default function MessagesPage() {
     <div className="min-h-screen bg-bg-primary pb-24">
       <div className="sticky top-0 z-30 border-b border-border bg-bg-primary" style={{ paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
       <div className="px-5 pb-3 flex items-center gap-3">
-        <button onClick={() => router.back()} className="p-1">
+        <button onClick={goBack} className="p-1">
           <ArrowLeft size={24} className="text-text-primary" />
         </button>
         <h1 className="text-lg font-bold text-text-primary flex-1">쪽지</h1>

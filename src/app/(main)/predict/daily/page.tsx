@@ -6,21 +6,21 @@ import { ArrowLeft, Users } from "lucide-react";
 import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
 import Image from "next/image";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useSafeBack } from "@/lib/hooks/useSafeBack";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import { MOCK_PREDICTIONS } from "@/lib/constants/predictions";
 import GlassCard from "@/components/ui/GlassCard";
 import AIAnalysis from "@/components/game/AIAnalysis";
 
 export default function DailyPredictPage() {
-  const router = useRouter();
+  const goBack = useSafeBack("/predict");
   const [aiTarget, setAiTarget] = useState<{ away: number; home: number; gameId: string } | null>(null);
 
   return (
     <div className="min-h-screen bg-bg-primary pb-24">
       <div className="sticky top-0 z-30 border-b border-border bg-bg-primary" style={{ paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
       <div className="px-5 pb-3 flex items-center gap-3">
-        <button onClick={() => router.back()} className="p-1">
+        <button onClick={goBack} className="p-1">
           <ArrowLeft size={24} className="text-text-primary" />
         </button>
         <h1 className="text-lg font-bold text-text-primary flex-1">오늘의 승부예측</h1>

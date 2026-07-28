@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useSafeBack } from "@/lib/hooks/useSafeBack";
 import { ArrowLeft, CheckCircle2, Loader2, Smartphone } from "lucide-react";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { supabase } from "@/lib/supabase/client";
@@ -14,6 +15,7 @@ const LOGIN_REDIRECT_KEY = "kbo-login-redirect";
 
 export default function TesterSignupPage() {
   const router = useRouter();
+  const goBack = useSafeBack("/");
   const { user, loading: authLoading } = useAuth();
 
   const [eligible, setEligible] = useState<boolean | null>(null);
@@ -129,7 +131,7 @@ export default function TesterSignupPage() {
   const header = (
     <div className="sticky top-0 z-30 -mx-5 border-b border-border bg-bg-primary px-5" style={{ paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
     <div className="mb-6 flex items-center gap-3">
-      <button onClick={() => router.back()} className="text-text-secondary">
+      <button onClick={goBack} className="text-text-secondary">
         <ArrowLeft size={22} />
       </button>
       <h1 className="flex items-center gap-2 text-lg font-bold text-text-primary">

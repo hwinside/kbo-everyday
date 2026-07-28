@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { useSafeBack } from "@/lib/hooks/useSafeBack";
 import { motion } from "framer-motion";
 import Image from "next/image";
 import { ChevronLeft, ChevronRight, RefreshCw, Settings } from "lucide-react";
@@ -46,6 +47,7 @@ export default function MyPage() {
   const [favPlayers, setFavPlayers] = useState<FavoritePlayer[]>([]);
   const [writingPoints, setWritingPoints] = useState<number | null>(null);
   const router = useRouter();
+  const goBack = useSafeBack("/");
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -142,7 +144,7 @@ export default function MyPage() {
     <div className="mx-auto max-w-lg px-5 pb-24">
       <div className="sticky top-0 z-30 border-b -mx-5 px-5 bg-bg-primary" style={{ borderColor: profile?.team_id ? getTeamBorderColorById(profile.team_id) : 'var(--color-border)', paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
         <header className="py-3 flex items-center gap-3">
-          <button onClick={() => router.back()} className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors"><ChevronLeft size={24} /></button>
+          <button onClick={goBack} className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors"><ChevronLeft size={24} /></button>
           <h1 className="text-lg font-semibold leading-[26px] text-text-primary flex-1">마이페이지</h1>
           <button onClick={() => router.push("/settings")} aria-label="설정" className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors"><Settings size={22} /></button>
         </header>

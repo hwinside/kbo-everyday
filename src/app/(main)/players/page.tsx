@@ -6,6 +6,7 @@ import Link from "next/link";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import { useState, useMemo, useEffect, useCallback, useRef, startTransition } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
+import { useSafeBack } from "@/lib/hooks/useSafeBack";
 import { TEAMS, getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import { getMyTeamId } from "@/lib/store/myteam";
 import TeamBadge from "@/components/ui/TeamBadge";
@@ -55,6 +56,7 @@ function sortPlayers(players: PlayerItem[], mode: SortMode): PlayerItem[] {
 function PlayersPageContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
+  const goBack = useSafeBack("/");
 
   // Supabase roster 로딩 (fallback: 정적 JSON)
   const [players, setPlayers] = useState<PlayerItem[]>(STATIC_PLAYERS);
@@ -181,7 +183,7 @@ function PlayersPageContent() {
       {/* Header */}
       <div className="sticky top-0 z-30 border-b -mx-5 px-5 bg-bg-primary" style={{ borderColor: myTeamId ? getTeamBorderColorById(myTeamId) : 'var(--color-border)', paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
         <header className="py-3 flex items-center gap-3">
-          <button onClick={() => router.back()} className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors"><ChevronLeft size={24} /></button>
+          <button onClick={goBack} className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors"><ChevronLeft size={24} /></button>
           <h1 className="text-2xl font-bold text-text-primary tracking-tight flex-1">선수</h1>
           <HeaderProfileLink />
         </header>

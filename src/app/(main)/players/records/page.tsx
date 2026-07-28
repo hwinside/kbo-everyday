@@ -1,19 +1,19 @@
 "use client";
 
 import { ChevronLeft } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { useSafeBack } from "@/lib/hooks/useSafeBack";
 import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
 import RecordRoom from "@/components/players/RecordRoom";
 
 export default function PlayerRecordsPage() {
-  const router = useRouter();
+  const goBack = useSafeBack("/players");
 
   return (
     <div className="mx-auto max-w-lg px-5">
       <div className="sticky top-0 z-30 border-b -mx-5 px-5 bg-bg-primary" style={{ borderColor: "var(--color-border)", paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
         <header className="py-3 flex items-center gap-3">
           <button
-            onClick={() => router.back()}
+            onClick={goBack}
             className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors"
           >
             <ChevronLeft size={24} />

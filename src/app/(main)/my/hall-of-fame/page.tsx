@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useSafeBack } from "@/lib/hooks/useSafeBack";
 import { ChevronLeft, Trophy } from "lucide-react";
 import { clsx } from "clsx";
 import GlassCard from "@/components/ui/GlassCard";
@@ -102,7 +102,7 @@ async function getAuthHeaders(): Promise<Record<string, string>> {
 }
 
 export default function HallOfFamePage() {
-  const router = useRouter();
+  const goBack = useSafeBack("/my");
   const { user, profile } = useAuth();
   const months = monthRange();
 
@@ -223,7 +223,7 @@ export default function HallOfFamePage() {
       >
         <header className="py-3 flex items-center gap-3">
           <button
-            onClick={() => router.back()}
+            onClick={goBack}
             className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors"
             aria-label="뒤로"
           >

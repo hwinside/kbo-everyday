@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { useSafeBack } from "@/lib/hooks/useSafeBack";
 import { motion } from "framer-motion";
 import { ChevronLeft, ChevronRight, Download, MessageSquareHeart, Sparkles } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
@@ -22,6 +23,7 @@ import FaqCard from "@/components/my/FaqCard";
 
 export default function SettingsPage() {
   const router = useRouter();
+  const goBack = useSafeBack("/my");
   const { user, signOut } = useAuth();
   const { permission, subscription, subscribe, unsubscribe } = usePushNotification();
   const [showPwaGuide, setShowPwaGuide] = useState(false);
@@ -32,7 +34,7 @@ export default function SettingsPage() {
     <div className="mx-auto max-w-lg px-5 pb-24">
       <div className="sticky top-0 z-30 border-b -mx-5 px-5 bg-bg-primary" style={{ borderColor: "var(--color-border)", paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
         <header className="py-3 flex items-center gap-3">
-          <button onClick={() => router.back()} className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors"><ChevronLeft size={24} /></button>
+          <button onClick={goBack} className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors"><ChevronLeft size={24} /></button>
           <h1 className="text-lg font-semibold leading-[26px] text-text-primary flex-1">설정</h1>
         </header>
       </div>

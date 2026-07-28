@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { useRouter, usePathname } from "next/navigation";
+import { useSafeBack } from "@/lib/hooks/useSafeBack";
 import { ArrowLeft, Sparkles, ChevronRight, MessageCircle, Heart } from "lucide-react";
 import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
 import GlassCard from "@/components/ui/GlassCard";
@@ -100,6 +101,7 @@ function formatDate(iso: string): string {
 
 export default function WhatsNewPage() {
   const router = useRouter();
+  const goBack = useSafeBack("/");
   const pathname = usePathname();
   const [items, setItems] = useState<Announcement[]>([]);
   const [loading, setLoading] = useState(true);
@@ -175,7 +177,7 @@ export default function WhatsNewPage() {
       {/* Header */}
       <div className="sticky top-0 z-30 -mx-5 border-b border-border bg-bg-primary px-5" style={{ paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
       <div className="mb-5 flex items-center gap-3">
-        <button onClick={() => router.back()} className="text-text-secondary">
+        <button onClick={goBack} className="text-text-secondary">
           <ArrowLeft size={22} />
         </button>
         <h1 className="flex items-center gap-2 text-lg font-bold text-text-primary flex-1">
