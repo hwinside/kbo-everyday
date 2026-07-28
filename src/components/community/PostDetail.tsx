@@ -22,6 +22,7 @@ import { isImageComment, prepareCommentImageForUpload } from "@/lib/community/co
 import LoginSheet from "@/components/auth/LoginSheet";
 import ShareSheet, { type ShareSheetPost } from "@/components/community/ShareSheet";
 import PostViewBadge from "@/components/community/PostViewBadge";
+import PollBlock from "@/components/community/PollBlock";
 import { trackPostClick } from "@/lib/community/view-tracker";
 import { useBlockedIds, blockUserById } from "@/lib/supabase/useBlock";
 import { supabase } from "@/lib/supabase/client";
@@ -452,7 +453,7 @@ export default function PostDetail({ postId }: PostDetailProps) {
                 <>
                   <div className="fixed inset-0 z-10" onClick={() => setPostMenuOpen(false)} />
                   <div className="absolute right-0 top-8 z-20 min-w-[112px] rounded-lg border border-border bg-bg-primary shadow-lg overflow-hidden">
-                    {isPostMine && <button onClick={startPostEdit} className="block w-full px-3 py-2 text-left text-sm text-text-primary hover:bg-bg-tertiary">수정</button>}
+                    {isPostMine && post.board_type !== "poll" && <button onClick={startPostEdit} className="block w-full px-3 py-2 text-left text-sm text-text-primary hover:bg-bg-tertiary">수정</button>}
                     {!isPostMine && (
                       <button onClick={() => openReport({ type: "post", id: post.id })} className="flex items-center gap-2 w-full px-3 py-2 text-left text-sm text-text-primary hover:bg-bg-tertiary">
                         <Flag size={14} /> 신고
@@ -552,6 +553,11 @@ export default function PostDetail({ postId }: PostDetailProps) {
             />
           );
         })()}
+
+        {/* 투표 블록 (board_type='poll' 전용, 선지·집계·상태만 렌더) */}
+        {post.board_type === "poll" && (
+          <PollBlock postId={post.id} onRequireLogin={() => setShowLogin(true)} />
+        )}
 
         {/* Actions */}
         <div className="flex items-center gap-4 mt-4 pt-3 border-t border-border">

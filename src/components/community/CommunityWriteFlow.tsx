@@ -1,8 +1,10 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import WritePost from "@/components/community/WritePost";
 import WritePhotoPost from "@/components/community/WritePhotoPost";
+import WritePoll from "@/components/community/WritePoll";
 import WriteEntrySheet from "@/components/community/WriteEntrySheet";
 import LoginSheet from "@/components/auth/LoginSheet";
 import { createPost } from "@/lib/supabase/usePosts";
@@ -28,7 +30,8 @@ interface CommunityWriteFlowProps {
  */
 export default function CommunityWriteFlow({ mode, onClose, onPosted }: CommunityWriteFlowProps) {
   // 타입 선택 후 어떤 컴포저를 열지(엔트리 시트의 하위 상태).
-  const [composer, setComposer] = useState<"write" | "photo" | null>(null);
+  const [composer, setComposer] = useState<"write" | "photo" | "poll" | null>(null);
+  const router = useRouter();
 
   const close = () => {
     setComposer(null);
@@ -42,6 +45,7 @@ export default function CommunityWriteFlow({ mode, onClose, onPosted }: Communit
         onClose={close}
         onChoosePhoto={() => setComposer("photo")}
         onChooseText={() => setComposer("write")}
+        onChoosePoll={() => setComposer("poll")}
       />
       <WritePost
         isOpen={composer === "write"}
@@ -69,6 +73,15 @@ export default function CommunityWriteFlow({ mode, onClose, onPosted }: Communit
         boardType="free"
         boardId="general"
         onSuccess={() => { onPosted?.(); close(); }}
+      />
+      <WritePoll
+        isOpen={composer === "poll"}
+        onClose={close}
+        onCreated={(postId) => {
+          onPosted?.();
+          close();
+          router.push(`/community/free/${postId}`);
+        }}
       />
       {mode === "login" && <LoginSheet isOpen onClose={close} />}
     </>

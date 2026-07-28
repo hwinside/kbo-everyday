@@ -1,22 +1,26 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { Pencil } from "lucide-react";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import LoginSheet from "@/components/auth/LoginSheet";
 import { usePosts, createPost } from "@/lib/supabase/usePosts";
 import WritePost from "@/components/community/WritePost";
 import WritePhotoPost from "@/components/community/WritePhotoPost";
+import WritePoll from "@/components/community/WritePoll";
 import WriteEntrySheet from "@/components/community/WriteEntrySheet";
 import PostList from "@/components/community/PostList";
 import type { Post } from "@/lib/types";
 
 export default function FreeBoardPage() {
   const { user } = useAuth();
+  const router = useRouter();
   const [showLogin, setShowLogin] = useState(false);
   const [showEntry, setShowEntry] = useState(false);
   const [showWrite, setShowWrite] = useState(false);
   const [showPhoto, setShowPhoto] = useState(false);
+  const [showPoll, setShowPoll] = useState(false);
   const { posts: rawPosts, loading, reload } = usePosts("free", "general");
 
   // Transform to shared Post type (same pattern as team/player boards)
@@ -79,6 +83,7 @@ export default function FreeBoardPage() {
         onClose={() => setShowEntry(false)}
         onChoosePhoto={() => { setShowEntry(false); setShowPhoto(true); }}
         onChooseText={() => { setShowEntry(false); setShowWrite(true); }}
+        onChoosePoll={() => { setShowEntry(false); setShowPoll(true); }}
       />
       <WritePost
         isOpen={showWrite}
@@ -106,6 +111,11 @@ export default function FreeBoardPage() {
         boardType="free"
         boardId="general"
         onSuccess={() => { setShowPhoto(false); reload(); }}
+      />
+      <WritePoll
+        isOpen={showPoll}
+        onClose={() => setShowPoll(false)}
+        onCreated={(postId) => { setShowPoll(false); router.push(`/community/free/${postId}`); }}
       />
     </div>
   );

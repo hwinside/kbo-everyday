@@ -1,0 +1,432 @@
+"use client";
+
+import { useMemo, useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { X, Plus, Trash2, Users, User, Type as TypeIcon } from "lucide-react";
+import Image from "next/image";
+import TeamTagger from "./TeamTagger";
+import PlayerPickerSheet from "./PlayerPickerSheet";
+import { TEAMS } from "@/lib/constants/teams";
+import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
+import { getPlayerPhotoByKboId } from "@/lib/constants/player-photos";
+import { createPoll, type PollOptionInput } from "@/lib/community/poll-client";
+
+/**
+ * 커뮤니티 투표 작성 컴포저 (spec: specs/community-poll.md §6, S2).
+ *
+ * - 선지는 작성순(배열 순서 = position)으로 유지. 팀=TeamTagger, 선수=PlayerPickerSheet
+ *   를 재사용해 기존 커뮤니티 태그 UX 와 동일하게 고른다. 기타는 자유 텍스트 행.
+ * - 한 투표에 팀 선지와 선수 선지 공존을 UI 에서 원천 차단(기타는 항상 허용).
+ * - 라벨/이미지(팀 로고·선수 사진)는 서버(create_poll route)가 canonical 파생하므로,
+ *   여기서는 미리보기용으로만 로컬 SSOT(teams.ts / roster+photo map)를 참조한다.
+ * - 개수(2~10)·마감범위(10분~30일)·공존금지 등 권위 검증은 서버 RPC 가 재수행.
+ */
+
+interface WritePollProps {
+  isOpen: boolean;
+  onClose: () => void;
+  /** 생성 성공 시 새 postId 전달(호스트가 상세로 이동/피드 갱신). */
+  onCreated: (postId: number) => void;
+}
+
+type DraftOption =
+  | { kind: "team"; refId: string; label: string; image: string | null }
+  | { kind: "player"; refId: string; label: string; image: string | null }
+  | { kind: "etc"; label: string };
+
+const MAX_OPTIONS = 10;
+const MIN_MINUTES = 10;
+const MAX_DAYS = 30;
+
+const ROSTER_NAME_BY_KBOID = new Map(
+  (PLAYERS_ROSTER as { kboId: string; name: string }[]).map((p) => [String(p.kboId), p.name]),
+);
+
+// 마감 프리셋(분 단위). 커스텀 datetime-local 도 병행 제공.
+const DURATION_PRESETS: { label: string; minutes: number }[] = [
+  { label: "1시간", minutes: 60 },
+  { label: "6시간", minutes: 360 },
+  { label: "1일", minutes: 1440 },
+  { label: "3일", minutes: 4320 },
+  { label: "7일", minutes: 10080 },
+  { label: "30일", minutes: 43200 },
+];
+
+function toLocalInputValue(d: Date): string {
+  // datetime-local 은 로컬 타임존 'YYYY-MM-DDTHH:mm' 문자열을 기대.
+  const tz = d.getTimezoneOffset() * 60000;
+  return new Date(d.getTime() - tz).toISOString().slice(0, 16);
+}
+
+export default function WritePoll({ isOpen, onClose, onCreated }: WritePollProps) {
+  const [title, setTitle] = useState("");
+  const [content, setContent] = useState("");
+  const [allowMultiple, setAllowMultiple] = useState(false);
+  const [options, setOptions] = useState<DraftOption[]>([]);
+  // 기본 마감 = 1일 후
+  const [closesAtLocal, setClosesAtLocal] = useState<string>(() =>
+    toLocalInputValue(new Date(Date.now() + 1440 * 60000)),
+  );
+  // datetime-local 경계(마운트 시각 기준). 권위 마감범위 검증은 서버 RPC 가 재수행하므로
+  // 마운트 기준 경계로 충분(렌더 중 Date.now 재호출 회피).
+  const [minLocal] = useState<string>(() => toLocalInputValue(new Date(Date.now() + MIN_MINUTES * 60000)));
+  const [maxLocal] = useState<string>(() => toLocalInputValue(new Date(Date.now() + MAX_DAYS * 86400000)));
+  const [teamSheetOpen, setTeamSheetOpen] = useState(false);
+  const [playerSheetOpen, setPlayerSheetOpen] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const hasTeam = options.some((o) => o.kind === "team");
+  const hasPlayer = options.some((o) => o.kind === "player");
+  const teamSlugs = useMemo(
+    () => options.filter((o): o is Extract<DraftOption, { kind: "team" }> => o.kind === "team").map((o) => o.refId),
+    [options],
+  );
+  const full = options.length >= MAX_OPTIONS;
+
+  function reset() {
+    setTitle("");
+    setContent("");
+    setAllowMultiple(false);
+    setOptions([]);
+    setClosesAtLocal(toLocalInputValue(new Date(Date.now() + 1440 * 60000)));
+    setError(null);
+    setSubmitting(false);
+  }
+
+  function close() {
+    reset();
+    onClose();
+  }
+
+  // 팀 토글: 선택되면 옵션 추가(작성순 append), 해제되면 제거.
+  function toggleTeam(slug: string) {
+    setError(null);
+    setOptions((prev) => {
+      const exists = prev.some((o) => o.kind === "team" && o.refId === slug);
+      if (exists) return prev.filter((o) => !(o.kind === "team" && o.refId === slug));
+      if (prev.length >= MAX_OPTIONS) return prev;
+      const team = TEAMS.find((t) => t.slug === slug);
+      if (!team) return prev;
+      return [...prev, { kind: "team", refId: slug, label: team.name, image: team.logoPath }];
+    });
+  }
+
+  function addPlayer(kboId: string) {
+    setError(null);
+    setOptions((prev) => {
+      if (prev.some((o) => o.kind === "player" && o.refId === kboId)) return prev; // 중복 방지
+      if (prev.length >= MAX_OPTIONS) return prev;
+      const name = ROSTER_NAME_BY_KBOID.get(kboId) ?? kboId;
+      return [...prev, { kind: "player", refId: kboId, label: name, image: getPlayerPhotoByKboId(kboId) }];
+    });
+    setPlayerSheetOpen(false);
+  }
+
+  function addEtc() {
+    setError(null);
+    setOptions((prev) => (prev.length >= MAX_OPTIONS ? prev : [...prev, { kind: "etc", label: "" }]));
+  }
+
+  function updateEtc(idx: number, label: string) {
+    setOptions((prev) => prev.map((o, i) => (i === idx && o.kind === "etc" ? { ...o, label } : o)));
+  }
+
+  function removeOption(idx: number) {
+    setError(null);
+    setOptions((prev) => prev.filter((_, i) => i !== idx));
+  }
+
+  function applyPreset(minutes: number) {
+    // eslint-disable-next-line react-hooks/purity -- 프리셋 버튼(이벤트) 핸들러, 렌더 순수성과 무관
+    setClosesAtLocal(toLocalInputValue(new Date(Date.now() + minutes * 60000)));
+  }
+
+  function validate(): { closesAtIso: string; opts: PollOptionInput[] } | null {
+    if (!title.trim()) {
+      setError("질문을 입력해 주세요");
+      return null;
+    }
+    if (options.length < 2) {
+      setError("선지는 2개 이상이어야 해요");
+      return null;
+    }
+    if (options.length > MAX_OPTIONS) {
+      setError(`선지는 최대 ${MAX_OPTIONS}개까지예요`);
+      return null;
+    }
+    if (hasTeam && hasPlayer) {
+      setError("한 투표에 팀과 선수를 함께 넣을 수 없어요");
+      return null;
+    }
+    for (const o of options) {
+      if (o.kind === "etc" && !o.label.trim()) {
+        setError("기타 선지의 내용을 입력해 주세요");
+        return null;
+      }
+    }
+    const closes = new Date(closesAtLocal);
+    if (Number.isNaN(closes.getTime())) {
+      setError("마감시간이 올바르지 않아요");
+      return null;
+    }
+    const now = Date.now();
+    if (closes.getTime() < now + MIN_MINUTES * 60000) {
+      setError(`마감은 지금부터 최소 ${MIN_MINUTES}분 뒤여야 해요`);
+      return null;
+    }
+    if (closes.getTime() > now + MAX_DAYS * 86400000) {
+      setError(`마감은 최대 ${MAX_DAYS}일 이내여야 해요`);
+      return null;
+    }
+    const opts: PollOptionInput[] = options.map((o) =>
+      o.kind === "etc"
+        ? { kind: "etc", label: o.label.trim() }
+        : { kind: o.kind, refId: o.refId },
+    );
+    return { closesAtIso: closes.toISOString(), opts };
+  }
+
+  async function handleSubmit() {
+    if (submitting) return;
+    const v = validate();
+    if (!v) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      const postId = await createPoll({
+        title: title.trim(),
+        content: content.trim(),
+        allowMultiple,
+        closesAt: v.closesAtIso,
+        options: v.opts,
+      });
+      const created = postId;
+      reset();
+      onCreated(created);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "투표 생성에 실패했어요");
+      setSubmitting(false);
+    }
+  }
+
+  if (!isOpen) return null;
+
+  return (
+    <AnimatePresence>
+      <motion.div
+        className="fixed inset-0 z-[10000] flex items-end"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+      >
+        <div className="absolute inset-0 bg-black/60" onClick={close} />
+        <motion.div
+          className="relative w-full max-w-lg mx-auto bg-bg-secondary rounded-t-3xl max-h-[92vh] flex flex-col"
+          initial={{ y: "100%" }}
+          animate={{ y: 0 }}
+          exit={{ y: "100%" }}
+          transition={{ type: "spring", damping: 25 }}
+        >
+          {/* Header */}
+          <div className="flex items-center justify-between px-5 py-4 border-b border-border flex-none">
+            <button onClick={close} aria-label="닫기">
+              <X size={22} className="text-text-secondary" />
+            </button>
+            <h2 className="text-lg font-bold text-text-primary">투표 만들기</h2>
+            <button
+              onClick={handleSubmit}
+              disabled={submitting}
+              className="text-sm font-semibold text-accent disabled:text-text-tertiary"
+            >
+              {submitting ? "등록 중..." : "등록"}
+            </button>
+          </div>
+
+          {/* Body (scroll) */}
+          <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5 pb-[calc(1.5rem+env(safe-area-inset-bottom))]">
+            {/* 질문 */}
+            <div>
+              <label className="block text-xs font-semibold text-text-tertiary mb-1.5">질문</label>
+              <input
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder="무엇을 투표할까요?"
+                maxLength={200}
+                className="w-full px-3 py-2.5 rounded-xl bg-bg-tertiary text-text-primary placeholder:text-text-tertiary outline-none"
+              />
+            </div>
+
+            {/* 설명(선택) */}
+            <div>
+              <label className="block text-xs font-semibold text-text-tertiary mb-1.5">설명 (선택)</label>
+              <textarea
+                value={content}
+                onChange={(e) => setContent(e.target.value)}
+                placeholder="투표에 대한 설명을 적어주세요"
+                rows={2}
+                className="w-full px-3 py-2.5 rounded-xl bg-bg-tertiary text-text-primary placeholder:text-text-tertiary outline-none resize-none"
+              />
+            </div>
+
+            {/* 선지 */}
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs font-semibold text-text-tertiary">
+                  선지 <span className="text-text-tertiary">({options.length}/{MAX_OPTIONS})</span>
+                </label>
+              </div>
+
+              {options.length === 0 && (
+                <p className="text-xs text-text-tertiary py-3 text-center">
+                  아래에서 팀·선수·기타 선지를 추가하세요 (2~10개)
+                </p>
+              )}
+
+              <div className="space-y-2">
+                {options.map((o, idx) => (
+                  <div key={`${o.kind}-${idx}-${o.kind === "etc" ? "etc" : o.refId}`} className="flex items-center gap-2">
+                    {o.kind === "etc" ? (
+                      <div className="flex-1 flex items-center gap-2 px-3 py-2 rounded-xl bg-bg-tertiary">
+                        <TypeIcon size={16} className="text-text-tertiary flex-none" />
+                        <input
+                          value={o.label}
+                          onChange={(e) => updateEtc(idx, e.target.value)}
+                          placeholder="직접 입력"
+                          maxLength={60}
+                          className="flex-1 bg-transparent text-sm text-text-primary placeholder:text-text-tertiary outline-none"
+                        />
+                      </div>
+                    ) : (
+                      <div className="flex-1 flex items-center gap-2.5 px-3 py-2 rounded-xl bg-bg-tertiary">
+                        {o.image ? (
+                          <Image
+                            src={o.image}
+                            alt={o.label}
+                            width={28}
+                            height={28}
+                            className="rounded-full object-cover w-7 h-7 flex-none bg-bg-secondary"
+                          />
+                        ) : (
+                          <span className="w-7 h-7 rounded-full bg-bg-secondary flex-none" />
+                        )}
+                        <span className="flex-1 text-sm text-text-primary truncate">{o.label}</span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-bg-secondary text-text-tertiary flex-none">
+                          {o.kind === "team" ? "팀" : "선수"}
+                        </span>
+                      </div>
+                    )}
+                    <button
+                      onClick={() => removeOption(idx)}
+                      aria-label="선지 삭제"
+                      className="p-2 text-text-tertiary active:scale-90 transition-transform flex-none"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              {/* 추가 버튼들 */}
+              <div className="grid grid-cols-3 gap-2 mt-3">
+                <button
+                  onClick={() => setTeamSheetOpen(true)}
+                  disabled={hasPlayer || full}
+                  className="flex flex-col items-center gap-1 py-2.5 rounded-xl bg-bg-tertiary active:scale-95 transition-transform disabled:opacity-40"
+                >
+                  <Users size={18} className="text-accent" />
+                  <span className="text-xs font-medium text-text-primary">팀</span>
+                </button>
+                <button
+                  onClick={() => setPlayerSheetOpen(true)}
+                  disabled={hasTeam || full}
+                  className="flex flex-col items-center gap-1 py-2.5 rounded-xl bg-bg-tertiary active:scale-95 transition-transform disabled:opacity-40"
+                >
+                  <User size={18} className="text-accent" />
+                  <span className="text-xs font-medium text-text-primary">선수</span>
+                </button>
+                <button
+                  onClick={addEtc}
+                  disabled={full}
+                  className="flex flex-col items-center gap-1 py-2.5 rounded-xl bg-bg-tertiary active:scale-95 transition-transform disabled:opacity-40"
+                >
+                  <Plus size={18} className="text-accent" />
+                  <span className="text-xs font-medium text-text-primary">기타</span>
+                </button>
+              </div>
+              {(hasTeam || hasPlayer) && (
+                <p className="text-[11px] text-text-tertiary mt-2">
+                  한 투표에는 {hasTeam ? "팀" : "선수"} 선지만 넣을 수 있어요 (기타는 함께 가능)
+                </p>
+              )}
+            </div>
+
+            {/* 복수선택 */}
+            <label className="flex items-center justify-between py-1 cursor-pointer">
+              <span className="text-sm text-text-primary">복수선택 허용</span>
+              <button
+                type="button"
+                onClick={() => setAllowMultiple((v) => !v)}
+                className={`relative w-11 h-6 rounded-full transition-colors ${allowMultiple ? "bg-accent" : "bg-bg-tertiary"}`}
+                aria-pressed={allowMultiple}
+              >
+                <span
+                  className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${allowMultiple ? "translate-x-5" : ""}`}
+                />
+              </button>
+            </label>
+
+            {/* 마감시간 */}
+            <div>
+              <label className="block text-xs font-semibold text-text-tertiary mb-1.5">마감시간</label>
+              <div className="flex flex-wrap gap-1.5 mb-2">
+                {DURATION_PRESETS.map((p) => (
+                  <button
+                    key={p.minutes}
+                    onClick={() => applyPreset(p.minutes)}
+                    className="px-2.5 py-1 rounded-lg bg-bg-tertiary text-xs text-text-secondary active:scale-95 transition-transform"
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+              <input
+                type="datetime-local"
+                value={closesAtLocal}
+                min={minLocal}
+                max={maxLocal}
+                onChange={(e) => setClosesAtLocal(e.target.value)}
+                className="w-full px-3 py-2.5 rounded-xl bg-bg-tertiary text-text-primary outline-none"
+              />
+              <p className="text-[11px] text-text-tertiary mt-1">지금부터 10분 ~ 30일 사이</p>
+            </div>
+
+            {error && <p className="text-sm text-red-500">{error}</p>}
+          </div>
+        </motion.div>
+      </motion.div>
+
+      {/* 팀 선택 시트 (TeamTagger 재사용, 다중 토글) */}
+      {teamSheetOpen && (
+        <div className="fixed inset-0 z-[10001] flex items-end">
+          <div className="absolute inset-0 bg-black/60" onClick={() => setTeamSheetOpen(false)} />
+          <div className="relative w-full max-w-lg mx-auto bg-bg-secondary rounded-t-3xl p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))]">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-base font-bold text-text-primary">팀 선지 선택</h3>
+              <button onClick={() => setTeamSheetOpen(false)} className="text-sm font-semibold text-accent">완료</button>
+            </div>
+            <TeamTagger selectedSlugs={teamSlugs} onToggle={toggleTeam} />
+          </div>
+        </div>
+      )}
+
+      {/* 선수 선택 시트 (PlayerPickerSheet 재사용) */}
+      <PlayerPickerSheet
+        open={playerSheetOpen}
+        onClose={() => setPlayerSheetOpen(false)}
+        players={[]}
+        onSelect={addPlayer}
+      />
+    </AnimatePresence>
+  );
+}

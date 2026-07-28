@@ -20,6 +20,7 @@ import type { Post } from "@/lib/supabase/usePosts";
 import { supabase } from "@/lib/supabase/client";
 import WritePost from "@/components/community/WritePost";
 import WritePhotoPost from "@/components/community/WritePhotoPost";
+import WritePoll from "@/components/community/WritePoll";
 import WriteEntrySheet from "@/components/community/WriteEntrySheet";
 import PhotoFeed from "@/components/community/PhotoFeed";
 import { useBadgeCheck } from "@/lib/hooks/useBadgeCheck";
@@ -104,6 +105,7 @@ export default function PlayerBoardPage() {
   const [showEntry, setShowEntry] = useState(false);
   const [showWrite, setShowWrite] = useState(false);
   const [showPhoto, setShowPhoto] = useState(false);
+  const [showPoll, setShowPoll] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
   const [statSeason, setStatSeason] = useState<2025 | 2026>(2026);
   // 통합 피드: 글·사진 한 스트림 (선수 게시판 직접글 + 다른 게시판에서 이 선수 태그된 글).
@@ -619,6 +621,13 @@ export default function PlayerBoardPage() {
         onClose={() => setShowEntry(false)}
         onChoosePhoto={() => { setShowEntry(false); setShowPhoto(true); }}
         onChooseText={() => { setShowEntry(false); setShowWrite(true); }}
+        onChoosePoll={() => { setShowEntry(false); setShowPoll(true); }}
+      />
+
+      <WritePoll
+        isOpen={showPoll}
+        onClose={() => setShowPoll(false)}
+        onCreated={(postId) => { setShowPoll(false); router.push(`/community/free/${postId}`); }}
       />
 
       <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />
