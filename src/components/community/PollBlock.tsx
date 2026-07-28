@@ -186,6 +186,12 @@ export default function PollBlock({ postId, onRequireLogin }: PollBlockProps) {
   const showResults = (detail.canSeeResults && !editing) || (effectiveClosed && detail.canSeeResults);
   const status = effectiveClosed ? "마감" : "진행중";
 
+  // 결과 공개 시에만 받은 표 많은 순(내림차순)으로 정렬. Array#sort 는 안정 정렬이므로
+  // 동표 선지는 원래(작성) 순서를 유지한다. 투표 모드에서는 작성 순서 그대로 둔다.
+  const displayOptions = showResults
+    ? [...detail.options].sort((a, b) => (b.voteCount ?? 0) - (a.voteCount ?? 0))
+    : detail.options;
+
   return (
     <div className="mt-4 rounded-2xl border border-border p-4">
       {/* 상태 헤더 */}
@@ -203,9 +209,10 @@ export default function PollBlock({ postId, onRequireLogin }: PollBlockProps) {
         <span className="text-xs text-text-tertiary ml-auto">👥 {detail.voterCount}명 참여</span>
       </div>
 
-      {/* 선지 */}
+      {/* 선지 — 결과 공개 시 받은 표 많은 순(내림차순)으로 정렬, 동표는 원래 순서 유지(안정 정렬).
+          투표 모드(결과 미공개)에서는 작성 순서 그대로 노출해 순위 유출을 막는다. */}
       <div className="space-y-2">
-        {detail.options.map((o) => (
+        {displayOptions.map((o) => (
           <PollOptionRow
             key={o.id}
             option={o}

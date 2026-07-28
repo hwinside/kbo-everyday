@@ -25,6 +25,7 @@ import {
 } from "../../src/lib/venue-stories/comments";
 import {
   computeKeyboardInset,
+  isVenueStoryKeyboardOpen,
   subscribeKeyboardInset,
   type VisualViewportLike,
 } from "../../src/lib/venue-stories/keyboard-inset";
@@ -177,6 +178,14 @@ console.log("[iOS 키보드 인셋 — 모킹 visualViewport 회귀(삼순 #807 
   ok("순수 계산: 키보드 300px 오픈 = 300", computeKeyboardInset(800, 500, 0) === 300);
   ok("순수 계산: visual viewport 상단 오프셋 반영", computeKeyboardInset(800, 500, 100) === 200);
   ok("순수 계산: 음수 방지(clamp 0)", computeKeyboardInset(800, 900, 0) === 0);
+  ok("3상태 idle — focus=false + inset=0이면 viewer visible",
+    isVenueStoryKeyboardOpen(false, 0) === false);
+  ok("3상태 focus — viewport resize 전에도 focus=true면 viewer hidden",
+    isVenueStoryKeyboardOpen(true, 0) === true);
+  ok("3상태 blur transition — focus=false여도 inset>0이면 viewer hidden 유지",
+    isVenueStoryKeyboardOpen(false, 300) === true);
+  ok("3상태 blur settled — inset=0 복귀 뒤에만 viewer visible",
+    isVenueStoryKeyboardOpen(false, 0) === false);
 
   // 모킹 visualViewport — focus→키보드 resize→submit 유지→blur(구독 해제) 시나리오
   const listeners: Record<string, Set<() => void>> = { resize: new Set(), scroll: new Set() };
@@ -268,12 +277,10 @@ console.log("[전송 중 스토리 전환 오염 가드 — 삼순 #807 라운�
   ok("body sibling 댓글 overlay가 뷰어 z-120보다 높은 shared overlay tier z-130",
     viewerSrc.includes("data-venue-story-comment-overlay") &&
     viewerSrc.includes("z-[130] bg-black/60"));
-  // ⭐ 기사(뉴스) 댓글 CommentSheet 는 iOS 웹에서 깔끔하게 동작하는데 스토리만 안 되는 이유 =
-  // 스토리 댓글은 풀스크린 뷰어(fixed inset-0 z-120, 비디오 레이어) 위에서 열려 iOS WKWebView 기본
-  // 키보드 회피를 방해받기 때문(하린아빠 iOS 리포트 7/26). 댓글 열릴 때 뷰어 레이어를 hidden 처리해
-  // CommentSheet 와 동일 환경으로 만들고, 백드롭은 CommentSheet 처럼 스크롤 전파를 차단한다.
-  ok("댓글 열릴 때 풀스크린 뷰어 레이어를 hidden 처리(iOS 키보드 회피 방해 제거, 기사 댓글과 동일 환경)",
-    /commentsOpen \? " hidden" : ""/.test(viewerSrc));
+  ok("idle-visible → focus/inset-hidden → blur-settled-visible 3상태를 공용 keyboardOpen에 결속",
+    viewerSrc.includes("isVenueStoryKeyboardOpen(composerFocused, kbInset)") &&
+    /commentsOpen && keyboardOpen \? " hidden" : ""/.test(viewerSrc) &&
+    /keyboardOpen && vvHeight != null/.test(viewerSrc));
   ok("댓글 백드롭이 스크롤/오버스크롤 전파 차단(touchAction:none + onTouchMove preventDefault) — 배경 밀림 방지",
     viewerSrc.includes('touchAction: "none"') &&
     /onTouchMove=\{\(e\) => \{\s*\n?\s*if \(e\.cancelable\) e\.preventDefault\(\);/.test(viewerSrc));

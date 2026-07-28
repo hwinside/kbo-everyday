@@ -4,6 +4,7 @@ import { isAllStarGameId } from "@/lib/constants/teams";
 import type { BroadcastChannel } from "@/lib/broadcast-channels";
 import { resolvePlayer } from "@/lib/utils/resolve-player";
 import { fetchNaverRelayBatterCounts } from "@/lib/naver-relay-counts";
+import { parseNaverScoreBoardLinescore } from "@/lib/crawler/naver-record";
 
 /** 숫자 kboId로 로스터 조회 — 외국인 숫자→영문 변환 포함 */
 function findPlayerByNumericId(numericId: string): { name: string } | undefined {
@@ -462,25 +463,8 @@ export async function fetchNaverRecord(kboGameId: string): Promise<{
       homePitchers: toPitchers(rd.pitchersBoxscore.home),
     };
 
-    // Linescore from scoreBoard
-    let linescore: GameDetailResponse["linescore"] = null;
-    const sb = rd.scoreBoard;
-    if (sb?.inn && sb?.rheb) {
-      linescore = {
-        away: {
-          innings: (sb.inn.away || []).map((v: number | null) => v),
-          R: sb.rheb.away?.r ?? 0,
-          H: sb.rheb.away?.h ?? 0,
-          E: sb.rheb.away?.e ?? 0,
-        },
-        home: {
-          innings: (sb.inn.home || []).map((v: number | null) => v),
-          R: sb.rheb.home?.r ?? 0,
-          H: sb.rheb.home?.h ?? 0,
-          E: sb.rheb.home?.e ?? 0,
-        },
-      };
-    }
+    // Linescore from scoreBoard (summary canonical source 와 공용 파서).
+    const linescore: GameDetailResponse["linescore"] = parseNaverScoreBoardLinescore(rd.scoreBoard);
 
     return { boxScore, linescore };
   } catch {

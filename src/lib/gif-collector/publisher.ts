@@ -29,6 +29,8 @@ import {
   extractMediaList,
   extractInstagramVideoUrls,
   extractInstagramImageUrls,
+  extractInstagramImageUrlsFromSrcset,
+  mergeInstagramImageSlides,
   extractThreadsImageUrls,
   extractMlbparkImageUrls,
   inferMediaExt,
@@ -88,7 +90,13 @@ async function fetchMediaList(sourceUrl: string): Promise<{ media: OgMedia[]; so
     if (embedHtml) {
       const igVideos = extractInstagramVideoUrls(embedHtml, MAX_MEDIA_ITEMS);
       if (igVideos.length > 0) return { media: igVideos, sourceHtml: html };
-      const igImages = extractInstagramImageUrls(embedHtml, MAX_MEDIA_ITEMS);
+      // 사진: display_url 캐러셀 slide(최대 5장) 순서를 SSOT로 유지하되, 커버(첫 슬라이드)만
+      // 원본 비율 srcset으로 교체/보강한다. contextJSON display_url이 정사각 크롭본을 주는
+      // 경우가 있어 cover 사진이 잘림(하린아빠 제보 2026-07-28). display_url이 사라진 단일글은
+      // srcset만으로 동작. (srcset을 무조건 1순위로 두면 캐러셀이 1장으로 축소되는 회귀 방지.)
+      const igDisplayUrls = extractInstagramImageUrls(embedHtml, MAX_MEDIA_ITEMS);
+      const igSrcsetCover = extractInstagramImageUrlsFromSrcset(embedHtml, 1);
+      const igImages = mergeInstagramImageSlides(igDisplayUrls, igSrcsetCover, MAX_MEDIA_ITEMS);
       if (igImages.length > 0) return { media: igImages, sourceHtml: html };
     }
   }

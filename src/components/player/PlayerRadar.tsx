@@ -5,69 +5,12 @@ import { useRouter } from "next/navigation";
 import { useState, useEffect } from "react";
 import RadarChart from "./RadarChart";
 import { getBatterTraits, getPitcherTraits } from "@/lib/utils/player-traits";
+import { calcBatterRadar, calcPitcherRadar, type BatterStatsRaw, type PitcherStatsRaw } from "@/lib/utils/player-radar";
 
 interface PlayerRadarProps {
   playerId: string;
   position: string;
   teamColor?: string;
-}
-
-interface BatterStatsRaw {
-  avg: string | number;
-  obp: string | number;
-  slg: string | number;
-  pa: number;
-  bb: number;
-  so: number;
-  sb: number;
-  // Additional fields used by traits/saber
-  [key: string]: string | number | undefined;
-}
-
-interface PitcherStatsRaw {
-  era: string | number;
-  whip: string | number;
-  ip: string | number;
-  so: number;
-  bb: number;
-  // Additional fields used by traits/saber
-  [key: string]: string | number | undefined;
-}
-
-function calcBatterRadar(s: BatterStatsRaw) {
-  const avg = parseFloat(String(s.avg)) || 0;
-  const obp = parseFloat(String(s.obp)) || 0;
-  const slg = parseFloat(String(s.slg)) || 0;
-  const pa = s.pa || 1;
-  const bb = s.bb || 0;
-  const so = s.so || 0;
-  const sb = s.sb || 0;
-
-  return [
-    { label: "타격", value: Math.min(100, Math.round((avg / 0.320) * 100)) },
-    { label: "파워", value: Math.min(100, Math.round((slg / 0.550) * 100)) },
-    { label: "선구안", value: Math.min(100, Math.round(((bb / pa) / 0.12) * 100)) },
-    { label: "주루", value: Math.min(100, Math.round((sb / 30) * 100)) },
-    { label: "안정감", value: Math.min(100, Math.round((1 - (so / pa) / 0.25) * 100)) },
-    { label: "출루", value: Math.min(100, Math.round((obp / 0.420) * 100)) },
-  ];
-}
-
-function calcPitcherRadar(s: PitcherStatsRaw) {
-  const era = parseFloat(String(s.era)) || 5;
-  const whip = parseFloat(String(s.whip)) || 1.5;
-  const ip = parseFloat(String(s.ip)) || 1;
-  const so = s.so || 0;
-  const bb = s.bb || 0;
-
-  return [
-    { label: "제구", value: Math.max(0, Math.min(100, Math.round((1 - (bb / ip) / 0.5) * 100))) },
-    { label: "구위", value: Math.max(0, Math.min(100, Math.round((so / ip / 1.2) * 100))) },
-    { label: "탈삼진", value: Math.max(0, Math.min(100, Math.round((so / Math.max(ip, 1)) / 1.0 * 100))) },
-    { label: "체력", value: Math.max(0, Math.min(100, Math.round((ip / 180) * 100))) },
-    { label: "안정감", value: Math.max(0, Math.min(100, Math.round((1 - era / 6.0) * 100))) },
-    { label: "지배력", value: Math.max(0, Math.min(100, Math.round((1 - whip / 1.8) * 100))) },
-  ];
 }
 
 const BATTER_INFO = [

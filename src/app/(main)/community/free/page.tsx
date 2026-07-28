@@ -22,12 +22,15 @@ export default function FreeBoardPage() {
   const [showPhoto, setShowPhoto] = useState(false);
   const [showPoll, setShowPoll] = useState(false);
   const { posts: rawPosts, loading, reload } = usePosts("free", "general");
+  // 자유게시판에도 투표글(board_type='poll')을 함께 노출 — 자유게시판 FAB의 '투표'로
+  // 작성한 글을 같은 목록에서 볼 수 있게(PostList가 poll 배치 요약→전용 카드 렌더).
+  const { posts: pollRaw } = usePosts("poll", "poll");
 
   // Transform to shared Post type (same pattern as team/player boards)
-  const posts: Post[] = rawPosts.map((p) => ({
+  const toPost = (p: (typeof rawPosts)[number], boardType: "free" | "poll"): Post => ({
     id: p.id,
-    boardType: "free" as const,
-    boardId: "general",
+    boardType,
+    boardId: boardType === "poll" ? "poll" : "general",
     authorId: p.author_id,
     title: p.title,
     content: p.content,
@@ -44,7 +47,12 @@ export default function FreeBoardPage() {
       title: "",
       grade: p.grade,
     },
-  }));
+  });
+  // 자유글 + 투표글을 작성순(created_at DESC)로 병합.
+  const posts: Post[] = [
+    ...rawPosts.map((p) => toPost(p, "free")),
+    ...pollRaw.map((p) => toPost(p, "poll")),
+  ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
   function handleWrite() {
     if (!user) {

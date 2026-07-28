@@ -13,6 +13,14 @@ export function computeKeyboardInset(
   return Math.max(0, innerHeight - viewportHeight - viewportOffsetTop);
 }
 
+/** focus가 먼저 풀려도 visualViewport 인셋이 남은 키보드 닫힘 애니메이션까지 open으로 본다. */
+export function isVenueStoryKeyboardOpen(
+  composerFocused: boolean,
+  keyboardInset: number,
+): boolean {
+  return composerFocused || keyboardInset > 0;
+}
+
 /** subscribeKeyboardInset 이 요구하는 최소 visualViewport 인터페이스(모킹 가능) */
 export interface VisualViewportLike {
   readonly height: number;

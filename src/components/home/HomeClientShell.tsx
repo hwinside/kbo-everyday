@@ -644,18 +644,26 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
       animate="show"
       className="mx-auto max-w-lg px-5"
     >
-      {/* Header */}
-      <m.header variants={item} className="flex items-center justify-between py-3 border-b mb-2" style={{ borderColor: myTeamId ? getTeamBorderColorById(myTeamId) : 'var(--color-border)' }}>
+      {/* Header — 전역 헤더 규격(sticky·min-h-[44px]·safe-area 상쇄), 로고 축소 */}
+      <header
+        className="sticky top-0 z-30 -mx-5 px-5 border-b bg-bg-primary mb-2"
+        style={{
+          borderColor: myTeamId ? getTeamBorderColorById(myTeamId) : 'var(--color-border)',
+          paddingTop: "env(safe-area-inset-top, 0px)",
+          marginTop: "calc(env(safe-area-inset-top, 0px) * -1)",
+        }}
+      >
+        <div className="flex items-center justify-between min-h-[44px]">
         <div className="flex flex-col">
-          <img src="/logo-mark-light.png" alt="크보팬" style={{height: "52px", objectFit: "contain"}} className="-ml-0.5 dark:hidden" />
-          <img src="/logo-mark.png" alt="크보팬" style={{height: "52px", objectFit: "contain"}} className="-ml-0.5 hidden dark:block" />
+          <img src="/logo-mark-light.png" alt="크보팬" style={{height: "30px", objectFit: "contain"}} className="-ml-0.5 dark:hidden" />
+          <img src="/logo-mark.png" alt="크보팬" style={{height: "30px", objectFit: "contain"}} className="-ml-0.5 hidden dark:block" />
         </div>
         <div className="flex items-center gap-1">
           {user ? (
-            <Link href="/messages" className="relative rounded-full p-2 text-text-secondary hover:bg-bg-tertiary transition-colors">
+            <Link href="/messages" aria-label="쪽지" className="relative flex h-11 w-11 items-center justify-center rounded-full text-text-secondary hover:bg-bg-tertiary transition-colors">
               <MessageCircle size={22} />
               {unreadDMCount > 0 && (
-                <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-red-500 flex items-center justify-center text-[10px] font-bold text-white leading-none">
+                <span className="absolute top-1 right-1 min-w-[16px] h-4 px-1 rounded-full bg-red-500 flex items-center justify-center text-[10px] font-bold text-white leading-none">
                   {unreadDMCount > 9 ? "9+" : unreadDMCount}
                 </span>
               )}
@@ -663,16 +671,17 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
           ) : (
             <button
               onClick={() => setShowLogin(true)}
-              className="px-4 py-2 rounded-full bg-accent text-white text-sm font-semibold transition-transform active:scale-95"
+              className="px-4 min-h-11 rounded-full bg-accent text-white text-sm font-semibold transition-transform active:scale-95"
             >
               회원가입
             </button>
           )}
-          <Link href="/my" className="rounded-full p-2 hover:bg-bg-tertiary transition-colors">
+          <Link href="/my" aria-label="마이페이지" className="flex h-11 w-11 items-center justify-center rounded-full hover:bg-bg-tertiary transition-colors">
             <HeaderAvatar user={user} profile={profile} />
           </Link>
         </div>
-      </m.header>
+        </div>
+      </header>
 
       <PWAInstallBanner />
 
