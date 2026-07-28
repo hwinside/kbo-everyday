@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useSafeBack } from "@/lib/hooks/useSafeBack";
 import {
   ChevronLeft,
   Trophy,
@@ -45,6 +46,7 @@ const RESULT_PATH = "/whats-new";
 
 export default function EventInvitePage() {
   const router = useRouter();
+  const goBack = useSafeBack("/");
   const { user } = useAuth();
   const eventEnded = Date.now() >= EVENT_END_MS;
   const [topInvite, setTopInvite] = useState<InviteRow[]>([]);
@@ -89,15 +91,17 @@ export default function EventInvitePage() {
 
   return (
     <div className="min-h-screen text-gray-900 dark:text-white">
-      <div className="max-w-screen-sm mx-auto px-5 py-4 flex items-center gap-2">
+      <div className="sticky top-0 z-30 border-b border-border bg-bg-primary" style={{ paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
+      <div className="max-w-screen-sm mx-auto px-5 min-h-[44px] flex items-center gap-2">
         <button
-          onClick={() => router.back()}
-          className="p-2 -ml-2 rounded-lg hover:bg-gray-900/5 dark:bg-white/5"
+          onClick={goBack}
+          className="flex h-11 w-11 items-center justify-center -ml-2.5 rounded-lg hover:bg-gray-900/5 dark:bg-white/5"
           aria-label="뒤로"
         >
           <ChevronLeft size={20} />
         </button>
         <h1 className="font-bold">얼리멤버 이벤트</h1>
+      </div>
       </div>
 
       <div className="max-w-screen-sm mx-auto px-5 pt-2 pb-24">

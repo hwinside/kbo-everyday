@@ -13,6 +13,34 @@ const PROJECT_REF = "lbmbdjgsnenqjwjotoei";
 
 export const maxDuration = 60;
 
+// Supabase RPC failures surface as PostgrestError — a plain object
+// ({ message, code, details, hint }), not an Error instance — so String(error)
+// collapsed the real cause to "[object Object]" and hid why 07:30 retention
+// failed. Serialize both Error instances and Postgrest-shaped objects.
+function describeError(error: unknown): string {
+  if (typeof error === "string") return error;
+  if (error && typeof error === "object") {
+    const e = error as Record<string, unknown>;
+    const parts = [
+      typeof e.message === "string" && e.message
+        ? e.message
+        : error instanceof Error
+          ? error.message
+          : undefined,
+      e.code != null ? `code=${String(e.code)}` : undefined,
+      e.details != null ? `details=${String(e.details)}` : undefined,
+      e.hint != null ? `hint=${String(e.hint)}` : undefined,
+    ].filter((part): part is string => Boolean(part));
+    if (parts.length > 0) return parts.join(" ");
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return String(error);
+    }
+  }
+  return String(error);
+}
+
 async function fetchFreshBackup(): Promise<ReturnType<typeof selectFreshPhysicalBackup>> {
   if (!MANAGEMENT_TOKEN) return null;
   const response = await fetch(
@@ -55,7 +83,7 @@ export async function GET(req: NextRequest) {
     await finishJob(logId, "success", `${mode} deleted=${JSON.stringify(deleted)}`);
     return NextResponse.json({ ok: true, mode, result: data });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = describeError(error);
     await finishJob(logId, "error", undefined, message);
     return NextResponse.json({ error: message }, { status: 503 });
   }

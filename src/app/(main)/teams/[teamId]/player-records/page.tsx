@@ -1,6 +1,7 @@
 "use client";
 
 import { ChevronLeft } from "lucide-react";
+import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
 import { useParams, useRouter } from "next/navigation";
 import { getTeamBySlug } from "@/lib/constants/teams";
 import RecordRoom from "@/components/players/RecordRoom";
@@ -23,15 +24,16 @@ export default function TeamPlayerRecordsPage() {
 
   return (
     <div className="mx-auto max-w-lg px-5 pb-24">
-      <div className="border-b -mx-5 px-5" style={{ borderColor: "var(--color-border)" }}>
-        <header className="py-3 flex items-center gap-2">
+      <div className="sticky top-0 z-30 border-b -mx-5 px-5 bg-bg-primary" style={{ borderColor: "var(--color-border)", paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
+        <header className="min-h-[44px] flex items-center gap-2">
           <button
             onClick={() => { if (window.history.length > 1) router.back(); else router.push(`/teams/${teamSlug}`); }}
-            className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors"
+            aria-label="뒤로가기" className="flex h-11 w-11 items-center justify-center rounded-full text-text-secondary hover:bg-bg-tertiary transition-colors"
           >
             <ChevronLeft size={24} />
           </button>
-          <h1 className="text-lg font-bold text-text-primary flex-1">{team.shortName} 선수 기록</h1>
+          <h1 className="truncate text-lg font-bold text-text-primary flex-1">{team.shortName} 선수 기록</h1>
+          <HeaderProfileLink />
         </header>
       </div>
 

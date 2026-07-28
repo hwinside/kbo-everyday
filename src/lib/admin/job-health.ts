@@ -36,7 +36,7 @@ export const DATA_MAX_AGE_HOURS = 48;
 export const JOB_DEFS: JobDef[] = [
   { name: "youtube-highlights", label: "유튜브 하이라이트", schedule: "매 4시간", description: "구단별 유튜브 하이라이트 영상 수집", maxAgeHours: 10, tracked: true },
   { name: "videos-rss", label: "영상 수집 (RSS)", schedule: "매 2시간", description: "channel_pool 전체 RSS 수집 (공식+커뮤니티 채널, 선수 태깅)", maxAgeHours: 6, tracked: true },
-  { name: "videos-player-shorts", label: "선수 숏츠", schedule: "매 6시간", description: "선수별 YouTube 숏츠 검색 수집", maxAgeHours: 14, tracked: true },
+  { name: "videos-player-shorts", label: "선수 숏츠", schedule: "매일 21:30·03:30", description: "선수별 YouTube 숏츠 검색 수집", maxAgeHours: 20, tracked: true },
   { name: "stats-update", label: "선수 스탯 업데이트", schedule: "매일 06:00", description: "KBO 타자/투수 스탯 크롤링 → Supabase 저장", maxAgeHours: 30, tracked: true, dataFreshness: true },
   { name: "game-logs-ingest", label: "경기별 로그 적재", schedule: "매일 23:00/00:00/01:00", description: "종료 경기 박스스코어 → player_game_logs 멱등 적재 (경기별 탭/추이)", maxAgeHours: 30, tracked: true },
   { name: "daily-analysis", label: "일일 경기 분석", schedule: "매일 01:00", description: "Gemini 기반 순위/타이틀 변동 분석 리포트", maxAgeHours: 30, tracked: true },
@@ -45,8 +45,8 @@ export const JOB_DEFS: JobDef[] = [
   { name: "daily-fallback-report", label: "API 장애 리포트", schedule: "매일 09:00", description: "전일 API 장애 집계 → 텔레그램 전송", maxAgeHours: 30, tracked: false },
   { name: "photos-check", label: "선수 사진 모니터링", schedule: "매주 일 06:00", description: "KBO CDN 선수 사진 존재 여부 확인", maxAgeHours: 192, tracked: true },
   { name: "roster-update", label: "로스터 업데이트", schedule: "매일 05:00", description: "GitHub Actions 크롤링 → 자동 PR+머지 (스탯/로스터 반영)", maxAgeHours: 30, tracked: false, dataFreshness: true },
-  { name: "hero-shot-batch", label: "히어로샷 자동 배치", schedule: "매주 월 03:00", description: "히어로샷 없는 선수(공식샷 보유) 탐지 → KBO 공식샷 rembg 컷아웃 생성 → 자동 PR+머지 (외부 API 없음)", maxAgeHours: 192, tracked: false },
-  { name: "channel-discovery", label: "채널 자동 발굴", schedule: "매주 일 09:00", description: "active 채널 숏츠 제목 분석 → 유사 신규 채널 발굴 (shadow 2회 후 자동 활성)", maxAgeHours: 192, tracked: true },
+  { name: "hero-shot-batch", label: "히어로샷 자동 배치", schedule: "매일 03:00", description: "히어로샷 없는 선수(공식샷 보유) 탐지 → KBO 공식샷 rembg 컷아웃 생성 → 자동 PR+머지 (외부 API 없음)", maxAgeHours: 192, tracked: false },
+  { name: "channel-discovery", label: "채널 자동 발굴", schedule: "매주 일 17:05", description: "active 채널 숏츠 제목 분석 → 유사 신규 채널 발굴 (shadow 2회 후 자동 활성)", maxAgeHours: 192, tracked: true },
 ];
 
 export interface JobHealthInput {
@@ -165,8 +165,14 @@ export function computeJobHealth(def: JobDef, input: JobHealthInput, now: number
   const runAgeHours = ageHours(input.latestAt, now);
   const dataAgeHours = def.dataFreshness ? ageHours(input.dataGeneratedAt, now) : null;
 
+  // tracked=false 잡(GH Actions 등)은 admin_job_logs 를 실행 기록으로 쓸 수 없어
+  // 간헐 남은 구형 로그가 오래됐는데(예: 44일 전 warning) status 만 읽으면 오탐이다.
+  // 주기(maxAgeHours)를 넘은 non-tracked 로그는 판정에 쓰지 않는다.
+  const logFresh = runAgeHours != null && runAgeHours <= def.maxAgeHours;
+  const logUsable = def.tracked || logFresh;
+
   // 1) 최근 실행이 에러
-  if (input.latestStatus === "error") {
+  if (input.latestStatus === "error" && logUsable) {
     return { level: "error", reason: "최근 실행 실패", runAgeHours, dataAgeHours };
   }
 
@@ -191,12 +197,13 @@ export function computeJobHealth(def: JobDef, input: JobHealthInput, now: number
   }
 
   // 4) 부분실패 (실행은 정상이나 일부 오류)
-  if (input.latestStatus === "warning") {
+  if (input.latestStatus === "warning" && logUsable) {
     return { level: "partial", reason: "최근 실행 부분실패", runAgeHours, dataAgeHours };
   }
 
   // 5) 추적 안 되고(외부 실행) 데이터 신호도 없어 판정 불가 → 회색(문제 아님)
-  if (!def.tracked && !def.dataFreshness && runAgeHours == null) {
+  // 구형 로그만 있고 주기를 넘은 non-tracked 잡도 판정 불가로 둔다(오탐 warning 방지).
+  if (!def.tracked && !def.dataFreshness && !logFresh) {
     return { level: "unknown", reason: "admin 로그 미기록 (모니터링 제외)", runAgeHours, dataAgeHours };
   }
 

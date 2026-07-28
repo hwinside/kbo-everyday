@@ -23,6 +23,7 @@ import {
   fetchVideoDurations,
 } from "@/lib/video/youtube-api";
 import { reserveQuota } from "@/lib/video/youtube-quota";
+import { classifyVideosRssStatus } from "@/lib/video/videos-rss-status";
 
 const CRON_SECRET = process.env.CRON_SECRET || "";
 const BACKFILL_LIMIT = 500; // max videos to backfill per run
@@ -235,17 +236,21 @@ export async function GET(req: NextRequest) {
   // fallback/backfill quota는 reserveQuota가 이미 원장에 반영함(이중 기록 방지로 record 생략).
   const errorCount = Object.keys(errors).length;
   const okCount = Object.keys(results).length;
-  // Partial-success is "warning", not "error". The anomaly detector
-  // (lib/admin/anomaly.ts) only triggers on consecutive "error" runs, so a
-  // handful of dead channels no longer false-alarms when the bulk succeeded.
-  // ledger skip/장애는 성공으로 숨지 않고 warning으로 들어올린다(삼순 3번).
-  const ledgerDegraded = fallbackLedgerSkipped > 0 || backfillLedgerSkipped || !!ledgerErr;
-  const status: "success" | "warning" | "error" =
-    errorCount > 0 && okCount === 0
-      ? "error"
-      : errorCount > 0 || ledgerDegraded
-        ? "warning"
-        : "success";
+  // Core(채널 RSS 수집 + upsert)가 성공하면 job은 success. enrichment 신호는
+  // result_summary에만 남기고 건강한 core를 warning으로 승격시키지 않는다:
+  //   - dead/silent 채널(RSS 404 → fallback noUploads)은 실패로 세지 않는다.
+  //   - fallback/backfill 의 quota skip은 예상된 enrichment 생략이라 warning 아니다.
+  //   - 단 원장 RPC 장애(ledgerErr)는 실제 인프라 결함이라 warning 유지.
+  //   - core에서 실제 실패(개별 fallback 실패/upsert 오류/cap 미도달)가 남으면
+  //     여전히 warning, 전수 실패면 error.
+  //   - okCount===0(전 채널 수집 전멸)은 core 실패가 noUploads로 상쇄돼도 error(전멸을
+  //     성공으로 숨기지 않는다). 호출 지점에서 channels.length>0 보장.
+  const coreFailedCount = errorCount - fallbackNoUploads;
+  const status = classifyVideosRssStatus({
+    okCount,
+    coreFailedCount,
+    ledgerErr: !!ledgerErr,
+  });
   const summary =
     `channels=${channels.length} upserted=${totalUpserted} ` +
     `ok=${okCount} err=${errorCount} ` +
@@ -254,16 +259,18 @@ export async function GET(req: NextRequest) {
     `backfilled=${backfilled}${backfillLedgerSkipped ? "(ledger-skip)" : ""} apiCalls=${backfillApiCalls}` +
     `${ledgerErr ? ` LEDGER_ERR=${ledgerErr.slice(0, 60)}` : ""}`;
   const errorMessage =
-    errorCount > 0
-      ? JSON.stringify(errors).slice(0, 900)
-      : ledgerErr
-        ? `quota ledger unavailable (${ledgerErr.slice(0, 120)}) — ran without shared cap, warning`
-        : undefined;
+    okCount === 0
+      ? `all ${channels.length} channels produced no videos (RSS fail / dead) — ${JSON.stringify(errors).slice(0, 850)}`
+      : coreFailedCount > 0
+        ? JSON.stringify(errors).slice(0, 900)
+        : ledgerErr
+          ? `quota ledger unavailable (${ledgerErr.slice(0, 120)}) — ran without shared cap, warning`
+          : undefined;
 
   await finishJob(logId, status, summary, errorMessage);
 
   return NextResponse.json({
-    ok: errorCount === 0,
+    ok: status === "success",
     status,
     channelsTotal: channels.length,
     totalUpserted,
