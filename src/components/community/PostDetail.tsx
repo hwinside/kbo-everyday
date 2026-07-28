@@ -108,6 +108,7 @@ export default function PostDetail({ postId }: PostDetailProps) {
   const [postMenuOpen, setPostMenuOpen] = useState(false);
   const [postEditing, setPostEditing] = useState(false);
   const [editContent, setEditContent] = useState("");
+  const [editTitle, setEditTitle] = useState(""); // 투표글 전용 질문 필드(설명=editContent 재사용)
   const [savingPost, setSavingPost] = useState(false);
   const [deletingPost, setDeletingPost] = useState(false);
   const [postPatch, setPostPatch] = useState<{ title?: string; content?: string; updated_at?: string }>({});
@@ -126,10 +127,18 @@ export default function PostDetail({ postId }: PostDetailProps) {
   const canModerateComments = profile?.is_operator === true;
   const canDeleteAnyPost = profile?.is_operator === true;
 
+  const isPoll = post.board_type === "poll";
+
   function startPostEdit() {
     setPostMenuOpen(false);
-    // 제목 필드 제거(⑥) — 기존 제목은 본문 앞에 합쳐 한 본문으로 편집. 저장 시 title은 비움.
-    setEditContent(mergeTitleBody(post!.title, post!.content));
+    if (isPoll) {
+      // 투표글: 질문(title)·설명(content)을 별도 필드로 편집(선지·마감은 이 화면에서 고정).
+      setEditTitle(postPatch.title ?? post!.title);
+      setEditContent(postPatch.content ?? post!.content ?? "");
+    } else {
+      // 일반글: 제목 필드 제거(⑥) — 기존 제목은 본문 앞에 합쳐 한 본문으로 편집. 저장 시 title은 비움.
+      setEditContent(mergeTitleBody(post!.title, post!.content));
+    }
     setPostEditing(true);
   }
 
@@ -139,6 +148,22 @@ export default function PostDetail({ postId }: PostDetailProps) {
 
   async function savePostEdit() {
     if (savingPost) return;
+    if (isPoll) {
+      const t = editTitle.trim();
+      if (!t) { alert("질문을 입력해주세요"); return; }
+      setSavingPost(true);
+      try {
+        // 투표글: 질문(title)·설명(content)만 저장. 선지·마감·태그는 서버 편집잠금이 지킨다.
+        await updatePost(post!.id, { title: t, content: editContent });
+        setPostPatch({ title: t, content: editContent, updated_at: new Date().toISOString() });
+        setPostEditing(false);
+      } catch {
+        alert("투표 수정에 실패했어요");
+      } finally {
+        setSavingPost(false);
+      }
+      return;
+    }
     const c = editContent.trim();
     if (!c) { alert("내용을 입력해주세요"); return; }
     setSavingPost(true);
@@ -453,7 +478,7 @@ export default function PostDetail({ postId }: PostDetailProps) {
                 <>
                   <div className="fixed inset-0 z-10" onClick={() => setPostMenuOpen(false)} />
                   <div className="absolute right-0 top-8 z-20 min-w-[112px] rounded-lg border border-border bg-bg-primary shadow-lg overflow-hidden">
-                    {isPostMine && post.board_type !== "poll" && <button onClick={startPostEdit} className="block w-full px-3 py-2 text-left text-sm text-text-primary hover:bg-bg-tertiary">수정</button>}
+                    {isPostMine && <button onClick={startPostEdit} className="block w-full px-3 py-2 text-left text-sm text-text-primary hover:bg-bg-tertiary">수정</button>}
                     {!isPostMine && (
                       <button onClick={() => openReport({ type: "post", id: post.id })} className="flex items-center gap-2 w-full px-3 py-2 text-left text-sm text-text-primary hover:bg-bg-tertiary">
                         <Flag size={14} /> 신고
@@ -487,7 +512,36 @@ export default function PostDetail({ postId }: PostDetailProps) {
           </div>
         )}
 
-        {postEditing ? (
+        {postEditing && isPoll ? (
+          <div className="space-y-2 mb-3">
+            {/* 투표글: 질문(title)·설명(content)만 수정. 선지·마감은 이 화면에서 변경 불가. */}
+            <input
+              value={editTitle}
+              onChange={e => setEditTitle(e.target.value)}
+              placeholder="질문"
+              className="w-full bg-bg-secondary rounded-lg px-3 py-2 text-sm font-semibold text-text-primary outline-none border border-border"
+            />
+            <textarea
+              value={editContent}
+              onChange={e => setEditContent(e.target.value)}
+              placeholder="설명 (선택)"
+              rows={4}
+              className="w-full bg-bg-secondary rounded-lg px-3 py-2 text-sm text-text-primary outline-none border border-border resize-y"
+            />
+            <p className="text-xs text-text-tertiary">질문·설명만 수정할 수 있어요. 투표가 시작되면 선지와 마감 시간은 변경할 수 없습니다.</p>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={savePostEdit}
+                disabled={savingPost || !editTitle.trim()}
+                className="px-4 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-50"
+                style={{ backgroundColor: post.team_id ? (() => { const t = getTeamById(post.team_id); return t ? getTeamBgColor(t) : '#FF453A'; })() : '#FF453A' }}
+              >
+                {savingPost ? "저장 중..." : "저장"}
+              </button>
+              <button onClick={cancelPostEdit} className="px-4 py-2 rounded-lg text-sm text-text-secondary hover:bg-bg-tertiary">취소</button>
+            </div>
+          </div>
+        ) : postEditing ? (
           <div className="space-y-2 mb-3">
             <textarea
               value={editContent}

@@ -21,6 +21,7 @@ fi
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 MIG="$ROOT/supabase/migrations/20260727_community_poll.sql"
+MIG2="$ROOT/supabase/migrations/20260728_poll_edit_title_content.sql"  # 편집정책 완화(title/content 허용)
 SQL="$ROOT/scripts/qa/poll-contract-e2e.sql"
 
 WORK="${OPENCLAW_REVIEW_ROOT:-/tmp}/poll-e2e.$$"
@@ -99,6 +100,10 @@ echo "[poll-e2e] apply migration ..."
 psql -q -f "$MIG" >/dev/null
 echo "[poll-e2e] reapply migration (idempotency) ..."
 psql -q -f "$MIG" >/dev/null
+echo "[poll-e2e] apply edit-policy migration (20260728) ..."
+psql -q -f "$MIG2" >/dev/null
+echo "[poll-e2e] reapply edit-policy migration (idempotency) ..."
+psql -q -f "$MIG2" >/dev/null
 
 echo "[poll-e2e] run assertions ..."
 psql -f "$SQL" 2>&1 | grep -E "PASS|FAIL|ERROR|COMPLETE|status|NOTICE" | sed 's/^psql.*NOTICE:  //'

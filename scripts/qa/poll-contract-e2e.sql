@@ -221,11 +221,14 @@ END $$;
 DO $$
 DECLARE v_pid bigint; o1 bigint;
 BEGIN
-  v_pid := current_setting('poll.pid')::bigint; -- has votes
-  BEGIN UPDATE posts SET title='hacked' WHERE id=v_pid;
-    RAISE EXCEPTION 'FAIL ⑨: posts title update accepted'; EXCEPTION WHEN check_violation THEN NULL; END;
-  BEGIN UPDATE posts SET content='hacked' WHERE id=v_pid;
-    RAISE EXCEPTION 'FAIL ⑨: posts content update accepted'; EXCEPTION WHEN check_violation THEN NULL; END;
+  v_pid := current_setting('poll.pid')::bigint; -- has votes (first_vote_at set)
+  -- (1) 2026-07-28 완화: title/content 는 첫 투표 후에도 수정 성공해야 함(하린아빠 결정).
+  UPDATE posts SET title='edited-question' WHERE id=v_pid;
+  UPDATE posts SET content='edited-desc' WHERE id=v_pid;
+  IF (SELECT title FROM posts WHERE id=v_pid) <> 'edited-question'
+     OR (SELECT content FROM posts WHERE id=v_pid) <> 'edited-desc' THEN
+    RAISE EXCEPTION 'FAIL ⑨: title/content edit after first vote did not persist'; END IF;
+  -- (2) 선지·마감·allow_multiple 은 계속 차단.
   BEGIN INSERT INTO poll_options(post_id,position,kind,label_snapshot) VALUES (v_pid,9,'etc','sneak');
     RAISE EXCEPTION 'FAIL ⑨: option insert accepted'; EXCEPTION WHEN check_violation THEN NULL; END;
   SELECT id INTO o1 FROM poll_options WHERE post_id=v_pid ORDER BY position LIMIT 1;
@@ -235,7 +238,9 @@ BEGIN
     RAISE EXCEPTION 'FAIL ⑨: option delete accepted'; EXCEPTION WHEN check_violation THEN NULL; END;
   BEGIN UPDATE poll_polls SET allow_multiple=true WHERE post_id=v_pid;
     RAISE EXCEPTION 'FAIL ⑨: allow_multiple update accepted'; EXCEPTION WHEN check_violation THEN NULL; END;
-  RAISE NOTICE 'PASS ⑨ edit-lock: title/content, option add/remove/struct, poll settings blocked';
+  BEGIN UPDATE poll_polls SET closes_at=now()+interval '99 days' WHERE post_id=v_pid;
+    RAISE EXCEPTION 'FAIL ⑨: closes_at update accepted'; EXCEPTION WHEN check_violation THEN NULL; END;
+  RAISE NOTICE 'PASS ⑨ edit-policy: title/content editable; option add/remove/struct, allow_multiple, closes_at blocked';
 END $$;
 
 -- ---------- ⑧ cascade 재집계 (계정/글 삭제) ----------
@@ -365,8 +370,11 @@ BEGIN
 
   -- (4) 첫 투표 후엔 title/content 구조 수정 여전히 거부(잠금 계약 유지)
   v_pid := current_setting('poll.pid')::bigint; -- has votes
-  BEGIN UPDATE posts SET title='post-vote-hack' WHERE id=v_pid;
-    RAISE EXCEPTION 'FAIL 운영: post-vote title edit accepted'; EXCEPTION WHEN check_violation THEN NULL; END;
+  -- 2026-07-28 완화: 첫 투표 후에도 title/content 수정 허용(선지·마감은 별도 트리거 잠금).
+  UPDATE posts SET title='post-vote-edited', content='post-vote-desc' WHERE id=v_pid;
+  IF (SELECT title FROM posts WHERE id=v_pid) <> 'post-vote-edited'
+     OR (SELECT content FROM posts WHERE id=v_pid) <> 'post-vote-desc' THEN
+    RAISE EXCEPTION 'FAIL 운영: post-vote title/content edit did not persist'; END IF;
   -- 투표 후에도 운영 카운터/신고는 허용(잠금 목록 밖)
   UPDATE posts SET like_count = like_count + 1 WHERE id=v_pid;
   INSERT INTO reports(target_type,target_id,reporter_id)
@@ -389,7 +397,7 @@ BEGIN
   BEGIN UPDATE posts SET board_id='free' WHERE id=v_new_pid;
     RAISE EXCEPTION 'FAIL 운영: poll board_id change accepted'; EXCEPTION WHEN check_violation THEN NULL; END;
 
-  RAISE NOTICE 'PASS 운영경로: pre-vote title/content edit + report(report_count=3,is_hidden) + view/like/comment counters allowed; post-vote struct edit blocked; phantom/non-poll→poll/poll→free/board_id still rejected';
+  RAISE NOTICE 'PASS 운영경로: pre/post-vote title/content edit + report(report_count=3,is_hidden) + view/like/comment counters allowed; phantom/non-poll→poll/poll→free/board_id still rejected';
 END $$;
 
 SELECT 'DB E2E COMPLETE (①②④⑤⑦⑧⑨ + direct poll-post write + duplicate ref RPC + tags/validations + 운영경로(신고/카운터/투표전편집) 회귀; ③⑩ hidden/snapshot route checks in poll-route-e2e.ts + ⑥ concurrency in .sh)' AS status;
