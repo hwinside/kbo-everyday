@@ -548,8 +548,21 @@ async function main(): Promise<void> {
     const sumBad = await POST_SUMMARIES(mkSummaries("nope") as never);
     ok("summaries 비배열 postIds → 400", sumBad.status === 400);
 
+    // 문서 계약(≤100) 초과 → 400(조용히 자르지 않음). 클라이언트가 chunk 해야 함.
+    const over = Array.from({ length: 101 }, (_, i) => i + 1);
+    const sumOver = await POST_SUMMARIES(mkSummaries(over) as never);
+    ok("summaries 101개 초과 → 400", sumOver.status === 400);
+    // 경계값 100개는 허용(200). id 1·2 만 실존 → 나머지는 맵에서 제외.
+    const at100 = Array.from({ length: 100 }, (_, i) => i + 1);
+    const sum100 = await POST_SUMMARIES(mkSummaries(at100) as never);
+    ok("summaries 100개 경계 → 200", sum100.status === 200);
+    {
+      const b = (await sum100.json()) as { summaries: Record<string, unknown> };
+      ok("summaries 100개 입력 → 실존 poll(1,2)만 맵에 존재", !!b.summaries["1"] && !!b.summaries["2"] && b.summaries["3"] === undefined);
+    }
+
     console.log(
-      `\npoll route E2E: ${pass} PASS (①②③⑩ + hidden GET/OG + canonical snapshots/tags + duplicate refs + manual tags union/dedupe/forged + moderation title/content/etc + summaries)`,
+      `\npoll route E2E: ${pass} PASS (①②③⑩ + hidden GET/OG + canonical snapshots/tags + duplicate refs + manual tags union/dedupe/forged + moderation title/content/etc + summaries + 100-cap)`,
     );
   } finally {
     globalThis.fetch = realFetch;

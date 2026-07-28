@@ -22,6 +22,28 @@ const ROSTER_NAME_BY_KBOID = new Map(
 
 const PREVIEW_MAX = 4;
 
+/** 마감 경계 판정(순수 함수, 회귀 공유). 서버 closed 또는 nowMs가 closesAt 이상이면 마감. */
+export function isPollEffectiveClosed(
+  summary: { closed: boolean; closesAt: string },
+  nowMs: number,
+): boolean {
+  return summary.closed || nowMs >= new Date(summary.closesAt).getTime();
+}
+
+/** 다음 마감 경계 타이머 예약 간격(ms) 계산. 최대 30일을 6시간 hop 으로 커버.
+ *  반환: {kind:'closed'} 이미 마감 / {kind:'hop', ms} 6시간 뒤 재평가 / {kind:'fire', ms} 경계에서 마감 전환. */
+export function pollBoundaryTimer(
+  summary: { closed: boolean; closesAt: string },
+  nowMs: number,
+): { kind: "closed" } | { kind: "hop"; ms: number } | { kind: "fire"; ms: number } {
+  if (summary.closed) return { kind: "closed" };
+  const ms = new Date(summary.closesAt).getTime() - nowMs;
+  if (ms <= 0) return { kind: "fire", ms: 0 };
+  const MAX_HOP = 6 * 60 * 60 * 1000;
+  if (ms > MAX_HOP) return { kind: "hop", ms: MAX_HOP };
+  return { kind: "fire", ms: ms + 250 };
+}
+
 function resolve(o: PollSummaryOption): { label: string; image: string | null } {
   if (o.kind === "team" && o.refId) {
     const team = getTeamBySlug(o.refId);
@@ -45,20 +67,16 @@ export default function PollCardBody({ summary }: { summary: PollSummary }) {
   const effectiveClosed = summary.closed || boundaryClosed;
   useEffect(() => {
     if (summary.closed || boundaryClosed) return;
-    const ms = new Date(summary.closesAt).getTime() - Date.now();
-    // 렌더 중 Date.now 호출 없이 effect 안에서만 경계 판정. 동기 setState 대신 타이머로 비동기 전환.
-    if (ms <= 0) {
-      const t = setTimeout(() => setBoundaryClosed(true), 0); // 마운트 시 이미 마감
+    // 렌더 중 Date.now 호출 없이 effect 안에서만 경계 판정(순수 함수 재사용). 동기 setState 대신 타이머.
+    const plan = pollBoundaryTimer(summary, Date.now());
+    if (plan.kind === "closed") return;
+    if (plan.kind === "hop") {
+      const t = setTimeout(() => setHopTick((n) => n + 1), plan.ms);
       return () => clearTimeout(t);
     }
-    const MAX_HOP = 6 * 60 * 60 * 1000; // 6시간 hop 으로 최대 30일 커버(setTimeout 2^31ms 상한 회피)
-    if (ms > MAX_HOP) {
-      const t = setTimeout(() => setHopTick((n) => n + 1), MAX_HOP);
-      return () => clearTimeout(t);
-    }
-    const t = setTimeout(() => setBoundaryClosed(true), ms + 250);
+    const t = setTimeout(() => setBoundaryClosed(true), plan.ms);
     return () => clearTimeout(t);
-  }, [summary.closed, summary.closesAt, boundaryClosed, hopTick]);
+  }, [summary, summary.closed, summary.closesAt, boundaryClosed, hopTick]);
 
   return (
     <div className="mt-2 rounded-xl border border-border p-3">

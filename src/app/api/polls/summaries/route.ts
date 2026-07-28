@@ -26,6 +26,10 @@ export async function POST(request: NextRequest) {
   if (!Array.isArray(body.postIds)) {
     return NextResponse.json({ error: "postIds 배열이 필요합니다" }, { status: 400 });
   }
+  // 문서 계약(≤100) 초과는 조용히 자르지 않고 400 거절 — 클라이언트가 100개 단위 chunk 해야 함.
+  if (body.postIds.length > 100) {
+    return NextResponse.json({ error: "postIds는 최대 100개입니다" }, { status: 400 });
+  }
   const postIds = (body.postIds as unknown[])
     .map((v) => Number(v))
     .filter((n) => Number.isInteger(n) && n > 0);

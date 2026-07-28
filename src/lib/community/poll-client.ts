@@ -120,20 +120,40 @@ export async function fetchPollDetail(postId: number): Promise<PollDetail | null
   return (await res.json()) as PollDetail;
 }
 
-/** 목록 카드용 poll 요약 배치 조회(인증 불필). hidden/비-poll 은 맵에서 제외된다. */
+export const SUMMARIES_CHUNK = 100; // route/서버 계약 상한(≤100). 무한피드 누적 id는 chunk 해서 전량 조회.
+
+/** 중복·비유효 제거 후 SUMMARIES_CHUNK(100) 단위로 분할. 무한피드 누적 id가 100개를
+ *  넘어도 101번째 이후가 누락되지 않도록 보장(route 계약·테스트 공유 순수함수). */
+export function chunkSummaryIds(postIds: number[]): number[][] {
+  const ids = [...new Set(postIds.filter((n) => Number.isInteger(n) && n > 0))];
+  const chunks: number[][] = [];
+  for (let i = 0; i < ids.length; i += SUMMARIES_CHUNK) {
+    chunks.push(ids.slice(i, i + SUMMARIES_CHUNK));
+  }
+  return chunks;
+}
+
+/** 목록 카드용 poll 요약 배치 조회(인증 불필). hidden/비-poll 은 맵에서 제외된다.
+ *  무한스크롤로 100개를 넘게 누적된 poll id 도 100개 단위 chunk 후 merge 해
+ *  101번째 이후 카드가 영구 로딩에 멈추지 않게 한다. */
 export async function fetchPollSummaries(
   postIds: number[],
 ): Promise<Record<number, PollSummary>> {
-  const ids = [...new Set(postIds.filter((n) => Number.isInteger(n) && n > 0))];
-  if (ids.length === 0) return {};
-  const res = await fetch("/api/polls/summaries", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ postIds: ids }),
-  });
-  if (!res.ok) return {};
-  const j = (await res.json()) as { summaries?: Record<number, PollSummary> };
-  return j.summaries ?? {};
+  const chunks = chunkSummaryIds(postIds);
+  if (chunks.length === 0) return {};
+  const results = await Promise.all(
+    chunks.map(async (chunk) => {
+      const res = await fetch("/api/polls/summaries", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ postIds: chunk }),
+      });
+      if (!res.ok) return {} as Record<number, PollSummary>;
+      const j = (await res.json()) as { summaries?: Record<number, PollSummary> };
+      return j.summaries ?? {};
+    }),
+  );
+  return Object.assign({}, ...results) as Record<number, PollSummary>;
 }
 
 /** 투표/변경. optionIds 는 선택한 선지 id 배열(단일선택이면 1개). */

@@ -77,6 +77,7 @@
     "qa:query-guard": "node scripts/qa/query-pagination-guard.mjs",
     "qa:poll-contract": "bash scripts/qa/poll-contract-e2e.sh && npm run qa:poll-route",
     "qa:poll-route": "tsx scripts/qa/poll-route-e2e.ts",
+    "qa:poll-card": "tsx scripts/qa/poll-card-smoke.ts",
     "qa:admin-delivery-ledger": "tsx scripts/qa/admin-delivery-ledger-smoke.ts",
     "qa:admin-dm-inbox": "node scripts/qa/admin-dm-inbox-smoke.mjs",
     "qa:feedback-origin-inbox": "bash scripts/qa/feedback-origin-inbox.sh",
