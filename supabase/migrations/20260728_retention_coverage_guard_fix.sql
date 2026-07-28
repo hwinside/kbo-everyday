@@ -151,11 +151,22 @@ BEGIN
          rolled.game_ids @> raw.game_ids
          AND rolled.game_ids <@ raw.game_ids
        )
-  ), deleted_demand_by_day AS (
-    -- Aggregate the whole day's deleted-account rollup demand and game-id set
-    -- so it can be exact-matched against the anonymized NULL-user raw pool.
+  ), deleted_demand_pv AS (
+    -- Whole-day deleted-account page-view demand, summed once per user-day.
+    -- Kept separate from the game-id set aggregation below: fanning the rows
+    -- out over their game-ids (unnest) before summing page_views would
+    -- multiply the demand by each row's game-id count (a 2-game user-day would
+    -- report double its page views), mismatching the anonymized pool and
+    -- permanently blocking purge for legitimate multi-game deletions.
     SELECT rows.day_kst,
-           sum(rows.rolled_page_views)::bigint AS deleted_demand,
+           sum(rows.rolled_page_views)::bigint AS deleted_demand
+    FROM user_day_mismatch_rows AS rows
+    WHERE rows.deleted_account
+    GROUP BY rows.day_kst
+  ), deleted_demand_games AS (
+    -- The distinct game-id set the day's deleted-account rollups touched,
+    -- aggregated independently of the page-view demand above.
+    SELECT rows.day_kst,
            COALESCE(
              array_agg(DISTINCT game_id) FILTER (WHERE game_id IS NOT NULL),
              '{}'::text[]
@@ -169,11 +180,12 @@ BEGIN
            rows.rollup_only,
            rows.deleted_account,
            COALESCE(demand.deleted_demand, 0) AS deleted_demand,
-           COALESCE(demand.deleted_game_ids, '{}'::text[]) AS deleted_game_ids,
+           COALESCE(games.deleted_game_ids, '{}'::text[]) AS deleted_game_ids,
            COALESCE(pool.anon_pv, 0) AS anon_pv,
            COALESCE(pool.anon_game_ids, '{}'::text[]) AS anon_game_ids
     FROM user_day_mismatch_rows AS rows
-    LEFT JOIN deleted_demand_by_day AS demand USING (day_kst)
+    LEFT JOIN deleted_demand_pv AS demand USING (day_kst)
+    LEFT JOIN deleted_demand_games AS games USING (day_kst)
     LEFT JOIN null_user_pool AS pool USING (day_kst)
   )
   SELECT count(*) INTO v_user_day_mismatches

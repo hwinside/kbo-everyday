@@ -13,10 +13,14 @@
 //      the run() purge rolls back raw + audit — for a still-existing user AND
 //      for deleted-account demand that exceeds its anonymized raw pool.
 //   3. Raw-only rows and value mismatches still FAIL coverage.
-//   4. An UNDER-pool missing-auth fabricated user-day (demand < pool, with a
-//      fake game-id) still FAILS coverage and rolls back — the exact-equality
-//      fix (= not <=) refuses to excuse headroom-sized fabrications that the
-//      auth.users-absence test alone would wave through (reopening PR #765).
+//   (a) An UNDER-pool missing-auth fabricated user-day whose game-id set
+//      EQUALS the anonymized pool (demand < pool, same game-ids) still FAILS
+//      coverage and rolls back. Because the game-id set matches, only the count
+//      comparator can decide the case, so flipping = back to <= turns it green
+//      — this is the case that actually proves the exact-equality fix (PR #765).
+//   (b) A NORMAL multi-game deleted account (page_views = 2 across 2 distinct
+//      games) reconciles EXACTLY (demand = 2, not the pre-fix double-count of
+//      4) and PASSES, pinning the demand aggregation against game-id fan-out.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -29,6 +33,9 @@ const LIVE_A = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 const LIVE_B = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
 const DELETED_D = "dddddddd-dddd-dddd-dddd-dddddddddddd";
 const DELETED_BIG = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee";
+// A legitimately deleted account whose anonymized raw touched two games,
+// exercising the multi-game demand aggregation.
+const DELETED_MULTI = "cccccccc-cccc-cccc-cccc-cccccccccccc";
 // A missing-auth UUID an attacker could fabricate: absent from auth.users,
 // but never actually a deleted account (no anonymized raw backs it).
 const FAKE_UNDER = "ffffffff-ffff-ffff-ffff-ffffffffffff";
@@ -209,35 +216,63 @@ async function main() {
     );
     await db.exec("ROLLBACK;");
 
-    // --- Scenario 4: UNDER-pool missing-auth fabrication FAILS -------------
+    // --- Scenario (a): comparator flip pin (game-id set held EQUAL) --------
     // The pre-fix `<=` excused any missing-auth rollup demand that fit inside
     // the day's anonymized pool. Here the legit deleted-account rollup (D, 3
     // page views = pool 3) is replaced by a fabricated missing-auth user-day
-    // of just 1 page view + a fake game-id, so whole-day deleted demand (1) is
-    // strictly UNDER the pool (3). Absence from auth.users is not proof of
-    // deletion, so exact-equality (= not <=) must keep it as a mismatch and
-    // roll the purge back — otherwise headroom-sized fabrications reopen #765.
+    // of just 1 page view, but with the SAME (empty) game-id set as the pool.
+    // Because the game-id exact condition passes, the ONLY thing that can
+    // decide this row is the count comparator: demand (1) < pool (3) FAILS
+    // under `=` (this assertion) yet would PASS under `<=`. That isolation is
+    // what actually proves the exact-equality fix rather than false-greening on
+    // an unrelated game-id divergence; absence from auth.users is not deletion
+    // proof, so the row must stay a mismatch and roll the purge back (#765).
     await db.exec("BEGIN;");
     await db.exec(`DELETE FROM admin_page_view_user_days WHERE user_id = '${DELETED_D}';`);
     await db.exec(`
       INSERT INTO admin_page_view_user_days (day_kst, user_id, page_views, game_ids)
-      VALUES ('2026-06-10', '${FAKE_UNDER}', 1, '{20260610FAKE}');
+      VALUES ('2026-06-10', '${FAKE_UNDER}', 1, '{}');
     `);
     assert.equal(
       (await coverage(db)).userDays,
       1,
-      "S4: under-pool missing-auth fabricated user-day must fail (exact = not <=)",
+      "(a): under-pool fabrication with a pool-matching game-id set must fail on the count comparator alone (exact = not <=)",
     );
     await expectCoverageRaise(db);
     assert.equal(
       await scalar(db, "SELECT count(*)::int AS value FROM admin_page_views"),
       rawBefore,
-      "S4: under-pool fabrication coverage failure must preserve raw page views",
+      "(a): under-pool fabrication coverage failure must preserve raw page views",
     );
     assert.equal(
       await scalar(db, "SELECT count(*)::int AS value FROM admin_telemetry_retention_runs"),
       auditBefore,
-      "S4: under-pool fabrication must not leave an audit success row",
+      "(a): under-pool fabrication must not leave an audit success row",
+    );
+    await db.exec("ROLLBACK;");
+
+    // --- Scenario (b): NORMAL multi-game deleted account PASSES ------------
+    // A legitimately deleted account whose anonymized raw touched two distinct
+    // games (2 NULL-user page views) reconciles exactly with its rollup
+    // (page_views = 2, two game-ids). The page-view demand must equal 2
+    // regardless of the game-id count: the pre-fix demand CTE fanned each row
+    // out over its game-ids before summing page_views, doubling this to 4 and
+    // mismatching the pool — fail-closing every legitimate multi-game deletion.
+    // The raw-insert trigger keeps the visitor-keyed pageViews rollup in sync
+    // (vm pv=2), so userDays is the only signal under test.
+    await db.exec("BEGIN;");
+    await db.exec(`
+      INSERT INTO admin_page_views (created_at, path, platform, visitor_id, user_id)
+      VALUES
+        ('2026-06-11T02:00:00Z', '/games/20260611AAA', 'web', 'vm', NULL),
+        ('2026-06-11T02:01:00Z', '/games/20260611BBB', 'web', 'vm', NULL);
+      INSERT INTO admin_page_view_user_days (day_kst, user_id, page_views, game_ids)
+      VALUES ('2026-06-11', '${DELETED_MULTI}', 2, '{20260611AAA,20260611BBB}');
+    `);
+    assert.deepEqual(
+      await coverage(db),
+      { pageViews: 0, userDays: 0, pageDwell: 0, pageDwellSessions: 0, pageDwellDistribution: 0 },
+      "(b): a normal multi-game deleted account (pv=2 across 2 games) must reconcile exactly (demand=2, not double-counted to 4)",
     );
     await db.exec("ROLLBACK;");
 
