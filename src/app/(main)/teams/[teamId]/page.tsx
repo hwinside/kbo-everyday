@@ -28,7 +28,7 @@ interface StandingData {
 export default function TeamHubPage() {
   const params = useParams();
   const teamSlug = params.teamId as string;
-  const goBack = useSafeBack(`/teams/${teamSlug}`);
+  const goBack = useSafeBack("/teams");
   const team = getTeamBySlug(teamSlug);
   const [standings, setStandings] = useState<StandingData | undefined>();
 
