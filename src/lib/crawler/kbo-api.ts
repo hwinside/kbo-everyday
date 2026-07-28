@@ -656,7 +656,14 @@ export async function fetchGameLinescore(gameId: string, seasonId?: string): Pro
     const hasInningBreakdown =
       linescore.away.innings.some((value) => value !== null) ||
       linescore.home.innings.some((value) => value !== null);
-    return hasInningBreakdown ? linescore : null;
+    // 2026-07-28: KBO 스코어보드가 경기 종료 후에도 이닝별 셀을 전부 비우고(모두 "-")
+    // R/H/E 총계만 내려주는 열화 상태가 관측됨(END_TM 결측과 동반). 이 경우에도
+    // parse가 live/final/cancelled로 판정한 실경기 스코어보드면 R/H/E·박스스코어로
+    // AI 요약을 만들 수 있으므로 linescore를 반환한다(이닝 breakdown 부재는 요약
+    // 프롬프트가 이닝 타임라인만 생략하고 헤드라인·MVP·흐름은 박스스코어로 생성해 대응).
+    // 진짜 프리게임(scheduled: 전 이닝 셀 비고 점수 0)만 null로 남긴다.
+    if (hasInningBreakdown || linescore.status !== "scheduled") return linescore;
+    return null;
   } catch {
     return null;
   }
