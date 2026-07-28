@@ -339,7 +339,9 @@ export default function VenueStorySection({ gameId }: Props) {
         <span className="text-[11px] text-text-tertiary">현장에서 온 짧은 중계</span>
       </div>
 
-      <div className="flex gap-2 overflow-x-auto scrollbar-hide -mx-1 px-1 pb-1">
+      {/* overflow-x-auto → computed overflow-y:auto 로 인해 라벨 `-top-1`이 스크롤포트 위로 잘리므로
+          상단 `pt-1`(4px)로 라벨 pill 상단까지 트레이 안에 넣는다(삼순 왕복2). */}
+      <div className="flex gap-2 overflow-x-auto scrollbar-hide -mx-1 px-1 pt-1 pb-1">
         {/* 올리기 타일 */}
         <button
           onClick={handleUploadClick}
