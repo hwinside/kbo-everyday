@@ -20,6 +20,8 @@ import PostViewBadge from "@/components/community/PostViewBadge";
 import { usePostImpression } from "@/lib/community/usePostImpression";
 import CommentSheet from "./CommentSheet";
 import { isShortText, BrandedTextCard } from "./FeedTextCards";
+import PollCardBody from "./PollCardBody";
+import { fetchPollSummaries, type PollSummary } from "@/lib/community/poll-client";
 
 function findPlayerByName(name: string): { kboId: string; teamId: number } | null {
   for (const p of PLAYERS_ROSTER) {
@@ -916,6 +918,21 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
   // 줌 활성 post id — post container의 overflow-hidden을 풀어 fixed overlay가 viewport까지 확장
   const [zoomedPostId, setZoomedPostId] = useState<number | null>(null);
 
+  // poll 글의 목록 카드용 요약(배지·참여수·선지 미리보기) 배치 조회. poll 이 없으면 no-op.
+  const [pollSummaries, setPollSummaries] = useState<Record<number, PollSummary>>({});
+  const pollIdsKey = posts.filter((p) => p.board_type === "poll").map((p) => p.id).join(",");
+  useEffect(() => {
+    const ids = pollIdsKey ? pollIdsKey.split(",").map(Number) : [];
+    if (ids.length === 0) return; // 남은 요약은 메모리에만 잔존(poll 아닌 글은 조회 안 함 — 내림)
+    let alive = true;
+    fetchPollSummaries(ids).then((s) => {
+      if (alive) setPollSummaries(s);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [pollIdsKey]);
+
   const handleDelete = useCallback(async (postId: number) => {
     setMenuOpenId(null);
     if (!confirm("이 게시글을 삭제할까요? 댓글/좋아요도 함께 삭제됩니다.")) return;
@@ -1026,6 +1043,92 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
           : undefined;
 
         if (deletedIds.has(post.id)) return null;
+
+        // poll 글: 질문 + 전용 카드(배지·참여수·선지 미리보기) + 작성자/like/comment/share.
+        // 미디어/텍스트 카드 대신 PollCardBody 로 렌더. 탭 → 상세 이동.
+        if (post.board_type === "poll") {
+          const summary = pollSummaries[post.id];
+          return (
+            <div key={post.id}>
+              {index > 0 && <div className="h-2 bg-white/[0.02]" />}
+              <PostImpressionWrapper postId={post.id} className="overflow-hidden">
+                {/* Author header */}
+                <div className="flex items-center gap-3 px-5 py-3">
+                  {boardType === "player" && playerLabels?.[post.id] ? (
+                    <TeamBadge teamId={playerLabels[post.id].teamId} playerName={playerLabels[post.id].playerName} />
+                  ) : post.team_id ? (
+                    post.author_id ? (
+                      <Link href={`/profile/${post.author_id}`} className="shrink-0 active:opacity-70 transition-opacity">
+                        <TeamBadge teamId={post.team_id} />
+                      </Link>
+                    ) : (
+                      <TeamBadge teamId={post.team_id} />
+                    )
+                  ) : null}
+                  {post.author_id ? (
+                    <Link
+                      href={`/profile/${post.author_id}`}
+                      className="min-w-0 truncate text-base font-medium text-text-primary active:opacity-70 transition-opacity"
+                    >
+                      {post.nickname || "익명"}
+                    </Link>
+                  ) : (
+                    <span className="min-w-0 truncate text-base font-medium text-text-primary">{post.nickname || "익명"}</span>
+                  )}
+                  <span className="ml-auto text-base text-text-tertiary whitespace-nowrap shrink-0">{timeAgo(post.created_at)}</span>
+                </div>
+
+                {/* 질문 + poll 카드 → 탭 시 상세 이동 */}
+                <Link href={`/community/free/${post.id}`} className="block px-5 pb-1 active:opacity-90">
+                  {post.title && (
+                    <h3 className="text-base font-semibold text-text-primary line-clamp-2">{post.title}</h3>
+                  )}
+                  {summary ? (
+                    <PollCardBody summary={summary} />
+                  ) : (
+                    <div className="mt-2 rounded-xl border border-border p-3 text-xs text-text-tertiary">투표 불러오는 중…</div>
+                  )}
+                </Link>
+
+                {/* Action bar (like/comment/share) */}
+                <div className="flex items-center gap-4 px-5 py-2.5">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleLike(post.id);
+                    }}
+                    className="flex items-center gap-1 text-base transition-colors"
+                  >
+                    <span className="text-xl leading-none">{isLiked ? "❤️" : "♡"}</span>
+                    <span className={isLiked ? "text-red-500 font-medium" : "text-text-secondary"}>
+                      {post.like_count + (controlledLikes ? 0 : isLiked ? 1 : 0)}
+                    </span>
+                  </button>
+                  <button onClick={() => openComments(post)} className="flex items-center gap-1 text-base text-text-secondary">
+                    <MessageCircle size={20} />
+                    <span>{post.comment_count + (commentDeltas[post.id] ?? 0)}</span>
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleShare(post);
+                    }}
+                    className="ml-auto flex items-center gap-1 text-base text-text-secondary"
+                    aria-label="게시글 공유"
+                  >
+                    <Share2 size={20} />
+                    <span className="sr-only">공유</span>
+                  </button>
+                  <PostViewBadge
+                    clickCount={post.click_view_count}
+                    impressionCount={post.impression_view_count}
+                    className="ml-2"
+                  />
+                </div>
+              </PostImpressionWrapper>
+            </div>
+          );
+        }
 
         return (
           <div key={post.id}>

@@ -36,10 +36,7 @@ export default function PostList({ posts, playerLabels, sourceLabels }: PostList
   const [pollSummaries, setPollSummaries] = useState<Record<number, PollSummary>>({});
   const pollIdsKey = pollIds.join(",");
   useEffect(() => {
-    if (pollIds.length === 0) {
-      setPollSummaries({});
-      return;
-    }
+    if (pollIds.length === 0) return; // 남은 요약은 메모리에만 잔존(poll 아닌 글은 조회 안 함)
     let alive = true;
     fetchPollSummaries(pollIds).then((s) => {
       if (alive) setPollSummaries(s);

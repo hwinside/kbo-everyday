@@ -85,6 +85,8 @@ export function useUnifiedFeed(board: FeedBoard, pageSize = 20) {
 
   const loadPage = useCallback(
     async (cursor: number | null): Promise<Post[]> => {
+      // query-guard: bounded -- id desc keyset(.lt("id",cursor)) + .limit(pageSize). board_type 목록에
+      // 'poll' 추가(S3)는 필터 확장일 뿐 페이지 경계 불변(성장 무한 아님).
       let query = supabase.from("posts").select(SELECT).neq("is_hidden", true);
       // 태그 기반 조회(V3): 팀탭 = "LG가 태그되거나 LG선수가 태그된 모든 글".
       // team_tags 만 보면 레거시·움짤콜렉터 글(board_type='player'/'team' + board_id, team_tags 빈 값)이
@@ -105,7 +107,7 @@ export function useUnifiedFeed(board: FeedBoard, pageSize = 20) {
         }
         query = query.or(orParts.join(","));
       } else if (board.kind === "player") query = query.eq("board_type", "player").eq("board_id", board.kboId);
-      else query = query.in("board_type", ["team", "player", "free"]);
+      else query = query.in("board_type", ["team", "player", "free", "poll"]); // 전체글 피드에 투표글(board_type='poll') 포함(S3)
       if (cursor !== null) query = query.lt("id", cursor);
       // keyset = id desc 단일 컬럼. id가 BIGSERIAL(삽입=created_at 순 단조증가)이라
       // (created_at,id) 복합 keyset과 동일 순서이면서 tie-break 불필요 → 더 단순·견고. (의도적 선택)
