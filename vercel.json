@@ -100,7 +100,7 @@
     },
     {
       "path": "/api/cron/discover-channels",
-      "schedule": "0 0 * * 0"
+      "schedule": "5 8 * * 0"
     },
     {
       "path": "/api/cron/venue-stories-cleanup",
