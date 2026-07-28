@@ -11,8 +11,8 @@
 -- 안전 설계(라이브 RLS 실측 기반):
 --   * monthly — 소스(chat_messages/comments/posts/profiles) 전부 공개 SELECT USING(true)
 --     + leaderboard_internal_user_ids() 는 anon/authenticated EXECUTE 가능 → 플립만.
---   * writing — leaderboard_writing_rollup(RLS on, 공개정책 0)에 공개 SELECT 정책 추가
---     (집계 컬럼 user_id/점수/날짜만, 뷰가 이미 공개하던 데이터라 신규 노출 0) + 플립.
+--   * writing — leaderboard_writing_rollup(RLS on, 공개정책 0)에 뷰와 동일한 내부자 제외
+--     SELECT 정책 추가(집계 컬럼 user_id/점수/날짜만 공개) + 플립.
 --   * invite — invitations RLS="본인 초대만"(inviter/invitee) → invoker 로 뒤집으면 집계가
 --     붕괴하고 원본 초대관계가 노출됨. writing 과 동일하게 *공개 집계 rollup*
 --     (leaderboard_invite_rollup) 신설 → 그 위 security_invoker 뷰. 원본 invitations 는
@@ -32,12 +32,12 @@ ALTER VIEW public.v_leaderboard_writing_monthly SET (security_invoker = on);
 -- 2. writing — rollup 공개 read 정책 + 플립
 -- ============================================================
 -- rollup 은 user_id / 합산점수 / 마지막활동일만 보유(민감정보 없음).
--- 뷰가 이미 SELECT r.user_id 로 공개하던 집계라 정책 추가로 인한 신규 노출 0.
+-- direct table endpoint 도 공개 뷰와 동일하게 동적 내부자/봇 제외를 적용한다.
 DROP POLICY IF EXISTS leaderboard_writing_rollup_public_read ON public.leaderboard_writing_rollup;
 CREATE POLICY leaderboard_writing_rollup_public_read
   ON public.leaderboard_writing_rollup
   FOR SELECT TO anon, authenticated
-  USING (true);
+  USING (user_id <> ALL (leaderboard_internal_user_ids()));
 -- RLS 정책 + 테이블 GRANT 둘 다 필요(정책만으론 anon 권한 부족). 명시 GRANT 로
 -- Supabase 암묵 default privilege 에 의존하지 않고 보안 계약을 자립적으로 고정.
 GRANT SELECT ON public.leaderboard_writing_rollup TO anon, authenticated;
@@ -54,15 +54,15 @@ CREATE TABLE IF NOT EXISTS public.leaderboard_invite_rollup (
   refreshed_at      timestamptz NOT NULL DEFAULT now()
 );
 
--- 직접 접근 차단 (읽기는 v_leaderboard_invite 뷰 경유, 갱신은 service_role RPC 경유).
--- 공개 read 정책은 집계 컬럼만 노출 — 원본 invitations(inviter/invitee 관계)는 노출 아님.
+-- 공개 read 는 집계 컬럼만 노출하며, direct endpoint 도 뷰와 동일하게 내부자/봇을
+-- 동적으로 제외한다. 원본 invitations(inviter/invitee 관계)는 계속 노출하지 않는다.
 ALTER TABLE public.leaderboard_invite_rollup ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS leaderboard_invite_rollup_public_read ON public.leaderboard_invite_rollup;
 CREATE POLICY leaderboard_invite_rollup_public_read
   ON public.leaderboard_invite_rollup
   FOR SELECT TO anon, authenticated
-  USING (true);
+  USING (user_id <> ALL (leaderboard_internal_user_ids()));
 -- RLS 정책 + 테이블 GRANT 둘 다 필요(정책만으론 anon 권한 부족).
 GRANT SELECT ON public.leaderboard_invite_rollup TO anon, authenticated;
 
