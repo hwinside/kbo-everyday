@@ -62,6 +62,7 @@ export function shouldSendStartNotification(params: {
     isTop: params.isTop,
     awayScore: params.awayScore,
     homeScore: params.homeScore,
+    plateAppearance: params.plateAppearance,
   })) return false;
   if (params.nowMs - params.lastSeenScheduledAtMs <= SCHEDULED_SEEN_RECENT_MS) return true;
   if (params.scheduledStartAtMs == null) return false;
@@ -69,26 +70,34 @@ export function shouldSendStartNotification(params: {
   return scheduledLagMs >= 0 && scheduledLagMs <= SCHEDULED_START_RECOVERY_MS;
 }
 
+// (2026-07-28 삼순 NO-GO 반영) 안전 가드를 `1회초 상단 AND 0:0`으로 strict하게 묶는다.
+// 이닝·초말·점수가 미상/누락/blank/malformed면 발송으로 판정할 근거가 없으므로 모두
+// fail-close(mark-only). 이전 구현은 미상 점수를 0으로 강등하고 이닝 null을 신선으로 봐서
+// `판정 불가여도 발송`(fail-open)이라 승인 기준(1회초 AND 0:0)을 위반했다.
+// 타석 근거는 발송 전제가 아니라 뒷북 차단 보조로만 쓴다: 근거 없음/지연/PA1은 허용하고,
+// 근거가 있고 completedPlateAppearances>=2면 이미 진행된 것으로 보아 차단한다.
 export function isStartNotificationFresh(params: {
-  /** KBO GAME_INN_NO — 개시 직후 등 미제공이면 null */
+  /** KBO GAME_INN_NO — 개시 직후 등 미제공이면 null. 1회여야만 신선. */
   inningNo: number | null | undefined;
-  /** GAME_TB_SC === "T" 여부. 미제공이면 null */
+  /** GAME_TB_SC === "T" 여부. true(1회초)여야만 신선. 미제공/1회말이면 차단. */
   isTop: boolean | null | undefined;
-  /** 경기 스코어. 득점 발생(>0)이면 이미 진행된 경기 → 뒷북 차단. 미상이면 0으로 본다. */
+  /** 경기 스코어. known 0:0이어야만 신선. 미상/누락/malformed면 fail-close. */
   awayScore?: number | null;
   homeScore?: number | null;
+  /** 뒷북 차단 보조 신호(선택). 발송 전제가 아니며, 없거나 지연돼도 발송을 막지 않는다. */
+  plateAppearance?: StartPlateAppearanceEvidence | null;
 }): boolean {
-  // 득점 발생 = 이미 경기가 진행됨 → 정시 시작알림이 아니다(뒷북 차단).
-  const away = typeof params.awayScore === "number" ? params.awayScore : 0;
-  const home = typeof params.homeScore === "number" ? params.homeScore : 0;
-  if (away > 0 || home > 0) return false;
-  const inning = typeof params.inningNo === "number" ? params.inningNo : null;
-  // 이닝 정보가 있으면 1회초만 신선하다. 2회+·1회말은 이미 수십 분 경과.
-  if (inning !== null) {
-    if (inning > 1) return false;
-    if (inning === 1 && params.isTop === false) return false; // 1회말
-  }
-  // 이닝 미상(개시 직후)이거나 1회초 + 0:0 → 신선. KBO state=2 전환 지연을 흡수한다.
-  // (scheduled→live 연속 관측은 shouldSendStartNotification의 recency 게이트가 담당)
+  // 1회초 상단 strict — 미상(null/undefined)·0·2회+·1회말은 모두 차단.
+  if (params.inningNo !== 1) return false;
+  if (params.isTop !== true) return false;
+  // 0:0 strict — known numeric 0:0만 신선. null/blank/NaN 등은 fail-close.
+  const away = params.awayScore;
+  const home = params.homeScore;
+  if (typeof away !== "number" || !Number.isFinite(away) || away !== 0) return false;
+  if (typeof home !== "number" || !Number.isFinite(home) || home !== 0) return false;
+  // 뒷북 차단 보조: 원정 1번 타자 완료 타석이 known으로 2 이상이면 이미 진행된 것 → 차단.
+  // 근거 없음(null)·PA1(이번 사고 케이스)은 발송을 막지 않는다.
+  const completedPA = params.plateAppearance?.completedPlateAppearances;
+  if (typeof completedPA === "number" && Number.isFinite(completedPA) && completedPA >= 2) return false;
   return true;
 }

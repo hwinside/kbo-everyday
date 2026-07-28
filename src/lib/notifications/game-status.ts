@@ -126,6 +126,16 @@ async function unclaim(gameId: string, flag: NotifyFlag): Promise<void> {
  * 있으면 직전 streak일 수 있어, 표기는 호출부에서 "이번 경기 결과 방향과 일치할 때만"
  * 노출(fail-closed)한다. fetch 실패 시 빈 맵(스코어만 발송).
  */
+// 시작알림 게이트용 스코어 파싱 — 누락/blank/malformed는 null로 남겨 fail-close시킨다.
+// (payload 표기용 `parseInt(...) || 0`과 달리, 게이트는 미상 점수를 실제 0과 구분해야 한다.)
+function parseStartGateScore(raw: string | null | undefined): number | null {
+  if (raw == null) return null;
+  const trimmed = String(raw).trim();
+  if (trimmed === "") return null;
+  const n = Number(trimmed);
+  return Number.isInteger(n) && n >= 0 ? n : null;
+}
+
 async function fetchTeamStreaks(): Promise<Map<number, { n: number; dir: "승" | "패" }>> {
   const out = new Map<number, { n: number; dir: "승" | "패" }>();
   try {
@@ -420,8 +430,8 @@ export async function notifyGameStatusTransitions(
         nowMs: observedAtMs,
         inningNo: game.GAME_INN_NO,
         isTop: game.GAME_TB_SC ? game.GAME_TB_SC === "T" : null,
-        awayScore: parseInt(game.T_SCORE_CN ?? "0") || 0,
-        homeScore: parseInt(game.B_SCORE_CN ?? "0") || 0,
+        awayScore: parseStartGateScore(game.T_SCORE_CN),
+        homeScore: parseStartGateScore(game.B_SCORE_CN),
         plateAppearance,
       });
       if (!sendOk) {
@@ -609,8 +619,8 @@ export async function notifyGameStatusTransitions(
         nowMs: observedAtMs,
         inningNo: g.GAME_INN_NO,
         isTop: g.GAME_TB_SC ? g.GAME_TB_SC === "T" : null,
-        awayScore: parseInt(g.T_SCORE_CN ?? "0") || 0,
-        homeScore: parseInt(g.B_SCORE_CN ?? "0") || 0,
+        awayScore: parseStartGateScore(g.T_SCORE_CN),
+        homeScore: parseStartGateScore(g.B_SCORE_CN),
         plateAppearance: opts?.startPlateAppearanceByGame?.get(gameId) ?? null,
       });
       if (!sendOk) {
