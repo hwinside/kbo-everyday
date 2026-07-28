@@ -105,7 +105,7 @@ export default function LinescoreTable({
           <tbody>
             {/* Away */}
             <tr className="border-b border-border">
-              <td className="text-left pl-1 py-1 font-semibold text-xs" style={{ color: awayTeam.colorPrimary }}>
+              <td className="text-left pl-1 py-1 font-semibold text-xs text-text-primary">
                 {awayTeam.shortName}
               </td>
               {inningNumbers.map((n) => {
@@ -133,7 +133,7 @@ export default function LinescoreTable({
             </tr>
             {/* Home */}
             <tr className="border-b border-border">
-              <td className="text-left pl-1 py-1 font-semibold text-xs" style={{ color: homeTeam.colorLight || homeTeam.colorPrimary }}>
+              <td className="text-left pl-1 py-1 font-semibold text-xs text-text-primary">
                 {homeTeam.shortName}
               </td>
               {inningNumbers.map((n) => {
