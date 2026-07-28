@@ -26,6 +26,9 @@ export function useGameRelay(
   // 누적 이닝 병합 캐시(`${inning}-${half}` 키). delta 응답은 이 캐시 위에 병합한다.
   const inningsRef = useRef<Map<string, InningRelay>>(new Map());
   const pollCountRef = useRef(0);
+  // 현재 활성 gameId. gameId 전환 직후 이전 경기의 in-flight 응답이 늦게 도착해
+  // 새 경기 state 를 오염시키는 것을 막기 위해 setData 전 이 값과 비교한다(삼순 blocker ②).
+  const activeGameIdRef = useRef<string | undefined>(gameId);
 
   const fetchRelay = useCallback((): Promise<boolean> => {
     if (!gameId) return Promise.resolve(false);
@@ -33,6 +36,7 @@ export function useGameRelay(
       return Promise.resolve(false);
     }
     if (inFlightRef.current) return Promise.resolve(false);
+    const requestGameId = gameId;
     const request = (async () => {
       inFlightRef.current = true;
       setIsLoading(true);
@@ -53,7 +57,8 @@ export function useGameRelay(
         }
 
         const res = await fetch(`/api/game-relay?${params}`);
-        if (res.ok && mountedRef.current) {
+        // 응답 도착 시점에 gameId 가 이미 전환됐으면 이 응답은 이전 경기 것 → 버린다.
+        if (res.ok && mountedRef.current && activeGameIdRef.current === requestGameId) {
           const json = (await res.json()) as GameRelayResponse;
           // innings만 병합(delta면 과거 이닝 유지, full이면 재구성), matchup/linescore/
           // currentInning 등 라이브 필드는 최신 응답 그대로 유지.
@@ -78,6 +83,17 @@ export function useGameRelay(
     inFlightPromiseRef.current = request;
     return request;
   }, [gameId, currentInning]);
+
+  // gameId 전환 시 누적 이닝 캐시·폴링 카운터·표시 데이터를 초기화한다. 이것이 없으면
+  // 새 경기 첫 폴링이 이전 경기의 캐시(size>0) 때문에 since 를 보내 이전 경기 이닝 위에
+  // delta 를 병합한다(교차 오염). 선언 순서상 폴링 effect 보다 먼저 실행된다.
+  useEffect(() => {
+    activeGameIdRef.current = gameId;
+    inningsRef.current = new Map();
+    pollCountRef.current = 0;
+    finalFetchedRef.current = false;
+    setData(null);
+  }, [gameId]);
 
   useEffect(() => {
     mountedRef.current = true;

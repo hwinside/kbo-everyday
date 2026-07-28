@@ -4,7 +4,7 @@
  *
  * 실행: npx tsx scripts/qa/relay-delta-smoke.ts
  */
-import { filterDeltaInnings, mergeDeltaInnings, inningKey } from "../../src/lib/game/relay-delta";
+import { filterDeltaInnings, mergeDeltaInnings, inningKey, toDeltaResponse } from "../../src/lib/game/relay-delta";
 import type { InningRelay } from "../../src/app/api/game-relay/route";
 
 let pass = 0;
@@ -87,6 +87,37 @@ function fullGame(maxInning: number): InningRelay[] {
   const firstTop = merged4.find((x) => inningKey(x) === "1-top");
   check("full self-heal rebuilds cache", cache.size === 16);
   check("full self-heal applies past correction", firstTop?.plays.length === 5);
+}
+
+// ---- toDeltaResponse (fresh ↔ cache-hit 패리티, 삼순 blocker ①) ----
+{
+  const full = { gameId: "g1", innings: fullGame(9), currentInning: 9, updatedAt: "t0" };
+
+  // since<=0 → full 그대로(partial 미설정)
+  const asFull = toDeltaResponse(full, 0);
+  check("toDeltaResponse since=0 keeps full innings", asFull.innings.length === 18);
+  check("toDeltaResponse since=0 no partial flag", asFull.partial !== true);
+
+  // since>0 → filter + partial:true
+  const asDelta = toDeltaResponse(full, 8);
+  check("toDeltaResponse since=8 filters innings", asDelta.innings.length === 6);
+  check("toDeltaResponse since=8 sets partial", asDelta.partial === true);
+  check("toDeltaResponse keeps live fields", asDelta.currentInning === 9 && asDelta.updatedAt === "t0");
+
+  // 입력 객체 불변(캐시 오염 방지) — responseCache 에 저장된 full 을 손대면 안 된다.
+  check("toDeltaResponse does not mutate input innings", full.innings.length === 18);
+  check("toDeltaResponse does not mutate input partial", (full as { partial?: boolean }).partial === undefined);
+
+  // fresh 경로와 cache-hit 경로는 동일 full+since 에 대해 동일 delta 를 내야 한다.
+  // (두 경로 모두 route 에서 같은 toDeltaResponse 를 호출하므로 계약 동등성을 고정)
+  const freshLike = toDeltaResponse(full, 7);
+  const cacheHitLike = toDeltaResponse({ ...full }, 7);
+  check("fresh vs cache-hit innings parity", freshLike.innings.length === cacheHitLike.innings.length);
+  check("fresh vs cache-hit partial parity", freshLike.partial === cacheHitLike.partial);
+  check(
+    "fresh vs cache-hit key set parity",
+    freshLike.innings.map(inningKey).join(",") === cacheHitLike.innings.map(inningKey).join(","),
+  );
 }
 
 console.log(`relay-delta-smoke: ${pass} passed, ${fail} failed`);

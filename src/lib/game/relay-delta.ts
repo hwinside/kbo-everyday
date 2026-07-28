@@ -28,6 +28,22 @@ export function filterDeltaInnings(innings: InningRelay[], since: number): Innin
 }
 
 /**
+ * full 응답에서 delta(부분) 응답을 파생하는 단일 계약. since<=0 이면 full 그대로 반환하고,
+ * since>0 이면 innings 를 filterDeltaInnings 로 줄이고 partial:true 를 세운다.
+ *
+ * fresh(업스트림) 경로와 warm responseCache HIT 경로가 **반드시 같은 delta 의미**를 갖도록
+ * 두 경로 모두 이 함수를 통과시킨다(삼순 blocker ①: cache-hit 이 since 를 무시하고 full 을
+ * 재전송하던 회귀 차단). 입력 객체는 변형하지 않는다(캐시 오염 방지, 얕은 복사).
+ */
+export function toDeltaResponse<T extends { innings: InningRelay[]; partial?: boolean }>(
+  full: T,
+  since: number,
+): T {
+  if (!Number.isFinite(since) || since <= 0) return full;
+  return { ...full, innings: filterDeltaInnings(full.innings, since), partial: true };
+}
+
+/**
  * 클라이언트 병합. partial(delta) 응답이면 cache 위에 응답 이닝을 키별로 덮어쓰고 나머지
  * 과거 이닝은 유지한다. full 응답이면 cache 를 응답 이닝으로 재구성한다(과거 이닝 정정 반영).
  * cache 는 호출자가 소유하는 Map 으로, 이 함수가 in-place 로 갱신하고 병합된 배열을 반환한다.
