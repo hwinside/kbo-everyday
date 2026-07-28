@@ -483,12 +483,13 @@ export default function WritePoll({ isOpen, onClose, onCreated }: WritePollProps
         </div>
       )}
 
-      {/* 선수 선택 시트 (PlayerPickerSheet 재사용) */}
+      {/* 선수 선택 시트 (PlayerPickerSheet 재사용). 컴포저(z-[10000])·팀 시트(z-[10001]) 위로 올린다. */}
       <PlayerPickerSheet
         open={playerSheetOpen}
         onClose={() => setPlayerSheetOpen(false)}
         players={[]}
         onSelect={addPlayer}
+        overlayZClassName="z-[10002]"
       />
     </AnimatePresence>
   );

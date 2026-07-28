@@ -78,6 +78,8 @@ export default function PollBlock({ postId, onRequireLogin }: PollBlockProps) {
   const [voteError, setVoteError] = useState<string | null>(null);
   // 페이지를 열어둔 채 마감시각을 넘겼을 때 경계에서 즉시 마감 처리(재조회로 결과 공개 수렴).
   const [boundaryClosed, setBoundaryClosed] = useState(false);
+  // 장기(최대 30일) 마감까지 hop 재예약하기 위한 tick(setTimeout 2^31ms 상한 회피).
+  const [hopTick, setHopTick] = useState(0);
 
   const load = useCallback(async () => {
     try {
@@ -104,9 +106,9 @@ export default function PollBlock({ postId, onRequireLogin }: PollBlockProps) {
   }, [load]);
 
   // 마감 경계 타이머: 페이지를 열어둔 채 closesAt 을 넘으면 즉시 마감 처리 + 재조회로
-  // 서버 canonical 결과(closed=true, vote_count 공개)를 수렴시킨다. detail.closed 가
-  // 이미 true 거나 detail 이 없으면 스케줄 안 함. setTimeout 상한(2^31ms) 방어로
-  // 먼 미래(>1일)는 예약 생략(페이지를 그만큼 열어두지 않음 — 재방문 시 load 가 재판정).
+  // 서버 canonical 결과(closed=true, vote_count 공개)를 수렴시킨다. 마감까지의 간격이
+  // 길면(최대 30일) setTimeout 상한(2^31ms)·장기 드리프트 문제가 있으므로 6시간 hop 으로
+  // 잖게 끊어 재예약(hopTick)해 전 범위를 커버한다. detail.closed / detail 없으면 스케줄 안 함.
   useEffect(() => {
     if (!detail || detail.closed) return;
     const ms = new Date(detail.closesAt).getTime() - Date.now();
@@ -115,14 +117,18 @@ export default function PollBlock({ postId, onRequireLogin }: PollBlockProps) {
       load();
       return;
     }
-    const MAX_DELAY = 24 * 60 * 60 * 1000; // 1일 상한
-    if (ms > MAX_DELAY) return;
+    const MAX_HOP = 6 * 60 * 60 * 1000; // 6시간 hop
+    if (ms > MAX_HOP) {
+      // 아직 멀었음 → 6시간 뒤 tick 증가 → effect 재실행으로 ms 재계산/재예약.
+      const t = setTimeout(() => setHopTick((n) => n + 1), MAX_HOP);
+      return () => clearTimeout(t);
+    }
     const t = setTimeout(() => {
       setBoundaryClosed(true);
       load();
     }, ms + 250);
     return () => clearTimeout(t);
-  }, [detail, load]);
+  }, [detail, load, hopTick]);
 
   function toggle(optionId: number, allowMultiple: boolean) {
     setVoteError(null);
