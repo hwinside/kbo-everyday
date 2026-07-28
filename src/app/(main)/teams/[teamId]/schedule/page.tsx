@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ChevronLeft, ChevronRight } from "lucide-react";
+import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
 import { getTeamBySlug, getTeamBgColor } from "@/lib/constants/teams";
 import TeamLogo from "@/components/ui/TeamLogo";
 
@@ -101,9 +102,10 @@ export default function TeamSchedulePage() {
         <button onClick={() => { if (window.history.length > 1) router.back(); else router.push(`/teams/${teamSlug}`); }} className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors">
           <ChevronLeft size={24} />
         </button>
-        <h1 className="text-lg font-bold text-text-primary">
+        <h1 className="text-lg font-bold text-text-primary flex-1">
           {team.shortName} 스케줄
         </h1>
+        <HeaderProfileLink />
       </header>
       </div>
 

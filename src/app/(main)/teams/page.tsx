@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import Link from "next/link";
+import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
 import GlassCard from "@/components/ui/GlassCard";
 import TeamLogo from "@/components/ui/TeamLogo";
 import { TEAMS } from "@/lib/constants/teams";
@@ -37,9 +38,12 @@ export default function TeamsPage() {
   return (
     <div className="mx-auto max-w-lg px-5">
       <div className="sticky top-0 z-30 -mx-5 border-b border-border bg-bg-primary px-5" style={{ paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
-      <header className="py-5">
-        <h1 className="text-xl font-bold text-text-primary">구단 선택</h1>
-        <p className="text-sm text-text-tertiary mt-1">팀 허브로 이동합니다</p>
+      <header className="py-5 flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-bold text-text-primary">구단 선택</h1>
+          <p className="text-sm text-text-tertiary mt-1">팀 허브로 이동합니다</p>
+        </div>
+        <HeaderProfileLink />
       </header>
       </div>
 

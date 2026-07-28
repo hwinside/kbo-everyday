@@ -2,6 +2,7 @@
 
 import { useParams, useRouter } from "next/navigation";
 import { ChevronLeft } from "lucide-react";
+import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
 import { getTeamBySlug } from "@/lib/constants/teams";
 import TeamVideos from "@/components/team/TeamVideos";
 
@@ -26,9 +27,10 @@ export default function TeamVideosPage() {
         <button onClick={() => { if (window.history.length > 1) router.back(); else router.push(`/teams/${teamSlug}`); }} className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors">
           <ChevronLeft size={24} />
         </button>
-        <h1 className="text-lg font-bold text-text-primary">
+        <h1 className="text-lg font-bold text-text-primary flex-1">
           {team.shortName} 공식영상
         </h1>
+        <HeaderProfileLink />
       </header>
       </div>
       <div className="px-5">

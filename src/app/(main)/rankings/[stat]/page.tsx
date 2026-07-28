@@ -14,6 +14,7 @@ import { STAT_DEFS } from "@/lib/stats/title-defs";
 import { rankByStat } from "@/lib/stats/title-rankings";
 
 import Link from "next/link";
+import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
 
 function hexToRgba(hex: string, alpha: number): string {
   const cleaned = hex.replace("#", "");
@@ -134,7 +135,8 @@ function RankingContent() {
       <div className="sticky top-0 z-30 -mx-5 border-b border-border bg-bg-primary px-5" style={{ paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
       <div className="py-3 flex items-center gap-3">
         <button onClick={() => router.back()} className="text-xl">←</button>
-        <h1 className="text-2xl font-bold tracking-tight">{def.emoji} {def.desc}</h1>
+        <h1 className="text-2xl font-bold tracking-tight flex-1">{def.emoji} {def.desc}</h1>
+        <HeaderProfileLink />
       </div>
       </div>
 

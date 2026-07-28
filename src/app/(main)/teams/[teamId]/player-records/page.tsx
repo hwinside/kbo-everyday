@@ -1,6 +1,7 @@
 "use client";
 
 import { ChevronLeft } from "lucide-react";
+import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
 import { useParams, useRouter } from "next/navigation";
 import { getTeamBySlug } from "@/lib/constants/teams";
 import RecordRoom from "@/components/players/RecordRoom";
@@ -32,6 +33,7 @@ export default function TeamPlayerRecordsPage() {
             <ChevronLeft size={24} />
           </button>
           <h1 className="text-lg font-bold text-text-primary flex-1">{team.shortName} 선수 기록</h1>
+          <HeaderProfileLink />
         </header>
       </div>
 

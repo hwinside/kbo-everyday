@@ -3,6 +3,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { ArrowLeft, Sparkles, ChevronRight, MessageCircle, Heart } from "lucide-react";
+import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
 import GlassCard from "@/components/ui/GlassCard";
 import CommentSheet from "@/components/community/CommentSheet";
 import LoginSheet from "@/components/auth/LoginSheet";
@@ -177,10 +178,11 @@ export default function WhatsNewPage() {
         <button onClick={() => router.back()} className="text-text-secondary">
           <ArrowLeft size={22} />
         </button>
-        <h1 className="flex items-center gap-2 text-lg font-bold text-text-primary">
+        <h1 className="flex items-center gap-2 text-lg font-bold text-text-primary flex-1">
           <Sparkles size={18} className="text-amber-400" />
           새 소식
         </h1>
+        <HeaderProfileLink />
       </div>
       </div>
 

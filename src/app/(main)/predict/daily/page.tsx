@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
 import { ArrowLeft, Users } from "lucide-react";
+import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -22,7 +23,8 @@ export default function DailyPredictPage() {
         <button onClick={() => router.back()} className="p-1">
           <ArrowLeft size={24} className="text-text-primary" />
         </button>
-        <h1 className="text-lg font-bold text-text-primary">오늘의 승부예측</h1>
+        <h1 className="text-lg font-bold text-text-primary flex-1">오늘의 승부예측</h1>
+        <HeaderProfileLink />
       </div>
       </div>
 

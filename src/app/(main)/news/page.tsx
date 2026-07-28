@@ -3,6 +3,7 @@
 import { motion } from "framer-motion";
 import { ChevronLeft } from "lucide-react";
 import Link from "next/link";
+import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
 import NewsFeed from "@/components/news/NewsFeed";
 import { MOCK_NEWS, MOCK_VIDEOS } from "@/lib/constants/news";
 
@@ -30,7 +31,8 @@ export default function NewsPage() {
         <Link href="/" className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors">
           <ChevronLeft size={24} />
         </Link>
-        <h1 className="text-xl font-bold text-text-primary">뉴스 & 영상</h1>
+        <h1 className="text-xl font-bold text-text-primary flex-1">뉴스 & 영상</h1>
+        <HeaderProfileLink />
       </motion.header>
       </div>
 

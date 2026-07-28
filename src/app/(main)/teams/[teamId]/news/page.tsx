@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ExternalLink, ChevronLeft, Images } from "lucide-react";
+import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
 import { getTeamBySlug } from "@/lib/constants/teams";
 import GlassCard from "@/components/ui/GlassCard";
 import { useNewsPhotoFilter } from "@/hooks/useNewsPhotoFilter";
@@ -65,13 +66,13 @@ export default function TeamNewsPage() {
         <button onClick={() => { if (window.history.length > 1) router.back(); else router.push(`/teams/${teamSlug}`); }} className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors">
           <ChevronLeft size={24} />
         </button>
-        <h1 className="text-lg font-bold text-text-primary">
+        <h1 className="text-lg font-bold text-text-primary flex-1">
           {team.shortName} 뉴스
         </h1>
         {/* 사진기사 숨김 토글 — 마이페이지 '뉴스 설정'과 동일 상태 공유 (발견성 보강) */}
         <button
           onClick={() => setPhotoFilterEnabled(!photoFilterOn)}
-          className={`ml-auto flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+          className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
             photoFilterOn ? "bg-accent text-white" : "bg-bg-tertiary text-text-secondary"
           }`}
           aria-pressed={photoFilterOn}
@@ -80,6 +81,7 @@ export default function TeamNewsPage() {
           <Images size={14} />
           사진기사 {photoFilterOn ? "숨김" : "표시"}
         </button>
+        <HeaderProfileLink />
       </header>
       </div>
 
