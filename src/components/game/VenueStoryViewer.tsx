@@ -490,12 +490,15 @@ export default function VenueStoryViewer({
     <motion.div
       data-venue-story-viewer
       // 경기 페이지 상단 스코어 헤더가 z-[100]이라 그 위로 — 풀스크린 뷰어는 모든 UI를 덮어야 함
-      // ⚠️ 댓글이 열리면 뷰어 레이어를 hidden(display:none) 처리해 기사(뉴스) 댓글 CommentSheet 와
-      // 동일한 환경으로 만든다. 풀스크린 fixed 뷰어(비디오 레이어)가 남아있으면 iOS WKWebView 가
-      // 포커스된 입력창을 키보드 위로 올리려는 기본 동작을 방해해 입력창이 가리고 배경이 밀린다(하린아빠 iOS 리포트).
-      // 댓글 오버레이는 별도 body 포털이라 뷰어를 숨겨도 그대로 보이고, 백드롭(bg-black/60)가 이미 배경을 덮어 체감 동일.
+      // ⚠️ 댓글 시트가 뜨면 인스타 스토리처럼 영상을 뒤에 그대로 보여준다(하린아빠 7/28 리포트 —
+      // 이전엔 commentsOpen 되자마자 뷰어를 통째 hidden 처리해 영상이 사라져 이상했다).
+      // 단, 컴포저가 포커스돼 키보드가 뜨는 순간에만 뷰어를 hidden 한다: 풀스크린 fixed 뷰어가
+      // 남아있으면 iOS WKWebView 가 포커스된 입력창을 키보드 위로 올리려는 기본 동작을 방해해
+      // 입력창이 가리고 배경이 밀린다(과거 iOS 리포트). 포커스 시엔 시트가 vvHeight 로 전체 확장돼
+      // 영상이 어차피 가려지므로 hidden 해도 체감 변화 없고, 검증된 키보드 회피 경로는 그대로 유지된다.
+      // 댓글 오버레이는 별도 body 포털이라 뷰어가 보여도 그 위(z-130)로 정상 렌더된다.
       className={`fixed inset-0 z-[120] bg-black flex flex-col select-none overflow-hidden overscroll-none${
-        commentsOpen ? " hidden" : ""
+        commentsOpen && composerFocused ? " hidden" : ""
       }`}
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
