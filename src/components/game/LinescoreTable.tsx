@@ -3,7 +3,7 @@
 import { motion } from "framer-motion";
 import { clsx } from "clsx";
 import type { GameInning } from "@/lib/types";
-import { getTeamBgColor, type TeamData } from "@/lib/constants/teams";
+import type { TeamData } from "@/lib/constants/teams";
 
 interface LinescoreSide {
   innings: (number | null)[];
@@ -105,7 +105,7 @@ export default function LinescoreTable({
           <tbody>
             {/* Away */}
             <tr className="border-b border-border">
-              <td className="text-left pl-1 py-1 font-semibold text-xs" style={{ color: getTeamBgColor(awayTeam, "dark") }}>
+              <td className="text-left pl-1 py-1 font-semibold text-xs text-text-primary">
                 {awayTeam.shortName}
               </td>
               {inningNumbers.map((n) => {
@@ -133,7 +133,7 @@ export default function LinescoreTable({
             </tr>
             {/* Home */}
             <tr className="border-b border-border">
-              <td className="text-left pl-1 py-1 font-semibold text-xs" style={{ color: getTeamBgColor(homeTeam, "dark") }}>
+              <td className="text-left pl-1 py-1 font-semibold text-xs text-text-primary">
                 {homeTeam.shortName}
               </td>
               {inningNumbers.map((n) => {
