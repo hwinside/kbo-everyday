@@ -93,12 +93,14 @@ BEGIN
         USING ERRCODE = 'check_violation';
     END IF;
 
-    -- (c) updated_at 은 실제 질문/설명 편집과 함께일 때만 변경 허용(순수 updated_at 위조 차단).
-    IF NEW.updated_at IS DISTINCT FROM OLD.updated_at
-       AND NEW.title IS NOT DISTINCT FROM OLD.title
-       AND NEW.content IS NOT DISTINCT FROM OLD.content THEN
-      RAISE EXCEPTION 'poll post: updated_at cannot change without a title/content edit'
-        USING ERRCODE = 'check_violation';
+    -- (c) updated_at 은 DB 서버생성 시각으로 강제 — 클라이언트 제공값을 무시해 위조 불가(삼순 4차 NO-GO).
+    --     실제 질문/설명 편집이면 now(), 그외(순수 updated_at 변경 시도)은 OLD 유지.
+    --     → UPDATE ... SET title='x', updated_at='위조' 이면 title 은 persist하되 updated_at 은 now(),
+    --       UPDATE ... SET updated_at='위조'(title/content 미변)은 OLD 유지(위조값 미반영).
+    IF NEW.title IS DISTINCT FROM OLD.title OR NEW.content IS DISTINCT FROM OLD.content THEN
+      NEW.updated_at := now();
+    ELSE
+      NEW.updated_at := OLD.updated_at;
     END IF;
   END IF;
 

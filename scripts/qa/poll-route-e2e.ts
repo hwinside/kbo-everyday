@@ -155,7 +155,24 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   restReads.set(name, (restReads.get(name) ?? 0) + 1);
 
   const f = eqFilters(u);
+  const method = (
+    init?.method ||
+    (input instanceof Request ? input.method : "GET")
+  ).toUpperCase();
   if (name === "posts") {
+    // PATCH(update) → store 에 실제 반영(회귀 false-green 방지). .eq("id")+.eq("author_id") 필터를
+    // 그대로 적용해 소유자 불일치면 0 rows(미반영). 이로써 route 가 update 를 실제 호출해야만
+    // owner persist · other 불변 assert 가 통과한다(route 가 update 를 누락하면 테스트 실패).
+    if (method === "PATCH") {
+      const id = f.id ? Number(f.id) : NaN;
+      const row = store.posts.get(id);
+      const patch = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
+      if (row && (!f.author_id || row.author_id === f.author_id)) {
+        Object.assign(row, patch);
+        return json([row]);
+      }
+      return json([]); // 0 rows (RLS/소유권 불일치 미반영)
+    }
     const inIds = inFilter(u, "id");
     if (inIds) {
       const rows = inIds
@@ -568,17 +585,26 @@ async function main(): Promise<void> {
         { params: Promise.resolve({ postId: String(pid) }) },
       );
 
-    // 작성자(USER_ID) → 200 + {ok,title,content}
+    // 작성자(USER_ID) → 200 + {ok,title,content} + 실제 store persist
     const pAuthor = await callPatchId(1, { title: "질문 수정", content: "설명 수정" }, VALID_TOKEN);
     ok("PATCH 작성자 → 200", pAuthor.status === 200);
     {
       const b = (await pAuthor.json()) as { ok?: boolean; title?: string; content?: string };
       ok("PATCH 작성자 → {ok,title,content}", b.ok === true && b.title === "질문 수정" && b.content === "설명 수정");
     }
+    // false-green 방지: route 가 실제 update 를 호출해 store 에 persist 됐는지 검증(update 누락 시 실패).
+    ok(
+      "PATCH 작성자 → store persist(title/content)",
+      store.posts.get(1)?.title === "질문 수정" && store.posts.get(1)?.content === "설명 수정",
+    );
 
-    // 타인(OTHER_ID) → 403 (소유권 불일치, DB update 전 차단)
-    const pOther = await callPatchId(1, { title: "탈취 수정", content: "x" }, OTHER_TOKEN);
+    // 타인(OTHER_ID) → 403 (소유권 불일치, DB update 전 차단) + store 불변
+    const pOther = await callPatchId(1, { title: "탈취 수정", content: "탈취 본문" }, OTHER_TOKEN);
     ok("PATCH 타인 → 403", pOther.status === 403);
+    ok(
+      "PATCH 타인 → store 불변(작성자 값 유지)",
+      store.posts.get(1)?.title === "질문 수정" && store.posts.get(1)?.content === "설명 수정",
+    );
 
     // 비-poll 글(board_type='free') → 404 (이 엔드포인트는 투표글 전용)
     store.posts.set(77, {

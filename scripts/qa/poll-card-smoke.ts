@@ -34,6 +34,7 @@ import PollCardBody, {
 import PollCardSlot from "../../src/components/community/PollCardSlot";
 import { buildTeamFeedOrParts, applyBoardFilter } from "../../src/lib/supabase/useUnifiedFeed";
 import { canEditOwnPost } from "../../src/lib/community/post-permissions";
+import PostActionsMenu from "../../src/components/community/PostActionsMenu";
 
 const SRC_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../src");
 function readSrc(rel: string): string {
@@ -451,7 +452,7 @@ async function badgeEffectSection() {
 // PostDetail 게시글 "수정" 메뉴는 작성자 본인만 노출된다. 순수 판정 canEditOwnPost 을
 // 직접 실행해 owner/other/비로그인 동작을 고정하고, PostDetail 이 실제로 이 판정으로
 // 수정 버튼을 게이트하는지 source 배선을 같이 잡는다(배선 끊김 방지).
-function menuGateSection() {
+async function menuGateSection() {
   const author = "11111111-1111-1111-1111-111111111111";
   const other = "22222222-2222-2222-2222-222222222222";
   ok("canEditOwnPost owner → true", canEditOwnPost(author, author) === true);
@@ -459,20 +460,76 @@ function menuGateSection() {
   ok("canEditOwnPost 비로그인 → false", canEditOwnPost(author, undefined) === false);
   ok("canEditOwnPost author 불명 → false", canEditOwnPost(null, author) === false);
 
+  // PostDetail 이 실제로 canEditOwnPost 결과를 isOwner 로 PostActionsMenu 에 넘기는지 배선 가드.
   const src = readSrc("components/community/PostDetail.tsx");
   ok("PostDetail canEditOwnPost import", /import\s*\{\s*canEditOwnPost\s*\}\s*from\s*"@\/lib\/community\/post-permissions"/.test(src));
   ok("PostDetail isPostMine = canEditOwnPost 배선", /isPostMine\s*=\s*canEditOwnPost\(/.test(src));
-  // 수정 버튼이 isPostMine 게이트 안에서만 렌더된다.
-  ok("PostDetail 수정 버튼이 isPostMine 게이트", /\{isPostMine\s*&&[\s\S]{0,160}startPostEdit/.test(src));
-  // 투표글 편집은 editPollPost(PATCH) 경로 사용(타인 403은 서버 route 강제).
+  ok("PostDetail 메뉴 isOwner={isPostMine} 배선", /<PostActionsMenu[\s\S]{0,200}isOwner=\{isPostMine\}/.test(src));
   ok("PostDetail 투표글 편집 editPollPost(PATCH) 경로", /editPollPost\(/.test(src));
+
+  // 실제 DOM 렌더(false-green 방지): owner → '수정' 노출·'신고/차단' 미노출, other → 반대.
+  const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost/" });
+  const g = globalThis as unknown as Record<string, unknown>;
+  const restore = {
+    window: g.window,
+    document: g.document,
+    navigator: g.navigator,
+    act: g.IS_REACT_ACT_ENVIRONMENT,
+  };
+  g.IS_REACT_ACT_ENVIRONMENT = true;
+  g.window = dom.window;
+  g.document = dom.window.document;
+  const noop = () => {};
+  const menuProps = {
+    canDeleteAny: false,
+    open: true,
+    onToggle: noop,
+    onClose: noop,
+    onEdit: noop,
+    onReport: noop,
+    onBlock: noop,
+    onDelete: noop,
+  };
+  try {
+    // owner
+    {
+      const c = dom.window.document.createElement("div");
+      dom.window.document.body.appendChild(c);
+      const r = createRoot(c);
+      await act(async () => {
+        r.render(React.createElement(PostActionsMenu, { isOwner: true, ...menuProps }));
+      });
+      const labels = Array.from(c.querySelectorAll("button")).map((b) => (b.textContent ?? "").trim());
+      ok("메뉴 owner → '수정' 노출", labels.some((t) => t.includes("수정")));
+      ok("메뉴 owner → '신고'·'차단' 미노출", !labels.some((t) => t.includes("신고") || t.includes("차단")));
+      await act(async () => { r.unmount(); });
+    }
+    // other
+    {
+      const c = dom.window.document.createElement("div");
+      dom.window.document.body.appendChild(c);
+      const r = createRoot(c);
+      await act(async () => {
+        r.render(React.createElement(PostActionsMenu, { isOwner: false, ...menuProps }));
+      });
+      const labels = Array.from(c.querySelectorAll("button")).map((b) => (b.textContent ?? "").trim());
+      ok("메뉴 other → '수정' 미노출", !labels.some((t) => t.includes("수정")));
+      ok("메뉴 other → '신고'·'차단' 노출", labels.some((t) => t.includes("신고")) && labels.some((t) => t.includes("차단")));
+      await act(async () => { r.unmount(); });
+    }
+  } finally {
+    if (restore.window === undefined) delete g.window; else g.window = restore.window;
+    if (restore.document === undefined) delete g.document; else g.document = restore.document;
+    if (restore.navigator === undefined) delete g.navigator; else g.navigator = restore.navigator;
+    if (restore.act === undefined) delete g.IS_REACT_ACT_ENVIRONMENT; else g.IS_REACT_ACT_ENVIRONMENT = restore.act;
+  }
 }
 
 // fetch mock 섹션은 비동기 → top-level await 대신 async IIFE(스크립트 런너 cjs 호환).
 void (async () => {
   await fetchMockSection();
   await badgeEffectSection();
-  menuGateSection();
+  await menuGateSection();
   console.log(`\npoll card smoke: ${pass} PASS${fail ? `, ${fail} FAIL` : ""}`);
   if (fail) process.exit(1);
 })();

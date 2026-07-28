@@ -351,7 +351,7 @@ END $$;
 -- 무조건 제외해 작성자가 직접 UPDATE 로 위조 가능했다(독립 PG17 UPDATE 1). 이제 GUC 미설정
 -- (작성자 직접 경로)에서는 title/content/updated_at 외 전부 불변 → 전부 check_violation.
 DO $$
-DECLARE v_pid bigint; v_rc int; v_hidden boolean;
+DECLARE v_pid bigint; v_rc int; v_hidden boolean; v_old_ua timestamptz;
 BEGIN
   v_pid := current_setting('poll.pid')::bigint; -- voted poll
   SELECT report_count, is_hidden INTO v_rc, v_hidden FROM posts WHERE id=v_pid;
@@ -371,14 +371,23 @@ BEGIN
   BEGIN UPDATE posts SET click_view_count = 999, impression_view_count = 999 WHERE id=v_pid;
     RAISE EXCEPTION 'FAIL N6: view_count forge accepted';
     EXCEPTION WHEN check_violation THEN NULL; END;
-  -- 순수 updated_at 위조(질문/설명 편집 없이)도 거부.
-  BEGIN UPDATE posts SET updated_at = now() - interval '10 years' WHERE id=v_pid;
-    RAISE EXCEPTION 'FAIL N6: bare updated_at forge accepted';
-    EXCEPTION WHEN check_violation THEN NULL; END;
   -- 결합 위조(title 편집에 운영필드 끼워넣기)도 거부.
   BEGIN UPDATE posts SET title='ok-q', report_count=report_count+5 WHERE id=v_pid;
     RAISE EXCEPTION 'FAIL N6: title+report_count combined forge accepted';
     EXCEPTION WHEN check_violation THEN NULL; END;
+
+  -- updated_at 은 DB 서버생성 시각으로 강제 — 클라 제공값 위조 불가(삼순 4차 NO-GO).
+  SELECT updated_at INTO v_old_ua FROM posts WHERE id=v_pid;
+  -- (a) 순수 updated_at 변경(질문/설명 미변) → 위조값 미반영(OLD 유지).
+  UPDATE posts SET updated_at = timestamptz '2000-01-01 00:00:00+00' WHERE id=v_pid;
+  IF (SELECT updated_at FROM posts WHERE id=v_pid) IS DISTINCT FROM v_old_ua THEN
+    RAISE EXCEPTION 'FAIL N6: bare updated_at forge persisted (expected OLD retained)'; END IF;
+  -- (b) title 편집 + updated_at 위조 → title persist 하되 updated_at 은 now()(위조값 아님).
+  UPDATE posts SET title='q-ua-edit', updated_at = timestamptz '2000-01-01 00:00:00+00' WHERE id=v_pid;
+  IF (SELECT title FROM posts WHERE id=v_pid) <> 'q-ua-edit' THEN
+    RAISE EXCEPTION 'FAIL N6: title edit did not persist'; END IF;
+  IF (SELECT updated_at FROM posts WHERE id=v_pid) < now() - interval '1 minute' THEN
+    RAISE EXCEPTION 'FAIL N6: updated_at forge persisted on title edit (expected server now())'; END IF;
 
   IF (SELECT report_count FROM posts WHERE id=v_pid) <> v_rc
      OR (SELECT is_hidden FROM posts WHERE id=v_pid) <> v_hidden
@@ -387,11 +396,11 @@ BEGIN
      OR (SELECT click_view_count FROM posts WHERE id=v_pid) <> 0 THEN
     RAISE EXCEPTION 'FAIL N6: operational field mutated despite reject'; END IF;
 
-  -- 정당한 편집(질문·설명 + updated_at 동반)은 통과.
-  UPDATE posts SET title='q-legit-edit', content='c-legit-edit', updated_at=now() WHERE id=v_pid;
+  -- 정당한 편집(질문·설명)은 통과.
+  UPDATE posts SET title='q-legit-edit', content='c-legit-edit' WHERE id=v_pid;
   IF (SELECT title FROM posts WHERE id=v_pid) <> 'q-legit-edit' THEN
-    RAISE EXCEPTION 'FAIL N6: legit title+updated_at edit did not persist'; END IF;
-  RAISE NOTICE 'PASS N6 operational/moderation fields (report/is_hidden/counters/updated_at) not forgeable by author; legit title/content edit persists';
+    RAISE EXCEPTION 'FAIL N6: legit title/content edit did not persist'; END IF;
+  RAISE NOTICE 'PASS N6 operational/moderation fields (report/is_hidden/counters) not forgeable; updated_at DB-authoritative (client value ignored); legit title/content edit persists';
 END $$;
 
 -- ---------- N6b 정당한 운영 경로(신고→auto_blind, SECURITY DEFINER + ALTER SET GUC)는 유지 ----------

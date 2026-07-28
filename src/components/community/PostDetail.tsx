@@ -9,6 +9,7 @@ import { getAvatarPath } from "@/lib/constants/avatars";
 import { usePostDetail, createComment, toggleLike, toggleCommentLike, updatePost, deletePost, updateComment, deleteComment, uploadCommentImage } from "@/lib/supabase/usePosts";
 import { editPollPost } from "@/lib/community/poll-client";
 import { canEditOwnPost } from "@/lib/community/post-permissions";
+import PostActionsMenu from "@/components/community/PostActionsMenu";
 import ReportSheet from "@/components/community/ReportSheet";
 import LinkPreview from "@/components/community/LinkPreview";
 import { isShortText, BrandedTextCard, getPostScopeLabel } from "@/components/community/FeedTextCards";
@@ -490,35 +491,18 @@ export default function PostDetail({ postId }: PostDetailProps) {
             impressionCount={post.impression_view_count}
           />
           {user && !postEditing && (
-            <div className="relative">
-              <button
-                onClick={(e) => { e.stopPropagation(); setPostMenuOpen(v => !v); }}
-                className="p-1 text-text-tertiary hover:text-text-primary"
-                aria-label="게시글 메뉴"
-                disabled={deletingPost}
-              >
-                <MoreHorizontal size={18} />
-              </button>
-              {postMenuOpen && (
-                <>
-                  <div className="fixed inset-0 z-10" onClick={() => setPostMenuOpen(false)} />
-                  <div className="absolute right-0 top-8 z-20 min-w-[112px] rounded-lg border border-border bg-bg-primary shadow-lg overflow-hidden">
-                    {isPostMine && <button onClick={startPostEdit} className="block w-full px-3 py-2 text-left text-sm text-text-primary hover:bg-bg-tertiary">수정</button>}
-                    {!isPostMine && (
-                      <button onClick={() => openReport({ type: "post", id: post.id })} className="flex items-center gap-2 w-full px-3 py-2 text-left text-sm text-text-primary hover:bg-bg-tertiary">
-                        <Flag size={14} /> 신고
-                      </button>
-                    )}
-                    {!isPostMine && (
-                      <button onClick={() => handleBlockUser(post.author_id, { type: "post", id: post.id })} className="flex items-center gap-2 w-full px-3 py-2 text-left text-sm text-text-primary hover:bg-bg-tertiary">
-                        <Ban size={14} /> 차단
-                      </button>
-                    )}
-                    {(isPostMine || canDeleteAnyPost) && <button onClick={handleDeletePost} className="block w-full px-3 py-2 text-left text-sm text-[#FF453A] hover:bg-bg-tertiary">삭제</button>}
-                  </div>
-                </>
-              )}
-            </div>
+            <PostActionsMenu
+              isOwner={isPostMine}
+              canDeleteAny={canDeleteAnyPost}
+              open={postMenuOpen}
+              disabled={deletingPost}
+              onToggle={() => setPostMenuOpen((v) => !v)}
+              onClose={() => setPostMenuOpen(false)}
+              onEdit={startPostEdit}
+              onReport={() => openReport({ type: "post", id: post.id })}
+              onBlock={() => handleBlockUser(post.author_id, { type: "post", id: post.id })}
+              onDelete={handleDeletePost}
+            />
           )}
         </div>
 
