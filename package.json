@@ -159,7 +159,8 @@
     "qa:game-summary-cache": "tsx scripts/qa/game-summary-cache-validation-smoke.ts",
     "qa:game-summary-kbo": "tsx scripts/qa/game-summary-kbo-integration.ts",
     "qa:notif-terminal-group": "tsx scripts/qa/notif-terminal-group-smoke.ts",
-    "qa:relay-inning-snapshot": "tsx scripts/qa/relay-inning-snapshot-smoke.ts"
+    "qa:relay-inning-snapshot": "tsx scripts/qa/relay-inning-snapshot-smoke.ts",
+    "qa:relay-delta": "tsx scripts/qa/relay-delta-smoke.ts"
   },
   "dependencies": {
     "@capacitor-firebase/messaging": "^8.3.0",

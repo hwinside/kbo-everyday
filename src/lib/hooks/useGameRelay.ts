@@ -1,8 +1,12 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import type { GameRelayResponse } from "@/app/api/game-relay/route";
+import type { GameRelayResponse, InningRelay } from "@/app/api/game-relay/route";
 import { planFinalFetch, afterFinalFetch } from "@/lib/hooks/final-relay-fetch";
+import { mergeDeltaInnings } from "@/lib/game/relay-delta";
+
+// delta(증분) 폴링: 매 N번째 폴링마다 한 번은 full로 받아 지난 이닝의 드문 정정을 self-heal 한다.
+const FULL_REFRESH_EVERY = 10;
 
 export type { GameRelayResponse, InningRelay, PlayEvent, MatchupStats, RelayPlayerStats, RelayBatterStat, RelayPitcherStat } from "@/app/api/game-relay/route";
 
@@ -19,6 +23,9 @@ export function useGameRelay(
   const finalFetchedRef = useRef(false);
   const inFlightRef = useRef(false);
   const inFlightPromiseRef = useRef<Promise<boolean> | null>(null);
+  // 누적 이닝 병합 캐시(`${inning}-${half}` 키). delta 응답은 이 캐시 위에 병합한다.
+  const inningsRef = useRef<Map<string, InningRelay>>(new Map());
+  const pollCountRef = useRef(0);
 
   const fetchRelay = useCallback((): Promise<boolean> => {
     if (!gameId) return Promise.resolve(false);
@@ -31,12 +38,32 @@ export function useGameRelay(
       setIsLoading(true);
       let succeeded = false;
       try {
+        const cache = inningsRef.current;
+        // full 조건: 보유한 이닝이 없거나(첫 로드) 주기적 self-heal 차례.
+        const n = pollCountRef.current++;
+        const wantFull = cache.size === 0 || n % FULL_REFRESH_EVERY === 0;
+
         const params = new URLSearchParams({ gameId });
         if (currentInning > 0) params.set("inning", String(currentInning));
+        if (!wantFull) {
+          // 보유한 최대 이닝 번호만 delta로 요청(서버가 since-1부터 내려줌).
+          let maxInn = 0;
+          for (const inn of cache.values()) if (inn.inning > maxInn) maxInn = inn.inning;
+          if (maxInn > 0) params.set("since", String(maxInn));
+        }
+
         const res = await fetch(`/api/game-relay?${params}`);
         if (res.ok && mountedRef.current) {
           const json = (await res.json()) as GameRelayResponse;
-          setData(json);
+          // innings만 병합(delta면 과거 이닝 유지, full이면 재구성), matchup/linescore/
+          // currentInning 등 라이브 필드는 최신 응답 그대로 유지.
+          const mergedInnings = mergeDeltaInnings(cache, json.innings, json.partial === true);
+          const merged: GameRelayResponse = {
+            ...json,
+            innings: mergedInnings,
+            partial: false,
+          };
+          setData(merged);
           succeeded = true;
         }
       } catch {
