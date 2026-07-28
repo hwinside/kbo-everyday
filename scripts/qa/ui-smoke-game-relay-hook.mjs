@@ -192,7 +192,78 @@ try {
     await partialPage.close();
   }
 
-  console.log("game-relay hook UI: 12 passed, 0 failed");
+  // final events frame이 영구 pending이어도 12초 bound로 요청을 abort하고,
+  // 다음 15초 retry가 실제 시작되며 성공 뒤 추가 polling이 멈춰야 한다.
+  {
+    const finalRetryPage = await browser.newPage();
+    await finalRetryPage.addInitScript(() => {
+      const originalFetch = window.fetch.bind(window);
+      let fetchCount = 0;
+      window.__qaFinalFetchCount = () => fetchCount;
+      window.fetch = (input, init = {}) => {
+        const url = typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url;
+        if (!url.includes("/api/game-relay")) return originalFetch(input, init);
+
+        fetchCount++;
+        const thisFetch = fetchCount;
+        const encoder = new TextEncoder();
+        const stream = new ReadableStream({
+          start(controller) {
+            controller.enqueue(encoder.encode(`${JSON.stringify({
+              channel: "relay",
+              ok: true,
+              status: 200,
+              data: {
+                gameId: "qa-game-a",
+                innings: [],
+                updatedAt: `final-retry-${thisFetch}`,
+              },
+            })}\n`));
+            if (thisFetch !== 2) {
+              controller.enqueue(encoder.encode(`${JSON.stringify({
+                channel: "events",
+                ok: true,
+                status: 200,
+                data: { events: [] },
+              })}\n`));
+              controller.close();
+              return;
+            }
+            init.signal?.addEventListener("abort", () => {
+              controller.error(new DOMException("Aborted", "AbortError"));
+            }, { once: true });
+          },
+        });
+        return Promise.resolve(new Response(stream, {
+          status: 200,
+          headers: { "content-type": "application/x-ndjson" },
+        }));
+      };
+    });
+    await finalRetryPage.goto(`${BASE_URL}/qa/game-relay-hook`, { waitUntil: "networkidle" });
+    await finalRetryPage.locator('[data-qa="finish-game"]').click();
+    await finalRetryPage.waitForFunction(() =>
+      document.querySelector('[data-qa="relay-updated"]')?.textContent === "final-retry-2"
+    );
+    await finalRetryPage.waitForFunction(() => window.__qaFinalFetchCount() === 3, null, {
+      timeout: 18_000,
+    });
+    await finalRetryPage.waitForFunction(() =>
+      document.querySelector('[data-qa="relay-updated"]')?.textContent === "final-retry-3"
+    );
+    await finalRetryPage.waitForTimeout(15_500);
+    const finalFetchCount = await finalRetryPage.evaluate(() => window.__qaFinalFetchCount());
+    if (finalFetchCount !== 3) {
+      throw new Error(`successful final retry must stop polling, got ${finalFetchCount} requests`);
+    }
+    await finalRetryPage.close();
+  }
+
+  console.log("game-relay hook UI: 15 passed, 0 failed");
 } finally {
   await browser.close();
 }
