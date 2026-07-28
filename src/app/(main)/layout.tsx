@@ -1,7 +1,6 @@
 import Link from "next/link";
 import TeamAccent from "@/components/ui/TeamAccent";
 import TabBar from "@/components/ui/TabBar";
-import KeyboardViewportReset from "@/components/ui/KeyboardViewportReset";
 
 import ProfileSetupWrapper from "@/components/auth/ProfileSetupWrapper";
 import MyTeamCookieSync from "@/components/auth/MyTeamCookieSync";
@@ -16,7 +15,6 @@ export default function MainLayout({
 }) {
   return (
     <div className="min-h-screen bg-bg-primary">
-      <KeyboardViewportReset />
       <HashSessionRestore />
       <PostLoginRedirect />
       <AppReviewTrigger />

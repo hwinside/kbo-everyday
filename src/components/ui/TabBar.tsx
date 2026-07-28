@@ -40,14 +40,10 @@ export default function TabBar() {
   return (
     <nav data-global-tabbar className="fixed bottom-0 left-0 right-0 z-50 rounded-none border-t border-border pb-[env(safe-area-inset-bottom,0px)]">
       {/*
-        Glass background lives on this NON-fixed absolute layer, NOT on the fixed <nav>.
-        iOS WKWebView positions a `position:fixed` element that carries its OWN
-        compositing property (transform / filter / backdrop-filter) relative to the
-        document instead of the visual viewport, so it floats mid-page instead of
-        pinning to the bottom (#420 transform → #445; this backdrop-filter is the
-        same class of bug). Keeping the fixed element filter-free fixes it while this
-        inner absolute layer preserves the frosted-glass look.
-        ⚠️ Do NOT move bg/backdrop-blur back onto the fixed <nav>. */}
+        Defensive iOS WKWebView hardening: keep the fixed <nav> free of compositing
+        effects while preserving the glass appearance on an inner absolute layer.
+        backdrop-filter has not been established as the cause of the reported float;
+        do not move it back without an iOS device regression check (#420/#445). */}
       <div
         aria-hidden
         className="pointer-events-none absolute inset-0 -z-10 bg-[rgba(248,248,250,0.85)] dark:bg-[rgba(10,10,11,0.85)] backdrop-blur-xl"
