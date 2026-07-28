@@ -322,6 +322,7 @@ async function main() {
     await writeFile(pngPath, Buffer.from(shot, 'base64'));
 
     const result = {
+      browserStackSessionId: sessionId,
       qaUrl: reportedQaUrl,
       pngPath,
       idle,
