@@ -46,11 +46,13 @@ export default function MessagesPage() {
   if (!user) {
     return (
       <div className="min-h-screen bg-bg-primary pb-24">
+        <div className="sticky top-0 z-30 border-b border-border bg-bg-primary" style={{ paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
         <div className="px-5 pb-3 flex items-center gap-3">
           <button onClick={() => router.back()} className="p-1">
             <ArrowLeft size={24} className="text-text-primary" />
           </button>
           <h1 className="text-lg font-semibold leading-[26px] text-text-primary">쪽지</h1>
+        </div>
         </div>
         <div className="text-center py-20">
           <MessageCircle size={40} className="mx-auto mb-3 text-text-tertiary opacity-50" />
@@ -66,6 +68,7 @@ export default function MessagesPage() {
 
   return (
     <div className="min-h-screen bg-bg-primary pb-24">
+      <div className="sticky top-0 z-30 border-b border-border bg-bg-primary" style={{ paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
       <div className="px-5 pb-3 flex items-center gap-3">
         <button onClick={() => router.back()} className="p-1">
           <ArrowLeft size={24} className="text-text-primary" />
@@ -74,6 +77,7 @@ export default function MessagesPage() {
         <button onClick={() => setShowBlockList(true)} className="p-1.5 rounded-full hover:bg-bg-tertiary transition-colors">
           <Settings size={20} className="text-text-tertiary" />
         </button>
+      </div>
       </div>
 
       {loading ? (

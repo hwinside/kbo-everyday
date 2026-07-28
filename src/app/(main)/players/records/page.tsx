@@ -10,7 +10,7 @@ export default function PlayerRecordsPage() {
 
   return (
     <div className="mx-auto max-w-lg px-5">
-      <div className="border-b -mx-5 px-5" style={{ borderColor: "var(--color-border)" }}>
+      <div className="sticky top-0 z-30 border-b -mx-5 px-5 bg-bg-primary" style={{ borderColor: "var(--color-border)", paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
         <header className="py-3 flex items-center gap-3">
           <button
             onClick={() => router.back()}

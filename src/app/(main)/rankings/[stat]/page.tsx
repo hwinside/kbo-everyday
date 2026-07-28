@@ -129,11 +129,13 @@ function RankingContent() {
   const formatValue = (v: number) => (def.format ? def.format(v) : String(v));
 
   return (
-    <div className="min-h-screen bg-bg-primary text-text-primary px-5 pt-safe pb-24">
+    <div className="min-h-screen bg-bg-primary text-text-primary px-5 pb-24">
       {/* Header */}
+      <div className="sticky top-0 z-30 -mx-5 border-b border-border bg-bg-primary px-5" style={{ paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
       <div className="py-3 flex items-center gap-3">
         <button onClick={() => router.back()} className="text-xl">←</button>
         <h1 className="text-2xl font-bold tracking-tight">{def.emoji} {def.desc}</h1>
+      </div>
       </div>
 
       {/* 뱃지 설명 */}

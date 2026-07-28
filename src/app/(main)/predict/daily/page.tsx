@@ -17,11 +17,13 @@ export default function DailyPredictPage() {
 
   return (
     <div className="min-h-screen bg-bg-primary pb-24">
-      <div className="px-5 pt-safe pb-3 flex items-center gap-3">
+      <div className="sticky top-0 z-30 border-b border-border bg-bg-primary" style={{ paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
+      <div className="px-5 pb-3 flex items-center gap-3">
         <button onClick={() => router.back()} className="p-1">
           <ArrowLeft size={24} className="text-text-primary" />
         </button>
         <h1 className="text-lg font-bold text-text-primary">오늘의 승부예측</h1>
+      </div>
       </div>
 
       <div className="px-5 space-y-4">

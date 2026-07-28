@@ -36,12 +36,12 @@ export default function GamePredictPage() {
     <div className="min-h-screen bg-bg-primary pb-24">
       {/* Header */}
       <div
-        className="relative px-5 pt-safe pb-4"
+        className="relative px-5 pb-4"
         style={{
           backgroundImage: `linear-gradient(135deg, ${away.colorPrimary}15, transparent, ${home.colorPrimary}15)`,
         }}
       >
-        <div className="flex items-center gap-3 mb-6">
+        <div className="sticky top-0 z-30 -mx-5 border-b border-border bg-bg-primary px-5 flex items-center gap-3 pb-3" style={{ paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
           <button onClick={() => router.back()} className="p-1">
             <ArrowLeft size={24} className="text-text-primary" />
           </button>

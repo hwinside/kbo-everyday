@@ -127,6 +127,7 @@ export default function TesterSignupPage() {
   }, [email, openLogin]);
 
   const header = (
+    <div className="sticky top-0 z-30 -mx-5 border-b border-border bg-bg-primary px-5" style={{ paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
     <div className="mb-6 flex items-center gap-3">
       <button onClick={() => router.back()} className="text-text-secondary">
         <ArrowLeft size={22} />
@@ -135,6 +136,7 @@ export default function TesterSignupPage() {
         <Smartphone size={18} className="text-accent" />
         테스터 신청
       </h1>
+    </div>
     </div>
   );
 

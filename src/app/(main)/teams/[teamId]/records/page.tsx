@@ -202,6 +202,7 @@ export default function TeamRecordsPage() {
 
   return (
     <div className="mx-auto max-w-lg pb-24">
+      <div className="sticky top-0 z-30 border-b border-border bg-bg-primary" style={{ paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
       <header className="flex items-center gap-2 px-5 py-4">
         <button onClick={() => { if (window.history.length > 1) router.back(); else router.push(`/teams/${teamSlug}`); }} className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors">
           <ChevronLeft size={24} />
@@ -210,6 +211,7 @@ export default function TeamRecordsPage() {
           {team.shortName} 팀 기록
         </h1>
       </header>
+      </div>
 
       {/* OPS Hero Card */}
       {myBatting && (

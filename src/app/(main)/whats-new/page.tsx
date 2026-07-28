@@ -172,6 +172,7 @@ export default function WhatsNewPage() {
   return (
     <div className="min-h-screen px-5 pt-4 pb-24">
       {/* Header */}
+      <div className="sticky top-0 z-30 -mx-5 border-b border-border bg-bg-primary px-5" style={{ paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
       <div className="mb-5 flex items-center gap-3">
         <button onClick={() => router.back()} className="text-text-secondary">
           <ArrowLeft size={22} />
@@ -180,6 +181,7 @@ export default function WhatsNewPage() {
           <Sparkles size={18} className="text-amber-400" />
           새 소식
         </h1>
+      </div>
       </div>
 
       {loading ? (

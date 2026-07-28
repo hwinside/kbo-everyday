@@ -100,6 +100,7 @@ export default function LearnPage() {
 
   return (
     <div className="min-h-screen bg-bg-primary pb-24">
+      <div className="sticky top-0 z-30 border-b border-border bg-bg-primary" style={{ paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
       <header className="px-5 py-5">
         {selectedChapter ? (
           <button onClick={() => { setSelectedChapter(null); setLessonIndex(0); }} className="flex items-center gap-1 text-text-secondary mb-2">
@@ -113,6 +114,7 @@ export default function LearnPage() {
           </>
         )}
       </header>
+      </div>
 
       {/* Chapter list */}
       {!selectedChapter && (
