@@ -221,7 +221,7 @@ export default function HallOfFamePage() {
           marginTop: "calc(env(safe-area-inset-top, 0px) * -1)",
         }}
       >
-        <header className="py-3 flex items-center gap-3">
+        <header className="py-2 flex items-center gap-3">
           <button
             onClick={goBack}
             className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors"

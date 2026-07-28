@@ -137,7 +137,7 @@ export default function CommunityLayout({
         >
           <div className="mx-auto max-w-lg">
             {/* Header (루트 메뉴들과 동일 규격) */}
-            <div className="flex items-center gap-3 px-5 py-3 border-b" style={{ borderColor: headerBorderColor || 'var(--color-border)' }}>
+            <div className="flex items-center gap-3 px-5 py-2 border-b" style={{ borderColor: headerBorderColor || 'var(--color-border)' }}>
               <button
                 onClick={handleBack}
                 className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors"
@@ -145,7 +145,7 @@ export default function CommunityLayout({
               >
                 <ChevronLeft size={24} />
               </button>
-              <h1 className="text-2xl font-bold text-text-primary tracking-tight flex-1">커뮤니티</h1>
+              <h1 className="text-lg font-bold text-text-primary tracking-tight flex-1">커뮤니티</h1>
               <HeaderProfileLink />
             </div>
 

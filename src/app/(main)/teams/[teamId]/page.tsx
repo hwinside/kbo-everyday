@@ -84,7 +84,7 @@ export default function TeamHubPage() {
           >
             <ChevronLeft size={24} />
           </button>
-          <h1 className="flex-1 text-2xl font-bold tracking-tight text-text-primary">팀</h1>
+          <h1 className="flex-1 text-lg font-bold tracking-tight text-text-primary">팀</h1>
           <HeaderProfileLink />
         </header>
       </div>

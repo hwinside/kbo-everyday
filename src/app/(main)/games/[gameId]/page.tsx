@@ -29,6 +29,7 @@ import type { LineupEntry } from "@/lib/hooks/useGameDetail";
 import { deriveGameState } from "@/lib/utils/game-derived";
 import { shouldKeepCancelledGameChat } from "@/lib/game-chat-visibility";
 import GameDetailHeader from "@/components/game/GameDetailHeader";
+import BroadcastBadges from "@/components/game/BroadcastBadges";
 import LiveActivityUpdateNudge from "@/components/game/LiveActivityUpdateNudge";
 import NonLiveScoreDisplay from "@/components/game/NonLiveScoreDisplay";
 import ScoreBar from "@/components/game/ScoreBar";
@@ -391,12 +392,7 @@ export default function GameDetailPage() {
       onRefresh={handleRefresh}
       className="flex flex-col min-h-[100dvh] bg-bg-primary overflow-y-auto pb-[104px] max-w-[640px] mx-auto w-full"
     >
-      <GameDetailHeader
-        status={d.derivedStatus}
-        time={gameDetail?.meta?.startTime || liveGame?.time || game.time}
-        stadium={gameDetail?.meta?.stadium || liveGame?.stadium || game.stadium}
-        broadcastChannels={gameDetail?.meta?.broadcastChannels}
-      />
+      <GameDetailHeader status={d.derivedStatus} />
 
       {d.derivedStatus === "cancelled" ? (
         <div className="px-5 py-5">
@@ -420,6 +416,19 @@ export default function GameDetailPage() {
           awayScore={d.awayScore}
           homeScore={d.homeScore}
         />
+      )}
+
+      {/* 헤더에서 내린 경기 정보줄: 예정 시간(예정 경기)·중계 방송사·구장 */}
+      {d.derivedStatus !== "cancelled" && (
+        <div className="mx-auto flex w-full max-w-[640px] flex-wrap items-center justify-center gap-x-2 gap-y-1 px-5 pt-1.5 pb-1 text-[13px] text-text-tertiary">
+          {d.derivedStatus === "scheduled" && (gameDetail?.meta?.startTime || liveGame?.time || game.time) && (
+            <span>{gameDetail?.meta?.startTime || liveGame?.time || game.time} 예정</span>
+          )}
+          {d.derivedStatus === "scheduled" && <BroadcastBadges channels={gameDetail?.meta?.broadcastChannels} />}
+          {(gameDetail?.meta?.stadium || liveGame?.stadium || game.stadium) && (
+            <span>{gameDetail?.meta?.stadium || liveGame?.stadium || game.stadium}</span>
+          )}
+        </div>
       )}
 
       {/* ② 구버전(채널 미지원) iOS 앱 업데이트 녋지 — 라이브 맥락·세션당 1회(LA gap 감축). */}

@@ -229,11 +229,11 @@ export default function GamesPage() {
   return (
     <div className="mx-auto max-w-lg">
       <div className="sticky top-0 z-30 border-b bg-bg-primary" style={{ borderColor: myTeamId ? getTeamBorderColorById(myTeamId) : 'var(--color-border)', paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
-        <div className="flex items-center gap-3 px-5 py-3">
+        <div className="flex items-center gap-3 px-5 py-2">
           <button onClick={goBack} className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors">
             <ChevronLeft size={24} />
           </button>
-          <h1 className="text-2xl font-bold text-text-primary tracking-tight flex-1">경기</h1>
+          <h1 className="text-lg font-bold text-text-primary tracking-tight flex-1">경기</h1>
           <button
             onClick={() => loadGames(selectedDate)}
             className="p-2 rounded-full text-text-tertiary hover:bg-bg-tertiary transition-colors"

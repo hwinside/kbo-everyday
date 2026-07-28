@@ -76,10 +76,15 @@ export default function MessagesPage() {
           <ArrowLeft size={24} className="text-text-primary" />
         </button>
         <h1 className="text-lg font-bold text-text-primary flex-1">쪽지</h1>
-        <button onClick={() => setShowBlockList(true)} className="p-1.5 rounded-full hover:bg-bg-tertiary transition-colors">
-          <Settings size={20} className="text-text-tertiary" />
-        </button>
       </div>
+      </div>
+
+      {/* 차단 관리 — 헤더에서 바디로 이동 */}
+      <div className="px-5 pt-3 flex justify-end">
+        <button onClick={() => setShowBlockList(true)} className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium bg-bg-tertiary text-text-secondary hover:bg-bg-secondary transition-colors">
+          <Settings size={14} />
+          차단 관리
+        </button>
       </div>
 
       {loading ? (

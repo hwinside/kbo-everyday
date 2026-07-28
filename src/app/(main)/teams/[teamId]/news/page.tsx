@@ -69,23 +69,25 @@ export default function TeamNewsPage() {
         <h1 className="text-lg font-bold text-text-primary flex-1">
           {team.shortName} 뉴스
         </h1>
-        {/* 사진기사 숨김 토글 — 마이페이지 '뉴스 설정'과 동일 상태 공유 (발견성 보강) */}
-        <button
-          onClick={() => setPhotoFilterEnabled(!photoFilterOn)}
-          className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
-            photoFilterOn ? "bg-accent text-white" : "bg-bg-tertiary text-text-secondary"
-          }`}
-          aria-pressed={photoFilterOn}
-          aria-label={`사진기사 ${photoFilterOn ? "표시" : "숨기기"}`}
-        >
-          <Images size={14} />
-          사진기사 {photoFilterOn ? "숨김" : "표시"}
-        </button>
         <HeaderProfileLink />
       </header>
       </div>
 
       <div className="px-5">
+        {/* 사진기사 숨김 토글 — 헤더에서 바디로 이동. 마이페이지 '뉴스 설정'과 동일 상태 공유 */}
+        <div className="flex justify-end pt-3">
+          <button
+            onClick={() => setPhotoFilterEnabled(!photoFilterOn)}
+            className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+              photoFilterOn ? "bg-accent text-white" : "bg-bg-tertiary text-text-secondary"
+            }`}
+            aria-pressed={photoFilterOn}
+            aria-label={`사진기사 ${photoFilterOn ? "표시" : "숨기기"}`}
+          >
+            <Images size={14} />
+            사진기사 {photoFilterOn ? "숨김" : "표시"}
+          </button>
+        </div>
         {loading ? (
           <div className="py-20 text-center text-sm text-text-tertiary">
             로딩 중...

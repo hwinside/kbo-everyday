@@ -348,11 +348,11 @@ export default function PlayerBoardPage() {
       {/* 독립 헤더: 선수 목록과 동일 */}
       <div className="sticky top-0 z-30 bg-bg-primary border-b" style={{ borderColor: teamBorder, paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
         <div className="mx-auto max-w-lg">
-          <header className="py-3 px-5 flex items-center gap-3">
+          <header className="py-2 px-5 flex items-center gap-3">
             <button onClick={goBack} className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors" aria-label="뒤로가기">
               <ArrowLeft size={24} />
             </button>
-            <h1 className="text-2xl font-bold text-text-primary tracking-tight flex-1">선수</h1>
+            <h1 className="text-lg font-bold text-text-primary tracking-tight flex-1">선수</h1>
             <HeaderProfileLink />
           </header>
         </div>
