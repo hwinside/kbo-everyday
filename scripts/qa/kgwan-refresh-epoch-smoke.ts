@@ -31,13 +31,23 @@ ok("fetch effect deps 에 refreshEpoch", /llmSummary, awayTeam, homeTeam, linesc
 
 // ── page 배선 ──
 ok("page: summaryRefreshEpoch state", /const \[summaryRefreshEpoch, setSummaryRefreshEpoch\] = useState\(0\)/.test(page));
-ok("page: handleRefresh 에서 epoch bump", /handleRefresh[\s\S]{0,220}setSummaryRefreshEpoch\(\(e\) => e \+ 1\)/.test(page));
+ok("page: handleRefresh 에서 epoch bump", /const handleRefresh = useCallback\(async \(\) => \{[\s\S]*?setSummaryRefreshEpoch\(\(e\) => e \+ 1\)[\s\S]*?\}, \[refetchLive, refetchDetail\]\)/.test(page));
 ok("page: KgwanTab 에 refreshEpoch 전달", /refreshEpoch=\{summaryRefreshEpoch\}/.test(page));
 
 // ── 최소 범위: handleRefresh 가 채팅/메시지 state 를 리셋하지 않음 ──
 const handleRefreshBody = (page.match(/const handleRefresh = useCallback\(async \(\) => \{[\s\S]*?\}, \[refetchLive, refetchDetail\]\);/) || [""])[0];
-ok("handleRefresh 는 refetch 2종 + epoch bump 만(채팅 리셋 없음)", !!handleRefreshBody && !/setMessages|setChat|setComments|clearChat/.test(handleRefreshBody));
+ok("handleRefresh 는 refetch + epoch bump 만(채팅 리셋 없음)", !!handleRefreshBody && !/setMessages|setChat|setComments|clearChat/.test(handleRefreshBody));
 ok("handleRefresh 가 refetchLive/refetchDetail 유지", /refetchLive\(\), refetchDetail\(\)/.test(handleRefreshBody));
+
+// ── reject 경계: live/detail refetch 실패해도 epoch bump 는 finally 로 독립 보장 ──
+ok(
+  "handleRefresh: try{Promise.all} finally{epoch bump}(reject 시에도 요약 재조회)",
+  /try \{[\s\S]*Promise\.all\(\[refetchLive\(\), refetchDetail\(\)\]\)[\s\S]*\} finally \{[\s\S]*setSummaryRefreshEpoch\(\(e\) => e \+ 1\)[\s\S]*\}/.test(handleRefreshBody),
+);
+
+// ── manual retry 유지 + summary 보유 시 불필요 재조회/깜빡임 0 ──
+ok("manual retry(retryNonce) 유지", /setRetryNonce/.test(kgwan) && /retryNonce, refreshEpoch\]/.test(kgwan));
+ok("summary 보유 시 재조회 안 함(early-return → POST/깜빡임 0)", /if \(isAllStar \|\| llmSummary\) return;/.test(kgwan));
 
 console.log(`\nkgwan refresh-epoch wiring: ${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);

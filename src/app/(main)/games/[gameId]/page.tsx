@@ -344,9 +344,14 @@ export default function GameDetailPage() {
 
   // useCallback must be called before any early returns (React hooks rules)
   const handleRefresh = useCallback(async () => {
-    await Promise.all([refetchLive(), refetchDetail()]);
-    // 요약 오류 카드가 pull-refresh 후에도 stuck 되던 문제: epoch 증가로 GET 재조회를 유도.
-    setSummaryRefreshEpoch((e) => e + 1);
+    // 요약 오류 카드가 pull-refresh 후에도 stuck 되던 문제: epoch 증가로 GET 재조회 유도.
+    // live/detail refetch 중 하나가 reject 도 AI요약 재조회는 막히면 안 되므로(동일 stuck),
+    // finally 로 epoch bump 를 독립 보장한다.
+    try {
+      await Promise.all([refetchLive(), refetchDetail()]);
+    } finally {
+      setSummaryRefreshEpoch((e) => e + 1);
+    }
   }, [refetchLive, refetchDetail]);
   if (!game) {
     return (
