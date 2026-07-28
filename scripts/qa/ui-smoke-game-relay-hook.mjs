@@ -263,7 +263,77 @@ try {
     await finalRetryPage.close();
   }
 
-  console.log("game-relay hook UI: 15 passed, 0 failed");
+  // relay 자체는 12초 events-tail bound보다 늦어도 서버 정상 상한 안이면 보존한다.
+  // 이전 request-wide abort는 이 13초 relay를 폐기해 이 회귀가 timeout 난다.
+  {
+    const slowRelayPage = await browser.newPage();
+    await slowRelayPage.addInitScript(() => {
+      const originalFetch = window.fetch.bind(window);
+      let fetchCount = 0;
+      window.__qaSlowRelayFetchCount = () => fetchCount;
+      window.fetch = (input, init = {}) => {
+        const url = typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url;
+        if (!url.includes("/api/game-relay")) return originalFetch(input, init);
+
+        fetchCount++;
+        const thisFetch = fetchCount;
+        const encoder = new TextEncoder();
+        let delayedRelay;
+        const stream = new ReadableStream({
+          start(controller) {
+            const send = () => {
+              controller.enqueue(encoder.encode(`${JSON.stringify({
+                channel: "relay",
+                ok: true,
+                status: 200,
+                data: {
+                  gameId: "qa-game-a",
+                  innings: [],
+                  updatedAt: `slow-relay-${thisFetch}`,
+                },
+              })}\n`));
+              controller.enqueue(encoder.encode(`${JSON.stringify({
+                channel: "events",
+                ok: true,
+                status: 200,
+                data: { events: [] },
+              })}\n`));
+              controller.close();
+            };
+            if (thisFetch === 2) delayedRelay = setTimeout(send, 13_000);
+            else send();
+            init.signal?.addEventListener("abort", () => {
+              if (delayedRelay) clearTimeout(delayedRelay);
+              controller.error(new DOMException("Aborted", "AbortError"));
+            }, { once: true });
+          },
+        });
+        return Promise.resolve(new Response(stream, {
+          status: 200,
+          headers: { "content-type": "application/x-ndjson" },
+        }));
+      };
+    });
+    await slowRelayPage.goto(`${BASE_URL}/qa/game-relay-hook`, { waitUntil: "networkidle" });
+    await slowRelayPage.locator('[data-qa="finish-game"]').click();
+    await slowRelayPage.waitForFunction(() =>
+      document.querySelector('[data-qa="relay-updated"]')?.textContent === "slow-relay-2",
+      null,
+      { timeout: 16_000 },
+    );
+    await slowRelayPage.waitForTimeout(2_500);
+    const slowRelayFetchCount = await slowRelayPage.evaluate(() => window.__qaSlowRelayFetchCount());
+    if (slowRelayFetchCount !== 2) {
+      throw new Error(`slow valid final relay must complete and stop polling, got ${slowRelayFetchCount} requests`);
+    }
+    await slowRelayPage.close();
+  }
+
+  console.log("game-relay hook UI: 17 passed, 0 failed");
 } finally {
   await browser.close();
 }

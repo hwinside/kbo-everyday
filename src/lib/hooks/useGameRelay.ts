@@ -13,7 +13,7 @@ import {
 
 // delta(증분) 폴링: 매 N번째 폴링마다 한 번은 full로 받아 지난 이닝의 드문 정정을 self-heal 한다.
 const FULL_REFRESH_EVERY = 10;
-const FINAL_FETCH_TIMEOUT_MS = 12_000;
+const FINAL_EVENTS_TAIL_TIMEOUT_MS = 12_000;
 interface GameEventsPayload {
   events?: GameEvent[];
   error?: string | null;
@@ -50,7 +50,7 @@ export function useGameRelay(
   const abortControllersRef = useRef(new Set<AbortController>());
   const seenEventIdsRef = useRef(new Set<string>());
 
-  const fetchRelay = useCallback((requestTimeoutMs?: number): Promise<boolean> => {
+  const fetchRelay = useCallback((eventsTailTimeoutMs?: number): Promise<boolean> => {
     if (!gameId) return Promise.resolve(false);
     if (typeof document !== "undefined" && document.visibilityState === "hidden") {
       return Promise.resolve(false);
@@ -61,9 +61,6 @@ export function useGameRelay(
     // parse/finally 재확인의 기준으로 쓴다. gameId 전환·후행 요청이 이 값을 다시 올리면 stale 이 된다.
     const mySeq = ++requestSeqRef.current;
     const controller = new AbortController();
-    const requestTimeout = requestTimeoutMs
-      ? setTimeout(() => controller.abort(), requestTimeoutMs)
-      : null;
     abortControllersRef.current.add(controller);
     inFlightRef.current = true;
     setIsLoading(true);
@@ -89,6 +86,16 @@ export function useGameRelay(
     const request = (async (): Promise<boolean> => {
       let relaySucceeded = false;
       let eventsSucceeded = false;
+      let eventsReceived = false;
+      let eventsTailTimeout: ReturnType<typeof setTimeout> | null = null;
+      const clearEventsTailTimeout = () => {
+        if (eventsTailTimeout) clearTimeout(eventsTailTimeout);
+        eventsTailTimeout = null;
+      };
+      const armEventsTailTimeout = () => {
+        if (!eventsTailTimeoutMs || eventsReceived || eventsTailTimeout) return;
+        eventsTailTimeout = setTimeout(() => controller.abort(), eventsTailTimeoutMs);
+      };
       try {
         const cache = inningsRef.current;
         // full 조건: 보유한 이닝이 없거나(첫 로드) 주기적 self-heal 차례.
@@ -131,9 +138,13 @@ export function useGameRelay(
           settleRelay(relaySucceeded);
           // 통합 stream의 events가 늦어져도 relay poll slot은 frame 도착 즉시 해제한다.
           releaseRelaySlot();
+          // 서버 relay 정상 상한까지는 기다리고, relay frame 뒤 남은 events tail만 bound한다.
+          armEventsTailTimeout();
         };
 
         const applyEvents = (envelope: LivePollEnvelope) => {
+          eventsReceived = true;
+          clearEventsTailTimeout();
           const payload = envelope.data as GameEventsPayload;
           if (
             !mountedRef.current
@@ -167,6 +178,7 @@ export function useGameRelay(
               else {
                 settleRelay(false);
                 releaseRelaySlot();
+                armEventsTailTimeout();
               }
             } else {
               applyEvents(envelope);
@@ -179,7 +191,7 @@ export function useGameRelay(
       } catch {
         // Silently fail(abort/network) — UI shows fallback
       } finally {
-        if (requestTimeout) clearTimeout(requestTimeout);
+        clearEventsTailTimeout();
         abortControllersRef.current.delete(controller);
         settleRelay(relaySucceeded);
         // fence: 후행 요청이 이미 공용 상태를 소유했으면(seq 증가) 늦게 끝난 요청은 clear 하지 않는다.
@@ -254,9 +266,9 @@ export function useGameRelay(
             cancelled
             || (typeof document !== "undefined" && document.visibilityState === "hidden")
           ) return;
-          // events frame이 pending이어도 retry cadence 전에 이 시도를 abort해
-          // finalFetchQueued 소유권을 해제하고 다음 종료 요청을 허용한다.
-          const ok = await fetchRelay(FINAL_FETCH_TIMEOUT_MS);
+          // relay frame 뒤 events tail이 pending일 때만 bound를 적용한다.
+          // relay 자체는 서버의 정상 upstream 상한까지 기다려 유효 응답을 폐기하지 않는다.
+          const ok = await fetchRelay(FINAL_EVENTS_TAIL_TIMEOUT_MS);
           finalFetchedRef.current = afterFinalFetch(finalFetchedRef.current, ok);
         } finally {
           finalFetchQueued = false;
