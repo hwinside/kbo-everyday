@@ -40,7 +40,7 @@
     },
     {
       "path": "/api/cron/videos-shorts",
-      "schedule": "30 */6 * * *"
+      "schedule": "30 12,18 * * *"
     },
     {
       "path": "/api/cron/stats",
