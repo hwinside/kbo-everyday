@@ -172,16 +172,26 @@ export interface DegradationAlertPolicy {
   leaseSeconds: number;
 }
 
+/** 전송 실패 시 다음 재시도까지 backoff(초). drainer 가 이 간격 뒤에 재획득. */
+export const DEGRADATION_NACK_BACKOFF_SECONDS = 60;
+/** drainer give-up 기준: outbox 가 이 시간보다 오래되면 포기(영구 재시도 방지). */
+export const DEGRADATION_MAX_AGE_MINUTES = 120;
+
+/** claim/drain 결과 1행을 안전하게 꺼낸다(table-returning RPC 는 rows 배열). */
+function firstRow<T>(data: unknown): T | null {
+  if (Array.isArray(data)) return (data[0] as T) ?? null;
+  return (data as T) ?? null;
+}
+
 /**
- * Durable API 열화 추적 + outbox/lease + 2xx ACK 경보.
+ * fast path: Durable API 열화 추적 + outbox 생성 + 즉시 전송 시도.
  *
- * 1) claim_api_fallback_alert RPC: 이벤트 durable insert + window count + (cooldown && lease)
- *    원자 claim. should_send=true 면 이 호출이 전송 담당(cooldown 은 아직 확정 안 함).
- * 2) 텔레그램 전송을 시도하고 **실제 2xx(ACK)** 를 받은 뒤에만 confirm 을 호출해 cooldown 확정.
- *    토큰 부재/4xx/5xx/timeout 은 confirm 을 건너뛰어 lease 만료 후 다음 이벤트가 재시도한다.
+ * 1) claim_api_fallback_alert: 이벤트 durable insert + window count + (cooldown && outbox부재)
+ *    판정 후 outbox 생성 + attempt_token 발급. should_send=true 면 이 호출이 전송 담당.
+ * 2) 텔레그램 전송 → 실제 2xx(ACK) 면 confirm(token), 실패면 nack(token, backoff).
+ *    전송 실패/crash 시 outbox 는 durable 하게 남아 recovery drainer(cron)가 재전송한다.
  *
- * **절대 throw 하지 않는다** — 호출측(요약 생성 등) 응답을 경보 실패가 막지 못하게 한다
- * (next/server `after` 안에서 실행 권장 — 응답 이후 수명 보장 + 요약 latency 무영향).
+ * **절대 throw 하지 않는다** — next/server `after` 안에서 실행 권장(응답 수명 보장 + 요약 latency 무영향).
  */
 export async function trackApiDegradation(
   apiName: string,
@@ -190,7 +200,7 @@ export async function trackApiDegradation(
   policy: DegradationAlertPolicy,
 ): Promise<void> {
   try {
-    const { data: shouldSend, error } = await supabase.rpc("claim_api_fallback_alert", {
+    const { data, error } = await supabase.rpc("claim_api_fallback_alert", {
       p_api_name: apiName,
       p_reason: reason,
       p_status_code: options.statusCode ?? null,
@@ -204,24 +214,98 @@ export async function trackApiDegradation(
       console.error("[API Degradation] claim RPC failed:", error.message);
       return;
     }
-    if (shouldSend !== true) return; // 임계치 미달 / cooldown / 다른 워커 전송 중
+    const row = firstRow<{ should_send: boolean; attempt_token: string | null }>(data);
+    if (!row || row.should_send !== true || !row.attempt_token) return;
 
-    // 실제 2xx 를 받았을 때만 confirm(cooldown 확정). 실패면 lease 만료 후 재시도.
-    const delivered = await sendDegradationTelegramAlert(apiName, reason, options, policy);
-    if (delivered) {
-      const { error: confirmErr } = await supabase.rpc("confirm_api_fallback_alert", {
-        p_api_name: apiName,
-      });
-      if (confirmErr) {
-        console.error("[API Degradation] confirm RPC failed:", confirmErr.message);
-      }
-    }
+    await deliverAndSettle(apiName, reason, options, policy, row.attempt_token);
   } catch (err) {
     console.error(
       "[API Degradation] unexpected error:",
       err instanceof Error ? err.message : String(err),
     );
   }
+}
+
+/**
+ * recovery drainer: 새 열화 이벤트 없이도 due outbox(전송 실패/crash 잔여)를 재전송한다.
+ * cron 이 주기적으로 호출. 각 due outbox 를 새 토큰으로 재획득 → 전송 → 2xx confirm / 실패 nack.
+ * 절대 throw 하지 않고 { drained, sent, failed } 요약을 반환.
+ */
+export async function drainApiFallbackAlerts(
+  policy: { leaseSeconds: number; maxBatch?: number } = { leaseSeconds: 120 },
+): Promise<{ drained: number; sent: number; failed: number }> {
+  const summary = { drained: 0, sent: 0, failed: 0 };
+  try {
+    const { data, error } = await supabase.rpc("drain_api_fallback_alerts", {
+      p_lease_seconds: policy.leaseSeconds,
+      p_max_age_minutes: DEGRADATION_MAX_AGE_MINUTES,
+      p_max_batch: policy.maxBatch ?? 20,
+    });
+    if (error) {
+      console.error("[API Degradation] drain RPC failed:", error.message);
+      return summary;
+    }
+    const rows = (Array.isArray(data) ? data : []) as Array<{
+      api_name: string;
+      attempt_token: string;
+      reason: string;
+      error_message: string | null;
+    }>;
+    for (const r of rows) {
+      summary.drained++;
+      const delivered = await settleAttempt(
+        r.api_name,
+        r.reason,
+        { errorMessage: r.error_message ?? undefined },
+        { windowMinutes: 5, threshold: 1, cooldownMinutes: 30, leaseSeconds: policy.leaseSeconds },
+        r.attempt_token,
+      );
+      if (delivered) summary.sent++;
+      else summary.failed++;
+    }
+  } catch (err) {
+    console.error(
+      "[API Degradation] drain unexpected error:",
+      err instanceof Error ? err.message : String(err),
+    );
+  }
+  return summary;
+}
+
+async function deliverAndSettle(
+  apiName: string,
+  reason: string,
+  options: { statusCode?: number; errorMessage?: string },
+  policy: DegradationAlertPolicy,
+  token: string,
+): Promise<void> {
+  await settleAttempt(apiName, reason, options, policy, token);
+}
+
+/** 전송 시도 + 토큰 소유자 기준 confirm/nack. delivered(2xx) 여부 반환. */
+async function settleAttempt(
+  apiName: string,
+  reason: string,
+  options: { statusCode?: number; errorMessage?: string },
+  policy: DegradationAlertPolicy,
+  token: string,
+): Promise<boolean> {
+  const delivered = await sendDegradationTelegramAlert(apiName, reason, options, policy);
+  if (delivered) {
+    const { error } = await supabase.rpc("confirm_api_fallback_alert", {
+      p_api_name: apiName,
+      p_token: token,
+    });
+    if (error) console.error("[API Degradation] confirm RPC failed:", error.message);
+  } else {
+    const { error } = await supabase.rpc("nack_api_fallback_alert", {
+      p_api_name: apiName,
+      p_token: token,
+      p_backoff_seconds: DEGRADATION_NACK_BACKOFF_SECONDS,
+    });
+    if (error) console.error("[API Degradation] nack RPC failed:", error.message);
+  }
+  return delivered;
 }
 
 /** 텔레그램 전송. 실제 HTTP 2xx(ACK) 이면 true, 그 외(토큰 부재/4xx/5xx/timeout)는 false. */

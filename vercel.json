@@ -21,7 +21,6 @@
     }
   ],
   "crons": [
-
     {
       "path": "/api/cron/admin-broadcast",
       "schedule": "* * * * *"
@@ -113,6 +112,10 @@
     {
       "path": "/api/cron/leaderboard-rollup",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/api-fallback-alert-drain",
+      "schedule": "*/2 * * * *"
     }
   ]
 }
