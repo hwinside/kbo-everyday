@@ -169,12 +169,19 @@ export interface DegradationAlertPolicy {
   windowMinutes: number;
   threshold: number;
   cooldownMinutes: number;
+  leaseSeconds: number;
 }
 
 /**
- * Durable API 열화 추적 + 원자적 경보 claim.
- * RPC 가 should_alert=true 를 돌려줄 때만 텔레그램을 보낸다. **절대 throw 하지 않는다** —
- * 호출측(요약 생성 등)의 응답을 경보 실패가 막지 못하게 한다(next/server `after` 안에서 실행 권장).
+ * Durable API 열화 추적 + outbox/lease + 2xx ACK 경보.
+ *
+ * 1) claim_api_fallback_alert RPC: 이벤트 durable insert + window count + (cooldown && lease)
+ *    원자 claim. should_send=true 면 이 호출이 전송 담당(cooldown 은 아직 확정 안 함).
+ * 2) 텔레그램 전송을 시도하고 **실제 2xx(ACK)** 를 받은 뒤에만 confirm 을 호출해 cooldown 확정.
+ *    토큰 부재/4xx/5xx/timeout 은 confirm 을 건너뛰어 lease 만료 후 다음 이벤트가 재시도한다.
+ *
+ * **절대 throw 하지 않는다** — 호출측(요약 생성 등) 응답을 경보 실패가 막지 못하게 한다
+ * (next/server `after` 안에서 실행 권장 — 응답 이후 수명 보장 + 요약 latency 무영향).
  */
 export async function trackApiDegradation(
   apiName: string,
@@ -183,7 +190,7 @@ export async function trackApiDegradation(
   policy: DegradationAlertPolicy,
 ): Promise<void> {
   try {
-    const { data, error } = await supabase.rpc("record_api_fallback_and_claim", {
+    const { data: shouldSend, error } = await supabase.rpc("claim_api_fallback_alert", {
       p_api_name: apiName,
       p_reason: reason,
       p_status_code: options.statusCode ?? null,
@@ -191,13 +198,23 @@ export async function trackApiDegradation(
       p_window_minutes: policy.windowMinutes,
       p_threshold: policy.threshold,
       p_cooldown_minutes: policy.cooldownMinutes,
+      p_lease_seconds: policy.leaseSeconds,
     });
     if (error) {
-      console.error("[API Degradation] RPC failed:", error.message);
+      console.error("[API Degradation] claim RPC failed:", error.message);
       return;
     }
-    if (data === true) {
-      await sendDegradationTelegramAlert(apiName, reason, options, policy);
+    if (shouldSend !== true) return; // 임계치 미달 / cooldown / 다른 워커 전송 중
+
+    // 실제 2xx 를 받았을 때만 confirm(cooldown 확정). 실패면 lease 만료 후 재시도.
+    const delivered = await sendDegradationTelegramAlert(apiName, reason, options, policy);
+    if (delivered) {
+      const { error: confirmErr } = await supabase.rpc("confirm_api_fallback_alert", {
+        p_api_name: apiName,
+      });
+      if (confirmErr) {
+        console.error("[API Degradation] confirm RPC failed:", confirmErr.message);
+      }
     }
   } catch (err) {
     console.error(
@@ -207,17 +224,18 @@ export async function trackApiDegradation(
   }
 }
 
-async function sendDegradationTelegramAlert(
+/** 텔레그램 전송. 실제 HTTP 2xx(ACK) 이면 true, 그 외(토큰 부재/4xx/5xx/timeout)는 false. */
+export async function sendDegradationTelegramAlert(
   apiName: string,
   reason: string,
   options: { statusCode?: number; errorMessage?: string },
   policy: DegradationAlertPolicy,
-) {
+): Promise<boolean> {
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
   const chatId = process.env.TELEGRAM_CHAT_ID || "6796048731"; // 하린아빠
   if (!botToken) {
-    console.warn("[API Degradation] TELEGRAM_BOT_TOKEN not set, skipping alert");
-    return;
+    console.warn("[API Degradation] TELEGRAM_BOT_TOKEN not set — NACK(재시도 대상)");
+    return false; // NACK: confirm 안 함 → env 배선 후 다음 이벤트에서 재전송
   }
   const detail = options.errorMessage ? `\n\n${options.errorMessage.slice(0, 300)}` : "";
   const message = `
@@ -229,13 +247,27 @@ async function sendDegradationTelegramAlert(
 시간: ${new Date().toLocaleString("ko-KR", { timeZone: "Asia/Seoul" })}
   `.trim();
   try {
-    await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: chatId, text: message, parse_mode: "Markdown" }),
-    });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    let res: Response;
+    try {
+      res = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chat_id: chatId, text: message, parse_mode: "Markdown" }),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+    if (!res.ok) {
+      console.error(`[API Degradation] Telegram non-2xx: ${res.status} — NACK(재시도)`);
+      return false;
+    }
+    return true; // 2xx ACK
   } catch (error) {
-    console.error("[API Degradation] Failed to send Telegram alert:", error);
+    console.error("[API Degradation] Telegram send failed — NACK(재시도):", error);
+    return false;
   }
 }
 
