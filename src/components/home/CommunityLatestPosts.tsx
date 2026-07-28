@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { MessageCircle, Heart, ChevronRight, ChevronDown, ChevronUp, PenSquare } from "lucide-react";
+import { MessageCircle, Heart, ChevronRight, ChevronDown, ChevronUp, PenSquare, BarChart3, Video, ImageIcon, FileText } from "lucide-react";
 import { useUnifiedFeed, type FeedBoard } from "@/lib/supabase/useUnifiedFeed";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { getPostDetailPath } from "@/lib/utils/post-share";
@@ -52,6 +52,20 @@ function timeAgo(dateStr: string): string {
   const days = Math.floor(hours / 24);
   if (days < 30) return `${days}일 전`;
   return `${Math.floor(days / 30)}개월 전`;
+}
+
+/**
+ * 글 유형 아이콘 (하린아빠 스펙 2026-07-28, 삼순 판별 우선순위).
+ *   poll → video_urls>0 → image_urls>0 → general (사진+영상 혼합은 영상).
+ * 팀/선수 소속은 PostLabel 배지가 이미 구분하므로, 여기선 콘텐츠 유형만 표기한다.
+ * 요약 제목 앞 인라인 14px tertiary 아이콘.
+ */
+function PostTypeIcon({ post }: { post: Post }) {
+  const cls = "shrink-0 text-text-tertiary";
+  if (post.board_type === "poll") return <BarChart3 size={14} className={cls} aria-label="투표" />;
+  if ((post.video_urls?.length ?? 0) > 0) return <Video size={14} className={cls} aria-label="영상" />;
+  if ((post.image_urls?.length ?? 0) > 0) return <ImageIcon size={14} className={cls} aria-label="사진" />;
+  return <FileText size={14} className={cls} aria-label="글" />;
 }
 
 /** 본문 요약 1줄 — 제목 우선, 없으면 본문 첫 줄. */
@@ -305,8 +319,9 @@ function PostRow({ post }: { post: Post }) {
 
       {/* 본문 요약 + 메타 */}
       <div className="flex-1 min-w-0">
-        <p className="text-[14px] leading-[20px] font-medium text-text-primary line-clamp-1">
-          {summary || "(내용 없음)"}
+        <p className="flex items-center gap-1.5 text-[14px] leading-[20px] font-medium text-text-primary">
+          <PostTypeIcon post={post} />
+          <span className="min-w-0 line-clamp-1">{summary || "(내용 없음)"}</span>
         </p>
         <div className="flex items-center gap-1.5 mt-1 text-[11px] leading-[16px] text-text-tertiary">
           <PostLabel post={post} />
