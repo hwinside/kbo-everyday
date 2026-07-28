@@ -13,7 +13,9 @@
  */
 import { readFileSync } from "node:fs";
 import { JSDOM } from "jsdom";
-import {
+import { act, createElement, Fragment } from "react";
+import { createRoot } from "react-dom/client";
+import PullToRefresh, {
   PTR_INDICATOR_Z,
   PTR_MAX_STICKY_HEADER_Z,
   PTR_MIN_FULLSCREEN_OVERLAY_Z,
@@ -69,6 +71,19 @@ ok("인디케이터 safe-area top 유지", /top:\s*"env\(safe-area-inset-top/.te
 // 위 stacking context"인지 정수 비교로 확정(브라우저 paint 순서 근사).
 const { window } = new JSDOM(`<!DOCTYPE html><body></body>`);
 const doc = window.document;
+const globals = globalThis as typeof globalThis & {
+  IS_REACT_ACT_ENVIRONMENT?: boolean;
+};
+Object.defineProperties(globalThis, {
+  window: { configurable: true, value: window },
+  document: { configurable: true, value: doc },
+  navigator: { configurable: true, value: window.navigator },
+  Element: { configurable: true, value: window.Element },
+  HTMLElement: { configurable: true, value: window.HTMLElement },
+  Node: { configurable: true, value: window.Node },
+  Event: { configurable: true, value: window.Event },
+});
+globals.IS_REACT_ACT_ENVIRONMENT = true;
 
 function layer(z: number, position = "fixed"): HTMLElement {
   const n = doc.createElement("div");
@@ -93,5 +108,123 @@ ok(
   zOf(fullscreenModal) > zOf(indicatorLayer),
 );
 
-console.log(`\npull-to-refresh stacking smoke: ${pass} passed, ${fail} failed`);
-process.exit(fail === 0 ? 0 : 1);
+// ── 4. 실제 컴포넌트 touch 상태 전이: home/game/admin × safe-area 0/47 ──
+// React DOM에 각 사용처의 헤더 배치를 그대로 축약해 렌더하고 실제 touch 이벤트를 보낸다.
+// drag 문구 → release spinner/onRefresh 1회 → resolve 뒤 height 0 복귀를 실행형으로 고정한다.
+function touchEvent(type: "touchstart" | "touchmove" | "touchend", clientY?: number): Event {
+  const event = new window.Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperty(event, "touches", {
+    value: clientY === undefined ? [] : [{ clientY }],
+  });
+  return event;
+}
+
+interface ConsumerCase {
+  name: "home" | "game" | "admin";
+  headerZ: number;
+  headerInsidePtr: boolean;
+  safeAreaTop: 0 | 47;
+}
+
+async function exerciseConsumer(c: ConsumerCase): Promise<void> {
+  const mount = doc.createElement("div");
+  doc.body.appendChild(mount);
+  const root = createRoot(mount);
+  let refreshCalls = 0;
+  let resolveRefresh!: () => void;
+  const refreshPending = new Promise<void>((resolve) => {
+    resolveRefresh = resolve;
+  });
+  const onRefresh = async () => {
+    refreshCalls++;
+    await refreshPending;
+  };
+
+  const header = createElement("header", {
+    key: "header",
+    "data-ptr-header": c.name,
+    style: { position: "sticky", zIndex: c.headerZ },
+  });
+  const target = createElement("div", {
+    key: "target",
+    "data-ptr-target": c.name,
+  });
+  const ptr = createElement(
+    PullToRefresh,
+    { onRefresh },
+    c.headerInsidePtr ? createElement(Fragment, null, header, target) : target,
+  );
+  const tree = c.headerInsidePtr
+    ? ptr
+    : createElement(Fragment, null, header, ptr);
+
+  await act(async () => {
+    root.render(tree);
+  });
+
+  const targetNode = mount.querySelector(`[data-ptr-target="${c.name}"]`);
+  const headerNode = mount.querySelector(`[data-ptr-header="${c.name}"]`) as HTMLElement | null;
+  const container = targetNode?.parentElement;
+  const indicator = container?.firstElementChild as HTMLElement | null;
+  ok(`[${c.name}/${c.safeAreaTop}] 렌더 노드 존재`, Boolean(targetNode && headerNode && indicator));
+  if (!targetNode || !headerNode || !indicator) {
+    await act(async () => root.unmount());
+    mount.remove();
+    return;
+  }
+
+  // env()는 jsdom CSS parser가 보존하지 않으므로 위 소스 스캔에서 계약을 고정하고,
+  // 여기서는 safe-area 0/47 양쪽 케이스의 상태 전이·stacking을 동일하게 실행한다.
+  ok(
+    `[${c.name}/${c.safeAreaTop}] indicator(${PTR_INDICATOR_Z}) > header(${c.headerZ})`,
+    Number(indicator.style.zIndex) > zOf(headerNode),
+  );
+
+  await act(async () => {
+    targetNode.dispatchEvent(touchEvent("touchstart", 100));
+  });
+  await act(async () => {
+    targetNode.dispatchEvent(touchEvent("touchmove", 300));
+  });
+  ok(
+    `[${c.name}/${c.safeAreaTop}] drag → 놓으면 새로고침`,
+    indicator.textContent?.includes("놓으면 새로고침") === true,
+  );
+  ok(`[${c.name}/${c.safeAreaTop}] drag height 노출`, Number.parseFloat(indicator.style.height) >= 60);
+
+  await act(async () => {
+    targetNode.dispatchEvent(touchEvent("touchend"));
+  });
+  ok(`[${c.name}/${c.safeAreaTop}] release → onRefresh 1회`, refreshCalls === 1);
+  ok(
+    `[${c.name}/${c.safeAreaTop}] release → spinner/업데이트 중`,
+    indicator.querySelector(".animate-spin") !== null
+      && indicator.textContent?.includes("업데이트 중...") === true,
+  );
+
+  await act(async () => {
+    resolveRefresh();
+    await refreshPending;
+  });
+  ok(`[${c.name}/${c.safeAreaTop}] 완료 → height 0px 복귀`, indicator.style.height === "0px");
+
+  await act(async () => root.unmount());
+  mount.remove();
+}
+
+async function main(): Promise<void> {
+  const cases: ConsumerCase[] = [
+    { name: "home", headerZ: 30, headerInsidePtr: true, safeAreaTop: 0 },
+    { name: "home", headerZ: 30, headerInsidePtr: true, safeAreaTop: 47 },
+    { name: "game", headerZ: 100, headerInsidePtr: false, safeAreaTop: 0 },
+    { name: "game", headerZ: 100, headerInsidePtr: false, safeAreaTop: 47 },
+    { name: "admin", headerZ: 40, headerInsidePtr: false, safeAreaTop: 0 },
+    { name: "admin", headerZ: 40, headerInsidePtr: false, safeAreaTop: 47 },
+  ];
+  for (const c of cases) await exerciseConsumer(c);
+
+  console.log(`\npull-to-refresh stacking smoke: ${pass} passed, ${fail} failed`);
+  process.exitCode = fail === 0 ? 0 : 1;
+}
+
+void main();
