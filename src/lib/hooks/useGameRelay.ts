@@ -2,11 +2,21 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { GameRelayResponse, InningRelay } from "@/app/api/game-relay/route";
+import type { GameEvent } from "@/types/game-events";
 import { planFinalFetch, afterFinalFetch } from "@/lib/hooks/final-relay-fetch";
 import { mergeDeltaInnings, shouldApplyRelayResponse, shouldReleaseInFlight } from "@/lib/game/relay-delta";
+import {
+  consumeLivePollStream,
+  shouldCombineGameEvents,
+  type LivePollEnvelope,
+} from "@/lib/game/live-poll-stream";
 
 // delta(증분) 폴링: 매 N번째 폴링마다 한 번은 full로 받아 지난 이닝의 드문 정정을 self-heal 한다.
 const FULL_REFRESH_EVERY = 10;
+interface GameEventsPayload {
+  events?: GameEvent[];
+  error?: string | null;
+}
 
 export type { GameRelayResponse, InningRelay, PlayEvent, MatchupStats, RelayPlayerStats, RelayBatterStat, RelayPitcherStat } from "@/app/api/game-relay/route";
 
@@ -18,6 +28,7 @@ export function useGameRelay(
   isFinal = false,
 ) {
   const [data, setData] = useState<GameRelayResponse | null>(null);
+  const [events, setEvents] = useState<GameEvent[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const mountedRef = useRef(true);
   const finalFetchedRef = useRef(false);
@@ -33,7 +44,10 @@ export function useGameRelay(
   // 공용 in-flight/promise/loading 을 clear 하거나 setData 하지 못하게 fencing 한다(삼순 blocker ②).
   const requestSeqRef = useRef(0);
   // 현재 in-flight 요청의 abort 핸들. gameId 전환 시 즉시 abort 해 B full 을 막힘없이 시작시킨다.
-  const abortRef = useRef<AbortController | null>(null);
+  // 통합 요청은 relay frame 전달 뒤 events frame을 계속 기다리는 동안 다음 relay poll이
+  // 시작될 수 있으므로 controller를 Set으로 추적한다. gameId 전환 시 전부 abort한다.
+  const abortControllersRef = useRef(new Set<AbortController>());
+  const seenEventIdsRef = useRef(new Set<string>());
 
   const fetchRelay = useCallback((): Promise<boolean> => {
     if (!gameId) return Promise.resolve(false);
@@ -46,16 +60,39 @@ export function useGameRelay(
     // parse/finally 재확인의 기준으로 쓴다. gameId 전환·후행 요청이 이 값을 다시 올리면 stale 이 된다.
     const mySeq = ++requestSeqRef.current;
     const controller = new AbortController();
-    abortRef.current = controller;
-    const request = (async () => {
-      inFlightRef.current = true;
-      setIsLoading(true);
-      let succeeded = false;
+    abortControllersRef.current.add(controller);
+    inFlightRef.current = true;
+    setIsLoading(true);
+
+    let settleRelay!: (ok: boolean) => void;
+    let relaySettled = false;
+    const relayResult = new Promise<boolean>((resolve) => {
+      settleRelay = (ok) => {
+        if (relaySettled) return;
+        relaySettled = true;
+        resolve(ok);
+      };
+    });
+    inFlightPromiseRef.current = relayResult;
+
+    const releaseRelaySlot = () => {
+      if (!shouldReleaseInFlight(mySeq, requestSeqRef.current)) return;
+      inFlightRef.current = false;
+      inFlightPromiseRef.current = null;
+      if (mountedRef.current) setIsLoading(false);
+    };
+
+    const request = (async (): Promise<boolean> => {
+      let relaySucceeded = false;
+      let eventsSucceeded = false;
       try {
         const cache = inningsRef.current;
         // full 조건: 보유한 이닝이 없거나(첫 로드) 주기적 self-heal 차례.
         const n = pollCountRef.current++;
         const wantFull = cache.size === 0 || n % FULL_REFRESH_EVERY === 0;
+        // 첫 poll + 이후 기존 15초 cadence마다 events를 같은 Edge Request에 싣는다.
+        // final 전환은 game_end/victory 발화를 위해 항상 events 포함.
+        const wantEvents = shouldCombineGameEvents(n, isFinal);
 
         const params = new URLSearchParams({ gameId: requestGameId });
         if (currentInning > 0) params.set("inning", String(currentInning));
@@ -66,9 +103,7 @@ export function useGameRelay(
           if (maxInn > 0) params.set("since", String(maxInn));
         }
 
-        const res = await fetch(`/api/game-relay?${params}`, { signal: controller.signal });
-        if (res.ok) {
-          const json = (await res.json()) as GameRelayResponse;
+        const applyRelay = (json: GameRelayResponse) => {
           // parse 후 재확인: gameId 가 headers 통과와 body 파싱 사이에 전환됐을 수 있다(late-body).
           // seq 일치 + 활성 gameId 일치 + 마운트 상태일 때만 setData(삼순 blocker ②).
           if (shouldApplyRelayResponse({
@@ -87,24 +122,70 @@ export function useGameRelay(
               partial: false,
             };
             setData(merged);
-            succeeded = true;
+            relaySucceeded = true;
           }
+          settleRelay(relaySucceeded);
+          // 통합 stream의 events가 늦어져도 relay poll slot은 frame 도착 즉시 해제한다.
+          releaseRelaySlot();
+        };
+
+        const applyEvents = (envelope: LivePollEnvelope) => {
+          const payload = envelope.data as GameEventsPayload;
+          if (
+            !mountedRef.current
+            || activeGameIdRef.current !== requestGameId
+          ) return;
+
+          if (payload.events) {
+            const newEvents: GameEvent[] = [];
+            for (const event of payload.events) {
+              if (seenEventIdsRef.current.has(event.id)) continue;
+              seenEventIdsRef.current.add(event.id);
+              newEvents.push(event);
+            }
+            if (newEvents.length > 0) {
+              setEvents((previous) => [...previous, ...newEvents]);
+            }
+          }
+          eventsSucceeded = envelope.ok && !payload.error;
+        };
+
+        if (wantEvents) {
+          const res = await fetch(`/api/game-relay-events?${params}`, { signal: controller.signal });
+          if (!res.ok) {
+            settleRelay(false);
+            releaseRelaySlot();
+            return false;
+          }
+          await consumeLivePollStream(res, (envelope) => {
+            if (envelope.channel === "relay") {
+              if (envelope.ok) applyRelay(envelope.data as GameRelayResponse);
+              else {
+                settleRelay(false);
+                releaseRelaySlot();
+              }
+            } else {
+              applyEvents(envelope);
+            }
+          });
+        } else {
+          const res = await fetch(`/api/game-relay?${params}`, { signal: controller.signal });
+          if (res.ok) applyRelay((await res.json()) as GameRelayResponse);
         }
       } catch {
         // Silently fail(abort/network) — UI shows fallback
       } finally {
+        abortControllersRef.current.delete(controller);
+        settleRelay(relaySucceeded);
         // fence: 후행 요청이 이미 공용 상태를 소유했으면(seq 증가) 늦게 끝난 요청은 clear 하지 않는다.
-        if (shouldReleaseInFlight(mySeq, requestSeqRef.current)) {
-          inFlightRef.current = false;
-          inFlightPromiseRef.current = null;
-          if (mountedRef.current) setIsLoading(false);
-        }
+        releaseRelaySlot();
       }
-      return succeeded;
+      // live에서는 relay frame의 즉시 성공만 중요하다. final에서는 events까지 성공해야
+      // 종결 fetch를 완료 처리하며, 부분 실패면 15초 뒤 bounded retry한다.
+      return relaySucceeded && (!isFinal || eventsSucceeded);
     })();
-    inFlightPromiseRef.current = request;
-    return request;
-  }, [gameId, currentInning]);
+    return isFinal ? request : relayResult;
+  }, [gameId, currentInning, isFinal]);
 
   // gameId 전환 시 누적 이닝 캐시·폴링 카운터·표시 데이터를 초기화한다. 이것이 없으면
   // 새 경기 첫 폴링이 이전 경기의 캐시(size>0) 때문에 since 를 보내 이전 경기 이닝 위에
@@ -114,15 +195,17 @@ export function useGameRelay(
     // 이전 경기의 in-flight 요청을 즉시 abort 하고 seq 를 올려 무효화한다. 이로써 (1) B full 이
     // A 완료를 기다리지 않고 바로 시작하고(inFlightRef 해제), (2) 늦게 끝난 A 의 finally/late-body
     // 가 B 상태를 훼손하지 못하게 한다(삼순 blocker ② (a)(b)).
-    abortRef.current?.abort();
-    abortRef.current = null;
+    for (const controller of abortControllersRef.current) controller.abort();
+    abortControllersRef.current.clear();
     requestSeqRef.current++;
     inFlightRef.current = false;
     inFlightPromiseRef.current = null;
     inningsRef.current = new Map();
+    seenEventIdsRef.current.clear();
     pollCountRef.current = 0;
     finalFetchedRef.current = false;
     setData(null);
+    setEvents([]);
     // abort 된 이전 요청의 finally 는 fencing 되어 loading 을 clear 하지 않으므로 여기서 직접 내린다
     // (B 가 live 면 즉시 다시 true, 비-live 면 spinner 가 A 에 갇히지 않게 한다).
     setIsLoading(false);
@@ -130,6 +213,7 @@ export function useGameRelay(
 
   useEffect(() => {
     mountedRef.current = true;
+    const controllers = abortControllersRef.current;
 
     if (isLive) {
       finalFetchedRef.current = false;
@@ -143,6 +227,7 @@ export function useGameRelay(
         mountedRef.current = false;
         clearInterval(timer);
         document.removeEventListener("visibilitychange", onVisibilityChange);
+        for (const controller of controllers) controller.abort();
       };
     }
 
@@ -171,6 +256,7 @@ export function useGameRelay(
         }
       };
       fetchFinalRelay();
+      const retryTimer = setInterval(fetchFinalRelay, 15000);
       const onVisibilityChange = () => {
         if (document.visibilityState === "visible") fetchFinalRelay();
       };
@@ -178,12 +264,17 @@ export function useGameRelay(
       return () => {
         cancelled = true;
         mountedRef.current = false;
+        clearInterval(retryTimer);
         document.removeEventListener("visibilitychange", onVisibilityChange);
+        for (const controller of controllers) controller.abort();
       };
     }
 
-    return () => { mountedRef.current = false; };
+    return () => {
+      mountedRef.current = false;
+      for (const controller of controllers) controller.abort();
+    };
   }, [fetchRelay, interval, isLive, isFinal]);
 
-  return { data, isLoading };
+  return { data, events, isLoading };
 }

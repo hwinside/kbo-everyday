@@ -6,19 +6,48 @@ const BASE_URL =
   process.argv.find((arg) => arg.startsWith("--base-url="))?.split("=")[1]
   ?? "http://localhost:3000";
 
+async function fulfillPoll(route, relay, events = []) {
+  const isCombined = new URL(route.request().url()).pathname === "/api/game-relay-events";
+  if (isCombined) {
+    await route.fulfill({
+      contentType: "application/x-ndjson",
+      body: [
+        JSON.stringify({ channel: "relay", ok: true, status: 200, data: relay }),
+        JSON.stringify({ channel: "events", ok: true, status: 200, data: { events } }),
+        "",
+      ].join("\n"),
+    });
+    return;
+  }
+  await route.fulfill({
+    contentType: "application/json",
+    body: JSON.stringify(relay),
+  });
+}
+
 const browser = await chromium.launch();
 try {
   let fetchCount = 0;
+  let legacyEventsFetchCount = 0;
   const page = await browser.newPage();
-  await page.route("**/api/game-relay?*", async (route) => {
+  await page.route("**/api/game-events?*", async (route) => {
+    legacyEventsFetchCount++;
+    await route.fulfill({ contentType: "application/json", body: JSON.stringify({ events: [] }) });
+  });
+  await page.route(/\/api\/game-(?:relay|relay-events)\?/, async (route) => {
     fetchCount++;
-    await route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({ innings: [], updatedAt: `fetch-${fetchCount}` }),
-    });
+    await fulfillPoll(
+      route,
+      { innings: [], updatedAt: `fetch-${fetchCount}` },
+      fetchCount === 1 ? [{ id: "event-1", gameId: "qa-game-a", type: "game_start", timestamp: Date.now(), detail: {} }] : [],
+    );
   });
   await page.goto(`${BASE_URL}/qa/game-relay-hook`, { waitUntil: "networkidle" });
   if (fetchCount !== 1) throw new Error(`live initial fetch expected 1, got ${fetchCount}`);
+  if (legacyEventsFetchCount !== 0) {
+    throw new Error(`legacy /api/game-events fetch must be removed, got ${legacyEventsFetchCount}`);
+  }
+  await page.waitForFunction(() => document.querySelector('[data-qa="event-count"]')?.textContent === "1");
 
   await page.evaluate(() => {
     Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" });
@@ -41,13 +70,10 @@ try {
     releaseInitialFetch = resolve;
   });
   const delayedPage = await browser.newPage();
-  await delayedPage.route("**/api/game-relay?*", async (route) => {
+  await delayedPage.route(/\/api\/game-(?:relay|relay-events)\?/, async (route) => {
     delayedFetchCount++;
     if (delayedFetchCount === 1) await initialFetchGate;
-    await route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({ innings: [], updatedAt: `delayed-fetch-${delayedFetchCount}` }),
-    });
+    await fulfillPoll(route, { innings: [], updatedAt: `delayed-fetch-${delayedFetchCount}` });
   });
   await delayedPage.goto(`${BASE_URL}/qa/game-relay-hook`, { waitUntil: "domcontentloaded" });
   await delayedPage.waitForFunction(() => document.querySelector('[data-qa="relay-status"]')?.textContent === "live");
@@ -65,14 +91,11 @@ try {
     const reqUrls = [];
     const inning = { inning: 1, half: "top", teamName: "A", plays: [] };
     const switchPage = await browser.newPage();
-    await switchPage.route("**/api/game-relay?*", async (route) => {
+    await switchPage.route(/\/api\/game-(?:relay|relay-events)\?/, async (route) => {
       const url = route.request().url();
       reqUrls.push(url);
       const gid = new URL(url).searchParams.get("gameId");
-      await route.fulfill({
-        contentType: "application/json",
-        body: JSON.stringify({ gameId: gid, innings: [inning], updatedAt: `${gid}-${reqUrls.length}` }),
-      });
+      await fulfillPoll(route, { gameId: gid, innings: [inning], updatedAt: `${gid}-${reqUrls.length}` });
     });
     await switchPage.goto(`${BASE_URL}/qa/game-relay-hook`, { waitUntil: "networkidle" });
     await switchPage.waitForFunction(() => document.querySelector('[data-qa="relay-game"]')?.textContent === "qa-game-a");
@@ -99,16 +122,13 @@ try {
     const aGate = new Promise((r) => { releaseA = r; });
     const inflightUrls = [];
     const inflightPage = await browser.newPage();
-    await inflightPage.route("**/api/game-relay?*", async (route) => {
+    await inflightPage.route(/\/api\/game-(?:relay|relay-events)\?/, async (route) => {
       const url = route.request().url();
       inflightUrls.push(url);
       const gid = new URL(url).searchParams.get("gameId");
       if (gid === "qa-game-a") await aGate; // A slow-body 보류
       try {
-        await route.fulfill({
-          contentType: "application/json",
-          body: JSON.stringify({ gameId: gid, innings: [inning], updatedAt: `${gid}-live` }),
-        });
+        await fulfillPoll(route, { gameId: gid, innings: [inning], updatedAt: `${gid}-live` });
       } catch {
         // A 는 전환 시 abort 되므로 fulfill 이 실패할 수 있다(정상).
       }
@@ -140,7 +160,39 @@ try {
     await inflightPage.close();
   }
 
-  console.log("game-relay hook UI: 8 passed, 0 failed");
+  // events frame 실패가 같은 응답의 정상 relay frame을 지우거나 막으면 안 된다.
+  {
+    const partialPage = await browser.newPage();
+    await partialPage.route("**/api/game-relay-events?*", async (route) => {
+      await route.fulfill({
+        contentType: "application/x-ndjson",
+        body: [
+          JSON.stringify({
+            channel: "relay",
+            ok: true,
+            status: 200,
+            data: { gameId: "qa-game-a", innings: [], updatedAt: "relay-survived" },
+          }),
+          JSON.stringify({
+            channel: "events",
+            ok: false,
+            status: 503,
+            data: { error: "events unavailable" },
+          }),
+          "",
+        ].join("\n"),
+      });
+    });
+    await partialPage.goto(`${BASE_URL}/qa/game-relay-hook`, { waitUntil: "networkidle" });
+    await partialPage.waitForFunction(() =>
+      document.querySelector('[data-qa="relay-updated"]')?.textContent === "relay-survived"
+    );
+    const eventCount = await partialPage.locator('[data-qa="event-count"]').textContent();
+    if (eventCount !== "0") throw new Error(`failed events frame leaked data: ${eventCount}`);
+    await partialPage.close();
+  }
+
+  console.log("game-relay hook UI: 12 passed, 0 failed");
 } finally {
   await browser.close();
 }

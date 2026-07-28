@@ -6,7 +6,7 @@ import { useGameRelay } from "@/lib/hooks/useGameRelay";
 export default function HookFixture() {
   const [status, setStatus] = useState<"live" | "final">("live");
   const [gameId, setGameId] = useState("qa-game-a");
-  const { data } = useGameRelay(gameId, status === "live", 60_000, 0, status === "final");
+  const { data, events } = useGameRelay(gameId, status === "live", 60_000, 0, status === "final");
 
   return (
     <main>
@@ -15,6 +15,7 @@ export default function HookFixture() {
       <span data-qa="relay-status">{status}</span>
       <span data-qa="relay-updated">{data?.updatedAt ?? "none"}</span>
       <span data-qa="relay-game">{data?.gameId ?? "none"}</span>
+      <span data-qa="event-count">{events.length}</span>
     </main>
   );
 }

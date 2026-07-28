@@ -21,7 +21,6 @@ import { useLiveGame } from "@/lib/hooks/useLiveGame";
 import { startLiveActivity } from "@/lib/native-live-activity";
 import { updateGameWidget, setWidgetMyTeam } from "@/lib/capacitor/game-notification";
 import { useGameDetail } from "@/lib/hooks/useGameDetail";
-import { useGameEvents } from "@/lib/hooks/useGameEvents";
 import { generateEvents, type PrevGameState } from "@/lib/event-generator";
 import { generateRelayEvents } from "@/lib/relay-event-generator";
 import { latestRelayLine } from "@/lib/notifications/relay-line";
@@ -180,16 +179,23 @@ export default function GameDetailPage() {
   // 당겨서 새로고침 시 증가 → KgwanTab 종료 요약이 GET 재조회(오류 카드 stuck 해소). 채팅 등 다른 state 무관.
   const [summaryRefreshEpoch, setSummaryRefreshEpoch] = useState(0);
   const liveIsFinal = !!liveGame && !liveGame.isLive && (liveGame.awayScore > 0 || liveGame.homeScore > 0);
-  // Keep game-events polling through the live → final transition so game_end/victory can be emitted.
-  const shouldPollGameEvents = (liveGame?.isLive ?? false) || liveIsFinal;
-  const { events: gameEvents } = useGameEvents(gameId, shouldPollGameEvents, 15000);
+  // live→final 전환까지 client-side diff를 유지해 game_end/victory를 한 번 생성한다.
+  const shouldProcessGameEvents = (liveGame?.isLive ?? false) || liveIsFinal;
   // Relay polls 5s while live (celebration trigger source), 30s otherwise
   // (display-only). The 3s cadence keeps the relay-bridged celebration path
   // within ~5s of the actual KBO play (was 5s → worst-case fire lag dropped
   // ~4s); the route caches Naver responses for 2s in-memory so KBO upstream
   // load stays bounded across concurrent viewers.
   const relayPollInterval = liveGame?.isLive ? 3000 : 30000;
-  const { data: gameRelay } = useGameRelay(gameId, liveGame?.isLive ?? false, relayPollInterval, liveGame?.inning ?? 0, liveIsFinal);
+  // game-events는 첫 poll/매 15초/final 전환 때 relay와 같은 Edge Request의
+  // NDJSON frame으로 받는다. 이벤트 기능·cadence는 유지하면서 별도 client poll을 제거한다.
+  const { data: gameRelay, events: gameEvents } = useGameRelay(
+    gameId,
+    liveGame?.isLive ?? false,
+    relayPollInterval,
+    liveGame?.inning ?? 0,
+    liveIsFinal,
+  );
   const clientEventStateRef = useRef<PrevGameState | null>(null);
 
   // Compute game early (non-hook) so celebration hook can reference team IDs
@@ -299,7 +305,7 @@ export default function GameDetailPage() {
   // identical ids across sources, so whichever source observes a play first
   // wins — the relay path typically arrives 10–20s before BoxScore.
   useEffect(() => {
-    if (!liveGame || !shouldPollGameEvents) return;
+    if (!liveGame || !shouldProcessGameEvents) return;
 
     // After returning from background, skip one diff cycle to re-establish baseline
     if (skipNextDiffRef.current) {
@@ -324,7 +330,7 @@ export default function GameDetailPage() {
     if (merged.length > 0) {
       processEvents(merged);
     }
-  }, [gameId, liveGame, gameDetail?.boxScore, gameRelay?.innings, shouldPollGameEvents, processEvents]);
+  }, [gameId, liveGame, gameDetail?.boxScore, gameRelay?.innings, shouldProcessGameEvents, processEvents]);
 
   // Reset baseline on gameId change
   useEffect(() => {
