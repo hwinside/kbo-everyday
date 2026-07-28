@@ -23,6 +23,13 @@ export const SCHEDULED_SEEN_RECENT_MS = 90 * 1000;
 /** 정규 scheduled tick이 끊겨도 예정시각 직후 1회초 상단이면 복구를 허용하는 상한. */
 export const SCHEDULED_START_RECOVERY_MS = 3 * 60 * 1000;
 
+// (2026-07-28 삼순 조건부 GO) KBO가 state=2(live)로 뒤늦게 넘기면 15초 watchdog이 첫 live를
+// 관측한 순간 이미 1번 타자 타석이 끝나 completedPlateAppearances=1로 잡힌다. 이전 게이트는
+// "completedPlateAppearances===0"을 발송 전제로 요구해 5경기 전원을 mark-only로 억제했다
+// (2026-07-28 실사고). 발송 판정은 "최근 scheduled→live 연속 관측"과 "1회초 상단 AND 0:0"만으로
+// 하고, currentBatter/BoxScore 유래 타석 근거는 발송 전제에서 내려 **뒷북 차단 보조**로만 둔다.
+// 안전 가드(뒷북 차단): 득점 발생·2회 이상·1회말은 이미 경기가 진행된 것이라 계속 차단한다.
+
 export type StartPlateAppearanceEvidence = {
   /** 원정 1번 타자의 완료 타석 수. authoritative source가 없으면 null. */
   completedPlateAppearances: number | null;
@@ -43,12 +50,18 @@ export function shouldSendStartNotification(params: {
   nowMs: number;
   inningNo: number | null | undefined;
   isTop: boolean | null | undefined;
+  /** 경기 스코어 — 득점 발생 시 이미 진행된 경기로 보고 뒷북 차단. 미상이면 0으로 본다. */
+  awayScore?: number | null;
+  homeScore?: number | null;
+  /** 뒷북 차단 보조 신호(선택). 발송 전제가 아니며, 없거나 지연돼도 발송을 막지 않는다. */
   plateAppearance?: StartPlateAppearanceEvidence | null;
 }): boolean {
   if (params.lastSeenScheduledAtMs === null) return false;
   if (!isStartNotificationFresh({
     inningNo: params.inningNo,
     isTop: params.isTop,
+    awayScore: params.awayScore,
+    homeScore: params.homeScore,
     plateAppearance: params.plateAppearance,
   })) return false;
   if (params.nowMs - params.lastSeenScheduledAtMs <= SCHEDULED_SEEN_RECENT_MS) return true;
@@ -57,19 +70,34 @@ export function shouldSendStartNotification(params: {
   return scheduledLagMs >= 0 && scheduledLagMs <= SCHEDULED_START_RECOVERY_MS;
 }
 
+// (2026-07-28 삼순 NO-GO 반영) 안전 가드를 `1회초 상단 AND 0:0`으로 strict하게 묶는다.
+// 이닝·초말·점수가 미상/누락/blank/malformed면 발송으로 판정할 근거가 없으므로 모두
+// fail-close(mark-only). 이전 구현은 미상 점수를 0으로 강등하고 이닝 null을 신선으로 봐서
+// `판정 불가여도 발송`(fail-open)이라 승인 기준(1회초 AND 0:0)을 위반했다.
+// 타석 근거는 발송 전제가 아니라 뒷북 차단 보조로만 쓴다: 근거 없음/지연/PA1은 허용하고,
+// 근거가 있고 completedPlateAppearances>=2면 이미 진행된 것으로 보아 차단한다.
 export function isStartNotificationFresh(params: {
-  /** KBO GAME_INN_NO — 개시 직후 등 미제공이면 null */
+  /** KBO GAME_INN_NO — 개시 직후 등 미제공이면 null. 1회여야만 신선. */
   inningNo: number | null | undefined;
-  /** GAME_TB_SC === "T" 여부. 미제공이면 null(판단 보류 → fresh) */
+  /** GAME_TB_SC === "T" 여부. true(1회초)여야만 신선. 미제공/1회말이면 차단. */
   isTop: boolean | null | undefined;
-  /** 첫 타석 완료/현재 타자 근거. 누락·모순이면 fail-close. */
+  /** 경기 스코어. known 0:0이어야만 신선. 미상/누락/malformed면 fail-close. */
+  awayScore?: number | null;
+  homeScore?: number | null;
+  /** 뒷북 차단 보조 신호(선택). 발송 전제가 아니며, 없거나 지연돼도 발송을 막지 않는다. */
   plateAppearance?: StartPlateAppearanceEvidence | null;
 }): boolean {
-  const inning = typeof params.inningNo === "number" ? params.inningNo : null;
-  if (inning === null) return false;
-  if (inning > 1) return false;
-  if (inning === 1 && params.isTop === false) return false; // 1회말 = 이미 수십 분 경과
-  if (inning !== 1 || params.isTop !== true) return false;
-  return params.plateAppearance?.completedPlateAppearances === 0
-    && params.plateAppearance.currentBatterIsLeadoff === true;
+  // 1회초 상단 strict — 미상(null/undefined)·0·2회+·1회말은 모두 차단.
+  if (params.inningNo !== 1) return false;
+  if (params.isTop !== true) return false;
+  // 0:0 strict — known numeric 0:0만 신선. null/blank/NaN 등은 fail-close.
+  const away = params.awayScore;
+  const home = params.homeScore;
+  if (typeof away !== "number" || !Number.isFinite(away) || away !== 0) return false;
+  if (typeof home !== "number" || !Number.isFinite(home) || home !== 0) return false;
+  // 뒷북 차단 보조: 원정 1번 타자 완료 타석이 known으로 2 이상이면 이미 진행된 것 → 차단.
+  // 근거 없음(null)·PA1(이번 사고 케이스)은 발송을 막지 않는다.
+  const completedPA = params.plateAppearance?.completedPlateAppearances;
+  if (typeof completedPA === "number" && Number.isFinite(completedPA) && completedPA >= 2) return false;
+  return true;
 }

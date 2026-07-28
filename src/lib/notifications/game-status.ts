@@ -126,6 +126,20 @@ async function unclaim(gameId: string, flag: NotifyFlag): Promise<void> {
  * 있으면 직전 streak일 수 있어, 표기는 호출부에서 "이번 경기 결과 방향과 일치할 때만"
  * 노출(fail-closed)한다. fetch 실패 시 빈 맵(스코어만 발송).
  */
+// 시작알림 게이트용 스코어 파싱 — 누락/blank/malformed는 null로 남겨 fail-close시킨다.
+// (payload 표기용 `parseInt(...) || 0`과 달리, 게이트는 미상 점수를 실제 0과 구분해야 한다.)
+// ⚠️ (2026-07-29 삼순 P0) `Number()`는 hex("0x0")·지수("0e9")·부호("+0"/"-0")·리터럴("0.0")을
+// 전부 0으로 받아 malformed raw를 실제 0으로 통과시킨다. KBO score는 decimal non-negative
+// integer이므로 `/^\d+$/`로 먼저 검증한 뒤 변환한다(그 외는 fail-close).
+const START_GATE_SCORE_RE = /^\d+$/;
+function parseStartGateScore(raw: string | null | undefined): number | null {
+  if (raw == null) return null;
+  const trimmed = String(raw).trim();
+  if (!START_GATE_SCORE_RE.test(trimmed)) return null;
+  const n = Number(trimmed);
+  return Number.isSafeInteger(n) ? n : null;
+}
+
 async function fetchTeamStreaks(): Promise<Map<number, { n: number; dir: "승" | "패" }>> {
   const out = new Map<number, { n: number; dir: "승" | "패" }>();
   try {
@@ -411,19 +425,17 @@ export async function notifyGameStatusTransitions(
       const lastSeenMs = seenRow?.last_seen_scheduled_at
         ? Date.parse(seenRow.last_seen_scheduled_at)
         : null;
-      const plateAppearance = opts?.startPlateAppearanceByGame?.get(gameId)
-        ?? (opts?.startPlateAppearanceByGame === undefined && opts?.startDeps
-          ? { completedPlateAppearances: 0, currentBatterIsLeadoff: true }
-          : null);
-      // game-events/KBO/DB 근거 fetch timeout은 "첫 타석 종료"가 아니다. cutoff 안에서는
-      // 상태를 열거나 mark-only로 닫지 않고 다음 tick에 이 경기만 재시도한다.
-      if (!seenRow?.start_snapshot_at && plateAppearance === null) return null;
+      // (2026-07-28 삼순 조건부 GO) 타석 근거는 발송 전제가 아니라 뒷북 차단 보조. 지연되는
+      // currentBatter/BoxScore를 기다리지 않고 scheduled→live + 1회초 0:0에서 즉시 snapshot한다.
+      const plateAppearance = opts?.startPlateAppearanceByGame?.get(gameId) ?? null;
       const sendOk = Boolean(seenRow?.start_snapshot_at) || shouldSendStartNotification({
         lastSeenScheduledAtMs: Number.isFinite(lastSeenMs as number) ? lastSeenMs : null,
         scheduledStartAtMs: scheduledStartMs(game.G_DT, game.G_TM),
         nowMs: observedAtMs,
         inningNo: game.GAME_INN_NO,
         isTop: game.GAME_TB_SC ? game.GAME_TB_SC === "T" : null,
+        awayScore: parseStartGateScore(game.T_SCORE_CN),
+        homeScore: parseStartGateScore(game.B_SCORE_CN),
         plateAppearance,
       });
       if (!sendOk) {
@@ -611,8 +623,9 @@ export async function notifyGameStatusTransitions(
         nowMs: observedAtMs,
         inningNo: g.GAME_INN_NO,
         isTop: g.GAME_TB_SC ? g.GAME_TB_SC === "T" : null,
-        plateAppearance: opts?.startPlateAppearanceByGame?.get(gameId)
-          ?? (opts?.startDeps ? { completedPlateAppearances: 0, currentBatterIsLeadoff: true } : null),
+        awayScore: parseStartGateScore(g.T_SCORE_CN),
+        homeScore: parseStartGateScore(g.B_SCORE_CN),
+        plateAppearance: opts?.startPlateAppearanceByGame?.get(gameId) ?? null,
       });
       if (!sendOk) {
         await markStart(gameId);
