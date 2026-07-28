@@ -1,7 +1,7 @@
 /**
  * 자동 채널 발굴 크론 — 정상 수집 중인 active 채널의 숏츠 제목을 분석해 유사 신규 채널을 발굴·활성화.
  *
- * 스케줄: vercel.json crons — 주 1회(일요일 00:00 UTC = 09:00 KST).
+ * 스케줄: vercel.json crons — 주 1회(일요일 08:05 UTC = 17:05 KST, Pacific quota 리셋 직후).
  *   (선수 검색·RSS fallback·duration backfill과 공유 quota ledger/cap을 사용하되,
  *    후보 품질/운영 안정성 확인 전까지 주 1회 유지.)
  *
