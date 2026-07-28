@@ -128,12 +128,16 @@ async function unclaim(gameId: string, flag: NotifyFlag): Promise<void> {
  */
 // 시작알림 게이트용 스코어 파싱 — 누락/blank/malformed는 null로 남겨 fail-close시킨다.
 // (payload 표기용 `parseInt(...) || 0`과 달리, 게이트는 미상 점수를 실제 0과 구분해야 한다.)
+// ⚠️ (2026-07-29 삼순 P0) `Number()`는 hex("0x0")·지수("0e9")·부호("+0"/"-0")·리터럴("0.0")을
+// 전부 0으로 받아 malformed raw를 실제 0으로 통과시킨다. KBO score는 decimal non-negative
+// integer이므로 `/^\d+$/`로 먼저 검증한 뒤 변환한다(그 외는 fail-close).
+const START_GATE_SCORE_RE = /^\d+$/;
 function parseStartGateScore(raw: string | null | undefined): number | null {
   if (raw == null) return null;
   const trimmed = String(raw).trim();
-  if (trimmed === "") return null;
+  if (!START_GATE_SCORE_RE.test(trimmed)) return null;
   const n = Number(trimmed);
-  return Number.isInteger(n) && n >= 0 ? n : null;
+  return Number.isSafeInteger(n) ? n : null;
 }
 
 async function fetchTeamStreaks(): Promise<Map<number, { n: number; dir: "승" | "패" }>> {
