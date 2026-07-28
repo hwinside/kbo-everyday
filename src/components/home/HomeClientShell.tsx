@@ -644,11 +644,19 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
       animate="show"
       className="mx-auto max-w-lg px-5"
     >
-      {/* Header */}
-      <m.header variants={item} className="flex items-center justify-between py-3 border-b mb-2" style={{ borderColor: myTeamId ? getTeamBorderColorById(myTeamId) : 'var(--color-border)' }}>
+      {/* Header — 전역 헤더 규격(sticky·min-h-[44px]·safe-area 상쇄), 로고 축소 */}
+      <header
+        className="sticky top-0 z-30 -mx-5 px-5 border-b bg-bg-primary mb-2"
+        style={{
+          borderColor: myTeamId ? getTeamBorderColorById(myTeamId) : 'var(--color-border)',
+          paddingTop: "env(safe-area-inset-top, 0px)",
+          marginTop: "calc(env(safe-area-inset-top, 0px) * -1)",
+        }}
+      >
+        <div className="flex items-center justify-between min-h-[44px]">
         <div className="flex flex-col">
-          <img src="/logo-mark-light.png" alt="크보팬" style={{height: "52px", objectFit: "contain"}} className="-ml-0.5 dark:hidden" />
-          <img src="/logo-mark.png" alt="크보팬" style={{height: "52px", objectFit: "contain"}} className="-ml-0.5 hidden dark:block" />
+          <img src="/logo-mark-light.png" alt="크보팬" style={{height: "30px", objectFit: "contain"}} className="-ml-0.5 dark:hidden" />
+          <img src="/logo-mark.png" alt="크보팬" style={{height: "30px", objectFit: "contain"}} className="-ml-0.5 hidden dark:block" />
         </div>
         <div className="flex items-center gap-1">
           {user ? (
@@ -672,7 +680,8 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
             <HeaderAvatar user={user} profile={profile} />
           </Link>
         </div>
-      </m.header>
+        </div>
+      </header>
 
       <PWAInstallBanner />
 
