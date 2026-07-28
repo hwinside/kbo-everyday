@@ -230,8 +230,9 @@ async function main() {
   // 클라(useGameRelay)가 non-2xx 를 기존 data 유지로 처리하는지 계약 고정
   const hookSrc = readFileSync(resolve(here0, "../../src/lib/hooks/useGameRelay.ts"), "utf8");
   check(
-    "(d) 클라: res.ok 일 때만 setData → non-2xx 는 기존 relay data 유지",
-    /if\s*\(\s*res\.ok\b[\s\S]*?\)\s*\{[\s\S]*?setData\(/.test(hookSrc),
+    "(d) 클라: direct/combined 모두 relay 2xx일 때만 apply → non-2xx는 기존 data 유지",
+    /if\s*\(\s*res\.ok\s*\)\s*applyRelay\(/.test(hookSrc)
+      && /if\s*\(\s*envelope\.ok\s*\)\s*applyRelay\(/.test(hookSrc),
   );
 
   // ---- (c) route 최대 wall-clock bound production wiring ----
