@@ -10,15 +10,42 @@ interface GameBase {
   homeTeamId?: number;
 }
 
-// Convert LineupEntry[] to the shape FieldViewV2 expects
-function toDefenders(entries: LineupEntry[], teamId?: number) {
-  return entries.map(e => ({
-    order: e.order,
-    name: e.name,
-    position: e.position,
-    avg: "",
-    teamId,
-  }));
+const FIELD_POSITIONS = ["C", "1B", "2B", "3B", "SS", "LF", "CF", "RF"] as const;
+
+/**
+ * 필드뷰 수비 다이어그램용 수비수 목록을 만든다.
+ *
+ * 선발 라인업(detailLineup)만 보면 대타·대주·수비교체 이후 필드 위치가 선발 선수
+ * 그대로 남아 "타순/투수는 바뀌는데 수비 위치만 안 바뀜" 버그가 난다.
+ * (주자 이름 해결과 동일한 근거 — BoxScore는 교체 이력을 포함한다.)
+ *
+ * 그래서 각 수비 위치별로 BoxScore에서 *그 포지션을 가진 마지막 선수*(= 현재 그
+ * 자리 선수)를 우선 사용하고, BoxScore에 해당 포지션이 없을 때만 선발 라인업으로
+ * 폴백한다. BoxScore가 통째로 비어있으면 전부 선발 라인업으로 폴백 → 기존 동작 유지.
+ */
+function toDefenders(
+  boxBatters: BatterRecord[] | null | undefined,
+  lineupEntries: LineupEntry[] | null | undefined,
+  teamId?: number,
+) {
+  return FIELD_POSITIONS.flatMap(pos => {
+    // 1) BoxScore 우선 — 교체 이력 반영. 같은 포지션의 마지막 entry가 현재 수비수.
+    let current: BatterRecord | null = null;
+    if (boxBatters) {
+      for (const b of boxBatters) {
+        if (b.position === pos && b.name) current = b;
+      }
+    }
+    if (current) {
+      return [{ order: current.order, name: current.name, position: pos, avg: current.avg ?? "", teamId }];
+    }
+    // 2) 선발 라인업 폴백 — BoxScore 미수신 또는 해당 포지션 미노출.
+    const entry = lineupEntries?.find(e => e.position === pos);
+    if (entry) {
+      return [{ order: entry.order, name: entry.name, position: pos, avg: "", teamId }];
+    }
+    return [];
+  });
 }
 
 /**
@@ -86,8 +113,10 @@ export function deriveGameState(
   const defensiveTeamId = isTop ? game.homeTeamId : game.awayTeamId;
   const battingTeamId = isTop ? game.awayTeamId : game.homeTeamId;
 
-  const defensiveSide = detailLineup
-    ? (isTop ? toDefenders(detailLineup.home, game.homeTeamId) : toDefenders(detailLineup.away, game.awayTeamId))
+  const defensiveLineup = detailLineup ? (isTop ? detailLineup.home : detailLineup.away) : null;
+  const defensiveBoxBatters = detailBoxScore ? (isTop ? detailBoxScore.homeBatters : detailBoxScore.awayBatters) : null;
+  const defensiveSide = (defensiveLineup || (defensiveBoxBatters && defensiveBoxBatters.length > 0))
+    ? toDefenders(defensiveBoxBatters, defensiveLineup, defensiveTeamId)
     : null;
 
   // On-deck batters from lineup
