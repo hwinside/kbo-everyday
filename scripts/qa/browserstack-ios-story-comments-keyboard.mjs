@@ -58,9 +58,12 @@ const METRICS_SCRIPT = `
   const composer = document.querySelector('[data-composer="venue-story"]');
   const viewer = document.querySelector('[data-venue-story-viewer]');
   const overlay = document.querySelector('[data-venue-story-comment-overlay]');
+  const sheet = document.querySelector('[data-venue-story-comment-sheet]');
+  const video = document.querySelector('[data-story-media="video"]');
   const input = composer ? composer.querySelector('input') : null;
   const rect = (el) => el ? JSON.parse(JSON.stringify(el.getBoundingClientRect())) : null;
   const composerRect = rect(composer);
+  const viewerRect = rect(viewer);
   const hit = composerRect
     ? document.elementFromPoint(
         composerRect.left + composerRect.width / 2,
@@ -73,8 +76,22 @@ const METRICS_SCRIPT = `
     inputFocused: Boolean(input && document.activeElement === input),
     inputValue: input ? input.value : null,
     composer: composerRect,
-    viewer: rect(viewer),
+    viewer: viewerRect,
+    viewerDisplay: viewer ? getComputedStyle(viewer).display : null,
+    viewerVisible: Boolean(
+      viewer &&
+      getComputedStyle(viewer).display !== 'none' &&
+      viewerRect &&
+      viewerRect.width > 0 &&
+      viewerRect.height > 0
+    ),
+    storyId: viewer ? viewer.getAttribute('data-story-id') : null,
+    videoPaused: video ? video.paused : null,
+    videoCurrentTime: video ? video.currentTime : null,
+    sheet: rect(sheet),
     overlayOnBody: Boolean(overlay && overlay.parentElement === document.body),
+    overlayMounted: Boolean(overlay),
+    keyboardOpenState: overlay ? overlay.getAttribute('data-keyboard-open') === 'true' : false,
     viewerZIndex: viewer ? Number(getComputedStyle(viewer).zIndex) : null,
     overlayZIndex: overlay ? Number(getComputedStyle(overlay).zIndex) : null,
     composerHit: Boolean(hit && composer && composer.contains(hit)),
@@ -91,6 +108,9 @@ const METRICS_SCRIPT = `
       height: window.visualViewport.height,
       offsetTop: window.visualViewport.offsetTop,
     } : null,
+    keyboardInset: window.visualViewport
+      ? Math.max(0, window.innerHeight - window.visualViewport.height - window.visualViewport.offsetTop)
+      : 0,
   };
 `;
 
@@ -108,6 +128,19 @@ async function waitMetrics(sessionId, predicate, timeoutMs) {
     m = await metrics(sessionId);
   }
   return m;
+}
+
+async function waitMetricsTrace(sessionId, predicate, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  const frames = [];
+  let m = await metrics(sessionId);
+  frames.push(m);
+  while (!predicate(m) && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 500));
+    m = await metrics(sessionId);
+    frames.push(m);
+  }
+  return { last: m, frames };
 }
 
 async function drag(sessionId, x, y1, y2) {
@@ -132,14 +165,21 @@ const composerFlushWithKeyboard = (m) =>
   && Math.abs(
     m.composer.bottom - (m.visualViewport.offsetTop + m.visualViewport.height)
   ) <= 4;
-const sameRootAndViewer = (a, b) =>
-  a.viewer != null && b.viewer != null
-  && Math.abs(a.viewer.top - b.viewer.top) <= 1
-  && Math.abs(a.viewer.bottom - b.viewer.bottom) <= 1
-  && b.scrollY === a.scrollY
+const sameRootScroll = (a, b) =>
+  b.scrollY === a.scrollY
   && b.pageYOffset === a.pageYOffset
   && b.documentElementScrollTop === a.documentElementScrollTop
   && b.bodyScrollTop === a.bodyScrollTop;
+const viewerMatchesKeyboardLifetime = (m) => {
+  const keyboardOpen = m.inputFocused || m.keyboardInset > 0;
+  return m.overlayMounted
+    && m.keyboardOpenState === keyboardOpen
+    && m.viewerVisible === !keyboardOpen;
+};
+const sheetCoversVisualViewport = (m) =>
+  m.sheet != null && m.visualViewport != null
+  && m.sheet.top <= m.visualViewport.offsetTop + 4
+  && m.sheet.bottom >= m.visualViewport.offsetTop + m.visualViewport.height - 4;
 
 async function main() {
   const created = await wd('POST', '/session', {
@@ -188,6 +228,7 @@ async function main() {
     const tapX = Math.round(idle.composer.x + idle.composer.width * 0.4);
     const webY = Math.round(idle.composer.y + idle.composer.height / 2);
     let focused = null;
+    const focusFrames = [];
     for (const topOffset of [59, 50, 70, 40, 80, 94, 100]) {
       await wd('POST', '/actions', {
         actions: [{
@@ -202,11 +243,13 @@ async function main() {
           ],
         }],
       }, sessionId);
-      focused = await waitMetrics(
+      const focusTrace = await waitMetricsTrace(
         sessionId,
         (m) => m.inputFocused && kbOpen(m) && composerFlushWithKeyboard(m),
         6000,
       );
+      focusFrames.push(...focusTrace.frames);
+      focused = focusTrace.last;
       if (focused.inputFocused) break;
     }
 
@@ -248,10 +291,28 @@ async function main() {
       script: 'if (document.activeElement && document.activeElement.blur) document.activeElement.blur();',
       args: [],
     }, sessionId);
-    const blurred = await waitMetrics(
+    const blurTrace = await waitMetricsTrace(
       sessionId,
-      (m) => !m.inputFocused && !kbOpen(m),
+      (m) => !m.inputFocused && !kbOpen(m) && m.keyboardInset === 0 && m.viewerVisible,
       12000,
+    );
+    const blurred = blurTrace.last;
+    const blurFrames = blurTrace.frames;
+
+    // 6) close — 댓글 시트를 닫아도 동일 story viewer와 root scroll 위치를 유지한다.
+    const close = await wd('POST', '/element', {
+      using: 'css selector',
+      value: '[data-venue-story-comment-overlay] [aria-label="댓글 닫기"]',
+    }, sessionId);
+    const closeId = close['element-6066-11e4-a52e-4f735466cecf'] || close.ELEMENT;
+    await wd('POST', '/execute/sync', {
+      script: 'arguments[0].click();',
+      args: [{ 'element-6066-11e4-a52e-4f735466cecf': closeId }],
+    }, sessionId);
+    const closed = await waitMetrics(
+      sessionId,
+      (m) => !m.overlayMounted && !m.hasComposer && m.viewerVisible,
+      6000,
     );
 
     const shot = await wd('GET', '/screenshot', null, sessionId);
@@ -264,37 +325,67 @@ async function main() {
       qaUrl: reportedQaUrl,
       pngPath,
       idle,
+      focusFrames,
       focused,
       typed,
       beforeDrag,
       afterDrag,
       submitted,
+      blurFrames,
       blurred,
+      closed,
     };
     console.log(JSON.stringify(result, null, 2));
 
+    const transitionFrames = [...focusFrames, ...blurFrames];
     const pass = idle.hasComposer
-      // body sibling stacking: overlay가 viewer보다 위이며 컴포저 중앙 hit target을 실제 소유
+      // idle: viewer/video visible + paused frame, body sibling overlay stacking
+      && idle.viewerVisible
+      && idle.videoPaused === true
       && idle.overlayOnBody
       && idle.overlayZIndex > idle.viewerZIndex
       && idle.composerHit
-      // focus: 키보드 frame(시각 뷰포트 축소) + 입력바가 키보드 위에 노출 + 실제 포커스
+      && viewerMatchesKeyboardLifetime(idle)
+      // focus: actual keyboard-open 수명에 viewer hidden + full sheet로 경기방 노출 차단
       && focused.inputFocused && kbOpen(focused) && composerFlushWithKeyboard(focused)
-      && sameRootAndViewer(idle, focused)
+      && !focused.viewerVisible
+      && focused.keyboardOpenState
+      && sheetCoversVisualViewport(focused)
+      && sameRootScroll(idle, focused)
       // type: 값 반영 + 키보드 유지
       && typed.inputValue === 'QA 키보드 확인' && kbOpen(typed) && composerFlushWithKeyboard(typed)
-      && sameRootAndViewer(idle, typed)
-      // native drag: 키보드·입력바 유지 + 뷰어 위치와 raw root scroll 불변 + 실제 lock style
+      && !typed.viewerVisible
+      && sheetCoversVisualViewport(typed)
+      && sameRootScroll(idle, typed)
+      // native drag: 키보드·입력바 유지 + raw root scroll 불변 + 실제 lock style
       && kbOpen(afterDrag) && composerFlushWithKeyboard(afterDrag)
-      && sameRootAndViewer(idle, afterDrag)
-      && sameRootAndViewer(beforeDrag, afterDrag)
+      && !afterDrag.viewerVisible
+      && sheetCoversVisualViewport(afterDrag)
+      && sameRootScroll(idle, afterDrag)
+      && sameRootScroll(beforeDrag, afterDrag)
       && afterDrag.bodyPosition === 'fixed'
       && afterDrag.htmlOverflow === 'hidden'
       // submit: 키보드 유지 중에도 입력바 가려지지 않음
       && kbOpen(submitted) && composerFlushWithKeyboard(submitted)
-      && sameRootAndViewer(idle, submitted)
-      // blur: 키보드 해제 + 인셋 복귀(입력바가 레이아웃 뷰포트 하단으로)
-      && !blurred.inputFocused && !kbOpen(blurred);
+      && !submitted.viewerVisible
+      && sameRootScroll(idle, submitted)
+      // focus→blur 연속 프레임 전부 actual keyboard-open 수명과 viewer hidden 상태 일치
+      && transitionFrames.length >= 3
+      && transitionFrames.every(viewerMatchesKeyboardLifetime)
+      && transitionFrames.every((m) => sameRootScroll(idle, m))
+      && transitionFrames
+        .filter((m) => m.inputFocused || m.keyboardInset > 0)
+        .every(sheetCoversVisualViewport)
+      // blur settled: inset=0 뒤에만 동일 story/정지 frame viewer 복원
+      && !blurred.inputFocused && !kbOpen(blurred) && blurred.keyboardInset === 0
+      && blurred.viewerVisible && blurred.videoPaused === true
+      && blurred.storyId === idle.storyId
+      && Math.abs((blurred.videoCurrentTime ?? 0) - (idle.videoCurrentTime ?? 0)) <= 0.05
+      && sameRootScroll(idle, blurred)
+      // close: overlay만 닫히고 동일 story viewer/root 위치 유지
+      && !closed.overlayMounted && closed.viewerVisible
+      && closed.storyId === idle.storyId
+      && sameRootScroll(idle, closed);
 
     await wd('POST', '/execute/sync', {
       script: 'browserstack_executor: ' + JSON.stringify({
