@@ -1,6 +1,13 @@
 import { ImageResponse } from "next/og";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { fetchPollCore } from "@/lib/community/poll";
+import { getTeamBySlug } from "@/lib/constants/teams";
+import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
+
+// current SSOT(팀명/선수명) 해석용 — refId 로 현재 이름을 우선, 실패 시 snapshot fallback.
+const OG_ROSTER_NAME_BY_KBOID = new Map(
+  (PLAYERS_ROSTER as { kboId: string; name: string }[]).map((p) => [String(p.kboId), p.name]),
+);
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,6 +31,14 @@ function clamp(text: string, max: number): string {
 }
 
 function optionLabel(o: { label: string | null; refId: string | null; kind: string }): string {
+  // current SSOT 먼저(팀명/선수명 변경 즉시 반영), 실패 시 snapshot label → refId fallback.
+  if (o.kind === "team" && o.refId) {
+    const team = getTeamBySlug(o.refId);
+    if (team) return team.name;
+  } else if (o.kind === "player" && o.refId) {
+    const name = OG_ROSTER_NAME_BY_KBOID.get(o.refId);
+    if (name) return name;
+  }
   return o.label || o.refId || (o.kind === "etc" ? "선택지" : o.kind);
 }
 

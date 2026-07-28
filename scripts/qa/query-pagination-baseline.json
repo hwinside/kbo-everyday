@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "generatedFrom": "9daa2787b945580e3ded74506264f67708d87cd4",
+  "generatedFrom": "5398002968ac05d03e04b65a703dc7f79f61f2aa",
   "violations": {
     "0034fe9a6a6cff327c64": {
       "count": 1,
@@ -1191,13 +1191,6 @@
       "file": "src/app/api/admin/live-activity/route.ts",
       "subject": "live_activity_channels",
       "detail": "add a bound, unique-key lookup, or query-guard annotation"
-    },
-    "d36a0acd527250b65b8e": {
-      "count": 1,
-      "kind": "ambiguous_growing_limit",
-      "file": "src/lib/supabase/useUnifiedFeed.ts",
-      "subject": "posts",
-      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
     },
     "dbfc8ce19adc4627ca1f": {
       "count": 1,
