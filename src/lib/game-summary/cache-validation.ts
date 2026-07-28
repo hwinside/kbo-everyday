@@ -64,11 +64,19 @@ export function canonicalGate(
 ): { reason: CanonicalGateReason; httpStatus: number; fingerprint?: SummaryFingerprint } {
   if (!canonical) return { reason: "canonical-unavailable", httpStatus: 503 };
   if (canonical.status !== "final") return { reason: "not-final", httpStatus: 409 };
+  // 종료 판정의 authoritative 신호는 경기목록 canonical.status(GAME_STATE_SC=3)이다.
+  // 스코어보드(linescore)는 이닝/R 교차검증 용도로만 쓴다.
+  // 2026-07-28 사고: KBO GetScoreBoard가 END_TM(경기종료시각)을 더 이상 내려주지 않아
+  // parseGameLinescoreResponse의 status가 종료 경기인데도 계속 "live"로 파싱됨
+  // → 기존 `linescore.status !== "final"` 게이트가 모든 종료 경기 요약을 canonical-not-settled로 거부.
+  // #888 stale-live 방지는 canonical.status===final(라이브 중엔 게이트) + 아래 스코어 exact 교차검증으로
+  // 그대로 유지된다(라이브 4-4 스냅샷은 최종 게임목록 스코어와 불일치해 걸러짐).
+  // 취소 경기는 스코어보드가 authoritative(더블헤더 취소 등)라 계속 게이트한다.
   if (
     canonical.awayScore == null ||
     canonical.homeScore == null ||
     !linescore ||
-    linescore.status !== "final" ||
+    linescore.status === "cancelled" ||
     canonical.awayScore !== linescore.away.R ||
     canonical.homeScore !== linescore.home.R
   ) {
