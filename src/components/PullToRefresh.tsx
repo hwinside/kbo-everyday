@@ -128,10 +128,16 @@ export default function PullToRefresh({ onRefresh, children, className }: PullTo
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
     >
-      {/* Pull indicator */}
+      {/* Pull indicator — 스티키 헤더(z-30) 위에 뜨는 고정 오버레이.
+          #917에서 홈 헤더가 sticky top-0 z-30(불투명 bg·노치 safe-area 음수 마진)으로 바뀌면서
+          in-flow 인디케이터를 덮어 스피너가 안 보이던 회귀 수정. 페이지 스크롤(window)과 무관하게
+          당김 중에만 상단 고정 오버레이로 노출한다. */}
       <div
-        className="flex items-center justify-center overflow-hidden transition-[height] duration-150 ease-out"
-        style={{ height: pullDistance > 5 ? pullDistance : 0 }}
+        className="pointer-events-none fixed left-0 right-0 z-[60] flex items-center justify-center overflow-hidden bg-bg-primary transition-[height] duration-150 ease-out"
+        style={{
+          top: "env(safe-area-inset-top, 0px)",
+          height: pullDistance > 5 ? pullDistance : 0,
+        }}
       >
         <div className="flex items-center gap-2">
           {isRefreshing ? (
