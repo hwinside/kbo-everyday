@@ -388,7 +388,7 @@ export default function VenueStorySection({ gameId }: Props) {
             >
               <div className="relative w-[68px] h-[68px]">
                 <div
-                  className={`w-full h-full rounded-full overflow-hidden bg-bg-tertiary ring-2 ${
+                  className={`relative w-full h-full rounded-full overflow-hidden bg-bg-tertiary ring-2 ${
                     seenIds.has(String(s.id)) ? "ring-gray-500/50" : "ring-red-500/60"
                   }`}
                 >
