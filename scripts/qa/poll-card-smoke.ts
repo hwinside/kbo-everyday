@@ -33,6 +33,7 @@ import PollCardBody, {
 } from "../../src/components/community/PollCardBody";
 import PollCardSlot from "../../src/components/community/PollCardSlot";
 import { buildTeamFeedOrParts, applyBoardFilter } from "../../src/lib/supabase/useUnifiedFeed";
+import { canEditOwnPost } from "../../src/lib/community/post-permissions";
 
 const SRC_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../src");
 function readSrc(rel: string): string {
@@ -446,10 +447,32 @@ async function badgeEffectSection() {
   }
 }
 
+// ---------- 6) 메뉴 owner/other 실행형 회귀 (삼순 3차 NO-GO P1-2) ----------
+// PostDetail 게시글 "수정" 메뉴는 작성자 본인만 노출된다. 순수 판정 canEditOwnPost 을
+// 직접 실행해 owner/other/비로그인 동작을 고정하고, PostDetail 이 실제로 이 판정으로
+// 수정 버튼을 게이트하는지 source 배선을 같이 잡는다(배선 끊김 방지).
+function menuGateSection() {
+  const author = "11111111-1111-1111-1111-111111111111";
+  const other = "22222222-2222-2222-2222-222222222222";
+  ok("canEditOwnPost owner → true", canEditOwnPost(author, author) === true);
+  ok("canEditOwnPost other → false", canEditOwnPost(author, other) === false);
+  ok("canEditOwnPost 비로그인 → false", canEditOwnPost(author, undefined) === false);
+  ok("canEditOwnPost author 불명 → false", canEditOwnPost(null, author) === false);
+
+  const src = readSrc("components/community/PostDetail.tsx");
+  ok("PostDetail canEditOwnPost import", /import\s*\{\s*canEditOwnPost\s*\}\s*from\s*"@\/lib\/community\/post-permissions"/.test(src));
+  ok("PostDetail isPostMine = canEditOwnPost 배선", /isPostMine\s*=\s*canEditOwnPost\(/.test(src));
+  // 수정 버튼이 isPostMine 게이트 안에서만 렌더된다.
+  ok("PostDetail 수정 버튼이 isPostMine 게이트", /\{isPostMine\s*&&[\s\S]{0,160}startPostEdit/.test(src));
+  // 투표글 편집은 editPollPost(PATCH) 경로 사용(타인 403은 서버 route 강제).
+  ok("PostDetail 투표글 편집 editPollPost(PATCH) 경로", /editPollPost\(/.test(src));
+}
+
 // fetch mock 섹션은 비동기 → top-level await 대신 async IIFE(스크립트 런너 cjs 호환).
 void (async () => {
   await fetchMockSection();
   await badgeEffectSection();
+  menuGateSection();
   console.log(`\npoll card smoke: ${pass} PASS${fail ? `, ${fail} FAIL` : ""}`);
   if (fail) process.exit(1);
 })();

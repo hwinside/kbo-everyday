@@ -8,6 +8,7 @@ import TeamBadge from "@/components/ui/TeamBadge";
 import { getAvatarPath } from "@/lib/constants/avatars";
 import { usePostDetail, createComment, toggleLike, toggleCommentLike, updatePost, deletePost, updateComment, deleteComment, uploadCommentImage } from "@/lib/supabase/usePosts";
 import { editPollPost } from "@/lib/community/poll-client";
+import { canEditOwnPost } from "@/lib/community/post-permissions";
 import ReportSheet from "@/components/community/ReportSheet";
 import LinkPreview from "@/components/community/LinkPreview";
 import { isShortText, BrandedTextCard, getPostScopeLabel } from "@/components/community/FeedTextCards";
@@ -144,7 +145,7 @@ export default function PostDetail({ postId }: PostDetailProps) {
   if (loading) return <div className="flex items-center justify-center h-screen text-text-secondary">로딩 중...</div>;
   if (!post) return <div className="flex items-center justify-center h-screen text-text-secondary">게시글을 찾을 수 없습니다</div>;
 
-  const isPostMine = !!user && post.author_id === user.id;
+  const isPostMine = canEditOwnPost(post.author_id, user?.id);
   const canModerateComments = profile?.is_operator === true;
   const canDeleteAnyPost = profile?.is_operator === true;
 

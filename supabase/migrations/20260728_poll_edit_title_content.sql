@@ -28,7 +28,6 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
 AS $$
-DECLARE v_first timestamptz;
 BEGIN
   IF TG_OP = 'INSERT' THEN
     IF NEW.board_type = 'poll'
@@ -50,55 +49,81 @@ BEGIN
   END IF;
 
   -- poll 글은 poll_polls 행 존재로 판정(board_type 무관 → 2-step 우회 차단).
-  SELECT first_vote_at INTO v_first FROM poll_polls WHERE post_id = OLD.id;
+  PERFORM 1 FROM poll_polls WHERE post_id = OLD.id;
   IF NOT FOUND THEN
     RETURN NEW; -- poll_polls 행 없음 → 비-poll 글 → 통과
   END IF;
 
   -- 여기부터는 poll 글의 UPDATE(poll_polls 행 존재). 첫 투표 여부와 무관하게
-  -- "질문·설명만 수정" 계약을 전 생애주기에 강제한다(삼순 지적: pre-vote 비텍스트 개방 차단).
+  -- "질문(title)·설명(content)만 작성자 수정" 계약을 전 생애주기에 강제한다.
+  --
+  -- 삼순 3차 NO-GO(P1) 반영 — denylist/부분 allowlist 폐기, GUC 게이트 strict allowlist:
+  --   기존 구현은 운영필드(report_count/is_hidden/조회·좋아요·댓글 카운터/updated_at)를
+  --   allowlist 비교에서 무조건 제외했다. 그 결과 authenticated 작성자가 직접 SDK UPDATE 로
+  --   이 필드들을 위조할 수 있었다(독립 PG17 `UPDATE 1`). 이제는 title/content/updated_at 을
+  --   제외한 "모든" 컬럼(운영필드 포함)을 불변화한다.
+  --   운영필드를 갱신하는 정당한 서버 경로(update_like_count / update_comment_count /
+  --   auto_blind_on_report / increment_post_view)는 전부 SECURITY DEFINER 함수이며, 이
+  --   마이그레이션이 각 함수에 `ALTER FUNCTION ... SET kbo.posts_op='1'` 을 부여한다
+  --   (함수 실행 스코프에서만 GUC='1', 종료 시 자동 해제 → drift 0, 트랜잭션 누수 0).
+  --   → 그 경로는 아래 잠금을 건너뛰고, GUC 미설정인 작성자 직접 UPDATE 만 잠금 대상.
+  IF current_setting('kbo.posts_op', true) IS DISTINCT FROM '1' THEN
+    -- (a) title/content 유효성(서버 route 우회 방어) — 생성 계약(create_poll)과 동일.
+    IF NEW.title IS NULL OR btrim(NEW.title) = '' THEN
+      RAISE EXCEPTION 'poll question(title) is required'
+        USING ERRCODE = 'check_violation';
+    END IF;
+    IF char_length(NEW.title) > 200 THEN
+      RAISE EXCEPTION 'poll question(title) exceeds 200 chars'
+        USING ERRCODE = 'check_violation';
+    END IF;
+    IF NEW.content IS NOT NULL AND char_length(NEW.content) > 2000 THEN
+      RAISE EXCEPTION 'poll content exceeds 2000 chars'
+        USING ERRCODE = 'check_violation';
+    END IF;
 
-  -- (a) poll 글의 title/content 유효성을 DB 에서 강제(서버 route 우회 방어).
-  --     생성 계약(create_poll)과 동일하게 질문 필수 + 길이 상한.
-  IF NEW.title IS NULL OR btrim(NEW.title) = '' THEN
-    RAISE EXCEPTION 'poll question(title) is required'
-      USING ERRCODE = 'check_violation';
-  END IF;
-  IF char_length(NEW.title) > 200 THEN
-    RAISE EXCEPTION 'poll question(title) exceeds 200 chars'
-      USING ERRCODE = 'check_violation';
-  END IF;
-  IF NEW.content IS NOT NULL AND char_length(NEW.content) > 2000 THEN
-    RAISE EXCEPTION 'poll content exceeds 2000 chars'
-      USING ERRCODE = 'check_violation';
+    -- (b) strict allowlist: title/content/updated_at 외 어떤 컬럼도 바뀌면 거부.
+    --     운영/모더레이션 카운터(report_count/is_hidden/조회·좋아요·댓글)·미디어·태그·
+    --     선지참조·board·game_id·hashtags·author_team_id_snapshot·created_at·author_id 전부 불변.
+    --     schema-agnostic: 향후 신규 컬럼도 명시 없이 자동 잠김.
+    IF (to_jsonb(NEW) - 'title' - 'content' - 'updated_at')
+       IS DISTINCT FROM
+       (to_jsonb(OLD) - 'title' - 'content' - 'updated_at') THEN
+      RAISE EXCEPTION 'poll post is locked: only title/content editable (moderation/counters/options/tags/media/board immutable)'
+        USING ERRCODE = 'check_violation';
+    END IF;
+
+    -- (c) updated_at 은 실제 질문/설명 편집과 함께일 때만 변경 허용(순수 updated_at 위조 차단).
+    IF NEW.updated_at IS DISTINCT FROM OLD.updated_at
+       AND NEW.title IS NOT DISTINCT FROM OLD.title
+       AND NEW.content IS NOT DISTINCT FROM OLD.content THEN
+      RAISE EXCEPTION 'poll post: updated_at cannot change without a title/content edit'
+        USING ERRCODE = 'check_violation';
+    END IF;
   END IF;
 
-  -- (b) 첫 투표 후 잠금 — **allowlist** 방식(삼순 NO-GO 반영, denylist → allowlist).
-  --     작성자가 직접 UPDATE 로 바꿀 수 있는 필드는 title/content 만 허용하고,
-  --     그 외 모든 컬럼(현재 스키마 + 향후 추가될 game_id/hashtags/author_team_id_snapshot/
-  --     created_at 등 전부)은 불변이어야 한다. 단, 서버(service_role/SECURITY DEFINER)가
-  --     수행하는 운영 갱신(신고 카운터·자동 블라인드·조회/좋아요/댓글 카운터·updated_at)은
-  --     허용해야 하므로 이 키들만 allowlist 에서 제외하고 나머지 jsonb 전체를 비교한다.
-  --     → schema-agnostic: 새 컬럼이 추가돼도 allowlist 에 명시하지 않는 한 자동으로 잠긴다.
-  --     첫 투표 전·후 모두 적용(poll 글은 create_poll RPC 만 선지·태그·미디어를 쓰므로
-  --     작성자 직접 UPDATE 로는 title/content 외 어떠한 필드도 바뀜 수 없다).
-  --     board_type/board_id 이동(2-step 우회)은 위 GUC 가드 + allowlist 이중으로 차단.
-  -- 작성자 편집 허용(title/content) + 서버 운영 갱신(카운터·블라인드·updated_at) 키를
-  -- 양쪽 jsonb 에서 제거한 뒤 나머지가 완전 동일해야 통과. 하나라도 다르면 거부.
-  IF (to_jsonb(NEW)
-        - 'title' - 'content' - 'updated_at'
-        - 'report_count' - 'is_hidden'
-        - 'click_view_count' - 'impression_view_count'
-        - 'like_count' - 'comment_count')
-     IS DISTINCT FROM
-     (to_jsonb(OLD)
-        - 'title' - 'content' - 'updated_at'
-        - 'report_count' - 'is_hidden'
-        - 'click_view_count' - 'impression_view_count'
-        - 'like_count' - 'comment_count') THEN
-    RAISE EXCEPTION 'poll post is locked: only title/content editable (options/tags/media/board immutable)'
-      USING ERRCODE = 'check_violation';
-  END IF;
   RETURN NEW;
 END;
 $$;
+
+-- ── 운영/모더레이션 SECURITY DEFINER writer 에 실행 스코프 GUC 부여 ──────────────
+-- poll 글에도 정당한 운영 갱신(좋아요/댓글/조회 카운터, 신고→자동 블라인드)이 발생하므로,
+-- 각 writer 실행 중에만 kbo.posts_op='1' 을 세워 위 strict 잠금을 건너뛰게 한다.
+-- ALTER FUNCTION ... SET 은 함수 진입 시 GUC 를 설정하고 종료 시 되돌리므로 body 재작성
+-- (drift) 없이, 그리고 set_config(is_local) 와 달리 트랜잭션 잔여 없이 정확히 함수 스코프로만
+-- 적용된다. 함수가 존재할 때만 ALTER(idempotent, 부분 환경/하네스 안전).
+DO $$
+BEGIN
+  IF to_regprocedure('public.update_like_count()') IS NOT NULL THEN
+    EXECUTE 'ALTER FUNCTION public.update_like_count() SET kbo.posts_op = ''1''';
+  END IF;
+  IF to_regprocedure('public.update_comment_count()') IS NOT NULL THEN
+    EXECUTE 'ALTER FUNCTION public.update_comment_count() SET kbo.posts_op = ''1''';
+  END IF;
+  IF to_regprocedure('public.auto_blind_on_report()') IS NOT NULL THEN
+    EXECUTE 'ALTER FUNCTION public.auto_blind_on_report() SET kbo.posts_op = ''1''';
+  END IF;
+  IF to_regprocedure('public.increment_post_view(bigint, text)') IS NOT NULL THEN
+    EXECUTE 'ALTER FUNCTION public.increment_post_view(bigint, text) SET kbo.posts_op = ''1''';
+  END IF;
+END $$;

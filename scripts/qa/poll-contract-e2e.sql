@@ -346,6 +346,69 @@ BEGIN
   RAISE NOTICE 'PASS N4 poll title required + title<=200 + content<=2000 enforced in DB';
 END $$;
 
+-- ---------- N6 삼순 3차 NO-GO P1-1: 운영/모더레이션 필드 직접 위조 차단 ----------
+-- 기존 allowlist 는 운영필드(report_count/is_hidden/조회·좋아요·댓글/updated_at)를 비교에서
+-- 무조건 제외해 작성자가 직접 UPDATE 로 위조 가능했다(독립 PG17 UPDATE 1). 이제 GUC 미설정
+-- (작성자 직접 경로)에서는 title/content/updated_at 외 전부 불변 → 전부 check_violation.
+DO $$
+DECLARE v_pid bigint; v_rc int; v_hidden boolean;
+BEGIN
+  v_pid := current_setting('poll.pid')::bigint; -- voted poll
+  SELECT report_count, is_hidden INTO v_rc, v_hidden FROM posts WHERE id=v_pid;
+
+  BEGIN UPDATE posts SET report_count = report_count + 999 WHERE id=v_pid;
+    RAISE EXCEPTION 'FAIL N6: report_count forge accepted';
+    EXCEPTION WHEN check_violation THEN NULL; END;
+  BEGIN UPDATE posts SET is_hidden = true WHERE id=v_pid;
+    RAISE EXCEPTION 'FAIL N6: is_hidden forge accepted';
+    EXCEPTION WHEN check_violation THEN NULL; END;
+  BEGIN UPDATE posts SET like_count = 999 WHERE id=v_pid;
+    RAISE EXCEPTION 'FAIL N6: like_count forge accepted';
+    EXCEPTION WHEN check_violation THEN NULL; END;
+  BEGIN UPDATE posts SET comment_count = 999 WHERE id=v_pid;
+    RAISE EXCEPTION 'FAIL N6: comment_count forge accepted';
+    EXCEPTION WHEN check_violation THEN NULL; END;
+  BEGIN UPDATE posts SET click_view_count = 999, impression_view_count = 999 WHERE id=v_pid;
+    RAISE EXCEPTION 'FAIL N6: view_count forge accepted';
+    EXCEPTION WHEN check_violation THEN NULL; END;
+  -- 순수 updated_at 위조(질문/설명 편집 없이)도 거부.
+  BEGIN UPDATE posts SET updated_at = now() - interval '10 years' WHERE id=v_pid;
+    RAISE EXCEPTION 'FAIL N6: bare updated_at forge accepted';
+    EXCEPTION WHEN check_violation THEN NULL; END;
+  -- 결합 위조(title 편집에 운영필드 끼워넣기)도 거부.
+  BEGIN UPDATE posts SET title='ok-q', report_count=report_count+5 WHERE id=v_pid;
+    RAISE EXCEPTION 'FAIL N6: title+report_count combined forge accepted';
+    EXCEPTION WHEN check_violation THEN NULL; END;
+
+  IF (SELECT report_count FROM posts WHERE id=v_pid) <> v_rc
+     OR (SELECT is_hidden FROM posts WHERE id=v_pid) <> v_hidden
+     OR (SELECT like_count FROM posts WHERE id=v_pid) <> 0
+     OR (SELECT comment_count FROM posts WHERE id=v_pid) <> 0
+     OR (SELECT click_view_count FROM posts WHERE id=v_pid) <> 0 THEN
+    RAISE EXCEPTION 'FAIL N6: operational field mutated despite reject'; END IF;
+
+  -- 정당한 편집(질문·설명 + updated_at 동반)은 통과.
+  UPDATE posts SET title='q-legit-edit', content='c-legit-edit', updated_at=now() WHERE id=v_pid;
+  IF (SELECT title FROM posts WHERE id=v_pid) <> 'q-legit-edit' THEN
+    RAISE EXCEPTION 'FAIL N6: legit title+updated_at edit did not persist'; END IF;
+  RAISE NOTICE 'PASS N6 operational/moderation fields (report/is_hidden/counters/updated_at) not forgeable by author; legit title/content edit persists';
+END $$;
+
+-- ---------- N6b 정당한 운영 경로(신고→auto_blind, SECURITY DEFINER + ALTER SET GUC)는 유지 ----------
+-- auto_blind_on_report 가 poll 글의 report_count 를 갱신할 때 strict 잠금에 막히지 않아야 한다.
+DO $$
+DECLARE v_pid bigint; v_before int; v_after int;
+BEGIN
+  v_pid := current_setting('poll.pid')::bigint;
+  SELECT report_count INTO v_before FROM posts WHERE id=v_pid;
+  INSERT INTO reports(target_type, target_id, reporter_id)
+    VALUES ('post', v_pid, '99999999-9999-9999-9999-999999999999');
+  SELECT report_count INTO v_after FROM posts WHERE id=v_pid;
+  IF v_after <> v_before + 1 THEN
+    RAISE EXCEPTION 'FAIL N6b: legit report path blocked by lock (report_count % -> %)', v_before, v_after; END IF;
+  RAISE NOTICE 'PASS N6b legit report->auto_blind path updates poll report_count (SECURITY DEFINER GUC bypass works)';
+END $$;
+
 -- ---------- ⑧ cascade 재집계 (계정/글 삭제) ----------
 DO $$
 DECLARE v_pid bigint; o1 bigint; o2 bigint; bv int; av int; ao2 int;
@@ -461,11 +524,15 @@ BEGIN
   IF v_rc <> 3 OR v_hidden IS NOT TRUE THEN
     RAISE EXCEPTION 'FAIL 운영: poll report path blocked (report_count=% is_hidden=%)', v_rc, v_hidden; END IF;
 
-  -- (3) 조회/좋아요/댓글 카운터 UPDATE 성공해야 함(board_type/board_id 미변경)
+  -- (3) 조회/좋아요/댓글 카운터 — 실제로는 SECURITY DEFINER writer(update_like_count/
+  --     update_comment_count/increment_post_view, ALTER FUNCTION SET kbo.posts_op='1')가
+  --     갱신하므로 그 실행 스코프를 재현한다(GUC='1' 시 strict 잠금 우회 → 카운터 갱신 허용).
+  PERFORM set_config('kbo.posts_op', '1', true);
   UPDATE posts SET click_view_count = click_view_count + 1 WHERE id=v_new_pid;
   UPDATE posts SET impression_view_count = impression_view_count + 1 WHERE id=v_new_pid;
   UPDATE posts SET like_count = like_count + 1 WHERE id=v_new_pid;
   UPDATE posts SET comment_count = comment_count + 1 WHERE id=v_new_pid;
+  PERFORM set_config('kbo.posts_op', '', true); -- 스코프 종료 → 이후 잠금 다시 활성
   SELECT click_view_count, impression_view_count, like_count, comment_count
     INTO v_cvc, v_ivc, v_lc, v_cc FROM posts WHERE id=v_new_pid;
   IF v_cvc<>1 OR v_ivc<>1 OR v_lc<>1 OR v_cc<>1 THEN
@@ -478,8 +545,10 @@ BEGIN
   IF (SELECT title FROM posts WHERE id=v_pid) <> 'post-vote-edited'
      OR (SELECT content FROM posts WHERE id=v_pid) <> 'post-vote-desc' THEN
     RAISE EXCEPTION 'FAIL 운영: post-vote title/content edit did not persist'; END IF;
-  -- 투표 후에도 운영 카운터/신고는 허용(잠금 목록 밖)
+  -- 투표 후에도 운영 카운터/신고는 허용(SECURITY DEFINER writer 스코프 GUC 재현 / 신고는 auto_blind)
+  PERFORM set_config('kbo.posts_op', '1', true);
   UPDATE posts SET like_count = like_count + 1 WHERE id=v_pid;
+  PERFORM set_config('kbo.posts_op', '', true);
   INSERT INTO reports(target_type,target_id,reporter_id)
     VALUES ('post',v_pid,'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
   IF (SELECT report_count FROM posts WHERE id=v_pid) < 1 THEN
