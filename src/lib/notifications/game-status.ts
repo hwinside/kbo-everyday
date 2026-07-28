@@ -411,19 +411,17 @@ export async function notifyGameStatusTransitions(
       const lastSeenMs = seenRow?.last_seen_scheduled_at
         ? Date.parse(seenRow.last_seen_scheduled_at)
         : null;
-      const plateAppearance = opts?.startPlateAppearanceByGame?.get(gameId)
-        ?? (opts?.startPlateAppearanceByGame === undefined && opts?.startDeps
-          ? { completedPlateAppearances: 0, currentBatterIsLeadoff: true }
-          : null);
-      // game-events/KBO/DB 근거 fetch timeout은 "첫 타석 종료"가 아니다. cutoff 안에서는
-      // 상태를 열거나 mark-only로 닫지 않고 다음 tick에 이 경기만 재시도한다.
-      if (!seenRow?.start_snapshot_at && plateAppearance === null) return null;
+      // (2026-07-28 삼순 조건부 GO) 타석 근거는 발송 전제가 아니라 뒷북 차단 보조. 지연되는
+      // currentBatter/BoxScore를 기다리지 않고 scheduled→live + 1회초 0:0에서 즉시 snapshot한다.
+      const plateAppearance = opts?.startPlateAppearanceByGame?.get(gameId) ?? null;
       const sendOk = Boolean(seenRow?.start_snapshot_at) || shouldSendStartNotification({
         lastSeenScheduledAtMs: Number.isFinite(lastSeenMs as number) ? lastSeenMs : null,
         scheduledStartAtMs: scheduledStartMs(game.G_DT, game.G_TM),
         nowMs: observedAtMs,
         inningNo: game.GAME_INN_NO,
         isTop: game.GAME_TB_SC ? game.GAME_TB_SC === "T" : null,
+        awayScore: parseInt(game.T_SCORE_CN ?? "0") || 0,
+        homeScore: parseInt(game.B_SCORE_CN ?? "0") || 0,
         plateAppearance,
       });
       if (!sendOk) {
@@ -611,8 +609,9 @@ export async function notifyGameStatusTransitions(
         nowMs: observedAtMs,
         inningNo: g.GAME_INN_NO,
         isTop: g.GAME_TB_SC ? g.GAME_TB_SC === "T" : null,
-        plateAppearance: opts?.startPlateAppearanceByGame?.get(gameId)
-          ?? (opts?.startDeps ? { completedPlateAppearances: 0, currentBatterIsLeadoff: true } : null),
+        awayScore: parseInt(g.T_SCORE_CN ?? "0") || 0,
+        homeScore: parseInt(g.B_SCORE_CN ?? "0") || 0,
+        plateAppearance: opts?.startPlateAppearanceByGame?.get(gameId) ?? null,
       });
       if (!sendOk) {
         await markStart(gameId);
