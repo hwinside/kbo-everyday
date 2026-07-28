@@ -10,6 +10,7 @@ import {
   type KboGame,
   type GameLinescore,
 } from "@/lib/crawler/kbo-api";
+import { fetchNaverLinescore, hasInningBreakdown } from "@/lib/crawler/naver-record";
 import { STANDINGS_ACCURACY_RULES, STANDINGS_UNAVAILABLE_RULES } from "@/lib/ai/standings-guard";
 import { computeSeriesSnapshot, serializeSeriesSnapshot } from "@/lib/series/snapshot";
 import { loserClaimedWin } from "@/lib/game-summary/winner-check";
@@ -108,12 +109,23 @@ async function fetchCanonicalSummarySource(gameId: string, includeBoxScore: bool
   }
 
   try {
-    const [games, linescore, boxScore] = await Promise.all([
+    const [games, kboLinescore, boxScore] = await Promise.all([
       fetchGames(meta.dateStr),
       fetchGameLinescore(gameId),
       includeBoxScore ? fetchBoxScore(gameId, meta.dateStr.slice(0, 4)) : Promise.resolve(null),
     ]);
     const game = games.find((candidate) => candidate.gameId === gameId);
+    // KBO GetScoreBoard가 '-' 이닝을 주면 linescore=null/이닝 부재 → canonicalGate가
+    // canonical-not-settled(409)로 종료 경기 요약을 거부한다(2026-07-28 사고). 경기목록
+    // canonical.status가 final인데 이닝표만 없을 때, game-detail과 동일한 Naver record
+    // scoreBoard로 이닝표를 fallback한다(스코어 R 교차검증은 canonicalGate가 그대로 수행).
+    let linescore = kboLinescore;
+    if (game?.status === "final" && !hasInningBreakdown(linescore)) {
+      const naver = await fetchNaverLinescore(gameId);
+      if (naver) {
+        linescore = { status: "final", away: naver.away, home: naver.home };
+      }
+    }
     const gate = canonicalGate(game, linescore);
     if (gate.reason !== "ok" || !gate.fingerprint) {
       return {

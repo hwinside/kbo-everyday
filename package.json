@@ -25,6 +25,7 @@
     "qa:admin-telemetry-retention": "tsx scripts/qa/admin-telemetry-retention-smoke.ts",
     "qa:admin-telemetry-retention:db": "tsx scripts/qa/admin-telemetry-retention-db-integration.ts",
     "qa:game-summary-singleflight:db": "tsx scripts/qa/game-summary-single-flight-db-integration.ts",
+    "qa:summary-naver-linescore": "tsx scripts/qa/summary-naver-linescore-smoke.ts",
     "qa:admin-telemetry-retention:guard": "tsx scripts/qa/admin-telemetry-retention-coverage-guard-smoke.ts",
     "qa:retention-rolling": "tsx scripts/qa/retention-rolling-smoke.ts",
     "qa:leaderboard-cache": "tsx scripts/qa/leaderboard-cache-smoke.ts",
