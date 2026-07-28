@@ -20,7 +20,7 @@ import PostViewBadge from "@/components/community/PostViewBadge";
 import { usePostImpression } from "@/lib/community/usePostImpression";
 import CommentSheet from "./CommentSheet";
 import { isShortText, BrandedTextCard } from "./FeedTextCards";
-import PollCardBody from "./PollCardBody";
+import PollCardSlot from "./PollCardSlot";
 import { fetchPollSummaries, type PollSummary } from "@/lib/community/poll-client";
 
 function findPlayerByName(name: string): { kboId: string; teamId: number } | null {
@@ -920,6 +920,8 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
 
   // poll 글의 목록 카드용 요약(배지·참여수·선지 미리보기) 배치 조회. poll 이 없으면 no-op.
   const [pollSummaries, setPollSummaries] = useState<Record<number, PollSummary>>({});
+  const [pollResolved, setPollResolved] = useState<Set<number>>(new Set()); // 응답 받은 poll id(없으면 terminal)
+  const [pollRetry, setPollRetry] = useState(0);
   const pollIdsKey = posts.filter((p) => p.board_type === "poll").map((p) => p.id).join(",");
   useEffect(() => {
     const ids = pollIdsKey ? pollIdsKey.split(",").map(Number) : [];
@@ -927,13 +929,25 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
     let alive = true;
     fetchPollSummaries(ids)
       .then((s) => {
-        if (alive) setPollSummaries((prev) => ({ ...prev, ...s })); // 부분 결과도 누적 merge(실패 chunk 카드만 로딩)
+        if (!alive) return;
+        setPollSummaries((prev) => ({ ...prev, ...s })); // 부분 결과도 누적 merge(실패 chunk 카드만 terminal)
+        setPollResolved((prev) => new Set([...prev, ...ids])); // 응답 받은 id 는 resolved(요약 없으면 '불러오기 실패')
       })
       .catch(() => {}); // fetchPollSummaries 는 chunk별 격리로 reject 안 하지만 방어적 catch
     return () => {
       alive = false;
     };
-  }, [pollIdsKey]);
+  }, [pollIdsKey, pollRetry]);
+
+  // terminal 카드 재시도: 해당 id 를 로딩으로 되돌리고 배치 재조회 트리거.
+  const retryPoll = useCallback((postId: number) => {
+    setPollResolved((prev) => {
+      const n = new Set(prev);
+      n.delete(postId);
+      return n;
+    });
+    setPollRetry((n) => n + 1);
+  }, []);
 
   const handleDelete = useCallback(async (postId: number) => {
     setMenuOpenId(null);
@@ -1085,11 +1099,11 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
                   {post.title && (
                     <h3 className="text-base font-semibold text-text-primary line-clamp-2">{post.title}</h3>
                   )}
-                  {summary ? (
-                    <PollCardBody summary={summary} />
-                  ) : (
-                    <div className="mt-2 rounded-xl border border-border p-3 text-xs text-text-tertiary">투표 불러오는 중…</div>
-                  )}
+                  <PollCardSlot
+                    summary={summary}
+                    loaded={pollResolved.has(post.id)}
+                    onRetry={() => retryPoll(post.id)}
+                  />
                 </Link>
 
                 {/* Action bar (like/comment/share) */}

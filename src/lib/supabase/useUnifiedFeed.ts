@@ -7,6 +7,24 @@ import { useBlockedIds } from "./useBlock";
 import type { Post } from "./usePosts";
 import { kboIdsForTeamSlug } from "@/lib/utils/player-roster";
 
+/**
+ * 팀 피드 OR 조건 파트(순수 함수, 회귀 공유).
+ * ① `team_tags.cs.["lg"]` — **board_type 무관**. 투표글(board_type='poll')이 팀 태그되면 이 파트로 도달.
+ * ② 레거시 팀보드 글, ③ 레거시/움짤콜렉터 선수보드 글.
+ * ①에 board_type 제약을 걸면(예: `and(board_type.eq.team,team_tags...)`) tagged poll이 팀 피드에서
+ * 사라지므로, 회귀가 ①의 board_type 무관성을 고정한다.
+ */
+export function buildTeamFeedOrParts(slug: string, kboIds: string[]): string[] {
+  const orParts = [
+    `team_tags.cs.${JSON.stringify([slug])}`,
+    `and(board_type.eq.team,board_id.eq.${slug})`,
+  ];
+  if (kboIds.length) {
+    orParts.push(`and(board_type.eq.player,board_id.in.(${kboIds.map((id) => `"${id}"`).join(",")}))`);
+  }
+  return orParts;
+}
+
 /** 피드가 바라보는 보드 컨텍스트. 전체글/팀/선수가 같은 훅을 source만 바꿔 재사용. */
 export type FeedBoard =
   | { kind: "all" }
@@ -98,14 +116,7 @@ export function useUnifiedFeed(board: FeedBoard, pageSize = 20) {
       if (board.kind === "team") {
         const slug = board.teamId;
         const kboIds = kboIdsForTeamSlug(slug);
-        const orParts = [
-          `team_tags.cs.${JSON.stringify([slug])}`,
-          `and(board_type.eq.team,board_id.eq.${slug})`,
-        ];
-        if (kboIds.length) {
-          orParts.push(`and(board_type.eq.player,board_id.in.(${kboIds.map((id) => `"${id}"`).join(",")}))`);
-        }
-        query = query.or(orParts.join(","));
+        query = query.or(buildTeamFeedOrParts(slug, kboIds).join(","));
       } else if (board.kind === "player") query = query.eq("board_type", "player").eq("board_id", board.kboId);
       else query = query.in("board_type", ["team", "player", "free", "poll"]); // 전체글 피드에 투표글(board_type='poll') 포함(S3)
       if (cursor !== null) query = query.lt("id", cursor);

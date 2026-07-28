@@ -9,7 +9,7 @@ import LinkPreview from "@/components/community/LinkPreview";
 import type { Post } from "@/lib/types";
 import type { CommunitySourceLabel } from "@/lib/utils/community-board";
 import ShareSheet, { type ShareSheetPost } from "@/components/community/ShareSheet";
-import PollCardBody from "@/components/community/PollCardBody";
+import PollCardSlot from "@/components/community/PollCardSlot";
 import type { PollSummary } from "@/lib/community/poll-client";
 
 interface PostCardProps {
@@ -18,11 +18,15 @@ interface PostCardProps {
   /** 선수 게시판: "LG 김진성" 같은 통합 레이블 (팀 뱃지 대체) */
   playerLabel?: { teamId: number; playerName: string } | null;
   sourceLabel?: CommunitySourceLabel | null;
-  /** board_type='poll' 일 때 목록 카드용 요약(배치 조회). 없으면 로딩 표시. */
+  /** board_type='poll' 일 때 목록 카드용 요약(배치 조회). 없으면 로딩/terminal 표시. */
   pollSummary?: PollSummary | null;
+  /** 배치 요약 조회가 응답됐는지(응답했는데 summary 없으면 terminal). */
+  pollLoaded?: boolean;
+  /** terminal 카드 재시도. */
+  onPollRetry?: () => void;
 }
 
-export default function PostCard({ post, onPress, playerLabel, sourceLabel, pollSummary }: PostCardProps) {
+export default function PostCard({ post, onPress, playerLabel, sourceLabel, pollSummary, pollLoaded, onPollRetry }: PostCardProps) {
   const timeAgo = getTimeAgo(post.createdAt);
   const isPoll = post.boardType === "poll";
   const [shareOpen, setShareOpen] = useState(false);
@@ -102,11 +106,7 @@ export default function PostCard({ post, onPress, playerLabel, sourceLabel, poll
 
       {isPoll ? (
         /* poll 카드: 질문(Title) 아래에 배지·참여수·선지 미리보기. 설명·미디어 대신 렌더. */
-        pollSummary ? (
-          <PollCardBody summary={pollSummary} />
-        ) : (
-          <div className="mt-2 rounded-xl border border-border p-3 text-xs text-text-tertiary">투표 불러오는 중…</div>
-        )
+        <PollCardSlot summary={pollSummary} loaded={!!pollLoaded} onRetry={onPollRetry ?? (() => {})} />
       ) : (
         <>
           {/* Content preview — URLs stripped (OG cards handle links) */}

@@ -31,6 +31,8 @@ import PollCardBody, {
   isPollEffectiveClosed,
   pollBoundaryTimer,
 } from "../../src/components/community/PollCardBody";
+import PollCardSlot from "../../src/components/community/PollCardSlot";
+import { buildTeamFeedOrParts } from "../../src/lib/supabase/useUnifiedFeed";
 
 const SRC_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../src");
 function readSrc(rel: string): string {
@@ -203,11 +205,14 @@ async function fetchMockSection() {
     /pollSummary=\{post\.boardType === "poll"/.test(postList) && postList.includes("pollSummaries[post.id]"),
   );
 
+  ok("PostList: PostCard 에 pollLoaded/onPollRetry 전달", postList.includes("pollLoaded=") && postList.includes("onPollRetry="));
+
   const postCard = readSrc("components/community/PostCard.tsx");
-  ok("PostCard: <PollCardBody summary={pollSummary}> 렌더", postCard.includes("<PollCardBody summary={pollSummary}"));
+  ok("PostCard: <PollCardSlot summary loaded onRetry> 렌더", postCard.includes("<PollCardSlot summary={pollSummary}") && /loaded=\{!!pollLoaded\}/.test(postCard));
 
   const photoFeed = readSrc("components/community/PhotoFeed.tsx");
-  ok("PhotoFeed: board_type poll 분기 + 전용카드 렌더", photoFeed.includes('post.board_type === "poll"') && photoFeed.includes("<PollCardBody summary={summary}"));
+  ok("PhotoFeed: board_type poll 분기 + PollCardSlot 렌더", photoFeed.includes('post.board_type === "poll"') && photoFeed.includes("<PollCardSlot"));
+  ok("PhotoFeed: PollCardSlot 에 loaded/onRetry 배선", /loaded=\{pollResolved\.has\(post\.id\)\}/.test(photoFeed) && photoFeed.includes("onRetry={() => retryPoll"));
   ok("PhotoFeed: fetchPollSummaries(ids) 배치 조회", photoFeed.includes("fetchPollSummaries(ids)"));
 
   // — 자유게시판(free): usePosts('poll','poll') 병합 → PostList —
@@ -240,6 +245,42 @@ async function fetchMockSection() {
     "useUnifiedFeed: 전체글 board_type 집합에 poll 포함",
     /\.in\("board_type",\s*\[[^\]]*"poll"/.test(unified),
   );
+
+  // — 팀 피드 tagged poll 도달성(삼순 5차 P1): buildTeamFeedOrParts 순수 함수 —
+  // team_tags.cs 가 board_type 무관이어야 board_type='poll' 태그글이 팀 피드에 도달.
+  // 팀 query에 board_type=team 을 걸어 tagged poll 을 막으면 이 guard 가 즉시 실패.
+  const orParts = buildTeamFeedOrParts("lg", ["69100", "69200"]);
+  ok("team orParts: team_tags.cs 는 board_type 무관(tagged poll 도달)", orParts.includes('team_tags.cs.["lg"]'));
+  ok("team orParts: team_tags 가 and(board_type...)로 감싸이지 않음", !orParts.some((p) => /and\([^)]*board_type[^)]*team_tags/.test(p)));
+  ok("team orParts: 레거시 팀·선수 보드 커버", orParts.some((p) => p.includes("board_type.eq.team")) && orParts.some((p) => p.includes('board_id.in.("69100"')));
+}
+
+// ---------- 4b) PollCardSlot 3상태(삼순 5차 P1: terminal/재시도 UI) ----------
+// 이전엔 summary 없으면 무조건 '불러오는 중…'라 실패 카드가 영구 로딩에 갇혔다.
+// loaded(응답 받음) + 무summary 이면 terminal(다시 시도)로 분기되는지 렌더로 고정.
+{
+  const noop = () => {};
+  const withSummary = renderToStaticMarkup(
+    React.createElement(PollCardSlot, { summary: badgeSummary(false, 3600_000), loaded: true, onRetry: noop }),
+  );
+  ok("PollCardSlot: summary 있음 → 카드(배지) 렌더", withSummary.includes("진행중") && !withSummary.includes("불러오지 못했어요"));
+
+  const terminal = renderToStaticMarkup(
+    React.createElement(PollCardSlot, { summary: null, loaded: true, onRetry: noop }),
+  );
+  ok(
+    "PollCardSlot: loaded+무summary → terminal('불러오지 못했어요'+다시 시도, 영구 로딩 아님)",
+    terminal.includes("불러오지 못했어요") && terminal.includes("다시 시도") && !terminal.includes("불러오는 중"),
+  );
+
+  const loading = renderToStaticMarkup(
+    React.createElement(PollCardSlot, { summary: null, loaded: false, onRetry: noop }),
+  );
+  ok("PollCardSlot: 미loaded+무summary → 로딩", loading.includes("불러오는 중") && !loading.includes("불러오지 못했어요"));
+
+  // PollCardSlot 자체에 terminal 분기가 있어야 함(영구 로딩 회귀 방지).
+  const slotSrc = readSrc("components/community/PollCardSlot.tsx");
+  ok("PollCardSlot: loaded 시 terminal(다시 시도) 분기", /if \(loaded\)/.test(slotSrc) && slotSrc.includes("다시 시도"));
 }
 
 // ---------- 5) 렌더된 배지 ↔ isPollEffectiveClosed 연결 (react-dom/server) ----------
