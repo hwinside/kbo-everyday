@@ -28,7 +28,10 @@ interface StandingData {
 export default function TeamHubPage() {
   const params = useParams();
   const teamSlug = params.teamId as string;
-  const goBack = useSafeBack("/teams");
+  // 팀 허브 direct-entry 뒤로가기 fallback은 홈("/")으로.
+  // /teams로 보내면 로그인+team_id 사용자의 useEffect가 /teams/{myTeam}로 replace해
+  // 같은 팀 허브로 되돌아오는 loop가 생기므로 홈으로 고정한다.
+  const goBack = useSafeBack("/");
   const team = getTeamBySlug(teamSlug);
   const [standings, setStandings] = useState<StandingData | undefined>();
 
