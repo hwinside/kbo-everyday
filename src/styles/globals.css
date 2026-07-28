@@ -295,6 +295,19 @@ body.kbd-open main.pb-tab-bar {
 }
 
 /*
+ * ===== Global keyboard TabBar guard =====
+ * Composer screens hide the TabBar via body.kbd-open above. Every OTHER screen
+ * with a plain input (설정 피드백, 검색, 닉네임 편집 …) toggles this dedicated
+ * class from KeyboardTabBarGuard so the fixed bottom TabBar can't ride up above
+ * the iOS keyboard and cover content (stella24 CS). Only display:none — no
+ * transform/will-change (see #420/#445). Separate from kbd-open so it never
+ * touches the composer padding/docking above.
+ */
+body.kbd-tabbar-hide [data-global-tabbar] {
+  display: none;
+}
+
+/*
  * Global TabBar box height above the safe-area inset: 50px content
  * (pinned via h-[50px] in TabBar.tsx) + 1px top border. The PostDetail
  * composer/container offsets below must clear exactly this much or a
