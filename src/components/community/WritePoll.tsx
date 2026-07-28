@@ -1,14 +1,16 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Plus, Trash2, Users, User, Type as TypeIcon } from "lucide-react";
 import Image from "next/image";
 import TeamTagger from "./TeamTagger";
+import PlayerTagger from "./PlayerTagger";
 import PlayerPickerSheet from "./PlayerPickerSheet";
 import { TEAMS } from "@/lib/constants/teams";
 import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
 import { getPlayerPhotoByKboId } from "@/lib/constants/player-photos";
+import { formatPlayerTag } from "@/lib/utils/player-tags";
 import { createPoll, type PollOptionInput } from "@/lib/community/poll-client";
 
 /**
@@ -33,6 +35,9 @@ type DraftOption =
   | { kind: "team"; refId: string; label: string; image: string | null }
   | { kind: "player"; refId: string; label: string; image: string | null }
   | { kind: "etc"; label: string };
+
+// 기존 커뮤니티 태그(PlayerTagger)와 동일 모델.
+type PlayerTag = { kboId: string; name: string; teamId: number };
 
 const MAX_OPTIONS = 10;
 const MIN_MINUTES = 10;
@@ -78,17 +83,33 @@ export default function WritePoll({ isOpen, onClose, onCreated }: WritePollProps
 
   const hasTeam = options.some((o) => o.kind === "team");
   const hasPlayer = options.some((o) => o.kind === "player");
-  const teamSlugs = useMemo(
+  const teamOptionSlugs = useMemo(
     () => options.filter((o): o is Extract<DraftOption, { kind: "team" }> => o.kind === "team").map((o) => o.refId),
     [options],
   );
   const full = options.length >= MAX_OPTIONS;
+
+  // 기존 일반/사진글과 동일한 팀·선수 태그 설정(피드 노출용). 선지에서 자동 파생되는
+  // 태그와 서버에서 union 된다(etc만 있는 투표도 원하는 피드에 노출 가능).
+  const [tagTeamSlugs, setTagTeamSlugs] = useState<string[]>([]);
+  const [taggedPlayers, setTaggedPlayers] = useState<PlayerTag[]>([]);
+
+  // 설명 textarea 자동 세로 확장(엔터·긴 글 대응). content 변경·열림 시 height 재계산.
+  const contentRef = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    const el = contentRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [content, isOpen]);
 
   function reset() {
     setTitle("");
     setContent("");
     setAllowMultiple(false);
     setOptions([]);
+    setTagTeamSlugs([]);
+    setTaggedPlayers([]);
     setClosesAtLocal(toLocalInputValue(new Date(Date.now() + 1440 * 60000)));
     setError(null);
     setSubmitting(false);
@@ -200,6 +221,8 @@ export default function WritePoll({ isOpen, onClose, onCreated }: WritePollProps
         allowMultiple,
         closesAt: v.closesAtIso,
         options: v.opts,
+        teamTags: tagTeamSlugs,
+        playerTags: taggedPlayers.map((p) => formatPlayerTag(p.kboId, p.name)),
       });
       const created = postId;
       reset();
@@ -261,15 +284,17 @@ export default function WritePoll({ isOpen, onClose, onCreated }: WritePollProps
             <div>
               <label className="block text-xs font-semibold text-text-tertiary mb-1.5">설명 (선택)</label>
               <textarea
+                ref={contentRef}
                 value={content}
                 onChange={(e) => setContent(e.target.value)}
-                placeholder="투표에 대한 설명을 적어주세요"
+                placeholder="투표에 대한 설명을 적어주세요 (엔터로 줄바꿈)"
                 rows={2}
-                className="w-full px-3 py-2.5 rounded-xl bg-bg-tertiary text-text-primary placeholder:text-text-tertiary outline-none resize-none"
+                maxLength={2000}
+                className="w-full px-3 py-2.5 rounded-xl bg-bg-tertiary text-text-primary placeholder:text-text-tertiary outline-none resize-none overflow-hidden min-h-[3rem] max-h-64"
               />
             </div>
 
-            {/* 선지 */}
+            {/* 선지 — 추가 토글(팀/선수/기타)을 리스트 위에 배치(더 직관적) */}
             <div>
               <div className="flex items-center justify-between mb-1.5">
                 <label className="text-xs font-semibold text-text-tertiary">
@@ -277,13 +302,46 @@ export default function WritePoll({ isOpen, onClose, onCreated }: WritePollProps
                 </label>
               </div>
 
-              {options.length === 0 && (
-                <p className="text-xs text-text-tertiary py-3 text-center">
-                  아래에서 팀·선수·기타 선지를 추가하세요 (2~10개)
+              {/* 추가 버튼들 (선지 리스트 위) */}
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  onClick={() => setTeamSheetOpen(true)}
+                  disabled={hasPlayer || full}
+                  className="flex flex-col items-center gap-1 py-2.5 rounded-xl bg-bg-tertiary active:scale-95 transition-transform disabled:opacity-40"
+                >
+                  <Users size={18} className="text-accent" />
+                  <span className="text-xs font-medium text-text-primary">팀</span>
+                </button>
+                <button
+                  onClick={() => setPlayerSheetOpen(true)}
+                  disabled={hasTeam || full}
+                  className="flex flex-col items-center gap-1 py-2.5 rounded-xl bg-bg-tertiary active:scale-95 transition-transform disabled:opacity-40"
+                >
+                  <User size={18} className="text-accent" />
+                  <span className="text-xs font-medium text-text-primary">선수</span>
+                </button>
+                <button
+                  onClick={addEtc}
+                  disabled={full}
+                  className="flex flex-col items-center gap-1 py-2.5 rounded-xl bg-bg-tertiary active:scale-95 transition-transform disabled:opacity-40"
+                >
+                  <Plus size={18} className="text-accent" />
+                  <span className="text-xs font-medium text-text-primary">기타</span>
+                </button>
+              </div>
+              {(hasTeam || hasPlayer) && (
+                <p className="text-[11px] text-text-tertiary mt-2">
+                  한 투표에는 {hasTeam ? "팀" : "선수"} 선지만 넣을 수 있어요 (기타는 함께 가능)
                 </p>
               )}
 
-              <div className="space-y-2">
+              {options.length === 0 && (
+                <p className="text-xs text-text-tertiary py-3 text-center">
+                  위에서 팀·선수·기타 선지를 추가하세요 (2~10개)
+                </p>
+              )}
+
+              <div className="space-y-2 mt-3">
                 {options.map((o, idx) => (
                   <div key={`${o.kind}-${idx}-${o.kind === "etc" ? "etc" : o.refId}`} className="flex items-center gap-2">
                     {o.kind === "etc" ? (
@@ -326,39 +384,34 @@ export default function WritePoll({ isOpen, onClose, onCreated }: WritePollProps
                   </div>
                 ))}
               </div>
+            </div>
 
-              {/* 추가 버튼들 */}
-              <div className="grid grid-cols-3 gap-2 mt-3">
-                <button
-                  onClick={() => setTeamSheetOpen(true)}
-                  disabled={hasPlayer || full}
-                  className="flex flex-col items-center gap-1 py-2.5 rounded-xl bg-bg-tertiary active:scale-95 transition-transform disabled:opacity-40"
-                >
-                  <Users size={18} className="text-accent" />
-                  <span className="text-xs font-medium text-text-primary">팀</span>
-                </button>
-                <button
-                  onClick={() => setPlayerSheetOpen(true)}
-                  disabled={hasTeam || full}
-                  className="flex flex-col items-center gap-1 py-2.5 rounded-xl bg-bg-tertiary active:scale-95 transition-transform disabled:opacity-40"
-                >
-                  <User size={18} className="text-accent" />
-                  <span className="text-xs font-medium text-text-primary">선수</span>
-                </button>
-                <button
-                  onClick={addEtc}
-                  disabled={full}
-                  className="flex flex-col items-center gap-1 py-2.5 rounded-xl bg-bg-tertiary active:scale-95 transition-transform disabled:opacity-40"
-                >
-                  <Plus size={18} className="text-accent" />
-                  <span className="text-xs font-medium text-text-primary">기타</span>
-                </button>
+            {/* 태그 설정 — 일반/사진글과 동일(팀 칩 + 선수 태그). 선지 파생 태그와 서버에서 union 돼
+                피드 노출을 결정(etc만 있는 투표도 원하는 팀/선수 피드에 노출 가능). */}
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-text-tertiary mb-1.5">태그 (선택)</label>
+                <p className="text-[11px] text-text-tertiary mb-2">태그한 팀·선수 피드에도 이 투표가 노출돼요</p>
+                <TeamTagger
+                  selectedSlugs={tagTeamSlugs}
+                  onToggle={(slug) =>
+                    setTagTeamSlugs((prev) =>
+                      prev.includes(slug) ? prev.filter((s) => s !== slug) : [...prev, slug],
+                    )
+                  }
+                />
               </div>
-              {(hasTeam || hasPlayer) && (
-                <p className="text-[11px] text-text-tertiary mt-2">
-                  한 투표에는 {hasTeam ? "팀" : "선수"} 선지만 넣을 수 있어요 (기타는 함께 가능)
-                </p>
-              )}
+              <PlayerTagger
+                game={null}
+                selectedPlayers={taggedPlayers}
+                onToggle={(player) =>
+                  setTaggedPlayers((prev) =>
+                    prev.some((p) => p.kboId === player.kboId)
+                      ? prev.filter((p) => p.kboId !== player.kboId)
+                      : [...prev, player],
+                  )
+                }
+              />
             </div>
 
             {/* 복수선택 */}
@@ -415,7 +468,7 @@ export default function WritePoll({ isOpen, onClose, onCreated }: WritePollProps
               <h3 className="text-base font-bold text-text-primary">팀 선지 선택</h3>
               <button onClick={() => setTeamSheetOpen(false)} className="text-sm font-semibold text-accent">완료</button>
             </div>
-            <TeamTagger selectedSlugs={teamSlugs} onToggle={toggleTeam} />
+            <TeamTagger selectedSlugs={teamOptionSlugs} onToggle={toggleTeam} />
           </div>
         </div>
       )}

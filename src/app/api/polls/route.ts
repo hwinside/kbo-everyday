@@ -62,6 +62,8 @@ export async function POST(request: NextRequest) {
     allowMultiple?: unknown;
     closesAt?: unknown;
     options?: unknown;
+    teamTags?: unknown;
+    playerTags?: unknown;
   };
   try {
     body = await request.json();
@@ -142,6 +144,27 @@ export async function POST(request: NextRequest) {
     }
     // etc → 태그 미반영, 클라이 label 유지(이미지 없음). 잘못된 kind 는 RPC 가 거절.
     options.push({ kind: o.kind, ref_id: null, label: o.label, image: null });
+  }
+  // 수동 태그(작성 UI 태그 섹션) union — 기존 일반/사진글과 동일하게 팀/선수 피드 노출.
+  // 선지에서 파생된 태그와 union(dedupe). 서버 canonical(teams.ts slug / roster kboId) 검증으로
+  // 위조 태그 거부. etc만 있는 투표도 이 경로로 원하는 피드에 노출 가능.
+  const seenPlayerKboIds = new Set(playerTags.map((t) => t.split(":")[0]));
+  if (Array.isArray(body.teamTags)) {
+    for (const raw of body.teamTags as unknown[]) {
+      const slug = typeof raw === "string" ? raw.trim() : "";
+      if (slug && TEAM_BY_SLUG.has(slug)) teamTags.add(slug);
+    }
+  }
+  if (Array.isArray(body.playerTags)) {
+    for (const raw of body.playerTags as unknown[]) {
+      // 기존 포맷 "kboId:name" 또는 단순 kboId 모두 수용.
+      const kboId = typeof raw === "string" ? raw.trim().split(":")[0] : "";
+      const name = kboId ? ROSTER_NAME_BY_KBOID.get(kboId) : undefined;
+      if (kboId && name && !seenPlayerKboIds.has(kboId)) {
+        seenPlayerKboIds.add(kboId);
+        playerTags.push(formatPlayerTag(kboId, name));
+      }
+    }
   }
   // 선수 태그의 소속팀 slug 도 team_tags 에 union (기존 createPost 동일 — 팀 피드 노출).
   for (const slug of teamSlugsForPlayerTags(playerTags)) teamTags.add(slug);

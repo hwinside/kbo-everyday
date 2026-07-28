@@ -24,6 +24,10 @@ export type CreatePollInput = {
   allowMultiple: boolean;
   closesAt: string; // ISO8601
   options: PollOptionInput[];
+  /** 수동 팀 태그(slug[]). 선지 파생 태그와 서버에서 union. */
+  teamTags?: string[];
+  /** 수동 선수 태그("kboId:name"[]). 선지 파생 태그와 서버에서 union. */
+  playerTags?: string[];
 };
 
 /** GET /api/polls/[postId] 응답 선지(결과 게이트 적용 — voteCount 는 은닉 시 null). */
@@ -78,6 +82,8 @@ export async function createPoll(input: CreatePollInput): Promise<number> {
       allowMultiple: input.allowMultiple,
       closesAt: input.closesAt,
       options: input.options.map((o) => ({ kind: o.kind, refId: o.refId, label: o.label })),
+      teamTags: input.teamTags ?? [],
+      playerTags: input.playerTags ?? [],
     }),
   });
   if (!res.ok) throw new Error(await parseError(res, "투표 생성에 실패했어요"));
