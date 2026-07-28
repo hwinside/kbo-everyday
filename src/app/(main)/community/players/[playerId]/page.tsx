@@ -100,6 +100,7 @@ export default function PlayerBoardPage() {
 
   const [player, setPlayer] = useState<PlayerData | null>(null);
   const [loading, setLoading] = useState(true);
+  const router = useRouter();
   const goBack = useSafeBack("/community");
   const router = useRouter(); // 투표 생성 완료 후 이동(WritePoll onCreated). #909가 헤더를 useSafeBack 로 바꾸며 선언을 빼 링크 복구.
   const [activeTab, setActiveTab] = useState<"stats" | "games" | "board">("stats");
