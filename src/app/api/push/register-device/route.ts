@@ -3,6 +3,7 @@ import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { supabaseErrorResponse } from "@/lib/supabase/error";
 import { getVerifiedUserFromRequest } from "@/lib/auth/verified-user";
 import { getActiveNotices, sendNoticeToUser } from "@/lib/urgent-notice/send";
+import { normalizeAppBuild } from "@/lib/notifications/app-build";
 
 // 네이티브 앱(iOS/Android) FCM 디바이스 토큰 등록/갱신.
 // 웹 Web Push는 별도(/api/push/subscribe). 로그인 필수.
@@ -18,10 +19,9 @@ export async function POST(req: NextRequest) {
   }
 
   // 앱 빌드 번호(선택) — 빌드 게이트 필터용(예: widget_live는 iOS build 17+만, 삼순 #674
-  // blocker⑤). 미보고/비정상값은 null = 구버전 취급(fail-closed).
-  const buildNum = Number.isFinite(Number(appBuild)) && Number(appBuild) > 0
-    ? Math.trunc(Number(appBuild))
-    : null;
+  // blocker⑤ / S2 버전 게이트). 미보고/비정상값은 null = 구버전 취급(fail-closed).
+  // 클라(native-push.ts)와 동일 normalizeAppBuild 규칙 — 버전 신호 양측 잠금(NO-GO #4).
+  const buildNum = normalizeAppBuild(appBuild);
 
   const { error } = await supabase.from("device_push_tokens").upsert({
     user_id: verified.user.id,

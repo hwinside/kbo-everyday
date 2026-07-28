@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { sendFcmToTokens } from "@/lib/notifications/fcm";
+import { sendGameEventToTokens, sendFcmToTokens } from "@/lib/notifications/fcm";
+import { deriveGameEventExpiresAtMs } from "@/lib/notifications/game-event-fanout";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { isKboGameCancelled } from "@/lib/crawler/kbo-status";
 import { teamIdByShortName } from "@/lib/notifications/game-status";
@@ -85,6 +86,10 @@ async function drainHighlightSnapshot(
   snapshot: DurableHighlightSnapshot,
   userIds: string[],
   startAcceptedBeforeMs: number,
+  // S2 Slice0: 이 snapshot의 불변 n_expires_at(원장 created_at + 6h). 모든 due retry가 동일 값 재사용.
+  // **fail-closed**(NO-GO #2): created_at row 누락/파싱 불가면 null → data-only 미첨부, notification-only 발송
+  // (now 재계산 금지). token 원장(claim/settle)은 양 경로 동일하므로 at-least-once는 그대로 유지.
+  nExpiresAtMs: number | null,
   deadlineAtMs?: number,
 ): Promise<number> {
   let acceptedTotal = 0;
@@ -132,11 +137,30 @@ async function drainHighlightSnapshot(
       deadlineAtMs ?? Date.now() + 8_000,
       Date.now() + 8_000,
     );
-    const res = await sendFcmToTokens(claimedTokens.map((row) => row.fcmToken), {
-      title: snapshot.title,
-      body: snapshot.body,
-      url: snapshot.url,
-    }, { deadlineAtMs: transportDeadlineAtMs });
+    // S2 Slice0: 버전 게이트 3분할 fanout — iOS/구Android=notification, 신Android=data-only game_event.
+    // eventId = snapshot.event_id(=persistedDedupId, sub suffix 이미 encode — §S2-1b). 재시도 동일 key.
+    // fail-closed(NO-GO #2): 안정 n_expires_at 없으면(null) data-only 미첨부 notification-only로만 발송.
+    const fcmTokens = claimedTokens.map((row) => row.fcmToken);
+    const res = nExpiresAtMs == null
+      ? await sendFcmToTokens(
+          fcmTokens,
+          { title: snapshot.title, body: snapshot.body, url: snapshot.url },
+          { deadlineAtMs: transportDeadlineAtMs },
+        )
+      : await sendGameEventToTokens(
+          fcmTokens,
+          { title: snapshot.title, body: snapshot.body, url: snapshot.url },
+          {
+            gameId: snapshot.gameId,
+            eventId: snapshot.eventId,
+            sub: snapshot.prefKey === "fav_player_strikeout" ? "fav-so" : "fav",
+            title: snapshot.title,
+            body: snapshot.body,
+            url: snapshot.url,
+            nExpiresAtMs,
+          },
+          { deadlineAtMs: transportDeadlineAtMs },
+        );
     const settleResults = mapHighlightSettlements(
       claimedTokens,
       res.outcomes ?? [],
@@ -305,6 +329,27 @@ export async function notifyPlayerHighlights(
     },
   );
   if (dueError) throw new Error(`highlight due snapshots: ${dueError.message}`);
+
+  // S2 Slice0: due snapshot의 불변 n_expires_at 유도용 created_at 조회(원장 row 생성시각 + 6h).
+  // list_due RPC가 created_at을 반환하지 않아 event_id로 bounded lookup — 신규 컬럼/RPC 변경 회피.
+  // created_at은 snapshot upsert(ignoreDuplicates) 시 1회 고정 → 모든 due retry가 동일 값 재사용.
+  const dueIds = ((dueSnapshots ?? []) as { event_id: string }[]).map((d) => d.event_id);
+  const nExpiresAtByEvent = new Map<string, number>();
+  if (dueIds.length > 0) {
+    // query-guard: bounded -- due snapshots capped at 50 by list_due RPC p_limit
+    const { data: createdRows, error: createdErr } = await supabase
+      .from("player_highlight_event_snapshots")
+      .select("event_id, created_at")
+      .in("event_id", dueIds);
+    if (createdErr) throw new Error(`highlight snapshot created_at: ${createdErr.message}`);
+    for (const r of createdRows ?? []) {
+      const row = r as { event_id: string; created_at: string };
+      const ms = Date.parse(row.created_at);
+      // fail-closed(NO-GO #2): created_at 파싱 불가면 map에 넣지 않음 → get() undefined → null(notification-only).
+      // now 폴백 금지(재시도마다 다른 만료 방지).
+      if (Number.isFinite(ms)) nExpiresAtByEvent.set(row.event_id, deriveGameEventExpiresAtMs(ms));
+    }
+  }
   type DueSnapshot = {
     event_id: string;
     game_id: string;
@@ -333,7 +378,10 @@ export async function notifyPlayerHighlights(
       body: due.push_body,
       url: due.push_url,
       snapshotCompleted: due.snapshot_completed,
-    }, userIds, startAcceptedBeforeMs, opts?.deadlineAtMs),
+    }, userIds, startAcceptedBeforeMs,
+    // fail-closed(NO-GO #2): created_at 누락/파싱불가 → null → notification-only(now 재계산 안 함).
+    nExpiresAtByEvent.get(due.event_id) ?? null,
+    opts?.deadlineAtMs),
     deadlineAtMs: opts?.deadlineAtMs,
   });
 

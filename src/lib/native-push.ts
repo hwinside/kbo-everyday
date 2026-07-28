@@ -2,6 +2,7 @@
 
 import { isNative, platform } from "@/lib/capacitor/platform";
 import { supabase } from "@/lib/supabase/client";
+import { appBuildFromNativeInfo } from "@/lib/notifications/app-build";
 
 // 네이티브(iOS/Android) FCM 푸시 토큰 유틸.
 // 웹 Web Push는 기존 usePushNotification 경로 유지 — 여기는 native 전용.
@@ -114,31 +115,51 @@ function showForegroundBanner(title: string, body: string, url: string | null): 
   }, 6000);
 }
 
+// registerTokenWithServer의 외부 의존(세션·getInfo·fetch·platform) — 테스트에서 주입해
+// "App.getInfo().build → body.appBuild" 실배선을 그대로 검증한다(단위 헬퍼 직호가 아닌
+// 실 경로 회귀 — 삼순 3차 NO-GO #3 client wiring). 미지정 시 프로덕션 기본 의존 사용.
+export interface RegisterTokenDeps {
+  getAccessToken?: () => Promise<string | null>;
+  getAppInfo?: () => Promise<{ build?: unknown } | null>;
+  fetchImpl?: typeof fetch;
+  platform?: string;
+}
+
 /** 서버에 FCM 토큰 등록 (로그인 필수 — 세션 없으면 조용히 skip) */
-export async function registerTokenWithServer(fcmToken: string): Promise<boolean> {
-  const { data: { session } } = await supabase.auth.getSession();
-  const accessToken = session?.access_token;
+export async function registerTokenWithServer(
+  fcmToken: string,
+  deps?: RegisterTokenDeps,
+): Promise<boolean> {
+  const getAccessToken = deps?.getAccessToken ?? (async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    return session?.access_token ?? null;
+  });
+  const accessToken = await getAccessToken();
   if (!accessToken) return false;
 
   // 앱 빌드 번호 동봉(실패 시 null) — 서버가 빌드 게이트 필터에 사용(widget_live는 17+만,
   // 삼순 #674 blocker⑤). 원격로드 JS라 구빌드도 다음 앱 실행 시 자연스럽게 재보고된다.
+  // 서버(register-device)와 동일 normalizeAppBuild 규칙로 정규화 — 버전 게이트 신호 양측 잠금(NO-GO #4).
+  const getAppInfo = deps?.getAppInfo ?? (async () => {
+    const { App } = await import("@capacitor/app");
+    return App.getInfo();
+  });
   let appBuild: number | null = null;
   try {
-    const { App } = await import("@capacitor/app");
-    const info = await App.getInfo();
-    const b = Number(info?.build);
-    if (Number.isFinite(b) && b > 0) appBuild = Math.trunc(b);
+    const info = await getAppInfo();
+    appBuild = appBuildFromNativeInfo(info);
   } catch {
     // 판별 실패 = null(구버전 취급) — 등록 자체는 계속
   }
 
-  const res = await fetch("/api/push/register-device", {
+  const fetchImpl = deps?.fetchImpl ?? fetch;
+  const res = await fetchImpl("/api/push/register-device", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${accessToken}`,
     },
-    body: JSON.stringify({ fcmToken, platform, appBuild }),
+    body: JSON.stringify({ fcmToken, platform: deps?.platform ?? platform, appBuild }),
   });
   return res.ok;
 }
