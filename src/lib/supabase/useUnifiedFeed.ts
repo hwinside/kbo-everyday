@@ -31,6 +31,30 @@ export type FeedBoard =
   | { kind: "team"; teamId: string }
   | { kind: "player"; kboId: string };
 
+/** PostgREST query builder 중 피드 필터에 쓰는 메서드만 추린 최소 인터페이스(회귀 mock 공유). */
+export type FeedFilterQuery<Q> = {
+  or(filters: string): Q;
+  eq(column: string, value: unknown): Q;
+  in(column: string, values: readonly unknown[]): Q;
+};
+
+/**
+ * 보드별 피드 필터를 query 에 적용(순수 — 회귀 가능). 실제 loadPage 가 이 함수로 전체 조립하므로,
+ * '팀 query 밖에 board_type=team 추가' 같은 mutation 도 기록된 메서드로 잡힌다:
+ *  - team  : team_tags.cs(board_type 무관) OR 레거시 팀/선수 보드. board_type 제약 없음 → tagged poll 도달.
+ *  - player: 선수 보드 직접 글(board_type='player'). cross-board tagged 글은 선수 page 자체 query 담당.
+ *  - all   : board_type in [team, player, free, poll] — 투표글 포함(S3).
+ */
+export function applyBoardFilter<Q extends FeedFilterQuery<Q>>(query: Q, board: FeedBoard): Q {
+  if (board.kind === "team") {
+    return query.or(buildTeamFeedOrParts(board.teamId, kboIdsForTeamSlug(board.teamId)).join(","));
+  }
+  if (board.kind === "player") {
+    return query.eq("board_type", "player").eq("board_id", board.kboId);
+  }
+  return query.in("board_type", ["team", "player", "free", "poll"]);
+}
+
 const SELECT =
   "id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, game_id, player_tags, team_tags, hashtags, author_team_id_snapshot, click_view_count, impression_view_count, profiles(nickname, team_id, grade, points)";
 
@@ -113,12 +137,7 @@ export function useUnifiedFeed(board: FeedBoard, pageSize = 20) {
       //   ② 레거시 팀보드 글 (board_type='team' AND board_id=slug)
       //   ③ 레거시/움짤콜렉터 선수보드 글 (board_type='player' AND board_id ∈ 해당 팀 선수 kboId)
       // team_tags 는 JSONB → `cs.["lg"]`(JSON) 형태로 전달(배열 리터럴 `cs.{lg}`는 @> 파싱 에러).
-      if (board.kind === "team") {
-        const slug = board.teamId;
-        const kboIds = kboIdsForTeamSlug(slug);
-        query = query.or(buildTeamFeedOrParts(slug, kboIds).join(","));
-      } else if (board.kind === "player") query = query.eq("board_type", "player").eq("board_id", board.kboId);
-      else query = query.in("board_type", ["team", "player", "free", "poll"]); // 전체글 피드에 투표글(board_type='poll') 포함(S3)
+      query = applyBoardFilter(query, board);
       if (cursor !== null) query = query.lt("id", cursor);
       // keyset = id desc 단일 컬럼. id가 BIGSERIAL(삽입=created_at 순 단조증가)이라
       // (created_at,id) 복합 keyset과 동일 순서이면서 tie-break 불필요 → 더 단순·견고. (의도적 선택)

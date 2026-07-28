@@ -32,7 +32,7 @@ import PollCardBody, {
   pollBoundaryTimer,
 } from "../../src/components/community/PollCardBody";
 import PollCardSlot from "../../src/components/community/PollCardSlot";
-import { buildTeamFeedOrParts } from "../../src/lib/supabase/useUnifiedFeed";
+import { buildTeamFeedOrParts, applyBoardFilter } from "../../src/lib/supabase/useUnifiedFeed";
 
 const SRC_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../src");
 function readSrc(rel: string): string {
@@ -253,6 +253,44 @@ async function fetchMockSection() {
   ok("team orParts: team_tags.cs 는 board_type 무관(tagged poll 도달)", orParts.includes('team_tags.cs.["lg"]'));
   ok("team orParts: team_tags 가 and(board_type...)로 감싸이지 않음", !orParts.some((p) => /and\([^)]*board_type[^)]*team_tags/.test(p)));
   ok("team orParts: 레거시 팀·선수 보드 커버", orParts.some((p) => p.includes("board_type.eq.team")) && orParts.some((p) => p.includes('board_id.in.("69100"')));
+
+  // — 실제 query 전체 조립(삼순 6차 P1): applyBoardFilter 를 recording mock 으로 구동 —
+  // '팀 branch 밖에 board_type=team 추가' 같은 mutation 도 기록된 메서드로 잡는다.
+  function recordingQuery() {
+    const calls: { method: string; args: unknown[] }[] = [];
+    const q = new Proxy(
+      {},
+      {
+        get: (_t, prop: string) =>
+          (...args: unknown[]) => {
+            calls.push({ method: prop, args });
+            return q;
+          },
+      },
+    );
+    return { q, calls };
+  }
+  {
+    const { q, calls } = recordingQuery();
+    applyBoardFilter(q as never, { kind: "team", teamId: "lg" });
+    const orCall = calls.find((c) => c.method === "or");
+    ok("applyBoardFilter team → .or 로 team_tags(board_type 무관) 필터", !!orCall && String(orCall.args[0]).includes('team_tags.cs.["lg"]'));
+    ok(
+      "applyBoardFilter team → board_type 를 team 으로 제한 안 함(tagged poll 도달)",
+      !calls.some((c) => (c.method === "eq" || c.method === "in") && c.args[0] === "board_type" && JSON.stringify(c.args[1]).includes("team") && !JSON.stringify(c.args[1]).includes("poll")),
+    );
+  }
+  {
+    const { q, calls } = recordingQuery();
+    applyBoardFilter(q as never, { kind: "all" });
+    const inCall = calls.find((c) => c.method === "in");
+    ok("applyBoardFilter all → board_type in 목록에 poll 포함", !!inCall && (inCall.args[1] as string[]).includes("poll"));
+  }
+  {
+    const { q, calls } = recordingQuery();
+    applyBoardFilter(q as never, { kind: "player", kboId: "69100" });
+    ok("applyBoardFilter player → board_type=player 직접 글(cross-board tagged 글은 선수 page query 담당)", calls.some((c) => c.method === "eq" && c.args[0] === "board_type" && c.args[1] === "player"));
+  }
 }
 
 // ---------- 4b) PollCardSlot 3상태(삼순 5차 P1: terminal/재시도 UI) ----------
@@ -377,6 +415,28 @@ async function badgeEffectSection() {
     // 동일하게 closed=false 이지만 closesAt 미래 → effect 후에도 '진행중'(경계 미도달). 둘의 차이는 closesAt 뿐.
     const futureText = await mountBadge(badgeSummary(false, 3600_000));
     ok("미래 마감 poll 은 effect 후에도 '진행중' 유지", futureText.includes("진행중") && !futureText.includes("마감"));
+
+    // 삼순 6차 P1 — terminal '다시 시도' 버튼 click → onRetry 콜백 실행 회귀(no-op 로 만들면 fail).
+    {
+      const c = dom.window.document.createElement("div");
+      dom.window.document.body.appendChild(c);
+      const r = createRoot(c);
+      let retryCalls = 0;
+      await act(async () => {
+        r.render(
+          React.createElement(PollCardSlot, { summary: null, loaded: true, onRetry: () => { retryCalls++; } }),
+        );
+      });
+      const btn = c.querySelector("button");
+      ok("terminal 카드에 '다시 시도' 버튼 존재", !!btn && (btn.textContent ?? "").includes("다시 시도"));
+      await act(async () => {
+        btn?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+      });
+      ok("'다시 시도' click → onRetry 콜백 1회 실행", retryCalls === 1);
+      await act(async () => {
+        r.unmount();
+      });
+    }
   } finally {
     // 글로벌 복원(다른 섹션이 jsdom 상태에 오염되지 않게).
     if (restore.window === undefined) delete g.window; else g.window = restore.window;
