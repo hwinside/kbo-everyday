@@ -31,6 +31,7 @@
     "qa:retention-rolling": "tsx scripts/qa/retention-rolling-smoke.ts",
     "qa:leaderboard-cache": "tsx scripts/qa/leaderboard-cache-smoke.ts",
     "qa:leaderboard-rollup": "bash scripts/qa/leaderboard-rollup-refresh-regression.sh",
+    "qa:leaderboard-invite-rollup": "bash scripts/qa/leaderboard-invite-rollup-refresh-regression.sh",
     "qa:war-saber": "tsx scripts/qa/war-saber-smoke.ts",
     "qa:war-benchmark-coverage": "tsx scripts/qa/war-benchmark-coverage-smoke.ts",
     "qa:foreign-onboard": "node scripts/qa/foreign-onboard-smoke.mjs",

@@ -38,6 +38,9 @@ CREATE POLICY leaderboard_writing_rollup_public_read
   ON public.leaderboard_writing_rollup
   FOR SELECT TO anon, authenticated
   USING (true);
+-- RLS 정책 + 테이블 GRANT 둘 다 필요(정책만으론 anon 권한 부족). 명시 GRANT 로
+-- Supabase 암묵 default privilege 에 의존하지 않고 보안 계약을 자립적으로 고정.
+GRANT SELECT ON public.leaderboard_writing_rollup TO anon, authenticated;
 
 ALTER VIEW public.v_leaderboard_writing SET (security_invoker = on);
 
@@ -60,6 +63,8 @@ CREATE POLICY leaderboard_invite_rollup_public_read
   ON public.leaderboard_invite_rollup
   FOR SELECT TO anon, authenticated
   USING (true);
+-- RLS 정책 + 테이블 GRANT 둘 다 필요(정책만으론 anon 권한 부족).
+GRANT SELECT ON public.leaderboard_invite_rollup TO anon, authenticated;
 
 -- 갱신 함수 — service_role 전용, idempotent, advisory try-lock
 -- (writing rollup 패턴 동일: 중복/수동 refresh 겹침 시 DELETE+INSERT PK 충돌 차단)
@@ -76,7 +81,9 @@ BEGIN
 
   -- 단일 트랜잭션 내 스냅샷 교체 — 리더는 커밋 전까지 이전 스냅샷 조회.
   -- 내부자 제외는 여기서 적용하지 않음(뷰 read 시점 <> ALL 로 동적 적용).
-  DELETE FROM leaderboard_invite_rollup;
+  -- public-qualified + 명시 WHERE TRUE — writing rollup(20260727_rpc_error_fixes) 동일 패턴
+  -- (#890 safe-update 400 재도입 방지).
+  DELETE FROM public.leaderboard_invite_rollup WHERE TRUE;
 
   INSERT INTO leaderboard_invite_rollup (user_id, invite_count, last_activated_at)
   SELECT
