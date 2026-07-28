@@ -230,7 +230,7 @@ export default function GamesPage() {
     <div className="mx-auto max-w-lg">
       <div className="sticky top-0 z-30 border-b bg-bg-primary" style={{ borderColor: myTeamId ? getTeamBorderColorById(myTeamId) : 'var(--color-border)', paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
         <div className="flex items-center gap-3 px-5 py-2">
-          <button onClick={goBack} className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors">
+          <button onClick={goBack} aria-label="뒤로가기" className="flex h-11 w-11 items-center justify-center rounded-full text-text-secondary hover:bg-bg-tertiary transition-colors">
             <ChevronLeft size={24} />
           </button>
           <h1 className="text-lg font-bold text-text-primary tracking-tight flex-1">경기</h1>

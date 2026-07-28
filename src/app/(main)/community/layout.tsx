@@ -140,41 +140,44 @@ export default function CommunityLayout({
             <div className="flex items-center gap-3 px-5 py-2 border-b" style={{ borderColor: headerBorderColor || 'var(--color-border)' }}>
               <button
                 onClick={handleBack}
-                className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors"
+                className="flex h-11 w-11 items-center justify-center rounded-full text-text-secondary hover:bg-bg-tertiary transition-colors"
                 aria-label="뒤로가기"
               >
                 <ChevronLeft size={24} />
               </button>
-              <h1 className="text-lg font-bold text-text-primary tracking-tight flex-1">커뮤니티</h1>
+              <h1 className="truncate text-lg font-bold text-text-primary tracking-tight flex-1">커뮤니티</h1>
               <HeaderProfileLink />
             </div>
-
-            {/* Community tabs (헤더 아래 2번째 줄) */}
-            <div className="flex px-5 gap-1 overflow-x-auto hide-scrollbar">
-              {displayTabs.map((tab) => {
-                const isActive = pathname === tab.href || pathname.startsWith(tab.href + "/");
-                const Icon = tab.icon;
-                return (
-                  <Link
-                    key={tab.key}
-                    href={tab.href}
-                    className={`relative flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium whitespace-nowrap transition-colors ${
-                      isActive ? "text-text-primary" : "text-text-tertiary"
-                    }`}
-                  >
-                    <Icon size={16} />
-                    {tab.label}
-                    {isActive && (
-                      <motion.div
-                        layoutId="community-tab-indicator"
-                        className="absolute bottom-0 left-2 right-2 h-0.5 rounded-full bg-accent"
-                        transition={{ type: "spring", stiffness: 500, damping: 35 }}
-                      />
-                    )}
-                  </Link>
-                );
-              })}
-            </div>
+          </div>
+        </div>
+      )}
+      {/* Community tabs — 삼순 NO-GO: sticky wrapper 밖 바디로 내려 본문과 함ꔀ 스크롤(고정 시 142px로 축소 목적 무너짐) */}
+      {isHubLevel && !isDetailPage && (
+        <div className="mx-auto max-w-lg border-b" style={{ borderColor: headerBorderColor || 'var(--color-border)' }}>
+          <div className="flex px-5 gap-1 overflow-x-auto hide-scrollbar">
+            {displayTabs.map((tab) => {
+              const isActive = pathname === tab.href || pathname.startsWith(tab.href + "/");
+              const Icon = tab.icon;
+              return (
+                <Link
+                  key={tab.key}
+                  href={tab.href}
+                  className={`relative flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium whitespace-nowrap transition-colors ${
+                    isActive ? "text-text-primary" : "text-text-tertiary"
+                  }`}
+                >
+                  <Icon size={16} />
+                  {tab.label}
+                  {isActive && (
+                    <motion.div
+                      layoutId="community-tab-indicator"
+                      className="absolute bottom-0 left-2 right-2 h-0.5 rounded-full bg-accent"
+                      transition={{ type: "spring", stiffness: 500, damping: 35 }}
+                    />
+                  )}
+                </Link>
+              );
+            })}
           </div>
         </div>
       )}

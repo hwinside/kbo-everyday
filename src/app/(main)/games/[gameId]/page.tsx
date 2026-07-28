@@ -387,12 +387,17 @@ export default function GameDetailPage() {
     || hasBoxScoreData
   );
 
+  const matchupTitle = `${awayTeam.shortName} vs ${homeTeam.shortName}`;
+
   return (
+    <div className="min-h-[100dvh] bg-bg-primary max-w-[640px] mx-auto w-full">
+      {/* 헤더는 스크롤 컨테이너(PullToRefresh) 밖 page-root에 두어 sticky top-0가 페이지 스크롤 기준으로 고정되게 한다 */}
+      <GameDetailHeader status={d.derivedStatus} title={matchupTitle} />
+
     <PullToRefresh
       onRefresh={handleRefresh}
-      className="flex flex-col min-h-[100dvh] bg-bg-primary overflow-y-auto pb-[104px] max-w-[640px] mx-auto w-full"
+      className="flex flex-col pb-[104px]"
     >
-      <GameDetailHeader status={d.derivedStatus} />
 
       {d.derivedStatus === "cancelled" ? (
         <div className="px-5 py-5">
@@ -418,13 +423,19 @@ export default function GameDetailPage() {
         />
       )}
 
-      {/* 헤더에서 내린 경기 정보줄: 예정 시간(예정 경기)·중계 방송사·구장 */}
+      {/* 헤더에서 내린 경기 정보줄: 상태(예정/경기 중/종료)·예정 시간·중계 방송사·구장 */}
       {d.derivedStatus !== "cancelled" && (
-        <div className="mx-auto flex w-full max-w-[640px] flex-wrap items-center justify-center gap-x-2 gap-y-1 px-5 pt-1.5 pb-1 text-[13px] text-text-tertiary">
-          {d.derivedStatus === "scheduled" && (gameDetail?.meta?.startTime || liveGame?.time || game.time) && (
-            <span>{gameDetail?.meta?.startTime || liveGame?.time || game.time} 예정</span>
+        <div className="flex w-full flex-wrap items-center justify-center gap-x-2 gap-y-1 px-5 pt-1.5 pb-1 text-[13px] text-text-tertiary">
+          {d.derivedStatus === "scheduled" ? (
+            <>
+              {(gameDetail?.meta?.startTime || liveGame?.time || game.time) && (
+                <span>{gameDetail?.meta?.startTime || liveGame?.time || game.time} 예정</span>
+              )}
+              <BroadcastBadges channels={gameDetail?.meta?.broadcastChannels} />
+            </>
+          ) : (
+            <span>{d.derivedStatus === "live" ? "경기 중" : "경기 종료"}</span>
           )}
-          {d.derivedStatus === "scheduled" && <BroadcastBadges channels={gameDetail?.meta?.broadcastChannels} />}
           {(gameDetail?.meta?.stadium || liveGame?.stadium || game.stadium) && (
             <span>{gameDetail?.meta?.stadium || liveGame?.stadium || game.stadium}</span>
           )}
@@ -696,5 +707,6 @@ export default function GameDetailPage() {
       {/* Celebration overlay (homerun etc.) */}
       <CelebrationOverlay event={celebration} onDone={dismiss} />
     </PullToRefresh>
+    </div>
   );
 }

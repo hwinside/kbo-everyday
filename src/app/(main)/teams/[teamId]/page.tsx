@@ -76,15 +76,15 @@ export default function TeamHubPage() {
         className="sticky top-0 z-30 border-b px-5 bg-bg-primary"
         style={{ borderColor: getTeamBorderColorById(team.id), paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}
       >
-        <header className="flex items-center gap-3 py-3">
+        <header className="flex items-center gap-3 py-2">
           <button
             onClick={goBack}
-            className="rounded-full p-1 text-text-secondary transition-colors hover:bg-bg-tertiary"
+            className="flex h-11 w-11 items-center justify-center rounded-full text-text-secondary transition-colors hover:bg-bg-tertiary"
             aria-label="뒤로 가기"
           >
             <ChevronLeft size={24} />
           </button>
-          <h1 className="flex-1 text-lg font-bold tracking-tight text-text-primary">팀</h1>
+          <h1 className="flex-1 truncate text-lg font-bold tracking-tight text-text-primary">팀</h1>
           <HeaderProfileLink />
         </header>
       </div>
