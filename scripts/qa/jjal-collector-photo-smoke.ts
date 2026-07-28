@@ -13,6 +13,7 @@
 import {
   extractInstagramImageUrls,
   extractInstagramImageUrlsFromSrcset,
+  mergeInstagramImageSlides,
   extractInstagramVideoUrls,
   extractThreadsImageUrls,
   extractMlbparkImageUrls,
@@ -256,6 +257,66 @@ check("content-type image/jpeg → jpg (회귀)", inferMediaExt("image/jpeg", "h
     "IG srcset: EmbeddedMediaImage만 수집(하단 다른 게시물 썸네일 오염 차단)",
     r.length === 1 && r[0].url.includes("other_post_n.jpg") && !r.some((x) => x.url.includes("footer_n")),
     `got ${JSON.stringify(r)}`,
+  );
+}
+
+// ── mergeInstagramImageSlides: publisher 조합 경로 (캐러셀 slide 보존 + cover만 원본비율 교체) — 삼순 NO-GO 반영 ──
+
+const img = (u: string): { url: string; type: "image" } => ({ url: u, type: "image" });
+
+// 20) 캐러셀 cover+2 slides(display_url 3장) + srcset cover 1장 → 3장 유지, [0]만 원본비율 cover로 교체.
+{
+  const display = [img("https://ig/cover_sq.jpg"), img("https://ig/slide2.jpg"), img("https://ig/slide3.jpg")];
+  const cover = [img("https://ig/cover_full_p1080.jpg")];
+  const r = mergeInstagramImageSlides(display, cover, 5);
+  check(
+    "merge: 캐러셀 3장 보존 + cover만 원본비율로 교체 (회귀 방지)",
+    r.length === 3 &&
+      r[0].url === "https://ig/cover_full_p1080.jpg" &&
+      r[1].url === "https://ig/slide2.jpg" &&
+      r[2].url === "https://ig/slide3.jpg",
+    `got ${JSON.stringify(r)}`,
+  );
+}
+
+// 21) display_url 없음(단일글·embed 포맷 변경) + srcset cover 1장 → srcset만 1장.
+{
+  const r = mergeInstagramImageSlides([], [img("https://ig/cover_full.jpg")], 5);
+  check(
+    "merge: display_url 없으면 srcset cover만 (제보된 단일글 케이스)",
+    r.length === 1 && r[0].url === "https://ig/cover_full.jpg",
+    `got ${JSON.stringify(r)}`,
+  );
+}
+
+// 22) display_url 있고 srcset 0장(embed 마크업 변경) → display_url 그대로 (기존 동작 회귀 없음).
+{
+  const display = [img("https://ig/a.jpg"), img("https://ig/b.jpg")];
+  const r = mergeInstagramImageSlides(display, [], 5);
+  check(
+    "merge: srcset 0장이면 display_url 그대로 (폴백, 기존 계약 유지)",
+    r.length === 2 && r[0].url === "https://ig/a.jpg" && r[1].url === "https://ig/b.jpg",
+    `got ${JSON.stringify(r)}`,
+  );
+}
+
+// 23) max cap: display_url 6장 + srcset cover → 5장(MAX), [0] 교체.
+{
+  const display = [1, 2, 3, 4, 5, 6].map((n) => img(`https://ig/s${n}.jpg`));
+  const r = mergeInstagramImageSlides(display, [img("https://ig/cover.jpg")], 5);
+  check(
+    "merge: display_url 6장 → max=5 cap + cover 교체",
+    r.length === 5 && r[0].url === "https://ig/cover.jpg" && r[4].url === "https://ig/s5.jpg",
+    `got ${JSON.stringify(r)}`,
+  );
+}
+
+// 24) 둘 다 비어 있으면 빈 배열 / max=0 가드.
+{
+  check("merge: 둘 다 비어있으면 빈 배열", mergeInstagramImageSlides([], [], 5).length === 0);
+  check(
+    "merge: max=0이면 빈 배열",
+    mergeInstagramImageSlides([img("https://ig/a.jpg")], [img("https://ig/c.jpg")], 0).length === 0,
   );
 }
 

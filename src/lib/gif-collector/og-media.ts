@@ -262,6 +262,32 @@ export function extractInstagramImageUrlsFromSrcset(html: string, max: number): 
   return out;
 }
 
+/**
+ * IG 사진 최종 선택: display_url 캐러셀 slide 순서·장수를 보존하되 *커버(첫 슬라이드)만*
+ * 원본 비율 srcset으로 교체/보강한다.
+ *
+ * 배경(삼순 NO-GO 2026-07-28): srcset은 embed cover 한 장만 노출하므로 srcset을 무조건
+ * 1순위로 두면 기존 다중 이미지(캐러셀 최대 5장) 게시물이 cover 1장으로 축소된다.
+ * → display_url slide를 SSOT로 유지하고, 그 첫 장(cover)만 원본비율 srcset으로 교체.
+ *   - display_url이 있으면: [srcsetCover 또는 display[0], display[1..]] 순서 유지, max 장.
+ *   - display_url이 없으면(단일글·embed 포맷 변경): srcsetCover만.
+ * 이때 srcsetCover와 display[0]은 둘 다 첫 슬라이드(cover)라 교체가 안전하다.
+ */
+export function mergeInstagramImageSlides(
+  displayUrls: OgMedia[],
+  srcsetCover: OgMedia[],
+  max: number,
+): OgMedia[] {
+  if (max <= 0) return [];
+  const cover = srcsetCover[0];
+  if (displayUrls.length > 0) {
+    const merged = displayUrls.slice(0, max);
+    if (cover) merged[0] = cover; // 첫 슬라이드(cover)만 원본비율로 교체, 나머지 slide 그대로.
+    return merged;
+  }
+  return srcsetCover.slice(0, max);
+}
+
 function isMlbparkEmoticon(url: string): boolean {
   try {
     const u = new URL(url);
