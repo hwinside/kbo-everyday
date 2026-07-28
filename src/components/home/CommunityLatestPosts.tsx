@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { MessageCircle, Heart, ChevronRight, ChevronDown, ChevronUp, PenSquare } from "lucide-react";
+import { MessageCircle, Heart, ChevronRight, ChevronDown, ChevronUp, PenSquare, FileText, Image as ImageIcon, Video, BarChart3 } from "lucide-react";
 import { useUnifiedFeed, type FeedBoard } from "@/lib/supabase/useUnifiedFeed";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { getPostDetailPath } from "@/lib/utils/post-share";
@@ -242,6 +242,31 @@ function IconTile() {
   );
 }
 
+/**
+ * 글 유형 아이콘 (하린아빠 스펙 2026-07-28) — 일반글/사진/동영상/투표 4종.
+ * 사진과 동영상이 섞여 있으면 동영상으로 표기(동영상 우선).
+ * 우선순위: 투표(board_type='poll') > 동영상(video_urls) > 사진(image_urls) > 일반글.
+ */
+function postTypeBadge(post: Post): { Icon: typeof FileText; label: string } {
+  if (post.board_type === "poll") return { Icon: BarChart3, label: "투표" };
+  if ((post.video_urls?.length ?? 0) > 0) return { Icon: Video, label: "동영상" };
+  if ((post.image_urls?.length ?? 0) > 0) return { Icon: ImageIcon, label: "사진" };
+  return { Icon: FileText, label: "일반글" };
+}
+
+function PostTypeIcon({ post }: { post: Post }) {
+  const { Icon, label } = postTypeBadge(post);
+  return (
+    <span
+      aria-label={label}
+      title={label}
+      className="absolute bottom-0.5 right-0.5 inline-flex items-center justify-center w-4 h-4 rounded-md bg-black/60 text-white ring-1 ring-white/20"
+    >
+      <Icon size={10} strokeWidth={2.25} />
+    </span>
+  );
+}
+
 function PostRow({ post }: { post: Post }) {
   const [imgFailed, setImgFailed] = useState(false);
   const thumb = resolveThumb(post);
@@ -257,8 +282,9 @@ function PostRow({ post }: { post: Post }) {
       }}
       className="flex items-center gap-3 py-2.5 active:opacity-70 transition-opacity"
     >
-      {/* 썸네일 56x56 — 선수 히어로샷/팀 로고는 팀컬러 그라데이션 배경(선수페이지 동일) */}
-      <div className="w-14 h-14 shrink-0 rounded-xl overflow-hidden bg-bg-tertiary">
+      {/* 썸네일 56x56 — 선수 히어로샷/팀 로고는 팀컬러 그라데이션 배경(선수페이지 동일).
+          우하단에 글 유형 아이콘(일반글/사진/동영상/투표) 오버레이. */}
+      <div className="relative w-14 h-14 shrink-0 rounded-xl overflow-hidden bg-bg-tertiary">
         {thumb.kind === "none" || thumb.kind === "kbo" || imgFailed ? (
           // 크보팬 라벨(다팀/무팀) 글은 말풍선 아이콘 타일. 크보팬 로고는 라벨과
           // 중복이고, 본문 미리보기는 우측 텍스트와 중복이라 중립 말풍선 채택(하린아빠 결정).
@@ -301,6 +327,7 @@ function PostRow({ post }: { post: Post }) {
             onError={() => setImgFailed(true)}
           />
         )}
+        <PostTypeIcon post={post} />
       </div>
 
       {/* 본문 요약 + 메타 */}
