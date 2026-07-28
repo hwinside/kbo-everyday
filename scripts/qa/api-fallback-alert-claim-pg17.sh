@@ -81,6 +81,49 @@ check "confirm 후 alert_sent 정확히 1건" "$SENT2" "1"
 R=$("${PSQL[@]}" -c "SELECT should_send FROM public.claim_api_fallback_alert('$API','schema-error',null,'again',5,3,30,120)")
 check "cooldown 중 재claim → false" "$R" "f"
 
+echo "[강제 interleaving — A confirm 락 보유 중 B drain 회전 차단(원자 fence)]"
+# 삼순 3차 NO-GO: confirm SELECT→UPDATE 사이에 B 가 token 을 회전하면 stale A 가 event 를
+# sent 로 마킹하고 true 반환하던 split-brain. 원자 fence(FOR UPDATE) 로 B 가 못 끓음을 증명.
+API2="interleave-api"
+for i in 1 2 3; do "${PSQL[@]}" -c "SELECT should_send FROM public.claim_api_fallback_alert('$API2','schema-error',null,'x$i',5,3,30,120)" >/dev/null; done
+TOK_A=$("${PSQL[@]}" -c "SELECT attempt_token FROM public.api_fallback_alert_state WHERE api_name='$API2'")
+EVID=$("${PSQL[@]}" -c "SELECT pending_event_id FROM public.api_fallback_alert_state WHERE api_name='$API2'")
+# 행을 drain-적격(due)으로 만들어 B 가 column 상태로는 가져갈 수 있게 한뒤, A 의 FOR UPDATE 행잠금으로만 막힐다.
+"${PSQL[@]}" -c "UPDATE public.api_fallback_alert_state SET locked_until=now()-interval '1 second', next_attempt_at=now()-interval '1 second' WHERE api_name='$API2'" >/dev/null
+FIFO="$WORK/fifo_a"; mkfifo "$FIFO"
+# 백그라운드 psql: FIFO 로 명령을 받아 A confirm 을 트랜잭션 안에서 실행 → COMMIT 까지 FOR UPDATE 락 보유.
+"$PGBIN/psql" -h "$SOCKDIR" -p 59323 -U qa -d postgres -v ON_ERROR_STOP=1 -qtA < "$FIFO" > "$WORK/a_out" 2>&1 &
+APID=$!
+exec 3>"$FIFO"
+echo "BEGIN;" >&3
+echo "SELECT public.confirm_api_fallback_alert('$API2','$TOK_A') AS a_confirm;" >&3
+sleep 1  # A 가 FOR UPDATE 락을 잡을 시간
+BDRAIN=$("${PSQL[@]}" -c "SELECT count(*) FROM public.drain_api_fallback_alerts(120,120,20) WHERE api_name='$API2'")
+echo "COMMIT;" >&3
+exec 3>&-
+wait "$APID" 2>/dev/null || true
+ACONF=$(grep -Eo '^[tf]$' "$WORK/a_out" | head -1)
+SENT_IL=$("${PSQL[@]}" -c "SELECT count(*) FROM public.api_fallback_events WHERE id=$EVID AND alert_sent=true")
+PENDING_IL=$("${PSQL[@]}" -c "SELECT count(*) FROM public.api_fallback_alert_state WHERE api_name='$API2' AND pending_event_id IS NOT NULL")
+check "A confirm 락 보유 중 B drain 회전 못 함(0건 skip)" "$BDRAIN" "0"
+check "A confirm 성공(true)" "$ACONF" "t"
+check "그 event 정확히 sent 마킹" "$SENT_IL" "1"
+check "confirm 후 outbox 비워짐(split-brain 없음)" "$PENDING_IL" "0"
+
+echo "[역 interleaving — B 가 먼저 token 회전 → 늦은 A confirm no-op]"
+# A lease 만료 → B(drain) 가 새 token 으로 재획득 → 구 token 으로의 늦은 A confirm 은 no-op·B pending 유지.
+API3="interleave-rev-api"
+for i in 1 2 3; do "${PSQL[@]}" -c "SELECT should_send FROM public.claim_api_fallback_alert('$API3','schema-error',null,'y$i',5,3,30,120)" >/dev/null; done
+TOK_A3=$("${PSQL[@]}" -c "SELECT attempt_token FROM public.api_fallback_alert_state WHERE api_name='$API3'")
+EVID3=$("${PSQL[@]}" -c "SELECT pending_event_id FROM public.api_fallback_alert_state WHERE api_name='$API3'")
+"${PSQL[@]}" -c "UPDATE public.api_fallback_alert_state SET locked_until=now()-interval '1 second', next_attempt_at=now()-interval '1 second' WHERE api_name='$API3'" >/dev/null
+TOK_B3=$("${PSQL[@]}" -c "SELECT attempt_token FROM public.drain_api_fallback_alerts(120,120,20) WHERE api_name='$API3'")
+check "B drain 이 새 token 으로 회전(구 token 과 다름)" "$([ -n "$TOK_B3" ] && [ "$TOK_B3" != "$TOK_A3" ] && echo t || echo f)" "t"
+RA3=$("${PSQL[@]}" -c "SELECT public.confirm_api_fallback_alert('$API3','$TOK_A3')")
+check "구 token 으로의 늦은 A confirm → no-op(false)" "$RA3" "f"
+check "stale A confirm 후 그 event sent 미마킹" "$("${PSQL[@]}" -c "SELECT count(*) FROM public.api_fallback_events WHERE id=$EVID3 AND alert_sent=true")" "0"
+check "stale A confirm 후 B outbox(pending+B token) 유지" "$("${PSQL[@]}" -c "SELECT count(*) FROM public.api_fallback_alert_state WHERE api_name='$API3' AND pending_event_id IS NOT NULL AND attempt_token='$TOK_B3' AND last_alerted_at IS NULL")" "1"
+
 echo "[클라 롤 차단]"
 check "anon 테이블 SELECT 불가" "$("${PSQL[@]}" -c "SELECT has_table_privilege('anon','public.api_fallback_alert_state','SELECT')")" "f"
 check "authenticated 테이블 INSERT 불가" "$("${PSQL[@]}" -c "SELECT has_table_privilege('authenticated','public.api_fallback_alert_state','INSERT')")" "f"

@@ -177,6 +177,10 @@ end;
 $$;
 
 -- ── 실제 2xx(ACK) 뒤에만: 현재 토큰 소유자만 cooldown 확정 + outbox 제거 + 그 event 마킹 ──
+-- 삼순 3차(왕복 3/3) NO-GO 반영: 기존 SELECT→UPDATE 2-statement 는 그 사이 B(drainer)가
+--   token 을 회전하면 stale A 가 event 를 sent 로 마킹하고 true 를 반환하는 창이 있었다.
+--   → 토큰 소유 행을 잠그고(pending_event_id 캡처) 같은 단일 statement 로 outbox 를 비우는
+--   원자 fence 로 재작성. 매칭 0행이면 stale confirm 은 no-op(false)·event 미마킹.
 create or replace function public.confirm_api_fallback_alert(p_api_name text, p_token uuid)
 returns boolean
 language plpgsql
@@ -186,13 +190,18 @@ as $$
 declare
   v_event_id bigint;
 begin
+  -- 원자 fence: 토큰 소유 행을 FOR UPDATE 로 잠가 먼저 잡는다. 이 행잠금이 SELECT→UPDATE
+  -- 사이의 gap 을 닫으므로, B(drainer의 for-update-skip-locked)는 confirm 트랜잭션 종료
+  -- 전까지 token 을 회전할 수 없다. 토큰 불일치(B 가 먼저 회전)면 not found → no-op·event 미마킹.
   select pending_event_id into v_event_id
     from public.api_fallback_alert_state
-   where api_name = p_api_name and attempt_token = p_token;
+   where api_name = p_api_name and attempt_token = p_token
+   for update;
   if not found then
-    return false; -- stale/mismatch → no-op
+    return false; -- stale/mismatch(토큰 회전됨) → no-op
   end if;
 
+  -- 행잠금을 보유한 채 같은 토큰 조건으로 outbox 비우기(fence 재확인).
   update public.api_fallback_alert_state set
     last_alerted_at = now(),
     pending_event_id = null, pending_reason = null, pending_error_message = null,
