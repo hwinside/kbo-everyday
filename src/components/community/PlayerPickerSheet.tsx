@@ -17,9 +17,12 @@ interface PlayerPickerSheetProps {
   onSelect: (playerId: string) => void;
   /** User's team id for prioritising roster list */
   userTeamId?: number;
+  /** overlay/sheet z-index tailwind 클래스. 상위 모달(z-[10000]) 위에서 열 때 주입.
+   *  기본 z-50 — 단독 사용처 회귀 없이 WritePoll 처럼 상위 레이어에서만 올린다. */
+  overlayZClassName?: string;
 }
 
-export default function PlayerPickerSheet({ open, onClose, players: favPlayers, onSelect, userTeamId }: PlayerPickerSheetProps) {
+export default function PlayerPickerSheet({ open, onClose, players: favPlayers, onSelect, userTeamId, overlayZClassName = "z-50" }: PlayerPickerSheetProps) {
   const [search, setSearch] = useState("");
 
   const favIds = useMemo(() => new Set(favPlayers.map((p) => p.playerId)), [favPlayers]);
@@ -94,7 +97,7 @@ export default function PlayerPickerSheet({ open, onClose, players: favPlayers, 
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 bg-black/60"
+            className={`fixed inset-0 ${overlayZClassName} bg-black/60`}
             onClick={handleClose}
           />
           <motion.div
@@ -102,7 +105,7 @@ export default function PlayerPickerSheet({ open, onClose, players: favPlayers, 
             animate={{ y: 0 }}
             exit={{ y: "100%" }}
             transition={{ type: "spring", damping: 30, stiffness: 300 }}
-            className="fixed inset-x-0 bottom-0 z-50 rounded-t-2xl bg-bg-secondary overflow-hidden flex flex-col"
+            className={`fixed inset-x-0 bottom-0 ${overlayZClassName} rounded-t-2xl bg-bg-secondary overflow-hidden flex flex-col`}
             style={{ maxHeight: "92dvh" }}
           >
             {/* Swipe-down handle */}

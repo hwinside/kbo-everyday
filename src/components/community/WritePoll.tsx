@@ -95,12 +95,22 @@ export default function WritePoll({ isOpen, onClose, onCreated }: WritePollProps
   const [taggedPlayers, setTaggedPlayers] = useState<PlayerTag[]>([]);
 
   // 설명 textarea 자동 세로 확장(엔터·긴 글 대응). content 변경·열림 시 height 재계산.
+  // max(약 10줄) 도달 후에는 내부 스크롤 허용(overflow-y-auto) — cap 되었다고 스크롤까지
+  // 막히지 않게 한다(삼순 지적). 254px ≈ max-h-64(256px) - 상하 경계.
   const contentRef = useRef<HTMLTextAreaElement>(null);
+  const CONTENT_MAX_PX = 256;
   useEffect(() => {
     const el = contentRef.current;
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = `${el.scrollHeight}px`;
+    const next = el.scrollHeight;
+    if (next > CONTENT_MAX_PX) {
+      el.style.height = `${CONTENT_MAX_PX}px`;
+      el.style.overflowY = "auto";
+    } else {
+      el.style.height = `${next}px`;
+      el.style.overflowY = "hidden";
+    }
   }, [content, isOpen]);
 
   function reset() {
@@ -290,7 +300,7 @@ export default function WritePoll({ isOpen, onClose, onCreated }: WritePollProps
                 placeholder="투표에 대한 설명을 적어주세요 (엔터로 줄바꿈)"
                 rows={2}
                 maxLength={2000}
-                className="w-full px-3 py-2.5 rounded-xl bg-bg-tertiary text-text-primary placeholder:text-text-tertiary outline-none resize-none overflow-hidden min-h-[3rem] max-h-64"
+                className="w-full px-3 py-2.5 rounded-xl bg-bg-tertiary text-text-primary placeholder:text-text-tertiary outline-none resize-none min-h-[3rem]"
               />
             </div>
 

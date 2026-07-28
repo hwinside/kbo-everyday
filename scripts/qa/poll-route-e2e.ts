@@ -389,8 +389,66 @@ async function main(): Promise<void> {
       );
     }
 
+    // ---------- 수동 태그(작성 UI 태그 섹션) union / dedupe / 위조 거절 / 모더레이션 ----------
+    const mkPostTags = (body: Record<string, unknown>) =>
+      new Request("https://keubo.fan/api/polls", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${VALID_TOKEN}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ title: "Q?", closesAt: future, ...body }),
+      });
+
+    // etc-only 투표 + 수동 team/player 태그 → 201, 수동 태그가 canonical 로 p_team_tags/p_player_tags 에 반영
+    rpcCount = 0;
+    lastRpc = null;
+    const etcManual = await POST(mkPostTags({
+      options: [{ kind: "etc", label: "치킨" }, { kind: "etc", label: "피자" }],
+      teamTags: ["lg"],
+      playerTags: ["56769:강건우"], // 한화
+    }) as never);
+    ok("수동태그 etc-only + manual → 201", etcManual.status === 201);
+    {
+      const tt = ((lastRpc?.body.p_team_tags as string[]) ?? []).slice().sort();
+      const pt = ((lastRpc?.body.p_player_tags as string[]) ?? []).slice().sort();
+      // lg(수동) + hanwha(선수 소속팀 union)
+      ok("수동태그 team_tags = [hanwha,lg]", JSON.stringify(tt) === JSON.stringify(["hanwha", "lg"]));
+      ok("수동태그 player_tags = [56769:강건우]", JSON.stringify(pt) === JSON.stringify(["56769:강건우"]));
+    }
+
+    // 선지 파생 태그 + 동일 수동 태그 → dedupe(중복 없음)
+    rpcCount = 0;
+    lastRpc = null;
+    const dedupe = await POST(mkPostTags({
+      options: [{ kind: "team", refId: "lg" }, { kind: "team", refId: "doosan" }],
+      teamTags: ["lg", "doosan"], // 선지와 중복
+    }) as never);
+    ok("수동태그 option+manual dedupe → 201", dedupe.status === 201);
+    {
+      const tt = ((lastRpc?.body.p_team_tags as string[]) ?? []).slice().sort();
+      ok("수동태그 dedupe team_tags = [doosan,lg]", JSON.stringify(tt) === JSON.stringify(["doosan", "lg"]));
+    }
+
+    // 위조/알 수 없는 수동 팀 태그 → 400, RPC 미호출
+    rpcCount = 0;
+    lastRpc = null;
+    const forgedTeam = await POST(mkPostTags({
+      options: [{ kind: "etc", label: "A" }, { kind: "etc", label: "B" }],
+      teamTags: ["not-a-team"],
+    }) as never);
+    ok("위조 수동 team 태그 → 400", forgedTeam.status === 400);
+    ok("위조 수동 team 태그 → rpc not called", rpcCount === 0 && lastRpc === null);
+
+    // 위조/알 수 없는 수동 선수 태그 → 400
+    rpcCount = 0;
+    lastRpc = null;
+    const forgedPlayer = await POST(mkPostTags({
+      options: [{ kind: "etc", label: "A" }, { kind: "etc", label: "B" }],
+      playerTags: ["000000:가짜"],
+    }) as never);
+    ok("위조 수동 player 태그 → 400", forgedPlayer.status === 400);
+    ok("위조 수동 player 태그 → rpc not called", rpcCount === 0 && lastRpc === null);
+
     console.log(
-      `\npoll route E2E: ${pass} PASS (①②③⑩ + hidden GET/OG + canonical snapshots/tags + duplicate refs)`,
+      `\npoll route E2E: ${pass} PASS (①②③⑩ + hidden GET/OG + canonical snapshots/tags + duplicate refs + manual tags union/dedupe/forged)`,
     );
   } finally {
     globalThis.fetch = realFetch;

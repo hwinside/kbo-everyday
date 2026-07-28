@@ -4,12 +4,34 @@ import { useCallback, useEffect, useState } from "react";
 import Image from "next/image";
 import { Check, Clock } from "lucide-react";
 import { useAuth } from "@/lib/supabase/AuthContext";
+import { getTeamBySlug } from "@/lib/constants/teams";
+import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
+import { getPlayerPhotoByKboId } from "@/lib/constants/player-photos";
 import {
   fetchPollDetail,
   castPollVote,
   type PollDetail,
   type PollDetailOption,
 } from "@/lib/community/poll-client";
+
+// 상세 선지 렌더는 current SSOT(teams.ts / roster / photo)를 refId 로 현재 해석하고,
+// 서버 snapshot(label/image)은 fallback 으로만 쓴다(spec §1/§3.2 — 팀명/로고·선수명/사진
+// 변경이 상세에 즉시 반영). etc 는 snapshot label(=자유입력)이 SSOT.
+const ROSTER_NAME_BY_KBOID = new Map(
+  (PLAYERS_ROSTER as { kboId: string; name: string }[]).map((p) => [String(p.kboId), p.name]),
+);
+
+function resolveOption(o: PollDetailOption): { label: string; image: string | null } {
+  if (o.kind === "team" && o.refId) {
+    const team = getTeamBySlug(o.refId);
+    if (team) return { label: team.name, image: team.logoPath };
+  } else if (o.kind === "player" && o.refId) {
+    const name = ROSTER_NAME_BY_KBOID.get(o.refId);
+    if (name) return { label: name, image: getPlayerPhotoByKboId(o.refId) ?? o.image };
+  }
+  // etc 또는 current 해석 실패 → snapshot fallback
+  return { label: o.label ?? (o.kind === "etc" ? "(빈 선지)" : o.refId ?? ""), image: o.image };
+}
 
 /**
  * 커뮤니티 투표 상세 블록 (spec §6, S2).
@@ -54,6 +76,8 @@ export default function PollBlock({ postId, onRequireLogin }: PollBlockProps) {
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [submitting, setSubmitting] = useState(false);
   const [voteError, setVoteError] = useState<string | null>(null);
+  // 페이지를 열어둔 채 마감시각을 넘겼을 때 경계에서 즉시 마감 처리(재조회로 결과 공개 수렴).
+  const [boundaryClosed, setBoundaryClosed] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -78,6 +102,27 @@ export default function PollBlock({ postId, onRequireLogin }: PollBlockProps) {
   useEffect(() => {
     load();
   }, [load]);
+
+  // 마감 경계 타이머: 페이지를 열어둔 채 closesAt 을 넘으면 즉시 마감 처리 + 재조회로
+  // 서버 canonical 결과(closed=true, vote_count 공개)를 수렴시킨다. detail.closed 가
+  // 이미 true 거나 detail 이 없으면 스케줄 안 함. setTimeout 상한(2^31ms) 방어로
+  // 먼 미래(>1일)는 예약 생략(페이지를 그만큼 열어두지 않음 — 재방문 시 load 가 재판정).
+  useEffect(() => {
+    if (!detail || detail.closed) return;
+    const ms = new Date(detail.closesAt).getTime() - Date.now();
+    if (ms <= 0) {
+      setBoundaryClosed(true);
+      load();
+      return;
+    }
+    const MAX_DELAY = 24 * 60 * 60 * 1000; // 1일 상한
+    if (ms > MAX_DELAY) return;
+    const t = setTimeout(() => {
+      setBoundaryClosed(true);
+      load();
+    }, ms + 250);
+    return () => clearTimeout(t);
+  }, [detail, load]);
 
   function toggle(optionId: number, allowMultiple: boolean) {
     setVoteError(null);
@@ -130,8 +175,10 @@ export default function PollBlock({ postId, onRequireLogin }: PollBlockProps) {
     return <div className="mt-4 py-6 text-center text-sm text-text-tertiary">{loadError ?? "투표를 찾을 수 없어요"}</div>;
   }
 
-  const showResults = detail.canSeeResults && !editing;
-  const status = detail.closed ? "마감" : "진행중";
+  // 경계 경과 즉시 반영: 서버 closed 또는 클라이언트 경계 도달. 재조회 전까지도 투표 비활성.
+  const effectiveClosed = detail.closed || boundaryClosed || Date.now() >= new Date(detail.closesAt).getTime();
+  const showResults = (detail.canSeeResults && !editing) || (effectiveClosed && detail.canSeeResults);
+  const status = effectiveClosed ? "마감" : "진행중";
 
   return (
     <div className="mt-4 rounded-2xl border border-border p-4">
@@ -139,13 +186,13 @@ export default function PollBlock({ postId, onRequireLogin }: PollBlockProps) {
       <div className="flex items-center gap-2 mb-3">
         <span
           className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
-            detail.closed ? "bg-bg-tertiary text-text-tertiary" : "bg-accent/15 text-accent"
+            effectiveClosed ? "bg-bg-tertiary text-text-tertiary" : "bg-accent/15 text-accent"
           }`}
         >
           {status}
         </span>
         <span className="text-xs text-text-tertiary flex items-center gap-1">
-          <Clock size={12} /> {remainingLabel(detail.closesAt, detail.closed)}
+          <Clock size={12} /> {remainingLabel(detail.closesAt, effectiveClosed)}
         </span>
         <span className="text-xs text-text-tertiary ml-auto">👥 {detail.voterCount}명 참여</span>
       </div>
@@ -158,7 +205,7 @@ export default function PollBlock({ postId, onRequireLogin }: PollBlockProps) {
             option={o}
             showResults={showResults}
             voterCount={detail.voterCount}
-            selectable={editing && !detail.closed}
+            selectable={editing && !effectiveClosed}
             checked={selected.has(o.id)}
             mine={detail.mySelection.includes(o.id)}
             onToggle={() => toggle(o.id, detail.allowMultiple)}
@@ -170,7 +217,7 @@ export default function PollBlock({ postId, onRequireLogin }: PollBlockProps) {
 
       {/* 액션 */}
       <div className="mt-3 flex items-center gap-2">
-        {detail.closed ? (
+        {effectiveClosed ? (
           <span className="text-sm text-text-tertiary">마감된 투표예요</span>
         ) : editing ? (
           <button
@@ -195,11 +242,14 @@ export default function PollBlock({ postId, onRequireLogin }: PollBlockProps) {
         )}
       </div>
 
-      {detail.allowMultiple && editing && !detail.closed && (
+      {detail.allowMultiple && editing && !effectiveClosed && (
         <p className="text-[11px] text-text-tertiary mt-2">복수선택 가능한 투표예요</p>
       )}
-      {!detail.canSeeResults && editing && !detail.closed && (
+      {!detail.canSeeResults && editing && !effectiveClosed && (
         <p className="text-[11px] text-text-tertiary mt-1">투표하면 중간 결과를 볼 수 있어요</p>
+      )}
+      {detail.voted && !effectiveClosed && (
+        <p className="text-[11px] text-text-tertiary mt-1">첫 투표 이후에는 질문·선지를 수정할 수 없어요</p>
       )}
     </div>
   );
@@ -223,7 +273,8 @@ function PollOptionRow({
   onToggle: () => void;
 }) {
   const percent = showResults ? pct(option.voteCount, voterCount) : 0;
-  const label = option.label ?? (option.kind === "etc" ? "(빈 선지)" : option.refId ?? "");
+  // current SSOT 해석(팀명/로고·선수명/사진) → 실패 시 snapshot fallback.
+  const { label, image } = resolveOption(option);
 
   const inner = (
     <div className="relative flex items-center gap-2.5 px-3 py-2.5 rounded-xl bg-bg-tertiary overflow-hidden">
@@ -235,10 +286,10 @@ function PollOptionRow({
           aria-hidden
         />
       )}
-      {/* 아이콘/로고 */}
-      {option.image ? (
+      {/* 아이콘/로고 (current SSOT → snapshot fallback) */}
+      {image ? (
         <Image
-          src={option.image}
+          src={image}
           alt={label}
           width={26}
           height={26}
