@@ -4,7 +4,14 @@
  *
  * 실행: npx tsx scripts/qa/relay-delta-smoke.ts
  */
-import { filterDeltaInnings, mergeDeltaInnings, inningKey, toDeltaResponse } from "../../src/lib/game/relay-delta";
+import {
+  filterDeltaInnings,
+  mergeDeltaInnings,
+  inningKey,
+  toDeltaResponse,
+  shouldApplyRelayResponse,
+  shouldReleaseInFlight,
+} from "../../src/lib/game/relay-delta";
 import type { InningRelay } from "../../src/app/api/game-relay/route";
 
 let pass = 0;
@@ -117,6 +124,67 @@ function fullGame(maxInning: number): InningRelay[] {
   check(
     "fresh vs cache-hit key set parity",
     freshLike.innings.map(inningKey).join(",") === cacheHitLike.innings.map(inningKey).join(","),
+  );
+}
+
+// ---- 요청 fencing (삼순 blocker ②: gameId 전환 교차 오염 / late-body) ----
+// 실행형 회귀. 훅의 seq 토큰 fencing 만을 결정론적으로 재현(dev-server 불필요).
+// 시나리오: `A pending → B full 먼저 → A release → B 유지`.
+{
+  // 훅 ref 상태를 그대로 모사. gameId A 요청이 발급되어 in-flight.
+  let currentSeq = 0;
+  let activeGameId = "A";
+  let mounted = true;
+
+  // A 요청 발급 (inFlight 가드 통과 후 mySeq 증가)
+  const aSeq = ++currentSeq; // 1
+  check("A request seq = 1", aSeq === 1);
+
+  // gameId A→B 전환: reset effect 가 seq 를 올려 A 무효화 + activeGameId=B
+  currentSeq++; // reset bump → 2
+  activeGameId = "B";
+  // B full 이 막힘없이 즉시 시작: 새 요청 발급
+  const bSeq = ++currentSeq; // 3
+  check("B request starts immediately with fresh seq", bSeq === 3 && bSeq !== aSeq);
+
+  // (b) 늦게 끝난 A 의 late-body 는 setData 하면 안 된다(seq 불일치 + gameId 불일치)
+  check(
+    "late A body is NOT applied (stale seq + gameId)",
+    shouldApplyRelayResponse({
+      mounted,
+      requestSeq: aSeq,
+      currentSeq,
+      requestGameId: "A",
+      activeGameId,
+    }) === false,
+  );
+  // (a) 늦게 끝난 A 의 finally 는 B 의 공용 in-flight 을 clear 하면 안 된다
+  check("late A finally does NOT release B in-flight", shouldReleaseInFlight(aSeq, currentSeq) === false);
+
+  // B 본문은 정상 적용되고(B 유지) B 가 자신의 in-flight 을 clear 한다
+  check(
+    "B body IS applied (current seq + active gameId)",
+    shouldApplyRelayResponse({
+      mounted,
+      requestSeq: bSeq,
+      currentSeq,
+      requestGameId: "B",
+      activeGameId,
+    }) === true,
+  );
+  check("B finally releases its own in-flight", shouldReleaseInFlight(bSeq, currentSeq) === true);
+
+  // 마운트 해제 후 도착한 응답은 seq·gameId 가 맞아도 적용 안 함
+  mounted = false;
+  check(
+    "unmounted response is NOT applied even when seq/gameId match",
+    shouldApplyRelayResponse({
+      mounted,
+      requestSeq: bSeq,
+      currentSeq,
+      requestGameId: "B",
+      activeGameId,
+    }) === false,
   );
 }
 

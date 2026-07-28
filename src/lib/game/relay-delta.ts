@@ -57,3 +57,48 @@ export function mergeDeltaInnings(
   for (const inn of responseInnings) cache.set(inningKey(inn), inn);
   return Array.from(cache.values());
 }
+
+/**
+ * gameId 전환·후행 요청 fencing 판정(순수 헬퍼).
+ *
+ * 배경: 라이브 폴링 훅은 공용 in-flight/promise/loading ref 하나를 쓴다. gameId 가 A→B 로
+ * 바뀌면 (1) 진행 중이던 A 요청은 abort 하고 B full 을 즉시 시작해야 하며(A 완료를 기다리다
+ * B 가 폴 주기만큼 비어 있는 회귀 차단), (2) 늦게 도착한 A 응답이 B 상태를 setData 로 덮거나
+ * B 의 in-flight/promise/loading 을 clear 하지 못하게 막아야 한다(교차 오염 차단). abort 만으로는
+ * 이미 버퍼된 body 의 late `res.json()` 을 못 막는 경합이 남으므로, 요청마다 발급한 seq 토큰으로
+ * parse 이후와 finally 를 한 번 더 fencing 한다(삼순 blocker ②: guard-before-json late-body).
+ */
+export interface RelayRequestFence {
+  /** 훅이 아직 마운트돼 있는가. */
+  mounted: boolean;
+  /** 이 요청 발급 시 캡처한 seq. */
+  requestSeq: number;
+  /** 현재(최신) seq. gameId 전환·후행 요청마다 증가한다. */
+  currentSeq: number;
+  /** 이 요청이 겨냥한 gameId. */
+  requestGameId: string;
+  /** 현재 활성 gameId. */
+  activeGameId: string | undefined;
+}
+
+/**
+ * parse(`res.json()`) 이후 setData 해도 되는가: 언마운트가 아니고, 이 요청이 여전히 최신
+ * 요청이며(seq 일치), 활성 gameId 와 겨냥 gameId 가 같을 때만 true. headers 통과 후 body 를
+ * 기다리는 사이 B 로 전환된 늦은 A(late-body)를 여기서 차단한다.
+ */
+export function shouldApplyRelayResponse(fence: RelayRequestFence): boolean {
+  return (
+    fence.mounted
+    && fence.requestSeq === fence.currentSeq
+    && fence.activeGameId === fence.requestGameId
+  );
+}
+
+/**
+ * finally 에서 공용 in-flight/promise/loading 을 clear 해도 되는가: 이 요청이 아직 최신일
+ * 때만. B 가 이미 공용 상태를 소유(seq 증가)했다면 늦게 끝난 A 는 no-op 이어야 B 의 로딩·
+ * in-flight 를 훼손하지 않는다.
+ */
+export function shouldReleaseInFlight(requestSeq: number, currentSeq: number): boolean {
+  return requestSeq === currentSeq;
+}
