@@ -83,6 +83,88 @@ export async function fetchPollCore(
   };
 }
 
+/** 목록/OG 카드용 poll 요약 — 득표수(vote_count) 미포함(진행중 우회 노출 방지). 선지는 작성순. */
+export type PollSummaryOption = {
+  position: number;
+  kind: "team" | "player" | "etc";
+  refId: string | null;
+  label: string | null; // label_snapshot (클라 현재 SSOT 해석 실패 시 fallback)
+  image: string | null; // image_snapshot (fallback)
+};
+
+export type PollSummary = {
+  postId: number;
+  closesAt: string; // ISO
+  closed: boolean;
+  voterCount: number; // 참여자 수 (항상 공개)
+  optionCount: number;
+  options: PollSummaryOption[]; // 작성순, 득표수 없음
+};
+
+/**
+ * 여러 postId 의 poll 요약을 배치로 읽는다(목록 카드용). poll_polls/options 는 RLS
+ * 차단이므로 service-role admin 으로만 호출. hidden/비-poll 은 결과에서 제외.
+ * 득표수는 반환하지 않는다(진행중 결과 은닉 계약 — 수치는 상세 GET 게이트에서만).
+ */
+export async function fetchPollSummaries(
+  admin: SupabaseClient,
+  postIds: number[],
+): Promise<Record<number, PollSummary>> {
+  const ids = [...new Set(postIds.filter((n) => Number.isInteger(n) && n > 0))].slice(0, 100);
+  if (ids.length === 0) return {};
+
+  // hidden 제외 + poll 만 유효
+  // query-guard: bounded -- ids 는 호출측 목록 페이지 크기로 상한(≤100)
+  const { data: posts } = await admin
+    .from("posts")
+    .select("id, board_type, is_hidden")
+    .in("id", ids);
+  const validIds = (posts ?? [])
+    .filter((p) => p.board_type === "poll" && p.is_hidden !== true)
+    .map((p) => p.id as number);
+  if (validIds.length === 0) return {};
+
+  // query-guard: bounded -- validIds ≤100, poll_polls 는 post 당 1행
+  const { data: polls } = await admin
+    .from("poll_polls")
+    .select("post_id, closes_at, voter_count")
+    .in("post_id", validIds);
+
+  // query-guard: bounded -- 선지 수는 poll 당 ≤10, validIds ≤100 → ≤1000
+  const { data: options } = await admin
+    .from("poll_options")
+    .select("post_id, position, kind, ref_id, label_snapshot, image_snapshot")
+    .in("post_id", validIds)
+    .order("position", { ascending: true });
+
+  const optsByPost = new Map<number, PollSummaryOption[]>();
+  for (const o of options ?? []) {
+    const arr = optsByPost.get(o.post_id) ?? [];
+    arr.push({
+      position: o.position,
+      kind: o.kind,
+      refId: o.ref_id,
+      label: o.label_snapshot,
+      image: o.image_snapshot,
+    });
+    optsByPost.set(o.post_id, arr);
+  }
+
+  const out: Record<number, PollSummary> = {};
+  for (const p of polls ?? []) {
+    const opts = optsByPost.get(p.post_id) ?? [];
+    out[p.post_id] = {
+      postId: p.post_id,
+      closesAt: new Date(p.closes_at).toISOString(),
+      closed: Date.now() >= new Date(p.closes_at).getTime(),
+      voterCount: p.voter_count,
+      optionCount: opts.length,
+      options: opts,
+    };
+  }
+  return out;
+}
+
 /**
  * 특정 유저가 이 poll 에서 선택한 option_id 배열(mySelection). 없으면 [].
  */

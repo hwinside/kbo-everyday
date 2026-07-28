@@ -55,6 +55,24 @@ export type PollDetail = {
   options: PollDetailOption[];
 };
 
+/** 목록 카드용 poll 요약(득표수 미포함, 선지 작성순). */
+export type PollSummaryOption = {
+  position: number;
+  kind: PollOptionKind;
+  refId: string | null;
+  label: string | null;
+  image: string | null;
+};
+
+export type PollSummary = {
+  postId: number;
+  closesAt: string;
+  closed: boolean;
+  voterCount: number;
+  optionCount: number;
+  options: PollSummaryOption[];
+};
+
 async function authHeader(): Promise<Record<string, string>> {
   const {
     data: { session },
@@ -100,6 +118,22 @@ export async function fetchPollDetail(postId: number): Promise<PollDetail | null
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(await parseError(res, "투표를 불러오지 못했어요"));
   return (await res.json()) as PollDetail;
+}
+
+/** 목록 카드용 poll 요약 배치 조회(인증 불필). hidden/비-poll 은 맵에서 제외된다. */
+export async function fetchPollSummaries(
+  postIds: number[],
+): Promise<Record<number, PollSummary>> {
+  const ids = [...new Set(postIds.filter((n) => Number.isInteger(n) && n > 0))];
+  if (ids.length === 0) return {};
+  const res = await fetch("/api/polls/summaries", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ postIds: ids }),
+  });
+  if (!res.ok) return {};
+  const j = (await res.json()) as { summaries?: Record<number, PollSummary> };
+  return j.summaries ?? {};
 }
 
 /** 투표/변경. optionIds 는 선택한 선지 id 배열(단일선택이면 1개). */

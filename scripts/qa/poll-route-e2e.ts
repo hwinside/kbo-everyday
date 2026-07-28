@@ -102,6 +102,16 @@ function eqFilters(u: URL): Record<string, string> {
   }
   return f;
 }
+// `.in(col, [..])` → `col=in.(1,2,3)` 파싱(summaries 배치 조회용).
+function inFilter(u: URL, key: string): number[] | null {
+  const v = u.searchParams.get(key);
+  if (!v || !v.startsWith("in.(")) return null;
+  return v
+    .slice(4, -1)
+    .split(",")
+    .map((s) => Number(s.replace(/"/g, "")))
+    .filter((n) => Number.isFinite(n));
+}
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -140,16 +150,31 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
 
   const f = eqFilters(u);
   if (name === "posts") {
+    const inIds = inFilter(u, "id");
+    if (inIds) {
+      const rows = inIds
+        .map((id) => store.posts.get(id))
+        .filter((r): r is NonNullable<typeof r> => Boolean(r));
+      return json(rows);
+    }
     const row = f.id ? store.posts.get(Number(f.id)) : undefined;
     return json(row ? [row] : []);
   }
   if (name === "poll_polls") {
+    const inIds = inFilter(u, "post_id");
+    if (inIds) {
+      const rows = inIds
+        .map((id) => store.poll_polls.get(id))
+        .filter((r): r is NonNullable<typeof r> => Boolean(r));
+      return json(rows);
+    }
     const row = f.post_id ? store.poll_polls.get(Number(f.post_id)) : undefined;
     return json(row ? [row] : []);
   }
   if (name === "poll_options") {
+    const inIds = inFilter(u, "post_id");
     const rows = store.poll_options
-      .filter((o) => o.post_id === Number(f.post_id))
+      .filter((o) => (inIds ? inIds.includes(o.post_id) : o.post_id === Number(f.post_id)))
       .sort((a, b) => a.position - b.position);
     return json(rows);
   }
@@ -188,6 +213,7 @@ async function main(): Promise<void> {
     const { GET } = await import("../../src/app/api/polls/[postId]/route");
     const { GET: GET_OG } = await import("../../src/app/api/og/poll/[postId]/route");
     const { POST } = await import("../../src/app/api/polls/route");
+    const { POST: POST_SUMMARIES } = await import("../../src/app/api/polls/summaries/route");
 
     // seed: 진행중(미투표자용) — user 미투표
     const future = new Date(Date.now() + 3600_000).toISOString();
@@ -490,8 +516,40 @@ async function main(): Promise<void> {
     const modClean = await POST(mkModPost({ title: "오늘 누가 MVP?", content: "자유롭게 투표하세요" }) as never);
     ok("모더레이션 정상 입력 → 201", modClean.status === 201 && rpcCount === 1);
 
+    // ---------- S3: 목록 카드용 배치 요약(summaries) — hidden 제외·득표수 미포함·작성순 ----------
+    const mkSummaries = (postIds: unknown) =>
+      new Request("https://keubo.fan/api/polls/summaries", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ postIds }),
+      });
+
+    // inProg(id 1, 진행중·투표 4명) + closed(id 2, 마감) + hidden(id 3) 배치 조회
+    const sumRes = await POST_SUMMARIES(mkSummaries([inProg[0] ? 1 : 1, 2, 3]) as never);
+    ok("summaries → 200", sumRes.status === 200);
+    const sumBody = (await sumRes.json()) as {
+      summaries: Record<string, { closed: boolean; voterCount: number; optionCount: number; options: { position: number; voteCount?: unknown }[] }>;
+    };
+    ok("summaries hidden(id 3) 제외", sumBody.summaries["3"] === undefined);
+    ok("summaries 진행중(id 1) 포함 + closed=false", !!sumBody.summaries["1"] && sumBody.summaries["1"].closed === false);
+    ok("summaries 마감(id 2) closed=true", !!sumBody.summaries["2"] && sumBody.summaries["2"].closed === true);
+    ok("summaries voterCount 공개(number)", typeof sumBody.summaries["1"].voterCount === "number");
+    ok(
+      "summaries 득표수 미포함(진행중 우회 방지)",
+      sumBody.summaries["1"].options.every((o) => !("voteCount" in o)),
+    );
+    {
+      const positions = sumBody.summaries["1"].options.map((o) => o.position);
+      const sorted = [...positions].sort((a, b) => a - b);
+      ok("summaries 선지 작성순(position ASC)", JSON.stringify(positions) === JSON.stringify(sorted));
+    }
+
+    // 비배열 postIds → 400
+    const sumBad = await POST_SUMMARIES(mkSummaries("nope") as never);
+    ok("summaries 비배열 postIds → 400", sumBad.status === 400);
+
     console.log(
-      `\npoll route E2E: ${pass} PASS (①②③⑩ + hidden GET/OG + canonical snapshots/tags + duplicate refs + manual tags union/dedupe/forged + moderation title/content/etc)`,
+      `\npoll route E2E: ${pass} PASS (①②③⑩ + hidden GET/OG + canonical snapshots/tags + duplicate refs + manual tags union/dedupe/forged + moderation title/content/etc + summaries)`,
     );
   } finally {
     globalThis.fetch = realFetch;
