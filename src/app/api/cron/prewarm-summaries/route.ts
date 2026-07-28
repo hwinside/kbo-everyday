@@ -102,7 +102,9 @@ export async function GET(req: NextRequest) {
           body: JSON.stringify(payload),
         });
 
-        if (res.ok) {
+        if (res.status === 202) {
+          results.push({ gameId: game.gameId, status: "pending", reason: "generation in flight" });
+        } else if (res.ok) {
           results.push({ gameId: game.gameId, status: "generated", reason: "ok" });
         } else {
           const err = await res.text().catch(() => "unknown");
