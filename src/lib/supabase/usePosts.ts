@@ -146,6 +146,7 @@ export function usePostDetail(postId: number) {
         .from("posts")
         .select("*, profiles(nickname, team_id, grade)")
         .eq("id", postId)
+        .neq("is_hidden", true) // 신고 블라인드(is_hidden=true) 글은 상세에서도 fail-closed — 목록 쿼리와 동일. poll 본문 우회 노출 차단.
         .maybeSingle(); // 삭제/미존재 글은 정상 no-row — .single()의 PGRST116 406을 유발하지 않는다.
 
       if (p) {

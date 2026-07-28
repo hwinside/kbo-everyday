@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { Pencil } from "lucide-react";
 import { getTeamBySlug, getTeamBgColor } from "@/lib/constants/teams";
@@ -9,6 +9,7 @@ import TeamLogo from "@/components/ui/TeamLogo";
 import PhotoFeed from "@/components/community/PhotoFeed";
 import WritePost from "@/components/community/WritePost";
 import WritePhotoPost from "@/components/community/WritePhotoPost";
+import WritePoll from "@/components/community/WritePoll";
 import WriteEntrySheet from "@/components/community/WriteEntrySheet";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import LoginSheet from "@/components/auth/LoginSheet";
@@ -20,7 +21,9 @@ export default function CommunityTeamBoardPage() {
   const teamSlug = params.teamId as string;
   const team = getTeamBySlug(teamSlug);
 
+  const router = useRouter();
   const [showEntry, setShowEntry] = useState(false);
+  const [showPoll, setShowPoll] = useState(false);
   const [writeOpen, setWriteOpen] = useState(false);
   const [showPhoto, setShowPhoto] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
@@ -115,6 +118,13 @@ export default function CommunityTeamBoardPage() {
         onClose={() => setShowEntry(false)}
         onChoosePhoto={() => { setShowEntry(false); setShowPhoto(true); }}
         onChooseText={() => { setShowEntry(false); setWriteOpen(true); }}
+        onChoosePoll={() => { setShowEntry(false); setShowPoll(true); }}
+      />
+
+      <WritePoll
+        isOpen={showPoll}
+        onClose={() => setShowPoll(false)}
+        onCreated={(postId) => { setShowPoll(false); router.push(`/community/free/${postId}`); }}
       />
 
       {/* Write post modal (글·사진 첨부 통합 — 밈 에디터/태그는 S5 통합 컴포저로 이관 예정) */}

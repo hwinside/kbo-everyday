@@ -6,6 +6,7 @@ import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
 import { formatPlayerTag } from "@/lib/utils/player-tags";
 import { teamSlugsForPlayerTags } from "@/lib/utils/player-roster";
 import { getPlayerPhotoByKboId } from "@/lib/constants/player-photos";
+import { checkObjectionableContent } from "@/lib/moderation/content-filter";
 
 // canonical SSOT: 팀 slug = teams.ts, 선수 kboId→name = players-roster.json.
 // 옵션 ref_id 가 이 집합에 없으면 route 가 400으로 거절(서버 검증), 있으면 team_tags/
@@ -62,6 +63,8 @@ export async function POST(request: NextRequest) {
     allowMultiple?: unknown;
     closesAt?: unknown;
     options?: unknown;
+    teamTags?: unknown;
+    playerTags?: unknown;
   };
   try {
     body = await request.json();
@@ -143,8 +146,59 @@ export async function POST(request: NextRequest) {
     // etc → 태그 미반영, 클라이 label 유지(이미지 없음). 잘못된 kind 는 RPC 가 거절.
     options.push({ kind: o.kind, ref_id: null, label: o.label, image: null });
   }
+  // 수동 태그(작성 UI 태그 섹션) union — 기존 일반/사진글과 동일하게 팀/선수 피드 노출.
+  // 선지에서 파생된 태그와 union(dedupe). 서버 canonical(teams.ts slug / roster kboId) 검증으로
+  // 위조 태그 거부. etc만 있는 투표도 이 경로로 원하는 피드에 노출 가능.
+  const seenPlayerKboIds = new Set(playerTags.map((t) => t.split(":")[0]));
+  if (Array.isArray(body.teamTags)) {
+    for (const raw of body.teamTags as unknown[]) {
+      const slug = typeof raw === "string" ? raw.trim() : "";
+      if (!slug) continue;
+      // 위조/알 수 없는 수동 팀 태그는 조용히 버리지 않고 400 거절(선지 ref_id 검증과 동일 정책).
+      if (!TEAM_BY_SLUG.has(slug)) {
+        return NextResponse.json({ error: `알 수 없는 팀 태그입니다: ${slug}` }, { status: 400 });
+      }
+      teamTags.add(slug);
+    }
+  }
+  if (Array.isArray(body.playerTags)) {
+    for (const raw of body.playerTags as unknown[]) {
+      // 기존 포맷 "kboId:name" 또는 단순 kboId 모두 수용.
+      const kboId = typeof raw === "string" ? raw.trim().split(":")[0] : "";
+      if (!kboId) continue;
+      const name = ROSTER_NAME_BY_KBOID.get(kboId);
+      // 위조/알 수 없는 수동 선수 태그도 400 거절(조용히 버리지 않음).
+      if (!name) {
+        return NextResponse.json({ error: `알 수 없는 선수 태그입니다: ${kboId}` }, { status: 400 });
+      }
+      if (!seenPlayerKboIds.has(kboId)) {
+        seenPlayerKboIds.add(kboId);
+        playerTags.push(formatPlayerTag(kboId, name));
+      }
+    }
+  }
   // 선수 태그의 소속팀 slug 도 team_tags 에 union (기존 createPost 동일 — 팀 피드 노출).
   for (const slug of teamSlugsForPlayerTags(playerTags)) teamTags.add(slug);
+
+  // 모더레이션 게이트 — 기존 일반/사진글(createPost)과 동일하게 금칙어·스팸을 차단.
+  // 질문(title)·설명(content)·기타 선지 라벨까지 모두 검사(기타 선지도 유저 자유입력).
+  const etcLabels = options
+    .filter((o) => o.kind === "etc" && o.label)
+    .map((o) => o.label)
+    .join(" ");
+  const contentForModeration = [
+    typeof body.content === "string" ? body.content : "",
+    etcLabels,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const moderation = checkObjectionableContent({ title, content: contentForModeration });
+  if (!moderation.allowed) {
+    return NextResponse.json(
+      { error: moderation.issues[0] ?? "부적절한 콘텐츠입니다" },
+      { status: 400 },
+    );
+  }
 
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase.rpc("create_poll", {
