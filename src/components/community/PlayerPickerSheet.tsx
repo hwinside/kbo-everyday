@@ -20,9 +20,11 @@ interface PlayerPickerSheetProps {
   /** overlay/sheet z-index tailwind 클래스. 상위 모달(z-[10000]) 위에서 열 때 주입.
    *  기본 z-50 — 단독 사용처 회귀 없이 WritePoll 처럼 상위 레이어에서만 올린다. */
   overlayZClassName?: string;
+  /** 시트 헤더 문구. 기본은 선수 게시판 진입 맥락. 투표 선지 추가 등 다른 맥락에선 주입해 교체. */
+  title?: string;
 }
 
-export default function PlayerPickerSheet({ open, onClose, players: favPlayers, onSelect, userTeamId, overlayZClassName = "z-50" }: PlayerPickerSheetProps) {
+export default function PlayerPickerSheet({ open, onClose, players: favPlayers, onSelect, userTeamId, overlayZClassName = "z-50", title = "어떤 선수 게시판에 쓸까요?" }: PlayerPickerSheetProps) {
   const [search, setSearch] = useState("");
 
   const favIds = useMemo(() => new Set(favPlayers.map((p) => p.playerId)), [favPlayers]);
@@ -122,7 +124,7 @@ export default function PlayerPickerSheet({ open, onClose, players: favPlayers, 
             </motion.div>
 
             <div className="sticky top-0 bg-bg-secondary px-5 pt-3 pb-2 z-10 space-y-3">
-              <h3 className="text-lg font-bold text-text-primary">어떤 선수 게시판에 쓸까요?</h3>
+              <h3 className="text-lg font-bold text-text-primary">{title}</h3>
               {/* Search */}
               <div className="relative">
                 <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-tertiary" />

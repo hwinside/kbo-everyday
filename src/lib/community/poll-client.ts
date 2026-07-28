@@ -55,6 +55,24 @@ export type PollDetail = {
   options: PollDetailOption[];
 };
 
+/** 목록 카드용 poll 요약(득표수 미포함, 선지 작성순). */
+export type PollSummaryOption = {
+  position: number;
+  kind: PollOptionKind;
+  refId: string | null;
+  label: string | null;
+  image: string | null;
+};
+
+export type PollSummary = {
+  postId: number;
+  closesAt: string;
+  closed: boolean;
+  voterCount: number;
+  optionCount: number;
+  options: PollSummaryOption[];
+};
+
 async function authHeader(): Promise<Record<string, string>> {
   const {
     data: { session },
@@ -100,6 +118,58 @@ export async function fetchPollDetail(postId: number): Promise<PollDetail | null
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(await parseError(res, "투표를 불러오지 못했어요"));
   return (await res.json()) as PollDetail;
+}
+
+export const SUMMARIES_CHUNK = 100; // route/서버 계약 상한(≤100). 무한피드 누적 id는 chunk 해서 전량 조회.
+
+/** 중복·비유효 제거 후 SUMMARIES_CHUNK(100) 단위로 분할. 무한피드 누적 id가 100개를
+ *  넘어도 101번째 이후가 누락되지 않도록 보장(route 계약·테스트 공유 순수함수). */
+export function chunkSummaryIds(postIds: number[]): number[][] {
+  const ids = [...new Set(postIds.filter((n) => Number.isInteger(n) && n > 0))];
+  const chunks: number[][] = [];
+  for (let i = 0; i < ids.length; i += SUMMARIES_CHUNK) {
+    chunks.push(ids.slice(i, i + SUMMARIES_CHUNK));
+  }
+  return chunks;
+}
+
+/** 단일 chunk 요약 — non-OK/네트워크 throw 를 격리해 다른 chunk 를 굶기지 않게 한다.
+ *  bounded 재시도(기본 1회) 후에도 실패하면 빈 결과를 돌려(never rejects) — 호출측 Promise.all 이
+ *  전체 reject 되어 모든 카드가 영구 로딩에 빠지는 것을 방지. 실패 chunk 카드만 로딩 유지. */
+async function fetchSummaryChunk(
+  chunk: number[],
+  retries = 1,
+): Promise<Record<number, PollSummary>> {
+  try {
+    const res = await fetch("/api/polls/summaries", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ postIds: chunk }),
+    });
+    if (!res.ok) {
+      if (retries > 0) return fetchSummaryChunk(chunk, retries - 1);
+      return {};
+    }
+    const j = (await res.json()) as { summaries?: Record<number, PollSummary> };
+    return j.summaries ?? {};
+  } catch {
+    // 네트워크 throw → 다른 chunk 를 굶기지 않도록 격리. bounded 재시도 후 빈 결과.
+    if (retries > 0) return fetchSummaryChunk(chunk, retries - 1);
+    return {};
+  }
+}
+
+/** 목록 카드용 poll 요약 배치 조회(인증 불필). hidden/비-poll 은 맵에서 제외된다.
+ *  무한스크롤로 100개를 넘게 누적된 poll id 도 100개 단위 chunk 후 merge 해
+ *  101번째 이후 카드가 영구 로딩에 멈추지 않게 한다. 각 chunk 는 독립 격리(하나 실패해도
+ *  나머지는 merge). */
+export async function fetchPollSummaries(
+  postIds: number[],
+): Promise<Record<number, PollSummary>> {
+  const chunks = chunkSummaryIds(postIds);
+  if (chunks.length === 0) return {};
+  const results = await Promise.all(chunks.map((chunk) => fetchSummaryChunk(chunk)));
+  return Object.assign({}, ...results) as Record<number, PollSummary>;
 }
 
 /** 투표/변경. optionIds 는 선택한 선지 id 배열(단일선택이면 1개). */
