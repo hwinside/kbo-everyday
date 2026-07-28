@@ -1,6 +1,7 @@
 import Link from "next/link";
 import TeamAccent from "@/components/ui/TeamAccent";
 import TabBar from "@/components/ui/TabBar";
+import KeyboardTabBarGuard from "@/components/ui/KeyboardTabBarGuard";
 
 import ProfileSetupWrapper from "@/components/auth/ProfileSetupWrapper";
 import MyTeamCookieSync from "@/components/auth/MyTeamCookieSync";
@@ -40,6 +41,7 @@ export default function MainLayout({
         </footer>
       </main>
       <TabBar />
+      <KeyboardTabBarGuard />
     </div>
   );
 }

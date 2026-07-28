@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useSafeBack } from "@/lib/hooks/useSafeBack";
 import { motion } from "framer-motion";
 import Image from "next/image";
-import { ChevronLeft, ChevronRight, RefreshCw, Settings } from "lucide-react";
+import { ChevronLeft, ChevronRight, RefreshCw, Settings, MessageSquareHeart } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import TeamSelectModal from "@/components/onboarding/TeamSelectModal";
 import PlayerSelectModal from "@/components/onboarding/PlayerSelectModal";
@@ -25,6 +25,7 @@ import ProfileCard from "@/components/my/ProfileCard";
 import InviteSection from "@/components/my/InviteSection";
 import FavoritePlayersCard from "@/components/my/FavoritePlayersCard";
 import MenuSection from "@/components/my/MenuSection";
+import FeedbackSheet from "@/components/feedback/FeedbackSheet";
 import VenueDiaryCard from "@/components/my/VenueDiaryCard";
 import AdminOnly from "@/components/admin/AdminOnly";
 
@@ -44,6 +45,7 @@ export default function MyPage() {
   const [showPlayerSelect, setShowPlayerSelect] = useState(false);
   const [showAvatarSelect, setShowAvatarSelect] = useState(false);
   const [showNicknameEdit, setShowNicknameEdit] = useState(false);
+  const [showFeedback, setShowFeedback] = useState(false);
   const [favPlayers, setFavPlayers] = useState<FavoritePlayer[]>([]);
   const [writingPoints, setWritingPoints] = useState<number | null>(null);
   const router = useRouter();
@@ -216,7 +218,21 @@ export default function MyPage() {
         <MenuSection />
       </motion.div>
 
+      {/* 피드백 보내기 — 기존 안내(마이페이지 → 피드백 보내기)와 일치하도록 명시 노출 (로그인 유저) */}
+      {user && (
+        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.18 }} className="mt-3">
+          <GlassCard pressable className="flex items-center justify-between p-5" onClick={() => setShowFeedback(true)}>
+            <div className="flex items-center gap-4">
+              <MessageSquareHeart size={22} className="text-text-secondary" />
+              <span className="text-base text-text-primary">피드백 보내기</span>
+            </div>
+            <ChevronRight size={22} className="text-text-tertiary" />
+          </GlassCard>
+        </motion.div>
+      )}
+
       {/* Modals */}
+      <FeedbackSheet isOpen={showFeedback} onClose={() => setShowFeedback(false)} />
       <TeamSelectModal isOpen={showTeamSelect} onSelect={handleTeamChange} />
       <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />
       <AvatarSelectSheet
