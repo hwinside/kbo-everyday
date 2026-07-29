@@ -70,24 +70,36 @@ export interface ViewPingPayload {
 }
 
 /**
- * 조회 1건 전송(#735 재발 방지 체크리스트): navigator.sendBeacon 우선(페이지 이탈/앱 종료
- * 직전에도 브라우저가 큐잉해 유실 최소화), 미지원/큐잉 실패 시 fetch keepalive 폴백.
- * 반환 false(폴백 fetch 실패·5xx)면 호출부가 세션 내 재시도할 수 있게 mark 를 해제한다.
+ * 조회 1건 전송(삼순 post-merge 정정 리뷰 #962 반영): **기본 경로는 fetch(keepalive:true)**.
+ * 서버 응답 status(204/5xx)를 확인할 수 있는 유일한 경로라, 성공 확정(2xx)과 실패 재시도
+ * (mark 해제) 판정의 기준이 된다. keepalive 라 이탈 직후에도 브라우저가 요청을 이어 보낸다.
+ *
+ * navigator.sendBeacon 은 **페이지 이탈(pagehide/visibilitychange hidden) 직전 최후
+ * fallback 으로만** 사용한다(opts.unloading): beacon 의 반환 true 는 "브라우저 큐잉 성공"일
+ * 뿐 서버 저장 성공이 아니며 **응답을 확인할 방법이 없다** — 서버 RPC 가 500 을 내도 감지·
+ * 재시도가 불가능하다. 이탈 시엔 탭과 함께 세션 mark(Set)도 소멸하므로, 이탈 경로에
+ * 한해 큐잉 성공을 best-effort 성공으로 간주하는 트레이드오프다.
+ *
+ * 반환 false(fetch 네트워크 실패·5xx)면 호출부가 mark 를 해제해 다음 노출/열람 때
+ * 재전송한다 — 중복 방지는 서버 KST 일별 dedupe(RPC)가 권위라 이중 집계가 없다.
  */
 export async function sendVenueStoryViewPing(opts: {
   url: string;
   payload: ViewPingPayload;
+  /** 페이지 이탈 직전 여부 — true 일 때만 sendBeacon fallback 을 허용한다. */
+  unloading?: boolean;
   sendBeacon?: (url: string, data: BodyInit) => boolean;
   fetchFn: typeof fetch;
 }): Promise<boolean> {
   const body = JSON.stringify(opts.payload);
-  if (opts.sendBeacon) {
+  if (opts.unloading && opts.sendBeacon) {
     try {
-      // text/plain Blob — beacon 의 안전한 기본값(#735 는 same-origin 이라 json 도 가능하지만
-      // 서버가 text→parse 로 흡수하므로 통일). 큐잉 성공이면 브라우저가 이탈 후에도 전송한다.
+      // 이탈 직전엔 일반 fetch 가 중단될 수 있어 beacon 을 먼저 시도. text/plain Blob 은
+      // beacon 의 안전한 기본값(서버가 text→parse 로 흡수). 큐잉 성공이어도 서버 저장
+      // 성공은 확인 불가(응답 없음) — 이탈 경로 한정 best-effort.
       if (opts.sendBeacon(opts.url, new Blob([body], { type: "text/plain" }))) return true;
     } catch {
-      // sendBeacon 자체 예외 → fetch 폴백으로 진행
+      // sendBeacon 자체 예외 → keepalive fetch 로 진행
     }
   }
   try {
