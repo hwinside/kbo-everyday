@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { resolveGameLiveDate } from "@/lib/game-live-date";
+import { useVisibilityAwareInterval } from "@/lib/hooks/useVisibilityAwareInterval";
 
 export interface LiveGameData {
   gameId: string;
@@ -53,16 +54,18 @@ export function useLiveGame(gameId?: string, pollInterval = 30000) {
     }
   }, [gameDate]);
 
+  // pollInterval<=0 이면 폴링 비활성 (비경기시간 등) — loading만 해제.
   useEffect(() => {
-    // pollInterval=0 이면 폴링 비활성 (비경기시간 등)
-    if (pollInterval <= 0) {
-      setLoading(false);
-      return;
-    }
-    fetchGames();
-    const interval = setInterval(fetchGames, pollInterval);
-    return () => clearInterval(interval);
-  }, [fetchGames, pollInterval]);
+    if (pollInterval <= 0) setLoading(false);
+  }, [pollInterval]);
+
+  // 백그라운드 탭은 폴링 정지, 복귀 시 즉시 1회 갱신(보는 유저 실시간성 유지).
+  // fetchGames는 Promise 반환이라 공용 훅 single-flight fence가 겹침을 막는다.
+  // gameDate 전환 시 즉시 갱신. pollInterval<=0이면 enabled:false로 폴링 안 함.
+  useVisibilityAwareInterval(fetchGames, pollInterval > 0 ? pollInterval : 30000, {
+    enabled: pollInterval > 0,
+    resetKey: gameDate,
+  });
 
   const game = gameId ? games.find(g => g.gameId === gameId) : undefined;
   const liveGames = games.filter(g => g.isLive);

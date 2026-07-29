@@ -174,6 +174,7 @@
     "qa:realtime-reconnect": "tsx scripts/qa/realtime-reconnect-smoke.ts",
     "qa:visibility-poller": "tsx scripts/qa/visibility-poller-smoke.ts",
     "qa:contextual-stats-fence": "tsx scripts/qa/contextual-stats-fence-smoke.ts",
+    "qa:livegame-visibility": "tsx scripts/qa/livegame-visibility-smoke.ts",
     "qa:visibility-poller-adoption": "tsx scripts/qa/visibility-poller-adoption-smoke.ts && tsx scripts/qa/games-visibility-poller-react-smoke.ts",
     "qa:game-live-stream": "tsx scripts/qa/game-live-stream-smoke.ts"
   },
