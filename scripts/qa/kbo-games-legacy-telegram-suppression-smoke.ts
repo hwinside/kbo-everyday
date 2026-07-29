@@ -37,19 +37,24 @@ async function main() {
   }) as typeof fetch;
 
   try {
-    const { trackFallback } = await import("../../src/lib/monitoring/api-fallback-tracker");
+    const {
+      getRecentFallbackBufferSizeForTest,
+      trackFallback,
+    } = await import("../../src/lib/monitoring/api-fallback-tracker");
 
     for (let i = 0; i < 5; i++) {
       await trackFallback("kbo-games", "timeout", { errorMessage: `failure-${i}` });
     }
     ok("kbo-games 이벤트 저장은 유지", insertCalls === 5);
     ok("kbo-games legacy Telegram은 임계치 이후에도 0회", telegramCalls === 0);
+    ok("kbo-games 이벤트는 in-memory buffer에 남지 않음", getRecentFallbackBufferSizeForTest() === 0);
 
     for (let i = 0; i < 3; i++) {
       await trackFallback("naver-standings", "timeout", { errorMessage: `control-${i}` });
     }
     ok("다른 legacy API 이벤트 저장 유지", insertCalls === 8);
     ok("다른 legacy API 경보 동작은 유지", telegramCalls === 1);
+    ok("다른 legacy API in-memory threshold는 유지", getRecentFallbackBufferSizeForTest() === 3);
   } finally {
     globalThis.fetch = realFetch;
   }

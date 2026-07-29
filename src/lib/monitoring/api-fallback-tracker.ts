@@ -27,6 +27,10 @@ const ALERT_WINDOW_MS = 5 * 60 * 1000; // 5분 내
 const COOLDOWN_MS = 30 * 60 * 1000; // 30분 쿨다운
 const LEGACY_TELEGRAM_SUPPRESSED_APIS = new Set(["kbo-games"]);
 
+export function getRecentFallbackBufferSizeForTest(): number {
+  return recentFallbacks.length;
+}
+
 /**
  * Fallback 이벤트 기록 + 알림 체크
  */
@@ -43,9 +47,6 @@ export async function trackFallback(
     errorMessage: options?.errorMessage,
   };
 
-  // 이벤트 추가 (메모리)
-  recentFallbacks.push(event);
-
   // Supabase 영구 저장 (비동기, 실패해도 알림은 계속)
   saveToSupabase(event).catch(err => {
     console.error("[API Fallback] Failed to save to Supabase:", err.message);
@@ -56,6 +57,9 @@ export async function trackFallback(
   if (LEGACY_TELEGRAM_SUPPRESSED_APIS.has(apiName)) {
     return;
   }
+
+  // 이벤트 추가 (메모리)
+  recentFallbacks.push(event);
 
   // 5분 이상 된 이벤트 제거 (메모리 관리)
   const cutoff = Date.now() - ALERT_WINDOW_MS;
