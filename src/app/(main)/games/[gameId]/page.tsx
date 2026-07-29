@@ -306,6 +306,9 @@ export default function GameDetailPage() {
   // wins — the relay path typically arrives 10–20s before BoxScore.
   useEffect(() => {
     if (!liveGame || !shouldProcessGameEvents) return;
+    // hidden 전환 전에 시작한 in-flight poll이 hidden 상태에서 settle해도,
+    // visible 세션의 마지막 baseline을 전진시키거나 celebration을 소비하지 않는다.
+    if (document.visibilityState === "hidden") return;
 
     let preserveFreshGameEnd = false;
 

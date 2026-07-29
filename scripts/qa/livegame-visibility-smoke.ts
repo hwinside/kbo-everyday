@@ -11,6 +11,7 @@
  * S5) gameDate A→B 전환 뒤 late A 응답은 B state를 덮지 않음
  * S6) poll pending 중 manual refetch는 single-flight 뒤 queued 1회로 합쳐짐
  * S7) hidden 중 live→final 전환은 복귀 첫 diff의 game_end/victory를 보존
+ * S8) visible에서 시작한 poll이 hidden 중 final settle해도 복귀 victory를 보존
  *
  * 실행: npx tsx scripts/qa/livegame-visibility-smoke.ts
  */
@@ -139,8 +140,8 @@ async function main() {
       React.createElement("button", { "data-testid": "refetch", onClick: () => void refetch() }, "refetch"),
     );
   }
-  function ResumeFinalHost({ gameId }: { gameId: string }) {
-    const { game: current } = useLiveGame(gameId, 60_000);
+  function ResumeFinalHost({ gameId, pollInterval = 60_000 }: { gameId: string; pollInterval?: number }) {
+    const { game: current } = useLiveGame(gameId, pollInterval);
     const previousRef = React.useRef<Parameters<typeof generateEvents>[1]>(null);
     const skipNextRef = React.useRef(false);
     const { celebration, processEvents } = useCelebration({
@@ -152,6 +153,7 @@ async function main() {
 
     React.useEffect(() => {
       if (!current) return;
+      if (document.visibilityState === "hidden") return;
       let preserveFreshGameEnd = false;
       if (skipNextRef.current) {
         skipNextRef.current = false;
@@ -304,6 +306,50 @@ async function main() {
     await waitFor(() => read(out, "resume-status") === "final");
     const victory = await waitFor(() => read(out, "celebration") === "victory");
     check("S7: 복귀 첫 live→final diff가 victory를 1회 보존", victory);
+    root.unmount(); out.remove();
+  }
+
+  // ── S8) visible poll pending → hidden 중 final settle → 복귀 victory 1회 ──
+  {
+    const gameId = "20260731WOLG0";
+    let pendingFinalResolve: (() => void) | null = null;
+    let calls = 0;
+    g.fetch = async () => {
+      calls++;
+      if (calls === 1) {
+        return {
+          ok: true,
+          json: async () => ({ games: [game(gameId, 2, "live")], error: null }),
+        } as Response;
+      }
+      if (calls === 2) {
+        return await new Promise<Response>((resolve) => {
+          pendingFinalResolve = () => resolve({
+            ok: true,
+            json: async () => ({ games: [game(gameId, 3, "final")], error: null }),
+          } as Response);
+        });
+      }
+      return {
+        ok: true,
+        json: async () => ({ games: [game(gameId, 3, "final")], error: null }),
+      } as Response;
+    };
+    hidden = false;
+    const out = dom.window.document.createElement("div");
+    dom.window.document.body.appendChild(out);
+    const root = createRoot(out);
+    root.render(React.createElement(ResumeFinalHost, { gameId, pollInterval: 40 }));
+    await waitFor(() => read(out, "resume-status") === "live");
+    await waitFor(() => calls === 2 && pendingFinalResolve !== null);
+    setHidden(true);
+    (pendingFinalResolve as (() => void) | null)?.();
+    await waitFor(() => read(out, "resume-status") === "final");
+    check("S8: hidden 중 final settle은 victory를 미리 소비하지 않음", read(out, "celebration") === "-");
+    setHidden(false);
+    await waitFor(() => calls === 3);
+    const victory = await waitFor(() => read(out, "celebration") === "victory");
+    check("S8: 복귀 fetch 뒤 pending game_end가 victory 정확히 1회 발화", victory);
     root.unmount(); out.remove();
   }
 
