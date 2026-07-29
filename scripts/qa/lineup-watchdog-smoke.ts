@@ -314,6 +314,38 @@ async function main() {
     void r;
   }
 
+  // ── (삼순 #952 4차 blocker2) 양 팀 FCM transient 로 pending>0 → status failed(부분 FCM 실패 502) ──
+  {
+    const r = await runLineupWatchdog({
+      dateStr: "20260729", deadlineAtMs: Date.now() + 16_000,
+      deps: base({
+        fetchGames: async () => [game("G1", "scheduled", 1, 10)],
+        fetchLineupConfirmed: async () => true,
+        openSnapshot: async () => Date.now() + 60_000,
+        // claim 은 됐지만 FCM transient(pending 잔존) — 예외 아님(drainErrors=0), deadline 안(expired=0).
+        deliverBatch: async () => batch({ claimed: 1, pending: 1, snapshotCompleted: false, fcmAcceptedDelta: 0 }),
+        finalizeSnapshot: async () => fin({ pending: 2 }),
+      }),
+    });
+    ok("양 팀 FCM transient pending>0 → status failed(502)", r.status === "failed");
+    ok("pending 집계 확인(>0)", r.summary.pending > 0 && r.summary.drainErrors === 0 && r.summary.expired === 0);
+  }
+
+  // ── 정상 완료(pending=0, drainErrors=0) → status ok (pending 게이트가 정상 tick 을 막지 않음) ──
+  {
+    const r = await runLineupWatchdog({
+      dateStr: "20260729", deadlineAtMs: Date.now() + 16_000,
+      deps: base({
+        fetchGames: async () => [game("G1", "scheduled", 1, 10)],
+        fetchLineupConfirmed: async () => true,
+        openSnapshot: async () => Date.now() + 60_000,
+        deliverBatch: async () => batch({ pending: 0 }),
+        finalizeSnapshot: async () => fin({ snapshotCompleted: true, pending: 0 }),
+      }),
+    });
+    ok("정상 완료(pending 0) → status ok", r.status === "ok");
+  }
+
   console.log(`\nlineup-watchdog 오케스트레이터: ${pass} passed, ${fail} failed`);
   if (fail > 0) process.exit(1);
 }

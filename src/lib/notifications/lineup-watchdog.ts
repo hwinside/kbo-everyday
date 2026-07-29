@@ -258,6 +258,7 @@ export async function runLineupWatchdog(args: {
     summary.probeFailures > 0 || // 부분 소스 null(특정 game 열화)
     summary.snapshotOpenErrors > 0 || // 원장 생성 실패(부분 포함)
     summary.drainErrors > 0 || // drain/FCM/due 조회 실패
+    summary.pending > 0 || // 이번 tick 발송 시도했으나 FCM transient 로 미완료(부분 FCM 실패) — 삼순 #952 4차 blocker2
     summary.expired > 0 || // 마감 내 미발송(실제 놓침) — 경보
     (summary.targets > 0 && summary.snapshotsOpened === 0);
 

@@ -26,22 +26,32 @@ export async function fetchLineupConfirmed(
   opts?: { seasonId?: string; timeoutMs?: number },
 ): Promise<boolean | null> {
   const sid = opts?.seasonId || gameId.slice(0, 4);
-  // srId=0(정규) 먼저, 신호 못 얻으면 srId=1(시범) 재시도. game-detail 과 동일.
+  // timeoutMs 는 srId 0/1 재시도를 포함한 **전체 절대 예산**이다(삼순 #952 4차 blocker1):
+  // 이전엔 srId 마다 timeoutMs 를 새로 셬 40ms 예산이 actual 82ms 가 됐다. 경과를 차감해
+  // 두 fetch 가 합치면 timeoutMs 를 넘지 않게 하고(watchdog 의 absolute deadline 결속 유지),
+  // 잔여 예산이 소진되면 두번째 srId 는 시도하지 않고 null(신호 못 얻음) 반환.
+  const startMs = Date.now();
   for (const srId of ["0", "1"]) {
+    let signal: AbortSignal | undefined;
+    if (opts?.timeoutMs != null) {
+      const remaining = opts.timeoutMs - (Date.now() - startMs);
+      if (remaining <= 0) break;
+      signal = AbortSignal.timeout(remaining);
+    }
     const body = `leId=1&srId=${srId}&seasonId=${sid}&gameId=${gameId}`;
     try {
       const res = await fetch(`${KBO_BASE}/GetLineUpAnalysis`, {
         method: "POST",
         headers: HEADERS,
         body,
-        signal: opts?.timeoutMs ? AbortSignal.timeout(opts.timeoutMs) : undefined,
+        signal,
       });
       if (!res.ok) continue;
       const data = await res.json();
       const ck = parseLineupCk(data);
       if (ck !== null) return ck;
     } catch {
-      // 다음 srId 시도
+      // 다음 srId 시도(단 잔여 예산 소진 시 위 remaining 체크로 break)
     }
   }
   return null;
