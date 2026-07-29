@@ -46,9 +46,11 @@
     "game_summary_generation_claims",
     "game_summaries",
     "game_event_state",
+    "game_lineup_notify_state",
     "game_notify_state",
     "game_start_delivery_ledger",
     "games",
+    "lineup_confirm_delivery_ledger",
     "gif_collector_queue",
     "highlights",
     "invitations",
@@ -397,6 +399,24 @@
       ],
       [
         "game_id",
+        "event_type",
+        "token_id",
+        "token_hash"
+      ]
+    ],
+    "game_lineup_notify_state": [
+      [
+        "game_id",
+        "team_id"
+      ]
+    ],
+    "lineup_confirm_delivery_ledger": [
+      [
+        "id"
+      ],
+      [
+        "game_id",
+        "team_id",
         "event_type",
         "token_id",
         "token_hash"
