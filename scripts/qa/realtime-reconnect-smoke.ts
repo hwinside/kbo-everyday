@@ -73,33 +73,33 @@ async function runLifecycleRegression() {
   const removeA = new Promise<void>((resolve) => { resolveRemoveA = resolve; });
   let backfills = 0;
   const lifecycle = createRealtimeChannelLifecycle<FakeChannel, Timer>({
-  createChannel: () => {
-    const channel = { id: String.fromCharCode(65 + channels.length) };
-    channels.push(channel);
-    return channel;
-  },
-  subscribeChannel: (channel, onStatus) => statusCallbacks.set(channel.id, onStatus),
-  removeChannel: async (channel) => {
-    removed.push(channel.id);
-    if (channel.id === "A") await removeA;
-  },
-  onSubscribed: () => { backfills += 1; },
-  onVisible: () => { backfills += 1; },
-  setTimer: (callback) => {
-    const timer: Timer = {
-      callback: async () => {
-        timer.fired = true;
-        await callback();
-      },
-      cleared: false,
-      fired: false,
-    };
-    timers.push(timer);
-    return timer;
-  },
-  clearTimer: (timer) => { timer.cleared = true; },
-  reconnectDelay: () => 0,
-  visibleReconnectDelay: () => 0,
+    createChannel: () => {
+      const channel = { id: String.fromCharCode(65 + channels.length) };
+      channels.push(channel);
+      return channel;
+    },
+    subscribeChannel: (channel, onStatus) => statusCallbacks.set(channel.id, onStatus),
+    removeChannel: async (channel) => {
+      removed.push(channel.id);
+      if (channel.id === "A") await removeA;
+    },
+    onSubscribed: () => { backfills += 1; },
+    onVisible: () => { backfills += 1; },
+    setTimer: (callback) => {
+      const timer: Timer = {
+        callback: async () => {
+          timer.fired = true;
+          await callback();
+        },
+        cleared: false,
+        fired: false,
+      };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimer: (timer) => { timer.cleared = true; },
+    reconnectDelay: () => 0,
+    visibleReconnectDelay: () => 0,
   });
 
   lifecycle.start();
