@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { supabase } from "./client";
 import { useAuth } from "./AuthContext";
 import { useBlockedIds } from "./useBlock";
@@ -9,6 +9,12 @@ import {
   BASEBALL_GENIUS_NAME,
   BASEBALL_GENIUS_USER_ID,
 } from "@/lib/constants/baseball-genius";
+import {
+  attemptBaseballQaOutbox,
+  enqueueBaseballQaQuestion,
+  readBaseballQaOutbox,
+  resetBaseballQaQuestion,
+} from "@/lib/baseball-qa/client-outbox";
 
 export interface DMConversation {
   id: string;
@@ -164,6 +170,61 @@ export function useDMChat(conversationId: string) {
   const { user } = useAuth();
   const [messages, setMessages] = useState<DMMessage[]>([]);
   const [loading, setLoading] = useState(Boolean(conversationId));
+  const [geniusReplyState, setGeniusReplyState] =
+    useState<"idle" | "waiting" | "retrying" | "failed">("idle");
+  const processingBaseballQaRef = useRef(false);
+
+  const processBaseballQaOutbox = useCallback(async () => {
+    if (typeof window === "undefined" || processingBaseballQaRef.current) return;
+    processingBaseballQaRef.current = true;
+    try {
+      const queued = readBaseballQaOutbox(window.localStorage);
+      if (queued.length === 0) {
+        setGeniusReplyState("idle");
+        return;
+      }
+      setGeniusReplyState("retrying");
+      const { data: { session } } = await supabase.auth.getSession();
+      const result = await attemptBaseballQaOutbox(
+        window.localStorage,
+        session?.access_token ?? null,
+      );
+      if (result.failed.length > 0) setGeniusReplyState("failed");
+      else if (result.pending.length > 0) setGeniusReplyState("waiting");
+      else setGeniusReplyState("idle");
+    } finally {
+      processingBaseballQaRef.current = false;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!user || typeof window === "undefined") return;
+    const initial = window.setTimeout(() => {
+      void processBaseballQaOutbox();
+    }, 0);
+    const handleOnline = () => { void processBaseballQaOutbox(); };
+    window.addEventListener("online", handleOnline);
+    return () => {
+      window.clearTimeout(initial);
+      window.removeEventListener("online", handleOnline);
+    };
+  }, [user, processBaseballQaOutbox]);
+
+  useEffect(() => {
+    if (geniusReplyState !== "waiting") return;
+    const timer = window.setTimeout(() => {
+      void processBaseballQaOutbox();
+    }, 3000);
+    return () => window.clearTimeout(timer);
+  }, [geniusReplyState, processBaseballQaOutbox]);
+
+  const retryBaseballQa = useCallback(() => {
+    if (typeof window === "undefined") return;
+    for (const entry of readBaseballQaOutbox(window.localStorage)) {
+      resetBaseballQaQuestion(window.localStorage, entry.messageId);
+    }
+    void processBaseballQaOutbox();
+  }, [processBaseballQaOutbox]);
 
   // 메시지 로드
   useEffect(() => {
@@ -366,32 +427,28 @@ export function useDMChat(conversationId: string) {
           result?.message_id &&
           targetUserId === BASEBALL_GENIUS_USER_ID
         ) {
-          try {
-            const { data: { session } } = await supabase.auth.getSession();
-            await fetch("/api/baseball-qa", {
-              method: "POST",
-              credentials: "include",
-              headers: {
-                "Content-Type": "application/json",
-                ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
-              },
-              body: JSON.stringify({
-                conversationId: result.conversation_id,
-                messageId: result.message_id,
-              }),
-            });
-          } catch {
-            // 사용자 질문 DM은 이미 원자적으로 저장됐다. 재전송으로 중복 질문을 만들지 않는다.
-          }
+          enqueueBaseballQaQuestion(window.localStorage, {
+            conversationId: result.conversation_id,
+            messageId: result.message_id,
+          });
+          setGeniusReplyState("waiting");
+          void processBaseballQaOutbox();
         }
       }
 
       return { ok: !error, conversationId: result?.conversation_id ?? null };
     },
-    [user, conversationId]
+    [user, conversationId, processBaseballQaOutbox]
   );
 
-  return { messages, loading, sendMessage, isLoggedIn: !!user };
+  return {
+    messages,
+    loading,
+    sendMessage,
+    isLoggedIn: !!user,
+    geniusReplyState,
+    retryBaseballQa,
+  };
 }
 
 // 대화 화면 진입만으로 빈 방을 만들지 않도록 기존 방 조회와 생성을 분리한다.

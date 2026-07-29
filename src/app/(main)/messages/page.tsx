@@ -120,7 +120,9 @@ export default function MessagesPage() {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-bold text-text-primary">{conv.other_nickname}</span>
-                    <span className="text-[10px] text-text-tertiary">{timeAgo(conv.last_message_at)}</span>
+                    {!conv.id.startsWith("new-") && (
+                      <span className="text-[10px] text-text-tertiary">{timeAgo(conv.last_message_at)}</span>
+                    )}
                   </div>
                   <div className="flex items-center justify-between mt-0.5">
                     <p className="text-xs text-text-secondary truncate">{conv.last_message || "대화를 시작해보세요"}</p>

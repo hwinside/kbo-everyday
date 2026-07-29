@@ -30,6 +30,11 @@ export interface GlossaryEntry {
   answer: string;
 }
 
+export interface PlayerRef {
+  name: string;
+  kboId: string;
+}
+
 export interface LlmResult {
   text: string;
   inputTokens: number | null;
@@ -58,6 +63,7 @@ export interface QaResult {
 
 export interface QaDeps {
   loadGlossary: () => Promise<GlossaryEntry[]>;
+  loadPlayers: () => Promise<PlayerRef[]>;
   getCache: (questionNorm: string) => Promise<string | null>;
   setCache: (questionNorm: string, answer: string) => Promise<void>;
   callLlm: (question: string) => Promise<LlmResult>;
@@ -81,16 +87,20 @@ const HISTORY_CONTEXT_WORDS = [
   "통산", "성적", "우승", "연도", "시즌", "드래프트", "은퇴", "몇승", "몇 홈런",
   "지난해", "작년", "올해",
 ];
+const STAT_WORDS = [
+  "타율", "방어율", "평균자책", "출루율", "장타율", "ops", "war", "wrc",
+  "홈런", "안타", "타점", "도루", "승", "패", "세이브", "홀드", "삼진", "기록", "스탯",
+];
 const TEAM_WORDS = [
   "기아", "두산", "롯데", "삼성", "한화", "키움", "엘지", "lg", "kt", "ssg", "nc",
   "타이거즈", "베어스", "자이언츠", "라이온즈", "이글스", "히어로즈", "트윈스",
   "위즈", "랜더스", "다이노스",
 ];
 const BASEBALL_WORDS = [
-  "야구", "투수", "타자", "포수", "주자", "심판", "스트라이크", "볼", "아웃", "안타",
-  "홈런", "이닝", "루", "베이스", "타석", "투구", "수비", "보크", "파울", "번트",
+  "야구", "투수", "타자", "포수", "주자", "심판", "스트라이크", "아웃", "안타",
+  "홈런", "이닝", "베이스", "타석", "투구", "수비", "보크", "파울", "번트",
   "도루", "병살", "태그", "세이프", "엔트리", "로스터", "피치클락", "abs", "시프트",
-  "규칙", "룰", "용어", "뜻", "타율", "방어율", "평균자책", "기록", "스탯", "war",
+  "규칙", "용어", "타율", "방어율", "평균자책", "기록", "스탯", "war",
 ];
 const INJECTION_PATTERNS = [
   /이전\s*(지시|명령).*(무시|잊)/i,
@@ -99,19 +109,71 @@ const INJECTION_PATTERNS = [
   /(링크|url).*(줘|출력|보여)/i,
 ];
 
+const TOKEN_TRIM_SUFFIXES = [
+  "이라는", "이란", "란", "은", "는", "이", "가", "을", "를", "에", "의", "도", "만",
+  "과", "와", "으로", "로", "에서", "에게", "한테", "부터", "까지", "처럼", "보다",
+  "인데", "인가", "예요", "이에요", "뭐야", "뜻",
+];
+
+function questionTokens(value: string): string[] {
+  return value
+    .normalize("NFKC")
+    .toLowerCase()
+    .match(/[가-힣a-z0-9+]+/g) ?? [];
+}
+
+function tokenMatches(tokens: string[], word: string): boolean {
+  const needle = word.toLowerCase();
+  return tokens.some((token) => {
+    if (token === needle) return true;
+    return TOKEN_TRIM_SUFFIXES.some((suffix) => token === `${needle}${suffix}`);
+  });
+}
+
+function hasPlayerReference(tokens: string[], players: PlayerRef[]): boolean {
+  return players.some((player) => {
+    const name = player.name.normalize("NFKC").toLowerCase().trim();
+    const kboId = player.kboId.normalize("NFKC").toLowerCase().trim();
+    return (name.length >= 2 && tokens.includes(name)) || (kboId.length >= 3 && tokens.includes(kboId));
+  });
+}
+
+function hasBaseballSignal(value: string): boolean {
+  const tokens = questionTokens(value);
+  return BASEBALL_WORDS.some((word) => tokenMatches(tokens, word)) ||
+    ["경기", "공격", "수비", "주루", "득점", "홈플레이트", "마운드"].some((word) =>
+      tokenMatches(tokens, word)
+    );
+}
+
 /** LLM 전에 실행하는 보수적 4갈래 라우터. 불명확하면 fail-closed 한다. */
-export function routeQuestion(question: string, glossary: GlossaryEntry[] = []): QuestionRoute {
+export function routeQuestion(
+  question: string,
+  glossary: GlossaryEntry[] = [],
+  players: PlayerRef[] = [],
+): QuestionRoute {
   const normalized = question.normalize("NFKC").toLowerCase();
+  const tokens = questionTokens(normalized);
   if (INJECTION_PATTERNS.some((pattern) => pattern.test(normalized))) return "blocked";
   if (SERVICE_WORDS.some((word) => normalized.includes(word))) return "service_redirect";
+  const hasStat = STAT_WORDS.some((word) => tokenMatches(tokens, word));
+  const hasTeam = TEAM_WORDS.some((word) => tokenMatches(tokens, word));
+  if (hasStat && (hasPlayerReference(tokens, players) || hasTeam)) return "history_hold";
   if (
     HISTORY_CONTEXT_WORDS.some((word) => normalized.includes(word)) ||
-    (TEAM_WORDS.some((word) => normalized.includes(word)) && /누구|언제|몇|기록|성적|역사/.test(normalized))
+    (hasTeam && /누구|언제|몇|기록|성적|역사/.test(normalized))
   ) {
     return "history_hold";
   }
   if (matchGlossary(glossary, question)) return "baseball_rule_term";
-  if (BASEBALL_WORDS.some((word) => normalized.includes(word))) return "baseball_rule_term";
+  const mentionsGlossaryTerm = glossary.some((entry) =>
+    [entry.term, ...entry.aliases].some((name) => {
+      const normalizedName = name.normalize("NFKC").toLowerCase().trim();
+      return normalizedName.length >= 2 && tokenMatches(tokens, normalizedName);
+    })
+  );
+  if (mentionsGlossaryTerm) return "baseball_rule_term";
+  if (BASEBALL_WORDS.some((word) => tokenMatches(tokens, word))) return "baseball_rule_term";
   return "blocked";
 }
 
@@ -140,7 +202,8 @@ export function validateLlmResponse(raw: string): ValidatedLlmAnswer {
   if (
     answer.length === 0 ||
     answer.length > BASEBALL_GENIUS_MAX_ANSWER_LENGTH ||
-    /https?:\/\/|www\.|(?:^|\s)\[[^\]]+\]\([^)]+\)|```|<a\b/i.test(answer)
+    /https?:\/\/|www\.|(?:^|\s)\[[^\]]+\]\([^)]+\)|```|<a\b/i.test(answer) ||
+    !hasBaseballSignal(answer)
   ) {
     return { kind: "unsure" };
   }
@@ -181,8 +244,8 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   }
   const remaining = reservation.remaining;
 
-  const glossary = await deps.loadGlossary();
-  const route = routeQuestion(question, glossary);
+  const [glossary, players] = await Promise.all([deps.loadGlossary(), deps.loadPlayers()]);
+  const route = routeQuestion(question, glossary, players);
   if (route !== "baseball_rule_term") {
     const answer =
       route === "service_redirect" ? SERVICE_REDIRECT_ANSWER :

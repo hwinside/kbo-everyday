@@ -9,6 +9,7 @@ import {
   MIN_QUESTION_LEN,
   type GlossaryEntry,
   type LlmResult,
+  type PlayerRef,
   type QaDeps,
   type QaResult,
 } from "@/lib/baseball-qa/pipeline";
@@ -26,7 +27,9 @@ const SYSTEM_PROMPT = [
 ].join("\n");
 
 let glossaryCache: { entries: GlossaryEntry[]; loadedAt: number } | null = null;
+let playerCache: { entries: PlayerRef[]; loadedAt: number } | null = null;
 const GLOSSARY_TTL_MS = 10 * 60 * 1000;
+const PLAYER_TTL_MS = 10 * 60 * 1000;
 
 async function loadGlossary(): Promise<GlossaryEntry[]> {
   if (glossaryCache && Date.now() - glossaryCache.loadedAt < GLOSSARY_TTL_MS) {
@@ -39,6 +42,24 @@ async function loadGlossary(): Promise<GlossaryEntry[]> {
   if (error) throw error;
   const entries = (data ?? []) as GlossaryEntry[];
   glossaryCache = { entries, loadedAt: Date.now() };
+  return entries;
+}
+
+async function loadPlayers(): Promise<PlayerRef[]> {
+  if (playerCache && Date.now() - playerCache.loadedAt < PLAYER_TTL_MS) {
+    return playerCache.entries;
+  }
+  // query-guard: bounded -- KBO 1·2군 roster 전체보다 큰 2,000행 상한.
+  const { data, error } = await supabaseAdmin
+    .from("players_roster")
+    .select("name, kbo_id")
+    .limit(2000);
+  if (error) throw error;
+  const entries = (data ?? []).map((row: { name: string; kbo_id: string }) => ({
+    name: row.name,
+    kboId: row.kbo_id,
+  }));
+  playerCache = { entries, loadedAt: Date.now() };
   return entries;
 }
 
@@ -72,6 +93,7 @@ async function callLlm(question: string): Promise<LlmResult> {
 
 const deps: QaDeps = {
   loadGlossary,
+  loadPlayers,
   callLlm,
   getCache: async (questionNorm) => {
     const { data, error } = await supabaseAdmin
@@ -132,16 +154,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "잘못된 요청입니다" }, { status: 400 });
   }
 
-  const dedupKey = `baseball-genius:${messageId}`;
-  const { data: existing } = await supabaseAdmin
-    .from("dm_messages")
-    .select("id")
-    .eq("dedup_key", dedupKey)
-    .eq("sender_id", BASEBALL_GENIUS_USER_ID)
-    .eq("conversation_id", conversationId)
-    .maybeSingle();
-  if (existing) return NextResponse.json({ ok: true, deduped: true });
-
   const { data: message, error: messageError } = await supabaseAdmin
     .from("dm_messages")
     .select("id, sender_id, content, conversation_id, dm_conversations!inner(user1_id,user2_id)")
@@ -167,18 +179,85 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `질문은 ${MIN_QUESTION_LEN}~${MAX_QUESTION_LEN}자로 입력해 주세요` }, { status: 400 });
   }
 
-  let result: QaResult;
-  try {
-    result = await answerQuestion(verified.user.id, question, deps);
-  } catch (error) {
-    console.error("baseball-genius pipeline failed:", (error as Error).message);
-    result = {
-      status: 503,
-      answer: "지금은 답변을 가져올 수 없어요. 잠시 후 다시 시도해 주세요.",
-      source: "error",
-      remaining: 0,
-    };
+  const numericMessageId = Number(messageId);
+  const dedupKey = `baseball-genius:${numericMessageId}`;
+  const { data: existing } = await supabaseAdmin
+    .from("dm_messages")
+    .select("id")
+    .eq("dedup_key", dedupKey)
+    .eq("sender_id", BASEBALL_GENIUS_USER_ID)
+    .eq("conversation_id", conversationId)
+    .maybeSingle();
+  if (existing) return NextResponse.json({ ok: true, deduped: true });
+
+  // query-guard: bounded -- messageId PK claim은 claim_state 한 행만 반환한다.
+  const { data: claim, error: claimError } = await supabaseAdmin
+    .rpc("claim_baseball_genius_question", {
+      p_message_id: numericMessageId,
+      p_conversation_id: conversationId,
+      p_user_id: verified.user.id,
+      p_lease_seconds: 30,
+    })
+    .single();
+  if (claimError || !claim) {
+    console.error("baseball-genius claim failed:", claimError?.message ?? "missing claim");
+    return NextResponse.json({ error: "답변 처리를 시작할 수 없습니다" }, { status: 503 });
   }
+  const claimState = (claim as { claim_state: string }).claim_state;
+  if (claimState === "completed") return NextResponse.json({ ok: true, deduped: true });
+  if (claimState === "processing") {
+    return NextResponse.json({ ok: false, pending: true }, { status: 202 });
+  }
+
+  let result: QaResult | null = null;
+  if (claimState === "ready") {
+    const { data: readyJob, error: readyError } = await supabaseAdmin
+      .from("genius_question_jobs")
+      .select("answer, source, remaining")
+      .eq("message_id", numericMessageId)
+      .eq("conversation_id", conversationId)
+      .eq("user_id", verified.user.id)
+      .eq("status", "ready")
+      .maybeSingle();
+    if (readyError || !readyJob?.answer || !readyJob.source) {
+      return NextResponse.json({ error: "저장된 답변을 확인할 수 없습니다" }, { status: 503 });
+    }
+    result = {
+      status: 200,
+      answer: readyJob.answer,
+      source: readyJob.source as QaResult["source"],
+      remaining: Number(readyJob.remaining ?? 0),
+    };
+  } else {
+    try {
+      result = await answerQuestion(verified.user.id, question, deps);
+      const { error: readyError } = await supabaseAdmin
+        .from("genius_question_jobs")
+        .update({
+          status: "ready",
+          answer: result.answer,
+          source: result.source,
+          remaining: result.remaining,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("message_id", numericMessageId)
+        .eq("status", "processing");
+      if (readyError) throw readyError;
+    } catch (error) {
+      console.error("baseball-genius pipeline failed:", (error as Error).message);
+      await supabaseAdmin
+        .from("genius_question_jobs")
+        .update({
+          status: "failed",
+          last_error: "pipeline_failed",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("message_id", numericMessageId)
+        .eq("status", "processing");
+      return NextResponse.json({ error: "답변 생성에 실패했습니다" }, { status: 503 });
+    }
+  }
+
   const sent = await sendOpsMessageToUser(
     supabaseAdmin,
     BASEBALL_GENIUS_USER_ID,
@@ -191,6 +270,10 @@ export async function POST(req: NextRequest) {
     console.error("baseball-genius DM reply failed:", sent.reason);
     return NextResponse.json({ error: "답변 쪽지 발송에 실패했습니다" }, { status: 500 });
   }
+  await supabaseAdmin
+    .from("genius_question_jobs")
+    .update({ status: "completed", updated_at: new Date().toISOString() })
+    .eq("message_id", numericMessageId);
   return NextResponse.json({
     ok: true,
     source: result.source,

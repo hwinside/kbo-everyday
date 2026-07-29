@@ -1,7 +1,7 @@
 -- ============================================================
 -- 야구 용어/룰 질문 AI MVP — 용어사전 시드 (spec: specs/baseball-qa-mvp.md)
--- 132개 전 항목 2026 KBO 공식 규정 기준 재검수.
--- 최근 변경 룰은 2026 규정·규칙 변화 페이지, 보편 용어는 동일 공식 출처를 버전 SSOT로 둔다.
+-- 132개 전 항목을 공식 규칙/공식 기록/편집 설명으로 구분해 2026-07-30 전수 재검수.
+-- 공식 근거가 없는 문화·전술·세이버 용어는 editorial_definition으로 명시하고 URL을 비운다.
 -- 멱등: ON CONFLICT (term) DO NOTHING. 운영 적용은 머지 게이트 후.
 -- ============================================================
 
@@ -398,19 +398,58 @@ KBO는 무승부를 계산에서 제외해요.
 경기 중 마운드에 모이는 것을 마운드 방문이라고 해요.', 'basic')
 )
 INSERT INTO public.baseball_terms (
-  term, aliases, answer, category, source_url, rule_version
+  term, aliases, answer, category, source_kind, source_url, rule_version, reviewed_at
 )
 SELECT
   term,
   aliases,
   answer,
   category,
-  'https://www.koreabaseball.com/Kbo/League/GameManage2026.aspx',
-  '2026'
+  CASE
+    WHEN term = ANY (ARRAY[
+      '스퀴즈','히트앤런','클린업','테이블세터','리드오프','불펜','마무리투수',
+      '유틸리티','퀄리티스타트','블론세이브','wRC+','WAR','WHIP','포심','투심',
+      '슬라이더','커브','체인지업','포크볼','커터','너클볼','언더핸드','클러치',
+      '스윕','위닝시리즈','벤치클리어링'
+    ]) THEN 'editorial_definition'
+    WHEN category = 'record' THEN 'official_record'
+    ELSE 'official_rule'
+  END,
+  CASE
+    WHEN term = ANY (ARRAY[
+      '스퀴즈','히트앤런','클린업','테이블세터','리드오프','불펜','마무리투수',
+      '유틸리티','퀄리티스타트','블론세이브','wRC+','WAR','WHIP','포심','투심',
+      '슬라이더','커브','체인지업','포크볼','커터','너클볼','언더핸드','클러치',
+      '스윕','위닝시리즈','벤치클리어링'
+    ]) THEN NULL
+    WHEN category = 'record' AND term = ANY (ARRAY[
+      '평균자책점','자책점','완투','완봉','노히트노런','퍼펙트게임','세이브',
+      '홀드','승리투수','패전투수'
+    ]) THEN 'https://www.koreabaseball.com/Record/Player/PitcherBasic/Basic1.aspx'
+    WHEN category = 'record'
+      THEN 'https://www.koreabaseball.com/Record/Player/HitterBasic/Basic1.aspx'
+    WHEN category = 'league'
+      THEN 'https://www.koreabaseball.com/Kbo/League/GameManageRule/GameManage.aspx'
+    WHEN term = ANY (ARRAY['ABS','피치클락','체크스윙','시프트','엔트리','외국인선수'])
+      THEN 'https://www.koreabaseball.com/Kbo/League/GameManage2026.aspx'
+    ELSE 'https://www.koreabaseball.com/Reference/Etc/GameRule.aspx'
+  END,
+  CASE
+    WHEN term = ANY (ARRAY[
+      '스퀴즈','히트앤런','클린업','테이블세터','리드오프','불펜','마무리투수',
+      '유틸리티','퀄리티스타트','블론세이브','wRC+','WAR','WHIP','포심','투심',
+      '슬라이더','커브','체인지업','포크볼','커터','너클볼','언더핸드','클러치',
+      '스윕','위닝시리즈','벤치클리어링'
+    ]) THEN 'not_applicable'
+    ELSE '2026'
+  END,
+  DATE '2026-07-30'
 FROM seed
 ON CONFLICT (term) DO UPDATE SET
   aliases = excluded.aliases,
   answer = excluded.answer,
   category = excluded.category,
+  source_kind = excluded.source_kind,
   source_url = excluded.source_url,
-  rule_version = excluded.rule_version;
+  rule_version = excluded.rule_version,
+  reviewed_at = excluded.reviewed_at;

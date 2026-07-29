@@ -41,7 +41,13 @@ export default function DMChatPage() {
   const conversationId = params.conversationId as string;
   const draftTargetId = conversationId.startsWith("new-") ? conversationId.slice(4) : null;
   const { user } = useAuth();
-  const { messages, loading, sendMessage } = useDMChat(draftTargetId ? "" : conversationId);
+  const {
+    messages,
+    loading,
+    sendMessage,
+    geniusReplyState,
+    retryBaseballQa,
+  } = useDMChat(draftTargetId ? "" : conversationId);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState("");
@@ -258,6 +264,8 @@ export default function DMChatPage() {
           <p className="text-[10px] text-text-tertiary">
             {!otherId && otherResolved
               ? "읽기 전용"
+              : isBaseballGeniusConv
+                ? "AI 야구 룰·용어 도우미"
               : isNoReplyConv
                 ? "자동 발송 전용"
                 : "1:1 쪽지"}
@@ -408,6 +416,24 @@ export default function DMChatPage() {
         <div className="px-5 py-3 border-t border-border bg-bg-secondary pb-safe">
           {sendError && (
             <p role="alert" className="mb-2 text-center text-xs text-red-500">{sendError}</p>
+          )}
+          {isBaseballGeniusConv && geniusReplyState !== "idle" && (
+            <div className="mb-2 text-center text-xs text-text-tertiary">
+              {geniusReplyState === "failed" ? (
+                <>
+                  답변을 받지 못했어요.{" "}
+                  <button
+                    type="button"
+                    onClick={retryBaseballQa}
+                    className="font-semibold text-accent underline"
+                  >
+                    다시 시도
+                  </button>
+                </>
+              ) : (
+                "답변을 준비하고 있어요…"
+              )}
+            </div>
           )}
           {isOperatorConv && images.length > 0 && (
             <div className="flex flex-wrap gap-2 mb-2">

@@ -28,6 +28,7 @@
     "app_downloads",
     "genius_daily_usage",
     "genius_qa_cache",
+    "genius_question_jobs",
     "genius_question_logs",
     "channel_discovery_candidates",
     "channel_discovery_runs",
@@ -156,6 +157,11 @@
       ],
       [
         "question_norm"
+      ]
+    ],
+    "genius_question_jobs": [
+      [
+        "message_id"
       ]
     ],
     "genius_question_logs": [

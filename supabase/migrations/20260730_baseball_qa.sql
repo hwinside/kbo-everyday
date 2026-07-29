@@ -7,8 +7,10 @@ CREATE TABLE IF NOT EXISTS public.baseball_terms (
   aliases text[] NOT NULL DEFAULT '{}',
   answer text NOT NULL,
   category text NOT NULL DEFAULT 'rule',
-  source_url text NOT NULL,
+  source_kind text NOT NULL CHECK (source_kind IN ('official_rule', 'official_record', 'editorial_definition')),
+  source_url text,
   rule_version text NOT NULL,
+  reviewed_at date NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
@@ -48,6 +50,21 @@ CREATE TABLE IF NOT EXISTS public.genius_daily_usage (
   PRIMARY KEY (user_id, kst_day)
 );
 
+CREATE TABLE IF NOT EXISTS public.genius_question_jobs (
+  message_id bigint PRIMARY KEY REFERENCES public.dm_messages(id) ON DELETE CASCADE,
+  conversation_id uuid NOT NULL REFERENCES public.dm_conversations(id) ON DELETE CASCADE,
+  user_id uuid NOT NULL,
+  status text NOT NULL CHECK (status IN ('processing', 'ready', 'completed', 'failed')),
+  attempts integer NOT NULL DEFAULT 1 CHECK (attempts > 0),
+  lease_until timestamptz NOT NULL,
+  answer text,
+  source text,
+  remaining integer,
+  last_error text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
 -- KST 날짜별 질문 슬롯을 단일 UPSERT로 예약한다. used=limit이면 UPDATE가 0행이라
 -- 초과 요청은 모두 allowed=false. DB 오류는 호출 route가 fail-closed 처리한다.
 CREATE OR REPLACE FUNCTION public.reserve_baseball_genius_daily_question(
@@ -81,12 +98,85 @@ BEGIN
 END;
 $$;
 
+-- message_id별 quota/LLM 선행 claim. 같은 메시지의 병렬 요청은 한 건만 claimed가 된다.
+-- ready는 파이프라인 결과가 이미 저장되어 답변 INSERT만 재시도하면 되는 상태다.
+CREATE OR REPLACE FUNCTION public.claim_baseball_genius_question(
+  p_message_id bigint,
+  p_conversation_id uuid,
+  p_user_id uuid,
+  p_lease_seconds integer DEFAULT 30
+)
+RETURNS TABLE(claim_state text)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_status text;
+BEGIN
+  IF p_message_id IS NULL OR p_message_id < 1 OR p_conversation_id IS NULL
+     OR p_user_id IS NULL OR p_lease_seconds < 5 OR p_lease_seconds > 300 THEN
+    RAISE EXCEPTION USING errcode = '22023', message = 'invalid genius question claim';
+  END IF;
+
+  INSERT INTO public.genius_question_jobs (
+    message_id, conversation_id, user_id, status, lease_until
+  )
+  VALUES (
+    p_message_id, p_conversation_id, p_user_id, 'processing',
+    clock_timestamp() + make_interval(secs => p_lease_seconds)
+  )
+  ON CONFLICT (message_id) DO NOTHING
+  RETURNING status INTO v_status;
+
+  IF v_status IS NOT NULL THEN
+    RETURN QUERY SELECT 'claimed'::text;
+    RETURN;
+  END IF;
+
+  SELECT status INTO v_status
+  FROM public.genius_question_jobs
+  WHERE message_id = p_message_id
+    AND conversation_id = p_conversation_id
+    AND user_id = p_user_id;
+
+  IF v_status IN ('ready', 'completed') THEN
+    RETURN QUERY SELECT v_status;
+    RETURN;
+  END IF;
+
+  UPDATE public.genius_question_jobs
+  SET status = 'processing',
+      attempts = attempts + 1,
+      lease_until = clock_timestamp() + make_interval(secs => p_lease_seconds),
+      last_error = NULL,
+      updated_at = now()
+  WHERE message_id = p_message_id
+    AND conversation_id = p_conversation_id
+    AND user_id = p_user_id
+    AND (status = 'failed' OR (status = 'processing' AND lease_until < clock_timestamp()))
+  RETURNING status INTO v_status;
+
+  IF v_status IS NOT NULL THEN
+    RETURN QUERY SELECT 'claimed'::text;
+  ELSE
+    RETURN QUERY SELECT 'processing'::text;
+  END IF;
+END;
+$$;
+
 ALTER TABLE public.baseball_terms ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.genius_qa_cache ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.genius_question_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.genius_daily_usage ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.genius_question_jobs ENABLE ROW LEVEL SECURITY;
 
 REVOKE ALL ON FUNCTION public.reserve_baseball_genius_daily_question(uuid, integer)
   FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.reserve_baseball_genius_daily_question(uuid, integer)
+  TO service_role;
+
+REVOKE ALL ON FUNCTION public.claim_baseball_genius_question(bigint, uuid, uuid, integer)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.claim_baseball_genius_question(bigint, uuid, uuid, integer)
   TO service_role;

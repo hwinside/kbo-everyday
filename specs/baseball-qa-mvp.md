@@ -1,6 +1,6 @@
 # 야구천재 — 야구 룰/용어 질문 AI MVP v1.2
 
-- 상태: 삼순 NO-GO 반영
+- 상태: 구현 결정 완료 — 삼순 재리뷰 대기
 - Notion SSOT: https://www.notion.so/3acc901bb3728165b783d0f0960c9f02
 - 범위: 신규 화면 0개, `/messages` 고정 DM과 기존 DM 인프라 재사용
 - migration은 머지 게이트 뒤 적용한다. PR 단계에서는 적용하지 않는다.
@@ -41,19 +41,24 @@ LLM 순으로 비용을 0에 수렴시킨다. 선수·구단 기록/히스토리
 - 검증에 실패하면 `UNSURE`로 보류한다.
 - 검증을 통과한 `baseball_rule_term + ANSWER`만 `genius_qa_cache`에 저장한다.
 - 서비스/히스토리/거절/보류/검증 실패는 캐시에 절대 저장하지 않는다.
-- 사용자 메시지 id 기반 `dedup_key=baseball-genius:${messageId}`로 답변 재처리를 멱등화한다.
+- 사용자 메시지 id를 quota/LLM 전에 atomic claim한다. 처리 결과를 durable job에 `ready`로
+  저장한 뒤 답변 insert를 수행하고, 재시도는 저장된 답변만 사용한다.
+- 브라우저는 DM 저장 직후 동일 `messageId`를 local outbox에 먼저 기록한다. 최초 500/abort,
+  앱 재진입, 온라인 복귀 시 같은 id만 재시도하며 실패 상태와 수동 재시도 UI를 제공한다.
 
 ## 5. 데이터 모델
 
-- `baseball_terms`: term, aliases, answer, category, `source_url`, `rule_version`
+- `baseball_terms`: term, aliases, answer, category, `source_kind`, `source_url`,
+  `rule_version`, `reviewed_at`
 - `genius_qa_cache`: 정규화 질문별 검증 통과 답변
 - `genius_question_logs`: 전 경로와 토큰 기록
 - `genius_daily_usage`: `(user_id, kst_day)`별 atomic 사용량
 
-132개 seed는 2026 KBO 공식 규정 기준으로 재검수한다. 최근 변경 규정의 기준 URL은
-https://www.koreabaseball.com/Kbo/League/GameManage2026.aspx 이며 모든 seed row에
-`source_url`과 `rule_version='2026'`을 저장한다. 특히 수비 시프트 제재 강화,
-29명 등록/28명 출장, 기존 외국인 외 아시아쿼터 1명 추가를 반영한다.
+132개 seed는 `official_rule / official_record / editorial_definition`으로 근거 성격을
+구분한다. 공식 항목만 KBO 경기규칙·경기운영·기록실의 실제 대응 URL과
+`rule_version='2026'`을 저장한다. 문화·전술·세이버 설명은 공식 규정인 것처럼 가장하지
+않고 URL 없이 `editorial_definition / not_applicable`로 표시한다.
+전수 검수 산출물은 `specs/baseball-qa-seed-audit-2026.md`다.
 
 ## 6. 일일 한도
 
@@ -68,20 +73,26 @@ UPSERT+조건부 increment+RETURNING을 한 트랜잭션으로 수행한다. LLM
 - 기록: 앱의 선수 페이지 / 기록 탭 안내
 - 불확실: 추측하지 않고 사전 보강 대기 안내
 
-## 8. 하린아빠 확정 대기 — 권장 기본값
+## 8. 결정 완료 (2026-07-30, 하린아빠 `삼순 의견 반영`)
 
-하드코딩된 익명 숫자/불리언 대신 아래 네이밍된 config 상수를 사용한다.
+- 고정방은 삭제·나가기 불가: `BASEBALL_GENIUS_PINNED_ROOM_LEAVABLE=false`
+- 일일 질문 한도는 KST 기준 20회: `BASEBALL_GENIUS_DAILY_LIMIT=20`
+- 슬라이스①+②를 한 PR로 묶되 삼순 GO·하린아빠 머지 승인 전 출시하지 않는다.
+- 말투는 친근한 존댓말 + ⚾
+- MVP 답변 범위는 룰/용어만. 선수·구단 히스토리/기록은 앱 내 기록 화면으로 유도한다.
+- 나무위키 운영 RAG는 법무 검토 전 제외한다. 향후 자체 DB·공식 출처 RAG만 별도 슬라이스로 검토한다.
 
-- `BASEBALL_GENIUS_DAILY_LIMIT=20` — 권장 기본값
-- `BASEBALL_GENIUS_PINNED_ROOM_LEAVABLE=false` — 권장 기본값
+구현 상수:
+
 - `BASEBALL_GENIUS_MAX_ANSWER_LENGTH=200` — 권장 기본값
 - `BASEBALL_GENIUS_MIN_QUESTION_LENGTH=2`, `BASEBALL_GENIUS_MAX_QUESTION_LENGTH=200`
 - `BASEBALL_GENIUS_USER_ID` — 배포 전 동일 UUID auth/profile 시스템 계정 프로비저닝
-- 말투: 친근한 존댓말 + ⚾ — 권장 기본값
 
 ## 9. 검증 DoD
 
 - `tsc --noEmit`, 변경 파일 ESLint, full prebuild, query guard 신규 위반 0
-- `qa:baseball-qa`: 4갈래 경로, 삼순 재현 3건, 캐시 오염 방지, 구조화 응답 검증
+- `qa:baseball-qa`: 4갈래 경로, 삼순 재현 6건, 캐시 오염 방지, 구조화 응답 검증
 - used=19에서 25개 병렬 예약 시 통과 최대 1개
+- 동일 messageId 25-way에서 claim 1·reserve 1·LLM ≤1·답변 1
+- DM 저장 성공 → 첫 처리 500 → local outbox 동일 messageId 재시도 → 완료
 - migration 미적용 유지
