@@ -371,7 +371,7 @@ struct KBOTeamRankWidgetEntryView: View {
                 }
                 mixedScriptText(row.name, 13, .heavy)
                     .foregroundStyle(RankColor.text)
-                    .lineLimit(1).minimumScaleFactor(0.7)
+                    .lineLimit(1).minimumScaleFactor(0.65)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.leading, 6)
@@ -416,7 +416,7 @@ struct KBOTeamRankWidgetEntryView: View {
         let s = streak.isEmpty ? "-" : streak
         return mixedScriptText(s, 13, .semibold)
             .foregroundStyle(streak.isEmpty ? RankColor.secondary : RankColor.text)
-            .lineLimit(1)
+            .lineLimit(1).minimumScaleFactor(0.65)
             .frame(width: w, alignment: .trailing)
     }
 }
