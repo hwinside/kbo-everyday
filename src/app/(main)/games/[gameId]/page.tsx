@@ -307,11 +307,19 @@ export default function GameDetailPage() {
   useEffect(() => {
     if (!liveGame || !shouldProcessGameEvents) return;
 
-    // After returning from background, skip one diff cycle to re-establish baseline
+    let preserveFreshGameEnd = false;
+
+    // After returning from background, skip one diff cycle to re-establish baseline.
+    // 단, hidden 중 놓친 live→final은 이전 live baseline과 diff해 game_end/victory를 보존한다.
     if (skipNextDiffRef.current) {
       skipNextDiffRef.current = false;
-      clientEventStateRef.current = { live: liveGame, boxScore: gameDetail?.boxScore ?? null };
-      return;
+      preserveFreshGameEnd = !!clientEventStateRef.current?.live.isLive
+        && !liveGame.isLive
+        && liveGame.awayScore + liveGame.homeScore > 0;
+      if (!preserveFreshGameEnd) {
+        clientEventStateRef.current = { live: liveGame, boxScore: gameDetail?.boxScore ?? null };
+        return;
+      }
     }
 
     const { events: clientEvents, nextState } = generateEvents(
@@ -328,7 +336,7 @@ export default function GameDetailPage() {
       ? [...relayEvents, ...clientEvents]
       : [];
     if (merged.length > 0) {
-      processEvents(merged);
+      processEvents(merged, { preserveFreshGameEnd });
     }
   }, [gameId, liveGame, gameDetail?.boxScore, gameRelay?.innings, shouldProcessGameEvents, processEvents]);
 
