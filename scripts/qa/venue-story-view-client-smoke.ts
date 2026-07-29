@@ -173,6 +173,7 @@ test("트레이 impression은 IntersectionObserver 50%+dwell 및 세션 중복 �
   );
   assert.match(section, /useVenueStoryImpression/);
   assert.doesNotMatch(section, /new IntersectionObserver/); // 구형 수동 observer 경로 재유입 금지
+  assert.doesNotMatch(section, /trayRef|impressionSentRef|data-story-impression/);
 });
 
 test("각 fire의 user/guest 판정은 전송 시점 세션이며 viewer별 세션 dedupe를 적용", () => {

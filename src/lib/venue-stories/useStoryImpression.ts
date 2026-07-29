@@ -10,8 +10,8 @@ import { trackVenueStoryView } from "./view-tracker-client";
  * 0.5초 이상 머무를 때 impression 1회 집계(탭 세션·KST 일자당 스토리 1회 — view-tracker-client).
  * 빠른 스크롤(0.5초 미만)은 미집계. 서버는 스토리×뷰어×kind×KST일 dedupe 를 별도 보장.
  *
- * #735 과 달리 viewer 식별은 전송 시점에 세션/직관 스토리 guest UUID로 해석하므로
- * auth 복원 대기 가드가 필요 없다(관찰 시점 user 스냅샷을 키로 쓰지 않음).
+ * viewer 식별은 전송 시점의 세션/직관 스토리 guest UUID로 해석한다. 호출부는 auth 복원
+ * 중 센서를 비활성화해 최초 노출을 guest로 오인하지 않고, 전송 함수는 viewer별 키로 중복을 막는다.
  */
 export function useVenueStoryImpression<T extends HTMLElement = HTMLSpanElement>(
   storyId: number,
