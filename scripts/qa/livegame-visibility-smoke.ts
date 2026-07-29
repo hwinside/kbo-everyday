@@ -117,7 +117,8 @@ async function main() {
   const { createRoot } = await import("react-dom/client");
   const { useLiveGame } = await import("../../src/lib/hooks/useLiveGame");
   const { useCelebration } = await import("../../src/lib/hooks/useCelebration");
-  const { generateEvents } = await import("../../src/lib/event-generator");
+  const { advanceClientGameEventTransition } = await import("../../src/lib/client-game-event-transition");
+  type PrevGameState = import("../../src/lib/event-generator").PrevGameState;
 
   // Host: pollInterval을 prop으로 받아 useLiveGame 마운트, game/loading을 DOM에 노출.
   function makeHost(pollInterval: number) {
@@ -142,7 +143,7 @@ async function main() {
   }
   function ResumeFinalHost({ gameId, pollInterval = 60_000 }: { gameId: string; pollInterval?: number }) {
     const { game: current } = useLiveGame(gameId, pollInterval);
-    const previousRef = React.useRef<Parameters<typeof generateEvents>[1]>(null);
+    const previousRef = React.useRef<PrevGameState | null>(null);
     const skipNextRef = React.useRef(false);
     const { celebration, processEvents } = useCelebration({
       gameId,
@@ -153,21 +154,21 @@ async function main() {
 
     React.useEffect(() => {
       if (!current) return;
-      if (document.visibilityState === "hidden") return;
-      let preserveFreshGameEnd = false;
-      if (skipNextRef.current) {
-        skipNextRef.current = false;
-        preserveFreshGameEnd = !!previousRef.current?.live.isLive
-          && !current.isLive
-          && current.awayScore + current.homeScore > 0;
-        if (!preserveFreshGameEnd) {
-          previousRef.current = { live: current, boxScore: null };
-          return;
-        }
+      const transition = advanceClientGameEventTransition({
+        gameId,
+        previous: previousRef.current,
+        current,
+        boxScore: null,
+        skipNextDiff: skipNextRef.current,
+        visibilityState: document.visibilityState,
+      });
+      previousRef.current = transition.nextState;
+      skipNextRef.current = transition.skipNextDiff;
+      if (transition.events.length > 0) {
+        processEvents(transition.events, {
+          preserveFreshGameEnd: transition.preserveFreshGameEnd,
+        });
       }
-      const { events, nextState } = generateEvents(gameId, previousRef.current, current, null);
-      previousRef.current = nextState;
-      if (events.length > 0) processEvents(events, { preserveFreshGameEnd });
     }, [current, gameId, processEvents]);
 
     React.useEffect(() => {
