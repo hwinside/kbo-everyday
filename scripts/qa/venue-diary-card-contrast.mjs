@@ -157,14 +157,21 @@ const PAGE_HELPERS = `
     return { fg, bg, ratio: contrast(fg,bg) }; };
 `;
 
+// CI(DIARY_CONTRAST_REQUIRE_BROWSER=1)에선 fail-closed: chromium 없으면 exit 1.
+// 그 외(로컬/Vercel prebuild) 에선 chromium 미설치면 graceful skip(exit 0)로 배포 무해.
+const REQUIRE_BROWSER = process.env.DIARY_CONTRAST_REQUIRE_BROWSER === "1";
 let browser;
 try {
   browser = await playwright.chromium.launch();
 } catch (e) {
-  // 브라우저 미설치 환경(예: Vercel prebuild)에서는 gate 를 깨지 않고 skip.
-  console.log(`SKIP: playwright chromium 사용 불가 — ${e.message.split("\n")[0]}`);
+  const line = e.message.split("\n")[0];
   server.close();
   rmSync(GEN, { recursive: true, force: true });
+  if (REQUIRE_BROWSER) {
+    console.error(`FAIL: playwright chromium launch 실패(fail-closed) — ${line}`);
+    process.exit(1);
+  }
+  console.log(`SKIP: playwright chromium 사용 불가 — ${line}`);
   process.exit(0);
 }
 try {
