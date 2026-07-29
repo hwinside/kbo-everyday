@@ -270,7 +270,7 @@ export default function StandingsPage() {
           animate={{ opacity: 1, y: 0 }}
           className="glass-card overflow-hidden"
         >
-          <table className="w-full text-sm sm:text-base table-fixed">
+          <table className="w-full text-[11px] min-[360px]:text-xs sm:text-base table-fixed">
             {hasTodayStatus && (
               <caption className="caption-top px-2 pt-2 pb-1 text-left">
                 <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] sm:text-xs font-normal text-text-tertiary">
@@ -285,27 +285,27 @@ export default function StandingsPage() {
               </caption>
             )}
             <colgroup>
-              <col className="w-6" />
+              <col className="w-5 sm:w-6" />
               <col />
-              <col className="w-8 sm:w-10" />
+              <col className="w-7 sm:w-10" />
+              <col className="w-5 sm:w-10" />
+              <col className="w-5 sm:w-10" />
+              <col className="w-4 min-[360px]:w-5 sm:w-8" />
+              <col className="w-7 sm:w-12" />
               <col className="w-6 sm:w-10" />
-              <col className="w-6 sm:w-10" />
-              <col className="w-5 min-[360px]:w-6 sm:w-8" />
-              <col className="w-9 sm:w-12" />
-              <col className="w-9 sm:w-10" />
-              <col className="w-0 min-[360px]:w-9 sm:w-11" />
+              <col className="w-7 sm:w-11" />
             </colgroup>
             <thead>
-              <tr className="border-b border-border text-sm sm:text-base font-semibold text-text-tertiary">
+              <tr className="border-b border-border text-[11px] min-[360px]:text-xs sm:text-base font-semibold text-text-tertiary">
                 <th className="py-2 text-center">#</th>
                 <th className="py-2 text-left pl-2">팀</th>
-                <th className="py-2 text-right pr-1 sm:pr-2 whitespace-nowrap">경기</th>
-                <th className="py-2 text-right pr-1 sm:pr-2">승</th>
-                <th className="py-2 text-right pr-1 sm:pr-2">패</th>
-                <th className="py-2 text-right pr-1 sm:pr-2">무</th>
-                <th className="py-2 text-right pr-1 sm:pr-2">승률</th>
-                <th className="py-2 text-right pr-1 sm:pr-2">차</th>
-                <th className="py-2 text-right pr-1 sm:pr-2 hidden min-[360px]:table-cell">연속</th>
+                <th className="py-2 text-right pr-0.5 min-[360px]:pr-1 sm:pr-2 whitespace-nowrap">경기</th>
+                <th className="py-2 text-right pr-0.5 min-[360px]:pr-1 sm:pr-2">승</th>
+                <th className="py-2 text-right pr-0.5 min-[360px]:pr-1 sm:pr-2">패</th>
+                <th className="py-2 text-right pr-0.5 min-[360px]:pr-1 sm:pr-2">무</th>
+                <th className="py-2 text-right pr-0.5 min-[360px]:pr-1 sm:pr-2 whitespace-nowrap">승률</th>
+                <th className="py-2 text-right pr-0.5 min-[360px]:pr-1 sm:pr-2">차</th>
+                <th className="py-2 text-right pr-0.5 min-[360px]:pr-1 sm:pr-2 whitespace-nowrap">연속</th>
               </tr>
             </thead>
             <tbody>
@@ -334,13 +334,13 @@ export default function StandingsPage() {
                         {getStreakIcon(standing.streak) && <span className="hidden min-[360px]:inline-block text-sm sm:text-base shrink-0">{getStreakIcon(standing.streak)}</span>}
                       </div>
                     </td>
-                    <td className="py-2.5 text-right pr-1 sm:pr-2 tabular-nums text-text-secondary">{standing.wins + standing.losses + standing.draws}</td>
-                    <td className="py-2.5 text-right pr-1 sm:pr-2 tabular-nums text-text-primary">{standing.wins}</td>
-                    <td className="py-2.5 text-right pr-1 sm:pr-2 tabular-nums text-text-primary">{standing.losses}</td>
-                    <td className="py-2.5 text-right pr-1 sm:pr-2 tabular-nums text-text-secondary">{standing.draws}</td>
-                    <td className="py-2.5 text-right pr-1 sm:pr-2 tabular-nums font-semibold text-text-primary">{standing.pct >= 1 ? "1.000" : standing.pct.toFixed(3).slice(1)}</td>
-                    <td className="py-2.5 text-right pr-1 sm:pr-2 tabular-nums text-text-secondary">{standing.gb === 0 ? "-" : standing.gb}</td>
-                    <td className="py-2.5 text-right pr-1 sm:pr-2 tabular-nums text-text-primary hidden min-[360px]:table-cell">
+                    <td className="py-2.5 text-right pr-0.5 min-[360px]:pr-1 sm:pr-2 tabular-nums text-text-secondary">{standing.wins + standing.losses + standing.draws}</td>
+                    <td className="py-2.5 text-right pr-0.5 min-[360px]:pr-1 sm:pr-2 tabular-nums text-text-primary">{standing.wins}</td>
+                    <td className="py-2.5 text-right pr-0.5 min-[360px]:pr-1 sm:pr-2 tabular-nums text-text-primary">{standing.losses}</td>
+                    <td className="py-2.5 text-right pr-0.5 min-[360px]:pr-1 sm:pr-2 tabular-nums text-text-secondary">{standing.draws}</td>
+                    <td className="py-2.5 text-right pr-0.5 min-[360px]:pr-1 sm:pr-2 tabular-nums font-semibold text-text-primary">{standing.pct >= 1 ? "1.000" : standing.pct.toFixed(3).slice(1)}</td>
+                    <td className="py-2.5 text-right pr-0.5 min-[360px]:pr-1 sm:pr-2 tabular-nums text-text-secondary">{standing.gb === 0 ? "-" : standing.gb}</td>
+                    <td className="py-2.5 text-right pr-0.5 min-[360px]:pr-1 sm:pr-2 tabular-nums text-text-primary whitespace-nowrap">
                       {standing.streak || <span className="text-text-secondary">-</span>}
                     </td>
                   </motion.tr>
