@@ -162,6 +162,10 @@ export async function runLineupWatchdog(args: {
         drainThrew = true;
         break;
       }
+      // settle 예약분 미달로 아예 시작 못한 reserve-skip sentinel: 아무 것도 안 했고 non-terminal.
+      // 마지막 informative counters(pending/permanent/expired)를 덮지 말고, 종결로도 보지 않는다.
+      // → 뒤 finalize(성공 시 authoritative) 또는 fallback(보존된 counters)이 systemic 노출(삼순 #952 7차).
+      if (batch.budgetSkipped) break;
       summary.accepted += batch.fcmAcceptedDelta;
       if (batch.snapshotCompleted) summary.snapshotsCompleted++;
       lastBatchPending = batch.pending; // finalize throw/skip 시 systemic 보존용(삼순 5·7차)

@@ -35,7 +35,12 @@ export type LineupDeliveryResult = {
   permanentFailed: number;
   expired: number;
 };
-export type LineupDeliveryBatchResult = LineupDeliveryResult & { claimed: number };
+export type LineupDeliveryBatchResult = LineupDeliveryResult & {
+  claimed: number;
+  // settle 예약분 미달로 이번 batch 를 아예 시작하지 못한 non-terminal 신호(삼순 #952 7차+).
+  // 원장은 그대로라 다음 tick 에 이어 drain — 진짜 terminal(claim 0·finalize 실행)과 구분된다.
+  budgetSkipped?: boolean;
+};
 export type LineupDeliveryTarget = {
   gameId: string;
   teamId: number;
@@ -162,7 +167,9 @@ export async function deliverLineupBatch(
 ): Promise<LineupDeliveryBatchResult> {
   const attemptDeadlineAtMs = Math.min(args.snapshotDeadlineAtMs, args.attemptDeadlineAtMs);
   // settle 예약분까지 남지 않으면 이번 batch 를 시작하지 않는다(claim 후 settle 못해 dispatch_started_at 행이 뜼는 것 방지).
-  if (Date.now() >= attemptDeadlineAtMs - LINEUP_SETTLE_RESERVE_MS) return { ...EMPTY, claimed: 0 };
+  // settle 예약분(2.5s)조차 없으면 claim 도 시작하지 않는다. budgetSkipped 로 표식 — watchdog 이 이걸
+  // 진짜 terminal(원장 비어 claim 0)과 구분해 마지막 informative counters 를 덮지 않게 한다(삼순 #952 7차).
+  if (Date.now() >= attemptDeadlineAtMs - LINEUP_SETTLE_RESERVE_MS) return { ...EMPTY, claimed: 0, budgetSkipped: true };
 
   const leaseToken = randomUUID();
   // query-guard: bounded -- SQL RPC 가 p_limit 을 500행으로 clamp.

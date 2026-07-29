@@ -431,6 +431,55 @@ async function main() {
     ok("batch permanent>0 + finalize throw → status failed(삼순 7차)", r.status === "failed");
   }
 
+  // ── (삼순 #952 8차) reserve-skip sentinel 구분: informative batch 뒤 budgetSkipped 가 counters 를 덮지 않음 ──
+  // A) informative(pending=1,permanent=2) → reserve-skip sentinel → finalize throw → failed(counters 보존)
+  {
+    const calls: Record<string, number> = {};
+    const r = await runLineupWatchdog({
+      dateStr: "20260729", deadlineAtMs: Date.now() + 16_000,
+      deps: base({
+        fetchGames: async () => [game("G1", "scheduled", 1, 10)],
+        fetchLineupConfirmed: async () => true,
+        openSnapshot: async () => Date.now() + 60_000,
+        deliverBatch: async (t) => {
+          const k = `${t.gameId}:${t.teamId}`;
+          calls[k] = (calls[k] ?? 0) + 1;
+          // 1회: informative(아직 pending 남음) → loop 지속. 2회: settle 예약분 미달 reserve-skip sentinel.
+          if (calls[k] === 1) return batch({ claimed: 1, pending: 1, snapshotCompleted: false, fcmAcceptedDelta: 0, permanentFailed: 2 });
+          return { claimed: 0, pending: 0, permanentFailed: 0, expired: 0, snapshotCompleted: false, fcmAcceptedDelta: 0, fcmAcceptedTotal: 0, budgetSkipped: true };
+        },
+        finalizeSnapshot: async () => { throw new Error("finalize RPC transient"); },
+      }),
+    });
+    ok("reserve-skip 뒤 finalize throw → informative counters 보존(pending>0)", r.summary.pending >= 2 && r.summary.permanentFailed >= 4); // 양 팀 각 1/2
+    ok("reserve-skip 이 실제 terminal \로 오인되지 않음(actual 2-call)", calls["G1:1"] === 2 && calls["G1:10"] === 2);
+    ok("reserve-skip + finalize throw → status failed(삼순 8차)", r.status === "failed");
+  }
+  // B) reserve-skip → finalize 성공(authoritative pending=0) → ok (실제 terminal 과 구분, false-red 아님)
+  {
+    const r = await runLineupWatchdog({
+      dateStr: "20260729", deadlineAtMs: Date.now() + 16_000,
+      deps: base({
+        fetchGames: async () => [game("G1", "scheduled", 1, 10)],
+        fetchLineupConfirmed: async () => true,
+        openSnapshot: async () => Date.now() + 60_000,
+        deliverBatch: (() => {
+          const calls: Record<string, number> = {};
+          return async (t: { gameId: string; teamId: number }) => {
+            const k = `${t.gameId}:${t.teamId}`;
+            calls[k] = (calls[k] ?? 0) + 1;
+            if (calls[k] === 1) return batch({ claimed: 1, pending: 1, snapshotCompleted: false, fcmAcceptedDelta: 1 });
+            return { claimed: 0, pending: 0, permanentFailed: 0, expired: 0, snapshotCompleted: false, fcmAcceptedDelta: 0, fcmAcceptedTotal: 0, budgetSkipped: true };
+          };
+        })(),
+        // finalize 가 authoritative 로 pending=0(다른 worker 가 마저 drain) → 종결.
+        finalizeSnapshot: async () => fin({ snapshotCompleted: true, pending: 0, fcmAcceptedTotal: 1 }),
+      }),
+    });
+    ok("reserve-skip + finalize authoritative pending=0 → status ok", r.status === "ok" && r.summary.pending === 0);
+    ok("reserve-skip + finalize 성공 → openUnresolved 0(종결 확정)", r.summary.openUnresolved === 0);
+  }
+
   console.log(`\nlineup-watchdog 오케스트레이터: ${pass} passed, ${fail} failed`);
   if (fail > 0) process.exit(1);
 }
