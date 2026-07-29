@@ -146,6 +146,7 @@
     "qa:venue-user-copy": "tsx scripts/qa/venue-user-copy-smoke.ts",
     "qa:venue-native-gate": "tsx scripts/qa/venue-native-gate-smoke.ts",
     "qa:widget-tap-mode": "tsx scripts/qa/widget-tap-mode-gate-smoke.ts",
+    "qa:standings-widget-games": "tsx scripts/qa/standings-widget-games-smoke.ts",
     "qa:venue-safe-area": "tsx scripts/qa/venue-safe-area-inset-smoke.ts",
     "qa:ios-venue-compress": "node scripts/qa/browserstack-ios-venue-compress.mjs",
     "qa:venue-expiry": "tsx scripts/qa/venue-expiry-smoke.ts",
