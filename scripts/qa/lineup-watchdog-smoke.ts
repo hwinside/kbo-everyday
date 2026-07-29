@@ -414,6 +414,23 @@ async function main() {
     ok("all-permanent → status failed(삼순 6차 ②)", r.status === "failed");
   }
 
+  // ── (삼순 #952 7차) batch permanent>0 반환 뒤 outer finalize 가 throw 해도 batch terminal counters 보존 → failed ──
+  {
+    const r = await runLineupWatchdog({
+      dateStr: "20260729", deadlineAtMs: Date.now() + 16_000,
+      deps: base({
+        fetchGames: async () => [game("G1", "scheduled", 1, 10)],
+        fetchLineupConfirmed: async () => true,
+        openSnapshot: async () => Date.now() + 60_000,
+        // batch 는 permanentFailed=2,pending=0,completed=true 반환(종결 설명) — 하지만 finalize 가 throw.
+        deliverBatch: async () => batch({ claimed: 2, pending: 0, snapshotCompleted: true, fcmAcceptedDelta: 0, permanentFailed: 2 }),
+        finalizeSnapshot: async () => { throw new Error("finalize RPC transient"); },
+      }),
+    });
+    ok("batch permanent>0 + finalize throw → permanentFailed 보존", r.summary.permanentFailed > 0);
+    ok("batch permanent>0 + finalize throw → status failed(삼순 7차)", r.status === "failed");
+  }
+
   console.log(`\nlineup-watchdog 오케스트레이터: ${pass} passed, ${fail} failed`);
   if (fail > 0) process.exit(1);
 }

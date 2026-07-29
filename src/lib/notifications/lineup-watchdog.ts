@@ -143,6 +143,8 @@ export async function runLineupWatchdog(args: {
     // 마지막 batch 가 남긴 in-flight 미완료 pending. deadline 소진으로 finalize 미실행 시 보존해
     // false-green(status:ok·pending:0) 차단(삼순 #952 5차 blocker).
     let lastBatchPending = 0;
+    let lastBatchPermanent = 0;
+    let lastBatchExpired = 0;
     // 이번 tick 에 이 대상을 종결 확인했는가: batch 가 pending=0/claimed=0 를 보았거나 finalize 성공.
     // 둘 다 아니면(deadline 소진로 drain/finalize 미수행) open 했지만 미종결 → systemic(삼순 #952 6차 ①).
     let sawTerminalBatch = false;
@@ -162,7 +164,9 @@ export async function runLineupWatchdog(args: {
       }
       summary.accepted += batch.fcmAcceptedDelta;
       if (batch.snapshotCompleted) summary.snapshotsCompleted++;
-      lastBatchPending = batch.pending; // deadline 소진 시 systemic 보존용
+      lastBatchPending = batch.pending; // finalize throw/skip 시 systemic 보존용(삼순 5·7차)
+      lastBatchPermanent = batch.permanentFailed;
+      lastBatchExpired = batch.expired;
       if (batch.claimed === 0 || batch.pending === 0) { sawTerminalBatch = true; break; }
     }
     if (countAsDue) summary.dueDrained++;
@@ -176,13 +180,18 @@ export async function runLineupWatchdog(args: {
         summary.expired += fin.expired;
         finalizedOk = true; // finalize 성공 = 이 대상 이번 tick 종결 확정(pending/permanent/expired 확정).
       } catch {
-        // finalize 실패(원장 durable) — 마지막 batch 의 in-flight pending 보존로 systemic 노출.
+        // finalize 실패(원장 durable) — 마지막 성공 batch 의 terminal counters 전부 보존로 systemic 노출
+        // (삼순 #952 7차: batch permanent>0 + finalize throw 결합 유실 차단).
         summary.pending += lastBatchPending;
+        summary.permanentFailed += lastBatchPermanent;
+        summary.expired += lastBatchExpired;
       }
     } else if (!drainThrew) {
       // 예산 소진으로 finalize 를 못 돌린 경우: 미완료는 pending 으로 최소 계상(durable, 다음 tick 재drain).
       // 예산 소진으로 finalize 미실행(삼순 #952 5차): 마지막 batch 미완료 pending 보존로 false-green 차단.
       summary.pending += lastBatchPending;
+      summary.permanentFailed += lastBatchPermanent;
+      summary.expired += lastBatchExpired;
     }
     // open 됐지만 이번 tick 종결(pending=0 확인 또는 finalize 성공)을 못 한 대상은 systemic 노출
     // (삼순 #952 6차 ①: snapshot open 직후 deadline 으로 batch 0회·finalize skip 캐이스). throw 는
