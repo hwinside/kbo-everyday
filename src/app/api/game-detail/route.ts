@@ -407,6 +407,27 @@ const POS_SHORT_TO_FULL: Record<string, string> = {
   "유": "SS", "좌": "LF", "중": "CF", "우": "RF", "지": "DH",
 };
 
+function countNaverRecordExtraBaseHits(batter: Record<string, unknown>): {
+  h2b: number;
+  h3b: number;
+  hr: number;
+} {
+  let h2b = 0;
+  let h3b = 0;
+  let hr = 0;
+  for (const [key, raw] of Object.entries(batter)) {
+    if (!/^inn\d+$/.test(key) || typeof raw !== "string") continue;
+    for (const result of raw.split("/").map((value) => value.trim()).filter(Boolean)) {
+      // Naver record shorthand: 좌2/우중2, 우3, 좌홈. "2땅"/"3안"처럼
+      // 수비 위치 숫자로 시작하는 결과와 혼동하지 않도록 끝 토큰만 판정한다.
+      if (/홈(?:런)?$/.test(result)) hr++;
+      else if (/(?:3|3루타)$/.test(result)) h3b++;
+      else if (/(?:2|2루타)$/.test(result)) h2b++;
+    }
+  }
+  return { h2b, h3b, hr };
+}
+
 export async function fetchNaverRecord(
   kboGameId: string,
   opts?: { signal?: AbortSignal; includeRelayCounts?: boolean },
@@ -438,6 +459,7 @@ export async function fetchNaverRecord(
       return (arr || []).map((b) => {
         const name = String(b.name || "");
         const relay = relayCounts.get(name);
+        const record = countNaverRecordExtraBaseHits(b);
         return {
           order: Number(b.batOrder) || 0,
           position: POS_SHORT_TO_FULL[String(b.pos)] || String(b.pos || ""),
@@ -448,9 +470,9 @@ export async function fetchNaverRecord(
           runs: Number(b.run) || 0,
           rbi: Number(b.rbi) || 0,
           // record가 정확하면 그대로, 비어있으면 relay 카운트로 보강.
-          hr: Math.max(Number(b.hr) || 0, relay?.hr ?? 0),
-          h2b: Math.max(Number(b.h2) || 0, relay?.h2b ?? 0),
-          h3b: Math.max(Number(b.h3) || 0, relay?.h3b ?? 0),
+          hr: Math.max(Number(b.hr) || 0, record.hr, relay?.hr ?? 0),
+          h2b: Math.max(Number(b.h2) || 0, record.h2b, relay?.h2b ?? 0),
+          h3b: Math.max(Number(b.h3) || 0, record.h3b, relay?.h3b ?? 0),
           bb: Number(b.bb) || 0,
           so: Number(b.kk) || 0,
           sb: Number(b.sb) || 0,
@@ -558,7 +580,8 @@ export async function GET(req: NextRequest) {
   // 양쪽 fallback을 요청 시작과 동시에 준비한다. KBO timeout 뒤 새 budget을 시작하지 않고,
   // 모든 작업이 위 단일 절대 deadline을 공유한다.
   // eager fallback은 record 1회만 준비한다. relay 전이닝 fanout은 매 폴링마다 증폭되므로
-  // KBO 정상경로에서는 실행하지 않고, record 자체의 boxScore로 graceful degrade한다.
+  // KBO 정상경로에서는 실행하지 않는다. record의 inn1..inn25 셀에서 XBH를 무추가요청
+  // 복원하므로 fallback celebration semantic id도 relay 경로와 일치한다.
   const naverRecordPromise = fetchNaverRecord(gameId, {
     signal: deadlineSignal,
     includeRelayCounts: false,

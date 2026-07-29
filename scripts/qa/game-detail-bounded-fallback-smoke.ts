@@ -168,8 +168,9 @@ function naverRecord(state: GameState) {
     return { result: { recordData: {} } };
   }
   const batter = (name: string) => ({
-    batOrder: 1, pos: "중", name, ab: 4, hit: 2, run: 1, rbi: 1,
-    hr: 0, h2: 0, h3: 0, bb: 0, kk: 1, sb: 0, hra: ".500",
+    batOrder: 1, pos: "중", name, ab: 4, hit: name === "김선수" ? 1 : 2, run: 1, rbi: 1,
+    hr: 0, h2: null, h3: null, bb: 0, kk: 1, sb: 0, hra: ".500",
+    inn4: name === "김선수" ? "좌2" : "중안",
   });
   const pitcherRow = (name: string) => ({
     name, inn: "9", wls: "승", hit: 6, r: 2, hr: 0, kk: 8,
@@ -303,6 +304,69 @@ async function main() {
   assert.ok(kboDownLive.body.boxScore.homeBatters.length > 0);
   assert.equal(kboDownLive.body.lineup, null);
   assert.deepEqual(kboDownLive.degradationEvents, [{ apiName: "kbo-game-detail", reason: "timeout" }]);
+  assert.equal(kboDownLive.body.boxScore.awayBatters[0].h2b, 1, "record inn4=좌2 → h2b=1");
+
+  // 실제 GET의 Naver record box를 celebration diff에 연결해 relay와 동일 semantic id인지 고정.
+  const [{ generateEvents }, { generateRelayEvents }] = await Promise.all([
+    import("../../src/lib/event-generator"),
+    import("../../src/lib/relay-event-generator"),
+  ]);
+  const live = {
+    gameId: GAME_ID,
+    isLive: true,
+    inning: 8,
+    isTop: true,
+    balls: 0,
+    strikes: 0,
+    outs: 0,
+    awayScore: 3,
+    homeScore: 2,
+    awayTeam: "키움",
+    homeTeam: "LG",
+    awayTeamFull: "키움",
+    homeTeamFull: "LG",
+    runner1b: false,
+    runner2b: false,
+    runner3b: false,
+    runner1bName: null,
+    runner2bName: null,
+    runner3bName: null,
+    currentBatter: "김선수",
+    currentPitcher: "홈투수",
+    stadium: "잠실",
+    startTime: "18:30",
+    statusCode: 4,
+    statusInfo: "8회초",
+    inningHalfDisplay: "8초",
+  } as import("../../src/lib/hooks/useLiveGame").LiveGameData;
+  const currentBox = kboDownLive.body.boxScore as NonNullable<
+    import("../../src/app/api/game-detail/route").GameDetailResponse["boxScore"]
+  >;
+  const prevBox = {
+    ...currentBox,
+    awayBatters: currentBox.awayBatters.map((b) =>
+      b.name === "김선수" ? { ...b, hits: 0, h2b: 0, h3b: 0, hr: 0, rbi: 0 } : b
+    ),
+  };
+  const boxEvents = generateEvents(
+    GAME_ID,
+    { live, boxScore: prevBox },
+    live,
+    currentBox,
+  ).events.filter((event) => event.type === "at_bat_double" || event.type === "at_bat_hit");
+  const relayEvents = generateRelayEvents(
+    GAME_ID,
+    [{
+      inning: 8,
+      half: "top",
+      teamName: "키움",
+      plays: [{ batterName: "김선수", result: "좌익선상 2루타", type: "hit" }],
+    }],
+    live,
+  ).filter((event) => event.type === "at_bat_double" || event.type === "at_bat_hit");
+  assert.deepEqual(boxEvents.map((event) => event.type), ["at_bat_double"]);
+  assert.deepEqual(relayEvents.map((event) => event.type), ["at_bat_double"]);
+  assert.equal(boxEvents[0].id, relayEvents[0].id, "record/relay double semantic id exact match");
 
   const naverDown = await scenario("KBO normal + Naver blackhole", "normal", "blackhole", "final");
   assert.equal(naverDown.body.status, "final");
@@ -346,12 +410,14 @@ async function main() {
   assert.equal(scheduled.body.linescore, null);
   assert.equal(scheduled.body.boxScore, null);
   assert.equal(scheduled.degradationEvents.length, 0);
+  assert.ok(scheduled.body.meta.broadcastChannels?.length > 0, "scheduled KBO TV_IF preserved");
 
   const cancelled = await scenario("normal cancelled", "normal", "normal", "cancelled");
   assert.equal(cancelled.body.status, "cancelled");
   assert.equal(cancelled.body.linescore, null);
   assert.equal(cancelled.body.boxScore, null);
   assert.equal(cancelled.degradationEvents.length, 0);
+  assert.ok(cancelled.body.meta.broadcastChannels?.length > 0, "cancelled KBO TV_IF preserved");
 
   // mutation guard: 후속 fetchGames() 기본 10초 경로가 route에 재유입되면 즉시 red.
   const routeSource = readFileSync("src/app/api/game-detail/route.ts", "utf8");
