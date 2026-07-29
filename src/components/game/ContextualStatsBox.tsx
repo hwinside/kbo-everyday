@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
+import { useVisibilityAwareInterval } from "@/lib/hooks/useVisibilityAwareInterval";
 import clsx from "clsx";
 import type {
   ContextualStatsResponse,
@@ -28,43 +29,46 @@ type Props = {
 export default function ContextualStatsBox({ gameId, enabled = true }: Props) {
   const [data, setData] = useState<ContextualStatsResponse | null>(null);
   const boxRef = useRef<HTMLDivElement>(null);
-
+  const mountedRef = useRef(true);
   useEffect(() => {
-    if (!enabled) return;
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
-    const fetchOnce = async () => {
-      try {
-        const res = await fetch(`/api/contextual-stats?gameId=${encodeURIComponent(gameId)}`, {
-          cache: "no-store",
-        });
-        if (!res.ok) {
-          if (!cancelled && !isKeyboardOpen()) setData(null);
-          return;
-        }
-        const json = (await res.json()) as ContextualStatsResponse;
-        // GameChat composer focus(=body.kbd-open) 동안엔 라인 add/remove로 인한
-        // 박스 높이 변화가 composer 위쪽 layout을 흔들어 V3 scrollIntoView 앵커가
-        // 깨진다. 키보드 내려갈 때까지 데이터 갱신을 보류한다. (PR #126 회귀 핫픽스)
-        if (!cancelled && !isKeyboardOpen()) setData(json);
-      } catch {
-        if (!cancelled && !isKeyboardOpen()) setData(null);
+  // gameId 세대 fence: 컴포넌트가 유지된 채 gameId가 바뀔때, 이전 경기의
+  // 늦은 응답(A slow → gameId B 전환 → late A resolve)이 현재 경기(B) 데이터를
+  // 덮어쓰지 못하게 막는다. 요청 시점 gameId와 현재 gameId가 같을 때만 commit.
+  const currentGameIdRef = useRef(gameId);
+  useEffect(() => {
+    currentGameIdRef.current = gameId;
+  }, [gameId]);
+
+  const pollContextualStats = useCallback(async () => {
+    // GameChat composer focus(=body.kbd-open) 동안엔 라인 add/remove로 인한
+    // 박스 높이 변화가 composer 위쪽 layout을 흔들어 V3 scrollIntoView 앵커가
+    // 깨진다. 키보드 내려갈 때까지 데이터 갱신을 보류한다. (PR #126 회귀 핫픽스)
+    if (isKeyboardOpen()) return;
+    const reqGameId = gameId;
+    // 언마운트·키보드·gameId 전환 경계를 모두 통과해야 commit.
+    const canCommit = () =>
+      mountedRef.current && currentGameIdRef.current === reqGameId && !isKeyboardOpen();
+    try {
+      const res = await fetch(`/api/contextual-stats?gameId=${encodeURIComponent(reqGameId)}`, {
+        cache: "no-store",
+      });
+      if (!res.ok) {
+        if (canCommit()) setData(null);
+        return;
       }
-    };
+      const json = (await res.json()) as ContextualStatsResponse;
+      if (canCommit()) setData(json);
+    } catch {
+      if (canCommit()) setData(null);
+    }
+  }, [gameId]);
 
-    const loop = async () => {
-      if (!isKeyboardOpen()) await fetchOnce();
-      if (cancelled) return;
-      timer = setTimeout(loop, POLL_INTERVAL_MS);
-    };
-
-    void loop();
-    return () => {
-      cancelled = true;
-      if (timer) clearTimeout(timer);
-    };
-  }, [gameId, enabled]);
+  // 백그라운드 탭은 폴링 정지, 복귀 시 즉시 갱신. gameId 전환 시도 즉시 갱신.
+  useVisibilityAwareInterval(pollContextualStats, POLL_INTERVAL_MS, { enabled, resetKey: gameId });
 
   // 폴링은 skip해도 framer-motion 진행 중인 height: auto↔0 transition은
   // 박스 외곽 높이를 미세하게 흔들 수 있다. body.kbd-open 동안엔 박스 outer

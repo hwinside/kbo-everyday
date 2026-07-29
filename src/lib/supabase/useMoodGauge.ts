@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback } from "react";
 import { supabase } from "./client";
+import { useVisibilityAwareInterval } from "@/lib/hooks/useVisibilityAwareInterval";
 import { useAuth } from "./AuthContext";
 import { isAllStarGame } from "@/lib/constants/teams";
 import { allStarSideOfTeam } from "@/lib/constants/allstar-2026";
@@ -102,12 +103,8 @@ export function useMoodGauge(
     recalc();
   }, [gameId, homeTeamId, awayTeamId, effectiveTeamId]);
 
-  // 초기 로드 + 30초 폴링
-  useEffect(() => {
-    fetchChatMood();
-    const interval = setInterval(fetchChatMood, 30_000);
-    return () => clearInterval(interval);
-  }, [fetchChatMood]);
+  // 초기 로드 + 30초 폴링 (백그라운드 탭은 정지, 복귀 시 즉시 갱신)
+  useVisibilityAwareInterval(fetchChatMood, 30_000, { resetKey: gameId });
 
   // ── 3) 블렌딩 ──
   // eslint-disable-next-line react-hooks/exhaustive-deps
