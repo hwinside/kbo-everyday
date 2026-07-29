@@ -156,18 +156,25 @@ export default function VenueStoryViewer({
   useEffect(() => {
     if (storyId == null || storyId <= 0) return;
     if (viewSentRef.current.has(storyId)) return;
+    // 중복 fire 방지로 선 mark 하되, 실패/미전송 시 해제해 다음 표시 때 재시도 가능하게 한다
+    // (시작 전 영구 mark 하면 auth/fetch 일시 실패가 세션 내 영구 누락이 됨 — 서버 dedupe 가 있어 재시도는 안전).
     viewSentRef.current.add(storyId);
     (async () => {
       try {
         const session = await getSafeSession();
         const token = session?.access_token;
-        if (!token) return; // 비로그인 열람은 기록하지 않음
-        await fetch(`/api/venue-stories/${storyId}/view`, {
+        if (!token) {
+          viewSentRef.current.delete(storyId); // 비로그인 열람은 미기록 — 이후 로그인 상태에서 재표시되면 기록
+          return;
+        }
+        const res = await fetch(`/api/venue-stories/${storyId}/view`, {
           method: "POST",
           headers: { Authorization: `Bearer ${token}` },
         });
+        if (!res.ok) viewSentRef.current.delete(storyId);
       } catch {
-        // 조회 기록 실패는 뷰어 UX 에 영향 주지 않고 무시
+        // 조회 기록 실패는 뷰어 UX 에 영향 주지 않고 무시 — 단, 재시도 가능하도록 해제
+        viewSentRef.current.delete(storyId);
       }
     })();
   }, [storyId]);
