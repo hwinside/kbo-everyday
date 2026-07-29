@@ -17,6 +17,19 @@ import {
   isVenueStoryKeyboardOpen,
 } from "@/lib/venue-stories/keyboard-inset";
 import { shouldCloseCommentSheetDrag } from "@/lib/venue-stories/comment-sheet-gesture";
+import {
+  createPressState,
+  markPressStart,
+  cancelPress,
+  shouldSubmitOnPointerUp,
+  canBeginCommentSubmit,
+} from "@/lib/venue-stories/comment-submit-gesture";
+import {
+  safeBottomCalc,
+  STORY_NAV_BOTTOM_OFFSET,
+  STORY_PILL_BOTTOM_OFFSET,
+  STORY_CAPTION_BOTTOM_OFFSET,
+} from "@/lib/venue-stories/story-tap-zone";
 import { lockRootScroll, unlockRootScroll } from "@/lib/venue-stories/scroll-lock";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import { isIosNativeRuntime } from "@/lib/capacitor/platform";
@@ -129,9 +142,11 @@ export default function VenueStoryViewer({
   const commentDragStartXRef = useRef(0);
   const commentDragStartYRef = useRef(0);
   const commentDragShouldCloseRef = useRef(false);
-  // 전송 재진입 가드(동기) — 안드에서 pointerdown 으로 즉시 제출하므로 뒤따르는 click 이
-  // 같은 탭에서 중복 POST 하지 않게 동기 ref 로 막는다(commentBusy 는 setState 라 같은 탭 내 stale).
+  // 전송 재진입 가드(동기) — pointerup 제출 뒤 따라오는 trailing click 이 같은 탭에서 중복 POST
+  // 하지 않게 동기 ref 로 막는다(commentBusy 는 setState 라 같은 탭 내 stale).
   const commentSubmitLockRef = useRef(false);
+  // 전송 버튼 press 상태 — pointerdown 에서 시작, primary pointerup(버튼 위)에서만 제출 확정.
+  const commentPressRef = useRef(createPressState());
   const rafRef = useRef<number | null>(null);
   const startRef = useRef<number>(0);
   const elapsedRef = useRef<number>(0);
@@ -390,9 +405,18 @@ export default function VenueStoryViewer({
   };
 
   const handleCommentSubmit = async () => {
-    if (!story || commentBusy || commentSubmitLockRef.current) return;
     const content = commentInput.trim();
-    if (!content) return;
+    if (
+      !canBeginCommentSubmit({
+        hasStory: !!story,
+        hasContent: content.length > 0,
+        busy: commentBusy,
+        locked: commentSubmitLockRef.current,
+      })
+    ) {
+      return;
+    }
+    if (!story) return; // 타입 내로잉(위 hasStory 로 이미 보장)
     // 요청 시점 story id 캡처 — 응답 도착 시 다른 스토리로 전환돼 있으면 반영 스킵
     const submitStoryId = story.id;
     commentSubmitLockRef.current = true;
@@ -643,7 +667,7 @@ export default function VenueStoryViewer({
             넘김 발동 재현). 캡션(72px)+pill 영역을 넘김 존에서 제외해 하단 탭이 모달 오픈으로 간다. */}
         <button
           className="absolute top-0 left-0 w-1/3"
-          style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 76px)" }}
+          style={{ bottom: safeBottomCalc(STORY_NAV_BOTTOM_OFFSET) }}
           aria-label="이전"
           onClick={() => {
             if (commentBusy) return;
@@ -655,7 +679,7 @@ export default function VenueStoryViewer({
         />
         <button
           className="absolute top-0 right-0 w-2/3"
-          style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 76px)" }}
+          style={{ bottom: safeBottomCalc(STORY_NAV_BOTTOM_OFFSET) }}
           aria-label="다음"
           onClick={() => {
             if (commentBusy) return;
@@ -671,7 +695,7 @@ export default function VenueStoryViewer({
       {story.caption && (
         <div
           className="absolute left-0 right-0 pl-4 pr-20 z-20 pointer-events-none"
-          style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 84px)" }}
+          style={{ bottom: safeBottomCalc(STORY_CAPTION_BOTTOM_OFFSET) }}
         >
           <p className="text-white text-sm bg-black/40 rounded-xl px-3 py-2 inline-block max-w-full break-words">
             {story.caption}
@@ -690,7 +714,7 @@ export default function VenueStoryViewer({
           setCommentsOpen(true);
         }}
         className="absolute left-3 right-3 z-20 h-12 flex items-center gap-2 px-4 rounded-full bg-black/40 border border-white/25 text-white/80"
-        style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 20px)" }}
+        style={{ bottom: safeBottomCalc(STORY_PILL_BOTTOM_OFFSET) }}
         aria-label="댓글 목록"
       >
         <MessageCircle size={18} />
@@ -864,13 +888,30 @@ export default function VenueStoryViewer({
                 <button
                   // 안드로이드 전송 씨음 핵심 수정(하린아빠 7/29 갤럭시 리포트 — 전송 눌러도 토스트·저장 안 됨):
                   // onClick 은 전송 탭 순간 입력창 blur→안드 키보드 내려감→시트 높이 재계산으로 버튼이
-                  // 손가락 밑에서 이동해 click 이 씨힌다(iOS는 kbInset 으로 keyboardOpen 유지돼 안 그런다).
-                  // pointerdown 에서 preventDefault(입력창 포커스 유지→키보드/시트 불변) 후 즉시 제출해
-                  // 이 레이스를 제거한다. onClick 은 데스크톱 키보드/마우스 폴백(ref 로 중복 방지).
+                  // 손가락 밑에서 이동해 click 이 씨힌다. pointerdown 은 preventDefault(입력창 포커스 유지
+                  // →키보드/시트 불변)만 하고, 제출 확정은 "버튼 위에서 끝난 primary pointerup"(불변 버튼)에서만.
+                  // 삼순 #948 blocker1: pointerdown 즉시 제출은 pointercancel(스크롤)·drag-out 도 전송하므로 금지.
+                  // onClick 은 데스크톱 키보드/마우스 폴백(ref lock 으로 trailing click 중복 차단).
                   onPointerDown={(e) => {
                     e.preventDefault();
-                    handleCommentSubmit();
+                    markPressStart(commentPressRef.current);
                   }}
+                  onPointerUp={(e) => {
+                    const b = e.currentTarget.getBoundingClientRect();
+                    if (
+                      shouldSubmitOnPointerUp(commentPressRef.current, {
+                        isPrimary: e.isPrimary,
+                        button: e.button,
+                        clientX: e.clientX,
+                        clientY: e.clientY,
+                        bounds: { left: b.left, top: b.top, right: b.right, bottom: b.bottom },
+                      })
+                    ) {
+                      handleCommentSubmit();
+                    }
+                  }}
+                  onPointerCancel={() => cancelPress(commentPressRef.current)}
+                  onPointerLeave={() => cancelPress(commentPressRef.current)}
                   onClick={handleCommentSubmit}
                   disabled={commentBusy || commentInput.trim().length === 0}
                   className="flex items-center justify-center w-9 h-9 rounded-full text-white disabled:opacity-50 transition-opacity shrink-0"
