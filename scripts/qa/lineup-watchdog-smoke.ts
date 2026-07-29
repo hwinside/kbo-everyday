@@ -346,6 +346,34 @@ async function main() {
     ok("정상 완료(pending 0) → status ok", r.status === "ok");
   }
 
+  // ── (삼순 #952 5차 blocker) deadline 경계 false-green: batch pending=1 된 직후 clock=deadline 되어
+  //    finalize 를 건너뛰어도 마지막 batch 의 pending 을 보존해 status=failed ──
+  {
+    let clock = 1_000_000;
+    const DEADLINE = 1_000_000 + 16_000;
+    let calls = 0;
+    const r = await runLineupWatchdog({
+      dateStr: "20260729", deadlineAtMs: DEADLINE,
+      deps: base({
+        fetchGames: async () => [game("G1", "scheduled", 1, 10)],
+        fetchLineupConfirmed: async () => true,
+        openSnapshot: async () => DEADLINE + 60_000,
+        // 첫 batch 는 deadline 전(claimed=1,pending=1) 반환 → 반환 직후 clock 을 deadline 으로 전진
+        // → 다음 루프 iteration 진입 안 함(now()>=deadline) + finalize 도 skip. 마지막 pending 보존되어야 함.
+        deliverBatch: async () => {
+          calls++;
+          clock = DEADLINE; // 반환 후 즉시 deadline 소진
+          return batch({ claimed: 1, pending: 1, snapshotCompleted: false, fcmAcceptedDelta: 0 });
+        },
+        finalizeSnapshot: async () => { throw new Error("finalize should be skipped at deadline"); },
+        now: () => clock,
+      }),
+    });
+    ok("deadline 경계: batch pending=1 보존 → status failed", r.status === "failed");
+    ok("deadline 경계: pending>0 집계(finalize skip에도)", r.summary.pending > 0);
+    ok("deadline 경계: batch 1회만(루프 재진입 안 함)", calls === 1);
+  }
+
   console.log(`\nlineup-watchdog 오케스트레이터: ${pass} passed, ${fail} failed`);
   if (fail > 0) process.exit(1);
 }

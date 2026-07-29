@@ -139,6 +139,9 @@ export async function runLineupWatchdog(args: {
     countAsDue: boolean,
   ): Promise<void> => {
     let drainThrew = false;
+    // 마지막 batch 가 남긴 in-flight 미완료 pending. deadline 소진으로 finalize 미실행 시 보존해
+    // false-green(status:ok·pending:0) 차단(삼순 #952 5차 blocker).
+    let lastBatchPending = 0;
     for (let i = 0; i < MAX_BATCHES_PER_TARGET && now() < deadlineAtMs; i++) {
       let batch: LineupDeliveryBatchResult;
       try {
@@ -154,6 +157,7 @@ export async function runLineupWatchdog(args: {
       }
       summary.accepted += batch.fcmAcceptedDelta;
       if (batch.snapshotCompleted) summary.snapshotsCompleted++;
+      lastBatchPending = batch.pending; // deadline 소진 시 systemic 보존용
       if (batch.claimed === 0 || batch.pending === 0) break;
     }
     if (countAsDue) summary.dueDrained++;
@@ -169,11 +173,13 @@ export async function runLineupWatchdog(args: {
           // 신규 경로에서 batch 가 completed 를 못 잡았어도 finalize 가 종결했으면 반영.
         }
       } catch {
-        /* durable — 다음 tick */
+        // finalize 실패(원장 durable) — 마지막 batch 의 in-flight pending 보존로 systemic 노출.
+        summary.pending += lastBatchPending;
       }
     } else if (!drainThrew) {
       // 예산 소진으로 finalize 를 못 돌린 경우: 미완료는 pending 으로 최소 계상(durable, 다음 tick 재drain).
-      summary.pending += 0;
+      // 예산 소진으로 finalize 미실행(삼순 #952 5차): 마지막 batch 미완료 pending 보존로 false-green 차단.
+      summary.pending += lastBatchPending;
     }
   };
 
