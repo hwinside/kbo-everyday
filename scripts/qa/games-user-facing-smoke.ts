@@ -120,6 +120,20 @@ function kboGame(overrides: Record<string, unknown> = {}): KboGame {
   assert.equal(mDh.length, 2);
   assert.equal(new Set(mDh.map((g) => g.gameId)).size, 2);
 }
+// ── 4e. KBO 내부 중복 gameId(upstream 부분열화/중복 응답) → union dedupe (삼순 3차 P1) ──
+{
+  const base = mapNaverGameToKbo(naverGame(), DATE); // HTSS0
+  // KBO: HTSS0(overlap) + LTOB0 ×2(내부 중복)
+  const merged = mergeKboEnrichment([base], [
+    kboGame(),
+    kboGame({ gameId: "20260729LTOB0" }),
+    kboGame({ gameId: "20260729LTOB0" }),
+  ]);
+  const uniq = new Set(merged.map((g) => g.gameId)).size;
+  assert.equal(merged.length, uniq); // result.length === unique gameId size
+  assert.equal(merged.length, 2);
+  assert.deepEqual(merged.map((g) => g.gameId).sort(), ["20260729HTSS0", "20260729LTOB0"]);
+}
 
 // ── fetch stub 헬퍼 ──
 const realFetch = globalThis.fetch;

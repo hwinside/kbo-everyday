@@ -60,11 +60,15 @@ export function mergeKboEnrichment(naverBase: KboGame[], kboGames: KboGame[]): K
     };
   });
   // KBO-only 경기(Naver 가 부분목록이라 놓친 경기)를 deterministic union 으로 보존(삼순 NO-GO P1).
-  // Naver base 순서 유지 + KBO-only 를 gameId 오름차순 append. naver gameId set 으로 dedupe(DH 중복 방지).
-  const naverIds = new Set(naverBase.map((g) => g.gameId));
-  const kboOnly = kboGames
-    .filter((g) => !naverIds.has(g.gameId))
-    .sort((a, b) => a.gameId.localeCompare(b.gameId));
+  // gameId 유일성 보장: seen 집합을 Naver id 로 시드 → Naver 중복도, KBO 내부 중복(upstream 부분
+  // 열화/중복 응답)도 둘 다 dedupe. 결과는 항상 result.length === unique gameId size (삼순 P1).
+  const seen = new Set(naverBase.map((g) => g.gameId));
+  const kboOnly: KboGame[] = [];
+  for (const g of [...kboGames].sort((a, b) => a.gameId.localeCompare(b.gameId))) {
+    if (seen.has(g.gameId)) continue;
+    seen.add(g.gameId);
+    kboOnly.push(g);
+  }
   return [...merged, ...kboOnly];
 }
 
