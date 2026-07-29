@@ -20,8 +20,14 @@ export interface PollingFallbackDeps<Handle> {
   intervalMs: number;
   setInterval: (callback: () => void, ms: number) => Handle;
   clearInterval: (handle: Handle) => void;
+  setTimeout: (callback: () => void, ms: number) => Handle;
+  clearTimeout: (handle: Handle) => void;
   /** 현재 탭이 사용자에게 보이는가. */
   isVisible: () => boolean;
+  /** terminal 동시 발생 시 catch-up herd 를 흩뜨리는 난수/상한. */
+  random?: () => number;
+  catchUpJitterMs?: number;
+  pollJitterMs?: number;
 }
 
 export interface PollingFallbackController {
@@ -35,6 +41,8 @@ export interface PollingFallbackController {
   stop: () => void;
   /** 현재 주기 폴링이 도는 중인지(테스트/관찰용). */
   isPolling: () => boolean;
+  /** load single-flight 상태(테스트/관찰용). */
+  loadState: () => { inFlight: boolean; queued: boolean };
 }
 
 export function createPollingFallback<Handle>(
@@ -43,21 +51,71 @@ export function createPollingFallback<Handle>(
   let enabled = false;
   let healthy = false;
   let timer: Handle | null = null;
+  let catchUpTimer: Handle | null = null;
+  let inFlight = false;
+  let queued = false;
+  let stopped = false;
 
   // 폴링이 돌아야 하는 조건: 활성 && 구독 비정상 && 탭 보임.
   const shouldRun = () => enabled && !healthy && deps.isVisible();
 
+  const clearCatchUp = () => {
+    if (catchUpTimer != null) {
+      deps.clearTimeout(catchUpTimer);
+      catchUpTimer = null;
+    }
+  };
+
+  const runLoad = () => {
+    if (!shouldRun() || stopped) return;
+    if (inFlight) {
+      queued = true;
+      return;
+    }
+    inFlight = true;
+    Promise.resolve(deps.load())
+      .catch(() => undefined)
+      .finally(() => {
+        inFlight = false;
+        if (!queued || !shouldRun() || stopped) {
+          queued = false;
+          return;
+        }
+        queued = false;
+        runLoad();
+      });
+  };
+
+  const scheduleCatchUp = () => {
+    if (catchUpTimer != null || !shouldRun()) return;
+    const jitterMs = Math.max(0, deps.catchUpJitterMs ?? 1_500);
+    const random = Math.min(0.999999, Math.max(0, (deps.random ?? Math.random)()));
+    const delay = Math.floor(random * jitterMs);
+    catchUpTimer = deps.setTimeout(() => {
+      catchUpTimer = null;
+      runLoad();
+    }, delay);
+  };
+
   const tick = () => {
-    // interval 콜백 시점에도 가시성 재확인(도중에 숨겨졌으면 스킵).
-    if (deps.isVisible()) void deps.load();
+    // interval 콜백 시점에도 전체 실행 조건 재확인.
+    runLoad();
   };
 
   const evaluate = () => {
     if (shouldRun()) {
-      if (timer == null) timer = deps.setInterval(tick, deps.intervalMs);
+      if (timer == null) {
+        const jitterMs = Math.max(0, deps.pollJitterMs ?? 1_500);
+        const random = Math.min(0.999999, Math.max(0, (deps.random ?? Math.random)()));
+        timer = deps.setInterval(tick, deps.intervalMs + Math.floor(random * jitterMs));
+      }
     } else if (timer != null) {
       deps.clearInterval(timer);
       timer = null;
+    }
+    if (!shouldRun()) {
+      queued = false;
+      clearCatchUp();
     }
   };
 
@@ -69,16 +127,19 @@ export function createPollingFallback<Handle>(
     setHealthy(next: boolean) {
       const wasHealthy = healthy;
       healthy = next;
-      // 정상→비정상 전이(구독이 죽는 순간)면 주기 대기 없이 즉시 catch-up.
-      if (wasHealthy && !next && enabled && deps.isVisible()) void deps.load();
+      // 정상→비정상 전이는 짧은 jitter 뒤 catch-up하고, interval phase도 클라이언트별로 흩뜨린다.
+      if (wasHealthy && !next && enabled && deps.isVisible()) scheduleCatchUp();
       evaluate();
     },
     onVisibilityChange() {
       // 탭 복귀 & 비정상이면 즉시 catch-up 후 주기 재개. 숨김이면 주기 정지.
-      if (shouldRun()) void deps.load();
+      if (shouldRun()) runLoad();
       evaluate();
     },
     stop() {
+      stopped = true;
+      queued = false;
+      clearCatchUp();
       if (timer != null) {
         deps.clearInterval(timer);
         timer = null;
@@ -86,6 +147,9 @@ export function createPollingFallback<Handle>(
     },
     isPolling() {
       return timer != null;
+    },
+    loadState() {
+      return { inFlight, queued };
     },
   };
 }

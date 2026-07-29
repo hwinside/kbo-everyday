@@ -19,6 +19,7 @@ type FakeTimer = { cb: () => void; cleared: boolean };
 
 function makeHarness(initialVisible = true) {
   const timers: FakeTimer[] = [];
+  const timeouts: FakeTimer[] = [];
   let visible = initialVisible;
   let loads = 0;
   const controller = createPollingFallback<FakeTimer>({
@@ -26,14 +27,26 @@ function makeHarness(initialVisible = true) {
     intervalMs: 30000,
     setInterval: (cb) => { const t: FakeTimer = { cb, cleared: false }; timers.push(t); return t; },
     clearInterval: (t) => { t.cleared = true; },
+    setTimeout: (cb) => { const t: FakeTimer = { cb, cleared: false }; timeouts.push(t); return t; },
+    clearTimeout: (t) => { t.cleared = true; },
     isVisible: () => visible,
+    random: () => 0,
   });
   const activeTimers = () => timers.filter((t) => !t.cleared);
+  const activeTimeouts = () => timeouts.filter((t) => !t.cleared);
   return {
     controller,
     timers,
+    timeouts,
     activeTimers,
     fireLast: () => activeTimers()[activeTimers().length - 1]?.cb(),
+    fireCatchUp: () => {
+      const timeout = activeTimeouts()[activeTimeouts().length - 1];
+      if (timeout) {
+        timeout.cleared = true;
+        timeout.cb();
+      }
+    },
     setVisible: (v: boolean) => { visible = v; },
     loads: () => loads,
   };
@@ -65,6 +78,7 @@ function makeHarness(initialVisible = true) {
   h.controller.setHealthy(true);   // 정상
   check("정상 구간 폴링 0", h.controller.isPolling() === false && h.loads() === 0);
   h.controller.setHealthy(false);  // 구독 사망
+  h.fireCatchUp();
   check("정상→비정상 즉시 catch-up load", h.loads() === 1);
   check("비정상 전이 후 폴링 가동", h.controller.isPolling() === true);
 }
@@ -126,12 +140,86 @@ function makeHarness(initialVisible = true) {
   check("stop 후 폴링 정지", h.controller.isPolling() === false);
 }
 
+// 9) 느린 load 중 terminal/visibility/tick이 겹쳐도 in-flight 1 + queued 1만 유지
+async function runSingleFlightRegression() {
+  const timers: FakeTimer[] = [];
+  const timeouts: FakeTimer[] = [];
+  const resolvers: Array<() => void> = [];
+  let loads = 0;
+  let active = 0;
+  let maxConcurrent = 0;
+  const controller = createPollingFallback<FakeTimer>({
+    load: () => {
+      loads += 1;
+      active += 1;
+      maxConcurrent = Math.max(maxConcurrent, active);
+      return new Promise<void>((resolve) => {
+        resolvers.push(() => { active -= 1; resolve(); });
+      });
+    },
+    intervalMs: 30000,
+    setInterval: (cb) => { const t = { cb, cleared: false }; timers.push(t); return t; },
+    clearInterval: (t) => { t.cleared = true; },
+    setTimeout: (cb) => { const t = { cb, cleared: false }; timeouts.push(t); return t; },
+    clearTimeout: (t) => { t.cleared = true; },
+    isVisible: () => true,
+    random: () => 0,
+  });
+  controller.setEnabled(true);
+  controller.setHealthy(false);
+  timers[0].cb();
+  timers[0].cb();
+  controller.onVisibilityChange();
+  check("느린 load 중 실제 요청 1개", loads === 1 && active === 1);
+  check("중첩 요청은 queued boolean 1개로 합침", controller.loadState().queued === true);
+  check("동시 요청 상한 1", maxConcurrent === 1);
+  resolvers.shift()?.();
+  await Promise.resolve();
+  await Promise.resolve();
+  check("settle 뒤 catch-up 정확히 1개", loads === 2 && active === 1);
+  check("두 번째 flight 시작 후 queue 비움", controller.loadState().queued === false);
+  resolvers.shift()?.();
+  await Promise.resolve();
+  await Promise.resolve();
+  check("모든 load settle", active === 0 && controller.loadState().inFlight === false);
+  controller.stop();
+}
+
+// 10) terminal catch-up은 클라이언트별 jitter phase로 분산
+{
+  let scheduledDelay = -1;
+  let scheduledInterval = -1;
+  const controller = createPollingFallback<FakeTimer>({
+    load: () => {},
+    intervalMs: 30000,
+    setInterval: (cb, ms) => {
+      scheduledInterval = ms;
+      return { cb, cleared: false };
+    },
+    clearInterval: (t) => { t.cleared = true; },
+    setTimeout: (cb, ms) => {
+      scheduledDelay = ms;
+      return { cb, cleared: false };
+    },
+    clearTimeout: (t) => { t.cleared = true; },
+    isVisible: () => true,
+    random: () => 0.5,
+    catchUpJitterMs: 1500,
+  });
+  controller.setEnabled(true);
+  controller.setHealthy(true);
+  controller.setHealthy(false);
+  check("terminal catch-up jitter phase 적용", scheduledDelay === 750);
+  check("periodic tick도 클라이언트별 phase 분산", scheduledInterval === 30_750);
+  controller.stop();
+}
+
 // ── 메시지 merge: id 기준 병합 + 대화 leak 방지 ──
 function msg(id: number, conv: string, content = `m${id}`): DMMessage {
   return { id, conversation_id: conv, sender_id: "u1", content, is_read: false, created_at: new Date(id * 1000).toISOString() };
 }
 
-// 9) 신규 메시지 append + id 정렬
+// 11) 신규 메시지 append + id 정렬
 {
   const prev = [msg(1, "c1"), msg(2, "c1")];
   const incoming = [msg(2, "c1"), msg(3, "c1")];
@@ -139,7 +227,7 @@ function msg(id: number, conv: string, content = `m${id}`): DMMessage {
   check("merge: id 오름차순 병합", merged.map((m) => m.id).join(",") === "1,2,3");
 }
 
-// 10) 같은 id 는 incoming(DB 최신)으로 갱신(예: is_read)
+// 12) 같은 id 는 incoming(DB 최신)으로 갱신(예: is_read)
 {
   const prev = [{ ...msg(5, "c1"), is_read: false }];
   const incoming = [{ ...msg(5, "c1"), is_read: true }];
@@ -147,7 +235,7 @@ function msg(id: number, conv: string, content = `m${id}`): DMMessage {
   check("merge: 동일 id 는 incoming 값으로 갱신", merged.length === 1 && merged[0].is_read === true);
 }
 
-// 11) 대화 전환 leak 방지: 다른 conversation 의 prev 는 버림
+// 13) 대화 전환 leak 방지: 다른 conversation 의 prev 는 버림
 {
   const prev = [msg(1, "OLD"), msg(2, "OLD")];
   const incoming = [msg(9, "NEW")];
@@ -155,7 +243,7 @@ function msg(id: number, conv: string, content = `m${id}`): DMMessage {
   check("merge: 다른 대화 prev 는 leak 안 됨", merged.map((m) => `${m.conversation_id}:${m.id}`).join(",") === "NEW:9");
 }
 
-// 12) 낙관 append(prev-only) 보존
+// 14) 낙관 append(prev-only) 보존
 {
   const prev = [msg(1, "c1"), msg(2, "c1"), { ...msg(3, "c1"), content: "optimistic" }];
   const incoming = [msg(1, "c1"), msg(2, "c1")]; // 아직 3 미반영된 폴링 스냅샷
@@ -163,12 +251,19 @@ function msg(id: number, conv: string, content = `m${id}`): DMMessage {
   check("merge: prev-only(낙관) 메시지 보존", merged.map((m) => m.id).join(",") === "1,2,3");
 }
 
-// 13) incoming 비면 prev 유지(일시적 빈 응답에 화면 안 비움)
+// 15) incoming 비면 prev 유지(일시적 빈 응답에 화면 안 비움)
 {
   const prev = [msg(1, "c1")];
   const merged = mergeDmMessagesById(prev, []);
   check("merge: incoming 비면 prev 유지", merged.length === 1 && merged[0].id === 1);
 }
 
-console.log(`\npolling-fallback: ${pass}/${pass + fail} pass${fail ? `, ${fail} FAIL` : ""}`);
-if (fail) process.exit(1);
+runSingleFlightRegression()
+  .then(() => {
+    console.log(`\npolling-fallback: ${pass}/${pass + fail} pass${fail ? `, ${fail} FAIL` : ""}`);
+    if (fail) process.exit(1);
+  })
+  .catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });

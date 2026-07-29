@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { supabase } from "./client";
 import { useAuth } from "./AuthContext";
 import { useBlockedIds } from "./useBlock";
@@ -30,6 +30,14 @@ interface AtomicDMSendResult {
   message_id: number;
 }
 
+interface DMConversationRow {
+  id: string;
+  user1_id: string | null;
+  user2_id: string | null;
+  last_message: string | null;
+  last_message_at: string;
+}
+
 // 대화 목록 (N+1 개선: batch fetch)
 export function useDMList() {
   const { user } = useAuth();
@@ -37,6 +45,7 @@ export function useDMList() {
   const [conversations, setConversations] = useState<DMConversation[]>([]);
   const [loading, setLoading] = useState(true);
   const [realtimeHealthy, setRealtimeHealthy] = useState(false);
+  const channelGenerationRef = useRef(0);
 
   const load = useCallback(async () => {
     if (!user) return;
@@ -51,12 +60,13 @@ export function useDMList() {
       .limit(500);
 
     if (!data || data.length === 0) { setConversations([]); setLoading(false); return; }
+    const conversationRows = data as DMConversationRow[];
 
     // 상대방 ID 추출
     const otherIds = [
       ...new Set(
-        data
-          .map((conv: { user1_id: string | null; user2_id: string | null }) =>
+        conversationRows
+          .map((conv) =>
             conv.user1_id === user.id ? conv.user2_id : conv.user1_id
           )
           .filter((id): id is string => id !== null),
@@ -76,7 +86,7 @@ export function useDMList() {
     );
 
     // batch fetch unread counts — RPC 결과는 요청 대화당 최대 1행(목록 상한 500).
-    const convIds = data.map((c: { id: string }) => c.id);
+    const convIds = conversationRows.map((c) => c.id);
     // query-guard: bounded -- p_conversation_ids는 클라이언트·RPC 양쪽에서 500개로 제한되고 대화당 1행만 반환
     const { data: unreadRows } = await supabase
       .rpc("dm_unread_counts", { p_conversation_ids: convIds });
@@ -86,8 +96,8 @@ export function useDMList() {
       unreadMap.set(r.conversation_id, Number(r.unread_count));
     });
 
-    const mapped: DMConversation[] = data
-      .map((conv: { id: string; user1_id: string | null; user2_id: string | null; last_message: string | null; last_message_at: string }) => {
+    const mapped: DMConversation[] = conversationRows
+      .map((conv) => {
         const otherId = conv.user1_id === user.id ? conv.user2_id : conv.user1_id;
         const prof = otherId ? profileMap.get(otherId) : undefined;
         return {
@@ -116,6 +126,7 @@ export function useDMList() {
   // Realtime — dm_messages 변경(읽음 처리 포함) 시 목록/대화별 안읽음 재계산. 구독 상태를 폴링 폴백에 전달.
   useEffect(() => {
     if (!user) return;
+    const generation = ++channelGenerationRef.current;
 
     const channel = supabase
       .channel("dm-list")
@@ -125,10 +136,17 @@ export function useDMList() {
         () => { load(); }
       )
       .subscribe((status) => {
+        if (channelGenerationRef.current !== generation) return;
         setRealtimeHealthy(status === "SUBSCRIBED");
       });
 
-    return () => { setRealtimeHealthy(false); supabase.removeChannel(channel); };
+    return () => {
+      if (channelGenerationRef.current === generation) {
+        channelGenerationRef.current += 1;
+        setRealtimeHealthy(false);
+      }
+      void supabase.removeChannel(channel);
+    };
   }, [user, load]);
 
   // Realtime 이 끊긴 동안만 대화 목록을 주기 재조회(새 쪽지/preview 무증상 유실 방지).
@@ -147,11 +165,14 @@ export function useDMChat(conversationId: string) {
   const [messages, setMessages] = useState<DMMessage[]>([]);
   const [loading, setLoading] = useState(Boolean(conversationId));
   const [realtimeHealthy, setRealtimeHealthy] = useState(false);
+  const loadGenerationRef = useRef(0);
+  const channelGenerationRef = useRef(0);
 
   // 메시지 로드/재조회 — 초기는 replace, 폴링 폴백은 merge(append 보존).
   const loadMessages = useCallback(
     async (mode: "replace" | "merge" = "merge") => {
       if (!conversationId) return;
+      const generation = loadGenerationRef.current;
 
       const { data } = await supabase
         .from("dm_messages")
@@ -188,18 +209,27 @@ export function useDMChat(conversationId: string) {
             sender_team_id: prof?.team_id,
           };
         });
+        if (loadGenerationRef.current !== generation) return;
         setMessages((prev) =>
           mode === "replace" ? mapped : mergeDmMessagesById(prev, mapped),
         );
       }
+      if (loadGenerationRef.current !== generation) return;
       setLoading(false);
     },
     [conversationId],
   );
 
   // 대화 전환 시에는 replace 로 새 대화 메시지만 로드.
-  // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(() => { void loadMessages("replace"); }, [loadMessages]);
+  useEffect(() => {
+    const generation = ++loadGenerationRef.current;
+    void loadMessages("replace");
+    return () => {
+      if (loadGenerationRef.current === generation) {
+        loadGenerationRef.current += 1;
+      }
+    };
+  }, [conversationId, loadMessages]);
 
   // 읽음 처리
   useEffect(() => {
@@ -217,6 +247,7 @@ export function useDMChat(conversationId: string) {
   // Realtime
   useEffect(() => {
     if (!conversationId) return;
+    const generation = ++channelGenerationRef.current;
 
     const channel = supabase
       .channel(`dm:${conversationId}`)
@@ -229,6 +260,7 @@ export function useDMChat(conversationId: string) {
           filter: `conversation_id=eq.${conversationId}`,
         },
         async (payload) => {
+          if (channelGenerationRef.current !== generation) return;
           const msg = payload.new as DMMessage;
           // 낙관 append(발신자 본인 echo)로 이미 넣은 행이면 중복 방지
           let alreadyPresent = false;
@@ -246,6 +278,7 @@ export function useDMChat(conversationId: string) {
                 .maybeSingle()
             : { data: null };
 
+          if (channelGenerationRef.current !== generation) return;
           setMessages((prev) =>
             prev.some((m) => m.id === msg.id)
               ? prev
@@ -271,10 +304,17 @@ export function useDMChat(conversationId: string) {
         }
       )
       .subscribe((status) => {
+        if (channelGenerationRef.current !== generation) return;
         setRealtimeHealthy(status === "SUBSCRIBED");
       });
 
-    return () => { setRealtimeHealthy(false); supabase.removeChannel(channel); };
+    return () => {
+      if (channelGenerationRef.current === generation) {
+        channelGenerationRef.current += 1;
+        setRealtimeHealthy(false);
+      }
+      void supabase.removeChannel(channel);
+    };
   }, [conversationId, user]);
 
   // Realtime 이 끊긴 동안만 보이는 대화창을 주기 재조회(새 메시지 무증상 누락 방지).

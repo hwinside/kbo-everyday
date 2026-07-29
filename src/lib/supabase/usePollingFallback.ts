@@ -38,6 +38,8 @@ export function usePollingFallback(
       intervalMs,
       setInterval: (callback, ms) => setInterval(callback, ms),
       clearInterval: (handle) => clearInterval(handle),
+      setTimeout: (callback, ms) => setTimeout(callback, ms),
+      clearTimeout: (handle) => clearTimeout(handle),
       isVisible: () =>
         typeof document === "undefined" ||
         document.visibilityState === "visible",

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { supabase } from "./client";
 import { useAuth } from "./AuthContext";
 import { usePollingFallback } from "./usePollingFallback";
@@ -12,6 +12,7 @@ export function useUnreadDMCount() {
   const { user } = useAuth();
   const [count, setCount] = useState(0);
   const [realtimeHealthy, setRealtimeHealthy] = useState(false);
+  const channelGenerationRef = useRef(0);
 
   const load = useCallback(async () => {
     if (!user) { setCount(0); return; }
@@ -46,6 +47,7 @@ export function useUnreadDMCount() {
   // Realtime 구독 — dm_messages INSERT 시 리카운트. 구독 상태를 폴링 폴백에 전달.
   useEffect(() => {
     if (!user) return;
+    const generation = ++channelGenerationRef.current;
 
     const channel = supabase
       .channel("dm-unread-count")
@@ -55,10 +57,17 @@ export function useUnreadDMCount() {
         () => { load(); }
       )
       .subscribe((status) => {
+        if (channelGenerationRef.current !== generation) return;
         setRealtimeHealthy(status === "SUBSCRIBED");
       });
 
-    return () => { setRealtimeHealthy(false); supabase.removeChannel(channel); };
+    return () => {
+      if (channelGenerationRef.current === generation) {
+        channelGenerationRef.current += 1;
+        setRealtimeHealthy(false);
+      }
+      void supabase.removeChannel(channel);
+    };
   }, [user, load]);
 
   // Realtime 이 끊긴 동안만 안읽음 카운트를 주기 재집계(무증상 유실 방지).
