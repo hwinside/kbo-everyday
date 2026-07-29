@@ -605,7 +605,7 @@ export async function GET(req: NextRequest) {
     // ETag/304 조건부 응답: 폴링 시 detail이 안 바뀌었으면 304(빈 바디)로
     // Fast Origin Transfer 절감. 폴링 주기 불변 → 실시간성 손실 0. 브라우저가
     // no-cache 저장분을 revalidate하고 304 시 캐시 바디를 JS에 투명 반환(클라 무변경).
-    return jsonWithETag(req, response);
+    return await jsonWithETag(req, response);
   } catch (e: unknown) {
     return NextResponse.json(
       { error: (e as Error).message, gameId, status: "scheduled", meta: null, linescore: null, lineup: null, boxScore: null },
