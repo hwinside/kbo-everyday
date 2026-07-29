@@ -631,9 +631,14 @@ export default function VenueStoryViewer({
 
         {/* 탭 존: 좌(이전)/우(다음), 길게 눌러 일시정지.
             전송 중(commentBusy)·입력 포커스 중엔 이동 비활성(삼순 #807 라운드3 blocker 3) —
-            pointerdown(blur 이전) 시점의 잠금을 캡처해 click 에서 이동을 스킵한다. */}
+            pointerdown(blur 이전) 시점의 잠금을 캡처해 click 에서 이동을 스킵한다.
+            ⚠️ 하단 댓글바 위에서 끊는다(bottom 76px+safe): 예전엔 inset-y-0(전체 높이)라
+            좌/우 넘김 존이 하단 '댓글 달기' pill(44px) 주변까지 덮어, 조금만 빗나가도 탭이
+            스토리 넘김으로 먹혀 모달이 잘 안 떴다(하린아빠 7/29 안드 리포트 — pill 8px 위만 눌러도
+            넘김 발동 재현). 캡션(72px)+pill 영역을 넘김 존에서 제외해 하단 탭이 모달 오픈으로 간다. */}
         <button
-          className="absolute inset-y-0 left-0 w-1/3"
+          className="absolute top-0 left-0 w-1/3"
+          style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 76px)" }}
           aria-label="이전"
           onClick={() => {
             if (commentBusy) return;
@@ -644,7 +649,8 @@ export default function VenueStoryViewer({
           onPointerLeave={() => setPaused(false)}
         />
         <button
-          className="absolute inset-y-0 right-0 w-2/3"
+          className="absolute top-0 right-0 w-2/3"
+          style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 76px)" }}
           aria-label="다음"
           onClick={() => {
             if (commentBusy) return;
@@ -660,7 +666,7 @@ export default function VenueStoryViewer({
       {story.caption && (
         <div
           className="absolute left-0 right-0 pl-4 pr-20 z-20 pointer-events-none"
-          style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 72px)" }}
+          style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 84px)" }}
         >
           <p className="text-white text-sm bg-black/40 rounded-xl px-3 py-2 inline-block max-w-full break-words">
             {story.caption}
@@ -670,14 +676,16 @@ export default function VenueStoryViewer({
 
       {/* 하단 댓글 버튼 — 인라인 입력바 대신 탭하면 댓글 모달(바텀시트) 오픈(하린아빠 7/25 지시 —
           인앱브라우저 기사 댓글 모달과 동일 UX). iOS 키보드 회피는 모달 셔(CommentSheet 패턴)에서 처리. */}
+      {/* 터치 타깃을 h-12로 키우고 안드로이드 제스처바 위로 띄운다(+20px). 넘기기 탭 존은 이제
+          이 pill 위에서 끔기므로 pill 주변 탭이 스토리 넘김으로 샘나지 않는다(하린아빠 7/29 안드). */}
       <button
         data-open-comments
         onClick={() => {
           setCommentsClosing(false);
           setCommentsOpen(true);
         }}
-        className="absolute left-3 right-3 z-20 h-11 flex items-center gap-2 px-4 rounded-full bg-black/40 border border-white/25 text-white/80"
-        style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 12px)" }}
+        className="absolute left-3 right-3 z-20 h-12 flex items-center gap-2 px-4 rounded-full bg-black/40 border border-white/25 text-white/80"
+        style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 20px)" }}
         aria-label="댓글 목록"
       >
         <MessageCircle size={18} />
