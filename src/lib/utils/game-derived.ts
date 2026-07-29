@@ -115,7 +115,10 @@ function toDefenders(
     if (!entry) return [];
     if (typeof entry.order === "number") {
       const slotCur = currentBySlot.get(entry.order);
-      if (slotCur && slotCur.name !== entry.name) return []; // stale 선발 억제
+      if (slotCur) {
+        const slotPosition = normalizeFieldPosition(slotCur.position);
+        if (slotCur.name !== entry.name || slotPosition !== pos) return []; // 교체·포지션 이동 stale 억제
+      }
     }
     return [{ order: entry.order, name: entry.name, position: pos, avg: "", teamId }];
   });

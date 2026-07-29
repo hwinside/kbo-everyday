@@ -133,33 +133,36 @@ function defenderAt(side: ReturnType<typeof deriveGameState>["defensiveSide"], p
 // 덮어 RF=안현민을 낸다(false green). 타순별 마지막 entry를 먼저 골라야 RF=장진혁.
 // 원문 행·타순·순서를 그대로 고정하고 최종 8명을 검증한다.
 const awayLineupKT: LineupEntry[] = [
-  lineupEntry(1, "CF", "박민석"),
-  lineupEntry(2, "C", "조대현"),
+  lineupEntry(1, "CF", "최원준"),
+  lineupEntry(2, "1B", "김현수"),
   lineupEntry(3, "RF", "안현민"),
-  lineupEntry(4, "3B", "허경민"),
-  lineupEntry(5, "1B", "김현수"),
+  lineupEntry(4, "LF", "힐리어드"),
+  lineupEntry(5, "DH", "장성우"),
   lineupEntry(6, "2B", "김상수"),
-  lineupEntry(7, "LF", "힐리어드"),
-  lineupEntry(8, "SS", "권동진"),
-  lineupEntry(9, "DH", "문상철"),
+  lineupEntry(7, "3B", "허경민"),
+  lineupEntry(8, "C", "한승택"),
+  lineupEntry(9, "SS", "권동진"),
 ];
 {
-  // 운영 API 원문 순서: 타순별로 묶이고, 각 그룹 안은 선발→교체 시간순.
+  // 2026-07-29 Production 캡처의 away lineup/boxScore 행·타순·포지션·순서 그대로.
   const awayBoxKT: BatterRecord[] = [
     batter(1, "중우", "최원준"),          // 1번 선발(중→우 이동), 이후 교체되어 사라짐
     batter(1, "RF", "장진혁", true),      // 1번 현재 = RF
-    batter(2, "포", "조대현"),          // 2번 = C
+    batter(2, "一", "김현수"),
+    batter(2, "一", "오윤석", true),     // 2번 현재 = 1B
     batter(3, "우", "안현민"),          // 3번 선발(우→RF), 이후 교체되어 사라짐
-    batter(3, "주중", "배정대", true),  // 3번 현재 = CF (대주→중견)
-    batter(4, "三", "허경민"),
-    batter(4, "三", "장준원", true),   // 4번 현재 = 3B
-    batter(5, "一", "김현수"),
-    batter(5, "一", "오윤석", true),   // 5번 현재 = 1B
+    batter(3, "CF", "배정대", true),    // 3번 현재 = CF (대주→중견)
+    batter(4, "좌", "힐리어드"),        // 4번 = LF
+    batter(5, "지", "장성우"),
+    batter(5, "DH", "김민혁", true),    // 5번 현재 = DH → 수비 제외
     batter(6, "二", "김상수"),
     batter(6, "타二", "류현인", true), // 6번 현재 = 2B (대타→2루)
-    batter(7, "좌", "힐리어드"),        // 7번 = LF
-    batter(8, "유", "권동진"),          // 8번 = SS
-    batter(9, "지", "문상철"),          // 9번 = DH → 수비 제외
+    batter(7, "三", "허경민"),
+    batter(7, "三", "장준원", true),   // 7번 현재 = 3B
+    batter(8, "포", "한승택"),
+    batter(8, "타", "이정훈", true),
+    batter(8, "포", "조대현", true),   // 8번 현재 = C
+    batter(9, "유", "권동진"),          // 9번 = SS
   ];
   const detail = {
     status: "live",
@@ -175,7 +178,7 @@ const awayLineupKT: LineupEntry[] = [
   check("3B = 장준원 (三, 허경민 아님)", defenderAt(s, "3B") === "장준원", `got ${defenderAt(s, "3B")}`);
   check("SS = 권동진 (유)", defenderAt(s, "SS") === "권동진", `got ${defenderAt(s, "SS")}`);
   check("LF = 힐리어드 (좌)", defenderAt(s, "LF") === "힐리어드", `got ${defenderAt(s, "LF")}`);
-  check("CF = 배정대 (3번 슬롯 현재, 박민석/안현민 아님)", defenderAt(s, "CF") === "배정대", `got ${defenderAt(s, "CF")}`);
+  check("CF = 배정대 (3번 슬롯 현재, 최원준/안현민 아님)", defenderAt(s, "CF") === "배정대", `got ${defenderAt(s, "CF")}`);
   check("RF = 장진혁 (1번 슬롯 현재, 안현민/최원준 아님)", defenderAt(s, "RF") === "장진혁", `got ${defenderAt(s, "RF")}`);
   check("수비수 정확히 8명", (s?.length ?? 0) === 8, `got ${s?.length}`);
   const positionsSeen = (s ?? []).map(d => d.position);
@@ -199,6 +202,37 @@ const awayLineupKT: LineupEntry[] = [
   check("투수 켈리 미포함", !(s ?? []).some(d => d.name === "켈리"));
   check("지명 오지환 미포함", !(s ?? []).some(d => d.name === "오지환"));
   check("순수 대타 이재원 미포함", !(s ?? []).some(d => d.name === "이재원"));
+}
+
+// ── 케이스 7: 순수 대타·대주가 현재 슬롯이면 stale 선발 수비를 되살리지 않음 ──
+{
+  console.log("[case7] 순수 타/주 뒤 stale 선발 억제");
+  const box: BatterRecord[] = [
+    batter(2, "SS", "최원준"),
+    batter(2, "타", "대타", true),
+    batter(3, "LF", "안현민"),
+    batter(3, "주", "대주자", true),
+  ];
+  const s = deriveGameState(undefined, game, makeDetail(box)).defensiveSide;
+  check("순수 대타 뒤 선발 SS 미노출", defenderAt(s, "SS") === undefined, `got ${defenderAt(s, "SS")}`);
+  check("순수 대주 뒤 선발 LF 미노출", defenderAt(s, "LF") === undefined, `got ${defenderAt(s, "LF")}`);
+  check("대타 미포함", !(s ?? []).some(d => d.name === "대타"));
+  check("대주자 미포함", !(s ?? []).some(d => d.name === "대주자"));
+}
+
+// ── 케이스 8: 선발 선수가 포지션 이동하면 옛 위치 fallback과 이름 중복을 막음 ──
+{
+  console.log("[case8] 포지션 이동 + 부분 BoxScore → 동일 선수 2포지션 방지");
+  const box: BatterRecord[] = [
+    batter(1, "중우", "박해민"), // 선발 CF였지만 현재 RF
+    batter(6, "타", "대타", true), // 선발 RF 슬롯은 순수 대타로 종료
+  ];
+  const s = deriveGameState(undefined, game, makeDetail(box)).defensiveSide;
+  const names = (s ?? []).map(d => d.name);
+  check("RF = 박해민 (현재 위치)", defenderAt(s, "RF") === "박해민", `got ${defenderAt(s, "RF")}`);
+  check("옛 CF 위치 미노출", defenderAt(s, "CF") === undefined, `got ${defenderAt(s, "CF")}`);
+  check("선발 RF 홍창기 stale 미노출", !names.includes("홍창기"), `got ${names.join(",")}`);
+  check("선수명 중복 0", new Set(names).size === names.length, `got ${names.join(",")}`);
 }
 
 console.log(`\n[field-defense-boxscore] ${pass} passed, ${fail} failed`);
