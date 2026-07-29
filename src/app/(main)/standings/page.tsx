@@ -287,6 +287,7 @@ export default function StandingsPage() {
             <colgroup>
               <col className="w-6" />
               <col />
+              <col className="w-7 min-[360px]:w-8 sm:w-10" />
               <col className="w-6 min-[360px]:w-7 sm:w-10" />
               <col className="w-6 min-[360px]:w-7 sm:w-10" />
               <col className="w-5 min-[360px]:w-6 sm:w-8" />
@@ -298,6 +299,7 @@ export default function StandingsPage() {
               <tr className="border-b border-border text-sm sm:text-base font-semibold text-text-tertiary">
                 <th className="py-2 text-center">#</th>
                 <th className="py-2 text-left pl-2">팀</th>
+                <th className="py-2 text-right pr-1 sm:pr-2">경기</th>
                 <th className="py-2 text-right pr-1 sm:pr-2">승</th>
                 <th className="py-2 text-right pr-1 sm:pr-2">패</th>
                 <th className="py-2 text-right pr-1 sm:pr-2">무</th>
@@ -332,6 +334,7 @@ export default function StandingsPage() {
                         {getStreakIcon(standing.streak) && <span className="hidden min-[360px]:inline-block text-sm sm:text-base shrink-0">{getStreakIcon(standing.streak)}</span>}
                       </div>
                     </td>
+                    <td className="py-2.5 text-right pr-1 sm:pr-2 tabular-nums text-text-secondary">{standing.wins + standing.losses + standing.draws}</td>
                     <td className="py-2.5 text-right pr-1 sm:pr-2 tabular-nums text-text-primary">{standing.wins}</td>
                     <td className="py-2.5 text-right pr-1 sm:pr-2 tabular-nums text-text-primary">{standing.losses}</td>
                     <td className="py-2.5 text-right pr-1 sm:pr-2 tabular-nums text-text-secondary">{standing.draws}</td>
