@@ -380,6 +380,7 @@ async function main() {
   assert.equal(partial.body.linescore.away.R, 3);
   assert.ok(partial.body.boxScore.awayBatters.length > 0);
   assert.equal(partial.body.lineup, null);
+  assert.ok(partial.body.meta.broadcastChannels?.length > 0, "degraded detail keeps settled KBO TV_IF");
   assert.deepEqual(partial.degradationEvents, [{ apiName: "kbo-game-detail", reason: "schema-error" }]);
 
   const bothDown = await scenario("KBO + Naver blackhole", "blackhole", "blackhole", "final");

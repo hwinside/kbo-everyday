@@ -719,12 +719,18 @@ export async function GET(req: NextRequest) {
       fallbackGames = await untilDeadline(fallbackListPromise, deadlineSignal, emptyObservedGames);
       listGame = fallbackGames.value?.find(g => g.gameId === gameId);
     }
+    // canonical status source와 KBO 고유 enrich(TV_IF)는 분리한다. detail 부분열화로
+    // Naver status를 택해도 동일 deadline 안에 KBO list가 정상 settle되면 방송 채널은 보존.
+    const kboListResult = kboDetailDegraded
+      ? await untilDeadline(kboListPromise, deadlineSignal, emptyObservedGames)
+      : primaryGames;
+    const kboListGame = kboListResult.value?.find(g => g.gameId === gameId);
     if (listGame) {
       liveListStatus = listGame?.status ?? null;
-      // 중계방송사는 GetKboGameList(TV_IF)에만 있으므로 여기서 meta에 채운다.
-      if (meta && listGame?.broadcastChannels && listGame.broadcastChannels.length > 0) {
-        meta.broadcastChannels = listGame.broadcastChannels;
-      }
+    }
+    // 중계방송사는 GetKboGameList(TV_IF)에만 있으므로 canonical listGame과 독립 병합한다.
+    if (meta && kboListGame?.broadcastChannels && kboListGame.broadcastChannels.length > 0) {
+      meta.broadcastChannels = kboListGame.broadcastChannels;
     }
 
     const status: GameDetailResponse["status"] =
@@ -760,8 +766,7 @@ export async function GET(req: NextRequest) {
       boxScore,
     };
 
-    const kboListResult = kboDetailDegraded ? fallbackGames : primaryGames;
-    const actualKboFailure = kboBatch.reasons[0] ?? kboListResult?.reason ?? null;
+    const actualKboFailure = kboBatch.reasons[0] ?? kboListResult.reason ?? null;
     const expectsDetailData = status === "live" || status === "final";
     const missingExpectedKboData =
       expectsDetailData && (!meta || !hasInningBreakdown(kboLinescore) || !hasRealBoxScore);
