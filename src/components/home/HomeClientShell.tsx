@@ -10,7 +10,7 @@ import GlassCard from "@/components/ui/GlassCard";
 import OnboardingFlow from "@/components/onboarding/OnboardingFlow";
 import PlayerSelectModal from "@/components/onboarding/PlayerSelectModal";
 import LoginSheet from "@/components/auth/LoginSheet";
-import PWAInstallBanner from "@/components/ui/PWAInstallBanner";
+import AppDownloadBanner from "@/components/ui/AppDownloadBanner";
 import { TEAMS, getTeamById, isAllStarGameId } from "@/lib/constants/teams";
 import { useLiveGame, type LiveGameData } from "@/lib/hooks/useLiveGame";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
@@ -683,7 +683,7 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
         </div>
       </header>
 
-      <PWAInstallBanner />
+      <AppDownloadBanner />
 
       {/* 스킵 유저: 최애선수 설정 CTA */}
       {showPlayerSetupCTA && myTeamId && (
