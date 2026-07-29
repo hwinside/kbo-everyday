@@ -140,8 +140,19 @@ async function main() {
   ok("DOM 에 raw 'custom:'/'preset:' <img src> 잔류 0",
     !imgSrcs.some((s) => s.startsWith("custom:") || s.startsWith("preset:")));
   // 3b) null 아바타 → 이니셜 폴백(이미지 아님, 닉네임 첫 글자)
-  ok("null 아바타 댓글 → 이니셜 폴백 표시(닉네임 첫 글자 '널')",
-    scope.textContent?.includes("널") === true && !imgSrcs.some((s) => s.includes("u-null")));
+  const nullCommentBody = Array.from(scope.querySelectorAll("p"))
+    .find((el) => el.textContent === "널 아바타");
+  const nullCommentRow = nullCommentBody?.parentElement?.parentElement;
+  const nullCommentAvatar = nullCommentRow?.firstElementChild as HTMLElement | null;
+  const nullCommentInitial = nullCommentAvatar?.firstElementChild as HTMLElement | null;
+  ok("null 아바타 댓글 row 직접 식별", nullCommentRow?.textContent?.includes("널테스터") === true);
+  ok("null 아바타 댓글 → avatar child 에 img 0",
+    nullCommentAvatar?.querySelectorAll("img").length === 0);
+  ok("null 아바타 댓글 → 이니셜 정확히 '널'",
+    nullCommentInitial?.textContent?.trim() === "널");
+  ok("null 아바타 댓글 → 이니셜 visible",
+    nullCommentInitial?.classList.contains("flex") === true
+      && nullCommentInitial.classList.contains("hidden") === false);
 
   const typeContent = async (text: string) => { await act(async () => { setReactInputValue(input!, text); }); };
   const tap = async (opts: { clientX?: number; clientY?: number } = {}) => {
