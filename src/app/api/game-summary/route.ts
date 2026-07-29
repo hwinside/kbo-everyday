@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { TEAMS, isAllStarGameId } from "@/lib/constants/teams";
 import {
@@ -11,6 +11,7 @@ import {
   type GameLinescore,
 } from "@/lib/crawler/kbo-api";
 import { fetchNaverLinescore, hasInningBreakdown } from "@/lib/crawler/naver-record";
+import { trackApiDegradation } from "@/lib/monitoring/api-fallback-tracker";
 import { STANDINGS_ACCURACY_RULES, STANDINGS_UNAVAILABLE_RULES } from "@/lib/ai/standings-guard";
 import { computeSeriesSnapshot, serializeSeriesSnapshot } from "@/lib/series/snapshot";
 import { loserClaimedWin } from "@/lib/game-summary/winner-check";
@@ -121,9 +122,33 @@ async function fetchCanonicalSummarySource(gameId: string, includeBoxScore: bool
     // scoreBoard로 이닝표를 fallback한다(스코어 R 교차검증은 canonicalGate가 그대로 수행).
     let linescore = kboLinescore;
     if (game?.status === "final" && !hasInningBreakdown(linescore)) {
+      // KBO GetScoreBoard 이닝표 열화(2026-07-28 종료경기 AI요약 전면 중단 사고) 실시간 감지.
+      // durable RPC 로 window count + cooldown 을 판정(서버리스 분산에도 경보 1회 보장) 후
+      // 임계치 초과 시 텔레그램 자동 경보 + 일일 리포트 반영. 다음 열화를 유저 제보 전에 알기 위함.
+      // after() 로 응답 이후 실행을 보장(durable insert·텔레그램 수명 보장)하되, 요약 생성 latency 는 안 늘린다.
       const naver = await fetchNaverLinescore(gameId);
       if (naver) {
         linescore = { status: "final", away: naver.away, home: naver.home };
+        // 성공 fallback(KBO 열화 → Naver 로 복구): warning 급, 5분 3회 임계치.
+        after(() =>
+          trackApiDegradation(
+            "kbo-scoreboard-linescore",
+            "schema-error",
+            { errorMessage: `${gameId}: KBO 이닝표 결측 → Naver record fallback 성공` },
+            { windowMinutes: 5, threshold: 3, cooldownMinutes: 30, leaseSeconds: 120 },
+          ),
+        );
+      } else {
+        // Naver 우회로도 이닝표를 못 줌 = 전면장애 재발 + 백업 소스 소실 → canonical-not-settled 예상.
+        // critical 급: 별도 api명으로 분리(일일 리포트 분리 집계) + 1건 즉시 경보.
+        after(() =>
+          trackApiDegradation(
+            "kbo-scoreboard-linescore-outage",
+            "schema-error",
+            { errorMessage: `${gameId}: KBO 이닝표 결측 + Naver fallback 실패 → canonical-not-settled 예상` },
+            { windowMinutes: 5, threshold: 1, cooldownMinutes: 10, leaseSeconds: 120 },
+          ),
+        );
       }
     }
     const gate = canonicalGate(game, linescore);
