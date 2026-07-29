@@ -33,6 +33,8 @@
     "qa:lineup-confirm-message": "tsx scripts/qa/lineup-confirm-message-smoke.ts",
     "qa:lineup-confirm-delivery:db": "tsx scripts/qa/lineup-confirm-delivery-db-integration.ts",
     "qa:lineup-ck": "tsx scripts/qa/lineup-ck-smoke.ts",
+    "qa:lineup-watchdog": "tsx scripts/qa/lineup-watchdog-smoke.ts",
+    "qa:lineup-confirm-delivery:pg17": "bash scripts/qa/lineup-confirm-delivery-pg17.sh",
     "qa:api-fallback-confirm-boolean": "tsx scripts/qa/api-fallback-confirm-boolean-smoke.ts",
     "qa:admin-telemetry-retention:guard": "tsx scripts/qa/admin-telemetry-retention-coverage-guard-smoke.ts",
     "qa:retention-rolling": "tsx scripts/qa/retention-rolling-smoke.ts",

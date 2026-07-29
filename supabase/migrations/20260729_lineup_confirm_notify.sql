@@ -7,7 +7,7 @@
 -- 3) lease_token fencing을 통과한 worker만 결과를 기록한다. dispatch_started_at = at-most-once intent.
 -- 4) 최초 스냅샷의 transient 실패만 snapshot deadline 안에서 재시도한다.
 -- 5) 스냅샷 모든 행이 terminal이 된 뒤에만 game_lineup_notify_state.lineup_notified=true로 종결한다.
--- 6) 더블헤더는 KBO gameId(…0/…1)가 다르므로 자연히 분리된다. 취소/연기 fail-safe는 호출부(cron)에서
+-- 6) 더블헤더는 KBO gameId(...0/...1)가 다르므로 자연히 분리된다. 취소/연기 fail-safe는 호출부(cron)에서
 --    LINEUP_CK=true & 미취소일 때만 snapshot을 여는 것으로 보장한다.
 
 create extension if not exists pgcrypto with schema extensions;

@@ -1,7 +1,8 @@
 /**
  * 라인업 확정 푸시 전달 — (game_id, team_id) 단위 durable 스냅샷/전달 (하린아빠 gate ①②③).
  * 경기 시작 푸시(game-start-delivery.ts)의 원장 규율(lease fencing · at-most-once dispatch intent ·
- * batch settle · deadline 만료)을 그대로 따르되, 라인업은 pre-game 이라 self-contained TTL 을 쓴다.
+ * batch settle · deadline 만료 · RPC remaining-budget abort)을 그대로 따른다. 라인업은 pre-game 이라
+ * self-contained TTL 을 쓴다.
  */
 import { randomUUID } from "node:crypto";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
@@ -10,7 +11,7 @@ import { sendFcmToTokens, type PushPayload } from "@/lib/notifications/fcm";
 // 라인업 확정~경기 시작 사이 재시도 여유. 이 안에서만 transient 재시도, 초과 시 finalize 가 expired.
 const SNAPSHOT_DEADLINE_MS = 30 * 60_000;
 const LINEUP_DELIVERY_TRANSPORT_MS = 8_000;
-const LINEUP_DELIVERY_ATTEMPT_MS = 14_000;
+export const LINEUP_DELIVERY_ATTEMPT_MS = 14_000;
 const LINEUP_DELIVERY_LEASE_SECONDS = 45;
 const LINEUP_PUSH_TTL_SECONDS = 30 * 60;
 
@@ -48,16 +49,29 @@ const EMPTY: LineupDeliveryResult = {
   expired: 0,
 };
 
+/** 잔여 예산(ms). deadline 초과면 throw 해 DB/FCM 부작용을 시작하지 않는다. */
+function remainingMs(deadlineAtMs: number | undefined, op: string): number | null {
+  if (deadlineAtMs == null) return null;
+  const remaining = deadlineAtMs - Date.now();
+  if (remaining <= 0) throw new Error(`${op}: deadline_exceeded`);
+  return remaining;
+}
+function withAbort<T extends { abortSignal(signal: AbortSignal): T }>(query: T, remaining: number | null): T {
+  return remaining != null ? query.abortSignal(AbortSignal.timeout(Math.max(1, remaining))) : query;
+}
+
 export async function finalizeLineupSnapshot(
   gameId: string,
   teamId: number,
   fcmAcceptedDelta = 0,
+  requestDeadlineAtMs?: number,
 ): Promise<LineupDeliveryResult> {
+  const remaining = remainingMs(requestDeadlineAtMs, "lineup delivery finalize");
   // query-guard: bounded -- 단일 (game,team) 집계 1행만 반환.
-  const { data, error } = await supabase.rpc("finalize_lineup_confirm_deliveries", {
-    p_game_id: gameId,
-    p_team_id: teamId,
-  });
+  const { data, error } = await withAbort(
+    supabase.rpc("finalize_lineup_confirm_deliveries", { p_game_id: gameId, p_team_id: teamId }),
+    remaining,
+  );
   if (error) throw new Error(`lineup delivery finalize: ${error.message}`);
   const row = (data?.[0] ?? null) as {
     snapshot_completed?: boolean;
@@ -77,16 +91,22 @@ export async function finalizeLineupSnapshot(
   };
 }
 
-/** (game,team) 최초 대상 스냅샷 생성. persisted deadline(ms) 반환. */
-export async function openLineupSnapshot(args: LineupDeliveryTarget): Promise<number> {
+/** (game,team) 최초 대상 스냅샷 생성. persisted deadline(ms) 반환. RPC 는 잔여 예산으로 abort. */
+export async function openLineupSnapshot(
+  args: LineupDeliveryTarget & { requestDeadlineAtMs?: number },
+): Promise<number> {
+  const remaining = remainingMs(args.requestDeadlineAtMs, "lineup delivery snapshot");
   const proposedDeadlineAtMs = args.observedAtMs + SNAPSHOT_DEADLINE_MS;
   // query-guard: bounded -- persisted deadline scalar 1개만 반환.
-  const { data: snapshotDeadline, error } = await supabase.rpc("snapshot_lineup_confirm_deliveries", {
-    p_game_id: args.gameId,
-    p_team_id: args.teamId,
-    p_snapshot_at: new Date(args.observedAtMs).toISOString(),
-    p_deadline_at: new Date(proposedDeadlineAtMs).toISOString(),
-  });
+  const { data: snapshotDeadline, error } = await withAbort(
+    supabase.rpc("snapshot_lineup_confirm_deliveries", {
+      p_game_id: args.gameId,
+      p_team_id: args.teamId,
+      p_snapshot_at: new Date(args.observedAtMs).toISOString(),
+      p_deadline_at: new Date(proposedDeadlineAtMs).toISOString(),
+    }),
+    remaining,
+  );
   if (error) throw new Error(`lineup delivery snapshot: ${error.message}`);
   const deadlineAtMs = Date.parse(String(snapshotDeadline ?? ""));
   if (!Number.isFinite(deadlineAtMs)) throw new Error("lineup delivery snapshot: invalid persisted deadline");
@@ -102,24 +122,32 @@ export async function deliverLineupBatch(
 
   const leaseToken = randomUUID();
   // query-guard: bounded -- SQL RPC 가 p_limit 을 500행으로 clamp.
-  const { data, error: claimError } = await supabase.rpc("claim_lineup_confirm_deliveries", {
-    p_game_id: args.gameId,
-    p_team_id: args.teamId,
-    p_lease_token: leaseToken,
-    p_lease_seconds: LINEUP_DELIVERY_LEASE_SECONDS,
-    p_limit: 500,
-  });
+  const claimRemaining = remainingMs(attemptDeadlineAtMs, "lineup delivery claim")!;
+  const { data, error: claimError } = await withAbort(
+    supabase.rpc("claim_lineup_confirm_deliveries", {
+      p_game_id: args.gameId,
+      p_team_id: args.teamId,
+      p_lease_token: leaseToken,
+      p_lease_seconds: LINEUP_DELIVERY_LEASE_SECONDS,
+      p_limit: 500,
+    }),
+    claimRemaining,
+  );
   if (claimError) throw new Error(`lineup delivery claim: ${claimError.message}`);
   const claimed = (data ?? []) as ClaimedDelivery[];
   if (claimed.length === 0) {
-    return { ...(await finalizeLineupSnapshot(args.gameId, args.teamId, 0)), claimed: 0 };
+    return { ...(await finalizeLineupSnapshot(args.gameId, args.teamId, 0, attemptDeadlineAtMs)), claimed: 0 };
   }
 
   // 외부 FCM 직전 durable intent — 성공행은 snapshot deadline 까지 재claim 금지(at-most-once).
   // query-guard: bounded -- p_ids 는 직전 claim(≤500행)의 id 집합이라 상한이 명확하다.
-  const { data: dispatching, error: dispatchError } = await supabase.rpc(
-    "mark_lineup_confirm_deliveries_dispatching",
-    { p_ids: claimed.map((r) => r.id), p_lease_token: leaseToken },
+  const dispatchRemaining = remainingMs(attemptDeadlineAtMs, "lineup delivery dispatch intent")!;
+  const { data: dispatching, error: dispatchError } = await withAbort(
+    supabase.rpc("mark_lineup_confirm_deliveries_dispatching", {
+      p_ids: claimed.map((r) => r.id),
+      p_lease_token: leaseToken,
+    }),
+    dispatchRemaining,
   );
   if (dispatchError) throw new Error(`lineup delivery dispatch intent: ${dispatchError.message}`);
   if (Number(dispatching ?? 0) !== claimed.length) {
@@ -152,24 +180,27 @@ export async function deliverLineupBatch(
   });
 
   // query-guard: bounded -- claim 최대 500행을 단일 RPC 로 원자 settle.
-  const { data: settled, error: settleError } = await supabase.rpc("settle_lineup_confirm_delivery_batch", {
-    p_results: results,
-    p_lease_token: leaseToken,
-  });
+  const settleRemaining = remainingMs(attemptDeadlineAtMs, "lineup delivery settle")!;
+  const { data: settled, error: settleError } = await withAbort(
+    supabase.rpc("settle_lineup_confirm_delivery_batch", { p_results: results, p_lease_token: leaseToken }),
+    settleRemaining,
+  );
   if (settleError) throw new Error(`lineup delivery settle: ${settleError.message}`);
   const fcmAcceptedDelta = Number(settled ?? 0);
 
-  return { ...(await finalizeLineupSnapshot(args.gameId, args.teamId, fcmAcceptedDelta)), claimed: claimed.length };
+  return {
+    ...(await finalizeLineupSnapshot(args.gameId, args.teamId, fcmAcceptedDelta, attemptDeadlineAtMs)),
+    claimed: claimed.length,
+  };
 }
 
 /** 단일 (game,team) 라인업 확정 전달: 스냅샷 → deadline/attempt 안에서 batch drain → finalize. */
 export async function deliverLineupConfirm(
   args: LineupDeliveryTarget & { attemptDeadlineAtMs?: number },
 ): Promise<LineupDeliveryResult> {
-  const snapshotDeadlineAtMs = await openLineupSnapshot(args);
+  const snapshotDeadlineAtMs = await openLineupSnapshot({ ...args, requestDeadlineAtMs: args.attemptDeadlineAtMs });
   const drainDeadlineAtMs = Math.min(snapshotDeadlineAtMs, args.attemptDeadlineAtMs ?? snapshotDeadlineAtMs);
   let acceptedDelta = 0;
-  // pending 이 남고 시간이 있으면 batch 를 이어서 처리(한 tick 안에서 최대 소진).
   for (let i = 0; i < 8 && Date.now() < drainDeadlineAtMs; i++) {
     const batch = await deliverLineupBatch({
       ...args,
@@ -179,5 +210,5 @@ export async function deliverLineupConfirm(
     acceptedDelta += batch.fcmAcceptedDelta;
     if (batch.claimed === 0 || batch.pending === 0) break;
   }
-  return finalizeLineupSnapshot(args.gameId, args.teamId, acceptedDelta);
+  return finalizeLineupSnapshot(args.gameId, args.teamId, acceptedDelta, drainDeadlineAtMs);
 }
