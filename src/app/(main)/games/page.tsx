@@ -6,6 +6,7 @@ import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
 import { useVisibilityAwareInterval } from "@/lib/hooks/useVisibilityAwareInterval";
+import { createRequestCoordinator, type RequestToken } from "@/lib/polling/request-coordinator";
 import { getKSTToday } from "@/lib/utils/date-kst";
 import { ChevronLeft, RefreshCw, Star } from "lucide-react";
 import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
@@ -79,40 +80,41 @@ export default function GamesPage() {
   const [nextMyGame, setNextMyGame] = useState<{ game: GameData; dateStr: string } | null>(null);
   // 구장 날씨 — key(날짜|구장세트)로 캐시해 날짜 전환 레이스에 이전 데이터가 붙지 않게 한다
   const [weather, setWeather] = useState<{ key: string; map: StadiumWeatherMap } | null>(null);
+  const [requestCoordinator] = useState(() => createRequestCoordinator<GameData[]>());
 
   useEffect(() => {
     setMyTeamId(getMyTeamId());
   }, []);
 
-  async function loadGames(date: string) {
+  const loadGames = useCallback(async (date: string, token: RequestToken) => {
+    if (!requestCoordinator.isCurrent(token)) return;
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/games?date=${formatDate(date)}`);
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-
-      const mapped: GameData[] = (data.games ?? []).map((g: { gameId: string; awayTeamId: number; homeTeamId: number; awayScore: number | null; homeScore: number | null; status: "scheduled" | "live" | "final" | "cancelled"; time: string; stadium: string; inning?: string; isTop?: boolean; awayStarterName?: string; homeStarterName?: string; broadcastChannels?: BroadcastChannel[] }) => ({
-        id: g.gameId,
-        awayTeamId: g.awayTeamId,
-        homeTeamId: g.homeTeamId,
-        awayScore: g.awayScore,
-        homeScore: g.homeScore,
-        status: g.status,
-        time: g.time,
-        stadium: g.stadium,
-        inning: g.status === "live" ? `${g.inning}회${g.isTop ? "초" : "말"}` : undefined,
-        awayStarter: g.awayStarterName,
-        homeStarter: g.homeStarterName,
-        broadcastChannels: g.broadcastChannels,
-      }));
-
-      if (mapped.length === 0) {
-        setGames(buildPreseasonFallback(date));
-      } else {
-        setGames(mapped);
-      }
+      const result = await requestCoordinator.run(token, async (signal) => {
+        const res = await fetch(`/api/games?date=${formatDate(date)}`, { signal });
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        const mapped: GameData[] = (data.games ?? []).map((g: { gameId: string; awayTeamId: number; homeTeamId: number; awayScore: number | null; homeScore: number | null; status: "scheduled" | "live" | "final" | "cancelled"; time: string; stadium: string; inning?: string; isTop?: boolean; awayStarterName?: string; homeStarterName?: string; broadcastChannels?: BroadcastChannel[] }) => ({
+          id: g.gameId,
+          awayTeamId: g.awayTeamId,
+          homeTeamId: g.homeTeamId,
+          awayScore: g.awayScore,
+          homeScore: g.homeScore,
+          status: g.status,
+          time: g.time,
+          stadium: g.stadium,
+          inning: g.status === "live" ? `${g.inning}회${g.isTop ? "초" : "말"}` : undefined,
+          awayStarter: g.awayStarterName,
+          homeStarter: g.homeStarterName,
+          broadcastChannels: g.broadcastChannels,
+        }));
+        return mapped.length === 0 ? buildPreseasonFallback(date) : mapped;
+      });
+      if (result.status === "stale") return;
+      setGames(result.value);
     } catch (e: unknown) {
+      if (!requestCoordinator.isCurrent(token)) return;
       const preGames = buildPreseasonFallback(date);
       if (preGames.length > 0) {
         setGames(preGames);
@@ -122,13 +124,17 @@ export default function GamesPage() {
         setGames([]);
       }
     }
+    if (!requestCoordinator.isCurrent(token)) return;
     setLoadedDate(date);
     setLoading(false);
-  }
+  }, [requestCoordinator]);
 
   useEffect(() => {
-    loadGames(selectedDate);
-  }, [selectedDate]);
+    const token = requestCoordinator.switchTarget(selectedDate);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void loadGames(selectedDate, token);
+    return () => requestCoordinator.dispose();
+  }, [loadGames, requestCoordinator, selectedDate]);
 
   // 예정/라이브 경기 구장의 날씨 로드 (날씨는 부가 정보 — 실패해도 조용히 무시)
   useEffect(() => {
@@ -153,8 +159,15 @@ export default function GamesPage() {
 
   // 라이브 경기 있으면 30초마다 자동 새로고침 (백그라운드 탭은 정지, 복귀 시 즉시 갱신)
   const hasLive = games.some(g => g.status === "live");
-  const refreshGames = useCallback(() => { loadGames(selectedDate); }, [selectedDate]);
-  useVisibilityAwareInterval(refreshGames, 30000, { enabled: hasLive, resetKey: selectedDate });
+  const refreshGames = useCallback(() => {
+    const token = requestCoordinator.currentToken() ?? requestCoordinator.switchTarget(selectedDate);
+    return loadGames(selectedDate, token);
+  }, [loadGames, requestCoordinator, selectedDate]);
+  useVisibilityAwareInterval(refreshGames, 30000, {
+    enabled: hasLive,
+    resetKey: selectedDate,
+    runImmediately: false,
+  });
 
   // MY TEAM 오늘 경기 유무 — boolean 으로 좁혀 30초 auto-refresh(games 배열 재생성)에
   // 다음 경기 스캔 effect 가 불필요하게 재실행되지 않게 한다.
@@ -233,7 +246,7 @@ export default function GamesPage() {
           </button>
           <h1 className="text-lg font-bold text-text-primary tracking-tight flex-1">경기</h1>
           <button
-            onClick={() => loadGames(selectedDate)}
+            onClick={() => { void refreshGames(); }}
             className="p-2 rounded-full text-text-tertiary hover:bg-bg-tertiary transition-colors"
           >
             <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
@@ -253,7 +266,7 @@ export default function GamesPage() {
       ) : error ? (
         <div className="px-5 py-20 text-center text-text-tertiary text-sm">
           데이터를 불러올 수 없습니다
-          <button onClick={() => loadGames(selectedDate)} className="block mx-auto mt-2 text-accent text-xs">다시 시도</button>
+          <button onClick={() => { void refreshGames(); }} className="block mx-auto mt-2 text-accent text-xs">다시 시도</button>
         </div>
       ) : games.length === 0 && !nextMyGame ? (
         <EmptyGameState selectedDate={selectedDate} />
