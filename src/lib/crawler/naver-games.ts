@@ -158,7 +158,11 @@ function isSaneGame(g: KboGame): boolean {
  * - fail-closed: success!==true || code!==200 || games 배열 부재 || per-game sanity 실패면 throw.
  * - 경기 없는 날(games: [])은 정상으로 간주해 빈 배열을 반환한다(무경기일 500 방지).
  */
-export async function fetchNaverGames(date: string, srId: string = DEFAULT_ALL_SR_ID): Promise<KboGame[]> {
+export async function fetchNaverGames(
+  date: string,
+  srId: string = DEFAULT_ALL_SR_ID,
+  opts?: { timeoutMs?: number },
+): Promise<KboGame[]> {
   if (srId !== DEFAULT_ALL_SR_ID) {
     // 정규시즌 전용 등 특정 시리즈 요구 — Naver 로는 series 보존 불가 → 오염 방지 위해 fail-close.
     throw new Error(`Naver fallback: srId(${srId}) series 필터 계약 보존 불가 — fail-close`);
@@ -172,7 +176,7 @@ export async function fetchNaverGames(date: string, srId: string = DEFAULT_ALL_S
       "Referer": "https://sports.news.naver.com/",
       "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)",
     },
-    signal: AbortSignal.timeout(5000),
+    signal: AbortSignal.timeout(opts?.timeoutMs ?? 5000),
     cache: "no-store",
   });
   if (!res.ok) {

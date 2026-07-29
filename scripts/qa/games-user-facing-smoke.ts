@@ -4,9 +4,10 @@
 //   Naver 빈+KBO 있음→KBO 안전망 / Naver 실패→KBO 폴백 / 둘 다 실패→throw
 import "./_smoke-env";
 import assert from "node:assert/strict";
-import { mergeKboEnrichment, fetchGamesUserFacing, KBO_ENRICH_TIMEOUT_MS } from "../../src/lib/crawler/games-user-facing";
+import { mergeKboEnrichment, fetchGamesUserFacing, KBO_ENRICH_TIMEOUT_MS, USER_FACING_NAVER_TIMEOUT_MS } from "../../src/lib/crawler/games-user-facing";
 import { mapNaverGameToKbo } from "../../src/lib/crawler/naver-games";
 import type { KboGame } from "../../src/lib/crawler/kbo-api";
+import { GET as gamesRouteGET } from "../../src/app/api/games/route";
 
 const DATE = "20260729";
 
@@ -87,6 +88,37 @@ function kboGame(overrides: Record<string, unknown> = {}): KboGame {
   const k = kboGame({ status: "scheduled", strikes: 2, balls: 3, outs: 1 });
   const m = mergeKboEnrichment([base], [k])[0];
   assert.equal(m.strikes, 0); assert.equal(m.balls, 0); // 양쪽 live 아니면 미오버레이
+}
+// ── 4b. 이닝/스코어 불일치(Naver 6회초 3:1 + KBO 5회말 2:1) → BSO/현재타자 오버레이 안 함(삼순 P1) ──
+{
+  const base = mapNaverGameToKbo(naverGame({ statusInfo: "6회초", awayTeamScore: 3, homeTeamScore: 1 }), DATE); // 6T 3:1 live
+  const k = kboGame({ status: "live", inning: 5, isTop: false, awayScore: 2, homeScore: 1, strikes: 2, balls: 3, outs: 1, currentBatter: "옷타자", runnersOn: { first: true, second: true, third: true } });
+  const m = mergeKboEnrichment([base], [k])[0];
+  assert.equal(m.inning, 6); assert.equal(m.isTop, true); assert.equal(m.awayScore, 3); // Naver 체간
+  assert.equal(m.strikes, 0); assert.equal(m.currentBatter, ""); // 불일치 → KBO 옷값 미혼입
+  assert.equal(m.runnersOn.first, false);
+}
+// ── 4c. 정확히 같은 라이브 순간(이닝/초말/스코어 일치) → BSO 오버레이 함 ──
+{
+  const base = mapNaverGameToKbo(naverGame(), DATE); // 5T 2:1 live
+  const k = kboGame({ inning: 5, isTop: true, awayScore: 2, homeScore: 1, strikes: 2, balls: 1, outs: 1 });
+  const m = mergeKboEnrichment([base], [k])[0];
+  assert.equal(m.strikes, 2); assert.equal(m.currentBatter, "타자김"); // 일치 → 오버레이
+}
+// ── 4d. KBO-only 경기(Naver 부분목록) union 보존 + DH dedupe(삼순 P1) ──
+{
+  const base = mapNaverGameToKbo(naverGame(), DATE); // 20260729HTSS0
+  const kSame = kboGame(); // 20260729HTSS0 (Naver 와 동일)
+  const kOnly = kboGame({ gameId: "20260729LTOB0", awayName: "롯데", homeName: "두산" }); // KBO-only
+  const merged = mergeKboEnrichment([base], [kSame, kOnly]);
+  assert.equal(merged.length, 2); // Naver 1 + KBO-only 1 union
+  assert.deepEqual(merged.map((g) => g.gameId).sort(), ["20260729HTSS0", "20260729LTOB0"]);
+  // DH dedupe: 동일 gameId 가 Naver·KBO 양쪽에 있어도 중복 안 됨
+  const dh1 = mapNaverGameToKbo(naverGame({ gameId: "20260729HTSS12026" }), DATE);
+  const dh2 = mapNaverGameToKbo(naverGame({ gameId: "20260729HTSS22026" }), DATE);
+  const mDh = mergeKboEnrichment([dh1, dh2], [kboGame({ gameId: "20260729HTSS1" }), kboGame({ gameId: "20260729HTSS2" })]);
+  assert.equal(mDh.length, 2);
+  assert.equal(new Set(mDh.map((g) => g.gameId)).size, 2);
 }
 
 // ── fetch stub 헬퍼 ──
@@ -196,6 +228,54 @@ const keepAlive = setInterval(() => {}, 1000); // AbortSignal.timeout unref 함�
   const games = await fetchGamesUserFacing(DATE);
   restoreFetch();
   assert.equal(games.length, 0);
+}
+
+// ── 11. P0(삼순): Naver blackhole + 건강한 KBO → KBO 폴백을 Naver budget 안에 bounded 반환 ──
+{
+  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input.toString();
+    if (url.includes("schedule/games")) {
+      return new Promise<Response>((_res, rej) => {
+        const s = init?.signal;
+        if (s) { if (s.aborted) return rej(new DOMException("aborted", "AbortError")); s.addEventListener("abort", () => rej(new DOMException("aborted", "AbortError")), { once: true }); }
+      });
+    }
+    if (url.includes("GetKboGameList")) return Promise.resolve(kboListText([kboRaw()]));
+    throw new Error(`unexpected ${url}`);
+  }) as typeof fetch;
+  const t0 = Date.now();
+  const games = await fetchGamesUserFacing(DATE);
+  const elapsed = Date.now() - t0;
+  restoreFetch();
+  // 기본 Naver 5s 면 elapsed≈5s → 이 assert 실패. user-facing Naver budget(2s) 사용 증명.
+  assert.ok(elapsed < USER_FACING_NAVER_TIMEOUT_MS + 1200, `Naver-down bounded 실패: ${elapsed}ms`);
+  assert.equal(games.length, 1);
+  assert.equal(games[0].strikes, 2); // KBO 폴백 full data
+}
+
+// ── 12. P0(삼순): actual GET /api/games — Naver blackhole + KBO 정상 → bounded 200 ──
+{
+  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input.toString();
+    if (url.includes("schedule/games")) {
+      return new Promise<Response>((_res, rej) => {
+        const s = init?.signal;
+        if (s) { if (s.aborted) return rej(new DOMException("aborted", "AbortError")); s.addEventListener("abort", () => rej(new DOMException("aborted", "AbortError")), { once: true }); }
+      });
+    }
+    if (url.includes("GetKboGameList")) return Promise.resolve(kboListText([kboRaw()]));
+    throw new Error(`unexpected ${url}`);
+  }) as typeof fetch;
+  const req = { nextUrl: new URL("http://localhost/api/games?date=20260729") } as unknown as Parameters<typeof gamesRouteGET>[0];
+  const t0 = Date.now();
+  const res = await gamesRouteGET(req);
+  const elapsed = Date.now() - t0;
+  restoreFetch();
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.ok(elapsed < USER_FACING_NAVER_TIMEOUT_MS + 1200, `route Naver-down bounded 실패: ${elapsed}ms`);
+  assert.equal(body.count, 1);
+  assert.equal(body.games[0].strikes, 2); // KBO full data
 }
 
 clearInterval(keepAlive);

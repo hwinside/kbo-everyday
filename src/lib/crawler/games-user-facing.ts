@@ -14,6 +14,9 @@ import { fetchNaverGames } from "@/lib/crawler/naver-games";
 
 // KBO enrich 는 비차단 성격 — 짧은 budget. 살아있으면 <1s, 열화면 이 상한에서 끊고 Naver 만.
 export const KBO_ENRICH_TIMEOUT_MS = 1500;
+// Naver(primary) user-facing timeout SSOT. 기본 fetchNaverGames 5s 를 그대로 쓰면 Naver blackhole 시
+// 건강한 KBO 폴백도 5초 뒤에야 반환된다(삼순 NO-GO P0). 짧게 잡아 Naver-down 시도 bounded.
+export const USER_FACING_NAVER_TIMEOUT_MS = 2000;
 
 /**
  * Naver 베이스(primary)에 KBO 라이브 상세를 gameId 로 매칭 오버레이한다.
@@ -24,28 +27,45 @@ export const KBO_ENRICH_TIMEOUT_MS = 1500;
  */
 export function mergeKboEnrichment(naverBase: KboGame[], kboGames: KboGame[]): KboGame[] {
   const kboById = new Map(kboGames.map((g) => [g.gameId, g]));
-  return naverBase.map((base) => {
+  const merged = naverBase.map((base) => {
     const k = kboById.get(base.gameId);
     if (!k) return base;
-    const overlayLive = base.status === "live" && k.status === "live";
+    // 휘발성 in-game 상태(BSO/주자/현재투타)는 두 소스가 '정확히 같은 라이브 순간'일 때만
+    // 오버레이. 이닝/초말/양팀 스코어 하나라도 다르면 서로 다른 시점의 KBO 값이 Naver 최신
+    // 스코어에 섞여 유령 상태가 된다(삼순 NO-GO P1) → Naver degrade 값 유지.
+    const sameLiveMoment =
+      base.status === "live" && k.status === "live" &&
+      base.inning === k.inning && base.isTop === k.isTop &&
+      base.awayScore === k.awayScore && base.homeScore === k.homeScore;
+    // 결과 투수(승/패/세이브)는 양쪽 종료일 때만 의미.
+    const bothFinal = base.status === "final" && k.status === "final";
     return {
       ...base,
-      strikes: overlayLive ? k.strikes : base.strikes,
-      balls: overlayLive ? k.balls : base.balls,
-      outs: overlayLive ? k.outs : base.outs,
-      runnersOn: overlayLive ? k.runnersOn : base.runnersOn,
-      currentPitcher: overlayLive ? k.currentPitcher : base.currentPitcher,
-      currentBatter: overlayLive ? k.currentBatter : base.currentBatter,
+      strikes: sameLiveMoment ? k.strikes : base.strikes,
+      balls: sameLiveMoment ? k.balls : base.balls,
+      outs: sameLiveMoment ? k.outs : base.outs,
+      runnersOn: sameLiveMoment ? k.runnersOn : base.runnersOn,
+      currentPitcher: sameLiveMoment ? k.currentPitcher : base.currentPitcher,
+      currentBatter: sameLiveMoment ? k.currentBatter : base.currentBatter,
+      // 준정적(시점 무관): 선발/랭크/방송 — KBO 값 있으면 채움
       awayStarterName: k.awayStarterName || base.awayStarterName,
       homeStarterName: k.homeStarterName || base.homeStarterName,
-      winPitcher: k.winPitcher || base.winPitcher,
-      losePitcher: k.losePitcher || base.losePitcher,
-      savePitcher: k.savePitcher || base.savePitcher,
       awayRank: k.awayRank || base.awayRank,
       homeRank: k.homeRank || base.homeRank,
       broadcastChannels: base.broadcastChannels ?? k.broadcastChannels,
+      // 결과 투수: 양쪽 final 일 때만
+      winPitcher: bothFinal ? k.winPitcher || base.winPitcher : base.winPitcher,
+      losePitcher: bothFinal ? k.losePitcher || base.losePitcher : base.losePitcher,
+      savePitcher: bothFinal ? k.savePitcher || base.savePitcher : base.savePitcher,
     };
   });
+  // KBO-only 경기(Naver 가 부분목록이라 놓친 경기)를 deterministic union 으로 보존(삼순 NO-GO P1).
+  // Naver base 순서 유지 + KBO-only 를 gameId 오름차순 append. naver gameId set 으로 dedupe(DH 중복 방지).
+  const naverIds = new Set(naverBase.map((g) => g.gameId));
+  const kboOnly = kboGames
+    .filter((g) => !naverIds.has(g.gameId))
+    .sort((a, b) => a.gameId.localeCompare(b.gameId));
+  return [...merged, ...kboOnly];
 }
 
 /**
@@ -57,7 +77,7 @@ export function mergeKboEnrichment(naverBase: KboGame[], kboGames: KboGame[]): K
  */
 export async function fetchGamesUserFacing(date: string): Promise<KboGame[]> {
   const [naverR, kboR] = await Promise.allSettled([
-    fetchNaverGames(date),
+    fetchNaverGames(date, undefined, { timeoutMs: USER_FACING_NAVER_TIMEOUT_MS }),
     fetchKboGamesOnly(date, "0,1,3,4,5,7,9", { timeoutMs: KBO_ENRICH_TIMEOUT_MS }),
   ]);
 
