@@ -5,10 +5,10 @@
 --    같은 방식으로 여러 번 봐도 1회만 집계(원자 처리, 서버 권위).
 --  - viewer_key: 로그인 `user:{uuid}` / 비로그인 `guest:{uuid}`(#735 과 같은 localStorage
 --    영속 guest id). IP/NAT 기반 dedupe 금지 — 서버는 IP 를 키로 쓰지 않는다.
---  - 표시: raw 2종 분리 저장, 노출은 관리자 전용(합산 배지 + 상세 툴팁).
+--  - 표시: raw 2종 분리 저장, 클릭·노출 숫자는 관리자에게만 분리 표시.
 --
 -- 설계 (20260725_venue_story_upload_daily.sql 의 durable rollup 패턴 준수):
---  - venue_story_view_marks: dedupe 원장. (story_id, viewer_key, kind, view_date) PK.
+--  - venue_story_view_marks: dedupe 원장. (story_id, viewer_key, view_date, kind) PK.
 --    venue_stories FK ON DELETE CASCADE — 스토리가 cleanup/삭제되면 마크도 정리
 --    (이후 재조회 불가능하므로 원장은 남길 이유가 없음).
 --  - venue_story_view_daily: kind별 일별 영구 롤업. 의도적으로 FK 없음 —
@@ -21,10 +21,10 @@
 CREATE TABLE IF NOT EXISTS venue_story_view_marks (
   story_id   BIGINT NOT NULL REFERENCES venue_stories(id) ON DELETE CASCADE,
   viewer_key TEXT   NOT NULL,
-  kind       TEXT   NOT NULL CHECK (kind IN ('click', 'impression')),
   view_date  DATE   NOT NULL,
+  kind       TEXT   NOT NULL CHECK (kind IN ('click', 'impression')),
   viewed_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-  PRIMARY KEY (story_id, viewer_key, kind, view_date)
+  PRIMARY KEY (story_id, viewer_key, view_date, kind)
 );
 
 COMMENT ON TABLE venue_story_view_marks IS
@@ -74,9 +74,9 @@ BEGIN
   END IF;
 
   BEGIN
-    INSERT INTO venue_story_view_marks (story_id, viewer_key, kind, view_date)
-    VALUES (p_story_id, p_viewer_key, p_kind, v_day)
-    ON CONFLICT (story_id, viewer_key, kind, view_date) DO NOTHING;
+    INSERT INTO venue_story_view_marks (story_id, viewer_key, view_date, kind)
+    VALUES (p_story_id, p_viewer_key, v_day, p_kind)
+    ON CONFLICT (story_id, viewer_key, view_date, kind) DO NOTHING;
     -- ON CONFLICT skip 이면 ROW_COUNT=0 → 신규 조회일 때만 롤업 +1.
     GET DIAGNOSTICS v_inserted = ROW_COUNT;
   EXCEPTION WHEN foreign_key_violation THEN
