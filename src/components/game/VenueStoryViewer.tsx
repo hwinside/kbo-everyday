@@ -34,6 +34,7 @@ import { lockRootScroll, unlockRootScroll } from "@/lib/venue-stories/scroll-loc
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import { isIosNativeRuntime } from "@/lib/capacitor/platform";
 import { startVenueStoryUrlRefresh } from "@/lib/venue-stories/refresh-policy";
+import { getAvatarPath } from "@/lib/constants/avatars";
 
 interface Props {
   stories: VenueStory[];
@@ -60,13 +61,17 @@ function CommentAvatar({
   initialClassName: string;
 }) {
   const initial = (nickname ?? "?").slice(0, 1);
+  // 아바타는 `preset:xxx`/`custom:https://...` 형식으로 저장된다 — 날것 src 로 넣으면
+  // 로드 실패해 이니셜만 보인다(하린아빠 7/29 프로필 이미지 안뜸 리포트). 커뮤니티
+  // CommentSheet 와 동일하게 getAvatarPath 로 실제 경로/URL 로 해석한다.
+  const resolvedAvatar = getAvatarPath(avatarUrl);
   return (
     <div className={className}>
-      {avatarUrl ? (
+      {resolvedAvatar ? (
         <>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src={avatarUrl}
+            src={resolvedAvatar}
             alt=""
             className="w-full h-full object-cover"
             referrerPolicy="no-referrer"
@@ -562,28 +567,33 @@ export default function VenueStoryViewer({
       >
         {/* story.id key로 remount — 이전 스토리에서 onError로 숨긴 img/flex 폴백이 다음 스토리에 남지 않게 (삼순 #805) */}
         <div key={`avatar-${story.id}`} className="w-8 h-8 rounded-full bg-white/20 overflow-hidden shrink-0">
-          {story.author.avatarUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={story.author.avatarUrl}
-              alt=""
-              className="w-full h-full object-cover"
-              // 구글 프로필 이미지는 referrer 달리면 403 → 깨진 아이콘 (NewsCarousel과 동일 패턴)
-              referrerPolicy="no-referrer"
-              // 로드 실패 시 깨진 이미지 대신 이니셜 폴백
-              onError={(e) => {
-                const img = e.currentTarget;
-                img.style.display = "none";
-                const fb = img.parentElement?.querySelector("[data-avatar-fallback]");
-                // hidden 제거만 하면 flex가 안 붙어 이니셜이 안 보임 → flex도 명시적으로 추가 (삼순 #805)
-                fb?.classList.remove("hidden");
-                fb?.classList.add("flex");
-              }}
-            />
-          ) : null}
+          {(() => {
+            // 아바타 `preset:`/`custom:` 해석(하린아빠 7/29 프로필 안뜸 — 날것 custom:URL 을
+            // src 로 넣어 로드 실패). null 이면 이니셜 폴백.
+            const resolved = getAvatarPath(story.author.avatarUrl);
+            return resolved ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={resolved}
+                alt=""
+                className="w-full h-full object-cover"
+                // 구글 프로필 이미지는 referrer 달리면 403 → 깨진 아이콘 (NewsCarousel과 동일 패턴)
+                referrerPolicy="no-referrer"
+                // 로드 실패 시 깨진 이미지 대신 이니셜 폴백
+                onError={(e) => {
+                  const img = e.currentTarget;
+                  img.style.display = "none";
+                  const fb = img.parentElement?.querySelector("[data-avatar-fallback]");
+                  // hidden 제거만 하면 flex가 안 붙어 이니셜이 안 보임 → flex도 명시적으로 추가 (삼순 #805)
+                  fb?.classList.remove("hidden");
+                  fb?.classList.add("flex");
+                }}
+              />
+            ) : null;
+          })()}
           <div
             data-avatar-fallback
-            className={`w-full h-full items-center justify-center text-white text-xs ${story.author.avatarUrl ? "hidden" : "flex"}`}
+            className={`w-full h-full items-center justify-center text-white text-xs ${getAvatarPath(story.author.avatarUrl) ? "hidden" : "flex"}`}
           >
             {(story.author.nickname ?? "?").slice(0, 1)}
           </div>
