@@ -183,7 +183,14 @@ export async function fetchGames(date: string, srId = "0,1,3,4,5,7,9"): Promise<
     const jsonStr = jsonEnd > 0 ? text.slice(0, jsonEnd + 1) : text;
     const data = JSON.parse(jsonStr);
 
-    return (data.game ?? []).map(parseGame);
+    // HTTP 200 스키마 열화 방어(2026-07-29 KBO 200 열화 인시던트): game 필드가 배열이
+    // 아니면(누락/null) 정상 무경기일(game:[])과 구분되지 않으므로 스키마 오류로 보고
+    // Naver 폴백을 태운다. 배열이면(빈 배열 포함) KBO 를 신뢰한다.
+    if (!Array.isArray(data.game)) {
+      throw new Error("KBO GetKboGameList schema-error: game 필드 부재/비배열");
+    }
+
+    return data.game.map(parseGame);
   } catch (e) {
     const error = e as Error;
     let reason: "timeout" | "http-error" | "schema-error" | "network-error" = "network-error";
@@ -191,7 +198,7 @@ export async function fetchGames(date: string, srId = "0,1,3,4,5,7,9"): Promise<
       reason = "timeout";
     } else if (error.message.includes("HTTP")) {
       reason = "http-error";
-    } else if (error.message.includes("JSON")) {
+    } else if (error.message.includes("JSON") || error.message.includes("schema-error")) {
       reason = "schema-error";
     }
 
@@ -200,12 +207,14 @@ export async function fetchGames(date: string, srId = "0,1,3,4,5,7,9"): Promise<
     });
 
     // Fallback: Naver schedule/games (일정+라이브 스코어). 소스 전환은 위 trackFallback 원장에 남는다.
+    // srId 계약 보존: 특정 시리즈 전용 호출은 fetchNaverGames 내부에서 fail-close(throw).
+    // Naver 성공 시 결과를 그대로 반환한다 — 정상 무경기일(빈 배열)도 성공으로 간주해
+    // 500 대신 "경기 없음"으로 응답한다(무경기일 fallback 500 방지).
     try {
       const { fetchNaverGames } = await import("@/lib/crawler/naver-games");
-      const naver = await fetchNaverGames(date);
-      if (naver.length) return naver;
+      return await fetchNaverGames(date, srId);
     } catch {
-      // Naver 도 실패 → 원래 KBO 에러로 throw.
+      // Naver 도 실패(또는 series 보존 불가 fail-close) → 원래 KBO 에러로 throw.
     }
 
     throw error;

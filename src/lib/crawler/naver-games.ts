@@ -1,5 +1,6 @@
 // Naver schedule/games 기반 경기목록 fallback — fetchGames(KBO GetKboGameList)가
-// 실패(throw/timeout)할 때 동일한 KboGame[] 형태로 일정+라이브 스코어를 대체 공급한다.
+// 실패(throw/timeout/스키마 열화)할 때 동일한 KboGame[] 형태로 일정+라이브 스코어를
+// 대체 공급한다.
 //
 // 리스트-레벨 필드(스코어/상태/이닝)만 보장한다. 라이브 카운트(strikes/balls/outs/
 // runners/currentBatter 등)는 Naver schedule 응답에 없어 0/빈값으로 graceful degrade
@@ -9,7 +10,17 @@ import { resolveTeamId, type KboGame } from "@/lib/crawler/kbo-api";
 
 const NAVER_SCHEDULE_API = "https://api-gw.sports.naver.com/schedule/games";
 
+/**
+ * fetchGames 기본 srId(전 시리즈: 시범/정규/포스트/올스타). 이 값으로 호출될 때만
+ * Naver 폴백이 안전하다 — Naver schedule/games 는 series(gameType) 필드를 제공하지 않아
+ * 특정 시리즈만 요구하는 호출(예: 정규시즌 전용 game-logs)은 시범경기 등이 섞일 수 있어
+ * fail-close 한다. (실측 2026-07-29: 시범경기(3/15)도 정규와 동일 categoryId=kbo 로 반환,
+ * 구분 필드 없음.)
+ */
+const DEFAULT_ALL_SR_ID = "0,1,3,4,5,7,9";
+
 interface NaverScheduleGame {
+  gameId?: string;
   gameDateTime?: string;
   stadium?: string;
   homeTeamCode?: string;
@@ -29,6 +40,23 @@ function toNaverDate(date: string): string {
   return `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}`;
 }
 
+/**
+ * Naver gameId 에서 회차(더블헤더) suffix 를 추출한다.
+ * Naver gameId 형식: YYYYMMDD + 팀코드 + N(회차) + YYYY(연도접미).
+ *   단일경기 `20260729HTSS02026` → "0", DH `20240623KTLG12024`/`…22024` → "1"/"2".
+ * 연도접미 앞 1자리가 회차. 올스타는 연도접미가 9999(`20260706..09999`)여도
+ * 회차 자리는 그대로 보존된다. 회차는 실무상 0~3만 유효(DH는 1/2, 드물게 3)이므로
+ * 그 범위를 벗어나면(연도접미 결측로 자릿수 오인식 등) 명시적으로 "0"으로 클램한다.
+ * gameId 파싱은 회차 추출에만 쓰고, 팀/날짜는 응답 필드를 직접 사용한다(reversedHomeAway 회피).
+ */
+export function extractGameSeq(naverGameId: string | undefined): string {
+  if (!naverGameId) return "0";
+  const withYear = naverGameId.match(/(\d)\d{4}$/);
+  const raw = withYear ? withYear[1] : (naverGameId.match(/(\d)$/)?.[1] ?? "0");
+  // 유효 회차 0~3 밖은 파싱 오인식(예: 올스타 9999 결측) → 단일경기 "0".
+  return /^[0-3]$/.test(raw) ? raw : "0";
+}
+
 function mapStatus(g: NaverScheduleGame): KboGame["status"] {
   const sc = g.statusCode ?? "";
   if (g.cancel || g.suspended || sc === "CANCEL" || sc === "POSTPONE") return "cancelled";
@@ -39,20 +67,21 @@ function mapStatus(g: NaverScheduleGame): KboGame["status"] {
 
 /**
  * Naver schedule game → KboGame 순수 매퍼(테스트용 export).
- * gameId 는 KBO 규칙(date + awayCode + homeCode + "0")으로 재구성한다. Naver gameId는
- * 연도 접미가 붙고, reversedHomeAway 표기가 있어 파싱하지 않고 응답의 home/away 코드를
- * 직접 사용한다(실측: KBO G_ID 와 Naver gameId 모두 away+home 순서).
+ * gameId 는 KBO 규칙(date + awayCode + homeCode + 회차)으로 재구성한다. 회차는 Naver
+ * gameId 에서 보존(더블헤더 충돌 방지). 팀/날짜는 응답 필드 직접 사용.
+ * (실측: KBO G_ID·Naver gameId 모두 away+home 순서, 예 `20260729WOLG0`.)
  */
 export function mapNaverGameToKbo(g: NaverScheduleGame, date: string): KboGame {
   const awayCode = g.awayTeamCode ?? "";
   const homeCode = g.homeTeamCode ?? "";
+  const seq = extractGameSeq(g.gameId);
   const status = mapStatus(g);
   // statusInfo "N회초"/"N회말" 에서 이닝/초말을 뽑는다(live·final 공통). 없으면 0/초.
   const inningMatch = (g.statusInfo ?? "").match(/(\d+)회(초|말)/);
   const inning = inningMatch ? parseInt(inningMatch[1], 10) : 0;
   const isTop = inningMatch ? inningMatch[2] === "초" : true;
   return {
-    gameId: `${date}${awayCode}${homeCode}0`,
+    gameId: `${date}${awayCode}${homeCode}${seq}`,
     date,
     time: g.gameDateTime ? g.gameDateTime.slice(11, 16) : "",
     stadium: g.stadium ?? "",
@@ -83,11 +112,30 @@ export function mapNaverGameToKbo(g: NaverScheduleGame, date: string): KboGame {
 }
 
 /**
- * 특정 날짜 경기목록을 Naver schedule/games 로 조회(KBO fallback).
- * fail-closed: success!==true || code!==200 || games 필드 부재면 throw.
- * 경기 없는 날(games: [])은 정상으로 간주해 빈 배열을 반환한다.
+ * per-game sanity — 필수 필드/팀 id 검증. Naver `games:[{}]` 같은 부분/가짜 응답을
+ * 성공으로 묻지 않는다(fail-close). 실제 KBO 경기는 양 팀 코드·해석된 teamId 가 항상 있다.
  */
-export async function fetchNaverGames(date: string): Promise<KboGame[]> {
+function isSaneGame(g: KboGame): boolean {
+  return (
+    !!g.gameId &&
+    g.awayTeamId > 0 &&
+    g.homeTeamId > 0 &&
+    g.awayName.length > 0 &&
+    g.homeName.length > 0
+  );
+}
+
+/**
+ * 특정 날짜 경기목록을 Naver schedule/games 로 조회(KBO fallback).
+ * - srId 가 기본 전-시리즈 셋이 아니면(특정 시리즈 전용) fail-close(series 필터 미지원).
+ * - fail-closed: success!==true || code!==200 || games 배열 부재 || per-game sanity 실패면 throw.
+ * - 경기 없는 날(games: [])은 정상으로 간주해 빈 배열을 반환한다(무경기일 500 방지).
+ */
+export async function fetchNaverGames(date: string, srId: string = DEFAULT_ALL_SR_ID): Promise<KboGame[]> {
+  if (srId !== DEFAULT_ALL_SR_ID) {
+    // 정규시즌 전용 등 특정 시리즈 요구 — Naver 로는 series 보존 불가 → 오염 방지 위해 fail-close.
+    throw new Error(`Naver fallback: srId(${srId}) series 필터 계약 보존 불가 — fail-close`);
+  }
   const naverDate = toNaverDate(date);
   const url =
     `${NAVER_SCHEDULE_API}?fields=basic,superCategoryId,categoryName,stadium,statusInfo` +
@@ -107,5 +155,10 @@ export async function fetchNaverGames(date: string): Promise<KboGame[]> {
   if (data?.code !== 200 || data?.success !== true || !Array.isArray(data?.result?.games)) {
     throw new Error("Naver schedule 응답 sanity 실패(success/code/games)");
   }
-  return (data.result.games as NaverScheduleGame[]).map((g) => mapNaverGameToKbo(g, date));
+  const games = (data.result.games as NaverScheduleGame[]).map((g) => mapNaverGameToKbo(g, date));
+  // 경기 있는 응답인데 하나라도 sanity 실패면 부분/가짜 응답 — fail-close.
+  if (games.some((g) => !isSaneGame(g))) {
+    throw new Error("Naver schedule per-game sanity 실패(팀 id/필수 필드 결측)");
+  }
+  return games;
 }
