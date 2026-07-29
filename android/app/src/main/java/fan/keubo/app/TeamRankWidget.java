@@ -30,7 +30,7 @@ import java.util.Map;
 
 /**
  * 팀 순위표 홈 위젯 — 앱 순위표(standings 탭)와 동일 디자인.
- * 컬럼: # / 팀(로고+약어) / 승 / 패 / 무 / 승률 / 차 / 연속. 최애팀 행은
+ * 컬럼: # / 팀(로고+약어) / 경기 / 승 / 패 / 무 / 승률 / 차 / 연속. 최애팀 행은
  * 앱과 동일하게 팀 컬러 배경(α 0x18) + 좌측 3dp 컬러 바로 하이라이트.
  *
  * 렌더: 표 전체를 Canvas 비트맵 하나로 그려 ImageView에 세팅.
@@ -228,15 +228,16 @@ public class TeamRankWidget extends AppWidgetProvider {
         float headerH = 24 * d;
         float rowH = (H - padV * 2 - headerH) / Math.max(1, rows.length());
 
-        // 컬럼 X 좌표(dp): [# 22 | 팀 flex | 승 26 | 패 26 | 무 22 | 승률 42 | 차 32 | 연속 36]
+        // 컬럼 X 좌표(dp): [# 22 | 팀 flex | 경기 32 | 승 26 | 패 26 | 무 22 | 승률 42 | 차 32 | 연속 36]
         float xRank = padH + 11 * u;                    // 가운데 정렬 기준점
         float xTeam = padH + 22 * u + 6 * u;            // 좌측 정렬 시작점
         float xStreakR = W - padH;                      // 이하 우측 정렬 기준점
-        float xGbR = xStreakR - 36 * u - 8 * u;
-        float xPctR = xGbR - 32 * u - 8 * u;
-        float xDrawR = xPctR - 42 * u - 8 * u;
-        float xLossR = xDrawR - 22 * u - 8 * u;
-        float xWinR = xLossR - 26 * u - 8 * u;
+        float xGbR = xStreakR - 36 * u - 5 * u;
+        float xPctR = xGbR - 32 * u - 5 * u;
+        float xDrawR = xPctR - 42 * u - 5 * u;
+        float xLossR = xDrawR - 22 * u - 5 * u;
+        float xWinR = xLossR - 26 * u - 5 * u;
+        float xGamesR = xWinR - 26 * u - 5 * u;
 
         Typeface mont = font(ctx, R.font.montserrat_vf, Typeface.DEFAULT_BOLD);
         Typeface noto = font(ctx, R.font.notosanskr_vf, Typeface.DEFAULT);
@@ -246,6 +247,7 @@ public class TeamRankWidget extends AppWidgetProvider {
         float hBase = padV + headerH / 2 + textCenterOffset(hs);
         drawMixed(cv, "#", xRank, hBase, hs, C_TEXT_TERTIARY, ALIGN_CENTER, mont, noto);
         drawMixed(cv, "팀", xTeam, hBase, hs, C_TEXT_TERTIARY, ALIGN_LEFT, mont, noto);
+        drawMixed(cv, "경기", xGamesR, hBase, hs, C_TEXT_TERTIARY, ALIGN_RIGHT, mont, noto);
         drawMixed(cv, "승", xWinR, hBase, hs, C_TEXT_TERTIARY, ALIGN_RIGHT, mont, noto);
         drawMixed(cv, "패", xLossR, hBase, hs, C_TEXT_TERTIARY, ALIGN_RIGHT, mont, noto);
         drawMixed(cv, "무", xDrawR, hBase, hs, C_TEXT_TERTIARY, ALIGN_RIGHT, mont, noto);
@@ -300,9 +302,13 @@ public class TeamRankWidget extends AppWidgetProvider {
             }
             drawMixed(cv, s.optString("teamName", ""), tx, base, fs, C_TEXT, ALIGN_LEFT, mont, noto);
 
-            drawMixed(cv, String.valueOf(s.optInt("wins", 0)), xWinR, base, fs, C_TEXT, ALIGN_RIGHT, mont, noto);
-            drawMixed(cv, String.valueOf(s.optInt("losses", 0)), xLossR, base, fs, C_TEXT, ALIGN_RIGHT, mont, noto);
-            drawMixed(cv, String.valueOf(s.optInt("draws", 0)), xDrawR, base, fs, C_TEXT_SECONDARY, ALIGN_RIGHT, mont, noto);
+            int wins = s.optInt("wins", 0);
+            int losses = s.optInt("losses", 0);
+            int draws = s.optInt("draws", 0);
+            drawMixed(cv, String.valueOf(wins + losses + draws), xGamesR, base, fs, C_TEXT_SECONDARY, ALIGN_RIGHT, mont, noto);
+            drawMixed(cv, String.valueOf(wins), xWinR, base, fs, C_TEXT, ALIGN_RIGHT, mont, noto);
+            drawMixed(cv, String.valueOf(losses), xLossR, base, fs, C_TEXT, ALIGN_RIGHT, mont, noto);
+            drawMixed(cv, String.valueOf(draws), xDrawR, base, fs, C_TEXT_SECONDARY, ALIGN_RIGHT, mont, noto);
             drawMixed(cv, pctLabel(s.optDouble("winRate", 0)), xPctR, base, fs, C_TEXT, ALIGN_RIGHT, mont, noto, true);
             drawMixed(cv, gbLabel(s.optDouble("gamesBehind", 0)), xGbR, base, fs, C_TEXT_SECONDARY, ALIGN_RIGHT, mont, noto);
             String streak = s.optString("continuousGameResult", "").trim();
