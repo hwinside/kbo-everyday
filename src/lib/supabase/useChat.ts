@@ -6,6 +6,7 @@ import { supabase } from "./client";
 import { useAuth } from "./AuthContext";
 import { normalizeForFloodKey } from "@/lib/utils/normalize-message";
 import { checkObjectionableContent } from "@/lib/moderation/content-filter";
+import { createRealtimeChannelLifecycle } from "./realtime-channel-lifecycle";
 
 export interface ChatMessage {
   id: number;
@@ -471,8 +472,6 @@ export function useChat(roomId: string) {
   useEffect(() => {
     if (!roomId) return;
 
-    let channel: RealtimeChannel | null = null;
-    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let cancelled = false;
 
     const handleInsert = async (payload: { new: ChatMessage }) => {
@@ -571,9 +570,12 @@ export function useChat(roomId: string) {
       if (reachedEnd) setHasMore(false);
     };
 
-    const subscribe = () => {
-      if (cancelled) return;
-      channel = supabase
+    const lifecycle = createRealtimeChannelLifecycle<
+      RealtimeChannel,
+      ReturnType<typeof setTimeout>
+    >({
+      createChannel: () =>
+        supabase
         .channel(`chat:${roomId}`)
         .on(
           "postgres_changes",
@@ -594,61 +596,39 @@ export function useChat(roomId: string) {
             filter: `room_id=eq.${roomId}`,
           },
           handleUpdate
-        )
-        .subscribe((status) => {
-          if (cancelled) return;
-          if (status === "SUBSCRIBED") {
-            // 재구독 직후 누락 흡수 (백그라운드 동안 들어온 메시지)
-            void backfill();
-          } else if (
-            status === "CHANNEL_ERROR" ||
-            status === "TIMED_OUT" ||
-            status === "CLOSED"
-          ) {
-            scheduleReconnect(1000);
-          }
-        });
-    };
-
-    const scheduleReconnect = (delay: number) => {
-      if (cancelled || reconnectTimer) return;
-      reconnectTimer = setTimeout(() => {
-        reconnectTimer = null;
-        if (cancelled) return;
-        if (channel) {
-          supabase.removeChannel(channel);
-          channel = null;
-        }
-        subscribe();
-      }, delay);
-    };
+        ),
+      subscribeChannel: (nextChannel, onStatus) => {
+        nextChannel.subscribe(onStatus);
+      },
+      removeChannel: async (oldChannel) => {
+        return supabase.removeChannel(oldChannel);
+      },
+      isRemovalSuccessful: (result) => result === "ok" || result === "timed out",
+      onSubscribed: () => {
+        void backfill();
+      },
+      onVisible: () => {
+        void backfill();
+      },
+      setTimer: (callback, delay) => setTimeout(callback, delay),
+      clearTimer: (handle) => clearTimeout(handle),
+    });
 
     const onVisible = () => {
       if (document.visibilityState !== "visible") return;
-      // 보이는 즉시 gap 메우기. 채널이 살아있으면 backfill만으로 충분히 빠름.
-      void backfill();
-      // 채널이 dead일 수도 있으므로 즉시 재구독 (subscribe 콜백이 SUBSCRIBED
-      // 재진입 시 backfill을 한 번 더 호출하지만, prev.some(id) dedupe로 무해).
-      scheduleReconnect(0);
+      lifecycle.visible();
     };
 
     document.addEventListener("visibilitychange", onVisible);
     window.addEventListener("online", onVisible);
 
-    subscribe();
+    lifecycle.start();
 
     return () => {
       cancelled = true;
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("online", onVisible);
-      if (reconnectTimer) {
-        clearTimeout(reconnectTimer);
-        reconnectTimer = null;
-      }
-      if (channel) {
-        supabase.removeChannel(channel);
-        channel = null;
-      }
+      lifecycle.stop();
     };
   }, [roomId]);
 

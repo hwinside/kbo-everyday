@@ -21,6 +21,7 @@ fi
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 MIG="$ROOT/supabase/migrations/20260727_community_poll.sql"
+MIG2="$ROOT/supabase/migrations/20260728_poll_edit_title_content.sql"  # 편집정책 완화(title/content 허용)
 SQL="$ROOT/scripts/qa/poll-contract-e2e.sql"
 
 WORK="${OPENCLAW_REVIEW_ROOT:-/tmp}/poll-e2e.$$"
@@ -56,6 +57,17 @@ CREATE TABLE IF NOT EXISTS public.posts (
   title text NOT NULL, content text NOT NULL,
   team_tags jsonb NOT NULL DEFAULT '[]'::jsonb,
   player_tags jsonb NOT NULL DEFAULT '[]'::jsonb,
+  -- 작성자 제어 비텍스트 필드(실제 posts 스키마 반영). poll_posts_edit_lock 이 voted poll 에서
+  -- 이 컬럼들의 변경을 차단하는지 실 PG17 로 고정(삼순 NO-GO probe N3).
+  content_type text NOT NULL DEFAULT 'text',
+  image_urls jsonb NOT NULL DEFAULT '[]'::jsonb,
+  video_urls jsonb NOT NULL DEFAULT '[]'::jsonb,
+  seat_info jsonb,
+  -- 삼순 NO-GO(2): denylist 가 놓치던 작성자 제어 필드(실제 posts 스키마). allowlist 트리거가
+  -- 이 필드들까지 불변화하는지(schema-drift) 실 PG17 로 고정.
+  game_id text,
+  hashtags jsonb NOT NULL DEFAULT '[]'::jsonb,
+  author_team_id_snapshot int,
   -- 운영 카운터/블라인드 컬럼(실제 posts 스키마 반영: 20260720_report_blind_notice,
   -- 20260721_post_view_counts + base like_count/comment_count). 이 컬럼들에 대한
   -- 정상 UPDATE 가 poll_posts_edit_lock 회귀로 막히지 않는지 실 PG17 로 고정한다.
@@ -68,6 +80,23 @@ CREATE TABLE IF NOT EXISTS public.posts (
   created_at timestamptz DEFAULT now(), updated_at timestamptz);
 GRANT SELECT, INSERT, UPDATE ON public.posts TO authenticated;
 GRANT USAGE, SELECT ON SEQUENCE public.posts_id_seq TO authenticated;
+
+-- 삼순 NO-GO(2): posts owner UPDATE RLS(실제 정책 반영) — 자신이 작성한 글만 UPDATE.
+-- auth.uid() 슴(request.jwt.claim.sub GUC 기반). 2계정(작성자·타인) 실행형 회귀에서
+-- 타인이 poll 글을 UPDATE 하면 RLS 로 막히고(0 rows), 작성자는 title/content 가 갱신되는지 고정.
+CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $fn$
+  SELECT NULLIF(current_setting('request.jwt.claim.sub', true), '')::uuid
+$fn$;
+ALTER TABLE public.posts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.posts FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Users update own posts" ON public.posts;
+CREATE POLICY "Users update own posts" ON public.posts
+  FOR UPDATE TO authenticated USING (author_id = auth.uid()) WITH CHECK (author_id = auth.uid());
+DROP POLICY IF EXISTS "Users read posts" ON public.posts;
+CREATE POLICY "Users read posts" ON public.posts FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "Users insert own posts" ON public.posts;
+CREATE POLICY "Users insert own posts" ON public.posts
+  FOR INSERT TO authenticated WITH CHECK (author_id = auth.uid());
 
 -- 신고 → 자동 블라인드 경로(실제 20260720_report_blind_notice auto_blind_on_report
 -- post 분기 최소 반영: report_count += 1, 임계 3 도달 시 is_hidden 전환). 이 경로가
@@ -99,6 +128,10 @@ echo "[poll-e2e] apply migration ..."
 psql -q -f "$MIG" >/dev/null
 echo "[poll-e2e] reapply migration (idempotency) ..."
 psql -q -f "$MIG" >/dev/null
+echo "[poll-e2e] apply edit-policy migration (20260728) ..."
+psql -q -f "$MIG2" >/dev/null
+echo "[poll-e2e] reapply edit-policy migration (idempotency) ..."
+psql -q -f "$MIG2" >/dev/null
 
 echo "[poll-e2e] run assertions ..."
 psql -f "$SQL" 2>&1 | grep -E "PASS|FAIL|ERROR|COMPLETE|status|NOTICE" | sed 's/^psql.*NOTICE:  //'

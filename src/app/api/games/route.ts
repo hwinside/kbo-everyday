@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { fetchGames } from "@/lib/crawler/kbo-api";
+import { fetchGamesUserFacing } from "@/lib/crawler/games-user-facing";
 
 export async function GET(request: NextRequest) {
   const date = request.nextUrl.searchParams.get("date");
@@ -8,7 +8,8 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const games = await fetchGames(date);
+    // user-facing 하이브리드: Naver primary(스코어/이닝/상태) + KBO enrich(BSO/주자/투타) 병렬 병합.
+    const games = await fetchGamesUserFacing(date);
     return NextResponse.json({
       date,
       count: games.length,

@@ -2,7 +2,7 @@
 //  KBOTeamRankWidget.swift
 //  KBO 크보팬 — 팀 순위표 홈 위젯 (WidgetKit StaticConfiguration, systemLarge 전용)
 //
-//  안드로이드 TeamRankWidget(renderTable)의 iOS판. 컬럼 #/팀/승/패/무/승률/차/연속을
+//  안드로이드 TeamRankWidget(renderTable)의 iOS판. 컬럼 #/팀/경기/승/패/무/승률/차/연속을
 //  다크(#0A0A0B) 배경에 그대로 옮기고, 최애팀 행은 팀컬러 α0.094 밴드 + 좌측 3pt 팀컬러
 //  바로 하이라이트한다. 데이터는 /api/standings를 위젯이 직접 fetch(30분) + App Group 캐시
 //  폴백. 폰트/로고/컬러 헬퍼는 KBOLiveActivityWidget.swift 것을 재사용(단일 소스).
@@ -306,12 +306,13 @@ struct KBOTeamRankWidgetEntryView: View {
 
     // 컬럼 폭(pt) — 우측 수치 컬럼 고정, 팀 컬럼 가변.
     private let wRank: CGFloat = 20
-    private let wWin: CGFloat = 28
-    private let wLoss: CGFloat = 28
-    private let wDraw: CGFloat = 24
-    private let wPct: CGFloat = 44
+    private let wGames: CGFloat = 32
+    private let wWin: CGFloat = 24
+    private let wLoss: CGFloat = 24
+    private let wDraw: CGFloat = 20
+    private let wPct: CGFloat = 40
     private let wGb: CGFloat = 30
-    private let wStreak: CGFloat = 40
+    private let wStreak: CGFloat = 36
 
     var body: some View {
         VStack(spacing: 0) {
@@ -338,6 +339,7 @@ struct KBOTeamRankWidgetEntryView: View {
             Text("팀").font(notoKR(11, .semibold)).foregroundStyle(RankColor.tertiary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.leading, 6)
+            headerCell("경기", wGames)
             headerCell("승", wWin)
             headerCell("패", wLoss)
             headerCell("무", wDraw)
@@ -369,11 +371,12 @@ struct KBOTeamRankWidgetEntryView: View {
                 }
                 mixedScriptText(row.name, 13, .heavy)
                     .foregroundStyle(RankColor.text)
-                    .lineLimit(1).minimumScaleFactor(0.7)
+                    .lineLimit(1).minimumScaleFactor(0.65)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.leading, 6)
 
+            numCell("\(row.wins + row.losses + row.draws)", wGames, RankColor.secondary, .semibold)
             numCell("\(row.wins)", wWin, RankColor.text, .semibold)
             numCell("\(row.losses)", wLoss, RankColor.text, .semibold)
             numCell("\(row.draws)", wDraw, RankColor.secondary, .semibold)
@@ -413,7 +416,7 @@ struct KBOTeamRankWidgetEntryView: View {
         let s = streak.isEmpty ? "-" : streak
         return mixedScriptText(s, 13, .semibold)
             .foregroundStyle(streak.isEmpty ? RankColor.secondary : RankColor.text)
-            .lineLimit(1)
+            .lineLimit(1).minimumScaleFactor(0.65)
             .frame(width: w, alignment: .trailing)
     }
 }
