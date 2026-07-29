@@ -3,8 +3,9 @@ import { PRESEASON_GAMES, PRESEASON_DATES } from "@/lib/constants/preseason-sche
 import { useSafeBack } from "@/lib/hooks/useSafeBack";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
+import { useVisibilityAwareInterval } from "@/lib/hooks/useVisibilityAwareInterval";
 import { getKSTToday } from "@/lib/utils/date-kst";
 import { ChevronLeft, RefreshCw, Star } from "lucide-react";
 import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
@@ -150,13 +151,10 @@ export default function GamesPage() {
     return () => { stale = true; };
   }, [games, selectedDate, weather, loading]);
 
-  // 라이브 경기 있으면 30초마다 자동 새로고침
-  useEffect(() => {
-    const hasLive = games.some(g => g.status === "live");
-    if (!hasLive) return;
-    const interval = setInterval(() => loadGames(selectedDate), 30000);
-    return () => clearInterval(interval);
-  }, [games, selectedDate]);
+  // 라이브 경기 있으면 30초마다 자동 새로고침 (백그라운드 탭은 정지, 복귀 시 즉시 갱신)
+  const hasLive = games.some(g => g.status === "live");
+  const refreshGames = useCallback(() => { loadGames(selectedDate); }, [selectedDate]);
+  useVisibilityAwareInterval(refreshGames, 30000, { enabled: hasLive, resetKey: selectedDate });
 
   // MY TEAM 오늘 경기 유무 — boolean 으로 좁혀 30초 auto-refresh(games 배열 재생성)에
   // 다음 경기 스캔 effect 가 불필요하게 재실행되지 않게 한다.

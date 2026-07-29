@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useVisibilityAwareInterval } from "@/lib/hooks/useVisibilityAwareInterval";
 import Image from "next/image";
 
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
@@ -213,31 +214,28 @@ export default function FavoritePlayersSection({ favPlayers, refreshNonce = 0 }:
   }, [favKey, refreshNonce]);
 
   // 오늘 경기 활약 — 팀의 당일 경기 박스스코어 라인. 라이브 갱신 위해 45초 폴링.
-  useEffect(() => {
+  // 백그라운드 탭은 정지, 복귀 시 즉시 갱신(보는 유저 실시간성 유지).
+  const hasFav = favPlayers.length > 0;
+  const loadTodayGames = useCallback(async () => {
     if (favPlayers.length === 0) { setTodayGames({}); return; }
-    let cancelled = false;
-    const load = async () => {
-      const entries = await Promise.all(
-        favPlayers.map(async (p) => {
-          const pos = classifyIsPitcher(p) ? "투수" : "타자";
-          const r: TodayGame | null = await fetch(
-            `/api/player-today-game?team=${p.teamId}&name=${encodeURIComponent(p.name)}&pos=${encodeURIComponent(pos)}`,
-          )
-            .then((res) => (res.ok ? res.json() : null))
-            .catch(() => null);
-          return [p.playerId, r] as const;
-        }),
-      );
-      if (cancelled) return;
-      const m: Record<string, TodayGame> = {};
-      for (const [id, r] of entries) if (r && r.show) m[id] = r;
-      setTodayGames(m);
-    };
-    load();
-    const iv = setInterval(load, 45000);
-    return () => { cancelled = true; clearInterval(iv); };
+    const entries = await Promise.all(
+      favPlayers.map(async (p) => {
+        const pos = classifyIsPitcher(p) ? "투수" : "타자";
+        const r: TodayGame | null = await fetch(
+          `/api/player-today-game?team=${p.teamId}&name=${encodeURIComponent(p.name)}&pos=${encodeURIComponent(pos)}`,
+        )
+          .then((res) => (res.ok ? res.json() : null))
+          .catch(() => null);
+        return [p.playerId, r] as const;
+      }),
+    );
+    const m: Record<string, TodayGame> = {};
+    for (const [id, r] of entries) if (r && r.show) m[id] = r;
+    setTodayGames(m);
+    // favKey로 최애선수 변경만 감지 (favPlayers 배열 identity 변동 재요청 방지)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [favKey, refreshNonce]);
+  useVisibilityAwareInterval(loadTodayGames, 45000, { enabled: hasFav, resetKey: favKey });
 
   if (favPlayers.length === 0) return null;
 
