@@ -339,7 +339,9 @@ export default function VenueStorySection({ gameId }: Props) {
         <span className="text-[11px] text-text-tertiary">현장에서 온 짧은 중계</span>
       </div>
 
-      <div className="flex gap-2 overflow-x-auto scrollbar-hide -mx-1 px-1 pb-1">
+      {/* overflow-x-auto → computed overflow-y:auto 로 인해 라벨 `-top-1`이 스크롤포트 위로 잘리므로
+          상단 `pt-1`(4px)로 라벨 pill 상단까지 트레이 안에 넣는다(삼순 왕복2). */}
+      <div className="flex gap-2 overflow-x-auto scrollbar-hide -mx-1 px-1 pt-1 pb-1">
         {/* 올리기 타일 */}
         <button
           onClick={handleUploadClick}
@@ -386,52 +388,54 @@ export default function VenueStorySection({ gameId }: Props) {
               }}
               className="shrink-0 w-[68px] flex flex-col items-center gap-1"
             >
-              <div
-                className={`relative w-[68px] h-[68px] rounded-full overflow-hidden bg-bg-tertiary ring-2 ${
-                  seenIds.has(String(s.id)) ? "ring-gray-500/50" : "ring-red-500/60"
-                }`}
-              >
-                {s.thumbUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={s.thumbUrl} alt="" className="w-full h-full object-cover" />
-                ) : (
-                  <div className="w-full h-full flex items-center justify-center text-text-tertiary text-xs">
-                    {s.mediaType === "video" ? "🎬" : "📷"}
-                  </div>
-                )}
+              <div className="relative w-[68px] h-[68px]">
+                <div
+                  className={`relative w-full h-full rounded-full overflow-hidden bg-bg-tertiary ring-2 ${
+                    seenIds.has(String(s.id)) ? "ring-gray-500/50" : "ring-red-500/60"
+                  }`}
+                >
+                  {s.thumbUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={s.thumbUrl} alt="" className="w-full h-full object-cover" />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-text-tertiary text-xs">
+                      {s.mediaType === "video" ? "🎬" : "📷"}
+                    </div>
+                  )}
+                  {s.mediaType === "video" && !s.processing && (
+                    <span className="absolute bottom-1 right-1 w-5 h-5 rounded-full bg-black/60 flex items-center justify-center">
+                      <Play size={11} className="text-white fill-white" />
+                    </span>
+                  )}
+                  {s.processing && !s.stalled && (
+                    <div className="absolute inset-0 bg-black/55 flex flex-col items-center justify-center gap-0.5 px-1">
+                      <Loader2 size={16} className="animate-spin text-white" />
+                      <span className="text-[9px] text-white font-medium leading-tight">처리중</span>
+                      <span className="text-[8px] text-white/70 leading-tight text-center">나가도 자동 게시돼요</span>
+                    </div>
+                  )}
+                  {s.processing && s.stalled && (
+                    <div className="absolute inset-0 bg-black/65 flex flex-col items-center justify-center gap-1 px-1">
+                      <span className="text-[13px]">⏳</span>
+                      <span className="text-[9px] text-white font-medium leading-tight text-center">지연·다시 시도</span>
+                    </div>
+                  )}
+                  {s.failed && (
+                    <div className="absolute inset-0 bg-black/70 flex flex-col items-center justify-center gap-1 px-1">
+                      <span className="text-[13px]">↻</span>
+                      <span className="text-[9px] text-white font-medium leading-tight text-center">
+                        실패·다시 올리기
+                      </span>
+                    </div>
+                  )}
+                </div>
                 {team && teamColor && (
                   <span
-                    className="absolute top-1 left-1 px-1.5 py-0.5 rounded-md text-[9px] font-extrabold text-white leading-none shadow"
+                    className="absolute -top-1 left-1/2 -translate-x-1/2 z-10 px-1.5 py-0.5 rounded-md text-[9px] font-extrabold text-white leading-none shadow whitespace-nowrap"
                     style={{ backgroundColor: teamColor }}
                   >
                     {team.shortName}
                   </span>
-                )}
-                {s.mediaType === "video" && !s.processing && (
-                  <span className="absolute bottom-1 right-1 w-5 h-5 rounded-full bg-black/60 flex items-center justify-center">
-                    <Play size={11} className="text-white fill-white" />
-                  </span>
-                )}
-                {s.processing && !s.stalled && (
-                  <div className="absolute inset-0 bg-black/55 flex flex-col items-center justify-center gap-0.5 px-1">
-                    <Loader2 size={16} className="animate-spin text-white" />
-                    <span className="text-[9px] text-white font-medium leading-tight">처리중</span>
-                    <span className="text-[8px] text-white/70 leading-tight text-center">나가도 자동 게시돼요</span>
-                  </div>
-                )}
-                {s.processing && s.stalled && (
-                  <div className="absolute inset-0 bg-black/65 flex flex-col items-center justify-center gap-1 px-1">
-                    <span className="text-[13px]">⏳</span>
-                    <span className="text-[9px] text-white font-medium leading-tight text-center">지연·다시 시도</span>
-                  </div>
-                )}
-                {s.failed && (
-                  <div className="absolute inset-0 bg-black/70 flex flex-col items-center justify-center gap-1 px-1">
-                    <span className="text-[13px]">↻</span>
-                    <span className="text-[9px] text-white font-medium leading-tight text-center">
-                      실패·다시 올리기
-                    </span>
-                  </div>
                 )}
               </div>
               <span className="text-[11px] text-text-secondary truncate w-full text-center">
