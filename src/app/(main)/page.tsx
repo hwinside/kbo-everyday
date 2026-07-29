@@ -3,9 +3,8 @@ import HomeClientShell from "@/components/home/HomeClientShell";
 import type { HomeGame } from "@/hooks/useHomeInit";
 import { PRESEASON_DATES } from "@/lib/constants/preseason-schedule";
 import type { LiveGameData } from "@/lib/hooks/useLiveGame";
-import { resolveCurrentPlayers } from "@/lib/kbo-player-mapping";
-import { fetchGames, isKboGameCancelled } from "@/lib/crawler/kbo-api";
-import type { KboRawGame } from "@/types/api";
+import { fetchGames } from "@/lib/crawler/kbo-api";
+import { fetchHomeLiveGames } from "@/lib/crawler/home-live-games";
 
 // Force dynamic rendering — game data changes throughout the day
 export const dynamic = "force-dynamic";
@@ -44,65 +43,9 @@ async function getInitialData(): Promise<{
       broadcastChannels: g.broadcastChannels,
     }));
 
-    // 2) 라이브 데이터 (KBO GameList — BSO/주자/타자/투수 포함)
-    let liveGames: LiveGameData[] = [];
-    try {
-      // 2026-05-20: KBO가 Referer가 koreabaseball.com이 아닌 요청을 IE 에러 페이지로 막음.
-      const res = await fetch("https://www.koreabaseball.com/ws/Main.asmx/GetKboGameList", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)",
-          "Referer": "https://www.koreabaseball.com/Schedule/ScoreBoard.aspx",
-        },
-        body: `leId=1&srId=0,1,3,4,5,7,8,9&date=${yyyymmdd}`,
-        next: { revalidate: 10 },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        liveGames = (data?.game || []).map((g: KboRawGame) => {
-          const status = isKboGameCancelled(g.CANCEL_SC_ID) ? "cancelled"
-            : g.GAME_STATE_SC === "3" ? "final"
-            : g.GAME_STATE_SC === "2" ? "live"
-            : "scheduled";
-          return {
-            gameId: g.G_ID,
-            awayName: g.AWAY_NM,
-            homeName: g.HOME_NM,
-            awayScore: status !== "scheduled" ? parseInt(g.T_SCORE_CN) || 0 : 0,
-            homeScore: status !== "scheduled" ? parseInt(g.B_SCORE_CN) || 0 : 0,
-            inning: g.GAME_INN_NO ?? 0,
-            isTop: g.GAME_TB_SC === "T",
-            balls: g.BALL_CN ?? 0,
-            strikes: g.STRIKE_CN ?? 0,
-            outs: g.OUT_CN ?? 0,
-            runner1b: (g.B1_BAT_ORDER_NO ?? 0) > 0,
-            runner2b: (g.B2_BAT_ORDER_NO ?? 0) > 0,
-            runner3b: (g.B3_BAT_ORDER_NO ?? 0) > 0,
-            runner1bOrder: g.B1_BAT_ORDER_NO ?? 0,
-            runner2bOrder: g.B2_BAT_ORDER_NO ?? 0,
-            runner3bOrder: g.B3_BAT_ORDER_NO ?? 0,
-            runner1bName: null,
-            runner2bName: null,
-            runner3bName: null,
-            ...resolveCurrentPlayers({
-              tPlayerName: g.T_P_NM,
-              bPlayerName: g.B_P_NM,
-              gameTbSc: g.GAME_TB_SC,
-            }),
-            date: g.G_DT,
-            stadium: g.S_NM,
-            status,
-            currentInning: g.GAME_INN_NO ? `${g.GAME_INN_NO}회${g.GAME_TB_SC === "T" ? "초" : "말"}` : "",
-            isLive: g.GAME_STATE_SC === "2",
-            awayStarterName: g.T_PIT_P_NM?.trim() || null,
-            homeStarterName: g.B_PIT_P_NM?.trim() || null,
-          } as LiveGameData;
-        });
-      }
-    } catch {
-      // live data fetch 실패해도 games만으로 진행
-    }
+    // 2) 라이브 데이터 (KBO GameList — BSO/주자/타자/투수 포함). bounded + 실패/열화 시
+    // 경기목록(gamesData, Naver 폴백 포함)에서 합성 — KBO blackhole 에도 홈 SSR 이 hang 안 함.
+    const liveGames: LiveGameData[] = await fetchHomeLiveGames(yyyymmdd, gamesData);
 
     return { games, liveGames, isPreseason: PRESEASON_DATES.includes(dateStr) };
   } catch {

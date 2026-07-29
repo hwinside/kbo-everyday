@@ -111,9 +111,35 @@ export function mapNaverGameToKbo(g: NaverScheduleGame, date: string): KboGame {
   };
 }
 
+/** Naver schedule 상태 코드 화이트리스트 — 이 밖의 미지값은 fail-close(합성 값으로 숨기지 않음). */
+const KNOWN_NAVER_STATUS = new Set(["READY", "BEFORE", "STARTED", "RESULT", "CANCEL", "POSTPONE", "SUSPENDED"]);
+
 /**
- * per-game sanity — 필수 필드/팀 id 검증. Naver `games:[{}]` 같은 부분/가짜 응답을
- * 성공으로 묻지 않는다(fail-close). 실제 KBO 경기는 양 팀 코드·해석된 teamId 가 항상 있다.
+ * raw NaverScheduleGame 원본 sanity — mapping 後 mapped 값만 검사하면 원본 결측이
+ * 합성 gameId/0:0/scheduled 로 숨어버린다. 따라서 매핑 전 원본 필드를 먼저 검증한다:
+ * - 원본 gameId/gameDateTime/양팀코드 필수·팀 해석(teamId>0)
+ * - status 는 known 상태만 허용(unknown/미지값 fail-close)
+ * - live/final 은 finite score 필수, live 는 이닝 정보(statusInfo "N회") 필수
+ */
+function isRawNaverGameSane(g: NaverScheduleGame): boolean {
+  if (!g.gameId || !g.gameDateTime || !g.homeTeamCode || !g.awayTeamCode) return false;
+  if (resolveTeamId(g.awayTeamCode, g.awayTeamName ?? "") <= 0) return false;
+  if (resolveTeamId(g.homeTeamCode, g.homeTeamName ?? "") <= 0) return false;
+  const sc = g.statusCode ?? "";
+  const knownStatus = KNOWN_NAVER_STATUS.has(sc) || g.cancel === true || g.suspended === true;
+  if (!knownStatus) return false; // unknown status → 합성 scheduled 로 숨기지 않고 fail-close
+  const status = mapStatus(g);
+  if (status === "live" || status === "final") {
+    // 진행/종료는 finite score 가 반드시 있어야 함(가짜 0:0 방지)
+    if (!Number.isFinite(g.awayTeamScore) || !Number.isFinite(g.homeTeamScore)) return false;
+    if (status === "live" && !/(\d+)회(초|말)/.test(g.statusInfo ?? "")) return false;
+  }
+  return true;
+}
+
+/**
+ * mapped 결과 방어적 재검증(이중). 원본은 isRawNaverGameSane 가 이미 걸렸지만,
+ * 매핑 결과의 gameId/teamId/name 도 비어있지 않은지 확인.
  */
 function isSaneGame(g: KboGame): boolean {
   return (
@@ -155,10 +181,19 @@ export async function fetchNaverGames(date: string, srId: string = DEFAULT_ALL_S
   if (data?.code !== 200 || data?.success !== true || !Array.isArray(data?.result?.games)) {
     throw new Error("Naver schedule 응답 sanity 실패(success/code/games)");
   }
-  const games = (data.result.games as NaverScheduleGame[]).map((g) => mapNaverGameToKbo(g, date));
-  // 경기 있는 응답인데 하나라도 sanity 실패면 부분/가짜 응답 — fail-close.
+  const rawGames = data.result.games as NaverScheduleGame[];
+  // 경기 있는 응답인데 원본 필드가 하나라도 결측/미지상태/점수결측이면 부분/가짜 응답 — fail-close.
+  if (rawGames.some((g) => !isRawNaverGameSane(g))) {
+    throw new Error("Naver schedule per-game sanity 실패(원본 필수 필드/상태/스코어 결측)");
+  }
+  const games = rawGames.map((g) => mapNaverGameToKbo(g, date));
+  // 매핑 gameId 유일성(회차 보존 실패로 DH 가 합쳐지면 상세/캐시/알림 키 충돌) — fail-close.
+  if (new Set(games.map((g) => g.gameId)).size !== games.length) {
+    throw new Error("Naver schedule gameId 중복(회차 보존 실패)");
+  }
+  // mapped 방어적 재검증(이중).
   if (games.some((g) => !isSaneGame(g))) {
-    throw new Error("Naver schedule per-game sanity 실패(팀 id/필수 필드 결측)");
+    throw new Error("Naver schedule per-game sanity 실패(mapped 팀 id/필수 필드)");
   }
   return games;
 }

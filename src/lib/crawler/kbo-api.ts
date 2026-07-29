@@ -160,6 +160,18 @@ function parseGame(raw: KboGameRaw): KboGame {
 }
 
 /** 특정 날짜 경기 목록 조회 */
+/**
+ * raw KBO 경기 원본 sanity — HTTP 200 이지만 per-game 필수 필드(경기id/날짜/팀)가
+ * 결측된 부분 열화(`game:[{}]`)를 정상으로 묻지 않는다. 하나라도 실패면
+ * 상위 fetchGames 가 schema-error 로 보고 Naver 폴백을 태운다.
+ */
+function isRawKboGameSane(raw: Partial<KboGameRaw> | null | undefined): boolean {
+  if (!raw?.G_ID || !raw?.G_DT || !raw?.AWAY_NM || !raw?.HOME_NM) return false;
+  if (resolveTeamId(raw.AWAY_ID ?? "", raw.AWAY_NM) <= 0) return false;
+  if (resolveTeamId(raw.HOME_ID ?? "", raw.HOME_NM) <= 0) return false;
+  return true;
+}
+
 export async function fetchGames(date: string, srId = "0,1,3,4,5,7,9"): Promise<KboGame[]> {
   try {
     const res = await fetch(`${KBO_BASE}/ws/Main.asmx/GetKboGameList`, {
@@ -184,10 +196,26 @@ export async function fetchGames(date: string, srId = "0,1,3,4,5,7,9"): Promise<
     const data = JSON.parse(jsonStr);
 
     // HTTP 200 스키마 열화 방어(2026-07-29 KBO 200 열화 인시던트): game 필드가 배열이
-    // 아니면(누락/null) 정상 무경기일(game:[])과 구분되지 않으므로 스키마 오류로 보고
-    // Naver 폴백을 태운다. 배열이면(빈 배열 포함) KBO 를 신뢰한다.
+    // 아니면(누락/null) 스키마 오류로 보고 Naver 폴백을 태운다.
     if (!Array.isArray(data.game)) {
       throw new Error("KBO GetKboGameList schema-error: game 필드 부재/비배열");
+    }
+
+    // per-game 부분 열화(`game:[{}]` 등 필수 필드 결측) → schema-error 로 Naver 폴백.
+    if (data.game.some((g: unknown) => !isRawKboGameSane(g as Partial<KboGameRaw>))) {
+      throw new Error("KBO GetKboGameList schema-error: per-game 필수 필드 결측");
+    }
+
+    // soft-empty: KBO 200 빈 응답(game:[])은 열화로 인한 것일 수 있어 Naver 로 교차확인한다.
+    // Naver 에 경기가 있으면 그것을 쓰고(=KBO 빈 응답은 열화), 양쪽 비면 정상 무경기일([]).
+    // 이 경로는 폴백 이벤트(trackFallback)를 쌓지 않는다(무경기일 노이즈 방지).
+    if (data.game.length === 0) {
+      try {
+        const { fetchNaverGames } = await import("@/lib/crawler/naver-games");
+        return await fetchNaverGames(date, srId); // Naver 경기 있으면 그것, 없으면 [](양쪽 빈=무경기)
+      } catch {
+        return []; // Naver 실패/특정 srId fail-close → KBO 빈 응답 존중
+      }
     }
 
     return data.game.map(parseGame);
