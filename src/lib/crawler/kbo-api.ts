@@ -42,7 +42,7 @@ const TEAM_CODE_MAP: Record<string, number> = {
 
 /** KBO 팀 코드 → 앱 teamId. 정규 10구단에 없으면 올스타(코드 → 팀명 순)로 해석,
  *  그래도 없으면 0. 올스타는 코드가 팀맵에 없어 예전엔 0으로 뭉개져 렌더가 터졌다. */
-function resolveTeamId(code: string, name: string): number {
+export function resolveTeamId(code: string, name: string): number {
   return TEAM_CODE_MAP[code] ?? ALLSTAR_CODE_TO_ID[code] ?? allstarTeamIdByName(name) ?? 0;
 }
 
@@ -198,6 +198,15 @@ export async function fetchGames(date: string, srId = "0,1,3,4,5,7,9"): Promise<
     await trackFallback("kbo-games", reason, {
       errorMessage: error.message,
     });
+
+    // Fallback: Naver schedule/games (일정+라이브 스코어). 소스 전환은 위 trackFallback 원장에 남는다.
+    try {
+      const { fetchNaverGames } = await import("@/lib/crawler/naver-games");
+      const naver = await fetchNaverGames(date);
+      if (naver.length) return naver;
+    } catch {
+      // Naver 도 실패 → 원래 KBO 에러로 throw.
+    }
 
     throw error;
   }
