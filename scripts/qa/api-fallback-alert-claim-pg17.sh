@@ -47,8 +47,8 @@ CREATE INDEX idx_afe_composite ON public.api_fallback_events(api_name, timestamp
 SQL
 "${PSQL[@]}" -f "$MIGRATION" >/dev/null
 
-pass=*** fail=0
-check() { if [ "$2" = "$3" ]; then pass=*** echo "  ✅ $1"; else fail=$((fail+1)); echo "  ❌ $1 (got: $2 / want: $3)"; fi; }
+pass=0 fail=0
+check() { if [ "$2" = "$3" ]; then pass=$((pass+1)); echo "  ✅ $1"; else fail=$((fail+1)); echo "  ❌ $1 (got: $2 / want: $3)"; fi; }
 API="kbo-scoreboard-linescore"
 
 echo "[20 커넥션 동시 claim — should_send 정확히 1건]"

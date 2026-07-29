@@ -29,6 +29,7 @@
     "qa:api-fallback-alert-claim:db": "tsx scripts/qa/api-fallback-alert-claim-db-integration.ts",
     "qa:api-fallback-alert-claim:pg17": "bash scripts/qa/api-fallback-alert-claim-pg17.sh",
     "qa:telegram-degradation-send": "tsx scripts/qa/telegram-degradation-send-smoke.ts",
+    "qa:api-fallback-confirm-boolean": "tsx scripts/qa/api-fallback-confirm-boolean-smoke.ts",
     "qa:admin-telemetry-retention:guard": "tsx scripts/qa/admin-telemetry-retention-coverage-guard-smoke.ts",
     "qa:retention-rolling": "tsx scripts/qa/retention-rolling-smoke.ts",
     "qa:leaderboard-cache": "tsx scripts/qa/leaderboard-cache-smoke.ts",

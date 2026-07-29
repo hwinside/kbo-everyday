@@ -282,7 +282,12 @@ async function deliverAndSettle(
   await settleAttempt(apiName, reason, options, policy, token);
 }
 
-/** 전송 시도 + 토큰 소유자 기준 confirm/nack. delivered(2xx) 여부 반환. */
+/**
+ * 전송 시도 + 토큰 소유자 기준 confirm/nack.
+ * 소유권을 실제로 소비(confirm=true)해 outbox 를 우리 토큰이 비운 경우에만 true.
+ * confirm 이 false(삼순 4차: 리스가 만료되어 drain 이 토큰을 먼저 회전시킴)면 이 시도는
+ * audit/state 를 바꾸지 않은 것이므로 sent 로 세지 않는다(drain 요약 이중카운트 방지).
+ */
 async function settleAttempt(
   apiName: string,
   reason: string,
@@ -291,21 +296,31 @@ async function settleAttempt(
   token: string,
 ): Promise<boolean> {
   const delivered = await sendDegradationTelegramAlert(apiName, reason, options, policy);
-  if (delivered) {
-    const { error } = await supabase.rpc("confirm_api_fallback_alert", {
-      p_api_name: apiName,
-      p_token: token,
-    });
-    if (error) console.error("[API Degradation] confirm RPC failed:", error.message);
-  } else {
+  if (!delivered) {
     const { error } = await supabase.rpc("nack_api_fallback_alert", {
       p_api_name: apiName,
       p_token: token,
       p_backoff_seconds: DEGRADATION_NACK_BACKOFF_SECONDS,
     });
     if (error) console.error("[API Degradation] nack RPC failed:", error.message);
+    return false;
   }
-  return delivered;
+  // 2xx ACK → confirm. 반환 boolean 을 반드시 확인: 토큰 소유자만 true(outbox 소비 + exact event sent).
+  const { data, error } = await supabase.rpc("confirm_api_fallback_alert", {
+    p_api_name: apiName,
+    p_token: token,
+  });
+  if (error) {
+    // 확정 RPC 자체 실패 → 소유 미확정(outbox durable 유지, drainer 가 재시도). sent 로 안 셀.
+    console.error("[API Degradation] confirm RPC failed:", error.message);
+    return false;
+  }
+  const confirmed = data === true;
+  if (!confirmed) {
+    // stale: 우리 토큰이 이미 재회전됨 → 이 시도는 audit(alert_sent)/state 를 바꾸지 않았음.
+    console.warn(`[API Degradation] confirm no-op(stale token) — ${apiName}`);
+  }
+  return confirmed;
 }
 
 /** 텔레그램 전송. 실제 HTTP 2xx(ACK) 이면 true, 그 외(토큰 부재/4xx/5xx/timeout)는 false. */
