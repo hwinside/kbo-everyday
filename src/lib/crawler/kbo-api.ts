@@ -172,13 +172,19 @@ function isRawKboGameSane(raw: Partial<KboGameRaw> | null | undefined): boolean 
   return true;
 }
 
-export async function fetchGames(date: string, srId = "0,1,3,4,5,7,9"): Promise<KboGame[]> {
+export async function fetchGames(
+  date: string,
+  srId = "0,1,3,4,5,7,9",
+  opts?: { timeoutMs?: number },
+): Promise<KboGame[]> {
   try {
     const res = await fetch(`${KBO_BASE}/ws/Main.asmx/GetKboGameList`, {
       method: "POST",
       headers: KBO_JSON_HEADERS,
       body: JSON.stringify({ leId: "1", srId, date }),
-      signal: AbortSignal.timeout(10000),
+      // 기본 10s(cron/배치 소비자). user-facing SSR(홈)은 짧은 budget 을 넘겨
+      // KBO blackhole 에서도 전체 응답이 빠르게 Naver 폴백으로 수렴한다.
+      signal: AbortSignal.timeout(opts?.timeoutMs ?? 10000),
     });
 
     if (!res.ok) {

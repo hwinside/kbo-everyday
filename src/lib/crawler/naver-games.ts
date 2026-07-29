@@ -60,7 +60,8 @@ export function extractGameSeq(naverGameId: string | undefined): string {
 function mapStatus(g: NaverScheduleGame): KboGame["status"] {
   const sc = g.statusCode ?? "";
   if (g.cancel || g.suspended || sc === "CANCEL" || sc === "POSTPONE") return "cancelled";
-  if (sc === "RESULT") return "final";
+  // 종료: RESULT(결과 확정) + ENDED(경기 종료 직후, 2026-07-29 21:09 실응답 두산-SSG 실측).
+  if (sc === "RESULT" || sc === "ENDED") return "final";
   if (sc === "STARTED") return "live";
   return "scheduled";
 }
@@ -112,7 +113,7 @@ export function mapNaverGameToKbo(g: NaverScheduleGame, date: string): KboGame {
 }
 
 /** Naver schedule 상태 코드 화이트리스트 — 이 밖의 미지값은 fail-close(합성 값으로 숨기지 않음). */
-const KNOWN_NAVER_STATUS = new Set(["READY", "BEFORE", "STARTED", "RESULT", "CANCEL", "POSTPONE", "SUSPENDED"]);
+const KNOWN_NAVER_STATUS = new Set(["READY", "BEFORE", "STARTED", "ENDED", "RESULT", "CANCEL", "POSTPONE", "SUSPENDED"]);
 
 /**
  * raw NaverScheduleGame 원본 sanity — mapping 後 mapped 값만 검사하면 원본 결측이

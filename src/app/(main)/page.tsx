@@ -4,7 +4,10 @@ import type { HomeGame } from "@/hooks/useHomeInit";
 import { PRESEASON_DATES } from "@/lib/constants/preseason-schedule";
 import type { LiveGameData } from "@/lib/hooks/useLiveGame";
 import { fetchGames } from "@/lib/crawler/kbo-api";
-import { fetchHomeLiveGames } from "@/lib/crawler/home-live-games";
+import { liveGamesFromKboGames } from "@/lib/crawler/home-live-games";
+
+// 홈 SSR 의 user-facing KBO budget. blackhole 여도 홈 전체가 KBO 3.5s + Naver 5s 안에 수렴.
+const HOME_KBO_BUDGET_MS = 3500;
 
 // Force dynamic rendering — game data changes throughout the day
 export const dynamic = "force-dynamic";
@@ -24,8 +27,8 @@ async function getInitialData(): Promise<{
     const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
     const yyyymmdd = dateStr.replace(/-/g, "");
 
-    // 1) 경기 목록
-    const gamesData = await fetchGames(yyyymmdd);
+    // 1) 경기 목록 — user-facing 짧은 budget(KBO blackhole 시에도 Naver 폴백까지 bounded).
+    const gamesData = await fetchGames(yyyymmdd, undefined, { timeoutMs: HOME_KBO_BUDGET_MS });
     const games: HomeGame[] = gamesData.map((g: { gameId: string; homeTeamId: number; awayTeamId: number; time: string; stadium: string; homeScore?: number | null; awayScore?: number | null; status: string; inning?: number; isTop?: boolean; awayStarterName?: string | null; homeStarterName?: string | null; winPitcher?: string | null; losePitcher?: string | null; broadcastChannels?: HomeGame["broadcastChannels"] }) => ({
       id: g.gameId,
       homeTeamId: g.homeTeamId,
@@ -43,9 +46,9 @@ async function getInitialData(): Promise<{
       broadcastChannels: g.broadcastChannels,
     }));
 
-    // 2) 라이브 데이터 (KBO GameList — BSO/주자/타자/투수 포함). bounded + 실패/열화 시
-    // 경기목록(gamesData, Naver 폴백 포함)에서 합성 — KBO blackhole 에도 홈 SSR 이 hang 안 함.
-    const liveGames: LiveGameData[] = await fetchHomeLiveGames(yyyymmdd, gamesData);
+    // 2) 라이브 데이터 — 경기목록에서 순수 변환(2차 KBO 직호출 제거). fetchGames 응답에
+    // BSO/주자/현재 투타가 이미 포함되어 있고, Naver 폴백 시엔 graceful degrade.
+    const liveGames: LiveGameData[] = liveGamesFromKboGames(gamesData);
 
     return { games, liveGames, isPreseason: PRESEASON_DATES.includes(dateStr) };
   } catch {

@@ -9,7 +9,7 @@ import "./_smoke-env";
 import assert from "node:assert/strict";
 import { fetchGames } from "../../src/lib/crawler/kbo-api";
 import { fetchNaverGames, mapNaverGameToKbo, extractGameSeq } from "../../src/lib/crawler/naver-games";
-import { fetchHomeLiveGames } from "../../src/lib/crawler/home-live-games";
+import { liveGamesFromKboGames } from "../../src/lib/crawler/home-live-games";
 
 const DATE = "20260729";
 
@@ -342,9 +342,10 @@ const keepAlive = setInterval(() => {}, 1000);
   restoreFetch();
 }
 
-// ── 14. 홈 SSR bounded(P0): KBO blackhole → fetchHomeLiveGames 가 budget 안에 합성으로 수렴 ───
+// ── 14. 홈 full-path bounded(P0): KBO blackhole + Naver 5경기(STARTED+ENDED 혼합) →
+//        fetchGames(짧은 budget)+순수변환이 홈 전체 데이터를 bounded 로 수렴 ───
 {
-  // blackhole stub: abort 시그널을 존중하는 영원 pending fetch.
+  // blackhole stub: KBO 는 abort 시그널 존중 영원 pending, Naver 는 정상 5경기(실응답 모양).
   globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input.toString();
     if (url.includes("GetKboGameList")) {
@@ -354,54 +355,66 @@ const keepAlive = setInterval(() => {}, 1000);
           if (signal.aborted) return reject(new DOMException("aborted", "AbortError"));
           signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true });
         }
-        // signal 없으면 영원히 pending(이게 기존 홈 hang 재현이자, bounded 강제 회귀)
       });
+    }
+    if (url.includes("schedule/games")) {
+      return Promise.resolve(jsonResponse({ code: 200, success: true, result: { games: [
+        naverGame({ gameId: "20260729OBSK02026", awayTeamCode: "OB", awayTeamName: "두산", homeTeamCode: "SK", homeTeamName: "SSG", statusCode: "ENDED", statusInfo: "9회말", homeTeamScore: 4, awayTeamScore: 6 }),
+        naverGame({ gameId: "20260729WOLG02026", awayTeamCode: "WO", awayTeamName: "키움", homeTeamCode: "LG", homeTeamName: "LG", statusCode: "STARTED", statusInfo: "7회초", homeTeamScore: 2, awayTeamScore: 1 }),
+        naverGame({ gameId: "20260729HTSS02026", statusCode: "STARTED", statusInfo: "6회말", homeTeamScore: 3, awayTeamScore: 3 }),
+        naverGame({ gameId: "20260729KTNC02026", awayTeamCode: "KT", awayTeamName: "KT", homeTeamCode: "NC", homeTeamName: "NC", statusCode: "STARTED", statusInfo: "5회초", homeTeamScore: 0, awayTeamScore: 2 }),
+        naverGame({ gameId: "20260729LTHH02026", awayTeamCode: "LT", awayTeamName: "롯데", homeTeamCode: "HH", homeTeamName: "한화", statusCode: "STARTED", statusInfo: "4회말", homeTeamScore: 5, awayTeamScore: 0 }),
+      ] } }));
     }
     throw new Error(`unexpected url ${url}`);
   }) as typeof fetch;
-  const fallbackGames = [
-    mapNaverGameToKbo(naverGame({ statusCode: "STARTED", statusInfo: "5회초", homeTeamScore: 2, awayTeamScore: 3 }), DATE),
-  ];
   const t0 = Date.now();
-  const live = await fetchHomeLiveGames(DATE, fallbackGames, { budgetMs: 300 });
+  // 홈과 동일 경로: 짧은 user-facing budget → Naver 폴백 → 순수변환. 2차 KBO 호출 없음.
+  const gamesData = await fetchGames(DATE, undefined, { timeoutMs: 300 });
+  const live = liveGamesFromKboGames(gamesData);
   const elapsed = Date.now() - t0;
   restoreFetch();
-  assert.ok(elapsed < 2000, `bounded 수렴 실패: ${elapsed}ms`); // blackhole 이어도 budget 안 수렴
-  assert.equal(live.length, 1); // 경기목록(Naver 폴백)에서 합성
-  assert.equal(live[0].status, "live");
-  assert.equal(live[0].awayScore, 3);
-  assert.equal(live[0].isLive, true);
-  assert.equal(live[0].currentInning, "5회초");
+  assert.ok(elapsed < 2000, `홈 full-path bounded 수렴 실패: ${elapsed}ms`); // 10s 전체 대기 없음
+  assert.equal(gamesData.length, 5);
+  assert.equal(live.length, 5);
+  const ended = live.find((g) => g.gameId === "20260729OBSK0");
+  assert.equal(ended?.status, "final"); // ENDED → final
+  assert.equal(ended?.awayScore, 6);
+  const started = live.find((g) => g.gameId === "20260729WOLG0");
+  assert.equal(started?.isLive, true);
+  assert.equal(started?.currentInning, "7회초");
 }
 
-// ── 15. 홈 SSR: KBO 라이브 정상 응답 → 상세(BSO 포함) 사용 ───
+// ── 15. 홈 변환: KBO 정상 응답이면 BSO/주자/현재 투타 상세가 그대로 살아있음 ───
 {
   stubFetch((url) => {
     if (url.includes("GetKboGameList")) {
-      return jsonResponse({ game: [{ G_ID: "20260729HTSS0", G_DT: "20260729", G_TM: "18:30", S_NM: "대구", AWAY_ID: "HT", AWAY_NM: "KIA", HOME_ID: "SS", HOME_NM: "삼성", GAME_STATE_SC: "2", CANCEL_SC_ID: "0", GAME_TB_SC: "T", GAME_INN_NO: 5, T_SCORE_CN: "3", B_SCORE_CN: "2", STRIKE_CN: 2, BALL_CN: 1, OUT_CN: 1, B1_BAT_ORDER_NO: 4 }] });
+      return jsonResponse({ game: [{ G_ID: "20260729HTSS0", G_DT: "20260729", G_TM: "18:30", S_NM: "대구", AWAY_ID: "HT", AWAY_NM: "KIA", HOME_ID: "SS", HOME_NM: "삼성", GAME_STATE_SC: "2", CANCEL_SC_ID: "0", GAME_TB_SC: "T", GAME_INN_NO: 5, T_SCORE_CN: "3", B_SCORE_CN: "2", STRIKE_CN: 2, BALL_CN: 1, OUT_CN: 1, B1_BAT_ORDER_NO: 4, T_P_NM: "김타자", B_P_NM: "박투수" }] });
     }
     throw new Error(`unexpected url ${url}`);
   });
-  const live = await fetchHomeLiveGames(DATE, [], { budgetMs: 1000 });
+  const live = liveGamesFromKboGames(await fetchGames(DATE));
   restoreFetch();
   assert.equal(live.length, 1);
-  assert.equal(live[0].strikes, 2); // 상세(BSO)는 KBO 직접 응답에서만
+  assert.equal(live[0].strikes, 2); // BSO 상세 보존(2차 호출 없이 fetchGames 응답에서)
+  assert.equal(live[0].balls, 1);
   assert.equal(live[0].runner1b, true);
+  assert.equal(live[0].currentBatter, "김타자"); // 초 공격 → T_P_NM 이 타자
+  assert.equal(live[0].currentPitcher, "박투수");
   assert.equal(live[0].isLive, true);
 }
 
-// ── 16. 홈 SSR: KBO 라이브 빈/열화 응답 → 경기목록에서 합성 ───
+// ── 16. Naver ENDED 단위: mapStatus/raw sanity 가 ENDED 를 final 로 수용 (P0) ───
 {
-  stubFetch((url) => {
-    if (url.includes("GetKboGameList")) return jsonResponse({}); // 열화
-    throw new Error(`unexpected url ${url}`);
-  });
-  const fallbackGames = [mapNaverGameToKbo(naverGame({ statusCode: "RESULT", statusInfo: "9회말", homeTeamScore: 7, awayTeamScore: 1 }), DATE)];
-  const live = await fetchHomeLiveGames(DATE, fallbackGames, { budgetMs: 1000 });
+  const g = mapNaverGameToKbo(naverGame({ statusCode: "ENDED", statusInfo: "9회말", homeTeamScore: 4, awayTeamScore: 6 }), DATE);
+  assert.equal(g.status, "final");
+  assert.equal(g.awayScore, 6);
+  // fetchNaverGames 경로에서도 ENDED 가 sanity 통과(실응답 혼합은 #14 가 커버)
+  stubFetch(() => jsonResponse({ code: 200, success: true, result: { games: [naverGame({ statusCode: "ENDED", statusInfo: "9회말", homeTeamScore: 4, awayTeamScore: 6 })] } }));
+  const games = await fetchNaverGames(DATE);
   restoreFetch();
-  assert.equal(live.length, 1);
-  assert.equal(live[0].status, "final");
-  assert.equal(live[0].homeScore, 7);
+  assert.equal(games.length, 1);
+  assert.equal(games[0].status, "final");
 }
 
 clearInterval(keepAlive);
