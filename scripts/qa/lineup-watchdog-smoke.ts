@@ -1,6 +1,7 @@
 /**
- * 라인업 확정 watchdog 오케스트레이터 회귀 (삼순 #952 NO-GO ①②) — 실제 runLineupWatchdog 를
- * 주입 fake 로 구동. snapshot-first 순서 · systemic 실패 status · scheduled-only · 공정 drain · deadline.
+ * 라인업 확정 watchdog 오케스트레이터 회귀 (삼순 #952 NO-GO 1·2차) — 실제 runLineupWatchdog 를
+ * 주입 fake 로 구동. 격리 병렬 파이프라인 · all-null→failed · partial open→failed ·
+ * 첫 drain hang 에도 뒤 대상 drain · systemic 실패 status · scheduled-only · deadline.
  * 실행: npm run qa:lineup-watchdog
  */
 import "./_smoke-env"; // supabase/admin 싱글톤이 모듈 로드 시 env 요구 → 더미 선주입(fake 주입이라 실 호출 없음)
@@ -30,146 +31,169 @@ function batch(over: Partial<{ claimed: number; pending: number; snapshotComplet
     fcmAcceptedTotal: 1, permanentFailed: 0, expired: 0,
   };
 }
+const later = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function main() {
-  // ── snapshot-first: 모든 open 이 어떤 drain 보다 먼저 (앞 팀 느린 drain 이 뒤 팀 원장 생성을 못 굶김) ──
+  // ── 확정 2경기 → 4 대상 전부 open+drain (격리 병렬) ──
   {
-    const log: string[] = [];
-    const games = [game("20260729LGWO0", "scheduled", 1, 10), game("20260729KTNC0", "scheduled", 3, 5)];
+    const opened = new Set<string>();
+    const drained = new Set<string>();
     const deps: Partial<LineupWatchdogDeps> = {
-      fetchGames: async () => games,
+      fetchGames: async () => [game("G1", "scheduled", 1, 10), game("G2", "scheduled", 3, 5)],
       fetchLineupConfirmed: async () => true,
-      openSnapshot: async (t) => { log.push(`open:${t.gameId}:${t.teamId}`); return Date.now() + 60_000; },
-      deliverBatch: async (t) => { log.push(`drain:${t.gameId}:${t.teamId}`); return batch(); },
+      openSnapshot: async (t) => { opened.add(`${t.gameId}:${t.teamId}`); return Date.now() + 60_000; },
+      deliverBatch: async (t) => { drained.add(`${t.gameId}:${t.teamId}`); return batch(); },
       now: () => Date.now(),
     };
     const r = await runLineupWatchdog({ dateStr: "20260729", deadlineAtMs: Date.now() + 16_000, deps });
-    const firstDrain = log.findIndex((l) => l.startsWith("drain:"));
-    const lastOpen = log.map((l) => l.startsWith("open:")).lastIndexOf(true);
-    ok("확정 2경기 → 4 대상 snapshot", r.summary.snapshotsOpened === 4);
-    ok("snapshot-first: 모든 open 이 첫 drain 보다 앞", lastOpen < firstDrain);
-    ok("status ok", r.status === "ok");
-    ok("accepted 집계", r.summary.accepted === 4);
+    ok("확정 2경기 → 4 대상 open", opened.size === 4 && r.summary.snapshotsOpened === 4);
+    ok("4 대상 전부 drain", drained.size === 4);
+    ok("status ok", r.status === "ok" && r.summary.accepted === 4);
   }
 
-  // ── scheduled-only: cancelled/live/final 은 라인업 조회·대상 제외 (fail-safe) ──
+  // ── (삼순 P1-1) all-null probe → failed (엔드포인트 열화, 정상 미확정과 구분) ──
   {
-    const fetched: string[] = [];
-    const games = [
-      game("A", "scheduled", 1, 2), game("B", "cancelled", 3, 4),
-      game("C", "live", 5, 6), game("D", "final", 7, 8),
-    ];
     const r = await runLineupWatchdog({
       dateStr: "20260729", deadlineAtMs: Date.now() + 16_000,
       deps: {
-        fetchGames: async () => games,
-        fetchLineupConfirmed: async (id) => { fetched.push(id); return true; },
+        fetchGames: async () => [game("G1", "scheduled", 1, 2), game("G2", "scheduled", 3, 4)],
+        fetchLineupConfirmed: async () => null, // 전건 신호 없음(네트워크/HTTP/파싱 실패 흡수)
         openSnapshot: async () => Date.now() + 60_000,
         deliverBatch: async () => batch(),
         now: () => Date.now(),
+      },
+    });
+    ok("all-null probe → status failed(502)", r.status === "failed");
+    ok("all-null → lineupSignals 0", r.summary.lineupSignals === 0);
+  }
+  // ── all-throw probe → failed (동일 열화) ──
+  {
+    const r = await runLineupWatchdog({
+      dateStr: "20260729", deadlineAtMs: Date.now() + 16_000,
+      deps: {
+        fetchGames: async () => [game("G1", "scheduled", 1, 2)],
+        fetchLineupConfirmed: async () => { throw new Error("kbo lineup down"); },
+        openSnapshot: async () => Date.now() + 60_000,
+        deliverBatch: async () => batch(), now: () => Date.now(),
+      },
+    });
+    ok("all-throw probe → status failed", r.status === "failed");
+  }
+
+  // ── 건강한 미확정(all-false) → ok, 대상 0 (정상 미확정은 false 신호를 주므로 열화 아님) ──
+  {
+    const r = await runLineupWatchdog({
+      dateStr: "20260729", deadlineAtMs: Date.now() + 16_000,
+      deps: {
+        fetchGames: async () => [game("G1", "scheduled", 1, 2), game("G2", "scheduled", 3, 4)],
+        fetchLineupConfirmed: async () => false,
+        openSnapshot: async () => Date.now() + 60_000, deliverBatch: async () => batch(), now: () => Date.now(),
+      },
+    });
+    ok("건강한 미확정(false) → status ok", r.status === "ok");
+    ok("미확정 → 대상 0, signals 2", r.summary.targets === 0 && r.summary.lineupSignals === 2);
+  }
+  // ── 일부만 신호 있음(1 true, 1 null) → ok (신호 0건 아님) ──
+  {
+    const r = await runLineupWatchdog({
+      dateStr: "20260729", deadlineAtMs: Date.now() + 16_000,
+      deps: {
+        fetchGames: async () => [game("G1", "scheduled", 1, 2), game("G2", "scheduled", 3, 4)],
+        fetchLineupConfirmed: async (id) => (id === "G1" ? true : null),
+        openSnapshot: async () => Date.now() + 60_000, deliverBatch: async () => batch(), now: () => Date.now(),
+      },
+    });
+    ok("1 true + 1 null → ok(신호>0)", r.status === "ok" && r.summary.confirmed === 1 && r.summary.snapshotsOpened === 2);
+  }
+
+  // ── (삼순 P1-2) partial open 실패(4 대상 중 3 snapshot RPC 실패) → failed ──
+  {
+    const r = await runLineupWatchdog({
+      dateStr: "20260729", deadlineAtMs: Date.now() + 16_000,
+      deps: {
+        fetchGames: async () => [game("G1", "scheduled", 1, 10), game("G2", "scheduled", 3, 5)],
+        fetchLineupConfirmed: async () => true,
+        openSnapshot: async (t) => {
+          if (`${t.gameId}:${t.teamId}` === "G1:1") return Date.now() + 60_000; // 1개만 성공
+          throw new Error("db down");
+        },
+        deliverBatch: async () => batch(), now: () => Date.now(),
+      },
+    });
+    ok("4 대상 중 3 open 실패 → failed(durable health 불량)", r.status === "failed");
+    ok("open 성공 1·실패 3 집계", r.summary.snapshotsOpened === 1 && r.summary.snapshotOpenErrors === 3);
+  }
+
+  // ── (삼순 P1-2) 격리: 첫 대상 drain hang(늦게 reject)이어도 뒤 대상들은 drain 완주 ──
+  {
+    const drained = new Set<string>();
+    const r = await runLineupWatchdog({
+      dateStr: "20260729", deadlineAtMs: Date.now() + 16_000,
+      deps: {
+        fetchGames: async () => [game("G1", "scheduled", 1, 10), game("G2", "scheduled", 3, 5), game("G3", "scheduled", 6, 7)],
+        fetchLineupConfirmed: async () => true,
+        openSnapshot: async () => Date.now() + 60_000,
+        deliverBatch: async (t) => {
+          const key = `${t.gameId}:${t.teamId}`;
+          if (key === "G1:1") { await later(40); throw new Error("rpc abort (deadline)"); } // 첫 대상 hang→reject
+          drained.add(key);
+          return batch();
+        },
+        now: () => Date.now(),
+      },
+    });
+    ok("첫 대상 drain hang 이어도 뒤 5 대상 전부 drain(격리)", drained.size === 5);
+    ok("첫 대상 drain 실패 집계(drainErrors 1)", r.summary.drainErrors === 1);
+    ok("open 6 성공이므로 status ok(open 실패 없음)", r.status === "ok" && r.summary.snapshotsOpened === 6);
+  }
+
+  // ── scheduled-only: cancelled/live/final 은 라인업 조회·대상 제외 ──
+  {
+    const fetched: string[] = [];
+    const r = await runLineupWatchdog({
+      dateStr: "20260729", deadlineAtMs: Date.now() + 16_000,
+      deps: {
+        fetchGames: async () => [game("A", "scheduled", 1, 2), game("B", "cancelled", 3, 4), game("C", "live", 5, 6), game("D", "final", 7, 8)],
+        fetchLineupConfirmed: async (id) => { fetched.push(id); return true; },
+        openSnapshot: async () => Date.now() + 60_000, deliverBatch: async () => batch(), now: () => Date.now(),
       },
     });
     ok("scheduled 1경기만 라인업 조회", fetched.length === 1 && fetched[0] === "A");
     ok("scheduled 1경기 → 2 대상", r.summary.targets === 2);
   }
 
-  // ── 미확정/ null 은 대상 아님 ──
-  {
-    const r = await runLineupWatchdog({
-      dateStr: "20260729", deadlineAtMs: Date.now() + 16_000,
-      deps: {
-        fetchGames: async () => [game("A", "scheduled", 1, 2), game("B", "scheduled", 3, 4)],
-        fetchLineupConfirmed: async (id) => (id === "A" ? false : null),
-        openSnapshot: async () => Date.now() + 60_000,
-        deliverBatch: async () => batch(),
-        now: () => Date.now(),
-      },
-    });
-    ok("미확정(false)·신호없음(null) → 대상 0", r.summary.targets === 0 && r.summary.confirmed === 0);
-    ok("대상 0 → status ok(정상)", r.status === "ok");
-  }
-
-  // ── systemic 실패 ①: fetchGames throw → failed ──
+  // ── systemic ①: fetchGames throw → failed ──
   {
     const r = await runLineupWatchdog({
       dateStr: "20260729", deadlineAtMs: Date.now() + 16_000,
       deps: { fetchGames: async () => { throw new Error("kbo down"); }, now: () => Date.now() },
     });
-    ok("KBO 목록 실패 → status failed(non-2xx)", r.status === "failed" && r.error === "kbo down");
+    ok("KBO 목록 실패 → failed", r.status === "failed" && r.error === "kbo down");
   }
 
-  // ── systemic 실패 ②: 확정 대상 있는데 snapshot 전건 실패 → failed(false-green 차단) ──
+  // ── 대상 0(경기 없음) → ok ──
   {
     const r = await runLineupWatchdog({
       dateStr: "20260729", deadlineAtMs: Date.now() + 16_000,
+      deps: { fetchGames: async () => [], now: () => Date.now() },
+    });
+    ok("경기 0 → ok(신호 probe 0이라 열화 아님)", r.status === "ok" && r.summary.scheduled === 0);
+  }
+
+  // ── deadline 즉시 → open/drain 0 ──
+  {
+    let opens = 0, drains = 0;
+    const r = await runLineupWatchdog({
+      dateStr: "20260729", deadlineAtMs: 1_000_000,
       deps: {
         fetchGames: async () => [game("A", "scheduled", 1, 2)],
         fetchLineupConfirmed: async () => true,
-        openSnapshot: async () => { throw new Error("db down"); },
-        deliverBatch: async () => batch(),
-        now: () => Date.now(),
+        openSnapshot: async () => { opens++; return 1_000_000 + 60_000; },
+        deliverBatch: async () => { drains++; return batch(); },
+        now: () => 1_000_000,
       },
     });
-    ok("확정 대상 있는데 원장 0개 → failed", r.status === "failed" && r.summary.snapshotOpenErrors === 2 && r.summary.snapshotsOpened === 0);
-  }
-
-  // ── systemic 실패 ③: 라인업 조회 전건 throw → failed ──
-  {
-    const r = await runLineupWatchdog({
-      dateStr: "20260729", deadlineAtMs: Date.now() + 16_000,
-      deps: {
-        fetchGames: async () => [game("A", "scheduled", 1, 2), game("B", "scheduled", 3, 4)],
-        fetchLineupConfirmed: async () => { throw new Error("lineup fetch fail"); },
-        openSnapshot: async () => Date.now() + 60_000,
-        deliverBatch: async () => batch(),
-        now: () => Date.now(),
-      },
-    });
-    ok("라인업 조회 전건 실패 → failed", r.status === "failed");
-  }
-
-  // ── 공정 round-robin: 대상별 1 batch 씩 순회(t1,t2,t1,t2), 한 대상 독점 아님 ──
-  {
-    const drainLog: string[] = [];
-    const pendingLeft: Record<string, number> = { "A:1": 2, "A:2": 2 };
-    const r = await runLineupWatchdog({
-      dateStr: "20260729", deadlineAtMs: Date.now() + 16_000,
-      deps: {
-        fetchGames: async () => [game("A", "scheduled", 1, 2)],
-        fetchLineupConfirmed: async () => true,
-        openSnapshot: async () => Date.now() + 60_000,
-        deliverBatch: async (t) => {
-          const key = `${t.gameId}:${t.teamId}`;
-          drainLog.push(key);
-          pendingLeft[key] -= 1;
-          const p = pendingLeft[key] > 0 ? 1 : 0;
-          // 실제 finalize 는 pending=0 인 완료 batch 에서만 snapshotCompleted=true.
-          return batch({ pending: p, snapshotCompleted: p === 0 });
-        },
-        now: () => Date.now(),
-      },
-    });
-    ok("두 대상 각 2 batch drain", drainLog.length === 4);
-    ok("round-robin 인터리브(A:1,A:2,A:1,A:2)", drainLog[0] !== drainLog[1] && drainLog[1] === drainLog[3]);
-    ok("전 대상 완료 → snapshotsCompleted 2", r.summary.snapshotsCompleted === 2);
-  }
-
-  // ── deadline: 예산 소진이면 drain 진입 안 함 ──
-  {
-    const clock = 1_000_000;
-    const games = [game("A", "scheduled", 1, 2)];
-    let drained = 0;
-    const r = await runLineupWatchdog({
-      dateStr: "20260729", deadlineAtMs: 1_000_000, // 시작부터 deadline
-      deps: {
-        fetchGames: async () => games,
-        fetchLineupConfirmed: async () => true,
-        openSnapshot: async () => clock + 60_000,
-        deliverBatch: async () => { drained++; return batch(); },
-        now: () => clock,
-      },
-    });
-    ok("deadline 즉시 → drain 0회", drained === 0);
+    ok("deadline 즉시 → open/drain 0", opens === 0 && drains === 0);
     void r;
   }
 

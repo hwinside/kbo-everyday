@@ -1,14 +1,14 @@
 /**
- * 라인업 확정 알림 watchdog 오케스트레이터 (삼순 #952 NO-GO 반영).
+ * 라인업 확정 알림 watchdog 오케스트레이터 (삼순 #952 NO-GO 1·2차 반영).
  *
  * 설계 원칙
- * - snapshot-first: 확정된 모든 (game,team) 대상의 durable 원장을 **먼저 전부 생성**한 뒤 drain 한다.
- *   앞 팀의 느린 FCM drain 이 뒤 팀의 원장 생성을 굶겨 경기 시작 전 미발송되는 것을 막는다(gate ②).
- * - 공정 round-robin drain: 남은 예산 안에서 대상별 1 batch 씩 순회. 원장은 durable 하므로 이번 tick
- *   에 다 못 보내도 다음 cron 이 이어 보낸다.
- * - deadline 전파: 모든 DB RPC 는 잔여 예산으로 abort(delivery 모듈이 담당).
- * - false-green 차단: KBO 목록 실패, 확정 대상이 있는데 원장 0개, 라인업 조회 전건 실패 →
- *   status='failed' 로 반환해 route 가 non-2xx 로 노출한다(gate ①).
+ * - 감지·open·drain 모두 **격리된 병렬 파이프라인**(game-status runGamePipeline 패턴). 한 대상의
+ *   느린 KBO/DB/FCM 이 다른 대상을 굶기지 않는다(공유 join 지점 없음, 각자 deadline 으로 self-abort).
+ * - snapshot 은 cheap·durable. 이번 tick 에 못 보낸 대상은 원장이 남아 다음 cron 이 이어 보낸다.
+ * - false-green 차단(gate ①): (a) KBO 목록 실패 (b) 라인업 조회 전건이 정의적 신호(true/false) 0건
+ *   (=all-null/all-throw: 엔드포인트 열화) (c) 확정 대상이 있는데 snapshot RPC 가 하나라도 실패
+ *   → status='failed' 로 route 가 non-2xx 노출. (b)는 정상 미확정(LINEUP_CK=false)과 구분된다:
+ *   건강한 미확정은 `false` 신호를 주므로 signalCount>0 → ok.
  */
 import type { KboGame } from "@/lib/crawler/kbo-api";
 import { fetchGames as realFetchGames } from "@/lib/crawler/kbo-api";
@@ -34,6 +34,8 @@ export interface LineupWatchdogDeps {
 
 export interface LineupWatchdogSummary {
   scheduled: number;
+  lineupProbes: number;
+  lineupSignals: number; // 정의적 true/false 신호 수(엔드포인트 건강 지표)
   confirmed: number;
   targets: number;
   snapshotsOpened: number;
@@ -50,6 +52,8 @@ export interface LineupWatchdogResult {
   error?: string;
 }
 
+const MAX_BATCHES_PER_TARGET = 8;
+
 export async function runLineupWatchdog(args: {
   dateStr: string;
   deadlineAtMs: number;
@@ -65,8 +69,8 @@ export async function runLineupWatchdog(args: {
   const lineupFetchMs = args.lineupFetchMs ?? 3_000;
 
   const summary: LineupWatchdogSummary = {
-    scheduled: 0, confirmed: 0, targets: 0, snapshotsOpened: 0,
-    snapshotOpenErrors: 0, snapshotsCompleted: 0, accepted: 0, drainErrors: 0,
+    scheduled: 0, lineupProbes: 0, lineupSignals: 0, confirmed: 0, targets: 0,
+    snapshotsOpened: 0, snapshotOpenErrors: 0, snapshotsCompleted: 0, accepted: 0, drainErrors: 0,
   };
 
   let games: KboGame[];
@@ -80,31 +84,36 @@ export async function runLineupWatchdog(args: {
   const scheduled = games.filter((g) => g.status === "scheduled");
   summary.scheduled = scheduled.length;
 
-  // 확정 감지 → 홈/원정 대상 수집.
+  // ── Phase 0: 확정 감지 — 병렬 격리(각 probe 는 자체 timeoutMs). null/throw = 신호 없음. ──
+  const probes = await Promise.all(
+    scheduled.map(async (game) => {
+      if (now() >= deadlineAtMs) return { game, ck: null as boolean | null };
+      try {
+        return { game, ck: await fetchLineupConfirmed(game.gameId, { timeoutMs: lineupFetchMs }) };
+      } catch {
+        return { game, ck: null as boolean | null };
+      }
+    }),
+  );
+  summary.lineupProbes = scheduled.length;
   const targets: Array<{ gameId: string; teamId: number; gameTimeKst: string }> = [];
-  let lineupFetchAttempts = 0;
-  let lineupFetchErrors = 0;
-  for (const game of scheduled) {
-    if (now() >= deadlineAtMs) break;
-    lineupFetchAttempts++;
-    let confirmed: boolean | null;
-    try {
-      confirmed = await fetchLineupConfirmed(game.gameId, { timeoutMs: lineupFetchMs });
-    } catch {
-      lineupFetchErrors++;
-      continue;
+  for (const p of probes) {
+    if (p.ck === true || p.ck === false) summary.lineupSignals++;
+    if (p.ck === true) {
+      summary.confirmed++;
+      targets.push({ gameId: p.game.gameId, teamId: p.game.homeTeamId, gameTimeKst: p.game.time });
+      targets.push({ gameId: p.game.gameId, teamId: p.game.awayTeamId, gameTimeKst: p.game.time });
     }
-    if (confirmed !== true) continue;
-    summary.confirmed++;
-    targets.push({ gameId: game.gameId, teamId: game.homeTeamId, gameTimeKst: game.time });
-    targets.push({ gameId: game.gameId, teamId: game.awayTeamId, gameTimeKst: game.time });
   }
   summary.targets = targets.length;
 
-  // ── Phase 1: snapshot-first — 확정 대상 원장을 전부 먼저 생성(cheap·durable) ──
-  const opened: Array<{ target: LineupDeliveryTarget; snapshotDeadlineAtMs: number; done: boolean }> = [];
-  for (const t of targets) {
-    if (now() >= deadlineAtMs) break;
+  // false-green 차단(gate ①-b): scheduled 경기가 있는데 정의적 신호가 0건 = 엔드포인트 열화(all-null/throw).
+  // 건강한 미확정은 LINEUP_CK=false 신호를 주므로 signalCount>0 → 여기 안 걸림.
+  const allProbesNoSignal = summary.lineupProbes > 0 && summary.lineupSignals === 0;
+
+  // ── Phase 1+2: 대상별 격리 파이프라인(open→drain) 병렬. 한 대상의 hang/실패가 다른 대상을 안 굶김. ──
+  const runTargetPipeline = async (t: { gameId: string; teamId: number; gameTimeKst: string }) => {
+    if (now() >= deadlineAtMs) return;
     const msg = formatLineupConfirmMessage({ teamId: t.teamId, confirmedAt: new Date(now()), gameTimeKst: t.gameTimeKst });
     const target: LineupDeliveryTarget = {
       gameId: t.gameId,
@@ -112,44 +121,40 @@ export async function runLineupWatchdog(args: {
       observedAtMs: now(),
       payload: { title: msg.title, body: msg.body, url: `/games/${t.gameId}?tab=lineup` },
     };
+    let snapshotDeadlineAtMs: number;
     try {
-      const snapshotDeadlineAtMs = await openSnapshot({ ...target, requestDeadlineAtMs: deadlineAtMs });
-      opened.push({ target, snapshotDeadlineAtMs, done: false });
+      snapshotDeadlineAtMs = await openSnapshot({ ...target, requestDeadlineAtMs: deadlineAtMs });
       summary.snapshotsOpened++;
     } catch {
       summary.snapshotOpenErrors++;
+      return; // 이 대상만 포기 — 다른 대상 파이프라인은 계속(격리)
     }
-  }
-
-  // ── Phase 2: 공정 round-robin drain — 대상별 1 batch 씩, 예산 안에서 순회 ──
-  let progress = true;
-  while (progress && now() < deadlineAtMs) {
-    progress = false;
-    for (const o of opened) {
-      if (o.done) continue;
-      if (now() >= deadlineAtMs) break;
+    for (let i = 0; i < MAX_BATCHES_PER_TARGET && now() < deadlineAtMs; i++) {
+      let batch: LineupDeliveryBatchResult;
       try {
-        const batch = await deliverBatch({
-          ...o.target,
-          snapshotDeadlineAtMs: o.snapshotDeadlineAtMs,
+        batch = await deliverBatch({
+          ...target,
+          snapshotDeadlineAtMs,
           attemptDeadlineAtMs: Math.min(deadlineAtMs, now() + LINEUP_DELIVERY_ATTEMPT_MS),
         });
-        summary.accepted += batch.fcmAcceptedDelta;
-        if (batch.snapshotCompleted) summary.snapshotsCompleted++;
-        if (batch.claimed > 0) progress = true;
-        if (batch.pending === 0) o.done = true;
       } catch {
-        // 이번 tick 이 대상은 포기(원장 durable → 다음 cron 이 이어 drain).
-        summary.drainErrors++;
-        o.done = true;
+        summary.drainErrors++; // 원장 durable → 다음 cron 이 이어 drain. 이 대상만 중단.
+        return;
       }
+      summary.accepted += batch.fcmAcceptedDelta;
+      if (batch.snapshotCompleted) summary.snapshotsCompleted++;
+      if (batch.claimed === 0 || batch.pending === 0) break;
     }
-  }
+  };
 
-  // false-green 차단(gate ①): 확정 대상 있는데 원장 0개 or 라인업 조회 전건 실패 → systemic failure.
+  // 모든 대상 파이프라인을 동시에 — 공유 join 없음. 하나가 deadline 까지 hang(→RPC abort reject)해도
+  // 나머지는 완주한다. allSettled 로 한 rejection 이 전체를 무너뜨리지 않게 감싼다.
+  await Promise.allSettled(targets.map((t) => runTargetPipeline(t)));
+
   const systemicFail =
-    (targets.length > 0 && summary.snapshotsOpened === 0) ||
-    (lineupFetchAttempts > 0 && lineupFetchErrors === lineupFetchAttempts);
+    allProbesNoSignal || // (b) 라인업 신호 전무
+    summary.snapshotOpenErrors > 0 || // (c) 원장 생성 실패(부분 포함) = durable health 불량
+    (targets.length > 0 && summary.snapshotsOpened === 0);
 
   return { status: systemicFail ? "failed" : "ok", dateStr, summary };
 }
