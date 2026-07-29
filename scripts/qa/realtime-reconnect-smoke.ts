@@ -1,0 +1,63 @@
+/**
+ * Realtime 재연결 백오프/재구독 판정 순수 헬퍼 스모크.
+ * 2026-07-28 재구독 폭주(양의 피드백) P0 회귀를 결정론으로 고정한다(dev-server 불필요).
+ *
+ * 실행: npx tsx scripts/qa/realtime-reconnect-smoke.ts
+ */
+import { computeReconnectDelay, shouldResubscribeOnVisible } from "../../src/lib/supabase/realtime-reconnect";
+
+let pass = 0;
+let fail = 0;
+function check(name: string, cond: boolean) {
+  if (cond) { pass++; }
+  else { fail++; console.error(`  ✗ ${name}`); }
+}
+
+// random=0 으로 jitter 제거 → 순수 지수 백오프 값 검증.
+const noJitter = { random: () => 0 };
+
+// --- 지수 백오프: base*2^attempt, 상한 max ---
+check("attempt0 = base(1000)", computeReconnectDelay(0, noJitter) === 1000);
+check("attempt1 = 2000", computeReconnectDelay(1, noJitter) === 2000);
+check("attempt2 = 4000", computeReconnectDelay(2, noJitter) === 4000);
+check("attempt3 = 8000", computeReconnectDelay(3, noJitter) === 8000);
+check("attempt4 = 16000", computeReconnectDelay(4, noJitter) === 16000);
+check("attempt5 = 30000(cap)", computeReconnectDelay(5, noJitter) === 30000);
+check("attempt10 = 30000(cap 유지)", computeReconnectDelay(10, noJitter) === 30000);
+
+// --- circuit breaker: 대량 attempt 에도 Infinity/오버플로우 없이 max 고정 ---
+check("attempt31 = max(overflow 방지)", computeReconnectDelay(31, noJitter) === 30000);
+check("attempt1e6 = max(overflow 방지)", computeReconnectDelay(1_000_000, noJitter) === 30000);
+check("attempt31 유한값", Number.isFinite(computeReconnectDelay(31, { random: () => 0.9 })));
+
+// --- 방어: 음수/NaN/소수 attempt → 0 취급 ---
+check("attempt -1 → base", computeReconnectDelay(-1, noJitter) === 1000);
+check("attempt NaN → base", computeReconnectDelay(NaN, noJitter) === 1000);
+check("attempt 2.9 → floor(2)=4000", computeReconnectDelay(2.9, noJitter) === 4000);
+
+// --- jitter: [0, jitterMs) 범위, 결정적 주입 ---
+check("jitter random=0 → +0", computeReconnectDelay(0, { random: () => 0 }) === 1000);
+check("jitter random≈1 → base+거의jitter", computeReconnectDelay(0, { random: () => 0.999, jitterMs: 1000 }) === 1000 + 999);
+check("jitter 폭 옵션 반영", computeReconnectDelay(0, { random: () => 0.5, jitterMs: 2000 }) === 1000 + 1000);
+
+// --- 고정 1초와의 차이(storm 완화 실증): 5회 연속 실패 누적 대기 ---
+// 구(고정 1s): 5회 = 5000ms. 신(백오프, no jitter): 1000+2000+4000+8000+16000 = 31000ms.
+const oldTotal = 1000 * 5;
+let newTotal = 0;
+for (let a = 0; a < 5; a++) newTotal += computeReconnectDelay(a, noJitter);
+check("백오프가 고정 1초 대비 재시도 빈도를 크게 낮춘다", newTotal > oldTotal * 5);
+
+// --- visibility 복귀 시 재구독 판정 ---
+// 정상 채널(subscribed) → 재구독 안 함(join storm 차단). backfill 은 별개로 항상 수행.
+check("정상 채널 복귀 → 재구독 X", shouldResubscribeOnVisible(true, false) === false);
+check("정상 채널 + 예약 있음 → 재구독 X", shouldResubscribeOnVisible(true, true) === false);
+// dead 채널 → 재구독 O(예약 없을 때만)
+check("dead 채널 + 예약 없음 → 재구독 O", shouldResubscribeOnVisible(false, false) === true);
+check("dead 채널 + 예약 있음 → 재구독 X(중복 예약 방지)", shouldResubscribeOnVisible(false, true) === false);
+
+// --- baseMs:0(사용자 복귀 즉시성) → [0, jitter) 즉시 재구독 ---
+check("visible 재구독은 base0 → 즉시(≈0)", computeReconnectDelay(0, { baseMs: 0, random: () => 0 }) === 0);
+check("visible 재구독 base0 + jitter 상한 내", computeReconnectDelay(0, { baseMs: 0, random: () => 0.999, jitterMs: 1000 }) === 999);
+
+console.log(`\nrealtime-reconnect: ${pass}/${pass + fail} pass${fail ? `, ${fail} FAIL` : ""}`);
+if (fail) process.exit(1);
