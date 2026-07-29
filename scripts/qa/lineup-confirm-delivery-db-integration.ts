@@ -68,7 +68,10 @@ async function main() {
 
     const G = "20260729LGWO0";
     async function snapshot(g: string, team: number) {
-      await db.query("select snapshot_lineup_confirm_deliveries($1,$2, now(), now() + interval '90 seconds')", [g, team]);
+      await db.query(
+        "select snapshot_lineup_confirm_deliveries($1,$2, now(), now() + interval '90 seconds', $3, $4, $5)",
+        [g, team, `${team} 라인업 확정`, `금일 라인업이 확정되었습니다.`, `/games/${g}?tab=lineup`],
+      );
     }
     const ledgerCount = (g: string, team: number) =>
       scalar(db, "select count(*)::int c from lineup_confirm_delivery_ledger where game_id=$1 and team_id=$2", [g, team]);
@@ -78,6 +81,14 @@ async function main() {
     // ── ③ pref 게이트 + 팀 필터: LG 팬 중 opt-in(A,B)만, C(off)·O(다른팀) 제외 ──
     await snapshot(G, 1);
     ok("snapshot → 대상 2건(A pref미설정=on, B on)", (await ledgerCount(G, 1)) === 2);
+    // (re-gate ③) snapshot 이 push payload 를 durable 하게 보존 → due drainer 가 재현.
+    ok("snapshot payload 저장(title/body/url)", (await scalar(db, "select count(*)::int c from game_lineup_notify_state where game_id=$1 and team_id=1 and push_title = $2 and push_url = $3", [G, "1 라인업 확정", `/games/${G}?tab=lineup`])) === 1);
+    // (re-gate ③) list_due: 미완료 스냅샷을 payload 와 함께 반환.
+    {
+      const due = await db.query<{ game_id: string; team_id: number; push_title: string; push_url: string }>(
+        "select game_id, team_id, push_title, push_url from list_due_lineup_confirm_snapshots(200) where game_id=$1 and team_id=1", [G]);
+      ok("list_due → 미완료 스냅샷 1건 반환", due.rows.length === 1 && due.rows[0]?.push_title === "1 라인업 확정" && due.rows[0]?.push_url === `/games/${G}?tab=lineup`);
+    }
     ok("lineup_confirm=false(C) 제외", (await scalar(db, "select count(*)::int c from lineup_confirm_delivery_ledger where token_hash = encode(extensions.digest('tokC','sha256'),'hex')")) === 0);
     ok("다른 팀 팬(O) 제외", (await scalar(db, "select count(*)::int c from lineup_confirm_delivery_ledger where token_hash = encode(extensions.digest('tokO','sha256'),'hex')")) === 0);
 
@@ -112,6 +123,8 @@ async function main() {
     ok("finalize → pending 0", Number(fin.rows[0]?.pending) === 0);
     ok("finalize → snapshot_completed=true", fin.rows[0]?.snapshot_completed === true);
     ok("발송 성공 뒤 lineup_notified=true 전진(gate ①)", (await notified(G, 1)) === 1);
+    // (re-gate ③) 종결된 스냅샷은 due 목록에서 제외(재drain 대상 아님).
+    ok("종결 후 list_due 에서 제외", (await scalar(db, "select count(*)::int c from list_due_lineup_confirm_snapshots(200) where game_id=$1 and team_id=1", [G])) === 0);
     ok("accepted 뒤 fcm_token NULL(활성 credential 미보존)", (await scalar(db, "select count(*)::int c from lineup_confirm_delivery_ledger where game_id=$1 and team_id=1 and fcm_token is not null", [G])) === 0);
 
     // ── ① 종결 뒤 재snapshot → 새 행 0(이미 notified) ──
@@ -132,8 +145,9 @@ async function main() {
     // ── 권한: anon/authenticated RPC 실행 불가 ──
     const fnDenied = async (role: string, sig: string) =>
       (await db.query<{ ok: boolean }>("select has_function_privilege($1,$2,'EXECUTE') ok", [role, sig])).rows[0]?.ok === false;
-    ok("anon snapshot RPC 차단", await fnDenied("anon", "snapshot_lineup_confirm_deliveries(text,integer,timestamptz,timestamptz)"));
+    ok("anon snapshot RPC 차단", await fnDenied("anon", "snapshot_lineup_confirm_deliveries(text,integer,timestamptz,timestamptz,text,text,text)"));
     ok("authenticated claim RPC 차단", await fnDenied("authenticated", "claim_lineup_confirm_deliveries(text,integer,uuid,integer,integer)"));
+    ok("anon list_due RPC 차단", await fnDenied("anon", "list_due_lineup_confirm_snapshots(integer)"));
   } finally {
     await db.close();
   }

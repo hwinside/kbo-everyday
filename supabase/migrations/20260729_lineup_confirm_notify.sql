@@ -23,6 +23,11 @@ create table if not exists game_lineup_notify_state (
   lineup_notified boolean not null default false,
   lineup_snapshot_at timestamptz,
   lineup_snapshot_deadline_at timestamptz,
+  -- 스냅샷 시점의 푸시 payload 를 durable 하게 보존한다. 다음 cron 의 due-ledger drainer 가
+  -- 현재 KBO/게임 데이터 없이(경기가 live 로 전환됐어도) 같은 문구로 이어 발송할 수 있게 한다(gate ③).
+  push_title text,
+  push_body text,
+  push_url text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   primary key (game_id, team_id)
@@ -30,6 +35,12 @@ create table if not exists game_lineup_notify_state (
 
 alter table game_lineup_notify_state enable row level security;
 -- 정책 없음: service_role cron 전용.
+
+-- lineup_notified=false 인데 스냅샷이 열린(=미완료) 상태를 deadline 순으로 훑는 인덱스.
+-- due-ledger drainer 가 이 부분 인덱스로 경기 상태와 무관하게 재drain 대상을 찾는다.
+create index if not exists idx_lineup_notify_state_due
+  on game_lineup_notify_state (lineup_snapshot_deadline_at)
+  where lineup_notified = false and lineup_snapshot_at is not null;
 
 create table if not exists lineup_confirm_delivery_ledger (
   id uuid primary key default gen_random_uuid(),
@@ -70,7 +81,10 @@ create or replace function snapshot_lineup_confirm_deliveries(
   p_game_id text,
   p_team_id integer,
   p_snapshot_at timestamptz,
-  p_deadline_at timestamptz
+  p_deadline_at timestamptz,
+  p_title text default null,
+  p_body text default null,
+  p_url text default null
 )
 returns timestamptz
 language plpgsql
@@ -88,6 +102,9 @@ begin
   update game_lineup_notify_state
      set lineup_snapshot_at = p_snapshot_at,
          lineup_snapshot_deadline_at = p_deadline_at,
+         push_title = p_title,
+         push_body = p_body,
+         push_url = p_url,
          updated_at = now()
    where game_id = p_game_id
      and team_id = p_team_id
@@ -325,12 +342,41 @@ begin
 end;
 $$;
 
-revoke all on function snapshot_lineup_confirm_deliveries(text, integer, timestamptz, timestamptz) from anon, authenticated, public;
+-- ── due-ledger drainer 조회: 현재 KBO/게임 상태와 무관하게, 스냅샷이 열렸으나 아직 종결되지 않은
+--    (game,team) 상태를 deadline 순으로 반환한다. cron 이 매 tick 재구성하는 confirmed target 과 별개로
+--    과거 tick 에서 열렸다가 이번에 못 보낸(그 사이 경기가 live 로 전환된) orphan 원장을 이어 drain 한다.
+--    payload 는 스냅샷 시점 값을 그대로 재사용(문구 재현). 만료(deadline 경과)는 finalize 가 expired 처리.
+create or replace function list_due_lineup_confirm_snapshots(
+  p_limit integer default 200
+)
+returns table (
+  game_id text,
+  team_id integer,
+  snapshot_deadline_at timestamptz,
+  push_title text,
+  push_body text,
+  push_url text
+)
+language sql
+security definer
+set search_path = public
+as $$
+  select s.game_id, s.team_id, s.lineup_snapshot_deadline_at, s.push_title, s.push_body, s.push_url
+  from game_lineup_notify_state s
+  where s.lineup_notified = false
+    and s.lineup_snapshot_at is not null
+  order by s.lineup_snapshot_deadline_at asc nulls last, s.game_id, s.team_id
+  limit greatest(1, least(p_limit, 500));
+$$;
+
+revoke all on function snapshot_lineup_confirm_deliveries(text, integer, timestamptz, timestamptz, text, text, text) from anon, authenticated, public;
+revoke all on function list_due_lineup_confirm_snapshots(integer) from anon, authenticated, public;
 revoke all on function claim_lineup_confirm_deliveries(text, integer, uuid, integer, integer) from anon, authenticated, public;
 revoke all on function mark_lineup_confirm_deliveries_dispatching(uuid[], uuid) from anon, authenticated, public;
 revoke all on function settle_lineup_confirm_delivery_batch(jsonb, uuid) from anon, authenticated, public;
 revoke all on function finalize_lineup_confirm_deliveries(text, integer) from anon, authenticated, public;
-grant execute on function snapshot_lineup_confirm_deliveries(text, integer, timestamptz, timestamptz) to service_role;
+grant execute on function snapshot_lineup_confirm_deliveries(text, integer, timestamptz, timestamptz, text, text, text) to service_role;
+grant execute on function list_due_lineup_confirm_snapshots(integer) to service_role;
 grant execute on function claim_lineup_confirm_deliveries(text, integer, uuid, integer, integer) to service_role;
 grant execute on function mark_lineup_confirm_deliveries_dispatching(uuid[], uuid) to service_role;
 grant execute on function settle_lineup_confirm_delivery_batch(jsonb, uuid) to service_role;

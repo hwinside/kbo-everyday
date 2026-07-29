@@ -12,6 +12,9 @@ import { sendFcmToTokens, type PushPayload } from "@/lib/notifications/fcm";
 const SNAPSHOT_DEADLINE_MS = 30 * 60_000;
 const LINEUP_DELIVERY_TRANSPORT_MS = 8_000;
 export const LINEUP_DELIVERY_ATTEMPT_MS = 14_000;
+// settle+finalize 전용 예약 예산. FCM transport 는 attempt deadline 보다 이만큼 먼저 끝나게 해
+// 외부 전송이 예산을 다 써도 settle 가 항상 실행된다(dispatch_started_at 행이 미settle 로 남지 않게, 삼순 #952 3차 re-gate).
+const LINEUP_SETTLE_RESERVE_MS = 2_500;
 const LINEUP_DELIVERY_LEASE_SECONDS = 45;
 const LINEUP_PUSH_TTL_SECONDS = 30 * 60;
 
@@ -91,6 +94,43 @@ export async function finalizeLineupSnapshot(
   };
 }
 
+/** 열린(미완료) due-ledger 스냅샷 상태. 현재 KBO/게임 상태와 무관하게 이어 drain 할 대상. */
+export type DueLineupSnapshot = {
+  gameId: string;
+  teamId: number;
+  snapshotDeadlineAtMs: number;
+  payload: PushPayload;
+};
+
+/** lineup_notified=false 이면서 스냅샷이 열린 (game,team) 상태를 deadline 순으로 반환. payload 는 스냅샷 시점 값 재사용. */
+export async function listDueLineupSnapshots(requestDeadlineAtMs?: number, limit = 200): Promise<DueLineupSnapshot[]> {
+  const remaining = remainingMs(requestDeadlineAtMs, "lineup delivery list-due");
+  // query-guard: bounded -- SQL RPC 가 p_limit 을 500행으로 clamp.
+  const { data, error } = await withAbort(
+    supabase.rpc("list_due_lineup_confirm_snapshots", { p_limit: limit }),
+    remaining,
+  );
+  if (error) throw new Error(`lineup delivery list-due: ${error.message}`);
+  const rows = (data ?? []) as Array<{
+    game_id: string;
+    team_id: number;
+    snapshot_deadline_at: string;
+    push_title: string | null;
+    push_body: string | null;
+    push_url: string | null;
+  }>;
+  return rows.map((r) => ({
+    gameId: r.game_id,
+    teamId: r.team_id,
+    snapshotDeadlineAtMs: Date.parse(r.snapshot_deadline_at),
+    payload: {
+      title: r.push_title ?? "라인업 확정",
+      body: r.push_body ?? "라인업이 확정되었습니다. 자세한 라인업을 확인해보세요.",
+      url: r.push_url ?? `/games/${r.game_id}?tab=lineup`,
+    },
+  }));
+}
+
 /** (game,team) 최초 대상 스냅샷 생성. persisted deadline(ms) 반환. RPC 는 잔여 예산으로 abort. */
 export async function openLineupSnapshot(
   args: LineupDeliveryTarget & { requestDeadlineAtMs?: number },
@@ -104,6 +144,9 @@ export async function openLineupSnapshot(
       p_team_id: args.teamId,
       p_snapshot_at: new Date(args.observedAtMs).toISOString(),
       p_deadline_at: new Date(proposedDeadlineAtMs).toISOString(),
+      p_title: args.payload.title,
+      p_body: args.payload.body,
+      p_url: args.payload.url ?? null,
     }),
     remaining,
   );
@@ -118,7 +161,8 @@ export async function deliverLineupBatch(
   args: LineupDeliveryTarget & { snapshotDeadlineAtMs: number; attemptDeadlineAtMs: number },
 ): Promise<LineupDeliveryBatchResult> {
   const attemptDeadlineAtMs = Math.min(args.snapshotDeadlineAtMs, args.attemptDeadlineAtMs);
-  if (Date.now() >= attemptDeadlineAtMs) return { ...EMPTY, claimed: 0 };
+  // settle 예약분까지 남지 않으면 이번 batch 를 시작하지 않는다(claim 후 settle 못해 dispatch_started_at 행이 뜼는 것 방지).
+  if (Date.now() >= attemptDeadlineAtMs - LINEUP_SETTLE_RESERVE_MS) return { ...EMPTY, claimed: 0 };
 
   const leaseToken = randomUUID();
   // query-guard: bounded -- SQL RPC 가 p_limit 을 500행으로 clamp.
@@ -154,7 +198,11 @@ export async function deliverLineupBatch(
     throw new Error("lineup delivery dispatch intent: fencing mismatch");
   }
 
-  const transportDeadlineAtMs = Math.min(attemptDeadlineAtMs, Date.now() + LINEUP_DELIVERY_TRANSPORT_MS);
+  // transport 는 attempt deadline 보다 settle 예약분 이만큼 먼저 끝난다 → settle/finalize 가 항상 예산 확보.
+  const transportDeadlineAtMs = Math.min(
+    attemptDeadlineAtMs - LINEUP_SETTLE_RESERVE_MS,
+    Date.now() + LINEUP_DELIVERY_TRANSPORT_MS,
+  );
   const delivery = await sendFcmToTokens(
     claimed.map((r) => r.fcm_token),
     {

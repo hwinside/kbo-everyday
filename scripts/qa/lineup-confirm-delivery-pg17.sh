@@ -48,7 +48,7 @@ G="20260729LGWO0"
 
 echo "[동시 snapshot 10개 — single-flight]"
 for i in $(seq 1 10); do
-  "${PSQL[@]}" -c "SELECT snapshot_lineup_confirm_deliveries('$G',1, now(), now() + interval '30 minutes')" >/dev/null &
+  "${PSQL[@]}" -c "SELECT snapshot_lineup_confirm_deliveries('$G',1, now(), now() + interval '30 minutes', 'LG 라인업 확정', '금일 라인업이 확정되었습니다.', '/games/$G?tab=lineup')" >/dev/null &
 done
 wait
 LEDGER=$("${PSQL[@]}" -c "SELECT count(*) FROM lineup_confirm_delivery_ledger WHERE game_id='$G' AND team_id=1")
@@ -57,6 +57,9 @@ SNAP1=$("${PSQL[@]}" -c "SELECT count(*) FROM game_lineup_notify_state WHERE gam
 check "동시 snapshot → 원장 정확히 20행(중복 0)" "$LEDGER" "20"
 check "state 행 1개" "$STATE" "1"
 check "snapshot 1회 고정(notified 전)" "$SNAP1" "1"
+# (re-gate ③) list_due: 미완료 스냅샷을 payload 와 함께 반환.
+DUE=$("${PSQL[@]}" -c "SELECT count(*) FROM list_due_lineup_confirm_snapshots(200) WHERE game_id='$G' AND team_id=1 AND push_title='LG 라인업 확정' AND push_url='/games/$G?tab=lineup'")
+check "list_due → 미완료 스냅샷 1건(payload 포함)" "$DUE" "1"
 
 echo "[동시 claim 10개(limit 3) — skip-locked 분할, 각 행 1회]"
 for i in $(seq 1 10); do
@@ -81,12 +84,16 @@ NOTIFIED=$("${PSQL[@]}" -c "SELECT (snapshot_completed)::text FROM finalize_line
 check "finalize snapshot_completed=true" "$NOTIFIED" "true"
 LN=$("${PSQL[@]}" -c "SELECT (lineup_notified)::text FROM game_lineup_notify_state WHERE game_id='$G' AND team_id=1")
 check "lineup_notified=true 전진" "$LN" "true"
+# (re-gate ③) 종결된 스냅샷은 due 목록에서 제외(재drain 대상 아님).
+DUE_AFTER=$("${PSQL[@]}" -c "SELECT count(*) FROM list_due_lineup_confirm_snapshots(200) WHERE game_id='$G' AND team_id=1")
+check "종결 후 list_due 에서 제외" "$DUE_AFTER" "0"
 SENTNULL=$("${PSQL[@]}" -c "SELECT count(*) FROM lineup_confirm_delivery_ledger WHERE game_id='$G' AND team_id=1 AND fcm_token IS NOT NULL")
 check "accepted 뒤 fcm_token NULL(20행)" "$SENTNULL" "0"
 
 echo "[클라 롤 차단]"
-check "anon snapshot RPC 불가" "$("${PSQL[@]}" -c "SELECT has_function_privilege('anon','snapshot_lineup_confirm_deliveries(text,integer,timestamptz,timestamptz)','EXECUTE')")" "f"
+check "anon snapshot RPC 불가" "$("${PSQL[@]}" -c "SELECT has_function_privilege('anon','snapshot_lineup_confirm_deliveries(text,integer,timestamptz,timestamptz,text,text,text)','EXECUTE')")" "f"
 check "authenticated claim RPC 불가" "$("${PSQL[@]}" -c "SELECT has_function_privilege('authenticated','claim_lineup_confirm_deliveries(text,integer,uuid,integer,integer)','EXECUTE')")" "f"
+check "anon list_due RPC 불가" "$("${PSQL[@]}" -c "SELECT has_function_privilege('anon','list_due_lineup_confirm_snapshots(integer)','EXECUTE')")" "f"
 check "anon 원장 SELECT 불가" "$("${PSQL[@]}" -c "SELECT has_table_privilege('anon','lineup_confirm_delivery_ledger','SELECT')")" "f"
 
 echo ""
