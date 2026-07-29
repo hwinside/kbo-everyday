@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
-import { X, Volume2, VolumeX, MoreVertical, Loader2, MessageCircle, Send, Trash2 } from "lucide-react";
+import { X, Volume2, VolumeX, MoreVertical, Loader2, MessageCircle, Send, Trash2, Eye } from "lucide-react";
+import AdminOnly from "@/components/admin/AdminOnly";
 import { getSafeSession } from "@/lib/supabase/client";
 import { VENUE_STORY_IMAGE_HOLD_MS, type VenueStory } from "@/lib/venue-stories/types";
 import {
@@ -21,6 +22,11 @@ import { lockRootScroll, unlockRootScroll } from "@/lib/venue-stories/scroll-loc
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import { isIosNativeRuntime } from "@/lib/capacitor/platform";
 import { startVenueStoryUrlRefresh } from "@/lib/venue-stories/refresh-policy";
+import {
+  startVenueStoryViewGate,
+  getOrCreateVenueGuestId,
+  sendVenueStoryViewPing,
+} from "@/lib/venue-stories/view-tracking";
 
 interface Props {
   stories: VenueStory[];
@@ -149,34 +155,48 @@ export default function VenueStoryViewer({
     if (storyId != null) onStorySeen?.(storyId);
   }, [storyId, onStorySeen]);
 
-  // 조회수 트래킹(A안 2026-07-29) — 표시된 스토리마다 fire-and-forget POST 1회.
-  // 실패는 무시(UI 영향 0), 같은 뷰어 세션 내 재전송은 ref Set 으로 방지.
-  // 서버측 dedupe(스토리×뷰어×KST일)는 DB RPC 가 별도 보장.
+  // 조회수 트래킹(A안 2026-07-29 · 삼순 게이트 반영) — 1초 이상 실제 노출된 스토리만 1회 전송.
+  // - 노출 게이트(①): 표시 시 1초 타이머, 1초 전 전환(자동넘김 포함)/뷰어 종료면 cleanup 이 취소.
+  // - 비로그인도 집계(③): localStorage 영속 guest UUID 를 body 로 전달(서버가 viewer_key 해석).
+  // - 전송(④): sendBeacon 우선 + fetch keepalive 폴백 — 페이지 이탈 직전 유실 최소화.
+  // - 같은 뷰어 세션 내 재전송은 ref Set 으로 방지, lifetime dedupe 는 서버 RPC 가 보장.
   const viewSentRef = useRef<Set<number>>(new Set());
   useEffect(() => {
     if (storyId == null || storyId <= 0) return;
     if (viewSentRef.current.has(storyId)) return;
-    // 중복 fire 방지로 선 mark 하되, 실패/미전송 시 해제해 다음 표시 때 재시도 가능하게 한다
-    // (시작 전 영구 mark 하면 auth/fetch 일시 실패가 세션 내 영구 누락이 됨 — 서버 dedupe 가 있어 재시도는 안전).
-    viewSentRef.current.add(storyId);
-    (async () => {
-      try {
-        const session = await getSafeSession();
-        const token = session?.access_token;
-        if (!token) {
-          viewSentRef.current.delete(storyId); // 비로그인 열람은 미기록 — 이후 로그인 상태에서 재표시되면 기록
-          return;
-        }
-        const res = await fetch(`/api/venue-stories/${storyId}/view`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (!res.ok) viewSentRef.current.delete(storyId);
-      } catch {
-        // 조회 기록 실패는 뷰어 UX 에 영향 주지 않고 무시 — 단, 재시도 가능하도록 해제
-        viewSentRef.current.delete(storyId);
-      }
-    })();
+    return startVenueStoryViewGate({
+      setTimer: (fn, ms) => setTimeout(fn, ms),
+      clearTimer: (handle) => clearTimeout(handle),
+      onQualify: () => {
+        if (viewSentRef.current.has(storyId)) return;
+        // 중복 fire 방지로 선 mark 하되, 전송 실패 시 해제해 다음 표시 때 재시도 가능하게 한다
+        // (서버 dedupe 가 있어 재시도는 과집계 없음).
+        viewSentRef.current.add(storyId);
+        void (async () => {
+          try {
+            // getSafeSession 은 로컬 세션 읽기라 즉시 settle — 이탈 직전에도 beacon 큐잉까지 도달 가능.
+            const session = await getSafeSession();
+            const guestId = getOrCreateVenueGuestId(
+              typeof window === "undefined" ? null : window.localStorage,
+              () => crypto.randomUUID(),
+            );
+            const ok = await sendVenueStoryViewPing({
+              url: `/api/venue-stories/${storyId}/view`,
+              payload: { guestId, accessToken: session?.access_token ?? null },
+              sendBeacon:
+                typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function"
+                  ? navigator.sendBeacon.bind(navigator)
+                  : undefined,
+              fetchFn: fetch,
+            });
+            if (!ok) viewSentRef.current.delete(storyId);
+          } catch {
+            // 조회 기록 실패는 뷰어 UX 에 영향 주지 않고 무시 — 단, 재시도 가능하도록 해제
+            viewSentRef.current.delete(storyId);
+          }
+        })();
+      },
+    });
   }, [storyId]);
 
   // 목록 최초 발급 URL의 나이를 신뢰하지 않고 현재 스토리 진입 즉시 단건 재발급한다.
@@ -607,7 +627,19 @@ export default function VenueStoryViewer({
               );
             })()}
           </div>
-          <p className="text-white/60 text-[11px]">{timeAgo(story.createdAt)}</p>
+          <p className="text-white/60 text-[11px] flex items-center gap-1.5">
+            <span>{timeAgo(story.createdAt)}</span>
+            {/* 조회수는 일단 관리자만(하린아빠 지시) — #735 AdminOnly 배지 패턴. viewCount 는
+                관리자 세션 응답에만 존재하는 필드라 이중 게이트(서버 분기 + AdminOnly)가 된다. */}
+            {story.viewCount != null && (
+              <AdminOnly>
+                <span className="inline-flex items-center gap-0.5" title="관리자 전용 조회수">
+                  <Eye size={12} />
+                  <span>{story.viewCount.toLocaleString()}</span>
+                </span>
+              </AdminOnly>
+            )}
+          </p>
         </div>
         {story.mediaType === "video" && (
           <button

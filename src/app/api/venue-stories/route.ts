@@ -28,7 +28,8 @@ import {
 } from "@/lib/venue-stories/media-url";
 import { decideListAuth } from "@/lib/venue-stories/auth-consent";
 import { validateVenueVideoRow } from "@/lib/venue-stories/video-validate-server";
-import { canBypassVenueGeofenceForQa } from "@/lib/admin/admin-users";
+import { canBypassVenueGeofenceForQa, isAdminEmail } from "@/lib/admin/admin-users";
+import { withAdminViewCounts, sumViewCountsByStory } from "@/lib/venue-stories/view-tracking";
 import { completeRequestedUploadStatuses } from "@/lib/venue-stories/composer-helpers";
 
 // 영상 즉시 검증(다운로드 최대 50MiB + ffprobe)을 요청 안에서 수행
@@ -264,7 +265,21 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  return NextResponse.json({ stories, uploadStatuses });
+  // 조회수는 일단 관리자만(하린아빠 2026-07-29) — #735 게시글 배지와 동일하게 관리자 세션에만
+  // viewCount 를 붙인다. 일반·익명 응답에는 필드 자체 부재(withAdminViewCounts 가 보장,
+  // 회귀는 qa:venue-story-views 클라 스모크가 고정). 조회 실패는 목록 응답을 막지 않는다(부가 지표).
+  const isAdmin = auth.kind === "user" && isAdminEmail(verified?.user.email);
+  let viewCounts = new Map<number, number>();
+  if (isAdmin && stories.length > 0) {
+    // query-guard: bounded -- 목록은 최대 100 스토리, active 스토리 수명(종료+24h)상 스토리당 daily 행 수일 이내
+    const { data: viewRows, error: viewError } = await supabase
+      .from("venue_story_view_daily")
+      .select("story_id, view_count")
+      .in("story_id", stories.map((s) => s.id));
+    if (!viewError) viewCounts = sumViewCountsByStory(viewRows);
+  }
+
+  return NextResponse.json({ stories: withAdminViewCounts(stories, isAdmin, viewCounts), uploadStatuses });
 }
 
 // POST: 직관 스토리 생성 (소유권 바인딩 + 실제 경기/구장/시간 + 지오펜스 + 크기/MIME 서버 검증)
