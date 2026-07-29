@@ -490,20 +490,21 @@ export default function PostDetail({ postId }: PostDetailProps) {
             clickCount={post.click_view_count}
             impressionCount={post.impression_view_count}
           />
-          {user && !postEditing && (
-            <PostActionsMenu
-              isOwner={isPostMine}
-              canDeleteAny={canDeleteAnyPost}
-              open={postMenuOpen}
-              disabled={deletingPost}
-              onToggle={() => setPostMenuOpen((v) => !v)}
-              onClose={() => setPostMenuOpen(false)}
-              onEdit={startPostEdit}
-              onReport={() => openReport({ type: "post", id: post.id })}
-              onBlock={() => handleBlockUser(post.author_id, { type: "post", id: post.id })}
-              onDelete={handleDeletePost}
-            />
-          )}
+          <PostActionsMenu
+            user={user}
+            postEditing={postEditing}
+            authorId={post.author_id}
+            userId={user?.id}
+            canDeleteAny={canDeleteAnyPost}
+            open={postMenuOpen}
+            disabled={deletingPost}
+            onToggle={() => setPostMenuOpen((v) => !v)}
+            onClose={() => setPostMenuOpen(false)}
+            onEdit={startPostEdit}
+            onReport={() => openReport({ type: "post", id: post.id })}
+            onBlock={() => handleBlockUser(post.author_id, { type: "post", id: post.id })}
+            onDelete={handleDeletePost}
+          />
         </div>
 
         {/* 미디어 — 사진 → 글 순서(피드 PhotoFeed와 동일). 인스타식 캐러셀(스와이프+점+더블탭 좋아요).

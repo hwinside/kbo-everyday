@@ -376,18 +376,31 @@ BEGIN
     RAISE EXCEPTION 'FAIL N6: title+report_count combined forge accepted';
     EXCEPTION WHEN check_violation THEN NULL; END;
 
-  -- updated_at 은 DB 서버생성 시각으로 강제 — 클라 제공값 위조 불가(삼순 4차 NO-GO).
-  SELECT updated_at INTO v_old_ua FROM posts WHERE id=v_pid;
-  -- (a) 순수 updated_at 변경(질문/설명 미변) → 위조값 미반영(OLD 유지).
+  -- updated_at 은 DB 서버생성 시각으로 강제 — 클라 제공값 위조 불가(삼순 4/5차 NO-GO).
+  --   삼순 5차: OLD 를 *과거값*으로 먼저 고정해, now()→OLD.updated_at fault-injection 이면 반드시
+  --   실패하도록 assert 를 강화한다. 즉 편집 후 updated_at 은 (트랜잭션 now() 근사) AND (!= OLD)
+  --   둘 다 만족해야 한다. OLD 가 트랜잭션 now() 와 달라야 두 assert 가 직교함(구분력 확보).
+  -- 먼저 OLD 를 과거값으로 심는다(운영 writer 스코프 GUC 사용 → 잠금 우회해 과거 updated_at 기록 가능).
+  PERFORM set_config('kbo.posts_op', '1', true);
   UPDATE posts SET updated_at = timestamptz '2000-01-01 00:00:00+00' WHERE id=v_pid;
+  PERFORM set_config('kbo.posts_op', '', true);
+  SELECT updated_at INTO v_old_ua FROM posts WHERE id=v_pid; -- v_old_ua = 2000-01-01(과거)
+
+  -- (a) 순수 updated_at 변경(질문/설명 미변) → 위조값 미반영(OLD 과거값 그대로 유지).
+  UPDATE posts SET updated_at = timestamptz '1999-06-06 00:00:00+00' WHERE id=v_pid;
   IF (SELECT updated_at FROM posts WHERE id=v_pid) IS DISTINCT FROM v_old_ua THEN
-    RAISE EXCEPTION 'FAIL N6: bare updated_at forge persisted (expected OLD retained)'; END IF;
-  -- (b) title 편집 + updated_at 위조 → title persist 하되 updated_at 은 now()(위조값 아님).
-  UPDATE posts SET title='q-ua-edit', updated_at = timestamptz '2000-01-01 00:00:00+00' WHERE id=v_pid;
+    RAISE EXCEPTION 'FAIL N6: bare updated_at forge persisted (expected OLD 2000-01-01 retained)'; END IF;
+
+  -- (b) title 편집 + updated_at 위조 → title persist, updated_at 은 트랜잭션 now() AND != OLD(과거).
+  --     now()→OLD.updated_at 구현이면 v_old_ua(2000-01-01) 가 남아 두 assert 모두 실패.
+  UPDATE posts SET title='q-ua-edit', updated_at = timestamptz '1999-06-06 00:00:00+00' WHERE id=v_pid;
   IF (SELECT title FROM posts WHERE id=v_pid) <> 'q-ua-edit' THEN
     RAISE EXCEPTION 'FAIL N6: title edit did not persist'; END IF;
-  IF (SELECT updated_at FROM posts WHERE id=v_pid) < now() - interval '1 minute' THEN
-    RAISE EXCEPTION 'FAIL N6: updated_at forge persisted on title edit (expected server now())'; END IF;
+  IF (SELECT updated_at FROM posts WHERE id=v_pid) IS DISTINCT FROM transaction_timestamp() THEN
+    RAISE EXCEPTION 'FAIL N6: updated_at not forced to transaction now() on title edit (got %)',
+      (SELECT updated_at FROM posts WHERE id=v_pid); END IF;
+  IF (SELECT updated_at FROM posts WHERE id=v_pid) = v_old_ua THEN
+    RAISE EXCEPTION 'FAIL N6: updated_at == OLD after title edit (now()->OLD fault not caught)'; END IF;
 
   IF (SELECT report_count FROM posts WHERE id=v_pid) <> v_rc
      OR (SELECT is_hidden FROM posts WHERE id=v_pid) <> v_hidden

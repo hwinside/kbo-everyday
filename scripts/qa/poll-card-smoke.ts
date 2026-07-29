@@ -460,14 +460,20 @@ async function menuGateSection() {
   ok("canEditOwnPost 비로그인 → false", canEditOwnPost(author, undefined) === false);
   ok("canEditOwnPost author 불명 → false", canEditOwnPost(null, author) === false);
 
-  // PostDetail 이 실제로 canEditOwnPost 결과를 isOwner 로 PostActionsMenu 에 넘기는지 배선 가드.
+  // PostDetail 이 raw user/postEditing/authorId/userId 를 PostActionsMenu 에 넘기고, 메뉴가
+  // 게이트+소유권을 내부에서 계산하는지 배선 가드(게이트 흡수 후 새 계약).
   const src = readSrc("components/community/PostDetail.tsx");
-  ok("PostDetail canEditOwnPost import", /import\s*\{\s*canEditOwnPost\s*\}\s*from\s*"@\/lib\/community\/post-permissions"/.test(src));
-  ok("PostDetail isPostMine = canEditOwnPost 배선", /isPostMine\s*=\s*canEditOwnPost\(/.test(src));
-  ok("PostDetail 메뉴 isOwner={isPostMine} 배선", /<PostActionsMenu[\s\S]{0,200}isOwner=\{isPostMine\}/.test(src));
+  ok("PostDetail PostActionsMenu authorId={post.author_id} 배선", /<PostActionsMenu[\s\S]{0,300}authorId=\{post\.author_id\}/.test(src));
+  ok("PostDetail PostActionsMenu userId={user?.id} 배선", /<PostActionsMenu[\s\S]{0,300}userId=\{user\?\.id\}/.test(src));
   ok("PostDetail 투표글 편집 editPollPost(PATCH) 경로", /editPollPost\(/.test(src));
+  // 메뉴가 소유권/게이트를 자체 계산하는지(PostDetail 인라인 게이트 흡수).
+  const menuSrc = readSrc("components/community/PostActionsMenu.tsx");
+  ok("PostActionsMenu canEditOwnPost 자체 계산", /canEditOwnPost\(authorId,\s*userId\)/.test(menuSrc));
+  ok("PostActionsMenu 비로그인/편집중 게이트", /if\s*\(!user\s*\|\|\s*postEditing\)\s*return null/.test(menuSrc));
 
-  // 실제 DOM 렌더(false-green 방지): owner → '수정' 노출·'신고/차단' 미노출, other → 반대.
+  // 실제 DOM 렌더(false-green/fault-injection 방지): PostActionsMenu 를 PostDetail 이 넘기는 것과
+  // 동일한 raw prop(user/postEditing/authorId/userId)으로 렌더해 owner/other/비로그인/편집중
+  // DOM 도달성을 검증한다. 메뉴 내부 게이트/소유권 계산을 깨면 이 assert 들이 실패한다.
   const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost/" });
   const g = globalThis as unknown as Record<string, unknown>;
   const restore = {
@@ -480,7 +486,9 @@ async function menuGateSection() {
   g.window = dom.window;
   g.document = dom.window.document;
   const noop = () => {};
-  const menuProps = {
+  const AUTHOR = "11111111-1111-1111-1111-111111111111";
+  const OTHER = "22222222-2222-2222-2222-222222222222";
+  const baseProps = {
     canDeleteAny: false,
     open: true,
     onToggle: noop,
@@ -490,33 +498,32 @@ async function menuGateSection() {
     onBlock: noop,
     onDelete: noop,
   };
+  const renderMenu = async (props: Record<string, unknown>): Promise<string[]> => {
+    const c = dom.window.document.createElement("div");
+    dom.window.document.body.appendChild(c);
+    const r = createRoot(c);
+    await act(async () => {
+      r.render(React.createElement(PostActionsMenu, { ...baseProps, ...props }));
+    });
+    const labels = Array.from(c.querySelectorAll("button")).map((b) => (b.textContent ?? "").trim());
+    await act(async () => { r.unmount(); });
+    return labels;
+  };
   try {
-    // owner
-    {
-      const c = dom.window.document.createElement("div");
-      dom.window.document.body.appendChild(c);
-      const r = createRoot(c);
-      await act(async () => {
-        r.render(React.createElement(PostActionsMenu, { isOwner: true, ...menuProps }));
-      });
-      const labels = Array.from(c.querySelectorAll("button")).map((b) => (b.textContent ?? "").trim());
-      ok("메뉴 owner → '수정' 노출", labels.some((t) => t.includes("수정")));
-      ok("메뉴 owner → '신고'·'차단' 미노출", !labels.some((t) => t.includes("신고") || t.includes("차단")));
-      await act(async () => { r.unmount(); });
-    }
-    // other
-    {
-      const c = dom.window.document.createElement("div");
-      dom.window.document.body.appendChild(c);
-      const r = createRoot(c);
-      await act(async () => {
-        r.render(React.createElement(PostActionsMenu, { isOwner: false, ...menuProps }));
-      });
-      const labels = Array.from(c.querySelectorAll("button")).map((b) => (b.textContent ?? "").trim());
-      ok("메뉴 other → '수정' 미노출", !labels.some((t) => t.includes("수정")));
-      ok("메뉴 other → '신고'·'차단' 노출", labels.some((t) => t.includes("신고")) && labels.some((t) => t.includes("차단")));
-      await act(async () => { r.unmount(); });
-    }
+    // owner: 로그인=작성자 본인 → '수정' 노출·'신고/차단' 미노출.
+    const ownerLabels = await renderMenu({ user: { id: AUTHOR }, postEditing: false, authorId: AUTHOR, userId: AUTHOR });
+    ok("메뉴 owner → '수정' 노출", ownerLabels.some((t) => t.includes("수정")));
+    ok("메뉴 owner → '신고'·'차단' 미노출", !ownerLabels.some((t) => t.includes("신고") || t.includes("차단")));
+    // other: 로그인=타인 → '수정' 미노출·'신고/차단' 노출.
+    const otherLabels = await renderMenu({ user: { id: OTHER }, postEditing: false, authorId: AUTHOR, userId: OTHER });
+    ok("메뉴 other → '수정' 미노출", !otherLabels.some((t) => t.includes("수정")));
+    ok("메뉴 other → '신고'·'차단' 노출", otherLabels.some((t) => t.includes("신고")) && otherLabels.some((t) => t.includes("차단")));
+    // 비로그인: user 없음 → 메뉴 자체 미노출(버튼 0개).
+    const anonLabels = await renderMenu({ user: null, postEditing: false, authorId: AUTHOR, userId: undefined });
+    ok("메뉴 비로그인 → 미노출(버튼 0)", anonLabels.length === 0);
+    // 편집 중: postEditing=true → 메뉴 미노출(버튼 0개).
+    const editingLabels = await renderMenu({ user: { id: AUTHOR }, postEditing: true, authorId: AUTHOR, userId: AUTHOR });
+    ok("메뉴 편집중 → 미노출(버튼 0)", editingLabels.length === 0);
   } finally {
     if (restore.window === undefined) delete g.window; else g.window = restore.window;
     if (restore.document === undefined) delete g.document; else g.document = restore.document;
