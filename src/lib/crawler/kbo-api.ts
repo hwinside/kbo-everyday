@@ -188,13 +188,13 @@ export const USER_FACING_GAMES_TIMEOUT_MS = 3500;
 export async function fetchKboGamesOnly(
   date: string,
   srId = "0,1,3,4,5,7,9",
-  opts?: { timeoutMs?: number },
+  opts?: { timeoutMs?: number; signal?: AbortSignal },
 ): Promise<KboGame[]> {
   const res = await fetch(`${KBO_BASE}/ws/Main.asmx/GetKboGameList`, {
     method: "POST",
     headers: KBO_JSON_HEADERS,
     body: JSON.stringify({ leId: "1", srId, date }),
-    signal: AbortSignal.timeout(opts?.timeoutMs ?? 10000),
+    signal: opts?.signal ?? AbortSignal.timeout(opts?.timeoutMs ?? 10000),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
   const text = await res.text();

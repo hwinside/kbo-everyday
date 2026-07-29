@@ -85,11 +85,12 @@ export function tallyHitsFromRelays(
 async function fetchInning(
   naverGameId: string,
   inning: number,
+  signal?: AbortSignal,
 ): Promise<{ relays: NaverTextRelay[]; inn: number }> {
   try {
     const res = await fetch(
       `${NAVER_API}/${naverGameId}/relay?inning=${inning}`,
-      { headers: HEADERS, cache: "no-store" },
+      { headers: HEADERS, cache: "no-store", signal },
     );
     if (!res.ok) return { relays: [], inn: 0 };
     const json = (await res.json()) as NaverRelayResponse;
@@ -108,8 +109,9 @@ async function fetchInning(
  */
 export async function fetchNaverRelayBatterCounts(
   naverGameId: string,
+  opts?: { signal?: AbortSignal },
 ): Promise<Map<string, BatterRelayCount>> {
-  const first = await fetchInning(naverGameId, 1);
+  const first = await fetchInning(naverGameId, 1, opts?.signal);
   const inn = first.inn || 1;
   // 연장 포함 최대 15회까지만.
   const maxInning = Math.min(Math.max(inn, 1), 15);
@@ -118,7 +120,7 @@ export async function fetchNaverRelayBatterCounts(
   if (maxInning > 1) {
     const tail = await Promise.all(
       Array.from({ length: maxInning - 1 }, (_, i) =>
-        fetchInning(naverGameId, i + 2).then((r) => r.relays),
+        fetchInning(naverGameId, i + 2, opts?.signal).then((r) => r.relays),
       ),
     );
     all.push(...tail);

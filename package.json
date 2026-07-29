@@ -29,6 +29,7 @@
     "qa:summary-naver-linescore": "tsx scripts/qa/summary-naver-linescore-smoke.ts",
     "qa:games-naver-fallback": "tsx scripts/qa/games-naver-fallback-smoke.ts",
     "qa:games-user-facing": "tsx scripts/qa/games-user-facing-smoke.ts",
+    "qa:game-detail-bounded-fallback": "tsx scripts/qa/game-detail-bounded-fallback-smoke.ts",
     "qa:api-fallback-alert-claim:db": "tsx scripts/qa/api-fallback-alert-claim-db-integration.ts",
     "qa:api-fallback-alert-claim:pg17": "bash scripts/qa/api-fallback-alert-claim-pg17.sh",
     "qa:kbo-games-legacy-telegram-suppression": "tsx scripts/qa/kbo-games-legacy-telegram-suppression-smoke.ts",

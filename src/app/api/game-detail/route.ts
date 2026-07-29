@@ -1,11 +1,18 @@
-import { NextRequest, NextResponse } from "next/server";
-import { fetchGames, parseGameLinescoreResponse } from "@/lib/crawler/kbo-api";
+import { NextRequest, NextResponse, after } from "next/server";
+import {
+  fetchKboGamesOnly,
+  parseGameLinescoreResponse,
+  type KboGame,
+} from "@/lib/crawler/kbo-api";
 import { jsonWithETag } from "@/lib/http/conditional";
-import { isAllStarGameId } from "@/lib/constants/teams";
 import type { BroadcastChannel } from "@/lib/broadcast-channels";
 import { resolvePlayer } from "@/lib/utils/resolve-player";
 import { fetchNaverRelayBatterCounts } from "@/lib/naver-relay-counts";
-import { parseNaverScoreBoardLinescore } from "@/lib/crawler/naver-record";
+import {
+  naverGameId,
+  parseNaverScoreBoardLinescore,
+} from "@/lib/crawler/naver-record";
+import { fetchNaverGames } from "@/lib/crawler/naver-games";
 
 /** 숫자 kboId로 로스터 조회 — 외국인 숫자→영문 변환 포함 */
 function findPlayerByNumericId(numericId: string): { name: string } | undefined {
@@ -132,6 +139,8 @@ function positionFullName(abbr: string): string {
 }
 
 const KBO_BASE = "https://www.koreabaseball.com/ws/Schedule.asmx";
+/** 경기상세의 모든 upstream(KBO 3종·srId retry·양쪽 경기목록·Naver record)이 공유하는 절대 상한. */
+export const USER_FACING_GAME_DETAIL_DEADLINE_MS = 3000;
 // 2026-05-20: KBO가 Referer가 koreabaseball.com이 아닌 요청에 IE 분기 HTML 에러 페이지 반환 → JSON 파싱 실패.
 const HEADERS = {
   "Content-Type": "application/x-www-form-urlencoded",
@@ -379,20 +388,15 @@ function parseBoxScore(data: unknown): GameDetailResponse["boxScore"] {
 
 const NAVER_API = "https://api-gw.sports.naver.com/schedule/games";
 
-function naverGameId(kboGameId: string): string {
-  // KBO gameId: 20260405LGWO0 → Naver: 20260405LGWO02026
-  // 올스타는 네이버가 앞 4자리 연도를 9999로 서비스: 20260711WEEA0 → 99990711WEEA02026
-  const year = kboGameId.slice(0, 4);
-  const base = isAllStarGameId(kboGameId) ? `9999${kboGameId.slice(4)}` : kboGameId;
-  return `${base}${year}`;
-}
-
 const POS_SHORT_TO_FULL: Record<string, string> = {
   "투": "P", "포": "C", "1": "1B", "2": "2B", "3": "3B",
   "유": "SS", "좌": "LF", "중": "CF", "우": "RF", "지": "DH",
 };
 
-export async function fetchNaverRecord(kboGameId: string): Promise<{
+export async function fetchNaverRecord(
+  kboGameId: string,
+  opts?: { signal?: AbortSignal; includeRelayCounts?: boolean },
+): Promise<{
   boxScore: GameDetailResponse["boxScore"];
   linescore: GameDetailResponse["linescore"];
 } | null> {
@@ -405,13 +409,16 @@ export async function fetchNaverRecord(kboGameId: string): Promise<{
       fetch(`${NAVER_API}/${nId}/record`, {
         headers: { "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)" },
         next: { revalidate: 30 },
+        signal: opts?.signal,
       }),
-      fetchNaverRelayBatterCounts(nId).catch(() => new Map()),
+      opts?.includeRelayCounts === false
+        ? Promise.resolve(new Map())
+        : fetchNaverRelayBatterCounts(nId, { signal: opts?.signal }).catch(() => new Map()),
     ]);
     if (!res.ok) return null;
     const json = await res.json();
     const rd = json?.result?.recordData;
-    if (!rd?.battersBoxscore || !rd?.pitchersBoxscore) return null;
+    if (!rd) return null;
 
     function toBatters(arr: Record<string, unknown>[]): BatterRecord[] {
       return (arr || []).map((b) => {
@@ -457,23 +464,70 @@ export async function fetchNaverRecord(kboGameId: string): Promise<{
       }));
     }
 
-    const boxScore: GameDetailResponse["boxScore"] = {
-      awayBatters: toBatters(rd.battersBoxscore.away),
-      homeBatters: toBatters(rd.battersBoxscore.home),
-      awayPitchers: toPitchers(rd.pitchersBoxscore.away),
-      homePitchers: toPitchers(rd.pitchersBoxscore.home),
-    };
+    const boxScore: GameDetailResponse["boxScore"] =
+      rd.battersBoxscore && rd.pitchersBoxscore
+        ? {
+            awayBatters: toBatters(rd.battersBoxscore.away),
+            homeBatters: toBatters(rd.battersBoxscore.home),
+            awayPitchers: toPitchers(rd.pitchersBoxscore.away),
+            homePitchers: toPitchers(rd.pitchersBoxscore.home),
+          }
+        : null;
 
     // Linescore from scoreBoard (summary canonical source 와 공용 파서).
     const linescore: GameDetailResponse["linescore"] = parseNaverScoreBoardLinescore(rd.scoreBoard);
 
-    return { boxScore, linescore };
+    return boxScore || linescore ? { boxScore, linescore } : null;
   } catch {
     return null;
   }
 }
 
 // ===== Route handler =====
+
+function untilDeadline<T>(promise: Promise<T>, signal: AbortSignal, fallback: T): Promise<T> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value: T) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", onAbort);
+      resolve(value);
+    };
+    const onAbort = () => finish(fallback);
+    promise.then(finish, () => finish(fallback));
+    if (signal.aborted) {
+      // 이미 settle된 병렬 fallback은 deadline 직후라도 먼저 회수한다.
+      queueMicrotask(onAbort);
+    } else {
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
+  });
+}
+
+function reportDetailDegradation(
+  gameId: string,
+  bothSourcesUnavailable: boolean,
+): void {
+  const apiName = bothSourcesUnavailable ? "game-detail-dual-source-outage" : "kbo-game-detail";
+  const policy = bothSourcesUnavailable
+    ? { windowMinutes: 5, threshold: 1, cooldownMinutes: 10, leaseSeconds: 120 }
+    : { windowMinutes: 5, threshold: 3, cooldownMinutes: 30, leaseSeconds: 120 };
+  try {
+    // 관제 저장·알림은 응답 이후 실행해 사용자 deadline을 소비하지 않는다.
+    after(async () => {
+      const { trackApiDegradation } = await import("@/lib/monitoring/api-fallback-tracker");
+      await trackApiDegradation(
+        apiName,
+        bothSourcesUnavailable ? "network-error" : "schema-error",
+        { errorMessage: `${gameId}: bounded game-detail fallback` },
+        policy,
+      );
+    });
+  } catch {
+    // 직접 함수 호출 스모크처럼 Next request context가 없는 환경에서는 관제를 생략한다.
+  }
+}
 
 export async function GET(req: NextRequest) {
   const gameId = req.nextUrl.searchParams.get("gameId");
@@ -482,6 +536,23 @@ export async function GET(req: NextRequest) {
   }
 
   const seasonId = req.nextUrl.searchParams.get("seasonId") || new Date().getFullYear().toString();
+  const deadlineSignal = AbortSignal.timeout(USER_FACING_GAME_DETAIL_DEADLINE_MS);
+  const dateStr = gameId.slice(0, 8);
+
+  // 양쪽 fallback을 요청 시작과 동시에 준비한다. KBO timeout 뒤 새 budget을 시작하지 않고,
+  // 모든 작업이 위 단일 절대 deadline을 공유한다.
+  // eager fallback은 record 1회만 준비한다. relay 전이닝 fanout은 매 폴링마다 증폭되므로
+  // KBO 정상경로에서는 실행하지 않고, record 자체의 boxScore로 graceful degrade한다.
+  const naverRecordPromise = fetchNaverRecord(gameId, {
+    signal: deadlineSignal,
+    includeRelayCounts: false,
+  });
+  const kboListPromise = fetchKboGamesOnly(dateStr, "0,1,3,4,5,7,9", {
+    signal: deadlineSignal,
+  }).catch(() => null);
+  const naverListPromise = fetchNaverGames(dateStr, undefined, {
+    signal: deadlineSignal,
+  }).catch(() => null);
 
   // KBO Schedule API (GetScoreBoard/GetBoxScore/GetLineUpAnalysis) only accepts
   // a single integer srId — NOT comma-separated like GetKboGameList.
@@ -494,30 +565,38 @@ export async function GET(req: NextRequest) {
       fetch(`${KBO_BASE}/GetScoreBoard`, {
         method: "POST", headers: HEADERS, body,
         next: { revalidate: 10 },
+        signal: deadlineSignal,
       }).then(r => r.ok ? r.json() : null).catch(() => null),
 
       fetch(`${KBO_BASE}/GetLineUpAnalysis`, {
         method: "POST", headers: HEADERS, body,
         next: { revalidate: 60 },
+        signal: deadlineSignal,
       }).then(r => r.ok ? r.json() : null).catch(() => null),
 
       fetch(`${KBO_BASE}/GetBoxScore`, {
         method: "POST", headers: HEADERS, body,
         next: { revalidate: 30 },
+        signal: deadlineSignal,
       }).then(r => r.ok ? r.json() : null).catch(() => null),
     ]);
   }
 
   try {
+    const emptyKboBatch: [null, null, null] = [null, null, null];
     let [scoreBoardRes, lineupRes, boxScoreRes] = overrideSrId
-      ? await fetchWithSrId(overrideSrId)
-      : await fetchWithSrId("0");
+      ? await untilDeadline(fetchWithSrId(overrideSrId), deadlineSignal, emptyKboBatch)
+      : await untilDeadline(fetchWithSrId("0"), deadlineSignal, emptyKboBatch);
 
     // If no override and srId=0 returned empty ScoreBoard, retry with srId=1 (preseason)
-    if (!overrideSrId) {
+    if (!overrideSrId && !deadlineSignal.aborted) {
       const sb = parseScoreBoard(scoreBoardRes ?? []);
       if (!sb.meta) {
-        [scoreBoardRes, lineupRes, boxScoreRes] = await fetchWithSrId("1");
+        [scoreBoardRes, lineupRes, boxScoreRes] = await untilDeadline(
+          fetchWithSrId("1"),
+          deadlineSignal,
+          emptyKboBatch,
+        );
       }
     }
 
@@ -535,10 +614,12 @@ export async function GET(req: NextRequest) {
     // ScoreBoard가 scheduled인데 BoxScore에 실데이터가 있으면 → 종료된 경기
     const hasRealBoxScore = boxScore &&
       (boxScore.awayBatters.some(b => b.atBats > 0) || boxScore.homeBatters.some(b => b.atBats > 0));
+    const kboDetailDegraded = !meta || !hasInningBreakdown(kboLinescore) || !hasRealBoxScore;
 
     // KBO BoxScore가 비어있거나, KBO linescore에 이닝별 값이 없으면 네이버 record API fallback
+    let naver: Awaited<ReturnType<typeof fetchNaverRecord>> = null;
     if (!hasRealBoxScore || !hasInningBreakdown(linescore)) {
-      const naver = await fetchNaverRecord(gameId);
+      naver = await untilDeadline(naverRecordPromise, deadlineSignal, null);
       // 박스스코어는 KBO가 비어있을 때만 네이버로 교체
       if (!hasRealBoxScore && naver?.boxScore) {
         const naverHasData = naver.boxScore.awayBatters.some(b => b.atBats > 0)
@@ -556,17 +637,25 @@ export async function GET(req: NextRequest) {
       (boxScore.awayBatters.some(b => b.atBats > 0) || boxScore.homeBatters.some(b => b.atBats > 0));
 
     let liveListStatus: GameDetailResponse["status"] | null = null;
-    try {
-      const dateStr = gameId.slice(0, 8);
-      const games = await fetchGames(dateStr);
-      const listGame = games.find(g => g.gameId === gameId);
+    let listGame: KboGame | undefined;
+    // detail 3종이 정상일 때는 KBO 목록(TV_IF 포함)을 우선하고, 부분결측이면 Naver
+    // status를 우선한다. KBO 목록이 구조상 정상이어도 상태만 stale인 부분열화를 막는다.
+    const primaryListPromise = kboDetailDegraded ? naverListPromise : kboListPromise;
+    const fallbackListPromise = kboDetailDegraded ? kboListPromise : naverListPromise;
+    const primaryGames = await untilDeadline(primaryListPromise, deadlineSignal, null);
+    if (primaryGames) {
+      listGame = primaryGames.find(g => g.gameId === gameId);
+    }
+    if (!listGame) {
+      const fallbackGames = await untilDeadline(fallbackListPromise, deadlineSignal, null);
+      listGame = fallbackGames?.find(g => g.gameId === gameId);
+    }
+    if (listGame) {
       liveListStatus = listGame?.status ?? null;
       // 중계방송사는 GetKboGameList(TV_IF)에만 있으므로 여기서 meta에 채운다.
       if (meta && listGame?.broadcastChannels && listGame.broadcastChannels.length > 0) {
         meta.broadcastChannels = listGame.broadcastChannels;
       }
-    } catch {
-      liveListStatus = null;
     }
 
     const status: GameDetailResponse["status"] =
@@ -601,6 +690,13 @@ export async function GET(req: NextRequest) {
       })(),
       boxScore,
     };
+
+    if (kboDetailDegraded) {
+      reportDetailDegradation(
+        gameId,
+        !hasInningBreakdown(naver?.linescore ?? null) && !listGame && !hasRealBoxScoreFinal,
+      );
+    }
 
     // ETag/304 조건부 응답: 폴링 시 detail이 안 바뀌었으면 304(빈 바디)로
     // Fast Origin Transfer 절감. 폴링 주기 불변 → 실시간성 손실 0. 브라우저가

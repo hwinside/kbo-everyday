@@ -161,7 +161,7 @@ function isSaneGame(g: KboGame): boolean {
 export async function fetchNaverGames(
   date: string,
   srId: string = DEFAULT_ALL_SR_ID,
-  opts?: { timeoutMs?: number },
+  opts?: { timeoutMs?: number; signal?: AbortSignal },
 ): Promise<KboGame[]> {
   if (srId !== DEFAULT_ALL_SR_ID) {
     // 정규시즌 전용 등 특정 시리즈 요구 — Naver 로는 series 보존 불가 → 오염 방지 위해 fail-close.
@@ -176,7 +176,7 @@ export async function fetchNaverGames(
       "Referer": "https://sports.news.naver.com/",
       "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)",
     },
-    signal: AbortSignal.timeout(opts?.timeoutMs ?? 5000),
+    signal: opts?.signal ?? AbortSignal.timeout(opts?.timeoutMs ?? 5000),
     cache: "no-store",
   });
   if (!res.ok) {
