@@ -137,6 +137,127 @@ async function run() {
     check("stop 후 예약 타이머 0", h.pendingTimers() === 0);
   }
 
+  // ── 비동기(느린 콜백) 경계: single-flight fence 회귀 ──
+  // 삼순 P1: A pending 중 hidden→visible이 새 tick과 겹쳐 중복 Edge Request를 냈다.
+
+  /** 콜백을 수동 resolve하는 deferred 하네스(동시 실행/겹침 추적). */
+  function makeDeferredHarness(startHidden = false) {
+    let hidden = startHidden;
+    let now = 0;
+    let seq = 1;
+    const timers = new Map<number, { at: number; fn: () => void }>();
+    let visHandler: (() => void) | null = null;
+    let calls = 0;
+    let active = 0;
+    let maxActive = 0;
+    const pending: Array<() => void> = []; // 각 콜백의 resolve
+
+    const deps = {
+      isHidden: () => hidden,
+      onVisibilityChange: (h: () => void) => { visHandler = h; return () => { visHandler = null; }; },
+      schedule: (fn: () => void, ms: number) => { const id = seq++; timers.set(id, { at: now + ms, fn }); return id; },
+      cancel: (id: number) => { timers.delete(id); },
+      callback: () => {
+        calls++;
+        active++;
+        maxActive = Math.max(maxActive, active);
+        return new Promise<void>((resolve) => {
+          pending.push(() => { active--; resolve(); });
+        });
+      },
+      intervalMs: 1000,
+    };
+
+    return {
+      deps,
+      get calls() { return calls; },
+      get maxActive() { return maxActive; },
+      get inFlight() { return active; },
+      pendingCount() { return pending.length; },
+      pendingTimers() { return timers.size; },
+      /** 가장 오래된 in-flight 콜백 1개를 완료. */
+      async settleOne() { const r = pending.shift(); if (r) r(); await flush(); },
+      async setHidden(v: boolean) { hidden = v; if (visHandler) visHandler(); await flush(); },
+      async advance(ms: number) {
+        const target = now + ms;
+        let guard = 0;
+        while (guard++ < 10000) {
+          let nextId: number | null = null;
+          let nextAt = Infinity;
+          for (const [id, t] of timers) {
+            if (t.at <= target && t.at < nextAt) { nextAt = t.at; nextId = id; }
+          }
+          if (nextId === null) break;
+          const t = timers.get(nextId)!;
+          timers.delete(nextId);
+          now = t.at;
+          t.fn();
+          await flush();
+        }
+        now = target;
+      },
+    };
+  }
+
+  // 6) A pending 중 hidden→visible: 겹침 없이 settle 후 정확히 1회 재실행.
+  {
+    const h = makeDeferredHarness(false);
+    const stop = startVisibilityPoller(h.deps);
+    await flush();
+    check("deferred: 초기 콜백 1회 시작(in-flight)", h.calls === 1 && h.inFlight === 1);
+    await h.setHidden(true);          // in-flight 중 숨김
+    await h.setHidden(false);         // in-flight 중 복귀 → 큐잉만, 새 tick 시작 금지
+    check("deferred: in-flight 중 복귀는 새 콜백을 시작하지 않음(겹침 0)", h.calls === 1 && h.maxActive === 1);
+    await h.settleOne();              // A 완료 → 큐된 복귀 1회 즉시 재실행
+    check("deferred: settle 후 정확히 1회 재실행", h.calls === 2);
+    check("deferred: 동시 실행 최대 1(no-overlap 계약)", h.maxActive === 1);
+    check("deferred: 재실행도 in-flight 1건뿐", h.inFlight === 1);
+    await h.settleOne();              // 재실행 완료 → 주기 타이머 예약
+    check("deferred: settle 후 예약 타이머 ≤ 1", h.pendingTimers() === 1);
+    stop();
+  }
+
+  // 7) A pending 중 hidden→visible 여러 번: 재실행은 여전히 1회(정확히 once).
+  {
+    const h = makeDeferredHarness(false);
+    const stop = startVisibilityPoller(h.deps);
+    await flush();
+    await h.setHidden(true); await h.setHidden(false);
+    await h.setHidden(true); await h.setHidden(false);
+    await h.setHidden(true); await h.setHidden(false);
+    check("deferred: 복귀 여러 번이어도 in-flight 중 겹침 0", h.calls === 1 && h.maxActive === 1);
+    await h.settleOne();
+    check("deferred: 복귀 여러 번이어도 재실행은 정확히 1회", h.calls === 2 && h.maxActive === 1);
+    stop();
+  }
+
+  // 8) 느린 콜백 중 interval 타이머 발화: 겹치지 않음.
+  {
+    const h = makeDeferredHarness(false);
+    const stop = startVisibilityPoller(h.deps);
+    await flush();
+    await h.settleOne();          // 첫 콜백 완료 → 1000ms 타이머 예약
+    await h.advance(1000);        // 타이머 발화 → 두번째 콜백 시작(in-flight)
+    check("deferred: interval 발화로 2번째 시작", h.calls === 2 && h.inFlight === 1);
+    await h.advance(3000);        // 진행 중엔 새 타이머 없음 → 추가 발화 겹침 없음
+    check("deferred: in-flight 동안 추가 겹침 0", h.maxActive === 1);
+    stop();
+  }
+
+  // 9) stop() during pending: 후행 예약·재실행 차단.
+  {
+    const h = makeDeferredHarness(false);
+    const stop = startVisibilityPoller(h.deps);
+    await flush();
+    check("deferred: stop 전 in-flight 1", h.inFlight === 1);
+    stop();                        // pending 중 정리
+    await h.settleOne();           // A resolve
+    check("deferred: stop 후 재실행 0(후행 tick 차단)", h.calls === 1);
+    check("deferred: stop 후 예약 타이머 0", h.pendingTimers() === 0);
+    await h.setHidden(false);
+    check("deferred: stop 후 visibility 무시", h.calls === 1);
+  }
+
   console.log(`\nvisibility-poller: ${pass}/${pass + fail} pass${fail ? `, ${fail} FAIL` : ""}`);
   if (fail) process.exit(1);
 }

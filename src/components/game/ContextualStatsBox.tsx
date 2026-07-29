@@ -35,23 +35,35 @@ export default function ContextualStatsBox({ gameId, enabled = true }: Props) {
     return () => { mountedRef.current = false; };
   }, []);
 
+  // gameId 세대 fence: 컴포넌트가 유지된 채 gameId가 바뀔때, 이전 경기의
+  // 늦은 응답(A slow → gameId B 전환 → late A resolve)이 현재 경기(B) 데이터를
+  // 덮어쓰지 못하게 막는다. 요청 시점 gameId와 현재 gameId가 같을 때만 commit.
+  const currentGameIdRef = useRef(gameId);
+  useEffect(() => {
+    currentGameIdRef.current = gameId;
+  }, [gameId]);
+
   const pollContextualStats = useCallback(async () => {
     // GameChat composer focus(=body.kbd-open) 동안엔 라인 add/remove로 인한
     // 박스 높이 변화가 composer 위쪽 layout을 흔들어 V3 scrollIntoView 앵커가
     // 깨진다. 키보드 내려갈 때까지 데이터 갱신을 보류한다. (PR #126 회귀 핫픽스)
     if (isKeyboardOpen()) return;
+    const reqGameId = gameId;
+    // 언마운트·키보드·gameId 전환 경계를 모두 통과해야 commit.
+    const canCommit = () =>
+      mountedRef.current && currentGameIdRef.current === reqGameId && !isKeyboardOpen();
     try {
-      const res = await fetch(`/api/contextual-stats?gameId=${encodeURIComponent(gameId)}`, {
+      const res = await fetch(`/api/contextual-stats?gameId=${encodeURIComponent(reqGameId)}`, {
         cache: "no-store",
       });
       if (!res.ok) {
-        if (mountedRef.current && !isKeyboardOpen()) setData(null);
+        if (canCommit()) setData(null);
         return;
       }
       const json = (await res.json()) as ContextualStatsResponse;
-      if (mountedRef.current && !isKeyboardOpen()) setData(json);
+      if (canCommit()) setData(json);
     } catch {
-      if (mountedRef.current && !isKeyboardOpen()) setData(null);
+      if (canCommit()) setData(null);
     }
   }, [gameId]);
 

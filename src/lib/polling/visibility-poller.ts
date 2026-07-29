@@ -11,6 +11,11 @@
  * - hidden 전환: 예약 취소(폴링 정지).
  * - visible 복귀: 즉시 1회 실행 + 폴링 재개.
  *
+ * single-flight fence: 콜백은 절대 겹치지 않는다(동시 실행 ≤ 1). 콜백이 in-flight인
+ * 동안 visible 복귀가 들어오면 새 tick을 시작하지 않고 "복귀 후 1회 재실행"을
+ * 큐잉했다가, 진행 중 콜백이 끝난 직후 정확히 1회만 즉시 재실행한다. 이로써
+ * 느린 fetch 중 앱을 빠르게 나갔다 돌아와도 중복 Edge Request가 발생하지 않는다.
+ *
  * DOM/timer/visibility를 전부 주입받아 결정론적으로 테스트한다.
  */
 export interface VisibilityPollerDeps {
@@ -34,6 +39,8 @@ export interface VisibilityPollerDeps {
 export function startVisibilityPoller(deps: VisibilityPollerDeps): () => void {
   let cancelled = false;
   let timer: number | null = null;
+  let running = false;      // 콜백 in-flight 여부 (single-flight fence)
+  let resumeQueued = false; // in-flight 중 들어온 visible 복귀 → settle 후 정확히 1회 재실행
 
   const clear = () => {
     if (timer !== null) {
@@ -43,11 +50,25 @@ export function startVisibilityPoller(deps: VisibilityPollerDeps): () => void {
   };
 
   const tick = async () => {
-    // 정리됐거나 숨겨졌으면 실행 안 함(visible 핸들러가 재개).
-    if (cancelled || deps.isHidden()) return;
-    await deps.callback();
-    if (cancelled || deps.isHidden()) return;
-    clear();
+    // 정리됐거나 숨겨졌거나 이미 실행 중이면 새로 시작하지 않는다(겹침 방지).
+    if (cancelled || deps.isHidden() || running) return;
+    clear(); // 진행하므로 대기 중 예약 타이머 취소(타이머 ≤ 1 보장).
+    running = true;
+    try {
+      await deps.callback();
+    } finally {
+      running = false;
+    }
+    if (cancelled) return;
+    // in-flight 중 visible 복귀가 있었으면, 보이는 상태에서 정확히 1회 즉시 재실행.
+    if (resumeQueued) {
+      resumeQueued = false;
+      if (!deps.isHidden()) {
+        void tick();
+        return;
+      }
+    }
+    if (deps.isHidden()) return; // 숨김이면 정지(visible 핸들러가 재개).
     timer = deps.schedule(() => { void tick(); }, deps.intervalMs);
   };
 
@@ -57,7 +78,12 @@ export function startVisibilityPoller(deps: VisibilityPollerDeps): () => void {
       clear();
       return;
     }
-    // 복귀: 진행 중 예약을 취소하고 즉시 1회 실행 + 재개.
+    // 복귀: 콜백이 in-flight면 새 tick을 시작하지 않고 settle 후 1회 재실행을 큐잉.
+    if (running) {
+      resumeQueued = true;
+      return;
+    }
+    // idle 상태면 진행 중 예약을 취소하고 즉시 1회 실행 + 재개.
     clear();
     void tick();
   };
@@ -69,6 +95,7 @@ export function startVisibilityPoller(deps: VisibilityPollerDeps): () => void {
 
   return () => {
     cancelled = true;
+    resumeQueued = false;
     clear();
     unsubscribe();
   };
