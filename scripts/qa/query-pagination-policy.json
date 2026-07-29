@@ -46,9 +46,11 @@
     "game_summary_generation_claims",
     "game_summaries",
     "game_event_state",
+    "game_lineup_notify_state",
     "game_notify_state",
     "game_start_delivery_ledger",
     "games",
+    "lineup_confirm_delivery_ledger",
     "gif_collector_queue",
     "highlights",
     "invitations",
@@ -104,6 +106,8 @@
     "venue_stories",
     "venue_story_comments",
     "venue_story_upload_daily",
+    "venue_story_view_daily",
+    "venue_story_view_marks",
     "video_transcode_jobs",
     "videos",
     "watch_pings",
@@ -402,6 +406,24 @@
         "token_hash"
       ]
     ],
+    "game_lineup_notify_state": [
+      [
+        "game_id",
+        "team_id"
+      ]
+    ],
+    "lineup_confirm_delivery_ledger": [
+      [
+        "id"
+      ],
+      [
+        "game_id",
+        "team_id",
+        "event_type",
+        "token_id",
+        "token_hash"
+      ]
+    ],
     "ios_widget_push_state": [
       [
         "game_id"
@@ -458,6 +480,7 @@
     "leaderboard_invite_rollup_refresh": "full snapshot recompute of the invite leaderboard rollup (advisory-locked, idempotent), returns text",
     "leaderboard_writing_rollup_refresh": "full snapshot recompute of the writing leaderboard rollup, returns void",
     "log_urgent_notice_error": "writes one delivery error",
+    "record_venue_story_view": "records one dedupe view mark and bumps one daily counter, returns void",
     "record_youtube_quota": "writes one quota ledger entry",
     "replace_team_roster_day": "bounded replacement for one team and date",
     "report_venue_story": "creates one report",

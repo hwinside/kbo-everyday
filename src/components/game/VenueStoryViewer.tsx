@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
-import { X, Volume2, VolumeX, MoreVertical, Loader2, MessageCircle, Send, Trash2 } from "lucide-react";
+import { X, Volume2, VolumeX, MoreVertical, Loader2, MessageCircle, Send, Trash2, Eye } from "lucide-react";
+import AdminOnly from "@/components/admin/AdminOnly";
 import { getSafeSession } from "@/lib/supabase/client";
 import { VENUE_STORY_IMAGE_HOLD_MS, type VenueStory } from "@/lib/venue-stories/types";
 import {
@@ -21,6 +22,7 @@ import { lockRootScroll, unlockRootScroll } from "@/lib/venue-stories/scroll-loc
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import { isIosNativeRuntime } from "@/lib/capacitor/platform";
 import { startVenueStoryUrlRefresh } from "@/lib/venue-stories/refresh-policy";
+import { trackVenueStoryView } from "@/lib/venue-stories/view-tracker-client";
 
 interface Props {
   stories: VenueStory[];
@@ -148,6 +150,14 @@ export default function VenueStoryViewer({
   useEffect(() => {
     if (storyId != null) onStorySeen?.(storyId);
   }, [storyId, onStorySeen]);
+
+  // 조회수 트래킹(A안 원문 · #735 패턴) — 뷰어 열람 = click: 표시된 스토리마다 1회 전송.
+  // 비로그인 guest 집계·beacon 우선/keepalive 폴백·탭 세션 내 중복 방지·실패 재시도 해제는
+  // trackVenueStoryView(view-tracker-client)가 담당. 스토리×뷰어×kind×KST일 dedupe 는 서버 RPC 보장.
+  useEffect(() => {
+    if (storyId == null || storyId <= 0) return;
+    void trackVenueStoryView(storyId, "click");
+  }, [storyId]);
 
   // 목록 최초 발급 URL의 나이를 신뢰하지 않고 현재 스토리 진입 즉시 단건 재발급한다.
   // 순수·주입형 루프(startVenueStoryUrlRefresh)를 그대로 사용해 테스트가 동일 코드를 실행한다.
@@ -577,7 +587,22 @@ export default function VenueStoryViewer({
               );
             })()}
           </div>
-          <p className="text-white/60 text-[11px]">{timeAgo(story.createdAt)}</p>
+          <p className="text-white/60 text-[11px] flex items-center gap-1.5">
+            <span>{timeAgo(story.createdAt)}</span>
+            {/* 조회수는 일단 관리자만 — 서버 필드 분기 + AdminOnly 이중 게이트. */}
+            {story.clickCount != null && story.impressionCount != null && (
+              <AdminOnly>
+                <span
+                  className="inline-flex items-center gap-1"
+                  title="관리자 전용 조회수: 클릭·노출"
+                >
+                  <Eye size={12} />
+                  <span>클릭 {story.clickCount.toLocaleString()}</span>
+                  <span>· 노출 {story.impressionCount.toLocaleString()}</span>
+                </span>
+              </AdminOnly>
+            )}
+          </p>
         </div>
         {story.mediaType === "video" && (
           <button

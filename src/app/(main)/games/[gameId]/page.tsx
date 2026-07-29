@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { clsx } from "clsx";
 import { getTeamById, ALLSTAR_CODE_TO_ID, isAllStarGameId } from "@/lib/constants/teams";
@@ -169,10 +169,20 @@ function parseKboGameId(gameId: string) {
   };
 }
 
+function parseTabParam(v: string | null): Tab | null {
+  return v && TABS.some((t) => t.id === v) ? (v as Tab) : null;
+}
+
 export default function GameDetailPage() {
   const params = useParams();
   const gameId = params.gameId as string;
-  const [activeTab, setActiveTab] = useState<Tab>("kgwan");
+  const searchParams = useSearchParams();
+  // 라인업 확정 푸시 딥링크: /games/{id}?tab=lineup → 라인업 탭으로 진입(cold: 초기값 / warm: URL 변경 반영).
+  const tabParam = parseTabParam(searchParams.get("tab"));
+  const [activeTab, setActiveTab] = useState<Tab>(tabParam ?? "kgwan");
+  useEffect(() => {
+    if (tabParam) setActiveTab(tabParam);
+  }, [tabParam]);
   const [isFieldCollapsed, setIsFieldCollapsed] = useState(false);
   const { game: liveGame, refetch: refetchLive } = useLiveGame(gameId, 10000);
   const { data: gameDetail, refetch: refetchDetail } = useGameDetail(gameId, 30000);

@@ -39,6 +39,8 @@ export interface VisibilityPollerDeps {
   callback: () => void | Promise<void>;
   /** 폴링 간격(ms). */
   intervalMs: number;
+  /** false면 최초 실행은 intervalMs 뒤로 미루되, hidden→visible 복귀는 즉시 실행한다. */
+  runImmediately?: boolean;
 }
 
 /**
@@ -102,8 +104,11 @@ export function startVisibilityPoller(deps: VisibilityPollerDeps): () => void {
 
   const unsubscribe = deps.onVisibilityChange(onVisibility);
 
-  // 초기: 보일 때만 시작.
-  if (!deps.isHidden()) void tick();
+  // 초기: 보일 때만 시작. 이미 별도 최초 로드를 수행한 소비처는 첫 폴링을 interval 뒤로 미룬다.
+  if (!deps.isHidden()) {
+    if (deps.runImmediately ?? true) void tick();
+    else timer = deps.schedule(() => { void tick(); }, deps.intervalMs);
+  }
 
   return () => {
     cancelled = true;

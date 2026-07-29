@@ -25,6 +25,11 @@ const lastAlertTime = new Map<string, number>(); // apiName -> timestamp
 const ALERT_THRESHOLD = 3; // N회 이상
 const ALERT_WINDOW_MS = 5 * 60 * 1000; // 5분 내
 const COOLDOWN_MS = 30 * 60 * 1000; // 30분 쿨다운
+const LEGACY_TELEGRAM_SUPPRESSED_APIS = new Set(["kbo-games"]);
+
+export function getRecentFallbackBufferSizeForTest(): number {
+  return recentFallbacks.length;
+}
 
 /**
  * Fallback 이벤트 기록 + 알림 체크
@@ -42,13 +47,19 @@ export async function trackFallback(
     errorMessage: options?.errorMessage,
   };
 
-  // 이벤트 추가 (메모리)
-  recentFallbacks.push(event);
-
   // Supabase 영구 저장 (비동기, 실패해도 알림은 계속)
   saveToSupabase(event).catch(err => {
     console.error("[API Fallback] Failed to save to Supabase:", err.message);
   });
+
+  // kbo-games 경보는 서버리스 인스턴스별 in-memory cooldown 때문에 장애 중 중복 폭주한다.
+  // 이벤트 저장은 유지하되 durable tracker 교체 전까지 legacy Telegram fanout만 차단한다.
+  if (LEGACY_TELEGRAM_SUPPRESSED_APIS.has(apiName)) {
+    return;
+  }
+
+  // 이벤트 추가 (메모리)
+  recentFallbacks.push(event);
 
   // 5분 이상 된 이벤트 제거 (메모리 관리)
   const cutoff = Date.now() - ALERT_WINDOW_MS;
