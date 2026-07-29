@@ -50,6 +50,10 @@ export function computeReconnectDelay(attempt: number, opts?: ReconnectBackoffOp
  * 이미 예약된 재연결이 있으면(hasPendingReconnect) 중복 예약하지 않는다.
  * (backfill 은 이 판정과 무관하게 항상 수행돼 REST 로 누락분을 즉시 메운다.)
  */
-export function shouldResubscribeOnVisible(subscribed: boolean, hasPendingReconnect: boolean): boolean {
-  return !subscribed && !hasPendingReconnect;
+export function shouldResubscribeOnVisible(
+  subscribed: boolean,
+  hasPendingReconnect: boolean,
+  hasActiveChannel = subscribed,
+): boolean {
+  return !subscribed && !hasPendingReconnect && !hasActiveChannel;
 }

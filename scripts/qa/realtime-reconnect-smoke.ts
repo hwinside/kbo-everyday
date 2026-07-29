@@ -5,6 +5,7 @@
  * 실행: npx tsx scripts/qa/realtime-reconnect-smoke.ts
  */
 import { computeReconnectDelay, shouldResubscribeOnVisible } from "../../src/lib/supabase/realtime-reconnect";
+import { createRealtimeChannelLifecycle } from "../../src/lib/supabase/realtime-channel-lifecycle";
 
 let pass = 0;
 let fail = 0;
@@ -54,10 +55,90 @@ check("정상 채널 + 예약 있음 → 재구독 X", shouldResubscribeOnVisibl
 // dead 채널 → 재구독 O(예약 없을 때만)
 check("dead 채널 + 예약 없음 → 재구독 O", shouldResubscribeOnVisible(false, false) === true);
 check("dead 채널 + 예약 있음 → 재구독 X(중복 예약 방지)", shouldResubscribeOnVisible(false, true) === false);
+check("joining 채널 + 예약 없음 → 재구독 X", shouldResubscribeOnVisible(false, false, true) === false);
 
 // --- baseMs:0(사용자 복귀 즉시성) → [0, jitter) 즉시 재구독 ---
 check("visible 재구독은 base0 → 즉시(≈0)", computeReconnectDelay(0, { baseMs: 0, random: () => 0 }) === 0);
 check("visible 재구독 base0 + jitter 상한 내", computeReconnectDelay(0, { baseMs: 0, random: () => 0.999, jitterMs: 1000 }) === 999);
 
-console.log(`\nrealtime-reconnect: ${pass}/${pass + fail} pass${fail ? `, ${fail} FAIL` : ""}`);
-if (fail) process.exit(1);
+// --- 실제 channel identity/generation + remove→subscribe 직렬화 수명 회귀 ---
+async function runLifecycleRegression() {
+  type FakeChannel = { id: string };
+  type Timer = { callback: () => void | Promise<void>; cleared: boolean; fired: boolean };
+  const channels: FakeChannel[] = [];
+  const statusCallbacks = new Map<string, (status: "SUBSCRIBED" | "CHANNEL_ERROR" | "TIMED_OUT" | "CLOSED") => void>();
+  const timers: Timer[] = [];
+  const removed: string[] = [];
+  let resolveRemoveA!: () => void;
+  const removeA = new Promise<void>((resolve) => { resolveRemoveA = resolve; });
+  let backfills = 0;
+  const lifecycle = createRealtimeChannelLifecycle<FakeChannel, Timer>({
+  createChannel: () => {
+    const channel = { id: String.fromCharCode(65 + channels.length) };
+    channels.push(channel);
+    return channel;
+  },
+  subscribeChannel: (channel, onStatus) => statusCallbacks.set(channel.id, onStatus),
+  removeChannel: async (channel) => {
+    removed.push(channel.id);
+    if (channel.id === "A") await removeA;
+  },
+  onSubscribed: () => { backfills += 1; },
+  onVisible: () => { backfills += 1; },
+  setTimer: (callback) => {
+    const timer: Timer = {
+      callback: async () => {
+        timer.fired = true;
+        await callback();
+      },
+      cleared: false,
+      fired: false,
+    };
+    timers.push(timer);
+    return timer;
+  },
+  clearTimer: (timer) => { timer.cleared = true; },
+  reconnectDelay: () => 0,
+  visibleReconnectDelay: () => 0,
+  });
+
+  lifecycle.start();
+  check("초기 A는 joining", lifecycle.snapshot().channel?.id === "A" && lifecycle.snapshot().state === "joining");
+  lifecycle.visible();
+  check("initial joining visibility는 교체 timer 0", timers.filter((timer) => !timer.cleared && !timer.fired).length === 0);
+
+  statusCallbacks.get("A")?.("CHANNEL_ERROR");
+  const reconnectA = timers.find((timer) => !timer.cleared && !timer.fired);
+  check("current A error만 재연결 예약", reconnectA != null);
+  const replacingA = reconnectA?.callback();
+  check("A 제거 완료 전 B subscribe 직렬 대기", channels.length === 1 && removed.join(",") === "A");
+
+  statusCallbacks.get("A")?.("CLOSED");
+  check("제거 중 A CLOSED는 추가 timer 0", timers.filter((timer) => !timer.cleared && !timer.fired).length === 0);
+  resolveRemoveA();
+  await replacingA;
+  check("A 제거 후 B 생성", channels.map((channel) => channel.id).join(",") === "A,B");
+
+  statusCallbacks.get("B")?.("SUBSCRIBED");
+  statusCallbacks.get("A")?.("CLOSED");
+  check("late A CLOSED 뒤 B subscribed 유지", lifecycle.snapshot().channel?.id === "B" && lifecycle.snapshot().state === "subscribed");
+  check("late A CLOSED 뒤 timer 0", lifecycle.snapshot().reconnectPending === false);
+  check("healthy B 미제거", removed.includes("B") === false);
+
+  statusCallbacks.get("B")?.("CHANNEL_ERROR");
+  check("current B error는 다음 백오프 예약", lifecycle.snapshot().reconnectPending === true);
+  statusCallbacks.get("B")?.("CLOSED");
+  check("같은 B 후속 CLOSED는 중복 예약/attempt 증가 없음", lifecycle.snapshot().reconnectAttempts === 1);
+  check("B subscribed backfill 1회", backfills === 2);
+  lifecycle.stop();
+}
+
+runLifecycleRegression()
+  .then(() => {
+    console.log(`\nrealtime-reconnect: ${pass}/${pass + fail} pass${fail ? `, ${fail} FAIL` : ""}`);
+    if (fail) process.exit(1);
+  })
+  .catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });

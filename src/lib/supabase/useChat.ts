@@ -6,7 +6,7 @@ import { supabase } from "./client";
 import { useAuth } from "./AuthContext";
 import { normalizeForFloodKey } from "@/lib/utils/normalize-message";
 import { checkObjectionableContent } from "@/lib/moderation/content-filter";
-import { computeReconnectDelay, shouldResubscribeOnVisible } from "./realtime-reconnect";
+import { createRealtimeChannelLifecycle } from "./realtime-channel-lifecycle";
 
 export interface ChatMessage {
   id: number;
@@ -472,13 +472,7 @@ export function useChat(roomId: string) {
   useEffect(() => {
     if (!roomId) return;
 
-    let channel: RealtimeChannel | null = null;
-    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let cancelled = false;
-    // 재구독 폭주(양의 피드백) 차단: 연속 실패 횟수로 지수 백오프, 성공 시 리셋.
-    // subscribed 는 채널 생사 플래그(visibility 재구독을 dead 채널로만 제한).
-    let reconnectAttempts = 0;
-    let subscribed = false;
 
     const handleInsert = async (payload: { new: ChatMessage }) => {
       const msg = payload.new;
@@ -576,9 +570,12 @@ export function useChat(roomId: string) {
       if (reachedEnd) setHasMore(false);
     };
 
-    const subscribe = () => {
-      if (cancelled) return;
-      channel = supabase
+    const lifecycle = createRealtimeChannelLifecycle<
+      RealtimeChannel,
+      ReturnType<typeof setTimeout>
+    >({
+      createChannel: () =>
+        supabase
         .channel(`chat:${roomId}`)
         .on(
           "postgres_changes",
@@ -599,76 +596,38 @@ export function useChat(roomId: string) {
             filter: `room_id=eq.${roomId}`,
           },
           handleUpdate
-        )
-        .subscribe((status) => {
-          if (cancelled) return;
-          if (status === "SUBSCRIBED") {
-            // 정상 구독: 백오프 리셋 + 예약된 재연결 취소(불필요한 채널 churn 방지).
-            subscribed = true;
-            reconnectAttempts = 0;
-            if (reconnectTimer) {
-              clearTimeout(reconnectTimer);
-              reconnectTimer = null;
-            }
-            // 재구독 직후 누락 흡수 (백그라운드 동안 들어온 메시지)
-            void backfill();
-          } else if (
-            status === "CHANNEL_ERROR" ||
-            status === "TIMED_OUT" ||
-            status === "CLOSED"
-          ) {
-            subscribed = false;
-            // 고정 1초 → 지수 백오프+jitter+상한. 열화 시 클라 재시도 폭주를 눌러 herd 분산.
-            const delay = computeReconnectDelay(reconnectAttempts);
-            reconnectAttempts += 1;
-            scheduleReconnect(delay);
-          }
-        });
-    };
-
-    const scheduleReconnect = (delay: number) => {
-      if (cancelled || reconnectTimer) return;
-      reconnectTimer = setTimeout(() => {
-        reconnectTimer = null;
-        if (cancelled) return;
-        if (channel) {
-          supabase.removeChannel(channel);
-          channel = null;
-        }
-        subscribe();
-      }, delay);
-    };
+        ),
+      subscribeChannel: (nextChannel, onStatus) => {
+        nextChannel.subscribe(onStatus);
+      },
+      removeChannel: async (oldChannel) => {
+        await supabase.removeChannel(oldChannel);
+      },
+      onSubscribed: () => {
+        void backfill();
+      },
+      onVisible: () => {
+        void backfill();
+      },
+      setTimer: (callback, delay) => setTimeout(callback, delay),
+      clearTimer: (handle) => clearTimeout(handle),
+    });
 
     const onVisible = () => {
       if (document.visibilityState !== "visible") return;
-      // 보이는 즉시 gap 메우기(cheap REST). 채널이 살아있으면 이것만으로 충분히 빠름.
-      void backfill();
-      // 정상 채널은 재구독하지 않는다(join storm 차단, 삼순 진단). 채널이 실제로 죽었고
-      // 예약된 재연결도 없을 때만 재구독. 사용자 능동 복귀라 백오프는 리셋하되, 경기 시작
-      // 시 herd 를 분산하려 jitter 만큼만 지연(baseMs:0 → [0,jitter)).
-      if (shouldResubscribeOnVisible(subscribed, reconnectTimer !== null)) {
-        reconnectAttempts = 0;
-        scheduleReconnect(computeReconnectDelay(0, { baseMs: 0 }));
-      }
+      lifecycle.visible();
     };
 
     document.addEventListener("visibilitychange", onVisible);
     window.addEventListener("online", onVisible);
 
-    subscribe();
+    lifecycle.start();
 
     return () => {
       cancelled = true;
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("online", onVisible);
-      if (reconnectTimer) {
-        clearTimeout(reconnectTimer);
-        reconnectTimer = null;
-      }
-      if (channel) {
-        supabase.removeChannel(channel);
-        channel = null;
-      }
+      lifecycle.stop();
     };
   }, [roomId]);
 
