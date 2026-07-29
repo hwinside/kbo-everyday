@@ -30,10 +30,33 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  // advisory try-lock 획득 실패(= 다른 refresh 진행 중) — 정상 경로, 이번 틱만 skip
-  if (data === "skipped_lock_busy") {
-    return NextResponse.json({ ok: true, skipped: true, tookMs: Date.now() - started });
+  // 초대 리더보드 rollup(leaderboard_invite_rollup) 도 동일 5분 주기로 갱신.
+  // v_leaderboard_invite 가 security_invoker 뷰로 이 스냅샷을 읽는다
+  // (원본 invitations 는 RLS 잠금 유지).
+  const invite = await supabase.rpc("leaderboard_invite_rollup_refresh");
+
+  // 실패를 숨기지 않고 5xx/ok:false 로 가시화 — Vercel cron health 가 stale invite
+  // 스냅샷을 성공으로 오인식하지 않도록. writing 은 이미 갱신 완료·멱등이라
+  // cron 재시도 시 안전. (skipped_lock_busy 는 동시 refresh 진행 중 = 정상)
+  if (invite.error) {
+    return NextResponse.json(
+      {
+        ok: false,
+        writing: data === "skipped_lock_busy" ? "skipped" : "refreshed",
+        error: "invite rollup refresh failed",
+        details: invite.error.message,
+        tookMs: Date.now() - started,
+      },
+      { status: 500 },
+    );
   }
 
-  return NextResponse.json({ ok: true, tookMs: Date.now() - started });
+  const invitePart = { invite: invite.data as string };
+
+  // advisory try-lock 획득 실패(= 다른 refresh 진행 중) — 정상 경로, 이번 틱만 skip
+  if (data === "skipped_lock_busy") {
+    return NextResponse.json({ ok: true, skipped: true, ...invitePart, tookMs: Date.now() - started });
+  }
+
+  return NextResponse.json({ ok: true, ...invitePart, tookMs: Date.now() - started });
 }

@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { useSafeBack } from "@/lib/hooks/useSafeBack";
 import { ChevronLeft, Trophy, Users, MessageSquare, Gift, Crown } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
@@ -43,6 +44,7 @@ const RESULT_PATH = "/whats-new";
 
 export default function LeaderboardPage() {
   const router = useRouter();
+  const goBack = useSafeBack("/events/invite");
   const { user } = useAuth();
   const eventEnded = Date.now() >= EVENT_END_MS;
   // 2026-04-20 삼순이/하린아빠 합의: 기본 탭은 글쓰기 — 데이터 더 풍부한 쪽을 먼저 노출
@@ -102,12 +104,12 @@ export default function LeaderboardPage() {
   return (
     <div className="min-h-screen bg-[#0A0A0B] text-white pb-24">
       {/* Header */}
-      <div className="sticky top-0 z-10 bg-[#0A0A0B]/90 backdrop-blur border-b border-white/10">
-        <div className="max-w-screen-sm mx-auto px-5 py-3 flex items-center gap-3">
+      <div className="sticky top-0 z-10 bg-[#0A0A0B]/90 backdrop-blur border-b border-white/10" style={{ paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
+        <div className="max-w-screen-sm mx-auto px-5 min-h-[44px] flex items-center gap-3">
           <button
-            onClick={() => router.back()}
-            className="p-1 -ml-1"
-            aria-label="뒤로"
+            onClick={goBack}
+            className="flex h-11 w-11 items-center justify-center -ml-2.5"
+            aria-label="뒤로가기"
           >
             <ChevronLeft size={24} />
           </button>

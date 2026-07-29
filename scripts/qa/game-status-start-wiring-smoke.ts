@@ -440,13 +440,16 @@ test("DB start-state 조회 실패는 mark/open 없이 fail-close하고 다음 c
   assert.equal(result.started, 0);
 });
 
-test("첫 타석 종료·2번 타자 진입 근거는 snapshot을 열지 않고 mark-only", async () => {
+test("(2026-07-28 fix) KBO late live-flip: 1회초 0:0이면 completedPA=1·비leadoff라도 즉시 snapshot 발송", async () => {
+  // 삼순 조건부 GO: KBO가 state=2를 뒤늦게 넘겨 첫 live 관측 시 이미 1번 타자 타석이 끝난(PA=1)
+  // 상황. 타석 근거는 더 이상 발송 전제가 아니므로, 1회초 0:0이면 snapshot을 열어야 한다.
   const notify = await loadNotify();
   const marked: string[] = [];
   const opened: string[] = [];
   const gameId = "20260726LGHH0";
   await notify([liveGame({
     G_ID: gameId, AWAY_NM: "LG", HOME_NM: "한화",
+    GAME_INN_NO: 1, GAME_TB_SC: "T", T_SCORE_CN: "0", B_SCORE_CN: "0",
   })], {
     observedAtMs: OBSERVED_AT,
     startPlateAppearanceByGame: new Map([[
@@ -463,8 +466,122 @@ test("첫 타석 종료·2번 타자 진입 근거는 snapshot을 열지 않고 
       openStart: async ({ gameId: id }) => { opened.push(id); return OBSERVED_AT + 90_000; },
     },
   });
+  assert.deepEqual(opened, [gameId], "1회초 0:0이면 PA와 무관하게 발송");
+  assert.deepEqual(marked, [], "mark-only 억제되면 안 됨");
+});
+
+// 2026-07-29 삼순 재리뷰 P0 — malformed raw score가 실제 notify 배선에서 mark-only되는지.
+// `Number()`로 파싱하면 "0x0"/"0e9"/"+0"/"-0"/"0.0"이 0으로 통과되는 사각을 정책함수 직호출이
+// 아닌 실제 seam으로 고정한다(삼순: "정책 함수 직접 호출이 아닌 실제 notify 배선에서 mark-only").
+test("(2026-07-29 삼순 P0) malformed raw score(\"0x0\"/\"0e9\"/\"+0\"/\"-0\"/\"0.0\")는 1회초여도 mark-only", async () => {
+  const notify = await loadNotify();
+  for (const raw of ["0x0", "0e9", "+0", "-0", "0.0", "", " ", "abc"]) {
+    const marked: string[] = [];
+    const opened: string[] = [];
+    const gameId = "20260726LGHH0";
+    await notify([liveGame({
+      G_ID: gameId, AWAY_NM: "LG", HOME_NM: "한화",
+      GAME_INN_NO: 1, GAME_TB_SC: "T", T_SCORE_CN: raw, B_SCORE_CN: "0",
+    })], {
+      observedAtMs: OBSERVED_AT,
+      startPlateAppearanceByGame: new Map([[
+        gameId,
+        { completedPlateAppearances: 0, currentBatterIsLeadoff: true },
+      ]]),
+      startDeps: {
+        storeScheduledSeen: async () => {},
+        readStartState: async () => ({
+          start_notified: false,
+          last_seen_scheduled_at: new Date(OBSERVED_AT - 60_000).toISOString(),
+        }),
+        markStart: async (id) => { marked.push(id); },
+        openStart: async ({ gameId: id }) => { opened.push(id); return OBSERVED_AT + 90_000; },
+      },
+    });
+    assert.deepEqual(opened, [], `malformed T_SCORE_CN=${JSON.stringify(raw)}는 발송하면 안 된다(0으로 강등 금지)`);
+    assert.deepEqual(marked, [gameId], `malformed T_SCORE_CN=${JSON.stringify(raw)}는 mark-only`);
+  }
+});
+
+// 2026-07-29 삼순 재리뷰 P1 — known PA>=2 뒷북 보조 차단이 실제 배선(plateAppearance 전달)으로 동작하는지.
+// 직전 exact의 실결함(인자를 받지만 정책에 전달하지 않음)을 잡으려면 seam에서 PA=2를 넣고
+// openStart=0/markStart=1을 확인해야 한다(qa:start-wiring의 PA1 허용만으로는 전달누락을 못 잡음).
+test("(2026-07-29 삼순 P1) known PA>=2는 1회초 0:0이어도 뒷북 보조 차단 → openStart=0/markStart=1", async () => {
+  const notify = await loadNotify();
+  for (const completedPlateAppearances of [2, 3, 5]) {
+    const marked: string[] = [];
+    const opened: string[] = [];
+    const gameId = "20260726LGHH0";
+    await notify([liveGame({
+      G_ID: gameId, AWAY_NM: "LG", HOME_NM: "한화",
+      GAME_INN_NO: 1, GAME_TB_SC: "T", T_SCORE_CN: "0", B_SCORE_CN: "0",
+    })], {
+      observedAtMs: OBSERVED_AT,
+      startPlateAppearanceByGame: new Map([[
+        gameId,
+        { completedPlateAppearances, currentBatterIsLeadoff: false },
+      ]]),
+      startDeps: {
+        storeScheduledSeen: async () => {},
+        readStartState: async () => ({
+          start_notified: false,
+          last_seen_scheduled_at: new Date(OBSERVED_AT - 60_000).toISOString(),
+        }),
+        markStart: async (id) => { marked.push(id); },
+        openStart: async ({ gameId: id }) => { opened.push(id); return OBSERVED_AT + 90_000; },
+      },
+    });
+    assert.deepEqual(opened, [], `known PA=${completedPlateAppearances}는 뒷북 차단 → 발송 없음`);
+    assert.deepEqual(marked, [gameId], `known PA=${completedPlateAppearances}는 mark-only`);
+  }
+});
+
+test("(2026-07-28 fix) 뒷북 차단: 득점 발생(1:0) 경기는 1회초여도 mark-only", async () => {
+  const notify = await loadNotify();
+  const marked: string[] = [];
+  const opened: string[] = [];
+  const gameId = "20260726LGHH0";
+  await notify([liveGame({
+    G_ID: gameId, AWAY_NM: "LG", HOME_NM: "한화",
+    GAME_INN_NO: 1, GAME_TB_SC: "T", T_SCORE_CN: "1", B_SCORE_CN: "0",
+  })], {
+    observedAtMs: OBSERVED_AT,
+    startDeps: {
+      storeScheduledSeen: async () => {},
+      readStartState: async () => ({
+        start_notified: false,
+        last_seen_scheduled_at: new Date(OBSERVED_AT - 60_000).toISOString(),
+      }),
+      markStart: async (id) => { marked.push(id); },
+      openStart: async ({ gameId: id }) => { opened.push(id); return OBSERVED_AT + 90_000; },
+    },
+  });
+  assert.deepEqual(opened, [], "득점 발생 = 이미 진행된 경기 → 발송 금지");
   assert.deepEqual(marked, [gameId]);
-  assert.deepEqual(opened, []);
+});
+
+test("(2026-07-28 fix) 뒷북 차단: 2회 진행 경기는 0:0이어도 mark-only", async () => {
+  const notify = await loadNotify();
+  const marked: string[] = [];
+  const opened: string[] = [];
+  const gameId = "20260726LGHH0";
+  await notify([liveGame({
+    G_ID: gameId, AWAY_NM: "LG", HOME_NM: "한화",
+    GAME_INN_NO: 2, GAME_TB_SC: "T", T_SCORE_CN: "0", B_SCORE_CN: "0",
+  })], {
+    observedAtMs: OBSERVED_AT,
+    startDeps: {
+      storeScheduledSeen: async () => {},
+      readStartState: async () => ({
+        start_notified: false,
+        last_seen_scheduled_at: new Date(OBSERVED_AT - 60_000).toISOString(),
+      }),
+      markStart: async (id) => { marked.push(id); },
+      openStart: async ({ gameId: id }) => { opened.push(id); return OBSERVED_AT + 90_000; },
+    },
+  });
+  assert.deepEqual(opened, [], "2회 진행 = 이미 수십 분 경과 → 발송 금지");
+  assert.deepEqual(marked, [gameId]);
 });
 
 test("warmup 배선: 초기 fetch 직후 start 근거 수집, token별 start barrier 뒤 highlight release", () => {
@@ -522,17 +639,21 @@ test("5경기 중 1 game-events hang은 짧은 deadline으로 격리되어 나�
   assert.deepEqual(results.filter((r) => !r.ok).map((r) => r.gameId), ["hang"]);
 });
 
-test("첫 PA 근거 timeout은 mark-only로 닫지 않고 다음 cron 재시도 상태를 유지", async () => {
+test("(2026-07-28 fix) 첫 PA 근거 timeout이어도 1회초 0:0이면 발송을 막지 않고 즉시 snapshot", async () => {
+  // 삼순 조건부 GO: 데이터 지연되는 currentBatter/BoxScore(PA 근거)를 기다리면 5경기 전원
+  // 누락(2026-07-28 실사고)이 재발한다. PA 근거 부재는 발송을 막지 않고, scheduled→live +
+  // 1회초 0:0이면 즉시 snapshot을 열어야 한다.
   const notify = await loadNotify();
   const marked: string[] = [];
   const opened: string[] = [];
   const gameId = "20260726LGHH0";
   await notify([
-    liveGame({ G_ID: gameId, AWAY_NM: "LG", HOME_NM: "한화" }),
+    liveGame({ G_ID: gameId, AWAY_NM: "LG", HOME_NM: "한화", GAME_INN_NO: 1, GAME_TB_SC: "T", T_SCORE_CN: "0", B_SCORE_CN: "0" }),
   ], {
     observedAtMs: OBSERVED_AT,
     startPlateAppearanceByGame: new Map(),
     startDeps: {
+      storeScheduledSeen: async () => {},
       readStartState: async () => ({
         start_notified: false,
         start_snapshot_at: null,
@@ -542,8 +663,8 @@ test("첫 PA 근거 timeout은 mark-only로 닫지 않고 다음 cron 재시도 
       openStart: async ({ gameId: id }) => { opened.push(id); return OBSERVED_AT + 90_000; },
     },
   });
+  assert.deepEqual(opened, [gameId], "PA 근거 부재여도 1회초 0:0 → 발송");
   assert.deepEqual(marked, []);
-  assert.deepEqual(opened, []);
 });
 
 // 마이그레이션 계약 — 저장이 앱-레벨 read-modify-write(레이시)가 아니라 DB 원자 단조여야 한다.

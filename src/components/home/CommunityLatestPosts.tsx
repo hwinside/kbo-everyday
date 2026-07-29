@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { MessageCircle, Heart, ChevronRight, ChevronDown, ChevronUp, PenSquare } from "lucide-react";
+import { MessageCircle, Heart, ChevronRight, ChevronDown, ChevronUp, PenSquare, FileText, Image as ImageIcon, Video, BarChart3 } from "lucide-react";
 import { useUnifiedFeed, type FeedBoard } from "@/lib/supabase/useUnifiedFeed";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { getPostDetailPath } from "@/lib/utils/post-share";
@@ -242,6 +242,31 @@ function IconTile() {
   );
 }
 
+/**
+ * 글 유형 아이콘 (하린아빠 스펙 2026-07-28) — 일반글/사진/동영상/투표 4종.
+ * 사진과 동영상이 섞여 있으면 동영상으로 표기(동영상 우선).
+ * 우선순위: 투표(board_type='poll') > 동영상(video_urls) > 사진(image_urls) > 일반글.
+ */
+function postTypeBadge(post: Post): { Icon: typeof FileText; label: string } {
+  if (post.board_type === "poll") return { Icon: BarChart3, label: "투표" };
+  if ((post.video_urls?.length ?? 0) > 0) return { Icon: Video, label: "동영상" };
+  if ((post.image_urls?.length ?? 0) > 0) return { Icon: ImageIcon, label: "사진" };
+  return { Icon: FileText, label: "일반글" };
+}
+
+/** 제목 왼쪽 인라인 글 유형 아이콘. 썸네일 오버레이는 선수 얼굴을 가려 제목 앞으로 이동(하린아빠). */
+function PostTypeIcon({ post }: { post: Post }) {
+  const { Icon, label } = postTypeBadge(post);
+  return (
+    <Icon
+      size={16}
+      strokeWidth={2.25}
+      aria-label={label}
+      className="shrink-0 text-text-secondary"
+    />
+  );
+}
+
 function PostRow({ post }: { post: Post }) {
   const [imgFailed, setImgFailed] = useState(false);
   const thumb = resolveThumb(post);
@@ -305,9 +330,13 @@ function PostRow({ post }: { post: Post }) {
 
       {/* 본문 요약 + 메타 */}
       <div className="flex-1 min-w-0">
-        <p className="text-[14px] leading-[20px] font-medium text-text-primary line-clamp-1">
-          {summary || "(내용 없음)"}
-        </p>
+        {/* 글 유형 아이콘을 제목 왼쪽에 인라인 배치(오버레이가 선수 얼굴 가림 → 이동). */}
+        <div className="flex items-center gap-1">
+          <PostTypeIcon post={post} />
+          <p className="text-[14px] leading-[20px] font-medium text-text-primary line-clamp-1">
+            {summary || "(내용 없음)"}
+          </p>
+        </div>
         <div className="flex items-center gap-1.5 mt-1 text-[11px] leading-[16px] text-text-tertiary">
           <PostLabel post={post} />
           <span className="shrink-0">{timeAgo(post.created_at)}</span>

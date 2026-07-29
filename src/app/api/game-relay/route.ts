@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { trackFallback } from "@/lib/monitoring/api-fallback-tracker";
 import { isAllStarGameId } from "@/lib/constants/teams";
 import { parseNaverPitch, type PitchDetail } from "@/lib/game/pitch-provider";
+import { toDeltaResponse } from "@/lib/game/relay-delta";
 
 // Vercel 서버리스에서 캐시 방지 (라이브 데이터는 항상 최신이어야 함)
 export const dynamic = "force-dynamic";
@@ -128,6 +129,11 @@ export interface GameRelayResponse {
   matchup?: MatchupStats;
   playerStats?: RelayPlayerStats;
   linescore?: RelayLinescore;
+  /**
+   * true 면 delta(증분) 응답 — innings가 현재/직전 이닝만 담긴 부분 집합이므로
+   * 클라이언트는 기존 보유 이닝과 병합(merge)해야 한다. 없거나 false면 전체(full).
+   */
+  partial?: boolean;
 }
 
 // ===== Helpers =====
@@ -914,13 +920,22 @@ export async function GET(req: NextRequest) {
   // 클라이언트에서 현재 이닝을 힌트로 전달 (네이버 API의 inn이 부정확할 때 대비)
   const inningHint = parseInt(req.nextUrl.searchParams.get("inning") || "0") || 0;
 
+  // Incremental(delta) 폴링: 클라이언트가 이미 보유한 마지막 이닝 번호를 넘기면
+  // 그 이닝 이후(현재/직전 이닝)만 돌려준다. 끝난 이닝의 play-by-play는 불변이라
+  // 매 폴링마다 전체 이닝을 재전송할 필요가 없다 → origin transfer 절감.
+  // 값이 없거나 0 이하이면 종전대로 전체 이닝을 반환한다(첫 로드/self-heal).
+  const sinceInning = parseInt(req.nextUrl.searchParams.get("since") || "0") || 0;
+
   const naverGameId = toNaverGameId(gameId);
 
   // Cache hit short-circuits Naver upstream entirely.
   const cacheKey = `${naverGameId}-${inningHint}`;
   const cached = getCachedResponse(cacheKey);
   if (cached) {
-    return NextResponse.json(cached);
+    // warm cache HIT 에서도 since delta 를 적용한다(삼순 blocker ①). 캐시는 항상 full 을
+    // 저장하므로 fresh 경로와 동일한 toDeltaResponse 로 partial 응답을 파생시켜
+    // cache-hit 이 지난 이닝을 재전송하는 origin transfer 낙비를 막는다.
+    return NextResponse.json(toDeltaResponse(cached, sinceInning));
   }
 
   try {
@@ -1131,10 +1146,18 @@ export async function GET(req: NextRequest) {
     // snapshot (degraded), skip caching so the very next poll retries the
     // failed upstream immediately instead of serving stale data for the full
     // TTL — the current client still gets a consistent (stable-id) response.
+    // 캐시는 항상 전체(full) 응답을 저장한다 — delta 응답은 요청마다 since가 달라
+    // 캐시 오염 위험이 있고, delta는 full에서 순수함수로 파생된다.
     if (!anyInningDegraded) {
       setCachedResponse(cacheKey, response);
     }
-    return NextResponse.json(response);
+
+    // Incremental delta: 클라이언트가 since를 보내면 그 이닝 이전(이미 보유한
+    // 불변 이닝)은 생략하고 현재/직전 이닝만 내려보낸다. matchup/playerStats/
+    // linescore/currentInning은 그대로(라이브) 유지 → 실시간 손실 0.
+    // safety: 직전 이닝도 포함(since - 1)해 방금 끝난 이닝의 지연 play 반영.
+    // cache-hit 경로와 동일한 toDeltaResponse 로 delta 의미를 일치시킨다(since<=0 면 full).
+    return NextResponse.json(toDeltaResponse(response, sinceInning));
   } catch (e) {
     const error = e as Error;
     let reason: "timeout" | "http-error" | "schema-error" | "network-error" = "network-error";

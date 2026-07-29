@@ -4,6 +4,7 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowLeft, ChevronRight, ChevronLeft, Trophy, Check } from "lucide-react";
 import Link from "next/link";
+import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
 
 interface Lesson {
   emoji: string;
@@ -100,19 +101,28 @@ export default function LearnPage() {
 
   return (
     <div className="min-h-screen bg-bg-primary pb-24">
-      <header className="px-5 py-5">
-        {selectedChapter ? (
-          <button onClick={() => { setSelectedChapter(null); setLessonIndex(0); }} className="flex items-center gap-1 text-text-secondary mb-2">
-            <ArrowLeft size={20} />
-            <span className="text-sm">목록으로</span>
-          </button>
-        ) : (
-          <>
-            <h1 className="text-xl font-bold text-text-primary">⚾ 야구 쉽게 배우기</h1>
-            <p className="text-sm text-text-tertiary mt-1">처음이어도 괜찮아요, 5분이면 충분!</p>
-          </>
-        )}
+      <div className="sticky top-0 z-30 border-b border-border bg-bg-primary" style={{ paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
+      <header className="px-5 min-h-[44px] flex items-center">
+        <div className="flex w-full items-center justify-between gap-3">
+          <div className="min-w-0">
+            {selectedChapter ? (
+              <button onClick={() => { setSelectedChapter(null); setLessonIndex(0); }} aria-label="목록으로" className="flex h-11 min-h-[44px] items-center gap-1 -ml-1 text-text-secondary">
+                <ArrowLeft size={20} />
+                <span className="text-sm">목록으로</span>
+              </button>
+            ) : (
+              <h1 className="text-xl font-bold text-text-primary">⚾ 야구 쉽게 배우기</h1>
+            )}
+          </div>
+          <HeaderProfileLink />
+        </div>
       </header>
+      </div>
+
+      {/* 헤더에서 바디로 내린 서브문구 */}
+      {!selectedChapter && (
+        <p className="px-5 pt-3 text-sm text-text-tertiary">처음이어도 괜찮아요, 5분이면 충분!</p>
+      )}
 
       {/* Chapter list */}
       {!selectedChapter && (

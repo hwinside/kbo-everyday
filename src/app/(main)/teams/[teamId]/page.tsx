@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
+import { useSafeBack } from "@/lib/hooks/useSafeBack";
 import { ChevronLeft } from "lucide-react";
 import { getTeamBySlug } from "@/lib/constants/teams";
 import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
@@ -26,8 +27,11 @@ interface StandingData {
 
 export default function TeamHubPage() {
   const params = useParams();
-  const router = useRouter();
   const teamSlug = params.teamId as string;
+  // 팀 허브 direct-entry 뒤로가기 fallback은 홈("/")으로.
+  // /teams로 보내면 로그인+team_id 사용자의 useEffect가 /teams/{myTeam}로 replace해
+  // 같은 팀 허브로 되돌아오는 loop가 생기므로 홈으로 고정한다.
+  const goBack = useSafeBack("/");
   const team = getTeamBySlug(teamSlug);
   const [standings, setStandings] = useState<StandingData | undefined>();
 
@@ -69,18 +73,18 @@ export default function TeamHubPage() {
   return (
     <div className="mx-auto max-w-lg pb-24">
       <div
-        className="border-b px-5"
-        style={{ borderColor: getTeamBorderColorById(team.id) }}
+        className="sticky top-0 z-30 border-b px-5 bg-bg-primary"
+        style={{ borderColor: getTeamBorderColorById(team.id), paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}
       >
-        <header className="flex items-center gap-3 py-3">
+        <header className="flex items-center gap-3 min-h-[44px]">
           <button
-            onClick={() => router.back()}
-            className="rounded-full p-1 text-text-secondary transition-colors hover:bg-bg-tertiary"
+            onClick={goBack}
+            className="flex h-11 w-11 items-center justify-center rounded-full text-text-secondary transition-colors hover:bg-bg-tertiary"
             aria-label="뒤로 가기"
           >
             <ChevronLeft size={24} />
           </button>
-          <h1 className="flex-1 text-2xl font-bold tracking-tight text-text-primary">팀</h1>
+          <h1 className="flex-1 truncate text-lg font-bold tracking-tight text-text-primary">팀</h1>
           <HeaderProfileLink />
         </header>
       </div>

@@ -2,9 +2,10 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { useSafeBack } from "@/lib/hooks/useSafeBack";
 import { motion } from "framer-motion";
 import Image from "next/image";
-import { ChevronLeft, ChevronRight, RefreshCw, Settings } from "lucide-react";
+import { ChevronLeft, ChevronRight, RefreshCw, Settings, MessageSquareHeart } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import TeamSelectModal from "@/components/onboarding/TeamSelectModal";
 import PlayerSelectModal from "@/components/onboarding/PlayerSelectModal";
@@ -24,6 +25,7 @@ import ProfileCard from "@/components/my/ProfileCard";
 import InviteSection from "@/components/my/InviteSection";
 import FavoritePlayersCard from "@/components/my/FavoritePlayersCard";
 import MenuSection from "@/components/my/MenuSection";
+import FeedbackSheet from "@/components/feedback/FeedbackSheet";
 import VenueDiaryCard from "@/components/my/VenueDiaryCard";
 import AdminOnly from "@/components/admin/AdminOnly";
 
@@ -43,9 +45,11 @@ export default function MyPage() {
   const [showPlayerSelect, setShowPlayerSelect] = useState(false);
   const [showAvatarSelect, setShowAvatarSelect] = useState(false);
   const [showNicknameEdit, setShowNicknameEdit] = useState(false);
+  const [showFeedback, setShowFeedback] = useState(false);
   const [favPlayers, setFavPlayers] = useState<FavoritePlayer[]>([]);
   const [writingPoints, setWritingPoints] = useState<number | null>(null);
   const router = useRouter();
+  const goBack = useSafeBack("/");
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -140,11 +144,11 @@ export default function MyPage() {
 
   return (
     <div className="mx-auto max-w-lg px-5 pb-24">
-      <div className="border-b -mx-5 px-5" style={{ borderColor: profile?.team_id ? getTeamBorderColorById(profile.team_id) : 'var(--color-border)' }}>
-        <header className="py-3 flex items-center gap-3">
-          <button onClick={() => router.back()} className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors"><ChevronLeft size={24} /></button>
+      <div className="sticky top-0 z-30 border-b -mx-5 px-5 bg-bg-primary" style={{ borderColor: profile?.team_id ? getTeamBorderColorById(profile.team_id) : 'var(--color-border)', paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
+        <header className="min-h-[44px] flex items-center gap-3">
+          <button onClick={goBack} aria-label="뒤로가기" className="flex h-11 w-11 items-center justify-center rounded-full text-text-secondary hover:bg-bg-tertiary transition-colors"><ChevronLeft size={24} /></button>
           <h1 className="text-lg font-semibold leading-[26px] text-text-primary flex-1">마이페이지</h1>
-          <button onClick={() => router.push("/settings")} aria-label="설정" className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors"><Settings size={22} /></button>
+          <button onClick={() => router.push("/settings")} aria-label="설정" className="flex h-11 w-11 items-center justify-center rounded-full text-text-secondary hover:bg-bg-tertiary transition-colors -mr-2.5"><Settings size={22} /></button>
         </header>
       </div>
 
@@ -214,7 +218,21 @@ export default function MyPage() {
         <MenuSection />
       </motion.div>
 
+      {/* 피드백 보내기 — 기존 안내(마이페이지 → 피드백 보내기)와 일치하도록 명시 노출 (로그인 유저) */}
+      {user && (
+        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.18 }} className="mt-3">
+          <GlassCard pressable className="flex items-center justify-between p-5" onClick={() => setShowFeedback(true)}>
+            <div className="flex items-center gap-4">
+              <MessageSquareHeart size={22} className="text-text-secondary" />
+              <span className="text-base text-text-primary">피드백 보내기</span>
+            </div>
+            <ChevronRight size={22} className="text-text-tertiary" />
+          </GlassCard>
+        </motion.div>
+      )}
+
       {/* Modals */}
+      <FeedbackSheet isOpen={showFeedback} onClose={() => setShowFeedback(false)} />
       <TeamSelectModal isOpen={showTeamSelect} onSelect={handleTeamChange} />
       <LoginSheet isOpen={showLogin} onClose={() => setShowLogin(false)} />
       <AvatarSelectSheet

@@ -2,7 +2,9 @@
 
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { useSafeBack } from "@/lib/hooks/useSafeBack";
 import { ChevronLeft, Heart, MessageCircle } from "lucide-react";
+import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
 import { supabase } from "@/lib/supabase/client";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { getTeamById } from "@/lib/constants/teams";
@@ -58,6 +60,7 @@ interface UserPost {
 export default function ProfilePage() {
   const { userId } = useParams();
   const router = useRouter();
+  const goBack = useSafeBack("/");
   const { user } = useAuth();
   const isOwn = user?.id === userId;
 
@@ -153,12 +156,13 @@ export default function ProfilePage() {
   return (
     <div className="mx-auto min-h-screen max-w-lg bg-bg-primary px-5 pb-24">
       {/* Header */}
-      <div className="border-b -mx-5 px-5" style={{ borderColor: profile?.team_id ? getTeamBorderColorById(profile.team_id) : 'var(--color-border)' }}>
-        <div className="flex items-center gap-3 py-3">
-          <button onClick={() => router.back()} className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors">
+      <div className="sticky top-0 z-30 border-b -mx-5 px-5 bg-bg-primary" style={{ borderColor: profile?.team_id ? getTeamBorderColorById(profile.team_id) : 'var(--color-border)', paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
+        <div className="flex items-center gap-3 min-h-[44px]">
+          <button onClick={goBack} aria-label="뒤로가기" className="flex h-11 w-11 items-center justify-center rounded-full text-text-secondary hover:bg-bg-tertiary transition-colors">
             <ChevronLeft size={24} />
           </button>
           <span className="text-lg font-semibold leading-[26px] text-text-primary flex-1">프로필</span>
+          <HeaderProfileLink />
         </div>
       </div>
 

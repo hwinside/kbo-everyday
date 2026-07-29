@@ -1,6 +1,7 @@
 "use client";
 
-import { useParams, useSearchParams, useRouter } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
+import { useSafeBack } from "@/lib/hooks/useSafeBack";
 import { Suspense, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
@@ -14,6 +15,7 @@ import { STAT_DEFS } from "@/lib/stats/title-defs";
 import { rankByStat } from "@/lib/stats/title-rankings";
 
 import Link from "next/link";
+import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
 
 function hexToRgba(hex: string, alpha: number): string {
   const cleaned = hex.replace("#", "");
@@ -53,7 +55,7 @@ type PlayerRow = {
 function RankingContent() {
   const params = useParams();
   const searchParams = useSearchParams();
-  const router = useRouter();
+  const goBack = useSafeBack("/");
   const { profile } = useAuth();
   const stat = params.stat as string;
   const highlightPlayer = searchParams.get("player");
@@ -113,8 +115,8 @@ function RankingContent() {
   if (!def) {
     return (
       <div className="min-h-screen bg-bg-primary text-text-primary px-5 pt-safe">
-        <div className="py-3 flex items-center gap-3">
-          <button onClick={() => router.back()} className="text-xl">←</button>
+        <div className="min-h-[44px] flex items-center gap-3">
+          <button onClick={goBack} aria-label="뒤로가기" className="flex h-11 w-11 items-center justify-center -ml-2 text-xl">←</button>
           <h1 className="text-lg font-bold">알 수 없는 기록</h1>
         </div>
       </div>
@@ -129,11 +131,14 @@ function RankingContent() {
   const formatValue = (v: number) => (def.format ? def.format(v) : String(v));
 
   return (
-    <div className="min-h-screen bg-bg-primary text-text-primary px-5 pt-safe pb-24">
+    <div className="min-h-screen bg-bg-primary text-text-primary px-5 pb-24">
       {/* Header */}
-      <div className="py-3 flex items-center gap-3">
-        <button onClick={() => router.back()} className="text-xl">←</button>
-        <h1 className="text-2xl font-bold tracking-tight">{def.emoji} {def.desc}</h1>
+      <div className="sticky top-0 z-30 -mx-5 border-b border-border bg-bg-primary px-5" style={{ paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
+      <div className="min-h-[44px] flex items-center gap-3">
+        <button onClick={goBack} aria-label="뒤로가기" className="flex h-11 w-11 items-center justify-center -ml-2 text-xl">←</button>
+        <h1 className="text-lg font-bold tracking-tight flex-1">{def.emoji} {def.desc}</h1>
+        <HeaderProfileLink />
+      </div>
       </div>
 
       {/* 뱃지 설명 */}

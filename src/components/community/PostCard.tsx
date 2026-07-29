@@ -9,6 +9,8 @@ import LinkPreview from "@/components/community/LinkPreview";
 import type { Post } from "@/lib/types";
 import type { CommunitySourceLabel } from "@/lib/utils/community-board";
 import ShareSheet, { type ShareSheetPost } from "@/components/community/ShareSheet";
+import PollCardSlot from "@/components/community/PollCardSlot";
+import type { PollSummary } from "@/lib/community/poll-client";
 
 interface PostCardProps {
   post: Post;
@@ -16,10 +18,17 @@ interface PostCardProps {
   /** 선수 게시판: "LG 김진성" 같은 통합 레이블 (팀 뱃지 대체) */
   playerLabel?: { teamId: number; playerName: string } | null;
   sourceLabel?: CommunitySourceLabel | null;
+  /** board_type='poll' 일 때 목록 카드용 요약(배치 조회). 없으면 로딩/terminal 표시. */
+  pollSummary?: PollSummary | null;
+  /** 배치 요약 조회가 응답됐는지(응답했는데 summary 없으면 terminal). */
+  pollLoaded?: boolean;
+  /** terminal 카드 재시도. */
+  onPollRetry?: () => void;
 }
 
-export default function PostCard({ post, onPress, playerLabel, sourceLabel }: PostCardProps) {
+export default function PostCard({ post, onPress, playerLabel, sourceLabel, pollSummary, pollLoaded, onPollRetry }: PostCardProps) {
   const timeAgo = getTimeAgo(post.createdAt);
+  const isPoll = post.boardType === "poll";
   const [shareOpen, setShareOpen] = useState(false);
 
   function handleShare(e: React.MouseEvent<HTMLButtonElement>) {
@@ -95,29 +104,36 @@ export default function PostCard({ post, onPress, playerLabel, sourceLabel }: Po
         </h3>
       )}
 
-      {/* Content preview — URLs stripped (OG cards handle links) */}
-      <p className="mt-1 text-base text-text-secondary line-clamp-2">
-        {stripUrls(post.content)}
-      </p>
+      {isPoll ? (
+        /* poll 카드: 질문(Title) 아래에 배지·참여수·선지 미리보기. 설명·미디어 대신 렌더. */
+        <PollCardSlot summary={pollSummary} loaded={!!pollLoaded} onRetry={onPollRetry ?? (() => {})} />
+      ) : (
+        <>
+          {/* Content preview — URLs stripped (OG cards handle links) */}
+          <p className="mt-1 text-base text-text-secondary line-clamp-2">
+            {stripUrls(post.content)}
+          </p>
 
-      {/* Link previews (OG cards + direct image URLs) */}
-      <LinkPreview text={post.content} maxPreviews={2} stopPropagation />
+          {/* Link previews (OG cards + direct image URLs) */}
+          <LinkPreview text={post.content} maxPreviews={2} stopPropagation />
 
-      {/* Image preview (uploaded — currently feature-flagged OFF) */}
-      {post.imageUrls.length > 0 && (
-        <div className="mt-2 flex gap-4 overflow-hidden">
-          {post.imageUrls.slice(0, 3).map((_, i) => (
-            <div key={i} className="h-20 w-20 flex-shrink-0 rounded-lg bg-bg-tertiary" />
-          ))}
-        </div>
-      )}
+          {/* Image preview (uploaded — currently feature-flagged OFF) */}
+          {post.imageUrls.length > 0 && (
+            <div className="mt-2 flex gap-4 overflow-hidden">
+              {post.imageUrls.slice(0, 3).map((_, i) => (
+                <div key={i} className="h-20 w-20 flex-shrink-0 rounded-lg bg-bg-tertiary" />
+              ))}
+            </div>
+          )}
 
-      {/* Video indicator */}
-      {post.videoUrls && post.videoUrls.length > 0 && (
-        <div className="mt-2 flex items-center gap-1.5 text-text-tertiary">
-          <Play size={16} fill="currentColor" />
-          <span className="text-xs">영상 {post.videoUrls.length}개</span>
-        </div>
+          {/* Video indicator */}
+          {post.videoUrls && post.videoUrls.length > 0 && (
+            <div className="mt-2 flex items-center gap-1.5 text-text-tertiary">
+              <Play size={16} fill="currentColor" />
+              <span className="text-xs">영상 {post.videoUrls.length}개</span>
+            </div>
+          )}
+        </>
       )}
 
       {/* Stats */}

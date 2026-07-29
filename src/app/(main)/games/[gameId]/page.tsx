@@ -21,7 +21,6 @@ import { useLiveGame } from "@/lib/hooks/useLiveGame";
 import { startLiveActivity } from "@/lib/native-live-activity";
 import { updateGameWidget, setWidgetMyTeam } from "@/lib/capacitor/game-notification";
 import { useGameDetail } from "@/lib/hooks/useGameDetail";
-import { useGameEvents } from "@/lib/hooks/useGameEvents";
 import { generateEvents, type PrevGameState } from "@/lib/event-generator";
 import { generateRelayEvents } from "@/lib/relay-event-generator";
 import { latestRelayLine } from "@/lib/notifications/relay-line";
@@ -29,6 +28,7 @@ import type { LineupEntry } from "@/lib/hooks/useGameDetail";
 import { deriveGameState } from "@/lib/utils/game-derived";
 import { shouldKeepCancelledGameChat } from "@/lib/game-chat-visibility";
 import GameDetailHeader from "@/components/game/GameDetailHeader";
+import BroadcastBadges from "@/components/game/BroadcastBadges";
 import LiveActivityUpdateNudge from "@/components/game/LiveActivityUpdateNudge";
 import NonLiveScoreDisplay from "@/components/game/NonLiveScoreDisplay";
 import ScoreBar from "@/components/game/ScoreBar";
@@ -176,17 +176,26 @@ export default function GameDetailPage() {
   const [isFieldCollapsed, setIsFieldCollapsed] = useState(false);
   const { game: liveGame, refetch: refetchLive } = useLiveGame(gameId, 10000);
   const { data: gameDetail, refetch: refetchDetail } = useGameDetail(gameId, 30000);
+  // 당겨서 새로고침 시 증가 → KgwanTab 종료 요약이 GET 재조회(오류 카드 stuck 해소). 채팅 등 다른 state 무관.
+  const [summaryRefreshEpoch, setSummaryRefreshEpoch] = useState(0);
   const liveIsFinal = !!liveGame && !liveGame.isLive && (liveGame.awayScore > 0 || liveGame.homeScore > 0);
-  // Keep game-events polling through the live → final transition so game_end/victory can be emitted.
-  const shouldPollGameEvents = (liveGame?.isLive ?? false) || liveIsFinal;
-  const { events: gameEvents } = useGameEvents(gameId, shouldPollGameEvents, 15000);
+  // live→final 전환까지 client-side diff를 유지해 game_end/victory를 한 번 생성한다.
+  const shouldProcessGameEvents = (liveGame?.isLive ?? false) || liveIsFinal;
   // Relay polls 5s while live (celebration trigger source), 30s otherwise
   // (display-only). The 3s cadence keeps the relay-bridged celebration path
   // within ~5s of the actual KBO play (was 5s → worst-case fire lag dropped
   // ~4s); the route caches Naver responses for 2s in-memory so KBO upstream
   // load stays bounded across concurrent viewers.
   const relayPollInterval = liveGame?.isLive ? 3000 : 30000;
-  const { data: gameRelay } = useGameRelay(gameId, liveGame?.isLive ?? false, relayPollInterval, liveGame?.inning ?? 0, liveIsFinal);
+  // game-events는 첫 poll/매 15초/final 전환 때 relay와 같은 Edge Request의
+  // NDJSON frame으로 받는다. 이벤트 기능·cadence는 유지하면서 별도 client poll을 제거한다.
+  const { data: gameRelay, events: gameEvents } = useGameRelay(
+    gameId,
+    liveGame?.isLive ?? false,
+    relayPollInterval,
+    liveGame?.inning ?? 0,
+    liveIsFinal,
+  );
   const clientEventStateRef = useRef<PrevGameState | null>(null);
 
   // Compute game early (non-hook) so celebration hook can reference team IDs
@@ -296,7 +305,7 @@ export default function GameDetailPage() {
   // identical ids across sources, so whichever source observes a play first
   // wins — the relay path typically arrives 10–20s before BoxScore.
   useEffect(() => {
-    if (!liveGame || !shouldPollGameEvents) return;
+    if (!liveGame || !shouldProcessGameEvents) return;
 
     // After returning from background, skip one diff cycle to re-establish baseline
     if (skipNextDiffRef.current) {
@@ -321,7 +330,7 @@ export default function GameDetailPage() {
     if (merged.length > 0) {
       processEvents(merged);
     }
-  }, [gameId, liveGame, gameDetail?.boxScore, gameRelay?.innings, shouldPollGameEvents, processEvents]);
+  }, [gameId, liveGame, gameDetail?.boxScore, gameRelay?.innings, shouldProcessGameEvents, processEvents]);
 
   // Reset baseline on gameId change
   useEffect(() => {
@@ -341,7 +350,14 @@ export default function GameDetailPage() {
 
   // useCallback must be called before any early returns (React hooks rules)
   const handleRefresh = useCallback(async () => {
-    await Promise.all([refetchLive(), refetchDetail()]);
+    // 요약 오류 카드가 pull-refresh 후에도 stuck 되던 문제: epoch 증가로 GET 재조회 유도.
+    // live/detail refetch 중 하나가 reject 도 AI요약 재조회는 막히면 안 되므로(동일 stuck),
+    // finally 로 epoch bump 를 독립 보장한다.
+    try {
+      await Promise.all([refetchLive(), refetchDetail()]);
+    } finally {
+      setSummaryRefreshEpoch((e) => e + 1);
+    }
   }, [refetchLive, refetchDetail]);
   if (!game) {
     return (
@@ -386,17 +402,17 @@ export default function GameDetailPage() {
     || hasBoxScoreData
   );
 
+  const matchupTitle = `${awayTeam.shortName} vs ${homeTeam.shortName}`;
+
   return (
+    <div className="min-h-[100dvh] bg-bg-primary max-w-[640px] mx-auto w-full">
+      {/* 헤더는 스크롤 컨테이너(PullToRefresh) 밖 page-root에 두어 sticky top-0가 페이지 스크롤 기준으로 고정되게 한다 */}
+      <GameDetailHeader title={matchupTitle} />
+
     <PullToRefresh
       onRefresh={handleRefresh}
-      className="flex flex-col min-h-[100dvh] bg-bg-primary overflow-y-auto pb-[104px] max-w-[640px] mx-auto w-full"
+      className="flex flex-col pb-[104px]"
     >
-      <GameDetailHeader
-        status={d.derivedStatus}
-        time={gameDetail?.meta?.startTime || liveGame?.time || game.time}
-        stadium={gameDetail?.meta?.stadium || liveGame?.stadium || game.stadium}
-        broadcastChannels={gameDetail?.meta?.broadcastChannels}
-      />
 
       {d.derivedStatus === "cancelled" ? (
         <div className="px-5 py-5">
@@ -420,6 +436,25 @@ export default function GameDetailPage() {
           awayScore={d.awayScore}
           homeScore={d.homeScore}
         />
+      )}
+
+      {/* 헤더에서 내린 경기 정보줄: 상태(예정/경기 중/종료)·예정 시간·중계 방송사·구장 */}
+      {d.derivedStatus !== "cancelled" && (
+        <div className="flex w-full flex-wrap items-center justify-center gap-x-2 gap-y-1 px-5 pt-1.5 pb-1 text-[13px] text-text-tertiary">
+          {d.derivedStatus === "scheduled" ? (
+            <>
+              {(gameDetail?.meta?.startTime || liveGame?.time || game.time) && (
+                <span>{gameDetail?.meta?.startTime || liveGame?.time || game.time} 예정</span>
+              )}
+              <BroadcastBadges channels={gameDetail?.meta?.broadcastChannels} />
+            </>
+          ) : (
+            <span>{d.derivedStatus === "live" ? "경기 중" : "경기 종료"}</span>
+          )}
+          {(gameDetail?.meta?.stadium || liveGame?.stadium || game.stadium) && (
+            <span>{gameDetail?.meta?.stadium || liveGame?.stadium || game.stadium}</span>
+          )}
+        </div>
       )}
 
       {/* ② 구버전(채널 미지원) iOS 앱 업데이트 녋지 — 라이브 맥락·세션당 1회(LA gap 감축). */}
@@ -561,6 +596,7 @@ export default function GameDetailPage() {
                     teamColor={battingTeamColor}
                     boxScore={gameDetail?.boxScore ?? null}
                     linescore={gameDetail?.linescore ?? gameRelay?.linescore ?? null}
+                    refreshEpoch={summaryRefreshEpoch}
                     starterNames={{
                       away: liveGame?.awayStarterName || (gameDetail?.boxScore?.awayPitchers?.[0]?.name && !/^선수\(\d+\)$/.test(gameDetail.boxScore.awayPitchers[0].name) ? gameDetail.boxScore.awayPitchers[0].name : ""),
                       home: liveGame?.homeStarterName || (gameDetail?.boxScore?.homePitchers?.[0]?.name && !/^선수\(\d+\)$/.test(gameDetail.boxScore.homePitchers[0].name) ? gameDetail.boxScore.homePitchers[0].name : ""),
@@ -687,5 +723,6 @@ export default function GameDetailPage() {
       {/* Celebration overlay (homerun etc.) */}
       <CelebrationOverlay event={celebration} onDone={dismiss} />
     </PullToRefresh>
+    </div>
   );
 }

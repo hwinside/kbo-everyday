@@ -1,6 +1,6 @@
 "use client";
 import { PRESEASON_GAMES, PRESEASON_DATES } from "@/lib/constants/preseason-schedule";
-import { useRouter } from "next/navigation";
+import { useSafeBack } from "@/lib/hooks/useSafeBack";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 
 import { useState, useEffect } from "react";
@@ -66,7 +66,7 @@ function buildPreseasonFallback(date: string): GameData[] {
 
 export default function GamesPage() {
   const today = getKSTToday();
-  const router = useRouter();
+  const goBack = useSafeBack("/");
   const [selectedDate, setSelectedDate] = useState(today);
   const [games, setGames] = useState<GameData[]>([]);
   const isPreseason = PRESEASON_DATES.includes(selectedDate);
@@ -228,12 +228,12 @@ export default function GamesPage() {
 
   return (
     <div className="mx-auto max-w-lg">
-      <div className="border-b" style={{ borderColor: myTeamId ? getTeamBorderColorById(myTeamId) : 'var(--color-border)' }}>
-        <div className="flex items-center gap-3 px-5 py-3">
-          <button onClick={() => router.back()} className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors">
+      <div className="sticky top-0 z-30 border-b bg-bg-primary" style={{ borderColor: myTeamId ? getTeamBorderColorById(myTeamId) : 'var(--color-border)', paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
+        <div className="flex items-center gap-3 px-5 min-h-[44px]">
+          <button onClick={goBack} aria-label="뒤로가기" className="flex h-11 w-11 items-center justify-center rounded-full text-text-secondary hover:bg-bg-tertiary transition-colors">
             <ChevronLeft size={24} />
           </button>
-          <h1 className="text-2xl font-bold text-text-primary tracking-tight flex-1">경기</h1>
+          <h1 className="text-lg font-bold text-text-primary tracking-tight flex-1">경기</h1>
           <button
             onClick={() => loadGames(selectedDate)}
             className="p-2 rounded-full text-text-tertiary hover:bg-bg-tertiary transition-colors"

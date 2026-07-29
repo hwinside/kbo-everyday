@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { useRouter } from "next/navigation";
-import { useParams } from "next/navigation";
+import { useSafeBack } from "@/lib/hooks/useSafeBack";
+import { useParams, useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { ArrowLeft, Share2, PenLine } from "lucide-react";
 import Link from "next/link";
@@ -100,7 +100,8 @@ export default function PlayerBoardPage() {
 
   const [player, setPlayer] = useState<PlayerData | null>(null);
   const [loading, setLoading] = useState(true);
-  const router = useRouter();
+  const router = useRouter(); // 투표 생성 완료 후 이동(WritePoll onCreated). router 선언은 #914 핫픽스가 단일 owner(main 반영됨).
+  const goBack = useSafeBack("/community");
   const [activeTab, setActiveTab] = useState<"stats" | "games" | "board">("stats");
   const [showEntry, setShowEntry] = useState(false);
   const [showWrite, setShowWrite] = useState(false);
@@ -348,13 +349,13 @@ export default function PlayerBoardPage() {
   return (
     <div className="min-h-screen bg-bg-primary pb-20">
       {/* 독립 헤더: 선수 목록과 동일 */}
-      <div className="bg-bg-primary border-b" style={{ borderColor: teamBorder }}>
+      <div className="sticky top-0 z-30 bg-bg-primary border-b" style={{ borderColor: teamBorder, paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
         <div className="mx-auto max-w-lg">
-          <header className="py-3 px-5 flex items-center gap-3">
-            <button onClick={() => router.back()} className="rounded-full p-1 text-text-secondary hover:bg-bg-tertiary transition-colors" aria-label="뒤로가기">
+          <header className="min-h-[44px] px-5 flex items-center gap-3">
+            <button onClick={goBack} aria-label="뒤로가기" className="flex h-11 w-11 items-center justify-center rounded-full text-text-secondary hover:bg-bg-tertiary transition-colors">
               <ArrowLeft size={24} />
             </button>
-            <h1 className="text-2xl font-bold text-text-primary tracking-tight flex-1">선수</h1>
+            <h1 className="text-lg font-bold text-text-primary tracking-tight flex-1">선수</h1>
             <HeaderProfileLink />
           </header>
         </div>

@@ -13,6 +13,20 @@ const THRESHOLD = 60; // px to trigger refresh
 const MAX_PULL = 100; // max pull distance
 
 /**
+ * 당김 인디케이터 고정 오버레이의 z-index.
+ * stacking 계약(삼순 #939 재리뷰 조건): 모든 페이지 sticky 헤더 위 · 전체화면 레이어 아래.
+ *   - 홈 헤더  sticky z-30
+ *   - 경기상세 GameDetailHeader sticky z-[100]  ← 인디케이터가 반드시 이보다 위여야 함
+ *   - 전체화면 모달/오버레이 z-[110]·[120]·[130], 풀스크린 뷰어 z-[10000]+  ← 인디케이터가 이보다 아래여야 함
+ * 105 = (100, 110) 구간 중간. GameDetailHeader/모달 z를 바꾸면 이 불변식을 지키도록 같이 갱신.
+ */
+export const PTR_INDICATOR_Z = 105;
+/** 페이지 sticky 헤더 z 상한(이보다 인디케이터가 높아야 함) */
+export const PTR_MAX_STICKY_HEADER_Z = 100;
+/** 전체화면 모달/오버레이 z 하한(이보다 인디케이터가 낮아야 함) */
+export const PTR_MIN_FULLSCREEN_OVERLAY_Z = 110;
+
+/**
  * 당김 제스처 arm 여부 — 터치가 시작된 노드가 입력/모달/중첩 스크롤러면 버블링으로
  * 상위 pull-to-refresh가 오발동해 key remount·미저장 입력 유실이 난다(삼순 #731 NO-GO).
  * 순수 판정(DOM 분리): 페이지 최상단 일반 콘텐츠에서 시작한 pull만 arm한다.
@@ -128,10 +142,20 @@ export default function PullToRefresh({ onRefresh, children, className }: PullTo
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
     >
-      {/* Pull indicator */}
+      {/* Pull indicator — 스티키 헤더 위에 뜨는 고정 오버레이.
+          #917에서 홈 헤더가 sticky top-0 z-30, 경기상세 GameDetailHeader는 sticky z-[100]로
+          바뀌면서 in-flow 인디케이터를 헤더가 덮어 스피너가 안 보이던 회귀 수정.
+          stacking 계약: 인디케이터 z=PTR_INDICATOR_Z(105)로 모든 페이지 sticky 헤더
+          (홈 z-30·경기상세 z-[100]) 위에 두되, z-[110]+ 전체화면 모달/오버레이
+          (모달 z-[110~130]·풀스크린 뷰어 z-[10000]+)보다는 아래에 둔다(삼순 #939 NO-GO).
+          페이지 스크롤(window)과 무관하게 당김 중에만 상단 고정 밴드로 노출. */}
       <div
-        className="flex items-center justify-center overflow-hidden transition-[height] duration-150 ease-out"
-        style={{ height: pullDistance > 5 ? pullDistance : 0 }}
+        className="pointer-events-none fixed left-0 right-0 flex items-center justify-center overflow-hidden bg-bg-primary transition-[height] duration-150 ease-out"
+        style={{
+          top: "env(safe-area-inset-top, 0px)",
+          height: pullDistance > 5 ? pullDistance : 0,
+          zIndex: PTR_INDICATOR_Z,
+        }}
       >
         <div className="flex items-center gap-2">
           {isRefreshing ? (

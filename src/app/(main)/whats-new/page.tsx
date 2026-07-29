@@ -2,7 +2,9 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { useRouter, usePathname } from "next/navigation";
+import { useSafeBack } from "@/lib/hooks/useSafeBack";
 import { ArrowLeft, Sparkles, ChevronRight, MessageCircle, Heart } from "lucide-react";
+import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
 import GlassCard from "@/components/ui/GlassCard";
 import CommentSheet from "@/components/community/CommentSheet";
 import LoginSheet from "@/components/auth/LoginSheet";
@@ -99,6 +101,7 @@ function formatDate(iso: string): string {
 
 export default function WhatsNewPage() {
   const router = useRouter();
+  const goBack = useSafeBack("/");
   const pathname = usePathname();
   const [items, setItems] = useState<Announcement[]>([]);
   const [loading, setLoading] = useState(true);
@@ -170,16 +173,19 @@ export default function WhatsNewPage() {
   };
 
   return (
-    <div className="min-h-screen px-5 pt-4 pb-24">
+    <div className="min-h-screen px-5 pb-24">
       {/* Header */}
-      <div className="mb-5 flex items-center gap-3">
-        <button onClick={() => router.back()} className="text-text-secondary">
+      <div className="sticky top-0 z-30 -mx-5 border-b border-border bg-bg-primary px-5" style={{ paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
+      <div className="min-h-[44px] flex items-center gap-3">
+        <button onClick={goBack} aria-label="뒤로가기" className="flex h-11 w-11 items-center justify-center -ml-2.5 text-text-secondary">
           <ArrowLeft size={22} />
         </button>
-        <h1 className="flex items-center gap-2 text-lg font-bold text-text-primary">
+        <h1 className="flex items-center gap-2 text-lg font-bold text-text-primary flex-1">
           <Sparkles size={18} className="text-amber-400" />
           새 소식
         </h1>
+        <HeaderProfileLink />
+      </div>
       </div>
 
       {loading ? (

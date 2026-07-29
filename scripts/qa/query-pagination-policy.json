@@ -54,6 +54,7 @@
     "invitations",
     "invite_abuse_check",
     "invite_refill_log",
+    "leaderboard_invite_rollup",
     "leaderboard_writing_rollup",
     "likes",
     "ios_widget_push_state",
@@ -110,6 +111,7 @@
   ],
   "boundedTables": [
     "admin_alert_state",
+    "api_fallback_alert_state",
     "channel_discovery_lock",
     "game_start_watchdog_config",
     "push_dispatch_config",
@@ -117,61 +119,328 @@
     "venue_cleanup_cursor"
   ],
   "uniqueKeySets": {
-    "admin_app_devices": [["platform", "visitor_id"]],
-    "admin_app_version_devices": [["platform", "visitor_id"]],
-    "admin_auth_attempts": [["ip_address"]],
-    "admin_broadcast_recipients": [["job_id", "user_id"]],
-    "admin_dm_notify_claims": [["message_id"]],
-    "admin_dwell_session_slices": [["session_id", "platform", "day_kst"]],
-    "admin_dwell_sessions": [["id"], ["visitor_id", "session_start"]],
-    "admin_page_view_user_days": [["id"], ["day_kst", "user_id"]],
-    "admin_push_subscriptions": [["endpoint"]],
-    "admin_telemetry_retention_runs": [["id"]],
-    "admin_traffic_daily_visitors": [["day_kst", "platform", "visitor_id"]],
-    "admin_user_game_lifetime": [["user_id"]],
-    "app_downloads": [["platform", "date"]],
-    "channel_pool": [["channel_id"]],
-    "comment_likes": [["comment_id", "user_id"]],
-    "daily_analysis": [["date", "type"]],
-    "daily_analysis_live_claims": [["analysis_date"]],
-    "daily_standings_snapshot": [["date", "team_id"]],
-    "daily_stats_snapshot": [["date", "category", "player_name", "team"]],
-    "device_push_tokens": [["id"], ["fcm_token"]],
-    "likes": [["post_id", "user_id"]],
-    "live_activity_channel_subscriptions": [["game_id", "environment", "channel_id", "device_key"]],
-    "live_activity_channels": [["game_id", "environment"]],
-    "live_activity_start_tokens": [["user_id"]],
-    "live_activity_started": [["game_id"]],
-    "live_activity_started_users": [["user_id", "game_id"]],
-    "news_clipping_sends": [["clip_date", "user_id"]],
-    "news_discussions": [["article_key"]],
-    "notification_prefs": [["user_id"]],
-    "notified_player_highlight_tokens": [["event_id", "token_id", "token_hash"]],
-    "notified_score_events": [["event_id"]],
-    "player_highlight_event_snapshots": [["event_id"]],
-    "player_stats_batter": [["name", "team"]],
-    "player_stats_pitcher": [["name", "team"]],
-    "players_roster": [["kbo_id"]],
-    "roster_snapshots": [["snapshot_date", "team_id", "kbo_player_id"]],
-    "urgent_notice_deliveries": [["notice_key", "user_id"]],
-    "urgent_notices": [["notice_key"]],
-    "user_blocks": [["blocker_id", "blocked_id"]],
-    "v_leaderboard_writing": [["user_id"]],
-    "watch_pings": [["ping_date", "platform", "ip_hash"]],
-    "youtube_quota_ledger": [["quota_date"]],
-    "admin_alert_state": [["job_name"]],
-    "game_event_state": [["game_id"]],
-    "game_notify_state": [["game_id"]],
-    "game_start_watchdog_config": [["id"]],
-    "game_start_delivery_ledger": [["id"], ["game_id", "event_type", "token_id", "token_hash"]],
-    "ios_widget_push_state": [["game_id"]],
-    "live_activity_game_push_state": [["game_id"]],
-    "team_rank_notify_state": [["team_id"]],
-    "venue_cleanup_cursor": [["bucket"]]
+    "admin_app_devices": [
+      [
+        "platform",
+        "visitor_id"
+      ]
+    ],
+    "admin_app_version_devices": [
+      [
+        "platform",
+        "visitor_id"
+      ]
+    ],
+    "admin_auth_attempts": [
+      [
+        "ip_address"
+      ]
+    ],
+    "admin_broadcast_recipients": [
+      [
+        "job_id",
+        "user_id"
+      ]
+    ],
+    "admin_dm_notify_claims": [
+      [
+        "message_id"
+      ]
+    ],
+    "admin_dwell_session_slices": [
+      [
+        "session_id",
+        "platform",
+        "day_kst"
+      ]
+    ],
+    "admin_dwell_sessions": [
+      [
+        "id"
+      ],
+      [
+        "visitor_id",
+        "session_start"
+      ]
+    ],
+    "admin_page_view_user_days": [
+      [
+        "id"
+      ],
+      [
+        "day_kst",
+        "user_id"
+      ]
+    ],
+    "admin_push_subscriptions": [
+      [
+        "endpoint"
+      ]
+    ],
+    "admin_telemetry_retention_runs": [
+      [
+        "id"
+      ]
+    ],
+    "admin_traffic_daily_visitors": [
+      [
+        "day_kst",
+        "platform",
+        "visitor_id"
+      ]
+    ],
+    "admin_user_game_lifetime": [
+      [
+        "user_id"
+      ]
+    ],
+    "app_downloads": [
+      [
+        "platform",
+        "date"
+      ]
+    ],
+    "channel_pool": [
+      [
+        "channel_id"
+      ]
+    ],
+    "comment_likes": [
+      [
+        "comment_id",
+        "user_id"
+      ]
+    ],
+    "daily_analysis": [
+      [
+        "date",
+        "type"
+      ]
+    ],
+    "daily_analysis_live_claims": [
+      [
+        "analysis_date"
+      ]
+    ],
+    "daily_standings_snapshot": [
+      [
+        "date",
+        "team_id"
+      ]
+    ],
+    "daily_stats_snapshot": [
+      [
+        "date",
+        "category",
+        "player_name",
+        "team"
+      ]
+    ],
+    "device_push_tokens": [
+      [
+        "id"
+      ],
+      [
+        "fcm_token"
+      ]
+    ],
+    "likes": [
+      [
+        "post_id",
+        "user_id"
+      ]
+    ],
+    "live_activity_channel_subscriptions": [
+      [
+        "game_id",
+        "environment",
+        "channel_id",
+        "device_key"
+      ]
+    ],
+    "live_activity_channels": [
+      [
+        "game_id",
+        "environment"
+      ]
+    ],
+    "live_activity_start_tokens": [
+      [
+        "user_id"
+      ]
+    ],
+    "live_activity_started": [
+      [
+        "game_id"
+      ]
+    ],
+    "live_activity_started_users": [
+      [
+        "user_id",
+        "game_id"
+      ]
+    ],
+    "news_clipping_sends": [
+      [
+        "clip_date",
+        "user_id"
+      ]
+    ],
+    "news_discussions": [
+      [
+        "article_key"
+      ]
+    ],
+    "notification_prefs": [
+      [
+        "user_id"
+      ]
+    ],
+    "notified_player_highlight_tokens": [
+      [
+        "event_id",
+        "token_id",
+        "token_hash"
+      ]
+    ],
+    "notified_score_events": [
+      [
+        "event_id"
+      ]
+    ],
+    "player_highlight_event_snapshots": [
+      [
+        "event_id"
+      ]
+    ],
+    "player_stats_batter": [
+      [
+        "name",
+        "team"
+      ]
+    ],
+    "player_stats_pitcher": [
+      [
+        "name",
+        "team"
+      ]
+    ],
+    "players_roster": [
+      [
+        "kbo_id"
+      ]
+    ],
+    "roster_snapshots": [
+      [
+        "snapshot_date",
+        "team_id",
+        "kbo_player_id"
+      ]
+    ],
+    "urgent_notice_deliveries": [
+      [
+        "notice_key",
+        "user_id"
+      ]
+    ],
+    "urgent_notices": [
+      [
+        "notice_key"
+      ]
+    ],
+    "user_blocks": [
+      [
+        "blocker_id",
+        "blocked_id"
+      ]
+    ],
+    "v_leaderboard_writing": [
+      [
+        "user_id"
+      ]
+    ],
+    "watch_pings": [
+      [
+        "ping_date",
+        "platform",
+        "ip_hash"
+      ]
+    ],
+    "youtube_quota_ledger": [
+      [
+        "quota_date"
+      ]
+    ],
+    "admin_alert_state": [
+      [
+        "job_name"
+      ]
+    ],
+    "game_event_state": [
+      [
+        "game_id"
+      ]
+    ],
+    "game_notify_state": [
+      [
+        "game_id"
+      ]
+    ],
+    "game_start_watchdog_config": [
+      [
+        "id"
+      ]
+    ],
+    "game_start_delivery_ledger": [
+      [
+        "id"
+      ],
+      [
+        "game_id",
+        "event_type",
+        "token_id",
+        "token_hash"
+      ]
+    ],
+    "ios_widget_push_state": [
+      [
+        "game_id"
+      ]
+    ],
+    "live_activity_game_push_state": [
+      [
+        "game_id"
+      ]
+    ],
+    "team_rank_notify_state": [
+      [
+        "team_id"
+      ]
+    ],
+    "venue_cleanup_cursor": [
+      [
+        "bucket"
+      ]
+    ],
+    "api_fallback_alert_state": [
+      [
+        "api_name"
+      ]
+    ]
   },
   "keysetHelpers": {
-    "fetchAllByKeyset": { "callbackArgs": [0], "cursorParam": 0 },
-    "fetchProfileIds": { "callbackArgs": [1], "cursorParam": 0 }
+    "fetchAllByKeyset": {
+      "callbackArgs": [
+        0
+      ],
+      "cursorParam": 0
+    },
+    "fetchProfileIds": {
+      "callbackArgs": [
+        1
+      ],
+      "cursorParam": 0
+    }
   },
   "boundedRpcAllowlist": {
     "admin_telemetry_retention_run": "returns one retention execution summary object",
@@ -186,6 +455,7 @@
     "delete_own_chat_message": "deletes one message",
     "finish_admin_broadcast_recipient": "state transition for one recipient",
     "increment_post_view": "increments one post counter",
+    "leaderboard_invite_rollup_refresh": "full snapshot recompute of the invite leaderboard rollup (advisory-locked, idempotent), returns text",
     "leaderboard_writing_rollup_refresh": "full snapshot recompute of the writing leaderboard rollup, returns void",
     "log_urgent_notice_error": "writes one delivery error",
     "record_youtube_quota": "writes one quota ledger entry",
@@ -193,6 +463,10 @@
     "report_venue_story": "creates one report",
     "reserve_youtube_quota": "returns one atomic quota decision",
     "save_game_summary_if_current": "conditionally saves one game summary and returns one boolean",
-    "upsert_naver_identity": "upserts one authenticated identity"
+    "upsert_naver_identity": "upserts one authenticated identity",
+    "claim_api_fallback_alert": "inserts one fallback event, atomically claims one alert lease, returns one boolean should_send",
+    "confirm_api_fallback_alert": "confirms one alert delivery (sets cooldown, clears lease, marks one event), returns void",
+    "drain_api_fallback_alerts": "returns at most p_max_batch due alert outboxes to re-send (bounded batch)",
+    "nack_api_fallback_alert": "reschedules one alert attempt backoff by token owner, returns void/boolean"
   }
 }

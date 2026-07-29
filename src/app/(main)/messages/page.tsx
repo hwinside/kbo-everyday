@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { useSafeBack } from "@/lib/hooks/useSafeBack";
 import { ArrowLeft, MessageCircle, Settings, X, ShieldBan } from "lucide-react";
 import { useDMList } from "@/lib/supabase/useDM";
 import { useBlockList } from "@/lib/supabase/useBlock";
@@ -24,6 +25,7 @@ function timeAgo(dateStr: string) {
 
 export default function MessagesPage() {
   const router = useRouter();
+  const goBack = useSafeBack("/");
   const { user } = useAuth();
   const { conversations, loading } = useDMList();
   const { blockedUsers, loading: blocksLoading, refresh: refreshBlocks } = useBlockList();
@@ -46,11 +48,13 @@ export default function MessagesPage() {
   if (!user) {
     return (
       <div className="min-h-screen bg-bg-primary pb-24">
-        <div className="px-5 pb-3 flex items-center gap-3">
-          <button onClick={() => router.back()} className="p-1">
+        <div className="sticky top-0 z-30 border-b border-border bg-bg-primary" style={{ paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
+        <div className="px-5 min-h-[44px] flex items-center gap-3">
+          <button onClick={goBack} aria-label="뒤로가기" className="flex h-11 w-11 items-center justify-center -ml-2">
             <ArrowLeft size={24} className="text-text-primary" />
           </button>
           <h1 className="text-lg font-semibold leading-[26px] text-text-primary">쪽지</h1>
+        </div>
         </div>
         <div className="text-center py-20">
           <MessageCircle size={40} className="mx-auto mb-3 text-text-tertiary opacity-50" />
@@ -66,13 +70,20 @@ export default function MessagesPage() {
 
   return (
     <div className="min-h-screen bg-bg-primary pb-24">
-      <div className="px-5 pb-3 flex items-center gap-3">
-        <button onClick={() => router.back()} className="p-1">
+      <div className="sticky top-0 z-30 border-b border-border bg-bg-primary" style={{ paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
+      <div className="px-5 min-h-[44px] flex items-center gap-3">
+        <button onClick={goBack} aria-label="뒤로가기" className="flex h-11 w-11 items-center justify-center -ml-2">
           <ArrowLeft size={24} className="text-text-primary" />
         </button>
         <h1 className="text-lg font-bold text-text-primary flex-1">쪽지</h1>
-        <button onClick={() => setShowBlockList(true)} className="p-1.5 rounded-full hover:bg-bg-tertiary transition-colors">
-          <Settings size={20} className="text-text-tertiary" />
+      </div>
+      </div>
+
+      {/* 차단 관리 — 헤더에서 바디로 이동 */}
+      <div className="px-5 pt-3 flex justify-end">
+        <button onClick={() => setShowBlockList(true)} className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium bg-bg-tertiary text-text-secondary hover:bg-bg-secondary transition-colors">
+          <Settings size={14} />
+          차단 관리
         </button>
       </div>
 
