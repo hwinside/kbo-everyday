@@ -138,6 +138,22 @@ async function run() {
     check("stop 후 예약 타이머 0", h.pendingTimers() === 0);
   }
 
+  // 5-A) 별도 최초 로드가 있는 소비처: 첫 실행은 interval 뒤, 복귀는 즉시.
+  {
+    const h = makeHarness(false);
+    const stop = startVisibilityPoller({ ...h.deps, runImmediately: false });
+    await flush();
+    check("delayed-first: 시작 직후 실행 0", h.calls === 0);
+    await h.advance(999);
+    check("delayed-first: interval 직전 추가 실행 0", h.calls === 0);
+    await h.advance(1);
+    check("delayed-first: interval 도달 시 첫 실행 1", h.calls === 1);
+    await h.setHidden(true);
+    await h.setHidden(false);
+    check("delayed-first: hidden→visible 복귀는 즉시 1회", h.calls === 2);
+    stop();
+  }
+
   // ── 비동기(느린 콜백) 경계: single-flight fence 회귀 ──
   // 삼순 P1: A pending 중 hidden→visible이 새 tick과 겹쳐 중복 Edge Request를 냈다.
 
