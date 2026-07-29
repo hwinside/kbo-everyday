@@ -170,6 +170,7 @@
     "qa:notif-terminal-group": "tsx scripts/qa/notif-terminal-group-smoke.ts",
     "qa:relay-inning-snapshot": "tsx scripts/qa/relay-inning-snapshot-smoke.ts",
     "qa:relay-delta": "tsx scripts/qa/relay-delta-smoke.ts",
+    "qa:conditional-etag": "tsx scripts/qa/conditional-etag-smoke.ts",
     "qa:game-live-stream": "tsx scripts/qa/game-live-stream-smoke.ts"
   },
   "dependencies": {
