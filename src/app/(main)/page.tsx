@@ -3,12 +3,8 @@ import HomeClientShell from "@/components/home/HomeClientShell";
 import type { HomeGame } from "@/hooks/useHomeInit";
 import { PRESEASON_DATES } from "@/lib/constants/preseason-schedule";
 import type { LiveGameData } from "@/lib/hooks/useLiveGame";
-import { fetchGames, USER_FACING_GAMES_TIMEOUT_MS } from "@/lib/crawler/kbo-api";
+import { fetchGamesUserFacing } from "@/lib/crawler/games-user-facing";
 import { liveGamesFromKboGames } from "@/lib/crawler/home-live-games";
-
-// 홈 SSR 의 user-facing KBO budget. blackhole 여도 홈 전체가 KBO 3.5s + Naver 5s 안에 수렴.
-// user-facing budget SSOT — `/api/games` route 와 동일 값 공유(kbo-api.ts).
-const HOME_KBO_BUDGET_MS = USER_FACING_GAMES_TIMEOUT_MS;
 
 // Force dynamic rendering — game data changes throughout the day
 export const dynamic = "force-dynamic";
@@ -28,8 +24,9 @@ async function getInitialData(): Promise<{
     const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
     const yyyymmdd = dateStr.replace(/-/g, "");
 
-    // 1) 경기 목록 — user-facing 짧은 budget(KBO blackhole 시에도 Naver 폴백까지 bounded).
-    const gamesData = await fetchGames(yyyymmdd, undefined, { timeoutMs: HOME_KBO_BUDGET_MS });
+    // 1) 경기 목록 — 유저 대면 하이브리드: Naver primary(스코어/이닝) + KBO enrich(BSO/주자/투타).
+    // KBO 열화여도 빠르게 수렴하고, KBO 살아있으면 라이브 상세까지 보존.
+    const gamesData = await fetchGamesUserFacing(yyyymmdd);
     const games: HomeGame[] = gamesData.map((g: { gameId: string; homeTeamId: number; awayTeamId: number; time: string; stadium: string; homeScore?: number | null; awayScore?: number | null; status: string; inning?: number; isTop?: boolean; awayStarterName?: string | null; homeStarterName?: string | null; winPitcher?: string | null; losePitcher?: string | null; broadcastChannels?: HomeGame["broadcastChannels"] }) => ({
       id: g.gameId,
       homeTeamId: g.homeTeamId,

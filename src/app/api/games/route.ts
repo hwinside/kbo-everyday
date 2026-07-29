@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { fetchGames, USER_FACING_GAMES_TIMEOUT_MS } from "@/lib/crawler/kbo-api";
+import { fetchGamesUserFacing } from "@/lib/crawler/games-user-facing";
 
 export async function GET(request: NextRequest) {
   const date = request.nextUrl.searchParams.get("date");
@@ -8,8 +8,8 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    // user-facing 경로: KBO blackhole 에서 10s 정지 대신 공통 budget 안에 Naver 폴백로 수렴.
-    const games = await fetchGames(date, undefined, { timeoutMs: USER_FACING_GAMES_TIMEOUT_MS });
+    // user-facing 하이브리드: Naver primary(스코어/이닝/상태) + KBO enrich(BSO/주자/투타) 병렬 병합.
+    const games = await fetchGamesUserFacing(date);
     return NextResponse.json({
       date,
       count: games.length,
