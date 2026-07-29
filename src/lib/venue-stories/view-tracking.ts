@@ -11,6 +11,16 @@ export function isVenueStoryViewKind(value: unknown): value is VenueStoryViewKin
   return value === "click" || value === "impression";
 }
 
+/** KST 일별 서버 dedupe와 클라 세션 dedupe 경계를 맞춘 키(장시간 열린 탭도 자정 이후 재집계). */
+export function venueStorySentKey(
+  storyId: number,
+  kind: VenueStoryViewKind,
+  nowMs = Date.now(),
+): string {
+  const kstDay = new Date(nowMs + 9 * 60 * 60 * 1_000).toISOString().slice(0, 10);
+  return `${kstDay}:${kind}:${storyId}`;
+}
+
 /**
  * 게스트 식별자 localStorage 키. 로그아웃/계정 전환 정리는 명시 키 목록만 지우므로 생존한다.
  */

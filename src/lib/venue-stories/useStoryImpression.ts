@@ -7,7 +7,7 @@ import { hasTrackedVenueStoryView, trackVenueStoryView } from "./view-tracker-cl
  * 직관 스토리 트레이 임프레션 트래킹 훅 — #735 usePostImpression 의 50%+0.5s 패턴 재사용.
  *
  * 반환된 ref 를 트레이 타일(센서 엘리먼트)에 걸면, 세로 ≥50% 가 뷰포트에 들어오고
- * 0.5초 이상 머무를 때 impression 1회 집계(탭 세션당 스토리 1회 — view-tracker-client).
+ * 0.5초 이상 머무를 때 impression 1회 집계(탭 세션·KST 일자당 스토리 1회 — view-tracker-client).
  * 빠른 스크롤(0.5초 미만)은 미집계. 서버는 스토리×뷰어×kind×KST일 dedupe 를 별도 보장.
  *
  * #735 과 달리 viewer 식별은 전송 시점에 세션/직관 스토리 guest UUID로 해석하므로

@@ -10,6 +10,7 @@ import {
   sendVenueStoryViewPing,
   withAdminViewCounts,
   sumViewCountsByStory,
+  venueStorySentKey,
   venueStoryViewRecordStatus,
   type StoryViewCounts,
 } from "../../src/lib/venue-stories/view-tracking";
@@ -21,6 +22,17 @@ test("kind 검증: click/impression 만 허용", () => {
   assert.equal(isVenueStoryViewKind("view"), false);
   assert.equal(isVenueStoryViewKind(undefined), false);
   assert.equal(isVenueStoryViewKind(1), false);
+});
+
+test("클라 세션 dedupe 키는 KST 일자를 포함해 장시간 열린 탭도 다음 날 다시 집계", () => {
+  const beforeKstMidnight = Date.parse("2026-07-29T14:59:59.000Z");
+  const afterKstMidnight = Date.parse("2026-07-29T15:00:00.000Z");
+  assert.equal(venueStorySentKey(7, "impression", beforeKstMidnight), "2026-07-29:impression:7");
+  assert.equal(venueStorySentKey(7, "impression", afterKstMidnight), "2026-07-30:impression:7");
+  assert.notEqual(
+    venueStorySentKey(7, "click", beforeKstMidnight),
+    venueStorySentKey(7, "impression", beforeKstMidnight),
+  );
 });
 
 test("게스트 UUID는 영속 재사용하고 storage 불가 시 IP 폴백 없이 null", () => {
@@ -145,6 +157,32 @@ test("트레이 impression은 IntersectionObserver 50%+dwell 및 세션 중복 �
   assert.match(source, /setTimeout/);
   assert.match(source, /hasTrackedVenueStoryView/);
   assert.match(source, /trackVenueStoryView\(storyId,\s*"impression"\)/);
+
+  const section = readFileSync(
+    new URL("../../src/components/game/VenueStorySection.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.match(section, /useVenueStoryImpression/);
+  assert.doesNotMatch(section, /new IntersectionObserver/); // 구형 수동 observer 경로 재유입 금지
+});
+
+test("각 fire의 user/guest 판정은 전송 시점 세션 + 서버 resolveViewerKey 단일 경로", () => {
+  const client = readFileSync(
+    new URL("../../src/lib/venue-stories/view-tracker-client.ts", import.meta.url),
+    "utf8",
+  );
+  const hook = readFileSync(
+    new URL("../../src/lib/venue-stories/useStoryImpression.ts", import.meta.url),
+    "utf8",
+  );
+  const route = readFileSync(
+    new URL("../../src/app/api/venue-stories/[id]/view/route.ts", import.meta.url),
+    "utf8",
+  );
+  assert.equal(client.match(/await getSafeSession\(\)/g)?.length, 1);
+  assert.match(client, /payload:\s*\{\s*kind,\s*guestId,\s*accessToken:/);
+  assert.doesNotMatch(hook, /useAuth|authLoading/);
+  assert.equal(route.match(/const viewerKey = resolveViewerKey\(/g)?.length, 1);
 });
 
 // ── 관리자 전용 노출 ("숫자는 일단 관리자만") ──

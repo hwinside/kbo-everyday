@@ -4,6 +4,7 @@ import { getSafeSession } from "@/lib/supabase/client";
 import {
   getOrCreateVenueGuestId,
   sendVenueStoryViewPing,
+  venueStorySentKey,
   type VenueStoryViewKind,
 } from "./view-tracking";
 
@@ -17,13 +18,9 @@ import {
  */
 const sent = new Set<string>();
 
-function sentKey(storyId: number, kind: VenueStoryViewKind): string {
-  return `${kind}:${storyId}`;
-}
-
-/** 이 탭 세션에서 이미 전송(성공)한 (kind, story)면 true — 트래킹 호출 전 skip 용. */
+/** 이 탭 세션에서 오늘(KST) 이미 전송(성공)한 (kind, story)면 true. */
 export function hasTrackedVenueStoryView(storyId: number, kind: VenueStoryViewKind): boolean {
-  return sent.has(sentKey(storyId, kind));
+  return sent.has(venueStorySentKey(storyId, kind));
 }
 
 /**
@@ -35,11 +32,13 @@ export async function trackVenueStoryView(
   kind: VenueStoryViewKind,
 ): Promise<void> {
   if (!Number.isInteger(storyId) || storyId <= 0) return;
-  const key = sentKey(storyId, kind);
+  const key = venueStorySentKey(storyId, kind);
   if (sent.has(key)) return;
   sent.add(key);
   try {
-    // getSafeSession 은 로컬 세션 읽기라 즉시 settle — 이탈 직전에도 beacon 큐잉까지 도달 가능.
+    // fire 시점의 세션을 정확히 한 번 읽고 guest UUID와 함께 보낸다. 클라는 user/guest를
+    // 자체 확정하지 않으며, 서버 resolveViewerKey 단일 경로가 검증된 user를 우선해 최종 1회 해석한다.
+    // 따라서 관찰 시점 authLoading 스냅샷 없이도 게스트→유저 이중 fire가 생기지 않는다.
     const session = await getSafeSession();
     const guestId = getOrCreateVenueGuestId(
       typeof window === "undefined" ? null : window.localStorage,
