@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { fetchGames } from "@/lib/crawler/kbo-api";
+import { fetchGames, USER_FACING_GAMES_TIMEOUT_MS } from "@/lib/crawler/kbo-api";
 
 export async function GET(request: NextRequest) {
   const date = request.nextUrl.searchParams.get("date");
@@ -8,7 +8,8 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const games = await fetchGames(date);
+    // user-facing 경로: KBO blackhole 에서 10s 정지 대신 공통 budget 안에 Naver 폴백로 수렴.
+    const games = await fetchGames(date, undefined, { timeoutMs: USER_FACING_GAMES_TIMEOUT_MS });
     return NextResponse.json({
       date,
       count: games.length,

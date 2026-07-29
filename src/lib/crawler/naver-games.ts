@@ -1,0 +1,200 @@
+// Naver schedule/games 기반 경기목록 fallback — fetchGames(KBO GetKboGameList)가
+// 실패(throw/timeout/스키마 열화)할 때 동일한 KboGame[] 형태로 일정+라이브 스코어를
+// 대체 공급한다.
+//
+// 리스트-레벨 필드(스코어/상태/이닝)만 보장한다. 라이브 카운트(strikes/balls/outs/
+// runners/currentBatter 등)는 Naver schedule 응답에 없어 0/빈값으로 graceful degrade
+// 하며, in-game 상태는 상세(game-detail)·중계(game-relay)의 Naver 경로가 커버한다.
+
+import { resolveTeamId, type KboGame } from "@/lib/crawler/kbo-api";
+
+const NAVER_SCHEDULE_API = "https://api-gw.sports.naver.com/schedule/games";
+
+/**
+ * fetchGames 기본 srId(전 시리즈: 시범/정규/포스트/올스타). 이 값으로 호출될 때만
+ * Naver 폴백이 안전하다 — Naver schedule/games 는 series(gameType) 필드를 제공하지 않아
+ * 특정 시리즈만 요구하는 호출(예: 정규시즌 전용 game-logs)은 시범경기 등이 섞일 수 있어
+ * fail-close 한다. (실측 2026-07-29: 시범경기(3/15)도 정규와 동일 categoryId=kbo 로 반환,
+ * 구분 필드 없음.)
+ */
+const DEFAULT_ALL_SR_ID = "0,1,3,4,5,7,9";
+
+interface NaverScheduleGame {
+  gameId?: string;
+  gameDateTime?: string;
+  stadium?: string;
+  homeTeamCode?: string;
+  awayTeamCode?: string;
+  homeTeamName?: string;
+  awayTeamName?: string;
+  homeTeamScore?: number;
+  awayTeamScore?: number;
+  statusCode?: string;
+  statusInfo?: string;
+  cancel?: boolean;
+  suspended?: boolean;
+}
+
+/** 입력 KBO 날짜(YYYYMMDD) → Naver 날짜(YYYY-MM-DD). */
+function toNaverDate(date: string): string {
+  return `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}`;
+}
+
+/**
+ * Naver gameId 에서 회차(더블헤더) suffix 를 추출한다.
+ * Naver gameId 형식: YYYYMMDD + 팀코드 + N(회차) + YYYY(연도접미).
+ *   단일경기 `20260729HTSS02026` → "0", DH `20240623KTLG12024`/`…22024` → "1"/"2".
+ * 연도접미 앞 1자리가 회차. 올스타는 연도접미가 9999(`20260706..09999`)여도
+ * 회차 자리는 그대로 보존된다. 회차는 실무상 0~3만 유효(DH는 1/2, 드물게 3)이므로
+ * 그 범위를 벗어나면(연도접미 결측로 자릿수 오인식 등) 명시적으로 "0"으로 클램한다.
+ * gameId 파싱은 회차 추출에만 쓰고, 팀/날짜는 응답 필드를 직접 사용한다(reversedHomeAway 회피).
+ */
+export function extractGameSeq(naverGameId: string | undefined): string {
+  if (!naverGameId) return "0";
+  const withYear = naverGameId.match(/(\d)\d{4}$/);
+  const raw = withYear ? withYear[1] : (naverGameId.match(/(\d)$/)?.[1] ?? "0");
+  // 유효 회차 0~3 밖은 파싱 오인식(예: 올스타 9999 결측) → 단일경기 "0".
+  return /^[0-3]$/.test(raw) ? raw : "0";
+}
+
+function mapStatus(g: NaverScheduleGame): KboGame["status"] {
+  const sc = g.statusCode ?? "";
+  if (g.cancel || g.suspended || sc === "CANCEL" || sc === "POSTPONE") return "cancelled";
+  // 종료: RESULT(결과 확정) + ENDED(경기 종료 직후, 2026-07-29 21:09 실응답 두산-SSG 실측).
+  if (sc === "RESULT" || sc === "ENDED") return "final";
+  if (sc === "STARTED") return "live";
+  return "scheduled";
+}
+
+/**
+ * Naver schedule game → KboGame 순수 매퍼(테스트용 export).
+ * gameId 는 KBO 규칙(date + awayCode + homeCode + 회차)으로 재구성한다. 회차는 Naver
+ * gameId 에서 보존(더블헤더 충돌 방지). 팀/날짜는 응답 필드 직접 사용.
+ * (실측: KBO G_ID·Naver gameId 모두 away+home 순서, 예 `20260729WOLG0`.)
+ */
+export function mapNaverGameToKbo(g: NaverScheduleGame, date: string): KboGame {
+  const awayCode = g.awayTeamCode ?? "";
+  const homeCode = g.homeTeamCode ?? "";
+  const seq = extractGameSeq(g.gameId);
+  const status = mapStatus(g);
+  // statusInfo "N회초"/"N회말" 에서 이닝/초말을 뽑는다(live·final 공통). 없으면 0/초.
+  const inningMatch = (g.statusInfo ?? "").match(/(\d+)회(초|말)/);
+  const inning = inningMatch ? parseInt(inningMatch[1], 10) : 0;
+  const isTop = inningMatch ? inningMatch[2] === "초" : true;
+  return {
+    gameId: `${date}${awayCode}${homeCode}${seq}`,
+    date,
+    time: g.gameDateTime ? g.gameDateTime.slice(11, 16) : "",
+    stadium: g.stadium ?? "",
+    awayTeamId: resolveTeamId(awayCode, g.awayTeamName ?? ""),
+    homeTeamId: resolveTeamId(homeCode, g.homeTeamName ?? ""),
+    awayName: g.awayTeamName ?? "",
+    homeName: g.homeTeamName ?? "",
+    awayScore: status !== "scheduled" ? (g.awayTeamScore ?? 0) : null,
+    homeScore: status !== "scheduled" ? (g.homeTeamScore ?? 0) : null,
+    inning,
+    isTop,
+    status,
+    awayStarterName: "",
+    homeStarterName: "",
+    winPitcher: "",
+    losePitcher: "",
+    savePitcher: "",
+    strikes: 0,
+    balls: 0,
+    outs: 0,
+    runnersOn: { first: false, second: false, third: false },
+    currentPitcher: "",
+    currentBatter: "",
+    awayRank: 0,
+    homeRank: 0,
+    broadcastChannels: undefined,
+  };
+}
+
+/** Naver schedule 상태 코드 화이트리스트 — 이 밖의 미지값은 fail-close(합성 값으로 숨기지 않음). */
+const KNOWN_NAVER_STATUS = new Set(["READY", "BEFORE", "STARTED", "ENDED", "RESULT", "CANCEL", "POSTPONE", "SUSPENDED"]);
+
+/**
+ * raw NaverScheduleGame 원본 sanity — mapping 後 mapped 값만 검사하면 원본 결측이
+ * 합성 gameId/0:0/scheduled 로 숨어버린다. 따라서 매핑 전 원본 필드를 먼저 검증한다:
+ * - 원본 gameId/gameDateTime/양팀코드 필수·팀 해석(teamId>0)
+ * - status 는 known 상태만 허용(unknown/미지값 fail-close)
+ * - live/final 은 finite score 필수, live 는 이닝 정보(statusInfo "N회") 필수
+ */
+function isRawNaverGameSane(g: NaverScheduleGame): boolean {
+  if (!g.gameId || !g.gameDateTime || !g.homeTeamCode || !g.awayTeamCode) return false;
+  if (resolveTeamId(g.awayTeamCode, g.awayTeamName ?? "") <= 0) return false;
+  if (resolveTeamId(g.homeTeamCode, g.homeTeamName ?? "") <= 0) return false;
+  const sc = g.statusCode ?? "";
+  const knownStatus = KNOWN_NAVER_STATUS.has(sc) || g.cancel === true || g.suspended === true;
+  if (!knownStatus) return false; // unknown status → 합성 scheduled 로 숨기지 않고 fail-close
+  const status = mapStatus(g);
+  if (status === "live" || status === "final") {
+    // 진행/종료는 finite score 가 반드시 있어야 함(가짜 0:0 방지)
+    if (!Number.isFinite(g.awayTeamScore) || !Number.isFinite(g.homeTeamScore)) return false;
+    if (status === "live" && !/(\d+)회(초|말)/.test(g.statusInfo ?? "")) return false;
+  }
+  return true;
+}
+
+/**
+ * mapped 결과 방어적 재검증(이중). 원본은 isRawNaverGameSane 가 이미 걸렸지만,
+ * 매핑 결과의 gameId/teamId/name 도 비어있지 않은지 확인.
+ */
+function isSaneGame(g: KboGame): boolean {
+  return (
+    !!g.gameId &&
+    g.awayTeamId > 0 &&
+    g.homeTeamId > 0 &&
+    g.awayName.length > 0 &&
+    g.homeName.length > 0
+  );
+}
+
+/**
+ * 특정 날짜 경기목록을 Naver schedule/games 로 조회(KBO fallback).
+ * - srId 가 기본 전-시리즈 셋이 아니면(특정 시리즈 전용) fail-close(series 필터 미지원).
+ * - fail-closed: success!==true || code!==200 || games 배열 부재 || per-game sanity 실패면 throw.
+ * - 경기 없는 날(games: [])은 정상으로 간주해 빈 배열을 반환한다(무경기일 500 방지).
+ */
+export async function fetchNaverGames(date: string, srId: string = DEFAULT_ALL_SR_ID): Promise<KboGame[]> {
+  if (srId !== DEFAULT_ALL_SR_ID) {
+    // 정규시즌 전용 등 특정 시리즈 요구 — Naver 로는 series 보존 불가 → 오염 방지 위해 fail-close.
+    throw new Error(`Naver fallback: srId(${srId}) series 필터 계약 보존 불가 — fail-close`);
+  }
+  const naverDate = toNaverDate(date);
+  const url =
+    `${NAVER_SCHEDULE_API}?fields=basic,superCategoryId,categoryName,stadium,statusInfo` +
+    `&upperCategoryId=kbaseball&categoryId=kbo&fromDate=${naverDate}&toDate=${naverDate}&size=20`;
+  const res = await fetch(url, {
+    headers: {
+      "Referer": "https://sports.news.naver.com/",
+      "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)",
+    },
+    signal: AbortSignal.timeout(5000),
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    throw new Error(`Naver schedule HTTP ${res.status}`);
+  }
+  const data = await res.json();
+  if (data?.code !== 200 || data?.success !== true || !Array.isArray(data?.result?.games)) {
+    throw new Error("Naver schedule 응답 sanity 실패(success/code/games)");
+  }
+  const rawGames = data.result.games as NaverScheduleGame[];
+  // 경기 있는 응답인데 원본 필드가 하나라도 결측/미지상태/점수결측이면 부분/가짜 응답 — fail-close.
+  if (rawGames.some((g) => !isRawNaverGameSane(g))) {
+    throw new Error("Naver schedule per-game sanity 실패(원본 필수 필드/상태/스코어 결측)");
+  }
+  const games = rawGames.map((g) => mapNaverGameToKbo(g, date));
+  // 매핑 gameId 유일성(회차 보존 실패로 DH 가 합쳐지면 상세/캐시/알림 키 충돌) — fail-close.
+  if (new Set(games.map((g) => g.gameId)).size !== games.length) {
+    throw new Error("Naver schedule gameId 중복(회차 보존 실패)");
+  }
+  // mapped 방어적 재검증(이중).
+  if (games.some((g) => !isSaneGame(g))) {
+    throw new Error("Naver schedule per-game sanity 실패(mapped 팀 id/필수 필드)");
+  }
+  return games;
+}
