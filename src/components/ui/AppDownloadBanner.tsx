@@ -42,20 +42,26 @@ export default function AppDownloadBanner() {
 
   return (
     <div className="mb-3">
-      <div className="bg-[rgba(240,240,242,0.95)] dark:bg-[rgba(30,30,35,0.95)] backdrop-blur-xl border border-border rounded-2xl px-4 py-2.5 flex items-center gap-3">
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-text-primary truncate">📲 크보팬 앱 다운로드</p>
-          <p className="text-xs leading-[18px] text-text-tertiary truncate">앱에서 이용할 때 가장 쾌적하게 이용하실 수 있어요</p>
+      <div className="relative bg-[rgba(240,240,242,0.95)] dark:bg-[rgba(30,30,35,0.95)] backdrop-blur-xl border border-border rounded-2xl px-4 py-3">
+        <div className="pr-10">
+          <p className="text-sm font-medium text-text-primary">📲 크보팬 앱 다운로드</p>
+          <p className="mt-0.5 text-xs leading-[18px] text-text-tertiary">
+            앱에서 이용할 때 가장 쾌적하게 이용하실 수 있어요
+          </p>
         </div>
         <a
           href={storeUrl}
           target="_blank"
           rel="noopener noreferrer"
-          className="px-3 py-1.5 bg-accent text-white text-xs font-semibold rounded-xl whitespace-nowrap"
+          className="mt-2 inline-flex min-h-11 items-center justify-center px-3 bg-accent text-white text-xs font-semibold rounded-xl whitespace-nowrap"
         >
           {storeUrl === APP_STORE_URL ? "App Store" : "Google Play"}
         </a>
-        <button onClick={dismiss} className="text-text-tertiary p-0.5 -mr-1" aria-label="닫기">
+        <button
+          onClick={dismiss}
+          className="absolute right-1 top-1 flex size-11 items-center justify-center text-text-tertiary"
+          aria-label="닫기"
+        >
           <X size={16} />
         </button>
       </div>
