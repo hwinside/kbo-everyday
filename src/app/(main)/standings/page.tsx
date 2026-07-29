@@ -287,25 +287,25 @@ export default function StandingsPage() {
             <colgroup>
               <col className="w-6" />
               <col />
-              <col className="w-7 min-[360px]:w-8 sm:w-10" />
+              <col className="w-8 min-[360px]:w-9 sm:w-10" />
               <col className="w-6 min-[360px]:w-7 sm:w-10" />
               <col className="w-6 min-[360px]:w-7 sm:w-10" />
               <col className="w-5 min-[360px]:w-6 sm:w-8" />
               <col className="w-9 min-[360px]:w-10 sm:w-12" />
               <col className="w-9 sm:w-10" />
-              <col className="w-9 min-[360px]:w-10 sm:w-11" />
+              <col className="w-0 min-[360px]:w-10 sm:w-11" />
             </colgroup>
             <thead>
               <tr className="border-b border-border text-sm sm:text-base font-semibold text-text-tertiary">
                 <th className="py-2 text-center">#</th>
                 <th className="py-2 text-left pl-2">팀</th>
-                <th className="py-2 text-right pr-1 sm:pr-2">경기</th>
+                <th className="py-2 text-right pr-1 sm:pr-2 whitespace-nowrap">경기</th>
                 <th className="py-2 text-right pr-1 sm:pr-2">승</th>
                 <th className="py-2 text-right pr-1 sm:pr-2">패</th>
                 <th className="py-2 text-right pr-1 sm:pr-2">무</th>
                 <th className="py-2 text-right pr-1 sm:pr-2">승률</th>
                 <th className="py-2 text-right pr-1 sm:pr-2">차</th>
-                <th className="py-2 text-right pr-1 sm:pr-2">연속</th>
+                <th className="py-2 text-right pr-1 sm:pr-2 hidden min-[360px]:table-cell">연속</th>
               </tr>
             </thead>
             <tbody>
@@ -340,7 +340,7 @@ export default function StandingsPage() {
                     <td className="py-2.5 text-right pr-1 sm:pr-2 tabular-nums text-text-secondary">{standing.draws}</td>
                     <td className="py-2.5 text-right pr-1 sm:pr-2 tabular-nums font-semibold text-text-primary">{standing.pct >= 1 ? "1.000" : standing.pct.toFixed(3).slice(1)}</td>
                     <td className="py-2.5 text-right pr-1 sm:pr-2 tabular-nums text-text-secondary">{standing.gb === 0 ? "-" : standing.gb}</td>
-                    <td className="py-2.5 text-right pr-1 sm:pr-2 tabular-nums text-text-primary">
+                    <td className="py-2.5 text-right pr-1 sm:pr-2 tabular-nums text-text-primary hidden min-[360px]:table-cell">
                       {standing.streak || <span className="text-text-secondary">-</span>}
                     </td>
                   </motion.tr>
