@@ -10,6 +10,7 @@ import VenueStoryComposer from "./VenueStoryComposer";
 import VenueStoryViewer from "./VenueStoryViewer";
 import type { VenueStory } from "@/lib/venue-stories/types";
 import { loadSeenIds, markStorySeen, orderBySeen } from "@/lib/venue-stories/seen";
+import { useVenueStoryImpression } from "@/lib/venue-stories/useStoryImpression";
 import {
   buildProcessingStory,
   terminalUploadFailureIds,
@@ -27,6 +28,15 @@ import {
 
 interface Props {
   gameId: string;
+}
+
+/**
+ * 트레이 타일 임프레션 센서 — 타일을 가득 채우는 투명 overlay 에 50%+0.5s 관찰 ref 를 건다.
+ * (hooks 는 map 콜백에서 직접 못 쓰므로 별도 컴포넌트로 분리 — #735 usePostImpression 패턴.)
+ */
+function StoryTrayImpressionSensor({ storyId, disabled }: { storyId: number; disabled: boolean }) {
+  const ref = useVenueStoryImpression<HTMLSpanElement>(storyId, disabled);
+  return <span ref={ref} aria-hidden className="absolute inset-0 pointer-events-none" />;
 }
 
 // 트레이 자동 새로고침 주기(ms). 현장 업로드를 넘치지 않게 짧게, 단 과도한 재조회는 피한다.
@@ -389,6 +399,8 @@ export default function VenueStorySection({ gameId }: Props) {
               className="shrink-0 w-[68px] flex flex-col items-center gap-1"
             >
               <div className="relative w-[68px] h-[68px]">
+                {/* 트레이 노출 = impression (A안 원문, #735 50%+0.5s 패턴) — 낙관 처리중/실패 카드 제외 */}
+                <StoryTrayImpressionSensor storyId={s.id} disabled={!!s.processing || !!s.failed} />
                 <div
                   className={`relative w-full h-full rounded-full overflow-hidden bg-bg-tertiary ring-2 ${
                     seenIds.has(String(s.id)) ? "ring-gray-500/50" : "ring-red-500/60"

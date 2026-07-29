@@ -70,11 +70,10 @@ export interface VenueStory {
     avatarUrl: string | null;
     teamId: number | null;
   };
-  /**
-   * 누적 조회수 — **관리자(ADMIN_EMAILS) 세션 응답에만 존재**(숫자는 일단 관리자만,
-   * 하린아빠 2026-07-29). 일반·익명 응답에는 필드 자체가 없다(withAdminViewCounts 회귀 고정).
-   */
-  viewCount?: number;
+  /** 뷰어 열람(click) 누적 — 관리자 응답에만 존재. */
+  clickCount?: number;
+  /** 트레이 썸네일 노출(impression) 누적 — 관리자 응답에만 존재. */
+  impressionCount?: number;
   /**
    * 클라이언트 낚관 카드 전용(서버 응답에는 없음). 영상 업로드 직후 pending(검증 중)이라
    * GET 목록(active만 조회)에서 빠지는 구간을 '처리중' 카드로 즉시 노출하기 위해 사용.
