@@ -149,6 +149,29 @@ export default function VenueStoryViewer({
     if (storyId != null) onStorySeen?.(storyId);
   }, [storyId, onStorySeen]);
 
+  // 조회수 트래킹(A안 2026-07-29) — 표시된 스토리마다 fire-and-forget POST 1회.
+  // 실패는 무시(UI 영향 0), 같은 뷰어 세션 내 재전송은 ref Set 으로 방지.
+  // 서버측 dedupe(스토리×뷰어×KST일)는 DB RPC 가 별도 보장.
+  const viewSentRef = useRef<Set<number>>(new Set());
+  useEffect(() => {
+    if (storyId == null || storyId <= 0) return;
+    if (viewSentRef.current.has(storyId)) return;
+    viewSentRef.current.add(storyId);
+    (async () => {
+      try {
+        const session = await getSafeSession();
+        const token = session?.access_token;
+        if (!token) return; // 비로그인 열람은 기록하지 않음
+        await fetch(`/api/venue-stories/${storyId}/view`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+      } catch {
+        // 조회 기록 실패는 뷰어 UX 에 영향 주지 않고 무시
+      }
+    })();
+  }, [storyId]);
+
   // 목록 최초 발급 URL의 나이를 신뢰하지 않고 현재 스토리 진입 즉시 단건 재발급한다.
   // 순수·주입형 루프(startVenueStoryUrlRefresh)를 그대로 사용해 테스트가 동일 코드를 실행한다.
   useEffect(() => {
