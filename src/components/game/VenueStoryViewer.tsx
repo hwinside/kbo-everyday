@@ -129,6 +129,9 @@ export default function VenueStoryViewer({
   const commentDragStartXRef = useRef(0);
   const commentDragStartYRef = useRef(0);
   const commentDragShouldCloseRef = useRef(false);
+  // 전송 재진입 가드(동기) — 안드에서 pointerdown 으로 즉시 제출하므로 뒤따르는 click 이
+  // 같은 탭에서 중복 POST 하지 않게 동기 ref 로 막는다(commentBusy 는 setState 라 같은 탭 내 stale).
+  const commentSubmitLockRef = useRef(false);
   const rafRef = useRef<number | null>(null);
   const startRef = useRef<number>(0);
   const elapsedRef = useRef<number>(0);
@@ -387,11 +390,12 @@ export default function VenueStoryViewer({
   };
 
   const handleCommentSubmit = async () => {
-    if (!story || commentBusy) return;
+    if (!story || commentBusy || commentSubmitLockRef.current) return;
     const content = commentInput.trim();
     if (!content) return;
     // 요청 시점 story id 캡처 — 응답 도착 시 다른 스토리로 전환돼 있으면 반영 스킵
     const submitStoryId = story.id;
+    commentSubmitLockRef.current = true;
     setCommentBusy(true);
     try {
       const session = await getSafeSession();
@@ -857,7 +861,15 @@ export default function VenueStoryViewer({
                   style={{ borderColor: "rgba(255,255,255,0.15)" }}
                 />
                 <button
-                  onMouseDown={(e) => e.preventDefault()}
+                  // 안드로이드 전송 씨음 핵심 수정(하린아빠 7/29 갤럭시 리포트 — 전송 눌러도 토스트·저장 안 됨):
+                  // onClick 은 전송 탭 순간 입력창 blur→안드 키보드 내려감→시트 높이 재계산으로 버튼이
+                  // 손가락 밑에서 이동해 click 이 씨힌다(iOS는 kbInset 으로 keyboardOpen 유지돼 안 그런다).
+                  // pointerdown 에서 preventDefault(입력창 포커스 유지→키보드/시트 불변) 후 즉시 제출해
+                  // 이 레이스를 제거한다. onClick 은 데스크톱 키보드/마우스 폴백(ref 로 중복 방지).
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    handleCommentSubmit();
+                  }}
                   onClick={handleCommentSubmit}
                   disabled={commentBusy || commentInput.trim().length === 0}
                   className="flex items-center justify-center w-9 h-9 rounded-full text-white disabled:opacity-50 transition-opacity shrink-0"
