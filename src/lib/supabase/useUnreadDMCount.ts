@@ -3,10 +3,15 @@
 import { useEffect, useState, useCallback } from "react";
 import { supabase } from "./client";
 import { useAuth } from "./AuthContext";
+import { usePollingFallback } from "./usePollingFallback";
+
+// Realtime 구독이 죽어 있는 동안(피크 구독풀 타임아웃)만 도는 안전망 폴링 주기.
+const DM_UNREAD_POLL_MS = 30_000;
 
 export function useUnreadDMCount() {
   const { user } = useAuth();
   const [count, setCount] = useState(0);
+  const [realtimeHealthy, setRealtimeHealthy] = useState(false);
 
   const load = useCallback(async () => {
     if (!user) { setCount(0); return; }
@@ -38,7 +43,7 @@ export function useUnreadDMCount() {
 
   useEffect(() => { load(); }, [load]); // eslint-disable-line react-hooks/set-state-in-effect
 
-  // Realtime 구독 — dm_messages INSERT 시 리카운트
+  // Realtime 구독 — dm_messages INSERT 시 리카운트. 구독 상태를 폴링 폴백에 전달.
   useEffect(() => {
     if (!user) return;
 
@@ -49,10 +54,19 @@ export function useUnreadDMCount() {
         { event: "*", schema: "public", table: "dm_messages" },
         () => { load(); }
       )
-      .subscribe();
+      .subscribe((status) => {
+        setRealtimeHealthy(status === "SUBSCRIBED");
+      });
 
-    return () => { supabase.removeChannel(channel); };
+    return () => { setRealtimeHealthy(false); supabase.removeChannel(channel); };
   }, [user, load]);
+
+  // Realtime 이 끊긴 동안만 안읽음 카운트를 주기 재집계(무증상 유실 방지).
+  usePollingFallback(load, {
+    enabled: !!user,
+    healthy: realtimeHealthy,
+    intervalMs: DM_UNREAD_POLL_MS,
+  });
 
   return count;
 }

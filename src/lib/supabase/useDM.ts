@@ -5,6 +5,14 @@ import { supabase } from "./client";
 import { useAuth } from "./AuthContext";
 import { useBlockedIds } from "./useBlock";
 import { OPERATOR_USER_ID } from "@/lib/constants/operator";
+import { usePollingFallback } from "./usePollingFallback";
+import { mergeDmMessagesById, type DMMessage } from "./dm-messages";
+
+export type { DMMessage };
+
+// Realtime 구독이 죽은 동안만 도는 안전망 폴링 주기.
+const DM_LIST_POLL_MS = 30_000;
+const DM_CHAT_POLL_MS = 20_000;
 
 export interface DMConversation {
   id: string;
@@ -15,20 +23,6 @@ export interface DMConversation {
   last_message: string | null;
   last_message_at: string;
   unread_count: number;
-}
-
-export interface DMMessage {
-  id: number;
-  conversation_id: string;
-  sender_id: string | null;
-  content: string;
-  image_urls?: string[] | null;
-  /** 구조화 쪽지 (뉴스클리핑 등) — payload->>'type'으로 렌더 분기 */
-  payload?: unknown;
-  is_read: boolean;
-  created_at: string;
-  sender_nickname?: string;
-  sender_team_id?: number | null;
 }
 
 interface AtomicDMSendResult {
@@ -42,6 +36,7 @@ export function useDMList() {
   const { blockedIds } = useBlockedIds();
   const [conversations, setConversations] = useState<DMConversation[]>([]);
   const [loading, setLoading] = useState(true);
+  const [realtimeHealthy, setRealtimeHealthy] = useState(false);
 
   const load = useCallback(async () => {
     if (!user) return;
@@ -118,7 +113,7 @@ export function useDMList() {
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { load(); }, [load]);
 
-  // Realtime — dm_messages 변경(읽음 처리 포함) 시 목록/대화별 안읽음 재계산
+  // Realtime — dm_messages 변경(읽음 처리 포함) 시 목록/대화별 안읽음 재계산. 구독 상태를 폴링 폴백에 전달.
   useEffect(() => {
     if (!user) return;
 
@@ -129,10 +124,19 @@ export function useDMList() {
         { event: "*", schema: "public", table: "dm_messages" },
         () => { load(); }
       )
-      .subscribe();
+      .subscribe((status) => {
+        setRealtimeHealthy(status === "SUBSCRIBED");
+      });
 
-    return () => { supabase.removeChannel(channel); };
+    return () => { setRealtimeHealthy(false); supabase.removeChannel(channel); };
   }, [user, load]);
+
+  // Realtime 이 끊긴 동안만 대화 목록을 주기 재조회(새 쪽지/preview 무증상 유실 방지).
+  usePollingFallback(load, {
+    enabled: !!user,
+    healthy: realtimeHealthy,
+    intervalMs: DM_LIST_POLL_MS,
+  });
 
   return { conversations, loading, refresh: load };
 }
@@ -142,12 +146,13 @@ export function useDMChat(conversationId: string) {
   const { user } = useAuth();
   const [messages, setMessages] = useState<DMMessage[]>([]);
   const [loading, setLoading] = useState(Boolean(conversationId));
+  const [realtimeHealthy, setRealtimeHealthy] = useState(false);
 
-  // 메시지 로드
-  useEffect(() => {
-    if (!conversationId) return;
+  // 메시지 로드/재조회 — 초기는 replace, 폴링 폴백은 merge(append 보존).
+  const loadMessages = useCallback(
+    async (mode: "replace" | "merge" = "merge") => {
+      if (!conversationId) return;
 
-    async function load() {
       const { data } = await supabase
         .from("dm_messages")
         .select("*")
@@ -183,13 +188,18 @@ export function useDMChat(conversationId: string) {
             sender_team_id: prof?.team_id,
           };
         });
-        setMessages(mapped);
+        setMessages((prev) =>
+          mode === "replace" ? mapped : mergeDmMessagesById(prev, mapped),
+        );
       }
       setLoading(false);
-    }
+    },
+    [conversationId],
+  );
 
-    load();
-  }, [conversationId]);
+  // 대화 전환 시에는 replace 로 새 대화 메시지만 로드.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { void loadMessages("replace"); }, [loadMessages]);
 
   // 읽음 처리
   useEffect(() => {
@@ -260,10 +270,19 @@ export function useDMChat(conversationId: string) {
           }
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        setRealtimeHealthy(status === "SUBSCRIBED");
+      });
 
-    return () => { supabase.removeChannel(channel); };
+    return () => { setRealtimeHealthy(false); supabase.removeChannel(channel); };
   }, [conversationId, user]);
+
+  // Realtime 이 끊긴 동안만 보이는 대화창을 주기 재조회(새 메시지 무증상 누락 방지).
+  usePollingFallback(loadMessages, {
+    enabled: !!conversationId,
+    healthy: realtimeHealthy,
+    intervalMs: DM_CHAT_POLL_MS,
+  });
 
   // 메시지 전송: 방 생성·메시지 INSERT·목록 preview를 DB 한 트랜잭션으로 처리한다.
   const sendMessage = useCallback(
