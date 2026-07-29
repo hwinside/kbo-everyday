@@ -16,6 +16,13 @@ import TeamBadge from "@/components/ui/TeamBadge";
 import { linkifyText } from "@/lib/linkify";
 import NewsClippingCard from "@/components/dm/NewsClippingCard";
 import { isNewsClippingPayload } from "@/types/news-clipping";
+import {
+  BASEBALL_GENIUS_NAME,
+  BASEBALL_GENIUS_MAX_QUESTION_LENGTH,
+  BASEBALL_GENIUS_MIN_QUESTION_LENGTH,
+  BASEBALL_GENIUS_PINNED_ROOM_LEAVABLE,
+  BASEBALL_GENIUS_USER_ID,
+} from "@/lib/constants/baseball-genius";
 
 const REPORT_CATEGORIES = [
   { id: "spam", label: "스팸" },
@@ -79,6 +86,11 @@ export default function DMChatPage() {
         setOtherTeamId(null);
         return;
       }
+      if (oid === BASEBALL_GENIUS_USER_ID) {
+        setOtherName(BASEBALL_GENIUS_NAME);
+        setOtherTeamId(null);
+        return;
+      }
 
       const { data: prof } = await supabase
         .from("profiles")
@@ -100,6 +112,7 @@ export default function DMChatPage() {
   // 사진 첨부는 운영팀과의 대화에서만 허용 (유저↔유저 DM은 범위 외).
   // 닉네임 위조 방지를 위해 운영팀 user_id로 판정.
   const isOperatorConv = otherId === OPERATOR_USER_ID;
+  const isBaseballGeniusConv = otherId === BASEBALL_GENIUS_USER_ID;
   // 뉴스클리퍼 대화 — 자동 발송 전용, 답장 시 자동응답만 옴 (안내 배너 노출)
   const isClipperConv = otherId != null && NEWS_CLIPPER_IDS.has(otherId);
   // 회신 불가(자동 발송 전용) 계정 — 클리퍼 + 긴급공지. 입력창 비활성 + 안내 배너.
@@ -173,6 +186,16 @@ export default function DMChatPage() {
     // 상대 미확정(프로필 로드 전/실패)·클리퍼 대화방은 전송 금지 — 초기 렌더 레이스에
     // 입력창이 잠깐 떠도 실제 전송은 막는다 (PR #622 삼순 가드)
     if (!otherId || isNoReplyConv) return;
+    if (
+      isBaseballGeniusConv &&
+      (input.trim().length < BASEBALL_GENIUS_MIN_QUESTION_LENGTH ||
+        input.trim().length > BASEBALL_GENIUS_MAX_QUESTION_LENGTH)
+    ) {
+      setSendError(
+        `질문은 ${BASEBALL_GENIUS_MIN_QUESTION_LENGTH}~${BASEBALL_GENIUS_MAX_QUESTION_LENGTH}자로 입력해 주세요`,
+      );
+      return;
+    }
     // 사진은 운영팀 대화에서만 전송 (유저↔유저는 텍스트만)
     const sendImages = isOperatorConv ? images : [];
     if ((!input.trim() && sendImages.length === 0) || sending || uploading) return;
@@ -223,7 +246,9 @@ export default function DMChatPage() {
         </button>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">
-            {otherName === "크보팬 운영팀" ? (
+            {isBaseballGeniusConv ? (
+              <span className="text-lg" aria-hidden>⚾</span>
+            ) : otherName === "크보팬 운영팀" ? (
               <img src="/apple-touch-icon.png" alt="크보팬" className="w-5 h-5 rounded-full object-cover" />
             ) : otherTeamId ? (
               <TeamBadge teamId={otherTeamId} size="xs" />
@@ -238,7 +263,7 @@ export default function DMChatPage() {
                 : "1:1 쪽지"}
           </p>
         </div>
-        <div className={otherId ? "relative" : "hidden"}>
+        <div className={otherId && (BASEBALL_GENIUS_PINNED_ROOM_LEAVABLE || !isBaseballGeniusConv) ? "relative" : "hidden"}>
           <button onClick={() => setShowMenu(!showMenu)} className="p-1.5 rounded-full hover:bg-bg-tertiary transition-colors">
             <EllipsisVertical size={20} className="text-text-secondary" />
           </button>
@@ -281,7 +306,9 @@ export default function DMChatPage() {
         <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-yellow-500/10 text-yellow-500 text-xs">
           <AlertTriangle size={14} className="flex-shrink-0" />
           <span>
-            {isNoReplyConv
+            {isBaseballGeniusConv
+              ? "야구 룰과 용어만 답해요. 선수 기록은 선수 페이지·기록 탭에서 확인해 주세요."
+              : isNoReplyConv
               ? noReplyBannerLabel(otherId)
               : "쪽지는 개인 간 대화입니다. 금전 거래 시 사기에 주의하세요."}
           </span>
@@ -438,6 +465,7 @@ export default function DMChatPage() {
                 }
               }}
               placeholder="쪽지를 입력하세요..."
+              maxLength={isBaseballGeniusConv ? BASEBALL_GENIUS_MAX_QUESTION_LENGTH : undefined}
               rows={1}
               className="flex-1 px-4 py-2.5 rounded-2xl bg-bg-tertiary text-sm text-text-primary placeholder:text-text-tertiary outline-none resize-none max-h-32 overflow-y-auto"
             />

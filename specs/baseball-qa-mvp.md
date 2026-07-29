@@ -1,115 +1,87 @@
-# 야구 용어/룰 질문 AI MVP (baseball-qa)
+# 야구천재 — 야구 룰/용어 질문 AI MVP v1.2
 
-- 상태: 스펙 확정 → 구현 (2026-07-30)
-- 승인: 하린아빠 (#cs 스레드 1785337823.334019 "만들어보자!")
-- 계약: 삼순 조건부 GO — 검수 사전 우선(토큰 0) → 동일질문 캐시 → 미매칭만 초저가 LLM + 4중 가드
-- Notion SSOT: 야구 용어/룰 질문 AI MVP 스펙 (기획/스펙)
+- 상태: 삼순 NO-GO 반영
+- Notion SSOT: https://www.notion.so/3acc901bb3728165b783d0f0960c9f02
+- 범위: 신규 화면 0개, `/messages` 고정 DM과 기존 DM 인프라 재사용
+- migration은 머지 게이트 뒤 적용한다. PR 단계에서는 적용하지 않는다.
 
 ## 1. 목표 / 비목표
 
-**목표**
-- 야구 입문 유저가 룰/용어를 물어보면 3줄 이내의 쉬운 한국어 설명을 즉시 받는다.
-- 운영 비용을 구조적으로 0에 수렴시킨다: 상위 질문 대부분을 검수 사전(토큰 0)으로, 재질문은 캐시로, LLM은 미매칭 잔여분만.
-- 모든 질문을 로그로 남겨 LLM 호출률·비용·오답 신고를 측정 가능하게 한다.
+야구 입문 유저가 룰·용어를 짧고 정확하게 묻고, 검수 사전 → 캐시 → 미매칭
+LLM 순으로 비용을 0에 수렴시킨다. 선수·구단 기록/히스토리, 서비스 문의,
+판정 논쟁, 실시간 경기, 자유 잡담은 MVP 답변 범위가 아니다.
 
-**비목표 (MVP 제외)**
-- 대화형(멀티턴) 챗봇 — 단발 질문/답변만.
-- 경기 데이터/선수 기록 질의 (기존 contextual-stats 영역).
-- 실시간 판정 논쟁 판단("방금 그 판정 맞았나요?").
-- 임베딩/벡터 검색 — 정규화 exact 매칭으로 시작, 히트율 데이터 보고 후속 판단.
+## 2. 고정 DM UX
 
-## 2. 3단 파이프라인
+- `/learn/ask`와 `/learn` 진입 카드를 제거한다.
+- `/messages` 최상단에 `야구천재` 방을 대화 유무와 무관하게 항상 고정한다.
+- 최초 질문은 `new-${BASEBALL_GENIUS_USER_ID}` 가상 row에서 기존
+  `send_dm_message_atomic` RPC로 대화와 유저 메시지를 원자 생성한다.
+- 서버는 해당 사용자·대화·메시지 소유권을 재검증한 뒤 파이프라인을 실행하고,
+  `sendOpsMessageToUser`/`admin_send_ops_message` 패턴으로 야구천재 계정 답변을
+  동일 대화에 insert한다.
+- 답변 insert는 기존 `dm_messages` push trigger와 Realtime/안읽음 집계를 그대로 탄다.
+- 고정방은 차단 필터에서 제외하고 신고·차단(나가기/삭제에 해당하는 UI)을 숨긴다.
+  `BASEBALL_GENIUS_PINNED_ROOM_LEAVABLE=false`가 권장 기본값이다.
 
-```
-질문 → [가드: 길이/한도] → 정규화(normalize)
-  → ① 사전 매칭 (baseball_glossary, term+aliases exact) …… 토큰 0
-  → ② 캐시 매칭 (baseball_qa_cache, question_norm exact) … 토큰 0
-  → ③ Gemini flash-lite 단발 호출 (미매칭만)
-       → 야구 외 질문: "NOT_BASEBALL" 센티널 → 차단 안내
-       → 불확실: "UNSURE" 센티널 → "잘 모르겠어요" (추측 금지)
-       → 정상 답변: 캐시에 저장 (같은 질문 재호출 방지)
-  → 전 경로 baseball_qa_log 기록 (match_path + 토큰 수)
-```
+## 3. LLM 전 4갈래 deterministic router
 
-**정규화 규칙** (`src/lib/baseball-qa/normalize.ts`)
-- NFKC → 소문자 → 공백/문장부호 전부 제거
-- 질문형 어미 반복 제거: "~가뭐야/뭔가요/무엇인가요/무슨뜻(이야|인가요)/알려줘/설명해줘" 등
-- 후행 조사 제거: 이란/란/이/가/은/는/을/를
-- 예: "ABS가 뭐예요?" → "abs", "보크란 무엇인가요" → "보크"
+1. `service_redirect`: 크보팬/앱/로그인/버그/건의/계정 등 → 마이페이지의 피드백 보내기 안내.
+2. `history_hold`: 선수·구단 히스토리/기록/스탯 → 선수 페이지·기록 탭 안내.
+3. `blocked`: 비야구 또는 프롬프트 인젝션 → 표준 거절.
+4. `baseball_rule_term`: 이 경로만 사전 → 캐시 → LLM에 진입.
 
-**사전 매칭**: 정규화 질문 == 정규화(term 또는 alias). 사전은 서버 모듈 메모리에 10분 캐시(테이블 ≤ 수백 행, bounded).
+불명확한 입력은 `blocked`로 fail-closed한다. LLM 프롬프트도 룰/용어만 허용하며
+기록 질문 답변 허용 문구는 없다.
 
-## 3. DB 스키마 (migration: `supabase/migrations/20260730_baseball_qa.sql` + `_seed.sql`)
+## 4. LLM 후 검증과 캐시 계약
 
-```sql
-baseball_glossary (
-  id uuid PK, term text UNIQUE, aliases text[], answer text,
-  category text, source text, created_at timestamptz
-)
-baseball_qa_cache (
-  id uuid PK, question_norm text UNIQUE, answer text,
-  hit_count int, created_at, last_hit_at
-)
-baseball_qa_log (
-  id uuid PK, user_id uuid, question text, question_norm text,
-  match_path text CHECK IN ('dictionary','cache','llm','blocked','unsure','limited','error'),
-  answer text, input_tokens int, output_tokens int, created_at
-)  -- index (user_id, created_at) → 일일 한도 카운트
-```
+- Gemini는 `status=ANSWER|NOT_BASEBALL|UNSURE` JSON만 출력한다.
+- 서버가 JSON 스키마, 센티널, 빈 문자열, 200자 상한, URL/마크다운/링크 금지를 검증한다.
+- 검증에 실패하면 `UNSURE`로 보류한다.
+- 검증을 통과한 `baseball_rule_term + ANSWER`만 `genius_qa_cache`에 저장한다.
+- 서비스/히스토리/거절/보류/검증 실패는 캐시에 절대 저장하지 않는다.
+- 사용자 메시지 id 기반 `dedup_key=baseball-genius:${messageId}`로 답변 재처리를 멱등화한다.
 
-- 3테이블 모두 RLS ENABLE + 정책 0개 → 클라 직접 접근 차단, route(service-role) 전용.
-- 시드: 검수 KBO 룰/용어 100+개 (KBO 공식 야구규칙/리그규정 기반, 불확실 항목 제외 원칙).
-- **프로덕션 적용은 머지 게이트(삼순 GO + 하린아빠 승인) 이후.**
+## 5. 데이터 모델
 
-## 4. API 계약
+- `baseball_terms`: term, aliases, answer, category, `source_url`, `rule_version`
+- `genius_qa_cache`: 정규화 질문별 검증 통과 답변
+- `genius_question_logs`: 전 경로와 토큰 기록
+- `genius_daily_usage`: `(user_id, kst_day)`별 atomic 사용량
 
-`POST /api/baseball-qa` (인증 필수, Bearer)
+132개 seed는 2026 KBO 공식 규정 기준으로 재검수한다. 최근 변경 규정의 기준 URL은
+https://www.koreabaseball.com/Kbo/League/GameManage2026.aspx 이며 모든 seed row에
+`source_url`과 `rule_version='2026'`을 저장한다. 특히 수비 시프트 제재 강화,
+29명 등록/28명 출장, 기존 외국인 외 아시아쿼터 1명 추가를 반영한다.
 
-요청: `{ "question": "보크가 뭐야?" }` (2~200자)
+## 6. 일일 한도
 
-응답 200: `{ "answer": "...", "source": "dictionary|cache|llm|blocked|unsure", "term": "보크"?, "remaining": 19 }`
-- `blocked`: "야구 룰/용어 질문만 답할 수 있어요" (야구 외 차단)
-- `unsure`: "잘 모르겠어요…" (추측 금지 보류; 한도 차감 O, 캐시 저장 X)
+`reserve_baseball_genius_daily_question(user_id, limit)` RPC가 KST 날짜 버킷에서
+UPSERT+조건부 increment+RETURNING을 한 트랜잭션으로 수행한다. LLM 호출 전에 슬롯을
+예약하고, 한도 초과 또는 DB 오류면 LLM에 진입하지 않는다.
 
-에러: 400(형식), 401(비로그인), 429(일일 한도 초과), 503(LLM 실패 — 사전/캐시는 영향 없음)
+## 7. 표준 문구
 
-## 5. LLM (③단계 전용)
+- 비야구: 야구 룰/용어 질문만 답할 수 있다는 안내
+- 서비스: 마이페이지 > 피드백 보내기 안내
+- 기록: 앱의 선수 페이지 / 기록 탭 안내
+- 불확실: 추측하지 않고 사전 보강 대기 안내
 
-- 모델: `gemini-2.5-flash-lite` (기존 AI 경기요약과 동일 `GEMINI_API_KEY`, generativelanguage v1beta REST)
-- 시스템 프롬프트(고정, 짧게): KBO/야구 룰·용어만, 80~120자 쉬운 한국어, 모르면 정확히 `UNSURE`, 야구와 무관하면 정확히 `NOT_BASEBALL`, 추측 금지.
-- 대화이력 미전송(단발). `maxOutputTokens` 제한. temperature 0.2.
-- 정상 답변만 `baseball_qa_cache`에 저장 → 동일 질문 재호출 0회.
+## 8. 하린아빠 확정 대기 — 권장 기본값
 
-## 6. 가드 / 한도 정책
+하드코딩된 익명 숫자/불리언 대신 아래 네이밍된 config 상수를 사용한다.
 
-1. **야구 외 차단(이중)**: ①사전/캐시는 야구 용어만 존재 ②LLM 프롬프트 `NOT_BASEBALL` 센티널 → 서버가 차단 응답으로 치환(LLM 원문 미노출).
-2. **추측 금지**: `UNSURE` 센티널 → 고정 보류 응답. 캐시에 저장하지 않음(사전 보강 후 정답 제공 여지).
-3. **일일 한도**: 사용자별 20회/일 (KST 자정 리셋, `baseball_qa_log` count — feedback 패턴 동일). 사전/캐시 히트도 카운트(남용 방지), 429 시 로그 `limited`.
-4. **입력 가드**: 2~200자, 인증 필수(익명 불가 → 어뷰즈 시 사용자 단위 대응 가능).
-5. **로그**: 전 질문 `baseball_qa_log` (질문/정규화/경로/답변/토큰) → 비용·오답 추적.
+- `BASEBALL_GENIUS_DAILY_LIMIT=20` — 권장 기본값
+- `BASEBALL_GENIUS_PINNED_ROOM_LEAVABLE=false` — 권장 기본값
+- `BASEBALL_GENIUS_MAX_ANSWER_LENGTH=200` — 권장 기본값
+- `BASEBALL_GENIUS_MIN_QUESTION_LENGTH=2`, `BASEBALL_GENIUS_MAX_QUESTION_LENGTH=200`
+- `BASEBALL_GENIUS_USER_ID` — 배포 전 동일 UUID auth/profile 시스템 계정 프로비저닝
+- 말투: 친근한 존댓말 + ⚾ — 권장 기본값
 
-## 7. 비용 추정
+## 9. 검증 DoD
 
-- flash-lite 단가: 입력 $0.10/1M tok, 출력 $0.40/1M tok.
-- 1콜 ≈ 입력 ~250tok + 출력 ~120tok ≈ **$0.00007 (약 0.1원)**.
-- 보수적 시나리오: DAU 500 × 1질문 × LLM 도달률 30% = 150콜/일 ≈ $0.011/일 ≈ **월 $0.3**. 캐시 적중 상승 시 추가 하락. 한도(20/일)로 상한 고정: 이론상 최악에도 유저당 월 $0.04.
-
-## 8. UI / 진입점
-
-- 페이지: `/learn/ask` — "야구 궁금증 바로 묻기". 검색/질문 입력 + 추천 질문 칩(사전 히트 보장 용어 6개) + 답변 카드(출처 배지: 크보팬 용어사전/AI 답변). 비로그인 시 로그인 유도.
-- 진입점: **야구 쉽게 배우기(`/learn`) 상단 카드** — 입문 유저 타겟과 동일 동선이라 최적. (경기상세 진입은 히트율 데이터 확인 후 후속.)
-
-## 9. 롤아웃 / 측정 지표
-
-- 롤아웃: 머지 게이트 통과 → migration(스키마+시드) 적용 → 배포 → /learn 진입 카드 노출. 플래그 없이 페이지 단위 출시(진입점 1곳이라 리스크 최소).
-- 지표 (baseball_qa_log 기반, 주간 리뷰):
-  - **LLM 호출률** = llm / (dictionary+cache+llm) — 목표 < 40%, 상위 미매칭 질문은 사전에 승격.
-  - **차단/보류율** = (blocked+unsure) / 전체 — unsure 상위 질문도 사전 승격 후보.
-  - **오답률**: 로그 샘플 검수(주 1회) + 기존 피드백(건의) 채널로 신고 수집 — 목표 0 유지, 오답 발견 시 사전 term 우선 등재로 LLM 우회.
-  - 일일 질문 수 / 한도 도달 유저 수 / 누적 토큰(비용).
-
-## 10. 검증 (DoD)
-
-- tsc 0 / eslint 신규 0 / full prebuild(qa:query-guard 포함) PASS
-- `qa:baseball-qa` 파이프라인 스모크: 사전 매칭·별칭·정규화·캐시 적중·미매칭 LLM 폴백(mock)·NOT_BASEBALL 차단·UNSURE 보류·일일 한도 — 전부 PASS
-- migration 프로덕션 적용 금지(머지 게이트 후), 시크릿 비노출
+- `tsc --noEmit`, 변경 파일 ESLint, full prebuild, query guard 신규 위반 0
+- `qa:baseball-qa`: 4갈래 경로, 삼순 재현 3건, 캐시 오염 방지, 구조화 응답 검증
+- used=19에서 25개 병렬 예약 시 통과 최대 1개
+- migration 미적용 유지

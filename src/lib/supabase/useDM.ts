@@ -5,6 +5,10 @@ import { supabase } from "./client";
 import { useAuth } from "./AuthContext";
 import { useBlockedIds } from "./useBlock";
 import { OPERATOR_USER_ID } from "@/lib/constants/operator";
+import {
+  BASEBALL_GENIUS_NAME,
+  BASEBALL_GENIUS_USER_ID,
+} from "@/lib/constants/baseball-genius";
 
 export interface DMConversation {
   id: string;
@@ -55,12 +59,12 @@ export function useDMList() {
       .order("last_message_at", { ascending: false })
       .limit(500);
 
-    if (!data || data.length === 0) { setConversations([]); setLoading(false); return; }
+    const rows = data ?? [];
 
     // 상대방 ID 추출
     const otherIds = [
       ...new Set(
-        data
+        rows
           .map((conv: { user1_id: string | null; user2_id: string | null }) =>
             conv.user1_id === user.id ? conv.user2_id : conv.user1_id
           )
@@ -81,7 +85,7 @@ export function useDMList() {
     );
 
     // batch fetch unread counts — RPC 결과는 요청 대화당 최대 1행(목록 상한 500).
-    const convIds = data.map((c: { id: string }) => c.id);
+    const convIds = rows.map((c: { id: string }) => c.id);
     // query-guard: bounded -- p_conversation_ids는 클라이언트·RPC 양쪽에서 500개로 제한되고 대화당 1행만 반환
     const { data: unreadRows } = await supabase
       .rpc("dm_unread_counts", { p_conversation_ids: convIds });
@@ -91,7 +95,7 @@ export function useDMList() {
       unreadMap.set(r.conversation_id, Number(r.unread_count));
     });
 
-    const mapped: DMConversation[] = data
+    const mapped: DMConversation[] = rows
       .map((conv: { id: string; user1_id: string | null; user2_id: string | null; last_message: string | null; last_message_at: string }) => {
         const otherId = conv.user1_id === user.id ? conv.user2_id : conv.user1_id;
         const prof = otherId ? profileMap.get(otherId) : undefined;
@@ -108,10 +112,28 @@ export function useDMList() {
       })
       // 차단된 유저 대화 필터링
       .filter((conv: DMConversation) =>
-        conv.other_user_id === null || !blockedIds.has(conv.other_user_id)
+        conv.other_user_id === null ||
+        conv.other_user_id === BASEBALL_GENIUS_USER_ID ||
+        !blockedIds.has(conv.other_user_id)
       );
 
-    setConversations(mapped);
+    const geniusConversation = mapped.find(
+      (conversation) => conversation.other_user_id === BASEBALL_GENIUS_USER_ID,
+    );
+    const pinnedGenius: DMConversation = geniusConversation ?? {
+      id: `new-${BASEBALL_GENIUS_USER_ID}`,
+      other_user_id: BASEBALL_GENIUS_USER_ID,
+      other_nickname: BASEBALL_GENIUS_NAME,
+      other_team_id: null,
+      other_avatar_url: null,
+      last_message: "야구 룰이나 용어를 물어보세요 ⚾",
+      last_message_at: new Date(0).toISOString(),
+      unread_count: 0,
+    };
+    setConversations([
+      pinnedGenius,
+      ...mapped.filter((conversation) => conversation.other_user_id !== BASEBALL_GENIUS_USER_ID),
+    ]);
     setLoading(false);
   }, [user, blockedIds]);
 
@@ -336,6 +358,31 @@ export function useDMChat(conversationId: string) {
               /* ignore */
             }
           })();
+        }
+
+        // 야구천재 질문은 기존 DM insert 성공 후 서버 파이프라인이 같은 대화에
+        // 시스템 계정 답변을 넣는다. 답변 INSERT도 기존 DM push trigger를 그대로 탄다.
+        if (
+          result?.message_id &&
+          targetUserId === BASEBALL_GENIUS_USER_ID
+        ) {
+          try {
+            const { data: { session } } = await supabase.auth.getSession();
+            await fetch("/api/baseball-qa", {
+              method: "POST",
+              credentials: "include",
+              headers: {
+                "Content-Type": "application/json",
+                ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+              },
+              body: JSON.stringify({
+                conversationId: result.conversation_id,
+                messageId: result.message_id,
+              }),
+            });
+          } catch {
+            // 사용자 질문 DM은 이미 원자적으로 저장됐다. 재전송으로 중복 질문을 만들지 않는다.
+          }
         }
       }
 

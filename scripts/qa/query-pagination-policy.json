@@ -26,8 +26,9 @@
     "announcements",
     "api_fallback_events",
     "app_downloads",
-    "baseball_qa_cache",
-    "baseball_qa_log",
+    "genius_daily_usage",
+    "genius_qa_cache",
+    "genius_question_logs",
     "channel_discovery_candidates",
     "channel_discovery_runs",
     "channel_pool",
@@ -118,7 +119,7 @@
   "boundedTables": [
     "admin_alert_state",
     "api_fallback_alert_state",
-    "baseball_glossary",
+    "baseball_terms",
     "channel_discovery_lock",
     "game_start_watchdog_config",
     "push_dispatch_config",
@@ -143,12 +144,23 @@
         "ip_address"
       ]
     ],
-    "baseball_qa_cache": [
+    "genius_daily_usage": [
+      [
+        "user_id",
+        "kst_day"
+      ]
+    ],
+    "genius_qa_cache": [
       [
         "id"
       ],
       [
         "question_norm"
+      ]
+    ],
+    "genius_question_logs": [
+      [
+        "id"
       ]
     ],
     "admin_broadcast_recipients": [

@@ -1,25 +1,18 @@
--- ============================================================
--- 야구 용어/룰 질문 AI MVP — 스키마 (spec: specs/baseball-qa-mvp.md)
--- ------------------------------------------------------------
--- 3단 파이프라인: ①검수 용어사전(토큰 0) → ②동일질문 캐시 → ③flash-lite LLM.
--- 3테이블 모두 RLS ENABLE + 정책 0개 → 클라 직접 접근 전면 차단,
--- 접근은 /api/baseball-qa route(service_role) 전용.
--- ⚠️ 멱등(IF NOT EXISTS). 운영 DB 직접 적용 금지 — 머지 게이트 후 적용.
--- ============================================================
+-- 야구천재 고정 DM Q&A MVP (Notion SSOT v1.2)
+-- ⚠️ 운영 DB 직접 적용 금지 — 머지 게이트 후 시스템 계정 프로비저닝과 함께 적용.
 
--- ① 검수 용어사전 (시드: 20260730_baseball_qa_seed.sql)
-CREATE TABLE IF NOT EXISTS baseball_glossary (
+CREATE TABLE IF NOT EXISTS public.baseball_terms (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   term text NOT NULL UNIQUE,
   aliases text[] NOT NULL DEFAULT '{}',
   answer text NOT NULL,
   category text NOT NULL DEFAULT 'rule',
-  source text NOT NULL DEFAULT 'KBO 야구규칙/리그규정 기반 자체 검수',
+  source_url text NOT NULL,
+  rule_version text NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
--- ② 동일질문 캐시 (LLM 정상 답변만 저장; UNSURE/NOT_BASEBALL 미저장)
-CREATE TABLE IF NOT EXISTS baseball_qa_cache (
+CREATE TABLE IF NOT EXISTS public.genius_qa_cache (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   question_norm text NOT NULL UNIQUE,
   answer text NOT NULL,
@@ -28,24 +21,72 @@ CREATE TABLE IF NOT EXISTS baseball_qa_cache (
   last_hit_at timestamptz NOT NULL DEFAULT now()
 );
 
--- ③ 전체 질문 로그 (경로/토큰 추적 → LLM 호출률·비용·오답 측정)
-CREATE TABLE IF NOT EXISTS baseball_qa_log (
+CREATE TABLE IF NOT EXISTS public.genius_question_logs (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id uuid NOT NULL,
   question text NOT NULL,
   question_norm text NOT NULL,
-  match_path text NOT NULL CHECK (match_path IN ('dictionary','cache','llm','blocked','unsure','limited','error')),
+  match_path text NOT NULL CHECK (
+    match_path IN (
+      'dictionary','cache','llm','service_redirect','history_hold',
+      'blocked','unsure','limited','error'
+    )
+  ),
   answer text,
   input_tokens integer,
   output_tokens integer,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE INDEX IF NOT EXISTS idx_genius_question_logs_user_day
+  ON public.genius_question_logs (user_id, created_at DESC);
 
--- 일일 한도 카운트용 (user_id + created_at range)
-CREATE INDEX IF NOT EXISTS idx_baseball_qa_log_user_day
-  ON baseball_qa_log (user_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS public.genius_daily_usage (
+  user_id uuid NOT NULL,
+  kst_day date NOT NULL,
+  used integer NOT NULL CHECK (used >= 0),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, kst_day)
+);
 
--- RLS: 전면 차단 (정책 0개 → service_role만 접근)
-ALTER TABLE baseball_glossary ENABLE ROW LEVEL SECURITY;
-ALTER TABLE baseball_qa_cache ENABLE ROW LEVEL SECURITY;
-ALTER TABLE baseball_qa_log ENABLE ROW LEVEL SECURITY;
+-- KST 날짜별 질문 슬롯을 단일 UPSERT로 예약한다. used=limit이면 UPDATE가 0행이라
+-- 초과 요청은 모두 allowed=false. DB 오류는 호출 route가 fail-closed 처리한다.
+CREATE OR REPLACE FUNCTION public.reserve_baseball_genius_daily_question(
+  p_user_id uuid,
+  p_limit integer
+)
+RETURNS TABLE(allowed boolean, remaining integer)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_used integer;
+BEGIN
+  IF p_user_id IS NULL OR p_limit < 1 OR p_limit > 1000 THEN
+    RAISE EXCEPTION USING errcode = '22023', message = 'invalid daily reservation';
+  END IF;
+
+  INSERT INTO public.genius_daily_usage (user_id, kst_day, used)
+  VALUES (p_user_id, (clock_timestamp() AT TIME ZONE 'Asia/Seoul')::date, 1)
+  ON CONFLICT (user_id, kst_day)
+  DO UPDATE SET used = genius_daily_usage.used + 1, updated_at = now()
+  WHERE genius_daily_usage.used < p_limit
+  RETURNING used INTO v_used;
+
+  IF v_used IS NULL THEN
+    RETURN QUERY SELECT false, 0;
+  ELSE
+    RETURN QUERY SELECT true, greatest(0, p_limit - v_used);
+  END IF;
+END;
+$$;
+
+ALTER TABLE public.baseball_terms ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.genius_qa_cache ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.genius_question_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.genius_daily_usage ENABLE ROW LEVEL SECURITY;
+
+REVOKE ALL ON FUNCTION public.reserve_baseball_genius_daily_question(uuid, integer)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.reserve_baseball_genius_daily_question(uuid, integer)
+  TO service_role;

@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowLeft, ChevronRight, ChevronLeft, Trophy, Check } from "lucide-react";
-import Link from "next/link";
 import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
 
 interface Lesson {
@@ -127,16 +126,6 @@ export default function LearnPage() {
       {/* Chapter list */}
       {!selectedChapter && (
         <div className="px-5 space-y-4">
-          {/* 야구 궁금증 묻기 진입 (spec: specs/baseball-qa-mvp.md §8) */}
-          <Link href="/learn/ask" className="glass-card flex w-full items-center gap-4 p-5 text-left">
-            <div className="text-3xl">💬</div>
-            <div className="flex-1">
-              <h2 className="text-base font-bold text-text-primary">야구 궁금증 바로 묻기</h2>
-              <p className="mt-0.5 text-sm text-text-tertiary">보크가 뭐야? ABS가 뭐야? 뭐든 물어보세요</p>
-            </div>
-            <ChevronRight size={20} className="text-text-tertiary" />
-          </Link>
-
           {CHAPTERS.map((ch) => {
             const isDone = completed.has(ch.id);
             return (
