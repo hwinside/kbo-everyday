@@ -7,6 +7,9 @@ import { ChevronLeft, Heart, MessageCircle, Share2, Send, Flag, Ban, MoreHorizon
 import TeamBadge from "@/components/ui/TeamBadge";
 import { getAvatarPath } from "@/lib/constants/avatars";
 import { usePostDetail, createComment, toggleLike, toggleCommentLike, updatePost, deletePost, updateComment, deleteComment, uploadCommentImage } from "@/lib/supabase/usePosts";
+import { editPollPost } from "@/lib/community/poll-client";
+import { canEditOwnPost } from "@/lib/community/post-permissions";
+import PostActionsMenu from "@/components/community/PostActionsMenu";
 import ReportSheet from "@/components/community/ReportSheet";
 import LinkPreview from "@/components/community/LinkPreview";
 import { isShortText, BrandedTextCard, getPostScopeLabel } from "@/components/community/FeedTextCards";
@@ -108,6 +111,9 @@ export default function PostDetail({ postId }: PostDetailProps) {
   const [postMenuOpen, setPostMenuOpen] = useState(false);
   const [postEditing, setPostEditing] = useState(false);
   const [editContent, setEditContent] = useState("");
+  const [editTitle, setEditTitle] = useState(""); // 투표글 전용 질문 필드(설명=editContent 재사용)
+  // 투표글 설명 textarea 자동 세로 확장(WritePoll 과 동일 UX). ~10줄 cap 후 내부 스크롤.
+  const editPollContentRef = useRef<HTMLTextAreaElement>(null);
   const [savingPost, setSavingPost] = useState(false);
   const [deletingPost, setDeletingPost] = useState(false);
   const [postPatch, setPostPatch] = useState<{ title?: string; content?: string; updated_at?: string }>({});
@@ -119,17 +125,43 @@ export default function PostDetail({ postId }: PostDetailProps) {
   const [cmtEditInput, setCmtEditInput] = useState("");
   const [cmtSaving, setCmtSaving] = useState(false);
 
+  // 투표글 설명 textarea auto-grow: editContent 변경·편집 진입 시 height 재계산(생성 화면과 동일).
+  // ref 가 마운트된 때(=투표글 편집 블록 렌더링)만 동작 → early-return 앞에 무조건 호출(hooks 규칙).
+  useEffect(() => {
+    if (!postEditing) return;
+    const el = editPollContentRef.current;
+    if (!el) return;
+    const CONTENT_MAX_PX = 240; // 약 10줄
+    el.style.height = "auto";
+    const next = el.scrollHeight;
+    if (next > CONTENT_MAX_PX) {
+      el.style.height = `${CONTENT_MAX_PX}px`;
+      el.style.overflowY = "auto";
+    } else {
+      el.style.height = `${next}px`;
+      el.style.overflowY = "hidden";
+    }
+  }, [editContent, postEditing]);
+
   if (loading) return <div className="flex items-center justify-center h-screen text-text-secondary">로딩 중...</div>;
   if (!post) return <div className="flex items-center justify-center h-screen text-text-secondary">게시글을 찾을 수 없습니다</div>;
 
-  const isPostMine = !!user && post.author_id === user.id;
+  const isPostMine = canEditOwnPost(post.author_id, user?.id);
   const canModerateComments = profile?.is_operator === true;
   const canDeleteAnyPost = profile?.is_operator === true;
 
+  const isPoll = post.board_type === "poll";
+
   function startPostEdit() {
     setPostMenuOpen(false);
-    // 제목 필드 제거(⑥) — 기존 제목은 본문 앞에 합쳐 한 본문으로 편집. 저장 시 title은 비움.
-    setEditContent(mergeTitleBody(post!.title, post!.content));
+    if (isPoll) {
+      // 투표글: 질문(title)·설명(content)을 별도 필드로 편집(선지·마감은 이 화면에서 고정).
+      setEditTitle(postPatch.title ?? post!.title);
+      setEditContent(postPatch.content ?? post!.content ?? "");
+    } else {
+      // 일반글: 제목 필드 제거(⑥) — 기존 제목은 본문 앞에 합쳐 한 본문으로 편집. 저장 시 title은 비움.
+      setEditContent(mergeTitleBody(post!.title, post!.content));
+    }
     setPostEditing(true);
   }
 
@@ -139,6 +171,25 @@ export default function PostDetail({ postId }: PostDetailProps) {
 
   async function savePostEdit() {
     if (savingPost) return;
+    if (isPoll) {
+      const t = editTitle.trim();
+      if (!t) { alert("질문을 입력해주세요"); return; }
+      if (t.length > 200) { alert("질문은 200자 이하여야 해요"); return; }
+      if (editContent.length > 2000) { alert("설명은 2000자 이하여야 해요"); return; }
+      setSavingPost(true);
+      try {
+        // 투표글: 질문(title)·설명(content)만 서버 route(PATCH)로 저장.
+        // 인증·작성자·검증·모더레이션은 서버, 비텍스트 필드 불변은 DB 트리거가 backstop.
+        await editPollPost(post!.id, { title: t, content: editContent });
+        setPostPatch({ title: t, content: editContent, updated_at: new Date().toISOString() });
+        setPostEditing(false);
+      } catch (e) {
+        alert(e instanceof Error ? e.message : "투표 수정에 실패했어요");
+      } finally {
+        setSavingPost(false);
+      }
+      return;
+    }
     const c = editContent.trim();
     if (!c) { alert("내용을 입력해주세요"); return; }
     setSavingPost(true);
@@ -439,37 +490,21 @@ export default function PostDetail({ postId }: PostDetailProps) {
             clickCount={post.click_view_count}
             impressionCount={post.impression_view_count}
           />
-          {user && !postEditing && (
-            <div className="relative">
-              <button
-                onClick={(e) => { e.stopPropagation(); setPostMenuOpen(v => !v); }}
-                className="p-1 text-text-tertiary hover:text-text-primary"
-                aria-label="게시글 메뉴"
-                disabled={deletingPost}
-              >
-                <MoreHorizontal size={18} />
-              </button>
-              {postMenuOpen && (
-                <>
-                  <div className="fixed inset-0 z-10" onClick={() => setPostMenuOpen(false)} />
-                  <div className="absolute right-0 top-8 z-20 min-w-[112px] rounded-lg border border-border bg-bg-primary shadow-lg overflow-hidden">
-                    {isPostMine && post.board_type !== "poll" && <button onClick={startPostEdit} className="block w-full px-3 py-2 text-left text-sm text-text-primary hover:bg-bg-tertiary">수정</button>}
-                    {!isPostMine && (
-                      <button onClick={() => openReport({ type: "post", id: post.id })} className="flex items-center gap-2 w-full px-3 py-2 text-left text-sm text-text-primary hover:bg-bg-tertiary">
-                        <Flag size={14} /> 신고
-                      </button>
-                    )}
-                    {!isPostMine && (
-                      <button onClick={() => handleBlockUser(post.author_id, { type: "post", id: post.id })} className="flex items-center gap-2 w-full px-3 py-2 text-left text-sm text-text-primary hover:bg-bg-tertiary">
-                        <Ban size={14} /> 차단
-                      </button>
-                    )}
-                    {(isPostMine || canDeleteAnyPost) && <button onClick={handleDeletePost} className="block w-full px-3 py-2 text-left text-sm text-[#FF453A] hover:bg-bg-tertiary">삭제</button>}
-                  </div>
-                </>
-              )}
-            </div>
-          )}
+          <PostActionsMenu
+            user={user}
+            postEditing={postEditing}
+            authorId={post.author_id}
+            userId={user?.id}
+            canDeleteAny={canDeleteAnyPost}
+            open={postMenuOpen}
+            disabled={deletingPost}
+            onToggle={() => setPostMenuOpen((v) => !v)}
+            onClose={() => setPostMenuOpen(false)}
+            onEdit={startPostEdit}
+            onReport={() => openReport({ type: "post", id: post.id })}
+            onBlock={() => handleBlockUser(post.author_id, { type: "post", id: post.id })}
+            onDelete={handleDeletePost}
+          />
         </div>
 
         {/* 미디어 — 사진 → 글 순서(피드 PhotoFeed와 동일). 인스타식 캐러셀(스와이프+점+더블탭 좋아요).
@@ -487,7 +522,39 @@ export default function PostDetail({ postId }: PostDetailProps) {
           </div>
         )}
 
-        {postEditing ? (
+        {postEditing && isPoll ? (
+          <div className="space-y-2 mb-3">
+            {/* 투표글: 질문(title)·설명(content)만 수정. 선지·마감은 이 화면에서 변경 불가. */}
+            <input
+              value={editTitle}
+              onChange={e => setEditTitle(e.target.value)}
+              placeholder="질문"
+              maxLength={200}
+              className="w-full bg-bg-secondary rounded-lg px-3 py-2 text-sm font-semibold text-text-primary outline-none border border-border"
+            />
+            <textarea
+              ref={editPollContentRef}
+              value={editContent}
+              onChange={e => setEditContent(e.target.value)}
+              placeholder="설명 (선택)"
+              rows={2}
+              maxLength={2000}
+              className="w-full bg-bg-secondary rounded-lg px-3 py-2 text-sm text-text-primary outline-none border border-border resize-none"
+            />
+            <p className="text-xs text-text-tertiary">질문·설명만 수정할 수 있어요. 투표가 시작되면 선지와 마감 시간은 변경할 수 없습니다.</p>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={savePostEdit}
+                disabled={savingPost || !editTitle.trim()}
+                className="px-4 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-50"
+                style={{ backgroundColor: post.team_id ? (() => { const t = getTeamById(post.team_id); return t ? getTeamBgColor(t) : '#FF453A'; })() : '#FF453A' }}
+              >
+                {savingPost ? "저장 중..." : "저장"}
+              </button>
+              <button onClick={cancelPostEdit} className="px-4 py-2 rounded-lg text-sm text-text-secondary hover:bg-bg-tertiary">취소</button>
+            </div>
+          </div>
+        ) : postEditing ? (
           <div className="space-y-2 mb-3">
             <textarea
               value={editContent}

@@ -33,6 +33,8 @@ import PollCardBody, {
 } from "../../src/components/community/PollCardBody";
 import PollCardSlot from "../../src/components/community/PollCardSlot";
 import { buildTeamFeedOrParts, applyBoardFilter } from "../../src/lib/supabase/useUnifiedFeed";
+import { canEditOwnPost } from "../../src/lib/community/post-permissions";
+import PostActionsMenu from "../../src/components/community/PostActionsMenu";
 
 const SRC_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../src");
 function readSrc(rel: string): string {
@@ -446,10 +448,95 @@ async function badgeEffectSection() {
   }
 }
 
+// ---------- 6) 메뉴 owner/other 실행형 회귀 (삼순 3차 NO-GO P1-2) ----------
+// PostDetail 게시글 "수정" 메뉴는 작성자 본인만 노출된다. 순수 판정 canEditOwnPost 을
+// 직접 실행해 owner/other/비로그인 동작을 고정하고, PostDetail 이 실제로 이 판정으로
+// 수정 버튼을 게이트하는지 source 배선을 같이 잡는다(배선 끊김 방지).
+async function menuGateSection() {
+  const author = "11111111-1111-1111-1111-111111111111";
+  const other = "22222222-2222-2222-2222-222222222222";
+  ok("canEditOwnPost owner → true", canEditOwnPost(author, author) === true);
+  ok("canEditOwnPost other → false", canEditOwnPost(author, other) === false);
+  ok("canEditOwnPost 비로그인 → false", canEditOwnPost(author, undefined) === false);
+  ok("canEditOwnPost author 불명 → false", canEditOwnPost(null, author) === false);
+
+  // PostDetail 이 raw user/postEditing/authorId/userId 를 PostActionsMenu 에 넘기고, 메뉴가
+  // 게이트+소유권을 내부에서 계산하는지 배선 가드(게이트 흡수 후 새 계약).
+  const src = readSrc("components/community/PostDetail.tsx");
+  ok("PostDetail PostActionsMenu authorId={post.author_id} 배선", /<PostActionsMenu[\s\S]{0,300}authorId=\{post\.author_id\}/.test(src));
+  ok("PostDetail PostActionsMenu userId={user?.id} 배선", /<PostActionsMenu[\s\S]{0,300}userId=\{user\?\.id\}/.test(src));
+  ok("PostDetail 투표글 편집 editPollPost(PATCH) 경로", /editPollPost\(/.test(src));
+  // 메뉴가 소유권/게이트를 자체 계산하는지(PostDetail 인라인 게이트 흡수).
+  const menuSrc = readSrc("components/community/PostActionsMenu.tsx");
+  ok("PostActionsMenu canEditOwnPost 자체 계산", /canEditOwnPost\(authorId,\s*userId\)/.test(menuSrc));
+  ok("PostActionsMenu 비로그인/편집중 게이트", /if\s*\(!user\s*\|\|\s*postEditing\)\s*return null/.test(menuSrc));
+
+  // 실제 DOM 렌더(false-green/fault-injection 방지): PostActionsMenu 를 PostDetail 이 넘기는 것과
+  // 동일한 raw prop(user/postEditing/authorId/userId)으로 렌더해 owner/other/비로그인/편집중
+  // DOM 도달성을 검증한다. 메뉴 내부 게이트/소유권 계산을 깨면 이 assert 들이 실패한다.
+  const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost/" });
+  const g = globalThis as unknown as Record<string, unknown>;
+  const restore = {
+    window: g.window,
+    document: g.document,
+    navigator: g.navigator,
+    act: g.IS_REACT_ACT_ENVIRONMENT,
+  };
+  g.IS_REACT_ACT_ENVIRONMENT = true;
+  g.window = dom.window;
+  g.document = dom.window.document;
+  const noop = () => {};
+  const AUTHOR = "11111111-1111-1111-1111-111111111111";
+  const OTHER = "22222222-2222-2222-2222-222222222222";
+  const baseProps = {
+    canDeleteAny: false,
+    open: true,
+    onToggle: noop,
+    onClose: noop,
+    onEdit: noop,
+    onReport: noop,
+    onBlock: noop,
+    onDelete: noop,
+  };
+  const renderMenu = async (props: Record<string, unknown>): Promise<string[]> => {
+    const c = dom.window.document.createElement("div");
+    dom.window.document.body.appendChild(c);
+    const r = createRoot(c);
+    await act(async () => {
+      r.render(React.createElement(PostActionsMenu, { ...baseProps, ...props }));
+    });
+    const labels = Array.from(c.querySelectorAll("button")).map((b) => (b.textContent ?? "").trim());
+    await act(async () => { r.unmount(); });
+    return labels;
+  };
+  try {
+    // owner: 로그인=작성자 본인 → '수정' 노출·'신고/차단' 미노출.
+    const ownerLabels = await renderMenu({ user: { id: AUTHOR }, postEditing: false, authorId: AUTHOR, userId: AUTHOR });
+    ok("메뉴 owner → '수정' 노출", ownerLabels.some((t) => t.includes("수정")));
+    ok("메뉴 owner → '신고'·'차단' 미노출", !ownerLabels.some((t) => t.includes("신고") || t.includes("차단")));
+    // other: 로그인=타인 → '수정' 미노출·'신고/차단' 노출.
+    const otherLabels = await renderMenu({ user: { id: OTHER }, postEditing: false, authorId: AUTHOR, userId: OTHER });
+    ok("메뉴 other → '수정' 미노출", !otherLabels.some((t) => t.includes("수정")));
+    ok("메뉴 other → '신고'·'차단' 노출", otherLabels.some((t) => t.includes("신고")) && otherLabels.some((t) => t.includes("차단")));
+    // 비로그인: user 없음 → 메뉴 자체 미노출(버튼 0개).
+    const anonLabels = await renderMenu({ user: null, postEditing: false, authorId: AUTHOR, userId: undefined });
+    ok("메뉴 비로그인 → 미노출(버튼 0)", anonLabels.length === 0);
+    // 편집 중: postEditing=true → 메뉴 미노출(버튼 0개).
+    const editingLabels = await renderMenu({ user: { id: AUTHOR }, postEditing: true, authorId: AUTHOR, userId: AUTHOR });
+    ok("메뉴 편집중 → 미노출(버튼 0)", editingLabels.length === 0);
+  } finally {
+    if (restore.window === undefined) delete g.window; else g.window = restore.window;
+    if (restore.document === undefined) delete g.document; else g.document = restore.document;
+    if (restore.navigator === undefined) delete g.navigator; else g.navigator = restore.navigator;
+    if (restore.act === undefined) delete g.IS_REACT_ACT_ENVIRONMENT; else g.IS_REACT_ACT_ENVIRONMENT = restore.act;
+  }
+}
+
 // fetch mock 섹션은 비동기 → top-level await 대신 async IIFE(스크립트 런너 cjs 호환).
 void (async () => {
   await fetchMockSection();
   await badgeEffectSection();
+  await menuGateSection();
   console.log(`\npoll card smoke: ${pass} PASS${fail ? `, ${fail} FAIL` : ""}`);
   if (fail) process.exit(1);
 })();
