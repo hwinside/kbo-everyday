@@ -26,6 +26,8 @@
     "announcements",
     "api_fallback_events",
     "app_downloads",
+    "baseball_qa_cache",
+    "baseball_qa_log",
     "channel_discovery_candidates",
     "channel_discovery_runs",
     "channel_pool",
@@ -116,6 +118,7 @@
   "boundedTables": [
     "admin_alert_state",
     "api_fallback_alert_state",
+    "baseball_glossary",
     "channel_discovery_lock",
     "game_start_watchdog_config",
     "push_dispatch_config",
@@ -138,6 +141,14 @@
     "admin_auth_attempts": [
       [
         "ip_address"
+      ]
+    ],
+    "baseball_qa_cache": [
+      [
+        "id"
+      ],
+      [
+        "question_norm"
       ]
     ],
     "admin_broadcast_recipients": [
