@@ -6,6 +6,7 @@
  */
 import { computeReconnectDelay, shouldResubscribeOnVisible } from "../../src/lib/supabase/realtime-reconnect";
 import { createRealtimeChannelLifecycle } from "../../src/lib/supabase/realtime-channel-lifecycle";
+import { RealtimeChannel, RealtimeClient } from "@supabase/realtime-js";
 
 let pass = 0;
 let fail = 0;
@@ -133,7 +134,78 @@ async function runLifecycleRegression() {
   lifecycle.stop();
 }
 
-runLifecycleRegression()
+async function runActualRealtimeClientRegression() {
+  type Timer = { callback: () => Promise<void>; fired: boolean; cleared: boolean };
+  const client = new RealtimeClient("ws://127.0.0.1:65535/socket", {
+    params: { apikey: "pr950-test" },
+  });
+  const statusCallbacks = new Map<
+    RealtimeChannel,
+    (status: "SUBSCRIBED" | "CHANNEL_ERROR" | "TIMED_OUT" | "CLOSED") => void
+  >();
+  const timers: Timer[] = [];
+  let removeAttempts = 0;
+
+  const manager = createRealtimeChannelLifecycle<RealtimeChannel, Timer>({
+    createChannel: () => client.channel("chat:pr950"),
+    subscribeChannel: (channel, onStatus) => statusCallbacks.set(channel, onStatus),
+    removeChannel: async (channel) => {
+      removeAttempts += 1;
+      if (removeAttempts === 1) {
+        const unsubscribe = channel.unsubscribe.bind(channel);
+        channel.unsubscribe = async () => "error";
+        const result = await client.removeChannel(channel);
+        channel.unsubscribe = unsubscribe;
+        return result;
+      }
+      return client.removeChannel(channel);
+    },
+    isRemovalSuccessful: (result) => result === "ok" || result === "timed out",
+    onSubscribed: () => {},
+    onVisible: () => {},
+    setTimer: (callback) => {
+      const timer: Timer = {
+        callback: async () => {
+          timer.fired = true;
+          await callback();
+        },
+        fired: false,
+        cleared: false,
+      };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimer: (timer) => { timer.cleared = true; },
+    reconnectDelay: () => 0,
+  });
+
+  const nextTimer = () => timers.find((timer) => !timer.fired && !timer.cleared);
+  manager.start();
+  const channelA = manager.snapshot().channel;
+  check("actual client A 최초 tracked", channelA != null && client.getChannels().includes(channelA));
+
+  if (!channelA) throw new Error("actual RealtimeClient A missing");
+  statusCallbacks.get(channelA)?.("CHANNEL_ERROR");
+  await nextTimer()?.callback();
+  check("actual remove error면 B 생성 금지", manager.snapshot().channel == null);
+  check("actual remove error면 A tracked 유지", client.getChannels().length === 1 && client.getChannels()[0] === channelA);
+  check("actual remove error면 removal retry 예약", manager.snapshot().reconnectPending === true);
+
+  await nextTimer()?.callback();
+  const channelB = manager.snapshot().channel;
+  check("actual remove 성공 뒤 B 생성", channelB != null && channelB !== channelA);
+  check("actual client에는 B만 tracked", channelB != null && client.getChannels().length === 1 && client.getChannels()[0] === channelB);
+
+  if (!channelB) throw new Error("actual RealtimeClient B missing");
+  statusCallbacks.get(channelB)?.("SUBSCRIBED");
+  statusCallbacks.get(channelA)?.("CLOSED");
+  check("actual late A CLOSED 뒤 manager B 유지", manager.snapshot().channel === channelB && manager.snapshot().state === "subscribed");
+  check("actual late A CLOSED 뒤 client B tracked", client.getChannels().length === 1 && client.getChannels()[0] === channelB);
+  check("actual late A CLOSED 뒤 timer 0", manager.snapshot().reconnectPending === false);
+  manager.stop();
+}
+
+Promise.all([runLifecycleRegression(), runActualRealtimeClientRegression()])
   .then(() => {
     console.log(`\nrealtime-reconnect: ${pass}/${pass + fail} pass${fail ? `, ${fail} FAIL` : ""}`);
     if (fail) process.exit(1);

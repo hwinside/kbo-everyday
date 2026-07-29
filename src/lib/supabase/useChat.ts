@@ -601,8 +601,9 @@ export function useChat(roomId: string) {
         nextChannel.subscribe(onStatus);
       },
       removeChannel: async (oldChannel) => {
-        await supabase.removeChannel(oldChannel);
+        return supabase.removeChannel(oldChannel);
       },
+      isRemovalSuccessful: (result) => result === "ok" || result === "timed out",
       onSubscribed: () => {
         void backfill();
       },

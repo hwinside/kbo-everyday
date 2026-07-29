@@ -15,6 +15,7 @@ export interface RealtimeChannelLifecycleOptions<Channel, TimerHandle> {
     onStatus: (status: RealtimeLifecycleStatus) => void,
   ) => void;
   removeChannel: (channel: Channel) => Promise<unknown>;
+  isRemovalSuccessful?: (result: unknown) => boolean;
   onSubscribed: () => void;
   onVisible: () => void;
   setTimer: (callback: () => void | Promise<void>, delay: number) => TimerHandle;
@@ -36,6 +37,7 @@ export function createRealtimeChannelLifecycle<Channel, TimerHandle>(
   let generation = 0;
   let reconnectAttempts = 0;
   let reconnectTimer: TimerHandle | null = null;
+  let pendingRemoval: Channel | null = null;
   let replacing = false;
   let cancelled = false;
 
@@ -78,12 +80,28 @@ export function createRealtimeChannelLifecycle<Channel, TimerHandle>(
   const replaceChannel = async () => {
     if (cancelled || replacing) return;
     replacing = true;
-    const old = current;
-    current = null;
-    generation += 1;
+    if (current) {
+      pendingRemoval = current.channel;
+      current = null;
+      generation += 1;
+    }
+    const old = pendingRemoval;
     try {
-      if (old) await options.removeChannel(old.channel);
-      if (!cancelled) {
+      const result = old
+        ? await options.removeChannel(old).catch(() => "error")
+        : "ok";
+      const removed =
+        options.isRemovalSuccessful?.(result) ??
+        result !== "error";
+      if (!removed) {
+        replacing = false;
+        const delay =
+          options.reconnectDelay?.(reconnectAttempts) ??
+          computeReconnectDelay(reconnectAttempts);
+        reconnectAttempts += 1;
+        scheduleReconnect(delay);
+      } else if (!cancelled) {
+        pendingRemoval = null;
         replacing = false;
         subscribe();
       }
@@ -131,6 +149,10 @@ export function createRealtimeChannelLifecycle<Channel, TimerHandle>(
       const old = current;
       current = null;
       if (old) void options.removeChannel(old.channel);
+      if (pendingRemoval && pendingRemoval !== old?.channel) {
+        void options.removeChannel(pendingRemoval);
+      }
+      pendingRemoval = null;
     },
     snapshot() {
       return {
@@ -138,6 +160,7 @@ export function createRealtimeChannelLifecycle<Channel, TimerHandle>(
         state: current?.state ?? null,
         reconnectAttempts,
         reconnectPending: reconnectTimer != null || replacing,
+        removalPending: pendingRemoval,
       };
     },
   };
