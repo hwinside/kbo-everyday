@@ -45,8 +45,8 @@ function isPageUnloading(): boolean {
 export async function trackVenueStoryView(
   storyId: number,
   kind: VenueStoryViewKind,
-): Promise<void> {
-  if (!Number.isInteger(storyId) || storyId <= 0) return;
+): Promise<boolean> {
+  if (!Number.isInteger(storyId) || storyId <= 0) return false;
   let key: string | null = null;
   try {
     // fire 시점 세션을 먼저 해석한 뒤 viewer까지 포함한 키로 mark한다. 같은 탭에서
@@ -61,10 +61,10 @@ export async function trackVenueStoryView(
       : guestId
         ? `guest:${guestId}`
         : null;
-    if (!viewerKey) return;
+    if (!viewerKey) return false;
 
     key = venueStorySentKey(storyId, kind, viewerKey);
-    if (sent.has(key)) return;
+    if (sent.has(key)) return true;
     sent.add(key);
 
     const ok = await sendVenueStoryViewPing({
@@ -79,7 +79,9 @@ export async function trackVenueStoryView(
       fetchFn: fetch,
     });
     if (!ok) sent.delete(key);
+    return ok;
   } catch {
     if (key) sent.delete(key);
+    return false;
   }
 }

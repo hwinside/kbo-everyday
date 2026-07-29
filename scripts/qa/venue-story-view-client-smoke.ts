@@ -108,60 +108,43 @@ test("전송: 일반 경로는 beacon 이 있어도 fetch(keepalive) 우선 — 
   assert.deepEqual(JSON.parse(String(calls[0].init?.body)), payload); // kind 가 body 로 전달됨
 });
 
-test("전송: 이탈 직전(unloading)에만 beacon 최후 fallback — 큐잉 성공 시 fetch 미호출", async () => {
+test("전송: hidden/pagehide도 keepalive fetch 우선 — 204 확인 뒤에만 성공", async () => {
+  let beaconed = 0;
   let fetched = 0;
   const ok = await sendVenueStoryViewPing({
     url: "/api/venue-stories/1/view",
     payload,
     unloading: true,
-    sendBeacon: () => true,
+    sendBeacon: () => {
+      beaconed++;
+      return true;
+    },
     fetchFn: (async () => {
       fetched++;
       return new Response(null, { status: 204 });
     }) as typeof fetch,
   });
   assert.equal(ok, true);
-  assert.equal(fetched, 0);
+  assert.equal(fetched, 1);
+  assert.equal(beaconed, 0);
 });
 
-test("전송: 이탈 직전 beacon 큐잉 거부/예외/미지원 → keepalive fetch 로 진행", async () => {
-  const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
-  const fetchFn = (async (url: unknown, init?: RequestInit) => {
-    calls.push({ url: String(url), init });
-    return new Response(null, { status: 204 });
-  }) as typeof fetch;
-
-  // beacon 이 false(큐잉 거부) → fetch 진행
-  assert.equal(
-    await sendVenueStoryViewPing({
-      url: "/v",
-      payload,
-      unloading: true,
-      sendBeacon: () => false,
-      fetchFn,
-    }),
-    true,
-  );
-  // beacon 자체 예외 → fetch 진행
-  assert.equal(
-    await sendVenueStoryViewPing({
-      url: "/v",
-      payload,
-      unloading: true,
-      sendBeacon: () => {
-        throw new Error("beacon boom");
-      },
-      fetchFn,
-    }),
-    true,
-  );
-  // beacon 미지원(undefined) → fetch 진행
-  assert.equal(await sendVenueStoryViewPing({ url: "/v", payload, unloading: true, fetchFn }), true);
-  assert.equal(calls.length, 3);
-  for (const c of calls) {
-    assert.equal(c.init?.method, "POST");
-    assert.equal((c.init as { keepalive?: boolean })?.keepalive, true); // 이탈 직전 유실 최소화
-  }
+test("전송: hidden/pagehide keepalive 시작 실패 뒤 beacon queued도 미확정(false)", async () => {
+  let beaconed = 0;
+  const ok = await sendVenueStoryViewPing({
+    url: "/v",
+    payload,
+    unloading: true,
+    sendBeacon: () => {
+      beaconed++;
+      return true;
+    },
+    fetchFn: (async () => {
+      throw new Error("page is freezing");
+    }) as typeof fetch,
+  });
+  assert.equal(ok, false);
+  assert.equal(beaconed, 1);
 });
 
 test("전송: fetch 실패/5xx 응답이면 false — 호출부 재시도 mark 해제용(RPC 오류 성공 위장 금지)", async () => {
@@ -246,12 +229,18 @@ test("클라 배선: beacon 은 이탈 직전 fallback 만, mark 는 2xx 확인 
     new URL("../../src/lib/venue-stories/view-tracker-client.ts", import.meta.url),
     "utf8",
   );
+  const hook = readFileSync(
+    new URL("../../src/lib/venue-stories/useStoryImpression.ts", import.meta.url),
+    "utf8",
+  );
   // 이탈 감지 배선: pagehide 설정 + pageshow(bfcache) 복원 + 전송 시점 unloading 전달
   assert.match(client, /addEventListener\("pagehide"/);
   assert.match(client, /addEventListener\("pageshow"/);
   assert.match(client, /unloading:\s*isPageUnloading\(\)/);
   // 실패(비 2xx·네트워크 오류) 시 mark 해제 → 재시도 경로 생존
   assert.match(client, /if \(!ok\) sent\.delete\(key\)/);
+  assert.match(hook, /trackVenueStoryView\(storyId,\s*"impression"\)\.then/);
+  assert.match(hook, /if \(confirmed\) io\.disconnect\(\)/);
 });
 
 // ── 관리자 전용 노출 ("숫자는 일단 관리자만") ──

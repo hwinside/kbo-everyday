@@ -26,6 +26,7 @@ export function useVenueStoryImpression<T extends HTMLElement = HTMLSpanElement>
     if (typeof IntersectionObserver === "undefined") return;
 
     let dwellTimer: ReturnType<typeof setTimeout> | null = null;
+    let tracking = false;
 
     const clearDwell = () => {
       if (dwellTimer) {
@@ -39,11 +40,14 @@ export function useVenueStoryImpression<T extends HTMLElement = HTMLSpanElement>
         const e = entries[0];
         if (!e) return;
         if (e.intersectionRatio >= 0.5) {
-          if (dwellTimer) return; // 이미 dwell 카운트 중
+          if (dwellTimer || tracking) return; // 이미 dwell/전송 중
           dwellTimer = setTimeout(() => {
             dwellTimer = null;
-            void trackVenueStoryView(storyId, "impression");
-            io.disconnect();
+            tracking = true;
+            void trackVenueStoryView(storyId, "impression").then((confirmed) => {
+              tracking = false;
+              if (confirmed) io.disconnect();
+            });
           }, 500);
         } else {
           clearDwell(); // 50% 밑으로 내려가면 dwell 취소(휙 지나감)

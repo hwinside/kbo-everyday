@@ -7,6 +7,7 @@
 // 를 고정한다. 실행: tsx --test scripts/qa/venue-story-view-route-smoke.ts
 import assert from "node:assert/strict";
 import test from "node:test";
+import { JSDOM } from "jsdom";
 import { NextRequest } from "next/server";
 
 process.env.NEXT_PUBLIC_SUPABASE_URL ??= "https://venue-view-route-test.supabase.co";
@@ -124,4 +125,160 @@ test("end-to-end 재시도: 헬퍼가 route 500 을 보고 false → mark 해제
     // 서버가 실제로 2회 RPC 를 받았다 — 이벤트 영구 유실 없음(중복은 서버 일별 dedupe 권위).
     assert.equal(calls.length, 2);
   });
+});
+
+test("실제 client/hook: hidden beacon 미확정 재시도 + impression 500→재노출→204/RPC 2회", async () => {
+  const dom = new JSDOM("<!doctype html><html><body><div id='root'></div></body></html>", {
+    url: "https://keubo.fan/",
+  });
+  const globals = globalThis as unknown as Record<string, unknown>;
+  const globalKeys = [
+    "window",
+    "document",
+    "navigator",
+    "HTMLElement",
+    "Element",
+    "Node",
+    "Event",
+    "IS_REACT_ACT_ENVIRONMENT",
+    "IntersectionObserver",
+  ] as const;
+  const originalGlobals = new Map(
+    globalKeys.map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]),
+  );
+  globals.window = dom.window;
+  globals.document = dom.window.document;
+  globals.HTMLElement = dom.window.HTMLElement;
+  globals.Element = dom.window.Element;
+  globals.Node = dom.window.Node;
+  globals.Event = dom.window.Event;
+  globals.IS_REACT_ACT_ENVIRONMENT = true;
+  Object.defineProperty(globalThis, "navigator", {
+    value: dom.window.navigator,
+    configurable: true,
+  });
+
+  let hidden = true;
+  Object.defineProperty(dom.window.document, "visibilityState", {
+    get: () => (hidden ? "hidden" : "visible"),
+    configurable: true,
+  });
+  dom.window.localStorage.setItem("vsv_guest_id", GUEST);
+
+  type ObserverState = {
+    callback: IntersectionObserverCallback;
+    disconnected: boolean;
+  };
+  const observers: ObserverState[] = [];
+  class MockIntersectionObserver {
+    readonly root = null;
+    readonly rootMargin = "0px";
+    readonly thresholds = [0, 0.5, 1];
+    private readonly state: ObserverState;
+    constructor(callback: IntersectionObserverCallback) {
+      this.state = { callback, disconnected: false };
+      observers.push(this.state);
+    }
+    observe() {}
+    unobserve() {}
+    takeRecords() {
+      return [];
+    }
+    disconnect() {
+      this.state.disconnected = true;
+    }
+  }
+  globals.IntersectionObserver = MockIntersectionObserver;
+
+  let beaconed = 0;
+  Object.defineProperty(dom.window.navigator, "sendBeacon", {
+    value: () => {
+      beaconed++;
+      return true;
+    },
+    configurable: true,
+  });
+
+  const { act } = await import("react");
+  const React = (await import("react")).default;
+  const { createRoot } = await import("react-dom/client");
+  const { trackVenueStoryView } = await import(
+    "../../src/lib/venue-stories/view-tracker-client"
+  );
+  const { useVenueStoryImpression } = await import(
+    "../../src/lib/venue-stories/useStoryImpression"
+  );
+
+  const originalFetch = globalThis.fetch;
+  try {
+    // hidden/pagehide: keepalive fetch가 시작되지 못해 beacon이 queued돼도 false/mark 해제.
+    globalThis.fetch = (async () => {
+      throw new Error("page freezing");
+    }) as typeof fetch;
+    assert.equal(await trackVenueStoryView(12, "click"), false);
+    assert.equal(beaconed, 1);
+
+    // BFCache 복원 뒤 같은 key가 다시 전송되어 route 204를 확인한다.
+    hidden = false;
+    dom.window.dispatchEvent(new dom.window.Event("pageshow"));
+    await withMockedRpc([null], async (calls) => {
+      globalThis.fetch = (async (_url: unknown, init?: RequestInit) =>
+        callViewRoute("12", String(init?.body))) as typeof fetch;
+      assert.equal(await trackVenueStoryView(12, "click"), true);
+      assert.equal(calls.length, 1);
+    });
+
+    function Harness() {
+      const ref = useVenueStoryImpression<HTMLSpanElement>(13);
+      return React.createElement("span", { ref });
+    }
+    const container = dom.window.document.getElementById("root")!;
+    const root = createRoot(container);
+    await act(async () => root.render(React.createElement(Harness)));
+    assert.equal(observers.length, 1);
+    const observer = observers[0];
+    const emit = (ratio: number) =>
+      observer.callback(
+        [{ intersectionRatio: ratio } as IntersectionObserverEntry],
+        {} as IntersectionObserver,
+      );
+    const waitFor = async (condition: () => boolean, timeoutMs = 2_000) => {
+      const started = Date.now();
+      while (!condition() && Date.now() - started < timeoutMs) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      return condition();
+    };
+
+    await withMockedRpc([{ message: "transient rpc failure" }, null], async (calls) => {
+      globalThis.fetch = (async (_url: unknown, init?: RequestInit) =>
+        callViewRoute("13", String(init?.body))) as typeof fetch;
+
+      // 첫 실제 노출은 route 500. observer가 살아 있어야 이탈/재노출이 가능하다.
+      emit(1);
+      assert.equal(await waitFor(() => calls.length === 1), true);
+      assert.equal(observer.disconnected, false);
+
+      emit(0);
+      emit(1);
+      assert.equal(await waitFor(() => calls.length === 2), true);
+      assert.equal(calls.length, 2);
+      assert.equal(observer.disconnected, true);
+    });
+
+    await act(async () => root.unmount());
+  } finally {
+    globalThis.fetch = originalFetch;
+    const { supabase } = await import("../../src/lib/supabase/client");
+    supabase.auth.stopAutoRefresh();
+    (
+      supabase.auth as unknown as { broadcastChannel?: { close: () => void } }
+    ).broadcastChannel?.close();
+    dom.window.close();
+    for (const key of globalKeys) {
+      const descriptor = originalGlobals.get(key);
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else delete globals[key];
+    }
+  }
 });
