@@ -250,6 +250,9 @@ END $$;
 -- 삼순이 PG17+RLS probe 로 재현한 경로: 첫 투표 후 작성자가 직접 UPDATE 로
 -- content_type/image_urls/seat_info/video_urls 를 바꿔 voted poll 무결성 훼손.
 -- 트리거가 title/content 이외 작성자 제어 필드를 전부 check_violation 으로 거부해야 한다.
+-- role 게이트: 작성자 직접 경로(authenticated)로 실행해야 strict 잠금이 걸린다(postgres 는 bypass).
+SET ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', false);
 DO $$
 DECLARE v_pid bigint;
 BEGIN
@@ -294,18 +297,28 @@ BEGIN
   UPDATE posts SET title='q-after-probe', content='c-after-probe' WHERE id=v_pid;
   IF (SELECT title FROM posts WHERE id=v_pid) <> 'q-after-probe' THEN
     RAISE EXCEPTION 'FAIL N3: title still editable after probe'; END IF;
-  RAISE NOTICE 'PASS N3 voted poll: non-text + schema-drift(game_id/hashtags/snapshot/created_at) fields immutable; title/content editable';
+  RAISE NOTICE 'PASS N3 (authenticated) voted poll: non-text + schema-drift(game_id/hashtags/snapshot/created_at) fields immutable; title/content editable';
 END $$;
+RESET ROLE;
+SELECT set_config('request.jwt.claim.sub', '', false);
 
 -- ---------- N3b pre-vote 글도 비텍스트 불변(삼순 지적: 첫 투표 전 개방 차단) ----------
 -- 삼순 NO-GO(2): 기존 denylist 는 first_vote_at IS NOT NULL 일 때만 비교해 투표 전엔
 -- 작성자가 직접 UPDATE 로 content_type/image_urls 를 바꿀 수 있었다. allowlist 는 투표 여부
 -- 무관하게 title/content 외 불변이므로 pre-vote 에서도 비텍스트 변경은 거부되어야 한다.
+-- create_poll 은 authenticated 에게 REVOKE 되어 있으므로 postgres 로 생성해 pid 를 보관하고,
+-- forge 는 authenticated 로 수행한다(role 게이트).
+SELECT create_poll(
+  'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','pre-vote lock?',null,false,
+  now()+interval '1 day','[{"kind":"etc","label":"a"},{"kind":"etc","label":"b"}]'::jsonb
+) AS n3b_pid \gset
+SELECT set_config('poll.n3b_pid', :'n3b_pid', false);
+SET ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', false);
 DO $$
 DECLARE v_pid bigint;
 BEGIN
-  v_pid := create_poll('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','pre-vote lock?',null,false,
-    now()+interval '1 day','[{"kind":"etc","label":"a"},{"kind":"etc","label":"b"}]'::jsonb);
+  v_pid := current_setting('poll.n3b_pid')::bigint;
   -- 투표 전이라도 title/content 는 수정 가능.
   UPDATE posts SET title='q-edit-prevote', content='c-edit-prevote' WHERE id=v_pid;
   IF (SELECT title FROM posts WHERE id=v_pid) <> 'q-edit-prevote' THEN
@@ -319,10 +332,15 @@ BEGIN
     EXCEPTION WHEN check_violation THEN NULL; END;
   IF (SELECT content_type FROM posts WHERE id=v_pid) = 'photo' THEN
     RAISE EXCEPTION 'FAIL N3b: pre-vote non-text mutated'; END IF;
-  RAISE NOTICE 'PASS N3b pre-vote poll: non-text fields immutable; title/content editable';
+  RAISE NOTICE 'PASS N3b (authenticated) pre-vote poll: non-text fields immutable; title/content editable';
 END $$;
+RESET ROLE;
+SELECT set_config('request.jwt.claim.sub', '', false);
 
 -- ---------- N4 title/content 유효성 DB 강제(서버 route 우회 방어) ----------
+-- role 게이트: 작성자 직접(authenticated) 경로에서 title 유효성이 강제되어야 한다.
+SET ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', false);
 DO $$
 DECLARE v_pid bigint;
 BEGIN
@@ -343,48 +361,71 @@ BEGIN
   UPDATE posts SET title=repeat('x',200), content=repeat('y',2000) WHERE id=v_pid;
   IF char_length((SELECT title FROM posts WHERE id=v_pid)) <> 200 THEN
     RAISE EXCEPTION 'FAIL N4: 200-char title not persisted'; END IF;
-  RAISE NOTICE 'PASS N4 poll title required + title<=200 + content<=2000 enforced in DB';
+  RAISE NOTICE 'PASS N4 (authenticated) poll title required + title<=200 + content<=2000 enforced in DB';
+END $$;
+RESET ROLE;
+SELECT set_config('request.jwt.claim.sub', '', false);
+
+-- ---------- N6 삼순 3차 NO-GO P1-1: 운영/모더레이션 필드 직접 위조 차단(컬럼 권한) ----------
+-- 기존 allowlist 는 운영필드(report_count/is_hidden/조회·좋아요·댓글)를 비교에서 제외해
+-- 작성자가 직접 UPDATE 로 위조 가능했다(독립 PG17 UPDATE 1). 이제 마이그레이션이 이 컬럼들의
+-- UPDATE 권한을 authenticated/anon 에서 REVOKE 하므로, 작성자 직접 위조는 컬럼 권한 계층에서
+-- insufficient_privilege(42501) 로 차단된다. 미디어/태그/board 위조는 트리거(check_violation, N3).
+-- 정당한 운영 갱신(SECURITY DEFINER writer owner)은 통과(N6b/운영경로).
+--
+-- setup: OLD.updated_at 을 과거값으로 먼저 고정(트리거가 updated_at 을 강제하므로 임시 DISABLE) + 운영필드 snapshot.
+DO $$
+DECLARE v_pid bigint;
+BEGIN
+  v_pid := current_setting('poll.pid')::bigint;
+  ALTER TABLE posts DISABLE TRIGGER poll_posts_edit_lock_trg;
+  UPDATE posts SET updated_at = timestamptz '2000-01-01 00:00:00+00' WHERE id=v_pid;
+  ALTER TABLE posts ENABLE TRIGGER poll_posts_edit_lock_trg;
+  PERFORM set_config('poll.n6_old_ua', (SELECT updated_at::text FROM posts WHERE id=v_pid), false);
+  PERFORM set_config('poll.n6_rc',     (SELECT report_count::text FROM posts WHERE id=v_pid), false);
+  PERFORM set_config('poll.n6_hidden', (SELECT is_hidden::text FROM posts WHERE id=v_pid), false);
 END $$;
 
--- ---------- N6 삼순 3차 NO-GO P1-1: 운영/모더레이션 필드 직접 위조 차단 ----------
--- 기존 allowlist 는 운영필드(report_count/is_hidden/조회·좋아요·댓글/updated_at)를 비교에서
--- 무조건 제외해 작성자가 직접 UPDATE 로 위조 가능했다(독립 PG17 UPDATE 1). 이제 GUC 미설정
--- (작성자 직접 경로)에서는 title/content/updated_at 외 전부 불변 → 전부 check_violation.
+-- forge(authenticated 직접 UPDATE). RLS 통과 위해 작성자(aaaa) identity 설정.
+SET ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', false);
 DO $$
 DECLARE v_pid bigint; v_rc int; v_hidden boolean; v_old_ua timestamptz;
 BEGIN
-  v_pid := current_setting('poll.pid')::bigint; -- voted poll
-  SELECT report_count, is_hidden INTO v_rc, v_hidden FROM posts WHERE id=v_pid;
+  v_pid := current_setting('poll.pid')::bigint; -- voted poll (author=aaaa)
+  v_old_ua := current_setting('poll.n6_old_ua')::timestamptz;
+  v_rc := current_setting('poll.n6_rc')::int;
+  v_hidden := current_setting('poll.n6_hidden')::boolean;
 
+  -- 운영 컬럼 직접 위조 → 컬럼 REVOKE 로 insufficient_privilege(42501).
   BEGIN UPDATE posts SET report_count = report_count + 999 WHERE id=v_pid;
     RAISE EXCEPTION 'FAIL N6: report_count forge accepted';
-    EXCEPTION WHEN check_violation THEN NULL; END;
+    EXCEPTION WHEN insufficient_privilege THEN NULL; END;
   BEGIN UPDATE posts SET is_hidden = true WHERE id=v_pid;
     RAISE EXCEPTION 'FAIL N6: is_hidden forge accepted';
-    EXCEPTION WHEN check_violation THEN NULL; END;
+    EXCEPTION WHEN insufficient_privilege THEN NULL; END;
   BEGIN UPDATE posts SET like_count = 999 WHERE id=v_pid;
     RAISE EXCEPTION 'FAIL N6: like_count forge accepted';
-    EXCEPTION WHEN check_violation THEN NULL; END;
+    EXCEPTION WHEN insufficient_privilege THEN NULL; END;
   BEGIN UPDATE posts SET comment_count = 999 WHERE id=v_pid;
     RAISE EXCEPTION 'FAIL N6: comment_count forge accepted';
-    EXCEPTION WHEN check_violation THEN NULL; END;
+    EXCEPTION WHEN insufficient_privilege THEN NULL; END;
   BEGIN UPDATE posts SET click_view_count = 999, impression_view_count = 999 WHERE id=v_pid;
     RAISE EXCEPTION 'FAIL N6: view_count forge accepted';
-    EXCEPTION WHEN check_violation THEN NULL; END;
-  -- 결합 위조(title 편집에 운영필드 끼워넣기)도 거부.
+    EXCEPTION WHEN insufficient_privilege THEN NULL; END;
+  -- 결합 위조(title 편집에 운영필드 끼워넣기)도 운영컬럼 권한 부족으로 거부.
   BEGIN UPDATE posts SET title='ok-q', report_count=report_count+5 WHERE id=v_pid;
     RAISE EXCEPTION 'FAIL N6: title+report_count combined forge accepted';
+    EXCEPTION WHEN insufficient_privilege THEN NULL; END;
+  -- 미디어/태그 위조는 컬럼 권한은 있지만 트리거(check_violation)로 차단(N3 보강).
+  BEGIN UPDATE posts SET image_urls='["https://attacker.invalid/n6.jpg"]'::jsonb WHERE id=v_pid;
+    RAISE EXCEPTION 'FAIL N6: image_urls forge accepted';
     EXCEPTION WHEN check_violation THEN NULL; END;
 
   -- updated_at 은 DB 서버생성 시각으로 강제 — 클라 제공값 위조 불가(삼순 4/5차 NO-GO).
-  --   삼순 5차: OLD 를 *과거값*으로 먼저 고정해, now()→OLD.updated_at fault-injection 이면 반드시
-  --   실패하도록 assert 를 강화한다. 즉 편집 후 updated_at 은 (트랜잭션 now() 근사) AND (!= OLD)
-  --   둘 다 만족해야 한다. OLD 가 트랜잭션 now() 와 달라야 두 assert 가 직교함(구분력 확보).
-  -- 먼저 OLD 를 과거값으로 심는다(운영 writer 스코프 GUC 사용 → 잠금 우회해 과거 updated_at 기록 가능).
-  PERFORM set_config('kbo.posts_op', '1', true);
-  UPDATE posts SET updated_at = timestamptz '2000-01-01 00:00:00+00' WHERE id=v_pid;
-  PERFORM set_config('kbo.posts_op', '', true);
-  SELECT updated_at INTO v_old_ua FROM posts WHERE id=v_pid; -- v_old_ua = 2000-01-01(과거)
+  --   삼순 5차: OLD 는 setup 블록에서 *과거값*(2000-01-01)으로 고정됨 → now()→OLD.updated_at
+  --   fault-injection 이면 반드시 실패하도록 assert 강화. 편집 후 updated_at 은 (트랜잭션 now())
+  --   AND (!= OLD) 둘 다 만족해야 한다(OLD 가 now() 와 달라 두 assert 직교).
 
   -- (a) 순수 updated_at 변경(질문/설명 미변) → 위조값 미반영(OLD 과거값 그대로 유지).
   UPDATE posts SET updated_at = timestamptz '1999-06-06 00:00:00+00' WHERE id=v_pid;
@@ -405,19 +446,23 @@ BEGIN
   IF (SELECT report_count FROM posts WHERE id=v_pid) <> v_rc
      OR (SELECT is_hidden FROM posts WHERE id=v_pid) <> v_hidden
      OR (SELECT like_count FROM posts WHERE id=v_pid) <> 0
-     OR (SELECT comment_count FROM posts WHERE id=v_pid) <> 0
+     OR (SELECT comment_count FROM posts WHERE id=v_pid) <> 0::int
      OR (SELECT click_view_count FROM posts WHERE id=v_pid) <> 0 THEN
     RAISE EXCEPTION 'FAIL N6: operational field mutated despite reject'; END IF;
 
-  -- 정당한 편집(질문·설명)은 통과.
+  -- 정당한 편집(질문·설명)은 통과(authenticated 작성자 본인).
   UPDATE posts SET title='q-legit-edit', content='c-legit-edit' WHERE id=v_pid;
   IF (SELECT title FROM posts WHERE id=v_pid) <> 'q-legit-edit' THEN
     RAISE EXCEPTION 'FAIL N6: legit title/content edit did not persist'; END IF;
-  RAISE NOTICE 'PASS N6 operational/moderation fields (report/is_hidden/counters) not forgeable; updated_at DB-authoritative (client value ignored); legit title/content edit persists';
+  RAISE NOTICE 'PASS N6 (authenticated direct) operational/moderation fields not forgeable; updated_at DB-authoritative; legit title/content edit persists';
 END $$;
+RESET ROLE;
+SELECT set_config('request.jwt.claim.sub', '', false);
 
--- ---------- N6b 정당한 운영 경로(신고→auto_blind, SECURITY DEFINER + ALTER SET GUC)는 유지 ----------
--- auto_blind_on_report 가 poll 글의 report_count 를 갱신할 때 strict 잠금에 막히지 않아야 한다.
+-- ---------- N6b 정당한 운영 경로(신고 → auto_blind SECURITY DEFINER → owner 권한 bypass) ----------
+-- auto_blind_on_report(SECURITY DEFINER, owner role 실행)가 poll 글의 report_count 를 갱신할 때
+-- 트리거 allowlist(운영 컬럼 제외) + owner 컬럼으로 통과해야 한다. auto_blind 는 호출자 role 무관
+-- (SECURITY DEFINER)로 owner 권한 실행되므로 postgres 컨텍스트로 검증해도 동등(caller role 무영향).
 DO $$
 DECLARE v_pid bigint; v_before int; v_after int;
 BEGIN
@@ -427,8 +472,8 @@ BEGIN
     VALUES ('post', v_pid, '99999999-9999-9999-9999-999999999999');
   SELECT report_count INTO v_after FROM posts WHERE id=v_pid;
   IF v_after <> v_before + 1 THEN
-    RAISE EXCEPTION 'FAIL N6b: legit report path blocked by lock (report_count % -> %)', v_before, v_after; END IF;
-  RAISE NOTICE 'PASS N6b legit report->auto_blind path updates poll report_count (SECURITY DEFINER GUC bypass works)';
+    RAISE EXCEPTION 'FAIL N6b: legit report path blocked (report_count % -> %)', v_before, v_after; END IF;
+  RAISE NOTICE 'PASS N6b report->auto_blind (SECURITY DEFINER owner) updates poll report_count (allowlist + owner-priv bypass)';
 END $$;
 
 -- ---------- ⑧ cascade 재집계 (계정/글 삭제) ----------
@@ -466,6 +511,9 @@ END $$;
 --   UPDATE posts SET board_type='free'  (분기 탈출) → UPDATE posts SET title=...
 -- 2-step 으로 title/content 를 바꿀 수 있었다. 잠금을 poll_polls 존재 기준으로
 -- 바꿔 board_type 변경 자체가 거부되므로 1단계부터 실패해야 한다.
+-- role 게이트: 작성자 직접(authenticated). board 변경은 kbo.poll_write 가드(role무관), tags 는 strict 잠금.
+SET ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', false);
 DO $$
 DECLARE v_pid bigint;
 BEGIN
@@ -488,8 +536,10 @@ BEGIN
   IF (SELECT board_type FROM posts WHERE id=v_pid) <> 'poll'
      OR (SELECT title FROM posts WHERE id=v_pid) = 'hacked-2step' THEN
     RAISE EXCEPTION 'FAIL ⑨-2: post mutated after bypass attempt'; END IF;
-  RAISE NOTICE 'PASS ⑨-2 2-step bypass blocked (board_type/board_id/title/tags immutable after first vote)';
+  RAISE NOTICE 'PASS ⑨-2 (authenticated) 2-step bypass blocked (board_type/board_id/title/tags immutable after first vote)';
 END $$;
+RESET ROLE;
+SELECT set_config('request.jwt.claim.sub', '', false);
 
 -- ---------- 축2 create_poll 이 canonical team_tags/player_tags 를 posts 에 원자 기입 ----------
 -- 라우트가 파생·검증한 태그를 create_poll 이 posts 에 그대로 적재하는지(현 [] 밖에
@@ -547,14 +597,12 @@ BEGIN
     RAISE EXCEPTION 'FAIL 운영: poll report path blocked (report_count=% is_hidden=%)', v_rc, v_hidden; END IF;
 
   -- (3) 조회/좋아요/댓글 카운터 — 실제로는 SECURITY DEFINER writer(update_like_count/
-  --     update_comment_count/increment_post_view, ALTER FUNCTION SET kbo.posts_op='1')가
-  --     갱신하므로 그 실행 스코프를 재현한다(GUC='1' 시 strict 잠금 우회 → 카운터 갱신 허용).
-  PERFORM set_config('kbo.posts_op', '1', true);
+  --     update_comment_count/increment_post_view)가 owner role 로 갱신하므로 그 bypass 컨텍스트를
+  --     재현한다(하네스 postgres = 클라이언트 role 이 아니므로 strict 잠금 자연 bypass → 카운터 갱신 허용).
   UPDATE posts SET click_view_count = click_view_count + 1 WHERE id=v_new_pid;
   UPDATE posts SET impression_view_count = impression_view_count + 1 WHERE id=v_new_pid;
   UPDATE posts SET like_count = like_count + 1 WHERE id=v_new_pid;
   UPDATE posts SET comment_count = comment_count + 1 WHERE id=v_new_pid;
-  PERFORM set_config('kbo.posts_op', '', true); -- 스코프 종료 → 이후 잠금 다시 활성
   SELECT click_view_count, impression_view_count, like_count, comment_count
     INTO v_cvc, v_ivc, v_lc, v_cc FROM posts WHERE id=v_new_pid;
   IF v_cvc<>1 OR v_ivc<>1 OR v_lc<>1 OR v_cc<>1 THEN
@@ -567,10 +615,8 @@ BEGIN
   IF (SELECT title FROM posts WHERE id=v_pid) <> 'post-vote-edited'
      OR (SELECT content FROM posts WHERE id=v_pid) <> 'post-vote-desc' THEN
     RAISE EXCEPTION 'FAIL 운영: post-vote title/content edit did not persist'; END IF;
-  -- 투표 후에도 운영 카운터/신고는 허용(SECURITY DEFINER writer 스코프 GUC 재현 / 신고는 auto_blind)
-  PERFORM set_config('kbo.posts_op', '1', true);
+  -- 투표 후에도 운영 카운터/신고는 허용(owner role bypass 재현 / 신고는 auto_blind SECURITY DEFINER)
   UPDATE posts SET like_count = like_count + 1 WHERE id=v_pid;
-  PERFORM set_config('kbo.posts_op', '', true);
   INSERT INTO reports(target_type,target_id,reporter_id)
     VALUES ('post',v_pid,'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
   IF (SELECT report_count FROM posts WHERE id=v_pid) < 1 THEN

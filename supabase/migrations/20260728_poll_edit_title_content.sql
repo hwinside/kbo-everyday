@@ -57,75 +57,82 @@ BEGIN
   -- 여기부터는 poll 글의 UPDATE(poll_polls 행 존재). 첫 투표 여부와 무관하게
   -- "질문(title)·설명(content)만 작성자 수정" 계약을 전 생애주기에 강제한다.
   --
-  -- 삼순 3차 NO-GO(P1) 반영 — denylist/부분 allowlist 폐기, GUC 게이트 strict allowlist:
-  --   기존 구현은 운영필드(report_count/is_hidden/조회·좋아요·댓글 카운터/updated_at)를
-  --   allowlist 비교에서 무조건 제외했다. 그 결과 authenticated 작성자가 직접 SDK UPDATE 로
-  --   이 필드들을 위조할 수 있었다(독립 PG17 `UPDATE 1`). 이제는 title/content/updated_at 을
-  --   제외한 "모든" 컬럼(운영필드 포함)을 불변화한다.
-  --   운영필드를 갱신하는 정당한 서버 경로(update_like_count / update_comment_count /
-  --   auto_blind_on_report / increment_post_view)는 전부 SECURITY DEFINER 함수이며, 이
-  --   마이그레이션이 각 함수에 `ALTER FUNCTION ... SET kbo.posts_op='1'` 을 부여한다
-  --   (함수 실행 스코프에서만 GUC='1', 종료 시 자동 해제 → drift 0, 트랜잭션 누수 0).
-  --   → 그 경로는 아래 잠금을 건너뛰고, GUC 미설정인 작성자 직접 UPDATE 만 잠금 대상.
-  IF current_setting('kbo.posts_op', true) IS DISTINCT FROM '1' THEN
-    -- (a) title/content 유효성(서버 route 우회 방어) — 생성 계약(create_poll)과 동일.
-    IF NEW.title IS NULL OR btrim(NEW.title) = '' THEN
-      RAISE EXCEPTION 'poll question(title) is required'
-        USING ERRCODE = 'check_violation';
-    END IF;
-    IF char_length(NEW.title) > 200 THEN
-      RAISE EXCEPTION 'poll question(title) exceeds 200 chars'
-        USING ERRCODE = 'check_violation';
-    END IF;
-    IF NEW.content IS NOT NULL AND char_length(NEW.content) > 2000 THEN
-      RAISE EXCEPTION 'poll content exceeds 2000 chars'
-        USING ERRCODE = 'check_violation';
-    END IF;
+  -- 삼순 3차 NO-GO(P1) 반영 + 배포 블로커 수정 — strict allowlist(컬럼 권한 계층과 결합):
+  --   이 트리거는 poll 글의 UPDATE 에서 title/content ‹그리고 운영 카운터/모더레이션 컬럼›
+  --   외 어떤 컬럼도 바뀌면 거부한다(미디어·태그·선지참조·board 등 불변). 운영 카운터
+  --   (report_count/is_hidden/조회·좋아요·댓글)는 allowlist 에서 제외해 정당한 서버 갱신
+  --   (SECURITY DEFINER writer · service_role)은 통과시키되, 작성자(authenticated)의 직접
+  --   위조는 트리거가 아닌 **컬럼 레벨 UPDATE 권한(REVOKE)** 로 차단한다(아래 REVOKE 참조).
+  --   ‹삼순 3차 P1-1(운영필드 위조)은 컬럼 권한으로 막는다. GUC/ALTER FUNCTION 방식은
+  --    Management API 에서 permission denied 로 적용 불가, role 게이트는 트리거가 SECURITY DEFINER
+  --    라 current_user 가 항상 owner → 불가. 컬럼 권한이 표준·prod-안전(함수 미건드림)·적용가능.›
+  -- (a) title/content 유효성(서버 route 우회 방어) — 생성 계약(create_poll)과 동일.
+  IF NEW.title IS NULL OR btrim(NEW.title) = '' THEN
+    RAISE EXCEPTION 'poll question(title) is required'
+      USING ERRCODE = 'check_violation';
+  END IF;
+  IF char_length(NEW.title) > 200 THEN
+    RAISE EXCEPTION 'poll question(title) exceeds 200 chars'
+      USING ERRCODE = 'check_violation';
+  END IF;
+  IF NEW.content IS NOT NULL AND char_length(NEW.content) > 2000 THEN
+    RAISE EXCEPTION 'poll content exceeds 2000 chars'
+      USING ERRCODE = 'check_violation';
+  END IF;
 
-    -- (b) strict allowlist: title/content/updated_at 외 어떤 컬럼도 바뀌면 거부.
-    --     운영/모더레이션 카운터(report_count/is_hidden/조회·좋아요·댓글)·미디어·태그·
-    --     선지참조·board·game_id·hashtags·author_team_id_snapshot·created_at·author_id 전부 불변.
-    --     schema-agnostic: 향후 신규 컬럼도 명시 없이 자동 잠김.
-    IF (to_jsonb(NEW) - 'title' - 'content' - 'updated_at')
-       IS DISTINCT FROM
-       (to_jsonb(OLD) - 'title' - 'content' - 'updated_at') THEN
-      RAISE EXCEPTION 'poll post is locked: only title/content editable (moderation/counters/options/tags/media/board immutable)'
-        USING ERRCODE = 'check_violation';
-    END IF;
+  -- (b) strict allowlist: title/content/updated_at + 운영 카운터 외 어떤 컬럼도 바뀌면 거부.
+  --     미디어·태그·선지참조·board·game_id·hashtags·author_team_id_snapshot·created_at·author_id 불변.
+  --     운영 카운터(report_count/is_hidden/조회·좋아요·댓글)는 제외(정당한 writer/service_role 허용,
+  --     클라이언트 위조는 컬럼 REVOKE 가 차단). schema-agnostic: 신규 컬럼도 명시 없이 자동 잠김.
+  IF (to_jsonb(NEW) - 'title' - 'content' - 'updated_at'
+        - 'report_count' - 'is_hidden' - 'click_view_count' - 'impression_view_count'
+        - 'like_count' - 'comment_count')
+     IS DISTINCT FROM
+     (to_jsonb(OLD) - 'title' - 'content' - 'updated_at'
+        - 'report_count' - 'is_hidden' - 'click_view_count' - 'impression_view_count'
+        - 'like_count' - 'comment_count') THEN
+    RAISE EXCEPTION 'poll post is locked: only title/content editable (options/tags/media/board immutable)'
+      USING ERRCODE = 'check_violation';
+  END IF;
 
-    -- (c) updated_at 은 DB 서버생성 시각으로 강제 — 클라이언트 제공값을 무시해 위조 불가(삼순 4차 NO-GO).
-    --     실제 질문/설명 편집이면 now(), 그외(순수 updated_at 변경 시도)은 OLD 유지.
-    --     → UPDATE ... SET title='x', updated_at='위조' 이면 title 은 persist하되 updated_at 은 now(),
-    --       UPDATE ... SET updated_at='위조'(title/content 미변)은 OLD 유지(위조값 미반영).
-    IF NEW.title IS DISTINCT FROM OLD.title OR NEW.content IS DISTINCT FROM OLD.content THEN
-      NEW.updated_at := now();
-    ELSE
-      NEW.updated_at := OLD.updated_at;
-    END IF;
+  -- (c) updated_at 은 DB 서버생성 시각으로 강제 — 클라이언트 제공값을 무시해 위조 불가(삼순 4차 NO-GO).
+  --     실제 질문/설명 편집이면 now(), 그외(순수 updated_at 변경 시도 / 운영 카운터 갱신)은 OLD 유지.
+  --     → UPDATE ... SET title='x', updated_at='위조' 이면 title 은 persist하되 updated_at 은 now(),
+  --       UPDATE ... SET updated_at='위조'(title/content 미변)은 OLD 유지(위조값 미반영).
+  IF NEW.title IS DISTINCT FROM OLD.title OR NEW.content IS DISTINCT FROM OLD.content THEN
+    NEW.updated_at := now();
+  ELSE
+    NEW.updated_at := OLD.updated_at;
   END IF;
 
   RETURN NEW;
 END;
 $$;
 
--- ── 운영/모더레이션 SECURITY DEFINER writer 에 실행 스코프 GUC 부여 ──────────────
--- poll 글에도 정당한 운영 갱신(좋아요/댓글/조회 카운터, 신고→자동 블라인드)이 발생하므로,
--- 각 writer 실행 중에만 kbo.posts_op='1' 을 세워 위 strict 잠금을 건너뛰게 한다.
--- ALTER FUNCTION ... SET 은 함수 진입 시 GUC 를 설정하고 종료 시 되돌리므로 body 재작성
--- (drift) 없이, 그리고 set_config(is_local) 와 달리 트랜잭션 잔여 없이 정확히 함수 스코프로만
--- 적용된다. 함수가 존재할 때만 ALTER(idempotent, 부분 환경/하네스 안전).
+-- ── 작성자(클라이언트)의 운영 컬럼 직접 UPDATE 차단 = 컬럼 레벨 REVOKE ──────────────
+-- 삼순 3차 P1-1(작성자가 report_count/is_hidden/조회·좋아요·댓글 직접 위조)을 표준 PG 컬럼
+-- 권한으로 막는다. 이 컬럼들은 오직 SECURITY DEFINER 트리거/RPC(update_like_count ·
+-- update_comment_count · auto_blind_on_report · increment_post_view; 전부 함수 owner 권한으로
+-- 실행)만 갱신하므로, 클라이언트 role 의 직접 UPDATE 권한은 회수해도 정상 경로 무영향.
+-- (title/content/image_urls/seat_info/updated_at 등 편집 컬럼 권한은 유지 → 편집 경로 무변경.)
+-- posts 전체 범위(poll 포함 모든 글)에 적용되는 방어 심층 강화. service_role(서버 전용)은 유지.
+-- ⚠️ PostgreSQL 의미: 테이블 레벨 UPDATE 권한은 모든 컬럼을 커버하므로 컬럼 REVOKE 만으로는
+-- 제한되지 않는다. 따라서 테이블 UPDATE 를 회수하고 **비운영 컬럼만** 동적으로 GRANT 한다
+-- (스키마 드리프에도 견고: 신규 비운영 컬럼은 자동 포함, 운영 컬럼은 자동 제외). service_role·owner 는 미변경.
 DO $$
+DECLARE v_cols text;
 BEGIN
-  IF to_regprocedure('public.update_like_count()') IS NOT NULL THEN
-    EXECUTE 'ALTER FUNCTION public.update_like_count() SET kbo.posts_op = ''1''';
-  END IF;
-  IF to_regprocedure('public.update_comment_count()') IS NOT NULL THEN
-    EXECUTE 'ALTER FUNCTION public.update_comment_count() SET kbo.posts_op = ''1''';
-  END IF;
-  IF to_regprocedure('public.auto_blind_on_report()') IS NOT NULL THEN
-    EXECUTE 'ALTER FUNCTION public.auto_blind_on_report() SET kbo.posts_op = ''1''';
-  END IF;
-  IF to_regprocedure('public.increment_post_view(bigint, text)') IS NOT NULL THEN
-    EXECUTE 'ALTER FUNCTION public.increment_post_view(bigint, text) SET kbo.posts_op = ''1''';
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+             WHERE table_schema='public' AND table_name='posts' AND column_name='report_count') THEN
+    SELECT string_agg(quote_ident(column_name), ', ' ORDER BY ordinal_position)
+      INTO v_cols
+      FROM information_schema.columns
+     WHERE table_schema='public' AND table_name='posts'
+       AND column_name NOT IN ('report_count','is_hidden','click_view_count',
+                               'impression_view_count','like_count','comment_count');
+    -- 테이블 레벨 UPDATE 회수 후 비운영 컬럼만 재부여(authenticated). anon 은 편집 불가 → 회수만.
+    EXECUTE 'REVOKE UPDATE ON public.posts FROM authenticated';
+    EXECUTE 'REVOKE UPDATE ON public.posts FROM anon';
+    EXECUTE 'GRANT UPDATE (' || v_cols || ') ON public.posts TO authenticated';
   END IF;
 END $$;
