@@ -33,6 +33,7 @@ function makeHarness(startHidden = false) {
     onVisibilityChange: (h: () => void) => { visHandler = h; return () => { visHandler = null; }; },
     schedule: (fn: () => void, ms: number) => { const id = seq++; timers.set(id, { at: now + ms, fn }); return id; },
     cancel: (id: number) => { timers.delete(id); },
+    now: () => now,
     callback: () => { calls++; },
     intervalMs: 1000,
   };
@@ -157,6 +158,7 @@ async function run() {
       onVisibilityChange: (h: () => void) => { visHandler = h; return () => { visHandler = null; }; },
       schedule: (fn: () => void, ms: number) => { const id = seq++; timers.set(id, { at: now + ms, fn }); return id; },
       cancel: (id: number) => { timers.delete(id); },
+      now: () => now,
       callback: () => {
         calls++;
         active++;
@@ -256,6 +258,91 @@ async function run() {
     check("deferred: stop 후 예약 타이머 0", h.pendingTimers() === 0);
     await h.setHidden(false);
     check("deferred: stop 후 visibility 무시", h.calls === 1);
+  }
+
+  // ── anchored cadence: 콜백 duration이 0이 아니어도 start-to-start ≈ interval ──
+  // 삼순 P1(재정정): 기존 setInterval은 시작기준 30주기였는데, 콜백 완료 후
+  // interval을 재면 start간격이 interval + 요청지연이 되어 활성 탭 신선도가 drift한다.
+  function makeTimedHarness(callbackMs: number) {
+    let now = 0;
+    let seq = 1;
+    const timers = new Map<number, { at: number; fn: () => void }>();
+    const starts: number[] = [];
+    const pending: Array<{ at: number; resolve: () => void }> = [];
+    let active = 0;
+    let maxActive = 0;
+
+    const deps = {
+      isHidden: () => false,
+      onVisibilityChange: () => () => {},
+      schedule: (fn: () => void, ms: number) => { const id = seq++; timers.set(id, { at: now + ms, fn }); return id; },
+      cancel: (id: number) => { timers.delete(id); },
+      now: () => now,
+      callback: () => {
+        starts.push(now);
+        active++; maxActive = Math.max(maxActive, active);
+        // callbackMs 뒤에 완료되는 비동기 콜백(요청 지연 모사).
+        return new Promise<void>((resolve) => {
+          pending.push({ at: now + callbackMs, resolve: () => { active--; resolve(); } });
+        });
+      },
+      intervalMs: 100,
+    };
+
+    return {
+      deps, starts, get maxActive() { return maxActive; },
+      /** 가짜 시간을 진행: 만기 콜백 완료 + 만기 타이머를 시간순 처리. */
+      async advance(ms: number) {
+        const target = now + ms;
+        let guard = 0;
+        while (guard++ < 100000) {
+          let nextAt = Infinity; let kind: "cb" | "timer" | null = null;
+          for (const pcb of pending) if (pcb.at <= target && pcb.at < nextAt) { nextAt = pcb.at; kind = "cb"; }
+          for (const [, t] of timers) if (t.at <= target && t.at < nextAt) { nextAt = t.at; kind = "timer"; }
+          if (kind === null) break;
+          now = nextAt;
+          if (kind === "cb") {
+            const i = pending.findIndex((pcb) => pcb.at === nextAt);
+            const [pcb] = pending.splice(i, 1);
+            pcb.resolve();
+          } else {
+            let tid: number | null = null;
+            for (const [id, t] of timers) if (t.at === nextAt) { tid = id; break; }
+            if (tid !== null) { const t = timers.get(tid)!; timers.delete(tid); t.fn(); }
+          }
+          await flush();
+        }
+        now = target;
+      },
+    };
+  }
+
+  // 10) callback 60ms / interval 100ms → start간격은 ~100ms(30+지연 아님).
+  {
+    const h = makeTimedHarness(60);
+    const stop = startVisibilityPoller(h.deps);
+    await flush();
+    await h.advance(350);
+    // 시작가: [0,100,200,300] 근처(anchored). 치명적으로 160/320(=100+60 drift)이 아니어야 함.
+    const gaps = h.starts.slice(1).map((t, i) => t - h.starts[i]);
+    check(`anchored: 시작 간격이 interval(100)에 근접 (gaps=${JSON.stringify(gaps)})`,
+      gaps.length >= 2 && gaps.every((gp) => gp === 100));
+    check("anchored: 추가 콜백 걹침 0(single-flight 유지)", h.maxActive === 1);
+    check("anchored: drift(160/320) 아님", !h.starts.includes(160) && !h.starts.includes(320));
+    stop();
+  }
+
+  // 11) callback이 interval보다 길면(120ms > 100ms) 겹침 없이 즉시 재실행(delay=0).
+  {
+    const h = makeTimedHarness(120);
+    const stop = startVisibilityPoller(h.deps);
+    await flush();
+    await h.advance(400);
+    const gaps = h.starts.slice(1).map((t, i) => t - h.starts[i]);
+    check(`slow-callback: 간격이 callback duration(120)으로 수렴(gaps=${JSON.stringify(gaps)})`,
+      gaps.length >= 2 && gaps.every((gp) => gp === 120));
+    check("slow-callback: 겹침 0", h.maxActive === 1);
+    stop();
   }
 
   console.log(`\nvisibility-poller: ${pass}/${pass + fail} pass${fail ? `, ${fail} FAIL` : ""}`);

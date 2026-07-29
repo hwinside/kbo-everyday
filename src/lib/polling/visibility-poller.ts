@@ -16,7 +16,13 @@
  * 큐잉했다가, 진행 중 콜백이 끝난 직후 정확히 1회만 즉시 재실행한다. 이로써
  * 느린 fetch 중 앱을 빠르게 나갔다 돌아와도 중복 Edge Request가 발생하지 않는다.
  *
- * DOM/timer/visibility를 전부 주입받아 결정론적으로 테스트한다.
+ * anchored cadence: 다음 예약은 콜백 *완료* 시점이 아니라 *시작* 시점 기준으로
+ * 계산한다(delay = max(0, intervalMs - 경과시간)). 따라서 setInterval처럼
+ * start-to-start 간격이 intervalMs로 유지되어, 보는 탭의 신선도가 매 회
+ * 요청 지연만큼 누적 변지(drift)하지 않는다. 콜백이 intervalMs보다 오래
+ * 걸리면 겹침 없이(single-flight 유지) 즉시 재실행한다.
+ *
+ * DOM/timer/visibility/clock을 전부 주입받아 결정론적으로 테스트한다.
  */
 export interface VisibilityPollerDeps {
   /** 현재 탭이 백그라운드인지. */
@@ -27,6 +33,8 @@ export interface VisibilityPollerDeps {
   schedule: (fn: () => void, ms: number) => number;
   /** clearTimeout 상당. */
   cancel: (id: number) => void;
+  /** 단조 증가 시각(ms). anchored cadence 계산용. */
+  now: () => number;
   /** 폴링마다 호출할 콜백(비동기 허용). */
   callback: () => void | Promise<void>;
   /** 폴링 간격(ms). */
@@ -54,6 +62,7 @@ export function startVisibilityPoller(deps: VisibilityPollerDeps): () => void {
     if (cancelled || deps.isHidden() || running) return;
     clear(); // 진행하므로 대기 중 예약 타이머 취소(타이머 ≤ 1 보장).
     running = true;
+    const startedAt = deps.now(); // anchored cadence: 시작 시각 기준.
     try {
       await deps.callback();
     } finally {
@@ -69,7 +78,10 @@ export function startVisibilityPoller(deps: VisibilityPollerDeps): () => void {
       }
     }
     if (deps.isHidden()) return; // 숨김이면 정지(visible 핸들러가 재개).
-    timer = deps.schedule(() => { void tick(); }, deps.intervalMs);
+    // 시작 기준 간격 유지: 경과시간을 뺀 나머지만 대기(콜백이 interval보다 길면 즉시).
+    const elapsed = deps.now() - startedAt;
+    const delay = Math.max(0, deps.intervalMs - elapsed);
+    timer = deps.schedule(() => { void tick(); }, delay);
   };
 
   const onVisibility = () => {

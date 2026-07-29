@@ -41,6 +41,7 @@ export function useVisibilityAwareInterval(
       },
       schedule: (fn, ms) => window.setTimeout(fn, ms),
       cancel: (id) => window.clearTimeout(id),
+      now: () => (typeof performance !== "undefined" ? performance.now() : Date.now()),
       callback: () => cbRef.current(),
       intervalMs,
     });
