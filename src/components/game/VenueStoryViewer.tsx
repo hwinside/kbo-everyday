@@ -423,6 +423,7 @@ export default function VenueStoryViewer({
     } catch {
       setToast("댓글 작성 실패");
     } finally {
+      commentSubmitLockRef.current = false;
       setCommentBusy(false);
     }
   };
