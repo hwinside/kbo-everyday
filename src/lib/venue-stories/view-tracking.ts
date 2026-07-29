@@ -15,10 +15,11 @@ export function isVenueStoryViewKind(value: unknown): value is VenueStoryViewKin
 export function venueStorySentKey(
   storyId: number,
   kind: VenueStoryViewKind,
+  viewerKey: string,
   nowMs = Date.now(),
 ): string {
   const kstDay = new Date(nowMs + 9 * 60 * 60 * 1_000).toISOString().slice(0, 10);
-  return `${kstDay}:${kind}:${storyId}`;
+  return `${kstDay}:${viewerKey}:${kind}:${storyId}`;
 }
 
 /**

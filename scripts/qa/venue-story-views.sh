@@ -59,10 +59,10 @@ SQL
 # migration 은 Supabase 처럼 단일 트랜잭션으로 적용.
 "${PSQL[@]}" -1 -f "$MIGRATION" >/dev/null
 
-pass=*** fail=0
+ok_count=0 bad_count=0
 check() { # name actual expected
-  if [ "$2" = "$3" ]; then pass=*** echo "  ✅ $1"
-  else fail=$((fail+1)); echo "  ❌ $1 (got: $2 / want: $3)"; fi
+  if [ "$2" = "$3" ]; then ok_count=$((ok_count+1)); echo "  ✅ $1"
+  else bad_count=$((bad_count+1)); echo "  ❌ $1 (got: $2 / want: $3)"; fi
 }
 daily_total() { # story_id kind → 전체 기간 view_count 합 (없으면 0)
   "${PSQL[@]}" -c "SELECT COALESCE(sum(view_count),0) FROM venue_story_view_daily WHERE story_id=$1 AND kind='$2'"
@@ -138,5 +138,5 @@ check "anon daily SELECT 불가" "$("${PSQL[@]}" -c "SELECT has_table_privilege(
 check "authenticated marks SELECT 불가" "$("${PSQL[@]}" -c "SELECT has_table_privilege('authenticated','venue_story_view_marks','SELECT')")" "f"
 
 echo
-echo "passed=$pass failed=$fail"
-[ "$fail" -eq 0 ]
+echo "passed=$ok_count failed=$bad_count"
+[ "$bad_count" -eq 0 ]

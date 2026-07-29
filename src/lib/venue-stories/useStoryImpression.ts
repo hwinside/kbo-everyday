@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { hasTrackedVenueStoryView, trackVenueStoryView } from "./view-tracker-client";
+import { trackVenueStoryView } from "./view-tracker-client";
 
 /**
  * 직관 스토리 트레이 임프레션 트래킹 훅 — #735 usePostImpression 의 50%+0.5s 패턴 재사용.
@@ -23,7 +23,6 @@ export function useVenueStoryImpression<T extends HTMLElement = HTMLSpanElement>
     const el = ref.current;
     if (!el || disabled) return;
     if (!Number.isInteger(storyId) || storyId <= 0) return;
-    if (hasTrackedVenueStoryView(storyId, "impression")) return;
     if (typeof IntersectionObserver === "undefined") return;
 
     let dwellTimer: ReturnType<typeof setTimeout> | null = null;
@@ -43,7 +42,6 @@ export function useVenueStoryImpression<T extends HTMLElement = HTMLSpanElement>
           if (dwellTimer) return; // 이미 dwell 카운트 중
           dwellTimer = setTimeout(() => {
             dwellTimer = null;
-            if (hasTrackedVenueStoryView(storyId, "impression")) return;
             void trackVenueStoryView(storyId, "impression");
             io.disconnect();
           }, 500);

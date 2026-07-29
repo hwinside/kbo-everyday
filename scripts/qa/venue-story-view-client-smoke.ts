@@ -27,11 +27,21 @@ test("kind 검증: click/impression 만 허용", () => {
 test("클라 세션 dedupe 키는 KST 일자를 포함해 장시간 열린 탭도 다음 날 다시 집계", () => {
   const beforeKstMidnight = Date.parse("2026-07-29T14:59:59.000Z");
   const afterKstMidnight = Date.parse("2026-07-29T15:00:00.000Z");
-  assert.equal(venueStorySentKey(7, "impression", beforeKstMidnight), "2026-07-29:impression:7");
-  assert.equal(venueStorySentKey(7, "impression", afterKstMidnight), "2026-07-30:impression:7");
+  assert.equal(
+    venueStorySentKey(7, "impression", "user:a", beforeKstMidnight),
+    "2026-07-29:user:a:impression:7",
+  );
+  assert.equal(
+    venueStorySentKey(7, "impression", "user:a", afterKstMidnight),
+    "2026-07-30:user:a:impression:7",
+  );
   assert.notEqual(
-    venueStorySentKey(7, "click", beforeKstMidnight),
-    venueStorySentKey(7, "impression", beforeKstMidnight),
+    venueStorySentKey(7, "click", "user:a", beforeKstMidnight),
+    venueStorySentKey(7, "impression", "user:a", beforeKstMidnight),
+  );
+  assert.notEqual(
+    venueStorySentKey(7, "click", "user:a", beforeKstMidnight),
+    venueStorySentKey(7, "click", "user:b", beforeKstMidnight),
   );
 });
 
@@ -155,7 +165,6 @@ test("트레이 impression은 IntersectionObserver 50%+dwell 및 세션 중복 �
   assert.match(source, /new IntersectionObserver/);
   assert.match(source, /intersectionRatio >= 0\.5/);
   assert.match(source, /setTimeout/);
-  assert.match(source, /hasTrackedVenueStoryView/);
   assert.match(source, /trackVenueStoryView\(storyId,\s*"impression"\)/);
 
   const section = readFileSync(
@@ -166,7 +175,7 @@ test("트레이 impression은 IntersectionObserver 50%+dwell 및 세션 중복 �
   assert.doesNotMatch(section, /new IntersectionObserver/); // 구형 수동 observer 경로 재유입 금지
 });
 
-test("각 fire의 user/guest 판정은 전송 시점 세션 + 서버 resolveViewerKey 단일 경로", () => {
+test("각 fire의 user/guest 판정은 전송 시점 세션이며 viewer별 세션 dedupe를 적용", () => {
   const client = readFileSync(
     new URL("../../src/lib/venue-stories/view-tracker-client.ts", import.meta.url),
     "utf8",
@@ -180,8 +189,10 @@ test("각 fire의 user/guest 판정은 전송 시점 세션 + 서버 resolveView
     "utf8",
   );
   assert.equal(client.match(/await getSafeSession\(\)/g)?.length, 1);
+  assert.match(client, /session\?\.user\?\.id/);
+  assert.match(client, /venueStorySentKey\(storyId,\s*kind,\s*viewerKey\)/);
   assert.match(client, /payload:\s*\{\s*kind,\s*guestId,\s*accessToken:/);
-  assert.doesNotMatch(hook, /useAuth|authLoading/);
+  assert.doesNotMatch(hook, /hasTrackedVenueStoryView/);
   assert.equal(route.match(/const viewerKey = resolveViewerKey\(/g)?.length, 1);
 });
 

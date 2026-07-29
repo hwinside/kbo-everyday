@@ -65,7 +65,7 @@ function buildQaKeyboardStory(gameId: string): VenueStory {
 }
 
 export default function VenueStorySection({ gameId }: Props) {
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const storyQaKeyboard =
     typeof window !== "undefined" &&
     new URLSearchParams(window.location.search).get("storyQaKeyboard") === "1";
@@ -400,7 +400,10 @@ export default function VenueStorySection({ gameId }: Props) {
             >
               <div className="relative w-[68px] h-[68px]">
                 {/* 트레이 노출 = impression (A안 원문, #735 50%+0.5s 패턴) — 낙관 처리중/실패 카드 제외 */}
-                <StoryTrayImpressionSensor storyId={s.id} disabled={!!s.processing || !!s.failed} />
+                <StoryTrayImpressionSensor
+                  storyId={s.id}
+                  disabled={authLoading || !!s.processing || !!s.failed}
+                />
                 <div
                   className={`relative w-full h-full rounded-full overflow-hidden bg-bg-tertiary ring-2 ${
                     seenIds.has(String(s.id)) ? "ring-gray-500/50" : "ring-red-500/60"
