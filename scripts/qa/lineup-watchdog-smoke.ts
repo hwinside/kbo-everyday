@@ -374,6 +374,46 @@ async function main() {
     ok("deadline 경계: batch 1회만(루프 재진입 안 함)", calls === 1);
   }
 
+  // ── (삼순 #952 6차 ①) snapshot open 직후 deadline → batch 0회·finalize skip → open됐지만 미종결 → failed ──
+  {
+    let clock = 2_000_000;
+    const DEADLINE = 2_000_000 + 16_000;
+    let drains = 0;
+    const r = await runLineupWatchdog({
+      dateStr: "20260729", deadlineAtMs: DEADLINE,
+      deps: base({
+        fetchGames: async () => [game("G1", "scheduled", 1, 10)],
+        fetchLineupConfirmed: async () => true,
+        // openSnapshot 은 deadline 전 성공하고 반환 직후 clock 을 deadline 으로 전진 → drain 루프 0회 진입.
+        openSnapshot: async () => { clock = DEADLINE; return DEADLINE + 60_000; },
+        deliverBatch: async () => { drains++; return batch(); },
+        finalizeSnapshot: async () => { throw new Error("finalize skipped at deadline"); },
+        now: () => clock,
+      }),
+    });
+    ok("open 직후 deadline: batch 0회(drain 미진입)", drains === 0);
+    ok("open됐으나 미종결 → openUnresolved>0", r.summary.openUnresolved > 0);
+    ok("open됐으나 미종결 → status failed(삼순 6차 ①)", r.status === "failed");
+  }
+
+  // ── (삼순 #952 6차 ②) 양 팀 all-permanent(영구 실패) → accepted=0/permanentFailed>0 → failed ──
+  {
+    const r = await runLineupWatchdog({
+      dateStr: "20260729", deadlineAtMs: Date.now() + 16_000,
+      deps: base({
+        fetchGames: async () => [game("G1", "scheduled", 1, 10)],
+        fetchLineupConfirmed: async () => true,
+        openSnapshot: async () => Date.now() + 60_000,
+        // claim 된 행이 전부 영구 실패(불량 토큰). pending=0·종결되었지만 permanentFailed>0.
+        deliverBatch: async () => batch({ claimed: 2, pending: 0, snapshotCompleted: true, fcmAcceptedDelta: 0, permanentFailed: 2 }),
+        finalizeSnapshot: async () => fin({ snapshotCompleted: true, pending: 0, permanentFailed: 2 }),
+      }),
+    });
+    ok("all-permanent: accepted 0", r.summary.accepted === 0);
+    ok("all-permanent: permanentFailed>0", r.summary.permanentFailed > 0);
+    ok("all-permanent → status failed(삼순 6차 ②)", r.status === "failed");
+  }
+
   console.log(`\nlineup-watchdog 오케스트레이터: ${pass} passed, ${fail} failed`);
   if (fail > 0) process.exit(1);
 }

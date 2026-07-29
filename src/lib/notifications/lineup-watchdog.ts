@@ -59,6 +59,7 @@ export interface LineupWatchdogSummary {
   snapshotsOpened: number;
   snapshotOpenErrors: number;
   snapshotsCompleted: number;
+  openUnresolved: number; // open 됐으나 이번 tick 종결 확인 못함(deadline 소진로 drain/finalize 미수행) = systemic
   accepted: number;
   drainErrors: number;
   pending: number; // 종료 시점 미terminal(재시도 대기) 행 합계
@@ -113,7 +114,7 @@ export async function runLineupWatchdog(args: {
   const summary: LineupWatchdogSummary = {
     scheduled: 0, lineupProbes: 0, lineupSignals: 0, probeFailures: 0, confirmed: 0, targets: 0,
     dueSnapshots: 0, dueDrained: 0, snapshotsOpened: 0, snapshotOpenErrors: 0, snapshotsCompleted: 0,
-    accepted: 0, drainErrors: 0, pending: 0, permanentFailed: 0, expired: 0,
+    openUnresolved: 0, accepted: 0, drainErrors: 0, pending: 0, permanentFailed: 0, expired: 0,
   };
 
   // fetchGames 도 동일 absolute deadline 에 결속(re-gate ①). 실패/초과면 systemic failed.
@@ -142,6 +143,10 @@ export async function runLineupWatchdog(args: {
     // 마지막 batch 가 남긴 in-flight 미완료 pending. deadline 소진으로 finalize 미실행 시 보존해
     // false-green(status:ok·pending:0) 차단(삼순 #952 5차 blocker).
     let lastBatchPending = 0;
+    // 이번 tick 에 이 대상을 종결 확인했는가: batch 가 pending=0/claimed=0 를 보았거나 finalize 성공.
+    // 둘 다 아니면(deadline 소진로 drain/finalize 미수행) open 했지만 미종결 → systemic(삼순 #952 6차 ①).
+    let sawTerminalBatch = false;
+    let finalizedOk = false;
     for (let i = 0; i < MAX_BATCHES_PER_TARGET && now() < deadlineAtMs; i++) {
       let batch: LineupDeliveryBatchResult;
       try {
@@ -158,7 +163,7 @@ export async function runLineupWatchdog(args: {
       summary.accepted += batch.fcmAcceptedDelta;
       if (batch.snapshotCompleted) summary.snapshotsCompleted++;
       lastBatchPending = batch.pending; // deadline 소진 시 systemic 보존용
-      if (batch.claimed === 0 || batch.pending === 0) break;
+      if (batch.claimed === 0 || batch.pending === 0) { sawTerminalBatch = true; break; }
     }
     if (countAsDue) summary.dueDrained++;
     // 종료 시점 터미널 카운트 확정(pending/permanent/expired). deadline 초과 pending 은 여기서 expired 전환.
@@ -169,9 +174,7 @@ export async function runLineupWatchdog(args: {
         summary.pending += fin.pending;
         summary.permanentFailed += fin.permanentFailed;
         summary.expired += fin.expired;
-        if (fin.snapshotCompleted && !countAsDue) {
-          // 신규 경로에서 batch 가 completed 를 못 잡았어도 finalize 가 종결했으면 반영.
-        }
+        finalizedOk = true; // finalize 성공 = 이 대상 이번 tick 종결 확정(pending/permanent/expired 확정).
       } catch {
         // finalize 실패(원장 durable) — 마지막 batch 의 in-flight pending 보존로 systemic 노출.
         summary.pending += lastBatchPending;
@@ -181,6 +184,10 @@ export async function runLineupWatchdog(args: {
       // 예산 소진으로 finalize 미실행(삼순 #952 5차): 마지막 batch 미완료 pending 보존로 false-green 차단.
       summary.pending += lastBatchPending;
     }
+    // open 됐지만 이번 tick 종결(pending=0 확인 또는 finalize 성공)을 못 한 대상은 systemic 노출
+    // (삼순 #952 6차 ①: snapshot open 직후 deadline 으로 batch 0회·finalize skip 캐이스). throw 는
+    // 이미 drainErrors>0 로 노출되므로 중복 계상하지 않는다.
+    if (!drainThrew && !finalizedOk && !sawTerminalBatch) summary.openUnresolved++;
   };
 
   /** 신규 confirmed 대상: openSnapshot(멱등) → drain. 이번 tick 처음 여는 경로. */
@@ -265,6 +272,8 @@ export async function runLineupWatchdog(args: {
     summary.snapshotOpenErrors > 0 || // 원장 생성 실패(부분 포함)
     summary.drainErrors > 0 || // drain/FCM/due 조회 실패
     summary.pending > 0 || // 이번 tick 발송 시도했으나 FCM transient 로 미완료(부분 FCM 실패) — 삼순 #952 4차 blocker2
+    summary.permanentFailed > 0 || // 영구 실패(불량 토큰 등) = 부분 delivery 실패 — 삼순 #952 6차 ②
+    summary.openUnresolved > 0 || // open 됐으나 이번 tick 미종결(deadline 소진) — 삼순 #952 6차 ①
     summary.expired > 0 || // 마감 내 미발송(실제 놓침) — 경보
     (summary.targets > 0 && summary.snapshotsOpened === 0);
 
