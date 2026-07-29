@@ -492,24 +492,15 @@ console.log("[전송 제스처 — pointerdown/up/cancel + 중복 가드]");
     ok("press 없이 pointerup → 미승인", shouldSubmitOnPointerUp(st, inside) === false);
   }
 
-  // 재진입/중복 가드 + 수명주기(1탭=1POST, trailing click 0중복, finally 뒤 2번째)
-  // 실제 handleCommentSubmit 락 수명을 모사: begin=사전 canBegin+lock set, end=finally lock 해제.
-  const base = { hasStory: true, hasContent: true };
-  let posts = 0;
-  const lock = { current: false };
-  const trySubmit = (busy: boolean) => {
-    if (!canBeginCommentSubmit({ ...base, busy, locked: lock.current })) return false;
-    lock.current = true; // 동기 lock(setState 전)
-    posts++;
-    return true;
-  };
-  const endSubmit = () => { lock.current = false; }; // finally
-
-  ok("1탭=1POST: pointerup 제출", trySubmit(false) === true && posts === 1);
-  ok("trailing click 0중복: 같은 탭 click 은 lock 으로 차단", trySubmit(false) === false && posts === 1);
-  endSubmit();
-  ok("finally 뒤 2번째 댓글 허용", trySubmit(false) === true && posts === 2);
-  endSubmit();
+  // 재진입 가드 순수 계약(canBeginCommentSubmit): lock/busy/내용/story 조건만 검증.
+  // ⚠️ 실제 1탭=1POST / trailing click 0중복 / finally 뒤 2번째는 lock set/reset 수명이
+  //   필요해 여기서 로컬 모사(posts++)하면 lock 제거도 green 인 false-green → 삼순 #948 5차 지적.
+  //   실제 VenueStoryViewer 를 렌더해 native pointer→POST spy 로 검증하는 건
+  //   scripts/qa/venue-story-comment-submit-render.ts (npm run qa:venue-story-comment-render).
+  ok("lock 보유 중 미제출(trailing click/동시탭 차단 전제)",
+    canBeginCommentSubmit({ hasStory: true, hasContent: true, busy: false, locked: true }) === false);
+  ok("lock 해제 후 제출 가능(finally 뒤 2번째 전제)",
+    canBeginCommentSubmit({ hasStory: true, hasContent: true, busy: false, locked: false }) === true);
   ok("내용 없으면 미제출", canBeginCommentSubmit({ hasStory: true, hasContent: false, busy: false, locked: false }) === false);
   ok("story 없으면 미제출", canBeginCommentSubmit({ hasStory: false, hasContent: true, busy: false, locked: false }) === false);
   ok("busy 중 미제출", canBeginCommentSubmit({ hasStory: true, hasContent: true, busy: true, locked: false }) === false);
