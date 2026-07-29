@@ -64,7 +64,21 @@ async function main() {
 
   const Viewer = (await import("../../src/components/game/VenueStoryViewer")).default;
 
-  // fetch spy: POST /comments 카운트 + 필요 시 hold(동시성 검증), GET 은 빈 목록.
+  // ③ 아바타 회귀 결속용 GET 댓글 셋 — custom:/preset:/null 각 1건.
+  // getAvatarPath 해석이 헤더·CommentAvatar 양쪽에서 실제 <img src> 로 렌더돼야 한다(삼순 #948 ③ NO-GO).
+  const HEADER_AVATAR_RAW = "custom:https://cdn.test/header.jpg";
+  const HEADER_AVATAR_URL = "https://cdn.test/header.jpg";
+  const COMMENT_CUSTOM_RAW = "custom:https://cdn.test/comment.jpg";
+  const COMMENT_CUSTOM_URL = "https://cdn.test/comment.jpg";
+  const COMMENT_PRESET_RAW = "preset:baseball";
+  const COMMENT_PRESET_URL = "/avatars/baseball.svg";
+  const getComments = [
+    { id: 101, content: "커스텀 아바타", userId: "u-custom", createdAt: new Date().toISOString(), author: { nickname: "커스텀", avatarUrl: COMMENT_CUSTOM_RAW, teamId: 1 } },
+    { id: 102, content: "프리셋 아바타", userId: "u-preset", createdAt: new Date().toISOString(), author: { nickname: "프리셋", avatarUrl: COMMENT_PRESET_RAW, teamId: 2 } },
+    { id: 103, content: "널 아바타", userId: "u-null", createdAt: new Date().toISOString(), author: { nickname: "널테스터", avatarUrl: null, teamId: 3 } },
+  ];
+
+  // fetch spy: POST /comments 카운트 + 필요 시 hold(동시성 검증), GET 은 위 아바타 댓글 셋.
   let postCount = 0;
   let holdPost = false;
   let releasers: Array<() => void> = [];
@@ -78,17 +92,17 @@ async function main() {
       if (holdPost) await new Promise<void>((r) => releasers.push(r));
       return {
         ok: true, status: 200,
-        json: async () => ({ comment: { id: postCount, content, userId: "author-1", createdAt: new Date().toISOString(), author: { nickname: "t", avatarUrl: null, teamId: 1 } } }),
+        json: async () => ({ comment: { id: 200 + postCount, content, userId: "author-1", createdAt: new Date().toISOString(), author: { nickname: "t", avatarUrl: null, teamId: 1 } } }),
       } as unknown as Response;
     }
-    return { ok: true, status: 200, json: async () => ({ comments: [], total: 0 }) } as unknown as Response;
+    return { ok: true, status: 200, json: async () => ({ comments: getComments, total: getComments.length }) } as unknown as Response;
   }) as typeof fetch;
 
   const story = {
     id: 1, gameId: "20260729KTNC0", userId: "author-1", mediaType: "image" as const,
     mediaUrl: "http://x/y.jpg", thumbUrl: null, durationMs: null, width: 1080, height: 1920,
     caption: "테스트", venueVerified: true, createdAt: new Date().toISOString(),
-    author: { nickname: "테스터", avatarUrl: null, teamId: 1 },
+    author: { nickname: "테스터", avatarUrl: HEADER_AVATAR_RAW, teamId: 1 },
   };
 
   const container = dom.window.document.createElement("div");
@@ -112,6 +126,22 @@ async function main() {
   ok("댓글 입력창 렌더됨", !!input);
   const sendBtn = scope.querySelector('button[aria-label="댓글 등록"]') as HTMLElement | null;
   ok("전송 버튼 렌더됨", !!sendBtn);
+
+  // ── ③ 아바타 렌더 결속(삼순 #948 NO-GO 보완조건 1~4) ──
+  // getAvatarPath 해석을 헤더/CommentAvatar 어느 한쪽이라도 제거하면 아래 assertion 이 fail 한다.
+  const imgSrcs = Array.from(scope.querySelectorAll("img")).map((el) => (el as HTMLImageElement).getAttribute("src") ?? "");
+  // 1) story header custom: → 실제 URL 렌더
+  ok("헤더 아바타 custom: → 실제 URL <img src> 렌더", imgSrcs.includes(HEADER_AVATAR_URL));
+  // 2) GET 댓글 작성자 custom: → 실제 URL 렌더
+  ok("댓글 작성자 아바타 custom: → 실제 URL <img src> 렌더", imgSrcs.includes(COMMENT_CUSTOM_URL));
+  // 3a) preset: → /avatars svg 경로 렌더
+  ok("댓글 작성자 아바타 preset: → /avatars svg 경로 렌더", imgSrcs.includes(COMMENT_PRESET_URL));
+  // 4) raw prefix 미해석 잔류 0 — getAvatarPath 제거 시 여기에 custom:/preset: 가 남아 fail
+  ok("DOM 에 raw 'custom:'/'preset:' <img src> 잔류 0",
+    !imgSrcs.some((s) => s.startsWith("custom:") || s.startsWith("preset:")));
+  // 3b) null 아바타 → 이니셜 폴백(이미지 아님, 닉네임 첫 글자)
+  ok("null 아바타 댓글 → 이니셜 폴백 표시(닉네임 첫 글자 '널')",
+    scope.textContent?.includes("널") === true && !imgSrcs.some((s) => s.includes("u-null")));
 
   const typeContent = async (text: string) => { await act(async () => { setReactInputValue(input!, text); }); };
   const tap = async (opts: { clientX?: number; clientY?: number } = {}) => {
