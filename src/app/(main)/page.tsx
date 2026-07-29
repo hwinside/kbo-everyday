@@ -3,11 +3,12 @@ import HomeClientShell from "@/components/home/HomeClientShell";
 import type { HomeGame } from "@/hooks/useHomeInit";
 import { PRESEASON_DATES } from "@/lib/constants/preseason-schedule";
 import type { LiveGameData } from "@/lib/hooks/useLiveGame";
-import { fetchGames } from "@/lib/crawler/kbo-api";
+import { fetchGames, USER_FACING_GAMES_TIMEOUT_MS } from "@/lib/crawler/kbo-api";
 import { liveGamesFromKboGames } from "@/lib/crawler/home-live-games";
 
 // 홈 SSR 의 user-facing KBO budget. blackhole 여도 홈 전체가 KBO 3.5s + Naver 5s 안에 수렴.
-const HOME_KBO_BUDGET_MS = 3500;
+// user-facing budget SSOT — `/api/games` route 와 동일 값 공유(kbo-api.ts).
+const HOME_KBO_BUDGET_MS = USER_FACING_GAMES_TIMEOUT_MS;
 
 // Force dynamic rendering — game data changes throughout the day
 export const dynamic = "force-dynamic";

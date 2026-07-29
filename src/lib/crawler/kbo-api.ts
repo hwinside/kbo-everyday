@@ -172,6 +172,13 @@ function isRawKboGameSane(raw: Partial<KboGameRaw> | null | undefined): boolean 
   return true;
 }
 
+/**
+ * user-facing 경기목록 조회 budget(ms). 홈 SSR·`/api/games` route 등 사용자 응답 경로가
+ * 공통으로 쓰는 SSOT — KBO blackhole 에서도 이 시간 안에 Naver 폴백으로 수렴한다.
+ * cron/배치 소비자는 opts 없이 기본 10s 를 그대로 쓴다.
+ */
+export const USER_FACING_GAMES_TIMEOUT_MS = 3500;
+
 export async function fetchGames(
   date: string,
   srId = "0,1,3,4,5,7,9",

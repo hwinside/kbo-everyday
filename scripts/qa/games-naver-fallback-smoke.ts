@@ -10,6 +10,8 @@ import assert from "node:assert/strict";
 import { fetchGames } from "../../src/lib/crawler/kbo-api";
 import { fetchNaverGames, mapNaverGameToKbo, extractGameSeq } from "../../src/lib/crawler/naver-games";
 import { liveGamesFromKboGames } from "../../src/lib/crawler/home-live-games";
+import { USER_FACING_GAMES_TIMEOUT_MS } from "../../src/lib/crawler/kbo-api";
+import { GET as gamesRouteGET } from "../../src/app/api/games/route";
 
 const DATE = "20260729";
 
@@ -415,6 +417,46 @@ const keepAlive = setInterval(() => {}, 1000);
   restoreFetch();
   assert.equal(games.length, 1);
   assert.equal(games[0].status, "final");
+}
+
+// ── actual `/api/games` route: KBO blackhole → 기본 10s 정지 아닌 user-facing budget(3.5s) 안 Naver 수렴 (P0/P1) ───
+// 삼순 4차 NO-GO: 홈 SSR 만 아니라 실제 경기목록 화면·30초 갱신이 타는 /api/games 도 bounded 여야 함.
+{
+  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input.toString();
+    if (url.includes("GetKboGameList")) {
+      // blackhole: abort 시그널만 존중. route 기본 10s 면 10s 정지, budget 3.5s 면 그 안에 수렴.
+      return new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal;
+        if (signal) {
+          if (signal.aborted) return reject(new DOMException("aborted", "AbortError"));
+          signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true });
+        }
+      });
+    }
+    if (url.includes("schedule/games")) {
+      return Promise.resolve(jsonResponse({ code: 200, success: true, result: { games: [naverGame({ statusCode: "RESULT", statusInfo: "9회말", homeTeamScore: 6, awayTeamScore: 3 })] } }));
+    }
+    throw new Error(`unexpected url ${url}`);
+  }) as typeof fetch;
+  const req = { nextUrl: new URL("http://localhost/api/games?date=20260729") } as unknown as Parameters<typeof gamesRouteGET>[0];
+  const t0 = Date.now();
+  const res = await gamesRouteGET(req);
+  const elapsed = Date.now() - t0;
+  restoreFetch();
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  // 기본 10s 면 elapsed≈10,000ms → 이 assert 실패. route 가 user-facing budget(3.5s) 사용 증명.
+  assert.ok(elapsed < 6000, `route가 user-facing budget 미사용(10s 정지): ${elapsed}ms`);
+  assert.equal(body.count, 1);
+  assert.equal(body.games[0].status, "final");
+  assert.equal(body.games[0].awayScore, 3);
+}
+
+// ── 배선 SSOT: 홈과 route 가 동일 user-facing budget 상수 공유(하드코딩 drift 방지) ───
+{
+  assert.equal(typeof USER_FACING_GAMES_TIMEOUT_MS, "number");
+  assert.ok(USER_FACING_GAMES_TIMEOUT_MS > 0 && USER_FACING_GAMES_TIMEOUT_MS <= 5000);
 }
 
 clearInterval(keepAlive);
