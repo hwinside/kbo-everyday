@@ -172,6 +172,7 @@
     "qa:relay-delta": "tsx scripts/qa/relay-delta-smoke.ts",
     "qa:conditional-etag": "tsx scripts/qa/conditional-etag-smoke.ts",
     "qa:realtime-reconnect": "tsx scripts/qa/realtime-reconnect-smoke.ts",
+    "qa:visibility-poller": "tsx scripts/qa/visibility-poller-smoke.ts",
     "qa:game-live-stream": "tsx scripts/qa/game-live-stream-smoke.ts"
   },
   "dependencies": {

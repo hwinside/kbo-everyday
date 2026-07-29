@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
+import { useVisibilityAwareInterval } from "@/lib/hooks/useVisibilityAwareInterval";
 import clsx from "clsx";
 import type {
   ContextualStatsResponse,
@@ -28,43 +29,34 @@ type Props = {
 export default function ContextualStatsBox({ gameId, enabled = true }: Props) {
   const [data, setData] = useState<ContextualStatsResponse | null>(null);
   const boxRef = useRef<HTMLDivElement>(null);
-
+  const mountedRef = useRef(true);
   useEffect(() => {
-    if (!enabled) return;
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
-    const fetchOnce = async () => {
-      try {
-        const res = await fetch(`/api/contextual-stats?gameId=${encodeURIComponent(gameId)}`, {
-          cache: "no-store",
-        });
-        if (!res.ok) {
-          if (!cancelled && !isKeyboardOpen()) setData(null);
-          return;
-        }
-        const json = (await res.json()) as ContextualStatsResponse;
-        // GameChat composer focus(=body.kbd-open) 동안엔 라인 add/remove로 인한
-        // 박스 높이 변화가 composer 위쪽 layout을 흔들어 V3 scrollIntoView 앵커가
-        // 깨진다. 키보드 내려갈 때까지 데이터 갱신을 보류한다. (PR #126 회귀 핫픽스)
-        if (!cancelled && !isKeyboardOpen()) setData(json);
-      } catch {
-        if (!cancelled && !isKeyboardOpen()) setData(null);
+  const pollContextualStats = useCallback(async () => {
+    // GameChat composer focus(=body.kbd-open) 동안엔 라인 add/remove로 인한
+    // 박스 높이 변화가 composer 위쪽 layout을 흔들어 V3 scrollIntoView 앵커가
+    // 깨진다. 키보드 내려갈 때까지 데이터 갱신을 보류한다. (PR #126 회귀 핫픽스)
+    if (isKeyboardOpen()) return;
+    try {
+      const res = await fetch(`/api/contextual-stats?gameId=${encodeURIComponent(gameId)}`, {
+        cache: "no-store",
+      });
+      if (!res.ok) {
+        if (mountedRef.current && !isKeyboardOpen()) setData(null);
+        return;
       }
-    };
+      const json = (await res.json()) as ContextualStatsResponse;
+      if (mountedRef.current && !isKeyboardOpen()) setData(json);
+    } catch {
+      if (mountedRef.current && !isKeyboardOpen()) setData(null);
+    }
+  }, [gameId]);
 
-    const loop = async () => {
-      if (!isKeyboardOpen()) await fetchOnce();
-      if (cancelled) return;
-      timer = setTimeout(loop, POLL_INTERVAL_MS);
-    };
-
-    void loop();
-    return () => {
-      cancelled = true;
-      if (timer) clearTimeout(timer);
-    };
-  }, [gameId, enabled]);
+  // 백그라운드 탭은 폴링 정지, 복귀 시 즉시 갱신. gameId 전환 시도 즉시 갱신.
+  useVisibilityAwareInterval(pollContextualStats, POLL_INTERVAL_MS, { enabled, resetKey: gameId });
 
   // 폴링은 skip해도 framer-motion 진행 중인 height: auto↔0 transition은
   // 박스 외곽 높이를 미세하게 흔들 수 있다. body.kbd-open 동안엔 박스 outer
