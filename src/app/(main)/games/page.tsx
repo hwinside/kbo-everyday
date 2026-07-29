@@ -83,6 +83,7 @@ export default function GamesPage() {
   const [requestCoordinator] = useState(() => createRequestCoordinator<GameData[]>());
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setMyTeamId(getMyTeamId());
   }, []);
 
@@ -177,6 +178,7 @@ export default function GamesPage() {
   // MY TEAM 이 오늘 경기가 없으면 다음 경기(최대 14일 이내) 탐색 — 오늘 날짜를 볼 때만
   useEffect(() => {
     if (myTeamId == null || selectedDate !== today || hasMyTeamGameToday) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setNextMyGame(null);
       return;
     }
