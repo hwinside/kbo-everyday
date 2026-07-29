@@ -109,6 +109,20 @@ export async function createPoll(input: CreatePollInput): Promise<number> {
   return j.postId;
 }
 
+/** 투표글 질문(title)·설명(content)만 수정. 서버 route(PATCH)가 인증·작성자·검증·모더레이션을
+ *  강제하고, 비텍스트 필드 불변은 DB 트리거가 backstop 한다. 실패 시 서버 메시지로 throw. */
+export async function editPollPost(
+  postId: number,
+  input: { title: string; content: string },
+): Promise<void> {
+  const res = await fetch(`/api/polls/${postId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...(await authHeader()) },
+    body: JSON.stringify({ title: input.title, content: input.content }),
+  });
+  if (!res.ok) throw new Error(await parseError(res, "투표 수정에 실패했어요"));
+}
+
 /** 투표 상세 조회(결과 게이트 서버 적용). 없으면 null. */
 export async function fetchPollDetail(postId: number): Promise<PollDetail | null> {
   const res = await fetch(`/api/polls/${postId}`, {

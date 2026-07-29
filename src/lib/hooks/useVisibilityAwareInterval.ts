@@ -11,12 +11,13 @@ import { startVisibilityPoller } from "@/lib/polling/visibility-poller";
  * @param callback 폴링마다 실행할 콜백. ref로 최신값을 참조하므로 매 렌더 새 함수여도 재구독하지 않는다.
  * @param intervalMs 폴링 간격(ms).
  * @param options.enabled false면 폴링하지 않는다(기본 true).
- * @param options.resetKey 값이 바뀌면 폴링을 재시작(=즉시 1회 실행)한다. gameId 등 대상 전환용.
+ * @param options.resetKey 값이 바뀌면 폴링을 재시작한다. gameId 등 대상 전환용.
+ * @param options.runImmediately false면 최초/대상전환 시 첫 실행을 intervalMs 뒤로 미룬다.
  */
 export function useVisibilityAwareInterval(
   callback: () => void | Promise<void>,
   intervalMs: number,
-  options?: { enabled?: boolean; resetKey?: string | number },
+  options?: { enabled?: boolean; resetKey?: string | number; runImmediately?: boolean },
 ): void {
   const enabled = options?.enabled ?? true;
   const resetKey = options?.resetKey;
@@ -44,7 +45,8 @@ export function useVisibilityAwareInterval(
       now: () => (typeof performance !== "undefined" ? performance.now() : Date.now()),
       callback: () => cbRef.current(),
       intervalMs,
+      runImmediately: options?.runImmediately,
     });
     // resetKey 변경 시 재구독(대상 전환 즉시 최신화). callback은 ref로 참조해 deps 제외.
-  }, [enabled, intervalMs, resetKey]);
+  }, [enabled, intervalMs, resetKey, options?.runImmediately]);
 }

@@ -30,7 +30,7 @@ import java.util.Map;
 
 /**
  * 팀 순위표 홈 위젯 — 앱 순위표(standings 탭)와 동일 디자인.
- * 컬럼: # / 팀(로고+약어) / 승 / 패 / 무 / 승률 / 차 / 연속. 최애팀 행은
+ * 컬럼: # / 팀(로고+약어) / 경기 / 승 / 패 / 무 / 승률 / 차 / 연속. 최애팀 행은
  * 앱과 동일하게 팀 컬러 배경(α 0x18) + 좌측 3dp 컬러 바로 하이라이트.
  *
  * 렌더: 표 전체를 Canvas 비트맵 하나로 그려 ImageView에 세팅.
@@ -228,15 +228,16 @@ public class TeamRankWidget extends AppWidgetProvider {
         float headerH = 24 * d;
         float rowH = (H - padV * 2 - headerH) / Math.max(1, rows.length());
 
-        // 컬럼 X 좌표(dp): [# 22 | 팀 flex | 승 26 | 패 26 | 무 22 | 승률 42 | 차 32 | 연속 36]
+        // 컬럼 X 좌표(dp): [# 22 | 팀 flex | 경기 32 | 승 26 | 패 26 | 무 22 | 승률 42 | 차 32 | 연속 36]
         float xRank = padH + 11 * u;                    // 가운데 정렬 기준점
         float xTeam = padH + 22 * u + 6 * u;            // 좌측 정렬 시작점
         float xStreakR = W - padH;                      // 이하 우측 정렬 기준점
-        float xGbR = xStreakR - 36 * u - 8 * u;
-        float xPctR = xGbR - 32 * u - 8 * u;
-        float xDrawR = xPctR - 42 * u - 8 * u;
-        float xLossR = xDrawR - 22 * u - 8 * u;
-        float xWinR = xLossR - 26 * u - 8 * u;
+        float xGbR = xStreakR - 36 * u - 4 * u;
+        float xPctR = xGbR - 32 * u - 4 * u;
+        float xDrawR = xPctR - 42 * u - 4 * u;
+        float xLossR = xDrawR - 22 * u - 4 * u;
+        float xWinR = xLossR - 26 * u - 4 * u;
+        float xGamesR = xWinR - 26 * u - 4 * u;
 
         Typeface mont = font(ctx, R.font.montserrat_vf, Typeface.DEFAULT_BOLD);
         Typeface noto = font(ctx, R.font.notosanskr_vf, Typeface.DEFAULT);
@@ -246,6 +247,7 @@ public class TeamRankWidget extends AppWidgetProvider {
         float hBase = padV + headerH / 2 + textCenterOffset(hs);
         drawMixed(cv, "#", xRank, hBase, hs, C_TEXT_TERTIARY, ALIGN_CENTER, mont, noto);
         drawMixed(cv, "팀", xTeam, hBase, hs, C_TEXT_TERTIARY, ALIGN_LEFT, mont, noto);
+        drawMixed(cv, "경기", xGamesR, hBase, hs, C_TEXT_TERTIARY, ALIGN_RIGHT, mont, noto);
         drawMixed(cv, "승", xWinR, hBase, hs, C_TEXT_TERTIARY, ALIGN_RIGHT, mont, noto);
         drawMixed(cv, "패", xLossR, hBase, hs, C_TEXT_TERTIARY, ALIGN_RIGHT, mont, noto);
         drawMixed(cv, "무", xDrawR, hBase, hs, C_TEXT_TERTIARY, ALIGN_RIGHT, mont, noto);
@@ -298,16 +300,38 @@ public class TeamRankWidget extends AppWidgetProvider {
                     tx += logo + 5 * u;
                 }
             }
-            drawMixed(cv, s.optString("teamName", ""), tx, base, fs, C_TEXT, ALIGN_LEFT, mont, noto);
-
-            drawMixed(cv, String.valueOf(s.optInt("wins", 0)), xWinR, base, fs, C_TEXT, ALIGN_RIGHT, mont, noto);
-            drawMixed(cv, String.valueOf(s.optInt("losses", 0)), xLossR, base, fs, C_TEXT, ALIGN_RIGHT, mont, noto);
-            drawMixed(cv, String.valueOf(s.optInt("draws", 0)), xDrawR, base, fs, C_TEXT_SECONDARY, ALIGN_RIGHT, mont, noto);
-            drawMixed(cv, pctLabel(s.optDouble("winRate", 0)), xPctR, base, fs, C_TEXT, ALIGN_RIGHT, mont, noto, true);
-            drawMixed(cv, gbLabel(s.optDouble("gamesBehind", 0)), xGbR, base, fs, C_TEXT_SECONDARY, ALIGN_RIGHT, mont, noto);
+            int wins = s.optInt("wins", 0);
+            int losses = s.optInt("losses", 0);
+            int draws = s.optInt("draws", 0);
+            String games = String.valueOf(wins + losses + draws);
+            String win = String.valueOf(wins);
+            String loss = String.valueOf(losses);
+            String draw = String.valueOf(draws);
+            String pct = pctLabel(s.optDouble("winRate", 0));
+            String gb = gbLabel(s.optDouble("gamesBehind", 0));
             String streak = s.optString("continuousGameResult", "").trim();
-            drawMixed(cv, streak.isEmpty() ? "-" : streak, xStreakR, base, fs,
-                streak.isEmpty() ? C_TEXT_SECONDARY : C_TEXT, ALIGN_RIGHT, mont, noto);
+
+            // 250dp에서도 로고+최장 팀명과 3자리 경기수가 닿지 않도록 실제 Paint 폭으로
+            // 팀명을 축소한다. clip/ellipsis 없이 다음 열의 실측 왼쪽 경계를 넘지 않는다.
+            float gamesLeft = xGamesR - mixedWidth(games, fs, mont, noto, false);
+            drawMixedFitted(cv, s.optString("teamName", ""), tx, base, fs, C_TEXT,
+                ALIGN_LEFT, mont, noto, false, Math.max(1, gamesLeft - 4 * u - tx));
+
+            drawMixedFitted(cv, games, xGamesR, base, fs, C_TEXT_SECONDARY,
+                ALIGN_RIGHT, mont, noto, false, 32 * u);
+            drawMixedFitted(cv, win, xWinR, base, fs, C_TEXT,
+                ALIGN_RIGHT, mont, noto, false, xWinR - xGamesR - 2 * u);
+            drawMixedFitted(cv, loss, xLossR, base, fs, C_TEXT,
+                ALIGN_RIGHT, mont, noto, false, xLossR - xWinR - 2 * u);
+            drawMixedFitted(cv, draw, xDrawR, base, fs, C_TEXT_SECONDARY,
+                ALIGN_RIGHT, mont, noto, false, xDrawR - xLossR - 2 * u);
+            drawMixedFitted(cv, pct, xPctR, base, fs, C_TEXT,
+                ALIGN_RIGHT, mont, noto, true, xPctR - xDrawR - 2 * u);
+            drawMixedFitted(cv, gb, xGbR, base, fs, C_TEXT_SECONDARY,
+                ALIGN_RIGHT, mont, noto, false, xGbR - xPctR - 2 * u);
+            drawMixedFitted(cv, streak.isEmpty() ? "-" : streak, xStreakR, base, fs,
+                streak.isEmpty() ? C_TEXT_SECONDARY : C_TEXT, ALIGN_RIGHT, mont, noto,
+                false, xStreakR - xGbR - 2 * u);
         }
         return bmp;
     }
@@ -387,5 +411,47 @@ public class TeamRankWidget extends AppWidgetProvider {
             cv.drawText(runs.get(i), sx, baseline, p);
             sx += p.measureText(runs.get(i));
         }
+    }
+
+    /** 실제 drawMixed Paint 폭이 열 예산을 넘을 때만 글자 크기를 비례 축소한다.
+     *  Canvas clip/말줄임에 의존하지 않아 좁은 런처에서도 인접 열 침범이 없다. */
+    private static void drawMixedFitted(Canvas cv, String text, float x, float baseline,
+                                        float sizePx, int color, int align,
+                                        Typeface mont, Typeface noto, boolean bold,
+                                        float maxWidth) {
+        float natural = mixedWidth(text, sizePx, mont, noto, bold);
+        float fitted = natural > maxWidth && natural > 0 ? sizePx * maxWidth / natural : sizePx;
+        float fittedBaseline = baseline - textCenterOffset(sizePx - fitted);
+        drawMixed(cv, text, x, fittedBaseline, fitted, color, align, mont, noto, bold);
+    }
+
+    /** drawMixed와 같은 Typeface/letterSpacing/fakeBold 조합의 실제 Paint 측정값. */
+    private static float mixedWidth(String text, float sizePx, Typeface mont,
+                                    Typeface noto, boolean bold) {
+        if (text == null || text.isEmpty()) return 0;
+        Paint pm = new Paint(Paint.ANTI_ALIAS_FLAG);
+        pm.setTypeface(mont); pm.setTextSize(sizePx); pm.setLetterSpacing(-0.02f);
+        pm.setSubpixelText(true);
+        Paint pn = new Paint(Paint.ANTI_ALIAS_FLAG);
+        pn.setTypeface(noto); pn.setTextSize(sizePx); pn.setLetterSpacing(-0.04f);
+        pn.setSubpixelText(true);
+        if (bold) { pm.setFakeBoldText(true); pn.setFakeBoldText(true); }
+
+        float width = 0;
+        StringBuilder run = new StringBuilder();
+        boolean runHangul = false;
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            boolean hangul = (c >= 0xAC00 && c <= 0xD7A3) || (c >= 0x1100 && c <= 0x11FF)
+                || (c >= 0x3130 && c <= 0x318F);
+            if (run.length() > 0 && hangul != runHangul) {
+                width += (runHangul ? pn : pm).measureText(run.toString());
+                run.setLength(0);
+            }
+            run.append(c);
+            runHangul = hangul;
+        }
+        if (run.length() > 0) width += (runHangul ? pn : pm).measureText(run.toString());
+        return width;
     }
 }

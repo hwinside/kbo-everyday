@@ -42,7 +42,7 @@ const TEAM_CODE_MAP: Record<string, number> = {
 
 /** KBO 팀 코드 → 앱 teamId. 정규 10구단에 없으면 올스타(코드 → 팀명 순)로 해석,
  *  그래도 없으면 0. 올스타는 코드가 팀맵에 없어 예전엔 0으로 뭉개져 렌더가 터졌다. */
-function resolveTeamId(code: string, name: string): number {
+export function resolveTeamId(code: string, name: string): number {
   return TEAM_CODE_MAP[code] ?? ALLSTAR_CODE_TO_ID[code] ?? allstarTeamIdByName(name) ?? 0;
 }
 
@@ -160,30 +160,67 @@ function parseGame(raw: KboGameRaw): KboGame {
 }
 
 /** 특정 날짜 경기 목록 조회 */
-export async function fetchGames(date: string, srId = "0,1,3,4,5,7,9"): Promise<KboGame[]> {
+/**
+ * raw KBO 경기 원본 sanity — HTTP 200 이지만 per-game 필수 필드(경기id/날짜/팀)가
+ * 결측된 부분 열화(`game:[{}]`)를 정상으로 묻지 않는다. 하나라도 실패면
+ * 상위 fetchGames 가 schema-error 로 보고 Naver 폴백을 태운다.
+ */
+function isRawKboGameSane(raw: Partial<KboGameRaw> | null | undefined): boolean {
+  if (!raw?.G_ID || !raw?.G_DT || !raw?.AWAY_NM || !raw?.HOME_NM) return false;
+  if (resolveTeamId(raw.AWAY_ID ?? "", raw.AWAY_NM) <= 0) return false;
+  if (resolveTeamId(raw.HOME_ID ?? "", raw.HOME_NM) <= 0) return false;
+  return true;
+}
+
+/**
+ * user-facing 경기목록 조회 budget(ms). 홈 SSR·`/api/games` route 등 사용자 응답 경로가
+ * 공통으로 쓰는 SSOT — KBO blackhole 에서도 이 시간 안에 Naver 폴백으로 수렴한다.
+ * cron/배치 소비자는 opts 없이 기본 10s 를 그대로 쓴다.
+ */
+export const USER_FACING_GAMES_TIMEOUT_MS = 3500;
+
+/**
+ * KBO GetKboGameList 만 호출/파싱(폴백 없음). 성공 시 KboGame[](빈 배열 포함),
+ * !ok/스키마 열화/per-game 결측이면 throw. 외부 KBO 호출을 단일 헬퍼로 중앙화한다
+ * (헤더/URL 변경 시 1곳만 수정 — 2026-05-20 Referer 정책 변경 교훈).
+ * trackFallback·Naver 폴백·soft-empty 는 호출자(fetchGames / fetchGamesUserFacing)가 담당한다.
+ */
+export async function fetchKboGamesOnly(
+  date: string,
+  srId = "0,1,3,4,5,7,9",
+  opts?: { timeoutMs?: number },
+): Promise<KboGame[]> {
+  const res = await fetch(`${KBO_BASE}/ws/Main.asmx/GetKboGameList`, {
+    method: "POST",
+    headers: KBO_JSON_HEADERS,
+    body: JSON.stringify({ leId: "1", srId, date }),
+    signal: AbortSignal.timeout(opts?.timeoutMs ?? 10000),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+  const text = await res.text();
+  // ASP.NET 에러 HTML이 뒤에 붙을 수 있음
+  const jsonEnd = text.indexOf("}<!");
+  const jsonStr = jsonEnd > 0 ? text.slice(0, jsonEnd + 1) : text;
+  const data = JSON.parse(jsonStr);
+  // HTTP 200 스키마 열화: game 필드가 배열이 아니면(누락/null) schema-error.
+  if (!Array.isArray(data.game)) {
+    throw new Error("KBO GetKboGameList schema-error: game 필드 부재/비배열");
+  }
+  // per-game 부분 열화(`game:[{}]` 등 필수 필드 결측) → schema-error.
+  if (data.game.some((g: unknown) => !isRawKboGameSane(g as Partial<KboGameRaw>))) {
+    throw new Error("KBO GetKboGameList schema-error: per-game 필수 필드 결측");
+  }
+  return data.game.map(parseGame);
+}
+
+export async function fetchGames(
+  date: string,
+  srId = "0,1,3,4,5,7,9",
+  opts?: { timeoutMs?: number },
+): Promise<KboGame[]> {
+  let games: KboGame[];
   try {
-    const res = await fetch(`${KBO_BASE}/ws/Main.asmx/GetKboGameList`, {
-      method: "POST",
-      headers: KBO_JSON_HEADERS,
-      body: JSON.stringify({ leId: "1", srId, date }),
-      signal: AbortSignal.timeout(10000),
-    });
-
-    if (!res.ok) {
-      await trackFallback("kbo-games", "http-error", {
-        statusCode: res.status,
-        errorMessage: `HTTP ${res.status} ${res.statusText}`,
-      });
-      throw new Error(`HTTP ${res.status}`);
-    }
-
-    const text = await res.text();
-    // ASP.NET 에러 HTML이 뒤에 붙을 수 있음
-    const jsonEnd = text.indexOf("}<!");
-    const jsonStr = jsonEnd > 0 ? text.slice(0, jsonEnd + 1) : text;
-    const data = JSON.parse(jsonStr);
-
-    return (data.game ?? []).map(parseGame);
+    games = await fetchKboGamesOnly(date, srId, opts);
   } catch (e) {
     const error = e as Error;
     let reason: "timeout" | "http-error" | "schema-error" | "network-error" = "network-error";
@@ -191,16 +228,34 @@ export async function fetchGames(date: string, srId = "0,1,3,4,5,7,9"): Promise<
       reason = "timeout";
     } else if (error.message.includes("HTTP")) {
       reason = "http-error";
-    } else if (error.message.includes("JSON")) {
+    } else if (error.message.includes("JSON") || error.message.includes("schema-error")) {
       reason = "schema-error";
     }
 
-    await trackFallback("kbo-games", reason, {
-      errorMessage: error.message,
-    });
+    await trackFallback("kbo-games", reason, { errorMessage: error.message });
 
+    // Fallback: Naver schedule/games. srId 계약 보존(특정 시리즈는 fetchNaverGames 내부 fail-close).
+    // Naver 성공 시 그대로 반환(무경기일 빈 배열도 성공) — 무경기일 fallback 500 방지.
+    try {
+      const { fetchNaverGames } = await import("@/lib/crawler/naver-games");
+      return await fetchNaverGames(date, srId);
+    } catch {
+      // Naver 도 실패(또는 series 보존 불가 fail-close) → 원래 KBO 에러로 throw.
+    }
     throw error;
   }
+
+  // soft-empty: KBO 200 빈 응답(game:[])은 열화로 인한 것일 수 있어 Naver 로 교차확인한다.
+  // Naver 에 경기가 있으면 그것(=KBO 빈은 열화), 양쪽 비면 정상 무경기일([]). 무경기일 노이즈 방지로 trackFallback 안 쌓음.
+  if (games.length === 0) {
+    try {
+      const { fetchNaverGames } = await import("@/lib/crawler/naver-games");
+      return await fetchNaverGames(date, srId);
+    } catch {
+      return [];
+    }
+  }
+  return games;
 }
 
 /** 이전/다음 경기일 조회 */

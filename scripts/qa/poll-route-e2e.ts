@@ -22,6 +22,9 @@ process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "fake-anon-key";
 
 const USER_ID = "11111111-1111-1111-1111-111111111111";
 const VALID_TOKEN = "valid-user-token";
+// 삼순 3차 NO-GO P1-2: 작성자/타인 2계정 route 실행형 회귀용 두 번째 유저.
+const OTHER_ID = "22222222-2222-2222-2222-222222222222";
+const OTHER_TOKEN = "other-user-token";
 
 // ---------- in-memory store ----------
 type PollOptionRow = {
@@ -52,9 +55,11 @@ function seedPoll(opts: {
   voterCount?: number;
   hidden?: boolean;
   title?: string;
+  authorId?: string;
 }): number[] {
   store.posts.set(opts.postId, {
     id: opts.postId,
+    author_id: opts.authorId ?? USER_ID,
     title: opts.title ?? `poll ${opts.postId}`,
     content: "body",
     board_type: "poll",
@@ -131,6 +136,7 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       "";
     const token = auth.replace(/^Bearer\s+/i, "");
     if (token === VALID_TOKEN) return json({ id: USER_ID, email: "u@e.com" });
+    if (token === OTHER_TOKEN) return json({ id: OTHER_ID, email: "o@e.com" });
     return json({ msg: "invalid token" }, 401);
   }
 
@@ -149,7 +155,24 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   restReads.set(name, (restReads.get(name) ?? 0) + 1);
 
   const f = eqFilters(u);
+  const method = (
+    init?.method ||
+    (input instanceof Request ? input.method : "GET")
+  ).toUpperCase();
   if (name === "posts") {
+    // PATCH(update) → store 에 실제 반영(회귀 false-green 방지). .eq("id")+.eq("author_id") 필터를
+    // 그대로 적용해 소유자 불일치면 0 rows(미반영). 이로써 route 가 update 를 실제 호출해야만
+    // owner persist · other 불변 assert 가 통과한다(route 가 update 를 누락하면 테스트 실패).
+    if (method === "PATCH") {
+      const id = f.id ? Number(f.id) : NaN;
+      const row = store.posts.get(id);
+      const patch = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
+      if (row && (!f.author_id || row.author_id === f.author_id)) {
+        Object.assign(row, patch);
+        return json([row]);
+      }
+      return json([]); // 0 rows (RLS/소유권 불일치 미반영)
+    }
     const inIds = inFilter(u, "id");
     if (inIds) {
       const rows = inIds
@@ -210,7 +233,7 @@ async function main(): Promise<void> {
     }
   };
   try {
-    const { GET } = await import("../../src/app/api/polls/[postId]/route");
+    const { GET, PATCH } = await import("../../src/app/api/polls/[postId]/route");
     const { GET: GET_OG } = await import("../../src/app/api/og/poll/[postId]/route");
     const { POST } = await import("../../src/app/api/polls/route");
     const { POST: POST_SUMMARIES } = await import("../../src/app/api/polls/summaries/route");
@@ -515,6 +538,89 @@ async function main(): Promise<void> {
     lastRpc = null;
     const modClean = await POST(mkModPost({ title: "오늘 누가 MVP?", content: "자유롭게 투표하세요" }) as never);
     ok("모더레이션 정상 입력 → 201", modClean.status === 201 && rpcCount === 1);
+
+    // ---------- PATCH /api/polls/[postId] 서버 검증(삼순 NO-GO P1-1: 클라이언트 우회 방어) ----------
+    // 아래 분기는 DB 접근 전에 반환되는 순수 검증/모더레이션 경로. 비텍스트 필드 불변·작성자
+    // 소유권·길이 DB 강제는 poll-contract-e2e.sql N3/N4(트리거) 가 authoritative 로 증명한다.
+    const mkPatch = (body: Record<string, unknown>, token?: string) =>
+      new Request("https://keubo.fan/api/polls/1", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(body),
+      });
+    const callPatch = (body: Record<string, unknown>, token?: string) =>
+      PATCH(mkPatch(body, token) as never, { params: Promise.resolve({ postId: "1" }) });
+
+    const pNoAuth = await callPatch({ title: "Q?", content: "c" });
+    ok("PATCH 미인증 → 401", pNoAuth.status === 401);
+
+    const pEmpty = await callPatch({ title: "   ", content: "c" }, VALID_TOKEN);
+    ok("PATCH 빈 질문 → 400", pEmpty.status === 400);
+
+    const pLongTitle = await callPatch({ title: "x".repeat(201), content: "c" }, VALID_TOKEN);
+    ok("PATCH 질문>200 → 400", pLongTitle.status === 400);
+
+    const pLongContent = await callPatch({ title: "Q?", content: "y".repeat(2001) }, VALID_TOKEN);
+    ok("PATCH 설명>2000 → 400", pLongContent.status === 400);
+
+    const pMod = await callPatch({ title: `누가 ${BAD} 최고?`, content: "c" }, VALID_TOKEN);
+    ok("PATCH 모더레이션 금칙어 → 400", pMod.status === 400);
+
+    // ---------- P1-2 삼순 3차 NO-GO: 작성자 200 · 타인 403 · 비-poll 404 실행형 회귀 ----------
+    // route 를 실제 실행해 소유권 분기(200/403)와 poll 전용 분기(404)까지 도달한다.
+    // post 1 = board_type 'poll', author_id = USER_ID (seedPoll 기본).
+    const callPatchId = (pid: number, body: Record<string, unknown>, token?: string) =>
+      PATCH(
+        new Request(`https://keubo.fan/api/polls/${pid}`, {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify(body),
+        }) as never,
+        { params: Promise.resolve({ postId: String(pid) }) },
+      );
+
+    // 작성자(USER_ID) → 200 + {ok,title,content} + 실제 store persist
+    const pAuthor = await callPatchId(1, { title: "질문 수정", content: "설명 수정" }, VALID_TOKEN);
+    ok("PATCH 작성자 → 200", pAuthor.status === 200);
+    {
+      const b = (await pAuthor.json()) as { ok?: boolean; title?: string; content?: string };
+      ok("PATCH 작성자 → {ok,title,content}", b.ok === true && b.title === "질문 수정" && b.content === "설명 수정");
+    }
+    // false-green 방지: route 가 실제 update 를 호출해 store 에 persist 됐는지 검증(update 누락 시 실패).
+    ok(
+      "PATCH 작성자 → store persist(title/content)",
+      store.posts.get(1)?.title === "질문 수정" && store.posts.get(1)?.content === "설명 수정",
+    );
+
+    // 타인(OTHER_ID) → 403 (소유권 불일치, DB update 전 차단) + store 불변
+    const pOther = await callPatchId(1, { title: "탈취 수정", content: "탈취 본문" }, OTHER_TOKEN);
+    ok("PATCH 타인 → 403", pOther.status === 403);
+    ok(
+      "PATCH 타인 → store 불변(작성자 값 유지)",
+      store.posts.get(1)?.title === "질문 수정" && store.posts.get(1)?.content === "설명 수정",
+    );
+
+    // 비-poll 글(board_type='free') → 404 (이 엔드포인트는 투표글 전용)
+    store.posts.set(77, {
+      id: 77,
+      author_id: USER_ID,
+      title: "자유글",
+      content: "c",
+      board_type: "free",
+      is_hidden: false,
+    });
+    const pNonPoll = await callPatchId(77, { title: "질문 수정", content: "설명 수정" }, VALID_TOKEN);
+    ok("PATCH 비-poll 글 → 404", pNonPoll.status === 404);
+
+    // 없는 글 → 404
+    const pMissing = await callPatchId(9999, { title: "질문 수정", content: "설명 수정" }, VALID_TOKEN);
+    ok("PATCH 없는 글 → 404", pMissing.status === 404);
 
     // ---------- S3: 목록 카드용 배치 요약(summaries) — hidden 제외·득표수 미포함·작성순 ----------
     const mkSummaries = (postIds: unknown) =>
