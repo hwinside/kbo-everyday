@@ -85,15 +85,18 @@ export async function fetchGamesUserFacing(date: string): Promise<KboGame[]> {
     fetchKboGamesOnly(date, "0,1,3,4,5,7,9", { timeoutMs: KBO_ENRICH_TIMEOUT_MS }),
   ]);
 
+  // 모든 반환 경로를 mergeKboEnrichment 로 통일해 gameId 유일성 불변식을 공통 적용한다
+  // (삼순 P1: base===[] / Naver 실패 직접 반환이 dedupe 를 우회하던 것 차단).
   if (naverR.status === "fulfilled") {
     const base = naverR.value;
     const kbo = kboR.status === "fulfilled" ? kboR.value : [];
-    // Naver 가 빈데 KBO 에 경기 있으면 Naver 오탐 가능 → KBO 사용(안전망).
-    if (base.length === 0 && kbo.length > 0) return kbo;
-    return kbo.length > 0 ? mergeKboEnrichment(base, kbo) : base;
+    // Naver 가 빈데 KBO 에 경기 있으면 Naver 오탐 가능 → KBO 전체 사용(안전망). dedupe 는 merge 가.
+    if (base.length === 0 && kbo.length > 0) return mergeKboEnrichment([], kbo);
+    // KBO enrich + KBO-only union + dedupe(mergeKboEnrichment 내부).
+    return mergeKboEnrichment(base, kbo);
   }
 
-  // Naver 실패 → KBO 폴백(전체 데이터). KBO 도 실패면 원래 Naver 에러로 throw.
-  if (kboR.status === "fulfilled") return kboR.value;
+  // Naver 실패 → KBO 폴백(전체 데이터, dedupe 정규화). KBO 도 실패면 원래 Naver 에러로 throw.
+  if (kboR.status === "fulfilled") return mergeKboEnrichment([], kboR.value);
   throw (naverR as PromiseRejectedResult).reason ?? new Error("games fetch failed (Naver+KBO)");
 }

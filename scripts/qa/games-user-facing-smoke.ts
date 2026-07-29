@@ -292,6 +292,34 @@ const keepAlive = setInterval(() => {}, 1000); // AbortSignal.timeout unref 함�
   assert.equal(body.games[0].strikes, 2); // KBO full data
 }
 
+// ── 13. P1(삼순 4차): Naver [] + KBO 중복 → fetchGamesUserFacing 반환도 dedupe(length===unique) ──
+{
+  stubFetch((url) => {
+    if (url.includes("GetKboGameList")) return kboListText([kboRaw(), kboRaw()]); // 동일 G_ID ×2
+    if (url.includes("schedule/games")) return jsonResponse({ code: 200, success: true, result: { games: [] } });
+    throw new Error(`unexpected ${url}`);
+  });
+  const games = await fetchGamesUserFacing(DATE);
+  restoreFetch();
+  const uniq = new Set(games.map((g) => g.gameId)).size;
+  assert.equal(games.length, uniq); // 직접 반환 분기도 dedupe
+  assert.equal(games.length, 1);
+}
+
+// ── 14. P1(삼순 4차): Naver 실패 + KBO 중복 → KBO 폴백도 dedupe(length===unique) ──
+{
+  stubFetch((url) => {
+    if (url.includes("GetKboGameList")) return kboListText([kboRaw(), kboRaw()]);
+    if (url.includes("schedule/games")) return jsonResponse({ code: 500, success: false, result: null });
+    throw new Error(`unexpected ${url}`);
+  });
+  const games = await fetchGamesUserFacing(DATE);
+  restoreFetch();
+  const uniq = new Set(games.map((g) => g.gameId)).size;
+  assert.equal(games.length, uniq);
+  assert.equal(games.length, 1);
+}
+
 clearInterval(keepAlive);
 console.log("✅ games-user-facing smoke passed");
 }
