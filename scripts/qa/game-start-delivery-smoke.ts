@@ -4,6 +4,7 @@ import { test } from "node:test";
 import { deliverTokenChunks } from "../../src/lib/notifications/fcm-batch";
 import {
   drainGameStartDeliveryBatches,
+  drainGameStartDeliveryRoundRobin,
   gameStartDeliveryWindow,
 } from "../../src/lib/notifications/game-start-delivery-policy";
 import {
@@ -15,6 +16,10 @@ import {
 
 const migration = readFileSync(
   "supabase/migrations/20260726_game_start_device_delivery.sql",
+  "utf8",
+).toLowerCase();
+const throughputMigration = readFileSync(
+  "supabase/migrations/20260730_game_start_fanout_throughput.sql",
   "utf8",
 ).toLowerCase();
 const source = readFileSync("src/lib/notifications/game-start-delivery.ts", "utf8");
@@ -49,6 +54,18 @@ test("lease fencing + transient-only deadline retry", () => {
   assert.match(source, /mark_game_start_deliveries_dispatching/);
   assert.match(migration, /status in \('pending', 'leased', 'transient'\)/);
   assert.match(migration, /status = 'expired'/);
+});
+
+test("최신 활성토큰 우선 + pending-first/transient-last claim", () => {
+  assert.match(throughputMigration, /is_primary_token boolean not null default false/);
+  assert.match(
+    throughputMigration,
+    /partition by d\.user_id[\s\S]*d\.last_seen desc nulls last[\s\S]*d\.id desc/,
+  );
+  assert.match(
+    throughputMigration,
+    /case l\.status when 'pending' then 0 when 'transient' then 1 else 2 end,[\s\S]*l\.is_primary_token desc/,
+  );
 });
 
 test("snapshot 전량 terminal 이전 global 종결 금지", () => {
@@ -100,6 +117,65 @@ test("운영규모 3,500행 + 첫 500 transient에서도 pending 전량을 먼�
   assert.deepEqual(attempted.slice(3_500, 4_000), Array.from({ length: 500 }, (_, id) => id));
   assert.ok(rows.every((row) => row.status === "accepted"));
   assert.equal(acceptedDelta, 3_500, "accepted delta는 각 행의 terminal 전이를 한 번만 합산");
+});
+
+test("round-robin은 pass당 게임별 1 batch, 안전마진 미만이면 신규 claim 0", async () => {
+  let clock = 0;
+  const calls: string[] = [];
+  await drainGameStartDeliveryRoundRobin({
+    items: ["G1", "G2", "G3"],
+    deadlineAtMs: 10_000,
+    minRemainingMs: 5_000,
+    now: () => clock,
+    process: async (gameId) => {
+      calls.push(gameId);
+      if (gameId === "G1") clock += 3_000;
+      return { claimed: 500, pending: 500 };
+    },
+  });
+  assert.deepEqual(calls, ["G1", "G2", "G3", "G1", "G2", "G3"]);
+
+  clock = 6_000;
+  calls.length = 0;
+  await drainGameStartDeliveryRoundRobin({
+    items: ["G1", "G2"],
+    deadlineAtMs: 10_000,
+    minRemainingMs: 5_000,
+    now: () => clock,
+    process: async (gameId) => {
+      calls.push(gameId);
+      return { claimed: 1, pending: 1 };
+    },
+  });
+  assert.deepEqual(calls, []);
+  assert.match(
+    source,
+    /attemptDeadlineAtMs - Date\.now\(\) < START_DELIVERY_NEW_BATCH_MIN_REMAINING_MS/,
+  );
+});
+
+test("실측 5경기 16,655행 편중(최대 6,587)도 90초 내 미시도 0", async () => {
+  const sizes = [6_587, 4_208, 2_329, 2_324, 1_207];
+  const games = sizes.map((size, index) => ({ id: `G${index + 1}`, remaining: size }));
+  let clock = 0;
+  for (let tickAt = 0; tickAt < 90_000; tickAt += 15_000) {
+    clock = Math.max(clock, tickAt);
+    await drainGameStartDeliveryRoundRobin({
+      items: games.filter((game) => game.remaining > 0),
+      deadlineAtMs: Math.min(90_000, tickAt + 12_000),
+      minRemainingMs: 5_000,
+      now: () => clock,
+      process: async (game) => {
+        const claimed = Math.min(500, game.remaining);
+        if (game.id === "G1" && claimed > 0) clock += 1_400;
+        game.remaining -= claimed;
+        return { claimed, pending: game.remaining };
+      },
+    });
+    if (games.every((game) => game.remaining === 0)) break;
+  }
+  assert.ok(games.every((game) => game.remaining === 0));
+  assert.ok(clock < 90_000);
 });
 
 test("T+60 retry도 최초 persisted deadline T+90을 단일 시계로 사용", () => {

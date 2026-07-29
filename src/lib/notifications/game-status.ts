@@ -21,12 +21,14 @@ import {
   finalizeGameStartSnapshot,
   openGameStartSnapshot,
   START_DELIVERY_ATTEMPT_MS,
+  START_DELIVERY_FINALIZE_RESERVE_MS,
+  START_DELIVERY_NEW_BATCH_MIN_REMAINING_MS,
+  START_DELIVERY_PREPARE_MS,
   type GameStartDeliveryBatchResult,
   type GameStartDeliveryResult,
   type GameStartDeliveryTarget,
 } from "@/lib/notifications/game-start-delivery";
-
-const START_DELIVERY_BATCH_CONCURRENCY_PER_GAME = 2;
+import { drainGameStartDeliveryRoundRobin } from "@/lib/notifications/game-start-delivery-policy";
 
 // 경기 시작/종료 알림 (push-notifications-v1 S4).
 // warmup cron(경기 시간대 매분)이 호출. 중복 발화 방지 = game_notify_state
@@ -410,18 +412,22 @@ export async function notifyGameStatusTransitions(
     // hang이 나머지 경기의 snapshot open을 굶기지 않는다.
     const prepareStart = async (game: KboRawGame) => {
       const gameId = game.G_ID as string;
+      const preparationDeadlineAtMs = Math.min(
+        routeDeadlineAtMs,
+        Date.now() + START_DELIVERY_PREPARE_MS,
+      );
       const preloaded = opts?.preloadedStartStates?.get(gameId);
       let seenRow: StartStateRow | null | undefined = preloaded;
       if (seenRow === undefined) {
-        if (Date.now() >= routeDeadlineAtMs) return null;
+        if (Date.now() >= preparationDeadlineAtMs) return null;
         try {
-          seenRow = await readStartState(gameId, routeDeadlineAtMs);
+          seenRow = await readStartState(gameId, preparationDeadlineAtMs);
         } catch (error) {
           console.error(`[game-status] start state read failed game=${gameId}:`, (error as Error).message);
           return null;
         }
       }
-      if (seenRow?.start_notified || Date.now() >= routeDeadlineAtMs) return null;
+      if (seenRow?.start_notified || Date.now() >= preparationDeadlineAtMs) return null;
       const lastSeenMs = seenRow?.last_seen_scheduled_at
         ? Date.parse(seenRow.last_seen_scheduled_at)
         : null;
@@ -440,7 +446,7 @@ export async function notifyGameStatusTransitions(
       });
       if (!sendOk) {
         try {
-          await markStart(gameId, routeDeadlineAtMs);
+          await markStart(gameId, preparationDeadlineAtMs);
         } catch (error) {
           console.error(`[game-status] start mark failed game=${gameId}:`, (error as Error).message);
         }
@@ -470,11 +476,11 @@ export async function notifyGameStatusTransitions(
           acceptedDelta: 0,
         };
       }
-      if (Date.now() >= routeDeadlineAtMs) return null;
+      if (Date.now() >= preparationDeadlineAtMs) return null;
       try {
         const snapshotDeadlineAtMs = await openStart({
           ...target,
-          requestDeadlineAtMs: routeDeadlineAtMs,
+          requestDeadlineAtMs: preparationDeadlineAtMs,
         });
         return { target, snapshotDeadlineAtMs, acceptedDelta: 0 };
       } catch (error) {
@@ -483,69 +489,53 @@ export async function notifyGameStatusTransitions(
       }
     };
 
-    // 각 경기를 독립 파이프라인(prepare → drain → finalize)으로 완전히 분리한다.
-    // 한 경기의 DB open/전송이 route deadline까지 hang해도 다른 경기의 fanout이
-    // 공용 Promise.all에 묶여 굶지 않도록, 경기 간 join 지점을 없앤다. 각 단계는
-    // routeDeadline 잔여 예산으로 스스로 abort한다.
+    // snapshot open은 병렬로 격리하고, 준비된 경기들을 매 pass마다 게임별 정확히
+    // 1 batch씩 처리한다. 한 인기 경기의 full-drain이 다른 경기의 최초 시도를
+    // 굶기지 않으며, 다음 pass에서 다시 같은 순서로 pending을 소진한다.
     const startedByGame = new Map<string, number>();
-    const runGamePipeline = async (game: KboRawGame) => {
-      let item: (typeof opened)[number] | null = null;
+    await Promise.allSettled(liveGames.map(async (game) => {
       try {
-        item = await prepareStart(game);
+        const item = await prepareStart(game);
+        if (item) opened.push(item);
       } catch (error) {
         console.error(
           `[game-status] start preparation failed game=${game.G_ID ?? "unknown"}:`,
           (error as Error).message,
         );
-        return;
       }
-      if (!item) return;
-      opened.push(item);
-      const current = item;
+    }));
 
-      // 이 경기만의 drain 루프. pending이 남고 claim이 진행되는 동안만 반복하며,
-      // 각 batch attempt는 잔여 route budget으로 bound된다.
-      while (Date.now() < routeDeadlineAtMs) {
+    const drainDeadlineAtMs = routeDeadlineAtMs - START_DELIVERY_FINALIZE_RESERVE_MS;
+    await drainGameStartDeliveryRoundRobin({
+      items: opened,
+      deadlineAtMs: drainDeadlineAtMs,
+      minRemainingMs: START_DELIVERY_NEW_BATCH_MIN_REMAINING_MS,
+      process: async (current) => {
         const nowMs = Date.now();
         const attemptDeadlineAtMs = Math.min(
-          routeDeadlineAtMs,
+          drainDeadlineAtMs,
           current.snapshotDeadlineAtMs,
           nowMs + START_DELIVERY_ATTEMPT_MS,
         );
-        if (attemptDeadlineAtMs <= nowMs) break;
-        const batches = await Promise.all(Array.from(
-          { length: START_DELIVERY_BATCH_CONCURRENCY_PER_GAME },
-          async () => {
-            try {
-              return await deliverStartBatch({
-                ...current.target,
-                snapshotDeadlineAtMs: current.snapshotDeadlineAtMs,
-                attemptDeadlineAtMs,
-              });
-            } catch (error) {
-              console.error(
-                `[game-status] start batch failed game=${current.target.gameId}:`,
-                (error as Error).message,
-              );
-              return {
-                claimed: 0,
-                snapshotCompleted: false,
-                fcmAcceptedDelta: 0,
-                fcmAcceptedTotal: 0,
-                deviceDelivered: null,
-                pending: 0,
-                permanentFailed: 0,
-                expired: 0,
-              } satisfies GameStartDeliveryBatchResult;
-            }
-          },
-        ));
-        const claimed = batches.reduce((sum, batch) => sum + batch.claimed, 0);
-        const pending = Math.max(...batches.map((batch) => batch.pending), 0);
-        current.acceptedDelta += batches.reduce((sum, batch) => sum + batch.fcmAcceptedDelta, 0);
-        if (!(claimed > 0 && pending > 0)) break;
-      }
+        try {
+          const batch = await deliverStartBatch({
+            ...current.target,
+            snapshotDeadlineAtMs: current.snapshotDeadlineAtMs,
+            attemptDeadlineAtMs,
+          });
+          current.acceptedDelta += batch.fcmAcceptedDelta;
+          return { claimed: batch.claimed, pending: batch.pending };
+        } catch (error) {
+          console.error(
+            `[game-status] start batch failed game=${current.target.gameId}:`,
+            (error as Error).message,
+          );
+          return { claimed: 0, pending: 0 };
+        }
+      },
+    });
 
+    await Promise.allSettled(opened.map(async (current) => {
       if (Date.now() >= routeDeadlineAtMs) return;
       try {
         const delivery = await finalizeStart(
@@ -564,9 +554,7 @@ export async function notifyGameStatusTransitions(
       } catch (error) {
         console.error(`[game-status] start finalize failed game=${current.target.gameId}:`, (error as Error).message);
       }
-    };
-
-    await Promise.allSettled(liveGames.map((game) => runGamePipeline(game)));
+    }));
     for (const delta of startedByGame.values()) started += delta;
   }
 
