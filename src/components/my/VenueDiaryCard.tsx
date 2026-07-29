@@ -404,7 +404,7 @@ export default function VenueDiaryCard() {
           <p className="mt-1 text-xs text-text-tertiary">내가 직관한 경기의 기록과 사진·영상</p>
 
           {/* 나만 보기 안내(1회) */}
-          <div className="mt-3 flex items-start gap-1.5 rounded-xl border border-blue-500/25 bg-blue-500/10 px-3 py-2 text-[12px] font-semibold text-blue-300">
+          <div className="mt-3 flex items-start gap-1.5 rounded-xl border border-blue-500/25 bg-blue-500/10 px-3 py-2 text-[12px] font-semibold text-blue-700 dark:text-blue-300">
             <span className="shrink-0">🔒</span>
             <span className="leading-snug">
               사진·영상은 나만 볼 수 있고, 공개 피드에는 올라가지 않아요.
@@ -418,7 +418,9 @@ export default function VenueDiaryCard() {
                 key={String(key)}
                 onClick={() => setSeason(key)}
                 className={`flex-1 rounded-lg py-2 text-[13px] font-bold ${
-                  season === key ? "bg-accent text-white" : "text-text-tertiary"
+                  season === key
+                    ? "bg-accent text-white"
+                    : "text-neutral-600 dark:text-neutral-300"
                 }`}
               >
                 {key === "all" ? "전체" : key}

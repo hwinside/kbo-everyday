@@ -1,33 +1,36 @@
 #!/usr/bin/env node
 /**
- * 직관 다이어리 카드 light/dark 대비 harness (삼순 PR#913 NO-GO 왕복3 blocker).
+ * 직관 다이어리 카드 light/dark 대비 harness (삼순 PR#913 리뷰 blocker).
  *
- * 목적: 실제 VenueDiaryCard 컴포넌트를 브라우저에 마운트(effect 실행 → 요약 카드 렌더)하고,
- * 프로젝트의 실제 Tailwind CSS(globals.css) 하에서
- *   1) 활성 연도 탭 배경 = accent(투명 아님)
- *   2) '지난 경기 추가하기' CTA 배경 = accent + box-shadow 존재
- *   3) 고정 다크 요약카드의 수치(18 / 100.0% / 18경기)가 카드 배경 대비 ≥4.5:1
- * 를 light·dark 두 테마 실제 computed style 로 assertion 한다.
+ * 실제 VenueDiaryCard 를 브라우저에 마운트(effect→요약 카드 렌더)하고, 프로젝트의
+ * 실제 컴파일 Tailwind CSS 하에서 아래를 light·dark 두 테마 computed style 로 검증한다:
+ *   1) 활성 연도탭 / '지난 경기 추가하기' CTA 배경 = accent(투명 아님) + CTA box-shadow
+ *   2) 고정 다크 요약카드 수치(3열) 가 실제 렌더 배경 대비 ≥4.5:1
+ *   3) 개인정보 안내문구 / 비활성 연도탭 텍스트가 실제 렌더 배경 대비 ≥4.5:1
  *
- * false-green 방지: CSS 는 프로젝트 원본을 그대로 컴파일(@tailwindcss/postcss)하므로
- * 존재하지 않는 토큰(bg-brand-primary)은 규칙이 생성되지 않아 투명→대비/배경 assertion 실패.
- * 마크업은 하드코딩이 아니라 실제 컴포넌트를 mount 해 얻는다(데이터 훅/닫힌 모달만 stub).
+ * false-green 방지:
+ *  - CSS 는 원본 globals.css 를 그대로 컴파일 → 없는 토큰(bg-brand-primary)은 규칙 미생성.
+ *  - 대비 기준 배경은 하드코딩이 아니라 실제 요소의 computed background 를 부모까지
+ *    합성(alpha over + gradient 평균)해 도출 → 카드 배경을 bg-white 로 바꾸면 FAIL.
+ *  - mutation self-guard: 카드 배경을 강제 흰색으로 바꾸면 수치 대비가 <4.5 로 떨어지는지
+ *    실제로 확인(harness 가 배경 변조에 민감함을 증명).
+ *  - codegen(entry/stub) 은 repo 밖(os.tmpdir)에 써서 후속 tsc 를 오염시키지 않는다.
  *
- * 실행: node scripts/qa/venue-diary-card-contrast.mjs
+ * 실행: npm run qa:diary-contrast  (node scripts/qa/venue-diary-card-contrast.mjs)
  */
 import { build } from "esbuild";
 import postcss from "postcss";
 import tailwind from "@tailwindcss/postcss";
 import playwright from "playwright";
-import { createServer } from "node:http";
-import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
+import { tmpdir } from "node:os";
 
 const ROOT = process.cwd();
-const OUT = resolve(ROOT, "tmp/diary-contrast");
-mkdirSync(OUT, { recursive: true });
 const SHOT = resolve(ROOT, "tmp/qa-screenshots");
 mkdirSync(SHOT, { recursive: true });
+// repo 밖 codegen 디렉터리 → tsconfig(**/*.tsx, allowJs) 가 스캔하지 않음 → harness→tsc PASS
+const GEN = mkdtempSync(resolve(tmpdir(), "diary-contrast-"));
 
 let failures = 0;
 const check = (cond, msg) => {
@@ -36,78 +39,61 @@ const check = (cond, msg) => {
 };
 
 // ---- 1) stub 모듈(데이터 훅 + 닫힌 모달만) ----
-const stubs = {
-  auth: resolve(OUT, "stub-auth.tsx"),
-  client: resolve(OUT, "stub-client.ts"),
-  nullmod: resolve(OUT, "stub-null.tsx"),
-};
 writeFileSync(
-  stubs.auth,
+  resolve(GEN, "stub-auth.jsx"),
   `import React from "react";
-export function AuthProvider({ children }){ return <>{children}</>; }
-export const useAuth = () => ({
-  user: { id: "qa-admin", email: "harinclaw@gmail.com" },
-  profile: { team_id: 1 },
-});
+export function AuthProvider({ children }){ return React.createElement(React.Fragment, null, children); }
+export const useAuth = () => ({ user: { id: "qa", email: "harinclaw@gmail.com" }, profile: { team_id: 1 } });
 export default { AuthProvider, useAuth };
 `,
 );
 writeFileSync(
-  stubs.client,
-  `export const supabase = { auth: { getSession: async () => ({ data: { session: { access_token: "qa" } } }) } };
-export async function getSafeSession(){ return { access_token: "qa" }; }
+  resolve(GEN, "stub-client.js"),
+  `export const supabase = { auth: { getSession: async () => ({ data: { session: { access_token: "x" } } }) } };
+export async function getSafeSession(){ return { access_token: "x" }; }
 `,
 );
+writeFileSync(resolve(GEN, "stub-null.jsx"), `export default function Stub(){ return null; }\n`);
 writeFileSync(
-  stubs.nullmod,
-  `export default function Stub(){ return null; }
-`,
-);
-
-const entry = resolve(OUT, "entry.tsx");
-writeFileSync(
-  entry,
+  resolve(GEN, "entry.jsx"),
   `import React from "react";
 import { createRoot } from "react-dom/client";
 import VenueDiaryCard from "@/components/my/VenueDiaryCard";
-createRoot(document.getElementById("root")).render(<VenueDiaryCard />);
+createRoot(document.getElementById("root")).render(React.createElement(VenueDiaryCard));
 `,
 );
 
-// ---- 2) 실제 컴포넌트 브라우저 번들(닫힌 모달·데이터 훅만 alias) ----
+// ---- 2) 실제 컴포넌트 브라우저 번들(데이터 훅·닫힌 모달만 alias) ----
 await build({
-  entryPoints: [entry],
+  entryPoints: [resolve(GEN, "entry.jsx")],
   bundle: true,
   format: "iife",
-  outfile: resolve(OUT, "bundle.js"),
+  outfile: resolve(GEN, "bundle.js"),
   jsx: "automatic",
-  loader: { ".ts": "tsx", ".tsx": "tsx" },
+  absWorkingDir: ROOT,
+  nodePaths: [resolve(ROOT, "node_modules")],
+  tsconfig: resolve(ROOT, "tsconfig.json"),
   define: { "process.env.NODE_ENV": '"production"' },
   logLevel: "error",
   alias: {
-    "@/lib/supabase/AuthContext": stubs.auth,
-    "@/lib/supabase/client": stubs.client,
-    "@/components/my/VenueDiaryAddGameSheet": stubs.nullmod,
-    "@/components/my/VenueDiaryUploader": stubs.nullmod,
-    "@/components/my/VenueDiaryViewer": stubs.nullmod,
+    "@/lib/supabase/AuthContext": resolve(GEN, "stub-auth.jsx"),
+    "@/lib/supabase/client": resolve(GEN, "stub-client.js"),
+    "@/components/my/VenueDiaryAddGameSheet": resolve(GEN, "stub-null.jsx"),
+    "@/components/my/VenueDiaryUploader": resolve(GEN, "stub-null.jsx"),
+    "@/components/my/VenueDiaryViewer": resolve(GEN, "stub-null.jsx"),
   },
-  tsconfig: resolve(ROOT, "tsconfig.json"),
 });
-const bundleJs = readFileSync(resolve(OUT, "bundle.js"), "utf8");
+const bundleJs = readFileSync(resolve(GEN, "bundle.js"), "utf8");
 
 // ---- 3) 실제 프로젝트 CSS 컴파일 ----
-const cssSrc = readFileSync(resolve(ROOT, "src/styles/globals.css"), "utf8");
-const compiled = await postcss([tailwind]).process(cssSrc, {
-  from: resolve(ROOT, "src/styles/globals.css"),
-});
-writeFileSync(resolve(OUT, "app.css"), compiled.css);
+const compiled = await postcss([tailwind]).process(
+  readFileSync(resolve(ROOT, "src/styles/globals.css"), "utf8"),
+  { from: resolve(ROOT, "src/styles/globals.css") },
+);
 console.log(`compiled CSS: ${(compiled.css.length / 1024).toFixed(0)}KB`);
-
-// bg-accent 규칙 존재 + bg-brand-primary(구 토큰) 미생성 확인 → 회귀 가드의 근거
 check(/\.bg-accent\b/.test(compiled.css), "compiled CSS 에 .bg-accent 규칙 존재");
 check(!/\.bg-brand-primary\b/.test(compiled.css), "compiled CSS 에 .bg-brand-primary 규칙 없음(구 토큰=무색)");
 
-// ---- 4) 요약 fixture (18 / 100.0% / 18경기) ----
 const attendance = {
   season: 2026,
   summary: { attendanceCount: 18, wins: 12, losses: 5, draws: 1, finalCount: 18, winRate: 1 },
@@ -116,42 +102,18 @@ const attendance = {
 };
 const media = { season: 2026, games: [], nextCursor: null, hasMore: false };
 
-function contrast(fg, bg) {
-  const lum = (c) => {
-    const [r, g, b] = c.map((v) => {
-      const s = v / 255;
-      return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
-    });
-    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
-  };
-  const L1 = lum(fg), L2 = lum(bg);
-  const [hi, lo] = L1 > L2 ? [L1, L2] : [L2, L1];
-  return (hi + 0.05) / (lo + 0.05);
-}
-const parseRGB = (s) => (s.match(/\d+(\.\d+)?/g) || []).slice(0, 3).map(Number);
-
-// 상대경로 fetch 가 실제 origin 을 갖도록 로컬 서버로 서빙(effect 데이터 로드 성립).
+// ---- 로컬 서버(상대경로 fetch origin 확보) ----
+import { createServer } from "node:http";
 let THEME = "light";
 const server = createServer((req, res) => {
   const url = req.url.split("?")[0];
-  if (url.startsWith("/api/me/venue-attendance")) {
-    res.writeHead(200, { "content-type": "application/json" });
-    return res.end(JSON.stringify(attendance));
-  }
-  if (url.startsWith("/api/me/venue-diary/media")) {
-    res.writeHead(200, { "content-type": "application/json" });
-    return res.end(JSON.stringify(media));
-  }
-  if (url === "/app.css") {
-    res.writeHead(200, { "content-type": "text/css" });
-    return res.end(compiled.css);
-  }
-  if (url === "/bundle.js") {
-    res.writeHead(200, { "content-type": "text/javascript" });
-    return res.end(bundleJs);
-  }
-  res.writeHead(200, { "content-type": "text/html" });
-  res.end(
+  if (url.startsWith("/api/me/venue-attendance"))
+    return res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(attendance));
+  if (url.startsWith("/api/me/venue-diary/media"))
+    return res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(media));
+  if (url === "/app.css") return res.writeHead(200, { "content-type": "text/css" }).end(compiled.css);
+  if (url === "/bundle.js") return res.writeHead(200, { "content-type": "text/javascript" }).end(bundleJs);
+  res.writeHead(200, { "content-type": "text/html" }).end(
     `<!doctype html><html class="${THEME === "dark" ? "dark" : ""}"><head><meta charset="utf8">` +
       `<link rel="stylesheet" href="/app.css"></head>` +
       `<body class="bg-bg-primary" style="margin:0;padding:12px"><div id="root"></div>` +
@@ -161,76 +123,110 @@ const server = createServer((req, res) => {
 await new Promise((r) => server.listen(0, "127.0.0.1", r));
 const PORT = server.address().port;
 
+// ---- 페이지 내부에서 실제 렌더 배경을 합성해 대비를 재는 헬퍼(문자열로 주입) ----
+const PAGE_HELPERS = `
+  const cv = document.createElement("canvas"); cv.width = cv.height = 1;
+  const g = cv.getContext("2d");
+  function toRGB(color){ g.clearRect(0,0,1,1); g.fillStyle="#000"; g.fillStyle=color; g.fillRect(0,0,1,1);
+    const d = g.getImageData(0,0,1,1).data; return [d[0],d[1],d[2]]; }
+  function rgba(str){ // returns {rgb:[r,g,b], a}
+    g.clearRect(0,0,1,1); g.fillStyle="rgba(0,0,0,0)"; g.fillStyle=str; g.fillRect(0,0,1,1);
+    const d = g.getImageData(0,0,1,1).data; return { rgb:[d[0],d[1],d[2]], a: d[3]/255 }; }
+  function over(fg, bg){ return fg.rgb.map((c,i)=> Math.round(c*fg.a + bg[i]*(1-fg.a))); }
+  function gradientAvg(img){ const m = img.match(/rgba?\\([^)]+\\)/g); if(!m) return null;
+    const cols = m.map(rgba).filter(c=>c.a>0.01); if(!cols.length) return null;
+    const n = cols.length; return [0,1,2].map(i=> Math.round(cols.reduce((s,c)=>s+c.rgb[i],0)/n)); }
+  // 요소의 실제 렌더 배경 = 조상 체인의 background-color(alpha)·gradient 를 흰 base 위에 합성
+  function effectiveBg(el){
+    const chain=[]; for(let e=el; e && e!==document.documentElement; e=e.parentElement) chain.push(e);
+    chain.push(document.documentElement);
+    let acc = [255,255,255];
+    for(let i=chain.length-1; i>=0; i--){
+      const cs = getComputedStyle(chain[i]);
+      const bc = rgba(cs.backgroundColor); if(bc.a>0.001) acc = over(bc, acc);
+      if(cs.backgroundImage && cs.backgroundImage!=="none"){ const gv = gradientAvg(cs.backgroundImage);
+        if(gv) acc = gv; } // gradient 는 불투명 레이어로 간주
+    }
+    return acc;
+  }
+  function lum(c){ const f=c.map(v=>{ const s=v/255; return s<=0.03928? s/12.92 : Math.pow((s+0.055)/1.055,2.4); });
+    return 0.2126*f[0]+0.7152*f[1]+0.0722*f[2]; }
+  function contrast(fg, bg){ const L1=lum(fg), L2=lum(bg); const hi=Math.max(L1,L2), lo=Math.min(L1,L2);
+    return (hi+0.05)/(lo+0.05); }
+  window.__probe = (el)=>{ const cs=getComputedStyle(el); const fg=toRGB(cs.color); const bg=effectiveBg(el);
+    return { fg, bg, ratio: contrast(fg,bg) }; };
+`;
+
 const browser = await playwright.chromium.launch();
-for (const theme of ["light", "dark"]) {
-  THEME = theme;
-  const ctx = await browser.newContext({ viewport: { width: 360, height: 900 }, deviceScaleFactor: 2 });
-  const page = await ctx.newPage();
-  page.on("pageerror", (e) => console.log(`  [pageerror] ${e.message}`));
-  page.on("console", (msg) => { if (msg.type() === "error") console.log(`  [console.error] ${msg.text()}`); });
-  await page.goto(`http://127.0.0.1:${PORT}/my`, { waitUntil: "load" });
-  // effect 로 요약 카드 렌더될 때까지
-  try {
+try {
+  for (const theme of ["light", "dark"]) {
+    THEME = theme;
+    const ctx = await browser.newContext({ viewport: { width: 360, height: 900 }, deviceScaleFactor: 2 });
+    const page = await ctx.newPage();
+    page.on("pageerror", (e) => console.log(`  [pageerror] ${e.message}`));
+    await page.goto(`http://127.0.0.1:${PORT}/my`, { waitUntil: "load" });
     await page.waitForFunction(() => /인증 직관/.test(document.body.innerText), null, { timeout: 8000 });
-  } catch {
-    console.log(`  [${theme}] body.innerText head:`, (await page.evaluate(() => document.body.innerText)).slice(0, 200));
+    await page.addScriptTag({ content: PAGE_HELPERS });
+
+    const m = await page.evaluate(() => {
+      const tabs = [...document.querySelectorAll("button")].filter((b) => /^(2026|2025|전체)$/.test((b.textContent || "").trim()));
+      const activeTab = tabs.find((b) => (b.textContent || "").trim() === "2026");
+      const inactiveTabs = tabs.filter((b) => b !== activeTab);
+      const cta = [...document.querySelectorAll("button")].find((b) => /지난 경기 추가하기/.test(b.textContent || ""));
+      const info = [...document.querySelectorAll("span")].find((s) => /나만 볼 수 있고/.test(s.textContent || ""));
+      const grid = document.querySelector('[class*="grid-cols-3"]');
+      const nums = grid ? [...grid.children].map((c) => c.querySelector("p")).filter(Boolean) : [];
+      const card = document.querySelector('[class*="from-["]');
+      const cs = (el) => getComputedStyle(el);
+      const win = window;
+      return {
+        activeTabBg: win.__probe(activeTab) && (() => { const c = cs(activeTab); return c.backgroundColor; })(),
+        activeTabBgRGB: (() => { const c = cs(activeTab); const p = document.createElement("canvas").getContext("2d"); p.fillStyle = c.backgroundColor; return p.fillStyle; })(),
+        ctaBg: cs(cta).backgroundColor,
+        ctaShadow: cs(cta).boxShadow,
+        nums: nums.map((p) => ({ t: p.textContent.trim(), ...win.__probe(p) })),
+        info: win.__probe(info),
+        inactive: inactiveTabs.map((b) => ({ t: b.textContent.trim(), ...win.__probe(b) })),
+        docOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        // mutation self-guard: 카드 배경 강제 흰색 → 수치 대비 재측정
+        mutated: (() => {
+          card.style.backgroundImage = "none";
+          card.style.backgroundColor = "#ffffff";
+          const p = nums[0];
+          return win.__probe(p).ratio;
+        })(),
+      };
+    });
+
+    const accentBg = await page.evaluate(() => {
+      const p = document.createElement("canvas").getContext("2d");
+      p.fillStyle = getComputedStyle([...document.querySelectorAll("button")].find((b) => /지난 경기 추가하기/.test(b.textContent || ""))).backgroundColor;
+      return p.fillStyle;
+    });
+
+    console.log(`\n[${theme}] cta=${m.ctaBg} nums=${m.nums.map((n) => n.t + ":" + n.ratio.toFixed(1)).join(",")} info=${m.info.ratio.toFixed(2)} inactive=${m.inactive.map((n) => n.ratio.toFixed(2)).join(",")} mutated=${m.mutated.toFixed(2)}`);
+
+    const isAccent = (s) => /rgb\(255,\s*69,\s*58\)|#ff453a/i.test(s);
+    check(isAccent(m.ctaBg), `[${theme}] CTA 배경 = accent (${m.ctaBg})`);
+    check(isAccent(m.activeTabBg), `[${theme}] 활성 연도탭 배경 = accent (${m.activeTabBg})`);
+    check(m.ctaShadow && m.ctaShadow !== "none", `[${theme}] CTA box-shadow 존재`);
+    check(m.nums.length === 3, `[${theme}] 요약 3열 수치 3개 (${m.nums.map((n) => n.t).join(",")})`);
+    for (const n of m.nums) check(n.ratio >= 4.5, `[${theme}] 수치 '${n.t}' 대비 ${n.ratio.toFixed(2)}:1 ≥4.5`);
+    check(m.info.ratio >= 4.5, `[${theme}] 개인정보 안내문구 대비 ${m.info.ratio.toFixed(2)}:1 ≥4.5`);
+    for (const t of m.inactive) check(t.ratio >= 4.5, `[${theme}] 비활성 연도탭 '${t.t}' 대비 ${t.ratio.toFixed(2)}:1 ≥4.5`);
+    check(m.docOverflow <= 0, `[${theme}] 가로 overflow 0 (delta=${m.docOverflow})`);
+    // 배경 변조에 민감함을 증명(흰 배경 위 흰 수치는 대비 붕괴)
+    check(m.mutated < 4.5, `[${theme}] mutation guard — 카드 bg=흰색 변조 시 수치 대비 ${m.mutated.toFixed(2)}<4.5 (harness가 배경 변조 감지)`);
+
+    await page.screenshot({ path: resolve(SHOT, `diary-card-${theme}-360.png`) });
+    void accentBg;
+    await ctx.close();
   }
-
-  const m = await page.evaluate(() => {
-    const q = (re) =>
-      [...document.querySelectorAll("button,p,span,div")].find((el) => re.test(el.textContent || ""));
-    const activeTab = [...document.querySelectorAll("button")].find((b) => (b.textContent || "").trim() === "2026");
-    const cta = [...document.querySelectorAll("button")].find((b) => /지난 경기 추가하기/.test(b.textContent || ""));
-    const card = document.querySelector('[class*="from-["]') || cta?.closest("div");
-    // 요약 3열 수치 <p> — 3-col 그리드의 각 컬럼 첫 <p>(값) 구조로 선택(값 변동 무관)
-    const grid = document.querySelector('[class*="grid-cols-3"]');
-    const nums = grid
-      ? [...grid.children].map((col) => col.querySelector("p")).filter(Boolean)
-      : [];
-    const cs = (el) => (el ? getComputedStyle(el) : null);
-    // oklch/oklab 등 임의 CSS 색을 canvas 로 실제 rgb 픽셀로 해석(파서 통일).
-    const cv = document.createElement("canvas");
-    cv.width = cv.height = 1;
-    const g = cv.getContext("2d");
-    const toRGB = (color) => {
-      g.clearRect(0, 0, 1, 1);
-      g.fillStyle = "#000";
-      g.fillStyle = color;
-      g.fillRect(0, 0, 1, 1);
-      const [r, gg, b] = g.getImageData(0, 0, 1, 1).data;
-      return [r, gg, b];
-    };
-    const cardCs = cs(card);
-    return {
-      activeTabBg: toRGB(cs(activeTab).backgroundColor),
-      ctaBg: toRGB(cs(cta).backgroundColor),
-      ctaShadow: cs(cta)?.boxShadow,
-      cardBgImage: cardCs?.backgroundImage,
-      nums: nums.map((p) => ({ t: p.textContent.trim(), rgb: toRGB(cs(p).color) })),
-      docOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
-    };
-  });
-
-  console.log(`\n[${theme}]`, JSON.stringify(m, null, 0));
-  // 카드 배경: 그라디언트라 backgroundColor 가 투명일 수 있어 고정 다크 그라디언트 끝색(#141417≈20,20,23)을 대비 기준으로 사용
-  const cardRef = [20, 20, 23];
-  const accent = [255, 69, 58];
-
-  check(JSON.stringify(m.activeTabBg) === JSON.stringify(accent), `[${theme}] 활성 연도탭 배경 = accent rgb(${m.activeTabBg})`);
-  check(JSON.stringify(m.ctaBg) === JSON.stringify(accent), `[${theme}] CTA 배경 = accent rgb(${m.ctaBg})`);
-  check(!!m.ctaShadow && m.ctaShadow !== "none", `[${theme}] CTA box-shadow 존재 ${m.ctaShadow?.slice(0, 40)}`);
-  check(m.nums.length === 3, `[${theme}] 요약 3열 수치 3개 검출 (${m.nums.map((n) => n.t).join(",")})`);
-  for (const n of m.nums) {
-    const ratio = contrast(n.rgb, cardRef);
-    check(ratio >= 4.5, `[${theme}] 수치 '${n.t}' 대비 ${ratio.toFixed(2)}:1 ≥4.5 (rgb ${n.rgb})`);
-  }
-  check(m.docOverflow <= 0, `[${theme}] 가로 overflow 0 (delta=${m.docOverflow})`);
-
-  await page.screenshot({ path: resolve(SHOT, `diary-card-${theme}-360.png`) });
-  await ctx.close();
+} finally {
+  await browser.close();
+  server.close();
+  rmSync(GEN, { recursive: true, force: true });
 }
-await browser.close();
-server.close();
 
 console.log(`\n${failures === 0 ? "PASS" : "FAIL"} — ${failures} failure(s)`);
 process.exit(failures === 0 ? 0 : 1);
