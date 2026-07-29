@@ -96,6 +96,20 @@ export interface PitcherRecord {
   era: string;
 }
 
+type DegradationReason = "timeout" | "http-error" | "schema-error" | "network-error";
+interface DetailDegradationEvent {
+  apiName: "kbo-game-detail" | "game-detail-dual-source-outage";
+  reason: DegradationReason;
+}
+let degradationObserverForTest: ((event: DetailDegradationEvent) => void) | null = null;
+
+/** actual GET 관제 분기 회귀에서만 사용. production 호출부는 등록하지 않는다. */
+export function setGameDetailDegradationObserverForTest(
+  observer: ((event: DetailDegradationEvent) => void) | null,
+): void {
+  degradationObserverForTest = observer;
+}
+
 // ===== Position mapping =====
 
 const POS_MAP: Record<string, string> = {
@@ -508,18 +522,20 @@ function untilDeadline<T>(promise: Promise<T>, signal: AbortSignal, fallback: T)
 function reportDetailDegradation(
   gameId: string,
   bothSourcesUnavailable: boolean,
+  reason: DegradationReason,
 ): void {
   const apiName = bothSourcesUnavailable ? "game-detail-dual-source-outage" : "kbo-game-detail";
   const policy = bothSourcesUnavailable
     ? { windowMinutes: 5, threshold: 1, cooldownMinutes: 10, leaseSeconds: 120 }
     : { windowMinutes: 5, threshold: 3, cooldownMinutes: 30, leaseSeconds: 120 };
+  degradationObserverForTest?.({ apiName, reason });
   try {
     // 관제 저장·알림은 응답 이후 실행해 사용자 deadline을 소비하지 않는다.
     after(async () => {
       const { trackApiDegradation } = await import("@/lib/monitoring/api-fallback-tracker");
       await trackApiDegradation(
         apiName,
-        bothSourcesUnavailable ? "network-error" : "schema-error",
+        reason,
         { errorMessage: `${gameId}: bounded game-detail fallback` },
         policy,
       );
@@ -547,12 +563,22 @@ export async function GET(req: NextRequest) {
     signal: deadlineSignal,
     includeRelayCounts: false,
   });
-  const kboListPromise = fetchKboGamesOnly(dateStr, "0,1,3,4,5,7,9", {
-    signal: deadlineSignal,
-  }).catch(() => null);
-  const naverListPromise = fetchNaverGames(dateStr, undefined, {
-    signal: deadlineSignal,
-  }).catch(() => null);
+  const reasonFor = (error: unknown): DegradationReason => {
+    const e = error as { name?: string; message?: string };
+    if (e?.name === "TimeoutError" || /timeout|deadline/i.test(e?.message ?? "")) return "timeout";
+    if (/HTTP/i.test(e?.message ?? "")) return "http-error";
+    if (/JSON|schema/i.test(e?.message ?? "")) return "schema-error";
+    return "network-error";
+  };
+  type ObservedGames = { value: KboGame[] | null; reason: DegradationReason | null };
+  const kboListPromise: Promise<ObservedGames> =
+    fetchKboGamesOnly(dateStr, "0,1,3,4,5,7,9", { signal: deadlineSignal })
+      .then((value) => ({ value, reason: null }))
+      .catch((error) => ({ value: null, reason: reasonFor(error) }));
+  const naverListPromise: Promise<ObservedGames> =
+    fetchNaverGames(dateStr, undefined, { signal: deadlineSignal })
+      .then((value) => ({ value, reason: null }))
+      .catch((error) => ({ value: null, reason: reasonFor(error) }));
 
   // KBO Schedule API (GetScoreBoard/GetBoxScore/GetLineUpAnalysis) only accepts
   // a single integer srId — NOT comma-separated like GetKboGameList.
@@ -561,42 +587,56 @@ export async function GET(req: NextRequest) {
 
   async function fetchWithSrId(srId: string) {
     const body = `leId=1&srId=${srId}&seasonId=${seasonId}&gameId=${gameId}`;
-    return Promise.all([
-      fetch(`${KBO_BASE}/GetScoreBoard`, {
-        method: "POST", headers: HEADERS, body,
-        next: { revalidate: 10 },
-        signal: deadlineSignal,
-      }).then(r => r.ok ? r.json() : null).catch(() => null),
-
-      fetch(`${KBO_BASE}/GetLineUpAnalysis`, {
-        method: "POST", headers: HEADERS, body,
-        next: { revalidate: 60 },
-        signal: deadlineSignal,
-      }).then(r => r.ok ? r.json() : null).catch(() => null),
-
-      fetch(`${KBO_BASE}/GetBoxScore`, {
-        method: "POST", headers: HEADERS, body,
-        next: { revalidate: 30 },
-        signal: deadlineSignal,
-      }).then(r => r.ok ? r.json() : null).catch(() => null),
+    const fetchKboJson = async (path: string, revalidate: number) => {
+      try {
+        const response = await fetch(`${KBO_BASE}/${path}`, {
+          method: "POST", headers: HEADERS, body,
+          next: { revalidate },
+          signal: deadlineSignal,
+        });
+        if (!response.ok) {
+          return { data: null, reason: "http-error" as const };
+        }
+        return { data: await response.json(), reason: null };
+      } catch (error) {
+        return { data: null, reason: reasonFor(error) };
+      }
+    };
+    const results = await Promise.all([
+      fetchKboJson("GetScoreBoard", 10),
+      fetchKboJson("GetLineUpAnalysis", 60),
+      fetchKboJson("GetBoxScore", 30),
     ]);
+    return {
+      data: results.map((result) => result.data),
+      reasons: results.flatMap((result) => result.reason ? [result.reason] : []),
+    };
   }
 
   try {
-    const emptyKboBatch: [null, null, null] = [null, null, null];
-    let [scoreBoardRes, lineupRes, boxScoreRes] = overrideSrId
-      ? await untilDeadline(fetchWithSrId(overrideSrId), deadlineSignal, emptyKboBatch)
-      : await untilDeadline(fetchWithSrId("0"), deadlineSignal, emptyKboBatch);
+    const timeoutBatch = {
+      data: [null, null, null],
+      reasons: ["timeout" as DegradationReason],
+    };
+    let kboBatch = overrideSrId
+      ? await untilDeadline(fetchWithSrId(overrideSrId), deadlineSignal, timeoutBatch)
+      : await untilDeadline(fetchWithSrId("0"), deadlineSignal, timeoutBatch);
+    let [scoreBoardRes, lineupRes, boxScoreRes] = kboBatch.data;
 
     // If no override and srId=0 returned empty ScoreBoard, retry with srId=1 (preseason)
     if (!overrideSrId && !deadlineSignal.aborted) {
       const sb = parseScoreBoard(scoreBoardRes ?? []);
       if (!sb.meta) {
-        [scoreBoardRes, lineupRes, boxScoreRes] = await untilDeadline(
+        const retryBatch = await untilDeadline(
           fetchWithSrId("1"),
           deadlineSignal,
-          emptyKboBatch,
+          timeoutBatch,
         );
+        kboBatch = {
+          data: retryBatch.data,
+          reasons: [...kboBatch.reasons, ...retryBatch.reasons],
+        };
+        [scoreBoardRes, lineupRes, boxScoreRes] = kboBatch.data;
       }
     }
 
@@ -614,7 +654,11 @@ export async function GET(req: NextRequest) {
     // ScoreBoard가 scheduled인데 BoxScore에 실데이터가 있으면 → 종료된 경기
     const hasRealBoxScore = boxScore &&
       (boxScore.awayBatters.some(b => b.atBats > 0) || boxScore.homeBatters.some(b => b.atBats > 0));
-    const kboDetailDegraded = !meta || !hasInningBreakdown(kboLinescore) || !hasRealBoxScore;
+    const kboExpectsDetailData =
+      scoreBoardStatus === "live" || scoreBoardStatus === "final" || !!hasRealBoxScore;
+    const kboDetailDegraded =
+      !meta ||
+      (kboExpectsDetailData && (!hasInningBreakdown(kboLinescore) || !hasRealBoxScore));
 
     // KBO BoxScore가 비어있거나, KBO linescore에 이닝별 값이 없으면 네이버 record API fallback
     let naver: Awaited<ReturnType<typeof fetchNaverRecord>> = null;
@@ -640,15 +684,17 @@ export async function GET(req: NextRequest) {
     let listGame: KboGame | undefined;
     // detail 3종이 정상일 때는 KBO 목록(TV_IF 포함)을 우선하고, 부분결측이면 Naver
     // status를 우선한다. KBO 목록이 구조상 정상이어도 상태만 stale인 부분열화를 막는다.
+    const emptyObservedGames: ObservedGames = { value: null, reason: "timeout" };
     const primaryListPromise = kboDetailDegraded ? naverListPromise : kboListPromise;
     const fallbackListPromise = kboDetailDegraded ? kboListPromise : naverListPromise;
-    const primaryGames = await untilDeadline(primaryListPromise, deadlineSignal, null);
-    if (primaryGames) {
-      listGame = primaryGames.find(g => g.gameId === gameId);
+    const primaryGames = await untilDeadline(primaryListPromise, deadlineSignal, emptyObservedGames);
+    if (primaryGames.value) {
+      listGame = primaryGames.value.find(g => g.gameId === gameId);
     }
+    let fallbackGames: ObservedGames | null = null;
     if (!listGame) {
-      const fallbackGames = await untilDeadline(fallbackListPromise, deadlineSignal, null);
-      listGame = fallbackGames?.find(g => g.gameId === gameId);
+      fallbackGames = await untilDeadline(fallbackListPromise, deadlineSignal, emptyObservedGames);
+      listGame = fallbackGames.value?.find(g => g.gameId === gameId);
     }
     if (listGame) {
       liveListStatus = listGame?.status ?? null;
@@ -691,10 +737,20 @@ export async function GET(req: NextRequest) {
       boxScore,
     };
 
-    if (kboDetailDegraded) {
+    const kboListResult = kboDetailDegraded ? fallbackGames : primaryGames;
+    const actualKboFailure = kboBatch.reasons[0] ?? kboListResult?.reason ?? null;
+    const expectsDetailData = status === "live" || status === "final";
+    const missingExpectedKboData =
+      expectsDetailData && (!meta || !hasInningBreakdown(kboLinescore) || !hasRealBoxScore);
+    const naverHasExpectedData =
+      hasInningBreakdown(naver?.linescore ?? null) || !!hasRealBoxScoreFinal || !!listGame;
+    const bothSourcesUnavailable =
+      !meta && !naverHasExpectedData && !!actualKboFailure;
+    if (actualKboFailure || missingExpectedKboData) {
       reportDetailDegradation(
         gameId,
-        !hasInningBreakdown(naver?.linescore ?? null) && !listGame && !hasRealBoxScoreFinal,
+        bothSourcesUnavailable,
+        actualKboFailure ?? "schema-error",
       );
     }
 

@@ -59,6 +59,8 @@ KBO API(`GetKboGameList`, `Record/*.aspx`, `Player/Register.aspx`)가 2026-07-28
 ### ①.6 추가 회귀
 
 - committed actual `GET /api/game-detail`: KBO blackhole/Naver 정상, 역방향, KBO 부분 스키마,
-  양쪽 blackhole, srId 0→1 retry를 동일 절대 deadline으로 검증.
+  양쪽 blackhole, srId 0→1 retry, HTTP 오류를 동일 절대 deadline으로 검증.
 - KBO unavailable이면 `lineup=null`, Naver linescore·boxScore·status는 유지하고 HTTP 200 partial.
+- 정상 scheduled/cancelled의 이닝·박스 부재는 관제 0건, live/final 결측과 dual outage만
+  실제 reason(timeout/HTTP/schema)을 보존해 비차단 관제.
 - route에 후속 `fetchGames()` 기본 10초 await가 재유입되면 mutation guard가 즉시 실패.

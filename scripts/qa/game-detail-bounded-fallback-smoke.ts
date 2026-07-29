@@ -22,9 +22,11 @@ AbortSignal.timeout = ((ms: number) => {
 
 let GET: typeof import("../../src/app/api/game-detail/route").GET;
 let USER_FACING_GAME_DETAIL_DEADLINE_MS: number;
+let setDegradationObserver:
+  typeof import("../../src/app/api/game-detail/route").setGameDetailDegradationObserverForTest;
 
-type SourceMode = "normal" | "partial" | "blackhole" | "sr-retry-blackhole";
-type GameState = "live" | "final";
+type SourceMode = "normal" | "partial" | "blackhole" | "http-error" | "sr-retry-blackhole";
+type GameState = "scheduled" | "live" | "final" | "cancelled";
 
 function json(data: unknown): Response {
   return new Response(JSON.stringify(data), {
@@ -38,6 +40,15 @@ function cells(values: unknown[]) {
 }
 
 function scoreboard(state: GameState) {
+  if (state === "scheduled" || state === "cancelled") {
+    return [[{
+      STADIUM_NM: "잠실",
+      GAME_START_TM: "18:30",
+      CANCEL_SC_NM: state === "cancelled" ? "우천취소" : "",
+      T_SCORE_CN: "0",
+      B_SCORE_CN: "0",
+    }]];
+  }
   const away = [0, 1, 0, 0, 0, 0, 2, 0, 0];
   const home = [0, 0, 0, 2, 0, 0, 0, 0, state === "live" ? "-" : 0];
   return [
@@ -81,6 +92,10 @@ function boxScore() {
 }
 
 function kboList(state: GameState) {
+  const stateCode =
+    state === "final" ? "3" :
+    state === "live" ? "2" :
+    "1";
   return {
     game: [{
       G_ID: GAME_ID,
@@ -93,10 +108,10 @@ function kboList(state: GameState) {
       HOME_NM: "LG",
       T_SCORE_CN: "3",
       B_SCORE_CN: "2",
-      GAME_INN_NO: state === "live" ? 8 : 9,
+      GAME_INN_NO: state === "live" ? 8 : state === "final" ? 9 : 0,
       GAME_TB_SC: "T",
-      GAME_STATE_SC: state === "final" ? "3" : "2",
-      CANCEL_SC_ID: "",
+      GAME_STATE_SC: stateCode,
+      CANCEL_SC_ID: state === "cancelled" ? "1" : "",
       T_PIT_P_NM: "",
       B_PIT_P_NM: "",
       W_PIT_P_NM: "",
@@ -132,14 +147,26 @@ function naverSchedule(state: GameState) {
         homeTeamName: "LG",
         awayTeamScore: 3,
         homeTeamScore: 2,
-        statusCode: state === "final" ? "RESULT" : "STARTED",
-        statusInfo: state === "final" ? "경기종료" : "8회초",
+        statusCode:
+          state === "final" ? "RESULT" :
+          state === "live" ? "STARTED" :
+          state === "cancelled" ? "CANCEL" :
+          "READY",
+        statusInfo:
+          state === "final" ? "경기종료" :
+          state === "live" ? "8회초" :
+          state === "cancelled" ? "우천취소" :
+          "경기전",
+        cancel: state === "cancelled",
       }],
     },
   };
 }
 
-function naverRecord() {
+function naverRecord(state: GameState) {
+  if (state === "scheduled" || state === "cancelled") {
+    return { result: { recordData: {} } };
+  }
   const batter = (name: string) => ({
     batOrder: 1, pos: "중", name, ab: 4, hit: 2, run: 1, rbi: 1,
     hr: 0, h2: 0, h3: 0, bb: 0, kk: 1, sb: 0, hra: ".500",
@@ -184,12 +211,15 @@ async function scenario(
 ) {
   const signals = new Set<AbortSignal>();
   const srIds: string[] = [];
+  const degradationEvents: Array<{ apiName: string; reason: string }> = [];
+  setDegradationObserver((event) => degradationEvents.push(event));
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
     if (init?.signal) signals.add(init.signal);
 
     const isKbo = url.includes("koreabaseball.com");
     if (isKbo && kboMode === "blackhole") return blackhole(init?.signal ?? undefined);
+    if (isKbo && kboMode === "http-error") return new Response("upstream unavailable", { status: 503 });
     if (!isKbo && naverMode === "blackhole") return blackhole(init?.signal ?? undefined);
 
     if (url.includes("GetKboGameList")) {
@@ -207,14 +237,24 @@ async function scenario(
       return json(scoreboard(state));
     }
     if (url.includes("GetLineUpAnalysis")) {
-      if (kboMode === "partial" || kboMode === "sr-retry-blackhole") return json([]);
+      if (
+        kboMode === "partial" ||
+        kboMode === "sr-retry-blackhole" ||
+        state === "scheduled" ||
+        state === "cancelled"
+      ) return json([]);
       return json(lineup());
     }
     if (url.includes("GetBoxScore")) {
-      if (kboMode === "partial" || kboMode === "sr-retry-blackhole") return json({ tables: [] });
+      if (
+        kboMode === "partial" ||
+        kboMode === "sr-retry-blackhole" ||
+        state === "scheduled" ||
+        state === "cancelled"
+      ) return json({ tables: [] });
       return json(boxScore());
     }
-    if (url.includes("/record")) return json(naverRecord());
+    if (url.includes("/record")) return json(naverRecord(state));
     if (url.includes("/relay?")) {
       return json({ result: { textRelayData: { inn: 1, textRelays: [] } } });
     }
@@ -231,6 +271,7 @@ async function scenario(
   clearTimeout(keepAlive);
   const elapsed = performance.now() - started;
   const body = await response.json();
+  setDegradationObserver(null);
 
   assert.equal(response.status, 200, `${name}: HTTP 200`);
   assert.ok(elapsed < 500, `${name}: bounded wall time (${elapsed.toFixed(1)}ms)`);
@@ -240,55 +281,84 @@ async function scenario(
     `${name}: absolute deadline SSOT 1회`,
   );
   assert.equal(signals.size, 1, `${name}: 모든 upstream이 동일 AbortSignal 공유`);
-  return { body, srIds };
+  return { body, srIds, degradationEvents };
 }
 
 async function main() {
   const route = await import("../../src/app/api/game-detail/route");
   GET = route.GET;
   USER_FACING_GAME_DETAIL_DEADLINE_MS = route.USER_FACING_GAME_DETAIL_DEADLINE_MS;
+  setDegradationObserver = route.setGameDetailDegradationObserverForTest;
 
   const kboDown = await scenario("KBO 3종 blackhole + Naver final", "blackhole", "normal", "final");
   assert.equal(kboDown.body.status, "final");
   assert.equal(kboDown.body.linescore.away.R, 3);
   assert.equal(kboDown.body.boxScore.awayBatters[0].name, "김선수");
   assert.equal(kboDown.body.lineup, null);
+  assert.deepEqual(kboDown.degradationEvents, [{ apiName: "kbo-game-detail", reason: "timeout" }]);
 
   const kboDownLive = await scenario("KBO 3종 blackhole + Naver live", "blackhole", "normal", "live");
   assert.equal(kboDownLive.body.status, "live");
   assert.equal(kboDownLive.body.linescore.home.R, 2);
   assert.ok(kboDownLive.body.boxScore.homeBatters.length > 0);
   assert.equal(kboDownLive.body.lineup, null);
+  assert.deepEqual(kboDownLive.degradationEvents, [{ apiName: "kbo-game-detail", reason: "timeout" }]);
 
   const naverDown = await scenario("KBO normal + Naver blackhole", "normal", "blackhole", "final");
   assert.equal(naverDown.body.status, "final");
   assert.equal(naverDown.body.linescore.away.R, 3);
   assert.ok(naverDown.body.boxScore.awayBatters.length > 0);
   assert.ok(naverDown.body.lineup?.away.length > 0);
+  assert.equal(naverDown.degradationEvents.length, 0);
 
   const partial = await scenario("KBO partial schema + Naver normal", "partial", "normal", "final");
   assert.equal(partial.body.status, "final");
   assert.equal(partial.body.linescore.away.R, 3);
   assert.ok(partial.body.boxScore.awayBatters.length > 0);
   assert.equal(partial.body.lineup, null);
+  assert.deepEqual(partial.degradationEvents, [{ apiName: "kbo-game-detail", reason: "schema-error" }]);
 
   const bothDown = await scenario("KBO + Naver blackhole", "blackhole", "blackhole", "final");
   assert.equal(bothDown.body.status, "scheduled");
   assert.equal(bothDown.body.linescore, null);
   assert.equal(bothDown.body.boxScore, null);
   assert.equal(bothDown.body.lineup, null);
+  assert.deepEqual(
+    bothDown.degradationEvents,
+    [{ apiName: "game-detail-dual-source-outage", reason: "timeout" }],
+  );
 
   const retry = await scenario("srId 0 empty → 1 blackhole", "sr-retry-blackhole", "normal", "final");
   assert.deepEqual(retry.srIds.filter((v) => v === "0" || v === "1"), ["0", "1"]);
   assert.equal(retry.body.status, "final");
   assert.equal(retry.body.lineup, null);
+  assert.deepEqual(retry.degradationEvents, [{ apiName: "kbo-game-detail", reason: "timeout" }]);
+
+  const httpError = await scenario("KBO HTTP 503 + Naver normal", "http-error", "normal", "final");
+  assert.equal(httpError.body.status, "final");
+  assert.deepEqual(
+    httpError.degradationEvents,
+    [{ apiName: "kbo-game-detail", reason: "http-error" }],
+  );
+
+  const scheduled = await scenario("normal scheduled", "normal", "normal", "scheduled");
+  assert.equal(scheduled.body.status, "scheduled");
+  assert.equal(scheduled.body.linescore, null);
+  assert.equal(scheduled.body.boxScore, null);
+  assert.equal(scheduled.degradationEvents.length, 0);
+
+  const cancelled = await scenario("normal cancelled", "normal", "normal", "cancelled");
+  assert.equal(cancelled.body.status, "cancelled");
+  assert.equal(cancelled.body.linescore, null);
+  assert.equal(cancelled.body.boxScore, null);
+  assert.equal(cancelled.degradationEvents.length, 0);
 
   // mutation guard: 후속 fetchGames() 기본 10초 경로가 route에 재유입되면 즉시 red.
   const routeSource = readFileSync("src/app/api/game-detail/route.ts", "utf8");
   assert.doesNotMatch(routeSource, /\bfetchGames\s*\(/, "route must not reintroduce fetchGames 10s await");
   assert.match(routeSource, /signal:\s*deadlineSignal/g, "shared absolute deadline wiring retained");
 
-  console.log("game-detail bounded fallback: 6 actual GET scenarios PASS");
+  console.log("game-detail bounded fallback: 9 actual GET + degradation scenarios PASS");
 }
 
 main()
