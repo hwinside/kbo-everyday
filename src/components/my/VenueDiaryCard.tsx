@@ -395,7 +395,7 @@ export default function VenueDiaryCard() {
 
   return (
     <>
-      <GlassCard className="mt-3 p-0 overflow-hidden">
+      <GlassCard className="mt-3 !p-0 overflow-hidden">
         <div className="p-5">
           <div className="flex items-center gap-2">
             <CalendarDays size={19} className="text-accent" />
