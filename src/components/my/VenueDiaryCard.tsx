@@ -404,11 +404,10 @@ export default function VenueDiaryCard() {
           <p className="mt-1 text-xs text-text-tertiary">내가 직관한 경기의 기록과 사진·영상</p>
 
           {/* 나만 보기 안내(1회) */}
-          <div className="mt-3 flex items-center gap-1.5 rounded-xl border border-blue-500/25 bg-blue-500/10 px-3 py-2 text-[12px] font-semibold text-blue-300">
+          <div className="mt-3 flex items-start gap-1.5 rounded-xl border border-blue-500/25 bg-blue-500/10 px-3 py-2 text-[12px] font-semibold text-blue-300">
             <span className="shrink-0">🔒</span>
-            <span>
-              사진·영상은 나만 볼 수 있어요
-              <span className="font-medium text-blue-400/80"> · 공개 피드 비노출</span>
+            <span className="leading-snug">
+              사진·영상은 나만 볼 수 있고, 공개 피드에는 올라가지 않아요.
             </span>
           </div>
 
@@ -446,20 +445,20 @@ export default function VenueDiaryCard() {
                 </span>
                 <div className="mt-3.5 grid grid-cols-3 gap-2">
                   <div className="min-w-0">
-                    <p className="whitespace-nowrap text-2xl font-extrabold tracking-tight text-text-primary">
+                    <p className="whitespace-nowrap text-[21px] font-extrabold tracking-tight text-text-primary min-[390px]:text-2xl">
                       {summary.attendanceCount}
                     </p>
                     <p className="mt-0.5 text-[11px] font-semibold text-text-tertiary">인증 직관</p>
                   </div>
                   <div className="min-w-0">
-                    <p className="whitespace-nowrap text-2xl font-extrabold tracking-tight text-amber-400">
+                    <p className="whitespace-nowrap text-[21px] font-extrabold tracking-tight text-amber-400 min-[390px]:text-2xl">
                       {summary.winRate == null ? "–" : `${(summary.winRate * 100).toFixed(1)}%`}
                     </p>
                     <p className="mt-0.5 text-[11px] font-semibold text-text-tertiary">승률</p>
                   </div>
                   <div className="min-w-0">
-                    <p className="whitespace-nowrap text-2xl font-extrabold tracking-tight text-text-primary">
-                      {data.diaryGameCount}
+                    <p className="whitespace-nowrap text-[21px] font-extrabold tracking-tight text-text-primary min-[390px]:text-2xl">
+                      {data.diaryGameCount}경기
                     </p>
                     <p className="mt-0.5 text-[11px] font-semibold text-text-tertiary">다이어리</p>
                   </div>
