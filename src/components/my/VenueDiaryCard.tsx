@@ -418,7 +418,7 @@ export default function VenueDiaryCard() {
                 key={String(key)}
                 onClick={() => setSeason(key)}
                 className={`flex-1 rounded-lg py-2 text-[13px] font-bold ${
-                  season === key ? "bg-brand-primary text-white" : "text-text-tertiary"
+                  season === key ? "bg-accent text-white" : "text-text-tertiary"
                 }`}
               >
                 {key === "all" ? "전체" : key}
@@ -445,31 +445,31 @@ export default function VenueDiaryCard() {
                 </span>
                 <div className="mt-3.5 grid grid-cols-3 gap-2">
                   <div className="min-w-0">
-                    <p className="whitespace-nowrap text-[21px] font-extrabold tracking-tight text-text-primary min-[390px]:text-2xl">
+                    <p className="whitespace-nowrap text-[21px] font-extrabold tracking-tight text-white min-[390px]:text-2xl">
                       {summary.attendanceCount}
                     </p>
-                    <p className="mt-0.5 text-[11px] font-semibold text-text-tertiary">인증 직관</p>
+                    <p className="mt-0.5 text-[11px] font-semibold text-white/55">인증 직관</p>
                   </div>
                   <div className="min-w-0">
                     <p className="whitespace-nowrap text-[21px] font-extrabold tracking-tight text-amber-400 min-[390px]:text-2xl">
                       {summary.winRate == null ? "–" : `${(summary.winRate * 100).toFixed(1)}%`}
                     </p>
-                    <p className="mt-0.5 text-[11px] font-semibold text-text-tertiary">승률</p>
+                    <p className="mt-0.5 text-[11px] font-semibold text-white/55">승률</p>
                   </div>
                   <div className="min-w-0">
-                    <p className="whitespace-nowrap text-[21px] font-extrabold tracking-tight text-text-primary min-[390px]:text-2xl">
+                    <p className="whitespace-nowrap text-[21px] font-extrabold tracking-tight text-white min-[390px]:text-2xl">
                       {data.diaryGameCount}경기
                     </p>
-                    <p className="mt-0.5 text-[11px] font-semibold text-text-tertiary">다이어리</p>
+                    <p className="mt-0.5 text-[11px] font-semibold text-white/55">다이어리</p>
                   </div>
                 </div>
                 <div className="mt-3 flex items-center justify-between gap-2 border-t border-[#2c1f27] pt-3">
                   <div className="flex gap-3 text-[13px] font-bold">
                     <span className="text-blue-400">{summary.wins}승</span>
-                    <span className="text-accent">{summary.losses}패</span>
-                    <span className="text-text-secondary">{summary.draws}무</span>
+                    <span className="text-red-400">{summary.losses}패</span>
+                    <span className="text-white/70">{summary.draws}무</span>
                   </div>
-                  <span className="shrink-0 whitespace-nowrap text-[11px] text-text-tertiary">
+                  <span className="shrink-0 whitespace-nowrap text-[11px] text-white/55">
                     다이어리 · 직접 추가 포함
                   </span>
                 </div>
@@ -478,7 +478,7 @@ export default function VenueDiaryCard() {
               {/* 지난 경기 추가하기 */}
               <button
                 onClick={openAddSheet}
-                className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl bg-brand-primary py-3.5 text-[14.5px] font-extrabold text-white shadow-lg shadow-brand-primary/30"
+                className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl bg-accent py-3.5 text-[14.5px] font-extrabold text-white shadow-lg shadow-accent/30"
               >
                 <Plus size={18} /> 지난 경기 추가하기
               </button>
