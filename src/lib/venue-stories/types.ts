@@ -70,6 +70,10 @@ export interface VenueStory {
     avatarUrl: string | null;
     teamId: number | null;
   };
+  /** 뷰어 열람(click) 누적 — 관리자 응답에만 존재. */
+  clickCount?: number;
+  /** 트레이 썸네일 노출(impression) 누적 — 관리자 응답에만 존재. */
+  impressionCount?: number;
   /**
    * 클라이언트 낚관 카드 전용(서버 응답에는 없음). 영상 업로드 직후 pending(검증 중)이라
    * GET 목록(active만 조회)에서 빠지는 구간을 '처리중' 카드로 즉시 노출하기 위해 사용.
