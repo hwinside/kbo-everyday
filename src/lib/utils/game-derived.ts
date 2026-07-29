@@ -59,32 +59,65 @@ function normalizeFieldPosition(raw: string | null | undefined): string | null {
  * 그대로 남아 "타순/투수는 바뀌는데 수비 위치만 안 바뀜" 버그가 난다.
  * (주자 이름 해결과 동일한 근거 — BoxScore는 교체 이력을 포함한다.)
  *
- * 그래서 각 수비 위치별로 BoxScore에서 *그 포지션을 가진 마지막 선수*(= 현재 그
- * 자리 선수)를 우선 사용하고, BoxScore에 해당 포지션이 없을 때만 선발 라인업으로
- * 폴백한다. BoxScore가 통째로 비어있으면 전부 선발 라인업으로 폴백 → 기존 동작 유지.
+ * ⚠️ BoxScore 배열은 *전역 시간순이 아니라 타순별 그룹 순서*다(각 타순 안에서만
+ * 시간순: 선발 → 교체 선수). 그래서 "포지션별로 배열 전체를 훑어 마지막 매치"를
+ * 하면, 뒤쪽 타순에 남아있는 *이미 교체돼 사라진* 선수(예: 3번 슬롯 안현민 우)가
+ * 앞 타순의 현재 선수(1번 슬롯 장진혁 RF)를 덮어써 잘못된 수비수가 나온다.
+ *
+ * 올바른 순서:
+ *  1) 타순별 *마지막 entry* = 그 슬롯의 현재 선수를 먼저 확정한다.
+ *  2) 그 현재 선수의 *최종 수비 위치만* 정규화해 8개 필드 위치를 구성한다.
+ *  3) BoxScore에 현재 수비수가 없는 위치만 선발 라인업으로 폴백하되, 그 선발이
+ *     이미 교체돼(같은 슬롯의 현재 선수가 다른 사람) 사라졌으면 되살리지 않는다
+ *     — 순수 대타/대주로 슬롯이 채워져 수비 위치가 아직 불명확(타/주)한 동안 stale
+ *     선발이 화면에 남는 것을 막는다.
+ * BoxScore가 통째로 비어있으면 전부 선발 라인업으로 폴백 → 기존 동작 유지.
  */
 function toDefenders(
   boxBatters: BatterRecord[] | null | undefined,
   lineupEntries: LineupEntry[] | null | undefined,
   teamId?: number,
 ) {
+  // BoxScore 미수신/빈 배열 → 선발 라인업 전체 폴백 (기존 동작 유지).
+  if (!boxBatters || boxBatters.length === 0) {
+    return FIELD_POSITIONS.flatMap(pos => {
+      const entry = lineupEntries?.find(e => normalizeFieldPosition(e.position) === pos);
+      return entry
+        ? [{ order: entry.order, name: entry.name, position: pos, avg: "", teamId }]
+        : [];
+    });
+  }
+
+  // 1) 타순별 마지막 entry = 현재 그 슬롯 선수. (배열이 타순 그룹 순 + 그룹 내 시간순
+  //    이므로 같은 order의 마지막 write = 현재.)
+  const currentBySlot = new Map<number, BatterRecord>();
+  for (const b of boxBatters) {
+    if (!b.name) continue;
+    if (typeof b.order === "number" && b.order > 0) currentBySlot.set(b.order, b);
+  }
+
+  // 2) 현재 슬롯 선수들의 *최종 수비 위치*만 필드 위치로 매핑. 교체돼 사라진 선수는
+  //    애초에 currentBySlot에 없으므로 새지 않는다.
+  const byPosition = new Map<string, BatterRecord>();
+  for (const b of currentBySlot.values()) {
+    const pos = normalizeFieldPosition(b.position);
+    if (pos && !byPosition.has(pos)) byPosition.set(pos, b);
+  }
+
   return FIELD_POSITIONS.flatMap(pos => {
-    // 1) BoxScore 우선 — 교체 이력 반영. 같은 포지션의 마지막 entry가 현재 수비수.
-    let current: BatterRecord | null = null;
-    if (boxBatters) {
-      for (const b of boxBatters) {
-        if (b.name && normalizeFieldPosition(b.position) === pos) current = b;
-      }
+    // 2-1) BoxScore의 현재 수비수 우선.
+    const cur = byPosition.get(pos);
+    if (cur) {
+      return [{ order: cur.order, name: cur.name, position: pos, avg: cur.avg ?? "", teamId }];
     }
-    if (current) {
-      return [{ order: current.order, name: current.name, position: pos, avg: current.avg ?? "", teamId }];
-    }
-    // 2) 선발 라인업 폴백 — BoxScore 미수신 또는 해당 포지션 미노출.
+    // 2-2) 선발 라인업 폴백 — 단 그 선발 슬롯이 이미 다른 선수로 교체됐으면 억제.
     const entry = lineupEntries?.find(e => normalizeFieldPosition(e.position) === pos);
-    if (entry) {
-      return [{ order: entry.order, name: entry.name, position: pos, avg: "", teamId }];
+    if (!entry) return [];
+    if (typeof entry.order === "number") {
+      const slotCur = currentBySlot.get(entry.order);
+      if (slotCur && slotCur.name !== entry.name) return []; // stale 선발 억제
     }
-    return [];
+    return [{ order: entry.order, name: entry.name, position: pos, avg: "", teamId }];
   });
 }
 

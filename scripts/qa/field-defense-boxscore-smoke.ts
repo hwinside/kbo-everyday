@@ -125,47 +125,63 @@ function defenderAt(side: ReturnType<typeof deriveGameState>["defensiveSide"], p
   check("CF = 정수빈 (원정 선발)", defenderAt(s, "CF") === "정수빈", `got ${defenderAt(s, "CF")}`);
 }
 
-// ── 케이스 5: 실제 제보 경기(20260728KTNC0) raw 약어 정규화 ──
-// 삼순 리뷰: Naver fallback BoxScore는 원시 약어(一/二/三, 타二, 중우/주우/주중)를
-// 그대로 반환. exact match만 하면 제보 핵심 4명이 미반영됨.
-// 원정(KT) 9회말 수비, 최종 8명 검증. (배열 뒤가 나중 = 현재 수비수)
+// ── 케이스 5: 실제 제보 경기(20260728KTNC0) 운영 원문 배열 순서 그대로 ──
+// 삼순 NO-GO(P0): BoxScore 배열은 전역 시간순이 아니라 *타순별 그룹 순서*.
+//   · 1번 슬롯: 최원준(중우) → 장진혁(RF)   ← 현재 RF = 장진혁
+//   · 3번 슬롯: 안현민(우) → 배정대(주중)  ← 현재 CF = 배정대, 안현민은 사라짐
+// 포지션별 전체 스캔(구 버그)은 뒤쪽 3번 슬롯의 안현민(우→RF)가 1번 슬롯 장진혁을
+// 덮어 RF=안현민을 낸다(false green). 타순별 마지막 entry를 먼저 골라야 RF=장진혁.
+// 원문 행·타순·순서를 그대로 고정하고 최종 8명을 검증한다.
+const awayLineupKT: LineupEntry[] = [
+  lineupEntry(1, "CF", "박민석"),
+  lineupEntry(2, "C", "조대현"),
+  lineupEntry(3, "RF", "안현민"),
+  lineupEntry(4, "3B", "허경민"),
+  lineupEntry(5, "1B", "김현수"),
+  lineupEntry(6, "2B", "김상수"),
+  lineupEntry(7, "LF", "힐리어드"),
+  lineupEntry(8, "SS", "권동진"),
+  lineupEntry(9, "DH", "문상철"),
+];
 {
+  // 운영 API 원문 순서: 타순별로 묶이고, 각 그룹 안은 선발→교체 시간순.
   const awayBoxKT: BatterRecord[] = [
-    batter(5, "一", "김현수"),
-    batter(5, "一", "오윤석", true),   // 1B 최종
-    batter(6, "二", "김상수"),
-    batter(6, "타二", "류현인", true), // 2B 최종 (대타→2루)
+    batter(1, "중우", "최원준"),          // 1번 선발(중→우 이동), 이후 교체되어 사라짐
+    batter(1, "RF", "장진혁", true),      // 1번 현재 = RF
+    batter(2, "포", "조대현"),          // 2번 = C
+    batter(3, "우", "안현민"),          // 3번 선발(우→RF), 이후 교체되어 사라짐
+    batter(3, "주중", "배정대", true),  // 3번 현재 = CF (대주→중견)
     batter(4, "三", "허경민"),
-    batter(4, "三", "장준원", true),   // 3B 최종
-    batter(8, "RF", "안현민"),
-    batter(8, "중우", "최원준", true), // 중간 이동 (최종 아님)
-    batter(8, "주우", "장진혁", true), // RF 최종 (대주→우익)
-    batter(1, "중", "박민석"),
-    batter(1, "주중", "배정대", true), // CF 최종 (대주→중견)
-    batter(2, "포", "조대현"),          // C
-    batter(3, "유", "권동진"),          // SS
-    batter(7, "좌", "힐리어드"),        // LF
+    batter(4, "三", "장준원", true),   // 4번 현재 = 3B
+    batter(5, "一", "김현수"),
+    batter(5, "一", "오윤석", true),   // 5번 현재 = 1B
+    batter(6, "二", "김상수"),
+    batter(6, "타二", "류현인", true), // 6번 현재 = 2B (대타→2루)
+    batter(7, "좌", "힐리어드"),        // 7번 = LF
+    batter(8, "유", "권동진"),          // 8번 = SS
+    batter(9, "지", "문상철"),          // 9번 = DH → 수비 제외
   ];
   const detail = {
     status: "live",
-    lineup: { away: awayLineup, home: homeLineup },
+    lineup: { away: awayLineupKT, home: homeLineup },
     boxScore: { awayBatters: awayBoxKT, homeBatters: [], awayPitchers: [], homePitchers: [] },
   } as unknown as GameDetailResponse;
   const gameKTNC = { status: "live", inning: "9회말", awayScore: 3, homeScore: 5, awayTeamId: 12, homeTeamId: 9 };
   const s = deriveGameState(undefined, gameKTNC, detail).defensiveSide;
-  console.log("[case5] 실제 제보 경기 raw 약어 정규화 (원정 9회말 수비)");
+  console.log("[case5] 실제 제보 경기 운영 원문 배열(타순별 그룹) → 현재 수비 (원정 9회말)");
   check("C = 조대현", defenderAt(s, "C") === "조대현", `got ${defenderAt(s, "C")}`);
   check("1B = 오윤석 (一, 김현수 아님)", defenderAt(s, "1B") === "오윤석", `got ${defenderAt(s, "1B")}`);
   check("2B = 류현인 (타二, 김상수 아님)", defenderAt(s, "2B") === "류현인", `got ${defenderAt(s, "2B")}`);
   check("3B = 장준원 (三, 허경민 아님)", defenderAt(s, "3B") === "장준원", `got ${defenderAt(s, "3B")}`);
   check("SS = 권동진 (유)", defenderAt(s, "SS") === "권동진", `got ${defenderAt(s, "SS")}`);
   check("LF = 힐리어드 (좌)", defenderAt(s, "LF") === "힐리어드", `got ${defenderAt(s, "LF")}`);
-  check("CF = 배정대 (주중, 박민석 아님)", defenderAt(s, "CF") === "배정대", `got ${defenderAt(s, "CF")}`);
-  check("RF = 장진혁 (주우, 안현민/최원준 아님)", defenderAt(s, "RF") === "장진혁", `got ${defenderAt(s, "RF")}`);
+  check("CF = 배정대 (3번 슬롯 현재, 박민석/안현민 아님)", defenderAt(s, "CF") === "배정대", `got ${defenderAt(s, "CF")}`);
+  check("RF = 장진혁 (1번 슬롯 현재, 안현민/최원준 아님)", defenderAt(s, "RF") === "장진혁", `got ${defenderAt(s, "RF")}`);
   check("수비수 정확히 8명", (s?.length ?? 0) === 8, `got ${s?.length}`);
   const positionsSeen = (s ?? []).map(d => d.position);
   check("포지션 중복 0", new Set(positionsSeen).size === positionsSeen.length, `got ${positionsSeen.join(",")}`);
   const names = (s ?? []).map(d => d.name);
+  check("교체된 안현민 미포함", !names.includes("안현민"), `got ${names.join(",")}`);
   check("중간 이동 최원준 미포함", !names.includes("최원준"), `got ${names.join(",")}`);
 }
 
