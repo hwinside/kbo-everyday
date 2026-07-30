@@ -14,20 +14,37 @@ type FallbackReason = "timeout" | "http-error" | "schema-error" | "network-error
 
 const ALERT_THRESHOLD = 3; // N회 이상
 
+// 삼순 NO-GO(exact b85fdb744) blocker 1: trackFallback 호출부(fetchGames의 Naver
+// 폴백 직전, game-relay의 503 반환 직전)가 전부 `await trackFallback` 이라 claim RPC나
+// Telegram 전송이 느리면 사용자 응답/폴백까지 그만큼 지연된다. trackFallback 호출부가
+// route 핸들러 request scope 밖(예: scripts, season-games-cache 배치)에서도 쓰이므로
+// next/server `after()`를 여기서 강제할 수 없다 — 대신 관제 작업에 짧은 예산을 걸어
+// 예산 초과 시 즉시 반환하고 나머지(RPC/텔레그램)는 백그라운드로 흘려보낸다.
+// trackApiDegradation은 내부에서 절대 throw하지 않으므로 백그라운드로 넘어가도
+// unhandled rejection이 발생하지 않는다.
+const TRACK_FALLBACK_BUDGET_MS = 50;
+
+function budgetTimeout(ms: number): Promise<"budget-exceeded"> {
+  return new Promise((resolve) => setTimeout(() => resolve("budget-exceeded"), ms));
+}
+
 /**
  * Fallback 이벤트를 durable 저장하고 공유 threshold/cooldown으로 알림을 판정한다.
+ * 사용자 요청/Naver 폴백 critical path를 막지 않도록 예산(TRACK_FALLBACK_BUDGET_MS) 내에
+ * 반환한다 — 예산을 넘기면 관제 작업은 백그라운드에서 계속 진행되고 이 함수는 즉시 끝난다.
  */
 export async function trackFallback(
   apiName: string,
   reason: FallbackReason,
   options?: { statusCode?: number; errorMessage?: string }
 ) {
-  await trackApiDegradation(
+  const work = trackApiDegradation(
     apiName,
     reason,
     options ?? {},
     { windowMinutes: 5, threshold: ALERT_THRESHOLD, cooldownMinutes: 30, leaseSeconds: 120 },
   );
+  await Promise.race([work, budgetTimeout(TRACK_FALLBACK_BUDGET_MS)]);
 }
 
 // ============================================================================

@@ -17,49 +17,53 @@ async function main() {
   process.env.SUPABASE_SERVICE_ROLE_KEY ??= "service-placeholder";
   process.env.TELEGRAM_BOT_TOKEN ??= "test-bot-token";
 
-  let insertCalls = 0;
   const adminMod = await import("../../src/lib/supabase/admin");
   const admin = adminMod.supabaseAdmin as unknown as {
-    from: () => { insert: () => Promise<{ error: null }> };
+    rpc: (name: string, args: Record<string, unknown>) => Promise<{ data: unknown; error: null }>;
   };
-  admin.from = () => ({
-    insert: async () => {
-      insertCalls++;
-      return { error: null };
-    },
-  });
+
+  const rpcCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  admin.rpc = (name, args) => {
+    rpcCalls.push({ name, args });
+    return new Promise(() => {});
+  };
 
   const realFetch = globalThis.fetch;
   let telegramCalls = 0;
   globalThis.fetch = (async () => {
     telegramCalls++;
-    return { ok: true, status: 200 } as Response;
+    return new Promise(() => {});
   }) as typeof fetch;
 
   try {
-    const {
-      getRecentFallbackBufferSizeForTest,
-      trackFallback,
-    } = await import("../../src/lib/monitoring/api-fallback-tracker");
+    const { trackFallback } = await import("../../src/lib/monitoring/api-fallback-tracker");
 
-    for (let i = 0; i < 5; i++) {
-      await trackFallback("kbo-games", "timeout", { errorMessage: `failure-${i}` });
-    }
-    ok("kbo-games 이벤트 저장은 유지", insertCalls === 5);
-    ok("kbo-games legacy Telegram은 임계치 이후에도 0회", telegramCalls === 0);
-    ok("kbo-games 이벤트는 in-memory buffer에 남지 않음", getRecentFallbackBufferSizeForTest() === 0);
+    const claimStarted = Date.now();
+    await trackFallback("kbo-games", "timeout", { errorMessage: "claim pending" });
+    const claimElapsed = Date.now() - claimStarted;
+    ok("event 1건 → durable claim RPC 1회", rpcCalls.length === 1 && rpcCalls[0]?.name === "claim_api_fallback_alert");
+    ok("durable 정책 5분/3회/30분/120초", (
+      rpcCalls[0]?.args.p_window_minutes === 5 &&
+      rpcCalls[0]?.args.p_threshold === 3 &&
+      rpcCalls[0]?.args.p_cooldown_minutes === 30 &&
+      rpcCalls[0]?.args.p_lease_seconds === 120
+    ));
+    ok("claim RPC pending이어도 사용자 경로 100ms 내 반환", claimElapsed < 100);
 
-    for (let i = 0; i < 3; i++) {
-      await trackFallback("naver-standings", "timeout", { errorMessage: `control-${i}` });
-    }
-    ok("다른 legacy API 이벤트 저장 유지", insertCalls === 8);
-    ok("다른 legacy API 경보 동작은 유지", telegramCalls === 1);
-    ok("다른 legacy API in-memory threshold는 유지", getRecentFallbackBufferSizeForTest() === 3);
+    admin.rpc = async (name, args) => {
+      rpcCalls.push({ name, args });
+      return { data: [{ should_send: true, attempt_token: "token-1" }], error: null };
+    };
+    const telegramStarted = Date.now();
+    await trackFallback("kbo-games", "timeout", { errorMessage: "telegram pending" });
+    const telegramElapsed = Date.now() - telegramStarted;
+    ok("Telegram pending이어도 사용자 경로 100ms 내 반환", telegramCalls === 1 && telegramElapsed < 100);
+    ok("legacy insert/buffer/fanout 경로 없이 durable claim만 사용", rpcCalls.every((c) => c.name === "claim_api_fallback_alert"));
   } finally {
     globalThis.fetch = realFetch;
   }
 
-  console.log(`\nkbo-games legacy Telegram suppression: ${passed} passed, ${failed} failed`);
+  console.log(`\nkbo-games durable fallback tracking: ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);
 }
 
