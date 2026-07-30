@@ -37,3 +37,19 @@ BEGIN
   END IF;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
+
+-- 추가(동일 삭제 경로): comment_likes cascade 시 발화하는 update_comment_like_count 도
+-- 같은 패턴(SECURITY DEFINER + search_path 미고정 + unqualified comments)이라
+-- 댓글 좋아요 보유 유저 탈퇴에서 동일 42P01 로 실패한다. 같은 수정 적용.
+CREATE OR REPLACE FUNCTION public.update_comment_like_count()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    UPDATE public.comments SET like_count = like_count + 1 WHERE id = NEW.comment_id;
+    RETURN NEW;
+  ELSIF TG_OP = 'DELETE' THEN
+    UPDATE public.comments SET like_count = like_count - 1 WHERE id = OLD.comment_id;
+    RETURN OLD;
+  END IF;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;

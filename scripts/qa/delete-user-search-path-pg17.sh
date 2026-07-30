@@ -60,6 +60,12 @@ CREATE TABLE public.posts (
 CREATE TABLE public.comments (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   post_id UUID NOT NULL REFERENCES public.posts (id) ON DELETE CASCADE,
+  user_id UUID REFERENCES auth.users (id) ON DELETE CASCADE,
+  like_count INT NOT NULL DEFAULT 0
+);
+CREATE TABLE public.comment_likes (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  comment_id UUID NOT NULL REFERENCES public.comments (id) ON DELETE CASCADE,
   user_id UUID REFERENCES auth.users (id) ON DELETE CASCADE
 );
 CREATE TABLE public.likes (
@@ -110,12 +116,28 @@ END;
 $fn$ LANGUAGE plpgsql SECURITY DEFINER;
 CREATE TRIGGER on_comment_change AFTER INSERT OR DELETE ON public.comments
   FOR EACH ROW EXECUTE FUNCTION update_comment_count();
+
+-- 취약(현재 production) 3번째 함수: src/lib/supabase/migration-comment-replies-likes.sql 과 동일
+CREATE OR REPLACE FUNCTION update_comment_like_count()
+RETURNS TRIGGER AS $fn$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    UPDATE comments SET like_count = like_count + 1 WHERE id = NEW.comment_id;
+    RETURN NEW;
+  ELSIF TG_OP = 'DELETE' THEN
+    UPDATE comments SET like_count = like_count - 1 WHERE id = OLD.comment_id;
+    RETURN OLD;
+  END IF;
+END;
+$fn$ LANGUAGE plpgsql SECURITY DEFINER;
+CREATE TRIGGER on_comment_like_change AFTER INSERT OR DELETE ON public.comment_likes
+  FOR EACH ROW EXECUTE FUNCTION update_comment_like_count();
 SQL
 
 seed() {
   "${PSQL[@]}" <<'SQL'
 TRUNCATE auth.users, public.profiles, public.posts, public.comments, public.likes,
-         public.dm_conversations, public.dm_messages CASCADE;
+         public.comment_likes, public.dm_conversations, public.dm_messages CASCADE;
 INSERT INTO auth.users VALUES
   ('00000000-0000-0000-0000-000000000001'),  -- 탈퇴 유저
   ('00000000-0000-0000-0000-000000000002');  -- 상대(생존) 유저
@@ -127,8 +149,12 @@ INSERT INTO public.posts (id, user_id) VALUES
   ('10000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000002');
 INSERT INTO public.comments (post_id, user_id)
   SELECT '10000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001' FROM generate_series(1,2);
-INSERT INTO public.comments (post_id, user_id) VALUES
-  ('10000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000002');
+INSERT INTO public.comments (id, post_id, user_id) VALUES
+  ('30000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000002');
+-- 생존 유저 댓글에 탈퇴 유저 + 생존 유저가 댓글 좋아요 (3번째 트리거 경유 카운트 적재)
+INSERT INTO public.comment_likes (comment_id, user_id) VALUES
+  ('30000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001'),
+  ('30000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000002');
 INSERT INTO public.likes (post_id, user_id) VALUES
   ('10000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001'),
   ('10000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000002');
@@ -148,6 +174,7 @@ echo "[사전 정합] 트리거 경유 카운트 적재"
 seed
 check "comment_count=3" "$("${PSQL[@]}" -c "SELECT comment_count FROM public.posts WHERE id='10000000-0000-0000-0000-000000000001'")" "3"
 check "like_count=2" "$("${PSQL[@]}" -c "SELECT like_count FROM public.posts WHERE id='10000000-0000-0000-0000-000000000001'")" "2"
+check "comment like_count=2" "$("${PSQL[@]}" -c "SELECT like_count FROM public.comments WHERE id='30000000-0000-0000-0000-000000000001'")" "2"
 
 echo "[RED] search_path=auth 세션에서 탈퇴 유저 삭제 → 42P01 재현"
 set +e
@@ -156,6 +183,41 @@ RED_RC=$?
 set -e
 check "삭제 실패(비정상 종료)" "$([ $RED_RC -ne 0 ] && echo fail)" "fail"
 check "42P01 relation posts" "$(echo "$RED_ERR" | grep -c 'relation "posts" does not exist')" "1"
+check "유저 잔존(롤백)" "$("${PSQL[@]}" -c "SELECT count(*) FROM auth.users WHERE id='00000000-0000-0000-0000-000000000001'")" "1"
+
+echo "[RED2] posts 트리거 2개만 고치면 comment_likes 경로가 여전히 42P01 (3번째 함수 필요 증명)"
+"${PSQL[@]}" <<'SQL'
+CREATE OR REPLACE FUNCTION public.update_like_count()
+RETURNS TRIGGER AS $fn$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    UPDATE public.posts SET like_count = like_count + 1 WHERE id = NEW.post_id;
+    RETURN NEW;
+  ELSIF TG_OP = 'DELETE' THEN
+    UPDATE public.posts SET like_count = like_count - 1 WHERE id = OLD.post_id;
+    RETURN OLD;
+  END IF;
+END;
+$fn$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
+CREATE OR REPLACE FUNCTION public.update_comment_count()
+RETURNS TRIGGER AS $fn$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    UPDATE public.posts SET comment_count = comment_count + 1 WHERE id = NEW.post_id;
+    RETURN NEW;
+  ELSIF TG_OP = 'DELETE' THEN
+    UPDATE public.posts SET comment_count = comment_count - 1 WHERE id = OLD.post_id;
+    RETURN OLD;
+  END IF;
+END;
+$fn$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
+SQL
+set +e
+RED2_ERR=$("${PSQL[@]}" -c "$DELETE_AS_AUTH_ADMIN" 2>&1)
+RED2_RC=$?
+set -e
+check "삭제 여전 실패" "$([ $RED2_RC -ne 0 ] && echo fail)" "fail"
+check "42P01 relation comments" "$(echo "$RED2_ERR" | grep -c 'relation \"comments\" does not exist')" "1"
 check "유저 잔존(롤백)" "$("${PSQL[@]}" -c "SELECT count(*) FROM auth.users WHERE id='00000000-0000-0000-0000-000000000001'")" "1"
 
 echo "[GREEN] 20260730 migration 적용 후 동일 시나리오"
@@ -168,6 +230,8 @@ check "탈퇴 유저 likes cascade" "$("${PSQL[@]}" -c "SELECT count(*) FROM pub
 check "생존 유저 댓글 보존" "$("${PSQL[@]}" -c "SELECT count(*) FROM public.comments")" "1"
 check "comment_count 정합(3→1)" "$("${PSQL[@]}" -c "SELECT comment_count FROM public.posts WHERE id='10000000-0000-0000-0000-000000000001'")" "1"
 check "like_count 정합(2→1)" "$("${PSQL[@]}" -c "SELECT like_count FROM public.posts WHERE id='10000000-0000-0000-0000-000000000001'")" "1"
+check "탈퇴 유저 comment_likes cascade" "$("${PSQL[@]}" -c "SELECT count(*) FROM public.comment_likes WHERE user_id='00000000-0000-0000-0000-000000000001'")" "0"
+check "댓글 like_count 정합(2→1)" "$("${PSQL[@]}" -c "SELECT like_count FROM public.comments WHERE id='30000000-0000-0000-0000-000000000001'")" "1"
 check "DM 대화 보존" "$("${PSQL[@]}" -c "SELECT count(*) FROM public.dm_conversations WHERE id='20000000-0000-0000-0000-000000000001'")" "1"
 check "DM 메시지 보존(2건)" "$("${PSQL[@]}" -c "SELECT count(*) FROM public.dm_messages")" "2"
 check "탈퇴 유저 sender 익명화" "$("${PSQL[@]}" -c "SELECT count(*) FROM public.dm_messages WHERE sender_id IS NULL")" "1"
@@ -179,6 +243,9 @@ for fn in update_comment_count update_like_count; do
   check "$fn: SET search_path" "$(echo "$DEF" | grep -c "SET search_path TO 'public', 'pg_temp'")" "1"
   check "$fn: public.posts 한정" "$(echo "$DEF" | grep -c 'UPDATE public.posts')" "2"
 done
+CLDEF="$("${PSQL[@]}" -c "SELECT pg_get_functiondef('public.update_comment_like_count()'::regprocedure)")"
+check "update_comment_like_count: SET search_path" "$(echo "$CLDEF" | grep -c "SET search_path TO 'public', 'pg_temp'")" "1"
+check "update_comment_like_count: public.comments 한정" "$(echo "$CLDEF" | grep -c 'UPDATE public.comments')" "2"
 
 echo "[bootstrap 정합] src/lib/supabase/functions.sql 이 migration 과 동일하게 안전"
 # 재설치/수동 적용 시 취약 정의 재유입 방지: bootstrap 파일도 search_path 고정 +
@@ -188,6 +255,9 @@ check "functions.sql 존재" "$([ -f "$BOOT" ] && echo ok)" "ok"
 # functions.sql 은 tail 에서 publication ALTER / 다른 트리거를 참조하므로, 두 함수
 # 정의 블록만 뽑아 clean DB 에 적용해 pg_get_functiondef 로 정합 판정.
 awk '/CREATE OR REPLACE FUNCTION update_(like|comment)_count\(\)/{c=1} c{print} /LANGUAGE plpgsql SECURITY DEFINER/{if(c){print ";"; c=0}}' "$BOOT" > "$WORK/boot_fns.sql"
+BOOT2="$ROOT/src/lib/supabase/migration-comment-replies-likes.sql"
+check "migration-comment-replies-likes.sql 존재" "$([ -f "$BOOT2" ] && echo ok)" "ok"
+awk '/CREATE OR REPLACE FUNCTION update_comment_like_count\(\)/{c=1} c{print} /LANGUAGE plpgsql SECURITY DEFINER/{if(c){print ";"; c=0}}' "$BOOT2" >> "$WORK/boot_fns.sql"
 "${PSQL[@]}" <<'SQL'
 CREATE SCHEMA IF NOT EXISTS boot;
 SQL
@@ -200,6 +270,10 @@ for fn in update_comment_count update_like_count; do
   check "boot $fn: unqualified posts 없음" "$(echo "$BDEF" | grep -Ec 'UPDATE[[:space:]]+posts[[:space:]]')" "0"
   check "boot $fn: public.posts 한정" "$(echo "$BDEF" | grep -c 'UPDATE public.posts')" "2"
 done
+BCLDEF="$("${PSQL[@]}" -c "SELECT pg_get_functiondef('public.update_comment_like_count()'::regprocedure)")"
+check "boot update_comment_like_count: SET search_path" "$(echo "$BCLDEF" | grep -c "SET search_path TO 'public', 'pg_temp'")" "1"
+check "boot update_comment_like_count: unqualified comments 없음" "$(echo "$BCLDEF" | grep -Ec 'UPDATE[[:space:]]+comments[[:space:]]')" "0"
+check "boot update_comment_like_count: public.comments 한정" "$(echo "$BCLDEF" | grep -c 'UPDATE public.comments')" "2"
 # bootstrap 재적용 후에도 auth-admin 세션 삭제가 여전히 성공하는지 재확인
 seed
 "${PSQL[@]}" -c "$DELETE_AS_AUTH_ADMIN"
