@@ -13,6 +13,10 @@ import {
   User,
 } from "lucide-react";
 import { getTeamById } from "@/lib/constants/teams";
+import {
+  createLatestRequestGate,
+  type DetailCursor,
+} from "@/lib/admin/baseball-genius-monitor";
 
 interface Conversation {
   id: string;
@@ -106,7 +110,12 @@ export default function AdminBaseballGeniusPage() {
   const [selectedConv, setSelectedConv] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [msgLoading, setMsgLoading] = useState(false);
+  const [msgLoadingMore, setMsgLoadingMore] = useState(false);
+  const [msgError, setMsgError] = useState(false);
+  const [messageCursor, setMessageCursor] = useState<DetailCursor | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const detailRequestGate = useRef(createLatestRequestGate());
+  const detailAbort = useRef<AbortController | null>(null);
 
   const getPin = useCallback(() => {
     if (typeof window !== "undefined") {
@@ -154,27 +163,58 @@ export default function AdminBaseballGeniusPage() {
     loadConversations();
   }, [loadConversations]);
 
-  async function loadMessages(conv: Conversation) {
-    setSelectedConv(conv);
-    setMsgLoading(true);
-    setMessages([]);
-    try {
-      const res = await fetch(`/api/admin/baseball-genius?conversationId=${conv.id}`, {
-        headers: { "x-admin-pin": getPin() },
-      });
-      if (res.ok) {
-        const json = await res.json();
-        setMessages(json.messages || []);
-      }
-    } catch {
-      /* ignore */
+  async function loadMessages(
+    conv: Conversation,
+    cursor: DetailCursor | null = null,
+    append = false,
+  ) {
+    const requestToken = detailRequestGate.current.begin();
+    detailAbort.current?.abort();
+    const controller = new AbortController();
+    detailAbort.current = controller;
+    if (append) {
+      setMsgLoadingMore(true);
+    } else {
+      setSelectedConv(conv);
+      setMsgLoading(true);
+      setMessages([]);
+      setMessageCursor(null);
     }
-    setMsgLoading(false);
+    setMsgError(false);
+    try {
+      const params = new URLSearchParams({ conversationId: conv.id });
+      if (cursor) {
+        params.set("messageAt", cursor.messageAt);
+        params.set("messageId", cursor.messageId);
+      }
+      const res = await fetch(`/api/admin/baseball-genius?${params}`, {
+        headers: { "x-admin-pin": getPin() },
+        signal: controller.signal,
+      });
+      if (!res.ok) throw new Error("load messages failed");
+      const json = await res.json();
+      if (!detailRequestGate.current.isCurrent(requestToken)) return;
+      const incoming = (json.messages || []) as Message[];
+      setMessages((previous) => append ? [...incoming, ...previous] : incoming);
+      setMessageCursor(json.nextCursor || null);
+      if (!append) {
+        requestAnimationFrame(() => {
+          messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
+        });
+      }
+    } catch (error) {
+      if ((error as Error).name !== "AbortError" && detailRequestGate.current.isCurrent(requestToken)) {
+        setMsgError(true);
+      }
+    } finally {
+      if (detailRequestGate.current.isCurrent(requestToken)) {
+        setMsgLoading(false);
+        setMsgLoadingMore(false);
+      }
+    }
   }
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  useEffect(() => () => detailAbort.current?.abort(), []);
 
   // 대화 상세 (읽기 전용 타임라인)
   if (selectedConv) {
@@ -183,8 +223,12 @@ export default function AdminBaseballGeniusPage() {
         <div className="flex items-center gap-3">
           <button
             onClick={() => {
+              detailRequestGate.current.invalidate();
+              detailAbort.current?.abort();
               setSelectedConv(null);
               setMessages([]);
+              setMsgError(false);
+              setMessageCursor(null);
             }}
             className="p-2 rounded-lg hover:bg-white/5 transition-colors"
             aria-label="목록으로"
@@ -211,36 +255,60 @@ export default function AdminBaseballGeniusPage() {
             <div className="flex justify-center py-8">
               <Loader2 className="w-6 h-6 animate-spin text-[#6366F1]" />
             </div>
+          ) : msgError ? (
+            <div className="py-10 text-center">
+              <AlertCircle className="mx-auto mb-3 h-10 w-10 text-[#FF453A]" />
+              <p className="mb-4 text-sm text-[#8E8E93]">대화를 불러오지 못했습니다</p>
+              <button
+                type="button"
+                onClick={() => loadMessages(selectedConv)}
+                className="rounded-lg border border-white/10 px-4 py-2 text-sm hover:bg-white/5"
+              >
+                다시 시도
+              </button>
+            </div>
           ) : messages.length === 0 ? (
             <p className="text-center text-[#8E8E93] py-8">메시지 없음</p>
           ) : (
-            messages.map((msg) => (
-              <div
-                key={msg.id}
-                className={`flex ${msg.is_genius ? "justify-end" : "justify-start"}`}
-              >
-                <div
-                  className={`max-w-[75%] px-4 py-2.5 rounded-2xl text-sm ${
-                    msg.is_genius ? "bg-[#6366F1] text-white" : "bg-white/8 text-white"
-                  }`}
+            <>
+              {messageCursor && (
+                <button
+                  type="button"
+                  onClick={() => loadMessages(selectedConv, messageCursor, true)}
+                  disabled={msgLoadingMore}
+                  className="mx-auto block rounded-lg border border-white/10 px-4 py-2 text-sm text-[#8E8E93] hover:bg-white/5 disabled:opacity-50"
                 >
-                  {!msg.is_genius && (
-                    <div className="flex items-center gap-1.5 mb-1">
-                      <p className="text-xs text-[#8E8E93]">{msg.sender_nickname}</p>
-                      {msg.log && <MatchPathBadge log={msg.log} />}
-                    </div>
-                  )}
-                  {msg.content ? (
-                    <p className="whitespace-pre-wrap break-words">{msg.content}</p>
-                  ) : null}
-                  <p
-                    className={`text-xs mt-1 ${msg.is_genius ? "text-white/60" : "text-[#636366]"}`}
+                  {msgLoadingMore ? "불러오는 중..." : "이전 대화 더 보기"}
+                </button>
+              )}
+              {messages.map((msg) => (
+                <div
+                  key={msg.id}
+                  className={`flex ${msg.is_genius ? "justify-end" : "justify-start"}`}
+                >
+                  <div
+                    className={`max-w-[75%] px-4 py-2.5 rounded-2xl text-sm ${
+                      msg.is_genius ? "bg-[#6366F1] text-white" : "bg-white/8 text-white"
+                    }`}
                   >
-                    {timeAgo(msg.created_at)}
-                  </p>
+                    {!msg.is_genius && (
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <p className="text-xs text-[#8E8E93]">{msg.sender_nickname}</p>
+                        {msg.log && <MatchPathBadge log={msg.log} />}
+                      </div>
+                    )}
+                    {msg.content ? (
+                      <p className="whitespace-pre-wrap break-words">{msg.content}</p>
+                    ) : null}
+                    <p
+                      className={`text-xs mt-1 ${msg.is_genius ? "text-white/60" : "text-[#636366]"}`}
+                    >
+                      {timeAgo(msg.created_at)}
+                    </p>
+                  </div>
                 </div>
-              </div>
-            ))
+              ))}
+            </>
           )}
           <div ref={messagesEndRef} />
         </div>

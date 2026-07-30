@@ -102,7 +102,7 @@
     "qa:poll-card": "tsx scripts/qa/poll-card-smoke.ts",
     "qa:admin-delivery-ledger": "tsx scripts/qa/admin-delivery-ledger-smoke.ts",
     "qa:admin-dm-inbox": "node scripts/qa/admin-dm-inbox-smoke.mjs",
-    "qa:admin-genius-monitor": "node scripts/qa/admin-genius-monitor-smoke.mjs",
+    "qa:admin-genius-monitor": "node scripts/qa/admin-genius-monitor-smoke.mjs && tsx scripts/qa/admin-genius-monitor-regression.ts",
     "qa:feedback-origin-inbox": "bash scripts/qa/feedback-origin-inbox.sh",
     "qa:venue-story-upload-daily": "bash scripts/qa/venue-story-upload-daily.sh",
     "qa:venue-story-views": "bash scripts/qa/venue-story-views.sh && tsx --test scripts/qa/venue-story-view-client-smoke.ts && tsx --test scripts/qa/venue-story-view-route-smoke.ts",

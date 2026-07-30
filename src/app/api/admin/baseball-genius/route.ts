@@ -2,6 +2,10 @@ import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { NextRequest, NextResponse } from "next/server";
 import { isAdminAuthedRequest } from "@/lib/admin/pin";
 import { BASEBALL_GENIUS_USER_ID } from "@/lib/constants/baseball-genius";
+import {
+  mapQuestionJobsByMessageId,
+  takeDetailPage,
+} from "@/lib/admin/baseball-genius-monitor";
 
 // 어드민 야잘알봇 대화 모니터링 — **읽기 전용** (알림·배지·읽음 처리·답장 없음).
 // 운영팀 쪽지함(/api/admin/messages)과 같은 인증(isAdminAuthedRequest) +
@@ -9,10 +13,7 @@ import { BASEBALL_GENIUS_USER_ID } from "@/lib/constants/baseball-genius";
 // 시스템 계정만 야잘알봇(BASEBALL_GENIUS_USER_ID)으로 바꾼다.
 
 const INBOX_PAGE_SIZE = 50;
-const DETAIL_MESSAGE_LIMIT = 200;
-const DETAIL_LOG_LIMIT = 300;
-/** 질문 메시지 ↔ 로그 매칭 허용 시차 (봇 처리 지연 감안, ms) */
-const LOG_MATCH_WINDOW_MS = 10 * 60 * 1000;
+const DETAIL_MESSAGE_PAGE_SIZE = 200;
 
 type InboxRow = {
   id: string;
@@ -27,15 +28,6 @@ type InboxRow = {
   origin: string;
 };
 
-type GeniusLog = {
-  id: string;
-  question: string;
-  match_path: string;
-  input_tokens: number | null;
-  output_tokens: number | null;
-  created_at: string;
-};
-
 function parseCursor(request: NextRequest) {
   const cursorAt = request.nextUrl.searchParams.get("cursorAt");
   const cursorId = request.nextUrl.searchParams.get("cursorId");
@@ -48,39 +40,13 @@ function parseCursor(request: NextRequest) {
   return { cursorAt: new Date(cursorAt).toISOString(), cursorId };
 }
 
-/**
- * 유저 질문 메시지에 genius_question_logs 의 match_path(dictionary|cache|llm|...)를
- * 붙인다. 로그에는 message_id 가 없으므로 질문 원문 일치 + 시각 근접(10분 창)으로
- * 순서대로 1:1 매칭한다 (모니터링 배지 용도 — 근사 매칭으로 충분).
- */
-function matchLogsToMessages(
-  messages: { id: number; sender_id: string | null; content: string; created_at: string }[],
-  logs: GeniusLog[],
-) {
-  const consumed = new Set<string>();
-  const byMessageId = new Map<number, GeniusLog>();
-  for (const msg of messages) {
-    if (msg.sender_id === BASEBALL_GENIUS_USER_ID || msg.sender_id === null) continue;
-    const msgAt = Date.parse(msg.created_at);
-    const question = (msg.content ?? "").trim();
-    if (!question) continue;
-    let best: GeniusLog | null = null;
-    let bestGap = Number.POSITIVE_INFINITY;
-    for (const log of logs) {
-      if (consumed.has(log.id)) continue;
-      if (log.question.trim() !== question) continue;
-      const gap = Math.abs(Date.parse(log.created_at) - msgAt);
-      if (gap <= LOG_MATCH_WINDOW_MS && gap < bestGap) {
-        best = log;
-        bestGap = gap;
-      }
-    }
-    if (best) {
-      consumed.add(best.id);
-      byMessageId.set(msg.id, best);
-    }
-  }
-  return byMessageId;
+function parseDetailCursor(request: NextRequest) {
+  const messageAt = request.nextUrl.searchParams.get("messageAt");
+  const messageId = request.nextUrl.searchParams.get("messageId");
+  if (!messageAt && !messageId) return { messageAt: null, messageId: null };
+  if (!messageAt || !messageId) return null;
+  if (!Number.isFinite(Date.parse(messageAt)) || !/^[1-9]\d*$/.test(messageId)) return null;
+  return { messageAt: new Date(messageAt).toISOString(), messageId };
 }
 
 // GET: 야잘알봇 대화 목록 / 상세 (읽기 전용 — POST 없음)
@@ -97,6 +63,11 @@ export async function GET(request: NextRequest) {
 
   // 개별 대화 상세 (질문/답변 타임라인 + match_path 배지)
   if (conversationId) {
+    const detailCursor = parseDetailCursor(request);
+    if (!detailCursor) {
+      return NextResponse.json({ error: "invalid_message_cursor" }, { status: 400 });
+    }
+
     const { data: conv } = await admin
       .from("dm_conversations")
       .select("id, user1_id, user2_id")
@@ -111,19 +82,30 @@ export async function GET(request: NextRequest) {
     const otherUserId =
       conv.user1_id === BASEBALL_GENIUS_USER_ID ? conv.user2_id : conv.user1_id;
 
-    // query-guard: bounded -- 단일 대화의 최근 메시지 200건으로 고정 제한.
-    const { data: messages, error: messagesError } = await admin
+    // query-guard: bounded -- created_at+id keyset으로 201건만 읽고 200건씩 전체 탐색한다.
+    let messageQuery = admin
       .from("dm_messages")
       .select("id, conversation_id, sender_id, content, image_urls, created_at")
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: false })
-      .limit(DETAIL_MESSAGE_LIMIT);
+      .order("id", { ascending: false })
+      .limit(DETAIL_MESSAGE_PAGE_SIZE + 1);
+    if (detailCursor.messageAt && detailCursor.messageId) {
+      messageQuery = messageQuery.or(
+        `created_at.lt.${detailCursor.messageAt},and(created_at.eq.${detailCursor.messageAt},id.lt.${detailCursor.messageId})`,
+      );
+    }
+    const { data: messageRows, error: messagesError } = await messageQuery;
 
     if (messagesError) {
       return NextResponse.json({ error: "fetch_messages_failed" }, { status: 500 });
     }
 
-    const timeline = (messages ?? []).slice().reverse();
+    const { page: descendingPage, nextCursor } = takeDetailPage(
+      messageRows ?? [],
+      DETAIL_MESSAGE_PAGE_SIZE,
+    );
+    const timeline = descendingPage.slice().reverse();
 
     // 상대 유저 닉네임 (탈퇴 시 null)
     const { data: profile } = otherUserId
@@ -134,24 +116,31 @@ export async function GET(request: NextRequest) {
           .maybeSingle()
       : { data: null };
 
-    // 응답 경로/비용 관측용 로그 — 이 유저의 최근 로그만 bounded 로 가져와 근사 매칭.
-    let logs: GeniusLog[] = [];
-    if (otherUserId && timeline.length > 0) {
-      // query-guard: bounded -- 유저 1명의 최근 질문 로그 300건으로 고정 제한.
-      const { data: logRows } = await admin
-        .from("genius_question_logs")
-        .select("id, question, match_path, input_tokens, output_tokens, created_at")
-        .eq("user_id", otherUserId)
-        .gte("created_at", timeline[0].created_at)
-        .order("created_at", { ascending: false })
-        .limit(DETAIL_LOG_LIMIT);
-      logs = (logRows ?? []) as GeniusLog[];
+    // 질문 message_id PK로 처리 job을 exact join한다. 동일 문구 반복/지연에도 오매핑되지 않는다.
+    const questionMessageIds = timeline
+      .filter((message) => message.sender_id && message.sender_id !== BASEBALL_GENIUS_USER_ID)
+      .map((message) => message.id);
+    let jobs: {
+      message_id: number;
+      source: string | null;
+      llm_input_tokens: number | null;
+      llm_output_tokens: number | null;
+    }[] = [];
+    if (questionMessageIds.length > 0) {
+      // query-guard: bounded -- 현재 상세 페이지의 message_id 최대 200개만 exact 조회.
+      const { data: jobRows, error: jobsError } = await admin
+        .from("genius_question_jobs")
+        .select("message_id, source, llm_input_tokens, llm_output_tokens")
+        .in("message_id", questionMessageIds);
+      if (jobsError) {
+        return NextResponse.json({ error: "fetch_question_jobs_failed" }, { status: 500 });
+      }
+      jobs = jobRows ?? [];
     }
-
-    const logByMessageId = matchLogsToMessages(timeline, logs);
+    const jobByMessageId = mapQuestionJobsByMessageId(jobs);
 
     const enriched = timeline.map((msg) => {
-      const log = logByMessageId.get(msg.id) ?? null;
+      const job = jobByMessageId.get(String(msg.id)) ?? null;
       return {
         ...msg,
         is_genius: msg.sender_id === BASEBALL_GENIUS_USER_ID,
@@ -161,11 +150,11 @@ export async function GET(request: NextRequest) {
             : msg.sender_id
               ? (profile?.nickname ?? "알 수 없음")
               : "탈퇴한 사용자",
-        log: log
+        log: job?.source
           ? {
-              match_path: log.match_path,
-              input_tokens: log.input_tokens,
-              output_tokens: log.output_tokens,
+              match_path: job.source,
+              input_tokens: job.llm_input_tokens,
+              output_tokens: job.llm_output_tokens,
             }
           : null,
       };
@@ -178,6 +167,7 @@ export async function GET(request: NextRequest) {
         nickname: profile?.nickname ?? (otherUserId ? "알 수 없음" : "탈퇴한 사용자"),
         team_id: profile?.team_id ?? null,
       },
+      nextCursor,
     });
   }
 
