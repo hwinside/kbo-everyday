@@ -12,6 +12,8 @@ import {
   fetchNaverPreviewStarters,
   type NaverPreviewStarters,
 } from "@/lib/crawler/naver-lineup";
+import { fetchNaverGames } from "@/lib/crawler/naver-games";
+import { runBeforeDeadline } from "@/lib/async-deadline";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
@@ -875,6 +877,30 @@ async function getCached(gameId: string): Promise<{ summary: Record<string, unkn
   }
 }
 
+// dual-source 장애 시 이미 저장된 AI 프리뷰(game_summaries)까지 숨기지 않는다(삼순 재리뷰 blocker2).
+// 캐시가 있으면 stale 로라도 서빙하고, 캐시가 없을 때만 503 fail-close 한다.
+async function unavailableOrCache(gameId: string): Promise<NextResponse> {
+  const cached = await getCached(gameId);
+  if (cached) {
+    return NextResponse.json({
+      preview: cached.summary,
+      source: "cache",
+      outdated: cached.outdated,
+      stale: true,
+    });
+  }
+  return NextResponse.json({
+    preview: null,
+    source: "unavailable",
+    message: "경기 정보를 확인할 수 없습니다. 잠시 후 다시 시도해 주세요.",
+  }, { status: 503 });
+}
+
+// 경기 소스 해석 예산(삼순 재리뷰 blocker1). KBO 1차는 sub-budget 안에서만 시도하고, 남은
+// 절대 deadline 을 Naver 일정 reserve 로 넘긴다. KBO 가 hard-hang(응답 안 옴)이어도
+// runBeforeDeadline 백스톱이 budget 에서 끊어 reserve 로 진입한다(#994 fetchKboLiveGames 동일 패턴).
+const PREVIEW_KBO_BUDGET_MS = 1_500;
+const PREVIEW_SOURCE_DEADLINE_MS = 6_000;
 
 export async function resolvePreviewGameContext(
   gameId: string,
@@ -883,16 +909,47 @@ export async function resolvePreviewGameContext(
     gameId: string,
     opts?: { timeoutMs?: number },
   ) => Promise<NaverPreviewStarters | null> = fetchNaverPreviewStarters,
+  opts?: {
+    fetchNaverGamesImpl?: typeof fetchNaverGames;
+    deadlineAtMs?: number;
+    kboBudgetMs?: number;
+  },
 ): Promise<KboGame> {
+  const fetchNaverGamesImpl = opts?.fetchNaverGamesImpl ?? fetchNaverGames;
+  const deadlineAtMs = opts?.deadlineAtMs ?? Date.now() + PREVIEW_SOURCE_DEADLINE_MS;
+  const kboBudgetMs = opts?.kboBudgetMs ?? PREVIEW_KBO_BUDGET_MS;
   const dateStr = getDateFromGameId(gameId);
-  const games = await fetchGamesImpl(dateStr);
+
+  // 1) KBO 1차(내부적으로 200-empty/hard-fail 시 Naver 일정 폴백 포함)를 sub-budget 절대
+  //    deadline race 로 감싼다 — KBO 가 매달려도 budget 에서 끊고 Naver reserve 시간을 남긴다.
+  const kboAtMs = Math.min(deadlineAtMs, Date.now() + kboBudgetMs);
+  let games: KboGame[] | null = await runBeforeDeadline(
+    () => fetchGamesImpl(dateStr, undefined, { timeoutMs: Math.max(1, kboAtMs - Date.now()) }),
+    kboAtMs,
+  ).catch(() => null);
+
+  // 2) KBO(+내부 Naver)가 budget 내 미해결 → 남은 절대 deadline 으로 Naver 일정 reserve.
+  if (!games || games.length === 0) {
+    games = await runBeforeDeadline(
+      () => fetchNaverGamesImpl(dateStr, undefined, { timeoutMs: Math.max(1, deadlineAtMs - Date.now()) }),
+      deadlineAtMs,
+    ).catch(() => null);
+  }
+  if (!games) {
+    throw new Error("game-preview source unavailable: schedule dual-source failed");
+  }
+
   const game = games.find(g => g.gameId === gameId);
   if (!game) {
     throw new Error("game-preview source unavailable: requested game not confirmed");
   }
   if (game.awayStarterName && game.homeStarterName) return game;
 
-  const naverStarters = await fetchNaverStartersImpl(gameId, { timeoutMs: 5000 });
+  // 3) 선발 미확정 → 남은 deadline 안에서 Naver preview 선발만 보강(경기 core 는 유지).
+  const naverStarters = await runBeforeDeadline(
+    () => fetchNaverStartersImpl(gameId, { timeoutMs: Math.max(1, deadlineAtMs - Date.now()) }),
+    deadlineAtMs,
+  ).catch(() => null);
   if (!naverStarters) return game;
   return {
     ...game,
@@ -955,11 +1012,7 @@ export async function GET(req: NextRequest) {
   try {
     game = await resolvePreviewGameContext(gameId);
   } catch {
-    return NextResponse.json({
-      preview: null,
-      source: "unavailable",
-      message: "경기 정보를 확인할 수 없습니다. 잠시 후 다시 시도해 주세요.",
-    }, { status: 503 });
+    return unavailableOrCache(gameId);
   }
   if (game.status === "cancelled") {
     return NextResponse.json({ preview: null, source: "cancelled" });
@@ -998,11 +1051,7 @@ export async function POST(req: NextRequest) {
   try {
     game = await resolvePreviewGameContext(body.gameId);
   } catch {
-    return NextResponse.json({
-      preview: null,
-      source: "unavailable",
-      message: "경기 정보를 확인할 수 없습니다. 잠시 후 다시 시도해 주세요.",
-    }, { status: 503 });
+    return unavailableOrCache(body.gameId);
   }
   if (game.status === "cancelled") {
     return NextResponse.json({ preview: null, source: "cancelled" });
