@@ -25,6 +25,7 @@ import { setWidgetFavPlayers, setWidgetMyTeam, updateGameWidget } from "@/lib/ca
 import { writeHomeWidgetSnapshot, type HomeWidgetGame } from "@/lib/native-live-activity";
 import { latestRelayLine } from "@/lib/notifications/relay-line";
 import HeaderAvatar from "@/components/home/HeaderAvatar";
+import OutageNoticeBanner from "@/components/home/OutageNoticeBanner";
 import MyTeamHero from "@/components/home/MyTeamHero";
 import AllStarGameCard from "@/components/home/AllStarGameCard";
 import TeamCard from "@/components/home/TeamCard";
@@ -684,6 +685,9 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
       </header>
 
       <AppDownloadBanner />
+
+      {/* 7/30 장애 안내 배너 — 2026-07-30 23:30 KST까지 노출 후 자동 소멸 */}
+      <OutageNoticeBanner />
 
       {/* 스킵 유저: 최애선수 설정 CTA */}
       {showPlayerSetupCTA && myTeamId && (
