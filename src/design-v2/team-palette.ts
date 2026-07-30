@@ -60,6 +60,15 @@ export function luminance(hex: string): number {
   return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
 }
 
+/** accent 배경 위에서 흑/백 중 WCAG 대비가 더 높은 텍스트 색을 선택. */
+export function onAccentColor(hex: string): "#ffffff" | "#0a0a0a" {
+  const bg = luminance(hex);
+  const whiteContrast = 1.05 / (bg + 0.05);
+  const blackLuminance = luminance("#0a0a0a");
+  const blackContrast = (bg + 0.05) / (blackLuminance + 0.05);
+  return blackContrast > whiteContrast ? "#0a0a0a" : "#ffffff";
+}
+
 /**
  * 어두운 팀 primary 는 light 를 대신 쓰도록 결정.
  * 두산/KT/KIA 검정~짙은 남색 계열 보정용.
@@ -147,9 +156,23 @@ export function teamPalette(
     accent: base,
     accentSoft: withAlpha(base, softAlpha),
     accentBorder: withAlpha(base, borderAlpha),
-    onAccent: luminance(base) > 0.5 ? "#0a0a0a" : "#ffffff",
+    onAccent: onAccentColor(base),
     isNeutral: false,
   };
+}
+
+/**
+ * 편의 함수: DB team_id(숫자)로 바로 팔레트 생성 — 팀색 강조 UI 공용 helper.
+ * 팀 CSS 변수 직접 사용 금지 계약의 진입점: accent/onAccent 가 WCAG AA 를 보장한다.
+ * 미매칭/null 은 neutral(KBO 블루) fallback.
+ */
+export function paletteForTeamId(
+  teamId: number | null | undefined,
+  intensity: number = 6,
+): TeamPalette {
+  const team =
+    teamId != null ? Object.values(TEAMS).find((t) => t.id === teamId) : undefined;
+  return teamPalette(team ?? TEAMS.neutral, intensity);
 }
 
 /** 편의 함수: slug 문자열로 바로 팔레트 생성. */

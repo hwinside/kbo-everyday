@@ -1,11 +1,15 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Loader2, Video as VideoIcon, MapPin } from "lucide-react";
+import { X, Loader2, Video as VideoIcon, MapPin, Play } from "lucide-react";
 import { getSafeSession } from "@/lib/supabase/client";
-import { prepareVenueStoryMedia, probeVideoDurationMs } from "@/lib/venue-stories/upload";
+import {
+  prepareVenueStoryMedia,
+  probeVideoDurationMs,
+  type UploadStage,
+} from "@/lib/venue-stories/upload";
 import { checkVenueMediaLimits } from "@/lib/venue-stories/media-limits";
 import { isVideoCompressSupported } from "@/lib/venue-stories/video-compress";
 import { getVenuePosition, type Position } from "@/lib/venue-stories/geo";
@@ -24,11 +28,23 @@ import {
 } from "@/lib/venue-stories/types";
 import { consentStorageKey } from "@/lib/venue-stories/auth-consent";
 import { createPickController, type PickController } from "@/lib/venue-stories/pick-controller";
+import { venueStorySubmitReady } from "@/lib/venue-stories/composer-helpers";
 import {
-  resolveImagePreview,
-  venueStorySubmitReady,
-} from "@/lib/venue-stories/composer-helpers";
+  VENUE_STORY_MAX_ITEMS,
+  VENUE_STORY_OVER_MAX_MSG,
+  VENUE_STORY_CTA_LABEL,
+  type MultiItemStatus,
+  pickIdentity,
+  mergePickedItems,
+  mediaDurationBadge,
+  overallUploadProgress,
+  summarizeUploadOutcome,
+  uploadFailureReason,
+  isRetryableItem,
+} from "@/lib/venue-stories/multi-pick";
 import { readFileAsDataURL } from "@/lib/venue-stories/read-file";
+import { getMyTeamId } from "@/lib/store/myteam";
+import { paletteForTeamId } from "@/design-v2/team-palette";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
 
 interface Props {
@@ -43,25 +59,40 @@ interface Props {
   }) => void;
 }
 
-type Phase = "idle" | "geo" | "upload";
+type Phase = "idle" | "geo" | "upload" | "done";
+
+/** 멀티픽 항목 — 원본 File + 프리뷰/진행/결과. key 는 pickIdentity(중복 픽 방지와 동일 축). */
+interface ComposerItem {
+  key: string;
+  file: File;
+  kind: "image" | "video";
+  /** image: data URL(안드 WebView blob 미렌더 회피, 삼순 #839 유지) · video: blob URL */
+  previewUrl: string | null;
+  durationMs: number | null;
+  status: MultiItemStatus;
+  /** 0~1 — status==="uploading" 일 때만 유효 */
+  progress: number;
+  stage: UploadStage;
+  failReason: string | null;
+}
 
 export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded }: Props) {
   const isAdmin = useIsAdmin();
-  const [file, setFile] = useState<File | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [previewType, setPreviewType] = useState<"image" | "video" | null>(null);
+  const [items, setItems] = useState<ComposerItem[]>([]);
+  const [activeKey, setActiveKey] = useState<string | null>(null);
   const [caption, setCaption] = useState("");
   const [phase, setPhase] = useState<Phase>("idle");
-  const [progress, setProgress] = useState(0); // 0~100, phase==="upload" 일 때만 유효
-  // cap 초과 영상 자동압축 구간(0~40%) 라벨 분기용 — upload.ts 가 stage 를 알려준다
-  const [uploadStage, setUploadStage] = useState<"compress" | "upload">("upload");
+  // phase state 반영 전의 짧은 구간까지 닫기/중복 제출을 막는 동기 guard.
+  const uploadInFlightRef = useRef(false);
   // iOS가 사진앱 영상을 export하느라 픽 후 change 이벤트까지 수 초간 무피드백 구간이 있다
   // → 픽 대기 안내 오버레이 (하린아빠 7/23 21:05 리포트). 상태 전이는 pick-session 순수 모듈이 소유:
   // 수동 취소/닫기 후 late change 무시 · 준비 중 재진입 차단 (삼순 #805 blocker)
   const [picking, setPicking] = useState(false);
+  // native change 뒤 duration probe/data URL 준비가 끝날 때까지 다음 픽 재진입을 막는다.
+  const processingPickRef = useRef(false);
   // controller의 onFile은 생성 시 1회 결속되므로, 최신 render closure를 ref로 우회한다
-  const handlePickedFileRef = useRef<(file: File | null) => void>(() => {});
-  // 영상 duration probe가 async — reset/새 픽 이후 도착하는 late probe 결과는 무시한다
+  const handlePickedFilesRef = useRef<(files: File[] | null) => void>(() => {});
+  // 영상 duration probe·이미지 read가 async — reset 이후 도착하는 late 결과는 무시한다
   const pickSeqRef = useRef(0);
   const pickControllerRef = useRef<PickController | null>(null);
   const pickController = () =>
@@ -72,6 +103,9 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
         const input = document.createElement("input");
         input.type = "file";
         input.accept = "image/*,video/*";
+        // 네이티브 멀티픽 — iOS PHPicker/안드 포토피커가 다중 선택 UI를 그대로 제공한다.
+        // 선택 순서는 input.files 순서로 보존(스트립 1→2→3).
+        input.multiple = true;
         // iOS WKWebView 버그: DOM에 **미부착된** file input은 영상 export가 필요한 픽에서
         // change 이벤트를 안 쏘고 멈춘다 → 픽 스피너 영구 hang (하린아빠 7/25 04:36 리포트).
         // 반드시 document에 붙여 click, 이벤트 처리 후 제거한다. (데스크톱/안드로이드는 무해)
@@ -92,8 +126,9 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
         input.addEventListener(
           "change",
           () => {
-            const f = input.files?.[0] ?? null; // 제거 전에 파일 참조 확보
-            settle(() => onChange(f));
+            // 제거 전에 파일 참조 확보 — 선택 순서 그대로의 배열
+            const picked = input.files?.length ? Array.from(input.files) : null;
+            settle(() => onChange(picked));
           },
           { once: true },
         );
@@ -102,7 +137,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
         watchdog = setTimeout(() => settle(() => onCancel()), 90_000);
         input.click();
       },
-      onFile: (file) => handlePickedFileRef.current(file),
+      onFile: (files) => handlePickedFilesRef.current(files),
       onStateChange: setPicking,
     }));
   const cancelPick = () => {
@@ -121,6 +156,14 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   const [precheck, setPrecheck] = useState<PrecheckState>({ status: "idle" });
   const [precheckNonce, setPrecheckNonce] = useState(0);
   const precheckPosRef = useRef<{ pos: Position; at: number } | null>(null);
+  // submit 시 확정한 위치 — 실패건 개별 재시도에서 재사용(서버가 최종 권위 재검증).
+  const submitPosRef = useRef<{ lat: number | null; lng: number | null; accuracy: number | null }>(
+    { lat: null, lng: null, accuracy: null },
+  );
+
+  // CTA 팀색 — 팀 CSS 변수 직접 사용 없이 공용 teamPalette.accent/onAccent(10팀 WCAG AA).
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- isOpen 마다 마이팀 재조회(설정 변경 반영)
+  const palette = useMemo(() => paletteForTeamId(getMyTeamId()), [isOpen]);
 
   // UGC 가이드라인 동의 — 버전별 + **user-scoped** 기억(삼순 09:44 #3: 계정 전환 시 타 계정
   // 동의 상속 금지). userId 미상이면 기억하지 않는다. 서버가 최종 검증하므로 이건 UX 편의용.
@@ -160,7 +203,8 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
     });
   };
 
-  const submitting = phase !== "idle";
+  // done(완료 요약)은 닫기 허용 — 진행 중(geo/upload)만 잠근다(orphan 업로드 방지, 삼순 #795).
+  const submitting = phase === "geo" || phase === "upload";
   const radiusKm = venue ? Math.round((venue.radiusM / 1000) * 10) / 10 : null;
 
   // 열릴 때 서버에서 구장/업로드 가능 시간대를 받아온다(서버가 최종 권위, 여기선 UX 게이트용).
@@ -251,109 +295,138 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   const reset = () => {
     // in-flight 픽 invalidate — 닫기/초기화 뒤 도착하는 late change는 무시된다
     cancelPick();
+    processingPickRef.current = false;
+    uploadInFlightRef.current = false;
+    setPicking(false);
     pickSeqRef.current++;
     // data URL(이미지 프리뷰)은 revoke 불필 — blob(비디오)만 해제
-    if (previewUrl?.startsWith("blob:")) URL.revokeObjectURL(previewUrl);
-    setFile(null);
-    setPreviewUrl(null);
-    setPreviewType(null);
+    for (const it of items) {
+      if (it.previewUrl?.startsWith("blob:")) URL.revokeObjectURL(it.previewUrl);
+    }
+    setItems([]);
+    setActiveKey(null);
     setCaption("");
     setError(null);
     setPhase("idle");
-    setProgress(0);
-    setUploadStage("upload");
-    // 이미지 late read 방어는 pickSeqRef 증가로 일원화 — 닫기/초기화 뒤 도착하는 read 는
-    // seq 불일치로 조용히 버려진다(별도 preview lock 없음 — #845 file·preview 분리).
     precheckPosRef.current = null;
+    submitPosRef.current = { lat: null, lng: null, accuracy: null };
     setPrecheck({ status: "idle" });
   };
 
   const close = () => {
     // 업로드 진행 중 닫기 금지 — XHR은 계속돼서 orphan 업로드가 남는다(삼순 #795 blocker)
-    if (submitting) return;
+    if (submitting || uploadInFlightRef.current) return;
     reset();
     onClose();
   };
 
   const openPicker = () => {
-    if (submitting) return;
+    if (submitting || phase === "done" || processingPickRef.current) return;
+    if (items.length >= VENUE_STORY_MAX_ITEMS) return;
     if (!precheckGateReady({ isAdmin, status: precheck.status })) return;
     // 재진입/late-event 방어는 controller가 소유 (픽별 새 input + 토큰 closure 결속)
     pickController().openPicker();
   };
 
-  const handlePickedFile = async (f: File | null) => {
-    if (!f || submitting) return;
+  const patchItem = (key: string, patch: Partial<ComposerItem>) => {
+    setItems((prev) => prev.map((it) => (it.key === key ? { ...it, ...patch } : it)));
+  };
+
+  const handlePickedFiles = async (files: File[] | null) => {
+    if (!files || files.length === 0 || submitting) return;
+    processingPickRef.current = true;
+    setPicking(true);
     setError(null);
-    const isVideo = f.type.startsWith("video/");
-    const isImage = f.type.startsWith("image/");
-    if (!isVideo && !isImage) {
-      setError("이미지 또는 영상만 올릴 수 있어요");
-      return;
-    }
-    // 제한 초과는 픽 시점에 즉시 차단 — '올리기'까지 가지 않게 (upload.ts 검사는 최종 안전망).
-    // 영상은 duration(15초)이 1차 기준 — 유저는 방금 찍은 영상이 몇 MB인지 모른다(하린아빠 7/24).
-    // probe 실패(null)는 여기서 차단하지 않고 업로드 단계 검증으로 fail-close(이중 차단 방지).
-    const seq = ++pickSeqRef.current;
-    const durationMs = isVideo ? await probeVideoDurationMs(f) : null;
-    if (seq !== pickSeqRef.current) return; // reset/새 픽이 끼어든 late probe — 버림
-    const limitError = checkVenueMediaLimits({
-      kind: isVideo ? "video" : "image",
-      sizeBytes: f.size,
-      durationMs,
-      // WebCodecs 지원 환경이면 cap 초과 영상을 차단 대신 업로드 단계 자동압축에 맡긴다
-      videoAutoCompressAvailable: isVideo && isVideoCompressSupported(),
-    });
-    if (limitError) {
-      setError(limitError);
-      return;
-    }
-    // 영상: blob 프리뷰 — file·preview·type 원자 반영(late면 방금 만든 blob만 revoke하고 빠짐).
-    if (isVideo) {
-      const url = URL.createObjectURL(f);
+    const seq = pickSeqRef.current;
+    try {
+      const accepted: ComposerItem[] = [];
+      let rejectReason: string | null = null;
+      for (const f of files) {
+        const isVideo = f.type.startsWith("video/");
+        const isImage = f.type.startsWith("image/");
+        if (!isVideo && !isImage) {
+          rejectReason ??= "이미지 또는 영상만 올릴 수 있어요";
+          continue;
+        }
+        // 제한 초과는 픽 시점에 즉시 차단 — '올리기'까지 가지 않게 (upload.ts 검사는 최종 안전망).
+        // 영상은 duration(15초)이 1차 기준 — 유저는 방금 찍은 영상이 몇 MB인지 모른다(하린아빠 7/24).
+        // probe 실패(null)는 여기서 차단하지 않고 업로드 단계 검증으로 fail-close(이중 차단 방지).
+        const durationMs = isVideo ? await probeVideoDurationMs(f) : null;
+        if (seq !== pickSeqRef.current) return; // reset 이 끼어든 late probe — 배치 전체 버림
+        const limitError = checkVenueMediaLimits({
+          kind: isVideo ? "video" : "image",
+          sizeBytes: f.size,
+          durationMs,
+          // WebCodecs 지원 환경이면 cap 초과 영상을 차단 대신 업로드 단계 압축에 맡긴다
+          videoAutoCompressAvailable: isVideo && isVideoCompressSupported(),
+        });
+        if (limitError) {
+          rejectReason ??= limitError;
+          continue;
+        }
+        accepted.push({
+          key: pickIdentity(f),
+          file: f,
+          kind: isVideo ? "video" : "image",
+          // 영상: blob 프리뷰. 이미지: 안드 WebView blob 미렌더 회피 → data URL 비동기 채움(#839).
+          previewUrl: isVideo ? URL.createObjectURL(f) : null,
+          durationMs,
+          status: "ready",
+          progress: 0,
+          stage: "upload",
+          failReason: null,
+        });
+      }
       if (seq !== pickSeqRef.current) {
-        URL.revokeObjectURL(url);
+        for (const it of accepted) {
+          if (it.previewUrl?.startsWith("blob:")) URL.revokeObjectURL(it.previewUrl);
+        }
         return;
       }
-      if (previewUrl?.startsWith("blob:")) URL.revokeObjectURL(previewUrl);
-      setFile(f);
-      setPreviewUrl(url);
-      setPreviewType("video");
-      return;
+      // 순서 보존 병합(기존 → 새 항목 append) + 중복/상한 drop — 스트립 순서 1→2→3 계약
+      setItems((prev) => {
+        const { merged, droppedOverMax } = mergePickedItems(
+          prev,
+          accepted,
+          (it) => it.key,
+        );
+        // 병합에서 탈락한 새 항목의 blob 은 즉시 회수
+        const kept = new Set(merged.map((it) => it.key));
+        for (const it of accepted) {
+          if (!kept.has(it.key) && it.previewUrl?.startsWith("blob:")) {
+            URL.revokeObjectURL(it.previewUrl);
+          }
+        }
+        if (droppedOverMax > 0) setError(VENUE_STORY_OVER_MAX_MSG);
+        setActiveKey((cur) => cur ?? merged[0]?.key ?? null);
+        return merged;
+      });
+      if (rejectReason) setError(rejectReason);
+      // 이미지 프리뷰(data URL) 비동기 읽기 — 실패한 항목은 제거해 "원본 썸네일 매칭" 계약을 지킨다.
+      for (const it of accepted.filter((a) => a.kind === "image")) {
+        let dataUrl: string | null = null;
+        try {
+          dataUrl = await readFileAsDataURL(it.file);
+        } catch {
+          dataUrl = null;
+        }
+        if (seq !== pickSeqRef.current) return; // reset 이후 late read — 버림
+        if (dataUrl != null) {
+          patchItem(it.key, { previewUrl: dataUrl });
+        } else {
+          setItems((prev) => prev.filter((x) => x.key !== it.key));
+          setActiveKey((cur) => (cur === it.key ? null : cur));
+          setError("사진을 불러오지 못했어요. 다시 선택해주세요");
+        }
+      }
+    } finally {
+      processingPickRef.current = false;
+      if (seq === pickSeqRef.current) setPicking(false);
     }
-    // 이미지: 안드로이드 WebView가 blob: 이미지를 못 렌더하는 케이스 방지 → data URL(삼순 #839 유지).
-    // **file 은 read 전에 즉시 확정 — 제출 게이트는 file 기준, 프리뷰는 화면 표시용 UX일 뿐이다(#845).**
-    // data URL 은 비동기로 채운다. readingPreview lock 을 두지 않아 안드 포토피커 중복 change 에서
-    // lock 이 stuck 돼 '올리기'가 영구 비활성되던 문제를 근본 제거한다. late/재선택은 pickSeqRef 로
-    // 최신 픽만 반영(A→B 재선택 시 늦게 온 A read 는 discard → file·preview 모두 최신 B).
-    if (previewUrl?.startsWith("blob:")) URL.revokeObjectURL(previewUrl);
-    setFile(f);
-    setPreviewUrl(null); // 새 이미지 읽는 동안 이전(다른 픽) 프리뷰 제거 — 불일치 방지
-    setPreviewType("image");
-    let dataUrl: string | null = null;
-    try {
-      dataUrl = await readFileAsDataURL(f);
-    } catch {
-      dataUrl = null;
-    }
-    const outcome = resolveImagePreview({
-      pickSeq: seq,
-      currentSeq: pickSeqRef.current,
-      read: dataUrl != null ? { ok: true, dataUrl } : { ok: false },
-    });
-    if (outcome === "discard") return; // reset/새 픽이 끼어든 late read — 최신 선택 유지
-    if (outcome === "error") {
-      // 최신 픽인데 read 실패 → file 확정 취소(제출 불가로 되돌림) + 에러 노출
-      setFile(null);
-      setPreviewType(null);
-      setError("사진을 불러오지 못했어요. 다시 선택해주세요");
-      return;
-    }
-    // apply — 프리뷰(data URL) 채움. file 은 이미 확정됨.
-    setPreviewUrl(dataUrl!);
   };
+
   // 모달이 열린 동안 body 스크롤 잠금 — 안드로이드에서 모달 안 터치가 배경(body)으로
-  // 체이닝돼 뤡경만 스크롤되고 하단 '올리기' 버튼에 도달 못하던 문제 방지(하린아빠 A17 리포트).
+  // 체이닝돼 배경만 스크롤되고 하단 CTA 버튼에 도달 못하던 문제 방지(하린아빠 A17 리포트).
   useEffect(() => {
     if (!isOpen) return;
     const prev = document.body.style.overflow;
@@ -365,12 +438,91 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
 
   useEffect(() => {
     // render마다 최신 closure로 갱신 — controller의 1회 결속 onFile이 stale state를 보지 않게
-    handlePickedFileRef.current = handlePickedFile;
+    handlePickedFilesRef.current = handlePickedFiles;
   });
 
+  /**
+   * 항목 순차 업로드 — 기존 단건 파이프라인(prepareVenueStoryMedia → POST /api/venue-stories)을
+   * 항목별로 그대로 재사용한다(서버 계약 변경 0). 성공 즉시 onUploaded 로 트레이 낙관 반영,
+   * 실패는 사유 1줄을 항목에 기록(완료 요약에서 실패건만 개별 재시도).
+   */
+  const runUpload = async (
+    targets: ReadonlyArray<Pick<ComposerItem, "key" | "file">>,
+  ) => {
+    const pos = submitPosRef.current;
+    for (const target of targets) {
+      patchItem(target.key, { status: "uploading", progress: 0, stage: "upload", failReason: null });
+      let prepared;
+      try {
+        prepared = await prepareVenueStoryMedia(target.file, gameId, (r, stage) => {
+          patchItem(target.key, { progress: Math.min(0.99, r), ...(stage ? { stage } : {}) });
+        });
+      } catch {
+        prepared = { error: "업로드에 실패했어요" };
+      }
+      if ("error" in prepared) {
+        patchItem(target.key, {
+          status: "failed",
+          failReason: uploadFailureReason({ kind: "prepare", message: prepared.error }),
+        });
+        continue;
+      }
+      const session = await getSafeSession();
+      const token = session?.access_token;
+      if (!token) {
+        patchItem(target.key, {
+          status: "failed",
+          failReason: uploadFailureReason({ kind: "server", message: "로그인이 필요해요" }),
+        });
+        continue;
+      }
+      try {
+        const res = await fetch("/api/venue-stories", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({
+            gameId,
+            mediaType: prepared.mediaType,
+            mediaUrl: prepared.mediaUrl,
+            mediaPath: prepared.mediaPath, // 영상: private staging 경로(서버 즉시 검증 후 공개 승격)
+            thumbUrl: prepared.thumbUrl,
+            durationMs: prepared.durationMs,
+            width: prepared.width,
+            height: prepared.height,
+            caption: caption.trim() || null,
+            lat: pos.lat,
+            lng: pos.lng,
+            accuracy: pos.accuracy,
+            consentVersion: VENUE_STORY_CONSENT_VERSION,
+          }),
+        });
+        const data = await res.json();
+        if (data.error) {
+          patchItem(target.key, {
+            status: "failed",
+            failReason: uploadFailureReason({ kind: "server", message: data.error }),
+          });
+          continue;
+        }
+        patchItem(target.key, { status: "done", progress: 1 });
+        // 항목 성공 즉시 트레이 낙관 반영(영상 pending 처리중 카드 포함 — 기존 단건 계약 유지)
+        onUploaded({
+          id: typeof data.id === "number" ? data.id : null,
+          mediaType: prepared.mediaType,
+          status: data.status ?? null,
+          thumbUrl: prepared.thumbUrl,
+        });
+      } catch {
+        patchItem(target.key, {
+          status: "failed",
+          failReason: uploadFailureReason({ kind: "network" }),
+        });
+      }
+    }
+  };
+
   const submit = async () => {
-    // 프리뷰(data URL) 읽기 여부는 제출 게이트가 아니다(#845) — file 확정 시 제출 가능.
-    if (!file || submitting) return;
+    if (items.length === 0 || submitting || uploadInFlightRef.current || phase === "done") return;
     setError(null);
 
     // UGC 가이드라인 동의 필수(업로드 시점 게이트)
@@ -430,64 +582,29 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
         return;
       }
     }
+    // 실패건 개별 재시도가 같은 인증 위치를 재사용(서버가 최종 권위 재검증)
+    submitPosRef.current = pos;
 
+    uploadInFlightRef.current = true;
     setPhase("upload");
-    setProgress(0);
-    setUploadStage("upload");
     try {
-      const prepared = await prepareVenueStoryMedia(file, gameId, (r, stage) => {
-        setProgress(Math.min(99, Math.round(r * 100)));
-        if (stage) setUploadStage(stage);
-      });
-      if ("error" in prepared) {
-        setError(prepared.error);
-        setPhase("idle");
-        return;
-      }
-      const session = await getSafeSession();
-      const token = session?.access_token;
-      if (!token) {
-        setError("로그인이 필요해요");
-        setPhase("idle");
-        return;
-      }
-      const res = await fetch("/api/venue-stories", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({
-          gameId,
-          mediaType: prepared.mediaType,
-          mediaUrl: prepared.mediaUrl,
-          mediaPath: prepared.mediaPath, // 영상: private staging 경로(서버 즉시 검증 후 공개 승격)
-          thumbUrl: prepared.thumbUrl,
-          durationMs: prepared.durationMs,
-          width: prepared.width,
-          height: prepared.height,
-          caption: caption.trim() || null,
-          lat: pos.lat,
-          lng: pos.lng,
-          accuracy: pos.accuracy,
-          consentVersion: VENUE_STORY_CONSENT_VERSION,
-        }),
-      });
-      const data = await res.json();
-      if (data.error) {
-        setError(data.error);
-        setPhase("idle");
-        return;
-      }
-      // 업로드 성공 — mediaType과 상태(영상은 pending→검증 중일 수 있음)를 알려 성공 피드백을 보장.
-      // 지금까지는 모달만 조용히 닫혀 "실패한 줄"로 오인되던 문제(하린아빠 A17 리포트).
-      onUploaded({
-        id: typeof data.id === "number" ? data.id : null,
-        mediaType: prepared.mediaType,
-        status: data.status ?? null,
-        thumbUrl: prepared.thumbUrl,
-      });
-      close();
-    } catch {
-      setError("업로드에 실패했어요");
-      setPhase("idle");
+      await runUpload(items.map((it) => ({ key: it.key, file: it.file })));
+      // 성공/실패와 무관하게 완료 요약으로 전환 — 항목별 결과·실패 사유·개별 재시도 제공(스펙 5)
+      setPhase("done");
+    } finally {
+      uploadInFlightRef.current = false;
+    }
+  };
+
+  /** 완료 요약에서 실패건 1건 재시도 — 성공/진행 중 항목은 재전송하지 않는다. */
+  const retryItem = async (key: string) => {
+    const target = items.find((it) => it.key === key);
+    if (!target || uploadInFlightRef.current || !isRetryableItem(target.status)) return;
+    uploadInFlightRef.current = true;
+    try {
+      await runUpload([{ key: target.key, file: target.file }]);
+    } finally {
+      uploadInFlightRef.current = false;
     }
   };
 
@@ -508,11 +625,44 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   // GPS 선체크(관리자 제외) 결과로 파일 선택 UI 대체/제출 게이트. 시간대 차단(gateReason) 시엔
   // 선체크 자체가 안 돌아 idle 이므로 그 사유만 노출(기존 동작 유지).
   const showPrecheckCard =
+    phase === "idle" &&
     !isAdmin &&
     !gateReason &&
     !precheckGateReady({ isAdmin, status: precheck.status });
   const precheckDistKm =
     precheck.distanceM != null ? Math.max(0.1, Math.round(precheck.distanceM / 100) / 10) : null;
+
+  const activeItem = items.find((it) => it.key === activeKey) ?? items[0] ?? null;
+  const activeBadge = activeItem
+    ? mediaDurationBadge(activeItem.kind, activeItem.durationMs)
+    : null;
+  const statuses = items.map((it) => it.status);
+  const uploadingItem = items.find((it) => it.status === "uploading") ?? null;
+  const overallProgress = overallUploadProgress(statuses, uploadingItem?.progress ?? 0);
+  const settledCount = statuses.filter((s) => s === "done" || s === "failed").length;
+  const outcome = summarizeUploadOutcome(statuses);
+  const retryInFlight = phase === "done" && uploadingItem != null;
+
+  const ctaLabel =
+    phase === "geo"
+      ? "직관 인증 중…"
+      : phase === "upload"
+        ? uploadingItem?.stage === "compress"
+          ? `영상 최적화 중… ${overallProgress}%`
+          : `올리는 중… ${Math.min(settledCount + 1, items.length)}/${items.length} · ${overallProgress}%`
+        : phase === "done"
+          ? "닫기"
+          : VENUE_STORY_CTA_LABEL;
+  const ctaDisabled =
+    phase === "done"
+      ? retryInFlight
+      : !venueStorySubmitReady({
+          hasFile: items.length > 0,
+          submitting,
+          gateBlocked: !!gateReason,
+          agreed,
+          precheckReady: precheckGateReady({ isAdmin, status: precheck.status }),
+        });
 
   return createPortal(
     <AnimatePresence>
@@ -531,8 +681,11 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
           transition={{ type: "spring", damping: 26 }}
           onClick={(e) => e.stopPropagation()}
         >
+          {/* 헤더 — 닫기만. 상단 공유 버튼 없음(하단 sticky CTA 1개 계약) */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-            <span className="text-base font-semibold text-text-primary">직관 라이브 올리기</span>
+            <span className="text-base font-semibold text-text-primary">
+              {phase === "done" ? "업로드 완료" : "직관 라이브 올리기"}
+            </span>
             <button
               onClick={close}
               disabled={submitting}
@@ -544,152 +697,329 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
           </div>
 
           <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 flex flex-col gap-3">
-            <div className="flex items-center gap-1.5 text-[12px] text-text-tertiary bg-bg-tertiary/50 rounded-lg px-3 py-2">
-              <MapPin size={13} className="text-red-400 shrink-0" />
-              <span>
-                {isAdmin
-                  ? "관리자 QA 모드 · 위치 인증 없이 업로드할 수 있어요"
-                  : venueLoading
-                  ? "구장 정보 확인 중…"
-                  : gateReason
-                    ? gateReason
-                    : `${venue?.stadiumName ?? "경기장"}${radiusKm ? ` 반경 ${radiusKm}km` : ""} 안(직관 중)에서만 올릴 수 있어요`}
-              </span>
-            </div>
-
-            {showPrecheckCard ? (
-              <div className="flex flex-col items-center justify-center gap-3 h-48 rounded-2xl border border-border bg-bg-tertiary/40 px-5 text-center">
-                {precheck.status === "idle" || precheck.status === "measuring" ? (
-                  <>
-                    <Loader2 size={26} className="animate-spin text-text-tertiary" />
-                    <span className="text-sm text-text-secondary">위치 확인 중… 잠시만요</span>
-                  </>
-                ) : (
-                  <>
-                    <MapPin size={26} className="text-red-400" />
-                    {precheck.status === "out" ? (
-                      <div className="flex flex-col gap-1">
-                        <span className="text-sm font-medium text-text-primary">
-                          {venue?.stadiumName ?? "경기장"}{radiusKm ? ` 반경 ${radiusKm}km` : ""} 밖이에요
-                        </span>
-                        <span className="text-[12px] text-text-tertiary">
-                          {precheckDistKm != null ? `지금은 약 ${precheckDistKm}km 떨어져 있어요. ` : ""}직관 중에 경기장 안에서 올릴 수 있어요
-                        </span>
+            {phase === "done" ? (
+              <>
+                {/* 완료 요약 — 항목별 원본 썸네일 매칭 성공/실패 + 실패 사유 1줄 + 실패건만 개별 재시도 */}
+                <div className="text-lg font-bold text-text-primary">
+                  <span className="text-green-400">성공 {outcome.success}</span>
+                  <span className="text-text-tertiary"> · </span>
+                  <span className="text-red-400">실패 {outcome.failed}</span>
+                </div>
+                <div className="flex flex-col gap-2">
+                  {items.map((it) => {
+                    const badge = mediaDurationBadge(it.kind, it.durationMs);
+                    return (
+                      <div
+                        key={it.key}
+                        className="flex items-center gap-3 rounded-xl border border-border bg-bg-tertiary/40 p-2.5"
+                      >
+                        <div className="relative w-[42px] h-[42px] shrink-0">
+                          <div
+                            className={`w-full h-full rounded-lg overflow-hidden bg-black ${
+                              it.status === "failed" ? "opacity-50 grayscale" : ""
+                            }`}
+                          >
+                            {it.previewUrl ? (
+                              it.kind === "video" ? (
+                                <video
+                                  src={it.previewUrl}
+                                  className="w-full h-full object-cover"
+                                  muted
+                                  playsInline
+                                  preload="metadata"
+                                />
+                              ) : (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img src={it.previewUrl} alt="" className="w-full h-full object-cover" />
+                              )
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center text-text-tertiary">
+                                <VideoIcon size={16} />
+                              </div>
+                            )}
+                          </div>
+                          {it.kind === "video" && (
+                            <Play
+                              size={11}
+                              className="absolute bottom-1 left-1 text-white fill-white drop-shadow"
+                            />
+                          )}
+                          {badge && (
+                            <span className="absolute top-0.5 right-0.5 px-1 rounded bg-black/60 text-white text-[8px] font-semibold leading-[13px]">
+                              {badge}
+                            </span>
+                          )}
+                          <span
+                            className={`absolute -bottom-1 -right-1 w-[18px] h-[18px] rounded-full border-2 border-bg-secondary flex items-center justify-center text-[10px] font-bold ${
+                              it.status === "done"
+                                ? "bg-green-500 text-black"
+                                : it.status === "failed"
+                                  ? "bg-red-500 text-white"
+                                  : "bg-bg-tertiary text-text-secondary"
+                            }`}
+                          >
+                            {it.status === "done" ? "✓" : it.status === "failed" ? "!" : "…"}
+                          </span>
+                        </div>
+                        <div className="flex flex-col gap-0.5 min-w-0">
+                          <span className="text-sm font-semibold text-text-primary">
+                            {it.status === "uploading"
+                              ? `올리는 중… ${Math.round(it.progress * 100)}%`
+                              : it.status === "done"
+                                ? `완료${it.kind === "video" ? " · 영상" : ""}`
+                                : `실패${it.kind === "video" ? " · 영상" : ""}`}
+                          </span>
+                          {it.status === "failed" && it.failReason && (
+                            <span className="text-[11px] text-text-tertiary truncate">{it.failReason}</span>
+                          )}
+                        </div>
+                        {it.status === "failed" && (
+                          <button
+                            onClick={() => retryItem(it.key)}
+                            disabled={retryInFlight}
+                            className="ml-auto shrink-0 h-8 px-3.5 rounded-lg text-xs font-semibold disabled:opacity-40"
+                            style={{ background: palette.accent, color: palette.onAccent }}
+                          >
+                            다시 시도
+                          </button>
+                        )}
+                        {it.status === "uploading" && (
+                          <Loader2 size={16} className="ml-auto shrink-0 animate-spin text-text-tertiary" />
+                        )}
                       </div>
-                    ) : (
-                      <div className="flex flex-col gap-1">
-                        <span className="text-sm font-medium text-text-primary">위치를 확인할 수 없어요</span>
-                        <span className="text-[12px] text-text-tertiary">
-                          {precheck.error ?? "위치 권한을 허용하고 다시 시도해주세요"}
-                        </span>
-                      </div>
-                    )}
-                    <button
-                      onClick={() => setPrecheckNonce((n) => n + 1)}
-                      className="mt-1 text-xs bg-bg-secondary border border-border text-text-secondary px-4 py-1.5 rounded-full active:bg-bg-tertiary"
-                    >
-                      다시 확인
-                    </button>
-                  </>
-                )}
-              </div>
-            ) : !previewUrl ? (
-              <button
-                onClick={openPicker}
-                disabled={submitting || !precheckGateReady({ isAdmin, status: precheck.status })}
-                className="flex flex-col items-center justify-center gap-2 h-48 rounded-2xl border-2 border-dashed border-border text-text-tertiary active:bg-bg-tertiary disabled:opacity-40"
-              >
-                <VideoIcon size={28} />
-                <span className="text-sm">현장 사진·영상 선택</span>
-                <span className="text-[11px] text-text-tertiary/70">영상은 15초 이하 · 세로 추천</span>
-                {/* iOS 네이티브 모달은 우리 UI 위에 뜨므로 picking 오버레이가 그 구간을 덮지 못한다.
-                    피커 열기 전에 상시 안내해 "멈춘 게 아니다" 신호를 미리 준다(삼순 #832 왕복2 합의). */}
-                <span className="text-[11px] text-text-tertiary/60">영상은 기기에서 준비하는 데 몇 초 걸릴 수 있어요</span>
-              </button>
+                    );
+                  })}
+                </div>
+              </>
             ) : (
-              <div className="relative rounded-2xl overflow-hidden bg-black aspect-[9/16] max-h-[50dvh] flex items-center justify-center">
-                {previewType === "video" ? (
-                  <video src={previewUrl} className="w-full h-full object-contain" controls playsInline muted />
+              <>
+                <div className="flex items-center gap-1.5 text-[12px] text-text-tertiary bg-bg-tertiary/50 rounded-lg px-3 py-2">
+                  <MapPin size={13} className="text-red-400 shrink-0" />
+                  <span>
+                    {isAdmin
+                      ? "관리자 QA 모드 · 위치 인증 없이 업로드할 수 있어요"
+                      : venueLoading
+                      ? "구장 정보 확인 중…"
+                      : gateReason
+                        ? gateReason
+                        : `${venue?.stadiumName ?? "경기장"}${radiusKm ? ` 반경 ${radiusKm}km` : ""} 안(직관 중)에서만 올릴 수 있어요`}
+                  </span>
+                </div>
+
+                {showPrecheckCard ? (
+                  <div className="flex flex-col items-center justify-center gap-3 h-48 rounded-2xl border border-border bg-bg-tertiary/40 px-5 text-center">
+                    {precheck.status === "idle" || precheck.status === "measuring" ? (
+                      <>
+                        <Loader2 size={26} className="animate-spin text-text-tertiary" />
+                        <span className="text-sm text-text-secondary">위치 확인 중… 잠시만요</span>
+                      </>
+                    ) : (
+                      <>
+                        <MapPin size={26} className="text-red-400" />
+                        {precheck.status === "out" ? (
+                          <div className="flex flex-col gap-1">
+                            <span className="text-sm font-medium text-text-primary">
+                              {venue?.stadiumName ?? "경기장"}{radiusKm ? ` 반경 ${radiusKm}km` : ""} 밖이에요
+                            </span>
+                            <span className="text-[12px] text-text-tertiary">
+                              {precheckDistKm != null ? `지금은 약 ${precheckDistKm}km 떨어져 있어요. ` : ""}직관 중에 경기장 안에서 올릴 수 있어요
+                            </span>
+                          </div>
+                        ) : (
+                          <div className="flex flex-col gap-1">
+                            <span className="text-sm font-medium text-text-primary">위치를 확인할 수 없어요</span>
+                            <span className="text-[12px] text-text-tertiary">
+                              {precheck.error ?? "위치 권한을 허용하고 다시 시도해주세요"}
+                            </span>
+                          </div>
+                        )}
+                        <button
+                          onClick={() => setPrecheckNonce((n) => n + 1)}
+                          className="mt-1 text-xs bg-bg-secondary border border-border text-text-secondary px-4 py-1.5 rounded-full active:bg-bg-tertiary"
+                        >
+                          다시 확인
+                        </button>
+                      </>
+                    )}
+                  </div>
+                ) : items.length === 0 ? (
+                  <button
+                    onClick={openPicker}
+                    disabled={submitting || !precheckGateReady({ isAdmin, status: precheck.status })}
+                    className="flex flex-col items-center justify-center gap-2 h-48 rounded-2xl border-2 border-dashed border-border text-text-tertiary active:bg-bg-tertiary disabled:opacity-40"
+                  >
+                    <VideoIcon size={28} />
+                    <span className="text-sm">현장 사진·영상 선택 (최대 {VENUE_STORY_MAX_ITEMS}개)</span>
+                    <span className="text-[11px] text-text-tertiary/70">영상은 15초 이하 · 세로 추천</span>
+                    <span className="text-[11px] text-text-tertiary/60">
+                      제한된 사진 접근은 선택 후 +로 더 추가하거나 기기 설정에서 변경할 수 있어요
+                    </span>
+                    {/* iOS 네이티브 픽커는 우리 UI 위에 뜨므로 picking 오버레이가 그 구간을 덮지 못한다.
+                        피커 열기 전에 상시 안내해 "멈춘 게 아니다" 신호를 미리 준다(삼순 #832 왕복2 합의). */}
+                    <span className="text-[11px] text-text-tertiary/60">영상은 기기에서 준비하는 데 몇 초 걸릴 수 있어요</span>
+                  </button>
                 ) : (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={previewUrl} alt="" className="w-full h-full object-contain" />
+                  <>
+                    {/* 선택 → 즉시 프리뷰: 첫 항목(또는 탭한 항목) 큰 프리뷰 */}
+                    <div className="relative rounded-2xl overflow-hidden bg-black aspect-[9/16] max-h-[42dvh] flex items-center justify-center">
+                      {activeItem?.kind === "video" ? (
+                        <video
+                          key={activeItem.key}
+                          src={activeItem.previewUrl ?? undefined}
+                          className="w-full h-full object-contain"
+                          controls
+                          playsInline
+                          muted
+                        />
+                      ) : activeItem?.previewUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={activeItem.previewUrl} alt="" className="w-full h-full object-contain" />
+                      ) : (
+                        <Loader2 size={22} className="animate-spin text-text-tertiary" />
+                      )}
+                      {/* 미디어 타입 정합: 길이 배지는 영상에만(0:12), 사진엔 금지 */}
+                      {activeBadge && (
+                        <span className="absolute bottom-2 right-2 px-2 py-0.5 rounded-lg bg-black/60 text-white text-[11px] font-semibold">
+                          {activeBadge}
+                        </span>
+                      )}
+                    </div>
+                    {/* 선택 스트립 — 선택 순서 1→2→3 배지 + 영상 재생 아이콘/길이 배지 */}
+                    <div className="flex gap-2">
+                      {items.map((it, idx) => {
+                        const badge = mediaDurationBadge(it.kind, it.durationMs);
+                        const isActive = activeItem?.key === it.key;
+                        return (
+                          <button
+                            key={it.key}
+                            onClick={() => setActiveKey(it.key)}
+                            disabled={submitting}
+                            className="relative w-14 h-14 rounded-lg overflow-hidden bg-bg-tertiary shrink-0 disabled:opacity-40"
+                            style={
+                              isActive
+                                ? { boxShadow: `inset 0 0 0 2px ${palette.accent}` }
+                                : undefined
+                            }
+                          >
+                            {it.previewUrl ? (
+                              it.kind === "video" ? (
+                                <video
+                                  src={it.previewUrl}
+                                  className="w-full h-full object-cover"
+                                  muted
+                                  playsInline
+                                  preload="metadata"
+                                />
+                              ) : (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img src={it.previewUrl} alt="" className="w-full h-full object-cover" />
+                              )
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center">
+                                <Loader2 size={14} className="animate-spin text-text-tertiary" />
+                              </div>
+                            )}
+                            <span
+                              className="absolute top-1 right-1 w-[18px] h-[18px] rounded-full border border-white/90 flex items-center justify-center text-[10px] font-bold"
+                              style={{ background: palette.accent, color: palette.onAccent }}
+                            >
+                              {idx + 1}
+                            </span>
+                            {it.kind === "video" && (
+                              <Play
+                                size={11}
+                                className="absolute bottom-1 left-1 text-white fill-white drop-shadow"
+                              />
+                            )}
+                            {badge && (
+                              <span className="absolute bottom-1 right-1 px-1 rounded bg-black/60 text-white text-[8px] font-semibold leading-[13px]">
+                                {badge}
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
+                      {items.length < VENUE_STORY_MAX_ITEMS && (
+                        <button
+                          onClick={openPicker}
+                          disabled={submitting || !precheckGateReady({ isAdmin, status: precheck.status })}
+                          aria-label="더 추가"
+                          className="w-14 h-14 rounded-lg bg-bg-tertiary text-text-tertiary text-xl font-light flex items-center justify-center active:bg-bg-primary disabled:opacity-40 shrink-0"
+                        >
+                          +
+                        </button>
+                      )}
+                    </div>
+                  </>
                 )}
-                <button
-                  onClick={openPicker}
-                  disabled={submitting || !precheckGateReady({ isAdmin, status: precheck.status })}
-                  className="absolute bottom-2 right-2 text-xs bg-black/60 text-white px-3 py-1.5 rounded-full disabled:opacity-40"
-                >
-                  다시 선택
-                </button>
-              </div>
-            )}
 
-            {/* iOS 사진앱 영상 export 대기 구간 안내 — 픽커가 닫힌 뒤 change 이벤트까지 수 초간 무피드백이던 구간 (7/23 리포트) */}
-            {picking && !submitting && (
-              <div className="flex items-center justify-between gap-2 rounded-xl bg-bg-tertiary/60 px-3 py-2.5 text-sm text-text-secondary">
-                <span className="flex items-center gap-2">
-                  <Loader2 size={16} className="animate-spin shrink-0" />
-                  사진·영상 불러오는 중… 영상은 몇 초 걸릴 수 있어요
-                </span>
-                <button onClick={cancelPick} className="text-xs text-text-tertiary shrink-0">
-                  취소
-                </button>
-              </div>
-            )}
+                {/* iOS 사진앱 영상 export 대기 구간 안내 — 픽커가 닫힌 뒤 change 이벤트까지 수 초간 무피드백이던 구간 (7/23 리포트) */}
+                {picking && !submitting && (
+                  <div className="flex items-center justify-between gap-2 rounded-xl bg-bg-tertiary/60 px-3 py-2.5 text-sm text-text-secondary">
+                    <span className="flex items-center gap-2">
+                      <Loader2 size={16} className="animate-spin shrink-0" />
+                      사진·영상 불러오는 중… 영상은 몇 초 걸릴 수 있어요
+                    </span>
+                    <button onClick={cancelPick} className="text-xs text-text-tertiary shrink-0">
+                      취소
+                    </button>
+                  </div>
+                )}
 
-            <input
-              type="text"
-              value={caption}
-              onChange={(e) => setCaption(e.target.value)}
-              maxLength={200}
-              disabled={submitting}
-              placeholder="한 줄 코멘트 (선택)"
-              className="w-full px-3 py-2.5 rounded-xl bg-bg-tertiary text-sm text-text-primary placeholder:text-text-tertiary outline-none disabled:opacity-40"
-            />
+                <input
+                  type="text"
+                  value={caption}
+                  onChange={(e) => setCaption(e.target.value)}
+                  maxLength={200}
+                  disabled={submitting}
+                  placeholder="한 줄 코멘트 (선택)"
+                  className="w-full px-3 py-2.5 rounded-xl bg-bg-tertiary text-sm text-text-primary placeholder:text-text-tertiary outline-none disabled:opacity-40"
+                />
+              </>
+            )}
           </div>
 
           <div
             className="shrink-0 border-t border-border p-4 flex flex-col gap-3"
             style={{ paddingBottom: "max(env(safe-area-inset-bottom), 12px)" }}
           >
-            <label className="flex items-start gap-2 text-[11px] text-text-tertiary leading-relaxed cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={agreed}
-                onChange={toggleAgree}
-                disabled={submitting}
-                className="mt-0.5 accent-brand-primary shrink-0 disabled:opacity-40"
-              />
-              <span>
-                중계화면 무단 재촬영·타인 얼굴/초상권 침해·욕설/폭력·불법 촬영물을 올리지 않겠습니다.
-                위반 콘텐츠는 신고·삭제될 수 있어요. <b className="text-text-secondary">가이드라인에 동의합니다.</b>
-              </span>
-            </label>
+            {phase !== "done" && (
+              <label className="flex items-start gap-2 text-[11px] text-text-tertiary leading-relaxed cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={agreed}
+                  onChange={toggleAgree}
+                  disabled={submitting}
+                  className="mt-0.5 accent-brand-primary shrink-0 disabled:opacity-40"
+                />
+                <span>
+                  중계화면 무단 재촬영·타인 얼굴/초상권 침해·욕설/폭력·불법 촬영물을 올리지 않겠습니다.
+                  위반 콘텐츠는 신고·삭제될 수 있어요. <b className="text-text-secondary">가이드라인에 동의합니다.</b>
+                </span>
+              </label>
+            )}
 
-            {error && <p className="text-sm text-red-400">{error}</p>}
+            {error && phase !== "done" && <p className="text-sm text-red-400">{error}</p>}
 
             {phase === "upload" && (
               <div className="w-full h-1.5 rounded-full bg-bg-tertiary overflow-hidden">
                 <div
-                  className="h-full rounded-full bg-brand-primary transition-[width] duration-200 ease-out"
-                  style={{ width: `${progress}%` }}
+                  className="h-full rounded-full transition-[width] duration-200 ease-out"
+                  style={{ width: `${overallProgress}%`, background: palette.accent }}
                 />
               </div>
             )}
 
+            {/* 하단 sticky CTA 1개 — rounded-xl · py-3.5 · safe-area(bottom).
+                팀색은 공용 teamPalette.accent/onAccent(10팀 WCAG AA)만 사용 */}
             <button
-              onClick={submit}
-              disabled={!venueStorySubmitReady({ hasFile: !!file, submitting, gateBlocked: !!gateReason, agreed, precheckReady: precheckGateReady({ isAdmin, status: precheck.status }) })}
-              className="w-full py-3 rounded-xl bg-brand-primary text-white font-semibold flex items-center justify-center gap-2 disabled:opacity-40"
+              onClick={phase === "done" ? close : submit}
+              disabled={ctaDisabled}
+              className="w-full py-3.5 rounded-xl font-semibold flex items-center justify-center gap-2 disabled:opacity-40"
+              style={{ background: palette.accent, color: palette.onAccent }}
             >
               {submitting ? <Loader2 size={18} className="animate-spin" /> : null}
-              {phase === "geo"
-                ? "직관 인증 중…"
-                : phase === "upload"
-                  ? uploadStage === "compress"
-                    ? `영상 최적화 중… ${progress}%`
-                    : `올리는 중… ${progress}%`
-                  : "올리기"}
+              {ctaLabel}
             </button>
           </div>
         </motion.div>
