@@ -499,6 +499,7 @@ struct PlayerCard: View {
                     let h = image.size.height * scale
                     Image(uiImage: image)
                         .resizable()
+                        .fullColorInAccentedWidget()
                         .frame(width: w, height: h)
                         .clipShape(isCutout ? AnyShape(Rectangle()) : AnyShape(Circle()))
                         .position(x: pw / 2, y: ph - h / 2)   // 하단 중앙 고정
