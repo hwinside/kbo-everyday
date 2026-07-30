@@ -16,14 +16,19 @@ import {
   buildDiaryHomeGames,
   diaryCountsOwnerKey,
   diaryCountsReady,
+  diaryDisplaySummary,
+  diaryWinRateScopeCaption,
+  DIARY_WIN_RATE_DEFAULT_SCOPE,
   makeDiaryThumbRefresh,
   mergeDiaryMediaPages,
-  mergeVenueSummaries,
+  mergeDiarySummaryPairs,
   shouldFetchNextDiaryPage,
   startDiaryPendingPoll,
   type DiaryAttendanceInput,
   type DiaryHomeGame,
   type DiaryMediaGroupInput,
+  type DiarySummaryPair,
+  type DiaryWinRateScope,
 } from "@/lib/venue-diary/view";
 import {
   mintWithTimeout,
@@ -41,7 +46,10 @@ import VenueDiaryViewer, {
 
 interface AttendanceResponse {
   season: number;
+  /** GPS 인증(story_geofence)만 집계 — 인증 직관수·배지 계약. */
   summary: VenueAttendanceSummary;
+  /** 직접 추가 포함 전체 집계 — 승률 표시 기본값. */
+  overallSummary?: VenueAttendanceSummary;
   diaryGameCount: number;
   games: VenueDiaryItem[];
 }
@@ -158,11 +166,15 @@ export default function VenueDiaryCard() {
   const [season, setSeason] = useState<SeasonKey>(CURRENT_SEASON);
   const [loaded, setLoaded] = useState<{
     key: string;
-    summary: VenueAttendanceSummary;
+    summaries: DiarySummaryPair;
     diaryGameCount: number;
     attendanceGames: DiaryAttendanceInput[];
     mediaGroups: DiaryMediaGroupInput[];
   } | null>(null);
+  // 승률 표시 범위 — 기본 전체(GPS+직접 추가), 토글로 GPS 인증만. 로컬 상태만(서버 저장 없음).
+  const [winScope, setWinScope] = useState<DiaryWinRateScope>(
+    DIARY_WIN_RATE_DEFAULT_SCOPE,
+  );
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
 
@@ -184,7 +196,13 @@ export default function VenueDiaryCard() {
       if (results.some((r) => r == null)) throw new Error("request failed");
       const ok = results.filter((r): r is NonNullable<typeof r> => r != null);
 
-      const summary = mergeVenueSummaries(ok.map((r) => r.attendance.summary));
+      const summaries = mergeDiarySummaryPairs(
+        ok.map((r) => ({
+          certified: r.attendance.summary,
+          // 구버전 응답(overallSummary 미포함) 폴백: GPS-only 로 표시(과대집계 방지).
+          overall: r.attendance.overallSummary ?? r.attendance.summary,
+        })),
+      );
       const diaryGameCount = ok.reduce((sum, r) => sum + r.attendance.diaryGameCount, 0);
       const attendanceGames = ok.flatMap((r) =>
         r.attendance.games.map((g) => ({
@@ -195,7 +213,7 @@ export default function VenueDiaryCard() {
         })),
       );
       const mediaGroups = ok.flatMap((r) => r.mediaGroups);
-      setLoaded({ key, summary, diaryGameCount, attendanceGames, mediaGroups });
+      setLoaded({ key, summaries, diaryGameCount, attendanceGames, mediaGroups });
     } catch {
       setFailed(true);
     } finally {
@@ -391,7 +409,9 @@ export default function VenueDiaryCard() {
   if (!user) return null;
 
   const data = loaded?.key === `${user.id}:${season}` ? loaded : null;
-  const summary = data?.summary;
+  const summaries = data?.summaries;
+  // 승률·승/패/무는 토글 범위, 인증 직관수는 항상 GPS 인증(certified)만.
+  const shown = summaries ? diaryDisplaySummary(summaries, winScope) : null;
 
   return (
     <>
@@ -438,23 +458,46 @@ export default function VenueDiaryCard() {
             >
               <RefreshCw size={15} /> 기록을 불러오지 못했어요 · 다시 시도
             </button>
-          ) : data && summary ? (
+          ) : data && summaries && shown ? (
             <>
-              {/* GPS 인증 요약 카드 — 3열(인증 직관 / 승률 / 다이어리) + 승·패·무 보조줄 */}
+              {/* 직관 요약 카드 — 3열(인증 직관 / 승률 / 다이어리) + 승·패·무 보조줄.
+                  승률·승패는 토글 범위(기본 전체), 인증 직관수는 항상 GPS 인증만. */}
               <div className="mt-3.5 rounded-2xl border border-[#33202a] bg-gradient-to-br from-[#20141b] to-[#141417] p-4">
-                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-1 text-[11px] font-extrabold text-emerald-400">
-                  ✓ GPS 인증 직관
-                </span>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-1 text-[11px] font-extrabold text-emerald-400">
+                    ✓ GPS 인증 직관
+                  </span>
+                  {/* 승률 범위 토글: 전체 포함(기본) ↔ GPS 인증만 */}
+                  <div className="flex rounded-full bg-white/10 p-0.5">
+                    {(
+                      [
+                        { key: "all", label: "전체 포함" },
+                        { key: "gps", label: "GPS 인증만" },
+                      ] as const
+                    ).map(({ key, label }) => (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => setWinScope(key)}
+                        className={`rounded-full px-2.5 py-1 text-[11px] font-extrabold ${
+                          winScope === key ? "bg-accent text-white" : "text-white/60"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 <div className="mt-3.5 grid grid-cols-3 gap-2">
                   <div className="min-w-0">
                     <p className="whitespace-nowrap text-[21px] font-extrabold tracking-tight text-white min-[390px]:text-2xl">
-                      {summary.attendanceCount}
+                      {summaries.certified.attendanceCount}
                     </p>
                     <p className="mt-0.5 text-[11px] font-semibold text-white/55">인증 직관</p>
                   </div>
                   <div className="min-w-0">
                     <p className="whitespace-nowrap text-[21px] font-extrabold tracking-tight text-amber-400 min-[390px]:text-2xl">
-                      {summary.winRate == null ? "–" : `${(summary.winRate * 100).toFixed(1)}%`}
+                      {shown.winRate == null ? "–" : `${(shown.winRate * 100).toFixed(1)}%`}
                     </p>
                     <p className="mt-0.5 text-[11px] font-semibold text-white/55">승률</p>
                   </div>
@@ -467,12 +510,12 @@ export default function VenueDiaryCard() {
                 </div>
                 <div className="mt-3 flex items-center justify-between gap-2 border-t border-[#2c1f27] pt-3">
                   <div className="flex gap-3 text-[13px] font-bold">
-                    <span className="text-blue-400">{summary.wins}승</span>
-                    <span className="text-red-400">{summary.losses}패</span>
-                    <span className="text-white/70">{summary.draws}무</span>
+                    <span className="text-blue-400">{shown.wins}승</span>
+                    <span className="text-red-400">{shown.losses}패</span>
+                    <span className="text-white/70">{shown.draws}무</span>
                   </div>
                   <span className="shrink-0 whitespace-nowrap text-[11px] text-white/55">
-                    다이어리 · 직접 추가 포함
+                    {diaryWinRateScopeCaption(winScope)}
                   </span>
                 </div>
               </div>

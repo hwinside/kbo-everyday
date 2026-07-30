@@ -121,7 +121,7 @@ assert.match(
   /\.in\("source", \["story_geofence", "diary_manual"\]\)/,
   "다이어리 기록에는 GPS+직접 추가 모두 조회(경기수 집계용)",
 );
-// 삼순 정정 + 하린아빠 확정: 승률·인증 직관수는 GPS 인증(story_geofence) 건만.
+// 인증 계약 유지: 인증 직관수·배지용 summary 는 GPS 인증(story_geofence) 건만.
 assert.match(
   diaryRoute,
   /const certifiedGames = games\.filter\(\(game\) => game\.source === "story_geofence"\)/,
@@ -130,7 +130,13 @@ assert.match(
 assert.match(
   diaryRoute,
   /summary: summarizeVenueAttendance\(certifiedGames\)/,
-  "summary(승률·인증 직관수·배지)는 GPS 인증 건만 집계 — 직접 추가 제외",
+  "summary(인증 직관수·배지)는 GPS 인증 건만 집계 — 기존 계약 유지",
+);
+// 하린아빠 정책 변경(2026-07-30): 승률 표시 기본값은 직접 추가 포함 전체 → overallSummary 별도 필드.
+assert.match(
+  diaryRoute,
+  /overallSummary: summarizeVenueAttendance\(games\)/,
+  "overallSummary(승률 기본값)는 GPS+직접 추가 전체 집계",
 );
 assert.match(
   diaryRoute,
@@ -139,9 +145,41 @@ assert.match(
 );
 assert.doesNotMatch(
   diaryRoute,
-  /summary: summarizeVenueAttendance\(games\)(?!\.)/,
-  "all-source 승률을 summary로 노출하지 않음(승률 조작 방지)",
+  /(?<!overall)summary: summarizeVenueAttendance\(games\)/i,
+  "인증 계약용 summary 필드에 all-source 집계를 넣지 않음(인증 직관수 오염 방지)",
 );
+
+// 승률 정책 회귀: 직접 추가 포함(기본) vs GPS 인증만(토글) 결과가 실제로 달라진다.
+{
+  const gpsWin = buildVenueDiaryItem(row({ id: 201 }), game());
+  const gpsLoss = buildVenueDiaryItem(
+    row({ id: 202 }),
+    game({ awayScore: 2, homeScore: 4 }),
+  );
+  const manualWin1 = buildVenueDiaryItem(
+    row({ id: 203, source: "diary_manual" }),
+    game(),
+  );
+  const manualWin2 = buildVenueDiaryItem(
+    row({ id: 204, source: "diary_manual" }),
+    game(),
+  );
+  const all = [gpsWin, gpsLoss, manualWin1, manualWin2];
+  const certifiedOnly = all.filter((item) => item.source === "story_geofence");
+
+  const overall = summarizeVenueAttendance(all);
+  const certified = summarizeVenueAttendance(certifiedOnly);
+  assert.equal(overall.wins, 3, "전체: GPS 1승 + 직접 추가 2승");
+  assert.equal(overall.losses, 1);
+  assert.equal(overall.winRate, 3 / 4, "직접 추가 포함 승률(기본값)");
+  assert.equal(certified.wins, 1, "GPS-only: 직접 추가 제외");
+  assert.equal(certified.winRate, 1 / 2, "GPS 인증만 승률(토글)");
+  assert.equal(
+    certified.attendanceCount,
+    2,
+    "인증 직관수는 GPS 건만(정책 변경 후에도 불변)",
+  );
+}
 
 async function testDeadline() {
   let deadlineCalls = 0;

@@ -127,13 +127,16 @@ export async function GET(req: NextRequest) {
     };
   });
 
-  // 삼순 정정 + 하린아빠 확정: 인증 직관수·승률·배지는 GPS 인증(story_geofence) 건만 집계한다.
-  // 직접 추가(diary_manual)는 아무 경기나 올릴 수 있어 승률 조작이 가능하므로 승무패/승률에서 제외한다.
+  // 인증 직관수·배지·공개 트레이 계약: summary 는 GPS 인증(story_geofence) 건만 집계(기존 유지).
+  // 하린아빠 정책 변경(2026-07-30): 다이어리 카드의 승률·승패 표시는 직접 추가(diary_manual)를
+  // 포함한 전체가 기본값 → overallSummary 로 별도 노출하고 클라 토글로 GPS-only 와 전환한다.
   const certifiedGames = games.filter((game) => game.source === "story_geofence");
   return NextResponse.json(
     {
       season: requestedSeason,
       summary: summarizeVenueAttendance(certifiedGames),
+      // 승률 표시 기본값용 전체(GPS + 직접 추가) 집계. 인증 배지·인증 직관수에는 쓰지 않는다.
+      overallSummary: summarizeVenueAttendance(games),
       // 다이어리 기록 경기수는 직접 추가 포함 전체(승률과 무관한 단순 집계).
       diaryGameCount: games.length,
       games,
