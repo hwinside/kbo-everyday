@@ -33,15 +33,20 @@ export async function fetchLineupConfirmed(
   opts?: { seasonId?: string; timeoutMs?: number },
 ): Promise<boolean | null> {
   const sid = opts?.seasonId || gameId.slice(0, 4);
-  // timeoutMs 는 srId 0/1 재시도를 포함한 **전체 절대 예산**이다(삼순 #952 4차 blocker1):
-  // 이전엔 srId 마다 timeoutMs 를 새로 셬 40ms 예산이 actual 82ms 가 됐다. 경과를 차감해
-  // 두 fetch 가 합치면 timeoutMs 를 넘지 않게 하고(watchdog 의 absolute deadline 결속 유지),
-  // 잔여 예산이 소진되면 두번째 srId 는 시도하지 않고 null(신호 못 얻음) 반환.
+  // timeoutMs 는 srId 0/1 재시도 + Naver 폴백을 포함한 **전체 절대 예산**이다(삼순 #952 4차 blocker1).
+  // ⚠️ 삼순 #988 재리뷰 P0: KBO 무응답 hard-hang 이 전체 예산을 삼키면 잔여≤0 이 되어 Naver
+  //   확정 폴백이 호출조차 안 됐다("KBO timeout → Naver 폴백" 계약이 hard timeout 에서 깨짐).
+  //   → KBO 에는 예산의 일부(kboBudget)만 배정하고 나머지는 Naver reserve 로 남긴다. 동일
+  //   absolute deadline(startMs+timeoutMs) 안에서 KBO→Naver 가 순차 완결되며, KBO hang 도
+  //   최대 kboBudget 에서 abort 되어 Naver 가 reserve 예산으로 반드시 시도된다.
   const startMs = Date.now();
+  // KBO 하위 예산 = 전체의 60%(최소 1ms). 나머지 40%+ 가 Naver reserve 로 보장된다.
+  const kboBudgetMs =
+    opts?.timeoutMs != null ? Math.max(1, Math.ceil(opts.timeoutMs * 0.6)) : null;
   for (const srId of ["0", "1"]) {
     let signal: AbortSignal | undefined;
-    if (opts?.timeoutMs != null) {
-      const remaining = opts.timeoutMs - (Date.now() - startMs);
+    if (kboBudgetMs != null) {
+      const remaining = kboBudgetMs - (Date.now() - startMs);
       if (remaining <= 0) break;
       signal = AbortSignal.timeout(remaining);
     }
