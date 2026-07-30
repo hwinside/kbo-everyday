@@ -7,6 +7,7 @@ import { TEAMS, isAllStarGame, isAllStarGameId } from "@/lib/constants/teams";
 import { INJURY_BLOCKLIST_KEYS } from "@/lib/constants/injury-blocklist";
 import { fetchStandings, buildRankMap, fetchGames, fetchBoxScore, type TeamStanding, type BoxScoreResult, type KboGame } from "@/lib/crawler/kbo-api";
 import { STANDINGS_ACCURACY_RULES, STANDINGS_UNAVAILABLE_RULES } from "@/lib/ai/standings-guard";
+import { fetchNaverLineup } from "@/lib/crawler/naver-lineup";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
@@ -259,15 +260,25 @@ async function fetchTodayLineup(gameId: string, teamId: number, isAway: boolean)
       body: reqBody,
       signal: AbortSignal.timeout(8000),
     });
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (!Array.isArray(data) || data.length < 5) return null;
-    const batters = parseLineupRows(isAway ? data[4] : data[3]);
-    if (batters.length === 0) return null;
-    return { batters, startingPitcher: "" };
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data) && data.length >= 5) {
+        const batters = parseLineupRows(isAway ? data[4] : data[3]);
+        if (batters.length > 0) return { batters, startingPitcher: "" };
+      }
+    }
   } catch {
-    return null;
+    // KBO 열화 → 아래 Naver 폴백으로 진행
   }
+  // KBO GetLineUpAnalysis 열화(204/빈응답/타임아웃) → 공용 Naver 어댑터 폴백(삼순 PR#988 P0-2 ④).
+  // 완전 라인업(선발1+타자9)만 반환 — 이때는 선발투수 이름도 함께 채워진다.
+  const snap = await fetchNaverLineup(gameId, { timeoutMs: 8000 });
+  if (!snap) return null;
+  const side = isAway ? snap.away : snap.home;
+  return {
+    batters: side.batters.map(b => ({ order: b.order, position: b.position, name: b.name })),
+    startingPitcher: side.starter,
+  };
 }
 
 async function fetchPrevGameLineup(gameId: string, teamId: number): Promise<LineupPlayer[] | null> {
@@ -291,13 +302,21 @@ async function fetchPrevGameLineup(gameId: string, teamId: number): Promise<Line
         body: reqBody,
         signal: AbortSignal.timeout(8000),
       });
-      if (!res.ok) continue;
-      const data = await res.json();
-      if (!Array.isArray(data) || data.length < 5) continue;
-      const batters = parseLineupRows(isAway ? data[4] : data[3]);
-      if (batters.length > 0) return batters;
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data) && data.length >= 5) {
+          const batters = parseLineupRows(isAway ? data[4] : data[3]);
+          if (batters.length > 0) return batters;
+        }
+      }
     } catch {
-      continue;
+      // KBO 열화 → 아래 Naver 폴백으로 진행
+    }
+    // KBO GetLineUpAnalysis 열화 → 공용 Naver 어댑터 폴백(삼순 PR#988 P0-2 ④). 실패 시 다음 lookback continue.
+    const snap = await fetchNaverLineup(teamGame.gameId, { timeoutMs: 8000 });
+    if (snap) {
+      const side = isAway ? snap.away : snap.home;
+      return side.batters.map(b => ({ order: b.order, position: b.position, name: b.name }));
     }
   }
   return null;
