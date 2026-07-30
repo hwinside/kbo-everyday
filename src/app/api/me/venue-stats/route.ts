@@ -286,8 +286,10 @@ async function computeSeasonAggregates(
     ) {
       return failClosed; // malformed(NaN/누락/음수/비정수) → 조용한 0 대체 금지, fail-closed
     }
-    // completeGames는 1 이상, 우주 내 해당 팀 complete 경기 수를 초과할 수 없다.
-    if (completeGames < 1 || completeGames > (completeTeamGameCounts.get(teamId) ?? 0)) {
+    // 삼순 4차 P0-2 — completeGames는 우주에서 계산한 해당 팀 complete 경기 수와
+    // exact equality여야 한다. 상한만 검사하면 undercount(실제 2 → RPC 1)가 통과해
+    // B4 등 per-game 분모(시즌 합계 ÷ completeGames)를 오염시킨다 → 불일치 즉시 fail-closed.
+    if (completeGames !== (completeTeamGameCounts.get(teamId) ?? 0)) {
       return failClosed;
     }
     teamSeasonTotals.set(teamId, { teamId, completeGames, ab, h, hr, outs, er, hAllowed });

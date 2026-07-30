@@ -113,13 +113,20 @@ export type SeasonGameFetcher = (date: string, srId: string) => Promise<SeasonGa
 
 /** Naver 전-시리즈 교차확인 srId (naver-games DEFAULT_ALL_SR_ID와 동일). */
 const NAVER_FULL_SR_ID = "0,1,3,4,5,7,9";
+/** 정규시즌 전용 srId (venue-stats REGULAR_SEASON_SR_ID와 동일). */
+const REGULAR_ONLY_SR_ID = "0";
+/** 비정규 시리즈(시범 1 · 포스트 3,4,5,7 · 올스타 9) srId — 전-시리즈에서 정규(0) 제외. */
+const NON_REGULAR_SR_ID = "1,3,4,5,7,9";
 
 /**
  * 시즌 우주 수집용 일자 fetcher(기본값) — 정규시즌(srId) 경기를 실제 fetchGames로 가져오되,
  * 빈 응답(무경기)일 때만 "verified-empty(무경기 확정)"를 교차검증한다(삼순 P0-1).
  *  - games 있으면 그대로 성공(emptyVerified 무의미).
  *  - 빈 응답이면 기존 교차검증 수단(fetchNaverGames 전-시리즈)을 재사용해 그 날짜 무경기를 확인:
- *    Naver도 빈 배열 → 무경기 확정(emptyVerified=true, 성공). Naver에 경기 존재/조회 실패 →
+ *    Naver도 빈 배열 → 무경기 확정(emptyVerified=true, 성공).
+ *  - 정규시즌 전용(srId="0")은 series-aware(삼순 4차 P0-1): Naver는 series 미구분이므로
+ *    Naver 경기 전부가 KBO 비정규 시리즈 조회(srId="1,3,4,5,7,9")로 gameId exact 설명되면
+ *    정규 무경기 확정(시범/올스타일 GREEN). 설명 안 되는 경기가 남거나 조회 실패 →
  *    교차확인 불가(emptyVerified=false) → 상위에서 fail-closed.
  * 정규시즌 전용 srId="0"의 soft-empty(KBO 200 game:[])가 조용히 성공 날짜가 되어
  * non-empty partial 우주를 authoritative로 만드는 것을 차단한다.
@@ -136,7 +143,20 @@ export async function fetchSeasonUniverseDate(
   try {
     const { fetchNaverGames } = await import("./naver-games");
     const cross = await fetchNaverGames(date, NAVER_FULL_SR_ID);
-    return { games: [], emptyVerified: cross.length === 0 };
+    if (cross.length === 0) return { games: [], emptyVerified: true };
+    // 삼순 4차 P0-1 series-aware — 정규시즌 전용(srId="0") 우주에서는 Naver가
+    // series 미구분(시범/올스타 포함)이므로, Naver 경기가 있어도 그 전부가 KBO 자체
+    // 비정규 시리즈 조회(srId=NON_REGULAR)로 gameId exact 설명되면 "정규 무경기 확정"이다
+    // (시범·올스타는 정규 우주 제외 대상이지 verification 실패가 아님 — 예: 2026-03-12
+    // KBO 정규 []·Naver 시범 5경기). 비정규로 설명 안 되는 Naver 경기가 하나라도 남으면
+    // 정규경기 soft-drop 가능성 → unverified fail-closed 유지.
+    if (srId === REGULAR_ONLY_SR_ID) {
+      const nonRegular = await fetchGames(date, NON_REGULAR_SR_ID);
+      const nonRegularIds = new Set(nonRegular.map((g) => g.gameId));
+      return { games: [], emptyVerified: cross.every((g) => nonRegularIds.has(g.gameId)) };
+    }
+    // 전-시리즈 우주 등 그 외 srId — Naver에 경기가 있으면 실제 경기 누락 가능성 → unverified.
+    return { games: [], emptyVerified: false };
   } catch {
     return { games: [], emptyVerified: false };
   }

@@ -243,8 +243,12 @@ async function seasonUniverseFailClosedRegression() {
 
   // ─ P0-2 teams exact + malformed reject ─
   await teamsExactRegression(routeMod, fullFetcher, GAME_A, GAME_B);
+  // ─ 삼순 4차 P0-2 completeGames exact equality (undercount fail-closed) ─
+  await completeGamesExactRegression(routeMod);
   // ─ P0-1 verified-empty (actual global fetch 경유) ─
   await verifiedEmptyActualRegression();
+  // ─ 삼순 4차 P0-1 series-aware verified-empty (3/12 유형 실소스 fixture) ─
+  await seriesAwareVerifiedEmptyRegression();
   // ─ P0-3 complete-only 캐시 + single-flight (fetch 카운트 계측) ─
   await cacheAndSingleFlightRegression(routeMod, universeGames);
 }
@@ -382,6 +386,41 @@ async function backfillContrastRegression(db: PGlite) {
   console.log("  ✓ RPC backfill 대조군(수집 helper actual 경유): 우주 480 = 472 complete / 8 incomplete (누락 0, 팀 합계 472)");
 }
 
+const jsonResponse = (obj: unknown) =>
+  ({
+    ok: true,
+    status: 200,
+    statusText: "OK",
+    text: async () => JSON.stringify(obj),
+    json: async () => obj,
+  }) as unknown as Response;
+
+/** KBO GetKboGameList raw final 경기 — gameId(YYYYMMDD+AWAY+HOME+회차) slice로 팀코드 해석. */
+const kboRawFinal = (gameId: string) => ({
+  G_ID: gameId, G_DT: gameId.slice(0, 8), G_TM: "18:30", S_NM: "잠실",
+  AWAY_ID: gameId.slice(8, 10), HOME_ID: gameId.slice(10, 12),
+  AWAY_NM: gameId.slice(8, 10), HOME_NM: gameId.slice(10, 12),
+  T_SCORE_CN: "5", B_SCORE_CN: "3", GAME_INN_NO: 9, GAME_TB_SC: "B",
+  GAME_STATE_SC: "3", CANCEL_SC_ID: "0",
+  T_PIT_P_NM: "", B_PIT_P_NM: "", W_PIT_P_NM: "", L_PIT_P_NM: "", SV_PIT_P_NM: "",
+  STRIKE_CN: 0, BALL_CN: 0, OUT_CN: 0,
+  B1_BAT_ORDER_NO: 0, B2_BAT_ORDER_NO: 0, B3_BAT_ORDER_NO: 0,
+  B_P_NM: "", T_P_NM: "", T_RANK_NO: 1, B_RANK_NO: 2,
+});
+
+/** Naver schedule raw final 경기 — KBO 형식 gameId(13자)에서 날짜/팀코드 파생(재구성 일치). */
+const naverRawFinal = (kboGameId: string) => {
+  const ymd = kboGameId.slice(0, 8);
+  const iso = `${ymd.slice(0, 4)}-${ymd.slice(4, 6)}-${ymd.slice(6, 8)}`;
+  return {
+    gameId: `${kboGameId}${ymd.slice(0, 4)}`,
+    gameDateTime: `${iso}T18:30:00`, stadium: "수원",
+    homeTeamCode: kboGameId.slice(10, 12), awayTeamCode: kboGameId.slice(8, 10),
+    homeTeamName: kboGameId.slice(10, 12), awayTeamName: kboGameId.slice(8, 10),
+    homeTeamScore: 4, awayTeamScore: 2, statusCode: "RESULT", statusInfo: "경기종료",
+  };
+};
+
 /** KBO GetKboGameList / Naver schedule 를 global fetch 레벨에서 목킹(actual fetchGames 경유). */
 function installKboNaverFetchMock(opts: {
   gameDate: string;
@@ -390,31 +429,6 @@ function installKboNaverFetchMock(opts: {
   faultNaverHasGame: boolean;
 }): () => void {
   const original = globalThis.fetch;
-  const jsonResponse = (obj: unknown) =>
-    ({
-      ok: true,
-      status: 200,
-      statusText: "OK",
-      text: async () => JSON.stringify(obj),
-      json: async () => obj,
-    }) as unknown as Response;
-  const kboRawFinal = (gameId: string) => ({
-    G_ID: gameId, G_DT: gameId.slice(0, 8), G_TM: "18:30", S_NM: "잠실",
-    AWAY_ID: gameId.slice(8, 10), HOME_ID: gameId.slice(10, 12),
-    AWAY_NM: "엘지", HOME_NM: "두산",
-    T_SCORE_CN: "5", B_SCORE_CN: "3", GAME_INN_NO: 9, GAME_TB_SC: "B",
-    GAME_STATE_SC: "3", CANCEL_SC_ID: "0",
-    T_PIT_P_NM: "", B_PIT_P_NM: "", W_PIT_P_NM: "", L_PIT_P_NM: "", SV_PIT_P_NM: "",
-    STRIKE_CN: 0, BALL_CN: 0, OUT_CN: 0,
-    B1_BAT_ORDER_NO: 0, B2_BAT_ORDER_NO: 0, B3_BAT_ORDER_NO: 0,
-    B_P_NM: "", T_P_NM: "", T_RANK_NO: 1, B_RANK_NO: 2,
-  });
-  const naverRawFinal = (iso: string) => ({
-    gameId: `${iso.replaceAll("-", "")}KTSS02026`,
-    gameDateTime: `${iso}T18:30:00`, stadium: "수원",
-    homeTeamCode: "SS", awayTeamCode: "KT", homeTeamName: "삼성", awayTeamName: "KT",
-    homeTeamScore: 4, awayTeamScore: 2, statusCode: "RESULT", statusInfo: "경기종료",
-  });
   globalThis.fetch = (async (input: unknown, init?: { body?: unknown }) => {
     const url =
       typeof input === "string" ? input : (input as { url?: string })?.url ?? String(input);
@@ -429,7 +443,7 @@ function installKboNaverFetchMock(opts: {
       const iso = url.match(/fromDate=(\d{4}-\d{2}-\d{2})/)?.[1] ?? "";
       const ymd = iso.replaceAll("-", "");
       if (ymd === opts.faultDate && opts.faultNaverHasGame) {
-        return jsonResponse({ code: 200, success: true, result: { games: [naverRawFinal(iso)] } });
+        return jsonResponse({ code: 200, success: true, result: { games: [naverRawFinal(`${ymd}KTSS0`)] } });
       }
       return jsonResponse({ code: 200, success: true, result: { games: [] } }); // verified-empty
     }
@@ -498,6 +512,190 @@ async function verifiedEmptyActualRegression() {
     restore();
   }
   console.log("  ✓ P0-1 GREEN(actual fetch): verified-empty(무경기 확정)만 성공 → complete=true·seasonGames 1건");
+}
+
+/**
+ * 삼순 4차 P0-1 series-aware mock — KBO GetKboGameList를 body.srId별로 분기(정규 "0" /
+ * 비정규 "1,3,4,5,7,9")하고 Naver 전-시리즈는 series 미구분으로 시범경기를 그대로 반환한다
+ * (2026-03-12 실소스 형태 재현).
+ */
+function installSeriesAwareFetchMock(opts: {
+  regularDate: string;
+  regularGameId: string;
+  preseasonDate: string;
+  preseasonGameIds: string[];
+  /** RED용: KBO 비정규 시리즈 조회가 이 gameId들을 누락(→ Naver 경기 미설명). */
+  kboNonRegularDrops?: string[];
+}): () => void {
+  const original = globalThis.fetch;
+  globalThis.fetch = (async (input: unknown, init?: { body?: unknown }) => {
+    const url =
+      typeof input === "string" ? input : (input as { url?: string })?.url ?? String(input);
+    if (url.includes("GetKboGameList")) {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { date?: string; srId?: string };
+      if (body.srId === "0") {
+        // 정규시즌 — regularDate에만 경기, 시범경기일 포함 나머지는 200 game:[](실소스 동일).
+        if (body.date === opts.regularDate) {
+          return jsonResponse({ game: [kboRawFinal(opts.regularGameId)] });
+        }
+        return jsonResponse({ game: [] });
+      }
+      if (body.srId === "1,3,4,5,7,9") {
+        // 비정규 시리즈(시범/포스트/올스타) — preseasonDate에 시범경기.
+        if (body.date === opts.preseasonDate) {
+          const drops = new Set(opts.kboNonRegularDrops ?? []);
+          return jsonResponse({
+            game: opts.preseasonGameIds.filter((id) => !drops.has(id)).map(kboRawFinal),
+          });
+        }
+        return jsonResponse({ game: [] });
+      }
+      return jsonResponse({ game: [] });
+    }
+    if (url.includes("api-gw.sports.naver.com/schedule/games")) {
+      const iso = url.match(/fromDate=(\d{4}-\d{2}-\d{2})/)?.[1] ?? "";
+      const ymd = iso.replaceAll("-", "");
+      if (ymd === opts.preseasonDate) {
+        // Naver는 series 미구분 — 시범경기도 정규와 동일 category로 반환(실측 2026-07-29).
+        return jsonResponse({
+          code: 200, success: true,
+          result: { games: opts.preseasonGameIds.map(naverRawFinal) },
+        });
+      }
+      return jsonResponse({ code: 200, success: true, result: { games: [] } });
+    }
+    throw new Error(`unexpected fetch url: ${url}`);
+  }) as typeof fetch;
+  return () => {
+    globalThis.fetch = original;
+  };
+}
+
+/**
+ * 삼순 4차 P0-1 — series-aware verified-empty. actual global fetch 경유:
+ * 2026-03-12 실소스 유형(KBO 정규 srId=0 → []·Naver 전-시리즈 시범 5경기)이 있어도
+ * 시즌 우주가 null로 죽지 않고 정규 무경기 확정(verified-empty)으로 처리되며(GREEN),
+ * 시범/올스타는 우주·분모에 샐지 않는다. KBO 비정규 조회로 설명 안 되는 Naver 경기가
+ * 남는 진짜 실패(정규 soft-drop 가능성)는 여전히 fail-closed(RED).
+ */
+async function seriesAwareVerifiedEmptyRegression() {
+  const { collectSeasonGameUniverse } = await import("../../src/lib/crawler/season-games-cache");
+  const { fetchSeasonAggregates, __resetSeasonAggregatesCaches } = await import(
+    "../../src/app/api/me/venue-stats/route"
+  );
+  const REGULAR_DATE = "20260614";
+  const REGULAR_GAME_ID = "20260614LGOB0"; // LG(1)·OB(2)
+  const PRESEASON_DATE = "20260312";
+  // 삼순 4차 리뷰 실소스 probe(2026-03-12) 그대로 — Naver 전-시리즈 시범 5경기.
+  const PRESEASON_IDS = [
+    "20260312KTLT0", "20260312LGNC0", "20260312SKHT0", "20260312SSHH0", "20260312WOOB0",
+  ];
+
+  // GREEN — 3/12 유형: 시범 5경기 전부 KBO 비정규 시리즈 조회로 gameId exact 설명 → 정규 verified-empty.
+  let restore = installSeriesAwareFetchMock({
+    regularDate: REGULAR_DATE, regularGameId: REGULAR_GAME_ID,
+    preseasonDate: PRESEASON_DATE, preseasonGameIds: PRESEASON_IDS,
+  });
+  try {
+    const green = await collectSeasonGameUniverse(2026, "0"); // 기본 fetcher=fetchSeasonUniverseDate
+    assert.equal(green.complete, true, "P0-1 series GREEN: 시범경기일이 정규 우주를 죽이지 않는다");
+    assert.equal(green.failedDates.length, 0);
+    // 우주에는 정규 경기만 — 시범경기가 우주·분모에 샐지 않는다.
+    assert.deepEqual(green.games.map((g) => g.gameId), [REGULAR_GAME_ID]);
+    __resetSeasonAggregatesCaches();
+    let rpcGames: string[] | null = null;
+    const greenAgg = await fetchSeasonAggregates(2026, {
+      rpc: async (args) => {
+        rpcGames = args.p_games.map((g) => g.gameId);
+        return {
+          data: {
+            games: args.p_games.map((g) => ({ ...g, complete: true })),
+            teams: [1, 2].map((teamId) => ({
+              teamId, completeGames: 1, ab: 10, h: 3, hr: 1, outs: 9, er: 2, hAllowed: 4,
+            })),
+          },
+          error: null,
+        };
+      },
+    });
+    assert.notEqual(greenAgg.seasonGames, null, "P0-1 series GREEN route: seasonGames non-null(RPC 호출됨)");
+    assert.deepEqual(rpcGames, [REGULAR_GAME_ID], "RPC 우주 = 정규 경기만(시범 미포함)");
+  } finally {
+    restore();
+  }
+  console.log("  ✓ P0-1 series GREEN(actual fetch): 3/12 유형(KBO 정규 []·Naver 시범 5) → 정규 verified-empty·우주에 정규만·RPC 호출");
+
+  // RED — 진짜 실패: Naver 경기 중 1개(SKHT)가 KBO 비정규 조회로 설명 안 됨(정규 soft-drop 가능성) → fail-closed.
+  restore = installSeriesAwareFetchMock({
+    regularDate: REGULAR_DATE, regularGameId: REGULAR_GAME_ID,
+    preseasonDate: PRESEASON_DATE, preseasonGameIds: PRESEASON_IDS,
+    kboNonRegularDrops: ["20260312SKHT0"],
+  });
+  try {
+    const red = await collectSeasonGameUniverse(2026, "0");
+    assert.equal(red.complete, false, "P0-1 series RED: 미설명 Naver 경기 → unverified → complete=false");
+    assert.ok(red.failedDates.includes(PRESEASON_DATE), "3/12가 failedDates에");
+    __resetSeasonAggregatesCaches();
+    let rpcCalled = false;
+    const redAgg = await fetchSeasonAggregates(2026, {
+      rpc: async () => {
+        rpcCalled = true;
+        return { data: null, error: null };
+      },
+    });
+    assert.equal(redAgg.seasonGames, null, "P0-1 series RED route: seasonGames null");
+    assert.equal(rpcCalled, false, "fail-closed 시 RPC 미호출");
+  } finally {
+    restore();
+  }
+  console.log("  ✓ P0-1 series RED(actual fetch): 비정규 조회로 설명 안 되는 Naver 경기 → unverified → seasonGames null·RPC 미호출");
+}
+
+/**
+ * 삼순 4차 P0-2 — completeGames exact equality. 우주에서 LG(1)가 complete 2경기인데
+ * RPC가 completeGames=1(undercount)을 반환하면 B4 per-game 분모가 오염되므로 fail-closed(RED),
+ * exact(2)만 수용(GREEN)되고 B4 분모 feed(completeGames)가 우주 기대수로 산출됨을 고정.
+ */
+async function completeGamesExactRegression(
+  routeMod: typeof import("../../src/app/api/me/venue-stats/route"),
+) {
+  const { fetchSeasonAggregates, __resetSeasonAggregatesCaches } = routeMod;
+  // LG(1) complete 2경기 우주 — 6/14 LG-OB, 6/16 LG-KT. 기대 completeGames: LG=2·OB=1·KT=1.
+  const GAME_1 = "20260614LGOB0";
+  const GAME_2 = "20260616LGKT0";
+  const universeGames: Record<string, KboGame[]> = {
+    "20260614": [makeFinalGame(GAME_1)],
+    "20260616": [makeFinalGame(GAME_2)],
+  };
+  const fetcher: SeasonGameFetcher = async (date) =>
+    universeGames[date] ? gamesResult(universeGames[date]) : VERIFIED_EMPTY;
+  const rpcWith = (lgCompleteGames: number) => async (args: {
+    p_games: Array<{ gameId: string; gameDate: string }>;
+  }) => ({
+    data: {
+      games: args.p_games.map((g) => ({ ...g, complete: true })),
+      teams: [
+        { teamId: 1, completeGames: lgCompleteGames, ab: 20, h: 6, hr: 2, outs: 18, er: 4, hAllowed: 8 },
+        { teamId: 2, completeGames: 1, ab: 10, h: 3, hr: 1, outs: 9, er: 2, hAllowed: 4 },
+        { teamId: 3, completeGames: 1, ab: 10, h: 3, hr: 1, outs: 9, er: 2, hAllowed: 4 },
+      ],
+    },
+    error: null,
+  });
+
+  // RED — undercount(실제 2 ≠ RPC 1) → fail-closed(null). 종전에는 상한만 검사해 통과했던 케이스.
+  __resetSeasonAggregatesCaches();
+  const red = await fetchSeasonAggregates(2026, { fetcher, rpc: rpcWith(1) });
+  assert.equal(red.seasonGames, null, "P0-2 exact RED: completeGames undercount(2→1) → null");
+  assert.equal(red.teamSeasonTotals, null, "P0-2 exact RED: teamSeasonTotals null");
+
+  // GREEN — exact(2) 원복 → 수용, B4 분모 feed = 우주 기대 complete 수(2).
+  __resetSeasonAggregatesCaches();
+  const green = await fetchSeasonAggregates(2026, { fetcher, rpc: rpcWith(2) });
+  assert.notEqual(green.seasonGames, null, "P0-2 exact GREEN: exact 일치만 수용");
+  assert.equal(green.teamSeasonTotals!.get(1)!.completeGames, 2, "B4 per-game 분모 = 우주 기대수(2)");
+  assert.equal(green.teamSeasonTotals!.get(2)!.completeGames, 1);
+  console.log("  ✓ P0-2 completeGames exact equality: undercount 2→1 fail-closed(RED) → exact 2만 GREEN(B4 분모=기대수)");
 }
 
 /**
