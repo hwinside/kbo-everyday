@@ -131,9 +131,23 @@ console.log("[③ 컴포저 정적 계약 — 단일 sticky CTA / raw 팀변수 
   const stickyCtaCount = (src.match(/className="w-full py-3\.5 rounded-xl/g) ?? []).length;
   ok("하단 sticky CTA 1개(상단 공유 버튼 없음)", stickyCtaCount === 1 && !src.includes("공유하기"));
   ok("완료 요약 재시도 게이트가 isRetryableItem 사용", src.includes("isRetryableItem(target.status)"));
-  ok("재시도 중 닫기/중복 전송 동기 guard", src.includes("if (submitting || uploadInFlightRef.current) return;"));
+  ok(
+    "재시도 중 닫기/중복 전송 동기 guard",
+    src.includes("if (!target || uploadInFlightRef.current || !isRetryableItem(target.status)) return;") &&
+      src.includes("if (submitting || uploadInFlightRef.current || processingPickRef.current) return;"),
+  );
   ok("멀티픽 병합이 mergePickedItems 사용(순서/상한 단일 소스)", src.includes("mergePickedItems("));
   ok("배지 렌더가 mediaDurationBadge 사용(사진 배지 금지 단일 소스)", (src.match(/mediaDurationBadge\(/g) ?? []).length >= 3);
+  ok("그리드 썸네일 lazy+async decode", src.includes('loading="lazy"') && src.includes('decoding="async"'));
+  ok("썸네일 placeholder→fade-in", src.includes("animate-pulse opacity-100") && src.includes("transition-opacity duration-200"));
+  ok("오프스크린 셀 렌더 비용 제한", src.includes('contentVisibility: "auto"'));
+  ok("선택 배지 spring 애니메이션", src.includes('transition={{ type: "spring", stiffness: 520, damping: 30 }}'));
+  ok("선택 즉시 optimistic 배지", /setPendingAssetId\(asset\.id\)[\s\S]{0,120}?venueMediaSelectionHaptic\(\)/.test(src));
+  ok("프리뷰 전환 AnimatePresence wait", src.includes('<AnimatePresence mode="wait" initial={false}>'));
+  ok("스트립 layout 재정렬 애니메이션", src.includes("<motion.button") && src.includes("layout"));
+  ok("스트립 이동·삭제 44px 터치 타겟", (src.match(/w-11 h-11 rounded-xl/g) ?? []).length >= 3);
+  ok("완료 요약 fade/slide 전환", /phase === "done"[\s\S]{0,180}?<motion\.div[\s\S]{0,180}?initial=\{\{ opacity: 0, y: 10 \}\}/.test(src));
+  ok("업로드 진행률 300ms ease-out", src.includes("transition-[width] duration-300 ease-out"));
 }
 
 console.log("[B안 브릿지 계약 — 사진첩 열거/asset export]");
@@ -148,6 +162,7 @@ console.log("[B안 브릿지 계약 — 사진첩 열거/asset export]");
   ok("원격 WebView file 경로 변환", bridge.includes("Capacitor.convertFileSrc(exported.webPath)"));
   ok("Limited 추가 허용 API", bridge.includes("presentLimitedPicker(): Promise<void>"));
   ok("설정 유도 API", bridge.includes("openSettings(): Promise<void>"));
+  ok("선택 햅틱 API + 구 브릿지 fallback", bridge.includes("selectionChanged(): Promise<void>") && bridge.includes("navigator.vibrate?.(8)"));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

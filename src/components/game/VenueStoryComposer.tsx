@@ -3,7 +3,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Loader2, Video as VideoIcon, MapPin, Play, Settings } from "lucide-react";
+import {
+  X,
+  Loader2,
+  Video as VideoIcon,
+  MapPin,
+  Play,
+  Settings,
+  Trash2,
+  ChevronLeft,
+  ChevronRight,
+} from "lucide-react";
 import { getSafeSession } from "@/lib/supabase/client";
 import {
   prepareVenueStoryMedia,
@@ -53,6 +63,7 @@ import {
   openVenueMediaSettings,
   presentLimitedVenueMediaPicker,
   requestVenueMediaPermission,
+  venueMediaSelectionHaptic,
   type VenueMediaAsset,
   type VenueMediaPermission,
 } from "@/lib/capacitor/venue-media-library";
@@ -88,6 +99,32 @@ interface ComposerItem {
   assetId: string | null;
 }
 
+function LibraryThumbnail({ asset }: { asset: VenueMediaAsset }) {
+  const [loaded, setLoaded] = useState(false);
+  return (
+    <>
+      <div
+        aria-hidden
+        className={`absolute inset-0 bg-gradient-to-br from-bg-tertiary via-bg-secondary to-bg-tertiary transition-opacity duration-200 ${
+          loaded ? "opacity-0" : "animate-pulse opacity-100"
+        }`}
+      />
+      {/* 네이티브가 내려준 작은 썸네일만 사용. lazy+async decode로 스크롤 메인 스레드 점유 최소화. */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={asset.thumbnailUrl}
+        alt=""
+        loading="lazy"
+        decoding="async"
+        onLoad={() => setLoaded(true)}
+        className={`w-full h-full object-cover transition-opacity duration-200 ease-out ${
+          loaded ? "opacity-100" : "opacity-0"
+        }`}
+      />
+    </>
+  );
+}
+
 export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded }: Props) {
   const isAdmin = useIsAdmin();
   const [items, setItems] = useState<ComposerItem[]>([]);
@@ -100,6 +137,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   const [libraryPermission, setLibraryPermission] =
     useState<VenueMediaPermission>("prompt");
   const [libraryLoading, setLibraryLoading] = useState(false);
+  const [pendingAssetId, setPendingAssetId] = useState<string | null>(null);
   const libraryAutoOpenRef = useRef(false);
   // phase state 반영 전의 짧은 구간까지 닫기/중복 제출을 막는 동기 guard.
   const uploadInFlightRef = useRef(false);
@@ -275,6 +313,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
     setLibraryCursor(null);
     setLibraryPermission("prompt");
     setLibraryLoading(false);
+    setPendingAssetId(null);
     precheckPosRef.current = null;
     submitPosRef.current = { lat: null, lng: null, accuracy: null };
     setPrecheck({ status: "idle" });
@@ -329,6 +368,35 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
 
   const patchItem = (key: string, patch: Partial<ComposerItem>) => {
     setItems((prev) => prev.map((it) => (it.key === key ? { ...it, ...patch } : it)));
+  };
+
+  const removeItem = (key: string) => {
+    setItems((prev) => {
+      const removedIndex = prev.findIndex((item) => item.key === key);
+      if (removedIndex < 0) return prev;
+      const removed = prev[removedIndex];
+      if (removed.previewUrl?.startsWith("blob:")) URL.revokeObjectURL(removed.previewUrl);
+      const next = prev.filter((item) => item.key !== key);
+      setActiveKey((current) =>
+        current === key
+          ? (next[Math.min(removedIndex, Math.max(0, next.length - 1))]?.key ?? null)
+          : current,
+      );
+      return next;
+    });
+    void venueMediaSelectionHaptic();
+  };
+
+  const moveItem = (key: string, delta: -1 | 1) => {
+    setItems((prev) => {
+      const from = prev.findIndex((item) => item.key === key);
+      const to = from + delta;
+      if (from < 0 || to < 0 || to >= prev.length) return prev;
+      const next = [...prev];
+      [next[from], next[to]] = [next[to], next[from]];
+      return next;
+    });
+    void venueMediaSelectionHaptic();
   };
 
   const handlePickedFiles = async (
@@ -427,15 +495,17 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   };
 
   const selectLibraryAsset = async (asset: VenueMediaAsset) => {
-    if (processingPickRef.current || items.length >= VENUE_STORY_MAX_ITEMS) return;
     const selected = items.find((item) => item.assetId === asset.id);
     if (selected) {
-      setActiveKey(selected.key);
-      setLibraryOpen(false);
+      removeItem(selected.key);
       return;
     }
+    if (processingPickRef.current || items.length >= VENUE_STORY_MAX_ITEMS) return;
     processingPickRef.current = true;
     const seq = pickSeqRef.current;
+    // 원본 export보다 먼저 배지/순서를 반영해 탭 피드백 지연 0.
+    setPendingAssetId(asset.id);
+    void venueMediaSelectionHaptic();
     setLibraryLoading(true);
     setError(null);
     try {
@@ -447,6 +517,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
     } catch {
       setError("선택한 사진·영상을 불러오지 못했어요");
     } finally {
+      setPendingAssetId(null);
       processingPickRef.current = false;
       setLibraryLoading(false);
     }
@@ -652,6 +723,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
     const target = items.find((it) => it.key === key);
     if (!target || uploadInFlightRef.current || !isRetryableItem(target.status)) return;
     uploadInFlightRef.current = true;
+    void venueMediaSelectionHaptic();
     try {
       await runUpload([{ key: target.key, file: target.file }]);
     } finally {
@@ -684,6 +756,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
     precheck.distanceM != null ? Math.max(0.1, Math.round(precheck.distanceM / 100) / 10) : null;
 
   const activeItem = items.find((it) => it.key === activeKey) ?? items[0] ?? null;
+  const activeIndex = activeItem ? items.findIndex((item) => item.key === activeItem.key) : -1;
   const activeBadge = activeItem
     ? mediaDurationBadge(activeItem.kind, activeItem.durationMs)
     : null;
@@ -741,7 +814,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
               onClick={close}
               disabled={submitting}
               aria-label="닫기"
-              className="text-text-tertiary disabled:opacity-40"
+              className="w-11 h-11 -mr-2 flex items-center justify-center text-text-tertiary disabled:opacity-40"
             >
               <X size={22} />
             </button>
@@ -749,7 +822,12 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
 
           <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 flex flex-col gap-3">
             {phase === "done" ? (
-              <>
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.22, ease: "easeOut" }}
+                className="flex flex-col gap-3"
+              >
                 {/* 완료 요약 — 항목별 원본 썸네일 매칭 성공/실패 + 실패 사유 1줄 + 실패건만 개별 재시도 */}
                 <div className="text-lg font-bold text-text-primary">
                   <span className="text-green-400">성공 {outcome.success}</span>
@@ -828,7 +906,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
                           <button
                             onClick={() => retryItem(it.key)}
                             disabled={retryInFlight}
-                            className="ml-auto shrink-0 h-8 px-3.5 rounded-lg text-xs font-semibold disabled:opacity-40"
+                            className="ml-auto shrink-0 min-h-11 px-3.5 rounded-xl text-xs font-semibold disabled:opacity-40"
                             style={{ background: palette.accent, color: palette.onAccent }}
                           >
                             다시 시도
@@ -841,7 +919,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
                     );
                   })}
                 </div>
-              </>
+              </motion.div>
             ) : libraryOpen ? (
               <>
                 {libraryPermission === "limited" && (
@@ -852,7 +930,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
                     <button
                       onClick={extendLimitedAccess}
                       disabled={libraryLoading}
-                      className="shrink-0 rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-40"
+                      className="shrink-0 min-h-11 rounded-xl px-3 text-xs font-semibold disabled:opacity-40"
                       style={{ background: palette.accent, color: palette.onAccent }}
                     >
                       더 보기
@@ -873,7 +951,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
                     </div>
                     <button
                       onClick={() => void openVenueMediaSettings()}
-                      className="rounded-xl px-4 py-2 text-sm font-semibold"
+                      className="min-h-11 rounded-xl px-4 text-sm font-semibold"
                       style={{ background: palette.accent, color: palette.onAccent }}
                     >
                       설정 열기
@@ -885,33 +963,47 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
                     <div className="grid grid-cols-3 gap-0.5">
                       {libraryAssets.map((asset) => {
                         const selectedIndex = items.findIndex((item) => item.assetId === asset.id);
+                        const displayIndex =
+                          selectedIndex >= 0
+                            ? selectedIndex
+                            : pendingAssetId === asset.id
+                              ? items.length
+                              : -1;
                         const badge = mediaDurationBadge(asset.kind, asset.durationMs);
                         return (
                           <button
                             key={asset.id}
                             onClick={() => void selectLibraryAsset(asset)}
                             disabled={
-                              libraryLoading ||
-                              (selectedIndex < 0 && items.length >= VENUE_STORY_MAX_ITEMS)
+                              (libraryLoading && pendingAssetId !== asset.id) ||
+                              (displayIndex < 0 && items.length >= VENUE_STORY_MAX_ITEMS)
                             }
-                            className="relative aspect-square overflow-hidden bg-bg-tertiary disabled:opacity-40"
+                            className="relative aspect-square min-h-11 overflow-hidden bg-bg-tertiary active:scale-[0.98] disabled:opacity-40"
+                            style={{ contentVisibility: "auto" }}
                           >
-                            {/* 네이티브가 내려준 작은 썸네일만 그리드에 사용(원본 export는 탭 후). */}
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img
-                              src={asset.thumbnailUrl}
-                              alt=""
-                              className="w-full h-full object-cover"
-                            />
-                            {selectedIndex >= 0 ? (
-                              <span
+                            <LibraryThumbnail asset={asset} />
+                            <AnimatePresence>
+                              {displayIndex >= 0 && (
+                              <motion.span
+                                key="selected"
+                                initial={{ scale: 0.55, opacity: 0 }}
+                                animate={{ scale: 1, opacity: 1 }}
+                                exit={{ scale: 0.55, opacity: 0 }}
+                                transition={{ type: "spring", stiffness: 520, damping: 30 }}
                                 className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full border border-white flex items-center justify-center text-[11px] font-bold"
                                 style={{ background: palette.accent, color: palette.onAccent }}
                               >
-                                {selectedIndex + 1}
-                              </span>
-                            ) : (
+                                {displayIndex + 1}
+                              </motion.span>
+                              )}
+                            </AnimatePresence>
+                            {displayIndex < 0 && (
                               <span className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full border border-white/90 bg-black/20" />
+                            )}
+                            {pendingAssetId === asset.id && (
+                              <span className="absolute inset-0 flex items-center justify-center bg-black/20">
+                                <Loader2 size={20} className="animate-spin text-white drop-shadow" />
+                              </span>
                             )}
                             {asset.kind === "video" && (
                               <Play
@@ -932,22 +1024,35 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
                       <button
                         onClick={() => void loadLibrary(true)}
                         disabled={libraryLoading}
-                        className="w-full rounded-xl border border-border py-2.5 text-sm text-text-secondary disabled:opacity-40"
+                        className="w-full min-h-11 rounded-xl border border-border px-3 text-sm text-text-secondary disabled:opacity-40"
                       >
                         더 불러오기
                       </button>
                     )}
                   </>
                 ) : (
-                  <div className="flex min-h-64 items-center justify-center rounded-2xl bg-bg-tertiary/30">
+                  <>
                     {libraryLoading ? (
-                      <Loader2 size={24} className="animate-spin text-text-tertiary" />
+                      <div className="grid grid-cols-3 gap-0.5" aria-label="사진첩 불러오는 중">
+                        {Array.from({ length: 12 }, (_, index) => (
+                          <div
+                            key={index}
+                            className="aspect-square animate-pulse bg-gradient-to-br from-bg-tertiary via-bg-secondary to-bg-tertiary"
+                          />
+                        ))}
+                      </div>
                     ) : (
+                      <div className="flex min-h-64 flex-col items-center justify-center gap-2 rounded-2xl border border-border bg-bg-tertiary/30 px-6 text-center">
+                        <VideoIcon size={28} className="text-text-tertiary" />
+                        <span className="text-sm font-semibold text-text-secondary">
+                          최근 사진·영상이 없어요
+                        </span>
                       <span className="text-sm text-text-tertiary">
-                        표시할 사진·영상이 없어요
+                          사진 접근 범위를 확인하거나 새로 촬영한 뒤 다시 열어주세요
                       </span>
+                      </div>
                     )}
-                  </div>
+                  </>
                 )}
 
                 {error && <p className="text-sm text-red-400">{error}</p>}
@@ -996,7 +1101,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
                         )}
                         <button
                           onClick={() => setPrecheckNonce((n) => n + 1)}
-                          className="mt-1 text-xs bg-bg-secondary border border-border text-text-secondary px-4 py-1.5 rounded-full active:bg-bg-tertiary"
+                          className="mt-1 min-h-11 text-xs bg-bg-secondary border border-border text-text-secondary px-4 rounded-full active:bg-bg-tertiary"
                         >
                           다시 확인
                         </button>
@@ -1020,21 +1125,39 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
                   <>
                     {/* 선택 → 즉시 프리뷰: 첫 항목(또는 탭한 항목) 큰 프리뷰 */}
                     <div className="relative rounded-2xl overflow-hidden bg-black aspect-[9/16] max-h-[42dvh] flex items-center justify-center">
-                      {activeItem?.kind === "video" ? (
-                        <video
-                          key={activeItem.key}
-                          src={activeItem.previewUrl ?? undefined}
-                          className="w-full h-full object-contain"
-                          controls
-                          playsInline
-                          muted
-                        />
-                      ) : activeItem?.previewUrl ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={activeItem.previewUrl} alt="" className="w-full h-full object-contain" />
-                      ) : (
-                        <Loader2 size={22} className="animate-spin text-text-tertiary" />
-                      )}
+                      <AnimatePresence mode="wait" initial={false}>
+                        <motion.div
+                          key={activeItem?.key ?? "loading"}
+                          initial={{ opacity: 0, scale: 1.015 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          exit={{ opacity: 0, scale: 0.99 }}
+                          transition={{ duration: 0.16, ease: "easeOut" }}
+                          className="absolute inset-0 flex items-center justify-center"
+                        >
+                          {activeItem?.kind === "video" ? (
+                            <video
+                              src={activeItem.previewUrl ?? undefined}
+                              className="w-full h-full object-contain"
+                              controls
+                              playsInline
+                              muted
+                            />
+                          ) : activeItem?.previewUrl ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={activeItem.previewUrl}
+                              alt=""
+                              decoding="async"
+                              className="w-full h-full object-contain"
+                            />
+                          ) : (
+                            <div className="flex flex-col items-center gap-2 text-text-tertiary">
+                              <Loader2 size={22} className="animate-spin" />
+                              <span className="text-xs">프리뷰 준비 중</span>
+                            </div>
+                          )}
+                        </motion.div>
+                      </AnimatePresence>
                       {/* 미디어 타입 정합: 길이 배지는 영상에만(0:12), 사진엔 금지 */}
                       {activeBadge && (
                         <span className="absolute bottom-2 right-2 px-2 py-0.5 rounded-lg bg-black/60 text-white text-[11px] font-semibold">
@@ -1043,16 +1166,22 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
                       )}
                     </div>
                     {/* 선택 스트립 — 선택 순서 1→2→3 배지 + 영상 재생 아이콘/길이 배지 */}
-                    <div className="flex gap-2">
+                    <div className="flex items-center gap-2">
+                      <AnimatePresence initial={false}>
                       {items.map((it, idx) => {
                         const badge = mediaDurationBadge(it.kind, it.durationMs);
                         const isActive = activeItem?.key === it.key;
                         return (
-                          <button
+                          <motion.button
                             key={it.key}
+                            layout
+                            initial={{ opacity: 0, scale: 0.82 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            exit={{ opacity: 0, scale: 0.82 }}
+                            transition={{ type: "spring", stiffness: 430, damping: 32 }}
                             onClick={() => setActiveKey(it.key)}
                             disabled={submitting}
-                            className="relative w-14 h-14 rounded-lg overflow-hidden bg-bg-tertiary shrink-0 disabled:opacity-40"
+                            className="relative w-14 h-14 min-w-11 min-h-11 rounded-lg overflow-hidden bg-bg-tertiary shrink-0 disabled:opacity-40"
                             style={
                               isActive
                                 ? { boxShadow: `inset 0 0 0 2px ${palette.accent}` }
@@ -1094,20 +1223,52 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
                                 {badge}
                               </span>
                             )}
-                          </button>
+                          </motion.button>
                         );
                       })}
+                      </AnimatePresence>
                       {items.length < VENUE_STORY_MAX_ITEMS && (
                         <button
                           onClick={openPicker}
                           disabled={submitting || !precheckGateReady({ isAdmin, status: precheck.status })}
                           aria-label="더 추가"
-                          className="w-14 h-14 rounded-lg bg-bg-tertiary text-text-tertiary text-xl font-light flex items-center justify-center active:bg-bg-primary disabled:opacity-40 shrink-0"
+                          className="w-14 h-14 min-w-11 min-h-11 rounded-lg bg-bg-tertiary text-text-tertiary text-xl font-light flex items-center justify-center active:bg-bg-primary disabled:opacity-40 shrink-0"
                         >
                           +
                         </button>
                       )}
                     </div>
+                    {activeItem && (
+                      <div className="flex items-center justify-end gap-1">
+                        <button
+                          type="button"
+                          onClick={() => moveItem(activeItem.key, -1)}
+                          disabled={submitting || activeIndex <= 0}
+                          aria-label="선택 항목 앞으로 이동"
+                          className="w-11 h-11 rounded-xl flex items-center justify-center text-text-secondary active:bg-bg-tertiary disabled:opacity-25"
+                        >
+                          <ChevronLeft size={19} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => moveItem(activeItem.key, 1)}
+                          disabled={submitting || activeIndex >= items.length - 1}
+                          aria-label="선택 항목 뒤로 이동"
+                          className="w-11 h-11 rounded-xl flex items-center justify-center text-text-secondary active:bg-bg-tertiary disabled:opacity-25"
+                        >
+                          <ChevronRight size={19} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => removeItem(activeItem.key)}
+                          disabled={submitting}
+                          aria-label="선택 항목 삭제"
+                          className="w-11 h-11 rounded-xl flex items-center justify-center text-red-400 active:bg-red-500/10 disabled:opacity-40"
+                        >
+                          <Trash2 size={18} />
+                        </button>
+                      </div>
+                    )}
                   </>
                 )}
 
@@ -1150,7 +1311,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
             {phase === "upload" && (
               <div className="w-full h-1.5 rounded-full bg-bg-tertiary overflow-hidden">
                 <div
-                  className="h-full rounded-full transition-[width] duration-200 ease-out"
+                  className="h-full rounded-full transition-[width] duration-300 ease-out"
                   style={{ width: `${overallProgress}%`, background: palette.accent }}
                 />
               </div>

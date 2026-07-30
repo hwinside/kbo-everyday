@@ -34,6 +34,7 @@ interface VenueMediaLibraryPlugin {
   exportMedia(options: { id: string }): Promise<ExportedVenueMedia>;
   presentLimitedPicker(): Promise<void>;
   openSettings(): Promise<void>;
+  selectionChanged(): Promise<void>;
 }
 
 const VenueMediaLibrary = registerPlugin<VenueMediaLibraryPlugin>("VenueMediaLibrary");
@@ -79,4 +80,13 @@ export async function presentLimitedVenueMediaPicker(): Promise<void> {
 
 export async function openVenueMediaSettings(): Promise<void> {
   await VenueMediaLibrary.openSettings();
+}
+
+/** 선택/해제 즉시 가벼운 촉각 피드백. 구 브릿지에서는 조용히 no-op. */
+export async function venueMediaSelectionHaptic(): Promise<void> {
+  try {
+    await VenueMediaLibrary.selectionChanged();
+  } catch {
+    navigator.vibrate?.(8);
+  }
 }
