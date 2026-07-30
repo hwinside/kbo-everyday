@@ -31,6 +31,7 @@
     "qa:games-naver-fallback": "tsx scripts/qa/games-naver-fallback-smoke.ts",
     "qa:games-user-facing": "tsx scripts/qa/games-user-facing-smoke.ts",
     "qa:game-detail-bounded-fallback": "tsx scripts/qa/game-detail-bounded-fallback-smoke.ts",
+    "qa:game-preview-naver-failover": "tsx scripts/qa/game-preview-naver-failover-smoke.ts",
     "qa:api-fallback-alert-claim:db": "tsx scripts/qa/api-fallback-alert-claim-db-integration.ts",
     "qa:venue-stats-s1a-ledger:db": "tsx scripts/qa/venue-stats-s1a-ledger-db-integration.ts",
     "qa:venue-stats-state": "tsx scripts/qa/venue-stats-state-ladder-smoke.ts",
