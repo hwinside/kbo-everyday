@@ -774,7 +774,16 @@ export async function GET(req: NextRequest) {
       hasInningBreakdown(naver?.linescore ?? null) || !!hasRealBoxScoreFinal || !!listGame;
     const bothSourcesUnavailable =
       !meta && !naverHasExpectedData && !!actualKboFailure;
-    if (actualKboFailure || missingExpectedKboData) {
+    // scheduled/cancelled 경기는 KBO 상세(스코어보드·박스스코어)가 자연 결측이라 upstream
+    // 응답 분류(schema-error 등)가 나와도 열화가 아니다 — 단일소스 경보에서 제외한다
+    // (2026-07-30 #967 배포 직후 예정 경기 schema-error 오탐 폭주 재발 방지).
+    // 양쪽 소스가 모두 죽은 outage 는 status 판정 자체가 기본값(scheduled)으로 무너진
+    // 상태이므로 기존대로 상태 무관 보고를 유지한다.
+    const reportableDegradation =
+      bothSourcesUnavailable ||
+      missingExpectedKboData ||
+      (expectsDetailData && actualKboFailure !== null);
+    if (reportableDegradation) {
       reportDetailDegradation(
         gameId,
         bothSourcesUnavailable,
