@@ -72,13 +72,21 @@ export function parseStrictStat(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-/** KBO "5.1"(5⅓) 이닝 표기 strict 파싱 → 총 아웃. 형식 불일치/결측 → null. */
+/**
+ * 이닝 표기 strict 파싱 → 총 아웃. 실제 공급자 형식 화이트리스트만 허용:
+ *  - KBO 소수 표기: "N", "N.1"(⅓), "N.2"(⅔) — 예) "6.1" → 19
+ *  - Naver record API 유니코드 분수 표기: "N ⅓"(U+2153)/"N ⅔"(U+2154), 공백 유무 변형 포함 —
+ *    예) "0 ⅓" → 1, "1 ⅔" → 5 (삼순 재리뷰 P0: 2026 final 480경기 중 416경기 ip_outs 1,690행이 이 표기)
+ * 그 외 형식/결측 → null (§12 fail-closed — 0 강등 금지).
+ */
 export function parseStrictIpOuts(v: unknown): number | null {
   if (v === null || v === undefined) return null;
   const s = String(v).trim();
-  if (!/^\d+(\.[0-2])?$/.test(s)) return null;
-  const [whole, frac] = s.split(".");
-  return parseInt(whole, 10) * 3 + (frac ? parseInt(frac, 10) : 0);
+  const decimal = /^(\d+)(?:\.([0-2]))?$/.exec(s);
+  if (decimal) return parseInt(decimal[1], 10) * 3 + (decimal[2] ? parseInt(decimal[2], 10) : 0);
+  const unicodeFrac = /^(\d+)\s*([\u2153\u2154])$/.exec(s);
+  if (unicodeFrac) return parseInt(unicodeFrac[1], 10) * 3 + (unicodeFrac[2] === "\u2153" ? 1 : 2);
+  return null;
 }
 
 /** raw row에서 필수 stat 필드를 읽지 못한 케이스 (§12 missing_required_field). */

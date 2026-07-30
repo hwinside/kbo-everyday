@@ -23,6 +23,7 @@ import {
   buildGameIngestion,
   canonicalPayloadHash,
   evaluateIngestion,
+  parseStrictIpOuts,
   verifyLedgerCompleteness,
   type CanonicalRowInput,
   type PlayerResolver,
@@ -62,7 +63,8 @@ const BOX: GameBoxscore = {
   ],
   homePitchers: [{ name: "홈투수A", inn: "6.1", er: 2, hit: 5, kk: 7, bb: 1 }],
   awayBatters: [{ name: "원정타자A", ab: 4, hit: 1, hr: 0, rbi: 1, bb: 0, kk: 0 }],
-  awayPitchers: [{ name: "원정투수A", inn: "5", er: 4, hit: 8, kk: 3, bb: 2 }],
+  // 실제 Naver record API 이닝 표기(유니코드 분수) — 삼순 재리뷰 P0 회귀: "1 ⅔" → 5 outs
+  awayPitchers: [{ name: "원정투수A", inn: "1 ⅔", er: 4, hit: 8, kk: 3, bb: 2 }],
 };
 
 /** 테스트 resolver — 이름→고정 kbo_id (RED ③에서 선택적으로 실패시킨다). */
@@ -137,6 +139,10 @@ async function main() {
   const build = buildGameIngestion(GAME, BOX, resolverAll);
   ok("strict 빌드: raw=resolved=rows=5", build.rawRowCount === 5 && build.resolvedRowCount === 5 && build.rows.length === 5);
   ok("missingFields 없음", build.missingFields.length === 0);
+  const homePitcherRow = build.rows.find((r) => r.kbo_id === "90003");
+  const awayPitcherRow = build.rows.find((r) => r.kbo_id === "90005");
+  ok("KBO 소수 표기 파이프라인 통과: \"6.1\" → ip_outs=19", homePitcherRow?.ip_outs === 19);
+  ok("Naver 유니코드 분수 파이프라인 통과: \"1 ⅔\" → ip_outs=5", awayPitcherRow?.ip_outs === 5);
   const expectedHash = canonicalPayloadHash(build.rows);
   await insertRows(db, build.rows as unknown as CanonicalRowInput[]);
   const persisted = await selectRows(db);
@@ -261,6 +267,28 @@ async function main() {
   const buildBadInn = buildGameIngestion(GAME, boxBadInn, resolverAll);
   ok("inn 파싱 실패도 0 강등 없이 missing_required_field",
     buildBadInn.missingFields.some((m) => m.field === "ip_outs") && buildBadInn.rows.length === 0);
+
+  // ── strict 이닝 파서 화이트리스트 (삼순 재리뷰 P0 — Naver 유니코드 분수) ────────
+  console.log("\n[parser] parseStrictIpOuts 공급자 형식 화이트리스트");
+  const IP_CASES: Array<[string, number]> = [
+    ["0 \u2153", 1],  // "0 ⅓"
+    ["0 \u2154", 2],  // "0 ⅔"
+    ["1 \u2153", 4],  // "1 ⅓"
+    ["1 \u2154", 5],  // "1 ⅔"
+    ["5 \u2153", 16], // "5 ⅓"
+    ["7\u2154", 23],  // 공백 없는 변형 "7⅔"
+    ["6.1", 19],
+    ["0.2", 2],
+    ["9", 27],
+    ["0", 0],
+  ];
+  for (const [input, outs] of IP_CASES) {
+    ok(`parseStrictIpOuts(${JSON.stringify(input)}) = ${outs}`, parseStrictIpOuts(input) === outs);
+  }
+  const IP_REJECTS: unknown[] = ["abc", "1.3", "1 \u00bc", "\u2153", "\u2153 1", "-1 \u2153", "1 1/3", "", null, undefined];
+  for (const input of IP_REJECTS) {
+    ok(`비지원 형식 fail-closed: ${JSON.stringify(input ?? String(input))} → null`, parseStrictIpOuts(input) === null);
+  }
 
   // ── canonical hash 속성 ──────────────────────────────────────────────────
   console.log("\n[hash] canonical payload hash 속성");
