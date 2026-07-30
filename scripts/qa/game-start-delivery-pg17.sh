@@ -194,6 +194,68 @@ IMMEDIATE_RETRY=$("${PSQL[@]}" -c "SELECT count(*) FROM claim_game_start_deliver
 NEXT_TICK_RETRY=$("${PSQL[@]}" -c "SELECT count(*) FROM claim_game_start_deliveries('$GAME','$LEASE_C',45,1)")
 [ "$NEXT_TICK_RETRY" = "1" ] || { echo "FAIL: transient missing next-tick retry=$NEXT_TICK_RETRY" >&2; exit 1; }
 
+# 삼순 P1 회귀: 혼합 큐 우선순위 — pending → 만료 pre-dispatch leased(crash 미시도) → transient.
+MIX_GAME=20260730SSNC0
+"${PSQL[@]}" <<SQL >/dev/null
+INSERT INTO game_notify_state(game_id, start_snapshot_at, start_snapshot_deadline_at)
+VALUES ('$MIX_GAME', now(), now() + interval '5 minutes');
+INSERT INTO game_start_delivery_ledger
+  (id, game_id, token_id, token_hash, user_id, platform, fcm_token, deadline_at,
+   status, attempts, lease_token, lease_until, dispatch_started_at, next_attempt_at)
+VALUES
+  ('00000000-0000-0000-0000-000000000021', '$MIX_GAME', 21, 'h21',
+   '10000000-0000-0000-0000-000000000021', 'ios', 'token-21', now() + interval '5 minutes',
+   'pending', 0, null, null, null, now() - interval '1 second'),
+  ('00000000-0000-0000-0000-000000000022', '$MIX_GAME', 22, 'h22',
+   '10000000-0000-0000-0000-000000000022', 'android', 'token-22', now() + interval '5 minutes',
+   'leased', 1, '22000000-0000-0000-0000-000000000099', now() - interval '1 second', null, now() - interval '1 second'),
+  ('00000000-0000-0000-0000-000000000023', '$MIX_GAME', 23, 'h23',
+   '10000000-0000-0000-0000-000000000023', 'ios', 'token-23', now() + interval '5 minutes',
+   'transient', 1, null, null, null, now() - interval '1 second');
+SQL
+MIX_LEASE=22000000-0000-0000-0000-000000000001
+MIX_1=$("${PSQL[@]}" -c "SELECT token_id FROM claim_game_start_deliveries('$MIX_GAME','$MIX_LEASE',45,1)")
+MIX_2=$("${PSQL[@]}" -c "SELECT token_id FROM claim_game_start_deliveries('$MIX_GAME','$MIX_LEASE',45,1)")
+MIX_3=$("${PSQL[@]}" -c "SELECT token_id FROM claim_game_start_deliveries('$MIX_GAME','$MIX_LEASE',45,1)")
+[ "$MIX_1" = "21" ] && [ "$MIX_2" = "22" ] && [ "$MIX_3" = "23" ] || {
+  echo "FAIL: mixed queue priority expected 21(pending)->22(expired leased)->23(transient), got=$MIX_1,$MIX_2,$MIX_3" >&2
+  exit 1
+}
+
+# 삼순 P1 회귀: due transient 500행이 batch 상한을 가득 채워도 미시도 crash(만료 pre-dispatch leased) 행이
+# 같은 batch에서 먼저 claim되어 deadline 안에 send를 시작한다(구 정렬이면 crash 행이 batch에서 밀려 RED).
+STARVE_GAME=20260730WOKT0
+"${PSQL[@]}" <<SQL >/dev/null
+INSERT INTO game_notify_state(game_id, start_snapshot_at, start_snapshot_deadline_at)
+VALUES ('$STARVE_GAME', now(), now() + interval '90 seconds');
+INSERT INTO game_start_delivery_ledger
+  (id, game_id, token_id, token_hash, user_id, platform, fcm_token, deadline_at,
+   status, attempts, next_attempt_at)
+SELECT
+  ('00000000-0000-0000-0001-'||lpad(n::text,12,'0'))::uuid, '$STARVE_GAME', 1000+n, 'sh'||n,
+  '10000000-0000-0000-0000-000000000031', 'android', 'starve-token-'||n, now() + interval '90 seconds',
+  'transient', 1, now() - interval '1 second'
+FROM generate_series(1,500) n;
+INSERT INTO game_start_delivery_ledger
+  (id, game_id, token_id, token_hash, user_id, platform, fcm_token, deadline_at,
+   status, attempts, lease_token, lease_until, dispatch_started_at, next_attempt_at)
+VALUES
+  ('00000000-0000-0000-0000-000000000031', '$STARVE_GAME', 31, 'h31',
+   '10000000-0000-0000-0000-000000000031', 'ios', 'crash-token-31', now() + interval '90 seconds',
+   'leased', 1, '23000000-0000-0000-0000-000000000099', now() - interval '1 second', null, now() - interval '1 second');
+SQL
+STARVE_LEASE=23000000-0000-0000-0000-000000000001
+STARVE_CRASH_CLAIMED=$("${PSQL[@]}" -c "SELECT count(*) FROM claim_game_start_deliveries('$STARVE_GAME','$STARVE_LEASE',45,500) WHERE token_id=31")
+[ "$STARVE_CRASH_CLAIMED" = "1" ] || {
+  echo "FAIL: untried crash row starved out of full 500-transient batch (claimed=$STARVE_CRASH_CLAIMED)" >&2
+  exit 1
+}
+STARVE_CRASH_STATE=$("${PSQL[@]}" -c "SELECT status||':'||attempts||':'||lease_token FROM game_start_delivery_ledger WHERE token_id=31 AND game_id='$STARVE_GAME'")
+[ "$STARVE_CRASH_STATE" = "leased:2:$STARVE_LEASE" ] || {
+  echo "FAIL: crash row post-claim state=$STARVE_CRASH_STATE" >&2
+  exit 1
+}
+
 # highlight token barrier: same-team ON만 start accepted가 필요하다. OFF와 cross-team ON은 bypass,
 # pending/permanent same-team token 하나가 다른 token release를 막지 않는다.
 HIGHLIGHT_GAME=20260726KTLT0

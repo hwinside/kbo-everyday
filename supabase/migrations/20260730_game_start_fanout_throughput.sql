@@ -138,7 +138,9 @@ as $$
       and l.attempts < 2
       and l.fcm_token is not null
     order by
-      case l.status when 'pending' then 0 when 'transient' then 1 else 2 end,
+      -- 미시도 우선: pending(0) → 만료된 pre-dispatch leased(1, send 미시작 crash 복구) → transient(2, 이미 1회 이상 시도).
+      -- candidates에 포함되는 leased는 dispatch_started_at is null + lease_until < now()뿐이므로 status='leased' = 미시도 crash 행이다.
+      case l.status when 'pending' then 0 when 'leased' then 1 else 2 end,
       l.is_primary_token desc,
       l.id
     for update skip locked

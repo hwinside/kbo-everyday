@@ -64,7 +64,7 @@ test("최신 활성토큰 우선 + pending-first/transient-last claim", () => {
   );
   assert.match(
     throughputMigration,
-    /case l\.status when 'pending' then 0 when 'transient' then 1 else 2 end,[\s\S]*l\.is_primary_token desc/,
+    /case l\.status when 'pending' then 0 when 'leased' then 1 else 2 end,[\s\S]*l\.is_primary_token desc/,
   );
 });
 
