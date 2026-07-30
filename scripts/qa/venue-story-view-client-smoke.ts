@@ -76,48 +76,75 @@ test("viewer_key: user 우선, guest 는 UUID 형식만, 그 외 null", () => {
   assert.equal(resolveViewerKey(null, "211.36.132.1"), null);
 });
 
-// ── 전송 신뢰성 (beacon 우선 + keepalive 폴백) ──
+// ── 전송 신뢰성 (fetch keepalive 기본 + 이탈 직전에만 beacon fallback — 삼순 정정 #962) ──
 const payload = {
   kind: "click" as const,
   guestId: "3f2b1a90-1234-4abc-8def-0123456789ab",
   accessToken: null,
 };
 
-test("전송: sendBeacon 큐잉 성공이면 fetch 미호출", async () => {
-  let fetched = 0;
-  const ok = await sendVenueStoryViewPing({
-    url: "/api/venue-stories/1/view",
-    payload,
-    sendBeacon: () => true,
-    fetchFn: (async () => {
-      fetched++;
-      return new Response(null, { status: 204 });
-    }) as typeof fetch,
-  });
-  assert.equal(ok, true);
-  assert.equal(fetched, 0);
-});
-
-test("전송: beacon 실패/미지원 → fetch keepalive 폴백 (kind 포함 body)", async () => {
+test("전송: 일반 경로는 beacon 이 있어도 fetch(keepalive) 우선 — 응답 status 확인 가능 경로가 기본", async () => {
+  let beaconed = 0;
   const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
   const fetchFn = (async (url: unknown, init?: RequestInit) => {
     calls.push({ url: String(url), init });
     return new Response(null, { status: 204 });
   }) as typeof fetch;
 
-  // beacon 이 false(큐잉 거부) → 폴백
-  assert.equal(
-    await sendVenueStoryViewPing({ url: "/v", payload, sendBeacon: () => false, fetchFn }),
-    true,
-  );
-  // beacon 미지원(undefined) → 폴백
-  assert.equal(await sendVenueStoryViewPing({ url: "/v", payload, fetchFn }), true);
-  assert.equal(calls.length, 2);
-  for (const c of calls) {
-    assert.equal(c.init?.method, "POST");
-    assert.equal((c.init as { keepalive?: boolean })?.keepalive, true); // 이탈 직전 유실 최소화
-    assert.deepEqual(JSON.parse(String(c.init?.body)), payload); // kind 가 body 로 전달됨
-  }
+  const ok = await sendVenueStoryViewPing({
+    url: "/api/venue-stories/1/view",
+    payload,
+    sendBeacon: () => {
+      beaconed++;
+      return true;
+    },
+    fetchFn,
+  });
+  assert.equal(ok, true);
+  assert.equal(beaconed, 0); // 큐잉=성공 착각 경로 금지 — 일반 전송에서 beacon 미사용
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].init?.method, "POST");
+  assert.equal((calls[0].init as { keepalive?: boolean })?.keepalive, true);
+  assert.deepEqual(JSON.parse(String(calls[0].init?.body)), payload); // kind 가 body 로 전달됨
+});
+
+test("전송: hidden/pagehide도 keepalive fetch 우선 — 204 확인 뒤에만 성공", async () => {
+  let beaconed = 0;
+  let fetched = 0;
+  const ok = await sendVenueStoryViewPing({
+    url: "/api/venue-stories/1/view",
+    payload,
+    unloading: true,
+    sendBeacon: () => {
+      beaconed++;
+      return true;
+    },
+    fetchFn: (async () => {
+      fetched++;
+      return new Response(null, { status: 204 });
+    }) as typeof fetch,
+  });
+  assert.equal(ok, true);
+  assert.equal(fetched, 1);
+  assert.equal(beaconed, 0);
+});
+
+test("전송: hidden/pagehide keepalive 시작 실패 뒤 beacon queued도 미확정(false)", async () => {
+  let beaconed = 0;
+  const ok = await sendVenueStoryViewPing({
+    url: "/v",
+    payload,
+    unloading: true,
+    sendBeacon: () => {
+      beaconed++;
+      return true;
+    },
+    fetchFn: (async () => {
+      throw new Error("page is freezing");
+    }) as typeof fetch,
+  });
+  assert.equal(ok, false);
+  assert.equal(beaconed, 1);
 });
 
 test("전송: fetch 실패/5xx 응답이면 false — 호출부 재시도 mark 해제용(RPC 오류 성공 위장 금지)", async () => {
@@ -195,6 +222,25 @@ test("각 fire의 user/guest 판정은 전송 시점 세션이며 viewer별 세�
   assert.match(client, /payload:\s*\{\s*kind,\s*guestId,\s*accessToken:/);
   assert.doesNotMatch(hook, /hasTrackedVenueStoryView/);
   assert.equal(route.match(/const viewerKey = resolveViewerKey\(/g)?.length, 1);
+});
+
+test("클라 배선: beacon 은 이탈 직전 fallback 만, mark 는 2xx 확인 실패 시 해제 (삼순 정정 #962)", () => {
+  const client = readFileSync(
+    new URL("../../src/lib/venue-stories/view-tracker-client.ts", import.meta.url),
+    "utf8",
+  );
+  const hook = readFileSync(
+    new URL("../../src/lib/venue-stories/useStoryImpression.ts", import.meta.url),
+    "utf8",
+  );
+  // 이탈 감지 배선: pagehide 설정 + pageshow(bfcache) 복원 + 전송 시점 unloading 전달
+  assert.match(client, /addEventListener\("pagehide"/);
+  assert.match(client, /addEventListener\("pageshow"/);
+  assert.match(client, /unloading:\s*isPageUnloading\(\)/);
+  // 실패(비 2xx·네트워크 오류) 시 mark 해제 → 재시도 경로 생존
+  assert.match(client, /if \(!ok\) sent\.delete\(key\)/);
+  assert.match(hook, /trackVenueStoryView\(storyId,\s*"impression"\)\.then/);
+  assert.match(hook, /if \(confirmed\) io\.disconnect\(\)/);
 });
 
 // ── 관리자 전용 노출 ("숫자는 일단 관리자만") ──

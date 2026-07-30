@@ -21,7 +21,8 @@ import { useLiveGame } from "@/lib/hooks/useLiveGame";
 import { startLiveActivity } from "@/lib/native-live-activity";
 import { updateGameWidget, setWidgetMyTeam } from "@/lib/capacitor/game-notification";
 import { useGameDetail } from "@/lib/hooks/useGameDetail";
-import { generateEvents, type PrevGameState } from "@/lib/event-generator";
+import type { PrevGameState } from "@/lib/event-generator";
+import { advanceClientGameEventTransition } from "@/lib/client-game-event-transition";
 import { generateRelayEvents } from "@/lib/relay-event-generator";
 import { latestRelayLine } from "@/lib/notifications/relay-line";
 import type { LineupEntry } from "@/lib/hooks/useGameDetail";
@@ -316,29 +317,25 @@ export default function GameDetailPage() {
   // wins — the relay path typically arrives 10–20s before BoxScore.
   useEffect(() => {
     if (!liveGame || !shouldProcessGameEvents) return;
-
-    // After returning from background, skip one diff cycle to re-establish baseline
-    if (skipNextDiffRef.current) {
-      skipNextDiffRef.current = false;
-      clientEventStateRef.current = { live: liveGame, boxScore: gameDetail?.boxScore ?? null };
-      return;
-    }
-
-    const { events: clientEvents, nextState } = generateEvents(
+    const transition = advanceClientGameEventTransition({
       gameId,
-      clientEventStateRef.current,
-      liveGame,
-      gameDetail?.boxScore ?? null,
-    );
-    clientEventStateRef.current = nextState;
+      previous: clientEventStateRef.current,
+      current: liveGame,
+      boxScore: gameDetail?.boxScore ?? null,
+      skipNextDiff: skipNextDiffRef.current,
+      visibilityState: document.visibilityState,
+    });
+    clientEventStateRef.current = transition.nextState;
+    skipNextDiffRef.current = transition.skipNextDiff;
+    if (!transition.shouldProcess) return;
 
     const relayEvents = generateRelayEvents(gameId, gameRelay?.innings, liveGame);
 
-    const merged = relayEvents.length > 0 || clientEvents.length > 0
-      ? [...relayEvents, ...clientEvents]
+    const merged = relayEvents.length > 0 || transition.events.length > 0
+      ? [...relayEvents, ...transition.events]
       : [];
     if (merged.length > 0) {
-      processEvents(merged);
+      processEvents(merged, { preserveFreshGameEnd: transition.preserveFreshGameEnd });
     }
   }, [gameId, liveGame, gameDetail?.boxScore, gameRelay?.innings, shouldProcessGameEvents, processEvents]);
 
