@@ -33,6 +33,19 @@ import {
   computeScrollRestore,
 } from "../../src/lib/venue-stories/scroll-lock";
 import { shouldCloseCommentSheetDrag } from "../../src/lib/venue-stories/comment-sheet-gesture";
+import {
+  createPressState,
+  markPressStart,
+  cancelPress,
+  shouldSubmitOnPointerUp,
+  canBeginCommentSubmit,
+} from "../../src/lib/venue-stories/comment-submit-gesture";
+import {
+  classifyStoryTap,
+  STORY_NAV_BOTTOM_OFFSET,
+  STORY_PILL_BOTTOM_OFFSET,
+  STORY_PILL_HEIGHT,
+} from "../../src/lib/venue-stories/story-tap-zone";
 
 let pass = 0;
 let fail = 0;
@@ -406,6 +419,111 @@ console.log("[migration RLS 계약 — service_role 전용(정책 0개)]");
 console.log("[상수 계약]");
 ok("최대 길이 200", VENUE_STORY_COMMENT_MAX_LENGTH === 200);
 ok("목록 조회 상한 유한(안전 limit)", Number.isInteger(VENUE_STORY_COMMENT_LIST_LIMIT) && VENUE_STORY_COMMENT_LIST_LIMIT > 0);
+
+// ── 넘기기 탭 존 ↔ pill 경계 기하(삼순 #948 blocker 2): pill 경계 탭은 모달, goNext 0 ──
+console.log("[탭 존 기하 — pill 경계는 모달(넘김 아님)]");
+{
+  // iPhone13(390×844) / Pixel7(412×915) 안전영역 가정.
+  const devices = [
+    { name: "iPhone13", w: 390, h: 844, safe: 34 },
+    { name: "Pixel7", w: 412, h: 915, safe: 24 },
+  ];
+  for (const d of devices) {
+    const cx = d.w / 2;
+    const pillTop = d.h - (d.safe + STORY_PILL_BOTTOM_OFFSET + STORY_PILL_HEIGHT);
+    const pillCenterY = d.h - (d.safe + STORY_PILL_BOTTOM_OFFSET + STORY_PILL_HEIGHT / 2);
+    const navBottom = d.h - (d.safe + STORY_NAV_BOTTOM_OFFSET);
+    // pill 중앙 탭 → 모달
+    ok(`${d.name}: pill 중앙 탭 → pill(모달)`,
+      classifyStoryTap({ viewportWidth: d.w, viewportHeight: d.h, safeBottom: d.safe, x: cx, y: pillCenterY }) === "pill");
+    // pill 상단 경계(+1px) 탭 → 여전히 pill, 넘김 아님
+    ok(`${d.name}: pill 상단 경계 탭 → pill(넘김 아님)`,
+      classifyStoryTap({ viewportWidth: d.w, viewportHeight: d.h, safeBottom: d.safe, x: cx, y: pillTop + 1 }) === "pill");
+    // pill 상단 바로 위 4px(갭) 탭 → none(넘김도 아님 — 예전 inset-y-0 회귀 방지)
+    ok(`${d.name}: pill 위 갭 탭 → none(goNext 0)`,
+      classifyStoryTap({ viewportWidth: d.w, viewportHeight: d.h, safeBottom: d.safe, x: cx, y: pillTop - 4 }) === "none");
+    // 화면 중앙(넘기기 존 내부) 우측 탭 → next 정상
+    ok(`${d.name}: 화면 중앙 우측 탭 → next`,
+      classifyStoryTap({ viewportWidth: d.w, viewportHeight: d.h, safeBottom: d.safe, x: d.w * 0.8, y: d.h * 0.4 }) === "next");
+    ok(`${d.name}: 화면 중앙 좌측 탭 → prev`,
+      classifyStoryTap({ viewportWidth: d.w, viewportHeight: d.h, safeBottom: d.safe, x: d.w * 0.1, y: d.h * 0.4 }) === "prev");
+    ok(`${d.name}: 넘기기 존 하단컷 위 = pill 상단(8px 갭 존재)`, navBottom < pillTop);
+  }
+}
+
+// ── 전송 제스처 상태기계(삼순 #948 blocker 1·2): 1탭=1POST, cancel/drag-out 0, trailing click 0중복, finally 뒤 2번째 ──
+console.log("[전송 제스처 — pointerdown/up/cancel + 중복 가드]");
+{
+  const BTN = { left: 100, top: 700, right: 140, bottom: 740 };
+  const inside = { clientX: 120, clientY: 720, bounds: BTN, isPrimary: true, button: 0 };
+
+  // (1) 정상 1탭: down → up(버튼 위) → submit 승인 1회
+  {
+    const st = createPressState();
+    markPressStart(st);
+    ok("1탭: 버튼 위 primary pointerup → 제출 승인", shouldSubmitOnPointerUp(st, inside) === true);
+    // 같은 press 재-up(중복 pointerup) → press 소비돼 false
+    ok("1탭: 중복 pointerup → 미승인(press 소비)", shouldSubmitOnPointerUp(st, inside) === false);
+  }
+  // (2) pointercancel(스크롤 제스처) → 이후 up 미승인
+  {
+    const st = createPressState();
+    markPressStart(st);
+    cancelPress(st);
+    ok("pointercancel 후 up → 미승인(0 POST)", shouldSubmitOnPointerUp(st, inside) === false);
+  }
+  // (3) drag-out: touch implicit-capture 로 버튼에서 up 나지만 좌표가 밖 → 미승인
+  {
+    const st = createPressState();
+    markPressStart(st);
+    ok("drag-out(버튼 밖 릴리즈) → 미승인(0 POST)",
+      shouldSubmitOnPointerUp(st, { ...inside, clientX: 300, clientY: 900 }) === false);
+  }
+  // (4) 비-primary / 보조버튼 → 미승인
+  {
+    const st1 = createPressState(); markPressStart(st1);
+    ok("비-primary 포인터 → 미승인", shouldSubmitOnPointerUp(st1, { ...inside, isPrimary: false }) === false);
+    const st2 = createPressState(); markPressStart(st2);
+    ok("보조 버튼(button>0) → 미승인", shouldSubmitOnPointerUp(st2, { ...inside, button: 2 }) === false);
+  }
+  // (5) up 없이 press 없음 상태의 up → 미승인
+  {
+    const st = createPressState();
+    ok("press 없이 pointerup → 미승인", shouldSubmitOnPointerUp(st, inside) === false);
+  }
+
+  // 재진입 가드 순수 계약(canBeginCommentSubmit): lock/busy/내용/story 조건만 검증.
+  // ⚠️ 실제 1탭=1POST / trailing click 0중복 / finally 뒤 2번째는 lock set/reset 수명이
+  //   필요해 여기서 로컬 모사(posts++)하면 lock 제거도 green 인 false-green → 삼순 #948 5차 지적.
+  //   실제 VenueStoryViewer 를 렌더해 native pointer→POST spy 로 검증하는 건
+  //   scripts/qa/venue-story-comment-submit-render.ts (npm run qa:venue-story-comment-render).
+  ok("lock 보유 중 미제출(trailing click/동시탭 차단 전제)",
+    canBeginCommentSubmit({ hasStory: true, hasContent: true, busy: false, locked: true }) === false);
+  ok("lock 해제 후 제출 가능(finally 뒤 2번째 전제)",
+    canBeginCommentSubmit({ hasStory: true, hasContent: true, busy: false, locked: false }) === true);
+  ok("내용 없으면 미제출", canBeginCommentSubmit({ hasStory: true, hasContent: false, busy: false, locked: false }) === false);
+  ok("story 없으면 미제출", canBeginCommentSubmit({ hasStory: false, hasContent: true, busy: false, locked: false }) === false);
+  ok("busy 중 미제출", canBeginCommentSubmit({ hasStory: true, hasContent: true, busy: true, locked: false }) === false);
+}
+
+// ── 컴포넌트 배선 가드(정적): 제출은 pointerup, pointerdown 은 preventDefault-only ──
+console.log("[컴포넌트 배선 — pointerup 제출/ pointerdown preventDefault-only]");
+{
+  const viewerSrc2 = readFileSync(
+    path.resolve(process.cwd(), "src/components/game/VenueStoryViewer.tsx"),
+    "utf8",
+  );
+  ok("전송 버튼 onPointerUp 에서 shouldSubmitOnPointerUp 게이트",
+    /onPointerUp=\{[\s\S]*?shouldSubmitOnPointerUp\(commentPressRef\.current/.test(viewerSrc2));
+  ok("전송 버튼 onPointerCancel 로 press 취소",
+    /onPointerCancel=\{\(\) => cancelPress\(commentPressRef\.current\)\}/.test(viewerSrc2));
+  ok("pointerdown 은 preventDefault + markPressStart 만(즉시 handleCommentSubmit 호출 없음)",
+    /onPointerDown=\{\(e\) => \{\s*e\.preventDefault\(\);\s*markPressStart\(commentPressRef\.current\);\s*\}\}/.test(viewerSrc2));
+  ok("handleCommentSubmit 가 canBeginCommentSubmit 로 재진입 가드",
+    /canBeginCommentSubmit\(\{/.test(viewerSrc2));
+  ok("넘기기 탭 존 bottom = safeBottomCalc(STORY_NAV_BOTTOM_OFFSET)",
+    /bottom: safeBottomCalc\(STORY_NAV_BOTTOM_OFFSET\)/.test(viewerSrc2));
+}
 
 console.log(`\n결과: ${pass} pass / ${fail} fail`);
 if (fail > 0) process.exit(1);
