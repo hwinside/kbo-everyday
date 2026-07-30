@@ -611,12 +611,330 @@ async function runtimeRegressions() {
   }
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// 라운드4 — production 배선 실행형 회귀 (삼순 라운드4 false-green 지적 반영)
+// 실제 VenueStoryComposer 를 jsdom 에 렌더해, 그리드 선택→confirm 으로 만들어진
+// **실제 ComposerItem** 이 production mapper(toUploadTarget)를 거쳐 업로드 큐로 가는
+// 전체 경로를 고정한다. 러너에 assetId 를 손으로 주입하지 않는다 — 러너가 받는 target 은
+// 전부 컴포넌트 state 에서 toUploadTarget 으로 파생된다.
+//   ① confirm 시점 export 0회(lazy) + 프리뷰는 네이티브 썸네일만(원본 File 미보관)
+//   ② submit: 1번 항목 export 1차 실패 → 항목 failed(assetId 보존) · 2번 항목 업로드 성공
+//   ③ 같은 항목 '다시 시도' → export 2회째 호출 → 업로드 성공(재시도 재-export 계약)
+// production 심볼 제거 시 이 회귀가 실제 RED:
+//   - VenueStoryComposer.toUploadTarget 의 `assetId: it.assetId` → null 로 fault-inject:
+//     ②·③ 모두 RED (모든 그리드 항목이 VenueOriginalUnavailableError 로 원본 준비 실패)
+//   - 실패 patch 의 assetId 보존 제거(onResolveFail patch 에 assetId:null 주입):
+//     ③ RED (재시도가 export 를 다시 못 부른다)
+// mock 경계는 기기/네트워크 가장자리만: 네이티브 브릿지(주입 window.Capacitor.Plugins —
+// 원격 로드 앱과 동일한 production 폴백 경로), geolocation, supabase auth/storage, fetch.
+// ────────────────────────────────────────────────────────────────────────────
+async function composerProductionWiringRegression() {
+  console.log(
+    "[라운드4 — 실제 VenueStoryComposer: 선택→confirm→submit(export 1차 실패)→재시도, production toUploadTarget 경유]",
+  );
+
+  // supabase client 모듈 평가 전에 env 필요(createBrowserClient throw 방지)
+  process.env.NEXT_PUBLIC_SUPABASE_URL = "https://test-ref.supabase.co";
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "test-anon-key";
+
+  const g = globalThis as unknown as Record<string, unknown>;
+  // @capacitor/core 첫 import 전에 커스텀 플랫폼('ios') 선언 → isNativeRuntime() true(pickerMode=grid).
+  // Geolocation 은 PluginHeaders 로 available 처리하되 methods 를 비워 두면 코어가 web 구현
+  // (navigator.geolocation shim)으로 위임한다. VenueMediaLibrary 는 헤더/JS 구현이 없어
+  // npm 프록시가 UNIMPLEMENTED throw → callPlugin 이 주입 브릿지(window.Capacitor.Plugins)로
+  // 폴백하는 production 경로(원격 로드 설치앱과 동일)를 그대로 탄다.
+  g.CapacitorCustomPlatform = { name: "ios" };
+  g.Capacitor = { PluginHeaders: [{ name: "Geolocation", methods: [] }] };
+
+  const dom = new JSDOM(`<!DOCTYPE html><body><div id="root"></div></body>`, {
+    url: "https://keubo.fan/",
+  });
+  g.window = dom.window;
+  g.document = dom.window.document;
+  // Node 24 는 전역 navigator 가 getter-only — 단순 대입은 조용히 무시된다(defineProperty 필수)
+  Object.defineProperty(globalThis, "navigator", {
+    configurable: true,
+    value: dom.window.navigator,
+  });
+  g.HTMLElement = dom.window.HTMLElement;
+  g.Element = dom.window.Element;
+  g.File = dom.window.File;
+  g.Blob = dom.window.Blob;
+  g.localStorage = dom.window.localStorage;
+  g.IS_REACT_ACT_ENVIRONMENT = true;
+
+  // framer-motion 등 matchMedia 참조 대비
+  const matchMediaShim = (query: string) => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addListener() {},
+    removeListener() {},
+    addEventListener() {},
+    removeEventListener() {},
+    dispatchEvent: () => false,
+  });
+  (dom.window as unknown as Record<string, unknown>).matchMedia = matchMediaShim;
+  g.matchMedia = matchMediaShim;
+
+  // jsdom 미구현 blob URL — 프리뷰/probe 경로가 죽지 않게 no-op stub
+  let blobSeq = 0;
+  (URL as unknown as Record<string, unknown>).createObjectURL = () => `blob:mock-${++blobSeq}`;
+  (URL as unknown as Record<string, unknown>).revokeObjectURL = () => {};
+
+  // upload.ts probeImage 의 `new Image()` — onload 즉시 발화
+  class MockImage {
+    naturalWidth = 720;
+    naturalHeight = 1280;
+    onload: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    set src(_v: string) {
+      setTimeout(() => this.onload?.(), 0);
+    }
+  }
+  g.Image = MockImage;
+
+  // 구장 좌표와 동일한 GPS 측정(정확도 8m) — 선체크/geofence 통과
+  const VLAT = 37.5122;
+  const VLNG = 127.0719;
+  Object.defineProperty(dom.window.navigator, "geolocation", {
+    configurable: true,
+    value: {
+      getCurrentPosition: (onOk: (p: unknown) => void) =>
+        onOk({
+          timestamp: Date.now(),
+          coords: {
+            latitude: VLAT,
+            longitude: VLNG,
+            accuracy: 8,
+            altitude: null,
+            altitudeAccuracy: null,
+            speed: null,
+            heading: null,
+          },
+        }),
+    },
+  });
+
+  // 서버 API — venue 정보(업로드 가능 시간대) + 스토리 생성 POST 기록
+  const postCalls: Array<Record<string, unknown>> = [];
+  g.fetch = (async (input: unknown, init?: { method?: string; body?: string }) => {
+    const url = String(input);
+    if (url.startsWith("/api/venue-stories/venue")) {
+      return {
+        ok: true,
+        json: async () => ({
+          gameId: "g-run4",
+          stadiumName: "잠실야구장",
+          lat: VLAT,
+          lng: VLNG,
+          radiusM: 2000,
+          uploadOpen: true,
+          reason: null,
+          cancelled: false,
+          gateKind: "open",
+        }),
+      };
+    }
+    if (url === "/api/venue-stories" && init?.method === "POST") {
+      postCalls.push(JSON.parse(init.body ?? "{}") as Record<string, unknown>);
+      return { ok: true, json: async () => ({ id: 900 + postCalls.length, status: "active" }) };
+    }
+    return { ok: true, json: async () => ({}) };
+  }) as never;
+
+  // 네이티브 사진첩 브릿지(주입 window.Capacitor.Plugins) — n1 은 export 1차만 transient 실패
+  const thumbs: Record<string, string> = {
+    n1: "data:image/jpeg;base64,THUMBN1",
+    n2: "data:image/jpeg;base64,THUMBN2",
+  };
+  const exportCalls: string[] = [];
+  const exportChunkB64 = Buffer.from("orig").toString("base64"); // 4 bytes
+  (dom.window as unknown as Record<string, unknown>).Capacitor = {
+    Plugins: {
+      VenueMediaLibrary: {
+        getPermission: async () => ({ permission: "authorized" }),
+        requestPermission: async () => ({ permission: "authorized" }),
+        listMedia: async () => ({
+          assets: [
+            { id: "n1", kind: "image", thumbnailUrl: thumbs.n1, durationMs: null, createdAt: 2 },
+            { id: "n2", kind: "image", thumbnailUrl: thumbs.n2, durationMs: null, createdAt: 1 },
+          ],
+          nextCursor: null,
+          permission: "authorized",
+        }),
+        exportMedia: async ({ id }: { id: string }) => {
+          exportCalls.push(id);
+          if (id === "n1" && exportCalls.filter((x) => x === "n1").length === 1) {
+            throw new Error("transient native export fail");
+          }
+          return { token: `tok-${id}`, fileName: `${id}.jpg`, mimeType: "image/jpeg", size: 4, lastModified: 1 };
+        },
+        readExport: async () => ({ data: exportChunkB64 }),
+        releaseExport: async () => ({}),
+        selectionChanged: async () => ({}),
+      },
+    },
+  };
+
+  const React = (await import("react")).default;
+  const { act } = await import("react");
+  const { createRoot } = await import("react-dom/client");
+
+  // supabase auth/storage 는 네트워크 가장자리만 스텁(모듈/컴포넌트 코드는 실제 그대로)
+  const { supabase } = await import("../../src/lib/supabase/client");
+  (supabase.auth as unknown as Record<string, unknown>).getSession = async () => ({
+    data: { session: { access_token: "test-token", user: { id: "u-run4" } } },
+  });
+  (supabase.auth as unknown as Record<string, unknown>).getUser = async () => ({
+    data: { user: { id: "u-run4" } },
+  });
+  Object.defineProperty(supabase, "storage", {
+    configurable: true,
+    value: {
+      from: () => ({
+        upload: async () => ({ error: null }),
+        getPublicUrl: (p: string) => ({ data: { publicUrl: `https://cdn.test/${p}` } }),
+      }),
+    },
+  });
+
+  const VenueStoryComposer = (await import("../../src/components/game/VenueStoryComposer")).default;
+
+  const container = dom.window.document.getElementById("root")!;
+  const root = createRoot(container);
+  const uploadedResults: unknown[] = [];
+  await act(async () => {
+    root.render(
+      React.createElement(VenueStoryComposer, {
+        gameId: "g-run4",
+        isOpen: true,
+        onClose: () => {},
+        onUploaded: (r: unknown) => uploadedResults.push(r),
+      }),
+    );
+  });
+
+  const body = dom.window.document.body;
+  const q = (sel: string) => body.querySelector(sel);
+  const buttonByText = (text: string) =>
+    Array.from(body.querySelectorAll("button")).find((b) => (b.textContent ?? "").includes(text)) ??
+    null;
+  const waitFor = async (label: string, cond: () => boolean, maxMs = 8000) => {
+    const start = Date.now();
+    while (!cond() && Date.now() - start < maxMs) {
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 15));
+      });
+    }
+    if (!cond()) {
+      // 실패 진단용 — 현재 렌더 텍스트 요약(성공 시 무출력)
+      console.log("    [debug] body text:", (body.textContent ?? "").replace(/\s+/g, " ").slice(0, 400));
+    }
+    ok(label, cond());
+    return cond();
+  };
+
+  // 선체크 ok → 커스텀 그리드 자동 오픈(실제 loadLibrary → 주입 브릿지 listMedia)
+  await waitFor(
+    "실제 컴포넌트 — 선체크 통과 후 커스텀 그리드 자동 오픈(네이티브 타일 렌더)",
+    () => q('[data-asset-id="n1"]') != null && q('[data-asset-id="n2"]') != null,
+  );
+
+  // 타일 탭 2회 → 하단 '2개 선택 완료' confirm — 실제 confirmLibrarySelection 이 ComposerItem 생성
+  await act(async () => {
+    (q('[data-asset-id="n1"]') as HTMLElement).click();
+  });
+  await act(async () => {
+    (q('[data-asset-id="n2"]') as HTMLElement).click();
+  });
+  const confirmBtn = buttonByText("선택 완료");
+  ok(
+    "그리드 하단 확정 버튼 '2개 선택 완료' 노출",
+    (confirmBtn?.textContent ?? "").includes("2개 선택 완료"),
+  );
+  await act(async () => {
+    confirmBtn!.click();
+  });
+  ok("confirm 시점 export 0회 — 원본은 업로드 차례에만 lazy export", exportCalls.length === 0);
+  await waitFor(
+    "confirm → 프리뷰는 네이티브 소형 썸네일(data URL)만 — 원본 File 미보관(thumbnail-only)",
+    () =>
+      Array.from(body.querySelectorAll("img")).some(
+        (im) => im.getAttribute("src") === thumbs.n1,
+      ),
+  );
+
+  // 가이드라인 동의 → CTA 활성 → 제출: submit() 이 items.map(toUploadTarget) — production mapper 경유
+  await act(async () => {
+    (q('input[type="checkbox"]') as HTMLElement).click();
+  });
+  await waitFor(
+    `CTA '${VENUE_STORY_CTA_LABEL}' 활성화(동의+선체크+항목)`,
+    () => {
+      const cta = buttonByText(VENUE_STORY_CTA_LABEL) as HTMLButtonElement | null;
+      return cta != null && !cta.disabled;
+    },
+  );
+  await act(async () => {
+    (buttonByText(VENUE_STORY_CTA_LABEL) as HTMLElement).click();
+  });
+
+  // 1차 submit: n1 export transient 실패 → failed(assetId 보존) · n2 성공 → 완료 요약 성공 1 · 실패 1
+  await waitFor(
+    "1차 submit → 완료 요약 '성공 1 · 실패 1' (n1 원본 준비 실패·n2 업로드 성공)",
+    () =>
+      (body.textContent ?? "").includes("업로드 완료") &&
+      (body.textContent ?? "").includes("성공 1") &&
+      (body.textContent ?? "").includes("실패 1"),
+  );
+  ok(
+    "1차 submit: export 호출 순서 [n1(실패), n2(성공)] — production toUploadTarget 이 assetId 를 러너에 전달",
+    exportCalls.join(",") === "n1,n2",
+  );
+  ok(
+    "1차 submit: 성공 1건만 서버 POST + 트레이 낙관 반영 1회 — 실패건 업로드 없음",
+    postCalls.length === 1 && uploadedResults.length === 1,
+  );
+  const retryBtn = buttonByText("다시 시도");
+  ok("실패건(n1)만 개별 '다시 시도' 버튼 노출", retryBtn != null);
+
+  // 재시도: 같은 항목이 다시 toUploadTarget 을 거쳐 export 2회째 호출 → 업로드 성공
+  await act(async () => {
+    retryBtn!.click();
+  });
+  await waitFor(
+    "재시도: export 2회째 호출(n1 재-export) → 업로드 성공 → '성공 2 · 실패 0'",
+    () =>
+      exportCalls.join(",") === "n1,n2,n1" &&
+      postCalls.length === 2 &&
+      (body.textContent ?? "").includes("성공 2") &&
+      (body.textContent ?? "").includes("실패 0"),
+  );
+  ok(
+    "재시도가 재-export 로만 성공 — 실패 patch 의 assetId 보존 + state 에 원본 File 비저장(file=null 유지) 실행 증거",
+    exportCalls.filter((x) => x === "n1").length === 2 && uploadedResults.length === 2,
+  );
+  ok(
+    "완료 후에도 모든 프리뷰가 네이티브 썸네일(data URL) 그대로 — full-res 원본/blob 승격 없음",
+    Array.from(body.querySelectorAll("img")).length > 0 &&
+      Array.from(body.querySelectorAll("img")).every((im) =>
+        [thumbs.n1, thumbs.n2].includes(im.getAttribute("src") ?? ""),
+      ),
+  );
+  ok("성공 후 '다시 시도' 버튼 제거(성공/진행 항목 재전송 금지)", buttonByText("다시 시도") == null);
+
+  await act(async () => root.unmount());
+}
+
 runtimeRegressions()
+  .then(() => composerProductionWiringRegression())
   .catch((e) => {
     fail++;
-    console.error("  ❌ runtimeRegressions threw:", e);
+    console.error("  ❌ runtime regressions threw:", e);
   })
   .finally(() => {
     console.log(`\n${pass} passed, ${fail} failed`);
-    if (fail > 0) process.exit(1);
+    // 라운드4 실제 컴포넌트 회귀가 supabase/jsdom 핸들을 남기므로 명시 종료(성공 0·실패 1)
+    process.exit(fail > 0 ? 1 : 0);
   });
