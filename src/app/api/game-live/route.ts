@@ -4,6 +4,7 @@ import { resolveCurrentPlayers } from "@/lib/kbo-player-mapping";
 import { PLAYER_PHOTO_MAP } from "@/lib/constants/player-photos";
 import { resolveGameLiveDate } from "@/lib/game-live-date";
 import { isKboGameCancelled } from "@/lib/crawler/kbo-status";
+import { fetchKboLiveGames } from "@/lib/notifications/kbo-live-games";
 
 const __diagSeenPitchers = new Set<string>();
 
@@ -25,22 +26,9 @@ export async function GET(req: NextRequest) {
   const date = req.nextUrl.searchParams.get("date") || resolveGameLiveDate();
   
   try {
-    // 2026-05-20: KBO가 Referer가 koreabaseball.com이 아닌 요청을 IE 에러 페이지로 막음.
-    const res = await fetch("https://www.koreabaseball.com/ws/Main.asmx/GetKboGameList", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)",
-        "Referer": "https://www.koreabaseball.com/Schedule/ScoreBoard.aspx",
-      },
-      body: `leId=1&srId=0,1,3,4,5,7,8,9&date=${date}`,
-      next: { revalidate: 10 },
-    });
-
-    if (!res.ok) throw new Error(`KBO API ${res.status}`);
-    
-    const data = await res.json();
-    const games = (data?.game || []).map((g: KboRawGame) => {
+    const fetched = await fetchKboLiveGames(date, Date.now() + 5_000);
+    if (!fetched.ok) throw new Error("dual-source live games unavailable");
+    const games = fetched.games.map((g: KboRawGame) => {
       const status = isKboGameCancelled(g.CANCEL_SC_ID) ? "cancelled"
         : g.GAME_STATE_SC === "3" ? "final"
         : g.GAME_STATE_SC === "2" ? "live"

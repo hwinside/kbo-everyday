@@ -91,6 +91,7 @@
     "qa:jjal-collector-photo": "tsx scripts/qa/jjal-collector-photo-smoke.ts",
     "qa:push-score-events": "tsx scripts/qa/push-score-events-smoke.ts",
     "qa:start-watchdog": "tsx scripts/qa/game-start-watchdog-smoke.ts",
+    "qa:kbo-live-games-failover": "tsx scripts/qa/kbo-live-games-failover-smoke.ts",
     "qa:end-streak": "tsx scripts/qa/end-streak-smoke.ts",
     "qa:team-rank": "tsx scripts/qa/team-rank-smoke.ts",
     "qa:team-switcher-history": "node scripts/qa/team-switcher-history-smoke.mjs",
@@ -196,7 +197,8 @@
     "qa:polling-fallback": "tsx scripts/qa/polling-fallback-smoke.ts && tsx scripts/qa/polling-fallback-react-smoke.ts",
     "qa:game-live-stream": "tsx scripts/qa/game-live-stream-smoke.ts",
     "qa:diary-contrast": "node scripts/qa/venue-diary-card-contrast.mjs",
-    "qa:baseball-qa": "tsx scripts/qa/baseball-qa-pipeline-smoke.ts"
+    "qa:baseball-qa": "tsx scripts/qa/baseball-qa-pipeline-smoke.ts",
+    "qa:outage-banner": "tsx scripts/qa/outage-notice-banner-smoke.ts"
   },
   "dependencies": {
     "@capacitor-firebase/messaging": "^8.3.0",
