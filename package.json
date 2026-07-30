@@ -91,6 +91,7 @@
     "qa:start-watchdog": "tsx scripts/qa/game-start-watchdog-smoke.ts",
     "qa:end-streak": "tsx scripts/qa/end-streak-smoke.ts",
     "qa:team-rank": "tsx scripts/qa/team-rank-smoke.ts",
+    "qa:team-switcher-history": "node scripts/qa/team-switcher-history-smoke.mjs",
     "qa:team-card-graph": "tsx scripts/qa/team-card-graph-smoke.ts",
     "qa:pagination": "tsx scripts/qa/pagination-fail-closed-smoke.ts",
     "qa:query-guard": "node scripts/qa/query-pagination-guard.mjs",
