@@ -63,7 +63,8 @@ async function fetchWithTimeout(url: string, init: RequestInit = {}): Promise<Re
 }
 
 // sourceHtml: 원문 페이지 HTML(출처 핸들 추출용). embed로 영상을 찾아도 원문 페이지 HTML을 함께 돌려준다.
-async function fetchMediaList(sourceUrl: string): Promise<{ media: OgMedia[]; sourceHtml: string | null }> {
+// export: orchestration(resolvedUrl 기반 임베드 재조회 + 영상>사진 우선 + Threads fail-close) 회귀테스트용.
+export async function fetchMediaList(sourceUrl: string): Promise<{ media: OgMedia[]; sourceHtml: string | null }> {
   const fetched = await fetchPageHtml(sourceUrl);
   if (!fetched) return { media: [], sourceHtml: null };
   // resolvedUrl: 리다이렉트 최종 URL. Threads 공유 링크(/share/CODE/)는 canonical
@@ -76,15 +77,30 @@ async function fetchMediaList(sourceUrl: string): Promise<{ media: OgMedia[]; so
   if (media.some((m) => m.type === "video")) return { media, sourceHtml: html };
 
   // SPA(Threads 등) — embed 페이지에서 한 번 더 시도. 영상 우선(움짤콜렉터) → 없으면 사진(짤콜렉터).
+  //
+  // fail-close(삼순 NO-GO 반영 2026-07-31): Threads로 식별된 게시물은 원문에 og:image(영상
+  // poster)만 있어서, embed 조회가 실패(429/5xx/네트워크)하거나 embed에서 영상/사진 유형을
+  // 확정하지 못하면 *아래 최종 return { media }로 떨어져 영상 poster가 사진글로 오발행*된다.
+  // 그래서 Threads 경로에 들어오면 이 블록 안에서 확정하거나 빈 배열(→ reject)로 fail-close하고,
+  // 절대 원문 og:image poster로 photo 발행하지 않는다.
   const threadsEmbedUrl = getThreadsEmbedUrl(resolvedUrl);
   if (threadsEmbedUrl) {
     const embedHtml = await fetchPageHtml(threadsEmbedUrl);
-    if (embedHtml) {
-      const embedMedia = extractMediaList(embedHtml.html, MAX_MEDIA_ITEMS);
-      if (embedMedia.some((m) => m.type === "video")) return { media: embedMedia, sourceHtml: html };
-      const thImages = extractThreadsImageUrls(embedHtml.html, MAX_MEDIA_ITEMS);
-      if (thImages.length > 0) return { media: thImages, sourceHtml: html };
-    }
+    // embed 조회 실패(429/5xx/네트워크) → 원문 poster photo 오발행 금지, fail-close.
+    if (!embedHtml) return { media: [], sourceHtml: html };
+    // http(s) 다운로드 가능한 video만 유효. blob:/data: src는 재생전용 비-다운로드 URL이라
+    // 영상 추출 실패로 간주(삼순 게이트: <video> 있으나 mp4 추출 깨짐 → photo 아님 → fail-close).
+    const embedVideos = extractMediaList(embedHtml.html, MAX_MEDIA_ITEMS).filter(
+      (m) => m.type === "video" && /^https?:\/\//i.test(m.url),
+    );
+    if (embedVideos.length > 0) return { media: embedVideos, sourceHtml: html };
+    // <video>/<source> 태그는 있는데 재생 URL 추출 0 = 영상 추출 실패(사진 아님) → fail-close.
+    // (poster/썸네일이 thImages로 잡혀 사진 오발행되는 것을 차단.)
+    if (/<(?:video|source)\b/i.test(embedHtml.html)) return { media: [], sourceHtml: html };
+    const thImages = extractThreadsImageUrls(embedHtml.html, MAX_MEDIA_ITEMS);
+    if (thImages.length > 0) return { media: thImages, sourceHtml: html };
+    // Threads로 식별됐으나 embed에서 영상·사진 확정 불가(200 unknown 등) → fail-close.
+    return { media: [], sourceHtml: html };
   }
 
   // Instagram reel/p/tv — 본문엔 og:image(썸네일)만 있고, /embed/ 페이지 contextJSON에
