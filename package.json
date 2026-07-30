@@ -92,6 +92,7 @@
     "qa:push-score-events": "tsx scripts/qa/push-score-events-smoke.ts",
     "qa:start-watchdog": "tsx scripts/qa/game-start-watchdog-smoke.ts",
     "qa:kbo-live-games-failover": "tsx scripts/qa/kbo-live-games-failover-smoke.ts",
+    "qa:naver-runner-name": "tsx scripts/qa/naver-runner-name-smoke.ts",
     "qa:end-streak": "tsx scripts/qa/end-streak-smoke.ts",
     "qa:team-rank": "tsx scripts/qa/team-rank-smoke.ts",
     "qa:team-switcher-history": "node scripts/qa/team-switcher-history-smoke.mjs",

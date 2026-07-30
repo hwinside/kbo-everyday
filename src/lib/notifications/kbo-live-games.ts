@@ -6,6 +6,15 @@ import type { KboGame } from "@/lib/crawler/kbo-api";
 import { naverGameId } from "@/lib/crawler/naver-record";
 
 const KBO_MAIN = "https://www.koreabaseball.com/ws/Main.asmx";
+
+/**
+ * Naver failover 는 베이스 점유 여부(boolean)만 알고 *타순*은 모른다.
+ * 예전엔 점유를 타순 1로 합성해서 소비측 resolveRunnerName 이 1번 타자 이름을
+ * 모든 점유 베이스에 붙였다(2026-07-30 두산:SSG 박찬호 1·2·3루 전부 표시 사고).
+ * KBO 타순은 1~9 이므로, 그 범위 밖 sentinel 을 넣어 점유 점등(>0 체크)은 유지하되
+ * 이름 해석은 실패(null)하게 한다 → UI 는 "주자" 로 표기.
+ */
+export const NAVER_UNKNOWN_RUNNER_ORDER = 99;
 const KBO_PRIMARY_BUDGET_MS = 1_500;
 
 type LiveGamesSource = "kbo" | "naver";
@@ -146,9 +155,9 @@ export function naverGameToRaw(game: KboGame): KboRawGame {
     STRIKE_CN: game.strikes,
     BALL_CN: game.balls,
     OUT_CN: game.outs,
-    B1_BAT_ORDER_NO: game.runnersOn.first ? 1 : 0,
-    B2_BAT_ORDER_NO: game.runnersOn.second ? 1 : 0,
-    B3_BAT_ORDER_NO: game.runnersOn.third ? 1 : 0,
+    B1_BAT_ORDER_NO: game.runnersOn.first ? NAVER_UNKNOWN_RUNNER_ORDER : 0,
+    B2_BAT_ORDER_NO: game.runnersOn.second ? NAVER_UNKNOWN_RUNNER_ORDER : 0,
+    B3_BAT_ORDER_NO: game.runnersOn.third ? NAVER_UNKNOWN_RUNNER_ORDER : 0,
     B_P_NM: game.isTop ? game.currentPitcher : game.currentBatter,
     T_P_NM: game.isTop ? game.currentBatter : game.currentPitcher,
     T_RANK_NO: game.awayRank,

@@ -119,9 +119,10 @@ async function main() {
     STRIKE_CN: 1,
     BALL_CN: 2,
     OUT_CN: 1,
-    B1_BAT_ORDER_NO: 1,
+    // 타순 미상 sentinel(99): 점유 점등(>0)은 유지, 이름 해석은 skip(1번 타자 오표시 사고 방지).
+    B1_BAT_ORDER_NO: 99,
     B2_BAT_ORDER_NO: 0,
-    B3_BAT_ORDER_NO: 1,
+    B3_BAT_ORDER_NO: 99,
     B_P_NM: "네일",
     T_P_NM: "김지찬",
     T_RANK_NO: 0,
