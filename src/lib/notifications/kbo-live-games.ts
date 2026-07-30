@@ -3,13 +3,91 @@ import { runBeforeDeadline } from "@/lib/async-deadline";
 import { parseKboGameListPayload } from "@/lib/notifications/widget-fast-loop";
 import { fetchNaverGames } from "@/lib/crawler/naver-games";
 import type { KboGame } from "@/lib/crawler/kbo-api";
+import { naverGameId } from "@/lib/crawler/naver-record";
 
 const KBO_MAIN = "https://www.koreabaseball.com/ws/Main.asmx";
 const KBO_PRIMARY_BUDGET_MS = 1_500;
 
 type LiveGamesSource = "kbo" | "naver";
 
-function naverGameToRaw(game: KboGame): KboRawGame {
+type NaverLiveEvidence = {
+  hasRealPlay: boolean;
+  balls: number;
+  strikes: number;
+  outs: number;
+  runner1b: boolean;
+  runner2b: boolean;
+  runner3b: boolean;
+};
+
+type NaverLiveEvidenceFetcher = (
+  gameId: string,
+  signal: AbortSignal,
+) => Promise<NaverLiveEvidence>;
+
+function safeCount(value: unknown): number {
+  const parsed = Number.parseInt(String(value ?? "0"), 10);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+/**
+ * Naver schedule의 STARTED는 첫 투구 전에도 1회초 0:0으로 바뀐다.
+ * relay에 실제 투구 식별자/투구번호가 생긴 뒤에만 downstream live로 노출한다.
+ */
+export async function fetchNaverLiveEvidence(
+  gameId: string,
+  signal: AbortSignal,
+): Promise<NaverLiveEvidence> {
+  const response = await fetch(
+    `https://api-gw.sports.naver.com/schedule/games/${naverGameId(gameId)}/relay?inning=1`,
+    {
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)" },
+      cache: "no-store",
+      signal,
+    },
+  );
+  if (!response.ok) throw new Error(`Naver relay HTTP ${response.status}`);
+  const json = await response.json();
+  const relays = Array.isArray(json?.result?.textRelayData?.textRelays)
+    ? json.result.textRelayData.textRelays
+    : [];
+  const options = relays.flatMap((relay: { textOptions?: unknown[] }) =>
+    Array.isArray(relay?.textOptions) ? relay.textOptions : []
+  ) as Array<{
+    seqno?: number;
+    pitchNum?: number;
+    ptsPitchId?: string;
+    currentGameState?: Record<string, unknown>;
+  }>;
+  const actualPlay = options
+    .filter((option) => (
+      (typeof option.pitchNum === "number" && option.pitchNum > 0)
+      || (typeof option.ptsPitchId === "string" && option.ptsPitchId.length > 0)
+    ))
+    .sort((a, b) => (b.seqno ?? 0) - (a.seqno ?? 0));
+  const state = actualPlay[0]?.currentGameState ?? {};
+  return {
+    hasRealPlay: actualPlay.length > 0,
+    balls: safeCount(state.ball),
+    strikes: safeCount(state.strike),
+    outs: safeCount(state.out),
+    runner1b: safeCount(state.base1) > 0,
+    runner2b: safeCount(state.base2) > 0,
+    runner3b: safeCount(state.base3) > 0,
+  };
+}
+
+function hasSchedulePlayEvidence(game: KboGame): boolean {
+  if (game.status !== "live") return true;
+  return (
+    game.inning > 1
+    || !game.isTop
+    || (game.awayScore ?? 0) > 0
+    || (game.homeScore ?? 0) > 0
+  );
+}
+
+export function naverGameToRaw(game: KboGame): KboRawGame {
   const state = game.status === "live"
     ? "2"
     : game.status === "final"
@@ -60,6 +138,7 @@ export async function fetchKboLiveGames(
   deadlineAtMs?: number,
   fetchImpl: typeof fetch = fetch,
   fetchNaverImpl: typeof fetchNaverGames = fetchNaverGames,
+  fetchNaverEvidenceImpl: NaverLiveEvidenceFetcher = fetchNaverLiveEvidence,
 ): Promise<{
   ok: boolean;
   games: KboRawGame[];
@@ -104,9 +183,34 @@ export async function fetchKboLiveGames(
     const games = await fetchNaverImpl(date, undefined, {
       signal: AbortSignal.timeout(remainingMs),
     });
+    const verifiedGames = await Promise.all(games.map(async (game) => {
+      if (game.status !== "live" || hasSchedulePlayEvidence(game)) return game;
+      const evidenceRemainingMs = (deadlineAtMs ?? Date.now() + 5_000) - Date.now();
+      if (evidenceRemainingMs <= 0) return { ...game, status: "scheduled" as const };
+      try {
+        const evidence = await fetchNaverEvidenceImpl(
+          game.gameId,
+          AbortSignal.timeout(evidenceRemainingMs),
+        );
+        if (!evidence.hasRealPlay) return { ...game, status: "scheduled" as const };
+        return {
+          ...game,
+          balls: evidence.balls,
+          strikes: evidence.strikes,
+          outs: evidence.outs,
+          runnersOn: {
+            first: evidence.runner1b,
+            second: evidence.runner2b,
+            third: evidence.runner3b,
+          },
+        };
+      } catch {
+        return { ...game, status: "scheduled" as const };
+      }
+    }));
     return {
       ok: true,
-      games: games.map(naverGameToRaw),
+      games: verifiedGames.map(naverGameToRaw),
       trace: { source: "naver", sourceAtMs, fetchedAtMs: Date.now() },
     };
   } catch {

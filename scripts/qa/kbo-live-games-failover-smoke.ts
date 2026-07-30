@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { fetchKboLiveGames } from "../../src/lib/notifications/kbo-live-games";
 import type { KboGame } from "../../src/lib/crawler/kbo-api";
 
@@ -13,7 +14,7 @@ const naverGames: KboGame[] = [{
   homeName: "LG",
   awayScore: 0,
   homeScore: 0,
-  inning: 1,
+  inning: 2,
   isTop: true,
   status: "live",
   awayStarterName: "",
@@ -59,7 +60,7 @@ async function main() {
     HOME_NM: "LG",
     T_SCORE_CN: "0",
     B_SCORE_CN: "0",
-    GAME_INN_NO: 1,
+    GAME_INN_NO: 2,
     GAME_TB_SC: "T",
     GAME_STATE_SC: "2",
     CANCEL_SC_ID: "0",
@@ -97,6 +98,42 @@ async function main() {
   assert.equal(kbo.trace.source, "kbo");
   assert.equal(naverCalls, 1);
 
+  const prePitch = await fetchKboLiveGames(
+    "20260730",
+    Date.now() + 2_000,
+    failedKbo as typeof fetch,
+    async () => [{ ...naverGames[0], inning: 1, isTop: true, awayScore: 0, homeScore: 0 }],
+    async () => ({
+      hasRealPlay: false,
+      balls: 0,
+      strikes: 0,
+      outs: 0,
+      runner1b: false,
+      runner2b: false,
+      runner3b: false,
+    }),
+  );
+  assert.equal(prePitch.ok, true);
+  assert.equal(prePitch.games[0].GAME_STATE_SC, "1");
+
+  const firstPitch = await fetchKboLiveGames(
+    "20260730",
+    Date.now() + 2_000,
+    failedKbo as typeof fetch,
+    async () => [{ ...naverGames[0], inning: 1, isTop: true, awayScore: 0, homeScore: 0 }],
+    async () => ({
+      hasRealPlay: true,
+      balls: 1,
+      strikes: 0,
+      outs: 0,
+      runner1b: false,
+      runner2b: false,
+      runner3b: false,
+    }),
+  );
+  assert.equal(firstPitch.games[0].GAME_STATE_SC, "2");
+  assert.equal(firstPitch.games[0].BALL_CN, 1);
+
   const bothFailed = await fetchKboLiveGames(
     "20260730",
     Date.now() + 2_000,
@@ -106,7 +143,14 @@ async function main() {
   assert.equal(bothFailed.ok, false);
   assert.deepEqual(bothFailed.games, []);
 
-  console.log("kbo-live-games-failover: 3/3 PASS");
+  const gameLiveRoute = readFileSync("src/app/api/game-live/route.ts", "utf8");
+  const gameEventsRoute = readFileSync("src/app/api/game-events/route.ts", "utf8");
+  assert.match(gameLiveRoute, /fetchKboLiveGames\(date,/);
+  assert.match(gameEventsRoute, /fetchKboLiveGames\(date,/);
+  assert.doesNotMatch(gameLiveRoute, /GetKboGameList/);
+  assert.doesNotMatch(gameEventsRoute, /GetKboGameList/);
+
+  console.log("kbo-live-games-failover: 7/7 PASS");
 }
 
 main().catch((error) => {
