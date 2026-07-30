@@ -18,15 +18,35 @@ import {
  */
 const sent = new Set<string>();
 
+// 페이지 이탈 감지 — sendBeacon 은 응답을 확인할 수 없으므로(큐잉 ≠ 서버 저장 성공)
+// 이탈 직전 최후 fallback 에만 허용한다. pageshow 는 bfcache 복원 대응.
+let pageHiding = false;
+if (typeof window !== "undefined") {
+  window.addEventListener("pagehide", () => {
+    pageHiding = true;
+  });
+  window.addEventListener("pageshow", () => {
+    pageHiding = false;
+  });
+}
+
+function isPageUnloading(): boolean {
+  return (
+    pageHiding || (typeof document !== "undefined" && document.visibilityState === "hidden")
+  );
+}
+
 /**
- * 조회 1건 트래킹 (best-effort, UX 무영향). 전송 실패(폴백 fetch 비정상 응답 — 서버는 RPC
- * 실패를 5xx 로 반환) 시 mark 해제해 다음 표시/노출 때 재시도한다.
+ * 조회 1건 트래킹 (best-effort, UX 무영향). mark 는 동시 중복 fire 방지용 in-flight
+ * 가드로 선점만 하고, **서버 2xx(204) 확인 실패 시 즉시 해제**해 미확정으로 되돌린다
+ * (서버는 RPC 실패를 5xx 로 반환) — 다음 표시/노출 때 재전송되며, 서버 KST 일별
+ * dedupe 가 권위라 재시도가 이중 집계를 만들지 않는다 (삼순 정정 리뷰 #962).
  */
 export async function trackVenueStoryView(
   storyId: number,
   kind: VenueStoryViewKind,
-): Promise<void> {
-  if (!Number.isInteger(storyId) || storyId <= 0) return;
+): Promise<boolean> {
+  if (!Number.isInteger(storyId) || storyId <= 0) return false;
   let key: string | null = null;
   try {
     // fire 시점 세션을 먼저 해석한 뒤 viewer까지 포함한 키로 mark한다. 같은 탭에서
@@ -41,15 +61,17 @@ export async function trackVenueStoryView(
       : guestId
         ? `guest:${guestId}`
         : null;
-    if (!viewerKey) return;
+    if (!viewerKey) return false;
 
     key = venueStorySentKey(storyId, kind, viewerKey);
-    if (sent.has(key)) return;
+    if (sent.has(key)) return true;
     sent.add(key);
 
     const ok = await sendVenueStoryViewPing({
       url: `/api/venue-stories/${storyId}/view`,
       payload: { kind, guestId, accessToken: session?.access_token ?? null },
+      // 이탈 직전에만 beacon fallback 허용 — 일반 경로는 응답 확인 가능한 fetch(keepalive).
+      unloading: isPageUnloading(),
       sendBeacon:
         typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function"
           ? navigator.sendBeacon.bind(navigator)
@@ -57,7 +79,9 @@ export async function trackVenueStoryView(
       fetchFn: fetch,
     });
     if (!ok) sent.delete(key);
+    return ok;
   } catch {
     if (key) sent.delete(key);
+    return false;
   }
 }

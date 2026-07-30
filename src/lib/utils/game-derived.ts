@@ -10,15 +10,118 @@ interface GameBase {
   homeTeamId?: number;
 }
 
-// Convert LineupEntry[] to the shape FieldViewV2 expects
-function toDefenders(entries: LineupEntry[], teamId?: number) {
-  return entries.map(e => ({
-    order: e.order,
-    name: e.name,
-    position: e.position,
-    avg: "",
-    teamId,
-  }));
+const FIELD_POSITIONS = ["C", "1B", "2B", "3B", "SS", "LF", "CF", "RF"] as const;
+const FIELD_POSITION_SET = new Set<string>(FIELD_POSITIONS);
+
+// 단일 수비 위치 문자 → 필드 코드. 한자/한글 약어(一二三·유좌중우·포) + 숫자.
+const POS_CHAR_TO_FIELD: Record<string, string> = {
+  "포": "C", "一": "1B", "二": "2B", "三": "3B",
+  "유": "SS", "좌": "LF", "중": "CF", "우": "RF",
+  "1": "1B", "2": "2B", "3": "3B",
+};
+// 한글 풀네임 → 필드 코드.
+const POS_FULL_TO_FIELD: Record<string, string> = {
+  "포수": "C", "1루수": "1B", "2루수": "2B", "3루수": "3B",
+  "유격수": "SS", "좌익수": "LF", "중견수": "CF", "우익수": "RF",
+};
+
+/**
+ * BoxScore/라인업의 포지션 값을 *최종 수비 위치 코드*로 정규화한다.
+ *
+ * 소스가 제각각이라 정규화 없이는 매칭이 샌다:
+ *  - KBO HTML 파서: 이미 코드(C/1B/…) 또는 지명(DH)
+ *  - Naver fallback 파서: 원시 약어(一/二/三, 포/유/좌/중/우) 그대로
+ *  - 대타·대주 후 수비 진입: 복합 약어(타二, 주중, 주우, 중우 …) → *마지막 문자가
+ *    최종 수비 위치*. 대타/대주(타/주) 접두는 무시하고 실제 수비 위치만 취한다.
+ *
+ * 투수(P/투)·지명타자(DH/지)·순수 대타·대주(타/주 단독)는 필드 수비수가 아니므로
+ * null을 반환한다(필드뷰에서 제외, 투수는 currentPitcher로 별도 렌더).
+ */
+function normalizeFieldPosition(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const t = raw.trim();
+  if (!t) return null;
+  if (FIELD_POSITION_SET.has(t)) return t;              // 이미 필드 코드
+  if (t === "P" || t === "DH" || t === "투" || t === "지" || t === "투수" || t === "지명타자") return null;
+  if (POS_FULL_TO_FIELD[t]) return POS_FULL_TO_FIELD[t]; // 한글 풀네임
+  // 복합/단일 약어 — 뒤에서부터 첫 수비 위치 문자(= 최종 이동 위치) 채택.
+  for (let i = t.length - 1; i >= 0; i--) {
+    const code = POS_CHAR_TO_FIELD[t[i]];
+    if (code) return code;
+  }
+  return null;
+}
+
+/**
+ * 필드뷰 수비 다이어그램용 수비수 목록을 만든다.
+ *
+ * 선발 라인업(detailLineup)만 보면 대타·대주·수비교체 이후 필드 위치가 선발 선수
+ * 그대로 남아 "타순/투수는 바뀌는데 수비 위치만 안 바뀜" 버그가 난다.
+ * (주자 이름 해결과 동일한 근거 — BoxScore는 교체 이력을 포함한다.)
+ *
+ * ⚠️ BoxScore 배열은 *전역 시간순이 아니라 타순별 그룹 순서*다(각 타순 안에서만
+ * 시간순: 선발 → 교체 선수). 그래서 "포지션별로 배열 전체를 훑어 마지막 매치"를
+ * 하면, 뒤쪽 타순에 남아있는 *이미 교체돼 사라진* 선수(예: 3번 슬롯 안현민 우)가
+ * 앞 타순의 현재 선수(1번 슬롯 장진혁 RF)를 덮어써 잘못된 수비수가 나온다.
+ *
+ * 올바른 순서:
+ *  1) 타순별 *마지막 entry* = 그 슬롯의 현재 선수를 먼저 확정한다.
+ *  2) 그 현재 선수의 *최종 수비 위치만* 정규화해 8개 필드 위치를 구성한다.
+ *  3) BoxScore에 현재 수비수가 없는 위치만 선발 라인업으로 폴백하되, 그 선발이
+ *     이미 교체돼(같은 슬롯의 현재 선수가 다른 사람) 사라졌으면 되살리지 않는다
+ *     — 순수 대타/대주로 슬롯이 채워져 수비 위치가 아직 불명확(타/주)한 동안 stale
+ *     선발이 화면에 남는 것을 막는다.
+ * BoxScore가 통째로 비어있으면 전부 선발 라인업으로 폴백 → 기존 동작 유지.
+ */
+function toDefenders(
+  boxBatters: BatterRecord[] | null | undefined,
+  lineupEntries: LineupEntry[] | null | undefined,
+  teamId?: number,
+) {
+  // BoxScore 미수신/빈 배열 → 선발 라인업 전체 폴백 (기존 동작 유지).
+  if (!boxBatters || boxBatters.length === 0) {
+    return FIELD_POSITIONS.flatMap(pos => {
+      const entry = lineupEntries?.find(e => normalizeFieldPosition(e.position) === pos);
+      return entry
+        ? [{ order: entry.order, name: entry.name, position: pos, avg: "", teamId }]
+        : [];
+    });
+  }
+
+  // 1) 타순별 마지막 entry = 현재 그 슬롯 선수. (배열이 타순 그룹 순 + 그룹 내 시간순
+  //    이므로 같은 order의 마지막 write = 현재.)
+  const currentBySlot = new Map<number, BatterRecord>();
+  for (const b of boxBatters) {
+    if (!b.name) continue;
+    if (typeof b.order === "number" && b.order > 0) currentBySlot.set(b.order, b);
+  }
+
+  // 2) 현재 슬롯 선수들의 *최종 수비 위치*만 필드 위치로 매핑. 교체돼 사라진 선수는
+  //    애초에 currentBySlot에 없으므로 새지 않는다.
+  const byPosition = new Map<string, BatterRecord>();
+  for (const b of currentBySlot.values()) {
+    const pos = normalizeFieldPosition(b.position);
+    if (pos && !byPosition.has(pos)) byPosition.set(pos, b);
+  }
+
+  return FIELD_POSITIONS.flatMap(pos => {
+    // 2-1) BoxScore의 현재 수비수 우선.
+    const cur = byPosition.get(pos);
+    if (cur) {
+      return [{ order: cur.order, name: cur.name, position: pos, avg: cur.avg ?? "", teamId }];
+    }
+    // 2-2) 선발 라인업 폴백 — 단 그 선발 슬롯이 이미 다른 선수로 교체됐으면 억제.
+    const entry = lineupEntries?.find(e => normalizeFieldPosition(e.position) === pos);
+    if (!entry) return [];
+    if (typeof entry.order === "number") {
+      const slotCur = currentBySlot.get(entry.order);
+      if (slotCur) {
+        const slotPosition = normalizeFieldPosition(slotCur.position);
+        if (slotCur.name !== entry.name || slotPosition !== pos) return []; // 교체·포지션 이동 stale 억제
+      }
+    }
+    return [{ order: entry.order, name: entry.name, position: pos, avg: "", teamId }];
+  });
 }
 
 /**
@@ -86,8 +189,10 @@ export function deriveGameState(
   const defensiveTeamId = isTop ? game.homeTeamId : game.awayTeamId;
   const battingTeamId = isTop ? game.awayTeamId : game.homeTeamId;
 
-  const defensiveSide = detailLineup
-    ? (isTop ? toDefenders(detailLineup.home, game.homeTeamId) : toDefenders(detailLineup.away, game.awayTeamId))
+  const defensiveLineup = detailLineup ? (isTop ? detailLineup.home : detailLineup.away) : null;
+  const defensiveBoxBatters = detailBoxScore ? (isTop ? detailBoxScore.homeBatters : detailBoxScore.awayBatters) : null;
+  const defensiveSide = (defensiveLineup || (defensiveBoxBatters && defensiveBoxBatters.length > 0))
+    ? toDefenders(defensiveBoxBatters, defensiveLineup, defensiveTeamId)
     : null;
 
   // On-deck batters from lineup

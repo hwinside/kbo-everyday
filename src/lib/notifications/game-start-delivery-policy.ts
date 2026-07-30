@@ -32,3 +32,26 @@ export async function drainGameStartDeliveryBatches<Row>(args: {
   }
   return acceptedDelta;
 }
+
+export async function drainGameStartDeliveryRoundRobin<Item>(args: {
+  items: Item[];
+  deadlineAtMs: number;
+  minRemainingMs: number;
+  process: (item: Item) => Promise<{ claimed: number; pending: number }>;
+  now?: () => number;
+}): Promise<void> {
+  const now = args.now ?? Date.now;
+  let active = [...args.items];
+  while (
+    active.length > 0
+    && args.deadlineAtMs - now() >= args.minRemainingMs
+  ) {
+    const pass = await Promise.all(active.map(async (item) => ({
+      item,
+      result: await args.process(item),
+    })));
+    active = pass
+      .filter(({ result }) => result.claimed > 0 && result.pending > 0)
+      .map(({ item }) => item);
+  }
+}

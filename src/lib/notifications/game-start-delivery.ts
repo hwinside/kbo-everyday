@@ -9,7 +9,10 @@ import {
 const SNAPSHOT_DEADLINE_MS = 90_000;
 export const START_DELIVERY_TRANSPORT_MS = 8_000;
 export const START_DELIVERY_ATTEMPT_MS = 14_000;
-const START_DELIVERY_SETTLE_RESERVE_MS = 4_000;
+export const START_DELIVERY_SETTLE_RESERVE_MS = 4_000;
+export const START_DELIVERY_FINALIZE_RESERVE_MS = 2_000;
+export const START_DELIVERY_NEW_BATCH_MIN_REMAINING_MS = 5_000;
+export const START_DELIVERY_PREPARE_MS = 2_500;
 const START_DELIVERY_LEASE_SECONDS = 45;
 
 type ClaimedDelivery = {
@@ -122,7 +125,7 @@ export async function deliverGameStartBatch(args: GameStartDeliveryTarget & {
   attemptDeadlineAtMs: number;
 }): Promise<GameStartDeliveryBatchResult> {
   const attemptDeadlineAtMs = Math.min(args.snapshotDeadlineAtMs, args.attemptDeadlineAtMs);
-  if (Date.now() >= attemptDeadlineAtMs) {
+  if (attemptDeadlineAtMs - Date.now() < START_DELIVERY_NEW_BATCH_MIN_REMAINING_MS) {
     return { ...EMPTY, claimed: 0 };
   }
 
