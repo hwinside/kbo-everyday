@@ -1,7 +1,29 @@
+/**
+ * fetchKboLiveGames dual-source failover 회귀 + actual GET /api/game-live 회귀.
+ *
+ * 고정하는 계약(삼순 1·2차 리뷰 blocker):
+ * - KBO HTTP/network/schema 실패 → Naver failover(ok:true, source:"naver").
+ * - KBO 200 + 빈 game 배열(soft-empty)은 Naver 교차확인 후에만 authoritative —
+ *   Naver 에 경기가 있으면 Naver 사용(블랙홀 방지), Naver 도 무경기일 때만 KBO empty 인정.
+ * - Naver failover live 경기는 relay currentGameState 로 볼카운트(B/S/O)·주자·현재
+ *   투수/타자를 enrichment(1회초 이후 포함). relay 실패는 per-game fail-soft(zero 유지, live 유지).
+ * - 1회초 0:0 은 첫 투구 증거(hasRealPlay) 없으면 scheduled 유지.
+ * - actual /api/game-live: KBO 실패 시에도 user-facing 필드(balls/strikes/outs/
+ *   runners/currentPitcher/currentBatter)가 Naver relay 값으로 채워진다.
+ */
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { fetchKboLiveGames } from "../../src/lib/notifications/kbo-live-games";
+import { NextRequest } from "next/server";
 import type { KboGame } from "../../src/lib/crawler/kbo-api";
+
+// import 체인(api-fallback-tracker → supabase admin)이 모듈 스코프에서 env 를 요구하므로
+// 앱 코드는 env 설정 후 동적 import 한다(game-detail smoke 와 동일 패턴).
+process.env.NEXT_PUBLIC_SUPABASE_URL ??= "http://127.0.0.1:54321";
+process.env.SUPABASE_SERVICE_ROLE_KEY ??= "smoke-service-role-key";
+
+type FetchKboLiveGames =
+  typeof import("../../src/lib/notifications/kbo-live-games").fetchKboLiveGames;
+let fetchKboLiveGames: FetchKboLiveGames;
 
 const naverGames: KboGame[] = [{
   gameId: "20260730WOLG0",
@@ -32,7 +54,20 @@ const naverGames: KboGame[] = [{
   homeRank: 0,
 }];
 
+const zeroEvidence = {
+  hasRealPlay: true,
+  balls: 0,
+  strikes: 0,
+  outs: 0,
+  runner1b: false,
+  runner2b: false,
+  runner3b: false,
+  currentPitcher: "",
+  currentBatter: "",
+};
+
 async function main() {
+  ({ fetchKboLiveGames } = await import("../../src/lib/notifications/kbo-live-games"));
   let naverCalls = 0;
   const failedKbo = async () => new Response(null, { status: 503 });
   const naver = async () => {
@@ -40,11 +75,23 @@ async function main() {
     return naverGames;
   };
 
+  // 1) KBO 실패 → Naver failover + relay enrichment(2회 경기도 카운트/투타 채움).
   const fallback = await fetchKboLiveGames(
     "20260730",
     Date.now() + 2_000,
     failedKbo as typeof fetch,
     naver,
+    async () => ({
+      hasRealPlay: true,
+      balls: 2,
+      strikes: 1,
+      outs: 1,
+      runner1b: true,
+      runner2b: false,
+      runner3b: true,
+      currentPitcher: "네일",
+      currentBatter: "김지찬",
+    }),
   );
   assert.equal(fallback.ok, true);
   assert.equal(fallback.trace.source, "naver");
@@ -69,18 +116,33 @@ async function main() {
     W_PIT_P_NM: "",
     L_PIT_P_NM: "",
     SV_PIT_P_NM: "",
-    STRIKE_CN: 0,
-    BALL_CN: 0,
-    OUT_CN: 0,
-    B1_BAT_ORDER_NO: 0,
+    STRIKE_CN: 1,
+    BALL_CN: 2,
+    OUT_CN: 1,
+    B1_BAT_ORDER_NO: 1,
     B2_BAT_ORDER_NO: 0,
-    B3_BAT_ORDER_NO: 0,
-    B_P_NM: "",
-    T_P_NM: "",
+    B3_BAT_ORDER_NO: 1,
+    B_P_NM: "네일",
+    T_P_NM: "김지찬",
     T_RANK_NO: 0,
     B_RANK_NO: 0,
   });
 
+  // 2) relay enrichment 실패 → per-game fail-soft: live 유지 + zero/empty 유지.
+  const enrichFailed = await fetchKboLiveGames(
+    "20260730",
+    Date.now() + 2_000,
+    failedKbo as typeof fetch,
+    naver,
+    async () => { throw new Error("relay down"); },
+  );
+  assert.equal(enrichFailed.ok, true);
+  assert.equal(enrichFailed.games[0].GAME_STATE_SC, "2");
+  assert.equal(enrichFailed.games[0].BALL_CN, 0);
+  assert.equal(enrichFailed.games[0].B_P_NM, "");
+
+  // 3) KBO 정상(경기 있음) → Naver 미호출.
+  naverCalls = 0;
   const kbo = await fetchKboLiveGames(
     "20260730",
     Date.now() + 2_000,
@@ -96,44 +158,79 @@ async function main() {
   );
   assert.equal(kbo.ok, true);
   assert.equal(kbo.trace.source, "kbo");
+  assert.equal(naverCalls, 0);
+
+  const kboEmpty = (async () => new Response(JSON.stringify({ game: [] }), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  })) as typeof fetch;
+
+  // 4) KBO 200 soft-empty + Naver 에 경기 있음 → Naver 사용(블랙홀 방지).
+  naverCalls = 0;
+  const softEmpty = await fetchKboLiveGames(
+    "20260730",
+    Date.now() + 2_000,
+    kboEmpty,
+    naver,
+    async () => zeroEvidence,
+  );
+  assert.equal(softEmpty.ok, true);
+  assert.equal(softEmpty.trace.source, "naver");
+  assert.equal(softEmpty.games.length, 1);
   assert.equal(naverCalls, 1);
 
+  // 5) KBO 200 empty + Naver 도 무경기 → KBO empty authoritative(source:"kbo").
+  naverCalls = 0;
+  const bothEmpty = await fetchKboLiveGames(
+    "20260730",
+    Date.now() + 2_000,
+    kboEmpty,
+    (async () => {
+      naverCalls += 1;
+      return [];
+    }),
+  );
+  assert.equal(bothEmpty.ok, true);
+  assert.equal(bothEmpty.trace.source, "kbo");
+  assert.deepEqual(bothEmpty.games, []);
+  assert.equal(naverCalls, 1);
+
+  // 6) KBO 200 empty + Naver 확인 실패 → KBO empty 유지(무경기일 Naver 장애로 500 방지).
+  const emptyNaverDown = await fetchKboLiveGames(
+    "20260730",
+    Date.now() + 2_000,
+    kboEmpty,
+    async () => { throw new Error("naver down"); },
+  );
+  assert.equal(emptyNaverDown.ok, true);
+  assert.equal(emptyNaverDown.trace.source, "kbo");
+  assert.deepEqual(emptyNaverDown.games, []);
+
+  // 7) 1회초 0:0 + 첫 투구 증거 없음 → scheduled 유지.
   const prePitch = await fetchKboLiveGames(
     "20260730",
     Date.now() + 2_000,
     failedKbo as typeof fetch,
     async () => [{ ...naverGames[0], inning: 1, isTop: true, awayScore: 0, homeScore: 0 }],
-    async () => ({
-      hasRealPlay: false,
-      balls: 0,
-      strikes: 0,
-      outs: 0,
-      runner1b: false,
-      runner2b: false,
-      runner3b: false,
-    }),
+    async () => ({ ...zeroEvidence, hasRealPlay: false }),
   );
   assert.equal(prePitch.ok, true);
   assert.equal(prePitch.games[0].GAME_STATE_SC, "1");
 
+  // 8) 1회초 첫 투구 확인 → live + 카운트 반영.
   const firstPitch = await fetchKboLiveGames(
     "20260730",
     Date.now() + 2_000,
     failedKbo as typeof fetch,
     async () => [{ ...naverGames[0], inning: 1, isTop: true, awayScore: 0, homeScore: 0 }],
-    async () => ({
-      hasRealPlay: true,
-      balls: 1,
-      strikes: 0,
-      outs: 0,
-      runner1b: false,
-      runner2b: false,
-      runner3b: false,
-    }),
+    async () => ({ ...zeroEvidence, balls: 1, currentPitcher: "폰세", currentBatter: "빅터레이예스" }),
   );
   assert.equal(firstPitch.games[0].GAME_STATE_SC, "2");
   assert.equal(firstPitch.games[0].BALL_CN, 1);
+  assert.equal(firstPitch.games[0].B_P_NM, "폰세");
+  assert.equal(firstPitch.games[0].T_P_NM, "빅터레이예스");
 
+  // 9) 양 소스 모두 실패 → ok:false (정상 "경기 0"과 구분).
   const bothFailed = await fetchKboLiveGames(
     "20260730",
     Date.now() + 2_000,
@@ -143,6 +240,10 @@ async function main() {
   assert.equal(bothFailed.ok, false);
   assert.deepEqual(bothFailed.games, []);
 
+  // 10) actual GET /api/game-live: KBO 전면 실패(2026-07-30 204 장애 재현) 시에도
+  //     5경기 전부 user-facing live 필드가 Naver relay 값으로 채워진다.
+  await routeLevelRegression();
+
   const gameLiveRoute = readFileSync("src/app/api/game-live/route.ts", "utf8");
   const gameEventsRoute = readFileSync("src/app/api/game-events/route.ts", "utf8");
   assert.match(gameLiveRoute, /fetchKboLiveGames\(date,/);
@@ -150,7 +251,121 @@ async function main() {
   assert.doesNotMatch(gameLiveRoute, /GetKboGameList/);
   assert.doesNotMatch(gameEventsRoute, /GetKboGameList/);
 
-  console.log("kbo-live-games-failover: 7/7 PASS");
+  console.log("kbo-live-games-failover: 12/12 PASS");
+}
+
+// ---- actual route-level regression (mocked globalThis.fetch) ----
+
+const SLATE = [
+  { away: "HT", home: "SS", awayName: "KIA", homeName: "삼성", statusInfo: "2회말", pitcher: "네일", batter: "김지찬" },
+  { away: "KT", home: "NC", awayName: "KT", homeName: "NC", statusInfo: "3회말", pitcher: "고영표", batter: "박민우" },
+  { away: "LT", home: "HH", awayName: "롯데", homeName: "한화", statusInfo: "4회초", pitcher: "폰세", batter: "빅터레이예스" },
+  { away: "OB", home: "SK", awayName: "두산", homeName: "SSG", statusInfo: "2회말", pitcher: "잭로그", batter: "최정" },
+  { away: "WO", home: "LG", awayName: "키움", homeName: "LG", statusInfo: "3회말", pitcher: "로젠버그", batter: "홍창기" },
+];
+
+function naverSchedulePayload(date: string) {
+  const naverDate = `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}`;
+  return {
+    code: 200,
+    success: true,
+    result: {
+      games: SLATE.map((g) => ({
+        gameId: `${date}${g.away}${g.home}0${date.slice(0, 4)}`,
+        gameDateTime: `${naverDate}T18:30:00`,
+        stadium: "구장",
+        awayTeamCode: g.away,
+        homeTeamCode: g.home,
+        awayTeamName: g.awayName,
+        homeTeamName: g.homeName,
+        awayTeamScore: 1,
+        homeTeamScore: 0,
+        statusCode: "STARTED",
+        statusInfo: g.statusInfo,
+      })),
+    },
+  };
+}
+
+function naverRelayPayload(pitcherName: string, batterName: string) {
+  return {
+    code: 200,
+    success: true,
+    result: {
+      textRelayData: {
+        inn: 3,
+        currentGameState: {
+          pitcher: "10001",
+          batter: "20002",
+          ball: "2",
+          strike: "1",
+          out: "1",
+          base1: "7",
+          base2: "0",
+          base3: "4",
+        },
+        awayLineup: {
+          batter: [{ pcode: "20002", name: batterName }],
+          pitcher: [{ pcode: "30003", name: "다른투수" }],
+        },
+        homeLineup: {
+          batter: [{ pcode: "40004", name: "다른타자" }],
+          pitcher: [{ pcode: "10001", name: pitcherName }],
+        },
+        textRelays: [{
+          title: "1회초",
+          titleStyle: "8",
+          textOptions: [{ seqno: 1, type: 1, pitchNum: 1, currentGameState: { ball: "0", strike: "1", out: "0" } }],
+        }],
+      },
+    },
+  };
+}
+
+async function routeLevelRegression() {
+  const date = "20260730";
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input instanceof Request ? input.url : input);
+    if (url.includes("Main.asmx")) return new Response(null, { status: 503 });
+    if (url.includes("/relay?")) {
+      const match = url.match(/schedule\/games\/(\d{8})([A-Z]{4})0\d{4}\/relay/);
+      const slate = SLATE.find((g) => `${g.away}${g.home}` === match?.[2]);
+      if (!slate) return new Response(null, { status: 404 });
+      return Response.json(naverRelayPayload(slate.pitcher, slate.batter));
+    }
+    if (url.includes("api-gw.sports.naver.com/schedule/games?")) {
+      return Response.json(naverSchedulePayload(date));
+    }
+    return realFetch(input as RequestInfo, init);
+  }) as typeof fetch;
+  try {
+    const { GET } = await import("../../src/app/api/game-live/route");
+    const res = await GET(new NextRequest(`http://localhost/api/game-live?date=${date}`));
+    const body = await res.json() as {
+      games: Array<{
+        gameId: string; status: string; balls: number; strikes: number; outs: number;
+        runner1b: boolean; runner2b: boolean; runner3b: boolean;
+        currentPitcher: string | null; currentBatter: string | null;
+      }>;
+    };
+    assert.equal(body.games.length, 5);
+    for (const slate of SLATE) {
+      const game = body.games.find((g) => g.gameId === `${date}${slate.away}${slate.home}0`);
+      assert.ok(game, `route game missing: ${slate.away}${slate.home}`);
+      assert.equal(game.status, "live");
+      assert.equal(game.balls, 2, `${slate.away}${slate.home} balls`);
+      assert.equal(game.strikes, 1, `${slate.away}${slate.home} strikes`);
+      assert.equal(game.outs, 1, `${slate.away}${slate.home} outs`);
+      assert.equal(game.runner1b, true);
+      assert.equal(game.runner2b, false);
+      assert.equal(game.runner3b, true);
+      assert.equal(game.currentPitcher, slate.pitcher, `${slate.away}${slate.home} pitcher`);
+      assert.equal(game.currentBatter, slate.batter, `${slate.away}${slate.home} batter`);
+    }
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 }
 
 main().catch((error) => {

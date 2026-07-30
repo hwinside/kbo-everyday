@@ -18,6 +18,9 @@ type NaverLiveEvidence = {
   runner1b: boolean;
   runner2b: boolean;
   runner3b: boolean;
+  /** relay currentGameState pitcher/batter pcode → 라인업 이름 해석(실패 시 ""). */
+  currentPitcher: string;
+  currentBatter: string;
 };
 
 type NaverLiveEvidenceFetcher = (
@@ -30,9 +33,19 @@ function safeCount(value: unknown): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+type NaverRelayLineupSide = {
+  batter?: Array<{ pcode?: unknown; name?: unknown }>;
+  pitcher?: Array<{ pcode?: unknown; name?: unknown }>;
+};
+
 /**
  * Naver schedule의 STARTED는 첫 투구 전에도 1회초 0:0으로 바뀐다.
  * relay에 실제 투구 식별자/투구번호가 생긴 뒤에만 downstream live로 노출한다.
+ *
+ * inning=1 요청이어도 top-level textRelayData.currentGameState 는 항상 "지금" 상태
+ * (볼카운트·주자·현재 투수/타자 pcode)를 담고(2026-07-30 4회초 경기 inning=1 실측),
+ * awayLineup/homeLineup 에서 pcode→이름을 해석할 수 있어 한 번의 호출로
+ * 첫 투구 검증 + live 카운트/매치업 enrichment 를 모두 처리한다.
  */
 export async function fetchNaverLiveEvidence(
   gameId: string,
@@ -48,9 +61,8 @@ export async function fetchNaverLiveEvidence(
   );
   if (!response.ok) throw new Error(`Naver relay HTTP ${response.status}`);
   const json = await response.json();
-  const relays = Array.isArray(json?.result?.textRelayData?.textRelays)
-    ? json.result.textRelayData.textRelays
-    : [];
+  const relayData = json?.result?.textRelayData ?? {};
+  const relays = Array.isArray(relayData.textRelays) ? relayData.textRelays : [];
   const options = relays.flatMap((relay: { textOptions?: unknown[] }) =>
     Array.isArray(relay?.textOptions) ? relay.textOptions : []
   ) as Array<{
@@ -65,7 +77,21 @@ export async function fetchNaverLiveEvidence(
       || (typeof option.ptsPitchId === "string" && option.ptsPitchId.length > 0)
     ))
     .sort((a, b) => (b.seqno ?? 0) - (a.seqno ?? 0));
-  const state = actualPlay[0]?.currentGameState ?? {};
+  // 현재 상태는 top-level currentGameState 우선(가장 최신), 없으면 최신 투구 옵션의 것.
+  const state = (
+    relayData.currentGameState ?? actualPlay[0]?.currentGameState ?? {}
+  ) as Record<string, unknown>;
+  const roster: Array<{ pcode?: unknown; name?: unknown }> = [];
+  for (const side of [relayData.awayLineup, relayData.homeLineup] as Array<NaverRelayLineupSide | undefined>) {
+    if (Array.isArray(side?.batter)) roster.push(...side.batter);
+    if (Array.isArray(side?.pitcher)) roster.push(...side.pitcher);
+  }
+  const nameByPcode = (pcode: unknown): string => {
+    const key = String(pcode ?? "").trim();
+    if (!key || key === "0") return "";
+    const hit = roster.find((p) => String(p?.pcode ?? "").trim() === key);
+    return typeof hit?.name === "string" ? hit.name.trim() : "";
+  };
   return {
     hasRealPlay: actualPlay.length > 0,
     balls: safeCount(state.ball),
@@ -74,6 +100,8 @@ export async function fetchNaverLiveEvidence(
     runner1b: safeCount(state.base1) > 0,
     runner2b: safeCount(state.base2) > 0,
     runner3b: safeCount(state.base3) > 0,
+    currentPitcher: nameByPcode(state.pitcher),
+    currentBatter: nameByPcode(state.batter),
   };
 }
 
@@ -145,6 +173,13 @@ export async function fetchKboLiveGames(
   trace: { source: LiveGamesSource; sourceAtMs: number; fetchedAtMs: number };
 }> {
   const sourceAtMs = Date.now();
+  // KBO 200 + 빈 game 배열(soft-empty)은 장애 중 "가짜 무경기"일 수 있어 Naver 교차확인
+  // 전까지 authoritative 로 인정하지 않는다(삼순 2차 리뷰 P1).
+  let kboEmptyResult: {
+    ok: true;
+    games: KboRawGame[];
+    trace: { source: LiveGamesSource; sourceAtMs: number; fetchedAtMs: number };
+  } | null = null;
   try {
     const kboDeadlineAtMs = Math.min(
       deadlineAtMs ?? Date.now() + KBO_PRIMARY_BUDGET_MS,
@@ -169,8 +204,11 @@ export async function fetchKboLiveGames(
       const json = await runBeforeDeadline(() => response.json(), kboDeadlineAtMs).catch(() => null);
       const games = parseKboGameListPayload(json);
       const fetchedAtMs = Date.now();
-      if (games !== null) {
+      if (games !== null && games.length > 0) {
         return { ok: true, games, trace: { source: "kbo", sourceAtMs, fetchedAtMs } };
+      }
+      if (games !== null) {
+        kboEmptyResult = { ok: true, games, trace: { source: "kbo", sourceAtMs, fetchedAtMs } };
       }
     }
   } catch {
@@ -183,16 +221,29 @@ export async function fetchKboLiveGames(
     const games = await fetchNaverImpl(date, undefined, {
       signal: AbortSignal.timeout(remainingMs),
     });
+    // KBO empty 는 Naver 도 무경기일 때만 인정. Naver 에 경기가 있으면 KBO soft-empty
+    // 로 보고 Naver 결과를 사용한다(서비스 전체 블랙홀 방지).
+    if (kboEmptyResult && games.length === 0) return kboEmptyResult;
     const verifiedGames = await Promise.all(games.map(async (game) => {
-      if (game.status !== "live" || hasSchedulePlayEvidence(game)) return game;
+      if (game.status !== "live") return game;
+      // 1회초 0:0(스케줄 증거 없음)만 첫 투구 검증 대상. 그 외 live 는 relay 조회가
+      // 실패해도 live 유지(카운트만 zero/empty 유지, per-game fail-soft).
+      const needsFirstPitchCheck = !hasSchedulePlayEvidence(game);
       const evidenceRemainingMs = (deadlineAtMs ?? Date.now() + 5_000) - Date.now();
-      if (evidenceRemainingMs <= 0) return { ...game, status: "scheduled" as const };
+      if (evidenceRemainingMs <= 0) {
+        return needsFirstPitchCheck ? { ...game, status: "scheduled" as const } : game;
+      }
       try {
         const evidence = await fetchNaverEvidenceImpl(
           game.gameId,
           AbortSignal.timeout(evidenceRemainingMs),
         );
-        if (!evidence.hasRealPlay) return { ...game, status: "scheduled" as const };
+        if (needsFirstPitchCheck && !evidence.hasRealPlay) {
+          return { ...game, status: "scheduled" as const };
+        }
+        // Naver schedule 은 볼카운트/주자/현재 투타를 안 줌 → relay currentGameState 로
+        // 모든 live 경기를 보강해 경기방·LA·위젯이 경기 내내 0/0/0 으로 굳는 걸 막는다
+        // (삼순 2차 리뷰 P0).
         return {
           ...game,
           balls: evidence.balls,
@@ -203,9 +254,11 @@ export async function fetchKboLiveGames(
             second: evidence.runner2b,
             third: evidence.runner3b,
           },
+          currentPitcher: evidence.currentPitcher || game.currentPitcher,
+          currentBatter: evidence.currentBatter || game.currentBatter,
         };
       } catch {
-        return { ...game, status: "scheduled" as const };
+        return needsFirstPitchCheck ? { ...game, status: "scheduled" as const } : game;
       }
     }));
     return {
@@ -214,6 +267,9 @@ export async function fetchKboLiveGames(
       trace: { source: "naver", sourceAtMs, fetchedAtMs: Date.now() },
     };
   } catch {
+    // Naver 확인 자체가 실패하면 KBO 200 empty 는 그대로 유지한다 — 블랙홀 위험 케이스는
+    // "Naver 에 경기가 있는데 KBO 가 빈 배열"인 경우로, 그때는 위 분기에서 잡힌다.
+    if (kboEmptyResult) return kboEmptyResult;
     return {
       ok: false,
       games: [],
