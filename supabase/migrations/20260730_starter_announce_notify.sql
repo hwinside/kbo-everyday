@@ -198,11 +198,12 @@ as $$
     on conflict (game_id) do update
       set saw_unannounced = s.saw_unannounced or excluded.saw_unannounced,
           updated_at = now()
-    returning s.game_id as gid, s.saw_unannounced
+    returning s.game_id as gid, s.saw_unannounced, s.baseline_official
   )
   select
     u.gid,
     case
+      when u.baseline_official then 'baseline'
       when o.official and u.saw_unannounced then 'emit'
       when o.official then 'baseline'
       else 'wait'

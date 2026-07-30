@@ -153,6 +153,10 @@ async function main() {
       ok("최초 관측 기공개 → baseline(발송 금지)", b1.rows[0]?.action === "baseline");
       const b2 = await obs([{ game_id: "OBS-BASE", both_official: true }]);
       ok("재관측도 baseline 유지(emit 승격 없음)", b2.rows[0]?.action === "baseline");
+      const bGap = await obs([{ game_id: "OBS-BASE", both_official: false }]);
+      ok("baseline 경기 일시 공백 → baseline 고정", bGap.rows[0]?.action === "baseline");
+      const bRestore = await obs([{ game_id: "OBS-BASE", both_official: true }]);
+      ok("baseline 경기 공백 뒤 복구 → baseline 고정(지연 발송 없음)", bRestore.rows[0]?.action === "baseline");
       // 빈값 관측 → wait, 이후 공식값 → emit(실제 전이).
       const w1 = await obs([{ game_id: "OBS-TRANS", both_official: false }]);
       ok("빈값 관측 → wait", w1.rows[0]?.action === "wait");

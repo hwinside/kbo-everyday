@@ -50,6 +50,7 @@ function fin(over: Partial<StarterDeliveryResult> = {}): StarterDeliveryResult {
 }
 function base(over: Partial<StarterWatchdogDeps> = {}): Partial<StarterWatchdogDeps> {
   return {
+    fetchScheduleWitness: async () => [],
     // 기본 fake 관측: 공식값 경기는 이미 빈값 관측 이력이 있는 '실제 전이'로 취급(emit).
     // baseline/전이 시나리오는 개별 테스트가 stateful fake 로 덮어쓴다.
     observeGames: async (obs) =>
@@ -63,14 +64,17 @@ function base(over: Partial<StarterWatchdogDeps> = {}): Partial<StarterWatchdogD
 
 /** 실제 observe RPC 와 동일한 의미론의 stateful in-memory fake (전이/baseline 회귀용). */
 function statefulObserve() {
-  const seen = new Map<string, { sawUnannounced: boolean }>();
+  const seen = new Map<string, { sawUnannounced: boolean; baselineOfficial: boolean }>();
   return async (obs: Array<{ gameId: string; bothOfficial: boolean }>) => {
     const out = new Map<string, StarterObserveAction>();
     for (const o of obs) {
-      const st = seen.get(o.gameId) ?? { sawUnannounced: false };
+      const st = seen.get(o.gameId) ?? { sawUnannounced: false, baselineOfficial: o.bothOfficial };
       if (!o.bothOfficial) st.sawUnannounced = true;
       seen.set(o.gameId, st);
-      out.set(o.gameId, o.bothOfficial ? (st.sawUnannounced ? "emit" : "baseline") : "wait");
+      out.set(
+        o.gameId,
+        st.baselineOfficial ? "baseline" : o.bothOfficial ? (st.sawUnannounced ? "emit" : "baseline") : "wait",
+      );
     }
     return out;
   };
@@ -438,6 +442,27 @@ async function main() {
       }),
     });
     ok("후속 tick 에도 baseline 유지 → 발송 0", opens === 0 && r2.summary.baselines === 2 && r2.summary.transitions === 0);
+
+    // 기공개 baseline은 일시 공백 뒤 복구되어도 stale 알림으로 승격하지 않는다.
+    await runStarterWatchdog({
+      dateStrs: ["20260730"], deadlineAtMs: Date.now() + 16_000,
+      deps: base({
+        fetchGames: async () => [game("G1", "scheduled", 9, 1, {})],
+        observeGames: observe,
+        openSnapshot: async () => { opens++; return Date.now() + 60_000; },
+        deliverBatch: async () => batch(),
+      }),
+    });
+    const r3 = await runStarterWatchdog({
+      dateStrs: ["20260730"], deadlineAtMs: Date.now() + 16_000,
+      deps: base({
+        fetchGames: async () => [game("G1", "scheduled", 9, 1, BOTH)],
+        observeGames: observe,
+        openSnapshot: async () => { opens++; return Date.now() + 60_000; },
+        deliverBatch: async () => batch(),
+      }),
+    });
+    ok("baseline→일시 공백→복구도 baseline 고정·발송 0", opens === 0 && r3.summary.baselines === 1 && r3.summary.transitions === 0);
   }
 
   // ── [NO-GO 재작업 2] 실제 빈값→공식값 전이: tick1 빈값 관측 → tick2 공식값 → 1회 발송 ──
@@ -454,6 +479,31 @@ async function main() {
     ok("tick1 빈값 관측 → wait·발송 0", opened.size === 0 && t1.summary.announced === 0 && t1.status === "ok");
     const t2 = await runStarterWatchdog({ dateStrs: ["20260730"], deadlineAtMs: Date.now() + 16_000, deps: mk(BOTH) });
     ok("tick2 공식값 → 실제 전이로 홈/원정 발송", opened.has("G1:9") && opened.has("G1:1") && t2.summary.transitions === 1 && t2.summary.baselines === 0 && t2.status === "ok");
+  }
+
+  // ── KBO HTTP 200 soft-empty: Naver 일정 witness에 경기가 있으면 열화, 양쪽 비면 정상 무경기 ──
+  {
+    let witnessCalls = 0;
+    const degraded = await runStarterWatchdog({
+      dateStrs: ["20260730"], deadlineAtMs: Date.now() + 16_000,
+      deps: base({
+        fetchGames: async () => [],
+        fetchScheduleWitness: async () => {
+          witnessCalls++;
+          return [game("G1", "scheduled", 9, 1)];
+        },
+      }),
+    });
+    ok("KBO soft-empty + 일정 존재 → fetchFailures·failed", witnessCalls === 1 && degraded.summary.fetchFailures === 1 && degraded.status === "failed");
+
+    const noGames = await runStarterWatchdog({
+      dateStrs: ["20260731"], deadlineAtMs: Date.now() + 16_000,
+      deps: base({
+        fetchGames: async () => [],
+        fetchScheduleWitness: async () => [],
+      }),
+    });
+    ok("KBO soft-empty + witness도 무경기 → 정상 ok", noGames.summary.fetchFailures === 0 && noGames.status === "ok");
   }
 
   // ── [NO-GO 재작업 3] 종결된 (game,team): snapshot RPC null → drain/finalize 없이 완전 skip ──
@@ -514,6 +564,54 @@ async function main() {
       });
       ok("KBO 실패(+Naver 가용) → fetchFailures·failed(장애 노출, 전이 판정 보류)", r.status === "failed" && r.summary.fetchFailures === 1 && opens === 0);
       ok("definitive wiring: KBO 호출만, Naver fallback 미참조", requested.some((u) => u.includes("koreabaseball.com")) && !requested.some((u) => u.includes("naver")));
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  }
+
+  // ── 실제 기본 wiring: KBO 200 game:[]이면 Naver 일정 witness를 호출해 경기 존재를 열화로 노출 ──
+  {
+    const realFetch = globalThis.fetch;
+    const requested: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input instanceof Request ? input.url : input);
+      requested.push(url);
+      if (url.includes("koreabaseball.com")) {
+        return new Response(JSON.stringify({ game: [] }), { status: 200 });
+      }
+      return new Response(JSON.stringify({
+        code: 200,
+        success: true,
+        result: {
+          games: [{
+            gameId: "20260730LGHH02026",
+            gameDateTime: "2026-07-30T18:30:00",
+            stadium: "잠실",
+            awayTeamCode: "LG",
+            homeTeamCode: "HH",
+            awayTeamName: "LG",
+            homeTeamName: "한화",
+            statusCode: "BEFORE",
+            statusInfo: "경기전",
+          }],
+        },
+      }), { status: 200 });
+    }) as typeof fetch;
+    try {
+      const r = await runStarterWatchdog({
+        dateStrs: ["20260730"], deadlineAtMs: Date.now() + 16_000,
+        deps: base({
+          fetchGames: undefined,
+          fetchScheduleWitness: undefined,
+        }),
+      });
+      ok(
+        "실 wiring KBO soft-empty + Naver 경기 존재 → witness 호출·failed",
+        requested.some((u) => u.includes("koreabaseball.com")) &&
+          requested.some((u) => u.includes("naver")) &&
+          r.summary.fetchFailures === 1 &&
+          r.status === "failed",
+      );
     } finally {
       globalThis.fetch = realFetch;
     }

@@ -25,6 +25,7 @@ import type { KboGame } from "@/lib/crawler/kbo-api";
 // definitive source: Naver fallback 없는 KBO 단독 fetch. fetchGames 는 선발 신호가 없는 Naver 로
 // 조용히 대체돼 KBO 장애를 '미공개 정상'으로 오인하게 하므로 여기서 쓰면 안 된다.
 import { fetchKboGamesOnly as realFetchGames } from "@/lib/crawler/kbo-api";
+import { fetchNaverGames as realFetchScheduleWitness } from "@/lib/crawler/naver-games";
 import {
   observeStarterAnnounceGames as realObserveGames,
   openStarterSnapshot as realOpenSnapshot,
@@ -46,6 +47,9 @@ import {
 
 export interface StarterWatchdogDeps {
   fetchGames: (dateStr: string) => Promise<KboGame[]>;
+  // KBO 200 soft-empty가 정상 무경기인지 열화인지 판별하는 일정 존재 witness.
+  // 선발명은 사용하지 않고 경기 존재 여부만 본다.
+  fetchScheduleWitness: (dateStr: string) => Promise<KboGame[]>;
   observeGames: (
     observations: Array<{ gameId: string; bothOfficial: boolean }>,
     requestDeadlineAtMs?: number,
@@ -122,6 +126,7 @@ export async function runStarterWatchdog(args: {
   deps?: Partial<StarterWatchdogDeps>;
 }): Promise<StarterWatchdogResult> {
   const fetchGames = args.deps?.fetchGames ?? realFetchGames;
+  const fetchScheduleWitness = args.deps?.fetchScheduleWitness ?? realFetchScheduleWitness;
   const observeGames = args.deps?.observeGames ?? realObserveGames;
   const openSnapshot = args.deps?.openSnapshot ?? realOpenSnapshot;
   const deliverBatch = args.deps?.deliverBatch ?? realDeliverBatch;
@@ -247,6 +252,25 @@ export async function runStarterWatchdog(args: {
     } catch {
       summary.fetchFailures++; // 부분 소스 열화 — systemic 노출, 다른 날짜/due drainer 는 계속.
       return;
+    }
+    // KBO는 HTTP 200 + game:[]로 열화를 숨길 수 있다. Naver 일정은 선발명 source가 아니라
+    // 경기 존재 witness로만 사용한다. 양쪽 모두 빈 날만 정상 무경기로 인정한다.
+    if (games.length === 0) {
+      try {
+        const witnessGames = await withDeadline(
+          fetchScheduleWitness(dateStr),
+          deadlineAtMs,
+          `starter schedule witness ${dateStr}`,
+          now,
+        );
+        if (witnessGames.length > 0) {
+          summary.fetchFailures++;
+          return;
+        }
+      } catch {
+        summary.fetchFailures++;
+        return;
+      }
     }
     // 미시작(scheduled)만 신규 대상 — cancelled 는 미발송 억제, live/final 은 신규 공개 알림 대상 아님(fail-safe).
     const scheduled = games.filter((g) => g.status === "scheduled");
