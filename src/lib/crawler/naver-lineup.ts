@@ -45,6 +45,66 @@ export interface NaverLineupSnapshot {
   confirmed: true;
 }
 
+export interface NaverPreviewStarters {
+  away: string;
+  home: string;
+}
+
+function previewStarterName(previewData: Record<string, unknown>, side: "away" | "home"): string {
+  const direct = (
+    previewData[`${side}Starter`] as { playerInfo?: { name?: unknown } } | undefined
+  )?.playerInfo?.name;
+  if (typeof direct === "string" && direct.trim()) return direct.trim();
+
+  const full = (
+    previewData[`${side}TeamLineUp`] as { fullLineUp?: unknown } | undefined
+  )?.fullLineUp;
+  if (!Array.isArray(full)) return "";
+  const starter = (full as Record<string, unknown>[]).find(
+    (player) => player.positionName === "선발투수",
+  );
+  return typeof starter?.playerName === "string" ? starter.playerName.trim() : "";
+}
+
+/**
+ * Naver preview의 경기 식별자를 KBO gameId와 대조한 뒤 발표된 선발만 추출한다.
+ * 라인업 확정 전(fullLineUp 1명)에도 awayStarter/homeStarter는 제공되므로,
+ * 완전 라인업 계약(parseNaverPreviewLineup)을 느슨하게 만들지 않고 별도 파싱한다.
+ */
+export function parseNaverPreviewStarters(
+  json: unknown,
+  kboGameId: string,
+): NaverPreviewStarters | null {
+  const payload = json as {
+    code?: unknown;
+    success?: unknown;
+    result?: { previewData?: Record<string, unknown> };
+  };
+  const previewData = payload.result?.previewData;
+  if (payload.code !== 200 || payload.success !== true || !previewData) return null;
+
+  const gameInfo = previewData.gameInfo as {
+    gdate?: unknown;
+    aCode?: unknown;
+    hCode?: unknown;
+  } | undefined;
+  const expectedDate = kboGameId.slice(0, 8);
+  const expectedAway = kboGameId.slice(8, 10);
+  const expectedHome = kboGameId.slice(10, 12);
+  if (
+    String(gameInfo?.gdate ?? "") !== expectedDate
+    || gameInfo?.aCode !== expectedAway
+    || gameInfo?.hCode !== expectedHome
+  ) {
+    return null;
+  }
+
+  return {
+    away: previewStarterName(previewData, "away"),
+    home: previewStarterName(previewData, "home"),
+  };
+}
+
 /** side 하나를 검증-파싱: 선발투수 정확히 1(이름 필수) + 타자 정확히 9 아니면 null. */
 function parseSide(side: unknown): NaverLineupSide | null {
   const full = (side as { fullLineUp?: unknown })?.fullLineUp;
@@ -101,6 +161,30 @@ export async function fetchNaverLineup(
     });
     if (!res.ok) return null;
     return parseNaverPreviewLineup(await res.json());
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Naver preview에서 발표된 선발투수만 조회한다.
+ * 라인업 전체가 아직 확정되지 않아도 경기 식별자 검증을 통과한 이름만 반환한다.
+ */
+export async function fetchNaverPreviewStarters(
+  kboGameId: string,
+  opts?: { signal?: AbortSignal; timeoutMs?: number },
+): Promise<NaverPreviewStarters | null> {
+  try {
+    const nId = naverGameId(kboGameId);
+    const signal =
+      opts?.signal ?? (opts?.timeoutMs != null ? AbortSignal.timeout(opts.timeoutMs) : undefined);
+    const res = await fetch(`${NAVER_API}/${nId}/preview`, {
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)" },
+      next: { revalidate: 60 },
+      signal,
+    });
+    if (!res.ok) return null;
+    return parseNaverPreviewStarters(await res.json(), kboGameId);
   } catch {
     return null;
   }
