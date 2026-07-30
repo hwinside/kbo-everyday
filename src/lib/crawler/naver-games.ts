@@ -10,14 +10,21 @@ import { resolveTeamId, type KboGame } from "@/lib/crawler/kbo-api";
 
 const NAVER_SCHEDULE_API = "https://api-gw.sports.naver.com/schedule/games";
 
-/**
- * fetchGames 기본 srId(전 시리즈: 시범/정규/포스트/올스타). 이 값으로 호출될 때만
- * Naver 폴백이 안전하다 — Naver schedule/games 는 series(gameType) 필드를 제공하지 않아
- * 특정 시리즈만 요구하는 호출(예: 정규시즌 전용 game-logs)은 시범경기 등이 섞일 수 있어
- * fail-close 한다. (실측 2026-07-29: 시범경기(3/15)도 정규와 동일 categoryId=kbo 로 반환,
- * 구분 필드 없음.)
- */
+/** fetchGames 기본 srId(전 시리즈: 시범/정규/포스트/올스타). */
 const DEFAULT_ALL_SR_ID = "0,1,3,4,5,7,9";
+/** 정규시즌 전용 srId(예: game-logs cron). */
+const REGULAR_SEASON_SR_ID = "0";
+/**
+ * Naver 로 안전하게 서빙 가능한 srId 화이트리스트. Naver schedule/games 는 series(gameType)
+ * 필드를 제공하지 않으므로(실측 2026-07-29: 시범경기 3/15 도 정규와 동일 categoryId=kbo, 구분
+ * 필드 없음) 아래 이외의 '특정 시리즈 전용' 요청은 오염 방지 위해 fail-close 한다.
+ * - DEFAULT_ALL_SR_ID: 전 시리즈 요청 → Naver 전체(categoryId=kbo) 그대로, over-inclusion 없음.
+ * - REGULAR_SEASON_SR_ID("0"): 정규시즌 전용(game-logs). KBO 장애 시 정규시즌 게임로그가 Naver
+ *   미폴백으로 '무경기'처럼 사라지던 gap(삼순 P1)을 막기 위해 서빙 허용 — 정규시즌 윈도우의 kbo
+ *   카테고리 응답은 전부 정규경기라 안전. (트레이드오프: 시범/포스트 윈도우와 KBO 장애가 겹치면
+ *   Naver 가 series 를 못 갈라 over-inclusion 가능 → 시범/포스트/올스타 '전용' srId 는 계속 fail-close.)
+ */
+const NAVER_SERVICEABLE_SR_IDS = new Set<string>([DEFAULT_ALL_SR_ID, REGULAR_SEASON_SR_ID]);
 
 interface NaverScheduleGame {
   gameId?: string;
@@ -154,7 +161,7 @@ function isSaneGame(g: KboGame): boolean {
 
 /**
  * 특정 날짜 경기목록을 Naver schedule/games 로 조회(KBO fallback).
- * - srId 가 기본 전-시리즈 셋이 아니면(특정 시리즈 전용) fail-close(series 필터 미지원).
+ * - srId 가 Naver 서빙 화이트리스트(전-시리즈 셋 또는 정규"0")가 아니면 fail-close(series 필터 미지원).
  * - fail-closed: success!==true || code!==200 || games 배열 부재 || per-game sanity 실패면 throw.
  * - 경기 없는 날(games: [])은 정상으로 간주해 빈 배열을 반환한다(무경기일 500 방지).
  */
@@ -163,8 +170,8 @@ export async function fetchNaverGames(
   srId: string = DEFAULT_ALL_SR_ID,
   opts?: { timeoutMs?: number; signal?: AbortSignal },
 ): Promise<KboGame[]> {
-  if (srId !== DEFAULT_ALL_SR_ID) {
-    // 정규시즌 전용 등 특정 시리즈 요구 — Naver 로는 series 보존 불가 → 오염 방지 위해 fail-close.
+  if (!NAVER_SERVICEABLE_SR_IDS.has(srId)) {
+    // 시범/포스트/올스타 '전용' srId — Naver 로는 series 보존 불가 → 오염 방지 위해 fail-close.
     throw new Error(`Naver fallback: srId(${srId}) series 필터 계약 보존 불가 — fail-close`);
   }
   const naverDate = toNaverDate(date);
