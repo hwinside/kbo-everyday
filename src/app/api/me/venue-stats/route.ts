@@ -16,7 +16,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getVerifiedUserFromRequest } from "@/lib/auth/verified-user";
 import { fetchGames, fetchStandings, type TeamStanding } from "@/lib/crawler/kbo-api";
-import { getSeasonGames } from "@/lib/crawler/season-games-cache";
+import {
+  collectSeasonGameUniverse,
+  type SeasonGameFetcher,
+} from "@/lib/crawler/season-games-cache";
 import type { LedgerRecord } from "@/lib/game-logs/completeness";
 import type { PlayerGameLogRow } from "@/lib/game-logs/ingest";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
@@ -157,6 +160,17 @@ interface SeasonAggregates {
   teamSeasonTotals: Map<number, TeamSeasonTotals> | null;
 }
 
+/** 시즌 집계 의존성 주입 seam — 수집 fetcher·RPC 경계만 교체 가능(삼순 P0 fail-closed 회귀용). */
+export interface SeasonAggregatesDeps {
+  /** 일자별 경기 fetcher (기본=실네트워크). 수집 로직은 항상 실제 collectSeasonGameUniverse 경유. */
+  fetcher?: SeasonGameFetcher;
+  /** RPC 호출(기본=supabase). */
+  rpc?: (args: {
+    p_season: number;
+    p_games: Array<{ gameId: string; gameDate: string }>;
+  }) => Promise<{ data: unknown; error: unknown }>;
+}
+
 /** KboGame.date(YYYYMMDD) → YYYY-MM-DD. 형식 이탈은 null(우주 무결성 훼손 → fail-closed). */
 function toIsoGameDate(raw: string): string | null {
   if (!/^\d{8}$/.test(raw)) return null;
@@ -166,17 +180,26 @@ function toIsoGameDate(raw: string): string | null {
 /**
  * S1b 시즌 집계 — §11 경기 우주: 정규시즌 final 전체 스케줄(권위 소스)을 먼저 구성해
  * RPC에 넘기고, RPC가 ledger를 LEFT JOIN해 ledger 없는 경기를 complete=false로 강등한다
- * (우주 누락 금지 — 삼순 리뷰 P0). 스케줄/RPC 실패·빈 우주·우주↔응답 길이 불일치는
- * 모두 null — B/C attendance_only·E1 unsupported fail-closed (ready·null false-green 금지).
+ * (우주 누락 금지 — 삼순 리뷰 P0). 일자별 수집이 한 날짜라도 실패한 non-empty partial 우주,
+ * RPC 실패·빈 우주·우주↔응답 gameId+gameDate exact 집합 불일치는 모두 null —
+ * B/C attendance_only·E1 unsupported fail-closed (조용한 partial·ready·null false-green 금지).
  */
-async function fetchSeasonAggregates(season: number): Promise<SeasonAggregates> {
+export async function fetchSeasonAggregates(
+  season: number,
+  deps: SeasonAggregatesDeps = {},
+): Promise<SeasonAggregates> {
   const failClosed: SeasonAggregates = { seasonGames: null, teamSeasonTotals: null };
   let universe: Array<{ gameId: string; gameDate: string }>;
   try {
-    const all = await getSeasonGames(season, REGULAR_SEASON_SR_ID);
+    const collection = await collectSeasonGameUniverse(season, REGULAR_SEASON_SR_ID, {
+      fetcher: deps.fetcher,
+    });
+    // 삼순 P0 gate 1 — 일자 1건이라도 수집 실패한 non-empty partial 우주는
+    // authoritative로 쓰지 않는다 — 그대로 B/C attendance_only·E1 unsupported로 fail-closed.
+    if (!collection.complete) return failClosed;
     const seen = new Set<string>();
     universe = [];
-    for (const g of all) {
+    for (const g of collection.games) {
       if (g.status !== "final" || seen.has(g.gameId)) continue;
       const gameDate = toIsoGameDate(String(g.date ?? ""));
       if (gameDate === null) return failClosed;
@@ -188,10 +211,10 @@ async function fetchSeasonAggregates(season: number): Promise<SeasonAggregates> 
   }
   if (universe.length === 0) return failClosed;
 
-  const { data, error } = await supabase.rpc("venue_stats_season_team_aggregates", {
-    p_season: season,
-    p_games: universe,
-  });
+  const rpc =
+    deps.rpc ??
+    (async (args) => supabase.rpc("venue_stats_season_team_aggregates", args));
+  const { data, error } = await rpc({ p_season: season, p_games: universe });
   if (error || !data || typeof data !== "object") {
     return failClosed;
   }
@@ -211,8 +234,15 @@ async function fetchSeasonAggregates(season: number): Promise<SeasonAggregates> 
       teamCodes: parseGameTeamCodes(g.gameId),
     }];
   });
-  // LEFT JOIN 결과가 우주 전체를 정확히 커버하지 못하면(부분 우주 드리프트) fail-closed.
-  if (seasonGames.length !== universe.length) return failClosed;
+  // 삼순 P0 gate 2 — RPC 반환 games의 gameId+gameDate exact 집합이 입력 우주와
+  // 정확히 일치해야 한다. 길이만 비교하면 동수 ID 치환·중복·누락 드리프트를 놓친다.
+  const universeKey = (g: { gameId: string; gameDate: string }) =>
+    `${g.gameId}\u0000${g.gameDate}`;
+  const rpcKeys = new Set(seasonGames.map(universeKey));
+  if (rpcKeys.size !== universe.length) return failClosed;
+  for (const u of universe) {
+    if (!rpcKeys.has(universeKey(u))) return failClosed;
+  }
   const teamSeasonTotals = new Map<number, TeamSeasonTotals>();
   for (const t of payload.teams) {
     const teamId = Number(t.teamId);
