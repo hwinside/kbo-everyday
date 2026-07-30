@@ -102,6 +102,12 @@ export async function fetchMediaList(sourceUrl: string): Promise<{ media: OgMedi
     // Threads로 식별됐으나 embed에서 영상·사진 확정 불가(200 unknown 등) → fail-close.
     return { media: [], sourceHtml: html };
   }
+  // Threads 여부와 canonical embed URL 파생 성공은 별개다. /share/ 리다이렉트가
+  // canonical로 풀리지 않거나 Meta 경로가 바뀌어도 원문 og:image poster를 사진으로
+  // 발행하지 않는다. 실제 사진은 canonical embed에서 사진 증거를 얻은 경우만 허용한다.
+  if (isThreadsUrl(sourceUrl) || isThreadsUrl(resolvedUrl)) {
+    return { media: [], sourceHtml: html };
+  }
 
   // Instagram reel/p/tv — 본문엔 og:image(썸네일)만 있고, /embed/ 페이지 contextJSON에
   // video_url(영상) 또는 display_url(사진 캐러셀)이 들어있음. 임베드는 한 번만 받아 둘 다 시도.
@@ -135,6 +141,15 @@ export async function fetchMediaList(sourceUrl: string): Promise<{ media: OgMedi
 function isMlbparkUrl(sourceUrl: string): boolean {
   try {
     return new URL(sourceUrl).hostname.toLowerCase().endsWith("mlbpark.donga.com");
+  } catch {
+    return false;
+  }
+}
+
+function isThreadsUrl(sourceUrl: string): boolean {
+  try {
+    const host = new URL(sourceUrl).hostname.toLowerCase();
+    return host.endsWith("threads.com") || host.endsWith("threads.net");
   } catch {
     return false;
   }

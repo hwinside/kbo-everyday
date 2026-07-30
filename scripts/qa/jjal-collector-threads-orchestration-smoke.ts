@@ -180,6 +180,26 @@ try {
       `got ${types(fixed.media)}`,
     );
   }
+
+  // 9) /share/ redirect가 canonical로 풀리지 않아도 Threads 식별 자체로 fail-close.
+  routes = {
+    [SHARE]: { finalUrl: SHARE, html: ORIGIN_HTML },
+  };
+  {
+    const r = await fetchMediaList(SHARE);
+    check("9) /share/ finalUrl 비canonical + poster → photo 0", r.media.length === 0, `got ${types(r.media)}`);
+  }
+
+  // 10) source는 외부 중간 URL이어도 resolvedUrl이 Threads noncanonical이면 fail-close.
+  const INTERMEDIATE = "https://example.com/threads-share";
+  const NONCANONICAL = "https://www.threads.net/t/temporary-route";
+  routes = {
+    [INTERMEDIATE]: { finalUrl: NONCANONICAL, html: ORIGIN_HTML },
+  };
+  {
+    const r = await fetchMediaList(INTERMEDIATE);
+    check("10) Threads noncanonical resolvedUrl + poster → photo 0", r.media.length === 0, `got ${types(r.media)}`);
+  }
 } finally {
   globalThis.fetch = origFetch;
 }
