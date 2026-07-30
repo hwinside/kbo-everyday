@@ -12,8 +12,7 @@
 import { createPickSession } from "./pick-session";
 
 export interface NativePickHandlers {
-  /** 멀티픽: 선택 순서 그대로의 배열(1→2→3). 빈 선택은 null. */
-  onChange: (files: File[] | null) => void;
+  onChange: (file: File | null) => void;
   onCancel: () => void;
 }
 
@@ -28,7 +27,7 @@ export interface PickController {
 export function createPickController(opts: {
   /** 픽마다 호출 — 반드시 매 호출 새 input 인스턴스를 만들어 handlers를 결속해야 한다. */
   openNative: (handlers: NativePickHandlers) => void;
-  onFile: (files: File[] | null) => void;
+  onFile: (file: File | null) => void;
   onStateChange?: (picking: boolean) => void;
 }): PickController {
   const session = createPickSession(opts.onStateChange);
@@ -38,10 +37,10 @@ export function createPickController(opts: {
       if (token == null) return false;
       // 토큰을 이 픽의 이벤트 handler closure에 결속 — 공유 ref 없음
       opts.openNative({
-        onChange: (files) => {
+        onChange: (file) => {
           // 이 change가 stale(취소/교체된 픽의 late event)이면 무시하고 활성 세션은 유지
           if (!session.resolveChange(token)) return;
-          opts.onFile(files);
+          opts.onFile(file);
         },
         onCancel: () => {
           // 자기 픽이 아직 활성일 때만 취소 — B가 열린 뒤 도착한 A의 cancel이 B를 죽이지 않게

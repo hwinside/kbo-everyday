@@ -141,38 +141,27 @@ async function main() {
     // submitting 동안 잠겨야 하는 조작 전수: 닫기 guard + disabled 속성들
     ok(
       "close()에 submitting + 동기 in-flight guard 존재",
-      /const close = \(\) => \{[\s\S]{0,180}?if \(submitting \|\| uploadInFlightRef\.current\) return;/.test(src),
+      /const close = \(\) => \{[\s\S]{0,180}?if \(submitting \|\| uploadInFlightRef\.current \|\| processingPickRef\.current\) return;/.test(src),
     );
-    ok("onPick이 submitting 중 무시(멀티픽)", /if \(!files \|\| files\.length === 0 \|\| submitting\) return;/.test(src));
+    ok("native export 결과가 submitting 중이면 무시", /if \(!files \|\| files\.length === 0 \|\| submitting\) return;/.test(src));
     const disabledCount = (src.match(/disabled=\{submitting\}/g) ?? []).length;
-    // 닫기 버튼 + caption + 동의 checkbox + 스트립 탭(멀티픽) = 4곳 (나머지는 복합 disabled 조건)
     ok(`disabled={submitting} 4곳 이상 (현재 ${disabledCount})`, disabledCount >= 4);
     ok("caption input에 disabled 적용", /maxLength=\{200\}\s*\n\s*disabled=\{submitting\}/.test(src));
     ok("동의 checkbox에 disabled 적용", /onChange=\{toggleAgree\}\s*\n\s*disabled=\{submitting\}/.test(src));
 
-    // 픽 대기 안내 배선 — iOS 영상 export 무피드백 구간 (7/23 리포트)
-    console.log("[픽 대기 안내 배선 — openPicker/pick-session 연결]");
-    ok("openPicker가 controller에 위임(공유 토큰 ref 없음)", /pickController\(\)\.openPicker\(\);/.test(src) && !src.includes("pickTokenRef"));
-    ok("픽마다 새 input 인스턴스 생성(공유 input 없음)", /document\.createElement\("input"\)/.test(src) && !src.includes("inputRef"));
-    // 삼순 #832 blocker: iOS WKWebView는 DOM 미부착 input이 영상 export 픽에서 change 미발생 → hang.
-    // input을 body에 붙여 click, 이벤트 후 remove, 90초 워치독 cleanup 배선 정적 검증.
-    ok("input을 document.body에 부착(iOS change 이벤트 보장)", /document\.body\.appendChild\(input\)/.test(src));
-    ok("change handler가 파일 확보 후 settle(멀티픽 배열)", /addEventListener\(\s*"change"[\s\S]{0,240}?Array\.from\(input\.files\)[\s\S]{0,120}?settle\(/.test(src));
-    ok("멀티픽 input.multiple 활성(선택 순서 1→2→3 보존)", /input\.multiple = true;/.test(src));
-    ok("cancel handler가 settle(onCancel)", /addEventListener\("cancel", \(\) => settle\(\(\) => onCancel\(\)\), \{ once: true \}\)/.test(src));
-    ok("90초 워치독 자동 취소(무한 스피너 방지)", /setTimeout\(\(\) => settle\(\(\) => onCancel\(\)\), 90_?000\)/.test(src));
-    ok("settle이 input.remove()로 cleanup", /const settle = [\s\S]{0,200}?input\.remove\(\)/.test(src));
-    ok("settle 중복 방지(settled guard)", /const settle = [\s\S]{0,120}?if \(settled\) return;/.test(src));
+    console.log("[커스텀 사진첩 배선 — OS 시스템 input 폴백 금지]");
+    ok("네이티브 사진첩 열거 브릿지 사용", src.includes("listVenueMedia("));
+    ok("asset export 후 기존 File 파이프라인 연결", /exportVenueMediaFile\(asset\.id\)[\s\S]{0,180}?handlePickedFiles\(\[file\], \[asset\.id\]\)/.test(src));
+    ok("OS file input 생성 0", !src.includes('document.createElement("input")'));
+    ok("Limited 더 보기 브릿지 사용", src.includes("presentLimitedVenueMediaPicker()"));
+    ok("권한 거부 설정 유도", src.includes("openVenueMediaSettings()"));
     // 관리자 QA closed-window 우회 — 렌더 gateReason과 submit 게이트 둘 다 단일 헬퍼 uploadBlocked 사용
     // (삼순 #832 blocker1 + 왕복2: isVenueUploadBlocked 헬퍼로 클라·서버 단일 소스, 취소는 관리자도 차단)
     ok("uploadBlocked가 isVenueUploadBlocked 헬퍼 사용(privileged: isAdmin)", /const uploadBlocked =[\s\S]{0,120}?isVenueUploadBlocked\(\{[\s\S]{0,120}?privileged: isAdmin/.test(src));
     ok("gateReason이 uploadBlocked 기반(헬퍼 판정 재사용)", /const gateReason = uploadBlocked \? venue\?\.reason \?\? null : null/.test(src));
     ok("submit 게이트도 uploadBlocked 사용(버튼만 활성하고 막지 않음 방지)", /if \(uploadBlocked\) \{/.test(src));
-    ok("reset()이 in-flight 픽 invalidate(cancelPick)", /const reset = \(\) => \{[\s\S]{0,120}?cancelPick\(\);/.test(src));
-    ok("onFile 최신 closure 유지(ref 우회)", /handlePickedFilesRef\.current = handlePickedFiles;/.test(src));
-    ok("수동 취소 버튼도 cancelPick 사용", /onClick=\{cancelPick\}/.test(src));
-    ok("픽 CTA가 openPicker 사용(직접 click 잔존 0)", (src.match(/onClick=\{openPicker\}/g) ?? []).length === 2);
-    ok("대기 안내 UI는 업로드 중엔 미표시(picking && !submitting)", /picking && !submitting && \(/.test(src));
+    ok("reset()이 async asset export invalidate", /const reset = \(\) => \{[\s\S]{0,220}?pickSeqRef\.current\+\+;/.test(src));
+    ok("그리드 재진입 CTA가 openPicker 사용", (src.match(/onClick=\{openPicker\}/g) ?? []).length === 2);
   }
 
   console.log("[pick-controller identity 회귀 — production 배선 경유 (삼순 #805 라운드4)]");

@@ -1,8 +1,8 @@
 /**
- * 직관 스토리 네이티브 멀티픽 계약 스모크.
+ * 직관 스토리 앱 내 커스텀 그리드 계약 스모크.
  * 실행: npm run qa:venue-multi-pick
  * 스펙 게이트(#product 1785211442.603729 목업 삼순 GO 2026-07-29):
- *   ① 선택 스트립 순서 1→2→3 보존 + 최대 3개
+ *   ① 최근순 커스텀 그리드 + 선택 스트립 순서 1→2→3 보존 + 최대 3개
  *   ② 미디어 타입 정합 — 사진에 영상 길이 배지 금지, 영상은 0:12 형식
  *   ③ 하단 sticky CTA 1개 `전체 팀 공유` (rounded-xl · py-3.5 · safe-area) — 상단 공유 버튼 없음
  *   ④ CTA 팀색 raw --team-primary 금지 — teamPalette.accent/onAccent(10팀 WCAG AA)
@@ -123,13 +123,31 @@ console.log("[③ 컴포저 정적 계약 — 단일 sticky CTA / raw 팀변수 
   ok("CTA 색상은 palette.accent/onAccent", /style=\{\{ background: palette\.accent, color: palette\.onAccent \}\}/.test(src));
   ok("raw --team-primary 사용 0", !src.includes("--team-primary"));
   ok("공용 paletteForTeamId 사용(픽커 로컬 예외 없음)", src.includes("paletteForTeamId(getMyTeamId())"));
-  ok("Limited/선택 사진 더 추가 + 기기 설정 안내", src.includes("제한된 사진 접근은 선택 후 +로 더 추가하거나 기기 설정에서 변경"));
+  ok("네이티브 사진첩 열거 브릿지 사용", src.includes("listVenueMedia("));
+  ok("OS 시스템 file input 폴백 금지", !src.includes('document.createElement("input")'));
+  ok("그리드 탭 즉시 asset export→프리뷰 전환", /exportVenueMediaFile\(asset\.id\)[\s\S]{0,180}?handlePickedFiles\(\[file\], \[asset\.id\]\)[\s\S]{0,100}?setLibraryOpen\(false\)/.test(src));
+  ok("Limited/선택 사진 `더 보기` 흐름", src.includes("presentLimitedVenueMediaPicker()") && src.includes("더 보기"));
+  ok("권한 거부 시 OS 설정 유도", src.includes("openVenueMediaSettings()") && src.includes("설정 열기"));
   const stickyCtaCount = (src.match(/className="w-full py-3\.5 rounded-xl/g) ?? []).length;
   ok("하단 sticky CTA 1개(상단 공유 버튼 없음)", stickyCtaCount === 1 && !src.includes("공유하기"));
   ok("완료 요약 재시도 게이트가 isRetryableItem 사용", src.includes("isRetryableItem(target.status)"));
   ok("재시도 중 닫기/중복 전송 동기 guard", src.includes("if (submitting || uploadInFlightRef.current) return;"));
   ok("멀티픽 병합이 mergePickedItems 사용(순서/상한 단일 소스)", src.includes("mergePickedItems("));
   ok("배지 렌더가 mediaDurationBadge 사용(사진 배지 금지 단일 소스)", (src.match(/mediaDurationBadge\(/g) ?? []).length >= 3);
+}
+
+console.log("[B안 브릿지 계약 — 사진첩 열거/asset export]");
+{
+  const bridge = readFileSync(
+    join(__dirname, "../../src/lib/capacitor/venue-media-library.ts"),
+    "utf8",
+  );
+  ok("VenueMediaLibrary 커스텀 플러그인 등록", bridge.includes('registerPlugin<VenueMediaLibraryPlugin>("VenueMediaLibrary")'));
+  ok("최근순 페이지 열거 API", bridge.includes("listMedia(options: { cursor?: string; limit: number })"));
+  ok("원본 asset export API", bridge.includes("exportMedia(options: { id: string })"));
+  ok("원격 WebView file 경로 변환", bridge.includes("Capacitor.convertFileSrc(exported.webPath)"));
+  ok("Limited 추가 허용 API", bridge.includes("presentLimitedPicker(): Promise<void>"));
+  ok("설정 유도 API", bridge.includes("openSettings(): Promise<void>"));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
