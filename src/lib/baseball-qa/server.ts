@@ -15,9 +15,13 @@ import {
   type QaResult,
 } from "@/lib/baseball-qa/pipeline";
 import { BASEBALL_GENIUS_USER_ID } from "@/lib/constants/baseball-genius";
+import {
+  BASEBALL_QA_GEMINI_MODEL,
+  buildBaseballQaGeminiRequest,
+} from "@/lib/baseball-qa/gemini-request";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${GEMINI_API_KEY}`;
+const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${BASEBALL_QA_GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
 const SYSTEM_PROMPT = [
   "너는 한국 프로야구(KBO) 룰/용어 도우미다.",
   "야구 룰과 야구 용어 질문에만 쉽고 정확한 한국어 존댓말로 답한다.",
@@ -82,16 +86,7 @@ async function callLlm(question: string): Promise<LlmResult> {
   const res = await fetch(GEMINI_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
-      contents: [{ role: "user", parts: [{ text: question }] }],
-      generationConfig: {
-        temperature: 0.1,
-        maxOutputTokens: 256,
-        responseMimeType: "application/json",
-        thinkingConfig: { thinkingBudget: 0 },
-      },
-    }),
+    body: JSON.stringify(buildBaseballQaGeminiRequest(question, SYSTEM_PROMPT)),
     signal: AbortSignal.timeout(15000),
   });
   if (!res.ok) throw new Error(`Gemini API failed: ${res.status}`);
