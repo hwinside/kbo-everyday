@@ -29,15 +29,15 @@ const NAVER_SERVICEABLE_SR_IDS = new Set<string>([DEFAULT_ALL_SR_ID, REGULAR_SEA
 /**
  * KBO 정규시즌 날짜 window (연도별, YYYYMMDD inclusive). srId=0(정규시즌 전용) Naver 폴백의
  * 허용 범위 — Naver schedule/games 는 series(gameType) 구분이 없어(파일 상단 실측 주석 참조)
- * 날짜 window 로만 시범경기(3월 중)/포스트시즌(10월~) 오염을 차단한다(삼순 P0: window 없이는
+ * 날짜 window 로 시범경기(3월 중) 오염을 차단하고, 정규 일정으로 확인되지 않은 날짜는
+ * fail-close 한다(삼순 P0: window 없이는
  * 3/15 시범경기 5경기가 srId=0 정규 요청에 서빙돼 player_game_logs 누적 기록을 오염).
  *
  * 2026 근거(KBO 공식 정규시즌 일정 발표 2025-12-19, 스포츠경향 202512191538003 보도):
  * - 개막 2026-03-28(토), 팀당 144경기·총 720경기.
  * - 9/6 까지 팀당 135경기 우선 편성, 잔여 45경기(우천 취소분 포함)는 추후 편성 → 공식 '정규
- *   종료일' 은 유동. 포스트시즌(통상 10월)과 절대 겹치지 않는 보수적 상한으로 9/30 을 잡는다.
- *   (트레이드오프: 10월 잔여 정규경기 + KBO 장애가 겹치면 Naver 폴백 없이 fail-close —
- *   오염 방지 > 가용성. 잔여 일정 확정 시 end 만 갱신.)
+ *   종료일' 은 유동. 9/30 이후는 무경기로 단정하지 않고 fail-close 한다. 잔여 일정이 확정되면
+ *   검증된 정규 경기 날짜를 별도 허용해야 한다.
  * 미등록 연도는 fail-close(정규 일정 미확정 상태에서 추측 서빙 금지). 시즌이 바뀌면 갱신
  * (src/app/api/roster-moves/route.ts 의 SEASON_START 상수와 동일한 연 1회 운영).
  */
@@ -52,9 +52,8 @@ export function isWithinRegularSeasonWindow(date: string): boolean {
 }
 
 /**
- * srId=0(정규시즌 전용) 요청인데 정규시즌 window 밖인가 — 이 조합은 '정규경기가 존재할 수
- * 없는 날' 이므로 Naver 폴백 금지 대상이다. fetchGames soft-empty 경로가 KBO 200-empty 를
- * authoritative 로 인정할지 판단할 때도 사용한다.
+ * srId=0(정규시즌 전용) 요청인데 검증된 정규시즌 window 밖인가. Naver는 series를 구분하지
+ * 못하므로 이 조합은 폴백 금지 대상이며 KBO soft-empty도 authoritative로 확정할 수 없다.
  */
 export function isRegularSeasonSrIdOutsideWindow(srId: string, date: string): boolean {
   return srId === REGULAR_SEASON_SR_ID && !isWithinRegularSeasonWindow(date);

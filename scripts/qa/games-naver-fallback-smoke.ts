@@ -408,8 +408,8 @@ const keepAlive = setInterval(() => {}, 1000);
   assert.equal(games.length, 0);
 }
 
-// ── 13d. srId=0 window 밖 soft-empty(P0 회귀): 3/15 KBO 정상 0경기 + Naver 에 시범 5경기 →
-//        시범경기를 정규 결과로 서빙하지 않고 [](정규 0경기), Naver 호출 자체를 안 함 ───
+// ── 13d. srId=0 window 밖 soft-empty(P0 회귀): 3/15 KBO 200-empty + Naver 에 시범 5경기 →
+//        시범경기를 정규 결과로 서빙하지 않고 fail-close, Naver 호출 자체를 안 함 ───
 //    삼순 실측: 수정 전 fetchGames("20260315","0") 이 시범 5경기를 반환 → getSeasonGames/game-logs 오염.
 {
   let naverCalled = false;
@@ -427,10 +427,9 @@ const keepAlive = setInterval(() => {}, 1000);
     }
     throw new Error(`unexpected url ${url}`);
   });
-  const games = await fetchGames("20260315", "0");
+  await assert.rejects(fetchGames("20260315", "0"), /미검증|window|fail-close/);
   restoreFetch();
-  assert.equal(games.length, 0);       // 시범 5경기 오염 금지 — 정규 0경기
-  assert.equal(naverCalled, false);    // window 밖 srId=0 은 Naver 교차확인 자체를 안 함
+  assert.equal(naverCalled, false);    // window guard가 네트워크 호출 전에 fail-close
 }
 
 // ── 13e. srId=0 window 밖 KBO 장애(P0): 3/15 KBO throw + Naver 에 시범경기 → 시범 서빙 없이
@@ -458,7 +457,24 @@ const keepAlive = setInterval(() => {}, 1000);
   assert.equal(games[0].status, "live");
 }
 
-// ── 13g. srId=0 포스트시즌 경계(P0): 20261001 + KBO throw + Naver 경기 있음 → fail-close ───
+// ── 13g. srId=0 window 밖 soft-empty(P0): 10/1 KBO 200-empty + Naver 경기 있음 →
+//         거짓 [] 대신 fail-close ───
+{
+  let naverCalled = false;
+  stubFetch((url) => {
+    if (url.includes("GetKboGameList")) return jsonResponse({ game: [] });
+    if (url.includes("schedule/games")) {
+      naverCalled = true;
+      return jsonResponse({ code: 200, success: true, result: { games: [naverGame({ gameId: "20261001HTSS02026" })] } });
+    }
+    throw new Error(`unexpected url ${url}`);
+  });
+  await assert.rejects(fetchGames("20261001", "0"), /미검증|window|fail-close/);
+  assert.equal(naverCalled, false);
+  restoreFetch();
+}
+
+// ── 13h. srId=0 실제 포스트시즌 경계(P0): 10/1 KBO 장애 + Naver 경기 있음 → fail-close ───
 {
   stubFetch((url) => {
     if (url.includes("GetKboGameList")) throw new Error("KBO down");
