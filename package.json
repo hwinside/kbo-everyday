@@ -196,7 +196,8 @@
     "qa:polling-fallback": "tsx scripts/qa/polling-fallback-smoke.ts && tsx scripts/qa/polling-fallback-react-smoke.ts",
     "qa:game-live-stream": "tsx scripts/qa/game-live-stream-smoke.ts",
     "qa:diary-contrast": "node scripts/qa/venue-diary-card-contrast.mjs",
-    "qa:baseball-qa": "tsx scripts/qa/baseball-qa-pipeline-smoke.ts"
+    "qa:baseball-qa": "tsx scripts/qa/baseball-qa-pipeline-smoke.ts",
+    "qa:outage-banner": "tsx scripts/qa/outage-notice-banner-smoke.ts"
   },
   "dependencies": {
     "@capacitor-firebase/messaging": "^8.3.0",
