@@ -10,6 +10,11 @@ import {
   resolveShortsQueryPlan,
 } from "@/lib/video/shorts-feed-scope";
 import { joinLgFeedRows, type ShortsRow } from "@/lib/video/shorts-feed-merge";
+import {
+  LatestOnlyGate,
+  nextShortsScopeOnTap,
+  resolveInitialShortsScope,
+} from "@/lib/video/shorts-scope-ui";
 
 let pass = 0,
   fail = 0;
@@ -71,5 +76,60 @@ const joined = joinLgFeedRows(
 check("LG 합류: 동일 video_id 중복 0", joined.rows.filter((r) => r.video_id === "v1").length === 1, true);
 check("LG 합류: 신규 행은 합류", joined.rows.some((r) => r.video_id === "v2"), true);
 
-console.log(`\n${pass} passed, ${fail} failed`);
-if (fail > 0) process.exit(1);
+// --- 삼순 재리뷰 게이트 ②: 칩 상태 모델 — 항상 정확히 1개 활성, 혼합(null) 없음 ---
+check("초기 scope: 저장값 없음+최애 있음 → favorite_players", resolveInitialShortsScope(null, 3), "favorite_players");
+check("초기 scope: 저장값 없음+최애 없음 → my_team", resolveInitialShortsScope(null, 0), "my_team");
+check("초기 scope: 유효 저장값 존중", resolveInitialShortsScope("all", 3), "all");
+check("초기 scope: 저장=최애인데 최애 미지정 → my_team 폴백", resolveInitialShortsScope("favorite_players", 0), "my_team");
+check("초기 scope: null 반환 경로 없음(혼합 금지)", resolveInitialShortsScope(null, 0) !== null, true);
+check("탭: active 재탭 = no-op (해제/혼합 복귀 없음)", nextShortsScopeOnTap("my_team", "my_team"), "my_team");
+check("탭: 다른 칩 = 전환", nextShortsScopeOnTap("my_team", "all"), "all");
+
+// --- 삼순 재리뷰 게이트 ①: scope 전환 race — 늦은 이전 응답 latest-only 커밋 ---
+const delay = (ms: number) => new Promise<void>((res) => setTimeout(res, ms));
+
+async function raceRegression() {
+  // 컴포넌트 fetch effect와 동일한 계약: begin() 토큰 발급 → 응답 시 isCurrent 확인 후만 커밋
+  const gate = new LatestOnlyGate();
+  let committed: string | null = null;
+  let errorShown = false;
+
+  const request = (label: string, ms: number, ok: boolean) => {
+    const token = gate.begin();
+    return delay(ms).then(() => {
+      if (ok) {
+        if (!gate.isCurrent(token)) return;
+        committed = label;
+      } else {
+        if (!gate.isCurrent(token)) return;
+        committed = null;
+        errorShown = true;
+      }
+    });
+  };
+
+  // 시나리오 1 (삼순 재현 그대로): all 요청 90ms, 직후 my_team 요청 10ms
+  const p1 = request("all-result", 90, true);
+  const p2 = request("my_team-result", 10, true);
+  await Promise.all([p1, p2]);
+  check("race: 늦은 all 응답이 my_team 결과를 덮지 않음", committed === "my_team-result", true);
+
+  // 시나리오 2: 늦은 이전 요청 실패도 현재 결과를 오류로 덮지 않음
+  committed = null;
+  errorShown = false;
+  const p3 = request("old-fail", 90, false);
+  const p4 = request("new-ok", 10, true);
+  await Promise.all([p3, p4]);
+  check("race: 늦은 이전 요청 실패 무시(오류 미표시)", committed === "new-ok" && !errorShown, true);
+
+  // 시나리오 3: 최신 요청 실패 → stale 데이터 대신 명시적 오류(목록 비움)
+  const p5 = request("old-ok", 90, true);
+  const p6 = request("latest-fail", 10, false);
+  await Promise.all([p5, p6]);
+  check("race: 최신 요청 실패 시 이전 scope 결과 노출 금지(목록 비움+오류)", committed === null && errorShown, true);
+}
+
+raceRegression().then(() => {
+  console.log(`\n${pass} passed, ${fail} failed`);
+  if (fail > 0) process.exit(1);
+});
