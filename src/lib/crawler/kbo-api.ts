@@ -675,11 +675,22 @@ export async function fetchBoxScore(gameId: string, seasonId?: string): Promise<
         statusCode: res.status,
         errorMessage: `HTTP ${res.status} ${res.statusText}`,
       });
-      return null;
+      // KBO 하드실패 → Naver record boxscore 로 failover (summary·daily 공용).
+      const { fetchNaverBoxScore } = await import("@/lib/crawler/naver-record");
+      return await fetchNaverBoxScore(gameId);
     }
 
     const data = await res.json();
-    return parseBoxScore(data);
+    const parsed = parseBoxScore(data);
+    if (!parsed) {
+      // KBO 응답 파싱 실패(스키마 열화) → Naver failover.
+      await trackFallback("kbo-boxscore", "schema-error", {
+        errorMessage: "parseBoxScore returned null",
+      });
+      const { fetchNaverBoxScore } = await import("@/lib/crawler/naver-record");
+      return await fetchNaverBoxScore(gameId);
+    }
+    return parsed;
   } catch (e) {
     const error = e as Error;
     let reason: "timeout" | "http-error" | "schema-error" | "network-error" = "network-error";
@@ -695,7 +706,9 @@ export async function fetchBoxScore(gameId: string, seasonId?: string): Promise<
       errorMessage: error.message,
     });
 
-    return null;
+    // KBO throw(timeout/network 등) → Naver record boxscore 로 failover.
+    const { fetchNaverBoxScore } = await import("@/lib/crawler/naver-record");
+    return await fetchNaverBoxScore(gameId);
   }
 }
 
