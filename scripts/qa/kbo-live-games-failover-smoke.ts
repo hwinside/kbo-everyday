@@ -195,15 +195,15 @@ async function main() {
   assert.deepEqual(bothEmpty.games, []);
   assert.equal(naverCalls, 1);
 
-  // 6) KBO 200 empty + Naver 확인 실패 → KBO empty 유지(무경기일 Naver 장애로 500 방지).
+  // 6) KBO 200 empty + Naver 확인 실패 → dual-source 불확실 = ok:false fail-close
+  //    (검증 안 된 soft-empty를 정상 무경기로 인정하면 watchdog 0경기 blackhole — 삼순 3차 P0).
   const emptyNaverDown = await fetchKboLiveGames(
     "20260730",
     Date.now() + 2_000,
     kboEmpty,
     async () => { throw new Error("naver down"); },
   );
-  assert.equal(emptyNaverDown.ok, true);
-  assert.equal(emptyNaverDown.trace.source, "kbo");
+  assert.equal(emptyNaverDown.ok, false);
   assert.deepEqual(emptyNaverDown.games, []);
 
   // 7) 1회초 0:0 + 첫 투구 증거 없음 → scheduled 유지.

@@ -267,9 +267,10 @@ export async function fetchKboLiveGames(
       trace: { source: "naver", sourceAtMs, fetchedAtMs: Date.now() },
     };
   } catch {
-    // Naver 확인 자체가 실패하면 KBO 200 empty 는 그대로 유지한다 — 블랙홀 위험 케이스는
-    // "Naver 에 경기가 있는데 KBO 가 빈 배열"인 경우로, 그때는 위 분기에서 잡힌다.
-    if (kboEmptyResult) return kboEmptyResult;
+    // KBO soft-empty(200+빈 배열)는 Naver가 "실제로 무경기"임을 정상 확인해 준 경우에만
+    // authoritative로 인정한다. Naver 확인 자체가 실패하면 dual-source 불확실이므로
+    // ok:false fail-close — soft-empty가 검증 없이 정상 무경기로 둔갑해 watchdog이
+    // 0경기 blackhole에 빠지는 경로를 차단한다(삼순 3차 리뷰 P0).
     return {
       ok: false,
       games: [],
