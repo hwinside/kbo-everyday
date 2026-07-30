@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback, type ChangeEvent } from "react";
+import { useState, useRef, useEffect, useLayoutEffect, useCallback, type ChangeEvent } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ChevronLeft, Send, EllipsisVertical, AlertTriangle, ShieldBan, Flag, X, ImagePlus, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -67,10 +67,12 @@ export default function DMChatPage() {
     setSendError("");
   }
 
-  // late handleSend 결과 fence 용 최신 대화 id (렌더 중 ref 쓰기는 react-hooks/refs 위반이라 effect 수행).
-  const conversationIdRef = useRef(conversationId);
-  useEffect(() => {
-    conversationIdRef.current = conversationId;
+  // late handleSend 결과 fence 용 대화 세대(epoch) — id 비교는 A→B→A(ABA) 복귀를 통과시켜
+  // late 결과가 새 draft 를 지우므로, 전환/진입마다 단조 증가하는 세대 번호의 정확 일치로 판정한다
+  // (렌더 중 ref 쓰기는 react-hooks/refs 위반이라 layout effect 로 commit 직후 동기 증가).
+  const sendEpochRef = useRef(0);
+  useLayoutEffect(() => {
+    sendEpochRef.current += 1;
   }, [conversationId]);
 
   useEffect(() => {
@@ -205,11 +207,11 @@ export default function DMChatPage() {
     if ((!input.trim() && sendImages.length === 0) || sending || uploading) return;
     setSendError("");
     setSending(true);
-    const sendConversationId = conversationId;
+    const sendEpoch = sendEpochRef.current;
     const result = await sendMessage(input.trim(), sendImages.map((img) => img.url), draftTargetId ?? undefined);
-    // 전송 중 다른 대화로 전환되었으면 새 대화의 input/images/sending 상태를 건드리지 않는다
-    // (전환 시점 render reset 이 composer 를 이미 초기화함 — late 결과는 폐기).
-    if (conversationIdRef.current !== sendConversationId) return;
+    // 전송 중 다른 대화로 전환(같은 대화로 복귀한 ABA 포함)되었으면 composer 상태를 건드리지 않는다
+    // (전환 시점 render reset 이 composer 를 이미 초기화함 — late 결과는 세대 불일치로 폐기).
+    if (sendEpochRef.current !== sendEpoch) return;
     if (result.ok && result.conversationId) {
       setInput("");
       setImages([]);

@@ -8,10 +8,18 @@
  * - 초기 replace 포함 전체 요청이 단일 request owner: 초기 load pending 중
  *   catch-up/visibility 가 겹쳐도 동시 쿼리 최대 1, 늦은 초기 응답 롤백 없음
  * - actual usePollingFallback 동시 요청 최대 1
+ * - 실제 page 컴포넌트 ABA 회귀: A send pending → B → A 복귀 + 새 draft 입력 →
+ *   late 최초 A success 가 새 draft 를 지우지 못함 (page 의 conversation epoch fence —
+ *   id 비교로 되돌리면 RED, fault-injection 으로 실증)
  */
 import { JSDOM } from "jsdom";
-import React from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type * as ReactNamespace from "react";
+import type { Root } from "react-dom/client";
+
+// react-dom 은 import 호이스팅으로 jsdom 전역 설치 전에 로드되면 이벤트 시스템이
+// 비활성화된다(page 회귀의 input/click 디스패치가 묵살됨) — main() 에서 동적 로드.
+let React: typeof ReactNamespace;
+let createRoot: typeof import("react-dom/client").createRoot;
 
 const dom = new JSDOM("<!doctype html><html><body></body></html>", {
   url: "http://localhost/",
@@ -26,6 +34,21 @@ Object.defineProperty(globalThis, "navigator", {
 for (const key of ["HTMLElement", "Element", "Node", "Event"]) {
   globals[key] = (dom.window as unknown as Record<string, unknown>)[key];
 }
+// 실제 page 렌더용 최소 polyfill — framer-motion(rAF/matchMedia)·scrollIntoView 는 jsdom 미구현.
+const rafPolyfill = (cb: (t: number) => void) => setTimeout(() => cb(Date.now()), 16);
+const cafPolyfill = (id: unknown) => clearTimeout(id as NodeJS.Timeout);
+globals.requestAnimationFrame = rafPolyfill;
+globals.cancelAnimationFrame = cafPolyfill;
+(dom.window as unknown as Record<string, unknown>).requestAnimationFrame = rafPolyfill;
+(dom.window as unknown as Record<string, unknown>).cancelAnimationFrame = cafPolyfill;
+(dom.window as unknown as Record<string, unknown>).matchMedia = () => ({
+  matches: false,
+  addEventListener: () => {},
+  removeEventListener: () => {},
+  addListener: () => {},
+  removeListener: () => {},
+});
+(dom.window.Element.prototype as unknown as Record<string, unknown>).scrollIntoView = () => {};
 Object.defineProperty(dom.window.document, "visibilityState", {
   get: () => "visible",
   configurable: true,
@@ -442,9 +465,214 @@ async function runPollingHookRegression() {
   Math.random = originalRandom;
 }
 
+// 실제 DM page 컴포넌트 ABA 회귀 (왕복 4 blocker) — A send pending 중 A→B→A 복귀 후
+// 새 draft 를 입력해도, 늦게 도착한 최초 A send 결과가 composer(새 draft)를 지우지 못한다.
+// id 비교 fence 는 둘 다 A 라 통과시키므로 이 회귀는 monotonic epoch fence 에만 GREEN.
+async function runPageAbaRegression() {
+  const { supabase } = await import("../../src/lib/supabase/client");
+  const { AuthProvider } = await import("../../src/lib/supabase/AuthContext");
+  const { AppRouterContext } = await import(
+    "next/dist/shared/lib/app-router-context.shared-runtime"
+  );
+  const { PathParamsContext } = await import(
+    "next/dist/shared/lib/hooks-client-context.shared-runtime"
+  );
+  const DMChatPage = (await import("../../src/app/(main)/messages/[conversationId]/page")).default;
+
+  const originalRandom = Math.random;
+  Math.random = () => 0;
+  const pending: PendingQuery[] = [];
+  const rpcPending: PendingRpc[] = [];
+
+  const mutableClient = supabase as unknown as {
+    from: (table: string) => unknown;
+    channel: (name: string) => unknown;
+    removeChannel: (channel: unknown) => Promise<string>;
+    rpc: (fn: string, args: unknown) => unknown;
+    auth: unknown;
+  };
+  mutableClient.from = (table: string) => {
+    if (table === "dm_conversations") {
+      const query = {
+        select: () => query,
+        eq: () => query,
+        maybeSingle: async () => ({ data: { user1_id: "me", user2_id: "u2" } }),
+      };
+      return query;
+    }
+    if (table === "profiles") {
+      const query = {
+        select: () => query,
+        eq: () => query,
+        maybeSingle: async () => ({ data: { nickname: "상대", team_id: null } }),
+      };
+      return query;
+    }
+    if (table === "user_blocks") {
+      const query = {
+        select: () => query,
+        eq: () => query,
+        maybeSingle: async () => ({ data: null }),
+      };
+      return query;
+    }
+    if (table !== "dm_messages") throw new Error(`unexpected table: ${table}`);
+    let conversationId = "";
+    const query = {
+      select: () => query,
+      update: () => {
+        const updateQuery = {
+          eq: () => updateQuery,
+          or: () => updateQuery,
+          then: (onFulfilled?: (value: { data: null }) => void) => {
+            onFulfilled?.({ data: null });
+          },
+        };
+        return updateQuery;
+      },
+      eq: (column: string, value: string) => {
+        if (column === "conversation_id") conversationId = value;
+        return query;
+      },
+      order: () => query,
+      limit: () =>
+        new Promise<{ data: MessageRow[] }>((resolve) => {
+          pending.push({ conversationId, settled: false, resolve });
+        }),
+    };
+    return query;
+  };
+  mutableClient.channel = () => {
+    const channel = {
+      on: () => channel,
+      subscribe: () => channel,
+    };
+    return channel;
+  };
+  mutableClient.removeChannel = async () => "ok";
+  mutableClient.rpc = (fn: string) => ({
+    single: () =>
+      new Promise<{ data: { conversation_id: string; message_id: number } | null; error: null }>(
+        (resolve) => {
+          rpcPending.push({ fn, settled: false, resolve });
+        },
+      ),
+  });
+  mutableClient.auth = {
+    getSession: async () => ({
+      data: { session: { user: { id: "me" }, access_token: "qa-token" } },
+    }),
+    setSession: async () => ({ data: { session: null } }),
+    onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => {} } } }),
+  };
+
+  const resolveQuery = (conversationId: string, data: MessageRow[]) => {
+    const query = pending.find((q) => q.conversationId === conversationId && !q.settled);
+    if (!query) throw new Error(`no pending query for ${conversationId}`);
+    query.settled = true;
+    query.resolve({ data });
+  };
+
+  const container = dom.window.document.createElement("div");
+  dom.window.document.body.appendChild(container);
+  const root = createRoot(container);
+  const router = {
+    back: () => {},
+    forward: () => {},
+    refresh: () => {},
+    push: () => {},
+    replace: () => {},
+    prefetch: () => {},
+    hmrRefresh: () => {},
+  };
+  const renderPage = (conversationId: string) =>
+    root.render(
+      React.createElement(
+        AppRouterContext.Provider,
+        { value: router as never },
+        React.createElement(
+          PathParamsContext.Provider,
+          { value: { conversationId } },
+          React.createElement(AuthProvider, null, React.createElement(DMChatPage)),
+        ),
+      ),
+    );
+
+  const composer = () => container.querySelector("textarea") as HTMLTextAreaElement | null;
+  const valueSetter = Object.getOwnPropertyDescriptor(
+    dom.window.HTMLTextAreaElement.prototype,
+    "value",
+  )!.set!;
+  const typeDraft = (value: string) => {
+    const el = composer()!;
+    valueSetter.call(el, value);
+    el.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+  };
+  const clickSend = () => {
+    container
+      .querySelector('button[aria-label="쪽지 보내기"]')!
+      .dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+  };
+
+  // A 진입 → 빈 대화 로드 완료 → composer 활성
+  renderPage("A");
+  await waitFor(() => pending.some((q) => q.conversationId === "A" && !q.settled));
+  resolveQuery("A", []);
+  await waitFor(() => composer() !== null);
+  check("actual page: A 진입 후 composer 렌더", composer() !== null);
+
+  // A 에서 최초 전송 시작 — RPC 는 pending 으로 묶어둔다.
+  typeDraft("최초 A 전송");
+  await waitFor(() => composer()?.value === "최초 A 전송");
+  clickSend();
+  await waitFor(() => rpcPending.some((rpc) => !rpc.settled));
+  check(
+    "actual page: 최초 A send RPC 가 실제로 pending",
+    rpcPending.some((rpc) => rpc.fn === "send_dm_message_atomic" && !rpc.settled),
+  );
+
+  // B 전환 → 다시 A 복귀 (ABA) — id 만 비교하는 fence 는 이 복귀를 구분 못 한다.
+  renderPage("B");
+  await waitFor(() => pending.some((q) => q.conversationId === "B" && !q.settled));
+  resolveQuery("B", []);
+  await waitFor(() => composer() !== null && composer()!.value === "");
+  renderPage("A");
+  await waitFor(() => pending.some((q) => q.conversationId === "A" && !q.settled));
+  resolveQuery("A", []);
+  await waitFor(() => composer() !== null);
+
+  // A 복귀 후 새 draft 입력 → 늦은 최초 A success 도착.
+  typeDraft("새 A draft");
+  await waitFor(() => composer()?.value === "새 A draft");
+  const rpc = rpcPending.find((entry) => !entry.settled)!;
+  rpc.settled = true;
+  rpc.resolve({ data: { conversation_id: "A", message_id: 9 }, error: null });
+  await sleep(50);
+
+  check(
+    "actual page ABA: late 최초 A success 가 새 draft 를 지우지 않음 (epoch fence)",
+    composer()?.value === "새 A draft",
+  );
+  const sendButton = container.querySelector(
+    'button[aria-label="쪽지 보내기"]',
+  ) as HTMLButtonElement;
+  check("actual page ABA: composer 재전송 가능 (sending 잠김 없음)", sendButton.disabled === false);
+  check(
+    "actual page ABA: 과거 전송 결과가 error 배너를 띄우지 않음",
+    container.querySelector('[role="alert"]') === null,
+  );
+
+  root.unmount();
+  container.remove();
+  Math.random = originalRandom;
+}
+
 async function main() {
+  React = (await import("react")).default;
+  ({ createRoot } = await import("react-dom/client"));
   await runDmHookRegression();
   await runPollingHookRegression();
+  await runPageAbaRegression();
   console.log(`\npolling-fallback-react: ${pass}/${pass + fail} pass${fail ? `, ${fail} FAIL` : ""}`);
   process.exit(fail ? 1 : 0);
 }
