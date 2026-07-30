@@ -17,7 +17,8 @@ import {
 import { BASEBALL_GENIUS_USER_ID } from "@/lib/constants/baseball-genius";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${GEMINI_API_KEY}`;
+const GEMINI_MODEL = "gemini-flash-lite-latest";
+const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
 const SYSTEM_PROMPT = [
   "너는 한국 프로야구(KBO) 룰/용어 도우미다.",
   "야구 룰과 야구 용어 질문에만 쉽고 정확한 한국어 존댓말로 답한다.",

@@ -64,6 +64,8 @@ const dmChatSource = readFileSync(
 );
 const routeSource = readFileSync(path.join(process.cwd(), "src/app/api/baseball-qa/route.ts"), "utf8");
 const serverSource = readFileSync(path.join(process.cwd(), "src/lib/baseball-qa/server.ts"), "utf8");
+assert.match(serverSource, /const GEMINI_MODEL = "gemini-flash-lite-latest"/);
+assert.doesNotMatch(serverSource, /gemini-2\.5-flash-lite/);
 const drainSource = readFileSync(
   path.join(process.cwd(), "src/app/api/cron/baseball-qa-drain/route.ts"),
   "utf8",
