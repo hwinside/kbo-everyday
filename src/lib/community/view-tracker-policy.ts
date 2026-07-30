@@ -25,6 +25,14 @@ export function shouldCountImpression(seen: Set<string>, postId: number, viewerK
   return !seen.has(impressionDedupKey(postId, viewerKey));
 }
 
+/** 화면 표시용 합산 조회수(click + impression). 원본 집계는 분리 유지한다. */
+export function postViewTotal(
+  clickCount?: number | null,
+  impressionCount?: number | null
+): number {
+  return (clickCount ?? 0) + (impressionCount ?? 0);
+}
+
 /**
  * 전송 수단 선택. sendBeacon이 없거나 큐잉 실패(false 반환) 시 fetch 폴백.
  * beaconAvailable: navigator.sendBeacon 존재 여부, beaconQueued: sendBeacon 반환값.

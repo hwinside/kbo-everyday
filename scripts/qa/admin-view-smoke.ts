@@ -3,7 +3,7 @@
  *   ① 관리자 화이트리스트 게이트(isAdminEmail)
  *   ② 조회수 dedup 정책(view-tracker-policy): click 재진입=집계, impression 동일유저·세션=1회,
  *      계정 전환 분리, viewerKey 우선순위(로그인>게스트), beacon=false fallback
- *   ③ 피드·상세 공용 배지: click 수는 전체 공개, impression은 관리자 전용 유지
+ *   ③ 피드·상세 공용 배지: click+impression 합산 단일값을 전체 공개(기존 관리자 배지와 동일 숫자 계약)
  *   ④ route abuse cap(view-rate-limit): 1초 창 중복 차단
  * 실행: npm run qa:admin-view
  */
@@ -18,6 +18,7 @@ import {
   impressionDedupKey,
   shouldCountImpression,
   pickTransport,
+  postViewTotal,
 } from "../../src/lib/community/view-tracker-policy";
 import { shouldAllowView } from "../../src/lib/community/view-rate-limit";
 
@@ -99,21 +100,22 @@ check("beacon ok → beacon", pickTransport(true, true), "beacon");
 check("beacon queued false → fetch", pickTransport(true, false), "fetch");
 check("beacon unavailable → fetch", pickTransport(false, false), "fetch");
 
-// ── ③ 피드·상세 공용 배지: click 공개 + impression 관리자 전용 ────
+// ── ③ 합산 정책: 기존 관리자 배지와 동일 숫자 계약 ────
+check("total = click + impression", postViewTotal(2, 4), 6);
+check("total click 0 · impression N → N (회귀 케이스)", postViewTotal(0, 6), 6);
+check("total null-safe", postViewTotal(null, undefined), 0);
+check("total impression-only null", postViewTotal(3, null), 3);
+
+// ── ③ 피드·상세 공용 배지: 합산 단일값 전체 공개(게이트 제거) ────
 {
   const badge = readFileSync(new URL("../../src/components/community/PostViewBadge.tsx", import.meta.url), "utf8");
   const feed = readFileSync(new URL("../../src/components/community/PhotoFeed.tsx", import.meta.url), "utf8");
   const detail = readFileSync(new URL("../../src/components/community/PostDetail.tsx", import.meta.url), "utf8");
-  // click 수는 AdminOnly 밖(전체 공개), impression만 AdminOnly 안에 있어야 한다.
-  const clickIdx = badge.indexOf("clickCount ?? 0");
-  const adminOpenIdx = badge.indexOf("<AdminOnly>");
-  const impressionIdx = badge.indexOf("impressionCount ?? 0");
-  const adminCloseIdx = badge.indexOf("</AdminOnly>");
-  check("click count rendered", clickIdx >= 0, true);
-  check("click count outside AdminOnly (public)", clickIdx >= 0 && clickIdx < adminOpenIdx, true);
-  check("impression inside AdminOnly", adminOpenIdx >= 0 && adminOpenIdx < impressionIdx && impressionIdx < adminCloseIdx, true);
-  check("badge no longer sums click+impression", badge.includes("postViewTotal"), false);
-  check("view badge removes click label", badge.includes("클릭 {"), false);
+  // 합산 단일값이 그대로 전체 공개 — AdminOnly 게이트가 없어야 한다.
+  check("badge sums click+impression (postViewTotal)", badge.includes("postViewTotal(clickCount, impressionCount)"), true);
+  check("badge renders total", badge.includes("total.toLocaleString()"), true);
+  check("badge has no AdminOnly gate", badge.includes("AdminOnly"), false);
+  check("badge no raw click-only render", badge.includes("clickCount ?? 0).toLocaleString"), false);
   check("feed uses shared view badge", feed.includes("<PostViewBadge"), true);
   check("detail uses shared view badge", detail.includes("<PostViewBadge"), true);
   // 폰트 통일: 배지 text-sm, 피드·상세 타임스탬프도 text-sm.
