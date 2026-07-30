@@ -53,8 +53,9 @@ async function budget() {
     // KBO hang 은 kboBudget(=60%)에서 abort, Naver 는 reserve(=잔여 40%)에서 abort → 합계 ≈ BUDGET.
     // 구 코드(srId 마다 40ms) 면 ~80ms. 신 코드는 전체 절대 예산 결속로 1배 근처.
     ok(`전체 소요 ≤ 2배 미만(${elapsed}ms < 70ms)`, elapsed < 70);
-    // srId 예산 공유: srId0 가 kboBudget 소진 → srId1 은 remaining≤0 으로 break → kboCalls=1.
-    ok(`srId 예산 공유 — srId0 소진 후 srId1 즉시 break(kboCalls=${kboCalls}===1)`, kboCalls === 1);
+    // srId 예산 공유: srId0 가 kboBudget abort 소진 → signal.aborted break(결정적) → kboCalls=1.
+    // (삼순 #988 재리뷰 flaky 수정: remaining 1ms 잔여 타이머 경계에서도 srId1 진입 불가)
+    ok(`srId 예산 공유 — srId0 abort 후 srId1 결정적 break(kboCalls=${kboCalls}===1)`, kboCalls === 1);
     // 삼순 #988 재리뷰 P0: KBO hard-hang 이 전체 예산을 삼켜도 Naver 폴백은 reserve 에서 반드시 시도된다.
     ok(`KBO hang 이후 Naver reserve 호출 보장(naverCalls=${naverCalls}===1)`, naverCalls === 1);
   } finally {

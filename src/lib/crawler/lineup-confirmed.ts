@@ -63,7 +63,11 @@ export async function fetchLineupConfirmed(
       const ck = parseLineupCk(data);
       if (ck !== null) return ck;
     } catch {
-      // 다음 srId 시도(단 잔여 예산 소진 시 위 remaining 체크로 break)
+      // ⚠️ 삼순 #988 재리뷰 flaky(방법 A): sub-budget abort 직후에도 타이머 경계에서 잔여가
+      //   1ms 남아 다음 srId 가 한 번 더 진입할 수 있었다(remaining 체크만으로는 비결정적).
+      //   signal.aborted = KBO 예산 소진 확정이므로 추가 srId 시도를 **결정적으로** 중단하고
+      //   Naver reserve 로 직행한다. 빠른 네트워크 실패(비-abort)는 종전대로 다음 srId 시도.
+      if (signal?.aborted) break;
     }
   }
   // KBO 신호 부재 → Naver 폴백. 잔여 예산 안에서만 시도(watchdog absolute deadline 결속 유지).
