@@ -1,8 +1,11 @@
 /**
  * DM 폴백 actual React hook 회귀.
- * - A load pending → B current → late A 결과/payload 무영향
- * - B SUBSCRIBED → late A CLOSED 뒤 healthy 유지(visibility catch-up 0)
- * - 느린 폴백 load에서 actual usePollingFallback 동시 요청 최대 1
+ * - A→B 전환 즉시 messages/loading reset + late A load/payload 무영향 (오발송 창 차단)
+ * - sender profile await 중 A→B 전환 → late A profile resolve 가 B 를 오염 못 함
+ *   (useDM post-await generation fence 삭제 시 RED — fault-injection 으로 실증)
+ * - 초기 replace 포함 전체 요청이 단일 request owner: 초기 load pending 중
+ *   catch-up/visibility 가 겹쳐도 동시 쿼리 최대 1, 늦은 초기 응답 롤백 없음
+ * - actual usePollingFallback 동시 요청 최대 1
  */
 import { JSDOM } from "jsdom";
 import React from "react";
@@ -51,7 +54,7 @@ async function waitFor(condition: () => boolean, timeoutMs = 1_000) {
 type MessageRow = {
   id: number;
   conversation_id: string;
-  sender_id: null;
+  sender_id: string | null;
   content: string;
   is_read: boolean;
   created_at: string;
@@ -61,14 +64,34 @@ type PendingQuery = {
   settled: boolean;
   resolve: (value: { data: MessageRow[] }) => void;
 };
+type PendingProfile = {
+  senderId: string;
+  settled: boolean;
+  resolve: (value: { data: { nickname: string; team_id: number | null } | null }) => void;
+};
+
+function row(id: number, conversationId: string, senderId: string | null = null): MessageRow {
+  return {
+    id,
+    conversation_id: conversationId,
+    sender_id: senderId,
+    content: `m${id}`,
+    is_read: false,
+    created_at: `2026-07-30T00:00:0${id}Z`,
+  };
+}
 
 async function runDmHookRegression() {
   const { supabase } = await import("../../src/lib/supabase/client");
   const { useDMChat } = await import("../../src/lib/supabase/useDM");
+  const originalRandom = Math.random;
+  Math.random = () => 0; // catch-up jitter 0ms 결정론
   const pending: PendingQuery[] = [];
+  const profilePending: PendingProfile[] = [];
+  let maxConcurrentQueries = 0;
+  const unsettled = () => pending.filter((query) => !query.settled).length;
   const statusCallbacks = new Map<string, (status: string) => void>();
   const payloadCallbacks = new Map<string, (payload: { new: MessageRow }) => void>();
-  let channelSequence = 0;
 
   const mutableClient = supabase as unknown as {
     from: (table: string) => unknown;
@@ -76,6 +99,23 @@ async function runDmHookRegression() {
     removeChannel: (channel: unknown) => Promise<string>;
   };
   mutableClient.from = (table: string) => {
+    if (table === "profiles") {
+      let senderId = "";
+      const profileQuery = {
+        select: () => profileQuery,
+        eq: (_column: string, value: string) => {
+          senderId = value;
+          return profileQuery;
+        },
+        maybeSingle: () =>
+          new Promise<{ data: { nickname: string; team_id: number | null } | null }>(
+            (resolve) => {
+              profilePending.push({ senderId, settled: false, resolve });
+            },
+          ),
+      };
+      return profileQuery;
+    }
     if (table !== "dm_messages") throw new Error(`unexpected table: ${table}`);
     let conversationId = "";
     const query = {
@@ -88,12 +128,13 @@ async function runDmHookRegression() {
       limit: () =>
         new Promise<{ data: MessageRow[] }>((resolve) => {
           pending.push({ conversationId, settled: false, resolve });
+          maxConcurrentQueries = Math.max(maxConcurrentQueries, unsettled());
         }),
     };
     return query;
   };
-  mutableClient.channel = () => {
-    const id = String.fromCharCode(65 + channelSequence++);
+  mutableClient.channel = (name: string) => {
+    const id = name.startsWith("dm:") ? name.slice(3) : name;
     const channel = {
       id,
       on: (
@@ -114,80 +155,123 @@ async function runDmHookRegression() {
   mutableClient.removeChannel = async () => "ok";
 
   function Harness({ conversationId }: { conversationId: string }) {
-    const { messages } = useDMChat(conversationId);
+    const { messages, loading } = useDMChat(conversationId);
     return React.createElement(
       "output",
       null,
-      messages.map((message) => `${message.conversation_id}:${message.id}`).join(","),
+      (loading ? "L|" : "") +
+        messages.map((message) => `${message.conversation_id}:${message.id}`).join(","),
     );
   }
 
-  const container = dom.window.document.createElement("div");
-  dom.window.document.body.appendChild(container);
-  const root = createRoot(container);
-  root.render(React.createElement(Harness, { conversationId: "A" }));
-  await waitFor(() => pending.some((query) => query.conversationId === "A"));
+  const resolveQuery = (conversationId: string, data: MessageRow[]) => {
+    const query = pending.find((q) => q.conversationId === conversationId && !q.settled);
+    if (!query) throw new Error(`no pending query for ${conversationId}`);
+    query.settled = true;
+    query.resolve({ data });
+  };
 
-  root.render(React.createElement(Harness, { conversationId: "B" }));
-  await waitFor(() => pending.some((query) => query.conversationId === "B"));
-  const b = pending.find((query) => query.conversationId === "B");
-  b!.settled = true;
-  b!.resolve({
-    data: [{
-      id: 2,
-      conversation_id: "B",
-      sender_id: null,
-      content: "B",
-      is_read: false,
-      created_at: "2026-07-30T00:00:02Z",
-    }],
-  });
-  await waitFor(() => container.textContent === "B:2");
-  check("actual useDMChat: B 응답이 현재 화면에 반영", container.textContent === "B:2");
+  // ── 시나리오 1: A→B 전환 fence (blocker 2) + sender profile await RED 회귀 (blocker 3) ──
+  {
+    const container = dom.window.document.createElement("div");
+    dom.window.document.body.appendChild(container);
+    const root = createRoot(container);
+    root.render(React.createElement(Harness, { conversationId: "A" }));
+    await waitFor(() => pending.some((query) => query.conversationId === "A"));
+    check("actual useDMChat: 초기 로드 중 loading 표시", container.textContent === "L|");
+    resolveQuery("A", [row(1, "A")]);
+    await waitFor(() => container.textContent === "A:1");
+    check("actual useDMChat: A 초기 로드 반영", container.textContent === "A:1");
 
-  const a = pending.find((query) => query.conversationId === "A");
-  a!.settled = true;
-  a!.resolve({
-    data: [{
-      id: 1,
-      conversation_id: "A",
-      sender_id: null,
-      content: "A",
-      is_read: false,
-      created_at: "2026-07-30T00:00:01Z",
-    }],
-  });
-  await sleep(20);
-  check("actual useDMChat: late A load가 B를 덮지 않음", container.textContent === "B:2");
+    // sender_id 있는 A payload → profile fetch 가 실제로 시작·pending
+    payloadCallbacks.get("A")?.({ new: row(3, "A", "u1") });
+    await waitFor(() => profilePending.some((profile) => profile.senderId === "u1"));
+    check(
+      "actual useDMChat: sender payload 가 profile await 를 실제 실행",
+      profilePending.some((profile) => profile.senderId === "u1" && !profile.settled),
+    );
 
-  payloadCallbacks.get("A")?.({
-    new: {
-      id: 3,
-      conversation_id: "A",
-      sender_id: null,
-      content: "late-A",
-      is_read: false,
-      created_at: "2026-07-30T00:00:03Z",
-    },
-  });
-  await sleep(10);
-  check("actual useDMChat: late A payload 무영향", container.textContent === "B:2");
+    // A 화면이 보이는 상태에서 B 로 전환 → 즉시 reset (A 잔존 화면 오발송 창 차단)
+    root.render(React.createElement(Harness, { conversationId: "B" }));
+    await waitFor(() => container.textContent === "L|");
+    check("actual useDMChat: B 전환 즉시 messages 비움 + loading 전환", container.textContent === "L|");
+    await waitFor(() => pending.some((query) => query.conversationId === "B"));
 
-  statusCallbacks.get("B")?.("SUBSCRIBED");
-  await sleep(10);
-  statusCallbacks.get("A")?.("CLOSED");
-  await sleep(10);
-  const beforeVisibility = pending.filter((query) => query.conversationId === "B").length;
-  dom.window.document.dispatchEvent(new dom.window.Event("visibilitychange"));
-  await sleep(20);
-  const afterVisibility = pending.filter((query) => query.conversationId === "B").length;
-  check(
-    "actual useDMChat: late A CLOSED 뒤 B healthy 유지·catch-up 0",
-    beforeVisibility === afterVisibility,
-  );
+    // late A profile resolve → post-await fence 로 폐기 (fence 삭제 시 A:3 이 붙어 RED)
+    const profile = profilePending.find((p) => p.senderId === "u1")!;
+    profile.settled = true;
+    profile.resolve({ data: { nickname: "에이", team_id: 1 } });
+    await sleep(30);
+    check(
+      "actual useDMChat: late A profile resolve 가 B 를 오염하지 않음 (post-await fence)",
+      container.textContent === "L|",
+    );
 
-  root.unmount();
-  container.remove();
+    // B load 지연/실패해도 A 메시지는 이미 비워져 있음 → 빈 data 로 resolve
+    resolveQuery("B", [row(2, "B")]);
+    await waitFor(() => container.textContent === "B:2");
+    check("actual useDMChat: B 응답이 현재 화면에 반영", container.textContent === "B:2");
+
+    // late A payload (sender 없음) → conversation fence 로 폐기
+    payloadCallbacks.get("A")?.({ new: row(4, "A") });
+    await sleep(10);
+    check("actual useDMChat: late A payload 무영향", container.textContent === "B:2");
+
+    statusCallbacks.get("B")?.("SUBSCRIBED");
+    await sleep(10);
+    statusCallbacks.get("A")?.("CLOSED");
+    await sleep(10);
+    const beforeVisibility = pending.length;
+    dom.window.document.dispatchEvent(new dom.window.Event("visibilitychange"));
+    await sleep(20);
+    check(
+      "actual useDMChat: late A CLOSED 뒤 B healthy 유지·catch-up 0",
+      pending.length === beforeVisibility,
+    );
+
+    root.unmount();
+    container.remove();
+  }
+
+  // ── 시나리오 2: 초기 replace 포함 단일 request owner (blocker 1) ──
+  {
+    maxConcurrentQueries = 0;
+    const container = dom.window.document.createElement("div");
+    dom.window.document.body.appendChild(container);
+    const root = createRoot(container);
+    root.render(React.createElement(Harness, { conversationId: "C" }));
+    await waitFor(() => pending.some((query) => query.conversationId === "C"));
+
+    // 초기 replace pending 중 구독 사망(catch-up jitter 0ms) + visibility 복귀가 겹침
+    statusCallbacks.get("C")?.("SUBSCRIBED");
+    await sleep(10);
+    statusCallbacks.get("C")?.("CLOSED");
+    await sleep(30);
+    dom.window.document.dispatchEvent(new dom.window.Event("visibilitychange"));
+    await sleep(30);
+    check(
+      "actual useDMChat: 초기 load pending 중 catch-up/visibility 겹쳐도 동시 쿼리 1",
+      unsettled() === 1 && maxConcurrentQueries === 1,
+    );
+
+    // 초기 응답이 settle 된 뒤에야 queued 폴백이 정확히 1회 이어서 실행
+    resolveQuery("C", [row(1, "C")]);
+    await waitFor(() => pending.filter((query) => query.conversationId === "C").length === 2);
+    check("actual useDMChat: settle 뒤 queued 폴백 1회", unsettled() === 1);
+    check("actual useDMChat: 전체 경로 동시 요청 상한 1", maxConcurrentQueries === 1);
+
+    // 폴백이 더 새로운 데이터를 merge — 늦은 초기 응답이 최신 상태를 되돌릴 수 없음
+    resolveQuery("C", [row(1, "C"), row(2, "C")]);
+    await waitFor(() => container.textContent === "C:1,C:2");
+    check("actual useDMChat: 최신 데이터 유지(늦은 초기 롤백 없음)", container.textContent === "C:1,C:2");
+    await sleep(30);
+    check("actual useDMChat: 추가 쿼리 발화 없음", unsettled() === 0);
+
+    root.unmount();
+    container.remove();
+  }
+
+  Math.random = originalRandom;
 }
 
 async function runPollingHookRegression() {

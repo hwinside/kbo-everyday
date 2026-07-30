@@ -51,8 +51,21 @@ export default function DMChatPage() {
   const [otherId, setOtherId] = useState<string | null>(null);
   const [otherResolved, setOtherResolved] = useState(false);
 
+  // 대화 전환(A→B) 즉시 헤더·composer 판정을 다시 pending 으로 되돌린다 —
+  // A 상대 프로필이 잔존한 채 B 전송 closure 가 묶이는 오발송 창 차단.
+  const [profileConversationId, setProfileConversationId] = useState(conversationId);
+  if (profileConversationId !== conversationId) {
+    setProfileConversationId(conversationId);
+    setOtherName("상대방");
+    setOtherTeamId(null);
+    setOtherId(null);
+    setOtherResolved(false);
+  }
+
   useEffect(() => {
     if (!user || !conversationId) return;
+    // 전환 후 도착하는 이전 대화의 late 응답은 폐기(cleanup fence).
+    let cancelled = false;
 
     async function fetchOther() {
       let oid = draftTargetId;
@@ -63,6 +76,7 @@ export default function DMChatPage() {
           .eq("id", conversationId)
           .maybeSingle();
 
+        if (cancelled) return;
         if (!conv) {
           setOtherName("탈퇴한 사용자");
           setOtherTeamId(null);
@@ -86,12 +100,14 @@ export default function DMChatPage() {
         .eq("id", oid)
         .maybeSingle();
 
+      if (cancelled) return;
       if (prof) {
         setOtherName(prof.nickname ?? "상대방");
         setOtherTeamId(prof.team_id);
       }
     }
     fetchOther();
+    return () => { cancelled = true; };
   }, [user, conversationId, draftTargetId]);
 
   // Block hook

@@ -42,7 +42,15 @@ export function useUnreadDMCount() {
     );
   }, [user]);
 
-  useEffect(() => { load(); }, [load]); // eslint-disable-line react-hooks/set-state-in-effect
+  // 초기 load·Realtime refresh·폴링 폴백 모두 단일 request owner(single-flight)로 실행.
+  // (컨슈머 효과보다 먼저 호출해 컨트롤러가 선생성되게 한다.)
+  const requestLoad = usePollingFallback(load, {
+    enabled: !!user,
+    healthy: realtimeHealthy,
+    intervalMs: DM_UNREAD_POLL_MS,
+  });
+
+  useEffect(() => { requestLoad(); }, [load, requestLoad]);
 
   // Realtime 구독 — dm_messages INSERT 시 리카운트. 구독 상태를 폴링 폴백에 전달.
   useEffect(() => {
@@ -54,7 +62,7 @@ export function useUnreadDMCount() {
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "dm_messages" },
-        () => { load(); }
+        () => { requestLoad(); }
       )
       .subscribe((status) => {
         if (channelGenerationRef.current !== generation) return;
@@ -68,14 +76,7 @@ export function useUnreadDMCount() {
       }
       void supabase.removeChannel(channel);
     };
-  }, [user, load]);
-
-  // Realtime 이 끊긴 동안만 안읽음 카운트를 주기 재집계(무증상 유실 방지).
-  usePollingFallback(load, {
-    enabled: !!user,
-    healthy: realtimeHealthy,
-    intervalMs: DM_UNREAD_POLL_MS,
-  });
+  }, [user, requestLoad]);
 
   return count;
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useLayoutEffect, useState, useCallback, useRef } from "react";
 import { supabase } from "./client";
 import { useAuth } from "./AuthContext";
 import { useBlockedIds } from "./useBlock";
@@ -13,6 +13,10 @@ export type { DMMessage };
 // Realtime 구독이 죽은 동안만 도는 안전망 폴링 주기.
 const DM_LIST_POLL_MS = 30_000;
 const DM_CHAT_POLL_MS = 20_000;
+
+// SSR 에서는 useLayoutEffect 경고를 피하고 브라우저에서는 paint 전 동기 실행.
+const useIsomorphicLayoutEffect =
+  typeof window === "undefined" ? useEffect : useLayoutEffect;
 
 export interface DMConversation {
   id: string;
@@ -120,8 +124,15 @@ export function useDMList() {
     setLoading(false);
   }, [user, blockedIds]);
 
-  // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(() => { load(); }, [load]);
+  // 초기 load·Realtime refresh·폴링 폴백 모두 단일 request owner(single-flight)로 실행.
+  // (컨슈머 효과보다 먼저 호출해 컨트롤러가 선생성되게 한다.)
+  const requestLoad = usePollingFallback(load, {
+    enabled: !!user,
+    healthy: realtimeHealthy,
+    intervalMs: DM_LIST_POLL_MS,
+  });
+
+  useEffect(() => { requestLoad(); }, [load, requestLoad]);
 
   // Realtime — dm_messages 변경(읽음 처리 포함) 시 목록/대화별 안읽음 재계산. 구독 상태를 폴링 폴백에 전달.
   useEffect(() => {
@@ -133,7 +144,7 @@ export function useDMList() {
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "dm_messages" },
-        () => { load(); }
+        () => { requestLoad(); }
       )
       .subscribe((status) => {
         if (channelGenerationRef.current !== generation) return;
@@ -147,14 +158,7 @@ export function useDMList() {
       }
       void supabase.removeChannel(channel);
     };
-  }, [user, load]);
-
-  // Realtime 이 끊긴 동안만 대화 목록을 주기 재조회(새 쪽지/preview 무증상 유실 방지).
-  usePollingFallback(load, {
-    enabled: !!user,
-    healthy: realtimeHealthy,
-    intervalMs: DM_LIST_POLL_MS,
-  });
+  }, [user, requestLoad]);
 
   return { conversations, loading, refresh: load };
 }
@@ -167,6 +171,24 @@ export function useDMChat(conversationId: string) {
   const [realtimeHealthy, setRealtimeHealthy] = useState(false);
   const loadGenerationRef = useRef(0);
   const channelGenerationRef = useRef(0);
+
+  // 대화 전환(A→B) 즉시 렌더 시점에 이전 대화 화면을 무효화한다:
+  // A 메시지 잔존 상태로 B composer 가 뜨면 A 화면을 보고 B 에 오발송하는 창이 생긴다.
+  // (React 공식 "렌더 중 이전 렌더 값 비교 후 setState" 패턴 — effect 보다 먼저 적용된다.)
+  const [activeConversationId, setActiveConversationId] = useState(conversationId);
+  if (activeConversationId !== conversationId) {
+    setActiveConversationId(conversationId);
+    setMessages([]);
+    setLoading(Boolean(conversationId));
+    setRealtimeHealthy(false);
+  }
+
+  // 전환 commit 직후(paint 전·비동기 이벤트 개입 전) 이전 대화 소속 load/payload 를 fence.
+  // (렌더 중 ref 변경은 react-hooks/refs 위반이라 layout effect 에서 수행.)
+  useIsomorphicLayoutEffect(() => {
+    loadGenerationRef.current += 1;
+    channelGenerationRef.current += 1;
+  }, [conversationId]);
 
   // 메시지 로드/재조회 — 초기는 replace, 폴링 폴백은 merge(append 보존).
   const loadMessages = useCallback(
@@ -220,16 +242,28 @@ export function useDMChat(conversationId: string) {
     [conversationId],
   );
 
+  // Realtime 이 끊긴 동안만 보이는 대화창을 주기 재조회(새 메시지 무증상 누락 방지).
+  // requestLoad 는 초기 replace 를 포함한 모든 재조회의 단일 owner(동시 요청 최대 1).
+  const requestLoad = usePollingFallback(loadMessages, {
+    enabled: !!conversationId,
+    healthy: realtimeHealthy,
+    intervalMs: DM_CHAT_POLL_MS,
+  });
+
   // 대화 전환 시에는 replace 로 새 대화 메시지만 로드.
+  // single-flight 대기 중 대화가 또 바뀌면 generation 가드가 실행 자체를 건너뛴다.
   useEffect(() => {
     const generation = ++loadGenerationRef.current;
-    void loadMessages("replace");
+    requestLoad(() => {
+      if (loadGenerationRef.current !== generation) return;
+      return loadMessages("replace");
+    });
     return () => {
       if (loadGenerationRef.current === generation) {
         loadGenerationRef.current += 1;
       }
     };
-  }, [conversationId, loadMessages]);
+  }, [conversationId, loadMessages, requestLoad]);
 
   // 읽음 처리
   useEffect(() => {
@@ -316,13 +350,6 @@ export function useDMChat(conversationId: string) {
       void supabase.removeChannel(channel);
     };
   }, [conversationId, user]);
-
-  // Realtime 이 끊긴 동안만 보이는 대화창을 주기 재조회(새 메시지 무증상 누락 방지).
-  usePollingFallback(loadMessages, {
-    enabled: !!conversationId,
-    healthy: realtimeHealthy,
-    intervalMs: DM_CHAT_POLL_MS,
-  });
 
   // 메시지 전송: 방 생성·메시지 INSERT·목록 preview를 DB 한 트랜잭션으로 처리한다.
   const sendMessage = useCallback(

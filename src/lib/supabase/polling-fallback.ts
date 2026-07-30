@@ -31,6 +31,13 @@ export interface PollingFallbackDeps<Handle> {
 }
 
 export interface PollingFallbackController {
+  /**
+   * 폴링 외 경로(초기 load·Realtime refresh 등)도 동일 single-flight 로 실행한다.
+   * 컨트롤러가 모든 load 요청의 단일 owner 가 되어 동시 요청을 1개로 보장하고,
+   * in-flight 중 도착한 explicit 요청은 마지막 것 하나만 이어서 실행한다(최신 우선).
+   * shouldRun(healthy/visible) 게이트와 무관하게 실행된다 — 폴백이 아닌 명시 요청이므로.
+   */
+  requestLoad: (loader?: () => void | Promise<void>) => void;
   /** 폴백 활성 조건(예: 로그인·대화 존재). */
   setEnabled: (enabled: boolean) => void;
   /** Realtime 구독이 정상(SUBSCRIBED)인가. false면 폴링 안전망 가동. */
@@ -53,7 +60,8 @@ export function createPollingFallback<Handle>(
   let timer: Handle | null = null;
   let catchUpTimer: Handle | null = null;
   let inFlight = false;
-  let queued = false;
+  let queuedPoll = false;
+  let queuedExplicit: (() => void | Promise<void>) | null = null;
   let stopped = false;
 
   // 폴링이 돌아야 하는 조건: 활성 && 구독 비정상 && 탭 보임.
@@ -66,24 +74,40 @@ export function createPollingFallback<Handle>(
     }
   };
 
-  const runLoad = () => {
-    if (!shouldRun() || stopped) return;
-    if (inFlight) {
-      queued = true;
-      return;
-    }
+  // 단일 single-flight 실행기 — 폴링·explicit 요청 모두 이 경로 하나만 탄다(동시 요청 상한 1).
+  const execute = (loader: () => void | Promise<void>) => {
     inFlight = true;
-    Promise.resolve(deps.load())
+    Promise.resolve(loader())
       .catch(() => undefined)
       .finally(() => {
         inFlight = false;
-        if (!queued || !shouldRun() || stopped) {
-          queued = false;
+        if (stopped) {
+          queuedPoll = false;
+          queuedExplicit = null;
           return;
         }
-        queued = false;
-        runLoad();
+        if (queuedExplicit != null) {
+          const next = queuedExplicit;
+          queuedExplicit = null;
+          // explicit 재조회가 최신 데이터를 가져오므로 대기 중이던 폴링 tick 은 합쳐진다.
+          queuedPoll = false;
+          execute(next);
+          return;
+        }
+        if (queuedPoll) {
+          queuedPoll = false;
+          if (shouldRun()) execute(deps.load);
+        }
       });
+  };
+
+  const runLoad = () => {
+    if (!shouldRun() || stopped) return;
+    if (inFlight) {
+      queuedPoll = true;
+      return;
+    }
+    execute(deps.load);
   };
 
   const scheduleCatchUp = () => {
@@ -114,12 +138,22 @@ export function createPollingFallback<Handle>(
       timer = null;
     }
     if (!shouldRun()) {
-      queued = false;
+      queuedPoll = false;
       clearCatchUp();
     }
   };
 
   return {
+    requestLoad(loader?: () => void | Promise<void>) {
+      if (stopped) return;
+      const next = loader ?? deps.load;
+      if (inFlight) {
+        // 최신 explicit 요청만 유지 — 이전 대기 요청(예: 이전 대화 초기 load)은 대체된다.
+        queuedExplicit = next;
+        return;
+      }
+      execute(next);
+    },
     setEnabled(next: boolean) {
       enabled = next;
       evaluate();
@@ -138,7 +172,8 @@ export function createPollingFallback<Handle>(
     },
     stop() {
       stopped = true;
-      queued = false;
+      queuedPoll = false;
+      queuedExplicit = null;
       clearCatchUp();
       if (timer != null) {
         deps.clearInterval(timer);
@@ -149,7 +184,7 @@ export function createPollingFallback<Handle>(
       return timer != null;
     },
     loadState() {
-      return { inFlight, queued };
+      return { inFlight, queued: queuedPoll || queuedExplicit != null };
     },
   };
 }
