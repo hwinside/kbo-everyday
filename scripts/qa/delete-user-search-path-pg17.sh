@@ -180,6 +180,31 @@ for fn in update_comment_count update_like_count; do
   check "$fn: public.posts 한정" "$(echo "$DEF" | grep -c 'UPDATE public.posts')" "2"
 done
 
+echo "[bootstrap 정합] src/lib/supabase/functions.sql 이 migration 과 동일하게 안전"
+# 재설치/수동 적용 시 취약 정의 재유입 방지: bootstrap 파일도 search_path 고정 +
+# public. qualified 여야 한다. functions.sql 을 임시 스키마에 로드해 catalog 로 검사.
+BOOT="$ROOT/src/lib/supabase/functions.sql"
+check "functions.sql 존재" "$([ -f "$BOOT" ] && echo ok)" "ok"
+# functions.sql 은 tail 에서 publication ALTER / 다른 트리거를 참조하므로, 두 함수
+# 정의 블록만 뽑아 clean DB 에 적용해 pg_get_functiondef 로 정합 판정.
+awk '/CREATE OR REPLACE FUNCTION update_(like|comment)_count\(\)/{c=1} c{print} /LANGUAGE plpgsql SECURITY DEFINER/{if(c){print ";"; c=0}}' "$BOOT" > "$WORK/boot_fns.sql"
+"${PSQL[@]}" <<'SQL'
+CREATE SCHEMA IF NOT EXISTS boot;
+SQL
+# posts 는 이미 public 에 존재. 함수를 boot 스키마 아래로 재로드하지 않고 public 재정의
+# (migration 과 동일 시그니처) 후 catalog 검사 — 정의가 정합이면 GREEN 상태 그대로 유지.
+"${PSQL[@]}" -f "$WORK/boot_fns.sql" >/dev/null
+for fn in update_comment_count update_like_count; do
+  BDEF="$("${PSQL[@]}" -c "SELECT pg_get_functiondef('public.$fn()'::regprocedure)")"
+  check "boot $fn: SET search_path" "$(echo "$BDEF" | grep -c "SET search_path TO 'public', 'pg_temp'")" "1"
+  check "boot $fn: unqualified posts 없음" "$(echo "$BDEF" | grep -Ec 'UPDATE[[:space:]]+posts[[:space:]]')" "0"
+  check "boot $fn: public.posts 한정" "$(echo "$BDEF" | grep -c 'UPDATE public.posts')" "2"
+done
+# bootstrap 재적용 후에도 auth-admin 세션 삭제가 여전히 성공하는지 재확인
+seed
+"${PSQL[@]}" -c "$DELETE_AS_AUTH_ADMIN"
+check "boot 정의로도 탈퇴 성공" "$("${PSQL[@]}" -c "SELECT count(*) FROM auth.users WHERE id='00000000-0000-0000-0000-000000000001'")" "0"
+
 echo
 echo "PASS=$pass FAIL=$fail"
 [ "$fail" -eq 0 ]
