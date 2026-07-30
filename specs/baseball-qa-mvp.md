@@ -46,10 +46,21 @@ LLM 순으로 비용을 0에 수렴시킨다. 선수·구단 기록/히스토리
   커밋 직후 앱 종료/응답 단절이어도 job은 유실되지 않으며,
   `/api/cron/baseball-qa-drain`(매분)이 due job을 끝까지 처리한다.
 - 사용자 메시지 id를 quota/LLM 전에 atomic claim한다. quota 예약은 messageId 단위
-  idempotent RPC(`reserve_baseball_genius_daily_question_for_message`)로 job 행에 고정하고,
-  LLM 응답 원본도 호출 직후 job 행에 durable 저장해 crash 재처리가 quota·LLM을
-  재소비하지 않는다. 처리 결과를 durable job에 `ready`로 저장한 뒤 답변 insert를
-  수행하고, 재시도는 저장된 답변만 사용한다.
+  idempotent RPC(`reserve_baseball_genius_daily_question_for_message`)로 job 행에 고정한다.
+- **LLM ≤1/messageId (4차 P1)**: `callLlm` 직전에 job 행의 `llm_started`를 durable
+  고정하고, 응답 원본을 호출 직후 job 행에 저장한다. 재처리는 저장된 결과를 재사용하며,
+  `llm_started=true`인데 결과가 없으면(응답 수신 후 DB 저장 실패/crash 창) 공급자 소비가
+  ambiguous하므로 자동 재호출 없이 fail-closed 안내(`LLM_AMBIGUOUS_ANSWER`)로 종결한다.
+  crash 재처리는 어떤 경우에도 quota·LLM을 재소비하지 않는다.
+- 처리 결과를 durable job에 `ready`로 저장한 뒤 답변 insert를 수행하고, 재시도는
+  저장된 답변만 사용한다.
+- **발송 재시도 분리 (4차 P1)**: 답변 DM 발송 실패는 처리 실패(`attempts`)와 분리된
+  `delivery_attempts`로 집계한다(`record_baseball_genius_delivery_failure` RPC: +1, 60초
+  backoff lease, status는 `ready` 유지). drainer의 due 선별은
+  `due_baseball_genius_question_jobs` RPC가 담당하며 queued/processing/failed는
+  `attempts<5`, `ready`는 `delivery_attempts<5`로 각각 bounded한다 — 5번째 처리에서 답변
+  생성 성공 + 발송 일시 실패여도 job이 영구 제외되지 않는다. delivery 상한 소진 시
+  `delivery exhausted` 운영 로그로 관측/알림한다.
 - 브라우저는 DM 저장 직후 동일 `messageId`를 local outbox에 먼저 기록한다(즉시 응답 UX용
   best-effort 경로). 최초 500/abort, 앱 재진입, 온라인 복귀 시 같은 id만 재시도하며 실패
   상태와 수동 재시도 UI를 제공한다. 최종 전달 보장은 서버 drainer가 담당한다.
@@ -58,9 +69,15 @@ LLM 순으로 비용을 0에 수렴시킨다. 선수·구단 기록/히스토리
 
 - `baseball_terms`: term, aliases, answer, category, `source_kind`, `source_url`,
   `rule_version`, `reviewed_at`
-- `genius_qa_cache`: 정규화 질문별 검증 통과 답변
-- `genius_question_logs`: 전 경로와 토큰 기록
+- `genius_qa_cache`: 정규화 질문별 검증 통과 답변 (`question_norm` UNIQUE)
+- `genius_question_logs`: 전 경로와 토큰 기록 (관측용 append-only — 한도/중복 판정에는
+  사용하지 않는다)
 - `genius_daily_usage`: `(user_id, kst_day)`별 atomic 사용량
+- `genius_question_jobs`: messageId PK durable job. `status(queued|processing|ready|completed|failed)`,
+  `attempts`(처리)·`delivery_attempts`(발송) 분리, `lease_until`,
+  `quota_reserved/quota_allowed/quota_remaining`(messageId 단위 quota 고정),
+  `llm_started`(호출 전 durable 고정)·`llm_text/llm_input_tokens/llm_output_tokens`(응답 원본),
+  `answer/source/remaining`(ready 결과), `last_error`. 질문 DM INSERT trigger가 생성한다.
 
 132개 seed는 `official_rule / official_record / editorial_definition`으로 근거 성격을
 구분한다. 공식 항목만 KBO 경기규칙·기록 페이지의 **항목별 실제 대응 URL**과
@@ -71,9 +88,14 @@ LLM 순으로 비용을 0에 수렴시킨다. 선수·구단 기록/히스토리
 
 ## 6. 일일 한도
 
-`reserve_baseball_genius_daily_question(user_id, limit)` RPC가 KST 날짜 버킷에서
-UPSERT+조건부 increment+RETURNING을 한 트랜잭션으로 수행한다. LLM 호출 전에 슬롯을
-예약하고, 한도 초과 또는 DB 오류면 LLM에 진입하지 않는다.
+서버 처리 경로는 `reserve_baseball_genius_daily_question_for_message(message_id, user_id,
+limit)` RPC를 사용한다: job 행을 `FOR UPDATE`로 잠그고, 이미 예약된 메시지면 저장된
+결과(`quota_allowed/quota_remaining`)를 그대로 반환하며 usage를 증가시키지 않는다
+(messageId 단위 idempotent — crash 재처리의 quota 중복 소비 방지). 미예약 메시지는 KST
+날짜 버킷에서 UPSERT+조건부 increment+RETURNING을 한 트랜잭션으로 수행하고 결과를 job
+행에 고정한다. LLM 호출 전에 슬롯을 예약하고, 한도 초과 또는 DB 오류면 LLM에 진입하지
+않는다. 레거시 `reserve_baseball_genius_daily_question(user_id, limit)`는 동일한 날짜 버킷
+원자 예약의 기본형으로 migration에 함께 있으나 서버 처리 경로는 message 단위 RPC만 쓴다.
 
 ## 7. 표준 문구
 
@@ -110,6 +132,9 @@ UPSERT+조건부 increment+RETURNING을 한 트랜잭션으로 수행한다. LLM
 - 조사 결합 선수명/KBO ID 4건(김도영의/류현진은/박해민이/52605의) history_hold·LLM 0·cache 0
 - 질문 INSERT 커밋만으로 job 생성(trigger, 클라이언트 호출 0) → claim 가능
 - crash-after-reserve 재처리에서 quota 1·LLM ≤1·답변 1
+- callLlm 성공 → storeLlm 1차 실패 → 재-claim에서 LLM 재호출 0 (fail-closed 안내로 종결)
+- 4회 처리 실패 → 5번째 ready → 발송 1회 실패 → 다음 drain 수거·답변 정확히 1회·delivery
+  상한 소진 시 제외
 - seed 항목별 근거 감사 + 대표 오매핑 결함 주입 RED
 - DM 저장 성공 → 첫 처리 500 → local outbox 동일 messageId 재시도 → 완료
 - migration 미적용 유지

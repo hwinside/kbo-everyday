@@ -13,12 +13,14 @@ import {
   BLOCKED_ANSWER,
   DAILY_LIMIT,
   HISTORY_HOLD_ANSWER,
+  LLM_AMBIGUOUS_ANSWER,
   matchGlossary,
   routeQuestion,
   SERVICE_REDIRECT_ANSWER,
   UNSURE_ANSWER,
   validateLlmResponse,
   type GlossaryEntry,
+  type LlmResult,
   type MatchPath,
   type PlayerRef,
   type QaDeps,
@@ -84,6 +86,12 @@ assert.doesNotMatch(serverSource, /룰·용어·기록 질문/);
 // 게이트 2: 서버측 durable handoff — drain 크론이 존재하고 vercel cron으로 등록되어야 한다.
 assert.match(drainSource, /CRON_SECRET/);
 assert.match(drainSource, /processBaseballQaQuestion/);
+// 삼순 4차 P1: due 선별은 processing/delivery attempt를 분리한 RPC를 사용해야 하고,
+// 발송 실패는 delivery_attempts로 기록되며, LLM 호출 전 durable 고정이 있어야 한다.
+assert.match(drainSource, /due_baseball_genius_question_jobs/);
+assert.match(serverSource, /record_baseball_genius_delivery_failure/);
+assert.match(serverSource, /markLlmStarted/);
+assert.match(serverSource, /llm_started/);
 assert.match(vercelJson, /\/api\/cron\/baseball-qa-drain/);
 assert.match(migrationSql, /trg_enqueue_baseball_genius_question/);
 // 게이트 5: 계정명 야잘알봇 + 안정 키 lookup (nickname lookup 금지 — 신규 auth 계정 생성 방지).
@@ -270,7 +278,8 @@ async function verifyCrashIdempotentLlmAndQuota() {
   let llmCalls = 0;
   let quotaReserves = 0;
   let storedQuota: { allowed: boolean; remaining: number } | null = null;
-  let storedLlm: { text: string; inputTokens: number | null; outputTokens: number | null } | null = null;
+  let storedLlm: LlmResult | null = null;
+  let llmStartedFlag = false;
   const cache = new Map<string, string>();
   let setCacheThrows = true;
   const deps: QaDeps = {
@@ -296,7 +305,8 @@ async function verifyCrashIdempotentLlmAndQuota() {
       storedQuota = { allowed: true, remaining: limit - 1 };
       return storedQuota;
     },
-    getStoredLlm: async () => storedLlm,
+    getLlmState: async () => ({ started: llmStartedFlag, result: storedLlm }),
+    markLlmStarted: async () => { llmStartedFlag = true; },
     storeLlm: async (result) => { storedLlm = result; },
     log: async () => {},
   };
@@ -313,6 +323,59 @@ async function verifyCrashIdempotentLlmAndQuota() {
   assert.equal(llmCalls, 1, "재시도가 LLM을 재소비하면 안 됨");
   assert.equal(quotaReserves, 1, "재시도가 quota를 재소비하면 안 됨");
   assert.equal(cache.size, 1);
+}
+
+// 게이트 1 (삼순 4차 P1): callLlm 성공 → storeLlm(DB write) 실패/그 사이 crash 창에서도
+// 동일 messageId의 LLM 소비는 1회여야 하고, 재처리는 자동 재호출 없이 fail-closed된다.
+async function verifyLlmStoreFailureFailClosed() {
+  let llmCalls = 0;
+  let storeCalls = 0;
+  let started = false;
+  const stored: LlmResult | null = null; // storeLlm이 항상 실패 → durable 결과는 끝까지 null.
+  let storedQuota: { allowed: boolean; remaining: number } | null = null;
+  const cache = new Map<string, string>();
+  const deps: QaDeps = {
+    loadGlossary: async () => seedEntries,
+    loadPlayers: async () => players,
+    getCache: async (key) => cache.get(key) ?? null,
+    setCache: async (key, value) => { cache.set(key, value); },
+    callLlm: async () => {
+      llmCalls++;
+      return {
+        text: '{"status":"ANSWER","answer":"야구 룰에 따른 검증된 답변이에요."}',
+        inputTokens: 250,
+        outputTokens: 100,
+      };
+    },
+    reserveDaily: async (_userId, limit) => {
+      if (storedQuota) return storedQuota;
+      storedQuota = { allowed: true, remaining: limit - 1 };
+      return storedQuota;
+    },
+    getLlmState: async () => ({ started, result: stored }),
+    markLlmStarted: async () => { started = true; },
+    storeLlm: async () => {
+      storeCalls++;
+      throw new Error("DB write failed after LLM response");
+    },
+    log: async () => {},
+  };
+
+  const question = "야구 경기에서 항의 규칙은 어떻게 돼?";
+  // 1차 시도: LLM 응답 수신 후 durable 저장에서 실패 → attempt 실패(공급자는 이미 응답).
+  await assert.rejects(() => answerQuestion("u1", question, deps), /DB write failed/);
+  assert.equal(llmCalls, 1);
+  assert.equal(storeCalls, 1);
+  assert.equal(started, true, "callLlm 전에 llm_started가 durable 고정되어야 함");
+  assert.equal(stored, null);
+
+  // 재-claim: started·결과 없음 ambiguous → 자동 재호출 금지, fail-closed 안내로 종결.
+  const retry = await answerQuestion("u1", question, deps);
+  assert.equal(llmCalls, 1, "storeLlm 실패 재처리가 LLM을 재호출하면 안 됨 (4차 P1)");
+  assert.equal(retry.status, 200);
+  assert.equal(retry.source, "error");
+  assert.equal(retry.answer, LLM_AMBIGUOUS_ANSWER);
+  assert.equal(cache.size, 0, "ambiguous 경로는 캐시를 오염하면 안 됨");
 }
 
 async function verifyAtomicLimitWithPglite() {
@@ -448,6 +511,8 @@ async function setupJobsDb() {
     /DROP TRIGGER IF EXISTS trg_enqueue_baseball_genius_question[\s\S]*?enqueue_baseball_genius_question\(\);/,
     /CREATE OR REPLACE FUNCTION public\.reserve_baseball_genius_daily_question_for_message[\s\S]*?\n\$\$;/,
     /CREATE OR REPLACE FUNCTION public\.claim_baseball_genius_question[\s\S]*?\n\$\$;/,
+    /CREATE OR REPLACE FUNCTION public\.due_baseball_genius_question_jobs[\s\S]*?\n\$\$;/,
+    /CREATE OR REPLACE FUNCTION public\.record_baseball_genius_delivery_failure[\s\S]*?\n\$\$;/,
   ];
   for (const pattern of pieces) {
     const sql = migrationSql.match(pattern)?.[0];
@@ -561,6 +626,86 @@ async function verifyCrashAfterReserveQuotaWithPglite() {
     [FAN_ID],
   );
   assert.equal(usage.rows[0]?.used, 1, "crash 재처리에서도 quota 소비는 messageId당 1이어야 함");
+  await db.close();
+}
+
+// 게이트 2 (삼순 4차 P1): 4회 처리 실패 → 5번째 claim에서 답변 생성 성공(ready, attempts=5)
+// → 발송 1회 실패해도 다음 drain이 다시 수거해 답변을 정확히 1회 전달해야 한다.
+async function verifyReadyDeliveryRetryWithPglite() {
+  const db = await setupJobsDb();
+  await seedConversations(db);
+  const inserted = await db.query<{ id: number }>(
+    "INSERT INTO dm_messages(conversation_id,sender_id,content) VALUES ($1,$2,$3) RETURNING id",
+    [GENIUS_CONV, FAN_ID, "마인드 게임이 아니라 보크가 뭐야?"],
+  );
+  const messageId = inserted.rows[0]?.id;
+  assert.ok(messageId);
+
+  // 앞선 4회 처리 실패 + 5번째 claim → attempts=5.
+  for (let i = 0; i < 5; i++) {
+    const claim = await db.query<{ claim_state: string }>(
+      "SELECT * FROM claim_baseball_genius_question($1,$2,$3,30)",
+      [messageId, GENIUS_CONV, FAN_ID],
+    );
+    assert.equal(claim.rows[0]?.claim_state, "claimed");
+    if (i < 4) {
+      await db.query(
+        "UPDATE genius_question_jobs SET status='failed', last_error='pipeline_failed' WHERE message_id=$1",
+        [messageId],
+      );
+    }
+  }
+  // 5번째 처리: 답변 생성 성공 → ready 저장.
+  await db.query(
+    "UPDATE genius_question_jobs SET status='ready', answer='보크는 투수의 반칙 투구 동작이에요.', source='dictionary', remaining=19 WHERE message_id=$1",
+    [messageId],
+  );
+  const afterReady = await db.query<{ attempts: number; delivery_attempts: number }>(
+    "SELECT attempts, delivery_attempts FROM genius_question_jobs WHERE message_id=$1",
+    [messageId],
+  );
+  assert.equal(afterReady.rows[0]?.attempts, 5, "5번째 claim 후 attempts=5여야 재현 조건이 맞음");
+
+  // 발송 1회 실패 → delivery_attempts=1 + backoff lease.
+  const failure = await db.query<{ record_baseball_genius_delivery_failure: number }>(
+    "SELECT record_baseball_genius_delivery_failure($1,60)",
+    [messageId],
+  );
+  assert.equal(Number(failure.rows[0]?.record_baseball_genius_delivery_failure), 1);
+  // backoff 중에는 due가 아니다.
+  const duringBackoff = await db.query<{ message_id: number }>(
+    "SELECT message_id FROM due_baseball_genius_question_jobs(5)",
+  );
+  assert.equal(duringBackoff.rows.length, 0);
+
+  // 다음 cron 시점(backoff 경과): ready·attempts=5여도 delivery_attempts 기준으로 수거되어야 한다.
+  // (구 쿼리의 attempts<5 전역 적용이면 이 행이 영구 제외되는 RED 케이스.)
+  await db.query(
+    "UPDATE genius_question_jobs SET lease_until = clock_timestamp() - interval '1 second' WHERE message_id=$1",
+    [messageId],
+  );
+  const nextDrain = await db.query<{ message_id: number; status: string }>(
+    "SELECT message_id, status FROM due_baseball_genius_question_jobs(5)",
+  );
+  assert.equal(nextDrain.rows.length, 1, "ready·attempts=5 job이 다음 drain에 정확히 1건 수거되어야 함");
+  assert.equal(nextDrain.rows[0]?.status, "ready");
+
+  // 재발송 성공(답변 1회 전달) → completed → 더는 due가 아니다.
+  await db.query("UPDATE genius_question_jobs SET status='completed' WHERE message_id=$1", [messageId]);
+  const afterComplete = await db.query<{ message_id: number }>(
+    "SELECT message_id FROM due_baseball_genius_question_jobs(5)",
+  );
+  assert.equal(afterComplete.rows.length, 0);
+
+  // bounded: delivery_attempts가 상한(5)에 닿은 ready job은 더는 수거하지 않는다.
+  await db.query(
+    "UPDATE genius_question_jobs SET status='ready', delivery_attempts=5, lease_until = clock_timestamp() - interval '1 second' WHERE message_id=$1",
+    [messageId],
+  );
+  const exhausted = await db.query<{ message_id: number }>(
+    "SELECT message_id FROM due_baseball_genius_question_jobs(5)",
+  );
+  assert.equal(exhausted.rows.length, 0, "delivery 상한 소진 job은 due에서 제외되어야 함");
   await db.close();
 }
 
@@ -710,15 +855,18 @@ function auditSeedEvidence(rows: SeedEvidenceRow[]) {
 async function main() {
   await verifyPipeline();
   await verifyCrashIdempotentLlmAndQuota();
+  await verifyLlmStoreFailureFailClosed();
   await verifySeedWithPglite();
   await verifyAtomicLimitWithPglite();
   await verifyAtomicMessageClaimWithPglite();
   await verifyDurableServerHandoffWithPglite();
   await verifyCrashAfterReserveQuotaWithPglite();
+  await verifyReadyDeliveryRetryWithPglite();
   await verifyClientRetryOutbox();
   console.log(
     "✅ baseball-qa PASS: seed 132 항목별 evidence audit(+결함주입 RED), 조사결합 선수 hold, " +
-      "trigger durable handoff, crash-idempotent quota/LLM, quota/message 25-way",
+      "trigger durable handoff, crash-idempotent quota/LLM(+storeLlm 실패 fail-closed), " +
+      "ready delivery bounded retry, quota/message 25-way",
   );
 }
 

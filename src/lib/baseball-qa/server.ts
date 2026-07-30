@@ -27,6 +27,10 @@ const SYSTEM_PROMPT = [
   "URL, 링크, 마크다운은 출력하지 않는다. 확실하지 않으면 UNSURE를 쓴다.",
 ].join("\n");
 
+/** 발송(delivery) 재시도 상한 — 처리(attempts) 상한과 분리된다 (삼순 4차 P1). */
+export const MAX_DELIVERY_ATTEMPTS = 5;
+const DELIVERY_RETRY_BACKOFF_SECONDS = 60;
+
 export const INVALID_QUESTION_ANSWER =
   `질문은 ${MIN_QUESTION_LEN}~${MAX_QUESTION_LEN}자 텍스트로 입력해 주세요. 예: "보크가 뭐야?"`;
 
@@ -135,19 +139,30 @@ function makeDeps(messageId: number): QaDeps {
       if (!row) throw new Error("daily reservation missing");
       return { allowed: row.allowed, remaining: Number(row.remaining) };
     },
-    getStoredLlm: async () => {
+    getLlmState: async () => {
       const { data, error } = await supabaseAdmin
         .from("genius_question_jobs")
-        .select("llm_text, llm_input_tokens, llm_output_tokens")
+        .select("llm_started, llm_text, llm_input_tokens, llm_output_tokens")
         .eq("message_id", messageId)
         .maybeSingle();
       if (error) throw error;
-      if (!data?.llm_text) return null;
       return {
-        text: data.llm_text as string,
-        inputTokens: data.llm_input_tokens as number | null,
-        outputTokens: data.llm_output_tokens as number | null,
+        started: data?.llm_started === true,
+        result: data?.llm_text
+          ? {
+              text: data.llm_text as string,
+              inputTokens: data.llm_input_tokens as number | null,
+              outputTokens: data.llm_output_tokens as number | null,
+            }
+          : null,
       };
+    },
+    markLlmStarted: async () => {
+      const { error } = await supabaseAdmin
+        .from("genius_question_jobs")
+        .update({ llm_started: true, updated_at: new Date().toISOString() })
+        .eq("message_id", messageId);
+      if (error) throw error;
     },
     storeLlm: async (result) => {
       const { error } = await supabaseAdmin
@@ -288,6 +303,22 @@ export async function processBaseballQaQuestion(input: {
   );
   if (!sent.ok) {
     console.error("baseball-genius DM reply failed:", sent.reason);
+    // 발송 실패는 status=ready를 유지한 채 delivery_attempts만 증가시켜(backoff lease)
+    // 다음 drain이 저장된 답변으로 발송만 재시도한다 (삼순 4차 P1).
+    // query-guard: bounded -- messageId 단위 단일 행 갱신 RPC.
+    const { data: deliveryAttempts, error: deliveryError } = await supabaseAdmin
+      .rpc("record_baseball_genius_delivery_failure", {
+        p_message_id: messageId,
+        p_backoff_seconds: DELIVERY_RETRY_BACKOFF_SECONDS,
+      });
+    if (deliveryError) {
+      console.error("baseball-genius delivery failure record failed:", deliveryError.message);
+    } else if (Number(deliveryAttempts) >= MAX_DELIVERY_ATTEMPTS) {
+      // 관측/알림: 상한 소진 job은 drain 대상에서 빠지므로 운영 로그로 표면화한다.
+      console.error(
+        `baseball-genius delivery exhausted: message ${messageId} (${deliveryAttempts}/${MAX_DELIVERY_ATTEMPTS})`,
+      );
+    }
     return { kind: "failed", status: 500, reason: "답변 쪽지 발송에 실패했습니다" };
   }
   await supabaseAdmin

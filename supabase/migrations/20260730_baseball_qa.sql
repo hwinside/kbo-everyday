@@ -56,11 +56,16 @@ CREATE TABLE IF NOT EXISTS public.genius_question_jobs (
   user_id uuid NOT NULL,
   status text NOT NULL CHECK (status IN ('queued', 'processing', 'ready', 'completed', 'failed')),
   attempts integer NOT NULL DEFAULT 1 CHECK (attempts >= 0),
+  -- 답변 DM 발송 실패는 처리(attempts)와 분리된 delivery_attempts로 bounded 재시도한다 (삼순 4차 P1).
+  delivery_attempts integer NOT NULL DEFAULT 0 CHECK (delivery_attempts >= 0),
   lease_until timestamptz NOT NULL,
   -- crash-after-reserve 재처리가 quota를 중복 소비하지 않도록 messageId 단위로 예약 결과를 고정한다.
   quota_reserved boolean NOT NULL DEFAULT false,
   quota_allowed boolean,
   quota_remaining integer,
+  -- LLM 호출 '시작'을 호출 전에 durable 고정한다. started=true인데 llm_text가 없으면 공급자
+  -- 소비 여부가 ambiguous하므로 재처리는 LLM을 재호출하지 않고 fail-closed한다 (삼순 4차 P1).
+  llm_started boolean NOT NULL DEFAULT false,
   -- crash-after-LLM 재처리가 LLM을 재호출하지 않도록 응답 원본을 durable 저장한다.
   llm_text text,
   llm_input_tokens integer,
@@ -278,6 +283,59 @@ BEGIN
 END;
 $$;
 
+-- drainer due-job 선별 (삼순 4차 P1). 처리 계열(queued/processing/failed)은 attempts,
+-- 발송만 남은 ready는 delivery_attempts로 각각 bounded한다 — 5번째 처리에서 답변 생성이
+-- 성공하고 발송만 일시 실패해도(ready, attempts=5) job이 영구 제외되지 않는다.
+CREATE OR REPLACE FUNCTION public.due_baseball_genius_question_jobs(
+  p_limit integer DEFAULT 5
+)
+RETURNS SETOF public.genius_question_jobs
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+  SELECT *
+  FROM public.genius_question_jobs
+  WHERE lease_until < clock_timestamp()
+    AND (
+      (status IN ('queued', 'processing', 'failed') AND attempts < 5)
+      OR (status = 'ready' AND delivery_attempts < 5)
+    )
+  ORDER BY created_at ASC
+  LIMIT least(greatest(coalesce(p_limit, 5), 1), 50);
+$$;
+
+-- 발송 실패 기록: delivery_attempts 증가 + backoff lease. status는 ready를 유지해
+-- 다음 drain이 저장된 답변으로 발송만 재시도한다. 반환값은 관측/알림 판단용.
+CREATE OR REPLACE FUNCTION public.record_baseball_genius_delivery_failure(
+  p_message_id bigint,
+  p_backoff_seconds integer DEFAULT 60
+)
+RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_attempts integer;
+BEGIN
+  IF p_message_id IS NULL OR p_message_id < 1
+     OR p_backoff_seconds < 5 OR p_backoff_seconds > 3600 THEN
+    RAISE EXCEPTION USING errcode = '22023', message = 'invalid delivery failure record';
+  END IF;
+
+  UPDATE public.genius_question_jobs
+  SET delivery_attempts = delivery_attempts + 1,
+      lease_until = clock_timestamp() + make_interval(secs => p_backoff_seconds),
+      last_error = 'dm_send_failed',
+      updated_at = now()
+  WHERE message_id = p_message_id AND status = 'ready'
+  RETURNING delivery_attempts INTO v_attempts;
+
+  RETURN coalesce(v_attempts, 0);
+END;
+$$;
+
 ALTER TABLE public.baseball_terms ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.genius_qa_cache ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.genius_question_logs ENABLE ROW LEVEL SECURITY;
@@ -297,4 +355,14 @@ GRANT EXECUTE ON FUNCTION public.claim_baseball_genius_question(bigint, uuid, uu
 REVOKE ALL ON FUNCTION public.reserve_baseball_genius_daily_question_for_message(bigint, uuid, integer)
   FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.reserve_baseball_genius_daily_question_for_message(bigint, uuid, integer)
+  TO service_role;
+
+REVOKE ALL ON FUNCTION public.due_baseball_genius_question_jobs(integer)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.due_baseball_genius_question_jobs(integer)
+  TO service_role;
+
+REVOKE ALL ON FUNCTION public.record_baseball_genius_delivery_failure(bigint, integer)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.record_baseball_genius_delivery_failure(bigint, integer)
   TO service_role;

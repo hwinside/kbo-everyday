@@ -13,8 +13,11 @@ export const maxDuration = 60;
  *
  * 질문 DM INSERT와 같은 트랜잭션에서 trigger가 genius_question_jobs 를 만들기 때문에,
  * send_dm_message_atomic 커밋 직후 앱 종료/응답 단절로 브라우저가 /api/baseball-qa 를
- * 한 번도 못 불러도 job은 남는다. 이 크론이 due job(queued / lease 만료 processing /
- * ready / failed<재시도 상한)을 재획득해 끝까지 처리한다. claim RPC와 messageId 단위
+ * 한 번도 못 불러도 job은 남는다. 이 크론이 due job을 재획득해 끝까지 처리한다.
+ * due 선별은 due_baseball_genius_question_jobs RPC가 담당한다: 처리 계열
+ * (queued / lease 만료 processing / failed)은 attempts<5, 발송만 남은 ready는
+ * delivery_attempts<5로 따로 bounded해 "5번째 처리 성공 + 발송 일시 실패" job도
+ * 영구 제외 없이 수거된다 (삼순 4차 P1). claim RPC와 messageId 단위
  * idempotent quota/LLM 저장 덕에 즉시 경로와 경합해도 중복 소비·중복 답변이 없다.
  */
 export async function GET(req: NextRequest) {
@@ -23,15 +26,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // query-guard: bounded -- due job은 배치당 최대 5건만 처리한다.
+  // query-guard: bounded -- due job RPC는 배치당 최대 5건만 반환한다.
   const { data: jobs, error } = await supabaseAdmin
-    .from("genius_question_jobs")
-    .select("message_id, conversation_id, user_id, status, attempts")
-    .in("status", ["queued", "processing", "ready", "failed"])
-    .lt("lease_until", new Date().toISOString())
-    .lt("attempts", MAX_DRAIN_ATTEMPTS)
-    .order("created_at", { ascending: true })
-    .limit(DRAIN_BATCH);
+    .rpc("due_baseball_genius_question_jobs", { p_limit: DRAIN_BATCH });
   if (error) {
     console.error("baseball-qa drain query failed:", error.message);
     return NextResponse.json({ error: "drain query failed" }, { status: 503 });

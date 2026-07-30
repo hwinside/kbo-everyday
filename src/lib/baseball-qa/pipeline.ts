@@ -21,6 +21,9 @@ export const SERVICE_REDIRECT_ANSWER =
 export const HISTORY_HOLD_ANSWER =
   "선수나 구단 기록은 제가 아직 정확히 답해드리기 어려워요. 앱의 선수 페이지 / 기록 탭에서 정확한 기록을 볼 수 있어요!";
 
+export const LLM_AMBIGUOUS_ANSWER =
+  "답변을 저장하는 과정에서 문제가 생겨 이번 질문에는 답을 드리지 못했어요. 같은 질문을 다시 보내주시면 새로 답해드릴게요! ⚾";
+
 export const NOT_BASEBALL_SENTINEL = "NOT_BASEBALL";
 export const UNSURE_SENTINEL = "UNSURE";
 
@@ -68,8 +71,10 @@ export interface QaDeps {
   setCache: (questionNorm: string, answer: string) => Promise<void>;
   callLlm: (question: string) => Promise<LlmResult>;
   reserveDaily: (userId: string, limit: number) => Promise<{ allowed: boolean; remaining: number }>;
-  /** crash-after-LLM 재처리 시 저장된 LLM 결과를 재사용 (messageId 단위 durable idempotency). */
-  getStoredLlm?: () => Promise<LlmResult | null>;
+  /** messageId의 durable LLM 상태: 호출 시작 여부 + 저장된 결과 (job 행 기준). */
+  getLlmState?: () => Promise<{ started: boolean; result: LlmResult | null }>;
+  /** callLlm 직전에 호출 시작을 durable 고정 — 이후 crash 시 재처리가 재호출 없이 fail-closed하게 한다. */
+  markLlmStarted?: () => Promise<void>;
   /** LLM 호출 직후 결과를 durable 저장 — 이후 단계 crash 시 재시도가 LLM을 재소비하지 않게 한다. */
   storeLlm?: (result: LlmResult) => Promise<void>;
   log: (entry: {
@@ -277,23 +282,45 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     return { status: 200, answer: cached, source: "cache", remaining };
   }
 
-  // ③ 미매칭만 LLM (단발, 이력 미전송). 저장된 결과가 있으면(이전 시도가 LLM 이후 단계에서
-  // crash) 재호출 없이 재사용해 동일 messageId의 LLM 소비를 1회로 고정한다.
+  // ③ 미매칭만 LLM (단발, 이력 미전송). durable job 상태로 동일 messageId의 LLM 소비를
+  // 1회로 고정한다: 호출 전 llm_started를 durable 고정 → 저장된 결과가 있으면 재사용 →
+  // started인데 결과가 없으면(응답 수신 후 저장 실패/crash 창) 재호출 없이 fail-closed (4차 P1).
   let llm: LlmResult | null = null;
-  if (deps.getStoredLlm) {
+  let llmStarted = false;
+  if (deps.getLlmState) {
     try {
-      llm = await deps.getStoredLlm();
+      const state = await deps.getLlmState();
+      llmStarted = state.started;
+      llm = state.result;
     } catch {
-      llm = null;
+      // LLM 소비 여부를 모르는 채 진행하지 않는다 (재시도 가능한 실패).
+      await deps.log({ userId, question, questionNorm, matchPath: "error", answer: null, inputTokens: null, outputTokens: null });
+      return { status: 503, answer: "지금은 답변을 가져올 수 없어요. 잠시 후 다시 시도해 주세요.", source: "error", remaining };
     }
   }
   if (!llm) {
+    if (llmStarted) {
+      // 이전 시도가 LLM 호출을 시작했지만 결과 저장 전에 죽은 ambiguous 창 — 공급자
+      // 응답/과금이 이미 발생했을 수 있으므로 자동 재호출하지 않고 안내로 종결한다.
+      await deps.log({ userId, question, questionNorm, matchPath: "error", answer: null, inputTokens: null, outputTokens: null });
+      return { status: 200, answer: LLM_AMBIGUOUS_ANSWER, source: "error", remaining };
+    }
+    if (deps.markLlmStarted) {
+      try {
+        await deps.markLlmStarted();
+      } catch {
+        // durable 고정에 실패하면 LLM을 호출하지 않는다 (재시도 가능, LLM 미소비).
+        await deps.log({ userId, question, questionNorm, matchPath: "error", answer: null, inputTokens: null, outputTokens: null });
+        return { status: 503, answer: "지금은 답변을 가져올 수 없어요. 잠시 후 다시 시도해 주세요.", source: "error", remaining };
+      }
+    }
     try {
       llm = await deps.callLlm(question);
     } catch {
       await deps.log({ userId, question, questionNorm, matchPath: "error", answer: null, inputTokens: null, outputTokens: null });
       return { status: 503, answer: "지금은 답변을 가져올 수 없어요. 잠시 후 다시 시도해 주세요.", source: "error", remaining };
     }
+    // 저장 실패는 throw로 전파 — 재처리는 위 ambiguous 경로로 fail-closed되어 재호출이 없다.
     if (deps.storeLlm) await deps.storeLlm(llm);
   }
 
