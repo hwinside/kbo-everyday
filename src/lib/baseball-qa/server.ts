@@ -29,6 +29,12 @@ const SYSTEM_PROMPT = [
 
 /** 발송(delivery) 재시도 상한 — 처리(attempts) 상한과 분리된다 (삼순 4차 P1). */
 export const MAX_DELIVERY_ATTEMPTS = 5;
+/**
+ * LLM 시작 fence (삼순 5차 P1): llm_started=true·결과 없음이어도 시작 후 이 창 안에서는
+ * winner의 callLlm(15s timeout)이 아직 진행 중일 수 있으므로 loser는 답변 없이 물러난다.
+ * fence 경과 후에만(winner는 이미 성공 저장 또는 사망) ambiguous fail-closed 복구가 동작한다.
+ */
+export const LLM_START_FENCE_MS = 30_000;
 const DELIVERY_RETRY_BACKOFF_SECONDS = 60;
 
 export const INVALID_QUESTION_ANSWER =
@@ -142,27 +148,43 @@ function makeDeps(messageId: number): QaDeps {
     getLlmState: async () => {
       const { data, error } = await supabaseAdmin
         .from("genius_question_jobs")
-        .select("llm_started, llm_text, llm_input_tokens, llm_output_tokens")
+        .select("llm_started, llm_started_at, llm_text, llm_input_tokens, llm_output_tokens")
         .eq("message_id", messageId)
         .maybeSingle();
       if (error) throw error;
+      const started = data?.llm_started === true;
+      const result = data?.llm_text
+        ? {
+            text: data.llm_text as string,
+            inputTokens: data.llm_input_tokens as number | null,
+            outputTokens: data.llm_output_tokens as number | null,
+          }
+        : null;
+      const startedAtMs = data?.llm_started_at ? Date.parse(data.llm_started_at as string) : NaN;
       return {
-        started: data?.llm_started === true,
-        result: data?.llm_text
-          ? {
-              text: data.llm_text as string,
-              inputTokens: data.llm_input_tokens as number | null,
-              outputTokens: data.llm_output_tokens as number | null,
-            }
-          : null,
+        started,
+        result,
+        // winner의 LLM 호출이 아직 끝나지 않았을 수 있는 fence 창 (삼순 5차 P1).
+        ownerActive:
+          started && !result && Number.isFinite(startedAtMs) &&
+          Date.now() - startedAtMs < LLM_START_FENCE_MS,
       };
     },
-    markLlmStarted: async () => {
-      const { error } = await supabaseAdmin
+    acquireLlmStart: async () => {
+      // 단일 UPDATE ... WHERE llm_started=false (PostgREST 한 요청 = 원자 CAS).
+      // 정확히 한 worker만 1행을 돌려받아 winner가 된다 (삼순 5차 P1).
+      const { data, error } = await supabaseAdmin
         .from("genius_question_jobs")
-        .update({ llm_started: true, updated_at: new Date().toISOString() })
-        .eq("message_id", messageId);
+        .update({
+          llm_started: true,
+          llm_started_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("message_id", messageId)
+        .eq("llm_started", false)
+        .select("message_id");
       if (error) throw error;
+      return (data?.length ?? 0) > 0;
     },
     storeLlm: async (result) => {
       const { error } = await supabaseAdmin
@@ -265,6 +287,12 @@ export async function processBaseballQaQuestion(input: {
         result = { status: 200, answer: INVALID_QUESTION_ANSWER, source: "blocked", remaining: 0 };
       } else {
         result = await answerQuestion(userId, question, makeDeps(messageId));
+      }
+      if (result.source === "pending") {
+        // LLM winner가 다른 worker (CAS 패배/fence 창) — 이 worker는 ready 저장도 발송도 하지
+        // 않고 물러난다. job은 winner가 끝까지 소유하며, winner crash 시에만 다음 drain이
+        // fence 경과 후 ambiguous fail-closed 복구로 이어받는다 (삼순 5차 P1).
+        return { kind: "pending" };
       }
       const { error: readyError } = await supabaseAdmin
         .from("genius_question_jobs")

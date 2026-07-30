@@ -47,11 +47,15 @@ LLM 순으로 비용을 0에 수렴시킨다. 선수·구단 기록/히스토리
   `/api/cron/baseball-qa-drain`(매분)이 due job을 끝까지 처리한다.
 - 사용자 메시지 id를 quota/LLM 전에 atomic claim한다. quota 예약은 messageId 단위
   idempotent RPC(`reserve_baseball_genius_daily_question_for_message`)로 job 행에 고정한다.
-- **LLM ≤1/messageId (4차 P1)**: `callLlm` 직전에 job 행의 `llm_started`를 durable
-  고정하고, 응답 원본을 호출 직후 job 행에 저장한다. 재처리는 저장된 결과를 재사용하며,
-  `llm_started=true`인데 결과가 없으면(응답 수신 후 DB 저장 실패/crash 창) 공급자 소비가
-  ambiguous하므로 자동 재호출 없이 fail-closed 안내(`LLM_AMBIGUOUS_ANSWER`)로 종결한다.
-  crash 재처리는 어떤 경우에도 quota·LLM을 재소비하지 않는다.
+- **LLM ≤1/messageId (4차 P1 + 5차 P1)**: `callLlm` 직전에 LLM 시작권을 atomic
+  CAS(단일 `UPDATE ... WHERE llm_started=false RETURNING`)로 획득해 정확히 한 worker만
+  winner가 되고(`llm_started_at` 기록), 응답 원본을 호출 직후 job 행에 저장한다.
+  stale lease 재 claim으로 두 worker가 LLM 경계에 동시 진입해도 CAS loser는 답변 발송 없이
+  물러난다(pending — job은 winner 소유). 재처리는 저장된 결과를 재사용하며,
+  `llm_started=true`인데 결과가 없으면 fence(30s)로 구분한다: fence 안이면 winner가 아직
+  실행 중일 수 있으므로 물러나고, fence 경과 후에만(응답 수신 후 DB 저장 실패/crash 창)
+  공급자 소비가 ambiguous하므로 자동 재호출 없이 fail-closed 안내(`LLM_AMBIGUOUS_ANSWER`)로
+  종결한다. crash 재처리는 어떤 경우에도 quota·LLM을 재소비하지 않는다.
 - 처리 결과를 durable job에 `ready`로 저장한 뒤 답변 insert를 수행하고, 재시도는
   저장된 답변만 사용한다.
 - **발송 재시도 분리 (4차 P1)**: 답변 DM 발송 실패는 처리 실패(`attempts`)와 분리된
@@ -76,7 +80,8 @@ LLM 순으로 비용을 0에 수렴시킨다. 선수·구단 기록/히스토리
 - `genius_question_jobs`: messageId PK durable job. `status(queued|processing|ready|completed|failed)`,
   `attempts`(처리)·`delivery_attempts`(발송) 분리, `lease_until`,
   `quota_reserved/quota_allowed/quota_remaining`(messageId 단위 quota 고정),
-  `llm_started`(호출 전 durable 고정)·`llm_text/llm_input_tokens/llm_output_tokens`(응답 원본),
+  `llm_started`(호출 전 atomic CAS 획득)·`llm_started_at`(winner 생존 fence 판정)·
+  `llm_text/llm_input_tokens/llm_output_tokens`(응답 원본),
   `answer/source/remaining`(ready 결과), `last_error`. 질문 DM INSERT trigger가 생성한다.
 
 132개 seed는 `official_rule / official_record / editorial_definition`으로 근거 성격을

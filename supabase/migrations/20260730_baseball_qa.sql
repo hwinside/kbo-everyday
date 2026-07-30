@@ -63,9 +63,13 @@ CREATE TABLE IF NOT EXISTS public.genius_question_jobs (
   quota_reserved boolean NOT NULL DEFAULT false,
   quota_allowed boolean,
   quota_remaining integer,
-  -- LLM 호출 '시작'을 호출 전에 durable 고정한다. started=true인데 llm_text가 없으면 공급자
+  -- LLM 호출 '시작'을 호출 전 atomic CAS(단일 UPDATE ... WHERE llm_started=false)로 획득해
+  -- 정확히 한 worker만 winner가 된다 (삼순 5차 P1). started=true인데 llm_text가 없으면 공급자
   -- 소비 여부가 ambiguous하므로 재처리는 LLM을 재호출하지 않고 fail-closed한다 (삼순 4차 P1).
   llm_started boolean NOT NULL DEFAULT false,
+  -- CAS winner가 기록하는 시작 시각 — started·결과 없음일 때 winner 생존 fence 판정용.
+  -- fence 창 안에서는 loser가 답변 없이 물러나고, 경과 후에만 ambiguous 복구가 동작한다 (삼순 5차 P1).
+  llm_started_at timestamptz,
   -- crash-after-LLM 재처리가 LLM을 재호출하지 않도록 응답 원본을 durable 저장한다.
   llm_text text,
   llm_input_tokens integer,

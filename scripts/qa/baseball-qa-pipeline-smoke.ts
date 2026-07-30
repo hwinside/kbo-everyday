@@ -90,8 +90,14 @@ assert.match(drainSource, /processBaseballQaQuestion/);
 // 발송 실패는 delivery_attempts로 기록되며, LLM 호출 전 durable 고정이 있어야 한다.
 assert.match(drainSource, /due_baseball_genius_question_jobs/);
 assert.match(serverSource, /record_baseball_genius_delivery_failure/);
-assert.match(serverSource, /markLlmStarted/);
-assert.match(serverSource, /llm_started/);
+// 삼순 5차 P1: LLM 시작은 SELECT+UPDATE 2요청이 아니라 단일 UPDATE ... WHERE llm_started=false
+// CAS(acquireLlmStart)여야 하고, fence(llm_started_at) 기반 ownerActive 분리가 있어야 한다.
+assert.match(serverSource, /acquireLlmStart/);
+assert.doesNotMatch(serverSource, /markLlmStarted/);
+assert.match(serverSource, /\.eq\("llm_started", false\)/);
+assert.match(serverSource, /llm_started_at/);
+assert.match(serverSource, /ownerActive/);
+assert.match(migrationSql, /llm_started_at timestamptz/);
 assert.match(vercelJson, /\/api\/cron\/baseball-qa-drain/);
 assert.match(migrationSql, /trg_enqueue_baseball_genius_question/);
 // 게이트 5: 계정명 야잘알봇 + 안정 키 lookup (nickname lookup 금지 — 신규 auth 계정 생성 방지).
@@ -280,6 +286,7 @@ async function verifyCrashIdempotentLlmAndQuota() {
   let storedQuota: { allowed: boolean; remaining: number } | null = null;
   let storedLlm: LlmResult | null = null;
   let llmStartedFlag = false;
+  const llmOwnerActive = false;
   const cache = new Map<string, string>();
   let setCacheThrows = true;
   const deps: QaDeps = {
@@ -305,8 +312,16 @@ async function verifyCrashIdempotentLlmAndQuota() {
       storedQuota = { allowed: true, remaining: limit - 1 };
       return storedQuota;
     },
-    getLlmState: async () => ({ started: llmStartedFlag, result: storedLlm }),
-    markLlmStarted: async () => { llmStartedFlag = true; },
+    getLlmState: async () => ({
+      started: llmStartedFlag,
+      result: storedLlm,
+      ownerActive: llmOwnerActive,
+    }),
+    acquireLlmStart: async () => {
+      if (llmStartedFlag) return false;
+      llmStartedFlag = true;
+      return true;
+    },
     storeLlm: async (result) => { storedLlm = result; },
     log: async () => {},
   };
@@ -352,8 +367,13 @@ async function verifyLlmStoreFailureFailClosed() {
       storedQuota = { allowed: true, remaining: limit - 1 };
       return storedQuota;
     },
-    getLlmState: async () => ({ started, result: stored }),
-    markLlmStarted: async () => { started = true; },
+    // 재-claim 시점에는 fence가 이미 경과(이전 worker 사망 확정) → ownerActive=false.
+    getLlmState: async () => ({ started, result: stored, ownerActive: false }),
+    acquireLlmStart: async () => {
+      if (started) return false;
+      started = true;
+      return true;
+    },
     storeLlm: async () => {
       storeCalls++;
       throw new Error("DB write failed after LLM response");
@@ -376,6 +396,140 @@ async function verifyLlmStoreFailureFailClosed() {
   assert.equal(retry.source, "error");
   assert.equal(retry.answer, LLM_AMBIGUOUS_ANSWER);
   assert.equal(cache.size, 0, "ambiguous 경로는 캐시를 오염하면 안 됨");
+}
+
+// 게이트 3 (삼순 5차 P1): 구 worker lease 만료 → 새 worker 재 claim → 둘 다 LLM 경계 동시 진입.
+// 실제 answerQuestion() 2개를 같은 durable state 위에서 동시 실행해 둘 다 started=false를
+// 읽게 바리어로 강제한 뒤, CAS winner 1 · quota 1 · LLM 1 · 답변 1(loser는 pending 무발송)을 고정한다.
+// (RED 증거: CAS 없는 구 pipeline에서는 이 시나리오가 llmCalls=2로 FAIL — 삼순 probe 재현.)
+async function verifyConcurrentLlmBoundaryRace() {
+  let llmCalls = 0;
+  let quotaReserves = 0;
+  let storedQuota: { allowed: boolean; remaining: number } | null = null;
+  let storedLlm: LlmResult | null = null;
+  let llmStarted = false;
+  let stateReads = 0;
+  const stateBarrier: Array<() => void> = [];
+  const cache = new Map<string, string>();
+  const deps: QaDeps = {
+    loadGlossary: async () => seedEntries,
+    loadPlayers: async () => players,
+    getCache: async (key) => cache.get(key) ?? null,
+    setCache: async (key, value) => { cache.set(key, value); },
+    callLlm: async () => {
+      llmCalls++;
+      // winner가 LLM 경계에 머무는 동안 loser가 뒤따라 진입하도록 지연을 넣는다.
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      return {
+        text: '{"status":"ANSWER","answer":"야구 룰에 따른 검증된 답변이에요."}',
+        inputTokens: 250,
+        outputTokens: 100,
+      };
+    },
+    // messageId 단위 idempotent quota (RPC의 FOR UPDATE 직렬화 모사 — sync check-and-set).
+    reserveDaily: async (_userId, limit) => {
+      if (storedQuota) return storedQuota;
+      quotaReserves++;
+      storedQuota = { allowed: true, remaining: limit - 1 };
+      return storedQuota;
+    },
+    // 바리어: 두 worker 모두가 state를 요청한 뒤에야 함께 해소 → 둘 다 started=false를 읽는
+    // 삼순 probe의 stateReads=2 교차를 결정론적으로 재현한다.
+    getLlmState: async () => {
+      stateReads++;
+      if (stateReads <= 2) {
+        await new Promise<void>((resolve) => {
+          stateBarrier.push(resolve);
+          if (stateBarrier.length === 2) {
+            for (const release of stateBarrier) release();
+          }
+        });
+      }
+      return { started: llmStarted, result: storedLlm, ownerActive: llmStarted && !storedLlm };
+    },
+    // atomic CAS: check와 set 사이에 await가 없어 정확히 한 호출만 true를 받는다
+    // (실제 구현은 단일 UPDATE ... WHERE llm_started=false RETURNING).
+    acquireLlmStart: async () => {
+      if (llmStarted) return false;
+      llmStarted = true;
+      return true;
+    },
+    storeLlm: async (result) => { storedLlm = result; },
+    log: async () => {},
+  };
+
+  const question = "연장전 야구 룰은 몇 회까지 진행해?";
+  const [oldWorker, newDrainer] = await Promise.all([
+    answerQuestion("u1", question, deps),
+    answerQuestion("u1", question, deps),
+  ]);
+  assert.equal(stateReads, 2, "두 worker 모두 LLM 경계에 도달해 state를 읽어야 재현 조건이 맞음");
+  assert.equal(llmCalls, 1, "동일 messageId LLM 호출은 1회여야 함 (삼순 5차 P1)");
+  assert.equal(quotaReserves, 1, "동시 진입에서도 quota 소비는 1이어야 함");
+  const outcomes = [oldWorker, newDrainer];
+  const winners = outcomes.filter((outcome) => outcome.source === "llm");
+  const losers = outcomes.filter((outcome) => outcome.source === "pending");
+  assert.equal(winners.length, 1, "답변을 만드는 winner는 정확히 1이어야 함");
+  assert.equal(losers.length, 1, "loser는 답변 없이 pending으로 물러나야 함");
+  assert.equal(losers[0]?.status, 202);
+  assert.equal(losers[0]?.answer, "", "loser는 ambiguous 등 어떤 답변도 먼저 발송하면 안 됨");
+  assert.equal(winners[0]?.answer, "야구 룰에 따른 검증된 답변이에요.");
+  assert.equal(cache.size, 1, "winner 답변만 캐시에 1건 저장되어야 함");
+}
+
+// 게이트 1+3 (SQL 층): 실제 migration 스키마 위에서 stale lease 재 claim 교차와
+// 단일 UPDATE ... WHERE llm_started=false CAS의 winner 유일성을 검증한다.
+async function verifyStaleLeaseLlmCasWithPglite() {
+  const db = await setupJobsDb();
+  await seedConversations(db);
+  const inserted = await db.query<{ id: number }>(
+    "INSERT INTO dm_messages(conversation_id,sender_id,content) VALUES ($1,$2,$3) RETURNING id",
+    [GENIUS_CONV, FAN_ID, "연장전 야구 룰은 몇 회까지 진행해?"],
+  );
+  const messageId = inserted.rows[0]?.id;
+  assert.ok(messageId);
+
+  // 구 worker claim → lease 유효 동안 새 drainer는 claim하지 못한다.
+  const oldClaim = await db.query<{ claim_state: string }>(
+    "SELECT * FROM claim_baseball_genius_question($1,$2,$3,30)",
+    [messageId, GENIUS_CONV, FAN_ID],
+  );
+  assert.equal(oldClaim.rows[0]?.claim_state, "claimed");
+  const duringLease = await db.query<{ claim_state: string }>(
+    "SELECT * FROM claim_baseball_genius_question($1,$2,$3,30)",
+    [messageId, GENIUS_CONV, FAN_ID],
+  );
+  assert.equal(duringLease.rows[0]?.claim_state, "processing", "lease 유효 중 재 claim 금지");
+
+  // lease 만료 → 새 drainer가 재 claim (이제 두 worker가 동시에 떠 있는 상황).
+  await db.query(
+    "UPDATE genius_question_jobs SET lease_until = clock_timestamp() - interval '1 second' WHERE message_id=$1",
+    [messageId],
+  );
+  const reclaim = await db.query<{ claim_state: string }>(
+    "SELECT * FROM claim_baseball_genius_question($1,$2,$3,30)",
+    [messageId, GENIUS_CONV, FAN_ID],
+  );
+  assert.equal(reclaim.rows[0]?.claim_state, "claimed", "lease 만료 후 재 claim은 허용");
+
+  // 둘 다 LLM 경계 도달: 서버 구현과 동일한 CAS 문장 25-way → winner 정확히 1.
+  const casAttempts = await Promise.all(
+    Array.from({ length: 25 }, () =>
+      db.query<{ message_id: number }>(
+        "UPDATE genius_question_jobs SET llm_started=true, llm_started_at=clock_timestamp(), updated_at=now() WHERE message_id=$1 AND llm_started=false RETURNING message_id",
+        [messageId],
+      ),
+    ),
+  );
+  const casWinners = casAttempts.filter((attempt) => attempt.rows.length > 0);
+  assert.equal(casWinners.length, 1, "llm_started CAS winner는 25-way에서 정확히 1이어야 함");
+  const finalState = await db.query<{ llm_started: boolean; llm_started_at: string | null }>(
+    "SELECT llm_started, llm_started_at FROM genius_question_jobs WHERE message_id=$1",
+    [messageId],
+  );
+  assert.equal(finalState.rows[0]?.llm_started, true);
+  assert.ok(finalState.rows[0]?.llm_started_at, "winner는 fence 판정용 llm_started_at을 남겨야 함");
+  await db.close();
 }
 
 async function verifyAtomicLimitWithPglite() {
@@ -856,6 +1010,8 @@ async function main() {
   await verifyPipeline();
   await verifyCrashIdempotentLlmAndQuota();
   await verifyLlmStoreFailureFailClosed();
+  await verifyConcurrentLlmBoundaryRace();
+  await verifyStaleLeaseLlmCasWithPglite();
   await verifySeedWithPglite();
   await verifyAtomicLimitWithPglite();
   await verifyAtomicMessageClaimWithPglite();
@@ -866,6 +1022,7 @@ async function main() {
   console.log(
     "✅ baseball-qa PASS: seed 132 항목별 evidence audit(+결함주입 RED), 조사결합 선수 hold, " +
       "trigger durable handoff, crash-idempotent quota/LLM(+storeLlm 실패 fail-closed), " +
+      "concurrent LLM boundary CAS race(winner1·quota1·LLM1·답변1), stale-lease reclaim+CAS 25-way, " +
       "ready delivery bounded retry, quota/message 25-way",
   );
 }

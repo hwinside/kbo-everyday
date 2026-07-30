@@ -54,7 +54,9 @@ export type MatchPath =
   | "blocked"
   | "unsure"
   | "limited"
-  | "error";
+  | "error"
+  // LLM winner가 다른 worker — 이 worker는 답변 발송 없이 물러난다 (로그/DB 미기록).
+  | "pending";
 
 export interface QaResult {
   status: number;
@@ -71,10 +73,17 @@ export interface QaDeps {
   setCache: (questionNorm: string, answer: string) => Promise<void>;
   callLlm: (question: string) => Promise<LlmResult>;
   reserveDaily: (userId: string, limit: number) => Promise<{ allowed: boolean; remaining: number }>;
-  /** messageId의 durable LLM 상태: 호출 시작 여부 + 저장된 결과 (job 행 기준). */
-  getLlmState?: () => Promise<{ started: boolean; result: LlmResult | null }>;
-  /** callLlm 직전에 호출 시작을 durable 고정 — 이후 crash 시 재처리가 재호출 없이 fail-closed하게 한다. */
-  markLlmStarted?: () => Promise<void>;
+  /**
+   * messageId의 durable LLM 상태: 호출 시작 여부 + 저장된 결과 (job 행 기준).
+   * ownerActive는 started·결과 없음일 때 winner의 callLlm이 아직 진행 중일 수 있는
+   * fence 창인지(=이 worker는 물러나야 하는지)를 뜻한다 (삼순 5차 P1).
+   */
+  getLlmState?: () => Promise<{ started: boolean; result: LlmResult | null; ownerActive?: boolean }>;
+  /**
+   * LLM 시작권 atomic CAS — 단일 UPDATE ... WHERE llm_started=false로 정확히 한 worker만
+   * true(winner)를 받아 callLlm을 실행한다. false(loser)는 발송 없이 물러난다 (삼순 5차 P1).
+   */
+  acquireLlmStart?: () => Promise<boolean>;
   /** LLM 호출 직후 결과를 durable 저장 — 이후 단계 crash 시 재시도가 LLM을 재소비하지 않게 한다. */
   storeLlm?: (result: LlmResult) => Promise<void>;
   log: (entry: {
@@ -283,35 +292,46 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   }
 
   // ③ 미매칭만 LLM (단발, 이력 미전송). durable job 상태로 동일 messageId의 LLM 소비를
-  // 1회로 고정한다: 호출 전 llm_started를 durable 고정 → 저장된 결과가 있으면 재사용 →
-  // started인데 결과가 없으면(응답 수신 후 저장 실패/crash 창) 재호출 없이 fail-closed (4차 P1).
+  // 1회로 고정한다 (4차 P1 + 5차 P1): 저장된 결과가 있으면 재사용 → 없으면 atomic
+  // CAS(acquireLlmStart)로 정확히 한 worker만 winner가 되어 callLlm을 실행한다.
+  // started인데 결과가 없으면 fence로 구분한다: winner가 아직 살아있을 수 있는 창
+  // (ownerActive)에는 답변 발송 없이 물러나고(job은 winner 소유), fence가 지나면
+  // (응답 수신 후 저장 실패/crash) 자동 재호출 없이 fail-closed 안내로 종결한다.
   let llm: LlmResult | null = null;
-  let llmStarted = false;
   if (deps.getLlmState) {
+    let state: { started: boolean; result: LlmResult | null; ownerActive?: boolean };
     try {
-      const state = await deps.getLlmState();
-      llmStarted = state.started;
-      llm = state.result;
+      state = await deps.getLlmState();
     } catch {
       // LLM 소비 여부를 모르는 채 진행하지 않는다 (재시도 가능한 실패).
       await deps.log({ userId, question, questionNorm, matchPath: "error", answer: null, inputTokens: null, outputTokens: null });
       return { status: 503, answer: "지금은 답변을 가져올 수 없어요. 잠시 후 다시 시도해 주세요.", source: "error", remaining };
     }
-  }
-  if (!llm) {
-    if (llmStarted) {
-      // 이전 시도가 LLM 호출을 시작했지만 결과 저장 전에 죽은 ambiguous 창 — 공급자
-      // 응답/과금이 이미 발생했을 수 있으므로 자동 재호출하지 않고 안내로 종결한다.
+    llm = state.result;
+    if (!llm && state.started) {
+      if (state.ownerActive) {
+        // winner worker가 LLM 경계를 진행 중 — loser는 어떤 답변도 발송하지 않고 물러난다.
+        return { status: 202, answer: "", source: "pending", remaining };
+      }
+      // fence 경과: 이전 시도가 LLM 호출을 시작했지만 결과 저장 전에 죽은 ambiguous 창 —
+      // 공급자 응답/과금이 이미 발생했을 수 있으므로 자동 재호출하지 않고 안내로 종결한다.
       await deps.log({ userId, question, questionNorm, matchPath: "error", answer: null, inputTokens: null, outputTokens: null });
       return { status: 200, answer: LLM_AMBIGUOUS_ANSWER, source: "error", remaining };
     }
-    if (deps.markLlmStarted) {
+  }
+  if (!llm) {
+    if (deps.acquireLlmStart) {
+      let won = false;
       try {
-        await deps.markLlmStarted();
+        won = await deps.acquireLlmStart();
       } catch {
         // durable 고정에 실패하면 LLM을 호출하지 않는다 (재시도 가능, LLM 미소비).
         await deps.log({ userId, question, questionNorm, matchPath: "error", answer: null, inputTokens: null, outputTokens: null });
         return { status: 503, answer: "지금은 답변을 가져올 수 없어요. 잠시 후 다시 시도해 주세요.", source: "error", remaining };
+      }
+      if (!won) {
+        // CAS 패배 — 동시 worker가 방금 winner가 됨. 답변 발송 없이 물러난다 (5차 P1).
+        return { status: 202, answer: "", source: "pending", remaining };
       }
     }
     try {
