@@ -214,6 +214,45 @@ export function mergeVenueSummaries(
   return { ...acc, winRate: decided > 0 ? acc.wins / decided : null };
 }
 
+// ── 승률 표시 범위 토글(2026-07-30 정책 변경) ──────────────────────────────────────
+// 기본값: 승률·승/패/무는 GPS 인증 + 직접 추가(diary_manual) 전체(all).
+// 옵션: 토글로 GPS 인증만(gps) 전환. 인증 직관수(배지 계약)는 항상 certified 을 쓴다.
+
+/** 승률 표시 범위: all = GPS+직접 추가(기본) · gps = GPS 인증만. */
+export type DiaryWinRateScope = "all" | "gps";
+
+/** 기본 범위 — 직접 추가 포함 전체(하린아빠 확정 2026-07-30). */
+export const DIARY_WIN_RATE_DEFAULT_SCOPE: DiaryWinRateScope = "all";
+
+/** 한 시즌의 summary 쌍: certified = GPS 인증만 · overall = 직접 추가 포함 전체. */
+export interface DiarySummaryPair {
+  certified: DiaryVenueSummary;
+  overall: DiaryVenueSummary;
+}
+
+/** 여러 시즌의 summary 쌍을 한 번에 합산한다('전체' 세그먼트). */
+export function mergeDiarySummaryPairs(
+  pairs: ReadonlyArray<DiarySummaryPair>,
+): DiarySummaryPair {
+  return {
+    certified: mergeVenueSummaries(pairs.map((p) => p.certified)),
+    overall: mergeVenueSummaries(pairs.map((p) => p.overall)),
+  };
+}
+
+/** 토글 범위에 맞는 승률·승/패/무 소스 summary. 인증 직관수에는 쓰지 않는다. */
+export function diaryDisplaySummary(
+  pair: DiarySummaryPair,
+  scope: DiaryWinRateScope,
+): DiaryVenueSummary {
+  return scope === "gps" ? pair.certified : pair.overall;
+}
+
+/** 승률 아래 범위 캐프션 — 지금 보는 승률이 어느 집합 기준인지 명시. */
+export function diaryWinRateScopeCaption(scope: DiaryWinRateScope): string {
+  return scope === "gps" ? "승률·승패 · GPS 인증만" : "승률·승패 · 직접 추가 포함";
+}
+
 /** 홈(①) 경기 카드에 얹을 미디어 썸네일. */
 export interface DiaryHomeThumb {
   id: number;

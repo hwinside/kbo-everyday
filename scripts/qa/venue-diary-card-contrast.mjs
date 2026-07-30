@@ -7,6 +7,9 @@
  *   1) 활성 연도탭 / '지난 경기 추가하기' CTA 배경 = accent(투명 아님) + CTA box-shadow
  *   2) 고정 다크 요약카드 수치(3열) 가 실제 렌더 배경 대비 ≥4.5:1
  *   3) 개인정보 안내문구 / 비활성 연도탭 텍스트가 실제 렌더 배경 대비 ≥4.5:1
+ *   4) 승률 범위 토글(PR#972): summary(GPS 2경기·50%) ≠ overallSummary(전체 4경기·75%) fixture로
+ *      기본=전체 표시·클릭 전환·재클릭 복귀·인증 직관수 GPS-only 고정·active bg-accent 토큰·
+ *      구버전 응답(overallSummary 부재) GPS-only 폴백을 실제 DOM 으로 검증한다.
  *
  * false-green 방지:
  *  - CSS 는 원본 globals.css 를 그대로 컴파일 → 없는 토큰(bg-brand-primary)은 규칙 미생성.
@@ -94,12 +97,19 @@ console.log(`compiled CSS: ${(compiled.css.length / 1024).toFixed(0)}KB`);
 check(/\.bg-accent\b/.test(compiled.css), "compiled CSS 에 .bg-accent 규칙 존재");
 check(!/\.bg-brand-primary\b/.test(compiled.css), "compiled CSS 에 .bg-brand-primary 규칙 없음(구 토큰=무색)");
 
-const attendance = {
+// 승률 범위 회귀 fixture(삼순 PR#972 NO-GO 보완): GPS 인증(summary)=2경기·1승1패(50%) vs
+// 전체(overallSummary)=4경기·3승1패(75%) — 두 집계가 명확히 달라야 기본 범위·클릭 배선이
+// 깨졌을 때 실제 DOM 단언이 RED 가 된다(동일값/폴백 fixture 는 false-green).
+const certifiedSummary = { attendanceCount: 2, wins: 1, losses: 1, draws: 0, finalCount: 2, winRate: 0.5 };
+const overallSummaryFx = { attendanceCount: 4, wins: 3, losses: 1, draws: 0, finalCount: 4, winRate: 0.75 };
+let LEGACY = false; // true = 구버전 응답(overallSummary 미포함) — GPS-only 폴백 검증
+const attendance = () => ({
   season: 2026,
-  summary: { attendanceCount: 18, wins: 12, losses: 5, draws: 1, finalCount: 18, winRate: 1 },
-  diaryGameCount: 18,
+  summary: certifiedSummary,
+  ...(LEGACY ? {} : { overallSummary: overallSummaryFx }),
+  diaryGameCount: 4,
   games: [],
-};
+});
 const media = { season: 2026, games: [], nextCursor: null, hasMore: false };
 
 // ---- 로컬 서버(상대경로 fetch origin 확보) ----
@@ -108,7 +118,7 @@ let THEME = "light";
 const server = createServer((req, res) => {
   const url = req.url.split("?")[0];
   if (url.startsWith("/api/me/venue-attendance"))
-    return res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(attendance));
+    return res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(attendance()));
   if (url.startsWith("/api/me/venue-diary/media"))
     return res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(media));
   if (url === "/app.css") return res.writeHead(200, { "content-type": "text/css" }).end(compiled.css);
@@ -245,6 +255,64 @@ try {
     check(m.docOverflow <= 0, `[${theme}] 가로 overflow 0 (delta=${m.docOverflow})`);
     // 배경 변조에 민감함을 증명(흰 배경 위 흰 수치는 대비 붕괴)
     check(m.mutated < 4.5, `[${theme}] mutation guard — 카드 bg=흰색 변조 시 수치 대비 ${m.mutated.toFixed(2)}<4.5 (harness가 배경 변조 감지, 캡처 후 복구)`);
+
+    // ── 승률 범위 토글 실제 DOM 회귀(삼순 PR#972 NO-GO 보완) ──
+    // 기본=전체 포함(4경기·75.0%·3승) → 클릭 시 GPS 인증만(2경기·50.0%·1승) → 재클릭 복귀.
+    // 인증 직관수는 토글과 무관하게 항상 GPS-only(2) 유지. active 토큰은 computed bg-accent.
+    const readScope = () =>
+      page.evaluate(() => {
+        const btns = [...document.querySelectorAll("button")];
+        const allBtn = btns.find((b) => (b.textContent || "").trim() === "전체 포함");
+        const gpsBtn = btns.find((b) => (b.textContent || "").trim() === "GPS 인증만");
+        if (!allBtn || !gpsBtn) return null;
+        const bg = (el) => getComputedStyle(el).backgroundColor;
+        const grid = document.querySelector('[class*="grid-cols-3"]');
+        const cells = [...grid.children].map((c) => c.querySelector("p").textContent.trim());
+        const spans = [...document.querySelectorAll("span")].map((s) => (s.textContent || "").trim());
+        const wins = spans.find((t) => /^\d+승$/.test(t)) ?? null;
+        const caption = spans.find((t) => t.startsWith("승률·승패")) ?? null;
+        return { allBg: bg(allBtn), gpsBg: bg(gpsBtn), certified: cells[0], winRate: cells[1], wins, caption };
+      });
+
+    const s0 = await readScope();
+    check(s0 != null, `[${theme}] 승률 범위 토글('전체 포함'/'GPS 인증만') 렌더됨`);
+    if (s0) {
+      check(isAccent(s0.allBg) && !isAccent(s0.gpsBg), `[${theme}] 기본 active 토큰='전체 포함' bg-accent (all=${s0.allBg} gps=${s0.gpsBg})`);
+      check(s0.winRate === "75.0%" && s0.wins === "3승", `[${theme}] 기본 표시=전체 집계 75.0%/3승 (got ${s0.winRate}/${s0.wins})`);
+      check(s0.certified === "2", `[${theme}] 기본 인증 직관수=GPS-only 2 (got ${s0.certified})`);
+      check(s0.caption === "승률·승패 · 직접 추가 포함", `[${theme}] 기본 범위 캐프션 '직접 추가 포함' (got ${s0.caption})`);
+
+      await page.getByRole("button", { name: "GPS 인증만", exact: true }).click();
+      const s1 = await readScope();
+      check(isAccent(s1.gpsBg) && !isAccent(s1.allBg), `[${theme}] 클릭 후 active 토큰='GPS 인증만'으로 이동 (all=${s1.allBg} gps=${s1.gpsBg})`);
+      check(s1.winRate === "50.0%" && s1.wins === "1승", `[${theme}] 클릭 후 표시=GPS-only 50.0%/1승 (got ${s1.winRate}/${s1.wins})`);
+      check(s1.certified === "2", `[${theme}] 클릭 후에도 인증 직관수 2 유지 (got ${s1.certified})`);
+      check(s1.caption === "승률·승패 · GPS 인증만", `[${theme}] 클릭 후 범위 캐프션 'GPS 인증만' (got ${s1.caption})`);
+
+      await page.getByRole("button", { name: "전체 포함", exact: true }).click();
+      const s2 = await readScope();
+      check(isAccent(s2.allBg) && s2.winRate === "75.0%" && s2.wins === "3승", `[${theme}] 재클릭 시 전체 집계 복귀 75.0%/3승 (got ${s2.winRate}/${s2.wins})`);
+    }
+
+    // 구버전 응답 폴백: overallSummary 부재 → 과대집계 금지(GPS-only 값 표시).
+    LEGACY = true;
+    const legacyPage = await ctx.newPage();
+    await legacyPage.goto(`http://127.0.0.1:${PORT}/my`, { waitUntil: "load" });
+    await legacyPage.waitForFunction(() => /인증 직관/.test(document.body.innerText), null, { timeout: 8000 });
+    const legacy = await legacyPage.evaluate(() => {
+      const grid = document.querySelector('[class*="grid-cols-3"]');
+      const cells = [...grid.children].map((c) => c.querySelector("p").textContent.trim());
+      const wins = [...document.querySelectorAll("span")]
+        .map((s) => (s.textContent || "").trim())
+        .find((t) => /^\d+승$/.test(t)) ?? null;
+      return { certified: cells[0], winRate: cells[1], wins };
+    });
+    check(
+      legacy.winRate === "50.0%" && legacy.wins === "1승" && legacy.certified === "2",
+      `[${theme}] 구버전 폴백(overallSummary 부재) → GPS-only 50.0%/1승·인증 2 (got ${legacy.winRate}/${legacy.wins}/${legacy.certified})`,
+    );
+    await legacyPage.close();
+    LEGACY = false;
 
     void accentBg;
     await ctx.close();

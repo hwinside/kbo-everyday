@@ -11,6 +11,7 @@ import {
   diaryBottomCta,
   diaryCanStartUpload,
   diaryCaptionForSubmit,
+  diaryDisplaySummary,
   diaryGameSourceLabel,
   diaryLeaveNotice,
   diaryMediaSourceLabel,
@@ -22,8 +23,11 @@ import {
   diaryUploadBadge,
   diaryUploadCta,
   diaryUploadTargets,
+  diaryWinRateScopeCaption,
+  DIARY_WIN_RATE_DEFAULT_SCOPE,
   makeDiaryThumbRefresh,
   mergeDiaryMediaPages,
+  mergeDiarySummaryPairs,
   mergeVenueSummaries,
   shouldFetchNextDiaryPage,
   startDiaryPendingPoll,
@@ -257,6 +261,41 @@ async function flush(): Promise<void> {
   const empty = mergeVenueSummaries([]);
   assert.equal(empty.attendanceCount, 0);
   assert.equal(empty.winRate, null, "표본 0 → null");
+}
+
+// 7-1) 승률 범위 토글(2026-07-30 정책 변경): 기본 전체(직접 추가 포함) ↔ GPS 인증만
+{
+  assert.equal(DIARY_WIN_RATE_DEFAULT_SCOPE, "all", "기본값 = 직접 추가 포함 전체");
+
+  // 시즌 A: GPS 1승 1패 / 전체 3승 1패(직접 추가 2승) · 시즌 B: GPS 1패 / 전체 1승 1패
+  const seasonA = {
+    certified: { attendanceCount: 2, wins: 1, losses: 1, draws: 0, finalCount: 2, winRate: 1 / 2 },
+    overall: { attendanceCount: 4, wins: 3, losses: 1, draws: 0, finalCount: 4, winRate: 3 / 4 },
+  };
+  const seasonB = {
+    certified: { attendanceCount: 1, wins: 0, losses: 1, draws: 0, finalCount: 1, winRate: 0 },
+    overall: { attendanceCount: 2, wins: 1, losses: 1, draws: 0, finalCount: 2, winRate: 1 / 2 },
+  };
+  const merged = mergeDiarySummaryPairs([seasonA, seasonB]);
+  assert.equal(merged.certified.attendanceCount, 3, "인증 직관수는 GPS 건만 합산");
+  assert.equal(merged.certified.winRate, 1 / 3, "GPS-only 합산 승률");
+  assert.equal(merged.overall.winRate, 4 / 6, "직접 추가 포함 합산 승률");
+
+  // manual 포함 승률(기본) vs GPS-only 승률(토글)이 실제로 다른 값으로 전환된다.
+  const shownDefault = diaryDisplaySummary(merged, DIARY_WIN_RATE_DEFAULT_SCOPE);
+  assert.equal(shownDefault.winRate, 4 / 6, "기본 표시 = 전체 승률");
+  assert.equal(shownDefault.wins, 4);
+  const shownGps = diaryDisplaySummary(merged, "gps");
+  assert.equal(shownGps.winRate, 1 / 3, "토글 표시 = GPS 인증만 승률");
+  assert.equal(shownGps.wins, 1);
+  assert.notEqual(shownDefault.winRate, shownGps.winRate, "두 범위 승률이 구분됨");
+
+  assert.equal(diaryWinRateScopeCaption("all"), "승률·승패 · 직접 추가 포함");
+  assert.equal(diaryWinRateScopeCaption("gps"), "승률·승패 · GPS 인증만");
+
+  const emptyPair = mergeDiarySummaryPairs([]);
+  assert.equal(emptyPair.overall.winRate, null, "표본 0 → null(전체)");
+  assert.equal(emptyPair.certified.winRate, null, "표본 0 → null(GPS)");
 }
 
 // 8) Blocker 1 — 목록 cursor 전페이지 병합 + 무한루프 가드
