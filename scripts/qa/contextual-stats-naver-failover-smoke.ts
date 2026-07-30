@@ -3,9 +3,12 @@
  */
 import "./_smoke-env";
 import assert from "node:assert/strict";
+import { NextRequest } from "next/server";
 import {
+  GET,
   fetchContextualBeforeDeadline,
   fetchLiveGame,
+  readTextBeforeDeadline,
 } from "@/app/api/contextual-stats/route";
 import type { KboGame } from "@/lib/crawler/kbo-api";
 import {
@@ -243,8 +246,160 @@ async function main() {
     assert.ok(Date.now() - startedAt < 250);
   }
 
+  // T9: readTextBeforeDeadline은 headers 200 후 body-stall을 절대 deadline에서 null degrade.
+  {
+    const stallSignalStream = (signal?: AbortSignal | null): Response => {
+      const stream = new ReadableStream({
+        start(controller) {
+          if (signal?.aborted) {
+            controller.error(new DOMException("aborted", "AbortError"));
+            return;
+          }
+          signal?.addEventListener(
+            "abort",
+            () => controller.error(new DOMException("aborted", "AbortError")),
+            { once: true },
+          );
+        },
+      });
+      return new Response(stream, {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+    const ac = new AbortController();
+    const res = stallSignalStream(ac.signal);
+    const startedAt = Date.now();
+    // deadline이 지난 후 호출이지만(remaining<=0) 멈추지 않고 null로 degrade.
+    setTimeout(() => ac.abort(), 40);
+    const text = await readTextBeforeDeadline(res, Date.now() + 60);
+    assert.equal(text, null);
+    assert.ok(Date.now() - startedAt < 400);
+  }
+
+  // ===== actual GET(req) headers+body-stall 회귀 =====
+  // KBO 200 헤더 후 box/basic/situation 본문이 멈춰도 route가 500이 아니라 200(empty degrade)로
+  // 응답해야 한다(삼순 NO-GO: actual GET 7.003s 후 reject/500 재현 차단).
+  const liveRaw = (gameId: string): Record<string, unknown> => ({
+    G_ID: gameId,
+    GAME_STATE_SC: "2",
+    AWAY_NM: "롯데",
+    HOME_NM: "두산",
+    GAME_TB_SC: "T",
+    T_P_NM: "김도영",
+    B_P_NM: "원태인",
+    GAME_INN_NO: 4,
+    OUT_CN: 1,
+    BALL_CN: 2,
+    STRIKE_CN: 1,
+    B1_BAT_ORDER_NO: 0,
+    B2_BAT_ORDER_NO: 0,
+    B3_BAT_ORDER_NO: 0,
+    SR_ID: "1",
+  });
+
+  const bodyStallFetch = (
+    gameId: string,
+    shouldStall: (url: string) => boolean,
+  ): typeof fetch =>
+    (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.href
+            : (input as Request).url;
+      if (url.includes("GetKboGameList")) {
+        return new Response(JSON.stringify({ game: [liveRaw(gameId)] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (shouldStall(url)) {
+        const signal = init?.signal;
+        const stream = new ReadableStream({
+          start(controller) {
+            if (signal?.aborted) {
+              controller.error(new DOMException("aborted", "AbortError"));
+              return;
+            }
+            signal?.addEventListener(
+              "abort",
+              () => controller.error(new DOMException("aborted", "AbortError")),
+              { once: true },
+            );
+          },
+        });
+        return new Response(stream, {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      // 비-stall KBO 호출(box/basic/situation 중 대상 아닌 것)은 빠른 hard-fail → null degrade
+      // (프로필 캐시 오염 없이 대상 read site만 격리 검증).
+      return new Response("", { status: 500 });
+    }) as typeof fetch;
+
+  const runGetWithStall = async (
+    gameId: string,
+    shouldStall: (url: string) => boolean,
+  ): Promise<{ status: number; body: { gameId?: string } }> => {
+    const prevFetch = globalThis.fetch;
+    globalThis.fetch = bodyStallFetch(gameId, shouldStall);
+    try {
+      const req = new NextRequest(
+        `http://localhost/api/contextual-stats?gameId=${gameId}`,
+      );
+      const res = await GET(req);
+      const body = (await res.json()) as { gameId?: string };
+      return { status: res.status, body };
+    } finally {
+      globalThis.fetch = prevFetch;
+    }
+  };
+
+  // T10: GetBoxScore 본문 stall → actual GET HTTP 200.
+  {
+    const out = await runGetWithStall("20260731LTOB0", (u) =>
+      u.includes("GetBoxScore"),
+    );
+    assert.equal(out.status, 200);
+    assert.equal(out.body.gameId, "20260731LTOB0");
+  }
+
+  // T11: HitterDetail/PitcherDetail Basic.aspx 본문 stall → actual GET HTTP 200.
+  {
+    const out = await runGetWithStall("20260731LTOB1", (u) =>
+      u.includes("Basic.aspx"),
+    );
+    assert.equal(out.status, 200);
+    assert.equal(out.body.gameId, "20260731LTOB1");
+  }
+
+  // T12: Situation.aspx 본문 stall → actual GET HTTP 200.
+  {
+    const out = await runGetWithStall("20260731LTOB2", (u) =>
+      u.includes("Situation.aspx"),
+    );
+    assert.equal(out.status, 200);
+    assert.equal(out.body.gameId, "20260731LTOB2");
+  }
+
+  // T13: box+basic+situation 동시 stall도 actual GET HTTP 200(전 read site 동시 degrade).
+  {
+    const out = await runGetWithStall(
+      "20260731LTOB3",
+      (u) =>
+        u.includes("GetBoxScore") ||
+        u.includes("Basic.aspx") ||
+        u.includes("Situation.aspx"),
+    );
+    assert.equal(out.status, 200);
+    assert.equal(out.body.gameId, "20260731LTOB3");
+  }
+
   clearInterval(keepAlive);
-  console.log("contextual-stats-naver-failover: 8/8 PASS");
+  console.log("contextual-stats-naver-failover: 13/13 PASS");
 }
 
 main().catch((error) => {

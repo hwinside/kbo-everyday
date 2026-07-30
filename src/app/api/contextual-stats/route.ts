@@ -96,6 +96,42 @@ export async function fetchContextualBeforeDeadline(
   }
 }
 
+// Exported for scripts/qa/contextual-stats-naver-failover-smoke.ts (fault injection).
+// KBO는 200 헤더를 먼저 흘리고 본문(body) 스트림에서 멈추는 부분열화가 있다. 이때
+// res.text()/res.json()은 fetch AbortSignal(또는 아래 명시 deadline)에 의해 reject되는데,
+// 그 reject가 fetchKboHtml/fetchBoxSnapshot→Promise.all→GET route로 전파되면 route 전체가
+// 500으로 죽는다(삼순 재리뷰 blocker: actual GET 7.003s 후 500). 본문 읽기까지 catch +
+// 절대 deadline race로 감싸 empty/null degrade시킨다(부분열화가 전체 실패로 번지지 않게).
+export async function readTextBeforeDeadline(
+  res: Response,
+  deadlineAtMs: number,
+): Promise<string | null> {
+  const remainingMs = deadlineAtMs - Date.now();
+  if (remainingMs <= 0) {
+    void res.body?.cancel().catch(() => {});
+    return null;
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    // fetch에 넘긴 AbortSignal이 stalled body를 이미 끊어주지만, 헤더 도착 후 본문에서
+    // 멈추는 런타임/수동 Response(테스트)에서도 안전하도록 명시적 절대 deadline을 함께 race한다.
+    return await Promise.race([
+      res.text(),
+      new Promise<string>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("contextual_body_read_deadline")),
+          Math.max(1, remainingMs),
+        );
+      }),
+    ]);
+  } catch {
+    void res.body?.cancel().catch(() => {});
+    return null;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 async function fetchKboHtml(url: string, deadlineAtMs: number): Promise<string | null> {
   const res = await fetchContextualBeforeDeadline(
     url,
@@ -103,8 +139,8 @@ async function fetchKboHtml(url: string, deadlineAtMs: number): Promise<string |
     deadlineAtMs,
   );
   if (!res?.ok) return null;
-  const html = await res.text();
-  if (looksLikeAspNetError(html)) return null;
+  const html = await readTextBeforeDeadline(res, deadlineAtMs);
+  if (html === null || looksLikeAspNetError(html)) return null;
   return html;
 }
 
@@ -220,9 +256,13 @@ async function fetchBoxSnapshot(
     deadlineAtMs,
   );
   if (!res?.ok) return { batterIsPinch: false, defendingTeamHits: null };
+  // Body-stall(헤더 200 후 본문 멈춤)도 catch+절대 deadline으로 null degrade — res.text()
+  // reject가 Promise.all→route로 전파되어 500 나는 것 차단(삼순 재리뷰 blocker).
+  const text = await readTextBeforeDeadline(res, deadlineAtMs);
+  if (text === null) return { batterIsPinch: false, defendingTeamHits: null };
   let parsed: { tables?: Array<{ rows?: Array<{ row: Array<{ Text: string }> }> }> };
   try {
-    parsed = JSON.parse(await res.text());
+    parsed = JSON.parse(text);
   } catch {
     return { batterIsPinch: false, defendingTeamHits: null };
   }
