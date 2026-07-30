@@ -545,7 +545,7 @@ function bsStripHtml(s: string): string {
   return s.replace(/<[^>]*>/g, "").trim();
 }
 
-const BS_POS_MAP: Record<string, string> = {
+export const BS_POS_MAP: Record<string, string> = {
   "투수": "P", "포수": "C", "1루수": "1B", "2루수": "2B",
   "3루수": "3B", "유격수": "SS", "좌익수": "LF", "중견수": "CF",
   "우익수": "RF", "지명타자": "DH",
@@ -658,8 +658,32 @@ export function parseBoxScore(data: unknown): BoxScoreResult | null {
   };
 }
 
+/**
+ * BoxScore 조회의 공용 absolute deadline 예산(ms).
+ * KBO GetBoxScore sub-budget + Naver failover reserve. KBO 무응답/느린 body 로 예산을
+ * 전소진해 Naver 진입 전에 끝나던 하드코딩 10s(삼순 NO-GO: 실측 10,013ms)를 막는다.
+ * KBO 는 자기 sub-budget(BOXSCORE_KBO_TIMEOUT_MS) 안에서만 끊고, 남은 시간(최소 reserve)을
+ * Naver 에 넘겨 response/body stall·dual-fail 을 결정적으로 종료시킨다.
+ */
+export const BOXSCORE_KBO_TIMEOUT_MS = 6000;
+export const BOXSCORE_NAVER_TIMEOUT_MS = 2500;
+
 /** BoxScore 조회 (특정 경기) */
-export async function fetchBoxScore(gameId: string, seasonId?: string): Promise<BoxScoreResult | null> {
+export async function fetchBoxScore(
+  gameId: string,
+  seasonId?: string,
+  opts?: { kboTimeoutMs?: number; naverTimeoutMs?: number },
+): Promise<BoxScoreResult | null> {
+  const kboBudget = opts?.kboTimeoutMs ?? BOXSCORE_KBO_TIMEOUT_MS;
+  const naverReserve = opts?.naverTimeoutMs ?? BOXSCORE_NAVER_TIMEOUT_MS;
+  // 공용 absolute deadline: KBO sub-budget + Naver reserve. KBO 가 자기 예산을 다 써도
+  // Naver 는 최소 naverReserve 를 확보한다(deadline - now ≥ reserve).
+  const deadline = Date.now() + kboBudget + naverReserve;
+  const naverBudget = () => Math.max(0, deadline - Date.now());
+  const failoverToNaver = async () => {
+    const { fetchNaverBoxScore } = await import("@/lib/crawler/naver-record");
+    return await fetchNaverBoxScore(gameId, { timeoutMs: naverBudget() });
+  };
   try {
     const sid = seasonId || new Date().getFullYear().toString();
     const body = `leId=1&srId=0&seasonId=${sid}&gameId=${gameId}`;
@@ -667,23 +691,36 @@ export async function fetchBoxScore(gameId: string, seasonId?: string): Promise<
       method: "POST",
       headers: SCHEDULE_HEADERS,
       body,
-      signal: AbortSignal.timeout(10000),
+      // KBO sub-budget 으로 response+body stall 을 함께 bound (같은 signal 이 res.json() 도 중단).
+      signal: AbortSignal.timeout(Math.min(kboBudget, naverBudget() || kboBudget)),
     });
 
     if (!res.ok) {
-      await trackFallback("kbo-boxscore", "http-error", {
+      // 관제는 fire-and-forget: durable insert·이벤트 카운트(동기 부수효과)는 그대로 실행하되,
+      // 임계치 초과 시 legacy Telegram alert 의 timeout 없는 fetch 를 await 하지 않는다.
+      // (await 하면 fetchBoxScore 공용 absolute deadline 을 관제가 깨고 Naver failover 를 블록.)
+      void trackFallback("kbo-boxscore", "http-error", {
         statusCode: res.status,
         errorMessage: `HTTP ${res.status} ${res.statusText}`,
-      });
-      return null;
+      }).catch(() => {});
+      // KBO 하드실패 → Naver record boxscore 로 failover (summary·daily 공용).
+      return await failoverToNaver();
     }
 
     const data = await res.json();
-    return parseBoxScore(data);
+    const parsed = parseBoxScore(data);
+    if (!parsed) {
+      // KBO 응답 파싱 실패(스키마 열화) → Naver failover. 관제는 응답 경로를 블록하지 않게 fire-and-forget.
+      void trackFallback("kbo-boxscore", "schema-error", {
+        errorMessage: "parseBoxScore returned null",
+      }).catch(() => {});
+      return await failoverToNaver();
+    }
+    return parsed;
   } catch (e) {
     const error = e as Error;
     let reason: "timeout" | "http-error" | "schema-error" | "network-error" = "network-error";
-    if (error.name === "TimeoutError" || error.message.includes("timeout")) {
+    if (error.name === "TimeoutError" || error.name === "AbortError" || error.message.includes("timeout")) {
       reason = "timeout";
     } else if (error.message.includes("HTTP")) {
       reason = "http-error";
@@ -691,11 +728,13 @@ export async function fetchBoxScore(gameId: string, seasonId?: string): Promise<
       reason = "schema-error";
     }
 
-    await trackFallback("kbo-boxscore", reason, {
+    // 관제 fire-and-forget: 남은 reserve 를 관제가 소진하지 않도록 await 제거(부수효과는 유지).
+    void trackFallback("kbo-boxscore", reason, {
       errorMessage: error.message,
-    });
+    }).catch(() => {});
 
-    return null;
+    // KBO throw(timeout/network/response·body stall 등) → 남은 reserve 안에서 Naver failover.
+    return await failoverToNaver();
   }
 }
 
