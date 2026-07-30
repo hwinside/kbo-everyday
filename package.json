@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "prebuild": "npm run qa:query-guard && npm run qa:foreign-photo && npm run qa:photos-helper-signature && npm run qa:roster-count-consistency && npm run qa:war-benchmark-coverage && npm run qa:videos-rss-status",
+    "prebuild": "npm run qa:query-guard && npm run qa:foreign-photo && npm run qa:photos-helper-signature && npm run qa:roster-count-consistency && npm run qa:war-benchmark-coverage && npm run qa:videos-rss-status && npm run qa:diary-contrast",
     "qa:photos-helper-signature": "tsx scripts/qa/photos-helper-signature.ts",
     "qa:field-defense": "tsx scripts/qa/field-defense-boxscore-smoke.ts",
     "transcode:videos": "node scripts/transcode-videos.mjs",
@@ -188,7 +188,8 @@
     "qa:contextual-stats-fence": "tsx scripts/qa/contextual-stats-fence-smoke.ts",
     "qa:livegame-visibility": "tsx scripts/qa/livegame-visibility-smoke.ts",
     "qa:visibility-poller-adoption": "tsx scripts/qa/visibility-poller-adoption-smoke.ts && tsx scripts/qa/games-visibility-poller-react-smoke.ts",
-    "qa:game-live-stream": "tsx scripts/qa/game-live-stream-smoke.ts"
+    "qa:game-live-stream": "tsx scripts/qa/game-live-stream-smoke.ts",
+    "qa:diary-contrast": "node scripts/qa/venue-diary-card-contrast.mjs"
   },
   "dependencies": {
     "@capacitor-firebase/messaging": "^8.3.0",

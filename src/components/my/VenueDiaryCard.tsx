@@ -395,7 +395,7 @@ export default function VenueDiaryCard() {
 
   return (
     <>
-      <GlassCard className="mt-3 p-0 overflow-hidden">
+      <GlassCard className="mt-3 !p-0 overflow-hidden">
         <div className="p-5">
           <div className="flex items-center gap-2">
             <CalendarDays size={19} className="text-accent" />
@@ -404,8 +404,11 @@ export default function VenueDiaryCard() {
           <p className="mt-1 text-xs text-text-tertiary">내가 직관한 경기의 기록과 사진·영상</p>
 
           {/* 나만 보기 안내(1회) */}
-          <div className="mt-3 flex items-center gap-2 rounded-xl border border-blue-500/25 bg-blue-500/10 px-3 py-2.5 text-[12px] font-semibold text-blue-300">
-            🔒 여기 사진·영상은 <b className="text-blue-200">나만 보기</b> — 공개 피드엔 올라가지 않아요
+          <div className="mt-3 flex items-start gap-1.5 rounded-xl border border-blue-500/25 bg-blue-500/10 px-3 py-2 text-[12px] font-semibold text-blue-700 dark:text-blue-300">
+            <span className="shrink-0">🔒</span>
+            <span className="leading-snug">
+              사진·영상은 나만 볼 수 있고, 공개 피드에는 올라가지 않아요.
+            </span>
           </div>
 
           {/* 시즌 세그먼트 */}
@@ -415,7 +418,9 @@ export default function VenueDiaryCard() {
                 key={String(key)}
                 onClick={() => setSeason(key)}
                 className={`flex-1 rounded-lg py-2 text-[13px] font-bold ${
-                  season === key ? "bg-brand-primary text-white" : "text-text-tertiary"
+                  season === key
+                    ? "bg-accent text-white"
+                    : "text-neutral-600 dark:text-neutral-300"
                 }`}
               >
                 {key === "all" ? "전체" : key}
@@ -435,47 +440,47 @@ export default function VenueDiaryCard() {
             </button>
           ) : data && summary ? (
             <>
-              {/* GPS 인증 요약 카드 */}
+              {/* GPS 인증 요약 카드 — 3열(인증 직관 / 승률 / 다이어리) + 승·패·무 보조줄 */}
               <div className="mt-3.5 rounded-2xl border border-[#33202a] bg-gradient-to-br from-[#20141b] to-[#141417] p-4">
                 <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-1 text-[11px] font-extrabold text-emerald-400">
                   ✓ GPS 인증 직관
                 </span>
-                <div className="mt-3.5 flex items-end gap-5">
-                  <div>
-                    <p className="text-3xl font-extrabold tracking-tight text-text-primary">
+                <div className="mt-3.5 grid grid-cols-3 gap-2">
+                  <div className="min-w-0">
+                    <p className="whitespace-nowrap text-[21px] font-extrabold tracking-tight text-white min-[390px]:text-2xl">
                       {summary.attendanceCount}
                     </p>
-                    <p className="text-[11px] font-semibold text-text-tertiary">인증 직관</p>
+                    <p className="mt-0.5 text-[11px] font-semibold text-white/55">인증 직관</p>
                   </div>
-                  <div>
-                    <p className="text-3xl font-extrabold tracking-tight text-amber-400">
+                  <div className="min-w-0">
+                    <p className="whitespace-nowrap text-[21px] font-extrabold tracking-tight text-amber-400 min-[390px]:text-2xl">
                       {summary.winRate == null ? "–" : `${(summary.winRate * 100).toFixed(1)}%`}
                     </p>
-                    <p className="text-[11px] font-semibold text-text-tertiary">승률</p>
+                    <p className="mt-0.5 text-[11px] font-semibold text-white/55">승률</p>
+                  </div>
+                  <div className="min-w-0">
+                    <p className="whitespace-nowrap text-[21px] font-extrabold tracking-tight text-white min-[390px]:text-2xl">
+                      {data.diaryGameCount}경기
+                    </p>
+                    <p className="mt-0.5 text-[11px] font-semibold text-white/55">다이어리</p>
                   </div>
                 </div>
-                <div className="mt-3 flex gap-3 border-t border-[#2c1f27] pt-3 text-[13px] font-bold">
-                  <span className="text-blue-400">{summary.wins}승</span>
-                  <span className="text-accent">{summary.losses}패</span>
-                  <span className="text-text-secondary">{summary.draws}무</span>
+                <div className="mt-3 flex items-center justify-between gap-2 border-t border-[#2c1f27] pt-3">
+                  <div className="flex gap-3 text-[13px] font-bold">
+                    <span className="text-blue-400">{summary.wins}승</span>
+                    <span className="text-red-400">{summary.losses}패</span>
+                    <span className="text-white/70">{summary.draws}무</span>
+                  </div>
+                  <span className="shrink-0 whitespace-nowrap text-[11px] text-white/55">
+                    다이어리 · 직접 추가 포함
+                  </span>
                 </div>
-              </div>
-
-              {/* 다이어리 기록 경기수(직접 추가 포함) */}
-              <div className="mt-2.5 flex items-center justify-between rounded-2xl border border-border bg-bg-tertiary px-4 py-3">
-                <span className="text-[12.5px] text-text-secondary">
-                  📔 다이어리 기록 경기수{" "}
-                  <span className="text-text-tertiary">(직접 추가 포함)</span>
-                </span>
-                <span className="text-[15px] font-extrabold text-text-primary">
-                  {data.diaryGameCount}경기
-                </span>
               </div>
 
               {/* 지난 경기 추가하기 */}
               <button
                 onClick={openAddSheet}
-                className="mt-3.5 flex w-full items-center justify-center gap-2 rounded-2xl bg-brand-primary py-3.5 text-[14.5px] font-extrabold text-white shadow-lg shadow-brand-primary/30"
+                className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl bg-accent py-3.5 text-[14.5px] font-extrabold text-white shadow-lg shadow-accent/30"
               >
                 <Plus size={18} /> 지난 경기 추가하기
               </button>
