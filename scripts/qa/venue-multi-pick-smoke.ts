@@ -25,6 +25,10 @@ import {
   isRetryableItem,
   resolveVenuePickerMode,
   toggleAssetSelection,
+  previewMediaMode,
+  shouldRefreshLibraryOnResume,
+  VENUE_LIBRARY_FIRST_PAGE_SIZE,
+  VENUE_LIBRARY_PAGE_SIZE,
   type MultiItemStatus,
 } from "../../src/lib/venue-stories/multi-pick";
 import { teamPalette } from "../../src/design-v2/team-palette";
@@ -139,6 +143,51 @@ console.log("[version gate — 픽커 모드 / 그리드 멀티셀렉트 토글]
   ok("상한(3) 도달 시 무변경 + overMax", t5.next.join(",") === "a,b,c" && t5.overMax);
 }
 
+console.log("[라운드2 #2 — 선택→즉시 프리뷰(썸네일 우선) / 원본 비동기 분리]");
+{
+  // 원본 미준비 상태에서는 네이티브 썸네일(data URL)을 img 로 즉시 표시한다.
+  ok(
+    "영상 + 썸네일만 있으면 img 모드(즉시 프리뷰)",
+    previewMediaMode({ kind: "video", previewUrl: "data:image/jpeg;base64,x", originalReady: false }) === "image",
+  );
+  ok(
+    "영상 + 원본 blob 준비 완료면 video 모드",
+    previewMediaMode({ kind: "video", previewUrl: "blob:https://x/1", originalReady: true }) === "video",
+  );
+  ok(
+    "영상 + blob 이지만 원본 미준비면 img 모드(video 장착 금지)",
+    previewMediaMode({ kind: "video", previewUrl: "blob:https://x/1", originalReady: false }) === "image",
+  );
+  ok(
+    "이미지는 준비 여부 무관 img 모드",
+    previewMediaMode({ kind: "image", previewUrl: "data:image/jpeg;base64,x", originalReady: false }) === "image",
+  );
+  ok(
+    "프리뷰 URL 없으면(iCloud 썸네일 부재) placeholder — 영구 shimmer 금지 축과 분리",
+    previewMediaMode({ kind: "image", previewUrl: null, originalReady: false }) === "placeholder" &&
+      previewMediaMode({ kind: "video", previewUrl: "", originalReady: true }) === "placeholder",
+  );
+}
+
+console.log("[라운드2 #1 — 앱 복귀 재조회 / 라운드2 #3 — 점진 pagination]");
+{
+  ok(
+    "그리드 열림 + 문서 visible → 재조회",
+    shouldRefreshLibraryOnResume({ libraryOpen: true, documentVisible: true }) === true,
+  );
+  ok(
+    "그리드 닫힘/문서 hidden → 재조회 안 함",
+    shouldRefreshLibraryOnResume({ libraryOpen: false, documentVisible: true }) === false &&
+      shouldRefreshLibraryOnResume({ libraryOpen: true, documentVisible: false }) === false,
+  );
+  ok(
+    "첫 페이지는 소량(웜 진입), 후속 페이지보다 작다",
+    VENUE_LIBRARY_FIRST_PAGE_SIZE === 24 &&
+      VENUE_LIBRARY_PAGE_SIZE === 60 &&
+      VENUE_LIBRARY_FIRST_PAGE_SIZE < VENUE_LIBRARY_PAGE_SIZE,
+  );
+}
+
 console.log("[③ 컴포저 정적 계약 — 단일 sticky CTA / raw 팀변수 금지]");
 {
   const src = readFileSync(
@@ -164,10 +213,28 @@ console.log("[③ 컴포저 정적 계약 — 단일 sticky CTA / raw 팀변수 
       src.includes("fileInputRef.current?.click()"),
   );
   ok(
-    "그리드 한 화면 멀티셀렉트 — 탭 토글(toggleAssetSelection) 후 일괄 확정",
+    "그리드 한 화면 멀티셀렉트 — 탭 토글 후 확정 즉시 닫기+썸네일 프리뷰+원본 비동기 큐(라운드2 #2)",
     src.includes("toggleAssetSelection(") &&
       src.includes("confirmLibrarySelection") &&
-      /const additions = librarySelection\.filter[\s\S]{0,400}?exportVenueMediaFile\(asset\.id\)[\s\S]{0,400}?handlePickedFiles\(\[file\], \[asset\.id\]\)[\s\S]{0,200}?setLibraryOpen\(false\)/.test(src),
+      /const additions = librarySelection\.filter[\s\S]{0,600}?previewUrl: asset\.thumbnailUrl[\s\S]{0,800}?setLibraryOpen\(false\)[\s\S]{0,200}?enqueueOriginalPrepare\(item\)/.test(src) &&
+      // 확정 핸들러 안에서 원본 export 를 await 하지 않는다(선택→프리뷰 P95 ≤0.3초 계약)
+      !/confirmLibrarySelection = [\s\S]{0,1500}?await exportVenueMediaFile/.test(src),
+  );
+  ok(
+    "업로드는 원본 준비 완료를 await(runUpload — pendingFiles)",
+    /let file = target\.file;[\s\S]{0,400}?await pendingFilesRef\.current\.get\(target\.key\)/.test(src) &&
+      src.includes("원본을 준비하지 못했어요"),
+  );
+  ok(
+    "원본 export 순차 큐(동시 메모리 폭증 방지) + 준비 중 상태 노출",
+    src.includes("prepareQueueRef") && src.includes("원본 준비 중"),
+  );
+  ok(
+    "앱 복귀(visibilitychange) 시 권한·목록 재조회 + denied '다시 확인' 동선(라운드2 #1)",
+    src.includes('document.addEventListener("visibilitychange"') &&
+      src.includes("shouldRefreshLibraryOnResume") &&
+      src.includes("다시 확인") &&
+      src.includes("openVenueMediaSettings"),
   );
   ok(
     "export 단건마다 그리드 닫힘 구조 제거(토글 중 setLibraryOpen(false) 없음)",
@@ -198,8 +265,7 @@ console.log("[③ 컴포저 정적 계약 — 단일 sticky CTA / raw 팀변수 
   ok("선택 배지 spring 애니메이션", src.includes('transition={{ type: "spring", stiffness: 520, damping: 30 }}'));
   ok(
     "탭 즉시 선택 배지+햅틱(export 대기 없음)",
-    /setLibrarySelection\(\(prev\)[\s\S]{0,500}?venueMediaSelectionHaptic\(\)/.test(src) &&
-      src.includes("setPendingAssetId(asset.id)"),
+    /setLibrarySelection\(\(prev\)[\s\S]{0,500}?venueMediaSelectionHaptic\(\)/.test(src),
   );
   ok("프리뷰 전환 AnimatePresence wait", src.includes('<AnimatePresence mode="wait" initial={false}>'));
   ok("스트립 layout 재정렬 애니메이션", src.includes("<motion.button") && src.includes("layout"));
@@ -268,6 +334,20 @@ console.log("[네이티브 실구현 — iOS PhotoKit / Android MediaStore / 권
     swift.includes("presentLimitedLibraryPicker") &&
       swift.includes("openSettingsURLString") &&
       swift.includes("isNetworkAccessAllowed = true"),
+  );
+  ok(
+    "iOS — Limited '더 보기' completion 후 resolve(stale 방지, 라운드2 #1)",
+    /presentLimitedLibraryPicker\(from: vc\)\s*\{/.test(swift) &&
+      swift.includes('call.resolve(["permission": self.currentPermission()])'),
+  );
+  const infoPlist = readFileSync(join(__dirname, "../../ios/App/App/Info.plist"), "utf8");
+  ok(
+    "iOS — 사진 권한 설명에 직관 사진·영상 업로드 목적 고지(라운드2 #4)",
+    /NSPhotoLibraryUsageDescription<\/key>\s*<string>[^<]*직관[^<]*사진·영상[^<]*<\/string>/.test(infoPlist),
+  );
+  ok(
+    "iOS — PHPhotoLibraryPreventAutomaticLimitedAccessAlert(수동 Limited UX, 라운드2 #4)",
+    /PHPhotoLibraryPreventAutomaticLimitedAccessAlert<\/key>\s*<true\/>/.test(infoPlist),
   );
   ok("iOS — export cache 정리(release/deinit)", swift.includes("removeItem(at:") && swift.includes("deinit"));
   const mainVC = readFileSync(join(__dirname, "../../ios/App/App/MainViewController.swift"), "utf8");

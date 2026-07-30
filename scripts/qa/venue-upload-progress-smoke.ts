@@ -151,7 +151,13 @@ async function main() {
 
     console.log("[커스텀 사진첩 배선 — OS 시스템 input 폴백 금지]");
     ok("네이티브 사진첩 열거 브릿지 사용", src.includes("listVenueMedia("));
-    ok("asset export 후 기존 File 파이프라인 연결", /exportVenueMediaFile\(asset\.id\)[\s\S]{0,180}?handlePickedFiles\(\[file\], \[asset\.id\]\)/.test(src));
+    // 라운드2 #2: export 는 백그라운드 큐(enqueueOriginalPrepare)로 분리, 업로드는 원본 File 을 await 해 기존 파이프라인(prepareVenueStoryMedia) 그대로 탄다.
+    ok(
+      "asset export 후 기존 File 파이프라인 연결",
+      /exportVenueMediaFile\(assetId\)/.test(src) &&
+        /await pendingFilesRef\.current\.get\(target\.key\)/.test(src) &&
+        /prepareVenueStoryMedia\(file, gameId/.test(src),
+    );
     ok("OS file input 생성 0", !src.includes('document.createElement("input")'));
     ok("Limited 더 보기 브릿지 사용", src.includes("presentLimitedVenueMediaPicker()"));
     ok("권한 거부 설정 유도", src.includes("openVenueMediaSettings()"));

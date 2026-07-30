@@ -169,6 +169,11 @@ export async function exportVenueMediaFile(id: string): Promise<File> {
   }
 }
 
+/**
+ * Limited '더 보기' 재선택 시트. **사용자가 선택을 마친 뒤** resolve 된다
+ * (iOS 15+ completionHandler / Android permissionCallback) — 호출부는 resolve 후
+ * 목록을 재조회해야 stale 이 안 남는다(삼순 라운드2 #1).
+ */
 export async function presentLimitedVenueMediaPicker(): Promise<void> {
   await callPlugin<void>("presentLimitedPicker");
 }

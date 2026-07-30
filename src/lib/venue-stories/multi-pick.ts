@@ -16,6 +16,40 @@ export const VENUE_UPLOAD_NETWORK_FAIL_MSG = "네트워크 오류";
 
 export type MultiItemStatus = "ready" | "uploading" | "done" | "failed";
 
+/** 그리드 첫 페이지 크기 — 웜 진입을 첫 화면 분량으로 묶는 점진 pagination(삼순 라운드2 #3). */
+export const VENUE_LIBRARY_FIRST_PAGE_SIZE = 24;
+/** '더 불러오기' 페이지 크기 */
+export const VENUE_LIBRARY_PAGE_SIZE = 60;
+
+/**
+ * 프리뷰 렌더 모드 판정 — 선택 확정 즉시 네이티브 썸네일(img)로 프리뷰를 열고,
+ * 영상 <video> 는 원본 blob 이 준비된 뒤에만 붙인다(선택→즉시 프리뷰 P95 ≤0.3초,
+ * 원본 export 는 백그라운드 비동기 — 삼순 라운드2 #2).
+ */
+export function previewMediaMode(input: {
+  kind: "image" | "video";
+  previewUrl: string | null;
+  originalReady: boolean;
+}): "video" | "image" | "placeholder" {
+  if (!input.previewUrl) return "placeholder";
+  if (input.kind === "video") {
+    return input.originalReady && input.previewUrl.startsWith("blob:") ? "video" : "image";
+  }
+  return "image";
+}
+
+/**
+ * 앱 복귀(기기 설정/Limited 시트에서 돌아옴) 시 사진첩 재조회 판정 — 그리드가 열려 있고
+ * 문서가 다시 보일 때만 권한+목록을 다시 읽는다(설정에서 허용해도 denied/stale 화면이
+ * 남는 회귀 방지 — 삼순 라운드2 #1).
+ */
+export function shouldRefreshLibraryOnResume(input: {
+  libraryOpen: boolean;
+  documentVisible: boolean;
+}): boolean {
+  return input.libraryOpen && input.documentVisible;
+}
+
 /**
  * 픽커 모드 판정 — version gate.
  * 설치 앱(native runtime) + 네이티브 `VenueMediaLibrary` 브릿지 가용일 때만 커스텀 그리드.

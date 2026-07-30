@@ -246,14 +246,19 @@ public class VenueMediaLibraryPlugin: CAPPlugin, CAPBridgedPlugin {
         call.resolve()
     }
 
+    /// Limited '더 보기' 재선택 시트 — 사용자가 선택을 **마친 뒤** resolve 한다(iOS 15+ completion).
+    /// 시트를 띄우자마자 resolve 하면 호출부가 기존 목록을 재조회해 stale 화면이 남는다(삼순 라운드2 #1).
     @objc func presentLimitedPicker(_ call: CAPPluginCall) {
         DispatchQueue.main.async { [weak self] in
-            guard let vc = self?.bridge?.viewController else {
+            guard let self, let vc = self.bridge?.viewController else {
                 call.reject("no view controller")
                 return
             }
-            PHPhotoLibrary.shared().presentLimitedLibraryPicker(from: vc)
-            call.resolve()
+            PHPhotoLibrary.shared().presentLimitedLibraryPicker(from: vc) { _ in
+                DispatchQueue.main.async {
+                    call.resolve(["permission": self.currentPermission()])
+                }
+            }
         }
     }
 
