@@ -25,7 +25,16 @@ let USER_FACING_GAME_DETAIL_DEADLINE_MS: number;
 let setDegradationObserver:
   typeof import("../../src/app/api/game-detail/route").setGameDetailDegradationObserverForTest;
 
-type SourceMode = "normal" | "partial" | "blackhole" | "http-error" | "sr-retry-blackhole";
+type SourceMode =
+  | "normal"
+  | "partial"
+  | "blackhole"
+  | "http-error"
+  | "sr-retry-blackhole"
+  | "detail-schema-error"
+  | "detail-http-error"
+  | "detail-timeout"
+  | "list-http-error";
 type GameState = "scheduled" | "live" | "final" | "cancelled";
 
 function json(data: unknown): Response {
@@ -221,6 +230,27 @@ async function scenario(
     const isKbo = url.includes("koreabaseball.com");
     if (isKbo && kboMode === "blackhole") return blackhole(init?.signal ?? undefined);
     if (isKbo && kboMode === "http-error") return new Response("upstream unavailable", { status: 503 });
+    const isKboList = url.includes("GetKboGameList");
+    if (isKbo && kboMode === "detail-timeout" && !isKboList) {
+      return blackhole(init?.signal ?? undefined);
+    }
+    if (isKbo && kboMode === "detail-http-error" && !isKboList) {
+      return new Response("upstream unavailable", { status: 503 });
+    }
+    if (isKbo && kboMode === "list-http-error" && isKboList) {
+      return new Response("upstream unavailable", { status: 503 });
+    }
+    // 상세 3종만 HTTP 200 + 비JSON(HTML) — 경기목록은 정상. 실측된 예정경기 오탐 패턴.
+    if (
+      isKbo &&
+      kboMode === "detail-schema-error" &&
+      !isKboList
+    ) {
+      return new Response("<html>KBO error page</html>", {
+        status: 200,
+        headers: { "Content-Type": "text/html" },
+      });
+    }
     if (!isKbo && naverMode === "blackhole") return blackhole(init?.signal ?? undefined);
 
     if (url.includes("GetKboGameList")) {
@@ -406,6 +436,36 @@ async function main() {
     [{ apiName: "kbo-game-detail", reason: "http-error" }],
   );
 
+  // request-context 관제 회귀 매트릭스:
+  // scheduled/cancelled의 상세 자연 결측 및 목록 실패는 0건,
+  // 동일 실패가 live/final이면 실제 열화이므로 원인 보존 1건.
+  const degradationMatrix = [
+    ["detail-schema-error", "schema-error"],
+    ["detail-http-error", "http-error"],
+    ["detail-timeout", "timeout"],
+    ["list-http-error", "http-error"],
+  ] as const;
+  for (const [mode, reason] of degradationMatrix) {
+    for (const state of ["scheduled", "cancelled", "live", "final"] as const) {
+      const result = await scenario(`KBO ${mode} + Naver ${state}`, mode, "normal", state);
+      assert.equal(result.body.status, state, `${mode}/${state}: canonical status 유지`);
+      if (state === "scheduled" || state === "cancelled") {
+        assert.equal(
+          result.degradationEvents.length,
+          0,
+          `${mode}/${state}: 정상 자연 결측은 관제 0건`,
+        );
+      } else {
+        assert.ok(result.body.boxScore?.awayBatters.length > 0, `${mode}/${state}: Naver fallback 유지`);
+        assert.deepEqual(
+          result.degradationEvents,
+          [{ apiName: "kbo-game-detail", reason }],
+          `${mode}/${state}: 실제 열화 원인 1건`,
+        );
+      }
+    }
+  }
+
   const scheduled = await scenario("normal scheduled", "normal", "normal", "scheduled");
   assert.equal(scheduled.body.status, "scheduled");
   assert.equal(scheduled.body.linescore, null);
@@ -425,7 +485,7 @@ async function main() {
   assert.doesNotMatch(routeSource, /\bfetchGames\s*\(/, "route must not reintroduce fetchGames 10s await");
   assert.match(routeSource, /signal:\s*deadlineSignal/g, "shared absolute deadline wiring retained");
 
-  console.log("game-detail bounded fallback: 9 actual GET + degradation scenarios PASS");
+  console.log("game-detail bounded fallback: 25 actual GET + degradation scenarios PASS");
 }
 
 main()
