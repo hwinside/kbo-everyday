@@ -10,6 +10,13 @@
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { JSDOM } from "jsdom";
+import {
+  runVenueUploadQueue,
+  resolveVenueOriginal,
+  VenueOriginalUnavailableError,
+  type VenueUploadTarget,
+} from "../../src/lib/venue-stories/venue-upload-queue";
 import {
   VENUE_STORY_MAX_ITEMS,
   VENUE_STORY_OVER_MAX_MSG,
@@ -194,6 +201,10 @@ console.log("[③ 컴포저 정적 계약 — 단일 sticky CTA / raw 팀변수 
     join(__dirname, "../../src/components/game/VenueStoryComposer.tsx"),
     "utf8",
   );
+  const gridSrc = readFileSync(
+    join(__dirname, "../../src/components/game/VenueLibraryGrid.tsx"),
+    "utf8",
+  );
   ok("CTA 라벨 상수 `전체 팀 공유` 사용", VENUE_STORY_CTA_LABEL === "전체 팀 공유" && src.includes("VENUE_STORY_CTA_LABEL"));
   ok("CTA 규격 rounded-xl · py-3.5", /className="w-full py-3\.5 rounded-xl/.test(src));
   ok("safe-area(bottom) 유지", src.includes("env(safe-area-inset-bottom)"));
@@ -213,21 +224,32 @@ console.log("[③ 컴포저 정적 계약 — 단일 sticky CTA / raw 팀변수 
       src.includes("fileInputRef.current?.click()"),
   );
   ok(
-    "그리드 한 화면 멀티셀렉트 — 탭 토글 후 확정 즉시 닫기+썸네일 프리뷰+원본 비동기 큐(라운드2 #2)",
+    "그리드 한 화면 멀티셀렉트 — 타일 탭 = 프리뷰 즉시 갱신 + 선택 토글, 확정은 썸네일만 보관(라운드3 #1/#3)",
     src.includes("toggleAssetSelection(") &&
+      src.includes("<VenueLibraryGrid") &&
       src.includes("confirmLibrarySelection") &&
-      /const additions = librarySelection\.filter[\s\S]{0,600}?previewUrl: asset\.thumbnailUrl[\s\S]{0,800}?setLibraryOpen\(false\)[\s\S]{0,200}?enqueueOriginalPrepare\(item\)/.test(src) &&
+      // 확정은 네이티브 썸네일만 provisional 항목에 담고(file: null) 그리드를 즉시 닫는다(원본 pre-export 없음).
+      /const additions = librarySelection\.filter[\s\S]{0,900}?file: null[\s\S]{0,300}?previewUrl: asset\.thumbnailUrl/.test(src) &&
+      /confirmLibrarySelection = \(\) => \{[\s\S]{0,1500}?setLibraryOpen\(false\)/.test(src) &&
       // 확정 핸들러 안에서 원본 export 를 await 하지 않는다(선택→프리뷰 P95 ≤0.3초 계약)
-      !/confirmLibrarySelection = [\s\S]{0,1500}?await exportVenueMediaFile/.test(src),
+      !/confirmLibrarySelection = [\s\S]{0,1500}?await exportVenueMediaFile/.test(src) &&
+      // 선-export 큐(enqueueOriginalPrepare)·푸시리스(pendingFilesRef)는 제거되었다(bounded memory).
+      !src.includes("enqueueOriginalPrepare") &&
+      !src.includes("pendingFilesRef") &&
+      !src.includes("prepareQueueRef"),
   );
   ok(
-    "업로드는 원본 준비 완료를 await(runUpload — pendingFiles)",
-    /let file = target\.file;[\s\S]{0,400}?await pendingFilesRef\.current\.get\(target\.key\)/.test(src) &&
+    "업로드는 runVenueUploadQueue 로 위임 — 원본은 업로드 차례에 lazy export(라운드3 #2/#3)",
+    src.includes("runVenueUploadQueue(targets, {") &&
+      src.includes("exportOriginal: (assetId) => exportVenueMediaFile(assetId)") &&
       src.includes("원본을 준비하지 못했어요"),
   );
   ok(
-    "원본 export 순차 큐(동시 메모리 폭증 방지) + 준비 중 상태 노출",
-    src.includes("prepareQueueRef") && src.includes("원본 준비 중"),
+    "그리드 항목은 full-res data URL 를 누적하지 않는다(썸네일만 프리뷰, bounded memory #3)",
+    // 그리드 확정 경로에서 readFileAsDataURL(고해상 변환)을 호출하지 않고(폴백 파일입력만 사용),
+      // provisional 항목은 file: null 로 생성된다.
+      /confirmLibrarySelection = [\s\S]{0,900}?file: null/.test(src) &&
+      !/confirmLibrarySelection = [\s\S]{0,1500}?readFileAsDataURL/.test(src),
   );
   ok(
     "앱 복귀(visibilitychange) 시 권한·목록 재조회 + denied '다시 확인' 동선(라운드2 #1)",
@@ -259,10 +281,11 @@ console.log("[③ 컴포저 정적 계약 — 단일 sticky CTA / raw 팀변수 
   );
   ok("멀티픽 병합이 mergePickedItems 사용(순서/상한 단일 소스)", src.includes("mergePickedItems("));
   ok("배지 렌더가 mediaDurationBadge 사용(사진 배지 금지 단일 소스)", (src.match(/mediaDurationBadge\(/g) ?? []).length >= 3);
-  ok("그리드 썸네일 lazy+async decode", src.includes('loading="lazy"') && src.includes('decoding="async"'));
-  ok("썸네일 placeholder→fade-in", src.includes("animate-pulse opacity-100") && src.includes("transition-opacity duration-200"));
-  ok("오프스크린 셀 렌더 비용 제한", src.includes('contentVisibility: "auto"'));
-  ok("선택 배지 spring 애니메이션", src.includes('transition={{ type: "spring", stiffness: 520, damping: 30 }}'));
+  ok("그리드 썸네일 lazy+async decode", gridSrc.includes('loading="lazy"') && gridSrc.includes('decoding="async"'));
+  ok("썸네일 placeholder→fade-in", gridSrc.includes("animate-pulse opacity-100") && gridSrc.includes("transition-opacity duration-200"));
+  ok("오프스크린 셀 렌더 비용 제한", gridSrc.includes('contentVisibility: "auto"'));
+  ok("선택 배지 spring 애니메이션", gridSrc.includes('transition={{ type: "spring", stiffness: 520, damping: 30 }}'));
+  ok("컴포저가 VenueLibraryGrid 로 위임(타일 탭→프리뷰 컴포넌트)", src.includes("<VenueLibraryGrid") && src.includes('from "@/components/game/VenueLibraryGrid"'));
   ok(
     "탭 즉시 선택 배지+햅틱(export 대기 없음)",
     /setLibrarySelection\(\(prev\)[\s\S]{0,500}?venueMediaSelectionHaptic\(\)/.test(src),
@@ -391,5 +414,209 @@ console.log("[네이티브 실구현 — iOS PhotoKit / Android MediaStore / 권
   ok("Android — MainActivity 등록", mainActivity.includes("registerPlugin(VenueMediaLibraryPlugin.class);"));
 }
 
-console.log(`\n${pass} passed, ${fail} failed`);
-if (fail > 0) process.exit(1);
+// ────────────────────────────────────────────────────────────────────────────
+// 실제 실행형 회귀 (삼순 라운드3 — 정적 regex false-green 지적 반영)
+//  #1 실제 컴포넌트 렌더: 타일 탭 → 큰 프리뷰 src 즉시 변경(같은 화면)
+//  #2 실제 상태: export 1회 실패 → 재시도 → export 재호출 성공 → 업로드 성공
+//  #3 실제 상태: 3개 대용량 원본 동시 상주 최대 1(bounded memory) + 원본은 File 만(data URL 누적 X)
+// 각 항목마다 fault injection(보호코드 제거 시 RED) 동봉.
+// ────────────────────────────────────────────────────────────────────────────
+async function runtimeRegressions() {
+  const dom = new JSDOM(`<!DOCTYPE html><body><div id="root"></div></body>`, {
+    url: "https://keubo.fan/",
+  });
+  const g = globalThis as unknown as Record<string, unknown>;
+  g.window = dom.window;
+  g.document = dom.window.document;
+  g.navigator = dom.window.navigator;
+  g.HTMLElement = dom.window.HTMLElement;
+  g.Element = dom.window.Element;
+  g.File = dom.window.File;
+  g.Blob = dom.window.Blob;
+  g.IS_REACT_ACT_ENVIRONMENT = true;
+
+  const React = (await import("react")).default;
+  const { act } = await import("react");
+  const { createRoot } = await import("react-dom/client");
+  const { VenueLibraryGrid } = await import("../../src/components/game/VenueLibraryGrid");
+
+  type Asset = {
+    id: string;
+    kind: "image" | "video";
+    thumbnailUrl: string;
+    durationMs: number | null;
+    createdAt: number;
+  };
+  const assets: Asset[] = [
+    { id: "a", kind: "image", thumbnailUrl: "data:image/jpeg;base64,AAAA", durationMs: null, createdAt: 3 },
+    { id: "b", kind: "image", thumbnailUrl: "data:image/jpeg;base64,BBBB", durationMs: null, createdAt: 2 },
+    { id: "c", kind: "video", thumbnailUrl: "data:image/jpeg;base64,CCCC", durationMs: 12000, createdAt: 1 },
+  ];
+
+  console.log("[라운드3 #1 — 실제 컴포넌트 렌더: 타일 탭 → 큰 프리뷰 즉시 갱신]");
+  {
+    const container = dom.window.document.getElementById("root")!;
+    const root = createRoot(container);
+    const toggled: string[] = [];
+    // onToggle 은 no-op(선택 prop 는 계속 [] 유지) — 그래도 탭 시 프리뷰가 바뀌어야 한다
+    // (선택 왕복과 무관한 '탭→프리뷰' 계약. 라운드2 false-green: 선택 뒤에야 프리뷰였던 회귀 차단).
+    await act(async () => {
+      root.render(
+        React.createElement(VenueLibraryGrid, {
+          assets: assets as never,
+          selection: [],
+          onToggle: (a: Asset) => toggled.push(a.id),
+          accent: "#123456",
+          onAccent: "#ffffff",
+        }),
+      );
+    });
+    const focusSrc = () =>
+      (container.querySelector('[data-testid="library-focus-image"]') as HTMLImageElement | null)?.getAttribute("src") ??
+      null;
+    const tapTile = async (id: string) => {
+      await act(async () => {
+        (container.querySelector(`[data-asset-id="${id}"]`) as HTMLElement).click();
+      });
+    };
+    ok("초기 큰 프리뷰 = 첫 asset 썸네일", focusSrc() === assets[0].thumbnailUrl);
+    await tapTile("b");
+    ok("타일 b 탭 → 큰 프리뷰 src 즉시 b 로 변경", focusSrc() === assets[1].thumbnailUrl);
+    await tapTile("c");
+    ok("타일 c 탭 → 큰 프리뷰 src 즉시 c 로 변경(연속 갱신)", focusSrc() === assets[2].thumbnailUrl);
+    ok(
+      "탭→프리뷰는 selection 왕복과 무관(onToggle no-op·selection=[] 인데도 갱신)",
+      toggled.join(",") === "b,c",
+    );
+    await act(async () => root.unmount());
+  }
+
+  console.log("[라운드3 #1 fault injection — 포커스 미갱신(구 false-green) 이면 프리뷰 고정]");
+  {
+    // setFocusId 를 누락한 '깨진' 그리드(선택으로만 프리뷰 파생) — 탭해도 프리뷰가 안 바뀜을 확인해
+    // 위 실제 렌더 회귀가 setFocusId 제거 시 RED 임을 입증한다.
+    const BrokenGrid = ({ items }: { items: Asset[] }) => {
+      const focus = items[0];
+      return React.createElement(
+        "div",
+        null,
+        React.createElement("img", { "data-testid": "broken-preview", src: focus.thumbnailUrl }),
+        ...items.map((a) =>
+          React.createElement("button", { key: a.id, "data-asset-id": a.id, onClick: () => {} }),
+        ),
+      );
+    };
+    const container = dom.window.document.getElementById("root")!;
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(React.createElement(BrokenGrid, { items: assets }));
+    });
+    const brokenSrc = () =>
+      (container.querySelector('[data-testid="broken-preview"]') as HTMLImageElement).getAttribute("src");
+    await act(async () => {
+      (container.querySelector('[data-asset-id="b"]') as HTMLElement).click();
+    });
+    ok("fault: 포커스 미갱신 그리드는 탭해도 프리뷰 고정(→ 실제 회귀가 RED 를 잡는다)", brokenSrc() === assets[0].thumbnailUrl);
+    await act(async () => root.unmount());
+  }
+
+  const mkFile = (id: string) => new (g.File as typeof File)([id], `${id}.jpg`, { type: "image/jpeg" });
+
+  console.log("[라운드3 #2 — export 1회 실패 → 재시도 시 export 재호출 성공 → 업로드 성공]");
+  {
+    const target: VenueUploadTarget = {
+      key: "asset:a1",
+      file: null,
+      assetId: "a1",
+      kind: "image",
+      durationMs: null,
+    };
+    let exportCalls = 0;
+    let uploaded = 0;
+    let resolveFails = 0;
+    const exportOriginal = async (id: string) => {
+      exportCalls++;
+      if (exportCalls === 1) throw new Error("transient export fail");
+      return mkFile(id);
+    };
+    const handlers = {
+      exportOriginal,
+      uploadOne: async () => {
+        uploaded++;
+      },
+      onResolveFail: () => {
+        resolveFails++;
+      },
+    };
+    // 1차 업로드: export transient 실패 → 항목은 실패로 남고(assetId 보존) 업로드 없음
+    await runVenueUploadQueue([target], handlers);
+    ok("1차: export 1회 호출·실패 → 업로드 0·resolveFail 1(항목/assetId 유지)", exportCalls === 1 && uploaded === 0 && resolveFails === 1);
+    // 재시도: 같은 target(assetId 그대로) → export 재호출 → 성공 → 업로드 성공
+    await runVenueUploadQueue([target], handlers);
+    ok("재시도: export 재호출(2회째) 성공 → 업로드 성공", exportCalls === 2 && uploaded === 1);
+  }
+
+  console.log("[라운드3 #2 fault injection — assetId 소실 시 export 미호출(재시도 불가)]");
+  {
+    // 구조기(라운드2): export 실패 시 항목/핸들을 잃으면 재시도가 export 를 못 부른다.
+    const lost = { file: null, assetId: null };
+    let ec = 0;
+    let threw = false;
+    try {
+      await resolveVenueOriginal(lost, async () => {
+        ec++;
+        return mkFile("x");
+      });
+    } catch (e) {
+      threw = e instanceof VenueOriginalUnavailableError;
+    }
+    ok("fault: assetId 소실 → export 미호출·재시도 불가(→ #2 보존이 RED 를 잡는다)", threw && ec === 0);
+  }
+
+  console.log("[라운드3 #3 — bounded memory: 3개 대용량 원본 동시 상주 최대 1 + 원본은 File 만]");
+  {
+    const targets: VenueUploadTarget[] = ["m1", "m2", "m3"].map((id) => ({
+      key: `asset:${id}`,
+      file: null,
+      assetId: id,
+      kind: "image" as const,
+      durationMs: null,
+    }));
+    let peak = 0;
+    const receivedFile: boolean[] = [];
+    await runVenueUploadQueue(targets, {
+      exportOriginal: async (id) => mkFile(id),
+      onResidentChange: (n) => {
+        peak = Math.max(peak, n);
+      },
+      onResolveFail: () => {},
+      uploadOne: async (_t, file) => {
+        receivedFile.push(file instanceof (g.File as typeof File));
+        await Promise.resolve();
+      },
+    });
+    ok("순차 러너 — 원본 동시 상주 peak = 1(3개 대용량)", peak === 1);
+    ok("원본은 File 로만 전달 — full-res data URL 누적 0", receivedFile.length === 3 && receivedFile.every(Boolean));
+
+    // fault injection: 순차/해제 가드를 없앤 병렬 pre-resolve 는 peak = 3 이 된다(steady-state 상주 위험).
+    let faultPeak = 0;
+    let live = 0;
+    const files = await Promise.all(targets.map((t) => resolveVenueOriginal(t, async (id) => mkFile(id))));
+    live = files.length;
+    faultPeak = live;
+    for (let i = 0; i < targets.length; i++) {
+      live--;
+    }
+    ok("fault: 병렬 pre-resolve(가드 제거) 는 peak = 3(→ #3 순차 러너가 RED 를 잡는다)", faultPeak === 3);
+  }
+}
+
+runtimeRegressions()
+  .catch((e) => {
+    fail++;
+    console.error("  ❌ runtimeRegressions threw:", e);
+  })
+  .finally(() => {
+    console.log(`\n${pass} passed, ${fail} failed`);
+    if (fail > 0) process.exit(1);
+  });

@@ -13,7 +13,6 @@ import {
   Trash2,
   ChevronLeft,
   ChevronRight,
-  Cloud,
 } from "lucide-react";
 import { getSafeSession } from "@/lib/supabase/client";
 import {
@@ -58,6 +57,11 @@ import {
   VENUE_LIBRARY_FIRST_PAGE_SIZE,
   VENUE_LIBRARY_PAGE_SIZE,
 } from "@/lib/venue-stories/multi-pick";
+import {
+  runVenueUploadQueue,
+  type VenueUploadTarget,
+} from "@/lib/venue-stories/venue-upload-queue";
+import { VenueLibraryGrid } from "@/components/game/VenueLibraryGrid";
 import { readFileAsDataURL } from "@/lib/venue-stories/read-file";
 import { getMyTeamId } from "@/lib/store/myteam";
 import { teamPalette } from "@/design-v2/team-palette";
@@ -112,44 +116,6 @@ interface ComposerItem {
 /** 그리드 픽 항목 key — 원본 File 도착 전에도 안정적이도록 asset id 기반. */
 const assetItemKey = (assetId: string) => `asset:${assetId}`;
 
-/** 원본 준비 단계에서 유저 안내 문구를 그대로 띄워야 하는 거절(제한 초과 등). */
-class PrepareRejectError extends Error {}
-
-function LibraryThumbnail({ asset }: { asset: VenueMediaAsset }) {
-  const [loaded, setLoaded] = useState(false);
-  // iCloud 전용 등 로컬 썸네일이 없는 asset — shimmer 영구 고착 대신 명시 상태(삼순 라운드2 #3).
-  // 선택은 가능 — 원본은 export 단계에서 네트워크(isNetworkAccessAllowed=true)로 내려받는다.
-  if (!asset.thumbnailUrl) {
-    return (
-      <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-bg-tertiary text-text-tertiary">
-        <Cloud size={18} />
-        <span className="text-[9px]">미리보기 없음</span>
-      </div>
-    );
-  }
-  return (
-    <>
-      <div
-        aria-hidden
-        className={`absolute inset-0 bg-gradient-to-br from-bg-tertiary via-bg-secondary to-bg-tertiary transition-opacity duration-200 ${
-          loaded ? "opacity-0" : "animate-pulse opacity-100"
-        }`}
-      />
-      {/* 네이티브가 내려준 작은 썸네일만 사용. lazy+async decode로 스크롤 메인 스레드 점유 최소화. */}
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={asset.thumbnailUrl}
-        alt=""
-        loading="lazy"
-        decoding="async"
-        onLoad={() => setLoaded(true)}
-        className={`w-full h-full object-cover transition-opacity duration-200 ease-out ${
-          loaded ? "opacity-100" : "opacity-0"
-        }`}
-      />
-    </>
-  );
-}
 
 export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded }: Props) {
   const isAdmin = useIsAdmin();
@@ -165,10 +131,6 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   const [libraryLoading, setLibraryLoading] = useState(false);
   // 그리드 한 화면 멀티셀렉트 — 탭 토글로 순서 유지, 하단 '선택 완료'는 즉시 닫힌다(삼순 라운드2 #2).
   const [librarySelection, setLibrarySelection] = useState<VenueMediaAsset[]>([]);
-  // 그리드 픽 원본 준비 — key → export 완료 Promise. 업로드는 이 Promise 를 await 한다.
-  const pendingFilesRef = useRef<Map<string, Promise<File>>>(new Map());
-  // 원본 export 순차 큐 — 3×50MB 원본이 동시에 WebView 메모리에 올라오지 않게 1개씩.
-  const prepareQueueRef = useRef<Promise<void>>(Promise.resolve());
   // version gate — 네이티브 브릿지 가용이면 grid, 아니면 기존 file input 폴백(구설치본/웹).
   const [pickerMode, setPickerMode] = useState<"grid" | "fileInput" | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -355,8 +317,6 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
     setLibraryPermission("prompt");
     setLibraryLoading(false);
     setLibrarySelection([]);
-    pendingFilesRef.current.clear();
-    prepareQueueRef.current = Promise.resolve();
     precheckPosRef.current = null;
     submitPosRef.current = { lat: null, lng: null, accuracy: null };
     setPrecheck({ status: "idle" });
@@ -453,7 +413,6 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   };
 
   const removeItem = (key: string) => {
-    pendingFilesRef.current.delete(key);
     setItems((prev) => {
       const removedIndex = prev.findIndex((item) => item.key === key);
       if (removedIndex < 0) return prev;
@@ -482,7 +441,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
     void venueMediaSelectionHaptic();
   };
 
-  /** 기존 file input 폴백 경로 — 그리드 픽은 confirmLibrarySelection/enqueueOriginalPrepare 가 담당. */
+  /** 기존 file input 폴백 경로 — 그리드 픽은 confirmLibrarySelection 이 담당(원본은 업로드 차례에 lazy export). */
   const handlePickedFiles = async (files: File[] | null) => {
     if (!files || files.length === 0 || submitting) return;
     processingPickRef.current = true;
@@ -596,74 +555,10 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   };
 
   /**
-   * 원본 준비 큐 — asset 원본 export → 제한 검증 → 고해상 프리뷰 교체를 백그라운드 순차 수행.
-   * 순차(1개씩)로 묶어 대용량 원본이 동시에 메모리에 올라오지 않게 한다(삼순 라운드2 #2).
-   * 실패 시: 업로드 전엔 항목 제거+사유 1줄, 업로드 중이면 runUpload 가 실패건으로 기록.
-   */
-  const enqueueOriginalPrepare = (target: ComposerItem) => {
-    if (target.assetId == null) return;
-    const assetId = target.assetId;
-    const seq = pickSeqRef.current;
-    const filePromise = prepareQueueRef.current.then(async () => {
-      const file = await exportVenueMediaFile(assetId);
-      if (seq !== pickSeqRef.current) throw new Error("stale");
-      const probedMs = target.kind === "video" ? await probeVideoDurationMs(file) : null;
-      if (seq !== pickSeqRef.current) throw new Error("stale");
-      const durationMs = probedMs ?? target.durationMs;
-      const limitError = checkVenueMediaLimits({
-        kind: target.kind,
-        sizeBytes: file.size,
-        durationMs,
-        videoAutoCompressAvailable: target.kind === "video" && isVideoCompressSupported(),
-      });
-      if (limitError) throw new PrepareRejectError(limitError);
-      // 고해상 프리뷰 — 영상: blob URL / 이미지: data URL(안드 WebView blob 미렌더 회피, #839).
-      // 이미지 read 실패는 썸네일 프리뷰 유지 — 업로드는 원본 File 로 정상 진행.
-      let previewUrl: string | null = null;
-      if (target.kind === "video") {
-        previewUrl = URL.createObjectURL(file);
-      } else {
-        try {
-          previewUrl = await readFileAsDataURL(file);
-        } catch {
-          previewUrl = null;
-        }
-      }
-      if (seq !== pickSeqRef.current) {
-        if (previewUrl?.startsWith("blob:")) URL.revokeObjectURL(previewUrl);
-        throw new Error("stale");
-      }
-      patchItem(target.key, {
-        file,
-        durationMs,
-        ...(previewUrl ? { previewUrl } : {}),
-      });
-      return file;
-    });
-    pendingFilesRef.current.set(target.key, filePromise);
-    // 큐는 성공/실패와 무관하게 다음 항목으로 진행한다.
-    prepareQueueRef.current = filePromise.then(
-      () => undefined,
-      () => undefined,
-    );
-    filePromise.catch((err: unknown) => {
-      if (seq !== pickSeqRef.current) return;
-      pendingFilesRef.current.delete(target.key);
-      // 이미 업로드 중이면 runUpload 의 await 가 실패건으로 기록(항목 제거 금지 — 요약 정합).
-      if (uploadInFlightRef.current) return;
-      removeItem(target.key);
-      setError(
-        err instanceof PrepareRejectError
-          ? err.message
-          : "선택한 사진·영상을 불러오지 못했어요",
-      );
-    });
-  };
-
-  /**
-   * 그리드 하단 '선택 완료' — 즉시(동기) 그리드를 닫고 네이티브 썸네일로 프리뷰를 먼저 연다
-   * (선택→즉시 프리뷰 P95 ≤0.3초). 원본 export/검증은 백그라운드 순차 큐로 분리하고,
-   * 업로드는 submit 시점에 원본 준비 완료를 await 한다(삼순 라운드2 #2).
+   * 그리드 하단 '선택 완료' — 즉시(동기) 그리드를 닫고 네이티브 썸네일(소형)로 프리뷰를 연다.
+   * 원본은 저장하지 않고(File 도, full-res data URL 도 생성 X) assetId 만 보관 —
+   * export 는 **업로드 차례**에 runVenueUploadQueue 가 lazy 로 수행하고 즉시 해제한다
+   * (bounded memory — 3×원본 동시 상주 제거, 삼순 라운드3 #3). 재시도는 assetId 로 재-export(#2).
    */
   const confirmLibrarySelection = () => {
     const selectedIds = new Set(librarySelection.map((a) => a.id));
@@ -678,7 +573,8 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
       key: assetItemKey(asset.id),
       file: null,
       kind: asset.kind,
-      // 즉시 프리뷰: 네이티브 썸네일(data URL). 원본 준비 후 고해상 프리뷜로 교체된다.
+      // 즉시 프리뷰: 네이티브 소형 썸네일(data URL)만 보관 — 고해상 원본은 저장하지 않는다
+      // (bounded memory, 삼순 라운드3 #3). 원본은 업로드 차례에 assetId 로 export 된다.
       previewUrl: asset.thumbnailUrl || null,
       durationMs: asset.durationMs,
       status: "ready",
@@ -695,7 +591,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
       return merged;
     });
     setLibraryOpen(false);
-    for (const item of provisional) enqueueOriginalPrepare(item);
+    // 원본 pre-export 없음 — assetId 만 provisional 항목에 남고, export 는 업로드 차례에 lazy 수행.
     void venueMediaSelectionHaptic();
   };
 
@@ -772,100 +668,116 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
    * 항목별로 그대로 재사용한다(서버 계약 변경 0). 성공 즉시 onUploaded 로 트레이 낙관 반영,
    * 실패는 사유 1줄을 항목에 기록(완료 요약에서 실패건만 개별 재시도).
    */
-  const runUpload = async (
-    targets: ReadonlyArray<Pick<ComposerItem, "key" | "file">>,
-  ) => {
+  const runUpload = async (targets: ReadonlyArray<VenueUploadTarget>) => {
     const pos = submitPosRef.current;
-    for (const target of targets) {
-      patchItem(target.key, { status: "uploading", progress: 0, stage: "upload", failReason: null });
-      // 그리드 픽 원본이 아직 백그라운드 준비 중이면 여기서 완료를 await 한다
-      // (선택→프리뷰와 분리된 업로드 시점 계약 — 삼순 라운드2 #2).
-      let file = target.file;
-      if (!file) {
-        try {
-          file = (await pendingFilesRef.current.get(target.key)) ?? null;
-        } catch {
-          file = null;
+    // 순차 러너 — 원본은 각 항목 차례에만 export 되고, 그 항목 업로드가 끝나면 즉시 해제된다
+    // (bounded memory — 3×원본 동시 상주 없음, #3). export 실패는 assetId 보존 → 재시도가 다시 export(#2).
+    await runVenueUploadQueue(targets, {
+      exportOriginal: (assetId) => exportVenueMediaFile(assetId),
+      onStart: (target) =>
+        patchItem(target.key, { status: "uploading", progress: 0, stage: "upload", failReason: null }),
+      onResolveFail: (target) =>
+        patchItem(target.key, {
+          status: "failed",
+          failReason: uploadFailureReason({ kind: "prepare", message: "원본을 준비하지 못했어요" }),
+        }),
+      uploadOne: async (target, file) => {
+        // 그리드 픽은 pick 시점 제한 검사가 없었으므로(lazy export) 여기서 원본 제한을 검증한다.
+        if (target.assetId != null) {
+          const limitError = checkVenueMediaLimits({
+            kind: target.kind,
+            sizeBytes: file.size,
+            durationMs: target.durationMs,
+            videoAutoCompressAvailable: target.kind === "video" && isVideoCompressSupported(),
+          });
+          if (limitError) {
+            patchItem(target.key, {
+              status: "failed",
+              failReason: uploadFailureReason({ kind: "prepare", message: limitError }),
+            });
+            return;
+          }
         }
-        if (!file) {
+        let prepared;
+        try {
+          prepared = await prepareVenueStoryMedia(file, gameId, (r, stage) => {
+            patchItem(target.key, { progress: Math.min(0.99, r), ...(stage ? { stage } : {}) });
+          });
+        } catch {
+          prepared = { error: "업로드에 실패했어요" };
+        }
+        if ("error" in prepared) {
           patchItem(target.key, {
             status: "failed",
-            failReason: uploadFailureReason({
-              kind: "prepare",
-              message: "원본을 준비하지 못했어요",
+            failReason: uploadFailureReason({ kind: "prepare", message: prepared.error }),
+          });
+          return;
+        }
+        const session = await getSafeSession();
+        const token = session?.access_token;
+        if (!token) {
+          patchItem(target.key, {
+            status: "failed",
+            failReason: uploadFailureReason({ kind: "server", message: "로그인이 필요해요" }),
+          });
+          return;
+        }
+        try {
+          const res = await fetch("/api/venue-stories", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+            body: JSON.stringify({
+              gameId,
+              mediaType: prepared.mediaType,
+              mediaUrl: prepared.mediaUrl,
+              mediaPath: prepared.mediaPath, // 영상: private staging 경로(서버 즉시 검증 후 공개 승격)
+              thumbUrl: prepared.thumbUrl,
+              durationMs: prepared.durationMs,
+              width: prepared.width,
+              height: prepared.height,
+              caption: caption.trim() || null,
+              lat: pos.lat,
+              lng: pos.lng,
+              accuracy: pos.accuracy,
+              consentVersion: VENUE_STORY_CONSENT_VERSION,
             }),
           });
-          continue;
-        }
-      }
-      let prepared;
-      try {
-        prepared = await prepareVenueStoryMedia(file, gameId, (r, stage) => {
-          patchItem(target.key, { progress: Math.min(0.99, r), ...(stage ? { stage } : {}) });
-        });
-      } catch {
-        prepared = { error: "업로드에 실패했어요" };
-      }
-      if ("error" in prepared) {
-        patchItem(target.key, {
-          status: "failed",
-          failReason: uploadFailureReason({ kind: "prepare", message: prepared.error }),
-        });
-        continue;
-      }
-      const session = await getSafeSession();
-      const token = session?.access_token;
-      if (!token) {
-        patchItem(target.key, {
-          status: "failed",
-          failReason: uploadFailureReason({ kind: "server", message: "로그인이 필요해요" }),
-        });
-        continue;
-      }
-      try {
-        const res = await fetch("/api/venue-stories", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-          body: JSON.stringify({
-            gameId,
+          const data = await res.json();
+          if (data.error) {
+            patchItem(target.key, {
+              status: "failed",
+              failReason: uploadFailureReason({ kind: "server", message: data.error }),
+            });
+            return;
+          }
+          patchItem(target.key, { status: "done", progress: 1 });
+          // 항목 성공 즉시 트레이 낙관 반영(영상 pending 처리중 카드 포함 — 기존 단건 계약 유지)
+          onUploaded({
+            id: typeof data.id === "number" ? data.id : null,
             mediaType: prepared.mediaType,
-            mediaUrl: prepared.mediaUrl,
-            mediaPath: prepared.mediaPath, // 영상: private staging 경로(서버 즉시 검증 후 공개 승격)
+            status: data.status ?? null,
             thumbUrl: prepared.thumbUrl,
-            durationMs: prepared.durationMs,
-            width: prepared.width,
-            height: prepared.height,
-            caption: caption.trim() || null,
-            lat: pos.lat,
-            lng: pos.lng,
-            accuracy: pos.accuracy,
-            consentVersion: VENUE_STORY_CONSENT_VERSION,
-          }),
-        });
-        const data = await res.json();
-        if (data.error) {
+          });
+        } catch {
           patchItem(target.key, {
             status: "failed",
-            failReason: uploadFailureReason({ kind: "server", message: data.error }),
+            failReason: uploadFailureReason({ kind: "network" }),
           });
-          continue;
         }
-        patchItem(target.key, { status: "done", progress: 1 });
-        // 항목 성공 즉시 트레이 낙관 반영(영상 pending 처리중 카드 포함 — 기존 단건 계약 유지)
-        onUploaded({
-          id: typeof data.id === "number" ? data.id : null,
-          mediaType: prepared.mediaType,
-          status: data.status ?? null,
-          thumbUrl: prepared.thumbUrl,
-        });
-      } catch {
-        patchItem(target.key, {
-          status: "failed",
-          failReason: uploadFailureReason({ kind: "network" }),
-        });
-      }
-    }
+      },
+    });
   };
+
+  /** 항목 → 업로드 타겟(key/file/assetId/kind/durationMs) — 그리드 픽은 file=null·assetId 보존. */
+  const toUploadTarget = (
+    it: Pick<ComposerItem, "key" | "file" | "assetId" | "kind" | "durationMs">,
+  ): VenueUploadTarget => ({
+    key: it.key,
+    file: it.file,
+    assetId: it.assetId,
+    kind: it.kind,
+    durationMs: it.durationMs,
+  });
 
   const submit = async () => {
     if (items.length === 0 || submitting || uploadInFlightRef.current || phase === "done") return;
@@ -934,7 +846,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
     uploadInFlightRef.current = true;
     setPhase("upload");
     try {
-      await runUpload(items.map((it) => ({ key: it.key, file: it.file })));
+      await runUpload(items.map((it) => toUploadTarget(it)));
       // 성공/실패와 무관하게 완료 요약으로 전환 — 항목별 결과·실패 사유·개별 재시도 제공(스펙 5)
       setPhase("done");
     } finally {
@@ -949,7 +861,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
     uploadInFlightRef.current = true;
     void venueMediaSelectionHaptic();
     try {
-      await runUpload([{ key: target.key, file: target.file }]);
+      await runUpload([toUploadTarget(target)]);
     } finally {
       uploadInFlightRef.current = false;
     }
@@ -1204,57 +1116,14 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
                   </div>
                 ) : libraryAssets.length > 0 ? (
                   <>
-                    {/* 앱 내 커스텀 그리드 — 최근순 사진+영상. 탭 = 즉시 선택/해제 토글,
-                        하단 '선택 완료'는 즉시 닫히고 원본은 백그라운드 준비(삼순 라운드2 #2). */}
-                    <div className="grid grid-cols-3 gap-0.5">
-                      {libraryAssets.map((asset) => {
-                        const displayIndex = librarySelection.findIndex((a) => a.id === asset.id);
-                        const badge = mediaDurationBadge(asset.kind, asset.durationMs);
-                        return (
-                          <button
-                            key={asset.id}
-                            onClick={() => toggleLibraryAsset(asset)}
-                            disabled={
-                              displayIndex < 0 &&
-                              librarySelection.length >= VENUE_STORY_MAX_ITEMS
-                            }
-                            className="relative aspect-square min-h-11 overflow-hidden bg-bg-tertiary active:scale-[0.98] disabled:opacity-40"
-                            style={{ contentVisibility: "auto" }}
-                          >
-                            <LibraryThumbnail asset={asset} />
-                            <AnimatePresence>
-                              {displayIndex >= 0 && (
-                              <motion.span
-                                key="selected"
-                                initial={{ scale: 0.55, opacity: 0 }}
-                                animate={{ scale: 1, opacity: 1 }}
-                                exit={{ scale: 0.55, opacity: 0 }}
-                                transition={{ type: "spring", stiffness: 520, damping: 30 }}
-                                className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full border border-white flex items-center justify-center text-[11px] font-bold"
-                                style={{ background: palette.accent, color: palette.onAccent }}
-                              >
-                                {displayIndex + 1}
-                              </motion.span>
-                              )}
-                            </AnimatePresence>
-                            {displayIndex < 0 && (
-                              <span className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full border border-white/90 bg-black/20" />
-                            )}
-                            {asset.kind === "video" && (
-                              <Play
-                                size={13}
-                                className="absolute bottom-1.5 left-1.5 text-white fill-white drop-shadow"
-                              />
-                            )}
-                            {badge && (
-                              <span className="absolute bottom-1.5 right-1.5 px-1.5 rounded-md bg-black/60 text-white text-[9px] font-semibold leading-4">
-                                {badge}
-                              </span>
-                            )}
-                          </button>
-                        );
-                      })}
-                    </div>
+                    {/* 타일 탭 → 같은 화면 큰 네이티브 썸네일 프리뷰 즉시 갱신 + 선택/해제 토글(삼순 라운드3 #1). */}
+                    <VenueLibraryGrid
+                      assets={libraryAssets}
+                      selection={librarySelection.map((a) => a.id)}
+                      onToggle={toggleLibraryAsset}
+                      accent={palette.accent}
+                      onAccent={palette.onAccent}
+                    />
                     {libraryCursor && (
                       <button
                         onClick={() => void loadLibrary(true)}
@@ -1399,13 +1268,6 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
                       {activeBadge && (
                         <span className="absolute bottom-2 right-2 px-2 py-0.5 rounded-lg bg-black/60 text-white text-[11px] font-semibold">
                           {activeBadge}
-                        </span>
-                      )}
-                      {/* 원본 준비 상태 — 대용량/iCloud 도 선택 즉시(동기 렌더) 노출된다(삼순 라운드2 #2). */}
-                      {activeItem && activeItem.file == null && (
-                        <span className="absolute bottom-2 left-2 flex items-center gap-1 px-2 py-0.5 rounded-lg bg-black/60 text-white text-[11px] font-medium">
-                          <Loader2 size={11} className="animate-spin" />
-                          원본 준비 중
                         </span>
                       )}
                     </div>

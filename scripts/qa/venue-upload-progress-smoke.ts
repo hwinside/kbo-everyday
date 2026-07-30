@@ -151,11 +151,11 @@ async function main() {
 
     console.log("[커스텀 사진첩 배선 — OS 시스템 input 폴백 금지]");
     ok("네이티브 사진첩 열거 브릿지 사용", src.includes("listVenueMedia("));
-    // 라운드2 #2: export 는 백그라운드 큐(enqueueOriginalPrepare)로 분리, 업로드는 원본 File 을 await 해 기존 파이프라인(prepareVenueStoryMedia) 그대로 탄다.
+    // 라운드3 #2/#3: export 는 업로드 차례에 runVenueUploadQueue 가 lazy 로 수행(assetId→File), 업로드는 기존 파이프라인(prepareVenueStoryMedia) 그대로 탄다.
     ok(
-      "asset export 후 기존 File 파이프라인 연결",
-      /exportVenueMediaFile\(assetId\)/.test(src) &&
-        /await pendingFilesRef\.current\.get\(target\.key\)/.test(src) &&
+      "asset export 후 기존 File 파이프라인 연결(lazy export via runVenueUploadQueue)",
+      /exportOriginal: \(assetId\) => exportVenueMediaFile\(assetId\)/.test(src) &&
+        src.includes("runVenueUploadQueue(targets, {") &&
         /prepareVenueStoryMedia\(file, gameId/.test(src),
     );
     ok("OS file input 생성 0", !src.includes('document.createElement("input")'));
