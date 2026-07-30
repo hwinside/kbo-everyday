@@ -10,12 +10,11 @@ import {
 } from "@/lib/notifications/live-activity-channel-policy";
 import type { KboRawGame } from "@/types/api";
 import { isKboGameCancelled } from "@/lib/crawler/kbo-status";
+import { fetchKboLiveGames } from "@/lib/notifications/kbo-live-games";
 
 // 어드민 — Live Activity 토큰/카드 종합 현황.
 // 발급된 push-to-start 토큰 수, 떠있는 잠금화면(started_users), update 토큰·현재
 // active broadcast 채널 구독 수, 갱신 불가 카드를 경기별로 집계한다.
-
-const KBO_MAIN = "https://www.koreabaseball.com/ws/Main.asmx";
 
 function getKSTDateStr(): string {
   const now = new Date();
@@ -31,22 +30,17 @@ function gameStatus(g: KboRawGame): "live" | "final" | "scheduled" | "cancelled"
   return "other";
 }
 
-// ok=false는 fetch 자체가 실패(네트워크/non-200/파싱 오류)했음을 뜻한다 — 이때는
-// 오늘 경기 상태를 KBO에서 확인할 수 없으므로 호출부가 "미상" 폴백을 적용해야 한다.
-async function fetchTodayGames(): Promise<{ games: KboRawGame[]; ok: boolean }> {
-  // 2026-05-20: KBO가 Referer가 koreabaseball.com이 아닌 요청을 IE 에러 페이지로 막음.
-  const res = await fetch(`${KBO_MAIN}/GetKboGameList`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)",
-      "Referer": "https://www.koreabaseball.com/Schedule/ScoreBoard.aspx",
-    },
-    body: `leId=1&srId=0,1,3,4,5,7,8,9&date=${getKSTDateStr()}`,
-    cache: "no-store",
-  }).then(r => (r.ok ? r.json() : null)).catch(() => null);
-  if (res === null) return { games: [], ok: false };
-  return { games: (res.game ?? []) as KboRawGame[], ok: true };
+// KBO 1.5s bounded → Naver failover 공용 SSOT(#985 계열, fetchKboLiveGames) 경유.
+// 어드민 관제도 KBO 단독 열화 시 Naver 값으로 경기 상태를 보여주고, 두 소스 모두 실패할
+// 때만 ok=false(fail-close) — 이때만 호출부가 "미상(unknown)" 폴백을 적용한다. KBO 200+빈
+// 배열 soft-empty 는 SSOT 가 Naver 로 교차확인해 authoritative empty 로만 인정하고(검증
+// 실패 시 ok=false), 검증 안 된 raw KBO 결과를 라이브로 오인하지 않는다.
+// liveGamesImpl 은 결함주입 회귀(admin-live-activity-naver-failover-smoke)용 seam.
+export async function fetchTodayGames(
+  liveGamesImpl: typeof fetchKboLiveGames = fetchKboLiveGames,
+): Promise<{ games: KboRawGame[]; ok: boolean }> {
+  const { ok, games } = await liveGamesImpl(getKSTDateStr(), Date.now() + 5_000);
+  return { games, ok };
 }
 
 interface CardRow {
