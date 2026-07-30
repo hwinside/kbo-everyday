@@ -172,6 +172,35 @@ function naverSchedule(state: GameState) {
   };
 }
 
+function naverPreview(state: GameState) {
+  // 미확정(scheduled/cancelled)은 실측대로 fullLineUp 빈 배열.
+  if (state === "scheduled" || state === "cancelled") {
+    return {
+      result: {
+        previewData: {
+          awayTeamLineUp: { fullLineUp: [] },
+          homeTeamLineUp: { fullLineUp: [] },
+        },
+      },
+    };
+  }
+  const POSITIONS = ["중견수", "유격수", "지명타자", "1루수", "우익수", "좌익수", "3루수", "포수", "2루수"];
+  const side = (prefix: string, sp: string) => ({
+    fullLineUp: [
+      { positionName: "선발투수", playerName: sp },
+      ...POSITIONS.map((positionName, i) => ({ positionName, playerName: `${prefix}${i + 1}` })),
+    ],
+  });
+  return {
+    result: {
+      previewData: {
+        awayTeamLineUp: side("원정타자", "원정투수"),
+        homeTeamLineUp: side("홈타자", "홈투수"),
+      },
+    },
+  };
+}
+
 function naverRecord(state: GameState) {
   if (state === "scheduled" || state === "cancelled") {
     return { result: { recordData: {} } };
@@ -286,6 +315,7 @@ async function scenario(
       return json(boxScore());
     }
     if (url.includes("/record")) return json(naverRecord(state));
+    if (url.includes("/preview")) return json(naverPreview(state));
     if (url.includes("/relay?")) {
       return json({ result: { textRelayData: { inn: 1, textRelays: [] } } });
     }
@@ -325,14 +355,25 @@ async function main() {
   assert.equal(kboDown.body.status, "final");
   assert.equal(kboDown.body.linescore.away.R, 3);
   assert.equal(kboDown.body.boxScore.awayBatters[0].name, "김선수");
-  assert.equal(kboDown.body.lineup, null);
+  // KBO GetLineUpAnalysis 열화 → Naver preview 라인업으로 표시 폴백(isToday=true 게이트 통과).
+  assert.equal(kboDown.body.lineup?.isToday, true);
+  assert.equal(kboDown.body.lineup?.away.length, 9);
+  assert.equal(kboDown.body.lineup?.home.length, 9);
+  assert.equal(kboDown.body.lineup?.away[0].name, "원정타자1");
+  assert.equal(kboDown.body.lineup?.away[0].position, "CF");
+  assert.equal(kboDown.body.lineup?.away[0].order, 1);
+  assert.ok(
+    !kboDown.body.lineup?.away.some((e: { name: string }) => e.name === "원정투수"),
+    "선발투수는 타순 엔트리에서 제외",
+  );
   assert.deepEqual(kboDown.degradationEvents, [{ apiName: "kbo-game-detail", reason: "timeout" }]);
 
   const kboDownLive = await scenario("KBO 3종 blackhole + Naver live", "blackhole", "normal", "live");
   assert.equal(kboDownLive.body.status, "live");
   assert.equal(kboDownLive.body.linescore.home.R, 2);
   assert.ok(kboDownLive.body.boxScore.homeBatters.length > 0);
-  assert.equal(kboDownLive.body.lineup, null);
+  assert.equal(kboDownLive.body.lineup?.isToday, true);
+  assert.equal(kboDownLive.body.lineup?.home.length, 9);
   assert.deepEqual(kboDownLive.degradationEvents, [{ apiName: "kbo-game-detail", reason: "timeout" }]);
   assert.equal(kboDownLive.body.boxScore.awayBatters[0].h2b, 1, "record inn4=좌2 → h2b=1");
 
@@ -403,13 +444,14 @@ async function main() {
   assert.equal(naverDown.body.linescore.away.R, 3);
   assert.ok(naverDown.body.boxScore.awayBatters.length > 0);
   assert.ok(naverDown.body.lineup?.away.length > 0);
+  assert.equal(naverDown.body.lineup?.away[0].name, "김선수", "KBO 정상이면 KBO 라인업 유지(Naver 미침범)");
   assert.equal(naverDown.degradationEvents.length, 0);
 
   const partial = await scenario("KBO partial schema + Naver normal", "partial", "normal", "final");
   assert.equal(partial.body.status, "final");
   assert.equal(partial.body.linescore.away.R, 3);
   assert.ok(partial.body.boxScore.awayBatters.length > 0);
-  assert.equal(partial.body.lineup, null);
+  assert.equal(partial.body.lineup?.isToday, true, "KBO lineup 빈응답 → Naver preview 폴백");
   assert.ok(partial.body.meta.broadcastChannels?.length > 0, "degraded detail keeps settled KBO TV_IF");
   assert.deepEqual(partial.degradationEvents, [{ apiName: "kbo-game-detail", reason: "schema-error" }]);
 
@@ -426,7 +468,7 @@ async function main() {
   const retry = await scenario("srId 0 empty → 1 blackhole", "sr-retry-blackhole", "normal", "final");
   assert.deepEqual(retry.srIds.filter((v) => v === "0" || v === "1"), ["0", "1"]);
   assert.equal(retry.body.status, "final");
-  assert.equal(retry.body.lineup, null);
+  assert.equal(retry.body.lineup?.isToday, true, "srId 재시도 실패해도 Naver preview 폴백");
   assert.deepEqual(retry.degradationEvents, [{ apiName: "kbo-game-detail", reason: "timeout" }]);
 
   const httpError = await scenario("KBO HTTP 503 + Naver normal", "http-error", "normal", "final");
