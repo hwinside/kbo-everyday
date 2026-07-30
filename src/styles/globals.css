@@ -388,6 +388,39 @@ html.postdetail-open > body {
   animation: fadeIn 0.25s ease-out;
 }
 
+/* ===== 직관 라이브 LIVE 액센트 (VenueStorySection 올리기 버튼 전용) ===== */
+/* 원 둘레 4px conic 링 — 안쪽을 mask 로 뚫어 기존 반투명 내부 배경을 가리지 않는다.
+   glow 는 mask 이후 적용되는 drop-shadow 로 링 형상을 따라가게 한다. */
+@keyframes venue-live-ring-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.72; }
+}
+.venue-live-ring {
+  background: conic-gradient(#FF3B30, #FF9500, #FF2D55, #FF3B30);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3.5px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3.5px));
+  filter: drop-shadow(0 0 4px rgba(255, 59, 48, 0.4));
+  animation: venue-live-ring-pulse 2.4s ease-in-out infinite;
+}
+
+/* 섹션 타이틀 왼쪽 레드 펄스 닷 (7px + glow) */
+@keyframes venue-live-dot-pulse {
+  0% { box-shadow: 0 0 4px rgba(255, 59, 48, 0.55), 0 0 0 0 rgba(255, 59, 48, 0.45); }
+  70% { box-shadow: 0 0 4px rgba(255, 59, 48, 0.55), 0 0 0 5px rgba(255, 59, 48, 0); }
+  100% { box-shadow: 0 0 4px rgba(255, 59, 48, 0.55), 0 0 0 0 rgba(255, 59, 48, 0); }
+}
+.venue-live-dot {
+  box-shadow: 0 0 4px rgba(255, 59, 48, 0.55);
+  animation: venue-live-dot-pulse 2s ease-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .venue-live-ring,
+  .venue-live-dot {
+    animation: none;
+  }
+}
+
 /* MY TEAM card — 라이트: 밝은 카드 + 팀 포인트, 다크: 진한 히어로 */
 .myteam-card {
   background: color-mix(in srgb, var(--team-bg, #999) 5%, #FFFFFF);

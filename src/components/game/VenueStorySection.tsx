@@ -344,21 +344,31 @@ export default function VenueStorySection({ gameId }: Props) {
   return (
     <div className="px-4 pt-1 pb-3">
       <div className="flex items-center gap-1.5 mb-2">
-        <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
+        <span className="venue-live-dot shrink-0 w-[7px] h-[7px] rounded-full bg-red-500" />
         <h3 className="text-sm font-semibold text-text-primary">직관 라이브</h3>
+        {stories.length > 0 && (
+          <span className="text-[11px] font-semibold text-red-500">{stories.length}개</span>
+        )}
         <span className="text-[11px] text-text-tertiary">현장에서 온 짧은 중계</span>
       </div>
 
       {/* overflow-x-auto → computed overflow-y:auto 로 인해 라벨 `-top-1`이 스크롤포트 위로 잘리므로
           상단 `pt-1`(4px)로 라벨 pill 상단까지 트레이 안에 넣는다(삼순 왕복2). */}
       <div className="flex gap-2 overflow-x-auto scrollbar-hide -mx-1 px-1 pt-1 pb-1">
-        {/* 올리기 타일 */}
+        {/* 올리기 타일 — LIVE 액센트: conic 링(마스크로 4px 두께만) + 원 안쪽 하단 LIVE 뱃지.
+            링/뱃지 모두 68px 원 박스 안에 두어 overflow-y 클리핑(#942 pill 전례)을 피한다. */}
         <button
           onClick={handleUploadClick}
           className="shrink-0 w-[68px] flex flex-col items-center gap-1"
         >
-          <div className="w-[68px] h-[68px] rounded-full border-2 border-dashed border-border flex items-center justify-center bg-bg-tertiary/50 active:bg-bg-tertiary">
-            <Plus size={22} className="text-text-tertiary" />
+          <div className="relative w-[68px] h-[68px]">
+            <div aria-hidden className="venue-live-ring absolute inset-0 rounded-full" />
+            <div className="absolute inset-[4px] rounded-full flex items-center justify-center bg-bg-tertiary/50 active:bg-bg-tertiary">
+              <Plus size={22} className="text-text-tertiary" />
+            </div>
+            <span className="absolute bottom-0 left-1/2 -translate-x-1/2 z-10 px-[5px] py-[2px] rounded bg-red-600 text-white text-[8px] font-extrabold leading-none tracking-wider border border-bg-primary">
+              LIVE
+            </span>
           </div>
           <span className="text-[11px] text-text-tertiary">올리기</span>
         </button>
