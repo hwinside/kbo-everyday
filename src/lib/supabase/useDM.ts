@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useLayoutEffect, useState, useCallback, useRef } from "react";
 import { supabase } from "./client";
 import { useAuth } from "./AuthContext";
 import { useBlockedIds } from "./useBlock";
@@ -15,6 +15,18 @@ import {
   readBaseballQaOutbox,
   resetBaseballQaQuestion,
 } from "@/lib/baseball-qa/client-outbox";
+import { usePollingFallback } from "./usePollingFallback";
+import { mergeDmMessagesById, type DMMessage } from "./dm-messages";
+
+export type { DMMessage };
+
+// Realtime 구독이 죽은 동안만 도는 안전망 폴링 주기.
+const DM_LIST_POLL_MS = 30_000;
+const DM_CHAT_POLL_MS = 20_000;
+
+// SSR 에서는 useLayoutEffect 경고를 피하고 브라우저에서는 paint 전 동기 실행.
+const useIsomorphicLayoutEffect =
+  typeof window === "undefined" ? useEffect : useLayoutEffect;
 
 export interface DMConversation {
   id: string;
@@ -27,23 +39,17 @@ export interface DMConversation {
   unread_count: number;
 }
 
-export interface DMMessage {
-  id: number;
-  conversation_id: string;
-  sender_id: string | null;
-  content: string;
-  image_urls?: string[] | null;
-  /** 구조화 쪽지 (뉴스클리핑 등) — payload->>'type'으로 렌더 분기 */
-  payload?: unknown;
-  is_read: boolean;
-  created_at: string;
-  sender_nickname?: string;
-  sender_team_id?: number | null;
-}
-
 interface AtomicDMSendResult {
   conversation_id: string;
   message_id: number;
+}
+
+interface DMConversationRow {
+  id: string;
+  user1_id: string | null;
+  user2_id: string | null;
+  last_message: string | null;
+  last_message_at: string;
 }
 
 // 대화 목록 (N+1 개선: batch fetch)
@@ -52,6 +58,8 @@ export function useDMList() {
   const { blockedIds } = useBlockedIds();
   const [conversations, setConversations] = useState<DMConversation[]>([]);
   const [loading, setLoading] = useState(true);
+  const [realtimeHealthy, setRealtimeHealthy] = useState(false);
+  const channelGenerationRef = useRef(0);
 
   const load = useCallback(async () => {
     if (!user) return;
@@ -65,13 +73,14 @@ export function useDMList() {
       .order("last_message_at", { ascending: false })
       .limit(500);
 
-    const rows = data ?? [];
+    // 빈 목록이어도 야잘알봇 고정방은 렌더해야 하므로 조기 반환하지 않는다.
+    const conversationRows = (data ?? []) as DMConversationRow[];
 
     // 상대방 ID 추출
     const otherIds = [
       ...new Set(
-        rows
-          .map((conv: { user1_id: string | null; user2_id: string | null }) =>
+        conversationRows
+          .map((conv) =>
             conv.user1_id === user.id ? conv.user2_id : conv.user1_id
           )
           .filter((id): id is string => id !== null),
@@ -91,7 +100,7 @@ export function useDMList() {
     );
 
     // batch fetch unread counts — RPC 결과는 요청 대화당 최대 1행(목록 상한 500).
-    const convIds = rows.map((c: { id: string }) => c.id);
+    const convIds = conversationRows.map((c) => c.id);
     // query-guard: bounded -- p_conversation_ids는 클라이언트·RPC 양쪽에서 500개로 제한되고 대화당 1행만 반환
     const { data: unreadRows } = await supabase
       .rpc("dm_unread_counts", { p_conversation_ids: convIds });
@@ -101,8 +110,8 @@ export function useDMList() {
       unreadMap.set(r.conversation_id, Number(r.unread_count));
     });
 
-    const mapped: DMConversation[] = rows
-      .map((conv: { id: string; user1_id: string | null; user2_id: string | null; last_message: string | null; last_message_at: string }) => {
+    const mapped: DMConversation[] = conversationRows
+      .map((conv) => {
         const otherId = conv.user1_id === user.id ? conv.user2_id : conv.user1_id;
         const prof = otherId ? profileMap.get(otherId) : undefined;
         return {
@@ -143,24 +152,41 @@ export function useDMList() {
     setLoading(false);
   }, [user, blockedIds]);
 
-  // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(() => { load(); }, [load]);
+  // 초기 load·Realtime refresh·폴링 폴백 모두 단일 request owner(single-flight)로 실행.
+  // (컨슈머 효과보다 먼저 호출해 컨트롤러가 선생성되게 한다.)
+  const requestLoad = usePollingFallback(load, {
+    enabled: !!user,
+    healthy: realtimeHealthy,
+    intervalMs: DM_LIST_POLL_MS,
+  });
 
-  // Realtime — dm_messages 변경(읽음 처리 포함) 시 목록/대화별 안읽음 재계산
+  useEffect(() => { requestLoad(); }, [load, requestLoad]);
+
+  // Realtime — dm_messages 변경(읽음 처리 포함) 시 목록/대화별 안읽음 재계산. 구독 상태를 폴링 폴백에 전달.
   useEffect(() => {
     if (!user) return;
+    const generation = ++channelGenerationRef.current;
 
     const channel = supabase
       .channel("dm-list")
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "dm_messages" },
-        () => { load(); }
+        () => { requestLoad(); }
       )
-      .subscribe();
+      .subscribe((status) => {
+        if (channelGenerationRef.current !== generation) return;
+        setRealtimeHealthy(status === "SUBSCRIBED");
+      });
 
-    return () => { supabase.removeChannel(channel); };
-  }, [user, load]);
+    return () => {
+      if (channelGenerationRef.current === generation) {
+        channelGenerationRef.current += 1;
+        setRealtimeHealthy(false);
+      }
+      void supabase.removeChannel(channel);
+    };
+  }, [user, requestLoad]);
 
   return { conversations, loading, refresh: load };
 }
@@ -170,6 +196,11 @@ export function useDMChat(conversationId: string) {
   const { user } = useAuth();
   const [messages, setMessages] = useState<DMMessage[]>([]);
   const [loading, setLoading] = useState(Boolean(conversationId));
+  const [realtimeHealthy, setRealtimeHealthy] = useState(false);
+  const loadGenerationRef = useRef(0);
+  const channelGenerationRef = useRef(0);
+  // 대화 전환마다 증가 — 늦게 resolve 된 send RPC 성공이 다른 대화 상태를 못 건드리게 하는 fence.
+  const conversationGenerationRef = useRef(0);
   const [geniusReplyState, setGeniusReplyState] =
     useState<"idle" | "waiting" | "retrying" | "failed">("idle");
   const processingBaseballQaRef = useRef(false);
@@ -226,11 +257,31 @@ export function useDMChat(conversationId: string) {
     void processBaseballQaOutbox();
   }, [processBaseballQaOutbox]);
 
-  // 메시지 로드
-  useEffect(() => {
-    if (!conversationId) return;
+  // 대화 전환(A→B) 즉시 렌더 시점에 이전 대화 화면을 무효화한다:
+  // A 메시지 잔존 상태로 B composer 가 뜨면 A 화면을 보고 B 에 오발송하는 창이 생긴다.
+  // (React 공식 "렌더 중 이전 렌더 값 비교 후 setState" 패턴 — effect 보다 먼저 적용된다.)
+  const [activeConversationId, setActiveConversationId] = useState(conversationId);
+  if (activeConversationId !== conversationId) {
+    setActiveConversationId(conversationId);
+    setMessages([]);
+    setLoading(Boolean(conversationId));
+    setRealtimeHealthy(false);
+  }
 
-    async function load() {
+  // 전환 commit 직후(paint 전·비동기 이벤트 개입 전) 이전 대화 소속 load/payload 를 fence.
+  // (렌더 중 ref 변경은 react-hooks/refs 위반이라 layout effect 에서 수행.)
+  useIsomorphicLayoutEffect(() => {
+    loadGenerationRef.current += 1;
+    channelGenerationRef.current += 1;
+    conversationGenerationRef.current += 1;
+  }, [conversationId]);
+
+  // 메시지 로드/재조회 — 초기는 replace, 폴링 폴백은 merge(append 보존).
+  const loadMessages = useCallback(
+    async (mode: "replace" | "merge" = "merge") => {
+      if (!conversationId) return;
+      const generation = loadGenerationRef.current;
+
       const { data } = await supabase
         .from("dm_messages")
         .select("*")
@@ -266,13 +317,39 @@ export function useDMChat(conversationId: string) {
             sender_team_id: prof?.team_id,
           };
         });
-        setMessages(mapped);
+        if (loadGenerationRef.current !== generation) return;
+        setMessages((prev) =>
+          mode === "replace" ? mapped : mergeDmMessagesById(prev, mapped),
+        );
       }
+      if (loadGenerationRef.current !== generation) return;
       setLoading(false);
-    }
+    },
+    [conversationId],
+  );
 
-    load();
-  }, [conversationId]);
+  // Realtime 이 끊긴 동안만 보이는 대화창을 주기 재조회(새 메시지 무증상 누락 방지).
+  // requestLoad 는 초기 replace 를 포함한 모든 재조회의 단일 owner(동시 요청 최대 1).
+  const requestLoad = usePollingFallback(loadMessages, {
+    enabled: !!conversationId,
+    healthy: realtimeHealthy,
+    intervalMs: DM_CHAT_POLL_MS,
+  });
+
+  // 대화 전환 시에는 replace 로 새 대화 메시지만 로드.
+  // single-flight 대기 중 대화가 또 바뀌면 generation 가드가 실행 자체를 건너뛴다.
+  useEffect(() => {
+    const generation = ++loadGenerationRef.current;
+    requestLoad(() => {
+      if (loadGenerationRef.current !== generation) return;
+      return loadMessages("replace");
+    });
+    return () => {
+      if (loadGenerationRef.current === generation) {
+        loadGenerationRef.current += 1;
+      }
+    };
+  }, [conversationId, loadMessages, requestLoad]);
 
   // 읽음 처리
   useEffect(() => {
@@ -290,6 +367,7 @@ export function useDMChat(conversationId: string) {
   // Realtime
   useEffect(() => {
     if (!conversationId) return;
+    const generation = ++channelGenerationRef.current;
 
     const channel = supabase
       .channel(`dm:${conversationId}`)
@@ -302,6 +380,7 @@ export function useDMChat(conversationId: string) {
           filter: `conversation_id=eq.${conversationId}`,
         },
         async (payload) => {
+          if (channelGenerationRef.current !== generation) return;
           const msg = payload.new as DMMessage;
           // 낙관 append(발신자 본인 echo)로 이미 넣은 행이면 중복 방지
           let alreadyPresent = false;
@@ -319,6 +398,7 @@ export function useDMChat(conversationId: string) {
                 .maybeSingle()
             : { data: null };
 
+          if (channelGenerationRef.current !== generation) return;
           setMessages((prev) =>
             prev.some((m) => m.id === msg.id)
               ? prev
@@ -343,9 +423,18 @@ export function useDMChat(conversationId: string) {
           }
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        if (channelGenerationRef.current !== generation) return;
+        setRealtimeHealthy(status === "SUBSCRIBED");
+      });
 
-    return () => { supabase.removeChannel(channel); };
+    return () => {
+      if (channelGenerationRef.current === generation) {
+        channelGenerationRef.current += 1;
+        setRealtimeHealthy(false);
+      }
+      void supabase.removeChannel(channel);
+    };
   }, [conversationId, user]);
 
   // 메시지 전송: 방 생성·메시지 INSERT·목록 preview를 DB 한 트랜잭션으로 처리한다.
@@ -355,6 +444,9 @@ export function useDMChat(conversationId: string) {
       const images = (imageUrls ?? []).filter((u) => typeof u === "string" && u.length > 0);
       // 텍스트 또는 사진 중 하나는 있어야 전송
       if (!user || (!trimmed && images.length === 0)) return { ok: false, conversationId: null };
+      // RPC await 중 A→B 전환 시 late 성공이 B 화면에 A 메시지를 append 하는 것을 막는 fence.
+      // (서버 반영 자체는 유효 — 훅 상태 갱신만 폐기한다.)
+      const sendGeneration = conversationGenerationRef.current;
 
       let targetUserId = targetUserIdOverride;
       if (!targetUserId && conversationId) {
@@ -381,7 +473,12 @@ export function useDMChat(conversationId: string) {
       if (!error) {
         // 낙관 append — 발신 즉시 내 메시지를 대화창에 반영 (Realtime echo가 본인에게 지연/누락되는 경우 대비).
         // RPC가 준 message_id로 dedup하므로 Realtime echo와 중복되지 않는다.
-        if (result?.message_id && conversationId && result.conversation_id === conversationId) {
+        if (
+          result?.message_id &&
+          conversationId &&
+          result.conversation_id === conversationId &&
+          conversationGenerationRef.current === sendGeneration
+        ) {
           const optimistic: DMMessage = {
             id: result.message_id,
             conversation_id: result.conversation_id,

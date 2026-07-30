@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback, type ChangeEvent } from "react";
+import { useState, useRef, useEffect, useLayoutEffect, useCallback, type ChangeEvent } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ChevronLeft, Send, EllipsisVertical, AlertTriangle, ShieldBan, Flag, X, ImagePlus, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -64,8 +64,34 @@ export default function DMChatPage() {
   const [otherId, setOtherId] = useState<string | null>(null);
   const [otherResolved, setOtherResolved] = useState(false);
 
+  // 대화 전환(A→B) 즉시 헤더·composer 판정을 다시 pending 으로 되돌린다 —
+  // A 상대 프로필이 잔존한 채 B 전송 closure 가 묶이는 오발송 창 차단.
+  const [profileConversationId, setProfileConversationId] = useState(conversationId);
+  if (profileConversationId !== conversationId) {
+    setProfileConversationId(conversationId);
+    setOtherName("상대방");
+    setOtherTeamId(null);
+    setOtherId(null);
+    setOtherResolved(false);
+    // composer 상태도 대화별로 격리 — A draft/전송중 표시가 B 로 이어지면 오발송·잠김 창이 생긴다.
+    setInput("");
+    setImages([]);
+    setSending(false);
+    setSendError("");
+  }
+
+  // late handleSend 결과 fence 용 대화 세대(epoch) — id 비교는 A→B→A(ABA) 복귀를 통과시켜
+  // late 결과가 새 draft 를 지우므로, 전환/진입마다 단조 증가하는 세대 번호의 정확 일치로 판정한다
+  // (렌더 중 ref 쓰기는 react-hooks/refs 위반이라 layout effect 로 commit 직후 동기 증가).
+  const sendEpochRef = useRef(0);
+  useLayoutEffect(() => {
+    sendEpochRef.current += 1;
+  }, [conversationId]);
+
   useEffect(() => {
     if (!user || !conversationId) return;
+    // 전환 후 도착하는 이전 대화의 late 응답은 폐기(cleanup fence).
+    let cancelled = false;
 
     async function fetchOther() {
       let oid = draftTargetId;
@@ -76,6 +102,7 @@ export default function DMChatPage() {
           .eq("id", conversationId)
           .maybeSingle();
 
+        if (cancelled) return;
         if (!conv) {
           setOtherName("탈퇴한 사용자");
           setOtherTeamId(null);
@@ -104,12 +131,14 @@ export default function DMChatPage() {
         .eq("id", oid)
         .maybeSingle();
 
+      if (cancelled) return;
       if (prof) {
         setOtherName(prof.nickname ?? "상대방");
         setOtherTeamId(prof.team_id);
       }
     }
     fetchOther();
+    return () => { cancelled = true; };
   }, [user, conversationId, draftTargetId]);
 
   // Block hook
@@ -207,7 +236,11 @@ export default function DMChatPage() {
     if ((!input.trim() && sendImages.length === 0) || sending || uploading) return;
     setSendError("");
     setSending(true);
+    const sendEpoch = sendEpochRef.current;
     const result = await sendMessage(input.trim(), sendImages.map((img) => img.url), draftTargetId ?? undefined);
+    // 전송 중 다른 대화로 전환(같은 대화로 복귀한 ABA 포함)되었으면 composer 상태를 건드리지 않는다
+    // (전환 시점 render reset 이 composer 를 이미 초기화함 — late 결과는 세대 불일치로 폐기).
+    if (sendEpochRef.current !== sendEpoch) return;
     if (result.ok && result.conversationId) {
       setInput("");
       setImages([]);
