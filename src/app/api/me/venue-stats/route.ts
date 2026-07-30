@@ -10,10 +10,13 @@
  *    attendance_only (§9 지원 시즌 상태).
  *  - B/C 완전성은 ledger + runtime canonical hash 대조(§11) — 순수 로직은
  *    src/lib/venue-stats/aggregate.ts, 시즌 집계는 venue_stats_season_team_aggregates RPC.
+ *  - 시즌 경기 우주는 정규시즌 final 전체 스케줄(getSeasonGames)을 먼저 구성하고 RPC가
+ *    ledger를 LEFT JOIN — ledger 없는 경기는 complete=false 강등(누락 금지, 삼순 리뷰 P0).
  */
 import { NextRequest, NextResponse } from "next/server";
 import { getVerifiedUserFromRequest } from "@/lib/auth/verified-user";
 import { fetchGames, fetchStandings, type TeamStanding } from "@/lib/crawler/kbo-api";
+import { getSeasonGames } from "@/lib/crawler/season-games-cache";
 import type { LedgerRecord } from "@/lib/game-logs/completeness";
 import type { PlayerGameLogRow } from "@/lib/game-logs/ingest";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
@@ -154,20 +157,50 @@ interface SeasonAggregates {
   teamSeasonTotals: Map<number, TeamSeasonTotals> | null;
 }
 
-/** S1b 신설 RPC — ledger 시즌 검증 + 팀별 complete 집계. 실패는 null(B/C attendance_only fail-closed). */
+/** KboGame.date(YYYYMMDD) → YYYY-MM-DD. 형식 이탈은 null(우주 무결성 훼손 → fail-closed). */
+function toIsoGameDate(raw: string): string | null {
+  if (!/^\d{8}$/.test(raw)) return null;
+  return `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`;
+}
+
+/**
+ * S1b 시즌 집계 — §11 경기 우주: 정규시즌 final 전체 스케줄(권위 소스)을 먼저 구성해
+ * RPC에 넘기고, RPC가 ledger를 LEFT JOIN해 ledger 없는 경기를 complete=false로 강등한다
+ * (우주 누락 금지 — 삼순 리뷰 P0). 스케줄/RPC 실패·빈 우주·우주↔응답 길이 불일치는
+ * 모두 null — B/C attendance_only·E1 unsupported fail-closed (ready·null false-green 금지).
+ */
 async function fetchSeasonAggregates(season: number): Promise<SeasonAggregates> {
+  const failClosed: SeasonAggregates = { seasonGames: null, teamSeasonTotals: null };
+  let universe: Array<{ gameId: string; gameDate: string }>;
+  try {
+    const all = await getSeasonGames(season, REGULAR_SEASON_SR_ID);
+    const seen = new Set<string>();
+    universe = [];
+    for (const g of all) {
+      if (g.status !== "final" || seen.has(g.gameId)) continue;
+      const gameDate = toIsoGameDate(String(g.date ?? ""));
+      if (gameDate === null) return failClosed;
+      seen.add(g.gameId);
+      universe.push({ gameId: g.gameId, gameDate });
+    }
+  } catch {
+    return failClosed;
+  }
+  if (universe.length === 0) return failClosed;
+
   const { data, error } = await supabase.rpc("venue_stats_season_team_aggregates", {
     p_season: season,
+    p_games: universe,
   });
   if (error || !data || typeof data !== "object") {
-    return { seasonGames: null, teamSeasonTotals: null };
+    return failClosed;
   }
   const payload = data as {
     games?: Array<{ gameId?: unknown; gameDate?: unknown; complete?: unknown }>;
     teams?: Array<Record<string, unknown>>;
   };
   if (!Array.isArray(payload.games) || !Array.isArray(payload.teams)) {
-    return { seasonGames: null, teamSeasonTotals: null };
+    return failClosed;
   }
   const seasonGames: SeasonGameVerification[] = payload.games.flatMap((g) => {
     if (typeof g.gameId !== "string" || typeof g.gameDate !== "string") return [];
@@ -178,6 +211,8 @@ async function fetchSeasonAggregates(season: number): Promise<SeasonAggregates> 
       teamCodes: parseGameTeamCodes(g.gameId),
     }];
   });
+  // LEFT JOIN 결과가 우주 전체를 정확히 커버하지 못하면(부분 우주 드리프트) fail-closed.
+  if (seasonGames.length !== universe.length) return failClosed;
   const teamSeasonTotals = new Map<number, TeamSeasonTotals>();
   for (const t of payload.teams) {
     const teamId = Number(t.teamId);

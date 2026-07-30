@@ -4,33 +4,60 @@
 --
 -- ⚠️ production 선적용 금지 — PR 리뷰·하린아빠 머지 승인 뒤 배포한다 (S1b는 migration 작성만).
 --
+-- 경기 우주 (§11 — ledger 없는 경기 누락 금지, 삼순 리뷰 P0 반영):
+--   호출측(route)이 권위 있는 정규시즌 final 전체 경기 우주(p_games: [{gameId, gameDate}])를
+--   먼저 구성해 넘기고, 이 RPC는 그 우주에 ledger/log를 LEFT JOIN한다.
+--   ledger가 없는 우주 경기는 결과에서 빠지는 게 아니라 complete=false로 강등된다(fail-closed).
+--   teams 합계도 이 우주 안에서 complete 검증을 통과한 경기만 산입한다 — 우주 밖 ledger는 무시.
+--
 -- 반환(jsonb):
---   games: 시즌 ledger 경기별 runtime 검증 결과 [{gameId, gameDate, complete}]
---          — E1 팀 일정·C 시즌 baseline coverage 공용 소스.
+--   games: 우주 전체 경기별 runtime 검증 결과 [{gameId, gameDate, complete}] (|games| = |우주|)
+--          — E1 팀 시즌 일정·B/C 시즌 baseline coverage 공용 소스.
 --   teams: complete 검증 통과 경기만으로 집계한 팀별 시즌 합계
 --          [{teamId, completeGames, ab, h, hr, outs, er, hAllowed}]
 --          — B1(AVG=ΣH/ΣAB)·B2(ERA=27×ΣER/Σouts)·B4(HR/피안타 per-game) 시즌 분모.
 --
 -- complete 판정 (§11 runtime completeness — ledger complete만으로 신뢰 금지):
---   ledger.status='complete' AND actual row count = expected_row_count AND
---   actual canonical payload hash = expected_payload_hash.
+--   ledger 행 존재 AND ledger.status='complete' AND actual row count = expected_row_count AND
+--   actual canonical payload hash = expected_payload_hash. 어느 조건이든 미충족(ledger 부재 포함)이면
+--   complete=false.
 --   hash는 §12 canonical 직렬화와 byte-exact 동일해야 한다:
 --   (kbo_id asc, player_type asc — COLLATE "C" byte order = TS 문자열 비교) 정렬,
 --   20필드를 "," join, 행을 "|" join, null → '∅'(U+2205), boolean → 'true'/'false',
 --   date → YYYY-MM-DD, sha256 hex (src/lib/game-logs/completeness.ts canonicalPayloadHash와 동치.
---   회귀: scripts/qa/venue-stats-s1b-db-integration.ts에서 TS hash와 exact 대조).
+--   회귀: scripts/qa/venue-stats-s1b-db-route-integration.ts에서 TS hash와 exact 대조).
 
-CREATE OR REPLACE FUNCTION public.venue_stats_season_team_aggregates(p_season integer)
+CREATE OR REPLACE FUNCTION public.venue_stats_season_team_aggregates(
+  p_season integer,
+  p_games jsonb
+)
 RETURNS jsonb
 LANGUAGE sql
 STABLE
 SET search_path = public
 AS $$
-WITH ledger AS (
-  SELECT game_id, game_date, status, expected_row_count, expected_payload_hash
-  FROM player_game_log_ingestions
-  WHERE game_date >= make_date(p_season, 1, 1)
-    AND game_date < make_date(p_season + 1, 1, 1)
+WITH universe AS (
+  -- 권위 있는 정규 final 전체 경기 우주 (호출측 스케줄 소스). game_id 중복은 1개로.
+  SELECT DISTINCT ON (g->>'gameId')
+    g->>'gameId' AS game_id,
+    g->>'gameDate' AS game_date
+  FROM jsonb_array_elements(coalesce(p_games, '[]'::jsonb)) AS g
+  WHERE jsonb_typeof(g) = 'object'
+    AND coalesce(g->>'gameId', '') <> ''
+    AND coalesce(g->>'gameDate', '') <> ''
+  ORDER BY g->>'gameId'
+),
+ledger AS (
+  -- 우주 → ledger LEFT JOIN: ledger 없는 경기도 우주에 남는다 (complete=false 강등 대상).
+  SELECT
+    u.game_id,
+    u.game_date,
+    l.status,
+    l.expected_row_count,
+    l.expected_payload_hash,
+    (l.game_id IS NOT NULL) AS has_ledger
+  FROM universe u
+  LEFT JOIN player_game_log_ingestions l ON l.game_id = u.game_id
 ),
 game_actual AS (
   SELECT
@@ -82,12 +109,14 @@ verified AS (
   SELECT
     l.game_id,
     l.game_date,
-    (
-      l.status = 'complete'
+    coalesce(
+      l.has_ledger
+      AND l.status = 'complete'
       AND l.expected_row_count IS NOT NULL
       AND l.expected_payload_hash IS NOT NULL
       AND a.actual_count = l.expected_row_count
-      AND a.actual_hash = l.expected_payload_hash
+      AND a.actual_hash = l.expected_payload_hash,
+      false
     ) AS complete
   FROM ledger l
   JOIN game_actual a USING (game_id)
@@ -113,7 +142,7 @@ SELECT jsonb_build_object(
       SELECT jsonb_agg(
         jsonb_build_object(
           'gameId', game_id,
-          'gameDate', game_date::text,
+          'gameDate', game_date,
           'complete', complete
         )
         ORDER BY game_date, game_id
@@ -146,5 +175,5 @@ $$;
 
 -- ledger는 service_role 전용(완료 판정 조작 방지) — RPC도 service_role만 실행한다.
 -- SECURITY INVOKER 유지: service_role 호출은 RLS를 우회하고, anon/authenticated는 실행 자체가 차단된다.
-REVOKE ALL ON FUNCTION public.venue_stats_season_team_aggregates(integer) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.venue_stats_season_team_aggregates(integer) TO service_role;
+REVOKE ALL ON FUNCTION public.venue_stats_season_team_aggregates(integer, jsonb) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.venue_stats_season_team_aggregates(integer, jsonb) TO service_role;

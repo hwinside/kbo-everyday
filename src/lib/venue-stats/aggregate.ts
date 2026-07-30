@@ -74,7 +74,11 @@ export interface TeamSeasonTotals {
   hAllowed: number;
 }
 
-/** RPC가 반환한 시즌 ledger 경기 + runtime hash 검증 결과 (E1 일정·C 시즌 baseline coverage 공용). */
+/**
+ * 정규시즌 final 전체 경기 우주 + ledger LEFT JOIN runtime 검증 결과
+ * (E1 일정·B/C 시즌 baseline coverage 공용). ledger 없는 우주 경기는 complete=false로
+ * 포함된다 — 우주에서 누락되면 안 된다(§11, 삼순 리뷰 P0).
+ */
 export interface SeasonGameVerification {
   gameId: string;
   gameDate: string;
@@ -349,6 +353,15 @@ interface Ctx {
   c: Classified;
   seasonComparable: boolean;
   logsByGame: Map<string, PlayerGameLogRow[]>;
+}
+
+/**
+ * §11 시즌 우주 가드 — 정규 final 전체 경기 우주가 실제로 존재해야 시즌 비교/일정을 연다.
+ * null(소스 실패)뿐 아니라 빈 우주도 fail-closed — 빈/부분 우주로 B/C·E1이 ready·null로
+ * false-green 되는 것을 막는다(삼순 리뷰 P0 보완 기준 2).
+ */
+function seasonUniverseAvailable(ctx: Ctx): boolean {
+  return ctx.input.seasonGames !== null && ctx.input.seasonGames.length > 0;
 }
 
 function pipeline(ctx: Ctx, over: Partial<MetricStateInput>): MetricState {
@@ -679,7 +692,7 @@ function buildB(
   // §5 — partial_data는 player-log 비교값(B1·B2·B4)에만. B3는 game 스코어 단독이라 제외.
   const usesLogs = id !== "B3";
   const seasonSourceOk = usesLogs
-    ? ctx.seasonComparable && ctx.input.teamSeasonTotals !== null
+    ? ctx.seasonComparable && ctx.input.teamSeasonTotals !== null && seasonUniverseAvailable(ctx)
     : true;
   const teamGames = new Map<number, ScopeGame[]>();
   for (const g of c.validFinal) {
@@ -866,8 +879,8 @@ interface FavoriteSeasonBaseline {
 }
 
 function favoriteSeasonBaseline(ctx: Ctx, favorite: FavoritePlayerSnapshot): FavoriteSeasonBaseline | null {
-  if (!ctx.seasonComparable || ctx.input.seasonGames === null) return null;
-  const completeGames = new Map(ctx.input.seasonGames.map((g) => [g.gameId, g.complete]));
+  if (!ctx.seasonComparable || !seasonUniverseAvailable(ctx)) return null;
+  const completeGames = new Map(ctx.input.seasonGames!.map((g) => [g.gameId, g.complete]));
   const rows = ctx.input.favoriteSeasonLogs.filter(
     (row) => row.kbo_id === favorite.playerId && completeGames.get(row.game_id) === true,
   );
@@ -882,7 +895,7 @@ function favoriteSeasonBaseline(ctx: Ctx, favorite: FavoritePlayerSnapshot): Fav
       .map((r) => r.game_id),
   );
   const coverage = { eligible: 0, complete: 0, appearances: 0, dnp: 0, unknown: 0 };
-  for (const g of ctx.input.seasonGames) {
+  for (const g of ctx.input.seasonGames!) {
     const eligible =
       appearanceGames.has(g.gameId) || g.teamCodes.some((code) => codes.has(code));
     if (!eligible) continue;
@@ -996,7 +1009,7 @@ function favoriteItemState(
 }
 
 function buildC1(ctx: Ctx, cc: CContext): MetricEnvelope<C1Entry[]> {
-  const state = cPipeline(ctx, { unknownGames: totalUnknown(cc), comparisonSourceSupported: ctx.seasonComparable });
+  const state = cPipeline(ctx, { unknownGames: totalUnknown(cc), comparisonSourceSupported: ctx.seasonComparable && seasonUniverseAvailable(ctx) });
   const envelope: MetricEnvelope<C1Entry[]> = {
     id: "C1",
     state,
@@ -1066,7 +1079,7 @@ function buildC1(ctx: Ctx, cc: CContext): MetricEnvelope<C1Entry[]> {
 }
 
 function buildC2(ctx: Ctx, cc: CContext): MetricEnvelope<C2Entry[]> {
-  const state = cPipeline(ctx, { unknownGames: totalUnknown(cc), comparisonSourceSupported: ctx.seasonComparable });
+  const state = cPipeline(ctx, { unknownGames: totalUnknown(cc), comparisonSourceSupported: ctx.seasonComparable && seasonUniverseAvailable(ctx) });
   const envelope: MetricEnvelope<C2Entry[]> = {
     id: "C2",
     state,
@@ -1260,7 +1273,7 @@ function buildC6(
   c1: MetricEnvelope<C1Entry[]>,
   c2: MetricEnvelope<C2Entry[]>,
 ): MetricEnvelope<C6Value> {
-  const state = cPipeline(ctx, { unknownGames: totalUnknown(cc), comparisonSourceSupported: ctx.seasonComparable });
+  const state = cPipeline(ctx, { unknownGames: totalUnknown(cc), comparisonSourceSupported: ctx.seasonComparable && seasonUniverseAvailable(ctx) });
   const envelope: MetricEnvelope<C6Value> = {
     id: "C6",
     state,
@@ -1470,7 +1483,7 @@ function streaks(schedule: string[], attended: Set<string>): { current: number; 
 
 function buildE1(ctx: Ctx): MetricEnvelope<E1Value> {
   const { c, input } = ctx;
-  const scheduleAvailable = input.seasonGames !== null && ctx.seasonComparable;
+  const scheduleAvailable = seasonUniverseAvailable(ctx) && ctx.seasonComparable;
   const state: MetricState = !scheduleAvailable
     ? "unsupported"
     : pipeline(ctx, { invalidSnapshotGames: c.invalidSnapshot.length });
@@ -1489,7 +1502,7 @@ function buildE1(ctx: Ctx): MetricEnvelope<E1Value> {
   if (state !== "ready" && state !== "sample_limited") return envelope;
 
   // §9 E1 — 같은 snapshot 팀의 정규시즌 final 일정에서 연속 참석 game_id 길이.
-  // 일정 소스: ledger 시즌 경기 목록(game_id 참가팀 코드 파싱). DH는 game_id 오름차순 별도 순서.
+  // 일정 소스: 정규 final 전체 경기 우주(game_id 참가팀 코드 파싱). DH는 game_id 오름차순 별도 순서.
   const perTeam: E1PerTeam[] = [];
   let eligibleTotalGames = 0;
   const teamsToEvaluate = new Set<number>(c.snapshotTeams);

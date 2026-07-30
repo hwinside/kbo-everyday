@@ -423,5 +423,40 @@ console.log("\n[6] 표본 가드 / D6 no_wins leaf 승격 / attendance_only");
   ok("standings 실패: A1 attendance_only + reasons", noStandings.metrics.A1.state === "attendance_only" && noStandings.metrics.A1.reasons?.includes("standings_unavailable") === true);
 }
 
+// ── 7) 시즌 우주 fail-closed (삼순 NO-GO P0 회귀 — backfill 0/부분/빈 우주) ──
+console.log("\n[7] 시즌 우주 fail-closed — backfill 0 / 부분 backfill / 빈 우주 false-green 금지");
+{
+  // (a) backfill 0: 정규 final 우주는 있으나 시즌 ledger 전무 → 전 경기 complete=false 강등.
+  const zeroBackfill = buildVenueStatsScope(input({
+    seasonGames: SEASON_GAMES.map((g) => ({ ...g, complete: false })),
+    teamSeasonTotals: new Map(),
+  }));
+  ok("[backfill 0] B1 partial_data·value=null (ready·null false-green 금지)", zeroBackfill.metrics.B1.state === "partial_data" && zeroBackfill.metrics.B1.value === null);
+  ok("[backfill 0] B2/B4도 partial_data", zeroBackfill.metrics.B2.state === "partial_data" && zeroBackfill.metrics.B4.state === "partial_data");
+  // 시즌 complete 0 → 최애 역할 baseline 자체가 미증명 → item worstState=attendance_only (partial보다 상위 fail-closed).
+  ok("[backfill 0] C1 attendance_only fail-closed·value=[] (false-green 금지)", zeroBackfill.metrics.C1.state === "attendance_only" && JSON.stringify(zeroBackfill.metrics.C1.value) === "[]", `actual=${zeroBackfill.metrics.C1.state}`);
+  const zbE1 = zeroBackfill.metrics.E1 as MetricEnvelope<{ longest: number; current: number | null }>;
+  ok("[backfill 0] E1은 권위 일정 우주 기반이라 계산 유지 (longest=5)", zbE1.state === "ready" && zbE1.value?.longest === 5);
+
+  // (b) 빈 우주: RPC/우주 소스가 빈 배열을 반환하는 결함 — ready·null false-green이 아니라 fail-closed.
+  const emptyUniverse = buildVenueStatsScope(input({ seasonGames: [], teamSeasonTotals: new Map() }));
+  ok("[빈 우주] B1 attendance_only fail-closed (ready·seasonAvg null 금지)", emptyUniverse.metrics.B1.state === "attendance_only" && emptyUniverse.metrics.B1.value === null);
+  ok("[빈 우주] B2/B4도 attendance_only", emptyUniverse.metrics.B2.state === "attendance_only" && emptyUniverse.metrics.B4.state === "attendance_only");
+  const euE1 = emptyUniverse.metrics.E1 as MetricEnvelope<{ perTeam: unknown[] }>;
+  ok("[빈 우주] E1 unsupported + schedule_unavailable (ready·perTeam:[] 금지)", euE1.state === "unsupported" && euE1.reasons?.includes("schedule_unavailable") === true);
+  ok("[빈 우주] C1/C2 attendance_only fail-closed", emptyUniverse.metrics.C1.state === "attendance_only" && emptyUniverse.metrics.C2.state === "attendance_only");
+
+  // (c) 부분 backfill: 시즌 우주 중 일부만 ledger 존재 → 나머지가 complete=false로 coverage 반영.
+  const partial = buildVenueStatsScope(input({
+    seasonGames: SEASON_GAMES.map((g) =>
+      ["20260628LGOB0", "20260629LGOB0"].includes(g.gameId) ? { ...g, complete: false } : g,
+    ),
+  }));
+  const partialUnknown = partial.metrics.B1.coverage.unknownGameIds as string[];
+  ok("[부분 backfill] B1 partial_data (미적재 시즌 경기 강등 반영)", partial.metrics.B1.state === "partial_data" && partial.metrics.B1.value === null);
+  ok("[부분 backfill] unknownGameIds에 ledger 없는 시즌 경기 포함", partialUnknown.includes("20260628LGOB0") && partialUnknown.includes("20260629LGOB0"));
+  ok("[부분 backfill] C1 partial_data", partial.metrics.C1.state === "partial_data");
+}
+
 console.log(`\n결과: ${pass} pass / ${fail} fail`);
 if (fail > 0) process.exit(1);
