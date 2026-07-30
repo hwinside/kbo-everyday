@@ -98,7 +98,49 @@ export interface SeasonGameCollection {
   failedDates: string[];
 }
 
-export type SeasonGameFetcher = (date: string, srId: string) => Promise<KboGame[]>;
+/**
+ * 시즌 우주 수집용 일자 fetch 결과 — games + 빈-응답 교차검증 증거.
+ * emptyVerified: games가 비었을 때 그 비어있음이 무경기 확정으로 교차검증됐는가.
+ *   games.length>0이면 의미 없음(true 취급). games.length===0 && emptyVerified===false 는
+ *   "unverified soft-empty"(교차확인 불가) — 상위 collectSeasonGameUniverse가 fail-closed 한다.
+ */
+export interface SeasonGameFetchResult {
+  games: KboGame[];
+  emptyVerified: boolean;
+}
+
+export type SeasonGameFetcher = (date: string, srId: string) => Promise<SeasonGameFetchResult>;
+
+/** Naver 전-시리즈 교차확인 srId (naver-games DEFAULT_ALL_SR_ID와 동일). */
+const NAVER_FULL_SR_ID = "0,1,3,4,5,7,9";
+
+/**
+ * 시즌 우주 수집용 일자 fetcher(기본값) — 정규시즌(srId) 경기를 실제 fetchGames로 가져오되,
+ * 빈 응답(무경기)일 때만 "verified-empty(무경기 확정)"를 교차검증한다(삼순 P0-1).
+ *  - games 있으면 그대로 성공(emptyVerified 무의미).
+ *  - 빈 응답이면 기존 교차검증 수단(fetchNaverGames 전-시리즈)을 재사용해 그 날짜 무경기를 확인:
+ *    Naver도 빈 배열 → 무경기 확정(emptyVerified=true, 성공). Naver에 경기 존재/조회 실패 →
+ *    교차확인 불가(emptyVerified=false) → 상위에서 fail-closed.
+ * 정규시즌 전용 srId="0"의 soft-empty(KBO 200 game:[])가 조용히 성공 날짜가 되어
+ * non-empty partial 우주를 authoritative로 만드는 것을 차단한다.
+ * (fetchGames가 srId="0" soft-empty에서 내부 Naver 교차확인을 시리즈 계약 때문에 거절하고
+ *  빈 배열을 fulfill하는 것을 그대로 신뢰하지 않는다.)
+ */
+export async function fetchSeasonUniverseDate(
+  date: string,
+  srId = "0,1,3,4,5,7,9",
+): Promise<SeasonGameFetchResult> {
+  const games = await fetchGames(date, srId);
+  if (games.length > 0) return { games, emptyVerified: false };
+  // 빈 응답 — 무경기 확정 교차검증. 확정 못하면 unverified(fail-closed 대상).
+  try {
+    const { fetchNaverGames } = await import("./naver-games");
+    const cross = await fetchNaverGames(date, NAVER_FULL_SR_ID);
+    return { games: [], emptyVerified: cross.length === 0 };
+  } catch {
+    return { games: [], emptyVerified: false };
+  }
+}
 
 /** 시즌 범위(3월 1일~현재월 말 또는 11월 말)의 모든 YYYYMMDD 날짜. */
 function getSeasonDates(season: number): string[] {
@@ -131,7 +173,7 @@ export async function collectSeasonGameUniverse(
   srId = "0,1,3,4,5,7,9",
   opts?: { fetcher?: SeasonGameFetcher },
 ): Promise<SeasonGameCollection> {
-  const fetcher = opts?.fetcher ?? fetchGames;
+  const fetcher = opts?.fetcher ?? fetchSeasonUniverseDate;
   const dates = getSeasonDates(season);
   const results = await Promise.allSettled(dates.map((d) => fetcher(d, srId)));
 
@@ -139,12 +181,19 @@ export async function collectSeasonGameUniverse(
   const collectedDates: string[] = [];
   const failedDates: string[] = [];
   results.forEach((r, i) => {
-    if (r.status === "fulfilled") {
-      collectedDates.push(dates[i]);
-      games.push(...r.value);
-    } else {
+    if (r.status !== "fulfilled") {
       failedDates.push(dates[i]);
+      return;
     }
+    // 삼순 P0-1 — unverified soft-empty(빈 배열 + 교차검증 미확정)는 성공 날짜로 세지 않는다.
+    // 실제 무경기 확정(emptyVerified) 또는 경기 존재(games>0)만 수집 성공.
+    const { games: dateGames, emptyVerified } = r.value;
+    if (dateGames.length === 0 && !emptyVerified) {
+      failedDates.push(dates[i]);
+      return;
+    }
+    collectedDates.push(dates[i]);
+    games.push(...dateGames);
   });
 
   return {

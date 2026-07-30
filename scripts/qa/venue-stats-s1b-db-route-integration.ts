@@ -8,7 +8,10 @@ import { resolve } from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import { NextRequest } from "next/server";
 import type { KboGame } from "@/lib/crawler/kbo-api";
-import type { SeasonGameFetcher } from "@/lib/crawler/season-games-cache";
+import type {
+  SeasonGameFetcher,
+  SeasonGameFetchResult,
+} from "@/lib/crawler/season-games-cache";
 import {
   canonicalPayloadHash,
   type CanonicalRowInput,
@@ -24,6 +27,13 @@ function makeFinalGame(gameId: string): KboGame {
     status: "final",
   } as unknown as KboGame;
 }
+
+/** 새 fetcher 계약(SeasonGameFetchResult) 헬퍼 — 경기 있는 날짜. */
+function gamesResult(games: KboGame[]): SeasonGameFetchResult {
+  return { games, emptyVerified: false };
+}
+/** verified-empty(무경기 확정) off-day. */
+const VERIFIED_EMPTY: SeasonGameFetchResult = { games: [], emptyVerified: true };
 
 process.env.NEXT_PUBLIC_SUPABASE_URL ??= "https://venue-stats-s1b-test.supabase.co";
 process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??= "test-anon-key";
@@ -143,42 +153,53 @@ async function rpcDbRegression() {
  * 동수 ID 치환)을 독립 검출한다.
  */
 async function seasonUniverseFailClosedRegression() {
-  const { fetchSeasonAggregates } = await import("../../src/app/api/me/venue-stats/route");
+  const routeMod = await import("../../src/app/api/me/venue-stats/route");
+  const { fetchSeasonAggregates, __resetSeasonAggregatesCaches } = routeMod;
   const { collectSeasonGameUniverse } = await import("../../src/lib/crawler/season-games-cache");
 
-  // 수집 완전 우주(2경기) — 각각 서로 다른 game-bearing 날짜.
-  const GAME_A = "20260614LGOB0";
-  const GAME_B = "20260615KTSS0";
+  // 수집 완전 우주(2경기) — 각각 서로 다른 game-bearing 날짜. 나머지 날짜는 verified-empty(off-day).
+  const GAME_A = "20260614LGOB0"; // LG(1)·OB(2)
+  const GAME_B = "20260615KTSS0"; // KT(3)·SS(8)
   const DATE_A = "20260614";
   const DATE_B = "20260615";
   const universeGames: Record<string, KboGame[]> = {
     [DATE_A]: [makeFinalGame(GAME_A)],
     [DATE_B]: [makeFinalGame(GAME_B)],
   };
-  const fullFetcher: SeasonGameFetcher = async (date) => universeGames[date] ?? [];
+  // 새 계약: 경기 있는 날짜는 gamesResult, 빈 날짜는 verified-empty(off-day).
+  const fullFetcher: SeasonGameFetcher = async (date) =>
+    universeGames[date] ? gamesResult(universeGames[date]) : VERIFIED_EMPTY;
 
-  // 실제 RPC 루프백—전달받은 우주를 그대로 games로 반환(complete=true), teams 빈 집합.
+  // 실제 RPC 루프백 — 전달받은 우주를 games(complete=true)로, teams는 complete 경기 참가팀 exact로 반환.
+  //  P0-2 exact 계약: complete 경기의 모든 참가팀(LG·OB·KT·SS = 1·2·3·8)을 누락 없이 담아야 GREEN.
+  const validTeams = [1, 2, 3, 8].map((teamId) => ({
+    teamId, completeGames: 1, ab: 10, h: 3, hr: 1, outs: 9, er: 2, hAllowed: 4,
+  }));
   const faithfulRpc = async (args: {
     p_games: Array<{ gameId: string; gameDate: string }>;
   }) => ({
     data: {
       games: args.p_games.map((g) => ({ ...g, complete: true })),
-      teams: [] as unknown[],
+      teams: validTeams,
     },
     error: null,
   });
 
-  // ─ GREEN: 완전 우주 + exact-set 일치 RPC → seasonGames 비비어있음(2건) ─
+  // ─ GREEN: 완전 우주 + exact-set 일치 RPC + teams exact → seasonGames 2건 ─
+  __resetSeasonAggregatesCaches();
   const green = await fetchSeasonAggregates(2026, { fetcher: fullFetcher, rpc: faithfulRpc });
   assert.notEqual(green.seasonGames, null);
   assert.equal(green.seasonGames!.length, 2);
-  console.log("  ✓ route gate GREEN: 완전 우주(날짜 실패 0) + exact-set 일치 → seasonGames 2건");
+  assert.notEqual(green.teamSeasonTotals, null);
+  assert.equal(green.teamSeasonTotals!.size, 4);
+  console.log("  ✓ route gate GREEN: 완전 우주(날짜 실패 0) + exact-set 일치 + teams exact → seasonGames 2건");
 
   // ─ gate1 RED (일자 1건 reject — off-day transient): 다른 날짜는 성공해도 전체 fail-closed ─
   const rejectOffDay: SeasonGameFetcher = async (date) => {
     if (date === "20260401") throw new Error("transient fetch fail");
-    return universeGames[date] ?? [];
+    return universeGames[date] ? gamesResult(universeGames[date]) : VERIFIED_EMPTY;
   };
+  __resetSeasonAggregatesCaches();
   const red1 = await fetchSeasonAggregates(2026, { fetcher: rejectOffDay, rpc: faithfulRpc });
   assert.equal(red1.seasonGames, null);
   assert.equal(red1.teamSeasonTotals, null);
@@ -187,11 +208,11 @@ async function seasonUniverseFailClosedRegression() {
   // ─ gate1 RED (non-empty partial — game-bearing 날짜 reject): 다른 경기는 수집되어 non-empty지만 null ─
   const rejectGameDate: SeasonGameFetcher = async (date) => {
     if (date === DATE_B) throw new Error("transient fetch fail");
-    return universeGames[date] ?? [];
+    return universeGames[date] ? gamesResult(universeGames[date]) : VERIFIED_EMPTY;
   };
+  __resetSeasonAggregatesCaches();
   const red2 = await fetchSeasonAggregates(2026, { fetcher: rejectGameDate, rpc: faithfulRpc });
   assert.equal(red2.seasonGames, null);
-  // 확인: collection은 non-empty(GAME_A 수집)지만 complete=false임을 helper actual로 증명.
   const partialCollection = await collectSeasonGameUniverse(2026, "0", { fetcher: rejectGameDate });
   assert.equal(partialCollection.complete, false);
   assert.ok(partialCollection.games.length > 0);
@@ -205,18 +226,81 @@ async function seasonUniverseFailClosedRegression() {
         { gameId: GAME_A, gameDate: "2026-06-14", complete: true },
         { gameId: "20260615KTDIFFERENT", gameDate: "2026-06-15", complete: true },
       ],
-      teams: [] as unknown[],
+      teams: validTeams,
     },
     error: null,
   });
+  __resetSeasonAggregatesCaches();
   const red3 = await fetchSeasonAggregates(2026, { fetcher: fullFetcher, rpc: substitutingRpc });
   assert.equal(red3.seasonGames, null);
   console.log("  ✓ route gate2 RED: 동수 ID 치환(len 같음) → gameId+gameDate exact-set 불일치 → seasonGames null");
 
   // ─ GREEN 원복: 완전 우주 + 일치 RPC 다시 → non-null(fault 제거 시만 열림) ─
+  __resetSeasonAggregatesCaches();
   const restored = await fetchSeasonAggregates(2026, { fetcher: fullFetcher, rpc: faithfulRpc });
   assert.notEqual(restored.seasonGames, null);
   console.log("  ✓ route gate GREEN 원복: fault 제거 → seasonGames 복구(완전 우주에서만 GREEN)");
+
+  // ─ P0-2 teams exact + malformed reject ─
+  await teamsExactRegression(routeMod, fullFetcher, GAME_A, GAME_B);
+  // ─ P0-1 verified-empty (actual global fetch 경유) ─
+  await verifiedEmptyActualRegression();
+  // ─ P0-3 complete-only 캐시 + single-flight (fetch 카운트 계측) ─
+  await cacheAndSingleFlightRegression(routeMod, universeGames);
+}
+
+/**
+ * 삼순 P0-2 — RPC teams 결과를 complete 경기 참가팀과 exact 대조하고 malformed를 fail-closed.
+ * teams=[] / 누락 / 중복 / 우주 밖 / NaN·음수·누락 값(Number(v)||0 조용한 0 오염 제거)가 전부 null로 fail-closed.
+ */
+async function teamsExactRegression(
+  routeMod: typeof import("../../src/app/api/me/venue-stats/route"),
+  fullFetcher: SeasonGameFetcher,
+  gameA: string,
+  gameB: string,
+) {
+  const { fetchSeasonAggregates, __resetSeasonAggregatesCaches } = routeMod;
+  const gamesOf = (rpcTeams: unknown[]) => async (args: {
+    p_games: Array<{ gameId: string; gameDate: string }>;
+  }) => ({
+    data: { games: args.p_games.map((g) => ({ ...g, complete: true })), teams: rpcTeams },
+    error: null,
+  });
+  const team = (over: Record<string, unknown>) => ({
+    teamId: 1, completeGames: 1, ab: 10, h: 3, hr: 1, outs: 9, er: 2, hAllowed: 4, ...over,
+  });
+  // complete 우주 참가팀 = LG(1)·OB(2)·KT(3)·SS(8).
+  const full = [1, 2, 3, 8].map((teamId) => team({ teamId }));
+
+  const cases: Array<{ name: string; teams: unknown[]; expectNull: boolean }> = [
+    { name: "teams=[] (complete 경기 존재 → 기대 팀 전원 누락)", teams: [], expectNull: true },
+    { name: "partial (teamId 8 누락)", teams: [1, 2, 3].map((teamId) => team({ teamId })), expectNull: true },
+    { name: "우주 밖 팀(teamId 99 extra)", teams: [...full, team({ teamId: 99 })], expectNull: true },
+    { name: "중복 teamId(1 두 번)", teams: [...full, team({ teamId: 1 })], expectNull: true },
+    { name: "malformed ab=NaN", teams: [team({ teamId: 1, ab: Number.NaN }), team({ teamId: 2 }), team({ teamId: 3 }), team({ teamId: 8 })], expectNull: true },
+    { name: "malformed ab='abc'(문자열)", teams: [team({ teamId: 1, ab: "abc" }), team({ teamId: 2 }), team({ teamId: 3 }), team({ teamId: 8 })], expectNull: true },
+    { name: "malformed h 누락(undefined)", teams: [team({ teamId: 1, h: undefined }), team({ teamId: 2 }), team({ teamId: 3 }), team({ teamId: 8 })], expectNull: true },
+    { name: "malformed er=음수(-1)", teams: [team({ teamId: 1, er: -1 }), team({ teamId: 2 }), team({ teamId: 3 }), team({ teamId: 8 })], expectNull: true },
+    { name: "completeGames=0(<1)", teams: [team({ teamId: 1, completeGames: 0 }), team({ teamId: 2 }), team({ teamId: 3 }), team({ teamId: 8 })], expectNull: true },
+    { name: "completeGames=2(>우주 내 1경기)", teams: [team({ teamId: 1, completeGames: 2 }), team({ teamId: 2 }), team({ teamId: 3 }), team({ teamId: 8 })], expectNull: true },
+    { name: "valid exact(1·2·3·8)", teams: full, expectNull: false },
+  ];
+
+  for (const c of cases) {
+    __resetSeasonAggregatesCaches();
+    const res = await fetchSeasonAggregates(2026, { fetcher: fullFetcher, rpc: gamesOf(c.teams) });
+    if (c.expectNull) {
+      assert.equal(res.seasonGames, null, `P0-2 RED 기대 null: ${c.name}`);
+      assert.equal(res.teamSeasonTotals, null, `P0-2 RED teamSeasonTotals null: ${c.name}`);
+    } else {
+      assert.notEqual(res.seasonGames, null, `P0-2 GREEN: ${c.name}`);
+      assert.equal(res.teamSeasonTotals!.size, 4, `P0-2 GREEN teams 4: ${c.name}`);
+      // Number(v)||0 제거 확인 — valid 값이 그대로 보존(0 강등 없음).
+      assert.equal(res.teamSeasonTotals!.get(1)!.ab, 10, "malformed 아닌 valid ab 보존");
+    }
+    void gameA; void gameB;
+  }
+  console.log("  ✓ P0-2 teams exact + malformed reject: teams=[]/누락/우주밖/중복/NaN/문자열/누락/음수/경계 = 전부 fail-closed, valid만 GREEN (Number(v)||0 제거)");
 }
 
 /**
@@ -238,7 +322,8 @@ async function backfillContrastRegression(db: PGlite) {
     expected.push({ gameId, gameDate: date });
   }
   const { collectSeasonGameUniverse } = await import("../../src/lib/crawler/season-games-cache");
-  const contrastFetcher: SeasonGameFetcher = async (date) => gamesByDate[date] ?? [];
+  const contrastFetcher: SeasonGameFetcher = async (date) =>
+    gamesByDate[date] ? gamesResult(gamesByDate[date]) : VERIFIED_EMPTY;
   const collection = await collectSeasonGameUniverse(2026, "0", { fetcher: contrastFetcher });
   assert.equal(collection.complete, true);
   assert.equal(collection.failedDates.length, 0);
@@ -295,6 +380,205 @@ async function backfillContrastRegression(db: PGlite) {
   const teamSum = result.rows[0].payload.teams.reduce((s, t) => s + t.completeGames, 0);
   assert.equal(teamSum, 472);
   console.log("  ✓ RPC backfill 대조군(수집 helper actual 경유): 우주 480 = 472 complete / 8 incomplete (누락 0, 팀 합계 472)");
+}
+
+/** KBO GetKboGameList / Naver schedule 를 global fetch 레벨에서 목킹(actual fetchGames 경유). */
+function installKboNaverFetchMock(opts: {
+  gameDate: string;
+  gameId: string;
+  faultDate: string;
+  faultNaverHasGame: boolean;
+}): () => void {
+  const original = globalThis.fetch;
+  const jsonResponse = (obj: unknown) =>
+    ({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      text: async () => JSON.stringify(obj),
+      json: async () => obj,
+    }) as unknown as Response;
+  const kboRawFinal = (gameId: string) => ({
+    G_ID: gameId, G_DT: gameId.slice(0, 8), G_TM: "18:30", S_NM: "잠실",
+    AWAY_ID: gameId.slice(8, 10), HOME_ID: gameId.slice(10, 12),
+    AWAY_NM: "엘지", HOME_NM: "두산",
+    T_SCORE_CN: "5", B_SCORE_CN: "3", GAME_INN_NO: 9, GAME_TB_SC: "B",
+    GAME_STATE_SC: "3", CANCEL_SC_ID: "0",
+    T_PIT_P_NM: "", B_PIT_P_NM: "", W_PIT_P_NM: "", L_PIT_P_NM: "", SV_PIT_P_NM: "",
+    STRIKE_CN: 0, BALL_CN: 0, OUT_CN: 0,
+    B1_BAT_ORDER_NO: 0, B2_BAT_ORDER_NO: 0, B3_BAT_ORDER_NO: 0,
+    B_P_NM: "", T_P_NM: "", T_RANK_NO: 1, B_RANK_NO: 2,
+  });
+  const naverRawFinal = (iso: string) => ({
+    gameId: `${iso.replaceAll("-", "")}KTSS02026`,
+    gameDateTime: `${iso}T18:30:00`, stadium: "수원",
+    homeTeamCode: "SS", awayTeamCode: "KT", homeTeamName: "삼성", awayTeamName: "KT",
+    homeTeamScore: 4, awayTeamScore: 2, statusCode: "RESULT", statusInfo: "경기종료",
+  });
+  globalThis.fetch = (async (input: unknown, init?: { body?: unknown }) => {
+    const url =
+      typeof input === "string" ? input : (input as { url?: string })?.url ?? String(input);
+    if (url.includes("GetKboGameList")) {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { date?: string };
+      if (body.date === opts.gameDate) {
+        return jsonResponse({ game: [kboRawFinal(opts.gameId)] });
+      }
+      return jsonResponse({ game: [] }); // 그 외 전부 soft-empty(200 game:[])
+    }
+    if (url.includes("api-gw.sports.naver.com/schedule/games")) {
+      const iso = url.match(/fromDate=(\d{4}-\d{2}-\d{2})/)?.[1] ?? "";
+      const ymd = iso.replaceAll("-", "");
+      if (ymd === opts.faultDate && opts.faultNaverHasGame) {
+        return jsonResponse({ code: 200, success: true, result: { games: [naverRawFinal(iso)] } });
+      }
+      return jsonResponse({ code: 200, success: true, result: { games: [] } }); // verified-empty
+    }
+    throw new Error(`unexpected fetch url: ${url}`);
+  }) as typeof fetch;
+  return () => {
+    globalThis.fetch = original;
+  };
+}
+
+/**
+ * 삼순 P0-1 — verified-empty. actual global fetch 경유(배열 직접 주입 아님):
+ * KBO 200 game:[] soft-empty가 Naver 전-시리즈 교차확인에서 무경기 확정(verified-empty)될 때만
+ * 성공, Naver에 경기가 있으면(=KBO가 정규경기를 soft-drop) unverified → fail-closed.
+ */
+async function verifiedEmptyActualRegression() {
+  const { collectSeasonGameUniverse } = await import("../../src/lib/crawler/season-games-cache");
+  const { fetchSeasonAggregates, __resetSeasonAggregatesCaches } = await import(
+    "../../src/app/api/me/venue-stats/route"
+  );
+  const GAME_DATE = "20260614";
+  const GAME_ID = "20260614LGOB0"; // LG(1)·OB(2)
+  const FAULT_DATE = "20260615";
+
+  // RED — fault date: KBO 200 game:[] + Naver 전-시리즈에 경기 존재 → unverified soft-empty.
+  let restore = installKboNaverFetchMock({
+    gameDate: GAME_DATE, gameId: GAME_ID, faultDate: FAULT_DATE, faultNaverHasGame: true,
+  });
+  try {
+    const red = await collectSeasonGameUniverse(2026, "0"); // 기본 fetcher=fetchSeasonUniverseDate
+    assert.equal(red.complete, false, "P0-1 RED: unverified soft-empty → complete=false");
+    assert.ok(red.failedDates.includes(FAULT_DATE), "fault 날짜가 failedDates에");
+    assert.ok(red.games.some((g) => g.gameId === GAME_ID), "non-empty partial(진짜 경기 수집)");
+    __resetSeasonAggregatesCaches();
+    const redAgg = await fetchSeasonAggregates(2026, { rpc: async () => ({ data: null, error: null }) });
+    assert.equal(redAgg.seasonGames, null, "P0-1 RED route: seasonGames null (fail-closed)");
+  } finally {
+    restore();
+  }
+  console.log("  ✓ P0-1 RED(actual fetch): srId=0 200 game:[] + Naver에 경기 → unverified → complete=false·seasonGames null");
+
+  // GREEN — fault date: Naver도 빈 배열 → verified-empty(무경기 확정) → 성공. 진짜 경기 1건 우주.
+  restore = installKboNaverFetchMock({
+    gameDate: GAME_DATE, gameId: GAME_ID, faultDate: FAULT_DATE, faultNaverHasGame: false,
+  });
+  try {
+    const green = await collectSeasonGameUniverse(2026, "0");
+    assert.equal(green.complete, true, "P0-1 GREEN: 모든 빈 날짜 verified-empty → complete=true");
+    assert.equal(green.failedDates.length, 0);
+    assert.ok(green.games.some((g) => g.gameId === GAME_ID));
+    __resetSeasonAggregatesCaches();
+    const greenAgg = await fetchSeasonAggregates(2026, {
+      rpc: async (args) => ({
+        data: {
+          games: args.p_games.map((g) => ({ ...g, complete: true })),
+          teams: [1, 2].map((teamId) => ({
+            teamId, completeGames: 1, ab: 10, h: 3, hr: 1, outs: 9, er: 2, hAllowed: 4,
+          })),
+        },
+        error: null,
+      }),
+    });
+    assert.notEqual(greenAgg.seasonGames, null, "P0-1 GREEN route: seasonGames non-null");
+    assert.equal(greenAgg.seasonGames!.length, 1);
+  } finally {
+    restore();
+  }
+  console.log("  ✓ P0-1 GREEN(actual fetch): verified-empty(무경기 확정)만 성공 → complete=true·seasonGames 1건");
+}
+
+/**
+ * 삼순 P0-3 — complete-only 캐시 + single-flight. 주입 counting fetcher로 실제 수집 호출 계측.
+ * (a) 반복 호출 2회차 캐시 히트 +0, (b) 동시 2호출=수집 1회, (c) 불완전 우주 미캐시→재수집,
+ * (d) TTL 만료 후 refresh 재수집.
+ */
+async function cacheAndSingleFlightRegression(
+  routeMod: typeof import("../../src/app/api/me/venue-stats/route"),
+  universeGames: Record<string, KboGame[]>,
+) {
+  const {
+    fetchSeasonAggregates,
+    __resetSeasonAggregatesCaches,
+    __expireSeasonAggregatesCache,
+  } = routeMod;
+  const validTeams = [1, 2, 3, 8].map((teamId) => ({
+    teamId, completeGames: 1, ab: 10, h: 3, hr: 1, outs: 9, er: 2, hAllowed: 4,
+  }));
+  const faithfulRpc = async (args: { p_games: Array<{ gameId: string; gameDate: string }> }) => ({
+    data: { games: args.p_games.map((g) => ({ ...g, complete: true })), teams: validTeams },
+    error: null,
+  });
+  let calls = 0;
+  const makeCounting = (): SeasonGameFetcher => async (date) => {
+    calls++;
+    return universeGames[date] ? gamesResult(universeGames[date]) : VERIFIED_EMPTY;
+  };
+
+  // (a) 반복 호출 — 2회차 캐시 히트 +0.
+  __resetSeasonAggregatesCaches();
+  calls = 0;
+  const first = await fetchSeasonAggregates(2026, { fetcher: makeCounting(), rpc: faithfulRpc });
+  const firstCalls = calls;
+  assert.notEqual(first.seasonGames, null);
+  assert.ok(firstCalls >= 150, `firstCalls≥150(시즌 전일자 수집): ${firstCalls}`);
+  const second = await fetchSeasonAggregates(2026, { fetcher: makeCounting(), rpc: faithfulRpc });
+  const secondAdditional = calls - firstCalls;
+  assert.equal(secondAdditional, 0, `2회차 캐시 히트 +0: ${secondAdditional}`);
+  assert.notEqual(second.seasonGames, null);
+  console.log(`  ✓ P0-3 (a) complete 캐시: 1회차 ${firstCalls} fetch → 2회차 +${secondAdditional} (반복 폭주 차단)`);
+
+  // (b) single-flight — 동시 2호출 = 수집 1회.
+  __resetSeasonAggregatesCaches();
+  calls = 0;
+  const counting = makeCounting();
+  const [c1, c2] = await Promise.all([
+    fetchSeasonAggregates(2026, { fetcher: counting, rpc: faithfulRpc }),
+    fetchSeasonAggregates(2026, { fetcher: counting, rpc: faithfulRpc }),
+  ]);
+  assert.notEqual(c1.seasonGames, null);
+  assert.equal(c1, c2, "single-flight: 동일 결과 합류");
+  assert.equal(calls, firstCalls, `동시 2호출=수집 1회(${firstCalls}): ${calls}`);
+  console.log(`  ✓ P0-3 (b) single-flight: 동시 2호출 → 수집 ${calls}(=1회), 중복 생성 0`);
+
+  // (c) partial(불완전 우주) 미캐시 — 다음 호출 재수집.
+  __resetSeasonAggregatesCaches();
+  calls = 0;
+  const rejectFetcher: SeasonGameFetcher = async (date) => {
+    calls++;
+    if (date === "20260401") throw new Error("transient");
+    return universeGames[date] ? gamesResult(universeGames[date]) : VERIFIED_EMPTY;
+  };
+  const p1 = await fetchSeasonAggregates(2026, { fetcher: rejectFetcher, rpc: faithfulRpc });
+  assert.equal(p1.seasonGames, null, "partial → failClosed");
+  const afterFirst = calls;
+  const p2 = await fetchSeasonAggregates(2026, { fetcher: rejectFetcher, rpc: faithfulRpc });
+  assert.equal(p2.seasonGames, null);
+  assert.ok(calls > afterFirst, `partial 미캐시 → 재수집(${afterFirst}→${calls})`);
+  console.log(`  ✓ P0-3 (c) partial 미캐시: 불완전 우주는 캐시 안 됨 → 재호출 재수집(${afterFirst}→${calls})`);
+
+  // (d) TTL 만료 → refresh 재수집.
+  __resetSeasonAggregatesCaches();
+  calls = 0;
+  await fetchSeasonAggregates(2026, { fetcher: makeCounting(), rpc: faithfulRpc });
+  const beforeExpire = calls;
+  __expireSeasonAggregatesCache(2026);
+  await fetchSeasonAggregates(2026, { fetcher: makeCounting(), rpc: faithfulRpc });
+  assert.ok(calls > beforeExpire, `TTL 만료 → refresh 재수집(${beforeExpire}→${calls})`);
+  console.log(`  ✓ P0-3 (d) TTL 만료 refresh: 캐시 expire 후 재수집(${beforeExpire}→${calls})`);
+  __resetSeasonAggregatesCaches();
 }
 
 function queryResult(data: unknown) {

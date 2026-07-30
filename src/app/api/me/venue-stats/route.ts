@@ -21,7 +21,7 @@ import {
   type SeasonGameFetcher,
 } from "@/lib/crawler/season-games-cache";
 import type { LedgerRecord } from "@/lib/game-logs/completeness";
-import type { PlayerGameLogRow } from "@/lib/game-logs/ingest";
+import { TEAM_ID_TO_CODE, type PlayerGameLogRow } from "@/lib/game-logs/ingest";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { fetchAttendanceGamesWithinDeadline } from "@/lib/venue-attendance/fetch-games";
 import type { FavoritePlayerSnapshot } from "@/lib/venue-attendance/player-comparison";
@@ -40,6 +40,11 @@ export const maxDuration = 60;
 const SUPPORTED_SEASON = 2026;
 /** 정규시즌만 (§5). srId 근거는 cron/game-logs·backfill과 동일. */
 const REGULAR_SEASON_SR_ID = "0";
+
+/** 팀코드 → teamId (parseGameTeamCodes가 쓰는 TEAM_ID_TO_CODE의 역맵) — P0-2 teams exact 대조용. */
+const TEAM_CODE_TO_ID = new Map<string, number>(
+  Object.entries(TEAM_ID_TO_CODE).map(([id, code]) => [code, Number(id)]),
+);
 
 function currentKstYear(): number {
   return Number(
@@ -184,7 +189,7 @@ function toIsoGameDate(raw: string): string | null {
  * RPC 실패·빈 우주·우주↔응답 gameId+gameDate exact 집합 불일치는 모두 null —
  * B/C attendance_only·E1 unsupported fail-closed (조용한 partial·ready·null false-green 금지).
  */
-export async function fetchSeasonAggregates(
+async function computeSeasonAggregates(
   season: number,
   deps: SeasonAggregatesDeps = {},
 ): Promise<SeasonAggregates> {
@@ -243,22 +248,123 @@ export async function fetchSeasonAggregates(
   for (const u of universe) {
     if (!rpcKeys.has(universeKey(u))) return failClosed;
   }
+  // 삼순 P0-2 gate — teams exact + malformed reject.
+  //  1) complete 우주 경기의 참가팀(gameId 코드→teamId) 집합을 기대 집합으로 삼고,
+  //  2) RPC teams 집합과 exact 대조(누락/우주 밖/중복 → fail-closed),
+  //  3) 값은 finite 비음 정수만 허용 — Number(v)||0 조용한 0 오염 제거(NaN/누락/음수 → fail-closed).
+  // complete 경기에 참가팀이 있으면 teams는 반드시 그 팀들을 담아야 한다 —
+  // teams=[]/partial이 B1을 ready·seasonAvg=null false-green으로 만드는 것을 원천 차단.
+  const completeTeamGameCounts = new Map<number, number>();
+  for (const g of seasonGames) {
+    if (!g.complete) continue;
+    for (const code of g.teamCodes) {
+      const teamId = TEAM_CODE_TO_ID.get(code);
+      if (teamId === undefined) return failClosed; // complete 경기 팀코드 해석 불가 → fail-closed
+      completeTeamGameCounts.set(teamId, (completeTeamGameCounts.get(teamId) ?? 0) + 1);
+    }
+  }
+  const expectedTeamIds = new Set(completeTeamGameCounts.keys());
+  const nonNegInt = (v: unknown): number | null =>
+    typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : null;
   const teamSeasonTotals = new Map<number, TeamSeasonTotals>();
   for (const t of payload.teams) {
-    const teamId = Number(t.teamId);
-    if (!Number.isInteger(teamId)) continue;
-    teamSeasonTotals.set(teamId, {
-      teamId,
-      completeGames: Number(t.completeGames) || 0,
-      ab: Number(t.ab) || 0,
-      h: Number(t.h) || 0,
-      hr: Number(t.hr) || 0,
-      outs: Number(t.outs) || 0,
-      er: Number(t.er) || 0,
-      hAllowed: Number(t.hAllowed) || 0,
-    });
+    const teamId = nonNegInt(t.teamId);
+    // 유효하지 않은/우주 밖/중복 teamId → fail-closed.
+    if (teamId === null || !expectedTeamIds.has(teamId) || teamSeasonTotals.has(teamId)) {
+      return failClosed;
+    }
+    const completeGames = nonNegInt(t.completeGames);
+    const ab = nonNegInt(t.ab);
+    const h = nonNegInt(t.h);
+    const hr = nonNegInt(t.hr);
+    const outs = nonNegInt(t.outs);
+    const er = nonNegInt(t.er);
+    const hAllowed = nonNegInt(t.hAllowed);
+    if (
+      completeGames === null || ab === null || h === null || hr === null ||
+      outs === null || er === null || hAllowed === null
+    ) {
+      return failClosed; // malformed(NaN/누락/음수/비정수) → 조용한 0 대체 금지, fail-closed
+    }
+    // completeGames는 1 이상, 우주 내 해당 팀 complete 경기 수를 초과할 수 없다.
+    if (completeGames < 1 || completeGames > (completeTeamGameCounts.get(teamId) ?? 0)) {
+      return failClosed;
+    }
+    teamSeasonTotals.set(teamId, { teamId, completeGames, ab, h, hr, outs, er, hAllowed });
+  }
+  // exact — 기대 팀이 하나라도 빠지면(teams=[] 포함) fail-closed.
+  for (const teamId of expectedTeamIds) {
+    if (!teamSeasonTotals.has(teamId)) return failClosed;
   }
   return { seasonGames, teamSeasonTotals };
+}
+
+// ── 삼순 P0-3 — complete-only 시즌 캐시 + single-flight ─────────────────────────
+// /api/me/venue-stats 1회 호출이 시즌 우주 수집으로 153 fetch를 생성하고 반복 호출마다
+// 또 +153하는 폭주를 막는다. 완전 우주(non-failClosed = seasonGames≠null && teamSeasonTotals≠null)
+// 결과만 시즌 단위 TTL 캐시하고(불완전/partial은 절대 캐시 금지 — r3 계약),
+// 동시 요청은 single-flight로 같은 시즌 in-flight 1개에 합류시킴다.
+interface SeasonAggregatesCacheEntry {
+  value: SeasonAggregates;
+  expiresAt: number;
+}
+const seasonAggregatesCache = new Map<number, SeasonAggregatesCacheEntry>();
+const seasonAggregatesInflight = new Map<number, Promise<SeasonAggregates>>();
+
+/** 시즌 캐시 TTL(ms) — 경기시간(KST 11~24시) 10분, 그 외 60분 (month cache와 동일 정책). */
+function seasonAggregatesTtlMs(): number {
+  const kstHour = new Date(
+    new Date().toLocaleString("en-US", { timeZone: "Asia/Seoul" }),
+  ).getHours();
+  return kstHour >= 11 && kstHour < 24 ? 10 * 60 * 1000 : 60 * 60 * 1000;
+}
+
+function isCompleteAggregates(a: SeasonAggregates): boolean {
+  return a.seasonGames !== null && a.teamSeasonTotals !== null;
+}
+
+/**
+ * 시즌 집계 — complete-only 캐시 + single-flight 로 감싸 computeSeasonAggregates.
+ * 캐시 명중: TTL 내 완전 결과 재사용(수집 0회). in-flight 합류: 동시 N호출=수집 1회.
+ * 불완전(failClosed) 결과는 캐시하지 않아 다음 호출이 재수집(정합성 유지).
+ */
+export async function fetchSeasonAggregates(
+  season: number,
+  deps: SeasonAggregatesDeps = {},
+): Promise<SeasonAggregates> {
+  const cached = seasonAggregatesCache.get(season);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+
+  const inflight = seasonAggregatesInflight.get(season);
+  if (inflight) return inflight; // single-flight 합류 — 같은 시즌 수집 1회만
+
+  const run = (async () => {
+    const result = await computeSeasonAggregates(season, deps);
+    // complete-only — 완전 우주 + exact 통과(=non-failClosed)만 캐시. partial 캐시 금지.
+    if (isCompleteAggregates(result)) {
+      seasonAggregatesCache.set(season, {
+        value: result,
+        expiresAt: Date.now() + seasonAggregatesTtlMs(),
+      });
+    }
+    return result;
+  })().finally(() => {
+    seasonAggregatesInflight.delete(season);
+  });
+  seasonAggregatesInflight.set(season, run);
+  return run;
+}
+
+/** 테스트 전용 — 시즌 캐시/in-flight 초기화(케이스 간 교차 오염 방지). production 미사용. */
+export function __resetSeasonAggregatesCaches(): void {
+  seasonAggregatesCache.clear();
+  seasonAggregatesInflight.clear();
+}
+
+/** 테스트 전용 — 특정 시즌 캐시를 만료시켜 TTL-후 refresh 회귀 검증. */
+export function __expireSeasonAggregatesCache(season: number): void {
+  const entry = seasonAggregatesCache.get(season);
+  if (entry) entry.expiresAt = 0;
 }
 
 /** 본인 전용 — userId 파라미터를 받지 않아 공개 프로필 조회로 확장되지 않는다 (§9 401·타인 차단). */
