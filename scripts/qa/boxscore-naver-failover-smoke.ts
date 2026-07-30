@@ -5,14 +5,22 @@
  * summary·daily 공용 boxscore 가 통째로 비었다. #994(contextual-stats) 와 동일하게
  * Naver record.recordData.battersBoxscore/pitchersBoxscore 로 failover 한다.
  *
+ * 삼순 NO-GO 재작업(3건)의 exact 게이트 — 실데이터 대조 + fault injection:
+ *  1) 필드 매핑: pitchCount=bf, walks=bbhp, 포지션 BS_POS_MAP, 외국인 이름 playerCode 정규화
+ *     → 저장 fixture(2026-07-29 5경기 실캡처) KBO↔Naver 대조로 56/56·130/130 증명.
+ *  2) bounded 종료: KBO/Naver response·body stall + dual-fail 을 absolute deadline 안에 결정적 종료.
+ *  3) 완전성 계약: 양팀 각각 usable 타자·투수 완전 → 채택, 한 팀/한 섹션 결측 partial → null.
+ *
  * 실행: npx tsx scripts/qa/boxscore-naver-failover-smoke.ts
  */
+import { readFileSync } from "fs";
 import {
   parseNaverBoxScore,
   normalizeNaverInnings,
   fetchNaverBoxScore,
 } from "../../src/lib/crawler/naver-record";
 import { fetchBoxScore, type BoxScoreResult } from "../../src/lib/crawler/kbo-api";
+import { resolvePlayer } from "../../src/lib/utils/resolve-player";
 
 let pass = 0;
 let fail = 0;
@@ -21,37 +29,28 @@ function check(name: string, cond: boolean, detail = "") {
   else { fail++; console.error(`  \u2717 ${name} ${detail}`); }
 }
 
-// 실측 캡처: WOLG0 20260729 record.recordData (선수 일부만 발췌 — 필드/포맷은 실제 원값).
-const WOLG0: unknown = {
-  battersBoxscore: {
-    away: [
-      { batOrder: 1, pos: "\uc9c0", name: "\uc11c\uac74\ucc3d", ab: 6, hit: 5, run: 3, rbi: 2, hr: 0, bb: 0, kk: 0, sb: 1, hra: "0.302" },
-      { batOrder: 1, pos: "\ud0c0", name: "\uae40\uc6c5\ube48", ab: 0, hit: 0, run: 0, rbi: 0, hr: 0, bb: 1, kk: 0, sb: 0, hra: "0.250" },
-      { batOrder: 2, pos: "\u4e8c", name: "\uc548\uce58\ud64d", ab: 6, hit: 3, run: 2, rbi: 2, hr: 0, bb: 0, kk: 0, sb: 0, hra: "0.270" },
-    ],
-    home: [
-      { batOrder: 1, pos: "\uc6b0", name: "\ud64d\ucc3d\uae30", ab: 3, hit: 1, run: 2, rbi: 0, hr: 0, bb: 0, kk: 1, sb: 0, hra: "0.262" },
-      { batOrder: 1, pos: "\ud0c0\uc6b0", name: "\uc1a1\ucc2c\uc758", ab: 2, hit: 2, run: 2, rbi: 0, hr: 0, bb: 1, kk: 0, sb: 0, hra: "0.292" },
-    ],
-  },
-  pitchersBoxscore: {
-    away: [
-      { name: "\ud558\uc601\ubbfc", inn: "3 \u2154", wls: "", hit: 10, r: 7, hr: 1, kk: 3, bb: 1, er: 7, era: "4.55" },
-      { name: "\uae40\uc120\uae30", inn: "1 \u2154", wls: "\uc2b9", hit: 2, r: 2, hr: 1, kk: 0, bb: 1, er: 2, era: "6.10" },
-      { name: "\uae40\uc131\ubbfc", inn: "0 \u2154", wls: "", hit: 0, r: 0, hr: 0, kk: 0, bb: 0, er: 0, era: "0.00" },
-    ],
-    home: [
-      { name: "\uc6f0\uc2a4", inn: "3", wls: "", hit: 9, r: 5, hr: 2, kk: 2, bb: 2, er: 5, era: "4.04" },
-      { name: "\uae40\uc601\uc6b0", inn: "1 \u2153", wls: "", hit: 2, r: 2, hr: 0, kk: 2, bb: 1, er: 2, era: "3.16" },
-    ],
-  },
-};
+// ── 저장 fixture: 2026-07-29 5경기 Naver record.recordData + KBO GetBoxScore(파싱·resolve 후) 실캡처.
+//    KBO↔Naver 를 독립 소스로 대조(삼순 방식) → pitchCount/walks/포지션/이름 정규화를 결정적으로 증명.
+interface KboPit { name: string; pitchCount: number; walks: number }
+interface KboBat { name: string; pos: string }
+interface Fixture {
+  [gameId: string]: {
+    naver: unknown;
+    kbo: { pit: KboPit[]; bat: KboBat[] };
+  };
+}
+const FIXTURE: Fixture = JSON.parse(
+  readFileSync(new URL("./fixtures/boxscore-failover-2026-07-29.json", import.meta.url), "utf-8"),
+);
+const GAME_IDS = Object.keys(FIXTURE);
 
+// ── stub fetch (signal 인지 — bounded 종료 fault injection 용) ──
 const origFetch = globalThis.fetch;
-function stubFetch(handler: (url: string) => Response | Promise<Response>) {
-  globalThis.fetch = ((input: unknown) => {
+type StubHandler = (url: string, signal?: AbortSignal) => Response | Promise<Response>;
+function stubFetch(handler: StubHandler) {
+  globalThis.fetch = ((input: unknown, init?: { signal?: AbortSignal }) => {
     const url = typeof input === "string" ? input : String((input as { url?: string })?.url ?? input);
-    return Promise.resolve(handler(url));
+    return Promise.resolve(handler(url, init?.signal));
   }) as typeof fetch;
 }
 function jsonResponse(body: unknown): Response {
@@ -60,9 +59,36 @@ function jsonResponse(body: unknown): Response {
 function errResponse(status: number): Response {
   return { ok: false, status, statusText: `E${status}`, json: async () => ({}) } as unknown as Response;
 }
+function abortError(): Error {
+  const e = new Error("The operation was aborted");
+  e.name = "AbortError";
+  return e;
+}
+/** 무응답(response stall): signal abort 전까지 resolve 안 됨 → 실 fetch 의 abort 계약 재현. */
+function hangResponse(signal?: AbortSignal): Promise<Response> {
+  return new Promise<Response>((_, reject) => {
+    if (signal?.aborted) return reject(abortError());
+    signal?.addEventListener("abort", () => reject(abortError()));
+  });
+}
+/** body stall: 헤더는 오지만 res.json() 이 signal abort 전까지 hang. */
+function bodyStallResponse(signal?: AbortSignal): Response {
+  return {
+    ok: true,
+    status: 200,
+    json: () =>
+      new Promise((_, reject) => {
+        if (signal?.aborted) return reject(abortError());
+        signal?.addEventListener("abort", () => reject(abortError()));
+      }),
+  } as unknown as Response;
+}
 
 async function main() {
   console.log("[boxscore-naver-failover-smoke]");
+  // 서버(Next/Vercel) 이벤트 루프는 항상 살아있어 AbortSignal.timeout(unref 타이머)이 확실히 발화한다.
+  // 스탠드얼론 스크립트는 루프가 조기 drain 될 수 있어 ref 타이머로 서버 환경을 충실히 재현한다.
+  const keepAlive = setInterval(() => {}, 1000);
 
   // ── normalizeNaverInnings: Naver 유니코드 분수 → KBO GetBoxScore 표기 ──
   console.log("\n1) normalizeNaverInnings (Naver \u2192 KBO \ud3ec\ub9f7)");
@@ -71,78 +97,193 @@ async function main() {
   check("'0 \u2154' \u2192 '2/3' (\uc815\uc218\ubd80 0 \uc0dd\ub7b5)", normalizeNaverInnings("0 \u2154") === "2/3", `got ${normalizeNaverInnings("0 \u2154")}`);
   check("'3' \u2192 '3'", normalizeNaverInnings("3") === "3", `got ${normalizeNaverInnings("3")}`);
 
-  // ── (RED baseline) pure mapper: 실측 fixture → BoxScoreResult exact ──
-  console.log("\n2) parseNaverBoxScore (\uc2e4\uce21 fixture \u2192 BoxScoreResult exact)");
-  const box = parseNaverBoxScore(WOLG0 as never)!;
-  check("not null", !!box);
-  check("awayBatters 3\uba85", box.awayBatters.length === 3, `got ${box.awayBatters.length}`);
-  check("homeBatters 2\uba85", box.homeBatters.length === 2, `got ${box.homeBatters.length}`);
-  check("awayPitchers 3\uba85", box.awayPitchers.length === 3, `got ${box.awayPitchers.length}`);
-  check("homePitchers 2\uba85", box.homePitchers.length === 2, `got ${box.homePitchers.length}`);
+  // ── NO-GO#1 필드 매핑: 실데이터 5경기 KBO↔Naver 대조 (pitchCount=bf, walks=bbhp, pos, 이름) ──
+  console.log("\n2) \uc2e4\ub370\uc774\ud130 5\uacbd\uae30 KBO\u2194Naver \ub300\uc870 (pitchCount=bf / walks=bbhp / \ud3ec\uc9c0\uc158 / \uc774\ub984)");
+  let pcOk = 0, pcTot = 0, bbhpOk = 0, posOk = 0, posTot = 0, nameNormOk = 0, nameNormTot = 0;
+  let flaggedWellsSeen = false;
+  for (const g of GAME_IDS) {
+    const box = parseNaverBoxScore(FIXTURE[g].naver as never);
+    check(`${g} \uc644\uc804 fixture \u2192 non-null`, box !== null);
+    if (!box) continue;
+    const boxPit = [...box.awayPitchers, ...box.homePitchers];
+    const boxBat = [...box.awayBatters, ...box.homeBatters];
+    const kPit = FIXTURE[g].kbo.pit;
+    const kBat = FIXTURE[g].kbo.bat;
+    check(`${g} \ud22c\uc218 \uc218 \uc77c\uce58 (${boxPit.length}=${kPit.length})`, boxPit.length === kPit.length, `${boxPit.length} vs ${kPit.length}`);
+    check(`${g} \ud0c0\uc790 \uc218 \uc77c\uce58 (${boxBat.length}=${kBat.length})`, boxBat.length === kBat.length, `${boxBat.length} vs ${kBat.length}`);
+    const np = Math.min(boxPit.length, kPit.length);
+    for (let i = 0; i < np; i++) {
+      pcTot++;
+      if (boxPit[i].pitchCount === kPit[i].pitchCount) pcOk++;
+      else console.error(`    pitchCount MISS ${g} ${boxPit[i].name} naver=${boxPit[i].pitchCount} kbo=${kPit[i].pitchCount}`);
+      if (boxPit[i].walks === kPit[i].walks) bbhpOk++;
+      else console.error(`    walks MISS ${g} ${boxPit[i].name} naver=${boxPit[i].walks} kbo=${kPit[i].walks}`);
+    }
+    const nb = Math.min(boxBat.length, kBat.length);
+    for (let i = 0; i < nb; i++) {
+      posTot++;
+      if (boxBat[i].position === kBat[i].pos) posOk++;
+      else console.error(`    pos MISS ${g} ${boxBat[i].name} naver='${boxBat[i].position}' kbo='${kBat[i].pos}'`);
+    }
+  }
+  // 이름 정규화: playerCode 가 resolve 되는 모든 선수는 canonical(로스터) 명으로 정규화됐는지 검증.
+  const rd = (FIXTURE["20260729WOLG0"].naver as { pitchersBoxscore: { away: { name: string; pcode: string }[]; home: { name: string; pcode: string }[] } }).pitchersBoxscore;
+  for (const p of [...rd.away, ...rd.home]) {
+    const resolved = resolvePlayer(String(p.pcode));
+    if (!resolved) continue;
+    nameNormTot++;
+    const box = parseNaverBoxScore(FIXTURE["20260729WOLG0"].naver as never)!;
+    const rec = [...box.awayPitchers, ...box.homePitchers].find((x) => x.name === resolved.name);
+    if (rec) nameNormOk++;
+    if (p.name === "\uc6f0\uc2a4" && resolved.name === "\ub77c\ud074\ub780 \uc6f0\uc2a4") {
+      flaggedWellsSeen = !![...box.awayPitchers, ...box.homePitchers].find((x) => x.name === "\ub77c\ud074\ub780 \uc6f0\uc2a4");
+    }
+  }
+  check(`pitchCount = Naver bf : ${pcOk}/${pcTot} (56/56 \uae30\ub300)`, pcOk === pcTot && pcTot === 56, `${pcOk}/${pcTot}`);
+  check(`walks = Naver bbhp : ${bbhpOk}/${pcTot} (56/56 \uae30\ub300)`, bbhpOk === pcTot && pcTot === 56, `${bbhpOk}/${pcTot}`);
+  check(`\ud0c0\uc790 \ud3ec\uc9c0\uc158 BS_POS_MAP \uc815\uaddc\ud654 : ${posOk}/${posTot} (130/130 \uae30\ub300)`, posOk === posTot && posTot === 130, `${posOk}/${posTot}`);
+  check(`playerCode \uc774\ub984 \uc815\uaddc\ud654(canonical) : ${nameNormOk}/${nameNormTot}`, nameNormOk === nameNormTot && nameNormTot > 0, `${nameNormOk}/${nameNormTot}`);
+  check("\uc678\uad6d\uc778 \ud22c\uc218 \uc815\uaddc\ud654: '\uc6f0\uc2a4'(pcode 55348) \u2192 '\ub77c\ud074\ub780 \uc6f0\uc2a4' (\uc0bc\uc21c flagged 1\uac74)", flaggedWellsSeen);
 
-  const seogeon = box.awayBatters[0];
-  check("\uc11c\uac74\ucc3d order=1/pos=\uc9c0/ab=6/hit=5/run=3/rbi=2/sb=1/avg=0.302",
-    seogeon.order === 1 && seogeon.position === "\uc9c0" && seogeon.atBats === 6 && seogeon.hits === 5 &&
-    seogeon.runs === 3 && seogeon.rbi === 2 && seogeon.sb === 1 && seogeon.avg === "0.302" && seogeon.name === "\uc11c\uac74\ucc3d",
-    JSON.stringify(seogeon));
-  check("\uc11c\uac74\ucc3d isSubstitute=false (\uc120\ubc1c)", seogeon.isSubstitute === false);
+  // 한국 선수 대조군: 정규화가 기존 이름을 깨지 않음.
+  const wolg0 = parseNaverBoxScore(FIXTURE["20260729WOLG0"].naver as never)!;
+  check("\ud55c\uad6d \ud22c\uc218 '\ud558\uc601\ubbfc' \uc774\ub984 \ubcf4\uc874(\uc815\uaddc\ud654 \ubb34\ud574)", [...wolg0.awayPitchers, ...wolg0.homePitchers].some((p) => p.name === "\ud558\uc601\ubbfc"));
 
-  const kimwoongbin = box.awayBatters[1];
-  check("\uae40\uc6c5\ube48 isSubstitute=true (batOrder \uc911\ubcf5 + pos '\ud0c0')", kimwoongbin.isSubstitute === true);
-  check("\uae40\uc6c5\ube48 bb=1", kimwoongbin.bb === 1);
+  // ── inningsPitched 유니코드 정규화 (WOLG0 하영민 3 2/3) ──
+  const hy = wolg0.awayPitchers.find((p) => p.name === "\ud558\uc601\ubbfc");
+  check("\ud558\uc601\ubbfc inningsPitched='3 2/3'", hy?.inningsPitched === "3 2/3", String(hy?.inningsPitched));
 
-  const songchani = box.homeBatters[1];
-  check("\uc1a1\ucc2c\uc758 isSubstitute=true (pos '\ud0c0\uc6b0')", songchani.isSubstitute === true);
-
-  const hayoungmin = box.awayPitchers[0];
-  check("\ud558\uc601\ubbfc inningsPitched='3 2/3' (\uc720\ub2c8\ucf54\ub4dc \uc815\uaddc\ud654)", hayoungmin.inningsPitched === "3 2/3", hayoungmin.inningsPitched);
-  check("\ud558\uc601\ubbfc decision='' (wls \ube48\uac12)", hayoungmin.decision === "", `got '${hayoungmin.decision}'`);
-  check("\ud558\uc601\ubbfc hits=10/runs=7/hr=1/K=3/bb=1/er=7/era=4.55",
-    hayoungmin.hits === 10 && hayoungmin.runs === 7 && hayoungmin.hr === 1 && hayoungmin.strikeouts === 3 &&
-    hayoungmin.walks === 1 && hayoungmin.earnedRuns === 7 && hayoungmin.era === "4.55", JSON.stringify(hayoungmin));
-
-  const kimseongi = box.awayPitchers[1];
-  check("\uae40\uc120\uae30 decision='\uc2b9' + inn='1 2/3'", kimseongi.decision === "\uc2b9" && kimseongi.inningsPitched === "1 2/3", JSON.stringify(kimseongi));
-  check("\uae40\uc131\ubbfc inn='2/3' (0 \u2154 \u2192 2/3)", box.awayPitchers[2].inningsPitched === "2/3", box.awayPitchers[2].inningsPitched);
-
-  // ── pitchCount degrade (P0: Naver \ubbf8\uc81c\uacf5 \u2192 0, \uc704\uc7a5 \uae08\uc9c0) ──
-  console.log("\n3) pitchCount degrade (Naver \ubbf8\uc81c\uacf5 \u2192 0)");
-  const allPitchers = [...box.awayPitchers, ...box.homePitchers];
-  check("\ubaa8\ub4e0 \ud22c\uc218 pitchCount=0", allPitchers.every((p) => p.pitchCount === 0), JSON.stringify(allPitchers.map((p) => p.pitchCount)));
-
-  // ── fail-close: 빈/결측 → null ──
-  console.log("\n4) fail-close (\uacb0\uce21/\ube48\ubc30\uc5f4 \u2192 null)");
-  check("battersBoxscore \uacb0\uce21 \u2192 null", parseNaverBoxScore({ pitchersBoxscore: { away: [], home: [] } } as never) === null);
-  check("\uc591\ud300 \uc804\ubd80 \ube48\ubc30\uc5f4 \u2192 null",
-    parseNaverBoxScore({ battersBoxscore: { away: [], home: [] }, pitchersBoxscore: { away: [], home: [] } } as never) === null);
+  // ── NO-GO#3 완전성 계약: partial fixture → null, 완전 fixture → 채택 ──
+  console.log("\n3) \uc644\uc804\uc131 \uacc4\uc57d fail-close (partial \u2192 null)");
+  const completeNaver = FIXTURE["20260729WOLG0"].naver as {
+    battersBoxscore: { away: unknown[]; home: unknown[] };
+    pitchersBoxscore: { away: unknown[]; home: unknown[] };
+  };
+  // 삼순이 잡은 실제 partial: awayBatters 1명만, home batters·양팀 pitchers 전부 빈 fixture.
+  const partialOneBatter = {
+    battersBoxscore: { away: [completeNaver.battersBoxscore.away[0]], home: [] },
+    pitchersBoxscore: { away: [], home: [] },
+  };
+  check("awayBatters 1\uba85\u00b7\ub098\uba38\uc9c0 empty \u2192 null (\uacfc\uac70 \ud1b5\uacfc\ud558\ub358 partial)", parseNaverBoxScore(partialOneBatter as never) === null);
+  // 한 팀만 완전, 상대 팀 batters 결측 → null.
+  const homeBattersMissing = {
+    battersBoxscore: { away: completeNaver.battersBoxscore.away, home: [] },
+    pitchersBoxscore: { away: completeNaver.pitchersBoxscore.away, home: completeNaver.pitchersBoxscore.home },
+  };
+  check("home batters \uc139\uc158 \uacb0\uce21 \u2192 null", parseNaverBoxScore(homeBattersMissing as never) === null);
+  // 한 섹션(away pitchers) 결측 → null.
+  const awayPitchersMissing = {
+    battersBoxscore: { away: completeNaver.battersBoxscore.away, home: completeNaver.battersBoxscore.home },
+    pitchersBoxscore: { away: [], home: completeNaver.pitchersBoxscore.home },
+  };
+  check("away pitchers \uc139\uc158 \uacb0\uce21 \u2192 null", parseNaverBoxScore(awayPitchersMissing as never) === null);
+  // batters 부족(팀당 <9) → null.
+  const tooFewBatters = {
+    battersBoxscore: { away: completeNaver.battersBoxscore.away.slice(0, 5), home: completeNaver.battersBoxscore.home.slice(0, 5) },
+    pitchersBoxscore: { away: completeNaver.pitchersBoxscore.away, home: completeNaver.pitchersBoxscore.home },
+  };
+  check("\ud300\ub2f9 \ud0c0\uc790 <9 \u2192 null (\ubbf8\uc644 \ub77c\uc778\uc5c5)", parseNaverBoxScore(tooFewBatters as never) === null);
   check("recordData null \u2192 null", parseNaverBoxScore(null) === null);
+  check("battersBoxscore \uacb0\uce21 \u2192 null", parseNaverBoxScore({ pitchersBoxscore: { away: [], home: [] } } as never) === null);
+  // 완전 fixture(양팀 9+타자·1+투수) → 채택.
+  check("\uc644\uc804 fixture(\uc591\ud300 \uc644\uc804) \u2192 non-null \ucc44\ud0dd", parseNaverBoxScore(completeNaver as never) !== null);
 
-  // ── (a) KBO 실패 주입 → Naver 성공 → BoxScoreResult ──
-  console.log("\n5) fetchBoxScore failover (a) KBO \uc2e4\ud328 \u2192 Naver \uc131\uacf5");
-  stubFetch((url) => {
-    if (url.includes("koreabaseball.com")) return errResponse(503); // KBO \ud558\ub4dc\uc2e4\ud328
-    if (url.includes("api-gw.sports.naver.com")) return jsonResponse({ result: { recordData: WOLG0 } });
+  // ── NO-GO#2 bounded 종료: fault injection 결정적 종료 (absolute deadline) ──
+  console.log("\n4) bounded \uc885\ub8cc (KBO/Naver response\u00b7body stall + dual-fail)");
+  const KBO = 200, NAVER = 150, SLACK = 900; // 주입 budget (prod \uae30\ubcf8 6000/2500 \u2192 \ud14c\uc2a4\ud2b8 \ucd95\uc18c)
+  async function timed(fn: () => Promise<BoxScoreResult | null>): Promise<{ ms: number; res: BoxScoreResult | null }> {
+    const t = Date.now();
+    const res = await fn();
+    return { ms: Date.now() - t, res };
+  }
+
+  // (a) KBO response stall(무응답) → KBO budget 에서 abort → Naver 성공.
+  stubFetch((url, signal) => {
+    if (url.includes("koreabaseball.com")) return hangResponse(signal);
+    if (url.includes("api-gw.sports.naver.com")) return jsonResponse({ result: { recordData: completeNaver } });
     return errResponse(404);
   });
-  const failover: BoxScoreResult | null = await fetchBoxScore("20260729WOLG0");
+  {
+    const { ms, res } = await timed(() => fetchBoxScore("20260729WOLG0", undefined, { kboTimeoutMs: KBO, naverTimeoutMs: NAVER }));
+    check(`(a) KBO \ubb34\uc751\ub2f5 \u2192 KBO budget \uc18c\uc9c4 \ud6c4 Naver failover \uc131\uacf5 (${ms}ms)`, res !== null && ms >= KBO && ms < KBO + NAVER + SLACK, `${ms}ms res=${res ? "ok" : "null"}`);
+  }
+
+  // (b) KBO response stall + Naver response stall → dual-fail, absolute deadline 결정적 종료.
+  //     (supabase/telegram 등 KBO/Naver 외 URL 은 즉시 error — trackFallback 내부 fetch 는 stall 대상 아님)
+  stubFetch((url, signal) =>
+    url.includes("koreabaseball.com") || url.includes("api-gw.sports.naver.com") ? hangResponse(signal) : errResponse(500),
+  );
+  {
+    const { ms, res } = await timed(() => fetchBoxScore("20260729WOLG0", undefined, { kboTimeoutMs: KBO, naverTimeoutMs: NAVER }));
+    check(`(b) KBO+Naver \ubb34\uc751\ub2f5 dual-fail \u2192 null, deadline \uc548 \uc885\ub8cc (${ms}ms)`, res === null && ms >= KBO && ms < KBO + NAVER + SLACK, `${ms}ms res=${JSON.stringify(res)}`);
+  }
+
+  // (c) KBO 503(\uc989\uc2dc) + Naver response stall → Naver reserve 에서 abort.
+  stubFetch((url, signal) => {
+    if (url.includes("koreabaseball.com")) return errResponse(503);
+    return hangResponse(signal);
+  });
+  {
+    const { ms, res } = await timed(() => fetchBoxScore("20260729WOLG0", undefined, { kboTimeoutMs: KBO, naverTimeoutMs: NAVER }));
+    check(`(c) KBO 503 + Naver \ubb34\uc751\ub2f5 \u2192 null, reserve \uc548 \uc885\ub8cc (${ms}ms)`, res === null && ms < KBO + NAVER + SLACK, `${ms}ms`);
+  }
+
+  // (d) KBO body stall(res.json() hang) → signal 이 body \ub3c4 \uc911\ub2e8 \u2192 failover.
+  stubFetch((url, signal) => {
+    if (url.includes("koreabaseball.com")) return bodyStallResponse(signal);
+    if (url.includes("api-gw.sports.naver.com")) return jsonResponse({ result: { recordData: completeNaver } });
+    return errResponse(404);
+  });
+  {
+    const { ms, res } = await timed(() => fetchBoxScore("20260729WOLG0", undefined, { kboTimeoutMs: KBO, naverTimeoutMs: NAVER }));
+    check(`(d) KBO body stall \u2192 KBO signal abort \ud6c4 Naver failover (${ms}ms)`, res !== null && ms >= KBO && ms < KBO + NAVER + SLACK, `${ms}ms res=${res ? "ok" : "null"}`);
+  }
+
+  // (e) Naver body stall → Naver 도 결정적 종료(null).
+  stubFetch((url, signal) => {
+    if (url.includes("koreabaseball.com")) return errResponse(503);
+    if (url.includes("api-gw.sports.naver.com")) return bodyStallResponse(signal);
+    return errResponse(500);
+  });
+  {
+    const { ms, res } = await timed(() => fetchBoxScore("20260729WOLG0", undefined, { kboTimeoutMs: KBO, naverTimeoutMs: NAVER }));
+    check(`(e) KBO 503 + Naver body stall \u2192 null, deadline \uc548 \uc885\ub8cc (${ms}ms)`, res === null && ms < KBO + NAVER + SLACK, `${ms}ms`);
+  }
+
+  // ── failover 통합: KBO 실패 주입 → Naver 성공/partial ──
+  console.log("\n5) fetchBoxScore failover \ud1b5\ud569");
+  // (a) KBO 503 → Naver \uc644\uc804 fixture \uc131\uacf5 (summary/prewarm/daily \uc18c\ube44 PASS).
+  stubFetch((url) => {
+    if (url.includes("koreabaseball.com")) return errResponse(503);
+    if (url.includes("api-gw.sports.naver.com")) return jsonResponse({ result: { recordData: completeNaver } });
+    return errResponse(404);
+  });
+  const failover = await fetchBoxScore("20260729WOLG0");
   check("KBO 503 \u2192 Naver failover \ube44\uc9c0 \uc54a\uc74c", failover !== null);
-  check("failover awayPitchers[0].inn='3 2/3'", failover?.awayPitchers[0].inningsPitched === "3 2/3", String(failover?.awayPitchers[0].inningsPitched));
-  check("failover awayBatters 3\uba85 + \uc11c\uac74\ucc3d hit=5", failover?.awayBatters.length === 3 && failover?.awayBatters[0].hits === 5);
-  check("failover pitchCount=0 degrade", (failover?.awayPitchers ?? []).every((p) => p.pitchCount === 0));
+  check("failover pitchCount(bf) \ubcf5\uc6d0 (\ubaa8\ub450 \u22650, \ud558\ub098\ub77c\ub3c4 >0)", (failover?.awayPitchers ?? []).some((p) => p.pitchCount > 0));
+  check("failover walks(bbhp) \ub9e4\ud551", (failover?.awayPitchers ?? []).every((p) => typeof p.walks === "number"));
 
-  // ── (b) KBO 실패 + Naver 실패 → null ──
-  console.log("\n6) fetchBoxScore failover (b) KBO+Naver \ubaa8\ub450 \uc2e4\ud328 \u2192 null");
+  // (b) KBO 503 → Naver partial(awayBatters 1\uba85) \u2192 null fail-close.
+  stubFetch((url) => {
+    if (url.includes("koreabaseball.com")) return errResponse(503);
+    if (url.includes("api-gw.sports.naver.com")) return jsonResponse({ result: { recordData: partialOneBatter } });
+    return errResponse(404);
+  });
+  const partialFailover = await fetchBoxScore("20260729WOLG0");
+  check("KBO 503 \u2192 Naver partial \u2192 null (fail-close)", partialFailover === null, JSON.stringify(partialFailover));
+
+  // (c) KBO 503 + Naver 503 → null.
   stubFetch(() => errResponse(503));
-  const both = await fetchBoxScore("20260729WOLG0");
-  check("KBO 503 + Naver 503 \u2192 null (fail-close)", both === null, JSON.stringify(both));
+  check("KBO 503 + Naver 503 \u2192 null", (await fetchBoxScore("20260729WOLG0")) === null);
 
-  // ── fetchNaverBoxScore \uc9c1\uc811(\ub124\ud2b8\uc6cc\ud06c \ub798\ud37c) ──
-  console.log("\n7) fetchNaverBoxScore wrapper");
-  stubFetch((url) => (url.includes("api-gw.sports.naver.com") ? jsonResponse({ result: { recordData: WOLG0 } }) : errResponse(404)));
-  const direct = await fetchNaverBoxScore("20260729WOLG0");
-  check("fetchNaverBoxScore \u2192 BoxScoreResult", direct?.homePitchers[1].inningsPitched === "1 1/3", String(direct?.homePitchers[1].inningsPitched));
+  // ── fetchNaverBoxScore 직접(bounded) ──
+  console.log("\n6) fetchNaverBoxScore wrapper (bounded)");
+  stubFetch((url) => (url.includes("api-gw.sports.naver.com") ? jsonResponse({ result: { recordData: completeNaver } }) : errResponse(404)));
+  const direct = await fetchNaverBoxScore("20260729WOLG0", { timeoutMs: 500 });
+  check("fetchNaverBoxScore \u2192 BoxScoreResult", direct !== null && direct.awayPitchers.length > 0);
 
   globalThis.fetch = origFetch;
+  clearInterval(keepAlive);
   console.log(`\n\uacb0\uacfc: ${pass} pass / ${fail} fail`);
   if (fail > 0) process.exit(1);
 }
