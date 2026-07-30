@@ -1087,7 +1087,7 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
                   ) : (
                     <span className="min-w-0 truncate text-base font-medium text-text-primary">{post.nickname || "익명"}</span>
                   )}
-                  <span className="ml-auto text-base text-text-tertiary whitespace-nowrap shrink-0">{timeAgo(post.created_at)}</span>
+                  <span className="ml-auto text-sm text-text-tertiary whitespace-nowrap shrink-0">{timeAgo(post.created_at)}</span>
                 </div>
 
                 {/* 질문 + poll 카드 → 탭 시 상세 이동 */}
@@ -1195,7 +1195,7 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
                     운영팀
                   </span>
                 )}
-                <span className="ml-auto text-base text-text-tertiary flex-shrink-0">
+                <span className="ml-auto text-sm text-text-tertiary flex-shrink-0">
                   {timeAgo(post.created_at)}{post.updated_at ? " · 수정됨" : ""}
                 </span>
                 {(isMine || canDeleteAnyPost) && (
