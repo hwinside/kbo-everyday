@@ -8,7 +8,7 @@
 import "./_smoke-env";
 import assert from "node:assert/strict";
 import { fetchGames } from "../../src/lib/crawler/kbo-api";
-import { fetchNaverGames, mapNaverGameToKbo, extractGameSeq } from "../../src/lib/crawler/naver-games";
+import { fetchNaverGames, mapNaverGameToKbo, extractGameSeq, isWithinRegularSeasonWindow } from "../../src/lib/crawler/naver-games";
 import { liveGamesFromKboGames } from "../../src/lib/crawler/home-live-games";
 import { USER_FACING_GAMES_TIMEOUT_MS } from "../../src/lib/crawler/kbo-api";
 import { GET as gamesRouteGET } from "../../src/app/api/games/route";
@@ -226,16 +226,27 @@ const keepAlive = setInterval(() => {}, 1000);
   assert.equal(games[0].awayScore, 5);
 }
 
-// ── 9c. soft-empty 안전망: KBO 200 game:[] + Naver 실패 → KBO 빈 응답 존중([]) ───
+// ── 9c. soft-empty fail-close(P1): KBO 200 game:[] + Naver 실패 → 무경기 단정 금지(throw) ───
+//    이전엔 [] 로 닫아 KBO 장애가 '정상 0경기'로 오인됐다(삼순 P1). 이제 Naver 미검증이면 throw.
 {
   stubFetch((url) => {
     if (url.includes("GetKboGameList")) return jsonResponse({ game: [] });
     if (url.includes("schedule/games")) throw new Error("Naver down");
     throw new Error(`unexpected url ${url}`);
   });
-  const games = await fetchGames(DATE); // throw 아닌 [] — 정상 무경기일 가능성 존중
+  await assert.rejects(fetchGames(DATE), /미검증|Naver/); // authoritative empty 로 단정하지 않음
   restoreFetch();
-  assert.equal(games.length, 0);
+}
+
+// ── 9c-2. soft-empty fail-close timeout(P1): KBO 200 game:[] + Naver timeout → 무경기 단정 금지 ───
+{
+  stubFetch((url) => {
+    if (url.includes("GetKboGameList")) return jsonResponse({ game: [] });
+    if (url.includes("schedule/games")) { const e = new Error("timeout"); e.name = "TimeoutError"; throw e; }
+    throw new Error(`unexpected url ${url}`);
+  });
+  await assert.rejects(fetchGames(DATE), /미검증|Naver|timeout/);
+  restoreFetch();
 }
 
 // ── 9d. KBO per-game 부분 열화(game:[{}]) → schema-error → Naver 폴백 (P1) ───
@@ -326,21 +337,151 @@ const keepAlive = setInterval(() => {}, 1000);
   assert.equal(games[0].inning, 7);
 }
 
-// ── 12. srId 계약(P1): 전-시리즈 셋이 아닌 srId → fail-close throw ───
+// ── 12. srId 계약(P1): 시범/포스트 '전용' srId → fail-close throw; 정규("0")·전-시리즈 셋 → 서빙 ───
 {
   stubFetch(() => jsonResponse({ code: 200, success: true, result: { games: [naverGame()] } }));
-  await assert.rejects(fetchNaverGames(DATE, "0"), /fail-close|series|srId/);
+  await assert.rejects(fetchNaverGames(DATE, "1"), /fail-close|series|srId/);     // 시범 전용 → 오염 방지
+  await assert.rejects(fetchNaverGames(DATE, "3,4,5"), /fail-close|series|srId/); // 포스트 전용 → 오염 방지
+  const reg = await fetchNaverGames(DATE, "0"); // 정규시즌 전용은 서빙(삼순 P1: game-logs gap 방지)
+  assert.equal(reg.length, 1);
   restoreFetch();
 }
 
-// ── 13. srId 계약 통합: fetchGames(date,"0") + KBO throw → Naver fail-close → 원 KBO 에러 재훈 ───
+// ── 12b. srId=0 정규시즌 window guard(P0): window 밖 srId=0 은 Naver fail-close ───
+//    삼순 P0: window 없이는 3/15 시범경기 5경기가 srId=0 정규 요청에 서빙됐다.
+//    window = 2026-03-28(공식 개막) ~ 2026-09-30(포스트시즌 비겹침 보수 상한).
+{
+  // 순수 window 판정 경계값
+  assert.equal(isWithinRegularSeasonWindow("20260327"), false); // 개막 전일(시범 이불)
+  assert.equal(isWithinRegularSeasonWindow("20260328"), true);  // 개막일
+  assert.equal(isWithinRegularSeasonWindow("20260930"), true);  // 보수 상한 마지막 날
+  assert.equal(isWithinRegularSeasonWindow("20261001"), false); // 포스트시즌 경계
+  assert.equal(isWithinRegularSeasonWindow("20270601"), false); // 미등록 연도 fail-close
+  // fetchNaverGames: window 밖 srId=0 은 Naver 가 경기를 줘도 fail-close(throw)
+  stubFetch(() => jsonResponse({ code: 200, success: true, result: { games: [naverGame()] } }));
+  await assert.rejects(fetchNaverGames("20260315", "0"), /window|fail-close/); // 시범경기 기간
+  await assert.rejects(fetchNaverGames("20261015", "0"), /window|fail-close/); // 포스트시즌 기간
+  await assert.rejects(fetchNaverGames("20270601", "0"), /window|fail-close/); // 미등록 연도
+  // 단, 전-시리즈 기본 srId 는 window 무관 서빙(시범기간 홈/일정 폴백 기존 계약 보존)
+  const all = await fetchNaverGames("20260315");
+  assert.equal(all.length, 1);
+  restoreFetch();
+}
+
+// ── 13. srId=0 폴백(P1): fetchGames(date,"0") + KBO throw → Naver 폴백 서빙(정규시즌 gap 방지) ───
+//    이전: fail-close 로 원 KBO 에러 재-throw. 이제: 다른 srId 와 동일하게 Naver 폴백 경유.
 {
   stubFetch((url) => {
     if (url.includes("GetKboGameList")) throw new Error("KBO down");
-    if (url.includes("schedule/games")) return jsonResponse({ code: 200, success: true, result: { games: [naverGame()] } });
+    if (url.includes("schedule/games")) return jsonResponse({ code: 200, success: true, result: { games: [naverGame({ statusCode: "STARTED", statusInfo: "3회초", homeTeamScore: 1, awayTeamScore: 2 })] } });
     throw new Error(`unexpected url ${url}`);
   });
-  await assert.rejects(fetchGames(DATE, "0"), /KBO down/); // 시리즈 오염 방지 fail-close
+  const games = await fetchGames(DATE, "0");
+  restoreFetch();
+  assert.equal(games.length, 1);
+  assert.equal(games[0].status, "live");
+  assert.equal(games[0].awayScore, 2);
+}
+
+// ── 13b. srId=0 soft-empty 폴백(P1): KBO 200 game:[] + Naver 경기 있음 → Naver 사용 ───
+{
+  stubFetch((url) => {
+    if (url.includes("GetKboGameList")) return jsonResponse({ game: [] });
+    if (url.includes("schedule/games")) return jsonResponse({ code: 200, success: true, result: { games: [naverGame({ statusCode: "RESULT", statusInfo: "9회말", homeTeamScore: 3, awayTeamScore: 1 })] } });
+    throw new Error(`unexpected url ${url}`);
+  });
+  const games = await fetchGames(DATE, "0");
+  restoreFetch();
+  assert.equal(games.length, 1);
+  assert.equal(games[0].status, "final");
+}
+
+// ── 13c. srId=0 soft-empty 정상 무경기일: KBO 200 game:[] + Naver 도 빈 → authoritative empty([]) ───
+{
+  stubFetch((url) => {
+    if (url.includes("GetKboGameList")) return jsonResponse({ game: [] });
+    if (url.includes("schedule/games")) return jsonResponse({ code: 200, success: true, result: { games: [] } });
+    throw new Error(`unexpected url ${url}`);
+  });
+  const games = await fetchGames(DATE, "0");
+  restoreFetch();
+  assert.equal(games.length, 0);
+}
+
+// ── 13d. srId=0 window 밖 soft-empty(P0 회귀): 3/15 KBO 200-empty + Naver 에 시범 5경기 →
+//        시범경기를 정규 결과로 서빙하지 않고 fail-close, Naver 호출 자체를 안 함 ───
+//    삼순 실측: 수정 전 fetchGames("20260315","0") 이 시범 5경기를 반환 → getSeasonGames/game-logs 오염.
+{
+  let naverCalled = false;
+  stubFetch((url) => {
+    if (url.includes("GetKboGameList")) return jsonResponse({ game: [] }); // 시범기간 srId=0 정규 0경기(참값)
+    if (url.includes("schedule/games")) {
+      naverCalled = true;
+      return jsonResponse({ code: 200, success: true, result: { games: [
+        naverGame({ gameId: "20260315HTSS02026" }),
+        naverGame({ gameId: "20260315OBSK02026", awayTeamCode: "OB", awayTeamName: "두산", homeTeamCode: "SK", homeTeamName: "SSG" }),
+        naverGame({ gameId: "20260315WOLG02026", awayTeamCode: "WO", awayTeamName: "키움", homeTeamCode: "LG", homeTeamName: "LG" }),
+        naverGame({ gameId: "20260315KTNC02026", awayTeamCode: "KT", awayTeamName: "KT", homeTeamCode: "NC", homeTeamName: "NC" }),
+        naverGame({ gameId: "20260315LTHH02026", awayTeamCode: "LT", awayTeamName: "롯데", homeTeamCode: "HH", homeTeamName: "한화" }),
+      ] } });
+    }
+    throw new Error(`unexpected url ${url}`);
+  });
+  await assert.rejects(fetchGames("20260315", "0"), /미검증|window|fail-close/);
+  restoreFetch();
+  assert.equal(naverCalled, false);    // window guard가 네트워크 호출 전에 fail-close
+}
+
+// ── 13e. srId=0 window 밖 KBO 장애(P0): 3/15 KBO throw + Naver 에 시범경기 → 시범 서빙 없이
+//        원 KBO 에러로 fail-close(오염 방지 > 가용성) ───
+{
+  stubFetch((url) => {
+    if (url.includes("GetKboGameList")) throw new Error("KBO down");
+    if (url.includes("schedule/games")) return jsonResponse({ code: 200, success: true, result: { games: [naverGame({ gameId: "20260315HTSS02026" })] } });
+    throw new Error(`unexpected url ${url}`);
+  });
+  await assert.rejects(fetchGames("20260315", "0"), /KBO down/);
+  restoreFetch();
+}
+
+// ── 13f. srId=0 개막일 경계(P0): 20260328(개막일) + KBO throw → Naver 폴백 서빙 ───
+{
+  stubFetch((url) => {
+    if (url.includes("GetKboGameList")) throw new Error("KBO down");
+    if (url.includes("schedule/games")) return jsonResponse({ code: 200, success: true, result: { games: [naverGame({ gameId: "20260328HTSS02026", statusCode: "STARTED", statusInfo: "1회초", homeTeamScore: 0, awayTeamScore: 0 })] } });
+    throw new Error(`unexpected url ${url}`);
+  });
+  const games = await fetchGames("20260328", "0");
+  restoreFetch();
+  assert.equal(games.length, 1);
+  assert.equal(games[0].status, "live");
+}
+
+// ── 13g. srId=0 window 밖 soft-empty(P0): 10/1 KBO 200-empty + Naver 경기 있음 →
+//         거짓 [] 대신 fail-close ───
+{
+  let naverCalled = false;
+  stubFetch((url) => {
+    if (url.includes("GetKboGameList")) return jsonResponse({ game: [] });
+    if (url.includes("schedule/games")) {
+      naverCalled = true;
+      return jsonResponse({ code: 200, success: true, result: { games: [naverGame({ gameId: "20261001HTSS02026" })] } });
+    }
+    throw new Error(`unexpected url ${url}`);
+  });
+  await assert.rejects(fetchGames("20261001", "0"), /미검증|window|fail-close/);
+  assert.equal(naverCalled, false);
+  restoreFetch();
+}
+
+// ── 13h. srId=0 실제 포스트시즌 경계(P0): 10/1 KBO 장애 + Naver 경기 있음 → fail-close ───
+{
+  stubFetch((url) => {
+    if (url.includes("GetKboGameList")) throw new Error("KBO down");
+    if (url.includes("schedule/games")) return jsonResponse({ code: 200, success: true, result: { games: [naverGame({ gameId: "20261001HTSS02026" })] } });
+    throw new Error(`unexpected url ${url}`);
+  });
+  await assert.rejects(fetchGames("20261001", "0"), /KBO down/);
   restoreFetch();
 }
 

@@ -246,14 +246,21 @@ export async function fetchGames(
     throw error;
   }
 
-  // soft-empty: KBO 200 빈 응답(game:[])은 열화로 인한 것일 수 있어 Naver 로 교차확인한다.
-  // Naver 에 경기가 있으면 그것(=KBO 빈은 열화), 양쪽 비면 정상 무경기일([]). 무경기일 노이즈 방지로 trackFallback 안 쌓음.
+  // soft-empty: KBO 200 빈 응답(game:[])을 authoritative empty 로 단정하지 않는다 — 열화(200+빈배열)
+  // 일 수 있어 Naver 로 교차확인한다(fetchKboLiveGames 의 ok:false 계약과 동일 fail-close).
+  //  - Naver 에 경기 있음 → KBO 빈은 열화 → Naver 사용.
+  //  - Naver 도 무경기(성공) → "그날 실제로 경기 없음" 확인 → 정상 무경기일([]) 인정(trackFallback 안 쌓음).
+  //  - Naver 확인 실패/timeout/fail-close → empty 를 정상으로 단정 금지 → throw(구값 캐시 불가한 순수
+  //    fetch 라 에러로 신호; 호출자가 구값 유지/ok:false 처리). 이전처럼 []로 닫으면 KBO 장애가 홈/일정에
+  //    "정상 0경기"로 오인된다(삼순 P1).
   if (games.length === 0) {
+    const naver = await import("@/lib/crawler/naver-games");
     try {
-      const { fetchNaverGames } = await import("@/lib/crawler/naver-games");
-      return await fetchNaverGames(date, srId);
-    } catch {
-      return [];
+      return await naver.fetchNaverGames(date, srId);
+    } catch (naverErr) {
+      throw new Error(
+        `KBO 200-empty 미검증: Naver 교차확인 실패로 무경기 단정 금지 (${(naverErr as Error).message})`,
+      );
     }
   }
   return games;

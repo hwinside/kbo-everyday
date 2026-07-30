@@ -10,14 +10,54 @@ import { resolveTeamId, type KboGame } from "@/lib/crawler/kbo-api";
 
 const NAVER_SCHEDULE_API = "https://api-gw.sports.naver.com/schedule/games";
 
-/**
- * fetchGames 기본 srId(전 시리즈: 시범/정규/포스트/올스타). 이 값으로 호출될 때만
- * Naver 폴백이 안전하다 — Naver schedule/games 는 series(gameType) 필드를 제공하지 않아
- * 특정 시리즈만 요구하는 호출(예: 정규시즌 전용 game-logs)은 시범경기 등이 섞일 수 있어
- * fail-close 한다. (실측 2026-07-29: 시범경기(3/15)도 정규와 동일 categoryId=kbo 로 반환,
- * 구분 필드 없음.)
- */
+/** fetchGames 기본 srId(전 시리즈: 시범/정규/포스트/올스타). */
 const DEFAULT_ALL_SR_ID = "0,1,3,4,5,7,9";
+/** 정규시즌 전용 srId(예: game-logs cron). */
+const REGULAR_SEASON_SR_ID = "0";
+/**
+ * Naver 로 안전하게 서빙 가능한 srId 화이트리스트. Naver schedule/games 는 series(gameType)
+ * 필드를 제공하지 않으므로(실측 2026-07-29: 시범경기 3/15 도 정규와 동일 categoryId=kbo, 구분
+ * 필드 없음) 아래 이외의 '특정 시리즈 전용' 요청은 오염 방지 위해 fail-close 한다.
+ * - DEFAULT_ALL_SR_ID: 전 시리즈 요청 → Naver 전체(categoryId=kbo) 그대로, over-inclusion 없음.
+ * - REGULAR_SEASON_SR_ID("0"): 정규시즌 전용(game-logs). KBO 장애 시 정규시즌 게임로그가 Naver
+ *   미폴백으로 '무경기'처럼 사라지던 gap(삼순 P1)을 막기 위해 서빙 허용 — 정규시즌 윈도우의 kbo
+ *   카테고리 응답은 전부 정규경기라 안전. (트레이드오프: 시범/포스트 윈도우와 KBO 장애가 겹치면
+ *   Naver 가 series 를 못 갈라 over-inclusion 가능 → 시범/포스트/올스타 '전용' srId 는 계속 fail-close.)
+ */
+const NAVER_SERVICEABLE_SR_IDS = new Set<string>([DEFAULT_ALL_SR_ID, REGULAR_SEASON_SR_ID]);
+
+/**
+ * KBO 정규시즌 날짜 window (연도별, YYYYMMDD inclusive). srId=0(정규시즌 전용) Naver 폴백의
+ * 허용 범위 — Naver schedule/games 는 series(gameType) 구분이 없어(파일 상단 실측 주석 참조)
+ * 날짜 window 로 시범경기(3월 중) 오염을 차단하고, 정규 일정으로 확인되지 않은 날짜는
+ * fail-close 한다(삼순 P0: window 없이는
+ * 3/15 시범경기 5경기가 srId=0 정규 요청에 서빙돼 player_game_logs 누적 기록을 오염).
+ *
+ * 2026 근거(KBO 공식 정규시즌 일정 발표 2025-12-19, 스포츠경향 202512191538003 보도):
+ * - 개막 2026-03-28(토), 팀당 144경기·총 720경기.
+ * - 9/6 까지 팀당 135경기 우선 편성, 잔여 45경기(우천 취소분 포함)는 추후 편성 → 공식 '정규
+ *   종료일' 은 유동. 9/30 이후는 무경기로 단정하지 않고 fail-close 한다. 잔여 일정이 확정되면
+ *   검증된 정규 경기 날짜를 별도 허용해야 한다.
+ * 미등록 연도는 fail-close(정규 일정 미확정 상태에서 추측 서빙 금지). 시즌이 바뀌면 갱신
+ * (src/app/api/roster-moves/route.ts 의 SEASON_START 상수와 동일한 연 1회 운영).
+ */
+export const REGULAR_SEASON_WINDOWS: Readonly<Record<string, { start: string; end: string }>> = {
+  "2026": { start: "20260328", end: "20260930" },
+};
+
+/** date(YYYYMMDD)가 검증된 정규시즌 window 안인가. 미등록 연도는 false(fail-close). */
+export function isWithinRegularSeasonWindow(date: string): boolean {
+  const w = REGULAR_SEASON_WINDOWS[date.slice(0, 4)];
+  return !!w && date >= w.start && date <= w.end;
+}
+
+/**
+ * srId=0(정규시즌 전용) 요청인데 검증된 정규시즌 window 밖인가. Naver는 series를 구분하지
+ * 못하므로 이 조합은 폴백 금지 대상이며 KBO soft-empty도 authoritative로 확정할 수 없다.
+ */
+export function isRegularSeasonSrIdOutsideWindow(srId: string, date: string): boolean {
+  return srId === REGULAR_SEASON_SR_ID && !isWithinRegularSeasonWindow(date);
+}
 
 interface NaverScheduleGame {
   gameId?: string;
@@ -154,7 +194,7 @@ function isSaneGame(g: KboGame): boolean {
 
 /**
  * 특정 날짜 경기목록을 Naver schedule/games 로 조회(KBO fallback).
- * - srId 가 기본 전-시리즈 셋이 아니면(특정 시리즈 전용) fail-close(series 필터 미지원).
+ * - srId 가 Naver 서빙 화이트리스트(전-시리즈 셋 또는 정규"0")가 아니면 fail-close(series 필터 미지원).
  * - fail-closed: success!==true || code!==200 || games 배열 부재 || per-game sanity 실패면 throw.
  * - 경기 없는 날(games: [])은 정상으로 간주해 빈 배열을 반환한다(무경기일 500 방지).
  */
@@ -163,9 +203,14 @@ export async function fetchNaverGames(
   srId: string = DEFAULT_ALL_SR_ID,
   opts?: { timeoutMs?: number; signal?: AbortSignal },
 ): Promise<KboGame[]> {
-  if (srId !== DEFAULT_ALL_SR_ID) {
-    // 정규시즌 전용 등 특정 시리즈 요구 — Naver 로는 series 보존 불가 → 오염 방지 위해 fail-close.
+  if (!NAVER_SERVICEABLE_SR_IDS.has(srId)) {
+    // 시범/포스트/올스타 '전용' srId — Naver 로는 series 보존 불가 → 오염 방지 위해 fail-close.
     throw new Error(`Naver fallback: srId(${srId}) series 필터 계약 보존 불가 — fail-close`);
+  }
+  if (isRegularSeasonSrIdOutsideWindow(srId, date)) {
+    // srId=0(정규 전용)인데 정규시즌 window 밖(시범/포스트/미확정 연도) — Naver 는 series 를
+    // 못 갈라 window 밖 경기(시범 5경기 등)를 정규로 오인 서빙하게 된다(삼순 P0) → fail-close.
+    throw new Error(`Naver fallback: srId=0 인데 ${date} 는 정규시즌 window 밖 — 시범/포스트 오염 방지 fail-close`);
   }
   const naverDate = toNaverDate(date);
   const url =
