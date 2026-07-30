@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { fetchGames, type KboGame } from "@/lib/crawler/kbo-api";
+import { fetchNaverLineup } from "@/lib/crawler/naver-lineup";
 import { TEAMS, isAllStarGame, isAllStarGameId } from "@/lib/constants/teams";
 import pitcherStats from "@/lib/constants/stats-2026-pitchers.json";
 
@@ -156,17 +157,28 @@ async function fetchPrevGameLineup(
         body,
         signal: AbortSignal.timeout(8000),
       });
-      if (!res.ok) continue;
-      const data = await res.json();
-      if (!Array.isArray(data) || data.length < 5) continue;
-
-      const batters = parseLineupRows(isAway ? data[4] : data[3]);
-      if (batters.length === 0) continue;
-
-      const starterName = isAway ? teamGame.awayStarterName : teamGame.homeStarterName;
-      return { batters, starterName };
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data) && data.length >= 5) {
+          const batters = parseLineupRows(isAway ? data[4] : data[3]);
+          if (batters.length > 0) {
+            const starterName = isAway ? teamGame.awayStarterName : teamGame.homeStarterName;
+            return { batters, starterName };
+          }
+        }
+      }
     } catch {
-      continue;
+      // KBO 열화 → 아래 Naver 폴백으로 진행
+    }
+
+    // KBO GetLineUpAnalysis 열화(204/빈응답/타임아웃) → 공용 Naver 어댑터 폴백(삼순 PR#988 P0-2 ③).
+    // 완전 라인업만 반환되므로 부분 데이터 오비교 위험 없음. 실패 시 다음 lookback 일자로 continue.
+    const snap = await fetchNaverLineup(teamGame.gameId, { timeoutMs: 8000 });
+    if (snap) {
+      const side = isAway ? snap.away : snap.home;
+      const batters: LineupPlayer[] = side.batters.map(b => ({ order: b.order, position: b.position, name: b.name }));
+      const starterName = (isAway ? teamGame.awayStarterName : teamGame.homeStarterName) || side.starter;
+      return { batters, starterName };
     }
   }
   return null;

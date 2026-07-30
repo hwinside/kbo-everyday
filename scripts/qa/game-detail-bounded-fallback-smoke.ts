@@ -362,10 +362,13 @@ async function main() {
   assert.equal(kboDown.body.lineup?.away[0].name, "원정타자1");
   assert.equal(kboDown.body.lineup?.away[0].position, "CF");
   assert.equal(kboDown.body.lineup?.away[0].order, 1);
+  // 선발투수는 타순 엔트리에서 제외하되 버리지 않고 awayStarter/homeStarter 로 보존(삼순 PR#988 P0-1).
   assert.ok(
     !kboDown.body.lineup?.away.some((e: { name: string }) => e.name === "원정투수"),
     "선발투수는 타순 엔트리에서 제외",
   );
+  assert.equal(kboDown.body.lineup?.awayStarter, "원정투수", "Naver 폴백 선발투수(원정) 보존");
+  assert.equal(kboDown.body.lineup?.homeStarter, "홈투수", "Naver 폴백 선발투수(홈) 보존");
   assert.deepEqual(kboDown.degradationEvents, [{ apiName: "kbo-game-detail", reason: "timeout" }]);
 
   const kboDownLive = await scenario("KBO 3종 blackhole + Naver live", "blackhole", "normal", "live");
@@ -374,6 +377,8 @@ async function main() {
   assert.ok(kboDownLive.body.boxScore.homeBatters.length > 0);
   assert.equal(kboDownLive.body.lineup?.isToday, true);
   assert.equal(kboDownLive.body.lineup?.home.length, 9);
+  assert.equal(kboDownLive.body.lineup?.awayStarter, "원정투수");
+  assert.equal(kboDownLive.body.lineup?.homeStarter, "홈투수");
   assert.deepEqual(kboDownLive.degradationEvents, [{ apiName: "kbo-game-detail", reason: "timeout" }]);
   assert.equal(kboDownLive.body.boxScore.awayBatters[0].h2b, 1, "record inn4=좌2 → h2b=1");
 
@@ -445,6 +450,7 @@ async function main() {
   assert.ok(naverDown.body.boxScore.awayBatters.length > 0);
   assert.ok(naverDown.body.lineup?.away.length > 0);
   assert.equal(naverDown.body.lineup?.away[0].name, "김선수", "KBO 정상이면 KBO 라인업 유지(Naver 미침범)");
+  assert.equal(naverDown.body.lineup?.awayStarter, undefined, "KBO 경로에선 starter 필드 미설정(기존 계약 무변경)");
   assert.equal(naverDown.degradationEvents.length, 0);
 
   const partial = await scenario("KBO partial schema + Naver normal", "partial", "normal", "final");

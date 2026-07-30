@@ -1,8 +1,10 @@
 /**
- * KBO LINEUP_CK 파서 순수 회귀 (라인업 확정 트리거).
+ * KBO LINEUP_CK 파서 순수 회귀 (라인업 확정 트리거)
+ * + Naver preview 확정 폴백 회귀(삼순 PR#988 P0-2 ② — 완전 라인업→true / 부분→null fail-close).
  * 실행: npm run qa:lineup-ck
  */
 import { parseLineupCk, fetchLineupConfirmed } from "../../src/lib/crawler/lineup-confirmed";
+import { parseNaverPreviewLineup } from "../../src/lib/crawler/naver-lineup";
 
 let pass = 0;
 let fail = 0;
@@ -56,8 +58,76 @@ async function budget() {
   }
 }
 
+// ── Naver preview 파서(공용 어댑터) — 완전 라인업(선발1+타자9)만 스냅샷, 그 외 전부 null ──
+const POSITIONS = ["중견수", "유격수", "지명타자", "1루수", "우익수", "좌익수", "3루수", "포수", "2루수"];
+function sideJson(sp: string, batterCount = 9, starterCount = 1) {
+  return {
+    fullLineUp: [
+      ...Array.from({ length: starterCount }, () => ({ positionName: "선발투수", playerName: sp })),
+      ...POSITIONS.slice(0, batterCount).map((positionName, i) => ({ positionName, playerName: `타자${i + 1}` })),
+    ],
+  };
+}
+function previewJson(away: unknown, home: unknown) {
+  return { result: { previewData: { awayTeamLineUp: away, homeTeamLineUp: home } } };
+}
+
+const full = parseNaverPreviewLineup(previewJson(sideJson("네일"), sideJson("페덱")));
+ok("완전 라인업 → 스냅샷 confirmed=true", full?.confirmed === true);
+ok("선발투수 보존(away/home)", full?.away.starter === "네일" && full?.home.starter === "페덱");
+ok("타자 정확히 9 + 타순 1~9", full?.away.batters.length === 9 && full?.away.batters[8].order === 9);
+ok("포지션 영문 매핑(중견수→CF)", full?.away.batters[0].position === "CF");
+ok("타자 8명(부분) → null", parseNaverPreviewLineup(previewJson(sideJson("네일", 8), sideJson("페덱"))) === null);
+ok("선발투수 0명 → null", parseNaverPreviewLineup(previewJson(sideJson("네일", 9, 0), sideJson("페덱"))) === null);
+ok("선발투수 2명 → null", parseNaverPreviewLineup(previewJson(sideJson("네일", 9, 2), sideJson("페덱"))) === null);
+ok("미확정(fullLineUp 빈 배열) → null", parseNaverPreviewLineup(previewJson({ fullLineUp: [] }, sideJson("페덱"))) === null);
+ok("previewData 결측 → null", parseNaverPreviewLineup({ result: {} }) === null);
+ok("이름 결측 엔트리 → null(fail-close)", parseNaverPreviewLineup(previewJson({
+  fullLineUp: [{ positionName: "선발투수", playerName: "" }, ...POSITIONS.map((p, i) => ({ positionName: p, playerName: `타자${i + 1}` }))],
+}, sideJson("페덱"))) === null);
+
+// ── fetchLineupConfirmed × Naver 확정 폴백 경로(watchdog 소비 계약) ──
+async function naverConfirmFallback() {
+  const realFetch = globalThis.fetch;
+  const mock = (kbo: () => Promise<Response> | Response, naver: (() => Promise<Response> | Response) | null) => {
+    let naverCalls = 0;
+    globalThis.fetch = (async (url: unknown) => {
+      const u = String(url);
+      if (u.includes("GetLineUpAnalysis")) return kbo();
+      if (u.includes("/preview")) { naverCalls++; if (!naver) throw new Error("naver down"); return naver(); }
+      throw new Error(`unexpected url ${u}`);
+    }) as typeof fetch;
+    return () => naverCalls;
+  };
+  const kbo204 = () => new Response(null, { status: 200 }); // body 없음 → json() throw = 신호 못 얻음(실측 204 등가)
+  const json = (v: unknown) => new Response(JSON.stringify(v), { status: 200 });
+  try {
+    // KBO 열화 + Naver 완전 라인업 → true(확정 근거)
+    mock(kbo204, () => json(previewJson(sideJson("네일"), sideJson("페덱"))));
+    ok("KBO 열화 + Naver 완전 → true", (await fetchLineupConfirmed("20260730HTSS0", { timeoutMs: 2000 })) === true);
+    // KBO 열화 + Naver 부분(8타자) → null(fail-close, 오발송 방지)
+    mock(kbo204, () => json(previewJson(sideJson("네일", 8), sideJson("페덱"))));
+    ok("KBO 열화 + Naver 부분 → null", (await fetchLineupConfirmed("20260730HTSS0", { timeoutMs: 2000 })) === null);
+    // KBO 열화 + Naver 미확정(빈 배열) → null
+    mock(kbo204, () => json(previewJson({ fullLineUp: [] }, { fullLineUp: [] })));
+    ok("KBO 열화 + Naver 미확정 → null", (await fetchLineupConfirmed("20260730HTSS0", { timeoutMs: 2000 })) === null);
+    // KBO 열화 + Naver 조회 실패 → null
+    mock(kbo204, null);
+    ok("KBO 열화 + Naver 실패 → null", (await fetchLineupConfirmed("20260730HTSS0", { timeoutMs: 2000 })) === null);
+    // KBO 명시적 false → false 그대로(미확정 존중) + Naver 미호출
+    const calls = mock(() => json([[{ LINEUP_CK: false }]]), () => json(previewJson(sideJson("네일"), sideJson("페덱"))));
+    ok("KBO false → false(Naver 미호출)", (await fetchLineupConfirmed("20260730HTSS0", { timeoutMs: 2000 })) === false && calls() === 0);
+    // KBO true → true(Naver 미호출)
+    const calls2 = mock(() => json([[{ LINEUP_CK: true }]]), () => json(previewJson(sideJson("네일"), sideJson("페덱"))));
+    ok("KBO true → true(Naver 미호출)", (await fetchLineupConfirmed("20260730HTSS0", { timeoutMs: 2000 })) === true && calls2() === 0);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
 async function run() {
   await budget();
+  await naverConfirmFallback();
   console.log(`\nlineup-ck 파서: ${pass} passed, ${fail} failed`);
   if (fail > 0) process.exit(1);
 }

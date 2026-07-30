@@ -13,6 +13,7 @@ import {
   parseNaverScoreBoardLinescore,
 } from "@/lib/crawler/naver-record";
 import { fetchNaverGames } from "@/lib/crawler/naver-games";
+import { fetchNaverLineup, type NaverLineupSide } from "@/lib/crawler/naver-lineup";
 
 /** 숫자 kboId로 로스터 조회 — 외국인 숫자→영문 변환 포함 */
 function findPlayerByNumericId(numericId: string): { name: string } | undefined {
@@ -41,6 +42,9 @@ export interface GameDetailResponse {
     isToday: boolean;
     away: LineupEntry[];
     home: LineupEntry[];
+    /** Naver preview 폴백 시에만 채움 — KBO boxScore/경기목록 starter 가 함께 죽었을 때 UI 선발 표기용. */
+    awayStarter?: string;
+    homeStarter?: string;
   } | null;
   boxScore: {
     awayBatters: BatterRecord[];
@@ -520,60 +524,34 @@ export async function fetchNaverRecord(
 }
 
 /**
- * Naver preview API 라인업 fallback — KBO GetLineUpAnalysis 전면 열화(204/빈응답) 시 표시용.
- *
- * previewData.{away,home}TeamLineUp.fullLineUp 은 [선발투수, 타순1..9] 순서로 내려오고,
- * 라인업 미확정 경기는 빈 배열이다(2026-07-30 익일 5경기 실측 — len 0). 따라서
- * fullLineUp 9+9 존재 자체가 확정 신호라 isToday=true 로 반환해도 stale 라인업
- * 오표시 위험이 없다(경기별 gameId 조회이므로 어제 라인업 fallback 패턴도 없음).
- * 알림(lineup-watchdog)은 lineup-confirmed.ts 의 KBO 직접 조회를 쓰므로 이 폴백과 무관.
+ * Naver preview 라인업 fallback — KBO GetLineUpAnalysis 전면 열화(204/빈응답) 시 표시용.
+ * 공용 어댑터(naver-lineup.ts)의 완전 라인업 스냅샷(양팀 선발1+타자9 검증 통과)만 사용하고,
+ * 선발투수 이름은 awayStarter/homeStarter 로 보존해 UI(boxScore/경기목록 starter 부재 시)에
+ * 전달한다(삼순 PR#988 P0-1). 완전 라인업 존재 자체가 확정 신호라 isToday=true 로 반환해도
+ * stale 라인업 오표시 위험이 없다(경기별 gameId 조회이므로 어제 라인업 fallback 패턴 없음).
  */
-export async function fetchNaverLineup(
+export async function fetchNaverDetailLineup(
   kboGameId: string,
   opts?: { signal?: AbortSignal },
 ): Promise<GameDetailResponse["lineup"]> {
-  try {
-    const nId = naverGameId(kboGameId);
-    const res = await fetch(`${NAVER_API}/${nId}/preview`, {
-      headers: { "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)" },
-      next: { revalidate: 60 },
-      signal: opts?.signal,
-    });
-    if (!res.ok) return null;
-    const json = await res.json();
-    const pd = json?.result?.previewData;
-    if (!pd) return null;
-
-    function toEntries(side: unknown): LineupEntry[] {
-      const full = (side as { fullLineUp?: unknown })?.fullLineUp;
-      if (!Array.isArray(full)) return [];
-      const entries: LineupEntry[] = [];
-      for (const p of full as Record<string, unknown>[]) {
-        const posKr = safeStr(p.positionName);
-        const name = safeStr(p.playerName);
-        // 선두 엔트리는 선발투수 — lineup 스키마(타순 1~9)에는 미포함.
-        // 선발투수 표기는 소비 측이 boxScore/경기목록 starter 경로로 이미 해결한다.
-        if (!name || posKr === "선발투수") continue;
-        entries.push({
-          order: entries.length + 1,
-          position: POS_MAP[posKr] || posKr,
-          positionKr: posKr,
-          name,
-          war: 0, // preview 에는 WAR 없음
-          avg: "", // boxScore merge 경로에서 채움 (KBO lineup 과 동일 계약)
-        });
-      }
-      return entries;
-    }
-
-    const away = toEntries(pd.awayTeamLineUp);
-    const home = toEntries(pd.homeTeamLineUp);
-    // 부분 응답(9+9 미만)은 확정 라인업으로 보지 않는다 — fail-close.
-    if (away.length < 9 || home.length < 9) return null;
-    return { isToday: true, away, home };
-  } catch {
-    return null;
-  }
+  const snap = await fetchNaverLineup(kboGameId, { signal: opts?.signal });
+  if (!snap) return null;
+  const toEntries = (side: NaverLineupSide): LineupEntry[] =>
+    side.batters.map((b) => ({
+      order: b.order,
+      position: b.position,
+      positionKr: b.positionKr,
+      name: b.name,
+      war: 0, // preview 에는 WAR 없음
+      avg: "", // boxScore merge 경로에서 채움 (KBO lineup 과 동일 계약)
+    }));
+  return {
+    isToday: true,
+    away: toEntries(snap.away),
+    home: toEntries(snap.home),
+    awayStarter: snap.away.starter,
+    homeStarter: snap.home.starter,
+  };
 }
 
 // ===== Route handler =====
@@ -645,7 +623,7 @@ export async function GET(req: NextRequest) {
   });
   // 라인업도 record 와 같이 eager 준비(revalidate 60 캐시로 fanout 억제). KBO blackhole 로
   // deadline 이 전부 소진돼도 병렬로 이미 settle 된 결과를 회수할 수 있게 한다.
-  const naverLineupPromise = fetchNaverLineup(gameId, { signal: deadlineSignal });
+  const naverLineupPromise = fetchNaverDetailLineup(gameId, { signal: deadlineSignal });
   const reasonFor = (error: unknown): DegradationReason => {
     const e = error as { name?: string; message?: string };
     if (e?.name === "TimeoutError" || /timeout|deadline/i.test(e?.message ?? "")) return "timeout";

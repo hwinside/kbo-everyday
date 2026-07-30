@@ -2,7 +2,14 @@
  * KBO 라인업 확정 신호(LINEUP_CK) 조회 — 라인업 확정 알림 트리거.
  * game-detail 의 GetLineUpAnalysis 응답 data[0][0].LINEUP_CK 를 그대로 읽는다.
  * true=확정 / false=미확정(또는 fallback 라인업) / null=신호 못 얻음(네트워크/파싱 실패).
+ *
+ * KBO 가 신호를 못 주는 전면 열화(204/빈응답/타임아웃)에서는 Naver preview 완전 라인업
+ * 스냅샷(양팀 각 선발1+타자9)의 존재를 확정 근거로 사용한다(삼순 PR#988 P0-2 ②).
+ * Naver 조회 실패/부분 데이터는 null 유지(fail-close) — 확정알림 오발송 방지.
+ * KBO 가 명시적으로 false(미확정)를 주면 Naver 를 보지 않고 그대로 존중한다.
  */
+import { fetchNaverLineup } from "@/lib/crawler/naver-lineup";
+
 const KBO_BASE = "https://www.koreabaseball.com/ws/Schedule.asmx";
 // 2026-05-20: KBO가 Referer 미지정 요청을 IE 에러 페이지로 막음 → LineUp Referer 고정.
 const HEADERS = {
@@ -54,5 +61,13 @@ export async function fetchLineupConfirmed(
       // 다음 srId 시도(단 잔여 예산 소진 시 위 remaining 체크로 break)
     }
   }
-  return null;
+  // KBO 신호 부재 → Naver 폴백. 잔여 예산 안에서만 시도(watchdog absolute deadline 결속 유지).
+  if (opts?.timeoutMs != null) {
+    const remaining = opts.timeoutMs - (Date.now() - startMs);
+    if (remaining <= 0) return null;
+    const snap = await fetchNaverLineup(gameId, { timeoutMs: remaining });
+    return snap ? true : null;
+  }
+  const snap = await fetchNaverLineup(gameId);
+  return snap ? true : null;
 }
