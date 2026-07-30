@@ -7,13 +7,6 @@ import { naverGameId } from "@/lib/crawler/naver-record";
 
 const KBO_MAIN = "https://www.koreabaseball.com/ws/Main.asmx";
 
-/**
- * Naver failover 는 베이스 점유 여부(boolean)만 알고 *타순*은 모른다.
- * 예전엔 점유를 타순 1로 합성해서 소비측 resolveRunnerName 이 1번 타자 이름을
- * 모든 점유 베이스에 붙였다(2026-07-30 두산:SSG 박찬호 1·2·3루 전부 표시 사고).
- * KBO 타순은 1~9 이므로, 그 범위 밖 sentinel 을 넣어 점유 점등(>0 체크)은 유지하되
- * 이름 해석은 실패(null)하게 한다 → UI 는 "주자" 로 표기.
- */
 export const NAVER_UNKNOWN_RUNNER_ORDER = 99;
 const KBO_PRIMARY_BUDGET_MS = 1_500;
 
@@ -27,6 +20,9 @@ type NaverLiveEvidence = {
   runner1b: boolean;
   runner2b: boolean;
   runner3b: boolean;
+  runner1bOrder: number;
+  runner2bOrder: number;
+  runner3bOrder: number;
   /** relay currentGameState pitcher/batter pcode → 라인업 이름 해석(실패 시 ""). */
   currentPitcher: string;
   currentBatter: string;
@@ -40,6 +36,12 @@ type NaverLiveEvidenceFetcher = (
 function safeCount(value: unknown): number {
   const parsed = Number.parseInt(String(value ?? "0"), 10);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function naverRunnerOrder(value: unknown): number {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) return 0;
+  return parsed <= 9 ? parsed : NAVER_UNKNOWN_RUNNER_ORDER;
 }
 
 type NaverRelayLineupSide = {
@@ -101,14 +103,20 @@ export async function fetchNaverLiveEvidence(
     const hit = roster.find((p) => String(p?.pcode ?? "").trim() === key);
     return typeof hit?.name === "string" ? hit.name.trim() : "";
   };
+  const runner1bOrder = naverRunnerOrder(state.base1);
+  const runner2bOrder = naverRunnerOrder(state.base2);
+  const runner3bOrder = naverRunnerOrder(state.base3);
   return {
     hasRealPlay: actualPlay.length > 0,
     balls: safeCount(state.ball),
     strikes: safeCount(state.strike),
     outs: safeCount(state.out),
-    runner1b: safeCount(state.base1) > 0,
-    runner2b: safeCount(state.base2) > 0,
-    runner3b: safeCount(state.base3) > 0,
+    runner1b: runner1bOrder > 0,
+    runner2b: runner2bOrder > 0,
+    runner3b: runner3bOrder > 0,
+    runner1bOrder,
+    runner2bOrder,
+    runner3bOrder,
     currentPitcher: nameByPcode(state.pitcher),
     currentBatter: nameByPcode(state.batter),
   };
@@ -155,9 +163,12 @@ export function naverGameToRaw(game: KboGame): KboRawGame {
     STRIKE_CN: game.strikes,
     BALL_CN: game.balls,
     OUT_CN: game.outs,
-    B1_BAT_ORDER_NO: game.runnersOn.first ? NAVER_UNKNOWN_RUNNER_ORDER : 0,
-    B2_BAT_ORDER_NO: game.runnersOn.second ? NAVER_UNKNOWN_RUNNER_ORDER : 0,
-    B3_BAT_ORDER_NO: game.runnersOn.third ? NAVER_UNKNOWN_RUNNER_ORDER : 0,
+    B1_BAT_ORDER_NO: game.runnerOrders?.first
+      ?? (game.runnersOn.first ? NAVER_UNKNOWN_RUNNER_ORDER : 0),
+    B2_BAT_ORDER_NO: game.runnerOrders?.second
+      ?? (game.runnersOn.second ? NAVER_UNKNOWN_RUNNER_ORDER : 0),
+    B3_BAT_ORDER_NO: game.runnerOrders?.third
+      ?? (game.runnersOn.third ? NAVER_UNKNOWN_RUNNER_ORDER : 0),
     B_P_NM: game.isTop ? game.currentPitcher : game.currentBatter,
     T_P_NM: game.isTop ? game.currentBatter : game.currentPitcher,
     T_RANK_NO: game.awayRank,
@@ -262,6 +273,11 @@ export async function fetchKboLiveGames(
             first: evidence.runner1b,
             second: evidence.runner2b,
             third: evidence.runner3b,
+          },
+          runnerOrders: {
+            first: evidence.runner1bOrder,
+            second: evidence.runner2bOrder,
+            third: evidence.runner3bOrder,
           },
           currentPitcher: evidence.currentPitcher || game.currentPitcher,
           currentBatter: evidence.currentBatter || game.currentBatter,

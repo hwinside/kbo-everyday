@@ -138,9 +138,8 @@ function resolveRunnerName(
   boxScore: GameDetailResponse["boxScore"] | null,
 ): string | null {
   if (!orderNo || orderNo <= 0) return null;
-  // KBO 타순은 1~9. Naver failover 는 점유만 알고 타순을 몰라 범위 밖 sentinel
-  // (NAVER_UNKNOWN_RUNNER_ORDER=99)을 보내므로, 범위 밖이면 이름 해석을 포기한다
-  // (null → UI "주자" 표기). 타순 1 합성 시 1번 타자가 전 베이스에 표시되던 사고 방지.
+  // KBO/Naver 타순은 1~9. Naver 원값이 결손/범위 밖이면 sentinel(99)이
+  // 전달되므로 이름 해석을 포기한다(null → UI "주자" 표기).
   if (!Number.isInteger(orderNo) || orderNo > 9) return null;
 
   // 1) BoxScore 우선 — 교체 이력 반영. 같은 order의 마지막 entry가 현재 주자.
