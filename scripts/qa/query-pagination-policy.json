@@ -520,6 +520,7 @@
     "claim_api_fallback_alert": "inserts one fallback event, atomically claims one alert lease, returns one boolean should_send",
     "confirm_api_fallback_alert": "confirms one alert delivery (sets cooldown, clears lease, marks one event), returns void",
     "drain_api_fallback_alerts": "returns at most p_max_batch due alert outboxes to re-send (bounded batch)",
-    "nack_api_fallback_alert": "reschedules one alert attempt backoff by token owner, returns void/boolean"
+    "nack_api_fallback_alert": "reschedules one alert attempt backoff by token owner, returns void/boolean",
+    "venue_stats_season_team_aggregates": "returns one jsonb aggregate (per-team season totals + per-game ledger verification flags for one season, ~1.5k bounded entries)"
   }
 }

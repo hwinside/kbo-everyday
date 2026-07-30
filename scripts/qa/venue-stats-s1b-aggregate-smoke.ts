@@ -1,0 +1,462 @@
+/**
+ * 직관 다이어리 통계 S1b — 순수 집계 모듈 회귀 (네트워크·DB 없음).
+ * spec: Notion "[기획] 직관 다이어리 통계 v1" rev5 §5·§9·§10·§11·§12
+ *
+ * 커버 (§9/§11 필수 회귀 중 S1b 순수 로직 몫):
+ *  - regular final만 산입, manual+GPS 동일 game dedupe, overall/gps 스키마 동일·scope 전환
+ *  - A1 동일 분모(W/(W+L+D))·officialWinRate 메타 분리, mixed A1 top-level comparable null+perTeam
+ *  - AVG/ERA pooled denominator, HR·피안타 per-game, B 표본 가드(AB60/outs81/final3)
+ *  - complete·incomplete 혼합 → B/C partial_data fail-closed (+unknownGameIds coverage)
+ *  - C 현재 최애 재계산·appearance/dnp/unknown coverage·C6 역할별 ranking·C5 top1
+ *  - D1 1점차 경계, D6 ready+no_wins leaf 승격(§12 고정 payload), D5 cancelled만
+ *  - E1 스트릭(일정 기반 current/longest), E2/E3/E4 사실형
+ *  - empty 계약(§11)·cancelled-only(no_final)·cancelled-only+invalid snapshot(=invalid_snapshot 단 1개)
+ *  - 판정 사다리 결속: 모든 state는 resolveMetricState/worstState(§12 유일 선언) 경유
+ *
+ * 실행: npm run qa:venue-stats-s1b-aggregate
+ */
+import { canonicalPayloadHash, type LedgerRecord } from "@/lib/game-logs/completeness";
+import type { PlayerGameLogRow } from "@/lib/game-logs/ingest";
+import type { KboGame, TeamStanding } from "@/lib/crawler/kbo-api";
+import type { FavoritePlayerSnapshot } from "@/lib/venue-attendance/player-comparison";
+import type { VenueAttendanceRow } from "@/lib/venue-attendance/summary";
+import {
+  buildVenueStatsScope,
+  parseGameTeamCodes,
+  type SeasonGameVerification,
+  type TeamSeasonTotals,
+  type VenueStatsAggregateInput,
+} from "@/lib/venue-stats/aggregate";
+import { METRIC_IDS, type MetricEnvelope } from "@/lib/venue-stats/types";
+
+let pass = 0;
+let fail = 0;
+function ok(name: string, cond: boolean, detail?: string) {
+  if (cond) {
+    pass++;
+    console.log(`  ✓ ${name}${detail ? ` — ${detail}` : ""}`);
+  } else {
+    fail++;
+    console.error(`  ✗ ${name}${detail ? ` — ${detail}` : ""}`);
+  }
+}
+function approx(a: number | null | undefined, b: number, eps = 1e-9): boolean {
+  return typeof a === "number" && Math.abs(a - b) < eps;
+}
+
+// ── fixture ──────────────────────────────────────────────────────────────────
+// 팀: LG=1, OB=2, KT=3. 최애: F1=70001(타자, LG), F2=70002(투수, LG), F4=70004(타자, LG).
+const LG = 1;
+const OB = 2;
+const KT = 3;
+
+function game(partial: Partial<KboGame> & { gameId: string }): KboGame {
+  return {
+    date: partial.gameId.slice(0, 8),
+    time: "18:30",
+    stadium: "잠실",
+    awayTeamId: OB,
+    homeTeamId: LG,
+    awayName: "두산",
+    homeName: "LG",
+    awayScore: null,
+    homeScore: null,
+    inning: 0,
+    isTop: false,
+    status: "final",
+    awayStarterName: "",
+    homeStarterName: "",
+    winPitcher: "",
+    losePitcher: "",
+    savePitcher: "",
+    ...partial,
+  } as KboGame;
+}
+
+// G1~G6: 직관 경기. G4=ledger 없음(incomplete), G5=우천취소, G6=manual 전용.
+const G1 = game({ gameId: "20260601LGOB0", time: "14:00", homeTeamId: LG, awayTeamId: OB, homeScore: 5, awayScore: 3 });
+const G2 = game({ gameId: "20260605OBLG0", stadium: "고척", homeTeamId: OB, awayTeamId: LG, homeScore: 4, awayScore: 4 });
+const G3 = game({ gameId: "20260610LGKT0", stadium: "수원", homeTeamId: KT, awayTeamId: LG, homeScore: 2, awayScore: 1 });
+const G4 = game({ gameId: "20260615LGOB0", homeTeamId: LG, awayTeamId: OB, homeScore: 7, awayScore: 1 });
+const G5 = game({ gameId: "20260620LGOB0", status: "cancelled" });
+const G6 = game({ gameId: "20260625LGOB0", time: "17:00", homeTeamId: LG, awayTeamId: OB, homeScore: 3, awayScore: 2 });
+// G7/G8: 직관 안 간 LG 시즌 경기 (E1 일정·시즌 baseline 전용).
+const GAMES = new Map([G1, G2, G3, G4, G5, G6].map((g) => [g.gameId, g]));
+
+let rowSeq = 1;
+function att(gameId: string, source: VenueAttendanceRow["source"], snapshot: number | null = LG): VenueAttendanceRow {
+  return {
+    id: rowSeq++,
+    game_id: gameId,
+    game_date: `${gameId.slice(0, 4)}-${gameId.slice(4, 6)}-${gameId.slice(6, 8)}`,
+    favorite_team_id_snapshot: snapshot,
+    stadium_name: null,
+    recorded_at: "2026-07-01T00:00:00Z",
+    source,
+  };
+}
+
+function log(
+  gameId: string,
+  kboId: string,
+  type: "batter" | "pitcher",
+  teamId: number,
+  stats: Partial<PlayerGameLogRow>,
+): PlayerGameLogRow {
+  const isHome = GAMES.get(gameId) ? GAMES.get(gameId)!.homeTeamId === teamId : true;
+  return {
+    kbo_id: kboId,
+    player_type: type,
+    game_id: gameId,
+    game_date: `${gameId.slice(0, 4)}-${gameId.slice(4, 6)}-${gameId.slice(6, 8)}`,
+    team_id: teamId,
+    team_code: teamId === LG ? "LG" : teamId === OB ? "OB" : "KT",
+    opponent_team_id: teamId === LG ? OB : LG,
+    is_home: isHome,
+    result: "W",
+    ab: 0, h: 0, hr: 0, rbi: 0, bb: 0, so: 0,
+    ip_outs: 0, er: 0, h_allowed: 0, k: 0, bb_allowed: 0,
+    ...stats,
+  };
+}
+
+// complete 경기별 전체 행 (LG 타자 3 + LG 투수 2 + OB 타자 1) — 팀 경기 합계 AB30/H9/HR1, outs27/er3/hA8.
+const GAME_ROWS: Record<string, PlayerGameLogRow[]> = {
+  [G1.gameId]: [
+    log(G1.gameId, "70001", "batter", LG, { ab: 4, h: 2, hr: 1, rbi: 2 }),
+    log(G1.gameId, "70004", "batter", LG, { ab: 13, h: 4 }),
+    log(G1.gameId, "71002", "batter", LG, { ab: 13, h: 3 }),
+    log(G1.gameId, "70002", "pitcher", LG, { ip_outs: 18, er: 2, k: 6, h_allowed: 5 }),
+    log(G1.gameId, "71003", "pitcher", LG, { ip_outs: 9, er: 1, k: 3, h_allowed: 3 }),
+    log(G1.gameId, "72001", "batter", OB, { ab: 4, h: 1 }),
+  ],
+  [G2.gameId]: [
+    log(G2.gameId, "70001", "batter", LG, { ab: 4, h: 1 }),
+    log(G2.gameId, "70004", "batter", LG, { ab: 13, h: 4, hr: 1 }),
+    log(G2.gameId, "71002", "batter", LG, { ab: 13, h: 4 }),
+    log(G2.gameId, "70002", "pitcher", LG, { ip_outs: 18, er: 2, k: 6, h_allowed: 5 }),
+    log(G2.gameId, "71003", "pitcher", LG, { ip_outs: 9, er: 1, k: 3, h_allowed: 3 }),
+    log(G2.gameId, "72001", "batter", OB, { ab: 4, h: 2 }),
+  ],
+  [G3.gameId]: [
+    log(G3.gameId, "70001", "batter", LG, { ab: 3, h: 2 }),
+    log(G3.gameId, "70004", "batter", LG, { ab: 14, h: 4 }),
+    log(G3.gameId, "71002", "batter", LG, { ab: 13, h: 3, hr: 1 }),
+    log(G3.gameId, "70002", "pitcher", LG, { ip_outs: 18, er: 2, k: 6, h_allowed: 5 }),
+    log(G3.gameId, "71003", "pitcher", LG, { ip_outs: 9, er: 1, k: 3, h_allowed: 3 }),
+    log(G3.gameId, "72001", "batter", KT, { ab: 4, h: 1 }),
+  ],
+  // G4는 행은 있지만 ledger 없음 → fail-closed incomplete (§11).
+  [G4.gameId]: [
+    log(G4.gameId, "70001", "batter", LG, { ab: 4, h: 3, hr: 1, rbi: 4 }),
+  ],
+  [G6.gameId]: [
+    log(G6.gameId, "70001", "batter", LG, { ab: 4, h: 1, hr: 1, rbi: 1 }),
+    log(G6.gameId, "70004", "batter", LG, { ab: 13, h: 4 }),
+    log(G6.gameId, "71002", "batter", LG, { ab: 13, h: 4 }),
+    log(G6.gameId, "70002", "pitcher", LG, { ip_outs: 18, er: 2, k: 6, h_allowed: 5 }),
+    log(G6.gameId, "71003", "pitcher", LG, { ip_outs: 9, er: 1, k: 3, h_allowed: 3 }),
+    log(G6.gameId, "72001", "batter", OB, { ab: 4, h: 0 }),
+  ],
+};
+
+const ATTENDANCE_LOGS = Object.values(GAME_ROWS).flat();
+
+const LEDGERS = new Map<string, LedgerRecord>(
+  [G1, G2, G3, G6].map((g) => {
+    const rows = GAME_ROWS[g.gameId];
+    return [
+      g.gameId,
+      {
+        status: "complete" as const,
+        expected_row_count: rows.length,
+        expected_payload_hash: canonicalPayloadHash(rows),
+      },
+    ];
+  }),
+);
+
+// 시즌 ledger 경기 검증 목록 (RPC games 결과 상당) — G4 incomplete, G7/G8 미직관.
+const SEASON_GAMES: SeasonGameVerification[] = [
+  ...[G1, G2, G3, G6].map((g) => ({
+    gameId: g.gameId,
+    gameDate: `${g.gameId.slice(0, 4)}-${g.gameId.slice(4, 6)}-${g.gameId.slice(6, 8)}`,
+    complete: true,
+    teamCodes: parseGameTeamCodes(g.gameId),
+  })),
+  {
+    gameId: G4.gameId,
+    gameDate: "2026-06-15",
+    complete: false,
+    teamCodes: parseGameTeamCodes(G4.gameId),
+  },
+  { gameId: "20260628LGOB0", gameDate: "2026-06-28", complete: true, teamCodes: ["LG", "OB"] },
+  { gameId: "20260629LGOB0", gameDate: "2026-06-29", complete: true, teamCodes: ["LG", "OB"] },
+];
+
+const FAVORITE_SEASON_LOGS: PlayerGameLogRow[] = [
+  ...ATTENDANCE_LOGS.filter((r) => ["70001", "70002", "70004"].includes(r.kbo_id)),
+  log("20260628LGOB0", "70001", "batter", LG, { ab: 4, h: 1 }),
+  log("20260628LGOB0", "70004", "batter", LG, { ab: 10, h: 2 }),
+  log("20260629LGOB0", "70002", "pitcher", LG, { ip_outs: 18, er: 2, k: 6, h_allowed: 4 }),
+];
+
+const FAVORITES: FavoritePlayerSnapshot[] = [
+  { playerId: "70001", name: "최애타자", teamId: LG },
+  { playerId: "70002", name: "최애투수", teamId: LG },
+  { playerId: "70004", name: "최애타자2", teamId: LG },
+];
+
+const STANDINGS: TeamStanding[] = [
+  { teamName: "LG", teamId: LG, games: 100, wins: 50, losses: 40, draws: 10, winRate: 0.556, gamesBehind: 0 },
+  { teamName: "KT", teamId: KT, games: 100, wins: 45, losses: 50, draws: 5, winRate: 0.474, gamesBehind: 5 },
+];
+
+const TEAM_TOTALS = new Map<number, TeamSeasonTotals>([
+  [LG, { teamId: LG, completeGames: 30, ab: 900, h: 225, hr: 30, outs: 810, er: 120, hAllowed: 250 }],
+  [KT, { teamId: KT, completeGames: 30, ab: 900, h: 250, hr: 25, outs: 810, er: 100, hAllowed: 240 }],
+]);
+
+const BASE_ROWS: VenueAttendanceRow[] = [
+  att(G1.gameId, "story_geofence"),
+  att(G1.gameId, "diary_manual"), // 동일 game_id GPS+manual → dedupe 1경기 (§5)
+  att(G2.gameId, "story_geofence"),
+  att(G3.gameId, "story_geofence"),
+  att(G4.gameId, "diary_manual"),
+  att(G5.gameId, "story_geofence"),
+  att(G6.gameId, "diary_manual"),
+];
+
+function input(over: Partial<VenueStatsAggregateInput> = {}): VenueStatsAggregateInput {
+  return {
+    season: 2026,
+    supportedSeason: 2026,
+    scope: "overall",
+    rows: BASE_ROWS,
+    games: GAMES,
+    standings: STANDINGS,
+    currentTeamId: LG,
+    favorites: FAVORITES,
+    attendanceLogs: ATTENDANCE_LOGS,
+    ledgers: LEDGERS,
+    seasonGames: SEASON_GAMES,
+    teamSeasonTotals: TEAM_TOTALS,
+    favoriteSeasonLogs: FAVORITE_SEASON_LOGS,
+    todayKst: "2026-07-30",
+    ...over,
+  };
+}
+
+function item(m: MetricEnvelope, key: string) {
+  return m.items?.find((i) => i.key === key);
+}
+
+// ── 1) overall — complete·incomplete 혼합 ────────────────────────────────────
+console.log("\n[1] overall scope (complete+incomplete 혼합, manual 포함, dedupe)");
+{
+  const s = buildVenueStatsScope(input({ scope: "overall" }));
+  ok("scope.state=ready", s.state === "ready");
+  ok("22종 metric 전부 존재", METRIC_IDS.every((id) => s.metrics[id] !== undefined), `ids=${Object.keys(s.metrics).length}`);
+  ok("coverage: attendance 6 / final 5 / cancelled 1 / dedupe 1", s.coverage.attendanceGames === 6 && s.coverage.finalGames === 5 && s.coverage.cancelledGames === 1 && s.coverage.dedupedRows === 1);
+  ok("coverage: incomplete final 1 (G4 ledger 없음 fail-closed)", s.coverage.incompleteFinalGames === 1);
+
+  const a1 = s.metrics.A1 as MetricEnvelope<{ attendance: { w: number; l: number; d: number; rate: number | null }; teamComparable: { rate: number | null } | null; deltaPp: number | null }>;
+  ok("A1 ready, 3승1패1무", a1.state === "ready" && a1.value?.attendance.w === 3 && a1.value?.attendance.l === 1 && a1.value?.attendance.d === 1);
+  ok("A1 동일 분모 rate=W/(W+L+D)=.6", approx(a1.value?.attendance.rate, 3 / 5));
+  ok("A1 팀 rate=50/100=.5, deltaPp=+10", approx(a1.value?.teamComparable?.rate, 0.5) && approx(a1.value?.deltaPp, 10));
+  const official = (a1.coverage as { officialWinRate?: { attendance: number | null } }).officialWinRate;
+  ok("A1 officialWinRate 메타=W/(W+L)=.75 (delta에 안 섞임)", approx(official?.attendance, 0.75));
+
+  const a2 = s.metrics.A2;
+  ok("A2 상대팀 cell: OB n=4 ready / KT n=1 sample_limited", item(a2, String(OB))?.n === 4 && item(a2, String(OB))?.state === "ready" && item(a2, String(KT))?.n === 1 && item(a2, String(KT))?.state === "sample_limited");
+  const a5 = s.metrics.A5;
+  ok("A5 낮/밤: day 2 / night 3 (18시 경계)", item(a5, "day")?.n === 2 && item(a5, "night")?.n === 3);
+
+  ok("B1 partial_data fail-closed (incomplete 혼합)", s.metrics.B1.state === "partial_data" && s.metrics.B1.value === null);
+  ok("B1 coverage.unknownGameIds=[G4]", JSON.stringify(s.metrics.B1.coverage.unknownGameIds) === JSON.stringify([G4.gameId]));
+  ok("B2/B4도 partial_data", s.metrics.B2.state === "partial_data" && s.metrics.B4.state === "partial_data");
+  const b3 = s.metrics.B3 as MetricEnvelope<{ runsPerGame: number | null; totalRuns: number }>;
+  ok("B3는 game 스코어 단독이라 partial 아님(§5 비교값 한정): 20득점/5경기=4.0", b3.state === "ready" && b3.value?.totalRuns === 20 && approx(b3.value?.runsPerGame, 4));
+
+  ok("C1 partial_data (G4 unknown_log_gap)", s.metrics.C1.state === "partial_data");
+  const c1f1 = item(s.metrics.C1, "70001");
+  ok("C1 F1 item coverage: eligible 5 / complete 4 / unknown 1", (c1f1?.coverage as { eligible: number; complete: number; unknown: number })?.eligible === 5 && (c1f1?.coverage as { complete: number })?.complete === 4 && (c1f1?.coverage as { unknown: number })?.unknown === 1);
+  ok("C4/C5도 partial_data", s.metrics.C4.state === "partial_data" && s.metrics.C5.state === "partial_data");
+
+  const d1 = s.metrics.D1 as MetricEnvelope<{ avgRunDiff: number | null; closeGameRate: number | null; closeGames: number }>;
+  ok("D1 avgRunDiff=+1.6, 1점차 경계 close 3/5", approx(d1.value?.avgRunDiff, 1.6) && d1.value?.closeGames === 3 && approx(d1.value?.closeGameRate, 0.6));
+  const d5 = s.metrics.D5 as MetricEnvelope<{ cancelledCount: number }>;
+  ok("D5 cancelledCount=1 (final 분모 미오염)", d5.state === "ready" && d5.value?.cancelledCount === 1);
+  const d6 = s.metrics.D6 as MetricEnvelope<{ maxTeamRuns: { gameId: string; runs: number } | null; maxMarginWin: { margin: number } | null }>;
+  ok("D6 maxTeamRuns=G4 7점 / maxMarginWin margin 6", d6.value?.maxTeamRuns?.gameId === G4.gameId && d6.value?.maxTeamRuns?.runs === 7 && d6.value?.maxMarginWin?.margin === 6);
+
+  const e1 = s.metrics.E1 as MetricEnvelope<{ current: number | null; longest: number }>;
+  ok("E1 일정 기반: longest=5(G1~G4,G6 연속) / current=0(G7·G8 미참석)", e1.value?.longest === 5 && e1.value?.current === 0);
+  const e3 = s.metrics.E3 as MetricEnvelope<{ firstAttendanceDate: string; daysSinceFirst: number; totalGames: number }>;
+  ok("E3 첫 직관 2026-06-01 · D+59 · 누적 6", e3.value?.firstAttendanceDate === "2026-06-01" && e3.value?.daysSinceFirst === 59 && e3.value?.totalGames === 6);
+  const e4 = s.metrics.E4;
+  ok("E4 topStadium ready + favorite 쪽 partial_data 독립 state(§11)", e4.components?.topStadium.state === "ready" && e4.components?.mostSeenFavorites.state === "partial_data");
+}
+
+// ── 2) gps — scope 전환 (manual 제외 → 전부 complete) ────────────────────────
+console.log("\n[2] gps scope (story_geofence만 — manual 혼입 금지 #972 동일 분모 규칙)");
+{
+  // C 정상값 산식 검증을 위해 시즌 baseline도 unknown=0인 대조군을 사용한다.
+  const s = buildVenueStatsScope(input({
+    scope: "gps",
+    seasonGames: SEASON_GAMES.filter((game) => game.complete),
+  }));
+  ok("gps filter sources=[story_geofence]", JSON.stringify(s.filter.sources) === JSON.stringify(["story_geofence"]));
+  ok("gps attendance 4 (G1,G2,G3,G5) / final 3 — manual(G4,G6) 미혼입", s.coverage.attendanceGames === 4 && s.coverage.finalGames === 3);
+  ok("overall/gps 스키마 동일 (metric id set)", JSON.stringify(Object.keys(s.metrics).sort()) === JSON.stringify([...METRIC_IDS].sort()));
+
+  const a1 = s.metrics.A1 as MetricEnvelope<{ attendance: { w: number; d: number; l: number; rate: number | null } }>;
+  ok("A1 gps 1승1무1패 rate=1/3", a1.value?.attendance.w === 1 && approx(a1.value?.attendance.rate, 1 / 3));
+
+  const b1 = s.metrics.B1 as MetricEnvelope<{ attendanceAvg: number | null; seasonAvg: number | null; delta: number | null }>;
+  ok("B1 ready: AVG pooled 27/90=.300 vs 시즌 .250, delta +.050", b1.state === "ready" && approx(b1.value?.attendanceAvg, 0.3) && approx(b1.value?.seasonAvg, 0.25) && approx(b1.value?.delta, 0.05));
+  ok("B1 denominator {attendanceAB:90, seasonAB:900}", b1.denominator.attendanceAB === 90 && b1.denominator.seasonAB === 900);
+  const b2 = s.metrics.B2 as MetricEnvelope<{ attendanceEra: number | null; seasonEra: number | null }>;
+  ok("B2 ready: ERA 27×9/81=3.00 vs 4.00 (outs 81 경계 통과)", b2.state === "ready" && approx(b2.value?.attendanceEra, 3) && approx(b2.value?.seasonEra, 4));
+  const b4 = s.metrics.B4 as MetricEnvelope<{ hr: { attendancePerGame: number | null; seasonPerGame: number | null } ; hitsAllowed: { attendancePerGame: number | null } }>;
+  ok("B4 per-game: HR 1.0 vs 1.0 / 피안타 8.0", approx(b4.value?.hr.attendancePerGame, 1) && approx(b4.value?.hr.seasonPerGame, 1) && approx(b4.value?.hitsAllowed.attendancePerGame, 8));
+  ok("B4 components(hr/hitsAllowed) envelope 의무(§11)", b4.components?.hr.state === "ready" && b4.components?.hitsAllowed.state === "ready");
+
+  const c1 = s.metrics.C1;
+  const f1 = item(c1, "70001");
+  ok("C1 F1 ready: 직관 5/11 vs 시즌 7/19", f1?.state === "ready" && approx((f1?.value as { attendanceAvg: number })?.attendanceAvg, 5 / 11) && approx((f1?.value as { seasonAvg: number })?.seasonAvg, 7 / 19));
+  ok("C1 coverage: appearance 3 / dnp 0 / unknown 0", (f1?.coverage as { appearances: number; unknown: number })?.appearances === 3 && (f1?.coverage as { unknown: number })?.unknown === 0);
+  const c2 = s.metrics.C2;
+  const f2 = item(c2, "70002");
+  ok("C2 F2 ready: ERA 3.00 vs 3.00, K/9=9, outs 54≥15", f2?.state === "ready" && approx((f2?.value as { attendanceEra: number })?.attendanceEra, 3) && approx((f2?.value as { attendanceK9: number })?.attendanceK9, 9));
+  const c4 = s.metrics.C4;
+  ok("C4 홈런 목격: F1 1방(G1)·appearance 3", (item(c4, "70001")?.value as { homeRuns: number; appearanceGames: number })?.homeRuns === 1 && (item(c4, "70001")?.value as { appearanceGames: number })?.appearanceGames === 3);
+  const c5 = s.metrics.C5;
+  const f1c5 = item(c5, "70001")?.value as { batterTop?: { gameId: string; hr: number } };
+  ok("C5 F1 batterTop=G1 (HR desc 우선 — §10 lexicographic)", f1c5?.batterTop?.gameId === G1.gameId && f1c5?.batterTop?.hr === 1);
+  const c6 = s.metrics.C6 as MetricEnvelope<{ batterRanking: Array<{ playerId: string; boostPct: number }> }>;
+  ok("C6 타자 2명 → batterRanking ready·F1 1위(boost 최대)", c6.components?.batterRanking.state === "ready" && c6.value?.batterRanking[0]?.playerId === "70001");
+  ok("C6 투수 1명 → pitcherRanking sample_limited (역할별 독립 — §10)", c6.components?.pitcherRanking.state === "sample_limited");
+
+  const e1 = s.metrics.E1 as MetricEnvelope<{ longest: number; current: number | null }>;
+  ok("E1 gps: longest=3 (G1~G3) / current=0", e1.value?.longest === 3 && e1.value?.current === 0);
+}
+
+// ── 3) empty 계약 (§11) ──────────────────────────────────────────────────────
+console.log("\n[3] empty 계약 — 0 attendance");
+{
+  const s = buildVenueStatsScope(input({ rows: [] }));
+  ok("scope.state=empty", s.state === "empty");
+  ok("모든 metric state=empty·n=0", METRIC_IDS.every((id) => s.metrics[id].state === "empty" && s.metrics[id].n === 0));
+  ok("scalar/compound value=null (A1·E3)", s.metrics.A1.value === null && s.metrics.E3.value === null);
+  ok("list value/items=[] (A2·C1)", JSON.stringify(s.metrics.A2.value) === "[]" && JSON.stringify(s.metrics.C1.items) === "[]");
+  ok("denominator shape 유지·전부 0 (B1)", s.metrics.B1.denominator.attendanceAB === 0 && s.metrics.B1.denominator.seasonAB === 0);
+  const gps = buildVenueStatsScope(input({ rows: [att(G6.gameId, "diary_manual")], scope: "gps" }));
+  ok("gps empty / overall nonempty 교차", gps.state === "empty" && buildVenueStatsScope(input({ rows: [att(G6.gameId, "diary_manual")], scope: "overall" })).state === "ready");
+}
+
+// ── 4) cancelled-only·복합 상태 (§12 파이프라인 순서) ────────────────────────
+console.log("\n[4] cancelled-only / 복합 invalid snapshot / no_favorite");
+{
+  const cancelledOnly = buildVenueStatsScope(input({ rows: [att(G5.gameId, "story_geofence")] }));
+  ok("cancelled-only: A1=no_final (성적 모수 미산입)", cancelledOnly.metrics.A1.state === "no_final");
+  ok("cancelled-only: C1=no_final (no_final > no_favorite — §12 사다리)", buildVenueStatsScope(input({ rows: [att(G5.gameId, "story_geofence")], favorites: [] })).metrics.C1.state === "no_final");
+  ok("cancelled-only: D5 사실형 ready·cancelledCount=1", cancelledOnly.metrics.D5.state === "ready" && (cancelledOnly.metrics.D5.value as { cancelledCount: number }).cancelledCount === 1);
+  ok("cancelled-only: E2/E3 사실형 ready", cancelledOnly.metrics.E2.state === "ready" && cancelledOnly.metrics.E3.state === "ready");
+
+  const compound = buildVenueStatsScope(input({ rows: [att(G5.gameId, "story_geofence", null)] }));
+  ok("cancelled-only+invalid snapshot → invalid_snapshot 단 1개(§12 rev5 복합 확정)", compound.metrics.A1.state === "invalid_snapshot" && compound.metrics.B1.state === "invalid_snapshot" && compound.metrics.D6.state === "invalid_snapshot");
+  ok("복합에서도 D5는 ready (invalid_snapshot 적용 범위 밖 — §10)", compound.metrics.D5.state === "ready");
+  ok("invalid coverage=[{gameId,reason:snapshot_missing}]", JSON.stringify(compound.metrics.A1.coverage.invalidSnapshot) === JSON.stringify([{ gameId: G5.gameId, reason: "snapshot_missing" }]));
+
+  const mismatch = buildVenueStatsScope(input({ rows: [att(G1.gameId, "story_geofence", KT)] }));
+  ok("snapshot_team_mismatch → invalid_snapshot fail-closed(행 폐기 금지 — §9)", mismatch.metrics.A1.state === "invalid_snapshot" && (mismatch.metrics.A1.coverage.invalidSnapshot as Array<{ reason: string }>)[0]?.reason === "snapshot_team_mismatch");
+
+  const noFav = buildVenueStatsScope(input({ rows: [att(G1.gameId, "story_geofence")], favorites: [] }));
+  ok("final≥1 + 최애 없음 → C1=no_favorite", noFav.metrics.C1.state === "no_favorite");
+}
+
+// ── 5) mixed team (§10·§11) ──────────────────────────────────────────────────
+console.log("\n[5] mixed snapshot team — A1/B perTeam");
+{
+  const s = buildVenueStatsScope(input({
+    rows: [att(G1.gameId, "story_geofence", LG), att(G3.gameId, "story_geofence", KT)],
+  }));
+  const a1 = s.metrics.A1 as MetricEnvelope<{ teamComparable: unknown; deltaPp: unknown; attendance: { w: number } }>;
+  ok("A1 mixed_team: top-level teamComparable/deltaPp=null (§11 exact)", a1.state === "mixed_team" && a1.value?.teamComparable === null && a1.value?.deltaPp === null);
+  ok("A1 perTeam 2팀 item (LG W / KT W)", a1.items?.length === 2 && item(a1, String(LG)) !== undefined && item(a1, String(KT)) !== undefined);
+  ok(
+    "A1 perTeam 1경기 표본 미달은 item value=null (§5)",
+    item(a1, String(LG))?.state === "sample_limited" && item(a1, String(LG))?.value === null,
+  );
+  ok("B1 mixed_team: value=null + perTeam items", s.metrics.B1.state === "mixed_team" && s.metrics.B1.value === null && s.metrics.B1.items?.length === 2);
+  const e1 = s.metrics.E1 as MetricEnvelope<{ perTeam: Array<{ teamId: number }> }>;
+  ok("E1 perTeam 팀별 구간 분리 (팀 가로지르기 금지 — §9)", (e1.value?.perTeam.length ?? 0) >= 2);
+}
+
+// ── 6) 표본 가드·no_wins·attendance_only ─────────────────────────────────────
+console.log("\n[6] 표본 가드 / D6 no_wins leaf 승격 / attendance_only");
+{
+  const single = buildVenueStatsScope(input({
+    rows: [att(G3.gameId, "story_geofence")],
+    seasonGames: SEASON_GAMES.filter((game) => game.complete),
+  }));
+  ok("final 1경기: A1 sample_limited (final≥3 가드)", single.metrics.A1.state === "sample_limited");
+  ok("A1 표본 미달 value=null (§5)", single.metrics.A1.value === null);
+  ok("B1 sample_limited (AB 30<60)·value=null", single.metrics.B1.state === "sample_limited" && single.metrics.B1.value === null);
+
+  const d6 = single.metrics.D6;
+  ok("D6 무승: outer=ready 승격(leaf 제외 — §12) + maxMarginWin=no_wins", d6.state === "ready" && d6.components?.maxMarginWin.state === "no_wins");
+  ok("D6 no_wins 고정 payload: value.maxMarginWin=null·denominator {wins:0}", (d6.value as { maxMarginWin: unknown }).maxMarginWin === null && d6.components?.maxMarginWin.denominator.wins === 0);
+  const a1single = single.metrics.A1;
+  ok("loss-only rate=0 (0 위조 아님 — denominator>0 유효값)", approx((a1single.value as { attendance: { rate: number | null } } | null)?.attendance.rate ?? NaN, 0) || a1single.state === "sample_limited");
+
+  const s2025 = buildVenueStatsScope(input({ season: 2025 }));
+  ok("2025: A1 attendance_only — 직관 사실값 유지·팀 비교 null (§9)", s2025.metrics.A1.state === "attendance_only" && (s2025.metrics.A1.value as { teamComparable: unknown })?.teamComparable === null);
+  ok("2025: B1/C1 fail-closed attendance_only", s2025.metrics.B1.state === "attendance_only" && s2025.metrics.C1.state === "attendance_only");
+  ok("2025: A2 스플릿·D1·E3는 계산 유지", s2025.metrics.A2.state !== "attendance_only" && s2025.metrics.E3.state === "ready");
+  ok("2025: E1 unsupported (일정 소스 없음)", s2025.metrics.E1.state === "unsupported");
+
+  const noRpc = buildVenueStatsScope(input({ teamSeasonTotals: null, seasonGames: null }));
+  ok("RPC 실패: B1 attendance_only fail-closed", noRpc.metrics.B1.state === "attendance_only");
+  const noStandings = buildVenueStatsScope(input({ standings: null }));
+  ok("standings 실패: A1 attendance_only + reasons", noStandings.metrics.A1.state === "attendance_only" && noStandings.metrics.A1.reasons?.includes("standings_unavailable") === true);
+}
+
+// ── 7) 시즌 우주 fail-closed (삼순 NO-GO P0 회귀 — backfill 0/부분/빈 우주) ──
+console.log("\n[7] 시즌 우주 fail-closed — backfill 0 / 부분 backfill / 빈 우주 false-green 금지");
+{
+  // (a) backfill 0: 정규 final 우주는 있으나 시즌 ledger 전무 → 전 경기 complete=false 강등.
+  const zeroBackfill = buildVenueStatsScope(input({
+    seasonGames: SEASON_GAMES.map((g) => ({ ...g, complete: false })),
+    teamSeasonTotals: new Map(),
+  }));
+  ok("[backfill 0] B1 partial_data·value=null (ready·null false-green 금지)", zeroBackfill.metrics.B1.state === "partial_data" && zeroBackfill.metrics.B1.value === null);
+  ok("[backfill 0] B2/B4도 partial_data", zeroBackfill.metrics.B2.state === "partial_data" && zeroBackfill.metrics.B4.state === "partial_data");
+  // 시즌 complete 0 → 최애 역할 baseline 자체가 미증명 → item worstState=attendance_only (partial보다 상위 fail-closed).
+  ok("[backfill 0] C1 attendance_only fail-closed·value=[] (false-green 금지)", zeroBackfill.metrics.C1.state === "attendance_only" && JSON.stringify(zeroBackfill.metrics.C1.value) === "[]", `actual=${zeroBackfill.metrics.C1.state}`);
+  const zbE1 = zeroBackfill.metrics.E1 as MetricEnvelope<{ longest: number; current: number | null }>;
+  ok("[backfill 0] E1은 권위 일정 우주 기반이라 계산 유지 (longest=5)", zbE1.state === "ready" && zbE1.value?.longest === 5);
+
+  // (b) 빈 우주: RPC/우주 소스가 빈 배열을 반환하는 결함 — ready·null false-green이 아니라 fail-closed.
+  const emptyUniverse = buildVenueStatsScope(input({ seasonGames: [], teamSeasonTotals: new Map() }));
+  ok("[빈 우주] B1 attendance_only fail-closed (ready·seasonAvg null 금지)", emptyUniverse.metrics.B1.state === "attendance_only" && emptyUniverse.metrics.B1.value === null);
+  ok("[빈 우주] B2/B4도 attendance_only", emptyUniverse.metrics.B2.state === "attendance_only" && emptyUniverse.metrics.B4.state === "attendance_only");
+  const euE1 = emptyUniverse.metrics.E1 as MetricEnvelope<{ perTeam: unknown[] }>;
+  ok("[빈 우주] E1 unsupported + schedule_unavailable (ready·perTeam:[] 금지)", euE1.state === "unsupported" && euE1.reasons?.includes("schedule_unavailable") === true);
+  ok("[빈 우주] C1/C2 attendance_only fail-closed", emptyUniverse.metrics.C1.state === "attendance_only" && emptyUniverse.metrics.C2.state === "attendance_only");
+
+  // (c) 부분 backfill: 시즌 우주 중 일부만 ledger 존재 → 나머지가 complete=false로 coverage 반영.
+  const partial = buildVenueStatsScope(input({
+    seasonGames: SEASON_GAMES.map((g) =>
+      ["20260628LGOB0", "20260629LGOB0"].includes(g.gameId) ? { ...g, complete: false } : g,
+    ),
+  }));
+  const partialUnknown = partial.metrics.B1.coverage.unknownGameIds as string[];
+  ok("[부분 backfill] B1 partial_data (미적재 시즌 경기 강등 반영)", partial.metrics.B1.state === "partial_data" && partial.metrics.B1.value === null);
+  ok("[부분 backfill] unknownGameIds에 ledger 없는 시즌 경기 포함", partialUnknown.includes("20260628LGOB0") && partialUnknown.includes("20260629LGOB0"));
+  ok("[부분 backfill] C1 partial_data", partial.metrics.C1.state === "partial_data");
+}
+
+console.log(`\n결과: ${pass} pass / ${fail} fail`);
+if (fail > 0) process.exit(1);
