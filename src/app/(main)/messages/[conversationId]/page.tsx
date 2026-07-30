@@ -15,6 +15,7 @@ import { isNoReplySender, noReplyBannerLabel } from "@/lib/constants/no-reply-se
 import TeamBadge from "@/components/ui/TeamBadge";
 import { linkifyText } from "@/lib/linkify";
 import NewsClippingCard from "@/components/dm/NewsClippingCard";
+import GeniusTypingIndicator from "@/components/dm/GeniusTypingIndicator";
 import { isNewsClippingPayload } from "@/types/news-clipping";
 import {
   BASEBALL_GENIUS_NAME,
@@ -428,6 +429,9 @@ export default function DMChatPage() {
             );
           })
         )}
+        {isBaseballGeniusConv && (
+          <GeniusTypingIndicator state={geniusReplyState} onRetry={retryBaseballQa} />
+        )}
         <div ref={bottomRef} />
       </div>
 
@@ -449,24 +453,6 @@ export default function DMChatPage() {
         <div className="px-5 py-3 border-t border-border bg-bg-secondary pb-safe">
           {sendError && (
             <p role="alert" className="mb-2 text-center text-xs text-red-500">{sendError}</p>
-          )}
-          {isBaseballGeniusConv && geniusReplyState !== "idle" && (
-            <div className="mb-2 text-center text-xs text-text-tertiary">
-              {geniusReplyState === "failed" ? (
-                <>
-                  답변을 받지 못했어요.{" "}
-                  <button
-                    type="button"
-                    onClick={retryBaseballQa}
-                    className="font-semibold text-accent underline"
-                  >
-                    다시 시도
-                  </button>
-                </>
-              ) : (
-                "답변을 준비하고 있어요…"
-              )}
-            </div>
           )}
           {isOperatorConv && images.length > 0 && (
             <div className="flex flex-wrap gap-2 mb-2">

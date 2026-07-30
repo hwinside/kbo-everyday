@@ -198,6 +198,7 @@
     "qa:game-live-stream": "tsx scripts/qa/game-live-stream-smoke.ts",
     "qa:diary-contrast": "node scripts/qa/venue-diary-card-contrast.mjs",
     "qa:baseball-qa": "tsx scripts/qa/baseball-qa-pipeline-smoke.ts",
+    "qa:genius-typing": "tsx --test scripts/qa/genius-typing-indicator-smoke.ts",
     "qa:outage-banner": "tsx scripts/qa/outage-notice-banner-smoke.ts"
   },
   "dependencies": {
