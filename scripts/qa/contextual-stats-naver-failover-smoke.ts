@@ -1,76 +1,27 @@
 /**
- * Smoke test for /api/contextual-stats KBO→Naver current-state failover.
- *
- * Why
- * ---
- * fetchLiveGame() reads the *current batter/pitcher* off KBO GetKboGameList.
- * When KBO hard-fails (HTTP !ok or JSON parse fail) it used to null-degrade,
- * blanking the whole contextual-stats box even while Naver relay still knows
- * who is at bat. This wires the shared Naver failover (fetchKboLiveGames,
- * whose naverGameToRaw maps relay currentGameState → B_P_NM/T_P_NM with the
- * matching GAME_TB_SC) into fetchLiveGame's failure branch.
- *
- * Fault injection (no network): fetchLiveGame(gameId, fetchImpl, failoverImpl).
- *
- * Assertions
- * ----------
- *   T1: KBO normal path unchanged — KBO ok + game found → uses KBO, no failover
- *   T2: KBO HTTP 500 + Naver ok(top) → batter/pitcher enriched from Naver
- *   T3: KBO JSON parse fail + Naver ok(bottom) → correct isTop-inverted mapping
- *   T4: KBO HTTP 500 + Naver ok:false → null degrade (fail-close)
- *   T5: KBO HTTP 500 + Naver ok but game absent → null degrade (fail-close)
- *   T6: KBO ok-but-game-not-found (soft) → null, failover NOT invoked (preserve)
+ * Fault-injection smoke for contextual-stats live-source failover and deadline.
  */
-
-// Pre-inject dummy SUPABASE env — importing the route transitively loads the
-// supabase/admin singleton, which requires env at module-eval time. Must be
-// first (ESM eval order). Production unaffected.
 import "./_smoke-env";
-import { fetchLiveGame } from "@/app/api/contextual-stats/route";
-import { naverGameToRaw } from "@/lib/notifications/kbo-live-games";
+import assert from "node:assert/strict";
+import {
+  fetchContextualBeforeDeadline,
+  fetchLiveGame,
+} from "@/app/api/contextual-stats/route";
 import type { KboGame } from "@/lib/crawler/kbo-api";
-import type { KboRawGame } from "@/types/api";
-
-let failures = 0;
-
-function assert(label: string, ok: boolean, detail?: unknown): void {
-  const tag = ok ? "PASS" : "FAIL";
-  console.log(`[${tag}] ${label}`);
-  if (!ok) {
-    failures++;
-    if (detail !== undefined) console.log("  detail:", detail);
-  }
-}
+import {
+  fetchKboLiveGames,
+  naverGameToRaw,
+} from "@/lib/notifications/kbo-live-games";
 
 const GAME_ID = "20260731LTOB0";
+const keepAlive = setInterval(() => {}, 1_000);
 
-function mkResponse(body: string, ok: boolean): Response {
+function response(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), { status });
+}
+
+function naverGame(isTop: boolean, batter: string, pitcher: string): KboGame {
   return {
-    ok,
-    status: ok ? 200 : 500,
-    text: async () => body,
-    json: async () => JSON.parse(body),
-  } as unknown as Response;
-}
-
-// A KBO GetKboGameList JSON body containing our game (top of inning).
-function kboBodyWithGame(isTop: boolean): string {
-  const game: Partial<KboRawGame> = {
-    G_ID: GAME_ID,
-    GAME_TB_SC: isTop ? "T" : "B",
-    GAME_INN_NO: 4,
-    // In KBO shape, T_P_NM is the away-side name slot, B_P_NM the home-side.
-    // isTop → batter = T_P_NM, pitcher = B_P_NM.
-    T_P_NM: isTop ? "KBO타자" : "KBO투수",
-    B_P_NM: isTop ? "KBO투수" : "KBO타자",
-  };
-  return JSON.stringify({ game: [game] });
-}
-
-// Build a Naver-origin KboRawGame via the real naverGameToRaw mapping so the
-// test exercises the actual field wiring, not a hand-rolled shape.
-function naverRaw(isTop: boolean, batter: string, pitcher: string): KboRawGame {
-  const game: Partial<KboGame> = {
     gameId: GAME_ID,
     date: "20260731",
     time: "18:30",
@@ -89,108 +40,215 @@ function naverRaw(isTop: boolean, batter: string, pitcher: string): KboRawGame {
     currentPitcher: pitcher,
     currentBatter: batter,
   };
-  return naverGameToRaw(game as KboGame);
 }
 
-type Failover = typeof import("@/lib/notifications/kbo-live-games").fetchKboLiveGames;
+const evidence = async () => ({
+  hasRealPlay: true,
+  balls: 2,
+  strikes: 1,
+  outs: 1,
+  runner1b: false,
+  runner2b: false,
+  runner3b: false,
+  runner1bOrder: 0,
+  runner2bOrder: 0,
+  runner3bOrder: 0,
+  currentPitcher: "네이버투수",
+  currentBatter: "네이버타자",
+});
 
-function okFailover(games: KboRawGame[]): Failover {
-  return (async () => ({
-    ok: true,
-    games,
-    trace: { source: "naver" as const, sourceAtMs: 0, fetchedAtMs: 0 },
-  })) as unknown as Failover;
+type LiveGames = typeof fetchKboLiveGames;
+type NaverFetcher = Parameters<LiveGames>[3];
+type EvidenceFetcher = Parameters<LiveGames>[4];
+
+function shared(
+  kboFetch: typeof fetch,
+  naverFetch: NaverFetcher,
+  evidenceFetch: EvidenceFetcher = evidence,
+): LiveGames {
+  return ((
+    date: string,
+    deadlineAtMs?: number,
+    _fetchImpl?: typeof fetch,
+    _fetchNaverImpl?: NaverFetcher,
+    _fetchNaverEvidenceImpl?: EvidenceFetcher,
+    requiredGameId?: string,
+  ) =>
+    fetchKboLiveGames(
+      date,
+      deadlineAtMs,
+      kboFetch,
+      naverFetch,
+      evidenceFetch,
+      requiredGameId,
+    )) as LiveGames;
 }
 
-const failClosedFailover: Failover = (async () => ({
-  ok: false,
-  games: [],
-  trace: { source: "kbo" as const, sourceAtMs: 0, fetchedAtMs: 0 },
-})) as unknown as Failover;
-
-function trackingFailover(games: KboRawGame[]): { impl: Failover; calls: () => number } {
-  let calls = 0;
-  const impl = (async () => {
-    calls += 1;
-    return {
-      ok: true,
-      games,
-      trace: { source: "naver" as const, sourceAtMs: 0, fetchedAtMs: 0 },
-    };
-  }) as unknown as Failover;
-  return { impl, calls: () => calls };
+function abortAwareHang(): typeof fetch {
+  return ((_url: RequestInfo | URL, init?: RequestInit) =>
+    new Promise<Response>((_resolve, reject) => {
+      const signal = init?.signal;
+      if (signal?.aborted) {
+        reject(new DOMException("aborted", "AbortError"));
+        return;
+      }
+      signal?.addEventListener(
+        "abort",
+        () => reject(new DOMException("aborted", "AbortError")),
+        { once: true },
+      );
+    })) as typeof fetch;
 }
 
 async function main() {
-  // T1: KBO normal path — ok + game found, failover must NOT be called.
+  // T1: KBO 정상 응답은 공용 helper에서 그대로 사용한다.
   {
-    const kboFetch = (async () => mkResponse(kboBodyWithGame(true), true)) as unknown as typeof fetch;
-    const fo = trackingFailover([]);
-    const snap = await fetchLiveGame(GAME_ID, kboFetch, fo.impl);
-    assert(
-      "T1 KBO ok+found → KBO used, no failover",
-      snap?.batterName === "KBO타자" && snap?.pitcherName === "KBO투수" && fo.calls() === 0,
-      { snap, failoverCalls: fo.calls() },
+    const raw = naverGameToRaw(naverGame(true, "KBO타자", "KBO투수"));
+    const kboFetch = (async () => response({ game: [raw] })) as typeof fetch;
+    let naverCalls = 0;
+    const naverFetch = (async () => {
+      naverCalls += 1;
+      return [];
+    }) as NaverFetcher;
+    const snapshot = await fetchLiveGame(
+      GAME_ID,
+      shared(kboFetch, naverFetch),
+      Date.now() + 500,
     );
+    assert.equal(snapshot?.batterName, "KBO타자");
+    assert.equal(snapshot?.pitcherName, "KBO투수");
+    assert.equal(naverCalls, 0);
   }
 
-  // T2: KBO HTTP 500 → Naver ok (top). batter=T_P_NM=currentBatter, pitcher=B_P_NM=currentPitcher.
+  // T2: KBO 200-empty도 authoritative empty로 확정하지 않고 Naver를 사용한다.
   {
-    const kboFetch = (async () => mkResponse("", false)) as unknown as typeof fetch;
-    const naver = naverRaw(true, "네이버타자", "네이버투수");
-    const snap = await fetchLiveGame(GAME_ID, kboFetch, okFailover([naver]));
-    assert(
-      "T2 KBO 500 + Naver top → batter/pitcher enriched",
-      snap?.batterName === "네이버타자" && snap?.pitcherName === "네이버투수",
-      snap,
+    const kboFetch = (async () => response({ game: [] })) as typeof fetch;
+    let naverCalls = 0;
+    const naverFetch = (async () => {
+      naverCalls += 1;
+      return [naverGame(true, "", "")];
+    }) as NaverFetcher;
+    const snapshot = await fetchLiveGame(
+      GAME_ID,
+      shared(kboFetch, naverFetch),
+      Date.now() + 500,
     );
+    assert.equal(snapshot?.batterName, "네이버타자");
+    assert.equal(snapshot?.pitcherName, "네이버투수");
+    assert.equal(naverCalls, 1);
   }
 
-  // T3: KBO JSON parse fail → Naver ok (bottom). Verifies isTop-inverted mapping.
+  // T3: KBO에 다른 경기만 있고 요청 경기 부재여도 Naver로 교차확인한다.
   {
-    const kboFetch = (async () => mkResponse("NOT_JSON<<<", true)) as unknown as typeof fetch;
-    const naver = naverRaw(false, "말타자", "말투수");
-    const snap = await fetchLiveGame(GAME_ID, kboFetch, okFailover([naver]));
-    assert(
-      "T3 KBO parse-fail + Naver bottom → correct mapping",
-      snap?.batterName === "말타자" && snap?.pitcherName === "말투수",
-      snap,
+    const otherRaw = {
+      ...naverGameToRaw(naverGame(true, "다른타자", "다른투수")),
+      G_ID: "20260731XXYY0",
+    };
+    const kboFetch = (async () => response({ game: [otherRaw] })) as typeof fetch;
+    let naverCalls = 0;
+    const naverFetch = (async () => {
+      naverCalls += 1;
+      return [naverGame(true, "", "")];
+    }) as NaverFetcher;
+    const snapshot = await fetchLiveGame(
+      GAME_ID,
+      shared(kboFetch, naverFetch),
+      Date.now() + 500,
     );
+    assert.equal(snapshot?.batterName, "네이버타자");
+    assert.equal(naverCalls, 1);
   }
 
-  // T4: KBO 500 + Naver ok:false → null degrade (fail-close).
+  // T4: KBO hard-hang은 sub-budget에서 끊고 남은 reserve로 Naver에 도달한다.
   {
-    const kboFetch = (async () => mkResponse("", false)) as unknown as typeof fetch;
-    const snap = await fetchLiveGame(GAME_ID, kboFetch, failClosedFailover);
-    assert("T4 KBO 500 + Naver ok:false → null", snap === null, snap);
-  }
-
-  // T5: KBO 500 + Naver ok but game absent → null degrade (fail-close).
-  {
-    const kboFetch = (async () => mkResponse("", false)) as unknown as typeof fetch;
-    const other = naverRaw(true, "x", "y");
-    other.G_ID = "20260731XXOO0";
-    const snap = await fetchLiveGame(GAME_ID, kboFetch, okFailover([other]));
-    assert("T5 KBO 500 + Naver game absent → null", snap === null, snap);
-  }
-
-  // T6: KBO ok but game not in list (soft) → null, failover NOT invoked (preserve current behavior).
-  {
-    const kboFetch = (async () => mkResponse(JSON.stringify({ game: [] }), true)) as unknown as typeof fetch;
-    const fo = trackingFailover([naverRaw(true, "a", "b")]);
-    const snap = await fetchLiveGame(GAME_ID, kboFetch, fo.impl);
-    assert(
-      "T6 KBO ok+not-found → null, no failover",
-      snap === null && fo.calls() === 0,
-      { snap, failoverCalls: fo.calls() },
+    let naverCalls = 0;
+    const naverFetch = (async () => {
+      naverCalls += 1;
+      return [naverGame(false, "", "")];
+    }) as NaverFetcher;
+    const startedAt = Date.now();
+    const snapshot = await fetchLiveGame(
+      GAME_ID,
+      shared(abortAwareHang(), naverFetch),
+      Date.now() + 2_000,
     );
+    assert.equal(snapshot?.batterName, "네이버타자");
+    assert.equal(snapshot?.pitcherName, "네이버투수");
+    assert.equal(naverCalls, 1);
+    assert.ok(Date.now() - startedAt < 2_000);
   }
 
-  console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILURE(S)`);
-  process.exit(failures === 0 ? 0 : 1);
+  // T5: Naver partial(해당 경기 없음)은 추측하지 않고 null degrade.
+  {
+    const kboFetch = (async () => response({}, 500)) as typeof fetch;
+    const naverFetch = (async () => [
+      { ...naverGame(true, "", ""), gameId: "20260731XXYY0" },
+    ]) as NaverFetcher;
+    const snapshot = await fetchLiveGame(
+      GAME_ID,
+      shared(kboFetch, naverFetch),
+      Date.now() + 500,
+    );
+    assert.equal(snapshot, null);
+  }
+
+  // T6: Naver timeout도 전체 deadline 안에서 null degrade.
+  {
+    const kboFetch = (async () => response({}, 500)) as typeof fetch;
+    const naverFetch = (async (
+      _date: string,
+      _srId?: string,
+      opts?: { signal?: AbortSignal },
+    ) => new Promise<KboGame[]>((_resolve, reject) => {
+      opts?.signal?.addEventListener(
+        "abort",
+        () => reject(new DOMException("aborted", "AbortError")),
+        { once: true },
+      );
+    })) as NaverFetcher;
+    const startedAt = Date.now();
+    const snapshot = await fetchLiveGame(
+      GAME_ID,
+      shared(kboFetch, naverFetch),
+      Date.now() + 80,
+    );
+    assert.equal(snapshot, null);
+    assert.ok(Date.now() - startedAt < 250);
+  }
+
+  // T7: dual-fail도 null degrade.
+  {
+    const kboFetch = (async () => response({}, 500)) as typeof fetch;
+    const naverFetch = (async () => {
+      throw new Error("Naver down");
+    }) as NaverFetcher;
+    const snapshot = await fetchLiveGame(
+      GAME_ID,
+      shared(kboFetch, naverFetch),
+      Date.now() + 500,
+    );
+    assert.equal(snapshot, null);
+  }
+
+  // T8: Box/Profile이 사용하는 공용 fetch wrapper도 hard-hang을 deadline에서 끊는다.
+  {
+    const startedAt = Date.now();
+    const result = await fetchContextualBeforeDeadline(
+      "https://example.invalid/hang",
+      { cache: "no-store" },
+      Date.now() + 60,
+      abortAwareHang(),
+    );
+    assert.equal(result, null);
+    assert.ok(Date.now() - startedAt < 250);
+  }
+
+  clearInterval(keepAlive);
+  console.log("contextual-stats-naver-failover: 8/8 PASS");
 }
 
-main().catch((e) => {
-  console.error(e);
+main().catch((error) => {
+  clearInterval(keepAlive);
+  console.error(error);
   process.exit(1);
 });

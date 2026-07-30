@@ -50,9 +50,9 @@ import { fetchKboLiveGames } from "@/lib/notifications/kbo-live-games";
 
 export const dynamic = "force-dynamic";
 
-const KBO_MAIN = "https://www.koreabaseball.com/ws/Main.asmx";
 const KBO_SCHEDULE = "https://www.koreabaseball.com/ws/Schedule.asmx";
 const KBO_PLAYER = "https://www.koreabaseball.com/Record/Player";
+const CONTEXTUAL_DEADLINE_MS = 7_000;
 
 // 2026-05-20: KBO returns IE-branch HTML when Referer is not koreabaseball.com.
 // Every outbound KBO fetch in this route MUST include this Referer header.
@@ -77,9 +77,32 @@ function profileKey(role: "batter" | "pitcher", playerId: string): string {
   return `${role}:${playerId}`;
 }
 
-async function fetchKboHtml(url: string): Promise<string | null> {
-  const res = await fetch(url, { headers: KBO_HEADERS, cache: "no-store" });
-  if (!res.ok) return null;
+// Exported for scripts/qa/contextual-stats-naver-failover-smoke.ts.
+export async function fetchContextualBeforeDeadline(
+  url: string,
+  init: RequestInit,
+  deadlineAtMs: number,
+  fetchImpl: typeof fetch = fetch,
+): Promise<Response | null> {
+  try {
+    const remainingMs = deadlineAtMs - Date.now();
+    if (remainingMs <= 0) return null;
+    return await fetchImpl(url, {
+      ...init,
+      signal: AbortSignal.timeout(Math.max(1, remainingMs)),
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function fetchKboHtml(url: string, deadlineAtMs: number): Promise<string | null> {
+  const res = await fetchContextualBeforeDeadline(
+    url,
+    { headers: KBO_HEADERS, cache: "no-store" },
+    deadlineAtMs,
+  );
+  if (!res?.ok) return null;
   const html = await res.text();
   if (looksLikeAspNetError(html)) return null;
   return html;
@@ -89,6 +112,7 @@ async function loadProfile(
   role: "batter" | "pitcher",
   numericId: string,
   name: string,
+  deadlineAtMs: number,
 ): Promise<ProfileBundle> {
   const key = profileKey(role, numericId);
   const cached = profileCache.get(key);
@@ -100,8 +124,8 @@ async function loadProfile(
     `${KBO_PLAYER}/${role === "batter" ? "HitterDetail" : "PitcherDetail"}/Situation.aspx?playerId=${numericId}`;
 
   const [basicHtml, situationHtml] = await Promise.all([
-    fetchKboHtml(basicUrl),
-    fetchKboHtml(situationUrl),
+    fetchKboHtml(basicUrl, deadlineAtMs),
+    fetchKboHtml(situationUrl, deadlineAtMs),
   ]);
 
   const basic =
@@ -119,7 +143,10 @@ async function loadProfile(
   const handedness = basicHtml ? parseHandedness(basicHtml) : { bat: null, throws: null };
 
   const bundle: ProfileBundle = { basic, situation, handedness };
-  profileCache.set(key, { bundle, expiresAt: Date.now() + PROFILE_TTL_MS });
+  // Upstream 전체 장애/timeout의 빈 결과를 1시간 캐시하면 복구 뒤에도 UI가 계속 비게 된다.
+  if (basicHtml !== null || situationHtml !== null) {
+    profileCache.set(key, { bundle, expiresAt: Date.now() + PROFILE_TTL_MS });
+  }
   return bundle;
 }
 
@@ -131,58 +158,26 @@ interface LiveGameSnapshot {
   pitcherName: string | null;
 }
 
-/**
- * KBO GetKboGameList 직접 호출 결과. rawGame=null이면서 kboFailed=true는
- * HTTP 실패/JSON 파싱 실패(하드 장애)로, 이때만 Naver failover를 태운다.
- * kboFailed=false + rawGame=null은 KBO가 정상 응답했으나 해당 경기가 목록에
- * 없는 경우로(무경기/미개시), 기존처럼 degrade 유지(무변경 보존).
- */
-async function fetchLiveGameFromKbo(
-  gameId: string,
-  date: string,
-  fetchImpl: typeof fetch,
-): Promise<{ rawGame: KboRawGame | null; kboFailed: boolean }> {
-  const res = await fetchImpl(`${KBO_MAIN}/GetKboGameList`, {
-    method: "POST",
-    headers: KBO_HEADERS,
-    body: `leId=1&srId=0,1,3,4,5,7,8,9&date=${date}`,
-    cache: "no-store",
-  });
-  if (!res.ok) return { rawGame: null, kboFailed: true };
-  const text = await res.text();
-  // KBO sometimes appends ASP.NET error HTML after JSON — parse JSON prefix only.
-  const jsonPrefix = text.split(/}<!/)[0] + (text.includes("}<!") ? "}" : "");
-  let parsed: { game?: KboRawGame[] };
-  try {
-    parsed = JSON.parse(jsonPrefix);
-  } catch {
-    return { rawGame: null, kboFailed: true };
-  }
-  const games = parsed.game ?? [];
-  return { rawGame: games.find(g => g.G_ID === gameId) ?? null, kboFailed: false };
-}
-
 // Exported for scripts/qa/contextual-stats-naver-failover-smoke.ts (fault injection).
 export async function fetchLiveGame(
   gameId: string,
-  fetchImpl: typeof fetch = fetch,
-  failoverImpl: typeof fetchKboLiveGames = fetchKboLiveGames,
+  liveGamesImpl: typeof fetchKboLiveGames = fetchKboLiveGames,
+  deadlineAtMs: number = Date.now() + CONTEXTUAL_DEADLINE_MS,
 ): Promise<LiveGameSnapshot | null> {
   const date = gameId.slice(0, 8);
-  const kbo = await fetchLiveGameFromKbo(gameId, date, fetchImpl);
-  let rawGame = kbo.rawGame;
-
-  // KBO GetKboGameList가 HTTP/파싱으로 하드 실패한 경우에만 공용 Naver failover로
-  // 현재 투수/타자를 보강한다. naverGameToRaw가 GAME_TB_SC(공수)와 함께
-  // B_P_NM/T_P_NM에 현재 투타명(relay currentGameState pcode→이름)을 넣어 주므로
-  // (kbo-live-games.ts naverGameToRaw), 아래 isTop 매핑을 그대로 재사용한다.
-  // Naver도 ok:false거나 해당 경기가 없으면 null degrade(fail-close).
-  if (!rawGame && kbo.kboFailed) {
-    const failover = await failoverImpl(date).catch(() => null);
-    if (failover?.ok) {
-      rawGame = failover.games.find(g => g.G_ID === gameId) ?? null;
-    }
-  }
+  // 공용 helper가 KBO hard-hang을 짧게 끊고, 200-empty/요청 경기 부재도 Naver로
+  // 교차확인한다. 양쪽 불확실하면 ok:false라 거짓 empty를 확정하지 않는다.
+  const source = await liveGamesImpl(
+    date,
+    deadlineAtMs,
+    undefined,
+    undefined,
+    undefined,
+    gameId,
+  ).catch(() => null);
+  const rawGame = source?.ok
+    ? source.games.find(g => g.G_ID === gameId) ?? null
+    : null;
   if (!rawGame) return null;
 
   const isTop = rawGame.GAME_TB_SC === "T";
@@ -211,15 +206,20 @@ async function fetchBoxSnapshot(
   srId: string,
   batterName: string | null,
   pitcherName: string | null,
+  deadlineAtMs: number,
 ): Promise<BoxSnapshot> {
   const seasonId = gameId.slice(0, 4);
-  const res = await fetch(`${KBO_SCHEDULE}/GetBoxScore`, {
-    method: "POST",
-    headers: KBO_HEADERS,
-    body: `leId=1&srId=${srId}&seasonId=${seasonId}&gameId=${gameId}`,
-    cache: "no-store",
-  });
-  if (!res.ok) return { batterIsPinch: false, defendingTeamHits: null };
+  const res = await fetchContextualBeforeDeadline(
+    `${KBO_SCHEDULE}/GetBoxScore`,
+    {
+      method: "POST",
+      headers: KBO_HEADERS,
+      body: `leId=1&srId=${srId}&seasonId=${seasonId}&gameId=${gameId}`,
+      cache: "no-store",
+    },
+    deadlineAtMs,
+  );
+  if (!res?.ok) return { batterIsPinch: false, defendingTeamHits: null };
   let parsed: { tables?: Array<{ rows?: Array<{ row: Array<{ Text: string }> }> }> };
   try {
     parsed = JSON.parse(await res.text());
@@ -322,7 +322,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "gameId required" }, { status: 400 });
   }
 
-  const live = await fetchLiveGame(gameId);
+  const deadlineAtMs = Date.now() + CONTEXTUAL_DEADLINE_MS;
+  const live = await fetchLiveGame(gameId, fetchKboLiveGames, deadlineAtMs);
   if (!live) {
     return NextResponse.json(
       emptyResponse(gameId, {
@@ -380,9 +381,9 @@ export async function GET(req: NextRequest) {
   }
 
   const [boxSnapshot, batterProfile, pitcherProfile] = await Promise.all([
-    fetchBoxSnapshot(gameId, srId, batterName, pitcherName),
-    batter ? loadProfile("batter", batter.numericId, batter.name) : Promise.resolve(null),
-    pitcher ? loadProfile("pitcher", pitcher.numericId, pitcher.name) : Promise.resolve(null),
+    fetchBoxSnapshot(gameId, srId, batterName, pitcherName, deadlineAtMs),
+    batter ? loadProfile("batter", batter.numericId, batter.name, deadlineAtMs) : Promise.resolve(null),
+    pitcher ? loadProfile("pitcher", pitcher.numericId, pitcher.name, deadlineAtMs) : Promise.resolve(null),
   ]);
 
   const ctx: GameContext = {
