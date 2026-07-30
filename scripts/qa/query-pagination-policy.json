@@ -78,6 +78,7 @@
     "notified_score_events",
     "photos",
     "player_game_logs",
+    "player_game_log_ingestions",
     "player_highlight_event_snapshots",
     "player_stats_batter",
     "player_stats_pitcher",

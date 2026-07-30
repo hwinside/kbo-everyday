@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { startJob, finishJob } from "@/lib/admin/job-logger";
 import { fetchGames } from "@/lib/crawler/kbo-api";
-import { ingestGameRows, type PlayerGameLogRow, type UnresolvedBoxScorePlayer } from "@/lib/game-logs/ingest";
+import { ingestGameWithLedger, type LedgerIngestResult } from "@/lib/game-logs/ledger-ingest";
+import type { UnresolvedBoxScorePlayer } from "@/lib/game-logs/ingest";
 import { notifyRosterGaps } from "@/lib/game-logs/roster-gap-alert";
 import { getKSTToday, getKSTYesterday } from "@/lib/utils/date-kst";
 
@@ -19,10 +20,14 @@ const REGULAR_SEASON_SR_ID = "0";
  * 경기 종료 자동 적재 cron (선수 스탯 보강 V1 — 빌드 2 후속).
  * spec: specs/stats/player-stats-v1.md §7
  *
- * 경기별 탭/주간 추이가 6/6 백필에서 멈추지 않도록, 매 실행마다 KST 오늘+어제의
- * final 경기를 player_game_logs에 멱등 upsert. (KBO 경기는 ~22~23:30 KST 종료, 일부는
- * 자정 넘김 → 어제까지 함께 적재해 누락/크로스미드나잇 방어.)
- * UNIQUE(kbo_id, player_type, game_id) 멱등 — 여러 번 돌아도 안전.
+ * 직관 통계 S1a부터 경기 단위 적재는 ledger-ingest 오케스트레이터를 쓴다:
+ * strict 필수필드 검증(결측→0 강등 금지) + raw=resolved=persisted 1:1 가드 +
+ * canonical payload hash 검증 후 player_game_log_ingestions ledger에 완료 증거를 남긴다.
+ * (Notion "[기획] 직관 다이어리 통계 v1" rev5 §11·§12)
+ *
+ * 매 실행마다 KST 오늘+어제의 final 경기를 멱등 upsert. (KBO 경기는 ~22~23:30 KST 종료,
+ * 일부는 자정 넘김 → 어제까지 함께 적재해 누락/크로스미드나잇 방어.)
+ * UNIQUE(kbo_id, player_type, game_id) + ledger PK(game_id) 멱등 — 여러 번 돌아도 안전.
  */
 export async function GET(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
@@ -45,33 +50,22 @@ export async function GET(req: NextRequest) {
     }
     const finals = [...finalsById.values()];
 
-    // 경기별 박스스코어 → 행 매핑 (실패한 경기는 건너뜀, 나머지는 진행)
-    // unresolved: 박스스코어엔 떴지만 로스터 미등록이라 스킵된 선수 (신규/시즌중 합류 탐지)
+    // 경기별: strict 적재 + ledger 기록 (경기 1건 실패는 건너뛰고 나머지 진행)
+    const settled = await Promise.allSettled(finals.map((g) => ingestGameWithLedger(supabaseAdmin, g)));
+    const results: LedgerIngestResult[] = [];
+    let gamesFailed = 0;
     const unresolved: UnresolvedBoxScorePlayer[] = [];
-    const settled = await Promise.allSettled(finals.map((g) => ingestGameRows(g, unresolved)));
-    const rows: PlayerGameLogRow[] = [];
-    let gamesOk = 0;
-    let gamesNoBox = 0;
     for (const r of settled) {
-      if (r.status === "fulfilled" && r.value) {
-        gamesOk++;
-        rows.push(...r.value);
+      if (r.status === "fulfilled") {
+        results.push(r.value);
+        unresolved.push(...r.value.unresolved);
       } else {
-        gamesNoBox++;
+        gamesFailed++;
       }
     }
-
-    let upserted = 0;
-    if (rows.length > 0) {
-      for (let i = 0; i < rows.length; i += 500) {
-        const chunk = rows.slice(i, i + 500);
-        const { error } = await supabaseAdmin
-          .from("player_game_logs")
-          .upsert(chunk, { onConflict: "kbo_id,player_type,game_id" });
-        if (error) throw new Error(`upsert 실패 @${i}: ${error.message}`);
-        upserted += chunk.length;
-      }
-    }
+    const complete = results.filter((r) => r.status === "complete").length;
+    const incomplete = results.filter((r) => r.status === "incomplete");
+    const upserted = results.reduce((sum, r) => sum + r.rowsUpserted, 0);
 
     // 미등록 선수 탐지 → 슬랙 알림 (부가 기능, throw 없음). 결과는 summary에 항상 기록.
     const gapResult = await notifyRosterGaps(unresolved);
@@ -80,8 +74,13 @@ export async function GET(req: NextRequest) {
           .map((g) => `${g.name}(${g.teamName})`)
           .join(",")}] (알림:${gapResult.status})`
       : "";
+    const incompleteNote = incomplete.length
+      ? ` | incomplete ${incomplete.length} [${incomplete
+          .map((r) => `${r.gameId}:${r.failureReason}`)
+          .join(",")}]`
+      : "";
 
-    const summary = `${dates.join(",")} | final ${finals.length} (박스 ${gamesOk}/없음 ${gamesNoBox}) | upsert ${upserted}행${gapNote}`;
+    const summary = `${dates.join(",")} | final ${finals.length} (complete ${complete}/incomplete ${incomplete.length}/에러 ${gamesFailed}) | upsert ${upserted}행${incompleteNote}${gapNote}`;
     await finishJob(logId, "success", summary);
 
     return NextResponse.json({
@@ -89,8 +88,9 @@ export async function GET(req: NextRequest) {
       timestamp: new Date().toISOString(),
       dates,
       finals: finals.length,
-      gamesOk,
-      gamesNoBox,
+      complete,
+      incomplete: incomplete.map((r) => ({ gameId: r.gameId, reason: r.failureReason })),
+      gamesFailed,
       upserted,
       rosterGaps: gapResult.gaps,
       rosterGapAlert: gapResult.status,

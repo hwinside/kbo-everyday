@@ -9,6 +9,10 @@
  *   npx tsx scripts/backfill-game-logs.mts --apply --season 2026
  *
  * 멱등: UNIQUE(kbo_id, player_type, game_id) upsert. 재실행 안전.
+ *
+ * ⚠️ 직관 통계 S1a 이후 주의: 이 스크립트는 lenient 파싱(결측→0 강등)이며 완료 증거
+ *    ledger(player_game_log_ingestions)를 기록하지 않는다. 완료 증거가 필요한 backfill은
+ *    scripts/backfill-game-log-ledger.mts 사용 (Notion 직관 통계 v1 rev5 §11·§12).
  */
 import { createClient } from "@supabase/supabase-js";
 import { getSeasonGames } from "@/lib/crawler/season-games-cache";
