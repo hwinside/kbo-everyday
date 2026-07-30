@@ -9,6 +9,7 @@ import { resolveCurrentPlayers } from "@/lib/kbo-player-mapping";
 import { isKboGameCancelled } from "@/lib/crawler/kbo-status";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { deriveStartPlateAppearanceEvidence } from "@/lib/notifications/start-plate-appearance";
+import { fetchKboLiveGames } from "@/lib/notifications/kbo-live-games";
 
 // State is persisted in Supabase (table: game_event_state) so all Vercel
 // serverless instances share a single source of truth. Previous in-memory
@@ -17,7 +18,6 @@ import { deriveStartPlateAppearanceEvidence } from "@/lib/notifications/start-pl
 // instance B, breaking K celebration counters (e.g. 6연속 K → "그냥 삼진"
 // or "2K" depending on which instance answered each poll).
 
-const KBO_MAIN = "https://www.koreabaseball.com/ws/Main.asmx";
 const KBO_SCHEDULE = "https://www.koreabaseball.com/ws/Schedule.asmx";
 // 2026-05-20: KBO가 Referer가 koreabaseball.com이 아닌 요청에 IE 분기 HTML 에러 페이지 반환.
 const HEADERS = {
@@ -128,26 +128,19 @@ export async function GET(req: NextRequest) {
   const date = gameId.slice(0, 8); // YYYYMMDD from game ID
 
   try {
-    // Fetch live game list + BoxScore in parallel
-    // Fetch live game list first (GetKboGameList accepts comma-separated srId)
-    const liveRes = await fetch(`${KBO_MAIN}/GetKboGameList`, {
-      method: "POST",
-      headers: HEADERS,
-      body: `leId=1&srId=0,1,3,4,5,7,8,9&date=${date}`,
-      cache: "no-store",
-    }).then(r => r.ok ? r.json() : null).catch(() => null);
-
-    // Find this game in the live list
-    const games = liveRes?.game || [];
+    // 중계 화면·warmup과 같은 KBO→Naver 공용 source를 사용한다.
+    const fetched = await fetchKboLiveGames(date, Date.now() + 5_000);
+    const games = fetched.ok ? fetched.games : [];
     const rawGame = games.find((g: KboRawGame) => g.G_ID === gameId);
 
     // Use SR_ID from live data (GetBoxScore only accepts single integer srId)
-    const srId = rawGame?.SR_ID ?? "0";
+    const srId = (rawGame as (KboRawGame & { SR_ID?: string }) | undefined)?.SR_ID ?? "0";
     const boxScoreRes = await fetch(`${KBO_SCHEDULE}/GetBoxScore`, {
       method: "POST",
       headers: HEADERS,
       body: `leId=1&srId=${srId}&seasonId=${date.slice(0, 4)}&gameId=${gameId}`,
       cache: "no-store",
+      signal: AbortSignal.timeout(3_000),
     }).then(r => r.ok ? r.json() : null).catch(() => null);
 
     if (!rawGame) {
