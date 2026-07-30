@@ -20,6 +20,11 @@ interface UseCelebrationOptions {
   awayTeamId: number;
 }
 
+interface ProcessEventsOptions {
+  /** visibility 복귀 직후 실제 live→final diff로 만든 종료 이벤트는 baseline/suppress 대상에서 제외. */
+  preserveFreshGameEnd?: boolean;
+}
+
 /**
  * Only process events generated within this window. Prevents replay of
  * accumulated server events on page re-entry, but must be wide enough to
@@ -196,11 +201,15 @@ export function useCelebration({ gameId, myTeamId, homeTeamId, awayTeamId }: Use
 
   /** Call on each gameEvents update to detect new celebration-worthy events */
   const processEvents = useCallback(
-    (events: GameEvent[]) => {
+    (events: GameEvent[], options?: ProcessEventsOptions) => {
       if (!myTeamId) return;
 
       const now = Date.now();
       const newCelebrations: CelebrationEvent[] = [];
+      const shouldPreserve = (ev: GameEvent) =>
+        options?.preserveFreshGameEnd === true
+        && ev.type === "game_end"
+        && ev.source === "kbo_diff";
 
       // Per-source baseline: the first batch from each unique ev.source seeds
       // seenRef silently. Subsequent batches process new ids normally.
@@ -220,7 +229,7 @@ export function useCelebration({ gameId, myTeamId, homeTeamId, awayTeamId }: Use
       }
       if (sourcesToBaseline.length > 0) {
         for (const ev of events) {
-          if (sourcesToBaseline.includes(ev.source ?? "_unknown")) {
+          if (sourcesToBaseline.includes(ev.source ?? "_unknown") && !shouldPreserve(ev)) {
             seenRef.current.add(ev.id);
           }
         }
@@ -237,7 +246,7 @@ export function useCelebration({ gameId, myTeamId, homeTeamId, awayTeamId }: Use
         const eventTime = new Date(ev.timestamp).getTime();
         if (!Number.isFinite(eventTime)) continue;
 
-        if (eventTime <= suppressBeforeRef.current) continue;
+        if (eventTime <= suppressBeforeRef.current && !shouldPreserve(ev)) continue;
 
         // Skip stale events (e.g. accumulated server events replayed on re-entry)
         const eventAge = now - eventTime;
