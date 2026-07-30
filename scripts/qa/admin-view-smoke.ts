@@ -1,9 +1,9 @@
 /**
- * 스모크: 조회수(관리자 전용) 핵심 정책 — 2026-07-21.
+ * 스모크: 조회수 핵심 정책 — 2026-07-21 (2026-07-30 클릭 수 전체 공개로 개정).
  *   ① 관리자 화이트리스트 게이트(isAdminEmail)
  *   ② 조회수 dedup 정책(view-tracker-policy): click 재진입=집계, impression 동일유저·세션=1회,
  *      계정 전환 분리, viewerKey 우선순위(로그인>게스트), beacon=false fallback
- *   ③ 피드·상세 공용 관리자 배지: click+impression 합산, 라벨 제거, 일반 유저 미노출
+ *   ③ 피드·상세 공용 배지: click+impression 합산 단일값을 전체 공개(기존 관리자 배지와 동일 숫자 계약)
  *   ④ route abuse cap(view-rate-limit): 1초 창 중복 차단
  * 실행: npm run qa:admin-view
  */
@@ -100,22 +100,29 @@ check("beacon ok → beacon", pickTransport(true, true), "beacon");
 check("beacon queued false → fetch", pickTransport(true, false), "fetch");
 check("beacon unavailable → fetch", pickTransport(false, false), "fetch");
 
-// ── ③ 관리자 피드·상세 공용 합산 표시 ────────────────
-check("view total click+impression", postViewTotal(12, 34), 46);
-check("view total null click", postViewTotal(null, 34), 34);
-check("view total null impression", postViewTotal(12, null), 12);
-check("view total both null", postViewTotal(null, null), 0);
+// ── ③ 합산 정책: 기존 관리자 배지와 동일 숫자 계약 ────
+check("total = click + impression", postViewTotal(2, 4), 6);
+check("total click 0 · impression N → N (회귀 케이스)", postViewTotal(0, 6), 6);
+check("total null-safe", postViewTotal(null, undefined), 0);
+check("total impression-only null", postViewTotal(3, null), 3);
 
+// ── ③ 피드·상세 공용 배지: 합산 단일값 전체 공개(게이트 제거) ────
 {
   const badge = readFileSync(new URL("../../src/components/community/PostViewBadge.tsx", import.meta.url), "utf8");
   const feed = readFileSync(new URL("../../src/components/community/PhotoFeed.tsx", import.meta.url), "utf8");
   const detail = readFileSync(new URL("../../src/components/community/PostDetail.tsx", import.meta.url), "utf8");
-  check("view badge remains admin-only", badge.includes("<AdminOnly>"), true);
-  check("view badge uses shared total", badge.includes("postViewTotal(clickCount, impressionCount)"), true);
-  check("view badge removes click label", badge.includes("클릭 {"), false);
-  check("view badge removes impression label", badge.includes("노출 {"), false);
+  // 합산 단일값이 그대로 전체 공개 — AdminOnly 게이트가 없어야 한다.
+  check("badge sums click+impression (postViewTotal)", badge.includes("postViewTotal(clickCount, impressionCount)"), true);
+  check("badge renders total", badge.includes("total.toLocaleString()"), true);
+  check("badge has no AdminOnly gate", badge.includes("AdminOnly"), false);
+  check("badge no raw click-only render", badge.includes("clickCount ?? 0).toLocaleString"), false);
   check("feed uses shared view badge", feed.includes("<PostViewBadge"), true);
   check("detail uses shared view badge", detail.includes("<PostViewBadge"), true);
+  // 폰트 통일: 배지 text-sm, 피드·상세 타임스탬프도 text-sm.
+  check("badge font text-sm", badge.includes("text-sm"), true);
+  check("feed timestamp no longer text-base", feed.includes("ml-auto text-base text-text-tertiary"), false);
+  check("feed timestamp text-sm", feed.includes("ml-auto text-sm text-text-tertiary"), true);
+  check("detail timestamp text-sm", detail.includes("text-sm text-text-tertiary ml-auto"), true);
 }
 
 // ── ④ route abuse cap(1초 창) ────────────────────────

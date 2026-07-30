@@ -25,7 +25,7 @@ export function shouldCountImpression(seen: Set<string>, postId: number, viewerK
   return !seen.has(impressionDedupKey(postId, viewerKey));
 }
 
-/** 관리자 화면에 표시할 합산 조회수. 원본 click/impression 집계는 분리 유지한다. */
+/** 화면 표시용 합산 조회수(click + impression). 원본 집계는 분리 유지한다. */
 export function postViewTotal(
   clickCount?: number | null,
   impressionCount?: number | null

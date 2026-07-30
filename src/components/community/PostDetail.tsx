@@ -483,7 +483,7 @@ export default function PostDetail({ postId }: PostDetailProps) {
           {post.author_id && user && post.author_id !== user.id && (
             <DMButton targetUserId={post.author_id} size="sm" />
           )}
-          <span className="text-xs text-text-tertiary ml-auto">
+          <span className="text-sm text-text-tertiary ml-auto">
             {timeAgo(post.created_at)}{(postPatch.updated_at || post.updated_at) ? " · 수정됨" : ""}
           </span>
           <PostViewBadge
