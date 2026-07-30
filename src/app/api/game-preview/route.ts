@@ -5,9 +5,13 @@ import batterStats from "@/lib/constants/stats-2026-batters.json";
 import pitcherStats from "@/lib/constants/stats-2026-pitchers.json";
 import { TEAMS, isAllStarGame, isAllStarGameId } from "@/lib/constants/teams";
 import { INJURY_BLOCKLIST_KEYS } from "@/lib/constants/injury-blocklist";
-import { fetchStandings, buildRankMap, fetchGames, fetchBoxScore, type TeamStanding, type BoxScoreResult, type KboGame } from "@/lib/crawler/kbo-api";
+import { fetchStandings, buildRankMap, fetchGames, fetchBoxScore, type KboGame } from "@/lib/crawler/kbo-api";
 import { STANDINGS_ACCURACY_RULES, STANDINGS_UNAVAILABLE_RULES } from "@/lib/ai/standings-guard";
-import { fetchNaverLineup } from "@/lib/crawler/naver-lineup";
+import {
+  fetchNaverLineup,
+  fetchNaverPreviewStarters,
+  type NaverPreviewStarters,
+} from "@/lib/crawler/naver-lineup";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
@@ -872,19 +876,29 @@ async function getCached(gameId: string): Promise<{ summary: Record<string, unkn
 }
 
 
-async function getGame(gameId: string): Promise<KboGame | null> {
-  try {
-    const dateStr = getDateFromGameId(gameId);
-    const games = await fetchGames(dateStr);
-    return games.find(g => g.gameId === gameId) ?? null;
-  } catch {
-    return null;
+export async function resolvePreviewGameContext(
+  gameId: string,
+  fetchGamesImpl: typeof fetchGames = fetchGames,
+  fetchNaverStartersImpl: (
+    gameId: string,
+    opts?: { timeoutMs?: number },
+  ) => Promise<NaverPreviewStarters | null> = fetchNaverPreviewStarters,
+): Promise<KboGame> {
+  const dateStr = getDateFromGameId(gameId);
+  const games = await fetchGamesImpl(dateStr);
+  const game = games.find(g => g.gameId === gameId);
+  if (!game) {
+    throw new Error("game-preview source unavailable: requested game not confirmed");
   }
-}
+  if (game.awayStarterName && game.homeStarterName) return game;
 
-async function getGameStatus(gameId: string): Promise<KboGame["status"] | null> {
-  const game = await getGame(gameId);
-  return game?.status ?? null;
+  const naverStarters = await fetchNaverStartersImpl(gameId, { timeoutMs: 5000 });
+  if (!naverStarters) return game;
+  return {
+    ...game,
+    awayStarterName: game.awayStarterName || naverStarters.away,
+    homeStarterName: game.homeStarterName || naverStarters.home,
+  };
 }
 
 function formatKstIso(date: Date): string {
@@ -901,9 +915,7 @@ function parseKstGameDateTime(game: KboGame): Date | null {
   return new Date(`${year}-${month}-${day}T${hour.padStart(2, "0")}:${minute}:00+09:00`);
 }
 
-async function getPreviewAvailability(gameId: string): Promise<PreviewAvailability> {
-  const game = await getGame(gameId);
-  if (!game) return { allowed: true };
+function getPreviewAvailability(game: KboGame): PreviewAvailability {
   if (game.status !== "scheduled") return { allowed: true };
 
   const gameStart = parseKstGameDateTime(game);
@@ -939,12 +951,21 @@ export async function GET(req: NextRequest) {
   if (!gameId) return NextResponse.json({ error: "gameId required" }, { status: 400 });
   if (isAllStarGameId(gameId)) return NextResponse.json({ preview: null, source: "allstar" });
 
-  const status = await getGameStatus(gameId);
-  if (status === "cancelled") {
+  let game: KboGame;
+  try {
+    game = await resolvePreviewGameContext(gameId);
+  } catch {
+    return NextResponse.json({
+      preview: null,
+      source: "unavailable",
+      message: "경기 정보를 확인할 수 없습니다. 잠시 후 다시 시도해 주세요.",
+    }, { status: 503 });
+  }
+  if (game.status === "cancelled") {
     return NextResponse.json({ preview: null, source: "cancelled" });
   }
 
-  const availability = await getPreviewAvailability(gameId);
+  const availability = getPreviewAvailability(game);
   if (!availability.allowed) {
     return NextResponse.json({
       preview: null,
@@ -973,12 +994,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "GEMINI_API_KEY not configured" }, { status: 500 });
   }
 
-  const status = await getGameStatus(body.gameId);
-  if (status === "cancelled") {
+  let game: KboGame;
+  try {
+    game = await resolvePreviewGameContext(body.gameId);
+  } catch {
+    return NextResponse.json({
+      preview: null,
+      source: "unavailable",
+      message: "경기 정보를 확인할 수 없습니다. 잠시 후 다시 시도해 주세요.",
+    }, { status: 503 });
+  }
+  if (game.status === "cancelled") {
     return NextResponse.json({ preview: null, source: "cancelled" });
   }
 
-  const availability = await getPreviewAvailability(body.gameId);
+  const availability = getPreviewAvailability(game);
   if (!availability.allowed) {
     return NextResponse.json({
       preview: null,
@@ -988,18 +1018,8 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // 선발투수가 없으면 fetchGames로 오늘 경기에서 선발투수 조회
-  if (!body.awayStarter || !body.homeStarter) {
-    try {
-      const dateStr = getDateFromGameId(body.gameId);
-      const todayGames = await fetchGames(dateStr);
-      const thisGame = todayGames.find(g => g.gameId === body.gameId);
-      if (thisGame) {
-        if (!body.awayStarter && thisGame.awayStarterName) body.awayStarter = thisGame.awayStarterName;
-        if (!body.homeStarter && thisGame.homeStarterName) body.homeStarter = thisGame.homeStarterName;
-      }
-    } catch { /* graceful fallback — proceed without starters */ }
-  }
+  if (!body.awayStarter && game.awayStarterName) body.awayStarter = game.awayStarterName;
+  if (!body.homeStarter && game.homeStarterName) body.homeStarter = game.homeStarterName;
 
   // 캐시 확인
   const cached = await getCached(body.gameId);
