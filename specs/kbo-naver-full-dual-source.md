@@ -8,15 +8,18 @@ KBO API(`GetKboGameList`, `Record/*.aspx`, `Player/Register.aspx`)가 2026-07-28
 (END_TM/이닝셀 결측 + `kbo-games` 타임아웃). KBO가 완전히 다운되어도 앱 전 기능이 Naver로
 자동 대체되도록 "완벽한 이중화"를 갖춘다.
 
-## 현재 소스 계층 (2026-07-29 실측 감사)
+## 현재 소스 계층 (2026-07-30 실측 감사)
 
 이미 이중화됨:
 - 순위표 `fetchStandings` — **Naver primary + KBO HTML 폴백** ✅
-- 라이브 이닝점수/박스스코어 (`game-detail`, `game-events`) — KBO primary + Naver record 폴백 ✅
+- 라이브 이닝점수/박스스코어 (`game-detail`, `game-events`) — KBO primary + Naver record 폴백.
+  단, `game-detail`은 KBO 3종과 후속 경기목록 await가 timeout 없이 누적되어 기존 폴백 도달 전
+  40초 이상 지연되는 availability gap이 남아 있음 ← **P0 bounded hardening 대상**
 - 중계 pitch-by-pitch(`game-relay`), AI요약, 뉴스 — Naver 계열 ✅
 
 아직 KBO 단일 (이번 작업 대상 갭):
-- `fetchGames` — 경기 일정 + 라이브 스코어 (KBO `GetKboGameList` 전용) ← P0
+- 유저 대면 경기목록은 Naver-primary + KBO enrich로 이중화 완료. cron/배치 `fetchGames`는
+  시리즈 계약 보존을 위해 KBO-primary + Naver fallback 유지.
 - `fetchGameDates` — 이전/다음 경기일 (KBO `GetKboGameDate` 전용)
 - `fetchBatterStats` — 선수 타격 랭킹 (KBO HTML 파싱 전용)
 - `fetchRegisterRosters` — 1군 엔트리 등록/말소 (KBO WebForms 전용)
@@ -38,7 +41,8 @@ KBO API(`GetKboGameList`, `Record/*.aspx`, `Player/Register.aspx`)가 2026-07-28
 
 ## 슬라이스 (얇은 수직, 각 PR = 삼순 리뷰 게이트)
 
-- ① `fetchGames` Naver 폴백 (일정+라이브 스코어) — **P0, 최우선**
+- ① `fetchGames` Naver 폴백 + 유저 대면 Naver-primary 하이브리드 — 완료
+- ①.6 `/api/game-detail` 단일 3초 절대 deadline + Naver record/list 병렬 fallback — **P0**
 - ② `fetchGameDates` Naver 폴백
 - ③ `fetchBatterStats` Naver 폴백
 - ④ `fetchRegisterRosters` Naver 폴백 (난이도 최상)
@@ -51,3 +55,14 @@ KBO API(`GetKboGameList`, `Record/*.aspx`, `Player/Register.aspx`)가 2026-07-28
 - gameId 매핑 양방향(정규/올스타/더블헤더) 순수 테스트.
 - `qa:query-guard`/tsc/eslint 0, Vercel prebuild PASS.
 - 배포 후 실제 라이브 경기에서 폴백 강제(또는 자연 열화) 시 리스트 정상 노출 End-User 확인.
+
+### ①.6 추가 회귀
+
+- committed actual `GET /api/game-detail`: KBO blackhole/Naver 정상, 역방향, KBO 부분 스키마,
+  양쪽 blackhole, srId 0→1 retry, HTTP 오류를 동일 절대 deadline으로 검증.
+- KBO unavailable이면 `lineup=null`, Naver linescore·boxScore·status는 유지하고 HTTP 200 partial.
+- 정상 scheduled/cancelled의 이닝·박스 부재는 관제 0건, live/final 결측과 dual outage만
+  실제 reason(timeout/HTTP/schema)을 보존해 비차단 관제.
+- scheduled/cancelled에서도 KBO `TV_IF` 중계 채널을 보존하고, Naver record `inn*`
+  타석 셀로 2·3루타/홈런을 무추가요청 복원해 relay celebration과 semantic id를 일치.
+- route에 후속 `fetchGames()` 기본 10초 await가 재유입되면 mutation guard가 즉시 실패.
