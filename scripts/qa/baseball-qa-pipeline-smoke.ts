@@ -25,6 +25,10 @@ import {
   type PlayerRef,
   type QaDeps,
 } from "../../src/lib/baseball-qa/pipeline";
+import {
+  BASEBALL_QA_GEMINI_MODEL,
+  buildBaseballQaGeminiRequest,
+} from "../../src/lib/baseball-qa/gemini-request";
 
 const seedSql = readFileSync(
   path.join(process.cwd(), "supabase/migrations/20260730_baseball_qa_seed.sql"),
@@ -64,8 +68,15 @@ const dmChatSource = readFileSync(
 );
 const routeSource = readFileSync(path.join(process.cwd(), "src/app/api/baseball-qa/route.ts"), "utf8");
 const serverSource = readFileSync(path.join(process.cwd(), "src/lib/baseball-qa/server.ts"), "utf8");
-assert.match(serverSource, /const GEMINI_MODEL = "gemini-flash-lite-latest"/);
 assert.doesNotMatch(serverSource, /gemini-2\.5-flash-lite/);
+assert.equal(BASEBALL_QA_GEMINI_MODEL, "gemini-flash-lite-latest");
+const geminiRequest = buildBaseballQaGeminiRequest("인필드 플라이가 뭐야?", "system");
+assert.equal(geminiRequest.generationConfig.responseMimeType, "application/json");
+assert.equal(
+  "thinkingConfig" in geminiRequest.generationConfig,
+  false,
+  "flash-lite request에 unsupported thinkingConfig 재도입 금지",
+);
 const drainSource = readFileSync(
   path.join(process.cwd(), "src/app/api/cron/baseball-qa-drain/route.ts"),
   "utf8",
