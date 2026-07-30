@@ -49,6 +49,7 @@
     "game_lineup_notify_state",
     "game_notify_state",
     "game_starter_notify_state",
+    "game_starter_observation",
     "game_start_delivery_ledger",
     "games",
     "lineup_confirm_delivery_ledger",
@@ -418,6 +419,11 @@
       [
         "game_id",
         "team_id"
+      ]
+    ],
+    "game_starter_observation": [
+      [
+        "game_id"
       ]
     ],
     "starter_announce_delivery_ledger": [

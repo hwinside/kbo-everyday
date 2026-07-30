@@ -24,11 +24,12 @@ ok("한쪽만 공개(원정만) → false(대기)", bothStartersOfficial("김윤
 ok("양쪽 빈값 → false", bothStartersOfficial("", "") === false);
 ok("공백 문자열은 빈값 취급", bothStartersOfficial("  ", "폰세") === false);
 
-// ── shouldEmitStarterAnnounce: 1회 계약 + fail-safe ──
-ok("전이 최초 관측 → 발송", shouldEmitStarterAnnounce({ bothOfficial: true, alreadyNotified: false }) === true);
-ok("이미 발송 → 재발송 없음(재수집/선발 변경 공통)", shouldEmitStarterAnnounce({ bothOfficial: true, alreadyNotified: true }) === false);
-ok("양팀 미확정 → 미발송", shouldEmitStarterAnnounce({ bothOfficial: false, alreadyNotified: false }) === false);
-ok("취소 경기 → 미발송 억제", shouldEmitStarterAnnounce({ bothOfficial: true, alreadyNotified: false, gameCancelled: true }) === false);
+// ── shouldEmitStarterAnnounce: 실제 전이 + 1회 계약 + fail-safe ──
+ok("실제 빈값→공식값 전이 → 발송", shouldEmitStarterAnnounce({ bothOfficial: true, alreadyNotified: false, sawUnannouncedBefore: true }) === true);
+ok("빈값 관측 이력 없는 공식값(rollout 기공개) → baseline 미발송", shouldEmitStarterAnnounce({ bothOfficial: true, alreadyNotified: false, sawUnannouncedBefore: false }) === false);
+ok("이미 발송 → 재발송 없음(재수집/선발 변경 공통)", shouldEmitStarterAnnounce({ bothOfficial: true, alreadyNotified: true, sawUnannouncedBefore: true }) === false);
+ok("양팀 미확정 → 미발송", shouldEmitStarterAnnounce({ bothOfficial: false, alreadyNotified: false, sawUnannouncedBefore: true }) === false);
+ok("취소 경기 → 미발송 억제", shouldEmitStarterAnnounce({ bothOfficial: true, alreadyNotified: false, sawUnannouncedBefore: true, gameCancelled: true }) === false);
 
 // ── 날짜 포맷 ──
 ok("YYYYMMDD → M월 D일", formatKstMonthDay("20260801") === "8월 1일");

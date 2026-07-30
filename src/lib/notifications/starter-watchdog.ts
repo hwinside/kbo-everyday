@@ -2,8 +2,14 @@
  * 예고선발 공개 알림 watchdog 오케스트레이터 — 라인업 확정 watchdog(#952, 삼순 8차 GO 규율)의 클론.
  *
  * 라인업 watchdog 과의 차이
- * - 별도 probe 엔드포인트가 없다: 선발 신호(awayStarterName/homeStarterName)는 fetchGames 결과에
+ * - 별도 probe 엔드포인트가 없다: 선발 신호(awayStarterName/homeStarterName)는 KBO 공식 응답에
  *   이미 들어 있다. 게이트는 순수 함수 bothStartersOfficial(양팀 모두 공식값) — 한쪽만 공개면 대기.
+ * - fetch 는 definitive source 인 fetchKboGamesOnly 를 쓴다(fetchGames 금지): fetchGames 의 Naver
+ *   fallback 은 선발명을 항상 빈 문자열로 만들어, KBO 장애를 '선발 미공개 정상(ok)'으로 오인하게
+ *   만든다. KBO 실패는 그대로 throw → fetchFailures → systemic failed 로 노출되고 전이 판정은 보류된다.
+ * - '전이'는 실제 빈값 관측 이력이 있어야 성립(observe 원장 + shouldEmitStarterAnnounce 게이트):
+ *   배포/rollout 첫 tick 에 이미 공식값인 경기는 baseline 기록만 하고 발송하지 않는다(stale burst 차단).
+ * - 이미 종결된 (game,team)은 snapshot RPC 가 null 을 반환 → drain/finalize 없이 완전히 skip.
  * - KBO 예고선발은 연전 첫날 시리즈 전체(D+1·D+2 포함)가 공시될 수 있어 여러 날짜를 훑는다
  *   (dateStrs 배열). '연전 첫날' 하드코딩 없음 — 어느 날짜든 빈값→공식값 전이 자체가 트리거.
  * - 재수집/cron 중복 실행의 단일 전이 보장은 DB 원장(game_starter_notify_state)이 담당한다.
@@ -16,8 +22,11 @@
  *   informative counters 를 덮지 않는다.
  */
 import type { KboGame } from "@/lib/crawler/kbo-api";
-import { fetchGames as realFetchGames } from "@/lib/crawler/kbo-api";
+// definitive source: Naver fallback 없는 KBO 단독 fetch. fetchGames 는 선발 신호가 없는 Naver 로
+// 조용히 대체돼 KBO 장애를 '미공개 정상'으로 오인하게 하므로 여기서 쓰면 안 된다.
+import { fetchKboGamesOnly as realFetchGames } from "@/lib/crawler/kbo-api";
 import {
+  observeStarterAnnounceGames as realObserveGames,
   openStarterSnapshot as realOpenSnapshot,
   deliverStarterBatch as realDeliverBatch,
   finalizeStarterSnapshot as realFinalizeSnapshot,
@@ -26,16 +35,23 @@ import {
   type StarterDeliveryBatchResult,
   type StarterDeliveryResult,
   type StarterDeliveryTarget,
+  type StarterObserveAction,
   type DueStarterSnapshot,
 } from "@/lib/notifications/starter-announce-delivery";
 import {
   bothStartersOfficial,
+  shouldEmitStarterAnnounce,
   formatStarterAnnounceMessage,
 } from "@/lib/notifications/starter-announce-message";
 
 export interface StarterWatchdogDeps {
   fetchGames: (dateStr: string) => Promise<KboGame[]>;
-  openSnapshot: (args: StarterDeliveryTarget & { requestDeadlineAtMs?: number }) => Promise<number>;
+  observeGames: (
+    observations: Array<{ gameId: string; bothOfficial: boolean }>,
+    requestDeadlineAtMs?: number,
+  ) => Promise<Map<string, StarterObserveAction>>;
+  // null = 이미 종결된 (game,team) — 호출부가 drain/finalize 없이 완전히 skip.
+  openSnapshot: (args: StarterDeliveryTarget & { requestDeadlineAtMs?: number }) => Promise<number | null>;
   deliverBatch: (
     args: StarterDeliveryTarget & { snapshotDeadlineAtMs: number; attemptDeadlineAtMs: number },
   ) => Promise<StarterDeliveryBatchResult>;
@@ -51,9 +67,13 @@ export interface StarterWatchdogDeps {
 
 export interface StarterWatchdogSummary {
   dates: number; // 훑은 날짜 수
-  fetchFailures: number; // fetchGames 실패한 날짜 수(부분 소스 열화) = systemic
+  fetchFailures: number; // definitive KBO fetch 실패한 날짜 수(부분 소스 열화) = systemic — 전이 판정 보류
+  observeErrors: number; // 관측 원장 RPC 실패한 날짜 수 = systemic(전이 판정 불가)
   scheduled: number;
   announced: number; // 양팀 선발 공식값 경기 수
+  baselines: number; // rollout 기공개(baseline) 경기 수 — 기록만, 발송 0
+  transitions: number; // 실제 빈값→공식값 전이 경기 수(발송 대상)
+  completedSkipped: number; // 이미 종결된 (game,team) — snapshot RPC null 로 완전 skip
   targets: number;
   dueSnapshots: number; // 과거 tick 에서 열렸다가 미완료로 남은 due 원장 수
   dueDrained: number; // 이번 tick 에 due-ledger drainer 가 처리한 대상 수
@@ -102,6 +122,7 @@ export async function runStarterWatchdog(args: {
   deps?: Partial<StarterWatchdogDeps>;
 }): Promise<StarterWatchdogResult> {
   const fetchGames = args.deps?.fetchGames ?? realFetchGames;
+  const observeGames = args.deps?.observeGames ?? realObserveGames;
   const openSnapshot = args.deps?.openSnapshot ?? realOpenSnapshot;
   const deliverBatch = args.deps?.deliverBatch ?? realDeliverBatch;
   const finalizeSnapshot = args.deps?.finalizeSnapshot ?? realFinalizeSnapshot;
@@ -110,7 +131,8 @@ export async function runStarterWatchdog(args: {
   const { dateStrs, deadlineAtMs } = args;
 
   const summary: StarterWatchdogSummary = {
-    dates: dateStrs.length, fetchFailures: 0, scheduled: 0, announced: 0, targets: 0,
+    dates: dateStrs.length, fetchFailures: 0, observeErrors: 0, scheduled: 0, announced: 0,
+    baselines: 0, transitions: 0, completedSkipped: 0, targets: 0,
     dueSnapshots: 0, dueDrained: 0, snapshotsOpened: 0, snapshotOpenErrors: 0, snapshotsCompleted: 0,
     openUnresolved: 0, accepted: 0, drainErrors: 0, pending: 0, permanentFailed: 0, expired: 0,
   };
@@ -199,14 +221,20 @@ export async function runStarterWatchdog(args: {
       // 선발 정보는 경기 상세 기본(크관) 탭에 노출 — 구버전 앱도 그대로 파싱하는 기존 딥링크 형식.
       payload: { title: msg.title, body: msg.body, url: `/games/${game.gameId}` },
     };
-    let snapshotDeadlineAtMs: number;
+    let snapshotDeadlineAtMs: number | null;
     try {
       snapshotDeadlineAtMs = await openSnapshot({ ...target, requestDeadlineAtMs: deadlineAtMs });
-      summary.snapshotsOpened++;
     } catch {
       summary.snapshotOpenErrors++;
       return; // 이 대상만 포기 — 다른 대상 파이프라인은 계속(격리)
     }
+    if (snapshotDeadlineAtMs == null) {
+      // 이미 종결된 (game,team): drain/finalize 없이 완전 skip — 과거 terminal(permanent/expired)
+      // 재집계로 매 tick 반복 502 가 되는 것을 차단한다.
+      summary.completedSkipped++;
+      return;
+    }
+    summary.snapshotsOpened++;
     await drainTarget(target, snapshotDeadlineAtMs, false);
   };
 
@@ -223,10 +251,37 @@ export async function runStarterWatchdog(args: {
     // 미시작(scheduled)만 신규 대상 — cancelled 는 미발송 억제, live/final 은 신규 공개 알림 대상 아님(fail-safe).
     const scheduled = games.filter((g) => g.status === "scheduled");
     summary.scheduled += scheduled.length;
+    if (scheduled.length === 0) return;
+    // 관측 원장 기록 + 전이 판정: 빈값 관측도 기록해야 이후 공식값이 '실제 전이'로 성립한다.
+    // 실패 시 전이 판정 불가 → 이 날짜는 보류하고 systemic 노출(발송 안 함 — stale burst 보다 안전).
+    let actions: Map<string, StarterObserveAction>;
+    try {
+      actions = await observeGames(
+        scheduled.map((g) => ({
+          gameId: g.gameId,
+          bothOfficial: bothStartersOfficial(g.awayStarterName, g.homeStarterName),
+        })),
+        deadlineAtMs,
+      );
+    } catch {
+      summary.observeErrors++;
+      return;
+    }
     const gameTasks = scheduled
       .filter((g) => bothStartersOfficial(g.awayStarterName, g.homeStarterName))
       .map(async (game) => {
         summary.announced++;
+        const action = actions.get(game.gameId) ?? "wait"; // 판정 누락은 보류(발송 금지)
+        if (action === "baseline") summary.baselines++;
+        // 실제 빈값→공식값 전이만 발송 — rollout 기공개(baseline)는 기록만 하고 발송 금지.
+        // (game,team) 단위 종결/재발송 차단은 snapshot RPC null 반환이 담당(alreadyNotified=false 고정).
+        const emit = shouldEmitStarterAnnounce({
+          bothOfficial: true,
+          alreadyNotified: false,
+          sawUnannouncedBefore: action === "emit",
+        });
+        if (!emit) return;
+        summary.transitions++;
         summary.targets += 2;
         // 홈/원정 두 팀도 서로 격리 병렬 — 한 팀 hang 이 다른 팀을 안 막음.
         await Promise.allSettled([
@@ -263,14 +318,15 @@ export async function runStarterWatchdog(args: {
   // systemic 실패 판정: 부분 열화·drain 실패·마감 내 미발송까지 전부 non-2xx 노출.
   // '양팀 선발 미공개'는 건강한 신호(announced=0·ok) — 여기 안 걸린다.
   const systemicFail =
-    summary.fetchFailures > 0 || // 날짜별 KBO 목록 실패(부분 포함)
+    summary.fetchFailures > 0 || // 날짜별 definitive KBO 목록 실패(부분 포함) — Naver fallback 으로 가리지 않음
+    summary.observeErrors > 0 || // 관측 원장 실패 — 전이 판정 불가(보류)
     summary.snapshotOpenErrors > 0 || // 원장 생성 실패(부분 포함)
     summary.drainErrors > 0 || // drain/FCM/due 조회 실패
     summary.pending > 0 || // FCM transient 로 미완료(부분 FCM 실패)
     summary.permanentFailed > 0 || // 영구 실패(불량 토큰 등) = 부분 delivery 실패
     summary.openUnresolved > 0 || // open 됐으나 이번 tick 미종결(deadline 소진)
     summary.expired > 0 || // 마감 내 미발송(실제 놓침) — 경보
-    (summary.targets > 0 && summary.snapshotsOpened === 0);
+    (summary.targets > 0 && summary.snapshotsOpened === 0 && summary.completedSkipped === 0);
 
   return { status: systemicFail ? "failed" : "ok", dateStrs, summary };
 }

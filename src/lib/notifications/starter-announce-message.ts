@@ -21,18 +21,22 @@ export function bothStartersOfficial(awayStarterName: string, homeStarterName: s
 }
 
 /**
- * 빈값→공식값 최초 전이 판정(순수 계약 부분).
+ * 빈값→공식값 최초 전이 판정(순수 계약 부분) — watchdog Phase A 가 실제로 호출하는 발송 게이트.
+ * - 전이는 실제 빈값 관측 이력(sawUnannouncedBefore)이 있어야 성립한다. 배포/rollout 첫 tick 에
+ *   이미 공식값인 경기는 baseline(발송 금지) — 기공개분 stale burst 차단.
  * - 취소 경기 fail-safe: 발송하지 않는다(호출부가 status='scheduled' 필터로 보장, 이중 게이트).
  * - 이미 발송(alreadyNotified)이면 재발송 없음 — 선발 변경(공식값→다른 공식값)도 여기 걸려 1회 계약 유지.
  */
 export function shouldEmitStarterAnnounce(input: {
   bothOfficial: boolean; // 현재 관측: 양팀 선발 모두 공식값
   alreadyNotified: boolean; // 원장상 이미 발송(이 gameId+team)
+  sawUnannouncedBefore: boolean; // 실제 빈값 관측 이력 — 없으면 baseline(발송 금지)
   gameCancelled?: boolean; // 취소 fail-safe
 }): boolean {
   if (input.gameCancelled === true) return false;
   if (!input.bothOfficial) return false;
   if (input.alreadyNotified) return false;
+  if (!input.sawUnannouncedBefore) return false; // rollout 기공개 baseline — 전이 아님
   return true;
 }
 

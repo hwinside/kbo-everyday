@@ -135,10 +135,44 @@ export async function listDueStarterSnapshots(requestDeadlineAtMs?: number, limi
   }));
 }
 
-/** (game,team) 최초 대상 스냅샷 생성. persisted deadline(ms) 반환. RPC 는 잔여 예산으로 abort. */
+/** 경기별 선발 공시 관측 판정. emit=실제 빈값→공식값 전이(발송 대상) · baseline=rollout 기공개(발송 금지) · wait=미공개. */
+export type StarterObserveAction = "emit" | "baseline" | "wait";
+
+/**
+ * 이번 tick 의 경기별 관측(양팀 공식값 여부)을 DB 관측 원장(game_starter_observation)에 기록하고
+ * 전이 판정을 받는다(단일 batch RPC). 빈값 관측 이력 없는 공식값(배포 첫 tick 기공개)은 'baseline' —
+ * 발송 금지. 실제 빈값→공식값 전이만 'emit'.
+ */
+export async function observeStarterAnnounceGames(
+  observations: Array<{ gameId: string; bothOfficial: boolean }>,
+  requestDeadlineAtMs?: number,
+): Promise<Map<string, StarterObserveAction>> {
+  if (observations.length === 0) return new Map();
+  const remaining = remainingMs(requestDeadlineAtMs, "starter observe");
+  // query-guard: bounded -- SQL RPC 가 관측 배열을 200행으로 clamp, 경기당 1행 반환.
+  const { data, error } = await withAbort(
+    supabase.rpc("observe_starter_announce_games", {
+      p_observations: observations.map((o) => ({ game_id: o.gameId, both_official: o.bothOfficial })),
+    }),
+    remaining,
+  );
+  if (error) throw new Error(`starter observe: ${error.message}`);
+  const rows = (data ?? []) as Array<{ game_id: string; action: string }>;
+  const map = new Map<string, StarterObserveAction>();
+  for (const r of rows) {
+    if (r.action === "emit" || r.action === "baseline" || r.action === "wait") map.set(r.game_id, r.action);
+  }
+  return map;
+}
+
+/**
+ * (game,team) 최초 대상 스냅샷 생성. persisted deadline(ms) 반환. RPC 는 잔여 예산으로 abort.
+ * 이미 종결된 state(starter_notified=true)면 RPC 가 null 을 반환 → null 그대로 넘겨 호출부(cron)가
+ * drain/finalize 를 완전히 skip 한다(완료 state 매 tick 재처리 금지).
+ */
 export async function openStarterSnapshot(
   args: StarterDeliveryTarget & { requestDeadlineAtMs?: number },
-): Promise<number> {
+): Promise<number | null> {
   const remaining = remainingMs(args.requestDeadlineAtMs, "starter delivery snapshot");
   const proposedDeadlineAtMs = args.observedAtMs + SNAPSHOT_DEADLINE_MS;
   // query-guard: bounded -- persisted deadline scalar 1개만 반환.
@@ -155,7 +189,8 @@ export async function openStarterSnapshot(
     remaining,
   );
   if (error) throw new Error(`starter delivery snapshot: ${error.message}`);
-  const deadlineAtMs = Date.parse(String(snapshotDeadline ?? ""));
+  if (snapshotDeadline == null) return null; // 종결된 (game,team) — 호출부가 완전히 skip
+  const deadlineAtMs = Date.parse(String(snapshotDeadline));
   if (!Number.isFinite(deadlineAtMs)) throw new Error("starter delivery snapshot: invalid persisted deadline");
   return deadlineAtMs;
 }

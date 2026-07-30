@@ -6,6 +6,8 @@
  *  - 최애팀 + notification_prefs.starter_announce(coalesce true) + 유효 토큰만 원장 대상
  *  - 종결 뒤 재snapshot 중복 0 = 선발 '변경'(공식값→다른 공식값) 재발송 없음(동일 메커니즘)
  *  - lease fencing / at-most-once dispatch intent / 멱등 키
+ *  - [NO-GO 재작업] observe 원장: 최초 관측 기공개=baseline(발송 금지) · 실제 빈값→공식값=emit ·
+ *    종결 state 에 snapshot RPC 재호출 시 null 반환(완료 state 완전 skip 근거)
  * 실행: npm run qa:starter-announce-delivery:db
  */
 import { readFileSync } from "node:fs";
@@ -128,6 +130,44 @@ async function main() {
     await snapshot(G, 1);
     ok("종결 뒤 재snapshot(선발 변경 재관측) 중복 0", (await ledgerCount(G, 1)) === 2);
 
+    // ── [NO-GO 재작업 3] 종결된 state 에 snapshot RPC 재호출 → null(호출부 Phase A 완전 skip 근거) ──
+    {
+      const r = await db.query<{ d: string | null }>(
+        "select snapshot_starter_announce_deliveries($1,1, now(), now() + interval '90 seconds') d", [G]);
+      ok("종결 state 재호출 → null 반환(drain/finalize skip 신호)", r.rows[0]?.d === null);
+    }
+    {
+      // 미종결(열린) state 는 여전히 기존 deadline 을 반환(이어 drain 경로 유지).
+      const r = await db.query<{ d: string | null }>(
+        "select snapshot_starter_announce_deliveries($1,10, now(), now() + interval '90 seconds') d", [G]);
+      ok("미종결 state 재호출 → 기존 deadline 반환(null 아님)", r.rows[0]?.d !== null);
+    }
+
+    // ── [NO-GO 재작업 2] observe 원장: baseline / 실제 전이 emit / wait ──
+    {
+      const obs = (arr: Array<{ game_id: string; both_official: boolean }>) =>
+        db.query<{ game_id: string; action: string }>(
+          "select game_id, action from observe_starter_announce_games($1::jsonb)", [JSON.stringify(arr)]);
+      // 최초 관측부터 공식값(배포 시점 기공개) → baseline, 재관측도 baseline 유지.
+      const b1 = await obs([{ game_id: "OBS-BASE", both_official: true }]);
+      ok("최초 관측 기공개 → baseline(발송 금지)", b1.rows[0]?.action === "baseline");
+      const b2 = await obs([{ game_id: "OBS-BASE", both_official: true }]);
+      ok("재관측도 baseline 유지(emit 승격 없음)", b2.rows[0]?.action === "baseline");
+      // 빈값 관측 → wait, 이후 공식값 → emit(실제 전이).
+      const w1 = await obs([{ game_id: "OBS-TRANS", both_official: false }]);
+      ok("빈값 관측 → wait", w1.rows[0]?.action === "wait");
+      const e1 = await obs([{ game_id: "OBS-TRANS", both_official: true }]);
+      ok("빈값 관측 후 공식값 → emit(실제 전이)", e1.rows[0]?.action === "emit");
+      // batch: 여러 경기 한 번에, 각자 독립 판정.
+      const m = await obs([
+        { game_id: "OBS-BASE", both_official: true },
+        { game_id: "OBS-TRANS", both_official: true },
+        { game_id: "OBS-NEW", both_official: false },
+      ]);
+      const byId = new Map(m.rows.map((r) => [r.game_id, r.action]));
+      ok("batch 관측 — baseline/emit/wait 독립 판정", byId.get("OBS-BASE") === "baseline" && byId.get("OBS-TRANS") === "emit" && byId.get("OBS-NEW") === "wait");
+    }
+
     // ── deadline 만료 fail-safe: 미발송 스냅샷은 finalize 시 expired ──
     const GF = "20260730SSNC0";
     await db.exec(`insert into profiles(id,team_id) values ('55555555-5555-5555-5555-555555555555',4);
@@ -145,6 +185,7 @@ async function main() {
     ok("anon snapshot RPC 차단", await fnDenied("anon", "snapshot_starter_announce_deliveries(text,integer,timestamptz,timestamptz,text,text,text)"));
     ok("authenticated claim RPC 차단", await fnDenied("authenticated", "claim_starter_announce_deliveries(text,integer,uuid,integer,integer)"));
     ok("anon list_due RPC 차단", await fnDenied("anon", "list_due_starter_announce_snapshots(integer)"));
+    ok("anon observe RPC 차단", await fnDenied("anon", "observe_starter_announce_games(jsonb)"));
   } finally {
     await db.close();
   }

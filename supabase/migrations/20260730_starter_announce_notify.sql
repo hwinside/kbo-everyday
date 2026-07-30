@@ -5,6 +5,10 @@
 -- 불변식 (삼순 계약)
 -- 1) (game_id, team_id) 스냅샷은 양팀 선발 빈값→공식값 최초 관측 1회만 생성한다(재수집/cron 중복 실행 중복 0).
 --    '연전 첫날' 하드코딩 없음 — 전이 자체가 트리거.
+-- 1-b) '전이'는 실제 빈값 관측 이력이 있어야 성립한다(game_starter_observation.saw_unannounced).
+--    rollout/배포 첫 tick 에 이미 공식값인 경기는 baseline(발송 금지)으로만 기록한다 — stale burst 차단.
+-- 1-c) 종결된 (game,team) state(starter_notified=true)에 snapshot RPC 를 재호출하면 null 을 반환해
+--    호출부(cron Phase A)가 drain/finalize 를 완전히 skip 한다(완료 state 매 tick 재처리 금지).
 -- 2) (game_id, team_id, event_type, token_id, token_hash)가 멱등 키다. 토큰 교체는 다른 hash로 구분.
 -- 3) lease_token fencing 통과 worker만 결과 기록. dispatch_started_at = at-most-once intent.
 -- 4) 최초 스냅샷의 transient 실패만 snapshot deadline 안에서 재시도한다.
@@ -18,6 +22,20 @@ create extension if not exists pgcrypto with schema extensions;
 -- 예고선발 공개 알림 opt-in (기본 on; lineup_confirm 컬럼 미러). coalesce(...,true)로 미설정=on.
 alter table notification_prefs
   add column if not exists starter_announce boolean not null default true;
+
+-- 경기 단위 선발 공시 관측 원장 — '실제 빈값→공식값 전이' 판정의 근거.
+-- saw_unannounced: 이 경기에서 양팀 선발이 미공개(빈값)인 상태를 실제로 관측한 적 있음.
+-- baseline_official: 최초 관측이 이미 공식값(배포/rollout 시점 기공개) — 발송 금지 baseline.
+create table if not exists game_starter_observation (
+  game_id text primary key,
+  saw_unannounced boolean not null default false,
+  baseline_official boolean not null default false,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table game_starter_observation enable row level security;
+-- 정책 없음: service_role cron 전용.
 
 -- (game_id, team_id) 단위 "공개 알림 1회" 게이트.
 create table if not exists game_starter_notify_state (
@@ -95,6 +113,7 @@ set search_path = public, extensions
 as $$
 declare
   v_created boolean := false;
+  v_notified boolean;
   v_deadline timestamptz;
 begin
   insert into game_starter_notify_state (game_id, team_id)
@@ -115,10 +134,14 @@ begin
 
   v_created := found;
   if not v_created then
-    select starter_snapshot_deadline_at
-      into v_deadline
+    select starter_notified, starter_snapshot_deadline_at
+      into v_notified, v_deadline
       from game_starter_notify_state
      where game_id = p_game_id and team_id = p_team_id;
+    -- 이미 종결된 (game,team): null 반환 → 호출부가 drain/finalize 를 완전히 skip(완료 state 재처리 금지).
+    if v_notified then
+      return null;
+    end if;
     return v_deadline;
   end if;
 
@@ -143,6 +166,49 @@ begin
 
   return p_deadline_at;
 end;
+$$;
+
+-- ── observe: 경기별 선발 공시 관측 기록 + 전이 판정(batch) ──
+-- 반환 action: 'emit'(실제 빈값 관측 이력 후 공식값 = 전이, 발송 대상) ·
+--   'baseline'(최초 관측부터 공식값 — rollout 기공개, 발송 금지) · 'wait'(아직 미공개).
+-- 발송 멱등/1회 계약 자체는 여전히 snapshot state 원장이 담당한다(emit 이 반복 반환돼도 안전).
+create or replace function observe_starter_announce_games(
+  p_observations jsonb
+)
+returns table (
+  game_id text,
+  action text
+)
+language sql
+security definer
+set search_path = public
+as $$
+  with obs as (
+    select
+      o->>'game_id' as gid,
+      coalesce((o->>'both_official')::boolean, false) as official
+    from jsonb_array_elements(p_observations) o
+    where coalesce(o->>'game_id', '') <> ''
+    limit 200
+  ),
+  upserted as (
+    insert into game_starter_observation as s (game_id, saw_unannounced, baseline_official)
+    select obs.gid, not obs.official, obs.official
+    from obs
+    on conflict (game_id) do update
+      set saw_unannounced = s.saw_unannounced or excluded.saw_unannounced,
+          updated_at = now()
+    returning s.game_id as gid, s.saw_unannounced
+  )
+  select
+    u.gid,
+    case
+      when o.official and u.saw_unannounced then 'emit'
+      when o.official then 'baseline'
+      else 'wait'
+    end
+  from upserted u
+  join obs o using (gid);
 $$;
 
 -- ── claim: pending 우선, transient 재시도 1회, lease fencing ──
@@ -369,12 +435,14 @@ as $$
   limit greatest(1, least(p_limit, 500));
 $$;
 
+revoke all on function observe_starter_announce_games(jsonb) from anon, authenticated, public;
 revoke all on function snapshot_starter_announce_deliveries(text, integer, timestamptz, timestamptz, text, text, text) from anon, authenticated, public;
 revoke all on function list_due_starter_announce_snapshots(integer) from anon, authenticated, public;
 revoke all on function claim_starter_announce_deliveries(text, integer, uuid, integer, integer) from anon, authenticated, public;
 revoke all on function mark_starter_announce_deliveries_dispatching(uuid[], uuid) from anon, authenticated, public;
 revoke all on function settle_starter_announce_delivery_batch(jsonb, uuid) from anon, authenticated, public;
 revoke all on function finalize_starter_announce_deliveries(text, integer) from anon, authenticated, public;
+grant execute on function observe_starter_announce_games(jsonb) to service_role;
 grant execute on function snapshot_starter_announce_deliveries(text, integer, timestamptz, timestamptz, text, text, text) to service_role;
 grant execute on function list_due_starter_announce_snapshots(integer) to service_role;
 grant execute on function claim_starter_announce_deliveries(text, integer, uuid, integer, integer) to service_role;
