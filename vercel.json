@@ -120,6 +120,10 @@
     {
       "path": "/api/cron/api-fallback-alert-drain",
       "schedule": "*/2 * * * *"
+    },
+    {
+      "path": "/api/cron/baseball-qa-drain",
+      "schedule": "* * * * *"
     }
   ]
 }

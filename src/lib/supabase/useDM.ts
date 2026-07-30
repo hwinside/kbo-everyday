@@ -5,6 +5,16 @@ import { supabase } from "./client";
 import { useAuth } from "./AuthContext";
 import { useBlockedIds } from "./useBlock";
 import { OPERATOR_USER_ID } from "@/lib/constants/operator";
+import {
+  BASEBALL_GENIUS_NAME,
+  BASEBALL_GENIUS_USER_ID,
+} from "@/lib/constants/baseball-genius";
+import {
+  attemptBaseballQaOutbox,
+  enqueueBaseballQaQuestion,
+  readBaseballQaOutbox,
+  resetBaseballQaQuestion,
+} from "@/lib/baseball-qa/client-outbox";
 import { usePollingFallback } from "./usePollingFallback";
 import { mergeDmMessagesById, type DMMessage } from "./dm-messages";
 
@@ -63,8 +73,8 @@ export function useDMList() {
       .order("last_message_at", { ascending: false })
       .limit(500);
 
-    if (!data || data.length === 0) { setConversations([]); setLoading(false); return; }
-    const conversationRows = data as DMConversationRow[];
+    // 빈 목록이어도 야잘알봇 고정방은 렌더해야 하므로 조기 반환하지 않는다.
+    const conversationRows = (data ?? []) as DMConversationRow[];
 
     // 상대방 ID 추출
     const otherIds = [
@@ -117,10 +127,28 @@ export function useDMList() {
       })
       // 차단된 유저 대화 필터링
       .filter((conv: DMConversation) =>
-        conv.other_user_id === null || !blockedIds.has(conv.other_user_id)
+        conv.other_user_id === null ||
+        conv.other_user_id === BASEBALL_GENIUS_USER_ID ||
+        !blockedIds.has(conv.other_user_id)
       );
 
-    setConversations(mapped);
+    const geniusConversation = mapped.find(
+      (conversation) => conversation.other_user_id === BASEBALL_GENIUS_USER_ID,
+    );
+    const pinnedGenius: DMConversation = geniusConversation ?? {
+      id: `new-${BASEBALL_GENIUS_USER_ID}`,
+      other_user_id: BASEBALL_GENIUS_USER_ID,
+      other_nickname: BASEBALL_GENIUS_NAME,
+      other_team_id: null,
+      other_avatar_url: null,
+      last_message: "야구 룰이나 용어를 물어보세요 ⚾",
+      last_message_at: new Date(0).toISOString(),
+      unread_count: 0,
+    };
+    setConversations([
+      pinnedGenius,
+      ...mapped.filter((conversation) => conversation.other_user_id !== BASEBALL_GENIUS_USER_ID),
+    ]);
     setLoading(false);
   }, [user, blockedIds]);
 
@@ -173,6 +201,61 @@ export function useDMChat(conversationId: string) {
   const channelGenerationRef = useRef(0);
   // 대화 전환마다 증가 — 늦게 resolve 된 send RPC 성공이 다른 대화 상태를 못 건드리게 하는 fence.
   const conversationGenerationRef = useRef(0);
+  const [geniusReplyState, setGeniusReplyState] =
+    useState<"idle" | "waiting" | "retrying" | "failed">("idle");
+  const processingBaseballQaRef = useRef(false);
+
+  const processBaseballQaOutbox = useCallback(async () => {
+    if (typeof window === "undefined" || processingBaseballQaRef.current) return;
+    processingBaseballQaRef.current = true;
+    try {
+      const queued = readBaseballQaOutbox(window.localStorage);
+      if (queued.length === 0) {
+        setGeniusReplyState("idle");
+        return;
+      }
+      setGeniusReplyState("retrying");
+      const { data: { session } } = await supabase.auth.getSession();
+      const result = await attemptBaseballQaOutbox(
+        window.localStorage,
+        session?.access_token ?? null,
+      );
+      if (result.failed.length > 0) setGeniusReplyState("failed");
+      else if (result.pending.length > 0) setGeniusReplyState("waiting");
+      else setGeniusReplyState("idle");
+    } finally {
+      processingBaseballQaRef.current = false;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!user || typeof window === "undefined") return;
+    const initial = window.setTimeout(() => {
+      void processBaseballQaOutbox();
+    }, 0);
+    const handleOnline = () => { void processBaseballQaOutbox(); };
+    window.addEventListener("online", handleOnline);
+    return () => {
+      window.clearTimeout(initial);
+      window.removeEventListener("online", handleOnline);
+    };
+  }, [user, processBaseballQaOutbox]);
+
+  useEffect(() => {
+    if (geniusReplyState !== "waiting") return;
+    const timer = window.setTimeout(() => {
+      void processBaseballQaOutbox();
+    }, 3000);
+    return () => window.clearTimeout(timer);
+  }, [geniusReplyState, processBaseballQaOutbox]);
+
+  const retryBaseballQa = useCallback(() => {
+    if (typeof window === "undefined") return;
+    for (const entry of readBaseballQaOutbox(window.localStorage)) {
+      resetBaseballQaQuestion(window.localStorage, entry.messageId);
+    }
+    void processBaseballQaOutbox();
+  }, [processBaseballQaOutbox]);
 
   // 대화 전환(A→B) 즉시 렌더 시점에 이전 대화 화면을 무효화한다:
   // A 메시지 잔존 상태로 B composer 가 뜨면 A 화면을 보고 B 에 오발송하는 창이 생긴다.
@@ -434,14 +517,35 @@ export function useDMChat(conversationId: string) {
             }
           })();
         }
+
+        // 야잘알봇 질문은 기존 DM insert 성공 후 서버 파이프라인이 같은 대화에
+        // 시스템 계정 답변을 넣는다. 답변 INSERT도 기존 DM push trigger를 그대로 탄다.
+        if (
+          result?.message_id &&
+          targetUserId === BASEBALL_GENIUS_USER_ID
+        ) {
+          enqueueBaseballQaQuestion(window.localStorage, {
+            conversationId: result.conversation_id,
+            messageId: result.message_id,
+          });
+          setGeniusReplyState("waiting");
+          void processBaseballQaOutbox();
+        }
       }
 
       return { ok: !error, conversationId: result?.conversation_id ?? null };
     },
-    [user, conversationId]
+    [user, conversationId, processBaseballQaOutbox]
   );
 
-  return { messages, loading, sendMessage, isLoggedIn: !!user };
+  return {
+    messages,
+    loading,
+    sendMessage,
+    isLoggedIn: !!user,
+    geniusReplyState,
+    retryBaseballQa,
+  };
 }
 
 // 대화 화면 진입만으로 빈 방을 만들지 않도록 기존 방 조회와 생성을 분리한다.

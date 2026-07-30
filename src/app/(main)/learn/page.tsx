@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowLeft, ChevronRight, ChevronLeft, Trophy, Check } from "lucide-react";
-import Link from "next/link";
 import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
 
 interface Lesson {

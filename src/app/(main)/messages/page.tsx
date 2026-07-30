@@ -12,6 +12,7 @@ import LoginSheet from "@/components/auth/LoginSheet";
 import { supabase } from "@/lib/supabase/client";
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { BASEBALL_GENIUS_NAME } from "@/lib/constants/baseball-genius";
 
 function timeAgo(dateStr: string) {
   const diff = Date.now() - new Date(dateStr).getTime();
@@ -106,7 +107,9 @@ export default function MessagesPage() {
             >
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-full bg-bg-tertiary flex items-center justify-center flex-shrink-0 overflow-hidden">
-                  {conv.other_nickname === "크보팬 운영팀" ? (
+                  {conv.other_nickname === BASEBALL_GENIUS_NAME ? (
+                    <span className="text-xl" aria-hidden>⚾</span>
+                  ) : conv.other_nickname === "크보팬 운영팀" ? (
                     <img src="/apple-touch-icon.png" alt="크보팬" className="w-full h-full object-cover" />
                   ) : conv.other_team_id ? (
                     <TeamBadge teamId={conv.other_team_id} size="sm" />
@@ -117,7 +120,9 @@ export default function MessagesPage() {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-bold text-text-primary">{conv.other_nickname}</span>
-                    <span className="text-[10px] text-text-tertiary">{timeAgo(conv.last_message_at)}</span>
+                    {!conv.id.startsWith("new-") && (
+                      <span className="text-[10px] text-text-tertiary">{timeAgo(conv.last_message_at)}</span>
+                    )}
                   </div>
                   <div className="flex items-center justify-between mt-0.5">
                     <p className="text-xs text-text-secondary truncate">{conv.last_message || "대화를 시작해보세요"}</p>
