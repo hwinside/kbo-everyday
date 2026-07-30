@@ -122,8 +122,8 @@ async function handleDm(record: Record<string, unknown>): Promise<Dispatch[]> {
   const receiver = conv.user1_id === senderId ? conv.user2_id : conv.user1_id;
   if (!receiver || receiver === senderId) return [];
 
-  // 야구천재는 시스템 계정이므로 유저 질문 수신 푸시는 만들지 않는다.
-  // 반대 방향(야구천재 답변 → 유저)은 아래 일반 DM prefKey 정책을 그대로 탄다.
+  // 야잘알봇는 시스템 계정이므로 유저 질문 수신 푸시는 만들지 않는다.
+  // 반대 방향(야잘알봇 답변 → 유저)은 아래 일반 DM prefKey 정책을 그대로 탄다.
   if (receiver === BASEBALL_GENIUS_USER_ID) return [];
 
   // 뉴스클리핑 쪽지 — 일반 쪽지 알림과 분리된 전용 문구 + 전용 prefKey (스펙 확정 문구).

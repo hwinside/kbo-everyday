@@ -1,4 +1,4 @@
--- 야구천재 고정 DM Q&A MVP (Notion SSOT v1.2)
+-- 야잘알봇 고정 DM Q&A MVP (Notion SSOT v1.2)
 -- ⚠️ 운영 DB 직접 적용 금지 — 머지 게이트 후 시스템 계정 프로비저닝과 함께 적용.
 
 CREATE TABLE IF NOT EXISTS public.baseball_terms (
@@ -54,9 +54,17 @@ CREATE TABLE IF NOT EXISTS public.genius_question_jobs (
   message_id bigint PRIMARY KEY REFERENCES public.dm_messages(id) ON DELETE CASCADE,
   conversation_id uuid NOT NULL REFERENCES public.dm_conversations(id) ON DELETE CASCADE,
   user_id uuid NOT NULL,
-  status text NOT NULL CHECK (status IN ('processing', 'ready', 'completed', 'failed')),
-  attempts integer NOT NULL DEFAULT 1 CHECK (attempts > 0),
+  status text NOT NULL CHECK (status IN ('queued', 'processing', 'ready', 'completed', 'failed')),
+  attempts integer NOT NULL DEFAULT 1 CHECK (attempts >= 0),
   lease_until timestamptz NOT NULL,
+  -- crash-after-reserve 재처리가 quota를 중복 소비하지 않도록 messageId 단위로 예약 결과를 고정한다.
+  quota_reserved boolean NOT NULL DEFAULT false,
+  quota_allowed boolean,
+  quota_remaining integer,
+  -- crash-after-LLM 재처리가 LLM을 재호출하지 않도록 응답 원본을 durable 저장한다.
+  llm_text text,
+  llm_input_tokens integer,
+  llm_output_tokens integer,
   answer text,
   source text,
   remaining integer,
@@ -64,6 +72,50 @@ CREATE TABLE IF NOT EXISTS public.genius_question_jobs (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE INDEX IF NOT EXISTS idx_genius_question_jobs_drain
+  ON public.genius_question_jobs (status, lease_until)
+  WHERE status IN ('queued', 'processing', 'ready', 'failed');
+
+-- 질문 INSERT와 같은 DB 트랜잭션에서 처리 job을 생성한다 (삼순 3차 P0).
+-- send_dm_message_atomic 커밋 직후 앱 종료/응답 단절이어도 job은 이미 존재하므로
+-- 클라이언트 outbox 없이도 서버 drainer(/api/cron/baseball-qa-drain)가 끝까지 처리한다.
+CREATE OR REPLACE FUNCTION public.enqueue_baseball_genius_question()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  -- 시스템 계정 고정 UUID (src/lib/constants/baseball-genius.ts와 동일 값).
+  v_genius constant uuid := '45ae7419-6a9a-4c6b-9101-8d65df7e242e';
+  v_is_genius_room boolean;
+BEGIN
+  IF NEW.sender_id IS NULL OR NEW.sender_id = v_genius THEN
+    RETURN NEW;
+  END IF;
+
+  SELECT true INTO v_is_genius_room
+  FROM public.dm_conversations c
+  WHERE c.id = NEW.conversation_id
+    AND v_genius IN (c.user1_id, c.user2_id)
+    AND NEW.sender_id IN (c.user1_id, c.user2_id);
+  IF v_is_genius_room IS NOT TRUE THEN
+    RETURN NEW;
+  END IF;
+
+  INSERT INTO public.genius_question_jobs (
+    message_id, conversation_id, user_id, status, attempts, lease_until
+  )
+  VALUES (NEW.id, NEW.conversation_id, NEW.sender_id, 'queued', 0, clock_timestamp())
+  ON CONFLICT (message_id) DO NOTHING;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_enqueue_baseball_genius_question ON public.dm_messages;
+CREATE TRIGGER trg_enqueue_baseball_genius_question
+  AFTER INSERT ON public.dm_messages
+  FOR EACH ROW EXECUTE FUNCTION public.enqueue_baseball_genius_question();
 
 -- KST 날짜별 질문 슬롯을 단일 UPSERT로 예약한다. used=limit이면 UPDATE가 0행이라
 -- 초과 요청은 모두 allowed=false. DB 오류는 호출 route가 fail-closed 처리한다.
@@ -94,6 +146,64 @@ BEGIN
     RETURN QUERY SELECT false, 0;
   ELSE
     RETURN QUERY SELECT true, greatest(0, p_limit - v_used);
+  END IF;
+END;
+$$;
+
+-- messageId 단위 durable idempotent quota 예약 (삼순 3차 P1).
+-- 같은 트랜잭션에서 job 행을 잠금 → 이미 예약된 메시지면 저장된 결과를 그대로 반환하고
+-- usage를 증가시키지 않는다. crash-after-reserve 재처리의 quota 중복 소비를 막는다.
+CREATE OR REPLACE FUNCTION public.reserve_baseball_genius_daily_question_for_message(
+  p_message_id bigint,
+  p_user_id uuid,
+  p_limit integer
+)
+RETURNS TABLE(allowed boolean, remaining integer)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_job public.genius_question_jobs%ROWTYPE;
+  v_used integer;
+  v_remaining integer;
+BEGIN
+  IF p_message_id IS NULL OR p_message_id < 1 OR p_user_id IS NULL
+     OR p_limit < 1 OR p_limit > 1000 THEN
+    RAISE EXCEPTION USING errcode = '22023', message = 'invalid message daily reservation';
+  END IF;
+
+  SELECT * INTO v_job
+  FROM public.genius_question_jobs
+  WHERE message_id = p_message_id AND user_id = p_user_id
+  FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION USING errcode = '22023', message = 'genius question job missing';
+  END IF;
+
+  IF v_job.quota_reserved THEN
+    RETURN QUERY SELECT coalesce(v_job.quota_allowed, false), coalesce(v_job.quota_remaining, 0);
+    RETURN;
+  END IF;
+
+  INSERT INTO public.genius_daily_usage (user_id, kst_day, used)
+  VALUES (p_user_id, (clock_timestamp() AT TIME ZONE 'Asia/Seoul')::date, 1)
+  ON CONFLICT (user_id, kst_day)
+  DO UPDATE SET used = genius_daily_usage.used + 1, updated_at = now()
+  WHERE genius_daily_usage.used < p_limit
+  RETURNING used INTO v_used;
+
+  IF v_used IS NULL THEN
+    UPDATE public.genius_question_jobs
+    SET quota_reserved = true, quota_allowed = false, quota_remaining = 0, updated_at = now()
+    WHERE message_id = p_message_id;
+    RETURN QUERY SELECT false, 0;
+  ELSE
+    v_remaining := greatest(0, p_limit - v_used);
+    UPDATE public.genius_question_jobs
+    SET quota_reserved = true, quota_allowed = true, quota_remaining = v_remaining, updated_at = now()
+    WHERE message_id = p_message_id;
+    RETURN QUERY SELECT true, v_remaining;
   END IF;
 END;
 $$;
@@ -154,7 +264,10 @@ BEGIN
   WHERE message_id = p_message_id
     AND conversation_id = p_conversation_id
     AND user_id = p_user_id
-    AND (status = 'failed' OR (status = 'processing' AND lease_until < clock_timestamp()))
+    AND (
+      status IN ('queued', 'failed')
+      OR (status = 'processing' AND lease_until < clock_timestamp())
+    )
   RETURNING status INTO v_status;
 
   IF v_status IS NOT NULL THEN
@@ -179,4 +292,9 @@ GRANT EXECUTE ON FUNCTION public.reserve_baseball_genius_daily_question(uuid, in
 REVOKE ALL ON FUNCTION public.claim_baseball_genius_question(bigint, uuid, uuid, integer)
   FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.claim_baseball_genius_question(bigint, uuid, uuid, integer)
+  TO service_role;
+
+REVOKE ALL ON FUNCTION public.reserve_baseball_genius_daily_question_for_message(bigint, uuid, integer)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.reserve_baseball_genius_daily_question_for_message(bigint, uuid, integer)
   TO service_role;

@@ -68,6 +68,10 @@ export interface QaDeps {
   setCache: (questionNorm: string, answer: string) => Promise<void>;
   callLlm: (question: string) => Promise<LlmResult>;
   reserveDaily: (userId: string, limit: number) => Promise<{ allowed: boolean; remaining: number }>;
+  /** crash-after-LLM 재처리 시 저장된 LLM 결과를 재사용 (messageId 단위 durable idempotency). */
+  getStoredLlm?: () => Promise<LlmResult | null>;
+  /** LLM 호출 직후 결과를 durable 저장 — 이후 단계 crash 시 재시도가 LLM을 재소비하지 않게 한다. */
+  storeLlm?: (result: LlmResult) => Promise<void>;
   log: (entry: {
     userId: string;
     question: string;
@@ -131,10 +135,14 @@ function tokenMatches(tokens: string[], word: string): boolean {
 }
 
 function hasPlayerReference(tokens: string[], players: PlayerRef[]): boolean {
+  // 선수명·KBO ID에도 일반 단어와 동일한 허용 조사 경계(tokenMatches)를 적용한다.
+  // "김도영의", "류현진은", "박해민이", "52605의" 같은 조사 결합형이 exact 미스로
+  // history_hold를 우회해 LLM/캐시에 진입하는 것을 막는다 (삼순 3차 P0).
   return players.some((player) => {
     const name = player.name.normalize("NFKC").toLowerCase().trim();
     const kboId = player.kboId.normalize("NFKC").toLowerCase().trim();
-    return (name.length >= 2 && tokens.includes(name)) || (kboId.length >= 3 && tokens.includes(kboId));
+    return (name.length >= 2 && tokenMatches(tokens, name)) ||
+      (kboId.length >= 3 && tokenMatches(tokens, kboId));
   });
 }
 
@@ -269,13 +277,24 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     return { status: 200, answer: cached, source: "cache", remaining };
   }
 
-  // ③ 미매칭만 LLM (단발, 이력 미전송)
-  let llm: LlmResult;
-  try {
-    llm = await deps.callLlm(question);
-  } catch {
-    await deps.log({ userId, question, questionNorm, matchPath: "error", answer: null, inputTokens: null, outputTokens: null });
-    return { status: 503, answer: "지금은 답변을 가져올 수 없어요. 잠시 후 다시 시도해 주세요.", source: "error", remaining };
+  // ③ 미매칭만 LLM (단발, 이력 미전송). 저장된 결과가 있으면(이전 시도가 LLM 이후 단계에서
+  // crash) 재호출 없이 재사용해 동일 messageId의 LLM 소비를 1회로 고정한다.
+  let llm: LlmResult | null = null;
+  if (deps.getStoredLlm) {
+    try {
+      llm = await deps.getStoredLlm();
+    } catch {
+      llm = null;
+    }
+  }
+  if (!llm) {
+    try {
+      llm = await deps.callLlm(question);
+    } catch {
+      await deps.log({ userId, question, questionNorm, matchPath: "error", answer: null, inputTokens: null, outputTokens: null });
+      return { status: 503, answer: "지금은 답변을 가져올 수 없어요. 잠시 후 다시 시도해 주세요.", source: "error", remaining };
+    }
+    if (deps.storeLlm) await deps.storeLlm(llm);
   }
 
   const validated = validateLlmResponse(llm.text);

@@ -421,7 +421,7 @@ export function useDMChat(conversationId: string) {
           })();
         }
 
-        // 야구천재 질문은 기존 DM insert 성공 후 서버 파이프라인이 같은 대화에
+        // 야잘알봇 질문은 기존 DM insert 성공 후 서버 파이프라인이 같은 대화에
         // 시스템 계정 답변을 넣는다. 답변 INSERT도 기존 DM push trigger를 그대로 탄다.
         if (
           result?.message_id &&

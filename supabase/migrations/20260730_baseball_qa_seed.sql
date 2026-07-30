@@ -400,6 +400,12 @@ KBO는 무승부를 계산에서 제외해요.
 INSERT INTO public.baseball_terms (
   term, aliases, answer, category, source_kind, source_url, rule_version, reviewed_at
 )
+-- 근거 매핑 원칙 (삼순 3차 P1 반영, 항목별 실정합):
+--   • official_rule  : 야구규칙서 범위의 경기 규칙/기록 규정만 GameRule.aspx에 연결.
+--   • official_record: KBO 기록 페이지에 실제 컬럼으로 존재하는 스탯만 해당 페이지(Basic1/Basic2)에 연결.
+--   • editorial_definition: 위 두 범주로 검증 가능한 URL이 없는 항목(리그 운영·KBO 2026 특별규정·
+--     문화·전술·세이버·서사적 기록 명칭)은 URL 없이 정직하게 분리.
+--     본문이 이미지 1장인 GameManage.aspx 등 근거 불가 페이지는 사용하지 않는다.
 SELECT
   term,
   aliases,
@@ -407,31 +413,40 @@ SELECT
   category,
   CASE
     WHEN term = ANY (ARRAY[
+      -- 문화·전술·세이버·구종/폼 설명 (기존 분류 유지)
       '스퀴즈','히트앤런','클린업','테이블세터','리드오프','불펜','마무리투수',
       '유틸리티','퀄리티스타트','블론세이브','wRC+','WAR','WHIP','포심','투심',
       '슬라이더','커브','체인지업','포크볼','커터','너클볼','언더핸드','클러치',
-      '스윕','위닝시리즈','벤치클리어링'
-    ]) THEN 'editorial_definition'
-    WHEN category = 'record' THEN 'official_record'
+      '스윕','위닝시리즈','벤치클리어링',
+      -- 서사적 기록 명칭 — 기록 페이지 컬럼이 아니므로 편집 설명으로 분리
+      '노히트노런','퍼펙트게임','사이클링히트','사이클링히트 조건','승률',
+      -- KBO 2026 리그 운영/특별규정 — 공개 규정 본문 URL 미확보로 편집 설명 분리
+      '체크스윙','시프트','비디오판독'
+    ]) OR category = 'league' THEN 'editorial_definition'
+    WHEN term = ANY (ARRAY[
+      '타율','득점','타점','출루율','장타율','OPS','득점권','멀티히트',
+      '평균자책점','자책점','세이브','홀드','완투','완봉'
+    ]) THEN 'official_record'
     ELSE 'official_rule'
   END,
   CASE
+    -- 항목별 실제 컬럼이 있는 기록 페이지만 연결한다.
+    WHEN term = ANY (ARRAY['타율','득점','타점'])  -- AVG / R / RBI
+      THEN 'https://www.koreabaseball.com/Record/Player/HitterBasic/Basic1.aspx'
+    WHEN term = ANY (ARRAY['출루율','장타율','OPS','득점권','멀티히트'])  -- OBP / SLG / OPS / RISP / MH
+      THEN 'https://www.koreabaseball.com/Record/Player/HitterBasic/Basic2.aspx'
+    WHEN term = ANY (ARRAY['평균자책점','자책점','세이브','홀드'])  -- ERA / ER / SV / HLD
+      THEN 'https://www.koreabaseball.com/Record/Player/PitcherBasic/Basic1.aspx'
+    WHEN term = ANY (ARRAY['완투','완봉'])  -- CG / SHO
+      THEN 'https://www.koreabaseball.com/Record/Player/PitcherBasic/Basic2.aspx'
     WHEN term = ANY (ARRAY[
       '스퀴즈','히트앤런','클린업','테이블세터','리드오프','불펜','마무리투수',
       '유틸리티','퀄리티스타트','블론세이브','wRC+','WAR','WHIP','포심','투심',
       '슬라이더','커브','체인지업','포크볼','커터','너클볼','언더핸드','클러치',
-      '스윕','위닝시리즈','벤치클리어링'
-    ]) THEN NULL
-    WHEN category = 'record' AND term = ANY (ARRAY[
-      '평균자책점','자책점','완투','완봉','노히트노런','퍼펙트게임','세이브',
-      '홀드','승리투수','패전투수'
-    ]) THEN 'https://www.koreabaseball.com/Record/Player/PitcherBasic/Basic1.aspx'
-    WHEN category = 'record'
-      THEN 'https://www.koreabaseball.com/Record/Player/HitterBasic/Basic1.aspx'
-    WHEN category = 'league'
-      THEN 'https://www.koreabaseball.com/Kbo/League/GameManageRule/GameManage.aspx'
-    WHEN term = ANY (ARRAY['ABS','피치클락','체크스윙','시프트','엔트리','외국인선수'])
-      THEN 'https://www.koreabaseball.com/Kbo/League/GameManage2026.aspx'
+      '스윕','위닝시리즈','벤치클리어링',
+      '노히트노런','퍼펙트게임','사이클링히트','사이클링히트 조건','승률',
+      '체크스윙','시프트','비디오판독'
+    ]) OR category = 'league' THEN NULL
     ELSE 'https://www.koreabaseball.com/Reference/Etc/GameRule.aspx'
   END,
   CASE
@@ -439,8 +454,10 @@ SELECT
       '스퀴즈','히트앤런','클린업','테이블세터','리드오프','불펜','마무리투수',
       '유틸리티','퀄리티스타트','블론세이브','wRC+','WAR','WHIP','포심','투심',
       '슬라이더','커브','체인지업','포크볼','커터','너클볼','언더핸드','클러치',
-      '스윕','위닝시리즈','벤치클리어링'
-    ]) THEN 'not_applicable'
+      '스윕','위닝시리즈','벤치클리어링',
+      '노히트노런','퍼펙트게임','사이클링히트','사이클링히트 조건','승률',
+      '체크스윙','시프트','비디오판독'
+    ]) OR category = 'league' THEN 'not_applicable'
     ELSE '2026'
   END,
   DATE '2026-07-30'

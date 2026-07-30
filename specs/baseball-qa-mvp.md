@@ -1,4 +1,4 @@
-# 야구천재 — 야구 룰/용어 질문 AI MVP v1.2
+# 야잘알봇 — 야구 룰/용어 질문 AI MVP v1.2
 
 - 상태: 구현 결정 완료 — 삼순 재리뷰 대기
 - Notion SSOT: https://www.notion.so/3acc901bb3728165b783d0f0960c9f02
@@ -14,11 +14,11 @@ LLM 순으로 비용을 0에 수렴시킨다. 선수·구단 기록/히스토리
 ## 2. 고정 DM UX
 
 - `/learn/ask`와 `/learn` 진입 카드를 제거한다.
-- `/messages` 최상단에 `야구천재` 방을 대화 유무와 무관하게 항상 고정한다.
+- `/messages` 최상단에 `야잘알봇` 방을 대화 유무와 무관하게 항상 고정한다.
 - 최초 질문은 `new-${BASEBALL_GENIUS_USER_ID}` 가상 row에서 기존
   `send_dm_message_atomic` RPC로 대화와 유저 메시지를 원자 생성한다.
 - 서버는 해당 사용자·대화·메시지 소유권을 재검증한 뒤 파이프라인을 실행하고,
-  `sendOpsMessageToUser`/`admin_send_ops_message` 패턴으로 야구천재 계정 답변을
+  `sendOpsMessageToUser`/`admin_send_ops_message` 패턴으로 야잘알봇 계정 답변을
   동일 대화에 insert한다.
 - 답변 insert는 기존 `dm_messages` push trigger와 Realtime/안읽음 집계를 그대로 탄다.
 - 고정방은 차단 필터에서 제외하고 신고·차단(나가기/삭제에 해당하는 UI)을 숨긴다.
@@ -41,10 +41,18 @@ LLM 순으로 비용을 0에 수렴시킨다. 선수·구단 기록/히스토리
 - 검증에 실패하면 `UNSURE`로 보류한다.
 - 검증을 통과한 `baseball_rule_term + ANSWER`만 `genius_qa_cache`에 저장한다.
 - 서비스/히스토리/거절/보류/검증 실패는 캐시에 절대 저장하지 않는다.
-- 사용자 메시지 id를 quota/LLM 전에 atomic claim한다. 처리 결과를 durable job에 `ready`로
-  저장한 뒤 답변 insert를 수행하고, 재시도는 저장된 답변만 사용한다.
-- 브라우저는 DM 저장 직후 동일 `messageId`를 local outbox에 먼저 기록한다. 최초 500/abort,
-  앱 재진입, 온라인 복귀 시 같은 id만 재시도하며 실패 상태와 수동 재시도 UI를 제공한다.
+- **서버측 durable handoff (3차 P0)**: 질문 DM INSERT와 같은 DB 트랜잭션에서
+  `dm_messages` trigger가 `genius_question_jobs(status='queued')`를 생성한다.
+  커밋 직후 앱 종료/응답 단절이어도 job은 유실되지 않으며,
+  `/api/cron/baseball-qa-drain`(매분)이 due job을 끝까지 처리한다.
+- 사용자 메시지 id를 quota/LLM 전에 atomic claim한다. quota 예약은 messageId 단위
+  idempotent RPC(`reserve_baseball_genius_daily_question_for_message`)로 job 행에 고정하고,
+  LLM 응답 원본도 호출 직후 job 행에 durable 저장해 crash 재처리가 quota·LLM을
+  재소비하지 않는다. 처리 결과를 durable job에 `ready`로 저장한 뒤 답변 insert를
+  수행하고, 재시도는 저장된 답변만 사용한다.
+- 브라우저는 DM 저장 직후 동일 `messageId`를 local outbox에 먼저 기록한다(즉시 응답 UX용
+  best-effort 경로). 최초 500/abort, 앱 재진입, 온라인 복귀 시 같은 id만 재시도하며 실패
+  상태와 수동 재시도 UI를 제공한다. 최종 전달 보장은 서버 drainer가 담당한다.
 
 ## 5. 데이터 모델
 
@@ -55,8 +63,9 @@ LLM 순으로 비용을 0에 수렴시킨다. 선수·구단 기록/히스토리
 - `genius_daily_usage`: `(user_id, kst_day)`별 atomic 사용량
 
 132개 seed는 `official_rule / official_record / editorial_definition`으로 근거 성격을
-구분한다. 공식 항목만 KBO 경기규칙·경기운영·기록실의 실제 대응 URL과
-`rule_version='2026'`을 저장한다. 문화·전술·세이버 설명은 공식 규정인 것처럼 가장하지
+구분한다. 공식 항목만 KBO 경기규칙·기록 페이지의 **항목별 실제 대응 URL**과
+`rule_version='2026'`을 저장한다. 본문이 이미지 1장인 경기운영 페이지 등 근거 불가
+페이지는 사용하지 않고 해당 항목은 editorial로 정직 분리한다(3차 P1). 문화·전술·세이버 설명은 공식 규정인 것처럼 가장하지
 않고 URL 없이 `editorial_definition / not_applicable`로 표시한다.
 전수 검수 산출물은 `specs/baseball-qa-seed-audit-2026.md`다.
 
@@ -87,6 +96,10 @@ UPSERT+조건부 increment+RETURNING을 한 트랜잭션으로 수행한다. LLM
 - `BASEBALL_GENIUS_MAX_ANSWER_LENGTH=200` — 권장 기본값
 - `BASEBALL_GENIUS_MIN_QUESTION_LENGTH=2`, `BASEBALL_GENIUS_MAX_QUESTION_LENGTH=200`
 - `BASEBALL_GENIUS_USER_ID` — 배포 전 동일 UUID auth/profile 시스템 계정 프로비저닝
+- 계정명 (2026-07-30 하린아빠 결정): 사용자 가시 계정명 `야구천재 → 야잘알봇`.
+  `BASEBALL_GENIUS_NAME=야잘알봇`, 기존 profile은 동일 UUID 유지한 채 nickname만 rename.
+  provisioning lookup은 nickname이 아니라 UUID/email 안정 키로 수행해 시스템 계정 1개와
+  기존 대화 연속성을 보장한다.
 
 ## 9. 검증 DoD
 
@@ -94,5 +107,9 @@ UPSERT+조건부 increment+RETURNING을 한 트랜잭션으로 수행한다. LLM
 - `qa:baseball-qa`: 4갈래 경로, 삼순 재현 6건, 캐시 오염 방지, 구조화 응답 검증
 - used=19에서 25개 병렬 예약 시 통과 최대 1개
 - 동일 messageId 25-way에서 claim 1·reserve 1·LLM ≤1·답변 1
+- 조사 결합 선수명/KBO ID 4건(김도영의/류현진은/박해민이/52605의) history_hold·LLM 0·cache 0
+- 질문 INSERT 커밋만으로 job 생성(trigger, 클라이언트 호출 0) → claim 가능
+- crash-after-reserve 재처리에서 quota 1·LLM ≤1·답변 1
+- seed 항목별 근거 감사 + 대표 오매핑 결함 주입 RED
 - DM 저장 성공 → 첫 처리 500 → local outbox 동일 messageId 재시도 → 완료
 - migration 미적용 유지
