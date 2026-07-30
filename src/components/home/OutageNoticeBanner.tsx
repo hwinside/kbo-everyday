@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Info } from "lucide-react";
 
 /**
@@ -13,7 +13,20 @@ import { Info } from "lucide-react";
 const NOTICE_END = new Date("2026-07-30T23:30:00+09:00");
 
 export default function OutageNoticeBanner() {
-  const [visible] = useState(() => Date.now() < NOTICE_END.getTime());
+  const [visible, setVisible] = useState(() => Date.now() < NOTICE_END.getTime());
+
+  // 열어둔 화면에서도 23:30 정각에 자동 소멸 (삼순 1차 리뷰 P1 — mount 1회 계산만으로는
+  // 23:29에 연 홈이 refresh 전까지 배너를 유지하는 문제). cleanup 가능한 단일 timer.
+  useEffect(() => {
+    if (!visible) return;
+    const remaining = NOTICE_END.getTime() - Date.now();
+    if (remaining <= 0) {
+      setVisible(false);
+      return;
+    }
+    const timer = setTimeout(() => setVisible(false), remaining);
+    return () => clearTimeout(timer);
+  }, [visible]);
 
   if (!visible) return null;
 
@@ -32,9 +45,9 @@ export default function OutageNoticeBanner() {
           서비스 이용 안내
         </p>
         <p className="mt-1 text-[13px] leading-[19px] text-text-secondary break-keep">
-          오늘 저녁 내부 장애로 경기 중계·알림 서비스가 원활하지 못했습니다.
-          19:45부터 정상화되었습니다. 불편을 드려 죄송하며, 같은 장애가
-          재발하지 않도록 더 철저히 운영하겠습니다.
+          서비스 이용에 불편을 드려 죄송합니다. 오늘 내부 시스템 장애로
+          서비스 이용이 원활하지 못했으며, 19:45부터 정상화되었습니다. 같은
+          장애가 재발하지 않도록 운영과 모니터링을 더욱 철저히 하겠습니다.
         </p>
       </div>
     </div>
