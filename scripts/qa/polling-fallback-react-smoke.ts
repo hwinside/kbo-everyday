@@ -3,6 +3,8 @@
  * - A→B 전환 즉시 messages/loading reset + late A load/payload 무영향 (오발송 창 차단)
  * - sender profile await 중 A→B 전환 → late A profile resolve 가 B 를 오염 못 함
  *   (useDM post-await generation fence 삭제 시 RED — fault-injection 으로 실증)
+ * - A send RPC pending 중 A→B 전환 → late A send success 가 B 화면에 A 메시지를
+ *   optimistic append 못 함 (sendMessage generation fence 삭제 시 RED)
  * - 초기 replace 포함 전체 요청이 단일 request owner: 초기 load pending 중
  *   catch-up/visibility 가 겹쳐도 동시 쿼리 최대 1, 늦은 초기 응답 롤백 없음
  * - actual usePollingFallback 동시 요청 최대 1
@@ -69,6 +71,14 @@ type PendingProfile = {
   settled: boolean;
   resolve: (value: { data: { nickname: string; team_id: number | null } | null }) => void;
 };
+type PendingRpc = {
+  fn: string;
+  settled: boolean;
+  resolve: (value: {
+    data: { conversation_id: string; message_id: number } | null;
+    error: null;
+  }) => void;
+};
 
 function row(id: number, conversationId: string, senderId: string | null = null): MessageRow {
   return {
@@ -84,10 +94,12 @@ function row(id: number, conversationId: string, senderId: string | null = null)
 async function runDmHookRegression() {
   const { supabase } = await import("../../src/lib/supabase/client");
   const { useDMChat } = await import("../../src/lib/supabase/useDM");
+  const { AuthProvider } = await import("../../src/lib/supabase/AuthContext");
   const originalRandom = Math.random;
   Math.random = () => 0; // catch-up jitter 0ms 결정론
   const pending: PendingQuery[] = [];
   const profilePending: PendingProfile[] = [];
+  const rpcPending: PendingRpc[] = [];
   let maxConcurrentQueries = 0;
   const unsettled = () => pending.filter((query) => !query.settled).length;
   const statusCallbacks = new Map<string, (status: string) => void>();
@@ -97,6 +109,8 @@ async function runDmHookRegression() {
     from: (table: string) => unknown;
     channel: (name: string) => unknown;
     removeChannel: (channel: unknown) => Promise<string>;
+    rpc: (fn: string, args: unknown) => unknown;
+    auth: unknown;
   };
   mutableClient.from = (table: string) => {
     if (table === "profiles") {
@@ -120,6 +134,17 @@ async function runDmHookRegression() {
     let conversationId = "";
     const query = {
       select: () => query,
+      // 읽음 처리(update 체인)는 즉시 resolve 되는 thenable 로 흘려보낸다.
+      update: () => {
+        const updateQuery = {
+          eq: () => updateQuery,
+          or: () => updateQuery,
+          then: (onFulfilled?: (value: { data: null }) => void) => {
+            onFulfilled?.({ data: null });
+          },
+        };
+        return updateQuery;
+      },
       eq: (column: string, value: string) => {
         if (column === "conversation_id") conversationId = value;
         return query;
@@ -153,6 +178,22 @@ async function runDmHookRegression() {
     return channel;
   };
   mutableClient.removeChannel = async () => "ok";
+  mutableClient.rpc = (fn: string) => ({
+    single: () =>
+      new Promise<{ data: { conversation_id: string; message_id: number } | null; error: null }>(
+        (resolve) => {
+          rpcPending.push({ fn, settled: false, resolve });
+        },
+      ),
+  });
+  // AuthProvider 용 최소 auth 목 — 실제 user 가 훅에 공급되어 sendMessage 가 동작한다.
+  mutableClient.auth = {
+    getSession: async () => ({
+      data: { session: { user: { id: "me" }, access_token: "qa-token" } },
+    }),
+    setSession: async () => ({ data: { session: null } }),
+    onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => {} } } }),
+  };
 
   function Harness({ conversationId }: { conversationId: string }) {
     const { messages, loading } = useDMChat(conversationId);
@@ -266,6 +307,82 @@ async function runDmHookRegression() {
     check("actual useDMChat: 최신 데이터 유지(늦은 초기 롤백 없음)", container.textContent === "C:1,C:2");
     await sleep(30);
     check("actual useDMChat: 추가 쿼리 발화 없음", unsettled() === 0);
+
+    root.unmount();
+    container.remove();
+  }
+
+  // ── 시나리오 3: A send RPC pending → B 전환 → late A success 가 B 를 오염 못 함 (왕10 3/3 blocker) ──
+  {
+    type SendFn = (
+      content: string,
+      imageUrls?: string[],
+      targetUserIdOverride?: string,
+    ) => Promise<{ ok: boolean; conversationId: string | null }>;
+    const sendRef: { current: SendFn | null } = { current: null };
+
+    function SendHarness({ conversationId }: { conversationId: string }) {
+      const { messages, loading, sendMessage } = useDMChat(conversationId);
+      React.useEffect(() => {
+        sendRef.current = sendMessage;
+      }, [sendMessage]);
+      return React.createElement(
+        "output",
+        null,
+        (loading ? "L|" : "") +
+          messages.map((message) => `${message.conversation_id}:${message.id}`).join(","),
+      );
+    }
+
+    const container = dom.window.document.createElement("div");
+    dom.window.document.body.appendChild(container);
+    const root = createRoot(container);
+    const render = (conversationId: string) =>
+      root.render(
+        React.createElement(
+          AuthProvider,
+          null,
+          React.createElement(SendHarness, { conversationId }),
+        ),
+      );
+
+    render("A");
+    await waitFor(() => pending.some((query) => query.conversationId === "A" && !query.settled));
+    resolveQuery("A", [row(1, "A")]);
+    await waitFor(() => container.textContent === "A:1");
+    check("actual useDMChat: send 시나리오 A 초기 로드", container.textContent === "A:1");
+    await waitFor(() => sendRef.current !== null);
+
+    // A 에서 send 시작 — RPC 는 pending 으로 묶어둔다 (override 로 대상 조회 생략).
+    const sendPromise = sendRef.current!("늦은 A 전송", [], "u2");
+    await waitFor(() => rpcPending.some((rpc) => !rpc.settled));
+    check(
+      "actual useDMChat: send RPC 가 실제로 pending",
+      rpcPending.some((rpc) => rpc.fn === "send_dm_message_atomic" && !rpc.settled),
+    );
+
+    // RPC pending 상태에서 B 로 전환 → 즉시 reset, B 는 빈 대화.
+    render("B");
+    await waitFor(() => container.textContent === "L|");
+    await waitFor(() => pending.some((query) => query.conversationId === "B" && !query.settled));
+    resolveQuery("B", []);
+    await waitFor(() => container.textContent === "");
+    check("actual useDMChat: B 전환 후 빈 대화 표시", container.textContent === "");
+
+    // 늦은 A send success — fence 가 없으면 A:9 가 B 화면에 붙고 빈 B 에서 계속 남는다.
+    const rpc = rpcPending.find((entry) => !entry.settled)!;
+    rpc.settled = true;
+    rpc.resolve({ data: { conversation_id: "A", message_id: 9 }, error: null });
+    const sendResult = await sendPromise;
+    await sleep(30);
+    check(
+      "actual useDMChat: late A send success 가 B 메시지 상태를 오염하지 않음 (send generation fence)",
+      container.textContent === "",
+    );
+    check(
+      "actual useDMChat: fence 는 상태만 폐기 — 서버 성공 결과는 그대로 반환",
+      sendResult.ok === true && sendResult.conversationId === "A",
+    );
 
     root.unmount();
     container.remove();

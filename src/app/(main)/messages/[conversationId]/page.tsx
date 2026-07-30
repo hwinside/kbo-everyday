@@ -60,7 +60,18 @@ export default function DMChatPage() {
     setOtherTeamId(null);
     setOtherId(null);
     setOtherResolved(false);
+    // composer 상태도 대화별로 격리 — A draft/전송중 표시가 B 로 이어지면 오발송·잠김 창이 생긴다.
+    setInput("");
+    setImages([]);
+    setSending(false);
+    setSendError("");
   }
+
+  // late handleSend 결과 fence 용 최신 대화 id (렌더 중 ref 쓰기는 react-hooks/refs 위반이라 effect 수행).
+  const conversationIdRef = useRef(conversationId);
+  useEffect(() => {
+    conversationIdRef.current = conversationId;
+  }, [conversationId]);
 
   useEffect(() => {
     if (!user || !conversationId) return;
@@ -194,7 +205,11 @@ export default function DMChatPage() {
     if ((!input.trim() && sendImages.length === 0) || sending || uploading) return;
     setSendError("");
     setSending(true);
+    const sendConversationId = conversationId;
     const result = await sendMessage(input.trim(), sendImages.map((img) => img.url), draftTargetId ?? undefined);
+    // 전송 중 다른 대화로 전환되었으면 새 대화의 input/images/sending 상태를 건드리지 않는다
+    // (전환 시점 render reset 이 composer 를 이미 초기화함 — late 결과는 폐기).
+    if (conversationIdRef.current !== sendConversationId) return;
     if (result.ok && result.conversationId) {
       setInput("");
       setImages([]);

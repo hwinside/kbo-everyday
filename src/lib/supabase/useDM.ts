@@ -171,6 +171,8 @@ export function useDMChat(conversationId: string) {
   const [realtimeHealthy, setRealtimeHealthy] = useState(false);
   const loadGenerationRef = useRef(0);
   const channelGenerationRef = useRef(0);
+  // 대화 전환마다 증가 — 늦게 resolve 된 send RPC 성공이 다른 대화 상태를 못 건드리게 하는 fence.
+  const conversationGenerationRef = useRef(0);
 
   // 대화 전환(A→B) 즉시 렌더 시점에 이전 대화 화면을 무효화한다:
   // A 메시지 잔존 상태로 B composer 가 뜨면 A 화면을 보고 B 에 오발송하는 창이 생긴다.
@@ -188,6 +190,7 @@ export function useDMChat(conversationId: string) {
   useIsomorphicLayoutEffect(() => {
     loadGenerationRef.current += 1;
     channelGenerationRef.current += 1;
+    conversationGenerationRef.current += 1;
   }, [conversationId]);
 
   // 메시지 로드/재조회 — 초기는 replace, 폴링 폴백은 merge(append 보존).
@@ -358,6 +361,9 @@ export function useDMChat(conversationId: string) {
       const images = (imageUrls ?? []).filter((u) => typeof u === "string" && u.length > 0);
       // 텍스트 또는 사진 중 하나는 있어야 전송
       if (!user || (!trimmed && images.length === 0)) return { ok: false, conversationId: null };
+      // RPC await 중 A→B 전환 시 late 성공이 B 화면에 A 메시지를 append 하는 것을 막는 fence.
+      // (서버 반영 자체는 유효 — 훅 상태 갱신만 폐기한다.)
+      const sendGeneration = conversationGenerationRef.current;
 
       let targetUserId = targetUserIdOverride;
       if (!targetUserId && conversationId) {
@@ -384,7 +390,12 @@ export function useDMChat(conversationId: string) {
       if (!error) {
         // 낙관 append — 발신 즉시 내 메시지를 대화창에 반영 (Realtime echo가 본인에게 지연/누락되는 경우 대비).
         // RPC가 준 message_id로 dedup하므로 Realtime echo와 중복되지 않는다.
-        if (result?.message_id && conversationId && result.conversation_id === conversationId) {
+        if (
+          result?.message_id &&
+          conversationId &&
+          result.conversation_id === conversationId &&
+          conversationGenerationRef.current === sendGeneration
+        ) {
           const optimistic: DMMessage = {
             id: result.message_id,
             conversation_id: result.conversation_id,
