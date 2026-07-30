@@ -19,11 +19,8 @@ export default function OutageNoticeBanner() {
   // 23:29에 연 홈이 refresh 전까지 배너를 유지하는 문제). cleanup 가능한 단일 timer.
   useEffect(() => {
     if (!visible) return;
-    const remaining = NOTICE_END.getTime() - Date.now();
-    if (remaining <= 0) {
-      setVisible(false);
-      return;
-    }
+    // 남은 시간 뒤 소멸 (이미 지난 경우 0ms 후 즉시). effect 본문 동기 setState 금지 룰 준수.
+    const remaining = Math.max(0, NOTICE_END.getTime() - Date.now());
     const timer = setTimeout(() => setVisible(false), remaining);
     return () => clearTimeout(timer);
   }, [visible]);
