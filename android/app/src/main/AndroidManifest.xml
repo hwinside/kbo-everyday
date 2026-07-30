@@ -180,4 +180,13 @@
     <!-- 직관 라이브: 구장 현장 인증(지오펜스)을 위해 업로드 시 위치 사용 -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <!-- 직관 라이브 커스텀 그리드 픽커: 앱 내 사진첩 열거(MediaStore) -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <!-- Android 14+ '일부 사진 선택'(limited) -->
+    <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
+    <!-- Android 12L 이하 사진첩 접근 -->
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
 </manifest>

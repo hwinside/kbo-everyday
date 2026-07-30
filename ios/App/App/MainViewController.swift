@@ -17,5 +17,6 @@ class MainViewController: CAPBridgeViewController {
         bridge?.registerPluginInstance(MetaAppEventsPlugin())
         bridge?.registerPluginInstance(AppReviewPlugin())
         bridge?.registerPluginInstance(NewsArticleBrowserPlugin())
+        bridge?.registerPluginInstance(VenueMediaLibraryPlugin())
     }
 }
