@@ -109,7 +109,6 @@
     "qa:celebration-relay-source": "tsx scripts/qa/celebration-relay-source-smoke.ts",
     "qa:shorts-relevance": "tsx scripts/qa/shorts-relevance-smoke.ts",
     "qa:shorts-scope": "tsx scripts/qa/shorts-scope-smoke.ts",
-    "qa:shorts-scope": "tsx scripts/qa/shorts-scope-smoke.ts",
     "qa:channel-discovery": "tsx scripts/qa/channel-discovery-smoke.ts",
     "qa:videos-rss-status": "tsx scripts/qa/videos-rss-status-smoke.ts",
     "qa:youtube-quota": "tsx scripts/qa/youtube-quota-smoke.ts",
