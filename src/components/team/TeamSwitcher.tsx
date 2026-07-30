@@ -29,7 +29,7 @@ export default function TeamSwitcher({ currentTeam }: TeamSwitcherProps) {
       {sortedTeams.map((t) => (
         <button
           key={t.id}
-          onClick={() => router.push(`/teams/${t.slug}`)}
+          onClick={() => router.replace(`/teams/${t.slug}`)}
           className={`flex-shrink-0 rounded-full p-1.5 transition-all ${
             t.id === currentTeam.id
               ? "ring-2 ring-offset-1 ring-offset-bg-primary bg-bg-tertiary"
