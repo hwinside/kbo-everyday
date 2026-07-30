@@ -318,73 +318,81 @@ test("17:59:15 scheduled → 18:02:46 live 1회초는 mark-only 대신 snapshot/
   }
 });
 
-test("오늘 5경기 13,454행은 bounded parallel + batch p95 1.4초·첫 8초 transient에도 전량 drain", async () => {
+test("5경기×4,000행 peak는 게임별 1-batch round-robin 반복으로 90초 안 전량 drain", async () => {
   const notify = await loadNotify();
   const gameIds = ["G1", "G2", "G3", "G4", "G5"];
-  const sizes = [3_419, 2_233, 1_191, 3_492, 3_119];
+  const sizes = gameIds.map(() => 4_000);
   const remaining = new Map(gameIds.map((id, index) => [id, sizes[index]]));
   const accepted = new Map(gameIds.map((id) => [id, 0]));
   const opened: string[] = [];
   const firstAttempted = new Set<string>();
   let clock = OBSERVED_AT;
-  let firstSlowTransient = true;
+  let snapshotOpened = false;
+  const passOrder: string[][] = [];
+  let currentPass: string[] = [];
   const realNow = Date.now;
   Date.now = () => clock;
   try {
-    const result = await notify(gameIds.map((gameId, index) => liveGame({
+    const games = gameIds.map((gameId, index) => liveGame({
       G_ID: gameId,
       G_DT: "20260724",
       G_TM: "18:30",
       AWAY_NM: index % 2 === 0 ? "한화" : "LG",
       HOME_NM: index % 2 === 0 ? "LG" : "한화",
-    })), {
-      observedAtMs: OBSERVED_AT,
-      deadlineAtMs: OBSERVED_AT + 52_000,
-      startDeps: {
-        storeScheduledSeen: async () => {},
-        readStartState: async () => ({
+    }));
+    let totalStarted = 0;
+    for (let invocation = 0; invocation < 6; invocation += 1) {
+      const invocationStart = clock;
+      const result = await notify(games, {
+        observedAtMs: OBSERVED_AT,
+        deadlineAtMs: invocationStart + 14_000,
+        preloadedStartStates: new Map(gameIds.map((gameId) => [gameId, {
           start_notified: false,
           last_seen_scheduled_at: new Date(OBSERVED_AT - 60_000).toISOString(),
-        }),
-        markStart: async () => {},
-        openStart: async ({ gameId }) => {
-          opened.push(gameId);
-          return OBSERVED_AT + 90_000;
-        },
-        deliverStartBatch: async ({ gameId, attemptDeadlineAtMs }) => {
-          assert.equal(opened.length, 5, "첫 FCM batch 전에 5경기 snapshot을 모두 열어야 한다");
-          assert.ok(clock < OBSERVED_AT + 52_000, "route deadline 뒤 신규 batch 금지");
-          assert.ok(attemptDeadlineAtMs <= clock + 14_000, "send+settle attempt budget은 14초 이하");
-          firstAttempted.add(gameId);
-          if (remaining.get(gameId) === 0) {
+          start_snapshot_at: snapshotOpened ? new Date(OBSERVED_AT).toISOString() : null,
+          start_snapshot_deadline_at: snapshotOpened
+            ? new Date(OBSERVED_AT + 90_000).toISOString()
+            : null,
+        }])),
+        startDeps: {
+          storeScheduledSeen: async () => {},
+          markStart: async () => {},
+          openStart: async ({ gameId }) => {
+            opened.push(gameId);
+            return OBSERVED_AT + 90_000;
+          },
+          deliverStartBatch: async ({ gameId, attemptDeadlineAtMs }) => {
+            assert.equal(opened.length, 5, "첫 FCM batch 전에 5경기 snapshot을 모두 열어야 한다");
+            assert.ok(attemptDeadlineAtMs <= invocationStart + 12_000, "finalize reserve 뒤 신규 batch 금지");
+            firstAttempted.add(gameId);
+            if (gameId === "G1") {
+              if (currentPass.length > 0) passOrder.push(currentPass);
+              currentPass = [];
+              clock += 1_400;
+            }
+            currentPass.push(gameId);
+            if (remaining.get(gameId) === 0) {
+              return {
+                claimed: 0, snapshotCompleted: true, fcmAcceptedDelta: 0,
+                fcmAcceptedTotal: accepted.get(gameId)!, deviceDelivered: null,
+                pending: 0, permanentFailed: 0, expired: 0,
+              };
+            }
+            const delta = Math.min(500, remaining.get(gameId)!);
+            remaining.set(gameId, remaining.get(gameId)! - delta);
+            accepted.set(gameId, accepted.get(gameId)! + delta);
             return {
-              claimed: 0, snapshotCompleted: true, fcmAcceptedDelta: 0,
-              fcmAcceptedTotal: accepted.get(gameId)!, deviceDelivered: null,
-              pending: 0, permanentFailed: 0, expired: 0,
-            };
-          }
-          if (gameId === "G1" && firstSlowTransient) {
-            firstSlowTransient = false;
-            clock += 8_000;
-            return {
-              claimed: 500,
-              snapshotCompleted: false,
-              fcmAcceptedDelta: 0,
-              fcmAcceptedTotal: 0,
+              claimed: delta,
+              snapshotCompleted: remaining.get(gameId) === 0,
+              fcmAcceptedDelta: delta,
+              fcmAcceptedTotal: accepted.get(gameId)!,
               deviceDelivered: null,
               pending: remaining.get(gameId)!,
               permanentFailed: 0,
               expired: 0,
             };
-          }
-          const delta = Math.min(500, remaining.get(gameId)!);
-          remaining.set(gameId, remaining.get(gameId)! - delta);
-          accepted.set(gameId, accepted.get(gameId)! + delta);
-          // 28개 FCM batch 전체에 운영 p95 1.4초를 적용한다(첫 transient만 8초 worst case).
-          // fake clock은 병렬 호출도 보수적으로 직렬 합산하므로 52초 통과는 실제보다 엄격하다.
-          clock += 1_400;
-          return {
-            claimed: delta,
+          },
+          finalizeStart: async (gameId, delta = 0) => ({
             snapshotCompleted: remaining.get(gameId) === 0,
             fcmAcceptedDelta: delta,
             fcmAcceptedTotal: accepted.get(gameId)!,
@@ -392,24 +400,22 @@ test("오늘 5경기 13,454행은 bounded parallel + batch p95 1.4초·첫 8초 
             pending: remaining.get(gameId)!,
             permanentFailed: 0,
             expired: 0,
-          };
+          }),
         },
-        finalizeStart: async (gameId, delta = 0) => ({
-          snapshotCompleted: remaining.get(gameId) === 0,
-          fcmAcceptedDelta: delta,
-          fcmAcceptedTotal: accepted.get(gameId)!,
-          deviceDelivered: null,
-          pending: remaining.get(gameId)!,
-          permanentFailed: 0,
-          expired: 0,
-        }),
-      },
-    });
+      });
+      totalStarted += result.started;
+      snapshotOpened = true;
+      if ([...remaining.values()].every((count) => count === 0)) break;
+      clock = invocationStart + 15_000;
+    }
+    if (currentPass.length > 0) passOrder.push(currentPass);
     assert.deepEqual(opened, gameIds);
     assert.deepEqual([...firstAttempted], gameIds);
     assert.ok([...remaining.values()].every((count) => count === 0));
-    assert.equal(result.started, sizes.reduce((sum, count) => sum + count, 0));
-    assert.ok(clock < OBSERVED_AT + 52_000);
+    assert.equal(totalStarted, sizes.reduce((sum, count) => sum + count, 0));
+    assert.ok(clock - OBSERVED_AT < 90_000);
+    assert.ok(passOrder.every((pass) => new Set(pass).size === pass.length));
+    assert.ok(passOrder.slice(0, 8).every((pass) => pass.length === 5));
   } finally {
     Date.now = realNow;
   }
@@ -800,8 +806,9 @@ test("watchdog actual wiring: bulk state 재사용 + 첫 snapshot slow 격리 + 
 
 test("watchdog actual wiring: 한 snapshot이 deadline까지 hang해도 FAST 경기는 즉시 drain", async () => {
   const notify = await loadNotify();
-  const startedAt = Date.now();
-  const deadlineAtMs = startedAt + 80;
+  let clock = Date.now();
+  const startedAt = clock;
+  const deadlineAtMs = startedAt + 10_000;
   const gameIds = ["HANG", "FAST"];
   const games = gameIds.map((gameId) => liveGame({
     G_ID: gameId,
@@ -821,25 +828,38 @@ test("watchdog actual wiring: 한 snapshot이 deadline까지 hang해도 FAST 경
   }]));
   const batches: string[] = [];
 
-  await notify(games, {
-    observedAtMs: startedAt,
-    deadlineAtMs,
-    preloadedStartStates,
-    startPlateAppearanceByGame: evidence,
-    startDeps: {
-      storeScheduledSeen: async () => {},
-      markStart: async () => {},
-      openStart: async ({ gameId, requestDeadlineAtMs }) => {
-        if (gameId === "HANG") {
-          await new Promise((resolve) => setTimeout(resolve, requestDeadlineAtMs! - Date.now()));
-          throw new Error("deadline");
-        }
-        return startedAt + 90_000;
-      },
-      deliverStartBatch: async ({ gameId }) => {
-        batches.push(gameId);
-        return {
-          claimed: 1,
+  const realNow = Date.now;
+  Date.now = () => clock;
+  try {
+    await notify(games, {
+      observedAtMs: startedAt,
+      deadlineAtMs,
+      preloadedStartStates,
+      startPlateAppearanceByGame: evidence,
+      startDeps: {
+        storeScheduledSeen: async () => {},
+        markStart: async () => {},
+        openStart: async ({ gameId }) => {
+          if (gameId === "HANG") {
+            clock += 2_500;
+            throw new Error("deadline");
+          }
+          return startedAt + 90_000;
+        },
+        deliverStartBatch: async ({ gameId }) => {
+          batches.push(gameId);
+          return {
+            claimed: 1,
+            snapshotCompleted: true,
+            fcmAcceptedDelta: 1,
+            fcmAcceptedTotal: 1,
+            deviceDelivered: null,
+            pending: 0,
+            permanentFailed: 0,
+            expired: 0,
+          };
+        },
+        finalizeStart: async () => ({
           snapshotCompleted: true,
           fcmAcceptedDelta: 1,
           fcmAcceptedTotal: 1,
@@ -847,22 +867,14 @@ test("watchdog actual wiring: 한 snapshot이 deadline까지 hang해도 FAST 경
           pending: 0,
           permanentFailed: 0,
           expired: 0,
-        };
+        }),
       },
-      finalizeStart: async () => ({
-        snapshotCompleted: true,
-        fcmAcceptedDelta: 1,
-        fcmAcceptedTotal: 1,
-        deviceDelivered: null,
-        pending: 0,
-        permanentFailed: 0,
-        expired: 0,
-      }),
-    },
-  });
+    });
+  } finally {
+    Date.now = realNow;
+  }
 
-  assert.equal(batches.length, 2, "FAST 경기는 게임별 batch concurrency 2로 즉시 drain");
-  assert.ok(batches.every((gameId) => gameId === "FAST"), "HANG 경기 batch는 시작하지 않는다");
+  assert.deepEqual(batches, ["FAST"], "HANG snapshot을 격리하고 FAST에 pass당 1 batch");
 });
 
 // 실행 동작은 qa:la-born-marking이 검증한다. 여기서는 production 함수가 그 검증된
