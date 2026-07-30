@@ -46,6 +46,7 @@ import type {
   SituationTables,
 } from "@/lib/contextual-stats/types";
 import type { KboRawGame } from "@/types/api";
+import { fetchKboLiveGames } from "@/lib/notifications/kbo-live-games";
 
 export const dynamic = "force-dynamic";
 
@@ -130,15 +131,24 @@ interface LiveGameSnapshot {
   pitcherName: string | null;
 }
 
-async function fetchLiveGame(gameId: string): Promise<LiveGameSnapshot | null> {
-  const date = gameId.slice(0, 8);
-  const res = await fetch(`${KBO_MAIN}/GetKboGameList`, {
+/**
+ * KBO GetKboGameList 직접 호출 결과. rawGame=null이면서 kboFailed=true는
+ * HTTP 실패/JSON 파싱 실패(하드 장애)로, 이때만 Naver failover를 태운다.
+ * kboFailed=false + rawGame=null은 KBO가 정상 응답했으나 해당 경기가 목록에
+ * 없는 경우로(무경기/미개시), 기존처럼 degrade 유지(무변경 보존).
+ */
+async function fetchLiveGameFromKbo(
+  gameId: string,
+  date: string,
+  fetchImpl: typeof fetch,
+): Promise<{ rawGame: KboRawGame | null; kboFailed: boolean }> {
+  const res = await fetchImpl(`${KBO_MAIN}/GetKboGameList`, {
     method: "POST",
     headers: KBO_HEADERS,
     body: `leId=1&srId=0,1,3,4,5,7,8,9&date=${date}`,
     cache: "no-store",
   });
-  if (!res.ok) return null;
+  if (!res.ok) return { rawGame: null, kboFailed: true };
   const text = await res.text();
   // KBO sometimes appends ASP.NET error HTML after JSON — parse JSON prefix only.
   const jsonPrefix = text.split(/}<!/)[0] + (text.includes("}<!") ? "}" : "");
@@ -146,10 +156,33 @@ async function fetchLiveGame(gameId: string): Promise<LiveGameSnapshot | null> {
   try {
     parsed = JSON.parse(jsonPrefix);
   } catch {
-    return null;
+    return { rawGame: null, kboFailed: true };
   }
   const games = parsed.game ?? [];
-  const rawGame = games.find(g => g.G_ID === gameId);
+  return { rawGame: games.find(g => g.G_ID === gameId) ?? null, kboFailed: false };
+}
+
+// Exported for scripts/qa/contextual-stats-naver-failover-smoke.ts (fault injection).
+export async function fetchLiveGame(
+  gameId: string,
+  fetchImpl: typeof fetch = fetch,
+  failoverImpl: typeof fetchKboLiveGames = fetchKboLiveGames,
+): Promise<LiveGameSnapshot | null> {
+  const date = gameId.slice(0, 8);
+  const kbo = await fetchLiveGameFromKbo(gameId, date, fetchImpl);
+  let rawGame = kbo.rawGame;
+
+  // KBO GetKboGameList가 HTTP/파싱으로 하드 실패한 경우에만 공용 Naver failover로
+  // 현재 투수/타자를 보강한다. naverGameToRaw가 GAME_TB_SC(공수)와 함께
+  // B_P_NM/T_P_NM에 현재 투타명(relay currentGameState pcode→이름)을 넣어 주므로
+  // (kbo-live-games.ts naverGameToRaw), 아래 isTop 매핑을 그대로 재사용한다.
+  // Naver도 ok:false거나 해당 경기가 없으면 null degrade(fail-close).
+  if (!rawGame && kbo.kboFailed) {
+    const failover = await failoverImpl(date).catch(() => null);
+    if (failover?.ok) {
+      rawGame = failover.games.find(g => g.G_ID === gameId) ?? null;
+    }
+  }
   if (!rawGame) return null;
 
   const isTop = rawGame.GAME_TB_SC === "T";
