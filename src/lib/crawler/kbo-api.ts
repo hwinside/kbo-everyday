@@ -72,6 +72,7 @@ export interface KboGame {
   balls: number;
   outs: number;
   runnersOn: { first: boolean; second: boolean; third: boolean };
+  runnerOrders?: { first: number; second: number; third: number };
   currentPitcher: string;
   currentBatter: string;
   // 순위
