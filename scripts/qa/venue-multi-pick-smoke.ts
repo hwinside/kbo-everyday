@@ -23,9 +23,11 @@ import {
   summarizeUploadOutcome,
   uploadFailureReason,
   isRetryableItem,
+  resolveVenuePickerMode,
+  toggleAssetSelection,
   type MultiItemStatus,
 } from "../../src/lib/venue-stories/multi-pick";
-import { paletteForTeamId, teamPalette } from "../../src/design-v2/team-palette";
+import { teamPalette } from "../../src/design-v2/team-palette";
 import { TEAMS } from "../../src/design-v2/TEAMS";
 import { meetsAA } from "../../src/lib/design-v2/contrast";
 
@@ -96,19 +98,45 @@ console.log("[⑤ 실패 사유 1줄 + 실패건만 재시도]");
   ok("재시도는 failed 만", isRetryableItem("failed") && !isRetryableItem("done") && !isRetryableItem("uploading") && !isRetryableItem("ready"));
 }
 
-console.log("[④ CTA 팀색 — teamPalette.accent/onAccent WCAG AA(10팀+neutral)]");
+console.log("[④ CTA 팀색 — 기존 teamPalette.accent/onAccent 계약]");
 {
-  let aaAll = true;
+  // 전 팀 WCAG AA 보강(onAccentColor 대비 기반 판정)은 합의상 별도 PR(onAccent helper 분리)에서
+  // 다뤘다 — 여기서는 기존 teamPalette 계약(흑/백 자동 선택 + neutral fallback)만 고정한다.
+  let pairAll = true;
+  let anyAA = true;
   for (const team of Object.values(TEAMS)) {
     const p = teamPalette(team);
-    if (!meetsAA(p.onAccent, p.accent)) {
-      aaAll = false;
-      console.log(`    ✗ ${team.slug}: ${p.onAccent} on ${p.accent}`);
-    }
+    if (p.onAccent !== "#ffffff" && p.onAccent !== "#0a0a0a") pairAll = false;
+    if (team.slug === "neutral" && !meetsAA(p.onAccent, p.accent)) anyAA = false;
   }
-  ok("전 팀 accent/onAccent 대비 AA(≥4.5:1)", aaAll);
-  ok("paletteForTeamId — id 매칭", paletteForTeamId(TEAMS.lg.id).primary === TEAMS.lg.primary);
-  ok("paletteForTeamId — null/미매칭은 neutral fallback", paletteForTeamId(null).isNeutral && paletteForTeamId(9999).isNeutral);
+  ok("전 팀 onAccent 흑/백 자동 선택(기존 계약)", pairAll);
+  ok("neutral(KBO 블루) accent/onAccent AA", anyAA);
+  ok("미매칭 팀은 neutral fallback", teamPalette(TEAMS.neutral).isNeutral);
+}
+
+console.log("[version gate — 픽커 모드 / 그리드 멀티셀렉트 토글]");
+{
+  ok(
+    "설치 앱 + 브릿지 가용 → grid",
+    resolveVenuePickerMode({ nativeRuntime: true, pluginAvailable: true }) === "grid",
+  );
+  ok(
+    "구설치본(브릿지 없음) → 기존 file input 폴백",
+    resolveVenuePickerMode({ nativeRuntime: true, pluginAvailable: false }) === "fileInput",
+  );
+  ok(
+    "웹/PWA → 기존 file input 폴백",
+    resolveVenuePickerMode({ nativeRuntime: false, pluginAvailable: false }) === "fileInput" &&
+      resolveVenuePickerMode({ nativeRuntime: false, pluginAvailable: true }) === "fileInput",
+  );
+  const t1 = toggleAssetSelection([], "a");
+  const t2 = toggleAssetSelection(["a"], "b");
+  const t3 = toggleAssetSelection(["a", "b"], "c");
+  ok("탭 토글 — 선택 순서 1→2→3 append", t1.next.join(",") === "a" && t2.next.join(",") === "a,b" && t3.next.join(",") === "a,b,c");
+  const t4 = toggleAssetSelection(["a", "b", "c"], "b");
+  ok("재탭 해제 — 뒤 번호 한 칸 당김", t4.next.join(",") === "a,c" && !t4.overMax);
+  const t5 = toggleAssetSelection(["a", "b", "c"], "d");
+  ok("상한(3) 도달 시 무변경 + overMax", t5.next.join(",") === "a,b,c" && t5.overMax);
 }
 
 console.log("[③ 컴포저 정적 계약 — 단일 sticky CTA / raw 팀변수 금지]");
@@ -122,14 +150,40 @@ console.log("[③ 컴포저 정적 계약 — 단일 sticky CTA / raw 팀변수 
   ok("safe-area(bottom) 유지", src.includes("env(safe-area-inset-bottom)"));
   ok("CTA 색상은 palette.accent/onAccent", /style=\{\{ background: palette\.accent, color: palette\.onAccent \}\}/.test(src));
   ok("raw --team-primary 사용 0", !src.includes("--team-primary"));
-  ok("공용 paletteForTeamId 사용(픽커 로컬 예외 없음)", src.includes("paletteForTeamId(getMyTeamId())"));
+  ok(
+    "CTA 팀색은 기존 teamPalette + TEAMS 만 사용(onAccent helper 신설은 별도 PR)",
+    src.includes("teamPalette(team ?? TEAMS.neutral)") && !src.includes("paletteForTeamId("),
+  );
   ok("네이티브 사진첩 열거 브릿지 사용", src.includes("listVenueMedia("));
-  ok("OS 시스템 file input 폴백 금지", !src.includes('document.createElement("input")'));
-  ok("그리드 탭 즉시 asset export→프리뷰 전환", /exportVenueMediaFile\(asset\.id\)[\s\S]{0,180}?handlePickedFiles\(\[file\], \[asset\.id\]\)[\s\S]{0,100}?setLibraryOpen\(false\)/.test(src));
+  ok(
+    "version gate — 브릿지 미가용이면 기존 file input 폴백(업로드 동선 보존)",
+    src.includes("isVenueMediaLibraryAvailable()") &&
+      src.includes("resolveVenuePickerMode(") &&
+      src.includes('type="file"') &&
+      src.includes('accept="image/*,video/*"') &&
+      src.includes("fileInputRef.current?.click()"),
+  );
+  ok(
+    "그리드 한 화면 멀티셀렉트 — 탭 토글(toggleAssetSelection) 후 일괄 확정",
+    src.includes("toggleAssetSelection(") &&
+      src.includes("confirmLibrarySelection") &&
+      /const additions = librarySelection\.filter[\s\S]{0,400}?exportVenueMediaFile\(asset\.id\)[\s\S]{0,400}?handlePickedFiles\(\[file\], \[asset\.id\]\)[\s\S]{0,200}?setLibraryOpen\(false\)/.test(src),
+  );
+  ok(
+    "export 단건마다 그리드 닫힘 구조 제거(토글 중 setLibraryOpen(false) 없음)",
+    !/toggleLibraryAsset[\s\S]{0,600}?setLibraryOpen\(false\)/.test(src),
+  );
   ok("Limited/선택 사진 `더 보기` 흐름", src.includes("presentLimitedVenueMediaPicker()") && src.includes("더 보기"));
   ok("권한 거부 시 OS 설정 유도", src.includes("openVenueMediaSettings()") && src.includes("설정 열기"));
+  // 프리뷰 화면 CTA 1개 + 그리드 확정 바 1개(상호 배타 화면) — 상단 공유 버튼은 여전히 없음.
   const stickyCtaCount = (src.match(/className="w-full py-3\.5 rounded-xl/g) ?? []).length;
-  ok("하단 sticky CTA 1개(상단 공유 버튼 없음)", stickyCtaCount === 1 && !src.includes("공유하기"));
+  ok(
+    "화면당 하단 sticky CTA 1개(프리뷰/그리드 배타 렌더 · 상단 공유 버튼 없음)",
+    stickyCtaCount === 2 &&
+      src.includes("{!libraryOpen && (") &&
+      src.includes('{libraryOpen && phase !== "done" && (') &&
+      !src.includes("공유하기"),
+  );
   ok("완료 요약 재시도 게이트가 isRetryableItem 사용", src.includes("isRetryableItem(target.status)"));
   ok(
     "재시도 중 닫기/중복 전송 동기 guard",
@@ -142,7 +196,11 @@ console.log("[③ 컴포저 정적 계약 — 단일 sticky CTA / raw 팀변수 
   ok("썸네일 placeholder→fade-in", src.includes("animate-pulse opacity-100") && src.includes("transition-opacity duration-200"));
   ok("오프스크린 셀 렌더 비용 제한", src.includes('contentVisibility: "auto"'));
   ok("선택 배지 spring 애니메이션", src.includes('transition={{ type: "spring", stiffness: 520, damping: 30 }}'));
-  ok("선택 즉시 optimistic 배지", /setPendingAssetId\(asset\.id\)[\s\S]{0,120}?venueMediaSelectionHaptic\(\)/.test(src));
+  ok(
+    "탭 즉시 선택 배지+햅틱(export 대기 없음)",
+    /setLibrarySelection\(\(prev\)[\s\S]{0,500}?venueMediaSelectionHaptic\(\)/.test(src) &&
+      src.includes("setPendingAssetId(asset.id)"),
+  );
   ok("프리뷰 전환 AnimatePresence wait", src.includes('<AnimatePresence mode="wait" initial={false}>'));
   ok("스트립 layout 재정렬 애니메이션", src.includes("<motion.button") && src.includes("layout"));
   ok("스트립 이동·삭제 44px 터치 타겟", (src.match(/w-11 h-11 rounded-xl/g) ?? []).length >= 3);
@@ -159,10 +217,98 @@ console.log("[B안 브릿지 계약 — 사진첩 열거/asset export]");
   ok("VenueMediaLibrary 커스텀 플러그인 등록", bridge.includes('registerPlugin<VenueMediaLibraryPlugin>("VenueMediaLibrary")'));
   ok("최근순 페이지 열거 API", bridge.includes("listMedia(options: { cursor?: string; limit: number })"));
   ok("원본 asset export API", bridge.includes("exportMedia(options: { id: string })"));
-  ok("원격 WebView file 경로 변환", bridge.includes("Capacitor.convertFileSrc(exported.webPath)"));
+  ok(
+    "원격 WebView 안전 export — base64 청크 읽기(convertFileSrc/file:// 의존 0)",
+    bridge.includes("readExport(options: { token: string; offset: number; length: number })") &&
+      bridge.includes("releaseExport(options: { token: string })") &&
+      !bridge.includes("convertFileSrc"),
+  );
+  ok(
+    "설치 앱 판정은 공용 isNativeRuntime (Capacitor.isNativePlatform 단독 판정 금지 — PR #484 패턴)",
+    bridge.includes('import { isNativeRuntime } from "@/lib/capacitor/platform"') &&
+      bridge.includes("return isNativeRuntime();"),
+  );
+  ok(
+    "브릿지 가용성 런타임 probe(version gate)",
+    bridge.includes("export async function isVenueMediaLibraryAvailable") &&
+      bridge.includes('callPlugin<{ permission: VenueMediaPermission }>("getPermission")'),
+  );
+  ok(
+    "원격 로드 dual-instance 우회 — 주입 브릿지 fallback(native-app-review 패턴)",
+    bridge.includes("window.Capacitor") || bridge.includes("InjectedCapacitor"),
+  );
+  ok("export cache 정리(releaseExport) 호출", bridge.includes('callPlugin<void>("releaseExport"'));
   ok("Limited 추가 허용 API", bridge.includes("presentLimitedPicker(): Promise<void>"));
   ok("설정 유도 API", bridge.includes("openSettings(): Promise<void>"));
   ok("선택 햅틱 API + 구 브릿지 fallback", bridge.includes("selectionChanged(): Promise<void>") && bridge.includes("navigator.vibrate?.(8)"));
+}
+
+console.log("[네이티브 실구현 — iOS PhotoKit / Android MediaStore / 권한·등록]");
+{
+  const swift = readFileSync(
+    join(__dirname, "../../ios/App/App/VenueMediaLibraryPlugin.swift"),
+    "utf8",
+  );
+  ok(
+    "iOS — PhotoKit 열거/썸네일/원본 export",
+    swift.includes("PHAsset.fetchAssets") &&
+      swift.includes("PHImageManager") &&
+      swift.includes("requestImageDataAndOrientation") &&
+      swift.includes("requestAVAsset"),
+  );
+  ok(
+    "iOS — 플러그인 메서드 9종 선언(CAPBridgedPlugin)",
+    swift.includes('jsName = "VenueMediaLibrary"') &&
+      ["getPermission", "requestPermission", "listMedia", "exportMedia", "readExport", "releaseExport", "presentLimitedPicker", "openSettings", "selectionChanged"].every((m) =>
+        swift.includes(`CAPPluginMethod(name: "${m}"`),
+      ),
+  );
+  ok(
+    "iOS — Limited(일부 선택) + 설정 유도 + iCloud 원본 허용",
+    swift.includes("presentLimitedLibraryPicker") &&
+      swift.includes("openSettingsURLString") &&
+      swift.includes("isNetworkAccessAllowed = true"),
+  );
+  ok("iOS — export cache 정리(release/deinit)", swift.includes("removeItem(at:") && swift.includes("deinit"));
+  const mainVC = readFileSync(join(__dirname, "../../ios/App/App/MainViewController.swift"), "utf8");
+  ok("iOS — 브릿지 수동 등록", mainVC.includes("registerPluginInstance(VenueMediaLibraryPlugin())"));
+  const pbx = readFileSync(join(__dirname, "../../ios/App/App.xcodeproj/project.pbxproj"), "utf8");
+  ok("iOS — Xcode 타쉿 소스 포함", (pbx.match(/VenueMediaLibraryPlugin\.swift/g) ?? []).length >= 4);
+  const plist = readFileSync(join(__dirname, "../../ios/App/App/Info.plist"), "utf8");
+  ok("iOS — NSPhotoLibraryUsageDescription 선언", plist.includes("NSPhotoLibraryUsageDescription"));
+
+  const kotlin = readFileSync(
+    join(__dirname, "../../android/app/src/main/java/fan/keubo/app/VenueMediaLibraryPlugin.kt"),
+    "utf8",
+  );
+  ok(
+    "Android Kotlin — MediaStore 열거/썸네일/원본 export",
+    kotlin.includes("MediaStore.Files.getContentUri") &&
+      kotlin.includes("loadThumbnail") &&
+      kotlin.includes("openInputStream"),
+  );
+  ok(
+    "Android — 권한 alias(READ_MEDIA_IMAGES/VIDEO/VISUAL_USER_SELECTED + legacy)",
+    kotlin.includes("READ_MEDIA_IMAGES") &&
+      kotlin.includes("READ_MEDIA_VIDEO") &&
+      kotlin.includes("READ_MEDIA_VISUAL_USER_SELECTED") &&
+      kotlin.includes("READ_EXTERNAL_STORAGE"),
+  );
+  ok("Android — limited(일부 사진) 판정", kotlin.includes('"limited"') && kotlin.includes("mediaPartial"));
+  ok("Android — export cache 정리(destroy)", kotlin.includes("handleOnDestroy"));
+  const manifest = readFileSync(join(__dirname, "../../android/app/src/main/AndroidManifest.xml"), "utf8");
+  ok(
+    "Android — Manifest 권한 선언(13+/14+/≤12L)",
+    manifest.includes("android.permission.READ_MEDIA_IMAGES") &&
+      manifest.includes("android.permission.READ_MEDIA_VIDEO") &&
+      manifest.includes("android.permission.READ_MEDIA_VISUAL_USER_SELECTED") &&
+      /READ_EXTERNAL_STORAGE"[\s\S]{0,80}?maxSdkVersion="32"/.test(manifest),
+  );
+  const mainActivity = readFileSync(
+    join(__dirname, "../../android/app/src/main/java/fan/keubo/app/MainActivity.java"),
+    "utf8",
+  );
+  ok("Android — MainActivity 등록", mainActivity.includes("registerPlugin(VenueMediaLibraryPlugin.class);"));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

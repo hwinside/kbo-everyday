@@ -1,4 +1,5 @@
 apply plugin: 'com.android.application'
+apply plugin: 'org.jetbrains.kotlin.android'
 
 // 릴리스 서명 — keystore.properties(gitignore, 로컬 시크릿)가 있을 때만 적용.
 // 없으면(다른 개발자/CI) release도 서명 없이 빌드되어 깨지지 않는다(Play 업로드만 불가).

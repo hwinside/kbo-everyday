@@ -17,6 +17,35 @@ export const VENUE_UPLOAD_NETWORK_FAIL_MSG = "네트워크 오류";
 export type MultiItemStatus = "ready" | "uploading" | "done" | "failed";
 
 /**
+ * 픽커 모드 판정 — version gate.
+ * 설치 앱(native runtime) + 네이티브 `VenueMediaLibrary` 브릿지 가용일 때만 커스텀 그리드.
+ * 플러그인 없는 구설치본(원격 WebView 만 최신)·웹/PWA 는 기존 file input 픽커로 폴백해
+ * 업로드 동선이 끊기지 않는다(삼순 NO-GO 라운드1 #2 구버전 호환 계약).
+ */
+export function resolveVenuePickerMode(input: {
+  nativeRuntime: boolean;
+  pluginAvailable: boolean;
+}): "grid" | "fileInput" {
+  return input.nativeRuntime && input.pluginAvailable ? "grid" : "fileInput";
+}
+
+/**
+ * 그리드 한 화면 멀티셀렉트 토글 — 선택 순서(1→2→3) 보존.
+ * 이미 선택된 id 는 해제(뒤 항목 번호가 한 칸씩 당겨진다), 상한 도달 시 무변경+overMax 플래그.
+ */
+export function toggleAssetSelection(
+  selected: readonly string[],
+  assetId: string,
+  max: number = VENUE_STORY_MAX_ITEMS,
+): { next: string[]; overMax: boolean } {
+  if (selected.includes(assetId)) {
+    return { next: selected.filter((id) => id !== assetId), overMax: false };
+  }
+  if (selected.length >= max) return { next: [...selected], overMax: true };
+  return { next: [...selected, assetId], overMax: false };
+}
+
+/**
  * 픽 identity — 같은 파일을 다시 골랐을 때 중복 항목 방지용.
  * File 객체 자체는 픽마다 새 인스턴스라 name+size+lastModified 로 판별한다.
  */

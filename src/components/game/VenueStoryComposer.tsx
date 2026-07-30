@@ -50,15 +50,19 @@ import {
   summarizeUploadOutcome,
   uploadFailureReason,
   isRetryableItem,
+  resolveVenuePickerMode,
+  toggleAssetSelection,
 } from "@/lib/venue-stories/multi-pick";
 import { readFileAsDataURL } from "@/lib/venue-stories/read-file";
 import { getMyTeamId } from "@/lib/store/myteam";
-import { paletteForTeamId } from "@/design-v2/team-palette";
+import { teamPalette } from "@/design-v2/team-palette";
+import { TEAMS } from "@/design-v2/TEAMS";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
 import {
   canUseVenueMediaLibrary,
   exportVenueMediaFile,
   getVenueMediaPermission,
+  isVenueMediaLibraryAvailable,
   listVenueMedia,
   openVenueMediaSettings,
   presentLimitedVenueMediaPicker,
@@ -137,7 +141,13 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   const [libraryPermission, setLibraryPermission] =
     useState<VenueMediaPermission>("prompt");
   const [libraryLoading, setLibraryLoading] = useState(false);
+  // 그리드 한 화면 멀티셀렉트 — 탭 토글로 순서 유지, 하단 '선택 완료'에서 일괄 export(삼순 #4).
+  const [librarySelection, setLibrarySelection] = useState<VenueMediaAsset[]>([]);
+  const [libraryConfirming, setLibraryConfirming] = useState(false);
   const [pendingAssetId, setPendingAssetId] = useState<string | null>(null);
+  // version gate — 네이티브 브릿지 가용이면 grid, 아니면 기존 file input 폴백(구설치본/웹).
+  const [pickerMode, setPickerMode] = useState<"grid" | "fileInput" | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const libraryAutoOpenRef = useRef(false);
   // phase state 반영 전의 짧은 구간까지 닫기/중복 제출을 막는 동기 guard.
   const uploadInFlightRef = useRef(false);
@@ -164,8 +174,15 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   );
 
   // CTA 팀색 — 팀 CSS 변수 직접 사용 없이 공용 teamPalette.accent/onAccent(10팀 WCAG AA).
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- isOpen 마다 마이팀 재조회(설정 변경 반영)
-  const palette = useMemo(() => paletteForTeamId(getMyTeamId()), [isOpen]);
+  // onAccent 공용 helper(paletteForTeamId/onAccentColor) 신설은 별도 PR 분리 합의 —
+  // 여기선 기존 teamPalette + TEAMS 로만 조회한다(삼순 NO-GO 라운드1 #5).
+  const palette = useMemo(() => {
+    const teamId = getMyTeamId();
+    const team =
+      teamId != null ? Object.values(TEAMS).find((t) => t.id === teamId) : undefined;
+    return teamPalette(team ?? TEAMS.neutral);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- isOpen 마다 마이팀 재조회(설정 변경 반영)
+  }, [isOpen]);
 
   // UGC 가이드라인 동의 — 버전별 + **user-scoped** 기억(삼순 09:44 #3: 계정 전환 시 타 계정
   // 동의 상속 금지). userId 미상이면 기억하지 않는다. 서버가 최종 검증하므로 이건 UX 편의용.
@@ -313,6 +330,8 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
     setLibraryCursor(null);
     setLibraryPermission("prompt");
     setLibraryLoading(false);
+    setLibrarySelection([]);
+    setLibraryConfirming(false);
     setPendingAssetId(null);
     precheckPosRef.current = null;
     submitPosRef.current = { lat: null, lng: null, accuracy: null };
@@ -326,16 +345,30 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
     onClose();
   };
 
+  // version gate — 열릴 때마다 네이티브 브릿지 가용성을 런타임 감지해 픽커 모드를 확정한다.
+  // 플러그인 없는 구설치본(원격 WebView 만 최신)·웹은 기존 file input 동선 그대로 유지.
+  useEffect(() => {
+    if (!isOpen) {
+      setPickerMode(null);
+      return;
+    }
+    let alive = true;
+    (async () => {
+      const nativeRuntime = canUseVenueMediaLibrary();
+      const pluginAvailable = nativeRuntime && (await isVenueMediaLibraryAvailable());
+      if (alive) setPickerMode(resolveVenuePickerMode({ nativeRuntime, pluginAvailable }));
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [isOpen]);
+
   const loadLibrary = async (append = false) => {
     if (libraryLoading) return;
     const seq = pickSeqRef.current;
     setLibraryLoading(true);
     setError(null);
     try {
-      if (!canUseVenueMediaLibrary()) {
-        setError("커스텀 사진첩은 최신 설치 앱에서만 사용할 수 있어요");
-        return;
-      }
       let permission = await getVenueMediaPermission();
       if (seq !== pickSeqRef.current) return;
       if (permission === "prompt") {
@@ -343,6 +376,20 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
       }
       if (seq !== pickSeqRef.current) return;
       setLibraryPermission(permission);
+      if (!append) {
+        // 재진입 시 이미 담긴 항목을 선택 상태로 복원 — 그리드에서 해제/추가 모두 가능.
+        setLibrarySelection(
+          items
+            .filter((it) => it.assetId != null)
+            .map((it) => ({
+              id: it.assetId as string,
+              kind: it.kind,
+              thumbnailUrl: "",
+              durationMs: it.durationMs,
+              createdAt: 0,
+            })),
+        );
+      }
       setLibraryOpen(true);
       if (permission === "denied") return;
       const page = await listVenueMedia(append ? libraryCursor ?? undefined : undefined);
@@ -351,9 +398,9 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
       setLibraryCursor(page.nextCursor);
       setLibraryAssets((prev) => (append ? [...prev, ...page.assets] : page.assets));
     } catch {
-      // 브릿지가 아직 없는 구 TestFlight 빌드도 OS 시스템 픽커로 폴백하지 않는다(B안 계약).
-      setLibraryOpen(true);
-      setError("이 기능을 사용하려면 최신 앱 업데이트가 필요해요");
+      // 브릿지 호출 자체가 실패(구설치본 등) — 기존 file input 동선으로 폴백해 업로드가 끊기지 않게.
+      setLibraryOpen(false);
+      setPickerMode("fileInput");
     } finally {
       setLibraryLoading(false);
     }
@@ -363,7 +410,12 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
     if (submitting || phase === "done" || processingPickRef.current) return;
     if (items.length >= VENUE_STORY_MAX_ITEMS) return;
     if (!precheckGateReady({ isAdmin, status: precheck.status })) return;
-    void loadLibrary(false);
+    if (pickerMode === "grid") {
+      void loadLibrary(false);
+    } else {
+      // 폴백: 기존(현행) OS 파일 선택 동선 — 구설치본/웹도 업로드 가능(version gate).
+      fileInputRef.current?.click();
+    }
   };
 
   const patchItem = (key: string, patch: Partial<ComposerItem>) => {
@@ -494,33 +546,66 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
     }
   };
 
-  const selectLibraryAsset = async (asset: VenueMediaAsset) => {
-    const selected = items.find((item) => item.assetId === asset.id);
-    if (selected) {
-      removeItem(selected.key);
-      return;
-    }
-    if (processingPickRef.current || items.length >= VENUE_STORY_MAX_ITEMS) return;
-    processingPickRef.current = true;
-    const seq = pickSeqRef.current;
-    // 원본 export보다 먼저 배지/순서를 반영해 탭 피드백 지연 0.
-    setPendingAssetId(asset.id);
+  /** 그리드 타일 탭 — 즉시 선택/해제 토글만(export 없음). 선택 순서 1→2→3 보존. */
+  const toggleLibraryAsset = (asset: VenueMediaAsset) => {
+    if (processingPickRef.current || libraryConfirming) return;
+    setLibrarySelection((prev) => {
+      const { next, overMax } = toggleAssetSelection(
+        prev.map((a) => a.id),
+        asset.id,
+      );
+      if (overMax) {
+        setError(VENUE_STORY_OVER_MAX_MSG);
+        return prev;
+      }
+      setError(null);
+      return next.length < prev.length
+        ? prev.filter((a) => a.id !== asset.id)
+        : [...prev, asset];
+    });
     void venueMediaSelectionHaptic();
-    setLibraryLoading(true);
+  };
+
+  /**
+   * 그리드 하단 '선택 완료' — 해제된 기존 항목 제거 + 새 선택분만 순서대로 일괄 export 후
+   * 프리뷰로 전환. 한 그리드 세션에서 1→2→3 선택/해제가 끝난 뒤 한 번만 닫힌다(삼순 #4).
+   */
+  const confirmLibrarySelection = async () => {
+    if (processingPickRef.current || libraryConfirming) return;
+    setLibraryConfirming(true);
+    const seq = pickSeqRef.current;
     setError(null);
     try {
-      const file = await exportVenueMediaFile(asset.id);
-      if (seq !== pickSeqRef.current) return;
-      // 그리드 탭 → export 완료 즉시 프리뷰로 전환. 추가 선택은 프리뷰 스트립의 +로 재진입.
-      await handlePickedFiles([file], [asset.id]);
+      const selectedIds = new Set(librarySelection.map((a) => a.id));
+      for (const it of items) {
+        if (it.assetId != null && !selectedIds.has(it.assetId)) removeItem(it.key);
+      }
+      const existingAssetIds = new Set(
+        items.filter((it) => it.assetId != null).map((it) => it.assetId as string),
+      );
+      const additions = librarySelection.filter((a) => !existingAssetIds.has(a.id));
+      for (const asset of additions) {
+        setPendingAssetId(asset.id);
+        const file = await exportVenueMediaFile(asset.id);
+        if (seq !== pickSeqRef.current) return;
+        await handlePickedFiles([file], [asset.id]);
+        if (seq !== pickSeqRef.current) return;
+      }
+      setPendingAssetId(null);
       setLibraryOpen(false);
     } catch {
       setError("선택한 사진·영상을 불러오지 못했어요");
     } finally {
       setPendingAssetId(null);
-      processingPickRef.current = false;
-      setLibraryLoading(false);
+      setLibraryConfirming(false);
     }
+  };
+
+  /** 그리드만 닫기(선택 변경 파기) — 기존 프리뷰/선택 화면으로 복귀. */
+  const closeLibrary = () => {
+    if (libraryConfirming || processingPickRef.current) return;
+    setLibraryOpen(false);
+    setError(null);
   };
 
   const extendLimitedAccess = async () => {
@@ -548,9 +633,11 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   }, [isOpen]);
 
   // 트레이 '올리기' 진입 → 위치 선체크 통과 즉시 앱 내 커스텀 사진첩 그리드.
+  // fileInput 폴백 모드는 자동 열기 없음 — OS 픽커 프로그래밍 클릭은 제스처 밖이면 차단된다.
   useEffect(() => {
     if (
       !isOpen ||
+      pickerMode !== "grid" ||
       libraryAutoOpenRef.current ||
       items.length > 0 ||
       !precheckGateReady({ isAdmin, status: precheck.status })
@@ -561,7 +648,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
     void loadLibrary(false);
     // loadLibrary는 현재 permission/cursor를 읽는 UI action. 자동 진입은 세션당 1회만 필요.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, isAdmin, precheck.status, items.length]);
+  }, [isOpen, isAdmin, precheck.status, items.length, pickerMode]);
 
   /**
    * 항목 순차 업로드 — 기존 단건 파이프라인(prepareVenueStoryMedia → POST /api/venue-stories)을
@@ -811,9 +898,9 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
               {phase === "done" ? "업로드 완료" : libraryOpen ? "최근 항목" : "직관 라이브 올리기"}
             </span>
             <button
-              onClick={close}
+              onClick={libraryOpen && phase !== "done" ? closeLibrary : close}
               disabled={submitting}
-              aria-label="닫기"
+              aria-label={libraryOpen && phase !== "done" ? "사진첩 닫기" : "닫기"}
               className="w-11 h-11 -mr-2 flex items-center justify-center text-text-tertiary disabled:opacity-40"
             >
               <X size={22} />
@@ -959,24 +1046,20 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
                   </div>
                 ) : libraryAssets.length > 0 ? (
                   <>
-                    {/* 앱 내 커스텀 그리드 — 최근순 사진+영상. 탭 즉시 export 후 프리뷰 전환. */}
+                    {/* 앱 내 커스텀 그리드 — 최근순 사진+영상. 탭 = 즉시 선택/해제 토글,
+                        하단 '선택 완료'에서 일괄 export → 프리뷰 전환(한 화면 멀티셀렉트). */}
                     <div className="grid grid-cols-3 gap-0.5">
                       {libraryAssets.map((asset) => {
-                        const selectedIndex = items.findIndex((item) => item.assetId === asset.id);
-                        const displayIndex =
-                          selectedIndex >= 0
-                            ? selectedIndex
-                            : pendingAssetId === asset.id
-                              ? items.length
-                              : -1;
+                        const displayIndex = librarySelection.findIndex((a) => a.id === asset.id);
                         const badge = mediaDurationBadge(asset.kind, asset.durationMs);
                         return (
                           <button
                             key={asset.id}
-                            onClick={() => void selectLibraryAsset(asset)}
+                            onClick={() => toggleLibraryAsset(asset)}
                             disabled={
-                              (libraryLoading && pendingAssetId !== asset.id) ||
-                              (displayIndex < 0 && items.length >= VENUE_STORY_MAX_ITEMS)
+                              libraryConfirming ||
+                              (displayIndex < 0 &&
+                                librarySelection.length >= VENUE_STORY_MAX_ITEMS)
                             }
                             className="relative aspect-square min-h-11 overflow-hidden bg-bg-tertiary active:scale-[0.98] disabled:opacity-40"
                             style={{ contentVisibility: "auto" }}
@@ -1117,9 +1200,11 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
                     <VideoIcon size={28} />
                     <span className="text-sm">현장 사진·영상 선택 (최대 {VENUE_STORY_MAX_ITEMS}개)</span>
                     <span className="text-[11px] text-text-tertiary/70">영상은 15초 이하 · 세로 추천</span>
-                    <span className="text-[11px] text-text-tertiary/60">
-                      앱 안에서 최근 사진첩을 열어요
-                    </span>
+                    {pickerMode === "grid" && (
+                      <span className="text-[11px] text-text-tertiary/60">
+                        앱 안에서 최근 사진첩을 열어요
+                      </span>
+                    )}
                   </button>
                 ) : (
                   <>
@@ -1330,6 +1415,47 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
             </button>
             </div>
           )}
+
+          {/* 그리드 sticky 확정 바 — 한 화면에서 1→2→3 선택/해제 끝내고 일괄 확정(삼순 #4). */}
+          {libraryOpen && phase !== "done" && (
+            <div
+              className="shrink-0 border-t border-border p-4"
+              style={{ paddingBottom: "max(env(safe-area-inset-bottom), 12px)" }}
+            >
+              <button
+                onClick={() => void confirmLibrarySelection()}
+                disabled={
+                  libraryConfirming ||
+                  libraryLoading ||
+                  libraryPermission === "denied" ||
+                  (librarySelection.length === 0 && !items.some((it) => it.assetId != null))
+                }
+                className="w-full py-3.5 rounded-xl font-semibold flex items-center justify-center gap-2 disabled:opacity-40"
+                style={{ background: palette.accent, color: palette.onAccent }}
+              >
+                {libraryConfirming ? <Loader2 size={18} className="animate-spin" /> : null}
+                {libraryConfirming
+                  ? "불러오는 중…"
+                  : librarySelection.length > 0
+                    ? `${librarySelection.length}개 선택 완료`
+                    : "선택 완료"}
+              </button>
+            </div>
+          )}
+
+          {/* version gate 폴백 — 네이티브 브릿지 없는 구설치본/웹은 기존 OS 파일 선택 동선 그대로. */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*,video/*"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              const files = e.target.files ? Array.from(e.target.files) : null;
+              e.target.value = "";
+              void handlePickedFiles(files);
+            }}
+          />
         </motion.div>
       </motion.div>
     </AnimatePresence>,
