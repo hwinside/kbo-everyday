@@ -696,10 +696,13 @@ export async function fetchBoxScore(
     });
 
     if (!res.ok) {
-      await trackFallback("kbo-boxscore", "http-error", {
+      // 관제는 fire-and-forget: durable insert·이벤트 카운트(동기 부수효과)는 그대로 실행하되,
+      // 임계치 초과 시 legacy Telegram alert 의 timeout 없는 fetch 를 await 하지 않는다.
+      // (await 하면 fetchBoxScore 공용 absolute deadline 을 관제가 깨고 Naver failover 를 블록.)
+      void trackFallback("kbo-boxscore", "http-error", {
         statusCode: res.status,
         errorMessage: `HTTP ${res.status} ${res.statusText}`,
-      });
+      }).catch(() => {});
       // KBO 하드실패 → Naver record boxscore 로 failover (summary·daily 공용).
       return await failoverToNaver();
     }
@@ -707,10 +710,10 @@ export async function fetchBoxScore(
     const data = await res.json();
     const parsed = parseBoxScore(data);
     if (!parsed) {
-      // KBO 응답 파싱 실패(스키마 열화) → Naver failover.
-      await trackFallback("kbo-boxscore", "schema-error", {
+      // KBO 응답 파싱 실패(스키마 열화) → Naver failover. 관제는 응답 경로를 블록하지 않게 fire-and-forget.
+      void trackFallback("kbo-boxscore", "schema-error", {
         errorMessage: "parseBoxScore returned null",
-      });
+      }).catch(() => {});
       return await failoverToNaver();
     }
     return parsed;
@@ -725,9 +728,10 @@ export async function fetchBoxScore(
       reason = "schema-error";
     }
 
-    await trackFallback("kbo-boxscore", reason, {
+    // 관제 fire-and-forget: 남은 reserve 를 관제가 소진하지 않도록 await 제거(부수효과는 유지).
+    void trackFallback("kbo-boxscore", reason, {
       errorMessage: error.message,
-    });
+    }).catch(() => {});
 
     // KBO throw(timeout/network/response·body stall 등) → 남은 reserve 안에서 Naver failover.
     return await failoverToNaver();

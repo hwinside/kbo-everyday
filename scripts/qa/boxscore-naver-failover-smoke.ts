@@ -188,6 +188,80 @@ async function main() {
   // 완전 fixture(양팀 9+타자·1+투수) → 채택.
   check("\uc644\uc804 fixture(\uc591\ud300 \uc644\uc804) \u2192 non-null \ucc44\ud0dd", parseNaverBoxScore(completeNaver as never) !== null);
 
+  // ── 2차 NO-GO 회귀: 관제(trackFallback) Telegram stall 이 응답/Naver failover 를 블록하면 안 됨 ──
+  //   삼순 실측: 동일 이벤트 키(kbo-boxscore) 3회째부터 legacy Telegram alert 가 timeout 없는 fetch 를
+  //   await 해 fetchBoxScore 공용 absolute deadline 을 깨버렸다(KBO 503 케이스 8s+ 미종료).
+  //   현 smoke 44/44 GREEN 은 TELEGRAM_BOT_TOKEN 미설정으로 alert 경로를 우회한 false-green.
+  //   → 여기서만 토큰을 강제 설정하고 Telegram 을 stall 시켜, 미수정=RED(watchdog hang)/수정=GREEN.
+  console.log("\n4a) 관제(trackFallback) Telegram stall 비블록 (2차 NO-GO 회귀)");
+  const RB_KBO = 200, RB_NAVER = 150, RB_SLACK = 900, RB_WATCHDOG = 4000;
+  const THRESHOLD = 3; // api-fallback-tracker ALERT_THRESHOLD: 동일 키 3회째부터 legacy Telegram alert
+  const prevTgToken = process.env.TELEGRAM_BOT_TOKEN;
+  process.env.TELEGRAM_BOT_TOKEN = "test-token-regression"; // false-green 제거: 임계치 alert 경로 강제
+  async function raceBounded(fn: () => Promise<BoxScoreResult | null>) {
+    const t = Date.now();
+    return await Promise.race([
+      fn().then((res) => ({ hang: false as const, res, ms: Date.now() - t })),
+      new Promise<{ hang: true }>((r) => setTimeout(() => r({ hang: true }), RB_WATCHDOG)),
+    ]);
+  }
+  // 예열: 임계치 미만(count 1,2) — alert 미발화(await 해도 빠름). 3회째부터 alert 발화.
+  stubFetch((url, signal) => {
+    if (url.includes("koreabaseball.com")) return errResponse(503);
+    if (url.includes("api-gw.sports.naver.com")) return errResponse(503);
+    if (url.includes("api.telegram.org")) return hangResponse(signal); // legacy alert 은 signal 없이 호출 → 영구 stall
+    return errResponse(404);
+  });
+  for (let i = 1; i < THRESHOLD; i++) {
+    await fetchBoxScore("20260729WOLG0", undefined, { kboTimeoutMs: RB_KBO, naverTimeoutMs: RB_NAVER });
+  }
+  // (A) KBO 503 + Telegram stall(3회째) → Naver 성공 + deadline 내 결정적 종료.
+  stubFetch((url, signal) => {
+    if (url.includes("koreabaseball.com")) return errResponse(503);
+    if (url.includes("api-gw.sports.naver.com")) return jsonResponse({ result: { recordData: completeNaver } });
+    if (url.includes("api.telegram.org")) return hangResponse(signal);
+    return errResponse(404);
+  });
+  {
+    const r = await raceBounded(() => fetchBoxScore("20260729WOLG0", undefined, { kboTimeoutMs: RB_KBO, naverTimeoutMs: RB_NAVER }));
+    check(
+      `(A) KBO 503 + Telegram stall(3회째) → deadline 내 종료 + Naver failover (${r.hang ? ">" + RB_WATCHDOG : r.ms}ms)`,
+      !r.hang && r.res !== null && r.ms < RB_KBO + RB_NAVER + RB_SLACK,
+      r.hang ? `HANG>${RB_WATCHDOG}ms (미수정 8s+)` : `${r.ms}ms res=${r.res ? "ok" : "null"}`,
+    );
+  }
+  // (B) KBO 무응답(catch/timeout 분기) + Telegram stall → Naver 성공 + bounded.
+  stubFetch((url, signal) => {
+    if (url.includes("koreabaseball.com")) return hangResponse(signal);
+    if (url.includes("api-gw.sports.naver.com")) return jsonResponse({ result: { recordData: completeNaver } });
+    if (url.includes("api.telegram.org")) return hangResponse(signal);
+    return errResponse(404);
+  });
+  {
+    const r = await raceBounded(() => fetchBoxScore("20260729WOLG0", undefined, { kboTimeoutMs: RB_KBO, naverTimeoutMs: RB_NAVER }));
+    check(
+      `(B) KBO 무응답 + Telegram stall → deadline 내 종료 + Naver failover (${r.hang ? ">" + RB_WATCHDOG : r.ms}ms)`,
+      !r.hang && r.res !== null && r.ms >= RB_KBO && r.ms < RB_KBO + RB_NAVER + RB_SLACK,
+      r.hang ? `HANG>${RB_WATCHDOG}ms` : `${r.ms}ms res=${r.res ? "ok" : "null"}`,
+    );
+  }
+  // (C) dual-fail (KBO 503 + Naver 무응답) + Telegram stall → null, deadline 내 종료.
+  stubFetch((url, signal) => {
+    if (url.includes("koreabaseball.com")) return errResponse(503);
+    if (url.includes("api-gw.sports.naver.com")) return hangResponse(signal);
+    if (url.includes("api.telegram.org")) return hangResponse(signal);
+    return errResponse(404);
+  });
+  {
+    const r = await raceBounded(() => fetchBoxScore("20260729WOLG0", undefined, { kboTimeoutMs: RB_KBO, naverTimeoutMs: RB_NAVER }));
+    check(
+      `(C) dual-fail + Telegram stall → null, deadline 내 종료 (${r.hang ? ">" + RB_WATCHDOG : r.ms}ms)`,
+      !r.hang && r.res === null && r.ms < RB_KBO + RB_NAVER + RB_SLACK,
+      r.hang ? `HANG>${RB_WATCHDOG}ms` : `${r.ms}ms`,
+    );
+  }
+  process.env.TELEGRAM_BOT_TOKEN = prevTgToken;
+
   // ── NO-GO#2 bounded 종료: fault injection 결정적 종료 (absolute deadline) ──
   console.log("\n4) bounded \uc885\ub8cc (KBO/Naver response\u00b7body stall + dual-fail)");
   const KBO = 200, NAVER = 150, SLACK = 900; // 주입 budget (prod \uae30\ubcf8 6000/2500 \u2192 \ud14c\uc2a4\ud2b8 \ucd95\uc18c)
