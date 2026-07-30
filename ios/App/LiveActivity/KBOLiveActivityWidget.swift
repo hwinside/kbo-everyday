@@ -693,6 +693,21 @@ struct DiamondView: View {
     }
 }
 
+// MARK: - iOS 18 tinted/clear 위젯 모드 풀컬러 렌더링
+
+extension Image {
+    /// iOS 18+ 위젯 tinted(무늬)/clear 모드는 풀컬러 이미지를 흰 실루엣으로 강제 변환한다.
+    /// 로고·선수 사진처럼 원본 색으로 보여야 하는 Image에 붙여 풀컬러 렌더링을 유지한다.
+    @ViewBuilder
+    func fullColorInAccentedWidget() -> some View {
+        if #available(iOS 18.0, *) {
+            self.widgetAccentedRenderingMode(.fullColor)
+        } else {
+            self
+        }
+    }
+}
+
 // MARK: - 팀 로고 이미지
 
 @available(iOS 16.1, *)
@@ -705,6 +720,7 @@ struct TeamLogo: View {
         if UIImage(named: "Logo_\(code)") != nil {
             Image("Logo_\(code)")
                 .resizable()
+                .fullColorInAccentedWidget()
                 .aspectRatio(contentMode: .fit)
                 .frame(width: size, height: size)
         } else {
