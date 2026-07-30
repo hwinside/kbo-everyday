@@ -187,6 +187,7 @@ export async function fetchKboLiveGames(
   fetchImpl: typeof fetch = fetch,
   fetchNaverImpl: typeof fetchNaverGames = fetchNaverGames,
   fetchNaverEvidenceImpl: NaverLiveEvidenceFetcher = fetchNaverLiveEvidence,
+  requiredGameId?: string,
 ): Promise<{
   ok: boolean;
   games: KboRawGame[];
@@ -224,10 +225,16 @@ export async function fetchKboLiveGames(
       const json = await runBeforeDeadline(() => response.json(), kboDeadlineAtMs).catch(() => null);
       const games = parseKboGameListPayload(json);
       const fetchedAtMs = Date.now();
-      if (games !== null && games.length > 0) {
+      if (
+        games !== null
+        && games.length > 0
+        && (!requiredGameId || games.some(game => game.G_ID === requiredGameId))
+      ) {
         return { ok: true, games, trace: { source: "kbo", sourceAtMs, fetchedAtMs } };
       }
       if (games !== null) {
+        // Targeted consumers must not treat "other games exist, requested game absent"
+        // as authoritative absence; keep the KBO result only as a fallback after Naver witness.
         kboEmptyResult = { ok: true, games, trace: { source: "kbo", sourceAtMs, fetchedAtMs } };
       }
     }
