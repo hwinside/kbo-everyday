@@ -6,6 +6,7 @@
  *   team     — team shortName (default: "_ALL")
  *   player_ids — comma-separated kbo_ids for favorite player prioritization
  *   limit    — max items (default: 30, max: 50)
+ *   scope    — "favorite_players" | "my_team" | "all" (optional; 미지정 시 기존 혼합 피드)
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -14,6 +15,11 @@ import { DEFAULT_EXCLUDE_FLAGS, extractNoiseFlags } from "@/lib/video/noise-flag
 import { loadPlayerAliases } from "@/lib/video/player-tagger";
 import { isTeamShortRelevant } from "@/lib/video/shorts-relevance";
 import { joinLgFeedRows } from "@/lib/video/shorts-feed-merge";
+import {
+  includesLgTeamFeed,
+  parseShortsScope,
+  resolveShortsQueryPlan,
+} from "@/lib/video/shorts-feed-scope";
 import { getActiveChannels } from "@/lib/video/team-channels";
 
 export async function GET(req: NextRequest) {
@@ -26,6 +32,7 @@ export async function GET(req: NextRequest) {
     parseInt(req.nextUrl.searchParams.get("limit") || "30", 10),
     50,
   );
+  const scope = parseShortsScope(req.nextUrl.searchParams.get("scope"));
 
   // Time window: only shorts from last 7 days
   const sinceDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
@@ -37,6 +44,8 @@ export async function GET(req: NextRequest) {
   let data: any[] | null = null;
   let error: any = null;
 
+  const plan = resolveShortsQueryPlan(scope, team, playerIds.length);
+
   // 다중 팀 노출 (2026-07-24 삼순 라운드4 — 운영 케이스 79W-OwErIEA):
   // 비-LG affinity 채널(예: 히어로북, 키움)이 올린 명시적 LG 야구 제목은
   // 수집 계약(channelTeam 선확정)을 유지한 채 team_id가 LG가 아니므로,
@@ -46,7 +55,7 @@ export async function GET(req: NextRequest) {
   // 기존 오분류/선확정 행에도 소급 적용되므로 백필 불필요.
   // query-guard: bounded -- fetchLimit(=limit*3) 단일 오버페치 페이지, 페이지네이션 커서 없음 (형제 팀/플레이어 쿼리와 동일 계약)
   const lgTitlePromise =
-    team === "LG"
+    includesLgTeamFeed(plan, team)
       ? supabaseAdmin
           .from("videos")
           .select(selectCols)
@@ -58,7 +67,16 @@ export async function GET(req: NextRequest) {
           .limit(fetchLimit)
       : null;
 
-  if (team !== "_ALL" && playerIds.length > 0) {
+  if (plan.kind === "empty") {
+    // scope 조건 미충족(최애선수/마이팀 미지정) → 빈 피드.
+    // 다른 scope로 임의 폴백하지 않는다 (UI는 칩 비활성/섹션 미렌더로 선차단)
+    return NextResponse.json(
+      { items: [] },
+      { headers: { "Cache-Control": "public, s-maxage=900, stale-while-revalidate=60" } },
+    );
+  }
+
+  if (plan.kind === "mixed") {
     // Two queries: team-scoped + player-matched from any team (including ETC)
     const [teamResult, playerResult] = await Promise.all([
       supabaseAdmin
@@ -92,7 +110,21 @@ export async function GET(req: NextRequest) {
       }
       data = merged;
     }
+  } else if (plan.kind === "player_only") {
+    // scope=favorite_players: 최애선수 태깅 영상만 (팀 무관)
+    // query-guard: bounded -- fetchLimit(=limit*3) 단일 오버페치 페이지 + 7일 시간창, 페이지네이션 커서 없음 (기존 혼합 피드의 선수 쿼리와 동일 계약)
+    const result = await supabaseAdmin
+      .from("videos")
+      .select(selectCols)
+      .eq("is_short_candidate", true)
+      .overlaps("player_ids", playerIds)
+      .gte("published_at", sinceDate)
+      .order("published_at", { ascending: false })
+      .limit(fetchLimit);
+    data = result.data;
+    error = result.error;
   } else {
+    // plan.kind === "team_only" | "all" — fetchLimit 단일 페이지 + 7일 시간창 (기존 else 분기와 동일 쿼리, query-guard baseline 유지)
     const query = supabaseAdmin
       .from("videos")
       .select(selectCols)
@@ -101,7 +133,7 @@ export async function GET(req: NextRequest) {
       .order("published_at", { ascending: false })
       .limit(fetchLimit);
 
-    if (team !== "_ALL") {
+    if (plan.kind === "team_only") {
       query.eq("team_id", team);
     }
 
