@@ -254,9 +254,16 @@ export async function fetchGames(
   //    fetch 라 에러로 신호; 호출자가 구값 유지/ok:false 처리). 이전처럼 []로 닫으면 KBO 장애가 홈/일정에
   //    "정상 0경기"로 오인된다(삼순 P1).
   if (games.length === 0) {
+    const naver = await import("@/lib/crawler/naver-games");
+    // srId=0(정규 전용) + 정규시즌 window 밖(시범/포스트 기간): 정규경기가 존재할 수 없는 날이라
+    // KBO 200-empty 가 스케줄상 참값과 일치 → 교차확인 없이 [] 인정. Naver 로 교차확인하면
+    // series 미구분이라 시범/포스트 경기가 정규 결과로 오염된다(삼순 P0 — 3/15 시범 5경기가
+    // getSeasonGames/game-logs 에 섮이던 경로 차단).
+    if (naver.isRegularSeasonSrIdOutsideWindow(srId, date)) {
+      return games;
+    }
     try {
-      const { fetchNaverGames } = await import("@/lib/crawler/naver-games");
-      return await fetchNaverGames(date, srId);
+      return await naver.fetchNaverGames(date, srId);
     } catch (naverErr) {
       throw new Error(
         `KBO 200-empty 미검증: Naver 교차확인 실패로 무경기 단정 금지 (${(naverErr as Error).message})`,
