@@ -29,18 +29,20 @@ CREATE POLICY "Auth users create comment likes" ON comment_likes FOR INSERT WITH
 CREATE POLICY "Users delete own comment likes" ON comment_likes FOR DELETE USING (auth.uid() = user_id);
 
 -- 3. comment_likes 카운트 트리거
+-- SECURITY DEFINER + search_path 고정: auth admin 세션(search_path에 public 없음)
+-- 에서 발화해도 unqualified 참조가 깨지지 않도록 함. 20260730 migration 과 정합 유지.
 CREATE OR REPLACE FUNCTION update_comment_like_count()
 RETURNS TRIGGER AS $$
 BEGIN
   IF TG_OP = 'INSERT' THEN
-    UPDATE comments SET like_count = like_count + 1 WHERE id = NEW.comment_id;
+    UPDATE public.comments SET like_count = like_count + 1 WHERE id = NEW.comment_id;
     RETURN NEW;
   ELSIF TG_OP = 'DELETE' THEN
-    UPDATE comments SET like_count = like_count - 1 WHERE id = OLD.comment_id;
+    UPDATE public.comments SET like_count = like_count - 1 WHERE id = OLD.comment_id;
     RETURN OLD;
   END IF;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 
 DROP TRIGGER IF EXISTS on_comment_like_change ON comment_likes;
 CREATE TRIGGER on_comment_like_change
