@@ -20,6 +20,7 @@ import {
   fetchNaverBoxScore,
 } from "../../src/lib/crawler/naver-record";
 import { fetchBoxScore, type BoxScoreResult } from "../../src/lib/crawler/kbo-api";
+import { getRecentFallbackBufferSizeForTest } from "../../src/lib/monitoring/api-fallback-tracker";
 import { resolvePlayer } from "../../src/lib/utils/resolve-player";
 
 let pass = 0;
@@ -198,6 +199,23 @@ async function main() {
   const THRESHOLD = 3; // api-fallback-tracker ALERT_THRESHOLD: 동일 키 3회째부터 legacy Telegram alert
   const prevTgToken = process.env.TELEGRAM_BOT_TOKEN;
   process.env.TELEGRAM_BOT_TOKEN = "test-token-regression"; // false-green 제거: 임계치 alert 경로 강제
+  const bufferBefore = getRecentFallbackBufferSizeForTest();
+  let telegramOutstanding = 0;
+  let telegramMaxOutstanding = 0;
+  let telegramCalls = 0;
+  function stalledTelegram(signal?: AbortSignal): Promise<Response> {
+    telegramCalls++;
+    telegramOutstanding++;
+    telegramMaxOutstanding = Math.max(telegramMaxOutstanding, telegramOutstanding);
+    return new Promise<Response>((_, reject) => {
+      const finish = () => {
+        telegramOutstanding--;
+        reject(abortError());
+      };
+      if (signal?.aborted) return finish();
+      signal?.addEventListener("abort", finish, { once: true });
+    });
+  }
   async function raceBounded(fn: () => Promise<BoxScoreResult | null>) {
     const t = Date.now();
     return await Promise.race([
@@ -209,7 +227,7 @@ async function main() {
   stubFetch((url, signal) => {
     if (url.includes("koreabaseball.com")) return errResponse(503);
     if (url.includes("api-gw.sports.naver.com")) return errResponse(503);
-    if (url.includes("api.telegram.org")) return hangResponse(signal); // legacy alert 은 signal 없이 호출 → 영구 stall
+    if (url.includes("api.telegram.org")) return stalledTelegram(signal);
     return errResponse(404);
   });
   for (let i = 1; i < THRESHOLD; i++) {
@@ -219,7 +237,7 @@ async function main() {
   stubFetch((url, signal) => {
     if (url.includes("koreabaseball.com")) return errResponse(503);
     if (url.includes("api-gw.sports.naver.com")) return jsonResponse({ result: { recordData: completeNaver } });
-    if (url.includes("api.telegram.org")) return hangResponse(signal);
+    if (url.includes("api.telegram.org")) return stalledTelegram(signal);
     return errResponse(404);
   });
   {
@@ -234,7 +252,7 @@ async function main() {
   stubFetch((url, signal) => {
     if (url.includes("koreabaseball.com")) return hangResponse(signal);
     if (url.includes("api-gw.sports.naver.com")) return jsonResponse({ result: { recordData: completeNaver } });
-    if (url.includes("api.telegram.org")) return hangResponse(signal);
+    if (url.includes("api.telegram.org")) return stalledTelegram(signal);
     return errResponse(404);
   });
   {
@@ -249,7 +267,7 @@ async function main() {
   stubFetch((url, signal) => {
     if (url.includes("koreabaseball.com")) return errResponse(503);
     if (url.includes("api-gw.sports.naver.com")) return hangResponse(signal);
-    if (url.includes("api.telegram.org")) return hangResponse(signal);
+    if (url.includes("api.telegram.org")) return stalledTelegram(signal);
     return errResponse(404);
   });
   {
@@ -260,6 +278,14 @@ async function main() {
       r.hang ? `HANG>${RB_WATCHDOG}ms` : `${r.ms}ms`,
     );
   }
+  check("Telegram stall 중 alert fanout ≤1", telegramCalls === 1 && telegramMaxOutstanding === 1, `calls=${telegramCalls} max=${telegramMaxOutstanding}`);
+  check(
+    "fallback 이벤트 버퍼 유지",
+    getRecentFallbackBufferSizeForTest() >= bufferBefore + THRESHOLD + 2,
+    `before=${bufferBefore} after=${getRecentFallbackBufferSizeForTest()}`,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 8200));
+  check("Telegram timeout 뒤 outstanding 0", telegramOutstanding === 0, `outstanding=${telegramOutstanding}`);
   process.env.TELEGRAM_BOT_TOKEN = prevTgToken;
 
   // ── NO-GO#2 bounded 종료: fault injection 결정적 종료 (absolute deadline) ──

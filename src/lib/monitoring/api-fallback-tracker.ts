@@ -25,6 +25,7 @@ const lastAlertTime = new Map<string, number>(); // apiName -> timestamp
 const ALERT_THRESHOLD = 3; // N회 이상
 const ALERT_WINDOW_MS = 5 * 60 * 1000; // 5분 내
 const COOLDOWN_MS = 30 * 60 * 1000; // 30분 쿨다운
+const LEGACY_TELEGRAM_TIMEOUT_MS = 8000;
 const LEGACY_TELEGRAM_SUPPRESSED_APIS = new Set(["kbo-games"]);
 
 export function getRecentFallbackBufferSizeForTest(): number {
@@ -89,11 +90,11 @@ async function checkAndAlert(apiName: string, events: FallbackEvent[]) {
     return;
   }
 
-  // 알림 발송
-  await sendTelegramAlert(apiName, events);
-  
-  // 쿨다운 갱신
+  // 전송 전에 cooldown 을 선점한다. Telegram 이 stall 되어도 같은 인스턴스에서
+  // 임계치 이후 이벤트마다 detached fetch 가 추가되는 것을 막는다.
   lastAlertTime.set(apiName, now);
+
+  await sendTelegramAlert(apiName, events);
 }
 
 /**
@@ -135,15 +136,22 @@ ${reasonText}${errorInfo}
   `.trim();
 
   try {
-    await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text: message,
-        parse_mode: "Markdown",
-      }),
-    });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), LEGACY_TELEGRAM_TIMEOUT_MS);
+    try {
+      await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: message,
+          parse_mode: "Markdown",
+        }),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
   } catch (error) {
     console.error("[API Fallback] Failed to send Telegram alert:", error);
   }
