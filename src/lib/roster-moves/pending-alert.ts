@@ -123,14 +123,23 @@ export async function notifyCollectionFailure(
  */
 export async function notifyPendingMoves(
   pending: PendingMove[],
+  opts: { deadlineAtMs?: number } = {},
 ): Promise<{ status: PendingNotifyStatus }> {
   if (pending.length === 0) return { status: "no-pending" };
   if (!WEBHOOK_URL) return { status: "no-webhook" };
+  const remainingMs = opts.deadlineAtMs == null
+    ? WEBHOOK_TIMEOUT_MS
+    : Math.min(WEBHOOK_TIMEOUT_MS, opts.deadlineAtMs - Date.now());
+  if (remainingMs <= 0) return { status: "webhook-error" };
+  const settleReserveMs = opts.deadlineAtMs == null
+    ? 0
+    : Math.min(25, Math.max(1, Math.floor(remainingMs / 10)));
   try {
     const res = await fetch(WEBHOOK_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text: formatPendingMessage(pending) }),
+      signal: AbortSignal.timeout(Math.max(1, remainingMs - settleReserveMs)),
     });
     return { status: res.ok ? "sent" : "webhook-error" };
   } catch {

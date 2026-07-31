@@ -218,11 +218,30 @@ export async function fetchKboGamesOnly(
 export async function fetchGames(
   date: string,
   srId = "0,1,3,4,5,7,9",
-  opts?: { timeoutMs?: number },
+  opts?: { timeoutMs?: number; deadlineAtMs?: number },
 ): Promise<KboGame[]> {
+  const deadlineAtMs = opts?.deadlineAtMs
+    ?? Date.now() + (opts?.timeoutMs ?? 10_000);
+  const remainingAtStartMs = deadlineAtMs - Date.now();
+  if (remainingAtStartMs <= 0) throw new Error("games deadline exceeded");
+  // When a caller supplies an absolute route deadline, KBO receives only half
+  // of the remaining budget. The other half is reserved for the Naver fallback,
+  // while both requests remain bounded by the same wall-clock deadline.
+  const kboBudgetMs = opts?.deadlineAtMs == null
+    ? remainingAtStartMs
+    : Math.max(1, Math.floor(remainingAtStartMs / 2));
+  const abortBeforeDeadlineMs = (remainingMs: number) => {
+    const settleReserveMs = Math.min(25, Math.max(1, Math.floor(remainingMs / 10)));
+    return Math.max(1, remainingMs - settleReserveMs);
+  };
   let games: KboGame[];
   try {
-    games = await fetchKboGamesOnly(date, srId, opts);
+    games = await runBeforeDeadline(
+      () => fetchKboGamesOnly(date, srId, {
+        signal: AbortSignal.timeout(kboBudgetMs),
+      }),
+      deadlineAtMs,
+    );
   } catch (e) {
     const error = e as Error;
     let reason: "timeout" | "http-error" | "schema-error" | "network-error" = "network-error";
@@ -234,13 +253,21 @@ export async function fetchGames(
       reason = "schema-error";
     }
 
-    await trackFallback("kbo-games", reason, { errorMessage: error.message });
+    // Monitoring must never consume or extend the user/cron response budget.
+    void trackFallback("kbo-games", reason, { errorMessage: error.message }).catch(() => undefined);
 
     // Fallback: Naver schedule/games. srId 계약 보존(특정 시리즈는 fetchNaverGames 내부 fail-close).
     // Naver 성공 시 그대로 반환(무경기일 빈 배열도 성공) — 무경기일 fallback 500 방지.
     try {
       const { fetchNaverGames } = await import("@/lib/crawler/naver-games");
-      return await fetchNaverGames(date, srId);
+      const remainingMs = deadlineAtMs - Date.now();
+      if (remainingMs <= 0) throw new Error("games deadline exceeded before Naver fallback");
+      return await runBeforeDeadline(
+        () => fetchNaverGames(date, srId, {
+          signal: AbortSignal.timeout(abortBeforeDeadlineMs(remainingMs)),
+        }),
+        deadlineAtMs,
+      );
     } catch {
       // Naver 도 실패(또는 series 보존 불가 fail-close) → 원래 KBO 에러로 throw.
     }
@@ -257,7 +284,14 @@ export async function fetchGames(
   if (games.length === 0) {
     const naver = await import("@/lib/crawler/naver-games");
     try {
-      return await naver.fetchNaverGames(date, srId);
+      const remainingMs = deadlineAtMs - Date.now();
+      if (remainingMs <= 0) throw new Error("games deadline exceeded before Naver cross-check");
+      return await runBeforeDeadline(
+        () => naver.fetchNaverGames(date, srId, {
+          signal: AbortSignal.timeout(abortBeforeDeadlineMs(remainingMs)),
+        }),
+        deadlineAtMs,
+      );
     } catch (naverErr) {
       throw new Error(
         `KBO 200-empty 미검증: Naver 교차확인 실패로 무경기 단정 금지 (${(naverErr as Error).message})`,

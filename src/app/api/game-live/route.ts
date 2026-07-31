@@ -6,6 +6,7 @@ import { resolveGameLiveDate } from "@/lib/game-live-date";
 import { isKboGameCancelled } from "@/lib/crawler/kbo-status";
 import { fetchKboLiveGames } from "@/lib/notifications/kbo-live-games";
 import { runBeforeDeadline } from "@/lib/async-deadline";
+import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
 const GAME_LIVE_DEADLINE_MS = 5_000;
 
@@ -21,6 +22,33 @@ type GameLiveTrace = {
   sourceAtMs: number;
   fetchedAtMs: number;
   deadlineAtMs: number;
+};
+
+type GameLiveRouteDeps = {
+  fetchKnownSlateIdsImpl: (date: string, deadlineAtMs: number) => Promise<string[]>;
+};
+
+async function fetchKnownSlateIds(date: string, deadlineAtMs: number): Promise<string[]> {
+  const remainingMs = deadlineAtMs - Date.now();
+  if (remainingMs <= 0) throw new Error("known_slate_deadline");
+  // query-guard: bounded -- one KBO date has at most 10 games; 11 detects overflow and fails closed.
+  const query = getSupabaseAdmin()
+    .from("game_notify_state")
+    .select("game_id")
+    .like("game_id", `${date}%`)
+    .order("game_id", { ascending: true })
+    .limit(11)
+    .abortSignal(AbortSignal.timeout(remainingMs));
+  const { data, error } = await runBeforeDeadline(() => query, deadlineAtMs);
+  if (error) throw new Error(`known_slate_db:${error.message}`);
+  if ((data?.length ?? 0) > 10) throw new Error("known_slate_overflow");
+  return (data ?? [])
+    .map((row) => row.game_id)
+    .filter((gameId): gameId is string => typeof gameId === "string");
+}
+
+const DEFAULT_DEPS: GameLiveRouteDeps = {
+  fetchKnownSlateIdsImpl: fetchKnownSlateIds,
 };
 
 function requiresStarterContract(game: KboRawGame): boolean {
@@ -113,7 +141,11 @@ function diagMissingPitcherPhoto(pitcherName: string | null, gameId: string) {
   );
 }
 
-export async function GET(req: NextRequest) {
+export async function gameLiveRoute(
+  req: NextRequest,
+  depsOverride: Partial<GameLiveRouteDeps> = {},
+) {
+  const deps = { ...DEFAULT_DEPS, ...depsOverride };
   const date = req.nextUrl.searchParams.get("date") || resolveGameLiveDate();
   const deadlineAtMs = Date.now() + GAME_LIVE_DEADLINE_MS;
   
@@ -134,6 +166,16 @@ export async function GET(req: NextRequest) {
       // partial or a Naver 5-game response with 0/10 starters is silently
       // accepted merely because no live/final game triggered the old guard.
       const witness = await fetchStarterWitness(req, date, deadlineAtMs);
+      if (rawGames.length === 0 && witness.length === 0) {
+        const knownSlateIds = await deps.fetchKnownSlateIdsImpl(date, deadlineAtMs);
+        if (knownSlateIds.length > 0) {
+          trace = { ...trace, stage: "known-slate-missing", fetchedAtMs: Date.now() };
+          return NextResponse.json(
+            { error: "known slate missing from live sources", games: [], date, trace },
+            { status: 503, headers: traceHeaders(trace) },
+          );
+        }
+      }
       const reconciled = reconcileStarterWitness(rawGames, witness);
       if (!reconciled) {
         trace = { ...trace, stage: "starter-witness-failed", fetchedAtMs: Date.now() };
@@ -214,4 +256,8 @@ export async function GET(req: NextRequest) {
       { status: 503, headers: traceHeaders(trace) },
     );
   }
+}
+
+export async function GET(req: NextRequest) {
+  return gameLiveRoute(req);
 }

@@ -421,7 +421,7 @@ async function withWatchdog<T>(promise: Promise<T>, timeoutMs: number, label: st
 async function routeFailureMatrix() {
   const date = "20260730";
   const realFetch = globalThis.fetch;
-  const { GET } = await import("../../src/app/api/game-live/route");
+  const { GET, gameLiveRoute } = await import("../../src/app/api/game-live/route");
   const witnessGames = SLATE.map((g) => ({
     gameId: `${date}${g.away}${g.home}0`,
     awayStarterName: `${g.awayName}선발`,
@@ -549,6 +549,66 @@ async function routeFailureMatrix() {
     const dualFail = await invoke("503", "fail");
     assert.equal(dualFail.response.status, 503, "dual fail must fail closed");
     assert.equal(dualFail.body.trace.stage, "dual-fail");
+
+    // A same-source empty witness cannot prove an off-day. The durable
+    // game_notify_state slate is independent evidence that five games existed,
+    // so KBO failure/empty + Naver empty + /api/games empty must never become
+    // the old false-green HTTP 200 games=[].
+    for (const mode of ["503", "204", "empty", "timeout"] as const) {
+      let active = 0;
+      globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input instanceof Request ? input.url : input);
+        if (url.includes("Main.asmx")) {
+          if (mode === "timeout") {
+            active++;
+            return new Promise<Response>((_resolve, reject) => {
+              init?.signal?.addEventListener("abort", () => {
+                active--;
+                reject(new DOMException("aborted", "AbortError"));
+              }, { once: true });
+            });
+          }
+          if (mode === "empty") return Response.json({ game: [] });
+          return new Response(null, { status: Number(mode) });
+        }
+        if (url.includes("api-gw.sports.naver.com/schedule/games?")) {
+          return Response.json({ code: 200, success: true, result: { games: [] } });
+        }
+        if (url.includes("/api/games?")) return Response.json({ games: [] });
+        return realFetch(input as RequestInfo, init);
+      }) as typeof fetch;
+      const response = await withWatchdog(
+        gameLiveRoute(
+          new NextRequest(`http://localhost/api/game-live?date=${date}`),
+          { fetchKnownSlateIdsImpl: async () => witnessGames.map((game) => game.gameId) },
+        ),
+        6_000,
+        `known-slate KBO ${mode} / Naver empty`,
+      );
+      const body = await response.json() as { games: unknown[]; trace: { stage: string } };
+      assert.equal(response.status, 503, `known slate KBO ${mode} must fail closed`);
+      assert.equal(body.games.length, 0);
+      assert.equal(body.trace.stage, "known-slate-missing");
+      assert.equal(active, 0, `known slate KBO ${mode} outstanding 0`);
+    }
+
+    // Without independent durable evidence, a dual-empty off-day remains a
+    // valid empty slate rather than manufacturing an outage.
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (url.includes("Main.asmx")) return Response.json({ game: [] });
+      if (url.includes("api-gw.sports.naver.com/schedule/games?")) {
+        return Response.json({ code: 200, success: true, result: { games: [] } });
+      }
+      if (url.includes("/api/games?")) return Response.json({ games: [] });
+      return realFetch(input as RequestInfo);
+    }) as typeof fetch;
+    const offday = await gameLiveRoute(
+      new NextRequest(`http://localhost/api/game-live?date=${date}`),
+      { fetchKnownSlateIdsImpl: async () => [] },
+    );
+    assert.equal(offday.status, 200, "no durable slate evidence permits authoritative off-day");
+    assert.deepEqual((await offday.json() as { games: unknown[] }).games, []);
   } finally {
     globalThis.fetch = realFetch;
   }

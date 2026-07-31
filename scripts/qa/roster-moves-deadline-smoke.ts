@@ -9,6 +9,7 @@ import { NextRequest } from "next/server";
 process.env.CRON_SECRET = "roster-deadline-smoke";
 process.env.NEXT_PUBLIC_SUPABASE_URL ??= "http://127.0.0.1:54321";
 process.env.SUPABASE_SERVICE_ROLE_KEY ??= "smoke-service-role-key";
+process.env.ROSTER_GAP_SLACK_WEBHOOK = "http://localhost/roster-gap";
 
 function neverResponse(): Promise<Response> {
   return new Promise(() => undefined);
@@ -175,6 +176,9 @@ async function main() {
         return this;
       },
       limit() {
+        return this;
+      },
+      abortSignal() {
         dbReadCalls++;
         return Promise.resolve({ data: pendingRows, error: null });
       },
@@ -228,7 +232,177 @@ async function main() {
     assert.equal(JSON.stringify({ snapshots: 10, moves: 4 }), snapshotSentinel, "readiness state unchanged");
   }
 
-  console.log(`roster-moves-deadline-smoke: ${cases.length + 2}/${cases.length + 2} PASS`);
+  // A delayed DB preflight must be aborted before the route deadline and must
+  // never reach the first mutating RPC/write.
+  {
+    let activeDb = 0;
+    let rpcCalls = 0;
+    let writes = 0;
+    let signal: AbortSignal | undefined;
+    const delayedBuilder = {
+      select() { return this; },
+      eq() { return this; },
+      lt() { return this; },
+      order() { return this; },
+      limit() { return this; },
+      abortSignal(next: AbortSignal) { signal = next; return this; },
+      maybeSingle() {
+        activeDb++;
+        return new Promise<{ data: null; error: null }>((resolve, reject) => {
+          const timer = setTimeout(() => {
+            activeDb--;
+            resolve({ data: null, error: null });
+          }, 140);
+          signal?.addEventListener("abort", () => {
+            clearTimeout(timer);
+            activeDb--;
+            reject(new DOMException("aborted", "AbortError"));
+          }, { once: true });
+        });
+      },
+      update() { writes++; return this; },
+    };
+    const admin = {
+      from(table: string) {
+        assert.equal(table, "roster_snapshots");
+        return delayedBuilder;
+      },
+      rpc() { rpcCalls++; return Promise.resolve({ data: null, error: null }); },
+    };
+    const startedAt = Date.now();
+    const response = await withWatchdog(rosterMovesRoute(
+      new NextRequest("http://localhost/api/cron/roster-moves?force=1", {
+        headers: { authorization: "Bearer roster-deadline-smoke" },
+      }),
+      {
+        now: () => new Date(),
+        fetchRegisterRostersImpl: async () => ({
+          date: kstToday(),
+          teams: [{ teamId: 1, teamCode: "LG", entries: [] }],
+        }),
+        getSupabaseAdminImpl: (() => admin) as never,
+        collectionDeadlineMs: 80,
+      },
+    ), 700, "db-preflight-stall");
+    const payload = await response.json() as { stage: string };
+    assert.equal(response.status, 502, "DB preflight stall status");
+    assert.equal(payload.stage, "read-prev-date", "DB preflight stall stage");
+    assert.equal(rpcCalls, 0, "DB preflight stall RPC 0");
+    assert.equal(writes, 0, "DB preflight stall write 0");
+    assert.equal(activeDb, 0, "DB preflight stall outstanding 0 at response");
+    assert.ok(Date.now() - startedAt < 500, "DB preflight stall bounded");
+  }
+
+  // The actual fetchGames KBO→Naver fallback shares this route's deadline.
+  // Both transports must be aborted and settled before the schedule 502.
+  {
+    const { fetchGames } = await import("../../src/lib/crawler/kbo-api");
+    const realFetch = globalThis.fetch;
+    let active = 0;
+    let kboCalls = 0;
+    let naverCalls = 0;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (url.includes("GetKboGameList")) kboCalls++;
+      else if (url.includes("api-gw.sports.naver.com/schedule/games")) naverCalls++;
+      else return new Response(null, { status: 503 });
+      active++;
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          active--;
+          reject(new DOMException("aborted", "AbortError"));
+        }, { once: true });
+      });
+    }) as typeof fetch;
+    let response: Response;
+    try {
+      response = await withWatchdog(rosterMovesRoute(
+        new NextRequest("http://localhost/api/cron/roster-moves", {
+          headers: { authorization: "Bearer roster-deadline-smoke" },
+        }),
+        {
+          now: () => new Date("2026-08-01T00:00:00+09:00"),
+          fetchGamesImpl: fetchGames,
+          getSupabaseAdminImpl: (() => { throw new Error("DB must stay unopened"); }) as never,
+          collectionDeadlineMs: 80,
+        },
+      ), 700, "actual-schedule-dual-stall");
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+    const payload = await response.json() as { stage: string };
+    assert.equal(response.status, 502, "actual schedule dual stall status");
+    assert.equal(payload.stage, "schedule", "actual schedule dual stall stage");
+    assert.equal(kboCalls, 1, "actual schedule KBO called once");
+    assert.equal(naverCalls, 1, "actual schedule Naver reserve exercised");
+    assert.equal(active, 0, "actual schedule outstanding 0 at response");
+  }
+
+  // Pending webhook response/body stalls are abortable and do not hold the
+  // cron open beyond the same absolute route deadline.
+  {
+    const realFetch = globalThis.fetch;
+    let webhookCalls = 0;
+    let active = 0;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      assert.equal(String(input), "http://localhost/roster-gap");
+      webhookCalls++;
+      active++;
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          active--;
+          reject(new DOMException("aborted", "AbortError"));
+        }, { once: true });
+      });
+    }) as typeof fetch;
+    const pendingRows = [{
+      id: "pending-webhook",
+      team_id: 1,
+      kbo_player_id: "51516",
+      player_name: "테스트",
+      move_date: "2026-08-01",
+    }];
+    const pendingBuilder = {
+      select() { return this; },
+      eq() { return this; },
+      order() { return this; },
+      limit() { return this; },
+      abortSignal() { return Promise.resolve({ data: pendingRows, error: null }); },
+    };
+    const admin = {
+      from(table: string) { assert.equal(table, "roster_moves"); return pendingBuilder; },
+      rpc() { throw new Error("no teams means RPC 0"); },
+    };
+    let response: Response;
+    try {
+      response = await withWatchdog(rosterMovesRoute(
+        new NextRequest("http://localhost/api/cron/roster-moves?force=1", {
+          headers: { authorization: "Bearer roster-deadline-smoke" },
+        }),
+        {
+          now: () => new Date(),
+          fetchRegisterRostersImpl: async () => ({ date: kstToday(), teams: [] }),
+          getSupabaseAdminImpl: (() => admin) as never,
+          checkPublishReadinessImpl: async () => ({
+            ready: false,
+            canonicalId: null,
+            missing: ["profile-asset"],
+          }),
+          collectionDeadlineMs: 80,
+        },
+      ), 700, "pending-webhook-stall");
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+    const payload = await response.json() as { ok: boolean; pendingAlert: string };
+    assert.equal(response.status, 200, "pending webhook stall keeps cron result");
+    assert.equal(payload.ok, true);
+    assert.equal(payload.pendingAlert, "webhook-error");
+    assert.equal(webhookCalls, 1);
+    assert.equal(active, 0, "pending webhook outstanding 0 at response");
+  }
+
+  console.log(`roster-moves-deadline-smoke: ${cases.length + 5}/${cases.length + 5} PASS`);
 }
 
 main().catch((error) => {

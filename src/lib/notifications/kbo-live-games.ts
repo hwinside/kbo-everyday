@@ -12,6 +12,11 @@ const KBO_BROWSER_UA =
 export const NAVER_UNKNOWN_RUNNER_ORDER = 99;
 const KBO_PRIMARY_BUDGET_MS = 1_500;
 
+function abortBeforeDeadlineMs(remainingMs: number): number {
+  const settleReserveMs = Math.min(25, Math.max(1, Math.floor(remainingMs / 10)));
+  return Math.max(1, remainingMs - settleReserveMs);
+}
+
 export type LiveGamesSource = "kbo" | "naver" | "none";
 
 export type LiveGamesTrace = {
@@ -228,7 +233,7 @@ export async function fetchKboLiveGames(
         },
         body: `leId=1&srId=0,1,3,4,5,7,8,9&date=${date}`,
         cache: "no-store",
-        signal: AbortSignal.timeout(Math.max(1, remainingMs)),
+        signal: AbortSignal.timeout(abortBeforeDeadlineMs(remainingMs)),
       }),
       kboDeadlineAtMs,
     );
@@ -278,7 +283,7 @@ export async function fetchKboLiveGames(
     if (remainingMs <= 0) throw new Error("live_games_deadline_exceeded");
     const games = await runBeforeDeadline(
       () => fetchNaverImpl(date, undefined, {
-        signal: AbortSignal.timeout(remainingMs),
+        signal: AbortSignal.timeout(abortBeforeDeadlineMs(remainingMs)),
       }),
       absoluteDeadlineAtMs,
     );
@@ -298,7 +303,7 @@ export async function fetchKboLiveGames(
         const evidence = await runBeforeDeadline(
           () => fetchNaverEvidenceImpl(
             game.gameId,
-            AbortSignal.timeout(evidenceRemainingMs),
+            AbortSignal.timeout(abortBeforeDeadlineMs(evidenceRemainingMs)),
           ),
           absoluteDeadlineAtMs,
         );

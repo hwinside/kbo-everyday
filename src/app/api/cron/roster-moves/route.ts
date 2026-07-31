@@ -50,6 +50,7 @@ export type RosterMovesRouteDeps = {
   fetchRegisterRostersImpl: typeof fetchRegisterRosters;
   getSupabaseAdminImpl: typeof getSupabaseAdmin;
   notifyCollectionFailureImpl: typeof notifyCollectionFailure;
+  notifyPendingMovesImpl: typeof notifyPendingMoves;
   checkPublishReadinessImpl: typeof checkPublishReadiness;
   collectionDeadlineMs: number;
 };
@@ -61,6 +62,7 @@ const DEFAULT_DEPS: RosterMovesRouteDeps = {
   fetchRegisterRostersImpl: fetchRegisterRosters,
   getSupabaseAdminImpl: getSupabaseAdmin,
   notifyCollectionFailureImpl: notifyCollectionFailure,
+  notifyPendingMovesImpl: notifyPendingMoves,
   checkPublishReadinessImpl: checkPublishReadiness,
   collectionDeadlineMs: REGISTER_COLLECTION_DEADLINE_MS,
 };
@@ -68,6 +70,15 @@ const DEFAULT_DEPS: RosterMovesRouteDeps = {
 /** "20260718" → "2026-07-18" (Postgres DATE 리터럴). */
 function toIsoDate(yyyymmdd: string): string {
   return `${yyyymmdd.slice(0, 4)}-${yyyymmdd.slice(4, 6)}-${yyyymmdd.slice(6, 8)}`;
+}
+
+function routeAbortSignal(deadlineAtMs: number): AbortSignal {
+  const remainingMs = deadlineAtMs - Date.now();
+  if (remainingMs <= 0) return AbortSignal.abort(new Error("deadline_exceeded"));
+  // Abort the transport slightly before the outer completion backstop so the
+  // route never returns while a PostgREST/fetch request is still outstanding.
+  const settleReserveMs = Math.min(25, Math.max(1, Math.floor(remainingMs / 10)));
+  return AbortSignal.timeout(Math.max(1, remainingMs - settleReserveMs));
 }
 
 export async function rosterMovesRoute(
@@ -81,7 +92,7 @@ export async function rosterMovesRoute(
 
   // One wall-clock budget covers schedule discovery, collection and asset
   // readiness. A later stage must never receive a fresh independent timeout.
-  const routeDeadlineAtMs = deps.now().getTime() + deps.collectionDeadlineMs;
+  const routeDeadlineAtMs = Date.now() + deps.collectionDeadlineMs;
 
   // 30분 tick 중 실제 수집은 매일 10시와 당일 첫 경기 2시간 전에만 실행한다.
   // 운영 수동 실행은 인증된 ?force=1로 시간 게이트를 우회할 수 있다.
@@ -93,7 +104,10 @@ export async function rosterMovesRoute(
         () => deps.fetchGamesImpl(
           getKSTToday().replaceAll("-", ""),
           undefined,
-          { timeoutMs: Math.max(1, routeDeadlineAtMs - Date.now()) },
+          {
+            timeoutMs: Math.max(1, routeDeadlineAtMs - Date.now()),
+            deadlineAtMs: routeDeadlineAtMs,
+          },
         ),
         routeDeadlineAtMs,
       );
@@ -153,25 +167,50 @@ export async function rosterMovesRoute(
   for (const team of teams) {
     // 직전 "일자" 스냅샷(오늘 이전 최신 1일) 조회 — diff 기준점.
     // 같은 날 2회차 실행도 동일 기준(전일)으로 오늘 이벤트 집합을 전체 재계산한다.
-    const { data: prevDateRow, error: prevDateErr } = await admin
-      .from("roster_snapshots")
-      .select("snapshot_date")
-      .eq("team_id", team.teamId)
-      .lt("snapshot_date", snapshotDate)
-      .order("snapshot_date", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+    let prevDateResult;
+    try {
+      const remainingMs = routeDeadlineAtMs - Date.now();
+      if (remainingMs <= 0) throw new Error("deadline_exceeded");
+      prevDateResult = await runBeforeDeadline(
+        () => admin
+          .from("roster_snapshots")
+          .select("snapshot_date")
+          .eq("team_id", team.teamId)
+          .lt("snapshot_date", snapshotDate)
+          .order("snapshot_date", { ascending: false })
+          .limit(1)
+          .abortSignal(routeAbortSignal(routeDeadlineAtMs))
+          .maybeSingle(),
+        routeDeadlineAtMs,
+      );
+    } catch (error) {
+      return deadlineFailClosed("read-prev-date", error);
+    }
+    const { data: prevDateRow, error: prevDateErr } = prevDateResult;
     if (prevDateErr) {
       return failClosed("read-prev-date", team.teamId, prevDateErr.message);
     }
 
     let prev: RosterEntry[] | null = null;
     if (prevDateRow) {
-      const { data: prevRows, error: prevRowsErr } = await admin
-        .from("roster_snapshots")
-        .select("kbo_player_id, player_name, back_no, position")
-        .eq("team_id", team.teamId)
-        .eq("snapshot_date", prevDateRow.snapshot_date);
+      let prevRowsResult;
+      try {
+        const remainingMs = routeDeadlineAtMs - Date.now();
+        if (remainingMs <= 0) throw new Error("deadline_exceeded");
+        // query-guard: bounded -- exact team/date roster snapshot is capped by the KBO active roster.
+        prevRowsResult = await runBeforeDeadline(
+          () => admin
+            .from("roster_snapshots")
+            .select("kbo_player_id, player_name, back_no, position")
+            .eq("team_id", team.teamId)
+            .eq("snapshot_date", prevDateRow.snapshot_date)
+            .abortSignal(routeAbortSignal(routeDeadlineAtMs)),
+          routeDeadlineAtMs,
+        );
+      } catch (error) {
+        return deadlineFailClosed("read-prev-rows", error);
+      }
+      const { data: prevRows, error: prevRowsErr } = prevRowsResult;
       if (prevRowsErr) {
         return failClosed("read-prev-rows", team.teamId, prevRowsErr.message);
       }
@@ -192,12 +231,25 @@ export async function rosterMovesRoute(
   // set. Include registrations planned by this run so newly inserted pending
   // rows can be promoted from the same preflight result without post-write I/O.
   // query-guard: bounded -- pending readiness preflight is capped at 501 and fails closed above 500.
-  const { data: existingPendingRows, error: existingPendingErr } = await admin
-    .from("roster_moves")
-    .select("id, team_id, kbo_player_id, player_name, move_date")
-    .eq("status", "pending")
-    .order("move_date", { ascending: true })
-    .limit(PENDING_READINESS_LIMIT + 1);
+  let existingPendingResult;
+  try {
+    const remainingMs = routeDeadlineAtMs - Date.now();
+    if (remainingMs <= 0) throw new Error("deadline_exceeded");
+    // query-guard: bounded -- pending readiness preflight is capped at 501 and fails closed above 500.
+    existingPendingResult = await runBeforeDeadline(
+      () => admin
+        .from("roster_moves")
+        .select("id, team_id, kbo_player_id, player_name, move_date")
+        .eq("status", "pending")
+        .order("move_date", { ascending: true })
+        .limit(PENDING_READINESS_LIMIT + 1)
+        .abortSignal(routeAbortSignal(routeDeadlineAtMs)),
+      routeDeadlineAtMs,
+    );
+  } catch (error) {
+    return deadlineFailClosed("read-pending", error);
+  }
+  const { data: existingPendingRows, error: existingPendingErr } = existingPendingResult;
   if (existingPendingErr) {
     return failClosed("read-pending", 0, existingPendingErr.message);
   }
@@ -244,23 +296,36 @@ export async function rosterMovesRoute(
 
     // ── 오늘 스냅샷+무브 원자 교체: 단일 RPC 트랜잭션(advisory lock + captured_at 워터마크).
     // 마이그레이션 미적용/함수 미존재/제약 위반은 모두 error로 돌아와 여기서 5xx fail-closed.
-    const { data: rpcData, error: rpcErr } = await admin.rpc("replace_team_roster_day", {
-      p_team_id: team.teamId,
-      p_snapshot_date: snapshotDate,
-      p_entries: team.entries.map((e) => ({
-        kboId: e.kboId,
-        name: e.name,
-        backNo: e.backNo,
-        position: e.position,
-      })),
-      p_moves: planned.map((m) => ({
-        kboPlayerId: m.kboPlayerId,
-        playerName: m.playerName,
-        moveType: m.moveType,
-        status: m.status,
-      })),
-      p_captured_at: capturedAt,
-    });
+    let rpcResult;
+    try {
+      // Check again immediately before the first write. A DB/readiness task
+      // that consumed the budget must never allow even one mutating RPC.
+      const remainingMs = routeDeadlineAtMs - Date.now();
+      if (remainingMs <= 0) throw new Error("deadline_exceeded");
+      rpcResult = await runBeforeDeadline(
+        () => admin.rpc("replace_team_roster_day", {
+          p_team_id: team.teamId,
+          p_snapshot_date: snapshotDate,
+          p_entries: team.entries.map((e) => ({
+            kboId: e.kboId,
+            name: e.name,
+            backNo: e.backNo,
+            position: e.position,
+          })),
+          p_moves: planned.map((m) => ({
+            kboPlayerId: m.kboPlayerId,
+            playerName: m.playerName,
+            moveType: m.moveType,
+            status: m.status,
+          })),
+          p_captured_at: capturedAt,
+        }).abortSignal(routeAbortSignal(routeDeadlineAtMs)),
+        routeDeadlineAtMs,
+      );
+    } catch (error) {
+      return deadlineFailClosed("replace-team-roster-day", error);
+    }
+    const { data: rpcData, error: rpcErr } = rpcResult;
     if (rpcErr) {
       return failClosed("replace-team-roster-day", team.teamId, rpcErr.message);
     }
@@ -287,12 +352,25 @@ export async function rosterMovesRoute(
   // ── 승격 단계: pending 등록 전건 재검사 → 전체 통과 시 published.
   // 미통과 건은 응답 + 슬랙으로 반드시 표면화(silent omission 금지 — 삼순 P0).
   // query-guard: bounded -- post-RPC pending verification is capped at 501 and fails closed above 500.
-  const { data: pendingRows, error: pendingErr } = await admin
-    .from("roster_moves")
-    .select("id, team_id, kbo_player_id, player_name, move_date")
-    .eq("status", "pending")
-    .order("move_date", { ascending: true })
-    .limit(PENDING_READINESS_LIMIT + 1);
+  let pendingResult;
+  try {
+    const remainingMs = routeDeadlineAtMs - Date.now();
+    if (remainingMs <= 0) throw new Error("deadline_exceeded");
+    // query-guard: bounded -- post-RPC pending verification is capped at 501 and fails closed above 500.
+    pendingResult = await runBeforeDeadline(
+      () => admin
+        .from("roster_moves")
+        .select("id, team_id, kbo_player_id, player_name, move_date")
+        .eq("status", "pending")
+        .order("move_date", { ascending: true })
+        .limit(PENDING_READINESS_LIMIT + 1)
+        .abortSignal(routeAbortSignal(routeDeadlineAtMs)),
+      routeDeadlineAtMs,
+    );
+  } catch (error) {
+    return deadlineFailClosed("read-pending-post-rpc", error);
+  }
+  const { data: pendingRows, error: pendingErr } = pendingResult;
   if (pendingErr) {
     return failClosed("read-pending", 0, pendingErr.message);
   }
@@ -318,10 +396,22 @@ export async function rosterMovesRoute(
     if (readiness.ready && readiness.canonicalId) {
       // published 등록 링크 불변식(삼순 P0 3차): 승격 시 검증한 canonical id를 함께 저장한다
       // → 조회 시점에 raw id 재resolve 없이 href를 항상 non-null로 생성한다.
-      const { error: updErr } = await admin
-        .from("roster_moves")
-        .update({ status: "published", canonical_id: readiness.canonicalId })
-        .eq("id", row.id);
+      let updateResult;
+      try {
+        const remainingMs = routeDeadlineAtMs - Date.now();
+        if (remainingMs <= 0) throw new Error("deadline_exceeded");
+        updateResult = await runBeforeDeadline(
+          () => admin
+            .from("roster_moves")
+            .update({ status: "published", canonical_id: readiness.canonicalId })
+            .eq("id", row.id)
+            .abortSignal(routeAbortSignal(routeDeadlineAtMs)),
+          routeDeadlineAtMs,
+        );
+      } catch (error) {
+        return deadlineFailClosed("promote-update", error);
+      }
+      const { error: updErr } = updateResult;
       if (updErr) {
         return failClosed("promote-update", row.team_id, updErr.message);
       }
@@ -336,7 +426,16 @@ export async function rosterMovesRoute(
     }
   }
 
-  const { status: pendingAlert } = await notifyPendingMoves(pending);
+  let pendingAlert: Awaited<ReturnType<typeof notifyPendingMoves>>["status"];
+  try {
+    const result = await runBeforeDeadline(
+      () => deps.notifyPendingMovesImpl(pending, { deadlineAtMs: routeDeadlineAtMs }),
+      routeDeadlineAtMs,
+    );
+    pendingAlert = result.status;
+  } catch {
+    pendingAlert = "webhook-error";
+  }
   if (pending.length > 0 && pendingAlert !== "sent") {
     // env 부재/전송 실패여도 silent 금지 — 로그 + 응답 pending으로 추적 가능하게 남긴다.
     console.warn(
@@ -365,4 +464,10 @@ export async function GET(req: NextRequest) {
 function failClosed(stage: string, teamId: number, message: string): NextResponse {
   console.error(`[roster-moves] DB 실패 stage=${stage} team=${teamId}: ${message} — 5xx fail-closed`);
   return NextResponse.json({ ok: false, stage, teamId, error: message }, { status: 500 });
+}
+
+function deadlineFailClosed(stage: string, error: unknown): NextResponse {
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(`[roster-moves] deadline 실패 stage=${stage}: ${message} — 후속 DB/RPC 중단`);
+  return NextResponse.json({ ok: false, stage, error: message }, { status: 502 });
 }
