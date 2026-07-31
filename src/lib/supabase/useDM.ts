@@ -10,10 +10,14 @@ import {
   BASEBALL_GENIUS_USER_ID,
 } from "@/lib/constants/baseball-genius";
 import {
+  BASEBALL_QA_MAX_ATTEMPTS,
   attemptBaseballQaOutbox,
   enqueueBaseballQaQuestion,
+  getBaseballQaReplyStates,
+  observeBaseballQaReplies,
   readBaseballQaOutbox,
   resetBaseballQaQuestion,
+  type BaseballQaReplyStates,
 } from "@/lib/baseball-qa/client-outbox";
 import { usePollingFallback } from "./usePollingFallback";
 import { mergeDmMessagesById, type DMMessage } from "./dm-messages";
@@ -201,9 +205,24 @@ export function useDMChat(conversationId: string) {
   const channelGenerationRef = useRef(0);
   // 대화 전환마다 증가 — 늦게 resolve 된 send RPC 성공이 다른 대화 상태를 못 건드리게 하는 fence.
   const conversationGenerationRef = useRef(0);
-  const [geniusReplyState, setGeniusReplyState] =
-    useState<"idle" | "waiting" | "retrying" | "failed">("idle");
+  const [geniusReplyStates, setGeniusReplyStates] =
+    useState<BaseballQaReplyStates>({});
   const processingBaseballQaRef = useRef(false);
+  const observedBaseballQaReplyIdsRef = useRef(new Set<number>());
+
+  const observeBaseballQaMessages = useCallback((nextMessages: DMMessage[]) => {
+    if (typeof window === "undefined") return;
+    const observed = observeBaseballQaReplies(
+      window.localStorage,
+      nextMessages,
+      BASEBALL_GENIUS_USER_ID,
+    );
+    if (observed.length === 0) return;
+    for (const messageId of observed) {
+      observedBaseballQaReplyIdsRef.current.add(messageId);
+    }
+    setGeniusReplyStates(getBaseballQaReplyStates(readBaseballQaOutbox(window.localStorage)));
+  }, []);
 
   const processBaseballQaOutbox = useCallback(async () => {
     if (typeof window === "undefined" || processingBaseballQaRef.current) return;
@@ -211,18 +230,22 @@ export function useDMChat(conversationId: string) {
     try {
       const queued = readBaseballQaOutbox(window.localStorage);
       if (queued.length === 0) {
-        setGeniusReplyState("idle");
+        setGeniusReplyStates({});
         return;
       }
-      setGeniusReplyState("retrying");
+      const retrying = new Set(
+        queued
+          .filter((entry) =>
+            !entry.acknowledged && entry.attempts < BASEBALL_QA_MAX_ATTEMPTS)
+          .map((entry) => entry.messageId),
+      );
+      setGeniusReplyStates(getBaseballQaReplyStates(queued, retrying));
       const { data: { session } } = await supabase.auth.getSession();
-      const result = await attemptBaseballQaOutbox(
+      await attemptBaseballQaOutbox(
         window.localStorage,
         session?.access_token ?? null,
       );
-      if (result.failed.length > 0) setGeniusReplyState("failed");
-      else if (result.pending.length > 0) setGeniusReplyState("waiting");
-      else setGeniusReplyState("idle");
+      setGeniusReplyStates(getBaseballQaReplyStates(readBaseballQaOutbox(window.localStorage)));
     } finally {
       processingBaseballQaRef.current = false;
     }
@@ -242,18 +265,22 @@ export function useDMChat(conversationId: string) {
   }, [user, processBaseballQaOutbox]);
 
   useEffect(() => {
-    if (geniusReplyState !== "waiting") return;
+    if (!Object.values(geniusReplyStates).some((state) => state === "waiting")) return;
     const timer = window.setTimeout(() => {
       void processBaseballQaOutbox();
     }, 3000);
     return () => window.clearTimeout(timer);
-  }, [geniusReplyState, processBaseballQaOutbox]);
+  }, [geniusReplyStates, processBaseballQaOutbox]);
 
-  const retryBaseballQa = useCallback(() => {
+  const retryBaseballQa = useCallback((messageId: number) => {
     if (typeof window === "undefined") return;
-    for (const entry of readBaseballQaOutbox(window.localStorage)) {
-      resetBaseballQaQuestion(window.localStorage, entry.messageId);
-    }
+    resetBaseballQaQuestion(window.localStorage, messageId);
+    setGeniusReplyStates(
+      getBaseballQaReplyStates(
+        readBaseballQaOutbox(window.localStorage),
+        new Set([messageId]),
+      ),
+    );
     void processBaseballQaOutbox();
   }, [processBaseballQaOutbox]);
 
@@ -318,6 +345,7 @@ export function useDMChat(conversationId: string) {
           };
         });
         if (loadGenerationRef.current !== generation) return;
+        observeBaseballQaMessages(mapped);
         setMessages((prev) =>
           mode === "replace" ? mapped : mergeDmMessagesById(prev, mapped),
         );
@@ -325,7 +353,7 @@ export function useDMChat(conversationId: string) {
       if (loadGenerationRef.current !== generation) return;
       setLoading(false);
     },
-    [conversationId],
+    [conversationId, observeBaseballQaMessages],
   );
 
   // Realtime 이 끊긴 동안만 보이는 대화창을 주기 재조회(새 메시지 무증상 누락 방지).
@@ -382,6 +410,7 @@ export function useDMChat(conversationId: string) {
         async (payload) => {
           if (channelGenerationRef.current !== generation) return;
           const msg = payload.new as DMMessage;
+          observeBaseballQaMessages([msg]);
           // 낙관 append(발신자 본인 echo)로 이미 넣은 행이면 중복 방지
           let alreadyPresent = false;
           setMessages((prev) => {
@@ -435,7 +464,7 @@ export function useDMChat(conversationId: string) {
       }
       void supabase.removeChannel(channel);
     };
-  }, [conversationId, user]);
+  }, [conversationId, user, observeBaseballQaMessages]);
 
   // 메시지 전송: 방 생성·메시지 INSERT·목록 preview를 DB 한 트랜잭션으로 처리한다.
   const sendMessage = useCallback(
@@ -524,11 +553,15 @@ export function useDMChat(conversationId: string) {
           result?.message_id &&
           targetUserId === BASEBALL_GENIUS_USER_ID
         ) {
-          enqueueBaseballQaQuestion(window.localStorage, {
-            conversationId: result.conversation_id,
-            messageId: result.message_id,
-          });
-          setGeniusReplyState("waiting");
+          if (!observedBaseballQaReplyIdsRef.current.has(result.message_id)) {
+            enqueueBaseballQaQuestion(window.localStorage, {
+              conversationId: result.conversation_id,
+              messageId: result.message_id,
+            });
+          }
+          setGeniusReplyStates(
+            getBaseballQaReplyStates(readBaseballQaOutbox(window.localStorage)),
+          );
           void processBaseballQaOutbox();
         }
       }
@@ -543,7 +576,7 @@ export function useDMChat(conversationId: string) {
     loading,
     sendMessage,
     isLoggedIn: !!user,
-    geniusReplyState,
+    geniusReplyStates,
     retryBaseballQa,
   };
 }

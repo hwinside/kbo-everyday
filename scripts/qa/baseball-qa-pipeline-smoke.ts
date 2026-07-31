@@ -6,6 +6,7 @@ import { normalizeKey, normalizeQuestion } from "../../src/lib/baseball-qa/norma
 import {
   attemptBaseballQaOutbox,
   enqueueBaseballQaQuestion,
+  observeBaseballQaReplies,
   readBaseballQaOutbox,
 } from "../../src/lib/baseball-qa/client-outbox";
 import {
@@ -649,7 +650,12 @@ async function verifyClientRetryOutbox() {
   assert.equal(readBaseballQaOutbox(storage).length, 1);
   const second = await attemptBaseballQaOutbox(storage, "token", request);
   assert.deepEqual(second.completed, [77]);
-  assert.equal(readBaseballQaOutbox(storage).length, 0);
+  assert.equal(readBaseballQaOutbox(storage).length, 1, "HTTP 200만으로 outbox를 종료하면 안 됨");
+  observeBaseballQaReplies(storage, [{
+    sender_id: "45ae7419-6a9a-4c6b-9101-8d65df7e242e",
+    dedup_key: "baseball-genius:77",
+  }], "45ae7419-6a9a-4c6b-9101-8d65df7e242e");
+  assert.equal(readBaseballQaOutbox(storage).length, 0, "exact 답변 DM 관측 후에만 종료");
   assert.equal(calls, 2, "첫 500 뒤 동일 messageId만 한 번 재시도해야 함");
 }
 
