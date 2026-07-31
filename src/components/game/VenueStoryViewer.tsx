@@ -37,6 +37,7 @@ import { isIosNativeRuntime } from "@/lib/capacitor/platform";
 import { startVenueStoryUrlRefresh } from "@/lib/venue-stories/refresh-policy";
 import { getAvatarPath } from "@/lib/constants/avatars";
 import { trackVenueStoryView } from "@/lib/venue-stories/view-tracker-client";
+import { postViewTotal } from "@/lib/community/view-tracker-policy";
 
 interface Props {
   stories: VenueStory[];
@@ -663,15 +664,17 @@ export default function VenueStoryViewer({
           <p className="text-white/60 text-[11px] flex items-center gap-1.5">
             <span>{timeAgo(story.createdAt)}</span>
             {/* 조회수는 일단 관리자만 — 서버 필드 분기 + AdminOnly 이중 게이트. */}
-            {story.clickCount != null && story.impressionCount != null && (
+            {("clickCount" in story || "impressionCount" in story) && (
               <AdminOnly>
                 <span
                   className="inline-flex items-center gap-1"
-                  title="관리자 전용 조회수: 클릭·노출"
+                  title="관리자 전용 조회수"
+                  data-venue-story-view-count
                 >
                   <Eye size={12} />
-                  <span>클릭 {story.clickCount.toLocaleString()}</span>
-                  <span>· 노출 {story.impressionCount.toLocaleString()}</span>
+                  <span>
+                    조회수 {postViewTotal(story.clickCount, story.impressionCount).toLocaleString()}
+                  </span>
                 </span>
               </AdminOnly>
             )}

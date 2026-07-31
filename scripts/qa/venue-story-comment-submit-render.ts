@@ -19,7 +19,7 @@ const win = dom.window as unknown as Record<string, unknown>;
 const g = globalThis as unknown as Record<string, unknown>;
 for (const k of [
   "window", "document", "navigator", "HTMLElement", "HTMLInputElement", "Element", "Node",
-  "Event", "MouseEvent", "HTMLMediaElement", "getComputedStyle", "requestAnimationFrame", "cancelAnimationFrame", "localStorage",
+  "Event", "MouseEvent", "HTMLMediaElement", "getComputedStyle", "requestAnimationFrame", "cancelAnimationFrame", "localStorage", "sessionStorage",
 ]) {
   g[k] = win[k];
 }
@@ -61,10 +61,14 @@ async function main() {
   // getSafeSession 이 토큰을 반환하도록 supabase 클라 객체의 메서드만 교체(ESM 재바인딩 아님).
   const clientMod = await import("../../src/lib/supabase/client");
   (clientMod.supabase.auth as unknown as { getSession: () => Promise<unknown> }).getSession = async () => ({
-    data: { session: { access_token: "test-token", user: { id: "author-1" } } }, error: null,
+    data: { session: { access_token: "test-token", user: { id: "author-1", email: "harinclaw@gmail.com" } } }, error: null,
+  });
+  (clientMod.supabase.auth as unknown as { onAuthStateChange: (cb: unknown) => unknown }).onAuthStateChange = () => ({
+    data: { subscription: { unsubscribe: () => {} } },
   });
 
   const Viewer = (await import("../../src/components/game/VenueStoryViewer")).default;
+  const { AuthProvider } = await import("../../src/lib/supabase/AuthContext");
 
   // ③ 아바타 회귀 결속용 GET 댓글 셋 — custom:/preset:/null 각 1건.
   // getAvatarPath 해석이 헤더·CommentAvatar 양쪽에서 실제 <img src> 로 렌더돼야 한다(삼순 #948 ③ NO-GO).
@@ -106,6 +110,12 @@ async function main() {
         json: async () => ({ comment: { id: 200 + postCount, content, userId: "author-1", createdAt: new Date().toISOString(), author: { nickname: "t", avatarUrl: null, teamId: 1 } } }),
       } as unknown as Response;
     }
+    if (url === "/api/me") {
+      return {
+        ok: true, status: 200,
+        json: async () => ({ profile: { id: "author-1", nickname: "관리자", team_id: 1, favorite_players: [], points: 0, grade: "rookie", avatar_url: null, invited_by: null } }),
+      } as unknown as Response;
+    }
     return { ok: true, status: 200, json: async () => ({ comments: getComments, total: getComments.length }) } as unknown as Response;
   }) as typeof fetch;
 
@@ -115,7 +125,11 @@ async function main() {
     caption: "테스트", venueVerified: true, createdAt: new Date().toISOString(),
     author: { nickname: "테스터", avatarUrl: HEADER_AVATAR_RAW, teamId: 1 },
   });
-  const stories = [makeStory(1), makeStory(2), makeStory(3)];
+  const stories = [
+    { ...makeStory(1), clickCount: null, impressionCount: 1_234_567 },
+    { ...makeStory(2), clickCount: 1_234_567, impressionCount: 765_433 },
+    { ...makeStory(3), clickCount: null, impressionCount: null },
+  ];
   let closeCount = 0;
 
   const container = dom.window.document.createElement("div");
@@ -123,14 +137,17 @@ async function main() {
   const root = createRoot(container);
 
   await act(async () => {
-    root.render(React.createElement(Viewer as never, {
-      stories, startIndex: 1, currentUserId: "viewer-1", onClose: () => { closeCount++; }, onChanged: () => {},
-    } as never));
+    root.render(React.createElement(AuthProvider, null,
+      React.createElement(Viewer as never, {
+        stories, startIndex: 1, currentUserId: "viewer-1", onClose: () => { closeCount++; }, onChanged: () => {},
+      } as never),
+    ));
   });
 
   // 뷰어는 document.body 로 createPortal 되므로 body 기준으로 쿼리.
   const scope = dom.window.document.body;
   const storyId = () => scope.querySelector("[data-venue-story-viewer]")?.getAttribute("data-story-id");
+  const viewCountText = () => scope.querySelector("[data-venue-story-view-count]")?.textContent?.replace(/\s+/g, " ").trim();
   const fullTap = async (button: HTMLElement) => {
     await act(async () => {
       button.dispatchEvent(pointer("pointerdown"));
@@ -150,6 +167,8 @@ async function main() {
   const closeButton = headerActions[2]!;
   ok("상단 action 행은 safe-area 아래에 앵커",
     closeButton.parentElement?.style.top.includes("safe-area-inset-top") === true);
+  ok("관리자 Viewer는 click+impression 합산 단일값·큰 수 포맷 렌더",
+    viewCountText() === "조회수 2,000,000");
   for (let i = 0; i < 10; i++) await fullTap(closeButton);
   ok("닫기 X 첫 탭 10/10 → onClose 정확히 10회", closeCount === 10);
   ok("닫기 X 탭이 story nav로 새지 않음", storyId() === "2");
@@ -168,10 +187,12 @@ async function main() {
   };
   await tapNav("이전");
   ok("왼쪽 첫 탭 → previous 정확히 1칸(2→1)", storyId() === "1");
+  ok("legacy null click은 0으로 합산해 Viewer에 렌더", viewCountText() === "조회수 1,234,567");
   await tapNav("다음");
   ok("오른쪽 첫 탭 → next 정확히 1칸(1→2, double advance 0)", storyId() === "2");
   await tapNav("다음");
   ok("오른쪽 다음 탭도 next 정확히 1칸(2→3)", storyId() === "3");
+  ok("관리자 응답 필드가 null인 legacy Viewer도 조회수 0 렌더", viewCountText() === "조회수 0");
 
   // 댓글 시트 오픈
   const openBtn = scope.querySelector("[data-open-comments]") as HTMLElement | null;
