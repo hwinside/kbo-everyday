@@ -44,6 +44,13 @@ jobs:
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 
+      - name: Lint venue stats S2 surface (fail-closed, warnings blocked)
+        # --max-warnings=0 → react-hooks 경고 1건도 check 실패로 이어진다.
+        run: npx eslint --max-warnings=0 src/components/my/VenueStatsDashboard.tsx src/lib/venue-stats scripts/qa/venue-stats-s2-browser.mjs scripts/qa/venue-stats-s2-ui-smoke.ts
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
       - name: Run venue stats S2 contract smoke
         run: npm run qa:venue-stats-s2-ui
 

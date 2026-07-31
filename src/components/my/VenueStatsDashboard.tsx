@@ -137,8 +137,10 @@ export default function VenueStatsDashboard() {
   const [season, setSeason] = useState<number>(2026);
   const [scopeName, setScopeName] = useState<ScopeName>("overall");
   const [data, setData] = useState<{ season: number; payload: VenueStatsResponse } | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [failed, setFailed] = useState(false);
+  // 실패는 "어느 시즌이 실패했는가"로 보관한다.
+  // 로딩 여부는 별도 state 없이 (현재 시즌 데이터 없음 + 현재 시즌 실패 아님)으로 파생시켜
+  // 시즌 전환 직후에도 effect 안 setState 없이 즉시 로딩 UI로 수렴한다.
+  const [failedSeason, setFailedSeason] = useState<number | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const requestGeneration = useRef(0);
   const requestController = useRef<AbortController | null>(null);
@@ -152,8 +154,7 @@ export default function VenueStatsDashboard() {
     requestController.current?.abort();
     const controller = new AbortController();
     requestController.current = controller;
-    setLoading(true);
-    setFailed(false);
+    setFailedSeason((current) => (current === season ? null : current));
     try {
       const token = (await getSafeSession())?.access_token;
       if (!token) throw new Error("missing session");
@@ -173,11 +174,7 @@ export default function VenueStatsDashboard() {
         !controller.signal.aborted &&
         !(error instanceof DOMException && error.name === "AbortError")
       ) {
-        setFailed(true);
-      }
-    } finally {
-      if (requestGeneration.current === activeGeneration && !controller.signal.aborted) {
-        setLoading(false);
+        setFailedSeason(season);
       }
     }
   }, [season, userId]);
@@ -187,9 +184,6 @@ export default function VenueStatsDashboard() {
     const generation = requestGeneration.current + 1;
     requestGeneration.current = generation;
     requestController.current?.abort();
-    // 선택 시즌이 바뀌면 이전 시즌 응답이 새 라벨 아래 남지 않도록 즉시 로딩 상태로 되돌린다.
-    setLoading(true);
-    setFailed(false);
     const timer = window.setTimeout(() => void load(generation), 0);
     return () => {
       window.clearTimeout(timer);
@@ -199,6 +193,8 @@ export default function VenueStatsDashboard() {
 
   // 표시 데이터는 현재 선택 시즌과 결속한다(다른 시즌 응답은 표시 대상이 아니다).
   const activeData = data && data.season === season ? data.payload : null;
+  const showFailure = !activeData && failedSeason === season;
+  const showLoading = !activeData && !showFailure;
   const scope = activeData?.[scopeName] ?? null;
   const hero = useMemo(() => (scope ? buildVenueStatsHero(scope) : null), [scope]);
   const favoriteById = useMemo(
@@ -272,12 +268,12 @@ export default function VenueStatsDashboard() {
         <span className="text-[11px] font-semibold text-white/70">정규시즌 기준</span>
       </div>
 
-      {loading && !activeData ? (
+      {showLoading ? (
         <div className="mt-5 space-y-3">
           <div className="h-52 animate-pulse rounded-2xl bg-white/[0.05]" />
           <div className="h-28 animate-pulse rounded-2xl bg-white/[0.05]" />
         </div>
-      ) : failed && !activeData ? (
+      ) : showFailure ? (
         <button
           onClick={() => void load()}
           className="mt-6 flex w-full items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/[0.05] py-5 text-sm font-bold text-white/70"
