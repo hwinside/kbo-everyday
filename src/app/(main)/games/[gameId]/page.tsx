@@ -49,6 +49,7 @@ import GameStatsTab from "@/components/game/GameStatsTab";
 import LiveStatsTab from "@/components/game/LiveStatsTab";
 import { useGameRelay } from "@/lib/hooks/useGameRelay";
 import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
+import { lookupPitcherSeasonEra } from "@/lib/stats/pitcher-season";
 import PullToRefresh from "@/components/PullToRefresh";
 import PostgameInterviewSection from "@/components/game/PostgameInterviewSection";
 
@@ -429,7 +430,11 @@ export default function GameDetailPage() {
               p.name === name && p.teamId === teamId,
           )
         : undefined;
-      return { name, era: "-", kboId: roster?.kboId };
+      return {
+        name,
+        era: lookupPitcherSeasonEra(roster?.kboId) ?? "-",
+        kboId: roster?.kboId,
+      };
     };
     return {
       gameId,
@@ -675,7 +680,12 @@ export default function GameDetailPage() {
                         // starter 가 모두 빈 장애에서도 선발 표기+AI 분석이 살아있게(삼순 PR#988 P0-1).
                         const spName = validBoxName || liveGame?.awayStarterName || d.detailLineup.awayStarter || "";
                         const spRoster = spName ? PLAYERS_ROSTER.find((p: { name: string; teamId: number; kboId: string }) => p.name === spName && p.teamId === game.awayTeamId) : undefined;
-                        return { name: spName, era: gameDetail?.boxScore?.awayPitchers?.[0]?.era ?? "-", kboId: spRoster?.kboId };
+                        const boxEra = gameDetail?.boxScore?.awayPitchers?.[0]?.era?.trim();
+                        return {
+                          name: spName,
+                          era: boxEra || lookupPitcherSeasonEra(spRoster?.kboId) || "-",
+                          kboId: spRoster?.kboId,
+                        };
                       })(),
                       batters: d.detailLineup.away.map((e: LineupEntry) => {
                         const roster = PLAYERS_ROSTER.find((p: { name: string; teamId: number; kboId: string }) => p.name === e.name && p.teamId === game.awayTeamId);
@@ -689,7 +699,12 @@ export default function GameDetailPage() {
                         const validBoxName = boxName && !/^선수\(\d+\)$/.test(boxName) ? boxName : "";
                         const spName = validBoxName || liveGame?.homeStarterName || d.detailLineup.homeStarter || "";
                         const spRoster = spName ? PLAYERS_ROSTER.find((p: { name: string; teamId: number; kboId: string }) => p.name === spName && p.teamId === game.homeTeamId) : undefined;
-                        return { name: spName, era: gameDetail?.boxScore?.homePitchers?.[0]?.era ?? "-", kboId: spRoster?.kboId };
+                        const boxEra = gameDetail?.boxScore?.homePitchers?.[0]?.era?.trim();
+                        return {
+                          name: spName,
+                          era: boxEra || lookupPitcherSeasonEra(spRoster?.kboId) || "-",
+                          kboId: spRoster?.kboId,
+                        };
                       })(),
                       batters: d.detailLineup.home.map((e: LineupEntry) => {
                         const roster = PLAYERS_ROSTER.find((p: { name: string; teamId: number; kboId: string }) => p.name === e.name && p.teamId === game.homeTeamId);
