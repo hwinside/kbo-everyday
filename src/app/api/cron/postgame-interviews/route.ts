@@ -5,7 +5,7 @@ import { fetchChannelRss, type RssVideoEntry } from "@/lib/video/rss-parser";
 import {
   matchPostgameInterview,
   nextPostgameInterviewCollectionAt,
-  OFFICIAL_INTERVIEW_CHANNELS,
+  APPROVED_INTERVIEW_CHANNELS,
   POSTGAME_INTERVIEW_START_MS,
   POSTGAME_INTERVIEW_WINDOW_MS,
   type InterviewMatchContext,
@@ -223,7 +223,7 @@ export async function GET(req: NextRequest) {
   const [contexts, feedResults] = await Promise.all([
     loadContexts(activeJobs),
     Promise.allSettled(
-      OFFICIAL_INTERVIEW_CHANNELS.map(async (channel) => ({
+      APPROVED_INTERVIEW_CHANNELS.map(async (channel) => ({
         channel,
         entries: await fetchChannelRss(channel.channelId),
       })),

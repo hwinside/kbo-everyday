@@ -28,6 +28,8 @@ assert.equal(isPostgameInterviewTitle("임찬규 승리 소감"), false);
 assert.equal(titleMatchesGameDate("인터뷰 | 2026 KBO리그 (26.07.30)", "2026-07-30"), true);
 assert.equal(titleMatchesGameDate("아이러브베이스볼 (07.30)", "2026-07-30"), true);
 assert.equal(titleMatchesGameDate("7월 30일 수훈선수", "2026-07-30"), true);
+assert.equal(titleMatchesGameDate("LG 2 vs 두산 4 | 260731", "2026-07-31"), true);
+assert.equal(titleMatchesGameDate("LG 2 vs 두산 4 | 260730", "2026-07-31"), false);
 assert.equal(titleMatchesGameDate("7월 29일 수훈선수", "2026-07-30"), false);
 
 const channel: InterviewChannel = {
@@ -74,6 +76,47 @@ assert.equal(
     [base],
   ),
   null,
+);
+
+const curatedInterviewChannel: InterviewChannel = {
+  channelId: "UCUB0bLq2AIOzE9EX9oyokTQ",
+  name: "[크보인터뷰]",
+  sourceKind: "curated",
+  teamId: null,
+  dedicatedInterviewChannel: true,
+};
+const kimDaeHanContext: InterviewMatchContext = {
+  gameId: "20260731LGOB0",
+  gameDate: "2026-07-31",
+  winnerTeamId: 2,
+  winnerPlayerNames: ["김대한", "김택연"],
+  isDoubleheader: false,
+  endedAt: "2026-07-31T12:25:15.000Z",
+  expiresAt: "2026-08-01T12:25:15.000Z",
+};
+assert.deepEqual(
+  matchPostgameInterview(
+    {
+      title: "[두산베어스] 김대한 선수 | 개인 통산 첫 2홈런 경기! LG 2 vs 두산 4 | 260731",
+      published_at: "2026-07-31T12:51:16.000Z",
+    },
+    curatedInterviewChannel,
+    [kimDaeHanContext],
+  ),
+  { gameId: kimDaeHanContext.gameId, playerNames: ["김대한"] },
+  "인터뷰 전용 검증 채널은 제목 키워드 없이도 YYMMDD·선수·경기 조건으로 매핑",
+);
+assert.equal(
+  matchPostgameInterview(
+    {
+      title: "[두산베어스] 김대한 선수 | 개인 통산 첫 2홈런 경기! LG 2 vs 두산 4 | 260730",
+      published_at: "2026-07-31T12:51:16.000Z",
+    },
+    curatedInterviewChannel,
+    [kimDaeHanContext],
+  ),
+  null,
+  "전용 채널이어도 경기일 불일치는 미노출",
 );
 
 // route seed 회귀: 1차전 final + 2차전 live여도 당일 전체 일정에서 두 game_id 모두
