@@ -1,7 +1,10 @@
-# 야잘알봇 v2 — 선수/구단 Hybrid RAG 스펙 (rev0.6)
+# 야잘알봇 v2 — 선수/구단 Hybrid RAG 스펙 (rev0.11)
 
-> 상태: **S0 스펙 GO (2026-07-31)** / 구현 PR #1011 코드 재리뷰·merge·deploy HOLD / S1a·S1b·S2 HOLD
-> 작성: 삼식이 2026-07-31 (rev0.6: 하린아빠 15:52 `착수착수` + 삼순 5차 재리뷰 테이블명 exact)
+> 상태: **범위 확대 GO(§12) — S1b-KBO/S2 source inventory·ingestion 착수 / S0 merge·Production DB 적용 완료(squash `882f1a1744fb9ead6197a133421b347b3836c96a`, PR #1011 — migration/RPC ACL 적용됨)·실제 계정 2턴 End-User QA HOLD / S1a·S1b·S2 구현 merge/deploy HOLD**
+> 작성: 삼식이 2026-07-31 (rev0.11: 삼순 S2a 3차 리뷰 NO-GO 반영 — retry 예산 회복 + 실패 종료 RPC 신설 / rev0.10: 삼순 S2a 재리뷰 NO-GO 3건 반영 — generation 원자성 stage→swap 재설계 / rev0.9: 삼순 S2a NO-GO 5건 반영 / rev0.7: 하린아빠 KBO 기록실+나무위키 전수 RAG 확정 §12 반영 / rev0.6: 삼순 5차 재리뷰 테이블명 exact)
+> SSOT: Notion `3aec901b-b372-8140-8cec-f4c700b96487` (본 파일은 미러).
+> **rev 정합 기준**: 이 문서의 제목·작성줄·§11 변경이력 최상단은 항상 동일 rev를 가리킨다(현재 **rev0.11**).
+> Notion SSOT live 버전은 rev0.11이며, repo mirror는 Notion 확인 후 exact 동기화한다.
 > 선행 SSOT: 야잘알봇 MVP 스펙 v1.2 (Notion `3acc901bb3728165b783d0f0960c9f02`)
 > 트리거: 하린아빠 2026-07-31 "야구 룰에 이어 구단·선수 질문 대응 + RAG. 이것까지 되어야 킬러피처."
 
@@ -207,7 +210,7 @@
 ---
 
 ## 10. 슬라이스 / 순서 + 삼순 판정 반영
-- **S0** 멀티턴 맥락 + 후속질문 차단 해소 · **계약(§4.1) 반영 후 조건부 GO** · 선행 배포
+- **S0** 멀티턴 맥락 + 후속질문 차단 해소 · **머지·Production DB 적용 완료** · 실제 계정 2턴 End-User QA HOLD
 - **S1a** 내부 자산 정량 답변 · **HOLD** — 데이터 완전성 게이트(§0.2) 선결. 프로필·로스터 필터는 완전하므로 먼저 열 수 있으나 시즌 누적은 보류
 - **S1b** 외부 소스 fail-close + provider/asOf/stale/season · **HOLD**
 - **S2** 서술형 벡터 RAG · **HOLD**
@@ -217,6 +220,64 @@
 ---
 
 ## 11. 변경 이력
+
+### rev0.11 (삼순 S2a 3차 리뷰 NO-GO 반영 — ingestion 수명주기 종료 경로, 2026-07-31)
+
+rev0.10까지는 claim과 **성공** 종료만 있고 **실패** 종료 경로가 없었다. 그 결과 worker가 죽으면 source를
+`ingesting`에서 내릴 수단이 없어 수명주기가 닫히지 않았다.
+
+- **[P0 — retry 예산이 lifetime 누적이라 증분 재수집이 정지]** `ingestion_attempts`가 성공해도 줄지 않아 3세대 만에
+  예산이 말라, 서빙 중인 source조차 stale 재claim이 영구히 0건이 됐다. → `complete_baseball_genius_rag_source`가
+  성공 시 `ingestion_attempts = 0`으로 예산을 회복시킨다(예산은 "연속 실패" 카운터다). PG17 회귀 R2-B5/R2-B5b.
+- **[P0 — 실패 종료 RPC 부재로 `ingesting` 영구 고착]** 함수가 claim/complete/upsert_chunk/record_demand + validator뿐이라
+  worker 실패를 DB에 알릴 경로가 없었다. lease 만료로 재claim되면서 attempts만 올라 연속 3회 실패 시점에
+  **`ingesting` + `last_error` NULL + claim_token 잔존 + claimable 0**으로 영구 고착했다(PG17 actual 재현 완료).
+  운영자는 진행 중인 claim과 죽은 claim도 구분할 수 없었다. → service_role 전용 SECURITY DEFINER RPC
+  **`fail_baseball_genius_rag_source(source_key, claim_token, claim_generation, error)`** 신설. exact token+generation이
+  일치하는 **그 claim만** 실패 처리해 `last_error` 기록 · lease/token 해제 · `failed` 강등으로 재claim 가능한 상태로
+  정리한다. token이나 generation이 어긋나면 **no-op**이라 다른 worker가 재claim한 남의 claim을 죽일 수 없다.
+  lease 만료를 종료 조건으로 걸지 않는다 — 걸었으면 고착 상태(만료 + 예산 소진)를 영원히 정리할 수 없다.
+  무한 재시도 방지는 불변이다: 종료 RPC는 attempts를 리셋하지 않으므로 예산 회복은 성공 complete만이 한다.
+  §12 "마지막 성공 snapshot 보존"도 유지한다: 실패한 generation의 미완성 chunk만 지우고 active generation은 건들지 않는다.
+- **[P0 — 실패 경로 경계 회귀 부재]** 성공 경로만 결속되어 있어 위 고착이 재발돼도 게이트가 잡지 못했다.
+  → `qa:baseball-source-inventory:db`에 **R2-B6**(연속 3회 실패 고착 재현 → 종료 RPC로 복구, token 불일치·generation
+  불일치 no-op, 종료 후에도 소진된 예산은 재claim 불가)와 **R2-B6b**(예산 잔존 실패는 lease 만료 대기 없이 즉시
+  재claim, 실패 종료가 마지막 성공 snapshot·서빙 연속성을 파괴하지 않음) 상설 추가. fail RPC ACL(service_role EXECUTE /
+  anon·authenticated 차단)도 기존 ACL 매트릭스에 편입. RED(migration 미적용 상태 exit 3)→GREEN 실측.
+- **[문서 rev 정합]** 제목 `rev0.9` ↔ 본문 `rev0.10` 불일치를 해소하고(제목·작성줄·변경이력 최상단 = 동일 rev),
+  Notion SSOT를 rev0.11로 먼저 승격하고 repo mirror는 그 확인값에 exact 동기화한다.
+
+### rev0.10 (삼순 S2a 재리뷰 NO-GO 3건 반영 — generation 원자성 재설계, 2026-07-31)
+
+rev0.9 B3의 "reclaim 시점 이전 generation purge"는 UNIQUE 충돌은 해소했지만 **§12 "마지막 성공 snapshot 보존" 계약을 깨는 역회귀**를 낳았다. purge를 제거하고 **stage→complete 시점 atomic swap** 구조로 교체한다.
+
+- **[R2-B1 P0 — stale 재수집 claim이 마지막 성공 snapshot을 즉시 삭제]** `claim_baseball_genius_rag_batch`의 `purged` CTE가 후보 이전상태 구분 없이 이전 generation chunk를 전부 지워, `gen1 ready → source stale → gen2 claim`에서 gen1 성공 chunk가 0건이 되고 서빙 공백이 생겼다(§12 위반). → **`genius_rag_sources.active_claim_generation`**(= 마지막으로 complete된 generation) 신설. claim은 새 generation을 **stage**만 하고 active는 건드리지 않으며, purge 대상을 **complete에 도달하지 못한 미완성 generation만**으로 좁혔다(`claim_generation <> active_claim_generation`). chunk UNIQUE 키에 `claim_generation`을 포함해 두 generation이 별도 행으로 공존하고, `complete_baseball_genius_rag_source`가 active를 원자 전환한 뒤에야 비활성 generation을 정리한다. 서빙은 신설 뷰 **`genius_rag_serving_chunks`**(active generation 결속, service_role SELECT 전용)가 담당해 stage 중인 미완성 generation이 검색에 노출되지 않는다.
+- **[R2-B2 P0 — current generation에 이질 provenance chunk가 섞여도 ready]** complete RPC가 matching chunk 1건 EXISTS + embedding NULL 0건만 검사해, 같은 claim에 `r-good/doc-good`과 `r-rogue/doc-rogue`를 함께 넣고 `r-good`으로 complete하면 ready가 됐다(오염된 snapshot 서빙). → complete RPC가 **current claim generation의 모든 chunk가 동일 `revision`/`document_content_hash`/`crawled_at`/`claim_token`을 만족**하는지 검증하고 하나라도 불일치면 complete를 거부한다. ready trigger도 `chunk.claim_generation = NEW.active_claim_generation`으로 generation에 결속했다.
+- **[R2-B3 P1 — write RPC가 동일 claim 안전 재시도를 거부]** DB commit 후 응답이 timeout되면 worker는 결과를 모른다. 그런데 `ON CONFLICT ... WHERE old_generation < new_generation`만 허용해 같은 token/generation/key 재호출이 `stale rag chunk generation`으로 실패했다. → UNIQUE 키에 generation이 포함되어 충돌 행은 항상 동일 generation이므로, 가드를 **`claim_token` 일치**로 바꿔 같은 claim의 재시도를 idempotent update로 허용한다(중복 행 0). 다른 token의 동일 generation 덮어쓰기는 거부되고, 낮은 generation 역주행은 chunk owner trigger의 generation 검증이 거부한다.
+- **§12 계약 준수 명시**: "갱신: revision/contentHash 기반 증분 수집, 삭제·이동 tombstone, bounded rate/retry, **마지막 성공 snapshot 보존**"를 DB 구조로 강제한다. 재수집이 시작되거나(stage) 실패해도(crash) 직전 성공 snapshot은 계속 서빙되며, 교체는 complete 성공 시점의 단일 원자 전환으로만 일어난다.
+- **[R2-B4 P0 — ready source에 identity drift가 불가능]** 위 R2-B1 재설계로 `ready`가 `active_claim_generation > 0`과 matching chunk 존재를 요구하게 되자, drift 트리거가 chunk를 전량 삭제하면서도 active·상태를 그대로 두어 **ready source에 대한 identity drift UPDATE 자체가 `ready rag source requires matching provenance chunk`로 거부**됐다(PG17 actual `DRIFT_ON_READY_FAILED=t / final_status=ready`). 이름·소속이 바뀐 문서를 영원히 무효화할 수 없어 잘못된 identity의 chunk가 계속 서빙된다. → drift 트리거가 chunk 삭제와 함께 `active_claim_generation := 0`으로 내리고, `ready`는 `stale`로 강등시켜 재수집 대상으로 둔다(서빙 가능한 snapshot이 없는 source는 ready일 수 없다는 계약과 정합).
+- PG17 회귀 추가(RED→GREEN 실측): R2-B4 ready source drift → 거부되지 않고 chunk 0·active 0·`stale` 강등, R2-B1 `gen1 ready → stale → gen2 claim` 시 gen1 chunk·서빙 보존 / `gen2 stage 중 crash → gen1 계속 서빙` / `gen3 complete → active swap + 이전 generation 정리`, R2-B2 이질 provenance 주입 → complete 거부(균일화 후 GREEN), R2-B3 동일 token/gen/key 재호출 → idempotent 성공(중복 0)·다른 token 거부·낮은 generation 거부, 서빙 뷰 ACL(service_role SELECT / anon·authenticated 차단 / chunks 직접 SELECT 전원 차단).
+
+### rev0.9 (삼순 S2a NO-GO 5건 반영, 2026-07-31)
+- **[B1 P0 — NULL embedding이 ready로 오인]** `genius_rag_chunks.embedding`이 nullable이고 ready 판정이 "matching chunk 존재"만 보아, embedding을 생략한 chunk로도 `complete=true / source=ready`가 됐다(검색 불가능한 문서가 ready). → 컬럼을 **`extensions.vector(768) NOT NULL`**로 제약하고, ready trigger와 `complete_baseball_genius_rag_source`가 추가로 *current claim generation의 embedding NULL chunk 0건*을 요구하도록 이중 가드.
+- **[B2 P0 — service_role ingestion write 경로 부재]** neutral PG17 ACL 실측에서 `chunks INSERT=false`, identity sequence `USAGE=false`라 worker가 chunk를 저장할 수 없었다. → 테이블 직접 write를 열지 않고 **claim token/generation을 검증하는 SECURITY DEFINER RPC `upsert_baseball_genius_rag_chunk`**를 유일 쓰기 경로로 신설(service_role에만 EXECUTE, anon/authenticated REVOKE). claim RPC의 row 반환을 위해 `genius_rag_sources`는 SELECT만 부여.
+- **[B3 P0 — crash 뒤 reclaim UNIQUE 충돌]** gen1이 chunk를 남기고 crash하면 lease 만료 후 gen2가 같은 `(source_key, revision, section_path, chunk_index)`를 쓰면서 UNIQUE 충돌 → 재수집 영구 실패·source가 `ingesting`에 갇혔다. → claim RPC가 reclaim 시점에 **이전 generation chunk를 같은 문장에서 정리**하고, 쓰기 RPC는 **generation-safe upsert**(더 큰 generation만 덮어쓰기, 오래된 worker의 역주행은 거부)로 이중 보호. → **rev0.10에서 supersede**: 이 purge 방식이 마지막 성공 snapshot까지 지워 §12를 위반해 stage→swap 구조로 교체됐다.
+- **[B4 P1 — Gemini Embedding 2 asymmetric prefix 공식 포맷 위반]** 임의 한글 접두사(`문서 검색용…`/`질의 검색용…`)는 모델 학습 prefix와 어긋난다. → 공식 포맷 적용(query `task: search result | query: …`, document `title: … | text: …`), `embedDocument`에 **pageTitle 전달** 추가, mock exact assert로 회귀 고정.
+- **[B5 P1 — §12.2 확정 + workflow 기록 상충 정정]** stale 범위는 rev0.7의 §12.2 `제안·미확정` 기록뿐이며, 상태줄·§10은 이미 최신이라 변경하지 않는다. §12.2는 robots/약관 확인기록·접근제한 우회금지·최소 원문저장·canonical provenance를 **확정 기술 게이트**로 승격하고, 상업 이용 법무만 대량 ingestion/서빙 전 별도 launch gate의 `decision_pending`으로 분리한다. workflow는 실제 PR diff 0건이므로 "하린아빠 승인 전 대기(미추가)"로 정정하고 현재 CI 결속은 prebuild 체인만임을 명시한다. Notion §12.2 승격은 부모가 Notion-first로 병행한다.
+
+### rev0.8 (삼순 S2a inventory 리뷰 blocker 반영 + §12.2 확정, 2026-07-31)
+- **[상태 범위 교정]** 상태줄·§10은 이미 **S0 merge·Production DB 적용 완료, 실제 계정 2턴 End-User QA HOLD**로 최신이며 이번 rev에서 변경하지 않는다. stale 범위는 rev0.7의 §12.2 `제안·미확정` 기록뿐이다.
+- **[§12.2 확정]** '제안·미확정' 블록을 **확정 기술 게이트**로 승격(robots 확인기록·접근제한 우회금지·최소 원문저장·canonical provenance). 상업 이용 법무 승인만 대량 ingestion/서빙 전 별도 launch gate로 분리해 `decision_pending` 유지.
+- **[universe 보강]** KBO 기록실 universe에 실제 프로덕션 호출 경로인 `Player/HitterDetail/Basic`·`Player/PitcherDetail/Basic`과 `Retire/Hitter`·`Retire/Pitcher` 4경로 추가(39→43, 전부 HTTP 200 실측). inventory 928→932.
+- **[CI 결속 — 정정]** 앞서 이 항목은 workflow 신설을 기정사실로 적었으나 **workflow 파일은 추가되지 않았다**(PR diff 0건). AGENTS.md상 CI/CD 워크플로 push는 하린아빠 명시 승인 필요 → **하린아빠 승인 전 대기(미추가)** 상태다. 현재 실제 CI 결속은 **`package.json` prebuild 체인만**이며(`qa:baseball-source-inventory` + `qa:baseball-rag-contract`), Vercel 빌이 이를 강제한다. PG17 결함주입(`qa:baseball-source-inventory:db`)은 postgresql@17 의존 때문에 prebuild에서 제외된 수동/로컬 게이트로 남아 있고, GitHub check 강제는 workflow 승인 이후로 유보한다.
+- **[PG17 런타임 결함]** 고정 포트 59343 + 빈 locale 탓에 macOS에서 postmaster가 `became multithreaded during startup`으로 즉사해 **게이트가 아예 돌지 못하던** 문제 수정(빈 포트 선택 + `LC_ALL=C`).
+
+### rev0.7 (하린아빠 KBO 기록실 + 나무위키 전수 RAG 확정, 2026-07-31)
+- **§12 신규**: KBO 기록실 + KBO/10구단/선수별(878명) 나무위키를 전수 RAG 자산으로 구축. 전수 inventory(resolved|missing|ambiguous|blocked 100% 분류), KBO 기록실=structured typed claim(벡터 아님), 나무위키=서술형 hybrid RAG(provenance 메타 필수). 숫자 정본=공식 KBO, 나무위키 숫자는 교차검증 전 확정 claim 금지.
+- **§12.1 실행순서**: S1b-KBO 기록실 inventory/schema → S2a KBO+10팀 ingestion → S2b 선수 878명 batch. 운영 대시보드+재수집 큐.
+- **§12.2 기술 게이트(rev0.8에서 확정 승격)**: robots/약관 확인기록·접근제한 우회금지·최소 원문저장·canonical provenance는 확정 계약이다. 단 상업 이용 법무 승인만 대량 ingestion/서빙 전 별도 launch gate로 분리해 `decision_pending` 유지.
+- **정책 supersede**: 7/30 "나무위키 운영 RAG NO-GO"는 §5 rev0.2 정책 교체 + §12 하린아빠 확정으로 명시적 supersede.
+- 판정: 범위 확대 GO. S1a 내부 완전성은 내부 시즌 누적 게이트로 유지하되 S1b/S2 착수 선행조건 아님. 구현 merge/deploy는 삼순 리뷰+하린아빠 승인 전 HOLD.
 
 ### rev0.6 (삼순 5차 재리뷰 테이블명 exact 반영, 2026-07-31)
 - **[B3 테이블명 정정]** `genius_qa_log`는 실재하지 않음(Production 404) → 실제 테이블 `genius_question_logs`(match_path 컬럼 존재, message_id 없음)로 전 참조 정정. 자격은 여전히 `genius_question_jobs.source`(logs.match_path는 turn과 exact join 불가라 미사용) 유지.
@@ -263,3 +324,42 @@
 ### 하린아빠 확정 결정 (보존)
 - 2026-07-31 '추천대로': ①S1a 먼저 ②크보팬 기준 명시+공식 링크 ③멀티턴 S0 선행 핫픽스. 구현 착수는 삼순 스펙 리뷰 통과 후, merge/deploy는 코드 리뷰 게이트 유지.
 - 2026-07-31 저작권 완화 + 정보 신뢰성 최우선(제0원칙).
+
+## 12. 확정 범위 확대 — KBO 기록실 + 나무위키 전수 RAG (rev0.7, 2026-07-31)
+
+하린아빠 확정 결정: KBO 기록실, KBO 나무위키, 10개 구단별 나무위키, 로스터의 각 선수별 나무위키를 모두 야잘알봇 검색 자산으로 구축한다. 범위는 전수 수집이지만 답변 신뢰성 계약은 제0원칙을 그대로 적용한다.
+
+- 전수 inventory: KBO 기록실의 제공 기록 범주 전체 + KBO 개요 1페이지 + 10개 구단 페이지 + players-roster.json 878명 각각의 나무위키 canonical page 후보. 각 엔티티는 resolved | missing | ambiguous | blocked 중 하나로 100% 분류하며 조용한 누락을 금지한다.
+- KBO 기록실은 벡터 RAG가 아니라 structured retrieval로 수집·정규화한다. season·entityId·metric·value·unit·provider·asOf·dataVersion을 가진 typed claim만 deterministic renderer에 전달하고, 숫자는 LLM/나무위키에서 생성하지 않는다.
+- 나무위키는 서술형 RAG로 사용한다. chunk 메타 필수값: entityType, entityId(kboId/teamId), pageTitle, canonicalUrl, revision, sectionPath, crawledAt, contentHash, sourceGrade, asOf. 이름 단독 연결 금지, 동명이인은 기존 AMBIGUOUS 계약으로 분리한다.
+- 임베딩은 지원 모델 `gemini-embedding-2`의 768차원 출력을 사용한다. 문서/질의는 **Google 공식 asymmetric retrieval prefix**를 그대로 쓴다 — 질의 `task: search result | query: {content}`, 문서 `title: {pageTitle} | text: {content}`(title 미상 시 `none`). 임의 한글 접두사는 모델이 학습한 prefix와 어긋나 index/query 정렬을 깨므로 사용하지 않는다. `task_type`은 전송하지 않으며, 768개 유한값이 아닌 응답은 저장 전 거부한다. 실 API 768 finite 검증은 `GEMINI_API_KEY` 보유 환경의 별도 launch gate(`verify-embedding-live`)에서 수행하고, PR 게이트는 mock 포맷 exact assert로 고정한다.
+- 검색은 entity filter + hybrid(BM25/vector)로 구성한다. 문서 안의 지시문·프롬프트·스크립트는 모두 비신뢰 데이터로 취급하고 모델 지시로 실행하지 않는다.
+- 신뢰도: 공식 KBO 기록실을 정량 claim의 우선 정본으로 사용한다. 나무위키의 숫자는 공식 소스로 교차확인되기 전 정량 확정값으로 쓰지 않는다. 서술형은 출처·revision/asOf를 표시하고, 공식/다른 출처와 충돌하면 단정 대신 차이를 공개한다.
+- 서빙: 사실을 재서술하고 원문 장문 재현은 피하며 답변에 canonical source 링크를 제공한다. 로그인·유료·접근제한 우회는 하지 않는다.
+- 갱신: revision/contentHash 기반 증분 수집, 삭제·이동 tombstone, bounded rate/retry, 마지막 성공 snapshot 보존. stale 허용기한 초과 또는 source 장애 시 stale 표시 후 보류한다.
+- 완료 게이트: inventory 분류 100%, resolved 문서 ingest 성공 100%, missing/ambiguous/blocked 공개 목록, 출처 링크 유효성, 동명이인·시즌·revision·stale·source-injection·숫자 환각 회귀를 모두 통과하기 전에는 전수 완료라고 표현하지 않는다.
+
+### 12.1 실행 순서
+
+1. S1b-KBO 기록실: source inventory → extractor/schema → typed claim/renderer → 장애·시즌·수치 exact eval.
+2. S2a: KBO 개요 1 + 구단 10페이지 ingestion, entity-filtered hybrid retrieval, citation/revision eval.
+3. S2b: 선수 878명 URL inventory는 전수 확정·유지한다. 선수 문서 embedding·갱신은 실제 질문 조회 빈도 내림차순의 작은 batch로 ingestion·평가·롤백 가능하게 확대하되 최종 목표 범위는 전원이다.
+4. 운영: source coverage/revision/stale/실패율 대시보드와 재수집 큐를 두고, 실제 질문 eval에서 정량 exact와 서술형 citation을 분리 판정한다.
+
+판정: 범위 확대 GO. S1a 내부 player_game_logs 완전성은 내부 시즌 누적 서빙 게이트로 유지하되, KBO 기록실 S1b와 나무위키 S2의 source inventory/ingestion 착수를 막는 선행조건으로 사용하지 않는다. 구현 PR은 삼순 코드리뷰와 하린아빠 merge 승인 전 merge/deploy HOLD.
+
+정책 판정: 7/30 기존 "나무위키 운영 RAG NO-GO"는 최신 Notion §5 rev0.2의 정책 교체 + §12 하린아빠 확정으로 명시적으로 supersede된 것으로 본다.
+
+### 12.2 수집 기술 게이트 (✅ 확정 — rev0.8, 2026-07-31 하린아빠 ③ 역할분리 통합안)
+
+아래 (a)~(d)는 **제안이 아니라 확정된 기술 게이트**다. inventory·ingestion 모든 수집 경로가 이를 충족해야 하며, 위반 source는 `blocked`로 분류하고 수집하지 않는다.
+
+- **(a) robots/약관 확인기록 필수 (확정)**: robots.txt·약관을 확인하고 **확인기록을 남긴** 경로만 bounded 수집한다. 확인기록 없는 source는 ingest 대상이 아니다.
+  - 2026-07-31 실측: KBO `Disallow: /Common/ /Help/ /Member/ /ws/` → `/Record/` 허용. namu `Allow: /w/` → 문서 경로 허용.
+- **(b) 접근제한 우회 금지 (확정)**: 로그인·유료·지역차단·봇차단 우회를 하지 않는다. bounded rate/retry를 지키고 과도한 대량수집을 하지 않는다.
+- **(c) 최소 원문저장 (확정)**: 원문 전문 보존 금지. retrieval에 필요한 **chunk + provenance**만 저장하고, 서빙은 재서술 + 출처링크로 한다. attribution/license 메타 보존.
+- **(d) canonical provenance (확정)**: 모든 chunk는 canonical URL·revision·contentHash·crawledAt·sourceGrade를 보유한다. canonical 미확정 source는 `resolved`가 될 수 없고(DB CHECK + claim 이중 술어로 강제) ingest 대상에서 제외된다. **HTTP 200 단독으로 canonical을 단정하지 않고** redirect 최종 URL 정규화 + page identity(canonical link·title) 일치를 확인한다.
+
+**분리된 게이트 — 상업 이용 법무 승인 (`decision_pending`, 미확정 유지)**: 나무위키 CC BY-NC 기반 상업 서빙 가능 여부는 **inventory 단계의 게이트가 아니다.** 대량 ingestion 및 유저 서빙 개시 전 **별도 launch gate**에서 판단하며, 하린아빠 확정 전까지 `decision_pending` 상태를 유지한다. 이 상태에서도 inventory 확정·canonical 검증은 진행한다(수집/서빙과 분리).
+
+- sourceGrade·공식 KBO 우선순위는 Notion §12에 이미 반영됨(중복 아님).
