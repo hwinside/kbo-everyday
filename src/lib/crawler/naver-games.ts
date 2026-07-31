@@ -7,6 +7,7 @@
 // 하며, in-game 상태는 상세(game-detail)·중계(game-relay)의 Naver 경로가 커버한다.
 
 import { resolveTeamId, type KboGame } from "@/lib/crawler/kbo-api";
+import { decodeBroadcast } from "@/lib/broadcast-channels";
 
 const NAVER_SCHEDULE_API = "https://api-gw.sports.naver.com/schedule/games";
 
@@ -73,6 +74,7 @@ interface NaverScheduleGame {
   statusInfo?: string;
   cancel?: boolean;
   suspended?: boolean;
+  broadChannel?: string | null;
 }
 
 /** 입력 KBO 날짜(YYYYMMDD) → Naver 날짜(YYYY-MM-DD). */
@@ -121,6 +123,7 @@ export function mapNaverGameToKbo(g: NaverScheduleGame, date: string): KboGame {
   const inningMatch = (g.statusInfo ?? "").match(/(\d+)회(초|말)/);
   const inning = inningMatch ? parseInt(inningMatch[1], 10) : 0;
   const isTop = inningMatch ? inningMatch[2] === "초" : true;
+  const broadcastChannels = decodeBroadcast(g.broadChannel);
   return {
     gameId: `${date}${awayCode}${homeCode}${seq}`,
     date,
@@ -148,7 +151,7 @@ export function mapNaverGameToKbo(g: NaverScheduleGame, date: string): KboGame {
     currentBatter: "",
     awayRank: 0,
     homeRank: 0,
-    broadcastChannels: undefined,
+    broadcastChannels: broadcastChannels.length > 0 ? broadcastChannels : undefined,
   };
 }
 
@@ -214,7 +217,7 @@ export async function fetchNaverGames(
   }
   const naverDate = toNaverDate(date);
   const url =
-    `${NAVER_SCHEDULE_API}?fields=basic,superCategoryId,categoryName,stadium,statusInfo` +
+    `${NAVER_SCHEDULE_API}?fields=basic,superCategoryId,categoryName,stadium,statusInfo,broadChannel` +
     `&upperCategoryId=kbaseball&categoryId=kbo&fromDate=${naverDate}&toDate=${naverDate}&size=20`;
   const res = await fetch(url, {
     headers: {

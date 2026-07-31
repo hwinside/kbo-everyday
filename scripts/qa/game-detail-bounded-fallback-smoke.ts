@@ -167,6 +167,7 @@ function naverSchedule(state: GameState) {
           state === "cancelled" ? "우천취소" :
           "경기전",
         cancel: state === "cancelled",
+        broadChannel: "KBS N SPORTS",
       }],
     },
   };
@@ -369,6 +370,11 @@ async function main() {
   );
   assert.equal(kboDown.body.lineup?.awayStarter, "원정투수", "Naver 폴백 선발투수(원정) 보존");
   assert.equal(kboDown.body.lineup?.homeStarter, "홈투수", "Naver 폴백 선발투수(홈) 보존");
+  assert.equal(
+    kboDown.body.meta.broadcastChannels?.[0]?.name,
+    "KBS N SPORTS",
+    "KBO list blackhole → Naver broadChannel 복구",
+  );
   assert.deepEqual(kboDown.degradationEvents, [{ apiName: "kbo-game-detail", reason: "timeout" }]);
 
   const kboDownLive = await scenario("KBO 3종 blackhole + Naver live", "blackhole", "normal", "live");

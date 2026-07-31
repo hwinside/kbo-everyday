@@ -701,7 +701,9 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    const { meta, linescore: kboLinescore, status: scoreBoardStatus } = parseScoreBoard(scoreBoardRes ?? []);
+    const parsedScoreBoard = parseScoreBoard(scoreBoardRes ?? []);
+    let meta = parsedScoreBoard.meta;
+    const { linescore: kboLinescore, status: scoreBoardStatus } = parsedScoreBoard;
     let lineup = parseLineup(lineupRes ?? []);
     // KBO GetLineUpAnalysis 열화(204/빈응답/타임아웃)면 Naver preview 라인업으로 표시 폴백.
     // KBO 가 응답한 미확정(isToday=false) 라인업은 그대로 존중한다(폴백 트리거 아님).
@@ -771,9 +773,23 @@ export async function GET(req: NextRequest) {
     if (listGame) {
       liveListStatus = listGame?.status ?? null;
     }
-    // 중계방송사는 GetKboGameList(TV_IF)에만 있으므로 canonical listGame과 독립 병합한다.
-    if (meta && kboListGame?.broadcastChannels && kboListGame.broadcastChannels.length > 0) {
-      meta.broadcastChannels = kboListGame.broadcastChannels;
+    // KBO TV_IF를 우선하되, KBO list까지 열화한 경우 Naver schedule broadChannel로 복구한다.
+    // canonical status와 방송 채널 source는 독립이라 detail/record 폴백과 무관하게 병합한다.
+    const broadcastChannels =
+      kboListGame?.broadcastChannels?.length
+        ? kboListGame.broadcastChannels
+        : listGame?.broadcastChannels;
+    if (!meta && listGame) {
+      meta = {
+        stadium: listGame.stadium,
+        crowd: null,
+        startTime: listGame.time || null,
+        endTime: null,
+        duration: null,
+        ...(broadcastChannels?.length ? { broadcastChannels } : {}),
+      };
+    } else if (meta && broadcastChannels?.length) {
+      meta.broadcastChannels = broadcastChannels;
     }
 
     const status: GameDetailResponse["status"] =
