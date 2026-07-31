@@ -1,0 +1,54 @@
+name: Venue Stats S2 Gate
+
+# 직관 통계 S2 대시보드 UI 게이트.
+# Chromium 을 설치해 qa:venue-stats-s2-browser 를 fail-closed 로 실행한다 —
+# browser launch 실패, AA 대비 실패, 시즌 전환 결함주입 회귀 실패가 반드시 check 실패로 이어진다.
+# (Vercel prebuild 의 graceful skip 과 달리 이 워크플로가 실제 자동 gate 다.)
+
+on:
+  pull_request:
+    paths:
+      - "src/components/my/VenueStatsDashboard.tsx"
+      - "src/lib/venue-stats/**"
+      - "scripts/qa/venue-stats-s2-browser.mjs"
+      - "scripts/qa/venue-stats-s2-ui-smoke.ts"
+      - "src/styles/globals.css"
+      - "package.json"
+      - ".github/workflows/venue-stats-s2-gate.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "src/components/my/VenueStatsDashboard.tsx"
+      - "src/lib/venue-stats/**"
+      - "scripts/qa/venue-stats-s2-browser.mjs"
+      - "scripts/qa/venue-stats-s2-ui-smoke.ts"
+      - "src/styles/globals.css"
+      - "package.json"
+      - ".github/workflows/venue-stats-s2-gate.yml"
+
+jobs:
+  venue-stats-s2:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run venue stats S2 contract smoke
+        run: npm run qa:venue-stats-s2-ui
+
+      - name: Run venue stats S2 browser gate (fail-closed)
+        # VENUE_STATS_S2_REQUIRE_BROWSER=1 → chromium 미설치/launch 실패도 exit 1(fail-closed)
+        env:
+          VENUE_STATS_S2_REQUIRE_BROWSER: "1"
+        run: npm run qa:venue-stats-s2-browser

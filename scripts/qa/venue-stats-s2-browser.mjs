@@ -8,9 +8,28 @@ import postcss from "postcss";
 import tailwind from "@tailwindcss/postcss";
 import playwright from "playwright";
 import { createServer } from "node:http";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
+
+// CI(VENUE_STATS_S2_REQUIRE_BROWSER=1)에선 fail-closed: chromium이 없으면 exit 1.
+// 그 외(로컬/Vercel prebuild)에선 chromium 미설치 시 graceful skip(exit 0)로 배포를 깨지 않는다.
+const REQUIRE_BROWSER = process.env.VENUE_STATS_S2_REQUIRE_BROWSER === "1";
+let chromiumPath = null;
+try {
+  chromiumPath = playwright.chromium.executablePath();
+} catch {
+  chromiumPath = null;
+}
+if (!chromiumPath || !existsSync(chromiumPath)) {
+  const detail = chromiumPath ? `not found at ${chromiumPath}` : "executablePath unavailable";
+  if (REQUIRE_BROWSER) {
+    console.error(`FAIL: playwright chromium 사용 불가(fail-closed) — ${detail}`);
+    process.exit(1);
+  }
+  console.log(`SKIP: playwright chromium 사용 불가 — ${detail}`);
+  process.exit(0);
+}
 
 const ROOT = process.cwd();
 const GEN = mkdtempSync(resolve(tmpdir(), "venue-stats-s2-"));
@@ -18,13 +37,15 @@ const SHOT = resolve(ROOT, "tmp/qa-screenshots/venue-stats-s2-390.png");
 mkdirSync(resolve(ROOT, "tmp/qa-screenshots"), { recursive: true });
 
 writeFileSync(resolve(GEN, "auth.jsx"), `
-export const useAuth=()=>({
+// 실제 AuthContext 처럼 매 렌더마다 새 객체를 만들지 않는 안정 참조.
+const AUTH={
   user:{id:"qa",email:"harinclaw@gmail.com"},
   profile:{favorite_players:[
     {playerId:"p1",name:"김최애",teamId:1,position:"내야수"},
     {playerId:"p2",name:"이최애",teamId:9,position:"투수"}
   ]}
-});`);
+};
+export const useAuth=()=>AUTH;`);
 writeFileSync(resolve(GEN, "client.js"), `
 export async function getSafeSession(){return {access_token:"qa"};}`);
 writeFileSync(resolve(GEN, "back.js"), `
@@ -140,6 +161,7 @@ const css = await postcss([tailwind]).process(
 );
 const bundle = readFileSync(resolve(GEN, "bundle.js"), "utf8");
 let initial2026Served = false;
+let fail2025 = false;
 const server = createServer((req, res) => {
   if (req.url?.startsWith("/api/me/venue-stats")) {
     const requestedSeason = new URL(req.url, "http://127.0.0.1").searchParams.get("season");
@@ -147,9 +169,12 @@ const server = createServer((req, res) => {
     const delay = requestedSeason === "2025" ? 300 : initial2026Served ? 10 : 0;
     if (requestedSeason === "2026") initial2026Served = true;
     return setTimeout(() => {
-      if (!res.destroyed) {
-        res.writeHead(200, {"content-type":"application/json"}).end(JSON.stringify(body));
+      if (res.destroyed) return;
+      if (requestedSeason === "2025" && fail2025) {
+        res.writeHead(503, {"content-type":"application/json"}).end('{"error":"injected"}');
+        return;
       }
+      res.writeHead(200, {"content-type":"application/json"}).end(JSON.stringify(body));
     }, delay);
   }
   if (req.url === "/app.css") return res.writeHead(200, {"content-type":"text/css"}).end(css.css);
@@ -160,8 +185,22 @@ const server = createServer((req, res) => {
 });
 await new Promise((done) => server.listen(0, "127.0.0.1", done));
 const port = server.address().port;
-const browser = await playwright.chromium.launch();
+let browser;
+try {
+  browser = await playwright.chromium.launch();
+} catch (error) {
+  const line = String(error?.message ?? error).split("\n")[0];
+  server.close();
+  rmSync(GEN, { recursive: true, force: true });
+  if (REQUIRE_BROWSER) {
+    console.error(`FAIL: playwright chromium launch 실패(fail-closed) — ${line}`);
+    process.exit(1);
+  }
+  console.log(`SKIP: playwright chromium launch 불가 — ${line}`);
+  process.exit(0);
+}
 const page = await browser.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1 });
+page.on("pageerror", (error) => console.log(`  [pageerror] ${error.message}`));
 
 try {
   await page.goto(`http://127.0.0.1:${port}`, { waitUntil: "domcontentloaded" });
@@ -188,6 +227,28 @@ try {
   await page.waitForTimeout(400);
   if ((await page.locator("select").inputValue()) !== "2026") throw new Error("season selection rolled back");
   if (await page.getByText("25", { exact: true }).isVisible()) throw new Error("stale 2025 response overwrote 2026");
+
+  // 결함주입: 선택 시즌(2025) 요청이 503으로 실패할 때
+  // 로딩 중·실패 후 모두 이전 시즌(2026) 수치가 남지 않고 retry UI가 떠야 한다.
+  fail2025 = true;
+  const failedResponse = page
+    .waitForResponse((response) => response.url().includes("season=2025") && response.status() === 503)
+    .catch(() => null);
+  await page.locator("select").selectOption("2025");
+  await page.waitForTimeout(50);
+  if ((await page.getByText("63", { exact: true }).count()) > 0) {
+    throw new Error("stale previous-season value visible while selected season is loading");
+  }
+  await failedResponse;
+  await page.getByRole("button", { name: /통계를 불러오지 못했어요/ }).waitFor({ timeout: 4000 });
+  if ((await page.getByText("63", { exact: true }).count()) > 0) {
+    throw new Error("stale previous-season value visible after selected season failed");
+  }
+  if ((await page.locator("select").inputValue()) !== "2025") throw new Error("failed season selection rolled back");
+
+  fail2025 = false;
+  await page.locator("select").selectOption("2026");
+  await page.getByText("63", { exact: true }).waitFor();
 
   await page.getByRole("button", { name: "GPS 인증만" }).click();
   await page.getByText("38", { exact: true }).waitFor();
@@ -292,7 +353,7 @@ try {
 
   await page.screenshot({ path: SHOT, fullPage: true });
   console.log(
-    `venue stats S2 browser: PASS (390px, B1~B4 actual payload, season abort/generation, AA ${contrast.minimum.toFixed(2)}:1 across ${contrast.count} texts)\nshot: ${SHOT}`,
+    `venue stats S2 browser: PASS (390px, B1~B4 actual payload, season abort/generation, selected-season 503 fail-closed(no stale value + retry UI), AA ${contrast.minimum.toFixed(2)}:1 across ${contrast.count} texts)\nshot: ${SHOT}`,
   );
 } finally {
   await browser.close();

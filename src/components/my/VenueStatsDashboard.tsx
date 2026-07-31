@@ -136,15 +136,17 @@ export default function VenueStatsDashboard() {
   const goBack = useSafeBack("/my");
   const [season, setSeason] = useState<number>(2026);
   const [scopeName, setScopeName] = useState<ScopeName>("overall");
-  const [data, setData] = useState<VenueStatsResponse | null>(null);
+  const [data, setData] = useState<{ season: number; payload: VenueStatsResponse } | null>(null);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const requestGeneration = useRef(0);
   const requestController = useRef<AbortController | null>(null);
 
+  const userId = user?.id ?? null;
+
   const load = useCallback(async (generation?: number) => {
-    if (!user) return;
+    if (!userId) return;
     const activeGeneration = generation ?? requestGeneration.current + 1;
     requestGeneration.current = activeGeneration;
     requestController.current?.abort();
@@ -163,7 +165,7 @@ export default function VenueStatsDashboard() {
       if (!res.ok) throw new Error("request failed");
       const nextData = (await res.json()) as VenueStatsResponse;
       if (requestGeneration.current === activeGeneration && !controller.signal.aborted) {
-        setData(nextData);
+        setData({ season, payload: nextData });
       }
     } catch (error) {
       if (
@@ -178,21 +180,26 @@ export default function VenueStatsDashboard() {
         setLoading(false);
       }
     }
-  }, [season, user]);
+  }, [season, userId]);
 
   useEffect(() => {
-    if (!user) return;
+    if (!userId) return;
     const generation = requestGeneration.current + 1;
     requestGeneration.current = generation;
     requestController.current?.abort();
+    // 선택 시즌이 바뀌면 이전 시즌 응답이 새 라벨 아래 남지 않도록 즉시 로딩 상태로 되돌린다.
+    setLoading(true);
+    setFailed(false);
     const timer = window.setTimeout(() => void load(generation), 0);
     return () => {
       window.clearTimeout(timer);
       if (requestGeneration.current === generation) requestController.current?.abort();
     };
-  }, [load, user]);
+  }, [load, userId]);
 
-  const scope = data?.[scopeName] ?? null;
+  // 표시 데이터는 현재 선택 시즌과 결속한다(다른 시즌 응답은 표시 대상이 아니다).
+  const activeData = data && data.season === season ? data.payload : null;
+  const scope = activeData?.[scopeName] ?? null;
   const hero = useMemo(() => (scope ? buildVenueStatsHero(scope) : null), [scope]);
   const favoriteById = useMemo(
     () => new Map((profile?.favorite_players ?? []).map((player) => [player.playerId, player])),
@@ -265,12 +272,12 @@ export default function VenueStatsDashboard() {
         <span className="text-[11px] font-semibold text-white/70">정규시즌 기준</span>
       </div>
 
-      {loading && !data ? (
+      {loading && !activeData ? (
         <div className="mt-5 space-y-3">
           <div className="h-52 animate-pulse rounded-2xl bg-white/[0.05]" />
           <div className="h-28 animate-pulse rounded-2xl bg-white/[0.05]" />
         </div>
-      ) : failed && !data ? (
+      ) : failed && !activeData ? (
         <button
           onClick={() => void load()}
           className="mt-6 flex w-full items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/[0.05] py-5 text-sm font-bold text-white/70"
