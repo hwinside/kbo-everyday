@@ -29,6 +29,7 @@ import { tmpdir } from "os";
 import { execFileSync } from "child_process";
 import { createHash } from "crypto";
 import { processVenueJob } from "./venue-transcode-job.mjs";
+import { VIDEO_PROFILES, buildTranscodeArgs, shouldReplaceWithReencode } from "./video-profiles.mjs";
 
 // ── env (.env.local 수동 파싱, dotenv 의존성 없음 — award-event-badges.mjs 패턴) ──
 try {
@@ -55,6 +56,8 @@ const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
 const argv = process.argv.slice(2);
 const APPLY = argv.includes("--apply");
 const PROBE = argv.includes("--probe");
+// 이미 done 인 job 을 새 인코딩 프로필로 다시 돌려 용량 백필(공개 URL 불변, --apply 필요).
+const REENCODE = argv.includes("--reencode");
 const LIMIT = argv.includes("--limit")
   ? parseInt(argv[argv.indexOf("--limit") + 1], 10)
   : PROBE ? 1 : 20;
@@ -123,23 +126,17 @@ async function downloadTo(url, dest) {
   return buf.length;
 }
 
-/** ffmpeg 720p(긴 변 ≤1280) H.264 + faststart. 출력 파일 경로 반환. */
-function transcode(input, output) {
-  execFileSync(
-    "ffmpeg",
-    [
-      "-y", "-i", input,
-      // 1280x1280 박스에 맞춰 축소(확대 안 함) 후 짝수 보정 (libx264 yuv420p 요구)
-      "-vf", "scale='min(1280,iw)':'min(1280,ih)':force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2",
-      "-c:v", "libx264", "-profile:v", "high", "-preset", "veryfast", "-crf", "27",
-      "-pix_fmt", "yuv420p",
-      "-c:a", "aac", "-b:a", "128k",
-      "-movflags", "+faststart",
-      output,
-    ],
-    { stdio: ["ignore", "ignore", "pipe"] }
-  );
+/** ffmpeg H.264 + faststart 재인코딩. 출력 파일 경로 반환. */
+function transcode(input, output, profile = VIDEO_PROFILES.community) {
+  execFileSync("ffmpeg", buildTranscodeArgs(input, output, profile), {
+    stdio: ["ignore", "ignore", "pipe"],
+  });
   return output;
+}
+
+/** 직관 라이브 전용 — 기존 venue 프로필 유지(커뮤니티 압축 강화가 스토리 화질을 건드리지 않게 분리). */
+function transcodeVenue(input, output) {
+  return transcode(input, output, VIDEO_PROFILES.venue);
 }
 
 /** posts.video_urls 에서 origUrl → newUrl 스왑 (순서/다른 항목 보존). 최신값 재조회 후 갱신. */
@@ -315,6 +312,71 @@ async function probe() {
   }
 }
 
+// ── reencode: 이미 done 인 job 을 새 프로필로 재인코딩(용량 백필) ──
+// 재인코딩 원본은 항상 original_url(보존된 raw) — 이미 압축된 결과물을 다시 압축하면
+// 세대 손실(generation loss)이 쌓인다. 업로드 경로는 optimizedPath() 로 결정적이라
+// upsert 가 같은 객체를 교체한다 → 공개 URL 불변 → posts.video_urls 스왝 불필요(멱등).
+async function reencode() {
+  let q = supabase
+    .from("video_transcode_jobs")
+    .select("id, post_id, original_url, optimized_url, original_bytes, optimized_bytes, attempts")
+    .eq("status", "done")
+    .order("optimized_bytes", { ascending: false, nullsFirst: false })
+    .limit(LIMIT);
+  if (ONLY_POST) q = q.eq("post_id", ONLY_POST);
+  const { data: jobs, error } = await q;
+  if (error) throw new Error(`jobs 조회 실패: ${error.message}`);
+  if (!jobs || jobs.length === 0) { console.log("재인코딩 대상 없음."); return; }
+
+  const work = mkdtempSync(join(tmpdir(), "kbo-reencode-"));
+  let replaced = 0, kept = 0, failed = 0, totBefore = 0, totAfter = 0;
+  try {
+    for (const job of jobs) {
+      const parsed = parsePublicUrl(job.original_url);
+      if (!parsed) { console.log(`  ⚠️  post ${job.post_id} 원본 URL 파싱 불가 — skip`); kept++; continue; }
+      const inPath = join(work, "in" + (basename(parsed.path).match(/\.[^.]+$/)?.[0] || ".mp4"));
+      const outPath = join(work, "out.mp4");
+      try {
+        const inBytes = await downloadTo(job.original_url, inPath);
+        transcode(inPath, outPath);
+        const outBytes = statSync(outPath).size;
+        const servedBytes = job.optimized_bytes ?? null;
+
+        if (!shouldReplaceWithReencode(outBytes, servedBytes, inBytes)) {
+          console.log(`  ⏭️  post ${job.post_id} ${fmtMB(servedBytes ?? inBytes)}→${fmtMB(outBytes)} 절감 미미 keep`);
+          kept++;
+          continue;
+        }
+
+        // 같은 optimizedPath 에 upsert — 공개 URL 이 안 바뀌므로 posts 스왝 불필요.
+        const newPath = optimizedPath(parsed.path);
+        const { error: upErr } = await supabase.storage
+          .from(parsed.bucket)
+          .upload(newPath, readFileSync(outPath), { contentType: "video/mp4", upsert: true });
+        if (upErr) throw new Error(`upload 실패: ${upErr.message}`);
+
+        await markJob(job.original_url, { original_bytes: inBytes, optimized_bytes: outBytes, error: null });
+        totBefore += servedBytes ?? inBytes;
+        totAfter += outBytes;
+        console.log(`  ✅ post ${job.post_id} ${fmtMB(servedBytes ?? inBytes)}→${fmtMB(outBytes)}`);
+        replaced++;
+      } catch (e) {
+        // 재인코딩 실패는 기존 서빙본을 그대로 둔다(노출 영향 0) — status 는 done 유지.
+        console.log(`  ❌ post ${job.post_id} 재인코딩 실패(기존 서빙본 유지): ${e.message || e}`);
+        failed++;
+      } finally {
+        for (const f of [inPath, outPath]) { try { rmSync(f); } catch {} }
+      }
+    }
+  } finally {
+    try { rmSync(work, { recursive: true, force: true }); } catch {}
+  }
+  console.log(`\n재인코딩: ✅${replaced} ⏭️${kept} ❌${failed}`);
+  if (totBefore > 0) {
+    console.log(`교체분 합계: ${fmtMB(totBefore)} → ${fmtMB(totAfter)} (절감 ${((1 - totAfter / totBefore) * 100).toFixed(0)}%)`);
+  }
+}
+
 // ── 직관 라이브(venue_stories) 처리 — **복구 전용**(B+①, 삼순 09:44 #1) ──
 // 즉시 경로(업로드 API 인라인 ffprobe)가 정상 동작하면 pending 은 여기 오지 않는다.
 //  - pending(즉시 경로 fault 잔여): private staging 에서 다운로드 → ffprobe 재검증
@@ -359,7 +421,8 @@ async function processVenueStories() {
           storage: supabase.storage,
           runner: {
             probe: probeVideoMeta,
-            transcode,
+            // 직관 라이브는 기존 venue 프로필 유지 — 커뮤니티 압축 강화가 스토리 화질을 건드리지 않게 분리.
+            transcode: transcodeVenue,
             downloadToFile: downloadTo,
           },
           inPath,
@@ -394,6 +457,16 @@ async function processVenueStories() {
   if (PROBE) {
     console.log(`🔍 probe (최신 ${LIMIT}개, DB/스토리지 무변경)\n`);
     await probe();
+    return;
+  }
+
+  if (REENCODE) {
+    if (!APPLY) {
+      console.log("--reencode 는 --apply 와 함께 써야 합니다(실제 교체 수행). 검증은 --probe.");
+      return;
+    }
+    console.log(`♻️  reencode (done ${LIMIT}개, 용량 큰 순)\n`);
+    await reencode();
     return;
   }
 
