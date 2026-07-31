@@ -1,7 +1,10 @@
-# 야잘알봇 v2 — 선수/구단 Hybrid RAG 스펙 (rev0.6)
+# 야잘알봇 v2 — 선수/구단 Hybrid RAG 스펙 (rev0.7)
 
-> 상태: **S0 스펙 GO (2026-07-31)** / 구현 PR #1011 코드 재리뷰·merge·deploy HOLD / S1a·S1b·S2 HOLD
-> 작성: 삼식이 2026-07-31 (rev0.6: 하린아빠 15:52 `착수착수` + 삼순 5차 재리뷰 테이블명 exact)
+> 상태: **범위 확대 GO(§12) — S1b-KBO/S2 source inventory·ingestion 착수 / S0 merge·DB 적용 완료(실계정 2턴 QA HOLD) / S1a·S1b·S2 구현 merge/deploy HOLD**
+> S0 current-state 실측(2026-07-31, 삼순 재리뷰 #5 반영): PR #1011 **MERGED**(08:30Z), `baseball_genius_previous_turn` RPC **Production 응답 200**(적용 완료). 이전 상태줄 `S0 exact 계약 조건부 GO`는 stale이라 정정함.
+> ⚠️ Notion SSOT 상태줄 동일 정정 **아직 반영 안 됨** — 본 PR은 repo 미러만 갱신.
+> 작성: 삼식이 2026-07-31 (rev0.7: 하린아빠 KBO 기록실+나무위키 전수 RAG 확정 §12 반영 / rev0.6: 삼순 5차 재리뷰 테이블명 exact)
+> SSOT: Notion `3aec901b-b372-8140-8cec-f4c700b96487` (본 파일은 미러).
 > 선행 SSOT: 야잘알봇 MVP 스펙 v1.2 (Notion `3acc901bb3728165b783d0f0960c9f02`)
 > 트리거: 하린아빠 2026-07-31 "야구 룰에 이어 구단·선수 질문 대응 + RAG. 이것까지 되어야 킬러피처."
 
@@ -263,3 +266,25 @@
 ### 하린아빠 확정 결정 (보존)
 - 2026-07-31 '추천대로': ①S1a 먼저 ②크보팬 기준 명시+공식 링크 ③멀티턴 S0 선행 핫픽스. 구현 착수는 삼순 스펙 리뷰 통과 후, merge/deploy는 코드 리뷰 게이트 유지.
 - 2026-07-31 저작권 완화 + 정보 신뢰성 최우선(제0원칙).
+
+## 12. 확정 범위 확대 — KBO 기록실 + 나무위키 전수 RAG (rev0.7, 2026-07-31)
+
+하린아빠 확정 결정: KBO 기록실, KBO 나무위키, 10개 구단별 나무위키, 로스터의 각 선수별 나무위키를 모두 야잘알봇 검색 자산으로 구축한다. 범위는 전수 수집이지만 답변 신뢰성 계약은 제0원칙을 그대로 적용한다.
+
+- 전수 inventory: KBO 기록실의 제공 기록 범주 전체 + KBO 개요 1페이지 + 10개 구단 페이지 + players-roster.json 878명 각각의 나무위키 canonical page 후보. 각 엔티티는 resolved | missing | ambiguous | blocked 중 하나로 100% 분류하며 조용한 누락을 금지한다.
+- KBO 기록실은 벡터 RAG가 아니라 structured retrieval로 수집·정규화한다. season·entityId·metric·value·unit·provider·asOf·dataVersion을 가진 typed claim만 deterministic renderer에 전달하고, 숫자는 LLM/나무위키에서 생성하지 않는다.
+- 나무위키는 서술형 RAG로 사용한다. chunk 메타 필수값: entityType, entityId(kboId/teamId), pageTitle, canonicalUrl, revision, sectionPath, crawledAt, contentHash, sourceGrade. 이름 단독 연결 금지, 동명이인은 기존 AMBIGUOUS 계약으로 분리한다.
+- 검색은 entity filter + hybrid(BM25/vector)로 구성한다. 문서 안의 지시문·프롬프트·스크립트는 모두 비신뢰 데이터로 취급하고 모델 지시로 실행하지 않는다.
+- 신뢰도: 공식 KBO 기록실을 정량 claim의 우선 정본으로 사용한다. 나무위키의 숫자는 공식 소스로 교차확인되기 전 정량 확정값으로 쓰지 않는다. 서술형은 출처·revision/asOf를 표시하고, 공식/다른 출처와 충돌하면 단정 대신 차이를 공개한다.
+- 서빙: 사실을 재서술하고 원문 장문 재현은 피하며 답변에 canonical source 링크를 제공한다. 로그인·유료·접근제한 우회는 하지 않는다.
+- 갱신: revision/contentHash 기반 증분 수집, 삭제·이동 tombstone, bounded rate/retry, 마지막 성공 snapshot 보존. stale 허용기한 초과 또는 source 장애 시 stale 표시 후 보류한다.
+- 완료 게이트: inventory 분류 100%, resolved 문서 ingest 성공 100%, missing/ambiguous/blocked 공개 목록, 출처 링크 유효성, 동명이인·시즌·revision·stale·source-injection·숫자 환각 회귀를 모두 통과하기 전에는 전수 완료라고 표현하지 않는다.
+
+### 12.1 실행 순서
+
+1. S1b-KBO 기록실: source inventory → extractor/schema → typed claim/renderer → 장애·시즌·수치 exact eval.
+2. S2a: KBO 개요 1 + 구단 10페이지 ingestion, entity-filtered hybrid retrieval, citation/revision eval.
+3. S2b: 선수 878명 URL inventory는 전수 확정·유지한다. 선수 문서 embedding·갱신은 실제 질문 조회 빈도 내림차순의 작은 batch로 ingestion·평가·롤백 가능하게 확대하되 최종 목표 범위는 전원이다.
+4. 운영: source coverage/revision/stale/실패율 대시보드와 재수집 큐를 두고, 실제 질문 eval에서 정량 exact와 서술형 citation을 분리 판정한다.
+
+판정: 범위 확대 GO. S1a 내부 player_game_logs 완전성은 내부 시즌 누적 서빙 게이트로 유지하되, KBO 기록실 S1b와 나무위키 S2의 source inventory/ingestion 착수를 막는 선행조건으로 사용하지 않는다. 구현 PR은 삼순 코드리뷰와 하린아빠 merge 승인 전 merge/deploy HOLD.

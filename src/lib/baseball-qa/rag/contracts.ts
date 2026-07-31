@@ -30,7 +30,24 @@ export type InventoryStatus =
   | "blocked"
   | "pending";
 
-/** 임베딩 차원 — migration의 vector(768)과 반드시 일치(스모크가 drift 차단). */
+/**
+ * 임베딩 모델 — `gemini-embedding-2`.
+ *
+ * 왜 이 모델인가(삼순 재리뷰 #2 반영): 기존 `text-embedding-004`는 2026-01-14 shutdown되어
+ * 현재 API에서 **실제 404**다(2026-07-31 실측: `models/text-embedding-004 is not found for
+ * API version v1beta`). 계정에서 `embedContent`를 지원하는 모델은 `gemini-embedding-001`,
+ * `gemini-embedding-2-preview`, `gemini-embedding-2` 3종이며 GA 최신인 `gemini-embedding-2`를 쓴다.
+ */
+export const RAG_EMBEDDING_MODEL = "gemini-embedding-2";
+
+/**
+ * 임베딩 차원 — migration의 vector(768)과 반드시 일치(스모크가 drift 차단).
+ *
+ * `gemini-embedding-2`의 기본 차원은 3072이라 **반드시 outputDimensionality=768을 명시**해야 한다.
+ * 명시하지 않으면 3072가 돌아와 vector(768) 컬럼과 어긋난다. 768은 공식 문서가 권장하는
+ * 절단 차원(768/1536/3072) 중 하나이고, 768 이하 절단분은 모델이 자동 재정규화한다(공식 문서).
+ * 2026-07-31 실측: outputDimensionality=768 요청 → HTTP 200 / values.length=768 / 전건 유한수.
+ */
 export const RAG_EMBEDDING_DIM = 768;
 
 /** 소스별 신뢰등급 매핑. 이 매핑 밖의 소스는 존재하지 않는다(fail-closed). */

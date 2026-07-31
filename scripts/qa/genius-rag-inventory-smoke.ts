@@ -19,18 +19,30 @@ import playersRoster from "../../src/lib/constants/players-roster.json" with { t
 import { TEAMS } from "../../src/lib/constants/teams";
 import {
   RAG_EMBEDDING_DIM,
+  RAG_EMBEDDING_MODEL,
   canGroundNumericClaim,
   gradeForSourceKind,
   missingChunkMetaKeys,
   resolveNumericConflict,
 } from "../../src/lib/baseball-qa/rag/contracts";
 import {
+  formatDocumentInput,
+  formatQueryInput,
+} from "../../src/lib/baseball-qa/rag/embed";
+import {
   KBO_RECORD_BOOK_SOURCES,
   buildInventorySeed,
   summarizeCoverage,
 } from "../../src/lib/baseball-qa/rag/source-inventory";
 import {
+  KBO_RECORD_UNIVERSE,
+  excludedRecordSources,
+  includedRecordSources,
+} from "../../src/lib/baseball-qa/rag/kbo-record-universe";
+import { renderSeedSql } from "../baseball-qa/build-rag-inventory-seed";
+import {
   MAX_CHUNK_CHARS,
+  MIN_CHUNK_CHARS,
   chunkText,
   prepareChunks,
   stripWikiMarkup,
@@ -61,6 +73,30 @@ const seed = buildInventorySeed();
 const coverage = summarizeCoverage(seed);
 
 // --- 1. 전수 커버리지 -------------------------------------------------------
+// [삼순 #6] 자기참조 게이트 제거: 기준은 상수 길이가 아니라 공식 navigation 전수 universe다.
+// universe에서 경로를 지우면 이 블록이 RED가 된다.
+const UNIVERSE_TOTAL = 39; // 2026-07-31 BFS 크롤 실측(선수 개별 상세 제외), 전건 HTTP 200
+check("기록실 universe 전수 고정", KBO_RECORD_UNIVERSE.length, UNIVERSE_TOTAL);
+check(
+  "universe = included + excluded (미분류 0)",
+  includedRecordSources().length + excludedRecordSources().length,
+  KBO_RECORD_UNIVERSE.length,
+);
+ok(
+  "excluded 항목은 전수 사유 보유(조용한 누락 금지)",
+  excludedRecordSources().every((e) => e.reason.trim() !== ""),
+);
+ok(
+  "universe 경로/id 중복 없음",
+  new Set(KBO_RECORD_UNIVERSE.map((e) => e.path)).size === KBO_RECORD_UNIVERSE.length &&
+    new Set(KBO_RECORD_UNIVERSE.map((e) => e.id)).size === KBO_RECORD_UNIVERSE.length,
+);
+// 인벤토리의 record_book 집합은 universe의 included 집합과 **exact** 일치해야 한다.
+check(
+  "인벤토리 record_book id 집합 = universe included 집합",
+  seed.filter((r) => r.entityType === "record_book").map((r) => r.entityId).sort(),
+  includedRecordSources().map((e) => e.id).sort(),
+);
 check("record_book 범주 전수 등재", coverage.byEntityType.record_book, KBO_RECORD_BOOK_SOURCES.length);
 check("KBO 리그 페이지 1건", coverage.byEntityType.league, 1);
 check("10개 구단 전량 등재", coverage.byEntityType.team, TEAMS.length);
@@ -224,6 +260,89 @@ ok(
   "inventory/chunks RLS service_role 전용",
   migration.includes("REVOKE ALL ON public.genius_source_inventory FROM public, anon, authenticated") &&
     migration.includes("REVOKE ALL ON public.genius_rag_chunks FROM public, anon, authenticated"),
+);
+
+// [삼순 #2] 종료 모델 재도입 차단 + 차원 명시 계약
+// 주석은 설명을 위해 구 모델명을 언급하므로, 가드는 **주석을 제거한 실코드**만 검사한다.
+const stripComments = (src: string) =>
+  src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+const stripSqlComments = (src: string) => src.replace(/^\s*--.*$/gm, " ");
+
+const embedCode = stripComments(
+  fs.readFileSync(path.join(ROOT, "src/lib/baseball-qa/rag/embed.ts"), "utf8"),
+);
+const contractsCode = stripComments(
+  fs.readFileSync(path.join(ROOT, "src/lib/baseball-qa/rag/contracts.ts"), "utf8"),
+);
+check("임베딩 모델 = gemini-embedding-2", RAG_EMBEDDING_MODEL, "gemini-embedding-2");
+ok(
+  "종료된 text-embedding-004 재도입 차단(실코드)",
+  !embedCode.includes("text-embedding-004") &&
+    !contractsCode.includes("text-embedding-004") &&
+    !stripSqlComments(migration).includes("text-embedding-004"),
+);
+ok(
+  "outputDimensionality 명시(기본 3072 → 768 절단)",
+  embedCode.includes("outputDimensionality: RAG_EMBEDDING_DIM"),
+);
+ok(
+  "gemini-embedding-2가 지원하지 않는 taskType 미전송(실코드)",
+  !embedCode.includes("taskType"),
+);
+check(
+  "문서 prefix 규격(title | text)",
+  formatDocumentInput("본문", null),
+  "title: none | text: 본문",
+);
+check(
+  "질의 prefix 규격(task | query)",
+  formatQueryInput("김도영 누구야"),
+  "task: question answering | query: 김도영 누구야",
+);
+
+// [삼순 #7] 시드 migration이 코드 시드와 byte-exact인가(생성물 drift 차단)
+const seedMigrationPath = path.join(
+  ROOT,
+  "supabase/migrations/20260731_genius_rag_inventory_seed.sql",
+);
+const seedSqlOnDisk = fs.readFileSync(seedMigrationPath, "utf8");
+ok("시드 migration이 생성기 출력과 일치(drift 없음)", seedSqlOnDisk === renderSeedSql());
+check(
+  "시드 migration 행수 = 인벤토리 총합",
+  (seedSqlOnDisk.match(/^ {2}\('/gm) ?? []).length,
+  coverage.total,
+);
+ok(
+  "시드는 멱등 upsert(ON CONFLICT)",
+  seedSqlOnDisk.includes("ON CONFLICT (entity_type, entity_id, source_kind) DO UPDATE"),
+);
+ok(
+  "시드 재실행이 resolved를 되돌리지 않음",
+  seedSqlOnDisk.includes("WHEN public.genius_source_inventory.status = 'resolved' THEN 'resolved'"),
+);
+
+// [삼순 #3] DB fail-close 제약이 migration에 실재하는가(실행 검증은 pg17 하네스)
+for (const constraint of [
+  "genius_source_inventory_grade_matches_kind",
+  "genius_source_inventory_resolved_requires_url",
+  "genius_source_inventory_ambiguous_has_no_url",
+  "genius_rag_chunks_meta_not_blank",
+  "genius_rag_chunks_content_chars_exact",
+  "genius_rag_chunks_content_chars_bounds",
+  "genius_rag_chunks_inventory_binding",
+]) {
+  ok(`migration에 ${constraint} 제약 존재`, migration.includes(constraint));
+}
+ok(
+  "chunk는 resolved 소스에서만 허용(트리거)",
+  migration.includes("genius_rag_chunks_require_resolved_source_trg"),
+);
+
+// [삼순 #4] 길이 상한 계약이 코드와 DB에서 같은 값인가
+check(
+  "DB chunk 길이 범위 = 코드 MIN/MAX",
+  migration.includes(`content_chars BETWEEN ${MIN_CHUNK_CHARS} AND ${MAX_CHUNK_CHARS}`),
+  true,
 );
 
 console.log(`\n${fail === 0 ? "PASS" : "FAIL"} — ${pass} passed, ${fail} failed`);

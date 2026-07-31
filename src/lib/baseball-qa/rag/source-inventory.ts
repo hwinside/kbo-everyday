@@ -24,6 +24,7 @@ import {
   type RagSourceKind,
   type SourceGrade,
 } from "./contracts";
+import { includedRecordSources, kboRecordUrl } from "./kbo-record-universe";
 
 export interface InventorySeedRow {
   entityType: RagEntityType;
@@ -46,65 +47,17 @@ export function namuwikiUrl(pageTitle: string): string {
 
 /**
  * KBO 기록실 수집 범주 (tier1 정본).
- * URL은 2026-07-31 HTTP 200 응답을 확인한 공개 경로다. 파싱 스키마 확정은 S1b 범위.
+ *
+ * 목록을 이 파일에 직접 쓰지 않고 `kbo-record-universe`의 included 항목에서 파생한다
+ * (삼순 재리뷰 #6: 상수 자기참조 게이트 제거). universe는 공식 navigation 전수 실측 SSOT이고,
+ * 이 상수는 그중 수집 대상만 투영한 뷰다. 파싱 스키마 확정은 S1b 범위.
  */
-export const KBO_RECORD_BOOK_SOURCES: { id: string; name: string; url: string }[] = [
-  {
-    id: "hitter_basic1",
-    name: "선수 기록 - 타자 기본1",
-    url: "https://www.koreabaseball.com/Record/Player/HitterBasic/Basic1.aspx",
-  },
-  {
-    id: "hitter_basic2",
-    name: "선수 기록 - 타자 기본2",
-    url: "https://www.koreabaseball.com/Record/Player/HitterBasic/Basic2.aspx",
-  },
-  {
-    id: "pitcher_basic1",
-    name: "선수 기록 - 투수 기본1",
-    url: "https://www.koreabaseball.com/Record/Player/PitcherBasic/Basic1.aspx",
-  },
-  {
-    id: "pitcher_basic2",
-    name: "선수 기록 - 투수 기본2",
-    url: "https://www.koreabaseball.com/Record/Player/PitcherBasic/Basic2.aspx",
-  },
-  {
-    id: "player_defense",
-    name: "선수 기록 - 수비",
-    url: "https://www.koreabaseball.com/Record/Player/Defense/Basic.aspx",
-  },
-  {
-    id: "player_runner",
-    name: "선수 기록 - 주루",
-    url: "https://www.koreabaseball.com/Record/Player/Runner/Basic.aspx",
-  },
-  {
-    id: "team_hitter",
-    name: "팀 기록 - 타자",
-    url: "https://www.koreabaseball.com/Record/Team/Hitter/Basic1.aspx",
-  },
-  {
-    id: "team_pitcher",
-    name: "팀 기록 - 투수",
-    url: "https://www.koreabaseball.com/Record/Team/Pitcher/Basic1.aspx",
-  },
-  {
-    id: "team_defense",
-    name: "팀 기록 - 수비",
-    url: "https://www.koreabaseball.com/Record/Team/Defense/Basic.aspx",
-  },
-  {
-    id: "team_runner",
-    name: "팀 기록 - 주루",
-    url: "https://www.koreabaseball.com/Record/Team/Runner/Basic.aspx",
-  },
-  {
-    id: "team_rank_daily",
-    name: "팀 순위 - 일자별",
-    url: "https://www.koreabaseball.com/Record/TeamRank/TeamRankDaily.aspx",
-  },
-];
+export const KBO_RECORD_BOOK_SOURCES: { id: string; name: string; url: string }[] =
+  includedRecordSources().map((entry) => ({
+    id: entry.id,
+    name: entry.name,
+    url: kboRecordUrl(entry.path),
+  }));
 
 /** KBO 리그 나무위키 문서 제목. */
 const KBO_LEAGUE_PAGE_TITLE = "KBO 리그";
