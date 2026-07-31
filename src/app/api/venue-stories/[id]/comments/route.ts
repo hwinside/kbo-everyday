@@ -140,7 +140,7 @@ export async function POST(
   }
 
   // 원자화 RPC(삼순 #807 라운드3 blocker 1) — 스토리 active/만료 게이트 +
-  // 10초 간격/60초 내 3건/동일내용(최근 5건) 판정 + INSERT 를 유저별
+  // 10초 간격/60초 내 3건/같은 스토리·5분 내 동일내용 판정 + INSERT 를 유저별
   // advisory xact lock 안 단일 트랜잭션으로 수행 — 동시 POST 가 같은 빈
   // snapshot 을 읽고 둘 다 통과하는 경쟁을 막는다. 판정 참조 구현은
   // evaluateCommentAbuse(comments.ts) — 상수/경계 동일 계약을 스모크가 검증한다.

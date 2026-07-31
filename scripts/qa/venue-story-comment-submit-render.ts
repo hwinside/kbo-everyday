@@ -19,10 +19,12 @@ const win = dom.window as unknown as Record<string, unknown>;
 const g = globalThis as unknown as Record<string, unknown>;
 for (const k of [
   "window", "document", "navigator", "HTMLElement", "HTMLInputElement", "Element", "Node",
-  "Event", "MouseEvent", "getComputedStyle", "requestAnimationFrame", "cancelAnimationFrame", "localStorage",
+  "Event", "MouseEvent", "HTMLMediaElement", "getComputedStyle", "requestAnimationFrame", "cancelAnimationFrame", "localStorage", "sessionStorage",
 ]) {
   g[k] = win[k];
 }
+(win.HTMLMediaElement as { prototype: HTMLMediaElement }).prototype.play = async () => {};
+(win.HTMLMediaElement as { prototype: HTMLMediaElement }).prototype.pause = () => {};
 (g as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 let pass = 0;
@@ -59,10 +61,14 @@ async function main() {
   // getSafeSession 이 토큰을 반환하도록 supabase 클라 객체의 메서드만 교체(ESM 재바인딩 아님).
   const clientMod = await import("../../src/lib/supabase/client");
   (clientMod.supabase.auth as unknown as { getSession: () => Promise<unknown> }).getSession = async () => ({
-    data: { session: { access_token: "test-token", user: { id: "author-1" } } }, error: null,
+    data: { session: { access_token: "test-token", user: { id: "author-1", email: "harinclaw@gmail.com" } } }, error: null,
+  });
+  (clientMod.supabase.auth as unknown as { onAuthStateChange: (cb: unknown) => unknown }).onAuthStateChange = () => ({
+    data: { subscription: { unsubscribe: () => {} } },
   });
 
   const Viewer = (await import("../../src/components/game/VenueStoryViewer")).default;
+  const { AuthProvider } = await import("../../src/lib/supabase/AuthContext");
 
   // ③ 아바타 회귀 결속용 GET 댓글 셋 — custom:/preset:/null 각 1건.
   // getAvatarPath 해석이 헤더·CommentAvatar 양쪽에서 실제 <img src> 로 렌더돼야 한다(삼순 #948 ③ NO-GO).
@@ -81,6 +87,7 @@ async function main() {
   // fetch spy: POST /comments 카운트 + 필요 시 hold(동시성 검증), GET 은 위 아바타 댓글 셋.
   let postCount = 0;
   let holdPost = false;
+  let nextPostError: string | null = null;
   let releasers: Array<() => void> = [];
   const origFetch = globalThis.fetch;
   globalThis.fetch = (async (input: unknown, init?: { method?: string; body?: string }) => {
@@ -90,37 +97,108 @@ async function main() {
       postCount++;
       const content = (() => { try { return JSON.parse(init?.body ?? "{}").content; } catch { return ""; } })();
       if (holdPost) await new Promise<void>((r) => releasers.push(r));
+      if (nextPostError) {
+        const error = nextPostError;
+        nextPostError = null;
+        return {
+          ok: false, status: 429,
+          json: async () => ({ error }),
+        } as unknown as Response;
+      }
       return {
         ok: true, status: 200,
         json: async () => ({ comment: { id: 200 + postCount, content, userId: "author-1", createdAt: new Date().toISOString(), author: { nickname: "t", avatarUrl: null, teamId: 1 } } }),
       } as unknown as Response;
     }
+    if (url === "/api/me") {
+      return {
+        ok: true, status: 200,
+        json: async () => ({ profile: { id: "author-1", nickname: "관리자", team_id: 1, favorite_players: [], points: 0, grade: "rookie", avatar_url: null, invited_by: null } }),
+      } as unknown as Response;
+    }
     return { ok: true, status: 200, json: async () => ({ comments: getComments, total: getComments.length }) } as unknown as Response;
   }) as typeof fetch;
 
-  const story = {
-    id: 1, gameId: "20260729KTNC0", userId: "author-1", mediaType: "image" as const,
-    mediaUrl: "http://x/y.jpg", thumbUrl: null, durationMs: null, width: 1080, height: 1920,
+  const makeStory = (id: number) => ({
+    id, gameId: "20260729KTNC0", userId: "author-1", mediaType: "video" as const,
+    mediaUrl: `http://x/${id}.mp4`, thumbUrl: null, durationMs: 10_000, width: 1080, height: 1920,
     caption: "테스트", venueVerified: true, createdAt: new Date().toISOString(),
     author: { nickname: "테스터", avatarUrl: HEADER_AVATAR_RAW, teamId: 1 },
-  };
+  });
+  const stories = [
+    { ...makeStory(1), clickCount: null, impressionCount: 1_234_567 },
+    { ...makeStory(2), clickCount: 1_234_567, impressionCount: 765_433 },
+    { ...makeStory(3), clickCount: null, impressionCount: null },
+  ];
+  let closeCount = 0;
 
   const container = dom.window.document.createElement("div");
   dom.window.document.body.appendChild(container);
   const root = createRoot(container);
 
   await act(async () => {
-    root.render(React.createElement(Viewer as never, {
-      stories: [story], startIndex: 0, currentUserId: "viewer-1", onClose: () => {}, onChanged: () => {},
-    } as never));
+    root.render(React.createElement(AuthProvider, null,
+      React.createElement(Viewer as never, {
+        stories, startIndex: 1, currentUserId: "viewer-1", onClose: () => { closeCount++; }, onChanged: () => {},
+      } as never),
+    ));
   });
 
   // 뷰어는 document.body 로 createPortal 되므로 body 기준으로 쿼리.
   const scope = dom.window.document.body;
+  const storyId = () => scope.querySelector("[data-venue-story-viewer]")?.getAttribute("data-story-id");
+  const viewCountText = () => scope.querySelector("[data-venue-story-view-count]")?.textContent?.replace(/\s+/g, " ").trim();
+  const fullTap = async (button: HTMLElement) => {
+    await act(async () => {
+      button.dispatchEvent(pointer("pointerdown"));
+      button.dispatchEvent(pointer("pointerup"));
+      button.dispatchEvent(new (win.MouseEvent as typeof MouseEvent)("click", {
+        bubbles: true, cancelable: true, detail: 1,
+      }));
+    });
+  };
+
+  // ── 상단 action 44×44 + 첫 탭 정확성 / nav 경계 비충돌 ──
+  const headerActions = ["음소거", "더보기", "닫기"].map(
+    (label) => scope.querySelector(`button[aria-label="${label}"]`) as HTMLElement | null,
+  );
+  ok("상단 action 실히트 타겟 전부 44×44(w-11/h-11)",
+    headerActions.every((button) => button?.classList.contains("w-11") && button.classList.contains("h-11")));
+  const closeButton = headerActions[2]!;
+  ok("상단 action 행은 safe-area 아래에 앵커",
+    closeButton.parentElement?.style.top.includes("safe-area-inset-top") === true);
+  ok("관리자 Viewer는 click+impression 합산 단일값·큰 수 포맷 렌더",
+    viewCountText() === "조회수 2,000,000");
+  for (let i = 0; i < 10; i++) await fullTap(closeButton);
+  ok("닫기 X 첫 탭 10/10 → onClose 정확히 10회", closeCount === 10);
+  ok("닫기 X 탭이 story nav로 새지 않음", storyId() === "2");
+
+  await fullTap(headerActions[1]!);
+  ok("더보기 첫 탭 → action sheet 열림",
+    Array.from(scope.querySelectorAll("button")).some((button) => button.textContent?.trim() === "취소"));
+  ok("더보기 탭이 story nav로 새지 않음", storyId() === "2");
+  const menuCancel = Array.from(scope.querySelectorAll("button"))
+    .find((button) => button.textContent?.trim() === "취소") as HTMLElement;
+  await fullTap(menuCancel);
+
+  const tapNav = async (label: "이전" | "다음") => {
+    const button = scope.querySelector(`button[aria-label="${label}"]`) as HTMLElement;
+    await fullTap(button);
+  };
+  await tapNav("이전");
+  ok("왼쪽 첫 탭 → previous 정확히 1칸(2→1)", storyId() === "1");
+  ok("legacy null click은 0으로 합산해 Viewer에 렌더", viewCountText() === "조회수 1,234,567");
+  await tapNav("다음");
+  ok("오른쪽 첫 탭 → next 정확히 1칸(1→2, double advance 0)", storyId() === "2");
+  await tapNav("다음");
+  ok("오른쪽 다음 탭도 next 정확히 1칸(2→3)", storyId() === "3");
+  ok("관리자 응답 필드가 null인 legacy Viewer도 조회수 0 렌더", viewCountText() === "조회수 0");
+
   // 댓글 시트 오픈
   const openBtn = scope.querySelector("[data-open-comments]") as HTMLElement | null;
   ok("전송 배선 전제: 댓글 열기 pill 렌더됨", !!openBtn);
   await act(async () => { openBtn!.dispatchEvent(new (win.MouseEvent as typeof MouseEvent)("click", { bubbles: true, cancelable: true })); });
+  ok("댓글 pill 탭이 story nav로 새지 않음", storyId() === "3");
 
   const input = scope.querySelector('input[placeholder="댓글을 입력하세요"]') as HTMLInputElement | null;
   ok("댓글 입력창 렌더됨", !!input);
@@ -208,6 +286,17 @@ async function main() {
   // 취소 후에도 정상 탭은 다시 전송돼야 함(press 소비만, 영구 잠금 아님)
   await tap({ clientX: 0, clientY: 0 });
   ok("취소/드래그아웃 뒤 정상 탭 → POST 재개(누적 4)", postCount === 4);
+
+  // ── (6) 429 오류는 z-130 댓글 portal 안에 노출 + 입력 유지 ──
+  const rejectedContent = "입력은 유지";
+  await typeContent(rejectedContent);
+  nextPostError = "잠시 후 다시 입력해 주세요";
+  await tap({ clientX: 0, clientY: 0 });
+  const commentOverlay = scope.querySelector("[data-venue-story-comment-overlay]");
+  const commentError = commentOverlay?.querySelector('[data-comment-error][role="alert"]');
+  ok("429 응답은 댓글 overlay 내 role=alert로 노출",
+    commentError?.textContent === "잠시 후 다시 입력해 주세요");
+  ok("429 거절 후 댓글 입력값 유지", input!.value === rejectedContent);
 
   globalThis.fetch = origFetch;
   console.log(`\nvenue-story comment submit render: ${pass} passed, ${fail} failed`);

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
 import { X, Volume2, VolumeX, MoreVertical, Loader2, MessageCircle, Send, Trash2, Eye } from "lucide-react";
@@ -37,6 +37,7 @@ import { isIosNativeRuntime } from "@/lib/capacitor/platform";
 import { startVenueStoryUrlRefresh } from "@/lib/venue-stories/refresh-policy";
 import { getAvatarPath } from "@/lib/constants/avatars";
 import { trackVenueStoryView } from "@/lib/venue-stories/view-tracker-client";
+import { postViewTotal } from "@/lib/community/view-tracker-policy";
 
 interface Props {
   stories: VenueStory[];
@@ -131,6 +132,7 @@ export default function VenueStoryViewer({
   const [commentTotal, setCommentTotal] = useState<number | null>(null);
   const [commentInput, setCommentInput] = useState("");
   const [commentBusy, setCommentBusy] = useState(false);
+  const [commentError, setCommentError] = useState<string | null>(null);
   // 모달 컴포저 포커스 → 시트를 시각 뷰포트 전체 높이로 확장(CommentSheet expanded 패턴).
   const [composerFocused, setComposerFocused] = useState(false);
   // iOS 키보드 회피 — CommentSheet 와 동일한 state 기반 visualViewport 패턴.
@@ -154,6 +156,9 @@ export default function VenueStoryViewer({
   const commentSubmitLockRef = useRef(false);
   // 전송 버튼 press 상태 — pointerdown 에서 시작, primary pointerup(버튼 위)에서만 제출 확정.
   const commentPressRef = useRef(createPressState());
+  // 스토리 좌/우 탭은 pointerup에서 즉시 1칸 이동한다.
+  // pointer 뒤 합성 click(detail>0)은 무시하고 키보드 click(detail=0)만 폴백으로 받아 2칸 이동을 막는다.
+  const storyNavPressRef = useRef(createPressState());
   const rafRef = useRef<number | null>(null);
   const startRef = useRef<number>(0);
   const elapsedRef = useRef<number>(0);
@@ -436,11 +441,12 @@ export default function VenueStoryViewer({
     const submitStoryId = story.id;
     commentSubmitLockRef.current = true;
     setCommentBusy(true);
+    setCommentError(null);
     try {
       const session = await getSafeSession();
       const token = session?.access_token;
       if (!token) {
-        setToast("로그인이 필요해요");
+        setCommentError("로그인이 필요해요");
         return;
       }
       const res = await fetch(`/api/venue-stories/${story.id}/comments`, {
@@ -450,7 +456,7 @@ export default function VenueStoryViewer({
       });
       const data = await res.json();
       if (data.error) {
-        setToast(data.error);
+        setCommentError(data.error);
       } else if (data.comment) {
         // A 스토리 submit → B 로 전환 → A 응답 도착 시 B 목록 오염 방지
         if (shouldApplyCommentResponse(submitStoryId, storyIdRef.current)) {
@@ -460,7 +466,7 @@ export default function VenueStoryViewer({
         }
       }
     } catch {
-      setToast("댓글 작성 실패");
+      setCommentError("댓글 작성 실패");
     } finally {
       commentSubmitLockRef.current = false;
       setCommentBusy(false);
@@ -493,6 +499,35 @@ export default function VenueStoryViewer({
     } finally {
       setCommentBusy(false);
     }
+  };
+
+  const handleStoryNavPointerUp = (
+    direction: "prev" | "next",
+    e: ReactPointerEvent<HTMLButtonElement>,
+  ) => {
+    const bounds = e.currentTarget.getBoundingClientRect();
+    const shouldNavigate = shouldSubmitOnPointerUp(storyNavPressRef.current, {
+      isPrimary: e.isPrimary,
+      button: e.button,
+      clientX: e.clientX,
+      clientY: e.clientY,
+      bounds: {
+        left: bounds.left,
+        top: bounds.top,
+        right: bounds.right,
+        bottom: bounds.bottom,
+      },
+    });
+    setPaused(false);
+    if (!shouldNavigate || commentBusy) return;
+    if (direction === "prev") goPrev();
+    else goNext();
+  };
+
+  const handleStoryNavClick = (direction: "prev" | "next", detail: number) => {
+    if (detail > 0 || commentBusy) return;
+    if (direction === "prev") goPrev();
+    else goNext();
   };
 
   const handleDelete = async () => {
@@ -629,15 +664,17 @@ export default function VenueStoryViewer({
           <p className="text-white/60 text-[11px] flex items-center gap-1.5">
             <span>{timeAgo(story.createdAt)}</span>
             {/* 조회수는 일단 관리자만 — 서버 필드 분기 + AdminOnly 이중 게이트. */}
-            {story.clickCount != null && story.impressionCount != null && (
+            {("clickCount" in story || "impressionCount" in story) && (
               <AdminOnly>
                 <span
                   className="inline-flex items-center gap-1"
-                  title="관리자 전용 조회수: 클릭·노출"
+                  title="관리자 전용 조회수"
+                  data-venue-story-view-count
                 >
                   <Eye size={12} />
-                  <span>클릭 {story.clickCount.toLocaleString()}</span>
-                  <span>· 노출 {story.impressionCount.toLocaleString()}</span>
+                  <span>
+                    조회수 {postViewTotal(story.clickCount, story.impressionCount).toLocaleString()}
+                  </span>
                 </span>
               </AdminOnly>
             )}
@@ -646,7 +683,7 @@ export default function VenueStoryViewer({
         {story.mediaType === "video" && (
           <button
             onClick={() => setMuted((m) => !m)}
-            className="w-9 h-9 flex items-center justify-center text-white/90"
+            className="w-11 h-11 flex items-center justify-center text-white/90 shrink-0 touch-manipulation"
             aria-label="음소거"
           >
             {muted ? <VolumeX size={20} /> : <Volume2 size={20} />}
@@ -657,14 +694,14 @@ export default function VenueStoryViewer({
             setMenuOpen(true);
             setPaused(true);
           }}
-          className="w-9 h-9 flex items-center justify-center text-white/90"
+          className="w-11 h-11 flex items-center justify-center text-white/90 shrink-0 touch-manipulation"
           aria-label="더보기"
         >
           <MoreVertical size={20} />
         </button>
         <button
           onClick={onClose}
-          className="w-9 h-9 flex items-center justify-center text-white/90"
+          className="w-11 h-11 flex items-center justify-center text-white/90 shrink-0 touch-manipulation"
           aria-label="닫기"
         >
           <X size={22} />
@@ -701,28 +738,44 @@ export default function VenueStoryViewer({
             스토리 넘김으로 먹혀 모달이 잘 안 떴다(하린아빠 7/29 안드 리포트 — pill 8px 위만 눌러도
             넘김 발동 재현). 캡션(72px)+pill 영역을 넘김 존에서 제외해 하단 탭이 모달 오픈으로 간다. */}
         <button
-          className="absolute top-0 left-0 w-1/3"
+          className="absolute top-0 left-0 w-1/3 touch-manipulation"
           style={{ bottom: safeBottomCalc(STORY_NAV_BOTTOM_OFFSET) }}
           aria-label="이전"
-          onClick={() => {
-            if (commentBusy) return;
-            goPrev();
+          onClick={(e) => handleStoryNavClick("prev", e.detail)}
+          onPointerDown={(e) => {
+            e.preventDefault();
+            markPressStart(storyNavPressRef.current);
+            setPaused(true);
           }}
-          onPointerDown={() => setPaused(true)}
-          onPointerUp={() => setPaused(false)}
-          onPointerLeave={() => setPaused(false)}
+          onPointerUp={(e) => handleStoryNavPointerUp("prev", e)}
+          onPointerCancel={() => {
+            cancelPress(storyNavPressRef.current);
+            setPaused(false);
+          }}
+          onPointerLeave={() => {
+            cancelPress(storyNavPressRef.current);
+            setPaused(false);
+          }}
         />
         <button
-          className="absolute top-0 right-0 w-2/3"
+          className="absolute top-0 right-0 w-2/3 touch-manipulation"
           style={{ bottom: safeBottomCalc(STORY_NAV_BOTTOM_OFFSET) }}
           aria-label="다음"
-          onClick={() => {
-            if (commentBusy) return;
-            goNext();
+          onClick={(e) => handleStoryNavClick("next", e.detail)}
+          onPointerDown={(e) => {
+            e.preventDefault();
+            markPressStart(storyNavPressRef.current);
+            setPaused(true);
           }}
-          onPointerDown={() => setPaused(true)}
-          onPointerUp={() => setPaused(false)}
-          onPointerLeave={() => setPaused(false)}
+          onPointerUp={(e) => handleStoryNavPointerUp("next", e)}
+          onPointerCancel={() => {
+            cancelPress(storyNavPressRef.current);
+            setPaused(false);
+          }}
+          onPointerLeave={() => {
+            cancelPress(storyNavPressRef.current);
+            setPaused(false);
+          }}
         />
       </div>
 
@@ -746,6 +799,7 @@ export default function VenueStoryViewer({
         data-open-comments
         onClick={() => {
           setCommentsClosing(false);
+          setCommentError(null);
           setCommentsOpen(true);
         }}
         className="absolute left-3 right-3 z-20 h-12 flex items-center gap-2 px-4 rounded-full bg-black/40 border border-white/25 text-white/80"
@@ -906,10 +960,23 @@ export default function VenueStoryViewer({
               className="flex-none border-t border-border px-4 py-3"
               style={{ paddingBottom: "calc(0.75rem + env(safe-area-inset-bottom))" }}
             >
+              {commentError && (
+                <p
+                  data-comment-error
+                  role="alert"
+                  aria-live="assertive"
+                  className="mb-2 text-sm text-red-400"
+                >
+                  {commentError}
+                </p>
+              )}
               <div className="flex items-center gap-2">
                 <input
                   value={commentInput}
-                  onChange={(e) => setCommentInput(e.target.value)}
+                  onChange={(e) => {
+                    setCommentInput(e.target.value);
+                    if (commentError) setCommentError(null);
+                  }}
                   onFocus={() => setComposerFocused(true)}
                   onBlur={() => setComposerFocused(false)}
                   onKeyDown={(e) => {
