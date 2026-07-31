@@ -80,6 +80,7 @@ async function main() {
 
   // fetch spy: POST /comments 카운트 + 필요 시 hold(동시성 검증), GET 은 위 아바타 댓글 셋.
   let postCount = 0;
+  let lastPostContent: string | null = null;
   let holdPost = false;
   let releasers: Array<() => void> = [];
   const origFetch = globalThis.fetch;
@@ -89,6 +90,7 @@ async function main() {
     if (url.includes("/comments") && method === "POST") {
       postCount++;
       const content = (() => { try { return JSON.parse(init?.body ?? "{}").content; } catch { return ""; } })();
+      lastPostContent = content;
       if (holdPost) await new Promise<void>((r) => releasers.push(r));
       return {
         ok: true, status: 200,
@@ -208,6 +210,25 @@ async function main() {
   // 취소 후에도 정상 탭은 다시 전송돼야 함(press 소비만, 영구 잠금 아님)
   await tap({ clientX: 0, clientY: 0 });
   ok("취소/드래그아웃 뒤 정상 탭 → POST 재개(누적 4)", postCount === 4);
+
+  // ── (6) iOS 이모지 회귀: controlled state 는 "" 인데 DOM value 에만 이모지가 있는 상태 ──
+  //   iOS 이모지 키보드 삽입이 React onChange 로 왕복되지 않으면 commentInput 이 "" 로 남는다
+  //   (하린아빠 7/31 — 👍 가 입력창에 남고 POST 0건·에러 토스트 0건·전송 버튼 흐림).
+  //   input 에 이벤트 없이 raw value 만 심어 그 상황을 그대로 재현한다.
+  await act(async () => {
+    input!.value = "👍"; // ⚠️ input 이벤트 미발생 = React state 미갱신
+  });
+  ok("이모지 재현: DOM value 는 👍", input!.value === "👍");
+  ok("이모지 재현: controlled state 빈 값이어도 전송 버튼 enabled(탭이 no-op 아님)",
+    (sendBtn as HTMLButtonElement).disabled === false);
+  await tap({ clientX: 0, clientY: 0 });
+  ok("이모지 1탭 → POST 1건 발생(누적 5)", postCount === 5);
+  ok("이모지 전송 내용이 👍 로 전달됨", lastPostContent === "👍");
+  ok("전송 후 입력창 비워짐(이모지 잔류 0)", input!.value === "");
+
+  // (7) 진짜 빈 입력(state·DOM 모두 "")은 여전히 전송되지 않는다 — 검증 약화 방지
+  await tap({ clientX: 0, clientY: 0 });
+  ok("빈 입력 탭 → POST 증가 없음(누적 5 유지)", postCount === 5);
 
   globalThis.fetch = origFetch;
   console.log(`\nvenue-story comment submit render: ${pass} passed, ${fail} failed`);

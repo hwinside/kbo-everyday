@@ -27,7 +27,10 @@ import {
 } from "@/lib/venue-stories/comment-submit-gesture";
 import {
   safeBottomCalc,
+  isStoryNavTap,
   STORY_NAV_BOTTOM_OFFSET,
+  STORY_NAV_TOP_OFFSET,
+  STORY_NAV_TAP_MAX_MS,
   STORY_PILL_BOTTOM_OFFSET,
   STORY_CAPTION_BOTTOM_OFFSET,
 } from "@/lib/venue-stories/story-tap-zone";
@@ -154,6 +157,16 @@ export default function VenueStoryViewer({
   const commentSubmitLockRef = useRef(false);
   // 전송 버튼 press 상태 — pointerdown 에서 시작, primary pointerup(버튼 위)에서만 제출 확정.
   const commentPressRef = useRef(createPressState());
+  // 댓글 입력 DOM 참조 — 제출 시 controlled state 대신 실제 DOM value 를 진실원본으로 읽는다.
+  // iOS 이모지 키보드 삽입이 React onChange 로 왕복되지 않으면 commentInput 이 "" 로 남아
+  // 전송이 통째로 no-op 이 된다(하린아빠 7/31 — 👍 가 입력창에 남고 POST 0건, 에러 토스트도 없음).
+  const commentInputRef = useRef<HTMLInputElement>(null);
+  // 좌/우 넘기기 존 제스처 — 짧은 탭은 pointerup 에서 즉시 이동, 길게 누르기만 일시정지.
+  const navPressRef = useRef<{ at: number; x: number; y: number } | null>(null);
+  const navPauseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 포인터 제스처가 시작되면 이동 여부 판단은 pointerup 이 전담하고, 뒤따르는 합성 click 은 소비한다.
+  // (long-press·스와이프에서 pointerup 이 이동을 거부해도 click 이 넘겨버리는 경로를 막는다.)
+  const navClickConsumeRef = useRef(false);
   const rafRef = useRef<number | null>(null);
   const startRef = useRef<number>(0);
   const elapsedRef = useRef<number>(0);
@@ -218,6 +231,76 @@ export default function VenueStoryViewer({
   const goPrev = useCallback(() => {
     setIndex((i) => Math.max(0, i - 1));
   }, []);
+
+  // 좌/우 넘기기: 인스타처럼 "한 번 탭 = 한 번 이동"(하린아빠 7/31 — 오른쪽을 두 번 눌러야 다음 영상).
+  // 예전엔 pointerdown 에서 즉시 setPaused(true) / pointerup 에서 setPaused(false) 하고 이동은 click 에만
+  // 걸려 있어, 첫 탭이 pause→play 재동기화에 먹혔다. 이제 pause 는 long-press 타이머가 넘긴 뒤에만 걸고
+  // 짧은 탭은 pointerup 에서 곧바로 이동한다.
+  const clearNavPauseTimer = useCallback(() => {
+    if (navPauseTimerRef.current != null) {
+      clearTimeout(navPauseTimerRef.current);
+      navPauseTimerRef.current = null;
+    }
+  }, []);
+  useEffect(() => clearNavPauseTimer, [clearNavPauseTimer]);
+
+  const handleNavPointerDown = useCallback(
+    (e: React.PointerEvent<HTMLButtonElement>) => {
+      navPressRef.current = { at: Date.now(), x: e.clientX, y: e.clientY };
+      navClickConsumeRef.current = true; // 이 제스처의 합성 click 은 pointer 경로가 이미 판정함
+      clearNavPauseTimer();
+      navPauseTimerRef.current = setTimeout(() => {
+        navPauseTimerRef.current = null; // 타이머 소진 = long-press 성립(일시정지, 이동 없음)
+        setPaused(true);
+      }, STORY_NAV_TAP_MAX_MS);
+    },
+    [clearNavPauseTimer],
+  );
+
+  const handleNavPointerUp = useCallback(
+    (direction: "prev" | "next") => (e: React.PointerEvent<HTMLButtonElement>) => {
+      const start = navPressRef.current;
+      navPressRef.current = null;
+      const longPressed = navPauseTimerRef.current == null; // 타이머가 이미 발화 = 일시정지 중
+      clearNavPauseTimer();
+      setPaused(false);
+      if (!start || longPressed) return;
+      if (commentBusy) return;
+      if (
+        !isStoryNavTap({
+          elapsedMs: Date.now() - start.at,
+          deltaX: e.clientX - start.x,
+          deltaY: e.clientY - start.y,
+        })
+      ) {
+        return;
+      }
+      if (direction === "next") goNext();
+      else goPrev();
+    },
+    [clearNavPauseTimer, commentBusy, goNext, goPrev],
+  );
+
+  const handleNavPointerCancel = useCallback(() => {
+    navPressRef.current = null;
+    clearNavPauseTimer();
+    setPaused(false);
+  }, [clearNavPauseTimer]);
+
+  // 키보드(Enter/Space) 폴백 전용 — 포인터 제스처가 있었다면 pointerup 이 이미 판정했으므로
+  // 합성 click 은 소비만 한다(long-press/스와이프가 click 으로 넘어가는 것을 차단).
+  const handleNavClick = useCallback(
+    (direction: "prev" | "next") => () => {
+      if (navClickConsumeRef.current) {
+        navClickConsumeRef.current = false;
+        return;
+      }
+      if (commentBusy) return;
+      if (direction === "next") goNext();
+      else goPrev();
+    },
+    [commentBusy, goNext, goPrev],
+  );
 
   // index 바뀔 때 진행 상태 리셋
   useEffect(() => {
@@ -420,7 +503,9 @@ export default function VenueStoryViewer({
   };
 
   const handleCommentSubmit = async () => {
-    const content = commentInput.trim();
+    // iOS 이모지 키보드 삽입이 React onChange 로 왕복되지 않아도 전송되도록 실제 DOM value 를 폴백으로
+    // 읽는다(하린아빠 7/31 — 👍 입력 후 전송 시 POST 0건·토스트 없음·입력창에 이모지 잔류).
+    const content = (commentInput || commentInputRef.current?.value || "").trim();
     if (
       !canBeginCommentSubmit({
         hasStory: !!story,
@@ -457,6 +542,8 @@ export default function VenueStoryViewer({
           setComments((prev) => [...(prev ?? []), data.comment]);
           setCommentTotal((prev) => (prev ?? 0) + 1);
           setCommentInput("");
+          // state 로 왕복되지 않은 값(이모지)이 DOM 에 남아 다음 전송에 새지 않게 직접 비운다.
+          if (commentInputRef.current) commentInputRef.current.value = "";
         }
       }
     } catch {
@@ -570,7 +657,10 @@ export default function VenueStoryViewer({
         ))}
       </div>
 
-      {/* 헤더 — 작성자/닫기도 상태바 아래로. 진행바(+8px)와 겹치지 않게 +28px 로 간격 확보(하린아빠 리포트). */}
+      {/* 헤더 — 작성자/닫기도 상태바 아래로. 진행바(+8px)와 겹치지 않게 +28px 로 간격 확보(하린아빠 리포트).
+          ⚠️ 음소거/더보기/닫기 X 는 44×44(w-11 h-11) 애플 최소 터치타깃 — 예전 36px(w-9)라 빗맞기 쉬웠고,
+          빗맞은 탭이 top-0 로 깔린 '다음' 넘기기 존에 먹혀 닫히지 않고 스토리가 넘어갔다(하린아빠 7/31 iOS).
+          넘기기 존은 이제 헤더 아래(STORY_NAV_TOP_OFFSET)에서 시작해 헤더 컨트롤과 겹치지 않는다. */}
       <div
         className="absolute left-0 right-0 z-20 flex items-center gap-2 px-3"
         style={{ top: `calc(${safeAreaInsetTop} + 28px)` }}
@@ -646,7 +736,7 @@ export default function VenueStoryViewer({
         {story.mediaType === "video" && (
           <button
             onClick={() => setMuted((m) => !m)}
-            className="w-9 h-9 flex items-center justify-center text-white/90"
+            className="w-11 h-11 flex items-center justify-center text-white/90"
             aria-label="음소거"
           >
             {muted ? <VolumeX size={20} /> : <Volume2 size={20} />}
@@ -657,14 +747,14 @@ export default function VenueStoryViewer({
             setMenuOpen(true);
             setPaused(true);
           }}
-          className="w-9 h-9 flex items-center justify-center text-white/90"
+          className="w-11 h-11 flex items-center justify-center text-white/90"
           aria-label="더보기"
         >
           <MoreVertical size={20} />
         </button>
         <button
           onClick={onClose}
-          className="w-9 h-9 flex items-center justify-center text-white/90"
+          className="w-11 h-11 flex items-center justify-center text-white/90"
           aria-label="닫기"
         >
           <X size={22} />
@@ -693,36 +783,41 @@ export default function VenueStoryViewer({
           />
         )}
 
-        {/* 탭 존: 좌(이전)/우(다음), 길게 눌러 일시정지.
-            전송 중(commentBusy)·입력 포커스 중엔 이동 비활성(삼순 #807 라운드3 blocker 3) —
-            pointerdown(blur 이전) 시점의 잠금을 캡처해 click 에서 이동을 스킵한다.
+        {/* 탭 존: 좌(이전)/우(다음) 짧은 탭은 pointerup 에서 즉시 이동(인스타 동일 — 1탭=1이동),
+            200ms 이상 길게 눌러야 일시정지(하린아빠 7/31 iOS — 예전엔 pointerdown 즉시 pause 토글이
+            첫 탭을 먹어 오른쪽을 두 번 눌러야 다음 영상으로 넘어갔다).
+            전송 중(commentBusy)엔 이동 비활성(삼순 #807 라운드3 blocker 3).
+            ⚠️ 상단은 헤더(닫기 X/더보기/음소거) 아래에서 시작한다(STORY_NAV_TOP_OFFSET): 예전엔 top-0 라
+            헤더 오른쪽 아래에 깔려 X 를 빗맞은 탭이 닫기 대신 스토리 넘김으로 샜다(하린아빠 7/31 iOS).
             ⚠️ 하단 댓글바 위에서 끊는다(bottom 76px+safe): 예전엔 inset-y-0(전체 높이)라
             좌/우 넘김 존이 하단 '댓글 달기' pill(44px) 주변까지 덮어, 조금만 빗나가도 탭이
             스토리 넘김으로 먹혀 모달이 잘 안 떴다(하린아빠 7/29 안드 리포트 — pill 8px 위만 눌러도
             넘김 발동 재현). 캡션(72px)+pill 영역을 넘김 존에서 제외해 하단 탭이 모달 오픈으로 간다. */}
         <button
-          className="absolute top-0 left-0 w-1/3"
-          style={{ bottom: safeBottomCalc(STORY_NAV_BOTTOM_OFFSET) }}
-          aria-label="이전"
-          onClick={() => {
-            if (commentBusy) return;
-            goPrev();
+          className="absolute left-0 w-1/3"
+          style={{
+            top: `calc(${safeAreaInsetTop} + ${STORY_NAV_TOP_OFFSET}px)`,
+            bottom: safeBottomCalc(STORY_NAV_BOTTOM_OFFSET),
           }}
-          onPointerDown={() => setPaused(true)}
-          onPointerUp={() => setPaused(false)}
-          onPointerLeave={() => setPaused(false)}
+          aria-label="이전"
+          onClick={handleNavClick("prev")}
+          onPointerDown={handleNavPointerDown}
+          onPointerUp={handleNavPointerUp("prev")}
+          onPointerCancel={handleNavPointerCancel}
+          onPointerLeave={handleNavPointerCancel}
         />
         <button
-          className="absolute top-0 right-0 w-2/3"
-          style={{ bottom: safeBottomCalc(STORY_NAV_BOTTOM_OFFSET) }}
-          aria-label="다음"
-          onClick={() => {
-            if (commentBusy) return;
-            goNext();
+          className="absolute right-0 w-2/3"
+          style={{
+            top: `calc(${safeAreaInsetTop} + ${STORY_NAV_TOP_OFFSET}px)`,
+            bottom: safeBottomCalc(STORY_NAV_BOTTOM_OFFSET),
           }}
-          onPointerDown={() => setPaused(true)}
-          onPointerUp={() => setPaused(false)}
-          onPointerLeave={() => setPaused(false)}
+          aria-label="다음"
+          onClick={handleNavClick("next")}
+          onPointerDown={handleNavPointerDown}
+          onPointerUp={handleNavPointerUp("next")}
+          onPointerCancel={handleNavPointerCancel}
+          onPointerLeave={handleNavPointerCancel}
         />
       </div>
 
@@ -908,6 +1003,7 @@ export default function VenueStoryViewer({
             >
               <div className="flex items-center gap-2">
                 <input
+                  ref={commentInputRef}
                   value={commentInput}
                   onChange={(e) => setCommentInput(e.target.value)}
                   onFocus={() => setComposerFocused(true)}
@@ -929,7 +1025,7 @@ export default function VenueStoryViewer({
                   // onClick 은 데스크톱 키보드/마우스 폴백(ref lock 으로 trailing click 중복 차단).
                   onPointerDown={(e) => {
                     e.preventDefault();
-                    markPressStart(commentPressRef.current);
+                    markPressStart(commentPressRef.current, { clientX: e.clientX, clientY: e.clientY });
                   }}
                   onPointerUp={(e) => {
                     const b = e.currentTarget.getBoundingClientRect();
@@ -948,8 +1044,15 @@ export default function VenueStoryViewer({
                   onPointerCancel={() => cancelPress(commentPressRef.current)}
                   onPointerLeave={() => cancelPress(commentPressRef.current)}
                   onClick={handleCommentSubmit}
-                  disabled={commentBusy || commentInput.trim().length === 0}
-                  className="flex items-center justify-center w-9 h-9 rounded-full text-white disabled:opacity-50 transition-opacity shrink-0"
+                  // ⚠️ disabled 를 controlled state(commentInput)로 잠그면, iOS 이모지 키보드 삽입이 React
+                  // onChange 로 왕복되지 않은 경우 버튼이 계속 disabled 라 탭이 통째로 no-op 이 된다
+                  // (POST 0·토스트 0·이모지 잔류 = 하린아빠 7/31 리포트 증상). 전송 자체는
+                  // handleCommentSubmit 가 DOM value 폴백으로 재검증하므로 여기선 busy 만 잠근다.
+                  // 빈 입력은 아래 opacity 로만 흐리게 표시하고 canBeginCommentSubmit 가 실제로 막는다.
+                  disabled={commentBusy}
+                  className={`flex items-center justify-center w-9 h-9 rounded-full text-white transition-opacity shrink-0${
+                    commentBusy || commentInput.trim().length === 0 ? " opacity-50" : ""
+                  }`}
                   style={{ backgroundColor: "#FF453A" }}
                   aria-label="댓글 등록"
                 >

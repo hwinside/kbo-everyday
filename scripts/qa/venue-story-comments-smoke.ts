@@ -42,7 +42,10 @@ import {
 } from "../../src/lib/venue-stories/comment-submit-gesture";
 import {
   classifyStoryTap,
+  isStoryNavTap,
   STORY_NAV_BOTTOM_OFFSET,
+  STORY_NAV_TOP_OFFSET,
+  STORY_NAV_TAP_MAX_MS,
   STORY_PILL_BOTTOM_OFFSET,
   STORY_PILL_HEIGHT,
 } from "../../src/lib/venue-stories/story-tap-zone";
@@ -451,6 +454,58 @@ console.log("[탭 존 기하 — pill 경계는 모달(넘김 아님)]");
   }
 }
 
+// ── 헤더(닫기 X) 아래 넘기기 존 상단컷: X 근처 빗맞은 탭이 next 로 새지 않는다(하린아빠 7/31 iOS) ──
+console.log("[탭 존 기하 — 헤더/닫기 X 영역은 넘김 아님]");
+{
+  // iOS 네이티브 런타임 safe-area-inset-top 최소 44px 폴백 기준 + env()=0 인 웹 기준 둘 다.
+  const devices = [
+    { name: "iPhone15(safeTop 47)", w: 393, h: 852, safeTop: 47, safe: 34 },
+    { name: "웹(safeTop 0)", w: 390, h: 844, safeTop: 0, safe: 0 },
+  ];
+  for (const d of devices) {
+    const at = (x: number, y: number) =>
+      classifyStoryTap({
+        viewportWidth: d.w,
+        viewportHeight: d.h,
+        safeBottom: d.safe,
+        safeTop: d.safeTop,
+        x,
+        y,
+      });
+    // 헤더 컨트롤(닫기 X)은 top = safeTop+28 부터 44px → 그 세로 구간 우측 탭은 넘김 아님
+    const headerTop = d.safeTop + 28;
+    const xNearClose = d.w - 20; // 우상단 X 자리
+    ok(`${d.name}: 닫기 X 중앙 높이 탭 → none(다음 스토리로 새지 않음)`,
+      at(xNearClose, headerTop + 22) === "none");
+    ok(`${d.name}: X 바로 아래 빗맞음(헤더 하단 경계) → none`,
+      at(xNearClose, headerTop + 43) === "none");
+    ok(`${d.name}: 헤더 상단(진행바 근처) 탭 → none`, at(xNearClose, d.safeTop + 8) === "none");
+    // 컷 아래(헤더+80px 이후)는 정상 넘김 유지 — 넘기기 자체가 죽으면 안 된다
+    ok(`${d.name}: 헤더 컷 바로 아래 우측 탭 → next(넘김 유지)`,
+      at(xNearClose, d.safeTop + STORY_NAV_TOP_OFFSET + 1) === "next");
+    ok(`${d.name}: 화면 중앙 좌측 탭 → prev(넘김 유지)`, at(d.w * 0.1, d.h * 0.5) === "prev");
+    ok(`${d.name}: 헤더 컷(${STORY_NAV_TOP_OFFSET}px) ≥ 헤더 터치타깃 하단(28+44)`,
+      STORY_NAV_TOP_OFFSET >= 28 + 44);
+  }
+}
+
+// ── 1탭=1이동(인스타 동일): 짧은 탭은 즉시 이동, 길게 누르기는 일시정지(하린아빠 7/31 iOS) ──
+console.log("[넘기기 제스처 — 짧은 탭 즉시 이동 / long-press 는 일시정지]");
+{
+  ok("정지 상태 짧은 탭(80ms, 0px) → 이동",
+    isStoryNavTap({ elapsedMs: 80, deltaX: 0, deltaY: 0 }) === true);
+  ok("살짝 흔들린 탭(120ms, 6px) → 이동(손떨림 허용)",
+    isStoryNavTap({ elapsedMs: 120, deltaX: 4, deltaY: 4 }) === true);
+  ok("long-press(400ms) → 이동 아님(일시정지 경로)",
+    isStoryNavTap({ elapsedMs: 400, deltaX: 0, deltaY: 0 }) === false);
+  ok(`경계값(${STORY_NAV_TAP_MAX_MS}ms) → 이동 아님(타이머와 동일 임계)`,
+    isStoryNavTap({ elapsedMs: STORY_NAV_TAP_MAX_MS, deltaX: 0, deltaY: 0 }) === false);
+  ok("스와이프(60ms, 40px) → 이동 아님",
+    isStoryNavTap({ elapsedMs: 60, deltaX: 40, deltaY: 0 }) === false);
+  ok("세로 스크롤(60ms, 30px) → 이동 아님",
+    isStoryNavTap({ elapsedMs: 60, deltaX: 0, deltaY: 30 }) === false);
+}
+
 // ── 전송 제스처 상태기계(삼순 #948 blocker 1·2): 1탭=1POST, cancel/drag-out 0, trailing click 0중복, finally 뒤 2번째 ──
 console.log("[전송 제스처 — pointerdown/up/cancel + 중복 가드]");
 {
@@ -475,9 +530,28 @@ console.log("[전송 제스처 — pointerdown/up/cancel + 중복 가드]");
   // (3) drag-out: touch implicit-capture 로 버튼에서 up 나지만 좌표가 밖 → 미승인
   {
     const st = createPressState();
-    markPressStart(st);
+    markPressStart(st, { clientX: 120, clientY: 720 });
     ok("drag-out(버튼 밖 릴리즈) → 미승인(0 POST)",
       shouldSubmitOnPointerUp(st, { ...inside, clientX: 300, clientY: 900 }) === false);
+  }
+  // (3-b) 제자리 탭인데 이모지 키보드 개폐로 bounds 만 밀린 경우 → 승인(하린아빠 7/31 iOS 전송 씨힘).
+  //       손가락은 안 움직였으므로 #948 drag-out 보호(위 3)를 깨지 않는다.
+  {
+    const st = createPressState();
+    markPressStart(st, { clientX: 120, clientY: 720 });
+    // 키보드가 올라와 버튼이 위로 260px 이동 → 릴리즈 좌표는 새 bounds 밖이지만 손가락은 제자리
+    const shiftedBounds = { left: 100, top: 440, right: 140, bottom: 480 };
+    ok("제자리 탭 + 레이아웃 shift(버튼 이동) → 승인(이모지 전송 회귀)",
+      shouldSubmitOnPointerUp(st, {
+        isPrimary: true, button: 0, clientX: 121, clientY: 721, bounds: shiftedBounds,
+      }) === true);
+  }
+  // (3-c) origin 기록이 있어도 실제로 손가락이 많이 이동했으면 여전히 drag-out(회귀 고정)
+  {
+    const st = createPressState();
+    markPressStart(st, { clientX: 120, clientY: 720 });
+    ok("origin 기록 + 손가락 40px 이동 → 미승인(drag-out 보호 유지)",
+      shouldSubmitOnPointerUp(st, { ...inside, clientX: 160, clientY: 760 }) === false);
   }
   // (4) 비-primary / 보조버튼 → 미승인
   {
@@ -517,12 +591,32 @@ console.log("[컴포넌트 배선 — pointerup 제출/ pointerdown preventDefau
     /onPointerUp=\{[\s\S]*?shouldSubmitOnPointerUp\(commentPressRef\.current/.test(viewerSrc2));
   ok("전송 버튼 onPointerCancel 로 press 취소",
     /onPointerCancel=\{\(\) => cancelPress\(commentPressRef\.current\)\}/.test(viewerSrc2));
-  ok("pointerdown 은 preventDefault + markPressStart 만(즉시 handleCommentSubmit 호출 없음)",
-    /onPointerDown=\{\(e\) => \{\s*e\.preventDefault\(\);\s*markPressStart\(commentPressRef\.current\);\s*\}\}/.test(viewerSrc2));
+  ok("pointerdown 은 preventDefault + markPressStart(origin 좌표) 만(즉시 handleCommentSubmit 호출 없음)",
+    /onPointerDown=\{\(e\) => \{\s*e\.preventDefault\(\);\s*markPressStart\(commentPressRef\.current, \{ clientX: e\.clientX, clientY: e\.clientY \}\);\s*\}\}/.test(viewerSrc2));
   ok("handleCommentSubmit 가 canBeginCommentSubmit 로 재진입 가드",
     /canBeginCommentSubmit\(\{/.test(viewerSrc2));
   ok("넘기기 탭 존 bottom = safeBottomCalc(STORY_NAV_BOTTOM_OFFSET)",
     /bottom: safeBottomCalc\(STORY_NAV_BOTTOM_OFFSET\)/.test(viewerSrc2));
+  // 하린아빠 7/31 iOS 3종
+  ok("넘기기 탭 존 top = safe-area + STORY_NAV_TOP_OFFSET(헤더 아래에서 시작)",
+    /top: `calc\(\$\{safeAreaInsetTop\} \+ \$\{STORY_NAV_TOP_OFFSET\}px\)`/.test(viewerSrc2));
+  ok("넘기기 탭 존에 top-0 잔류 없음(헤더 밑으로 깔리지 않음)",
+    !/absolute top-0 (left|right)-0 w-(1\/3|2\/3)/.test(viewerSrc2));
+  ok("헤더 컨트롤(닫기/더보기/음소거) 44px 터치타깃(w-11 h-11)",
+    (viewerSrc2.match(/className="w-11 h-11 flex items-center justify-center text-white\/90"/g) ?? []).length === 3);
+  ok("헤더 컨트롤에 36px(w-9 h-9) 잔류 없음",
+    !/className="w-9 h-9 flex items-center justify-center text-white\/90"/.test(viewerSrc2));
+  ok("넘기기 존 pointerup 이 isStoryNavTap 기반 즉시 이동(1탭=1이동)",
+    /onPointerUp=\{handleNavPointerUp\("prev"\)\}/.test(viewerSrc2)
+      && /onPointerUp=\{handleNavPointerUp\("next"\)\}/.test(viewerSrc2)
+      && /isStoryNavTap\(\{/.test(viewerSrc2));
+  ok("long-press 만 일시정지(pointerdown 즉시 setPaused(true) 아님)",
+    !/onPointerDown=\{\(\) => setPaused\(true\)\}/.test(viewerSrc2)
+      && /navPauseTimerRef\.current = setTimeout\(/.test(viewerSrc2));
+  ok("전송 버튼 disabled 는 busy 만(controlled 빈 값으로 잠그지 않음 — 이모지 회귀)",
+    /disabled=\{commentBusy\}/.test(viewerSrc2));
+  ok("제출 내용은 DOM value 폴백 포함(controlled state 만 신뢰하지 않음)",
+    /commentInputRef\.current\?\.value/.test(viewerSrc2));
 }
 
 console.log(`\n결과: ${pass} pass / ${fail} fail`);

@@ -14,7 +14,18 @@
 
 export interface PressState {
   pressActive: boolean;
+  /** pointerdown 좌표(있으면 stationary-tap 판정에 사용). 없으면 bounds 판정만. */
+  originX?: number;
+  originY?: number;
 }
+
+/**
+ * 제자리 탭 허용 반경(px). iOS 이모지 키보드가 뜨/닫히면 pointerdown~pointerup 사이 시각
+ * 뷰포트가 흔들려 버튼 getBoundingClientRect() 가 이동한다 → 손가락은 가만히 있었는데
+ * "버튼 밖 릴리즈(drag-out)"로 오판돼 제출이 통째로 씨힜다(하린아빠 7/31 iOS 이모지 리포트).
+ * 손가락 이동량 자체가 이 반경 이내면 레이아웃이 어떻게 흔들렸든 진짜 탭으로 본다.
+ */
+export const COMMENT_SUBMIT_TAP_SLOP_PX = 12;
 
 export interface PointerUpLike {
   isPrimary?: boolean;
@@ -28,28 +39,49 @@ export function createPressState(): PressState {
   return { pressActive: false };
 }
 
-/** pointerdown: press 시작만 기록(제출은 pointerup/click). 호출부가 preventDefault 로 포커스 유지. */
-export function markPressStart(state: PressState): void {
+/** pointerdown: press 시작 + 시작 좌표 기록(제출은 pointerup/click). 호출부가 preventDefault 로 포커스 유지. */
+export function markPressStart(
+  state: PressState,
+  origin: { clientX?: number; clientY?: number } = {},
+): void {
   state.pressActive = true;
+  state.originX = typeof origin.clientX === "number" ? origin.clientX : undefined;
+  state.originY = typeof origin.clientY === "number" ? origin.clientY : undefined;
 }
 
 /** pointercancel/leave: 스크롤·드래그로 제스처 취소 → 제출 안 함. */
 export function cancelPress(state: PressState): void {
   state.pressActive = false;
+  state.originX = undefined;
+  state.originY = undefined;
 }
 
 /**
  * pointerup: 이 버튼 위에서 끝난 primary(주 버튼) 탭만 제출 승인.
  * - press 이미 해제됨(pointercancel/중복 up) → false
  * - 비-primary 포인터 / 보조 버튼(button>0) → false
- * - 릴리즈 좌표가 버튼 bounds 밖(touch implicit-capture drag-out) → false
+ * - 손가락이 거의 안 움직인 제자리 탭(≤ SLOP) → true (레이아웃 shift 로 bounds 가 밀려도 제출)
+ * - 그 외 릴리즈 좌표가 버튼 bounds 밖(touch implicit-capture drag-out) → false
  * 어느 경우든 press 는 소비(해제)한다.
  */
 export function shouldSubmitOnPointerUp(state: PressState, e: PointerUpLike = {}): boolean {
   if (!state.pressActive) return false;
   state.pressActive = false;
+  const originX = state.originX;
+  const originY = state.originY;
+  state.originX = undefined;
+  state.originY = undefined;
   if (e.isPrimary === false) return false;
   if (typeof e.button === "number" && e.button > 0) return false;
+  if (
+    typeof originX === "number" &&
+    typeof originY === "number" &&
+    typeof e.clientX === "number" &&
+    typeof e.clientY === "number" &&
+    Math.hypot(e.clientX - originX, e.clientY - originY) <= COMMENT_SUBMIT_TAP_SLOP_PX
+  ) {
+    return true; // 제자리 탭: bounds 가 키보드/시트 재계산으로 밀렸어도 진짜 탭
+  }
   if (
     e.bounds &&
     typeof e.clientX === "number" &&
