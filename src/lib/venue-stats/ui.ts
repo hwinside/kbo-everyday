@@ -4,6 +4,8 @@ import type {
   MetricId,
   VenueStatsScopePayload,
 } from "@/lib/venue-stats/types";
+// 순수 leaf 모듈 — aggregate.ts 는 node 전용 의존을 끌어서 클라이언트 번들에 넣으면 안 된다.
+import { MIN_FINAL_GAMES } from "@/lib/venue-stats/state";
 
 export const VENUE_STATS_UI_GROUPS = {
   hero: ["A1"],
@@ -67,6 +69,12 @@ export interface VenueStatsHero {
   deltaPp: number | null;
   mixedTeam: boolean;
   teamIds: number[];
+  /**
+   * 표본 미달 여부(참고용 계약 적용 대상).
+   * `state === "sample_limited"` 뿐 아니라 mixed_team 이어도 총 final < MIN_FINAL_GAMES 면 true —
+   * 파이프라인에서 복수 팀은 표본 가드보다 먼저 mixed_team 으로 확정되어 표본 미달이 가려진다.
+   */
+  sampleLimited: boolean;
 }
 
 export function buildVenueStatsHero(scope: VenueStatsScopePayload): VenueStatsHero {
@@ -82,7 +90,12 @@ export function buildVenueStatsHero(scope: VenueStatsScopePayload): VenueStatsHe
   }
   // 표본 미달이면 사실값(W/L/D·승률)만 노출하고 파생 '요정 지수'는 확정값처럼 보이지 않게 비운다.
   // (2승 0패 → score 100 같은 과대 확정 표기 차단 — 2026-07-31 삼순 리뷰)
-  const sampleLimited = metric.state === "sample_limited";
+  //
+  // mixed_team 은 표본 가드보다 먼저 판정되므로 state 만 보면 총 2경기짜리도 sample_limited 가
+  // 아니게 된다 — 그래서 총 final 경기수(metric.n)로 한 번 더 막는다 (삼순 P0-2).
+  const sampleLimited =
+    metric.state === "sample_limited" ||
+    (metric.state === "mixed_team" && metric.n < MIN_FINAL_GAMES);
   return {
     // S1 계약에 별도 합성 점수는 없다. A1 직관 승률(0~1)을 0~100으로만 표시한다.
     score: sampleLimited || rate == null ? null : Math.round(rate * 100),
@@ -91,6 +104,7 @@ export function buildVenueStatsHero(scope: VenueStatsScopePayload): VenueStatsHe
     deltaPp: value?.deltaPp ?? null,
     mixedTeam: metric.state === "mixed_team",
     teamIds: [...teamIds],
+    sampleLimited,
   };
 }
 

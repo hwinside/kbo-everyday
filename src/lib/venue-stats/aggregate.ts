@@ -30,7 +30,6 @@ import type {
   B3Value,
   B4Side,
   B4Value,
-  BTeamValue,
   C1Entry,
   C2Entry,
   C4Entry,
@@ -628,17 +627,6 @@ function stripSeasonBaseline(id: "B1" | "B2" | "B3" | "B4", value: unknown): unk
   return { hr: strip(v.hr), hitsAllowed: strip(v.hitsAllowed) } satisfies B4Value;
 }
 
-/** mixed_team perTeam item(BTeamValue)은 4지표 묶음이라 각각 벼낸다. */
-function stripSeasonBaselineTeam(value: BTeamValue | null): BTeamValue | null {
-  if (value == null) return null;
-  return {
-    b1: stripSeasonBaseline("B1", value.b1) as B1Value | null,
-    b2: stripSeasonBaseline("B2", value.b2) as B2Value | null,
-    b3: stripSeasonBaseline("B3", value.b3) as B3Value | null,
-    b4: stripSeasonBaseline("B4", value.b4) as B4Value | null,
-  };
-}
-
 function computeBForTeam(ctx: Ctx, teamId: number, games: ScopeGame[]): BTeamComputed {
   const att = teamAttendanceTotals(ctx, teamId, games);
   const season = ctx.input.teamSeasonTotals?.get(teamId) ?? null;
@@ -812,6 +800,8 @@ function buildB(
             : "sample_limited";
       // 표본 미달(sample_limited)은 직관 사실값만 노출하고 시즌 baseline·delta는 fail-closed.
       // partial_data(적재 누락)는 수치 자체가 불완전이므로 계속 전체 null.
+      // ⚠️ mixed 여기서 part.value 는 BTeamValue 가 아니라 현재 id 하나의 값(B1Value 등)이다.
+      // BTeamValue 로 cast 해 strip 하면 shape 가 깨져 attendanceAvg 까지 사라진다(2026-07-31 삼순 P0-1).
       const item: ItemEnvelope = {
         key: String(teamId),
         state: itemState,
@@ -819,8 +809,8 @@ function buildB(
           itemState === "partial_data"
             ? null
             : itemState === "sample_limited"
-              ? stripSeasonBaselineTeam(part.value as BTeamValue | null)
-              : (part.value as BTeamValue | null),
+              ? stripSeasonBaseline(id, part.value)
+              : part.value,
         n: games.length,
         denominator: part.denominator,
         coverage: {

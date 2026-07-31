@@ -401,6 +401,60 @@ console.log("\n[5] mixed snapshot team — A1/B perTeam");
       (item(a1, String(LG))?.value as { deltaPp: unknown } | null)?.deltaPp === null,
   );
   ok("B1 mixed_team: value=null + perTeam items", s.metrics.B1.state === "mixed_team" && s.metrics.B1.value === null && s.metrics.B1.items?.length === 2);
+  // ─ mixed 표본 미달 item 은 단일팀과 동일 계약: 직관 사실값 shape 보존 + 시즌 baseline·delta null.
+  // (part.value 를 BTeamValue 로 cast 해 strip 하면 shape 가 깨져 attendanceAvg 까지 사라졌던 결함 — 삼순 P0-1)
+  {
+    const b1Item = item(s.metrics.B1, String(KT));
+    const b1Value = b1Item?.value as B1Value | null;
+    ok(
+      "B1 mixed sample_limited item: attendanceAvg shape 보존·seasonAvg/delta null",
+      b1Item?.state === "sample_limited" &&
+        approx(b1Value?.attendanceAvg, 0.25) &&
+        b1Value?.seasonAvg === null &&
+        b1Value?.delta === null,
+    );
+    const b2Item = item(s.metrics.B2, String(KT));
+    const b2Value = b2Item?.value as B2Value | null;
+    ok(
+      "B2 mixed sample_limited item: B2 shape 유지(attendanceEra 키 존재)·seasonEra/delta null",
+      b2Item?.state === "sample_limited" &&
+        b2Value != null &&
+        "attendanceEra" in b2Value &&
+        b2Value.seasonEra === null &&
+        b2Value.delta === null,
+    );
+    const b4Item = item(s.metrics.B4, String(KT));
+    const b4Value = b4Item?.value as B4Value | null;
+    ok(
+      "B4 mixed sample_limited item: hr/hitsAllowed attendancePerGame 보존·seasonPerGame/delta null",
+      b4Item?.state === "sample_limited" &&
+        b4Value?.hr?.attendancePerGame === 0 &&
+        b4Value?.hr?.seasonPerGame === null &&
+        b4Value?.hr?.delta === null &&
+        b4Value?.hitsAllowed?.attendancePerGame === 0 &&
+        b4Value?.hitsAllowed?.seasonPerGame === null &&
+        b4Value?.hitsAllowed?.delta === null,
+    );
+    // partial_data(적재 누락) item 은 수치 자체가 불완전이라 계속 전체 null.
+    ok(
+      "B1 mixed partial_data item 은 여전히 value=null (fail-closed 유지)",
+      item(s.metrics.B1, String(LG))?.state === "partial_data" &&
+        item(s.metrics.B1, String(LG))?.value === null,
+    );
+  }
+  // ─ mixed_team 총 final 이 모자라면 파생 '요정 지수'도 참고용 계약 (삼순 P0-2).
+  {
+    const mixedHero = buildVenueStatsHero(s);
+    ok(
+      "hero mixed_team 총 2경기: sampleLimited=true·score=null (승률 요정 배지 방지)",
+      s.metrics.A1.n === 2 && mixedHero.sampleLimited === true && mixedHero.score === null,
+    );
+    ok(
+      "hero mixed_team: score 는 비워도 사실 W/L/D 는 그대로",
+      mixedHero.attendance != null &&
+        mixedHero.attendance.w + mixedHero.attendance.l + mixedHero.attendance.d === 2,
+    );
+  }
   const e1 = s.metrics.E1 as MetricEnvelope<{ perTeam: Array<{ teamId: number }> }>;
   ok("E1 perTeam 팀별 구간 분리 (팀 가로지르기 금지 — §9)", (e1.value?.perTeam.length ?? 0) >= 2);
 }

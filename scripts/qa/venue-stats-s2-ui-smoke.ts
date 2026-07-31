@@ -50,7 +50,40 @@ assert.deepEqual(buildVenueStatsHero(scope), {
   deltaPp: 19.4,
   mixedTeam: false,
   teamIds: [1],
+  sampleLimited: false,
 });
+
+// ─ 표본 미달 계약: 파생 '요정 지수'는 확정값처럼 노출하지 않는다.
+// mixed_team 은 표본 가드보다 먼저 판정되므로 state 만으로는 총 2경기가 안 걸린다 (삼순 P0-2).
+{
+  const mixedMetrics = JSON.parse(JSON.stringify(metrics)) as VenueStatsScopePayload["metrics"];
+  mixedMetrics.A1.state = "mixed_team";
+  mixedMetrics.A1.n = 2;
+  mixedMetrics.A1.value = {
+    attendance: { w: 2, l: 0, d: 0, rate: 1 },
+    teamComparable: null,
+    deltaPp: null,
+  };
+  mixedMetrics.A1.items = [
+    { key: "1", state: "sample_limited", value: null, n: 1, denominator: {} },
+    { key: "2", state: "sample_limited", value: null, n: 1, denominator: {} },
+  ];
+  const mixedHero = buildVenueStatsHero({ ...scope, metrics: mixedMetrics });
+  assert.equal(mixedHero.sampleLimited, true, "mixed_team 총 2경기는 참고용 계약 대상");
+  assert.equal(mixedHero.score, null, "mixed_team 총 2경기 전승도 요정 지수 100 금지");
+  assert.deepEqual(
+    mixedHero.attendance,
+    { w: 2, l: 0, d: 0, rate: 1 },
+    "score 는 비워도 사실 W/L/D 는 유지",
+  );
+
+  // 총 final 이 가드를 넘으면 mixed_team 이어도 정상 노출.
+  const mixedReady = JSON.parse(JSON.stringify(mixedMetrics)) as VenueStatsScopePayload["metrics"];
+  mixedReady.A1.n = 6;
+  const readyHero = buildVenueStatsHero({ ...scope, metrics: mixedReady });
+  assert.equal(readyHero.sampleLimited, false, "mixed_team 이어도 표본 충족이면 참고용 아님");
+  assert.equal(readyHero.score, 100, "표본 충족 mixed_team 은 파생 점수 노출");
+}
 assert.equal(formatRate(0.75), "75.0%");
 assert.equal(formatRate(null), "–");
 assert.equal(formatAvg(0.286), ".286");
