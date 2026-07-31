@@ -77,16 +77,24 @@ const scope = (name, wins, rate) => {
       { key:"9", state:"ready", value:{attendance:{w:2,l:2,d:0,rate:.5},teamComparable:null,deltaPp:null}, n:4, denominator:{} },
     ],
   };
-  const teamValue = {
-    b1:{attendanceAvg:.286,seasonAvg:.263,delta:.023},
-    b2:{attendanceEra:3.42,seasonEra:4.01,delta:-.59},
-    b3:{runsPerGame:5.2,totalRuns:21},
-    b4:{hr:{attendancePerGame:1.3,seasonPerGame:1.0,delta:.3},hitsAllowed:null},
+  const teamValues = {
+    "1": {
+      B1:{attendanceAvg:.286,seasonAvg:.263,delta:.023},
+      B2:{attendanceEra:3.42,seasonEra:4.01,delta:-.59},
+      B3:{runsPerGame:5.2,totalRuns:21},
+      B4:{hr:{attendancePerGame:1.3,seasonPerGame:1.0,delta:.3},hitsAllowed:null},
+    },
+    "9": {
+      B1:{attendanceAvg:.251,seasonAvg:.244,delta:.007},
+      B2:{attendanceEra:4.18,seasonEra:4.31,delta:-.13},
+      B3:{runsPerGame:4.1,totalRuns:16},
+      B4:{hr:{attendancePerGame:.8,seasonPerGame:.7,delta:.1},hitsAllowed:null},
+    },
   };
   for (const id of ["B1","B2","B3","B4"]) {
     metrics[id] = {...envelope(id, null),state:"mixed_team",items:[
-      {key:"1",state:"ready",value:teamValue,n:4,denominator:{}},
-      {key:"9",state:"ready",value:teamValue,n:4,denominator:{}},
+      {key:"1",state:"ready",value:teamValues["1"][id],n:4,denominator:{}},
+      {key:"9",state:"ready",value:teamValues["9"][id],n:4,denominator:{}},
     ]};
   }
   metrics.C1 = envelope("C1", [{playerId:"p1",attendanceAvg:.333,seasonAvg:.278,deltaAvg:.055,attendanceHrPerGame:.2,seasonHrPerGame:.1,attendanceRbiPerGame:1,seasonRbiPerGame:.7,appearances:6,ab:21}], {attendanceAB:21});
@@ -119,15 +127,30 @@ const payload = {
   overall:scope("overall",5,.625),
   gps:scope("gps",3,.375),
 };
+const stalePayload = {
+  season:2025,
+  seasonSupport:{status:"attendance_only",supportedSeason:2026},
+  overall:scope("overall",2,.25),
+  gps:scope("gps",1,.125),
+};
 
 const css = await postcss([tailwind]).process(
   readFileSync(resolve(ROOT, "src/styles/globals.css"), "utf8"),
   { from: resolve(ROOT, "src/styles/globals.css") },
 );
 const bundle = readFileSync(resolve(GEN, "bundle.js"), "utf8");
+let initial2026Served = false;
 const server = createServer((req, res) => {
   if (req.url?.startsWith("/api/me/venue-stats")) {
-    return res.writeHead(200, {"content-type":"application/json"}).end(JSON.stringify(payload));
+    const requestedSeason = new URL(req.url, "http://127.0.0.1").searchParams.get("season");
+    const body = requestedSeason === "2025" ? stalePayload : payload;
+    const delay = requestedSeason === "2025" ? 300 : initial2026Served ? 10 : 0;
+    if (requestedSeason === "2026") initial2026Served = true;
+    return setTimeout(() => {
+      if (!res.destroyed) {
+        res.writeHead(200, {"content-type":"application/json"}).end(JSON.stringify(body));
+      }
+    }, delay);
   }
   if (req.url === "/app.css") return res.writeHead(200, {"content-type":"text/css"}).end(css.css);
   if (req.url === "/bundle.js") return res.writeHead(200, {"content-type":"text/javascript"}).end(bundle);
@@ -143,13 +166,134 @@ const page = await browser.newPage({ viewport: { width: 390, height: 844 }, devi
 try {
   await page.goto(`http://127.0.0.1:${port}`, { waitUntil: "domcontentloaded" });
   await page.getByText("63", { exact: true }).waitFor();
+  const lgSegment = page.getByText("LG 응원 구간", { exact: true }).nth(1).locator("../..");
+  const hanwhaSegment = page.getByText("한화 응원 구간", { exact: true }).nth(1).locator("../..");
+  const lgText = await lgSegment.innerText();
+  const hanwhaText = await hanwhaSegment.innerText();
+  if (![".286", "3.42", "5.2", "1.3"].every((value) => lgText.includes(value))) {
+    throw new Error(`mixed-team LG B1~B4 actual payload mismatch: ${lgText}`);
+  }
+  if (![".251", "4.18", "4.1", "0.8"].every((value) => hanwhaText.includes(value))) {
+    throw new Error(`mixed-team 한화 B1~B4 actual payload mismatch: ${hanwhaText}`);
+  }
   const body = await page.locator("body").innerText();
   if (!body.includes("LG 응원 구간") || !body.includes("한화 응원 구간")) throw new Error("mixed-team segments missing");
   if ((await page.evaluate(() => document.documentElement.scrollWidth)) > 390) throw new Error("horizontal overflow");
+
+  const staleRequest = page.waitForRequest((request) => request.url().includes("season=2025"));
+  await page.locator("select").selectOption("2025");
+  await staleRequest;
+  await page.locator("select").selectOption("2026");
+  await page.getByText("63", { exact: true }).waitFor();
+  await page.waitForTimeout(400);
+  if ((await page.locator("select").inputValue()) !== "2026") throw new Error("season selection rolled back");
+  if (await page.getByText("25", { exact: true }).isVisible()) throw new Error("stale 2025 response overwrote 2026");
+
   await page.getByRole("button", { name: "GPS 인증만" }).click();
   await page.getByText("38", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "상대·구장·요일 상세 통계" }).click();
+
+  const contrast = await page.evaluate(() => {
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = 1;
+    const context = canvas.getContext("2d");
+    const rgba = (value) => {
+      context.clearRect(0, 0, 1, 1);
+      context.fillStyle = "rgba(0,0,0,0)";
+      context.fillStyle = value;
+      context.fillRect(0, 0, 1, 1);
+      const data = context.getImageData(0, 0, 1, 1).data;
+      return { rgb: [data[0], data[1], data[2]], alpha: data[3] / 255 };
+    };
+    const over = (foreground, background) =>
+      foreground.rgb.map((channel, index) =>
+        Math.round(channel * foreground.alpha + background[index] * (1 - foreground.alpha)));
+    const gradientAverage = (image) => {
+      const colors = image.match(/rgba?\([^)]+\)/g)?.map(rgba).filter((color) => color.alpha > 0.01) ?? [];
+      if (colors.length === 0) return null;
+      return [0, 1, 2].map((index) =>
+        Math.round(colors.reduce((sum, color) => sum + color.rgb[index], 0) / colors.length));
+    };
+    const effectiveBackground = (element) => {
+      const chain = [];
+      for (let current = element; current && current !== document.documentElement; current = current.parentElement) {
+        chain.push(current);
+      }
+      chain.push(document.documentElement);
+      let background = [255, 255, 255];
+      for (let index = chain.length - 1; index >= 0; index -= 1) {
+        const style = getComputedStyle(chain[index]);
+        const color = rgba(style.backgroundColor);
+        if (color.alpha > 0.001) background = over(color, background);
+        if (style.backgroundImage !== "none") {
+          const gradient = gradientAverage(style.backgroundImage);
+          if (gradient) background = gradient;
+        }
+      }
+      return background;
+    };
+    const luminance = (rgb) => {
+      const channels = rgb.map((value) => {
+        const normalized = value / 255;
+        return normalized <= 0.03928
+          ? normalized / 12.92
+          : ((normalized + 0.055) / 1.055) ** 2.4;
+      });
+      return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+    };
+    const ratio = (foreground, background) => {
+      const first = luminance(foreground);
+      const second = luminance(background);
+      return (Math.max(first, second) + 0.05) / (Math.min(first, second) + 0.05);
+    };
+    const probe = (element) => {
+      const background = effectiveBackground(element);
+      const foreground = over(rgba(getComputedStyle(element).color), background);
+      return ratio(foreground, background);
+    };
+    const root = document.querySelector('[data-testid="venue-stats-dashboard"]');
+    const candidates = [...root.querySelectorAll("*")].filter((element) => {
+      const directText = [...element.childNodes]
+        .filter((node) => node.nodeType === Node.TEXT_NODE)
+        .map((node) => node.textContent ?? "")
+        .join("")
+        .trim();
+      const rect = element.getBoundingClientRect();
+      const style = getComputedStyle(element);
+      return directText.length > 0 && rect.width > 0 && rect.height > 0 &&
+        style.display !== "none" && style.visibility !== "hidden";
+    });
+    const measured = candidates.map((element) => ({
+      text: [...element.childNodes]
+        .filter((node) => node.nodeType === Node.TEXT_NODE)
+        .map((node) => node.textContent ?? "")
+        .join("")
+        .trim()
+        .replace(/\s+/g, " ")
+        .slice(0, 60),
+      ratio: probe(element),
+    }));
+    const target = candidates.find((element) => element.textContent?.trim() === "정규시즌 기준");
+    const previousColor = target.style.color;
+    target.style.color = "rgba(255,255,255,0.2)";
+    const mutationRatio = probe(target);
+    target.style.color = previousColor;
+    return {
+      count: measured.length,
+      minimum: Math.min(...measured.map((entry) => entry.ratio)),
+      failures: measured.filter((entry) => entry.ratio < 4.5),
+      mutationRatio,
+    };
+  });
+  if (contrast.failures.length > 0) {
+    throw new Error(`Dashboard AA contrast failures: ${JSON.stringify(contrast.failures.slice(0, 8))}`);
+  }
+  if (contrast.mutationRatio >= 4.5) throw new Error("Dashboard AA mutation guard did not fail");
+
   await page.screenshot({ path: SHOT, fullPage: true });
-  console.log(`venue stats S2 browser: PASS (390px, scope switch, mixed-team segments)\nshot: ${SHOT}`);
+  console.log(
+    `venue stats S2 browser: PASS (390px, B1~B4 actual payload, season abort/generation, AA ${contrast.minimum.toFixed(2)}:1 across ${contrast.count} texts)\nshot: ${SHOT}`,
+  );
 } finally {
   await browser.close();
   server.close();
