@@ -23,6 +23,10 @@ CREATE TABLE IF NOT EXISTS public.genius_rag_sources (
   lease_until timestamptz,
   claim_token uuid,
   claim_generation bigint NOT NULL DEFAULT 0 CHECK (claim_generation >= 0),
+  -- 서빙 중인 generation(= 마지막으로 complete에 성공한 generation). §12 "마지막 성공 snapshot 보존" 계약의
+  -- 저장소다. claim은 새 generation을 stage만 하고 이 값을 건드리지 않으며, complete가 원자적으로 swap한다.
+  -- 0은 아직 성공 snapshot이 없다는 뜻이다.
+  active_claim_generation bigint NOT NULL DEFAULT 0 CHECK (active_claim_generation >= 0),
   revision text,
   content_hash text,
   crawled_at timestamptz,
@@ -55,8 +59,10 @@ CREATE TABLE IF NOT EXISTS public.genius_rag_sources (
       AND ingested_at IS NOT NULL
       AND claim_token IS NULL
       AND lease_until IS NULL
+      AND active_claim_generation > 0
     )
-  )
+  ),
+  CHECK (active_claim_generation <= claim_generation)
 );
 
 CREATE INDEX IF NOT EXISTS idx_genius_rag_sources_ingestion_queue
@@ -98,8 +104,27 @@ CREATE TABLE IF NOT EXISTS public.genius_rag_chunks (
   created_at timestamptz NOT NULL DEFAULT now(),
   FOREIGN KEY (source_key, source_kind)
     REFERENCES public.genius_rag_sources(source_key, source_kind) ON DELETE CASCADE,
-  UNIQUE (source_key, revision, section_path, chunk_index)
+  -- generation을 UNIQUE 키에 포함해야 stage→swap이 성립한다. generation이 빠져 있으면 재수집(gen2)이
+  -- 같은 (revision, section_path, chunk_index)를 쓸 때 서빙 중인 gen1 행을 덮어써서
+  -- complete 전에 마지막 성공 snapshot이 파괴된다(§12 위반). 두 generation은 별도 행으로 공존하고,
+  -- complete 시점에만 active가 전환되며 비활성 generation이 정리된다.
+  UNIQUE (source_key, claim_generation, revision, section_path, chunk_index)
 );
+
+-- 서빙 조건을 generation에 결속한다: **active generation chunk만** retrieval 대상이다.
+-- stage 중인 새 generation(미완성)은 complete 전까지 이 뷰에 절대 나타나지 않는다.
+-- 반대로 source가 재수집으로 'ingesting'이 되어도 마지막 성공 snapshot은 계속 서빙된다
+-- (§12 "마지막 성공 snapshot 보존"). 서빙 기준은 ingestion_status가 아니라 active snapshot 존재여부다.
+-- SECURITY DEFINER 뷰다(security_invoker 미지정) — service_role은 genius_rag_chunks에 직접 SELECT 권한이
+-- 없으므로 이 뷰가 유일한 읽기 경로이며, generation 결속을 우회할 수 없다.
+CREATE OR REPLACE VIEW public.genius_rag_serving_chunks AS
+SELECT chunk.*
+FROM public.genius_rag_chunks chunk
+JOIN public.genius_rag_sources source
+  ON source.source_key = chunk.source_key
+ WHERE source.tombstoned_at IS NULL
+   AND source.active_claim_generation > 0
+   AND chunk.claim_generation = source.active_claim_generation;
 
 CREATE OR REPLACE FUNCTION public.invalidate_baseball_genius_rag_identity_drift()
 RETURNS trigger
@@ -169,6 +194,8 @@ BEGIN
     SELECT 1
     FROM public.genius_rag_chunks chunk
     WHERE chunk.source_key = NEW.source_key
+      -- ready는 active generation에만 근거한다(서빙 조건 = generation 결속).
+      AND chunk.claim_generation = NEW.active_claim_generation
       AND chunk.revision = NEW.revision
       AND chunk.document_content_hash = NEW.content_hash
       AND chunk.entity_type = NEW.entity_type
@@ -237,14 +264,16 @@ BEGIN
     WHERE source.source_key = candidate.source_key
     RETURNING source.*
   ),
-  -- crash한 이전 generation이 남긴 chunk를 reclaim 시점에 정리한다.
-  -- 이걸 안 하면 gen2가 같은 (revision, section_path, chunk_index)를 쓸 때 UNIQUE 충돌로
-  -- 재수집이 영구히 실패하고 source가 ingesting에 갇힌다.
+  -- claim은 새 generation을 stage만 한다. 마지막 성공 snapshot(active generation)은 절대 지우지 않는다.
+  -- 여기서 정리하는 대상은 complete에 도달하지 못한 미완성 generation(실패/lease 만료 partial)뿐이다.
+  -- §12 "마지막 성공 snapshot 보존": gen1 ready → source stale → gen2 claim 시에도 gen1 chunk는
+  -- gen2가 complete되어 active가 swap될 때까지 그대로 남아 서빙된다.
   purged AS (
     DELETE FROM public.genius_rag_chunks chunk
     USING claimed
     WHERE chunk.source_key = claimed.source_key
       AND chunk.claim_generation < claimed.claim_generation
+      AND chunk.claim_generation <> claimed.active_claim_generation
     RETURNING chunk.id
   )
   SELECT claimed.* FROM claimed;
@@ -270,6 +299,8 @@ DECLARE
 BEGIN
   UPDATE public.genius_rag_sources source
   SET ingestion_status = 'ready',
+      -- stage→swap: 이 시점에만 active generation이 새 generation으로 원자 전환된다.
+      active_claim_generation = p_claim_generation,
       revision = p_revision,
       content_hash = p_content_hash,
       crawled_at = p_crawled_at,
@@ -294,14 +325,30 @@ BEGIN
         AND chunk.crawled_at = p_crawled_at
         AND chunk.embedding IS NOT NULL
     )
-    -- 검색 불가능한 chunk가 단 1건이라도 남아 있으면 ready로 올리지 않는다.
+    -- current claim generation의 **모든** chunk가 동일 provenance여야 한다.
+    -- 이질 revision/document_content_hash/crawled_at/claim_token이 섞이거나 embedding이 NULL인
+    -- chunk가 단 1건이라도 있으면 ready로 올리지 않는다(검색 불가 chunk + 오염된 snapshot 차단).
     AND NOT EXISTS (
       SELECT 1 FROM public.genius_rag_chunks chunk
       WHERE chunk.source_key = source.source_key
         AND chunk.claim_generation = p_claim_generation
-        AND chunk.embedding IS NULL
+        AND (
+          chunk.embedding IS NULL
+          OR chunk.claim_token IS DISTINCT FROM p_claim_token
+          OR chunk.revision IS DISTINCT FROM p_revision
+          OR chunk.document_content_hash IS DISTINCT FROM p_content_hash
+          OR chunk.crawled_at IS DISTINCT FROM p_crawled_at
+        )
     )
   RETURNING true INTO v_completed;
+
+  IF coalesce(v_completed, false) THEN
+    -- swap 완료 후에야 비활성 generation(이전 snapshot 포함)을 정리한다.
+    -- 순서가 반대였으면 swap 전에 마지막 성공 snapshot이 사라져 서빙 공백이 생긴다.
+    DELETE FROM public.genius_rag_chunks chunk
+    WHERE chunk.source_key = p_source_key
+      AND chunk.claim_generation <> p_claim_generation;
+  END IF;
 
   RETURN coalesce(v_completed, false);
 END;
@@ -310,9 +357,13 @@ $$;
 -- worker의 유일한 chunk write 경로다.
 -- (1) service_role은 genius_rag_chunks에 직접 INSERT 권한도 identity sequence USAGE도 없다.
 --     SECURITY DEFINER RPC만 열어 claim token/generation 검증을 거친 write만 허용한다.
--- (2) gen1이 chunk를 남기고 crash한 뒤 lease 만료로 gen2가 reclaim하면 같은
---     (source_key, revision, section_path, chunk_index)를 다시 쓰게 되어 UNIQUE 충돌로 재수집이 영구 실패했다.
---     generation-safe replace로 더 새로운 generation만 기존 행을 덮어쓴다(오래된 worker의 역주행은 거부).
+-- (2) gen1이 chunk를 남기고 crash한 뒤 lease 만료로 gen2가 reclaim해도 UNIQUE 키에 claim_generation이
+--     포함되어 있으므로 두 generation이 별도 행으로 공존한다(stage). 서빙 중인 이전 snapshot을
+--     덮어쓰지 않으며, active 전환은 complete RPC가 원자적으로 수행한다.
+-- (3) DB commit 후 응답이 timeout되면 worker는 결과를 모른다. 같은 claim(동일 generation + 동일 token)의
+--     재시도는 idempotent update로 성공해야 하며, 낮은 generation이나 다른 token은 거부한다.
+--     낮은 generation 역주행은 UNIQUE 키가 달라 애초에 충돌하지 않고, chunk owner trigger의
+--     claim_generation 검증이 거부한다.
 CREATE OR REPLACE FUNCTION public.upsert_baseball_genius_rag_chunk(
   p_source_key text,
   p_claim_token uuid,
@@ -354,7 +405,7 @@ BEGIN
     p_chunk_index, p_content, p_document_content_hash, p_content_hash, p_source_grade, p_crawled_at, p_as_of,
     p_claim_token, p_claim_generation, p_embedding, coalesce(p_metadata, '{}'::jsonb)
   )
-  ON CONFLICT (source_key, revision, section_path, chunk_index) DO UPDATE
+  ON CONFLICT (source_key, claim_generation, revision, section_path, chunk_index) DO UPDATE
   SET entity_type = EXCLUDED.entity_type,
       entity_id = EXCLUDED.entity_id,
       page_title = EXCLUDED.page_title,
@@ -369,7 +420,9 @@ BEGIN
       claim_generation = EXCLUDED.claim_generation,
       embedding = EXCLUDED.embedding,
       metadata = EXCLUDED.metadata
-  WHERE public.genius_rag_chunks.claim_generation < EXCLUDED.claim_generation
+  -- UNIQUE 키에 claim_generation이 있으므로 충돌 행은 항상 같은 generation이다.
+  -- 그중 같은 claim_token일 때만 idempotent 재시도로 허용하고, 다른 token의 덮어쓰기는 거부한다.
+  WHERE public.genius_rag_chunks.claim_token = EXCLUDED.claim_token
   RETURNING id INTO v_id;
 
   IF v_id IS NULL THEN
@@ -429,3 +482,7 @@ GRANT EXECUTE ON FUNCTION public.upsert_baseball_genius_rag_chunk(
 -- claim RPC는 genius_rag_sources 행 타입을 반환하므로 caller에게 row type 접근이 필요하다.
 -- 쓰기는 열지 않고 SELECT만 부여한다(chunks 테이블 직접 write는 계속 차단).
 GRANT SELECT ON public.genius_rag_sources TO service_role;
+-- retrieval은 active generation에 결속된 서빙 뷰만 읽는다. 기반 chunks 테이블 직접 접근은 여전히 닫혀 있어
+-- stage 중인 미완성 generation이 검색에 새어나갈 경로가 없다.
+REVOKE ALL ON public.genius_rag_serving_chunks FROM PUBLIC, anon, authenticated;
+GRANT SELECT ON public.genius_rag_serving_chunks TO service_role;

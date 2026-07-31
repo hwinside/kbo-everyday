@@ -1,7 +1,7 @@
 # 야잘알봇 v2 — 선수/구단 Hybrid RAG 스펙 (rev0.9)
 
 > 상태: **범위 확대 GO(§12) — S1b-KBO/S2 source inventory·ingestion 착수 / S0 merge·Production DB 적용 완료(squash `882f1a1744fb9ead6197a133421b347b3836c96a`, PR #1011 — migration/RPC ACL 적용됨)·실제 계정 2턴 End-User QA HOLD / S1a·S1b·S2 구현 merge/deploy HOLD**
-> 작성: 삼식이 2026-07-31 (rev0.9: 삼순 S2a NO-GO 5건 반영 / rev0.7: 하린아빠 KBO 기록실+나무위키 전수 RAG 확정 §12 반영 / rev0.6: 삼순 5차 재리뷰 테이블명 exact)
+> 작성: 삼식이 2026-07-31 (rev0.10: 삼순 S2a 재리뷰 NO-GO 3건 반영 — generation 원자성 stage→swap 재설계 / rev0.9: 삼순 S2a NO-GO 5건 반영 / rev0.7: 하린아빠 KBO 기록실+나무위키 전수 RAG 확정 §12 반영 / rev0.6: 삼순 5차 재리뷰 테이블명 exact)
 > SSOT: Notion `3aec901b-b372-8140-8cec-f4c700b96487` (본 파일은 미러).
 > 선행 SSOT: 야잘알봇 MVP 스펙 v1.2 (Notion `3acc901bb3728165b783d0f0960c9f02`)
 > 트리거: 하린아빠 2026-07-31 "야구 룰에 이어 구단·선수 질문 대응 + RAG. 이것까지 되어야 킬러피처."
@@ -219,10 +219,20 @@
 
 ## 11. 변경 이력
 
+### rev0.10 (삼순 S2a 재리뷰 NO-GO 3건 반영 — generation 원자성 재설계, 2026-07-31)
+
+rev0.9 B3의 "reclaim 시점 이전 generation purge"는 UNIQUE 충돌은 해소했지만 **§12 "마지막 성공 snapshot 보존" 계약을 깨는 역회귀**를 낳았다. purge를 제거하고 **stage→complete 시점 atomic swap** 구조로 교체한다.
+
+- **[R2-B1 P0 — stale 재수집 claim이 마지막 성공 snapshot을 즉시 삭제]** `claim_baseball_genius_rag_batch`의 `purged` CTE가 후보 이전상태 구분 없이 이전 generation chunk를 전부 지워, `gen1 ready → source stale → gen2 claim`에서 gen1 성공 chunk가 0건이 되고 서빙 공백이 생겼다(§12 위반). → **`genius_rag_sources.active_claim_generation`**(= 마지막으로 complete된 generation) 신설. claim은 새 generation을 **stage**만 하고 active는 건드리지 않으며, purge 대상을 **complete에 도달하지 못한 미완성 generation만**으로 좁혔다(`claim_generation <> active_claim_generation`). chunk UNIQUE 키에 `claim_generation`을 포함해 두 generation이 별도 행으로 공존하고, `complete_baseball_genius_rag_source`가 active를 원자 전환한 뒤에야 비활성 generation을 정리한다. 서빙은 신설 뷰 **`genius_rag_serving_chunks`**(active generation 결속, service_role SELECT 전용)가 담당해 stage 중인 미완성 generation이 검색에 노출되지 않는다.
+- **[R2-B2 P0 — current generation에 이질 provenance chunk가 섞여도 ready]** complete RPC가 matching chunk 1건 EXISTS + embedding NULL 0건만 검사해, 같은 claim에 `r-good/doc-good`과 `r-rogue/doc-rogue`를 함께 넣고 `r-good`으로 complete하면 ready가 됐다(오염된 snapshot 서빙). → complete RPC가 **current claim generation의 모든 chunk가 동일 `revision`/`document_content_hash`/`crawled_at`/`claim_token`을 만족**하는지 검증하고 하나라도 불일치면 complete를 거부한다. ready trigger도 `chunk.claim_generation = NEW.active_claim_generation`으로 generation에 결속했다.
+- **[R2-B3 P1 — write RPC가 동일 claim 안전 재시도를 거부]** DB commit 후 응답이 timeout되면 worker는 결과를 모른다. 그런데 `ON CONFLICT ... WHERE old_generation < new_generation`만 허용해 같은 token/generation/key 재호출이 `stale rag chunk generation`으로 실패했다. → UNIQUE 키에 generation이 포함되어 충돌 행은 항상 동일 generation이므로, 가드를 **`claim_token` 일치**로 바꿔 같은 claim의 재시도를 idempotent update로 허용한다(중복 행 0). 다른 token의 동일 generation 덮어쓰기는 거부되고, 낮은 generation 역주행은 chunk owner trigger의 generation 검증이 거부한다.
+- **§12 계약 준수 명시**: "갱신: revision/contentHash 기반 증분 수집, 삭제·이동 tombstone, bounded rate/retry, **마지막 성공 snapshot 보존**"를 DB 구조로 강제한다. 재수집이 시작되거나(stage) 실패해도(crash) 직전 성공 snapshot은 계속 서빙되며, 교체는 complete 성공 시점의 단일 원자 전환으로만 일어난다.
+- PG17 회귀 추가(RED→GREEN 실측): R2-B1 `gen1 ready → stale → gen2 claim` 시 gen1 chunk·서빙 보존 / `gen2 stage 중 crash → gen1 계속 서빙` / `gen3 complete → active swap + 이전 generation 정리`, R2-B2 이질 provenance 주입 → complete 거부(균일화 후 GREEN), R2-B3 동일 token/gen/key 재호출 → idempotent 성공(중복 0)·다른 token 거부·낮은 generation 거부, 서빙 뷰 ACL(service_role SELECT / anon·authenticated 차단 / chunks 직접 SELECT 전원 차단).
+
 ### rev0.9 (삼순 S2a NO-GO 5건 반영, 2026-07-31)
 - **[B1 P0 — NULL embedding이 ready로 오인]** `genius_rag_chunks.embedding`이 nullable이고 ready 판정이 "matching chunk 존재"만 보아, embedding을 생략한 chunk로도 `complete=true / source=ready`가 됐다(검색 불가능한 문서가 ready). → 컬럼을 **`extensions.vector(768) NOT NULL`**로 제약하고, ready trigger와 `complete_baseball_genius_rag_source`가 추가로 *current claim generation의 embedding NULL chunk 0건*을 요구하도록 이중 가드.
 - **[B2 P0 — service_role ingestion write 경로 부재]** neutral PG17 ACL 실측에서 `chunks INSERT=false`, identity sequence `USAGE=false`라 worker가 chunk를 저장할 수 없었다. → 테이블 직접 write를 열지 않고 **claim token/generation을 검증하는 SECURITY DEFINER RPC `upsert_baseball_genius_rag_chunk`**를 유일 쓰기 경로로 신설(service_role에만 EXECUTE, anon/authenticated REVOKE). claim RPC의 row 반환을 위해 `genius_rag_sources`는 SELECT만 부여.
-- **[B3 P0 — crash 뒤 reclaim UNIQUE 충돌]** gen1이 chunk를 남기고 crash하면 lease 만료 후 gen2가 같은 `(source_key, revision, section_path, chunk_index)`를 쓰면서 UNIQUE 충돌 → 재수집 영구 실패·source가 `ingesting`에 갇혔다. → claim RPC가 reclaim 시점에 **이전 generation chunk를 같은 문장에서 정리**하고, 쓰기 RPC는 **generation-safe upsert**(더 큰 generation만 덮어쓰기, 오래된 worker의 역주행은 거부)로 이중 보호.
+- **[B3 P0 — crash 뒤 reclaim UNIQUE 충돌]** gen1이 chunk를 남기고 crash하면 lease 만료 후 gen2가 같은 `(source_key, revision, section_path, chunk_index)`를 쓰면서 UNIQUE 충돌 → 재수집 영구 실패·source가 `ingesting`에 갇혔다. → claim RPC가 reclaim 시점에 **이전 generation chunk를 같은 문장에서 정리**하고, 쓰기 RPC는 **generation-safe upsert**(더 큰 generation만 덮어쓰기, 오래된 worker의 역주행은 거부)로 이중 보호. → **rev0.10에서 supersede**: 이 purge 방식이 마지막 성공 snapshot까지 지워 §12를 위반해 stage→swap 구조로 교체됐다.
 - **[B4 P1 — Gemini Embedding 2 asymmetric prefix 공식 포맷 위반]** 임의 한글 접두사(`문서 검색용…`/`질의 검색용…`)는 모델 학습 prefix와 어긋난다. → 공식 포맷 적용(query `task: search result | query: …`, document `title: … | text: …`), `embedDocument`에 **pageTitle 전달** 추가, mock exact assert로 회귀 고정.
 - **[B5 P1 — §12.2 확정 + workflow 기록 상충 정정]** stale 범위는 rev0.7의 §12.2 `제안·미확정` 기록뿐이며, 상태줄·§10은 이미 최신이라 변경하지 않는다. §12.2는 robots/약관 확인기록·접근제한 우회금지·최소 원문저장·canonical provenance를 **확정 기술 게이트**로 승격하고, 상업 이용 법무만 대량 ingestion/서빙 전 별도 launch gate의 `decision_pending`으로 분리한다. workflow는 실제 PR diff 0건이므로 "하린아빠 승인 전 대기(미추가)"로 정정하고 현재 CI 결속은 prebuild 체인만임을 명시한다. Notion §12.2 승격은 부모가 Notion-first로 병행한다.
 

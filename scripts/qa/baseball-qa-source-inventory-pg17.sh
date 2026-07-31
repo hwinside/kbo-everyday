@@ -319,6 +319,223 @@ begin
   end if;
 end;
 $$;
+
+-- [R2-B1] §12 "마지막 성공 snapshot 보존": stale 재수집 claim은 새 generation을 stage만 하고
+-- 이전 성공 snapshot을 지우지 않는다. active 전환은 complete 시점의 원자 swap으로만 일어난다.
+update public.genius_rag_sources
+set ingestion_status='not_started', ingestion_attempts=0, lease_until=null, claim_token=null,
+    claim_generation=0, active_claim_generation=0, question_count=600, revision=null, content_hash=null,
+    crawled_at=null, ingested_at=null
+where source_key='namu:team:7';
+do $$
+declare
+  gen1 public.genius_rag_sources%rowtype;
+  gen2 public.genius_rag_sources%rowtype;
+  gen3 public.genius_rag_sources%rowtype;
+  completed boolean;
+  serving_rev text;
+begin
+  select * into gen1 from public.claim_baseball_genius_rag_batch(1, 60);
+  if gen1.source_key <> 'namu:team:7' then raise exception 'R2-B1 setup claim mismatch'; end if;
+  perform public.upsert_baseball_genius_rag_chunk(
+    gen1.source_key, gen1.claim_token, gen1.claim_generation, gen1.entity_type, gen1.entity_id,
+    gen1.page_title, gen1.canonical_url, 'rGEN1', '개요', 0, repeat('gen1 content ', 4), 'docGEN1', 'hGEN1',
+    gen1.source_grade, '2026-07-31T00:00:00Z', '2026-07-31', 'vec-768'
+  );
+  select public.complete_baseball_genius_rag_source(
+    gen1.source_key, gen1.claim_token, gen1.claim_generation,
+    'rGEN1', 'docGEN1', '2026-07-31T00:00:00Z', '2026-08-01T00:00:00Z'
+  ) into completed;
+  if not completed then raise exception 'R2-B1 gen1 failed to reach ready'; end if;
+  if (select active_claim_generation from public.genius_rag_sources where source_key=gen1.source_key)
+     <> gen1.claim_generation then
+    raise exception 'R2-B1 active generation not swapped to gen1';
+  end if;
+
+  -- source stale → 재수집 claim(gen2 stage). 이 시점에 gen1 snapshot은 그대로 살아있어야 한다.
+  update public.genius_rag_sources set ingestion_status='stale' where source_key=gen1.source_key;
+  select * into gen2 from public.claim_baseball_genius_rag_batch(1, 60);
+  if gen2.source_key <> gen1.source_key or gen2.claim_generation <> gen1.claim_generation + 1 then
+    raise exception 'R2-B1 stale reclaim generation mismatch';
+  end if;
+  if not exists (
+    select 1 from public.genius_rag_chunks
+    where source_key=gen1.source_key and claim_generation=gen1.claim_generation
+  ) then
+    raise exception 'R2-B1 stale reclaim destroyed last successful snapshot';
+  end if;
+  -- 서빙도 계속된다(active generation 결속 뷰).
+  select revision into serving_rev from public.genius_rag_serving_chunks where source_key=gen1.source_key;
+  if serving_rev is distinct from 'rGEN1' then
+    raise exception 'R2-B1 serving snapshot lost during stale reclaim (got %)', coalesce(serving_rev, '<none>');
+  end if;
+
+  -- gen2 stage 중 crash(chunk 일부만 쓰고 lease 만료) → gen1이 계속 서빙된다.
+  perform public.upsert_baseball_genius_rag_chunk(
+    gen2.source_key, gen2.claim_token, gen2.claim_generation, gen2.entity_type, gen2.entity_id,
+    gen2.page_title, gen2.canonical_url, 'rGEN2', '개요', 0, repeat('gen2 content ', 4), 'docGEN2', 'hGEN2',
+    gen2.source_grade, '2026-07-31T01:00:00Z', '2026-07-31', 'vec-768'
+  );
+  if (select count(*) from public.genius_rag_serving_chunks where source_key=gen1.source_key) <> 1
+     or (select revision from public.genius_rag_serving_chunks where source_key=gen1.source_key) <> 'rGEN1' then
+    raise exception 'R2-B1 staged generation leaked into serving set';
+  end if;
+  update public.genius_rag_sources set lease_until=now()-interval '1 second' where source_key=gen1.source_key;
+
+  -- gen3 reclaim: 실패한 gen2 partial은 정리하되 active gen1 snapshot은 보존한다.
+  select * into gen3 from public.claim_baseball_genius_rag_batch(1, 60);
+  if gen3.claim_generation <> gen2.claim_generation + 1 then
+    raise exception 'R2-B1 gen3 reclaim generation mismatch';
+  end if;
+  if exists (
+    select 1 from public.genius_rag_chunks
+    where source_key=gen1.source_key and claim_generation=gen2.claim_generation
+  ) then
+    raise exception 'R2-B1 failed partial generation survived reclaim';
+  end if;
+  if not exists (
+    select 1 from public.genius_rag_chunks
+    where source_key=gen1.source_key and claim_generation=gen1.claim_generation
+  ) then
+    raise exception 'R2-B1 active snapshot purged by later reclaim';
+  end if;
+
+  -- gen3 complete → active swap + 이전 generation 정리.
+  perform public.upsert_baseball_genius_rag_chunk(
+    gen3.source_key, gen3.claim_token, gen3.claim_generation, gen3.entity_type, gen3.entity_id,
+    gen3.page_title, gen3.canonical_url, 'rGEN3', '개요', 0, repeat('gen3 content ', 4), 'docGEN3', 'hGEN3',
+    gen3.source_grade, '2026-07-31T02:00:00Z', '2026-07-31', 'vec-768'
+  );
+  select public.complete_baseball_genius_rag_source(
+    gen3.source_key, gen3.claim_token, gen3.claim_generation,
+    'rGEN3', 'docGEN3', '2026-07-31T02:00:00Z', '2026-08-01T00:00:00Z'
+  ) into completed;
+  if not completed then raise exception 'R2-B1 gen3 failed to complete'; end if;
+  if (select active_claim_generation from public.genius_rag_sources where source_key=gen1.source_key)
+     <> gen3.claim_generation then
+    raise exception 'R2-B1 active generation not swapped to gen3';
+  end if;
+  if (select count(*) from public.genius_rag_chunks where source_key=gen1.source_key) <> 1
+     or (select revision from public.genius_rag_serving_chunks where source_key=gen1.source_key) <> 'rGEN3' then
+    raise exception 'R2-B1 atomic swap did not retire previous generation';
+  end if;
+end;
+$$;
+
+-- [R2-B2] current claim generation에 이질 provenance chunk가 섞이면 complete를 거부한다.
+update public.genius_rag_sources
+set ingestion_status='not_started', ingestion_attempts=0, lease_until=null, claim_token=null,
+    claim_generation=0, active_claim_generation=0, question_count=500, revision=null, content_hash=null,
+    crawled_at=null, ingested_at=null
+where source_key='namu:team:8';
+do $$
+declare
+  claim public.genius_rag_sources%rowtype;
+  completed boolean;
+begin
+  select * into claim from public.claim_baseball_genius_rag_batch(1, 60);
+  if claim.source_key <> 'namu:team:8' then raise exception 'R2-B2 setup claim mismatch'; end if;
+
+  perform public.upsert_baseball_genius_rag_chunk(
+    claim.source_key, claim.claim_token, claim.claim_generation, claim.entity_type, claim.entity_id,
+    claim.page_title, claim.canonical_url, 'r-good', '개요', 0, repeat('good content ', 4), 'doc-good', 'h-good',
+    claim.source_grade, '2026-07-31T00:00:00Z', '2026-07-31', 'vec-768'
+  );
+  -- 같은 claim generation에 다른 revision/document hash/crawled_at을 가진 chunk를 주입(embedding은 non-null).
+  perform public.upsert_baseball_genius_rag_chunk(
+    claim.source_key, claim.claim_token, claim.claim_generation, claim.entity_type, claim.entity_id,
+    claim.page_title, claim.canonical_url, 'r-rogue', '본문', 0, repeat('rogue content ', 4), 'doc-rogue', 'h-rogue',
+    claim.source_grade, '2026-07-30T00:00:00Z', '2026-07-30', 'vec-768'
+  );
+
+  select public.complete_baseball_genius_rag_source(
+    claim.source_key, claim.claim_token, claim.claim_generation,
+    'r-good', 'doc-good', '2026-07-31T00:00:00Z', '2026-08-01T00:00:00Z'
+  ) into completed;
+  if completed then raise exception 'R2-B2 ready granted with mixed provenance in current generation'; end if;
+  if (select ingestion_status from public.genius_rag_sources where source_key=claim.source_key) = 'ready' then
+    raise exception 'R2-B2 source went ready with rogue provenance chunk';
+  end if;
+  if (select active_claim_generation from public.genius_rag_sources where source_key=claim.source_key) <> 0 then
+    raise exception 'R2-B2 rejected completion still swapped active generation';
+  end if;
+
+  -- 이질 chunk를 제거해 provenance가 균일해지면 ready로 올라간다(GREEN 대조군).
+  delete from public.genius_rag_chunks
+  where source_key=claim.source_key and claim_generation=claim.claim_generation and revision='r-rogue';
+  select public.complete_baseball_genius_rag_source(
+    claim.source_key, claim.claim_token, claim.claim_generation,
+    'r-good', 'doc-good', '2026-07-31T00:00:00Z', '2026-08-01T00:00:00Z'
+  ) into completed;
+  if not completed then raise exception 'R2-B2 uniform provenance generation failed to complete'; end if;
+  -- 서빙은 active generation에 결속된다.
+  if (select count(*) from public.genius_rag_serving_chunks where source_key=claim.source_key) <> 1 then
+    raise exception 'R2-B2 serving set not bound to active generation';
+  end if;
+end;
+$$;
+
+-- [R2-B3] 동일 claim(같은 token+generation+key) 재시도는 idempotent하게 성공한다.
+-- lower generation 역주행과 다른 token의 동일 generation 덮어쓰기는 계속 거부된다.
+update public.genius_rag_sources
+set ingestion_status='not_started', ingestion_attempts=0, lease_until=null, claim_token=null,
+    claim_generation=0, active_claim_generation=0, question_count=400, revision=null, content_hash=null,
+    crawled_at=null, ingested_at=null
+where source_key='namu:team:9';
+do $$
+declare
+  claim public.genius_rag_sources%rowtype;
+  first_id bigint;
+  retry_id bigint;
+  rogue_rejected boolean := false;
+  lower_rejected boolean := false;
+begin
+  select * into claim from public.claim_baseball_genius_rag_batch(1, 60);
+  if claim.source_key <> 'namu:team:9' then raise exception 'R2-B3 setup claim mismatch'; end if;
+
+  first_id := public.upsert_baseball_genius_rag_chunk(
+    claim.source_key, claim.claim_token, claim.claim_generation, claim.entity_type, claim.entity_id,
+    claim.page_title, claim.canonical_url, 'rR2B3', '개요', 0, repeat('retry content ', 4), 'docR2B3', 'hR2B3',
+    claim.source_grade, '2026-07-31T00:00:00Z', '2026-07-31', 'vec-768'
+  );
+
+  -- DB commit 후 응답 timeout → worker가 결과를 모른 채 똑같은 write를 재시도한다.
+  retry_id := public.upsert_baseball_genius_rag_chunk(
+    claim.source_key, claim.claim_token, claim.claim_generation, claim.entity_type, claim.entity_id,
+    claim.page_title, claim.canonical_url, 'rR2B3', '개요', 0, repeat('retry content ', 4), 'docR2B3', 'hR2B3',
+    claim.source_grade, '2026-07-31T00:00:00Z', '2026-07-31', 'vec-768'
+  );
+  if retry_id is distinct from first_id then
+    raise exception 'R2-B3 same-claim retry created a different row (dup)';
+  end if;
+  if (select count(*) from public.genius_rag_chunks
+      where source_key=claim.source_key and claim_generation=claim.claim_generation) <> 1 then
+    raise exception 'R2-B3 same-claim retry duplicated chunk';
+  end if;
+
+  -- 다른 token의 동일 generation 덮어쓰기는 거부된다.
+  begin
+    perform public.upsert_baseball_genius_rag_chunk(
+      claim.source_key, gen_random_uuid(), claim.claim_generation, claim.entity_type, claim.entity_id,
+      claim.page_title, claim.canonical_url, 'rR2B3', '개요', 0, repeat('rogue token ', 4), 'docR2B3', 'hRogue',
+      claim.source_grade, '2026-07-31T00:00:00Z', '2026-07-31', 'vec-768'
+    );
+  exception when others then rogue_rejected := true;
+  end;
+  if not rogue_rejected then raise exception 'R2-B3 foreign token overwrote same-generation chunk'; end if;
+
+  -- 멱춘 generation 역주행도 거부된다.
+  begin
+    perform public.upsert_baseball_genius_rag_chunk(
+      claim.source_key, claim.claim_token, claim.claim_generation - 1, claim.entity_type, claim.entity_id,
+      claim.page_title, claim.canonical_url, 'rR2B3', '개요', 0, repeat('older gen ', 4), 'docR2B3', 'hOld',
+      claim.source_grade, '2026-07-31T00:00:00Z', '2026-07-31', 'vec-768'
+    );
+  exception when others then lower_rejected := true;
+  end;
+  if not lower_rejected then raise exception 'R2-B3 lower generation write accepted'; end if;
+end;
+$$;
 SQL
 
 # [B2] service_role은 쓰기 RPC를 실행할 수 있고, anon/authenticated는 모든 RPC가 막힌다.
@@ -341,6 +558,12 @@ done
 # claim RPC가 row type을 반환하므로 service_role은 sources SELECT만 가진다.
 check_acl "has_table_privilege('service_role', 'public.genius_rag_sources', 'SELECT')" t "service sources SELECT"
 check_acl "has_table_privilege('anon', 'public.genius_rag_sources', 'SELECT')" f "anon sources SELECT"
+# retrieval은 active generation 결속 서빙 뷰만 읽는다. 기반 chunks 테이블 직접 SELECT은 전원 차단되어
+# stage 중인 미완성 generation이 검색으로 새어나갈 경로가 없다.
+check_acl "has_table_privilege('service_role', 'public.genius_rag_serving_chunks', 'SELECT')" t "service serving-view SELECT"
+check_acl "has_table_privilege('anon', 'public.genius_rag_serving_chunks', 'SELECT')" f "anon serving-view SELECT"
+check_acl "has_table_privilege('authenticated', 'public.genius_rag_serving_chunks', 'SELECT')" f "authenticated serving-view SELECT"
+check_acl "has_table_privilege('service_role', 'public.genius_rag_chunks', 'SELECT')" f "service chunks direct SELECT"
 
 # service_role이 실제로 RPC만으로 ingestion write를 완주할 수 있는지 — 실행 경로 검증.
 "${PSQL[@]}" <<'SQL'
@@ -411,4 +634,4 @@ wait "$PID_A" "$PID_B"
 [ "$(sort -u "$WORK/a" "$WORK/b" | wc -l | tr -d ' ')" = "20" ]
 [ "$(cat "$WORK/a" "$WORK/b" | wc -l | tr -d ' ')" = "20" ]
 
-echo "baseball QA source inventory PG17 PASS (seed932·pending878·fault/CAS/concurrency·B1embedding·B2acl·B3reclaim)"
+echo "baseball QA source inventory PG17 PASS (seed932·pending878·fault/CAS/concurrency·B1embedding·B2acl·B3reclaim·R2-B1stage→swap+snapshot보존·R2-B2provenance균일·R2-B3idempotent재시도)"
