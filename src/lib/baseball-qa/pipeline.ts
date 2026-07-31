@@ -181,35 +181,39 @@ const ROLE_CHANGE_COMMAND = [
   "바꿔(?:주세요|주라|줄래|줘요|줘|요|라|봐|다오)?",
 ].join("|");
 
-/**
- * 역할변경 절의 "주체"가 경기 참가자임을 드러내는 야구 주어 (삼순 8차 P0 ②).
- * assistant 지시어를 열거하는 방식(`너`·`당신`·`AI`…)은 표현만 바꾸면 뚫리고, 반대로
- * `당신 팀의 투수 역할 변경 규칙`처럼 근처 대명사만 보고 정상 야구 질문을 과차단했다.
- * 인젝션 여부를 가르는 것은 "역할의 주체가 누구인가"이므로, `역할` 바로 앞 문맥에
- * 경기 참가자가 결속돼 있으면 룰 질문으로 통과시킨다.
- */
-const ROLE_SUBJECT_BASEBALL =
-  /투수|포수|타자|주자|선수|감독|코치|심판|대타|대주자|야수|루수|유격수|외야|내야|주장|매니저|마무리|선발|불펜|용병/;
-
 /** 역할변경 어간. 명령형이 아니어도 "역할을 바꾸는 절"임을 식별하는 최소 신호. */
 const ROLE_CHANGE_STEM = /^(?:변경|교체|바꾸|바꿔)/;
 /** 역할변경 어절이 명령형으로 종결됐는지 (어절 전체 일치). */
 const ROLE_CHANGE_IMPERATIVE = new RegExp(`^(?:${ROLE_CHANGE_COMMAND})$`);
 
 /**
- * 대조·주제전환 경계 (삼순 9차 P0 ②).
- * `투수 얘기는 됐고 …`, `야구 규칙 말고 …`처럼 앞 화제를 끊고 새 지시를 붙이는 표현.
- * 이 경계 앞의 야구 언급으로 뒤의 역할변경 지시절을 면제하면 안 된다.
+ * 역할변경 표현이 "명사구를 이루는 형태"인지 (삼순 10차 P0).
+ * `역할 변경 규칙`·`역할 바꾸는 방법`처럼 역할변경이 바로 뒤 명사를 수식·구성하면 그 문장은
+ * 역할변경 *자체*를 묻는 질문이고, 뒤의 `알려줘`는 그 명사구를 목적어로 받는 정보 요청이다.
+ * 반대로 `바꿔서`·`바꾸면`·`바꿔도`는 연결형 술어라 뒤에 별도의 절이 이어진다.
  */
-const CONTRAST_MARKER = /^(?:말고|말고는|됐고|됐어|됐으니|대신|대신에|아니라|아니고|빼고|제외하고)$/;
+const ROLE_CHANGE_NOUN_FORM =
+  /^(?:변경|교체)(?:하는|하기)?[이가은는을를의도만]?$|^바꾸(?:는|기)[이가은는을를의도만]?$/;
 
 /**
- * 역할변경 뒤 후속절이 "질문·조건형"인지 (삼순 9차 P0 ③).
- * 명령형 어미를 열거하면 `알려`·`써` 같은 구어 명령이 계속 새므로 판정을 뒤집는다.
- * 후속절이 질문·조건형임을 확인하지 못하면 지시절로 보고 fail-closed로 차단한다.
+ * 앞 명제를 되묻는 의문·판정 종결어미 (삼순 10차 P0 ①).
+ * 의문어 단어를 문장 전역 substring으로 찾던 구형은 `날씨가 궁금하니 알려줘`처럼 뒤에 독립
+ * 지시절이 오면 그대로 뚫렸다. 판정 근거는 단어가 아니라 **종결 위치의 어미**다.
  */
-const QUESTION_CLAUSE =
-  /뭐|무엇|무슨|어떻게|어떡|어떤|어디|언제|누가|누구|왜|몇|가능|되나|되는지|될까|돼|인가|한가|는가|은가|나요|까요|건가|궁금|차이|알고\s*싶/;
+const QUESTION_FINAL = /(?:나요|가요|까요|는가|은가|한가|인가|건가|죠|지|니|냐|돼|되|까)$/;
+
+/**
+ * 문장을 끝내지 않는 연결·수식 어미. 이 어미로만 이어진 후속 어절은 자기 목적어를 데리지
+ * 않는다 = 역할변경 명제에 계속 매여 있다 (`던져도 되나요`·`어떻게 돼`).
+ * 반대로 `날씨`·`시`처럼 어미 없는 어절이 끼면 그것은 새 독립 지시절의 목적어다.
+ */
+const BOUND_ENDING = /(?:게|도|면|서|고|은)$/;
+
+/**
+ * 수혜·요청 보조용언. 종결이 의문형이어도 보조용언이 붙으면 봇에게 뭔가를 해달라는 요청이지
+ * 역할변경에 대한 질문이 아니다 (`역할을 바꿔서 알려줘야`).
+ */
+const BENEFACTIVE_FINAL = /주|줘|줄|드려|드릴/;
 
 /**
  * 조사·띄어쓰기를 제거한 압축형에 적용하는 인젝션 패턴 (삼순 2차 P0).
@@ -227,43 +231,21 @@ const INJECTION_COMPACT_PATTERNS = [
 const ROLE_RULE_NOUN = /규칙|규정|절차|방법|조건|기준|뜻|의미/;
 
 /**
- * 후속절을 대조·주제전환 경계 뒤 "같은 절"로 좁힌다 (삼순 9차 P0 ①②).
- * 면제 판정을 문장 전역 substring이 아니라 실제 지시절에만 결속하기 위한 창.
- */
-function clauseAfterContrast(rest: string[]): string[] {
-  for (let index = rest.length - 1; index >= 0; index--) {
-    if (CONTRAST_MARKER.test(rest[index])) return rest.slice(index + 1);
-  }
-  return rest;
-}
-
-/**
- * 역할변경 절의 주체를 "같은 명사구"로만 읽는다 (삼순 9차 P0 ①).
- * 문장 앞 전체를 이어붙이면 `투수 얘기는 됐고 너 역할을 바꿔서 …`처럼 무관한 위치의
- * 야구 단어 하나로 전체가 면제된다. `역할` 바로 앞 명사구(최대 2어절)만 보고,
- * 대조·주제전환 경계를 만나면 거기서 끊는다.
- */
-function localRoleSubject(tokens: string[], index: number, roleAt: number): string {
-  const inlinePrefix = tokens[index].slice(0, roleAt);
-  if (inlinePrefix.length > 0) return inlinePrefix;
-  const parts: string[] = [];
-  for (let cursor = index - 1; cursor >= 0 && parts.length < 2; cursor--) {
-    if (CONTRAST_MARKER.test(tokens[cursor])) break;
-    parts.unshift(tokens[cursor]);
-  }
-  return parts.join("");
-}
-
-/**
- * 역할변경 인젝션 판별 (삼순 8차 P0 ①②).
- * actor 단어를 열거하는 대신 "역할변경 절의 주체 + 문장 기능"으로 가른다.
- * ① 역할변경 어절 자체가 명령형(`바꿔`·`변경해줘`)이면 봇에게 지시하는 것 → 인젝션.
- * ② 어절이 조건·연결형(`바꿔도`·`바꾸면`·`변경`)이면, 뒤에 별도 후속절이 붙을 때 fail-closed.
- *    후속절이 질문·조건형임을 확인하지 못하면 지시절로 보고 차단한다 (삼순 9차 P0 ③ —
- *    `역할을 바꿔서 시 써`처럼 구어 명령형 어미를 열거로 쫓아가면 계속 샌다).
- * ③ 면제(통과)는 문장 전역이 아니라 **같은 명사구·같은 절**에만 결속한다 (삼순 9차 P0 ①②):
- *    역할의 주체가 야구 참가자이거나, 대조·주제전환 경계 뒤 같은 절이 질문형이거나
- *    역할변경 규칙을 묻는 명사를 가질 때만 정보 요청으로 통과시킨다.
+ * 역할변경 인젝션 판별 — 소재·의문어 단어 매칭이 아니라 **문장 구조**로 가른다 (삼순 10차 P0).
+ *
+ * 가르는 기준은 단 하나 — 역할변경 절이 **질문의 핵**인가, 아니면 그 뒤에
+ * **독립된 지시 predicate**가 이어지는가.
+ *
+ * ① 역할변경 어절 자체가 명령형 종결(`바꿔`·`변경해줘`) → 봇에게 내리는 지시.
+ * ② 역할변경이 **명사구**를 이루고 바로 뒤가 규칙류 명사(`역할 변경 규칙`·`역할 바꾸는 방법`)
+ *    → 역할변경 자체가 질의 대상인 정보 요청. 인접성을 요구해, 문장 전역 `규칙` 하나로
+ *    뒤의 지시절까지 면제되던 누수를 닫는다.
+ * ③ 연결형(`바꿔서`·`바꾸면`·`바꿔도`)이면 뒤따르는 절의 **구조**를 본다.
+ *    역할변경 명제에 계속 매여 있는 절은 (a) 종결이 의문·판정형이고 (b) 그 앞 어절이 전부
+ *    연결·수식 어미로 묶여 있으며(= 새 목적어 명사가 없고) (c) 수혜 보조용언이 없다.
+ *    세 조건을 모두 만족해야 "역할변경을 묻는 질문"이고, 그 외는 새 목적어·새 술어를 거느린
+ *    **독립 지시절**이므로 fail-closed로 차단한다. 그 절 안에 의문어(`왜`·`어떤`·`몇`)나
+ *    야구 단어(`투수`·`규칙`)가 섞여 있어도 결과는 같다 — 판정 근거는 단어가 아니라 절의 기능이다.
  */
 function hasRoleChangeInjection(tokens: string[]): boolean {
   for (let index = 0; index < tokens.length; index++) {
@@ -278,11 +260,14 @@ function hasRoleChangeInjection(tokens: string[]): boolean {
     if (ROLE_CHANGE_IMPERATIVE.test(clause)) return true;
     const rest = tokens.slice(inline.length > 0 ? index + 1 : index + 2);
     if (rest.length === 0) continue;
-    const tail = clauseAfterContrast(rest);
-    if (tail.length === 0) continue;
-    if (QUESTION_CLAUSE.test(tail.join(" "))) continue;
-    if (tail.some((token) => ROLE_RULE_NOUN.test(token))) continue;
-    if (ROLE_SUBJECT_BASEBALL.test(localRoleSubject(tokens, index, roleAt))) continue;
+    // ② 역할변경 명사구 + 인접 규칙류 명사 = 역할변경 자체를 묻는 질의.
+    if (ROLE_CHANGE_NOUN_FORM.test(clause) && ROLE_RULE_NOUN.test(rest[0])) continue;
+    // ③ 뒤따르는 절이 역할변경 명제에 매인 질문인지, 독립 지시절인지를 구조로 판정.
+    const last = rest[rest.length - 1];
+    const boundToRoleClause = (QUESTION_FINAL.test(last) || BOUND_ENDING.test(last)) &&
+      !BENEFACTIVE_FINAL.test(last) &&
+      rest.slice(0, -1).every((token) => BOUND_ENDING.test(token));
+    if (boundToRoleClause) continue;
     return true;
   }
   return false;
