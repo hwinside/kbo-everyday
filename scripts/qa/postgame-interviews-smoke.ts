@@ -117,5 +117,15 @@ assert.deepEqual(
   [{ name: "미등록선수", kboId: null, teamId: 1 }],
   "미등록 선수명은 링크 없이 라벨을 유지",
 );
+assert.deepEqual(
+  interviewPlayerLinks(["임찬규"], 2),
+  [{ name: "임찬규", kboId: null, teamId: 2 }],
+  "타팀 선수 fallback은 링크하지 않는다",
+);
+assert.deepEqual(
+  interviewPlayerLinks(["김민준"], 4),
+  [{ name: "김민준", kboId: null, teamId: 4 }],
+  "같은 팀 동명이인은 임의의 첫 선수로 링크하지 않는다",
+);
 
 console.log("postgame-interviews smoke: PASS");

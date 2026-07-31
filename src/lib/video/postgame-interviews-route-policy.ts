@@ -1,5 +1,5 @@
 import type { InterviewMatchContext } from "./postgame-interviews";
-import { resolvePlayerIdentity } from "@/lib/utils/resolve-player";
+import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
 
 interface ScheduledGame {
   gameId: string;
@@ -29,13 +29,16 @@ export function interviewPlayerLinks(
 ): InterviewPlayerLink[] {
   const uniqueNames = [...new Set(playerNames.map((name) => name.trim()).filter(Boolean))];
   return uniqueNames.map((name) => {
-    const resolved = winnerTeamId == null
-      ? null
-      : resolvePlayerIdentity({ name, teamId: winnerTeamId });
+    const candidates = winnerTeamId == null
+      ? []
+      : PLAYERS_ROSTER.filter(
+        (player) => player.name === name && player.teamId === winnerTeamId,
+      );
+    const resolved = candidates.length === 1 ? candidates[0] : null;
     return {
       name,
       kboId: resolved?.kboId ?? null,
-      teamId: resolved?.teamId ?? winnerTeamId ?? 0,
+      teamId: winnerTeamId ?? 0,
     };
   });
 }
