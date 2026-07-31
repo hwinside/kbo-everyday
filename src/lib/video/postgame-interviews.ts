@@ -57,6 +57,10 @@ export const APPROVED_INTERVIEW_CHANNELS: readonly InterviewChannel[] = [
 export interface InterviewMatchContext {
   gameId: string;
   gameDate: string; // YYYY-MM-DD
+  awayTeamName: string | null;
+  homeTeamName: string | null;
+  awayScore: number | null;
+  homeScore: number | null;
   winnerTeamId: number;
   winnerPlayerNames: string[];
   isDoubleheader: boolean;
@@ -120,6 +124,29 @@ export function titleMatchesGameDate(title: string, gameDate: string): boolean {
   ].some((pattern) => pattern.test(title));
 }
 
+export function titleMatchesMatchupAndScore(
+  title: string,
+  context: Pick<
+    InterviewMatchContext,
+    "awayTeamName" | "homeTeamName" | "awayScore" | "homeScore"
+  >,
+): boolean {
+  const { awayTeamName, homeTeamName, awayScore, homeScore } = context;
+  if (
+    !awayTeamName
+    || !homeTeamName
+    || awayScore === null
+    || homeScore === null
+  ) {
+    return false;
+  }
+  const pattern = new RegExp(
+    `${escaped(awayTeamName)}\\s*${awayScore}\\s*(?:vs\\.?|대)\\s*${escaped(homeTeamName)}\\s*${homeScore}`,
+    "i",
+  );
+  return pattern.test(title);
+}
+
 /**
  * 한 영상이 정확히 한 종료 경기에만 대응할 때 반환한다.
  * 같은 날짜·같은 선수의 더블헤더는 candidate가 2개가 되어 fail-closed 된다.
@@ -136,6 +163,7 @@ export function matchPostgameInterview(
   const candidates = contexts.flatMap((context) => {
     if (context.isDoubleheader) return [];
     if (!titleMatchesGameDate(entry.title, context.gameDate)) return [];
+    if (channel.dedicatedInterviewChannel && !titleMatchesMatchupAndScore(entry.title, context)) return [];
     if (channel.teamId !== null && channel.teamId !== context.winnerTeamId) return [];
 
     const endedAtMs = Date.parse(context.endedAt);

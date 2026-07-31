@@ -4,6 +4,7 @@ import {
   matchPostgameInterview,
   nextPostgameInterviewCollectionAt,
   titleMatchesGameDate,
+  titleMatchesMatchupAndScore,
   type InterviewChannel,
   type InterviewMatchContext,
 } from "../../src/lib/video/postgame-interviews";
@@ -42,6 +43,10 @@ const channel: InterviewChannel = {
 const base: InterviewMatchContext = {
   gameId: "20260730WOLG0",
   gameDate: "2026-07-30",
+  awayTeamName: "키움",
+  homeTeamName: "LG",
+  awayScore: 3,
+  homeScore: 5,
   winnerTeamId: 1,
   winnerPlayerNames: ["임찬규", "송찬의"],
   isDoubleheader: false,
@@ -86,15 +91,18 @@ const curatedInterviewChannel: InterviewChannel = {
   teamId: null,
   dedicatedInterviewChannel: true,
 };
-const kimDaeHanContext: InterviewMatchContext = {
-  gameId: "20260731LGOB0",
-  gameDate: "2026-07-31",
-  winnerTeamId: 2,
-  winnerPlayerNames: ["김대한", "김택연"],
-  isDoubleheader: false,
-  endedAt: "2026-07-31T12:25:15.000Z",
-  expiresAt: "2026-08-01T12:25:15.000Z",
-};
+const kimDaeHanContext = contextFromStoredJob({
+  game_id: "20260731LGOB0",
+  game_date: "2026-07-31",
+  away_team_name: "LG",
+  home_team_name: "두산",
+  away_score: 2,
+  home_score: 4,
+  winner_team_id: 2,
+  is_doubleheader: false,
+  ended_at: "2026-07-31T12:25:15.000Z",
+  expires_at: "2026-08-01T12:25:15.000Z",
+}, ["김대한", "김택연"]);
 assert.deepEqual(
   matchPostgameInterview(
     {
@@ -106,6 +114,37 @@ assert.deepEqual(
   ),
   { gameId: kimDaeHanContext.gameId, playerNames: ["김대한"] },
   "인터뷰 전용 검증 채널은 제목 키워드 없이도 YYMMDD·선수·경기 조건으로 매핑",
+);
+assert.equal(
+  titleMatchesMatchupAndScore(
+    "[두산베어스] 김대한 선수 | LG 2 vs 두산 4 | 260731",
+    kimDaeHanContext,
+  ),
+  true,
+);
+assert.equal(
+  matchPostgameInterview(
+    {
+      title: "[두산베어스] 김대한 선수 | 한화 2 vs 두산 4 | 260731",
+      published_at: "2026-07-31T12:51:16.000Z",
+    },
+    curatedInterviewChannel,
+    [kimDaeHanContext],
+  ),
+  null,
+  "curated 영상의 대진 불일치는 미노출",
+);
+assert.equal(
+  matchPostgameInterview(
+    {
+      title: "[두산베어스] 김대한 선수 | LG 9 vs 두산 0 | 260731",
+      published_at: "2026-07-31T12:51:16.000Z",
+    },
+    curatedInterviewChannel,
+    [kimDaeHanContext],
+  ),
+  null,
+  "curated 영상의 최종스코어 불일치는 미노출",
 );
 assert.equal(
   matchPostgameInterview(
@@ -133,6 +172,10 @@ const persistedDoubleheaderJob = {
   game_id: "20260730WOLG1",
   game_date: "2026-07-30",
   winner_team_id: 1,
+  away_team_name: "키움",
+  home_team_name: "LG",
+  away_score: 3,
+  home_score: 5,
   is_doubleheader: doubleheaders.has("20260730WOLG1"),
   ended_at: base.endedAt,
   expires_at: base.expiresAt,

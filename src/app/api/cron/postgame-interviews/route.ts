@@ -30,6 +30,10 @@ interface JobRow {
   game_date: string;
   away_team_id: number;
   home_team_id: number;
+  away_team_name: string | null;
+  home_team_name: string | null;
+  away_score: number | null;
+  home_score: number | null;
   winner_team_id: number;
   is_doubleheader: boolean;
   ended_at: string;
@@ -120,10 +124,32 @@ async function seedNewFinalJobs(): Promise<{ seeded: number; faults: number }> {
   // query-guard: bounded -- KBO 하루 경기 최대 10건(자정 복구 시 이틀 20건)의 exact game_id IN 조회.
   const { data: existing, error: existingError } = await supabaseAdmin
     .from("postgame_interview_jobs")
-    .select("game_id")
+    .select("game_id, away_team_name, home_team_name, away_score, home_score")
     .in("game_id", finals.map((game) => game.gameId));
   if (existingError) faults++;
-  const existingIds = new Set((existing ?? []).map((row) => row.game_id as string));
+  const existingById = new Map((existing ?? []).map((row) => [row.game_id as string, row]));
+  const existingIds = new Set(existingById.keys());
+  const metadataUpdates = finals.filter((game) => {
+    const row = existingById.get(game.gameId);
+    return row && (
+      row.away_team_name !== game.awayName
+      || row.home_team_name !== game.homeName
+      || row.away_score !== game.awayScore
+      || row.home_score !== game.homeScore
+    );
+  });
+  const metadataResults = await Promise.all(metadataUpdates.map((game) => (
+    supabaseAdmin
+      .from("postgame_interview_jobs")
+      .update({
+        away_team_name: game.awayName,
+        home_team_name: game.homeName,
+        away_score: game.awayScore,
+        home_score: game.homeScore,
+      })
+      .eq("game_id", game.gameId)
+  )));
+  faults += metadataResults.filter((result) => result.error).length;
   const missing = finals.filter((game) => !existingIds.has(game.gameId));
   if (missing.length === 0) return { seeded: 0, faults };
 
@@ -145,6 +171,10 @@ async function seedNewFinalJobs(): Promise<{ seeded: number; faults: number }> {
       game_date: gameDate,
       away_team_id: game.awayTeamId,
       home_team_id: game.homeTeamId,
+      away_team_name: game.awayName,
+      home_team_name: game.homeName,
+      away_score: game.awayScore,
+      home_score: game.homeScore,
       winner_team_id: winnerTeamId(game)!,
       is_doubleheader: doubleheaders.has(game.gameId),
       ended_at: new Date(endedAtMs).toISOString(),
@@ -205,7 +235,7 @@ export async function GET(req: NextRequest) {
   // query-guard: bounded -- 종료+24시간 수명의 active job만, KBO 동시 경기 이틀 상한에 맞춰 20행 처리.
   const { data: activeRows, error: jobsError } = await supabaseAdmin
     .from("postgame_interview_jobs")
-    .select("game_id, game_date, away_team_id, home_team_id, winner_team_id, is_doubleheader, ended_at, expires_at, next_collect_at, attempts")
+    .select("game_id, game_date, away_team_id, home_team_id, away_team_name, home_team_name, away_score, home_score, winner_team_id, is_doubleheader, ended_at, expires_at, next_collect_at, attempts")
     .eq("status", "collecting")
     .gt("expires_at", nowIso)
     .order("next_collect_at", { ascending: true })
