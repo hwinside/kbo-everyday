@@ -56,7 +56,11 @@ import type {
 } from "@/lib/venue-stats/types";
 
 // ── §5 표본 가드 상수 ─────────────────────────────────────────────────────────
-export const MIN_FINAL_GAMES = 3; // 승률/스플릿/팀 경기당 지표
+// 승률/스플릿/팀 경기당 지표 표본 가드. 순수 leaf 모듈(state.ts)이 SSOT —
+// 클라이언트 번들이 node 전용 의존을 끌지 않도록 여기서는 재수출만 한다.
+import { MIN_FINAL_GAMES } from "@/lib/venue-stats/state";
+
+export { MIN_FINAL_GAMES };
 export const MIN_TEAM_AB = 60; // B1
 export const MIN_TEAM_OUTS = 81; // B2
 export const MIN_FAVORITE_AB = 10; // C1
@@ -423,13 +427,18 @@ function buildA1(ctx: Ctx): MetricEnvelope<A1Value> {
           ? "ready"
           : "sample_limited"
         : "attendance_only";
+      // §5 표본 미달이어도 직관 사실값(W/L/D·승률)은 그대로 노출하고 state 배지로만 경고한다
+      // (값을 숨기면 실제 기록이 0승 0패로 보여 더 나쁜 오정보 — 2026-07-31 하린아빠 결정).
+      // 비교(teamComparable·deltaPp)는 ready에서만 제공해 fail-closed 계약을 유지한다.
       return {
         key: String(teamId),
         state: itemState as MetricState,
         value:
           itemState === "ready"
             ? { attendance: teamAttendance, teamComparable: comparable, deltaPp }
-            : null,
+            : itemState === "sample_limited"
+              ? { attendance: teamAttendance, teamComparable: null, deltaPp: null }
+              : null,
         n: teamGames.length,
         denominator: {
           attendanceFinalGames: teamGames.length,
@@ -453,7 +462,11 @@ function buildA1(ctx: Ctx): MetricEnvelope<A1Value> {
     };
     return envelope;
   }
-  if (state === "sample_limited") return envelope;
+  if (state === "sample_limited") {
+    // 표본 미달 — 직관 사실값은 유지하고 팀 비교만 fail-closed (위 mixed 항과 동일 계약).
+    envelope.value = { attendance, teamComparable: null, deltaPp: null };
+    return envelope;
+  }
 
   const teamSeasonGames = standing.wins + standing.losses + standing.draws;
   const teamRate = ratio(standing.wins, teamSeasonGames);
@@ -512,6 +525,7 @@ function buildSplit<T extends WinLossDraw>(
     groups.set(key, list);
   }
   const keys = [...groups.keys()].sort();
+  // top-level value 는 표본 충족 cell 만(대표값 계약 유지). 미달 cell 은 item 으로 사실값+배지 노출.
   envelope.value = keys
     .filter((key) => groups.get(key)!.length >= MIN_FINAL_GAMES)
     .map((key) => cellOf(key, wld(groups.get(key)!)));
@@ -521,7 +535,8 @@ function buildSplit<T extends WinLossDraw>(
     return {
       key,
       state: itemState as MetricState,
-      value: itemState === "ready" ? cellOf(key, wld(games)) : null,
+      // 표본 미달 cell 도 승·패·무 사실값을 노출하고 state 배지로 경고한다.
+      value: cellOf(key, wld(games)),
       n: games.length,
       denominator: { finalGames: games.length },
     };
@@ -762,10 +777,13 @@ function buildB(
           : part.sampleMet
             ? "ready"
             : "sample_limited";
+      // 표본 미달(sample_limited)은 사실값을 노출하고 배지로 경고한다.
+      // partial_data(적재 누락)는 수치 자체가 불완전이므로 계속 fail-closed(null).
       const item: ItemEnvelope = {
         key: String(teamId),
         state: itemState,
-        value: itemState === "ready" ? (part.value as BTeamValue | null) : null,
+        value:
+          itemState === "partial_data" ? null : (part.value as BTeamValue | null),
         n: games.length,
         denominator: part.denominator,
         coverage: {
@@ -784,18 +802,18 @@ function buildB(
   const computed = computeBForTeam(ctx, teamId, teamGames.get(teamId) ?? []);
   const part = buildValueFor(computed);
   envelope.denominator = part.denominator;
-  envelope.value = state === "ready" ? part.value : null;
+  // 표본 미달도 사실값을 노출한다(숫자를 숨기면 실제 기록이 0으로 오독된다).
+  envelope.value = state === "ready" || state === "sample_limited" ? part.value : null;
   if (id === "B4" && part.components) {
     envelope.components = part.components;
     // sample_limited여도 component envelope로 세부 상태를 드러낸다 (§11).
+    // 값은 유지하고 state로만 표본 부족을 알린다.
     if (state === "sample_limited") {
       for (const component of Object.values(part.components)) {
         component.state = "sample_limited";
-        component.value = null;
       }
     }
   }
-  if (state === "sample_limited") envelope.value = null;
   return envelope;
 }
 

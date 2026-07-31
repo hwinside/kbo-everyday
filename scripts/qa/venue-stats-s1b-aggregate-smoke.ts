@@ -386,8 +386,11 @@ console.log("\n[5] mixed snapshot team — A1/B perTeam");
   ok("A1 mixed_team: top-level teamComparable/deltaPp=null (§11 exact)", a1.state === "mixed_team" && a1.value?.teamComparable === null && a1.value?.deltaPp === null);
   ok("A1 perTeam 2팀 item (LG W / KT W)", a1.items?.length === 2 && item(a1, String(LG)) !== undefined && item(a1, String(KT)) !== undefined);
   ok(
-    "A1 perTeam 1경기 표본 미달은 item value=null (§5)",
-    item(a1, String(LG))?.state === "sample_limited" && item(a1, String(LG))?.value === null,
+    "A1 perTeam 1경기 표본 미달: state=sample_limited 이지만 사실값(W/L/D)은 노출·비교만 null (2026-07-31 결정)",
+    item(a1, String(LG))?.state === "sample_limited" &&
+      (item(a1, String(LG))?.value as { attendance: { w: number }; teamComparable: unknown; deltaPp: unknown } | null)?.attendance.w === 1 &&
+      (item(a1, String(LG))?.value as { teamComparable: unknown } | null)?.teamComparable === null &&
+      (item(a1, String(LG))?.value as { deltaPp: unknown } | null)?.deltaPp === null,
   );
   ok("B1 mixed_team: value=null + perTeam items", s.metrics.B1.state === "mixed_team" && s.metrics.B1.value === null && s.metrics.B1.items?.length === 2);
   const e1 = s.metrics.E1 as MetricEnvelope<{ perTeam: Array<{ teamId: number }> }>;
@@ -402,8 +405,16 @@ console.log("\n[6] 표본 가드 / D6 no_wins leaf 승격 / attendance_only");
     seasonGames: SEASON_GAMES.filter((game) => game.complete),
   }));
   ok("final 1경기: A1 sample_limited (final≥3 가드)", single.metrics.A1.state === "sample_limited");
-  ok("A1 표본 미달 value=null (§5)", single.metrics.A1.value === null);
-  ok("B1 sample_limited (AB 30<60)·value=null", single.metrics.B1.state === "sample_limited" && single.metrics.B1.value === null);
+  ok(
+    "A1 표본 미달: 사실값 노출(0승 위조 금지)·팀 비교만 null (2026-07-31 결정)",
+    (single.metrics.A1.value as { attendance: { w: number; l: number } } | null)?.attendance != null &&
+      (single.metrics.A1.value as { teamComparable: unknown } | null)?.teamComparable === null &&
+      (single.metrics.A1.value as { deltaPp: unknown } | null)?.deltaPp === null,
+  );
+  ok(
+    "B1 sample_limited (AB 30<60)·사실값 노출",
+    single.metrics.B1.state === "sample_limited" && single.metrics.B1.value !== null,
+  );
 
   const d6 = single.metrics.D6;
   ok("D6 무승: outer=ready 승격(leaf 제외 — §12) + maxMarginWin=no_wins", d6.state === "ready" && d6.components?.maxMarginWin.state === "no_wins");

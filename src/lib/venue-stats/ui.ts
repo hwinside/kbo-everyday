@@ -23,7 +23,9 @@ export const METRIC_STATE_LABELS: Record<string, string> = {
   partial_data: "일부 기록 확인 중",
   no_final: "종료 경기 없음",
   no_favorite: "최애 선수 미설정",
-  sample_limited: "표본 부족",
+  // 표본 가드 미달이어도 사실값(승·패·무·비율)은 노출하고 이 배지로만 경고한다.
+  // (값을 숨기면 2경기 기록이 `0승 0패 · 승률 –`으로 보여 더 나쁜 오정보가 된다 — 2026-07-31 하린아빠 결정)
+  sample_limited: "표본 부족(참고용)",
   ready: "집계 완료",
   no_wins: "승리 기록 없음",
 };

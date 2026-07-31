@@ -55,6 +55,9 @@ import {
   METRIC_STATE_LABELS,
   metricEvidence,
 } from "@/lib/venue-stats/ui";
+// 순수 leaf 모듈에서 가져온다 — aggregate.ts 는 node 전용 의존(node:crypto)을 끌어서
+// 클라이언트 번들에서 import 하면 안 된다.
+import { MIN_FINAL_GAMES } from "@/lib/venue-stats/state";
 
 interface VenueStatsResponse {
   season: number;
@@ -304,8 +307,15 @@ export default function VenueStatsDashboard() {
                 {hero.score ?? "–"}
               </span>
               {hero.score != null && <span className="mb-1 text-[16px] font-extrabold text-white/70">점</span>}
-              <span className="mb-1 rounded-full border border-[#ff596a]/55 px-2.5 py-1 text-[11px] font-black text-[#ff9aa5]">
-                승률 요정
+              {/* 표본 가드 미달이면 사실값은 그대로 두고 배지로만 참고용임을 알린다. */}
+              <span
+                className={`mb-1 rounded-full border px-2.5 py-1 text-[11px] font-black ${
+                  a1.state === "sample_limited"
+                    ? "border-amber-300/55 text-amber-300"
+                    : "border-[#ff596a]/55 text-[#ff9aa5]"
+                }`}
+              >
+                {a1.state === "sample_limited" ? METRIC_STATE_LABELS.sample_limited : "승률 요정"}
               </span>
             </div>
             <div className="mt-3 flex items-center gap-3 text-[15px] font-black">
@@ -316,11 +326,13 @@ export default function VenueStatsDashboard() {
               <span>승률 {formatRate(hero.attendance?.rate)}</span>
             </div>
             <p className="mt-2 text-[12px] font-semibold text-white/70">
-              {hero.mixedTeam
-                ? "응원팀 변경 포함 · 팀별 구간은 아래에서 확인"
-                : hero.deltaPp == null
-                  ? "팀 시즌 비교값을 확인 중이에요"
-                  : `팀 시즌 승률 ${formatRate(hero.teamRate)}보다 ${formatSigned(hero.deltaPp, 1, "%p")}`}
+              {a1.state === "sample_limited"
+                ? `종료 경기 ${a1.n}경기 기록이에요 · ${MIN_FINAL_GAMES}경기부터 팀 시즌 비교를 보여드려요`
+                : hero.mixedTeam
+                  ? "응원팀 변경 포함 · 팀별 구간은 아래에서 확인"
+                  : hero.deltaPp == null
+                    ? "팀 시즌 비교값을 확인 중이에요"
+                    : `팀 시즌 승률 ${formatRate(hero.teamRate)}보다 ${formatSigned(hero.deltaPp, 1, "%p")}`}
             </p>
             {hero.teamIds.length > 0 && (
               <div className="mt-4 flex flex-wrap gap-1.5 rounded-xl border border-white/8 bg-white/[0.035] p-2.5">
