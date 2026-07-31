@@ -35,6 +35,7 @@
     "qa:game-preview-naver-failover": "tsx scripts/qa/game-preview-naver-failover-smoke.ts",
     "qa:admin-live-activity-failover": "tsx scripts/qa/admin-live-activity-naver-failover-smoke.ts",
     "qa:team-records-failover": "tsx scripts/qa/team-records-naver-failover-smoke.ts && tsx scripts/qa/team-records-client-contract-smoke.ts",
+    "qa:team-records-ui": "node scripts/qa/ui-smoke-team-records-contract.mjs",
     "qa:api-fallback-alert-claim:db": "tsx scripts/qa/api-fallback-alert-claim-db-integration.ts",
     "qa:venue-stats-s1a-ledger:db": "tsx scripts/qa/venue-stats-s1a-ledger-db-integration.ts",
     "qa:venue-stats-state": "tsx scripts/qa/venue-stats-state-ladder-smoke.ts",
