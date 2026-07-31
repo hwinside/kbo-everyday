@@ -33,6 +33,11 @@ on:
         options:
           - 'false'
           - 'true'
+      require_complete:
+        description: '이 game_id 들이 apply 후 모두 complete 가 아니면 실패 처리 (쉼표 구분). 공개 선행 검증용'
+        required: false
+        default: '20260704HHLG0,20260708LGSS0,20260725LGHH0'
+        type: string
 
 permissions:
   contents: read
@@ -134,9 +139,48 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # ── fail-closed 검증 ──────────────────────────────────────────
+      # 전역 ledger count 나 "complete N건" 은 성공 근거가 못 된다 — 수백 경기가 complete 면
+      # 정작 필요한 경기가 incomplete 여도 전체 수치는 초록이 된다(삼순 P0).
+      # 공개 선행 조건인 target game_id 들의 ledger status 를 직접 확인한다.
+      - name: Verify required games are complete
+        if: inputs.apply == 'true' && inputs.require_complete != ''
+        env:
+          SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          FAILED=""
+          echo "| game_id | status | failure_reason |" > /tmp/required.md
+          echo "|---|---|---|" >> /tmp/required.md
+          IFS=',' read -ra GAMES <<< "${{ inputs.require_complete }}"
+          for RAW in "${GAMES[@]}"; do
+            GID=$(echo "$RAW" | tr -d '[:space:]')
+            [ -z "$GID" ] && continue
+            BODY=$(curl -s "$SUPABASE_URL/rest/v1/player_game_log_ingestions?select=game_id,status,failure_reason&game_id=eq.$GID" \
+              -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+              -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY")
+            STATUS=$(echo "$BODY" | jq -r '.[0].status // "MISSING"')
+            REASON=$(echo "$BODY" | jq -r '.[0].failure_reason // "-"')
+            echo "| $GID | $STATUS | $REASON |" >> /tmp/required.md
+            echo "required $GID -> $STATUS ($REASON)"
+            if [ "$STATUS" != "complete" ]; then
+              FAILED="$FAILED $GID($STATUS/$REASON)"
+            fi
+          done
+          {
+            echo "### 공개 선행 검증 대상 경기"
+            echo ""
+            cat /tmp/required.md
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$FAILED" ]; then
+            echo "::error::required games not complete:$FAILED"
+            exit 1
+          fi
+          echo "✅ all required games complete"
+
       # dry-run 은 판정 미리보기라 incomplete 가 있어도 실패가 아니다.
-      # apply 실행에서 ledger 가 하나도 늘지 않았다면 백필이 사실상 no-op 이므로 드러낸다
-      # (이미 전량 채워진 재실행은 정상이므로 로그의 complete 수로 구분한다).
+      # apply 실행이 사실상 no-op 이면(증가 0 + complete 0) 드러낸다.
+      # 이건 보조 가드일 뿐이고, 진짜 게이트는 위의 required games 검증이다.
       - name: Verify apply made progress
         if: inputs.apply == 'true'
         run: |

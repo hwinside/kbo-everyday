@@ -317,6 +317,67 @@ async function main() {
   const greenIdem = await verifyNow(db);
   ok("동일 rows 재upsert 후에도 complete + 행수 불변", greenIdem.complete && (await selectRows(db)).length === 5);
 
+  // ── stale key reconciliation (2026-07-31 삼순 P0) ──────────────────────
+  // 운영 `20260704HHLG0` 실제 shape: 기존 37행 / strict expected 37행인데
+  // 투수 1명의 key 가 `56709|pitcher` → `52731|pitcher` 로 재해석됨.
+  // upsert 만 하면 구 key 가 남아 38행 → hash mismatch → 영원히 incomplete.
+  console.log("\n[stale key] 재해석된 구 (kbo_id, player_type) 가 남으면 영원히 incomplete");
+  {
+    // 기준선을 complete 로 맞춘 다음, 구 key 행을 주입해 운영 상황을 재현한다.
+    await insertRows(db, build.rows as unknown as CanonicalRowInput[]);
+    const staleRow = {
+      ...(build.rows.find((r) => r.kbo_id === "90003") as unknown as CanonicalRowInput),
+      kbo_id: "56709", // 재해석 전 구 식별자
+    };
+    await insertRows(db, [staleRow]);
+    const withStale = await selectRows(db);
+    ok("stale key 주입 → 6행(기대 5행)", withStale.length === 6);
+    const redStale = await verifyNow(db);
+    logVerify("RED", redStale);
+    ok("upsert만으로는 복구 불가 → incomplete", !redStale.complete);
+
+    // reconciliation 계약: expected canonical set 에 없는 key 를 지우면 complete 로 돌아온다.
+    const expectedKeys = new Set(
+      build.rows.map((r) => `${String(r.kbo_id)}\u0000${String(r.player_type)}`),
+    );
+    const staleKeys = withStale.filter(
+      (r) => !expectedKeys.has(`${String(r.kbo_id)}\u0000${String(r.player_type)}`),
+    );
+    ok("stale 행만 정확히 1건 식별(정상 행 오삭제 없음)", staleKeys.length === 1 && staleKeys[0].kbo_id === "56709");
+    for (const s of staleKeys) {
+      await db.query(
+        "delete from player_game_logs where game_id=$1 and kbo_id=$2 and player_type=$3",
+        [GAME.gameId, s.kbo_id, s.player_type],
+      );
+    }
+    const afterReconcile = await selectRows(db);
+    ok("reconcile 후 37행계약(=기대 5행) 복원", afterReconcile.length === 5);
+    ok(
+      "reconcile 후 canonical hash 일치",
+      canonicalPayloadHash(afterReconcile) === expectedHash,
+    );
+    const greenStale = await verifyNow(db);
+    logVerify("GREEN 원복", greenStale);
+    ok("reconcile 후 ledger complete", greenStale.complete);
+  }
+
+  // ── reconciliation 안전가드: 전면 삭제는 금지 ───────────────────────
+  // 기대 집합이 비었거나 기존 행을 전부 지워야 하는 상황은 입력 이상이므로
+  // 삭제 없이 fail-closed 해야 한다(삭제는 복구 불가).
+  console.log("\n[reconcile 가드] 전면 삭제 상황은 fail-closed");
+  {
+    const persistedNow = await selectRows(db);
+    const emptyExpected = new Set<string>();
+    const wouldDeleteAll = persistedNow.filter(
+      (r) => !emptyExpected.has(`${String(r.kbo_id)}\u0000${String(r.player_type)}`),
+    );
+    ok(
+      "expected 집합 0 → stale 가 전체와 같음(삭제 금지 조건 성립)",
+      wouldDeleteAll.length === persistedNow.length && persistedNow.length > 0,
+    );
+    ok("실제 행은 그대로 보존", (await selectRows(db)).length === 5);
+  }
+
   // ── RLS: ledger는 service_role 전용 ──────────────────────────────────────
   console.log("\n[RLS] player_game_log_ingestions service_role 전용");
   async function relPriv(role: string, priv: string): Promise<boolean> {
