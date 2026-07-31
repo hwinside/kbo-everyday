@@ -39,8 +39,8 @@
 - **DB:** migration `20260731_baseball_genius_previous_turn.sql` 프로덕션 적용(Management API HTTP 201). ⚠️ 하린아빠 GitHub 직접 머지로 "migration 선적용→머지" 순서 역전 — 미적용 구간에는 RPC error를 catch해 context=null로 `context_missing` 처리(의도치 않은 맥락 주입 없이 fail-closed). live/DB는 정상이나 미적용 구간 DM 영향은 미검증(장애 증거 없음), 머지 감지 즉시 적용.
 - **리스크/롤백:** 낮음. 미적용·오류 경로 전부 fail-closed(context=null→`context_missing`, 의도치 않은 맥락 주입 없음). 롤백은 squash revert + migration full reverse — `baseball_genius_previous_turn(bigint)` DROP FUNCTION + `idx_dm_messages_conversation_sender_recent` DROP INDEX + `genius_question_logs.match_path` CHECK를 `context_missing` 제외한 기존 allowlist로 복원.
 - **확인 항목:**
-  - [x] 삼순 코드리뷰 GO(3왕복, exact `b623a2cf0`) + 하린아빠 `머지ok`
-  - [x] Vercel Production Ready(`882f1a174`, deployment `5688672207`) + `keubo.fan` HTTP 200
+  - [x] 삼순 코드리뷰 GO(3왕복, exact `b623a2cf014ed356d71645015eae50e89415d0b4`) + 하린아빠 `머지ok`
+  - [x] Vercel Production Ready(`882f1a1744fb9ead6197a133421b347b3836c96a`, deployment `5688672207`) + `keubo.fan` HTTP 200
   - [x] migration 적용·실측: RPC ACL service=true/anon·auth=false, 인덱스, `context_missing` CHECK, RPC smoke 0행
   - [x] AC1~15 + RPC ACL 결함주입 RED→GREEN, tsc/eslint/prebuild PASS
   - [ ] 배포 후 실제 계정 직접 첫 질문→후속 질문 2턴 End-User QA — HOLD
