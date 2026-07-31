@@ -1,0 +1,116 @@
+/**
+ * Actual `/api/cron/roster-moves` collection-stage deadline regression.
+ * KBO response/body stalls and malformed/HTTP failures must terminate inside
+ * one absolute budget before any Supabase read/write/RPC is created.
+ */
+import assert from "node:assert/strict";
+import { NextRequest } from "next/server";
+
+process.env.CRON_SECRET = "roster-deadline-smoke";
+process.env.NEXT_PUBLIC_SUPABASE_URL ??= "http://127.0.0.1:54321";
+process.env.SUPABASE_SERVICE_ROLE_KEY ??= "smoke-service-role-key";
+
+function neverResponse(): Promise<Response> {
+  return new Promise(() => undefined);
+}
+
+function stalledBodyResponse(): Response {
+  return new Response(new ReadableStream<Uint8Array>({
+    start() {
+      // Intentionally never enqueue or close. runBeforeDeadline is the body-read backstop.
+    },
+  }), { status: 200 });
+}
+
+function kstToday(): string {
+  const kst = new Date(Date.now() + 9 * 60 * 60 * 1_000);
+  return `${kst.getUTCFullYear()}${String(kst.getUTCMonth() + 1).padStart(2, "0")}${String(kst.getUTCDate()).padStart(2, "0")}`;
+}
+
+function registerBootstrapHtml(): string {
+  return [
+    '<input id="__VIEWSTATE" value="viewstate" />',
+    '<input id="__VIEWSTATEGENERATOR" value="generator" />',
+    '<input id="__EVENTVALIDATION" value="validation" />',
+    `<input id="cphContents_cphContents_cphContents_hfSearchDate" value="${kstToday()}" />`,
+  ].join("");
+}
+
+async function main() {
+  const { rosterMovesRoute } = await import("../../src/app/api/cron/roster-moves/route");
+  const snapshotSentinel = JSON.stringify({ snapshots: 10, moves: 4 });
+
+  const cases = [
+    { mode: "503", failAt: "get" },
+    { mode: "204", failAt: "get" },
+    { mode: "empty", failAt: "get" },
+    { mode: "response-stall", failAt: "get" },
+    { mode: "body-stall", failAt: "get" },
+    { mode: "response-stall", failAt: "post" },
+    { mode: "body-stall", failAt: "post" },
+  ] as const;
+
+  for (const { mode, failAt } of cases) {
+    let dbFactoryCalls = 0;
+    let scheduleCalls = 0;
+    let fetchCalls = 0;
+    let notifyCalls = 0;
+    let sawAbortSignal = false;
+    const fetchImpl = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      fetchCalls++;
+      sawAbortSignal ||= init?.signal instanceof AbortSignal;
+      if (failAt === "post" && fetchCalls === 1) {
+        return new Response(registerBootstrapHtml(), { status: 200 });
+      }
+      if (mode === "response-stall") return neverResponse();
+      if (mode === "body-stall") return stalledBodyResponse();
+      if (mode === "empty") return new Response("", { status: 200 });
+      return new Response(null, { status: Number(mode) });
+    }) as typeof fetch;
+
+    const startedAt = Date.now();
+    const response = await rosterMovesRoute(
+      new NextRequest("http://localhost/api/cron/roster-moves?force=1", {
+        headers: { authorization: "Bearer roster-deadline-smoke" },
+      }),
+      {
+        now: () => new Date(),
+        fetchImpl,
+        fetchGamesImpl: async () => {
+          scheduleCalls++;
+          return [];
+        },
+        getSupabaseAdminImpl: (() => {
+          dbFactoryCalls++;
+          throw new Error("DB must not be initialized during collect failure");
+        }) as never,
+        notifyCollectionFailureImpl: async () => {
+          notifyCalls++;
+          return new Promise(() => undefined);
+        },
+        collectionDeadlineMs: 80,
+      },
+    );
+    const elapsedMs = Date.now() - startedAt;
+    const payload = await response.json() as { ok: boolean; stage: string; error: string };
+
+    const label = `${failAt}-${mode}`;
+    assert.equal(response.status, 502, `${label}: status`);
+    assert.equal(payload.ok, false, `${label}: ok`);
+    assert.equal(payload.stage, "collect", `${label}: stage`);
+    assert.equal(dbFactoryCalls, 0, `${label}: DB read/write/RPC 0`);
+    assert.equal(scheduleCalls, 0, `${label}: force path skips schedule`);
+    assert.equal(fetchCalls, failAt === "post" ? 2 : 1, `${label}: stop at first failed request`);
+    assert.equal(notifyCalls, 1, `${label}: failure notification dispatched without blocking`);
+    assert.equal(sawAbortSignal, true, `${label}: fetch receives abort signal`);
+    assert.ok(elapsedMs < 500, `${label}: elapsed ${elapsedMs}ms exceeds budget`);
+    assert.equal(JSON.stringify({ snapshots: 10, moves: 4 }), snapshotSentinel, `${label}: state unchanged`);
+  }
+
+  console.log(`roster-moves-deadline-smoke: ${cases.length}/${cases.length} PASS`);
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});

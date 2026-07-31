@@ -5,6 +5,98 @@ import { PLAYER_PHOTO_MAP } from "@/lib/constants/player-photos";
 import { resolveGameLiveDate } from "@/lib/game-live-date";
 import { isKboGameCancelled } from "@/lib/crawler/kbo-status";
 import { fetchKboLiveGames } from "@/lib/notifications/kbo-live-games";
+import { runBeforeDeadline } from "@/lib/async-deadline";
+
+const GAME_LIVE_DEADLINE_MS = 5_000;
+
+type StarterWitnessGame = {
+  gameId: string;
+  awayStarterName?: string | null;
+  homeStarterName?: string | null;
+};
+
+type GameLiveTrace = {
+  source: string;
+  stage: string;
+  sourceAtMs: number;
+  fetchedAtMs: number;
+  deadlineAtMs: number;
+};
+
+function requiresStarterContract(game: KboRawGame): boolean {
+  return !isKboGameCancelled(game.CANCEL_SC_ID)
+    && (game.GAME_STATE_SC === "2" || game.GAME_STATE_SC === "3");
+}
+
+function starterContractIncomplete(games: KboRawGame[]): boolean {
+  return games.some((game) => (
+    requiresStarterContract(game)
+    && (!game.T_PIT_P_NM?.trim() || !game.B_PIT_P_NM?.trim())
+  ));
+}
+
+/**
+ * `/api/games` is independently cached and Naver-primary, so it is the bounded
+ * witness for the static starter fields when game-live's KBO-primary response
+ * is transiently partial. Dynamic score/inning fields always remain from the
+ * original game-live source. A different slate or incomplete witness is not
+ * merged: the route fails closed and clients retain their previous snapshot.
+ */
+export function reconcileStarterWitness(
+  games: KboRawGame[],
+  witnessGames: StarterWitnessGame[],
+): KboRawGame[] | null {
+  const liveIds = [...new Set(games.map((game) => game.G_ID))].sort();
+  const witnessIds = [...new Set(witnessGames.map((game) => game.gameId))].sort();
+  if (
+    liveIds.length !== games.length
+    || witnessIds.length !== witnessGames.length
+    || liveIds.length !== witnessIds.length
+    || liveIds.some((id, index) => id !== witnessIds[index])
+  ) {
+    return null;
+  }
+
+  const witnessById = new Map(witnessGames.map((game) => [game.gameId, game]));
+  const reconciled = games.map((game) => {
+    if (!requiresStarterContract(game)) return game;
+    const witness = witnessById.get(game.G_ID);
+    const away = game.T_PIT_P_NM?.trim() || witness?.awayStarterName?.trim() || "";
+    const home = game.B_PIT_P_NM?.trim() || witness?.homeStarterName?.trim() || "";
+    return { ...game, T_PIT_P_NM: away, B_PIT_P_NM: home };
+  });
+  return starterContractIncomplete(reconciled) ? null : reconciled;
+}
+
+async function fetchStarterWitness(
+  req: NextRequest,
+  date: string,
+  deadlineAtMs: number,
+): Promise<StarterWitnessGame[]> {
+  const url = new URL("/api/games", req.nextUrl.origin);
+  url.searchParams.set("date", date);
+  const response = await runBeforeDeadline(
+    () => fetch(url, {
+      headers: { "User-Agent": "KboEveryday/game-live-starter-witness" },
+      signal: AbortSignal.timeout(Math.max(1, deadlineAtMs - Date.now())),
+    }),
+    deadlineAtMs,
+  );
+  if (!response.ok) throw new Error(`starter_witness_http_${response.status}`);
+  const payload = await runBeforeDeadline(() => response.json(), deadlineAtMs) as {
+    games?: StarterWitnessGame[];
+  };
+  if (!Array.isArray(payload.games)) throw new Error("starter_witness_schema");
+  return payload.games;
+}
+
+function traceHeaders(trace: GameLiveTrace): Record<string, string> {
+  return {
+    "X-Game-Live-Source": trace.source,
+    "X-Game-Live-Stage": trace.stage,
+    "X-Game-Live-Deadline": String(trace.deadlineAtMs),
+  };
+}
 
 const __diagSeenPitchers = new Set<string>();
 
@@ -24,11 +116,34 @@ function diagMissingPitcherPhoto(pitcherName: string | null, gameId: string) {
 
 export async function GET(req: NextRequest) {
   const date = req.nextUrl.searchParams.get("date") || resolveGameLiveDate();
+  const deadlineAtMs = Date.now() + GAME_LIVE_DEADLINE_MS;
   
   try {
-    const fetched = await fetchKboLiveGames(date, Date.now() + 5_000);
-    if (!fetched.ok) throw new Error("dual-source live games unavailable");
-    const games = fetched.games.map((g: KboRawGame) => {
+    const fetched = await fetchKboLiveGames(date, deadlineAtMs);
+    if (!fetched.ok) {
+      return NextResponse.json(
+        { error: "dual-source live games unavailable", games: [], date, trace: fetched.trace },
+        { status: 503, headers: traceHeaders(fetched.trace) },
+      );
+    }
+
+    let rawGames = fetched.games;
+    let trace: GameLiveTrace = fetched.trace;
+    if (starterContractIncomplete(rawGames)) {
+      const witness = await fetchStarterWitness(req, date, deadlineAtMs);
+      const reconciled = reconcileStarterWitness(rawGames, witness);
+      if (!reconciled) {
+        trace = { ...trace, stage: "starter-witness-failed", fetchedAtMs: Date.now() };
+        return NextResponse.json(
+          { error: "starter witness incomplete", games: [], date, trace },
+          { status: 503, headers: traceHeaders(trace) },
+        );
+      }
+      rawGames = reconciled;
+      trace = { ...trace, stage: "starter-witness", fetchedAtMs: Date.now() };
+    }
+
+    const games = rawGames.map((g: KboRawGame) => {
       const status = isKboGameCancelled(g.CANCEL_SC_ID) ? "cancelled"
         : g.GAME_STATE_SC === "3" ? "final"
         : g.GAME_STATE_SC === "2" ? "live"
@@ -73,8 +188,21 @@ export async function GET(req: NextRequest) {
       };
     });
 
-    return NextResponse.json({ games, date });
+    return NextResponse.json(
+      { games, date, trace },
+      { headers: traceHeaders(trace) },
+    );
   } catch (e: unknown) {
-    return NextResponse.json({ error: (e as Error).message, games: [] }, { status: 200 });
+    const trace: GameLiveTrace = {
+      source: "none",
+      stage: "route-fail-close",
+      sourceAtMs: deadlineAtMs - GAME_LIVE_DEADLINE_MS,
+      fetchedAtMs: Date.now(),
+      deadlineAtMs,
+    };
+    return NextResponse.json(
+      { error: (e as Error).message, games: [], date, trace },
+      { status: 503, headers: traceHeaders(trace) },
+    );
   }
 }

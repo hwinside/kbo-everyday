@@ -10,6 +10,7 @@
 import { getTeamById } from "@/lib/constants/teams";
 
 const WEBHOOK_URL = process.env.ROSTER_GAP_SLACK_WEBHOOK || "";
+const WEBHOOK_TIMEOUT_MS = 5_000;
 
 export interface PendingMove {
   playerName: string;
@@ -108,6 +109,7 @@ export async function notifyCollectionFailure(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text }),
+      signal: AbortSignal.timeout(WEBHOOK_TIMEOUT_MS),
     });
     return { status: res.ok ? "sent" : "webhook-error" };
   } catch {

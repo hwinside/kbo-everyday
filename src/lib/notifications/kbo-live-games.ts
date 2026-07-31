@@ -12,7 +12,15 @@ const KBO_BROWSER_UA =
 export const NAVER_UNKNOWN_RUNNER_ORDER = 99;
 const KBO_PRIMARY_BUDGET_MS = 1_500;
 
-type LiveGamesSource = "kbo" | "naver";
+export type LiveGamesSource = "kbo" | "naver" | "none";
+
+export type LiveGamesTrace = {
+  source: LiveGamesSource;
+  stage: "kbo" | "kbo-empty-confirmed" | "naver" | "dual-fail";
+  sourceAtMs: number;
+  fetchedAtMs: number;
+  deadlineAtMs: number;
+};
 
 type NaverLiveEvidence = {
   hasRealPlay: boolean;
@@ -193,19 +201,20 @@ export async function fetchKboLiveGames(
 ): Promise<{
   ok: boolean;
   games: KboRawGame[];
-  trace: { source: LiveGamesSource; sourceAtMs: number; fetchedAtMs: number };
+  trace: LiveGamesTrace;
 }> {
   const sourceAtMs = Date.now();
+  const absoluteDeadlineAtMs = deadlineAtMs ?? sourceAtMs + 5_000;
   // KBO 200 + 빈 game 배열(soft-empty)은 장애 중 "가짜 무경기"일 수 있어 Naver 교차확인
   // 전까지 authoritative 로 인정하지 않는다(삼순 2차 리뷰 P1).
   let kboEmptyResult: {
     ok: true;
     games: KboRawGame[];
-    trace: { source: LiveGamesSource; sourceAtMs: number; fetchedAtMs: number };
+    trace: LiveGamesTrace;
   } | null = null;
   try {
     const kboDeadlineAtMs = Math.min(
-      deadlineAtMs ?? Date.now() + KBO_PRIMARY_BUDGET_MS,
+        absoluteDeadlineAtMs,
       Date.now() + KBO_PRIMARY_BUDGET_MS,
     );
     const remainingMs = kboDeadlineAtMs - Date.now();
@@ -232,12 +241,32 @@ export async function fetchKboLiveGames(
         && games.length > 0
         && (!requiredGameId || games.some(game => game.G_ID === requiredGameId))
       ) {
-        return { ok: true, games, trace: { source: "kbo", sourceAtMs, fetchedAtMs } };
+        return {
+          ok: true,
+          games,
+          trace: {
+            source: "kbo",
+            stage: "kbo",
+            sourceAtMs,
+            fetchedAtMs,
+            deadlineAtMs: absoluteDeadlineAtMs,
+          },
+        };
       }
       if (games !== null) {
         // Targeted consumers must not treat "other games exist, requested game absent"
         // as authoritative absence; keep the KBO result only as a fallback after Naver witness.
-        kboEmptyResult = { ok: true, games, trace: { source: "kbo", sourceAtMs, fetchedAtMs } };
+        kboEmptyResult = {
+          ok: true,
+          games,
+          trace: {
+            source: "kbo",
+            stage: "kbo-empty-confirmed",
+            sourceAtMs,
+            fetchedAtMs,
+            deadlineAtMs: absoluteDeadlineAtMs,
+          },
+        };
       }
     }
   } catch {
@@ -245,11 +274,14 @@ export async function fetchKboLiveGames(
   }
 
   try {
-    const remainingMs = (deadlineAtMs ?? Date.now() + 5_000) - Date.now();
+    const remainingMs = absoluteDeadlineAtMs - Date.now();
     if (remainingMs <= 0) throw new Error("live_games_deadline_exceeded");
-    const games = await fetchNaverImpl(date, undefined, {
-      signal: AbortSignal.timeout(remainingMs),
-    });
+    const games = await runBeforeDeadline(
+      () => fetchNaverImpl(date, undefined, {
+        signal: AbortSignal.timeout(remainingMs),
+      }),
+      absoluteDeadlineAtMs,
+    );
     // KBO empty 는 Naver 도 무경기일 때만 인정. Naver 에 경기가 있으면 KBO soft-empty
     // 로 보고 Naver 결과를 사용한다(서비스 전체 블랙홀 방지).
     if (kboEmptyResult && games.length === 0) return kboEmptyResult;
@@ -258,14 +290,17 @@ export async function fetchKboLiveGames(
       // 1회초 0:0(스케줄 증거 없음)만 첫 투구 검증 대상. 그 외 live 는 relay 조회가
       // 실패해도 live 유지(카운트만 zero/empty 유지, per-game fail-soft).
       const needsFirstPitchCheck = !hasSchedulePlayEvidence(game);
-      const evidenceRemainingMs = (deadlineAtMs ?? Date.now() + 5_000) - Date.now();
+      const evidenceRemainingMs = absoluteDeadlineAtMs - Date.now();
       if (evidenceRemainingMs <= 0) {
         return needsFirstPitchCheck ? { ...game, status: "scheduled" as const } : game;
       }
       try {
-        const evidence = await fetchNaverEvidenceImpl(
-          game.gameId,
-          AbortSignal.timeout(evidenceRemainingMs),
+        const evidence = await runBeforeDeadline(
+          () => fetchNaverEvidenceImpl(
+            game.gameId,
+            AbortSignal.timeout(evidenceRemainingMs),
+          ),
+          absoluteDeadlineAtMs,
         );
         if (needsFirstPitchCheck && !evidence.hasRealPlay) {
           return { ...game, status: "scheduled" as const };
@@ -298,7 +333,13 @@ export async function fetchKboLiveGames(
     return {
       ok: true,
       games: verifiedGames.map(naverGameToRaw),
-      trace: { source: "naver", sourceAtMs, fetchedAtMs: Date.now() },
+      trace: {
+        source: "naver",
+        stage: "naver",
+        sourceAtMs,
+        fetchedAtMs: Date.now(),
+        deadlineAtMs: absoluteDeadlineAtMs,
+      },
     };
   } catch {
     // KBO soft-empty(200+빈 배열)는 Naver가 "실제로 무경기"임을 정상 확인해 준 경우에만
@@ -308,7 +349,13 @@ export async function fetchKboLiveGames(
     return {
       ok: false,
       games: [],
-      trace: { source: "kbo", sourceAtMs, fetchedAtMs: Date.now() },
+      trace: {
+        source: "none",
+        stage: "dual-fail",
+        sourceAtMs,
+        fetchedAtMs: Date.now(),
+        deadlineAtMs: absoluteDeadlineAtMs,
+      },
     };
   }
 }

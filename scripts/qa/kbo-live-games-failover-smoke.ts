@@ -255,6 +255,7 @@ async function main() {
   // 10) actual GET /api/game-live: KBO 전면 실패(2026-07-30 204 장애 재현) 시에도
   //     5경기 전부 user-facing live 필드가 Naver relay 값으로 채워진다.
   await routeLevelRegression();
+  await routeFailureMatrix();
 
   const gameLiveRoute = readFileSync("src/app/api/game-live/route.ts", "utf8");
   const gameEventsRoute = readFileSync("src/app/api/game-events/route.ts", "utf8");
@@ -263,7 +264,7 @@ async function main() {
   assert.doesNotMatch(gameLiveRoute, /GetKboGameList/);
   assert.doesNotMatch(gameEventsRoute, /GetKboGameList/);
 
-  console.log("kbo-live-games-failover: 12/12 PASS");
+  console.log("kbo-live-games-failover: actual-route matrix PASS");
 }
 
 // ---- actual route-level regression (mocked globalThis.fetch) ----
@@ -340,6 +341,15 @@ async function routeLevelRegression() {
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input instanceof Request ? input.url : input);
     if (url.includes("Main.asmx")) return new Response(null, { status: 503 });
+    if (url.includes("/api/games?")) {
+      return Response.json({
+        games: SLATE.map((g) => ({
+          gameId: `${date}${g.away}${g.home}0`,
+          awayStarterName: `${g.awayName}선발`,
+          homeStarterName: `${g.homeName}선발`,
+        })),
+      });
+    }
     if (url.includes("/relay?")) {
       const match = url.match(/schedule\/games\/(\d{8})([A-Z]{4})0\d{4}\/relay/);
       const slate = SLATE.find((g) => `${g.away}${g.home}` === match?.[2]);
@@ -355,12 +365,20 @@ async function routeLevelRegression() {
     const { GET } = await import("../../src/app/api/game-live/route");
     const res = await GET(new NextRequest(`http://localhost/api/game-live?date=${date}`));
     const body = await res.json() as {
+      trace: { source: string; stage: string; deadlineAtMs: number };
       games: Array<{
         gameId: string; status: string; balls: number; strikes: number; outs: number;
         runner1b: boolean; runner2b: boolean; runner3b: boolean;
         currentPitcher: string | null; currentBatter: string | null;
+        awayStarterName: string | null; homeStarterName: string | null;
       }>;
     };
+    assert.equal(res.status, 200);
+    assert.equal(body.trace.source, "naver");
+    assert.equal(body.trace.stage, "starter-witness");
+    assert.equal(res.headers.get("x-game-live-source"), "naver");
+    assert.equal(res.headers.get("x-game-live-stage"), "starter-witness");
+    assert.ok(Number(res.headers.get("x-game-live-deadline")) > Date.now());
     assert.equal(body.games.length, 5);
     for (const slate of SLATE) {
       const game = body.games.find((g) => g.gameId === `${date}${slate.away}${slate.home}0`);
@@ -374,7 +392,74 @@ async function routeLevelRegression() {
       assert.equal(game.runner3b, true);
       assert.equal(game.currentPitcher, slate.pitcher, `${slate.away}${slate.home} pitcher`);
       assert.equal(game.currentBatter, slate.batter, `${slate.away}${slate.home} batter`);
+      assert.equal(game.awayStarterName, `${slate.awayName}선발`);
+      assert.equal(game.homeStarterName, `${slate.homeName}선발`);
     }
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
+function neverResponse(): Promise<Response> {
+  return new Promise(() => undefined);
+}
+
+async function routeFailureMatrix() {
+  const date = "20260730";
+  const realFetch = globalThis.fetch;
+  const { GET } = await import("../../src/app/api/game-live/route");
+  const witnessGames = SLATE.map((g) => ({
+    gameId: `${date}${g.away}${g.home}0`,
+    awayStarterName: `${g.awayName}선발`,
+    homeStarterName: `${g.homeName}선발`,
+  }));
+
+  const invoke = async (mode: "503" | "204" | "empty" | "timeout", naverMode: "ok" | "partial" | "timeout" | "fail") => {
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (url.includes("Main.asmx")) {
+        if (mode === "timeout") return neverResponse();
+        if (mode === "empty") return Response.json({ game: [] });
+        return new Response(null, { status: Number(mode) });
+      }
+      if (url.includes("/api/games?")) return Response.json({ games: witnessGames });
+      if (url.includes("api-gw.sports.naver.com/schedule/games?")) {
+        if (naverMode === "timeout") return neverResponse();
+        if (naverMode === "fail") throw new Error("naver down");
+        const payload = naverSchedulePayload(date);
+        if (naverMode === "partial") payload.result.games.pop();
+        return Response.json(payload);
+      }
+      if (url.includes("/relay?")) return Response.json(naverRelayPayload("투수", "타자"));
+      return realFetch(input as RequestInfo, init);
+    }) as typeof fetch;
+    const startedAt = Date.now();
+    const response = await GET(new NextRequest(`http://localhost/api/game-live?date=${date}`));
+    const body = await response.json() as { games: unknown[]; trace: { stage: string; deadlineAtMs: number } };
+    return { response, body, elapsedMs: Date.now() - startedAt };
+  };
+
+  try {
+    for (const mode of ["503", "204", "empty", "timeout"] as const) {
+      const result = await invoke(mode, "ok");
+      assert.equal(result.response.status, 200, `KBO ${mode} -> Naver+witness`);
+      assert.equal(result.body.games.length, 5, `KBO ${mode} full slate`);
+      assert.ok(result.elapsedMs < 5_500, `KBO ${mode} deadline bound`);
+    }
+
+    const partial = await invoke("503", "partial");
+    assert.equal(partial.response.status, 503, "Naver partial must fail closed");
+    assert.equal(partial.body.games.length, 0);
+    assert.equal(partial.body.trace.stage, "starter-witness-failed");
+
+    const naverTimeout = await invoke("503", "timeout");
+    assert.equal(naverTimeout.response.status, 503, "Naver timeout must fail closed");
+    assert.equal(naverTimeout.body.trace.stage, "dual-fail");
+    assert.ok(naverTimeout.elapsedMs < 5_500, "Naver timeout absolute deadline");
+
+    const dualFail = await invoke("503", "fail");
+    assert.equal(dualFail.response.status, 503, "dual fail must fail closed");
+    assert.equal(dualFail.body.trace.stage, "dual-fail");
   } finally {
     globalThis.fetch = realFetch;
   }

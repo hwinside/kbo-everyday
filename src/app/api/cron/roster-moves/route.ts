@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
-import { fetchGames, fetchRegisterRosters, RosterCollectionError } from "@/lib/crawler/kbo-api";
+import {
+  fetchGames,
+  fetchRegisterRosters,
+  REGISTER_COLLECTION_DEADLINE_MS,
+  RosterCollectionError,
+} from "@/lib/crawler/kbo-api";
 import { planTeamMoves, type RosterEntry } from "@/lib/roster-moves/parse";
 import { checkPublishReadiness } from "@/lib/roster-moves/readiness";
 import { getKSTToday } from "@/lib/utils/date-kst";
@@ -36,23 +41,44 @@ function authorized(req: NextRequest): boolean {
   return Boolean(CRON_SECRET) && req.headers.get("authorization") === `Bearer ${CRON_SECRET}`;
 }
 
+export type RosterMovesRouteDeps = {
+  now: () => Date;
+  fetchImpl: typeof fetch;
+  fetchGamesImpl: typeof fetchGames;
+  getSupabaseAdminImpl: typeof getSupabaseAdmin;
+  notifyCollectionFailureImpl: typeof notifyCollectionFailure;
+  collectionDeadlineMs: number;
+};
+
+const DEFAULT_DEPS: RosterMovesRouteDeps = {
+  now: () => new Date(),
+  fetchImpl: fetch,
+  fetchGamesImpl: fetchGames,
+  getSupabaseAdminImpl: getSupabaseAdmin,
+  notifyCollectionFailureImpl: notifyCollectionFailure,
+  collectionDeadlineMs: REGISTER_COLLECTION_DEADLINE_MS,
+};
+
 /** "20260718" → "2026-07-18" (Postgres DATE 리터럴). */
 function toIsoDate(yyyymmdd: string): string {
   return `${yyyymmdd.slice(0, 4)}-${yyyymmdd.slice(4, 6)}-${yyyymmdd.slice(6, 8)}`;
 }
 
-export async function GET(req: NextRequest) {
+export async function rosterMovesRoute(
+  req: NextRequest,
+  deps: RosterMovesRouteDeps = DEFAULT_DEPS,
+) {
   if (!authorized(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   // 30분 tick 중 실제 수집은 매일 10시와 당일 첫 경기 2시간 전에만 실행한다.
   // 운영 수동 실행은 인증된 ?force=1로 시간 게이트를 우회할 수 있다.
-  const now = new Date();
+  const now = deps.now();
   if (req.nextUrl.searchParams.get("force") !== "1" && !isDailyRosterMovesWindow(now)) {
     let games;
     try {
-      games = await fetchGames(getKSTToday().replaceAll("-", ""));
+      games = await deps.fetchGamesImpl(getKSTToday().replaceAll("-", ""));
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       console.error(`[roster-moves] 경기일정 확인 실패: ${message}`);
@@ -74,23 +100,28 @@ export async function GET(req: NextRequest) {
   //   시작해 먼저 끝난 run B보다 커져(늦게 완료=더 큰 값) B를 덮는다(later-started run이 져야
   //   하는데 이김). 시작 시각으로 고정하면 RPC 워터마크 비교가 "나중에 시작한 run이 항상 이긴다"를
   //   보장한다(수집 소요와 무관).
-  const runStartedAt = new Date().toISOString();
+  const runStartedAt = deps.now().toISOString();
 
   // ⓪ 수집 — 실패(HTTP/토큰/날짜/인원수/적용일 freshness)는 DB를 건드리기 전에 fail-closed.
   let date: string;
   let teams: { teamId: number; teamCode: string; entries: RosterEntry[] }[];
   try {
-    const result = await fetchRegisterRosters();
+    const result = await fetchRegisterRosters({
+      deadlineAtMs: deps.now().getTime() + deps.collectionDeadlineMs,
+      fetchImpl: deps.fetchImpl,
+    });
     date = result.date;
     teams = result.teams;
   } catch (e) {
     const msg = e instanceof RosterCollectionError ? e.message : String(e);
-    await notifyCollectionFailure(msg);
+    // 관제 실패가 이미 종료된 수집 deadline 뒤에서 cron 응답을 다시 붙잡지 않도록 분리한다.
+    // 실제 notifier 자체도 AbortSignal timeout으로 outstanding request를 회수한다.
+    void deps.notifyCollectionFailureImpl(msg).catch(() => undefined);
     console.error(`[roster-moves] 수집 실패 — 스냅샷 불변, 5xx fail-closed: ${msg}`);
     return NextResponse.json({ ok: false, stage: "collect", error: msg }, { status: 502 });
   }
 
-  const admin = getSupabaseAdmin();
+  const admin = deps.getSupabaseAdminImpl();
   const snapshotDate = toIsoDate(date);
   // stale run 역순 커밋 차단(삼순 P0/P1 3차+4차): 수집 시작 전에 고정한 runStartedAt을 모든 팀 RPC에
   // 워터마크로 넘긴다. RPC는 저장된 값보다 오래되거나 같은 쓰기를 거부한다 → 나중에 시작한 run이 항상 이긴다.
@@ -232,6 +263,10 @@ export async function GET(req: NextRequest) {
     pendingAlert,
     perTeam,
   });
+}
+
+export async function GET(req: NextRequest) {
+  return rosterMovesRoute(req);
 }
 
 /** DB 오류 시 5xx fail-closed 응답 — 스냅샷/무브는 RPC 트랜잭션 롤백으로 불변. */

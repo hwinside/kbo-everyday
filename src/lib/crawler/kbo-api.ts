@@ -11,6 +11,7 @@ import { isKboGameCancelled } from "@/lib/crawler/kbo-status";
 // 순수 상태 헬퍼 재노출 — 스모크가 supabase 의존 없이 import.
 export { isKboGameCancelled } from "@/lib/crawler/kbo-status";
 import { ALLSTAR_CODE_TO_ID, allstarTeamIdByName } from "@/lib/constants/teams";
+import { runBeforeDeadline } from "@/lib/async-deadline";
 
 /** 숫자 kboId로 로스터 조회 — 외국인 숫자→영문 변환 포함 */
 function findPlayerByNumericId(numericId: string): { name: string } | undefined {
@@ -817,6 +818,7 @@ const REGISTER_POSTBACK_TARGET = "ctl00$ctl00$ctl00$cphContents$cphContents$cphC
 const REGISTER_TEAM_FIELD = "ctl00$ctl00$ctl00$cphContents$cphContents$cphContents$hfSearchTeam";
 const REGISTER_DATE_FIELD = "ctl00$ctl00$ctl00$cphContents$cphContents$cphContents$hfSearchDate";
 const REGISTER_DATE_HIDDEN_ID = "cphContents_cphContents_cphContents_hfSearchDate";
+export const REGISTER_COLLECTION_DEADLINE_MS = 30_000;
 
 export interface TeamRosterSnapshot {
   teamId: number;
@@ -835,17 +837,51 @@ function extractRegisterHidden(html: string, id: string): string {
   return m ? m[1] : "";
 }
 
+async function fetchRegisterPage(
+  label: string,
+  init: RequestInit,
+  deadlineAtMs: number,
+  fetchImpl: typeof fetch,
+): Promise<{ response: Response; html: string }> {
+  const remainingMs = deadlineAtMs - Date.now();
+  if (remainingMs <= 0) {
+    throw new RosterCollectionError(`${label} absolute deadline exceeded`);
+  }
+  try {
+    const response = await runBeforeDeadline(
+      () => fetchImpl(REGISTER_URL, {
+        ...init,
+        signal: AbortSignal.timeout(Math.max(1, remainingMs)),
+      }),
+      deadlineAtMs,
+    );
+    const html = await runBeforeDeadline(() => response.text(), deadlineAtMs);
+    return { response, html };
+  } catch {
+    throw new RosterCollectionError(`${label} absolute deadline exceeded`);
+  }
+}
+
 /**
  * 10개 구단 1군 등록명단 스냅샷을 GET 1 + 구단별 POST 10회로 수집.
  * 실패를 조용히 성공으로 묻지 않는다(삼순 P1): HTTP status/WebForms 토큰/날짜/인원수를
  * 검증하고 하나라도 실패하면 RosterCollectionError를 throw한다(호출측 cron이 fail-closed).
  */
-export async function fetchRegisterRosters(): Promise<RegisterRosters> {
-  const initRes = await fetch(REGISTER_URL, { headers: { ...KBO_HTML_HEADERS, Referer: REGISTER_URL } });
+export async function fetchRegisterRosters(opts?: {
+  deadlineAtMs?: number;
+  fetchImpl?: typeof fetch;
+}): Promise<RegisterRosters> {
+  const deadlineAtMs = opts?.deadlineAtMs ?? Date.now() + REGISTER_COLLECTION_DEADLINE_MS;
+  const fetchImpl = opts?.fetchImpl ?? fetch;
+  const { response: initRes, html: initHtml } = await fetchRegisterPage(
+    "Register.aspx GET",
+    { headers: { ...KBO_HTML_HEADERS, Referer: REGISTER_URL } },
+    deadlineAtMs,
+    fetchImpl,
+  );
   if (!initRes.ok) {
     throw new RosterCollectionError(`Register.aspx GET HTTP ${initRes.status}`);
   }
-  const initHtml = await initRes.text();
   const viewState = extractRegisterHidden(initHtml, "__VIEWSTATE");
   const viewStateGen = extractRegisterHidden(initHtml, "__VIEWSTATEGENERATOR");
   const eventValidation = extractRegisterHidden(initHtml, "__EVENTVALIDATION");
@@ -869,7 +905,9 @@ export async function fetchRegisterRosters(): Promise<RegisterRosters> {
       [REGISTER_TEAM_FIELD]: code,
       [REGISTER_DATE_FIELD]: date,
     });
-    const res = await fetch(REGISTER_URL, {
+    const { response: res, html } = await fetchRegisterPage(
+      `Register.aspx POST team ${code}`,
+      {
       method: "POST",
       headers: {
         ...KBO_HTML_HEADERS,
@@ -877,11 +915,13 @@ export async function fetchRegisterRosters(): Promise<RegisterRosters> {
         "Content-Type": "application/x-www-form-urlencoded",
       },
       body: body.toString(),
-    });
+      },
+      deadlineAtMs,
+      fetchImpl,
+    );
     if (!res.ok) {
       throw new RosterCollectionError(`Register.aspx POST HTTP ${res.status} (team ${code})`);
     }
-    const html = await res.text();
     teams.push({ teamId, teamCode: code, entries: parseTeamRegister(html) });
   }
 
