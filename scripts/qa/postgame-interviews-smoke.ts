@@ -7,6 +7,10 @@ import {
   type InterviewChannel,
   type InterviewMatchContext,
 } from "../../src/lib/video/postgame-interviews";
+import {
+  contextFromStoredJob,
+  doubleheaderGameIds,
+} from "../../src/lib/video/postgame-interviews-route-policy";
 
 const minute = 60_000;
 const hour = 60 * minute;
@@ -71,22 +75,30 @@ assert.equal(
   null,
 );
 
-// 더블헤더 수명주기 회귀: seed 시점 당일 전체 일정으로 판정한 is_doubleheader가
-// job에 영속되므로, 한쪽 경기만 active context로 남는 구간에도 fail-closed 돼야 한다.
-// (1) 1차전 final + 2차전 live/scheduled → 2차전 job이 아직 없어 context는 1차전 하나뿐이지만
-//     seed 시 is_doubleheader=true로 고정됐으므로 매핑 금지.
+// route seed 회귀: 1차전 final + 2차전 live여도 당일 전체 일정에서 두 game_id 모두
+// doubleheader로 분류되어 seed row의 is_doubleheader가 true가 된다.
+const doubleheaders = doubleheaderGameIds([
+  { gameId: "20260730WOLG0", date: "20260730", awayTeamId: 7, homeTeamId: 1 },
+  { gameId: "20260730WOLG1", date: "20260730", awayTeamId: 7, homeTeamId: 1 },
+]);
+assert.equal(doubleheaders.has("20260730WOLG0"), true, "1차전 seed row true");
+assert.equal(doubleheaders.has("20260730WOLG1"), true, "2차전 seed row true");
+
+const persistedDoubleheaderJob = {
+  game_id: "20260730WOLG1",
+  game_date: "2026-07-30",
+  winner_team_id: 1,
+  is_doubleheader: doubleheaders.has("20260730WOLG1"),
+  ended_at: base.endedAt,
+  expires_at: base.expiresAt,
+};
+
+// route context 회귀: 1차전 job이 expired되고 2차전 collecting job만 조회돼도
+// 저장된 is_doubleheader가 context까지 유지되어 matcher가 fail-closed한다.
+const persistedContext = contextFromStoredJob(persistedDoubleheaderJob, ["임찬규", "송찬의"]);
+assert.equal(persistedContext.isDoubleheader, true, "저장 job→context true");
 assert.equal(
-  matchPostgameInterview(entry, channel, [{ ...base, isDoubleheader: true }]),
-  null,
-  "1차전 final + 2차전 live/scheduled: 단일 context여도 더블헤더면 미노출",
-);
-// (2) 1차전 expired + 2차전 collecting → context는 2차전 하나뿐이지만 동일하게 fail-closed.
-assert.equal(
-  matchPostgameInterview(
-    { ...entry, title: "임찬규 인터뷰｜키움 VS LG｜2026 (07.30)" },
-    channel,
-    [{ ...base, gameId: "20260730WOLG1", isDoubleheader: true }],
-  ),
+  matchPostgameInterview(entry, channel, [persistedContext]),
   null,
   "1차전 expired + 2차전 collecting: 남은 2차전 context도 더블헤더면 미노출",
 );

@@ -10,6 +10,10 @@ import {
   POSTGAME_INTERVIEW_WINDOW_MS,
   type InterviewMatchContext,
 } from "@/lib/video/postgame-interviews";
+import {
+  contextFromStoredJob,
+  doubleheaderGameIds,
+} from "@/lib/video/postgame-interviews-route-policy";
 
 const CRON_SECRET = process.env.CRON_SECRET || "";
 const KBO_SCOREBOARD_URL = "https://www.koreabaseball.com/ws/Schedule.asmx/GetScoreBoard";
@@ -98,20 +102,14 @@ async function seedNewFinalJobs(): Promise<{ seeded: number; faults: number }> {
 
   let faults = 0;
   const finals: KboGame[] = [];
+  const scheduledGames: KboGame[] = [];
   // 더블헤더 판정은 종료 여부와 무관하게 당일 전체 일정의 동일 대진 수로 계산해
   // seed 시점에 영속한다. 1차전만 final이고 2차전이 scheduled/live인 구간에도
   // 1차전 job이 is_doubleheader=true로 고정되어 오매핑을 막는다.
-  const matchupCounts = new Map<string, number>();
   for (const date of dates) {
     try {
       const games = await fetchGames(compactDate(date), undefined, { timeoutMs: 5_000 });
-      for (const game of games) {
-        const gameDate = isoGameDate(game.date);
-        if (!gameDate) continue;
-        const teams = [game.awayTeamId, game.homeTeamId].sort((a, b) => a - b);
-        const key = `${gameDate}:${teams[0]}:${teams[1]}`;
-        matchupCounts.set(key, (matchupCounts.get(key) ?? 0) + 1);
-      }
+      scheduledGames.push(...games);
       finals.push(...games.filter((game) => game.status === "final" && winnerTeamId(game) !== null));
     } catch {
       faults++;
@@ -130,6 +128,7 @@ async function seedNewFinalJobs(): Promise<{ seeded: number; faults: number }> {
   if (missing.length === 0) return { seeded: 0, faults };
 
   const nowMs = Date.now();
+  const doubleheaders = doubleheaderGameIds(scheduledGames);
   const endedAtValues = await Promise.all(missing.map((game) => fetchGameEndIso(game)));
   const rows = missing.flatMap((game, index) => {
     const gameDate = isoGameDate(game.date);
@@ -141,15 +140,13 @@ async function seedNewFinalJobs(): Promise<{ seeded: number; faults: number }> {
     const expiresAtMs = endedAtMs + POSTGAME_INTERVIEW_WINDOW_MS;
     if (expiresAtMs <= nowMs) return [];
     const collectAfterMs = endedAtMs + POSTGAME_INTERVIEW_START_MS;
-    const teams = [game.awayTeamId, game.homeTeamId].sort((a, b) => a - b);
-    const matchupKey = `${gameDate}:${teams[0]}:${teams[1]}`;
     return [{
       game_id: game.gameId,
       game_date: gameDate,
       away_team_id: game.awayTeamId,
       home_team_id: game.homeTeamId,
       winner_team_id: winnerTeamId(game)!,
-      is_doubleheader: (matchupCounts.get(matchupKey) ?? 0) > 1,
+      is_doubleheader: doubleheaders.has(game.gameId),
       ended_at: new Date(endedAtMs).toISOString(),
       collect_after: new Date(collectAfterMs).toISOString(),
       expires_at: new Date(expiresAtMs).toISOString(),
@@ -185,15 +182,7 @@ async function loadContexts(jobs: JobRow[]): Promise<InterviewMatchContext[]> {
     if (names.length === 0) return null;
     // 더블헤더 여부는 seed 시점 당일 전체 일정 기준으로 job에 영속된 값을 쓴다.
     // active job 수를 다시 세면 1차전만 남은 구간에서 오판정된다.
-    return {
-      gameId: job.game_id,
-      gameDate: job.game_date,
-      winnerTeamId: job.winner_team_id,
-      winnerPlayerNames: names,
-      isDoubleheader: job.is_doubleheader,
-      endedAt: job.ended_at,
-      expiresAt: job.expires_at,
-    };
+    return contextFromStoredJob(job, names);
   }));
   return contexts.filter((context): context is InterviewMatchContext => context !== null);
 }
