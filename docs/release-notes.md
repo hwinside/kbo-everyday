@@ -24,6 +24,29 @@
 
 ---
 
+## 2026-07-31 17:32 KST — 야잘알봇 v2 S0 멀티턴 맥락 (#1011)
+
+- **환경:** prod/web (Vercel) + Supabase migration
+- **Commit:** `882f1a1744fb9ead6197a133421b347b3836c96a` (squash, reviewed exact `b623a2cf0`)
+- **배경:** 야잘알봇의 후속 질문(`또 다른 경우는?`)이 맥락 부재로 `blocked` 차단되던 버그 해소(spec §4 rev0.6, Notion `3aec901bb37281408cecf4c700b96487`). S0 전용 — S1a/S1b/S2는 HOLD.
+- **변경사항:**
+  - B1 직전 user turn 1개만 후속 맥락 source·중간 blocked/in-flight/new-topic barrier(과거 폴백 금지)
+  - B2 `genius_question_jobs.message_id` join + answer DM `dedup_key='baseball-genius:'||q.id` exact join, answered_at=answer created_at, answer DM 실존 시만 source
+  - B3 자격=`genius_question_jobs.source IN (dictionary,cache,llm)` fail-closed(logs.match_path는 FK 없어 미사용)
+  - B4 closed-set 정규화 full-string 후속 문법 SSOT 상수
+  - B5 TTL=answer DM created_at 기준 600.000초·`genius_qa_cache` read+write bypass
+  - 신규 RPC `baseball_genius_previous_turn(bigint)`(SECURITY DEFINER, GRANT service_role 명시·anon/auth REVOKE)·인덱스·`context_missing` route/match_path
+- **DB:** migration `20260731_baseball_genius_previous_turn.sql` 프로덕션 적용(Management API HTTP 201). ⚠️ 하린아빠 GitHub 직접 머지로 "migration 선적용→머지" 순서 역전 — 코드가 미적용 시 fail-closed(맥락 없음=기존 동작)라 장애 없음, 머지 감지 즉시 적용.
+- **리스크/롤백:** 낮음. 미적용·오류 경로 전부 fail-closed(맥락 없음으로 폴백, 기존 동작 유지). 문제 시 squash revert + RPC drop.
+- **확인 항목:**
+  - [x] 삼순 코드리뷰 GO(3왕복, exact `b623a2cf0`) + 하린아빠 `머지ok`
+  - [x] Vercel Production Ready(`882f1a174`, deployment `5688672207`) + `keubo.fan` HTTP 200
+  - [x] migration 적용·실측: RPC ACL service=true/anon·auth=false, 인덱스, `context_missing` CHECK, RPC smoke 0행
+  - [x] AC1~15 + RPC ACL 결함주입 RED→GREEN, tsc/eslint/prebuild PASS
+  - [ ] 실제 DM 첫 질문→후속 질문 2턴 End-User QA (자연 관찰, HOLD)
+
+---
+
 ## 2026-05-02 21:31 KST — 크관 채팅 iOS 키보드 하단 gap 방어 + BrowserStack QA 스크립트
 
 - **환경:** prod/web (Vercel)
