@@ -59,6 +59,15 @@ function naverGame(overrides: Record<string, unknown> = {}) {
   assert.equal(g.broadcastChannels, undefined);
 }
 {
+  const g = mapNaverGameToKbo(
+    naverGame({ broadChannel: "KBS N SPORTS" }),
+    DATE,
+  );
+  assert.deepEqual(g.broadcastChannels, [
+    { name: "KBS N SPORTS", code: "KBS N SPORTS", logoSrc: undefined },
+  ]);
+}
+{
   // STARTED → live, score 숫자, inning/isTop from statusInfo.
   const g = mapNaverGameToKbo(
     naverGame({ statusCode: "STARTED", statusInfo: "5회초", homeTeamScore: 3, awayTeamScore: 2 }),
@@ -133,13 +142,15 @@ async function main() {
 const keepAlive = setInterval(() => {}, 1000);
 // ── 2. fetchGames: KBO 실패 → Naver 폴백 ────────────────────
 {
+  let requestedBroadcastField = false;
   stubFetch((url) => {
     if (url.includes("GetKboGameList")) throw new Error("KBO down");
     if (url.includes("api-gw.sports.naver.com/schedule/games")) {
+      requestedBroadcastField = url.includes("broadChannel");
       return jsonResponse({
         code: 200,
         success: true,
-        result: { games: [naverGame({ statusCode: "STARTED", statusInfo: "3회말", homeTeamScore: 1, awayTeamScore: 0 })] },
+        result: { games: [naverGame({ statusCode: "STARTED", statusInfo: "3회말", homeTeamScore: 1, awayTeamScore: 0, broadChannel: "KBS N SPORTS" })] },
       });
     }
     throw new Error(`unexpected url ${url}`);
@@ -152,6 +163,8 @@ const keepAlive = setInterval(() => {}, 1000);
   assert.equal(games[0].homeScore, 1);
   assert.equal(games[0].inning, 3);
   assert.equal(games[0].isTop, false);
+  assert.equal(requestedBroadcastField, true);
+  assert.equal(games[0].broadcastChannels?.[0]?.name, "KBS N SPORTS");
 }
 
 // ── 3. Naver fail-closed: success:false → throw ─────────────
