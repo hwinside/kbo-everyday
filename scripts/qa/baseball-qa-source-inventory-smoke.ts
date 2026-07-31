@@ -130,6 +130,11 @@ for (const contract of [
   "source.ingestion_attempts < 3",
   "source.claim_token = p_claim_token",
   "source.claim_generation = p_claim_generation",
+  // 실패 종료 RPC는 sources 직접 UPDATE 없이 terminal 전이·last_error 관측을 여는 유일한 경로다.
+  // 경계 검증은 PG17 게이트(qa:baseball-source-inventory:db)가 하지만, 그건 prebuild 체인에
+  // 없는 수동 게이트라 RPC가 통째로 사라져도 자동 게이트가 녹색이 된다. 존재·ACL만 여기서 고정한다.
+  "FUNCTION public.fail_baseball_genius_rag_source(",
+  "GRANT EXECUTE ON FUNCTION public.fail_baseball_genius_rag_source(text, uuid, bigint, text) TO service_role;",
   "source_kind text NOT NULL DEFAULT 'namu_document' CHECK (source_kind = 'namu_document')",
   "(source_kind = 'kbo_structured' AND source_grade = 'tier1')",
   "content_chars integer GENERATED ALWAYS AS (char_length(content)) STORED",
