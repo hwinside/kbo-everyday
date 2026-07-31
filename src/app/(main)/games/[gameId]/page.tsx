@@ -13,6 +13,7 @@ import {
   getInningsForGame,
   getPlaysForGame,
 } from "@/lib/constants/games";
+import type { GameLineup } from "@/lib/constants/games";
 import { getStatsForGame } from "@/lib/constants/game-stats";
 import type { GameStats, BatterStat, PitcherStat } from "@/lib/constants/game-stats";
 import type { GameDetailResponse } from "@/app/api/game-detail/route";
@@ -411,6 +412,39 @@ export default function GameDetailPage() {
   );
 
   const matchupTitle = `${awayTeam.shortName} vs ${homeTeam.shortName}`;
+  const starterOnlyLineup: GameLineup | null = (() => {
+    const awayName =
+      liveGame?.awayStarterName?.trim()
+      || d.detailLineup?.awayStarter?.trim()
+      || "";
+    const homeName =
+      liveGame?.homeStarterName?.trim()
+      || d.detailLineup?.homeStarter?.trim()
+      || "";
+    if (!awayName && !homeName) return null;
+    const starter = (name: string, teamId: number) => {
+      const roster = name
+        ? PLAYERS_ROSTER.find(
+            (p: { name: string; teamId: number; kboId: string }) =>
+              p.name === name && p.teamId === teamId,
+          )
+        : undefined;
+      return { name, era: "-", kboId: roster?.kboId };
+    };
+    return {
+      gameId,
+      away: {
+        teamId: game.awayTeamId,
+        startingPitcher: starter(awayName, game.awayTeamId),
+        batters: [],
+      },
+      home: {
+        teamId: game.homeTeamId,
+        startingPitcher: starter(homeName, game.homeTeamId),
+        batters: [],
+      },
+    };
+  })();
 
   return (
     <div className="min-h-[100dvh] bg-bg-primary max-w-[640px] mx-auto w-full">
@@ -666,6 +700,14 @@ export default function GameDetailPage() {
                   awayTeam={awayTeam}
                   homeTeam={homeTeam}
                   isLineupConfirmed={true}
+                />
+              ) : starterOnlyLineup ? (
+                <LineupTab
+                  gameId={gameId}
+                  lineup={starterOnlyLineup}
+                  awayTeam={awayTeam}
+                  homeTeam={homeTeam}
+                  isLineupConfirmed={false}
                 />
               ) : isAllStarGameId(gameId) ? (
                 /* 올스타전: 타순 게시 전엔 확정 엔트리 50명 명단(원소속 팀명 병기) 노출 (2026-07-11 하린아빠) */
