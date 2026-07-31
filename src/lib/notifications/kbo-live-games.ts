@@ -6,6 +6,8 @@ import type { KboGame } from "@/lib/crawler/kbo-api";
 import { naverGameId } from "@/lib/crawler/naver-record";
 
 const KBO_MAIN = "https://www.koreabaseball.com/ws/Main.asmx";
+const KBO_BROWSER_UA =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
 export const NAVER_UNKNOWN_RUNNER_ORDER = 99;
 const KBO_PRIMARY_BUDGET_MS = 1_500;
@@ -212,7 +214,7 @@ export async function fetchKboLiveGames(
         method: "POST",
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
-          "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)",
+          "User-Agent": KBO_BROWSER_UA,
           "Referer": "https://www.koreabaseball.com/Schedule/ScoreBoard.aspx",
         },
         body: `leId=1&srId=0,1,3,4,5,7,8,9&date=${date}`,
