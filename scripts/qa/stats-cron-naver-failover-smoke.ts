@@ -234,7 +234,7 @@ function installFetch(kbo: KboMode, naver: NaverMode, dbFail = false) {
           return Response.json(fixture);
         }
         default:
-          return Response.json(isPitcher ? naverPitchers(200) : naverHitters(300));
+          return Response.json(isPitcher ? naverPitchers(200) : naverHitters(329));
       }
     }
 
@@ -421,8 +421,8 @@ async function main() {
     const { status, body } = await run("page-boundary", "ok");
     assert.equal(status, 200);
     assert.equal(body["sources"]["batter"], "naver");
-    assert.equal(body["batters"], 300);
-    assert.equal(allRows(batterUpserts()).length, 300);
+    assert.equal(body["batters"], 329);
+    assert.equal(allRows(batterUpserts()).length, 329);
     ok("18. KBO 타자 30행 페이지 경계 → Naver 전량 복구(부분 30행 채택 금지)");
   }
 
