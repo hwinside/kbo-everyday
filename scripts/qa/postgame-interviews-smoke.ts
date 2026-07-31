@@ -132,6 +132,25 @@ for (const wrongHomeScore of ["40", "400"]) {
     `home score ${wrongHomeScore}은 score 4로 prefix 매칭하지 않는다`,
   );
 }
+const ktLgContext = {
+  ...kimDaeHanContext,
+  awayTeamName: "KT",
+  homeTeamName: "LG",
+  awayScore: 5,
+  homeScore: 4,
+};
+assert.equal(
+  titleMatchesMatchupAndScore("KT 5 vs LG 4", ktLgContext),
+  true,
+  "영문 약칭 대진 정상 매칭",
+);
+for (const prefixedAwayTeam of ["SKT", "XKT"]) {
+  assert.equal(
+    titleMatchesMatchupAndScore(`${prefixedAwayTeam} 5 vs LG 4`, ktLgContext),
+    false,
+    `${prefixedAwayTeam} 안의 KT substring은 away team으로 매칭하지 않는다`,
+  );
+}
 assert.equal(
   matchPostgameInterview(
     {
