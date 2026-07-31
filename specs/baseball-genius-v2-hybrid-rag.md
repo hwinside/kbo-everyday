@@ -1,7 +1,7 @@
-# 야잘알봇 v2 — 선수/구단 Hybrid RAG 스펙 (rev0.7)
+# 야잘알봇 v2 — 선수/구단 Hybrid RAG 스펙 (rev0.9)
 
 > 상태: **범위 확대 GO(§12) — S1b-KBO/S2 source inventory·ingestion 착수 / S0 merge·Production DB 적용 완료(squash `882f1a1744fb9ead6197a133421b347b3836c96a`, PR #1011 — migration/RPC ACL 적용됨)·실제 계정 2턴 End-User QA HOLD / S1a·S1b·S2 구현 merge/deploy HOLD**
-> 작성: 삼식이 2026-07-31 (rev0.7: 하린아빠 KBO 기록실+나무위키 전수 RAG 확정 §12 반영 / rev0.6: 삼순 5차 재리뷰 테이블명 exact)
+> 작성: 삼식이 2026-07-31 (rev0.9: 삼순 S2a NO-GO 5건 반영 / rev0.7: 하린아빠 KBO 기록실+나무위키 전수 RAG 확정 §12 반영 / rev0.6: 삼순 5차 재리뷰 테이블명 exact)
 > SSOT: Notion `3aec901b-b372-8140-8cec-f4c700b96487` (본 파일은 미러).
 > 선행 SSOT: 야잘알봇 MVP 스펙 v1.2 (Notion `3acc901bb3728165b783d0f0960c9f02`)
 > 트리거: 하린아빠 2026-07-31 "야구 룰에 이어 구단·선수 질문 대응 + RAG. 이것까지 되어야 킬러피처."
@@ -219,11 +219,18 @@
 
 ## 11. 변경 이력
 
+### rev0.9 (삼순 S2a NO-GO 5건 반영, 2026-07-31)
+- **[B1 P0 — NULL embedding이 ready로 오인]** `genius_rag_chunks.embedding`이 nullable이고 ready 판정이 "matching chunk 존재"만 보아, embedding을 생략한 chunk로도 `complete=true / source=ready`가 됐다(검색 불가능한 문서가 ready). → 컬럼을 **`extensions.vector(768) NOT NULL`**로 제약하고, ready trigger와 `complete_baseball_genius_rag_source`가 추가로 *current claim generation의 embedding NULL chunk 0건*을 요구하도록 이중 가드.
+- **[B2 P0 — service_role ingestion write 경로 부재]** neutral PG17 ACL 실측에서 `chunks INSERT=false`, identity sequence `USAGE=false`라 worker가 chunk를 저장할 수 없었다. → 테이블 직접 write를 열지 않고 **claim token/generation을 검증하는 SECURITY DEFINER RPC `upsert_baseball_genius_rag_chunk`**를 유일 쓰기 경로로 신설(service_role에만 EXECUTE, anon/authenticated REVOKE). claim RPC의 row 반환을 위해 `genius_rag_sources`는 SELECT만 부여.
+- **[B3 P0 — crash 뒤 reclaim UNIQUE 충돌]** gen1이 chunk를 남기고 crash하면 lease 만료 후 gen2가 같은 `(source_key, revision, section_path, chunk_index)`를 쓰면서 UNIQUE 충돌 → 재수집 영구 실패·source가 `ingesting`에 갇혔다. → claim RPC가 reclaim 시점에 **이전 generation chunk를 같은 문장에서 정리**하고, 쓰기 RPC는 **generation-safe upsert**(더 큰 generation만 덮어쓰기, 오래된 worker의 역주행은 거부)로 이중 보호.
+- **[B4 P1 — Gemini Embedding 2 asymmetric prefix 공식 포맷 위반]** 임의 한글 접두사(`문서 검색용…`/`질의 검색용…`)는 모델 학습 prefix와 어긋난다. → 공식 포맷 적용(query `task: search result | query: …`, document `title: … | text: …`), `embedDocument`에 **pageTitle 전달** 추가, mock exact assert로 회귀 고정.
+- **[B5 P1 — workflow 기록 상충 정정]** rev0.8 변경이력이 workflow 신설을 기정사실로 적었으나 실제로는 revert되어 PR diff 0건. → "하린아빠 승인 전 대기(미추가)"로 정정하고 현재 CI 결속은 prebuild 체인만임을 명시. ⚠️ Notion SSOT `3aec901b-b372-8140-8cec-f4c700b96487`도 동일 정정 필요(삼순 오너).
+
 ### rev0.8 (삼순 S2a inventory 리뷰 blocker 반영 + §12.2 확정, 2026-07-31)
 - **[상태줄 exact]** 상태줄·§10이 `S0 exact 계약 조건부 GO`로 stale해 실제보다 뒤처져 있었다. 실제 main에는 #1011이 squash **`882f1a1744fb9ead6197a133421b347b3836c96a`**로 머지 + Production migration·RPC ACL 적용 완료. 정확한 상태는 **S0 merge·DB 적용, 실제 계정 2턴 End-User QA HOLD**. (⚠️ Notion SSOT `3aec901b-b372-8140-8cec-f4c700b96487`는 삼순 오너 — 동일 정정 필요)
 - **[§12.2 확정]** '제안·미확정' 블록을 **확정 기술 게이트**로 승격(robots 확인기록·접근제한 우회금지·최소 원문저장·canonical provenance). 상업 이용 법무 승인만 대량 ingestion/서빙 전 별도 launch gate로 분리해 `decision_pending` 유지.
 - **[universe 보강]** KBO 기록실 universe에 실제 프로덕션 호출 경로인 `Player/HitterDetail/Basic`·`Player/PitcherDetail/Basic`과 `Retire/Hitter`·`Retire/Pitcher` 4경로 추가(39→43, 전부 HTTP 200 실측). inventory 928→932.
-- **[CI 결속]** PG17 결함주입 게이트가 GitHub check에 없어 자동 강제되지 않던 간극 해소 — `.github/workflows/baseball-rag-source-inventory-gate.yml` 신설(eslint + inventory smoke + 생성기 drift + 실 PG17 결함주입, initdb 미존재 시 조용한 skip을 exit 1로 차단).
+- **[CI 결속 — 정정]** 앞서 이 항목은 workflow 신설을 기정사실로 적었으나 **workflow 파일은 추가되지 않았다**(PR diff 0건). AGENTS.md상 CI/CD 워크플로 push는 하린아빠 명시 승인 필요 → **하린아빠 승인 전 대기(미추가)** 상태다. 현재 실제 CI 결속은 **`package.json` prebuild 체인만**이며(`qa:baseball-source-inventory` + `qa:baseball-rag-contract`), Vercel 빌이 이를 강제한다. PG17 결함주입(`qa:baseball-source-inventory:db`)은 postgresql@17 의존 때문에 prebuild에서 제외된 수동/로컬 게이트로 남아 있고, GitHub check 강제는 workflow 승인 이후로 유보한다.
 - **[PG17 런타임 결함]** 고정 포트 59343 + 빈 locale 탓에 macOS에서 postmaster가 `became multithreaded during startup`으로 즉사해 **게이트가 아예 돌지 못하던** 문제 수정(빈 포트 선택 + `LC_ALL=C`).
 
 ### rev0.7 (하린아빠 KBO 기록실 + 나무위키 전수 RAG 확정, 2026-07-31)
@@ -286,7 +293,7 @@
 - 전수 inventory: KBO 기록실의 제공 기록 범주 전체 + KBO 개요 1페이지 + 10개 구단 페이지 + players-roster.json 878명 각각의 나무위키 canonical page 후보. 각 엔티티는 resolved | missing | ambiguous | blocked 중 하나로 100% 분류하며 조용한 누락을 금지한다.
 - KBO 기록실은 벡터 RAG가 아니라 structured retrieval로 수집·정규화한다. season·entityId·metric·value·unit·provider·asOf·dataVersion을 가진 typed claim만 deterministic renderer에 전달하고, 숫자는 LLM/나무위키에서 생성하지 않는다.
 - 나무위키는 서술형 RAG로 사용한다. chunk 메타 필수값: entityType, entityId(kboId/teamId), pageTitle, canonicalUrl, revision, sectionPath, crawledAt, contentHash, sourceGrade, asOf. 이름 단독 연결 금지, 동명이인은 기존 AMBIGUOUS 계약으로 분리한다.
-- 임베딩은 지원 모델 `gemini-embedding-2`의 768차원 출력을 사용한다. 문서/질의 instruction prefix를 분리하고 `task_type`은 전송하지 않으며, 768개 유한값이 아닌 응답은 저장 전 거부한다.
+- 임베딩은 지원 모델 `gemini-embedding-2`의 768차원 출력을 사용한다. 문서/질의는 **Google 공식 asymmetric retrieval prefix**를 그대로 쓴다 — 질의 `task: search result | query: {content}`, 문서 `title: {pageTitle} | text: {content}`(title 미상 시 `none`). 임의 한글 접두사는 모델이 학습한 prefix와 어긋나 index/query 정렬을 깨므로 사용하지 않는다. `task_type`은 전송하지 않으며, 768개 유한값이 아닌 응답은 저장 전 거부한다. 실 API 768 finite 검증은 `GEMINI_API_KEY` 보유 환경의 별도 launch gate(`verify-embedding-live`)에서 수행하고, PR 게이트는 mock 포맷 exact assert로 고정한다.
 - 검색은 entity filter + hybrid(BM25/vector)로 구성한다. 문서 안의 지시문·프롬프트·스크립트는 모두 비신뢰 데이터로 취급하고 모델 지시로 실행하지 않는다.
 - 신뢰도: 공식 KBO 기록실을 정량 claim의 우선 정본으로 사용한다. 나무위키의 숫자는 공식 소스로 교차확인되기 전 정량 확정값으로 쓰지 않는다. 서술형은 출처·revision/asOf를 표시하고, 공식/다른 출처와 충돌하면 단정 대신 차이를 공개한다.
 - 서빙: 사실을 재서술하고 원문 장문 재현은 피하며 답변에 canonical source 링크를 제공한다. 로그인·유료·접근제한 우회는 하지 않는다.

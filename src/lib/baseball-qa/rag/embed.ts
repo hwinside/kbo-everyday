@@ -9,19 +9,34 @@ export type EmbedResult =
   | { ok: true; vector: number[] }
   | { ok: false; reason: string };
 
-const INSTRUCTION_PREFIX: Record<EmbeddingPurpose, string> = {
-  document: "문서 검색용 야구 지식: ",
-  query: "질의 검색용 야구 질문: ",
-};
+/**
+ * Gemini Embedding 2 공식 asymmetric retrieval 포맷.
+ * 임의 접두사는 모델이 학습한 task prefix와 어긋나 index/query 정렬을 깨뜨린다.
+ * query: `task: search result | query: {content}`
+ * document: `title: {title} | text: {content}` (title 없으면 "none")
+ */
+export function formatQueryInput(text: string): string {
+  return `task: search result | query: ${text}`;
+}
+
+export function formatDocumentInput(text: string, title?: string | null): string {
+  const resolvedTitle = title?.trim() ? title.trim() : "none";
+  return `title: ${resolvedTitle} | text: ${text}`;
+}
 
 export async function embedText(
   text: string,
   purpose: EmbeddingPurpose,
   fetchImpl: typeof fetch = fetch,
+  title?: string | null,
 ): Promise<EmbedResult> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) return { ok: false, reason: "missing_api_key" };
   if (!text.trim()) return { ok: false, reason: "empty_text" };
+
+  const formatted = purpose === "query"
+    ? formatQueryInput(text.trim())
+    : formatDocumentInput(text.trim(), title);
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), EMBED_TIMEOUT_MS);
@@ -31,7 +46,7 @@ export async function embedText(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         model: `models/${RAG_EMBEDDING_MODEL}`,
-        content: { parts: [{ text: `${INSTRUCTION_PREFIX[purpose]}${text.trim()}` }] },
+        content: { parts: [{ text: formatted }] },
         outputDimensionality: RAG_EMBEDDING_DIM,
       }),
       signal: controller.signal,
@@ -56,8 +71,12 @@ export async function embedText(
   }
 }
 
-export function embedDocument(text: string, fetchImpl?: typeof fetch): Promise<EmbedResult> {
-  return embedText(text, "document", fetchImpl);
+export function embedDocument(
+  text: string,
+  pageTitle?: string | null,
+  fetchImpl?: typeof fetch,
+): Promise<EmbedResult> {
+  return embedText(text, "document", fetchImpl, pageTitle);
 }
 
 export function embedQuery(text: string, fetchImpl?: typeof fetch): Promise<EmbedResult> {

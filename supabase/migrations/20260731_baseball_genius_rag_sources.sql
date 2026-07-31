@@ -91,7 +91,9 @@ CREATE TABLE IF NOT EXISTS public.genius_rag_chunks (
   as_of date NOT NULL,
   claim_token uuid NOT NULL,
   claim_generation bigint NOT NULL CHECK (claim_generation > 0),
-  embedding extensions.vector(768),
+  -- embedding NULL은 검색 불가능한 chunk다. nullable로 두면 embedding을 생략한 chunk가
+  -- ready 판정의 "matching chunk 존재"를 만족시켜 NULL 문서가 ready로 오인된다.
+  embedding extensions.vector(768) NOT NULL,
   metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
   created_at timestamptz NOT NULL DEFAULT now(),
   FOREIGN KEY (source_key, source_kind)
@@ -175,6 +177,7 @@ BEGIN
       AND chunk.canonical_url = NEW.canonical_url
       AND chunk.source_grade = NEW.source_grade
       AND chunk.crawled_at = NEW.crawled_at
+      AND chunk.embedding IS NOT NULL
   ) THEN
     RAISE EXCEPTION 'ready rag source requires matching provenance chunk';
   END IF;
@@ -202,7 +205,7 @@ BEGIN
 
   RETURN QUERY
   WITH candidates AS (
-    SELECT source.source_key
+    SELECT source.source_key AS source_key
     FROM public.genius_rag_sources source
     WHERE source.source_kind = 'namu_document'
       AND source.resolution_status = 'resolved'
@@ -220,18 +223,31 @@ BEGIN
     ORDER BY source.question_count DESC, source.last_question_at DESC NULLS LAST, source.source_key
     FOR UPDATE SKIP LOCKED
     LIMIT p_limit
+  ),
+  claimed AS (
+    UPDATE public.genius_rag_sources source
+    SET ingestion_status = 'ingesting',
+        ingestion_attempts = source.ingestion_attempts + 1,
+        lease_until = clock_timestamp() + make_interval(secs => p_lease_seconds),
+        claim_token = gen_random_uuid(),
+        claim_generation = source.claim_generation + 1,
+        last_error = NULL,
+        updated_at = now()
+    FROM candidates candidate
+    WHERE source.source_key = candidate.source_key
+    RETURNING source.*
+  ),
+  -- crash한 이전 generation이 남긴 chunk를 reclaim 시점에 정리한다.
+  -- 이걸 안 하면 gen2가 같은 (revision, section_path, chunk_index)를 쓸 때 UNIQUE 충돌로
+  -- 재수집이 영구히 실패하고 source가 ingesting에 갇힌다.
+  purged AS (
+    DELETE FROM public.genius_rag_chunks chunk
+    USING claimed
+    WHERE chunk.source_key = claimed.source_key
+      AND chunk.claim_generation < claimed.claim_generation
+    RETURNING chunk.id
   )
-  UPDATE public.genius_rag_sources source
-  SET ingestion_status = 'ingesting',
-      ingestion_attempts = source.ingestion_attempts + 1,
-      lease_until = clock_timestamp() + make_interval(secs => p_lease_seconds),
-      claim_token = gen_random_uuid(),
-      claim_generation = source.claim_generation + 1,
-      last_error = NULL,
-      updated_at = now()
-  FROM candidates candidate
-  WHERE source.source_key = candidate.source_key
-  RETURNING source.*;
+  SELECT claimed.* FROM claimed;
 END;
 $$;
 
@@ -276,10 +292,90 @@ BEGIN
         AND chunk.revision = p_revision
         AND chunk.document_content_hash = p_content_hash
         AND chunk.crawled_at = p_crawled_at
+        AND chunk.embedding IS NOT NULL
+    )
+    -- 검색 불가능한 chunk가 단 1건이라도 남아 있으면 ready로 올리지 않는다.
+    AND NOT EXISTS (
+      SELECT 1 FROM public.genius_rag_chunks chunk
+      WHERE chunk.source_key = source.source_key
+        AND chunk.claim_generation = p_claim_generation
+        AND chunk.embedding IS NULL
     )
   RETURNING true INTO v_completed;
 
   RETURN coalesce(v_completed, false);
+END;
+$$;
+
+-- worker의 유일한 chunk write 경로다.
+-- (1) service_role은 genius_rag_chunks에 직접 INSERT 권한도 identity sequence USAGE도 없다.
+--     SECURITY DEFINER RPC만 열어 claim token/generation 검증을 거친 write만 허용한다.
+-- (2) gen1이 chunk를 남기고 crash한 뒤 lease 만료로 gen2가 reclaim하면 같은
+--     (source_key, revision, section_path, chunk_index)를 다시 쓰게 되어 UNIQUE 충돌로 재수집이 영구 실패했다.
+--     generation-safe replace로 더 새로운 generation만 기존 행을 덮어쓴다(오래된 worker의 역주행은 거부).
+CREATE OR REPLACE FUNCTION public.upsert_baseball_genius_rag_chunk(
+  p_source_key text,
+  p_claim_token uuid,
+  p_claim_generation bigint,
+  p_entity_type text,
+  p_entity_id text,
+  p_page_title text,
+  p_canonical_url text,
+  p_revision text,
+  p_section_path text,
+  p_chunk_index integer,
+  p_content text,
+  p_document_content_hash text,
+  p_content_hash text,
+  p_source_grade text,
+  p_crawled_at timestamptz,
+  p_as_of date,
+  p_embedding extensions.vector(768),
+  p_metadata jsonb DEFAULT '{}'::jsonb
+)
+RETURNS bigint
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_id bigint;
+BEGIN
+  IF p_embedding IS NULL THEN
+    RAISE EXCEPTION 'rag chunk requires embedding';
+  END IF;
+
+  INSERT INTO public.genius_rag_chunks (
+    source_key, entity_type, entity_id, page_title, canonical_url, revision, section_path,
+    chunk_index, content, document_content_hash, content_hash, source_grade, crawled_at, as_of,
+    claim_token, claim_generation, embedding, metadata
+  ) VALUES (
+    p_source_key, p_entity_type, p_entity_id, p_page_title, p_canonical_url, p_revision, p_section_path,
+    p_chunk_index, p_content, p_document_content_hash, p_content_hash, p_source_grade, p_crawled_at, p_as_of,
+    p_claim_token, p_claim_generation, p_embedding, coalesce(p_metadata, '{}'::jsonb)
+  )
+  ON CONFLICT (source_key, revision, section_path, chunk_index) DO UPDATE
+  SET entity_type = EXCLUDED.entity_type,
+      entity_id = EXCLUDED.entity_id,
+      page_title = EXCLUDED.page_title,
+      canonical_url = EXCLUDED.canonical_url,
+      content = EXCLUDED.content,
+      document_content_hash = EXCLUDED.document_content_hash,
+      content_hash = EXCLUDED.content_hash,
+      source_grade = EXCLUDED.source_grade,
+      crawled_at = EXCLUDED.crawled_at,
+      as_of = EXCLUDED.as_of,
+      claim_token = EXCLUDED.claim_token,
+      claim_generation = EXCLUDED.claim_generation,
+      embedding = EXCLUDED.embedding,
+      metadata = EXCLUDED.metadata
+  WHERE public.genius_rag_chunks.claim_generation < EXCLUDED.claim_generation
+  RETURNING id INTO v_id;
+
+  IF v_id IS NULL THEN
+    RAISE EXCEPTION 'stale rag chunk generation for %', p_source_key;
+  END IF;
+  RETURN v_id;
 END;
 $$;
 
@@ -322,3 +418,14 @@ GRANT EXECUTE ON FUNCTION public.complete_baseball_genius_rag_source(text, uuid,
 REVOKE ALL ON FUNCTION public.record_baseball_genius_source_demand(text[])
   FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.record_baseball_genius_source_demand(text[]) TO service_role;
+REVOKE ALL ON FUNCTION public.upsert_baseball_genius_rag_chunk(
+  text, uuid, bigint, text, text, text, text, text, text, integer, text, text, text, text,
+  timestamptz, date, extensions.vector(768), jsonb
+) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.upsert_baseball_genius_rag_chunk(
+  text, uuid, bigint, text, text, text, text, text, text, integer, text, text, text, text,
+  timestamptz, date, extensions.vector(768), jsonb
+) TO service_role;
+-- claim RPC는 genius_rag_sources 행 타입을 반환하므로 caller에게 row type 접근이 필요하다.
+-- 쓰기는 열지 않고 SELECT만 부여한다(chunks 테이블 직접 write는 계속 차단).
+GRANT SELECT ON public.genius_rag_sources TO service_role;

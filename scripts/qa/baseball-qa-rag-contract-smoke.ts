@@ -9,6 +9,8 @@ import {
 import {
   embedDocument,
   embedQuery,
+  formatDocumentInput,
+  formatQueryInput,
   RAG_EMBEDDING_MODEL,
 } from "../../src/lib/baseball-qa/rag/embed";
 import {
@@ -71,23 +73,35 @@ const mockFetch: typeof fetch = async (input, init) => {
   }), { status: 200, headers: { "Content-Type": "application/json" } });
 };
 
-assert.equal((await embedDocument("문서", mockFetch)).ok, true);
+assert.equal((await embedDocument("문서", "이정후", mockFetch)).ok, true);
 assert.equal((await embedQuery("질문", mockFetch)).ok, true);
+assert.equal((await embedDocument("제목 없는 문서", null, mockFetch)).ok, true);
 for (const call of calls) {
   assert.ok(call.url.includes(`/models/${RAG_EMBEDDING_MODEL}:embedContent`));
   assert.equal(call.body.model, `models/${RAG_EMBEDDING_MODEL}`);
   assert.equal(call.body.outputDimensionality, RAG_EMBEDDING_DIM);
   assert.equal("taskType" in call.body, false);
 }
-assert.match(JSON.stringify(calls[0].body), /문서 검색용/);
-assert.match(JSON.stringify(calls[1].body), /질의 검색용/);
+
+// Gemini Embedding 2 공식 asymmetric retrieval 포맷을 exact로 고정한다.
+const sentText = (index: number): string =>
+  ((calls[index].body.content as { parts: { text: string }[] }).parts[0].text);
+assert.equal(sentText(0), "title: 이정후 | text: 문서");
+assert.equal(sentText(1), "task: search result | query: 질문");
+assert.equal(sentText(2), "title: none | text: 제목 없는 문서");
+assert.equal(formatQueryInput("질문"), "task: search result | query: 질문");
+assert.equal(formatDocumentInput("본문", "  "), "title: none | text: 본문");
+assert.equal(formatDocumentInput("본문", " KBO 리그 "), "title: KBO 리그 | text: 본문");
 
 const nonFiniteFetch: typeof fetch = async () => new Response(JSON.stringify({
   embedding: { values: [...Array(RAG_EMBEDDING_DIM - 1).fill(0), null] },
 }), { status: 200, headers: { "Content-Type": "application/json" } });
-assert.deepEqual(await embedDocument("문서", nonFiniteFetch), { ok: false, reason: "non_finite_value" });
+assert.deepEqual(
+  await embedDocument("문서", "제목", nonFiniteFetch),
+  { ok: false, reason: "non_finite_value" },
+);
 
-console.log("baseball QA RAG contracts PASS (tier/canonical/meta/chunk/gemini-embedding-2)");
+console.log("baseball QA RAG contracts PASS (tier/canonical/meta/chunk/gemini-embedding-2 asymmetric prefix)");
 }
 
 verifyEmbeddingContract().catch((error: unknown) => {
