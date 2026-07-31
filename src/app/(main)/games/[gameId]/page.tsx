@@ -49,7 +49,7 @@ import GameStatsTab from "@/components/game/GameStatsTab";
 import LiveStatsTab from "@/components/game/LiveStatsTab";
 import { useGameRelay } from "@/lib/hooks/useGameRelay";
 import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
-import { lookupPitcherSeasonEra } from "@/lib/stats/pitcher-season";
+import { resolveStarterPitcher } from "@/lib/stats/pitcher-season";
 import PullToRefresh from "@/components/PullToRefresh";
 import PostgameInterviewSection from "@/components/game/PostgameInterviewSection";
 
@@ -423,29 +423,16 @@ export default function GameDetailPage() {
       || d.detailLineup?.homeStarter?.trim()
       || "";
     if (!awayName && !homeName) return null;
-    const starter = (name: string, teamId: number) => {
-      const roster = name
-        ? PLAYERS_ROSTER.find(
-            (p: { name: string; teamId: number; kboId: string }) =>
-              p.name === name && p.teamId === teamId,
-          )
-        : undefined;
-      return {
-        name,
-        era: lookupPitcherSeasonEra(roster?.kboId) ?? "-",
-        kboId: roster?.kboId,
-      };
-    };
     return {
       gameId,
       away: {
         teamId: game.awayTeamId,
-        startingPitcher: starter(awayName, game.awayTeamId),
+        startingPitcher: resolveStarterPitcher(awayName, game.awayTeamId),
         batters: [],
       },
       home: {
         teamId: game.homeTeamId,
-        startingPitcher: starter(homeName, game.homeTeamId),
+        startingPitcher: resolveStarterPitcher(homeName, game.homeTeamId),
         batters: [],
       },
     };
@@ -679,13 +666,11 @@ export default function GameDetailPage() {
                         // Naver 폴백 라인업은 awayStarter 를 함께 실어온다 — KBO boxScore/경기목록
                         // starter 가 모두 빈 장애에서도 선발 표기+AI 분석이 살아있게(삼순 PR#988 P0-1).
                         const spName = validBoxName || liveGame?.awayStarterName || d.detailLineup.awayStarter || "";
-                        const spRoster = spName ? PLAYERS_ROSTER.find((p: { name: string; teamId: number; kboId: string }) => p.name === spName && p.teamId === game.awayTeamId) : undefined;
-                        const boxEra = gameDetail?.boxScore?.awayPitchers?.[0]?.era?.trim();
-                        return {
-                          name: spName,
-                          era: boxEra || lookupPitcherSeasonEra(spRoster?.kboId) || "-",
-                          kboId: spRoster?.kboId,
-                        };
+                        return resolveStarterPitcher(
+                          spName,
+                          game.awayTeamId,
+                          gameDetail?.boxScore?.awayPitchers?.[0]?.era,
+                        );
                       })(),
                       batters: d.detailLineup.away.map((e: LineupEntry) => {
                         const roster = PLAYERS_ROSTER.find((p: { name: string; teamId: number; kboId: string }) => p.name === e.name && p.teamId === game.awayTeamId);
@@ -698,13 +683,11 @@ export default function GameDetailPage() {
                         const boxName = gameDetail?.boxScore?.homePitchers?.[0]?.name;
                         const validBoxName = boxName && !/^선수\(\d+\)$/.test(boxName) ? boxName : "";
                         const spName = validBoxName || liveGame?.homeStarterName || d.detailLineup.homeStarter || "";
-                        const spRoster = spName ? PLAYERS_ROSTER.find((p: { name: string; teamId: number; kboId: string }) => p.name === spName && p.teamId === game.homeTeamId) : undefined;
-                        const boxEra = gameDetail?.boxScore?.homePitchers?.[0]?.era?.trim();
-                        return {
-                          name: spName,
-                          era: boxEra || lookupPitcherSeasonEra(spRoster?.kboId) || "-",
-                          kboId: spRoster?.kboId,
-                        };
+                        return resolveStarterPitcher(
+                          spName,
+                          game.homeTeamId,
+                          gameDetail?.boxScore?.homePitchers?.[0]?.era,
+                        );
                       })(),
                       batters: d.detailLineup.home.map((e: LineupEntry) => {
                         const roster = PLAYERS_ROSTER.find((p: { name: string; teamId: number; kboId: string }) => p.name === e.name && p.teamId === game.homeTeamId);
