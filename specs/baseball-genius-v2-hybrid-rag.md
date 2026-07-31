@@ -4,9 +4,7 @@
 > 작성: 삼식이 2026-07-31 (rev0.11: 삼순 S2a 3차 리뷰 NO-GO 반영 — retry 예산 회복 + 실패 종료 RPC 신설 / rev0.10: 삼순 S2a 재리뷰 NO-GO 3건 반영 — generation 원자성 stage→swap 재설계 / rev0.9: 삼순 S2a NO-GO 5건 반영 / rev0.7: 하린아빠 KBO 기록실+나무위키 전수 RAG 확정 §12 반영 / rev0.6: 삼순 5차 재리뷰 테이블명 exact)
 > SSOT: Notion `3aec901b-b372-8140-8cec-f4c700b96487` (본 파일은 미러).
 > **rev 정합 기준**: 이 문서의 제목·작성줄·§11 변경이력 최상단은 항상 동일 rev를 가리킨다(현재 **rev0.11**).
-> Notion SSOT의 live 버전은 **rev0.7**이며, repo 미러가 rev0.8~0.11만큼 앞서 있다. 앞선 분은 전부
-> 삼순 S2a 리뷰 NO-GO 반영분(미머지 PR #1018)이라 PR 머지 시점에 Notion을 rev0.11로 일괄 동기화한다.
-> 그전까지 외부 참조의 정본은 Notion rev0.7, 구현 계약의 정본은 본 미러 rev0.11이다.
+> Notion SSOT live 버전은 rev0.11이며, repo mirror는 Notion 확인 후 exact 동기화한다.
 > 선행 SSOT: 야잘알봇 MVP 스펙 v1.2 (Notion `3acc901bb3728165b783d0f0960c9f02`)
 > 트리거: 하린아빠 2026-07-31 "야구 룰에 이어 구단·선수 질문 대응 + RAG. 이것까지 되어야 킬러피처."
 
@@ -244,10 +242,10 @@ rev0.10까지는 claim과 **성공** 종료만 있고 **실패** 종료 경로�
 - **[P0 — 실패 경로 경계 회귀 부재]** 성공 경로만 결속되어 있어 위 고착이 재발돼도 게이트가 잡지 못했다.
   → `qa:baseball-source-inventory:db`에 **R2-B6**(연속 3회 실패 고착 재현 → 종료 RPC로 복구, token 불일치·generation
   불일치 no-op, 종료 후에도 소진된 예산은 재claim 불가)와 **R2-B6b**(예산 잔존 실패는 lease 만료 대기 없이 즉시
-  재claim, 실패 종료가 마지막 성공 snapshot·서빙 뜸를 파괴하지 않음) 상설 추가. fail RPC ACL(service_role EXECUTE /
+  재claim, 실패 종료가 마지막 성공 snapshot·서빙 연속성을 파괴하지 않음) 상설 추가. fail RPC ACL(service_role EXECUTE /
   anon·authenticated 차단)도 기존 ACL 매트릭스에 편입. RED(migration 미적용 상태 exit 3)→GREEN 실측.
 - **[문서 rev 정합]** 제목 `rev0.9` ↔ 본문 `rev0.10` 불일치를 해소하고(제목·작성줄·변경이력 최상단 = 동일 rev),
-  Notion live **rev0.7** 대비 repo 미러가 rev0.8~0.11만큼 앞서 있음·머지 시점 일괄 동기화를 헤더에 명시했다.
+  Notion SSOT를 rev0.11로 먼저 승격하고 repo mirror는 그 확인값에 exact 동기화한다.
 
 ### rev0.10 (삼순 S2a 재리뷰 NO-GO 3건 반영 — generation 원자성 재설계, 2026-07-31)
 
@@ -257,7 +255,7 @@ rev0.9 B3의 "reclaim 시점 이전 generation purge"는 UNIQUE 충돌은 해소
 - **[R2-B2 P0 — current generation에 이질 provenance chunk가 섞여도 ready]** complete RPC가 matching chunk 1건 EXISTS + embedding NULL 0건만 검사해, 같은 claim에 `r-good/doc-good`과 `r-rogue/doc-rogue`를 함께 넣고 `r-good`으로 complete하면 ready가 됐다(오염된 snapshot 서빙). → complete RPC가 **current claim generation의 모든 chunk가 동일 `revision`/`document_content_hash`/`crawled_at`/`claim_token`을 만족**하는지 검증하고 하나라도 불일치면 complete를 거부한다. ready trigger도 `chunk.claim_generation = NEW.active_claim_generation`으로 generation에 결속했다.
 - **[R2-B3 P1 — write RPC가 동일 claim 안전 재시도를 거부]** DB commit 후 응답이 timeout되면 worker는 결과를 모른다. 그런데 `ON CONFLICT ... WHERE old_generation < new_generation`만 허용해 같은 token/generation/key 재호출이 `stale rag chunk generation`으로 실패했다. → UNIQUE 키에 generation이 포함되어 충돌 행은 항상 동일 generation이므로, 가드를 **`claim_token` 일치**로 바꿔 같은 claim의 재시도를 idempotent update로 허용한다(중복 행 0). 다른 token의 동일 generation 덮어쓰기는 거부되고, 낮은 generation 역주행은 chunk owner trigger의 generation 검증이 거부한다.
 - **§12 계약 준수 명시**: "갱신: revision/contentHash 기반 증분 수집, 삭제·이동 tombstone, bounded rate/retry, **마지막 성공 snapshot 보존**"를 DB 구조로 강제한다. 재수집이 시작되거나(stage) 실패해도(crash) 직전 성공 snapshot은 계속 서빙되며, 교체는 complete 성공 시점의 단일 원자 전환으로만 일어난다.
-- **[R2-B4 P0 — ready source에 identity drift가 불가능]** 위 R2-B1 재설계로 `ready`가 `active_claim_generation > 0`과 matching chunk 존재를 요구하게 되자, drift 트리거가 chunk를 전량 삭제하면서도 active·상태를 그대로 두어 **ready source에 대한 identity drift UPDATE 자체가 `ready rag source requires matching provenance chunk`로 거부**됐다(PG17 actual `DRIFT_ON_READY_FAILED=t / final_status=ready`). 이름·소속이 바뀐 문서를 영원히 무효화할 수 없어 잘못된 identity의 chunk가 계속 서빙된다. → drift 트리거가 chunk 삭제와 함께 `active_claim_generation := 0`으로 내리고, `ready`는 `stale`로 강등시켜 재수집 대상으로 둘다(서빙 가능한 snapshot이 없는 source는 ready일 수 없다는 계약과 정합).
+- **[R2-B4 P0 — ready source에 identity drift가 불가능]** 위 R2-B1 재설계로 `ready`가 `active_claim_generation > 0`과 matching chunk 존재를 요구하게 되자, drift 트리거가 chunk를 전량 삭제하면서도 active·상태를 그대로 두어 **ready source에 대한 identity drift UPDATE 자체가 `ready rag source requires matching provenance chunk`로 거부**됐다(PG17 actual `DRIFT_ON_READY_FAILED=t / final_status=ready`). 이름·소속이 바뀐 문서를 영원히 무효화할 수 없어 잘못된 identity의 chunk가 계속 서빙된다. → drift 트리거가 chunk 삭제와 함께 `active_claim_generation := 0`으로 내리고, `ready`는 `stale`로 강등시켜 재수집 대상으로 둔다(서빙 가능한 snapshot이 없는 source는 ready일 수 없다는 계약과 정합).
 - PG17 회귀 추가(RED→GREEN 실측): R2-B4 ready source drift → 거부되지 않고 chunk 0·active 0·`stale` 강등, R2-B1 `gen1 ready → stale → gen2 claim` 시 gen1 chunk·서빙 보존 / `gen2 stage 중 crash → gen1 계속 서빙` / `gen3 complete → active swap + 이전 generation 정리`, R2-B2 이질 provenance 주입 → complete 거부(균일화 후 GREEN), R2-B3 동일 token/gen/key 재호출 → idempotent 성공(중복 0)·다른 token 거부·낮은 generation 거부, 서빙 뷰 ACL(service_role SELECT / anon·authenticated 차단 / chunks 직접 SELECT 전원 차단).
 
 ### rev0.9 (삼순 S2a NO-GO 5건 반영, 2026-07-31)
