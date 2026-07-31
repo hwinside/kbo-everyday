@@ -88,6 +88,8 @@
     "poll_votes",
     "posts",
     "prediction_stats",
+    "postgame_interview_jobs",
+    "postgame_interviews",
     "profile_nickname_changes",
     "profiles",
     "push_subscriptions",
@@ -345,6 +347,20 @@
     "player_highlight_event_snapshots": [
       [
         "event_id"
+      ]
+    ],
+    "postgame_interview_jobs": [
+      [
+        "game_id"
+      ]
+    ],
+    "postgame_interviews": [
+      [
+        "id"
+      ],
+      [
+        "game_id",
+        "video_id"
       ]
     ],
     "player_stats_batter": [

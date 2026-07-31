@@ -122,6 +122,7 @@
     "qa:shorts-relevance": "tsx scripts/qa/shorts-relevance-smoke.ts",
     "qa:channel-discovery": "tsx scripts/qa/channel-discovery-smoke.ts",
     "qa:videos-rss-status": "tsx scripts/qa/videos-rss-status-smoke.ts",
+    "qa:postgame-interviews": "tsx scripts/qa/postgame-interviews-smoke.ts",
     "qa:youtube-quota": "tsx scripts/qa/youtube-quota-smoke.ts",
     "qa:naver-relay-counts": "tsx scripts/qa/naver-relay-counts-smoke.ts",
     "qa:relay-inning-runs": "tsx scripts/qa/relay-inning-runs-smoke.ts",
