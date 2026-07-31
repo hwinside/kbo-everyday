@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
 import { X, Volume2, VolumeX, MoreVertical, Loader2, MessageCircle, Send, Trash2, Eye } from "lucide-react";
@@ -155,6 +155,9 @@ export default function VenueStoryViewer({
   const commentSubmitLockRef = useRef(false);
   // 전송 버튼 press 상태 — pointerdown 에서 시작, primary pointerup(버튼 위)에서만 제출 확정.
   const commentPressRef = useRef(createPressState());
+  // 스토리 좌/우 탭은 pointerup에서 즉시 1칸 이동한다.
+  // pointer 뒤 합성 click(detail>0)은 무시하고 키보드 click(detail=0)만 폴백으로 받아 2칸 이동을 막는다.
+  const storyNavPressRef = useRef(createPressState());
   const rafRef = useRef<number | null>(null);
   const startRef = useRef<number>(0);
   const elapsedRef = useRef<number>(0);
@@ -497,6 +500,35 @@ export default function VenueStoryViewer({
     }
   };
 
+  const handleStoryNavPointerUp = (
+    direction: "prev" | "next",
+    e: ReactPointerEvent<HTMLButtonElement>,
+  ) => {
+    const bounds = e.currentTarget.getBoundingClientRect();
+    const shouldNavigate = shouldSubmitOnPointerUp(storyNavPressRef.current, {
+      isPrimary: e.isPrimary,
+      button: e.button,
+      clientX: e.clientX,
+      clientY: e.clientY,
+      bounds: {
+        left: bounds.left,
+        top: bounds.top,
+        right: bounds.right,
+        bottom: bounds.bottom,
+      },
+    });
+    setPaused(false);
+    if (!shouldNavigate || commentBusy) return;
+    if (direction === "prev") goPrev();
+    else goNext();
+  };
+
+  const handleStoryNavClick = (direction: "prev" | "next", detail: number) => {
+    if (detail > 0 || commentBusy) return;
+    if (direction === "prev") goPrev();
+    else goNext();
+  };
+
   const handleDelete = async () => {
     if (!story) return;
     setBusy(true);
@@ -648,7 +680,7 @@ export default function VenueStoryViewer({
         {story.mediaType === "video" && (
           <button
             onClick={() => setMuted((m) => !m)}
-            className="w-9 h-9 flex items-center justify-center text-white/90"
+            className="w-11 h-11 flex items-center justify-center text-white/90 shrink-0 touch-manipulation"
             aria-label="음소거"
           >
             {muted ? <VolumeX size={20} /> : <Volume2 size={20} />}
@@ -659,14 +691,14 @@ export default function VenueStoryViewer({
             setMenuOpen(true);
             setPaused(true);
           }}
-          className="w-9 h-9 flex items-center justify-center text-white/90"
+          className="w-11 h-11 flex items-center justify-center text-white/90 shrink-0 touch-manipulation"
           aria-label="더보기"
         >
           <MoreVertical size={20} />
         </button>
         <button
           onClick={onClose}
-          className="w-9 h-9 flex items-center justify-center text-white/90"
+          className="w-11 h-11 flex items-center justify-center text-white/90 shrink-0 touch-manipulation"
           aria-label="닫기"
         >
           <X size={22} />
@@ -703,28 +735,44 @@ export default function VenueStoryViewer({
             스토리 넘김으로 먹혀 모달이 잘 안 떴다(하린아빠 7/29 안드 리포트 — pill 8px 위만 눌러도
             넘김 발동 재현). 캡션(72px)+pill 영역을 넘김 존에서 제외해 하단 탭이 모달 오픈으로 간다. */}
         <button
-          className="absolute top-0 left-0 w-1/3"
+          className="absolute top-0 left-0 w-1/3 touch-manipulation"
           style={{ bottom: safeBottomCalc(STORY_NAV_BOTTOM_OFFSET) }}
           aria-label="이전"
-          onClick={() => {
-            if (commentBusy) return;
-            goPrev();
+          onClick={(e) => handleStoryNavClick("prev", e.detail)}
+          onPointerDown={(e) => {
+            e.preventDefault();
+            markPressStart(storyNavPressRef.current);
+            setPaused(true);
           }}
-          onPointerDown={() => setPaused(true)}
-          onPointerUp={() => setPaused(false)}
-          onPointerLeave={() => setPaused(false)}
+          onPointerUp={(e) => handleStoryNavPointerUp("prev", e)}
+          onPointerCancel={() => {
+            cancelPress(storyNavPressRef.current);
+            setPaused(false);
+          }}
+          onPointerLeave={() => {
+            cancelPress(storyNavPressRef.current);
+            setPaused(false);
+          }}
         />
         <button
-          className="absolute top-0 right-0 w-2/3"
+          className="absolute top-0 right-0 w-2/3 touch-manipulation"
           style={{ bottom: safeBottomCalc(STORY_NAV_BOTTOM_OFFSET) }}
           aria-label="다음"
-          onClick={() => {
-            if (commentBusy) return;
-            goNext();
+          onClick={(e) => handleStoryNavClick("next", e.detail)}
+          onPointerDown={(e) => {
+            e.preventDefault();
+            markPressStart(storyNavPressRef.current);
+            setPaused(true);
           }}
-          onPointerDown={() => setPaused(true)}
-          onPointerUp={() => setPaused(false)}
-          onPointerLeave={() => setPaused(false)}
+          onPointerUp={(e) => handleStoryNavPointerUp("next", e)}
+          onPointerCancel={() => {
+            cancelPress(storyNavPressRef.current);
+            setPaused(false);
+          }}
+          onPointerLeave={() => {
+            cancelPress(storyNavPressRef.current);
+            setPaused(false);
+          }}
         />
       </div>
 

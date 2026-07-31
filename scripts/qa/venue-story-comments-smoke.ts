@@ -273,7 +273,8 @@ console.log("[전송 중 스토리 전환 오염 가드 — 삼순 #807 라운�
   ok("응답 반영 전 shouldApplyCommentResponse 가드 통과",
     /shouldApplyCommentResponse\(submitStoryId, storyIdRef\.current\)/.test(viewerSrc));
   ok("좌/우 탭 이동이 전송 중(commentBusy) 잠금을 본다",
-    (viewerSrc.match(/if \(commentBusy\) return;/g) ?? []).length === 2);
+    viewerSrc.includes("if (!shouldNavigate || commentBusy) return;") &&
+    viewerSrc.includes("if (detail > 0 || commentBusy) return;"));
   ok("인라인 입력바 제거 — 하단은 댓글 모달 오픈 버튼(data-open-comments)",
     viewerSrc.includes("data-open-comments") &&
     !/onFocus=\{\(\) => setInputFocused/.test(viewerSrc));
