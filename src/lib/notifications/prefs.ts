@@ -2,6 +2,7 @@
 // row 없음 = DEFAULT_PREFS (전부 on, 이닝 묶음 요약만 off — 스펙 §6 확정)
 
 export const PREF_KEYS = [
+  "starter_announce",
   "lineup_confirm",
   "game_start",
   "game_end",
@@ -22,6 +23,7 @@ export type PrefKey = (typeof PREF_KEYS)[number];
 export type NotificationPrefs = Record<PrefKey, boolean>;
 
 export const DEFAULT_PREFS: NotificationPrefs = {
+  starter_announce: true,
   lineup_confirm: true,
   game_start: true,
   game_end: true,
@@ -40,6 +42,7 @@ export const DEFAULT_PREFS: NotificationPrefs = {
 
 /** 마이페이지 토글 UI 라벨 (노출 순서 그대로) */
 export const PREF_LABELS: { key: PrefKey; label: string; desc?: string }[] = [
+  { key: "starter_announce", label: "예고선발 공개", desc: "최애팀 경기 양팀 선발투수가 공개되면 알림" },
   { key: "lineup_confirm", label: "라인업 확정", desc: "최애팀 라인업이 확정되면 즉시 알림" },
   { key: "game_start", label: "경기 시작" },
   { key: "game_end", label: "경기 종료" },

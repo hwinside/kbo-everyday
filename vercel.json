@@ -86,6 +86,10 @@
       "schedule": "* 4-14 * * *"
     },
     {
+      "path": "/api/cron/starter-watchdog",
+      "schedule": "*/10 * * * *"
+    },
+    {
       "path": "/api/cron/game-logs",
       "schedule": "0 14,15,16 * * *"
     },
