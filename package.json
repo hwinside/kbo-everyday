@@ -19,6 +19,7 @@
     "qa:chat-count-delta": "tsx scripts/qa/chat-count-delta-smoke.ts",
     "qa:chat-count-hook": "tsx scripts/qa/chat-count-hook-probe.ts",
     "qa:resolve-player": "tsx scripts/qa/resolve-player-smoke.ts",
+    "qa:genius-rag": "tsx scripts/qa/genius-rag-inventory-smoke.ts",
     "qa:roster-count-consistency": "tsx scripts/qa/roster-count-consistency-smoke.ts",
     "qa:admin-view": "tsx scripts/qa/admin-view-smoke.ts",
     "qa:app-rankings": "tsx scripts/qa/app-rankings-smoke.ts",

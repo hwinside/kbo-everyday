@@ -30,6 +30,8 @@
     "genius_qa_cache",
     "genius_question_jobs",
     "genius_question_logs",
+    "genius_rag_chunks",
+    "genius_source_inventory",
     "channel_discovery_candidates",
     "channel_discovery_runs",
     "channel_pool",
