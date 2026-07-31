@@ -11,6 +11,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { KboGame } from "@/lib/crawler/kbo-api";
 import { fetchGameBoxscore, type PlayerGameLogRow, type UnresolvedBoxScorePlayer } from "@/lib/game-logs/ingest";
+import { planStaleReconciliation } from "@/lib/game-logs/reconcile";
 import {
   CANONICAL_ROW_FIELDS,
   buildGameIngestion,
@@ -32,11 +33,6 @@ export interface LedgerIngestResult {
    * 영원히 incomplete 가 된다 — 그걸 정리한 개수다.
    */
   staleRowsRemoved: number;
-}
-
-/** canonical key — payload hash 정렬키와 동일한 (kbo_id, player_type) 쌍. */
-function rowKey(row: { kbo_id?: unknown; player_type?: unknown }): string {
-  return `${String(row.kbo_id)}\u0000${String(row.player_type)}`;
 }
 
 /** YYYYMMDD → YYYY-MM-DD */
@@ -113,7 +109,20 @@ export async function ingestGameWithLedger(
 
   const expectedRowCount = build.rows.length;
   const expectedPayloadHash = canonicalPayloadHash(build.rows);
-  const expectedKeys = new Set(build.rows.map(rowKey));
+
+  // §11: DB 재조회 helper (upsert/삭제 결과를 신뢰하지 않는다).
+  // query-guard: bounded -- game_id 단위 선수 행, 경기당 최대 ~60행 (양팀 타자+투수)
+  const reselect = async (): Promise<CanonicalRowInput[]> => {
+    const { data, error } = await client
+      .from("player_game_logs")
+      .select(CANONICAL_ROW_FIELDS.join(","))
+      .eq("game_id", game.gameId);
+    if (error) throw new Error(`player_game_logs 재조회 실패 (${game.gameId}): ${error.message}`);
+    return (data ?? []) as unknown as CanonicalRowInput[];
+  };
+
+  // rekey 판정에는 "upsert 전" 상태가 필요하다 — 여기 없던 key 만 이번에 새로 생긴 key 다.
+  const beforeRows = await reselect();
 
   // resolve된 행은 unresolved가 있어도 upsert한다(로스터 보강 후 재적재로 complete 승격).
   let rowsUpserted = 0;
@@ -126,45 +135,32 @@ export async function ingestGameWithLedger(
     rowsUpserted += chunk.length;
   }
 
-  // §11: DB 재조회로 actual canonical payload hash 검증 (upsert 결과를 신뢰하지 않는다).
-  // query-guard: bounded -- game_id 단위 선수 행, 경기당 최대 ~60행 (양팀 타자+투수)
-  const reselect = async (): Promise<CanonicalRowInput[]> => {
-    const { data, error } = await client
-      .from("player_game_logs")
-      .select(CANONICAL_ROW_FIELDS.join(","))
-      .eq("game_id", game.gameId);
-    if (error) throw new Error(`player_game_logs 재조회 실패 (${game.gameId}): ${error.message}`);
-    return (data ?? []) as unknown as CanonicalRowInput[];
-  };
-
   let persistedRows = await reselect();
 
   // ── stale key reconciliation ────────────────────────────────────────
-  // upsert 는 새 key 를 넣기만 하고 과거에 잘못 들어간 key 를 지우지 않는다.
-  // 선수 식별자가 재해석되면(예: 7/4 LG전 `56709|pitcher` → `52731|pitcher`)
-  // 구 key 가 남아 37행 기대에 38행이 되고 hash mismatch 로 영원히 incomplete 된다.
-  //
-  // strict full build 가 성공한 경기에만(이 지점이 그젇이다 — missing_required_field 는 위에서
-  // 이미 return) expected canonical set 으로 교체한다. 기대 집합이 불완전일 때는
-  // 절대 지우지 않는다 — 삭제는 복구 불가능하므로 fail-closed 가 기본이다.
+  // upsert 는 새 key 를 넣기만 하고 구 key 를 지우지 않아, 선수 식별자가 재해석되면
+  // (예: 7/4 LG전 `56709|pitcher` → `52731|pitcher`) 행이 부풀어 hash mismatch 로
+  // 영원히 incomplete 된다. 다만 "기대에 없으면 지운다" 는 공급자 부분 응답 때
+  // 멀쩡한 과거 행을 지우고 줄어든 집합끼리 아귀가 맞아 complete 로 오판된다.
+  // 그래서 삭제는 rekey 로 설명되는 1:1 짝에만 허용한다(planStaleReconciliation).
   let staleRowsRemoved = 0;
-  const staleRows = persistedRows.filter((row) => !expectedKeys.has(rowKey(row)));
-  if (staleRows.length > 0) {
-    // 방어선: 기대 집합이 비었거나 삭제가 전면적이면 입력 이상을 의심해 중단한다.
-    if (expectedKeys.size === 0 || staleRows.length >= persistedRows.length) {
-      return incomplete(
-        "row_count_mismatch",
-        {
-          expected_row_count: expectedRowCount,
-          expected_payload_hash: expectedPayloadHash,
-          persisted_row_count: persistedRows.length,
-          unresolved_count: build.unresolved.length,
-        },
-        build.unresolved,
-        rowsUpserted,
-      );
-    }
-    for (const stale of staleRows) {
+  const plan = planStaleReconciliation(beforeRows, persistedRows, build.rows, build.unresolved.length);
+  if (plan.refusal) {
+    // 삭제는 복구 불가 — 조금이라도 의심스러우면 지우지 않고 fail-closed 한다.
+    return incomplete(
+      "row_count_mismatch",
+      {
+        expected_row_count: expectedRowCount,
+        expected_payload_hash: expectedPayloadHash,
+        persisted_row_count: persistedRows.length,
+        unresolved_count: build.unresolved.length,
+      },
+      build.unresolved,
+      rowsUpserted,
+    );
+  }
+  if (plan.deletions.length > 0) {
+    for (const stale of plan.deletions) {
       const { error: deleteError } = await client
         .from("player_game_logs")
         .delete()

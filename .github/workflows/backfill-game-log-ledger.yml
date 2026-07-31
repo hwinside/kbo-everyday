@@ -33,11 +33,14 @@ on:
         options:
           - 'false'
           - 'true'
-      require_complete:
-        description: '이 game_id 들이 apply 후 모두 complete 가 아니면 실패 처리 (쉼표 구분). 공개 선행 검증용'
-        required: false
-        default: '20260704HHLG0,20260708LGSS0,20260725LGHH0'
-        type: string
+      mode:
+        description: 'canary = 소량 시험 실행(공개 게이트 없음) / release = 공개 선행 실행(제보 3경기 complete 필수)'
+        required: true
+        default: 'canary'
+        type: choice
+        options:
+          - 'canary'
+          - 'release'
 
 permissions:
   contents: read
@@ -132,6 +135,7 @@ jobs:
             echo "- season: \`${{ steps.validate.outputs.season }}\`"
             echo "- limit: \`${{ steps.validate.outputs.limit }}\` (0 = 시즌 전체)"
             echo "- apply: \`${{ inputs.apply }}\`"
+            echo "- mode: \`${{ inputs.mode }}\` (release 만 공개 선행 게이트를 탄다)"
             echo "- ledger rows: \`${{ steps.before.outputs.count }}\` → \`${{ steps.after.outputs.count }}\`"
             echo ""
             echo '```'
@@ -139,44 +143,60 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # ── fail-closed 검증 ──────────────────────────────────────────
+      # ── fail-closed 검증 ────────────────────────────────────────────────────
       # 전역 ledger count 나 "complete N건" 은 성공 근거가 못 된다 — 수백 경기가 complete 면
-      # 정작 필요한 경기가 incomplete 여도 전체 수치는 초록이 된다(삼순 P0).
-      # 공개 선행 조건인 target game_id 들의 ledger status 를 직접 확인한다.
-      - name: Verify required games are complete
-        if: inputs.apply == 'true' && inputs.require_complete != ''
+      # 정작 필요한 경기가 incomplete 여도 전체 수치는 초록이 된다(삼순 P0-1).
+      #
+      # 그리고 검증 대상을 운영자 입력으로 받으면 빈 값으로 dispatch 해서 게이트를 건너뛸 수 있다(P0-2).
+      # 그래서 공개 선행 대상 3경기를 **워크플로에 고정**하고, mode=release 면 무조건 실행한다.
+      # canary 는 소량 시험용이라 이 게이트를 타지 않으며, 공개 근거로 쓸 수 없다.
+      - name: Verify release games are complete
+        if: inputs.apply == 'true' && inputs.mode == 'release'
         env:
           SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          # 하드코딩 — 운영자가 바꿀 수 없다. 변경하려면 PR 로 리뷰를 거쳐야 한다.
+          RELEASE_GAME_IDS: '20260704HHLG0,20260708LGSS0,20260725LGHH0'
         run: |
+          set -euo pipefail
           FAILED=""
           echo "| game_id | status | failure_reason |" > /tmp/required.md
           echo "|---|---|---|" >> /tmp/required.md
-          IFS=',' read -ra GAMES <<< "${{ inputs.require_complete }}"
+          IFS=',' read -ra GAMES <<< "$RELEASE_GAME_IDS"
+          if [ "${#GAMES[@]}" -eq 0 ]; then
+            echo "::error::release game list is empty"
+            exit 1
+          fi
           for RAW in "${GAMES[@]}"; do
             GID=$(echo "$RAW" | tr -d '[:space:]')
-            [ -z "$GID" ] && continue
-            BODY=$(curl -s "$SUPABASE_URL/rest/v1/player_game_log_ingestions?select=game_id,status,failure_reason&game_id=eq.$GID" \
+            # game_id 형식 strict 검증 — 예상 밖 문자열로 REST 쿼리를 만들지 않는다.
+            if ! echo "$GID" | grep -Eq '^[0-9]{8}[A-Z]{4}[0-9]$'; then
+              echo "::error::invalid game_id format: '$GID'"
+              exit 1
+            fi
+            BODY=$(curl -s -G "$SUPABASE_URL/rest/v1/player_game_log_ingestions" \
+              --data-urlencode "select=game_id,status,failure_reason" \
+              --data-urlencode "game_id=eq.$GID" \
               -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
               -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY")
             STATUS=$(echo "$BODY" | jq -r '.[0].status // "MISSING"')
             REASON=$(echo "$BODY" | jq -r '.[0].failure_reason // "-"')
             echo "| $GID | $STATUS | $REASON |" >> /tmp/required.md
-            echo "required $GID -> $STATUS ($REASON)"
+            echo "release $GID -> $STATUS ($REASON)"
             if [ "$STATUS" != "complete" ]; then
               FAILED="$FAILED $GID($STATUS/$REASON)"
             fi
           done
           {
-            echo "### 공개 선행 검증 대상 경기"
+            echo "### 공개 선행 검증 대상 경기 (고정)"
             echo ""
             cat /tmp/required.md
           } >> "$GITHUB_STEP_SUMMARY"
           if [ -n "$FAILED" ]; then
-            echo "::error::required games not complete:$FAILED"
+            echo "::error::release games not complete:$FAILED"
             exit 1
           fi
-          echo "✅ all required games complete"
+          echo "✅ all release games complete"
 
       # dry-run 은 판정 미리보기라 incomplete 가 있어도 실패가 아니다.
       # apply 실행이 사실상 no-op 이면(증가 0 + complete 0) 드러낸다.

@@ -18,6 +18,7 @@ import { resolve } from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import type { KboGame } from "@/lib/crawler/kbo-api";
 import type { GameBoxscore } from "@/lib/game-logs/ingest";
+import { planStaleReconciliation } from "@/lib/game-logs/reconcile";
 import {
   CANONICAL_ROW_FIELDS,
   buildGameIngestion,
@@ -318,63 +319,135 @@ async function main() {
   ok("동일 rows 재upsert 후에도 complete + 행수 불변", greenIdem.complete && (await selectRows(db)).length === 5);
 
   // ── stale key reconciliation (2026-07-31 삼순 P0) ──────────────────────
-  // 운영 `20260704HHLG0` 실제 shape: 기존 37행 / strict expected 37행인데
-  // 투수 1명의 key 가 `56709|pitcher` → `52731|pitcher` 로 재해석됨.
-  // upsert 만 하면 구 key 가 남아 38행 → hash mismatch → 영원히 incomplete.
-  console.log("\n[stale key] 재해석된 구 (kbo_id, player_type) 가 남으면 영원히 incomplete");
+  // 수동으로 알고리즘을 복제하지 않고 **production helper `planStaleReconciliation` 을 직접 호출**해
+  // 실제 판정 로직을 그대로 태운다(삼순 요구). DB 반영도 plan.deletions 그대로만 수행한다.
+  const applyPlan = async (plan: ReturnType<typeof planStaleReconciliation>) => {
+    for (const row of plan.deletions) {
+      await db.query(
+        "delete from player_game_logs where game_id=$1 and kbo_id=$2 and player_type=$3",
+        [GAME.gameId, row.kbo_id, row.player_type],
+      );
+    }
+  };
+
+  // ① GREEN — 7/4 실제 shape: 투수 1명 key 재해석(`56709|pitcher` → `52731|pitcher`).
+  //    kbo_id 만 다르고 나머지 19필드가 exact 일치하는 1:1 짝 → 교체 허용.
+  console.log("\n[reconcile ① GREEN] 7/4 rekey — 1:1 짝이 확인되면 교체");
   {
-    // 기준선을 complete 로 맞춘 다음, 구 key 행을 주입해 운영 상황을 재현한다.
     await insertRows(db, build.rows as unknown as CanonicalRowInput[]);
-    const staleRow = {
-      ...(build.rows.find((r) => r.kbo_id === "90003") as unknown as CanonicalRowInput),
-      kbo_id: "56709", // 재해석 전 구 식별자
-    };
-    await insertRows(db, [staleRow]);
+    const newPitcher = build.rows.find((r) => r.kbo_id === "90003") as unknown as CanonicalRowInput;
+    const oldPitcher = { ...newPitcher, kbo_id: "56709" };
+    // upsert 전 상태 = 구 key 만 있고 신 key 는 없는 시점
+    await db.query("delete from player_game_logs where game_id=$1 and kbo_id='90003'", [GAME.gameId]);
+    await insertRows(db, [oldPitcher]);
+    const beforeRows = await selectRows(db);
+    ok(
+      "upsert 전: 구 key 존재·신 key 부재",
+      beforeRows.some((r) => r.kbo_id === "56709") && !beforeRows.some((r) => r.kbo_id === "90003"),
+    );
+
+    await insertRows(db, build.rows as unknown as CanonicalRowInput[]);
     const withStale = await selectRows(db);
-    ok("stale key 주입 → 6행(기대 5행)", withStale.length === 6);
+    ok("upsert 후 구+신 공존 → 6행(기대 5행)", withStale.length === 6);
     const redStale = await verifyNow(db);
     logVerify("RED", redStale);
     ok("upsert만으로는 복구 불가 → incomplete", !redStale.complete);
 
-    // reconciliation 계약: expected canonical set 에 없는 key 를 지우면 complete 로 돌아온다.
-    const expectedKeys = new Set(
-      build.rows.map((r) => `${String(r.kbo_id)}\u0000${String(r.player_type)}`),
+    const plan = planStaleReconciliation(
+      beforeRows,
+      withStale,
+      build.rows as unknown as CanonicalRowInput[],
+      0,
     );
-    const staleKeys = withStale.filter(
-      (r) => !expectedKeys.has(`${String(r.kbo_id)}\u0000${String(r.player_type)}`),
-    );
-    ok("stale 행만 정확히 1건 식별(정상 행 오삭제 없음)", staleKeys.length === 1 && staleKeys[0].kbo_id === "56709");
-    for (const s of staleKeys) {
-      await db.query(
-        "delete from player_game_logs where game_id=$1 and kbo_id=$2 and player_type=$3",
-        [GAME.gameId, s.kbo_id, s.player_type],
-      );
-    }
-    const afterReconcile = await selectRows(db);
-    ok("reconcile 후 37행계약(=기대 5행) 복원", afterReconcile.length === 5);
+    ok("helper: 거부 사유 없음", plan.refusal === null, `refusal=${plan.refusal}`);
     ok(
-      "reconcile 후 canonical hash 일치",
-      canonicalPayloadHash(afterReconcile) === expectedHash,
+      "helper: 구 key 1건만 삭제 대상",
+      plan.deletions.length === 1 && plan.deletions[0].kbo_id === "56709",
     );
+    await applyPlan(plan);
+
+    const afterReconcile = await selectRows(db);
+    ok("reconcile 후 기대 행수 복원", afterReconcile.length === 5);
+    ok("reconcile 후 canonical hash 일치", canonicalPayloadHash(afterReconcile) === expectedHash);
     const greenStale = await verifyNow(db);
     logVerify("GREEN 원복", greenStale);
     ok("reconcile 후 ledger complete", greenStale.complete);
   }
 
-  // ── reconciliation 안전가드: 전면 삭제는 금지 ───────────────────────
-  // 기대 집합이 비었거나 기존 행을 전부 지워야 하는 상황은 입력 이상이므로
-  // 삭제 없이 fail-closed 해야 한다(삭제는 복구 불가).
-  console.log("\n[reconcile 가드] 전면 삭제 상황은 fail-closed");
+  // ② RED — 공급자가 정상 선수 1명을 빠뜨린 부분 응답.
+  //    `missingFields=0` 이어도 "전원 반환"의 증거가 아니다 — 지우면 멀쩡한 과거 행이 사라지고
+  //    줄어든 집합끼리 아귀가 맞아 complete 로 오판된다. 삭제 0 + 거부가 맞다.
+  console.log("\n[reconcile ② RED] 선수 1명 누락 부분 응답은 삭제 금지");
   {
     const persistedNow = await selectRows(db);
-    const emptyExpected = new Set<string>();
-    const wouldDeleteAll = persistedNow.filter(
-      (r) => !emptyExpected.has(`${String(r.kbo_id)}\u0000${String(r.player_type)}`),
+    const partialExpected = (build.rows as unknown as CanonicalRowInput[]).filter(
+      (r) => r.kbo_id !== "90002",
+    );
+    const plan = planStaleReconciliation(persistedNow, persistedNow, partialExpected, 0);
+    ok(
+      "helper: no_rekey_counterpart 로 거부",
+      plan.refusal === "no_rekey_counterpart",
+      `refusal=${plan.refusal}`,
+    );
+    ok("helper: 삭제 0건", plan.deletions.length === 0);
+    await applyPlan(plan);
+    ok("정상 행 보존(5행 유지)", (await selectRows(db)).length === 5);
+    ok("여전히 ledger complete(데이터 무상)", (await verifyNow(db)).complete);
+  }
+
+  // ③ RED — unresolved 선수가 있으면 기대 집합 자체를 신뢰할 수 없다.
+  console.log("\n[reconcile ③ RED] unresolved 존재 시 삭제 금지");
+  {
+    const persistedNow = await selectRows(db);
+    const newPitcher = build.rows.find((r) => r.kbo_id === "90003") as unknown as CanonicalRowInput;
+    const rekeyed = (build.rows as unknown as CanonicalRowInput[])
+      .filter((r) => r.kbo_id !== "90003")
+      .concat([{ ...newPitcher, kbo_id: "52731" }]);
+    const plan = planStaleReconciliation(persistedNow, persistedNow, rekeyed, 1);
+    ok(
+      "helper: unresolved_present 로 거부",
+      plan.refusal === "unresolved_present",
+      `refusal=${plan.refusal}`,
+    );
+    ok("helper: 삭제 0건", plan.deletions.length === 0);
+    await applyPlan(plan);
+    ok("행 보존", (await selectRows(db)).length === 5);
+  }
+
+  // ④ RED — 같은 지문의 후보가 둘 이상이면 누가 누구의 재식별인지 확정 불가.
+  console.log("\n[reconcile ④ RED] 모호한 짝(동일 지문 복수)은 삭제 금지");
+  {
+    const batterA = build.rows.find((r) => r.kbo_id === "90001") as unknown as CanonicalRowInput;
+    const twinOld1 = { ...batterA, kbo_id: "70001" };
+    const twinOld2 = { ...batterA, kbo_id: "70002" };
+    const twinNew1 = { ...batterA, kbo_id: "80001" };
+    const twinNew2 = { ...batterA, kbo_id: "80002" };
+    const plan = planStaleReconciliation(
+      [twinOld1, twinOld2],
+      [twinOld1, twinOld2, twinNew1, twinNew2],
+      [twinNew1, twinNew2],
+      0,
     );
     ok(
-      "expected 집합 0 → stale 가 전체와 같음(삭제 금지 조건 성립)",
-      wouldDeleteAll.length === persistedNow.length && persistedNow.length > 0,
+      "helper: ambiguous_rekey_counterpart 로 거부",
+      plan.refusal === "ambiguous_rekey_counterpart",
+      `refusal=${plan.refusal}`,
     );
+    ok("helper: 삭제 0건", plan.deletions.length === 0);
+  }
+
+  // ⑤ RED — 기대 집합이 비었거나 전면 삭제가 되는 상황은 입력 이상.
+  console.log("\n[reconcile ⑤ RED] 전면 삭제 상황은 fail-closed");
+  {
+    const persistedNow = await selectRows(db);
+    const plan = planStaleReconciliation(persistedNow, persistedNow, [], 0);
+    ok(
+      "helper: suspicious_full_delete 로 거부",
+      plan.refusal === "suspicious_full_delete",
+      `refusal=${plan.refusal}`,
+    );
+    ok("helper: 삭제 0건", plan.deletions.length === 0);
+    await applyPlan(plan);
     ok("실제 행은 그대로 보존", (await selectRows(db)).length === 5);
   }
 
