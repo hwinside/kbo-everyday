@@ -77,6 +77,19 @@ jobs:
           RELEASE_SEASON: '2026'
         run: |
           set -euo pipefail
+          # ── whitelist 먼저 ────────────────────────────────────────────────
+          # mode/apply 를 분기 조건으로만 쓰면 오타값(예: MODE=typo)이 어느 분기에도
+          # 걸리지 않고 통과한다. 그러면 backfill 은 --apply 로 시즌 전체를 쓰는데
+          # release 3경기 검증은 `inputs.mode == 'release'` 가 아니라 skip 된다(삼순 P0).
+          case "$MODE" in
+            canary|release) ;;
+            *) echo "::error::mode must be 'canary' or 'release', got '$MODE'"; exit 1 ;;
+          esac
+          case "$APPLY" in
+            true|false) ;;
+            *) echo "::error::apply must be 'true' or 'false', got '$APPLY'"; exit 1 ;;
+          esac
+
           # 시즌은 4자리 연도만. 오타로 엉뚱한 시즌을 긁지 않게 fail-closed.
           if ! echo "$SEASON" | grep -Eq '^[0-9]{4}$'; then
             echo "::error::season must be a 4-digit year, got '$SEASON'"
