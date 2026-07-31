@@ -156,6 +156,11 @@ export default function VenueStoryViewer({
   const commentSubmitLockRef = useRef(false);
   // 전송 버튼 press 상태 — pointerdown 에서 시작, primary pointerup(버튼 위)에서만 제출 확정.
   const commentPressRef = useRef(createPressState());
+  // 댓글 입력 DOM 참조 — 제출/활성 판정에서 controlled state 대신 실제 DOM value 를 진실원본으로 읽는다.
+  // iOS 이모지 키보드 삽입이 React onChange 로 왕복되지 않는 기기가 있어 commentInput 이 "" 로 남으면
+  // 전송 버튼이 disabled 로 잠겨 탭이 통째로 no-op 이 된다(하린아빠 7/31 — 👍 입력 후 전송해도
+  // POST 0건·에러 토스트 0·이모지가 입력창에 잔류. 텍스트는 정상 전송).
+  const commentInputRef = useRef<HTMLInputElement>(null);
   // 스토리 좌/우 탭은 pointerup에서 즉시 1칸 이동한다.
   // pointer 뒤 합성 click(detail>0)은 무시하고 키보드 click(detail=0)만 폴백으로 받아 2칸 이동을 막는다.
   const storyNavPressRef = useRef(createPressState());
@@ -425,7 +430,8 @@ export default function VenueStoryViewer({
   };
 
   const handleCommentSubmit = async () => {
-    const content = commentInput.trim();
+    // 이모지 키보드 삽입이 onChange 로 왕복되지 않아도 전송되도록 DOM value 를 폴백으로 읽는다.
+    const content = (commentInput || commentInputRef.current?.value || "").trim();
     if (
       !canBeginCommentSubmit({
         hasStory: !!story,
@@ -463,6 +469,8 @@ export default function VenueStoryViewer({
           setComments((prev) => [...(prev ?? []), data.comment]);
           setCommentTotal((prev) => (prev ?? 0) + 1);
           setCommentInput("");
+          // state 로 왕복되지 않은 값(이모지)이 DOM 에 남아 다음 전송에 새지 않게 직접 비운다.
+          if (commentInputRef.current) commentInputRef.current.value = "";
         }
       }
     } catch {
@@ -972,6 +980,8 @@ export default function VenueStoryViewer({
               )}
               <div className="flex items-center gap-2">
                 <input
+                  ref={commentInputRef}
+                  type="text"
                   value={commentInput}
                   onChange={(e) => {
                     setCommentInput(e.target.value);
@@ -1015,8 +1025,14 @@ export default function VenueStoryViewer({
                   onPointerCancel={() => cancelPress(commentPressRef.current)}
                   onPointerLeave={() => cancelPress(commentPressRef.current)}
                   onClick={handleCommentSubmit}
-                  disabled={commentBusy || commentInput.trim().length === 0}
-                  className="flex items-center justify-center w-9 h-9 rounded-full text-white disabled:opacity-50 transition-opacity shrink-0"
+                  // ⚠️ disabled 를 controlled state(commentInput)로 잠그면, iOS 이모지 키보드 삽입이 React
+                  // onChange 로 왕복되지 않는 기기에서 버튼이 계속 disabled 라 탭이 통째로 no-op 이 된다
+                  // (POST 0·토스트 0·이모지 잔류 = 하린아빠 7/31 리포트). 전송 자체는 handleCommentSubmit 가
+                  // DOM value 폴백으로 재검증하므로 여기선 busy 만 잠그고, 빈 입력은 opacity 로만 표시한다.
+                  disabled={commentBusy}
+                  className={`flex items-center justify-center w-9 h-9 rounded-full text-white transition-opacity shrink-0${
+                    commentBusy || commentInput.trim().length === 0 ? " opacity-50" : ""
+                  }`}
                   style={{ backgroundColor: "#FF453A" }}
                   aria-label="댓글 등록"
                 >

@@ -86,6 +86,7 @@ async function main() {
 
   // fetch spy: POST /comments 카운트 + 필요 시 hold(동시성 검증), GET 은 위 아바타 댓글 셋.
   let postCount = 0;
+  let lastPostContent: string | null = null;
   let holdPost = false;
   let nextPostError: string | null = null;
   let releasers: Array<() => void> = [];
@@ -96,6 +97,7 @@ async function main() {
     if (url.includes("/comments") && method === "POST") {
       postCount++;
       const content = (() => { try { return JSON.parse(init?.body ?? "{}").content; } catch { return ""; } })();
+      lastPostContent = content;
       if (holdPost) await new Promise<void>((r) => releasers.push(r));
       if (nextPostError) {
         const error = nextPostError;
@@ -297,6 +299,25 @@ async function main() {
   ok("429 응답은 댓글 overlay 내 role=alert로 노출",
     commentError?.textContent === "잠시 후 다시 입력해 주세요");
   ok("429 거절 후 댓글 입력값 유지", input!.value === rejectedContent);
+
+  // ── (7) iOS 이모지 회귀(하린아빠 7/31) ──
+  //   증상: 기본 이모지 👍 를 넣고 전송해도 POST 0건·에러 토스트 0·이모지가 입력창에 그대로 잔류.
+  //   원인: iOS 이모지 키보드 삽입이 React onChange 로 왕복되지 않는 경우 controlled state(commentInput)
+//   가 "" 로 남아 전송 버튼이 disabled 로 잠기고, 탭이 통째로 no-op 이 된다.
+  //   재현: onChange 를 거치지 않고 DOM value 에만 이모지를 넣는다(= 키보드 삽입이 state 로 안 온 상태).
+  //   ⚠️ 앞 케이스의 잔류 state 가 있으면 버튼이 그것 때문에 활성화돼 재현이 오염된다 → state 를 먼저 비운다.
+  await typeContent("");
+  await act(async () => { input!.value = "👍"; });
+  ok("이모지 재현: DOM value 는 👍 인데 controlled state 는 빈 값", input!.value === "👍");
+  ok("이모지 재현: 전송 버튼이 disabled 가 아니어야 탭이 no-op 이 아니다",
+    (sendBtn as HTMLButtonElement).disabled === false);
+  const beforeEmoji = postCount;
+  await tap({ clientX: 0, clientY: 0 });
+  ok("이모지 1탭 → POST 정확히 1건 발생", postCount === beforeEmoji + 1);
+  ok("이모지 전송 내용이 👍 로 전달됨", lastPostContent === "👍");
+  ok("전송 후 입력창 비워짐(이모지 잔류 0)", input!.value === "");
+  // 정상 동작하는 CommentSheet 입력창과 동일 속성
+  ok('입력창 type="text" 명시(CommentSheet 동일)', input!.getAttribute("type") === "text");
 
   globalThis.fetch = origFetch;
   console.log(`\nvenue-story comment submit render: ${pass} passed, ${fail} failed`);
