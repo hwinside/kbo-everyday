@@ -584,6 +584,110 @@ begin
   if final_status = 'ready' then raise exception 'R2-B4 source stayed ready with zero chunks'; end if;
 end;
 $$;
+
+-- [R2-B5] retry budget는 "연속 실패" 카운터다. complete 성공이 attempts를 0으로 되돌리지 않으면
+-- lifetime 누적 3회로 예산이 말라 성공적으로 서빙 중인 source조차 stale 재claim이 영구히 0건이 되고
+-- §12 증분 재수집이 정지한다. ①성공→stale 재claim ②성공→crash→재수집 성공→stale 재claim을 검증한다.
+update public.genius_rag_sources
+set ingestion_status='not_started', ingestion_attempts=0, lease_until=null, claim_token=null,
+    claim_generation=0, active_claim_generation=0, question_count=9000, revision=null, content_hash=null,
+    crawled_at=null, ingested_at=null
+where source_key='namu:team:10';
+do $$
+declare
+  claim public.genius_rag_sources%rowtype;
+  completed boolean;
+  attempts integer;
+  reclaimed text;
+begin
+  -- gen1 성공.
+  select * into claim from public.claim_baseball_genius_rag_batch(1, 60);
+  if claim.source_key <> 'namu:team:10' then raise exception 'R2-B5 setup claim mismatch'; end if;
+  perform public.upsert_baseball_genius_rag_chunk(
+    claim.source_key, claim.claim_token, claim.claim_generation, claim.entity_type, claim.entity_id,
+    claim.page_title, claim.canonical_url, 'rB5a', '개요', 0, repeat('content ', 6), 'docB5a', 'hB5a',
+    claim.source_grade, '2026-07-31T00:00:00Z', '2026-07-31', 'vec-768'
+  );
+  select public.complete_baseball_genius_rag_source(
+    claim.source_key, claim.claim_token, claim.claim_generation,
+    'rB5a', 'docB5a', '2026-07-31T00:00:00Z', '2026-08-01T00:00:00Z'
+  ) into completed;
+  if not completed then raise exception 'R2-B5 gen1 publish failed'; end if;
+
+  select ingestion_attempts into attempts
+  from public.genius_rag_sources where source_key='namu:team:10';
+  if attempts <> 0 then
+    raise exception 'R2-B5 successful complete left retry budget consumed (attempts=%)', attempts;
+  end if;
+
+  -- ① 재수집 주기 도래(stale) → 정상적으로 재claim된다.
+  update public.genius_rag_sources set ingestion_status='stale' where source_key='namu:team:10';
+  select source_key into reclaimed from public.claim_baseball_genius_rag_batch(1, 60);
+  if reclaimed is distinct from 'namu:team:10' then
+    raise exception 'R2-B5 stale source after success was not reclaimable';
+  end if;
+
+  -- ② 그 generation이 crash(lease 만료)해도 다음 재수집 성공이 예산을 다시 회복시킨다.
+  update public.genius_rag_sources set lease_until = clock_timestamp() - interval '1 second'
+  where source_key='namu:team:10';
+  select * into claim from public.claim_baseball_genius_rag_batch(1, 60);
+  if claim.source_key <> 'namu:team:10' then raise exception 'R2-B5 crashed generation was not reclaimed'; end if;
+  perform public.upsert_baseball_genius_rag_chunk(
+    claim.source_key, claim.claim_token, claim.claim_generation, claim.entity_type, claim.entity_id,
+    claim.page_title, claim.canonical_url, 'rB5b', '개요', 0, repeat('content ', 6), 'docB5b', 'hB5b',
+    claim.source_grade, '2026-07-31T00:00:00Z', '2026-07-31', 'vec-768'
+  );
+  select public.complete_baseball_genius_rag_source(
+    claim.source_key, claim.claim_token, claim.claim_generation,
+    'rB5b', 'docB5b', '2026-07-31T00:00:00Z', '2026-08-01T00:00:00Z'
+  ) into completed;
+  if not completed then raise exception 'R2-B5 post-crash republish failed'; end if;
+
+  update public.genius_rag_sources set ingestion_status='stale' where source_key='namu:team:10';
+  select source_key into reclaimed from public.claim_baseball_genius_rag_batch(1, 60);
+  if reclaimed is distinct from 'namu:team:10' then
+    raise exception 'R2-B5 lifetime attempts exhausted incremental re-ingestion';
+  end if;
+end;
+$$;
+
+-- [R2-B5b] 무한 재시도 방지 계약 무회귀: 성공 없이 연속 3회 실패하면 여전히 예산이 소진된다.
+update public.genius_rag_sources
+set ingestion_status='not_started', ingestion_attempts=0, lease_until=null, claim_token=null,
+    claim_generation=0, active_claim_generation=0, question_count=9000, revision=null, content_hash=null,
+    crawled_at=null, ingested_at=null
+where source_key='namu:team:10';
+delete from public.genius_rag_chunks where source_key='namu:team:10';
+do $$
+declare
+  claim public.genius_rag_sources%rowtype;
+  attempts integer;
+  reclaimed text;
+begin
+  for i in 1..3 loop
+    select * into claim from public.claim_baseball_genius_rag_batch(1, 60);
+    if claim.source_key <> 'namu:team:10' then raise exception 'R2-B5b crash loop claim mismatch at %', i; end if;
+    update public.genius_rag_sources set lease_until = clock_timestamp() - interval '1 second'
+    where source_key='namu:team:10';
+  end loop;
+
+  select ingestion_attempts into attempts
+  from public.genius_rag_sources where source_key='namu:team:10';
+  if attempts <> 3 then raise exception 'R2-B5b consecutive failures did not accumulate (attempts=%)', attempts; end if;
+
+  -- 이 검증의 claim은 다른 source를 가져가 뒤따르는 ACL 검증의 큐 순서를 흔든다.
+  -- subtransaction으로 둘러 판정만 취하고 부수효과는 되돌린다.
+  begin
+    select source_key into reclaimed from public.claim_baseball_genius_rag_batch(1, 60);
+    if reclaimed is not distinct from 'namu:team:10' then
+      raise exception 'R2-B5b exhausted retry budget still claimable (infinite retry)';
+    end if;
+    raise exception 'R2B5B_ROLLBACK';
+  exception when others then
+    if sqlerrm <> 'R2B5B_ROLLBACK' then raise; end if;
+  end;
+end;
+$$;
 SQL
 
 # [B2] service_role은 쓰기 RPC를 실행할 수 있고, anon/authenticated는 모든 RPC가 막힌다.
@@ -682,4 +786,4 @@ wait "$PID_A" "$PID_B"
 [ "$(sort -u "$WORK/a" "$WORK/b" | wc -l | tr -d ' ')" = "20" ]
 [ "$(cat "$WORK/a" "$WORK/b" | wc -l | tr -d ' ')" = "20" ]
 
-echo "baseball QA source inventory PG17 PASS (seed932·pending878·fault/CAS/concurrency·B1embedding·B2acl·B3reclaim·R2-B1stage→swap+snapshot보존·R2-B2provenance균일·R2-B3idempotent재시도·R2-B4drift→stale강등)"
+echo "baseball QA source inventory PG17 PASS (seed932·pending878·fault/CAS/concurrency·B1embedding·B2acl·B3reclaim·R2-B1stage→swap+snapshot보존·R2-B2provenance균일·R2-B3idempotent재시도·R2-B4drift→stale강등·R2-B5성공시retry예산회복+연속3회소진)"

@@ -308,6 +308,11 @@ DECLARE
 BEGIN
   UPDATE public.genius_rag_sources source
   SET ingestion_status = 'ready',
+      -- retry budget은 "연속 실패" 카운터다. lifetime 누적이면 성공한 source도 3세대 만에
+      -- 예산이 말라 stale 재claim이 영구히 0건이 되어 §12 증분 재수집이 정지한다.
+      -- 성공(complete)했다는 것은 그 source가 수집 가능하다는 증거이므로 예산을 회복시킨다.
+      -- 무한 재시도 방지 계약은 그대로다: 성공 없이 연속 3회 실패하면 여전히 소진된다.
+      ingestion_attempts = 0,
       -- stage→swap: 이 시점에만 active generation이 새 generation으로 원자 전환된다.
       active_claim_generation = p_claim_generation,
       revision = p_revision,
