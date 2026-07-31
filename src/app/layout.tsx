@@ -8,6 +8,7 @@ import { NativePushMount } from "@/components/NativePushMount";
 import { PageViewTracker } from "@/components/PageViewTracker";
 import { ClientErrorMount } from "@/components/ClientErrorMount";
 import { DwellTracker } from "@/components/DwellTracker";
+import AuthErrorNotice from "@/components/auth/AuthErrorNotice";
 import { Analytics } from "@vercel/analytics/next";
 
 const GA_ID = "G-C0TE4TFLZ4";
@@ -107,6 +108,7 @@ export default function RootLayout({
         <NativePushMount />
         <ThemeProvider>
           <AuthProvider>
+            <AuthErrorNotice />
             <PageViewTracker />
             <DwellTracker />
             {children}
