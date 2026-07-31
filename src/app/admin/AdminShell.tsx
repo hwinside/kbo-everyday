@@ -24,6 +24,7 @@ import {
   Download,
   RadioTower,
   Image as ImageIcon,
+  BrainCircuit,
 } from "lucide-react";
 import { useAdminUnreadDMCount } from "@/lib/admin/useAdminUnreadDMCount";
 import { useAdminBatchHealthCount } from "@/lib/admin/useAdminBatchHealthCount";
@@ -76,6 +77,7 @@ const NAV_ITEMS = [
   { href: "/admin/jobs", label: "크롤러/배치", icon: Bot },
   { href: "/admin/messages", label: "쪽지함", icon: Mail },
   { href: "/admin/feedback", label: "건의함", icon: MessageSquare },
+  { href: "/admin/baseball-genius", label: "야잘알봇", icon: BrainCircuit },
   { href: "/admin/reports", label: "신고 관리", icon: ShieldAlert },
   { href: "/admin/whats-new", label: "새 소식", icon: Sparkles },
   { href: "/admin/tester-signups", label: "테스터 신청", icon: Smartphone },
@@ -267,10 +269,12 @@ function Sidebar({ mobile, onClose, unreadDM, batchProblems }: { mobile?: boolea
       {mobile && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
       )}
+      {/* 모바일 drawer는 fixed 컨테이너라 메뉴가 뷰포트보다 길어지면 하단이 잘렸다
+          (2026-07-30) → 높이를 h-dvh로 고정하고 nav만 내부 스크롤시킨다. */}
       <div
         className={`${
-          mobile ? "relative z-10 w-64" : "w-60"
-        } flex flex-col min-h-screen border-r border-white/8`}
+          mobile ? "relative z-10 w-64 h-dvh" : "w-60 min-h-screen"
+        } flex flex-col border-r border-white/8`}
         style={{ background: "#101012" }}
       >
         <div
@@ -287,7 +291,7 @@ function Sidebar({ mobile, onClose, unreadDM, batchProblems }: { mobile?: boolea
             </button>
           )}
         </div>
-        <nav className="flex-1 p-3 space-y-1">
+        <nav className="flex-1 min-h-0 overflow-y-auto p-3 space-y-1">
           {NAV_ITEMS.map(({ href, label, icon: Icon }) => {
             const active = href === "/admin" ? pathname === "/admin" : pathname.startsWith(href);
             return (
@@ -317,7 +321,10 @@ function Sidebar({ mobile, onClose, unreadDM, batchProblems }: { mobile?: boolea
             );
           })}
         </nav>
-        <div className="p-4 border-t border-white/8 space-y-2">
+        <div
+          className="p-4 border-t border-white/8 space-y-2"
+          style={mobile ? { paddingBottom: "calc(env(safe-area-inset-bottom) + 1rem)" } : undefined}
+        >
           <AdminPushToggle />
           <p className="text-xs text-[#636366]">크보팬 v0.9</p>
         </div>
