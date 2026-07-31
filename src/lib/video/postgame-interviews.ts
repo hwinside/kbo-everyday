@@ -141,7 +141,7 @@ export function titleMatchesMatchupAndScore(
     return false;
   }
   const pattern = new RegExp(
-    `${escaped(awayTeamName)}\\s*${awayScore}\\s*(?:vs\\.?|대)\\s*${escaped(homeTeamName)}\\s*${homeScore}`,
+    `${escaped(awayTeamName)}\\s*${awayScore}\\s*(?:vs\\.?|대)\\s*${escaped(homeTeamName)}\\s*${homeScore}(?!\\d)`,
     "i",
   );
   return pattern.test(title);

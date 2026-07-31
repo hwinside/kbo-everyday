@@ -122,6 +122,16 @@ assert.equal(
   ),
   true,
 );
+for (const wrongHomeScore of ["40", "400"]) {
+  assert.equal(
+    titleMatchesMatchupAndScore(
+      `[두산베어스] 김대한 선수 | LG 2 vs 두산 ${wrongHomeScore} | 260731`,
+      kimDaeHanContext,
+    ),
+    false,
+    `home score ${wrongHomeScore}은 score 4로 prefix 매칭하지 않는다`,
+  );
+}
 assert.equal(
   matchPostgameInterview(
     {
