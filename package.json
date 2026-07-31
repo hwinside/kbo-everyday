@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "prebuild": "npm run qa:query-guard && npm run qa:foreign-photo && npm run qa:photos-helper-signature && npm run qa:roster-count-consistency && npm run qa:war-benchmark-coverage && npm run qa:videos-rss-status && npm run qa:diary-contrast && npm run qa:venue-stats-s2-effect-guard && npm run qa:venue-stats-s2-header-guard && npm run qa:venue-stats-s2-browser",
+    "prebuild": "npm run qa:query-guard && npm run qa:baseball-source-inventory && npm run qa:baseball-rag-contract && npm run qa:foreign-photo && npm run qa:photos-helper-signature && npm run qa:roster-count-consistency && npm run qa:war-benchmark-coverage && npm run qa:videos-rss-status && npm run qa:diary-contrast && npm run qa:venue-stats-s2-effect-guard && npm run qa:venue-stats-s2-header-guard && npm run qa:venue-stats-s2-browser",
     "qa:photos-helper-signature": "tsx scripts/qa/photos-helper-signature.ts",
     "qa:field-defense": "tsx scripts/qa/field-defense-boxscore-smoke.ts",
     "transcode:videos": "node scripts/transcode-videos.mjs",
@@ -126,6 +126,12 @@
     "qa:admin-delivery-ledger": "tsx scripts/qa/admin-delivery-ledger-smoke.ts",
     "qa:admin-dm-inbox": "node scripts/qa/admin-dm-inbox-smoke.mjs",
     "qa:admin-genius-monitor": "node scripts/qa/admin-genius-monitor-smoke.mjs && tsx scripts/qa/admin-genius-monitor-regression.ts",
+    "qa:baseball-source-inventory": "tsx scripts/qa/baseball-qa-source-inventory-smoke.ts",
+    "qa:baseball-source-inventory:db": "bash scripts/qa/baseball-qa-source-inventory-pg17.sh",
+    "qa:baseball-rag-contract": "tsx scripts/qa/baseball-qa-rag-contract-smoke.ts",
+    "build:baseball-source-inventory": "tsx scripts/baseball-qa/build-source-inventory.ts",
+    "verify:baseball-source-canonicals": "tsx scripts/baseball-qa/verify-source-canonicals.ts",
+    "verify:baseball-embedding-live": "tsx scripts/baseball-qa/verify-embedding-live.ts",
     "qa:feedback-origin-inbox": "bash scripts/qa/feedback-origin-inbox.sh",
     "qa:venue-story-upload-daily": "bash scripts/qa/venue-story-upload-daily.sh",
     "qa:venue-story-views": "bash scripts/qa/venue-story-views.sh && tsx --test scripts/qa/venue-story-view-client-smoke.ts && tsx --test scripts/qa/venue-story-view-route-smoke.ts",
@@ -227,7 +233,8 @@
     "qa:baseball-genius-context": "tsx scripts/qa/baseball-genius-context-smoke.ts",
     "qa:genius-typing": "tsx --test scripts/qa/genius-typing-indicator-smoke.ts",
     "qa:outage-banner": "tsx scripts/qa/outage-notice-banner-smoke.ts",
-    "qa:game-log-ledger-orchestrator": "tsx scripts/qa/game-log-ledger-orchestrator.ts"
+    "qa:game-log-ledger-orchestrator": "tsx scripts/qa/game-log-ledger-orchestrator.ts",
+    "qa:title-orphan": "tsx scripts/qa/title-analysis-orphan-score-smoke.ts"
   },
   "dependencies": {
     "@capacitor-firebase/messaging": "^8.3.0",

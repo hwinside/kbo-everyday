@@ -9,8 +9,9 @@ export const POSTGAME_INTERVIEW_WINDOW_MS = 24 * HOUR_MS;
 export interface InterviewChannel {
   channelId: string;
   name: string;
-  sourceKind: "broadcaster" | "team";
+  sourceKind: "broadcaster" | "team" | "curated";
   teamId: number | null;
+  dedicatedInterviewChannel?: boolean;
 }
 
 /**
@@ -37,14 +38,29 @@ const TEAM_CHANNELS: InterviewChannel[] = [
   { channelId: "UC_MA8-XEaVmvyayPzG66IKg", name: "키움히어로즈", sourceKind: "team", teamId: 10 },
 ];
 
-export const OFFICIAL_INTERVIEW_CHANNELS: readonly InterviewChannel[] = [
+const CURATED_INTERVIEW_CHANNELS: InterviewChannel[] = [
+  {
+    channelId: "UCUB0bLq2AIOzE9EX9oyokTQ",
+    name: "[크보인터뷰]",
+    sourceKind: "curated",
+    teamId: null,
+    dedicatedInterviewChannel: true,
+  },
+];
+
+export const APPROVED_INTERVIEW_CHANNELS: readonly InterviewChannel[] = [
   ...BROADCASTER_CHANNELS,
   ...TEAM_CHANNELS,
+  ...CURATED_INTERVIEW_CHANNELS,
 ];
 
 export interface InterviewMatchContext {
   gameId: string;
   gameDate: string; // YYYY-MM-DD
+  awayTeamName: string | null;
+  homeTeamName: string | null;
+  awayScore: number | null;
+  homeScore: number | null;
   winnerTeamId: number;
   winnerPlayerNames: string[];
   isDoubleheader: boolean;
@@ -101,9 +117,34 @@ export function titleMatchesGameDate(title: string, gameDate: string): boolean {
   return [
     new RegExp(`(?:^|\\D)${yyyy}[./-]${mm}[./-]${dd}(?!\\d)`),
     new RegExp(`(?:^|\\D)${yy}[./-]${mm}[./-]${dd}(?!\\d)`),
+    new RegExp(`(?:^|\\D)${yy}${monthRaw}${dayRaw}(?!\\d)`),
+    new RegExp(`(?:^|\\D)${mm}[./-]${dd}[./-]${yy}(?!\\d)`),
     new RegExp(`[([]\\s*${mm}[./]${dd}\\s*[)\\]]`),
     new RegExp(`(?:^|\\D)${mm}월\\s*${dd}일`),
   ].some((pattern) => pattern.test(title));
+}
+
+export function titleMatchesMatchupAndScore(
+  title: string,
+  context: Pick<
+    InterviewMatchContext,
+    "awayTeamName" | "homeTeamName" | "awayScore" | "homeScore"
+  >,
+): boolean {
+  const { awayTeamName, homeTeamName, awayScore, homeScore } = context;
+  if (
+    !awayTeamName
+    || !homeTeamName
+    || awayScore === null
+    || homeScore === null
+  ) {
+    return false;
+  }
+  const pattern = new RegExp(
+    `(?:^|[^0-9A-Za-z가-힣])${escaped(awayTeamName)}\\s*${awayScore}\\s*(?:vs\\.?|대)\\s*${escaped(homeTeamName)}\\s*${homeScore}(?!\\d)`,
+    "i",
+  );
+  return pattern.test(title);
 }
 
 /**
@@ -115,13 +156,14 @@ export function matchPostgameInterview(
   channel: InterviewChannel,
   contexts: InterviewMatchContext[],
 ): InterviewMatch | null {
-  if (!isPostgameInterviewTitle(entry.title)) return null;
+  if (!channel.dedicatedInterviewChannel && !isPostgameInterviewTitle(entry.title)) return null;
   const publishedAtMs = Date.parse(entry.published_at);
   if (!Number.isFinite(publishedAtMs)) return null;
 
   const candidates = contexts.flatMap((context) => {
     if (context.isDoubleheader) return [];
     if (!titleMatchesGameDate(entry.title, context.gameDate)) return [];
+    if (channel.dedicatedInterviewChannel && !titleMatchesMatchupAndScore(entry.title, context)) return [];
     if (channel.teamId !== null && channel.teamId !== context.winnerTeamId) return [];
 
     const endedAtMs = Date.parse(context.endedAt);

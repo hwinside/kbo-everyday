@@ -19,7 +19,7 @@ interface InterviewVideo {
   thumbnail: string | null;
   playerNames: string[];
   players?: InterviewPlayer[];
-  sourceKind: "broadcaster" | "team";
+  sourceKind: "broadcaster" | "team" | "curated";
 }
 
 interface InterviewResponse {
