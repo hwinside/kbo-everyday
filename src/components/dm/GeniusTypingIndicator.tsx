@@ -6,7 +6,7 @@ export type GeniusTypingState = "idle" | "waiting" | "retrying" | "failed";
 
 /**
  * 야잘알봇 답변 대기/실패 인디케이터 — 봇 말풍선(좌측) 자리에 렌더한다.
- * geniusReplyState(useDMChat)를 그대로 소비하며 별도 폴링/구독을 만들지 않는다.
+ * geniusReplyStates(useDMChat)의 질문별 상태를 소비하며 별도 폴링/구독을 만들지 않는다.
  * - waiting/retrying: bounce 점 3개(답변 작성 중). prefers-reduced-motion 시 정적.
  * - failed: 오류 문구 + 다시 시도 버튼.
  */

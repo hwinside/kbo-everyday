@@ -14,6 +14,15 @@ import assert from "node:assert/strict";
 import { JSDOM } from "jsdom";
 import type * as ReactNamespace from "react";
 import type { Root } from "react-dom/client";
+import {
+  BASEBALL_QA_OUTBOX_KEY,
+  attemptBaseballQaOutbox,
+  enqueueBaseballQaQuestion,
+  getBaseballQaReplyStates,
+  observeBaseballQaReplies,
+  readBaseballQaOutbox,
+  resetBaseballQaQuestion,
+} from "../../src/lib/baseball-qa/client-outbox";
 
 const dom = new JSDOM("<!doctype html><html><body></body></html>", {
   url: "http://localhost/",
@@ -38,6 +47,139 @@ let createRoot: typeof import("react-dom/client").createRoot;
 let act: typeof ReactNamespace.act;
 let GeniusTypingIndicator: typeof import("../../src/components/dm/GeniusTypingIndicator").default;
 type GeniusTypingState = import("../../src/components/dm/GeniusTypingIndicator").GeniusTypingState;
+
+const GENIUS_ID = "45ae7419-6a9a-4c6b-9101-8d65df7e242e";
+
+class MemoryStorage {
+  private values = new Map<string, string>();
+
+  constructor(initial?: string) {
+    if (initial) this.values.set(BASEBALL_QA_OUTBOX_KEY, initial);
+  }
+
+  getItem(key: string) {
+    return this.values.get(key) ?? null;
+  }
+
+  setItem(key: string, value: string) {
+    this.values.set(key, value);
+  }
+}
+
+function response(status: number) {
+  return new Response(null, { status });
+}
+
+test("연속 질문은 messageId별 waiting/failed 상태를 독립 유지한다", async () => {
+  const storage = new MemoryStorage();
+  enqueueBaseballQaQuestion(storage, { conversationId: "conv", messageId: 101 });
+  enqueueBaseballQaQuestion(storage, { conversationId: "conv", messageId: 102 });
+
+  const request = (async (_url: URL | RequestInfo, init?: RequestInit) => {
+    const messageId = JSON.parse(String(init?.body)).messageId as number;
+    return response(messageId === 101 ? 500 : 202);
+  }) as typeof fetch;
+  for (let i = 0; i < 5; i += 1) {
+    await attemptBaseballQaOutbox(storage, "token", request);
+  }
+
+  assert.deepEqual(getBaseballQaReplyStates(readBaseballQaOutbox(storage)), {
+    101: "failed",
+    102: "waiting",
+  });
+});
+
+test("HTTP 200 선도착 뒤에도 exact 답변을 역순 관측할 때까지 질문별로 유지한다", async () => {
+  const storage = new MemoryStorage();
+  enqueueBaseballQaQuestion(storage, { conversationId: "conv", messageId: 201 });
+  enqueueBaseballQaQuestion(storage, { conversationId: "conv", messageId: 202 });
+
+  await attemptBaseballQaOutbox(
+    storage,
+    "token",
+    (async () => response(200)) as typeof fetch,
+  );
+  assert.deepEqual(getBaseballQaReplyStates(readBaseballQaOutbox(storage)), {
+    201: "waiting",
+    202: "waiting",
+  }, "HTTP 200만으로 인디케이터를 종료하면 안 된다");
+
+  assert.deepEqual(
+    observeBaseballQaReplies(storage, [{
+      sender_id: GENIUS_ID,
+      dedup_key: "baseball-genius:202",
+    }], GENIUS_ID),
+    [202],
+    "B 답변을 먼저 관측하면 B만 종료해야 한다",
+  );
+  assert.deepEqual(getBaseballQaReplyStates(readBaseballQaOutbox(storage)), {
+    201: "waiting",
+  });
+
+  assert.deepEqual(
+    observeBaseballQaReplies(storage, [{
+      sender_id: GENIUS_ID,
+      dedup_key: "baseball-genius:201",
+    }], GENIUS_ID),
+    [201],
+  );
+  assert.deepEqual(readBaseballQaOutbox(storage), []);
+});
+
+test("Realtime 단절·새로고침 뒤에도 polling에서 exact 답변을 볼 때까지 유지한다", async () => {
+  const beforeRefresh = new MemoryStorage();
+  enqueueBaseballQaQuestion(beforeRefresh, { conversationId: "conv", messageId: 301 });
+  await attemptBaseballQaOutbox(
+    beforeRefresh,
+    "token",
+    (async () => response(200)) as typeof fetch,
+  );
+
+  const afterRefresh = new MemoryStorage(beforeRefresh.getItem(BASEBALL_QA_OUTBOX_KEY) ?? undefined);
+  assert.deepEqual(getBaseballQaReplyStates(readBaseballQaOutbox(afterRefresh)), {
+    301: "waiting",
+  }, "재진입 시 처리 중 상태를 복원해야 한다");
+
+  assert.deepEqual(
+    observeBaseballQaReplies(afterRefresh, [{
+      sender_id: GENIUS_ID,
+      dedup_key: "baseball-genius:301",
+    }], GENIUS_ID),
+    [301],
+    "Realtime 없이 기존 메시지 polling 결과로도 exact 답변을 종결해야 한다",
+  );
+  assert.deepEqual(readBaseballQaOutbox(afterRefresh), []);
+});
+
+test("다시 시도는 선택한 failed messageId만 요청한다", async () => {
+  const storage = new MemoryStorage();
+  enqueueBaseballQaQuestion(storage, { conversationId: "conv", messageId: 401 });
+  enqueueBaseballQaQuestion(storage, { conversationId: "conv", messageId: 402 });
+
+  const seedRequest = (async (_url: URL | RequestInfo, init?: RequestInit) => {
+    const messageId = JSON.parse(String(init?.body)).messageId as number;
+    return response(messageId === 401 ? 500 : 200);
+  }) as typeof fetch;
+  for (let i = 0; i < 5; i += 1) {
+    await attemptBaseballQaOutbox(storage, "token", seedRequest);
+  }
+  assert.deepEqual(getBaseballQaReplyStates(readBaseballQaOutbox(storage)), {
+    401: "failed",
+    402: "waiting",
+  });
+
+  resetBaseballQaQuestion(storage, 401);
+  const requested: number[] = [];
+  await attemptBaseballQaOutbox(
+    storage,
+    "token",
+    (async (_url: URL | RequestInfo, init?: RequestInit) => {
+      requested.push(JSON.parse(String(init?.body)).messageId as number);
+      return response(202);
+    }) as typeof fetch,
+  );
+  assert.deepEqual(requested, [401]);
+});
 
 test("야잘알봇 타이핑 인디케이터 3전이", async () => {
   React = await import("react");

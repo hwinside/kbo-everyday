@@ -5,6 +5,7 @@ export interface BaseballQaOutboxEntry {
   conversationId: string;
   messageId: number;
   attempts: number;
+  acknowledged?: boolean;
 }
 
 interface StorageLike {
@@ -18,6 +19,14 @@ export interface BaseballQaAttemptResult {
   failed: number[];
 }
 
+export type BaseballQaReplyState = "waiting" | "retrying" | "failed";
+export type BaseballQaReplyStates = Record<number, BaseballQaReplyState>;
+
+interface BaseballQaReplyMessage {
+  sender_id: string | null;
+  dedup_key?: string | null;
+}
+
 export function readBaseballQaOutbox(storage: StorageLike): BaseballQaOutboxEntry[] {
   try {
     const value = JSON.parse(storage.getItem(BASEBALL_QA_OUTBOX_KEY) ?? "[]");
@@ -29,7 +38,8 @@ export function readBaseballQaOutbox(storage: StorageLike): BaseballQaOutboxEntr
         Number.isSafeInteger(row.messageId) &&
         row.messageId > 0 &&
         Number.isInteger(row.attempts) &&
-        row.attempts >= 0,
+        row.attempts >= 0 &&
+        (row.acknowledged === undefined || typeof row.acknowledged === "boolean"),
     );
   } catch {
     return [];
@@ -53,9 +63,51 @@ export function enqueueBaseballQaQuestion(
 
 export function resetBaseballQaQuestion(storage: StorageLike, messageId: number) {
   const entries = readBaseballQaOutbox(storage).map((row) =>
-    row.messageId === messageId ? { ...row, attempts: 0 } : row,
+    row.messageId === messageId ? { ...row, attempts: 0, acknowledged: false } : row,
   );
   writeBaseballQaOutbox(storage, entries);
+}
+
+export function getBaseballQaReplyStates(
+  entries: BaseballQaOutboxEntry[],
+  retryingMessageIds: ReadonlySet<number> = new Set(),
+): BaseballQaReplyStates {
+  return Object.fromEntries(entries.map((entry) => [
+    entry.messageId,
+    entry.attempts >= BASEBALL_QA_MAX_ATTEMPTS
+      ? "failed"
+      : retryingMessageIds.has(entry.messageId)
+        ? "retrying"
+        : "waiting",
+  ]));
+}
+
+export function observeBaseballQaReplies(
+  storage: StorageLike,
+  messages: BaseballQaReplyMessage[],
+  geniusUserId: string,
+): number[] {
+  const observed = new Set<number>();
+  for (const message of messages) {
+    if (message.sender_id !== geniusUserId) continue;
+    const match = /^baseball-genius:(\d+)$/.exec(message.dedup_key ?? "");
+    if (!match) continue;
+    const messageId = Number(match[1]);
+    if (Number.isSafeInteger(messageId) && messageId > 0) observed.add(messageId);
+  }
+  if (observed.size === 0) return [];
+
+  const entries = readBaseballQaOutbox(storage);
+  const completed = entries
+    .filter((entry) => observed.has(entry.messageId))
+    .map((entry) => entry.messageId);
+  if (completed.length > 0) {
+    writeBaseballQaOutbox(
+      storage,
+      entries.filter((entry) => !observed.has(entry.messageId)),
+    );
+  }
+  return Array.from(observed);
 }
 
 export async function attemptBaseballQaOutbox(
@@ -65,11 +117,16 @@ export async function attemptBaseballQaOutbox(
 ): Promise<BaseballQaAttemptResult> {
   const entries = readBaseballQaOutbox(storage);
   const result: BaseballQaAttemptResult = { completed: [], pending: [], failed: [] };
-  const keep: BaseballQaOutboxEntry[] = [];
+  const updates = new Map<number, BaseballQaOutboxEntry>();
 
   for (const entry of entries) {
+    if (entry.acknowledged) {
+      updates.set(entry.messageId, entry);
+      result.pending.push(entry.messageId);
+      continue;
+    }
     if (entry.attempts >= BASEBALL_QA_MAX_ATTEMPTS) {
-      keep.push(entry);
+      updates.set(entry.messageId, entry);
       result.failed.push(entry.messageId);
       continue;
     }
@@ -87,11 +144,12 @@ export async function attemptBaseballQaOutbox(
         }),
       });
       if (response.ok && response.status !== 202) {
+        updates.set(entry.messageId, { ...entry, acknowledged: true });
         result.completed.push(entry.messageId);
         continue;
       }
       if (response.status === 202) {
-        keep.push(entry);
+        updates.set(entry.messageId, entry);
         result.pending.push(entry.messageId);
         continue;
       }
@@ -100,11 +158,17 @@ export async function attemptBaseballQaOutbox(
     }
 
     const next = { ...entry, attempts: entry.attempts + 1 };
-    keep.push(next);
+    updates.set(entry.messageId, next);
     if (next.attempts >= BASEBALL_QA_MAX_ATTEMPTS) result.failed.push(entry.messageId);
     else result.pending.push(entry.messageId);
   }
 
-  writeBaseballQaOutbox(storage, keep);
+  // 요청 중 exact 답변이 관측되어 제거된 항목은 되살리지 않고,
+  // 같은 사이 새로 enqueue 된 질문은 보존한다.
+  const current = readBaseballQaOutbox(storage);
+  writeBaseballQaOutbox(
+    storage,
+    current.map((entry) => updates.get(entry.messageId) ?? entry),
+  );
   return result;
 }

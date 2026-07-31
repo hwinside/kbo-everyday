@@ -46,7 +46,7 @@ export default function DMChatPage() {
     messages,
     loading,
     sendMessage,
-    geniusReplyState,
+    geniusReplyStates,
     retryBaseballQa,
   } = useDMChat(draftTargetId ? "" : conversationId);
   const [input, setInput] = useState("");
@@ -430,7 +430,13 @@ export default function DMChatPage() {
           })
         )}
         {isBaseballGeniusConv && (
-          <GeniusTypingIndicator state={geniusReplyState} onRetry={retryBaseballQa} />
+          Object.entries(geniusReplyStates).map(([messageId, state]) => (
+            <GeniusTypingIndicator
+              key={messageId}
+              state={state}
+              onRetry={() => retryBaseballQa(Number(messageId))}
+            />
+          ))
         )}
         <div ref={bottomRef} />
       </div>
