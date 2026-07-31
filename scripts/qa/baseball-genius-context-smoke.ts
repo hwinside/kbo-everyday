@@ -178,11 +178,20 @@ async function verifyAcPipeline() {
   assert.equal(ac4.llmCalls, 0);
 
   // AC5: 후속형이 아니고 비야구인 "그럼 주식은?"은 맥락이 있어도 차단 유지.
+  // 과차단 핏스 이후 차단 주체는 결정론 게이트가 아니라 LLM의 NOT_BASEBALL 판정이다
+  // (결과 source/answer 계약은 동일). 사전·캐시에는 여전히 남지 않는다.
   const ac5 = freshCtx(eligibleTurn());
-  const ac5Result = await answerQuestion("u1", "그럼 주식은?", ctxDeps(ac5));
+  const ac5Deps: QaDeps = {
+    ...ctxDeps(ac5),
+    callLlm: async () => {
+      ac5.llmCalls++;
+      return { text: '{"status":"NOT_BASEBALL","answer":""}', inputTokens: 1, outputTokens: 1 };
+    },
+  };
+  const ac5Result = await answerQuestion("u1", "그럼 주식은?", ac5Deps);
   assert.equal(ac5Result.source, "blocked", "AC5: 비야구 후속은 차단 유지");
   assert.equal(ac5Result.answer, BLOCKED_ANSWER);
-  assert.equal(ac5.llmCalls, 0);
+  assert.equal(ac5.cache.size, 0, "AC5: 차단된 답은 캐시되지 않아야 함");
 
   // AC6: 차단된 질문(blocked) 뒤 후속형 → 통과 안 됨.
   const ac6 = freshCtx(eligibleTurn({ jobSource: "blocked" }));

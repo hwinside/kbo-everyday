@@ -21,7 +21,9 @@ export const MIN_QUESTION_LEN = BASEBALL_GENIUS_MIN_QUESTION_LENGTH;
 export const MAX_QUESTION_LEN = BASEBALL_GENIUS_MAX_QUESTION_LENGTH;
 
 export const BLOCKED_ANSWER = "야구 룰/용어에 대한 질문만 답할 수 있어요. 예: \"보크가 뭐야?\"";
-export const UNSURE_ANSWER = "잘 모르겠어요. 더 정확히 알게 되면 용어사전에 추가할게요!";
+// LLM이 야구 룰/용어인지 확신하지 못한 경우 — 차단 문구가 아니라 확인 질문이다.
+export const UNSURE_ANSWER =
+  "어떤 야구 룰/용어를 여쭤보신 걸까요? 조금만 더 자세히 적어주시면 정확히 답해드릴게요! ⚾";
 export const SERVICE_REDIRECT_ANSWER =
   "크보팬 서비스 관련 문의는 마이페이지 > 피드백 보내기로 보내주시면 운영팀이 확인해요! 저는 야구 룰/용어 질문을 도와드릴게요 ⚾";
 export const HISTORY_HOLD_ANSWER =
@@ -33,8 +35,12 @@ export const CONTEXT_MISSING_ANSWER =
 export const LLM_AMBIGUOUS_ANSWER =
   "답변을 저장하는 과정에서 문제가 생겨 이번 질문에는 답을 드리지 못했어요. 같은 질문을 다시 보내주시면 새로 답해드릴게요! ⚾";
 
+/** LLM 판정 계약 (spec: 야구 룰/용어 판정 3분기). */
+export const RULE_TERM_SENTINEL = "BASEBALL_RULE_TERM";
 export const NOT_BASEBALL_SENTINEL = "NOT_BASEBALL";
 export const UNSURE_SENTINEL = "UNSURE";
+/** 구 프롬프트가 쓰던 status 값 — RULE_TERM과 동일 의미로 매핑한다 (in-flight 응답 호환). */
+export const LEGACY_ANSWER_SENTINEL = "ANSWER";
 
 export interface GlossaryEntry {
   term: string;
@@ -141,7 +147,9 @@ const BASEBALL_WORDS = [
   "규칙", "용어", "타율", "방어율", "평균자책", "기록", "스탯", "war",
 ];
 const INJECTION_PATTERNS = [
-  /이전\s*(지시|명령).*(무시|잊)/i,
+  // "이전/위/앞의 지시·명령·규칙·프롬프트 무시" 계열. BASEBALL_WORDS fail-closed 게이트가
+  // 빠진 뒤에도 인젝션은 결정론적으로 먼저 차단되어야 하므로 지시어 집합을 맞춘다.
+  /(이전|위|앞)\s*의?\s*(지시|명령|규칙|프롬프트).*(무시|잊)/i,
   /(시스템|개발자)\s*(프롬프트|메시지|지시)/i,
   /ignore\s+(all\s+)?previous/i,
   /(링크|url).*(줘|출력|보여)/i,
@@ -188,7 +196,10 @@ function hasBaseballSignal(value: string): boolean {
     );
 }
 
-/** LLM 전에 실행하는 보수적 라우터. 불명확하면 fail-closed 한다. */
+/**
+ * LLM 전에 실행하는 결정론적 라우터.
+ * 인젝션·서비스·선수기록·맥락부재만 여기서 종결하고, 나머지는 LLM 판정으로 보낸다.
+ */
 export function routeQuestion(
   question: string,
   glossary: GlossaryEntry[] = [],
@@ -220,7 +231,11 @@ export function routeQuestion(
   );
   if (mentionsGlossaryTerm) return "baseball_rule_term";
   if (BASEBALL_WORDS.some((word) => tokenMatches(tokens, word))) return "baseball_rule_term";
-  return "blocked";
+  // 위 결정론적 선차단·선라우팅에 걸리지 않은 나머지는 LLM 판정에 맡긴다.
+  // 여기서 BASEBALL_WORDS 미매칭을 blocked로 fail-closed 하면 "잔루만루가 뭔데"처럼
+  // 붙여쓰기/사전 미수록인 정상 룰 질문이 LLM에 도달조차 못 하고 과차단된다.
+  // 비야구 방어는 LLM의 NOT_BASEBALL 판정 + validateLlmResponse 출력 가드가 맡는다.
+  return "baseball_rule_term";
 }
 
 export interface ValidatedLlmAnswer {
@@ -238,11 +253,16 @@ export function validateLlmResponse(raw: string): ValidatedLlmAnswer {
   }
   if (!value || typeof value !== "object" || Array.isArray(value)) return { kind: "unsure" };
   const row = value as Record<string, unknown>;
-  if (!["ANSWER", NOT_BASEBALL_SENTINEL, UNSURE_SENTINEL].includes(String(row.status))) {
+  const status = String(row.status);
+  // 계약 밖 status는 판정 불명확 → 답변이 아니라 되묻기로 fail-closed 한다.
+  if (
+    ![RULE_TERM_SENTINEL, LEGACY_ANSWER_SENTINEL, NOT_BASEBALL_SENTINEL, UNSURE_SENTINEL]
+      .includes(status)
+  ) {
     return { kind: "unsure" };
   }
-  if (row.status === NOT_BASEBALL_SENTINEL) return { kind: "blocked" };
-  if (row.status === UNSURE_SENTINEL) return { kind: "unsure" };
+  if (status === NOT_BASEBALL_SENTINEL) return { kind: "blocked" };
+  if (status === UNSURE_SENTINEL) return { kind: "unsure" };
   if (typeof row.answer !== "string") return { kind: "unsure" };
   const answer = row.answer.trim();
   if (
