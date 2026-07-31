@@ -406,10 +406,11 @@ export default function VenueStatsDashboard() {
               <SectionTitle>내가 간 경기, 우리 팀은</SectionTitle>
               {!hero.mixedTeam && (
                 <div className="grid grid-cols-2 gap-2">
+                  {/* 표본 미달이면 baseline이 null로 내려오므로 비교문구 자체를 감춘다("시즌 – · –" 방지). */}
                   <MetricCard
                     title="팀 타율"
                     value={formatAvg(b1?.value?.attendanceAvg)}
-                    comparison={b1?.value ? `시즌 ${formatAvg(b1.value.seasonAvg)} · ${formatSigned(b1.value.delta, 3)}` : undefined}
+                    comparison={b1?.value?.seasonAvg != null ? `시즌 ${formatAvg(b1.value.seasonAvg)} · ${formatSigned(b1.value.delta, 3)}` : undefined}
                     metric={b1!}
                   />
                   <MetricCard
@@ -421,13 +422,13 @@ export default function VenueStatsDashboard() {
                   <MetricCard
                     title="팀 ERA"
                     value={formatEra(b2?.value?.attendanceEra)}
-                    comparison={b2?.value ? `시즌 ${formatEra(b2.value.seasonEra)} · ${formatSigned(b2.value.delta, 2)}` : undefined}
+                    comparison={b2?.value?.seasonEra != null ? `시즌 ${formatEra(b2.value.seasonEra)} · ${formatSigned(b2.value.delta, 2)}` : undefined}
                     metric={b2!}
                   />
                   <MetricCard
                     title="홈런"
                     value={b4?.value?.hr?.attendancePerGame == null ? "–" : b4.value.hr.attendancePerGame.toFixed(1)}
-                    comparison={b4?.value?.hr ? `시즌 경기당 ${b4.value.hr.seasonPerGame?.toFixed(1) ?? "–"}` : undefined}
+                    comparison={b4?.value?.hr?.seasonPerGame != null ? `시즌 경기당 ${b4.value.hr.seasonPerGame.toFixed(1)}` : undefined}
                     metric={b4!}
                   />
                 </div>

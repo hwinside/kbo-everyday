@@ -606,6 +606,39 @@ interface BTeamComputed {
   finalGames: number;
 }
 
+/**
+ * 표본 미달(sample_limited) B 지표는 직관 사실값만 남기고 시즌 baseline·delta를 fail-closed 한다.
+ * "3경기부터 팀 시즌 비교를 보여드려요" 안내문과 카드가 충돌하면 안 된다 (2026-07-31 삼순 리뷰).
+ */
+function stripSeasonBaseline(id: "B1" | "B2" | "B3" | "B4", value: unknown): unknown {
+  if (value == null) return value;
+  if (id === "B1") {
+    const v = value as B1Value;
+    return { attendanceAvg: v.attendanceAvg, seasonAvg: null, delta: null } satisfies B1Value;
+  }
+  if (id === "B2") {
+    const v = value as B2Value;
+    return { attendanceEra: v.attendanceEra, seasonEra: null, delta: null } satisfies B2Value;
+  }
+  // B3는 시즌 baseline이 없는 직관 단독 지표라 그대로 둔다.
+  if (id === "B3") return value;
+  const v = value as B4Value;
+  const strip = (side: B4Side | null): B4Side | null =>
+    side == null ? null : { attendancePerGame: side.attendancePerGame, seasonPerGame: null, delta: null };
+  return { hr: strip(v.hr), hitsAllowed: strip(v.hitsAllowed) } satisfies B4Value;
+}
+
+/** mixed_team perTeam item(BTeamValue)은 4지표 묶음이라 각각 벼낸다. */
+function stripSeasonBaselineTeam(value: BTeamValue | null): BTeamValue | null {
+  if (value == null) return null;
+  return {
+    b1: stripSeasonBaseline("B1", value.b1) as B1Value | null,
+    b2: stripSeasonBaseline("B2", value.b2) as B2Value | null,
+    b3: stripSeasonBaseline("B3", value.b3) as B3Value | null,
+    b4: stripSeasonBaseline("B4", value.b4) as B4Value | null,
+  };
+}
+
 function computeBForTeam(ctx: Ctx, teamId: number, games: ScopeGame[]): BTeamComputed {
   const att = teamAttendanceTotals(ctx, teamId, games);
   const season = ctx.input.teamSeasonTotals?.get(teamId) ?? null;
@@ -777,13 +810,17 @@ function buildB(
           : part.sampleMet
             ? "ready"
             : "sample_limited";
-      // 표본 미달(sample_limited)은 사실값을 노출하고 배지로 경고한다.
-      // partial_data(적재 누락)는 수치 자체가 불완전이므로 계속 fail-closed(null).
+      // 표본 미달(sample_limited)은 직관 사실값만 노출하고 시즌 baseline·delta는 fail-closed.
+      // partial_data(적재 누락)는 수치 자체가 불완전이므로 계속 전체 null.
       const item: ItemEnvelope = {
         key: String(teamId),
         state: itemState,
         value:
-          itemState === "partial_data" ? null : (part.value as BTeamValue | null),
+          itemState === "partial_data"
+            ? null
+            : itemState === "sample_limited"
+              ? stripSeasonBaselineTeam(part.value as BTeamValue | null)
+              : (part.value as BTeamValue | null),
         n: games.length,
         denominator: part.denominator,
         coverage: {
@@ -802,15 +839,23 @@ function buildB(
   const computed = computeBForTeam(ctx, teamId, teamGames.get(teamId) ?? []);
   const part = buildValueFor(computed);
   envelope.denominator = part.denominator;
-  // 표본 미달도 사실값을 노출한다(숫자를 숨기면 실제 기록이 0으로 오독된다).
-  envelope.value = state === "ready" || state === "sample_limited" ? part.value : null;
+  // 표본 미달도 직관 사실값은 노출한다(숫자를 숨기면 실제 기록이 0으로 오독된다).
+  // 단 시즌 baseline·delta는 "3경기부터 비교" 안내와 충돌하지 않게 null로 막는다.
+  envelope.value =
+    state === "ready"
+      ? part.value
+      : state === "sample_limited"
+        ? stripSeasonBaseline(id, part.value)
+        : null;
   if (id === "B4" && part.components) {
     envelope.components = part.components;
     // sample_limited여도 component envelope로 세부 상태를 드러낸다 (§11).
-    // 값은 유지하고 state로만 표본 부족을 알린다.
+    // 직관 값은 유지하되 시즌 baseline·delta는 동일하게 fail-closed.
     if (state === "sample_limited") {
       for (const component of Object.values(part.components)) {
         component.state = "sample_limited";
+        const side = component.value as B4Side | null;
+        if (side) component.value = { attendancePerGame: side.attendancePerGame, seasonPerGame: null, delta: null };
       }
     }
   }

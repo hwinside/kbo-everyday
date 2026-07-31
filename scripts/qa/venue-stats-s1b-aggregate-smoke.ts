@@ -27,7 +27,15 @@ import {
   type TeamSeasonTotals,
   type VenueStatsAggregateInput,
 } from "@/lib/venue-stats/aggregate";
-import { METRIC_IDS, type MetricEnvelope } from "@/lib/venue-stats/types";
+import {
+  METRIC_IDS,
+  type B1Value,
+  type B2Value,
+  type B4Side,
+  type B4Value,
+  type MetricEnvelope,
+} from "@/lib/venue-stats/types";
+import { buildVenueStatsHero } from "@/lib/venue-stats/ui";
 
 let pass = 0;
 let fail = 0;
@@ -415,6 +423,42 @@ console.log("\n[6] 표본 가드 / D6 no_wins leaf 승격 / attendance_only");
     "B1 sample_limited (AB 30<60)·사실값 노출",
     single.metrics.B1.state === "sample_limited" && single.metrics.B1.value !== null,
   );
+  // ─ 표본 미달은 직관 사실값만. 시즌 baseline·delta는 "3경기부터 비교" 안내와 충돌하면 안 된다.
+  {
+    const b1 = single.metrics.B1.value as B1Value | null;
+    ok(
+      "B1 sample_limited: attendanceAvg 유지·seasonAvg/delta null (카드가 칭션과 충돌 금지)",
+      b1?.attendanceAvg != null && b1?.seasonAvg === null && b1?.delta === null,
+    );
+    const b2 = single.metrics.B2.value as B2Value | null;
+    ok(
+      "B2 sample_limited: attendanceEra 유지·seasonEra/delta null",
+      single.metrics.B2.state === "sample_limited" && b2?.seasonEra === null && b2?.delta === null,
+    );
+    const b4 = single.metrics.B4.value as B4Value | null;
+    ok(
+      "B4 sample_limited: attendancePerGame 유지·seasonPerGame/delta null (hr·hitsAllowed 둘 다)",
+      single.metrics.B4.state === "sample_limited" &&
+        b4?.hr?.seasonPerGame === null && b4?.hr?.delta === null &&
+        b4?.hitsAllowed?.seasonPerGame === null && b4?.hitsAllowed?.delta === null,
+    );
+    const hrComponent = single.metrics.B4.components?.hr.value as B4Side | null;
+    ok(
+      "B4 component도 동일: state=sample_limited·seasonPerGame/delta null",
+      single.metrics.B4.components?.hr.state === "sample_limited" &&
+        hrComponent?.seasonPerGame === null && hrComponent?.delta === null,
+    );
+    // 파생 '요정 지수'는 확정값처럼 보이면 안 되므로 hero score는 null.
+    const hero = buildVenueStatsHero(single);
+    ok(
+      "hero: 표본 미달이면 score=null (2경기 전승을 100점으로 확정 표기 금지)",
+      hero.score === null,
+    );
+    ok(
+      "hero: score는 숨겨도 사실 W/L/D는 그대로 노출",
+      hero.attendance != null && hero.attendance.w + hero.attendance.l + hero.attendance.d === 1,
+    );
+  }
 
   const d6 = single.metrics.D6;
   ok("D6 무승: outer=ready 승격(leaf 제외 — §12) + maxMarginWin=no_wins", d6.state === "ready" && d6.components?.maxMarginWin.state === "no_wins");

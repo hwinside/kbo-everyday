@@ -80,9 +80,12 @@ export function buildVenueStatsHero(scope: VenueStatsScopePayload): VenueStatsHe
     const teamId = Number(item.key);
     if (Number.isInteger(teamId)) teamIds.add(teamId);
   }
+  // 표본 미달이면 사실값(W/L/D·승률)만 노출하고 파생 '요정 지수'는 확정값처럼 보이지 않게 비운다.
+  // (2승 0패 → score 100 같은 과대 확정 표기 차단 — 2026-07-31 삼순 리뷰)
+  const sampleLimited = metric.state === "sample_limited";
   return {
     // S1 계약에 별도 합성 점수는 없다. A1 직관 승률(0~1)을 0~100으로만 표시한다.
-    score: rate == null ? null : Math.round(rate * 100),
+    score: sampleLimited || rate == null ? null : Math.round(rate * 100),
     attendance,
     teamRate: value?.teamComparable?.rate ?? null,
     deltaPp: value?.deltaPp ?? null,
