@@ -149,22 +149,28 @@ async function main() {
 
   // 3) KBO 정상(경기 있음) → Naver 미호출.
   naverCalls = 0;
+  let kboRequestUserAgent = "";
   const kbo = await fetchKboLiveGames(
     "20260730",
     Date.now() + 2_000,
-    (async () => new Response(JSON.stringify({
-      game: [{
-        G_ID: "20260730HTSS0",
-        GAME_STATE_SC: "1",
-        AWAY_NM: "KIA",
-        HOME_NM: "삼성",
-      }],
-    }), { status: 200, headers: { "content-type": "application/json" } })) as typeof fetch,
+    (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      kboRequestUserAgent = new Headers(init?.headers).get("user-agent") ?? "";
+      return new Response(JSON.stringify({
+        game: [{
+          G_ID: "20260730HTSS0",
+          GAME_STATE_SC: "1",
+          AWAY_NM: "KIA",
+          HOME_NM: "삼성",
+        }],
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }) as typeof fetch,
     naver,
   );
   assert.equal(kbo.ok, true);
   assert.equal(kbo.trace.source, "kbo");
   assert.equal(naverCalls, 0);
+  assert.match(kboRequestUserAgent, /Chrome\//);
+  assert.doesNotMatch(kboRequestUserAgent, /KboEveryday/);
 
   const kboEmpty = (async () => new Response(JSON.stringify({ game: [] }), {
     status: 200,
