@@ -49,6 +49,7 @@ import LiveStatsTab from "@/components/game/LiveStatsTab";
 import { useGameRelay } from "@/lib/hooks/useGameRelay";
 import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
 import PullToRefresh from "@/components/PullToRefresh";
+import PostgameInterviewSection from "@/components/game/PostgameInterviewSection";
 
 type Tab = "kgwan" | "lineup" | "stats";
 
@@ -552,6 +553,8 @@ export default function GameDetailPage() {
           />
         </div>
       )}
+
+      <PostgameInterviewSection key={gameId} gameId={gameId} enabled={d.isFinal} />
 
       {d.derivedStatus === "cancelled" ? (
         <CancelledGameChat

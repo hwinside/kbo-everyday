@@ -1,0 +1,110 @@
+"use client";
+
+import { useCallback, useEffect, useState } from "react";
+import { Play } from "lucide-react";
+import { handleExternalAnchorClick } from "@/lib/open-external";
+
+interface InterviewVideo {
+  videoId: string;
+  title: string;
+  channel: string;
+  thumbnail: string | null;
+  playerNames: string[];
+  sourceKind: "broadcaster" | "team";
+}
+
+interface InterviewResponse {
+  items?: InterviewVideo[];
+  collecting?: boolean;
+}
+
+export default function PostgameInterviewSection({
+  gameId,
+  enabled,
+}: {
+  gameId: string;
+  enabled: boolean;
+}) {
+  const [items, setItems] = useState<InterviewVideo[]>([]);
+  const [collecting, setCollecting] = useState(false);
+
+  const load = useCallback(async () => {
+    if (!enabled) return;
+    try {
+      const response = await fetch(`/api/game-interviews?gameId=${encodeURIComponent(gameId)}`);
+      if (!response.ok) return;
+      const json = await response.json() as InterviewResponse;
+      setItems(json.items ?? []);
+      setCollecting(json.collecting === true);
+    } catch {
+      // 인터뷰 보조 영역 실패가 경기 상세를 막지 않는다.
+    }
+  }, [enabled, gameId]);
+
+  useEffect(() => {
+    if (!enabled) return;
+    const timer = window.setTimeout(() => void load(), 0);
+    return () => window.clearTimeout(timer);
+  }, [enabled, load]);
+
+  useEffect(() => {
+    if (!enabled || !collecting) return;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") void load();
+    }, 5 * 60_000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void load();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [collecting, enabled, load]);
+
+  if (!enabled || items.length === 0) return null;
+
+  return (
+    <section className="px-4 pt-3 pb-4" aria-label="수훈선수 인터뷰">
+      <h2 className="mb-2.5 text-[15px] font-semibold text-text-primary">수훈선수 인터뷰</h2>
+      <div className="flex gap-3 overflow-x-auto pb-1 scrollbar-hide">
+        {items.map((item) => {
+          const url = `https://www.youtube.com/watch?v=${item.videoId}`;
+          return (
+            <a
+              key={item.videoId}
+              href={url}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(event) => handleExternalAnchorClick(event, url)}
+              className="w-[236px] shrink-0"
+            >
+              <div className="relative aspect-video w-full overflow-hidden rounded-xl bg-bg-tertiary">
+                {item.thumbnail && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={item.thumbnail}
+                    alt=""
+                    className="h-full w-full object-cover"
+                  />
+                )}
+                <div className="absolute inset-0 flex items-center justify-center bg-black/20">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-full bg-white/90">
+                    <Play size={18} className="ml-0.5 text-black" fill="black" />
+                  </span>
+                </div>
+              </div>
+              <p className="mt-1.5 line-clamp-2 text-sm leading-snug text-text-primary">
+                {item.title}
+              </p>
+              <p className="mt-1 text-xs text-text-tertiary">
+                {item.channel}
+                {item.playerNames.length > 0 ? ` · ${item.playerNames.join(", ")}` : ""}
+              </p>
+            </a>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
