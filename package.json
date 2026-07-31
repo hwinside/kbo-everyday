@@ -51,6 +51,7 @@
     "qa:venue-stats-s2-header-guard": "node scripts/qa/venue-stats-s2-header-guard.mjs",
     "qa:api-fallback-alert-claim:pg17": "bash scripts/qa/api-fallback-alert-claim-pg17.sh",
     "qa:kbo-games-legacy-telegram-suppression": "tsx scripts/qa/kbo-games-legacy-telegram-suppression-smoke.ts",
+    "qa:player-stats-legacy-telegram-suppression": "tsx scripts/qa/player-stats-legacy-telegram-suppression-smoke.ts",
     "qa:telegram-degradation-send": "tsx scripts/qa/telegram-degradation-send-smoke.ts",
     "qa:starter-announce-message": "tsx scripts/qa/starter-announce-message-smoke.ts",
     "qa:starter-watchdog": "tsx scripts/qa/starter-watchdog-smoke.ts",
