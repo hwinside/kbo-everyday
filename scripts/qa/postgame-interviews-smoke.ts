@@ -29,6 +29,7 @@ assert.equal(titleMatchesGameDate("인터뷰 | 2026 KBO리그 (26.07.30)", "2026
 assert.equal(titleMatchesGameDate("아이러브베이스볼 (07.30)", "2026-07-30"), true);
 assert.equal(titleMatchesGameDate("7월 30일 수훈선수", "2026-07-30"), true);
 assert.equal(titleMatchesGameDate("LG 2 vs 두산 4 | 260731", "2026-07-31"), true);
+assert.equal(titleMatchesGameDate("KIA 4 vs. NC 10 | 07/31/26", "2026-07-31"), true);
 assert.equal(titleMatchesGameDate("LG 2 vs 두산 4 | 260730", "2026-07-31"), false);
 assert.equal(titleMatchesGameDate("7월 29일 수훈선수", "2026-07-30"), false);
 
