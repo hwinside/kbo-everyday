@@ -124,6 +124,34 @@ export async function ingestGameWithLedger(
   // rekey 판정에는 "upsert 전" 상태가 필요하다 — 여기 없던 key 만 이번에 새로 생긴 key 다.
   const beforeRows = await reselect();
 
+  // ── preflight reconciliation (upsert 전에 판정한다) ────────────────────
+  // upsert 를 먼저 하고 판정하면, 거부되더라도 신 key 가 DB 에 남는다.
+  // 그럼 다음 정상 실행의 beforeRows 에 이미 신 key 가 있어 `added` 가 빈 배열이 되고,
+  // 구 key 는 `no_rekey_counterpart` 로 분류되어 **재시도로도 영원히 복구 불가**가 된다.
+  // (예: 1차에 rekey + 일시적 unresolved 가 같이 오는 경우 — 삼순 P0)
+  //
+  // 그래서 삭제 필요 여부를 **upsert 전 상태로 먼저 판정**하고, 거부되면
+  // 쓰기 자체를 하지 않고 종료한다 — DB 를 직전 상태 그대로 남겨 다음 정상 실행이 복구할 수 있게 한다.
+  const preflight = planStaleReconciliation(
+    beforeRows,
+    beforeRows,
+    build.rows,
+    build.unresolved.length,
+  );
+  if (preflight.refusal) {
+    return incomplete(
+      "row_count_mismatch",
+      {
+        expected_row_count: expectedRowCount,
+        expected_payload_hash: expectedPayloadHash,
+        persisted_row_count: beforeRows.length,
+        unresolved_count: build.unresolved.length,
+      },
+      build.unresolved,
+      0, // 쓰기 없음
+    );
+  }
+
   // resolve된 행은 unresolved가 있어도 upsert한다(로스터 보강 후 재적재로 complete 승격).
   let rowsUpserted = 0;
   for (let i = 0; i < build.rows.length; i += 500) {
@@ -143,22 +171,10 @@ export async function ingestGameWithLedger(
   // 영원히 incomplete 된다. 다만 "기대에 없으면 지운다" 는 공급자 부분 응답 때
   // 멀쩡한 과거 행을 지우고 줄어든 집합끼리 아귀가 맞아 complete 로 오판된다.
   // 그래서 삭제는 rekey 로 설명되는 1:1 짝에만 허용한다(planStaleReconciliation).
+  // preflight 에서 이미 거부 없음을 확인했고, 삭제 대상도 upsert 전 기준으로 확정됐다.
+  // upsert 는 기대 행만 넣으므로 삭제 대상(구 key)은 그대로 유효하다.
   let staleRowsRemoved = 0;
-  const plan = planStaleReconciliation(beforeRows, persistedRows, build.rows, build.unresolved.length);
-  if (plan.refusal) {
-    // 삭제는 복구 불가 — 조금이라도 의심스러우면 지우지 않고 fail-closed 한다.
-    return incomplete(
-      "row_count_mismatch",
-      {
-        expected_row_count: expectedRowCount,
-        expected_payload_hash: expectedPayloadHash,
-        persisted_row_count: persistedRows.length,
-        unresolved_count: build.unresolved.length,
-      },
-      build.unresolved,
-      rowsUpserted,
-    );
-  }
+  const plan = preflight;
   if (plan.deletions.length > 0) {
     for (const stale of plan.deletions) {
       const { error: deleteError } = await client

@@ -68,9 +68,15 @@ jobs:
 
       - name: Validate inputs
         id: validate
+        env:
+          SEASON: ${{ inputs.season }}
+          LIMIT: ${{ inputs.limit }}
+          APPLY: ${{ inputs.apply }}
+          MODE: ${{ inputs.mode }}
+          # release 는 이 시즌 전체에만 허용 — 하드코딩된 검증 3경기와 처리 범위를 결속한다.
+          RELEASE_SEASON: '2026'
         run: |
-          SEASON="${{ inputs.season }}"
-          LIMIT="${{ inputs.limit }}"
+          set -euo pipefail
           # 시즌은 4자리 연도만. 오타로 엉뚱한 시즌을 긁지 않게 fail-closed.
           if ! echo "$SEASON" | grep -Eq '^[0-9]{4}$'; then
             echo "::error::season must be a 4-digit year, got '$SEASON'"
@@ -80,8 +86,34 @@ jobs:
             echo "::error::limit must be a non-negative integer, got '$LIMIT'"
             exit 1
           fi
+
+          # ── mode × limit × season fail-close matrix ────────────────────────
+          # canary 는 소량 시험 전용이다. limit=0(시즌 전체)로 apply 하면
+          # release 3경기 게이트를 타지 않은 채 전체 DB 쓰기가 일어난다(삼순 P0).
+          if [ "$MODE" = "canary" ] && [ "$APPLY" = "true" ] && [ "$LIMIT" = "0" ]; then
+            echo "::error::canary + apply requires limit > 0. Full-season apply must use mode=release."
+            exit 1
+          fi
+          # release 는 공개 선행 실행이다 — 고정된 2026 3경기를 반드시 포함해야 하므로
+          # 시즌 전체(limit=0) + 실제 쓰기(apply=true) + 해당 시즌으로 결속한다.
+          if [ "$MODE" = "release" ]; then
+            if [ "$APPLY" != "true" ]; then
+              echo "::error::release mode requires apply=true (it is the public-rollout run)."
+              exit 1
+            fi
+            if [ "$SEASON" != "$RELEASE_SEASON" ]; then
+              echo "::error::release mode is pinned to season $RELEASE_SEASON, got '$SEASON'"
+              exit 1
+            fi
+            if [ "$LIMIT" != "0" ]; then
+              echo "::error::release mode requires limit=0 (full season), got '$LIMIT'"
+              exit 1
+            fi
+          fi
+
           echo "season=$SEASON" >> $GITHUB_OUTPUT
           echo "limit=$LIMIT" >> $GITHUB_OUTPUT
+          echo "mode=$MODE / apply=$APPLY / season=$SEASON / limit=$LIMIT (validated)"
 
       - name: Ledger count before
         id: before

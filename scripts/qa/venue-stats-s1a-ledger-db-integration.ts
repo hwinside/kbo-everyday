@@ -451,6 +451,60 @@ async function main() {
     ok("실제 행은 그대로 보존", (await selectRows(db)).length === 5);
   }
 
+  // ⑥ 재시도 복구성 — production 오케스트레이터 경로로 연속 2회 (2026-08-01 삼순 P0)
+  // 1차에 rekey + 일시적 unresolved 가 같이 오면, upsert 를 먼저 하는 구현은
+  // 거부되어도 신 key 가 DB 에 남는다. 그럼 2차 정상 실행의 beforeRows 에 이미 신 key 가 있어
+  // added 가 비고 구 key 는 no_rekey_counterpart 로 분류되어 영원히 복구 불가가 된다.
+  // → preflight(=upsert 전 판정)로 거부 시 쓰기 자체를 하지 않아야 2차가 복구한다.
+  console.log("\n[reconcile ⑥] 1차 거부 후 2차 정상 실행이 복구되어야 한다");
+  {
+    // 깨끗한 경기로 격리 — 구 key 만 존재하는 상태에서 시작한다.
+    await db.query("delete from player_game_logs where game_id=$1", [GAME.gameId]);
+    const newPitcher = build.rows.find((r) => r.kbo_id === "90003") as unknown as CanonicalRowInput;
+    const oldPitcher = { ...newPitcher, kbo_id: "56709" };
+    const seed = (build.rows as unknown as CanonicalRowInput[])
+      .filter((r) => r.kbo_id !== "90003")
+      .concat([oldPitcher]);
+    await insertRows(db, seed);
+    const seeded = await selectRows(db);
+    ok("초기: 구 key 만 존재(5행)", seeded.length === 5 && seeded.some((r) => r.kbo_id === "56709"));
+
+    // ── 1차: rekey + 일시적 unresolved 동반 → 거부 + DB 무변경이어야 한다.
+    const before1 = await selectRows(db);
+    const plan1 = planStaleReconciliation(
+      before1,
+      before1, // preflight: upsert 전 상태로 판정
+      build.rows as unknown as CanonicalRowInput[],
+      1, // 일시적 unresolved
+    );
+    ok("1차: unresolved_present 로 거부", plan1.refusal === "unresolved_present", `refusal=${plan1.refusal}`);
+    ok("1차: 삭제 0건", plan1.deletions.length === 0);
+    // preflight 계약 = 거부면 upsert 도 하지 않는다(신 key 를 남기지 않는다).
+    if (!plan1.refusal) await insertRows(db, build.rows as unknown as CanonicalRowInput[]);
+    await applyPlan(plan1);
+    const after1 = await selectRows(db);
+    ok("1차 후 DB 불변(5행)", after1.length === 5);
+    ok("1차 후 신 key 미생성 — 2차 복구 경로 보존",
+      !after1.some((r) => r.kbo_id === "90003"), "신 key 가 남으면 added 가 비어 영구 incomplete");
+
+    // ── 2차: 정상 응답 → 구 key 1건 교체 → complete 로 복구되어야 한다.
+    const before2 = await selectRows(db);
+    const plan2 = planStaleReconciliation(
+      before2,
+      before2,
+      build.rows as unknown as CanonicalRowInput[],
+      0, // 정상
+    );
+    ok("2차: 거부 없음", plan2.refusal === null, `refusal=${plan2.refusal}`);
+    ok("2차: 구 key 1건만 삭제 대상",
+      plan2.deletions.length === 1 && plan2.deletions[0].kbo_id === "56709");
+    await insertRows(db, build.rows as unknown as CanonicalRowInput[]);
+    await applyPlan(plan2);
+    const after2 = await selectRows(db);
+    ok("2차 후 기대 행수 복원", after2.length === 5);
+    ok("2차 후 canonical hash 일치 → 복구 성공", canonicalPayloadHash(after2) === expectedHash);
+  }
+
   // ── RLS: ledger는 service_role 전용 ──────────────────────────────────────
   console.log("\n[RLS] player_game_log_ingestions service_role 전용");
   async function relPriv(role: string, priv: string): Promise<boolean> {
