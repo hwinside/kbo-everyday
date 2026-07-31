@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
-import { METRIC_IDS, type VenueStatsScopePayload } from "../../src/lib/venue-stats/types";
+import {
+  METRIC_IDS,
+  type MetricEnvelope,
+  type VenueStatsScopePayload,
+} from "../../src/lib/venue-stats/types";
 import {
   buildVenueStatsHero,
   coverageCaption,
@@ -7,6 +11,7 @@ import {
   formatOuts,
   formatRate,
   formatSigned,
+  splitCells,
   VENUE_STATS_UI_GROUPS,
 } from "../../src/lib/venue-stats/ui";
 
@@ -83,6 +88,78 @@ assert.deepEqual(buildVenueStatsHero(scope), {
   const readyHero = buildVenueStatsHero({ ...scope, metrics: mixedReady });
   assert.equal(readyHero.sampleLimited, false, "mixed_team 이어도 표본 충족이면 참고용 아님");
   assert.equal(readyHero.score, 100, "표본 충족 mixed_team 은 파생 점수 노출");
+}
+
+// ─ attendance_only(비교 소스 없는 2025 등) 2경기도 참고용 계약 대상 (삼순 P0-1).
+// 판정 사다리에서 attendance_only 가 sample_limited 보다 먼저 확정되어 표본 미달이 가려졌던 경계.
+{
+  const aoMetrics = JSON.parse(JSON.stringify(metrics)) as VenueStatsScopePayload["metrics"];
+  aoMetrics.A1.state = "attendance_only";
+  aoMetrics.A1.n = 2;
+  aoMetrics.A1.denominator = { attendanceFinalGames: 2, teamSeasonGames: 0 };
+  aoMetrics.A1.value = {
+    attendance: { w: 2, l: 0, d: 0, rate: 1 },
+    teamComparable: null,
+    deltaPp: null,
+  };
+  aoMetrics.A1.items = [];
+  const aoHero = buildVenueStatsHero({ ...scope, metrics: aoMetrics });
+  assert.equal(aoHero.sampleLimited, true, "attendance_only 총 2경기는 참고용 계약 대상");
+  assert.equal(aoHero.score, null, "attendance_only 2경기 전승도 요정 지수 100 금지");
+  assert.deepEqual(
+    aoHero.attendance,
+    { w: 2, l: 0, d: 0, rate: 1 },
+    "attendance_only 에서도 사실 W/L/D 는 그대로",
+  );
+
+  // 같은 attendance_only 여도 표본을 넘기면 정상 노출.
+  const aoReady = JSON.parse(JSON.stringify(aoMetrics)) as VenueStatsScopePayload["metrics"];
+  aoReady.A1.n = 8;
+  aoReady.A1.denominator = { attendanceFinalGames: 8, teamSeasonGames: 0 };
+  const aoReadyHero = buildVenueStatsHero({ ...scope, metrics: aoReady });
+  assert.equal(aoReadyHero.sampleLimited, false, "attendance_only 여도 표본 충족이면 참고용 아님");
+  assert.equal(aoReadyHero.score, 100, "표본 충족 attendance_only 는 파생 점수 노출");
+}
+
+// ─ A2~A6 스플릿: 표본 미달 cell 은 top-level value 에 없고 items 에만 사실값이 있다 (삼순 P0-2).
+// splitCells() 가 items 를 우선해야 "두산전 1승" 같은 실제 기록이 화면에서 안 사라진다.
+{
+  const productionShape = {
+    id: "A2",
+    state: "sample_limited",
+    value: [],
+    n: 2,
+    denominator: { finalGames: 2 },
+    coverage: {},
+    items: [
+      { key: "2", state: "sample_limited", value: { opponentTeamId: 2, w: 1, l: 0, d: 0, rate: 1 }, n: 1, denominator: {} },
+      { key: "9", state: "sample_limited", value: { opponentTeamId: 9, w: 1, l: 0, d: 0, rate: 1 }, n: 1, denominator: {} },
+    ],
+  } as unknown as MetricEnvelope;
+  const cells = splitCells<{ opponentTeamId: number; w: number }>(productionShape);
+  assert.equal(cells.length, 2, "top-level value=[] 여도 items 사실값을 행으로 낸다");
+  assert.equal(cells[0].cell.opponentTeamId, 2);
+  assert.equal(cells[0].sampleLimited, true, "표본 미달 cell 은 참고용 표기 대상");
+
+  // ready cell 은 참고용 표기 없이 그대로.
+  const readyShape = {
+    ...productionShape,
+    state: "ready",
+    items: [{ key: "2", state: "ready", value: { opponentTeamId: 2, w: 3, l: 1, d: 0, rate: 0.75 }, n: 4, denominator: {} }],
+  } as unknown as MetricEnvelope;
+  const readyCells = splitCells<{ opponentTeamId: number }>(readyShape);
+  assert.equal(readyCells.length, 1);
+  assert.equal(readyCells[0].sampleLimited, false);
+
+  // items 가 없는 구버전 payload 는 top-level 로 폴백.
+  const legacyShape = {
+    ...productionShape,
+    value: [{ opponentTeamId: 5, w: 2, l: 1, d: 0, rate: 0.667 }],
+    items: undefined,
+  } as unknown as MetricEnvelope;
+  const legacyCells = splitCells<{ opponentTeamId: number }>(legacyShape);
+  assert.equal(legacyCells.length, 1, "items 없는 구버전은 top-level 폴백");
+  assert.equal(legacyCells[0].cell.opponentTeamId, 5);
 }
 assert.equal(formatRate(0.75), "75.0%");
 assert.equal(formatRate(null), "–");

@@ -53,6 +53,7 @@ import {
   formatRate,
   formatSigned,
   METRIC_STATE_LABELS,
+  splitCells,
   metricEvidence,
 } from "@/lib/venue-stats/ui";
 // 순수 leaf 모듈에서 가져온다 — aggregate.ts 는 node 전용 의존(node:crypto)을 끌어서
@@ -114,7 +115,7 @@ function SplitList({
   metric,
 }: {
   title: string;
-  rows: Array<{ key: string; label: string; value: string }>;
+  rows: Array<{ key: string; label: string; value: string; sampleLimited?: boolean }>;
   metric: MetricEnvelope;
 }) {
   return (
@@ -124,7 +125,15 @@ function SplitList({
         {rows.slice(0, 4).map((row) => (
           <div key={row.key} className="flex items-center justify-between gap-3 text-[13px]">
             <span className="truncate text-white/70">{row.label}</span>
-            <span className="shrink-0 font-extrabold text-white">{row.value}</span>
+            <span className="flex shrink-0 items-center gap-1.5">
+              <span className="font-extrabold text-white">{row.value}</span>
+              {/* 표본 미달 cell 은 사실값을 보여주되 참고용임을 행 단위로 표시한다. */}
+              {row.sampleLimited && (
+                <span className="rounded-full border border-amber-300/45 px-1.5 py-0.5 text-[9px] font-black text-amber-300">
+                  참고용
+                </span>
+              )}
+            </span>
           </div>
         ))}
         {rows.length === 0 && <p className="text-[12px] text-white/70">표시할 기록이 없어요</p>}
@@ -583,49 +592,56 @@ export default function VenueStatsDashboard() {
               </button>
               {detailsOpen && (
                 <div className="mt-2 grid gap-2">
+                  {/* 표본 미달 cell 은 top-level value 에 없고 items 에만 사실값이 있다 —
+                      splitCells() 로 items 를 우선 합쳐 실제 기록이 사라지지 않게 한다(삼순 P0-2). */}
                   <SplitList
                     title="상대팀별"
                     metric={scope.metrics.A2}
-                    rows={((scope.metrics.A2.value as A2Cell[] | null) ?? []).map((cell) => ({
-                      key: String(cell.opponentTeamId),
+                    rows={splitCells<A2Cell>(scope.metrics.A2).map(({ key, cell, sampleLimited }) => ({
+                      key,
                       label: `${getTeamById(cell.opponentTeamId)?.shortName ?? `팀 ${cell.opponentTeamId}`}전`,
                       value: `${cell.w}승 ${cell.l}패 ${cell.d}무 · ${formatRate(cell.rate)}`,
+                      sampleLimited,
                     }))}
                   />
                   <SplitList
                     title="구장별"
                     metric={scope.metrics.A3}
-                    rows={((scope.metrics.A3.value as A3Cell[] | null) ?? []).map((cell) => ({
-                      key: `${cell.stadium}:${cell.homeAway}`,
+                    rows={splitCells<A3Cell>(scope.metrics.A3).map(({ key, cell, sampleLimited }) => ({
+                      key,
                       label: `${cell.stadium} · ${cell.homeAway === "home" ? "홈" : "원정"}`,
                       value: `${cell.w}승 ${cell.l}패 · ${formatRate(cell.rate)}`,
+                      sampleLimited,
                     }))}
                   />
                   <SplitList
                     title="요일별"
                     metric={scope.metrics.A4}
-                    rows={((scope.metrics.A4.value as A4Cell[] | null) ?? []).map((cell) => ({
-                      key: String(cell.weekday),
+                    rows={splitCells<A4Cell>(scope.metrics.A4).map(({ key, cell, sampleLimited }) => ({
+                      key,
                       label: `${WEEKDAYS[cell.weekday]}요일`,
                       value: `${cell.w}승 ${cell.l}패 · ${formatRate(cell.rate)}`,
+                      sampleLimited,
                     }))}
                   />
                   <SplitList
                     title="낮·밤"
                     metric={scope.metrics.A5}
-                    rows={((scope.metrics.A5.value as A5Cell[] | null) ?? []).map((cell) => ({
-                      key: cell.dayNight,
+                    rows={splitCells<A5Cell>(scope.metrics.A5).map(({ key, cell, sampleLimited }) => ({
+                      key,
                       label: cell.dayNight === "day" ? "낮 경기" : "야간 경기",
                       value: `${cell.w}승 ${cell.l}패 · ${formatRate(cell.rate)}`,
+                      sampleLimited,
                     }))}
                   />
                   <SplitList
                     title="월별"
                     metric={scope.metrics.A6}
-                    rows={((scope.metrics.A6.value as A6Cell[] | null) ?? []).map((cell) => ({
-                      key: String(cell.month),
+                    rows={splitCells<A6Cell>(scope.metrics.A6).map(({ key, cell, sampleLimited }) => ({
+                      key,
                       label: `${cell.month}월`,
                       value: `${cell.w}승 ${cell.l}패 · ${formatRate(cell.rate)}`,
+                      sampleLimited,
                     }))}
                   />
                 </div>
