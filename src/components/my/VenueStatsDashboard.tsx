@@ -572,7 +572,15 @@ export default function VenueStatsDashboard() {
 
               <SectionTitle>이런 것까지?</SectionTitle>
               <div className="grid grid-cols-2 gap-2">
-                <MetricCard title="토요일 승률" value={formatRate(((scope.metrics.A4.value as A4Cell[] | null) ?? []).find((x) => x.weekday === 6)?.rate)} metric={scope.metrics.A4} />
+                {/* 상세 목록과 같은 소스를 써야 한다 — 표본 미달 cell 은 top-level value 에 없고
+                    items 에만 사실값이 있어서, 여기서 value 만 읽으면 상세엔 보이는 토요일이 `–` 로 죽는다. */}
+                <MetricCard
+                  title="토요일 승률"
+                  value={formatRate(
+                    splitCells<A4Cell>(scope.metrics.A4).find(({ cell }) => cell.weekday === 6)?.cell.rate,
+                  )}
+                  metric={scope.metrics.A4}
+                />
                 <MetricCard title="연속 직관" value={`${e1?.value?.current ?? 0}경기`} comparison={`최장 ${e1?.value?.longest ?? 0}경기`} metric={e1!} />
                 <MetricCard title="우천·취소" value={`${d5?.value?.cancelledCount ?? 0}회`} metric={d5!} />
                 <MetricCard title="최다 득점" value={d6?.value?.maxTeamRuns ? `${d6.value.maxTeamRuns.runs}점` : "–"} comparison={d6?.value?.maxTeamRuns?.date} metric={d6!} />

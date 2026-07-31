@@ -230,6 +230,28 @@ const sampleLimitedPayload = {
   gps:sampleLimitedScope("gps"),
 };
 
+// attendance_only(비교 소스 없는 시즌) 2경기 — 판정 사다리에서 sample_limited 보다 먼저 확정되어
+// 표본 미달이 state 에 가려지던 경계. 사실값은 노출하되 파생 지수는 `–` 이어야 한다.
+const attendanceOnlyScope = (name) => {
+  const base = sampleLimitedScope(name);
+  base.metrics.A1 = {
+    ...base.metrics.A1,
+    state: "attendance_only",
+    n: 2,
+    denominator: { attendanceFinalGames: 2, teamSeasonGames: 0 },
+    value: { attendance: { w: 2, l: 0, d: 0, rate: 1 }, teamComparable: null, deltaPp: null },
+    items: [],
+    reasons: ["season_not_supported"],
+  };
+  return base;
+};
+const attendanceOnlyPayload = {
+  season:2026,
+  seasonSupport:{status:"supported",supportedSeason:2026},
+  overall:attendanceOnlyScope("overall"),
+  gps:attendanceOnlyScope("gps"),
+};
+
 const css = await postcss([tailwind]).process(
   readFileSync(resolve(ROOT, "src/styles/globals.css"), "utf8"),
   { from: resolve(ROOT, "src/styles/globals.css") },
@@ -238,12 +260,15 @@ const bundle = readFileSync(resolve(GEN, "bundle.js"), "utf8");
 let initial2026Served = false;
 let fail2025 = false;
 let serveSampleLimited = false;
+let serveAttendanceOnly = false;
 const server = createServer((req, res) => {
   if (req.url?.startsWith("/api/me/venue-stats")) {
     const requestedSeason = new URL(req.url, "http://127.0.0.1").searchParams.get("season");
     const body = requestedSeason === "2025"
       ? stalePayload
-      : serveSampleLimited ? sampleLimitedPayload : payload;
+      : serveAttendanceOnly ? attendanceOnlyPayload
+      : serveSampleLimited ? sampleLimitedPayload
+      : payload;
     const delay = requestedSeason === "2025" ? 300 : initial2026Served ? 10 : 0;
     if (requestedSeason === "2026") initial2026Served = true;
     return setTimeout(() => {
@@ -530,6 +555,14 @@ try {
     throw new Error("sample-limited split rows missing 참고용 badge");
   }
 
+  // 상세 목록 밖의 요약 카드(`토요일 승률`)도 같은 items 소스를 써야 한다.
+  // top-level value 만 읽으면 상세엔 토요일이 보이는데 이 카드만 `–` 로 죽는다.
+  const saturdayCard = page.getByText("토요일 승률", { exact: true }).locator("..");
+  const saturdayText = await saturdayCard.innerText();
+  if (!saturdayText.includes("100.0%")) {
+    throw new Error(`sample-limited Saturday fact dropped outside detail list: ${saturdayText}`);
+  }
+
   const badgeRgb = await page.getByText("표본 부족(참고용)", { exact: true }).first()
     .evaluate((element) => {
       const canvas = document.createElement("canvas");
@@ -545,8 +578,54 @@ try {
     throw new Error(`sample-limited badge must be amber warning tone, got rgb(${badgeRgb.join(",")})`);
   }
 
+  // ── attendance_only 2경기 actual DOM 계약 ─────────────────────────────────
+  // 비교 소스가 없는 시즌은 attendance_only 가 sample_limited 보다 먼저 확정되므로
+  // state 열거로 막으면 다시 뚫린다 — 사실값은 남기고 파생 지수만 비워야 한다.
+  serveAttendanceOnly = true;
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.getByText("표본 부족(참고용)", { exact: true }).first().waitFor({ timeout: 4000 });
+
+  const aoText = await page.locator('[data-testid="venue-stats-dashboard"]').first().innerText();
+  for (const fact of ["2승", "0패", "0무", "100.0%"]) {
+    if (!aoText.includes(fact)) throw new Error(`attendance_only hero fact missing: ${fact}`);
+  }
+  if (aoText.includes("승률 요정")) {
+    throw new Error(`attendance_only 2 games must not show confident badge: ${aoText.slice(0, 200)}`);
+  }
+  const aoScore = await page
+    .locator('[data-testid="venue-stats-dashboard"] span.text-\\[54px\\]')
+    .first()
+    .innerText();
+  if (aoScore.trim() !== "–") {
+    throw new Error(`attendance_only 2 games derived score must be dash, got ${aoScore}`);
+  }
+  const aoBadgeRgb = await page.getByText("표본 부족(참고용)", { exact: true }).first()
+    .evaluate((element) => {
+      const canvas = document.createElement("canvas");
+      canvas.width = canvas.height = 1;
+      const context = canvas.getContext("2d");
+      context.fillStyle = getComputedStyle(element).color;
+      context.fillRect(0, 0, 1, 1);
+      const data = context.getImageData(0, 0, 1, 1).data;
+      return [data[0], data[1], data[2]];
+    });
+  if (!(aoBadgeRgb[0] > 200 && aoBadgeRgb[1] > 150 && aoBadgeRgb[2] < 140)) {
+    throw new Error(`attendance_only badge must be amber, got rgb(${aoBadgeRgb.join(",")})`);
+  }
+
+  // mutation RED: 가드가 실제로 살아있는지 — 점수 slot 을 강제로 채우면 검사가 실패해야 한다.
+  const mutationDetected = await page.evaluate(() => {
+    const slot = document.querySelector('[data-testid="venue-stats-dashboard"] span.text-\\[54px\\]');
+    const original = slot.textContent;
+    slot.textContent = "100";
+    const leaked = slot.textContent.trim() !== "–";
+    slot.textContent = original;
+    return leaked;
+  });
+  if (!mutationDetected) throw new Error("attendance_only score mutation guard did not trip");
+
   console.log(
-    `venue stats S2 browser: PASS (390px, B1~B4 actual payload, season abort/generation, selected-season 503 fail-closed(no stale value + retry UI), mixed sample-limited facts+dash score+amber badge+0 baseline, AA ${contrast.minimum.toFixed(2)}:1 across ${contrast.count} texts)\nshot: ${SHOT}`,
+    `venue stats S2 browser: PASS (390px, B1~B4 actual payload, season abort/generation, selected-season 503 fail-closed(no stale value + retry UI), mixed sample-limited facts+dash score+amber badge+0 baseline+summary card, attendance_only 2-game facts+dash score+amber badge+mutation RED, AA ${contrast.minimum.toFixed(2)}:1 across ${contrast.count} texts)\nshot: ${SHOT}`,
   );
 } finally {
   await browser.close();
