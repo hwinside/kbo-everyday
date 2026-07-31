@@ -1,13 +1,13 @@
 import { createHash } from "node:crypto";
 
-import { TEAMS } from "@/lib/constants/teams";
+import kboRecordCategoryUniverse from "./kbo-record-category-universe.json";
+import namuCoreManifest from "./namu-core-manifest.json";
 
 export type RagSourceKind = "kbo_structured" | "namu_document";
 export type RagEntityType = "record_category" | "league" | "team" | "player";
 export type RagResolutionStatus = "resolved" | "missing" | "ambiguous" | "blocked";
 export type RagIngestionStatus =
   | "not_started"
-  | "queued"
   | "ingesting"
   | "ready"
   | "failed"
@@ -31,7 +31,7 @@ export interface RagSourceInventoryItem {
   canonicalUrl: string | null;
   resolutionStatus: RagResolutionStatus | null;
   resolutionNote: string | null;
-  sourceGrade: "official" | "secondary";
+  sourceGrade: "tier1" | "tier2";
   ingestionStatus: RagIngestionStatus;
   revision: string | null;
   contentHash: string | null;
@@ -41,6 +41,7 @@ export interface RagSourceInventoryItem {
   tombstonedAt: string | null;
   questionCount: number;
   lastQuestionAt: string | null;
+  identityFingerprint: string;
   metadata: Record<string, string | number | boolean | string[]>;
 }
 
@@ -53,27 +54,33 @@ export interface RagSourceInventory {
 const KBO_BASE = "https://www.koreabaseball.com";
 const NAMU_BASE = "https://namu.wiki/w/";
 
-export const KBO_STRUCTURED_SOURCES: RagSourceInventoryItem[] = [
-  ["player-hitter", "선수 타자 기록", "/Record/Player/HitterBasic/Basic1.aspx"],
-  ["player-pitcher", "선수 투수 기록", "/Record/Player/PitcherBasic/Basic1.aspx"],
-  ["team-hitter-basic1", "팀 타자 기본 기록", "/Record/Team/Hitter/Basic1.aspx"],
-  ["team-hitter-basic2", "팀 타자 세부 기록", "/Record/Team/Hitter/Basic2.aspx"],
-  ["team-runner", "팀 주루 기록", "/Record/Team/Runner/Basic.aspx"],
-  ["team-pitcher", "팀 투수 기록", "/Record/Team/Pitcher/Basic1.aspx"],
-  ["team-rank", "팀 순위", "/Record/TeamRank/TeamRank.aspx"],
-].map(([id, title, path]) => {
+function identityFingerprint(source: {
+  sourceKey: string;
+  sourceKind: RagSourceKind;
+  entityType: RagEntityType;
+  entityId: string;
+  pageTitle: string;
+  candidateUrls: string[];
+}): string {
+  return createHash("sha256").update(JSON.stringify(source)).digest("hex");
+}
+
+export const KBO_STRUCTURED_SOURCES: RagSourceInventoryItem[] = kboRecordCategoryUniverse.map(({ id, title, path }) => {
   const canonicalUrl = `${KBO_BASE}${path}`;
-  return {
+  const identity = {
     sourceKey: `kbo:record:${id}`,
-    sourceKind: "kbo_structured",
-    entityType: "record_category",
+    sourceKind: "kbo_structured" as const,
+    entityType: "record_category" as const,
     entityId: id,
     pageTitle: title,
     candidateUrls: [canonicalUrl],
+  };
+  return {
+    ...identity,
     canonicalUrl,
     resolutionStatus: "resolved",
     resolutionNote: "크보팬 structured retrieval에서 사용 중인 KBO 공식 기록실 경로",
-    sourceGrade: "official",
+    sourceGrade: "tier1",
     ingestionStatus: "not_started",
     revision: null,
     contentHash: null,
@@ -83,6 +90,7 @@ export const KBO_STRUCTURED_SOURCES: RagSourceInventoryItem[] = [
     tombstonedAt: null,
     questionCount: 0,
     lastQuestionAt: null,
+    identityFingerprint: identityFingerprint(identity),
     metadata: { retrievalMode: "structured", embeddingAllowed: false },
   };
 });
@@ -91,31 +99,25 @@ function namuUrl(title: string): string {
   return `${NAMU_BASE}${encodeURIComponent(title)}`;
 }
 
-export const NAMU_CORE_SOURCES: RagSourceInventoryItem[] = [
-  {
-    sourceKey: "namu:league:kbo",
-    entityType: "league" as const,
-    entityId: "kbo",
-    pageTitle: "KBO 리그",
-    metadata: { scope: "league" },
-  },
-  ...TEAMS.map((team) => ({
-    sourceKey: `namu:team:${team.id}`,
-    entityType: "team" as const,
-    entityId: String(team.id),
-    pageTitle: team.name,
-    metadata: { teamId: team.id, teamSlug: team.slug },
-  })),
-].map((seed) => {
-  const canonicalUrl = namuUrl(seed.pageTitle);
+export const NAMU_CORE_SOURCES: RagSourceInventoryItem[] = namuCoreManifest.map((seed) => {
+  const requestedUrl = namuUrl(seed.requestedTitle);
+  const candidateUrls = requestedUrl === seed.canonicalUrl
+    ? [requestedUrl]
+    : [requestedUrl, seed.canonicalUrl];
+  const identity = {
+    sourceKey: seed.sourceKey,
+    sourceKind: "namu_document" as const,
+    entityType: seed.entityType as "league" | "team",
+    entityId: seed.entityId,
+    pageTitle: seed.canonicalTitle,
+    candidateUrls,
+  };
   return {
-    ...seed,
-    sourceKind: "namu_document",
-    candidateUrls: [canonicalUrl],
-    canonicalUrl,
+    ...identity,
+    canonicalUrl: seed.canonicalUrl,
     resolutionStatus: "resolved",
     resolutionNote: "2026-07-31 canonical URL HTTP 200 확인",
-    sourceGrade: "secondary",
+    sourceGrade: "tier2",
     ingestionStatus: "not_started",
     revision: null,
     contentHash: null,
@@ -125,6 +127,12 @@ export const NAMU_CORE_SOURCES: RagSourceInventoryItem[] = [
     tombstonedAt: null,
     questionCount: 0,
     lastQuestionAt: null,
+    identityFingerprint: identityFingerprint(identity),
+    metadata: {
+      requestedTitle: seed.requestedTitle,
+      canonicalTitle: seed.canonicalTitle,
+      canonicalVerifiedAt: "2026-07-31",
+    },
   };
 });
 
@@ -134,17 +142,20 @@ function playerCandidateTitles(name: string): string[] {
 
 function playerSource(player: RosterSourcePlayer): RagSourceInventoryItem {
   const candidateTitles = playerCandidateTitles(player.name);
-  return {
+  const identity = {
     sourceKey: `namu:player:${player.kboId}`,
-    sourceKind: "namu_document",
-    entityType: "player",
+    sourceKind: "namu_document" as const,
+    entityType: "player" as const,
     entityId: player.kboId,
     pageTitle: player.name,
     candidateUrls: candidateTitles.map(namuUrl),
+  };
+  return {
+    ...identity,
     canonicalUrl: null,
     resolutionStatus: null,
     resolutionNote: null,
-    sourceGrade: "secondary",
+    sourceGrade: "tier2",
     ingestionStatus: "not_started",
     revision: null,
     contentHash: null,
@@ -154,6 +165,7 @@ function playerSource(player: RosterSourcePlayer): RagSourceInventoryItem {
     tombstonedAt: null,
     questionCount: 0,
     lastQuestionAt: null,
+    identityFingerprint: identityFingerprint(identity),
     metadata: {
       teamId: player.teamId,
       team: player.team,
@@ -181,7 +193,7 @@ function preserveOperationalState(
   current: RagSourceInventoryItem,
   previous: RagSourceInventoryItem | undefined,
 ): RagSourceInventoryItem {
-  if (!previous) return current;
+  if (!previous || previous.identityFingerprint !== current.identityFingerprint) return current;
   const merged = { ...current };
   for (const field of PRESERVED_FIELDS) {
     if (previous[field] !== null && previous[field] !== undefined) {
@@ -204,9 +216,18 @@ export function buildSourceInventory(
     .map((source) => preserveOperationalState(source, previousByKey.get(source.sourceKey)))
     .sort((a, b) => a.sourceKey.localeCompare(b.sourceKey));
   const inventoryVersion = createHash("sha256")
-    .update(JSON.stringify(sources.map(({ sourceKey, candidateUrls, metadata }) => ({
+    .update(JSON.stringify(sources.map(({ sourceKey, sourceKind, entityType, entityId, pageTitle,
+      candidateUrls, canonicalUrl, resolutionStatus, sourceGrade, identityFingerprint, metadata }) => ({
       sourceKey,
+      sourceKind,
+      entityType,
+      entityId,
+      pageTitle,
       candidateUrls,
+      canonicalUrl,
+      resolutionStatus,
+      sourceGrade,
+      identityFingerprint,
       metadata,
     }))))
     .digest("hex");

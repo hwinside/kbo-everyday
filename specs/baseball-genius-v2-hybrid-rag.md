@@ -1,6 +1,6 @@
 # 야잘알봇 v2 — 선수/구단 Hybrid RAG 스펙 (rev0.7)
 
-> 상태: **범위 확대 GO(§12) — S1b-KBO/S2 source inventory·ingestion 착수 / S0 exact 계약 조건부 GO / S1a·S1b·S2 구현 merge/deploy HOLD**
+> 상태: **범위 확대 GO(§12) — S1b-KBO/S2 source inventory·ingestion 착수 / S0 merge·Production DB 적용·실제 계정 2턴 End-User QA HOLD / S1a·S1b·S2 구현 merge/deploy HOLD**
 > 작성: 삼식이 2026-07-31 (rev0.7: 하린아빠 KBO 기록실+나무위키 전수 RAG 확정 §12 반영 / rev0.6: 삼순 5차 재리뷰 테이블명 exact)
 > SSOT: Notion `3aec901b-b372-8140-8cec-f4c700b96487` (본 파일은 미러).
 > 선행 SSOT: 야잘알봇 MVP 스펙 v1.2 (Notion `3acc901bb3728165b783d0f0960c9f02`)
@@ -208,7 +208,7 @@
 ---
 
 ## 10. 슬라이스 / 순서 + 삼순 판정 반영
-- **S0** 멀티턴 맥락 + 후속질문 차단 해소 · **계약(§4.1) 반영 후 조건부 GO** · 선행 배포
+- **S0** 멀티턴 맥락 + 후속질문 차단 해소 · **머지·Production DB 적용 완료** · 실제 계정 2턴 End-User QA HOLD
 - **S1a** 내부 자산 정량 답변 · **HOLD** — 데이터 완전성 게이트(§0.2) 선결. 프로필·로스터 필터는 완전하므로 먼저 열 수 있으나 시즌 누적은 보류
 - **S1b** 외부 소스 fail-close + provider/asOf/stale/season · **HOLD**
 - **S2** 서술형 벡터 RAG · **HOLD**
@@ -218,6 +218,13 @@
 ---
 
 ## 11. 변경 이력
+
+### rev0.7 (하린아빠 KBO 기록실 + 나무위키 전수 RAG 확정, 2026-07-31)
+- **§12 신규**: KBO 기록실 + KBO/10구단/선수별(878명) 나무위키를 전수 RAG 자산으로 구축. 전수 inventory(resolved|missing|ambiguous|blocked 100% 분류), KBO 기록실=structured typed claim(벡터 아님), 나무위키=서술형 hybrid RAG(provenance 메타 필수). 숫자 정본=공식 KBO, 나무위키 숫자는 교차검증 전 확정 claim 금지.
+- **§12.1 실행순서**: S1b-KBO 기록실 inventory/schema → S2a KBO+10팀 ingestion → S2b 선수 878명 batch. 운영 대시보드+재수집 큐.
+- **§12.2 제안블록(미확정)**: robots/약관/권리 게이트·원문 저장 최소화·attribution/license 메타·상업 서빙 법무 gate — Notion §12에 부분 반영이라 제안 상태로 병기(확정 계약 아님).
+- **정책 supersede**: 7/30 "나무위키 운영 RAG NO-GO"는 §5 rev0.2 정책 교체 + §12 하린아빠 확정으로 명시적 supersede.
+- 판정: 범위 확대 GO. S1a 내부 완전성은 내부 시즌 누적 게이트로 유지하되 S1b/S2 착수 선행조건 아님. 구현 merge/deploy는 삼순 리뷰+하린아빠 승인 전 HOLD.
 
 ### rev0.6 (삼순 5차 재리뷰 테이블명 exact 반영, 2026-07-31)
 - **[B3 테이블명 정정]** `genius_qa_log`는 실재하지 않음(Production 404) → 실제 테이블 `genius_question_logs`(match_path 컬럼 존재, message_id 없음)로 전 참조 정정. 자격은 여전히 `genius_question_jobs.source`(logs.match_path는 turn과 exact join 불가라 미사용) 유지.
@@ -271,7 +278,8 @@
 
 - 전수 inventory: KBO 기록실의 제공 기록 범주 전체 + KBO 개요 1페이지 + 10개 구단 페이지 + players-roster.json 878명 각각의 나무위키 canonical page 후보. 각 엔티티는 resolved | missing | ambiguous | blocked 중 하나로 100% 분류하며 조용한 누락을 금지한다.
 - KBO 기록실은 벡터 RAG가 아니라 structured retrieval로 수집·정규화한다. season·entityId·metric·value·unit·provider·asOf·dataVersion을 가진 typed claim만 deterministic renderer에 전달하고, 숫자는 LLM/나무위키에서 생성하지 않는다.
-- 나무위키는 서술형 RAG로 사용한다. chunk 메타 필수값: entityType, entityId(kboId/teamId), pageTitle, canonicalUrl, revision, sectionPath, crawledAt, contentHash, sourceGrade. 이름 단독 연결 금지, 동명이인은 기존 AMBIGUOUS 계약으로 분리한다.
+- 나무위키는 서술형 RAG로 사용한다. chunk 메타 필수값: entityType, entityId(kboId/teamId), pageTitle, canonicalUrl, revision, sectionPath, crawledAt, contentHash, sourceGrade, asOf. 이름 단독 연결 금지, 동명이인은 기존 AMBIGUOUS 계약으로 분리한다.
+- 임베딩은 지원 모델 `gemini-embedding-2`의 768차원 출력을 사용한다. 문서/질의 instruction prefix를 분리하고 `task_type`은 전송하지 않으며, 768개 유한값이 아닌 응답은 저장 전 거부한다.
 - 검색은 entity filter + hybrid(BM25/vector)로 구성한다. 문서 안의 지시문·프롬프트·스크립트는 모두 비신뢰 데이터로 취급하고 모델 지시로 실행하지 않는다.
 - 신뢰도: 공식 KBO 기록실을 정량 claim의 우선 정본으로 사용한다. 나무위키의 숫자는 공식 소스로 교차확인되기 전 정량 확정값으로 쓰지 않는다. 서술형은 출처·revision/asOf를 표시하고, 공식/다른 출처와 충돌하면 단정 대신 차이를 공개한다.
 - 서빙: 사실을 재서술하고 원문 장문 재현은 피하며 답변에 canonical source 링크를 제공한다. 로그인·유료·접근제한 우회는 하지 않는다.
@@ -286,3 +294,14 @@
 4. 운영: source coverage/revision/stale/실패율 대시보드와 재수집 큐를 두고, 실제 질문 eval에서 정량 exact와 서술형 citation을 분리 판정한다.
 
 판정: 범위 확대 GO. S1a 내부 player_game_logs 완전성은 내부 시즌 누적 서빙 게이트로 유지하되, KBO 기록실 S1b와 나무위키 S2의 source inventory/ingestion 착수를 막는 선행조건으로 사용하지 않는다. 구현 PR은 삼순 코드리뷰와 하린아빠 merge 승인 전 merge/deploy HOLD.
+
+정책 판정: 7/30 기존 "나무위키 운영 RAG NO-GO"는 최신 Notion §5 rev0.2의 정책 교체 + §12 하린아빠 확정으로 명시적으로 supersede된 것으로 본다.
+
+### 12.2 리스크 제안 블록 (⚠️ 제안 · 미확정 — 확정 계약으로 오기재 금지)
+
+> 삼순이가 지적한 §12 부분반영 갭(robots/약관·원문저장최소화·상업법무)을 보완하는 제안이다. 확정 계약이 아니며, 하린아빠/삼순 승인 시 §12로 승격한다.
+
+- **(a) robots/약관/권리 게이트**: robots.txt·서비스 약관·권리 확인 후 허용된 공개경로만 bounded 수집, 불허 경로는 inventory에서 blocked 분류.
+- **(b) 원문 저장 최소화**: 원문 전문 보존 금지, retrieval 최소 chunk + provenance만 저장. attribution/license 메타 보존.
+- **(c) 상업 서빙 법무 gate**: 나무위키 CC BY-NC-SA 등 상업 이용 적합성을 별도 gate로 노출(법무 확인 상태 표기). 미확인 시 서빙 보류.
+- sourceGrade·공식 KBO 우선순위는 Notion §12에 이미 반영됨(중복 아님).
