@@ -1,0 +1,279 @@
+name: Backfill Game Log Ledger
+
+# 직관 다이어리 통계(S1a)용 완료 증거 원장(player_game_log_ingestions) backfill.
+#
+# 배경: player_game_logs 행은 있어도 ledger가 없으면 S1a는 heuristic 추정 없이
+# complete=false로 강등한다(설계 계약). 그래서 통계 화면에서 팀 타율/ERA/홈런이
+# `비교 데이터 준비 중`으로 막힌다. 이 워크플로가 boxscore를 재수집해 ledger를 채운다.
+#
+# 실행은 수동(workflow_dispatch)만. 스케줄 없음 —
+# 운영 정기 수집은 별도 경로가 담당하고 이건 과거분 보정용이다.
+#
+# 멱등: player_game_logs UNIQUE(kbo_id,player_type,game_id) + ledger PK(game_id) upsert.
+# 재실행해도 중복이 생기지 않는다.
+
+on:
+  workflow_dispatch:
+    inputs:
+      season:
+        description: '대상 시즌 (예: 2026)'
+        required: true
+        default: '2026'
+        type: string
+      limit:
+        description: '최근 N경기만 처리 (0 = 시즌 전체). 검증용으로 작은 값부터 권장'
+        required: false
+        default: '0'
+        type: string
+      apply:
+        description: 'true = 실제 DB 쓰기, false = dry-run(판정 미리보기만)'
+        required: true
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+      mode:
+        description: 'canary = 소량 시험 실행(공개 게이트 없음) / release = 공개 선행 실행(제보 3경기 complete 필수)'
+        required: true
+        default: 'canary'
+        type: choice
+        options:
+          - 'canary'
+          - 'release'
+
+permissions:
+  contents: read
+
+concurrency:
+  # 같은 시즌에 동시 실행되면 같은 경기를 중복 페치한다. 겹치면 대기시킨다.
+  group: backfill-game-log-ledger-${{ inputs.season }}
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate inputs
+        id: validate
+        env:
+          SEASON: ${{ inputs.season }}
+          LIMIT: ${{ inputs.limit }}
+          APPLY: ${{ inputs.apply }}
+          MODE: ${{ inputs.mode }}
+          # release 는 이 시즌 전체에만 허용 — 하드코딩된 검증 3경기와 처리 범위를 결속한다.
+          RELEASE_SEASON: '2026'
+          # canary apply 상한. 이보다 크면 slice(-limit) 이 사실상 전체가 된다.
+          CANARY_MAX_LIMIT: '50'
+        run: |
+          set -euo pipefail
+          # ── whitelist 먼저 ────────────────────────────────────────────────
+          # mode/apply 를 분기 조건으로만 쓰면 오타값(예: MODE=typo)이 어느 분기에도
+          # 걸리지 않고 통과한다. 그러면 backfill 은 --apply 로 시즌 전체를 쓰는데
+          # release 3경기 검증은 `inputs.mode == 'release'` 가 아니라 skip 된다(삼순 P0).
+          case "$MODE" in
+            canary|release) ;;
+            *) echo "::error::mode must be 'canary' or 'release', got '$MODE'"; exit 1 ;;
+          esac
+          case "$APPLY" in
+            true|false) ;;
+            *) echo "::error::apply must be 'true' or 'false', got '$APPLY'"; exit 1 ;;
+          esac
+
+          # 시즌은 4자리 연도만. 오타로 엉뚱한 시즌을 긁지 않게 fail-closed.
+          if ! echo "$SEASON" | grep -Eq '^[0-9]{4}$'; then
+            echo "::error::season must be a 4-digit year, got '$SEASON'"
+            exit 1
+          fi
+          # limit 은 canonical 정수 표기만 허용한다.
+          # '00'/'000' 은 정규식 ^[0-9]+$ 를 통과하지만 문자열 비교 "$LIMIT" = "0" 에는
+          # 걸리지 않아, canary 인 채로 Number('00')=0 → 시즌 전체가 apply 된다(삼순 P0).
+          if ! echo "$LIMIT" | grep -Eq '^(0|[1-9][0-9]*)$'; then
+            echo "::error::limit must be a canonical integer (no leading zeros), got '$LIMIT'"
+            exit 1
+          fi
+
+          # ── mode × limit × season fail-close matrix ────────────────────────
+          # canary 는 소량 시험 전용이다. limit=0(시즌 전체)로 apply 하면
+          # release 3경기 게이트를 타지 않은 채 전체 DB 쓰기가 일어난다(삼순 P0).
+          if [ "$MODE" = "canary" ] && [ "$APPLY" = "true" ]; then
+            if [ "$LIMIT" -eq 0 ]; then
+              echo "::error::canary + apply requires limit > 0. Full-season apply must use mode=release."
+              exit 1
+            fi
+            # 큰 limit 은 slice(-limit) 이 시즌 전체를 고르므로 canary 를 무력화한다.
+            # canary 는 소량 시험 전용 — 상한을 둬 전체 apply 경로를 release 로만 남긴다.
+            if [ "$LIMIT" -gt "$CANARY_MAX_LIMIT" ]; then
+              echo "::error::canary + apply limit must be <= $CANARY_MAX_LIMIT, got '$LIMIT'. Use mode=release for a full-season run."
+              exit 1
+            fi
+          fi
+          # release 는 공개 선행 실행이다 — 고정된 2026 3경기를 반드시 포함해야 하므로
+          # 시즌 전체(limit=0) + 실제 쓰기(apply=true) + 해당 시즌으로 결속한다.
+          if [ "$MODE" = "release" ]; then
+            if [ "$APPLY" != "true" ]; then
+              echo "::error::release mode requires apply=true (it is the public-rollout run)."
+              exit 1
+            fi
+            if [ "$SEASON" != "$RELEASE_SEASON" ]; then
+              echo "::error::release mode is pinned to season $RELEASE_SEASON, got '$SEASON'"
+              exit 1
+            fi
+            if [ "$LIMIT" != "0" ]; then
+              echo "::error::release mode requires limit=0 (full season), got '$LIMIT'"
+              exit 1
+            fi
+          fi
+
+          # 이후 step 은 반드시 이 정규화된 출력만 쓴다(원본 inputs 직접 사용 금지).
+          echo "season=$SEASON" >> $GITHUB_OUTPUT
+          echo "limit=$LIMIT" >> $GITHUB_OUTPUT
+          echo "apply=$APPLY" >> $GITHUB_OUTPUT
+          echo "mode=$MODE" >> $GITHUB_OUTPUT
+          echo "mode=$MODE / apply=$APPLY / season=$SEASON / limit=$LIMIT (validated)"
+
+      - name: Ledger count before
+        id: before
+        env:
+          SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          COUNT=$(curl -s "$SUPABASE_URL/rest/v1/player_game_log_ingestions?select=game_id" \
+            -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Prefer: count=exact" -H "Range: 0-0" -D - -o /dev/null \
+            | grep -i '^content-range:' | tr -d '\r' | sed 's|.*/||')
+          echo "count=$COUNT" >> $GITHUB_OUTPUT
+          echo "ledger rows before: $COUNT"
+
+      - name: Run backfill
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          ARGS="--season ${{ steps.validate.outputs.season }}"
+          if [ "${{ steps.validate.outputs.limit }}" != "0" ]; then
+            ARGS="$ARGS --limit ${{ steps.validate.outputs.limit }}"
+          fi
+          if [ "${{ steps.validate.outputs.apply }}" = "true" ]; then
+            ARGS="$ARGS --apply"
+          fi
+          echo "npx tsx scripts/backfill-game-log-ledger.mts $ARGS"
+          npx tsx scripts/backfill-game-log-ledger.mts $ARGS 2>&1 | tee /tmp/backfill.log
+
+      - name: Ledger count after
+        id: after
+        env:
+          SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          COUNT=$(curl -s "$SUPABASE_URL/rest/v1/player_game_log_ingestions?select=game_id" \
+            -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Prefer: count=exact" -H "Range: 0-0" -D - -o /dev/null \
+            | grep -i '^content-range:' | tr -d '\r' | sed 's|.*/||')
+          echo "count=$COUNT" >> $GITHUB_OUTPUT
+          echo "ledger rows after: $COUNT"
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Game Log Ledger Backfill"
+            echo ""
+            echo "- season: \`${{ steps.validate.outputs.season }}\`"
+            echo "- limit: \`${{ steps.validate.outputs.limit }}\` (0 = 시즌 전체)"
+            echo "- apply: \`${{ steps.validate.outputs.apply }}\`"
+            echo "- mode: \`${{ steps.validate.outputs.mode }}\` (release 만 공개 선행 게이트를 탄다)"
+            echo "- ledger rows: \`${{ steps.before.outputs.count }}\` → \`${{ steps.after.outputs.count }}\`"
+            echo ""
+            echo '```'
+            tail -n 60 /tmp/backfill.log 2>/dev/null || echo "(no log)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # ── fail-closed 검증 ────────────────────────────────────────────────────
+      # 전역 ledger count 나 "complete N건" 은 성공 근거가 못 된다 — 수백 경기가 complete 면
+      # 정작 필요한 경기가 incomplete 여도 전체 수치는 초록이 된다(삼순 P0-1).
+      #
+      # 그리고 검증 대상을 운영자 입력으로 받으면 빈 값으로 dispatch 해서 게이트를 건너뛸 수 있다(P0-2).
+      # 그래서 공개 선행 대상 3경기를 **워크플로에 고정**하고, mode=release 면 무조건 실행한다.
+      # canary 는 소량 시험용이라 이 게이트를 타지 않으며, 공개 근거로 쓸 수 없다.
+      - name: Verify release games are complete
+        if: steps.validate.outputs.apply == 'true' && steps.validate.outputs.mode == 'release'
+        env:
+          SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          # 하드코딩 — 운영자가 바꿀 수 없다. 변경하려면 PR 로 리뷰를 거쳐야 한다.
+          RELEASE_GAME_IDS: '20260704HHLG0,20260708LGSS0,20260725LGHH0'
+        run: |
+          set -euo pipefail
+          FAILED=""
+          echo "| game_id | status | failure_reason |" > /tmp/required.md
+          echo "|---|---|---|" >> /tmp/required.md
+          IFS=',' read -ra GAMES <<< "$RELEASE_GAME_IDS"
+          if [ "${#GAMES[@]}" -eq 0 ]; then
+            echo "::error::release game list is empty"
+            exit 1
+          fi
+          for RAW in "${GAMES[@]}"; do
+            GID=$(echo "$RAW" | tr -d '[:space:]')
+            # game_id 형식 strict 검증 — 예상 밖 문자열로 REST 쿼리를 만들지 않는다.
+            if ! echo "$GID" | grep -Eq '^[0-9]{8}[A-Z]{4}[0-9]$'; then
+              echo "::error::invalid game_id format: '$GID'"
+              exit 1
+            fi
+            BODY=$(curl -s -G "$SUPABASE_URL/rest/v1/player_game_log_ingestions" \
+              --data-urlencode "select=game_id,status,failure_reason" \
+              --data-urlencode "game_id=eq.$GID" \
+              -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+              -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY")
+            STATUS=$(echo "$BODY" | jq -r '.[0].status // "MISSING"')
+            REASON=$(echo "$BODY" | jq -r '.[0].failure_reason // "-"')
+            echo "| $GID | $STATUS | $REASON |" >> /tmp/required.md
+            echo "release $GID -> $STATUS ($REASON)"
+            if [ "$STATUS" != "complete" ]; then
+              FAILED="$FAILED $GID($STATUS/$REASON)"
+            fi
+          done
+          {
+            echo "### 공개 선행 검증 대상 경기 (고정)"
+            echo ""
+            cat /tmp/required.md
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$FAILED" ]; then
+            echo "::error::release games not complete:$FAILED"
+            exit 1
+          fi
+          echo "✅ all release games complete"
+
+      # dry-run 은 판정 미리보기라 incomplete 가 있어도 실패가 아니다.
+      # apply 실행이 사실상 no-op 이면(증가 0 + complete 0) 드러낸다.
+      # 이건 보조 가드일 뿐이고, 진짜 게이트는 위의 required games 검증이다.
+      - name: Verify apply made progress
+        if: steps.validate.outputs.apply == 'true'
+        run: |
+          BEFORE="${{ steps.before.outputs.count }}"
+          AFTER="${{ steps.after.outputs.count }}"
+          COMPLETE=$(grep -oE 'complete [0-9]+' /tmp/backfill.log | tail -1 | grep -oE '[0-9]+' || echo "0")
+          echo "before=$BEFORE after=$AFTER complete=$COMPLETE"
+          if [ "$AFTER" -lt "$BEFORE" ]; then
+            echo "::error::ledger rows decreased ($BEFORE → $AFTER)"
+            exit 1
+          fi
+          if [ "$AFTER" -eq "$BEFORE" ] && [ "$COMPLETE" = "0" ]; then
+            echo "::error::apply run produced no complete ledger rows — check the log above"
+            exit 1
+          fi
