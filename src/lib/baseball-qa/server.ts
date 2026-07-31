@@ -20,6 +20,7 @@ import {
   type PreviousTurnRow,
 } from "@/lib/baseball-qa/context";
 import { BASEBALL_GENIUS_USER_ID } from "@/lib/constants/baseball-genius";
+import playersRoster from "@/lib/constants/players-roster.json";
 import {
   BASEBALL_QA_GEMINI_MODEL,
   buildBaseballQaGeminiRequest,
@@ -54,9 +55,8 @@ export const INVALID_QUESTION_ANSWER =
   `질문은 ${MIN_QUESTION_LEN}~${MAX_QUESTION_LEN}자 텍스트로 입력해 주세요. 예: "보크가 뭐야?"`;
 
 let glossaryCache: { entries: GlossaryEntry[]; loadedAt: number } | null = null;
-let playerCache: { entries: PlayerRef[]; loadedAt: number } | null = null;
 const GLOSSARY_TTL_MS = 10 * 60 * 1000;
-const PLAYER_TTL_MS = 10 * 60 * 1000;
+const ROSTER_PLAYERS: PlayerRef[] = playersRoster.map(({ name, kboId }) => ({ name, kboId }));
 
 async function loadGlossary(): Promise<GlossaryEntry[]> {
   if (glossaryCache && Date.now() - glossaryCache.loadedAt < GLOSSARY_TTL_MS) {
@@ -73,21 +73,7 @@ async function loadGlossary(): Promise<GlossaryEntry[]> {
 }
 
 async function loadPlayers(): Promise<PlayerRef[]> {
-  if (playerCache && Date.now() - playerCache.loadedAt < PLAYER_TTL_MS) {
-    return playerCache.entries;
-  }
-  // query-guard: bounded -- KBO 1·2군 roster 전체보다 큰 2,000행 상한.
-  const { data, error } = await supabaseAdmin
-    .from("players_roster")
-    .select("name, kbo_id")
-    .limit(2000);
-  if (error) throw error;
-  const entries = (data ?? []).map((row: { name: string; kbo_id: string }) => ({
-    name: row.name,
-    kboId: row.kbo_id,
-  }));
-  playerCache = { entries, loadedAt: Date.now() };
-  return entries;
+  return ROSTER_PLAYERS;
 }
 
 async function callLlm(question: string, context?: ContextTurn): Promise<LlmResult> {

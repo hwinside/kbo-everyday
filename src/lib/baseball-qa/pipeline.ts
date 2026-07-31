@@ -152,6 +152,10 @@ const INJECTION_PATTERNS = [
   /(이전|위|앞)\s*의?\s*(지시|명령|규칙|프롬프트).*(무시|잊)/i,
   /(시스템|개발자)\s*(프롬프트|메시지|지시)/i,
   /ignore\s+(all\s+)?previous/i,
+  /\bforget\s+(all\s+)?previous\s+(instructions?|prompts?)\b/i,
+  /\breveal\s+(your\s+)?(system\s+)?prompt\b/i,
+  /\bact\s+as\b/i,
+  /(이전|위|앞|앞에\s*나온).*(무시하고|잊고).*역할\s*(변경|바꿔|바꾸)/i,
   /(링크|url).*(줘|출력|보여)/i,
 ];
 
