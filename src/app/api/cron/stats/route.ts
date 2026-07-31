@@ -33,7 +33,9 @@ const NAVER_MIN_PER_TEAM: Record<"HITTER" | "PITCHER", number> = {
   HITTER: 15,
   PITCHER: 10,
 };
-const KBO_MIN_COVERAGE = { batter: 30, pitcher: 15 } as const;
+// KBO 선수표는 페이지당 정확히 30행이다. 30행을 "완전"으로 채택하면 31위 이하가
+// 조용히 stale 상태로 남으므로, 단일 페이지 경계는 불완전으로 보고 Naver 전량으로 전환한다.
+const KBO_MIN_COVERAGE = { batter: 31, pitcher: 15 } as const;
 
 interface PlayerStat {
   rank: number;

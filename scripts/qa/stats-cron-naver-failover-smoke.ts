@@ -44,7 +44,8 @@ function pitcherRow(i: number): string {
   ];
   return `<tr>${c.map((x) => `<td>${x}</td>`).join("")}</tr>`;
 }
-const KBO_HITTER_HTML = `<table><tbody>${Array.from({ length: 30 }, (_, i) => hitterRow(i)).join("")}</tbody></table>`;
+const KBO_HITTER_HTML = `<table><tbody>${Array.from({ length: 40 }, (_, i) => hitterRow(i)).join("")}</tbody></table>`;
+const KBO_HITTER_PAGE_BOUNDARY_HTML = `<table><tbody>${Array.from({ length: 30 }, (_, i) => hitterRow(i)).join("")}</tbody></table>`;
 const KBO_PITCHER_HTML = `<table><tbody>${Array.from({ length: 19 }, (_, i) => pitcherRow(i)).join("")}</tbody></table>`;
 const EMPTY_TABLE_HTML = "<table><tbody></tbody></table>";
 // KBO 503/302 본문에는 표가 아예 없다(실측: 302 본문 <tbody> 부재).
@@ -109,6 +110,7 @@ type KboMode =
   | "timeout"
   | "partial-row"
   | "valid-partial"
+  | "page-boundary"
   | "bad-numeric"
   | "one-sort-fails";
 type NaverMode =
@@ -173,6 +175,11 @@ function installFetch(kbo: KboMode, naver: NaverMode, dbFail = false) {
         case "valid-partial":
           return new Response(
             `<table><tbody>${isPitcher ? pitcherRow(0) : hitterRow(0)}</tbody></table>`,
+            { status: 200 },
+          );
+        case "page-boundary":
+          return new Response(
+            isPitcher ? KBO_PITCHER_HTML : KBO_HITTER_PAGE_BOUNDARY_HTML,
             { status: 200 },
           );
         case "bad-numeric": {
@@ -407,6 +414,16 @@ async function main() {
     assert.equal(status, 500);
     assert.equal(upserts.length, 0);
     ok(`17. Naver ${mode} malformed 200 → upsert 0`);
+  }
+
+  // ── 18. KBO 실제 30행 페이지 경계는 완전 목록이 아니므로 Naver 전량 복구 ──
+  {
+    const { status, body } = await run("page-boundary", "ok");
+    assert.equal(status, 200);
+    assert.equal(body["sources"]["batter"], "naver");
+    assert.equal(body["batters"], 300);
+    assert.equal(allRows(batterUpserts()).length, 300);
+    ok("18. KBO 타자 30행 페이지 경계 → Naver 전량 복구(부분 30행 채택 금지)");
   }
 
   globalThis.fetch = realFetch;

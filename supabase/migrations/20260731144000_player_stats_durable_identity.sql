@@ -4,6 +4,35 @@
 ALTER TABLE player_stats_batter ADD COLUMN IF NOT EXISTS player_key text;
 ALTER TABLE player_stats_pitcher ADD COLUMN IF NOT EXISTS player_key text;
 
+-- Production에서 kbo_id가 비어 있던 두 선수는 이름 기반 legacy key로 남기면
+-- 이후 실 ID upsert와 별도 행이 되어 유령 레코드가 된다. 정본 로스터 ID를 먼저
+-- 복구한 뒤 일반 backfill/dedupe를 수행해 같은 선수는 한 행으로 수렴시킨다.
+WITH known(name, team, canonical_id) AS (
+  VALUES
+    ('김윤식', 'LG', '50157'),
+    ('미야지', '삼성', 'AQ003'),
+    ('미야지 유라', '삼성', 'AQ003')
+)
+UPDATE player_stats_batter p
+SET kbo_id = known.canonical_id, player_key = known.canonical_id
+FROM known
+WHERE p.name = known.name
+  AND p.team = known.team
+  AND NULLIF(p.kbo_id, '') IS NULL;
+
+WITH known(name, team, canonical_id) AS (
+  VALUES
+    ('김윤식', 'LG', '50157'),
+    ('미야지', '삼성', 'AQ003'),
+    ('미야지 유라', '삼성', 'AQ003')
+)
+UPDATE player_stats_pitcher p
+SET kbo_id = known.canonical_id, player_key = known.canonical_id
+FROM known
+WHERE p.name = known.name
+  AND p.team = known.team
+  AND NULLIF(p.kbo_id, '') IS NULL;
+
 UPDATE player_stats_batter
 SET player_key = COALESCE(NULLIF(kbo_id, ''), 'legacy:' || team || ':' || name)
 WHERE player_key IS NULL;
