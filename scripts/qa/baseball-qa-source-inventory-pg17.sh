@@ -536,6 +536,54 @@ begin
   if not lower_rejected then raise exception 'R2-B3 lower generation write accepted'; end if;
 end;
 $$;
+
+-- [R2-B4] ready source에 identity drift가 오면 chunk 전량 삭제로 서빙 snapshot이 사라진다.
+-- active를 같이 내리지 않으면 ready 계약 위반으로 drift UPDATE 자체가 거부되어
+-- 이름·소속이 바뀜 문서를 영원히 무효화할 수 없게 된다.
+update public.genius_rag_sources
+set ingestion_status='not_started', ingestion_attempts=0, lease_until=null, claim_token=null,
+    claim_generation=0, active_claim_generation=0, question_count=650, revision=null, content_hash=null,
+    crawled_at=null, ingested_at=null
+where source_key='namu:team:10';
+do $$
+declare
+  gen1 public.genius_rag_sources%rowtype;
+  completed boolean;
+  drift_failed boolean := false;
+  final_status text;
+  final_active bigint;
+begin
+  select * into gen1 from public.claim_baseball_genius_rag_batch(1, 60);
+  if gen1.source_key <> 'namu:team:10' then raise exception 'R2-B4 setup claim mismatch'; end if;
+  perform public.upsert_baseball_genius_rag_chunk(
+    gen1.source_key, gen1.claim_token, gen1.claim_generation, gen1.entity_type, gen1.entity_id,
+    gen1.page_title, gen1.canonical_url, 'rB4', '개요', 0, repeat('content ', 6), 'docB4', 'hB4',
+    gen1.source_grade, '2026-07-31T00:00:00Z', '2026-07-31', 'vec-768'
+  );
+  select public.complete_baseball_genius_rag_source(
+    gen1.source_key, gen1.claim_token, gen1.claim_generation,
+    'rB4', 'docB4', '2026-07-31T00:00:00Z', '2026-08-01T00:00:00Z'
+  ) into completed;
+  if not completed then raise exception 'R2-B4 setup publish failed'; end if;
+
+  -- ready 상태에서 identity drift 발생.
+  begin
+    update public.genius_rag_sources
+    set identity_fingerprint = identity_fingerprint || '-changed'
+    where source_key = gen1.source_key;
+  exception when others then drift_failed := true;
+  end;
+  if drift_failed then raise exception 'R2-B4 identity drift blocked on ready source'; end if;
+
+  select ingestion_status, active_claim_generation into final_status, final_active
+  from public.genius_rag_sources where source_key = gen1.source_key;
+  if exists (select 1 from public.genius_rag_chunks where source_key = gen1.source_key) then
+    raise exception 'R2-B4 identity drift preserved stale chunks';
+  end if;
+  if final_active <> 0 then raise exception 'R2-B4 active snapshot survived chunk purge'; end if;
+  if final_status = 'ready' then raise exception 'R2-B4 source stayed ready with zero chunks'; end if;
+end;
+$$;
 SQL
 
 # [B2] service_role은 쓰기 RPC를 실행할 수 있고, anon/authenticated는 모든 RPC가 막힌다.
@@ -634,4 +682,4 @@ wait "$PID_A" "$PID_B"
 [ "$(sort -u "$WORK/a" "$WORK/b" | wc -l | tr -d ' ')" = "20" ]
 [ "$(cat "$WORK/a" "$WORK/b" | wc -l | tr -d ' ')" = "20" ]
 
-echo "baseball QA source inventory PG17 PASS (seed932·pending878·fault/CAS/concurrency·B1embedding·B2acl·B3reclaim·R2-B1stage→swap+snapshot보존·R2-B2provenance균일·R2-B3idempotent재시도)"
+echo "baseball QA source inventory PG17 PASS (seed932·pending878·fault/CAS/concurrency·B1embedding·B2acl·B3reclaim·R2-B1stage→swap+snapshot보존·R2-B2provenance균일·R2-B3idempotent재시도·R2-B4drift→stale강등)"

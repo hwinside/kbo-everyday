@@ -135,6 +135,15 @@ AS $$
 BEGIN
   IF OLD.identity_fingerprint IS DISTINCT FROM NEW.identity_fingerprint THEN
     DELETE FROM public.genius_rag_chunks WHERE source_key = OLD.source_key;
+    -- chunk를 전량 삭제했으므로 서빙 중이던 snapshot도 사라졌다. active를 같이 내리지 않으면
+    -- ready 계약(active_claim_generation > 0 + matching chunk 존재)을 즉시 위반해
+    -- ready source에 대한 drift UPDATE 자체가 'ready rag source requires matching provenance chunk'로
+    -- 거부된다(= 이름/소속이 바뀜 문서를 영원히 무효화할 수 없음). 서빙 가능한 snapshot이
+    -- 없으므로 active를 0으로 내리고 ready는 재수집 대상(stale)으로 강등시킨다.
+    NEW.active_claim_generation := 0;
+    IF NEW.ingestion_status = 'ready' THEN
+      NEW.ingestion_status := 'stale';
+    END IF;
   END IF;
   RETURN NEW;
 END;
