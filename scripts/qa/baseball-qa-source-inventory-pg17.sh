@@ -688,6 +688,162 @@ begin
   end;
 end;
 $$;
+
+-- [R2-B6] 실패 종료 경로가 없으면 claim한 worker가 죽은 순간 source를 'ingesting'에서 내릴 수 없고,
+-- 연속 3회 실패 시점에 `ingesting` + `last_error` NULL + claim_token 잔존 + claimable 0으로 영구 고착한다
+-- (RPC 신설 전 PG17 actual로 재현한 상태). fail RPC가 그 종료를 책임지는지 검증한다.
+update public.genius_rag_sources
+set ingestion_status='not_started', ingestion_attempts=0, lease_until=null, claim_token=null,
+    claim_generation=0, active_claim_generation=0, question_count=9000, revision=null, content_hash=null,
+    crawled_at=null, ingested_at=null, last_error=null
+where source_key='namu:team:10';
+delete from public.genius_rag_chunks where source_key='namu:team:10';
+do $$
+declare
+  claim public.genius_rag_sources%rowtype;
+  stuck public.genius_rag_sources%rowtype;
+  failed boolean;
+  reclaimed text;
+  chunk_rows integer;
+begin
+  -- ① 연속 3회 실패(worker crash → lease 만료)로 고착 상태를 만든다.
+  for i in 1..3 loop
+    select * into claim from public.claim_baseball_genius_rag_batch(1, 60);
+    if claim.source_key <> 'namu:team:10' then raise exception 'R2-B6 crash loop claim mismatch at %', i; end if;
+    update public.genius_rag_sources set lease_until = clock_timestamp() - interval '1 second'
+    where source_key='namu:team:10';
+  end loop;
+
+  select * into stuck from public.genius_rag_sources where source_key='namu:team:10';
+  if stuck.ingestion_status <> 'ingesting' or stuck.last_error is not null or stuck.claim_token is null then
+    raise exception 'R2-B6 precondition drift (status=% last_error=% token_null=%)',
+      stuck.ingestion_status, coalesce(stuck.last_error,'<null>'), (stuck.claim_token is null);
+  end if;
+
+  -- ② token 불일치는 no-op이다(남의 claim을 실패시킬 수 없다).
+  select public.fail_baseball_genius_rag_source(
+    'namu:team:10', gen_random_uuid(), stuck.claim_generation, 'wrong token'
+  ) into failed;
+  if failed then raise exception 'R2-B6 foreign token terminated someone else claim'; end if;
+
+  -- ③ generation 불일치도 no-op이다(오래된 worker의 지연 실패 보고 역주행 차단).
+  select public.fail_baseball_genius_rag_source(
+    'namu:team:10', stuck.claim_token, stuck.claim_generation - 1, 'stale generation'
+  ) into failed;
+  if failed then raise exception 'R2-B6 stale generation terminated current claim'; end if;
+
+  select * into stuck from public.genius_rag_sources where source_key='namu:team:10';
+  if stuck.ingestion_status <> 'ingesting' or stuck.last_error is not null or stuck.claim_token is null then
+    raise exception 'R2-B6 no-op path mutated the claim';
+  end if;
+
+  -- ④ exact token + generation은 그 claim만 실패 종료한다. lease가 이미 만료된 고착 상태에서도
+  --   복구되어야 한다(만료를 조건으로 걸었으면 이 상태를 영원히 정리할 수 없다).
+  select public.fail_baseball_genius_rag_source(
+    'namu:team:10', stuck.claim_token, stuck.claim_generation, '  fetch timeout after 3 retries  '
+  ) into failed;
+  if not failed then raise exception 'R2-B6 exact-claim failure termination rejected'; end if;
+
+  select * into stuck from public.genius_rag_sources where source_key='namu:team:10';
+  if stuck.ingestion_status <> 'failed' then
+    raise exception 'R2-B6 source still stuck in ingesting after termination (status=%)', stuck.ingestion_status;
+  end if;
+  if stuck.last_error <> 'fetch timeout after 3 retries' then
+    raise exception 'R2-B6 last_error not recorded (got %)', coalesce(stuck.last_error,'<null>');
+  end if;
+  if stuck.claim_token is not null or stuck.lease_until is not null then
+    raise exception 'R2-B6 terminated claim kept lease/token';
+  end if;
+
+  -- ⑤ 무한 재시도 방지 무회귀: 종료 RPC는 attempts를 리셋하지 않으므로 예산은 여전히 소진 상태다.
+  if stuck.ingestion_attempts <> 3 then
+    raise exception 'R2-B6 termination reset retry budget (attempts=%)', stuck.ingestion_attempts;
+  end if;
+  begin
+    select source_key into reclaimed from public.claim_baseball_genius_rag_batch(1, 60);
+    if reclaimed is not distinct from 'namu:team:10' then
+      raise exception 'R2-B6 exhausted budget became claimable after termination (infinite retry)';
+    end if;
+    raise exception 'R2B6_ROLLBACK';
+  exception when others then
+    if sqlerrm <> 'R2B6_ROLLBACK' then raise; end if;
+  end;
+end;
+$$;
+
+-- [R2-B6b] 예산이 남은 실패는 lease 만료를 기다리지 않고 즉시 재claim되고,
+-- 실패 종료는 마지막 성공 snapshot(active generation)을 파괴하지 않는다(§12).
+update public.genius_rag_sources
+set ingestion_status='not_started', ingestion_attempts=0, lease_until=null, claim_token=null,
+    claim_generation=0, active_claim_generation=0, question_count=9000, revision=null, content_hash=null,
+    crawled_at=null, ingested_at=null, last_error=null
+where source_key='namu:team:10';
+delete from public.genius_rag_chunks where source_key='namu:team:10';
+do $$
+declare
+  claim public.genius_rag_sources%rowtype;
+  completed boolean;
+  failed boolean;
+  reclaimed text;
+  active_rev text;
+  serving_rev text;
+  staged_rows integer;
+begin
+  -- gen1 성공 → 서빙 snapshot을 만든다.
+  select * into claim from public.claim_baseball_genius_rag_batch(1, 60);
+  if claim.source_key <> 'namu:team:10' then raise exception 'R2-B6b setup claim mismatch'; end if;
+  perform public.upsert_baseball_genius_rag_chunk(
+    claim.source_key, claim.claim_token, claim.claim_generation, claim.entity_type, claim.entity_id,
+    claim.page_title, claim.canonical_url, 'rB6a', '개요', 0, repeat('content ', 6), 'docB6a', 'hB6a',
+    claim.source_grade, '2026-07-31T00:00:00Z', '2026-07-31', 'vec-768'
+  );
+  select public.complete_baseball_genius_rag_source(
+    claim.source_key, claim.claim_token, claim.claim_generation,
+    'rB6a', 'docB6a', '2026-07-31T00:00:00Z', '2026-08-01T00:00:00Z'
+  ) into completed;
+  if not completed then raise exception 'R2-B6b gen1 publish failed'; end if;
+
+  -- 재수집(gen2) claim → chunk를 일부 stage한 뒤 실패한다.
+  update public.genius_rag_sources set ingestion_status='stale' where source_key='namu:team:10';
+  select * into claim from public.claim_baseball_genius_rag_batch(1, 60);
+  if claim.source_key <> 'namu:team:10' then raise exception 'R2-B6b stale reclaim mismatch'; end if;
+  perform public.upsert_baseball_genius_rag_chunk(
+    claim.source_key, claim.claim_token, claim.claim_generation, claim.entity_type, claim.entity_id,
+    claim.page_title, claim.canonical_url, 'rB6b', '개요', 0, repeat('content ', 6), 'docB6b', 'hB6b',
+    claim.source_grade, '2026-07-31T00:00:00Z', '2026-07-31', 'vec-768'
+  );
+  select public.fail_baseball_genius_rag_source(
+    claim.source_key, claim.claim_token, claim.claim_generation, 'parser crashed'
+  ) into failed;
+  if not failed then raise exception 'R2-B6b live-lease failure termination rejected'; end if;
+
+  -- 마지막 성공 snapshot은 그대로 서빙된다.
+  select revision into active_rev from public.genius_rag_sources where source_key='namu:team:10';
+  if active_rev is distinct from 'rB6a' then
+    raise exception 'R2-B6b failure termination destroyed last successful revision (got %)', coalesce(active_rev,'<null>');
+  end if;
+  select revision into serving_rev from public.genius_rag_serving_chunks where source_key='namu:team:10';
+  if serving_rev is distinct from 'rB6a' then
+    raise exception 'R2-B6b serving snapshot lost after failure (got %)', coalesce(serving_rev,'<none>');
+  end if;
+  -- 실패한 generation의 미완성 chunk는 정리된다.
+  select count(*) into staged_rows from public.genius_rag_chunks
+  where source_key='namu:team:10' and revision='rB6b';
+  if staged_rows <> 0 then raise exception 'R2-B6b failed generation chunks survived (%)', staged_rows; end if;
+
+  -- 예산이 남았으므로 lease 만료 대기 없이 즉시 재claim된다.
+  select source_key into reclaimed from public.claim_baseball_genius_rag_batch(1, 60);
+  if reclaimed is distinct from 'namu:team:10' then
+    raise exception 'R2-B6b terminated source was not immediately reclaimable';
+  end if;
+end;
+$$;
+
+-- 뒤따르는 ACL/동시성 검증은 큐 순서에 의존한다. R2-B6계열이 높은 question_count로 올려둔
+-- namu:team:10을 큐에서 내려둔다(예산 소진 상태로 고정).
+update public.genius_rag_sources
+set ingestion_status='failed', ingestion_attempts=3, lease_until=null, claim_token=null
+where source_key='namu:team:10';
 SQL
 
 # [B2] service_role은 쓰기 RPC를 실행할 수 있고, anon/authenticated는 모든 RPC가 막힌다.
@@ -702,6 +858,7 @@ for role in service_role anon authenticated; do
   check_acl "has_function_privilege('$role', 'public.claim_baseball_genius_rag_batch(integer,integer)', 'EXECUTE')" "$want" "$role claim EXECUTE"
   check_acl "has_function_privilege('$role', 'public.complete_baseball_genius_rag_source(text,uuid,bigint,text,text,timestamptz,timestamptz)', 'EXECUTE')" "$want" "$role complete EXECUTE"
   check_acl "has_function_privilege('$role', 'public.record_baseball_genius_source_demand(text[])', 'EXECUTE')" "$want" "$role demand EXECUTE"
+  check_acl "has_function_privilege('$role', 'public.fail_baseball_genius_rag_source(text,uuid,bigint,text)', 'EXECUTE')" "$want" "$role fail EXECUTE"
   check_acl "has_function_privilege('$role', 'public.upsert_baseball_genius_rag_chunk(text,uuid,bigint,text,text,text,text,text,text,integer,text,text,text,text,timestamptz,date,text,jsonb)', 'EXECUTE')" "$want" "$role upsert EXECUTE"
   # 테이블 직접 write는 전원 차단.
   check_acl "has_table_privilege('$role', 'public.genius_rag_chunks', 'INSERT')" f "$role chunks INSERT"
@@ -786,4 +943,4 @@ wait "$PID_A" "$PID_B"
 [ "$(sort -u "$WORK/a" "$WORK/b" | wc -l | tr -d ' ')" = "20" ]
 [ "$(cat "$WORK/a" "$WORK/b" | wc -l | tr -d ' ')" = "20" ]
 
-echo "baseball QA source inventory PG17 PASS (seed932·pending878·fault/CAS/concurrency·B1embedding·B2acl·B3reclaim·R2-B1stage→swap+snapshot보존·R2-B2provenance균일·R2-B3idempotent재시도·R2-B4drift→stale강등·R2-B5성공시retry예산회복+연속3회소진)"
+echo "baseball QA source inventory PG17 PASS (seed932·pending878·fault/CAS/concurrency·B1embedding·B2acl·B3reclaim·R2-B1stage→swap+snapshot보존·R2-B2provenance균일·R2-B3idempotent재시도·R2-B4drift→stale강등·R2-B5성공시retry예산회복+연속3회소진·R2-B6실패종료+token/gen불일치no-op·R2-B6b실패시snapshot보존+즉시재claim)"

@@ -446,6 +446,59 @@ BEGIN
 END;
 $$;
 
+-- worker의 실패 종료 경로다. 이것이 없으면 claim한 worker가 실패했을 때 source를 'ingesting'에서
+-- 내릴 수단이 아예 없다. lease 만료를 기다려 재claim되더라도 attempts는 매번 증가하므로
+-- 연속 3회 실패 시점에 **`ingesting` + `last_error` NULL + claim_token 잔존 + claimable 0**으로
+-- 영구 고착된다(PG17 actual 재현). 운영자는 진행 중인 claim과 죽은 claim을 구분할 수도 없다.
+-- 이 RPC는 exact token + generation이 일치하는 **그 claim만** 실패 처리한다:
+--   (1) last_error를 남겨 실패 사유를 관측 가능하게 하고,
+--   (2) lease/token을 비워 'ingesting' 고착을 풀며,
+--   (3) 상태를 'failed'로 내려 예산이 남아 있으면(attempts < 3) lease 만료를 기다리지 않고 즉시 재claim된다.
+-- 무한 재시도 방지 계약은 그대로다: attempts는 리셋하지 않으므로 성공 없이 연속 3회 실패하면
+-- 여전히 예산이 소진된다(복구는 성공 complete만이 한다).
+-- lease가 이미 만료됐어도 종료를 허용한다. 만료를 조건으로 걸면 위 고착 상태(만료 + 예산 소진)를
+-- 영원히 정리할 수 없기 때문이다. 그 사이 다른 worker가 reclaim했다면 generation이 올라가
+-- token/generation 불일치로 자동 no-op이 된다(남의 claim을 실패시키지 못한다).
+CREATE OR REPLACE FUNCTION public.fail_baseball_genius_rag_source(
+  p_source_key text,
+  p_claim_token uuid,
+  p_claim_generation bigint,
+  p_error text
+)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_failed boolean;
+  v_active bigint;
+BEGIN
+  UPDATE public.genius_rag_sources source
+  SET ingestion_status = 'failed',
+      last_error = left(coalesce(nullif(btrim(p_error), ''), 'unspecified ingestion failure'), 500),
+      lease_until = NULL,
+      claim_token = NULL,
+      updated_at = now()
+  WHERE source.source_key = p_source_key
+    AND source.ingestion_status = 'ingesting'
+    AND source.claim_token = p_claim_token
+    AND source.claim_generation = p_claim_generation
+  RETURNING true, source.active_claim_generation INTO v_failed, v_active;
+
+  IF coalesce(v_failed, false) THEN
+    -- 실패한 generation이 남긴 미완성 chunk를 정리한다. 마지막 성공 snapshot(active generation)은
+    -- 절대 건드리지 않는다(§12) — 재수집이 실패해도 직전 성공본은 계속 서빙되어야 한다.
+    DELETE FROM public.genius_rag_chunks chunk
+    WHERE chunk.source_key = p_source_key
+      AND chunk.claim_generation = p_claim_generation
+      AND chunk.claim_generation <> v_active;
+  END IF;
+
+  RETURN coalesce(v_failed, false);
+END;
+$$;
+
 CREATE OR REPLACE FUNCTION public.record_baseball_genius_source_demand(p_source_keys text[])
 RETURNS integer
 LANGUAGE plpgsql
@@ -482,6 +535,9 @@ REVOKE ALL ON FUNCTION public.complete_baseball_genius_rag_source(text, uuid, bi
   FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.complete_baseball_genius_rag_source(text, uuid, bigint, text, text, timestamptz, timestamptz)
   TO service_role;
+REVOKE ALL ON FUNCTION public.fail_baseball_genius_rag_source(text, uuid, bigint, text)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.fail_baseball_genius_rag_source(text, uuid, bigint, text) TO service_role;
 REVOKE ALL ON FUNCTION public.record_baseball_genius_source_demand(text[])
   FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.record_baseball_genius_source_demand(text[]) TO service_role;

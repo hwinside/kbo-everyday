@@ -1,8 +1,12 @@
-# 야잘알봇 v2 — 선수/구단 Hybrid RAG 스펙 (rev0.9)
+# 야잘알봇 v2 — 선수/구단 Hybrid RAG 스펙 (rev0.11)
 
 > 상태: **범위 확대 GO(§12) — S1b-KBO/S2 source inventory·ingestion 착수 / S0 merge·Production DB 적용 완료(squash `882f1a1744fb9ead6197a133421b347b3836c96a`, PR #1011 — migration/RPC ACL 적용됨)·실제 계정 2턴 End-User QA HOLD / S1a·S1b·S2 구현 merge/deploy HOLD**
-> 작성: 삼식이 2026-07-31 (rev0.10: 삼순 S2a 재리뷰 NO-GO 3건 반영 — generation 원자성 stage→swap 재설계 / rev0.9: 삼순 S2a NO-GO 5건 반영 / rev0.7: 하린아빠 KBO 기록실+나무위키 전수 RAG 확정 §12 반영 / rev0.6: 삼순 5차 재리뷰 테이블명 exact)
+> 작성: 삼식이 2026-07-31 (rev0.11: 삼순 S2a 3차 리뷰 NO-GO 반영 — retry 예산 회복 + 실패 종료 RPC 신설 / rev0.10: 삼순 S2a 재리뷰 NO-GO 3건 반영 — generation 원자성 stage→swap 재설계 / rev0.9: 삼순 S2a NO-GO 5건 반영 / rev0.7: 하린아빠 KBO 기록실+나무위키 전수 RAG 확정 §12 반영 / rev0.6: 삼순 5차 재리뷰 테이블명 exact)
 > SSOT: Notion `3aec901b-b372-8140-8cec-f4c700b96487` (본 파일은 미러).
+> **rev 정합 기준**: 이 문서의 제목·작성줄·§11 변경이력 최상단은 항상 동일 rev를 가리킨다(현재 **rev0.11**).
+> Notion SSOT의 live 버전은 **rev0.7**이며, repo 미러가 rev0.8~0.11만큼 앞서 있다. 앞선 분은 전부
+> 삼순 S2a 리뷰 NO-GO 반영분(미머지 PR #1018)이라 PR 머지 시점에 Notion을 rev0.11로 일괄 동기화한다.
+> 그전까지 외부 참조의 정본은 Notion rev0.7, 구현 계약의 정본은 본 미러 rev0.11이다.
 > 선행 SSOT: 야잘알봇 MVP 스펙 v1.2 (Notion `3acc901bb3728165b783d0f0960c9f02`)
 > 트리거: 하린아빠 2026-07-31 "야구 룰에 이어 구단·선수 질문 대응 + RAG. 이것까지 되어야 킬러피처."
 
@@ -218,6 +222,32 @@
 ---
 
 ## 11. 변경 이력
+
+### rev0.11 (삼순 S2a 3차 리뷰 NO-GO 반영 — ingestion 수명주기 종료 경로, 2026-07-31)
+
+rev0.10까지는 claim과 **성공** 종료만 있고 **실패** 종료 경로가 없었다. 그 결과 worker가 죽으면 source를
+`ingesting`에서 내릴 수단이 없어 수명주기가 닫히지 않았다.
+
+- **[P0 — retry 예산이 lifetime 누적이라 증분 재수집이 정지]** `ingestion_attempts`가 성공해도 줄지 않아 3세대 만에
+  예산이 말라, 서빙 중인 source조차 stale 재claim이 영구히 0건이 됐다. → `complete_baseball_genius_rag_source`가
+  성공 시 `ingestion_attempts = 0`으로 예산을 회복시킨다(예산은 "연속 실패" 카운터다). PG17 회귀 R2-B5/R2-B5b.
+- **[P0 — 실패 종료 RPC 부재로 `ingesting` 영구 고착]** 함수가 claim/complete/upsert_chunk/record_demand + validator뿐이라
+  worker 실패를 DB에 알릴 경로가 없었다. lease 만료로 재claim되면서 attempts만 올라 연속 3회 실패 시점에
+  **`ingesting` + `last_error` NULL + claim_token 잔존 + claimable 0**으로 영구 고착했다(PG17 actual 재현 완료).
+  운영자는 진행 중인 claim과 죽은 claim도 구분할 수 없었다. → service_role 전용 SECURITY DEFINER RPC
+  **`fail_baseball_genius_rag_source(source_key, claim_token, claim_generation, error)`** 신설. exact token+generation이
+  일치하는 **그 claim만** 실패 처리해 `last_error` 기록 · lease/token 해제 · `failed` 강등으로 재claim 가능한 상태로
+  정리한다. token이나 generation이 어긋나면 **no-op**이라 다른 worker가 재claim한 남의 claim을 죽일 수 없다.
+  lease 만료를 종료 조건으로 걸지 않는다 — 걸었으면 고착 상태(만료 + 예산 소진)를 영원히 정리할 수 없다.
+  무한 재시도 방지는 불변이다: 종료 RPC는 attempts를 리셋하지 않으므로 예산 회복은 성공 complete만이 한다.
+  §12 "마지막 성공 snapshot 보존"도 유지한다: 실패한 generation의 미완성 chunk만 지우고 active generation은 건들지 않는다.
+- **[P0 — 실패 경로 경계 회귀 부재]** 성공 경로만 결속되어 있어 위 고착이 재발돼도 게이트가 잡지 못했다.
+  → `qa:baseball-source-inventory:db`에 **R2-B6**(연속 3회 실패 고착 재현 → 종료 RPC로 복구, token 불일치·generation
+  불일치 no-op, 종료 후에도 소진된 예산은 재claim 불가)와 **R2-B6b**(예산 잔존 실패는 lease 만료 대기 없이 즉시
+  재claim, 실패 종료가 마지막 성공 snapshot·서빙 뜸를 파괴하지 않음) 상설 추가. fail RPC ACL(service_role EXECUTE /
+  anon·authenticated 차단)도 기존 ACL 매트릭스에 편입. RED(migration 미적용 상태 exit 3)→GREEN 실측.
+- **[문서 rev 정합]** 제목 `rev0.9` ↔ 본문 `rev0.10` 불일치를 해소하고(제목·작성줄·변경이력 최상단 = 동일 rev),
+  Notion live **rev0.7** 대비 repo 미러가 rev0.8~0.11만큼 앞서 있음·머지 시점 일괄 동기화를 헤더에 명시했다.
 
 ### rev0.10 (삼순 S2a 재리뷰 NO-GO 3건 반영 — generation 원자성 재설계, 2026-07-31)
 
