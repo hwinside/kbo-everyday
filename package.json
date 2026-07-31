@@ -231,7 +231,8 @@
     "qa:baseball-qa": "tsx scripts/qa/baseball-qa-pipeline-smoke.ts",
     "qa:baseball-genius-context": "tsx scripts/qa/baseball-genius-context-smoke.ts",
     "qa:genius-typing": "tsx --test scripts/qa/genius-typing-indicator-smoke.ts",
-    "qa:outage-banner": "tsx scripts/qa/outage-notice-banner-smoke.ts"
+    "qa:outage-banner": "tsx scripts/qa/outage-notice-banner-smoke.ts",
+    "qa:title-orphan": "tsx scripts/qa/title-analysis-orphan-score-smoke.ts"
   },
   "dependencies": {
     "@capacitor-firebase/messaging": "^8.3.0",
