@@ -36,6 +36,7 @@
 		A1B2C3D42FE000000000001 /* MetaAppEventsPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D42FE000000000002 /* MetaAppEventsPlugin.swift */; };
 		A1B2C3D42FE000000000003 /* FacebookCore in Frameworks */ = {isa = PBXBuildFile; productRef = A1B2C3D42FE000000000004 /* FacebookCore */; };
 		AAEE11D52FE000000000001 /* AppReviewPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAEE11D52FE000000000002 /* AppReviewPlugin.swift */; };
+		AAEE11D52FE000000000011 /* VenueMediaLibraryPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAEE11D52FE000000000012 /* VenueMediaLibraryPlugin.swift */; };
 		B001A7712FE0000000000001 /* NewsArticleBrowserPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = B001A7712FE0000000000002 /* NewsArticleBrowserPlugin.swift */; };
 		B001A7722FE0000000000001 /* NewsArticleBrowserSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B001A7722FE0000000000002 /* NewsArticleBrowserSupport.swift */; };
 		ABCD00000000000000000002 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = ABCD00000000000000000001 /* Assets.xcassets */; };
@@ -138,6 +139,7 @@
 		A1B2C3D42FE000000000002 /* MetaAppEventsPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetaAppEventsPlugin.swift; sourceTree = "<group>"; };
 		A4C1D752B8E5F1912873A2F0 /* WatchData.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WatchData.swift; sourceTree = "<group>"; };
 		AAEE11D52FE000000000002 /* AppReviewPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppReviewPlugin.swift; sourceTree = "<group>"; };
+		AAEE11D52FE000000000012 /* VenueMediaLibraryPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VenueMediaLibraryPlugin.swift; sourceTree = "<group>"; };
 		B001A7712FE0000000000002 /* NewsArticleBrowserPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewsArticleBrowserPlugin.swift; sourceTree = "<group>"; };
 		B001A7722FE0000000000002 /* NewsArticleBrowserSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewsArticleBrowserSupport.swift; sourceTree = "<group>"; };
 		ABCD00000000000000000001 /* Assets.xcassets */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -292,6 +294,7 @@
 				47B1AA0A2FDADA7700271DE5 /* MainViewController.swift */,
 				A1B2C3D42FE000000000002 /* MetaAppEventsPlugin.swift */,
 				AAEE11D52FE000000000002 /* AppReviewPlugin.swift */,
+				AAEE11D52FE000000000012 /* VenueMediaLibraryPlugin.swift */,
 				B001A7712FE0000000000002 /* NewsArticleBrowserPlugin.swift */,
 				B001A7722FE0000000000002 /* NewsArticleBrowserSupport.swift */,
 				50379B222058CBB4000EE86E /* capacitor.config.json */,
@@ -530,6 +533,7 @@
 				47B1AA0B2FDADA7700271DE5 /* MainViewController.swift in Sources */,
 				A1B2C3D42FE000000000001 /* MetaAppEventsPlugin.swift in Sources */,
 				AAEE11D52FE000000000001 /* AppReviewPlugin.swift in Sources */,
+				AAEE11D52FE000000000011 /* VenueMediaLibraryPlugin.swift in Sources */,
 				B001A7712FE0000000000001 /* NewsArticleBrowserPlugin.swift in Sources */,
 				B001A7722FE0000000000001 /* NewsArticleBrowserSupport.swift in Sources */,
 				1FB9D552D369B5999B046BE8 /* WatchSyncManager.swift in Sources */,
@@ -598,12 +602,12 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = KBOWatch/KBOWatch.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 21;
+				CURRENT_PROJECT_VERSION = 22;
 				DEVELOPMENT_TEAM = HRSVQZ27F9;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = KBOWatch/Info.plist;
-				MARKETING_VERSION = 1.0.12;
+				MARKETING_VERSION = 1.0.13;
 				PRODUCT_BUNDLE_IDENTIFIER = fan.keubo.app.watchkitapp;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
@@ -627,7 +631,7 @@
 				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
 				CODE_SIGN_ENTITLEMENTS = LiveActivity/LiveActivity.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 21;
+				CURRENT_PROJECT_VERSION = 22;
 				DEVELOPMENT_TEAM = HRSVQZ27F9;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
@@ -642,7 +646,7 @@
 					"@executable_path/../../Frameworks",
 				);
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MARKETING_VERSION = 1.0.12;
+				MARKETING_VERSION = 1.0.13;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = fan.keubo.app.LiveActivity;
@@ -671,7 +675,7 @@
 				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
 				CODE_SIGN_ENTITLEMENTS = LiveActivity/LiveActivity.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 21;
+				CURRENT_PROJECT_VERSION = 22;
 				DEVELOPMENT_TEAM = HRSVQZ27F9;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
@@ -686,7 +690,7 @@
 					"@executable_path/../../Frameworks",
 				);
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MARKETING_VERSION = 1.0.12;
+				MARKETING_VERSION = 1.0.13;
 				MTL_FAST_MATH = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = fan.keubo.app.LiveActivity;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -816,7 +820,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 21;
+				CURRENT_PROJECT_VERSION = 22;
 				DEVELOPMENT_TEAM = HRSVQZ27F9;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
@@ -824,7 +828,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0.12;
+				MARKETING_VERSION = 1.0.13;
 				OTHER_SWIFT_FLAGS = "$(inherited) \"-D\" \"COCOAPODS\" \"-DDEBUG\"";
 				PRODUCT_BUNDLE_IDENTIFIER = fan.keubo.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -840,7 +844,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 21;
+				CURRENT_PROJECT_VERSION = 22;
 				DEVELOPMENT_TEAM = HRSVQZ27F9;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
@@ -848,7 +852,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0.12;
+				MARKETING_VERSION = 1.0.13;
 				PRODUCT_BUNDLE_IDENTIFIER = fan.keubo.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "";
@@ -865,12 +869,12 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = KBOWatch/KBOWatch.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 21;
+				CURRENT_PROJECT_VERSION = 22;
 				DEVELOPMENT_TEAM = HRSVQZ27F9;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = KBOWatch/Info.plist;
-				MARKETING_VERSION = 1.0.12;
+				MARKETING_VERSION = 1.0.13;
 				PRODUCT_BUNDLE_IDENTIFIER = fan.keubo.app.watchkitapp;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
@@ -887,11 +891,11 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = KBOWatchWidget/KBOWatchWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 21;
+				CURRENT_PROJECT_VERSION = 22;
 				DEVELOPMENT_TEAM = HRSVQZ27F9;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = KBOWatchWidget/Info.plist;
-				MARKETING_VERSION = 1.0.12;
+				MARKETING_VERSION = 1.0.13;
 				PRODUCT_BUNDLE_IDENTIFIER = fan.keubo.app.watchkitapp.KBOWatchWidget;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
@@ -908,11 +912,11 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = KBOWatchWidget/KBOWatchWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 21;
+				CURRENT_PROJECT_VERSION = 22;
 				DEVELOPMENT_TEAM = HRSVQZ27F9;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = KBOWatchWidget/Info.plist;
-				MARKETING_VERSION = 1.0.12;
+				MARKETING_VERSION = 1.0.13;
 				PRODUCT_BUNDLE_IDENTIFIER = fan.keubo.app.watchkitapp.KBOWatchWidget;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;

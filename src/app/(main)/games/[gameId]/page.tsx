@@ -605,8 +605,8 @@ export default function GameDetailPage() {
                     linescore={gameDetail?.linescore ?? gameRelay?.linescore ?? null}
                     refreshEpoch={summaryRefreshEpoch}
                     starterNames={{
-                      away: liveGame?.awayStarterName || (gameDetail?.boxScore?.awayPitchers?.[0]?.name && !/^선수\(\d+\)$/.test(gameDetail.boxScore.awayPitchers[0].name) ? gameDetail.boxScore.awayPitchers[0].name : ""),
-                      home: liveGame?.homeStarterName || (gameDetail?.boxScore?.homePitchers?.[0]?.name && !/^선수\(\d+\)$/.test(gameDetail.boxScore.homePitchers[0].name) ? gameDetail.boxScore.homePitchers[0].name : ""),
+                      away: liveGame?.awayStarterName || (gameDetail?.boxScore?.awayPitchers?.[0]?.name && !/^선수\(\d+\)$/.test(gameDetail.boxScore.awayPitchers[0].name) ? gameDetail.boxScore.awayPitchers[0].name : "") || d.detailLineup?.awayStarter || "",
+                      home: liveGame?.homeStarterName || (gameDetail?.boxScore?.homePitchers?.[0]?.name && !/^선수\(\d+\)$/.test(gameDetail.boxScore.homePitchers[0].name) ? gameDetail.boxScore.homePitchers[0].name : "") || d.detailLineup?.homeStarter || "",
                     }}
                     lineupConfirmed={!!d.detailLineup && d.detailLineup.isToday === true}
                     gameRelay={gameRelay}
@@ -634,7 +634,9 @@ export default function GameDetailPage() {
                       startingPitcher: (() => {
                         const boxName = gameDetail?.boxScore?.awayPitchers?.[0]?.name;
                         const validBoxName = boxName && !/^선수\(\d+\)$/.test(boxName) ? boxName : "";
-                        const spName = validBoxName || liveGame?.awayStarterName || "";
+                        // Naver 폴백 라인업은 awayStarter 를 함께 실어온다 — KBO boxScore/경기목록
+                        // starter 가 모두 빈 장애에서도 선발 표기+AI 분석이 살아있게(삼순 PR#988 P0-1).
+                        const spName = validBoxName || liveGame?.awayStarterName || d.detailLineup.awayStarter || "";
                         const spRoster = spName ? PLAYERS_ROSTER.find((p: { name: string; teamId: number; kboId: string }) => p.name === spName && p.teamId === game.awayTeamId) : undefined;
                         return { name: spName, era: gameDetail?.boxScore?.awayPitchers?.[0]?.era ?? "-", kboId: spRoster?.kboId };
                       })(),
@@ -648,7 +650,7 @@ export default function GameDetailPage() {
                       startingPitcher: (() => {
                         const boxName = gameDetail?.boxScore?.homePitchers?.[0]?.name;
                         const validBoxName = boxName && !/^선수\(\d+\)$/.test(boxName) ? boxName : "";
-                        const spName = validBoxName || liveGame?.homeStarterName || "";
+                        const spName = validBoxName || liveGame?.homeStarterName || d.detailLineup.homeStarter || "";
                         const spRoster = spName ? PLAYERS_ROSTER.find((p: { name: string; teamId: number; kboId: string }) => p.name === spName && p.teamId === game.homeTeamId) : undefined;
                         return { name: spName, era: gameDetail?.boxScore?.homePitchers?.[0]?.era ?? "-", kboId: spRoster?.kboId };
                       })(),

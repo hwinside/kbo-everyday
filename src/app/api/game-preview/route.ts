@@ -5,8 +5,15 @@ import batterStats from "@/lib/constants/stats-2026-batters.json";
 import pitcherStats from "@/lib/constants/stats-2026-pitchers.json";
 import { TEAMS, isAllStarGame, isAllStarGameId } from "@/lib/constants/teams";
 import { INJURY_BLOCKLIST_KEYS } from "@/lib/constants/injury-blocklist";
-import { fetchStandings, buildRankMap, fetchGames, fetchBoxScore, type TeamStanding, type BoxScoreResult, type KboGame } from "@/lib/crawler/kbo-api";
+import { fetchStandings, buildRankMap, fetchGames, fetchBoxScore, type KboGame } from "@/lib/crawler/kbo-api";
 import { STANDINGS_ACCURACY_RULES, STANDINGS_UNAVAILABLE_RULES } from "@/lib/ai/standings-guard";
+import {
+  fetchNaverLineup,
+  fetchNaverPreviewStarters,
+  type NaverPreviewStarters,
+} from "@/lib/crawler/naver-lineup";
+import { fetchNaverGames } from "@/lib/crawler/naver-games";
+import { runBeforeDeadline } from "@/lib/async-deadline";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
@@ -259,15 +266,25 @@ async function fetchTodayLineup(gameId: string, teamId: number, isAway: boolean)
       body: reqBody,
       signal: AbortSignal.timeout(8000),
     });
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (!Array.isArray(data) || data.length < 5) return null;
-    const batters = parseLineupRows(isAway ? data[4] : data[3]);
-    if (batters.length === 0) return null;
-    return { batters, startingPitcher: "" };
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data) && data.length >= 5) {
+        const batters = parseLineupRows(isAway ? data[4] : data[3]);
+        if (batters.length > 0) return { batters, startingPitcher: "" };
+      }
+    }
   } catch {
-    return null;
+    // KBO 열화 → 아래 Naver 폴백으로 진행
   }
+  // KBO GetLineUpAnalysis 열화(204/빈응답/타임아웃) → 공용 Naver 어댑터 폴백(삼순 PR#988 P0-2 ④).
+  // 완전 라인업(선발1+타자9)만 반환 — 이때는 선발투수 이름도 함께 채워진다.
+  const snap = await fetchNaverLineup(gameId, { timeoutMs: 8000 });
+  if (!snap) return null;
+  const side = isAway ? snap.away : snap.home;
+  return {
+    batters: side.batters.map(b => ({ order: b.order, position: b.position, name: b.name })),
+    startingPitcher: side.starter,
+  };
 }
 
 async function fetchPrevGameLineup(gameId: string, teamId: number): Promise<LineupPlayer[] | null> {
@@ -291,13 +308,21 @@ async function fetchPrevGameLineup(gameId: string, teamId: number): Promise<Line
         body: reqBody,
         signal: AbortSignal.timeout(8000),
       });
-      if (!res.ok) continue;
-      const data = await res.json();
-      if (!Array.isArray(data) || data.length < 5) continue;
-      const batters = parseLineupRows(isAway ? data[4] : data[3]);
-      if (batters.length > 0) return batters;
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data) && data.length >= 5) {
+          const batters = parseLineupRows(isAway ? data[4] : data[3]);
+          if (batters.length > 0) return batters;
+        }
+      }
     } catch {
-      continue;
+      // KBO 열화 → 아래 Naver 폴백으로 진행
+    }
+    // KBO GetLineUpAnalysis 열화 → 공용 Naver 어댑터 폴백(삼순 PR#988 P0-2 ④). 실패 시 다음 lookback continue.
+    const snap = await fetchNaverLineup(teamGame.gameId, { timeoutMs: 8000 });
+    if (snap) {
+      const side = isAway ? snap.away : snap.home;
+      return side.batters.map(b => ({ order: b.order, position: b.position, name: b.name }));
     }
   }
   return null;
@@ -852,20 +877,85 @@ async function getCached(gameId: string): Promise<{ summary: Record<string, unkn
   }
 }
 
-
-async function getGame(gameId: string): Promise<KboGame | null> {
-  try {
-    const dateStr = getDateFromGameId(gameId);
-    const games = await fetchGames(dateStr);
-    return games.find(g => g.gameId === gameId) ?? null;
-  } catch {
-    return null;
+// dual-source 장애 시 이미 저장된 AI 프리뷰(game_summaries)까지 숨기지 않는다(삼순 재리뷰 blocker2).
+// 캐시가 있으면 stale 로라도 서빙하고, 캐시가 없을 때만 503 fail-close 한다.
+async function unavailableOrCache(gameId: string): Promise<NextResponse> {
+  const cached = await getCached(gameId);
+  if (cached) {
+    return NextResponse.json({
+      preview: cached.summary,
+      source: "cache",
+      outdated: cached.outdated,
+      stale: true,
+    });
   }
+  return NextResponse.json({
+    preview: null,
+    source: "unavailable",
+    message: "경기 정보를 확인할 수 없습니다. 잠시 후 다시 시도해 주세요.",
+  }, { status: 503 });
 }
 
-async function getGameStatus(gameId: string): Promise<KboGame["status"] | null> {
-  const game = await getGame(gameId);
-  return game?.status ?? null;
+// 경기 소스 해석 예산(삼순 재리뷰 blocker1). KBO 1차는 sub-budget 안에서만 시도하고, 남은
+// 절대 deadline 을 Naver 일정 reserve 로 넘긴다. KBO 가 hard-hang(응답 안 옴)이어도
+// runBeforeDeadline 백스톱이 budget 에서 끊어 reserve 로 진입한다(#994 fetchKboLiveGames 동일 패턴).
+const PREVIEW_KBO_BUDGET_MS = 1_500;
+const PREVIEW_SOURCE_DEADLINE_MS = 6_000;
+
+export async function resolvePreviewGameContext(
+  gameId: string,
+  fetchGamesImpl: typeof fetchGames = fetchGames,
+  fetchNaverStartersImpl: (
+    gameId: string,
+    opts?: { timeoutMs?: number },
+  ) => Promise<NaverPreviewStarters | null> = fetchNaverPreviewStarters,
+  opts?: {
+    fetchNaverGamesImpl?: typeof fetchNaverGames;
+    deadlineAtMs?: number;
+    kboBudgetMs?: number;
+  },
+): Promise<KboGame> {
+  const fetchNaverGamesImpl = opts?.fetchNaverGamesImpl ?? fetchNaverGames;
+  const deadlineAtMs = opts?.deadlineAtMs ?? Date.now() + PREVIEW_SOURCE_DEADLINE_MS;
+  const kboBudgetMs = opts?.kboBudgetMs ?? PREVIEW_KBO_BUDGET_MS;
+  const dateStr = getDateFromGameId(gameId);
+
+  // 1) KBO 1차(내부적으로 200-empty/hard-fail 시 Naver 일정 폴백 포함)를 sub-budget 절대
+  //    deadline race 로 감싼다 — KBO 가 매달려도 budget 에서 끊고 Naver reserve 시간을 남긴다.
+  const kboAtMs = Math.min(deadlineAtMs, Date.now() + kboBudgetMs);
+  let games: KboGame[] | null = await runBeforeDeadline(
+    () => fetchGamesImpl(dateStr, undefined, { timeoutMs: Math.max(1, kboAtMs - Date.now()) }),
+    kboAtMs,
+  ).catch(() => null);
+
+  // 2) KBO(+내부 Naver)가 budget 내 미해결 → 남은 절대 deadline 으로 Naver 일정 reserve.
+  if (!games || games.length === 0) {
+    games = await runBeforeDeadline(
+      () => fetchNaverGamesImpl(dateStr, undefined, { timeoutMs: Math.max(1, deadlineAtMs - Date.now()) }),
+      deadlineAtMs,
+    ).catch(() => null);
+  }
+  if (!games) {
+    throw new Error("game-preview source unavailable: schedule dual-source failed");
+  }
+
+  const game = games.find(g => g.gameId === gameId);
+  if (!game) {
+    throw new Error("game-preview source unavailable: requested game not confirmed");
+  }
+  if (game.awayStarterName && game.homeStarterName) return game;
+
+  // 3) 선발 미확정 → 남은 deadline 안에서 Naver preview 선발만 보강(경기 core 는 유지).
+  const naverStarters = await runBeforeDeadline(
+    () => fetchNaverStartersImpl(gameId, { timeoutMs: Math.max(1, deadlineAtMs - Date.now()) }),
+    deadlineAtMs,
+  ).catch(() => null);
+  if (!naverStarters) return game;
+  return {
+    ...game,
+    awayStarterName: game.awayStarterName || naverStarters.away,
+    homeStarterName: game.homeStarterName || naverStarters.home,
+  };
 }
 
 function formatKstIso(date: Date): string {
@@ -882,9 +972,7 @@ function parseKstGameDateTime(game: KboGame): Date | null {
   return new Date(`${year}-${month}-${day}T${hour.padStart(2, "0")}:${minute}:00+09:00`);
 }
 
-async function getPreviewAvailability(gameId: string): Promise<PreviewAvailability> {
-  const game = await getGame(gameId);
-  if (!game) return { allowed: true };
+function getPreviewAvailability(game: KboGame): PreviewAvailability {
   if (game.status !== "scheduled") return { allowed: true };
 
   const gameStart = parseKstGameDateTime(game);
@@ -920,12 +1008,17 @@ export async function GET(req: NextRequest) {
   if (!gameId) return NextResponse.json({ error: "gameId required" }, { status: 400 });
   if (isAllStarGameId(gameId)) return NextResponse.json({ preview: null, source: "allstar" });
 
-  const status = await getGameStatus(gameId);
-  if (status === "cancelled") {
+  let game: KboGame;
+  try {
+    game = await resolvePreviewGameContext(gameId);
+  } catch {
+    return unavailableOrCache(gameId);
+  }
+  if (game.status === "cancelled") {
     return NextResponse.json({ preview: null, source: "cancelled" });
   }
 
-  const availability = await getPreviewAvailability(gameId);
+  const availability = getPreviewAvailability(game);
   if (!availability.allowed) {
     return NextResponse.json({
       preview: null,
@@ -954,12 +1047,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "GEMINI_API_KEY not configured" }, { status: 500 });
   }
 
-  const status = await getGameStatus(body.gameId);
-  if (status === "cancelled") {
+  let game: KboGame;
+  try {
+    game = await resolvePreviewGameContext(body.gameId);
+  } catch {
+    return unavailableOrCache(body.gameId);
+  }
+  if (game.status === "cancelled") {
     return NextResponse.json({ preview: null, source: "cancelled" });
   }
 
-  const availability = await getPreviewAvailability(body.gameId);
+  const availability = getPreviewAvailability(game);
   if (!availability.allowed) {
     return NextResponse.json({
       preview: null,
@@ -969,18 +1067,8 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // 선발투수가 없으면 fetchGames로 오늘 경기에서 선발투수 조회
-  if (!body.awayStarter || !body.homeStarter) {
-    try {
-      const dateStr = getDateFromGameId(body.gameId);
-      const todayGames = await fetchGames(dateStr);
-      const thisGame = todayGames.find(g => g.gameId === body.gameId);
-      if (thisGame) {
-        if (!body.awayStarter && thisGame.awayStarterName) body.awayStarter = thisGame.awayStarterName;
-        if (!body.homeStarter && thisGame.homeStarterName) body.homeStarter = thisGame.homeStarterName;
-      }
-    } catch { /* graceful fallback — proceed without starters */ }
-  }
+  if (!body.awayStarter && game.awayStarterName) body.awayStarter = game.awayStarterName;
+  if (!body.homeStarter && game.homeStarterName) body.homeStarter = game.homeStarterName;
 
   // 캐시 확인
   const cached = await getCached(body.gameId);

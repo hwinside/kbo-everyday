@@ -370,6 +370,29 @@ export function extractThreadsImageUrls(html: string, max: number): OgMedia[] {
   return out;
 }
 
+/**
+ * Threads 게시물 URL → 임베드(/embed) URL. 영상 URL은 원문 SPA 페이지가 아니라
+ * 임베드 페이지의 <video>/<source>에 들어있어 이 URL이 있어야 영상을 찾는다.
+ *
+ * 주의: canonical(@handle/post/CODE) 경로만 인식한다. 공유 단축 링크(/share/CODE/)는
+ * @handle/post 패턴이 아니므로 null — 호출부가 리다이렉트 최종 URL(res.url)을 넘겨야
+ * 임베드가 생성된다. 이걸 빼먹으면 원문 og:image(영상 poster)만 잡혀 영상이 사진글로
+ * 오발행된다(하린아빠 제보 2026-07-31). Meta가 경로 구조를 바꾸면 먼저 깨진다.
+ */
+export function getThreadsEmbedUrl(sourceUrl: string): string | null {
+  try {
+    const u = new URL(sourceUrl);
+    const host = u.hostname.toLowerCase();
+    if (!host.endsWith("threads.com") && !host.endsWith("threads.net")) return null;
+    // 공유 URL은 코드 뒤에 한글 슬러그가 붙는 경우가 많음(/@h/post/CODE/kbo-...) — 첫 세그먼트만 캡처.
+    const m = u.pathname.match(/^\/(@[^/]+\/post\/[^/]+)/i);
+    if (!m) return null;
+    return `${u.origin}/${m[1]}/embed`;
+  } catch {
+    return null;
+  }
+}
+
 export function inferMediaExt(contentType: string, url: string): string {
   const ct = contentType.toLowerCase();
   if (ct.includes("gif")) return "gif";

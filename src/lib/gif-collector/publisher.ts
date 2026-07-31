@@ -33,6 +33,7 @@ import {
   mergeInstagramImageSlides,
   extractThreadsImageUrls,
   extractMlbparkImageUrls,
+  getThreadsEmbedUrl,
   inferMediaExt,
   type OgMedia,
 } from "./og-media";
@@ -62,40 +63,67 @@ async function fetchWithTimeout(url: string, init: RequestInit = {}): Promise<Re
 }
 
 // sourceHtml: 원문 페이지 HTML(출처 핸들 추출용). embed로 영상을 찾아도 원문 페이지 HTML을 함께 돌려준다.
-async function fetchMediaList(sourceUrl: string): Promise<{ media: OgMedia[]; sourceHtml: string | null }> {
-  const html = await fetchPageHtml(sourceUrl);
-  if (!html) return { media: [], sourceHtml: null };
+// export: orchestration(resolvedUrl 기반 임베드 재조회 + 영상>사진 우선 + Threads fail-close) 회귀테스트용.
+export async function fetchMediaList(sourceUrl: string): Promise<{ media: OgMedia[]; sourceHtml: string | null }> {
+  const fetched = await fetchPageHtml(sourceUrl);
+  if (!fetched) return { media: [], sourceHtml: null };
+  // resolvedUrl: 리다이렉트 최종 URL. Threads 공유 링크(/share/CODE/)는 canonical
+  // (@handle/post/CODE)로 리다이렉트되므로, 임베드 URL은 sourceUrl이 아니라 이 최종 URL로
+  // 만들어야 한다(공유 링크 자체는 @handle/post 패턴에 안 걸려 임베드 재조회가 통째로 스킵되고,
+  // 그러면 원문 og:image=영상 poster만 잡혀 영상이 사진글로 오발행됨 — 하린아빠 제보 2026-07-31).
+  const { html, finalUrl: resolvedUrl } = fetched;
 
   const media = extractMediaList(html, MAX_MEDIA_ITEMS);
   if (media.some((m) => m.type === "video")) return { media, sourceHtml: html };
 
   // SPA(Threads 등) — embed 페이지에서 한 번 더 시도. 영상 우선(움짤콜렉터) → 없으면 사진(짤콜렉터).
-  const threadsEmbedUrl = getThreadsEmbedUrl(sourceUrl);
+  //
+  // fail-close(삼순 NO-GO 반영 2026-07-31): Threads로 식별된 게시물은 원문에 og:image(영상
+  // poster)만 있어서, embed 조회가 실패(429/5xx/네트워크)하거나 embed에서 영상/사진 유형을
+  // 확정하지 못하면 *아래 최종 return { media }로 떨어져 영상 poster가 사진글로 오발행*된다.
+  // 그래서 Threads 경로에 들어오면 이 블록 안에서 확정하거나 빈 배열(→ reject)로 fail-close하고,
+  // 절대 원문 og:image poster로 photo 발행하지 않는다.
+  const threadsEmbedUrl = getThreadsEmbedUrl(resolvedUrl);
   if (threadsEmbedUrl) {
     const embedHtml = await fetchPageHtml(threadsEmbedUrl);
-    if (embedHtml) {
-      const embedMedia = extractMediaList(embedHtml, MAX_MEDIA_ITEMS);
-      if (embedMedia.some((m) => m.type === "video")) return { media: embedMedia, sourceHtml: html };
-      const thImages = extractThreadsImageUrls(embedHtml, MAX_MEDIA_ITEMS);
-      if (thImages.length > 0) return { media: thImages, sourceHtml: html };
-    }
+    // embed 조회 실패(429/5xx/네트워크) → 원문 poster photo 오발행 금지, fail-close.
+    if (!embedHtml) return { media: [], sourceHtml: html };
+    // http(s) 다운로드 가능한 video만 유효. blob:/data: src는 재생전용 비-다운로드 URL이라
+    // 영상 추출 실패로 간주(삼순 게이트: <video> 있으나 mp4 추출 깨짐 → photo 아님 → fail-close).
+    const embedVideos = extractMediaList(embedHtml.html, MAX_MEDIA_ITEMS).filter(
+      (m) => m.type === "video" && /^https?:\/\//i.test(m.url),
+    );
+    if (embedVideos.length > 0) return { media: embedVideos, sourceHtml: html };
+    // <video>/<source> 태그는 있는데 재생 URL 추출 0 = 영상 추출 실패(사진 아님) → fail-close.
+    // (poster/썸네일이 thImages로 잡혀 사진 오발행되는 것을 차단.)
+    if (/<(?:video|source)\b/i.test(embedHtml.html)) return { media: [], sourceHtml: html };
+    const thImages = extractThreadsImageUrls(embedHtml.html, MAX_MEDIA_ITEMS);
+    if (thImages.length > 0) return { media: thImages, sourceHtml: html };
+    // Threads로 식별됐으나 embed에서 영상·사진 확정 불가(200 unknown 등) → fail-close.
+    return { media: [], sourceHtml: html };
+  }
+  // Threads 여부와 canonical embed URL 파생 성공은 별개다. /share/ 리다이렉트가
+  // canonical로 풀리지 않거나 Meta 경로가 바뀌어도 원문 og:image poster를 사진으로
+  // 발행하지 않는다. 실제 사진은 canonical embed에서 사진 증거를 얻은 경우만 허용한다.
+  if (isThreadsUrl(sourceUrl) || isThreadsUrl(resolvedUrl)) {
+    return { media: [], sourceHtml: html };
   }
 
   // Instagram reel/p/tv — 본문엔 og:image(썸네일)만 있고, /embed/ 페이지 contextJSON에
   // video_url(영상) 또는 display_url(사진 캐러셀)이 들어있음. 임베드는 한 번만 받아 둘 다 시도.
   // 영상 우선(움짤콜렉터) → 영상이 없으면 캐러셀 이미지(짤콜렉터).
-  const instagramEmbedUrl = getInstagramEmbedUrl(sourceUrl);
+  const instagramEmbedUrl = getInstagramEmbedUrl(resolvedUrl);
   if (instagramEmbedUrl) {
     const embedHtml = await fetchPageHtml(instagramEmbedUrl);
     if (embedHtml) {
-      const igVideos = extractInstagramVideoUrls(embedHtml, MAX_MEDIA_ITEMS);
+      const igVideos = extractInstagramVideoUrls(embedHtml.html, MAX_MEDIA_ITEMS);
       if (igVideos.length > 0) return { media: igVideos, sourceHtml: html };
       // 사진: display_url 캐러셀 slide(최대 5장) 순서를 SSOT로 유지하되, 커버(첫 슬라이드)만
       // 원본 비율 srcset으로 교체/보강한다. contextJSON display_url이 정사각 크롭본을 주는
       // 경우가 있어 cover 사진이 잘림(하린아빠 제보 2026-07-28). display_url이 사라진 단일글은
       // srcset만으로 동작. (srcset을 무조건 1순위로 두면 캐러셀이 1장으로 축소되는 회귀 방지.)
-      const igDisplayUrls = extractInstagramImageUrls(embedHtml, MAX_MEDIA_ITEMS);
-      const igSrcsetCover = extractInstagramImageUrlsFromSrcset(embedHtml, 1);
+      const igDisplayUrls = extractInstagramImageUrls(embedHtml.html, MAX_MEDIA_ITEMS);
+      const igSrcsetCover = extractInstagramImageUrlsFromSrcset(embedHtml.html, 1);
       const igImages = mergeInstagramImageSlides(igDisplayUrls, igSrcsetCover, MAX_MEDIA_ITEMS);
       if (igImages.length > 0) return { media: igImages, sourceHtml: html };
     }
@@ -118,28 +146,26 @@ function isMlbparkUrl(sourceUrl: string): boolean {
   }
 }
 
-async function fetchPageHtml(url: string): Promise<string | null> {
+function isThreadsUrl(sourceUrl: string): boolean {
+  try {
+    const host = new URL(sourceUrl).hostname.toLowerCase();
+    return host.endsWith("threads.com") || host.endsWith("threads.net");
+  } catch {
+    return false;
+  }
+}
+
+// html: 응답 본문. finalUrl: 리다이렉트를 모두 따라간 최종 URL(res.url). 공유 단축 링크가
+// canonical로 풀리는 경우 임베드 URL을 이 최종 URL로 만들어야 하므로 함께 반환한다.
+async function fetchPageHtml(url: string): Promise<{ html: string; finalUrl: string } | null> {
   const res = await fetchWithTimeout(url, {
     headers: {
       "User-Agent": FETCH_USER_AGENT,
     },
   });
   if (!res.ok) return null;
-  return res.text();
-}
-
-function getThreadsEmbedUrl(sourceUrl: string): string | null {
-  try {
-    const u = new URL(sourceUrl);
-    const host = u.hostname.toLowerCase();
-    if (!host.endsWith("threads.com") && !host.endsWith("threads.net")) return null;
-    // 공유 URL은 코드 뒤에 한글 슬러그가 붙는 경우가 많음(/@h/post/CODE/kbo-...) — 첫 세그먼트만 캡처.
-    const m = u.pathname.match(/^\/(@[^/]+\/post\/[^/]+)/i);
-    if (!m) return null;
-    return `${u.origin}/${m[1]}/embed`;
-  } catch {
-    return null;
-  }
+  const html = await res.text();
+  return { html, finalUrl: res.url || url };
 }
 
 function getInstagramEmbedUrl(sourceUrl: string): string | null {
