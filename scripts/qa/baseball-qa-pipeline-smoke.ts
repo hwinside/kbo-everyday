@@ -155,6 +155,9 @@ const players: PlayerRef[] = [
 for (const question of ["김도영 타율 알려줘", "류현진 방어율 알려줘", "박해민 도루 몇 개야?"]) {
   assert.equal(routeQuestion(question, seedEntries, players), "history_hold");
 }
+for (const question of ["류현진 승수", "LG 순위"]) {
+  assert.equal(routeQuestion(question, seedEntries, players), "history_hold", question);
+}
 // 게이트 1 (삼순 3차 P0): 선수명/KBO ID + 조사 결합형도 history_hold를 우회하면 안 된다.
 const particleJoinedPlayerQuestions = [
   "김도영의 타율 알려줘",
@@ -169,8 +172,8 @@ for (const question of particleJoinedPlayerQuestions) {
 // 결정론 게이트가 blocked로 죽이지 않고 LLM 판정 경로(baseball_rule_term)로 넣어야 한다.
 const ruleTermRoutingQuestions = [
   "잔루만루가 뭔데",
-  "잔루가 뭔야",
-  "만루가 뭔야",
+  "잔루가 뭐야",
+  "만루가 뭐야",
   "잔루만루는",
   "잔루만루가뭔데",
   "만루면",
@@ -228,6 +231,7 @@ interface MockState {
   llmCalls: number;
   llmThrows: boolean;
   reserveThrows: boolean;
+  events: string[];
 }
 
 function freshState(overrides: Partial<MockState> = {}): MockState {
@@ -239,6 +243,7 @@ function freshState(overrides: Partial<MockState> = {}): MockState {
     llmCalls: 0,
     llmThrows: false,
     reserveThrows: false,
+    events: [],
     ...overrides,
   };
 }
@@ -250,11 +255,13 @@ function makeDeps(state: MockState): QaDeps {
     getCache: async (key) => state.cache.get(key) ?? null,
     setCache: async (key, value) => { state.cache.set(key, value); },
     callLlm: async () => {
+      state.events.push("llm");
       state.llmCalls++;
       if (state.llmThrows) throw new Error("llm down");
       return { text: state.llmText, inputTokens: 250, outputTokens: 100 };
     },
     reserveDaily: async (_userId, limit) => {
+      state.events.push("reserve");
       if (state.reserveThrows) throw new Error("db down");
       if (state.used >= limit) return { allowed: false, remaining: 0 };
       state.used++;
@@ -293,6 +300,8 @@ async function verifyPipeline() {
     ["김도영 타율 알려줘", "history_hold", HISTORY_HOLD_ANSWER],
     ["류현진 방어율 알려줘", "history_hold", HISTORY_HOLD_ANSWER],
     ["박해민 도루 몇 개야?", "history_hold", HISTORY_HOLD_ANSWER],
+    ["류현진 승수", "history_hold", HISTORY_HOLD_ANSWER],
+    ["LG 순위", "history_hold", HISTORY_HOLD_ANSWER],
     // 게이트 1 actual pipeline 회귀: 조사 결합 4건 모두 history_hold / LLM 0 / cache 0.
     ["김도영의 타율 알려줘", "history_hold", HISTORY_HOLD_ANSWER],
     ["류현진은 방어율이 얼마야?", "history_hold", HISTORY_HOLD_ANSWER],
@@ -321,8 +330,25 @@ async function verifyPipeline() {
     const result = await answerQuestion("u1", input, makeDeps(state));
     assert.equal(result.source, "blocked", input);
     assert.equal(result.answer, BLOCKED_ANSWER, input);
+    assert.equal(state.llmCalls, 1, `${input}: 분류+답변 단일 LLM 호출이어야 함`);
+    assert.equal(state.used, 1, `${input}: NOT_BASEBALL도 daily quota를 소비해야 함`);
+    assert.deepEqual(state.events.slice(0, 2), ["reserve", "llm"], `${input}: quota가 LLM보다 먼저여야 함`);
     assert.equal(state.cache.size, 0, input);
   }
+
+  // 미등록 선수 기록 질문도 룰 답변으로 새지 않는다. 선수사전 미등록이면 단일 LLM의
+  // NOT_BASEBALL 판정으로 차단하며 quota 1회 소비·cache write 0을 지킨다.
+  const unregisteredPlayer = freshState({ llmText: '{"status":"NOT_BASEBALL","answer":""}' });
+  const unregisteredResult = await answerQuestion(
+    "u1",
+    "오타니 홈런 몇개",
+    makeDeps(unregisteredPlayer),
+  );
+  assert.equal(unregisteredResult.source, "blocked");
+  assert.equal(unregisteredPlayer.llmCalls, 1);
+  assert.equal(unregisteredPlayer.used, 1);
+  assert.deepEqual(unregisteredPlayer.events.slice(0, 2), ["reserve", "llm"]);
+  assert.equal(unregisteredPlayer.cache.size, 0);
 
   // 과차단 핏스 — 정상 룰/용어 실경로: 사전 미수록 + 붙여쓰기/조사 변형도
   // LLM까지 도달해 RULE_TERM 답변 경로로 끝나야 한다 (기존엔 전부 blocked였다).
@@ -334,6 +360,8 @@ async function verifyPipeline() {
     assert.equal(result.source, "llm", input);
     assert.equal(result.answer, "잔루는 공격이 끝났을 때 루상에 남은 주자예요.", input);
     assert.equal(state.llmCalls, 1, input);
+    assert.equal(state.used, 1, input);
+    assert.equal(state.cache.size, 1, `${input}: 유효 RULE_TERM만 cache write`);
   }
 
   // fail-closed: 판정 불명확(계약 밖 status · 파싱실패 · UNSURE)는 차단도 답변도 아닌 되묻기다.
@@ -347,8 +375,20 @@ async function verifyPipeline() {
     assert.equal(result.source, "unsure", llmText);
     assert.equal(result.answer, UNSURE_ANSWER, llmText);
     assert.notEqual(result.answer, BLOCKED_ANSWER, llmText);
+    assert.equal(state.llmCalls, 1, llmText);
+    assert.equal(state.used, 1, llmText);
     assert.equal(state.cache.size, 0, llmText);
   }
+
+  // LLM timeout/공급자 오류도 판정 불명확: 룰 답변·캐시 없이 unsure 되묻기.
+  const timeout = freshState({ llmThrows: true });
+  const timeoutResult = await answerQuestion("u1", "잔루만루가 뭔데", makeDeps(timeout));
+  assert.equal(timeoutResult.source, "unsure");
+  assert.equal(timeoutResult.answer, UNSURE_ANSWER);
+  assert.equal(timeout.llmCalls, 1);
+  assert.equal(timeout.used, 1);
+  assert.deepEqual(timeout.events, ["reserve", "llm"]);
+  assert.equal(timeout.cache.size, 0);
 
   for (const llmText of [
     '{"status":"NOT_BASEBALL","answer":""}',
@@ -366,6 +406,17 @@ async function verifyPipeline() {
   const limited = freshState({ used: DAILY_LIMIT });
   assert.equal((await answerQuestion("u1", "보크가 뭐야?", makeDeps(limited))).source, "limited");
   assert.equal(limited.llmCalls, 0);
+
+  const limitedNonBaseball = freshState({
+    used: DAILY_LIMIT,
+    llmText: '{"status":"NOT_BASEBALL","answer":""}',
+  });
+  assert.equal(
+    (await answerQuestion("u1", "주식 추천해줘", makeDeps(limitedNonBaseball))).source,
+    "limited",
+  );
+  assert.equal(limitedNonBaseball.llmCalls, 0, "한도 소진 비야구 질문도 LLM을 호출하면 안 됨");
+  assert.deepEqual(limitedNonBaseball.events, ["reserve"]);
 
   const dbDown = freshState({ reserveThrows: true });
   assert.equal((await answerQuestion("u1", "보크가 뭐야?", makeDeps(dbDown))).source, "error");

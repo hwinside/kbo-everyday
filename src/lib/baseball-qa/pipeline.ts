@@ -129,11 +129,11 @@ const SERVICE_WORDS = [
 ];
 const HISTORY_CONTEXT_WORDS = [
   "통산", "성적", "우승", "연도", "시즌", "드래프트", "은퇴", "몇승", "몇 홈런",
-  "지난해", "작년", "올해",
+  "지난해", "작년", "올해", "순위",
 ];
 const STAT_WORDS = [
   "타율", "방어율", "평균자책", "출루율", "장타율", "ops", "war", "wrc",
-  "홈런", "안타", "타점", "도루", "승", "패", "세이브", "홀드", "삼진", "기록", "스탯",
+  "홈런", "안타", "타점", "도루", "승", "승수", "패", "세이브", "홀드", "삼진", "기록", "스탯",
 ];
 const TEAM_WORDS = [
   "기아", "두산", "롯데", "삼성", "한화", "키움", "엘지", "lg", "kt", "ssg", "nc",
@@ -395,8 +395,9 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     try {
       llm = await deps.callLlm(question, context ?? undefined);
     } catch {
-      await deps.log({ userId, question, questionNorm, matchPath: "error", answer: null, inputTokens: null, outputTokens: null });
-      return { status: 503, answer: "지금은 답변을 가져올 수 없어요. 잠시 후 다시 시도해 주세요.", source: "error", remaining };
+      // timeout/공급자 오류도 판정 불명확이다. 답변·캐시 없이 확인 질문으로 fail-close한다.
+      await deps.log({ userId, question, questionNorm, matchPath: "unsure", answer: null, inputTokens: null, outputTokens: null });
+      return { status: 200, answer: UNSURE_ANSWER, source: "unsure", remaining };
     }
     // 저장 실패는 throw로 전파 — 재처리는 위 ambiguous 경로로 fail-closed되어 재호출이 없다.
     if (deps.storeLlm) await deps.storeLlm(llm);
