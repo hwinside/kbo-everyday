@@ -95,6 +95,61 @@ assert.match(dmHookSource, /enqueueBaseballQaQuestion/);
 assert.match(outboxSource, /\/api\/baseball-qa/);
 assert.match(dmListSource, /BASEBALL_GENIUS_NAME/);
 assert.match(dmChatSource, /BASEBALL_GENIUS_PINNED_ROOM_LEAVABLE/);
+// 삼순 NO-GO blocker 2: 상단 경고 배너는 승인된 문구 정확히 1건, 옛 문구 0건이어야 한다.
+const GENIUS_BANNER_COPY =
+  "야구와 관련된 질문에만 답해요. 그리고 야잘알봇도 실수를 하거나 잘못된 정보를 제공하는 경우가 있어요.";
+assert.equal(
+  dmChatSource.split(GENIUS_BANNER_COPY).length - 1,
+  1,
+  "야잘알봇 상단 경고 배너는 승인된 exact 문구 1건이어야 함",
+);
+assert.doesNotMatch(
+  dmChatSource,
+  /야구 룰과 용어만 답해요/,
+  "옛 배너 문구(룰/용어 한정)는 남아있으면 안 됨",
+);
+// 390px 모바일 줄바꿈 회귀: 문구가 길어져도 배너가 잘리지 않고 아래로 늘어나야 한다.
+{
+  const bannerMatch = dmChatSource.match(
+    /\{\/\* Safety Banner[^]*?<div className="([^"]*)">\s*<AlertTriangle size=\{(\d+)\} className="([^"]*)"/,
+  );
+  assert.ok(bannerMatch, "Safety Banner 마크업을 찾지 못함");
+  const [, bannerClass, iconSizeRaw, iconClass] = bannerMatch;
+  // 잘림 유발 클래스가 없어야 wrap으로 늘어난다.
+  for (const forbidden of [/truncate/, /whitespace-nowrap/, /line-clamp/, /overflow-hidden/, /\bh-\d/]) {
+    assert.doesNotMatch(bannerClass, forbidden, `배너에 잘림 유발 클래스 금지: ${forbidden}`);
+  }
+  // 아이콘이 찌그러져 텍스트를 밀어내지 않도록 shrink 방지가 유지되어야 한다.
+  assert.match(iconClass, /flex-shrink-0/);
+
+  // iPhone13(390px) 기준 텍스트 가용 폭: 390 - px-4(32) - px-3(24) - 아이콘 - gap-2(8).
+  const VIEWPORT = 390;
+  const textWidth = VIEWPORT - 32 - 24 - Number(iconSizeRaw) - 8;
+  const FONT_PX = 12; // text-xs
+  const LINE_H = 16;
+  const charWidth = (ch: string) => {
+    if (ch === " ") return FONT_PX * 0.3;
+    if (/[가-힣]/.test(ch)) return FONT_PX; // 한글 전각
+    return FONT_PX * 0.55; // 문장부호·영숫자
+  };
+  const widthOf = (text: string) => [...text].reduce((sum, ch) => sum + charWidth(ch), 0);
+  // 공백 단위 greedy wrap (CJK는 글자 단위로도 끊기므로 이 추정이 보수적 = 최악 케이스).
+  let lines = 1;
+  let cursor = 0;
+  for (const word of GENIUS_BANNER_COPY.split(" ")) {
+    const w = widthOf(word);
+    assert.ok(w <= textWidth, `단어 하나가 390px 한 줄을 넘김: ${word}`);
+    const next = cursor === 0 ? w : cursor + widthOf(" ") + w;
+    if (next > textWidth) {
+      lines++;
+      cursor = w;
+    } else {
+      cursor = next;
+    }
+  }
+  assert.ok(lines <= 3, `390px에서 배너가 ${lines}줄 — 3줄 이내여야 함`);
+  assert.ok(lines * LINE_H + 16 <= 80, "390px 배너 높이가 과도하면 안 됨(py-2 포함 80px 이내)");
+}
 assert.match(serverSource, /sendOpsMessageToUser/);
 assert.match(serverSource, /reserve_baseball_genius_daily_question_for_message/);
 assert.doesNotMatch(routeSource, /룰·용어·기록 질문/);
@@ -157,6 +212,12 @@ for (const question of ["김도영 타율 알려줘", "류현진 방어율 알�
 }
 for (const question of ["류현진 승수", "LG 순위"]) {
   assert.equal(routeQuestion(question, seedEntries, players), "history_hold", question);
+}
+// 과차단 회귀 (삼순 NO-GO blocker 1): "순위"는 team-bound일 때만 실시간 기록이다.
+// 팀 없는 순위 "룰" 질문까지 history_hold로 죽이면 핏스 목적과 정반대가 된다.
+const rankRuleQuestions = ["야구 순위가 동률이면 어떻게 정해?", "순위 결정 규칙 알려줘"];
+for (const question of rankRuleQuestions) {
+  assert.equal(routeQuestion(question, seedEntries, players), "baseball_rule_term", question);
 }
 // 게이트 1 (삼순 3차 P0): 선수명/KBO ID + 조사 결합형도 history_hold를 우회하면 안 된다.
 const particleJoinedPlayerQuestions = [
@@ -308,6 +369,19 @@ async function verifyPipeline() {
     ["박해민이 도루 몇 개야?", "history_hold", HISTORY_HOLD_ANSWER],
     ["52605의 타율 알려줘", "history_hold", HISTORY_HOLD_ANSWER],
   ];
+  // blocker 1 actual pipeline: team-bound "LG 순위"는 위 paths에서 history_hold 유지,
+  // 팀 없는 순위 룰 질문은 단일 LLM RULE_TERM 경로로 답변되어야 한다.
+  const RANK_RULE_ANSWER = "순위가 같으면 야구 규칙에 따라 상대전적 순으로 가려요.";
+  for (const input of rankRuleQuestions) {
+    const state = freshState({
+      llmText: `{"status":"${RULE_TERM_SENTINEL}","answer":"${RANK_RULE_ANSWER}"}`,
+    });
+    const result = await answerQuestion("u1", input, makeDeps(state));
+    assert.equal(result.source, "llm", `${input}: 순위 룰 질문은 과차단되면 안 된다`);
+    assert.equal(result.answer, RANK_RULE_ANSWER, input);
+    assert.notEqual(result.answer, HISTORY_HOLD_ANSWER, input);
+    assert.equal(state.llmCalls, 1, `${input}: 분류+답변 단일 LLM 호출`);
+  }
   for (const [input, source, answer] of paths) {
     const state = freshState();
     const result = await answerQuestion("u1", input, makeDeps(state));

@@ -129,7 +129,7 @@ const SERVICE_WORDS = [
 ];
 const HISTORY_CONTEXT_WORDS = [
   "통산", "성적", "우승", "연도", "시즌", "드래프트", "은퇴", "몇승", "몇 홈런",
-  "지난해", "작년", "올해", "순위",
+  "지난해", "작년", "올해",
 ];
 const STAT_WORDS = [
   "타율", "방어율", "평균자책", "출루율", "장타율", "ops", "war", "wrc",
@@ -215,7 +215,9 @@ export function routeQuestion(
   if (hasStat && (hasPlayerReference(tokens, players) || hasTeam)) return "history_hold";
   if (
     HISTORY_CONTEXT_WORDS.some((word) => normalized.includes(word)) ||
-    (hasTeam && /누구|언제|몇|기록|성적|역사/.test(normalized))
+    // "순위"는 team-bound일 때만 실시간 기록 질의다. 전역 차단어로 두면
+    // "순위 결정 규칙 알려줘"처럼 팀 없는 룰 질문까지 history_hold로 과차단된다.
+    (hasTeam && /누구|언제|몇|기록|성적|역사|순위/.test(normalized))
   ) {
     return "history_hold";
   }
