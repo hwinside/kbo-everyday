@@ -51,6 +51,7 @@ async function main() {
     const migrationSql = readFileSync(resolve("supabase/migrations/20260729_lineup_confirm_notify.sql"), "utf8")
       .replace(/create extension if not exists pgcrypto[^;]*;/i, "");
     await db.exec(migrationSql);
+    await db.exec(readFileSync(resolve("supabase/migrations/20260731212000_lineup_notify_retry_outcome.sql"), "utf8"));
 
     // ── 픽스처: LG(팀1) 팬 3명 — A(pref 미설정=on), B(lineup_confirm=true), C(lineup_confirm=false 제외) ──
     const A = "11111111-1111-1111-1111-111111111111";
@@ -77,6 +78,11 @@ async function main() {
       scalar(db, "select count(*)::int c from lineup_confirm_delivery_ledger where game_id=$1 and team_id=$2", [g, team]);
     const notified = (g: string, team: number) =>
       scalar(db, "select (lineup_notified)::int c from game_lineup_notify_state where game_id=$1 and team_id=$2", [g, team]);
+    const stateStatus = async (g: string, team: number) => {
+      const r = await db.query<{ delivery_status: string }>(
+        "select delivery_status from game_lineup_notify_state where game_id=$1 and team_id=$2", [g, team]);
+      return r.rows[0]?.delivery_status;
+    };
 
     // ── ③ pref 게이트 + 팀 필터: LG 팬 중 opt-in(A,B)만, C(off)·O(다른팀) 제외 ──
     await snapshot(G, 1);
@@ -141,6 +147,85 @@ async function main() {
       "select expired, snapshot_completed from finalize_lineup_confirm_deliveries($1,$2)", [GF, 4]);
     ok("deadline 경과 → expired 1(fail-safe)", Number(finF.rows[0]?.expired) === 1);
     ok("만료 종결 → snapshot_completed=true", finF.rows[0]?.snapshot_completed === true);
+    ok("만료 종결 → failed 보존(lineup_notified 오판 금지)", (await stateStatus(GF, 4)) === "failed" && (await notified(GF, 4)) === 0);
+    ok("만료 종결 → expired_count=1 보존", (await scalar(db, "select expired_count c from game_lineup_notify_state where game_id=$1 and team_id=$2", [GF, 4])) === 1);
+
+    // ── partial terminal: 일부 accepted + 일부 permanent_failed를 성공으로 뭉개지 않는다 ──
+    const GP = "20260729OBKT0";
+    await db.exec(`
+      insert into profiles(id,team_id) values
+        ('66666666-6666-6666-6666-666666666661',3),
+        ('66666666-6666-6666-6666-666666666662',3);
+      insert into device_push_tokens(user_id,fcm_token,platform) values
+        ('66666666-6666-6666-6666-666666666661','tokP1','ios'),
+        ('66666666-6666-6666-6666-666666666662','tokP2','android');
+    `);
+    await snapshot(GP, 3);
+    const leaseP = "cccccccc-cccc-cccc-cccc-cccccccccccc";
+    const claimP = await db.query<{ id: string }>(
+      "select id from claim_lineup_confirm_deliveries($1,$2,$3::uuid,45,500)", [GP, 3, leaseP]);
+    const idsP = claimP.rows.map((r) => r.id);
+    await db.query("select mark_lineup_confirm_deliveries_dispatching($1::uuid[],$2::uuid)", [idsP, leaseP]);
+    await db.query("select settle_lineup_confirm_delivery_batch($1::jsonb,$2::uuid)", [JSON.stringify([
+      { id: idsP[0], status: "accepted" },
+      { id: idsP[1], status: "permanent_failed", error: "messaging/registration-token-not-registered" },
+    ]), leaseP]);
+    await db.query("select * from finalize_lineup_confirm_deliveries($1,$2)", [GP, 3]);
+    ok("partial accepted → delivery_status=partial", (await stateStatus(GP, 3)) === "partial");
+    ok("partial accepted → lineup_notified=false", (await notified(GP, 3)) === 0);
+    ok("partial counters 보존", (await scalar(db, "select accepted_count c from game_lineup_notify_state where game_id=$1 and team_id=$2", [GP, 3])) === 1
+      && (await scalar(db, "select permanent_failed_count c from game_lineup_notify_state where game_id=$1 and team_id=$2", [GP, 3])) === 1);
+    ok("partial terminal은 due drain에서 제외", (await scalar(db, "select count(*) c from list_due_lineup_confirm_snapshots(200) where game_id=$1 and team_id=$2", [GP, 3])) === 0);
+
+    // ── 501-token 전체 transport 장애: 실패 500 backoff 중 미시도 1개가 먼저 drain되고,
+    //    동일 500개도 2회 cap을 넘어 4번째 시도에서 복구한다 ──
+    const GR = "20260729HHHT0";
+    const R = "77777777-7777-7777-7777-777777777777";
+    await db.exec(`
+      insert into profiles(id,team_id) values ('${R}',7);
+      insert into device_push_tokens(user_id,fcm_token,platform)
+      select '${R}', 'tokR' || gs::text, case when gs % 2 = 0 then 'ios' else 'android' end
+      from generate_series(1,501) gs;
+    `);
+    await snapshot(GR, 7);
+    const transientRound = async (lease: string) => {
+      const claim = await db.query<{ id: string }>(
+        "select id from claim_lineup_confirm_deliveries($1,$2,$3::uuid,45,500)", [GR, 7, lease]);
+      const ids = claim.rows.map((r) => r.id);
+      await db.query("select mark_lineup_confirm_deliveries_dispatching($1::uuid[],$2::uuid)", [ids, lease]);
+      await db.query("select settle_lineup_confirm_delivery_batch($1::jsonb,$2::uuid)", [
+        JSON.stringify(ids.map((id) => ({ id, status: "transient", error: "messaging/server-unavailable" }))), lease]);
+      return ids;
+    };
+    const first500 = await transientRound("10000000-0000-0000-0000-000000000001");
+    ok("500-token server-unavailable → 500 transient", first500.length === 500);
+    const fairLease = "10000000-0000-0000-0000-000000000002";
+    const fair = await db.query<{ id: string }>(
+      "select id from claim_lineup_confirm_deliveries($1,$2,$3::uuid,45,500)", [GR, 7, fairLease]);
+    ok("실패 batch backoff 중 미시도 token 굶김 없음", fair.rows.length === 1);
+    const fairIds = fair.rows.map((r) => r.id);
+    await db.query("select mark_lineup_confirm_deliveries_dispatching($1::uuid[],$2::uuid)", [fairIds, fairLease]);
+    await db.query("select settle_lineup_confirm_delivery_batch($1::jsonb,$2::uuid)", [
+      JSON.stringify(fairIds.map((id) => ({ id, status: "accepted" }))), fairLease]);
+    for (let round = 2; round <= 3; round++) {
+      await db.query("update lineup_confirm_delivery_ledger set next_attempt_at=now() where game_id=$1 and team_id=$2 and status='transient'", [GR, 7]);
+      const ids = await transientRound(`10000000-0000-0000-0000-00000000000${round + 1}`);
+      ok(`500-token transient 재시도 ${round}회`, ids.length === 500);
+    }
+    await db.query("update lineup_confirm_delivery_ledger set next_attempt_at=now() where game_id=$1 and team_id=$2 and status='transient'", [GR, 7]);
+    const recoveryLease = "10000000-0000-0000-0000-000000000005";
+    const recovered = await db.query<{ id: string }>(
+      "select id from claim_lineup_confirm_deliveries($1,$2,$3::uuid,45,500)", [GR, 7, recoveryLease]);
+    const recoveredIds = recovered.rows.map((r) => r.id);
+    await db.query("select mark_lineup_confirm_deliveries_dispatching($1::uuid[],$2::uuid)", [recoveredIds, recoveryLease]);
+    await db.query("select settle_lineup_confirm_delivery_batch($1::jsonb,$2::uuid)", [
+      JSON.stringify(recoveredIds.map((id) => ({ id, status: "accepted" }))), recoveryLease]);
+    await db.query("select * from finalize_lineup_confirm_deliveries($1,$2)", [GR, 7]);
+    ok("2회 초과(4번째) 500-token recovery", recoveredIds.length === 500
+      && (await scalar(db, "select count(*) c from lineup_confirm_delivery_ledger where game_id=$1 and team_id=$2 and attempts=4 and status='accepted'", [GR, 7])) === 500);
+    ok("501 accepted·duplicate 0·delivered", (await scalar(db, "select accepted_count c from game_lineup_notify_state where game_id=$1 and team_id=$2", [GR, 7])) === 501
+      && (await ledgerCount(GR, 7)) === 501
+      && (await stateStatus(GR, 7)) === "delivered");
 
     // ── 권한: anon/authenticated RPC 실행 불가 ──
     const fnDenied = async (role: string, sig: string) =>
