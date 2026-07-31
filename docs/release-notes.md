@@ -4,6 +4,24 @@
 
 ---
 
+## 2026-07-31 13:52 KST — 쇼츠 scope 필터(#973) + 예고선발 공개 알림(#974) [CS 제안]
+
+- **환경:** prod/web (Vercel)
+- **Commit:** `fdd165ee9b6c27b58636c3decc7cb78e8b3181a9` (#973) · `9c5772726b660b370c73fd0250592d83e23ecba4` (#974, origin/main HEAD)
+- **배경:** 유저 제안(#cs `1785380092`, DM conv cf07bbc6) — ①쇼츠를 최애선수만이 아니라 마이팀·전체로 골라 보기 ②예고선발(선발 투수) 공개 즉시 알림
+- **변경사항:**
+  - (#973) 쇼츠 피드에 `최애선수 · 마이팀 · 전체` scope 필터. 단순 화면 필터가 아니라 API `scope=favorite_players|my_team|all` 쿼리 분리(순수함수 `shorts-feed-scope.ts`), scope 미지정=기존 혼합 피드(하위호환), HomeHighlights 3칩 + localStorage 유지. race LatestOnlyGate + abort/실패 stale 차단, 칩 항상 1개 활성
+  - (#974) 최애팀 경기 예고선발 공식 공개 시 즉시 푸시 1회. 라인업 확정 푸시(#952) 원장 아키텍처를 event `starter_announce`로 클론 — `(game_id, team_id)` 스냅샷·lease fencing·at-most-once dispatch·due-ledger drainer. 실제 빈값→공식값 전이만 발송(baseline stale burst 차단), 선발 변경·연전 재발송 0. `starter_announce` pref 기본 on
+- **DB:** migration `20260730_starter_announce_notify.sql` 프로덕션 선적용(Management API HTTP 201) — `starter_announce` 컬럼 + `game_starter_observation`·`game_starter_notify_state`·`starter_announce_delivery_ledger` 3테이블 RLS ON(정책 0) + snapshot/observe/claim/mark/settle/finalize/list_due 7 RPC(anon/authenticated EXECUTE revoke, service_role 전용)
+- **리스크/롤백:** 낮음. #973은 migration 없음, scope 미지정 시 기존 동작 불변. #974는 신규 알림 종류 추가(전이 게이트로 오발송 차단). 문제 시 각 squash revert
+- **확인 항목:**
+  - [x] 삼순 GO exact 그대로 squash 머지 (#973 `8bcd58ba5`, #974 `744338af8`)
+  - [x] Vercel Production Ready(커밋 `9c5772726`) + `keubo.fan` HTTP 200
+  - [x] 쇼츠 scope 프로덕션 스모크: all=3 / my_team(LG)=3 / favorite_players 미지정=0(임의 폴백 없음) / 무scope=3(하위호환)
+  - [x] DB sanity: starter_announce 컬럼 + 3테이블 RLS ON(정책 0) + 7 RPC anon/auth EXECUTE revoke·service_role only
+  - [x] 건의 유저 완료 회신(conv cf07bbc6, dm_messages id 292539)
+  - [ ] 예고선발 알림 실제 푸시 실수신 자연관찰 (서버 cron 푸시라 다음 실경기 예고선발 공개 시, HOLD)
+
 ---
 
 ## 2026-05-02 21:31 KST — 크관 채팅 iOS 키보드 하단 gap 방어 + BrowserStack QA 스크립트
