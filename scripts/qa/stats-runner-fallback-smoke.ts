@@ -83,9 +83,14 @@ test("중간 POST 실패 시 부분 rows를 성공으로 반환하지 않는다"
 });
 
 function basicHtml(): string {
-  return `<tbody><tr><td>1</td><td>박재엽</td><td>롯데</td><td>.300</td>` +
-    `<td>10</td><td>40</td><td>35</td><td>5</td><td>10</td><td>1</td><td>0</td>` +
-    `<td>1</td><td>14</td><td>7</td><td>0</td><td>0</td></tr></tbody>`;
+  const rows = batterStats2026.slice(0, 250).map((player, index) =>
+    `<tr><td>${index + 1}</td><td>${player.name}</td><td>${player.team}</td><td>${player.avg}</td>` +
+      `<td>${player.games}</td><td>${player.pa}</td><td>${player.ab}</td><td>${player.runs}</td>` +
+      `<td>${player.hits}</td><td>${player.doubles}</td><td>${player.triples}</td>` +
+      `<td>${player.hr}</td><td>${player.tb}</td><td>${player.rbi}</td><td>${player.sac}</td>` +
+      `<td>${player.sf}</td></tr>`,
+  ).join("");
+  return `<tbody>${rows}</tbody>`;
 }
 
 function routeFetch(options: { runnerPostFails?: boolean; runnerEarlyEndAt?: number }): typeof fetch {
@@ -156,7 +161,7 @@ test("actual GET은 page 9 HTTP 200 조기 종료를 live로 채택하지 않고
       row.name === "최원준" && row.team === "KT");
     assert.strictEqual(body.runnerSource, "static-fallback");
     assert.strictEqual(body.updatedAt, statsMeta.battersGeneratedAt);
-    assert.deepStrictEqual({ sb: player?.sb, cs: player?.cs }, { sb: 17, cs: 8 });
+    assert.deepStrictEqual({ sb: player?.sb, cs: player?.cs }, { sb: 18, cs: 8 });
   } finally {
     globalThis.fetch = originalFetch;
   }

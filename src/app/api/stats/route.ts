@@ -10,6 +10,10 @@ import type { RosterPlayer } from "@/types/api";
 import { resolvePlayer } from "@/lib/utils/resolve-player";
 import { aggregateDefense, type DefenseRow } from "@/lib/utils/defense-aggregate";
 import { mergeFullEntry } from "@/lib/stats/full-entry";
+import {
+  fetchNaverPlayerStats,
+  type NaverPlayerStat,
+} from "@/lib/crawler/naver-player-stats";
 
 const KBO_BASE = "https://www.koreabaseball.com";
 const RUNNER_URL = `${KBO_BASE}/Record/Player/Runner/Basic.aspx?sort=SB_CN`;
@@ -18,6 +22,8 @@ const RUNNER_PAGER_PREFIX =
 const RUNNER_CRAWL_TIMEOUT_MS = 5_000;
 const RUNNER_MIN_PAGES = 9;
 const RUNNER_MIN_ROWS = 250;
+const STATS_TOTAL_DEADLINE_MS = 5_000;
+const STATS_KBO_BUDGET_MS = 2_500;
 
 interface PlayerStat {
   rank: number;
@@ -29,15 +35,28 @@ interface PlayerStat {
 type RunnerStat = { sb: number; cs: number };
 type RunnerSource = "live" | "static-fallback";
 
-async function fetchHtml(url: string): Promise<string> {
+function readTextWithSignal(response: Response, signal: AbortSignal): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    const onAbort = () => reject(new DOMException("aborted", "AbortError"));
+    signal.addEventListener("abort", onAbort, { once: true });
+    response.text().then(resolve, reject).finally(() => {
+      signal.removeEventListener("abort", onAbort);
+    });
+  });
+}
+
+async function fetchHtml(url: string, signal?: AbortSignal): Promise<string> {
   const res = await fetch(url, {
     headers: {
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
       "Referer": KBO_BASE,
     },
     next: { revalidate: 0 },  // 캐싱은 인메모리 캐시에서 관리 (getCacheTtl)
+    signal,
   });
-  return res.text();
+  if (!res.ok) throw new Error(`KBO stats HTTP ${res.status}`);
+  if (!signal) return res.text();
+  return readTextWithSignal(res, signal);
 }
 
 function parseTable(html: string): string[][] {
@@ -111,22 +130,28 @@ function runnerNextTarget(html: string, currentPage: number): string | null {
  * KBO Runner WebForms 전 페이지를 같은 ASP.NET session으로 순차 수집한다.
  * 한 페이지라도 실패하면 부분 결과를 반환하지 않아 호출측이 static 전체 fallback으로 전환한다.
  */
-export async function fetchAllRunnerRows(fetchImpl: typeof fetch = fetch): Promise<string[][]> {
+export async function fetchAllRunnerRows(
+  fetchImpl: typeof fetch = fetch,
+  externalSignal?: AbortSignal,
+): Promise<string[][]> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), RUNNER_CRAWL_TIMEOUT_MS);
+  const signal = externalSignal
+    ? AbortSignal.any([controller.signal, externalSignal])
+    : controller.signal;
   try {
     let response = await fetchImpl(RUNNER_URL, {
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Referer": RUNNER_URL,
       },
-      signal: controller.signal,
+      signal,
     });
     if (!response.ok) throw new Error(`Runner GET HTTP ${response.status}`);
     const cookie = response.headers.get("set-cookie")?.split(";")[0];
     if (!cookie) throw new Error("Runner ASP.NET session cookie missing");
 
-    let html = await response.text();
+    let html = await readTextWithSignal(response, signal);
     const rows: string[][] = [];
     const seenPages = new Set<number>();
     while (true) {
@@ -149,10 +174,10 @@ export async function fetchAllRunnerRows(fetchImpl: typeof fetch = fetch): Promi
           "Cookie": cookie,
         },
         body: runnerPostbackBody(html, eventTarget).toString(),
-        signal: controller.signal,
+        signal,
       });
       if (!response.ok) throw new Error(`Runner page ${page + 1} POST HTTP ${response.status}`);
-      html = await response.text();
+      html = await readTextWithSignal(response, signal);
     }
     if (seenPages.size < RUNNER_MIN_PAGES || rows.length < RUNNER_MIN_ROWS) {
       throw new Error(`Runner full crawl incomplete: ${seenPages.size} pages, ${rows.length} rows`);
@@ -163,7 +188,7 @@ export async function fetchAllRunnerRows(fetchImpl: typeof fetch = fetch): Promi
   }
 }
 
-async function fetchBatterStats(): Promise<{
+async function fetchBatterStats(signal?: AbortSignal): Promise<{
   stats: PlayerStat[];
   runnerMap: Map<string, RunnerStat>;
   runnerSource: RunnerSource;
@@ -184,20 +209,36 @@ async function fetchBatterStats(): Promise<{
   const roster = playersRoster as RosterPlayer[];
 
   const [basic1Htmls, basic2Htmls, runnerResult] = await Promise.all([
-    Promise.all(basic1Sorts.map((s) => fetchHtml(`${KBO_BASE}/Record/Player/HitterBasic/Basic1.aspx?sort=${s}`))),
-    Promise.all(basic2Sorts.map((s) => fetchHtml(`${KBO_BASE}/Record/Player/HitterBasic/Basic2.aspx?sort=${s}`))),
-    fetchAllRunnerRows()
+    Promise.all(basic1Sorts.map((s) => fetchHtml(`${KBO_BASE}/Record/Player/HitterBasic/Basic1.aspx?sort=${s}`, signal))),
+    Promise.all(basic2Sorts.map((s) => fetchHtml(`${KBO_BASE}/Record/Player/HitterBasic/Basic2.aspx?sort=${s}`, signal))),
+    fetchAllRunnerRows(fetch, signal)
       .then((rows) => ({ rows, live: true as const }))
       .catch((error) => {
         console.warn("[stats] Runner full crawl failed; using static fallback", error);
         return { rows: [] as string[][], live: false as const };
       }),
   ]);
+  const basic1Tables = basic1Htmls.map(parseTable);
+  const basic2Tables = basic2Htmls.map(parseTable);
+  if (
+    basic1Tables.some(
+      (table) =>
+        table.length < 10 ||
+        table.some((row) => row.length < 16 || !row[1]?.trim() || !row[2]?.trim()),
+    ) ||
+    basic2Tables.some(
+      (table) =>
+        table.length < 10 ||
+        table.some((row) => row.length < 12 || !row[1]?.trim() || !row[2]?.trim()),
+    )
+  ) {
+    throw new Error("KBO batter stats table incomplete");
+  }
 
   // Basic1 union: name::team 최초 우선으로 병합 (각 정렬 상위 30 합집합)
   const mergedRows = new Map<string, string[]>();
-  for (const html of basic1Htmls) {
-    for (const c of parseTable(html)) {
+  for (const table of basic1Tables) {
+    for (const c of table) {
       const key = `${(c[1] || "").trim()}::${(c[2] || "").trim()}`;
       if (key !== "::" && !mergedRows.has(key)) mergedRows.set(key, c);
     }
@@ -205,13 +246,13 @@ async function fetchBatterStats(): Promise<{
   const rows = [...mergedRows.values()];
 
   // Basic2 union (OBP/OPS/SLG 등)
-  const basic2Rows = basic2Htmls.flatMap((html) => parseTable(html));
+  const basic2Rows = basic2Tables.flat();
   // 규정타석 충족 선수 셋 — 비율스탯 리더보드(규정타석만 노출) union
   // (단일 HRA_RT는 타율 31위↓ 규정타석 선수를 놓쳐 OPS/OBP/SLG 랭킹 누락 유발)
   const qualifiedKeys = new Set<string>();
   for (const sort of rateSorts) {
     const idx = basic1Sorts.indexOf(sort);
-    for (const c of parseTable(basic1Htmls[idx])) {
+    for (const c of basic1Tables[idx]) {
       qualifiedKeys.add(`${(c[1] || "").trim()}::${(c[2] || "").trim()}`);
     }
   }
@@ -354,7 +395,7 @@ function parsePitcherRow(c: string[], roster: RosterPlayer[]): PlayerStat {
   };
 }
 
-async function fetchPitcherStats(): Promise<PlayerStat[]> {
+async function fetchPitcherStats(signal?: AbortSignal): Promise<PlayerStat[]> {
   // ERA_RT는 규정이닝 투수만 반환 (시즌초 17명 등), SV/HOLD/W/KK/INN2는 전체 30명
   // 여러 정렬로 크롤링 후 병합해야 세이브/홀드/이닝 리더가 빠지지 않음.
   // INN2_CN(이닝) 미포함 시 규정이닝 미달 이닝이터(선발 기량투수)가 라이브 집합에서 전부 누락된다.
@@ -366,8 +407,15 @@ async function fetchPitcherStats(): Promise<PlayerStat[]> {
   const results = await Promise.all(
     sortKeys.map(async (sort) => {
       const url = `${KBO_BASE}/Record/Player/PitcherBasic/Basic1.aspx?sort=${sort}`;
-      const html = await fetchHtml(url);
-      return { sort, rows: parseTable(html) };
+      const html = await fetchHtml(url, signal);
+      const rows = parseTable(html);
+      if (
+        rows.length < 10 ||
+        rows.some((row) => row.length < 19 || !row[1]?.trim() || !row[2]?.trim())
+      ) {
+        throw new Error(`KBO pitcher stats ${sort} table incomplete`);
+      }
+      return { sort, rows };
     })
   );
 
@@ -422,6 +470,80 @@ function setCache(key: string, data: StatsResult) {
   cache[key] = { data, ts: Date.now() };
 }
 
+function assertStatsComplete(stats: PlayerStat[], type: "batter" | "pitcher"): void {
+  const minimum = 30;
+  const teams = new Set(stats.map((row) => row.team.trim()).filter(Boolean));
+  const players = new Set(
+    stats.map((row) => `${row.name.trim()}::${row.team.trim()}`).filter((key) => key !== "::"),
+  );
+  if (stats.length < minimum || players.size !== stats.length || teams.size !== 10) {
+    throw new Error(
+      `KBO ${type} stats partial: rows=${stats.length}, unique=${players.size}, teams=${teams.size}`,
+    );
+  }
+}
+
+async function fetchCurrentStats(
+  type: "batter" | "pitcher",
+): Promise<{
+  stats: PlayerStat[];
+  source: "live" | "naver-fallback";
+  runnerSource?: RunnerSource;
+  runnerUpdatedAt?: string;
+  runnerMap?: Map<string, RunnerStat>;
+}> {
+  const deadlineAt = Date.now() + STATS_TOTAL_DEADLINE_MS;
+  const kboController = new AbortController();
+  const kboTimer = setTimeout(() => kboController.abort(), STATS_KBO_BUDGET_MS);
+  try {
+    if (type === "pitcher") {
+      const stats = await fetchPitcherStats(kboController.signal);
+      assertStatsComplete(stats, type);
+      return { stats, source: "live" };
+    }
+    const live = await fetchBatterStats(kboController.signal);
+    assertStatsComplete(live.stats, type);
+    return {
+      stats: live.stats,
+      source: "live",
+      runnerSource: live.runnerSource,
+      runnerUpdatedAt: live.runnerUpdatedAt,
+      runnerMap: live.runnerMap,
+    };
+  } catch (error) {
+    const message = (error as Error).message;
+    console.warn(
+      `[stats] KBO ${type} failed, using Naver:`,
+      message,
+    );
+    const reason = /abort|timeout|deadline/i.test(message)
+      ? "timeout"
+      : /HTTP/i.test(message)
+        ? "http-error"
+        : "schema-error";
+    void import("@/lib/monitoring/api-fallback-tracker")
+      .then(({ trackFallback }) =>
+        trackFallback(`kbo-player-stats-${type}`, reason, {
+          errorMessage: message,
+        }),
+      )
+      .catch(() => {});
+    const fallback = type === "pitcher"
+      ? (pitcherStats2026 as unknown as NaverPlayerStat[])
+      : (batterStats2026 as unknown as NaverPlayerStat[]);
+    const stats = await fetchNaverPlayerStats(
+      type,
+      2026,
+      deadlineAt,
+      fallback,
+    );
+    return { stats: stats as PlayerStat[], source: "naver-fallback" };
+  } finally {
+    clearTimeout(kboTimer);
+    kboController.abort();
+  }
+}
+
 export async function GET(req: NextRequest) {
   const type = req.nextUrl.searchParams.get("type") || "batter";
   const season = req.nextUrl.searchParams.get("season") || "current";
@@ -447,39 +569,44 @@ export async function GET(req: NextRequest) {
   if (cached) return NextResponse.json(cached);
 
   try {
-    let stats: PlayerStat[];
-    let runnerSource: RunnerSource | undefined;
-    let runnerUpdatedAt: string | undefined;
-    if (type === "pitcher") {
-      const live = await fetchPitcherStats();
-      stats = full
-        ? mergeFullEntry(live, pitcherStats2026 as unknown as PlayerStat[])
-        : live;
-    } else {
-      const live = await fetchBatterStats();
-      const merged = full
-        ? mergeFullEntry(live.stats, batterStats2026 as unknown as PlayerStat[])
-        : live.stats;
+    const statsType = type === "pitcher" ? "pitcher" : "batter";
+    const current = await fetchCurrentStats(statsType);
+    const staticStats = statsType === "pitcher"
+      ? (pitcherStats2026 as unknown as PlayerStat[])
+      : (batterStats2026 as unknown as PlayerStat[]);
+    let stats = full ? mergeFullEntry(current.stats, staticStats) : current.stats;
+    if (current.runnerMap) {
       // full=1로 static에서 추가된 선수도 같은 전페이지 live Runner map으로 마지막에 보정한다.
-      stats = applyRunnerStats(merged, live.runnerMap);
-      runnerSource = live.runnerSource;
-      runnerUpdatedAt = live.runnerUpdatedAt;
+      stats = applyRunnerStats(stats, current.runnerMap);
     }
     const now = new Date().toISOString();
     const result: StatsResult = {
       stats,
       type,
       count: stats.length,
-      source: runnerSource === "static-fallback" ? "live+static-runner-fallback" : "live",
+      source:
+        current.source === "naver-fallback"
+          ? current.source
+          : current.runnerSource === "static-fallback"
+            ? "live+static-runner-fallback"
+            : "live",
       // 혼합 응답은 가장 오래된 구성요소 시각을 대표 freshness로 노출한다.
-      updatedAt: runnerSource === "static-fallback" ? runnerUpdatedAt : now,
-      ...(runnerSource ? { runnerSource, runnerUpdatedAt } : {}),
+      updatedAt:
+        current.runnerSource === "static-fallback"
+          ? current.runnerUpdatedAt
+          : now,
+      ...(current.runnerSource
+        ? {
+            runnerSource: current.runnerSource,
+            runnerUpdatedAt: current.runnerUpdatedAt,
+          }
+        : {}),
     };
     setCache(cacheKey, result);
     return NextResponse.json(result);
   } catch (e: unknown) {
     // 크롤링 실패 시 static JSON fallback (빈화면 방지)
-    if (season === "2026") {
+    if (season === "2026" || season === "current") {
       const fallback = type === "pitcher"
         ? (pitcherStats2026 as unknown as PlayerStat[])
         : (batterStats2026 as unknown as PlayerStat[]);
