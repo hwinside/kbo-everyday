@@ -6,6 +6,7 @@ import { supabaseAdmin } from "@/lib/supabase/admin";
 import { sendOpsMessageToUser } from "@/lib/cs/send-ops-message";
 import {
   answerQuestion,
+  isAckPhrase,
   MAX_QUESTION_LEN,
   MIN_QUESTION_LEN,
   type GlossaryEntry,
@@ -298,9 +299,10 @@ export async function processBaseballQaQuestion(input: {
   } else {
     try {
       // trigger는 모든 질문 메시지에 job을 만들므로 길이 위반도 여기서 안내 답변으로 종결한다.
-      // 단 폐쇄집합 후속어("또"·"더"·"왜")는 1자라 최소 길이 게이트에 걸리므로
+      // 단 폐쇄집합 후속어("또"·"더"·"왜")와 감사 인사("ㄳ")는 1자라 최소 길이 게이트에 걸리므로
       // 이 열거된 집합만 예외로 통과시킨다 (spec §4.1 B4 closed-set 도달성).
-      const tooShort = question.length < MIN_QUESTION_LEN && !isFollowupPhrase(question);
+      const tooShort = question.length < MIN_QUESTION_LEN &&
+        !isFollowupPhrase(question) && !isAckPhrase(question);
       if (tooShort || question.length > MAX_QUESTION_LEN) {
         result = { status: 200, answer: INVALID_QUESTION_ANSWER, source: "blocked", remaining: 0 };
       } else {

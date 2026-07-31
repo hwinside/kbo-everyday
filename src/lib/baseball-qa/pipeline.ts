@@ -34,6 +34,43 @@ export const CONTEXT_MISSING_ANSWER =
 
 export const LLM_AMBIGUOUS_ANSWER =
   "답변을 저장하는 과정에서 문제가 생겨 이번 질문에는 답을 드리지 못했어요. 같은 질문을 다시 보내주시면 새로 답해드릴게요! ⚾";
+// 직전 답변에 대한 감사·확인 인사 — 질문이 아니라 대화 행위다. 차단 문구를 보내면 안 된다.
+export const ACK_ANSWER = "도움이 됐다니 다행이에요! ⚾";
+
+/**
+ * 단독 감사·확인 인사 폐쇄집합 (삼순 GO / 신기능 B).
+ * `고마워`처럼 직전 답변에 대한 대화 행위는 야구 질문이 아니지만 차단 대상도 아니다.
+ * 폐쇄집합 **full-string 완전일치**만 ACK로 분기한다 — substring 매칭을 하면
+ * `고마운데 주식 추천해줘`처럼 감사 뒤에 새 요청이 붙은 문장이 판정을 우회한다.
+ */
+const ACK_PHRASES = [
+  "고마워", "고마워요", "고마웠어", "고맙습니다", "고맙다",
+  "감사", "감사해", "감사해요", "감사합니다", "감사드립니다",
+  "ㄳ", "ㄱㅅ", "땡큐", "땡스", "thx", "thanks", "thank you",
+  "잘 알겠어", "잘 알겠어요", "알겠어", "알겠어요", "알겠습니다",
+  "이해했어", "이해했어요", "이해됐어", "이해됐어요",
+] as const;
+
+/** 앞뒤 공백 제거 · 중복 공백 축약 · 문말 구두점 제거 · 소문자 · NFC */
+function normalizeAck(value: string): string {
+  return value
+    .normalize("NFC")
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/[?!.,~…♡❤⚾🙏😊ㅎㅋ]+$/u, "")
+    .trim();
+}
+
+const ACK_SET = new Set(ACK_PHRASES.map(normalizeAck));
+
+/**
+ * 단독 감사·확인 인사인지 (폐쇄집합 full-string 완전일치).
+ * 뒤에 새 요청절이 붙은 문장(`고마워 근데 날씨 알려줘`)은 일치하지 않으므로 기존 판정으로 간다.
+ */
+export function isAckPhrase(question: string): boolean {
+  return ACK_SET.has(normalizeAck(question));
+}
 
 /** LLM 판정 계약 (spec: 야구 룰/용어 판정 3분기). */
 export const RULE_TERM_SENTINEL = "BASEBALL_RULE_TERM";
@@ -64,6 +101,7 @@ export type QuestionRoute =
   | "history_hold"
   | "blocked"
   | "context_missing"
+  | "ack"
   | "baseball_rule_term";
 export type MatchPath =
   | "dictionary"
@@ -73,6 +111,8 @@ export type MatchPath =
   | "history_hold"
   | "blocked"
   | "context_missing"
+  // 단독 감사·확인 인사 — LLM/캐시 없이 결정론 응답 (#983 모니터에서 별도 라벨).
+  | "ack"
   | "unsure"
   | "limited"
   | "error"
@@ -181,39 +221,8 @@ const ROLE_CHANGE_COMMAND = [
   "바꿔(?:주세요|주라|줄래|줘요|줘|요|라|봐|다오)?",
 ].join("|");
 
-/** 역할변경 어간. 명령형이 아니어도 "역할을 바꾸는 절"임을 식별하는 최소 신호. */
-const ROLE_CHANGE_STEM = /^(?:변경|교체|바꾸|바꿔)/;
 /** 역할변경 어절이 명령형으로 종결됐는지 (어절 전체 일치). */
 const ROLE_CHANGE_IMPERATIVE = new RegExp(`^(?:${ROLE_CHANGE_COMMAND})$`);
-
-/**
- * 역할변경 표현이 "명사구를 이루는 형태"인지 (삼순 10차 P0).
- * `역할 변경 규칙`·`역할 바꾸는 방법`처럼 역할변경이 바로 뒤 명사를 수식·구성하면 그 문장은
- * 역할변경 *자체*를 묻는 질문이고, 뒤의 `알려줘`는 그 명사구를 목적어로 받는 정보 요청이다.
- * 반대로 `바꿔서`·`바꾸면`·`바꿔도`는 연결형 술어라 뒤에 별도의 절이 이어진다.
- */
-const ROLE_CHANGE_NOUN_FORM =
-  /^(?:변경|교체)(?:하는|하기)?[이가은는을를의도만]?$|^바꾸(?:는|기)[이가은는을를의도만]?$/;
-
-/**
- * 앞 명제를 되묻는 의문·판정 종결어미 (삼순 10차 P0 ①).
- * 의문어 단어를 문장 전역 substring으로 찾던 구형은 `날씨가 궁금하니 알려줘`처럼 뒤에 독립
- * 지시절이 오면 그대로 뚫렸다. 판정 근거는 단어가 아니라 **종결 위치의 어미**다.
- */
-const QUESTION_FINAL = /(?:나요|가요|까요|는가|은가|한가|인가|건가|죠|지|니|냐|돼|되|까)$/;
-
-/**
- * 문장을 끝내지 않는 연결·수식 어미. 이 어미로만 이어진 후속 어절은 자기 목적어를 데리지
- * 않는다 = 역할변경 명제에 계속 매여 있다 (`던져도 되나요`·`어떻게 돼`).
- * 반대로 `날씨`·`시`처럼 어미 없는 어절이 끼면 그것은 새 독립 지시절의 목적어다.
- */
-const BOUND_ENDING = /(?:게|도|면|서|고|은)$/;
-
-/**
- * 수혜·요청 보조용언. 종결이 의문형이어도 보조용언이 붙으면 봇에게 뭔가를 해달라는 요청이지
- * 역할변경에 대한 질문이 아니다 (`역할을 바꿔서 알려줘야`).
- */
-const BENEFACTIVE_FINAL = /주|줘|줄|드려|드릴/;
 
 /**
  * 조사·띄어쓰기를 제거한 압축형에 적용하는 인젝션 패턴 (삼순 2차 P0).
@@ -227,25 +236,19 @@ const INJECTION_COMPACT_PATTERNS = [
   ),
 ];
 
-/** 역할변경을 "질문"하게 만드는 명사. 뒤에 `알려줘`가 와도 정보 요청이지 지시가 아니다. */
-const ROLE_RULE_NOUN = /규칙|규정|절차|방법|조건|기준|뜻|의미/;
-
 /**
- * 역할변경 인젝션 판별 — 소재·의문어 단어 매칭이 아니라 **문장 구조**로 가른다 (삼순 10차 P0).
+ * 역할변경 인젝션 판별 — **명백한 명령형만** 결정론적으로 차단한다 (삼순 11차 + 하린아빠 결정).
  *
- * 가르는 기준은 단 하나 — 역할변경 절이 **질문의 핵**인가, 아니면 그 뒤에
- * **독립된 지시 predicate**가 이어지는가.
+ * 판정 기준은 하나 — 역할변경 어절 자체가 봇에게 내리는 **명령형 종결**인가
+ * (`역할을 바꿔`·`역할 변경해줘`·`너의 역할을 바꿔라`). 정상 야구 질문으로는 성립하지 않는
+ * 형태이므로 확신을 갖고 차단할 수 있다.
  *
- * ① 역할변경 어절 자체가 명령형 종결(`바꿔`·`변경해줘`) → 봇에게 내리는 지시.
- * ② 역할변경이 **명사구**를 이루고 바로 뒤가 규칙류 명사(`역할 변경 규칙`·`역할 바꾸는 방법`)
- *    → 역할변경 자체가 질의 대상인 정보 요청. 인접성을 요구해, 문장 전역 `규칙` 하나로
- *    뒤의 지시절까지 면제되던 누수를 닫는다.
- * ③ 연결형(`바꿔서`·`바꾸면`·`바꿔도`)이면 뒤따르는 절의 **구조**를 본다.
- *    역할변경 명제에 계속 매여 있는 절은 (a) 종결이 의문·판정형이고 (b) 그 앞 어절이 전부
- *    연결·수식 어미로 묶여 있으며(= 새 목적어 명사가 없고) (c) 수혜 보조용언이 없다.
- *    세 조건을 모두 만족해야 "역할변경을 묻는 질문"이고, 그 외는 새 목적어·새 술어를 거느린
- *    **독립 지시절**이므로 fail-closed로 차단한다. 그 절 안에 의문어(`왜`·`어떤`·`몇`)나
- *    야구 단어(`투수`·`규칙`)가 섞여 있어도 결과는 같다 — 판정 근거는 단어가 아니라 절의 기능이다.
+ * 연결형(`바꿔서`·`바꾸면`·`바꿔도`) 뒤에 오는 절의 기능을 어미 구조로 판정하던 이전
+ * 휴리스틱은 삭제한다. 그 판정에는 확신이 없어 — 후속절이 지시인지 질문인지 어미만으로는
+ * 갈리지 않아 — `투수 역할을 바꾸면 어떻게 돼요?`·`수비 역할을 바꿔도 괜찮아요?` 같은
+ * **정상 야구 질문을 과차단**했다. 실 Gemini 검증(공격 12/12 `NOT_BASEBALL`→`blocked`,
+ * cache write 0)으로 비야구 방어는 단일 구조화 LLM 판정이 담당함이 입증됐으므로, 애매한
+ * 역할변경 문장은 차단하지 않고 LLM 판정에 위임한다. 게이트 기본값은 "애매하면 통과"다.
  */
 function hasRoleChangeInjection(tokens: string[]): boolean {
   for (let index = 0; index < tokens.length; index++) {
@@ -256,19 +259,11 @@ function hasRoleChangeInjection(tokens: string[]): boolean {
       .replace(/^(?:역할|role)/, "")
       .replace(/^(?:을|를|은|는|이|가|의)/, "");
     const clause = inline.length > 0 ? inline : (tokens[index + 1] ?? "");
-    if (!ROLE_CHANGE_STEM.test(clause)) continue;
     if (ROLE_CHANGE_IMPERATIVE.test(clause)) return true;
-    const rest = tokens.slice(inline.length > 0 ? index + 1 : index + 2);
-    if (rest.length === 0) continue;
-    // ② 역할변경 명사구 + 인접 규칙류 명사 = 역할변경 자체를 묻는 질의.
-    if (ROLE_CHANGE_NOUN_FORM.test(clause) && ROLE_RULE_NOUN.test(rest[0])) continue;
-    // ③ 뒤따르는 절이 역할변경 명제에 매인 질문인지, 독립 지시절인지를 구조로 판정.
-    const last = rest[rest.length - 1];
-    const boundToRoleClause = (QUESTION_FINAL.test(last) || BOUND_ENDING.test(last)) &&
-      !BENEFACTIVE_FINAL.test(last) &&
-      rest.slice(0, -1).every((token) => BOUND_ENDING.test(token));
-    if (boundToRoleClause) continue;
-    return true;
+    // 명령이 두 어절로 띄어 쓰인 형태(`역할 변경 부탁해`)도 같은 명령형이다 — 인접 1어절만 결합해
+    // 판정한다. 결합 범위를 인접으로 제한해 뒤쪽 무관한 어절이 명령형을 만들어내지 않게 한다.
+    const next = tokens[inline.length > 0 ? index + 1 : index + 2];
+    if (next && ROLE_CHANGE_IMPERATIVE.test(`${clause}${next}`)) return true;
   }
   return false;
 }
@@ -366,6 +361,10 @@ export function routeQuestion(
   const injectionNorm = injectionNormalize(normalized);
   if (INJECTION_COMPACT_PATTERNS.some((pattern) => pattern.test(injectionNorm))) return "blocked";
   if (hasRoleChangeInjection(tokens)) return "blocked";
+  // 단독 감사·확인 인사는 질문이 아니라 직전 답변에 대한 대화 행위다 — 차단 문구 대신 짧게 받는다.
+  // 폐쇄집합 full-string 완전일치라 `고마워 근데 날씨 알려줘`처럼 새 요청이 붙으면 여기 걸리지
+  // 않고 아래 기존 판정(비야구면 LLM NOT_BASEBALL → blocked)으로 그대로 내려간다.
+  if (isAckPhrase(question)) return "ack";
   if (SERVICE_WORDS.some((word) => normalized.includes(word))) return "service_redirect";
   const hasStat = STAT_WORDS.some((word) => tokenMatches(tokens, word));
   const hasTeam = TEAM_WORDS.some((word) => tokenMatches(tokens, word));
@@ -486,6 +485,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       route === "service_redirect" ? SERVICE_REDIRECT_ANSWER :
       route === "history_hold" ? HISTORY_HOLD_ANSWER :
       route === "context_missing" ? CONTEXT_MISSING_ANSWER :
+      route === "ack" ? ACK_ANSWER :
       BLOCKED_ANSWER;
     await deps.log({ userId, question, questionNorm, matchPath: route, answer, inputTokens: null, outputTokens: null });
     return { status: 200, answer, source: route, remaining };
