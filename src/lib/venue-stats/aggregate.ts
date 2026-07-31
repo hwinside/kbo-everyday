@@ -30,7 +30,6 @@ import type {
   B3Value,
   B4Side,
   B4Value,
-  BTeamValue,
   C1Entry,
   C2Entry,
   C4Entry,
@@ -56,7 +55,11 @@ import type {
 } from "@/lib/venue-stats/types";
 
 // ── §5 표본 가드 상수 ─────────────────────────────────────────────────────────
-export const MIN_FINAL_GAMES = 3; // 승률/스플릿/팀 경기당 지표
+// 승률/스플릿/팀 경기당 지표 표본 가드. 순수 leaf 모듈(state.ts)이 SSOT —
+// 클라이언트 번들이 node 전용 의존을 끌지 않도록 여기서는 재수출만 한다.
+import { MIN_FINAL_GAMES } from "@/lib/venue-stats/state";
+
+export { MIN_FINAL_GAMES };
 export const MIN_TEAM_AB = 60; // B1
 export const MIN_TEAM_OUTS = 81; // B2
 export const MIN_FAVORITE_AB = 10; // C1
@@ -423,13 +426,18 @@ function buildA1(ctx: Ctx): MetricEnvelope<A1Value> {
           ? "ready"
           : "sample_limited"
         : "attendance_only";
+      // §5 표본 미달이어도 직관 사실값(W/L/D·승률)은 그대로 노출하고 state 배지로만 경고한다
+      // (값을 숨기면 실제 기록이 0승 0패로 보여 더 나쁜 오정보 — 2026-07-31 하린아빠 결정).
+      // 비교(teamComparable·deltaPp)는 ready에서만 제공해 fail-closed 계약을 유지한다.
       return {
         key: String(teamId),
         state: itemState as MetricState,
         value:
           itemState === "ready"
             ? { attendance: teamAttendance, teamComparable: comparable, deltaPp }
-            : null,
+            : itemState === "sample_limited"
+              ? { attendance: teamAttendance, teamComparable: null, deltaPp: null }
+              : null,
         n: teamGames.length,
         denominator: {
           attendanceFinalGames: teamGames.length,
@@ -453,7 +461,11 @@ function buildA1(ctx: Ctx): MetricEnvelope<A1Value> {
     };
     return envelope;
   }
-  if (state === "sample_limited") return envelope;
+  if (state === "sample_limited") {
+    // 표본 미달 — 직관 사실값은 유지하고 팀 비교만 fail-closed (위 mixed 항과 동일 계약).
+    envelope.value = { attendance, teamComparable: null, deltaPp: null };
+    return envelope;
+  }
 
   const teamSeasonGames = standing.wins + standing.losses + standing.draws;
   const teamRate = ratio(standing.wins, teamSeasonGames);
@@ -512,6 +524,7 @@ function buildSplit<T extends WinLossDraw>(
     groups.set(key, list);
   }
   const keys = [...groups.keys()].sort();
+  // top-level value 는 표본 충족 cell 만(대표값 계약 유지). 미달 cell 은 item 으로 사실값+배지 노출.
   envelope.value = keys
     .filter((key) => groups.get(key)!.length >= MIN_FINAL_GAMES)
     .map((key) => cellOf(key, wld(groups.get(key)!)));
@@ -521,7 +534,8 @@ function buildSplit<T extends WinLossDraw>(
     return {
       key,
       state: itemState as MetricState,
-      value: itemState === "ready" ? cellOf(key, wld(games)) : null,
+      // 표본 미달 cell 도 승·패·무 사실값을 노출하고 state 배지로 경고한다.
+      value: cellOf(key, wld(games)),
       n: games.length,
       denominator: { finalGames: games.length },
     };
@@ -589,6 +603,28 @@ interface BTeamComputed {
   };
   unknownGames: number;
   finalGames: number;
+}
+
+/**
+ * 표본 미달(sample_limited) B 지표는 직관 사실값만 남기고 시즌 baseline·delta를 fail-closed 한다.
+ * "3경기부터 팀 시즌 비교를 보여드려요" 안내문과 카드가 충돌하면 안 된다 (2026-07-31 삼순 리뷰).
+ */
+function stripSeasonBaseline(id: "B1" | "B2" | "B3" | "B4", value: unknown): unknown {
+  if (value == null) return value;
+  if (id === "B1") {
+    const v = value as B1Value;
+    return { attendanceAvg: v.attendanceAvg, seasonAvg: null, delta: null } satisfies B1Value;
+  }
+  if (id === "B2") {
+    const v = value as B2Value;
+    return { attendanceEra: v.attendanceEra, seasonEra: null, delta: null } satisfies B2Value;
+  }
+  // B3는 시즌 baseline이 없는 직관 단독 지표라 그대로 둔다.
+  if (id === "B3") return value;
+  const v = value as B4Value;
+  const strip = (side: B4Side | null): B4Side | null =>
+    side == null ? null : { attendancePerGame: side.attendancePerGame, seasonPerGame: null, delta: null };
+  return { hr: strip(v.hr), hitsAllowed: strip(v.hitsAllowed) } satisfies B4Value;
 }
 
 function computeBForTeam(ctx: Ctx, teamId: number, games: ScopeGame[]): BTeamComputed {
@@ -762,10 +798,19 @@ function buildB(
           : part.sampleMet
             ? "ready"
             : "sample_limited";
+      // 표본 미달(sample_limited)은 직관 사실값만 노출하고 시즌 baseline·delta는 fail-closed.
+      // partial_data(적재 누락)는 수치 자체가 불완전이므로 계속 전체 null.
+      // ⚠️ mixed 여기서 part.value 는 BTeamValue 가 아니라 현재 id 하나의 값(B1Value 등)이다.
+      // BTeamValue 로 cast 해 strip 하면 shape 가 깨져 attendanceAvg 까지 사라진다(2026-07-31 삼순 P0-1).
       const item: ItemEnvelope = {
         key: String(teamId),
         state: itemState,
-        value: itemState === "ready" ? (part.value as BTeamValue | null) : null,
+        value:
+          itemState === "partial_data"
+            ? null
+            : itemState === "sample_limited"
+              ? stripSeasonBaseline(id, part.value)
+              : part.value,
         n: games.length,
         denominator: part.denominator,
         coverage: {
@@ -784,18 +829,26 @@ function buildB(
   const computed = computeBForTeam(ctx, teamId, teamGames.get(teamId) ?? []);
   const part = buildValueFor(computed);
   envelope.denominator = part.denominator;
-  envelope.value = state === "ready" ? part.value : null;
+  // 표본 미달도 직관 사실값은 노출한다(숫자를 숨기면 실제 기록이 0으로 오독된다).
+  // 단 시즌 baseline·delta는 "3경기부터 비교" 안내와 충돌하지 않게 null로 막는다.
+  envelope.value =
+    state === "ready"
+      ? part.value
+      : state === "sample_limited"
+        ? stripSeasonBaseline(id, part.value)
+        : null;
   if (id === "B4" && part.components) {
     envelope.components = part.components;
     // sample_limited여도 component envelope로 세부 상태를 드러낸다 (§11).
+    // 직관 값은 유지하되 시즌 baseline·delta는 동일하게 fail-closed.
     if (state === "sample_limited") {
       for (const component of Object.values(part.components)) {
         component.state = "sample_limited";
-        component.value = null;
+        const side = component.value as B4Side | null;
+        if (side) component.value = { attendancePerGame: side.attendancePerGame, seasonPerGame: null, delta: null };
       }
     }
   }
-  if (state === "sample_limited") envelope.value = null;
   return envelope;
 }
 

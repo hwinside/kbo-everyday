@@ -155,6 +155,103 @@ const stalePayload = {
   gps:scope("gps",1,.125),
 };
 
+// 혼합팀 표본 미달(2팀 × 1경기 = 총 2경기 < MIN_FINAL_GAMES).
+// 서버 계약대로 시즌 baseline·delta 는 이미 null 로 내려오고, UI 는
+// 사실값 노출 + 파생 점수 `–` + amber `표본 부족(참고용)` 이어야 한다.
+const sampleLimitedScope = (name) => {
+  const base = scope(name, 2, 1);
+  base.metrics.A1 = {
+    ...base.metrics.A1,
+    n: 2,
+    value: { attendance: { w: 2, l: 0, d: 0, rate: 1 }, teamComparable: null, deltaPp: null },
+    items: [
+      { key:"1", state:"sample_limited", value:{attendance:{w:1,l:0,d:0,rate:1},teamComparable:null,deltaPp:null}, n:1, denominator:{} },
+      { key:"9", state:"sample_limited", value:{attendance:{w:1,l:0,d:0,rate:1},teamComparable:null,deltaPp:null}, n:1, denominator:{} },
+    ],
+  };
+  const limited = {
+    "1": {
+      B1:{attendanceAvg:.286,seasonAvg:null,delta:null},
+      B2:{attendanceEra:3.42,seasonEra:null,delta:null},
+      B3:{runsPerGame:5.2,totalRuns:5},
+      B4:{hr:{attendancePerGame:1.3,seasonPerGame:null,delta:null},hitsAllowed:null},
+    },
+    "9": {
+      B1:{attendanceAvg:.251,seasonAvg:null,delta:null},
+      B2:{attendanceEra:4.18,seasonEra:null,delta:null},
+      B3:{runsPerGame:4.1,totalRuns:4},
+      B4:{hr:{attendancePerGame:.8,seasonPerGame:null,delta:null},hitsAllowed:null},
+    },
+  };
+  for (const id of ["B1","B2","B3","B4"]) {
+    base.metrics[id] = {...base.metrics[id],items:[
+      {key:"1",state:"sample_limited",value:limited["1"][id],n:1,denominator:{}},
+      {key:"9",state:"sample_limited",value:limited["9"][id],n:1,denominator:{}},
+    ]};
+  }
+  // A2~A6 production shape: 표본 미달 cell 은 top-level value 에서 빠지고 items 에만 사실값이 남는다.
+  // UI 가 top-level 만 읽으면 이 경로가 `표시할 기록이 없어요` 로 죽는다(삼순 P0-2).
+  const splitItems = {
+    A2: [
+      {key:"2",value:{opponentTeamId:2,w:1,l:0,d:0,rate:1}},
+      {key:"9",value:{opponentTeamId:9,w:1,l:0,d:0,rate:1}},
+    ],
+    A3: [
+      {key:"잠실:home",value:{stadium:"잠실",homeAway:"home",w:1,l:0,d:0,rate:1}},
+      {key:"대전:away",value:{stadium:"대전",homeAway:"away",w:1,l:0,d:0,rate:1}},
+    ],
+    A4: [
+      {key:"6",value:{weekday:6,w:1,l:0,d:0,rate:1}},
+      {key:"3",value:{weekday:3,w:1,l:0,d:0,rate:1}},
+    ],
+    A5: [
+      {key:"night",value:{dayNight:"night",w:2,l:0,d:0,rate:1}},
+    ],
+    A6: [
+      {key:"7",value:{month:7,w:2,l:0,d:0,rate:1}},
+    ],
+  };
+  for (const [id, items] of Object.entries(splitItems)) {
+    base.metrics[id] = {
+      ...base.metrics[id],
+      state:"sample_limited",
+      value:[],
+      n:2,
+      denominator:{finalGames:2},
+      items: items.map(({key,value}) => ({key,state:"sample_limited",value,n:1,denominator:{finalGames:1}})),
+    };
+  }
+  return base;
+};
+const sampleLimitedPayload = {
+  season:2026,
+  seasonSupport:{status:"supported",supportedSeason:2026},
+  overall:sampleLimitedScope("overall"),
+  gps:sampleLimitedScope("gps"),
+};
+
+// attendance_only(비교 소스 없는 시즌) 2경기 — 판정 사다리에서 sample_limited 보다 먼저 확정되어
+// 표본 미달이 state 에 가려지던 경계. 사실값은 노출하되 파생 지수는 `–` 이어야 한다.
+const attendanceOnlyScope = (name) => {
+  const base = sampleLimitedScope(name);
+  base.metrics.A1 = {
+    ...base.metrics.A1,
+    state: "attendance_only",
+    n: 2,
+    denominator: { attendanceFinalGames: 2, teamSeasonGames: 0 },
+    value: { attendance: { w: 2, l: 0, d: 0, rate: 1 }, teamComparable: null, deltaPp: null },
+    items: [],
+    reasons: ["season_not_supported"],
+  };
+  return base;
+};
+const attendanceOnlyPayload = {
+  season:2026,
+  seasonSupport:{status:"supported",supportedSeason:2026},
+  overall:attendanceOnlyScope("overall"),
+  gps:attendanceOnlyScope("gps"),
+};
+
 const css = await postcss([tailwind]).process(
   readFileSync(resolve(ROOT, "src/styles/globals.css"), "utf8"),
   { from: resolve(ROOT, "src/styles/globals.css") },
@@ -162,10 +259,16 @@ const css = await postcss([tailwind]).process(
 const bundle = readFileSync(resolve(GEN, "bundle.js"), "utf8");
 let initial2026Served = false;
 let fail2025 = false;
+let serveSampleLimited = false;
+let serveAttendanceOnly = false;
 const server = createServer((req, res) => {
   if (req.url?.startsWith("/api/me/venue-stats")) {
     const requestedSeason = new URL(req.url, "http://127.0.0.1").searchParams.get("season");
-    const body = requestedSeason === "2025" ? stalePayload : payload;
+    const body = requestedSeason === "2025"
+      ? stalePayload
+      : serveAttendanceOnly ? attendanceOnlyPayload
+      : serveSampleLimited ? sampleLimitedPayload
+      : payload;
     const delay = requestedSeason === "2025" ? 300 : initial2026Served ? 10 : 0;
     if (requestedSeason === "2026") initial2026Served = true;
     return setTimeout(() => {
@@ -387,8 +490,142 @@ try {
   if (contrast.mutationRatio >= 4.5) throw new Error("Dashboard AA mutation guard did not fail");
 
   await page.screenshot({ path: SHOT, fullPage: true });
+
+  // ── 혼합팀 표본 미달(2팀 × 1경기) actual DOM 계약 ────────────────────────────
+  // 사실값(W/L/D·승률·B1~B4)은 보이고, 파생 요정 지수는 `–`, 배지는 amber `표본 부족(참고용)`,
+  // 시즌 baseline/delta 비교 문구는 0건이어야 한다.
+  serveSampleLimited = true;
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.getByText("표본 부족(참고용)", { exact: true }).first().waitFor({ timeout: 4000 });
+
+  const heroBlock = page.locator('[data-testid="venue-stats-dashboard"]').first();
+  const heroText = await heroBlock.innerText();
+  for (const fact of ["2승", "0패", "0무", "100.0%"]) {
+    if (!heroText.includes(fact)) throw new Error(`sample-limited hero fact missing: ${fact}`);
+  }
+  if (/\b100점\b/.test(heroText) || heroText.includes("승률 요정")) {
+    throw new Error(`sample-limited hero exposed derived score/badge: ${heroText.slice(0, 200)}`);
+  }
+  // 파생 지수는 hero 숫자 slot(54px) 에만 렌더된다 — 해당 슬롯을 직접 집어 값을 확인한다.
+  const scoreText = await page
+    .locator('[data-testid="venue-stats-dashboard"] span.text-\\[54px\\]')
+    .first()
+    .innerText();
+  if (scoreText.trim() !== "–") throw new Error(`sample-limited derived score must be dash, got ${scoreText}`);
+
+  const limitedLg = await page.getByText("LG 응원 구간", { exact: true }).nth(1).locator("../..").innerText();
+  const limitedHanwha = await page.getByText("한화 응원 구간", { exact: true }).nth(1).locator("../..").innerText();
+  if (![".286", "3.42", "5.2", "1.3"].every((value) => limitedLg.includes(value))) {
+    throw new Error(`sample-limited mixed LG facts missing: ${limitedLg}`);
+  }
+  if (![".251", "4.18", "4.1", "0.8"].every((value) => limitedHanwha.includes(value))) {
+    throw new Error(`sample-limited mixed 한화 facts missing: ${limitedHanwha}`);
+  }
+  const baselinePhrases = await page.evaluate(() => {
+    const root = document.querySelector('[data-testid="venue-stats-dashboard"]');
+    return [...root.querySelectorAll("*")]
+      .map((element) => [...element.childNodes]
+        .filter((node) => node.nodeType === Node.TEXT_NODE)
+        .map((node) => node.textContent ?? "").join("").trim())
+      .filter((text) => /^시즌 /.test(text) || text.includes("시즌 경기당"));
+  });
+  if (baselinePhrases.length > 0) {
+    throw new Error(`sample-limited must not render season baseline: ${JSON.stringify(baselinePhrases.slice(0, 5))}`);
+  }
+  // 배지는 기본 '승률 요정'(핑크 #ff9aa5)과 다른 경고색(amber)이어야 한다.
+  // Tailwind v4 는 oklch 를 내보내므로 문자열 접두사 대신 실제 픽셀 RGB 로 판정한다.
+  // A2~A6 상세: top-level value=[] 이어도 items 사실값이 실제 행으로 렌더되어야 한다.
+  await page.getByRole("button", { name: "상대·구장·요일 상세 통계" }).click();
+  const opponentCard = page.getByText("상대팀별", { exact: true }).locator("..");
+  const opponentText = await opponentCard.innerText();
+  if (opponentText.includes("표시할 기록이 없어요")) {
+    throw new Error(`sample-limited split rows dropped (items ignored): ${opponentText}`);
+  }
+  for (const fact of ["두산전", "1승 0패 0무 · 100.0%"]) {
+    if (!opponentText.includes(fact)) throw new Error(`sample-limited split fact missing: ${fact} / ${opponentText}`);
+  }
+  for (const [title, fact] of [["구장별", "잠실 · 홈"], ["요일별", "토요일"], ["낮·밤", "야간 경기"], ["월별", "7월"]]) {
+    const text = await page.getByText(title, { exact: true }).locator("..").innerText();
+    if (text.includes("표시할 기록이 없어요") || !text.includes(fact)) {
+      throw new Error(`sample-limited split "${title}" missing ${fact}: ${text}`);
+    }
+  }
+  // 행 단위 참고용 배지도 실제로 붙어야 한다.
+  if ((await opponentCard.getByText("참고용", { exact: true }).count()) < 1) {
+    throw new Error("sample-limited split rows missing 참고용 badge");
+  }
+
+  // 상세 목록 밖의 요약 카드(`토요일 승률`)도 같은 items 소스를 써야 한다.
+  // top-level value 만 읽으면 상세엔 토요일이 보이는데 이 카드만 `–` 로 죽는다.
+  const saturdayCard = page.getByText("토요일 승률", { exact: true }).locator("..");
+  const saturdayText = await saturdayCard.innerText();
+  if (!saturdayText.includes("100.0%")) {
+    throw new Error(`sample-limited Saturday fact dropped outside detail list: ${saturdayText}`);
+  }
+
+  const badgeRgb = await page.getByText("표본 부족(참고용)", { exact: true }).first()
+    .evaluate((element) => {
+      const canvas = document.createElement("canvas");
+      canvas.width = canvas.height = 1;
+      const context = canvas.getContext("2d");
+      context.fillStyle = getComputedStyle(element).color;
+      context.fillRect(0, 0, 1, 1);
+      const data = context.getImageData(0, 0, 1, 1).data;
+      return [data[0], data[1], data[2]];
+    });
+  const [br, bg, bb] = badgeRgb;
+  if (!(br > 200 && bg > 150 && bb < 140)) {
+    throw new Error(`sample-limited badge must be amber warning tone, got rgb(${badgeRgb.join(",")})`);
+  }
+
+  // ── attendance_only 2경기 actual DOM 계약 ─────────────────────────────────
+  // 비교 소스가 없는 시즌은 attendance_only 가 sample_limited 보다 먼저 확정되므로
+  // state 열거로 막으면 다시 뚫린다 — 사실값은 남기고 파생 지수만 비워야 한다.
+  serveAttendanceOnly = true;
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.getByText("표본 부족(참고용)", { exact: true }).first().waitFor({ timeout: 4000 });
+
+  const aoText = await page.locator('[data-testid="venue-stats-dashboard"]').first().innerText();
+  for (const fact of ["2승", "0패", "0무", "100.0%"]) {
+    if (!aoText.includes(fact)) throw new Error(`attendance_only hero fact missing: ${fact}`);
+  }
+  if (aoText.includes("승률 요정")) {
+    throw new Error(`attendance_only 2 games must not show confident badge: ${aoText.slice(0, 200)}`);
+  }
+  const aoScore = await page
+    .locator('[data-testid="venue-stats-dashboard"] span.text-\\[54px\\]')
+    .first()
+    .innerText();
+  if (aoScore.trim() !== "–") {
+    throw new Error(`attendance_only 2 games derived score must be dash, got ${aoScore}`);
+  }
+  const aoBadgeRgb = await page.getByText("표본 부족(참고용)", { exact: true }).first()
+    .evaluate((element) => {
+      const canvas = document.createElement("canvas");
+      canvas.width = canvas.height = 1;
+      const context = canvas.getContext("2d");
+      context.fillStyle = getComputedStyle(element).color;
+      context.fillRect(0, 0, 1, 1);
+      const data = context.getImageData(0, 0, 1, 1).data;
+      return [data[0], data[1], data[2]];
+    });
+  if (!(aoBadgeRgb[0] > 200 && aoBadgeRgb[1] > 150 && aoBadgeRgb[2] < 140)) {
+    throw new Error(`attendance_only badge must be amber, got rgb(${aoBadgeRgb.join(",")})`);
+  }
+
+  // mutation RED: 가드가 실제로 살아있는지 — 점수 slot 을 강제로 채우면 검사가 실패해야 한다.
+  const mutationDetected = await page.evaluate(() => {
+    const slot = document.querySelector('[data-testid="venue-stats-dashboard"] span.text-\\[54px\\]');
+    const original = slot.textContent;
+    slot.textContent = "100";
+    const leaked = slot.textContent.trim() !== "–";
+    slot.textContent = original;
+    return leaked;
+  });
+  if (!mutationDetected) throw new Error("attendance_only score mutation guard did not trip");
+
   console.log(
-    `venue stats S2 browser: PASS (390px, B1~B4 actual payload, season abort/generation, selected-season 503 fail-closed(no stale value + retry UI), AA ${contrast.minimum.toFixed(2)}:1 across ${contrast.count} texts)\nshot: ${SHOT}`,
+    `venue stats S2 browser: PASS (390px, B1~B4 actual payload, season abort/generation, selected-season 503 fail-closed(no stale value + retry UI), mixed sample-limited facts+dash score+amber badge+0 baseline+summary card, attendance_only 2-game facts+dash score+amber badge+mutation RED, AA ${contrast.minimum.toFixed(2)}:1 across ${contrast.count} texts)\nshot: ${SHOT}`,
   );
 } finally {
   await browser.close();

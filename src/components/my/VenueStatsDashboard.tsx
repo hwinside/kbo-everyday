@@ -53,8 +53,12 @@ import {
   formatRate,
   formatSigned,
   METRIC_STATE_LABELS,
+  splitCells,
   metricEvidence,
 } from "@/lib/venue-stats/ui";
+// 순수 leaf 모듈에서 가져온다 — aggregate.ts 는 node 전용 의존(node:crypto)을 끌어서
+// 클라이언트 번들에서 import 하면 안 된다.
+import { MIN_FINAL_GAMES } from "@/lib/venue-stats/state";
 
 interface VenueStatsResponse {
   season: number;
@@ -111,7 +115,7 @@ function SplitList({
   metric,
 }: {
   title: string;
-  rows: Array<{ key: string; label: string; value: string }>;
+  rows: Array<{ key: string; label: string; value: string; sampleLimited?: boolean }>;
   metric: MetricEnvelope;
 }) {
   return (
@@ -121,7 +125,15 @@ function SplitList({
         {rows.slice(0, 4).map((row) => (
           <div key={row.key} className="flex items-center justify-between gap-3 text-[13px]">
             <span className="truncate text-white/70">{row.label}</span>
-            <span className="shrink-0 font-extrabold text-white">{row.value}</span>
+            <span className="flex shrink-0 items-center gap-1.5">
+              <span className="font-extrabold text-white">{row.value}</span>
+              {/* 표본 미달 cell 은 사실값을 보여주되 참고용임을 행 단위로 표시한다. */}
+              {row.sampleLimited && (
+                <span className="rounded-full border border-amber-300/45 px-1.5 py-0.5 text-[9px] font-black text-amber-300">
+                  참고용
+                </span>
+              )}
+            </span>
           </div>
         ))}
         {rows.length === 0 && <p className="text-[12px] text-white/70">표시할 기록이 없어요</p>}
@@ -304,8 +316,16 @@ export default function VenueStatsDashboard() {
                 {hero.score ?? "–"}
               </span>
               {hero.score != null && <span className="mb-1 text-[16px] font-extrabold text-white/70">점</span>}
-              <span className="mb-1 rounded-full border border-[#ff596a]/55 px-2.5 py-1 text-[11px] font-black text-[#ff9aa5]">
-                승률 요정
+              {/* 표본 가드 미달이면 사실값은 그대로 두고 배지로만 참고용임을 알린다.
+                  mixed_team 이어도 총 final 이 모자라면 참고용 — hero.sampleLimited 가 SSOT. */}
+              <span
+                className={`mb-1 rounded-full border px-2.5 py-1 text-[11px] font-black ${
+                  hero.sampleLimited
+                    ? "border-amber-300/55 text-amber-300"
+                    : "border-[#ff596a]/55 text-[#ff9aa5]"
+                }`}
+              >
+                {hero.sampleLimited ? METRIC_STATE_LABELS.sample_limited : "승률 요정"}
               </span>
             </div>
             <div className="mt-3 flex items-center gap-3 text-[15px] font-black">
@@ -316,11 +336,13 @@ export default function VenueStatsDashboard() {
               <span>승률 {formatRate(hero.attendance?.rate)}</span>
             </div>
             <p className="mt-2 text-[12px] font-semibold text-white/70">
-              {hero.mixedTeam
-                ? "응원팀 변경 포함 · 팀별 구간은 아래에서 확인"
-                : hero.deltaPp == null
-                  ? "팀 시즌 비교값을 확인 중이에요"
-                  : `팀 시즌 승률 ${formatRate(hero.teamRate)}보다 ${formatSigned(hero.deltaPp, 1, "%p")}`}
+              {hero.sampleLimited
+                ? `종료 경기 ${a1.n}경기 기록이에요 · ${MIN_FINAL_GAMES}경기부터 팀 시즌 비교를 보여드려요`
+                : hero.mixedTeam
+                  ? "응원팀 변경 포함 · 팀별 구간은 아래에서 확인"
+                  : hero.deltaPp == null
+                    ? "팀 시즌 비교값을 확인 중이에요"
+                    : `팀 시즌 승률 ${formatRate(hero.teamRate)}보다 ${formatSigned(hero.deltaPp, 1, "%p")}`}
             </p>
             {hero.teamIds.length > 0 && (
               <div className="mt-4 flex flex-wrap gap-1.5 rounded-xl border border-white/8 bg-white/[0.035] p-2.5">
@@ -394,10 +416,11 @@ export default function VenueStatsDashboard() {
               <SectionTitle>내가 간 경기, 우리 팀은</SectionTitle>
               {!hero.mixedTeam && (
                 <div className="grid grid-cols-2 gap-2">
+                  {/* 표본 미달이면 baseline이 null로 내려오므로 비교문구 자체를 감춘다("시즌 – · –" 방지). */}
                   <MetricCard
                     title="팀 타율"
                     value={formatAvg(b1?.value?.attendanceAvg)}
-                    comparison={b1?.value ? `시즌 ${formatAvg(b1.value.seasonAvg)} · ${formatSigned(b1.value.delta, 3)}` : undefined}
+                    comparison={b1?.value?.seasonAvg != null ? `시즌 ${formatAvg(b1.value.seasonAvg)} · ${formatSigned(b1.value.delta, 3)}` : undefined}
                     metric={b1!}
                   />
                   <MetricCard
@@ -409,13 +432,13 @@ export default function VenueStatsDashboard() {
                   <MetricCard
                     title="팀 ERA"
                     value={formatEra(b2?.value?.attendanceEra)}
-                    comparison={b2?.value ? `시즌 ${formatEra(b2.value.seasonEra)} · ${formatSigned(b2.value.delta, 2)}` : undefined}
+                    comparison={b2?.value?.seasonEra != null ? `시즌 ${formatEra(b2.value.seasonEra)} · ${formatSigned(b2.value.delta, 2)}` : undefined}
                     metric={b2!}
                   />
                   <MetricCard
                     title="홈런"
                     value={b4?.value?.hr?.attendancePerGame == null ? "–" : b4.value.hr.attendancePerGame.toFixed(1)}
-                    comparison={b4?.value?.hr ? `시즌 경기당 ${b4.value.hr.seasonPerGame?.toFixed(1) ?? "–"}` : undefined}
+                    comparison={b4?.value?.hr?.seasonPerGame != null ? `시즌 경기당 ${b4.value.hr.seasonPerGame.toFixed(1)}` : undefined}
                     metric={b4!}
                   />
                 </div>
@@ -549,7 +572,15 @@ export default function VenueStatsDashboard() {
 
               <SectionTitle>이런 것까지?</SectionTitle>
               <div className="grid grid-cols-2 gap-2">
-                <MetricCard title="토요일 승률" value={formatRate(((scope.metrics.A4.value as A4Cell[] | null) ?? []).find((x) => x.weekday === 6)?.rate)} metric={scope.metrics.A4} />
+                {/* 상세 목록과 같은 소스를 써야 한다 — 표본 미달 cell 은 top-level value 에 없고
+                    items 에만 사실값이 있어서, 여기서 value 만 읽으면 상세엔 보이는 토요일이 `–` 로 죽는다. */}
+                <MetricCard
+                  title="토요일 승률"
+                  value={formatRate(
+                    splitCells<A4Cell>(scope.metrics.A4).find(({ cell }) => cell.weekday === 6)?.cell.rate,
+                  )}
+                  metric={scope.metrics.A4}
+                />
                 <MetricCard title="연속 직관" value={`${e1?.value?.current ?? 0}경기`} comparison={`최장 ${e1?.value?.longest ?? 0}경기`} metric={e1!} />
                 <MetricCard title="우천·취소" value={`${d5?.value?.cancelledCount ?? 0}회`} metric={d5!} />
                 <MetricCard title="최다 득점" value={d6?.value?.maxTeamRuns ? `${d6.value.maxTeamRuns.runs}점` : "–"} comparison={d6?.value?.maxTeamRuns?.date} metric={d6!} />
@@ -569,49 +600,56 @@ export default function VenueStatsDashboard() {
               </button>
               {detailsOpen && (
                 <div className="mt-2 grid gap-2">
+                  {/* 표본 미달 cell 은 top-level value 에 없고 items 에만 사실값이 있다 —
+                      splitCells() 로 items 를 우선 합쳐 실제 기록이 사라지지 않게 한다(삼순 P0-2). */}
                   <SplitList
                     title="상대팀별"
                     metric={scope.metrics.A2}
-                    rows={((scope.metrics.A2.value as A2Cell[] | null) ?? []).map((cell) => ({
-                      key: String(cell.opponentTeamId),
+                    rows={splitCells<A2Cell>(scope.metrics.A2).map(({ key, cell, sampleLimited }) => ({
+                      key,
                       label: `${getTeamById(cell.opponentTeamId)?.shortName ?? `팀 ${cell.opponentTeamId}`}전`,
                       value: `${cell.w}승 ${cell.l}패 ${cell.d}무 · ${formatRate(cell.rate)}`,
+                      sampleLimited,
                     }))}
                   />
                   <SplitList
                     title="구장별"
                     metric={scope.metrics.A3}
-                    rows={((scope.metrics.A3.value as A3Cell[] | null) ?? []).map((cell) => ({
-                      key: `${cell.stadium}:${cell.homeAway}`,
+                    rows={splitCells<A3Cell>(scope.metrics.A3).map(({ key, cell, sampleLimited }) => ({
+                      key,
                       label: `${cell.stadium} · ${cell.homeAway === "home" ? "홈" : "원정"}`,
                       value: `${cell.w}승 ${cell.l}패 · ${formatRate(cell.rate)}`,
+                      sampleLimited,
                     }))}
                   />
                   <SplitList
                     title="요일별"
                     metric={scope.metrics.A4}
-                    rows={((scope.metrics.A4.value as A4Cell[] | null) ?? []).map((cell) => ({
-                      key: String(cell.weekday),
+                    rows={splitCells<A4Cell>(scope.metrics.A4).map(({ key, cell, sampleLimited }) => ({
+                      key,
                       label: `${WEEKDAYS[cell.weekday]}요일`,
                       value: `${cell.w}승 ${cell.l}패 · ${formatRate(cell.rate)}`,
+                      sampleLimited,
                     }))}
                   />
                   <SplitList
                     title="낮·밤"
                     metric={scope.metrics.A5}
-                    rows={((scope.metrics.A5.value as A5Cell[] | null) ?? []).map((cell) => ({
-                      key: cell.dayNight,
+                    rows={splitCells<A5Cell>(scope.metrics.A5).map(({ key, cell, sampleLimited }) => ({
+                      key,
                       label: cell.dayNight === "day" ? "낮 경기" : "야간 경기",
                       value: `${cell.w}승 ${cell.l}패 · ${formatRate(cell.rate)}`,
+                      sampleLimited,
                     }))}
                   />
                   <SplitList
                     title="월별"
                     metric={scope.metrics.A6}
-                    rows={((scope.metrics.A6.value as A6Cell[] | null) ?? []).map((cell) => ({
-                      key: String(cell.month),
+                    rows={splitCells<A6Cell>(scope.metrics.A6).map(({ key, cell, sampleLimited }) => ({
+                      key,
                       label: `${cell.month}월`,
                       value: `${cell.w}승 ${cell.l}패 · ${formatRate(cell.rate)}`,
+                      sampleLimited,
                     }))}
                   />
                 </div>

@@ -27,7 +27,15 @@ import {
   type TeamSeasonTotals,
   type VenueStatsAggregateInput,
 } from "@/lib/venue-stats/aggregate";
-import { METRIC_IDS, type MetricEnvelope } from "@/lib/venue-stats/types";
+import {
+  METRIC_IDS,
+  type B1Value,
+  type B2Value,
+  type B4Side,
+  type B4Value,
+  type MetricEnvelope,
+} from "@/lib/venue-stats/types";
+import { buildVenueStatsHero } from "@/lib/venue-stats/ui";
 
 let pass = 0;
 let fail = 0;
@@ -386,10 +394,67 @@ console.log("\n[5] mixed snapshot team — A1/B perTeam");
   ok("A1 mixed_team: top-level teamComparable/deltaPp=null (§11 exact)", a1.state === "mixed_team" && a1.value?.teamComparable === null && a1.value?.deltaPp === null);
   ok("A1 perTeam 2팀 item (LG W / KT W)", a1.items?.length === 2 && item(a1, String(LG)) !== undefined && item(a1, String(KT)) !== undefined);
   ok(
-    "A1 perTeam 1경기 표본 미달은 item value=null (§5)",
-    item(a1, String(LG))?.state === "sample_limited" && item(a1, String(LG))?.value === null,
+    "A1 perTeam 1경기 표본 미달: state=sample_limited 이지만 사실값(W/L/D)은 노출·비교만 null (2026-07-31 결정)",
+    item(a1, String(LG))?.state === "sample_limited" &&
+      (item(a1, String(LG))?.value as { attendance: { w: number }; teamComparable: unknown; deltaPp: unknown } | null)?.attendance.w === 1 &&
+      (item(a1, String(LG))?.value as { teamComparable: unknown } | null)?.teamComparable === null &&
+      (item(a1, String(LG))?.value as { deltaPp: unknown } | null)?.deltaPp === null,
   );
   ok("B1 mixed_team: value=null + perTeam items", s.metrics.B1.state === "mixed_team" && s.metrics.B1.value === null && s.metrics.B1.items?.length === 2);
+  // ─ mixed 표본 미달 item 은 단일팀과 동일 계약: 직관 사실값 shape 보존 + 시즌 baseline·delta null.
+  // (part.value 를 BTeamValue 로 cast 해 strip 하면 shape 가 깨져 attendanceAvg 까지 사라졌던 결함 — 삼순 P0-1)
+  {
+    const b1Item = item(s.metrics.B1, String(KT));
+    const b1Value = b1Item?.value as B1Value | null;
+    ok(
+      "B1 mixed sample_limited item: attendanceAvg shape 보존·seasonAvg/delta null",
+      b1Item?.state === "sample_limited" &&
+        approx(b1Value?.attendanceAvg, 0.25) &&
+        b1Value?.seasonAvg === null &&
+        b1Value?.delta === null,
+    );
+    const b2Item = item(s.metrics.B2, String(KT));
+    const b2Value = b2Item?.value as B2Value | null;
+    ok(
+      "B2 mixed sample_limited item: B2 shape 유지(attendanceEra 키 존재)·seasonEra/delta null",
+      b2Item?.state === "sample_limited" &&
+        b2Value != null &&
+        "attendanceEra" in b2Value &&
+        b2Value.seasonEra === null &&
+        b2Value.delta === null,
+    );
+    const b4Item = item(s.metrics.B4, String(KT));
+    const b4Value = b4Item?.value as B4Value | null;
+    ok(
+      "B4 mixed sample_limited item: hr/hitsAllowed attendancePerGame 보존·seasonPerGame/delta null",
+      b4Item?.state === "sample_limited" &&
+        b4Value?.hr?.attendancePerGame === 0 &&
+        b4Value?.hr?.seasonPerGame === null &&
+        b4Value?.hr?.delta === null &&
+        b4Value?.hitsAllowed?.attendancePerGame === 0 &&
+        b4Value?.hitsAllowed?.seasonPerGame === null &&
+        b4Value?.hitsAllowed?.delta === null,
+    );
+    // partial_data(적재 누락) item 은 수치 자체가 불완전이라 계속 전체 null.
+    ok(
+      "B1 mixed partial_data item 은 여전히 value=null (fail-closed 유지)",
+      item(s.metrics.B1, String(LG))?.state === "partial_data" &&
+        item(s.metrics.B1, String(LG))?.value === null,
+    );
+  }
+  // ─ mixed_team 총 final 이 모자라면 파생 '요정 지수'도 참고용 계약 (삼순 P0-2).
+  {
+    const mixedHero = buildVenueStatsHero(s);
+    ok(
+      "hero mixed_team 총 2경기: sampleLimited=true·score=null (승률 요정 배지 방지)",
+      s.metrics.A1.n === 2 && mixedHero.sampleLimited === true && mixedHero.score === null,
+    );
+    ok(
+      "hero mixed_team: score 는 비워도 사실 W/L/D 는 그대로",
+      mixedHero.attendance != null &&
+        mixedHero.attendance.w + mixedHero.attendance.l + mixedHero.attendance.d === 2,
+    );
+  }
   const e1 = s.metrics.E1 as MetricEnvelope<{ perTeam: Array<{ teamId: number }> }>;
   ok("E1 perTeam 팀별 구간 분리 (팀 가로지르기 금지 — §9)", (e1.value?.perTeam.length ?? 0) >= 2);
 }
@@ -402,8 +467,52 @@ console.log("\n[6] 표본 가드 / D6 no_wins leaf 승격 / attendance_only");
     seasonGames: SEASON_GAMES.filter((game) => game.complete),
   }));
   ok("final 1경기: A1 sample_limited (final≥3 가드)", single.metrics.A1.state === "sample_limited");
-  ok("A1 표본 미달 value=null (§5)", single.metrics.A1.value === null);
-  ok("B1 sample_limited (AB 30<60)·value=null", single.metrics.B1.state === "sample_limited" && single.metrics.B1.value === null);
+  ok(
+    "A1 표본 미달: 사실값 노출(0승 위조 금지)·팀 비교만 null (2026-07-31 결정)",
+    (single.metrics.A1.value as { attendance: { w: number; l: number } } | null)?.attendance != null &&
+      (single.metrics.A1.value as { teamComparable: unknown } | null)?.teamComparable === null &&
+      (single.metrics.A1.value as { deltaPp: unknown } | null)?.deltaPp === null,
+  );
+  ok(
+    "B1 sample_limited (AB 30<60)·사실값 노출",
+    single.metrics.B1.state === "sample_limited" && single.metrics.B1.value !== null,
+  );
+  // ─ 표본 미달은 직관 사실값만. 시즌 baseline·delta는 "3경기부터 비교" 안내와 충돌하면 안 된다.
+  {
+    const b1 = single.metrics.B1.value as B1Value | null;
+    ok(
+      "B1 sample_limited: attendanceAvg 유지·seasonAvg/delta null (카드가 칭션과 충돌 금지)",
+      b1?.attendanceAvg != null && b1?.seasonAvg === null && b1?.delta === null,
+    );
+    const b2 = single.metrics.B2.value as B2Value | null;
+    ok(
+      "B2 sample_limited: attendanceEra 유지·seasonEra/delta null",
+      single.metrics.B2.state === "sample_limited" && b2?.seasonEra === null && b2?.delta === null,
+    );
+    const b4 = single.metrics.B4.value as B4Value | null;
+    ok(
+      "B4 sample_limited: attendancePerGame 유지·seasonPerGame/delta null (hr·hitsAllowed 둘 다)",
+      single.metrics.B4.state === "sample_limited" &&
+        b4?.hr?.seasonPerGame === null && b4?.hr?.delta === null &&
+        b4?.hitsAllowed?.seasonPerGame === null && b4?.hitsAllowed?.delta === null,
+    );
+    const hrComponent = single.metrics.B4.components?.hr.value as B4Side | null;
+    ok(
+      "B4 component도 동일: state=sample_limited·seasonPerGame/delta null",
+      single.metrics.B4.components?.hr.state === "sample_limited" &&
+        hrComponent?.seasonPerGame === null && hrComponent?.delta === null,
+    );
+    // 파생 '요정 지수'는 확정값처럼 보이면 안 되므로 hero score는 null.
+    const hero = buildVenueStatsHero(single);
+    ok(
+      "hero: 표본 미달이면 score=null (2경기 전승을 100점으로 확정 표기 금지)",
+      hero.score === null,
+    );
+    ok(
+      "hero: score는 숨겨도 사실 W/L/D는 그대로 노출",
+      hero.attendance != null && hero.attendance.w + hero.attendance.l + hero.attendance.d === 1,
+    );
+  }
 
   const d6 = single.metrics.D6;
   ok("D6 무승: outer=ready 승격(leaf 제외 — §12) + maxMarginWin=no_wins", d6.state === "ready" && d6.components?.maxMarginWin.state === "no_wins");

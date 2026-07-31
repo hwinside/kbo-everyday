@@ -26,6 +26,13 @@ export const METRIC_STATE_LADDER = [
 
 export type MetricState = (typeof METRIC_STATE_LADDER)[number];
 
+/**
+ * §5 표본 가드 — 종료 경기 최소 수(승률·스플릿·팀 경기당 지표).
+ * 클라이언트 UI 안내문과 집계 로직이 같은 임계값을 써야 해서 순수 leaf 모듈인 여기에 둔다
+ * (aggregate.ts 는 node 전용 의존을 끌어서 클라이언트 번들에서 import 하면 안 된다).
+ */
+export const MIN_FINAL_GAMES = 3;
+
 /** 사다리 밖 leaf-only 정보성 상태 (component envelope 전용, §11 D6 등). */
 export const LEAF_ONLY_STATES = ["no_wins"] as const;
 export type LeafOnlyState = (typeof LEAF_ONLY_STATES)[number];
