@@ -40,6 +40,8 @@ import { isIosNativeRuntime } from "@/lib/capacitor/platform";
 import { startVenueStoryUrlRefresh } from "@/lib/venue-stories/refresh-policy";
 import { getAvatarPath } from "@/lib/constants/avatars";
 import { trackVenueStoryView } from "@/lib/venue-stories/view-tracker-client";
+// 조회수 합산 표기 — 게시글 조회수(#978)와 동일 계약(click+impression) 재사용.
+import { postViewTotal } from "@/lib/community/view-tracker-policy";
 
 interface Props {
   stories: VenueStory[];
@@ -718,16 +720,22 @@ export default function VenueStoryViewer({
           </div>
           <p className="text-white/60 text-[11px] flex items-center gap-1.5">
             <span>{timeAgo(story.createdAt)}</span>
-            {/* 조회수는 일단 관리자만 — 서버 필드 분기 + AdminOnly 이중 게이트. */}
+            {/* 조회수는 일단 관리자만 — 서버 필드 분기 + AdminOnly 이중 게이트.
+                표기는 클릭·노출 분리 대신 합산 단일값(하린아빠 7/31) — 게시글 조회수(#978,
+                postViewTotal)와 동일 계약을 재사용해 두 화면의 숫자 의미가 어긋나지 않게 한다.
+                원본 집계(click/impression)는 서버·DB에서 분리 유지하고 표시만 합친다.
+                공개 범위는 관리자 전용 유지(하린아빠 7/31) — 전체 공개 전환은 AdminOnly 제거 한 줄. */}
             {story.clickCount != null && story.impressionCount != null && (
               <AdminOnly>
                 <span
                   className="inline-flex items-center gap-1"
-                  title="관리자 전용 조회수: 클릭·노출"
+                  title="관리자 전용 조회수: 클릭+노출 합산"
                 >
                   <Eye size={12} />
-                  <span>클릭 {story.clickCount.toLocaleString()}</span>
-                  <span>· 노출 {story.impressionCount.toLocaleString()}</span>
+                  <span>
+                    조회수{" "}
+                    {postViewTotal(story.clickCount, story.impressionCount).toLocaleString()}
+                  </span>
                 </span>
               </AdminOnly>
             )}
