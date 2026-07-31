@@ -404,6 +404,20 @@ function neverResponse(): Promise<Response> {
   return new Promise(() => undefined);
 }
 
+async function withWatchdog<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label}: watchdog ${timeoutMs}ms exceeded`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 async function routeFailureMatrix() {
   const date = "20260730";
   const realFetch = globalThis.fetch;
@@ -434,7 +448,11 @@ async function routeFailureMatrix() {
       return realFetch(input as RequestInfo, init);
     }) as typeof fetch;
     const startedAt = Date.now();
-    const response = await GET(new NextRequest(`http://localhost/api/game-live?date=${date}`));
+    const response = await withWatchdog(
+      GET(new NextRequest(`http://localhost/api/game-live?date=${date}`)),
+      6_000,
+      `KBO ${mode} / Naver ${naverMode}`,
+    );
     const body = await response.json() as { games: unknown[]; trace: { stage: string; deadlineAtMs: number } };
     return { response, body, elapsedMs: Date.now() - startedAt };
   };

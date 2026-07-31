@@ -14,6 +14,20 @@ function neverResponse(): Promise<Response> {
   return new Promise(() => undefined);
 }
 
+async function withWatchdog<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label}: watchdog ${timeoutMs}ms exceeded`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 function stalledBodyResponse(): Response {
   return new Response(new ReadableStream<Uint8Array>({
     start() {
@@ -69,7 +83,7 @@ async function main() {
     }) as typeof fetch;
 
     const startedAt = Date.now();
-    const response = await rosterMovesRoute(
+    const response = await withWatchdog(rosterMovesRoute(
       new NextRequest("http://localhost/api/cron/roster-moves?force=1", {
         headers: { authorization: "Bearer roster-deadline-smoke" },
       }),
@@ -90,7 +104,7 @@ async function main() {
         },
         collectionDeadlineMs: 80,
       },
-    );
+    ), 700, `${failAt}-${mode}`);
     const elapsedMs = Date.now() - startedAt;
     const payload = await response.json() as { ok: boolean; stage: string; error: string };
 
