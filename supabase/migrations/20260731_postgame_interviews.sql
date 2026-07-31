@@ -7,6 +7,8 @@ create table if not exists postgame_interview_jobs (
   away_team_id integer not null,
   home_team_id integer not null,
   winner_team_id integer not null,
+  -- 당일 전체 일정(종료 여부 무관)의 동일 대진 수로 seed 시점에 확정해 영속한다.
+  is_doubleheader boolean not null default false,
   ended_at timestamptz not null,
   collect_after timestamptz not null,
   expires_at timestamptz not null,

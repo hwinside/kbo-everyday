@@ -71,4 +71,24 @@ assert.equal(
   null,
 );
 
+// 더블헤더 수명주기 회귀: seed 시점 당일 전체 일정으로 판정한 is_doubleheader가
+// job에 영속되므로, 한쪽 경기만 active context로 남는 구간에도 fail-closed 돼야 한다.
+// (1) 1차전 final + 2차전 live/scheduled → 2차전 job이 아직 없어 context는 1차전 하나뿐이지만
+//     seed 시 is_doubleheader=true로 고정됐으므로 매핑 금지.
+assert.equal(
+  matchPostgameInterview(entry, channel, [{ ...base, isDoubleheader: true }]),
+  null,
+  "1차전 final + 2차전 live/scheduled: 단일 context여도 더블헤더면 미노출",
+);
+// (2) 1차전 expired + 2차전 collecting → context는 2차전 하나뿐이지만 동일하게 fail-closed.
+assert.equal(
+  matchPostgameInterview(
+    { ...entry, title: "임찬규 인터뷰｜키움 VS LG｜2026 (07.30)" },
+    channel,
+    [{ ...base, gameId: "20260730WOLG1", isDoubleheader: true }],
+  ),
+  null,
+  "1차전 expired + 2차전 collecting: 남은 2차전 context도 더블헤더면 미노출",
+);
+
 console.log("postgame-interviews smoke: PASS");

@@ -27,6 +27,7 @@ interface JobRow {
   away_team_id: number;
   home_team_id: number;
   winner_team_id: number;
+  is_doubleheader: boolean;
   ended_at: string;
   expires_at: string;
   next_collect_at: string;
@@ -97,9 +98,20 @@ async function seedNewFinalJobs(): Promise<{ seeded: number; faults: number }> {
 
   let faults = 0;
   const finals: KboGame[] = [];
+  // 더블헤더 판정은 종료 여부와 무관하게 당일 전체 일정의 동일 대진 수로 계산해
+  // seed 시점에 영속한다. 1차전만 final이고 2차전이 scheduled/live인 구간에도
+  // 1차전 job이 is_doubleheader=true로 고정되어 오매핑을 막는다.
+  const matchupCounts = new Map<string, number>();
   for (const date of dates) {
     try {
       const games = await fetchGames(compactDate(date), undefined, { timeoutMs: 5_000 });
+      for (const game of games) {
+        const gameDate = isoGameDate(game.date);
+        if (!gameDate) continue;
+        const teams = [game.awayTeamId, game.homeTeamId].sort((a, b) => a - b);
+        const key = `${gameDate}:${teams[0]}:${teams[1]}`;
+        matchupCounts.set(key, (matchupCounts.get(key) ?? 0) + 1);
+      }
       finals.push(...games.filter((game) => game.status === "final" && winnerTeamId(game) !== null));
     } catch {
       faults++;
@@ -129,12 +141,15 @@ async function seedNewFinalJobs(): Promise<{ seeded: number; faults: number }> {
     const expiresAtMs = endedAtMs + POSTGAME_INTERVIEW_WINDOW_MS;
     if (expiresAtMs <= nowMs) return [];
     const collectAfterMs = endedAtMs + POSTGAME_INTERVIEW_START_MS;
+    const teams = [game.awayTeamId, game.homeTeamId].sort((a, b) => a - b);
+    const matchupKey = `${gameDate}:${teams[0]}:${teams[1]}`;
     return [{
       game_id: game.gameId,
       game_date: gameDate,
       away_team_id: game.awayTeamId,
       home_team_id: game.homeTeamId,
       winner_team_id: winnerTeamId(game)!,
+      is_doubleheader: (matchupCounts.get(matchupKey) ?? 0) > 1,
       ended_at: new Date(endedAtMs).toISOString(),
       collect_after: new Date(collectAfterMs).toISOString(),
       expires_at: new Date(expiresAtMs).toISOString(),
@@ -153,13 +168,6 @@ async function seedNewFinalJobs(): Promise<{ seeded: number; faults: number }> {
 }
 
 async function loadContexts(jobs: JobRow[]): Promise<InterviewMatchContext[]> {
-  const matchupCounts = new Map<string, number>();
-  for (const job of jobs) {
-    const teams = [job.away_team_id, job.home_team_id].sort((a, b) => a - b);
-    const key = `${job.game_date}:${teams[0]}:${teams[1]}`;
-    matchupCounts.set(key, (matchupCounts.get(key) ?? 0) + 1);
-  }
-
   const contexts = await Promise.all(jobs.map(async (job) => {
     const boxScore = await fetchBoxScore(job.game_id);
     if (!boxScore) return null;
@@ -175,14 +183,14 @@ async function loadContexts(jobs: JobRow[]): Promise<InterviewMatchContext[]> {
           : [];
     const names = [...new Set(winnerPlayers.map((player) => player.name.trim()).filter(Boolean))];
     if (names.length === 0) return null;
-    const teams = [job.away_team_id, job.home_team_id].sort((a, b) => a - b);
-    const matchupKey = `${job.game_date}:${teams[0]}:${teams[1]}`;
+    // 더블헤더 여부는 seed 시점 당일 전체 일정 기준으로 job에 영속된 값을 쓴다.
+    // active job 수를 다시 세면 1차전만 남은 구간에서 오판정된다.
     return {
       gameId: job.game_id,
       gameDate: job.game_date,
       winnerTeamId: job.winner_team_id,
       winnerPlayerNames: names,
-      isDoubleheader: (matchupCounts.get(matchupKey) ?? 0) > 1,
+      isDoubleheader: job.is_doubleheader,
       endedAt: job.ended_at,
       expiresAt: job.expires_at,
     };
@@ -208,7 +216,7 @@ export async function GET(req: NextRequest) {
   // query-guard: bounded -- 종료+24시간 수명의 active job만, KBO 동시 경기 이틀 상한에 맞춰 20행 처리.
   const { data: activeRows, error: jobsError } = await supabaseAdmin
     .from("postgame_interview_jobs")
-    .select("game_id, game_date, away_team_id, home_team_id, winner_team_id, ended_at, expires_at, next_collect_at, attempts")
+    .select("game_id, game_date, away_team_id, home_team_id, winner_team_id, is_doubleheader, ended_at, expires_at, next_collect_at, attempts")
     .eq("status", "collecting")
     .gt("expires_at", nowIso)
     .order("next_collect_at", { ascending: true })
