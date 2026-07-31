@@ -2,6 +2,12 @@
 // ①검수 사전(토큰 0) → ②동일질문 캐시 → ③flash-lite LLM(미매칭만).
 // DB/LLM 접근은 deps로 주입 → route가 실제 구현, 스모크는 mock으로 검증.
 
+import {
+  isFollowupPhrase,
+  selectContextTurn,
+  type ContextTurn,
+  type PreviousTurnRow,
+} from "./context";
 import { normalizeKey, normalizeQuestion } from "./normalize";
 import {
   BASEBALL_GENIUS_DAILY_LIMIT,
@@ -20,6 +26,9 @@ export const SERVICE_REDIRECT_ANSWER =
   "크보팬 서비스 관련 문의는 마이페이지 > 피드백 보내기로 보내주시면 운영팀이 확인해요! 저는 야구 룰/용어 질문을 도와드릴게요 ⚾";
 export const HISTORY_HOLD_ANSWER =
   "선수나 구단 기록은 제가 아직 정확히 답해드리기 어려워요. 앱의 선수 페이지 / 기록 탭에서 정확한 기록을 볼 수 있어요!";
+// 후속형인데 이어붙일 직전 turn이 없을 때 — 차단 문구가 아니라 정중한 되묻기다 (spec §4.3 AC4).
+export const CONTEXT_MISSING_ANSWER =
+  "어떤 내용에 이어서 여쭤보시는 걸까요? 궁금한 야구 룰/용어를 한 번만 더 적어주시면 답해드릴게요! ⚾";
 
 export const LLM_AMBIGUOUS_ANSWER =
   "답변을 저장하는 과정에서 문제가 생겨 이번 질문에는 답을 드리지 못했어요. 같은 질문을 다시 보내주시면 새로 답해드릴게요! ⚾";
@@ -44,7 +53,12 @@ export interface LlmResult {
   outputTokens: number | null;
 }
 
-export type QuestionRoute = "service_redirect" | "history_hold" | "blocked" | "baseball_rule_term";
+export type QuestionRoute =
+  | "service_redirect"
+  | "history_hold"
+  | "blocked"
+  | "context_missing"
+  | "baseball_rule_term";
 export type MatchPath =
   | "dictionary"
   | "cache"
@@ -52,6 +66,7 @@ export type MatchPath =
   | "service_redirect"
   | "history_hold"
   | "blocked"
+  | "context_missing"
   | "unsure"
   | "limited"
   | "error"
@@ -71,7 +86,12 @@ export interface QaDeps {
   loadPlayers: () => Promise<PlayerRef[]>;
   getCache: (questionNorm: string) => Promise<string | null>;
   setCache: (questionNorm: string, answer: string) => Promise<void>;
-  callLlm: (question: string) => Promise<LlmResult>;
+  callLlm: (question: string, context?: ContextTurn) => Promise<LlmResult>;
+  /**
+   * 현재 질문 바로 직전의 user turn 1행 (spec §4.1 B1·B2). 후속 문법일 때만 조회한다.
+   * 과거 폴백은 없다 — 이 1행이 부적격이면 맥락 없음으로 종료한다.
+   */
+  loadPreviousTurn?: () => Promise<PreviousTurnRow | null>;
   reserveDaily: (userId: string, limit: number) => Promise<{ allowed: boolean; remaining: number }>;
   /**
    * messageId의 durable LLM 상태: 호출 시작 여부 + 저장된 결과 (job 행 기준).
@@ -168,11 +188,12 @@ function hasBaseballSignal(value: string): boolean {
     );
 }
 
-/** LLM 전에 실행하는 보수적 4갈래 라우터. 불명확하면 fail-closed 한다. */
+/** LLM 전에 실행하는 보수적 라우터. 불명확하면 fail-closed 한다. */
 export function routeQuestion(
   question: string,
   glossary: GlossaryEntry[] = [],
   players: PlayerRef[] = [],
+  hasContext = false,
 ): QuestionRoute {
   const normalized = question.normalize("NFKC").toLowerCase();
   const tokens = questionTokens(normalized);
@@ -187,6 +208,9 @@ export function routeQuestion(
   ) {
     return "history_hold";
   }
+  // 후속 문법(폐쇄집합 full-string 일치) + 새 야구 엔티티/주제 신호 부재일 때만 직전 토픽 연장.
+  // 소스 turn이 없으면 차단이 아니라 되묻기로 종료한다 (spec §4.1 B4, §4.3 AC2·AC3·AC4).
+  if (isFollowupPhrase(question)) return hasContext ? "baseball_rule_term" : "context_missing";
   if (matchGlossary(glossary, question)) return "baseball_rule_term";
   const mentionsGlossaryTerm = glossary.some((entry) =>
     [entry.term, ...entry.aliases].some((name) => {
@@ -267,11 +291,22 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   const remaining = reservation.remaining;
 
   const [glossary, players] = await Promise.all([deps.loadGlossary(), deps.loadPlayers()]);
-  const route = routeQuestion(question, glossary, players);
+  // 맥락 조회는 후속 문법일 때만 — 일반 질문은 기존 경로 그대로다 (spec §4.1 B4).
+  // 조회 실패는 맥락 없음으로 fail-closed 한다.
+  let context: ContextTurn | null = null;
+  if (deps.loadPreviousTurn && isFollowupPhrase(question)) {
+    try {
+      context = selectContextTurn(await deps.loadPreviousTurn());
+    } catch {
+      context = null;
+    }
+  }
+  const route = routeQuestion(question, glossary, players, context !== null);
   if (route !== "baseball_rule_term") {
     const answer =
       route === "service_redirect" ? SERVICE_REDIRECT_ANSWER :
       route === "history_hold" ? HISTORY_HOLD_ANSWER :
+      route === "context_missing" ? CONTEXT_MISSING_ANSWER :
       BLOCKED_ANSWER;
     await deps.log({ userId, question, questionNorm, matchPath: route, answer, inputTokens: null, outputTokens: null });
     return { status: 200, answer, source: route, remaining };
@@ -284,11 +319,14 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     return { status: 200, answer: hit.answer, source: "dictionary", term: hit.term, remaining };
   }
 
-  // ② 동일질문 캐시 (토큰 0)
-  const cached = await deps.getCache(questionNorm);
-  if (cached !== null) {
-    await deps.log({ userId, question, questionNorm, matchPath: "cache", answer: cached, inputTokens: null, outputTokens: null });
-    return { status: 200, answer: cached, source: "cache", remaining };
+  // ② 동일질문 캐시 (토큰 0). 맥락 의존 질문은 global 캐시를 read도 write도 하지 않는다
+  // — preseed된 동일 정규화 키가 있어도 맥락 없는 답으로 오염되면 안 된다 (spec §4.1 B5).
+  if (!context) {
+    const cached = await deps.getCache(questionNorm);
+    if (cached !== null) {
+      await deps.log({ userId, question, questionNorm, matchPath: "cache", answer: cached, inputTokens: null, outputTokens: null });
+      return { status: 200, answer: cached, source: "cache", remaining };
+    }
   }
 
   // ③ 미매칭만 LLM (단발, 이력 미전송). durable job 상태로 동일 messageId의 LLM 소비를
@@ -335,7 +373,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       }
     }
     try {
-      llm = await deps.callLlm(question);
+      llm = await deps.callLlm(question, context ?? undefined);
     } catch {
       await deps.log({ userId, question, questionNorm, matchPath: "error", answer: null, inputTokens: null, outputTokens: null });
       return { status: 503, answer: "지금은 답변을 가져올 수 없어요. 잠시 후 다시 시도해 주세요.", source: "error", remaining };
@@ -355,7 +393,8 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     return { status: 200, answer: UNSURE_ANSWER, source: "unsure", remaining };
   }
 
-  await deps.setCache(questionNorm, validated.answer);
+  // 맥락 의존 답변은 global 캐시에 쓰지 않는다 (spec §4.1 B5).
+  if (!context) await deps.setCache(questionNorm, validated.answer);
   await deps.log({ userId, question, questionNorm, matchPath: "llm", answer: validated.answer, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
   return { status: 200, answer: validated.answer, source: "llm", remaining };
 }

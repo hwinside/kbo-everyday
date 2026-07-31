@@ -57,6 +57,7 @@ const MATCH_PATH_STYLES: Record<string, { label: string; color: string }> = {
   llm: { label: "LLM", color: "#BF5AF2" },
   service_redirect: { label: "안내", color: "#64D2FF" },
   history_hold: { label: "보류", color: "#FFD60A" },
+  context_missing: { label: "맥락없음", color: "#FFD60A" },
   blocked: { label: "차단", color: "#FF453A" },
   unsure: { label: "불확실", color: "#FF9F0A" },
   limited: { label: "한도", color: "#FF9F0A" },
