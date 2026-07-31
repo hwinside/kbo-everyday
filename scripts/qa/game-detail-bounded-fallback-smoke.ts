@@ -174,11 +174,36 @@ function naverSchedule(state: GameState) {
 }
 
 function naverPreview(state: GameState) {
-  // 미확정(scheduled/cancelled)은 실측대로 fullLineUp 빈 배열.
-  if (state === "scheduled" || state === "cancelled") {
+  const gameInfo = {
+    gdate: "20260729",
+    aCode: "WO",
+    hCode: "LG",
+  };
+  // 라인업 미확정 scheduled는 실측대로 선발투수 1명만 먼저 내려온다.
+  if (state === "scheduled") {
     return {
+      code: 200,
+      success: true,
       result: {
         previewData: {
+          gameInfo,
+          awayTeamLineUp: {
+            fullLineUp: [{ positionName: "선발투수", playerName: "원정투수" }],
+          },
+          homeTeamLineUp: {
+            fullLineUp: [{ positionName: "선발투수", playerName: "홈투수" }],
+          },
+        },
+      },
+    };
+  }
+  if (state === "cancelled") {
+    return {
+      code: 200,
+      success: true,
+      result: {
+        previewData: {
+          gameInfo,
           awayTeamLineUp: { fullLineUp: [] },
           homeTeamLineUp: { fullLineUp: [] },
         },
@@ -193,8 +218,11 @@ function naverPreview(state: GameState) {
     ],
   });
   return {
+    code: 200,
+    success: true,
     result: {
       previewData: {
+        gameInfo,
         awayTeamLineUp: side("원정타자", "원정투수"),
         homeTeamLineUp: side("홈타자", "홈투수"),
       },
@@ -524,6 +552,11 @@ async function main() {
   assert.equal(scheduled.body.status, "scheduled");
   assert.equal(scheduled.body.linescore, null);
   assert.equal(scheduled.body.boxScore, null);
+  assert.equal(scheduled.body.lineup?.isToday, false);
+  assert.equal(scheduled.body.lineup?.awayStarter, "원정투수");
+  assert.equal(scheduled.body.lineup?.homeStarter, "홈투수");
+  assert.equal(scheduled.body.lineup?.away.length, 0, "미확정 최근 타순은 노출하지 않음");
+  assert.equal(scheduled.body.lineup?.home.length, 0, "미확정 최근 타순은 노출하지 않음");
   assert.equal(scheduled.degradationEvents.length, 0);
   assert.ok(scheduled.body.meta.broadcastChannels?.length > 0, "scheduled KBO TV_IF preserved");
 

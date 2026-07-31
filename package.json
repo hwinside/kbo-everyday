@@ -58,6 +58,7 @@
     "qa:lineup-confirm-message": "tsx scripts/qa/lineup-confirm-message-smoke.ts",
     "qa:lineup-confirm-delivery:db": "tsx scripts/qa/lineup-confirm-delivery-db-integration.ts",
     "qa:lineup-ck": "tsx scripts/qa/lineup-ck-smoke.ts",
+    "qa:lineup-starter-cards": "node scripts/qa/ui-smoke-lineup-starter-cards.mjs",
     "qa:lineup-watchdog": "tsx scripts/qa/lineup-watchdog-smoke.ts",
     "qa:lineup-confirm-delivery:pg17": "bash scripts/qa/lineup-confirm-delivery-pg17.sh",
     "qa:api-fallback-confirm-boolean": "tsx scripts/qa/api-fallback-confirm-boolean-smoke.ts",

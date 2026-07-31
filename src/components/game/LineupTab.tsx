@@ -263,7 +263,9 @@ export default function LineupTab({
         <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-yellow-500/10 border border-yellow-500/20">
           <span className="text-yellow-400 text-sm">⚠️</span>
           <span className="text-sm text-yellow-400/90">
-            선발투수 정보가 아직 반영되지 않았습니다. 경기 시작 전 업데이트됩니다.
+            {!awaySp || !homeSp
+              ? "선발투수 정보가 아직 반영되지 않았습니다. 경기 시작 전 업데이트됩니다."
+              : "타순은 라인업 확정 후 공개됩니다."}
           </span>
         </div>
       )}
