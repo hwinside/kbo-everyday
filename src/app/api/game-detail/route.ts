@@ -17,7 +17,11 @@ import {
   fetchKboSessionCookie,
   withKboSessionCookie,
 } from "@/lib/crawler/kbo-session";
-import { fetchNaverLineup, type NaverLineupSide } from "@/lib/crawler/naver-lineup";
+import {
+  fetchNaverLineup,
+  fetchNaverPreviewStarters,
+  type NaverLineupSide,
+} from "@/lib/crawler/naver-lineup";
 
 /** 숫자 kboId로 로스터 조회 — 외국인 숫자→영문 변환 포함 */
 function findPlayerByNumericId(numericId: string): { name: string } | undefined {
@@ -629,6 +633,7 @@ export async function GET(req: NextRequest) {
   // 라인업도 record 와 같이 eager 준비(revalidate 60 캐시로 fanout 억제). KBO blackhole 로
   // deadline 이 전부 소진돼도 병렬로 이미 settle 된 결과를 회수할 수 있게 한다.
   const naverLineupPromise = fetchNaverDetailLineup(gameId, { signal: deadlineSignal });
+  const naverStartersPromise = fetchNaverPreviewStarters(gameId, { signal: deadlineSignal });
   const reasonFor = (error: unknown): DegradationReason => {
     const e = error as { name?: string; message?: string };
     if (e?.name === "TimeoutError" || /timeout|deadline/i.test(e?.message ?? "")) return "timeout";
@@ -715,6 +720,21 @@ export async function GET(req: NextRequest) {
     // KBO 가 응답한 미확정(isToday=false) 라인업은 그대로 존중한다(폴백 트리거 아님).
     if (!lineup) {
       lineup = await untilDeadline(naverLineupPromise, deadlineSignal, null);
+    }
+    // KBO가 LINEUP_CK=false로 직전 경기 타순을 돌려주는 동안에도 Naver preview에는
+    // 오늘 예고선발 1+1이 먼저 발표된다. 직전 타순은 폐기하고 오늘 선발만 별도 보존해,
+    // UI가 선발카드는 노출하되 타순은 확정 전까지 fail-close하도록 한다.
+    if (!lineup?.isToday) {
+      const starters = await untilDeadline(naverStartersPromise, deadlineSignal, null);
+      if (starters?.away || starters?.home) {
+        lineup = {
+          isToday: false,
+          away: [],
+          home: [],
+          awayStarter: starters.away,
+          homeStarter: starters.home,
+        };
+      }
     }
     let boxScore = parseBoxScore(boxScoreRes);
     let linescore = kboLinescore;
