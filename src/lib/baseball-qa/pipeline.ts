@@ -157,7 +157,27 @@ const INJECTION_PATTERNS = [
   /\bact\s+as\b/i,
   /(이전|위|앞|앞에\s*나온).*(무시하고|잊고).*역할\s*(변경|바꿔|바꾸)/i,
   /(링크|url).*(줘|출력|보여)/i,
+  /\bignore\b[\s\S]{0,40}\b(previous|above|prior|earlier|prompt|instructions?)\b/i,
 ];
+
+/**
+ * 조사·띄어쓰기를 제거한 압축형에 적용하는 인젝션 패턴 (삼순 2차 P0).
+ * 원문 정규화만으로는 "역할을 바꿔"(목적격 조사)·"지금까지 안내를 무시하고"처럼
+ * 조사·띄어쓰기가 한 칸만 달라도 exact 패턴을 빠져나가 LLM에 누수된다.
+ */
+const INJECTION_COMPACT_PATTERNS = [
+  // "지금까지/이전/앞에 나온 (지시·안내·내용·규칙) ... 무시/잊" 시작형.
+  /(지금까지|이전|앞에나온|앞의|위에나온|기존|처음)(.{0,12})?(지시|명령|규칙|프롬프트|안내|내용|설정|대화)(.{0,12})?(무시|잊)/,
+  // 어시스턴트 역할 변경 명령형. "바꾸면"처럼 조건·서술형은 제외해 룰 질문 오탐을 막는다.
+  /역할.{0,3}(변경해|변경하라|변경해줘|변경하고|교체해|바꿔|바꾸라|바꾸어|바꿈)/,
+];
+
+/** 인젝션 판정 전용 정규화: 토큰별 조사 제거 후 공백을 모두 없앤 압축 문자열. */
+function injectionNormalize(value: string): string {
+  return questionTokens(value)
+    .map((token) => (token.length >= 3 ? token.replace(/(을|를|은|는|이|가|의|도|만)$/, "") : token))
+    .join("");
+}
 
 const TOKEN_TRIM_SUFFIXES = [
   "이라는", "이란", "란", "은", "는", "이", "가", "을", "를", "에", "의", "도", "만",
@@ -180,15 +200,40 @@ function tokenMatches(tokens: string[], word: string): boolean {
   });
 }
 
+/**
+ * 공백 포함 canonical 이름(roster 878명 중 28건, 예 "토다 나츠키")을 연속 토큰으로 매칭한다.
+ * 단일 토큰 비교만 하면 이름이 질문에서 두 토큰으로 쪼개져 exact 미스 → history_hold를
+ * 우회해 LLM으로 누수된다 (삼순 2차 P0). 토큰 단위 비교라 단어 경계는 그대로 지키고,
+ * 마지막 토큰에만 기존 허용 조사 경계를 적용한다 ("미치 화이트가").
+ */
+function tokensContainSequence(tokens: string[], parts: string[]): boolean {
+  const last = parts.length - 1;
+  for (let start = 0; start + parts.length <= tokens.length; start++) {
+    let matched = true;
+    for (let offset = 0; offset <= last; offset++) {
+      const token = tokens[start + offset];
+      const part = parts[offset];
+      const ok = offset === last ? tokenMatches([token], part) : token === part;
+      if (!ok) { matched = false; break; }
+    }
+    if (matched) return true;
+  }
+  return false;
+}
+
 function hasPlayerReference(tokens: string[], players: PlayerRef[]): boolean {
   // 선수명·KBO ID에도 일반 단어와 동일한 허용 조사 경계(tokenMatches)를 적용한다.
   // "김도영의", "류현진은", "박해민이", "52605의" 같은 조사 결합형이 exact 미스로
   // history_hold를 우회해 LLM/캐시에 진입하는 것을 막는다 (삼순 3차 P0).
   return players.some((player) => {
-    const name = player.name.normalize("NFKC").toLowerCase().trim();
+    const nameParts = questionTokens(player.name);
     const kboId = player.kboId.normalize("NFKC").toLowerCase().trim();
-    return (name.length >= 2 && tokenMatches(tokens, name)) ||
-      (kboId.length >= 3 && tokenMatches(tokens, kboId));
+    if (kboId.length >= 3 && tokenMatches(tokens, kboId)) return true;
+    if (nameParts.length === 0) return false;
+    if (nameParts.join("").length < 2) return false;
+    return nameParts.length === 1
+      ? tokenMatches(tokens, nameParts[0])
+      : tokensContainSequence(tokens, nameParts);
   });
 }
 
@@ -213,6 +258,8 @@ export function routeQuestion(
   const normalized = question.normalize("NFKC").toLowerCase();
   const tokens = questionTokens(normalized);
   if (INJECTION_PATTERNS.some((pattern) => pattern.test(normalized))) return "blocked";
+  const injectionNorm = injectionNormalize(normalized);
+  if (INJECTION_COMPACT_PATTERNS.some((pattern) => pattern.test(injectionNorm))) return "blocked";
   if (SERVICE_WORDS.some((word) => normalized.includes(word))) return "service_redirect";
   const hasStat = STAT_WORDS.some((word) => tokenMatches(tokens, word));
   const hasTeam = TEAM_WORDS.some((word) => tokenMatches(tokens, word));
