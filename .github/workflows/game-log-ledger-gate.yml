@@ -76,6 +76,10 @@ jobs:
         #   원자 RPC 경로 유지 mutation 가드(직접 delete/upsert 재유입 차단)
         run: npm run qa:game-log-ledger-orchestrator
 
+      - name: Query pagination guard (fail-closed)
+        # 신규 RPC/collection query 위험을 PR 에서 잡는다 — Vercel prebuild 와 동일 게이트.
+        run: npm run qa:query-guard
+
       - name: Backfill workflow input matrix (fail-closed)
         # yml 의 Validate inputs run 블록을 그대로 추출해 실행한다(로직 복제 아님).
         run: npm run qa:backfill-workflow-matrix

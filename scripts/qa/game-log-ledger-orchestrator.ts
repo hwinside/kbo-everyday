@@ -86,7 +86,7 @@ const resolver: PlayerResolver = (q) => (IDS[q.name] ? { kboId: IDS[q.name] } : 
  * ledger-ingest 가 실제로 쓰는 표면만 구현한다 — select/eq, upsert(ledger), rpc.
  * 이 shim 이 없으면 오케스트레이터를 직접 태울 수 없다.
  */
-function makeClient(db: PGlite, opts: { failReconcile?: boolean } = {}) {
+function makeClient(db: PGlite) {
   const client = {
     from(table: string) {
       const builder = {
@@ -132,20 +132,9 @@ function makeClient(db: PGlite, opts: { failReconcile?: boolean } = {}) {
       return builder;
     },
     async rpc(fn: string, args: Record<string, unknown>) {
-      if (opts.failReconcile) {
-        // 쓰기 중간 실패 주입. RPC 는 단일 트랜잭션이므로 삭제도 함께 롤백되어야 한다.
-        // 트랜잭션 안에서 예외를 일으켜 실제 롤백 경로를 태운다.
-        try {
-          await db.query(
-            `select public.${fn}($1::text, $2::jsonb, $3::jsonb),
-                    (1/0)::int`, // 함수 실행 후 같은 문장에서 실패
-            [args.p_game_id, JSON.stringify(args.p_delete_keys), JSON.stringify(args.p_rows)],
-          );
-        } catch (e) {
-          return { data: null, error: { message: String((e as Error).message) } };
-        }
-        return { data: null, error: { message: "injected failure did not trigger" } };
-      }
+      // 실패 주입은 client 가 아니라 DB trigger 로 한다(아래 injectInsertFailure 참조).
+      // client 단에서 `select fn(...), (1/0)` 같은 식으로 끊으면 PGlite 가 `1/0` 을 먼저
+      // 평가해 **함수가 아예 호출되지 않는다** — rollback 을 검증한 것처럼 보이는 false-green.
       const r = await db.query<{ result: unknown }>(
         `select public.${fn}($1::text, $2::jsonb, $3::jsonb) as result`,
         [args.p_game_id, JSON.stringify(args.p_delete_keys), JSON.stringify(args.p_rows)],
@@ -154,6 +143,59 @@ function makeClient(db: PGlite, opts: { failReconcile?: boolean } = {}) {
     },
   };
   return client as unknown as SupabaseClient;
+}
+
+/**
+ * 실패 주입 — `player_game_logs` INSERT trigger 로 **RPC 안에서 delete 이후 insert 시점**을 끊는다.
+ *
+ * client 단에서 `select fn(...), (1/0)` 처럼 끊으면 PGlite 가 `1/0` 을 먼저 평가해
+ * 함수가 아예 호출되지 않는다 — rollback 을 검증한 것처럼 보이는 false-green(삼순 P0).
+ * trigger 는 실제 INSERT 실행 중에 발화하므로, 그 시점엔 이미 DELETE 가 수행된 상태다.
+ */
+async function injectInsertFailure(db: PGlite, newKboId: string) {
+  await db.exec(`
+    create or replace function qa_fail_on_new_key() returns trigger
+    language plpgsql as $$
+    begin
+      if NEW.kbo_id = '${newKboId}' then
+        raise exception 'injected insert failure for %', NEW.kbo_id;
+      end if;
+      return NEW;
+    end $$;
+    drop trigger if exists qa_fail_on_new_key_trg on player_game_logs;
+    create trigger qa_fail_on_new_key_trg
+      before insert or update on player_game_logs
+      for each row execute function qa_fail_on_new_key();
+  `);
+}
+
+async function removeInsertFailure(db: PGlite) {
+  await db.exec("drop trigger if exists qa_fail_on_new_key_trg on player_game_logs;");
+}
+
+/** 주입이 실제로 유효한지 확인 — 가드가 죽어 있으면 ②가 무의미해진다. */
+async function assertTriggerArmed(db: PGlite, newKboId: string): Promise<boolean> {
+  const r = await db.query<{ cnt: number }>(
+    `select count(*)::int as cnt from pg_trigger
+      where tgname = 'qa_fail_on_new_key_trg' and not tgisinternal`,
+  );
+  if ((r.rows[0]?.cnt ?? 0) !== 1) return false;
+  // 실제로 예외를 던지는지 직접 확인한다(선언만 되고 무력한 trigger 방지).
+  try {
+    await db.query("begin");
+    await db.query(
+      `insert into player_game_logs
+         (kbo_id, player_type, game_id, game_date, team_id, team_code, opponent_team_id,
+          is_home, result, ab, h, hr, rbi, bb, so, ip_outs, er, h_allowed, k, bb_allowed)
+       values ($1,'batter','__qa_probe__','2026-07-04',1,'LG',2,true,'W',0,0,0,0,0,0,0,0,0,0,0)`,
+      [newKboId],
+    );
+    await db.query("rollback");
+    return false; // 예외가 안 났다 = 무력한 trigger
+  } catch {
+    await db.query("rollback");
+    return true;
+  }
 }
 
 /** 직접 소비자 관점 — ledger 를 보지 않고 player_game_logs 를 그대로 읽는다. */
@@ -236,10 +278,14 @@ async function main() {
   // ── ② RED: 쓰기 중간 실패 → 행 누락 0 → 재시도 complete ──────────────
   console.log("\n[② RED] 쓰기 중간 실패 — 직접 소비자 무오염 + 재시도 복구");
   const beforeFail = await directConsumerRows(db);
-  const failing = makeClient(db, { failReconcile: true });
+  // 신 key INSERT 를 trigger 로 끊는다 — RPC 안에서 DELETE 는 이미 실행된 뒤 시점이다.
+  await injectInsertFailure(db, target.kbo_id);
+  ok("실패 주입 trigger 가 실제로 발화한다(가드 자체 검증)",
+    await assertTriggerArmed(db, target.kbo_id));
+
   let threw = false;
   try {
-    await ingestGameWithLedger(failing, GAME, { fetchBoxscore: async () => BOX, resolver });
+    await ingestGameWithLedger(client, GAME, { fetchBoxscore: async () => BOX, resolver });
   } catch {
     threw = true;
   }
@@ -263,7 +309,8 @@ async function main() {
     `reason=${verifyAfterFail.reason}`,
   );
 
-  // 재시도 — 정상 client 로 같은 경기를 다시 적재하면 수렴해야 한다.
+  // 재시도 — trigger 해제 후 **동일 production 오케스트레이터**로 다시 적재하면 수렴해야 한다.
+  await removeInsertFailure(db);
   const retry = await ingestGameWithLedger(client, GAME, { fetchBoxscore: async () => BOX, resolver });
   ok("재시도 complete 로 수렴", retry.status === "complete",
     `status=${retry.status} reason=${retry.failureReason}`);

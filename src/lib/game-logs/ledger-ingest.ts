@@ -177,6 +177,9 @@ export async function ingestGameWithLedger(
     playerType: String(row.player_type),
   }));
 
+  // query-guard: bounded -- 단일 game_id 적재 RPC. 반환은 {deleted, upserted} 스칼라 jsonb 1객체로
+  // 행 집합이 아니고, 쓰기 범위도 경기 1건 박스스코어로 상한이 고정된다
+  // (양팀 타자+투수 = 최대 ~60행; delete_keys ⊆ 기존 경기행). 유저·시간 증가 무관.
   const { data: reconcileData, error: reconcileError } = await client.rpc(
     "reconcile_player_game_logs",
     {
