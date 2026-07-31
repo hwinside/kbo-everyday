@@ -155,6 +155,49 @@ const stalePayload = {
   gps:scope("gps",1,.125),
 };
 
+// 혼합팀 표본 미달(2팀 × 1경기 = 총 2경기 < MIN_FINAL_GAMES).
+// 서버 계약대로 시즌 baseline·delta 는 이미 null 로 내려오고, UI 는
+// 사실값 노출 + 파생 점수 `–` + amber `표본 부족(참고용)` 이어야 한다.
+const sampleLimitedScope = (name) => {
+  const base = scope(name, 2, 1);
+  base.metrics.A1 = {
+    ...base.metrics.A1,
+    n: 2,
+    value: { attendance: { w: 2, l: 0, d: 0, rate: 1 }, teamComparable: null, deltaPp: null },
+    items: [
+      { key:"1", state:"sample_limited", value:{attendance:{w:1,l:0,d:0,rate:1},teamComparable:null,deltaPp:null}, n:1, denominator:{} },
+      { key:"9", state:"sample_limited", value:{attendance:{w:1,l:0,d:0,rate:1},teamComparable:null,deltaPp:null}, n:1, denominator:{} },
+    ],
+  };
+  const limited = {
+    "1": {
+      B1:{attendanceAvg:.286,seasonAvg:null,delta:null},
+      B2:{attendanceEra:3.42,seasonEra:null,delta:null},
+      B3:{runsPerGame:5.2,totalRuns:5},
+      B4:{hr:{attendancePerGame:1.3,seasonPerGame:null,delta:null},hitsAllowed:null},
+    },
+    "9": {
+      B1:{attendanceAvg:.251,seasonAvg:null,delta:null},
+      B2:{attendanceEra:4.18,seasonEra:null,delta:null},
+      B3:{runsPerGame:4.1,totalRuns:4},
+      B4:{hr:{attendancePerGame:.8,seasonPerGame:null,delta:null},hitsAllowed:null},
+    },
+  };
+  for (const id of ["B1","B2","B3","B4"]) {
+    base.metrics[id] = {...base.metrics[id],items:[
+      {key:"1",state:"sample_limited",value:limited["1"][id],n:1,denominator:{}},
+      {key:"9",state:"sample_limited",value:limited["9"][id],n:1,denominator:{}},
+    ]};
+  }
+  return base;
+};
+const sampleLimitedPayload = {
+  season:2026,
+  seasonSupport:{status:"supported",supportedSeason:2026},
+  overall:sampleLimitedScope("overall"),
+  gps:sampleLimitedScope("gps"),
+};
+
 const css = await postcss([tailwind]).process(
   readFileSync(resolve(ROOT, "src/styles/globals.css"), "utf8"),
   { from: resolve(ROOT, "src/styles/globals.css") },
@@ -162,10 +205,13 @@ const css = await postcss([tailwind]).process(
 const bundle = readFileSync(resolve(GEN, "bundle.js"), "utf8");
 let initial2026Served = false;
 let fail2025 = false;
+let serveSampleLimited = false;
 const server = createServer((req, res) => {
   if (req.url?.startsWith("/api/me/venue-stats")) {
     const requestedSeason = new URL(req.url, "http://127.0.0.1").searchParams.get("season");
-    const body = requestedSeason === "2025" ? stalePayload : payload;
+    const body = requestedSeason === "2025"
+      ? stalePayload
+      : serveSampleLimited ? sampleLimitedPayload : payload;
     const delay = requestedSeason === "2025" ? 300 : initial2026Served ? 10 : 0;
     if (requestedSeason === "2026") initial2026Served = true;
     return setTimeout(() => {
@@ -387,8 +433,67 @@ try {
   if (contrast.mutationRatio >= 4.5) throw new Error("Dashboard AA mutation guard did not fail");
 
   await page.screenshot({ path: SHOT, fullPage: true });
+
+  // ── 혼합팀 표본 미달(2팀 × 1경기) actual DOM 계약 ────────────────────────────
+  // 사실값(W/L/D·승률·B1~B4)은 보이고, 파생 요정 지수는 `–`, 배지는 amber `표본 부족(참고용)`,
+  // 시즌 baseline/delta 비교 문구는 0건이어야 한다.
+  serveSampleLimited = true;
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.getByText("표본 부족(참고용)", { exact: true }).first().waitFor({ timeout: 4000 });
+
+  const heroBlock = page.locator('[data-testid="venue-stats-dashboard"]').first();
+  const heroText = await heroBlock.innerText();
+  for (const fact of ["2승", "0패", "0무", "100.0%"]) {
+    if (!heroText.includes(fact)) throw new Error(`sample-limited hero fact missing: ${fact}`);
+  }
+  if (/\b100점\b/.test(heroText) || heroText.includes("승률 요정")) {
+    throw new Error(`sample-limited hero exposed derived score/badge: ${heroText.slice(0, 200)}`);
+  }
+  // 파생 지수는 hero 숫자 slot(54px) 에만 렌더된다 — 해당 슬롯을 직접 집어 값을 확인한다.
+  const scoreText = await page
+    .locator('[data-testid="venue-stats-dashboard"] span.text-\\[54px\\]')
+    .first()
+    .innerText();
+  if (scoreText.trim() !== "–") throw new Error(`sample-limited derived score must be dash, got ${scoreText}`);
+
+  const limitedLg = await page.getByText("LG 응원 구간", { exact: true }).nth(1).locator("../..").innerText();
+  const limitedHanwha = await page.getByText("한화 응원 구간", { exact: true }).nth(1).locator("../..").innerText();
+  if (![".286", "3.42", "5.2", "1.3"].every((value) => limitedLg.includes(value))) {
+    throw new Error(`sample-limited mixed LG facts missing: ${limitedLg}`);
+  }
+  if (![".251", "4.18", "4.1", "0.8"].every((value) => limitedHanwha.includes(value))) {
+    throw new Error(`sample-limited mixed 한화 facts missing: ${limitedHanwha}`);
+  }
+  const baselinePhrases = await page.evaluate(() => {
+    const root = document.querySelector('[data-testid="venue-stats-dashboard"]');
+    return [...root.querySelectorAll("*")]
+      .map((element) => [...element.childNodes]
+        .filter((node) => node.nodeType === Node.TEXT_NODE)
+        .map((node) => node.textContent ?? "").join("").trim())
+      .filter((text) => /^시즌 /.test(text) || text.includes("시즌 경기당"));
+  });
+  if (baselinePhrases.length > 0) {
+    throw new Error(`sample-limited must not render season baseline: ${JSON.stringify(baselinePhrases.slice(0, 5))}`);
+  }
+  // 배지는 기본 '승률 요정'(핑크 #ff9aa5)과 다른 경고색(amber)이어야 한다.
+  // Tailwind v4 는 oklch 를 내보내므로 문자열 접두사 대신 실제 픽셀 RGB 로 판정한다.
+  const badgeRgb = await page.getByText("표본 부족(참고용)", { exact: true }).first()
+    .evaluate((element) => {
+      const canvas = document.createElement("canvas");
+      canvas.width = canvas.height = 1;
+      const context = canvas.getContext("2d");
+      context.fillStyle = getComputedStyle(element).color;
+      context.fillRect(0, 0, 1, 1);
+      const data = context.getImageData(0, 0, 1, 1).data;
+      return [data[0], data[1], data[2]];
+    });
+  const [br, bg, bb] = badgeRgb;
+  if (!(br > 200 && bg > 150 && bb < 140)) {
+    throw new Error(`sample-limited badge must be amber warning tone, got rgb(${badgeRgb.join(",")})`);
+  }
+
   console.log(
-    `venue stats S2 browser: PASS (390px, B1~B4 actual payload, season abort/generation, selected-season 503 fail-closed(no stale value + retry UI), AA ${contrast.minimum.toFixed(2)}:1 across ${contrast.count} texts)\nshot: ${SHOT}`,
+    `venue stats S2 browser: PASS (390px, B1~B4 actual payload, season abort/generation, selected-season 503 fail-closed(no stale value + retry UI), mixed sample-limited facts+dash score+amber badge+0 baseline, AA ${contrast.minimum.toFixed(2)}:1 across ${contrast.count} texts)\nshot: ${SHOT}`,
   );
 } finally {
   await browser.close();
