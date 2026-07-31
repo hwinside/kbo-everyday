@@ -10,6 +10,7 @@ import {
 import {
   contextFromStoredJob,
   doubleheaderGameIds,
+  interviewPlayerLinks,
 } from "../../src/lib/video/postgame-interviews-route-policy";
 
 const minute = 60_000;
@@ -101,6 +102,20 @@ assert.equal(
   matchPostgameInterview(entry, channel, [persistedContext]),
   null,
   "1차전 expired + 2차전 collecting: 남은 2차전 context도 더블헤더면 미노출",
+);
+
+assert.deepEqual(
+  interviewPlayerLinks(["임찬규", "임찬규", "송찬의"], 1),
+  [
+    { name: "임찬규", kboId: "61101", teamId: 1 },
+    { name: "송찬의", kboId: "68110", teamId: 1 },
+  ],
+  "승리팀으로 동명이인을 한정하고 선수 상세용 canonical kboId를 반환",
+);
+assert.deepEqual(
+  interviewPlayerLinks(["미등록선수"], 1),
+  [{ name: "미등록선수", kboId: null, teamId: 1 }],
+  "미등록 선수명은 링크 없이 라벨을 유지",
 );
 
 console.log("postgame-interviews smoke: PASS");

@@ -1,4 +1,5 @@
 import type { InterviewMatchContext } from "./postgame-interviews";
+import { resolvePlayerIdentity } from "@/lib/utils/resolve-player";
 
 interface ScheduledGame {
   gameId: string;
@@ -14,6 +15,29 @@ interface StoredInterviewJob {
   is_doubleheader: boolean;
   ended_at: string;
   expires_at: string;
+}
+
+export interface InterviewPlayerLink {
+  name: string;
+  kboId: string | null;
+  teamId: number;
+}
+
+export function interviewPlayerLinks(
+  playerNames: string[],
+  winnerTeamId: number | null | undefined,
+): InterviewPlayerLink[] {
+  const uniqueNames = [...new Set(playerNames.map((name) => name.trim()).filter(Boolean))];
+  return uniqueNames.map((name) => {
+    const resolved = winnerTeamId == null
+      ? null
+      : resolvePlayerIdentity({ name, teamId: winnerTeamId });
+    return {
+      name,
+      kboId: resolved?.kboId ?? null,
+      teamId: resolved?.teamId ?? winnerTeamId ?? 0,
+    };
+  });
 }
 
 export function doubleheaderGameIds(games: ScheduledGame[]): Set<string> {
