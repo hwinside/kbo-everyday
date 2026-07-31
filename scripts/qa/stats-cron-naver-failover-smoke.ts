@@ -56,6 +56,7 @@ function naverHitters(n: number) {
     success: true,
     result: {
       seasonPlayerStats: Array.from({ length: n }, (_, i) => ({
+        playerId: `5${String(i).padStart(4, "0")}`,
         playerName: `타자${i}`,
         teamName: TEAMS10[i % 10],
         hitterHra: 0.3498694516971279,
@@ -76,6 +77,7 @@ function naverPitchers(n: number) {
     success: true,
     result: {
       seasonPlayerStats: Array.from({ length: n }, (_, i) => ({
+        playerId: `6${String(i).padStart(4, "0")}`,
         playerName: `투수${i}`,
         teamName: TEAMS10[i % 10],
         pitcherEra: 2.640378548895899,
@@ -99,12 +101,31 @@ function naverPitchers(n: number) {
   };
 }
 
-type KboMode = "ok" | "503" | "204" | "empty" | "timeout" | "partial-row" | "one-sort-fails";
-type NaverMode = "ok" | "500" | "timeout" | "empty" | "schema" | "truncated" | "pagesize-full";
+type KboMode =
+  | "ok"
+  | "503"
+  | "204"
+  | "empty"
+  | "timeout"
+  | "partial-row"
+  | "valid-partial"
+  | "bad-numeric"
+  | "one-sort-fails";
+type NaverMode =
+  | "ok"
+  | "500"
+  | "timeout"
+  | "empty"
+  | "schema"
+  | "truncated"
+  | "pagesize-full"
+  | "duplicate-names"
+  | "team-skew"
+  | "bad-inning";
 
 const realFetch = globalThis.fetch;
 
-function installFetch(kbo: KboMode, naver: NaverMode) {
+function installFetch(kbo: KboMode, naver: NaverMode, dbFail = false) {
   globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
     const url = String((input as { url?: string })?.url ?? input);
 
@@ -114,6 +135,7 @@ function installFetch(kbo: KboMode, naver: NaverMode) {
       const body = init?.body ? JSON.parse(String(init.body)) : null;
       if (table.startsWith("player_stats_") && Array.isArray(body)) {
         upserts.push({ table, rows: body });
+        if (dbFail) return Response.json({ message: "forced upsert failure" }, { status: 500 });
         return Response.json([]);
       }
       if (table === "admin_job_logs") {
@@ -148,6 +170,18 @@ function installFetch(kbo: KboMode, naver: NaverMode) {
           const good = isPitcher ? pitcherRow(0) : hitterRow(0);
           return new Response(`<table><tbody>${good}${bad}</tbody></table>`, { status: 200 });
         }
+        case "valid-partial":
+          return new Response(
+            `<table><tbody>${isPitcher ? pitcherRow(0) : hitterRow(0)}</tbody></table>`,
+            { status: 200 },
+          );
+        case "bad-numeric": {
+          const row = (isPitcher ? pitcherRow(0) : hitterRow(0)).replace(
+            isPitcher ? "2.64" : ".327",
+            "N/A",
+          );
+          return new Response(`<table><tbody>${row}</tbody></table>`, { status: 200 });
+        }
         case "one-sort-fails":
           if (isPitcher && url.includes("sort=SV_CN")) {
             return new Response(ERROR_BODY, { status: 503 });
@@ -175,6 +209,23 @@ function installFetch(kbo: KboMode, naver: NaverMode) {
         case "pagesize-full":
           // pageSize 에 꿉 차게 반환 → 더 받을 게 남았을 수 있음
           return Response.json(isPitcher ? naverPitchers(500) : naverHitters(500));
+        case "duplicate-names": {
+          const fixture = isPitcher ? naverPitchers(200) : naverHitters(300);
+          const rows = fixture.result.seasonPlayerStats;
+          rows[1].playerName = rows[0].playerName;
+          rows[1].teamName = rows[0].teamName;
+          return Response.json(fixture);
+        }
+        case "team-skew": {
+          const fixture = isPitcher ? naverPitchers(200) : naverHitters(300);
+          for (const row of fixture.result.seasonPlayerStats) row.teamName = "LG";
+          return Response.json(fixture);
+        }
+        case "bad-inning": {
+          const fixture = isPitcher ? naverPitchers(200) : naverHitters(300);
+          if (isPitcher) fixture.result.seasonPlayerStats[0].pitcherInning = "not-an-inning";
+          return Response.json(fixture);
+        }
         default:
           return Response.json(isPitcher ? naverPitchers(200) : naverHitters(300));
       }
@@ -194,10 +245,10 @@ function req() {
   } as unknown as Parameters<typeof GET>[0];
 }
 
-async function run(kbo: KboMode, naver: NaverMode) {
+async function run(kbo: KboMode, naver: NaverMode, dbFail = false) {
   upserts = [];
   jobStatuses = [];
-  installFetch(kbo, naver);
+  installFetch(kbo, naver, dbFail);
   const res = await GET(req());
   const body = (await res.json()) as Record<string, never>;
   return { status: res.status, body };
@@ -274,12 +325,12 @@ async function main() {
     ok("6. KBO partial(셀 부족·미지팀 행) → 0값 오염 없이 Naver 복구");
   }
 
-  // ── 7. 투수 sort 1개만 실패 → KBO 유지 (allSettled) ───────────────────────
+  // ── 7. 투수 sort 1개만 실패 → Naver 전체 복구 ─────────────────────────────
   {
     const { body } = await run("one-sort-fails", "ok");
-    assert.equal(body["sources"]["pitcher"], "kbo", "sort 1개 실패는 KBO 유지");
+    assert.equal(body["sources"]["pitcher"], "naver", "sort 1개 실패는 부분 KBO 채택 금지");
     assert.ok(Number(body["pitchers"]) > 0);
-    ok("7. 투수 sort 부분 실패는 KBO 정상 유지(전량 throw 아님)");
+    ok("7. 투수 sort 부분 실패는 Naver 전체 복구");
   }
 
   // ── 8~11. dual-fail → upsert 미수행 (fail-close, 기존행 보존) ─────────────
@@ -306,20 +357,56 @@ async function main() {
     ok("13. Naver 절단(첫 100명) → 부분 upsert 없이 fail-close");
   }
 
-  // ── 12. kbo_id 미매칭 행이 기존 kbo_id 를 ""로 덮어쓰지 않음 ──────────────
+  // ── 12. Naver playerId가 durable identity로 보존됨 ─────────────────────────
   {
     await run("503", "ok");
     for (const u of [...batterUpserts(), ...pitcherUpserts()]) {
-      const hasId = "kbo_id" in u.rows[0];
-      assert.ok(
-        u.rows.every((r) => ("kbo_id" in r) === hasId),
-        "한 upsert 묶음의 kbo_id 키 집합은 균일(PostgREST 요구)",
+      assert.ok(u.rows.every((r) => r.player_key), "모든 행에 player_key 존재");
+      assert.equal(
+        new Set(u.rows.map((r) => r.player_key)).size,
+        u.rows.length,
+        "한 upsert 안의 identity key unique",
       );
-      if (hasId) {
-        assert.ok(u.rows.every((r) => r.kbo_id), "kbo_id 묶음은 전부 비어있지 않은 값");
-      }
     }
-    ok("12. 미매칭 선수는 kbo_id 컬럼을 보내지 않아 기존 kbo_id 파괴 없음");
+    ok("12. Naver playerId를 durable unique identity로 보존");
+  }
+
+  // ── 14. 같은 팀 동명이인은 Naver playerId로 별도 행을 유지 ────────────────
+  {
+    const { status } = await run("503", "duplicate-names");
+    assert.equal(status, 200);
+    const keys = allRows(batterUpserts())
+      .filter((r) => r.name === "타자0" && r.team === "LG")
+      .map((r) => r.player_key);
+    assert.equal(keys.length, 2);
+    assert.equal(new Set(keys).size, 2);
+    ok("14. 동일 name+team 동명이인 2명을 playerId로 분리 저장");
+  }
+
+  // ── 15. 필수 upsert 실패는 HTTP 500 / ok:false ─────────────────────────────
+  {
+    const { status, body } = await run("503", "ok", true);
+    assert.equal(status, 500);
+    assert.equal(body["ok"], false);
+    assert.equal(jobStatuses.at(-1), "error");
+    ok("15. PostgREST upsert 실패 → non-2xx fail-close");
+  }
+
+  // ── 16. valid-looking KBO partial·비수치도 Naver로 전환 ────────────────────
+  for (const mode of ["valid-partial", "bad-numeric"] as KboMode[]) {
+    const { status, body } = await run(mode, "ok");
+    assert.equal(status, 200);
+    assert.equal(body["sources"]["batter"], "naver");
+    assert.equal(body["sources"]["pitcher"], "naver");
+    ok(`16. KBO ${mode} → Naver 전체 복구`);
+  }
+
+  // ── 17. Naver 팀 편중·잘못된 이닝은 fail-close ─────────────────────────────
+  for (const mode of ["team-skew", "bad-inning"] as NaverMode[]) {
+    const { status } = await run("503", mode);
+    assert.equal(status, 500);
+    assert.equal(upserts.length, 0);
+    ok(`17. Naver ${mode} malformed 200 → upsert 0`);
   }
 
   globalThis.fetch = realFetch;

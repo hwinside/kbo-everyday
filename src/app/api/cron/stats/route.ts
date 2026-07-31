@@ -29,11 +29,17 @@ const NAVER_MIN_COVERAGE: Record<"HITTER" | "PITCHER", number> = {
   HITTER: 150,
   PITCHER: 120,
 };
+const NAVER_MIN_PER_TEAM: Record<"HITTER" | "PITCHER", number> = {
+  HITTER: 15,
+  PITCHER: 10,
+};
+const KBO_MIN_COVERAGE = { batter: 30, pitcher: 15 } as const;
 
 interface PlayerStat {
   rank: number;
   name: string;
   team: string;
+  playerKey: string;
   [key: string]: string | number;
 }
 
@@ -52,8 +58,13 @@ async function fetchHtml(url: string): Promise<string> {
   return res.text();
 }
 
-function parseTable(html: string): string[][] {
-  const rows: string[][] = [];
+interface KboRow {
+  cells: string[];
+  playerId: string;
+}
+
+function parseTable(html: string): KboRow[] {
+  const rows: KboRow[] = [];
   const tbodyMatch = html.match(/<tbody[^>]*>([\s\S]*?)<\/tbody>/i);
   if (!tbodyMatch) return rows;
   const trMatches = tbodyMatch[1].match(/<tr[^>]*>([\s\S]*?)<\/tr>/gi);
@@ -66,7 +77,13 @@ function parseTable(html: string): string[][] {
         cells.push(td.replace(/<[^>]+>/g, "").trim());
       }
     }
-    if (cells.length > 0) rows.push(cells);
+    if (cells.length > 0) {
+      const playerId =
+        tr.match(/[?&]playerId=([A-Za-z0-9]+)/i)?.[1] ??
+        tr.match(/[?&]playerCode=([A-Za-z0-9]+)/i)?.[1] ??
+        "";
+      rows.push({ cells, playerId });
+    }
   }
   return rows;
 }
@@ -75,9 +92,9 @@ function parseTable(html: string): string[][] {
  * KBO 표 행 계약 검증. 셀 수 부족·이름 공백·미지 팀명은 열화 응답(안내문 행, 스키마 변경)이므로
  * 조용히 0/빈값 레코드로 만들지 않고 소스 전체를 실패 처리한다.
  */
-function assertKboRows(rows: string[][], minCells: number, label: string): string[][] {
+function assertKboRows(rows: KboRow[], minCells: number, label: string): KboRow[] {
   if (rows.length === 0) throw new Error(`KBO ${label} empty table`);
-  for (const c of rows) {
+  for (const { cells: c } of rows) {
     if (c.length < minCells) throw new Error(`KBO ${label} row too short (${c.length})`);
     const name = (c[1] || "").trim();
     const team = (c[2] || "").trim();
@@ -90,6 +107,7 @@ function assertKboRows(rows: string[][], minCells: number, label: string): strin
 
 // ── Naver 시즌 선수기록 ────────────────────────────────────────────────────
 interface NaverPlayerStat {
+  playerId?: string;
   playerName?: string;
   teamName?: string;
   [key: string]: unknown;
@@ -124,6 +142,24 @@ async function fetchNaverPlayerStats(
       `Naver ${playerType} 수집량(${rows.length}) < 최소 coverage(${NAVER_MIN_COVERAGE[playerType]})`,
     );
   }
+  const ids = rows.map((row) => String(row.playerId ?? "").trim());
+  if (ids.some((id) => !id) || new Set(ids).size !== rows.length) {
+    throw new Error(`Naver ${playerType} playerId coverage invalid`);
+  }
+  const perTeam = new Map<string, number>();
+  for (const row of rows) {
+    const team = String(row.teamName ?? "").trim();
+    if (!KBO_TEAM_NAMES.has(team)) throw new Error(`Naver ${playerType} invalid team`);
+    perTeam.set(team, (perTeam.get(team) ?? 0) + 1);
+  }
+  if (
+    perTeam.size !== TEAMS.length ||
+    [...KBO_TEAM_NAMES].some(
+      (team) => (perTeam.get(team) ?? 0) < NAVER_MIN_PER_TEAM[playerType],
+    )
+  ) {
+    throw new Error(`Naver ${playerType} per-team coverage invalid`);
+  }
   return rows;
 }
 
@@ -141,8 +177,41 @@ function rate(v: unknown, digits: number, trimLeadingZero: boolean): string {
 
 function intOf(v: unknown): number {
   const n = num(v);
-  if (!Number.isFinite(n)) throw new Error("Naver non-numeric count");
+  if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) {
+    throw new Error("Naver invalid count");
+  }
   return Math.trunc(n);
+}
+
+function strictInt(v: string, label: string): number {
+  if (!/^\d+$/.test(v.trim())) throw new Error(`KBO ${label} invalid integer`);
+  return Number(v);
+}
+
+function strictRate(v: string, label: string): string {
+  const n = Number(v);
+  if (!v.trim() || !Number.isFinite(n) || n < 0) {
+    throw new Error(`KBO ${label} invalid rate`);
+  }
+  return v;
+}
+
+function identityFor(
+  rawPlayerId: unknown,
+  name: string,
+  team: string,
+  roster: RosterPlayer[],
+): { playerKey: string; kboId: string } {
+  const raw = String(rawPlayerId ?? "").trim();
+  const found = resolvePlayer(
+    { playerId: raw || undefined, name, team },
+    roster,
+  );
+  const canonical = found?.kboId || raw;
+  return {
+    playerKey: canonical || `legacy:${team}:${name}`,
+    kboId: canonical,
+  };
 }
 
 function mapNaverBatters(rows: NaverPlayerStat[], roster: RosterPlayer[]): PlayerStat[] {
@@ -150,7 +219,7 @@ function mapNaverBatters(rows: NaverPlayerStat[], roster: RosterPlayer[]): Playe
     const name = (r.playerName || "").trim();
     const team = (r.teamName || "").trim();
     if (!name || !KBO_TEAM_NAMES.has(team)) throw new Error("Naver batter invalid row");
-    const found = resolvePlayer({ name, team }, roster, { context: "cron/stats:batter:naver" });
+    const identity = identityFor(r.playerId, name, team, roster);
     const hits = intOf(r.hitterHit);
     const doubles = intOf(r.hitterH2);
     const triples = intOf(r.hitterH3);
@@ -159,6 +228,7 @@ function mapNaverBatters(rows: NaverPlayerStat[], roster: RosterPlayer[]): Playe
       rank: i + 1,
       name,
       team,
+      playerKey: identity.playerKey,
       avg: rate(r.hitterHra, 3, true),
       games: intOf(r.hitterGameCount),
       ab: intOf(r.hitterAb),
@@ -171,8 +241,8 @@ function mapNaverBatters(rows: NaverPlayerStat[], roster: RosterPlayer[]): Playe
       // (KBO 표 30/30 행 완전 일치 실측). pa·sac·sf 는 복원 불가 → upsert 에서 제외해 기존값 보존.
       tb: hits + doubles + 2 * triples + 3 * hr,
       rbi: intOf(r.hitterRbi),
-      kboId: found?.kboId || "",
-      playerId: found?.kboId || "",
+      kboId: identity.kboId,
+      playerId: identity.kboId,
     };
   });
 }
@@ -182,13 +252,14 @@ function mapNaverPitchers(rows: NaverPlayerStat[], roster: RosterPlayer[]): Play
     const name = (r.playerName || "").trim();
     const team = (r.teamName || "").trim();
     if (!name || !KBO_TEAM_NAMES.has(team)) throw new Error("Naver pitcher invalid row");
-    const found = resolvePlayer({ name, team }, roster, { context: "cron/stats:pitcher:naver" });
+    const identity = identityFor(r.playerId, name, team, roster);
     const ip = typeof r.pitcherInning === "string" ? r.pitcherInning.trim() : "";
-    if (!ip) throw new Error("Naver pitcher missing IP");
+    if (!/^\d+(?: [12]\/3)?$/.test(ip)) throw new Error("Naver pitcher invalid IP");
     return {
       rank: i + 1,
       name,
       team,
+      playerKey: identity.playerKey,
       era: rate(r.pitcherEra, 2, false),
       games: intOf(r.pitcherGameCount),
       wins: intOf(r.pitcherWin),
@@ -205,8 +276,8 @@ function mapNaverPitchers(rows: NaverPlayerStat[], roster: RosterPlayer[]): Play
       r: intOf(r.pitcherR),
       er: intOf(r.pitcherEr),
       whip: rate(r.pitcherWhip, 2, false),
-      kboId: found?.kboId || "",
-      playerId: found?.kboId || "",
+      kboId: identity.kboId,
+      playerId: identity.kboId,
     };
   });
 }
@@ -216,60 +287,78 @@ async function fetchKboBatterStats(roster: RosterPlayer[]): Promise<PlayerStat[]
   // GAME_CN 정렬로 출장기록 있는 전체 타자 수집 (HRA_RT는 규정타석 충족자만 반환)
   const html = await fetchHtml(`${KBO_BASE}/Record/Player/HitterBasic/Basic1.aspx?sort=GAME_CN`);
   const rows = assertKboRows(parseTable(html), 16, "hitter");
-  return rows.map((c, i) => {
+  if (rows.length < KBO_MIN_COVERAGE.batter) throw new Error("KBO hitter coverage invalid");
+  const stats = rows.map(({ cells: c, playerId }, i) => {
     const name = c[1] || "";
     const team = c[2] || "";
-    const found = resolvePlayer({ name, team }, roster, { context: "cron/stats:batter" });
+    const identity = identityFor(playerId, name, team, roster);
     return {
       rank: i + 1,
       name,
       team,
-      avg: c[3] || ".000",
-      games: parseInt(c[4]) || 0,
-      pa: parseInt(c[5]) || 0,
-      ab: parseInt(c[6]) || 0,
-      runs: parseInt(c[7]) || 0,
-      hits: parseInt(c[8]) || 0,
-      doubles: parseInt(c[9]) || 0,
-      triples: parseInt(c[10]) || 0,
-      hr: parseInt(c[11]) || 0,
-      tb: parseInt(c[12]) || 0,
-      rbi: parseInt(c[13]) || 0,
-      sac: parseInt(c[14]) || 0,
-      sf: parseInt(c[15]) || 0,
-      kboId: found?.kboId || "",
-      playerId: found?.kboId || "",
+      playerKey: identity.playerKey,
+      avg: strictRate(c[3], "hitter avg"),
+      games: strictInt(c[4], "hitter games"),
+      pa: strictInt(c[5], "hitter pa"),
+      ab: strictInt(c[6], "hitter ab"),
+      runs: strictInt(c[7], "hitter runs"),
+      hits: strictInt(c[8], "hitter hits"),
+      doubles: strictInt(c[9], "hitter doubles"),
+      triples: strictInt(c[10], "hitter triples"),
+      hr: strictInt(c[11], "hitter hr"),
+      tb: strictInt(c[12], "hitter tb"),
+      rbi: strictInt(c[13], "hitter rbi"),
+      sac: strictInt(c[14], "hitter sac"),
+      sf: strictInt(c[15], "hitter sf"),
+      kboId: identity.kboId,
+      playerId: identity.kboId,
     };
   });
+  assertTeamCoverage(stats, "KBO hitter", 1);
+  return stats;
 }
 
-function parsePitcherRow(c: string[], roster: RosterPlayer[]): PlayerStat {
+function parsePitcherRow(row: KboRow, roster: RosterPlayer[]): PlayerStat {
+  const c = row.cells;
   const name = c[1] || "";
   const team = c[2] || "";
-  const found = resolvePlayer({ name, team }, roster, { context: "cron/stats:pitcher" });
+  const identity = identityFor(row.playerId, name, team, roster);
+  if (!/^\d+(?: [12]\/3)?$/.test(c[10])) throw new Error("KBO pitcher invalid IP");
   return {
     rank: 0,
     name,
     team,
-    era: c[3] || "0.00",
-    games: parseInt(c[4]) || 0,
-    wins: parseInt(c[5]) || 0,
-    losses: parseInt(c[6]) || 0,
-    saves: parseInt(c[7]) || 0,
-    holds: parseInt(c[8]) || 0,
-    wpct: c[9] || "0.000",
-    ip: c[10] || "0",
-    h: parseInt(c[11]) || 0,
-    hr: parseInt(c[12]) || 0,
-    bb: parseInt(c[13]) || 0,
-    hbp: parseInt(c[14]) || 0,
-    so: parseInt(c[15]) || 0,
-    r: parseInt(c[16]) || 0,
-    er: parseInt(c[17]) || 0,
-    whip: c[18] || "0.00",
-    kboId: found?.kboId || "",
-    playerId: found?.kboId || "",
+    playerKey: identity.playerKey,
+    era: strictRate(c[3], "pitcher era"),
+    games: strictInt(c[4], "pitcher games"),
+    wins: strictInt(c[5], "pitcher wins"),
+    losses: strictInt(c[6], "pitcher losses"),
+    saves: strictInt(c[7], "pitcher saves"),
+    holds: strictInt(c[8], "pitcher holds"),
+    wpct: strictRate(c[9], "pitcher wpct"),
+    ip: c[10],
+    h: strictInt(c[11], "pitcher h"),
+    hr: strictInt(c[12], "pitcher hr"),
+    bb: strictInt(c[13], "pitcher bb"),
+    hbp: strictInt(c[14], "pitcher hbp"),
+    so: strictInt(c[15], "pitcher so"),
+    r: strictInt(c[16], "pitcher r"),
+    er: strictInt(c[17], "pitcher er"),
+    whip: strictRate(c[18], "pitcher whip"),
+    kboId: identity.kboId,
+    playerId: identity.kboId,
   };
+}
+
+function assertTeamCoverage(stats: PlayerStat[], label: string, minPerTeam: number): void {
+  const perTeam = new Map<string, number>();
+  for (const row of stats) perTeam.set(row.team, (perTeam.get(row.team) ?? 0) + 1);
+  if (
+    perTeam.size !== TEAMS.length ||
+    [...KBO_TEAM_NAMES].some((team) => (perTeam.get(team) ?? 0) < minPerTeam)
+  ) {
+    throw new Error(`${label} team coverage invalid`);
+  }
 }
 
 async function fetchKboPitcherStats(roster: RosterPlayer[]): Promise<PlayerStat[]> {
@@ -286,19 +375,21 @@ async function fetchKboPitcherStats(roster: RosterPlayer[]): Promise<PlayerStat[
     }),
   );
   const ok = results.filter(
-    (r): r is PromiseFulfilledResult<string[][]> => r.status === "fulfilled",
+    (r): r is PromiseFulfilledResult<KboRow[]> => r.status === "fulfilled",
   );
-  if (ok.length === 0) {
+  if (ok.length !== sortKeys.length) {
     throw new Error(`KBO pitcher all sorts failed: ${(results[0] as PromiseRejectedResult)?.reason}`);
   }
 
   for (const { value: rows } of ok) {
-    for (const c of rows) {
+    for (const row of rows) {
+      const c = row.cells;
       const name = c[1] || "";
       const team = c[2] || "";
-      const key = `${name}::${team}`;
+      const identity = identityFor(row.playerId, name, team, roster);
+      const key = identity.playerKey;
       if (!merged.has(key)) {
-        merged.set(key, parsePitcherRow(c, roster));
+        merged.set(key, parsePitcherRow(row, roster));
       }
     }
   }
@@ -309,6 +400,10 @@ async function fetchKboPitcherStats(roster: RosterPlayer[]): Promise<PlayerStat[
   stats.forEach((p, i) => {
     p.rank = i + 1;
   });
+  if (stats.length < KBO_MIN_COVERAGE.pitcher) {
+    throw new Error("KBO pitcher coverage invalid");
+  }
+  assertTeamCoverage(stats, "KBO pitcher", 1);
   return stats;
 }
 
@@ -356,24 +451,15 @@ async function collect(
  * 이렇게 해야 로스터 매칭이 일시적으로 실패한 선수의 기존 kbo_id 를 ""로 덮어쓰지 않는다 —
  * kbo_id 는 player-tagger·videos-shorts 가 선수를 식별하는 유일 키다.
  */
-async function upsertSplit(
+async function upsertRows(
   table: "player_stats_batter" | "player_stats_pitcher",
   rows: Record<string, string | number>[],
 ): Promise<string[]> {
   const errors: string[] = [];
-  const withId = rows.filter((r) => r.kbo_id);
-  const withoutId = rows
-    .filter((r) => !r.kbo_id)
-    .map((r) => {
-      const rest = { ...r };
-      delete rest.kbo_id;
-      return rest;
-    });
-  for (const g of [withId, withoutId]) {
-    if (g.length === 0) continue;
-    const { error } = await supabaseAdmin.from(table).upsert(g, { onConflict: "name,team" });
-    if (error) errors.push(error.message);
-  }
+  const { error } = await supabaseAdmin
+    .from(table)
+    .upsert(rows, { onConflict: "player_key" });
+  if (error) errors.push(error.message);
   return errors;
 }
 
@@ -400,6 +486,7 @@ export async function GET(req: NextRequest) {
       const base: Record<string, string | number> = {
         name: b.name,
         team: b.team,
+        player_key: b.playerKey,
         kbo_id: b.kboId,
         rank: b.rank,
         avg: b.avg,
@@ -427,6 +514,7 @@ export async function GET(req: NextRequest) {
     const pitcherRows = pitchers.map((p) => ({
       name: p.name,
       team: p.team,
+      player_key: p.playerKey,
       kbo_id: p.kboId,
       rank: p.rank,
       era: p.era,
@@ -449,10 +537,10 @@ export async function GET(req: NextRequest) {
     })) as Record<string, string | number>[];
 
     const dbErrors: string[] = [];
-    for (const m of await upsertSplit("player_stats_batter", batterRows)) {
+    for (const m of await upsertRows("player_stats_batter", batterRows)) {
       dbErrors.push(`batter: ${m}`);
     }
-    for (const m of await upsertSplit("player_stats_pitcher", pitcherRows)) {
+    for (const m of await upsertRows("player_stats_pitcher", pitcherRows)) {
       dbErrors.push(`pitcher: ${m}`);
     }
 
@@ -461,6 +549,14 @@ export async function GET(req: NextRequest) {
 
     if (dbErrors.length > 0) {
       await finishJob(logId, "error", summary, dbErrors.join("; "));
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "player stats upsert failed",
+          dbErrors,
+        },
+        { status: 500 },
+      );
     } else if (batterRes.source === "naver" || pitcherRes.source === "naver") {
       await finishJob(logId, "warning", summary, "KBO 실패 → Naver failover");
     } else {
