@@ -17,6 +17,7 @@ import {
   extractInstagramVideoUrls,
   extractThreadsImageUrls,
   extractMlbparkImageUrls,
+  getThreadsEmbedUrl,
   inferMediaExt,
 } from "@/lib/gif-collector/og-media";
 
@@ -317,6 +318,32 @@ const img = (u: string): { url: string; type: "image" } => ({ url: u, type: "ima
   check(
     "merge: max=0이면 빈 배열",
     mergeInstagramImageSlides([img("https://ig/a.jpg")], [img("https://ig/c.jpg")], 0).length === 0,
+  );
+}
+
+// 25) Threads 임베드 URL 파생 — canonical 해서만 없으면 영상 poster가 사진글로 오발행된다(하린아빠 제보 2026-07-31).
+//     공유링크(/share/CODE/)는 canonical(@handle/post/CODE)로 리다이렉트된 최종 URL을 써야 임베드가 생긴다.
+{
+  const canonical = "https://www.threads.com/@dydal06/post/DbaxddEk7IV?xmt=AQG0";
+  check(
+    "Threads embed: canonical @handle/post → /embed 생성(쿼리 제거)",
+    getThreadsEmbedUrl(canonical) === "https://www.threads.com/@dydal06/post/DbaxddEk7IV/embed",
+    `got ${getThreadsEmbedUrl(canonical)}`,
+  );
+  check(
+    "Threads embed: 공유링크(/share/CODE/)는 그대로는 null — resolvedUrl 필요 근거",
+    getThreadsEmbedUrl("https://www.threads.com/share/BASpyXtGA0/") === null,
+    `got ${getThreadsEmbedUrl("https://www.threads.com/share/BASpyXtGA0/")}`,
+  );
+  check(
+    "Threads embed: threads.net 호스트도 동작",
+    getThreadsEmbedUrl("https://www.threads.net/@a/post/XYZ/some-slug") ===
+      "https://www.threads.net/@a/post/XYZ/embed",
+    `got ${getThreadsEmbedUrl("https://www.threads.net/@a/post/XYZ/some-slug")}`,
+  );
+  check(
+    "Threads embed: 비-Threads 호스트는 null",
+    getThreadsEmbedUrl("https://example.com/@a/post/XYZ") === null,
   );
 }
 
