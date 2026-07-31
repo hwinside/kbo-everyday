@@ -144,7 +144,7 @@ assert.equal(
   true,
   "영문 약칭 대진 정상 매칭",
 );
-for (const prefixedAwayTeam of ["SKT", "XKT"]) {
+for (const prefixedAwayTeam of ["SKT", "XKT", "한KT"]) {
   assert.equal(
     titleMatchesMatchupAndScore(`${prefixedAwayTeam} 5 vs LG 4`, ktLgContext),
     false,
