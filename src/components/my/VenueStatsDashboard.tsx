@@ -251,7 +251,13 @@ export default function VenueStatsDashboard() {
     >
       <header
         className="sticky top-0 z-30 -mx-5 flex min-h-[52px] items-center gap-2 border-b border-white/8 bg-[#0A0A0B]/95 px-3 backdrop-blur-xl"
-        style={{ paddingTop: "env(safe-area-inset-top, 0px)" }}
+        // 공용 고정헤더 규격: 부모 `main.pt-safe`가 이미 safe-area를 주므로
+        // padding만 더하면 이중 적용된다. 음수 marginTop으로 상쇄해야
+        // 상단 여백이 정상이고 sticky top-0 기준도 상태바 아래에 고정된다.
+        style={{
+          paddingTop: "env(safe-area-inset-top, 0px)",
+          marginTop: "calc(env(safe-area-inset-top, 0px) * -1)",
+        }}
       >
         <button onClick={goBack} aria-label="뒤로가기" className="flex h-11 w-11 items-center justify-center">
           <ChevronLeft size={26} />
