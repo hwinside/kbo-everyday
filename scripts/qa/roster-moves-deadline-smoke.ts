@@ -121,7 +121,114 @@ async function main() {
     assert.equal(JSON.stringify({ snapshots: 10, moves: 4 }), snapshotSentinel, `${label}: state unchanged`);
   }
 
-  console.log(`roster-moves-deadline-smoke: ${cases.length}/${cases.length} PASS`);
+  // Non-force cron: schedule discovery shares the same route deadline and
+  // cannot reach collection or DB when its upstream never settles.
+  {
+    let dbFactoryCalls = 0;
+    let collectionCalls = 0;
+    const startedAt = Date.now();
+    const response = await withWatchdog(rosterMovesRoute(
+      new NextRequest("http://localhost/api/cron/roster-moves", {
+        headers: { authorization: "Bearer roster-deadline-smoke" },
+      }),
+      {
+        now: () => new Date(),
+        fetchGamesImpl: async () => neverResponse() as never,
+        fetchRegisterRostersImpl: async () => {
+          collectionCalls++;
+          throw new Error("collection must not start after schedule stall");
+        },
+        getSupabaseAdminImpl: (() => {
+          dbFactoryCalls++;
+          throw new Error("DB must not initialize after schedule stall");
+        }) as never,
+        collectionDeadlineMs: 80,
+      },
+    ), 700, "schedule-response-stall");
+    const payload = await response.json() as { ok: boolean; stage: string };
+    assert.equal(response.status, 502, "schedule stall status");
+    assert.equal(payload.stage, "schedule", "schedule stall stage");
+    assert.equal(dbFactoryCalls, 0, "schedule stall DB read/write/RPC 0");
+    assert.equal(collectionCalls, 0, "schedule stall collection 0");
+    assert.ok(Date.now() - startedAt < 500, "schedule stall bounded");
+  }
+
+  // Pending readiness: all three asset probes are covered by the route
+  // deadline before the first mutating RPC, preserving stored state on stall.
+  {
+    let dbReadCalls = 0;
+    let rpcCalls = 0;
+    let updateCalls = 0;
+    let probeCalls = 0;
+    const probeSignals: AbortSignal[] = [];
+    const pendingRows = [{
+      id: "pending-1",
+      team_id: 1,
+      kbo_player_id: "51516",
+      player_name: "테스트",
+      move_date: "2026-08-01",
+    }];
+    const pendingBuilder = {
+      select() { return this; },
+      eq() { return this; },
+      order() {
+        return this;
+      },
+      limit() {
+        dbReadCalls++;
+        return Promise.resolve({ data: pendingRows, error: null });
+      },
+      update() {
+        updateCalls++;
+        return this;
+      },
+    };
+    const admin = {
+      from(table: string) {
+        assert.equal(table, "roster_moves");
+        return pendingBuilder;
+      },
+      rpc() {
+        rpcCalls++;
+        return Promise.resolve({ data: null, error: null });
+      },
+    };
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      probeCalls++;
+      if (init?.signal instanceof AbortSignal) probeSignals.push(init.signal);
+      return neverResponse();
+    }) as typeof fetch;
+    const startedAt = Date.now();
+    let response: Response;
+    try {
+      response = await withWatchdog(rosterMovesRoute(
+        new NextRequest("http://localhost/api/cron/roster-moves?force=1", {
+          headers: { authorization: "Bearer roster-deadline-smoke" },
+        }),
+        {
+          now: () => new Date(),
+          fetchRegisterRostersImpl: async () => ({ date: kstToday(), teams: [] }),
+          getSupabaseAdminImpl: (() => admin) as never,
+          collectionDeadlineMs: 80,
+        },
+      ), 700, "pending-readiness-stall");
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+    const payload = await response.json() as { ok: boolean; stage: string };
+    assert.equal(response.status, 502, "readiness stall status");
+    assert.equal(payload.stage, "readiness", "readiness stall stage");
+    assert.equal(dbReadCalls, 1, "readiness preflight reads pending once");
+    assert.equal(probeCalls, 3, "profile/hero/player-card probes all started");
+    assert.equal(probeSignals.length, 3, "each readiness fetch receives abort signal");
+    assert.equal(rpcCalls, 0, "readiness stall RPC 0");
+    assert.equal(updateCalls, 0, "readiness stall writes 0");
+    assert.ok(Date.now() - startedAt < 500, "readiness stall bounded");
+    assert.equal(JSON.stringify({ snapshots: 10, moves: 4 }), snapshotSentinel, "readiness state unchanged");
+  }
+
+  console.log(`roster-moves-deadline-smoke: ${cases.length + 2}/${cases.length + 2} PASS`);
 }
 
 main().catch((error) => {

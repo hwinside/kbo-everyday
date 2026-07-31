@@ -24,8 +24,7 @@ type GameLiveTrace = {
 };
 
 function requiresStarterContract(game: KboRawGame): boolean {
-  return !isKboGameCancelled(game.CANCEL_SC_ID)
-    && (game.GAME_STATE_SC === "2" || game.GAME_STATE_SC === "3");
+  return !isKboGameCancelled(game.CANCEL_SC_ID);
 }
 
 function starterContractIncomplete(games: KboRawGame[]): boolean {
@@ -129,7 +128,11 @@ export async function GET(req: NextRequest) {
 
     let rawGames = fetched.games;
     let trace: GameLiveTrace = fetched.trace;
-    if (starterContractIncomplete(rawGames)) {
+    try {
+      // The independently sourced schedule is also the full-slate witness.
+      // Always compare it, including scheduled games: otherwise a 4/5 KBO
+      // partial or a Naver 5-game response with 0/10 starters is silently
+      // accepted merely because no live/final game triggered the old guard.
       const witness = await fetchStarterWitness(req, date, deadlineAtMs);
       const reconciled = reconcileStarterWitness(rawGames, witness);
       if (!reconciled) {
@@ -141,6 +144,12 @@ export async function GET(req: NextRequest) {
       }
       rawGames = reconciled;
       trace = { ...trace, stage: "starter-witness", fetchedAtMs: Date.now() };
+    } catch {
+      trace = { ...trace, stage: "starter-witness-failed", fetchedAtMs: Date.now() };
+      return NextResponse.json(
+        { error: "starter witness unavailable", games: [], date, trace },
+        { status: 503, headers: traceHeaders(trace) },
+      );
     }
 
     const games = rawGames.map((g: KboRawGame) => {

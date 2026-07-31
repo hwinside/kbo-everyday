@@ -465,6 +465,77 @@ async function routeFailureMatrix() {
       assert.ok(result.elapsedMs < 5_500, `KBO ${mode} deadline bound`);
     }
 
+    // Scheduled slate is still subject to starter completeness. With KBO down
+    // and both Naver views returning five games but zero starters, the route
+    // must not emit the old silent HTTP 200 / starters 0-of-10 response.
+    {
+      let witnessCalls = 0;
+      globalThis.fetch = (async (input: RequestInfo | URL) => {
+        const url = String(input instanceof Request ? input.url : input);
+        if (url.includes("Main.asmx")) return new Response(null, { status: 503 });
+        if (url.includes("/api/games?")) {
+          witnessCalls++;
+          return Response.json({
+            games: witnessGames.map((game) => ({
+              ...game,
+              awayStarterName: null,
+              homeStarterName: null,
+            })),
+          });
+        }
+        if (url.includes("api-gw.sports.naver.com/schedule/games?")) {
+          const payload = naverSchedulePayload(date);
+          for (const game of payload.result.games) game.statusCode = "BEFORE";
+          return Response.json(payload);
+        }
+        return realFetch(input as RequestInfo);
+      }) as typeof fetch;
+      const response = await withWatchdog(
+        GET(new NextRequest(`http://localhost/api/game-live?date=${date}`)),
+        6_000,
+        "scheduled 0/10 starters",
+      );
+      const body = await response.json() as { games: unknown[]; trace: { stage: string } };
+      assert.equal(response.status, 503, "scheduled starters 0/10 fail closed");
+      assert.equal(body.games.length, 0);
+      assert.equal(body.trace.stage, "starter-witness-failed");
+      assert.equal(witnessCalls, 1, "scheduled slate always calls witness");
+    }
+
+    // A structurally valid KBO 200 containing only 4/5 games must also compare
+    // against the whole-day witness instead of bypassing it as authoritative.
+    {
+      let witnessCalls = 0;
+      const partialKbo = SLATE.slice(0, 4).map((game) => ({
+        G_ID: `${date}${game.away}${game.home}0`,
+        GAME_STATE_SC: "1",
+        CANCEL_SC_ID: "0",
+        AWAY_NM: game.awayName,
+        HOME_NM: game.homeName,
+        T_PIT_P_NM: `${game.awayName}선발`,
+        B_PIT_P_NM: `${game.homeName}선발`,
+      }));
+      globalThis.fetch = (async (input: RequestInfo | URL) => {
+        const url = String(input instanceof Request ? input.url : input);
+        if (url.includes("Main.asmx")) return Response.json({ game: partialKbo });
+        if (url.includes("/api/games?")) {
+          witnessCalls++;
+          return Response.json({ games: witnessGames });
+        }
+        return realFetch(input as RequestInfo);
+      }) as typeof fetch;
+      const response = await withWatchdog(
+        GET(new NextRequest(`http://localhost/api/game-live?date=${date}`)),
+        6_000,
+        "KBO 200 partial 4/5",
+      );
+      const body = await response.json() as { games: unknown[]; trace: { stage: string } };
+      assert.equal(response.status, 503, "KBO 4/5 slate fail closed");
+      assert.equal(body.games.length, 0);
+      assert.equal(body.trace.stage, "starter-witness-failed");
+      assert.equal(witnessCalls, 1, "KBO partial always calls witness");
+    }
+
     const partial = await invoke("503", "partial");
     assert.equal(partial.response.status, 503, "Naver partial must fail closed");
     assert.equal(partial.body.games.length, 0);

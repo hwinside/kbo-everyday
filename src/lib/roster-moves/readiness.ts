@@ -26,6 +26,7 @@
 import { resolvePlayer } from "@/lib/utils/resolve-player";
 import { getPlayerPhotoByKboId } from "@/lib/constants/player-photos";
 import heroApprovedList from "@/lib/constants/hero-approved-kboids.json";
+import { runBeforeDeadline } from "@/lib/async-deadline";
 
 const HERO_APPROVED = new Set<string>(heroApprovedList as string[]);
 
@@ -39,7 +40,8 @@ export type MissingCheck =
   | "hero"
   | "profile-asset"
   | "hero-asset"
-  | "player-page";
+  | "player-page"
+  | "readiness-unverified";
 
 /** 준비 완료 판정 순수 코어 — 로스터 && 프로필 사진 && 히어로컷. 스모크 테스트 대상. */
 export function evaluateReadiness(inRoster: boolean, hasPhoto: boolean, hasHero: boolean): boolean {
@@ -82,14 +84,15 @@ export interface ProbeResult {
   status: number;
   contentType: string | null;
 }
-export type AssetProbe = (url: string) => Promise<ProbeResult>;
+export type AssetProbe = (url: string, signal?: AbortSignal) => Promise<ProbeResult>;
 
 /** 기본 프로브 — GET 후 status/content-type만 읽는다(no-store). 실패=상태 0. */
-export const defaultProbe: AssetProbe = async (url) => {
+export const defaultProbe: AssetProbe = async (url, signal) => {
   try {
-    const res = await fetch(url, { method: "GET", cache: "no-store" });
+    const res = await fetch(url, { method: "GET", cache: "no-store", signal });
     return { status: res.status, contentType: res.headers.get("content-type") };
-  } catch {
+  } catch (error) {
+    if (signal?.aborted) throw error;
     return { status: 0, contentType: null };
   }
 };
@@ -106,6 +109,7 @@ function isImage(ct: string | null): boolean {
 export async function checkPublishReadiness(
   kboPlayerId: string,
   probe: AssetProbe = defaultProbe,
+  deadlineAtMs?: number,
 ): Promise<MoveReadiness> {
   const sync = checkMoveReadiness(kboPlayerId);
   if (!sync.ready || !sync.canonicalId || !sync.photoPath) {
@@ -113,12 +117,18 @@ export async function checkPublishReadiness(
   }
   const canonical = sync.canonicalId;
 
-  const [profile, hero, page] = await Promise.all([
-    probe(`${PUBLIC_BASE}${sync.photoPath}`),
-    probe(`${PUBLIC_BASE}/players-hero/${canonical}.webp`),
-    // 서버 신호: 미존재 선수는 404, 실존 선수는 200 (클라 상세페이지는 미존재도 200 shell이라 부적합).
-    probe(`${PUBLIC_BASE}/api/widget/player-card?id=${encodeURIComponent(canonical)}`),
-  ]);
+  const signal = deadlineAtMs == null
+    ? undefined
+    : AbortSignal.timeout(Math.max(1, deadlineAtMs - Date.now()));
+  const [profile, hero, page] = await runBeforeDeadline(
+    () => Promise.all([
+      probe(`${PUBLIC_BASE}${sync.photoPath}`, signal),
+      probe(`${PUBLIC_BASE}/players-hero/${canonical}.webp`, signal),
+      // 서버 신호: 미존재 선수는 404, 실존 선수는 200 (클라 상세페이지는 미존재도 200 shell이라 부적합).
+      probe(`${PUBLIC_BASE}/api/widget/player-card?id=${encodeURIComponent(canonical)}`, signal),
+    ]),
+    deadlineAtMs,
+  );
 
   const missing: MissingCheck[] = [];
   if (!(profile.status === 200 && isImage(profile.contentType))) missing.push("profile-asset");
