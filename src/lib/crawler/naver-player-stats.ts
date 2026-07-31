@@ -57,7 +57,20 @@ interface NaverPlayersPayload {
   };
 }
 
-const TEAM_IDS = new Set(["HH", "HT", "KT", "LG", "LT", "NC", "OB", "SK", "SS", "WO"]);
+const TEAM_NAMES_BY_ID = new Map([
+  ["HH", "한화"],
+  ["HT", "KIA"],
+  ["KT", "KT"],
+  ["LG", "LG"],
+  ["LT", "롯데"],
+  ["NC", "NC"],
+  ["OB", "두산"],
+  ["SK", "SSG"],
+  ["SS", "삼성"],
+  ["WO", "키움"],
+]);
+const NAVER_TEAM_MINIMUM = { batter: 20, pitcher: 15 } as const;
+const PITCHER_INNING_RE = /^\d+(?: [12]\/3)?$/;
 
 function finite(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
@@ -97,7 +110,7 @@ function validateCommon(row: NaverPlayerRow): row is NaverPlayerRow & {
     typeof row.playerName === "string" &&
     row.playerName.trim().length > 0 &&
     typeof row.teamId === "string" &&
-    TEAM_IDS.has(row.teamId) &&
+    TEAM_NAMES_BY_ID.get(row.teamId) === row.teamName &&
     typeof row.teamName === "string" &&
     row.teamName.trim().length > 0
   );
@@ -213,7 +226,7 @@ export function parseNaverPlayerStats(
       if (
         !required.every(finiteNonNegative) ||
         typeof row.pitcherInning !== "string" ||
-        row.pitcherInning.trim().length === 0
+        !PITCHER_INNING_RE.test(row.pitcherInning.trim())
       ) {
         throw new Error("Naver pitcher stats required field missing");
       }
@@ -244,15 +257,25 @@ export function parseNaverPlayerStats(
     }
   }
 
-  const teams = new Set(
-    raw
-      .map((row) => (row && typeof row === "object" ? (row as NaverPlayerRow).teamId : null))
-      .filter((team): team is string => typeof team === "string"),
-  );
+  const teamCounts = new Map<string, number>();
+  for (const row of raw as NaverPlayerRow[]) {
+    if (typeof row.teamId === "string") {
+      teamCounts.set(row.teamId, (teamCounts.get(row.teamId) || 0) + 1);
+    }
+  }
   const minimum = type === "batter" ? 250 : 200;
-  if (stats.length < minimum || teams.size !== TEAM_IDS.size) {
+  const perTeamMinimum = NAVER_TEAM_MINIMUM[type];
+  const allTeamsCovered = [...TEAM_NAMES_BY_ID.keys()].every(
+    (teamId) => (teamCounts.get(teamId) || 0) >= perTeamMinimum,
+  );
+  if (
+    stats.length < minimum ||
+    teamCounts.size !== TEAM_NAMES_BY_ID.size ||
+    !allTeamsCovered
+  ) {
     throw new Error(
-      `Naver ${type} stats partial: rows=${stats.length}, teams=${teams.size}`,
+      `Naver ${type} stats partial: rows=${stats.length}, teams=${teamCounts.size}, ` +
+        `minTeam=${Math.min(...teamCounts.values())}`,
     );
   }
   return stats;

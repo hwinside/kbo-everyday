@@ -62,6 +62,43 @@ function payload(type: "batter" | "pitcher", count: number) {
   return { success: true, code: 200, result: { seasonPlayerStats } };
 }
 
+function pitcherTableHtml(rowCount: number): string {
+  const rows = Array.from({ length: rowCount }, (_, index) => {
+    const cells = Array.from({ length: 19 }, () => "0");
+    cells[0] = String(index + 1);
+    cells[1] = `KBO투수${index}`;
+    cells[2] = teamNames[index % teamNames.length];
+    cells[3] = "3.25";
+    cells[10] = "10";
+    cells[18] = "1.20";
+    return `<tr>${cells.map((cell) => `<td>${cell}</td>`).join("")}</tr>`;
+  }).join("");
+  return `<html><tbody>${rows}</tbody></html>`;
+}
+
+function batterTableHtml(kind: "basic1" | "basic2"): string {
+  const columnCount = kind === "basic1" ? 16 : 12;
+  const rows = Array.from({ length: 30 }, (_, index) => {
+    const cells = Array.from({ length: columnCount }, () => "0");
+    cells[0] = String(index + 1);
+    cells[1] =
+      index === 29
+        ? kind === "basic1"
+          ? "Basic1전용"
+          : "Basic2전용"
+        : `KBO타자${index}`;
+    cells[2] = teamNames[index % teamNames.length];
+    cells[3] = ".300";
+    if (kind === "basic2") {
+      cells[9] = ".400";
+      cells[10] = ".350";
+      cells[11] = ".750";
+    }
+    return `<tr>${cells.map((cell) => `<td>${cell}</td>`).join("")}</tr>`;
+  }).join("");
+  return `<html><tbody>${rows}</tbody></html>`;
+}
+
 async function main() {
   const batters = parseNaverPlayerStats(payload("batter", 260), "batter");
   assert.equal(batters.length, 260);
@@ -93,6 +130,24 @@ async function main() {
   }
   assert.throws(() => parseNaverPlayerStats(missingTeam, "pitcher"), /partial/);
 
+  const wrongTeamName = payload("batter", 260);
+  wrongTeamName.result.seasonPlayerStats[0].teamName = "가짜팀";
+  assert.throws(
+    () => parseNaverPlayerStats(wrongTeamName, "batter"),
+    /coverage/,
+  );
+
+  const skewedTeams = payload("batter", 260);
+  for (let i = 0; i < skewedTeams.result.seasonPlayerStats.length; i += 1) {
+    const teamIndex = i < 241 ? 0 : Math.min(9, i - 240);
+    skewedTeams.result.seasonPlayerStats[i].teamId = teamIds[teamIndex];
+    skewedTeams.result.seasonPlayerStats[i].teamName = teamNames[teamIndex];
+  }
+  assert.throws(
+    () => parseNaverPlayerStats(skewedTeams, "batter"),
+    /partial/,
+  );
+
   const invalidRate = payload("batter", 260);
   invalidRate.result.seasonPlayerStats[0].hitterHra = Number.NaN;
   assert.throws(() => parseNaverPlayerStats(invalidRate, "batter"), /required/);
@@ -108,6 +163,13 @@ async function main() {
   invalidPitcherRate.result.seasonPlayerStats[0].pitcherWhip = Number.NaN;
   assert.throws(
     () => parseNaverPlayerStats(invalidPitcherRate, "pitcher"),
+    /required/,
+  );
+
+  const invalidPitcherInning = payload("pitcher", 210);
+  invalidPitcherInning.result.seasonPlayerStats[0].pitcherInning = "not-an-inning";
+  assert.throws(
+    () => parseNaverPlayerStats(invalidPitcherInning, "pitcher"),
     /required/,
   );
 
@@ -161,14 +223,33 @@ async function main() {
   assert.ok(Date.now() - bodyStarted < 250, "body stall obeys deadline");
 
   let naverPayload = payload("batter", 260);
-  let kboMode: "error" | "empty" | "stall" | "body-stall" = "error";
+  let kboMode:
+    | "error"
+    | "empty"
+    | "stall"
+    | "body-stall"
+    | "partial-table"
+    | "batter-basic2-gap" = "error";
   let naverMode: "ok" | "stall" = "ok";
+  let naverCalls = 0;
   const originalFetch = global.fetch;
   process.env.NEXT_PUBLIC_SUPABASE_URL ||= "https://example.supabase.co";
   process.env.SUPABASE_SERVICE_ROLE_KEY ||= "test-service-role";
   global.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url.includes("koreabaseball.com")) {
+      if (kboMode === "batter-basic2-gap") {
+        if (url.includes("/Runner/")) {
+          return new Response("unavailable", { status: 503 });
+        }
+        return new Response(
+          batterTableHtml(url.includes("/Basic2.aspx") ? "basic2" : "basic1"),
+          { status: 200 },
+        );
+      }
+      if (kboMode === "partial-table") {
+        return new Response(pitcherTableHtml(10), { status: 200 });
+      }
       if (kboMode === "empty") {
         return new Response("<html><tbody></tbody></html>", {
           status: 200,
@@ -194,6 +275,7 @@ async function main() {
       return new Response("unavailable", { status: 503 });
     }
     if (url.includes("api-gw.sports.naver.com")) {
+      naverCalls += 1;
       if (naverMode === "stall") {
         return new Promise<Response>((_resolve, reject) => {
           init?.signal?.addEventListener(
@@ -228,7 +310,23 @@ async function main() {
     const softEmptyBody = await softEmptyResponse.json();
     assert.equal(softEmptyBody.source, "naver-fallback");
 
+    kboMode = "error";
+    naverPayload = payload("batter", 260);
+    naverPayload.result.seasonPlayerStats[0].teamName = "가짜팀";
+    const malformedNaverResponse = await GET(
+      new NextRequest("http://localhost/api/stats?type=batter&season=current"),
+    );
+    const malformedNaverBody = await malformedNaverResponse.json();
+    assert.equal(malformedNaverBody.source, "fallback");
+    assert.ok(
+      malformedNaverBody.stats.some(
+        (row: { team?: string; name?: string }) => row.team === "LG" && row.name,
+      ),
+      "malformed Naver 200 falls back to static stats with LG players",
+    );
+
     kboMode = "body-stall";
+    naverPayload = payload("batter", 260);
     const bodyHangStarted = Date.now();
     const bodyHangResponse = await GET(
       new NextRequest("http://localhost/api/stats?type=batter&season=body-stall"),
@@ -254,6 +352,37 @@ async function main() {
       "KBO hard hang preserves Naver reserve",
     );
 
+    kboMode = "partial-table";
+    naverPayload = payload("pitcher", 210);
+    const callsBeforePartial = naverCalls;
+    const partialKboResponse = await GET(
+      new NextRequest("http://localhost/api/stats?type=pitcher&season=kbo-partial"),
+    );
+    const partialKboBody = await partialKboResponse.json();
+    assert.equal(partialKboBody.source, "naver-fallback");
+    assert.equal(partialKboBody.count, 210);
+    assert.equal(
+      naverCalls,
+      callsBeforePartial + 1,
+      "10-row x 6 KBO sort partial calls Naver exactly once",
+    );
+
+    kboMode = "batter-basic2-gap";
+    naverPayload = payload("batter", 260);
+    const callsBeforeBasic2Gap = naverCalls;
+    const basic2GapResponse = await GET(
+      new NextRequest("http://localhost/api/stats?type=batter&season=basic2-gap"),
+    );
+    const basic2GapBody = await basic2GapResponse.json();
+    assert.equal(basic2GapBody.source, "naver-fallback");
+    assert.equal(basic2GapBody.count, 260);
+    assert.equal(
+      naverCalls,
+      callsBeforeBasic2Gap + 1,
+      "Basic1 player missing from Basic2 calls Naver exactly once",
+    );
+
+    kboMode = "stall";
     naverMode = "stall";
     const dualHangKeepAlive = setInterval(() => {}, 50);
     const dualHangStarted = Date.now();

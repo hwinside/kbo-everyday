@@ -24,6 +24,9 @@ const RUNNER_MIN_PAGES = 9;
 const RUNNER_MIN_ROWS = 250;
 const STATS_TOTAL_DEADLINE_MS = 5_000;
 const STATS_KBO_BUDGET_MS = 2_500;
+const KBO_TABLE_MIN_ROWS = 30;
+const KBO_TEAM_NAMES = new Set(["한화", "KIA", "KT", "LG", "롯데", "NC", "두산", "SSG", "삼성", "키움"]);
+const KBO_TEAM_MINIMUM = { batter: 3, pitcher: 6 } as const;
 
 interface PlayerStat {
   rank: number;
@@ -223,12 +226,12 @@ async function fetchBatterStats(signal?: AbortSignal): Promise<{
   if (
     basic1Tables.some(
       (table) =>
-        table.length < 10 ||
+        table.length < KBO_TABLE_MIN_ROWS ||
         table.some((row) => row.length < 16 || !row[1]?.trim() || !row[2]?.trim()),
     ) ||
     basic2Tables.some(
       (table) =>
-        table.length < 10 ||
+        table.length < KBO_TABLE_MIN_ROWS ||
         table.some((row) => row.length < 12 || !row[1]?.trim() || !row[2]?.trim()),
     )
   ) {
@@ -271,6 +274,12 @@ async function fetchBatterStats(signal?: AbortSignal): Promise<{
       obp: c[10] || ".000",
       ops: c[11] || ".000",
     });
+  }
+  const missingBasic2 = [...mergedRows.keys()].filter((key) => !basic2Map.has(key));
+  if (missingBasic2.length > 0) {
+    throw new Error(
+      `KBO batter Basic2 join incomplete: missing=${missingBasic2.length}`,
+    );
   }
 
   // Runner 전 페이지 live 수집이 완전히 성공했을 때만 사용한다. 일부 페이지만 성공한 결과와
@@ -409,8 +418,11 @@ async function fetchPitcherStats(signal?: AbortSignal): Promise<PlayerStat[]> {
       const url = `${KBO_BASE}/Record/Player/PitcherBasic/Basic1.aspx?sort=${sort}`;
       const html = await fetchHtml(url, signal);
       const rows = parseTable(html);
+      // ERA_RT는 규정이닝 충족자만 내려와 현재 정상 응답도 19행이다.
+      // 나머지 누적 정렬은 정상 페이지의 30행 계약을 그대로 요구한다.
+      const minimumRows = sort === "ERA_RT" ? 15 : KBO_TABLE_MIN_ROWS;
       if (
-        rows.length < 10 ||
+        rows.length < minimumRows ||
         rows.some((row) => row.length < 19 || !row[1]?.trim() || !row[2]?.trim())
       ) {
         throw new Error(`KBO pitcher stats ${sort} table incomplete`);
@@ -472,13 +484,27 @@ function setCache(key: string, data: StatsResult) {
 
 function assertStatsComplete(stats: PlayerStat[], type: "batter" | "pitcher"): void {
   const minimum = 30;
-  const teams = new Set(stats.map((row) => row.team.trim()).filter(Boolean));
+  const teamCounts = new Map<string, number>();
+  for (const row of stats) {
+    const team = row.team.trim();
+    if (team) teamCounts.set(team, (teamCounts.get(team) || 0) + 1);
+  }
   const players = new Set(
     stats.map((row) => `${row.name.trim()}::${row.team.trim()}`).filter((key) => key !== "::"),
   );
-  if (stats.length < minimum || players.size !== stats.length || teams.size !== 10) {
+  const perTeamMinimum = KBO_TEAM_MINIMUM[type];
+  const allTeamsCovered = [...KBO_TEAM_NAMES].every(
+    (team) => (teamCounts.get(team) || 0) >= perTeamMinimum,
+  );
+  if (
+    stats.length < minimum ||
+    players.size !== stats.length ||
+    teamCounts.size !== KBO_TEAM_NAMES.size ||
+    !allTeamsCovered
+  ) {
     throw new Error(
-      `KBO ${type} stats partial: rows=${stats.length}, unique=${players.size}, teams=${teams.size}`,
+      `KBO ${type} stats partial: rows=${stats.length}, unique=${players.size}, ` +
+        `teams=${teamCounts.size}, minTeam=${Math.min(...teamCounts.values())}`,
     );
   }
 }
