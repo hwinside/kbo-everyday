@@ -1,4 +1,5 @@
 import type { InterviewMatchContext } from "./postgame-interviews";
+import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
 
 interface ScheduledGame {
   gameId: string;
@@ -14,6 +15,32 @@ interface StoredInterviewJob {
   is_doubleheader: boolean;
   ended_at: string;
   expires_at: string;
+}
+
+export interface InterviewPlayerLink {
+  name: string;
+  kboId: string | null;
+  teamId: number;
+}
+
+export function interviewPlayerLinks(
+  playerNames: string[],
+  winnerTeamId: number | null | undefined,
+): InterviewPlayerLink[] {
+  const uniqueNames = [...new Set(playerNames.map((name) => name.trim()).filter(Boolean))];
+  return uniqueNames.map((name) => {
+    const candidates = winnerTeamId == null
+      ? []
+      : PLAYERS_ROSTER.filter(
+        (player) => player.name === name && player.teamId === winnerTeamId,
+      );
+    const resolved = candidates.length === 1 ? candidates[0] : null;
+    return {
+      name,
+      kboId: resolved?.kboId ?? null,
+      teamId: winnerTeamId ?? 0,
+    };
+  });
 }
 
 export function doubleheaderGameIds(games: ScheduledGame[]): Set<string> {

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
+import { interviewPlayerLinks } from "@/lib/video/postgame-interviews-route-policy";
 
 const GAME_ID_RE = /^\d{8}[A-Z]{4}\d$/;
 
@@ -21,7 +22,7 @@ export async function GET(req: NextRequest) {
       .limit(6),
     supabaseAdmin
       .from("postgame_interview_jobs")
-      .select("status, expires_at")
+      .select("status, expires_at, winner_team_id")
       .eq("game_id", gameId)
       .maybeSingle(),
   ]);
@@ -45,6 +46,7 @@ export async function GET(req: NextRequest) {
         thumbnail: item.thumbnail,
         publishedAt: item.published_at,
         playerNames: item.player_names ?? [],
+        players: interviewPlayerLinks(item.player_names ?? [], job?.winner_team_id),
         sourceKind: item.source_kind,
       })),
       collecting,
