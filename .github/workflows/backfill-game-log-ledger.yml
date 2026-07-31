@@ -1,0 +1,154 @@
+name: Backfill Game Log Ledger
+
+# 직관 다이어리 통계(S1a)용 완료 증거 원장(player_game_log_ingestions) backfill.
+#
+# 배경: player_game_logs 행은 있어도 ledger가 없으면 S1a는 heuristic 추정 없이
+# complete=false로 강등한다(설계 계약). 그래서 통계 화면에서 팀 타율/ERA/홈런이
+# `비교 데이터 준비 중`으로 막힌다. 이 워크플로가 boxscore를 재수집해 ledger를 채운다.
+#
+# 실행은 수동(workflow_dispatch)만. 스케줄 없음 —
+# 운영 정기 수집은 별도 경로가 담당하고 이건 과거분 보정용이다.
+#
+# 멱등: player_game_logs UNIQUE(kbo_id,player_type,game_id) + ledger PK(game_id) upsert.
+# 재실행해도 중복이 생기지 않는다.
+
+on:
+  workflow_dispatch:
+    inputs:
+      season:
+        description: '대상 시즌 (예: 2026)'
+        required: true
+        default: '2026'
+        type: string
+      limit:
+        description: '최근 N경기만 처리 (0 = 시즌 전체). 검증용으로 작은 값부터 권장'
+        required: false
+        default: '0'
+        type: string
+      apply:
+        description: 'true = 실제 DB 쓰기, false = dry-run(판정 미리보기만)'
+        required: true
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+permissions:
+  contents: read
+
+concurrency:
+  # 같은 시즌에 동시 실행되면 같은 경기를 중복 페치한다. 겹치면 대기시킨다.
+  group: backfill-game-log-ledger-${{ inputs.season }}
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate inputs
+        id: validate
+        run: |
+          SEASON="${{ inputs.season }}"
+          LIMIT="${{ inputs.limit }}"
+          # 시즌은 4자리 연도만. 오타로 엉뚱한 시즌을 긁지 않게 fail-closed.
+          if ! echo "$SEASON" | grep -Eq '^[0-9]{4}$'; then
+            echo "::error::season must be a 4-digit year, got '$SEASON'"
+            exit 1
+          fi
+          if ! echo "$LIMIT" | grep -Eq '^[0-9]+$'; then
+            echo "::error::limit must be a non-negative integer, got '$LIMIT'"
+            exit 1
+          fi
+          echo "season=$SEASON" >> $GITHUB_OUTPUT
+          echo "limit=$LIMIT" >> $GITHUB_OUTPUT
+
+      - name: Ledger count before
+        id: before
+        env:
+          SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          COUNT=$(curl -s "$SUPABASE_URL/rest/v1/player_game_log_ingestions?select=game_id" \
+            -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Prefer: count=exact" -H "Range: 0-0" -D - -o /dev/null \
+            | grep -i '^content-range:' | tr -d '\r' | sed 's|.*/||')
+          echo "count=$COUNT" >> $GITHUB_OUTPUT
+          echo "ledger rows before: $COUNT"
+
+      - name: Run backfill
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          ARGS="--season ${{ steps.validate.outputs.season }}"
+          if [ "${{ steps.validate.outputs.limit }}" != "0" ]; then
+            ARGS="$ARGS --limit ${{ steps.validate.outputs.limit }}"
+          fi
+          if [ "${{ inputs.apply }}" = "true" ]; then
+            ARGS="$ARGS --apply"
+          fi
+          echo "npx tsx scripts/backfill-game-log-ledger.mts $ARGS"
+          npx tsx scripts/backfill-game-log-ledger.mts $ARGS 2>&1 | tee /tmp/backfill.log
+
+      - name: Ledger count after
+        id: after
+        env:
+          SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          COUNT=$(curl -s "$SUPABASE_URL/rest/v1/player_game_log_ingestions?select=game_id" \
+            -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Prefer: count=exact" -H "Range: 0-0" -D - -o /dev/null \
+            | grep -i '^content-range:' | tr -d '\r' | sed 's|.*/||')
+          echo "count=$COUNT" >> $GITHUB_OUTPUT
+          echo "ledger rows after: $COUNT"
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Game Log Ledger Backfill"
+            echo ""
+            echo "- season: \`${{ steps.validate.outputs.season }}\`"
+            echo "- limit: \`${{ steps.validate.outputs.limit }}\` (0 = 시즌 전체)"
+            echo "- apply: \`${{ inputs.apply }}\`"
+            echo "- ledger rows: \`${{ steps.before.outputs.count }}\` → \`${{ steps.after.outputs.count }}\`"
+            echo ""
+            echo '```'
+            tail -n 60 /tmp/backfill.log 2>/dev/null || echo "(no log)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # dry-run 은 판정 미리보기라 incomplete 가 있어도 실패가 아니다.
+      # apply 실행에서 ledger 가 하나도 늘지 않았다면 백필이 사실상 no-op 이므로 드러낸다
+      # (이미 전량 채워진 재실행은 정상이므로 로그의 complete 수로 구분한다).
+      - name: Verify apply made progress
+        if: inputs.apply == 'true'
+        run: |
+          BEFORE="${{ steps.before.outputs.count }}"
+          AFTER="${{ steps.after.outputs.count }}"
+          COMPLETE=$(grep -oE 'complete [0-9]+' /tmp/backfill.log | tail -1 | grep -oE '[0-9]+' || echo "0")
+          echo "before=$BEFORE after=$AFTER complete=$COMPLETE"
+          if [ "$AFTER" -lt "$BEFORE" ]; then
+            echo "::error::ledger rows decreased ($BEFORE → $AFTER)"
+            exit 1
+          fi
+          if [ "$AFTER" -eq "$BEFORE" ] && [ "$COMPLETE" = "0" ]; then
+            echo "::error::apply run produced no complete ledger rows — check the log above"
+            exit 1
+          fi
