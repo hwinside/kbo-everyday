@@ -594,16 +594,68 @@ function verifyWiring() {
   assert.match(rpcBody, /'baseball-genius:' \|\| p\.id/, "answer DM은 dedup_key exact join");
 }
 
+// migration ACL 자립성: neutral Postgres(default ACL 무의존)에서도 RPC가
+// service_role EXECUTE=true / anon·authenticated EXECUTE=false 여야 한다.
+async function verifyRpcAcl() {
+  const db = new PGlite();
+  await db.exec(`
+    CREATE ROLE service_role;
+    CREATE ROLE anon;
+    CREATE ROLE authenticated;
+    CREATE TABLE dm_conversations (id uuid PRIMARY KEY, user1_id uuid, user2_id uuid);
+    CREATE TABLE dm_messages (
+      id bigserial PRIMARY KEY,
+      conversation_id uuid NOT NULL REFERENCES dm_conversations(id),
+      sender_id uuid,
+      content text NOT NULL DEFAULT '',
+      dedup_key text,
+      created_at timestamptz NOT NULL DEFAULT now()
+    );
+  `);
+  // 함수 본문이 참조하는 genius_question_jobs도 생성(SQL 함수는 CREATE 시점 참조 검증).
+  const jobsSql = migrationSql.match(
+    /CREATE TABLE IF NOT EXISTS public\.genius_question_jobs[\s\S]*?\n\);/,
+  )?.[0];
+  assert.ok(jobsSql, "genius_question_jobs DDL을 migration에서 찾을 수 있어야 함");
+  await db.exec(jobsSql);
+  const functionSql = contextMigrationSql.match(
+    /CREATE OR REPLACE FUNCTION public\.baseball_genius_previous_turn[\s\S]*?\n\$\$;/,
+  )?.[0];
+  assert.ok(functionSql, "RPC 정의를 migration에서 찾을 수 있어야 함");
+  await db.exec(functionSql);
+  // migration의 REVOKE/GRANT 라인을 그대로 적용(default ACL에 의존하지 않는다).
+  const aclStatements = contextMigrationSql
+    .split("\n")
+    .filter((l) => /^(REVOKE|GRANT)\b/.test(l.trim()));
+  assert.ok(
+    aclStatements.some((l) => /GRANT EXECUTE[\s\S]*baseball_genius_previous_turn[\s\S]*service_role/.test(l)),
+    "migration에 service_role EXECUTE GRANT가 명시돼야 함(default ACL 의존 금지)",
+  );
+  for (const stmt of aclStatements) await db.exec(stmt);
+  const check = async (role: string) =>
+    (
+      await db.query<{ has: boolean }>(
+        "SELECT has_function_privilege($1, 'public.baseball_genius_previous_turn(bigint)', 'EXECUTE') AS has",
+        [role],
+      )
+    ).rows[0].has;
+  assert.equal(await check("service_role"), true, "ACL: service_role EXECUTE=true");
+  assert.equal(await check("anon"), false, "ACL: anon EXECUTE=false");
+  assert.equal(await check("authenticated"), false, "ACL: authenticated EXECUTE=false");
+  await db.close();
+}
+
 async function main() {
   verifyClosedSetContract();
   await verifyAcPipeline();
   verifySourceAllowlistFailClosed();
   await verifyPreviousTurnSql();
+  await verifyRpcAcl();
   verifyWiring();
   console.log(
     "✅ baseball-genius S0 context PASS: AC1~15 (B1 직전-turn-only barrier, B2 exact join·answer DM 실존, " +
       "B3 source allowlist fail-closed, B4 closed-set full-string, B5 TTL 600.000/600.001 경계·cache read+write bypass), " +
-      "AC8 conversation/유저 격리, AC9 tie-break, AC10 역순 제외",
+      "AC8 conversation/유저 격리, AC9 tie-break, AC10 역순 제외, RPC ACL service=true·anon/auth=false",
   );
 }
 

@@ -50,6 +50,8 @@ $$;
 REVOKE ALL ON FUNCTION public.baseball_genius_previous_turn(bigint) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.baseball_genius_previous_turn(bigint) FROM anon;
 REVOKE ALL ON FUNCTION public.baseball_genius_previous_turn(bigint) FROM authenticated;
+-- service_role만 실행 자격(neutral Postgres에서도 자립하도록 명시 GRANT — default ACL 의존 금지).
+GRANT EXECUTE ON FUNCTION public.baseball_genius_previous_turn(bigint) TO service_role;
 
 -- (q.conversation_id, q.sender_id, q.created_at DESC, q.id DESC) 직전 turn 조회 인덱스.
 CREATE INDEX IF NOT EXISTS idx_dm_messages_conversation_sender_recent
