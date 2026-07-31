@@ -81,6 +81,7 @@ async function main() {
   // fetch spy: POST /comments 카운트 + 필요 시 hold(동시성 검증), GET 은 위 아바타 댓글 셋.
   let postCount = 0;
   let holdPost = false;
+  let nextPostError: string | null = null;
   let releasers: Array<() => void> = [];
   const origFetch = globalThis.fetch;
   globalThis.fetch = (async (input: unknown, init?: { method?: string; body?: string }) => {
@@ -90,6 +91,14 @@ async function main() {
       postCount++;
       const content = (() => { try { return JSON.parse(init?.body ?? "{}").content; } catch { return ""; } })();
       if (holdPost) await new Promise<void>((r) => releasers.push(r));
+      if (nextPostError) {
+        const error = nextPostError;
+        nextPostError = null;
+        return {
+          ok: false, status: 429,
+          json: async () => ({ error }),
+        } as unknown as Response;
+      }
       return {
         ok: true, status: 200,
         json: async () => ({ comment: { id: 200 + postCount, content, userId: "author-1", createdAt: new Date().toISOString(), author: { nickname: "t", avatarUrl: null, teamId: 1 } } }),
@@ -208,6 +217,17 @@ async function main() {
   // 취소 후에도 정상 탭은 다시 전송돼야 함(press 소비만, 영구 잠금 아님)
   await tap({ clientX: 0, clientY: 0 });
   ok("취소/드래그아웃 뒤 정상 탭 → POST 재개(누적 4)", postCount === 4);
+
+  // ── (6) 429 오류는 z-130 댓글 portal 안에 노출 + 입력 유지 ──
+  const rejectedContent = "입력은 유지";
+  await typeContent(rejectedContent);
+  nextPostError = "잠시 후 다시 입력해 주세요";
+  await tap({ clientX: 0, clientY: 0 });
+  const commentOverlay = scope.querySelector("[data-venue-story-comment-overlay]");
+  const commentError = commentOverlay?.querySelector('[data-comment-error][role="alert"]');
+  ok("429 응답은 댓글 overlay 내 role=alert로 노출",
+    commentError?.textContent === "잠시 후 다시 입력해 주세요");
+  ok("429 거절 후 댓글 입력값 유지", input!.value === rejectedContent);
 
   globalThis.fetch = origFetch;
   console.log(`\nvenue-story comment submit render: ${pass} passed, ${fail} failed`);

@@ -9,8 +9,10 @@ export const VENUE_STORY_COMMENT_LIST_LIMIT = 100; // 스토리당 조회 상한
 export const VENUE_STORY_COMMENT_COOLDOWN_MS = 10_000;
 export const VENUE_STORY_COMMENT_WINDOW_MS = 60_000;
 export const VENUE_STORY_COMMENT_MAX_IN_WINDOW = 3;
-// CommentSheet 와 동일 — 정규화 키 기준 최근 5건 내 같은 내용 반복 차단
+// 같은 스토리에서 짧은 시간 내 재시도된 동일 내용만 차단.
+// 다른 스토리에 표현이 같은 이모지/짧은 댓글을 남기는 정상 사용은 허용한다.
 export const VENUE_STORY_COMMENT_DUP_RECENT = 5;
+export const VENUE_STORY_COMMENT_DUP_WINDOW_MS = 5 * 60_000;
 
 /** GET /api/venue-stories/[id]/comments 응답 아이템 */
 export interface VenueStoryComment {
@@ -102,6 +104,7 @@ export function isStoryOpenForComments(
 
 /** 어뷰징 판정 입력 — DB에서 조회한 유저 최근 댓글(최신순) */
 export interface RecentCommentRow {
+  story_id: number;
   content: string;
   created_at: string;
 }
@@ -109,11 +112,12 @@ export interface RecentCommentRow {
 /**
  * DB 권위 어뷰징 판정(삼순 #807 blocker 3) — 서버리스 인스턴스 메모리가 아니라
  * 유저의 최근 댓글 행(created_at/content)을 근거로 판정한다:
- * (1) 10초 간격 / 60초 내 3건 rate 차단 (2) 정규화 키 기준 최근 5건 동일내용 반복 차단.
- * 정책 상수는 기존 커뮤니티 CommentSheet 와 동일.
+ * (1) 10초 간격 / 60초 내 3건 rate 차단
+ * (2) 같은 스토리·5분 내 정규화 킴 동일내용 반복 차단.
  */
 export function evaluateCommentAbuse(
   recentDesc: readonly RecentCommentRow[],
+  storyId: number,
   content: string,
   now: number,
 ): { allowed: true } | { allowed: false; error: string } {
@@ -125,6 +129,10 @@ export function evaluateCommentAbuse(
   }
   const key = normalizeForFloodKey(content);
   const dup = recentDesc
+    .filter((r) =>
+      r.story_id === storyId &&
+      now - new Date(r.created_at).getTime() < VENUE_STORY_COMMENT_DUP_WINDOW_MS
+    )
     .slice(0, VENUE_STORY_COMMENT_DUP_RECENT)
     .some((r) => normalizeForFloodKey(r.content) === key);
   if (dup) {

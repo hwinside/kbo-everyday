@@ -22,6 +22,7 @@ import {
   VENUE_STORY_COMMENT_WINDOW_MS,
   VENUE_STORY_COMMENT_MAX_IN_WINDOW,
   VENUE_STORY_COMMENT_DUP_RECENT,
+  VENUE_STORY_COMMENT_DUP_WINDOW_MS,
 } from "../../src/lib/venue-stories/comments";
 import {
   computeKeyboardInset,
@@ -136,35 +137,45 @@ console.log("[DB 권위 어뷰징 가드 — 유저 최근 댓글 행 기반(eva
 {
   const now = Date.parse("2026-07-23T12:00:00Z");
   const iso = (msAgo: number) => new Date(now - msAgo).toISOString();
-  ok("과거 댓글 없음 → 허용", evaluateCommentAbuse([], "컬로가자", now).allowed === true);
+  const row = (storyId: number, content: string, msAgo: number) => ({
+    story_id: storyId,
+    content,
+    created_at: iso(msAgo),
+  });
+  ok("과거 댓글 없음 → 허용", evaluateCommentAbuse([], 1, "컬로가자", now).allowed === true);
   ok("10초 미만 재작성 차단(DB created_at 기준)",
-    evaluateCommentAbuse([{ content: "a", created_at: iso(5_000) }], "b", now).allowed === false);
+    evaluateCommentAbuse([row(1, "a", 5_000)], 1, "b", now).allowed === false);
   ok("10초 경과 후 허용",
-    evaluateCommentAbuse([{ content: "a", created_at: iso(10_000) }], "b", now).allowed === true);
+    evaluateCommentAbuse([row(1, "a", 10_000)], 1, "b", now).allowed === true);
   ok("60초 내 3건 이상 차단(윈도우)",
     evaluateCommentAbuse([
-      { content: "a", created_at: iso(15_000) },
-      { content: "b", created_at: iso(30_000) },
-      { content: "c", created_at: iso(45_000) },
-    ], "d", now).allowed === false);
+      row(1, "a", 15_000),
+      row(2, "b", 30_000),
+      row(3, "c", 45_000),
+    ], 1, "d", now).allowed === false);
   ok("윈도우 밖 오래된 행은 rate 무관",
     evaluateCommentAbuse([
-      { content: "a", created_at: iso(70_000) },
-      { content: "b", created_at: iso(80_000) },
-      { content: "c", created_at: iso(90_000) },
-    ], "d", now).allowed === true);
-  ok("최근 5건 내 동일내용 반복 차단(정규화 — 공백/런 변형 포함)", (() => {
+      row(1, "a", 70_000),
+      row(2, "b", 80_000),
+      row(3, "c", 90_000),
+    ], 1, "d", now).allowed === true);
+  ok("같은 스토리·5분 내 동일내용 반복 차단(정규화 포함)", (() => {
     const r = evaluateCommentAbuse(
-      [{ content: "ㄷㄷㄷ", created_at: iso(20_000) }], "ㄷ ㄷ ㄷㄷ", now);
+      [row(1, "ㄷㄷㄷ", 20_000)], 1, "ㄷ ㄷ ㄷㄷ", now);
     return r.allowed === false && r.error === "같은 댓글은 반복해서 달 수 없어요";
   })());
+  ok("다른 스토리의 동일 이모지/내용은 허용",
+    evaluateCommentAbuse([row(1, "👍", 20_000)], 2, "👍", now).allowed === true);
+  ok("5분 윈도우가 지난 같은 스토리 동일 내용은 허용",
+    evaluateCommentAbuse([row(1, "👍", VENUE_STORY_COMMENT_DUP_WINDOW_MS + 1)], 1, "👍", now).allowed === true);
   ok("다른 내용은 허용",
-    evaluateCommentAbuse([{ content: "ㄷㄷㄷ", created_at: iso(20_000) }], "오늘 직관 최고", now).allowed === true);
+    evaluateCommentAbuse([row(1, "ㄷㄷㄷ", 20_000)], 1, "오늘 직관 최고", now).allowed === true);
   ok("rate 차단 메시지 계약(429)", (() => {
-    const r = evaluateCommentAbuse([{ content: "a", created_at: iso(1_000) }], "b", now);
+    const r = evaluateCommentAbuse([row(1, "a", 1_000)], 1, "b", now);
     return r.allowed === false && r.error === "잠시 후 다시 입력해 주세요";
   })());
   ok("dup 비교 상한 상수(최근 5건)", VENUE_STORY_COMMENT_DUP_RECENT === 5);
+  ok("dup 시간 상한 상수(5분)", VENUE_STORY_COMMENT_DUP_WINDOW_MS === 300_000);
 }
 
 console.log("[수명주기 게이트 — GET/POST 공용(isStoryOpenForComments)]");
@@ -361,7 +372,11 @@ console.log("[rate limit 원자화 RPC 계약 — 삼순 #807 라운드3 blocker
     path.resolve(process.cwd(), "supabase/migrations/20260723_venue_story_comments.sql"),
     "utf8",
   );
-  const fnMatch = sql.match(
+  const duplicateScopeSql = readFileSync(
+    path.resolve(process.cwd(), "supabase/migrations/20260731_fix_venue_story_comment_duplicate_scope.sql"),
+    "utf8",
+  );
+  const fnMatch = duplicateScopeSql.match(
     /CREATE OR REPLACE FUNCTION venue_story_comment_post[\s\S]*?\$\$;\n/,
   );
   const fn = fnMatch?.[0] ?? "";
@@ -372,8 +387,8 @@ console.log("[rate limit 원자화 RPC 계약 — 삼순 #807 라운드3 blocker
     /status = 'active' AND expires_at > v_now/.test(fn));
   ok("단일 함수 안에서 10초/60초 rate 판정 수행",
     fn.includes("INTERVAL '10 seconds'") && fn.includes("INTERVAL '60 seconds'"));
-  ok("단일 함수 안에서 동일내용(content_key 최근 5건) 판정 수행",
-    /LIMIT 5[\s\S]*?content_key = p_content_key/.test(fn));
+  ok("동일내용 차단은 같은 스토리·5분 내 최근 5건으로 제한",
+    /story_id = p_story_id[\s\S]*?INTERVAL '5 minutes'[\s\S]*?LIMIT 5[\s\S]*?content_key = p_content_key/.test(fn));
   ok("단일 함수 안에서 INSERT 까지 수행(판정+INSERT 단일 트랜잭션)",
     fn.includes("INSERT INTO venue_story_comments"));
   ok("advisory lock 이 게이트/판정/INSERT 보다 앞서 잡힌다",
@@ -382,8 +397,8 @@ console.log("[rate limit 원자화 RPC 계약 — 삼순 #807 라운드3 blocker
   ok("유저 최근 댓글 판정용 (user_id, created_at DESC) 인덱스 존재",
     /idx_venue_story_comments_user_recent\s+ON venue_story_comments \(user_id, created_at DESC\)/.test(sql));
   ok("RPC 클라 롤(anon/authenticated) 실행 차단(REVOKE)",
-    /REVOKE ALL ON FUNCTION venue_story_comment_post[\s\S]*?FROM anon/.test(sql) &&
-    /REVOKE ALL ON FUNCTION venue_story_comment_post[\s\S]*?FROM authenticated/.test(sql));
+    /REVOKE ALL ON FUNCTION venue_story_comment_post[\s\S]*?FROM anon/.test(duplicateScopeSql) &&
+    /REVOKE ALL ON FUNCTION venue_story_comment_post[\s\S]*?FROM authenticated/.test(duplicateScopeSql));
 
   // route 계약: POST 가 더 이상 개별 SELECT+INSERT 를 하지 않고 RPC 호출로 단일화
   const routeSrc = readFileSync(

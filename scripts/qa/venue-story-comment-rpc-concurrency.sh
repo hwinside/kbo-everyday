@@ -24,7 +24,9 @@ if [ -z "$PGBIN" ]; then
 fi
 
 MIGRATION="$(cd "$(dirname "$0")/../.." && pwd)/supabase/migrations/20260723_venue_story_comments.sql"
+SCOPE_MIGRATION="$(cd "$(dirname "$0")/../.." && pwd)/supabase/migrations/20260731_fix_venue_story_comment_duplicate_scope.sql"
 [ -f "$MIGRATION" ] || { echo "migration not found: $MIGRATION" >&2; exit 1; }
+[ -f "$SCOPE_MIGRATION" ] || { echo "migration not found: $SCOPE_MIGRATION" >&2; exit 1; }
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/story-rpc-qa.XXXXXX")"
 DATADIR="$WORK/data"
@@ -59,10 +61,12 @@ INSERT INTO auth.users (id) VALUES
 INSERT INTO venue_stories (status, expires_at) VALUES
   ('active', now() + interval '1 hour'),   -- id=1 live
   ('active', now() - interval '1 minute'), -- id=2 expired
-  ('hidden', now() + interval '1 hour');   -- id=3 inactive
+  ('hidden', now() + interval '1 hour'),   -- id=3 inactive
+  ('active', now() + interval '1 hour');   -- id=4 another live story
 SQL
 
 "${PSQL[@]}" -f "$MIGRATION" >/dev/null
+"${PSQL[@]}" -f "$SCOPE_MIGRATION" >/dev/null
 
 pass=0; fail=0
 check() { # name actual expected
@@ -98,8 +102,16 @@ check "다른 유저 첫 댓글 성공" "$(echo "$R" | grep -c '"ok": true')" "1
 "${PSQL[@]}" -c "UPDATE venue_story_comments SET created_at = now() - interval '15 seconds' WHERE user_id='$U2'" >/dev/null
 R=$("${PSQL[@]}" -c "SELECT venue_story_comment_post(1,'$U2','첫  댓 글','key1')")
 check "정규화 키 동일 → duplicate" "$(echo "$R" | grep -c duplicate)" "1"
+# 같은 표현을 다른 스토리에 남기는 정상 사용은 허용
+R=$("${PSQL[@]}" -c "SELECT venue_story_comment_post(4,'$U2','첫 댓글','key1')")
+check "다른 스토리의 동일 키 → 허용" "$(echo "$R" | grep -c '"ok": true')" "1"
+# 같은 스토리라도 5분 차단 윈도우가 지나면 허용
+"${PSQL[@]}" -c "UPDATE venue_story_comments SET created_at = now() - interval '5 minutes 1 second' WHERE user_id='$U2'" >/dev/null
+R=$("${PSQL[@]}" -c "SELECT venue_story_comment_post(1,'$U2','첫 댓글','key1')")
+check "같은 스토리 동일 키·5분 경과 → 허용" "$(echo "$R" | grep -c '"ok": true')" "1"
 # soft delete 해도 rate/dup 판정에 남는지: 삭제 후에도 duplicate 유지
-"${PSQL[@]}" -c "UPDATE venue_story_comments SET deleted_at = now() WHERE user_id='$U2'" >/dev/null
+"${PSQL[@]}" -c "DELETE FROM venue_story_comments WHERE user_id='$U2' AND id <> (SELECT max(id) FROM venue_story_comments WHERE user_id='$U2' AND story_id=1)" >/dev/null
+"${PSQL[@]}" -c "UPDATE venue_story_comments SET created_at = now() - interval '15 seconds', deleted_at = now() WHERE user_id='$U2'" >/dev/null
 R=$("${PSQL[@]}" -c "SELECT venue_story_comment_post(1,'$U2','첫 댓글','key1')")
 check "soft delete 후에도 duplicate(리셋 불가)" "$(echo "$R" | grep -c duplicate)" "1"
 # 60초 창 3건: 과거 12/24/36초 시점 행 3건 구성 → 4번째 rate

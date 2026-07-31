@@ -131,6 +131,7 @@ export default function VenueStoryViewer({
   const [commentTotal, setCommentTotal] = useState<number | null>(null);
   const [commentInput, setCommentInput] = useState("");
   const [commentBusy, setCommentBusy] = useState(false);
+  const [commentError, setCommentError] = useState<string | null>(null);
   // 모달 컴포저 포커스 → 시트를 시각 뷰포트 전체 높이로 확장(CommentSheet expanded 패턴).
   const [composerFocused, setComposerFocused] = useState(false);
   // iOS 키보드 회피 — CommentSheet 와 동일한 state 기반 visualViewport 패턴.
@@ -436,11 +437,12 @@ export default function VenueStoryViewer({
     const submitStoryId = story.id;
     commentSubmitLockRef.current = true;
     setCommentBusy(true);
+    setCommentError(null);
     try {
       const session = await getSafeSession();
       const token = session?.access_token;
       if (!token) {
-        setToast("로그인이 필요해요");
+        setCommentError("로그인이 필요해요");
         return;
       }
       const res = await fetch(`/api/venue-stories/${story.id}/comments`, {
@@ -450,7 +452,7 @@ export default function VenueStoryViewer({
       });
       const data = await res.json();
       if (data.error) {
-        setToast(data.error);
+        setCommentError(data.error);
       } else if (data.comment) {
         // A 스토리 submit → B 로 전환 → A 응답 도착 시 B 목록 오염 방지
         if (shouldApplyCommentResponse(submitStoryId, storyIdRef.current)) {
@@ -460,7 +462,7 @@ export default function VenueStoryViewer({
         }
       }
     } catch {
-      setToast("댓글 작성 실패");
+      setCommentError("댓글 작성 실패");
     } finally {
       commentSubmitLockRef.current = false;
       setCommentBusy(false);
@@ -746,6 +748,7 @@ export default function VenueStoryViewer({
         data-open-comments
         onClick={() => {
           setCommentsClosing(false);
+          setCommentError(null);
           setCommentsOpen(true);
         }}
         className="absolute left-3 right-3 z-20 h-12 flex items-center gap-2 px-4 rounded-full bg-black/40 border border-white/25 text-white/80"
@@ -906,10 +909,23 @@ export default function VenueStoryViewer({
               className="flex-none border-t border-border px-4 py-3"
               style={{ paddingBottom: "calc(0.75rem + env(safe-area-inset-bottom))" }}
             >
+              {commentError && (
+                <p
+                  data-comment-error
+                  role="alert"
+                  aria-live="assertive"
+                  className="mb-2 text-sm text-red-400"
+                >
+                  {commentError}
+                </p>
+              )}
               <div className="flex items-center gap-2">
                 <input
                   value={commentInput}
-                  onChange={(e) => setCommentInput(e.target.value)}
+                  onChange={(e) => {
+                    setCommentInput(e.target.value);
+                    if (commentError) setCommentError(null);
+                  }}
                   onFocus={() => setComposerFocused(true)}
                   onBlur={() => setComposerFocused(false)}
                   onKeyDown={(e) => {
