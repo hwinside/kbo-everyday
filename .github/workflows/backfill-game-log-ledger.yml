@@ -75,6 +75,8 @@ jobs:
           MODE: ${{ inputs.mode }}
           # release 는 이 시즌 전체에만 허용 — 하드코딩된 검증 3경기와 처리 범위를 결속한다.
           RELEASE_SEASON: '2026'
+          # canary apply 상한. 이보다 크면 slice(-limit) 이 사실상 전체가 된다.
+          CANARY_MAX_LIMIT: '50'
         run: |
           set -euo pipefail
           # ── whitelist 먼저 ────────────────────────────────────────────────
@@ -95,17 +97,28 @@ jobs:
             echo "::error::season must be a 4-digit year, got '$SEASON'"
             exit 1
           fi
-          if ! echo "$LIMIT" | grep -Eq '^[0-9]+$'; then
-            echo "::error::limit must be a non-negative integer, got '$LIMIT'"
+          # limit 은 canonical 정수 표기만 허용한다.
+          # '00'/'000' 은 정규식 ^[0-9]+$ 를 통과하지만 문자열 비교 "$LIMIT" = "0" 에는
+          # 걸리지 않아, canary 인 채로 Number('00')=0 → 시즌 전체가 apply 된다(삼순 P0).
+          if ! echo "$LIMIT" | grep -Eq '^(0|[1-9][0-9]*)$'; then
+            echo "::error::limit must be a canonical integer (no leading zeros), got '$LIMIT'"
             exit 1
           fi
 
           # ── mode × limit × season fail-close matrix ────────────────────────
           # canary 는 소량 시험 전용이다. limit=0(시즌 전체)로 apply 하면
           # release 3경기 게이트를 타지 않은 채 전체 DB 쓰기가 일어난다(삼순 P0).
-          if [ "$MODE" = "canary" ] && [ "$APPLY" = "true" ] && [ "$LIMIT" = "0" ]; then
-            echo "::error::canary + apply requires limit > 0. Full-season apply must use mode=release."
-            exit 1
+          if [ "$MODE" = "canary" ] && [ "$APPLY" = "true" ]; then
+            if [ "$LIMIT" -eq 0 ]; then
+              echo "::error::canary + apply requires limit > 0. Full-season apply must use mode=release."
+              exit 1
+            fi
+            # 큰 limit 은 slice(-limit) 이 시즌 전체를 고르므로 canary 를 무력화한다.
+            # canary 는 소량 시험 전용 — 상한을 둬 전체 apply 경로를 release 로만 남긴다.
+            if [ "$LIMIT" -gt "$CANARY_MAX_LIMIT" ]; then
+              echo "::error::canary + apply limit must be <= $CANARY_MAX_LIMIT, got '$LIMIT'. Use mode=release for a full-season run."
+              exit 1
+            fi
           fi
           # release 는 공개 선행 실행이다 — 고정된 2026 3경기를 반드시 포함해야 하므로
           # 시즌 전체(limit=0) + 실제 쓰기(apply=true) + 해당 시즌으로 결속한다.
@@ -124,8 +137,11 @@ jobs:
             fi
           fi
 
+          # 이후 step 은 반드시 이 정규화된 출력만 쓴다(원본 inputs 직접 사용 금지).
           echo "season=$SEASON" >> $GITHUB_OUTPUT
           echo "limit=$LIMIT" >> $GITHUB_OUTPUT
+          echo "apply=$APPLY" >> $GITHUB_OUTPUT
+          echo "mode=$MODE" >> $GITHUB_OUTPUT
           echo "mode=$MODE / apply=$APPLY / season=$SEASON / limit=$LIMIT (validated)"
 
       - name: Ledger count before
@@ -151,7 +167,7 @@ jobs:
           if [ "${{ steps.validate.outputs.limit }}" != "0" ]; then
             ARGS="$ARGS --limit ${{ steps.validate.outputs.limit }}"
           fi
-          if [ "${{ inputs.apply }}" = "true" ]; then
+          if [ "${{ steps.validate.outputs.apply }}" = "true" ]; then
             ARGS="$ARGS --apply"
           fi
           echo "npx tsx scripts/backfill-game-log-ledger.mts $ARGS"
@@ -179,8 +195,8 @@ jobs:
             echo ""
             echo "- season: \`${{ steps.validate.outputs.season }}\`"
             echo "- limit: \`${{ steps.validate.outputs.limit }}\` (0 = 시즌 전체)"
-            echo "- apply: \`${{ inputs.apply }}\`"
-            echo "- mode: \`${{ inputs.mode }}\` (release 만 공개 선행 게이트를 탄다)"
+            echo "- apply: \`${{ steps.validate.outputs.apply }}\`"
+            echo "- mode: \`${{ steps.validate.outputs.mode }}\` (release 만 공개 선행 게이트를 탄다)"
             echo "- ledger rows: \`${{ steps.before.outputs.count }}\` → \`${{ steps.after.outputs.count }}\`"
             echo ""
             echo '```'
@@ -196,7 +212,7 @@ jobs:
       # 그래서 공개 선행 대상 3경기를 **워크플로에 고정**하고, mode=release 면 무조건 실행한다.
       # canary 는 소량 시험용이라 이 게이트를 타지 않으며, 공개 근거로 쓸 수 없다.
       - name: Verify release games are complete
-        if: inputs.apply == 'true' && inputs.mode == 'release'
+        if: steps.validate.outputs.apply == 'true' && steps.validate.outputs.mode == 'release'
         env:
           SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -247,7 +263,7 @@ jobs:
       # apply 실행이 사실상 no-op 이면(증가 0 + complete 0) 드러낸다.
       # 이건 보조 가드일 뿐이고, 진짜 게이트는 위의 required games 검증이다.
       - name: Verify apply made progress
-        if: inputs.apply == 'true'
+        if: steps.validate.outputs.apply == 'true'
         run: |
           BEFORE="${{ steps.before.outputs.count }}"
           AFTER="${{ steps.after.outputs.count }}"

@@ -19,6 +19,7 @@ import {
   evaluateIngestion,
   type CanonicalRowInput,
   type IngestionFailureReason,
+  type PlayerResolver,
 } from "@/lib/game-logs/completeness";
 
 export interface LedgerIngestResult {
@@ -69,7 +70,13 @@ async function upsertLedger(client: SupabaseClient, row: LedgerUpsertRow): Promi
 export async function ingestGameWithLedger(
   client: SupabaseClient,
   game: KboGame,
+  /**
+   * 테스트 seam — 기본값은 production 경로(실제 boxscore 페치 + 로스터 resolver).
+   * 회귀에서 이 오케스트레이터를 그대로 태우기 위해서만 주입한다.
+   */
+  deps: { fetchBoxscore?: typeof fetchGameBoxscore; resolver?: PlayerResolver } = {},
 ): Promise<LedgerIngestResult> {
+  const fetchBoxscore = deps.fetchBoxscore ?? fetchGameBoxscore;
   const gameDate = toIsoDate(game.date);
   const fetchedAt = new Date().toISOString();
 
@@ -95,12 +102,14 @@ export async function ingestGameWithLedger(
     return incomplete("score_unavailable");
   }
 
-  const box = await fetchGameBoxscore(game.gameId);
+  const box = await fetchBoxscore(game.gameId);
   if (!box) {
     return incomplete("boxscore_unavailable");
   }
 
-  const build = buildGameIngestion(game, box);
+  const build = deps.resolver
+    ? buildGameIngestion(game, box, deps.resolver)
+    : buildGameIngestion(game, box);
 
   // §12 fail-closed: 필수필드 결측이면 0 강등도, 부분 적재도 하지 않는다.
   if (build.missingFields.length > 0) {
@@ -152,47 +161,39 @@ export async function ingestGameWithLedger(
     );
   }
 
-  // ── 쓰기 순서: 삭제 → upsert (순서가 재시도 복구성을 결정한다) ──────────────
-  // 삭제와 upsert 는 서로 다른 요청이라 중간 실패를 피할 수 없다.
-  // 그러면 "중간 실패가 남기는 상태"가 다음 실행을 막지 않아야 한다.
+  // ── 쓰기: 삭제 + upsert 를 하나의 트랜잭션으로 원자화 ─────────────────────
+  // 두 요청으로 나누면 중간 실패 때 선수 행이 실제로 사라진다. 그 구간은 조용하지 않다 —
+  // `/api/player-game-logs`, team-card 주간 집계, venue-attendance 는 ledger 를 보지 않고
+  // player_game_logs 를 직접 읽으므로 누락값을 그대로 노출한다(삼순 P0).
+  // (venue-stats 만 runtime hash 로 fail-close 한다.)
   //
-  //   upsert → 삭제 순서(이전): upsert 성공 + 삭제 실패 → DB 에 old+new 공존.
-  //     다음 실행은 new 가 이미 beforeRows 에 있어 added=[] → old 가
-  //     `no_rekey_counterpart` 로 거부 → **정상 응답에도 영원히 incomplete** (삼순 P0)
+  // 그래서 `reconcile_player_game_logs` RPC 로 묶는다 — 함수 본문이 단일 트랜잭션이라
+  // 중간 실패 시 삭제도 함께 롤백되고, 외부 소비자는 "구 key 만" 또는 "신 key 만" 중
+  // 하나의 일관된 상태만 관측한다.
   //
-  //   삭제 → upsert 순서(현재): 삭제 성공 + upsert 실패 → DB 에 old 없고 new 도 없음.
-  //     다음 실행은 stale 이 아예 없고 new 가 added 로 잡혀 그대로 복구된다.
-  //     삭제된 행은 같은 boxscore 에서 재생성되므로 유실이 아니고,
-  //     그 사이에도 ledger 를 쓰지 않아 통계가 불완전 데이터를 쓰지 않는다(fail-closed).
-  //
-  // 삭제 대상은 preflight 가 upsert 전 상태로 확정했고, 거부 없음도 이미 확인했다.
-  let staleRowsRemoved = 0;
-  for (const stale of preflight.deletions) {
-    const { error: deleteError } = await client
-      .from("player_game_logs")
-      .delete()
-      .eq("game_id", game.gameId)
-      .eq("kbo_id", stale.kbo_id as string)
-      .eq("player_type", stale.player_type as string);
-    // 삭제 실패는 조용히 넘기지 않는다 — 부분 상태를 complete 로 남기면 안 된다.
-    if (deleteError) {
-      throw new Error(
-        `stale row 삭제 실패 (${game.gameId} ${String(stale.kbo_id)}/${String(stale.player_type)}): ${deleteError.message}`,
-      );
-    }
-    staleRowsRemoved += 1;
-  }
+  // 삭제 대상은 preflight 가 upsert 전 상태로 확정했고(rekey 1:1 짝), 거부 없음도 확인했다.
+  const deleteKeys = preflight.deletions.map((row) => ({
+    kboId: String(row.kbo_id),
+    playerType: String(row.player_type),
+  }));
 
-  // resolve된 행은 unresolved가 있어도 upsert한다(로스터 보강 후 재적재로 complete 승격).
-  let rowsUpserted = 0;
-  for (let i = 0; i < build.rows.length; i += 500) {
-    const chunk = build.rows.slice(i, i + 500);
-    const { error } = await client
-      .from("player_game_logs")
-      .upsert(chunk, { onConflict: "kbo_id,player_type,game_id" });
-    if (error) throw new Error(`player_game_logs upsert 실패 (${game.gameId} @${i}): ${error.message}`);
-    rowsUpserted += chunk.length;
+  const { data: reconcileData, error: reconcileError } = await client.rpc(
+    "reconcile_player_game_logs",
+    {
+      p_game_id: game.gameId,
+      p_delete_keys: deleteKeys,
+      p_rows: build.rows,
+    },
+  );
+  // 실패는 조용히 넘기지 않는다 — 부분 상태를 complete 로 남기면 안 된다.
+  if (reconcileError) {
+    throw new Error(
+      `player_game_logs reconcile 실패 (${game.gameId}): ${reconcileError.message}`,
+    );
   }
+  const reconciled = (reconcileData ?? {}) as { deleted?: number; upserted?: number };
+  const staleRowsRemoved = reconciled.deleted ?? 0;
+  const rowsUpserted = reconciled.upserted ?? 0;
 
   // 쓰기 결과를 신뢰하지 않고 재조회해 actual canonical payload hash 를 검증한다.
   const persistedRows = await reselect();

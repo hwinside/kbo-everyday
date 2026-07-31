@@ -26,7 +26,7 @@ run_case() {
   local label="$1" expect="$2" season="$3" limit="$4" apply="$5" mode="$6"
   local out rc
   out=$(SEASON="$season" LIMIT="$limit" APPLY="$apply" MODE="$mode" \
-        RELEASE_SEASON="2026" GITHUB_OUTPUT=/dev/null bash -c "$SCRIPT" 2>&1)
+        RELEASE_SEASON="2026" CANARY_MAX_LIMIT="50" GITHUB_OUTPUT=/dev/null bash -c "$SCRIPT" 2>&1)
   rc=$?
   if [ "$expect" = "pass" ] && [ $rc -eq 0 ]; then
     echo "  ✓ $label (exit 0)"; pass=$((pass+1))
@@ -49,6 +49,11 @@ run_case "RED release+season2025 (고정 3경기와 불일치)"                f
 run_case "RED release+limit5 (3경기 미포함 가능)"                      fail 2026 5 true release
 run_case "RED release+apply=false (공개 실행인데 쓰기 없음)"           fail 2026 0 false release
 # 형식 검증
+run_case "RED canary+apply+limit=00 (Number 0 → 전체 apply)"           fail 2026 00 true canary
+run_case "RED canary+apply+limit=000"                                 fail 2026 000 true canary
+run_case "RED canary+apply+limit=999999 (slice 가 전체 선택)"          fail 2026 999999 true canary
+run_case "RED canary+apply+limit=51 (상한 초과)"                       fail 2026 51 true canary
+run_case "GREEN canary apply limit50 (상한 경계)"                      pass 2026 50 true canary
 run_case "RED season 오타 (20266)"                                     fail 20266 0 false canary
 run_case "RED limit 비정수 (abc)"                                      fail 2026 abc false canary
 # 정상 경로
