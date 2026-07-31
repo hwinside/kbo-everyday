@@ -4,6 +4,10 @@ import { fetchGames, type KboGame } from "@/lib/crawler/kbo-api";
 import { fetchNaverLineup } from "@/lib/crawler/naver-lineup";
 import { TEAMS, isAllStarGame, isAllStarGameId } from "@/lib/constants/teams";
 import pitcherStats from "@/lib/constants/stats-2026-pitchers.json";
+import {
+  fetchKboSessionCookie,
+  withKboSessionCookie,
+} from "@/lib/crawler/kbo-session";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
@@ -151,9 +155,12 @@ async function fetchPrevGameLineup(
     const body = `leId=1&srId=0&seasonId=${seasonId}&gameId=${teamGame.gameId}`;
 
     try {
+      const sessionCookie = await fetchKboSessionCookie(
+        AbortSignal.timeout(8000),
+      );
       const res = await fetch(`${KBO_BASE}/GetLineUpAnalysis`, {
         method: "POST",
-        headers: HEADERS,
+        headers: withKboSessionCookie(HEADERS, sessionCookie),
         body,
         signal: AbortSignal.timeout(8000),
       });

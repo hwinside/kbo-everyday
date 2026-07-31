@@ -9,6 +9,10 @@
  * KBO 가 명시적으로 false(미확정)를 주면 Naver 를 보지 않고 그대로 존중한다.
  */
 import { fetchNaverLineup } from "@/lib/crawler/naver-lineup";
+import {
+  fetchKboSessionCookie,
+  withKboSessionCookie,
+} from "@/lib/crawler/kbo-session";
 
 const KBO_BASE = "https://www.koreabaseball.com/ws/Schedule.asmx";
 // 2026-05-20: KBO가 Referer 미지정 요청을 IE 에러 페이지로 막음 → LineUp Referer 고정.
@@ -43,6 +47,19 @@ export async function fetchLineupConfirmed(
   // KBO 하위 예산 = 전체의 60%(최소 1ms). 나머지 40%+ 가 Naver reserve 로 보장된다.
   const kboBudgetMs =
     opts?.timeoutMs != null ? Math.max(1, Math.ceil(opts.timeoutMs * 0.6)) : null;
+  let sessionCookie: string | null = null;
+  try {
+    const remaining = kboBudgetMs == null
+      ? undefined
+      : kboBudgetMs - (Date.now() - startMs);
+    if (remaining == null || remaining > 0) {
+      sessionCookie = await fetchKboSessionCookie(
+        remaining == null ? undefined : AbortSignal.timeout(remaining),
+      );
+    }
+  } catch {
+    // 기존 무쿠키 요청과 Naver 폴백을 유지한다.
+  }
   for (const srId of ["0", "1"]) {
     let signal: AbortSignal | undefined;
     if (kboBudgetMs != null) {
@@ -54,7 +71,7 @@ export async function fetchLineupConfirmed(
     try {
       const res = await fetch(`${KBO_BASE}/GetLineUpAnalysis`, {
         method: "POST",
-        headers: HEADERS,
+        headers: withKboSessionCookie(HEADERS, sessionCookie),
         body,
         signal,
       });

@@ -14,6 +14,10 @@ import {
 } from "@/lib/crawler/naver-lineup";
 import { fetchNaverGames } from "@/lib/crawler/naver-games";
 import { runBeforeDeadline } from "@/lib/async-deadline";
+import {
+  fetchKboSessionCookie,
+  withKboSessionCookie,
+} from "@/lib/crawler/kbo-session";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
@@ -260,9 +264,12 @@ async function fetchTodayLineup(gameId: string, teamId: number, isAway: boolean)
   const seasonId = gameId.slice(0, 4);
   const reqBody = `leId=1&srId=0&seasonId=${seasonId}&gameId=${gameId}`;
   try {
+    const sessionCookie = await fetchKboSessionCookie(
+      AbortSignal.timeout(8000),
+    );
     const res = await fetch(`${KBO_BASE}/GetLineUpAnalysis`, {
       method: "POST",
-      headers: KBO_HEADERS,
+      headers: withKboSessionCookie(KBO_HEADERS, sessionCookie),
       body: reqBody,
       signal: AbortSignal.timeout(8000),
     });
@@ -302,9 +309,12 @@ async function fetchPrevGameLineup(gameId: string, teamId: number): Promise<Line
     const seasonId = teamGame.gameId.slice(0, 4);
     const reqBody = `leId=1&srId=0&seasonId=${seasonId}&gameId=${teamGame.gameId}`;
     try {
+      const sessionCookie = await fetchKboSessionCookie(
+        AbortSignal.timeout(8000),
+      );
       const res = await fetch(`${KBO_BASE}/GetLineUpAnalysis`, {
         method: "POST",
-        headers: KBO_HEADERS,
+        headers: withKboSessionCookie(KBO_HEADERS, sessionCookie),
         body: reqBody,
         signal: AbortSignal.timeout(8000),
       });

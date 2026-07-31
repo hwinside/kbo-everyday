@@ -13,6 +13,10 @@ import {
   parseNaverScoreBoardLinescore,
 } from "@/lib/crawler/naver-record";
 import { fetchNaverGames } from "@/lib/crawler/naver-games";
+import {
+  fetchKboSessionCookie,
+  withKboSessionCookie,
+} from "@/lib/crawler/kbo-session";
 import { fetchNaverLineup, type NaverLineupSide } from "@/lib/crawler/naver-lineup";
 
 /** 숫자 kboId로 로스터 조회 — 외국인 숫자→영문 변환 포함 */
@@ -611,6 +615,7 @@ export async function GET(req: NextRequest) {
   const seasonId = req.nextUrl.searchParams.get("seasonId") || new Date().getFullYear().toString();
   const deadlineSignal = AbortSignal.timeout(USER_FACING_GAME_DETAIL_DEADLINE_MS);
   const dateStr = gameId.slice(0, 8);
+  const kboSessionPromise = fetchKboSessionCookie(deadlineSignal);
 
   // 양쪽 fallback을 요청 시작과 동시에 준비한다. KBO timeout 뒤 새 budget을 시작하지 않고,
   // 모든 작업이 위 단일 절대 deadline을 공유한다.
@@ -648,10 +653,13 @@ export async function GET(req: NextRequest) {
 
   async function fetchWithSrId(srId: string) {
     const body = `leId=1&srId=${srId}&seasonId=${seasonId}&gameId=${gameId}`;
+    const sessionCookie = await kboSessionPromise;
     const fetchKboJson = async (path: string, revalidate: number) => {
       try {
         const response = await fetch(`${KBO_BASE}/${path}`, {
-          method: "POST", headers: HEADERS, body,
+          method: "POST",
+          headers: withKboSessionCookie(HEADERS, sessionCookie),
+          body,
           next: { revalidate },
           signal: deadlineSignal,
         });
