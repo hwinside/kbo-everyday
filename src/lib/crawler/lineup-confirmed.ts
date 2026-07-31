@@ -47,24 +47,14 @@ export async function fetchLineupConfirmed(
   // KBO 하위 예산 = 전체의 60%(최소 1ms). 나머지 40%+ 가 Naver reserve 로 보장된다.
   const kboBudgetMs =
     opts?.timeoutMs != null ? Math.max(1, Math.ceil(opts.timeoutMs * 0.6)) : null;
-  let sessionCookie: string | null = null;
-  try {
-    const remaining = kboBudgetMs == null
-      ? undefined
-      : kboBudgetMs - (Date.now() - startMs);
-    if (remaining == null || remaining > 0) {
-      sessionCookie = await fetchKboSessionCookie(
-        remaining == null ? undefined : AbortSignal.timeout(remaining),
-      );
-    }
-  } catch {
-    // 기존 무쿠키 요청과 Naver 폴백을 유지한다.
-  }
-  for (const srId of ["0", "1"]) {
+  const requestLineupCk = async (
+    srId: string,
+    sessionCookie: string | null,
+  ): Promise<{ ck: boolean | null; budgetExhausted: boolean }> => {
     let signal: AbortSignal | undefined;
     if (kboBudgetMs != null) {
       const remaining = kboBudgetMs - (Date.now() - startMs);
-      if (remaining <= 0) break;
+      if (remaining <= 0) return { ck: null, budgetExhausted: true };
       signal = AbortSignal.timeout(remaining);
     }
     const body = `leId=1&srId=${srId}&seasonId=${sid}&gameId=${gameId}`;
@@ -75,17 +65,43 @@ export async function fetchLineupConfirmed(
         body,
         signal,
       });
-      if (!res.ok) continue;
+      if (!res.ok) return { ck: null, budgetExhausted: false };
       const data = await res.json();
       const ck = parseLineupCk(data);
-      if (ck !== null) return ck;
+      return { ck, budgetExhausted: false };
     } catch {
-      // ⚠️ 삼순 #988 재리뷰 flaky(방법 A): sub-budget abort 직후에도 타이머 경계에서 잔여가
-      //   1ms 남아 다음 srId 가 한 번 더 진입할 수 있었다(remaining 체크만으로는 비결정적).
-      //   signal.aborted = KBO 예산 소진 확정이므로 추가 srId 시도를 **결정적으로** 중단하고
-      //   Naver reserve 로 직행한다. 빠른 네트워크 실패(비-abort)는 종전대로 다음 srId 시도.
-      if (signal?.aborted) break;
+      return { ck: null, budgetExhausted: signal?.aborted === true };
     }
+  };
+
+  // 확정알림에서 session bootstrap을 먼저 기다리면 GameCenter stall이 KBO 예산을 전부
+  // 소모해, 실제 GetLineUpAnalysis의 명시적 false를 한 번도 읽지 못한 채 Naver complete를
+  // true로 승격할 수 있다. 브라우저 UA 무쿠키 요청을 먼저 보내 false/true를 우선 확정하고,
+  // 204/empty일 때만 세션을 재취득해 재시도한다.
+  const initial = await requestLineupCk("0", null);
+  if (initial.ck !== null) return initial.ck;
+
+  let sessionCookie: string | null = null;
+  if (!initial.budgetExhausted) {
+    try {
+      const remaining = kboBudgetMs == null
+        ? undefined
+        : kboBudgetMs - (Date.now() - startMs);
+      if (remaining == null || remaining > 0) {
+        sessionCookie = await fetchKboSessionCookie(
+          remaining == null ? undefined : AbortSignal.timeout(remaining),
+        );
+      }
+    } catch {
+      // 세션 취득 실패여도 무쿠키 재시도와 Naver 폴백을 유지한다.
+    }
+  }
+
+  for (const srId of ["0", "1"]) {
+    const attempt = await requestLineupCk(srId, sessionCookie);
+    if (attempt.ck !== null) return attempt.ck;
+    // sub-budget abort 직후 타이머 경계에서 다음 srId가 진입하지 않도록 결정적으로 중단한다.
+    if (attempt.budgetExhausted) break;
   }
   // KBO 신호 부재 → Naver 폴백. 잔여 예산 안에서만 시도(watchdog absolute deadline 결속 유지).
   if (opts?.timeoutMs != null) {

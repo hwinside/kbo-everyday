@@ -181,8 +181,51 @@ async function hardTimeoutNaverReserve() {
   }
 }
 
+// ── #1009 NO-GO: session bootstrap stall이 KBO 명시적 false를 가리면 확정알림 오발송 ──
+async function sessionStallMustNotSkipLineupSignal() {
+  const realFetch = globalThis.fetch;
+  let sessionCalls = 0;
+  let lineupCalls = 0;
+  let naverCalls = 0;
+  globalThis.fetch = ((url: unknown, init?: { signal?: AbortSignal }) => {
+    const u = String(url);
+    if (u.includes("/Schedule/GameCenter/")) {
+      sessionCalls++;
+      return new Promise((_resolve, reject) => {
+        const signal = init?.signal;
+        signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+      });
+    }
+    if (u.includes("GetLineUpAnalysis")) {
+      lineupCalls++;
+      return Promise.resolve(new Response(JSON.stringify([[{ LINEUP_CK: false }]]), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }));
+    }
+    if (u.includes("/preview")) {
+      naverCalls++;
+      return Promise.resolve(new Response(
+        JSON.stringify(previewJson(sideJson("네일"), sideJson("페덱"))),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ));
+    }
+    return Promise.reject(new Error(`unexpected url ${u}`));
+  }) as typeof fetch;
+  try {
+    const result = await fetchLineupConfirmed("20260731HHKT0", { timeoutMs: 80 });
+    ok("session stall 반례 → KBO 명시적 false", result === false);
+    ok(`  └ lineupCalls>=1(${lineupCalls})`, lineupCalls >= 1);
+    ok(`  └ session 선행호출 없음(${sessionCalls})`, sessionCalls === 0);
+    ok(`  └ Naver 조기승격 없음(${naverCalls})`, naverCalls === 0);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
 async function run() {
   await budget();
+  await sessionStallMustNotSkipLineupSignal();
   await hardTimeoutNaverReserve();
   await naverConfirmFallback();
   console.log(`\nlineup-ck 파서: ${pass} passed, ${fail} failed`);
