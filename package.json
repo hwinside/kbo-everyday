@@ -36,6 +36,8 @@
     "qa:admin-live-activity-failover": "tsx scripts/qa/admin-live-activity-naver-failover-smoke.ts",
     "qa:team-records-failover": "tsx scripts/qa/team-records-naver-failover-smoke.ts && tsx scripts/qa/team-records-client-contract-smoke.ts",
     "qa:team-records-ui": "node scripts/qa/ui-smoke-team-records-contract.mjs",
+    "qa:player-stats-failover": "tsx scripts/qa/player-stats-naver-failover-smoke.ts",
+    "qa:player-stats-ui": "node scripts/qa/ui-smoke-player-stats-fallback.mjs",
     "qa:stats-cron-failover": "tsx scripts/qa/stats-cron-naver-failover-smoke.ts",
     "qa:stats-cron-identity-pg17": "bash scripts/qa/player-stats-identity-migration-pg17.sh",
     "qa:api-fallback-alert-claim:db": "tsx scripts/qa/api-fallback-alert-claim-db-integration.ts",
