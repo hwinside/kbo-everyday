@@ -250,6 +250,41 @@ try {
   await page.locator("select").selectOption("2026");
   await page.getByText("63", { exact: true }).waitFor();
 
+  // 실패했던 시즌을 다시 고를 때, 이전 실패 UI가 새 요청 로딩 전에 한 프레임이라도 재노출되면 안 된다.
+  // MutationObserver 로 DOM 변경마다 retry 버튼 존재를 샘플링해 1-frame flash 까지 잡는다.
+  await page.evaluate(() => {
+    const root = document.querySelector('[data-testid="venue-stats-dashboard"]');
+    window.__retryFlash = 0;
+    const hasRetry = () =>
+      [...root.querySelectorAll("button")].some((button) =>
+        (button.textContent ?? "").includes("통계를 불러오지 못했어요"));
+    window.__retryObserver = new MutationObserver(() => {
+      if (hasRetry()) window.__retryFlash += 1;
+    });
+    window.__retryObserver.observe(root, { childList: true, subtree: true, characterData: true });
+    if (hasRetry()) window.__retryFlash += 1;
+  });
+  await page.locator("select").selectOption("2025");
+  const immediateRetry = await page.evaluate(() => {
+    const root = document.querySelector('[data-testid="venue-stats-dashboard"]');
+    return [...root.querySelectorAll("button")].some((button) =>
+      (button.textContent ?? "").includes("통계를 불러오지 못했어요"));
+  });
+  if (immediateRetry) {
+    throw new Error("previous failure retry UI visible immediately after reselecting failed season");
+  }
+  await page.getByText("25", { exact: true }).waitFor();
+  const retryFlash = await page.evaluate(() => {
+    window.__retryObserver.disconnect();
+    return window.__retryFlash;
+  });
+  if (retryFlash > 0) {
+    throw new Error(`stale retry UI flashed ${retryFlash} time(s) when reselecting previously failed season`);
+  }
+
+  await page.locator("select").selectOption("2026");
+  await page.getByText("63", { exact: true }).waitFor();
+
   await page.getByRole("button", { name: "GPS 인증만" }).click();
   await page.getByText("38", { exact: true }).waitFor();
   await page.getByRole("button", { name: "상대·구장·요일 상세 통계" }).click();

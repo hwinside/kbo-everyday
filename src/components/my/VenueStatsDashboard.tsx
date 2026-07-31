@@ -147,6 +147,14 @@ export default function VenueStatsDashboard() {
 
   const userId = user?.id ?? null;
 
+  // 시즌 선택은 사용자 event에서만 일어난다.
+  // 이전에 실패했던 시즌을 다시 고를 때 묵은 실패가 한 프레임 다시 보이지 않도록
+  // 선택과 같은 틱에 실패 상태를 무효화한다(effect 아닌 event 경로).
+  const selectSeason = (nextSeason: number) => {
+    setSeason(nextSeason);
+    setFailedSeason(null);
+  };
+
   const load = useCallback(async (generation?: number) => {
     if (!userId) return;
     const activeGeneration = generation ?? requestGeneration.current + 1;
@@ -258,7 +266,7 @@ export default function VenueStatsDashboard() {
         <label className="relative">
           <select
             value={season}
-            onChange={(event) => setSeason(Number(event.target.value))}
+            onChange={(event) => selectSeason(Number(event.target.value))}
             className="h-10 appearance-none rounded-full border border-white/10 bg-white/[0.06] pl-4 pr-10 text-[13px] font-extrabold text-white outline-none"
           >
             {SEASONS.map((value) => <option key={value} value={value}>{value}</option>)}

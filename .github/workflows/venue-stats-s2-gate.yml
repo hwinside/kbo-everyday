@@ -12,7 +12,9 @@ on:
       - "src/lib/venue-stats/**"
       - "scripts/qa/venue-stats-s2-browser.mjs"
       - "scripts/qa/venue-stats-s2-ui-smoke.ts"
+      - "scripts/qa/venue-stats-s2-effect-guard.mjs"
       - "src/styles/globals.css"
+      - "eslint.config.mjs"
       - "package.json"
       - ".github/workflows/venue-stats-s2-gate.yml"
   push:
@@ -23,7 +25,9 @@ on:
       - "src/lib/venue-stats/**"
       - "scripts/qa/venue-stats-s2-browser.mjs"
       - "scripts/qa/venue-stats-s2-ui-smoke.ts"
+      - "scripts/qa/venue-stats-s2-effect-guard.mjs"
       - "src/styles/globals.css"
+      - "eslint.config.mjs"
       - "package.json"
       - ".github/workflows/venue-stats-s2-gate.yml"
 
@@ -50,6 +54,11 @@ jobs:
 
       - name: Typecheck
         run: npx tsc --noEmit
+
+      - name: Effect setState source guard (AST, fail-closed)
+        # 실제 VenueStatsDashboard.tsx 소스를 파싱해 effect 내 direct setState 재유입을 차단한다.
+        # (react-hooks/set-state-in-effect 가 이 컴포넌트에서 false-green 이라 소스 가드로 고정)
+        run: npm run qa:venue-stats-s2-effect-guard
 
       - name: Run venue stats S2 contract smoke
         run: npm run qa:venue-stats-s2-ui
