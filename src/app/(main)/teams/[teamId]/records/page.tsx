@@ -6,36 +6,14 @@ import { ChevronLeft, ChevronDown } from "lucide-react";
 import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
 import { getTeamBySlug, getTeamBgColor } from "@/lib/constants/teams";
 import TeamLogo from "@/components/ui/TeamLogo";
+import {
+  fetchTeamRecordsForDisplay,
+  type RecordsData,
+} from "@/lib/team-records/client";
 
 interface RankedTeam {
   slug: string;
   value: string | number;
-}
-
-interface TeamBatting {
-  teamId: number;
-  slug: string;
-  avg: string;
-  ops: string;
-  hr: number;
-  runs: number;
-  sb: number;
-}
-
-interface TeamPitching {
-  teamId: number;
-  slug: string;
-  era: string;
-  whip: string;
-  so: number;
-  sv: number;
-  hra: number;
-}
-
-interface RecordsData {
-  season: number;
-  batting: TeamBatting[];
-  pitching: TeamPitching[];
 }
 
 function StatBar({
@@ -122,9 +100,8 @@ export default function TeamRecordsPage() {
   const [expandedStat, setExpandedStat] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch("/api/team-records?season=2026")
-      .then((r) => r.json())
-      .then((d) => setData(d))
+    fetchTeamRecordsForDisplay()
+      .then(setData)
       .catch(() => setData(null))
       .finally(() => setLoading(false));
   }, []);
