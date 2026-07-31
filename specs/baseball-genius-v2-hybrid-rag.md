@@ -1,6 +1,6 @@
 # 야잘알봇 v2 — 선수/구단 Hybrid RAG 스펙 (rev0.7)
 
-> 상태: **범위 확대 GO(§12) — S1b-KBO/S2 source inventory·ingestion 착수 / S0 merge·Production DB 적용·실제 계정 2턴 End-User QA HOLD / S1a·S1b·S2 구현 merge/deploy HOLD**
+> 상태: **범위 확대 GO(§12) — S1b-KBO/S2 source inventory·ingestion 착수 / S0 merge·Production DB 적용 완료(squash `882f1a1744fb9ead6197a133421b347b3836c96a`, PR #1011 — migration/RPC ACL 적용됨)·실제 계정 2턴 End-User QA HOLD / S1a·S1b·S2 구현 merge/deploy HOLD**
 > 작성: 삼식이 2026-07-31 (rev0.7: 하린아빠 KBO 기록실+나무위키 전수 RAG 확정 §12 반영 / rev0.6: 삼순 5차 재리뷰 테이블명 exact)
 > SSOT: Notion `3aec901b-b372-8140-8cec-f4c700b96487` (본 파일은 미러).
 > 선행 SSOT: 야잘알봇 MVP 스펙 v1.2 (Notion `3acc901bb3728165b783d0f0960c9f02`)
@@ -219,10 +219,17 @@
 
 ## 11. 변경 이력
 
+### rev0.8 (삼순 S2a inventory 리뷰 blocker 반영 + §12.2 확정, 2026-07-31)
+- **[상태줄 exact]** 상태줄·§10이 `S0 exact 계약 조건부 GO`로 stale해 실제보다 뒤처져 있었다. 실제 main에는 #1011이 squash **`882f1a1744fb9ead6197a133421b347b3836c96a`**로 머지 + Production migration·RPC ACL 적용 완료. 정확한 상태는 **S0 merge·DB 적용, 실제 계정 2턴 End-User QA HOLD**. (⚠️ Notion SSOT `3aec901b-b372-8140-8cec-f4c700b96487`는 삼순 오너 — 동일 정정 필요)
+- **[§12.2 확정]** '제안·미확정' 블록을 **확정 기술 게이트**로 승격(robots 확인기록·접근제한 우회금지·최소 원문저장·canonical provenance). 상업 이용 법무 승인만 대량 ingestion/서빙 전 별도 launch gate로 분리해 `decision_pending` 유지.
+- **[universe 보강]** KBO 기록실 universe에 실제 프로덕션 호출 경로인 `Player/HitterDetail/Basic`·`Player/PitcherDetail/Basic`과 `Retire/Hitter`·`Retire/Pitcher` 4경로 추가(39→43, 전부 HTTP 200 실측). inventory 928→932.
+- **[CI 결속]** PG17 결함주입 게이트가 GitHub check에 없어 자동 강제되지 않던 간극 해소 — `.github/workflows/baseball-rag-source-inventory-gate.yml` 신설(eslint + inventory smoke + 생성기 drift + 실 PG17 결함주입, initdb 미존재 시 조용한 skip을 exit 1로 차단).
+- **[PG17 런타임 결함]** 고정 포트 59343 + 빈 locale 탓에 macOS에서 postmaster가 `became multithreaded during startup`으로 즉사해 **게이트가 아예 돌지 못하던** 문제 수정(빈 포트 선택 + `LC_ALL=C`).
+
 ### rev0.7 (하린아빠 KBO 기록실 + 나무위키 전수 RAG 확정, 2026-07-31)
 - **§12 신규**: KBO 기록실 + KBO/10구단/선수별(878명) 나무위키를 전수 RAG 자산으로 구축. 전수 inventory(resolved|missing|ambiguous|blocked 100% 분류), KBO 기록실=structured typed claim(벡터 아님), 나무위키=서술형 hybrid RAG(provenance 메타 필수). 숫자 정본=공식 KBO, 나무위키 숫자는 교차검증 전 확정 claim 금지.
 - **§12.1 실행순서**: S1b-KBO 기록실 inventory/schema → S2a KBO+10팀 ingestion → S2b 선수 878명 batch. 운영 대시보드+재수집 큐.
-- **§12.2 제안블록(미확정)**: robots/약관/권리 게이트·원문 저장 최소화·attribution/license 메타·상업 서빙 법무 gate — Notion §12에 부분 반영이라 제안 상태로 병기(확정 계약 아님).
+- **§12.2 기술 게이트(rev0.8에서 확정 승격)**: robots/약관 확인기록·접근제한 우회금지·최소 원문저장·canonical provenance는 확정 계약이다. 단 상업 이용 법무 승인만 대량 ingestion/서빙 전 별도 launch gate로 분리해 `decision_pending` 유지.
 - **정책 supersede**: 7/30 "나무위키 운영 RAG NO-GO"는 §5 rev0.2 정책 교체 + §12 하린아빠 확정으로 명시적 supersede.
 - 판정: 범위 확대 GO. S1a 내부 완전성은 내부 시즌 누적 게이트로 유지하되 S1b/S2 착수 선행조건 아님. 구현 merge/deploy는 삼순 리뷰+하린아빠 승인 전 HOLD.
 
@@ -297,11 +304,16 @@
 
 정책 판정: 7/30 기존 "나무위키 운영 RAG NO-GO"는 최신 Notion §5 rev0.2의 정책 교체 + §12 하린아빠 확정으로 명시적으로 supersede된 것으로 본다.
 
-### 12.2 리스크 제안 블록 (⚠️ 제안 · 미확정 — 확정 계약으로 오기재 금지)
+### 12.2 수집 기술 게이트 (✅ 확정 — rev0.8, 2026-07-31 하린아빠 ③ 역할분리 통합안)
 
-> 삼순이가 지적한 §12 부분반영 갭(robots/약관·원문저장최소화·상업법무)을 보완하는 제안이다. 확정 계약이 아니며, 하린아빠/삼순 승인 시 §12로 승격한다.
+아래 (a)~(d)는 **제안이 아니라 확정된 기술 게이트**다. inventory·ingestion 모든 수집 경로가 이를 충족해야 하며, 위반 source는 `blocked`로 분류하고 수집하지 않는다.
 
-- **(a) robots/약관/권리 게이트**: robots.txt·서비스 약관·권리 확인 후 허용된 공개경로만 bounded 수집, 불허 경로는 inventory에서 blocked 분류.
-- **(b) 원문 저장 최소화**: 원문 전문 보존 금지, retrieval 최소 chunk + provenance만 저장. attribution/license 메타 보존.
-- **(c) 상업 서빙 법무 gate**: 나무위키 CC BY-NC-SA 등 상업 이용 적합성을 별도 gate로 노출(법무 확인 상태 표기). 미확인 시 서빙 보류.
+- **(a) robots/약관 확인기록 필수 (확정)**: robots.txt·약관을 확인하고 **확인기록을 남긴** 경로만 bounded 수집한다. 확인기록 없는 source는 ingest 대상이 아니다.
+  - 2026-07-31 실측: KBO `Disallow: /Common/ /Help/ /Member/ /ws/` → `/Record/` 허용. namu `Allow: /w/` → 문서 경로 허용.
+- **(b) 접근제한 우회 금지 (확정)**: 로그인·유료·지역차단·봇차단 우회를 하지 않는다. bounded rate/retry를 지키고 과도한 대량수집을 하지 않는다.
+- **(c) 최소 원문저장 (확정)**: 원문 전문 보존 금지. retrieval에 필요한 **chunk + provenance**만 저장하고, 서빙은 재서술 + 출처링크로 한다. attribution/license 메타 보존.
+- **(d) canonical provenance (확정)**: 모든 chunk는 canonical URL·revision·contentHash·crawledAt·sourceGrade를 보유한다. canonical 미확정 source는 `resolved`가 될 수 없고(DB CHECK + claim 이중 술어로 강제) ingest 대상에서 제외된다. **HTTP 200 단독으로 canonical을 단정하지 않고** redirect 최종 URL 정규화 + page identity(canonical link·title) 일치를 확인한다.
+
+**분리된 게이트 — 상업 이용 법무 승인 (`decision_pending`, 미확정 유지)**: 나무위키 CC BY-NC 기반 상업 서빙 가능 여부는 **inventory 단계의 게이트가 아니다.** 대량 ingestion 및 유저 서빙 개시 전 **별도 launch gate**에서 판단하며, 하린아빠 확정 전까지 `decision_pending` 상태를 유지한다. 이 상태에서도 inventory 확정·canonical 검증은 진행한다(수집/서빙과 분리).
+
 - sourceGrade·공식 KBO 우선순위는 Notion §12에 이미 반영됨(중복 아님).

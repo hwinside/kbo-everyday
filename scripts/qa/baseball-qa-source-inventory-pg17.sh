@@ -4,9 +4,19 @@ set -euo pipefail
 PGBIN="${PGBIN:-/opt/homebrew/opt/postgresql@17/bin}"
 [ -x "$PGBIN/initdb" ] || { echo "SKIP: postgresql@17 binaries not found"; exit 0; }
 
+# locale이 비어 있으면 macOS에서 postmaster가
+# "became multithreaded during startup"로 즉사해 게이트가 아예 돌지 않는다(실제 겪음).
+# initdb가 --locale=C 로 클러스터를 만드므로 런타임도 C로 고정한다.
+export LC_ALL=C
+export LANG=C
+
 REVIEW_ROOT="${OPENCLAW_REVIEW_ROOT:-/Volumes/T7-Dev/reviews/runtime}"
 WORK="$(mktemp -d "$REVIEW_ROOT/baseball-rag-pg17.XXXXXX")"
-PORT=59343
+# 고정 포트는 병렬 리뷰·CI job 간 충돌로 서버 기동을 실패시킨다(실제 겪음). 빈 포트를 골라 쓴다.
+pick_free_port() {
+  node -e 'const net=require("net");const s=net.createServer();s.listen(0,"127.0.0.1",()=>{const p=s.address().port;s.close(()=>console.log(p));});'
+}
+PORT="${BASEBALL_RAG_PG_PORT:-$(pick_free_port)}"
 
 cleanup() {
   "$PGBIN/pg_ctl" -D "$WORK/data" -m immediate stop >/dev/null 2>&1 || true
@@ -26,10 +36,10 @@ sed \
   -e 's/embedding extensions\.vector(768)/embedding text/' \
   supabase/migrations/20260731_baseball_genius_rag_sources.sql | "${PSQL[@]}"
 
-# committed inventory는 migration 직후 928행을 만들며 재실행해도 중복되지 않는다.
+# committed inventory는 migration 직후 932행을 만들며 재실행해도 중복되지 않는다.
 "${PSQL[@]}" -f supabase/migrations/20260731_baseball_genius_rag_sources_seed.sql
 "${PSQL[@]}" -f supabase/migrations/20260731_baseball_genius_rag_sources_seed.sql
-[ "$("${PSQL[@]}" -c 'select count(*) from public.genius_rag_sources')" = "928" ]
+[ "$("${PSQL[@]}" -c 'select count(*) from public.genius_rag_sources')" = "932" ]
 [ "$("${PSQL[@]}" -c "select count(*) from public.genius_rag_sources where entity_type='player' and resolution_status is null")" = "878" ]
 [ "$("${PSQL[@]}" -c "select count(*) from public.claim_baseball_genius_rag_batch(50, 60) where entity_type='player'")" = "0" ]
 
@@ -175,4 +185,4 @@ wait "$PID_A" "$PID_B"
 [ "$(sort -u "$WORK/a" "$WORK/b" | wc -l | tr -d ' ')" = "20" ]
 [ "$(cat "$WORK/a" "$WORK/b" | wc -l | tr -d ' ')" = "20" ]
 
-echo "baseball QA source inventory PG17 PASS (seed928·pending878·fault/CAS/concurrency)"
+echo "baseball QA source inventory PG17 PASS (seed932·pending878·fault/CAS/concurrency)"

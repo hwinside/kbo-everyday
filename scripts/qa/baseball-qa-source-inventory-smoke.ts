@@ -17,8 +17,8 @@ const inventory = inventoryJson as RagSourceInventory;
 const rebuilt = buildSourceInventory(roster as RosterSourcePlayer[], inventory);
 
 assert.equal(roster.length, 878, "roster SSOT count changed; inventory contract must be reviewed");
-assert.equal(KBO_STRUCTURED_SOURCES.length, 39, "KBO navigation universe is an independent fixed contract");
-assert.equal(inventory.sources.length, 878 + 11 + 39);
+assert.equal(KBO_STRUCTURED_SOURCES.length, 43, "KBO navigation universe is an independent fixed contract");
+assert.equal(inventory.sources.length, 878 + 11 + 43);
 assert.equal(rebuilt.inventoryVersion, inventory.inventoryVersion, "inventory generation must be idempotent");
 assert.deepEqual(rebuilt, inventory, "committed inventory must match the deterministic generator");
 
@@ -55,6 +55,13 @@ const requiredKboPaths = [
   "/Record/Etc/HitVsPit.aspx",
   "/Record/History/Top/Hitter.aspx",
   "/Record/TeamRank/TeamRankDaily.aspx",
+  // 기존 야잘알 공식 seed·프로덕션 코드가 실제로 호출 중인 개인 상세 경로
+  // (player-stats·contextual-stats·update-player-photos·backfill-roster-birthdate 등).
+  "/Record/Player/HitterDetail/Basic.aspx",
+  "/Record/Player/PitcherDetail/Basic.aspx",
+  // 은퇴선수 기록(scripts/crawl-* 계열에서 참조). 2026-07-31 HTTP 200 실측.
+  "/Record/Retire/Hitter.aspx",
+  "/Record/Retire/Pitcher.aspx",
 ];
 const kboUrls = new Set(KBO_STRUCTURED_SOURCES.flatMap((source) => source.candidateUrls));
 for (const path of requiredKboPaths) {
@@ -142,14 +149,39 @@ const seed = readFileSync(
   "supabase/migrations/20260731_baseball_genius_rag_sources_seed.sql",
   "utf8",
 );
-assert.equal((seed.match(/^  \('/gm) ?? []).length, 928);
+assert.equal((seed.match(/^  \('/gm) ?? []).length, 932);
 assert.ok(seed.includes("ON CONFLICT (source_key) DO UPDATE"));
 assert.ok(seed.includes("target.identity_fingerprint = EXCLUDED.identity_fingerprint"));
 
 const spec = readFileSync("specs/baseball-genius-v2-hybrid-rag.md", "utf8");
 assert.ok(spec.includes("선수 878명 URL inventory는 전수 확정·유지"));
 assert.ok(spec.includes("실제 질문 조회 빈도 내림차순"));
-assert.ok(spec.includes("S0 merge·Production DB 적용·실제 계정 2턴 End-User QA HOLD"));
-assert.ok(spec.includes("### 12.2 리스크 제안 블록"));
+assert.ok(spec.includes("S0 merge·Production DB 적용"));
+assert.ok(spec.includes("실제 계정 2턴 End-User QA HOLD"));
+// 상태줄은 머지된 실제 squash SHA를 exact로 밝혀야 한다(재발 방지).
+assert.ok(
+  spec.includes("882f1a1744fb9ead6197a133421b347b3836c96a"),
+  "spec 상태줄은 머지된 S0 squash SHA를 명시해야 한다",
+);
+// 변경이력(§11)은 과거 stale 문구를 인용할 수 있으므로 *상태줄 그 자체*만 검사한다.
+const specStatusLine = spec.split("\n").find((line) => line.startsWith("> 상태:")) ?? "";
+assert.ok(
+  !specStatusLine.includes("S0 exact 계약 조건부 GO"),
+  "stale 상태줄(S0 조건부 GO)이 남아 있으면 안 된다",
+);
+assert.ok(
+  specStatusLine.includes("882f1a1744fb9ead6197a133421b347b3836c96a"),
+  "상태줄 자체에 머지된 S0 squash SHA가 있어야 한다",
+);
 
-console.log(`baseball QA source inventory PASS (${inventory.sources.length} sources, players ${coverage.total})`);
+// §12.2는 '제안·미확정'이 아니라 확정된 기술 게이트다.
+assert.ok(spec.includes("### 12.2 수집 기술 게이트"), "§12.2는 확정 기술 게이트로 승격돼야 한다");
+assert.ok(
+  !spec.includes("### 12.2 리스크 제안 블록"),
+  "§12.2가 아직 '제안·미확정' 상태로 남아 있다",
+);
+// 상업 이용 법무 승인은 inventory 게이트가 아니라 별도 launch gate로 분리·미확정 유지.
+assert.ok(spec.includes("decision_pending"), "상업 법무 승인은 decision_pending으로 분리 유지돼야 한다");
+assert.ok(spec.includes("launch gate"), "대량 ingestion/서빙 전 별도 launch gate가 명시돼야 한다");
+
+console.log(`baseball QA source inventory PASS (${inventory.sources.length} sources, KBO universe ${KBO_STRUCTURED_SOURCES.length}, players ${coverage.total})`);
