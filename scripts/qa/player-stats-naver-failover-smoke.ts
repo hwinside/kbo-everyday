@@ -100,18 +100,31 @@ function batterTableHtml(kind: "basic1" | "basic2"): string {
 }
 
 async function main() {
-  const batters = parseNaverPlayerStats(payload("batter", 260), "batter");
+  const batterPayload = payload("batter", 260);
+  batterPayload.result.seasonPlayerStats[0].playerId = "54730";
+  batterPayload.result.seasonPlayerStats[0].playerName = "페라자";
+  batterPayload.result.seasonPlayerStats[0].teamId = "HH";
+  batterPayload.result.seasonPlayerStats[0].teamName = "한화";
+  const batters = parseNaverPlayerStats(batterPayload, "batter");
   assert.equal(batters.length, 260);
   assert.equal(batters[0].avg, ".300");
   assert.equal(batters[0].ops, ".773");
   assert.equal(batters[0].tb, 124);
-  assert.equal(batters[0].playerId, "50000");
+  assert.equal(batters[0].playerId, "FP003");
+  assert.equal(batters[0].kboId, "FP003");
 
-  const pitchers = parseNaverPlayerStats(payload("pitcher", 210), "pitcher");
+  const pitcherPayload = payload("pitcher", 210);
+  pitcherPayload.result.seasonPlayerStats[0].playerId = "56415";
+  pitcherPayload.result.seasonPlayerStats[0].playerName = "미야지";
+  pitcherPayload.result.seasonPlayerStats[0].teamId = "SS";
+  pitcherPayload.result.seasonPlayerStats[0].teamName = "삼성";
+  const pitchers = parseNaverPlayerStats(pitcherPayload, "pitcher");
   assert.equal(pitchers.length, 210);
   assert.equal(pitchers[0].era, "3.25");
   assert.equal(pitchers[0].ip, "88 2/3");
   assert.equal(pitchers[0].whip, "1.06");
+  assert.equal(pitchers[0].playerId, "AQ003");
+  assert.equal(pitchers[0].kboId, "AQ003");
 
   const partial = payload("batter", 249);
   assert.throws(() => parseNaverPlayerStats(partial, "batter"), /partial/);

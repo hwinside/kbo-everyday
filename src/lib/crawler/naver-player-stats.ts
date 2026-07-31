@@ -1,3 +1,5 @@
+import { canonicalKboId } from "@/lib/utils/resolve-player";
+
 const NAVER_STATS_BASE =
   "https://api-gw.sports.naver.com/statistics/categories/kbo/seasons";
 
@@ -136,11 +138,15 @@ export function parseNaverPlayerStats(
       throw new Error("Naver player stats row invalid");
     }
     const row = candidate as NaverPlayerRow;
-    if (!validateCommon(row) || seen.has(row.playerId)) {
+    if (!validateCommon(row)) {
       throw new Error("Naver player stats player/team coverage invalid");
     }
-    seen.add(row.playerId);
-    const previous = fallback.get(row.playerId);
+    const canonicalId = canonicalKboId(row.playerId);
+    if (seen.has(canonicalId)) {
+      throw new Error("Naver player stats player/team coverage invalid");
+    }
+    seen.add(canonicalId);
+    const previous = fallback.get(canonicalId) ?? fallback.get(row.playerId);
 
     if (type === "batter") {
       const required = [
@@ -201,8 +207,8 @@ export function parseNaverPlayerStats(
         ops: rate(row.hitterOps, 3),
         sb: nonNegative(row.hitterSb),
         cs: Number(previous?.cs) || 0,
-        kboId: row.playerId,
-        playerId: row.playerId,
+        kboId: canonicalId,
+        playerId: canonicalId,
         qualifiedRate: row.isQualified === true ? 1 : 0,
       });
     } else {
@@ -250,8 +256,8 @@ export function parseNaverPlayerStats(
         r: nonNegative(row.pitcherR),
         er: nonNegative(row.pitcherEr),
         whip: rate(row.pitcherWhip, 2),
-        kboId: row.playerId,
-        playerId: row.playerId,
+        kboId: canonicalId,
+        playerId: canonicalId,
         qualifiedRate: row.isQualified === true ? 1 : 0,
       });
     }
