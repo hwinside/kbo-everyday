@@ -50,7 +50,7 @@ async function budget() {
     const ck = await fetchLineupConfirmed("20260729LGWO0", { timeoutMs: BUDGET });
     const elapsed = Date.now() - t0;
     ok("전건 abort → null(신호 못 얻음)", ck === null);
-    // KBO hang 은 kboBudget(=60%)에서 abort, Naver 는 reserve(=잔여 40%)에서 abort → 합계 ≈ BUDGET.
+    // KBO hang 은 kboBudget(=40%)에서 abort, Naver 는 reserve(=잔여 60%)에서 abort → 합계 ≈ BUDGET.
     // 구 코드(srId 마다 40ms) 면 ~80ms. 신 코드는 전체 절대 예산 결속로 1배 근처.
     ok(`전체 소요 ≤ 2배 미만(${elapsed}ms < 70ms)`, elapsed < 70);
     // srId 예산 공유: srId0 가 kboBudget abort 소진 → signal.aborted break(결정적) → kboCalls=1.

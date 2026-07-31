@@ -44,9 +44,10 @@ export async function fetchLineupConfirmed(
   //   absolute deadline(startMs+timeoutMs) 안에서 KBO→Naver 가 순차 완결되며, KBO hang 도
   //   최대 kboBudget 에서 abort 되어 Naver 가 reserve 예산으로 반드시 시도된다.
   const startMs = Date.now();
-  // KBO 하위 예산 = 전체의 60%(최소 1ms). 나머지 40%+ 가 Naver reserve 로 보장된다.
+  // KBO 하위 예산 = 전체의 40%(최소 1ms). 작은 watchdog 예산에서 AbortSignal 타이머가
+  // 수 ms 지연돼도 Naver reserve 를 잠식하지 않도록 과반을 폴백에 남긴다.
   const kboBudgetMs =
-    opts?.timeoutMs != null ? Math.max(1, Math.ceil(opts.timeoutMs * 0.6)) : null;
+    opts?.timeoutMs != null ? Math.max(1, Math.ceil(opts.timeoutMs * 0.4)) : null;
   const requestLineupCk = async (
     srId: string,
     sessionCookie: string | null,
