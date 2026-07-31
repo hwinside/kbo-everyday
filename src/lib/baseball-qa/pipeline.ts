@@ -21,7 +21,9 @@ export const MIN_QUESTION_LEN = BASEBALL_GENIUS_MIN_QUESTION_LENGTH;
 export const MAX_QUESTION_LEN = BASEBALL_GENIUS_MAX_QUESTION_LENGTH;
 
 export const BLOCKED_ANSWER = "야구 룰/용어에 대한 질문만 답할 수 있어요. 예: \"보크가 뭐야?\"";
-export const UNSURE_ANSWER = "잘 모르겠어요. 더 정확히 알게 되면 용어사전에 추가할게요!";
+// UNSURE는 단정 답변 금지 경로다 — 틀린 확신 대신 되묻는다 (정보 신뢰성 우선).
+export const UNSURE_ANSWER =
+  "제가 확실히 아는 내용이 아니라 함부로 답하지 않을게요. 어떤 상황에서 나온 말인지 조금만 더 알려주시겠어요? ⚾";
 export const SERVICE_REDIRECT_ANSWER =
   "크보팬 서비스 관련 문의는 마이페이지 > 피드백 보내기로 보내주시면 운영팀이 확인해요! 저는 야구 룰/용어 질문을 도와드릴게요 ⚾";
 export const HISTORY_HOLD_ANSWER =
@@ -58,7 +60,10 @@ export type QuestionRoute =
   | "history_hold"
   | "blocked"
   | "context_missing"
-  | "baseball_rule_term";
+  | "baseball_rule_term"
+  // 결정적 선차단에 걸리지 않았고 사전/화이트리스트에도 없는 질문 — 확정 차단 대신
+  // LLM 3값 구조화 판정(ANSWER|NOT_BASEBALL|UNSURE)에 위임한다. match_path가 되지 않는다.
+  | "llm_screen";
 export type MatchPath =
   | "dictionary"
   | "cache"
@@ -188,7 +193,13 @@ function hasBaseballSignal(value: string): boolean {
     );
 }
 
-/** LLM 전에 실행하는 보수적 라우터. 불명확하면 fail-closed 한다. */
+/**
+ * LLM 전에 실행하는 결정적 라우터.
+ * 인젝션·서비스·선수/구단 기록 계열은 여기서 확정 선차단하고(LLM 위임 금지, P0 방어 유지),
+ * 사전/화이트리스트 매칭은 확정 통과시킨다.
+ * 어느 쪽도 아닌 미매칭 질문만 llm_screen으로 넘겨 3값 구조화 판정을 받는다 — 사전에 없는
+ * 야구 용어("잔루만루가 뭔데")가 첫 질문부터 차단되던 recall 결손을 여기서 해소한다.
+ */
 export function routeQuestion(
   question: string,
   glossary: GlossaryEntry[] = [],
@@ -220,7 +231,7 @@ export function routeQuestion(
   );
   if (mentionsGlossaryTerm) return "baseball_rule_term";
   if (BASEBALL_WORDS.some((word) => tokenMatches(tokens, word))) return "baseball_rule_term";
-  return "blocked";
+  return "llm_screen";
 }
 
 export interface ValidatedLlmAnswer {
@@ -302,7 +313,9 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     }
   }
   const route = routeQuestion(question, glossary, players, context !== null);
-  if (route !== "baseball_rule_term") {
+  // 결정적 종결 경로만 여기서 끝난다. llm_screen은 baseball_rule_term과 같은 사다리를 타되
+  // 최종 통과 여부는 LLM 3값 판정 + validator 2차 가드가 정한다.
+  if (route !== "baseball_rule_term" && route !== "llm_screen") {
     const answer =
       route === "service_redirect" ? SERVICE_REDIRECT_ANSWER :
       route === "history_hold" ? HISTORY_HOLD_ANSWER :
