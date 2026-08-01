@@ -1,5 +1,4 @@
 import type { KboRawGame } from "@/types/api";
-import { runBeforeDeadline } from "@/lib/async-deadline";
 import { parseKboGameListPayload } from "@/lib/notifications/widget-fast-loop";
 import { fetchNaverGames } from "@/lib/crawler/naver-games";
 import type { KboGame } from "@/lib/crawler/kbo-api";
@@ -11,10 +10,28 @@ const KBO_BROWSER_UA =
 
 export const NAVER_UNKNOWN_RUNNER_ORDER = 99;
 const KBO_PRIMARY_BUDGET_MS = 1_500;
+const SOURCE_SETTLE_RESERVE_MS = 100;
 
-function abortBeforeDeadlineMs(remainingMs: number): number {
-  const settleReserveMs = Math.min(25, Math.max(1, Math.floor(remainingMs / 10)));
-  return Math.max(1, remainingMs - settleReserveMs);
+async function runSourceBeforeDeadline<T>(
+  task: (signal: AbortSignal) => Promise<T>,
+  deadlineAtMs: number,
+): Promise<T> {
+  const remainingMs = deadlineAtMs - Date.now();
+  if (remainingMs <= SOURCE_SETTLE_RESERVE_MS) {
+    throw new Error("live_games_settle_budget_exhausted");
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () => controller.abort(new DOMException("live games source deadline", "AbortError")),
+    remainingMs - SOURCE_SETTLE_RESERVE_MS,
+  );
+  try {
+    // Await the raw operation itself. A Promise.race deadline wrapper can
+    // reject while fetch/PostgREST abort cleanup remains active.
+    return await task(controller.signal);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export type LiveGamesSource = "kbo" | "naver" | "none";
@@ -222,24 +239,28 @@ export async function fetchKboLiveGames(
         absoluteDeadlineAtMs,
       Date.now() + KBO_PRIMARY_BUDGET_MS,
     );
-    const remainingMs = kboDeadlineAtMs - Date.now();
-    const response = await runBeforeDeadline(
-      () => fetchImpl(`${KBO_MAIN}/GetKboGameList`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          "User-Agent": KBO_BROWSER_UA,
-          "Referer": "https://www.koreabaseball.com/Schedule/ScoreBoard.aspx",
-        },
-        body: `leId=1&srId=0,1,3,4,5,7,8,9&date=${date}`,
-        cache: "no-store",
-        signal: AbortSignal.timeout(abortBeforeDeadlineMs(remainingMs)),
-      }),
+    const result = await runSourceBeforeDeadline(
+      async (signal) => {
+        const response = await fetchImpl(`${KBO_MAIN}/GetKboGameList`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "User-Agent": KBO_BROWSER_UA,
+            "Referer": "https://www.koreabaseball.com/Schedule/ScoreBoard.aspx",
+          },
+          body: `leId=1&srId=0,1,3,4,5,7,8,9&date=${date}`,
+          cache: "no-store",
+          signal,
+        });
+        return {
+          response,
+          json: response.ok ? await response.json() : null,
+        };
+      },
       kboDeadlineAtMs,
     );
-    if (response.ok) {
-      const json = await runBeforeDeadline(() => response.json(), kboDeadlineAtMs).catch(() => null);
-      const games = parseKboGameListPayload(json);
+    if (result.response.ok) {
+      const games = parseKboGameListPayload(result.json);
       const fetchedAtMs = Date.now();
       if (
         games !== null
@@ -279,12 +300,8 @@ export async function fetchKboLiveGames(
   }
 
   try {
-    const remainingMs = absoluteDeadlineAtMs - Date.now();
-    if (remainingMs <= 0) throw new Error("live_games_deadline_exceeded");
-    const games = await runBeforeDeadline(
-      () => fetchNaverImpl(date, undefined, {
-        signal: AbortSignal.timeout(abortBeforeDeadlineMs(remainingMs)),
-      }),
+    const games = await runSourceBeforeDeadline(
+      (signal) => fetchNaverImpl(date, undefined, { signal }),
       absoluteDeadlineAtMs,
     );
     // KBO empty 는 Naver 도 무경기일 때만 인정. Naver 에 경기가 있으면 KBO soft-empty
@@ -300,11 +317,8 @@ export async function fetchKboLiveGames(
         return needsFirstPitchCheck ? { ...game, status: "scheduled" as const } : game;
       }
       try {
-        const evidence = await runBeforeDeadline(
-          () => fetchNaverEvidenceImpl(
-            game.gameId,
-            AbortSignal.timeout(abortBeforeDeadlineMs(evidenceRemainingMs)),
-          ),
+        const evidence = await runSourceBeforeDeadline(
+          (signal) => fetchNaverEvidenceImpl(game.gameId, signal),
           absoluteDeadlineAtMs,
         );
         if (needsFirstPitchCheck && !evidence.hasRealPlay) {
