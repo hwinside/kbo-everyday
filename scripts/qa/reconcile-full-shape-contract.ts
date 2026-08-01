@@ -16,6 +16,11 @@
  */
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import {
+  assertDeletionKeysMatchStaleKeys,
+  assertExpectedApprovedHeals,
+  EXPECTED_STALE_DELETIONS,
+} from "./reconcile-full-shape-assertions";
 
 const SRC = "scripts/qa/reconcile-full-shape-verifier.ts";
 const src = readFileSync(SRC, "utf8");
@@ -37,6 +42,11 @@ check("① partial 우주 중단 가드(MIN_SEASON_FINALS) 존재", () => {
 
 check("② --expect pre-backfill gate: 대상 전수 우주 해결 + boxscore 성공", () => {
   assert.match(src, /unresolvable/, "미해결 목록을 모으지 않는다");
+  assert.match(
+    src,
+    /unresolvable\.push\(`\$\{gameId\}: 필수 필드 누락\(missing_required_field\)`\)/,
+    "missing_required_field를 blocking 미해결 목록에 넣지 않는다",
+  );
   assert.match(src, /blockingUnresolvable/, "정규 밖 예외를 제외한 blocking 목록이 없다");
   assert.match(
     src,
@@ -50,22 +60,35 @@ check("③ 거부 경기 부분삭제 0 (atomic) assert 존재", () => {
 });
 
 check("④ 삭제 대상 = stale 정확 일치 assert 존재", () => {
-  assert.match(src, /v\.deletions\.length === v\.stalePairs/);
+  assert.match(src, /assertDeletionKeysMatchStaleKeys\(v\.gameId, v\.deletions, v\.staleKeys\)/);
+  assert.doesNotThrow(() => assertDeletionKeysMatchStaleKeys("G", ["1|batter"], ["1|batter"]));
+  assert.throws(
+    () => assertDeletionKeysMatchStaleKeys("G", ["__WRONG__|batter"], ["1|batter"]),
+    "wrong-key/same-count 결함주입이 RED여야 한다",
+  );
 });
 
-check("⑤ production helper 직접 사용 (알고리즘 복제 금지)", () => {
+check("⑤ 승인된 stale 치유 4경기 / exact 삭제 집합 고정", () => {
+  assert.equal(Object.keys(EXPECTED_STALE_DELETIONS).length, 4);
+  assert.match(src, /assertExpectedApprovedHeals\(/);
+  assert.doesNotThrow(() => assertExpectedApprovedHeals(EXPECTED_STALE_DELETIONS));
+  const mutated = { ...EXPECTED_STALE_DELETIONS, "20260430SSOB0": ["__WRONG__|pitcher"] };
+  assert.throws(() => assertExpectedApprovedHeals(mutated), "승인 4경기 중 한 key 퇴행이 RED여야 한다");
+});
+
+check("⑥ production helper 직접 사용 (알고리즘 복제 금지)", () => {
   assert.match(src, /from "@\/lib\/game-logs\/reconcile"/);
   assert.match(src, /planStaleReconciliation\(/);
   assert.match(src, /buildGameIngestion\(/);
 });
 
-check("⑥ 읽기 전용 — 쓰기 호출 없음", () => {
+check("⑦ 읽기 전용 — 쓰기 호출 없음", () => {
   for (const w of [".insert(", ".update(", ".delete(", ".upsert("]) {
     assert.ok(!src.includes(w), `쓰기 호출 발견: ${w}`);
   }
 });
 
-check("⑦ package script 로 노출되어 운영 실행 가능", () => {
+check("⑧ package script 로 노출되어 운영 실행 가능", () => {
   const pkg = JSON.parse(readFileSync("package.json", "utf8")) as { scripts: Record<string, string> };
   assert.ok(pkg.scripts["qa:reconcile-full-shape"], "qa:reconcile-full-shape 스크립트 없음");
   assert.match(pkg.scripts["qa:reconcile-full-shape"], /reconcile-full-shape-verifier\.ts/);

@@ -28,6 +28,10 @@ import { getSeasonGames } from "@/lib/crawler/season-games-cache";
 import { fetchGameBoxscore } from "@/lib/game-logs/ingest";
 import { CANONICAL_ROW_FIELDS, buildGameIngestion, type CanonicalRowInput } from "@/lib/game-logs/completeness";
 import { planStaleReconciliation, type ReconcileRefusalReason } from "@/lib/game-logs/reconcile";
+import {
+  assertDeletionKeysMatchStaleKeys,
+  assertExpectedApprovedHeals,
+} from "./reconcile-full-shape-assertions";
 
 const EXPECT = process.argv.includes("--expect");
 const gameArg = process.argv.indexOf("--game");
@@ -40,19 +44,10 @@ type Verdict = ReconcileRefusalReason | "healable" | "no_regular_game" | "boxsco
 interface GameVerdict {
   gameId: string;
   verdict: Verdict;
-  stalePairs: number;
+  staleKeys: string[];
   deletions: string[];
   detail?: string;
 }
-
-/**
- * 기대 계약 — 실제 운영 shape 로 고정한다.
- *
- * 이 PR 의 승인표는 `65040→62360` 4경기지만, full shape 에서는 그중 3경기만
- * 실제로 치유된다(나머지 1경기는 같은 경기에 다른 stale 쌍이 함께 있어 거부).
- * "몇 건이 치유되는가"를 코드 주장이 아니라 **실측으로** 못박는다.
- */
-const EXPECTED_HEALABLE_MIN = 1;
 
 /**
  * 시즌 우주 sanity 하한(2026 실측 491 final).
@@ -102,19 +97,20 @@ async function main() {
     const game = byId.get(gameId);
     if (!game) {
       unresolvable.push(`${gameId}: 우주에 없음(no_regular_game)`);
-      verdicts.push({ gameId, verdict: "no_regular_game", stalePairs: 0, deletions: [] });
+      verdicts.push({ gameId, verdict: "no_regular_game", staleKeys: [], deletions: [] });
       continue;
     }
     const box = await fetchGameBoxscore(gameId);
     if (!box) {
       unresolvable.push(`${gameId}: boxscore 조회 실패`);
-      verdicts.push({ gameId, verdict: "boxscore_unavailable", stalePairs: 0, deletions: [] });
+      verdicts.push({ gameId, verdict: "boxscore_unavailable", staleKeys: [], deletions: [] });
       continue;
     }
     const build = buildGameIngestion(game, box);
     if (build.missingFields.length > 0) {
+      unresolvable.push(`${gameId}: 필수 필드 누락(missing_required_field)`);
       verdicts.push({
-        gameId, verdict: "missing_required_field", stalePairs: 0, deletions: [],
+        gameId, verdict: "missing_required_field", staleKeys: [], deletions: [],
         detail: `${build.missingFields.length}필드`,
       });
       continue;
@@ -137,7 +133,7 @@ async function main() {
     verdicts.push({
       gameId,
       verdict: plan.refusal ?? "healable",
-      stalePairs: stale.length,
+      staleKeys: stale.map((r) => `${r.kbo_id}|${r.player_type}`),
       deletions: plan.deletions.map((r) => `${r.kbo_id}|${r.player_type}`),
       detail: stale.map((r) => `${r.kbo_id}|${r.player_type}`).join(","),
     });
@@ -194,21 +190,14 @@ async function main() {
         assert.deepEqual(v.deletions, [], `${v.gameId}: 거부인데 삭제가 계획됨`);
       }
     }
-    // ② 삭제는 오직 stale 행에만 일어난다 — 멀짱한 행을 지우지 않는다.
-    //   (stale 이 없는 healable 경기는 삭제 0 이 정상이다 — reconcile 이 막지 않았다는 뜻이고,
-    //    이 경기들은 재수집 hash 갱신만으로 complete 로 수렴한다.)
+    // ② 삭제 key 집합은 stale key 집합과 경기별 exact-set으로 같아야 한다.
+    //    개수만 같고 key가 다른 회귀도 즉시 실패한다.
     for (const v of healable) {
-      assert.ok(
-        v.deletions.length === v.stalePairs,
-        `${v.gameId}: 삭제 ${v.deletions.length} ≠ stale ${v.stalePairs} — 삭제 대상이 stale 과 불일치`,
-      );
+      assertDeletionKeysMatchStaleKeys(v.gameId, v.deletions, v.staleKeys);
     }
-    // ③ 실제로 하나라도 치유되어야 이 PR 이 의미가 있다(stale 이 있는 경기 기준).
-    const healedWithStale = healable.filter((v) => v.stalePairs > 0);
-    assert.ok(
-      healedWithStale.length >= EXPECTED_HEALABLE_MIN,
-      `stale 치유 경기가 ${healedWithStale.length}건 — 최소 ${EXPECTED_HEALABLE_MIN}건 기대`,
-    );
+    // ③ 승인된 운영 shape 4경기와 삭제 exact-set 전체를 고정한다.
+    const healedWithStale = healable.filter((v) => v.staleKeys.length > 0);
+    assertExpectedApprovedHeals(Object.fromEntries(healedWithStale.map((v) => [v.gameId, v.deletions])));
     console.log(`  · stale 치유 ${healedWithStale.length}경기 / stale 없는 healable ${healable.length - healedWithStale.length}경기`);
     // ③ LG 잔여를 숨기지 않는다 — 화면 blocker 해소 주장의 근거로 쓰지 못하게 명시적으로 실패시킨다.
     const lgBlocked = lg.filter((v) => v.verdict !== "healable");
