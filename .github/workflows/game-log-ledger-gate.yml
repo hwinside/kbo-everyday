@@ -19,6 +19,8 @@ on:
       - "scripts/qa/venue-stats-s1a-ledger-db-integration.ts"
       - "scripts/qa/backfill-workflow-matrix.sh"
       - "scripts/qa/game-log-ledger-orchestrator.ts"
+      - "scripts/qa/ledger-count-guard-smoke.sh"
+      - "scripts/ci/ledger-count.sh"
       - "supabase/migrations/20260606_player_game_logs.sql"
       - "supabase/migrations/20260730_player_game_log_ingestions.sql"
       - "supabase/migrations/20260801_player_game_logs_reconcile_rpc.sql"
@@ -35,6 +37,8 @@ on:
       - "scripts/qa/venue-stats-s1a-ledger-db-integration.ts"
       - "scripts/qa/backfill-workflow-matrix.sh"
       - "scripts/qa/game-log-ledger-orchestrator.ts"
+      - "scripts/qa/ledger-count-guard-smoke.sh"
+      - "scripts/ci/ledger-count.sh"
       - "supabase/migrations/20260606_player_game_logs.sql"
       - "supabase/migrations/20260730_player_game_log_ingestions.sql"
       - "supabase/migrations/20260801_player_game_logs_reconcile_rpc.sql"
@@ -83,3 +87,8 @@ jobs:
       - name: Backfill workflow input matrix (fail-closed)
         # yml 의 Validate inputs run 블록을 그대로 추출해 실행한다(로직 복제 아님).
         run: npm run qa:backfill-workflow-matrix
+
+      - name: Ledger count fail-closed guard
+        # before/after count 가 HTTP 500 · Content-Range 누락에서 빈 문자열로 떨어지면
+        # dry-run 가드의 before==after 가 ""=="" 로 통과한다(false-green). stub 서버로 고정.
+        run: npm run qa:ledger-count-guard
