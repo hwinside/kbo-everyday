@@ -18,6 +18,7 @@ on:
       - "scripts/backfill-game-log-ledger.mts"
       - "scripts/qa/venue-stats-s1a-ledger-db-integration.ts"
       - "scripts/qa/backfill-workflow-matrix.sh"
+      - "scripts/qa/ledger-complete-parse-smoke.sh"
       - "scripts/qa/game-log-ledger-orchestrator.ts"
       - "scripts/qa/ledger-count-guard-smoke.sh"
       - "scripts/ci/ledger-count.sh"
@@ -36,6 +37,7 @@ on:
       - "scripts/backfill-game-log-ledger.mts"
       - "scripts/qa/venue-stats-s1a-ledger-db-integration.ts"
       - "scripts/qa/backfill-workflow-matrix.sh"
+      - "scripts/qa/ledger-complete-parse-smoke.sh"
       - "scripts/qa/game-log-ledger-orchestrator.ts"
       - "scripts/qa/ledger-count-guard-smoke.sh"
       - "scripts/ci/ledger-count.sh"
@@ -92,3 +94,9 @@ jobs:
         # before/after count 가 HTTP 500 · Content-Range 누락에서 빈 문자열로 떨어지면
         # dry-run 가드의 before==after 가 ""=="" 로 통과한다(false-green). stub 서버로 고정.
         run: npm run qa:ledger-count-guard
+
+      - name: Ledger apply-progress parse guard (fail-closed)
+        # run 30679031813: `incomplete 0` 안의 `complete 0` 을 tail -1 이 집어
+        # 5경기 전부 성공한 apply 런을 실패로 판정했다. 반대로 진짜 무진행은
+        # `incomplete N` 을 읽어 통과시켰다 — 양방향으로 틀렸다.
+        run: npm run qa:ledger-complete-parse
