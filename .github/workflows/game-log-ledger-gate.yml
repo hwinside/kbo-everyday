@@ -69,6 +69,19 @@ jobs:
         # tsc 는 프로젝트 전체를 본다 — 이 job 의 목적은 ledger 변경이 타입을 깨지 않는지 확인.
         run: npx tsc --noEmit
 
+      - name: Reconcile rekey regression (경기별 승인표 + 부분응답 방어 + full-shape 경계)
+        # 효과: 원천 pcode 대조로 승인한 경기별 rekey 만 치유
+        # 방어: 설명 없는 stale(부분 응답)·동명이인은 여전히 삭제 0 fail-closed
+        # full-shape: 경기당 stale 이 여럿인 실제 shape(20260505WOSS0) + LG 잔여 3경기 미치유 고정
+        run: npm run qa:reconcile-rekey
+
+      - name: Reconcile full-shape verifier (정적 계약)
+        # 실제 운영 DB 조회는 CI 자격증명 밖이라, 여기서는 검증기 자체의 계약을 고정한다:
+        #   · --expect 경로가 pre-backfill gate(대상 전수 우주 해결)를 포함하는가
+        #   · partial 우주 중단 가드(MIN_SEASON_FINALS)가 살아있는가
+        # 운영 실행은 백필 직전에 `npm run qa:reconcile-full-shape -- --expect` 로 돌린다.
+        run: npm run qa:reconcile-full-shape-contract
+
       - name: Ledger DB integration (PGlite, real migrations)
         # RED: 행 누락·필드 오염·unresolved·metadata 변조
         # reconciliation RED: 부분 응답 / unresolved / 모호한 짝 / 전면 삭제 → 삭제 0
