@@ -7,6 +7,7 @@ import {
 import {
   batterCompatibility,
   buildVenueStatsHero,
+  MEASURED_ATTENDANCE_DISTRIBUTION,
   scoreConfidenceLevel,
   coverageCaption,
   formatAvg,
@@ -135,8 +136,8 @@ const scope: VenueStatsScopePayload = {
   // 축은 pregame 초과성과 기반 — winLift(승점 초과) + quality(마진 초과).
   assert.deepEqual(heroV2.scoreAxes.map((axis) => axis.key), ["winLift", "quality"]);
   assert.ok(
-    heroV2.scoreConfidence != null && Math.abs(heroV2.scoreConfidence - Math.sqrt(4 / 7)) < 1e-9,
-    "신뢰도는 √(n/(n+3)) 수축",
+    heroV2.scoreConfidence != null && Math.abs(heroV2.scoreConfidence - Math.sqrt(4 / 5)) < 1e-9,
+    "신뢰도는 √(n/(n+1)) 수축 — 실측 분포(최대 4경기)에 맞춘 낮은 기준",
   );
   // v1 회귀 RED — 승률(W/L/D)은 그대로 두고 pregame 초과성과만 뒤집으면 점수가 반드시 달라져야 한다.
   // `round(rate*100)` 로 되돌리면 두 케이스가 같은 값이 되어 이 assert 가 깨진다.
@@ -182,31 +183,48 @@ const scope: VenueStatsScopePayload = {
     `신뢰도는 경기수에 대해 단조 증가해야 함: ${at3.score}/${at5.score}/${at20.score}`,
   );
   // 핵심 RED: 최소 표본(3경기)에서도 상한 초과성과가 의미 있는 폭으로 나와야 한다.
-  // √(3/20)=0.387 → 69점에 그치지만, √(3/6)=0.707 → 85점.
+  // 하린아빠 2026-08-02(3회 반복): "신뢰도 구간은 경기수 기준을 너무 높게 잡지 마".
+  // 실측 분포는 P50 1 · P95 2 · 최대 4경기라 k=3(5경기 해제)은 도달 불가 기준이었다.
+  // k=1: 3경기 √(3/4)=.866 → 지수 산출 최소 표본에서 이미 보정이 거의 해제된다.
   assert.ok(
-    at3.score! >= 80,
-    `3경기 상한 초과성과가 수축에 뭉개지면 안 됨(실제 유저 대부분이 1~4경기): ${at3.score}`,
+    at3.score! >= 90,
+    `3경기 상한 초과성과가 수축에 뭉개지면 안 됨(실측 최대가 4경기): ${at3.score}`,
   );
   assert.ok(
-    at3.scoreConfidence != null && Math.abs(at3.scoreConfidence - Math.sqrt(0.5)) < 1e-9,
-    `3경기 신뢰도는 √0.5≈0.71: ${at3.scoreConfidence}`,
+    at3.scoreConfidence != null && Math.abs(at3.scoreConfidence - Math.sqrt(0.75)) < 1e-9,
+    `3경기 신뢰도는 √0.75≈0.87: ${at3.scoreConfidence}`,
   );
-  // 삼순 제품 정책 — 약 5경기면 보정이 "거의" 해제된다.
-  // 실측: 3경기 .707 · 5경기 .791 · 8경기 .853 · 10경기 .877 · 20경기 .933 (상한 1.0)
-  // 5경기가 이미 .79 로 20경기(.93)의 85% 수준이고, 그 뒤로는 완만하게만 오른다.
+  // RED — 경기수 기준이 다시 높아지면(k≥2, 즉 3경기 r<0.85) FAIL.
   assert.ok(
-    at5.scoreConfidence! >= 0.78,
-    `5경기 신뢰도는 .78 이상이어야 함(보정 거의 해제): ${at5.scoreConfidence}`,
+    at3.scoreConfidence! >= 0.85,
+    `최소 표본 3경기에서 보정이 거의 해제돼야 함(기준 상향 회귀 차단): ${at3.scoreConfidence}`,
+  );
+  // 3→20경기 이득이 완만해야 한다. k=1 이면 .866 / .976 = 89%.
+  assert.ok(
+    at3.scoreConfidence! / at20.scoreConfidence! >= 0.88,
+    `3→20경기 추가 이득은 완만해야 함: ${at3.scoreConfidence} / ${at20.scoreConfidence}`,
   );
   assert.ok(
-    at5.scoreConfidence! / at20.scoreConfidence! >= 0.84,
-    `5→20경기 추가 이득은 완만해야 함: ${at5.scoreConfidence} / ${at20.scoreConfidence}`,
+    at5.scoreConfidence! >= 0.9,
+    `5경기 신뢰도는 .9 이상: ${at5.scoreConfidence}`,
   );
   // 신뢰도 라벨은 점수 반응성(r)과 분리된 제품 정책이다(삼순 지적).
+  // 실측 최대가 4경기 → 라벨 임계도 관측된 분포 안에서만 나눈다(3 낮음 · 4 보통 · 5+ 높음).
   assert.equal(scoreConfidenceLevel(2), "measuring");
   assert.equal(scoreConfidenceLevel(3), "low");
-  assert.equal(scoreConfidenceLevel(5), "medium");
-  assert.equal(scoreConfidenceLevel(8), "high");
+  assert.equal(scoreConfidenceLevel(4), "medium");
+  assert.equal(scoreConfidenceLevel(5), "high");
+  // RED — 라벨 임계가 실측 최대(4경기)를 넘으면 "아무도 도달 못 하는 등급"이 생긴다.
+  assert.equal(
+    scoreConfidenceLevel(MEASURED_ATTENDANCE_DISTRIBUTION.max),
+    "medium",
+    "실측 최대 경기수에서 이미 최소 '보통' 이상이어야 함(도달 불가 라벨 차단)",
+  );
+  assert.notEqual(
+    scoreConfidenceLevel(MEASURED_ATTENDANCE_DISTRIBUTION.max + 1),
+    "low",
+    "실측 최대+1 경기에서 '낮음'이면 기준이 너무 높다",
+  );
 }
 
 // ─ 하린아빠 2026-08-02: "관전가치 기준이 아니라 무조건 팀퍼포먼스와의 상관도를 봐야지".

@@ -290,31 +290,50 @@ function weightedDelta<T>(
  * 축이 하나도 없으면 지수 자체를 null 로 fail-close 한다 — 승률로 몰래 대체하지 않는다.
  */
 /**
- * 신뢰도 수축 — `r = √(n / (n + 3))`.
+ * 신뢰도 수축 — `r = √(n / (n + 1))`.
  *
- * 하린아빠 2026-08-02: "20경기씩 직관 가는 사람들이 많지는 않아",
- * "신뢰도 구간은 경기수 기준을 너무 높게 잡지 마", "10번 가는 사람도 상위 5%일듯".
- * 실측(`venue_attendance` 48명, 7/4~8/1): P50 1경기 · P95 2경기 · P99 4경기.
- * 3경기 이상이 이미 상위 2.1%이고 10경기 이상은 0명이다.
+ * 하린아빠 2026-08-02(3회 반복 지시): **"신뢰도 구간은 경기수 기준을 너무 높게 잡지 마"**
+ * (+ "20경기씩 직관 가는 사람들이 많지는 않아", "10번 가는 사람도 상위 5%일듯").
  *
- * r: 3경기 .71 · 4경기 .76 · 5경기 .79 · 8경기 .85 · 10경기 .88
- * → **약 5경기면 보정이 거의 해제**되는 제품 정책이다(삼순 2026-08-02 확정).
+ * 실측(`venue_attendance` 전량 55행 / 48명, 7/4~8/1):
+ *   1경기 43명 · 2경기 4명 · 4경기 1명 — **P50 1 · P95 2 · P99 4, 최대 4경기.**
+ *   3경기 이상이 이미 상위 2.1%, 5경기 이상·10경기 이상은 **0명**.
+ *
+ * 즉 k=3(5경기에서 해제)은 **실사용자가 사실상 도달하지 못하는 기준**이었다.
+ * k=1 로 낮춘다: 3경기 .87 · 4경기 .89 · 5경기 .91 · 8경기 .94.
+ * → **3경기(=`MIN_FINAL_GAMES`, 지수 산출 최소 표본)에서 이미 보정이 거의 해제**된다.
+ *
+ * 하한을 더 내리지 않는 이유: 지수 자체가 3경기 미만이면 `sample_limited` 로
+ * fail-close 되므로, r 은 "지수를 보여주는 구간" 안에서만 의미가 있다.
  *
  * ⚠️ 위 백분위는 '이용 빈도' 근거이지 통계적 신뢰도 근거가 아니다(삼순 지적).
  * 그래서 점수 반응성(r)과 사용자에게 보이는 신뢰도 라벨을 분리해 둔다.
+ * ⚠️ 이 분포는 기능 오픈 직후 한 달치다. 시즌이 쌓이면 재측정 대상.
  */
-const SCORE_CONFIDENCE_K = 3;
+const SCORE_CONFIDENCE_K = 1;
+
+/** 실측 직관 횟수 분포 — 라벨 임계가 이 분포를 벗어나면 회귀가 FAIL. */
+export const MEASURED_ATTENDANCE_DISTRIBUTION = {
+  users: 48,
+  p50: 1,
+  p95: 2,
+  p99: 4,
+  max: 4,
+} as const;
 
 export type ScoreConfidenceLevel = "measuring" | "low" | "medium" | "high";
 
 /**
  * 신뢰도 라벨 — 점수 반응성(r)과 별도로 노출하는 제품 정책.
- * 3경기 미만 `측정 중` · 3~4 낮음 · 5~7 보통 · 8+ 높음.
+ *
+ * 실측 최대가 4경기이므로 이전 기준(5 보통 / 8 높음)은 **아무도 도달 못 하는 라벨**이었다.
+ * 관측된 분포 안에서만 등급을 나눈다: 3 낮음 · 4 보통 · 5+ 높음.
+ * (3경기 미만은 지수를 아예 안 보여주므로 `측정 중`.)
  */
 export function scoreConfidenceLevel(finalGames: number): ScoreConfidenceLevel {
   if (finalGames < MIN_FINAL_GAMES) return "measuring";
-  if (finalGames < 5) return "low";
-  if (finalGames < 8) return "medium";
+  if (finalGames < 4) return "low";
+  if (finalGames < 5) return "medium";
   return "high";
 }
 
