@@ -39,8 +39,12 @@ BEGIN
   WITH candidates AS (
     SELECT source.source_key AS source_key
     FROM public.genius_rag_sources source
-    -- ▼ 문서형 소스 2종 모두 후보. 여기가 namu 전용으로 좁아지면 wikipedia 가 죽는다.
-    WHERE source.source_kind IN ('namu_document', 'wikipedia_document')
+    -- ▼ 문서형 소스 전체가 후보. 여기가 좁아지면 그 종류가 통째로 죽는다.
+    --   ⚠️ 이 파일은 사전순 뒤쪽이라 앞선 migration 의 확장을 **덮어쓴다**.
+    --   그래서 아직 이 브랜치에 없는 종류(kbo_ebook, #1050)까지 미리 포함한다.
+    --   IN 목록의 값은 CHECK 제약과 무관하므로, 해당 종류가 없는 DB 에서도 안전하다.
+    --   (이 규칙을 어겨서 wikipedia 가 죽은 것이 삼순 R4 P0-1 사고다 — 같은 실수 반복 금지)
+    WHERE source.source_kind IN ('namu_document', 'wikipedia_document', 'kbo_ebook')
       AND source.source_key = ANY (p_source_keys)
       AND source.resolution_status = 'resolved'
       AND source.canonical_url IS NOT NULL
