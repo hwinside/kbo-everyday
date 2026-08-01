@@ -803,24 +803,26 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     if (official) return official;
   }
 
-  // ② 동일질문 캐시 (토큰 0). 맥락 의존 질문은 global 캐시를 read도 write도 하지 않는다
+  // ② 선수 서술형 질문은 수집된 tier2 문서 근거로만 답한다 (S2b).
+  // ⚠️ **global 캐시보다 앞**에 둔다 (삼순 R3/R4 P0-3). 캐시가 먼저면 과거에 저장된
+  // 근거 없는 답(오염 캐시 포함)이 선수 질문의 답으로 재노출되고 RAG 경로가 통째로
+  // 무시된다 — 실제로 `문보경 별명이 뭐야?` 에 preseed 캐시를 넣으면 source=cache 로
+  // 재현됐다. 이 분기에 들어오면 **여기서 종결**한다: 근거가 있으면 rag 답변,
+  // 근거 0건·근거부족·오염근거는 generic LLM 0 / cache 0 으로 명시 fail-close 한다.
+  if (deps.searchRag && deps.callRagLlm) {
+    const candidate = resolveRagPlayerCandidate(question, players);
+    if (candidate) {
+      return answerPlayerDescriptiveQuestion(userId, question, questionNorm, candidate, remaining, deps);
+    }
+  }
+
+  // ③ 동일질문 캐시 (토큰 0). 맥락 의존 질문은 global 캐시를 read도 write도 하지 않는다
   // — preseed된 동일 정규화 키가 있어도 맥락 없는 답으로 오염되면 안 된다 (spec §4.1 B5).
   if (!context) {
     const cached = await deps.getCache(questionNorm);
     if (cached !== null) {
       await deps.log({ userId, question, questionNorm, matchPath: "cache", answer: cached, inputTokens: null, outputTokens: null });
       return { status: 200, answer: cached, source: "cache", remaining };
-    }
-  }
-
-  // ②-b 선수 서술형 질문은 수집된 tier2 문서 근거로만 답한다 (S2b).
-  // 이 분기에 들어오면 **여기서 종결**한다: 근거가 있으면 rag 답변, 근거 0건·근거부족·오염근거는
-  // generic LLM 0 / cache 0으로 명시 fail-close 한다 (삼순 R1 P0 #4). 아래 일반 LLM·캐시 경로로
-  // 통과시키면 근거 없는 생성답이 선수 질문의 답으로 나가고 global 캐시에까지 썻긴다.
-  if (deps.searchRag && deps.callRagLlm) {
-    const candidate = resolveRagPlayerCandidate(question, players);
-    if (candidate) {
-      return answerPlayerDescriptiveQuestion(userId, question, questionNorm, candidate, remaining, deps);
     }
   }
 

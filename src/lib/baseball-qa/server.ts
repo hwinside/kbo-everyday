@@ -37,6 +37,7 @@ import {
   type RagPlayerCandidate,
 } from "@/lib/baseball-qa/rag/retrieve";
 import { embedQuery } from "@/lib/baseball-qa/rag/embed";
+import { orderTier2Evidence } from "@/lib/baseball-qa/rag/fetch-wikipedia";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${BASEBALL_QA_GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
@@ -156,7 +157,12 @@ async function searchRag(
     sourceGrade: row.source_grade === "tier1" ? ("tier1" as const) : ("tier2" as const),
     embedding: row.embedding,
   }));
-  return rankEvidenceByQuery(rows, embedded.vector);
+  // ⚠️ 유사도 랭킹 뒤에 tier2 소스 우선순위를 **실제 서빙 경로에서** 적용한다.
+  // helper 단위 테스트만 GREEN 이고 여기서 호출하지 않으면, vector 점수가 높은
+  // 나무위키 근거가 계속 evidence[0] 이 되어 위키피디아 우선 계약이 무효가 된다
+  // (삼순 R3/R4 P0-4 — server searchRag 미배선으로 지적됨).
+  // orderTier2Evidence 는 안정 정렬이라 같은 소스 안의 유사도 순서는 보존된다.
+  return orderTier2Evidence(rankEvidenceByQuery(rows, embedded.vector));
 }
 
 /** 근거를 비신뢰 데이터 블록으로만 전달하는 재서술 호출 (S2b). */

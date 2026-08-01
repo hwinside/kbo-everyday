@@ -132,5 +132,141 @@ t("claim 0건 스킵이 종료코드로 드러난다", () => {
   if (!/process\.exitCode\s*=\s*1/.test(src)) throw new Error("부분 실패가 exit 0으로 끝난다");
 });
 
+t("적재량이 complete swap 의 원자 조건이다 (삼순 R4 #1050-2)", () => {
+  if (!/p_expected_chunk_count:\s*p\.chunks\.length/.test(src)) {
+    throw new Error("complete RPC 에 기대 chunk 수를 넘기지 않는다 — swap 뒤 검증은 이미 늦다");
+  }
+  const completeIdx = src.indexOf('rpc("complete_baseball_genius_rag_source"');
+  const countIdx = src.indexOf("countActiveChunks(url, key");
+  if (completeIdx < 0 || countIdx < 0) throw new Error("complete/count 호출을 못 찾음");
+});
+
+t("READY source 재적재 경로가 있다 (삼순 R4 #1050-1)", () => {
+  if (!/flag\("refresh"\)/.test(src)) throw new Error("--refresh 플래그 부재");
+  if (!/request_baseball_genius_rag_refresh/.test(src)) throw new Error("재적재 RPC 호출 부재");
+  const refreshIdx = src.indexOf('rpc("request_baseball_genius_rag_refresh"');
+  const claimIdx = src.indexOf('rpc("claim_baseball_genius_rag_batch_scoped"');
+  if (refreshIdx < 0 || claimIdx < 0) throw new Error("refresh/claim 호출을 못 찾음");
+  if (refreshIdx > claimIdx) throw new Error("refresh 가 claim 뒤에 있어 재적재가 성립하지 않는다");
+});
+
+// ── 실제 DB(PGlite)에서 원자성 검증 ─────────────────────────────────────────
+// 소스 문자열 검사만으로는 "불일치 시 last-good 이 보존되는가"를 증명할 수 없다.
+{
+  const { PGlite } = await import("@electric-sql/pglite");
+  const { vector } = await import("@electric-sql/pglite/vector");
+  const { readdirSync } = await import("node:fs");
+  const db = new PGlite({ extensions: { vector } });
+  // migration 이 pgvector 를 `WITH SCHEMA extensions` 로 만든다. 그러면 타입이
+  // `extensions.vector` 라 search_path 에 그 스키마가 없으면 `vector` 를 못 찾는다.
+  await db.exec("CREATE SCHEMA IF NOT EXISTS extensions;");
+  await db.exec("CREATE ROLE anon NOLOGIN; CREATE ROLE authenticated NOLOGIN; CREATE ROLE service_role NOLOGIN;");
+  await db.exec("SET search_path = public, extensions;");
+  const migDir = path.join(HERE, "..", "..", "supabase", "migrations");
+  // ⚠️ 사전순 그대로 적용한다. 손으로 순서를 정하면 실제 배포와 달라진다.
+  for (const f of readdirSync(migDir).filter((x) => x.endsWith(".sql") && /baseball_genius_rag/.test(x)).sort()) {
+    const sql = readFileSync(path.join(migDir, f), "utf8");
+    if (!/genius_rag_sources|genius_rag_chunks|complete_baseball_genius_rag/.test(sql)) continue;
+    await db.exec(sql);
+  }
+
+  const KEY = "kbo:ebook:test";
+  const vec = () => JSON.stringify(Array.from({ length: 768 }, () => 0.01));
+  await db.query(
+    `INSERT INTO public.genius_rag_sources
+      (source_key, source_kind, entity_type, entity_id, page_title, candidate_urls, canonical_url,
+       resolution_status, source_grade, identity_fingerprint)
+     VALUES ($1,'kbo_ebook','document','doc','규칙',ARRAY['https://x'],'https://x','resolved','tier1',$2)`,
+    [KEY, crypto.randomUUID()],
+  );
+
+  // ⚠️ crawled_at 은 **같은 값**을 chunk 와 complete 양쪽에 써야 한다.
+  // 각각 now() 를 부르면 값이 달라 complete 의 provenance EXISTS 조건이 깨지고,
+  // 구현이 멀쩡한데 "정상 적재가 거부됐다" 로 보인다(내 하니스 결함이었다).
+  const CRAWLED_AT = new Date().toISOString();
+  const stage = async (n, revision) => {
+    const claimed = await db.query(
+      "SELECT source_key, claim_token, claim_generation FROM public.claim_baseball_genius_rag_batch_scoped(1, 300, $1)",
+      [[KEY]],
+    );
+    if (claimed.rows.length !== 1) throw new Error(`claim 실패(rows=${claimed.rows.length})`);
+    const c = claimed.rows[0];
+    for (let i = 0; i < n; i++) {
+      await db.query(
+        `SELECT public.upsert_baseball_genius_rag_chunk($1,$2,$3,'document','doc','규칙','https://x',
+           $4,$5,$6,$7,$8,$9,'tier1',$11::timestamptz,current_date,$10::vector,'{}'::jsonb)`,
+        [KEY, c.claim_token, c.claim_generation, revision, `sec-${i}`, 0,
+         `본문 ${i} `.repeat(20), `dochash-${revision}`, `chunkhash-${revision}-${i}`, vec(), CRAWLED_AT],
+      );
+    }
+    return c;
+  };
+
+  // 1차: 정상 적재 → READY (last-good)
+  const c1 = await stage(3, "rev1");
+  const ok1 = await db.query(
+    "SELECT public.complete_baseball_genius_rag_source($1,$2,$3,'rev1','dochash-rev1',$4::timestamptz,now()+interval '30 days',3) AS ok",
+    [KEY, c1.claim_token, c1.claim_generation, CRAWLED_AT],
+  );
+  t("1차 적재 complete 성공", () => {
+    if (ok1.rows[0].ok !== true) throw new Error("정상 적재가 거부됐다");
+  });
+
+  // 2차: 기대 5인데 3건만 staged → swap 되면 안 되고 last-good 이 남아야 한다
+  await db.query("SELECT public.request_baseball_genius_rag_refresh($1,'rev2')", [KEY]);
+  const c2 = await stage(3, "rev2");
+  const bad = await db.query(
+    "SELECT public.complete_baseball_genius_rag_source($1,$2,$3,'rev2','dochash-rev2',$4::timestamptz,now()+interval '30 days',5) AS ok",
+    [KEY, c2.claim_token, c2.claim_generation, CRAWLED_AT],
+  );
+  const after = await db.query(
+    "SELECT active_claim_generation, revision FROM public.genius_rag_sources WHERE source_key=$1",
+    [KEY],
+  );
+  const kept = await db.query(
+    "SELECT count(*)::int AS n FROM public.genius_rag_chunks WHERE source_key=$1 AND claim_generation=$2",
+    [KEY, c1.claim_generation],
+  );
+  const serving = await db.query(
+    "SELECT count(*)::int AS n FROM public.genius_rag_serving_chunks WHERE source_key=$1",
+    [KEY],
+  );
+  t("RED — staged 수 불일치면 swap 0 + last-good 보존", () => {
+    if (bad.rows[0].ok !== false) throw new Error("불일치인데 complete 가 성공했다");
+    if (Number(after.rows[0].active_claim_generation) !== Number(c1.claim_generation)) {
+      throw new Error(`active 가 바뀌었다: ${after.rows[0].active_claim_generation}`);
+    }
+    if (after.rows[0].revision !== "rev1") throw new Error(`revision 이 바뀌었다: ${after.rows[0].revision}`);
+    if (kept.rows[0].n !== 3) throw new Error(`직전 정상본이 삭제됐다(남은 ${kept.rows[0].n}건)`);
+    if (serving.rows[0].n !== 3) throw new Error(`서빙 snapshot 이 깨졌다(${serving.rows[0].n}건)`);
+  });
+
+  // 3차: 기대 수가 맞으면 정상 swap + 이전 generation 정리
+  const good = await db.query(
+    "SELECT public.complete_baseball_genius_rag_source($1,$2,$3,'rev2','dochash-rev2',$4::timestamptz,now()+interval '30 days',3) AS ok",
+    [KEY, c2.claim_token, c2.claim_generation, CRAWLED_AT],
+  );
+  const after3 = await db.query(
+    "SELECT active_claim_generation, revision FROM public.genius_rag_sources WHERE source_key=$1",
+    [KEY],
+  );
+  const oldGone = await db.query(
+    "SELECT count(*)::int AS n FROM public.genius_rag_chunks WHERE source_key=$1 AND claim_generation=$2",
+    [KEY, c1.claim_generation],
+  );
+  t("GREEN — 기대 수 일치면 swap + 이전 generation 정리", () => {
+    if (good.rows[0].ok !== true) throw new Error("일치인데 complete 가 거부됐다");
+    if (after3.rows[0].revision !== "rev2") throw new Error(`swap 안 됨: ${after3.rows[0].revision}`);
+    if (oldGone.rows[0].n !== 0) throw new Error(`이전 generation 이 남았다(${oldGone.rows[0].n}건)`);
+  });
+
+  t("재적재 요청은 같은 revision 이면 no-op (무한 재적재 방지)", async () => {});
+  const sameRev = await db.query("SELECT public.request_baseball_genius_rag_refresh($1,'rev2') AS ok", [KEY]);
+  t("같은 revision refresh 는 false", () => {
+    if (sameRev.rows[0].ok !== false) throw new Error("같은 revision 인데 stale 로 내렸다");
+  });
+  await db.close();
+}
+
 console.log(`\nofficial loader contract: PASS=${pass} FAIL=${fails.length}`);
 if (fails.length) { fails.forEach((f) => console.error(" -", f)); process.exit(1); }

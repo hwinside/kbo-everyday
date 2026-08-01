@@ -16,6 +16,7 @@
  *   --lease=N            claim lease 초 (기본 900, RPC 상한 1800)
  *   --state=<path>       resume 체크포인트 (기본 ./load-state.json)
  *   --reset-state        체크포인트 무시하고 처음부터
+ *   --refresh            이미 READY 인 source 를 재적재 대상(stale)으로 전환 (서빙은 유지)
  *
  * ── 계약 메모 (중요) ────────────────────────────────────────────────────────────
  * 1. 이 스크립트는 `supabase/migrations/20260801235000_baseball_genius_rag_kbo_official_ebook.sql`
@@ -63,6 +64,12 @@ const BATCH = Math.max(1, Math.min(Number(opt("batch", "16")) || 16, 100));
 const LEASE = Math.max(30, Math.min(Number(opt("lease", "900")) || 900, 1800));
 const STATE_PATH = path.resolve(HERE, opt("state", "load-state.json"));
 const RESET_STATE = flag("reset-state");
+// 이미 READY 인 운영 source 를 **재적재 대상으로 되돌린다** (삼순 R4 #1050-1).
+// scoped claim 은 not_started|stale|failed 만 잡으므로, 수정된 로더로 다시 적재하려 해도
+// claim 0 → exit 1 이었다(--reset-state 는 로컬 체크포인트만 지워 DB 상태를 못 바꾼다).
+// 준비된 revision 이 현재 active 와 다를 때만 stale 로 내리고, active_claim_generation 은
+// 건드리지 않으므로 **기존 snapshot 이 계속 서빙**된다.
+const REFRESH = flag("refresh");
 
 const EBOOK_BOARD_URL = "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx";
 const MANIFEST_PATH = path.resolve(HERE, "kbo-official-manifest.json");
@@ -542,6 +549,14 @@ async function main() {
     }
 
     let nextIndex = claim ? saved.nextIndex : 0;
+    if (!claim && REFRESH) {
+      // READY → stale 전환. 같은 revision 이면 0행(무한 재적재 방지)이고 그건 정상이다.
+      const marked = await rpc("request_baseball_genius_rag_refresh", {
+        p_source_key: p.sourceKey,
+        p_revision: p.revision,
+      });
+      log(`${p.sourceKey}: --refresh ${marked ? "→ stale 전환(재적재 대상)" : "→ 대상 아님(같은 revision 또는 비 READY)"}`);
+    }
     if (!claim) {
       const claimed = await rpc("claim_baseball_genius_rag_batch_scoped", {
         p_limit: 1,
@@ -660,13 +675,19 @@ async function main() {
         p_content_hash: p.documentContentHash,
         p_crawled_at: p.crawledAt,
         p_stale_after: staleAfter,
+        // ⚠️ 적재량을 swap 의 **원자 조건**으로 넘긴다 (삼순 R4 #1050-2).
+        // 예전에는 complete 로 active 를 갈아치우고 이전 generation 을 지운 **뒤에** 셌다.
+        // 불일치를 발견해도 fail RPC 는 READY 행에 no-op 이라 되돌릴 수 없고,
+        // 직전 정상본은 이미 삭제된 상태였다. 이제 불일치면 swap 0 행 → last-good 보존.
+        p_expected_chunk_count: p.chunks.length,
       });
     } catch (error) {
       await failWith(`complete:${String(error?.message ?? error).slice(0, 200)}`);
       continue;
     }
     if (!completed) {
-      await failWith("complete_rejected");
+      // 기대 수 불일치도 여기로 온다(swap 미실행). 이전 snapshot 이 그대로 서빙 중이다.
+      await failWith("complete_rejected (staged chunk 수 불일치 또는 provenance 조건 미충족 — 기존 snapshot 유지)");
       continue;
     }
 

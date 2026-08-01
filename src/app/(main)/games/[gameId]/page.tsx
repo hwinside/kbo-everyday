@@ -49,6 +49,10 @@ import GameStatsTab from "@/components/game/GameStatsTab";
 import LiveStatsTab from "@/components/game/LiveStatsTab";
 import { useGameRelay } from "@/lib/hooks/useGameRelay";
 import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
+import { resolveLineupStarter } from "@/lib/stats/pitcher-season";
+import {
+  isLineupStarterProvenanceTrusted,
+} from "@/lib/source-snapshot";
 import PullToRefresh from "@/components/PullToRefresh";
 import PostgameInterviewSection from "@/components/game/PostgameInterviewSection";
 
@@ -187,8 +191,8 @@ export default function GameDetailPage() {
     if (tabParam) setActiveTab(tabParam);
   }, [tabParam]);
   const [isFieldCollapsed, setIsFieldCollapsed] = useState(false);
-  const { game: liveGame, refetch: refetchLive } = useLiveGame(gameId, 10000);
-  const { data: gameDetail, refetch: refetchDetail } = useGameDetail(gameId, 30000);
+  const { game: liveGame, snapshot: liveSnapshot, refetch: refetchLive } = useLiveGame(gameId, 10000);
+  const { data: gameDetail, snapshot: detailSnapshot, refetch: refetchDetail } = useGameDetail(gameId, 30000);
   // 당겨서 새로고침 시 증가 → KgwanTab 종료 요약이 GET 재조회(오류 카드 stuck 해소). 채팅 등 다른 state 무관.
   const [summaryRefreshEpoch, setSummaryRefreshEpoch] = useState(0);
   const liveIsFinal = !!liveGame && !liveGame.isLive && (liveGame.awayScore > 0 || liveGame.homeScore > 0);
@@ -402,6 +406,33 @@ export default function GameDetailPage() {
   const tabIndicatorTeam = myTeamInGame ? getTeamById(myTeamId)! : homeTeam;
 
   const d = deriveGameState(liveGame, game, gameDetail);
+  // 두 API의 요청시각은 payload revision이 아니다. live 성공 여부만 전달하고,
+  // 불일치 시 confirmed lineup 우선 정책은 resolveLineupStarter가 담당한다.
+  const liveStarterFresh = Boolean(liveSnapshot);
+  const lineupStarterTrusted = isLineupStarterProvenanceTrusted({
+    source: detailSnapshot?.lineupSource,
+    awayBatters: d.detailLineup?.away.length ?? 0,
+    homeBatters: d.detailLineup?.home.length ?? 0,
+    isAllStar: isAllStarGameId(gameId),
+  });
+  const awayLineupStarter = resolveLineupStarter({
+    liveStarterName: liveGame?.awayStarterName,
+    lineupStarterName: d.detailLineup?.awayStarter,
+    liveStarterFresh,
+    lineupStarterTrusted,
+    lineupSource: detailSnapshot?.lineupSource,
+    teamId: game.awayTeamId,
+    boxPitcher: gameDetail?.boxScore?.awayPitchers?.[0],
+  });
+  const homeLineupStarter = resolveLineupStarter({
+    liveStarterName: liveGame?.homeStarterName,
+    lineupStarterName: d.detailLineup?.homeStarter,
+    liveStarterFresh,
+    lineupStarterTrusted,
+    lineupSource: detailSnapshot?.lineupSource,
+    teamId: game.homeTeamId,
+    boxPitcher: gameDetail?.boxScore?.homePitchers?.[0],
+  });
   const hasGameProgress = Boolean(
     gameEvents.length > 0
     || gameRelay?.innings.some((inning) => inning.plays.length > 0)
@@ -413,34 +444,19 @@ export default function GameDetailPage() {
 
   const matchupTitle = `${awayTeam.shortName} vs ${homeTeam.shortName}`;
   const starterOnlyLineup: GameLineup | null = (() => {
-    const awayName =
-      liveGame?.awayStarterName?.trim()
-      || d.detailLineup?.awayStarter?.trim()
-      || "";
-    const homeName =
-      liveGame?.homeStarterName?.trim()
-      || d.detailLineup?.homeStarter?.trim()
-      || "";
+    const awayName = awayLineupStarter.name;
+    const homeName = homeLineupStarter.name;
     if (!awayName && !homeName) return null;
-    const starter = (name: string, teamId: number) => {
-      const roster = name
-        ? PLAYERS_ROSTER.find(
-            (p: { name: string; teamId: number; kboId: string }) =>
-              p.name === name && p.teamId === teamId,
-          )
-        : undefined;
-      return { name, era: "-", kboId: roster?.kboId };
-    };
     return {
       gameId,
       away: {
         teamId: game.awayTeamId,
-        startingPitcher: starter(awayName, game.awayTeamId),
+        startingPitcher: awayLineupStarter,
         batters: [],
       },
       home: {
         teamId: game.homeTeamId,
-        startingPitcher: starter(homeName, game.homeTeamId),
+        startingPitcher: homeLineupStarter,
         batters: [],
       },
     };
@@ -642,8 +658,8 @@ export default function GameDetailPage() {
                     linescore={gameDetail?.linescore ?? gameRelay?.linescore ?? null}
                     refreshEpoch={summaryRefreshEpoch}
                     starterNames={{
-                      away: liveGame?.awayStarterName || (gameDetail?.boxScore?.awayPitchers?.[0]?.name && !/^선수\(\d+\)$/.test(gameDetail.boxScore.awayPitchers[0].name) ? gameDetail.boxScore.awayPitchers[0].name : "") || d.detailLineup?.awayStarter || "",
-                      home: liveGame?.homeStarterName || (gameDetail?.boxScore?.homePitchers?.[0]?.name && !/^선수\(\d+\)$/.test(gameDetail.boxScore.homePitchers[0].name) ? gameDetail.boxScore.homePitchers[0].name : "") || d.detailLineup?.homeStarter || "",
+                      away: awayLineupStarter.name,
+                      home: homeLineupStarter.name,
                     }}
                     lineupConfirmed={!!d.detailLineup && d.detailLineup.isToday === true}
                     gameRelay={gameRelay}
@@ -668,15 +684,7 @@ export default function GameDetailPage() {
                     gameId,
                     away: {
                       teamId: game.awayTeamId,
-                      startingPitcher: (() => {
-                        const boxName = gameDetail?.boxScore?.awayPitchers?.[0]?.name;
-                        const validBoxName = boxName && !/^선수\(\d+\)$/.test(boxName) ? boxName : "";
-                        // Naver 폴백 라인업은 awayStarter 를 함께 실어온다 — KBO boxScore/경기목록
-                        // starter 가 모두 빈 장애에서도 선발 표기+AI 분석이 살아있게(삼순 PR#988 P0-1).
-                        const spName = validBoxName || liveGame?.awayStarterName || d.detailLineup.awayStarter || "";
-                        const spRoster = spName ? PLAYERS_ROSTER.find((p: { name: string; teamId: number; kboId: string }) => p.name === spName && p.teamId === game.awayTeamId) : undefined;
-                        return { name: spName, era: gameDetail?.boxScore?.awayPitchers?.[0]?.era ?? "-", kboId: spRoster?.kboId };
-                      })(),
+                      startingPitcher: awayLineupStarter,
                       batters: d.detailLineup.away.map((e: LineupEntry) => {
                         const roster = PLAYERS_ROSTER.find((p: { name: string; teamId: number; kboId: string }) => p.name === e.name && p.teamId === game.awayTeamId);
                         return { order: e.order, name: e.name, position: e.position, avg: e.avg || "", kboId: roster?.kboId, teamId: game.awayTeamId };
@@ -684,13 +692,7 @@ export default function GameDetailPage() {
                     },
                     home: {
                       teamId: game.homeTeamId,
-                      startingPitcher: (() => {
-                        const boxName = gameDetail?.boxScore?.homePitchers?.[0]?.name;
-                        const validBoxName = boxName && !/^선수\(\d+\)$/.test(boxName) ? boxName : "";
-                        const spName = validBoxName || liveGame?.homeStarterName || d.detailLineup.homeStarter || "";
-                        const spRoster = spName ? PLAYERS_ROSTER.find((p: { name: string; teamId: number; kboId: string }) => p.name === spName && p.teamId === game.homeTeamId) : undefined;
-                        return { name: spName, era: gameDetail?.boxScore?.homePitchers?.[0]?.era ?? "-", kboId: spRoster?.kboId };
-                      })(),
+                      startingPitcher: homeLineupStarter,
                       batters: d.detailLineup.home.map((e: LineupEntry) => {
                         const roster = PLAYERS_ROSTER.find((p: { name: string; teamId: number; kboId: string }) => p.name === e.name && p.teamId === game.homeTeamId);
                         return { order: e.order, name: e.name, position: e.position, avg: e.avg || "", kboId: roster?.kboId, teamId: game.homeTeamId };

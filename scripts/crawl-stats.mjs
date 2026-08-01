@@ -13,6 +13,7 @@ import { readFileSync, writeFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { computeDefenseRuns } from "./lib/defense-runs.mjs";
+import { validatePitcherSnapshot } from "./lib/stats-snapshot-guard.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = join(__dirname, "..");
@@ -449,6 +450,17 @@ async function main() {
     const metaPath = join(CONSTANTS_DIR, `stats-${SEASON}-meta.json`);
     const nowIso = new Date().toISOString();
     const meta = { battersGeneratedAt: nowIso, pitchersGeneratedAt: nowIso, defenseGeneratedAt: nowIso };
+
+    // A transient pager skip can return a syntactically valid snapshot with one
+    // complete 30-row page missing. Reject it before any stats/meta artifact is
+    // written so a fresh timestamp can never bless a partial dataset.
+    let previousPitchers = [];
+    try {
+      previousPitchers = JSON.parse(readFileSync(pitcherPath, "utf-8"));
+    } catch {
+      // First-time season generation has no baseline; non-empty is still enforced.
+    }
+    validatePitcherSnapshot(previousPitchers, pitchers);
 
     writeFileSync(batterPath, JSON.stringify(batters, null, 2));
     writeFileSync(pitcherPath, JSON.stringify(pitchers, null, 2));
