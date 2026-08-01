@@ -51,10 +51,16 @@ export const AUTO_WORKFLOWS: AutoWorkflowDef[] = [
   },
 ];
 
-/** auto PR이 이 시간을 넘도록 열려 있으면 적체로 본다(크롤~머지 정상 소요는 15분 내외). */
-export const PR_STALE_HOURS = 12;
+/**
+ * auto PR이 이 시간을 넘도록 열려 있으면 적체로 본다.
+ * 정상 크롤~머지 소요가 15분 내외라 **30분**을 임계로 둔다(삼순 합의값).
+ * check FAIL은 시간과 무관하게 즉시(다음 poll) 잡는다 — 아래 evaluateAutoWorkflow 참조.
+ */
+export const PR_STALE_HOURS = 0.5;
 
 export interface WorkflowRunInfo {
+  /** run 고유 id — event fingerprint 의 축. 없으면 createdAt 으로 대체한다. */
+  id?: number | string | null;
   /** queued | in_progress | completed ... */
   status: string | null;
   /** success | failure | cancelled | null(미완료) */
@@ -69,6 +75,8 @@ export interface OpenPrInfo {
   createdAt: string | null;
   /** 모든 체크가 성공인지. null = 판정 불가. */
   checksPassing: boolean | null;
+  /** 알림 본문에 넣을 PR 링크. */
+  htmlUrl?: string | null;
 }
 
 export type AutoPrIssueKind = "run-failed" | "pr-stale" | "never-ran";
@@ -77,6 +85,13 @@ export interface AutoPrIssue {
   key: string;
   label: string;
   kind: AutoPrIssueKind;
+  /**
+   * **동일 event 1회** dedupe 키 (삼순 R1 P0).
+   * kind 만으로 dedupe 하면 `run-failed` 가 한 번 기록된 뒤 다음 날 다른 run 이 또 실패해도
+   * 같은 레벨이라 무알림이 된다. 새 stale PR 이 추가돼도 마찬가지다.
+   * run id·PR 번호·check 상태를 지문에 넣어 **새 사건이면 다시 알린다**.
+   */
+  fingerprint: string;
   /** 사람이 읽는 사유 — 알림 본문에 그대로 쓴다. */
   reason: string;
 }
@@ -120,6 +135,7 @@ export function evaluateAutoWorkflow(
       key: def.key,
       label: def.label,
       kind: "never-ran",
+      fingerprint: "never-ran:no-runs",
       reason: `실행 기록이 없습니다 (${def.workflowFile})`,
     };
   }
@@ -134,6 +150,8 @@ export function evaluateAutoWorkflow(
       key: def.key,
       label: def.label,
       kind: "run-failed",
+      // run 고유 id 를 지문에 넣는다 — 다음 날 **다른 run** 이 또 실패하면 새 event 로 다시 알린다.
+      fingerprint: `run:${latestCompleted.id ?? latestCompleted.createdAt ?? "unknown"}:${latestCompleted.conclusion}`,
       reason:
         `마지막 실행이 ${latestCompleted.conclusion}` +
         (age !== null ? ` (${fmtAge(age)})` : "") +
@@ -149,35 +167,45 @@ export function evaluateAutoWorkflow(
       key: def.key,
       label: def.label,
       kind: "never-ran",
+      // 방치가 길어질수록 "며칠째"가 바뀐다 — 하루 단위로 새 event 로 본다(계속 조용해지지 않게).
+      fingerprint: `never-ran:${Math.floor(latestAge / 24)}d`,
       reason: `${fmtAge(latestAge)} 실행되지 않았습니다 (예정 주기 ${def.intervalHours}시간)`,
     };
   }
 
-  // ② auto PR 적체 — 열린 지 오래된 것이 있으면 머지 파이프라인이 막힌 것이다.
-  //    checks가 성공인데도 방치된 케이스(#699)가 실제로 있었으므로 checks 성공 여부와
-  //    무관하게 "열려 있는 시간"으로 판정한다.
-  const stalePrs = openPrs
+  // ② auto PR 문제 — 두 축을 본다(삼순 R1 요구).
+  //    (a) check FAIL 은 **시간과 무관하게 즉시**(다음 poll) — 고장난 PR 을 30분 기다릴 이유가 없다.
+  //    (b) 열린 지 임계(30분)를 넘김 — checks 가 성공인데도 방치된 케이스(#699)가 실제로 있었다.
+  const mine = openPrs
     .filter((pr) => pr.headRefName.startsWith(def.branchPrefix))
-    .map((pr) => ({ pr, age: ageHours(pr.createdAt, nowMs) }))
-    .filter((x) => x.age !== null && x.age > PR_STALE_HOURS)
-    .sort((a, b) => (b.age as number) - (a.age as number));
+    .map((pr) => ({ pr, age: ageHours(pr.createdAt, nowMs) }));
 
-  if (stalePrs.length > 0) {
-    const detail = stalePrs
+  const problemPrs = mine
+    .filter(({ pr, age }) => pr.checksPassing === false || (age !== null && age > PR_STALE_HOURS))
+    .sort((a, b) => (b.age ?? 0) - (a.age ?? 0));
+
+  if (problemPrs.length > 0) {
+    const detail = problemPrs
       .map(({ pr, age }) => {
         const checks = pr.checksPassing === null
           ? "체크 미상"
           : pr.checksPassing
             ? "체크 통과(머지만 안 됨)"
             : "체크 실패";
-        return `#${pr.number} ${fmtAge(age as number)} · ${checks}`;
+        const url = pr.htmlUrl ? ` ${pr.htmlUrl}` : "";
+        return `#${pr.number} ${age === null ? "" : fmtAge(age) + " · "}${checks}${url}`;
       })
       .join("\n");
     return {
       key: def.key,
       label: def.label,
       kind: "pr-stale",
-      reason: `미머지 자동 PR ${stalePrs.length}건\n${detail}`,
+      // PR 번호 + check 상태를 지문에 넣는다 — 새 PR 이 추가되거나 check 상태가 바뀌면 다시 알린다.
+      fingerprint: `pr:${problemPrs
+        .map(({ pr }) => `${pr.number}/${pr.checksPassing === null ? "?" : pr.checksPassing ? "ok" : "fail"}`)
+        .sort()
+        .join(",")}`,
+      reason: `자동 PR 문제 ${problemPrs.length}건\n${detail}`,
     };
   }
 

@@ -13,6 +13,12 @@
  *   ⑤ 다른 워크플로의 PR을 자기 것으로 오인하지 않는다(브랜치 접두사 격리).
  *   ⑥ 최신 run 기준으로 판정한다(과거 실패가 복구 후에도 계속 울리지 않는다).
  */
+// route 모듈은 supabase/admin 싱글톤을 트랜지티브로 로드하고, 그 싱글톤이 모듈 로드
+// 시점에 env 를 요구한다. DI 로 실제 DB 를 쓰지 않으므로 더미 값을 선주입한다.
+process.env.NEXT_PUBLIC_SUPABASE_URL ??= "http://localhost:54321";
+process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??= "test-anon-key";
+process.env.SUPABASE_SERVICE_ROLE_KEY ??= "test-service-role-key";
+
 import assert from "node:assert/strict";
 
 import {
@@ -150,7 +156,8 @@ check("② 임계 이내 PR은 정상으로 본다(방금 만든 PR에 알림 �
     [{
       number: 1050,
       headRefName: "auto/update-roster-stats-20260801",
-      createdAt: hoursAgo(PR_STALE_HOURS - 1),
+      // 임계(30분) 이내 + 체크 미상 = 아직 정상. 음수 나이(미래)로 도망가지 않게 절반값을 쓴다.
+      createdAt: hoursAgo(PR_STALE_HOURS / 2),
       checksPassing: null,
     }],
     NOW,
@@ -252,7 +259,197 @@ check("사고 재현: 7/26 run 실패 + #893/#699 적체 상황을 잡는다", (
   assert.equal(issue.kind, "run-failed");
 });
 
-console.log(
-  `\n${failures.length === 0 ? "PASS" : "FAIL"} — auto PR health (${pass} pass, ${failures.length} fail)`,
-);
-process.exit(failures.length === 0 ? 0 : 1);
+
+// ── route-level 결속 (삼순 R1 P1) ─────────────────────────────────────────
+// 순수 evaluator 만 호출하면 route 의 상태·발송 코드를 통째로 지워도 PASS 한다(false-green).
+// 실제 runAutoPrWatch 를 DI 로 태워 claim/발송/revert/재알림을 검증한다.
+async function runRouteLevelChecks() {
+
+  const { runAutoPrWatch } = await import("../../src/app/api/cron/admin-alerts/route");
+
+  const NOW_ISO = new Date(NOW).toISOString();
+  const failedRun = (id: number) => ({
+    id, status: "completed", conclusion: "failure",
+    created_at: new Date(NOW - 3600_000).toISOString(),
+    html_url: `https://github.com/x/y/actions/runs/${id}`,
+  });
+
+  /**
+   * admin_alert_state 를 흉내내는 최소 인메모리 DB (CAS 의미 포함).
+   *
+   * ⚠️ 반드시 **thenable** 이어야 한다. route 는 revert 경로에서 `.select()` 없이
+   * `await db.from().delete().eq().eq()` 로 바로 await 한다. select 안에서만 변경을
+   * 적용하면 revert 가 아무 일도 안 하고, 구현이 멀쩡한데 "상태가 남아 있다"로 보인다
+   * (내 첫 mock 이 실제로 그랬다).
+   */
+  function makeDb(initial: Record<string, string> = {}) {
+    const rows = new Map<string, { job_name: string; level: string }>();
+    for (const [k, v] of Object.entries(initial)) rows.set(k, { job_name: k, level: v });
+
+    const api = {
+      rows,
+      from() {
+        let job: string | null = null;
+        let lvl: string | null = null;
+        let op: "update" | "delete" | null = null;
+        let pending: { level: string } | null = null;
+
+        // CAS 적용: 대상 행의 level 이 기대값과 같을 때만 변경한다.
+        const apply = (): { data: { job_name: string }[]; error: null } => {
+          if (op === null || job === null) return { data: [], error: null };
+          const hit = rows.get(job)?.level === lvl;
+          if (hit && op === "update" && pending) rows.set(job, { job_name: job, level: pending.level });
+          if (hit && op === "delete") rows.delete(job);
+          op = null;
+          return { data: hit ? [{ job_name: job }] : [], error: null };
+        };
+
+        const self: Record<string, unknown> = {
+          select: () => {
+            if (op === null) return { in: async () => ({ data: [...rows.values()], error: null }) };
+            return Promise.resolve(apply());
+          },
+          in: async () => ({ data: [...rows.values()], error: null }),
+          upsert: (row: { job_name: string; level: string }) => {
+            const exists = rows.has(row.job_name);
+            if (!exists) rows.set(row.job_name, { job_name: row.job_name, level: row.level });
+            return { select: async () => ({ data: exists ? [] : [{ job_name: row.job_name }], error: null }) };
+          },
+          update: (row: { level?: string }) => { op = "update"; pending = { level: row.level as string }; return self; },
+          delete: () => { op = "delete"; return self; },
+          eq: (col: string, val: string) => {
+            if (col === "job_name") job = val;
+            if (col === "level") lvl = val;
+            return self;
+          },
+          // select 없이 await 하는 경로(revert)를 위한 thenable
+          then: (resolve: (v: unknown) => unknown) => resolve(apply()),
+        };
+        return self;
+      },
+    };
+    return api;
+  }
+
+  // 감시 대상이 2개(로스터·히어로샷)라 모든 워크플로에 같은 실패 run 을 주면
+  // claimed 가 2 로 나와 기대값 1 과 어긋난다. 로스터만 시나리오 run 을 쓴다.
+  const okRunPayload = {
+    id: 9, status: "completed", conclusion: "success",
+    created_at: new Date(NOW - 3600_000).toISOString(), html_url: null,
+  };
+  const ghWith = (runs: unknown[], prs: unknown[] = []) => async (path: string) => {
+    // 대상 워크플로(로스터)만 주어진 runs 를 쓰고, 나머지는 정상 run 으로 고정한다.
+    if (path.includes("/actions/workflows/update-roster-stats.yml/")) return { workflow_runs: runs };
+    if (path.includes("/actions/workflows/")) return { workflow_runs: [okRunPayload] };
+    if (path.startsWith("/pulls")) return prs;
+    if (path.includes("/check-runs")) return { check_runs: [] };
+    return {};
+  };
+
+  // ① 전달 전패면 상태를 되돌려 다음 tick 에 재시도한다 (영구 누락 금지)
+  {
+    const db = makeDb();
+    const res = await runAutoPrWatch(NOW_ISO, {
+      token: "t",
+      db: db as never,
+      fetchGitHub: ghWith([failedRun(1)]),
+      push: async () => ({ sent: 0, failed: 1 }),
+      telegram: async () => ({ sent: 0, failed: 1 }),
+    });
+    check("route: 전달 전패면 claim 을 revert 한다", () => {
+      assert.equal(res.sent, 0);
+      assert.equal(res.reverted, 1, "revert 되지 않으면 다음 tick 이 skip 해 영구 누락된다");
+      assert.equal(db.rows.has("roster-stats-auto-pr"), false, "revert 후에도 상태가 남아 있다");
+    });
+  }
+
+  // ② 동시 2실행 — CAS 승자만 발송
+  {
+    const db = makeDb();
+    // ⚠️ claimed 로 세면 안 된다 — "최초 healthy 상태 기록"도 claim 을 잡고 발송 전에 continue 한다
+    //    (히어로샷이 healthy 로 초기화되며 +1). 계약은 **실제 발송 횟수**다.
+    let pushCalls = 0;
+    const opts = {
+      token: "t",
+      db: db as never,
+      fetchGitHub: ghWith([failedRun(1)]),
+      push: async () => { pushCalls++; return { sent: 1, failed: 0 }; },
+      telegram: async () => ({ sent: 1, failed: 0 }),
+    };
+    await Promise.all([
+      runAutoPrWatch(NOW_ISO, opts as never),
+      runAutoPrWatch(NOW_ISO, opts as never),
+    ]);
+    check("route: 동시 2실행이어도 발송은 1회", () => {
+      assert.equal(pushCalls, 1, `실제 발송 ${pushCalls}회 (기대 1) — CAS 가 중복 알림을 못 막았다`);
+    });
+  }
+
+  // ③ 새 run 실패는 다시 알린다 (kind dedupe 였으면 무알림)
+  {
+    const db = makeDb();
+    const titles: string[] = [];
+    const base = {
+      token: "t",
+      db: db as never,
+      push: async (p: { body?: string }) => { titles.push(p.body ?? ""); return { sent: 1, failed: 0 }; },
+      telegram: async () => ({ sent: 1, failed: 0 }),
+    };
+    await runAutoPrWatch(NOW_ISO, { ...base, fetchGitHub: ghWith([failedRun(111)]) } as never);
+    const afterFirst = titles.length;
+    await runAutoPrWatch(NOW_ISO, { ...base, fetchGitHub: ghWith([failedRun(111)]) } as never);
+    const afterSame = titles.length;
+    await runAutoPrWatch(NOW_ISO, { ...base, fetchGitHub: ghWith([failedRun(222)]) } as never);
+    const afterNext = titles.length;
+    check("route: 같은 run 은 1회, 새 run 실패는 다시 알린다", () => {
+      assert.equal(afterFirst, 1, `첫 실패를 알리지 않았다 (발송 ${afterFirst}회)`);
+      assert.equal(afterSame, 1, `같은 run 을 중복 알림했다 (발송 ${afterSame}회)`);
+      assert.equal(afterNext, 2, `다음 실패 run 을 놓쳤다 — kind dedupe 회귀 (발송 ${afterNext}회)`);
+    });
+  }
+
+  // ④ 최초 healthy 는 상태만 기록하고 가짜 복구 알림을 보내지 않는다
+  {
+    const db = makeDb();
+    let pushed = 0;
+    const res = await runAutoPrWatch(NOW_ISO, {
+      token: "t",
+      db: db as never,
+      fetchGitHub: ghWith([okRunPayload]),
+      push: async () => { pushed++; return { sent: 1, failed: 0 }; },
+      telegram: async () => ({ sent: 1, failed: 0 }),
+    } as never);
+    check("route: 최초 healthy 는 복구 알림을 보내지 않는다", () => {
+      assert.equal(pushed, 0, `신규 key healthy 에 가짜 복구 알림이 나갔다(${res.sent}건)`);
+      assert.equal(db.rows.get("roster-stats-auto-pr")?.level, "healthy", "상태는 기록돼야 한다");
+    });
+  }
+
+  // ⑤ GitHub 조회 실패는 조용히 200 이 되면 안 된다
+  {
+    const db = makeDb();
+    let threw = false;
+    try {
+      await runAutoPrWatch(NOW_ISO, {
+        token: "t",
+        db: db as never,
+        fetchGitHub: async () => { throw new Error("GitHub /pulls HTTP 500"); },
+        push: async () => ({ sent: 1, failed: 0 }),
+        telegram: async () => ({ sent: 1, failed: 0 }),
+      } as never);
+    } catch { threw = true; }
+    check("route: GitHub 조회 실패는 감춰지지 않는다(상위에서 5xx 로 노출)", () => {
+      assert.equal(threw, true, "감시기 실패가 조용히 성공으로 끝났다");
+    });
+  }
+}
+
+runRouteLevelChecks().then(() => {
+  console.log(
+    `\n${failures.length === 0 ? "PASS" : "FAIL"} — auto PR health (${pass} pass, ${failures.length} fail)`,
+  );
+  process.exit(failures.length === 0 ? 0 : 1);
+}).catch((e) => {
+  console.error("SMOKE ERROR:", (e as Error).message);
+  process.exit(1);
+});
