@@ -61,6 +61,7 @@ import {
   formatSigned,
   METRIC_STATE_LABELS,
   awayFanTag,
+  scoreBadgeLabel,
   SCORE_CONFIDENCE_LABELS,
   scoreConfidenceLevel,
   splitCells,
@@ -660,15 +661,7 @@ export default function VenueStatsDashboard() {
                   ? METRIC_STATE_LABELS.sample_limited
                   : hero.score == null
                     ? "지수 준비 중"
-                    : hero.score >= 70
-                      ? "진짜 요정"
-                      : hero.score >= 56
-                        ? "약간 요정"
-                        : hero.score >= 45
-                          ? "평소와 비슷"
-                          : hero.score >= 30
-                            ? "살짝 흑염룡"
-                            : "흑염룡"}
+                    : scoreBadgeLabel(hero.score)}
               </span>
             </div>
             {/* 지수는 승률이 아니라 합성값이라 기준점 50을 명시해야 읽힌다. */}
@@ -719,20 +712,29 @@ export default function VenueStatsDashboard() {
                   const byImpact = [...hero.scoreAxes].sort(
                     (a, b) => Math.abs(b.normalized * b.weight) - Math.abs(a.normalized * a.weight),
                   );
-                  const positiveScore = hero.score >= 50;
+                  const confidence =
+                    `${SCORE_CONFIDENCE_LABELS[scoreConfidenceLevel(a1.n)]}(${a1.n}경기)`;
+                  // 삼순 P1 (2026-08-02) — 50점은 화면 계약상 `50 = 평소`(중립)다.
+                  // 예전에는 `score >= 50` 을 positive 로 보고 normalized 0 인 축까지
+                  // `우세` 라고 적어, 모든 축이 0인 화면에서
+                  // `50점 / 기대 대비 승리 우세가 높은 이유예요` 라는 모순이 나왔다.
+                  // 중립은 중립이라고 말한다.
+                  if (hero.score === 50 || byImpact.every((axis) => axis.normalized === 0)) {
+                    return `기대와 비슷했어요 · ${confidence}`;
+                  }
+                  const positiveScore = hero.score > 50;
                   const aligned = byImpact.filter((axis) =>
                     positiveScore ? axis.normalized > 0 : axis.normalized < 0);
                   const opposing = byImpact.filter((axis) =>
                     positiveScore ? axis.normalized < 0 : axis.normalized > 0);
-                  const lead = aligned[0] ?? byImpact[0] ?? null;
-                  const confidence =
-                    `${SCORE_CONFIDENCE_LABELS[scoreConfidenceLevel(a1.n)]}(${a1.n}경기)`;
+                  // 총점과 같은 방향 축이 없으면 방향을 단정하지 않는다(0 축을 우세로 읽지 않음).
+                  const lead = aligned[0] ?? null;
                   if (lead == null) return `기대 대비 성과 기준이에요 · ${confidence}`;
                   const leadText =
-                    `${lead.label} ${lead.normalized >= 0 ? "우세" : "열세"}`;
+                    `${lead.label} ${lead.normalized > 0 ? "우세" : "열세"}`;
                   const counter = opposing[0];
                   const counterText = counter
-                    ? `, ${counter.label} ${counter.normalized >= 0 ? "우세" : "열세"}는 반대`
+                    ? `, ${counter.label} ${counter.normalized > 0 ? "우세" : "열세"}는 반대`
                     : "";
                   return `${leadText}가 ${positiveScore ? "높은" : "낮은"} 이유예요${counterText} · ${confidence}`;
                 })()}

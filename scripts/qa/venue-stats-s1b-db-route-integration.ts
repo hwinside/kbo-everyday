@@ -339,6 +339,80 @@ async function seasonUniverseFailClosedRegression() {
   await seriesAwareVerifiedEmptyRegression();
   // ─ P0-3 complete-only 캐시 + single-flight (fetch 카운트 계측) ─
   await cacheAndSingleFlightRegression(routeMod, universeGames);
+  // ─ 삼순 P1 (2026-08-02): time 결손 → isDayGame 미존재 (route actual) ─
+  await dayGameParseRegression(routeMod, faithfulRpc, GAME_A, GAME_B, DATE_A, DATE_B);
+}
+
+/**
+ * 삼순 P1 (2026-08-02) — `time` 결손을 낮경기로 오분류하지 않는지 **route actual** 로 고정.
+ *
+ * 이전 라운드에서 `parseDayGame()` 만 고치고 회귀에 결속하지 않아, 예전 결함
+ * (`if (time === "") return true`)을 재주입해도 전 게이트가 PASS 했다(삼순 mutation 실증).
+ * 여기서는 파서를 직접 부르지 않고 **fetchSeasonAggregates 결과의 seasonGames** 를 본다.
+ */
+async function dayGameParseRegression(
+  routeMod: typeof import("../../src/app/api/me/venue-stats/route"),
+  faithfulRpc: (args: { p_games: Array<{ gameId: string; gameDate: string }> }) => Promise<unknown>,
+  gameA: string,
+  gameB: string,
+  dateA: string,
+  dateB: string,
+) {
+  const { fetchSeasonAggregates, __resetSeasonAggregatesCaches } = routeMod;
+
+  const withTime = (gameId: string, time: unknown): KboGame => ({
+    ...makeFinalGame(gameId),
+    time,
+  } as unknown as KboGame);
+
+  const fetcherOf = (aTime: unknown, bTime: unknown): SeasonGameFetcher =>
+    async (date) => {
+      if (date === dateA) return gamesResult([withTime(gameA, aTime)]);
+      if (date === dateB) return gamesResult([withTime(gameB, bTime)]);
+      return VERIFIED_EMPTY;
+    };
+
+  const runWith = async (aTime: unknown, bTime: unknown) => {
+    __resetSeasonAggregatesCaches();
+    const res = await fetchSeasonAggregates(2026, {
+      fetcher: fetcherOf(aTime, bTime),
+      rpc: faithfulRpc as never,
+    });
+    assert.notEqual(res.seasonGames, null, "우주 자체는 살아 있어야 함(시간만 결손)");
+    const byId = new Map(res.seasonGames!.map((g) => [g.gameId, g]));
+    return byId;
+  };
+
+  // ① 정상 시간 — 낮/야간이 실제로 분류된다(과잉 차단이 아님을 함께 증명).
+  {
+    const byId = await runWith("14:00", "18:30");
+    assert.equal(byId.get(gameA)!.isDayGame, true, "14:00 은 낮경기");
+    assert.equal(byId.get(gameB)!.isDayGame, false, "18:30 은 야간경기");
+  }
+
+  // ② 핵심 RED — 시간 결손/형식 이탈은 `isDayGame` 키 자체가 없어야 한다.
+  //    구 결함(`Number("")===0` → 00시=낮)으로 되돌리면 여기서 FAIL 한다.
+  for (const bad of ["", null, undefined, "  ", "24:00", "09:60", "abc", "1830", 0]) {
+    const byId = await runWith(bad, "18:30");
+    const game = byId.get(gameA)!;
+    assert.ok(
+      !("isDayGame" in game),
+      `time=${JSON.stringify(bad)} 는 낮경기 판정 불가여야 함(actual: ${JSON.stringify(game.isDayGame)})`,
+    );
+    // 같은 응답의 정상 경기는 영향을 받지 않는다(결손 1건이 우주를 오염시키지 않음).
+    assert.equal(byId.get(gameB)!.isDayGame, false);
+  }
+
+  // ③ 낮경기 "기회" 분모 — 시간 결손 경기는 seasonDayGames/seasonTotal 어느 쪽에도
+  //    들어가지 않아야 한다. `isDayGame` 키 부재가 곧 분모 제외 계약이다.
+  {
+    const byId = await runWith("", "13:00");
+    const known = [...byId.values()].filter((g) => "isDayGame" in g);
+    assert.equal(known.length, 1, "시간 아는 경기만 기회 분모에 들어간다");
+    assert.equal(known[0]!.isDayGame, true);
+  }
+
+  console.log("  ✓ route actual: time 결손/형식 이탈 → isDayGame 미존재(낮경기 기회 분모 제외), 정상 시간은 분류됨");
 }
 
 /**

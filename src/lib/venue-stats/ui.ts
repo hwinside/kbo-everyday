@@ -321,13 +321,30 @@ export const MEASURED_ATTENDANCE_DISTRIBUTION = {
   max: 4,
 } as const;
 
+/**
+ * 지수 배지 — 화면에 뜨는 등급 문구. 정규화 스케일 민감도 회귀가 이 함수로
+ * "스케일을 바꿔도 배지 구간이 흔들리지 않는가"를 검증한다(삼순 P0 2026-08-02).
+ */
+export function scoreBadgeLabel(score: number): string {
+  if (score >= 70) return "진짜 요정";
+  if (score >= 56) return "약간 요정";
+  if (score >= 45) return "평소와 비슷";
+  if (score >= 30) return "살짝 흑염룡";
+  return "흑염룡";
+}
+
 export type ScoreConfidenceLevel = "measuring" | "low" | "medium" | "high";
 
 /**
- * 신뢰도 라벨 — 점수 반응성(r)과 별도로 노출하는 제품 정책.
+ * **기록 충분도** 라벨 — 삼순 P1(2026-08-02) 반영으로 `신뢰도`에서 의미를 바꿨다.
  *
- * 실측 최대가 4경기이므로 이전 기준(5 보통 / 8 높음)은 **아무도 도달 못 하는 라벨**이었다.
- * 관측된 분포 안에서만 등급을 나눈다: 3 낮음 · 4 보통 · 5+ 높음.
+ * 이전에는 `신뢰도 높음` 이라고 썼는데, 근거는 이용 빈도 백분위였다.
+ * 주석에서 스스로 "백분위는 통계적 신뢰도 근거가 아니다" 라고 해놓고 라벨은
+ * 신뢰도라고 부른 것 자체가 모순이다. holdout 기반 불확실성 추정이 없는 이상
+ * **통계적 신뢰도를 주장할 수 없으므로, 주장하지 않는 이름으로 바꾼다.**
+ *
+ * `기록 충분도` 는 "이 사람의 직관 기록이 지수를 만들기에 얼마나 쌓였나" 라는
+ * 순수 표본량 서술이다. 실측 최대 4경기 분포 안에서 3 적음 · 4 보통 · 5+ 충분.
  * (3경기 미만은 지수를 아예 안 보여주므로 `측정 중`.)
  */
 export function scoreConfidenceLevel(finalGames: number): ScoreConfidenceLevel {
@@ -339,9 +356,9 @@ export function scoreConfidenceLevel(finalGames: number): ScoreConfidenceLevel {
 
 export const SCORE_CONFIDENCE_LABELS: Record<ScoreConfidenceLevel, string> = {
   measuring: "측정 중",
-  low: "신뢰도 낮음",
-  medium: "신뢰도 보통",
-  high: "신뢰도 높음",
+  low: "기록 적음",
+  medium: "기록 보통",
+  high: "기록 충분",
 };
 
 /**
@@ -361,6 +378,32 @@ export const SCORE_CONFIDENCE_LABELS: Record<ScoreConfidenceLevel, string> = {
  *
  * pregame 기대치가 없으면 축 재정규화가 아니라 **지수 전체 fail-close**(삼순 P0).
  */
+/**
+ * 축 정규화 스케일 — **제품 정책 상수**(삼순 P0 2026-08-02).
+ *
+ * ⚠️ 이전에는 주석만 "실전 평균 ±0.35" 라고 써 두고 근거도 회귀도 없었다.
+ * 삼순 지적: `.35/3` 을 `.25/2` 로 바꾸면 같은 경기가 71점 → 80점이 되어
+ * `약간 요정 ↔ 진짜 요정` 배지가 뒤집히는데, 어떤 게이트도 그걸 막지 못했다.
+ *
+ * **holdout 보정이 아니라 정책 경로를 택한다.** 이유:
+ *  - 초과성과의 "얼마면 극단인가"는 통계량이 아니라 **점수 체감**의 문제다.
+ *    (같은 데이터에서도 100점 만점을 어디에 걸지는 제품 결정)
+ *  - 현재 표본(직관 최대 4경기)으로는 분위수 추정 자체가 불안정하다.
+ *
+ * 대신 **정책 상수로 명시 선언**하고, 아래 두 가지를 회귀로 잠근다:
+ *  ① 값 자체 고정 — 바꾸면 FAIL(무단 재튜닝 차단)
+ *  ② raw-game 민감도 행렬 — 스케일이 바뀌어도 **순서·부호·배지 구간**이
+ *     흔들리지 않는지. 즉 상수 하나로 사용자 체감이 뒤집히지 않음을 증명한다.
+ *
+ * 재튜닝하려면 회귀를 함께 고쳐야 하므로, 근거 없이 조용히 바뀔 수 없다.
+ */
+export const SCORE_SCALE = {
+  /** 승점 초과 ±0.35 를 축 끝(±1)으로. 기대보다 35%p 더/덜 이긴 상태. */
+  winExcess: 0.35,
+  /** 마진 초과 ±3점을 축 끝으로. 기대보다 평균 3점 더/덜 = 압도적. */
+  marginExcess: 3,
+} as const;
+
 function buildScoreAxes(scope: VenueStatsScopePayload): VenueStatsScoreAxis[] {
   const axes: VenueStatsScoreAxis[] = [];
   const push = (
@@ -378,10 +421,8 @@ function buildScoreAxes(scope: VenueStatsScopePayload): VenueStatsScoreAxis[] {
   // 기대치 없음 → 빈 축 배열 → 호출측이 score=null 로 닫는다. 승률로 대체하지 않는다.
   if (excess == null) return [];
 
-  // 승점 초과는 이론상 ±1이지만 실전 평균 ±0.35면 이미 극단이라 그걸 축 끝으로 둔다.
-  push("winLift", "기대 대비 승리", excess.winExcess / 0.35, 0.55);
-  // 마진 초과 ±3점을 축 끝으로(기대보다 평균 3점 더/덜 = 압도적).
-  push("quality", "기대 대비 득실", excess.marginExcess / 3, 0.3);
+  push("winLift", "기대 대비 승리", excess.winExcess / SCORE_SCALE.winExcess, 0.55);
+  push("quality", "기대 대비 득실", excess.marginExcess / SCORE_SCALE.marginExcess, 0.3);
 
   const avgDelta = weightedDelta<B1Value>(scope.metrics.B1, (v) => v.delta);
   const runsDelta = weightedDelta<B3Value>(scope.metrics.B3, (v) => v.delta);

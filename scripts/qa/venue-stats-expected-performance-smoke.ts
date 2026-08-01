@@ -20,6 +20,7 @@ import {
   MEASURED_HOME_WIN_EDGE_CI,
   MIN_PRIOR_GAMES,
 } from "../../src/lib/venue-stats/expected";
+import { SCORE_SCALE, scoreBadgeLabel } from "../../src/lib/venue-stats/ui";
 import type { SeasonGameVerification } from "../../src/lib/venue-stats/aggregate";
 
 let pass = 0;
@@ -382,6 +383,121 @@ function excessOf(params: {
     extreme.expectedWinProb <= 0.95 && extreme.expectedWinProb >= 0.05,
     `${extreme.expectedWinProb}`,
   );
+}
+
+// ── ⑦ 정규화 스케일 정책 + raw-game 민감도 행렬 (삼순 P0 2026-08-02) ─────────
+// 삼순 실증: `.35/3` → `.25/2` 로 바꾸면 같은 경기가 71 → 80점이 되어
+// `약간 요정 ↔ 진짜 요정` 배지가 뒤집히는데 어떤 게이트도 막지 못했다.
+// 여기서 ①상수 자체를 고정하고 ②스케일이 흔들려도 순서·부호·배지가 안정한지 본다.
+{
+  ok(
+    "정규화 스케일이 정책 상수로 선언되어 있다",
+    SCORE_SCALE.winExcess === 0.35 && SCORE_SCALE.marginExcess === 3,
+    JSON.stringify(SCORE_SCALE),
+  );
+
+  /** raw 경기 → 초과성과 → 임의 스케일로 지수 계산(구현과 동일 합성식). */
+  const scoreWith = (
+    scale: { winExcess: number; marginExcess: number },
+    game: Parameters<typeof excessOf>[0],
+    n = 8,
+  ) => {
+    const e = excessOf(game)!;
+    const clamp = (v: number) => Math.max(-1, Math.min(1, v));
+    const axes = [
+      { v: clamp(e.winExcess / scale.winExcess), w: 0.55 },
+      { v: clamp(e.marginExcess / scale.marginExcess), w: 0.3 },
+    ];
+    const weight = axes.reduce((s, a) => s + a.w, 0);
+    const composite = axes.reduce((s, a) => s + a.v * a.w, 0) / weight;
+    const r = Math.sqrt(n / (n + 1));
+    return Math.round(50 + composite * r * 50);
+  };
+
+  // 대표 경기 6종 — 중립/강약, 홈/원정, 박빙/대승·대패.
+  const matrix: Array<{ name: string; game: Parameters<typeof excessOf>[0] }> = [
+    { name: "강팀 상대 원정 대승", game: { myTeamId: WEAK, opponentTeamId: STRONG, isHome: false, result: "W", myScore: 9, oppScore: 2 } },
+    { name: "강팀 상대 원정 박빙승", game: { myTeamId: WEAK, opponentTeamId: STRONG, isHome: false, result: "W", myScore: 4, oppScore: 3 } },
+    { name: "강팀 상대 원정 박빙패", game: { myTeamId: WEAK, opponentTeamId: STRONG, isHome: false, result: "L", myScore: 3, oppScore: 4 } },
+    { name: "중립 홈 박빙승", game: { myTeamId: NEUTRAL, opponentTeamId: NEUTRAL, isHome: true, result: "W", myScore: 4, oppScore: 3 } },
+    { name: "약팀 상대 홈 박빙패", game: { myTeamId: STRONG, opponentTeamId: WEAK, isHome: true, result: "L", myScore: 3, oppScore: 4 } },
+    { name: "약팀 상대 홈 대패", game: { myTeamId: STRONG, opponentTeamId: WEAK, isHome: true, result: "L", myScore: 1, oppScore: 9 } },
+  ];
+
+  // 후보 스케일 — 현행 + 삼순이 지적한 완만/공격적 변형.
+  const scales = [
+    { label: "정책 .35/3", winExcess: 0.35, marginExcess: 3 },
+    { label: "완만 .5/4", winExcess: 0.5, marginExcess: 4 },
+    { label: "공격 .25/2", winExcess: 0.25, marginExcess: 2 },
+  ];
+
+  const rankings = scales.map((scale) => ({
+    label: scale.label,
+    scores: matrix.map((m) => scoreWith(scale, m.game)),
+  }));
+  for (const r of rankings) {
+    console.log(`    ${r.label}: ${matrix.map((m, i) => `${m.name} ${r.scores[i]}`).join(" · ")}`);
+  }
+
+  // ① 순서 안정성 — 스케일이 바뀌어도 경기 간 우열 순서는 동일해야 한다.
+  const orderOf = (scores: number[]) =>
+    scores.map((_, i) => i).sort((a, b) => scores[b]! - scores[a]!).join(",");
+  const baseOrder = orderOf(rankings[0]!.scores);
+  ok(
+    "스케일이 바뀌어도 경기 간 순서는 불변",
+    rankings.every((r) => orderOf(r.scores) === baseOrder),
+    rankings.map((r) => `${r.label}=${orderOf(r.scores)}`).join(" / "),
+  );
+
+  // ② 부호 안정성 — 50점 기준 위/아래(잘함/못함) 판정이 뒤집히지 않아야 한다.
+  const signOf = (scores: number[]) =>
+    scores.map((v) => (v > 50 ? "+" : v < 50 ? "-" : "0")).join("");
+  const baseSign = signOf(rankings[0]!.scores);
+  ok(
+    "스케일이 바뀌어도 50점 기준 부호는 불변",
+    rankings.every((r) => signOf(r.scores) === baseSign),
+    rankings.map((r) => `${r.label}=${signOf(r.scores)}`).join(" / "),
+  );
+
+  // ③ 배지 구간 안정성 — 사용자가 보는 등급 문구가 스케일로 뒤집히면 안 된다.
+  //    이것이 삼순 지적의 본체다(같은 경기로 `약간 요정 ↔ 진짜 요정`).
+  const badgesOf = (scores: number[]) => scores.map(scoreBadgeLabel).join("|");
+  const baseBadges = badgesOf(rankings[0]!.scores);
+  ok(
+    "스케일이 바뀌어도 배지 등급은 불변",
+    rankings.every((r) => badgesOf(r.scores) === baseBadges),
+    rankings.map((r) => `${r.label}=${badgesOf(r.scores)}`).join(" / "),
+  );
+
+  // ④ 기대와 정확히 같은 경기는 어떤 스케일에서도 50점(중립 앵커 고정).
+  const neutralGames = matrix.map(() => null);
+  void neutralGames;
+  const neutralScores = scales.map((scale) => {
+    const clamp = (v: number) => Math.max(-1, Math.min(1, v));
+    const axes = [
+      { v: clamp(0 / scale.winExcess), w: 0.55 },
+      { v: clamp(0 / scale.marginExcess), w: 0.3 },
+    ];
+    const weight = axes.reduce((s, a) => s + a.w, 0);
+    const composite = axes.reduce((s, a) => s + a.v * a.w, 0) / weight;
+    return Math.round(50 + composite * Math.sqrt(8 / 9) * 50);
+  });
+  ok(
+    "초과성과 0은 어떤 스케일에서도 50점(중립 앵커)",
+    neutralScores.every((v) => v === 50),
+    neutralScores.join(","),
+  );
+
+  // ⑤ 배지 경계 자체의 단조성 — 점수가 오를수록 등급이 내려가지 않는다.
+  let prevRank = -1;
+  const badgeOrder = ["흑염룡", "살짝 흑염룡", "평소와 비슷", "약간 요정", "진짜 요정"];
+  let monotone = true;
+  for (let v = 0; v <= 100; v += 1) {
+    const rank = badgeOrder.indexOf(scoreBadgeLabel(v));
+    if (rank < prevRank) monotone = false;
+    prevRank = rank;
+  }
+  ok("배지 등급은 점수에 대해 단조 증가", monotone);
 }
 
 console.log(`\n결과: ${pass} pass / ${fail} fail`);

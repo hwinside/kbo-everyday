@@ -425,6 +425,27 @@ const partialBaselineScope = (name) => {
   base.metrics.C5 = envelope("C5", [{playerId:"53123",batterTop:{gameId:"g",date:"2026-07-12",ab:4,h:3,hr:1,rbi:3,bb:1}}]);
   return base;
 };
+// 삼순 P1 (2026-08-02) — 초과성과·팀 delta 가 전부 0인 중립 화면.
+// 예전 구현은 `score >= 50` 을 positive 로 보고 normalized 0 축까지 `우세` 라고 적어
+// `50점 / 기대 대비 승리 우세가 높은 이유예요` 라는 모순 문장을 렌더했다.
+const neutralScoreScope = (name) => {
+  const base = scope(name, 4, .5, 0, 0);
+  base.metrics.B1 = envelope("B1", { attendanceAvg:.263, seasonAvg:.263, delta:0 });
+  base.metrics.B2 = envelope("B2", { attendanceEra:3.88, seasonEra:3.88, delta:0 });
+  base.metrics.B3 = envelope("B3", { runsPerGame:4.6, seasonRunsPerGame:4.6, delta:0, totalRuns:37 });
+  base.metrics.B4 = envelope("B4", {
+    hr:{attendancePerGame:.9,seasonPerGame:.9,delta:0},
+    hitsAllowed:{attendancePerGame:8.1,seasonPerGame:8.1,delta:0},
+  });
+  return base;
+};
+const neutralScorePayload = {
+  season:2026,
+  seasonSupport:{status:"supported",supportedSeason:2026},
+  overall:neutralScoreScope("overall"),
+  gps:neutralScoreScope("gps"),
+};
+
 const partialBaselinePayload = {
   season:2026,
   seasonSupport:{status:"supported",supportedSeason:2026},
@@ -470,11 +491,13 @@ let serveAttendanceOnly = false;
 let servePartialBaseline = false;
 let serveLosingSplits = false;
 let breakFavoritePhoto = false;
+let serveNeutralScore = false;
 const server = createServer((req, res) => {
   if (req.url?.startsWith("/api/me/venue-stats")) {
     const requestedSeason = new URL(req.url, "http://127.0.0.1").searchParams.get("season");
     const body = requestedSeason === "2025"
       ? stalePayload
+      : serveNeutralScore ? neutralScorePayload
       : serveLosingSplits ? losingSplitPayload
       : servePartialBaseline ? partialBaselinePayload
       : serveAttendanceOnly ? attendanceOnlyPayload
@@ -585,6 +608,34 @@ try {
   const tagToggle = page.getByRole("button", { name: /태그 .*개 더 보기/ });
   await tagToggle.click();
   if (await interestingFacts.count() <= 6) throw new Error("all character tags did not expand beyond representative six");
+
+  // ── 원정 찐팬 태그 사용자 배선 RED (삼순 P1 2026-08-02) ──────────────────
+  // 함수 단위 회귀만 있으면 `awayTag` push 블록을 통째로 지워도 PASS 한다(삼순 mutation 실증).
+  // 여기서는 actual DOM 에 라벨+근거가 실제로 렌더되는지를 본다.
+  // fixture: 홈 잠실 5경기 + 원정 대구 2 · 문학 1 = 원정 3경기 · 2구장 → tier4 `원정대장`.
+  // 확장 렌더가 안정될 때까지 폴링 — 클릭 직후 allInnerTexts 는 이전 스냅샷을 볼 수 있다.
+  let expandedFacts = [];
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    expandedFacts = await interestingFacts.allInnerTexts();
+    if (expandedFacts.length > 6) break;
+    await page.waitForTimeout(50);
+  }
+  if (expandedFacts.length <= 6) {
+    throw new Error(`태그 펼침이 안정화되지 않음: ${JSON.stringify(expandedFacts)}`);
+  }
+  const expandedText = expandedFacts.join("\n");
+  if (!expandedText.includes("원정대장")) {
+    throw new Error(`원정 3경기·2구장이면 '원정대장' 태그가 화면에 있어야 함: ${expandedText}`);
+  }
+  if (!expandedText.includes("원정 3경기 · 2개 구장")) {
+    throw new Error(`원정 태그 근거 문자열이 정확해야 함: ${expandedText}`);
+  }
+  for (const lowerTier of ["첫 원정", "원정러", "전국구 팬"]) {
+    if (expandedText.includes(lowerTier)) {
+      throw new Error(`상위 등급 도달 시 하위 등급이 함께 뜨면 안 됨: ${lowerTier} / ${expandedText}`);
+    }
+  }
+
   await page.getByRole("button", { name: "태그 접기" }).click();
   const compactHeight = await page.evaluate(() => document.documentElement.scrollHeight);
   if (compactHeight > 1500) throw new Error(`compact dashboard exceeded 1500px before details: ${compactHeight}px`);
@@ -1028,6 +1079,29 @@ try {
   if ((await page.evaluate(() => document.documentElement.scrollWidth)) > 390) {
     throw new Error("partial-baseline horizontal overflow");
   }
+
+  // ── 50점 중립 문구 RED (삼순 P1 2026-08-02) ──────────────────────────
+  // 초과성과·팀 delta 가 전부 0이면 점수는 정확히 50이고, 화면 계약은 `50 = 평소`다.
+  // 예전 구현은 `score >= 50` 을 positive 로 보고 normalized 0 축까지 `우세`라고 적어
+  // `50점 / 기대 대비 승리 우세가 높은 이유예요` 라는 모순을 렌더했다.
+  servePartialBaseline = false;
+  serveNeutralScore = true;
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.getByText("50", { exact: true }).waitFor({ timeout: 6000 });
+  const neutralBasis = await page.getByTestId("venue-score-basis").innerText();
+  if (!neutralBasis.includes("기대와 비슷했어요")) {
+    throw new Error(`중립(50점) 근거는 중립 문구여야 함: ${neutralBasis}`);
+  }
+  for (const contradiction of ["우세가 높은", "열세가 낮은", "우세가 낮은", "열세가 높은"]) {
+    if (neutralBasis.includes(contradiction)) {
+      throw new Error(`모든 축이 0인데 방향을 단정함: ${contradiction} / ${neutralBasis}`);
+    }
+  }
+  const neutralBadge = await page.locator('[data-testid="venue-stats-dashboard"]').first().innerText();
+  if (!neutralBadge.includes("평소와 비슷")) {
+    throw new Error(`50점 배지는 '평소와 비슷' 이어야 함: ${neutralBadge.slice(0, 200)}`);
+  }
+  serveNeutralScore = false;
 
   // ── 패배 스플릿 mutation RED (삼순 2026-08-02 P1) ────────────────────
   // 야간 0승3패·7월 0승3패인 actual DOM에서 긍정 캐릭터 태그가 붙으면 FAIL.

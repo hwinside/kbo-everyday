@@ -10,6 +10,9 @@ import {
   awayFanTag,
   MEASURED_ATTENDANCE_DISTRIBUTION,
   MEASURED_AWAY_DISTRIBUTION,
+  SCORE_CONFIDENCE_LABELS,
+  SCORE_SCALE,
+  scoreBadgeLabel,
   scoreConfidenceLevel,
   coverageCaption,
   formatAvg,
@@ -480,5 +483,106 @@ metrics.A1.items = [
 const mixed = buildVenueStatsHero(scope);
 assert.equal(mixed.mixedTeam, true);
 assert.deepEqual(mixed.teamIds, [1, 9]);
+
+// ─ 삼순 P0 (2026-08-02): 정규화 스케일 `.35/3` 의 제품 계약 잠금 ────────────────
+//
+// 지적: `.35/3` 을 `.25/2` 로 바꾸면 같은 경기가 71 → 80 점이 되어
+// `약간 요정 ↔ 진짜 요정` 배지가 뒤집히는데 어떤 게이트도 그걸 막지 못했다.
+// browser sentinel 도 구현 변경에 맞춰 함께 갱신돼 정책을 독립 고정하지 못했다.
+//
+// holdout 보정이 아니라 **정책 경로**를 택한 이유는 ui.ts SCORE_SCALE 주석 참조.
+// 여기서는 두 가지를 잠근다:
+//   ① 값 자체 고정 — 무단 재튜닝 차단
+//   ② raw-game 민감도 행렬 — 스케일이 바뀌어도 순서·부호·배지 구간이 흔들리지 않는가
+{
+  // ① 정책 상수 고정. 바꾸려면 이 회귀를 함께 고쳐야 한다(조용한 재튜닝 불가).
+  assert.equal(SCORE_SCALE.winExcess, 0.35, "승점 초과 축 끝은 정책 상수 0.35");
+  assert.equal(SCORE_SCALE.marginExcess, 3, "마진 초과 축 끝은 정책 상수 3");
+
+  const scoreOf = (winExcess: number, marginExcess: number, games = 10) => {
+    const cloned = JSON.parse(JSON.stringify(metrics)) as VenueStatsScopePayload["metrics"];
+    cloned.A1.state = "ready";
+    cloned.A1.items = undefined;
+    cloned.A1.n = games;
+    cloned.A1.denominator = { attendanceFinalGames: games, teamSeasonGames: 100 };
+    cloned.A1.value = {
+      attendance: { w: 5, l: 5, d: 0, rate: 0.5 },
+      teamComparable: { teamId: 1, w: 50, l: 50, d: 0, rate: 0.5 },
+      deltaPp: 0,
+      excess: { winExcess, marginExcess, games },
+    };
+    return buildVenueStatsHero({ ...scope, metrics: cloned }).score!;
+  };
+
+  // ② 민감도 행렬 — 중립·약/강 초과성과·박빙/대승을 한 축에 늘어놓는다.
+  //    스케일을 바꿔도 이 **순서와 부호**는 절대 흔들리면 안 된다.
+  const matrix = [
+    { name: "강한 열세", win: -0.30, margin: -2.5 },
+    { name: "약한 열세", win: -0.10, margin: -0.8 },
+    { name: "중립", win: 0, margin: 0 },
+    { name: "약한 우세", win: 0.10, margin: 0.8 },
+    { name: "강한 우세", win: 0.30, margin: 2.5 },
+  ];
+  const scores = matrix.map((m) => scoreOf(m.win, m.margin));
+
+  // 단조 증가 — 초과성과가 커질수록 점수도 커진다.
+  for (let i = 1; i < scores.length; i++) {
+    assert.ok(
+      scores[i]! > scores[i - 1]!,
+      `민감도 순서 역행: ${matrix[i - 1]!.name}(${scores[i - 1]}) → ${matrix[i]!.name}(${scores[i]})`,
+    );
+  }
+  // 부호 — 중립은 정확히 50, 열세는 50 미만, 우세는 50 초과.
+  assert.equal(scores[2], 50, `중립(초과성과 0)은 정확히 50이어야 함: ${scores[2]}`);
+  assert.ok(scores[0]! < 50 && scores[1]! < 50, "열세는 50 미만");
+  assert.ok(scores[3]! > 50 && scores[4]! > 50, "우세는 50 초과");
+
+  // 배지 구간 안정성 — 사용자가 보는 등급이 각 구간에서 서로 달라야 한다.
+  // (스케일을 공격적으로 바꾸면 약한 우세까지 `진짜 요정`이 되어 이 assert 가 깨진다.)
+  const badges = scores.map(scoreBadgeLabel);
+  assert.equal(badges[2], "평소와 비슷", `중립 배지: ${badges[2]}`);
+  assert.notEqual(
+    badges[3], badges[4],
+    `약한 우세(${scores[3]}·${badges[3]})와 강한 우세(${scores[4]}·${badges[4]})가 같은 배지면 변별력이 없다`,
+  );
+  assert.notEqual(
+    badges[0], badges[1],
+    `강한 열세(${scores[0]}·${badges[0]})와 약한 열세(${scores[1]}·${badges[1]})가 같은 배지면 변별력이 없다`,
+  );
+  // 약한 우세가 최상위 배지를 먹으면 스케일이 너무 공격적이다(= `.25/2` 회귀).
+  assert.notEqual(
+    badges[3], "진짜 요정",
+    `약한 우세(win .10 / margin .8)가 최상위 배지면 스케일이 과하다: ${scores[3]}`,
+  );
+  // 강한 우세가 최상위에 못 가면 너무 보수적이다(= `.5/4` 회귀).
+  assert.equal(
+    badges[4], "진짜 요정",
+    `강한 우세(win .30 / margin 2.5)는 최상위 배지여야 한다: ${scores[4]}`,
+  );
+
+  // 축 끝(±1) 포화 — 정책 상수 자체가 축 끝임을 확인한다.
+  const atCap = scoreOf(SCORE_SCALE.winExcess, SCORE_SCALE.marginExcess, 20);
+  const beyondCap = scoreOf(SCORE_SCALE.winExcess * 2, SCORE_SCALE.marginExcess * 2, 20);
+  assert.equal(atCap, beyondCap, "정책 상수가 축 끝이므로 그 이상은 포화(clamp)되어야 함");
+}
+
+// ─ 삼순 P1 (2026-08-02): `신뢰도` 라벨이 이용 빈도를 통계 신뢰도로 둔갑시키던 문제 ──
+//
+// 임계는 실측 이용 빈도(최대 4경기)에서 나왔는데 라벨은 `신뢰도 높음` 이라고 썼다.
+// 주석에서 스스로 "백분위는 통계적 신뢰도 근거가 아니다" 라고 해놓고 그렇게 부른 모순.
+// holdout 이 없으므로 통계적 신뢰도를 주장하지 않는 이름(`기록 충분도`)으로 바꿨다.
+{
+  const labels = Object.values(SCORE_CONFIDENCE_LABELS);
+  for (const label of labels) {
+    assert.ok(
+      !label.includes("신뢰도"),
+      `이용 빈도 기반 라벨이 통계적 '신뢰도'를 주장하면 안 됨: ${label}`,
+    );
+  }
+  assert.equal(SCORE_CONFIDENCE_LABELS.measuring, "측정 중");
+  assert.equal(SCORE_CONFIDENCE_LABELS.low, "기록 적음");
+  assert.equal(SCORE_CONFIDENCE_LABELS.medium, "기록 보통");
+  assert.equal(SCORE_CONFIDENCE_LABELS.high, "기록 충분");
+}
 
 console.log("venue stats S2 UI smoke: PASS (22/22 routing + hero/scope/format contracts)");
