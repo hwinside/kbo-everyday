@@ -16,13 +16,15 @@ import { getCommunitySourceLabel, type CommunitySourceLabel } from "@/lib/utils/
 import { useFeedScrollRestore } from "@/lib/community/useFeedScrollRestore";
 
 export default function AllPostsPage() {
+  // 복원은 이 라우트 경로로 되돌아온 뒤로가기에서만 발동한다(restorePath).
+  const feedPath = "/community/all-posts";
   const {
     posts, likedIds, loading, loadingMore, hasMore, loadMore, setPostLiked, reload,
     feedKey, pageCountRef, pendingScrollY, consumePendingScroll,
-  } = useUnifiedFeed({ kind: "all" });
+  } = useUnifiedFeed({ kind: "all" }, 20, { restorePath: feedPath });
 
   // 글 상세 진입 후 뒤로가기로 돌아오면 보던 위치·분량 복원(#cs 제보).
-  useFeedScrollRestore({ feedKey, pageCountRef, loading, pendingScrollY, consumePendingScroll });
+  useFeedScrollRestore({ feedKey, feedPath, pageCountRef, loading, pendingScrollY, consumePendingScroll });
   const { user, loading: authLoading } = useAuth();
 
   const router = useRouter();

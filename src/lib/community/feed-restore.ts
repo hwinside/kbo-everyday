@@ -18,8 +18,14 @@
  */
 
 const KEY_PREFIX = "kbo:feed-restore:";
-/** popstate(뒤로가기)가 실제로 일어났음을 표시. push 네비게이션과 구별하기 위한 1회용 플래그. */
-const POP_KEY = "kbo:feed-restore:popped";
+/**
+ * popstate(뒤로가기)가 실제로 일어났음을 표시하는 1회용 플래그.
+ * ⚠️ 값은 boolean 이 아니라 **뒤로가기가 도착한 경로**다. 전역 boolean 으로 두면 피드와 무관한
+ * 뒤로가기(예: 경기 상세 → 순위 → 뒤로)가 남긴 플래그를 그 다음 피드 push 진입이 주워먹어
+ * "push 진입은 최상단" 계약이 깨진다(삼순 리뷰 실측: 경기 back 후 커뮤니티 push 인데 12972 복원).
+ * 그래서 pop 이 도착한 경로와 마운트한 피드 경로가 **같을 때만** 복원으로 승격한다.
+ */
+const POP_KEY = "kbo:feed-restore:popped-path";
 /** 저장 상태 유효시간. 오래된 세션까지 복원하면 오히려 낯선 위치로 튄다. */
 export const RESTORE_TTL_MS = 30 * 60 * 1000;
 
@@ -105,30 +111,73 @@ export function clearFeedRestore(feedKey: string): void {
 }
 
 /**
- * 뒤로가기(popstate)로 돌아왔는지 확정 플래그를 소비한다.
+ * 떠날 때 저장 판정(순수 — 회귀에서 직접 검증).
+ *
+ * 0 을 두 종류로 구분하는 게 핵심이다.
+ *  - **라우터가 만든 0**: 상세로 이동할 때 스크롤이 먼저 0 으로 되돌아간 뒤 피드가 언마운트된다.
+ *    이걸 저장하면 진짜 위치가 지워진다(실측 12972 → 0 → 복원해도 맨 위). → 무시(`ignore`).
+ *  - **유저가 만든 진짜 0**: 유저가 직접 맨 위로 올렸다면 복원할 게 없다. 이때 그냥 무시하면
+ *    오래된 깊은 위치가 남아 다음 복귀에 거기로 튄다(삼순 실측). → 저장 상태 제거(`clear`).
+ *
+ * 둘을 가르는 신호가 `leaving`(링크 클릭으로 이 피드를 떠나는 중인가)이다.
+ */
+export type FeedPersistDecision = "save" | "clear" | "ignore";
+
+export function decideFeedPersist(leaving: boolean, scrollY: number): FeedPersistDecision {
+  if (leaving) return "ignore";
+  if (scrollY <= 0) return "clear";
+  return "save";
+}
+
+/**
+ * pop 경로와 마운트한 피드 경로를 대조해 "이 피드로의 뒤로가기"인지 판정(순수 — 회귀에서 직접 검증).
+ * 플래그는 어느 경로든 1회용이므로 불일치여도 소비해서 버린다(다음 진입에 다시 주워먹지 않게).
+ */
+export function matchesPoppedFeed(poppedPath: string | null, feedPath: string): boolean {
+  if (poppedPath === null) return false;
+  return poppedPath === feedPath;
+}
+
+/**
+ * 뒤로가기(popstate)로 **이 피드로** 돌아왔는지 확정 플래그를 소비한다.
  * 클릭 시점에는 "뒤로 돌아올지" 알 수 없으므로, 실제 popstate 이벤트에서만 세워진 플래그만 신뢰한다.
  * 이렇게 해야 탭바로 피드에 새로 들어오는(push) 경우엔 복원이 발동하지 않는다.
  */
-export function consumeBackNavigation(): boolean {
-  const popped = safeGet(POP_KEY) === "1";
-  if (popped) {
+export function consumeBackNavigation(feedPath: string): boolean {
+  const popped = safeGet(POP_KEY);
+  if (popped !== null) {
     safeRemove(POP_KEY);
-    return true;
+    return matchesPoppedFeed(popped, feedPath);
   }
   // SPA popstate 가 없더라도 뒤로가기일 수 있다 — 모바일 웹뷰/새로고침 경로에서는 뒤로가기가
   // **전체 문서 로드**로 처리돼 JS 컨텍스트가 초기화되고 popstate 리스너 자체가 없다(실측).
   // 이때는 Navigation Timing 의 back_forward 타입으로 판별한다.
-  return isBackForwardNavigation();
+  return consumeBackForwardLoad(feedPath);
 }
 
-/** 이번 문서 로드가 뒤로/앞으로 이동으로 발생했는지(Navigation Timing). */
-export function isBackForwardNavigation(): boolean {
+/** Navigation Timing 엔트리에서 이번 **문서 로드**의 종류와 URL 경로를 뽑는다. */
+export function backForwardEntryPath(): string | null {
   try {
     const nav = performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined;
-    return nav?.type === "back_forward";
+    if (!nav || nav.type !== "back_forward") return null;
+    return new URL(nav.name, window.location.origin).pathname;
   } catch {
-    return false;
+    return null;
   }
+}
+
+/**
+ * 전체 문서 로드 뒤로가기를 1회만 인정한다.
+ * ⚠️ `performance` 의 navigation type 은 **문서 전체**의 속성이라 그 뒤 SPA 로 어디를 더 눌러도
+ * 계속 back_forward 로 남는다. 그래서 (a) 문서 진입 URL 이 이 피드인지 (b) 아직 소비 안 됐는지를
+ * 함께 본다. 이게 없으면 "bf 로드로 경기 화면 → push 로 피드"가 뒤로가기로 오인된다.
+ */
+let backForwardConsumed = false;
+export function consumeBackForwardLoad(feedPath: string): boolean {
+  if (backForwardConsumed) return false;
+  if (backForwardEntryPath() !== feedPath) return false;
+  backForwardConsumed = true;
+  return true;
 }
 
 /** popstate 리스너 등록(모듈 싱글턴). SPA 수명 동안 1회만 붙는다. */
@@ -137,6 +186,7 @@ export function ensurePopStateListener(): void {
   if (popListenerAttached || typeof window === "undefined") return;
   popListenerAttached = true;
   window.addEventListener("popstate", () => {
-    safeSet(POP_KEY, "1");
+    // popstate 시점의 location 은 이미 도착지로 갱신돼 있다(실측) → 그대로 경로를 남긴다.
+    safeSet(POP_KEY, window.location.pathname);
   });
 }

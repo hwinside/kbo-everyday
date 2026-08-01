@@ -11,6 +11,8 @@
  */
 import assert from "node:assert/strict";
 import {
+  decideFeedPersist,
+  matchesPoppedFeed,
   parseRestoreState,
   RESTORE_TTL_MS,
   type FeedRestoreState,
@@ -142,32 +144,88 @@ t("1페이지 + 최상단이면 저장할 게 없음(불필요한 복원 방지)
   assert.equal(shouldSkip(3, 0), false);
 });
 
-console.log("\n[5] 실측으로 잡은 회귀 — 저장 시 scrollY 0 덮어쓰기 금지");
+console.log("\n[5] 저장 판정 — 라우터가 만든 0 vs 유저가 만든 진짜 0");
 /**
- * 사고의 진짜 원인이었다: 상세로 이동할 때 브라우저가 먼저 스크롤을 0으로 되돌린 뒤
- * 피드가 언마운트되므로, 언마운트 시점에 무조건 저장하면 방금 기록한 진짜 위치를 0이 덮어쓴다.
- * (실측: saved scrollY 12972 → 0 → 복원해도 항상 맨 위)
+ * 사고의 진짜 원인: 상세로 이동할 때 스크롤이 먼저 0 으로 되돌아간 뒤 피드가 언마운트되므로,
+ * 그 0 을 저장하면 진짜 위치가 지워진다(실측 saved 12972 → 0 → 복원해도 항상 맨 위).
+ *
+ * 그런데 "y<=0 이면 무조건 무시"로 막으면 반대 사고가 난다 — 유저가 직접 맨 위로 올린 진짜 0 까지
+ * 무시돼 오래된 깊은 위치가 남고, 다음 복귀에 거기로 튄다(삼순 리뷰 actual: 12972 → top → 진입 →
+ * back → 12972 복원). 그래서 `leaving`(링크 클릭으로 떠나는 중인가)로 두 0 을 가른다.
  */
-function persistPolicy(prevSaved: number, currentY: number): number {
-  // 구현과 동일한 규칙: y<=0 이면 저장 자체를 하지 않는다.
-  if (currentY <= 0) return prevSaved;
-  return currentY;
-}
-t("언마운트 시 scrollY 0 은 기존 저장값을 덮어쓰지 않음", () => {
-  assert.equal(persistPolicy(7107, 0), 7107);
+t("떠나는 중(라우터가 만든 0)은 저장 상태를 건드리지 않음", () => {
+  assert.equal(decideFeedPersist(true, 0), "ignore");
 });
-t("정상 스크롤 값은 갱신", () => {
-  assert.equal(persistPolicy(7107, 9200), 9200);
+t("떠나는 중이면 어떤 값이 와도 확정 저장분을 덮지 않음", () => {
+  assert.equal(decideFeedPersist(true, 5), "ignore");
+});
+t("유저가 만든 진짜 0(최상단)은 저장 상태를 제거", () => {
+  // ⚠️ 이전 구현(y<=0 이면 그냥 return)은 여기서 "ignore" 였고, 그래서 오래된 12972 가 살아남았다.
+  assert.equal(decideFeedPersist(false, 0), "clear");
+});
+t("정상 스크롤 값은 저장", () => {
+  assert.equal(decideFeedPersist(false, 9200), "save");
+});
+t("클릭 순간의 확정 저장은 leaving=false 로 평가돼 실제 위치가 남는다", () => {
+  // 링크 클릭 capture 시점에는 아직 스크롤이 0 으로 되돌려지기 전이다.
+  assert.equal(decideFeedPersist(false, 7107), "save");
 });
 
-console.log("\n[6] 뒤로가기 판별 — 전체 문서 로드(back_forward)도 인정");
-/** 모바일 웹뷰/전체 로드 복귀에서는 popstate 리스너가 없다(JS 컨텍스트 초기화). */
-function cameBack(popFlag: boolean, navType: string): boolean {
-  return popFlag || navType === "back_forward";
+console.log("\n[5b] 뒤로가기 scope — 무관한 back 이 다음 push 를 오염시키지 않음");
+/**
+ * 삼순 리뷰 actual 재현: LG 피드 저장 → 경기 push → 순위 push → **경기로 back**(pop 플래그 발생)
+ * → 커뮤니티 push → LG 팀 push 인데 12972 로 복원됐다. 전역 boolean 플래그가 목적지를 안 봤기 때문.
+ * pop 이 실제로 도착한 경로와 마운트한 피드 경로가 같을 때만 복원으로 승격한다.
+ */
+t("pop 이 이 피드로 도착했을 때만 복원", () => {
+  assert.equal(matchesPoppedFeed("/community/teams/lg", "/community/teams/lg"), true);
+});
+t("무관한 화면으로의 back 은 이 피드 복원이 아님(사고 재현 케이스)", () => {
+  assert.equal(matchesPoppedFeed("/games/20260801LGHH0", "/community/teams/lg"), false);
+});
+t("다른 팀 피드로의 back 도 이 피드 복원이 아님", () => {
+  assert.equal(matchesPoppedFeed("/community/teams/ss", "/community/teams/lg"), false);
+});
+t("pop 자체가 없으면 복원 아님(push 진입)", () => {
+  assert.equal(matchesPoppedFeed(null, "/community/teams/lg"), false);
+});
+
+console.log("\n[6] 뒤로가기 판별 — 전체 문서 로드(back_forward)도 인정, 단 1회·경로 일치");
+/**
+ * 모바일 웹뷰/전체 로드 복귀에서는 popstate 리스너가 없다(JS 컨텍스트 초기화) → Navigation Timing 사용.
+ * ⚠️ navigation type 은 **문서 전체**의 속성이라 그 뒤 SPA 로 어디를 눌러도 계속 back_forward 로 남는다.
+ * 그래서 (a) 문서 진입 경로가 이 피드인지 (b) 아직 소비 안 됐는지를 함께 봐야 한다.
+ * (consumeBackForwardLoad 의 계약을 순수 재현)
+ */
+function makeBfConsumer(entryPath: string | null) {
+  let consumed = false;
+  return (feedPath: string) => {
+    if (consumed) return false;
+    if (entryPath !== feedPath) return false;
+    consumed = true;
+    return true;
+  };
 }
-t("SPA popstate 로 복귀", () => assert.equal(cameBack(true, "navigate"), true));
-t("전체 로드 뒤로가기(back_forward)도 복원 대상", () => assert.equal(cameBack(false, "back_forward"), true));
-t("일반 진입(navigate)은 복원 안 함", () => assert.equal(cameBack(false, "navigate"), false));
+t("SPA popstate 로 복귀(경로 일치)", () => {
+  assert.equal(matchesPoppedFeed("/community/teams/lg", "/community/teams/lg"), true);
+});
+t("전체 로드 뒤로가기(back_forward)가 이 피드로 진입하면 복원 대상", () => {
+  const bf = makeBfConsumer("/community/teams/lg");
+  assert.equal(bf("/community/teams/lg"), true);
+});
+t("bf 로드가 다른 화면으로 진입했으면 그 뒤 push 로 온 피드는 복원 안 함", () => {
+  const bf = makeBfConsumer("/games/20260801LGHH0");
+  assert.equal(bf("/community/teams/lg"), false);
+});
+t("bf 는 1회만 인정 — 소비 후 같은 문서에서 재진입해도 복원 안 함", () => {
+  const bf = makeBfConsumer("/community/teams/lg");
+  assert.equal(bf("/community/teams/lg"), true);
+  assert.equal(bf("/community/teams/lg"), false);
+});
+t("일반 진입(navigate)은 복원 안 함", () => {
+  const bf = makeBfConsumer(null);
+  assert.equal(bf("/community/teams/lg"), false);
+});
 
 console.log(`\nPASS=${pass} FAIL=${fail}`);
 process.exit(fail === 0 ? 0 : 1);

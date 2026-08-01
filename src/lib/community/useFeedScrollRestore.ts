@@ -1,12 +1,12 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { saveFeedRestore } from "@/lib/community/feed-restore";
+import { clearFeedRestore, decideFeedPersist, saveFeedRestore } from "@/lib/community/feed-restore";
 
 /**
  * 피드 페이지에 붙이는 스크롤 복원 훅.
  *
- *  - 페이지를 떠나기 직전(스크롤/pagehide/언마운트) 현재 스크롤 + 로드 페이지 수를 저장한다.
+ *  - 페이지를 떠나기 직전(링크 클릭/pagehide/언마운트) 현재 스크롤 + 로드 페이지 수를 저장한다.
  *  - `useUnifiedFeed`가 복원 페이지를 다 채우고 `pendingScrollY`를 넘겨주면 그 위치로 되돌린다.
  *
  * 복원 시점이 까다롭다: 카드에 이미지/투표 요약이 뒤늦게 붙으면서 문서 높이가 계속 자라기 때문에
@@ -15,52 +15,95 @@ import { saveFeedRestore } from "@/lib/community/feed-restore";
  */
 export function useFeedScrollRestore(opts: {
   feedKey: string;
+  /** 이 피드의 라우트 경로. "떠나는 중인가" 판정에 쓴다. */
+  feedPath: string;
   /** 로드된 페이지 수 ref — setState 지연 없이 항상 최신값(useUnifiedFeed 제공). */
   pageCountRef: { current: number };
   loading: boolean;
   pendingScrollY: number | null;
   consumePendingScroll: () => void;
 }) {
-  const { feedKey, pageCountRef, loading, pendingScrollY, consumePendingScroll } = opts;
+  const { feedKey, feedPath, pageCountRef, loading, pendingScrollY, consumePendingScroll } = opts;
 
-  // 브라우저 기본 스크롤 복원을 끈다. 피드는 복귀 직후 1페이지만 들고 시작해 문서가 짧기 때문에
-  // 브라우저가 복원한 위치는 잘리거나 0 이 되고, 그게 우리 복원을 덮어쓴다(실측).
-  useEffect(() => {
-    if (typeof window === "undefined" || !("scrollRestoration" in window.history)) return;
-    const prev = window.history.scrollRestoration;
-    window.history.scrollRestoration = "manual";
-    return () => {
-      window.history.scrollRestoration = prev;
-    };
-  }, []);
-
-  // 최신 feedKey 를 이벤트 핸들러에서 읽기 위한 ref.
+  // 최신 feedKey/feedPath 를 이벤트 핸들러에서 읽기 위한 ref.
   // 렌더 중 ref 를 쓰면 안 되므로(react-hooks/refs) effect 에서만 갱신한다.
   const keyRef = useRef(feedKey);
+  const pathRef = useRef(feedPath);
   useEffect(() => {
     keyRef.current = feedKey;
-  }, [feedKey]);
+    pathRef.current = feedPath;
+  }, [feedKey, feedPath]);
 
   // 떠나기 직전 저장. Link 클릭(클라이언트 라우팅)은 pagehide가 안 뜨므로 스크롤할 때마다 갱신해 둔다.
   // pageCount 를 state 가 아니라 ref 로 읽는 이유: setState 는 비동기라 방금 로드된 페이지가
   // 반영되기 전에 저장되면 분량이 적게 복원된다(실측: 카드 31인데 pageCount 2로 저장됨).
+  //
+  // 0 을 다루는 방식이 핵심이다.
+  //  - 상세로 이동할 때 라우터/브라우저가 먼저 스크롤을 0 으로 되돌린 뒤 피드가 언마운트되므로,
+  //    그 0 을 저장하면 진짜 위치가 지워진다(실측 12972 → 0 → 복원해도 맨 위).
+  //  - 그렇다고 "y<=0 이면 무조건 무시"로 두면 **유저가 직접 맨 위로 올린 진짜 0** 까지 무시돼
+  //    다음 복귀에 오래된 깊은 위치로 튄다(삼순 리뷰 실측: 12972 → top → 진입 → back → 12972).
+  // 그래서 둘을 "링크를 클릭해 떠나는 중인가"로 구분한다:
+  //  - 링크 클릭(capture) 순간의 y/pageCount 를 확정 저장하고, 그 뒤 라우터가 만든 0 은 무시
+  //  - 떠나는 중이 아니면 스크롤을 그대로 반영하고, 진짜 0(최상단)은 저장 상태를 제거
   useEffect(() => {
-    // ⚠️ scrollY === 0 은 저장하지 않는다.
-    // 상세로 이동할 때 브라우저가 먼저 스크롤을 0 으로 되돌린 뒤 이 컴포넌트가 언마운트되므로,
-    // 언마운트 시점에 무조건 저장하면 방금 기록한 진짜 위치(예: 7107)를 0 으로 덮어써
-    // 복원이 항상 맨 위가 된다(실측: saved scrollY 12972 → 0).
-    const persist = () => {
-      const y = window.scrollY;
-      if (y <= 0) return;
+    let leaving = false;
+
+    // 판정은 순수 함수(decideFeedPersist)에 위임한다 — 회귀가 그 함수를 직접 검증한다.
+    const apply = (isLeaving: boolean, y: number) => {
+      const decision = decideFeedPersist(isLeaving, y);
+      if (decision === "ignore") return;
+      // 유저가 직접 만든 최상단 — 복원할 게 없으므로 오래된 깊은 위치를 반드시 지운다.
+      if (decision === "clear") {
+        clearFeedRestore(keyRef.current);
+        return;
+      }
       saveFeedRestore(keyRef.current, pageCountRef.current, y);
     };
+
+    const onScroll = () => {
+      apply(leaving, window.scrollY);
+    };
+
+    // 유저가 여전히 이 화면을 조작 중 — 클릭했지만 네비게이션이 안 일어난 경우 복귀.
+    const onUserInput = () => {
+      leaving = false;
+    };
+
+    // capture 단계에서 링크 클릭을 잡아 떠나기 직전의 진짜 위치를 확정 저장한다.
+    const onClickCapture = (e: MouseEvent) => {
+      const target = e.target;
+      if (!(target instanceof Element)) return;
+      const anchor = target.closest("a[href]");
+      if (!anchor) return;
+      const href = anchor.getAttribute("href");
+      if (!href || href.startsWith("#")) return;
+      let dest: URL;
+      try {
+        dest = new URL(href, window.location.origin);
+      } catch {
+        return;
+      }
+      // 같은 피드 안에서의 이동은 이탈이 아니다.
+      if (dest.origin === window.location.origin && dest.pathname === pathRef.current) return;
+      // 클릭 순간의 위치가 확정 저장 대상이다(아직 떠나지 않은 상태로 판정 → save/clear).
+      apply(false, window.scrollY);
+      leaving = true;
+    };
+
     // passive: 스크롤 성능 영향 없음.
-    window.addEventListener("scroll", persist, { passive: true });
-    window.addEventListener("pagehide", persist);
+    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("wheel", onUserInput, { passive: true });
+    window.addEventListener("touchstart", onUserInput, { passive: true });
+    window.addEventListener("pagehide", onScroll);
+    document.addEventListener("click", onClickCapture, true);
     return () => {
-      persist();
-      window.removeEventListener("scroll", persist);
-      window.removeEventListener("pagehide", persist);
+      onScroll();
+      window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("wheel", onUserInput);
+      window.removeEventListener("touchstart", onUserInput);
+      window.removeEventListener("pagehide", onScroll);
+      document.removeEventListener("click", onClickCapture, true);
     };
   }, [pageCountRef]);
 
@@ -91,7 +134,7 @@ export function useFeedScrollRestore(opts: {
       // 아직 콘텐츠가 덜 자라 목표에 못 미치면 도달 가능한 최대치로 붙여두고 다음 프레임 재시도.
       const want = Math.min(target, maxY);
       if (Math.abs(window.scrollY - want) > 2) window.scrollTo(0, want);
-      // ⚠️ 목표에 닿았다고 바로 멈추면 안 된다 — 브라우저/라우터의 자체 스크롤 복원이
+      // 목표에 닿았다고 바로 멈추면 안 된다 — 브라우저/라우터의 자체 스크롤 복원이
       // 한 박자 늦게 0 으로 되돌리는 것을 실측했다. 마감기한까지 계속 재주장한다.
       if (Date.now() < deadline) {
         raf = requestAnimationFrame(step);

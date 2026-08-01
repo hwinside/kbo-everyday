@@ -98,7 +98,23 @@ function boardKey(board: FeedBoard): string {
  * - 글로벌 serial `id` 기반 keyset 페이징(= created_at 내림차순과 동일 순서).
  * - 보이는 글들의 내 좋아요 상태를 페이지마다 배치 조회해 누적.
  */
-export function useUnifiedFeed(board: FeedBoard, pageSize = 20) {
+/**
+ * 피드 복원 옵션. **restorePath 를 준 소비자만** 뒤로가기 복원에 참여한다.
+ *
+ * 옵션으로 둔 이유: 이 훅은 홈 '커뮤니티 최신글' 섹션(`CommunityLatestPosts`)도 함께 쓴다.
+ * 복원을 훅 기본 동작으로 두면 restore 훅이 없는 그 소비자가 뒤로가기 플래그를 대신 소비해
+ * 정작 피드는 복원되지 않거나, 반대로 무관한 화면에서 복원 상태가 소모된다.
+ */
+export type FeedRestoreOptions = {
+  /** 이 피드의 라우트 경로(예: `/community/teams/lg`). 뒤로가기 도착지와 대조한다. */
+  restorePath: string;
+};
+
+export function useUnifiedFeed(
+  board: FeedBoard,
+  pageSize = 20,
+  restore?: FeedRestoreOptions,
+) {
   const { user } = useAuth();
   const { blockedIds } = useBlockedIds();
   const [posts, setPosts] = useState<Post[]>([]);
@@ -167,9 +183,11 @@ export function useUnifiedFeed(board: FeedBoard, pageSize = 20) {
   // 초기 로드 / 보드 전환.
   // 뒤로가기(popstate)로 돌아온 경우엔 떠날 때 로드돼 있던 페이지 수만큼 이어서 채운 뒤
   // 스크롤을 복원한다. 1페이지만 불러오면 문서가 짧아져 브라우저 스크롤 복원이 잘려버린다.
+  const restorePath = restore?.restorePath ?? null;
+
   useEffect(() => {
     let cancelled = false;
-    ensurePopStateListener();
+    if (restorePath) ensurePopStateListener();
     setLoading(true);
     setPosts([]);
     setLikedIds(new Set());
@@ -180,9 +198,13 @@ export function useUnifiedFeed(board: FeedBoard, pageSize = 20) {
     setPendingScrollY(null);
 
     // 뒤로가기 확정 플래그는 라우트 단위 1회용이라 여기서 소비한다(push 진입이면 false).
-    const cameBack = consumeBackNavigation();
+    // ⚠️ pop 이 **이 피드 경로로** 도착했을 때만 인정한다. 전역 boolean 으로 두면 무관한 화면에서의
+    // 뒤로가기(경기 → 순위 → back)가 남긴 플래그를 그 다음 피드 push 진입이 주워먹는다(삼순 실측).
+    const cameBack = restorePath ? consumeBackNavigation(restorePath) : false;
     const saved = cameBack ? readFeedRestore(key) : null;
-    if (!cameBack) clearFeedRestore(key);
+    // 복원 대상이 아닌 진입(push)에서만 상태를 버린다. 복원을 쓰지 않는 소비자(홈 최신글)는
+    // 남의 상태를 지우면 안 되므로 그대로 둔다.
+    if (restorePath && !cameBack) clearFeedRestore(key);
 
     (async () => {
       const rows = await loadPage(null);
@@ -225,7 +247,7 @@ export function useUnifiedFeed(board: FeedBoard, pageSize = 20) {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, pageSize, user?.id]);
+  }, [key, pageSize, user?.id, restorePath]);
 
   const loadMore = useCallback(async () => {
     if (fetchingRef.current || !hasMore || loading) return;
