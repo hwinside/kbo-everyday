@@ -8,6 +8,10 @@ import {
 } from "@/lib/crawler/kbo-api";
 import { planTeamMoves, type RosterEntry } from "@/lib/roster-moves/parse";
 import { checkPublishReadiness } from "@/lib/roster-moves/readiness";
+import {
+  triggerRosterOnboarding,
+  type OnboardTriggerResult,
+} from "@/lib/roster-moves/onboard-trigger";
 import { runBeforeDeadline } from "@/lib/async-deadline";
 import { getKSTToday } from "@/lib/utils/date-kst";
 import {
@@ -52,6 +56,8 @@ export type RosterMovesRouteDeps = {
   notifyCollectionFailureImpl: typeof notifyCollectionFailure;
   notifyPendingMovesImpl: typeof notifyPendingMoves;
   checkPublishReadinessImpl: typeof checkPublishReadiness;
+  triggerRosterOnboardingImpl: typeof triggerRosterOnboarding;
+  githubToken: string;
   collectionDeadlineMs: number;
 };
 
@@ -64,6 +70,8 @@ const DEFAULT_DEPS: RosterMovesRouteDeps = {
   notifyCollectionFailureImpl: notifyCollectionFailure,
   notifyPendingMovesImpl: notifyPendingMoves,
   checkPublishReadinessImpl: checkPublishReadiness,
+  triggerRosterOnboardingImpl: triggerRosterOnboarding,
+  githubToken: process.env.GITHUB_PAT || "",
   collectionDeadlineMs: REGISTER_COLLECTION_DEADLINE_MS,
 };
 
@@ -444,6 +452,40 @@ export async function rosterMovesRoute(
     );
   }
 
+  // ── 온보딩 자동 트리거(2026-08-01): roster SSOT 미등록 신규 등록 선수가 있으면
+  // 크롤 워크플로를 1회 dispatch해 다음 새벽 배치까지 기다리지 않게 한다.
+  // best-effort — 실패해도 이번 cron의 수집/승격 결과 판정을 바꾸지 않는다(새벽 배치가 재처리).
+  const onboardCandidates = [
+    ...new Set(
+      preparedTeams.flatMap(({ planned }) =>
+        planned
+          .filter((move) => move.moveType === "register")
+          .map((move) => move.kboPlayerId)
+          .filter((playerId) => readinessById.get(playerId)?.missing.includes("roster") ?? false),
+      ),
+    ),
+  ];
+  let onboardTrigger: OnboardTriggerResult = { status: "no-new-players" };
+  try {
+    onboardTrigger = await runBeforeDeadline(
+      () => deps.triggerRosterOnboardingImpl(onboardCandidates, {
+        fetchImpl: deps.fetchImpl,
+        token: deps.githubToken,
+        now: () => Date.now(),
+        deadlineAtMs: routeDeadlineAtMs,
+      }),
+      routeDeadlineAtMs,
+    );
+  } catch {
+    onboardTrigger = { status: "dispatch-error" };
+  }
+  if (onboardCandidates.length > 0 && onboardTrigger.status !== "dispatched") {
+    // 디스패치하지 못한 이유도 silent 금지(상태는 응답 JSON에도 포함).
+    console.warn(
+      `[roster-moves] 온보딩 트리거 미수행(${onboardTrigger.status}) — 대상 ${onboardCandidates.join(", ")}`,
+    );
+  }
+
   return NextResponse.json({
     ok: true,
     snapshotDate,
@@ -452,6 +494,7 @@ export async function rosterMovesRoute(
     promoted,
     pending,
     pendingAlert,
+    onboardTrigger,
     perTeam,
   });
 }
