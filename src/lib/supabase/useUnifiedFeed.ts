@@ -11,6 +11,9 @@ import {
   consumeBackNavigation,
   ensurePopStateListener,
   readFeedRestore,
+  resolveFeedRestoreIntent,
+  type FeedRestoreIntent,
+  type FeedRestoreState,
 } from "@/lib/community/feed-restore";
 
 /**
@@ -184,6 +187,8 @@ export function useUnifiedFeed(
   // 뒤로가기(popstate)로 돌아온 경우엔 떠날 때 로드돼 있던 페이지 수만큼 이어서 채운 뒤
   // 스크롤을 복원한다. 1페이지만 불러오면 문서가 짧아져 브라우저 스크롤 복원이 잘려버린다.
   const restorePath = restore?.restorePath ?? null;
+  // 확정된 복원 의사. auth hydration 등으로 effect 가 재실행돼도 살아남아야 한다.
+  const restoreIntentRef = useRef<FeedRestoreIntent | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -200,11 +205,26 @@ export function useUnifiedFeed(
     // 뒤로가기 확정 플래그는 라우트 단위 1회용이라 여기서 소비한다(push 진입이면 false).
     // ⚠️ pop 이 **이 피드 경로로** 도착했을 때만 인정한다. 전역 boolean 으로 두면 무관한 화면에서의
     // 뒤로가기(경기 → 순위 → back)가 남긴 플래그를 그 다음 피드 push 진입이 주워먹는다(삼순 실측).
-    const cameBack = restorePath ? consumeBackNavigation(restorePath) : false;
-    const saved = cameBack ? readFeedRestore(key) : null;
-    // 복원 대상이 아닌 진입(push)에서만 상태를 버린다. 복원을 쓰지 않는 소비자(홈 최신글)는
-    // 남의 상태를 지우면 안 되므로 그대로 둔다.
-    if (restorePath && !cameBack) clearFeedRestore(key);
+    //
+    // ⚠️⚠️ 소비는 **feed 당 한 번만** 해야 한다. 이 effect 는 dep 에 user?.id 가 있어
+    // 로그인 세션의 문서 로드마다 auth hydration(null → user.id)으로 **같은 feed 에서 재실행**된다.
+    // 재실행이 1회용 플래그를 다시 소비하려 하면 false 가 되고, 저장값까지 지우면서 첫 복원 load 를
+    // cleanup 으로 죽여 원 사고가 그대로 재현된다(삼순 실측 12972 → 1243, cards 31 → 12).
+    // 그래서 확정본(intent)을 ref 에 남기고 재실행은 그것을 재사용한다.
+    let saved: FeedRestoreState | null = null;
+    if (restorePath) {
+      const { intent, fresh } = resolveFeedRestoreIntent({
+        prev: restoreIntentRef.current,
+        feedKey: key,
+        consumeBack: () => consumeBackNavigation(restorePath),
+        readSaved: () => readFeedRestore(key),
+      });
+      restoreIntentRef.current = intent;
+      saved = intent.state;
+      // 복원 대상이 아닌 **최초** 진입(push)에서만 상태를 버린다. 재실행은 아무것도 지우지 않는다.
+      // 복원을 쓰지 않는 소비자(홈 최신글)도 남의 상태를 지우면 안 되므로 restorePath 안에서만 한다.
+      if (fresh && !saved) clearFeedRestore(key);
+    }
 
     (async () => {
       const rows = await loadPage(null);
@@ -237,7 +257,8 @@ export function useUnifiedFeed(
       setLoading(false);
       fetchLikedFor(acc.map((r) => r.id));
       if (saved) {
-        // 복원 상태는 1회용 — 소비 후 제거해 다음 진입에 재사용되지 않게 한다.
+        // sessionStorage 는 여기서 비운다(다음 진입에 재사용 금지). 이번 문서 안에서의 재실행은
+        // ref 의 intent 로 이어지므로 지워도 복원이 끊기지 않는다.
         clearFeedRestore(key);
         setPendingScrollY(saved.scrollY);
       }

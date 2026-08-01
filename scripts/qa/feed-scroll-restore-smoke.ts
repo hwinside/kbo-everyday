@@ -14,7 +14,9 @@ import {
   decideFeedPersist,
   matchesPoppedFeed,
   parseRestoreState,
+  resolveFeedRestoreIntent,
   RESTORE_TTL_MS,
+  type FeedRestoreIntent,
   type FeedRestoreState,
 } from "../../src/lib/community/feed-restore";
 
@@ -188,6 +190,80 @@ t("다른 팀 피드로의 back 도 이 피드 복원이 아님", () => {
 });
 t("pop 자체가 없으면 복원 아님(push 진입)", () => {
   assert.equal(matchesPoppedFeed(null, "/community/teams/lg"), false);
+});
+
+console.log("\n[5c] effect 재실행(auth hydration) — 확정된 복원 의사가 살아남아야 함");
+/**
+ * 삼순 재리뷰 실측 사고: 로그인 세션의 **전체문서 뒤로가기**에서 12972 → 1243, cards 31 → 12.
+ *
+ * 체인:
+ *  1. useUnifiedFeed 초기 effect 가 back_forward 를 1회 소비하고 저장값을 읽는다
+ *  2. AuthProvider 는 문서 로드마다 user=null 로 시작한 뒤 세션을 읽어 setUser 한다
+ *  3. effect dep 에 user?.id 가 있어 **같은 feed 에서 즉시 재실행**된다
+ *  4. 재실행은 1회용 플래그를 다시 소비할 수 없어 cameBack=false → 저장값을 clear,
+ *     첫 복원 load 는 cleanup 으로 취소 → 사고 재현
+ *
+ * 계약: 복원 의사는 feed 당 **한 번만** 확정하고, 재실행은 확정본을 재사용한다(재소비·삭제 금지).
+ */
+function runFeedEffects(opts: {
+  /** effect 가 실행되는 순서대로의 feedKey (auth hydration 은 같은 키가 두 번). */
+  runs: string[];
+  /** 최초 확정 때 back_forward 소비 결과. 1회용이라 두 번째 호출부터는 false. */
+  backAvailable: boolean;
+  saved: FeedRestoreState | null;
+}) {
+  let intentRef: FeedRestoreIntent | null = null;
+  let backLeft = opts.backAvailable;
+  let storage: FeedRestoreState | null = opts.saved;
+  let consumeCalls = 0;
+  const results: (FeedRestoreState | null)[] = [];
+
+  for (const feedKey of opts.runs) {
+    const { intent, fresh } = resolveFeedRestoreIntent({
+      prev: intentRef,
+      feedKey,
+      consumeBack: () => {
+        consumeCalls++;
+        const v = backLeft;
+        backLeft = false; // 1회용
+        return v;
+      },
+      readSaved: () => storage,
+    });
+    intentRef = intent;
+    // 구현과 동일: 최초 확정에서 복원 대상이 아닐 때만 저장 상태를 버린다.
+    if (fresh && !intent.state) storage = null;
+    results.push(intent.state);
+  }
+  return { results, consumeCalls, storage };
+}
+
+const DEEP: FeedRestoreState = { pageCount: 2, scrollY: 12972, savedAt: NOW };
+
+t("사고 재현 방지: auth hydration 재실행에도 같은 복원값 유지", () => {
+  const r = runFeedEffects({ runs: ["team:lg", "team:lg"], backAvailable: true, saved: DEEP });
+  assert.deepEqual(r.results[0], DEEP);
+  // ⚠️ 이전 구현은 여기서 null 이 되고 저장값까지 지워 12972 → 1243 이 됐다.
+  assert.deepEqual(r.results[1], DEEP);
+});
+t("재실행은 1회용 뒤로가기 플래그를 다시 소비하지 않음", () => {
+  const r = runFeedEffects({ runs: ["team:lg", "team:lg", "team:lg"], backAvailable: true, saved: DEEP });
+  assert.equal(r.consumeCalls, 1);
+});
+t("재실행은 저장 상태를 지우지 않음(첫 복원이 끊기지 않도록)", () => {
+  const r = runFeedEffects({ runs: ["team:lg", "team:lg"], backAvailable: true, saved: DEEP });
+  assert.notEqual(r.storage, null);
+});
+t("push 진입은 최초 확정에서 상태를 버리고, 재실행해도 복원되지 않음", () => {
+  const r = runFeedEffects({ runs: ["team:lg", "team:lg"], backAvailable: false, saved: DEEP });
+  assert.equal(r.results[0], null);
+  assert.equal(r.results[1], null);
+  assert.equal(r.storage, null);
+});
+t("다른 피드로 이동하면 새로 확정한다(intent 가 고착되지 않음)", () => {
+  const r = runFeedEffects({ runs: ["team:lg", "team:ss"], backAvailable: true, saved: DEEP });
+  assert.deepEqual(r.results[0], DEEP);
+  assert.equal(r.consumeCalls, 2, "새 feedKey 에서는 다시 판정해야 한다");
 });
 
 console.log("\n[6] 뒤로가기 판별 — 전체 문서 로드(back_forward)도 인정, 단 1회·경로 일치");
