@@ -53,11 +53,17 @@ function naverPayload(
         offenseHr: 50 + index,
         offenseRun: 300 + index,
         offenseSb: 40 + index,
+        offenseAb: 1000,
+        offenseHit: 250 + index,
         defenseEra: 3.5 + index / 100,
         defenseWhip: 1.2 + index / 100,
         defenseKk: 500 + index,
         defenseSave: 20 + index,
         defenseHr: 60 + index,
+        defenseInning: 900,
+        defenseEr: 350 + index,
+        defenseHit: 800 + index,
+        gameCount: 100,
       })),
     },
   };
@@ -244,6 +250,9 @@ async function main() {
     hr: 50,
     runs: 300,
     sb: 40,
+    games: 100,
+    ab: 1000,
+    hits: 250,
   });
   assert.deepEqual(mapped.pitching[0], {
     teamId: 1,
@@ -253,6 +262,10 @@ async function main() {
     so: 500,
     sv: 20,
     hra: 60,
+    games: 100,
+    inningsOuts: 2700,
+    er: 350,
+    hitsAllowed: 800,
   });
 
   const kboData = { batting: mapped.batting, pitching: mapped.pitching };

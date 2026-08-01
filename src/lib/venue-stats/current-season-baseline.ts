@@ -1,5 +1,4 @@
 import { TEAMS } from "@/lib/constants/teams";
-import type { TeamStanding } from "@/lib/crawler/kbo-api";
 import type { TeamSeasonTotals } from "@/lib/venue-stats/aggregate";
 
 export const CURRENT_SEASON_BASELINE_MAX_AGE_MS = 48 * 60 * 60 * 1000;
@@ -73,7 +72,27 @@ export interface CurrentSeasonBaselineInput {
   currentSeason: number;
   generatedAt: string;
   nowMs?: number;
-  standings: TeamStanding[] | null;
+  teamRecords: {
+    season: number;
+    batting: Array<{
+      teamId: number;
+      slug: string;
+      avg: string;
+      hr: number;
+      games?: number;
+      ab?: number;
+      hits?: number;
+    }>;
+    pitching: Array<{
+      teamId: number;
+      slug: string;
+      era: string;
+      games?: number;
+      inningsOuts?: number;
+      er?: number;
+      hitsAllowed?: number;
+    }>;
+  } | null;
   favoriteIds: string[];
   bundledBatters: readonly BundledBatterRow[];
   bundledPitchers: readonly BundledPitcherRow[];
@@ -82,8 +101,8 @@ export interface CurrentSeasonBaselineInput {
 }
 
 export interface CurrentSeasonBaselines {
-  teamSeasonTotals: Map<number, TeamSeasonTotals>;
-  favoriteSeasonBaselines: Map<string, FavoriteSeasonBaselineSnapshot>;
+  teamSeasonTotals: Map<number, TeamSeasonTotals> | null;
+  favoriteSeasonBaselines: Map<string, FavoriteSeasonBaselineSnapshot> | null;
 }
 
 function nonNegativeInteger(value: unknown): number | null {
@@ -102,6 +121,57 @@ function isFresh(timestamp: unknown, nowMs: number): boolean {
   if (typeof timestamp !== "string") return false;
   const parsed = Date.parse(timestamp);
   return Number.isFinite(parsed) && parsed <= nowMs && nowMs - parsed <= CURRENT_SEASON_BASELINE_MAX_AGE_MS;
+}
+
+function officialTeamSeasonTotals(
+  records: CurrentSeasonBaselineInput["teamRecords"],
+  season: number,
+): Map<number, TeamSeasonTotals> | null {
+  if (
+    records === null ||
+    records.season !== season ||
+    records.batting.length !== TEAMS.length ||
+    records.pitching.length !== TEAMS.length
+  ) return null;
+
+  const battingByTeam = new Map(records.batting.map((row) => [row.teamId, row]));
+  const pitchingByTeam = new Map(records.pitching.map((row) => [row.teamId, row]));
+  const totals = new Map<number, TeamSeasonTotals>();
+  for (const team of TEAMS) {
+    const batting = battingByTeam.get(team.id);
+    const pitching = pitchingByTeam.get(team.id);
+    if (!batting || !pitching || batting.slug !== team.slug || pitching.slug !== team.slug) return null;
+
+    const games = nonNegativeInteger(batting.games);
+    const pitchingGames = nonNegativeInteger(pitching.games);
+    const ab = nonNegativeInteger(batting.ab);
+    const h = nonNegativeInteger(batting.hits);
+    const hr = nonNegativeInteger(batting.hr);
+    const outs = nonNegativeInteger(pitching.inningsOuts);
+    const er = nonNegativeInteger(pitching.er);
+    const hAllowed = nonNegativeInteger(pitching.hitsAllowed);
+    const publishedAvg = Number(batting.avg);
+    const publishedEra = Number(pitching.era);
+    if (
+      games === null || games <= 0 || pitchingGames !== games ||
+      ab === null || ab <= 0 || h === null || h > ab || hr === null ||
+      outs === null || outs <= 0 || er === null || hAllowed === null ||
+      !Number.isFinite(publishedAvg) || Math.abs(h / ab - publishedAvg) > 0.0005 ||
+      !Number.isFinite(publishedEra) || Math.abs((27 * er) / outs - publishedEra) > 0.005
+    ) return null;
+
+    totals.set(team.id, {
+      teamId: team.id,
+      completeGames: games,
+      ab,
+      h,
+      hr,
+      outs,
+      er,
+      hAllowed,
+    });
+  }
+  return totals.size === TEAMS.length ? totals : null;
 }
 
 function playerId(row: { kboId?: unknown; playerId?: unknown }): string | null {
@@ -132,27 +202,34 @@ function bundledPitcher(row: BundledPitcherRow): (PitcherSeasonBaseline & { team
 }
 
 /**
- * 현재시즌 비교값은 매일 갱신되는 기존 선수 시즌 스냅샷을 사용한다.
- * 번들 스냅샷을 완전한 기준 집합으로 두고, 같은 kbo_id의 신선한 DB 행만 덮어쓴다.
- * 이름 매칭·평균의 재평균·stale 행의 0 대체는 하지 않는다.
+ * 팀 비교값은 공식 팀기록 raw totals, 최애 비교값은 기존 선수 시즌 스냅샷을 사용한다.
+ * 선수 번들을 완전한 기준 집합으로 두고 같은 kbo_id의 신선한 DB 행만 덮어쓴다.
+ * 두 소스는 독립적으로 fail-close하며 이름 매칭·선수 누적합의 팀 환산은 하지 않는다.
  */
 export function buildCurrentSeasonBaselines(input: CurrentSeasonBaselineInput): CurrentSeasonBaselines | null {
-  if (input.season !== input.currentSeason || input.standings === null) return null;
+  if (input.season !== input.currentSeason) return null;
   const nowMs = input.nowMs ?? Date.now();
-  if (!isFresh(input.generatedAt, nowMs)) return null;
+  const teamSeasonTotals = officialTeamSeasonTotals(input.teamRecords, input.season);
+  if (!isFresh(input.generatedAt, nowMs)) {
+    return { teamSeasonTotals, favoriteSeasonBaselines: null };
+  }
 
   const batters = new Map<string, BatterSeasonBaseline & { team: string }>();
   for (const row of input.bundledBatters) {
     const id = playerId(row);
     const parsed = bundledBatter(row);
-    if (!id || !parsed || batters.has(id)) return null;
+    if (!id || !parsed || batters.has(id)) {
+      return { teamSeasonTotals, favoriteSeasonBaselines: null };
+    }
     batters.set(id, parsed);
   }
   const pitchers = new Map<string, PitcherSeasonBaseline & { team: string; hAllowed: number }>();
   for (const row of input.bundledPitchers) {
     const id = playerId(row);
     const parsed = bundledPitcher(row);
-    if (!id || !parsed || pitchers.has(id)) return null;
+    if (!id || !parsed || pitchers.has(id)) {
+      return { teamSeasonTotals, favoriteSeasonBaselines: null };
+    }
     pitchers.set(id, parsed);
   }
 
@@ -181,26 +258,6 @@ export function buildCurrentSeasonBaselines(input: CurrentSeasonBaselineInput): 
       so: row.so,
     });
     if (parsed) pitchers.set(id, parsed);
-  }
-
-  const standingsByTeam = new Map(input.standings.map((row) => [row.teamId, row]));
-  const teamSeasonTotals = new Map<number, TeamSeasonTotals>();
-  for (const team of TEAMS) {
-    const standing = standingsByTeam.get(team.id);
-    if (!standing || !Number.isInteger(standing.games) || standing.games <= 0) return null;
-    const teamBatters = [...batters.values()].filter((row) => row.team === team.shortName);
-    const teamPitchers = [...pitchers.values()].filter((row) => row.team === team.shortName);
-    if (teamBatters.length === 0 || teamPitchers.length === 0) return null;
-    teamSeasonTotals.set(team.id, {
-      teamId: team.id,
-      completeGames: standing.games,
-      ab: teamBatters.reduce((sum, row) => sum + row.ab, 0),
-      h: teamBatters.reduce((sum, row) => sum + row.h, 0),
-      hr: teamBatters.reduce((sum, row) => sum + row.hr, 0),
-      outs: teamPitchers.reduce((sum, row) => sum + row.outs, 0),
-      er: teamPitchers.reduce((sum, row) => sum + row.er, 0),
-      hAllowed: teamPitchers.reduce((sum, row) => sum + row.hAllowed, 0),
-    });
   }
 
   const favoriteSeasonBaselines = new Map<string, FavoriteSeasonBaselineSnapshot>();

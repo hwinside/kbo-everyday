@@ -588,14 +588,21 @@ console.log("\n[7] 시즌 비교 소스 분리 — 직관 원장 / 기존 시즌
   ok("[시즌 스냅샷 실패] B1/C1 attendance_only", noSnapshot.metrics.B1.state === "attendance_only" && noSnapshot.metrics.C1.state === "attendance_only");
 }
 
-// ── 8) 기존 현재시즌 스냅샷 파서/풀링/freshness ──────────────────────────────
-console.log("\n[8] 기존 현재시즌 스냅샷 — kbo_id exact / pooled totals / stale fallback");
+// ── 8) 팀 공식기록 / 선수 현재시즌 스냅샷 분리 ───────────────────────────────
+console.log("\n[8] 팀 공식기록 / 선수 현재시즌 스냅샷 분리");
 {
   const nowMs = Date.parse("2026-08-01T12:00:00Z");
-  const standings = TEAMS.map((team) => ({
-    teamId: team.id, teamName: team.shortName, games: 100,
-    wins: 50, losses: 45, draws: 5, winRate: 0.5, gamesBehind: 0,
-  }));
+  const teamRecords = {
+    season: 2026,
+    batting: TEAMS.map((team) => ({
+      teamId: team.id, slug: team.slug, avg: ".270", hr: 70,
+      games: 100, ab: 1_000, hits: 270,
+    })),
+    pitching: TEAMS.map((team) => ({
+      teamId: team.id, slug: team.slug, era: "4.80",
+      games: 100, inningsOuts: 2_700, er: 480, hitsAllowed: 900,
+    })),
+  };
   const batters = TEAMS.flatMap((team, index) => [
     { kboId: `B${index}A`, team: team.shortName, games: 90, ab: 100, hits: 30, hr: 10, rbi: 40 },
     { kboId: `B${index}B`, team: team.shortName, games: 80, ab: 50, hits: 10, hr: 2, rbi: 15 },
@@ -606,32 +613,49 @@ console.log("\n[8] 기존 현재시즌 스냅샷 — kbo_id exact / pooled total
   ]);
   const built = buildCurrentSeasonBaselines({
     season: 2026, currentSeason: 2026, generatedAt: "2026-08-01T11:00:00Z", nowMs,
-    standings, favoriteIds: ["B0A", "없는선수"], bundledBatters: batters,
+    teamRecords, favoriteIds: ["B0A", "B0B", "없는선수"], bundledBatters: batters,
     bundledPitchers: pitchers,
     liveBatters: [
-      { kbo_id: "B0A", team: "LG", games: 91, ab: 120, hits: 48, hr: 11, rbi: 41, updated_at: "2026-08-01T11:30:00Z" },
+      // 이적선수 결함주입: 현재소속·누적값이 달라도 팀 공식기록에는 섞이지 않아야 한다.
+      { kbo_id: "B0A", team: "키움", games: 91, ab: 120, hits: 48, hr: 999, rbi: 41, updated_at: "2026-08-01T11:30:00Z" },
       { kbo_id: "B0B", team: "LG", games: 0, ab: 0, hits: 0, hr: 0, rbi: 0, updated_at: "2026-05-01T00:00:00Z" },
     ],
     livePitchers: [],
   });
-  const lg = built?.teamSeasonTotals.get(LG);
-  ok("현재시즌만 지원·10구단 exact", built !== null && built.teamSeasonTotals.size === 10);
-  ok("팀 AVG pooled totals ΣH/ΣAB (평균 재평균 금지)", lg?.h === 58 && lg.ab === 170);
-  ok("팀 ERA pooled totals 27×ΣER/Σouts", lg?.er === 5 && lg.outs === 33);
-  ok("fresh DB는 kbo_id exact overlay", built?.favoriteSeasonBaselines.get("B0A")?.batter?.h === 48);
-  ok("stale DB 0 덮어쓰기 금지", lg?.ab === 170 && lg.h === 58);
-  ok("이름 fallback 없음", built?.favoriteSeasonBaselines.get("없는선수")?.batter === null);
+  const lg = built?.teamSeasonTotals?.get(LG);
+  const kiwoom = built?.teamSeasonTotals?.get(TEAMS.find((team) => team.shortName === "키움")!.id);
+  ok("공식 팀기록 10구단 exact", built?.teamSeasonTotals?.size === 10);
+  ok("팀 AVG/ERA는 공식 raw totals", lg?.h === 270 && lg.ab === 1_000 && lg.er === 480 && lg.outs === 2_700);
+  ok("이적선수 누적 999HR이 현재 팀값을 오염하지 않음", kiwoom?.hr === 70);
+  ok("fresh DB는 최애 kbo_id exact overlay", built?.favoriteSeasonBaselines?.get("B0A")?.batter?.h === 48);
+  ok("stale DB 0 덮어쓰기 금지", built?.favoriteSeasonBaselines?.get("B0B")?.batter?.ab === 50);
+  ok("이름 fallback 없음", built?.favoriteSeasonBaselines?.get("없는선수")?.batter === null);
   ok("이닝 파서 10 2/3·1/3 exact", parseSeasonInningsOuts("10 2/3") === 32 && parseSeasonInningsOuts("1/3") === 1 && parseSeasonInningsOuts("10.2") === null);
   ok("2025는 현재시즌 snapshot 사용 금지", buildCurrentSeasonBaselines({
     season: 2025, currentSeason: 2026, generatedAt: "2026-08-01T11:00:00Z", nowMs,
-    standings, favoriteIds: [], bundledBatters: batters, bundledPitchers: pitchers,
+    teamRecords, favoriteIds: [], bundledBatters: batters, bundledPitchers: pitchers,
     liveBatters: [], livePitchers: [],
   }) === null);
-  ok("stale 번들 snapshot은 0 대신 fail-close", buildCurrentSeasonBaselines({
+  const stalePlayers = buildCurrentSeasonBaselines({
     season: 2026, currentSeason: 2026, generatedAt: "2026-07-01T00:00:00Z", nowMs,
-    standings, favoriteIds: [], bundledBatters: batters, bundledPitchers: pitchers,
+    teamRecords, favoriteIds: [], bundledBatters: batters, bundledPitchers: pitchers,
     liveBatters: [], livePitchers: [],
-  }) === null);
+  });
+  ok("선수 snapshot stale은 C만 fail-close·팀 공식값 유지", stalePlayers?.favoriteSeasonBaselines === null && stalePlayers.teamSeasonTotals?.size === 10);
+  const missingTeam = buildCurrentSeasonBaselines({
+    season: 2026, currentSeason: 2026, generatedAt: "2026-08-01T11:00:00Z", nowMs,
+    teamRecords: { ...teamRecords, batting: teamRecords.batting.slice(1) },
+    favoriteIds: ["B0A"], bundledBatters: batters, bundledPitchers: pitchers,
+    liveBatters: [], livePitchers: [],
+  });
+  ok("공식 팀 1곳 누락은 B만 fail-close·최애 유지", missingTeam?.teamSeasonTotals === null && missingTeam.favoriteSeasonBaselines?.get("B0A")?.batter !== null);
+  const mismatchedRate = buildCurrentSeasonBaselines({
+    season: 2026, currentSeason: 2026, generatedAt: "2026-08-01T11:00:00Z", nowMs,
+    teamRecords: { ...teamRecords, batting: teamRecords.batting.map((row, index) => index === 0 ? { ...row, avg: ".999" } : row) },
+    favoriteIds: [], bundledBatters: batters, bundledPitchers: pitchers,
+    liveBatters: [], livePitchers: [],
+  });
+  ok("공식 published/raw 불일치는 0 대신 B fail-close", mismatchedRate?.teamSeasonTotals === null);
 }
 
 console.log(`\n결과: ${pass} pass / ${fail} fail`);

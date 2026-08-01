@@ -37,6 +37,7 @@ import {
 } from "@/lib/venue-stats/aggregate";
 import type { SeasonSupportStatus } from "@/lib/venue-stats/types";
 import { buildCurrentSeasonBaselines } from "@/lib/venue-stats/current-season-baseline";
+import { loadCachedTeamRecords } from "@/app/api/team-records/route";
 
 export const maxDuration = 60;
 
@@ -424,7 +425,15 @@ export async function GET(req: NextRequest) {
   const currentTeamId =
     typeof profileResult.data?.team_id === "number" ? profileResult.data.team_id : null;
 
-  const [gamesById, logsResult, ledgersResult, seasonAggregates, standings, liveSeasonSnapshots] =
+  const [
+    gamesById,
+    logsResult,
+    ledgersResult,
+    seasonAggregates,
+    standings,
+    liveSeasonSnapshots,
+    teamRecords,
+  ] =
     await Promise.all([
       fetchAttendanceGamesWithinDeadline(rows, {
         fetcher: (date) => fetchGames(date, REGULAR_SEASON_SR_ID),
@@ -440,6 +449,9 @@ export async function GET(req: NextRequest) {
       seasonSupported
         ? fetchLiveSeasonSnapshots()
         : Promise.resolve({ batters: [], pitchers: [] }),
+      seasonSupported
+        ? loadCachedTeamRecords(requestedSeason).catch(() => null)
+        : Promise.resolve(null),
     ]);
 
   // 로그/ledger 조회 실패는 fail-closed — ledger 없음 취급(incomplete)으로 B/C가 partial로 강등된다.
@@ -450,7 +462,7 @@ export async function GET(req: NextRequest) {
         season: requestedSeason,
         currentSeason: nowYear,
         generatedAt: oldestStatsGeneratedAt(),
-        standings,
+        teamRecords,
         favoriteIds: favorites.map((favorite) => favorite.playerId),
         bundledBatters,
         bundledPitchers,
