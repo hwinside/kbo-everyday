@@ -43,10 +43,12 @@ import {
   RAG_RETRIEVAL_MODE,
   RAG_SYSTEM_PROMPT,
   rankEvidenceByQuery,
+  searchSourcePriorityCandidates,
   sanitizeEvidenceContent,
   selectEvidence,
   validateRagResponse,
   type RagEvidence,
+  type RagDocumentSourceKind,
 } from "../../src/lib/baseball-qa/rag/retrieve";
 import { RAG_EMBEDDING_DIM } from "../../src/lib/baseball-qa/rag/contracts";
 import { buildResolutionSourceRow } from "../../src/lib/baseball-qa/rag/source-resolution";
@@ -1514,13 +1516,17 @@ async function verifyServingContractOnRealDb(): Promise<void> {
   await insertSource("namu:player:69102", "69102", "문보경");
   await insertSource("namu:player:52605", "52605", "김도영");
 
-  const ingest = async (sourceKey: string, entityId: string, title: string, content: string) => {
+  const claimSource = async (sourceKey: string) => {
     const claimed = await db.query<{ claim_token: string; claim_generation: number }>(
-      "SELECT claim_token, claim_generation FROM public.claim_baseball_genius_rag_batch(5, 300) WHERE source_key = $1",
+      "SELECT claim_token, claim_generation FROM public.claim_baseball_genius_rag_batch_scoped(1, 300, ARRAY[$1])",
       [sourceKey],
     );
     const claim = claimed.rows[0];
     assert.ok(claim, `${sourceKey} claim 실패`);
+    return claim;
+  };
+  const ingest = async (sourceKey: string, entityId: string, title: string, content: string) => {
+    const claim = await claimSource(sourceKey);
     const hash = `hash-${entityId}`;
     await db.query(
       `SELECT public.upsert_baseball_genius_rag_chunk($1,$2,$3,'player',$4,$5,'https://namu.wiki/w/x',
@@ -1571,16 +1577,100 @@ async function verifyServingContractOnRealDb(): Promise<void> {
   assert.match(finalAnswer, /출처: 문보경/);
   assert.match(finalAnswer, /rev rev1/);
 
-  // 4) R4 다문서 generation — 서로 다른 revision/hash/crawledAt의 하위문서를 한 번에 atomic swap.
+  // 4) source-priority bounded fetch — Namu 41건 뒤 Wikipedia 1건도 DB 절단 전에 보존한다.
+  const wikipediaUrl = unresolvedSource.candidate_urls[0];
+  const wikipediaClaim = await claimSource("wikipedia:player:69102");
+  await db.query(
+    `SELECT public.upsert_baseball_genius_rag_chunk($1,$2,$3,'player','69102','문보경',$4,
+      'wiki-rev','본문',0,$5,'wiki-doc-hash','wiki-chunk-hash','tier2',$6::timestamptz,
+      '2026-08-01'::date,$7::extensions.vector,'{}'::jsonb)`,
+    ["wikipedia:player:69102", wikipediaClaim.claim_token, wikipediaClaim.claim_generation,
+     wikipediaUrl, "위키피디아 문보경 기본 근거이며 선수 소개를 담은 충분히 긴 서술형 문장입니다.", crawledAt, embedding],
+  );
+  assert.equal((await db.query<{ ok: boolean }>(
+    "SELECT public.complete_baseball_genius_rag_source($1,$2,$3,'wiki-rev','wiki-doc-hash',$4::timestamptz,now()+interval '30 days') AS ok",
+    ["wikipedia:player:69102", wikipediaClaim.claim_token, wikipediaClaim.claim_generation, crawledAt],
+  )).rows[0].ok, true);
+
   await db.query("UPDATE public.genius_rag_sources SET ingestion_status='stale' WHERE source_key='namu:player:69102'");
-  const generationTwo = (await db.query<{ claim_token: string; claim_generation: number }>(
-    "SELECT claim_token,claim_generation FROM public.claim_baseball_genius_rag_batch(1,900) WHERE source_key='namu:player:69102'",
-  )).rows[0];
-  assert.ok(generationTwo);
+  const priorityNamuClaim = await claimSource("namu:player:69102");
+  for (let index = 0; index < 41; index += 1) {
+    await db.query(
+      `SELECT public.upsert_baseball_genius_rag_chunk($1,$2,$3,'player','69102','문보경','https://namu.wiki/w/x',
+        'namu-priority-rev',$4,$5::integer,$6,'namu-priority-doc',$7,'tier2',$8::timestamptz,
+        '2026-08-01'::date,$9::extensions.vector,'{}'::jsonb)`,
+      ["namu:player:69102", priorityNamuClaim.claim_token, priorityNamuClaim.claim_generation,
+       `우선순위/${index}`, index,
+       `나무위키 고유사도 근거 ${index}번이며 선수 별명과 소개를 담은 충분히 긴 서술형 문장입니다.`,
+       `namu-priority-${index}`, crawledAt, embedding],
+    );
+  }
+  assert.equal((await db.query<{ ok: boolean }>(
+    "SELECT public.complete_baseball_genius_rag_source($1,$2,$3,'namu-priority-rev','namu-priority-doc',$4::timestamptz,now()+interval '30 days') AS ok",
+    ["namu:player:69102", priorityNamuClaim.claim_token, priorityNamuClaim.claim_generation, crawledAt],
+  )).rows[0].ok, true);
+
+  const legacyCut = await db.query<{ source_kind: string }>(
+    `SELECT source_kind FROM public.genius_rag_serving_chunks
+      WHERE entity_type='player' AND entity_id='69102'
+      ORDER BY source_kind ASC LIMIT 40`,
+  );
+  assert.equal(legacyCut.rows.length, 40);
+  assert.equal(legacyCut.rows.filter((row) => row.source_kind === "wikipedia_document").length, 0,
+    "RED 재현 실패: entity 전체 limit(40)에서 Wikipedia가 절단되어야 한다");
+
+  const priorityEvidence = await searchSourcePriorityCandidates(
+    async (sourceKind: RagDocumentSourceKind, limit: number) => {
+      const fetched = await db.query<{
+        content: string; page_title: string; canonical_url: string; revision: string;
+        section_path: string; as_of: string; source_grade: string; embedding: string;
+      }>(
+        `SELECT content,page_title,canonical_url,revision,section_path,as_of::text,source_grade,embedding::text
+           FROM public.genius_rag_serving_chunks
+          WHERE entity_type='player' AND entity_id='69102' AND source_kind=$1
+          LIMIT $2`,
+        [sourceKind, limit],
+      );
+      return fetched.rows.map((row) => ({
+        content: row.content,
+        pageTitle: row.page_title,
+        canonicalUrl: row.canonical_url,
+        revision: row.revision,
+        sectionPath: row.section_path,
+        asOf: row.as_of,
+        sourceGrade: "tier2" as const,
+        embedding: row.embedding,
+      }));
+    },
+    JSON.parse(embedding) as number[],
+    orderTier2Evidence,
+  );
+  assert.equal(tier2SourceOf(priorityEvidence[0].canonicalUrl), "wikipedia",
+    "Namu 41건 뒤 Wikipedia가 DB 후보 절단으로 소실되면 안 된다");
+
+  // 5) R4 다문서 generation — 서로 다른 revision/hash/crawledAt의 하위문서를 한 번에 atomic swap.
+  await db.query("UPDATE public.genius_rag_sources SET ingestion_status='stale' WHERE source_key='namu:player:69102'");
+  const generationTwo = await claimSource("namu:player:69102");
   const subdocs = [
     { revision: "root-rev", hash: "root-hash", crawled: "2026-08-01T01:00:00Z", path: "문보경", canonical: "https://namu.wiki/w/x" },
-    { revision: "career-rev", hash: "career-hash", crawled: "2026-08-01T01:00:10Z", path: "문보경/선수 경력/2024년", canonical: "https://namu.wiki/w/%EB%AC%B8%EB%B3%B4%EA%B2%BD/%EC%84%A0%EC%88%98%20%EA%B2%BD%EB%A0%A5/2024%EB%85%84" },
+    { revision: "career-rev", hash: "career-hash", crawled: "2026-08-01T01:00:10Z", path: "문보경/선수 경력/2024년", canonical: "https://namu.wiki/w/x/%EC%84%A0%EC%88%98%20%EA%B2%BD%EB%A0%A5/2024%EB%85%84" },
   ];
+  await assert.rejects(
+    db.query(
+      `SELECT public.upsert_baseball_genius_rag_chunk($1,$2,$3,'player','69102','문보경',$4,
+        'foreign-rev','문보경/오염',99,$5,'foreign-hash','foreign-chunk','tier2',$6::timestamptz,
+        '2026-08-01'::date,$7::extensions.vector,$8::jsonb)`,
+      [
+        "namu:player:69102", generationTwo.claim_token, generationTwo.claim_generation,
+        "https://namu.wiki/w/%EA%B9%80%EB%8F%84%EC%98%81",
+        "다른 선수 canonical을 metadata와 함께 위조한 충분히 긴 오염 근거 문장입니다.",
+        crawledAt, embedding,
+        JSON.stringify({ documentCanonicalUrl: "https://namu.wiki/w/%EA%B9%80%EB%8F%84%EC%98%81" }),
+      ],
+    ),
+    /stale or mismatched rag chunk owner\/provenance/,
+    "다른 선수 canonical은 caller metadata가 일치해도 거부해야 한다",
+  );
   for (const [index, subdoc] of subdocs.entries()) {
     await db.query(
       `SELECT public.upsert_baseball_genius_rag_chunk($1,$2,$3,'player','69102','문보경',$4,
@@ -1600,13 +1690,86 @@ async function verifyServingContractOnRealDb(): Promise<void> {
   )).rows[0].ok;
   assert.equal(multiCompleted, true, "revision이 다른 하위문서 generation이 complete되어야 한다");
   const multiServed = await db.query<{ section_path: string; canonical_url: string }>(
-    "SELECT section_path,canonical_url FROM public.genius_rag_serving_chunks WHERE entity_id='69102' ORDER BY section_path",
+    "SELECT section_path,canonical_url FROM public.genius_rag_serving_chunks WHERE source_key='namu:player:69102' ORDER BY section_path",
   );
   assert.deepEqual(multiServed.rows.map((row) => row.section_path), ["문보경", "문보경/선수 경력/2024년"]);
   assert.equal(multiServed.rows[1].canonical_url, subdocs[1].canonical, "서빙 provenance는 실제 하위문서 canonical이어야 한다");
 
+  // 6) expired partial purge — active generation은 보존하고 만료된 stage만 reclaim 때 삭제한다.
+  await db.query("UPDATE public.genius_rag_sources SET ingestion_status='stale' WHERE source_key='namu:player:69102'");
+  const partialClaim = await claimSource("namu:player:69102");
+  await db.query(
+    `SELECT public.upsert_baseball_genius_rag_chunk($1,$2,$3,'player','69102','문보경','https://namu.wiki/w/x',
+      'partial-rev','문보경/partial',0,$4,'partial-doc','partial-chunk','tier2',$5::timestamptz,
+      '2026-08-01'::date,$6::extensions.vector,'{}'::jsonb)`,
+    ["namu:player:69102", partialClaim.claim_token, partialClaim.claim_generation,
+     "만료될 partial generation에만 존재하는 충분히 긴 stage 근거 문장입니다.", crawledAt, embedding],
+  );
+  await db.query(
+    "UPDATE public.genius_rag_sources SET lease_until=clock_timestamp()-interval '1 second' WHERE source_key='namu:player:69102'",
+  );
+  const reclaimed = await claimSource("namu:player:69102");
+  assert.ok(reclaimed.claim_generation > partialClaim.claim_generation);
+  const generationsAfterPurge = await db.query<{ claim_generation: number; c: number }>(
+    `SELECT claim_generation,count(*)::int AS c FROM public.genius_rag_chunks
+      WHERE source_key='namu:player:69102' GROUP BY claim_generation ORDER BY claim_generation`,
+  );
+  assert.deepEqual(generationsAfterPurge.rows, [
+    { claim_generation: generationTwo.claim_generation, c: 2 },
+  ], "reclaim은 active generation을 보존하고 expired partial generation만 purge해야 한다");
+
+  // 7) ready active → missing → resolved 복구: unresolved 판정과 기존 snapshot은 공존할 수 없다.
+  const namuResolutionBase = {
+    sourceKey: "namu:player:69102",
+    sourceKind: "namu_document" as const,
+    entityId: "69102",
+    pageTitle: "문보경",
+    candidateUrls: ["https://namu.wiki/w/x"],
+  };
+  await upsertResolutionSource(buildResolutionSourceRow({
+    ...namuResolutionBase,
+    canonicalUrl: null,
+    resolutionStatus: "missing",
+    resolutionNote: "fixture missing after ready",
+    updatedAt: "2026-08-02T01:00:00Z",
+  }));
+  const invalidated = await db.query<{
+    resolution_status: string; ingestion_status: string; active_claim_generation: number; chunks: number; served: number;
+  }>(
+    `SELECT source.resolution_status,source.ingestion_status,source.active_claim_generation,
+            (SELECT count(*)::int FROM public.genius_rag_chunks chunk WHERE chunk.source_key=source.source_key) AS chunks,
+            (SELECT count(*)::int FROM public.genius_rag_serving_chunks served WHERE served.source_key=source.source_key) AS served
+       FROM public.genius_rag_sources source WHERE source.source_key='namu:player:69102'`,
+  );
+  assert.deepEqual(invalidated.rows[0], {
+    resolution_status: "missing", ingestion_status: "not_started", active_claim_generation: 0, chunks: 0, served: 0,
+  });
+
+  await upsertResolutionSource(buildResolutionSourceRow({
+    ...namuResolutionBase,
+    canonicalUrl: "https://namu.wiki/w/x",
+    resolutionStatus: "resolved",
+    resolutionNote: "fixture resolved again",
+    updatedAt: "2026-08-02T01:01:00Z",
+  }));
+  const recoveryClaim = await claimSource("namu:player:69102");
+  await db.query(
+    `SELECT public.upsert_baseball_genius_rag_chunk($1,$2,$3,'player','69102','문보경','https://namu.wiki/w/x',
+      'recovered-rev','본문',0,$4,'recovered-doc','recovered-chunk','tier2',$5::timestamptz,
+      '2026-08-01'::date,$6::extensions.vector,'{}'::jsonb)`,
+    ["namu:player:69102", recoveryClaim.claim_token, recoveryClaim.claim_generation,
+     "resolved 복구 뒤 다시 서빙되어야 하는 충분히 긴 회복 근거 문장입니다.", crawledAt, embedding],
+  );
+  assert.equal((await db.query<{ ok: boolean }>(
+    "SELECT public.complete_baseball_genius_rag_source($1,$2,$3,'recovered-rev','recovered-doc',$4::timestamptz,now()+interval '30 days') AS ok",
+    ["namu:player:69102", recoveryClaim.claim_token, recoveryClaim.claim_generation, crawledAt],
+  )).rows[0].ok, true);
+  assert.equal((await db.query<{ c: number }>(
+    "SELECT count(*)::int AS c FROM public.genius_rag_serving_chunks WHERE source_key='namu:player:69102'",
+  )).rows[0].c, 1, "resolved 복구 뒤 새 snapshot이 다시 서빙되어야 한다");
+
   await db.close();
-  console.log("PASS 실 DB 계약 — stage 미노출 / complete 후 서빙 / entity 필터 / 다문서 mixed provenance atomic swap / migration 멱등");
+  console.log("PASS 실 DB 계약 — source-priority fetch / owner root-prefix / ready invalidation+recovery / expired partial purge");
 }
 
 run().catch((error: unknown) => {

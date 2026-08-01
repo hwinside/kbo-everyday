@@ -88,8 +88,8 @@ END;
 $$;
 
 -- 하위문서 chunk는 root source와 entity/page ownership을 공유하지만 canonical provenance는
--- 실제 하위문서 URL이어야 한다. metadata 값과 canonical_url의 exact 일치까지 검증해
--- 호출자가 임의 URL을 귀속시키지 못하게 한다.
+-- 실제 하위문서 URL이어야 한다. root canonical의 exact `root/…` 하위 prefix와 metadata의
+-- exact 일치를 함께 검증해 호출자가 다른 선수 canonical을 같은 claim에 귀속시키지 못하게 한다.
 CREATE OR REPLACE FUNCTION public.validate_baseball_genius_rag_chunk_owner()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -120,7 +120,8 @@ BEGIN
       v_source.canonical_url <> NEW.canonical_url
       AND NOT (
         v_source.source_kind = 'namu_document'
-        AND NEW.canonical_url LIKE 'https://namu.wiki/%'
+        AND left(NEW.canonical_url, length(v_source.canonical_url) + 1)
+              = v_source.canonical_url || '/'
         AND NEW.metadata ->> 'documentCanonicalUrl' = NEW.canonical_url
       )
     )
@@ -129,6 +130,34 @@ BEGIN
     RAISE EXCEPTION 'stale or mismatched rag chunk owner/provenance';
   END IF;
   NEW.source_kind := v_source.source_kind;
+  RETURN NEW;
+END;
+$$;
+
+-- resolution의 canonical/status도 identity fingerprint에 포함된다. ready source가 missing/blocked
+-- 로 재판정되면 이 trigger가 마지막 성공 snapshot과 진행 중 claim을 같은 UPDATE에서 무효화한다.
+-- 그렇지 않으면 ready provenance CHECK가 UPDATE를 거부하고 옛 active snapshot이 계속 서빙된다.
+CREATE OR REPLACE FUNCTION public.invalidate_baseball_genius_rag_identity_drift()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF OLD.identity_fingerprint IS DISTINCT FROM NEW.identity_fingerprint THEN
+    DELETE FROM public.genius_rag_chunks WHERE source_key = OLD.source_key;
+    NEW.ingestion_status := 'not_started';
+    NEW.ingestion_attempts := 0;
+    NEW.lease_until := NULL;
+    NEW.claim_token := NULL;
+    NEW.active_claim_generation := 0;
+    NEW.revision := NULL;
+    NEW.content_hash := NULL;
+    NEW.crawled_at := NULL;
+    NEW.ingested_at := NULL;
+    NEW.stale_after := NULL;
+    NEW.last_error := NULL;
+  END IF;
   RETURN NEW;
 END;
 $$;

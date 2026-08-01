@@ -24,6 +24,8 @@ export function buildResolutionSourceRow(input: ResolutionSourceInput) {
     entityId: input.entityId,
     pageTitle: input.pageTitle,
     candidateUrls: input.candidateUrls,
+    canonicalUrl: input.canonicalUrl,
+    resolutionStatus: input.resolutionStatus,
   })).digest("hex");
   return {
     source_key: input.sourceKey,
