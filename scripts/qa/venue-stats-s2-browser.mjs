@@ -39,24 +39,31 @@ mkdirSync(resolve(ROOT, "tmp/qa-screenshots"), { recursive: true });
 writeFileSync(resolve(GEN, "auth.jsx"), `
 // 실제 AuthContext 처럼 매 렌더마다 새 객체를 만들지 않는 안정 참조.
 const AUTH={
-  user:{id:"qa",email:"harinclaw@gmail.com"},
+  user:{id:"qa",email:"venue-stats-qa@example.invalid"},
   profile:{favorite_players:[
     {playerId:"53123",name:"오스틴",teamId:1,position:"내야수"},
     {playerId:"p2",name:"이최애",teamId:9,position:"투수"}
   ]}
 };
-export const useAuth=()=>AUTH;`);
+const ANON={user:null,profile:null,loading:false};
+export const useAuth=()=>new URLSearchParams(window.location.search).has("anonymous")?ANON:AUTH;`);
 writeFileSync(resolve(GEN, "client.js"), `
 export async function getSafeSession(){return {access_token:"qa"};}`);
 writeFileSync(resolve(GEN, "back.js"), `
 export const useSafeBack=()=>()=>{};`);
 writeFileSync(resolve(GEN, "image.jsx"), `
 export default function Image(p){return <img {...p}/>;}`);
+writeFileSync(resolve(GEN, "link.jsx"), `
+export default function Link({href,children,...props}){return <a href={href} {...props}>{children}</a>;}`);
 writeFileSync(resolve(GEN, "entry.jsx"), `
 import React from "react";
 import {createRoot} from "react-dom/client";
 import VenueStatsDashboard from "@/components/my/VenueStatsDashboard";
-createRoot(document.getElementById("root")).render(<VenueStatsDashboard/>);`);
+import VenueStatsEntryCard from "@/components/my/VenueStatsEntryCard";
+import VenueStatsPage from "@/app/(main)/my/venue-stats/page";
+const path=window.location.pathname;
+const App=path==="/my"?VenueStatsEntryCard:path==="/my/venue-stats"?VenueStatsPage:VenueStatsDashboard;
+createRoot(document.getElementById("root")).render(<App/>);`);
 
 await build({
   entryPoints: [resolve(GEN, "entry.jsx")],
@@ -73,6 +80,7 @@ await build({
     "@/lib/supabase/client": resolve(GEN, "client.js"),
     "@/lib/hooks/useSafeBack": resolve(GEN, "back.js"),
     "next/image": resolve(GEN, "image.jsx"),
+    "next/link": resolve(GEN, "link.jsx"),
   },
   logLevel: "error",
 });
@@ -352,6 +360,21 @@ const page = await browser.newPage({ viewport: { width: 390, height: 844 }, devi
 page.on("pageerror", (error) => console.log(`  [pageerror] ${error.message}`));
 
 try {
+  // 일반 로그인 사용자의 실제 진입 DOM → 클릭 → 실제 대시보드 DOM.
+  await page.goto(`http://127.0.0.1:${port}/my`, { waitUntil: "domcontentloaded" });
+  const entry = page.getByTestId("venue-stats-entry");
+  await entry.waitFor();
+  await entry.click();
+  await page.waitForURL(`http://127.0.0.1:${port}/my/venue-stats`);
+  await page.locator('[data-testid="venue-stats-dashboard"]').waitFor();
+
+  // 익명 직접 URL은 빈 화면/데이터 호출이 아니라 명시적 로그인 유도로 차단한다.
+  await page.goto(`http://127.0.0.1:${port}/my/venue-stats?anonymous=1`, { waitUntil: "domcontentloaded" });
+  await page.getByTestId("venue-stats-login-required").waitFor();
+  if (await page.locator('[data-testid="venue-stats-dashboard"]').count()) {
+    throw new Error("anonymous direct URL rendered venue stats dashboard");
+  }
+
   await page.goto(`http://127.0.0.1:${port}`, { waitUntil: "domcontentloaded" });
   await page.getByText("63", { exact: true }).waitFor();
   const lgSegment = page.getByText("LG 응원 구간", { exact: true }).nth(1).locator("../..");
