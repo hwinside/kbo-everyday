@@ -11,6 +11,7 @@ import {
   Legend,
   ResponsiveContainer,
 } from "recharts";
+import StackedTooltip from "@/components/admin/StackedTooltip";
 
 type TrafficRow = { day: string; platform: string; pv: number; uv: number };
 type TrafficResp = {
@@ -61,15 +62,6 @@ function getPin(): string {
   if (typeof window === "undefined") return "";
   return sessionStorage.getItem("admin_pin") || "";
 }
-
-const tooltipStyle = {
-  contentStyle: {
-    background: "#1C1C1F",
-    border: "1px solid rgba(255,255,255,0.1)",
-    borderRadius: "8px",
-  },
-  labelStyle: { color: "#8E8E93" },
-};
 
 function fmt(n: number): string {
   return n.toLocaleString("ko-KR");
@@ -444,7 +436,7 @@ export default function TrafficPage() {
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
               <XAxis dataKey="day" stroke="#8E8E93" fontSize={11} />
               <YAxis stroke="#8E8E93" fontSize={11} allowDecimals={false} />
-              <Tooltip {...tooltipStyle} />
+              <Tooltip content={<StackedTooltip showTotal />} />
               <Legend wrapperStyle={{ fontSize: 12 }} />
               <Bar dataKey="ios" name="iOS 앱" stackId="dau" fill="#0A84FF" />
               <Bar dataKey="aos" name="안드 앱" stackId="dau" fill="#3DDC84" radius={[4, 4, 0, 0]} />
@@ -505,7 +497,7 @@ export default function TrafficPage() {
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
               <XAxis dataKey="day" stroke="#8E8E93" fontSize={11} />
               <YAxis stroke="#8E8E93" fontSize={11} />
-              <Tooltip {...tooltipStyle} />
+              <Tooltip content={<StackedTooltip showTotal />} />
               <Legend wrapperStyle={{ fontSize: 12 }} />
               {activePlatforms.map((p) => (
                 <Bar

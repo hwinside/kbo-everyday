@@ -30,7 +30,6 @@ import type {
   B3Value,
   B4Side,
   B4Value,
-  BTeamValue,
   C1Entry,
   C2Entry,
   C4Entry,
@@ -56,7 +55,11 @@ import type {
 } from "@/lib/venue-stats/types";
 
 // ── §5 표본 가드 상수 ─────────────────────────────────────────────────────────
-export const MIN_FINAL_GAMES = 3; // 승률/스플릿/팀 경기당 지표
+// 승률/스플릿/팀 경기당 지표 표본 가드. 순수 leaf 모듈(state.ts)이 SSOT —
+// 클라이언트 번들이 node 전용 의존을 끌지 않도록 여기서는 재수출만 한다.
+import { MIN_FINAL_GAMES } from "@/lib/venue-stats/state";
+
+export { MIN_FINAL_GAMES };
 export const MIN_TEAM_AB = 60; // B1
 export const MIN_TEAM_OUTS = 81; // B2
 export const MIN_FAVORITE_AB = 10; // C1
@@ -423,13 +426,18 @@ function buildA1(ctx: Ctx): MetricEnvelope<A1Value> {
           ? "ready"
           : "sample_limited"
         : "attendance_only";
+      // §5 표본 미달이어도 직관 사실값(W/L/D·승률)은 그대로 노출하고 state 배지로만 경고한다
+      // (값을 숨기면 실제 기록이 0승 0패로 보여 더 나쁜 오정보 — 2026-07-31 하린아빠 결정).
+      // 비교(teamComparable·deltaPp)는 ready에서만 제공해 fail-closed 계약을 유지한다.
       return {
         key: String(teamId),
         state: itemState as MetricState,
         value:
           itemState === "ready"
             ? { attendance: teamAttendance, teamComparable: comparable, deltaPp }
-            : null,
+            : itemState === "sample_limited"
+              ? { attendance: teamAttendance, teamComparable: null, deltaPp: null }
+              : null,
         n: teamGames.length,
         denominator: {
           attendanceFinalGames: teamGames.length,
@@ -453,7 +461,11 @@ function buildA1(ctx: Ctx): MetricEnvelope<A1Value> {
     };
     return envelope;
   }
-  if (state === "sample_limited") return envelope;
+  if (state === "sample_limited") {
+    // 표본 미달 — 직관 사실값은 유지하고 팀 비교만 fail-closed (위 mixed 항과 동일 계약).
+    envelope.value = { attendance, teamComparable: null, deltaPp: null };
+    return envelope;
+  }
 
   const teamSeasonGames = standing.wins + standing.losses + standing.draws;
   const teamRate = ratio(standing.wins, teamSeasonGames);
@@ -512,6 +524,7 @@ function buildSplit<T extends WinLossDraw>(
     groups.set(key, list);
   }
   const keys = [...groups.keys()].sort();
+  // top-level value 는 표본 충족 cell 만(대표값 계약 유지). 미달 cell 은 item 으로 사실값+배지 노출.
   envelope.value = keys
     .filter((key) => groups.get(key)!.length >= MIN_FINAL_GAMES)
     .map((key) => cellOf(key, wld(groups.get(key)!)));
@@ -521,7 +534,8 @@ function buildSplit<T extends WinLossDraw>(
     return {
       key,
       state: itemState as MetricState,
-      value: itemState === "ready" ? cellOf(key, wld(games)) : null,
+      // 표본 미달 cell 도 승·패·무 사실값을 노출하고 state 배지로 경고한다.
+      value: cellOf(key, wld(games)),
       n: games.length,
       denominator: { finalGames: games.length },
     };
@@ -589,6 +603,28 @@ interface BTeamComputed {
   };
   unknownGames: number;
   finalGames: number;
+}
+
+/**
+ * 표본 미달(sample_limited) B 지표는 직관 사실값만 남기고 시즌 baseline·delta를 fail-closed 한다.
+ * "3경기부터 팀 시즌 비교를 보여드려요" 안내문과 카드가 충돌하면 안 된다 (2026-07-31 삼순 리뷰).
+ */
+function stripSeasonBaseline(id: "B1" | "B2" | "B3" | "B4", value: unknown): unknown {
+  if (value == null) return value;
+  if (id === "B1") {
+    const v = value as B1Value;
+    return { attendanceAvg: v.attendanceAvg, seasonAvg: null, delta: null } satisfies B1Value;
+  }
+  if (id === "B2") {
+    const v = value as B2Value;
+    return { attendanceEra: v.attendanceEra, seasonEra: null, delta: null } satisfies B2Value;
+  }
+  // B3는 시즌 baseline이 없는 직관 단독 지표라 그대로 둔다.
+  if (id === "B3") return value;
+  const v = value as B4Value;
+  const strip = (side: B4Side | null): B4Side | null =>
+    side == null ? null : { attendancePerGame: side.attendancePerGame, seasonPerGame: null, delta: null };
+  return { hr: strip(v.hr), hitsAllowed: strip(v.hitsAllowed) } satisfies B4Value;
 }
 
 function computeBForTeam(ctx: Ctx, teamId: number, games: ScopeGame[]): BTeamComputed {
@@ -762,10 +798,21 @@ function buildB(
           : part.sampleMet
             ? "ready"
             : "sample_limited";
+      // 표본 미달 또는 시즌 baseline만 partial이면 직관 사실값만 노출한다.
+      // 직관 경기 자체가 incomplete인 partial_data는 수치도 불완전하므로 전체 null.
+      // ⚠️ mixed 여기서 part.value 는 BTeamValue 가 아니라 현재 id 하나의 값(B1Value 등)이다.
+      // BTeamValue 로 cast 해 strip 하면 shape 가 깨져 attendanceAvg 까지 사라진다(2026-07-31 삼순 P0-1).
       const item: ItemEnvelope = {
         key: String(teamId),
         state: itemState,
-        value: itemState === "ready" ? (part.value as BTeamValue | null) : null,
+        value:
+          itemState === "partial_data"
+            ? games.some((game) => !game.complete)
+              ? null
+              : stripSeasonBaseline(id, part.value)
+            : itemState === "sample_limited"
+              ? stripSeasonBaseline(id, part.value)
+              : part.value,
         n: games.length,
         denominator: part.denominator,
         coverage: {
@@ -778,24 +825,35 @@ function buildB(
     return envelope;
   }
 
-  if (state !== "ready" && state !== "sample_limited") return envelope;
+  if (state !== "ready" && state !== "sample_limited" && state !== "partial_data") return envelope;
 
   const teamId = c.snapshotTeams[0];
   const computed = computeBForTeam(ctx, teamId, teamGames.get(teamId) ?? []);
   const part = buildValueFor(computed);
+  const attendanceHasUnknown = attendanceUnknownIds.length > 0;
   envelope.denominator = part.denominator;
-  envelope.value = state === "ready" ? part.value : null;
+  // 표본 미달 또는 시즌 baseline만 partial이면 확정된 직관 사실값은 노출한다.
+  // 시즌 baseline·delta는 null, 직관 경기 자체가 incomplete면 전체 null로 막는다.
+  envelope.value =
+    state === "ready"
+      ? part.value
+      : state === "sample_limited"
+        ? stripSeasonBaseline(id, part.value)
+        : attendanceHasUnknown
+          ? null
+          : stripSeasonBaseline(id, part.value);
   if (id === "B4" && part.components) {
     envelope.components = part.components;
     // sample_limited여도 component envelope로 세부 상태를 드러낸다 (§11).
-    if (state === "sample_limited") {
+    // 직관 값은 유지하되 시즌 baseline·delta는 동일하게 fail-closed.
+    if (state === "sample_limited" || (state === "partial_data" && !attendanceHasUnknown)) {
       for (const component of Object.values(part.components)) {
-        component.state = "sample_limited";
-        component.value = null;
+        component.state = state;
+        const side = component.value as B4Side | null;
+        if (side) component.value = { attendancePerGame: side.attendancePerGame, seasonPerGame: null, delta: null };
       }
     }
   }
-  if (state === "sample_limited") envelope.value = null;
   return envelope;
 }
 
@@ -965,6 +1023,10 @@ function totalUnknown(cc: CContext): number {
   }, 0);
 }
 
+function totalAttendanceUnknown(cc: CContext): number {
+  return cc.attendances.reduce((sum, attendance) => sum + attendance.coverage.unknown, 0);
+}
+
 function playerUnknown(a: FavoriteAttendance, baseline: FavoriteSeasonBaseline | null): number {
   return a.coverage.unknown + (baseline?.coverage.unknown ?? 0);
 }
@@ -986,6 +1048,15 @@ function cCoverageSummary(cc: CContext): Record<string, unknown> {
     perPlayer: cc.attendances.map((a) => ({
       playerId: a.favorite.playerId,
       ...playerCoverage(a, cc.baselines.get(a.favorite.playerId) ?? null),
+    })),
+  };
+}
+
+function cAttendanceCoverageSummary(cc: CContext): Record<string, unknown> {
+  return {
+    perPlayer: cc.attendances.map((attendance) => ({
+      playerId: attendance.favorite.playerId,
+      ...attendance.coverage,
     })),
   };
 }
@@ -1045,17 +1116,24 @@ function buildC1(ctx: Ctx, cc: CContext): MetricEnvelope<C1Entry[]> {
       baseline?.batter != null,
     );
     itemStates.push(itemState);
+    const attendanceOnly = itemState === "partial_data" && a.coverage.unknown === 0;
     const entry: C1Entry | null =
-      itemState === "ready"
+      itemState === "ready" || attendanceOnly
         ? {
             playerId: a.favorite.playerId,
             attendanceAvg: pooledAvg(h, ab),
-            seasonAvg: baseline?.batter ? pooledAvg(baseline.batter.h, baseline.batter.ab) : null,
+            seasonAvg: attendanceOnly || !baseline?.batter
+              ? null
+              : pooledAvg(baseline.batter.h, baseline.batter.ab),
             deltaAvg: null,
             attendanceHrPerGame: ratio(hr, games),
-            seasonHrPerGame: baseline?.batter ? ratio(baseline.batter.hr, baseline.batter.games) : null,
+            seasonHrPerGame: attendanceOnly || !baseline?.batter
+              ? null
+              : ratio(baseline.batter.hr, baseline.batter.games),
             attendanceRbiPerGame: ratio(rbi, games),
-            seasonRbiPerGame: baseline?.batter ? ratio(baseline.batter.rbi, baseline.batter.games) : null,
+            seasonRbiPerGame: attendanceOnly || !baseline?.batter
+              ? null
+              : ratio(baseline.batter.rbi, baseline.batter.games),
             appearances: games,
             ab,
           }
@@ -1114,13 +1192,14 @@ function buildC2(ctx: Ctx, cc: CContext): MetricEnvelope<C2Entry[]> {
     );
     itemStates.push(itemState);
     let entry: C2Entry | null = null;
-    if (itemState === "ready") {
+    const attendanceOnly = itemState === "partial_data" && a.coverage.unknown === 0;
+    if (itemState === "ready" || attendanceOnly) {
       const attendanceEra = pooledEra(er, outs);
-      const seasonEra = baseline?.pitcher
+      const seasonEra = !attendanceOnly && baseline?.pitcher
         ? pooledEra(baseline.pitcher.er, baseline.pitcher.outs)
         : null;
       const attendanceK9 = pooledK9(k, outs);
-      const seasonK9 = baseline?.pitcher
+      const seasonK9 = !attendanceOnly && baseline?.pitcher
         ? pooledK9(baseline.pitcher.k, baseline.pitcher.outs)
         : null;
       entry = {
@@ -1152,25 +1231,24 @@ function buildC2(ctx: Ctx, cc: CContext): MetricEnvelope<C2Entry[]> {
 }
 
 function buildC4(ctx: Ctx, cc: CContext): MetricEnvelope<C4Entry[]> {
-  const state = cPipeline(ctx, { unknownGames: totalUnknown(cc) });
+  const state = cPipeline(ctx, { unknownGames: totalAttendanceUnknown(cc) });
   const envelope: MetricEnvelope<C4Entry[]> = {
     id: "C4",
     state,
     value: [],
     n: 0,
     denominator: { eligibleAttendanceGames: eligibleTotal(cc) },
-    coverage: cCoverageSummary(cc),
+    coverage: cAttendanceCoverageSummary(cc),
     items: [],
   };
   if (state !== "ready" && state !== "sample_limited" && state !== "partial_data") return envelope;
 
   for (const a of cc.attendances) {
     if (a.batterRows.length === 0 && a.coverage.unknown === 0) continue;
-    const baseline = cc.baselines.get(a.favorite.playerId) ?? null;
     const homeRuns = a.batterRows.reduce((s, r) => s + r.hr, 0);
     const games = new Set(a.batterRows.map((r) => r.game_id)).size;
     const itemState: MetricState =
-      playerUnknown(a, baseline) > 0 ? "partial_data" : "ready";
+      a.coverage.unknown > 0 ? "partial_data" : "ready";
     const entry: C4Entry | null =
       itemState === "ready"
         ? { playerId: a.favorite.playerId, homeRuns, appearanceGames: games }
@@ -1182,7 +1260,7 @@ function buildC4(ctx: Ctx, cc: CContext): MetricEnvelope<C4Entry[]> {
       value: entry,
       n: games,
       denominator: { appearanceGames: games },
-      coverage: playerCoverage(a, baseline),
+      coverage: playerCoverage(a, null),
     });
   }
   envelope.n = envelope.items!.length;
@@ -1213,23 +1291,22 @@ function topRow(rows: PlayerGameLogRow[], order: Array<[keyof PlayerGameLogRow, 
 }
 
 function buildC5(ctx: Ctx, cc: CContext): MetricEnvelope<C5Entry[]> {
-  const state = cPipeline(ctx, { unknownGames: totalUnknown(cc) });
+  const state = cPipeline(ctx, { unknownGames: totalAttendanceUnknown(cc) });
   const envelope: MetricEnvelope<C5Entry[]> = {
     id: "C5",
     state,
     value: [],
     n: 0,
     denominator: { eligibleAttendanceGames: eligibleTotal(cc) },
-    coverage: cCoverageSummary(cc),
+    coverage: cAttendanceCoverageSummary(cc),
     items: [],
   };
   if (state !== "ready" && state !== "sample_limited" && state !== "partial_data") return envelope;
 
   for (const a of cc.attendances) {
     if (a.batterRows.length === 0 && a.pitcherRows.length === 0 && a.coverage.unknown === 0) continue;
-    const baseline = cc.baselines.get(a.favorite.playerId) ?? null;
     const itemState: MetricState =
-      playerUnknown(a, baseline) > 0 ? "partial_data" : "ready";
+      a.coverage.unknown > 0 ? "partial_data" : "ready";
     let entry: C5Entry | null = null;
     if (itemState === "ready") {
       entry = { playerId: a.favorite.playerId };
@@ -1258,7 +1335,7 @@ function buildC5(ctx: Ctx, cc: CContext): MetricEnvelope<C5Entry[]> {
       value: entry,
       n: a.appearanceGames,
       denominator: { appearanceGames: a.appearanceGames },
-      coverage: playerCoverage(a, baseline),
+      coverage: playerCoverage(a, null),
     });
   }
   envelope.n = envelope.items!.length;

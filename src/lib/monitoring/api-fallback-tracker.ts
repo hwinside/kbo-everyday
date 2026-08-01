@@ -26,7 +26,15 @@ const ALERT_THRESHOLD = 3; // N회 이상
 const ALERT_WINDOW_MS = 5 * 60 * 1000; // 5분 내
 const COOLDOWN_MS = 30 * 60 * 1000; // 30분 쿨다운
 const LEGACY_TELEGRAM_TIMEOUT_MS = 8000;
-const LEGACY_TELEGRAM_SUPPRESSED_APIS = new Set(["kbo-games"]);
+// 유저 대면 /api/stats(+stats 크론)가 kbo-player-stats-batter/pitcher 에 레거시 trackFallback 을
+// 쓰는데, in-memory cooldown 은 서버리스 인스턴스별이라 KBO 열화 중 트래픽이 인스턴스마다 첫 알림을
+// 발사해 텔레그램이 폭주한다(kbo-games 와 동일 패턴). 이벤트 저장은 유지하되 durable tracker 로
+// 전환하기 전까지 legacy Telegram fanout 만 차단한다.
+const LEGACY_TELEGRAM_SUPPRESSED_APIS = new Set([
+  "kbo-games",
+  "kbo-player-stats-batter",
+  "kbo-player-stats-pitcher",
+]);
 
 export function getRecentFallbackBufferSizeForTest(): number {
   return recentFallbacks.length;

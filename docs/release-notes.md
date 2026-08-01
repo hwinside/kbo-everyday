@@ -4,6 +4,47 @@
 
 ---
 
+## 2026-07-31 13:52 KST — 쇼츠 scope 필터(#973) + 예고선발 공개 알림(#974) [CS 제안]
+
+- **환경:** prod/web (Vercel)
+- **Commit:** `fdd165ee9b6c27b58636c3decc7cb78e8b3181a9` (#973) · `9c5772726b660b370c73fd0250592d83e23ecba4` (#974 최종 배포 커밋)
+- **배경:** 유저 제안(#cs `1785380092`, DM conv cf07bbc6) — ①쇼츠를 최애선수만이 아니라 마이팀·전체로 골라 보기 ②예고선발(선발 투수) 공개 즉시 알림
+- **변경사항:**
+  - (#973) 쇼츠 피드에 `최애선수 · 마이팀 · 전체` scope 필터. 단순 화면 필터가 아니라 API `scope=favorite_players|my_team|all` 쿼리 분리(순수함수 `shorts-feed-scope.ts`), scope 미지정=기존 혼합 피드(하위호환), HomeHighlights 3칩 + localStorage 유지. race LatestOnlyGate + abort/실패 stale 차단, 칩 항상 1개 활성
+  - (#974) 최애팀 경기 예고선발 공식 공개 시 즉시 푸시 1회. 라인업 확정 푸시(#952) 원장 아키텍처를 event `starter_announce`로 클론 — `(game_id, team_id)` 스냅샷·lease fencing·at-most-once dispatch·due-ledger drainer. 실제 빈값→공식값 전이만 발송(baseline stale burst 차단). 각 `(game_id, team_id)`당 1회·공식→공식 변경 재발송 0; 연전/더블헤더는 gameId별 분리. `starter_announce` pref 기본 on
+- **DB:** migration `20260730_starter_announce_notify.sql` 프로덕션 선적용(Management API HTTP 201) — `starter_announce` 컬럼 + `game_starter_observation`·`game_starter_notify_state`·`starter_announce_delivery_ledger` 3테이블 RLS ON(정책 0) + snapshot/observe/claim/mark/settle/finalize/list_due 7 RPC(anon/authenticated EXECUTE revoke, service_role 전용)
+- **리스크/롤백:** 낮음. #973은 migration 없음, scope 미지정 시 기존 동작 불변. #974는 신규 알림 종류 추가(전이 게이트로 오발송 차단). 문제 시 각 squash revert
+- **확인 항목:**
+  - [x] 삼순 GO exact 그대로 squash 머지 (#973 `8bcd58ba5`, #974 `744338af8`)
+  - [x] Vercel Production Ready(커밋 `9c5772726`) + `keubo.fan` HTTP 200
+  - [x] 쇼츠 scope 프로덕션 스모크: all=3 / my_team(LG)=3 / favorite_players 미지정=0(임의 폴백 없음) / 무scope=3(하위호환)
+  - [x] DB sanity: starter_announce 컬럼 + 3테이블 RLS ON(정책 0) + 7 RPC anon/auth EXECUTE revoke·service_role only
+  - [x] 건의 유저 완료 회신(conv cf07bbc6, dm_messages id 292539)
+  - [ ] 예고선발 알림 실제 푸시 실수신 자연관찰 (서버 cron 푸시라 다음 실경기 예고선발 공개 시, HOLD)
+
+---
+
+## 2026-07-31 17:32 KST — 야잘알봇 v2 S0 멀티턴 맥락 (#1011)
+
+- **환경:** prod/web (Vercel) + Supabase migration
+- **Commit:** `882f1a1744fb9ead6197a133421b347b3836c96a` (squash, reviewed exact `b623a2cf014ed356d71645015eae50e89415d0b4`)
+- **배경:** 야잘알봇의 후속 질문(`또 다른 경우는?`)이 맥락 부재로 `blocked` 차단되던 버그 해소(spec §4 rev0.6, Notion `3aec901bb37281408cecf4c700b96487`). S0 전용 — S1a/S1b/S2는 HOLD.
+- **변경사항:**
+  - B1 직전 user turn 1개만 후속 맥락 source·중간 blocked/in-flight/new-topic barrier(과거 폴백 금지)
+  - B2 `genius_question_jobs.message_id` join + answer DM `dedup_key='baseball-genius:'||q.id` exact join, answered_at=answer created_at, answer DM 실존 시만 source
+  - B3 자격=`genius_question_jobs.source IN (dictionary,cache,llm)` fail-closed(logs.match_path는 FK 없어 미사용)
+  - B4 closed-set 정규화 full-string 후속 문법 SSOT 상수
+  - B5 TTL=answer DM created_at 기준 600.000초·`genius_qa_cache` read+write bypass
+  - 신규 RPC `baseball_genius_previous_turn(bigint)`(SECURITY DEFINER, GRANT service_role 명시·anon/auth REVOKE)·인덱스·`context_missing` route/match_path
+- **DB:** migration `20260731_baseball_genius_previous_turn.sql` 프로덕션 적용(Management API HTTP 201). ⚠️ 하린아빠 GitHub 직접 머지로 "migration 선적용→머지" 순서 역전 — 미적용 구간에는 RPC error를 catch해 context=null로 `context_missing` 처리(의도치 않은 맥락 주입 없이 fail-closed). live/DB는 정상이나 미적용 구간 DM 영향은 미검증(장애 증거 없음), 머지 감지 즉시 적용.
+- **리스크/롤백:** 낮음. 미적용·오류 경로 전부 fail-closed(context=null→`context_missing`, 의도치 않은 맥락 주입 없음). 롤백은 squash revert + migration full reverse — `baseball_genius_previous_turn(bigint)` DROP FUNCTION + `idx_dm_messages_conversation_sender_recent` DROP INDEX + `genius_question_logs.match_path` CHECK를 `context_missing` 제외한 기존 allowlist로 복원.
+- **확인 항목:**
+  - [x] 삼순 코드리뷰 GO(3왕복, exact `b623a2cf014ed356d71645015eae50e89415d0b4`) + 하린아빠 `머지ok`
+  - [x] Vercel Production Ready(`882f1a1744fb9ead6197a133421b347b3836c96a`, deployment `5688672207`) + `keubo.fan` HTTP 200
+  - [x] migration 적용·실측: RPC ACL service=true/anon·auth=false, 인덱스, `context_missing` CHECK, RPC smoke 0행
+  - [x] AC1~15 + RPC ACL 결함주입 RED→GREEN, tsc/eslint/prebuild PASS
+  - [ ] 배포 후 실제 계정 직접 첫 질문→후속 질문 2턴 End-User QA — HOLD
+
 ---
 
 ## 2026-05-02 21:31 KST — 크관 채팅 iOS 키보드 하단 gap 방어 + BrowserStack QA 스크립트

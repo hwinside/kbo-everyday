@@ -1,0 +1,115 @@
+name: Game Log Ledger Gate
+
+# 경기 로그 완료 원장(ledger) 적재 게이트.
+#
+# stale key reconciliation 은 **DB 행을 삭제**하는 경로다. 잘못되면
+#  - 공급자 부분 응답 때 멀쩡한 과거 행이 사라진 뒤 complete 로 오판되거나
+#  - 쓰기 중간 실패가 다음 재시도를 영구히 막는다
+# 둘 다 조용히 번지므로 PR 단계에서 fail-closed 로 잡는다.
+#
+# 백필 워크플로의 입력 검증(mode × apply × limit × season)도 같은 이유로 함께 고정한다 —
+# 잘못된 조합이 release 3경기 게이트를 우회한 채 시즌 전체 DB 쓰기를 실행할 수 있다.
+
+on:
+  pull_request:
+    paths:
+      - "src/lib/game-logs/**"
+      - "src/app/api/cron/game-logs/**"
+      - "scripts/backfill-game-log-ledger.mts"
+      - "scripts/qa/venue-stats-s1a-ledger-db-integration.ts"
+      - "scripts/qa/backfill-workflow-matrix.sh"
+      - "scripts/qa/ledger-complete-parse-smoke.sh"
+      - "scripts/qa/game-log-ledger-orchestrator.ts"
+      - "scripts/qa/ledger-count-guard-smoke.sh"
+      - "scripts/ci/ledger-count.sh"
+      - "supabase/migrations/20260606_player_game_logs.sql"
+      - "supabase/migrations/20260730_player_game_log_ingestions.sql"
+      - "supabase/migrations/20260801_player_game_logs_reconcile_rpc.sql"
+      - "package.json"
+      - ".github/workflows/backfill-game-log-ledger.yml"
+      - ".github/workflows/game-log-ledger-gate.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "src/lib/game-logs/**"
+      - "src/app/api/cron/game-logs/**"
+      - "scripts/backfill-game-log-ledger.mts"
+      - "scripts/qa/venue-stats-s1a-ledger-db-integration.ts"
+      - "scripts/qa/backfill-workflow-matrix.sh"
+      - "scripts/qa/ledger-complete-parse-smoke.sh"
+      - "scripts/qa/game-log-ledger-orchestrator.ts"
+      - "scripts/qa/ledger-count-guard-smoke.sh"
+      - "scripts/ci/ledger-count.sh"
+      - "supabase/migrations/20260606_player_game_logs.sql"
+      - "supabase/migrations/20260730_player_game_log_ingestions.sql"
+      - "supabase/migrations/20260801_player_game_logs_reconcile_rpc.sql"
+      - "package.json"
+      - ".github/workflows/backfill-game-log-ledger.yml"
+      - ".github/workflows/game-log-ledger-gate.yml"
+
+jobs:
+  game-log-ledger:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Lint ledger surface (fail-closed, warnings blocked)
+        run: npx eslint --max-warnings=0 src/lib/game-logs scripts/qa/venue-stats-s1a-ledger-db-integration.ts
+
+      - name: Typecheck ledger surface
+        # tsc 는 프로젝트 전체를 본다 — 이 job 의 목적은 ledger 변경이 타입을 깨지 않는지 확인.
+        run: npx tsc --noEmit
+
+      - name: Reconcile rekey regression (경기별 승인표 + 부분응답 방어 + full-shape 경계)
+        # 효과: 원천 pcode 대조로 승인한 경기별 rekey 만 치유
+        # 방어: 설명 없는 stale(부분 응답)·동명이인은 여전히 삭제 0 fail-closed
+        # full-shape: 경기당 stale 이 여럿인 실제 shape(20260505WOSS0) + LG 잔여 3경기 미치유 고정
+        run: npm run qa:reconcile-rekey
+
+      - name: Reconcile full-shape verifier (정적 계약)
+        # 실제 운영 DB 조회는 CI 자격증명 밖이라, 여기서는 검증기 자체의 계약을 고정한다:
+        #   · --expect 경로가 pre-backfill gate(대상 전수 우주 해결)를 포함하는가
+        #   · partial 우주 중단 가드(MIN_SEASON_FINALS)가 살아있는가
+        # 운영 실행은 백필 직전에 `npm run qa:reconcile-full-shape -- --expect` 로 돌린다.
+        run: npm run qa:reconcile-full-shape-contract
+
+      - name: Ledger DB integration (PGlite, real migrations)
+        # RED: 행 누락·필드 오염·unresolved·metadata 변조
+        # reconciliation RED: 부분 응답 / unresolved / 모호한 짝 / 전면 삭제 → 삭제 0
+        # reconciliation GREEN: 7/4 rekey 교체 + 1차 거부 후 2차 정상 복구
+        run: npm run qa:venue-stats-s1a-ledger:db
+
+      - name: Orchestrator regression (real ingestGameWithLedger on PGlite)
+        # 실제 production 오케스트레이터를 태운다:
+        #   쓰기 중간 실패 → 트랜잭션 롤백 → 직접 소비자 행 누락 0 → 재시도 complete 수렴
+        #   부분 응답 → 삭제 0
+        #   원자 RPC 경로 유지 mutation 가드(직접 delete/upsert 재유입 차단)
+        run: npm run qa:game-log-ledger-orchestrator
+
+      - name: Query pagination guard (fail-closed)
+        # 신규 RPC/collection query 위험을 PR 에서 잡는다 — Vercel prebuild 와 동일 게이트.
+        run: npm run qa:query-guard
+
+      - name: Backfill workflow input matrix (fail-closed)
+        # yml 의 Validate inputs run 블록을 그대로 추출해 실행한다(로직 복제 아님).
+        run: npm run qa:backfill-workflow-matrix
+
+      - name: Ledger count fail-closed guard
+        # before/after count 가 HTTP 500 · Content-Range 누락에서 빈 문자열로 떨어지면
+        # dry-run 가드의 before==after 가 ""=="" 로 통과한다(false-green). stub 서버로 고정.
+        run: npm run qa:ledger-count-guard
+
+      - name: Ledger apply-progress parse guard (fail-closed)
+        # run 30679031813: `incomplete 0` 안의 `complete 0` 을 tail -1 이 집어
+        # 5경기 전부 성공한 apply 런을 실패로 판정했다. 반대로 진짜 무진행은
+        # `incomplete N` 을 읽어 통과시켰다 — 양방향으로 틀렸다.
+        run: npm run qa:ledger-complete-parse

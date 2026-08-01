@@ -11,6 +11,7 @@ import {
   ResponsiveContainer,
   Legend,
 } from "recharts";
+import StackedTooltip from "@/components/admin/StackedTooltip";
 import { Inbox, Eye, CheckCircle, XCircle, ChevronDown, Loader2, Clock, Copy, Send } from "lucide-react";
 import type { FeedbackItem, FeedbackStatus } from "@/lib/admin/types";
 
@@ -269,18 +270,6 @@ export default function AdminFeedbackPage() {
     }
   }
 
-  /* ── Tooltip Style ── */
-
-  const tooltipStyle = {
-    contentStyle: {
-      background: "#1C1C1F",
-      border: "1px solid rgba(255,255,255,0.1)",
-      borderRadius: 12,
-      fontSize: 13,
-    },
-    labelStyle: { color: "#8E8E93" },
-  };
-
   /* ── Loading State ── */
 
   if (loading) {
@@ -326,7 +315,7 @@ export default function AdminFeedbackPage() {
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
             <XAxis dataKey="date" stroke="#636366" fontSize={12} />
             <YAxis stroke="#636366" fontSize={12} />
-            <Tooltip {...tooltipStyle} />
+            <Tooltip content={<StackedTooltip showTotal />} />
             <Legend />
             <Bar dataKey="버그" stackId="a" fill="#FF453A" />
             <Bar dataKey="데이터 수정" stackId="a" fill="#FFD60A" />

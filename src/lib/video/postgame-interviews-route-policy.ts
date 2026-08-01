@@ -11,6 +11,10 @@ interface ScheduledGame {
 interface StoredInterviewJob {
   game_id: string;
   game_date: string;
+  away_team_name: string | null;
+  home_team_name: string | null;
+  away_score: number | null;
+  home_score: number | null;
   winner_team_id: number;
   is_doubleheader: boolean;
   ended_at: string;
@@ -69,6 +73,10 @@ export function contextFromStoredJob(
   return {
     gameId: job.game_id,
     gameDate: job.game_date,
+    awayTeamName: job.away_team_name,
+    homeTeamName: job.home_team_name,
+    awayScore: job.away_score,
+    homeScore: job.home_score,
     winnerTeamId: job.winner_team_id,
     winnerPlayerNames,
     isDoubleheader: job.is_doubleheader,
