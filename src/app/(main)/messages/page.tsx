@@ -12,7 +12,7 @@ import LoginSheet from "@/components/auth/LoginSheet";
 import { supabase } from "@/lib/supabase/client";
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { BASEBALL_GENIUS_NAME } from "@/lib/constants/baseball-genius";
+import { BASEBALL_GENIUS_USER_ID } from "@/lib/constants/baseball-genius";
 import AdminOnly from "@/components/admin/AdminOnly";
 
 function timeAgo(dateStr: string) {
@@ -108,7 +108,9 @@ export default function MessagesPage() {
             >
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-full bg-bg-tertiary flex items-center justify-center flex-shrink-0 overflow-visible">
-                  {conv.other_nickname === BASEBALL_GENIUS_NAME ? (
+                  {conv.other_user_id === BASEBALL_GENIUS_USER_ID ? (
+                    // 야잘알봇 판정은 닉네임이 아니라 **계정 ID** 로 한다 (삼순 NO-GO).
+                    // 닉네임 비교는 같은 이름을 쓰는 일반 유저에게도 마스코트가 붙는다(위조 가능).
                     // 야잘알봇만 원형 프로필이 아니라 캐릭터 전신을 쓴다(삼순 확정 규격).
                     // 컨테이너 w-10 은 전 행 공용이라 폭을 바꾸면 닉네임 시작 x 가 밀려
                     // 다른 행과 정렬이 어긋난다. 그래서 폭은 그대로 두고, 캐릭터만

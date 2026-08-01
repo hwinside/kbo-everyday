@@ -8,7 +8,7 @@
 // 저기는 실제 렌더/클릭. 배선 계약을 따로 두는 이유는 컴포넌트만 만들고
 // 헤더에 안 붙이거나, 라우팅을 /messages 목록으로 되돌리는 회귀를 잡기 위함.
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { BASEBALL_GENIUS_USER_ID } from "../../src/lib/constants/baseball-genius";
 
@@ -25,18 +25,57 @@ function check(name: string, fn: () => void) {
 
 const read = (p: string) => readFileSync(path.join(process.cwd(), p), "utf8");
 const entry = read("src/components/ui/GeniusEntryButton.tsx");
-const header = read("src/components/ui/HeaderProfileLink.tsx");
 
-// --- 헤더 배선: 존재 + 쪽지 아이콘 '왼쪽' ---
-check("헤더가 GeniusEntryButton을 렌더한다", () => {
-  assert.ok(/import\s+GeniusEntryButton\s+from/.test(header), "import 없음");
-  assert.ok(/<GeniusEntryButton\s*\/>/.test(header), "렌더 없음");
-});
-check("마스코트가 쪽지 아이콘보다 왼쪽에 있다", () => {
-  const mascotIdx = header.indexOf("<GeniusEntryButton");
-  const dmIdx = header.indexOf('href="/messages"');
-  assert.ok(mascotIdx >= 0 && dmIdx >= 0, "둘 중 하나를 찾지 못함");
-  assert.ok(mascotIdx < dmIdx, "마스코트가 쪽지 아이콘 오른쪽에 있음");
+// 쪽지 아이콘을 렌더하는 헤더는 하나가 아니다.
+// 홈(HomeClientShell)은 공용 HeaderProfileLink 를 쓰지 않고 자체 헤더를 직접 그린다.
+// 공용 컴포넌트만 고치면 홈 유저에게는 진입점이 아예 안 붙는다(삼순 NO-GO P0-1 — 실제로 그랬다).
+// 그래서 "쪽지 링크를 가진 헤더 파일 전부"를 대상으로 같은 계약을 건다.
+const HEADERS_WITH_DM = [
+  "src/components/ui/HeaderProfileLink.tsx",
+  "src/components/home/HomeClientShell.tsx",
+] as const;
+
+// --- 헤더 배선: 존재 + 쪽지 아이콘 '왼쪽' (쪽지 헤더 전부) ---
+for (const file of HEADERS_WITH_DM) {
+  const src = read(file);
+  const name = file.split("/").pop();
+  check(`[${name}] GeniusEntryButton을 렌더한다`, () => {
+    assert.ok(/import\s+GeniusEntryButton\s+from/.test(src), "import 없음");
+    assert.ok(/<GeniusEntryButton\s*\/>/.test(src), "렌더 없음");
+  });
+  check(`[${name}] 마스코트가 쪽지 아이콘보다 왼쪽에 있다`, () => {
+    const mascotIdx = src.indexOf("<GeniusEntryButton");
+    const dmIdx = src.indexOf('href="/messages"');
+    assert.ok(mascotIdx >= 0 && dmIdx >= 0, "둘 중 하나를 찾지 못함");
+    assert.ok(mascotIdx < dmIdx, "마스코트가 쪽지 아이콘 오른쪽에 있음");
+  });
+}
+
+// 위 목록이 실제와 어긋나면(새 헤더가 생겼는데 등록 안 하면) 같은 사고가 반복된다.
+// 쪽지 링크를 가진 클라이언트 헤더 파일을 실제로 훑어 목록과 대조한다.
+check("쪽지 링크를 가진 헤더 파일이 목록에 빠짐없이 등록돼 있다", () => {
+  const roots = ["src/components", "src/app"];
+  const found: string[] = [];
+  const walk = (dir: string) => {
+    for (const e of readdirSync(path.join(process.cwd(), dir), { withFileTypes: true })) {
+      const rel = `${dir}/${e.name}`;
+      if (e.isDirectory()) walk(rel);
+      else if (e.name.endsWith(".tsx")) {
+        const src = readFileSync(path.join(process.cwd(), rel), "utf8");
+        // 헤더 규격(min-h-[44px]) + 쪽지 링크 + aria-label="쪽지" 를 모두 가진 파일 = 전역 헤더
+        if (
+          src.includes('href="/messages"') &&
+          src.includes('aria-label="쪽지"') &&
+          src.includes("min-h-[44px]")
+        ) {
+          found.push(rel);
+        }
+      }
+    }
+  };
+  roots.forEach(walk);
+  const missing = found.filter((f) => !HEADERS_WITH_DM.includes(f as never));
+  assert.deepEqual(missing, [], `헤더인데 회귀 대상에 없음: ${missing.join(", ")}`);
 });
 
 // --- 라우팅: 한 탭에 대화창 ---

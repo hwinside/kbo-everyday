@@ -19,6 +19,15 @@ const BASE_URL = process.argv.find((a) => a.startsWith("--base-url="))?.split("=
 const EXPECT_SRC = "/mascot/yajalal-avatar.png";
 const GENIUS_ID = "45ae7419-6a9a-4c6b-9101-8d65df7e242e";
 
+// ⚠️ 쪽지 아이콘을 그리는 헤더는 하나가 아니다.
+// 홈("/")은 HomeClientShell 이 자체 헤더를 직접 렌더하므로 공용 HeaderProfileLink 만
+// 고치면 홈 유저에게는 진입점이 안 붙는다(삼순 NO-GO P0-1 — 실제로 그랬다).
+// 그래서 두 헤더를 모두 실제 화면에서 확인한다.
+const PAGES = [
+  { path: "/", label: "홈" },
+  { path: "/news", label: "뉴스" },
+];
+
 // 헤더 계약: 전역 헤더는 min-h-44px 규격이다. 마스코트를 넣어도 그 규격을 깨면 안 된다.
 const HEADER_MIN = 44;
 const HEADER_MAX = 64; // 44 + safe-area/패딩 여유. 이걸 넘으면 헤더가 밀린 것.
@@ -39,6 +48,13 @@ async function measure(page) {
     const btn = document.querySelector('[data-testid="genius-entry-button"]');
     const dm = document.querySelector('a[href="/messages"]');
     const header = btn?.closest("header") ?? null;
+    // ⚠️ 홈 비로그인에는 쪽지 링크가 없다 — 그 자리에 '회원가입' 버튼이 온다(기존 동작).
+    // "쪽지 왼쪽" 계약은 결국 "마스코트가 헤더 우측 컨트롤들보다 왼쪽" 이므로,
+    // 쪽지가 없으면 바로 오른쪽 형제 컨트롤을 기준으로 삼는다.
+    const sibling = btn?.parentElement
+      ? [...btn.parentElement.children].find((el) => el !== btn) ?? null
+      : null;
+    const anchor = dm ?? sibling;
     const img = btn?.querySelector("img") ?? null;
     const r = (el) => (el ? el.getBoundingClientRect() : null);
     return {
@@ -46,6 +62,8 @@ async function measure(page) {
       hasDm: !!dm,
       btnRect: r(btn),
       dmRect: r(dm),
+      anchorRect: r(anchor),
+      anchorLabel: dm ? "쪽지" : (anchor?.textContent?.trim().slice(0, 10) || "우측컨트롤"),
       headerRect: r(header),
       imgSrc: img?.getAttribute("src") ?? null,
       imgNaturalWidth: img?.naturalWidth ?? 0,
@@ -61,44 +79,77 @@ async function main() {
   let testUser = null;
 
   try {
-    // ---------- 비로그인 ----------
-    {
+    // ---------- 비로그인 (홈 + 뉴스, 두 헤더 모두) ----------
+    for (const pg of PAGES) {
       const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
       const page = await ctx.newPage();
-      await page.goto(`${BASE_URL}/news`, { waitUntil: "networkidle" });
+      await page.goto(`${BASE_URL}${pg.path}`, { waitUntil: "networkidle" });
       const m = await measure(page);
+      const T = `[비로그인·${pg.label}]`;
 
-      ok("[비로그인] 헤더에 마스코트 버튼이 렌더된다", m.hasBtn);
-      ok("[비로그인] 이미지 src가 마스코트 자산", m.srcMatches, m.imgSrc ?? "(없음)");
+      ok(`${T} 헤더에 마스코트 버튼이 렌더된다`, m.hasBtn);
+      ok(`${T} 이미지 src가 마스코트 자산`, m.srcMatches, m.imgSrc ?? "(없음)");
       ok(
-        "[비로그인] 이미지가 실제로 로드된다(404 아님)",
+        `${T} 이미지가 실제로 로드된다(404 아님)`,
         m.imgNaturalWidth > 0,
         `naturalWidth=${m.imgNaturalWidth}`,
       );
       ok(
-        "[비로그인] 마스코트가 쪽지 아이콘 왼쪽",
-        !!m.btnRect && !!m.dmRect && m.btnRect.x < m.dmRect.x,
-        m.btnRect && m.dmRect ? `mascot.x=${Math.round(m.btnRect.x)} dm.x=${Math.round(m.dmRect.x)}` : "",
+        `${T} 마스코트가 헤더 우측 컨트롤(${m.anchorLabel})보다 왼쪽`,
+        !!m.btnRect && !!m.anchorRect && m.btnRect.x < m.anchorRect.x,
+        m.btnRect && m.anchorRect
+          ? `mascot.x=${Math.round(m.btnRect.x)} ${m.anchorLabel}.x=${Math.round(m.anchorRect.x)}`
+          : "기준 컨트롤을 찾지 못함",
       );
       ok(
-        "[비로그인] 캐릭터 가시 높이 충분",
+        `${T} 캐릭터 가시 높이 충분`,
         !!m.imgRect && m.imgRect.height >= MASCOT_MIN_VISIBLE,
         m.imgRect ? `${Math.round(m.imgRect.height)}px >= ${MASCOT_MIN_VISIBLE}` : "",
       );
       ok(
-        "[비로그인] 헤더 높이가 규격 안(밀림 없음)",
+        `${T} 헤더 높이가 규격 안(밀림 없음)`,
         !!m.headerRect && m.headerRect.height >= HEADER_MIN && m.headerRect.height <= HEADER_MAX,
         m.headerRect ? `${Math.round(m.headerRect.height)}px` : "",
       );
-      ok("[비로그인] 가로 overflow 없음", !m.docOverflowX);
+      ok(`${T} 가로 overflow 없음`, !m.docOverflowX);
 
-      // 비로그인 탭 → 로그인 시트. 방을 만들면 안 된다.
-      await page.click('[data-testid="genius-entry-button"]');
-      await page.waitForTimeout(800);
-      const loginShown = await page.evaluate(() =>
-        /카카오|구글|로그인/.test(document.body.innerText),
-      );
-      ok("[비로그인] 탭하면 로그인 시트, 라우팅 안 함", loginShown && page.url().includes("/news"), page.url());
+      // ⚠️ 홈 비로그인은 OnboardingFlow(z-[110])가 헤더 전체를 덮는다 — **기존 동작**이다.
+      // 내 변경 탓으로 오독하지 않기 위해, 오버레이가 있으면 **쪽지 아이콘도 똑같이 막히는지**
+      // 확인해 "마스코트만의 문제가 아님"을 증명하고 클릭 검증은 그 페이지에서 건너뛴다.
+      const blocked = await page.evaluate(() => {
+        const btn = document.querySelector('[data-testid="genius-entry-button"]');
+        const sibling = btn?.parentElement
+          ? [...btn.parentElement.children].find((el) => el !== btn) ?? null
+          : null;
+        const ref = document.querySelector('a[href="/messages"]') ?? sibling;
+        const hitTop = (el) => {
+          if (!el) return null;
+          const r = el.getBoundingClientRect();
+          const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+          return hit && !el.contains(hit) ? (hit.className || hit.tagName) : null;
+        };
+        return { mascot: hitTop(btn), ref: hitTop(ref), hasRef: !!ref };
+      });
+
+      if (blocked.mascot) {
+        ok(
+          `${T} 헤더를 덮는 오버레이는 마스코트 전용이 아님(옆 컨트롤도 동일하게 가려짐 = 기존 동작)`,
+          blocked.hasRef && !!blocked.ref,
+          `mascot차단=${String(blocked.mascot).slice(0, 40)} / 옆컨트롤차단=${String(blocked.ref ?? "없음").slice(0, 40)}`,
+        );
+      } else {
+        // 비로그인 탭 → 로그인 시트. 방을 만들면 안 된다.
+        await page.click('[data-testid="genius-entry-button"]');
+        await page.waitForTimeout(800);
+        const loginShown = await page.evaluate(() =>
+          /카카오|구글|로그인/.test(document.body.innerText),
+        );
+        ok(
+          `${T} 탭하면 로그인 시트, 라우팅 안 함`,
+          loginShown && !page.url().includes("/messages"),
+          page.url(),
+        );
+      }
       await ctx.close();
     }
 

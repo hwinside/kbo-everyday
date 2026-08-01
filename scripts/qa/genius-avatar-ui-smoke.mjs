@@ -13,6 +13,9 @@
  */
 import { createClient } from "@supabase/supabase-js";
 import playwright from "playwright";
+import sharp from "sharp";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { SUPABASE_URL, ANON, SERVICE_ROLE, REF, BASE } from "./_env.mjs";
 
 const BASE_URL = process.argv.find((a) => a.startsWith("--base-url="))?.split("=")[1] ?? BASE;
@@ -32,11 +35,41 @@ const CARD_H = 82;              // 카드 높이는 아바타를 넘치게 그�
 const LIST_MIN_VISIBLE = 50;    // 목록 캐릭터 최소 가시 높이
 const CHAT_SLOT = 96;           // 대화방 슬롯
 const CHAT_MIN_VISIBLE = 72;    // 대화방 캐릭터 최소 가시 높이
-const CHAT_HEADER_MIN = 104;    // 헤더 허용 범위 (요구 108~112, safe-area 편차 허용)
-const CHAT_HEADER_MAX = 120;
+// 헤더 게이트는 삼순 합의 규격 그대로 108~112px 로 고정한다 (삼순 NO-GO).
+// 104~120 으로 넓혀두면 규격을 벗어난 레이아웃도 통과해 게이트가 의미를 잃는다.
+// safe-area 편차를 핑계로 넓히지 않는다 — 아래 뷰포트를 390x844 로 고정해
+// env(safe-area-inset-top) 이 0 인 결정론적 조건에서만 측정한다.
+const CHAT_HEADER_MIN = 108;
+const CHAT_HEADER_MAX = 112;
+const VIEWPORT = { width: 390, height: 844 };
 
 // 대화방 부제 문구 (하린아빠 2026-08-01 확정)
 const GENIUS_SUBTITLE = "야구 밖에 모르는 바보 AI봇";
+
+/**
+ * PNG 의 불투명 영역 세로 비율을 실측한다.
+ *
+ * <img> 의 getBoundingClientRect().height 는 **투명 여백까지 포함한 박스**다.
+ * 자산 위아래에 투명 패딩이 생기면 박스는 그대로인데 실제 캐릭터는 작아진다 —
+ * 그런 회귀를 박스 기준 assert 는 못 잡는다(삼순 NO-GO). 그래서 알파 bbox 비율을
+ * 곱해 "화면에서 실제로 보이는 캐릭터 높이" 로 판정한다.
+ */
+async function alphaBboxRatio(publicPath) {
+  const file = path.join(process.cwd(), "public", publicPath.replace(/^\//, ""));
+  const img = sharp(readFileSync(file));
+  const { width, height } = await img.metadata();
+  const buf = await img.raw().ensureAlpha().toBuffer();
+  let top = -1, bottom = -1;
+  for (let y = 0; y < height; y++) {
+    let opaque = false;
+    for (let x = 0; x < width; x++) {
+      if (buf[(y * width + x) * 4 + 3] > 8) { opaque = true; break; }
+    }
+    if (opaque) { if (top < 0) top = y; bottom = y; }
+  }
+  if (top < 0) throw new Error(`${publicPath}: 불투명 픽셀 0`);
+  return { ratio: (bottom - top + 1) / height, top, bottom, height };
+}
 
 const admin = createClient(SUPABASE_URL, SERVICE_ROLE, {
   auth: { autoRefreshToken: false, persistSession: false },
@@ -49,7 +82,7 @@ const ok = (name, pass, detail = "") => {
 };
 
 async function ctxWithSession(browser, session, user) {
-  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const ctx = await browser.newContext({ viewport: VIEWPORT });
   const key = `sb-${REF}-auth-token`;
   // ⚠️ 쿠키 1개 상한은 4096B 다. magiclink 로 받은 user 객체를 통째로 넣으면
   // identities/app_metadata 때문에 4.3KB 가 되어 CDP 가 "Invalid cookie fields" 로 거부한다.
@@ -205,8 +238,16 @@ try {
   const aList = await aPage.evaluate(probeList, EXPECT_SRC);
   ok("목록: 마스코트 아바타 렌더", aList.hasImg);
   ok("목록: 이미지 실제 로드됨(404 아님)", !!aList.loaded, `natural=${aList.natural}`);
-  ok(`목록: 캐릭터 가시 높이 >= ${LIST_MIN_VISIBLE}px`,
-     aList.visibleH >= LIST_MIN_VISIBLE, `${aList.visibleH}px (슬롯 ${aList.slotH}px)`);
+  // ⚠️ <img> 박스가 아니라 **알파 bbox 실측**으로 판정한다 (삼순 NO-GO).
+  // 자산에 투명 패딩이 생기면 박스 높이는 그대로인데 캐릭터만 작아진다 — 박스 기준은 못 잡는다.
+  const alphaList = await alphaBboxRatio(EXPECT_SRC);
+  const listVisible = Math.round(aList.visibleH * alphaList.ratio);
+  ok(`목록: 캐릭터 실제(알파) 가시 높이 >= ${LIST_MIN_VISIBLE}px`,
+     listVisible >= LIST_MIN_VISIBLE,
+     `${listVisible}px = 박스 ${aList.visibleH}px x 알파비 ${alphaList.ratio.toFixed(3)} (슬롯 ${aList.slotH}px)`);
+  ok("자산에 상하 투명 패딩이 없다(크롭 유지)",
+     alphaList.ratio >= 0.98,
+     `알파비 ${alphaList.ratio.toFixed(3)} (top=${alphaList.top} bottom=${alphaList.bottom} h=${alphaList.height})`);
   ok("목록: 캐릭터가 카드 세로 안에 담김(한 줄 구조 유지)", aList.withinCard);
   ok("목록: 가로 overflow 0", aList.docOverflow <= 0, `${aList.docOverflow}px`);
   ok("목록: ⚾ 이모지 잔존 0", aList.emoji === 0, `발견 ${aList.emoji}개`);
@@ -219,8 +260,10 @@ try {
   ok("대화방: 진입 성공", aChat.path.startsWith("/messages/"), `title=${aChat.title}`);
   ok("대화방: 마스코트 아바타 렌더", aChat.hasImg);
   ok("대화방: 이미지 실제 로드됨", !!aChat.loaded);
-  ok(`대화방: 캐릭터 가시 높이 >= ${CHAT_MIN_VISIBLE}px`,
-     aChat.visibleH >= CHAT_MIN_VISIBLE, `${aChat.visibleH}px (슬롯 ${CHAT_SLOT}px)`);
+  const chatVisible = Math.round(aChat.visibleH * alphaList.ratio);
+  ok(`대화방: 캐릭터 실제(알파) 가시 높이 >= ${CHAT_MIN_VISIBLE}px`,
+     chatVisible >= CHAT_MIN_VISIBLE,
+     `${chatVisible}px = 박스 ${aChat.visibleH}px x 알파비 ${alphaList.ratio.toFixed(3)} (슬롯 ${CHAT_SLOT}px)`);
   ok(`대화방: 헤더 ${CHAT_HEADER_MIN}~${CHAT_HEADER_MAX}px`,
      aChat.headerH >= CHAT_HEADER_MIN && aChat.headerH <= CHAT_HEADER_MAX, `${aChat.headerH}px`);
   ok("대화방: 캐릭터가 헤더 밖으로 안 삐져나옴", aChat.withinHeader);
@@ -288,9 +331,21 @@ try {
 } finally {
   if (browser) await browser.close();
   if (guestId) {
-    await admin.from("profiles").delete().eq("id", guestId);
-    await admin.auth.admin.deleteUser(guestId);
-    console.log("  (임시 손님 계정 정리 완료 — 관리자 계정은 건드리지 않음)");
+    // ⚠️ deleteUser 는 throw 하지 않고 resolved `{ error }` 로 실패할 수 있다.
+    // 예전 코드는 반환값을 안 보고 항상 "정리 완료" 를 찍어서, 계정이 남아도
+    // exit 0 으로 성공 기록됐다(삼순 NO-GO P0-3). 결과를 검사하고
+    // 실제로 지워졌는지 postcondition 까지 확인한다.
+    const { error: profDelErr } = await admin.from("profiles").delete().eq("id", guestId);
+    const { error: userDelErr } = await admin.auth.admin.deleteUser(guestId);
+    const { data: leftUser } = await admin.auth.admin.getUserById(guestId).catch(() => ({ data: null }));
+    const { count: leftProfile } = await admin
+      .from("profiles").select("id", { count: "exact", head: true }).eq("id", guestId);
+    ok("QA 임시 계정 삭제 성공(반환 error 없음)",
+       !profDelErr && !userDelErr,
+       `profile=${profDelErr?.message ?? "ok"} user=${userDelErr?.message ?? "ok"}`);
+    ok("QA 임시 계정 잔존 0 (auth·profiles postcondition)",
+       !leftUser?.user && (leftProfile ?? 0) === 0,
+       `auth=${leftUser?.user ? "남음" : "없음"} profiles=${leftProfile ?? 0}`);
   }
 }
 
