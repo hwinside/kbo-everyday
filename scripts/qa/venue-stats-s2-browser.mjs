@@ -313,6 +313,10 @@ const attendanceOnlyScope = (name) => {
     items: [],
     reasons: ["season_not_supported"],
   };
+  base.metrics.D5 = envelope("D5", { cancelledCount: 0 });
+  base.metrics.D6 = envelope("D6", { maxTeamRuns: null, maxMarginWin: null });
+  base.metrics.D1 = envelope("D1", { avgRunDiff: null, closeGameRate: null, closeGames: 0 });
+  base.metrics.E1 = envelope("E1", { current: 0, longest: 0, perTeam: [] });
   return base;
 };
 const attendanceOnlyPayload = {
@@ -442,8 +446,8 @@ try {
 
   await page.goto(`http://127.0.0.1:${port}`, { waitUntil: "domcontentloaded" });
   await page.getByText("63", { exact: true }).waitFor();
-  const lgSegment = page.getByText("LG 응원 구간", { exact: true }).nth(1).locator("../..");
-  const hanwhaSegment = page.getByText("한화 응원 구간", { exact: true }).nth(1).locator("../..");
+  const lgSegment = page.getByText("LG 응원 구간", { exact: true }).first().locator("../..");
+  const hanwhaSegment = page.getByText("한화 응원 구간", { exact: true }).first().locator("../..");
   const lgText = await lgSegment.innerText();
   const hanwhaText = await hanwhaSegment.innerText();
   if (![".286", "3.42", "5.2", "1.3"].every((value) => lgText.includes(value))) {
@@ -455,6 +459,17 @@ try {
   const body = await page.locator("body").innerText();
   if (!body.includes("LG 응원 구간") || !body.includes("한화 응원 구간")) throw new Error("mixed-team segments missing");
   if ((await page.evaluate(() => document.documentElement.scrollWidth)) > 390) throw new Error("horizontal overflow");
+  const interestingFacts = page.getByTestId("venue-interesting-fact");
+  if (await interestingFacts.count() !== 6) {
+    throw new Error(`compact novelty facts must cap at 6, got ${await interestingFacts.count()}`);
+  }
+  for (const fact of await interestingFacts.allInnerTexts()) {
+    if (fact.includes("–") || /\b0(?:회|경기|개)/.test(fact)) {
+      throw new Error(`irrelevant novelty fact must be omitted: ${fact}`);
+    }
+  }
+  const compactHeight = await page.evaluate(() => document.documentElement.scrollHeight);
+  if (compactHeight > 1500) throw new Error(`compact dashboard exceeded 1500px before details: ${compactHeight}px`);
 
   // 최애 사진 회귀: 실제 사진 ID는 정적 JPEG를 로드하고, 사진 없는 ID는 종전 팀 로고를 유지한다.
   const favoritePhoto = page.locator('img[src="/players/53123.jpg"]');
@@ -619,11 +634,12 @@ try {
         .slice(0, 60),
       ratio: probe(element),
     }));
-    const target = candidates.find((element) => element.textContent?.trim() === "정규시즌 기준");
-    const previousColor = target.style.color;
-    target.style.color = "rgba(255,255,255,0.2)";
-    const mutationRatio = probe(target);
-    target.style.color = previousColor;
+    const mutationTarget = document.createElement("span");
+    mutationTarget.textContent = "contrast mutation";
+    mutationTarget.style.cssText = "display:block;color:rgb(21,21,25);background:rgb(21,21,25)";
+    root.appendChild(mutationTarget);
+    const mutationRatio = probe(mutationTarget);
+    mutationTarget.remove();
     return {
       count: measured.length,
       minimum: Math.min(...measured.map((entry) => entry.ratio)),
@@ -636,6 +652,7 @@ try {
   }
   if (contrast.mutationRatio >= 4.5) throw new Error("Dashboard AA mutation guard did not fail");
 
+  await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({ path: SHOT, fullPage: true });
 
   // ── 혼합팀 표본 미달(2팀 × 1경기) actual DOM 계약 ────────────────────────────
@@ -660,8 +677,8 @@ try {
     .innerText();
   if (scoreText.trim() !== "–") throw new Error(`sample-limited derived score must be dash, got ${scoreText}`);
 
-  const limitedLg = await page.getByText("LG 응원 구간", { exact: true }).nth(1).locator("../..").innerText();
-  const limitedHanwha = await page.getByText("한화 응원 구간", { exact: true }).nth(1).locator("../..").innerText();
+  const limitedLg = await page.getByText("LG 응원 구간", { exact: true }).first().locator("../..").innerText();
+  const limitedHanwha = await page.getByText("한화 응원 구간", { exact: true }).first().locator("../..").innerText();
   if (![".286", "3.42", "5.2", "1.3"].every((value) => limitedLg.includes(value))) {
     throw new Error(`sample-limited mixed LG facts missing: ${limitedLg}`);
   }
@@ -702,11 +719,11 @@ try {
     throw new Error("sample-limited split rows missing 참고용 badge");
   }
 
-  // 상세 목록 밖의 요약 카드(`토요일 승률`)도 같은 items 소스를 써야 한다.
+  // 상세 목록 밖의 요약 카드(`토요일`)도 같은 items 소스를 써야 한다.
   // top-level value 만 읽으면 상세엔 토요일이 보이는데 이 카드만 `–` 로 죽는다.
-  const saturdayCard = page.getByText("토요일 승률", { exact: true }).locator("..");
+  const saturdayCard = page.getByTestId("venue-interesting-fact").filter({ hasText: "토요일" });
   const saturdayText = await saturdayCard.innerText();
-  if (!saturdayText.includes("100.0%")) {
+  if (!saturdayText.includes("승률 100%")) {
     throw new Error(`sample-limited Saturday fact dropped outside detail list: ${saturdayText}`);
   }
 
@@ -759,6 +776,12 @@ try {
   if (!(aoBadgeRgb[0] > 200 && aoBadgeRgb[1] > 150 && aoBadgeRgb[2] < 140)) {
     throw new Error(`attendance_only badge must be amber, got rgb(${aoBadgeRgb.join(",")})`);
   }
+  const sparseFactText = await page.getByTestId("venue-interesting-fact").allInnerTexts();
+  for (const omitted of ["우천·취소", "연속 직관", "최다 득점", "1점차 승부"]) {
+    if (sparseFactText.some((text) => text.includes(omitted))) {
+      throw new Error(`inapplicable novelty fact must be omitted: ${omitted}`);
+    }
+  }
 
   // mutation RED: 가드가 실제로 살아있는지 — 점수 slot 을 강제로 채우면 검사가 실패해야 한다.
   const mutationDetected = await page.evaluate(() => {
@@ -800,7 +823,7 @@ try {
   }
 
   console.log(
-    `venue stats S2 browser: PASS (390px, B1~B4 actual payload, season abort/generation, selected-season 503 fail-closed(no stale value + retry UI), mixed sample-limited facts+dash score+amber badge+0 baseline+summary card, attendance_only 2-game facts+dash score+amber badge+mutation RED, partial-baseline B/C attendance facts+C4/C5 visible+season hidden, AA ${contrast.minimum.toFixed(2)}:1 across ${contrast.count} texts)\nshot: ${SHOT}`,
+    `venue stats S2 browser: PASS (390px, compact<=1500px, novelty<=6+inapplicable omitted, B1~B4 actual payload, season abort/generation, selected-season 503 fail-closed(no stale value + retry UI), mixed sample-limited facts+dash score+amber badge+0 baseline+summary card, attendance_only 2-game facts+dash score+amber badge+mutation RED, partial-baseline B/C attendance facts+C4/C5 visible+season hidden, AA ${contrast.minimum.toFixed(2)}:1 across ${contrast.count} texts)\nshot: ${SHOT}`,
   );
 } finally {
   await browser.close();
