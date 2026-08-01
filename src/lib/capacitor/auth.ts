@@ -11,6 +11,11 @@ import { App } from "@capacitor/app";
 import { Browser } from "@capacitor/browser";
 import { registerPlugin } from "@capacitor/core";
 import { supabase } from "@/lib/supabase/client";
+import {
+  AUTH_ERROR_EVENT,
+  AUTH_ERROR_STORAGE_KEY,
+  getUserFacingAuthErrorFromUrl,
+} from "@/lib/auth-error";
 import { isNative, isAndroid } from "./platform";
 
 let listenerRegistered = false;
@@ -66,6 +71,15 @@ export function registerDeepLinkListener(): void {
     // Case 1: App Links가 /auth/callback?code=... 를 가로챈 경우
     // 서버에 도달하기 전이므로 클라이언트에서 직접 code exchange
     const urlObj = new URL(url);
+    const userFacingError = getUserFacingAuthErrorFromUrl(urlObj);
+    if (userFacingError) {
+      sessionStorage.setItem(AUTH_ERROR_STORAGE_KEY, userFacingError);
+      window.dispatchEvent(
+        new CustomEvent(AUTH_ERROR_EVENT, { detail: userFacingError }),
+      );
+      return;
+    }
+
     const code = urlObj.searchParams.get("code");
     if (code) {
       const { error } = await supabase.auth.exchangeCodeForSession(code);
