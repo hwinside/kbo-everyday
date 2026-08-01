@@ -207,6 +207,30 @@ async function seasonUniverseFailClosedRegression() {
   assert.equal(green.teamSeasonTotals!.size, 4);
   console.log("  ✓ route gate GREEN: 완전 우주(날짜 실패 0) + exact-set 일치 + teams exact → seasonGames 2건");
 
+  // ─ B3 gate RED (삼순 2026-08-02 P0): final 우주 중 1경기만 스코어/팀ID가 결손되어도
+  //   공식 시즌 득점 baseline은 전부 fail-close 되어야 한다. 예전엔 그 경기만 officialGames에서
+  //   조용히 빠져 남은 1경기만 분모로 “시즌 평균 득점”이 계산되는 부분 우주 false-green이었다.
+  const missingScoreFetcher: SeasonGameFetcher = async (date) => {
+    if (!universeGames[date]) return VERIFIED_EMPTY;
+    if (date === DATE_B) {
+      const broken = { ...makeFinalGame(GAME_B), awayScore: null } as unknown as KboGame;
+      return gamesResult([broken]);
+    }
+    return gamesResult(universeGames[date]);
+  };
+  __resetSeasonAggregatesCaches();
+  const b3Red = await fetchSeasonAggregates(2026, { fetcher: missingScoreFetcher, rpc: faithfulRpc });
+  // 우주 자체는 유지된다(E1 일정·complete 판정은 스코어와 무관) — 공식 스코어만 전면 fail-close.
+  assert.notEqual(b3Red.seasonGames, null, "스코어 결손이 우주 자체를 지우면 안 된다");
+  assert.equal(b3Red.seasonGames!.length, 2);
+  for (const game of b3Red.seasonGames!) {
+    assert.equal(game.awayScore, undefined, `부분 스코어 우주에서 ${game.gameId} 공식 득점이 남아 있으면 부분 분모 계산이 된다`);
+    assert.equal(game.homeScore, undefined);
+    assert.equal(game.awayTeamId, undefined);
+    assert.equal(game.homeTeamId, undefined);
+  }
+  console.log("  ✓ route B3 gate RED: final 1경기 스코어 결손 → 공식 시즌 득점 baseline 전면 fail-close(부분 우주 금지)");
+
   // ─ gate1 RED (일자 1건 reject — off-day transient): 다른 날짜는 성공해도 전체 fail-closed ─
   const rejectOffDay: SeasonGameFetcher = async (date) => {
     if (date === "20260401") throw new Error("transient fetch fail");

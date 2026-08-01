@@ -114,6 +114,48 @@ export interface FavoriteCompatibility {
   evidence: string;
 }
 
+/**
+ * 삼순 P1 (2026-08-02) — 궁합점수는 여러 지표의 합성인데 근거를 한 개만 고정 노출하면
+ * 초록 점수 옆에 "타율 ▼"만 보이는 모순이 생긴다.
+ * → 합성에 기여한 지표를 기여도 순으로 정렬해 점수 방향과 같은 부호의 것을 먼저 보여주고,
+ * 단일 지표로 방향이 설명되지 않으면 두 개를 함께 표기한다.
+ */
+interface CompatibilityContribution {
+  label: string;
+  delta: number;
+  weightedSigned: number;
+  higherIsBetter: boolean;
+  digits: number;
+  trimLeadingZero?: boolean;
+}
+
+function buildCompatibilityEvidence(
+  contributions: CompatibilityContribution[],
+  tone: Exclude<TrendTone, "unavailable">,
+): string {
+  const format = (c: CompatibilityContribution) => {
+    const trend = metricTrend(c.delta, {
+      higherIsBetter: c.higherIsBetter,
+      digits: c.digits,
+      trimLeadingZero: c.trimLeadingZero,
+    });
+    return `${c.label} ${trend.arrow} ${trend.label}`;
+  };
+  const ranked = [...contributions].sort(
+    (a, b) => Math.abs(b.weightedSigned) - Math.abs(a.weightedSigned),
+  );
+  if (tone === "neutral") return format(ranked[0]);
+  const wanted = tone === "positive" ? 1 : -1;
+  const aligned = ranked.filter((c) => Math.sign(c.weightedSigned) === wanted);
+  // 점수 방향과 같은 기여가 없을 수는 없지만(합성 부호가 그렇게 정해짐),
+  // 방어적으로 비면 상위 기여 2개를 그대로 보여준다.
+  const base = aligned.length > 0 ? aligned : ranked;
+  const opposing = ranked.filter((c) => Math.sign(c.weightedSigned) === -wanted);
+  // 반대 부호 지표가 있으면 그것도 같이 노출해야 "초록 점수 ↔ 나빠진 근거" 모순이 사라진다.
+  const picked = opposing.length > 0 ? [base[0], opposing[0]] : base.slice(0, 1);
+  return picked.map(format).join(" · ");
+}
+
 /** 표본 신뢰도를 50점 쪽으로 수축한 최애선수 직관 성적 궁합점수. */
 export function batterCompatibility(entry: C1Entry | null | undefined): FavoriteCompatibility | null {
   if (
@@ -124,15 +166,21 @@ export function batterCompatibility(entry: C1Entry | null | undefined): Favorite
   const avg = clamp(entry.deltaAvg / 0.08, -1, 1);
   const hrDelta = entry.attendanceHrPerGame - entry.seasonHrPerGame;
   const rbiDelta = entry.attendanceRbiPerGame - entry.seasonRbiPerGame;
-  const composite = avg * 0.6 + clamp(hrDelta / 0.5, -1, 1) * 0.2 + clamp(rbiDelta / 0.8, -1, 1) * 0.2;
+  const avgWeighted = avg * 0.6;
+  const hrWeighted = clamp(hrDelta / 0.5, -1, 1) * 0.2;
+  const rbiWeighted = clamp(rbiDelta / 0.8, -1, 1) * 0.2;
+  const composite = avgWeighted + hrWeighted + rbiWeighted;
   const confidence = Math.sqrt(clamp(entry.ab / 40, 0, 1));
   const score = Math.round(clamp(50 + 50 * composite * confidence, 0, 100));
   const tone = score >= 56 ? "positive" : score <= 44 ? "negative" : "neutral";
-  const trend = metricTrend(entry.deltaAvg, { higherIsBetter: true, digits: 3, trimLeadingZero: true });
   return {
     score,
     tone,
-    evidence: `타율 ${trend.arrow} ${trend.label}`,
+    evidence: buildCompatibilityEvidence([
+      { label: "타율", delta: entry.deltaAvg, weightedSigned: avgWeighted, higherIsBetter: true, digits: 3, trimLeadingZero: true },
+      { label: "홈런", delta: hrDelta, weightedSigned: hrWeighted, higherIsBetter: true, digits: 2 },
+      { label: "타점", delta: rbiDelta, weightedSigned: rbiWeighted, higherIsBetter: true, digits: 2 },
+    ], tone),
   };
 }
 
@@ -141,15 +189,20 @@ export function pitcherCompatibility(entry: C2Entry | null | undefined): Favorit
     !entry || entry.outs < 15 || entry.eraImprovement == null ||
     entry.k9Delta == null
   ) return null;
-  const composite = clamp(entry.eraImprovement / 2, -1, 1) * 0.65 + clamp(entry.k9Delta / 3, -1, 1) * 0.35;
+  const eraWeighted = clamp(entry.eraImprovement / 2, -1, 1) * 0.65;
+  const k9Weighted = clamp(entry.k9Delta / 3, -1, 1) * 0.35;
+  const composite = eraWeighted + k9Weighted;
   const confidence = Math.sqrt(clamp(entry.outs / 60, 0, 1));
   const score = Math.round(clamp(50 + 50 * composite * confidence, 0, 100));
   const tone = score >= 56 ? "positive" : score <= 44 ? "negative" : "neutral";
-  const trend = metricTrend(-entry.eraImprovement, { higherIsBetter: false, digits: 2 });
   return {
     score,
     tone,
-    evidence: `ERA ${trend.arrow} ${trend.label}`,
+    // ERA는 낮을수록 좋으므로 표기는 실제 수치 변화(-eraImprovement) 기준으로 보여준다.
+    evidence: buildCompatibilityEvidence([
+      { label: "ERA", delta: -entry.eraImprovement, weightedSigned: eraWeighted, higherIsBetter: false, digits: 2 },
+      { label: "K/9", delta: entry.k9Delta, weightedSigned: k9Weighted, higherIsBetter: true, digits: 1 },
+    ], tone),
   };
 }
 

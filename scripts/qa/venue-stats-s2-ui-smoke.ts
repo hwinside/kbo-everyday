@@ -48,6 +48,44 @@ const pitcherScore = pitcherCompatibility({
 });
 assert.ok(pitcherScore && pitcherScore.score > 50 && pitcherScore.score <= 100);
 
+// 삼순 P1 (2026-08-02) — mixed-sign RED: 합성 점수가 긍정인데 근거만 부정이면 사용자가
+// 초록 점수 옆에서 나빠진 지표만 보게 된다. 점수 방향을 설명하는 기여 지표가 먼저 나와야 하고,
+// 반대 부호 지표가 있으면 함께 노출되어 모순이 보이지 않아야 한다.
+const mixedBatter = batterCompatibility({
+  playerId: "mixed-b", attendanceAvg: 0.26, seasonAvg: 0.27, deltaAvg: -0.01,
+  attendanceHrPerGame: 0.7, seasonHrPerGame: 0.1,
+  attendanceRbiPerGame: 1.6, seasonRbiPerGame: 0.6,
+  appearances: 10, ab: 40,
+});
+assert.ok(mixedBatter, "mixed-sign 타자 궁합점수는 산출돼야 함");
+if (mixedBatter!.tone === "positive") {
+  assert.ok(
+    /▲/.test(mixedBatter!.evidence),
+    `긍정 궁합점수는 점수를 설명하는 긍정 기여 지표를 보여줘야 함: ${mixedBatter!.evidence}`,
+  );
+}
+assert.ok(
+  mixedBatter!.evidence.includes("타율") && /홈런|타점/.test(mixedBatter!.evidence),
+  `반대 부호 지표가 있으면 함성 기여 지표와 함께 표기돼야 함: ${mixedBatter!.evidence}`,
+);
+
+const mixedPitcher = pitcherCompatibility({
+  playerId: "mixed-p", attendanceEra: 4.0, seasonEra: 3.5, eraImprovement: -0.5,
+  attendanceK9: 11.5, seasonK9: 8, k9Delta: 3.5, appearances: 6, outs: 60,
+});
+assert.ok(mixedPitcher, "mixed-sign 투수 궁합점수는 산출돼야 함");
+assert.ok(
+  mixedPitcher!.evidence.includes("ERA") && mixedPitcher!.evidence.includes("K/9"),
+  `투수 mixed-sign 근거는 ERA·K/9를 함께 보여줘야 함: ${mixedPitcher!.evidence}`,
+);
+
+// 단일 방향(모두 긍정)이면 근거를 불필요하게 늘리지 않는다.
+assert.equal(
+  batterScore!.evidence.includes(" · "),
+  false,
+  `모든 기여가 같은 방향이면 단일 근거만 표기: ${batterScore!.evidence}`,
+);
+
 const routed = Object.values(VENUE_STATS_UI_GROUPS).flat();
 assert.equal(routed.length, 22);
 assert.deepEqual([...new Set(routed)].sort(), [...METRIC_IDS].sort());

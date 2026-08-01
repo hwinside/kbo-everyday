@@ -210,6 +210,12 @@ async function computeSeasonAggregates(
     awayScore: number;
     homeScore: number;
   }>();
+  // 삼순 P0 (2026-08-02) — 공식 시즌 득점(B3) baseline은 all-or-nothing이다.
+  // final 우주 중 단 1경기라도 팀ID/스코어가 유효하지 않으면 그 경기만 조용히 빠져
+  // 남은 경기로 "시즌 평균 득점"이 계산되는 부분 우주 false-green이 된다
+  // (하류 aggregate는 팀ID 있는 경기만 먼저 filter하므로 결손을 볼 수 없다).
+  // → 하나라도 결손이면 공식 필드를 전부 버리고 B3 시즌 baseline을 null로 fail-close.
+  let officialScoreUniverseComplete = true;
   try {
     const collection = await collectSeasonGameUniverse(season, REGULAR_SEASON_SR_ID, {
       fetcher: deps.fetcher,
@@ -236,11 +242,14 @@ async function computeSeasonAggregates(
           awayScore: g.awayScore!,
           homeScore: g.homeScore!,
         });
+      } else {
+        officialScoreUniverseComplete = false;
       }
     }
   } catch {
     return failClosed;
   }
+  if (!officialScoreUniverseComplete) officialGames.clear();
   if (universe.length === 0) return failClosed;
 
   const rpc =

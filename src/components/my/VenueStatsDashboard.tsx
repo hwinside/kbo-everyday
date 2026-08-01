@@ -351,6 +351,24 @@ export default function VenueStatsDashboard() {
   const bestStadiumLabel = bestStadium
     ? `${bestStadium.cell.stadium}${(bestStadium.cell.rate ?? 0) >= 0.6 ? " 강자" : " 궁합 1위"}`
     : null;
+  // 삼순 P1 (2026-08-02) — "최고의 스플릿"이라도 승률이 낮으면 긍정 태그를 붙이지 않는다.
+  // 예전엔 표본만 충족하면 0승3패에도 `야간 경기 체질`/`7월의 승요`가 렌더됐다.
+  const POSITIVE_TAG_RATE = 0.5;
+  const isPositiveSplit = (rate: number | null | undefined) => (rate ?? 0) > POSITIVE_TAG_RATE;
+  const bestDayNightLabel = bestDayNight
+    ? (() => {
+        const slot = bestDayNight.cell.dayNight === "day" ? "낮" : "야간";
+        if (isPositiveSplit(bestDayNight.cell.rate)) return `${slot} 경기 체질`;
+        return (bestDayNight.cell.rate ?? 0) === 0 ? `${slot} 경기 인내형` : `${slot} 경기가 그나마`;
+      })()
+    : null;
+  const bestMonthLabel = bestMonth
+    ? isPositiveSplit(bestMonth.cell.rate)
+      ? `${bestMonth.cell.month}월의 승요`
+      : (bestMonth.cell.rate ?? 0) === 0
+        ? `${bestMonth.cell.month}월 인내형`
+        : `${bestMonth.cell.month}월이 그나마`
+    : null;
   const summarySampleReady = (a1?.n ?? 0) >= MIN_FINAL_GAMES && !hero?.sampleLimited;
   const hrGames = b4?.denominator?.attendanceFinalGames ?? b4?.n ?? 0;
   const homeRunsSeen = b4?.value?.hr?.attendancePerGame == null
@@ -394,12 +412,12 @@ export default function VenueStatsDashboard() {
   });
   if (bestDayNight) interestingFacts.push({
     key: "day-night",
-    label: bestDayNight.cell.dayNight === "day" ? "낮 경기 체질" : "야간 경기 체질",
-    value: `${bestDayNight.cell.w}승 · ${formatRate(bestDayNight.cell.rate, 0)}`,
+    label: bestDayNightLabel!,
+    value: `${bestDayNight.cell.w}승 ${bestDayNight.cell.l}패 · ${formatRate(bestDayNight.cell.rate, 0)}`,
     icon: <span className="text-[15px]">{bestDayNight.cell.dayNight === "day" ? "☀️" : "🌙"}</span>,
   });
   if (bestMonth) interestingFacts.push({
-    key: "month", label: `${bestMonth.cell.month}월의 승요`, value: `${bestMonth.cell.w}승 · ${formatRate(bestMonth.cell.rate, 0)}`,
+    key: "month", label: bestMonthLabel!, value: `${bestMonth.cell.w}승 ${bestMonth.cell.l}패 · ${formatRate(bestMonth.cell.rate, 0)}`,
     icon: <CalendarDays size={16} className="text-cyan-300" />,
   });
   if (summarySampleReady && (d6?.value?.maxMarginWin?.margin ?? 0) >= 3) interestingFacts.push({

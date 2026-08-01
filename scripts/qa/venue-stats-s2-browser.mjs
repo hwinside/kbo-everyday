@@ -409,6 +409,22 @@ const partialBaselinePayload = {
   gps:partialBaselineScope("gps"),
 };
 
+// 삼순 P1 (2026-08-02) — 패배 스플릿 mutation RED용 payload.
+// 표본은 충족하지만 야간·7월이 전부 패배인 실제 fixture — 예전엔 이 상태에서도
+// `야간 경기 체질 0승 · 0%`, `7월의 승요 0승 · 0%` 같은 긍정 태그가 렌더됐다.
+const losingSplitScope = (name) => {
+  const base = scope(name, 5, .625);
+  base.metrics.A5 = envelope("A5", [{dayNight:"night",w:0,l:3,d:0,rate:0}]);
+  base.metrics.A6 = envelope("A6", [{month:7,w:0,l:3,d:0,rate:0}]);
+  return base;
+};
+const losingSplitPayload = {
+  season:2026,
+  seasonSupport:{status:"supported",supportedSeason:2026},
+  overall:losingSplitScope("overall"),
+  gps:losingSplitScope("gps"),
+};
+
 const css = await postcss([tailwind]).process(
   readFileSync(resolve(ROOT, "src/styles/globals.css"), "utf8"),
   { from: resolve(ROOT, "src/styles/globals.css") },
@@ -419,11 +435,13 @@ let fail2025 = false;
 let serveSampleLimited = false;
 let serveAttendanceOnly = false;
 let servePartialBaseline = false;
+let serveLosingSplits = false;
 const server = createServer((req, res) => {
   if (req.url?.startsWith("/api/me/venue-stats")) {
     const requestedSeason = new URL(req.url, "http://127.0.0.1").searchParams.get("season");
     const body = requestedSeason === "2025"
       ? stalePayload
+      : serveLosingSplits ? losingSplitPayload
       : servePartialBaseline ? partialBaselinePayload
       : serveAttendanceOnly ? attendanceOnlyPayload
       : serveSampleLimited ? sampleLimitedPayload
@@ -927,6 +945,29 @@ try {
   }
   if ((await page.evaluate(() => document.documentElement.scrollWidth)) > 390) {
     throw new Error("partial-baseline horizontal overflow");
+  }
+
+  // ── 패배 스플릿 mutation RED (삼순 2026-08-02 P1) ────────────────────
+  // 야간 0승3패·7월 0승3패인 actual DOM에서 긍정 캐릭터 태그가 붙으면 FAIL.
+  servePartialBaseline = false;
+  serveLosingSplits = true;
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.getByTestId("venue-interesting-fact").first().waitFor({ timeout: 4000 });
+  await page.getByRole("button", { name: /태그 .*개 더 보기/ }).click();
+  const losingFacts = await page.getByTestId("venue-interesting-fact").allInnerTexts();
+  const losingText = losingFacts.join("\n");
+  for (const phrase of ["야간 경기 체질", "낮 경기 체질", "7월의 승요"]) {
+    if (losingText.includes(phrase)) {
+      throw new Error(`0승 스플릿에 긍정 태그가 붙음: ${phrase} / ${losingText}`);
+    }
+  }
+  for (const phrase of ["야간 경기 인내형", "7월 인내형"]) {
+    if (!losingText.includes(phrase)) {
+      throw new Error(`0승 스플릿은 정직한 인내형 문구로 바뀌어야 함: ${phrase} / ${losingText}`);
+    }
+  }
+  if (!losingText.includes("0승 3패")) {
+    throw new Error(`0승 스플릿은 승·패를 함께 보여줘야 함: ${losingText}`);
   }
 
   console.log(
