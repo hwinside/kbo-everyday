@@ -16,6 +16,7 @@ import TeamBadge from "@/components/ui/TeamBadge";
 import { linkifyText } from "@/lib/linkify";
 import NewsClippingCard from "@/components/dm/NewsClippingCard";
 import GeniusTypingIndicator from "@/components/dm/GeniusTypingIndicator";
+import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { isNewsClippingPayload } from "@/types/news-clipping";
 import {
   BASEBALL_GENIUS_NAME,
@@ -149,6 +150,9 @@ export default function DMChatPage() {
   // 닉네임 위조 방지를 위해 운영팀 user_id로 판정.
   const isOperatorConv = otherId === OPERATOR_USER_ID;
   const isBaseballGeniusConv = otherId === BASEBALL_GENIUS_USER_ID;
+  // 마스코트 아바타는 일단 관리자에게만 (2026-08-01 하린아빠 지시).
+  // 비관리자는 종전 ⚾ 이모지 그대로 — 검증 끝나면 이 게이트만 제거해 전체 롤아웃.
+  const showGeniusMascot = useIsAdmin() && isBaseballGeniusConv;
   // 뉴스클리퍼 대화 — 자동 발송 전용, 답장 시 자동응답만 옴 (안내 배너 노출)
   const isClipperConv = otherId != null && NEWS_CLIPPER_IDS.has(otherId);
   // 회신 불가(자동 발송 전용) 계정 — 클리퍼 + 긴급공지. 입력창 비활성 + 안내 배너.
@@ -284,10 +288,18 @@ export default function DMChatPage() {
         >
           <ChevronLeft size={24} />
         </button>
+        {/* 마스코트는 제목 줄 안이 아니라 2줄 텍스트블록 '옆'에 둔다.
+            제목 줄(gap-1.5) 안에 40px 를 넣으면 그 줄이 26→40px 가 돼
+            블록이 41→55px, 헤더가 54→68px 로 커진다(실측 확인함).
+            형제로 빼면 헤더 높이는 max(뒤로 32, 아바타 40, 텍스트 41) 이라 불변. */}
+        {showGeniusMascot && (
+          <img src="/mascot/yajalal-avatar.png" alt="야잘알봇"
+               className="w-10 h-10 rounded-full object-cover flex-shrink-0" />
+        )}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">
             {isBaseballGeniusConv ? (
-              <img src="/mascot/yajalal-avatar.png" alt="야잘알봇" className="w-5 h-5 rounded-full object-cover" />
+              showGeniusMascot ? null : <span className="text-lg" aria-hidden>⚾</span>
             ) : otherName === "크보팬 운영팀" ? (
               <img src="/apple-touch-icon.png" alt="크보팬" className="w-5 h-5 rounded-full object-cover" />
             ) : otherTeamId ? (

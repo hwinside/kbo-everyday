@@ -13,6 +13,7 @@ import { supabase } from "@/lib/supabase/client";
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { BASEBALL_GENIUS_NAME } from "@/lib/constants/baseball-genius";
+import AdminOnly from "@/components/admin/AdminOnly";
 
 function timeAgo(dateStr: string) {
   const diff = Date.now() - new Date(dateStr).getTime();
@@ -108,7 +109,12 @@ export default function MessagesPage() {
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-full bg-bg-tertiary flex items-center justify-center flex-shrink-0 overflow-hidden">
                   {conv.other_nickname === BASEBALL_GENIUS_NAME ? (
-                    <img src="/mascot/yajalal-avatar.png" alt="야잘알봇" className="w-full h-full object-cover" />
+                    // 목록은 아바타 컴테이너(w-10)가 전 행 공용이라 여기만 키우면
+                    // 닉네임 시작 x 가 밀려 다른 행과 정렬이 어긋난다.
+                    // 대신 크롭을 꽉 채워(margin 1.06) 같은 40px 안에서 최대한 크게 보이게 한다.
+                    <AdminOnly fallback={<span className="text-xl" aria-hidden>⚾</span>}>
+                      <img src="/mascot/yajalal-avatar.png" alt="야잘알봇" className="w-full h-full object-cover" />
+                    </AdminOnly>
                   ) : conv.other_nickname === "크보팬 운영팀" ? (
                     <img src="/apple-touch-icon.png" alt="크보팬" className="w-full h-full object-cover" />
                   ) : conv.other_team_id ? (
