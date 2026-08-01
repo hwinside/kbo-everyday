@@ -8,4 +8,5 @@
 - [x] 390px 고밀도 레이아웃 적용
 - [x] aggregate/UI/browser 회귀 추가
 - [x] lint/type/graphify/필수 게이트 통과
-- [ ] 커밋·PR·삼순 리뷰 요청
+- [x] 커밋·PR 생성
+- [ ] 삼순 리뷰 요청·GO
