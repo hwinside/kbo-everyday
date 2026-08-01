@@ -43,6 +43,8 @@
     "qa:api-fallback-alert-claim:db": "tsx scripts/qa/api-fallback-alert-claim-db-integration.ts",
     "qa:venue-stats-s1a-ledger:db": "tsx scripts/qa/venue-stats-s1a-ledger-db-integration.ts",
     "qa:backfill-workflow-matrix": "bash scripts/qa/backfill-workflow-matrix.sh",
+    "qa:backfill-workflow-failfast": "bash scripts/qa/backfill-workflow-failfast.sh",
+    "qa:backfill-script-module-load": "node scripts/qa/backfill-script-module-load.mjs",
     "qa:venue-stats-state": "tsx scripts/qa/venue-stats-state-ladder-smoke.ts",
     "qa:venue-stats-s1b-aggregate": "tsx scripts/qa/venue-stats-s1b-aggregate-smoke.ts",
     "qa:venue-stats-s1b-db-route": "tsx scripts/qa/venue-stats-s1b-db-route-integration.ts",

@@ -60,7 +60,12 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          # 24 미만 금지. lockfile 의 tsx 4.22.0 은 node 22 에서
+          #   SyntaxError: '@/lib/game-logs/completeness' does not provide an export named 'buildGameIngestion'
+          # 로 죽는다 — .mts(ESM) 진입점이 CJS 로 컴파일된 .ts 모듈의 named export 를
+          # 인식하지 못하는 interop 차이다(node 24 는 정상). run 30655482859 실측.
+          # 이 값은 scripts/qa/backfill-script-module-load.mjs 가 게이트에서 강제한다.
+          node-version: '24'
           cache: 'npm'
 
       - name: Install dependencies
@@ -159,10 +164,17 @@ jobs:
           echo "ledger rows before: $COUNT"
 
       - name: Run backfill
+        id: backfill
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
+          # pipefail 이 없으면 파이프라인 종료코드가 마지막 명령인 tee(항상 0)로 덮인다.
+          # 즉 backfill 이 SyntaxError 로 죽어도 step 이 초록이 되고 run 도 SUCCESS 로
+          # 끝난다(run 30655482859 실측). 실패한 백필을 성공으로 오인하면
+          # 그대로 공개 단계로 넘어간다 — 이 한 줄이 그 경로를 막는다.
+          # 회귀: scripts/qa/backfill-workflow-failfast.sh (실제 실패 주입으로 전파 검증)
+          set -euo pipefail
           ARGS="--season ${{ steps.validate.outputs.season }}"
           if [ "${{ steps.validate.outputs.limit }}" != "0" ]; then
             ARGS="$ARGS --limit ${{ steps.validate.outputs.limit }}"
@@ -173,8 +185,12 @@ jobs:
           echo "npx tsx scripts/backfill-game-log-ledger.mts $ARGS"
           npx tsx scripts/backfill-game-log-ledger.mts $ARGS 2>&1 | tee /tmp/backfill.log
 
+      # 진단용 수치다 — 실패한 런에서도 "쓰기가 어디까지 갔나"를 봐야 하므로 always().
+      # 이 step 이 성공해도 run 은 여전히 실패다(앞 step 의 failure 가 job 결론을 결정).
+      # 아래 검증 step 들은 success() 를 명시해 이 수치를 성공 근거로 쓰지 못하게 한다.
       - name: Ledger count after
         id: after
+        if: always()
         env:
           SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -193,6 +209,10 @@ jobs:
           {
             echo "## Game Log Ledger Backfill"
             echo ""
+            echo "- backfill 실행 결과: \`${{ steps.backfill.outcome }}\`"
+            if [ "${{ steps.backfill.outcome }}" != "success" ]; then
+              echo "  - ⚠️ **이 런은 실패했다. 아래 수치는 진단용이며 성공 근거가 아니다.**"
+            fi
             echo "- season: \`${{ steps.validate.outputs.season }}\`"
             echo "- limit: \`${{ steps.validate.outputs.limit }}\` (0 = 시즌 전체)"
             echo "- apply: \`${{ steps.validate.outputs.apply }}\`"
@@ -211,8 +231,12 @@ jobs:
       # 그리고 검증 대상을 운영자 입력으로 받으면 빈 값으로 dispatch 해서 게이트를 건너뛸 수 있다(P0-2).
       # 그래서 공개 선행 대상 3경기를 **워크플로에 고정**하고, mode=release 면 무조건 실행한다.
       # canary 는 소량 시험용이라 이 게이트를 타지 않으며, 공개 근거로 쓸 수 없다.
+      #
+      # ⚠️ success() 를 명시한다. 앞에 `if: always()` step(Ledger count after / Summary)이
+      # 생기면서 "암시적 success()"만 믿기엔 읽는 사람이 헷갈렸다. 백필이 실패했는데
+      # 이 게이트가 돌아 초록이 나면 공개 근거가 오염된다.
       - name: Verify release games are complete
-        if: steps.validate.outputs.apply == 'true' && steps.validate.outputs.mode == 'release'
+        if: success() && steps.validate.outputs.apply == 'true' && steps.validate.outputs.mode == 'release'
         env:
           SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -263,7 +287,7 @@ jobs:
       # apply 실행이 사실상 no-op 이면(증가 0 + complete 0) 드러낸다.
       # 이건 보조 가드일 뿐이고, 진짜 게이트는 위의 required games 검증이다.
       - name: Verify apply made progress
-        if: steps.validate.outputs.apply == 'true'
+        if: success() && steps.validate.outputs.apply == 'true'
         run: |
           BEFORE="${{ steps.before.outputs.count }}"
           AFTER="${{ steps.after.outputs.count }}"

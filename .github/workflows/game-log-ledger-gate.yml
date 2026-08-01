@@ -18,6 +18,8 @@ on:
       - "scripts/backfill-game-log-ledger.mts"
       - "scripts/qa/venue-stats-s1a-ledger-db-integration.ts"
       - "scripts/qa/backfill-workflow-matrix.sh"
+      - "scripts/qa/backfill-workflow-failfast.sh"
+      - "scripts/qa/backfill-script-module-load.mjs"
       - "scripts/qa/game-log-ledger-orchestrator.ts"
       - "supabase/migrations/20260606_player_game_logs.sql"
       - "supabase/migrations/20260730_player_game_log_ingestions.sql"
@@ -34,6 +36,8 @@ on:
       - "scripts/backfill-game-log-ledger.mts"
       - "scripts/qa/venue-stats-s1a-ledger-db-integration.ts"
       - "scripts/qa/backfill-workflow-matrix.sh"
+      - "scripts/qa/backfill-workflow-failfast.sh"
+      - "scripts/qa/backfill-script-module-load.mjs"
       - "scripts/qa/game-log-ledger-orchestrator.ts"
       - "supabase/migrations/20260606_player_game_logs.sql"
       - "supabase/migrations/20260730_player_game_log_ingestions.sql"
@@ -51,7 +55,9 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          # backfill 진입점(.mts) 로딩 가드가 이 job 에서 돌아간다 —
+          # 백필 워크플로와 동일한 런타임이어야 검증이 의미가 있다.
+          node-version: "24"
 
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
@@ -83,3 +89,15 @@ jobs:
       - name: Backfill workflow input matrix (fail-closed)
         # yml 의 Validate inputs run 블록을 그대로 추출해 실행한다(로직 복제 아님).
         run: npm run qa:backfill-workflow-matrix
+
+      - name: Backfill failure propagation (fail-closed)
+        # run 30655482859: backfill 이 SyntaxError 로 죽었는데 run 은 SUCCESS 였다.
+        # `| tee` 가 종료코드를 삼켰기 때문 — 실패한 백필을 성공으로 오인하면
+        # 그대로 공개 단계로 넘어간다. 실패 주입으로 전파를 실증한다.
+        run: npm run qa:backfill-workflow-failfast
+
+      - name: Backfill entrypoint module load (fail-closed)
+        # 같은 사고의 1차 원인 — 러너 node 22 + tsx 4.22.0 에서 .mts 가
+        # CJS 컴파일된 .ts 의 named export 를 못 읽는다. 버전 되돌림과
+        # export 이름 변경/삭제를 둘 다 잡는다.
+        run: npm run qa:backfill-script-module-load
