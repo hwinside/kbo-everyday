@@ -98,6 +98,13 @@ async function main() {
 
   console.log(`\n[ledger-backfill] === 요약 ===`);
   console.log(`대상 ${targets.length} | complete ${complete} | incomplete ${incompletes.length}`);
+  // 기계 판독용 단일 행. 위 사람용 요약을 CI 가 직접 파싱하다
+  // `incomplete 0` 안의 `complete 0` 을 집어 complete=0 으로 오독했다
+  // (run 30679031813: 실제 5경기 성공인데 apply 가드가 실패 판정).
+  // 산문을 정규식으로 긁는 대신 고정 key=value 를 내보낸다.
+  console.log(
+    `[ledger-backfill] RESULT target=${targets.length} complete=${complete} incomplete=${incompletes.length}`,
+  );
   for (const p of incompletes) console.log(`  ✗ ${p}`);
 }
 

@@ -314,7 +314,22 @@ jobs:
             echo "::error::ledger counts must be numeric (before='$BEFORE' after='$AFTER')"
             exit 1
           fi
-          COMPLETE=$(grep -oE 'complete [0-9]+' /tmp/backfill.log | tail -1 | grep -oE '[0-9]+' || echo "0")
+          # 산문(`대상 5 | complete 5 | incomplete 0`)을 긁지 않는다 —
+          # `incomplete 0` 안에 `complete 0` 이 들어 있어 tail -1 이 그걸 집었고,
+          # 5경기 전부 성공한 apply 런을 complete=0 으로 오독해 실패시켰다
+          # (run 30679031813). 스크립트가 내보내는 고정 RESULT 행만 읽는다.
+          RESULT_LINE=$(grep -E '^\[ledger-backfill\] RESULT ' /tmp/backfill.log | tail -1 || true)
+          if [ -z "$RESULT_LINE" ]; then
+            # 이전에는 `|| echo "0"` 로 조용히 0 이 돼서, 행이 없으면
+            # after>before 일 때 그대로 통과했다. 이젠 fail-close.
+            echo "::error::backfill log has no RESULT line — cannot verify apply progress"
+            exit 1
+          fi
+          COMPLETE=$(printf '%s' "$RESULT_LINE" | sed -nE 's/.* complete=([0-9]+).*/\1/p')
+          if ! printf '%s' "$COMPLETE" | grep -Eq '^[0-9]+$'; then
+            echo "::error::could not parse complete= from RESULT line: '$RESULT_LINE'"
+            exit 1
+          fi
           echo "before=$BEFORE after=$AFTER complete=$COMPLETE"
           if [ "$AFTER" -lt "$BEFORE" ]; then
             echo "::error::ledger rows decreased ($BEFORE → $AFTER)"
