@@ -51,6 +51,12 @@ async function measure(page) {
     //    "헤더 없음" 이라는 무관한 FAIL 이 난다(내 첫 하니스가 그랬다).
     //    헤더는 버튼 존재와 무관하게 문서에서 직접 찾는다.
     const header = btn?.closest("header") ?? document.querySelector("header") ?? null;
+    // "쪽지 왼쪽" 계약의 기준점. 로그인 헤더에는 쪽지 링크가 있지만, 없을 수 있는
+    // 헤더에서도 판정되도록 바로 오른쪽 형제 컨트롤을 대체 기준으로 둔다.
+    const sibling = btn?.parentElement
+      ? [...btn.parentElement.children].find((el) => el !== btn) ?? null
+      : null;
+    const anchor = dm ?? sibling;
     const img = btn?.querySelector("img") ?? null;
     const r = (el) => (el ? el.getBoundingClientRect() : null);
     return {
@@ -213,6 +219,16 @@ async function main() {
       "[로그인] 헤더 높이가 규격 안",
       !!m2.headerRect && m2.headerRect.height >= HEADER_MIN && m2.headerRect.height <= HEADER_MAX,
       m2.headerRect ? `${Math.round(m2.headerRect.height)}px` : "",
+    );
+    ok(
+      "[로그인] 이미지가 실제로 로드된다(404 아님)",
+      m2.imgNaturalWidth > 0,
+      `naturalWidth=${m2.imgNaturalWidth}`,
+    );
+    ok(
+      "[로그인] 캐릭터 가시 높이 충분",
+      !!m2.imgRect && m2.imgRect.height >= MASCOT_MIN_VISIBLE,
+      m2.imgRect ? `${Math.round(m2.imgRect.height)}px >= ${MASCOT_MIN_VISIBLE}` : "",
     );
 
     // 세션이 실제로 적용됐는지 먼저 확인한다. 미적용이면 클릭은 로그인 시트를 띄우고
