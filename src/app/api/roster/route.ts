@@ -19,7 +19,7 @@ export const revalidate = 300; // 5분 ISR 캐시
 //   photoUrl (향후 확장 예정)
 // ============================================================================
 
-const EXPECTED_ROSTER_COUNT = 878; // 2026-07-28 신규 외인 보스(56402) 온보딩 +1 (877→878)
+const EXPECTED_ROSTER_COUNT = 879; // 2026-07-28 신규 외인 보스(56402) 온보딩 +1 (877→878)
 
 interface RosterPlayer {
   kboId: string;

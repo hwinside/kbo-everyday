@@ -161,7 +161,9 @@ assert.doesNotMatch(
 }
 assert.match(serverSource, /sendOpsMessageToUser/);
 assert.match(serverSource, /reserve_baseball_genius_daily_question_for_message/);
-assert.equal(playersRoster.length, 878, "선수 선차단 SSOT는 roster JSON 878명이어야 함");
+// 로스터 인원은 콜업·트레이드로 상시 변하므로 숫자를 고정하지 않는다(2026-08-01 P0:
+// 하드코딩 878이 자동 roster PR을 영구 막았다). 계약은 "선차단 SSOT가 roster JSON이고 비어있지 않다".
+assert.ok(playersRoster.length > 0, "선수 선차단 SSOT는 roster JSON이며 비어 있으면 안 됨");
 assert.match(serverSource, /import playersRoster from "@\/lib\/constants\/players-roster\.json"/);
 assert.doesNotMatch(serverSource, /\.from\("players_roster"\)/);
 assert.doesNotMatch(routeSource, /룰·용어·기록 질문/);

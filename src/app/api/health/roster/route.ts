@@ -11,7 +11,7 @@ import playersRoster from "@/lib/constants/players-roster.json";
 
 export const dynamic = "force-dynamic"; // no-cache
 
-const EXPECTED_ROSTER_COUNT = 878; // 2026-07-28 신규 외인 보스(56402) 온보딩 +1 (877→878)
+const EXPECTED_ROSTER_COUNT = 879; // 2026-07-28 신규 외인 보스(56402) 온보딩 +1 (877→878)
 const MIN_PER_TEAM = 30;
 const KNOWN_TEAMS = [
   "KIA", "두산", "롯데", "삼성", "SSG", "NC", "한화", "키움", "LG", "KT",
