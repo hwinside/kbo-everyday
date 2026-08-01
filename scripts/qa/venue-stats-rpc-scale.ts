@@ -10,7 +10,7 @@
  * 이 회귀가 고정하는 것:
  *   1) 마이그레이션 SQL 의 모든 CTE 에 MATERIALIZED 힌트가 살아있다 (되돌림 가드).
  *   2) 실 DB 에서 시즌 전체 우주(현재 ledger 전량)가 예산 안에 완료된다.
- *   3) MATERIALIZED 가 결과를 바꾸지 않는다 — 규모별 byte-exact(md5) 동일.
+ *   3) 같은 입력의 반복 호출 결과가 결정적이고 우주 길이를 보존한다.
  *
  * (2)(3)은 service_role 자격증명이 있을 때만 실행하고, 없으면 (1)만 검사하고 skip 한다
  * (CI 에서 조용히 통과시키지 않기 위해 skip 사유를 명시 출력한다).
@@ -107,7 +107,8 @@ async function assertLiveScale() {
   );
   console.log(`  ✓ 실 DB 규모: ${games.length}경기 ${ms}ms (< ${BUDGET_MS}ms) · games=${payload.games?.length} teams=${payload.teams?.length}`);
 
-  // MATERIALIZED 가 결과를 바꾸지 않는지 — 부분 규모에서 결정성/일관성 확인.
+  // 부분 규모에서 결정성/일관성 확인. old-vs-new byte 동치 증거는 배포 전 수동 shadow
+  // verifier로 별도 수행하며, 이 committed test가 그 검증을 대신한다고 표현하지 않는다.
   for (const n of [1, 10, 97]) {
     const slice = games.slice(0, n);
     const [a, b] = await Promise.all([

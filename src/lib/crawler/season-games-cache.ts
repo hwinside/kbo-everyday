@@ -6,7 +6,7 @@
  * TTL: 10 minutes during game hours (KST 11:00-24:00), 60 minutes otherwise.
  */
 
-import { fetchGames, type KboGame } from "./kbo-api";
+import { fetchGames, fetchKboGamesOnly, type KboGame } from "./kbo-api";
 import { REGULAR_SEASON_WINDOWS } from "./naver-games";
 
 interface CacheEntry {
@@ -138,6 +138,29 @@ export async function fetchSeasonUniverseDate(
   date: string,
   srId = "0,1,3,4,5,7,9",
 ): Promise<SeasonGameFetchResult> {
+  // 정규 전용 우주는 source를 숨기는 fetchGames fallback 결과를 곧바로 신뢰하지 않는다.
+  // KBO regular 원본이 비었을 때 Naver 전시리즈와 KBO non-regular를 exact 대조해야
+  // window 내부 올스타(예: 20260711 WEEA0)가 정규 우주로 섞이지 않는다.
+  if (srId === REGULAR_ONLY_SR_ID) {
+    let regular: KboGame[];
+    try {
+      regular = await fetchKboGamesOnly(date, REGULAR_ONLY_SR_ID);
+    } catch {
+      return { games: [], emptyVerified: false };
+    }
+    if (regular.length > 0) return { games: regular, emptyVerified: false };
+    try {
+      const { fetchNaverGames } = await import("./naver-games");
+      const cross = await fetchNaverGames(date, NAVER_FULL_SR_ID);
+      if (cross.length === 0) return { games: [], emptyVerified: true };
+      const nonRegular = await fetchKboGamesOnly(date, NON_REGULAR_SR_ID);
+      const nonRegularIds = new Set(nonRegular.map((game) => game.gameId));
+      return { games: [], emptyVerified: cross.every((game) => nonRegularIds.has(game.gameId)) };
+    } catch {
+      return { games: [], emptyVerified: false };
+    }
+  }
+
   const games = await fetchGames(date, srId);
   if (games.length > 0) return { games, emptyVerified: false };
   // 빈 응답 — 무경기 확정 교차검증. 확정 못하면 unverified(fail-closed 대상).
@@ -151,11 +174,6 @@ export async function fetchSeasonUniverseDate(
     // (시범·올스타는 정규 우주 제외 대상이지 verification 실패가 아님 — 예: 2026-03-12
     // KBO 정규 []·Naver 시범 5경기). 비정규로 설명 안 되는 Naver 경기가 하나라도 남으면
     // 정규경기 soft-drop 가능성 → unverified fail-closed 유지.
-    if (srId === REGULAR_ONLY_SR_ID) {
-      const nonRegular = await fetchGames(date, NON_REGULAR_SR_ID);
-      const nonRegularIds = new Set(nonRegular.map((g) => g.gameId));
-      return { games: [], emptyVerified: cross.every((g) => nonRegularIds.has(g.gameId)) };
-    }
     // 전-시리즈 우주 등 그 외 srId — Naver에 경기가 있으면 실제 경기 누락 가능성 → unverified.
     return { games: [], emptyVerified: false };
   } catch {
@@ -166,7 +184,7 @@ export async function fetchSeasonUniverseDate(
 /**
  * 시즌 범위(3월 1일~현재월 말 또는 11월 말)의 모든 YYYYMMDD 날짜.
  *
- * 정규시즌 전용(srId="0") 우주는 검증된 정규시즌 window 교집합만 남긴다.
+ * 정규시즌 전용(srId="0") 우주는 검증된 개막일 전 날짜만 제외한다.
  * 3월 1일~개막일 전날은 정규경기가 존재할 수 없는 날짜인데, 그 구간은 window 밖이라
  * srId="0" 조회가 "KBO 200-empty 미검증"으로 throw 한다(시범경기 오염 방지 fail-close).
  * 그 날짜를 우주에 넣으면 collectSeasonGameUniverse 가 구조적으로 영원히
@@ -174,8 +192,8 @@ export async function fetchSeasonUniverseDate(
  * (2026 실측: 3/1~3/27 27일 전부 failed → 직관 통계 팀 타율·ERA·홈런 영구 미노출).
  * window 미등록 연도는 범위를 즐이지 않는다 — 기존대로 fail-close 된다(추측 서빙 금지).
  */
-function getSeasonDates(season: number, srId = "0,1,3,4,5,7,9"): string[] {
-  const today = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Seoul" });
+function getSeasonDates(season: number, srId = "0,1,3,4,5,7,9", todayOverride?: string): string[] {
+  const today = todayOverride ?? new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Seoul" });
   const [todayYear, todayMonth] = today.split("-").map(Number);
   const startMonth = 3; // KBO 정규시즌 3월 개막
   const endMonth = todayYear === season ? todayMonth : 11;
@@ -189,7 +207,10 @@ function getSeasonDates(season: number, srId = "0,1,3,4,5,7,9"): string[] {
   if (srId !== REGULAR_ONLY_SR_ID) return dates;
   const window = REGULAR_SEASON_WINDOWS[String(season)];
   if (!window) return dates; // 미등록 시즌 — 기존 fail-close 경로 그대로
-  return dates.filter((d) => d >= window.start && d <= window.end);
+  // 개막 전만 확정적으로 자른다. 종료일은 순연으로 유동이므로 window.end 뒤를 조용히
+  // 제외하지 않는다. 현재 horizon이 end를 넘으면 실제 fetch가 그 날짜를 검증하거나
+  // unverified로 남겨 complete=false가 되어야 한다.
+  return dates.filter((d) => d >= window.start);
 }
 
 /**
@@ -205,10 +226,10 @@ function getSeasonDates(season: number, srId = "0,1,3,4,5,7,9"): string[] {
 export async function collectSeasonGameUniverse(
   season: number,
   srId = "0,1,3,4,5,7,9",
-  opts?: { fetcher?: SeasonGameFetcher },
+  opts?: { fetcher?: SeasonGameFetcher; today?: string },
 ): Promise<SeasonGameCollection> {
   const fetcher = opts?.fetcher ?? fetchSeasonUniverseDate;
-  const dates = getSeasonDates(season, srId);
+  const dates = getSeasonDates(season, srId, opts?.today);
   const results = await Promise.allSettled(dates.map((d) => fetcher(d, srId)));
 
   const games: KboGame[] = [];
