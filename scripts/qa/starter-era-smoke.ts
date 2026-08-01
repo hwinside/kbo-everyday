@@ -7,6 +7,11 @@ import {
   resolveStarterPitcher,
 } from "../../src/lib/stats/pitcher-season";
 import { resolveRosterPlayer } from "../../src/lib/utils/player-roster";
+import {
+  isLineupStarterProvenanceTrusted,
+  isSourceSnapshotNewer,
+  shouldCommitResponse,
+} from "../../src/lib/source-snapshot";
 
 const officialLineupStarters = [
   ["카라스코", 1, "56103", "0.00", "카라스코", "0.00"],
@@ -157,6 +162,75 @@ assert.deepEqual(
   "unknown pitcher fails closed without guessing",
 );
 
+const previewTrusted = isLineupStarterProvenanceTrusted({
+  source: "naver-preview",
+  awayBatters: 0,
+  homeBatters: 0,
+  isAllStar: false,
+});
+assert.equal(previewTrusted, true, "identity-verified Naver preview-only starters are trusted");
+assert.deepEqual(
+  resolveLineupStarter({
+    liveStarterName: null,
+    lineupStarterName: "곽빈",
+    liveStarterFresh: false,
+    lineupStarterTrusted: previewTrusted,
+    teamId: 2,
+  }),
+  { name: "곽빈", era: "2.64", kboId: "68220" },
+  "live failure + Naver preview-only preserves starter identity and season ERA",
+);
+assert.equal(
+  isLineupStarterProvenanceTrusted({
+    source: "naver-preview",
+    awayBatters: 1,
+    homeBatters: 0,
+    isAllStar: false,
+  }),
+  false,
+  "partial preview shape fails closed",
+);
+assert.equal(
+  isLineupStarterProvenanceTrusted({
+    source: "none",
+    awayBatters: 0,
+    homeBatters: 0,
+    isAllStar: false,
+  }),
+  false,
+  "dual-source failure cannot manufacture starter provenance",
+);
+
+const olderLive = { generation: 3, sourceAtMs: 1_000, fetchedAtMs: 1_100 };
+const newerLineup = { generation: 7, sourceAtMs: 1_200, fetchedAtMs: 1_250 };
+assert.equal(isSourceSnapshotNewer(olderLive, newerLineup), false);
+assert.deepEqual(
+  resolveLineupStarter({
+    liveStarterName: "화이트",
+    lineupStarterName: "타케다",
+    liveStarterFresh: isSourceSnapshotNewer(olderLive, newerLineup),
+    lineupStarterTrusted: true,
+    teamId: 4,
+  }),
+  { name: "타케다", era: "7.10", kboId: "56823" },
+  "newer confirmed lineup supersedes an older successful live snapshot",
+);
+const newerLive = { generation: 4, sourceAtMs: 1_300, fetchedAtMs: 1_350 };
+assert.equal(isSourceSnapshotNewer(newerLive, newerLineup), true);
+assert.deepEqual(
+  resolveLineupStarter({
+    liveStarterName: "화이트",
+    lineupStarterName: "타케다",
+    liveStarterFresh: isSourceSnapshotNewer(newerLive, newerLineup),
+    lineupStarterTrusted: true,
+    teamId: 4,
+  }),
+  { name: "화이트", era: "4.11", kboId: "FP007" },
+  "newer live snapshot supersedes an older confirmed lineup",
+);
+assert.equal(shouldCommitResponse(8, 7), false, "older in-flight response generation is fenced");
+assert.equal(shouldCommitResponse(8, 8), true, "latest response generation commits");
+
 const gamePage = readFileSync("src/app/(main)/games/[gameId]/page.tsx", "utf8");
 assert.equal(
   (gamePage.match(/boxPitcher: gameDetail\?\.boxScore\?\.(?:away|home)Pitchers\?\.\[0\]/g) ?? []).length,
@@ -168,8 +242,9 @@ assert.ok(
     && gamePage.includes("lineupStarterName: d.detailLineup?.awayStarter")
     && gamePage.includes("liveStarterName: liveGame?.homeStarterName")
     && gamePage.includes("lineupStarterName: d.detailLineup?.homeStarter")
-    && gamePage.includes("liveStarterFresh = !liveError"),
-  "both official-lineup sides must pass live/lineup starter SSOT before box fallback",
+    && gamePage.includes("isSourceSnapshotNewer(liveSnapshot, detailSnapshot)")
+    && gamePage.includes("isLineupStarterProvenanceTrusted"),
+  "page binds starter selection to actual hook timestamps and lineup provenance",
 );
 
 console.log("starter ERA smoke: ALL assertions PASS");

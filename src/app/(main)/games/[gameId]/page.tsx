@@ -50,6 +50,10 @@ import LiveStatsTab from "@/components/game/LiveStatsTab";
 import { useGameRelay } from "@/lib/hooks/useGameRelay";
 import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
 import { resolveLineupStarter } from "@/lib/stats/pitcher-season";
+import {
+  isLineupStarterProvenanceTrusted,
+  isSourceSnapshotNewer,
+} from "@/lib/source-snapshot";
 import PullToRefresh from "@/components/PullToRefresh";
 import PostgameInterviewSection from "@/components/game/PostgameInterviewSection";
 
@@ -188,8 +192,8 @@ export default function GameDetailPage() {
     if (tabParam) setActiveTab(tabParam);
   }, [tabParam]);
   const [isFieldCollapsed, setIsFieldCollapsed] = useState(false);
-  const { game: liveGame, error: liveError, refetch: refetchLive } = useLiveGame(gameId, 10000);
-  const { data: gameDetail, refetch: refetchDetail } = useGameDetail(gameId, 30000);
+  const { game: liveGame, snapshot: liveSnapshot, refetch: refetchLive } = useLiveGame(gameId, 10000);
+  const { data: gameDetail, snapshot: detailSnapshot, refetch: refetchDetail } = useGameDetail(gameId, 30000);
   // 당겨서 새로고침 시 증가 → KgwanTab 종료 요약이 GET 재조회(오류 카드 stuck 해소). 채팅 등 다른 state 무관.
   const [summaryRefreshEpoch, setSummaryRefreshEpoch] = useState(0);
   const liveIsFinal = !!liveGame && !liveGame.isLive && (liveGame.awayScore > 0 || liveGame.homeScore > 0);
@@ -403,10 +407,13 @@ export default function GameDetailPage() {
   const tabIndicatorTeam = myTeamInGame ? getTeamById(myTeamId)! : homeTeam;
 
   const d = deriveGameState(liveGame, game, gameDetail);
-  const liveStarterFresh = !liveError;
-  const lineupStarterTrusted = Boolean(
-    d.detailLineup?.isToday === true || isAllStarGameId(gameId),
-  );
+  const liveStarterFresh = isSourceSnapshotNewer(liveSnapshot, detailSnapshot);
+  const lineupStarterTrusted = isLineupStarterProvenanceTrusted({
+    source: detailSnapshot?.lineupSource,
+    awayBatters: d.detailLineup?.away.length ?? 0,
+    homeBatters: d.detailLineup?.home.length ?? 0,
+    isAllStar: isAllStarGameId(gameId),
+  });
   const awayLineupStarter = resolveLineupStarter({
     liveStarterName: liveGame?.awayStarterName,
     lineupStarterName: d.detailLineup?.awayStarter,
