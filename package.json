@@ -47,6 +47,7 @@
     "qa:venue-stats-state": "tsx scripts/qa/venue-stats-state-ladder-smoke.ts",
     "qa:venue-stats-s1b-aggregate": "tsx scripts/qa/venue-stats-s1b-aggregate-smoke.ts",
     "qa:venue-stats-s1b-db-route": "tsx scripts/qa/venue-stats-s1b-db-route-integration.ts",
+    "qa:venue-stats-rpc-scale": "tsx scripts/qa/venue-stats-rpc-scale.ts",
     "qa:venue-stats-s2-ui": "tsx scripts/qa/venue-stats-s2-ui-smoke.ts",
     "qa:venue-stats-s2-browser": "node scripts/qa/venue-stats-s2-browser.mjs",
     "qa:venue-stats-s2-effect-guard": "node scripts/qa/venue-stats-s2-effect-guard.mjs",

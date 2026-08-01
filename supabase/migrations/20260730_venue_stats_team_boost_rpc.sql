@@ -26,6 +26,15 @@
 --   20필드를 "," join, 행을 "|" join, null → '∅'(U+2205), boolean → 'true'/'false',
 --   date → YYYY-MM-DD, sha256 hex (src/lib/game-logs/completeness.ts canonicalPayloadHash와 동치.
 --   회귀: scripts/qa/venue-stats-s1b-db-route-integration.ts에서 TS hash와 exact 대조).
+--
+-- ⚠️ CTE 는 전부 MATERIALIZED 이어야 한다 (2026-08-01 사고 대응).
+--   PG12+ 는 단일 참조 CTE 를 기본 inline 하는데, 이 쿼리는 verified/team_totals 가
+--   ledger→game_actual 을 재참조해서 inline 되면 hash 집계(17k 행 string_agg+sha256)가
+--   여러 번 재실행된다. 경기 수에 대해 초선형으로 터져 실측상 491경기에서
+--   statement timeout(57014) 으로 죽었다(=직관 통계 B1·B2·B4 가 상시 attendance_only).
+--   실측: 300경기 4.1s / 491경기 timeout → MATERIALIZED 후 491경기 157ms,
+--   결과는 byte-exact 동일(md5 대조 확인). 이 힌트를 제거하지 말 것.
+--   회귀: scripts/qa/venue-stats-rpc-scale.ts (491경기 예산 내 완료 + 결과 동일성).
 
 CREATE OR REPLACE FUNCTION public.venue_stats_season_team_aggregates(
   p_season integer,
@@ -36,7 +45,7 @@ LANGUAGE sql
 STABLE
 SET search_path = public
 AS $$
-WITH universe AS (
+WITH universe AS MATERIALIZED (
   -- 권위 있는 정규 final 전체 경기 우주 (호출측 스케줄 소스). game_id 중복은 1개로.
   SELECT DISTINCT ON (g->>'gameId')
     g->>'gameId' AS game_id,
@@ -47,7 +56,7 @@ WITH universe AS (
     AND coalesce(g->>'gameDate', '') <> ''
   ORDER BY g->>'gameId'
 ),
-ledger AS (
+ledger AS MATERIALIZED (
   -- 우주 → ledger LEFT JOIN: ledger 없는 경기도 우주에 남는다 (complete=false 강등 대상).
   SELECT
     u.game_id,
@@ -59,7 +68,7 @@ ledger AS (
   FROM universe u
   LEFT JOIN player_game_log_ingestions l ON l.game_id = u.game_id
 ),
-game_actual AS (
+game_actual AS MATERIALIZED (
   SELECT
     l.game_id,
     count(r.id) AS actual_count,
@@ -105,7 +114,7 @@ game_actual AS (
   LEFT JOIN player_game_logs r ON r.game_id = l.game_id
   GROUP BY l.game_id
 ),
-verified AS (
+verified AS MATERIALIZED (
   SELECT
     l.game_id,
     l.game_date,
@@ -121,7 +130,7 @@ verified AS (
   FROM ledger l
   JOIN game_actual a USING (game_id)
 ),
-team_totals AS (
+team_totals AS MATERIALIZED (
   SELECT
     r.team_id,
     count(DISTINCT r.game_id) AS complete_games,

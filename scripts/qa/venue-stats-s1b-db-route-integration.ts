@@ -245,6 +245,8 @@ async function seasonUniverseFailClosedRegression() {
   await teamsExactRegression(routeMod, fullFetcher, GAME_A, GAME_B);
   // ─ 삼순 4차 P0-2 completeGames exact equality (undercount fail-closed) ─
   await completeGamesExactRegression(routeMod);
+  // ─ 정규시즌 window 교집합 — 개막 전 날짜가 우주를 죽이지 않는다 ─
+  await regularSeasonWindowScopeRegression();
   // ─ P0-1 verified-empty (actual global fetch 경유) ─
   await verifiedEmptyActualRegression();
   // ─ 삼순 4차 P0-1 series-aware verified-empty (3/12 유형 실소스 fixture) ─
@@ -455,9 +457,60 @@ function installKboNaverFetchMock(opts: {
 }
 
 /**
- * 삼순 P0-1 — verified-empty. actual global fetch 경유(배열 직접 주입 아님):
- * KBO 200 game:[] soft-empty가 Naver 전-시리즈 교차확인에서 무경기 확정(verified-empty)될 때만
- * 성공, Naver에 경기가 있으면(=KBO가 정규경기를 soft-drop) unverified → fail-closed.
+ * 정규시즌 window 교집합 회귀 — 진짜 사고 재현.
+ *
+ * 사고: 시즌 우주 수집이 3월 1일부터 훑는데 2026 개막은 3/28이다. 3/1~3/27은
+ * 정규시즌 window 밖이라 srId="0" 조회가 "200-empty 미검증"으로 throw 하고,
+ * 그 27일이 항상 failedDates 에 쌓여 complete 가 구조적으로 영원히 false 였다.
+ * 결과: 직관 통계 팀 타율·ERA·홈런이 원장을 전부 채워도 `비교 데이터 준비 중`으로 막혔다.
+ *
+ * 이 회귀는 수집 범위가 window 와 교집합인지만 검증한다 — 네트워크 없이
+ * expectedDates 경계만 본다(개막일 포함·개막 전날 미포함).
+ */
+async function regularSeasonWindowScopeRegression() {
+  const { collectSeasonGameUniverse } = await import("../../src/lib/crawler/season-games-cache");
+  const { REGULAR_SEASON_WINDOWS } = await import("../../src/lib/crawler/naver-games");
+  const w = REGULAR_SEASON_WINDOWS["2026"];
+  assert.ok(w, "2026 정규시즌 window 등록됨");
+
+  // 수집 자체는 일어나지 않게 모든 날짜 verified-empty 로 닫고 범위만 관찰한다.
+  const noop = async (): Promise<SeasonGameFetchResult> => VERIFIED_EMPTY;
+
+  const regular = await collectSeasonGameUniverse(2026, "0", { fetcher: noop });
+  const before = regular.expectedDates.filter((d) => d < w.start);
+  assert.deepEqual(before, [], `개막(${w.start}) 전 날짜가 정규 우주에 남아있으면 영구 fail-close`);
+  assert.ok(regular.expectedDates.includes(w.start), "개막일은 반드시 포함");
+  assert.ok(regular.expectedDates.every((d) => d >= w.start && d <= w.end), "전부 window 안");
+  assert.equal(regular.complete, true, "window 교집합이면 complete=true 도달 가능");
+
+  // 전-시리즈 우주(시범·포스트 포함)는 종래대로 3월 1일부터 — 범위를 즐이지 않는다.
+  const all = await collectSeasonGameUniverse(2026, "0,1,3,4,5,7,9", { fetcher: noop });
+  assert.ok(all.expectedDates.includes("20260301"), "전-시리즈 우주는 3/1 포함(기존 동작 보존)");
+  assert.ok(
+    all.expectedDates.length > regular.expectedDates.length,
+    "정규 전용 범위가 전-시리즈보다 좁다",
+  );
+  console.log(
+    `  ✓ window 교집합: 정규 전용 우주=${regular.expectedDates.length}일(${w.start}~) · 전-시리즈=${all.expectedDates.length}일(3/1~) · 개막 전 날짜 0`,
+  );
+}
+
+/**
+ * 삼순 P0-1 — verified-empty.
+ *
+ * GREEN 은 actual global fetch 경유(배열 직접 주입 아님): KBO 200 game:[] soft-empty 가
+ * Naver 전-시리즈 교차확인에서 무경기 확정(verified-empty)될 때만 성공한다.
+ *
+ * RED 는 fetcher seam 으로 진짜 unverified soft-empty(`games:[] + emptyVerified:false`)를
+ * 주입해 collectSeasonGameUniverse 자체 계약(unverified 날짜는 성공으로 세지 않고
+ * failedDates 로 묶어 complete=false)을 고정한다.
+ *
+ * ⚠️ 예전 RED 는 "KBO 200-empty + Naver 에 경기 존재"를 unverified 로 기대했지만,
+ * fetchGames 가 soft-empty 에서 Naver 로 failover 하게 된 뒤(#991)로는 그 상황이
+ * "Naver 값으로 정상 수집"이라 complete=true 가 맞다. 그 assert 가 그동안 통과한 것은
+ * 계약이 지켜져서가 아니라 시즌 우주에 개막 전 날짜(3/1~3/27)가 섞여 있어
+ * 무관한 이유로 complete=false 였기 때문이다(false-green). 개막 전 날짜를 우주에서
+ * 제외하자 즉시 드러나 수정했다.
  */
 async function verifiedEmptyActualRegression() {
   const { collectSeasonGameUniverse } = await import("../../src/lib/crawler/season-games-cache");
@@ -468,22 +521,44 @@ async function verifiedEmptyActualRegression() {
   const GAME_ID = "20260614LGOB0"; // LG(1)·OB(2)
   const FAULT_DATE = "20260615";
 
-  // RED — fault date: KBO 200 game:[] + Naver 전-시리즈에 경기 존재 → unverified soft-empty.
-  let restore = installKboNaverFetchMock({
-    gameDate: GAME_DATE, gameId: GAME_ID, faultDate: FAULT_DATE, faultNaverHasGame: true,
-  });
-  try {
-    const red = await collectSeasonGameUniverse(2026, "0"); // 기본 fetcher=fetchSeasonUniverseDate
+  // RED — fault date 가 진짜 unverified soft-empty(교차확인 미확정) → 성공 날짜로 세지 않는다.
+  {
+    const seamFetcher = async (date: string): Promise<SeasonGameFetchResult> =>
+      date === FAULT_DATE
+        ? { games: [], emptyVerified: false } // unverified soft-empty
+        : date === GAME_DATE
+          ? gamesResult([makeFinalGame(GAME_ID)])
+          : VERIFIED_EMPTY; // 무경기 확정
+    const red = await collectSeasonGameUniverse(2026, "0", { fetcher: seamFetcher });
     assert.equal(red.complete, false, "P0-1 RED: unverified soft-empty → complete=false");
     assert.ok(red.failedDates.includes(FAULT_DATE), "fault 날짜가 failedDates에");
     assert.ok(red.games.some((g) => g.gameId === GAME_ID), "non-empty partial(진짜 경기 수집)");
     __resetSeasonAggregatesCaches();
-    const redAgg = await fetchSeasonAggregates(2026, { rpc: async () => ({ data: null, error: null }) });
+    const redAgg = await fetchSeasonAggregates(2026, {
+      fetcher: seamFetcher,
+      rpc: async () => ({ data: null, error: null }),
+    });
     assert.equal(redAgg.seasonGames, null, "P0-1 RED route: seasonGames null (fail-closed)");
+  }
+  console.log("  ✓ P0-1 RED(seam): unverified soft-empty 날짜 → failedDates·complete=false·seasonGames null");
+
+  // 대조 — 같은 fault 날짜가 KBO 200 game:[] 이지만 Naver 에 경기가 있으면(#991 failover)
+  // 그건 장애가 아니라 "Naver 값으로 정상 수집"이다 → complete=true · 그 경기가 우주에 들어온다.
+  let restore = installKboNaverFetchMock({
+    gameDate: GAME_DATE, gameId: GAME_ID, faultDate: FAULT_DATE, faultNaverHasGame: true,
+  });
+  try {
+    const failover = await collectSeasonGameUniverse(2026, "0"); // 기본 fetcher=fetchSeasonUniverseDate
+    assert.equal(failover.complete, true, "KBO soft-empty + Naver 경기 존재 → failover 수집 성공");
+    assert.equal(failover.failedDates.length, 0);
+    assert.ok(
+      failover.games.some((g) => g.gameId === `${FAULT_DATE}KTSS0`),
+      "Naver failover 경기가 우주에 포함",
+    );
   } finally {
     restore();
   }
-  console.log("  ✓ P0-1 RED(actual fetch): srId=0 200 game:[] + Naver에 경기 → unverified → complete=false·seasonGames null");
+  console.log("  ✓ P0-1 대조(actual fetch): KBO 200 game:[] + Naver 경기 → failover 수집(complete=true)");
 
   // GREEN — fault date: Naver도 빈 배열 → verified-empty(무경기 확정) → 성공. 진짜 경기 1건 우주.
   restore = installKboNaverFetchMock({
@@ -591,7 +666,9 @@ async function seriesAwareVerifiedEmptyRegression() {
     "20260312KTLT0", "20260312LGNC0", "20260312SKHT0", "20260312SSHH0", "20260312WOOB0",
   ];
 
-  // GREEN — 3/12 유형: 시범 5경기 전부 KBO 비정규 시리즈 조회로 gameId exact 설명 → 정규 verified-empty.
+  // GREEN — 3/12 유형: 시범경기일은 정규 우주를 죽이지 않고 분모에도 새지 않는다.
+  // (window 교집합 이후에는 3/12 가 정규 우주 범위에 애초에 들어오지 않아서 성립한다 —
+  //  비정규 조회로 설명해서가 아니라 수집 대상이 아니기 때문이다. 외부 계약은 동일.)
   let restore = installSeriesAwareFetchMock({
     regularDate: REGULAR_DATE, regularGameId: REGULAR_GAME_ID,
     preseasonDate: PRESEASON_DATE, preseasonGameIds: PRESEASON_IDS,
@@ -623,32 +700,52 @@ async function seriesAwareVerifiedEmptyRegression() {
   } finally {
     restore();
   }
-  console.log("  ✓ P0-1 series GREEN(actual fetch): 3/12 유형(KBO 정규 []·Naver 시범 5) → 정규 verified-empty·우주에 정규만·RPC 호출");
+  console.log("  ✓ P0-1 series GREEN(actual fetch): 3/12 유형 → 정규 우주 생존·시범경기 분모 미유입·RPC 호출");
 
-  // RED — 진짜 실패: Naver 경기 중 1개(SKHT)가 KBO 비정규 조회로 설명 안 됨(정규 soft-drop 가능성) → fail-closed.
+  // 구 RED — "비정규 조회로 설명 안 되는 Naver 경기 → unverified fail-close".
+  // window 교집합 이후 개막 전 날짜는 정규 우주에서 아예 조회되지 않으므로 이 상황은
+  // 구조적으로 발생하지 않는다 — "설명 안 됨"을 주입해도 우주가 오염되지 않음을 고정한다.
+  // ⚠️ 결과적으로 fetchSeasonUniverseDate 의 srId="0" 비정규 교차확인 분기는 vestigial 이 된다
+  //    (삭제하지 않고 삼순 판단에 남긴다 — 이 PR 은 범위 제한만 건드린다).
   restore = installSeriesAwareFetchMock({
     regularDate: REGULAR_DATE, regularGameId: REGULAR_GAME_ID,
     preseasonDate: PRESEASON_DATE, preseasonGameIds: PRESEASON_IDS,
     kboNonRegularDrops: ["20260312SKHT0"],
   });
   try {
-    const red = await collectSeasonGameUniverse(2026, "0");
-    assert.equal(red.complete, false, "P0-1 series RED: 미설명 Naver 경기 → unverified → complete=false");
-    assert.ok(red.failedDates.includes(PRESEASON_DATE), "3/12가 failedDates에");
+    const scoped = await collectSeasonGameUniverse(2026, "0");
+    assert.ok(
+      !scoped.expectedDates.includes(PRESEASON_DATE),
+      "개막 전 날짜는 정규 우주 수집 대상이 아니다",
+    );
+    assert.equal(scoped.complete, true, "개막 전 시범경기는 정규 우주를 fail-close 시키지 못한다");
+    assert.deepEqual(
+      scoped.games.map((g) => g.gameId),
+      [REGULAR_GAME_ID],
+      "설명 안 되는 시범경기가 우주·분모에 새지 않는다",
+    );
     __resetSeasonAggregatesCaches();
-    let rpcCalled = false;
-    const redAgg = await fetchSeasonAggregates(2026, {
-      rpc: async () => {
-        rpcCalled = true;
-        return { data: null, error: null };
+    let rpcGames: string[] | null = null;
+    const agg = await fetchSeasonAggregates(2026, {
+      rpc: async (args) => {
+        rpcGames = args.p_games.map((g) => g.gameId);
+        return {
+          data: {
+            games: args.p_games.map((g) => ({ ...g, complete: true })),
+            teams: [1, 2].map((teamId) => ({
+              teamId, completeGames: 1, ab: 10, h: 3, hr: 1, outs: 9, er: 2, hAllowed: 4,
+            })),
+          },
+          error: null,
+        };
       },
     });
-    assert.equal(redAgg.seasonGames, null, "P0-1 series RED route: seasonGames null");
-    assert.equal(rpcCalled, false, "fail-closed 시 RPC 미호출");
+    assert.notEqual(agg.seasonGames, null, "정규 우주는 살아있다");
+    assert.deepEqual(rpcGames, [REGULAR_GAME_ID], "RPC 우주 = 정규 경기만");
   } finally {
     restore();
   }
-  console.log("  ✓ P0-1 series RED(actual fetch): 비정규 조회로 설명 안 되는 Naver 경기 → unverified → seasonGames null·RPC 미호출");
+  console.log("  ✓ P0-1 series 범위(actual fetch): 개막 전 미설명 시범경기 주입해도 정규 우주 무사·분모 미유입");
 }
 
 /**

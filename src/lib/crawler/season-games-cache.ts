@@ -7,6 +7,7 @@
  */
 
 import { fetchGames, type KboGame } from "./kbo-api";
+import { REGULAR_SEASON_WINDOWS } from "./naver-games";
 
 interface CacheEntry {
   data: KboGame[];
@@ -162,8 +163,18 @@ export async function fetchSeasonUniverseDate(
   }
 }
 
-/** 시즌 범위(3월 1일~현재월 말 또는 11월 말)의 모든 YYYYMMDD 날짜. */
-function getSeasonDates(season: number): string[] {
+/**
+ * 시즌 범위(3월 1일~현재월 말 또는 11월 말)의 모든 YYYYMMDD 날짜.
+ *
+ * 정규시즌 전용(srId="0") 우주는 검증된 정규시즌 window 교집합만 남긴다.
+ * 3월 1일~개막일 전날은 정규경기가 존재할 수 없는 날짜인데, 그 구간은 window 밖이라
+ * srId="0" 조회가 "KBO 200-empty 미검증"으로 throw 한다(시범경기 오염 방지 fail-close).
+ * 그 날짜를 우주에 넣으면 collectSeasonGameUniverse 가 구조적으로 영원히
+ * complete=false 가 되어 시즌 비교(B/C·E1)가 항상 attendance_only 로 강등된다
+ * (2026 실측: 3/1~3/27 27일 전부 failed → 직관 통계 팀 타율·ERA·홈런 영구 미노출).
+ * window 미등록 연도는 범위를 즐이지 않는다 — 기존대로 fail-close 된다(추측 서빙 금지).
+ */
+function getSeasonDates(season: number, srId = "0,1,3,4,5,7,9"): string[] {
   const today = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Seoul" });
   const [todayYear, todayMonth] = today.split("-").map(Number);
   const startMonth = 3; // KBO 정규시즌 3월 개막
@@ -175,7 +186,10 @@ function getSeasonDates(season: number): string[] {
       dates.push(`${season}${String(m).padStart(2, "0")}${String(d).padStart(2, "0")}`);
     }
   }
-  return dates;
+  if (srId !== REGULAR_ONLY_SR_ID) return dates;
+  const window = REGULAR_SEASON_WINDOWS[String(season)];
+  if (!window) return dates; // 미등록 시즌 — 기존 fail-close 경로 그대로
+  return dates.filter((d) => d >= window.start && d <= window.end);
 }
 
 /**
@@ -194,7 +208,7 @@ export async function collectSeasonGameUniverse(
   opts?: { fetcher?: SeasonGameFetcher },
 ): Promise<SeasonGameCollection> {
   const fetcher = opts?.fetcher ?? fetchSeasonUniverseDate;
-  const dates = getSeasonDates(season);
+  const dates = getSeasonDates(season, srId);
   const results = await Promise.allSettled(dates.map((d) => fetcher(d, srId)));
 
   const games: KboGame[] = [];
