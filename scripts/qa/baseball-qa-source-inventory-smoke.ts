@@ -20,7 +20,7 @@ const rebuilt = buildSourceInventory(roster as RosterSourcePlayer[], inventory);
 // 로스터가 1명만 바뀌어도 매일 새벽 자동 PR의 prebuild가 죽어 스탯/로스터 반영이 통째로
 // 멈춘다(2026-08-01 카라스코 56103, roster 878→879로 실제 발생). 따라서 고정값이 아니라
 // "커밋된 inventory가 현재 roster와 정확히 대응한다"는 *관계*를 계약으로 강제한다.
-// (roster 자체의 급변 방어는 validate-roster.mjs의 roster-size-change ack + 워크플로 Δ 가드 소관.)
+// (roster 자체의 급변 방어는 자동 크롤 workflow의 main 대비 Δ+ack 가드 소관.)
 const ROSTER_COUNT = roster.length;
 assert.ok(ROSTER_COUNT > 0, "roster SSOT must not be empty");
 assert.equal(KBO_STRUCTURED_SOURCES.length, 43, "KBO navigation universe is an independent fixed contract");
@@ -167,9 +167,17 @@ const seed = readFileSync(
   "supabase/migrations/20260731_baseball_genius_rag_sources_seed.sql",
   "utf8",
 );
-assert.equal((seed.match(/^  \('/gm) ?? []).length, inventory.sources.length);
+const bootstrapRows = (seed.match(/^  \('/gm) ?? []).length;
+assert.ok(bootstrapRows > 0, "bootstrap seed fixture must not be empty");
 assert.ok(seed.includes("ON CONFLICT (source_key) DO UPDATE"));
 assert.ok(seed.includes("target.identity_fingerprint = EXCLUDED.identity_fingerprint"));
+const rosterDelta = readFileSync(
+  "supabase/migrations/20260801184500_baseball_genius_roster_sources_56103.sql",
+  "utf8",
+);
+assert.ok(rosterDelta.includes("namu:player:56103"), "new roster source must ship append-only");
+assert.ok(rosterDelta.includes("namu:player:55435"), "transfer metadata delta missing: 55435");
+assert.ok(rosterDelta.includes("namu:player:69428"), "transfer metadata delta missing: 69428");
 
 const spec = readFileSync("specs/baseball-genius-v2-hybrid-rag.md", "utf8");
 assert.ok(spec.includes("선수 URL inventory는 전수 확정·유지"));

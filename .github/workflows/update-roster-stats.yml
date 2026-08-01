@@ -82,9 +82,8 @@ jobs:
       - name: Update player photos
         run: node scripts/update-player-photos.mjs
 
-      # P0(2026-08-01): roster 인원이 바뀌면 파생 산출물(카운트 상수 3곳 + RAG source inventory)도
-      # 같은 커밋에서 갱신해야 한다. 이게 없으면 prebuild 게이트가 구값과 어긋나 Vercel 빌드가 죽고
-      # 자동 PR이 사람 손 없이는 영구 머지 불가가 된다(카라스코 56103, 878→879에서 실제 발생).
+      # P0(2026-08-01): roster 변경에 따른 data inventory만 같은 커밋에서 갱신한다.
+      # 런타임 코드와 기존 migration은 자동 크롤이 수정하지 않는다.
       - name: Sync roster-derived artifacts
         run: node scripts/ci/sync-roster-derived-artifacts.mjs
 
@@ -137,12 +136,9 @@ jobs:
 
             # 생성 데이터 allowlist 검사 — 크롤 단계가 예상 밖 파일(코드/워크플로 등)을
             # 건드렸으면 PR은 생성하되 자동 머지는 보류한다 (#685 삼순 리뷰 Blocker 2)
-            # 2026-08-01: reconcile/파생 동기화가 *정상적으로* 만드는 산출물을 allowlist에 편입한다.
-            #   - foreign-nationality-pending.json : 신규 외인 국적 대기 리포트(reconcile 생성)
-            #   - api/health roster 상수 + validate-roster.mjs 상수 + source-inventory(+seed)
-            #     : roster JSON에서 결정론적으로 파생되며 sync-roster-derived-artifacts.mjs가 갱신
-            # 이 파일들이 빠져 있어서 카라스코(56103) 온보딩 PR이 off_allowlist로 보류됐다.
-            ALLOWLIST_RE='^(public/players/[^/]+\.(jpg|jpeg|png|webp)|src/lib/constants/(players-roster\.json|player-photos\.ts|player-defense-runs\.json|foreign-nationality-pending\.json|stats-2026-(batters|pitchers|defense|meta)\.json)|src/app/api/(roster|health/roster)/route\.ts|scripts/validate-roster\.mjs|data/baseball-qa/source-inventory\.json|supabase/migrations/20260731_baseball_genius_rag_sources_seed\.sql)$'
+            # reconcile과 inventory-only sync가 생성하는 data artifact만 허용한다.
+            # API/validator 소스, workflow, migration은 내용 검증 없는 경로 allowlist로 열지 않는다.
+            ALLOWLIST_RE='^(public/players/[^/]+\.(jpg|jpeg|png|webp)|src/lib/constants/(players-roster\.json|player-photos\.ts|player-defense-runs\.json|foreign-nationality-pending\.json|stats-2026-(batters|pitchers|defense|meta)\.json)|data/baseball-qa/source-inventory\.json)$'
             CHANGED_FILES=$(git diff --cached --name-only)
             OFF_ALLOWLIST=$(echo "$CHANGED_FILES" | grep -Ev "$ALLOWLIST_RE" || true)
             if [ -n "$OFF_ALLOWLIST" ]; then
