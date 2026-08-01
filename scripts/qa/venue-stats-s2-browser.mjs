@@ -36,27 +36,96 @@ const GEN = mkdtempSync(resolve(tmpdir(), "venue-stats-s2-"));
 const SHOT = resolve(ROOT, "tmp/qa-screenshots/venue-stats-s2-390.png");
 mkdirSync(resolve(ROOT, "tmp/qa-screenshots"), { recursive: true });
 
+const myPagePath = resolve(ROOT, "src/app/(main)/my/page.tsx");
+const entryMarkup = "      <VenueStatsEntryCard />";
+const myPageSourceRaw = readFileSync(myPagePath, "utf8");
+const myPageSource = process.env.VENUE_STATS_S2_MUTATE_MY_ENTRY === "1"
+  ? myPageSourceRaw.replace(entryMarkup, "      {/* injected entry-removal mutation */}")
+  : myPageSourceRaw;
+const entryMarkupCount = myPageSource.split(entryMarkup).length - 1;
+if (entryMarkupCount !== 1) {
+  throw new Error(`MyPage venue stats entry wiring must be unique, got ${entryMarkupCount}`);
+}
+writeFileSync(
+  resolve(GEN, "my-page-mutated.tsx"),
+  myPageSource.replace(entryMarkup, "      {/* mutation: venue stats entry removed */}"),
+);
+
+const dashboardPath = resolve(ROOT, "src/components/my/VenueStatsDashboard.tsx");
+const crossRoleSelection = "return candidateOrder < selectedOrder ? candidate : selected;";
+const dashboardSourceRaw = readFileSync(dashboardPath, "utf8");
+let dashboardEntryPath = dashboardPath;
+if (process.env.VENUE_STATS_S2_MUTATE_CROSS_ROLE_SORT === "1") {
+  const selectionCount = dashboardSourceRaw.split(crossRoleSelection).length - 1;
+  if (selectionCount !== 1) {
+    throw new Error(`cross-role selection mutation target must be unique, got ${selectionCount}`);
+  }
+  dashboardEntryPath = resolve(GEN, "VenueStatsDashboard-mutated.tsx");
+  writeFileSync(
+    dashboardEntryPath,
+    dashboardSourceRaw.replace(
+      crossRoleSelection,
+      "return candidate.boostPct > selected.boostPct ? candidate : selected;",
+    ),
+  );
+}
+
 writeFileSync(resolve(GEN, "auth.jsx"), `
 // 실제 AuthContext 처럼 매 렌더마다 새 객체를 만들지 않는 안정 참조.
 const AUTH={
-  user:{id:"qa",email:"harinclaw@gmail.com"},
+  user:{id:"qa",email:"venue-stats-qa@example.invalid"},
   profile:{favorite_players:[
     {playerId:"53123",name:"오스틴",teamId:1,position:"내야수"},
-    {playerId:"p2",name:"이최애",teamId:9,position:"투수"}
-  ]}
+    {playerId:"p2",name:"이최애",teamId:9,position:"투수"},
+    {playerId:"p3",name:"김최애",teamId:1,position:"외야수"},
+    {playerId:"p4",name:"박최애",teamId:1,position:"내야수"},
+    {playerId:"p5",name:"최최애",teamId:1,position:"투수"}
+  ],team_id:1,nickname:"QA",avatar_url:null},
+  loading:false,
+  refreshProfile:async()=>{},
+  signOut:async()=>{}
 };
-export const useAuth=()=>AUTH;`);
+const ANON={user:null,profile:null,loading:false};
+export const useAuth=()=>new URLSearchParams(window.location.search).has("anonymous")?ANON:AUTH;`);
 writeFileSync(resolve(GEN, "client.js"), `
-export async function getSafeSession(){return {access_token:"qa"};}`);
+export async function getSafeSession(){return {access_token:"qa"};}
+export const supabase={auth:{getSession:async()=>({data:{session:null}})}};`);
 writeFileSync(resolve(GEN, "back.js"), `
 export const useSafeBack=()=>()=>{};`);
 writeFileSync(resolve(GEN, "image.jsx"), `
 export default function Image(p){return <img {...p}/>;}`);
+writeFileSync(resolve(GEN, "link.jsx"), `
+export default function Link({href,children,...props}){return <a href={href} {...props}>{children}</a>;}`);
+writeFileSync(resolve(GEN, "navigation.js"), `
+export const useRouter=()=>({push:(href)=>window.location.assign(href)});`);
+writeFileSync(resolve(GEN, "motion.jsx"), `
+export const motion={div:({children,initial,animate,transition,...props})=><div {...props}>{children}</div>};`);
+writeFileSync(resolve(GEN, "empty.jsx"), `
+export default function Empty(){return null;}`);
+writeFileSync(resolve(GEN, "pass.jsx"), `
+export default function Pass({children}){return children;}`);
+writeFileSync(resolve(GEN, "favorites.js"), `
+export const getFavoritePlayers=()=>[];
+export const setFavoritePlayers=()=>{};`);
+writeFileSync(resolve(GEN, "myteam.js"), `
+export const getMyTeamId=()=>1;
+export const setMyTeamId=()=>{};`);
+writeFileSync(resolve(GEN, "profile-auth.js"), `
+export const updateProfile=async()=>{};`);
+writeFileSync(resolve(GEN, "game-notification.js"), `
+export const setWidgetMyTeam=async()=>{};`);
+writeFileSync(resolve(GEN, "native-live.js"), `
+export const ID_TO_KBO_CODE={1:"LG"};`);
 writeFileSync(resolve(GEN, "entry.jsx"), `
 import React from "react";
 import {createRoot} from "react-dom/client";
 import VenueStatsDashboard from "@/components/my/VenueStatsDashboard";
-createRoot(document.getElementById("root")).render(<VenueStatsDashboard/>);`);
+import MyPage from "@/app/(main)/my/page";
+import MutatedMyPage from "./my-page-mutated";
+import VenueStatsPage from "@/app/(main)/my/venue-stats/page";
+const path=window.location.pathname;
+const App=path==="/my"?MyPage:path==="/my-mutation"?MutatedMyPage:path==="/my/venue-stats"?VenueStatsPage:VenueStatsDashboard;
+createRoot(document.getElementById("root")).render(<App/>);`);
 
 await build({
   entryPoints: [resolve(GEN, "entry.jsx")],
@@ -71,8 +140,29 @@ await build({
   alias: {
     "@/lib/supabase/AuthContext": resolve(GEN, "auth.jsx"),
     "@/lib/supabase/client": resolve(GEN, "client.js"),
+    "@/lib/supabase/auth": resolve(GEN, "profile-auth.js"),
     "@/lib/hooks/useSafeBack": resolve(GEN, "back.js"),
+    "@/lib/store/favorites": resolve(GEN, "favorites.js"),
+    "@/lib/store/myteam": resolve(GEN, "myteam.js"),
+    "@/lib/capacitor/game-notification": resolve(GEN, "game-notification.js"),
+    "@/lib/native-live-activity": resolve(GEN, "native-live.js"),
+    "@/components/my/VenueStatsDashboard": dashboardEntryPath,
+    "@/components/onboarding/TeamSelectModal": resolve(GEN, "empty.jsx"),
+    "@/components/onboarding/PlayerSelectModal": resolve(GEN, "empty.jsx"),
+    "@/components/auth/LoginSheet": resolve(GEN, "empty.jsx"),
+    "@/components/profile/AvatarSelectSheet": resolve(GEN, "empty.jsx"),
+    "@/components/profile/NicknameEditSheet": resolve(GEN, "empty.jsx"),
+    "@/components/my/ProfileCard": resolve(GEN, "empty.jsx"),
+    "@/components/my/InviteSection": resolve(GEN, "empty.jsx"),
+    "@/components/my/FavoritePlayersCard": resolve(GEN, "empty.jsx"),
+    "@/components/my/MenuSection": resolve(GEN, "empty.jsx"),
+    "@/components/feedback/FeedbackSheet": resolve(GEN, "empty.jsx"),
+    "@/components/my/VenueDiaryCard": resolve(GEN, "empty.jsx"),
+    "@/components/admin/AdminOnly": resolve(GEN, "pass.jsx"),
     "next/image": resolve(GEN, "image.jsx"),
+    "next/link": resolve(GEN, "link.jsx"),
+    "next/navigation": resolve(GEN, "navigation.js"),
+    "framer-motion": resolve(GEN, "motion.jsx"),
   },
   logLevel: "error",
 });
@@ -118,14 +208,34 @@ const scope = (name, wins, rate) => {
       {key:"9",state:"ready",value:teamValues["9"][id],n:4,denominator:{}},
     ]};
   }
-  metrics.C1 = envelope("C1", [{playerId:"53123",attendanceAvg:.333,seasonAvg:.278,deltaAvg:.055,attendanceHrPerGame:.2,seasonHrPerGame:.1,attendanceRbiPerGame:1,seasonRbiPerGame:.7,appearances:6,ab:21}], {attendanceAB:21});
-  metrics.C2 = envelope("C2", [{playerId:"p2",attendanceEra:2.71,seasonEra:3.88,eraImprovement:1.17,attendanceK9:9.2,seasonK9:8.1,k9Delta:1.1,appearances:4,outs:40}], {attendanceOuts:40});
+  metrics.C1 = envelope("C1", [
+    {playerId:"53123",attendanceAvg:.333,seasonAvg:.278,deltaAvg:.055,attendanceHrPerGame:.2,seasonHrPerGame:.1,attendanceRbiPerGame:1,seasonRbiPerGame:.7,appearances:6,ab:21},
+    {playerId:"p3",attendanceAvg:.310,seasonAvg:.270,deltaAvg:.040,attendanceHrPerGame:.1,seasonHrPerGame:.1,attendanceRbiPerGame:.8,seasonRbiPerGame:.6,appearances:5,ab:20},
+    {playerId:"p4",attendanceAvg:.290,seasonAvg:.260,deltaAvg:.030,attendanceHrPerGame:.1,seasonHrPerGame:.1,attendanceRbiPerGame:.7,seasonRbiPerGame:.5,appearances:5,ab:20},
+  ], {attendanceAB:61});
+  metrics.C2 = envelope("C2", [
+    {playerId:"p2",attendanceEra:2.71,seasonEra:3.88,eraImprovement:1.17,attendanceK9:9.2,seasonK9:8.1,k9Delta:1.1,appearances:4,outs:40},
+    {playerId:"p5",attendanceEra:3.20,seasonEra:3.75,eraImprovement:.55,attendanceK9:8.7,seasonK9:8.0,k9Delta:.7,appearances:4,outs:36},
+  ], {attendanceOuts:76});
   metrics.C4 = envelope("C4", [
     {playerId:"53123",homeRuns:2,appearanceGames:6,batter:{hits:9,rbi:7,homeRuns:2},pitcher:null},
     {playerId:"p2",homeRuns:0,appearanceGames:4,batter:null,pitcher:{strikeouts:12,zeroEarnedRunGames:2}},
+    {playerId:"p3",homeRuns:1,appearanceGames:5,batter:{hits:6,rbi:4,homeRuns:1},pitcher:null},
+    {playerId:"p4",homeRuns:0,appearanceGames:5,batter:{hits:5,rbi:3,homeRuns:0},pitcher:null},
+    {playerId:"p5",homeRuns:0,appearanceGames:4,batter:null,pitcher:{strikeouts:9,zeroEarnedRunGames:1}},
   ]);
   metrics.C5 = envelope("C5", [{playerId:"53123",batterTop:{gameId:"g",date:"2026-07-12",ab:4,h:3,hr:1,rbi:3,bb:1}}]);
-  metrics.C6 = envelope("C6", {batterRanking:[],pitcherRanking:[]});
+  metrics.C6 = envelope("C6", {
+    batterRanking:[
+      {playerId:"53123",boostPct:.1978417266},
+      {playerId:"p3",boostPct:.1481481481},
+      {playerId:"p4",boostPct:.1153846154},
+    ],
+    pitcherRanking:[
+      {playerId:"p2",boostPct:.3015463918},
+      {playerId:"p5",boostPct:.1466666667},
+    ],
+  });
   metrics.D1 = envelope("D1", {avgRunDiff:1.4,closeGameRate:.25,closeGames:2});
   metrics.D5 = envelope("D5", {cancelledCount:1});
   metrics.D6 = envelope("D6", {maxTeamRuns:{gameId:"g",date:"2026-07-12",runs:9},maxMarginWin:null});
@@ -246,6 +356,10 @@ const attendanceOnlyScope = (name) => {
     items: [],
     reasons: ["season_not_supported"],
   };
+  base.metrics.D5 = envelope("D5", { cancelledCount: 0 });
+  base.metrics.D6 = envelope("D6", { maxTeamRuns: null, maxMarginWin: null });
+  base.metrics.D1 = envelope("D1", { avgRunDiff: null, closeGameRate: null, closeGames: 0 });
+  base.metrics.E1 = envelope("E1", { current: 0, longest: 0, perTeam: [] });
   return base;
 };
 const attendanceOnlyPayload = {
@@ -352,10 +466,31 @@ const page = await browser.newPage({ viewport: { width: 390, height: 844 }, devi
 page.on("pageerror", (error) => console.log(`  [pageerror] ${error.message}`));
 
 try {
+  // 일반 로그인 사용자의 실제 진입 DOM → 클릭 → 실제 대시보드 DOM.
+  await page.goto(`http://127.0.0.1:${port}/my`, { waitUntil: "domcontentloaded" });
+  const entry = page.getByTestId("venue-stats-entry");
+  await entry.waitFor();
+  await entry.click();
+  await page.waitForURL(`http://127.0.0.1:${port}/my/venue-stats`);
+  await page.locator('[data-testid="venue-stats-dashboard"]').waitFor();
+
+  // 실제 MyPage에서 진입 배선을 제거한 mutation은 링크를 0개로 만든다.
+  await page.goto(`http://127.0.0.1:${port}/my-mutation`, { waitUntil: "domcontentloaded" });
+  if (await page.getByTestId("venue-stats-entry").count()) {
+    throw new Error("MyPage entry-removal mutation did not remove the venue stats entry");
+  }
+
+  // 익명 직접 URL은 빈 화면/데이터 호출이 아니라 명시적 로그인 유도로 차단한다.
+  await page.goto(`http://127.0.0.1:${port}/my/venue-stats?anonymous=1`, { waitUntil: "domcontentloaded" });
+  await page.getByTestId("venue-stats-login-required").waitFor();
+  if (await page.locator('[data-testid="venue-stats-dashboard"]').count()) {
+    throw new Error("anonymous direct URL rendered venue stats dashboard");
+  }
+
   await page.goto(`http://127.0.0.1:${port}`, { waitUntil: "domcontentloaded" });
   await page.getByText("63", { exact: true }).waitFor();
-  const lgSegment = page.getByText("LG 응원 구간", { exact: true }).nth(1).locator("../..");
-  const hanwhaSegment = page.getByText("한화 응원 구간", { exact: true }).nth(1).locator("../..");
+  const lgSegment = page.getByText("LG 응원 구간", { exact: true }).first().locator("../..");
+  const hanwhaSegment = page.getByText("한화 응원 구간", { exact: true }).first().locator("../..");
   const lgText = await lgSegment.innerText();
   const hanwhaText = await hanwhaSegment.innerText();
   if (![".286", "3.42", "5.2", "1.3"].every((value) => lgText.includes(value))) {
@@ -367,19 +502,55 @@ try {
   const body = await page.locator("body").innerText();
   if (!body.includes("LG 응원 구간") || !body.includes("한화 응원 구간")) throw new Error("mixed-team segments missing");
   if ((await page.evaluate(() => document.documentElement.scrollWidth)) > 390) throw new Error("horizontal overflow");
+  const interestingFacts = page.getByTestId("venue-interesting-fact");
+  if (await interestingFacts.count() !== 6) {
+    throw new Error(`compact novelty facts must cap at 6, got ${await interestingFacts.count()}`);
+  }
+  for (const fact of await interestingFacts.allInnerTexts()) {
+    if (fact.includes("–") || /\b0(?:회|경기|개)/.test(fact)) {
+      throw new Error(`irrelevant novelty fact must be omitted: ${fact}`);
+    }
+  }
+  const compactHeight = await page.evaluate(() => document.documentElement.scrollHeight);
+  if (compactHeight > 1500) throw new Error(`compact dashboard exceeded 1500px before details: ${compactHeight}px`);
+
+  // 최애 5명 actual DOM(타자 3 + 투수 2): 역할별 1위 후보의 boostPct는
+  // 투수(.3015) > 타자(.1978)이지만, 역할 간 숫자 비교 없이 최애 등록순 첫 후보(오스틴)를 메인으로 둔다.
+  const favoriteCards = page.getByTestId("venue-favorite-card");
+  const mainFavoriteText = await favoriteCards.first().innerText();
+  if (await favoriteCards.count() !== 1 || !mainFavoriteText.includes("오스틴")) {
+    throw new Error("cross-role boost values must not override favorite registration order");
+  }
+  if (!mainFavoriteText.includes("타자 부스트 1위") || mainFavoriteText.includes("투수 부스트 1위")) {
+    throw new Error(`main favorite role label mismatch: ${mainFavoriteText}`);
+  }
+  const favoritesToggle = page.getByRole("button", { name: "다른 최애 4명 보기" });
+  await favoritesToggle.click();
+  if (await favoriteCards.count() !== 5) {
+    throw new Error(`five-favorite expanded view must show 5 cards, got ${await favoriteCards.count()}`);
+  }
+  const pitcherLeaderText = await page.getByText("이최애", { exact: true })
+    .locator('xpath=ancestor::*[@data-testid="venue-favorite-card"][1]')
+    .innerText();
+  if (!pitcherLeaderText.includes("투수 부스트 1위")) {
+    throw new Error(`pitcher role leader label missing: ${pitcherLeaderText}`);
+  }
 
   // 최애 사진 회귀: 실제 사진 ID는 정적 JPEG를 로드하고, 사진 없는 ID는 종전 팀 로고를 유지한다.
   const favoritePhoto = page.locator('img[src="/players/53123.jpg"]');
   if (await favoritePhoto.count() !== 1) throw new Error("favorite photo must render exactly once");
   const photoLoaded = await favoritePhoto.evaluate((img) => img.complete && img.naturalWidth > 0);
   if (!photoLoaded) throw new Error("favorite photo did not load a valid image");
-  const fallbackRow = page.getByText("이최애", { exact: true }).locator("../..");
+  const fallbackRow = page.getByText("이최애", { exact: true })
+    .locator('xpath=ancestor::*[@data-testid="venue-favorite-card"][1]');
   const fallbackImages = fallbackRow.locator("img");
   if (await fallbackImages.count() !== 1) throw new Error("photo-less favorite must keep exactly one team-logo fallback");
   const fallbackSrc = await fallbackImages.first().getAttribute("src");
   if (!fallbackSrc || fallbackSrc.includes("/players/")) {
     throw new Error(`photo-less favorite rendered invalid photo instead of team logo: ${fallbackSrc}`);
   }
+  await page.getByRole("button", { name: "최애 접기" }).click();
+  if (await favoriteCards.count() !== 1) throw new Error("five-favorite collapse did not return to one card");
 
   const staleRequest = page.waitForRequest((request) => request.url().includes("season=2025"));
   await page.locator("select").selectOption("2025");
@@ -531,11 +702,12 @@ try {
         .slice(0, 60),
       ratio: probe(element),
     }));
-    const target = candidates.find((element) => element.textContent?.trim() === "정규시즌 기준");
-    const previousColor = target.style.color;
-    target.style.color = "rgba(255,255,255,0.2)";
-    const mutationRatio = probe(target);
-    target.style.color = previousColor;
+    const mutationTarget = document.createElement("span");
+    mutationTarget.textContent = "contrast mutation";
+    mutationTarget.style.cssText = "display:block;color:rgb(21,21,25);background:rgb(21,21,25)";
+    root.appendChild(mutationTarget);
+    const mutationRatio = probe(mutationTarget);
+    mutationTarget.remove();
     return {
       count: measured.length,
       minimum: Math.min(...measured.map((entry) => entry.ratio)),
@@ -548,6 +720,7 @@ try {
   }
   if (contrast.mutationRatio >= 4.5) throw new Error("Dashboard AA mutation guard did not fail");
 
+  await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({ path: SHOT, fullPage: true });
 
   // ── 혼합팀 표본 미달(2팀 × 1경기) actual DOM 계약 ────────────────────────────
@@ -572,8 +745,8 @@ try {
     .innerText();
   if (scoreText.trim() !== "–") throw new Error(`sample-limited derived score must be dash, got ${scoreText}`);
 
-  const limitedLg = await page.getByText("LG 응원 구간", { exact: true }).nth(1).locator("../..").innerText();
-  const limitedHanwha = await page.getByText("한화 응원 구간", { exact: true }).nth(1).locator("../..").innerText();
+  const limitedLg = await page.getByText("LG 응원 구간", { exact: true }).first().locator("../..").innerText();
+  const limitedHanwha = await page.getByText("한화 응원 구간", { exact: true }).first().locator("../..").innerText();
   if (![".286", "3.42", "5.2", "1.3"].every((value) => limitedLg.includes(value))) {
     throw new Error(`sample-limited mixed LG facts missing: ${limitedLg}`);
   }
@@ -614,12 +787,9 @@ try {
     throw new Error("sample-limited split rows missing 참고용 badge");
   }
 
-  // 상세 목록 밖의 요약 카드(`토요일 승률`)도 같은 items 소스를 써야 한다.
-  // top-level value 만 읽으면 상세엔 토요일이 보이는데 이 카드만 `–` 로 죽는다.
-  const saturdayCard = page.getByText("토요일 승률", { exact: true }).locator("..");
-  const saturdayText = await saturdayCard.innerText();
-  if (!saturdayText.includes("100.0%")) {
-    throw new Error(`sample-limited Saturday fact dropped outside detail list: ${saturdayText}`);
+  // 표본 미달 사실은 상세의 `참고용` 행에만 남기고, 확정형 요약 pill에는 올리지 않는다.
+  if (await page.getByTestId("venue-interesting-fact").count()) {
+    throw new Error("sample-limited facts must be omitted from confident novelty summary pills");
   }
 
   const badgeRgb = await page.getByText("표본 부족(참고용)", { exact: true }).first()
@@ -671,6 +841,12 @@ try {
   if (!(aoBadgeRgb[0] > 200 && aoBadgeRgb[1] > 150 && aoBadgeRgb[2] < 140)) {
     throw new Error(`attendance_only badge must be amber, got rgb(${aoBadgeRgb.join(",")})`);
   }
+  const sparseFactText = await page.getByTestId("venue-interesting-fact").allInnerTexts();
+  for (const omitted of ["우천·취소", "연속 직관", "최다 득점", "1점차 승부"]) {
+    if (sparseFactText.some((text) => text.includes(omitted))) {
+      throw new Error(`inapplicable novelty fact must be omitted: ${omitted}`);
+    }
+  }
 
   // mutation RED: 가드가 실제로 살아있는지 — 점수 slot 을 강제로 채우면 검사가 실패해야 한다.
   const mutationDetected = await page.evaluate(() => {
@@ -688,6 +864,13 @@ try {
   servePartialBaseline = true;
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.getByText(".333", { exact: true }).waitFor({ timeout: 4000 });
+
+  // 단일팀 B1~B4는 네 개의 독립 카드가 아니라 divider를 둔 하나의 2×2 카드다.
+  const teamMetrics = page.getByTestId("venue-team-metrics");
+  if (await teamMetrics.count() !== 1 || await teamMetrics.locator(":scope > div").count() !== 4) {
+    throw new Error("single-team metrics must render as one combined 2x2 card with four cells");
+  }
+  await page.getByRole("button", { name: /다른 최애 .*명 보기/ }).click();
 
   const partialText = await page.locator('[data-testid="venue-stats-dashboard"]').first().innerText();
   for (const fact of [".286", "3.42", "1.3", ".333", "2.71", "9안타", "7타점 · 2홈런", "12K", "2경기 0자책", "최애 최고의 직관 경기"]) {
@@ -712,7 +895,7 @@ try {
   }
 
   console.log(
-    `venue stats S2 browser: PASS (390px, B1~B4 actual payload, season abort/generation, selected-season 503 fail-closed(no stale value + retry UI), mixed sample-limited facts+dash score+amber badge+0 baseline+summary card, attendance_only 2-game facts+dash score+amber badge+mutation RED, partial-baseline B/C attendance facts+C4/C5 visible+season hidden, AA ${contrast.minimum.toFixed(2)}:1 across ${contrast.count} texts)\nshot: ${SHOT}`,
+    `venue stats S2 browser: PASS (390px, compact<=1500px, novelty<=6+inapplicable omitted, 5-favorite batter3+pitcher2 role-leader candidate + registration-order main + role labels + collapse/expand, mixed B1~B4 actual payload, season abort/generation, selected-season 503 fail-closed(no stale value + retry UI), sample-limited facts detail-only+dash score+amber badge+0 baseline, attendance_only 2-game facts+dash score+amber badge+mutation RED, single-team 2x2 card, partial-baseline B/C attendance facts+C4/C5 visible+season hidden, AA ${contrast.minimum.toFixed(2)}:1 across ${contrast.count} texts)\nshot: ${SHOT}`,
   );
 } finally {
   await browser.close();
