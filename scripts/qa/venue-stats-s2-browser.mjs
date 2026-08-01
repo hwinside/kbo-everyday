@@ -41,7 +41,7 @@ writeFileSync(resolve(GEN, "auth.jsx"), `
 const AUTH={
   user:{id:"qa",email:"harinclaw@gmail.com"},
   profile:{favorite_players:[
-    {playerId:"p1",name:"김최애",teamId:1,position:"내야수"},
+    {playerId:"53123",name:"오스틴",teamId:1,position:"내야수"},
     {playerId:"p2",name:"이최애",teamId:9,position:"투수"}
   ]}
 };
@@ -118,10 +118,10 @@ const scope = (name, wins, rate) => {
       {key:"9",state:"ready",value:teamValues["9"][id],n:4,denominator:{}},
     ]};
   }
-  metrics.C1 = envelope("C1", [{playerId:"p1",attendanceAvg:.333,seasonAvg:.278,deltaAvg:.055,attendanceHrPerGame:.2,seasonHrPerGame:.1,attendanceRbiPerGame:1,seasonRbiPerGame:.7,appearances:6,ab:21}], {attendanceAB:21});
+  metrics.C1 = envelope("C1", [{playerId:"53123",attendanceAvg:.333,seasonAvg:.278,deltaAvg:.055,attendanceHrPerGame:.2,seasonHrPerGame:.1,attendanceRbiPerGame:1,seasonRbiPerGame:.7,appearances:6,ab:21}], {attendanceAB:21});
   metrics.C2 = envelope("C2", [{playerId:"p2",attendanceEra:2.71,seasonEra:3.88,eraImprovement:1.17,attendanceK9:9.2,seasonK9:8.1,k9Delta:1.1,appearances:4,outs:40}], {attendanceOuts:40});
-  metrics.C4 = envelope("C4", [{playerId:"p1",homeRuns:2,appearanceGames:6}]);
-  metrics.C5 = envelope("C5", [{playerId:"p1",batterTop:{gameId:"g",date:"2026-07-12",ab:4,h:3,hr:1,rbi:3,bb:1}}]);
+  metrics.C4 = envelope("C4", [{playerId:"53123",homeRuns:2,appearanceGames:6}]);
+  metrics.C5 = envelope("C5", [{playerId:"53123",batterTop:{gameId:"g",date:"2026-07-12",ab:4,h:3,hr:1,rbi:3,bb:1}}]);
   metrics.C6 = envelope("C6", {batterRanking:[],pitcherRanking:[]});
   metrics.D1 = envelope("D1", {avgRunDiff:1.4,closeGameRate:.25,closeGames:2});
   metrics.D5 = envelope("D5", {cancelledCount:1});
@@ -282,6 +282,10 @@ const server = createServer((req, res) => {
   }
   if (req.url === "/app.css") return res.writeHead(200, {"content-type":"text/css"}).end(css.css);
   if (req.url === "/bundle.js") return res.writeHead(200, {"content-type":"text/javascript"}).end(bundle);
+  if (req.url === "/players/53123.jpg") {
+    return res.writeHead(200, {"content-type":"image/jpeg"})
+      .end(readFileSync(resolve(ROOT, "public/players/53123.jpg")));
+  }
   res.writeHead(200, {"content-type":"text/html"}).end(
     '<!doctype html><html class="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><link rel="stylesheet" href="/app.css"></head><body style="margin:0"><div id="root"></div><script src="/bundle.js"></script></body></html>',
   );
@@ -321,6 +325,19 @@ try {
   const body = await page.locator("body").innerText();
   if (!body.includes("LG 응원 구간") || !body.includes("한화 응원 구간")) throw new Error("mixed-team segments missing");
   if ((await page.evaluate(() => document.documentElement.scrollWidth)) > 390) throw new Error("horizontal overflow");
+
+  // 최애 사진 회귀: 실제 사진 ID는 정적 JPEG를 로드하고, 사진 없는 ID는 종전 팀 로고를 유지한다.
+  const favoritePhoto = page.locator('img[src="/players/53123.jpg"]');
+  if (await favoritePhoto.count() !== 1) throw new Error("favorite photo must render exactly once");
+  const photoLoaded = await favoritePhoto.evaluate((img) => img.complete && img.naturalWidth > 0);
+  if (!photoLoaded) throw new Error("favorite photo did not load a valid image");
+  const fallbackRow = page.getByText("이최애", { exact: true }).locator("../..");
+  const fallbackImages = fallbackRow.locator("img");
+  if (await fallbackImages.count() !== 1) throw new Error("photo-less favorite must keep exactly one team-logo fallback");
+  const fallbackSrc = await fallbackImages.first().getAttribute("src");
+  if (!fallbackSrc || fallbackSrc.includes("/players/")) {
+    throw new Error(`photo-less favorite rendered invalid photo instead of team logo: ${fallbackSrc}`);
+  }
 
   const staleRequest = page.waitForRequest((request) => request.url().includes("season=2025"));
   await page.locator("select").selectOption("2025");
