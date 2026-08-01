@@ -3,8 +3,17 @@ import { createHash } from "node:crypto";
 import kboRecordCategoryUniverse from "./kbo-record-category-universe.json";
 import namuCoreManifest from "./namu-core-manifest.json";
 
-export type RagSourceKind = "kbo_structured" | "namu_document";
-export type RagEntityType = "record_category" | "league" | "team" | "player";
+export type RagSourceKind =
+  | "kbo_structured"
+  | "namu_document"
+  | "wikipedia_document"
+  | "kbo_ebook";
+export type RagEntityType =
+  | "record_category"
+  | "league"
+  | "team"
+  | "player"
+  | "document";
 export type RagResolutionStatus = "resolved" | "missing" | "ambiguous" | "blocked";
 export type RagIngestionStatus =
   | "not_started"

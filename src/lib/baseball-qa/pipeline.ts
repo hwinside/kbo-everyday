@@ -10,6 +10,7 @@ import {
 } from "./context";
 import { normalizeKey, normalizeQuestion } from "./normalize";
 import {
+  allowsNumericAnswer,
   composeRagAnswer,
   isDescriptivePlayerQuestion,
   selectEvidence,
@@ -150,6 +151,15 @@ export interface QaDeps {
   searchRag?: (candidate: RagPlayerCandidate, question: string) => Promise<RagEvidence[]>;
   /** 근거를 **비신뢰 데이터**로만 전달하는 재서술 호출 (S2b). */
   callRagLlm?: (question: string, evidence: RagEvidence[]) => Promise<LlmResult>;
+  /**
+   * KBO 공식 간행물(tier1) 근거 검색 — 규칙·용어 질문용.
+   *
+   * 선수 경로와 달리 entity로 문서를 특정하지 않는다. 미배선이면 이 경로 자체가 비활성이라
+   * 기존 동작(사전 → 캐시 → 일반 LLM) 그대로다.
+   */
+  searchOfficialRag?: (question: string) => Promise<RagEvidence[]>;
+  /** 공식 간행물 근거 전용 재서술 호출. tier1이므로 근거에 적힌 숫자를 쓸 수 있다. */
+  callOfficialRagLlm?: (question: string, evidence: RagEvidence[]) => Promise<LlmResult>;
   /** 수요 기반 ingestion 우선순위용 — 질문이 지목한 source를 기록한다. 실패는 무시한다. */
   recordRagDemand?: (sourceKeys: string[]) => Promise<void>;
   /**
@@ -613,6 +623,89 @@ async function answerPlayerDescriptiveQuestion(
   return { status: 200, answer, source: "rag", remaining };
 }
 
+/**
+ * 규칙·용어 질문을 **KBO 공식 간행물(tier1) 근거**로 답한다.
+ *
+ * 선수 경로(`answerPlayerDescriptiveQuestion`)와 세 가지가 다르다:
+ *  1. entity로 문서를 특정하지 않는다 — "보크가 뭐야"는 어느 간행물 몇 페이지에 답이 있는지
+ *     질문만으로 알 수 없다. 공식 문서 전체를 벡터로 검색한다.
+ *  2. 근거가 tier1이므로 **숫자를 허용**한다(단 근거에 적힌 숫자만 — `numericTokensGrounded`).
+ *  3. 실패해도 **fail-close하지 않고 null을 돌려** 기존 경로(사전·캐시·일반 LLM)로 내려보낸다.
+ *     이게 핵심이다: 이 경로는 기존 답변 품질을 **올리기만** 하고 기존에 답하던 질문을
+ *     새로 막지 않는다. 선수 경로의 fail-close는 "근거 없으면 생성답 금지"가 목적이었지만,
+ *     규칙 질문은 원래 LLM이 답하던 정상 경로라 같은 논리를 적용하면 기능이 퇴행한다.
+ *
+ * LLM durable 경계는 동일하다 — 한 messageId가 소비하는 LLM 호출은 경로와 무관하게 1회다.
+ * 그래서 이 함수는 **LLM 경계에 들어가기 전에만** null을 돌릴 수 있다(근거 0건).
+ * 경계를 지나면 그 호출을 이미 소비했으므로 아래 일반 LLM로 내려보내지 않고 여기서 종결한다.
+ */
+async function answerOfficialDocumentQuestion(
+  userId: string,
+  question: string,
+  questionNorm: string,
+  remaining: number,
+  deps: QaDeps,
+): Promise<QaResult | null> {
+  let evidence: RagEvidence[];
+  try {
+    evidence = selectEvidence(await deps.searchOfficialRag!(question));
+  } catch {
+    return null; // 검색 실패는 기존 경로로 양보한다(기능 퇴행 금지).
+  }
+  // 근거 0건 = 공식 문서에 답이 없는 질문. LLM을 소비하기 전이므로 안전하게 기존 경로로 내려보낸다.
+  if (evidence.length === 0) return null;
+  // 공식 문서 경로인데 근거가 tier1이 아니면 계약 위반이다 — 숫자 허용을 쓰지 않는다.
+  if (!allowsNumericAnswer(evidence)) return null;
+
+  // ── durable LLM 경계 (선수 경로·일반 경로와 동일 계약) ───────────────────────
+  const failCloseError = async (status: number, answer: string): Promise<QaResult> => {
+    await deps.log({ userId, question, questionNorm, matchPath: "error", answer: null, inputTokens: null, outputTokens: null });
+    return { status, answer, source: "error", remaining };
+  };
+  let llm: LlmResult | null = null;
+  if (deps.getLlmState) {
+    let state: { started: boolean; result: LlmResult | null; ownerActive?: boolean };
+    try {
+      state = await deps.getLlmState();
+    } catch {
+      return failCloseError(503, "지금은 답변을 가져올 수 없어요. 잠시 후 다시 시도해 주세요.");
+    }
+    llm = state.result;
+    if (!llm && state.started) {
+      if (state.ownerActive) return { status: 202, answer: "", source: "pending", remaining };
+      return failCloseError(200, LLM_AMBIGUOUS_ANSWER);
+    }
+  }
+  if (!llm) {
+    if (deps.acquireLlmStart) {
+      let won = false;
+      try {
+        won = await deps.acquireLlmStart();
+      } catch {
+        return failCloseError(503, "지금은 답변을 가져올 수 없어요. 잠시 후 다시 시도해 주세요.");
+      }
+      if (!won) return { status: 202, answer: "", source: "pending", remaining };
+    }
+    try {
+      llm = await deps.callOfficialRagLlm!(question, evidence);
+    } catch {
+      // LLM 호출 실패. 경계를 이미 소비했을 수 있어 일반 경로로 내려보내지 않는다.
+      return failCloseError(200, LLM_AMBIGUOUS_ANSWER);
+    }
+    if (deps.storeLlm) await deps.storeLlm(llm);
+  }
+
+  const validated = validateRagResponse(llm.text, { numericEvidence: true, evidence });
+  if (validated.kind !== "grounded") {
+    // 공식 근거로도 답을 못 만들었다. LLM 호출을 이미 써서 일반 경로 재호출은 안 된다.
+    await deps.log({ userId, question, questionNorm, matchPath: "unsure", answer: UNSURE_ANSWER, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
+    return { status: 200, answer: UNSURE_ANSWER, source: "unsure", remaining };
+  }
+  const answer = composeRagAnswer(validated.answer, evidence[0]);
+  await deps.log({ userId, question, questionNorm, matchPath: "rag", answer, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
+  return { status: 200, answer, source: "rag", remaining };
+}
+
 export async function answerQuestion(userId: string, rawQuestion: string, deps: QaDeps): Promise<QaResult> {
   const question = rawQuestion.trim();
   const questionNorm = normalizeQuestion(question);
@@ -684,6 +777,18 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     if (candidate) {
       return answerPlayerDescriptiveQuestion(userId, question, questionNorm, candidate, remaining, deps);
     }
+  }
+
+  // ②-c 규칙·용어 질문은 KBO 공식 간행물(tier1) 근거로 먼저 시도한다.
+  //
+  // 선수 경로와 달리 **fail-close하지 않는다**: 공식 문서에 근거가 없으면 null을 돌려
+  // 아래 일반 LLM 경로로 그대로 내려간다. 이 경로는 기존 답변 품질을 올리기만 하고
+  // 기존에 답하던 질문을 새로 막지 않는다(기능 퇴행 금지).
+  //
+  // 캐시(②)보다 뒤에 두는 이유: 검수 사전·캐시는 토큰 0이고 이미 검수된 답이므로 우선순위가 높다.
+  if (deps.searchOfficialRag && deps.callOfficialRagLlm) {
+    const official = await answerOfficialDocumentQuestion(userId, question, questionNorm, remaining, deps);
+    if (official) return official;
   }
 
   // ③ 미매칭만 LLM (단발, 이력 미전송). durable job 상태로 동일 messageId의 LLM 소비를
