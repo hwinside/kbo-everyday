@@ -97,6 +97,17 @@ expect "GREEN 개수 감소 → 실패" \
 expect "RED  RESULT 행 없음 → fail-close (구 구현은 조용히 0 후 통과)" \
        fail 15 20 "$(printf '[ledger-backfill] === 요약 ===\n대상 5 | complete 5 | incomplete 0\n')"
 
+expect "RED  RESULT 중복 → 마지막 행 임의 채택 금지" \
+       fail 15 15 "$(summary 5 0 5)$(summary 5 5 0)"
+expect "RED  필드 누락 → fail-close" \
+       fail 15 15 "[ledger-backfill] RESULT complete=5"
+expect "RED  필드 순서 변경 → fail-close" \
+       fail 15 15 "[ledger-backfill] RESULT complete=5 target=5 incomplete=0"
+expect "RED  suffix 오염 → fail-close" \
+       fail 15 15 "[ledger-backfill] RESULT target=5 complete=5 incomplete=0 garbage=1"
+expect "RED  target 합계 불일치 → fail-close" \
+       fail 15 15 "[ledger-backfill] RESULT target=5 complete=5 incomplete=5"
+
 # 숫자가 아닌 count 는 기존대로 차단
 expect "GREEN count 비숫자 → 실패" \
        fail "" 20 "$(summary 5 5 0)"
@@ -113,11 +124,12 @@ else
 fi
 
 # 신 파서가 같은 입력에서 5 를 읽는지 직접 확인
-NEW=$(grep -E '^\[ledger-backfill\] RESULT ' /tmp/backfill.log | tail -1 | sed -nE 's/.* complete=([0-9]+).*/\1/p')
-if [ "$NEW" = "5" ]; then
-  ok "신 파서는 같은 입력에서 5 산출"
+if printf '%s' "$SCRIPT" | grep -Fq 'RESULT totals disagree' && \
+   printf '%s' "$SCRIPT" | grep -Fq 'must have exactly one RESULT line' && \
+   printf '%s' "$SCRIPT" | grep -Fq 'incomplete=([0-9]+)$'; then
+  ok "strict guard mutation lock: 유일행·전체 anchored parse·합계 검증이 step에 결속"
 else
-  bad "신 파서가 '$NEW' 산출 (기대 5)"
+  bad "strict guard mutation lock 누락"
 fi
 
 rm -f /tmp/backfill.log
