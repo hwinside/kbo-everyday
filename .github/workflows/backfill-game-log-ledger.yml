@@ -60,7 +60,12 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          # node 24 필수. node 22 + tsx 4.22.0(package-lock 고정 버전) 조합에서
+          # `.mts`(ESM) → CJS 컴파일 모듈(src/lib/game-logs/completeness.ts)의 named export 를
+          # 인식하지 못해 `SyntaxError: ... does not provide an export named 'buildGameIngestion'`
+          # 로 모듈 로딩 단계에서 죽는다(run 30655482859 실측).
+          # 동일 tsx 4.22.0 을 node 24 로 실행하면 로딩이 통과한다(양쪽 실측 대조).
+          node-version: '24'
           cache: 'npm'
 
       - name: Install dependencies
@@ -163,6 +168,11 @@ jobs:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
+          # pipefail 필수 — `npx tsx ... | tee` 는 파이프라인 종료코드가 tee(0)라
+          # tsx 가 SyntaxError 로 죽어도 step 이 초록으로 통과한다(run 30655482859 실측:
+          # 모듈 로딩 실패인데 job conclusion=success). 아래 검증 step 들도 apply 조건부라
+          # dry-run 실패가 아무 데서도 잡히지 않았다.
+          set -euo pipefail
           ARGS="--season ${{ steps.validate.outputs.season }}"
           if [ "${{ steps.validate.outputs.limit }}" != "0" ]; then
             ARGS="$ARGS --limit ${{ steps.validate.outputs.limit }}"
@@ -258,6 +268,35 @@ jobs:
             exit 1
           fi
           echo "✅ all release games complete"
+
+      # dry-run 도 "조용히 아무것도 안 한 실행"이 초록으로 통과하면 안 된다.
+      # pipefail 이 1차 방어이고, 이건 산출물 기준 2차 방어다 —
+      # 실제 backfill 출력(대상 경기 수 + DRY-RUN 요약)이 찍혔는지, 그리고
+      # dry-run 인데 ledger 행이 늘지 않았는지(DB write 0)를 고정한다.
+      - name: Verify dry-run produced output without DB writes
+        if: steps.validate.outputs.apply == 'false'
+        run: |
+          set -euo pipefail
+          if [ ! -s /tmp/backfill.log ]; then
+            echo "::error::dry-run produced no log output"
+            exit 1
+          fi
+          if ! grep -q '\[ledger-backfill\] games:' /tmp/backfill.log; then
+            echo "::error::dry-run log has no target summary line — the script did not reach the fetch stage"
+            exit 1
+          fi
+          if ! grep -q 'DRY-RUN 요약' /tmp/backfill.log; then
+            echo "::error::dry-run log has no DRY-RUN summary — the run did not complete"
+            exit 1
+          fi
+          BEFORE="${{ steps.before.outputs.count }}"
+          AFTER="${{ steps.after.outputs.count }}"
+          echo "dry-run ledger rows: $BEFORE → $AFTER"
+          if [ "$AFTER" != "$BEFORE" ]; then
+            echo "::error::dry-run must not write to the ledger ($BEFORE → $AFTER)"
+            exit 1
+          fi
+          echo "✅ dry-run produced real output and wrote 0 ledger rows"
 
       # dry-run 은 판정 미리보기라 incomplete 가 있어도 실패가 아니다.
       # apply 실행이 사실상 no-op 이면(증가 0 + complete 0) 드러낸다.
