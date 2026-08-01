@@ -204,6 +204,12 @@ async function computeSeasonAggregates(
 ): Promise<SeasonAggregates> {
   const failClosed: SeasonAggregates = { seasonGames: null, teamSeasonTotals: null };
   let universe: Array<{ gameId: string; gameDate: string }>;
+  const officialGames = new Map<string, {
+    awayTeamId: number;
+    homeTeamId: number;
+    awayScore: number;
+    homeScore: number;
+  }>();
   try {
     const collection = await collectSeasonGameUniverse(season, REGULAR_SEASON_SR_ID, {
       fetcher: deps.fetcher,
@@ -219,6 +225,18 @@ async function computeSeasonAggregates(
       if (gameDate === null) return failClosed;
       seen.add(g.gameId);
       universe.push({ gameId: g.gameId, gameDate });
+      if (
+        Number.isInteger(g.awayTeamId) && Number.isInteger(g.homeTeamId) &&
+        Number.isInteger(g.awayScore) && Number.isInteger(g.homeScore) &&
+        (g.awayScore ?? -1) >= 0 && (g.homeScore ?? -1) >= 0
+      ) {
+        officialGames.set(g.gameId, {
+          awayTeamId: g.awayTeamId,
+          homeTeamId: g.homeTeamId,
+          awayScore: g.awayScore!,
+          homeScore: g.homeScore!,
+        });
+      }
     }
   } catch {
     return failClosed;
@@ -241,11 +259,13 @@ async function computeSeasonAggregates(
   }
   const seasonGames: SeasonGameVerification[] = payload.games.flatMap((g) => {
     if (typeof g.gameId !== "string" || typeof g.gameDate !== "string") return [];
+    const official = officialGames.get(g.gameId);
     return [{
       gameId: g.gameId,
       gameDate: g.gameDate,
       complete: g.complete === true,
       teamCodes: parseGameTeamCodes(g.gameId),
+      ...(official ?? {}),
     }];
   });
   // 삼순 P0 gate 2 — RPC 반환 games의 gameId+gameDate exact 집합이 입력 우주와

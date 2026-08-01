@@ -5,15 +5,48 @@ import {
   type VenueStatsScopePayload,
 } from "../../src/lib/venue-stats/types";
 import {
+  batterCompatibility,
   buildVenueStatsHero,
   coverageCaption,
   formatAvg,
   formatOuts,
   formatRate,
   formatSigned,
+  metricTrend,
+  pitcherCompatibility,
   splitCells,
   VENUE_STATS_UI_GROUPS,
 } from "../../src/lib/venue-stats/ui";
+
+assert.deepEqual(
+  metricTrend(0.042, { higherIsBetter: true, digits: 3, trimLeadingZero: true }),
+  { tone: "positive", arrow: "▲", label: "+.042" },
+);
+assert.deepEqual(
+  metricTrend(-0.7, { higherIsBetter: false, digits: 2 }),
+  { tone: "positive", arrow: "▼", label: "−0.70" },
+  "ERA 하락은 ▼지만 긍정 의미색",
+);
+assert.equal(metricTrend(0.01, { higherIsBetter: true, digits: 2, neutralThreshold: 0.02 }).tone, "neutral");
+
+const batterScore = batterCompatibility({
+  playerId: "b1", attendanceAvg: 0.35, seasonAvg: 0.28, deltaAvg: 0.07,
+  attendanceHrPerGame: 0.4, seasonHrPerGame: 0.2,
+  attendanceRbiPerGame: 1.1, seasonRbiPerGame: 0.6,
+  appearances: 8, ab: 32,
+});
+assert.ok(batterScore && batterScore.score > 50 && batterScore.score <= 100);
+assert.equal(batterCompatibility({
+  playerId: "small", attendanceAvg: 1, seasonAvg: 0.2, deltaAvg: 0.8,
+  attendanceHrPerGame: 1, seasonHrPerGame: 0,
+  attendanceRbiPerGame: 4, seasonRbiPerGame: 0,
+  appearances: 1, ab: 4,
+}), null, "1경기 대폭발은 궁합점수 미산출");
+const pitcherScore = pitcherCompatibility({
+  playerId: "p1", attendanceEra: 1.5, seasonEra: 3.5, eraImprovement: 2,
+  attendanceK9: 10, seasonK9: 8, k9Delta: 2, appearances: 5, outs: 45,
+});
+assert.ok(pitcherScore && pitcherScore.score > 50 && pitcherScore.score <= 100);
 
 const routed = Object.values(VENUE_STATS_UI_GROUPS).flat();
 assert.equal(routed.length, 22);

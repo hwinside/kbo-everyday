@@ -43,12 +43,16 @@ import type {
   D5Value,
   D6Value,
   E1Value,
+  E2Value,
+  E3Value,
+  E4Value,
   MetricEnvelope,
   ScopeName,
   VenueStatsScopePayload,
 } from "@/lib/venue-stats/types";
 import {
   buildVenueStatsHero,
+  batterCompatibility,
   coverageCaption,
   formatAvg,
   formatEra,
@@ -58,6 +62,9 @@ import {
   METRIC_STATE_LABELS,
   splitCells,
   metricEvidence,
+  metricTrend,
+  pitcherCompatibility,
+  type MetricTrend,
 } from "@/lib/venue-stats/ui";
 // 순수 leaf 모듈에서 가져온다 — aggregate.ts 는 node 전용 의존(node:crypto)을 끌어서
 // 클라이언트 번들에서 import 하면 안 된다.
@@ -87,31 +94,42 @@ function StatState({ metric }: { metric: MetricEnvelope }) {
 }
 function MetricCard({
   title,
-  value,
-  comparison,
+  actual,
+  baseline,
+  trend,
   metric,
-  accent = "text-white",
   icon,
   embedded = false,
   className = "",
 }: {
   title: string;
-  value: string;
-  comparison?: string;
+  actual: string;
+  baseline?: string;
+  trend: MetricTrend;
   metric: MetricEnvelope;
-  accent?: string;
   icon?: React.ReactNode;
   embedded?: boolean;
   className?: string;
 }) {
+  const tone = {
+    positive: "text-emerald-300",
+    negative: "text-rose-300",
+    neutral: "text-slate-300",
+    unavailable: "text-white/65",
+  }[trend.tone];
   return (
     <div className={`min-w-0 p-3 ${embedded ? "" : "rounded-xl border border-white/8 bg-[#151519]"} ${className}`}>
       <div className="flex items-center justify-between gap-2">
         <p className="flex items-center gap-1.5 text-[10px] font-bold text-white/70">{icon}{title}</p>
         <span className="text-[9px] font-semibold text-white/60">{metric.n}경기 기준</span>
       </div>
-      <p className={`mt-0.5 text-[23px] font-black leading-tight tracking-tight ${accent}`}>{value}</p>
-      {comparison && <p className="mt-0.5 text-[10px] font-semibold text-white/70">{comparison}</p>}
+      <p data-testid="venue-metric-trend" className={`mt-1 text-[24px] font-black leading-none tracking-tight ${tone}`}>
+        {trend.arrow && <span aria-hidden="true">{trend.arrow} </span>}{trend.label}
+      </p>
+      <p className="mt-1 text-[10px] font-semibold text-white/70">
+        직관 <strong className="text-white/90">{actual}</strong>
+        {baseline && <> · 시즌 <strong className="text-white/90">{baseline}</strong></>}
+      </p>
       <StatState metric={metric} />
     </div>
   );
@@ -167,6 +185,8 @@ export default function VenueStatsDashboard() {
   const [failedSeason, setFailedSeason] = useState<number | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [favoritesOpen, setFavoritesOpen] = useState(false);
+  const [tagsOpen, setTagsOpen] = useState(false);
+  const [evidenceOpen, setEvidenceOpen] = useState(false);
   const requestGeneration = useRef(0);
   const requestController = useRef<AbortController | null>(null);
 
@@ -249,6 +269,9 @@ export default function VenueStatsDashboard() {
   const d5 = scope?.metrics.D5 as MetricEnvelope<D5Value> | undefined;
   const d6 = scope?.metrics.D6 as MetricEnvelope<D6Value> | undefined;
   const e1 = scope?.metrics.E1 as MetricEnvelope<E1Value> | undefined;
+  const e2 = scope?.metrics.E2 as MetricEnvelope<E2Value> | undefined;
+  const e3 = scope?.metrics.E3 as MetricEnvelope<E3Value> | undefined;
+  const e4 = scope?.metrics.E4 as MetricEnvelope<E4Value> | undefined;
 
   const c1ById = new Map((c1?.value ?? []).map((entry) => [entry.playerId, entry]));
   const c2ById = new Map((c2?.value ?? []).map((entry) => [entry.playerId, entry]));
@@ -300,14 +323,34 @@ export default function VenueStatsDashboard() {
   const opponentCells = scope ? splitCells<A2Cell>(scope.metrics.A2) : [];
   const stadiumCells = scope ? splitCells<A3Cell>(scope.metrics.A3) : [];
   const weekdayCells = scope ? splitCells<A4Cell>(scope.metrics.A4) : [];
-  const bestOpponent = [...opponentCells]
-    .filter(({ cell, sampleLimited }) => !sampleLimited && cell.w + cell.l + cell.d >= MIN_FINAL_GAMES)
-    .sort((a, b) => (b.cell.w + b.cell.l + b.cell.d) - (a.cell.w + a.cell.l + a.cell.d))[0];
-  const bestStadium = [...stadiumCells]
-    .filter(({ cell, sampleLimited }) => !sampleLimited && cell.w + cell.l + cell.d >= MIN_FINAL_GAMES)
-    .sort((a, b) => (b.cell.w + b.cell.l + b.cell.d) - (a.cell.w + a.cell.l + a.cell.d))[0];
-  const saturday = weekdayCells.find(({ cell, sampleLimited }) =>
-    !sampleLimited && cell.weekday === 6 && cell.w + cell.l + cell.d >= MIN_FINAL_GAMES);
+  const dayNightCells = scope ? splitCells<A5Cell>(scope.metrics.A5) : [];
+  const monthCells = scope ? splitCells<A6Cell>(scope.metrics.A6) : [];
+  const bestSplit = <T extends { w: number; l: number; d: number; rate: number | null }>(
+    cells: Array<{ key: string; cell: T; sampleLimited: boolean }>,
+  ) => [...cells]
+    .filter(({ cell, sampleLimited }) =>
+      !sampleLimited && cell.rate != null && cell.w + cell.l + cell.d >= MIN_FINAL_GAMES)
+    .sort((a, b) =>
+      (b.cell.rate ?? -1) - (a.cell.rate ?? -1) ||
+      (b.cell.w + b.cell.l + b.cell.d) - (a.cell.w + a.cell.l + a.cell.d) ||
+      a.key.localeCompare(b.key))[0];
+  const bestOpponent = bestSplit(opponentCells);
+  const bestStadium = bestSplit(stadiumCells);
+  const bestWeekday = bestSplit(weekdayCells);
+  const bestDayNight = bestSplit(dayNightCells);
+  const bestMonth = bestSplit(monthCells);
+  const bestOpponentName = bestOpponent
+    ? getTeamById(bestOpponent.cell.opponentTeamId)?.shortName ?? `팀 ${bestOpponent.cell.opponentTeamId}`
+    : null;
+  const bestOpponentLabel = bestOpponent
+    ? `${bestOpponentName}${(bestOpponent.cell.rate ?? 0) >= 0.6 ? " 킬러" : "전 궁합 1위"}`
+    : null;
+  const bestWeekdayLabel = bestWeekday
+    ? `${WEEKDAYS[bestWeekday.cell.weekday]}요일${(bestWeekday.cell.rate ?? 0) >= 0.6 ? "의 승요" : "이 최선"}`
+    : null;
+  const bestStadiumLabel = bestStadium
+    ? `${bestStadium.cell.stadium}${(bestStadium.cell.rate ?? 0) >= 0.6 ? " 강자" : " 궁합 1위"}`
+    : null;
   const summarySampleReady = (a1?.n ?? 0) >= MIN_FINAL_GAMES && !hero?.sampleLimited;
   const hrGames = b4?.denominator?.attendanceFinalGames ?? b4?.n ?? 0;
   const homeRunsSeen = b4?.value?.hr?.attendancePerGame == null
@@ -319,13 +362,13 @@ export default function VenueStatsDashboard() {
     value: `${bestStadium.cell.w}승 ${bestStadium.cell.l}패`,
     icon: <MapPin size={16} className="text-sky-300" />,
   });
-  if (saturday) interestingFacts.push({
-    key: "saturday", label: "토요일", value: `승률 ${formatRate(saturday.cell.rate, 0)}`,
+  if (bestWeekday) interestingFacts.push({
+    key: "weekday", label: bestWeekdayLabel!, value: `${bestWeekday.cell.w}승 · ${formatRate(bestWeekday.cell.rate, 0)}`,
     icon: <CalendarDays size={16} className="text-rose-300" />,
   });
   if (bestOpponent) interestingFacts.push({
     key: "opponent",
-    label: `${getTeamById(bestOpponent.cell.opponentTeamId)?.shortName ?? `팀 ${bestOpponent.cell.opponentTeamId}`}전`,
+    label: bestOpponentLabel!,
     value: `${bestOpponent.cell.w}승 ${bestOpponent.cell.l}패`,
     icon: <Swords size={16} className="text-orange-300" />,
   });
@@ -349,7 +392,45 @@ export default function VenueStatsDashboard() {
     key: "close-games", label: "1점차 승부", value: `${d1!.value!.closeGames}경기`,
     icon: <Trophy size={16} className="text-violet-300" />,
   });
-  const visibleInterestingFacts = interestingFacts.slice(0, 6);
+  if (bestDayNight) interestingFacts.push({
+    key: "day-night",
+    label: bestDayNight.cell.dayNight === "day" ? "낮 경기 체질" : "야간 경기 체질",
+    value: `${bestDayNight.cell.w}승 · ${formatRate(bestDayNight.cell.rate, 0)}`,
+    icon: <span className="text-[15px]">{bestDayNight.cell.dayNight === "day" ? "☀️" : "🌙"}</span>,
+  });
+  if (bestMonth) interestingFacts.push({
+    key: "month", label: `${bestMonth.cell.month}월의 승요`, value: `${bestMonth.cell.w}승 · ${formatRate(bestMonth.cell.rate, 0)}`,
+    icon: <CalendarDays size={16} className="text-cyan-300" />,
+  });
+  if (summarySampleReady && (d6?.value?.maxMarginWin?.margin ?? 0) >= 3) interestingFacts.push({
+    key: "margin", label: "대승 수집가", value: `최대 ${d6!.value!.maxMarginWin!.margin}점 차`,
+    icon: <Trophy size={16} className="text-amber-300" />,
+  });
+  if (summarySampleReady && (hero?.attendance?.w ?? 0) >= 3) interestingFacts.push({
+    key: "wins-seen", label: "승리 목격자", value: `${hero!.attendance!.w}승 수집`,
+    icon: <Trophy size={16} className="text-emerald-300" />,
+  });
+  if (summarySampleReady && (hero?.attendance?.l ?? 0) >= 3) interestingFacts.push({
+    key: "loss-endurance", label: "패배 인내형", value: `${hero!.attendance!.l}패 견딤`,
+    icon: <span className="text-[15px]">🧘</span>,
+  });
+  if (summarySampleReady && (hero?.attendance?.d ?? 0) > 0) interestingFacts.push({
+    key: "draw-seen", label: "무승부 희귀종", value: `${hero!.attendance!.d}무 목격`,
+    icon: <span className="text-[15px]">🦄</span>,
+  });
+  if (summarySampleReady && (e2?.value?.seasonCount ?? 0) > 0) interestingFacts.push({
+    key: "season-count", label: "구장 출석부", value: `${e2!.value!.seasonCount}경기`,
+    icon: <MapPin size={16} className="text-emerald-300" />,
+  });
+  if (summarySampleReady && (e3?.value?.daysSinceFirst ?? 0) >= 30) interestingFacts.push({
+    key: "days", label: "직관 인생", value: `D+${e3!.value!.daysSinceFirst}`,
+    icon: <Sparkles size={16} className="text-violet-300" />,
+  });
+  if (summarySampleReady && (e4?.value?.topStadium?.count ?? 0) >= 2) interestingFacts.push({
+    key: "home-ground", label: "나의 홈그라운드", value: `${e4!.value!.topStadium!.name} ${e4!.value!.topStadium!.count}회`,
+    icon: <MapPin size={16} className="text-sky-300" />,
+  });
+  const visibleInterestingFacts = tagsOpen ? interestingFacts : interestingFacts.slice(0, 6);
 
   if (!user) return null;
 
@@ -480,6 +561,33 @@ export default function VenueStatsDashboard() {
           ) : (
             <>
               <SectionTitle>내가 간 경기, 우리 팀은</SectionTitle>
+              {(bestOpponent || bestWeekday || bestStadium) && (
+                <div data-testid="venue-primary-insights" className="mb-2 grid grid-cols-3 gap-1.5">
+                  {bestOpponent && (
+                    <div className="min-w-0 rounded-xl border border-emerald-400/20 bg-emerald-400/[0.07] px-2.5 py-2.5">
+                      <Swords size={13} className="text-emerald-300" />
+                      <p className="mt-1 truncate text-[11px] font-black text-white">
+                        {bestOpponentLabel}
+                      </p>
+                      <p className="text-[9px] font-bold text-emerald-300">{bestOpponent.cell.w}승 · {formatRate(bestOpponent.cell.rate, 0)}</p>
+                    </div>
+                  )}
+                  {bestWeekday && (
+                    <div className="min-w-0 rounded-xl border border-amber-300/20 bg-amber-300/[0.07] px-2.5 py-2.5">
+                      <CalendarDays size={13} className="text-amber-300" />
+                      <p className="mt-1 truncate text-[11px] font-black text-white">{bestWeekdayLabel}</p>
+                      <p className="text-[9px] font-bold text-amber-300">{bestWeekday.cell.w}승 · {formatRate(bestWeekday.cell.rate, 0)}</p>
+                    </div>
+                  )}
+                  {bestStadium && (
+                    <div className="min-w-0 rounded-xl border border-sky-300/20 bg-sky-300/[0.07] px-2.5 py-2.5">
+                      <MapPin size={13} className="text-sky-300" />
+                      <p className="mt-1 truncate text-[11px] font-black text-white">{bestStadiumLabel}</p>
+                      <p className="text-[9px] font-bold text-sky-300">{bestStadium.cell.w}승 · {formatRate(bestStadium.cell.rate, 0)}</p>
+                    </div>
+                  )}
+                </div>
+              )}
               {!hero.mixedTeam && (
                 <div
                   data-testid="venue-team-metrics"
@@ -488,40 +596,40 @@ export default function VenueStatsDashboard() {
                   {/* 표본 미달이면 baseline이 null로 내려오므로 비교문구 자체를 감춘다("시즌 – · –" 방지). */}
                   <MetricCard
                     title="팀 타율"
-                    value={formatAvg(b1?.value?.attendanceAvg)}
-                    comparison={b1?.value?.seasonAvg != null ? `시즌 ${formatAvg(b1.value.seasonAvg)} · ${formatSigned(b1.value.delta, 3)}` : undefined}
+                    actual={formatAvg(b1?.value?.attendanceAvg)}
+                    baseline={b1?.value?.seasonAvg != null ? formatAvg(b1.value.seasonAvg) : undefined}
+                    trend={metricTrend(b1?.value?.delta, { higherIsBetter: true, digits: 3, neutralThreshold: 0.004, trimLeadingZero: true })}
                     metric={b1!}
-                    accent="text-emerald-300"
                     icon={<span className="text-[12px]">⚾</span>}
                     embedded
                     className="border-b border-r border-white/8"
                   />
                   <MetricCard
                     title="평균 득점"
-                    value={b3?.value?.runsPerGame == null ? "–" : b3.value.runsPerGame.toFixed(1)}
-                    comparison={b3?.value ? `${b3.value.totalRuns}득점` : undefined}
+                    actual={b3?.value?.runsPerGame == null ? "–" : b3.value.runsPerGame.toFixed(1)}
+                    baseline={b3?.value?.seasonRunsPerGame != null ? b3.value.seasonRunsPerGame.toFixed(1) : undefined}
+                    trend={metricTrend(b3?.value?.delta, { higherIsBetter: true, digits: 1, neutralThreshold: 0.15 })}
                     metric={b3!}
-                    accent="text-amber-300"
                     icon={<Target size={12} />}
                     embedded
                     className="border-b border-white/8"
                   />
                   <MetricCard
                     title="팀 ERA"
-                    value={formatEra(b2?.value?.attendanceEra)}
-                    comparison={b2?.value?.seasonEra != null ? `시즌 ${formatEra(b2.value.seasonEra)} · ${formatSigned(b2.value.delta, 2)}` : undefined}
+                    actual={formatEra(b2?.value?.attendanceEra)}
+                    baseline={b2?.value?.seasonEra != null ? formatEra(b2.value.seasonEra) : undefined}
+                    trend={metricTrend(b2?.value?.delta, { higherIsBetter: false, digits: 2, neutralThreshold: 0.1 })}
                     metric={b2!}
-                    accent="text-sky-300"
                     icon={<span className="text-[12px]">⚾</span>}
                     embedded
                     className="border-r border-white/8"
                   />
                   <MetricCard
                     title="홈런"
-                    value={b4?.value?.hr?.attendancePerGame == null ? "–" : b4.value.hr.attendancePerGame.toFixed(1)}
-                    comparison={b4?.value?.hr?.seasonPerGame != null ? `시즌 경기당 ${b4.value.hr.seasonPerGame.toFixed(1)}` : undefined}
+                    actual={b4?.value?.hr?.attendancePerGame == null ? "–" : b4.value.hr.attendancePerGame.toFixed(1)}
+                    baseline={b4?.value?.hr?.seasonPerGame != null ? b4.value.hr.seasonPerGame.toFixed(1) : undefined}
+                    trend={metricTrend(b4?.value?.hr?.delta, { higherIsBetter: true, digits: 1, neutralThreshold: 0.05 })}
                     metric={b4!}
-                    accent="text-rose-300"
                     icon={<Flame size={12} />}
                     embedded
                   />
@@ -596,11 +704,18 @@ export default function VenueStatsDashboard() {
                   const photoUrl = player ? getPlayerPhotoUrl(player.name, playerId, player.teamId) : null;
                   const attendanceValue = batter ? formatAvg(batter.attendanceAvg) : formatEra(pitcher?.attendanceEra);
                   const seasonValue = batter ? formatAvg(batter.seasonAvg) : formatEra(pitcher?.seasonEra);
-                  const boostLabel = batter?.deltaAvg != null
-                    ? `타율 ${formatSigned(batter.deltaAvg, 3).replace("+0.", "+.")}`
-                    : pitcher?.eraImprovement != null
-                      ? `ERA ${formatSigned(pitcher.eraImprovement, 2)}`
-                      : null;
+                  const boostTrend = batter
+                    ? metricTrend(batter.deltaAvg, { higherIsBetter: true, digits: 3, neutralThreshold: 0.004, trimLeadingZero: true })
+                    : metricTrend(pitcher?.eraImprovement == null ? null : -pitcher.eraImprovement, {
+                        higherIsBetter: false, digits: 2, neutralThreshold: 0.1,
+                      });
+                  const compatibility = batterCompatibility(batter) ?? pitcherCompatibility(pitcher);
+                  const boostTone = {
+                    positive: "border-emerald-300/40 bg-emerald-300/10 text-emerald-300",
+                    negative: "border-rose-300/40 bg-rose-300/10 text-rose-300",
+                    neutral: "border-slate-300/30 bg-slate-300/10 text-slate-300",
+                    unavailable: "border-white/10 bg-white/[0.04] text-white/60",
+                  }[boostTrend.tone];
                   return (
                     <div key={playerId} data-testid="venue-favorite-card" className="rounded-2xl border border-white/8 bg-[#151519] p-3">
                       <div className="flex items-center gap-2.5">
@@ -633,26 +748,39 @@ export default function VenueStatsDashboard() {
                               </span>
                             )}
                           </div>
-                          {boostLabel && (
-                            <span className="mt-0.5 inline-flex rounded-full border border-[#ff596a]/45 bg-[#ff4053]/10 px-1.5 py-0.5 text-[9px] font-black text-[#ff9aa5]">
-                              직관 부스트 {boostLabel}
+                          {boostTrend.tone !== "unavailable" && (
+                            <span data-testid="venue-favorite-trend" className={`mt-0.5 inline-flex rounded-full border px-1.5 py-0.5 text-[9px] font-black ${boostTone}`}>
+                              {boostTrend.arrow} {batter ? "타율" : "ERA"} {boostTrend.label}
                             </span>
                           )}
                           <p className="mt-0.5 text-[9px] font-semibold text-white/70">
                             {team?.shortName ?? "최애 선수"}{player?.position ? ` · ${player.position}` : ""}
                           </p>
                         </div>
-                        <div className="grid shrink-0 grid-cols-2 divide-x divide-white/10 text-right">
-                          <div className="px-2">
-                            <p className="text-[9px] font-bold text-white/60">내 앞에서</p>
-                            <p className="mt-0.5 text-[20px] font-black leading-none text-[#ffb0b8]">{attendanceValue}</p>
-                          </div>
-                          <div className="pl-2">
-                            <p className="text-[9px] font-bold text-white/60">시즌</p>
-                            <p className="mt-0.5 text-[20px] font-black leading-none text-white/75">{seasonValue}</p>
-                          </div>
+                        <div className="shrink-0 text-right">
+                          {compatibility ? (
+                            <>
+                              <p className="text-[9px] font-bold text-white/60">성적 궁합</p>
+                              <p data-testid="venue-compatibility-score" className={`text-[24px] font-black leading-none ${
+                                compatibility.tone === "positive"
+                                  ? "text-emerald-300"
+                                  : compatibility.tone === "negative"
+                                    ? "text-rose-300"
+                                    : "text-slate-300"
+                              }`}>{compatibility.score}<span className="text-[10px] text-white/60">점</span></p>
+                              <p className="mt-0.5 text-[8px] font-bold text-white/55">{compatibility.evidence}</p>
+                            </>
+                          ) : (
+                            <p className="max-w-[54px] text-[9px] font-bold leading-tight text-white/60">궁합 측정 중</p>
+                          )}
                         </div>
                       </div>
+                      {(batter || pitcher) && (
+                        <div className="mt-2 flex items-center justify-between rounded-lg bg-white/[0.045] px-2.5 py-1.5 text-[10px] font-bold">
+                          <span className="text-white/70">내 앞에서 <strong className="text-white">{attendanceValue}</strong></span>
+                          {seasonValue !== "–" && <span className="text-white/55">시즌 {seasonValue}</span>}
+                        </div>
+                      )}
                       {(highlight?.batter || highlight?.pitcher) && (
                         <div className="mt-2 flex items-center gap-1.5 text-[10px] font-bold text-white/80">
                           <Sparkles size={12} className="text-amber-300" />
@@ -688,23 +816,33 @@ export default function VenueStatsDashboard() {
 
               {visibleInterestingFacts.length > 0 && (
                 <>
-                  <SectionTitle>이런 것까지?</SectionTitle>
-                  <div className="grid grid-cols-2 gap-1.5">
+                  <SectionTitle>나의 직관 캐릭터</SectionTitle>
+                  <div data-testid="venue-character-tags" className="flex flex-wrap gap-1.5">
                     {visibleInterestingFacts.map((fact) => (
                       <div
                         key={fact.key}
                         data-testid="venue-interesting-fact"
-                        className="flex min-w-0 items-center gap-2 rounded-xl border border-white/8 bg-[#151519] px-3 py-2.5"
+                        className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-white/10 bg-[#151519] px-2.5 py-1.5"
                       >
-                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/[0.07]">
+                        <span className="flex h-5 w-5 shrink-0 items-center justify-center">
                           {fact.icon}
                         </span>
-                        <p className="min-w-0 truncate text-[11px] font-bold text-white/75">
+                        <p className="min-w-0 truncate text-[10px] font-bold text-white/75">
                           {fact.label} <strong className="text-white">{fact.value}</strong>
                         </p>
                       </div>
                     ))}
                   </div>
+                  {interestingFacts.length > 6 && (
+                    <button
+                      type="button"
+                      onClick={() => setTagsOpen((value) => !value)}
+                      className="mt-1.5 inline-flex items-center gap-1 text-[10px] font-black text-white/65"
+                    >
+                      {tagsOpen ? "태그 접기" : `태그 ${interestingFacts.length - 6}개 더 보기`}
+                      <ChevronDown size={12} className={tagsOpen ? "rotate-180" : ""} />
+                    </button>
+                  )}
                 </>
               )}
 
@@ -776,24 +914,37 @@ export default function VenueStatsDashboard() {
           )}
 
           <section className="mt-3 rounded-xl border border-white/8 bg-white/[0.045] p-3">
-            <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setEvidenceOpen((value) => !value)}
+              className="flex w-full items-center gap-2 text-left"
+            >
               <BarChart3 size={16} className="text-[#ff6574]" />
-              <p className="text-[12px] font-extrabold">데이터 기준</p>
-            </div>
-            <p className="mt-1.5 text-[10px] leading-relaxed text-white/70">{coverageCaption(scope)}</p>
-            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/8">
-              <div
-                className="h-full rounded-full bg-gradient-to-r from-[#ff4053] to-[#ff7180]"
-                style={{
-                  width: `${scope.coverage.finalGames === 0
-                    ? 0
-                    : Math.max(4, ((scope.coverage.finalGames - scope.coverage.incompleteFinalGames) / scope.coverage.finalGames) * 100)}%`,
-                }}
-              />
-            </div>
-            <p className="mt-1.5 flex items-center gap-1 text-[9px] text-white/70">
-              <CalendarDays size={11} /> 표본이 적거나 기록이 누락된 지표는 참고용으로 표시돼요
-            </p>
+              <p className="flex-1 text-[12px] font-extrabold">데이터 기준</p>
+              <span className="truncate text-[9px] text-white/55">종료 {scope.coverage.finalGames}경기</span>
+              <ChevronDown size={14} className={evidenceOpen ? "rotate-180" : ""} />
+            </button>
+            {evidenceOpen && (
+              <>
+                <p className="mt-1.5 text-[10px] leading-relaxed text-white/70">{coverageCaption(scope)}</p>
+                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/8">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-[#ff4053] to-[#ff7180]"
+                    style={{
+                      width: `${scope.coverage.finalGames === 0
+                        ? 0
+                        : Math.max(4, ((scope.coverage.finalGames - scope.coverage.incompleteFinalGames) / scope.coverage.finalGames) * 100)}%`,
+                    }}
+                  />
+                </div>
+                <p className="mt-1.5 flex items-center gap-1 text-[9px] text-white/70">
+                  <CalendarDays size={11} /> 표본이 적거나 기록이 누락된 지표는 참고용으로 표시돼요
+                </p>
+                <p className="mt-1 text-[9px] leading-relaxed text-white/60">
+                  성적 궁합은 타자의 타율·홈런·타점, 투수의 ERA·K/9 시즌 대비 변화에 표본 신뢰도를 반영한 100점 지표예요.
+                </p>
+              </>
+            )}
           </section>
         </>
       ) : null}

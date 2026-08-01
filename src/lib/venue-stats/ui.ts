@@ -1,5 +1,7 @@
 import type {
   A1Value,
+  C1Entry,
+  C2Entry,
   MetricEnvelope,
   MetricId,
   VenueStatsScopePayload,
@@ -60,6 +62,95 @@ export function formatOuts(outs: number | null | undefined): string {
   const whole = Math.floor(outs / 3);
   const rest = outs % 3;
   return rest === 0 ? `${whole}` : `${whole} ${rest === 1 ? "⅓" : "⅔"}`;
+}
+
+export type TrendTone = "positive" | "negative" | "neutral" | "unavailable";
+
+export interface MetricTrend {
+  tone: TrendTone;
+  arrow: "▲" | "▼" | "→" | "";
+  label: string;
+}
+
+/**
+ * 실제 수치 방향(▲/▼)과 좋은지 나쁜지(tone)를 분리한다.
+ * ERA처럼 낮을수록 좋은 지표도 ▼와 positive를 동시에 가질 수 있다.
+ */
+export function metricTrend(
+  delta: number | null | undefined,
+  options: {
+    higherIsBetter: boolean;
+    digits: number;
+    neutralThreshold?: number;
+    suffix?: string;
+    trimLeadingZero?: boolean;
+  },
+): MetricTrend {
+  if (delta == null || !Number.isFinite(delta)) {
+    return { tone: "unavailable", arrow: "", label: "비교 준비 중" };
+  }
+  const threshold = options.neutralThreshold ?? 0;
+  if (Math.abs(delta) <= threshold) {
+    return { tone: "neutral", arrow: "→", label: "시즌과 비슷" };
+  }
+  const increased = delta > 0;
+  const positive = options.higherIsBetter ? increased : !increased;
+  const raw = Math.abs(delta).toFixed(options.digits);
+  const value = options.trimLeadingZero ? raw.replace(/^0/, "") : raw;
+  return {
+    tone: positive ? "positive" : "negative",
+    arrow: increased ? "▲" : "▼",
+    label: `${increased ? "+" : "−"}${value}${options.suffix ?? ""}`,
+  };
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+export interface FavoriteCompatibility {
+  score: number;
+  tone: Exclude<TrendTone, "unavailable">;
+  evidence: string;
+}
+
+/** 표본 신뢰도를 50점 쪽으로 수축한 최애선수 직관 성적 궁합점수. */
+export function batterCompatibility(entry: C1Entry | null | undefined): FavoriteCompatibility | null {
+  if (
+    !entry || entry.ab < 10 || entry.deltaAvg == null ||
+    entry.seasonHrPerGame == null || entry.seasonRbiPerGame == null ||
+    entry.attendanceHrPerGame == null || entry.attendanceRbiPerGame == null
+  ) return null;
+  const avg = clamp(entry.deltaAvg / 0.08, -1, 1);
+  const hrDelta = entry.attendanceHrPerGame - entry.seasonHrPerGame;
+  const rbiDelta = entry.attendanceRbiPerGame - entry.seasonRbiPerGame;
+  const composite = avg * 0.6 + clamp(hrDelta / 0.5, -1, 1) * 0.2 + clamp(rbiDelta / 0.8, -1, 1) * 0.2;
+  const confidence = Math.sqrt(clamp(entry.ab / 40, 0, 1));
+  const score = Math.round(clamp(50 + 50 * composite * confidence, 0, 100));
+  const tone = score >= 56 ? "positive" : score <= 44 ? "negative" : "neutral";
+  const trend = metricTrend(entry.deltaAvg, { higherIsBetter: true, digits: 3, trimLeadingZero: true });
+  return {
+    score,
+    tone,
+    evidence: `타율 ${trend.arrow} ${trend.label}`,
+  };
+}
+
+export function pitcherCompatibility(entry: C2Entry | null | undefined): FavoriteCompatibility | null {
+  if (
+    !entry || entry.outs < 15 || entry.eraImprovement == null ||
+    entry.k9Delta == null
+  ) return null;
+  const composite = clamp(entry.eraImprovement / 2, -1, 1) * 0.65 + clamp(entry.k9Delta / 3, -1, 1) * 0.35;
+  const confidence = Math.sqrt(clamp(entry.outs / 60, 0, 1));
+  const score = Math.round(clamp(50 + 50 * composite * confidence, 0, 100));
+  const tone = score >= 56 ? "positive" : score <= 44 ? "negative" : "neutral";
+  const trend = metricTrend(-entry.eraImprovement, { higherIsBetter: false, digits: 2 });
+  return {
+    score,
+    tone,
+    evidence: `ERA ${trend.arrow} ${trend.label}`,
+  };
 }
 
 export interface VenueStatsHero {

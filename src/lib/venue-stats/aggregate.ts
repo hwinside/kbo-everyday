@@ -89,6 +89,11 @@ export interface SeasonGameVerification {
   complete: boolean;
   /** game_id에서 파싱한 참가팀 코드 2개 (parseGameTeamCodes). 파싱 실패 시 []. */
   teamCodes: string[];
+  /** 공식 정규시즌 final 스코어. 구버전/불완전 소스는 undefined로 fail-close. */
+  awayTeamId?: number;
+  homeTeamId?: number;
+  awayScore?: number;
+  homeScore?: number;
 }
 
 export interface VenueStatsAggregateInput {
@@ -612,8 +617,15 @@ function stripSeasonBaseline(id: "B1" | "B2" | "B3" | "B4", value: unknown): unk
     const v = value as B2Value;
     return { attendanceEra: v.attendanceEra, seasonEra: null, delta: null } satisfies B2Value;
   }
-  // B3는 시즌 baseline이 없는 직관 단독 지표라 그대로 둔다.
-  if (id === "B3") return value;
+  if (id === "B3") {
+    const v = value as B3Value;
+    return {
+      runsPerGame: v.runsPerGame,
+      seasonRunsPerGame: null,
+      delta: null,
+      totalRuns: v.totalRuns,
+    } satisfies B3Value;
+  }
   const v = value as B4Value;
   const strip = (side: B4Side | null): B4Side | null =>
     side == null ? null : { attendancePerGame: side.attendancePerGame, seasonPerGame: null, delta: null };
@@ -632,6 +644,26 @@ function computeBForTeam(ctx: Ctx, teamId: number, games: ScopeGame[]): BTeamCom
   const seasonEra = season ? pooledEra(season.er, season.outs) : null;
 
   const totalRuns = games.reduce((sum, g) => sum + (g.myScore ?? 0), 0);
+  const seasonScoreGames = ctx.input.seasonGames?.filter(
+    (game) => game.awayTeamId === teamId || game.homeTeamId === teamId,
+  ) ?? [];
+  const seasonScoringComplete =
+    seasonScoreGames.length > 0 &&
+    seasonScoreGames.every((game) =>
+      Number.isInteger(game.awayTeamId) && Number.isInteger(game.homeTeamId) &&
+      Number.isInteger(game.awayScore) && Number.isInteger(game.homeScore) &&
+      (game.awayScore ?? -1) >= 0 && (game.homeScore ?? -1) >= 0,
+    );
+  const seasonTotalRuns = seasonScoringComplete
+    ? seasonScoreGames.reduce(
+        (sum, game) => sum + (game.awayTeamId === teamId ? game.awayScore! : game.homeScore!),
+        0,
+      )
+    : null;
+  const seasonRunsPerGame = seasonTotalRuns === null
+    ? null
+    : ratio(seasonTotalRuns, seasonScoreGames.length);
+  const attendanceRunsPerGame = ratio(totalRuns, games.length);
 
   const b4Sides: { hr: B4Side; hitsAllowed: B4Side } = {
     hr: {
@@ -673,9 +705,17 @@ function computeBForTeam(ctx: Ctx, teamId: number, games: ScopeGame[]): BTeamCom
       denominator: { attendanceOuts: att.outs, seasonOuts: season?.outs ?? 0 },
     },
     b3: {
-      value: { runsPerGame: ratio(totalRuns, games.length), totalRuns },
+      value: {
+        runsPerGame: attendanceRunsPerGame,
+        seasonRunsPerGame,
+        delta:
+          attendanceRunsPerGame !== null && seasonRunsPerGame !== null
+            ? attendanceRunsPerGame - seasonRunsPerGame
+            : null,
+        totalRuns,
+      },
       sampleMet: games.length >= MIN_FINAL_GAMES,
-      denominator: { finalGames: games.length },
+      denominator: { finalGames: games.length, seasonGames: seasonScoreGames.length },
     },
     b4: {
       value: b4Sides,

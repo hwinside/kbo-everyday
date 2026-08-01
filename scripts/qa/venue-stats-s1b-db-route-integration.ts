@@ -18,13 +18,18 @@ import {
 } from "@/lib/game-logs/completeness";
 import { METRIC_IDS } from "@/lib/venue-stats/types";
 
-/** collection이 status/date/gameId만 읽으므로 최소 필드만 채우고 KboGame으로 캐스트. */
+/** 시즌 득점 baseline까지 보존하는 final fixture. */
 function makeFinalGame(gameId: string): KboGame {
+  const ids: Record<string, number> = { LG: 1, OB: 2, KT: 3, SS: 8 };
   return {
     gameId,
     date: gameId.slice(0, 8),
     time: "18:30",
     status: "final",
+    awayTeamId: ids[gameId.slice(8, 10)],
+    homeTeamId: ids[gameId.slice(10, 12)],
+    awayScore: 5,
+    homeScore: 3,
   } as unknown as KboGame;
 }
 
@@ -190,6 +195,14 @@ async function seasonUniverseFailClosedRegression() {
   const green = await fetchSeasonAggregates(2026, { fetcher: fullFetcher, rpc: faithfulRpc });
   assert.notEqual(green.seasonGames, null);
   assert.equal(green.seasonGames!.length, 2);
+  assert.deepEqual(
+    green.seasonGames!.map(({ awayTeamId, homeTeamId, awayScore, homeScore }) => ({ awayTeamId, homeTeamId, awayScore, homeScore })),
+    [
+      { awayTeamId: 1, homeTeamId: 2, awayScore: 5, homeScore: 3 },
+      { awayTeamId: 3, homeTeamId: 8, awayScore: 5, homeScore: 3 },
+    ],
+    "공식 final 스코어가 B3 시즌 득점 baseline으로 보존돼야 함",
+  );
   assert.notEqual(green.teamSeasonTotals, null);
   assert.equal(green.teamSeasonTotals!.size, 4);
   console.log("  ✓ route gate GREEN: 완전 우주(날짜 실패 0) + exact-set 일치 + teams exact → seasonGames 2건");

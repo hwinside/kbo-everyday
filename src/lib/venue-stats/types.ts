@@ -90,6 +90,10 @@ export interface B2Value {
 }
 export interface B3Value {
   runsPerGame: number | null;
+  /** 응원팀의 정규시즌 경기당 평균 득점. 시즌 경기 우주가 완전할 때만 제공. */
+  seasonRunsPerGame: number | null;
+  /** runsPerGame - seasonRunsPerGame. 양수가 직관 부스트. */
+  delta: number | null;
   totalRuns: number;
 }
 export interface B4Side {

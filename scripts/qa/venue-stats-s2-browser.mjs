@@ -192,13 +192,13 @@ const scope = (name, wins, rate) => {
     "1": {
       B1:{attendanceAvg:.286,seasonAvg:.263,delta:.023},
       B2:{attendanceEra:3.42,seasonEra:4.01,delta:-.59},
-      B3:{runsPerGame:5.2,totalRuns:21},
+      B3:{runsPerGame:5.2,seasonRunsPerGame:4.6,delta:.6,totalRuns:21},
       B4:{hr:{attendancePerGame:1.3,seasonPerGame:1.0,delta:.3},hitsAllowed:null},
     },
     "9": {
       B1:{attendanceAvg:.251,seasonAvg:.244,delta:.007},
       B2:{attendanceEra:4.18,seasonEra:4.31,delta:-.13},
-      B3:{runsPerGame:4.1,totalRuns:16},
+      B3:{runsPerGame:4.1,seasonRunsPerGame:4.4,delta:-.3,totalRuns:16},
       B4:{hr:{attendancePerGame:.8,seasonPerGame:.7,delta:.1},hitsAllowed:null},
     },
   };
@@ -211,7 +211,7 @@ const scope = (name, wins, rate) => {
   metrics.C1 = envelope("C1", [
     {playerId:"53123",attendanceAvg:.333,seasonAvg:.278,deltaAvg:.055,attendanceHrPerGame:.2,seasonHrPerGame:.1,attendanceRbiPerGame:1,seasonRbiPerGame:.7,appearances:6,ab:21},
     {playerId:"p3",attendanceAvg:.310,seasonAvg:.270,deltaAvg:.040,attendanceHrPerGame:.1,seasonHrPerGame:.1,attendanceRbiPerGame:.8,seasonRbiPerGame:.6,appearances:5,ab:20},
-    {playerId:"p4",attendanceAvg:.290,seasonAvg:.260,deltaAvg:.030,attendanceHrPerGame:.1,seasonHrPerGame:.1,attendanceRbiPerGame:.7,seasonRbiPerGame:.5,appearances:5,ab:20},
+    {playerId:"p4",attendanceAvg:.230,seasonAvg:.260,deltaAvg:-.030,attendanceHrPerGame:0,seasonHrPerGame:.1,attendanceRbiPerGame:.3,seasonRbiPerGame:.5,appearances:5,ab:20},
   ], {attendanceAB:61});
   metrics.C2 = envelope("C2", [
     {playerId:"p2",attendanceEra:2.71,seasonEra:3.88,eraImprovement:1.17,attendanceK9:9.2,seasonK9:8.1,k9Delta:1.1,appearances:4,outs:40},
@@ -286,13 +286,13 @@ const sampleLimitedScope = (name) => {
     "1": {
       B1:{attendanceAvg:.286,seasonAvg:null,delta:null},
       B2:{attendanceEra:3.42,seasonEra:null,delta:null},
-      B3:{runsPerGame:5.2,totalRuns:5},
+      B3:{runsPerGame:5.2,seasonRunsPerGame:null,delta:null,totalRuns:5},
       B4:{hr:{attendancePerGame:1.3,seasonPerGame:null,delta:null},hitsAllowed:null},
     },
     "9": {
       B1:{attendanceAvg:.251,seasonAvg:null,delta:null},
       B2:{attendanceEra:4.18,seasonEra:null,delta:null},
-      B3:{runsPerGame:4.1,totalRuns:4},
+      B3:{runsPerGame:4.1,seasonRunsPerGame:null,delta:null,totalRuns:4},
       B4:{hr:{attendancePerGame:.8,seasonPerGame:null,delta:null},hitsAllowed:null},
     },
   };
@@ -334,6 +334,9 @@ const sampleLimitedScope = (name) => {
       items: items.map(({key,value}) => ({key,state:"sample_limited",value,n:1,denominator:{finalGames:1}})),
     };
   }
+  // production aggregate: C1/C2 sample_limited item은 value=null이고 C4 사실형만 남는다.
+  base.metrics.C1 = { ...base.metrics.C1, state:"sample_limited", value:[], items:[] };
+  base.metrics.C2 = { ...base.metrics.C2, state:"sample_limited", value:[], items:[] };
   return base;
 };
 const sampleLimitedPayload = {
@@ -382,7 +385,7 @@ const partialBaselineScope = (name) => {
   });
   base.metrics.B1 = { ...envelope("B1", { attendanceAvg:.286, seasonAvg:null, delta:null }), state:"partial_data" };
   base.metrics.B2 = { ...envelope("B2", { attendanceEra:3.42, seasonEra:null, delta:null }), state:"partial_data" };
-  base.metrics.B3 = envelope("B3", { runsPerGame:5.2, totalRuns:42 });
+  base.metrics.B3 = envelope("B3", { runsPerGame:5.2, seasonRunsPerGame:4.6, delta:.6, totalRuns:42 });
   base.metrics.B4 = { ...envelope("B4", { hr:{attendancePerGame:1.3,seasonPerGame:null,delta:null}, hitsAllowed:null }), state:"partial_data" };
   base.metrics.C1 = {
     ...envelope("C1", [{playerId:"53123",attendanceAvg:.333,seasonAvg:null,deltaAvg:null,attendanceHrPerGame:.2,seasonHrPerGame:null,attendanceRbiPerGame:1,seasonRbiPerGame:null,appearances:6,ab:21}], {attendanceAB:21}),
@@ -511,6 +514,16 @@ try {
       throw new Error(`irrelevant novelty fact must be omitted: ${fact}`);
     }
   }
+  const primaryInsights = page.getByTestId("venue-primary-insights");
+  if (await primaryInsights.count() !== 1) throw new Error("primary opponent/weekday/stadium insights missing");
+  const primaryText = await primaryInsights.innerText();
+  for (const phrase of ["두산 킬러", "토요일의 승요", "잠실 강자"]) {
+    if (!primaryText.includes(phrase)) throw new Error(`primary insight missing: ${phrase}`);
+  }
+  const tagToggle = page.getByRole("button", { name: /태그 .*개 더 보기/ });
+  await tagToggle.click();
+  if (await interestingFacts.count() <= 6) throw new Error("all character tags did not expand beyond representative six");
+  await page.getByRole("button", { name: "태그 접기" }).click();
   const compactHeight = await page.evaluate(() => document.documentElement.scrollHeight);
   if (compactHeight > 1500) throw new Error(`compact dashboard exceeded 1500px before details: ${compactHeight}px`);
 
@@ -524,10 +537,32 @@ try {
   if (!mainFavoriteText.includes("타자 부스트 1위") || mainFavoriteText.includes("투수 부스트 1위")) {
     throw new Error(`main favorite role label mismatch: ${mainFavoriteText}`);
   }
+  if (!mainFavoriteText.includes("성적 궁합") || !mainFavoriteText.includes("▲")) {
+    throw new Error(`favorite compatibility/direction hierarchy missing: ${mainFavoriteText}`);
+  }
+  if (await page.getByTestId("venue-compatibility-score").count() !== 1) {
+    throw new Error("collapsed favorite view must show one compatibility score");
+  }
   const favoritesToggle = page.getByRole("button", { name: "다른 최애 4명 보기" });
   await favoritesToggle.click();
   if (await favoriteCards.count() !== 5) {
     throw new Error(`five-favorite expanded view must show 5 cards, got ${await favoriteCards.count()}`);
+  }
+  if (await page.getByTestId("venue-compatibility-score").count() !== 5) {
+    throw new Error("every sufficiently sampled favorite must show a 100-point compatibility score");
+  }
+  const positiveFavorite = page.getByText("오스틴", { exact: true })
+    .locator('xpath=ancestor::*[@data-testid="venue-favorite-card"][1]');
+  const negativeFavorite = page.getByText("박최애", { exact: true })
+    .locator('xpath=ancestor::*[@data-testid="venue-favorite-card"][1]');
+  const [positiveTrendText, negativeTrendText, positiveTrendColor, negativeTrendColor] = await Promise.all([
+    positiveFavorite.getByTestId("venue-favorite-trend").innerText(),
+    negativeFavorite.getByTestId("venue-favorite-trend").innerText(),
+    positiveFavorite.getByTestId("venue-favorite-trend").evaluate((element) => getComputedStyle(element).color),
+    negativeFavorite.getByTestId("venue-favorite-trend").evaluate((element) => getComputedStyle(element).color),
+  ]);
+  if (!positiveTrendText.includes("▲") || !negativeTrendText.includes("▼") || positiveTrendColor === negativeTrendColor) {
+    throw new Error(`positive/negative boost contrast missing: ${positiveTrendText}/${positiveTrendColor}, ${negativeTrendText}/${negativeTrendColor}`);
   }
   const pitcherLeaderText = await page.getByText("이최애", { exact: true })
     .locator('xpath=ancestor::*[@data-testid="venue-favorite-card"][1]')
@@ -873,7 +908,7 @@ try {
   await page.getByRole("button", { name: /다른 최애 .*명 보기/ }).click();
 
   const partialText = await page.locator('[data-testid="venue-stats-dashboard"]').first().innerText();
-  for (const fact of [".286", "3.42", "1.3", ".333", "2.71", "9안타", "7타점 · 2홈런", "12K", "2경기 0자책", "최애 최고의 직관 경기"]) {
+  for (const fact of [".286", "3.42", "1.3", "시즌 4.6", "▲ +0.6", ".333", "2.71", "9안타", "7타점 · 2홈런", "12K", "2경기 0자책", "최애 최고의 직관 경기"]) {
     if (!partialText.includes(fact)) throw new Error(`partial-baseline attendance fact/card missing: ${fact}`);
   }
   if (!partialText.includes("일부 기록 확인 중")) {
@@ -886,8 +921,8 @@ try {
     const cardText = await page.getByText(favorite, { exact: true })
       .locator('xpath=ancestor::div[contains(@class,"rounded-2xl")][1]')
       .innerText();
-    if (!cardText.includes("시즌") || !cardText.includes("–")) {
-      throw new Error(`partial-baseline ${favorite} season comparison must be dash: ${cardText}`);
+    if (cardText.includes("시즌") || cardText.includes("–")) {
+      throw new Error(`partial-baseline ${favorite} unavailable season comparison must be omitted: ${cardText}`);
     }
   }
   if ((await page.evaluate(() => document.documentElement.scrollWidth)) > 390) {

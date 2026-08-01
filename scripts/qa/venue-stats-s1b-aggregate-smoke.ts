@@ -32,6 +32,7 @@ import {
   METRIC_IDS,
   type B1Value,
   type B2Value,
+  type B3Value,
   type B4Side,
   type B4Value,
   type C4Entry,
@@ -199,15 +200,23 @@ const SEASON_GAMES: SeasonGameVerification[] = [
     gameDate: `${g.gameId.slice(0, 4)}-${g.gameId.slice(4, 6)}-${g.gameId.slice(6, 8)}`,
     complete: true,
     teamCodes: parseGameTeamCodes(g.gameId),
+    awayTeamId: g.awayTeamId,
+    homeTeamId: g.homeTeamId,
+    awayScore: g.awayScore!,
+    homeScore: g.homeScore!,
   })),
   {
     gameId: G4.gameId,
     gameDate: "2026-06-15",
     complete: false,
     teamCodes: parseGameTeamCodes(G4.gameId),
+    awayTeamId: G4.awayTeamId,
+    homeTeamId: G4.homeTeamId,
+    awayScore: G4.awayScore!,
+    homeScore: G4.homeScore!,
   },
-  { gameId: "20260628LGOB0", gameDate: "2026-06-28", complete: true, teamCodes: ["LG", "OB"] },
-  { gameId: "20260629LGOB0", gameDate: "2026-06-29", complete: true, teamCodes: ["LG", "OB"] },
+  { gameId: "20260628LGOB0", gameDate: "2026-06-28", complete: true, teamCodes: ["LG", "OB"], awayTeamId: LG, homeTeamId: OB, awayScore: 4, homeScore: 2 },
+  { gameId: "20260629LGOB0", gameDate: "2026-06-29", complete: true, teamCodes: ["LG", "OB"], awayTeamId: LG, homeTeamId: OB, awayScore: 6, homeScore: 3 },
 ];
 
 const FAVORITES: FavoritePlayerSnapshot[] = [
@@ -290,8 +299,11 @@ console.log("\n[1] overall scope (complete+incomplete 혼합, manual 포함, ded
   ok("B1 partial_data fail-closed (incomplete 혼합)", s.metrics.B1.state === "partial_data" && s.metrics.B1.value === null);
   ok("B1 coverage.unknownGameIds=[G4]", JSON.stringify(s.metrics.B1.coverage.unknownGameIds) === JSON.stringify([G4.gameId]));
   ok("B2/B4도 partial_data", s.metrics.B2.state === "partial_data" && s.metrics.B4.state === "partial_data");
-  const b3 = s.metrics.B3 as MetricEnvelope<{ runsPerGame: number | null; totalRuns: number }>;
+  const b3 = s.metrics.B3 as MetricEnvelope<B3Value>;
   ok("B3는 game 스코어 단독이라 partial 아님(§5 비교값 한정): 20득점/5경기=4.0", b3.state === "ready" && b3.value?.totalRuns === 20 && approx(b3.value?.runsPerGame, 4));
+  const lgSeasonRuns = SEASON_GAMES.reduce((sum, game) =>
+    sum + (game.awayTeamId === LG ? game.awayScore! : game.homeTeamId === LG ? game.homeScore! : 0), 0);
+  ok("B3 시즌 평균 득점=공식 정규시즌 스코어 / 팀 경기수 + delta", b3.value?.seasonRunsPerGame === lgSeasonRuns / SEASON_GAMES.length && b3.value?.delta === 4 - lgSeasonRuns / SEASON_GAMES.length);
 
   ok("C1 partial_data (G4 unknown_log_gap)", s.metrics.C1.state === "partial_data");
   const c1f1 = item(s.metrics.C1, "70001");
