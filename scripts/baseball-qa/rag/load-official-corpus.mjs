@@ -208,7 +208,18 @@ function loadCorpus() {
   return { docs: list, skips };
 }
 
-/** 문서 1건을 chunk 배열로 만든다. section_path = "<제목>#p<페이지>". */
+/**
+ * 문서 1건을 chunk 배열로 만든다.
+ *
+ * 입력 단위가 두 가지다:
+ *  - **페이지 단위**(`section` 없음): PDF 페이지를 그대로 청킹. `section_path = "<제목>#p<페이지>"`.
+ *  - **조문 단위**(`section` 있음): 입력이 이미 `5.09 아 웃` 같은 조문로 쪼개져 있다.
+ *    `section_path = "<제목>#<조문>"`로 두고 **페이지로 다시 묶지 않는다**.
+ *
+ * ⚠️ 이 분기가 없으면 조문 입력이 **조용히 페이지로 뭉개진다**. 실측으로 조문 836건을
+ * 넣었는데 275건만 남았고(한 페이지에 조문 2개+ 인 그룹이 219개), 로더는 그런데도
+ * "301건 적재 완료"로 보고했다 — 자기가 만든 chunk 수를 셀을 뿐 DB 상태를 확인하지 않았기 때문이다.
+ */
 function prepareDocument(doc) {
   const fullClean = doc.pages.map((p) => p.text).join("\n\n");
   const documentContentHash = sha256(fullClean);
@@ -217,29 +228,55 @@ function prepareDocument(doc) {
 
   const chunks = [];
   const skips = { page_too_short: 0, chunk_too_short: 0 };
+  // section 부여 여부는 문서 단위로 고정한다 — 한 문서 안에서 섮이면 section_path 규칙이 둘로 갈라진다.
+  const sectioned = doc.pages.every((p) => typeof p.section === "string" && p.section.trim().length > 0);
+  // 조문 단위일 때 같은 조문이 여러 조각으로 나누어질 수 있으므로 section별 순번을 개별 관리한다.
+  const indexBySection = new Map();
+
   for (const page of doc.pages) {
     const pageChunks = chunkText(page.text);
     if (pageChunks.length === 0) {
       skips.page_too_short += 1;
       continue;
     }
-    let index = 0;
+    let pageIndex = 0;
     for (const content of pageChunks) {
       if (content.length < MIN_CHUNK_CHARS || content.length > MAX_CHUNK_CHARS) {
         skips.chunk_too_short += 1;
         continue;
       }
+      let sectionPath;
+      let chunkIndex;
+      if (sectioned) {
+        sectionPath = `${doc.title}#${page.section.trim()}`;
+        chunkIndex = indexBySection.get(sectionPath) ?? 0;
+        indexBySection.set(sectionPath, chunkIndex + 1);
+      } else {
+        sectionPath = `${doc.title}#p${page.page}`;
+        chunkIndex = pageIndex;
+        pageIndex += 1;
+      }
       chunks.push({
-        sectionPath: `${doc.title}#p${page.page}`,
-        chunkIndex: index,
+        sectionPath,
+        chunkIndex,
         page: page.page,
         content,
         contentHash: sha256(content),
       });
-      index += 1;
     }
   }
   if (LIMIT_CHUNKS && chunks.length > LIMIT_CHUNKS) chunks.length = LIMIT_CHUNKS;
+
+  // (source_key, claim_generation, revision, section_path, chunk_index)가 DB UNIQUE 키다.
+  // 여기서 중복이 생기면 upsert가 앞 행을 덮어써 **조용히 사라진다**.
+  // 적재 전에 막고, 막을 수 없으면 진행하지 않는다(fail-close).
+  const keys = new Set(chunks.map((c) => `${c.sectionPath}\u0000${c.chunkIndex}`));
+  if (keys.size !== chunks.length) {
+    throw new Error(
+      `${doc.entity}: chunk 키 충돌 — ${chunks.length}건 중 고유 ${keys.size}건. ` +
+        `적재하면 ${chunks.length - keys.size}건이 덮어쓰기로 유실된다.`,
+    );
+  }
 
   return {
     sourceKey: `kbo:ebook:${slugify(doc.entity)}`,
@@ -371,6 +408,37 @@ function makeRpc(url, key) {
   };
 }
 
+/**
+ * 해당 generation으로 실제 DB에 저장된 chunk 수를 센다.
+ *
+ * 적재 성공 판정을 로더가 생성한 수가 아니라 **DB 상태**로 하기 위해 필요하다.
+ * `Content-Range` 헤더가 없거나 숫자로 읽을 수 없으면 **예외로 드러낸다** —
+ * 검증 불가를 0이나 null로 바꿔 버리면 그것이 곧 false-success 통로가 된다.
+ */
+async function countActiveChunks(url, key, sourceKey, claimGeneration) {
+  const query =
+    `${url}/rest/v1/genius_rag_chunks?select=id`
+    + `&source_key=eq.${encodeURIComponent(sourceKey)}`
+    + `&claim_generation=eq.${encodeURIComponent(String(claimGeneration))}`;
+  const response = await fetch(query, {
+    headers: {
+      apikey: key,
+      Authorization: `Bearer ${key}`,
+      Prefer: "count=exact",
+      Range: "0-0",
+    },
+    signal: AbortSignal.timeout(60_000),
+  });
+  if (response.status !== 200 && response.status !== 206) {
+    throw new Error(`count HTTP ${response.status}: ${(await response.text()).slice(0, 200)}`);
+  }
+  const range = response.headers.get("content-range");
+  if (!range) throw new Error("count: Content-Range 헤더 없음");
+  const total = range.split("/")[1];
+  if (!/^\d+$/.test(total ?? "")) throw new Error(`count: 숫자가 아닌 total="${total}"`);
+  return Number(total);
+}
+
 // ── resume 체크포인트 ────────────────────────────────────────────────────────
 function loadState() {
   if (RESET_STATE || !fs.existsSync(STATE_PATH)) return { sources: {} };
@@ -442,6 +510,9 @@ async function main() {
   if (!apiKey) throw new Error("GEMINI_API_KEY 미설정 — embedding NOT NULL이라 chunk 저장 불가");
   const rpc = makeRpc(url, key);
   const state = loadState();
+  // claim 실패로 건너뛴 source. 마지막에 종료코드로 드러낸다 — 조용한 skip이 false-success다.
+  const skippedSources = [];
+  const failedSources = [];
 
   for (const p of prepared) {
     const saved = state.sources[p.sourceKey];
@@ -475,7 +546,12 @@ async function main() {
         p_source_keys: [p.sourceKey],
       });
       if (!Array.isArray(claimed) || claimed.length === 0) {
+        // ⚠️ claim 0건은 "적재할 것이 없음"이 아니라 **적재하려던 문서를 못 잡은 것**이다.
+        // 이전에는 로그만 남기고 계속 진행해 프로세스가 exit 0으로 끝나, 호출자는 적재가
+        // 성공한 것으로 오해했다(false-success). 실제로 규칙서 3종이 이 경로로 조용히 스킵됐다.
+        // 스킵을 기록하고 마지막에 **종료코드로 드러낸다**.
         log(`${p.sourceKey}: claim 실패 (resolved/attempts/lease 조건 미충족) — 건너뜀`);
+        skippedSources.push(p.sourceKey);
         continue;
       }
       claim = claimed[0];
@@ -483,6 +559,7 @@ async function main() {
     }
 
     const failWith = async (reason) => {
+      failedSources.push(`${p.sourceKey}: ${reason}`);
       try {
         await rpc("fail_baseball_genius_rag_source", {
           p_source_key: p.sourceKey,
@@ -589,12 +666,43 @@ async function main() {
       await failWith("complete_rejected");
       continue;
     }
+
+    // ⚠️ 적재량 검증은 **DB 실측**으로만 한다.
+    // 이전에는 `p.chunks.length`(로더가 생성한 수)를 그대로 READY 로그에 썼고, 그 숫자를
+    // 그대로 보고했다. 실제로는 UNIQUE 키 충돌로 덮어쓰기가 일어나 836건 입력이 275건만 남았는데
+    // "적재 완료"로 보고됐다. 생성 수와 저장 수는 다른 값이며, 계약은 후자다.
+    let activeCount = null;
+    try {
+      activeCount = await countActiveChunks(url, key, p.sourceKey, claim.claim_generation);
+    } catch (error) {
+      await failWith(`verify:${String(error?.message ?? error).slice(0, 200)}`);
+      continue;
+    }
+    if (activeCount !== p.chunks.length) {
+      // 검증 실패를 조용히 넘기지 않는다 — 불일치 자체가 적재 계약 위반이다.
+      await failWith(`chunk_count_mismatch expected=${p.chunks.length} actual=${activeCount}`);
+      log(`${p.sourceKey} ✗ 적재 불일치 — 생성 ${p.chunks.length} vs DB ${activeCount}`);
+      continue;
+    }
+
     state.sources[p.sourceKey].done = true;
+    state.sources[p.sourceKey].verifiedChunks = activeCount;
     saveState(state);
-    log(`${p.sourceKey} READY chunks=${p.chunks.length} ${(Date.now() - t0) / 1000}s`);
+    log(`${p.sourceKey} READY chunks=${activeCount} (DB 실측) ${(Date.now() - t0) / 1000}s`);
   }
 
   log(`전체 소요 ${((Date.now() - started) / 1000 / 60).toFixed(1)}분`);
+
+  // ⚠️ 여기서 종료코드를 나눈다.
+  // 이전에는 claim 실패·적재 실패가 있어도 exit 0으로 끝나 호출자가 성공으로 읽었다.
+  // 하나라도 못 끝냈으면 실패로 종료한다 — 부분 성공은 성공이 아니다.
+  if (skippedSources.length > 0 || failedSources.length > 0) {
+    log("");
+    log("✗ 완료하지 못한 source가 있다:");
+    for (const key of skippedSources) log(`  - claim 실패(스킵): ${key}`);
+    for (const detail of failedSources) log(`  - 적재 실패: ${detail}`);
+    process.exitCode = 1;
+  }
 }
 
 main().catch((error) => {
