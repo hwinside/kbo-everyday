@@ -120,7 +120,10 @@ const scope = (name, wins, rate) => {
   }
   metrics.C1 = envelope("C1", [{playerId:"53123",attendanceAvg:.333,seasonAvg:.278,deltaAvg:.055,attendanceHrPerGame:.2,seasonHrPerGame:.1,attendanceRbiPerGame:1,seasonRbiPerGame:.7,appearances:6,ab:21}], {attendanceAB:21});
   metrics.C2 = envelope("C2", [{playerId:"p2",attendanceEra:2.71,seasonEra:3.88,eraImprovement:1.17,attendanceK9:9.2,seasonK9:8.1,k9Delta:1.1,appearances:4,outs:40}], {attendanceOuts:40});
-  metrics.C4 = envelope("C4", [{playerId:"53123",homeRuns:2,appearanceGames:6}]);
+  metrics.C4 = envelope("C4", [
+    {playerId:"53123",homeRuns:2,appearanceGames:6,batter:{hits:9,rbi:7,homeRuns:2},pitcher:null},
+    {playerId:"p2",homeRuns:0,appearanceGames:4,batter:null,pitcher:{strikeouts:12,zeroEarnedRunGames:2}},
+  ]);
   metrics.C5 = envelope("C5", [{playerId:"53123",batterTop:{gameId:"g",date:"2026-07-12",ab:4,h:3,hr:1,rbi:3,bb:1}}]);
   metrics.C6 = envelope("C6", {batterRanking:[],pitcherRanking:[]});
   metrics.D1 = envelope("D1", {avgRunDiff:1.4,closeGameRate:.25,closeGames:2});
@@ -275,7 +278,10 @@ const partialBaselineScope = (name) => {
     ...envelope("C2", [{playerId:"p2",attendanceEra:2.71,seasonEra:null,eraImprovement:null,attendanceK9:9.2,seasonK9:null,k9Delta:null,appearances:4,outs:40}], {attendanceOuts:40}),
     state:"partial_data",
   };
-  base.metrics.C4 = envelope("C4", [{playerId:"53123",homeRuns:2,appearanceGames:6}]);
+  base.metrics.C4 = envelope("C4", [
+    {playerId:"53123",homeRuns:2,appearanceGames:6,batter:{hits:9,rbi:7,homeRuns:2},pitcher:null},
+    {playerId:"p2",homeRuns:0,appearanceGames:4,batter:null,pitcher:{strikeouts:12,zeroEarnedRunGames:2}},
+  ]);
   base.metrics.C5 = envelope("C5", [{playerId:"53123",batterTop:{gameId:"g",date:"2026-07-12",ab:4,h:3,hr:1,rbi:3,bb:1}}]);
   return base;
 };
@@ -684,7 +690,7 @@ try {
   await page.getByText(".333", { exact: true }).waitFor({ timeout: 4000 });
 
   const partialText = await page.locator('[data-testid="venue-stats-dashboard"]').first().innerText();
-  for (const fact of [".286", "3.42", "1.3", ".333", "2.71", "홈런 목격", "최애 최고의 직관 경기"]) {
+  for (const fact of [".286", "3.42", "1.3", ".333", "2.71", "9안타", "7타점 · 2홈런", "12K", "2경기 0자책", "최애 최고의 직관 경기"]) {
     if (!partialText.includes(fact)) throw new Error(`partial-baseline attendance fact/card missing: ${fact}`);
   }
   if (!partialText.includes("일부 기록 확인 중")) {
