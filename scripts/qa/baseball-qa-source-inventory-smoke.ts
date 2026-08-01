@@ -157,6 +157,12 @@ const seed = readFileSync(
 assert.equal((seed.match(/^  \('/gm) ?? []).length, 933);
 assert.ok(seed.includes("ON CONFLICT (source_key) DO UPDATE"));
 assert.ok(seed.includes("target.identity_fingerprint = EXCLUDED.identity_fingerprint"));
+const carrascoSeed = readFileSync(
+  "supabase/migrations/20260801195000_add_carrasco_genius_source.sql",
+  "utf8",
+);
+assert.ok(carrascoSeed.includes("'namu:player:56103'"));
+assert.ok(carrascoSeed.includes("ON CONFLICT (source_key) DO NOTHING"));
 
 const spec = readFileSync("specs/baseball-genius-v2-hybrid-rag.md", "utf8");
 assert.ok(spec.includes("선수 879명 URL inventory는 전수 확정·유지"));
