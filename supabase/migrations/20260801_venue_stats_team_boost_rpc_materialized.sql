@@ -1,31 +1,29 @@
--- 직관 다이어리 통계 S1b — 팀 부스트 시즌 집계 RPC (v1 신설 RPC 1개).
--- spec: Notion "[기획] 직관 다이어리 통계 v1" rev5 §4(B1·B2·B4 집계 RPC)·§11(runtime completeness)·
---       §12(canonical payload hash — PlayerGameLogRow 20필드 전체)
+-- 직관 다이어리 통계 S1b — 팀 부스트 시즌 집계 RPC: CTE MATERIALIZED 강제.
 --
--- ⚠️ production 선적용 금지 — PR 리뷰·하린아빠 머지 승인 뒤 배포한다 (S1b는 migration 작성만).
+-- 배경(2026-08-01 사고):
+--   20260730_venue_stats_team_boost_rpc.sql 은 **이미 production 에 적용되어 있다**.
+--   그 파일을 직접 고치면 표준 migration runner 가 재실행하지 않아 schema drift 가 된다
+--   (삼순 P0). 그래서 원본은 그대로 두고 이 파일에서 CREATE OR REPLACE 로 덮어쓴다.
 --
--- 경기 우주 (§11 — ledger 없는 경기 누락 금지, 삼순 리뷰 P0 반영):
---   호출측(route)이 권위 있는 정규시즌 final 전체 경기 우주(p_games: [{gameId, gameDate}])를
---   먼저 구성해 넘기고, 이 RPC는 그 우주에 ledger/log를 LEFT JOIN한다.
---   ledger가 없는 우주 경기는 결과에서 빠지는 게 아니라 complete=false로 강등된다(fail-closed).
---   teams 합계도 이 우주 안에서 complete 검증을 통과한 경기만 산입한다 — 우주 밖 ledger는 무시.
+-- 무엇을 고치나:
+--   PG12+ 는 단일 참조 CTE 를 기본 inline 한다. 이 함수는 verified/team_totals 가
+--   ledger→game_actual(17k 행 string_agg + sha256)을 재참조하므로, inline 되면
+--   hash 집계가 매 참조마다 재실행되어 경기 수에 초선형으로 터진다.
 --
--- 반환(jsonb):
---   games: 우주 전체 경기별 runtime 검증 결과 [{gameId, gameDate, complete}] (|games| = |우주|)
---          — E1 팀 시즌 일정·B/C 시즌 baseline coverage 공용 소스.
---   teams: complete 검증 통과 경기만으로 집계한 팀별 시즌 합계
---          [{teamId, completeGames, ab, h, hr, outs, er, hAllowed}]
---          — B1(AVG=ΣH/ΣAB)·B2(ERA=27×ΣER/Σouts)·B4(HR/피안타 per-game) 시즌 분모.
+--   실측(운영 DB, 동일 우주):
+--     n=10   90ms / n=100 519ms / n=200 1.9s / n=300 4.1s
+--     n=491  ERROR 57014 canceling statement due to statement timeout
+--     → 전 CTE MATERIALIZED 후 n=491 157ms
+--   결과는 byte-exact 동일(n=1/10/97/200/300 md5 대조 확인). 로직·반환 형태 무변경.
 --
--- complete 판정 (§11 runtime completeness — ledger complete만으로 신뢰 금지):
---   ledger 행 존재 AND ledger.status='complete' AND actual row count = expected_row_count AND
---   actual canonical payload hash = expected_payload_hash. 어느 조건이든 미충족(ledger 부재 포함)이면
---   complete=false.
---   hash는 §12 canonical 직렬화와 byte-exact 동일해야 한다:
---   (kbo_id asc, player_type asc — COLLATE "C" byte order = TS 문자열 비교) 정렬,
---   20필드를 "," join, 행을 "|" join, null → '∅'(U+2205), boolean → 'true'/'false',
---   date → YYYY-MM-DD, sha256 hex (src/lib/game-logs/completeness.ts canonicalPayloadHash와 동치.
---   회귀: scripts/qa/venue-stats-s1b-db-route-integration.ts에서 TS hash와 exact 대조).
+--   증상: 직관 통계 B1(팀 타율)·B2(팀 ERA)·B4(홈런)가 상시 attendance_only
+--         (`비교 데이터 준비 중`)로 막혔다.
+--
+-- ⚠️ MATERIALIZED 힌트를 제거하지 말 것.
+--   회귀: scripts/qa/venue-stats-rpc-scale.ts (정적 계약 + 실 DB 예산 + 결과 일관성),
+--         CI 결속은 venue-stats-s2-gate.
+--
+-- 멱등: CREATE OR REPLACE — 재실행 안전. 권한/시그니처 변경 없음.
 
 CREATE OR REPLACE FUNCTION public.venue_stats_season_team_aggregates(
   p_season integer,
@@ -36,7 +34,7 @@ LANGUAGE sql
 STABLE
 SET search_path = public
 AS $$
-WITH universe AS (
+WITH universe AS MATERIALIZED (
   -- 권위 있는 정규 final 전체 경기 우주 (호출측 스케줄 소스). game_id 중복은 1개로.
   SELECT DISTINCT ON (g->>'gameId')
     g->>'gameId' AS game_id,
@@ -47,7 +45,7 @@ WITH universe AS (
     AND coalesce(g->>'gameDate', '') <> ''
   ORDER BY g->>'gameId'
 ),
-ledger AS (
+ledger AS MATERIALIZED (
   -- 우주 → ledger LEFT JOIN: ledger 없는 경기도 우주에 남는다 (complete=false 강등 대상).
   SELECT
     u.game_id,
@@ -59,7 +57,7 @@ ledger AS (
   FROM universe u
   LEFT JOIN player_game_log_ingestions l ON l.game_id = u.game_id
 ),
-game_actual AS (
+game_actual AS MATERIALIZED (
   SELECT
     l.game_id,
     count(r.id) AS actual_count,
@@ -105,7 +103,7 @@ game_actual AS (
   LEFT JOIN player_game_logs r ON r.game_id = l.game_id
   GROUP BY l.game_id
 ),
-verified AS (
+verified AS MATERIALIZED (
   SELECT
     l.game_id,
     l.game_date,
@@ -121,7 +119,7 @@ verified AS (
   FROM ledger l
   JOIN game_actual a USING (game_id)
 ),
-team_totals AS (
+team_totals AS MATERIALIZED (
   SELECT
     r.team_id,
     count(DISTINCT r.game_id) AS complete_games,

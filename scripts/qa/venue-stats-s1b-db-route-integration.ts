@@ -527,6 +527,24 @@ async function regularSeasonWindowScopeRegression() {
     "end 이내는 기존대로 성공 — 이 가드가 정상 구간까지 막지 않는다",
   );
 
+  // 종료 후 충분히 지난 과거시즌은 end 뒤 lookahead의 verified-empty를 실제 무경기로
+  // 확정할 수 있어야 한다. end 뒤를 무조건 failedDates로 묶으면 window.end를 실제
+  // 종료일로 갱신해도 과거시즌 조회가 영구 fail-close 된다.
+  const settledPast = await collectSeasonGameUniverse(2026, "0", {
+    today: "2026-11-01",
+    fetcher: async (): Promise<SeasonGameFetchResult> => VERIFIED_EMPTY,
+  });
+  assert.equal(settledPast.complete, true, "종료 후 지난 verified-empty 구간은 완전함 근거로 인정");
+  assert.deepEqual(
+    settledPast.failedDates,
+    [],
+    "종료 후 지난 verified-empty 구간을 영구 failedDates로 남기면 안 된다",
+  );
+  assert.ok(
+    settledPast.expectedDates.some((d) => d > w.end),
+    "순연 lookahead가 실제로 포함됐는지 전제 확인",
+  );
+
   // end 뒤에 실제 순연 경기가 있어도 같다 — 경기 데이터는 버리지 않되, 실제 종료일을
   // 모르므로 우주 완전함은 주장하지 않는다(window 갱신이 유일한 해소 조건).
   const postponed = await collectSeasonGameUniverse(2026, "0", {

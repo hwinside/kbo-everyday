@@ -19,14 +19,45 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
+/**
+ * ⚠️ 원본 20260730 은 **이미 production 에 적용되어 있다**. 그 파일을 고치면 표준
+ * migration runner 가 재실행하지 않아 schema drift 가 된다(삼순 P0).
+ * 그래서 MATERIALIZED 강제는 새 migration 에서 CREATE OR REPLACE 로 덮어쓰고,
+ * 이 회귀도 그 새 파일을 검사한다.
+ */
 const MIGRATION = join(
+  process.cwd(),
+  "supabase/migrations/20260801_venue_stats_team_boost_rpc_materialized.sql",
+);
+
+/** 원본 migration 은 이미 적용된 상태로 보존되어야 한다(수정 = drift). */
+const APPLIED_MIGRATION = join(
   process.cwd(),
   "supabase/migrations/20260730_venue_stats_team_boost_rpc.sql",
 );
 
+/**
+ * 이미 적용된 migration 은 손대지 않는다 — runner 가 재실행하지 않아
+ * 파일과 실제 DB 가 어긋나는 schema drift 가 된다(삼순 P0).
+ */
+function assertNoAppliedMigrationDrift() {
+  const applied = readFileSync(APPLIED_MIGRATION, "utf8");
+  assert.ok(
+    !/AS\s+MATERIALIZED/i.test(applied),
+    `이미 적용된 ${APPLIED_MIGRATION} 에 MATERIALIZED 가 들어갔다 — ` +
+    `runner 가 재실행하지 않으므로 schema drift. 새 migration 에서 CREATE OR REPLACE 로 덮어써라.`,
+  );
+  console.log("  ✓ 적용된 20260730 migration 무변경(schema drift 없음)");
+}
+
 /** 함수 본문에 선언된 CTE 는 전부 MATERIALIZED 여야 한다 (inline 되돌림 = 사고 재발). */
 function assertMaterializedHints() {
   const sql = readFileSync(MIGRATION, "utf8");
+  assert.match(
+    sql,
+    /CREATE OR REPLACE FUNCTION public\.venue_stats_season_team_aggregates/,
+    "새 migration 이 함수를 CREATE OR REPLACE 하지 않는다",
+  );
   const body = sql.slice(sql.indexOf("AS $$"), sql.indexOf("$$;"));
   assert.ok(body.length > 0, "함수 본문을 찾지 못함");
 
@@ -130,6 +161,7 @@ async function assertLiveScale() {
 
 async function main() {
   console.log("venue-stats RPC 규모 회귀");
+  assertNoAppliedMigrationDrift();
   assertMaterializedHints();
   await assertLiveScale();
   console.log("\n결과: RPC 규모/되돌림 가드 PASS");

@@ -207,30 +207,67 @@ function getSeasonDates(season: number, srId = "0,1,3,4,5,7,9", todayOverride?: 
   if (srId !== REGULAR_ONLY_SR_ID) return dates;
   const window = REGULAR_SEASON_WINDOWS[String(season)];
   if (!window) return dates; // 미등록 시즌 — 기존 fail-close 경로 그대로
-  // 개막 전만 확정적으로 자른다. 종료일은 순연으로 유동이므로 window.end 뒤를 조용히
-  // 제외하지 않는다 — 제외하면 순연 경기가 우주에서 사라진다.
-  // 대신 collectSeasonGameUniverse 가 end 뒤 날짜를 **구조적 미검증**으로 묶어
-  // complete=false 로 남긴다(isBeyondVerifiedSeasonEnd).
-  return dates.filter((d) => d >= window.start);
+  // 개막 전은 확정적으로 자른다.
+  //
+  // 종료일 쪽은 window.end 에서 바로 자르지 않고 **순연 lookahead** 만큼 더 본다.
+  //   · end 에서 바로 자르면 순연로 end 뒤로 밀린 경기가 우주에서 조용히 사라진다.
+  //   · 반대로 11/30 까지 무조건 보면, 종료일을 10/15 로 갱신해도 다음 해 과거시즌
+  //     조회가 10/16~11/30 46일을 전부 실패로 묶어 **영구 퇴행**한다(삼순 P0).
+  // 그래서 범위는 min(horizon, end + LOOKAHEAD) 로 가두고, 그 안에서도 end 뒤 날짜는
+  // isBeyondVerifiedSeasonEnd 가 조건부로 미검증 처리한다.
+  const horizonEnd = addDays(window.end, SEASON_END_LOOKAHEAD_DAYS);
+  return dates.filter((d) => d >= window.start && d <= horizonEnd);
 }
 
 /**
- * 정규 전용(srId="0") 우주에서 검증된 시즌 종료일(window.end) 뒤 날짜인가.
- *
- * 삼순 P0 — end 뒤는 "아직 일정이 확정되지 않은 구간"이지 "무경기가 확정된 구간"이 아니다.
- * KBO와 Naver가 둘 다 미래 날짜를 빈 응답으로 주면 fetch 계층은 emptyVerified=true 로
- * 보고하는데, 그걸 그대로 인정하면 순연/포스트시즌 직전 horizon 에서 다시
- * "권위 우주 완전함"을 거짓으로 확정한다(독립 probe 재현: today=2026-10-01 +
- * 전부 verified-empty → complete=true, last=20261031).
- *
- * 따라서 응답 내용과 무관하게 구조적으로 미검증 처리한다. 해소 조건은 단 하나 —
- * REGULAR_SEASON_WINDOWS 의 end 를 확정된 실제 종료일로 갱신하는 것(추측 서빙 금지).
+ * 순연 lookahead — 검증된 종료일 뒤 이만큼은 우주에 남겨 실제 순연 경기를 놓치지 않는다.
+ * 이보다 멀리 밀린다면 window.end 자체를 갱신해야 하는 상황이다.
  */
-export function isBeyondVerifiedSeasonEnd(date: string, srId: string): boolean {
+const SEASON_END_LOOKAHEAD_DAYS = 14;
+
+/** YYYYMMDD + n일 — UTC 기준 단순 산술(시간대 무관한 달력 경계 계산). */
+function addDays(ymd: string, n: number): string {
+  const y = Number(ymd.slice(0, 4));
+  const m = Number(ymd.slice(4, 6));
+  const d = Number(ymd.slice(6, 8));
+  const t = new Date(Date.UTC(y, m - 1, d + n));
+  return `${t.getUTCFullYear()}${String(t.getUTCMonth() + 1).padStart(2, "0")}${String(t.getUTCDate()).padStart(2, "0")}`;
+}
+
+/**
+ * 정규 전용(srId="0") 우주에서 이 날짜를 "수집 성공"으로 인정할 수 없는가.
+ *
+ * 삼순 P0 — 문제는 두 가지고, 방향이 서로 반대다:
+ *
+ *  (1) end 뒤 **미래** 날짜를 verified-empty 로 인정하면 안 된다.
+ *      아직 일정이 안 잡힌 구간은 KBO·Naver 둘 다 빈 응답을 주므로 "무경기 확정"이
+ *      아니다. 그대로 인정하면 권위 우주 완전함을 거짓 확정한다
+ *      (독립 probe: today=2026-10-01 + 전부 verified-empty → complete=true).
+ *
+ *  (2) 그렇다고 end 뒤를 **무조건** 미검증으로 묶으면, 종료일을 실제값으로 갱신해도
+ *      과거시즌 조회가 end~11/30 을 전부 실패로 묶어 **영구 퇴행**한다(삼순 재리뷰 P0).
+ *      종료된 과거 날짜에 대해 양 소스가 비었다면 그건 진짜 무경기다.
+ *
+ * 그래서 가르는 기준은 "end 뒤냐"가 아니라 **답변이 의미를 가지는 날짜냐** 이다:
+ *   · end 이내        → 종전대로 판정(false)
+ *   · end 뒤 + 미래    → 구조적 미검증(true) — 빈 응답에 의미 없음
+ *   · end 뒤 + 과거 + 경기있음 → 미검증(true) — window.end 가 stale 이라는 증거, fail-close
+ *   · end 뒤 + 과거 + 무경기확정 → 성공(false) — 순연 없었다는 진짜 확인
+ */
+export function isBeyondVerifiedSeasonEnd(
+  date: string,
+  srId: string,
+  today: string,
+  hasGames: boolean,
+): boolean {
   if (srId !== REGULAR_ONLY_SR_ID) return false;
   const window = REGULAR_SEASON_WINDOWS[date.slice(0, 4)];
   if (!window) return false; // 미등록 연도는 기존 fail-close 경로가 이미 닫는다
-  return date > window.end;
+  if (date <= window.end) return false;
+  // 미래 날짜는 빈 응답이든 아니든 "완전함" 근거가 되지 못한다.
+  if (date >= today.replaceAll("-", "")) return true;
+  // 과거인데 end 뒤에 실제 경기가 있으면 window.end 가 stale 하다 — 우주 경계를 모르므로 fail-close.
+  return hasGames;
 }
 
 /**
@@ -249,7 +286,8 @@ export async function collectSeasonGameUniverse(
   opts?: { fetcher?: SeasonGameFetcher; today?: string },
 ): Promise<SeasonGameCollection> {
   const fetcher = opts?.fetcher ?? fetchSeasonUniverseDate;
-  const dates = getSeasonDates(season, srId, opts?.today);
+  const today = opts?.today ?? new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Seoul" });
+  const dates = getSeasonDates(season, srId, today);
   const results = await Promise.allSettled(dates.map((d) => fetcher(d, srId)));
 
   const games: KboGame[] = [];
@@ -263,11 +301,8 @@ export async function collectSeasonGameUniverse(
     const { games: dateGames, emptyVerified } = r.value;
     // 경기가 실제로 있으면 데이터는 수집한다(end 뒤 순연 경기도 실제 경기다).
     games.push(...dateGames);
-    // 삼순 P0 — 검증된 시즌 종료일 뒤 horizon 은 응답 내용과 무관하게 구조적 미검증.
-    // 양 소스가 둘 다 빈 응답이면 fetch 계층은 emptyVerified=true 로 보고하지만,
-    // 그건 "무경기 확정"이 아니라 "아직 일정이 안 잡힌 구간"일 수 있다.
-    // 경기가 있는 경우에도 실제 종료일을 모르므로 우주 완전함을 주장하지 않는다.
-    if (isBeyondVerifiedSeasonEnd(dates[i], srId)) {
+    // 삼순 P0 — 종료일 뒤 경계. 자세한 근거는 isBeyondVerifiedSeasonEnd 참조.
+    if (isBeyondVerifiedSeasonEnd(dates[i], srId, today, dateGames.length > 0)) {
       failedDates.push(dates[i]);
       return;
     }
