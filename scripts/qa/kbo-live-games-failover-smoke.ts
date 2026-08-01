@@ -666,8 +666,10 @@ async function routeFailureMatrix() {
           witnessSignal = init?.signal ?? undefined;
           return new Promise<Response>((_resolve, reject) => {
             init?.signal?.addEventListener("abort", () => {
-              activeWitness--;
-              reject(new DOMException("aborted", "AbortError"));
+              setTimeout(() => {
+                activeWitness--;
+                reject(new DOMException("aborted", "AbortError"));
+              }, 60);
             }, { once: true });
           });
         }
@@ -687,9 +689,64 @@ async function routeFailureMatrix() {
       assert.equal(response.status, 503, "witness stall fails closed");
       assert.equal(body.trace.stage, "starter-witness-failed");
       assert.equal(body.games.length, 0, "witness stall exposes no partial slate");
-      assert.ok(elapsedMs < 5_500, `witness stall bounded: ${elapsedMs}ms`);
+      assert.ok(elapsedMs < 5_000, `witness settles before hard deadline: ${elapsedMs}ms`);
       assert.equal(witnessSignal?.aborted, true, "deadline abort reaches actual witness");
       assert.equal(activeWitness, 0, "deadline witness settled before response");
+    }
+
+    // The symmetric DB shape must also await delayed PostgREST abort cleanup,
+    // rather than letting a deadline wrapper false-settle before raw I/O.
+    {
+      let activeDb = 0;
+      let dbSignal: AbortSignal | undefined;
+      globalThis.fetch = (async (input: RequestInfo | URL) => {
+        const url = String(input instanceof Request ? input.url : input);
+        if (url.includes("Main.asmx")) {
+          return Response.json({
+            game: SLATE.map((game) => ({
+              G_ID: `${date}${game.away}${game.home}0`,
+              GAME_STATE_SC: "1",
+              CANCEL_SC_ID: "0",
+              AWAY_NM: game.awayName,
+              HOME_NM: game.homeName,
+              T_PIT_P_NM: `${game.awayName}선발`,
+              B_PIT_P_NM: `${game.homeName}선발`,
+            })),
+          });
+        }
+        if (url.includes("/api/games?")) return Response.json({ games: witnessGames });
+        return realFetch(input as RequestInfo);
+      }) as typeof fetch;
+      const startedAt = Date.now();
+      const response = await withWatchdog(
+        gameLiveRoute(
+          new NextRequest(`http://localhost/api/game-live?date=${date}`),
+          {
+            fetchKnownSlateIdsImpl: async (_date, _deadlineAtMs, signal) => {
+              activeDb++;
+              dbSignal = signal;
+              return new Promise<string[]>((_resolve, reject) => {
+                signal.addEventListener("abort", () => {
+                  setTimeout(() => {
+                    activeDb--;
+                    reject(new DOMException("aborted", "AbortError"));
+                  }, 60);
+                }, { once: true });
+              });
+            },
+          },
+        ),
+        6_000,
+        "actual DB deadline stall",
+      );
+      const body = await response.json() as { games: unknown[]; trace: { stage: string } };
+      const elapsedMs = Date.now() - startedAt;
+      assert.equal(response.status, 503, "DB stall fails closed");
+      assert.equal(body.trace.stage, "starter-witness-failed");
+      assert.equal(body.games.length, 0, "DB stall exposes no partial slate");
+      assert.ok(elapsedMs < 5_000, `DB settles before hard deadline: ${elapsedMs}ms`);
+      assert.equal(dbSignal?.aborted, true, "soft deadline abort reaches actual DB query");
+      assert.equal(activeDb, 0, "delayed DB abort settled before response");
     }
 
     const partial = await invoke("503", "partial");

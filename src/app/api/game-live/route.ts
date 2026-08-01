@@ -5,7 +5,6 @@ import { PLAYER_PHOTO_MAP } from "@/lib/constants/player-photos";
 import { resolveGameLiveDate } from "@/lib/game-live-date";
 import { isKboGameCancelled } from "@/lib/crawler/kbo-status";
 import { fetchKboLiveGames } from "@/lib/notifications/kbo-live-games";
-import { runBeforeDeadline } from "@/lib/async-deadline";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
 const GAME_LIVE_DEADLINE_MS = 5_000;
@@ -47,7 +46,7 @@ async function fetchKnownSlateIds(
     .order("game_id", { ascending: true })
     .limit(11)
     .abortSignal(signal);
-  const { data, error } = await runBeforeDeadline(() => query, deadlineAtMs);
+  const { data, error } = await query;
   if (error) throw new Error(`known_slate_db:${error.message}`);
   if ((data?.length ?? 0) > 10) throw new Error("known_slate_overflow");
   return (data ?? [])
@@ -115,20 +114,16 @@ export function reconcileStarterWitness(
 async function fetchStarterWitness(
   req: NextRequest,
   date: string,
-  deadlineAtMs: number,
   signal: AbortSignal,
 ): Promise<StarterWitnessGame[]> {
   const url = new URL("/api/games", req.nextUrl.origin);
   url.searchParams.set("date", date);
-  const response = await runBeforeDeadline(
-    () => fetch(url, {
-      headers: { "User-Agent": "KboEveryday/game-live-starter-witness" },
-      signal,
-    }),
-    deadlineAtMs,
-  );
+  const response = await fetch(url, {
+    headers: { "User-Agent": "KboEveryday/game-live-starter-witness" },
+    signal,
+  });
   if (!response.ok) throw new Error(`starter_witness_http_${response.status}`);
-  const payload = await runBeforeDeadline(() => response.json(), deadlineAtMs) as {
+  const payload = await response.json() as {
     games?: StarterWitnessGame[];
   };
   if (!Array.isArray(payload.games)) throw new Error("starter_witness_schema");
@@ -145,7 +140,11 @@ async function fetchSlateWitnesses(
   if (remainingMs <= 0) throw new Error("slate_witness_deadline");
 
   const controller = new AbortController();
-  const settleReserveMs = Math.min(25, Math.max(1, Math.floor(remainingMs / 10)));
+  // Abort raw fetch/PostgREST work at a soft deadline, leaving enough of the
+  // 5s route budget for delayed abort cleanup before the hard response edge.
+  // Do not wrap these raw promises in runBeforeDeadline: that race can reject
+  // its wrapper while the underlying I/O remains active (post-merge P0).
+  const settleReserveMs = Math.min(250, Math.max(50, Math.floor(remainingMs / 10)));
   const timer = setTimeout(
     () => controller.abort(new DOMException("slate witness deadline", "AbortError")),
     Math.max(1, remainingMs - settleReserveMs),
@@ -163,7 +162,7 @@ async function fetchSlateWitnesses(
 
   try {
     const settled = await Promise.allSettled([
-      abortOnFailure(() => fetchStarterWitness(req, date, deadlineAtMs, controller.signal)),
+      abortOnFailure(() => fetchStarterWitness(req, date, controller.signal)),
       abortOnFailure(() => deps.fetchKnownSlateIdsImpl(date, deadlineAtMs, controller.signal)),
     ] as const);
     if (firstFailure !== undefined) throw firstFailure;
