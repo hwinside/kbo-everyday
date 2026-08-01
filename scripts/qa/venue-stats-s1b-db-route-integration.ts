@@ -475,11 +475,11 @@ async function regularSeasonWindowScopeRegression() {
   // 수집 자체는 일어나지 않게 모든 날짜 verified-empty 로 닫고 범위만 관찰한다.
   const noop = async (): Promise<SeasonGameFetchResult> => VERIFIED_EMPTY;
 
-  const regular = await collectSeasonGameUniverse(2026, "0", { fetcher: noop });
+  const regular = await collectSeasonGameUniverse(2026, "0", { today: "2026-08-01", fetcher: noop });
   const before = regular.expectedDates.filter((d) => d < w.start);
   assert.deepEqual(before, [], `개막(${w.start}) 전 날짜가 정규 우주에 남아있으면 영구 fail-close`);
   assert.ok(regular.expectedDates.includes(w.start), "개막일은 반드시 포함");
-  assert.ok(regular.expectedDates.every((d) => d >= w.start && d <= w.end), "전부 window 안");
+  assert.ok(regular.expectedDates.every((d) => d >= w.start), "전부 개막일 이후");
   assert.equal(regular.complete, true, "window 교집합이면 complete=true 도달 가능");
 
   const future = await collectSeasonGameUniverse(2026, "0", {
@@ -527,35 +527,34 @@ async function regularSeasonWindowScopeRegression() {
     "end 이내는 기존대로 성공 — 이 가드가 정상 구간까지 막지 않는다",
   );
 
-  // 종료 후 충분히 지난 과거시즌은 end 뒤 lookahead의 verified-empty를 실제 무경기로
-  // 확정할 수 있어야 한다. end 뒤를 무조건 failedDates로 묶으면 window.end를 실제
-  // 종료일로 갱신해도 과거시즌 조회가 영구 fail-close 된다.
+  // provisional end는 과거가 되어도 실제 종료일이 아니다. 운영자가 공식 actual end와
+  // finalized=true를 함께 넣은 뒤에만 그 날짜에서 자르고 complete를 열 수 있다.
+  const finalizedWindow = { start: w.start, end: "20261020", finalized: true } as const;
   const settledPast = await collectSeasonGameUniverse(2026, "0", {
     today: "2026-11-01",
     fetcher: async (): Promise<SeasonGameFetchResult> => VERIFIED_EMPTY,
+    regularSeasonWindow: finalizedWindow,
   });
-  assert.equal(settledPast.complete, true, "종료 후 지난 verified-empty 구간은 완전함 근거로 인정");
+  assert.equal(settledPast.complete, true, "공식 actual end 확정 뒤 complete=true 도달");
   assert.deepEqual(
     settledPast.failedDates,
     [],
-    "종료 후 지난 verified-empty 구간을 영구 failedDates로 남기면 안 된다",
+    "finalized actual end 이내 verified-empty는 성공",
   );
-  assert.ok(
-    settledPast.expectedDates.some((d) => d > w.end),
-    "순연 lookahead가 실제로 포함됐는지 전제 확인",
-  );
+  assert.equal(settledPast.expectedDates.at(-1), finalizedWindow.end, "확정 실제 종료일에서 정확히 clip");
 
   // end 뒤에 실제 순연 경기가 있어도 같다 — 경기 데이터는 버리지 않되, 실제 종료일을
   // 모르므로 우주 완전함은 주장하지 않는다(window 갱신이 유일한 해소 조건).
   const postponed = await collectSeasonGameUniverse(2026, "0", {
-    today: "2026-10-01",
+    today: "2026-10-15",
     fetcher: async (date): Promise<SeasonGameFetchResult> =>
-      date === "20261001" ? gamesResult([makeFinalGame("20261001LGOB0")]) : VERIFIED_EMPTY,
+      date === "20261020" ? gamesResult([makeFinalGame("20261020LGOB0")]) : VERIFIED_EMPTY,
   });
-  assert.equal(postponed.complete, false, "end 뒤 순연 경기가 있어도 complete 확정 금지");
+  assert.ok(postponed.expectedDates.includes("20261020"), "고정 14일 밖 순연일도 수집 우주에 포함");
+  assert.equal(postponed.complete, false, "provisional end 뒤 순연 경기면 complete 확정 금지");
   assert.ok(
-    postponed.games.some((g) => g.gameId === "20261001LGOB0"),
-    "end 뒤 순연 경기 데이터 자체는 버리지 않는다",
+    postponed.games.some((g) => g.gameId === "20261020LGOB0"),
+    "10/20 실제 순연 경기 데이터 자체는 버리지 않는다",
   );
 
   // 전-시리즌 우주(srId≠"0")는 이 경계 규칙의 대상이 아니다 — 종랰 동작 보존.
