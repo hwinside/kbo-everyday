@@ -290,7 +290,21 @@ function weightedDelta<T>(
  * 값이 없는 축은 **추정하지 않고 제외**한 뒤 남은 축으로 가중치를 재정규화한다.
  * 축이 하나도 없으면 지수 자체를 null 로 fail-close 한다 — 승률로 몰래 대체하지 않는다.
  */
-const SCORE_CONFIDENCE_GAMES = 20;
+/**
+ * 신뢰도 수축 상수 — `n / (n + k)`.
+ *
+ * 처음엔 `√(n/20)` 으로 잡았으나 근거 없는 수치였고, 실측상 20경기 직관자는 거의 없다
+ * (2026-08-02 `venue_attendance` 55행/48명: 1경기 43명 · 2경기 4명 · 4경기 1명, 최대 4).
+ * 20 기준이면 대부분 유저가 신뢰도 0.4 미만에 눌려 지수가 50 근처로 뭉개져 변별력을 잃는다.
+ *
+ * k=3 이면 3경기 0.50 · 5경기 0.63 · 10경기 0.77 · 20경기 0.87 · 40경기 0.93 으로,
+ * 실제 유저가 몬려 있는 3~5경기 구간에서 이미 의미 있는 폭이 나오면서도
+ * 표본이 쌓일수록 계속 진짜 값에 가까워진다(1에 도달하지 않는 것도 의도 — 직관은 항상 표본이 적다).
+ *
+ * ⚠️ 위 분포는 기능 오픈 직후(7/4~8/1) 한 달치라 시즌 전체 행태가 아니다.
+ * 시즌이 쌓이면 재측정해야 하는 값이다.
+ */
+const SCORE_CONFIDENCE_K = 3;
 
 function buildScoreAxes(scope: VenueStatsScopePayload): VenueStatsScoreAxis[] {
   const axes: VenueStatsScoreAxis[] = [];
@@ -380,7 +394,7 @@ export function buildVenueStatsHero(scope: VenueStatsScopePayload): VenueStatsHe
   const axisWeight = scoreAxes.reduce((sum, axis) => sum + axis.weight, 0);
   const scoreConfidence = sampleLimited
     ? null
-    : Math.sqrt(clamp(finalGames / SCORE_CONFIDENCE_GAMES, 0, 1));
+    : finalGames / (finalGames + SCORE_CONFIDENCE_K);
   const composite =
     axisWeight > 0
       ? scoreAxes.reduce((sum, axis) => sum + axis.normalized * axis.weight, 0) / axisWeight

@@ -130,13 +130,50 @@ const scope: VenueStatsScopePayload = {
   assert.equal(heroV2.teamRate, 20 / 36);
   assert.equal(heroV2.deltaPp, 19.4);
   assert.deepEqual(heroV2.scoreAxes.map((axis) => axis.key), ["winLift"]);
-  // deltaPp 19.4%p / 20 = 0.97 축 기여, 신뢰도 √(4/20)=0.447 → 50 + 50·0.97·0.447 ≈ 72
-  assert.equal(heroV2.score, 72, `winLift 단독축 합성 점수: ${heroV2.score}`);
+  // deltaPp 19.4%p / 20 = 0.97 축 기여, 신뢰도 4/(4+3)=0.571 → 50 + 50·0.97·0.571 ≈ 78
+  assert.equal(heroV2.score, 78, `winLift 단독축 합성 점수: ${heroV2.score}`);
   assert.ok(
-    heroV2.scoreConfidence != null && Math.abs(heroV2.scoreConfidence - Math.sqrt(4 / 20)) < 1e-9,
-    "신뢰도는 √(경기수/20) 수축",
+    heroV2.scoreConfidence != null && Math.abs(heroV2.scoreConfidence - 4 / 7) < 1e-9,
+    "신뢰도는 n/(n+3) 수축",
   );
   assert.notEqual(heroV2.score, 75, "v1 순수 승률(75점)으로 회귀하면 안 됨");
+}
+
+// ─ 신뢰도 수축은 실제 직관 분포(대부분 1~4경기)에서 변별력을 가져야 한다.
+// 2026-08-02 실측 `venue_attendance` 48명: 1경기 43 · 2경기 4 · 4경기 1(최대 4).
+// 구(√(n/20)) 방식은 이 구간을 전부 50점 근처로 므어 지수를 무의미하게 만들었다.
+{
+  const heroWithGames = (finalGames: number) => {
+    const cloned = JSON.parse(JSON.stringify(metrics)) as VenueStatsScopePayload["metrics"];
+    cloned.A1.n = finalGames;
+    cloned.A1.denominator = { attendanceFinalGames: finalGames, teamSeasonGames: 100 };
+    cloned.A1.value = {
+      attendance: { w: finalGames, l: 0, d: 0, rate: 1 },
+      teamComparable: { teamId: 1, w: 50, l: 50, d: 0, rate: 0.5 },
+      // 승률 리프트를 축 끝(+20%p)으로 고정해 신뢰도만 변수로 남긴다.
+      deltaPp: 20,
+    };
+    return buildVenueStatsHero({ ...scope, metrics: cloned });
+  };
+
+  const at3 = heroWithGames(3);
+  const at5 = heroWithGames(5);
+  const at20 = heroWithGames(20);
+  // 단조 증가: 같은 리프트면 경기가 쌓일수록 확신에 가까워진다.
+  assert.ok(
+    at3.score! < at5.score! && at5.score! < at20.score!,
+    `신뢰도는 경기수에 대해 단조 증가해야 함: ${at3.score}/${at5.score}/${at20.score}`,
+  );
+  // 핵심 RED: 최소 표본(3경기)에서도 상한 리프트가 의미 있는 폭으로 나와야 한다.
+  // √(3/20)=0.387 → 69점에 그치지만, 3/(3+3)=0.5 → 75점.
+  assert.ok(
+    at3.score! >= 74,
+    `3경기 상한 리프트가 수축에 뭉개지면 안 됨(실제 유저 대부분이 1~4경기): ${at3.score}`,
+  );
+  assert.ok(
+    at3.scoreConfidence != null && Math.abs(at3.scoreConfidence - 0.5) < 1e-9,
+    `3경기 신뢰도는 0.5: ${at3.scoreConfidence}`,
+  );
 }
 
 // ─ 하린아빠 2026-08-02: "이겨도 얼마나 크게, 져도 얼마나 박빙으로"가 긍정 기여하는지.
