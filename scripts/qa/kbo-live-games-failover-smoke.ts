@@ -588,6 +588,108 @@ async function routeFailureMatrix() {
       assert.equal(knownSlateCalls, 1, "durable known slate always queried");
     }
 
+    // Post-merge P0 regression: a fast durable-ledger failure must abort and
+    // settle the concurrent actual /api/games witness before the 503 response.
+    // Promise.all fail-fast previously returned while this fetch stayed active.
+    {
+      let activeWitness = 0;
+      let witnessSignal: AbortSignal | undefined;
+      globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input instanceof Request ? input.url : input);
+        if (url.includes("Main.asmx")) {
+          return Response.json({
+            game: SLATE.map((game) => ({
+              G_ID: `${date}${game.away}${game.home}0`,
+              GAME_STATE_SC: "1",
+              CANCEL_SC_ID: "0",
+              AWAY_NM: game.awayName,
+              HOME_NM: game.homeName,
+              T_PIT_P_NM: `${game.awayName}선발`,
+              B_PIT_P_NM: `${game.homeName}선발`,
+            })),
+          });
+        }
+        if (url.includes("/api/games?")) {
+          activeWitness++;
+          witnessSignal = init?.signal ?? undefined;
+          return new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => {
+              activeWitness--;
+              reject(new DOMException("aborted", "AbortError"));
+            }, { once: true });
+          });
+        }
+        return realFetch(input as RequestInfo, init);
+      }) as typeof fetch;
+      const response = await withWatchdog(
+        gameLiveRoute(
+          new NextRequest(`http://localhost/api/game-live?date=${date}`),
+          {
+            fetchKnownSlateIdsImpl: async () => {
+              throw new Error("known slate DB failed");
+            },
+          },
+        ),
+        6_000,
+        "known-slate fast failure aborts witness",
+      );
+      assert.equal(response.status, 503, "known-slate failure stays fail-closed");
+      assert.equal(witnessSignal?.aborted, true, "witness shares failure abort signal");
+      assert.equal(activeWitness, 0, "witness settled before response");
+    }
+
+    // Production 14:14 intermittent shape: the source and durable slate are
+    // healthy, but the actual /api/games witness stalls until the route budget.
+    // The request must fail closed without leaking that self-fetch afterward.
+    {
+      let activeWitness = 0;
+      let witnessSignal: AbortSignal | undefined;
+      globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input instanceof Request ? input.url : input);
+        if (url.includes("Main.asmx")) {
+          return Response.json({
+            game: SLATE.map((game) => ({
+              G_ID: `${date}${game.away}${game.home}0`,
+              GAME_STATE_SC: "1",
+              CANCEL_SC_ID: "0",
+              AWAY_NM: game.awayName,
+              HOME_NM: game.homeName,
+              T_PIT_P_NM: `${game.awayName}선발`,
+              B_PIT_P_NM: `${game.homeName}선발`,
+            })),
+          });
+        }
+        if (url.includes("/api/games?")) {
+          activeWitness++;
+          witnessSignal = init?.signal ?? undefined;
+          return new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => {
+              activeWitness--;
+              reject(new DOMException("aborted", "AbortError"));
+            }, { once: true });
+          });
+        }
+        return realFetch(input as RequestInfo, init);
+      }) as typeof fetch;
+      const startedAt = Date.now();
+      const response = await withWatchdog(
+        gameLiveRoute(
+          new NextRequest(`http://localhost/api/game-live?date=${date}`),
+          { fetchKnownSlateIdsImpl: async () => witnessGames.map((game) => game.gameId) },
+        ),
+        6_000,
+        "actual witness deadline stall",
+      );
+      const body = await response.json() as { games: unknown[]; trace: { stage: string } };
+      const elapsedMs = Date.now() - startedAt;
+      assert.equal(response.status, 503, "witness stall fails closed");
+      assert.equal(body.trace.stage, "starter-witness-failed");
+      assert.equal(body.games.length, 0, "witness stall exposes no partial slate");
+      assert.ok(elapsedMs < 5_500, `witness stall bounded: ${elapsedMs}ms`);
+      assert.equal(witnessSignal?.aborted, true, "deadline abort reaches actual witness");
+      assert.equal(activeWitness, 0, "deadline witness settled before response");
+    }
+
     const partial = await invoke("503", "partial");
     assert.equal(partial.response.status, 503, "Naver partial must fail closed");
     assert.equal(partial.body.games.length, 0);

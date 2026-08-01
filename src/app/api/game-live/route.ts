@@ -25,10 +25,18 @@ type GameLiveTrace = {
 };
 
 type GameLiveRouteDeps = {
-  fetchKnownSlateIdsImpl: (date: string, deadlineAtMs: number) => Promise<string[]>;
+  fetchKnownSlateIdsImpl: (
+    date: string,
+    deadlineAtMs: number,
+    signal: AbortSignal,
+  ) => Promise<string[]>;
 };
 
-async function fetchKnownSlateIds(date: string, deadlineAtMs: number): Promise<string[]> {
+async function fetchKnownSlateIds(
+  date: string,
+  deadlineAtMs: number,
+  signal: AbortSignal,
+): Promise<string[]> {
   const remainingMs = deadlineAtMs - Date.now();
   if (remainingMs <= 0) throw new Error("known_slate_deadline");
   // query-guard: bounded -- one KBO date has at most 10 games; 11 detects overflow and fails closed.
@@ -38,7 +46,7 @@ async function fetchKnownSlateIds(date: string, deadlineAtMs: number): Promise<s
     .like("game_id", `${date}%`)
     .order("game_id", { ascending: true })
     .limit(11)
-    .abortSignal(AbortSignal.timeout(remainingMs));
+    .abortSignal(signal);
   const { data, error } = await runBeforeDeadline(() => query, deadlineAtMs);
   if (error) throw new Error(`known_slate_db:${error.message}`);
   if ((data?.length ?? 0) > 10) throw new Error("known_slate_overflow");
@@ -108,13 +116,14 @@ async function fetchStarterWitness(
   req: NextRequest,
   date: string,
   deadlineAtMs: number,
+  signal: AbortSignal,
 ): Promise<StarterWitnessGame[]> {
   const url = new URL("/api/games", req.nextUrl.origin);
   url.searchParams.set("date", date);
   const response = await runBeforeDeadline(
     () => fetch(url, {
       headers: { "User-Agent": "KboEveryday/game-live-starter-witness" },
-      signal: AbortSignal.timeout(Math.max(1, deadlineAtMs - Date.now())),
+      signal,
     }),
     deadlineAtMs,
   );
@@ -124,6 +133,46 @@ async function fetchStarterWitness(
   };
   if (!Array.isArray(payload.games)) throw new Error("starter_witness_schema");
   return payload.games;
+}
+
+async function fetchSlateWitnesses(
+  req: NextRequest,
+  date: string,
+  deadlineAtMs: number,
+  deps: GameLiveRouteDeps,
+): Promise<[StarterWitnessGame[], string[]]> {
+  const remainingMs = deadlineAtMs - Date.now();
+  if (remainingMs <= 0) throw new Error("slate_witness_deadline");
+
+  const controller = new AbortController();
+  const settleReserveMs = Math.min(25, Math.max(1, Math.floor(remainingMs / 10)));
+  const timer = setTimeout(
+    () => controller.abort(new DOMException("slate witness deadline", "AbortError")),
+    Math.max(1, remainingMs - settleReserveMs),
+  );
+  let firstFailure: unknown;
+  const abortOnFailure = async <T>(operation: () => Promise<T>): Promise<T> => {
+    try {
+      return await operation();
+    } catch (error) {
+      firstFailure ??= error;
+      controller.abort(error);
+      throw error;
+    }
+  };
+
+  try {
+    const settled = await Promise.allSettled([
+      abortOnFailure(() => fetchStarterWitness(req, date, deadlineAtMs, controller.signal)),
+      abortOnFailure(() => deps.fetchKnownSlateIdsImpl(date, deadlineAtMs, controller.signal)),
+    ] as const);
+    if (firstFailure !== undefined) throw firstFailure;
+    if (settled[0].status === "rejected") throw settled[0].reason;
+    if (settled[1].status === "rejected") throw settled[1].reason;
+    return [settled[0].value, settled[1].value];
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function traceHeaders(trace: GameLiveTrace): Record<string, string> {
@@ -174,10 +223,12 @@ export async function gameLiveRoute(
       // Always compare it, including scheduled games: otherwise a 4/5 KBO
       // partial or a Naver 5-game response with 0/10 starters is silently
       // accepted merely because no live/final game triggered the old guard.
-      const [witness, knownSlateIds] = await Promise.all([
-        fetchStarterWitness(req, date, deadlineAtMs),
-        deps.fetchKnownSlateIdsImpl(date, deadlineAtMs),
-      ]);
+      const [witness, knownSlateIds] = await fetchSlateWitnesses(
+        req,
+        date,
+        deadlineAtMs,
+        deps,
+      );
       if (knownSlateIds.length > 0 && (
         !slateMatches(rawGames.map((game) => ({ gameId: game.G_ID })), knownSlateIds)
         || !slateMatches(witness, knownSlateIds)
