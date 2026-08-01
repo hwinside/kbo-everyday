@@ -16,6 +16,7 @@ import {
 import { useSafeBack } from "@/lib/hooks/useSafeBack";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { getSafeSession } from "@/lib/supabase/client";
+import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import { getTeamById } from "@/lib/constants/teams";
 import type {
   A1Value,
@@ -508,11 +509,29 @@ export default function VenueStatsDashboard() {
                   const pitcher = c2ById.get(playerId);
                   const homer = c4ById.get(playerId);
                   const team = player ? getTeamById(player.teamId) : null;
+                  const photoUrl = player ? getPlayerPhotoUrl(player.name, playerId, player.teamId) : null;
                   return (
                     <div key={playerId} className="rounded-2xl border border-white/8 bg-white/[0.045] p-4">
                       <div className="flex items-center gap-3">
-                        <div className="flex h-12 w-12 items-center justify-center rounded-full border border-white/10 bg-white/[0.06]">
-                          {team ? <Image src={team.logoPath} alt="" width={30} height={30} unoptimized /> : <Star size={20} className="text-white/70" />}
+                        {/* 선수 사진이 있으면 사진, 없으면 종전 팀 로고/별 폴백.
+                            공용 PlayerAvatar 는 쓰지 않는다 — 그 이니셜 폴백은 팀색 글자라
+                            어두운 배경에서 AA 대비를 못 넘긴다(실측 2.75·3.36 < 4.5, S2 browser gate).
+                            이 PR 은 사진 배선만 한다 — 공용 컴포넌트 대비 개선은 별건. */}
+                        <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-full border border-white/10 bg-white/[0.06]">
+                          {photoUrl ? (
+                            <Image
+                              src={photoUrl}
+                              alt={player?.name ?? ""}
+                              width={48}
+                              height={48}
+                              unoptimized
+                              className="h-12 w-12 rounded-full object-cover"
+                            />
+                          ) : team ? (
+                            <Image src={team.logoPath} alt="" width={30} height={30} unoptimized />
+                          ) : (
+                            <Star size={20} className="text-white/70" />
+                          )}
                         </div>
                         <div className="min-w-0 flex-1">
                           <p className="truncate text-[17px] font-black">{player?.name ?? playerId}</p>
