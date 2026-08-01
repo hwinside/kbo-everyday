@@ -59,6 +59,8 @@ assert.deepEqual(
   resolveLineupStarter({
     liveStarterName: "곽빈",
     lineupStarterName: "곽빈",
+    liveStarterFresh: true,
+    lineupStarterTrusted: true,
     teamId: 2,
     boxPitcher: { name: "이영하", era: "1.23" },
   }),
@@ -69,6 +71,8 @@ assert.deepEqual(
   resolveLineupStarter({
     liveStarterName: "타케다",
     lineupStarterName: "화이트",
+    liveStarterFresh: true,
+    lineupStarterTrusted: true,
     teamId: 4,
     boxPitcher: { name: "다른투수", era: "9.99" },
   }),
@@ -78,6 +82,8 @@ assert.deepEqual(
 assert.deepEqual(
   resolveLineupStarter({
     lineupStarterName: "김윤하",
+    liveStarterFresh: false,
+    lineupStarterTrusted: true,
     teamId: 10,
     boxPitcher: { name: "이강준", era: "3.21" },
   }),
@@ -88,11 +94,62 @@ assert.deepEqual(
   resolveLineupStarter({
     liveStarterName: "곽빈",
     lineupStarterName: "곽빈",
+    liveStarterFresh: true,
+    lineupStarterTrusted: true,
     teamId: 2,
     boxPitcher: { name: "곽빈", era: "2.66" },
   }),
   { name: "곽빈", era: "2.66", kboId: "68220" },
   "matching box starter ERA takes priority after game start",
+);
+const productionPartialPayload = {
+  liveGame: { awayStarterName: null },
+  detailLineup: { isToday: true, awayStarter: null },
+  boxScore: { awayPitchers: [{ name: "이영하", era: "1.23" }] },
+};
+assert.deepEqual(
+  resolveLineupStarter({
+    liveStarterName: productionPartialPayload.liveGame.awayStarterName,
+    lineupStarterName: productionPartialPayload.detailLineup.awayStarter,
+    liveStarterFresh: false,
+    lineupStarterTrusted: productionPartialPayload.detailLineup.isToday,
+    teamId: 2,
+    boxPitcher: productionPartialPayload.boxScore.awayPitchers[0],
+  }),
+  { name: "", era: "-", kboId: undefined },
+  "no canonical starter must not promote the first box reliever",
+);
+assert.deepEqual(
+  resolveLineupStarter({
+    liveStarterFresh: false,
+    lineupStarterTrusted: true,
+    teamId: 2,
+    boxPitcher: { name: "선수(66291)", era: "1.23" },
+  }),
+  { name: "", era: "-", kboId: undefined },
+  "placeholder-only box rows fail closed without a canonical starter",
+);
+assert.deepEqual(
+  resolveLineupStarter({
+    liveStarterName: "이영하",
+    lineupStarterName: "곽빈",
+    liveStarterFresh: false,
+    lineupStarterTrusted: true,
+    teamId: 2,
+  }),
+  { name: "곽빈", era: "2.64", kboId: "68220" },
+  "a stale live mismatch yields to the trusted confirmed lineup",
+);
+assert.deepEqual(
+  resolveLineupStarter({
+    liveStarterName: "곽빈",
+    lineupStarterName: "이영하",
+    liveStarterFresh: true,
+    lineupStarterTrusted: true,
+    teamId: 2,
+  }),
+  { name: "곽빈", era: "2.64", kboId: "68220" },
+  "a fresh live mismatch supersedes the earlier confirmed-lineup value",
 );
 assert.deepEqual(
   resolveStarterPitcher("미등록투수", 1, "-"),
@@ -108,9 +165,10 @@ assert.equal(
 );
 assert.ok(
   gamePage.includes("liveStarterName: liveGame?.awayStarterName")
-    && gamePage.includes("lineupStarterName: d.detailLineup.awayStarter")
+    && gamePage.includes("lineupStarterName: d.detailLineup?.awayStarter")
     && gamePage.includes("liveStarterName: liveGame?.homeStarterName")
-    && gamePage.includes("lineupStarterName: d.detailLineup.homeStarter"),
+    && gamePage.includes("lineupStarterName: d.detailLineup?.homeStarter")
+    && gamePage.includes("liveStarterFresh = !liveError"),
   "both official-lineup sides must pass live/lineup starter SSOT before box fallback",
 );
 
