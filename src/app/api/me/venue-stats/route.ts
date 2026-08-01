@@ -142,19 +142,23 @@ async function fetchLiveSeasonSnapshots(): Promise<{
   pitchers: Array<Record<string, unknown>>;
 }> {
   const [batterResult, pitcherResult] = await Promise.all([
+    // query-guard: bounded -- KBO 현재시즌 10구단 선수 스냅샷은 1,000명 상한, 1,001행은 overflow로 폴백한다.
     supabase
       .from("player_stats_batter")
       .select("kbo_id, team, games, ab, hits, hr, rbi, updated_at")
-      .limit(1_000),
+      .limit(1_001),
+    // query-guard: bounded -- KBO 현재시즌 10구단 선수 스냅샷은 1,000명 상한, 1,001행은 overflow로 폴백한다.
     supabase
       .from("player_stats_pitcher")
       .select("kbo_id, team, games, ip, h, er, so, updated_at")
-      .limit(1_000),
+      .limit(1_001),
   ]);
+  const batterRows = batterResult.data ?? [];
+  const pitcherRows = pitcherResult.data ?? [];
   return {
     // DB 열화/실패는 stale 값을 0으로 만들지 않고 버전 고정 번들 스냅샷으로 폴백한다.
-    batters: batterResult.error ? [] : (batterResult.data ?? []) as Array<Record<string, unknown>>,
-    pitchers: pitcherResult.error ? [] : (pitcherResult.data ?? []) as Array<Record<string, unknown>>,
+    batters: batterResult.error || batterRows.length > 1_000 ? [] : batterRows as Array<Record<string, unknown>>,
+    pitchers: pitcherResult.error || pitcherRows.length > 1_000 ? [] : pitcherRows as Array<Record<string, unknown>>,
   };
 }
 
