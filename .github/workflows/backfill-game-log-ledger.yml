@@ -155,11 +155,11 @@ jobs:
           SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
-          COUNT=$(curl -s "$SUPABASE_URL/rest/v1/player_game_log_ingestions?select=game_id" \
-            -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
-            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
-            -H "Prefer: count=exact" -H "Range: 0-0" -D - -o /dev/null \
-            | grep -i '^content-range:' | tr -d '\r' | sed 's|.*/||')
+          # 인라인 curl 은 HTTP 500 · Content-Range 누락을 둘 다 exit 0 + 빈 문자열로 삼켜
+          # before/after 가 함께 "" 가 되면 dry-run 가드의 before==after 가 ""=="" 로 통과한다(삼순 P0).
+          # → fail-closed 스크립트로 위임: HTTP 코드·헤더 존재·^[0-9]+$ 전부 강제.
+          set -euo pipefail
+          COUNT=$(bash scripts/ci/ledger-count.sh before)
           echo "count=$COUNT" >> $GITHUB_OUTPUT
           echo "ledger rows before: $COUNT"
 
@@ -189,11 +189,8 @@ jobs:
           SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
-          COUNT=$(curl -s "$SUPABASE_URL/rest/v1/player_game_log_ingestions?select=game_id" \
-            -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
-            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
-            -H "Prefer: count=exact" -H "Range: 0-0" -D - -o /dev/null \
-            | grep -i '^content-range:' | tr -d '\r' | sed 's|.*/||')
+          set -euo pipefail
+          COUNT=$(bash scripts/ci/ledger-count.sh after)
           echo "count=$COUNT" >> $GITHUB_OUTPUT
           echo "ledger rows after: $COUNT"
 
@@ -291,6 +288,12 @@ jobs:
           fi
           BEFORE="${{ steps.before.outputs.count }}"
           AFTER="${{ steps.after.outputs.count }}"
+          # count step 이 fail-closed 지만, 이 가드도 빈값/비숫자를 독립적으로 거부한다 —
+          # ""=="" 같은 공백 비교로 초록이 되는 경로를 남기지 않는다(삼순 P0).
+          if ! printf '%s' "$BEFORE" | grep -Eq '^[0-9]+$' || ! printf '%s' "$AFTER" | grep -Eq '^[0-9]+$'; then
+            echo "::error::ledger counts must be numeric (before='$BEFORE' after='$AFTER')"
+            exit 1
+          fi
           echo "dry-run ledger rows: $BEFORE → $AFTER"
           if [ "$AFTER" != "$BEFORE" ]; then
             echo "::error::dry-run must not write to the ledger ($BEFORE → $AFTER)"
@@ -304,8 +307,13 @@ jobs:
       - name: Verify apply made progress
         if: steps.validate.outputs.apply == 'true'
         run: |
+          set -euo pipefail
           BEFORE="${{ steps.before.outputs.count }}"
           AFTER="${{ steps.after.outputs.count }}"
+          if ! printf '%s' "$BEFORE" | grep -Eq '^[0-9]+$' || ! printf '%s' "$AFTER" | grep -Eq '^[0-9]+$'; then
+            echo "::error::ledger counts must be numeric (before='$BEFORE' after='$AFTER')"
+            exit 1
+          fi
           COMPLETE=$(grep -oE 'complete [0-9]+' /tmp/backfill.log | tail -1 | grep -oE '[0-9]+' || echo "0")
           echo "before=$BEFORE after=$AFTER complete=$COMPLETE"
           if [ "$AFTER" -lt "$BEFORE" ]; then
