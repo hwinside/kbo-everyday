@@ -45,13 +45,27 @@ const APPROVED_REKEYS = new Set([
   "20260517HTSS0\u0000pitcher\u000065040\u000062360",
 ]);
 
+/**
+ * 승인표로 설명되는 후보 행.
+ *
+ * ⚠️ candidate 는 **같은 경기 · 같은 player_type** 이어야 한다(삼순 P0).
+ * 승인표 key 에는 stale 쪽의 game_id/player_type 만 들어 있어서, candidate 쪽을 검증하지 않으면
+ *   · stale `65040|pitcher` + expected `62360|batter` 만 있어도 pitcher 행이 삭제되고
+ *   · 전혀 다른 경기의 `62360` 행이 섞여 있어도 삭제가 통과한다
+ * 둘 다 재현 확인했다. 승인한 것은 "그 경기의 그 역할에서 65040이 62360으로 재식별"이지
+ * "62360 이라는 ID 가 어디에든 있으면 삭제"가 아니다.
+ */
 function approvedCounterparts(row: CanonicalRowInput, added: CanonicalRowInput[]): CanonicalRowInput[] {
-  return added.filter((candidate) => APPROVED_REKEYS.has([
-    String(row.game_id),
-    String(row.player_type),
-    String(row.kbo_id),
-    String(candidate.kbo_id),
-  ].join("\u0000")));
+  return added.filter((candidate) => {
+    if (String(candidate.game_id) !== String(row.game_id)) return false;
+    if (String(candidate.player_type) !== String(row.player_type)) return false;
+    return APPROVED_REKEYS.has([
+      String(row.game_id),
+      String(row.player_type),
+      String(row.kbo_id),
+      String(candidate.kbo_id),
+    ].join("\u0000"));
+  });
 }
 
 export type ReconcileRefusalReason =

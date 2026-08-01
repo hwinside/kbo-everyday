@@ -149,6 +149,26 @@ check("[full-shape] 다중 stale 중 하나라도 설명 안 되면 전체 거�
   assert.deepEqual(plan.deletions, [], "거부 시 부분 삭제 0 (atomic)");
 });
 
+// ── 승인표 candidate 경계 (삼순 P0) ──────────────────────────────────────
+// 승인표 key 에는 stale 쪽의 game_id/player_type 만 들어 있다. candidate 쪽을 검증하지 않으면
+// "그 ID 가 어디에든 있으면 삭제"가 되어 승인 범위를 벗어난다.
+check("승인표 candidate 의 player_type 이 다르면 fail-close", () => {
+  // stale 65040|pitcher 에 대해 expected 에 62360|**batter** 만 있는 경우.
+  // 승인한 건 "그 경기 pitcher 역할의 65040→62360" 이지 batter 가 아니다.
+  expectRefusal(
+    [pitcher("65040", { ip_outs: 3 }), keep],
+    [batter("62360"), keep],
+  );
+});
+
+check("승인표 candidate 가 다른 경기의 행이면 fail-close", () => {
+  // 같은 ID 짝이라도 다른 game_id 의 added 행으로는 설명될 수 없다.
+  expectRefusal(
+    [pitcher("65040", { ip_outs: 3 }), keep],
+    [pitcher("62360", { game_id: "20260999XXYY0", ip_outs: 3 }), keep],
+  );
+});
+
 check("[full-shape] LG 잔여 3경기 패턴(56709/53893)은 여전히 fail-close", () => {
   // 실측: 20260422HHLG0·20260508LGHH0 → 56709|pitcher, 20260609SKLG0 → 53893|pitcher.
   // 이 3건은 이 PR 로 치유되지 **않는다** — 화면 blocker 해소 주장의 근거로 쓰지 못하게 고정.

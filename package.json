@@ -44,6 +44,7 @@
     "qa:venue-stats-s1a-ledger:db": "tsx scripts/qa/venue-stats-s1a-ledger-db-integration.ts",
     "qa:reconcile-rekey": "tsx scripts/qa/game-log-reconcile-rekey-smoke.ts",
     "qa:reconcile-full-shape": "tsx scripts/qa/reconcile-full-shape-verifier.ts",
+    "qa:reconcile-full-shape-contract": "tsx scripts/qa/reconcile-full-shape-contract.ts",
     "qa:backfill-workflow-matrix": "bash scripts/qa/backfill-workflow-matrix.sh",
     "qa:ledger-count-guard": "bash scripts/qa/ledger-count-guard-smoke.sh",
     "qa:venue-stats-state": "tsx scripts/qa/venue-stats-state-ladder-smoke.ts",

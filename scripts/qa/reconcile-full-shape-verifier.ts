@@ -54,7 +54,14 @@ interface GameVerdict {
  */
 const EXPECTED_HEALABLE_MIN = 1;
 
-/** 시즌 우주가 이보다 작으면 partial 로 보고 중단한다(2026 실측 491 final). */
+/**
+ * 시즌 우주 sanity 하한(2026 실측 491 final).
+ *
+ * ⚠️ 이건 대뷄 방법일 뿐 충분 조건이 아니다 — 450을 넘어도 최대 41경기가 빠질 수 있고,
+ * 그러면 빠진 경기가 no_regular_game 으로 조용히 오분류된다(삼순 지적).
+ * 진짜 게이트는 아래 assertAllTargetsResolvable — **대상 game_id 가 전부** 우주에 있고
+ * boxscore 조회까지 성공해야 한다. 이 상수는 "명백히 망가진 우주"를 조기에 자르는 용도다.
+ */
 const MIN_SEASON_FINALS = 450;
 
 async function main() {
@@ -90,14 +97,17 @@ async function main() {
   console.log(`[full-shape] 시즌 우주 final ${finals.length}경기 확보\n`);
 
   const verdicts: GameVerdict[] = [];
+  const unresolvable: string[] = [];
   for (const gameId of targets) {
     const game = byId.get(gameId);
     if (!game) {
+      unresolvable.push(`${gameId}: 우주에 없음(no_regular_game)`);
       verdicts.push({ gameId, verdict: "no_regular_game", stalePairs: 0, deletions: [] });
       continue;
     }
     const box = await fetchGameBoxscore(gameId);
     if (!box) {
+      unresolvable.push(`${gameId}: boxscore 조회 실패`);
       verdicts.push({ gameId, verdict: "boxscore_unavailable", stalePairs: 0, deletions: [] });
       continue;
     }
@@ -163,6 +173,21 @@ async function main() {
 
   if (EXPECT) {
     console.log("\n[release verifier] 계약 검증");
+    // ① pre-backfill gate — 대상 game_id 가 **전부** 우주에 존재하고 boxscore 조회까지 성공해야 한다.
+    //   final>=450 상수만으로는 최대 41경기 누락을 통과시킨다(삼순 지적).
+    //   누락된 경기는 no_regular_game/boxscore_unavailable 로 조용히 오분류되어
+    //   "재식별 문제가 없다"는 거짓 근거가 된다. 하나라도 미해결이면 중단한다.
+    //   (단, 정규 우주 밖 경기 — 예: 올스타전 20260711WEEA0 — 는 예외로 명시 허용.)
+    const EXEMPT_NON_REGULAR = new Set(["20260711WEEA0"]);
+    const blockingUnresolvable = unresolvable.filter(
+      (line) => !EXEMPT_NON_REGULAR.has(line.split(":")[0]),
+    );
+    assert.deepEqual(
+      blockingUnresolvable,
+      [],
+      `대상 경기 중 우주 미해결/조회실패가 있다 — 이 상태의 분포는 근거가 아니다:\n${blockingUnresolvable.join("\n")}`,
+    );
+    console.log(`  · 대상 ${targets.length}경기 전부 우주 해결 + boxscore 조회 성공(정규 밖 예외 ${EXEMPT_NON_REGULAR.size})`);
     // ① 거부된 경기는 부분 삭제가 0 이어야 한다(atomic) — 이 PR 의 핵심 안전 계약.
     for (const v of verdicts) {
       if (v.verdict !== "healable") {
