@@ -38,6 +38,7 @@ import type {
   C2Entry,
   C4Entry,
   C5Entry,
+  C6Value,
   D1Value,
   D5Value,
   D6Value,
@@ -91,6 +92,8 @@ function MetricCard({
   metric,
   accent = "text-white",
   icon,
+  embedded = false,
+  className = "",
 }: {
   title: string;
   value: string;
@@ -98,9 +101,11 @@ function MetricCard({
   metric: MetricEnvelope;
   accent?: string;
   icon?: React.ReactNode;
+  embedded?: boolean;
+  className?: string;
 }) {
   return (
-    <div className="min-w-0 rounded-xl border border-white/8 bg-[#151519] p-3">
+    <div className={`min-w-0 p-3 ${embedded ? "" : "rounded-xl border border-white/8 bg-[#151519]"} ${className}`}>
       <div className="flex items-center justify-between gap-2">
         <p className="flex items-center gap-1.5 text-[10px] font-bold text-white/70">{icon}{title}</p>
         <span className="text-[9px] font-semibold text-white/60">{metric.n}경기 기준</span>
@@ -161,6 +166,7 @@ export default function VenueStatsDashboard() {
   // 시즌 전환 직후에도 effect 안 setState 없이 즉시 로딩 UI로 수렴한다.
   const [failedSeason, setFailedSeason] = useState<number | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [favoritesOpen, setFavoritesOpen] = useState(false);
   const requestGeneration = useRef(0);
   const requestController = useRef<AbortController | null>(null);
 
@@ -238,6 +244,7 @@ export default function VenueStatsDashboard() {
   const c2 = scope?.metrics.C2 as MetricEnvelope<C2Entry[]> | undefined;
   const c4 = scope?.metrics.C4 as MetricEnvelope<C4Entry[]> | undefined;
   const c5 = scope?.metrics.C5 as MetricEnvelope<C5Entry[]> | undefined;
+  const c6 = scope?.metrics.C6 as MetricEnvelope<C6Value> | undefined;
   const d1 = scope?.metrics.D1 as MetricEnvelope<D1Value> | undefined;
   const d5 = scope?.metrics.D5 as MetricEnvelope<D5Value> | undefined;
   const d6 = scope?.metrics.D6 as MetricEnvelope<D6Value> | undefined;
@@ -246,7 +253,13 @@ export default function VenueStatsDashboard() {
   const c1ById = new Map((c1?.value ?? []).map((entry) => [entry.playerId, entry]));
   const c2ById = new Map((c2?.value ?? []).map((entry) => [entry.playerId, entry]));
   const c4ById = new Map((c4?.value ?? []).map((entry) => [entry.playerId, entry]));
-  const favoriteIds = [...new Set([...c1ById.keys(), ...c2ById.keys(), ...c4ById.keys()])];
+  const favoriteBoostById = new Map([
+    ...(c6?.value?.batterRanking ?? []).map((entry) => [entry.playerId, entry.boostPct] as const),
+    ...(c6?.value?.pitcherRanking ?? []).map((entry) => [entry.playerId, entry.boostPct] as const),
+  ]);
+  const favoriteIds = [...new Set([...c1ById.keys(), ...c2ById.keys(), ...c4ById.keys()])]
+    .sort((left, right) => (favoriteBoostById.get(right) ?? -Infinity) - (favoriteBoostById.get(left) ?? -Infinity));
+  const visibleFavoriteIds = favoritesOpen ? favoriteIds : favoriteIds.slice(0, 1);
   const mixedBTeamIds = hero?.mixedTeam
     ? [...new Set(
         [b1, b2, b3, b4]
@@ -259,12 +272,14 @@ export default function VenueStatsDashboard() {
   const stadiumCells = scope ? splitCells<A3Cell>(scope.metrics.A3) : [];
   const weekdayCells = scope ? splitCells<A4Cell>(scope.metrics.A4) : [];
   const bestOpponent = [...opponentCells]
-    .filter(({ cell }) => cell.w + cell.l + cell.d >= 2)
+    .filter(({ cell, sampleLimited }) => !sampleLimited && cell.w + cell.l + cell.d >= MIN_FINAL_GAMES)
     .sort((a, b) => (b.cell.w + b.cell.l + b.cell.d) - (a.cell.w + a.cell.l + a.cell.d))[0];
   const bestStadium = [...stadiumCells]
-    .filter(({ cell }) => cell.w + cell.l + cell.d >= 2)
+    .filter(({ cell, sampleLimited }) => !sampleLimited && cell.w + cell.l + cell.d >= MIN_FINAL_GAMES)
     .sort((a, b) => (b.cell.w + b.cell.l + b.cell.d) - (a.cell.w + a.cell.l + a.cell.d))[0];
-  const saturday = weekdayCells.find(({ cell }) => cell.weekday === 6 && cell.w + cell.l + cell.d > 0);
+  const saturday = weekdayCells.find(({ cell, sampleLimited }) =>
+    !sampleLimited && cell.weekday === 6 && cell.w + cell.l + cell.d >= MIN_FINAL_GAMES);
+  const summarySampleReady = (a1?.n ?? 0) >= MIN_FINAL_GAMES && !hero?.sampleLimited;
   const hrGames = b4?.denominator?.attendanceFinalGames ?? b4?.n ?? 0;
   const homeRunsSeen = b4?.value?.hr?.attendancePerGame == null
     ? 0
@@ -285,23 +300,23 @@ export default function VenueStatsDashboard() {
     value: `${bestOpponent.cell.w}승 ${bestOpponent.cell.l}패`,
     icon: <Swords size={16} className="text-orange-300" />,
   });
-  if (homeRunsSeen > 0) interestingFacts.push({
+  if (summarySampleReady && homeRunsSeen > 0) interestingFacts.push({
     key: "home-runs", label: "홈런", value: `${homeRunsSeen}개 목격`,
     icon: <span className="text-[16px] leading-none">⚾</span>,
   });
-  if ((e1?.value?.longest ?? 0) >= 2) interestingFacts.push({
+  if (summarySampleReady && (e1?.value?.longest ?? 0) >= 2) interestingFacts.push({
     key: "streak", label: "연속 직관", value: `최장 ${e1!.value!.longest}경기`,
     icon: <Flame size={16} className="text-amber-300" />,
   });
-  if ((d5?.value?.cancelledCount ?? 0) > 0) interestingFacts.push({
+  if (summarySampleReady && (d5?.value?.cancelledCount ?? 0) > 0) interestingFacts.push({
     key: "cancelled", label: "우천·취소", value: `${d5!.value!.cancelledCount}회`,
     icon: <CloudRain size={16} className="text-blue-300" />,
   });
-  if (d6?.value?.maxTeamRuns) interestingFacts.push({
+  if (summarySampleReady && d6?.value?.maxTeamRuns) interestingFacts.push({
     key: "max-runs", label: "최다 득점", value: `${d6.value.maxTeamRuns.runs}점`,
     icon: <Target size={16} className="text-emerald-300" />,
   });
-  if ((d1?.value?.closeGames ?? 0) > 0) interestingFacts.push({
+  if (summarySampleReady && (d1?.value?.closeGames ?? 0) > 0) interestingFacts.push({
     key: "close-games", label: "1점차 승부", value: `${d1!.value!.closeGames}경기`,
     icon: <Trophy size={16} className="text-violet-300" />,
   });
@@ -351,7 +366,7 @@ export default function VenueStatsDashboard() {
               onClick={() => setScopeName(key)}
               className={`rounded-full py-2 text-[11px] font-black transition-colors ${
                 scopeName === key
-                  ? "bg-gradient-to-r from-[#ee4055] to-[#c8324c] text-white shadow-[0_3px_12px_rgba(238,64,85,.24)]"
+                  ? "bg-gradient-to-r from-[#a51f36] to-[#7f182e] text-white shadow-[0_3px_12px_rgba(165,31,54,.3)]"
                   : "text-white/70"
               }`}
             >
@@ -437,7 +452,10 @@ export default function VenueStatsDashboard() {
             <>
               <SectionTitle>내가 간 경기, 우리 팀은</SectionTitle>
               {!hero.mixedTeam && (
-                <div className="grid grid-cols-2 gap-2">
+                <div
+                  data-testid="venue-team-metrics"
+                  className="grid grid-cols-2 overflow-hidden rounded-2xl border border-white/8 bg-[#151519]"
+                >
                   {/* 표본 미달이면 baseline이 null로 내려오므로 비교문구 자체를 감춘다("시즌 – · –" 방지). */}
                   <MetricCard
                     title="팀 타율"
@@ -446,6 +464,8 @@ export default function VenueStatsDashboard() {
                     metric={b1!}
                     accent="text-emerald-300"
                     icon={<span className="text-[12px]">⚾</span>}
+                    embedded
+                    className="border-b border-r border-white/8"
                   />
                   <MetricCard
                     title="평균 득점"
@@ -454,6 +474,8 @@ export default function VenueStatsDashboard() {
                     metric={b3!}
                     accent="text-amber-300"
                     icon={<Target size={12} />}
+                    embedded
+                    className="border-b border-white/8"
                   />
                   <MetricCard
                     title="팀 ERA"
@@ -462,6 +484,8 @@ export default function VenueStatsDashboard() {
                     metric={b2!}
                     accent="text-sky-300"
                     icon={<span className="text-[12px]">⚾</span>}
+                    embedded
+                    className="border-r border-white/8"
                   />
                   <MetricCard
                     title="홈런"
@@ -470,6 +494,7 @@ export default function VenueStatsDashboard() {
                     metric={b4!}
                     accent="text-rose-300"
                     icon={<Flame size={12} />}
+                    embedded
                   />
                 </div>
               )}
@@ -532,7 +557,7 @@ export default function VenueStatsDashboard() {
                   <div className="rounded-2xl border border-white/8 bg-white/[0.045] p-4 text-sm font-semibold text-white/70">
                     {METRIC_STATE_LABELS[c1?.state ?? "no_favorite"]}
                   </div>
-                ) : favoriteIds.map((playerId) => {
+                ) : visibleFavoriteIds.map((playerId, favoriteIndex) => {
                   const player = favoriteById.get(playerId);
                   const batter = c1ById.get(playerId);
                   const pitcher = c2ById.get(playerId);
@@ -548,7 +573,7 @@ export default function VenueStatsDashboard() {
                       ? `ERA ${formatSigned(pitcher.eraImprovement, 2)}`
                       : null;
                   return (
-                    <div key={playerId} className="rounded-2xl border border-white/8 bg-[#151519] p-3">
+                    <div key={playerId} data-testid="venue-favorite-card" className="rounded-2xl border border-white/8 bg-[#151519] p-3">
                       <div className="flex items-center gap-2.5">
                         {/* 선수 사진이 있으면 사진, 없으면 종전 팀 로고/별 폴백.
                             공용 PlayerAvatar 는 쓰지 않는다 — 그 이니셜 폴백은 팀색 글자라
@@ -571,7 +596,14 @@ export default function VenueStatsDashboard() {
                           )}
                         </div>
                         <div className="min-w-0 flex-1">
-                          <p className="truncate text-[16px] font-black">{player?.name ?? playerId}</p>
+                          <div className="flex items-center gap-1.5">
+                            <p className="truncate text-[16px] font-black">{player?.name ?? playerId}</p>
+                            {favoriteIndex === 0 && favoriteBoostById.has(playerId) && (
+                              <span className="shrink-0 rounded-full bg-amber-300/15 px-1.5 py-0.5 text-[9px] font-black text-amber-300">
+                                부스트 1위
+                              </span>
+                            )}
+                          </div>
                           {boostLabel && (
                             <span className="mt-0.5 inline-flex rounded-full border border-[#ff596a]/45 bg-[#ff4053]/10 px-1.5 py-0.5 text-[9px] font-black text-[#ff9aa5]">
                               직관 부스트 {boostLabel}
@@ -613,6 +645,16 @@ export default function VenueStatsDashboard() {
                     </div>
                   );
                 })}
+                {favoriteIds.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => setFavoritesOpen((value) => !value)}
+                    className="flex w-full items-center justify-center gap-1 rounded-xl border border-white/8 bg-white/[0.045] py-2.5 text-[11px] font-extrabold text-white/75"
+                  >
+                    {favoritesOpen ? "최애 접기" : `다른 최애 ${favoriteIds.length - 1}명 보기`}
+                    <ChevronDown size={13} className={favoritesOpen ? "rotate-180" : ""} />
+                  </button>
+                )}
               </div>
 
               {visibleInterestingFacts.length > 0 && (

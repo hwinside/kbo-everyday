@@ -57,7 +57,10 @@ const AUTH={
   user:{id:"qa",email:"venue-stats-qa@example.invalid"},
   profile:{favorite_players:[
     {playerId:"53123",name:"오스틴",teamId:1,position:"내야수"},
-    {playerId:"p2",name:"이최애",teamId:9,position:"투수"}
+    {playerId:"p2",name:"이최애",teamId:9,position:"투수"},
+    {playerId:"p3",name:"김최애",teamId:1,position:"외야수"},
+    {playerId:"p4",name:"박최애",teamId:1,position:"내야수"},
+    {playerId:"p5",name:"최최애",teamId:1,position:"포수"}
   ],team_id:1,nickname:"QA",avatar_url:null},
   loading:false,
   refreshProfile:async()=>{},
@@ -185,14 +188,30 @@ const scope = (name, wins, rate) => {
       {key:"9",state:"ready",value:teamValues["9"][id],n:4,denominator:{}},
     ]};
   }
-  metrics.C1 = envelope("C1", [{playerId:"53123",attendanceAvg:.333,seasonAvg:.278,deltaAvg:.055,attendanceHrPerGame:.2,seasonHrPerGame:.1,attendanceRbiPerGame:1,seasonRbiPerGame:.7,appearances:6,ab:21}], {attendanceAB:21});
+  metrics.C1 = envelope("C1", [
+    {playerId:"53123",attendanceAvg:.333,seasonAvg:.278,deltaAvg:.055,attendanceHrPerGame:.2,seasonHrPerGame:.1,attendanceRbiPerGame:1,seasonRbiPerGame:.7,appearances:6,ab:21},
+    {playerId:"p3",attendanceAvg:.310,seasonAvg:.270,deltaAvg:.040,attendanceHrPerGame:.1,seasonHrPerGame:.1,attendanceRbiPerGame:.8,seasonRbiPerGame:.6,appearances:5,ab:20},
+    {playerId:"p4",attendanceAvg:.290,seasonAvg:.260,deltaAvg:.030,attendanceHrPerGame:.1,seasonHrPerGame:.1,attendanceRbiPerGame:.7,seasonRbiPerGame:.5,appearances:5,ab:20},
+    {playerId:"p5",attendanceAvg:.275,seasonAvg:.255,deltaAvg:.020,attendanceHrPerGame:.1,seasonHrPerGame:.1,attendanceRbiPerGame:.6,seasonRbiPerGame:.5,appearances:5,ab:20},
+  ], {attendanceAB:81});
   metrics.C2 = envelope("C2", [{playerId:"p2",attendanceEra:2.71,seasonEra:3.88,eraImprovement:1.17,attendanceK9:9.2,seasonK9:8.1,k9Delta:1.1,appearances:4,outs:40}], {attendanceOuts:40});
   metrics.C4 = envelope("C4", [
     {playerId:"53123",homeRuns:2,appearanceGames:6,batter:{hits:9,rbi:7,homeRuns:2},pitcher:null},
     {playerId:"p2",homeRuns:0,appearanceGames:4,batter:null,pitcher:{strikeouts:12,zeroEarnedRunGames:2}},
+    {playerId:"p3",homeRuns:1,appearanceGames:5,batter:{hits:6,rbi:4,homeRuns:1},pitcher:null},
+    {playerId:"p4",homeRuns:0,appearanceGames:5,batter:{hits:5,rbi:3,homeRuns:0},pitcher:null},
+    {playerId:"p5",homeRuns:0,appearanceGames:5,batter:{hits:4,rbi:2,homeRuns:0},pitcher:null},
   ]);
   metrics.C5 = envelope("C5", [{playerId:"53123",batterTop:{gameId:"g",date:"2026-07-12",ab:4,h:3,hr:1,rbi:3,bb:1}}]);
-  metrics.C6 = envelope("C6", {batterRanking:[],pitcherRanking:[]});
+  metrics.C6 = envelope("C6", {
+    batterRanking:[
+      {playerId:"53123",boostPct:19.8},
+      {playerId:"p3",boostPct:14.8},
+      {playerId:"p4",boostPct:11.5},
+      {playerId:"p5",boostPct:7.8},
+    ],
+    pitcherRanking:[{playerId:"p2",boostPct:15.2}],
+  });
   metrics.D1 = envelope("D1", {avgRunDiff:1.4,closeGameRate:.25,closeGames:2});
   metrics.D5 = envelope("D5", {cancelledCount:1});
   metrics.D6 = envelope("D6", {maxTeamRuns:{gameId:"g",date:"2026-07-12",runs:9},maxMarginWin:null});
@@ -471,18 +490,32 @@ try {
   const compactHeight = await page.evaluate(() => document.documentElement.scrollHeight);
   if (compactHeight > 1500) throw new Error(`compact dashboard exceeded 1500px before details: ${compactHeight}px`);
 
+  // 최애 5명 actual DOM: 부스트 1위만 기본 노출하고 나머지는 명시적 펼침 뒤에만 보여야 한다.
+  const favoriteCards = page.getByTestId("venue-favorite-card");
+  if (await favoriteCards.count() !== 1 || !(await favoriteCards.first().innerText()).includes("오스틴")) {
+    throw new Error("five-favorite compact view must show only the #1 boosted favorite");
+  }
+  const favoritesToggle = page.getByRole("button", { name: "다른 최애 4명 보기" });
+  await favoritesToggle.click();
+  if (await favoriteCards.count() !== 5) {
+    throw new Error(`five-favorite expanded view must show 5 cards, got ${await favoriteCards.count()}`);
+  }
+
   // 최애 사진 회귀: 실제 사진 ID는 정적 JPEG를 로드하고, 사진 없는 ID는 종전 팀 로고를 유지한다.
   const favoritePhoto = page.locator('img[src="/players/53123.jpg"]');
   if (await favoritePhoto.count() !== 1) throw new Error("favorite photo must render exactly once");
   const photoLoaded = await favoritePhoto.evaluate((img) => img.complete && img.naturalWidth > 0);
   if (!photoLoaded) throw new Error("favorite photo did not load a valid image");
-  const fallbackRow = page.getByText("이최애", { exact: true }).locator("../..");
+  const fallbackRow = page.getByText("이최애", { exact: true })
+    .locator('xpath=ancestor::*[@data-testid="venue-favorite-card"][1]');
   const fallbackImages = fallbackRow.locator("img");
   if (await fallbackImages.count() !== 1) throw new Error("photo-less favorite must keep exactly one team-logo fallback");
   const fallbackSrc = await fallbackImages.first().getAttribute("src");
   if (!fallbackSrc || fallbackSrc.includes("/players/")) {
     throw new Error(`photo-less favorite rendered invalid photo instead of team logo: ${fallbackSrc}`);
   }
+  await page.getByRole("button", { name: "최애 접기" }).click();
+  if (await favoriteCards.count() !== 1) throw new Error("five-favorite collapse did not return to one card");
 
   const staleRequest = page.waitForRequest((request) => request.url().includes("season=2025"));
   await page.locator("select").selectOption("2025");
@@ -719,12 +752,9 @@ try {
     throw new Error("sample-limited split rows missing 참고용 badge");
   }
 
-  // 상세 목록 밖의 요약 카드(`토요일`)도 같은 items 소스를 써야 한다.
-  // top-level value 만 읽으면 상세엔 토요일이 보이는데 이 카드만 `–` 로 죽는다.
-  const saturdayCard = page.getByTestId("venue-interesting-fact").filter({ hasText: "토요일" });
-  const saturdayText = await saturdayCard.innerText();
-  if (!saturdayText.includes("승률 100%")) {
-    throw new Error(`sample-limited Saturday fact dropped outside detail list: ${saturdayText}`);
+  // 표본 미달 사실은 상세의 `참고용` 행에만 남기고, 확정형 요약 pill에는 올리지 않는다.
+  if (await page.getByTestId("venue-interesting-fact").count()) {
+    throw new Error("sample-limited facts must be omitted from confident novelty summary pills");
   }
 
   const badgeRgb = await page.getByText("표본 부족(참고용)", { exact: true }).first()
@@ -800,6 +830,13 @@ try {
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.getByText(".333", { exact: true }).waitFor({ timeout: 4000 });
 
+  // 단일팀 B1~B4는 네 개의 독립 카드가 아니라 divider를 둔 하나의 2×2 카드다.
+  const teamMetrics = page.getByTestId("venue-team-metrics");
+  if (await teamMetrics.count() !== 1 || await teamMetrics.locator(":scope > div").count() !== 4) {
+    throw new Error("single-team metrics must render as one combined 2x2 card with four cells");
+  }
+  await page.getByRole("button", { name: /다른 최애 .*명 보기/ }).click();
+
   const partialText = await page.locator('[data-testid="venue-stats-dashboard"]').first().innerText();
   for (const fact of [".286", "3.42", "1.3", ".333", "2.71", "9안타", "7타점 · 2홈런", "12K", "2경기 0자책", "최애 최고의 직관 경기"]) {
     if (!partialText.includes(fact)) throw new Error(`partial-baseline attendance fact/card missing: ${fact}`);
@@ -823,7 +860,7 @@ try {
   }
 
   console.log(
-    `venue stats S2 browser: PASS (390px, compact<=1500px, novelty<=6+inapplicable omitted, B1~B4 actual payload, season abort/generation, selected-season 503 fail-closed(no stale value + retry UI), mixed sample-limited facts+dash score+amber badge+0 baseline+summary card, attendance_only 2-game facts+dash score+amber badge+mutation RED, partial-baseline B/C attendance facts+C4/C5 visible+season hidden, AA ${contrast.minimum.toFixed(2)}:1 across ${contrast.count} texts)\nshot: ${SHOT}`,
+    `venue stats S2 browser: PASS (390px, compact<=1500px, novelty<=6+inapplicable omitted, 5-favorite #1 collapse/expand, mixed B1~B4 actual payload, season abort/generation, selected-season 503 fail-closed(no stale value + retry UI), sample-limited facts detail-only+dash score+amber badge+0 baseline, attendance_only 2-game facts+dash score+amber badge+mutation RED, single-team 2x2 card, partial-baseline B/C attendance facts+C4/C5 visible+season hidden, AA ${contrast.minimum.toFixed(2)}:1 across ${contrast.count} texts)\nshot: ${SHOT}`,
   );
 } finally {
   await browser.close();
