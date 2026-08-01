@@ -36,6 +36,7 @@ import {
   cosineSimilarity,
   isDescriptivePlayerQuestion,
   RAG_ANSWER_MAX_CHARS,
+  RAG_CANDIDATE_LIMIT,
   RAG_EVIDENCE_LIMIT,
   RAG_EVIDENCE_MAX_CHARS,
   RAG_GROUNDED_SENTINEL,
@@ -43,7 +44,6 @@ import {
   RAG_RETRIEVAL_MODE,
   RAG_SYSTEM_PROMPT,
   rankEvidenceByQuery,
-  searchSourcePriorityCandidates,
   sanitizeEvidenceContent,
   selectEvidence,
   validateRagResponse,
@@ -1619,34 +1619,46 @@ async function verifyServingContractOnRealDb(): Promise<void> {
   assert.equal(legacyCut.rows.filter((row) => row.source_kind === "wikipedia_document").length, 0,
     "RED 재현 실패: entity 전체 limit(40)에서 Wikipedia가 절단되어야 한다");
 
-  const priorityEvidence = await searchSourcePriorityCandidates(
-    async (sourceKind: RagDocumentSourceKind, limit: number) => {
-      const fetched = await db.query<{
-        content: string; page_title: string; canonical_url: string; revision: string;
-        section_path: string; as_of: string; source_grade: string; embedding: string;
-      }>(
-        `SELECT content,page_title,canonical_url,revision,section_path,as_of::text,source_grade,embedding::text
-           FROM public.genius_rag_serving_chunks
-          WHERE entity_type='player' AND entity_id='69102' AND source_kind=$1
-          LIMIT $2`,
-        [sourceKind, limit],
-      );
-      return fetched.rows.map((row) => ({
-        content: row.content,
-        pageTitle: row.page_title,
-        canonicalUrl: row.canonical_url,
-        revision: row.revision,
-        sectionPath: row.section_path,
-        asOf: row.as_of,
-        sourceGrade: "tier2" as const,
-        embedding: row.embedding,
-      }));
+  process.env.NEXT_PUBLIC_SUPABASE_URL ??= "http://127.0.0.1:54321";
+  process.env.SUPABASE_SERVICE_ROLE_KEY ??= "baseball-rag-serving-smoke-key";
+  const { searchRag: searchServerRag } = await import("../../src/lib/baseball-qa/server");
+  const serverFetchedKinds: RagDocumentSourceKind[] = [];
+  const priorityEvidence = await searchServerRag(
+    { entityType: "player", entityId: "69102", name: "문보경" },
+    "문보경 별명이 뭐야?",
+    {
+      embed: async () => ({ ok: true, vector: JSON.parse(embedding) as number[] }),
+      fetchBySourceKind: async (candidate, sourceKind, limit) => {
+        assert.deepEqual(candidate, { entityType: "player", entityId: "69102", name: "문보경" });
+        assert.equal(limit, RAG_CANDIDATE_LIMIT);
+        serverFetchedKinds.push(sourceKind);
+        const fetched = await db.query<{
+          content: string; page_title: string; canonical_url: string; revision: string;
+          section_path: string; as_of: string; source_grade: string; embedding: string;
+        }>(
+          `SELECT content,page_title,canonical_url,revision,section_path,as_of::text,source_grade,embedding::text
+             FROM public.genius_rag_serving_chunks
+            WHERE entity_type='player' AND entity_id='69102' AND source_kind=$1
+            LIMIT $2`,
+          [sourceKind, limit],
+        );
+        return fetched.rows.map((row) => ({
+          content: row.content,
+          pageTitle: row.page_title,
+          canonicalUrl: row.canonical_url,
+          revision: row.revision,
+          sectionPath: row.section_path,
+          asOf: row.as_of,
+          sourceGrade: "tier2" as const,
+          embedding: row.embedding,
+        }));
+      },
     },
-    JSON.parse(embedding) as number[],
-    orderTier2Evidence,
   );
+  assert.deepEqual(serverFetchedKinds, ["wikipedia_document", "namu_document"],
+    "production server searchRag가 source-kind별 bounded fetch를 실행해야 한다");
   assert.equal(tier2SourceOf(priorityEvidence[0].canonicalUrl), "wikipedia",
-    "Namu 41건 뒤 Wikipedia가 DB 후보 절단으로 소실되면 안 된다");
+    "production server searchRag에서 Namu 41건 뒤 Wikipedia가 DB 후보 절단으로 소실되면 안 된다");
 
   // 5) R4 다문서 generation — 서로 다른 revision/hash/crawledAt의 하위문서를 한 번에 atomic swap.
   await db.query("UPDATE public.genius_rag_sources SET ingestion_status='stale' WHERE source_key='namu:player:69102'");
@@ -1671,6 +1683,31 @@ async function verifyServingContractOnRealDb(): Promise<void> {
     /stale or mismatched rag chunk owner\/provenance/,
     "다른 선수 canonical은 caller metadata가 일치해도 거부해야 한다",
   );
+  const traversalCanonicals = [
+    "https://namu.wiki/w/x/../%EA%B9%80%EB%8F%84%EC%98%81",
+    "https://namu.wiki/w/x/%2e%2e/%EA%B9%80%EB%8F%84%EC%98%81",
+    "https://namu.wiki/w/x/%252e%252e/%EA%B9%80%EB%8F%84%EC%98%81",
+    "https://namu.wiki/w/x\\..\\%EA%B9%80%EB%8F%84%EC%98%81",
+    "https://namu.wiki/w/x/%2f%EA%B9%80%EB%8F%84%EC%98%81",
+  ];
+  for (const [index, canonical] of traversalCanonicals.entries()) {
+    await assert.rejects(
+      db.query(
+        `SELECT public.upsert_baseball_genius_rag_chunk($1,$2,$3,'player','69102','문보경',$4,
+          'traversal-rev','문보경/오염',$5,$6,'traversal-hash',$7,'tier2',$8::timestamptz,
+          '2026-08-01'::date,$9::extensions.vector,$10::jsonb)`,
+        [
+          "namu:player:69102", generationTwo.claim_token, generationTwo.claim_generation,
+          canonical, 90 + index,
+          "URL traversal로 다른 선수에게 이동하는 충분히 긴 오염 근거 문장입니다.",
+          `traversal-${index}`, crawledAt, embedding,
+          JSON.stringify({ documentCanonicalUrl: canonical }),
+        ],
+      ),
+      /stale or mismatched rag chunk owner\/provenance/,
+      `URL parser 정규화 우회는 거부해야 한다: ${canonical}`,
+    );
+  }
   for (const [index, subdoc] of subdocs.entries()) {
     await db.query(
       `SELECT public.upsert_baseball_genius_rag_chunk($1,$2,$3,'player','69102','문보경',$4,
@@ -1769,7 +1806,7 @@ async function verifyServingContractOnRealDb(): Promise<void> {
   )).rows[0].c, 1, "resolved 복구 뒤 새 snapshot이 다시 서빙되어야 한다");
 
   await db.close();
-  console.log("PASS 실 DB 계약 — source-priority fetch / owner root-prefix / ready invalidation+recovery / expired partial purge");
+  console.log("PASS 실 DB 계약 — actual server source-priority / owner URL traversal / ready invalidation+recovery / expired partial purge");
 }
 
 run().catch((error: unknown) => {

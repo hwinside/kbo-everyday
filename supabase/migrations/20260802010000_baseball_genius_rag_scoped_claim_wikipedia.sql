@@ -98,11 +98,20 @@ SET search_path = public, pg_temp
 AS $$
 DECLARE
   v_source public.genius_rag_sources%ROWTYPE;
+  v_root_path text;
+  v_chunk_path text;
 BEGIN
   SELECT * INTO v_source
   FROM public.genius_rag_sources
   WHERE source_key = NEW.source_key
   FOR SHARE;
+
+  -- PostgreSQL core에는 범용 URL parser가 없다. 이 provenance 계약은 Namu canonical의
+  -- 허용 scheme/host/path를 먼저 분리하고, URL parser가 path로 접는 구분자·dot segment를
+  -- fail-close한 뒤에만 root/child 결속을 검사한다. raw URL prefix만 비교하면
+  -- `/문보경/../김도영`이 브라우저에서 `/김도영`으로 정규화되는 우회가 열린다.
+  v_root_path := substring(v_source.canonical_url FROM '^https://namu[.]wiki(/w/[^?#]+)$');
+  v_chunk_path := substring(NEW.canonical_url FROM '^https://namu[.]wiki(/w/[^?#]+)$');
 
   IF v_source.source_key IS NULL
     OR v_source.source_kind NOT IN ('namu_document', 'wikipedia_document', 'kbo_ebook')
@@ -120,8 +129,16 @@ BEGIN
       v_source.canonical_url <> NEW.canonical_url
       AND NOT (
         v_source.source_kind = 'namu_document'
-        AND left(NEW.canonical_url, length(v_source.canonical_url) + 1)
-              = v_source.canonical_url || '/'
+        AND v_root_path IS NOT NULL
+        AND v_chunk_path IS NOT NULL
+        AND position(E'\\' IN v_root_path) = 0
+        AND position(E'\\' IN v_chunk_path) = 0
+        AND v_root_path !~ '(^|/)[.]{1,2}(/|$)'
+        AND v_chunk_path !~ '(^|/)[.]{1,2}(/|$)'
+        -- encoded dot/separator와 double-encoding(%25)은 decode 횟수에 관계없이 거부.
+        AND v_root_path !~* '%(2e|2f|5c|25)'
+        AND v_chunk_path !~* '%(2e|2f|5c|25)'
+        AND left(v_chunk_path, length(v_root_path) + 1) = v_root_path || '/'
         AND NEW.metadata ->> 'documentCanonicalUrl' = NEW.canonical_url
       )
     )

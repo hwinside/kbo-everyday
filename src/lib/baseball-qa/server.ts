@@ -119,22 +119,26 @@ interface RagServingChunkRow {
  * **대상 선수의 문서가 아니면 아예 후보에 들어오지 못하게** 한다(엉뚱한 chunk 답변 차단).
  * 미수집 선수는 자연히 0행이므로 호출자가 fail-close한다.
  */
-async function searchRag(
-  candidate: RagPlayerCandidate,
-  question: string,
-): Promise<RagEvidence[]> {
-  const embedded = await embedQuery(question);
-  if (!embedded.ok) return [];
-  const fetchBySourceKind = async (sourceKind: RagDocumentSourceKind): Promise<RagEvidenceCandidate[]> => {
-    // query-guard: bounded -- entity + source_kind 폐쇄집합 각각 최대 40행. entity 전체를
-    // 먼저 limit(40)하면 Namu 41건 뒤의 Wikipedia가 DB에서 소실된다.
+export interface RagSearchRuntime {
+  embed: typeof embedQuery;
+  fetchBySourceKind: (
+    candidate: RagPlayerCandidate,
+    sourceKind: RagDocumentSourceKind,
+    limit: number,
+  ) => Promise<RagEvidenceCandidate[]>;
+}
+
+const productionRagSearchRuntime: RagSearchRuntime = {
+  embed: embedQuery,
+  fetchBySourceKind: async (candidate, sourceKind, limit) => {
+    // query-guard: bounded -- caller가 폐쇄집합 source_kind마다 RAG_CANDIDATE_LIMIT(40)을 전달한다.
     const { data, error } = await supabaseAdmin
       .from("genius_rag_serving_chunks")
       .select("content, page_title, canonical_url, revision, section_path, as_of, source_grade, source_kind, embedding")
       .eq("entity_type", candidate.entityType)
       .eq("entity_id", candidate.entityId)
       .eq("source_kind", sourceKind)
-      .limit(RAG_CANDIDATE_LIMIT);
+      .limit(limit);
     if (error) throw error;
     return ((data ?? []) as RagServingChunkRow[]).map((row) => ({
       content: row.content,
@@ -146,8 +150,23 @@ async function searchRag(
       sourceGrade: row.source_grade === "tier1" ? ("tier1" as const) : ("tier2" as const),
       embedding: row.embedding,
     }));
-  };
-  return searchSourcePriorityCandidates(fetchBySourceKind, embedded.vector, orderTier2Evidence);
+  },
+};
+
+export async function searchRag(
+  candidate: RagPlayerCandidate,
+  question: string,
+  runtime: RagSearchRuntime = productionRagSearchRuntime,
+): Promise<RagEvidence[]> {
+  const embedded = await runtime.embed(question);
+  if (!embedded.ok) return [];
+  // query-guard: bounded -- entity + source_kind 폐쇄집합 각각 최대 40행. entity 전체를
+  // 먼저 limit(40)하면 Namu 41건 뒤의 Wikipedia가 DB에서 소실된다.
+  return searchSourcePriorityCandidates(
+    (sourceKind) => runtime.fetchBySourceKind(candidate, sourceKind, RAG_CANDIDATE_LIMIT),
+    embedded.vector,
+    orderTier2Evidence,
+  );
 }
 
 /** 근거를 비신뢰 데이터 블록으로만 전달하는 재서술 호출 (S2b). */
