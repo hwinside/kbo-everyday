@@ -6,6 +6,12 @@ import { useAuth } from "./AuthContext";
 import { useBlockedIds } from "./useBlock";
 import type { Post } from "./usePosts";
 import { kboIdsForTeamSlug } from "@/lib/utils/player-roster";
+import {
+  clearFeedRestore,
+  consumeBackNavigation,
+  ensurePopStateListener,
+  readFeedRestore,
+} from "@/lib/community/feed-restore";
 
 /**
  * 팀 피드 OR 조건 파트(순수 함수, 회귀 공유).
@@ -150,23 +156,69 @@ export function useUnifiedFeed(board: FeedBoard, pageSize = 20) {
     [key, pageSize],
   );
 
+  // 지금까지 로드된 페이지 수 — 뒤로가기 복원 시 같은 분량을 다시 채우기 위해 추적한다.
+  // ref 를 함께 두는 이유: 저장은 scroll 핸들러에서 일어나는데 setState 는 비동기라
+  // 막 로드된 페이지가 반영되기 전에 저장되면 분량이 적게 복원된다(실측: cards 31 인데 pageCount 2).
+  const [pageCount, setPageCount] = useState(1);
+  const pageCountRef = useRef(1);
+  // 복원 대상 스크롤 위치(뒤로가기로 돌아왔고 저장 상태가 있을 때만 채워짐). 소비형.
+  const [pendingScrollY, setPendingScrollY] = useState<number | null>(null);
+
   // 초기 로드 / 보드 전환.
+  // 뒤로가기(popstate)로 돌아온 경우엔 떠날 때 로드돼 있던 페이지 수만큼 이어서 채운 뒤
+  // 스크롤을 복원한다. 1페이지만 불러오면 문서가 짧아져 브라우저 스크롤 복원이 잘려버린다.
   useEffect(() => {
     let cancelled = false;
+    ensurePopStateListener();
     setLoading(true);
     setPosts([]);
     setLikedIds(new Set());
     cursorRef.current = null;
     setHasMore(true);
+    pageCountRef.current = 1;
+    setPageCount(1);
+    setPendingScrollY(null);
+
+    // 뒤로가기 확정 플래그는 라우트 단위 1회용이라 여기서 소비한다(push 진입이면 false).
+    const cameBack = consumeBackNavigation();
+    const saved = cameBack ? readFeedRestore(key) : null;
+    if (!cameBack) clearFeedRestore(key);
 
     (async () => {
       const rows = await loadPage(null);
       if (cancelled) return;
-      setPosts(rows);
-      cursorRef.current = rows.length ? rows[rows.length - 1].id : null;
-      setHasMore(rows.length === pageSize);
+      let acc = rows;
+      let cursor = rows.length ? rows[rows.length - 1].id : null;
+      let more = rows.length === pageSize;
+      let pages = 1;
+
+      // 저장된 페이지 수까지 순차 복원. 서버 왕복이 늘지만 뒤로가기 1회에 한정된다.
+      while (saved && more && pages < saved.pageCount) {
+        const next = await loadPage(cursor);
+        if (cancelled) return;
+        if (!next.length) {
+          more = false;
+          break;
+        }
+        const seen = new Set(acc.map((p) => p.id));
+        acc = [...acc, ...next.filter((r) => !seen.has(r.id))];
+        cursor = next[next.length - 1].id;
+        more = next.length === pageSize;
+        pages += 1;
+      }
+
+      setPosts(acc);
+      cursorRef.current = cursor;
+      setHasMore(more);
+      pageCountRef.current = pages;
+      setPageCount(pages);
       setLoading(false);
-      fetchLikedFor(rows.map((r) => r.id));
+      fetchLikedFor(acc.map((r) => r.id));
+      if (saved) {
+        // 복원 상태는 1회용 — 소비 후 제거해 다음 진입에 재사용되지 않게 한다.
+        clearFeedRestore(key);
+        setPendingScrollY(saved.scrollY);
+      }
     })();
 
     return () => {
@@ -187,6 +239,10 @@ export function useUnifiedFeed(board: FeedBoard, pageSize = 20) {
       });
       if (rows.length) cursorRef.current = rows[rows.length - 1].id;
       setHasMore(rows.length === pageSize);
+      if (rows.length) {
+        pageCountRef.current += 1;
+        setPageCount(pageCountRef.current);
+      }
       fetchLikedFor(rows.map((r) => r.id));
     } finally {
       setLoadingMore(false);
@@ -201,6 +257,8 @@ export function useUnifiedFeed(board: FeedBoard, pageSize = 20) {
     setPosts(rows);
     cursorRef.current = rows.length ? rows[rows.length - 1].id : null;
     setHasMore(rows.length === pageSize);
+    pageCountRef.current = 1;
+    setPageCount(1);
     setLikedIds(new Set());
     setLoading(false);
     fetchLikedFor(rows.map((r) => r.id));
@@ -233,5 +291,14 @@ export function useUnifiedFeed(board: FeedBoard, pageSize = 20) {
     loadMore,
     reload,
     setPostLiked,
+    /** 피드 식별자 — 복원 상태 저장 키. */
+    feedKey: key,
+    /** 현재까지 로드된 페이지 수(복원 저장용). */
+    pageCount,
+    /** 같은 값의 ref — scroll 핸들러처럼 렌더 밖에서 즉시 최신값이 필요한 곳용. */
+    pageCountRef,
+    /** 복원해야 할 스크롤 위치(1회용). 복원을 수행한 쪽이 consumePendingScroll로 비운다. */
+    pendingScrollY,
+    consumePendingScroll: useCallback(() => setPendingScrollY(null), []),
   };
 }
