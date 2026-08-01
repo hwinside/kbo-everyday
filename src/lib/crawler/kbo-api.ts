@@ -253,8 +253,11 @@ export async function fetchGames(
       reason = "schema-error";
     }
 
-    // Monitoring must never consume or extend the user/cron response budget.
-    void trackFallback("kbo-games", reason, { errorMessage: error.message }).catch(() => undefined);
+    // A route-scoped absolute deadline must leave no detached DB write after
+    // the response. Callers without such a deadline retain fallback telemetry.
+    if (opts?.deadlineAtMs == null) {
+      void trackFallback("kbo-games", reason, { errorMessage: error.message }).catch(() => undefined);
+    }
 
     // Fallback: Naver schedule/games. srId 계약 보존(특정 시리즈는 fetchNaverGames 내부 fail-close).
     // Naver 성공 시 그대로 반환(무경기일 빈 배열도 성공) — 무경기일 fallback 500 방지.

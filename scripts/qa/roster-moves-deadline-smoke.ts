@@ -301,11 +301,17 @@ async function main() {
     let active = 0;
     let kboCalls = 0;
     let naverCalls = 0;
+    let fallbackWriteCalls = 0;
+    let activeFallbackWrites = 0;
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input instanceof Request ? input.url : input);
       if (url.includes("GetKboGameList")) kboCalls++;
       else if (url.includes("api-gw.sports.naver.com/schedule/games")) naverCalls++;
-      else return new Response(null, { status: 503 });
+      else if (url.startsWith(process.env.NEXT_PUBLIC_SUPABASE_URL!)) {
+        fallbackWriteCalls++;
+        activeFallbackWrites++;
+        return new Promise<Response>(() => undefined);
+      } else return new Response(null, { status: 503 });
       active++;
       return new Promise<Response>((_resolve, reject) => {
         init?.signal?.addEventListener("abort", () => {
@@ -336,6 +342,8 @@ async function main() {
     assert.equal(kboCalls, 1, "actual schedule KBO called once");
     assert.equal(naverCalls, 1, "actual schedule Naver reserve exercised");
     assert.equal(active, 0, "actual schedule outstanding 0 at response");
+    assert.equal(fallbackWriteCalls, 0, "deadline fallback telemetry DB write attempts 0");
+    assert.equal(activeFallbackWrites, 0, "deadline fallback telemetry outstanding 0");
   }
 
   // Pending webhook response/body stalls are abortable and do not hold the

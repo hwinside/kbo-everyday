@@ -62,6 +62,15 @@ function starterContractIncomplete(games: KboRawGame[]): boolean {
   ));
 }
 
+function slateMatches(games: Array<{ gameId: string }>, knownSlateIds: string[]): boolean {
+  const gameIds = [...new Set(games.map((game) => game.gameId))].sort();
+  const knownIds = [...new Set(knownSlateIds)].sort();
+  return gameIds.length === games.length
+    && knownIds.length === knownSlateIds.length
+    && gameIds.length === knownIds.length
+    && gameIds.every((id, index) => id === knownIds[index]);
+}
+
 /**
  * `/api/games` is independently cached and Naver-primary, so it is the bounded
  * witness for the static starter fields when game-live's KBO-primary response
@@ -165,16 +174,19 @@ export async function gameLiveRoute(
       // Always compare it, including scheduled games: otherwise a 4/5 KBO
       // partial or a Naver 5-game response with 0/10 starters is silently
       // accepted merely because no live/final game triggered the old guard.
-      const witness = await fetchStarterWitness(req, date, deadlineAtMs);
-      if (rawGames.length === 0 && witness.length === 0) {
-        const knownSlateIds = await deps.fetchKnownSlateIdsImpl(date, deadlineAtMs);
-        if (knownSlateIds.length > 0) {
-          trace = { ...trace, stage: "known-slate-missing", fetchedAtMs: Date.now() };
-          return NextResponse.json(
-            { error: "known slate missing from live sources", games: [], date, trace },
-            { status: 503, headers: traceHeaders(trace) },
-          );
-        }
+      const [witness, knownSlateIds] = await Promise.all([
+        fetchStarterWitness(req, date, deadlineAtMs),
+        deps.fetchKnownSlateIdsImpl(date, deadlineAtMs),
+      ]);
+      if (knownSlateIds.length > 0 && (
+        !slateMatches(rawGames.map((game) => ({ gameId: game.G_ID })), knownSlateIds)
+        || !slateMatches(witness, knownSlateIds)
+      )) {
+        trace = { ...trace, stage: "known-slate-mismatch", fetchedAtMs: Date.now() };
+        return NextResponse.json(
+          { error: "live slate differs from durable known slate", games: [], date, trace },
+          { status: 503, headers: traceHeaders(trace) },
+        );
       }
       const reconciled = reconcileStarterWitness(rawGames, witness);
       if (!reconciled) {
