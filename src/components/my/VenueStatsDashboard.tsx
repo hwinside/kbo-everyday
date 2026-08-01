@@ -7,10 +7,15 @@ import {
   CalendarDays,
   ChevronDown,
   ChevronLeft,
+  CloudRain,
+  Flame,
   Info,
+  MapPin,
   RefreshCw,
   Sparkles,
   Star,
+  Swords,
+  Target,
   Trophy,
 } from "lucide-react";
 import { useSafeBack } from "@/lib/hooks/useSafeBack";
@@ -38,9 +43,6 @@ import type {
   D5Value,
   D6Value,
   E1Value,
-  E2Value,
-  E3Value,
-  E4Value,
   MetricEnvelope,
   ScopeName,
   VenueStatsScopePayload,
@@ -73,41 +75,50 @@ const SEASONS = [2026, 2025] as const;
 
 function StatState({ metric }: { metric: MetricEnvelope }) {
   const good = metric.state === "ready";
+  if (good) return null;
   return (
-    <div className="mt-2 flex items-center justify-between gap-2 text-[10px] font-semibold">
-      <span className={good ? "text-white/70" : "text-amber-300/85"}>
+    <div className="mt-1 flex items-center justify-between gap-2 text-[9px] font-semibold">
+      <span className="text-amber-300/90">
         {METRIC_STATE_LABELS[metric.state] ?? metric.state}
       </span>
       <span className="text-white/70">{metricEvidence(metric)}</span>
     </div>
   );
 }
-
 function MetricCard({
   title,
   value,
   comparison,
   metric,
   accent = "text-white",
+  icon,
+  embedded = false,
+  className = "",
 }: {
   title: string;
   value: string;
   comparison?: string;
   metric: MetricEnvelope;
   accent?: string;
+  icon?: React.ReactNode;
+  embedded?: boolean;
+  className?: string;
 }) {
   return (
-    <div className="min-w-0 rounded-2xl border border-white/8 bg-white/[0.045] p-3.5">
-      <p className="text-[11px] font-bold text-white/70">{title}</p>
-      <p className={`mt-1 text-[24px] font-black tracking-tight ${accent}`}>{value}</p>
-      {comparison && <p className="mt-0.5 text-[11px] font-semibold text-white/70">{comparison}</p>}
+    <div className={`min-w-0 p-3 ${embedded ? "" : "rounded-xl border border-white/8 bg-[#151519]"} ${className}`}>
+      <div className="flex items-center justify-between gap-2">
+        <p className="flex items-center gap-1.5 text-[10px] font-bold text-white/70">{icon}{title}</p>
+        <span className="text-[9px] font-semibold text-white/60">{metric.n}경기 기준</span>
+      </div>
+      <p className={`mt-0.5 text-[23px] font-black leading-tight tracking-tight ${accent}`}>{value}</p>
+      {comparison && <p className="mt-0.5 text-[10px] font-semibold text-white/70">{comparison}</p>}
       <StatState metric={metric} />
     </div>
   );
 }
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
-  return <h2 className="mb-2 mt-5 px-0.5 text-[15px] font-black text-white">{children}</h2>;
+  return <h2 className="mb-2 mt-4 px-0.5 text-[14px] font-black text-white">{children}</h2>;
 }
 
 function SplitList({
@@ -155,6 +166,7 @@ export default function VenueStatsDashboard() {
   // 시즌 전환 직후에도 effect 안 setState 없이 즉시 로딩 UI로 수렴한다.
   const [failedSeason, setFailedSeason] = useState<number | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [favoritesOpen, setFavoritesOpen] = useState(false);
   const requestGeneration = useRef(0);
   const requestController = useRef<AbortController | null>(null);
 
@@ -237,15 +249,46 @@ export default function VenueStatsDashboard() {
   const d5 = scope?.metrics.D5 as MetricEnvelope<D5Value> | undefined;
   const d6 = scope?.metrics.D6 as MetricEnvelope<D6Value> | undefined;
   const e1 = scope?.metrics.E1 as MetricEnvelope<E1Value> | undefined;
-  const e2 = scope?.metrics.E2 as MetricEnvelope<E2Value> | undefined;
-  const e3 = scope?.metrics.E3 as MetricEnvelope<E3Value> | undefined;
-  const e4 = scope?.metrics.E4 as MetricEnvelope<E4Value> | undefined;
 
   const c1ById = new Map((c1?.value ?? []).map((entry) => [entry.playerId, entry]));
   const c2ById = new Map((c2?.value ?? []).map((entry) => [entry.playerId, entry]));
   const c4ById = new Map((c4?.value ?? []).map((entry) => [entry.playerId, entry]));
-  const favoriteIds = [...new Set([...c1ById.keys(), ...c2ById.keys(), ...c4ById.keys()])];
-  const mixedA1Items = hero?.mixedTeam ? (a1?.items ?? []) : [];
+  const favoriteRegistrationOrder = new Map(
+    (profile?.favorite_players ?? []).map((player, index) => [player.playerId, index]),
+  );
+  const allFavoriteIds = [...new Set([...c1ById.keys(), ...c2ById.keys(), ...c4ById.keys()])]
+    .sort((left, right) =>
+      (favoriteRegistrationOrder.get(left) ?? Number.MAX_SAFE_INTEGER)
+      - (favoriteRegistrationOrder.get(right) ?? Number.MAX_SAFE_INTEGER));
+  // C6의 타자·투수 boostPct는 서로 다른 지표라 역할을 가로질러 숫자로 비교하지 않는다.
+  // 역할별 1위 후보만 만든 뒤, 후보 간 메인은 사용자의 최애 등록순으로 결정한다.
+  const favoriteBoostLeaders = [
+    c6?.value?.batterRanking?.[0]
+      ? { ...c6.value.batterRanking[0], role: "batter" as const }
+      : null,
+    c6?.value?.pitcherRanking?.[0]
+      ? { ...c6.value.pitcherRanking[0], role: "pitcher" as const }
+      : null,
+  ].filter((entry): entry is NonNullable<typeof entry> => entry != null && allFavoriteIds.includes(entry.playerId));
+  const mainFavorite = favoriteBoostLeaders.reduce<(typeof favoriteBoostLeaders)[number] | null>(
+    (selected, candidate) => {
+      if (!selected) return candidate;
+      const selectedOrder = favoriteRegistrationOrder.get(selected.playerId) ?? Number.MAX_SAFE_INTEGER;
+      const candidateOrder = favoriteRegistrationOrder.get(candidate.playerId) ?? Number.MAX_SAFE_INTEGER;
+      return candidateOrder < selectedOrder ? candidate : selected;
+    },
+    null,
+  );
+  const favoriteBoostLabelById = new Map(
+    favoriteBoostLeaders.map((entry) => [
+      entry.playerId,
+      entry.role === "batter" ? "타자 부스트 1위" : "투수 부스트 1위",
+    ] as const),
+  );
+  const favoriteIds = mainFavorite
+    ? [mainFavorite.playerId, ...allFavoriteIds.filter((playerId) => playerId !== mainFavorite.playerId)]
+    : allFavoriteIds;
+  const visibleFavoriteIds = favoritesOpen ? favoriteIds : favoriteIds.slice(0, 1);
   const mixedBTeamIds = hero?.mixedTeam
     ? [...new Set(
         [b1, b2, b3, b4]
@@ -254,6 +297,59 @@ export default function VenueStatsDashboard() {
           .filter(Number.isInteger),
       )]
     : [];
+  const opponentCells = scope ? splitCells<A2Cell>(scope.metrics.A2) : [];
+  const stadiumCells = scope ? splitCells<A3Cell>(scope.metrics.A3) : [];
+  const weekdayCells = scope ? splitCells<A4Cell>(scope.metrics.A4) : [];
+  const bestOpponent = [...opponentCells]
+    .filter(({ cell, sampleLimited }) => !sampleLimited && cell.w + cell.l + cell.d >= MIN_FINAL_GAMES)
+    .sort((a, b) => (b.cell.w + b.cell.l + b.cell.d) - (a.cell.w + a.cell.l + a.cell.d))[0];
+  const bestStadium = [...stadiumCells]
+    .filter(({ cell, sampleLimited }) => !sampleLimited && cell.w + cell.l + cell.d >= MIN_FINAL_GAMES)
+    .sort((a, b) => (b.cell.w + b.cell.l + b.cell.d) - (a.cell.w + a.cell.l + a.cell.d))[0];
+  const saturday = weekdayCells.find(({ cell, sampleLimited }) =>
+    !sampleLimited && cell.weekday === 6 && cell.w + cell.l + cell.d >= MIN_FINAL_GAMES);
+  const summarySampleReady = (a1?.n ?? 0) >= MIN_FINAL_GAMES && !hero?.sampleLimited;
+  const hrGames = b4?.denominator?.attendanceFinalGames ?? b4?.n ?? 0;
+  const homeRunsSeen = b4?.value?.hr?.attendancePerGame == null
+    ? 0
+    : Math.round(b4.value.hr.attendancePerGame * hrGames);
+  const interestingFacts: Array<{ key: string; label: string; value: string; icon: React.ReactNode }> = [];
+  if (bestStadium) interestingFacts.push({
+    key: "stadium", label: bestStadium.cell.stadium,
+    value: `${bestStadium.cell.w}승 ${bestStadium.cell.l}패`,
+    icon: <MapPin size={16} className="text-sky-300" />,
+  });
+  if (saturday) interestingFacts.push({
+    key: "saturday", label: "토요일", value: `승률 ${formatRate(saturday.cell.rate, 0)}`,
+    icon: <CalendarDays size={16} className="text-rose-300" />,
+  });
+  if (bestOpponent) interestingFacts.push({
+    key: "opponent",
+    label: `${getTeamById(bestOpponent.cell.opponentTeamId)?.shortName ?? `팀 ${bestOpponent.cell.opponentTeamId}`}전`,
+    value: `${bestOpponent.cell.w}승 ${bestOpponent.cell.l}패`,
+    icon: <Swords size={16} className="text-orange-300" />,
+  });
+  if (summarySampleReady && homeRunsSeen > 0) interestingFacts.push({
+    key: "home-runs", label: "홈런", value: `${homeRunsSeen}개 목격`,
+    icon: <span className="text-[16px] leading-none">⚾</span>,
+  });
+  if (summarySampleReady && (e1?.value?.longest ?? 0) >= 2) interestingFacts.push({
+    key: "streak", label: "연속 직관", value: `최장 ${e1!.value!.longest}경기`,
+    icon: <Flame size={16} className="text-amber-300" />,
+  });
+  if (summarySampleReady && (d5?.value?.cancelledCount ?? 0) > 0) interestingFacts.push({
+    key: "cancelled", label: "우천·취소", value: `${d5!.value!.cancelledCount}회`,
+    icon: <CloudRain size={16} className="text-blue-300" />,
+  });
+  if (summarySampleReady && d6?.value?.maxTeamRuns) interestingFacts.push({
+    key: "max-runs", label: "최다 득점", value: `${d6.value.maxTeamRuns.runs}점`,
+    icon: <Target size={16} className="text-emerald-300" />,
+  });
+  if (summarySampleReady && (d1?.value?.closeGames ?? 0) > 0) interestingFacts.push({
+    key: "close-games", label: "1점차 승부", value: `${d1!.value!.closeGames}경기`,
+    icon: <Trophy size={16} className="text-violet-300" />,
+  });
+  const visibleInterestingFacts = interestingFacts.slice(0, 6);
 
   if (!user) return null;
 
@@ -281,18 +377,32 @@ export default function VenueStatsDashboard() {
         </div>
       </header>
 
-      <div className="mt-4 flex items-center justify-between gap-3">
+      <div className="mt-3 flex items-center gap-2">
         <label className="relative">
           <select
             value={season}
             onChange={(event) => selectSeason(Number(event.target.value))}
-            className="h-10 appearance-none rounded-full border border-white/10 bg-white/[0.06] pl-4 pr-10 text-[13px] font-extrabold text-white outline-none"
+            className="h-9 appearance-none rounded-full border border-white/10 bg-white/[0.06] pl-4 pr-9 text-[12px] font-extrabold text-white outline-none"
           >
             {SEASONS.map((value) => <option key={value} value={value}>{value}</option>)}
           </select>
-          <ChevronDown size={14} className="pointer-events-none absolute right-3 top-3 text-white/60" />
+          <ChevronDown size={13} className="pointer-events-none absolute right-3 top-[11px] text-white/60" />
         </label>
-        <span className="text-[11px] font-semibold text-white/70">정규시즌 기준</span>
+        <div className="grid min-w-0 flex-1 grid-cols-2 rounded-full border border-white/10 bg-white/[0.05] p-0.5">
+          {([["overall", "전체 기록"], ["gps", "GPS 인증만"]] as const).map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => setScopeName(key)}
+              className={`rounded-full py-2 text-[11px] font-black transition-colors ${
+                scopeName === key
+                  ? "bg-gradient-to-r from-[#a51f36] to-[#7f182e] text-white shadow-[0_3px_12px_rgba(165,31,54,.3)]"
+                  : "text-white/70"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {showLoading ? (
@@ -309,10 +419,10 @@ export default function VenueStatsDashboard() {
         </button>
       ) : scope && hero && a1 ? (
         <>
-          <section className="relative mt-4 overflow-hidden rounded-2xl border border-[#ff5263]/45 bg-[radial-gradient(circle_at_88%_8%,rgba(255,82,99,0.18),transparent_35%),linear-gradient(145deg,#211318,#111114_72%)] p-5 shadow-[0_10px_35px_rgba(255,69,84,0.08)]">
-            <Sparkles className="absolute right-5 top-5 text-[#ff9aa5]" size={28} />
-            <p className="text-[13px] font-black text-[#ff9aa5]">나의 직관 요정 지수</p>
-            <div className="mt-2 flex items-end gap-2">
+          <section className="relative mt-3 overflow-hidden rounded-2xl border border-[#ff5263]/50 bg-[radial-gradient(circle_at_88%_8%,rgba(255,82,99,0.22),transparent_34%),linear-gradient(145deg,#241318,#111114_72%)] p-4 shadow-[0_10px_35px_rgba(255,69,84,0.1)]">
+            <Sparkles className="absolute right-4 top-4 text-[#ff9aa5]" size={24} />
+            <p className="text-[12px] font-black text-[#ff9aa5]">나의 직관 요정 지수</p>
+            <div className="mt-1.5 flex items-end gap-2">
               <span className="text-[54px] font-black leading-none tracking-[-0.06em]">
                 {hero.score ?? "–"}
               </span>
@@ -329,14 +439,14 @@ export default function VenueStatsDashboard() {
                 {hero.sampleLimited ? METRIC_STATE_LABELS.sample_limited : "승률 요정"}
               </span>
             </div>
-            <div className="mt-3 flex items-center gap-3 text-[15px] font-black">
+            <div className="mt-2 flex items-center gap-2.5 text-[14px] font-black">
               <span className="text-sky-400">{hero.attendance?.w ?? 0}승</span>
               <span className="text-rose-300">{hero.attendance?.l ?? 0}패</span>
               <span className="text-white/65">{hero.attendance?.d ?? 0}무</span>
               <span>·</span>
               <span>승률 {formatRate(hero.attendance?.rate)}</span>
             </div>
-            <p className="mt-2 text-[12px] font-semibold text-white/70">
+            <p className="mt-1.5 text-[11px] font-semibold text-white/70">
               {hero.sampleLimited
                 ? `종료 경기 ${a1.n}경기 기록이에요 · ${MIN_FINAL_GAMES}경기부터 팀 시즌 비교를 보여드려요`
                 : hero.mixedTeam
@@ -346,64 +456,19 @@ export default function VenueStatsDashboard() {
                     : `팀 시즌 승률 ${formatRate(hero.teamRate)}보다 ${formatSigned(hero.deltaPp, 1, "%p")}`}
             </p>
             {hero.teamIds.length > 0 && (
-              <div className="mt-4 flex flex-wrap gap-1.5 rounded-xl border border-white/8 bg-white/[0.035] p-2.5">
+              <div className="mt-3 flex items-center gap-1.5 overflow-hidden rounded-lg border border-white/8 bg-white/[0.035] px-2.5 py-2">
                 {hero.teamIds.map((teamId) => {
                   const team = getTeamById(teamId);
                   return (
-                    <span key={teamId} className="inline-flex items-center gap-1.5 rounded-full bg-white/[0.06] px-2 py-1 text-[10px] font-bold text-white/70">
+                    <span key={teamId} className="inline-flex shrink-0 items-center gap-1 rounded-full bg-white/[0.06] px-1.5 py-0.5 text-[9px] font-bold text-white/70">
                       {team && <Image src={team.logoPath} alt="" width={14} height={14} unoptimized />}
                       {team?.shortName ?? `팀 ${teamId}`}
                     </span>
                   );
                 })}
-                <span className="ml-auto self-center text-[10px] text-white/70">{metricEvidence(a1)}</span>
+                <span className="ml-auto truncate text-[9px] text-white/70">{metricEvidence(a1)}</span>
               </div>
             )}
-            {mixedA1Items.length > 0 && (
-              <div className="mt-3 grid gap-1.5">
-                {mixedA1Items.map((item) => {
-                  const team = getTeamById(Number(item.key));
-                  const value = item.value as A1Value | null;
-                  return (
-                    <div
-                      key={item.key}
-                      className="flex items-center justify-between gap-3 rounded-xl border border-white/8 bg-black/20 px-3 py-2"
-                    >
-                      <span className="text-[11px] font-extrabold text-white/70">
-                        {team?.shortName ?? `팀 ${item.key}`} 응원 구간
-                      </span>
-                      <span className="text-[11px] font-black text-white/80">
-                        {value
-                          ? `${value.attendance.w}승 ${value.attendance.l}패 ${value.attendance.d}무 · ${formatRate(value.attendance.rate)}`
-                          : METRIC_STATE_LABELS[item.state]}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </section>
-
-          <section className="sticky top-[52px] z-20 -mx-1 mt-3 rounded-2xl border border-white/8 bg-[#111114]/95 p-1.5 shadow-xl backdrop-blur-xl">
-            <div className="grid grid-cols-2 gap-1">
-              {([
-                ["overall", "전체 기록"],
-                ["gps", "GPS 인증만"],
-              ] as const).map(([key, label]) => (
-                <button
-                  key={key}
-                  onClick={() => setScopeName(key)}
-                  className={`rounded-xl py-2.5 text-[12px] font-black transition-colors ${
-                    scopeName === key ? "bg-[#b82d41] text-white" : "text-white/70"
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-            <p className="px-2 pb-1 pt-2 text-center text-[10px] font-semibold text-white/70">
-              재미 지표 · 시즌 {season} · 표본 {scope.coverage.attendanceGames}경기
-            </p>
           </section>
 
           {scope.state === "empty" ? (
@@ -416,36 +481,54 @@ export default function VenueStatsDashboard() {
             <>
               <SectionTitle>내가 간 경기, 우리 팀은</SectionTitle>
               {!hero.mixedTeam && (
-                <div className="grid grid-cols-2 gap-2">
+                <div
+                  data-testid="venue-team-metrics"
+                  className="grid grid-cols-2 overflow-hidden rounded-2xl border border-white/8 bg-[#151519]"
+                >
                   {/* 표본 미달이면 baseline이 null로 내려오므로 비교문구 자체를 감춘다("시즌 – · –" 방지). */}
                   <MetricCard
                     title="팀 타율"
                     value={formatAvg(b1?.value?.attendanceAvg)}
                     comparison={b1?.value?.seasonAvg != null ? `시즌 ${formatAvg(b1.value.seasonAvg)} · ${formatSigned(b1.value.delta, 3)}` : undefined}
                     metric={b1!}
+                    accent="text-emerald-300"
+                    icon={<span className="text-[12px]">⚾</span>}
+                    embedded
+                    className="border-b border-r border-white/8"
                   />
                   <MetricCard
                     title="평균 득점"
                     value={b3?.value?.runsPerGame == null ? "–" : b3.value.runsPerGame.toFixed(1)}
                     comparison={b3?.value ? `${b3.value.totalRuns}득점` : undefined}
                     metric={b3!}
+                    accent="text-amber-300"
+                    icon={<Target size={12} />}
+                    embedded
+                    className="border-b border-white/8"
                   />
                   <MetricCard
                     title="팀 ERA"
                     value={formatEra(b2?.value?.attendanceEra)}
                     comparison={b2?.value?.seasonEra != null ? `시즌 ${formatEra(b2.value.seasonEra)} · ${formatSigned(b2.value.delta, 2)}` : undefined}
                     metric={b2!}
+                    accent="text-sky-300"
+                    icon={<span className="text-[12px]">⚾</span>}
+                    embedded
+                    className="border-r border-white/8"
                   />
                   <MetricCard
                     title="홈런"
                     value={b4?.value?.hr?.attendancePerGame == null ? "–" : b4.value.hr.attendancePerGame.toFixed(1)}
                     comparison={b4?.value?.hr?.seasonPerGame != null ? `시즌 경기당 ${b4.value.hr.seasonPerGame.toFixed(1)}` : undefined}
                     metric={b4!}
+                    accent="text-rose-300"
+                    icon={<Flame size={12} />}
+                    embedded
                   />
                 </div>
               )}
               {mixedBTeamIds.length > 0 && (
-                <div className="mt-2 grid gap-2">
+                <div className="mt-2 grid grid-cols-2 gap-2">
                   {mixedBTeamIds.map((teamId) => {
                     const key = String(teamId);
                     const b1Item = b1?.items?.find((item) => item.key === key);
@@ -462,9 +545,9 @@ export default function VenueStatsDashboard() {
                     const ready = items.some((item) => item.state === "ready");
                     const team = getTeamById(teamId);
                     return (
-                      <div key={teamId} className="rounded-2xl border border-white/8 bg-white/[0.045] p-3.5">
+                      <div key={teamId} className="rounded-xl border border-white/8 bg-[#151519] p-3">
                         <div className="flex items-center justify-between gap-2">
-                          <span className="text-[12px] font-black text-white/70">
+                          <span className="truncate text-[11px] font-black text-white/75">
                             {team?.shortName ?? `팀 ${teamId}`} 응원 구간
                           </span>
                           <span className="text-[10px] font-semibold text-white/70">
@@ -473,7 +556,7 @@ export default function VenueStatsDashboard() {
                               : METRIC_STATE_LABELS[items[0]?.state ?? "empty"]}
                           </span>
                         </div>
-                        <div className="mt-2 grid grid-cols-4 gap-1 text-center">
+                        <div className="mt-2 grid grid-cols-2 gap-x-1 gap-y-2 text-center">
                           <div>
                             <p className="text-[9px] text-white/70">타율</p>
                             <p className="mt-0.5 text-[12px] font-black">{formatAvg(b1Value?.attendanceAvg)}</p>
@@ -500,24 +583,32 @@ export default function VenueStatsDashboard() {
               <SectionTitle>내 앞에서 더 빛난 최애</SectionTitle>
               <div className="space-y-2">
                 {favoriteIds.length === 0 ? (
-                  <div className="rounded-2xl border border-white/8 bg-white/[0.045] p-5 text-sm font-semibold text-white/70">
+                  <div className="rounded-2xl border border-white/8 bg-white/[0.045] p-4 text-sm font-semibold text-white/70">
                     {METRIC_STATE_LABELS[c1?.state ?? "no_favorite"]}
                   </div>
-                ) : favoriteIds.map((playerId) => {
+                ) : visibleFavoriteIds.map((playerId) => {
                   const player = favoriteById.get(playerId);
                   const batter = c1ById.get(playerId);
                   const pitcher = c2ById.get(playerId);
-                  const homer = c4ById.get(playerId);
+                  const highlight = c4ById.get(playerId);
+                  const topGame = c5?.value?.find((entry) => entry.playerId === playerId);
                   const team = player ? getTeamById(player.teamId) : null;
                   const photoUrl = player ? getPlayerPhotoUrl(player.name, playerId, player.teamId) : null;
+                  const attendanceValue = batter ? formatAvg(batter.attendanceAvg) : formatEra(pitcher?.attendanceEra);
+                  const seasonValue = batter ? formatAvg(batter.seasonAvg) : formatEra(pitcher?.seasonEra);
+                  const boostLabel = batter?.deltaAvg != null
+                    ? `타율 ${formatSigned(batter.deltaAvg, 3).replace("+0.", "+.")}`
+                    : pitcher?.eraImprovement != null
+                      ? `ERA ${formatSigned(pitcher.eraImprovement, 2)}`
+                      : null;
                   return (
-                    <div key={playerId} className="rounded-2xl border border-white/8 bg-white/[0.045] p-4">
-                      <div className="flex items-center gap-3">
+                    <div key={playerId} data-testid="venue-favorite-card" className="rounded-2xl border border-white/8 bg-[#151519] p-3">
+                      <div className="flex items-center gap-2.5">
                         {/* 선수 사진이 있으면 사진, 없으면 종전 팀 로고/별 폴백.
                             공용 PlayerAvatar 는 쓰지 않는다 — 그 이니셜 폴백은 팀색 글자라
                             어두운 배경에서 AA 대비를 못 넘긴다(실측 2.75·3.36 < 4.5, S2 browser gate).
                             이 PR 은 사진 배선만 한다 — 공용 컴포넌트 대비 개선은 별건. */}
-                        <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-full border border-white/10 bg-white/[0.06]">
+                        <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-full border border-white/10 bg-white/[0.06] shadow-[0_0_18px_rgba(255,82,99,.12)]">
                           {photoUrl ? (
                             <Image
                               src={photoUrl}
@@ -534,85 +625,93 @@ export default function VenueStatsDashboard() {
                           )}
                         </div>
                         <div className="min-w-0 flex-1">
-                          <p className="truncate text-[17px] font-black">{player?.name ?? playerId}</p>
-                          <p className="text-[11px] font-semibold text-white/70">
+                          <div className="flex items-center gap-1.5">
+                            <p className="truncate text-[16px] font-black">{player?.name ?? playerId}</p>
+                            {favoriteBoostLabelById.has(playerId) && (
+                              <span className="shrink-0 rounded-full bg-amber-300/15 px-1.5 py-0.5 text-[9px] font-black text-amber-300">
+                                {favoriteBoostLabelById.get(playerId)}
+                              </span>
+                            )}
+                          </div>
+                          {boostLabel && (
+                            <span className="mt-0.5 inline-flex rounded-full border border-[#ff596a]/45 bg-[#ff4053]/10 px-1.5 py-0.5 text-[9px] font-black text-[#ff9aa5]">
+                              직관 부스트 {boostLabel}
+                            </span>
+                          )}
+                          <p className="mt-0.5 text-[9px] font-semibold text-white/70">
                             {team?.shortName ?? "최애 선수"}{player?.position ? ` · ${player.position}` : ""}
                           </p>
                         </div>
-                        {homer && (
-                          <div className="text-right">
-                            <p className="text-[20px] font-black">{homer.homeRuns}개</p>
-                            <p className="text-[10px] text-white/70">홈런 목격</p>
+                        <div className="grid shrink-0 grid-cols-2 divide-x divide-white/10 text-right">
+                          <div className="px-2">
+                            <p className="text-[9px] font-bold text-white/60">내 앞에서</p>
+                            <p className="mt-0.5 text-[20px] font-black leading-none text-[#ffb0b8]">{attendanceValue}</p>
                           </div>
-                        )}
-                      </div>
-                      <div className="mt-3 grid grid-cols-2 divide-x divide-white/8 rounded-xl bg-black/20 p-3">
-                        <div className="pr-3">
-                          <p className="text-[10px] font-bold text-white/70">내 앞에서</p>
-                          <p className="mt-1 text-[23px] font-black">
-                            {batter ? formatAvg(batter.attendanceAvg) : formatEra(pitcher?.attendanceEra)}
-                          </p>
-                        </div>
-                        <div className="pl-3">
-                          <p className="text-[10px] font-bold text-white/70">시즌</p>
-                          <p className="mt-1 text-[23px] font-black text-white/70">
-                            {batter ? formatAvg(batter.seasonAvg) : formatEra(pitcher?.seasonEra)}
-                          </p>
+                          <div className="pl-2">
+                            <p className="text-[9px] font-bold text-white/60">시즌</p>
+                            <p className="mt-0.5 text-[20px] font-black leading-none text-white/75">{seasonValue}</p>
+                          </div>
                         </div>
                       </div>
-                      <p className="mt-2 text-[10px] font-semibold text-white/70">
-                        {batter ? `출전 ${batter.appearances}경기 · AB ${batter.ab}` : `출전 ${pitcher?.appearances ?? 0}경기 · IP ${formatOuts(pitcher?.outs)}`}
-                      </p>
+                      {(highlight?.batter || highlight?.pitcher) && (
+                        <div className="mt-2 flex items-center gap-1.5 text-[10px] font-bold text-white/80">
+                          <Sparkles size={12} className="text-amber-300" />
+                          {highlight?.batter
+                            ? `${highlight.batter.hits}안타 · ${highlight.batter.rbi}타점 · ${highlight.batter.homeRuns}홈런`
+                            : `${highlight!.pitcher!.strikeouts}K · ${highlight!.pitcher!.zeroEarnedRunGames}경기 0자책`}
+                        </div>
+                      )}
+                      {topGame && (
+                        <p className="mt-1.5 truncate text-[9px] font-semibold text-white/70">
+                          최애 최고의 직관 경기 · {topGame.batterTop
+                            ? `${topGame.batterTop.date} ${topGame.batterTop.h}안타 ${topGame.batterTop.hr}홈런`
+                            : topGame.pitcherTop
+                              ? `${topGame.pitcherTop.date} ${formatOuts(topGame.pitcherTop.ipOuts)}이닝 ${topGame.pitcherTop.k}K`
+                              : "기록 확인 중"}
+                        </p>
+                      )}
+                      <StatState metric={batter ? c1! : c2!} />
                     </div>
                   );
                 })}
-                {(c5?.value?.length ?? 0) > 0 && (
-                  <div className="rounded-2xl border border-white/8 bg-white/[0.045] p-4 text-[12px]">
-                    <p className="font-extrabold text-white/70">최애 최고의 직관 경기</p>
-                    <p className="mt-1 text-white/70">
-                      {c5!.value![0].batterTop
-                        ? `${c5!.value![0].batterTop!.date} · ${c5!.value![0].batterTop!.h}안타 ${c5!.value![0].batterTop!.hr}홈런`
-                        : c5!.value![0].pitcherTop
-                          ? `${c5!.value![0].pitcherTop!.date} · ${formatOuts(c5!.value![0].pitcherTop!.ipOuts)}이닝 ${c5!.value![0].pitcherTop!.k}K`
-                          : "기록 확인 중"}
-                    </p>
-                  </div>
-                )}
-                {c6?.value && (
-                  <div className="rounded-2xl border border-white/8 bg-white/[0.045] p-4 text-[12px]">
-                    <p className="font-extrabold text-white/70">내 직관 부스트 순위</p>
-                    <p className="mt-1 text-white/70">
-                      타자 {c6.value.batterRanking.length}명 · 투수 {c6.value.pitcherRanking.length}명 비교
-                    </p>
-                    <StatState metric={c6} />
-                  </div>
+                {favoriteIds.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => setFavoritesOpen((value) => !value)}
+                    className="flex w-full items-center justify-center gap-1 rounded-xl border border-white/8 bg-white/[0.045] py-2.5 text-[11px] font-extrabold text-white/75"
+                  >
+                    {favoritesOpen ? "최애 접기" : `다른 최애 ${favoriteIds.length - 1}명 보기`}
+                    <ChevronDown size={13} className={favoritesOpen ? "rotate-180" : ""} />
+                  </button>
                 )}
               </div>
 
-              <SectionTitle>이런 것까지?</SectionTitle>
-              <div className="grid grid-cols-2 gap-2">
-                {/* 상세 목록과 같은 소스를 써야 한다 — 표본 미달 cell 은 top-level value 에 없고
-                    items 에만 사실값이 있어서, 여기서 value 만 읽으면 상세엔 보이는 토요일이 `–` 로 죽는다. */}
-                <MetricCard
-                  title="토요일 승률"
-                  value={formatRate(
-                    splitCells<A4Cell>(scope.metrics.A4).find(({ cell }) => cell.weekday === 6)?.cell.rate,
-                  )}
-                  metric={scope.metrics.A4}
-                />
-                <MetricCard title="연속 직관" value={`${e1?.value?.current ?? 0}경기`} comparison={`최장 ${e1?.value?.longest ?? 0}경기`} metric={e1!} />
-                <MetricCard title="우천·취소" value={`${d5?.value?.cancelledCount ?? 0}회`} metric={d5!} />
-                <MetricCard title="최다 득점" value={d6?.value?.maxTeamRuns ? `${d6.value.maxTeamRuns.runs}점` : "–"} comparison={d6?.value?.maxTeamRuns?.date} metric={d6!} />
-                <MetricCard title="평균 득점차" value={d1?.value?.avgRunDiff == null ? "–" : formatSigned(d1.value.avgRunDiff, 1)} comparison={d1?.value ? `1점차 경기 ${d1.value.closeGames}회` : undefined} metric={d1!} />
-                <MetricCard title="누적 직관" value={`${e2?.value?.seasonCount ?? 0}경기`} comparison={e2?.value?.avgPerActiveMonth == null ? undefined : `활동 월 평균 ${e2.value.avgPerActiveMonth.toFixed(1)}회`} metric={e2!} />
-                <MetricCard title="첫 직관부터" value={e3?.value?.daysSinceFirst == null ? "–" : `D+${e3.value.daysSinceFirst}`} comparison={e3?.value?.firstAttendanceDate} metric={e3!} />
-                <MetricCard title="주력 구장" value={e4?.value?.topStadium?.name ?? "–"} comparison={e4?.value?.topStadium ? `${e4.value.topStadium.count}회` : undefined} metric={e4!} />
-              </div>
+              {visibleInterestingFacts.length > 0 && (
+                <>
+                  <SectionTitle>이런 것까지?</SectionTitle>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {visibleInterestingFacts.map((fact) => (
+                      <div
+                        key={fact.key}
+                        data-testid="venue-interesting-fact"
+                        className="flex min-w-0 items-center gap-2 rounded-xl border border-white/8 bg-[#151519] px-3 py-2.5"
+                      >
+                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/[0.07]">
+                          {fact.icon}
+                        </span>
+                        <p className="min-w-0 truncate text-[11px] font-bold text-white/75">
+                          {fact.label} <strong className="text-white">{fact.value}</strong>
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
 
               <button
                 type="button"
                 onClick={() => setDetailsOpen((value) => !value)}
-                className="mt-4 flex w-full items-center justify-between rounded-2xl border border-white/8 bg-white/[0.045] px-4 py-3.5 text-[13px] font-extrabold"
+                className="mt-3 flex w-full items-center justify-between rounded-xl border border-white/8 bg-white/[0.045] px-3.5 py-3 text-[12px] font-extrabold"
               >
                 상대·구장·요일 상세 통계
                 <ChevronDown size={17} className={`transition-transform ${detailsOpen ? "rotate-180" : ""}`} />
@@ -676,13 +775,13 @@ export default function VenueStatsDashboard() {
             </>
           )}
 
-          <section className="mt-4 rounded-2xl border border-white/8 bg-white/[0.045] p-4">
+          <section className="mt-3 rounded-xl border border-white/8 bg-white/[0.045] p-3">
             <div className="flex items-center gap-2">
               <BarChart3 size={16} className="text-[#ff6574]" />
               <p className="text-[12px] font-extrabold">데이터 기준</p>
             </div>
-            <p className="mt-2 text-[11px] leading-relaxed text-white/70">{coverageCaption(scope)}</p>
-            <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/8">
+            <p className="mt-1.5 text-[10px] leading-relaxed text-white/70">{coverageCaption(scope)}</p>
+            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/8">
               <div
                 className="h-full rounded-full bg-gradient-to-r from-[#ff4053] to-[#ff7180]"
                 style={{
@@ -692,7 +791,7 @@ export default function VenueStatsDashboard() {
                 }}
               />
             </div>
-            <p className="mt-2 flex items-center gap-1 text-[10px] text-white/70">
+            <p className="mt-1.5 flex items-center gap-1 text-[9px] text-white/70">
               <CalendarDays size={11} /> 표본이 적거나 기록이 누락된 지표는 참고용으로 표시돼요
             </p>
           </section>

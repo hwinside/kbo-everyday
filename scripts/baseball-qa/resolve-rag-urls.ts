@@ -258,28 +258,55 @@ async function main(): Promise<void> {
     console.error("NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY 미설정 — DB 쓰기 불가");
     process.exit(1);
   }
+  // ⚠️ PATCH + `Prefer: return=minimal` 만 쓰면 **행이 없어도 성공(0행 갱신)** 이다.
+  // wikipedia:* source 는 migration/seed 에 INSERT 가 0건이라, 예전 코드는 한 행도
+  // 만들지 않고 "갱신 완료" 를 출력했다(삼순 R3/R4 P0-2 — 16행 미생성).
+  // 그래서 upsert 로 바꾸고, `return=representation` 으로 **실제 반영된 행**을 세어
+  // 기대 건수와 대조한다. 하나라도 어긋나면 실패로 종결한다.
+  const sourceKind = SOURCE === "namu" ? "namu_document" : "wikipedia_document";
+  let affected = 0;
   for (const row of results) {
-    const response = await fetch(`${url}/rest/v1/genius_rag_sources?source_key=eq.${encodeURIComponent(row.sourceKey)}`, {
-      method: "PATCH",
+    const response = await fetch(`${url}/rest/v1/genius_rag_sources?on_conflict=source_key`, {
+      method: "POST",
       headers: {
         apikey: key,
         Authorization: `Bearer ${key}`,
         "Content-Type": "application/json",
-        Prefer: "return=minimal",
+        // merge-duplicates = 있으면 UPDATE, 없으면 INSERT. representation = 반영된 행 반환.
+        Prefer: "resolution=merge-duplicates,return=representation",
       },
-      body: JSON.stringify({
-        resolution_status: row.status,
+      body: JSON.stringify([{
+        source_key: row.sourceKey,
+        source_kind: sourceKind,
+        entity_type: "player",
+        entity_id: String(row.kboId),
+        page_title: row.pageTitle ?? row.name,
+        candidate_urls: row.canonicalUrl ? [row.canonicalUrl] : [],
         canonical_url: row.canonicalUrl,
+        resolution_status: row.status,
         resolution_note: row.note,
+        source_grade: "tier2",
         updated_at: new Date().toISOString(),
-      }),
+      }]),
     });
     if (!response.ok) {
-      console.error(`${row.sourceKey} 갱신 실패: HTTP ${response.status} ${await response.text()}`);
+      console.error(`${row.sourceKey} upsert 실패: HTTP ${response.status} ${await response.text()}`);
       process.exitCode = 1;
+      continue;
     }
+    const returned = (await response.json()) as unknown[];
+    if (!Array.isArray(returned) || returned.length !== 1) {
+      console.error(`${row.sourceKey}: 반영 행 ${Array.isArray(returned) ? returned.length : "?"}건 (1건 기대)`);
+      process.exitCode = 1;
+      continue;
+    }
+    affected += 1;
   }
-  console.log(`resolution_status 갱신 완료 (${results.length}건)`);
+  if (affected !== results.length) {
+    console.error(`source upsert 불일치: 반영 ${affected}건 / 기대 ${results.length}건 — 부분 반영 상태다`);
+    process.exit(1);
+  }
+  console.log(`source upsert + resolution_status 갱신 완료 (반영 ${affected}/${results.length}건)`);
 }
 
 main().catch((error: unknown) => {

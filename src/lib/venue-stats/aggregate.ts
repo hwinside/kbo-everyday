@@ -58,6 +58,7 @@ import type {
 // 승률/스플릿/팀 경기당 지표 표본 가드. 순수 leaf 모듈(state.ts)이 SSOT —
 // 클라이언트 번들이 node 전용 의존을 끌지 않도록 여기서는 재수출만 한다.
 import { MIN_FINAL_GAMES } from "@/lib/venue-stats/state";
+import type { FavoriteSeasonBaselineSnapshot } from "@/lib/venue-stats/current-season-baseline";
 
 export { MIN_FINAL_GAMES };
 export const MIN_TEAM_AB = 60; // B1
@@ -112,8 +113,8 @@ export interface VenueStatsAggregateInput {
   seasonGames: SeasonGameVerification[] | null;
   /** 팀별 시즌 집계. null=RPC 실패/비지원 시즌. */
   teamSeasonTotals: ReadonlyMap<number, TeamSeasonTotals> | null;
-  /** 최애선수 시즌 전체 로그 (C 시즌 baseline). */
-  favoriteSeasonLogs: PlayerGameLogRow[];
+  /** 기존 현재시즌 선수 스냅샷의 kbo_id exact baseline. null=소스 실패/비지원 시즌. */
+  favoriteSeasonBaselines: ReadonlyMap<string, FavoriteSeasonBaselineSnapshot> | null;
   /** KST 오늘 (YYYY-MM-DD) — E3 daysSinceFirst. */
   todayKst: string;
 }
@@ -583,14 +584,6 @@ function teamAttendanceTotals(ctx: Ctx, teamId: number, games: ScopeGame[]): Tea
   return totals;
 }
 
-function seasonUnknownGameIds(ctx: Ctx, teamId: number): string[] {
-  const code = TEAM_ID_TO_CODE[teamId];
-  if (!code || ctx.input.seasonGames === null) return [];
-  return ctx.input.seasonGames
-    .filter((game) => game.teamCodes.includes(code) && !game.complete)
-    .map((game) => game.gameId);
-}
-
 interface BTeamComputed {
   b1: { value: B1Value; sampleMet: boolean; denominator: Record<string, number> };
   b2: { value: B2Value; sampleMet: boolean; denominator: Record<string, number> };
@@ -630,11 +623,8 @@ function stripSeasonBaseline(id: "B1" | "B2" | "B3" | "B4", value: unknown): unk
 function computeBForTeam(ctx: Ctx, teamId: number, games: ScopeGame[]): BTeamComputed {
   const att = teamAttendanceTotals(ctx, teamId, games);
   const season = ctx.input.teamSeasonTotals?.get(teamId) ?? null;
-  // §10 B complete coverage=1: 직관 쪽뿐 아니라 시즌 baseline 쪽 ledger gap도 fail-closed.
-  const unknownGames = new Set([
-    ...games.filter((g) => !g.complete).map((g) => g.gameId),
-    ...seasonUnknownGameIds(ctx, teamId),
-  ]).size;
+  // 시즌 baseline은 기존 현재시즌 스냅샷이므로 경기별 원장 gap과 무관하다.
+  const unknownGames = games.filter((g) => !g.complete).length;
 
   const attendanceAvg = pooledAvg(att.h, att.ab);
   const seasonAvg = season ? pooledAvg(season.h, season.ab) : null;
@@ -728,7 +718,7 @@ function buildB(
   // §5 — partial_data는 player-log 비교값(B1·B2·B4)에만. B3는 game 스코어 단독이라 제외.
   const usesLogs = id !== "B3";
   const seasonSourceOk = usesLogs
-    ? ctx.seasonComparable && ctx.input.teamSeasonTotals !== null && seasonUniverseAvailable(ctx)
+    ? ctx.seasonComparable && ctx.input.teamSeasonTotals !== null
     : true;
   const teamGames = new Map<number, ScopeGame[]>();
   for (const g of c.validFinal) {
@@ -738,12 +728,7 @@ function buildB(
     teamGames.set(g.snapshotTeamId, list);
   }
   const attendanceUnknownIds = c.validFinal.filter((g) => !g.complete).map((g) => g.gameId);
-  const seasonUnknownIds = usesLogs
-    ? [...new Set(c.snapshotTeams.flatMap((teamId) => seasonUnknownGameIds(ctx, teamId)))]
-    : [];
-  const unknownGameIds = usesLogs
-    ? [...new Set([...attendanceUnknownIds, ...seasonUnknownIds])]
-    : [];
+  const unknownGameIds = usesLogs ? [...new Set(attendanceUnknownIds)] : [];
   const unknownGames = unknownGameIds.length;
 
   const buildValueFor = (computed: BTeamComputed): {
@@ -817,7 +802,7 @@ function buildB(
         denominator: part.denominator,
         coverage: {
           unknownGames: computed.unknownGames,
-          seasonUnknownGameIds: seasonUnknownGameIds(ctx, teamId),
+          seasonSource: "current_snapshot",
         },
       };
       return item;
@@ -865,16 +850,6 @@ interface FavoriteAttendance {
   batterRows: PlayerGameLogRow[];
   pitcherRows: PlayerGameLogRow[];
   appearanceGames: number;
-}
-
-function favoriteTeamCodes(ctx: Ctx, favorite: FavoritePlayerSnapshot): Set<string> {
-  const codes = new Set<string>();
-  const current = TEAM_ID_TO_CODE[favorite.teamId];
-  if (current) codes.add(current);
-  for (const row of ctx.input.favoriteSeasonLogs) {
-    if (row.kbo_id === favorite.playerId && row.team_code) codes.add(row.team_code);
-  }
-  return codes;
 }
 
 function favoriteAttendance(ctx: Ctx, favorite: FavoritePlayerSnapshot): FavoriteAttendance {
@@ -930,65 +905,9 @@ function favoriteAttendance(ctx: Ctx, favorite: FavoritePlayerSnapshot): Favorit
   };
 }
 
-interface FavoriteSeasonBaseline {
-  batter: { ab: number; h: number; hr: number; rbi: number; games: number } | null;
-  pitcher: { outs: number; er: number; k: number; games: number } | null;
-  coverage: { eligible: number; complete: number; appearances: number; dnp: number; unknown: number };
-}
-
-function favoriteSeasonBaseline(ctx: Ctx, favorite: FavoritePlayerSnapshot): FavoriteSeasonBaseline | null {
-  if (!ctx.seasonComparable || !seasonUniverseAvailable(ctx)) return null;
-  const completeGames = new Map(ctx.input.seasonGames!.map((g) => [g.gameId, g.complete]));
-  const rows = ctx.input.favoriteSeasonLogs.filter(
-    (row) => row.kbo_id === favorite.playerId && completeGames.get(row.game_id) === true,
-  );
-  const batterRows = rows.filter((r) => r.player_type === "batter");
-  const pitcherRows = rows.filter((r) => r.player_type === "pitcher");
-
-  // §10 — 시즌 baseline도 선수 season team(s) schedule에 같은 complete/DNP/unknown 판정 적용.
-  const codes = favoriteTeamCodes(ctx, favorite);
-  const appearanceGames = new Set(
-    ctx.input.favoriteSeasonLogs
-      .filter((r) => r.kbo_id === favorite.playerId)
-      .map((r) => r.game_id),
-  );
-  const coverage = { eligible: 0, complete: 0, appearances: 0, dnp: 0, unknown: 0 };
-  for (const g of ctx.input.seasonGames!) {
-    const eligible =
-      appearanceGames.has(g.gameId) || g.teamCodes.some((code) => codes.has(code));
-    if (!eligible) continue;
-    coverage.eligible += 1;
-    if (!g.complete) {
-      coverage.unknown += 1;
-      continue;
-    }
-    coverage.complete += 1;
-    if (appearanceGames.has(g.gameId)) coverage.appearances += 1;
-    else coverage.dnp += 1;
-  }
-
-  return {
-    batter:
-      batterRows.length > 0
-        ? {
-            ab: batterRows.reduce((s, r) => s + r.ab, 0),
-            h: batterRows.reduce((s, r) => s + r.h, 0),
-            hr: batterRows.reduce((s, r) => s + r.hr, 0),
-            rbi: batterRows.reduce((s, r) => s + r.rbi, 0),
-            games: new Set(batterRows.map((r) => r.game_id)).size,
-          }
-        : null,
-    pitcher:
-      pitcherRows.length > 0
-        ? {
-            outs: pitcherRows.reduce((s, r) => s + r.ip_outs, 0),
-            er: pitcherRows.reduce((s, r) => s + r.er, 0),
-            k: pitcherRows.reduce((s, r) => s + r.k, 0),
-            games: new Set(pitcherRows.map((r) => r.game_id)).size,
-          }
-        : null,
-    coverage,
-  };
+function favoriteSeasonBaseline(ctx: Ctx, favorite: FavoritePlayerSnapshot): FavoriteSeasonBaselineSnapshot | null {
+  if (!ctx.seasonComparable || ctx.input.favoriteSeasonBaselines === null) return null;
+  return ctx.input.favoriteSeasonBaselines.get(favorite.playerId) ?? null;
 }
 
 function cPipeline(ctx: Ctx, over: Partial<MetricStateInput>): MetricState {
@@ -1002,7 +921,7 @@ function cPipeline(ctx: Ctx, over: Partial<MetricStateInput>): MetricState {
 
 interface CContext {
   attendances: FavoriteAttendance[];
-  baselines: Map<string, FavoriteSeasonBaseline | null>;
+  baselines: Map<string, FavoriteSeasonBaselineSnapshot | null>;
 }
 
 function buildCContext(ctx: Ctx): CContext {
@@ -1017,29 +936,24 @@ function buildCContext(ctx: Ctx): CContext {
 }
 
 function totalUnknown(cc: CContext): number {
-  return cc.attendances.reduce((sum, a) => {
-    const baseline = cc.baselines.get(a.favorite.playerId);
-    return sum + a.coverage.unknown + (baseline?.coverage.unknown ?? 0);
-  }, 0);
+  return cc.attendances.reduce((sum, a) => sum + a.coverage.unknown, 0);
 }
 
 function totalAttendanceUnknown(cc: CContext): number {
   return cc.attendances.reduce((sum, attendance) => sum + attendance.coverage.unknown, 0);
 }
 
-function playerUnknown(a: FavoriteAttendance, baseline: FavoriteSeasonBaseline | null): number {
-  return a.coverage.unknown + (baseline?.coverage.unknown ?? 0);
+function playerUnknown(a: FavoriteAttendance): number {
+  return a.coverage.unknown;
 }
 
 function playerCoverage(
   a: FavoriteAttendance,
-  baseline: FavoriteSeasonBaseline | null,
+  baseline: FavoriteSeasonBaselineSnapshot | null,
 ): Record<string, unknown> {
   return {
     ...a.coverage,
-    season: baseline?.coverage ?? {
-      eligible: 0, complete: 0, appearances: 0, dnp: 0, unknown: 0,
-    },
+    season: { source: "current_snapshot", available: baseline !== null },
   };
 }
 
@@ -1080,7 +994,7 @@ function favoriteItemState(
 }
 
 function buildC1(ctx: Ctx, cc: CContext): MetricEnvelope<C1Entry[]> {
-  const state = cPipeline(ctx, { unknownGames: totalUnknown(cc), comparisonSourceSupported: ctx.seasonComparable && seasonUniverseAvailable(ctx) });
+  const state = cPipeline(ctx, { unknownGames: totalUnknown(cc), comparisonSourceSupported: ctx.seasonComparable && ctx.input.favoriteSeasonBaselines !== null });
   const envelope: MetricEnvelope<C1Entry[]> = {
     id: "C1",
     state,
@@ -1110,7 +1024,7 @@ function buildC1(ctx: Ctx, cc: CContext): MetricEnvelope<C1Entry[]> {
     const games = new Set(a.batterRows.map((r) => r.game_id)).size;
     const itemState = favoriteItemState(
       ctx,
-      playerUnknown(a, baseline),
+      playerUnknown(a),
       ab >= MIN_FAVORITE_AB,
       true,
       baseline?.batter != null,
@@ -1157,7 +1071,7 @@ function buildC1(ctx: Ctx, cc: CContext): MetricEnvelope<C1Entry[]> {
 }
 
 function buildC2(ctx: Ctx, cc: CContext): MetricEnvelope<C2Entry[]> {
-  const state = cPipeline(ctx, { unknownGames: totalUnknown(cc), comparisonSourceSupported: ctx.seasonComparable && seasonUniverseAvailable(ctx) });
+  const state = cPipeline(ctx, { unknownGames: totalUnknown(cc), comparisonSourceSupported: ctx.seasonComparable && ctx.input.favoriteSeasonBaselines !== null });
   const envelope: MetricEnvelope<C2Entry[]> = {
     id: "C2",
     state,
@@ -1185,7 +1099,7 @@ function buildC2(ctx: Ctx, cc: CContext): MetricEnvelope<C2Entry[]> {
     const games = new Set(a.pitcherRows.map((r) => r.game_id)).size;
     const itemState = favoriteItemState(
       ctx,
-      playerUnknown(a, baseline),
+      playerUnknown(a),
       outs >= MIN_FAVORITE_OUTS,
       true,
       baseline?.pitcher != null,
@@ -1244,14 +1158,28 @@ function buildC4(ctx: Ctx, cc: CContext): MetricEnvelope<C4Entry[]> {
   if (state !== "ready" && state !== "sample_limited" && state !== "partial_data") return envelope;
 
   for (const a of cc.attendances) {
-    if (a.batterRows.length === 0 && a.coverage.unknown === 0) continue;
+    if (a.batterRows.length === 0 && a.pitcherRows.length === 0 && a.coverage.unknown === 0) continue;
+    const hits = a.batterRows.reduce((s, r) => s + r.h, 0);
+    const rbi = a.batterRows.reduce((s, r) => s + r.rbi, 0);
     const homeRuns = a.batterRows.reduce((s, r) => s + r.hr, 0);
-    const games = new Set(a.batterRows.map((r) => r.game_id)).size;
+    const strikeouts = a.pitcherRows.reduce((s, r) => s + r.k, 0);
+    const zeroEarnedRunGames = new Set(
+      a.pitcherRows
+        .filter((row) => row.ip_outs > 0 && row.er === 0)
+        .map((row) => row.game_id),
+    ).size;
+    const games = new Set([...a.batterRows, ...a.pitcherRows].map((r) => r.game_id)).size;
     const itemState: MetricState =
       a.coverage.unknown > 0 ? "partial_data" : "ready";
     const entry: C4Entry | null =
       itemState === "ready"
-        ? { playerId: a.favorite.playerId, homeRuns, appearanceGames: games }
+        ? {
+            playerId: a.favorite.playerId,
+            homeRuns,
+            appearanceGames: games,
+            batter: a.batterRows.length > 0 ? { hits, rbi, homeRuns } : null,
+            pitcher: a.pitcherRows.length > 0 ? { strikeouts, zeroEarnedRunGames } : null,
+          }
         : null;
     if (entry) envelope.value!.push(entry);
     envelope.items!.push({
@@ -1350,7 +1278,7 @@ function buildC6(
   c1: MetricEnvelope<C1Entry[]>,
   c2: MetricEnvelope<C2Entry[]>,
 ): MetricEnvelope<C6Value> {
-  const state = cPipeline(ctx, { unknownGames: totalUnknown(cc), comparisonSourceSupported: ctx.seasonComparable && seasonUniverseAvailable(ctx) });
+  const state = cPipeline(ctx, { unknownGames: totalUnknown(cc), comparisonSourceSupported: ctx.seasonComparable && ctx.input.favoriteSeasonBaselines !== null });
   const envelope: MetricEnvelope<C6Value> = {
     id: "C6",
     state,
