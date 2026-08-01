@@ -311,7 +311,7 @@ export default function DMChatPage() {
             {!otherId && otherResolved
               ? "읽기 전용"
               : isBaseballGeniusConv
-                ? "AI 야구 룰·용어 도우미"
+                ? "야구 밖에 모르는 바보 AI봇"
               : isNoReplyConv
                 ? "자동 발송 전용"
                 : "1:1 쪽지"}

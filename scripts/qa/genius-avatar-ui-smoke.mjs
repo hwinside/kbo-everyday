@@ -35,6 +35,9 @@ const CHAT_MIN_VISIBLE = 72;    // 대화방 캐릭터 최소 가시 높이
 const CHAT_HEADER_MIN = 104;    // 헤더 허용 범위 (요구 108~112, safe-area 편차 허용)
 const CHAT_HEADER_MAX = 120;
 
+// 대화방 부제 문구 (하린아빠 2026-08-01 확정)
+const GENIUS_SUBTITLE = "야구 밖에 모르는 바보 AI봇";
+
 const admin = createClient(SUPABASE_URL, SERVICE_ROLE, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
@@ -221,7 +224,7 @@ try {
   ok(`대화방: 헤더 ${CHAT_HEADER_MIN}~${CHAT_HEADER_MAX}px`,
      aChat.headerH >= CHAT_HEADER_MIN && aChat.headerH <= CHAT_HEADER_MAX, `${aChat.headerH}px`);
   ok("대화방: 캐릭터가 헤더 밖으로 안 삐져나옴", aChat.withinHeader);
-  ok("대화방: 제목/설명 두 줄 유지", aChat.subtitle === "AI 야구 룰·용어 도우미", `설명='${aChat.subtitle}'`);
+  ok("대화방: 제목/설명 두 줄 유지", aChat.subtitle === GENIUS_SUBTITLE, `설명='${aChat.subtitle}'`);
   // ⚠️ 뒤로가기를 '헤더 세로 중심'과 비교하면 안 된다. 헤더 padding 이
   // 비대칭이라(pt-safe=0 / pb-3=12px) flex 콘텐츠 중심은 헤더 중심보다 항상
   // 6~7px 위다 — 관리자 48 vs 55, 비관리자 22 vs 28 로 마스코트와 무관하게
