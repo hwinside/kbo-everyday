@@ -360,6 +360,14 @@ rev0.9 B3의 "reclaim 시점 이전 generation purge"는 UNIQUE 충돌은 해소
 - **(c) 최소 원문저장 (확정)**: 원문 전문 보존 금지. retrieval에 필요한 **chunk + provenance**만 저장하고, 서빙은 재서술 + 출처링크로 한다. attribution/license 메타 보존.
 - **(d) canonical provenance (확정)**: 모든 chunk는 canonical URL·revision·contentHash·crawledAt·sourceGrade를 보유한다. canonical 미확정 source는 `resolved`가 될 수 없고(DB CHECK + claim 이중 술어로 강제) ingest 대상에서 제외된다. **HTTP 200 단독으로 canonical을 단정하지 않고** redirect 최종 URL 정규화 + page identity(canonical link·title) 일치를 확인한다.
 
+### 12.3 S2b thin-slice waiver — retrieval은 vector-only (2026-08-01, 삼순 R1 P1 반영)
+
+§12는 최종형 retrieval을 "entity filter + hybrid(BM25/vector)"로 정의한다. **S2b 수직 슬라이스의 구현은 hybrid가 아니라 vector-only다** — BM25/lexical 경로는 구현되어 있지 않다. 이를 미구현 결함이 아닌 **명시적 waiver**로 기록한다.
+
+- 근거: entity 필터가 이미 후보를 문서 1건(선수 1명 = source 1건)으로 고정하므로, 남는 상위 선별은 한 문서 안 chunk 수십 개 정렬이다. lexical 병합의 이득은 작고, 도입하려면 tsvector 인덱스 + 새 RPC가 필요해 수직 슬라이스 범위를 벗어난다.
+- 구현 표기: `src/lib/baseball-qa/rag/retrieve.ts`의 `RAG_RETRIEVAL_MODE = "vector_only"`가 계약 표기이며, 회귀(`qa:baseball-rag-serving`)가 이 값과 본 문서의 waiver 존재를 함께 고정한다. "hybrid 구현됨"으로 표기하는 것은 금지된다.
+- 해소 조건: 선수 전수(878명) 확대 단계에서 entity 필터만으로 후보가 충분히 좁혀지지 않거나 동의어/별칭 검색 품질 이슈가 관측되면 hybrid를 별도 트랙으로 구현하고 이 waiver를 해제한다.
+
 **분리된 게이트 — 상업 이용 법무 승인 (`decision_pending`, 미확정 유지)**: 나무위키 CC BY-NC 기반 상업 서빙 가능 여부는 **inventory 단계의 게이트가 아니다.** 대량 ingestion 및 유저 서빙 개시 전 **별도 launch gate**에서 판단하며, 하린아빠 확정 전까지 `decision_pending` 상태를 유지한다. 이 상태에서도 inventory 확정·canonical 검증은 진행한다(수집/서빙과 분리).
 
 - sourceGrade·공식 KBO 우선순위는 Notion §12에 이미 반영됨(중복 아님).

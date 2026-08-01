@@ -7,14 +7,20 @@
  * 계약 (spec rev0.7 §12.2):
  *   (a) robots.txt 확인기록 없이는 한 건도 수집하지 않는다 — 시작 전 전역 게이트.
  *   (b) 봇차단은 우회하지 않고 fail RPC로 종료한다.
- *   (c) 원문 전문을 저장하지 않는다 — chunk + provenance만 저장한다.
+ *   (c) 원문 전문을 저장하지 않는다 — retrieval에 필요한 snippet + provenance만 저장한다
+ *       (보존 상한은 `prepareNamuChunks`가 강제한다).
+ *   (d) canonical은 HTTP 200이 아니라 **최종 URL + rel=canonical + 제목/entity 대조**로 확정한다.
+ *       적재 시점에도 다시 대조한다 — resolve 이후 문서가 리다이렉트되면 남의 문서 내용이
+ *       이 선수 entity로 귀속될 수 있기 때문이다.
  *
- * 기존 RPC 5종만 사용한다(새 RPC 없음): claim / upsert_chunk / complete / fail.
+ * claim은 **대상 범위를 DB 경계 안에서 좀히는** scoped RPC를 쓴다. 전역 claim 뒤에 범위 밖을
+ * fail로 반납하면 대상 밖 운영 source의 retry 예산이 영구 소진된다(삼순 R1 P0 #3).
  */
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
+import { expectedPlayerTitles, verifyCanonicalIdentity } from "../../src/lib/baseball-qa/rag/canonical";
 import { embedDocument } from "../../src/lib/baseball-qa/rag/embed";
 import {
   assertRobotsAllowed,
@@ -23,7 +29,7 @@ import {
   RAG_FETCH_INTERVAL_MS,
 } from "../../src/lib/baseball-qa/rag/fetch-namu";
 import { prepareNamuChunks } from "../../src/lib/baseball-qa/rag/ingest";
-import { isS2bTargetSourceKey } from "../../src/lib/baseball-qa/rag/targets";
+import { S2B_TARGET_SOURCE_KEYS } from "../../src/lib/baseball-qa/rag/targets";
 
 interface RagSourceRow {
   source_key: string;
@@ -91,25 +97,16 @@ async function main(): Promise<void> {
     return (await response.json()) as T;
   };
 
-  const claimed = await rpc<RagSourceRow[]>("claim_baseball_genius_rag_batch", {
+  // 범위는 claim 이전에 DB 경계에서 좀힌다 — 대상 밖 source는 애초에 claim되지 않으므로
+  // lease도 ingestion_attempts도 건드리지 않는다(scope skip = retry 예산 0 소비).
+  const claimed = await rpc<RagSourceRow[]>("claim_baseball_genius_rag_batch_scoped", {
     p_limit: LIMIT,
     p_lease_seconds: 300,
+    p_source_keys: S2B_TARGET_SOURCE_KEYS,
   });
-  console.log(`claimed ${claimed.length} source(s)`);
+  console.log(`claimed ${claimed.length} source(s) (scope=${S2B_TARGET_SOURCE_KEYS.length})`);
 
   for (const source of claimed) {
-    // 이번 슬라이스는 대상 선수만 처리한다. 대상 밖이 잡히면 즉시 실패 처리해 lease를 반납한다.
-    if (!isS2bTargetSourceKey(source.source_key)) {
-      await rpc("fail_baseball_genius_rag_source", {
-        p_source_key: source.source_key,
-        p_claim_token: source.claim_token,
-        p_claim_generation: source.claim_generation,
-        p_error: "out_of_s2b_slice_scope",
-      });
-      console.log(`${source.source_key} SKIP (대상 밖)`);
-      continue;
-    }
-
     const failWith = async (reason: string) => {
       await rpc("fail_baseball_genius_rag_source", {
         p_source_key: source.source_key,
@@ -125,6 +122,25 @@ async function main(): Promise<void> {
     if (!fetched.ok) {
       // (b) 봇차단은 우회하지 않는다 — 사유를 남기고 종료한다.
       await failWith(`${fetched.status}:${fetched.reason}`);
+      continue;
+    }
+
+    // (d) 적재 시점 canonical 재대조. HTTP 200이어도 redirect/soft-200으로 남의 문서가 왔으면
+    // 그 내용을 이 선수 entity로 저장하지 않는다(entity filter는 이 오염을 막지 못한다).
+    const identity = verifyCanonicalIdentity({
+      requestedUrl: fetched.requestedUrl,
+      finalUrl: fetched.url,
+      html: fetched.html,
+      expectedTitles: expectedPlayerTitles(source.page_title),
+    });
+    if (!identity.ok) {
+      await failWith(`canonical:${identity.reason}`);
+      continue;
+    }
+    if (identity.canonicalUrl !== source.canonical_url) {
+      // 저장된 canonical과 실제 문서 canonical이 다르면 resolution을 다시 받아야 한다.
+      // 임의로 갱신하면 canonical 확정 경로(§12.2 d)를 ingestion이 우회하는 셈이다.
+      await failWith("canonical:stored_canonical_url_drift");
       continue;
     }
 

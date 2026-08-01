@@ -46,7 +46,16 @@ export async function assertRobotsAllowed(fetchImpl: typeof fetch = fetch): Prom
 }
 
 export type FetchDocResult =
-  | { ok: true; url: string; html: string; revision: string; crawledAt: string }
+  | {
+      ok: true;
+      /** 요청한 후보 URL. canonical 확정은 이 값이 아니라 `url`(최종 도달 URL) 기준이다(§12.2 d). */
+      requestedUrl: string;
+      /** redirect를 따라간 뒤의 최종 URL. */
+      url: string;
+      html: string;
+      revision: string;
+      crawledAt: string;
+    }
   | { ok: false; status: "missing" | "blocked"; reason: string; httpStatus?: number };
 
 /**
@@ -98,6 +107,7 @@ export async function fetchNamuDocument(
   }
   return {
     ok: true,
+    requestedUrl: url,
     url: response.url || url,
     html,
     revision: deriveRevision(response.headers, crawledAt),

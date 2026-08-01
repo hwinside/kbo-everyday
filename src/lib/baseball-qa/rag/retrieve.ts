@@ -14,6 +14,18 @@
 
 import { canGroundNumericClaim, type SourceGrade } from "./contracts";
 
+/**
+ * 이번 슬라이스의 retrieval 모드 — **vector-only**다 (S2b thin-slice waiver, 삼순 R1 P1 #6).
+ *
+ * 스펙 §12가 목표로 적은 최종형은 "entity filter + hybrid(BM25/vector)"이지만, 이 슬라이스는
+ * entity 필터로 문서 1건(선수 1명)까지 좀힌 뒤 chunk 수십 개를 코사인으로 정렬할 뿐
+ * BM25/lexical 경로가 없다. 후보가 이미 한 문서로 고정되어 lexical 병합의 이득이 작고,
+ * 도입하면 새 RPC/인덱스(tsvector)가 필요해 수직 슬라이스 범위를 넘어서다.
+ * 따라서 구현과 표기를 일치시키기 위해 **이 상수로 모드를 명시**하고 SSOT에 waiver를 남긴다.
+ * hybrid로 올라가는 것은 전수 확대 단계의 별도 작업이다.
+ */
+export const RAG_RETRIEVAL_MODE = "vector_only" as const;
+
 /** 서빙 뷰(genius_rag_serving_chunks)에서 읽어오는 근거 1건. */
 export interface RagEvidence {
   content: string;

@@ -518,16 +518,39 @@ export function matchGlossary(entries: GlossaryEntry[], question: string): Gloss
 }
 
 /**
- * RAG 서빙 시도. 성공하면 출처 표기까지 붙인 최종 답변을, 실패하면 null을 돌려준다.
- * null은 "이 경로로는 답하지 않는다"는 뜻이며 호출자는 기존 경로를 계속 진행한다.
- * 검색·LLM 오류도 null로 흡수한다 — RAG는 부가 경로이지 기존 답변을 막는 관문이 아니다.
+ * 선수 서술형 질문의 **종단 경로**. 이 함수에 들어오면 어떤 경우에도 아래 일반 LLM·글로벌
+ * 캐시 경로로 내려가지 않는다 (삼순 R1 P0 #4).
+ *
+ * 왜인가: 근거 0건·근거부족·오염근거일 때 기존 경로로 통과시키면, "문보경 별명" 같은 질문이
+ * 근거 없는 일반 LLM 생성답으로 나가고 그 답이 global 캐시에까지 썻긴다. 실제로 공급자 응답이
+ * NOT_BASEBALL이 아니면 `source=llm` + cache write가 재현된다(삼순 alternate-provider probe).
+ * 따라서 이 경로는 **generic LLM 0 / cache 0**으로 명시 종결한다.
+ *
+ * RAG LLM 호출도 일반 LLM과 **동일한 durable 경계**(getLlmState/acquireLlmStart/storeLlm)를 통과한다
+ * (삼순 R1 P0 #5). 한 messageId가 소비하는 LLM 호출은 경로와 무관하게 정확히 1회이며,
+ * crash/lease 회수 뒤 재처리는 저장된 결과를 재사용하고 ambiguous 창은 fail-close 한다.
+ * 경로 분기는 질문만으로 결정되므로(서술형 + 단일 entity), 재처리가 같은 경로로 돌아오는 것은
+ * 결정론적이다 — 저장된 결과를 어느 검증기로 읽을지가 모호해지지 않는다.
  */
-async function tryAnswerFromRag(
+async function answerPlayerDescriptiveQuestion(
+  userId: string,
   question: string,
+  questionNorm: string,
   candidate: RagPlayerCandidate,
+  remaining: number,
   deps: QaDeps,
-): Promise<LlmResult & { answer: string } | null> {
-  if (!deps.searchRag || !deps.callRagLlm) return null;
+): Promise<QaResult> {
+  const failClose = async (): Promise<QaResult> => {
+    // 근거로 답할 수 없는 선수 서술형 질문은 기존과 동일한 안내로 종결한다.
+    // 중요한 건 문구가 아니라 **여기서 끝난다**는 것이다: generic LLM 호출도 cache write도 없다.
+    await deps.log({ userId, question, questionNorm, matchPath: "blocked", answer: BLOCKED_ANSWER, inputTokens: null, outputTokens: null });
+    return { status: 200, answer: BLOCKED_ANSWER, source: "blocked", remaining };
+  };
+  const failCloseError = async (status: number, answer: string): Promise<QaResult> => {
+    await deps.log({ userId, question, questionNorm, matchPath: "error", answer: null, inputTokens: null, outputTokens: null });
+    return { status, answer, source: "error", remaining };
+  };
+
   // 수요 기록은 ingestion 우선순위 신호일 뿐이라 실패해도 답변 경로를 막지 않는다.
   if (deps.recordRagDemand) {
     try {
@@ -536,27 +559,58 @@ async function tryAnswerFromRag(
       // 무시
     }
   }
-  let rows: RagEvidence[];
-  try {
-    rows = await deps.searchRag(candidate, question);
-  } catch {
-    return null;
-  }
-  const evidence = selectEvidence(rows);
-  if (evidence.length === 0) return null;
 
-  let llm: LlmResult;
+  // 근거 검색은 LLM 경계 앞이다 — 근거가 없으면 LLM을 아예 소비하지 않고 종결한다.
+  let evidence: RagEvidence[];
   try {
-    llm = await deps.callRagLlm(question, evidence);
+    evidence = selectEvidence(await deps.searchRag!(candidate, question));
   } catch {
-    return null;
+    return failClose();
   }
+  // 미커버 선수(0행)·sanitize 뒤 남는 근거 없음(오염근거) — 둘 다 여기서 명시 종결한다.
+  if (evidence.length === 0) return failClose();
+
+  // ── durable LLM 경계 (일반 LLM 경로와 동일 계약) ──────────────────────────
+  let llm: LlmResult | null = null;
+  if (deps.getLlmState) {
+    let state: { started: boolean; result: LlmResult | null; ownerActive?: boolean };
+    try {
+      state = await deps.getLlmState();
+    } catch {
+      return failCloseError(503, "지금은 답변을 가져올 수 없어요. 잠시 후 다시 시도해 주세요.");
+    }
+    llm = state.result;
+    if (!llm && state.started) {
+      // winner가 아직 LLM 경계에 있을 수 있는 창 — loser는 어떤 답변도 발송하지 않는다.
+      if (state.ownerActive) return { status: 202, answer: "", source: "pending", remaining };
+      // fence 경과: 공급자 응답/과금이 이미 발생했을 수 있다 — 자동 재호출 없이 종결한다.
+      return failCloseError(200, LLM_AMBIGUOUS_ANSWER);
+    }
+  }
+  if (!llm) {
+    if (deps.acquireLlmStart) {
+      let won = false;
+      try {
+        won = await deps.acquireLlmStart();
+      } catch {
+        return failCloseError(503, "지금은 답변을 가져올 수 없어요. 잠시 후 다시 시도해 주세요.");
+      }
+      if (!won) return { status: 202, answer: "", source: "pending", remaining };
+    }
+    try {
+      llm = await deps.callRagLlm!(question, evidence);
+    } catch {
+      return failClose();
+    }
+    // 저장 실패는 throw로 전파 — 재처리는 위 ambiguous 경로로 fail-close되어 재호출이 없다.
+    if (deps.storeLlm) await deps.storeLlm(llm);
+  }
+
   const validated = validateRagResponse(llm.text);
-  if (validated.kind !== "grounded") return null;
-  return {
-    ...llm,
-    answer: composeRagAnswer(validated.answer, evidence[0]),
-  };
+  if (validated.kind !== "grounded") return failClose();
+  const answer = composeRagAnswer(validated.answer, evidence[0]);
+  await deps.log({ userId, question, questionNorm, matchPath: "rag", answer, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
+  return { status: 200, answer, source: "rag", remaining };
 }
 
 export async function answerQuestion(userId: string, rawQuestion: string, deps: QaDeps): Promise<QaResult> {
@@ -621,17 +675,14 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     }
   }
 
-  // ②-b 선수 서술형 질문은 수집된 tier2 문서 근거로 답한다 (S2b).
-  // 근거가 없거나 계약(수치 금지·출력 가드)을 통과하지 못하면 **답을 만들지 않고** 아래 기존
-  // 경로로 그대로 내려간다 — 미커버 선수는 지금과 동일하게 동작한다(fail-close).
+  // ②-b 선수 서술형 질문은 수집된 tier2 문서 근거로만 답한다 (S2b).
+  // 이 분기에 들어오면 **여기서 종결**한다: 근거가 있으면 rag 답변, 근거 0건·근거부족·오염근거는
+  // generic LLM 0 / cache 0으로 명시 fail-close 한다 (삼순 R1 P0 #4). 아래 일반 LLM·캐시 경로로
+  // 통과시키면 근거 없는 생성답이 선수 질문의 답으로 나가고 global 캐시에까지 썻긴다.
   if (deps.searchRag && deps.callRagLlm) {
     const candidate = resolveRagPlayerCandidate(question, players);
     if (candidate) {
-      const ragAnswer = await tryAnswerFromRag(question, candidate, deps);
-      if (ragAnswer) {
-        await deps.log({ userId, question, questionNorm, matchPath: "rag", answer: ragAnswer.answer, inputTokens: ragAnswer.inputTokens, outputTokens: ragAnswer.outputTokens });
-        return { status: 200, answer: ragAnswer.answer, source: "rag", remaining };
-      }
+      return answerPlayerDescriptiveQuestion(userId, question, questionNorm, candidate, remaining, deps);
     }
   }
 

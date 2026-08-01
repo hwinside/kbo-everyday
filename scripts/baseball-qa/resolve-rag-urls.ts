@@ -4,9 +4,11 @@
  * 실행: `npm run rag:resolve-urls`  (수동/GitHub Actions. 맥미니 LaunchAgent 금지 — P0)
  *   옵션: `--dry-run` DB 쓰기 없이 판정만 출력
  *
- * 판정 계약 (spec rev0.7 §12):
- *   resolved   — 후보 URL 중 정확히 하나가 HTTP 200이고 동명이인 위험이 없음
- *   ambiguous  — 로스터에 동명이인이 있거나 후보 여럿이 동시에 살아있음 (이름 단독 연결 금지)
+ * 판정 계약 (spec rev0.7 §12 / §12.2 d):
+ *   resolved   — 후보 URL 중 **정확히 하나가 canonical 게이트를 통과**하고 동명이인 위험이 없음.
+ *                canonical 게이트 = redirect 최종 URL + `rel=canonical` + page title/entity identity 대조.
+ *                **HTTP 200 단독으로는 canonical을 단정하지 않는다.**
+ *   ambiguous  — 로스터에 동명이인이 있거나 후보 여럿이 동시에 게이트를 통과 (이름 단독 연결 금지)
  *   missing    — 후보 전부 404/410
  *   blocked    — 봇차단(403/429/503) 등으로 확인 자체가 불가능
  *
@@ -17,7 +19,8 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import { assertRobotsAllowed, RAG_FETCH_INTERVAL_MS, RAG_USER_AGENT, RAG_FETCH_TIMEOUT_MS } from "../../src/lib/baseball-qa/rag/fetch-namu";
+import { expectedPlayerTitles, verifyCanonicalIdentity } from "../../src/lib/baseball-qa/rag/canonical";
+import { assertRobotsAllowed, fetchNamuDocument, RAG_FETCH_INTERVAL_MS } from "../../src/lib/baseball-qa/rag/fetch-namu";
 import { S2B_TARGET_PLAYERS } from "../../src/lib/baseball-qa/rag/targets";
 
 type Resolution = "resolved" | "missing" | "ambiguous" | "blocked";
@@ -41,18 +44,35 @@ function loadEnv(): Record<string, string> {
   return env;
 }
 
-async function headStatus(url: string): Promise<number> {
-  try {
-    const response = await fetch(url, {
-      method: "GET",
-      headers: { "User-Agent": RAG_USER_AGENT, Accept: "text/html" },
-      redirect: "follow",
-      signal: AbortSignal.timeout(RAG_FETCH_TIMEOUT_MS),
-    });
-    return response.status;
-  } catch {
-    return 0;
+/**
+ * 후보 URL 1건의 canonical 판정.
+ * 응답이 와도 §12.2(d) 대조를 통과하지 못하면 canonical이 아니다 — HTTP 200은 근거가 아니다.
+ */
+type CandidateProbe =
+  | { kind: "canonical"; url: string; canonicalUrl: string; pageTitle: string; redirected: boolean }
+  | { kind: "rejected"; url: string; reason: string }
+  | { kind: "missing"; url: string; reason: string }
+  | { kind: "blocked"; url: string; reason: string };
+
+async function probeCandidate(url: string, expectedTitles: string[]): Promise<CandidateProbe> {
+  const fetched = await fetchNamuDocument(url);
+  if (!fetched.ok) {
+    return { kind: fetched.status, url, reason: fetched.reason };
   }
+  const verdict = verifyCanonicalIdentity({
+    requestedUrl: fetched.requestedUrl,
+    finalUrl: fetched.url,
+    html: fetched.html,
+    expectedTitles,
+  });
+  if (!verdict.ok) return { kind: "rejected", url, reason: verdict.reason };
+  return {
+    kind: "canonical",
+    url,
+    canonicalUrl: verdict.canonicalUrl,
+    pageTitle: verdict.pageTitle,
+    redirected: verdict.redirected,
+  };
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -83,27 +103,35 @@ async function main(): Promise<void> {
       });
       continue;
     }
-    const candidates = [
-      `https://namu.wiki/w/${encodeURIComponent(`${target.name}(야구선수)`)}`,
-      `https://namu.wiki/w/${encodeURIComponent(target.name)}`,
-      `https://namu.wiki/w/${encodeURIComponent(`${target.name}(야구)`)}`,
-    ];
-    const statuses: { url: string; status: number }[] = [];
+    const expectedTitles = expectedPlayerTitles(target.name);
+    const candidates = expectedTitles.map((title) => `https://namu.wiki/w/${encodeURIComponent(title)}`);
+    const probes: CandidateProbe[] = [];
     for (const url of candidates) {
-      statuses.push({ url, status: await headStatus(url) });
+      probes.push(await probeCandidate(url, expectedTitles));
       await sleep(RAG_FETCH_INTERVAL_MS);
     }
-    const alive = statuses.filter(({ status }) => status === 200);
-    const bot = statuses.filter(({ status }) => [403, 429, 503, 0].includes(status));
+    // canonical 게이트를 통과한 후보만 살아있는 것으로 센다. 통과 못한 200(redirect/soft-200/
+    // 제목 불일치)은 `rejected`이며 canonical 근거가 되지 않는다(§12.2 d).
+    const canonicalHits = probes.filter((probe): probe is Extract<CandidateProbe, { kind: "canonical" }> =>
+      probe.kind === "canonical");
+    // 서로 다른 후보가 같은 canonical 문서로 수렴하면(리다이렉트 별칭) 모호한 것이 아니라 동일 문서다.
+    const distinctCanonical = new Set(canonicalHits.map((probe) => probe.canonicalUrl));
+    const bot = probes.filter((probe) => probe.kind === "blocked");
+    const trace = probes.map((probe) => `${probe.kind}${probe.kind === "canonical" ? "" : `(${probe.reason})`}`).join("/");
     let verdict: { status: Resolution; canonicalUrl: string | null; note: string };
-    if (alive.length === 1) {
-      verdict = { status: "resolved", canonicalUrl: alive[0].url, note: `${new Date().toISOString().slice(0, 10)} canonical URL HTTP 200 확인` };
-    } else if (alive.length > 1) {
-      verdict = { status: "ambiguous", canonicalUrl: null, note: `후보 ${alive.length}건 동시 200 — 동일인 확정 불가` };
+    if (distinctCanonical.size === 1) {
+      const hit = canonicalHits[0];
+      verdict = {
+        status: "resolved",
+        canonicalUrl: hit.canonicalUrl,
+        note: `${new Date().toISOString().slice(0, 10)} canonical 대조 통과(최종URL+rel=canonical+제목 "${hit.pageTitle}"${hit.redirected ? ", redirect 반영" : ""})`,
+      };
+    } else if (distinctCanonical.size > 1) {
+      verdict = { status: "ambiguous", canonicalUrl: null, note: `canonical 문서 ${distinctCanonical.size}건 동시 확정 — 동일인 확정 불가 (${trace})` };
     } else if (bot.length > 0) {
-      verdict = { status: "blocked", canonicalUrl: null, note: `봇차단으로 확인 불가 (${statuses.map((entry) => entry.status).join("/")}) — 우회 금지(§12.2 b)` };
+      verdict = { status: "blocked", canonicalUrl: null, note: `봇차단으로 확인 불가 (${trace}) — 우회 금지(§12.2 b)` };
     } else {
-      verdict = { status: "missing", canonicalUrl: null, note: `후보 전부 부재 (${statuses.map((entry) => entry.status).join("/")})` };
+      verdict = { status: "missing", canonicalUrl: null, note: `canonical 확정 후보 없음 (${trace})` };
     }
     results.push({ sourceKey, name: target.name, ...verdict });
     console.log(`${target.name.padEnd(6)} ${verdict.status.padEnd(10)} ${verdict.note}`);
