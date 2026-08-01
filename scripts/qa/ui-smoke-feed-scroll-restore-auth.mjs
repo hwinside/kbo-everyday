@@ -186,14 +186,60 @@ try {
   console.error("ERROR", e.message);
 } finally {
   if (browser) await browser.close();
-  // 전용 테스트 계정은 반드시 정리한다.
+  // 전용 테스트 계정은 반드시 정리한다 (AGENTS P0).
+  //
+  // ⚠️ 예전 코드는 두 delete 의 반환 `{ error }` 를 검사하지 않고 무조건
+  // "정리 완료" 를 출력했다. Supabase 는 삭제 실패를 보통 throw 가 아니라
+  // resolved `{ error }` 로 돌려주므로 계정이 남아도 exit 0 이었다(삼순 3차 NO-GO).
+  // 또 profile 삭제가 throw 하면 auth user 삭제 시도 자체를 건너뛰었다.
+  //
+  // 계약: (1) 둘을 서로 독립적으로 끝까지 시도 (2) 각 반환 error 검사
+  //       (3) 삭제 후 profile 0 + auth user not-found postcondition
+  //       (4) 하나라도 실패/잔존이면 failures++ → exit 1
   if (userId) {
+    const cleanupProblems = [];
+
+    // (1)(2) 독립 시도 + 반환 error 검사. 앞이 실패해도 뒤는 반드시 시도한다.
     try {
-      await admin.from("profiles").delete().eq("id", userId);
-      await admin.auth.admin.deleteUser(userId);
-      console.log("전용 테스트 계정 정리 완료");
+      const { error } = await admin.from("profiles").delete().eq("id", userId);
+      if (error) cleanupProblems.push(`profile delete error: ${error.message}`);
     } catch (e) {
-      console.error("cleanup failed:", e.message);
+      cleanupProblems.push(`profile delete threw: ${e.message}`);
+    }
+    try {
+      const { error } = await admin.auth.admin.deleteUser(userId);
+      if (error) cleanupProblems.push(`auth delete error: ${error.message}`);
+    } catch (e) {
+      cleanupProblems.push(`auth delete threw: ${e.message}`);
+    }
+
+    // (3) postcondition — "삭제 호출이 성공했다" 가 아니라 "실제로 없다" 를 본다.
+    try {
+      const { count, error } = await admin
+        .from("profiles").select("id", { count: "exact", head: true }).eq("id", userId);
+      if (error) cleanupProblems.push(`profile postcondition 조회 실패: ${error.message}`);
+      else if ((count ?? 0) !== 0) cleanupProblems.push(`profile 잔존 ${count}건`);
+    } catch (e) {
+      cleanupProblems.push(`profile postcondition threw: ${e.message}`);
+    }
+    try {
+      const { data, error } = await admin.auth.admin.getUserById(userId);
+      // not-found 는 정상(우리가 지운 것). 그 외 에러는 확인 불가라 실패로 본다.
+      if (data?.user) cleanupProblems.push(`auth user 잔존: ${userId}`);
+      else if (error && !/not.?found/i.test(error.message)) {
+        cleanupProblems.push(`auth postcondition 확인 불가: ${error.message}`);
+      }
+    } catch (e) {
+      cleanupProblems.push(`auth postcondition threw: ${e.message}`);
+    }
+
+    // (4) 실패/잔존이면 스모크 전체를 실패로 종결한다.
+    if (cleanupProblems.length > 0) {
+      failures += 1;
+      console.error(`FAIL 전용 테스트 계정 정리 (${userId})`);
+      for (const problem of cleanupProblems) console.error("  -", problem);
+    } else {
+      console.log(`전용 테스트 계정 정리 완료 (auth·profiles 잔존 0 확인) ${userId}`);
     }
   }
 }

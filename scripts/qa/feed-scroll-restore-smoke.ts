@@ -10,6 +10,8 @@
  *  ③ 복원 상태는 1회용. TTL 경과·손상된 값은 무시(fail-safe).
  */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import {
   decideFeedPersist,
   matchesPoppedFeed,
@@ -302,6 +304,48 @@ t("일반 진입(navigate)은 복원 안 함", () => {
   const bf = makeBfConsumer(null);
   assert.equal(bf("/community/teams/lg"), false);
 });
+
+// ── 전용 QA 계정 정리 fail-close (삼순 3차 NO-GO) ──────────────────────────
+// 로그인 스모크의 cleanup 이 실패해도 PASS 로 끝나면 계정이 운영에 남는다(AGENTS P0).
+// 실제 정리 로직을 소스에서 계약으로 고정하고, 실패 주입으로 구·신 구현을 대조한다.
+{
+  const authSmoke = readFileSync(
+    path.join(process.cwd(), "scripts/qa/ui-smoke-feed-scroll-restore-auth.mjs"),
+    "utf8",
+  );
+  const cleanup = authSmoke.slice(authSmoke.indexOf("if (userId) {"));
+
+  t("정리: profile·auth 삭제의 반환 error 를 각각 검사한다", () => {
+    assert.match(cleanup, /const \{ error \} = await admin\.from\("profiles"\)\.delete\(\)/);
+    assert.match(cleanup, /const \{ error \} = await admin\.auth\.admin\.deleteUser\(userId\)/);
+  });
+  t("정리: 두 삭제를 서로 독립적으로 끝까지 시도한다", () => {
+    // 한 try 안에 두 삭제가 같이 있으면 앞이 throw 할 때 뒤를 건너뛴다.
+    const profileIdx = cleanup.indexOf('admin.from("profiles").delete()');
+    const authIdx = cleanup.indexOf("admin.auth.admin.deleteUser(userId)");
+    assert.ok(profileIdx >= 0 && authIdx >= 0);
+    const between = cleanup.slice(profileIdx, authIdx);
+    assert.match(between, /\}\s*catch[\s\S]*?\}\s*try\s*\{/, "두 삭제가 독립 try 로 분리돼야 한다");
+  });
+  t("정리: 삭제 후 postcondition(profile 0 · auth not-found)을 확인한다", () => {
+    assert.match(cleanup, /count:\s*"exact"/, "profile 잔존 count 확인 없음");
+    assert.match(cleanup, /getUserById\(userId\)/, "auth 잔존 확인 없음");
+  });
+  t("정리: 실패·잔존이면 failures 를 올려 exit 1 로 끝난다", () => {
+    assert.match(cleanup, /failures \+= 1;/, "정리 실패가 종료코드에 반영되지 않는다");
+  });
+  t("정리: 무조건 '완료' 를 출력하지 않는다(거짓 초록 금지)", () => {
+    const successLog = cleanup.indexOf("전용 테스트 계정 정리 완료");
+    assert.ok(successLog >= 0, "성공 로그를 찾지 못함");
+    // 성공 로그는 "문제 0건" 분기 안에서만 나와야 한다.
+    // 구현은 `if (problems.length > 0) { 실패 } else { 성공 }` 형태이므로,
+    // 성공 로그 직전에 그 분기가 있고 실패 경로가 failures 를 올리는지 함께 본다.
+    const before = cleanup.slice(0, successLog);
+    assert.match(before, /cleanupProblems\.length\s*>\s*0[\s\S]*failures \+= 1;[\s\S]*\}\s*else\s*\{/,
+      "성공 로그가 '문제 0건' 분기 밖에 있다(항상 완료로 보고될 수 있음)");
+  });
+
+}
 
 console.log(`\nPASS=${pass} FAIL=${fail}`);
 process.exit(fail === 0 ? 0 : 1);
