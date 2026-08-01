@@ -3,49 +3,30 @@ import { readFileSync } from "node:fs";
 import {
   lookupPitcherSeasonEra,
   normalizePitcherEra,
+  resolveLineupStarter,
   resolveStarterPitcher,
 } from "../../src/lib/stats/pitcher-season";
 import { resolveRosterPlayer } from "../../src/lib/utils/player-roster";
 
-const todayStarters = [
-  ["류현진", 9, "76715", "3.41"],
-  ["소형준", 3, "50030", "3.10"],
-  ["양현종", 6, "77637", "4.52"],
-  ["토다", 5, "AQ006", "5.23"],
-  ["송승기", 1, "51111", "5.49"],
-  ["잭로그", 2, "55239", "4.02"],
-  ["김건우", 4, "51867", "6.43"],
-  ["박준현", 10, "56318", "4.99"],
-  ["원태인", 8, "69446", "4.14"],
-  ["김진욱", 7, "51516", "3.13"],
-] as const;
-
-for (const [name, teamId, kboId, era] of todayStarters) {
-  assert.deepEqual(
-    resolveStarterPitcher(name, teamId, "-"),
-    { name, era, kboId },
-    `${name} placeholder box ERA falls back to season`,
-  );
-}
-
 const officialLineupStarters = [
-  ["카라스코", 1, "56103", "0.00"],
-  ["곽빈", 2, "68220", "2.64"],
-  ["짐머맨", 9, "56799", "0.00"],
-  ["배제성", 3, "65516", "4.30"],
+  ["카라스코", 1, "56103", "0.00", "카라스코", "0.00"],
+  ["곽빈", 2, "68220", "2.64", undefined, undefined],
+  ["짐머맨", 9, "56799", "0.00", undefined, undefined],
+  ["배제성", 3, "65516", "4.30", undefined, undefined],
+  ["타케다", 4, "56823", "7.10", undefined, undefined],
+  ["김윤하", 10, "54319", "6.35", undefined, undefined],
 ] as const;
 
-for (const [name, teamId, kboId, era] of officialLineupStarters) {
+for (const [name, teamId, kboId, era, boxName, boxEra] of officialLineupStarters) {
   assert.deepEqual(
-    resolveStarterPitcher(name, teamId),
+    resolveStarterPitcher(name, teamId, boxEra, boxName),
     { name, era, kboId },
-    `${name} official pregame lineup resolves season ERA without box score`,
+    `${name} official lineup resolves the current identity-bound ERA`,
   );
 }
 
 assert.equal(lookupPitcherSeasonEra("missing"), null, "unknown pitcher fails closed");
 
-assert.equal(resolveRosterPlayer({ name: "토다", teamId: 5 })?.kboId, "AQ006");
 assert.equal(
   lookupPitcherSeasonEra(resolveRosterPlayer({ name: "양현종", teamId: 6 })?.kboId),
   "4.52",
@@ -75,6 +56,45 @@ assert.equal(
   "partial or unavailable box stats retain the identity-bound season fallback",
 );
 assert.deepEqual(
+  resolveLineupStarter({
+    liveStarterName: "곽빈",
+    lineupStarterName: "곽빈",
+    teamId: 2,
+    boxPitcher: { name: "이영하", era: "1.23" },
+  }),
+  { name: "곽빈", era: "2.64", kboId: "68220" },
+  "a reliever-first box must not replace the official starter or contaminate ERA",
+);
+assert.deepEqual(
+  resolveLineupStarter({
+    liveStarterName: "타케다",
+    lineupStarterName: "화이트",
+    teamId: 4,
+    boxPitcher: { name: "다른투수", era: "9.99" },
+  }),
+  { name: "타케다", era: "7.10", kboId: "56823" },
+  "a live starter change supersedes the earlier lineup and unrelated box row",
+);
+assert.deepEqual(
+  resolveLineupStarter({
+    lineupStarterName: "김윤하",
+    teamId: 10,
+    boxPitcher: { name: "이강준", era: "3.21" },
+  }),
+  { name: "김윤하", era: "6.35", kboId: "54319" },
+  "lineup starter remains canonical when box contains only a reliever",
+);
+assert.deepEqual(
+  resolveLineupStarter({
+    liveStarterName: "곽빈",
+    lineupStarterName: "곽빈",
+    teamId: 2,
+    boxPitcher: { name: "곽빈", era: "2.66" },
+  }),
+  { name: "곽빈", era: "2.66", kboId: "68220" },
+  "matching box starter ERA takes priority after game start",
+);
+assert.deepEqual(
   resolveStarterPitcher("미등록투수", 1, "-"),
   { name: "미등록투수", era: "-", kboId: undefined },
   "unknown pitcher fails closed without guessing",
@@ -82,14 +102,16 @@ assert.deepEqual(
 
 const gamePage = readFileSync("src/app/(main)/games/[gameId]/page.tsx", "utf8");
 assert.equal(
-  (gamePage.match(/resolveStarterPitcher\([\s\S]*?validBoxName,\n\s*\);/g) ?? []).length,
+  (gamePage.match(/boxPitcher: gameDetail\?\.boxScore\?\.(?:away|home)Pitchers\?\.\[0\]/g) ?? []).length,
   2,
-  "both official-lineup sides must bind box ERA to the actual box pitcher identity",
+  "both official-lineup sides must pass box identity separately from starter identity",
 );
 assert.ok(
-  gamePage.includes("startingPitcher: resolveStarterPitcher(awayName, game.awayTeamId)")
-    && gamePage.includes("startingPitcher: resolveStarterPitcher(homeName, game.homeTeamId)"),
-  "starter-only pregame UI must use the identity-bound season fallback",
+  gamePage.includes("liveStarterName: liveGame?.awayStarterName")
+    && gamePage.includes("lineupStarterName: d.detailLineup.awayStarter")
+    && gamePage.includes("liveStarterName: liveGame?.homeStarterName")
+    && gamePage.includes("lineupStarterName: d.detailLineup.homeStarter"),
+  "both official-lineup sides must pass live/lineup starter SSOT before box fallback",
 );
 
 console.log("starter ERA smoke: ALL assertions PASS");

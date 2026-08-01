@@ -49,7 +49,7 @@ import GameStatsTab from "@/components/game/GameStatsTab";
 import LiveStatsTab from "@/components/game/LiveStatsTab";
 import { useGameRelay } from "@/lib/hooks/useGameRelay";
 import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
-import { resolveStarterPitcher } from "@/lib/stats/pitcher-season";
+import { resolveLineupStarter } from "@/lib/stats/pitcher-season";
 import PullToRefresh from "@/components/PullToRefresh";
 import PostgameInterviewSection from "@/components/game/PostgameInterviewSection";
 
@@ -427,12 +427,18 @@ export default function GameDetailPage() {
       gameId,
       away: {
         teamId: game.awayTeamId,
-        startingPitcher: resolveStarterPitcher(awayName, game.awayTeamId),
+        startingPitcher: resolveLineupStarter({
+          liveStarterName: awayName,
+          teamId: game.awayTeamId,
+        }),
         batters: [],
       },
       home: {
         teamId: game.homeTeamId,
-        startingPitcher: resolveStarterPitcher(homeName, game.homeTeamId),
+        startingPitcher: resolveLineupStarter({
+          liveStarterName: homeName,
+          teamId: game.homeTeamId,
+        }),
         batters: [],
       },
     };
@@ -661,17 +667,14 @@ export default function GameDetailPage() {
                     away: {
                       teamId: game.awayTeamId,
                       startingPitcher: (() => {
-                        const boxName = gameDetail?.boxScore?.awayPitchers?.[0]?.name;
-                        const validBoxName = boxName && !/^선수\(\d+\)$/.test(boxName) ? boxName : "";
                         // Naver 폴백 라인업은 awayStarter 를 함께 실어온다 — KBO boxScore/경기목록
                         // starter 가 모두 빈 장애에서도 선발 표기+AI 분석이 살아있게(삼순 PR#988 P0-1).
-                        const spName = validBoxName || liveGame?.awayStarterName || d.detailLineup.awayStarter || "";
-                        return resolveStarterPitcher(
-                          spName,
-                          game.awayTeamId,
-                          gameDetail?.boxScore?.awayPitchers?.[0]?.era,
-                          validBoxName,
-                        );
+                        return resolveLineupStarter({
+                          liveStarterName: liveGame?.awayStarterName,
+                          lineupStarterName: d.detailLineup.awayStarter,
+                          teamId: game.awayTeamId,
+                          boxPitcher: gameDetail?.boxScore?.awayPitchers?.[0],
+                        });
                       })(),
                       batters: d.detailLineup.away.map((e: LineupEntry) => {
                         const roster = PLAYERS_ROSTER.find((p: { name: string; teamId: number; kboId: string }) => p.name === e.name && p.teamId === game.awayTeamId);
@@ -681,15 +684,12 @@ export default function GameDetailPage() {
                     home: {
                       teamId: game.homeTeamId,
                       startingPitcher: (() => {
-                        const boxName = gameDetail?.boxScore?.homePitchers?.[0]?.name;
-                        const validBoxName = boxName && !/^선수\(\d+\)$/.test(boxName) ? boxName : "";
-                        const spName = validBoxName || liveGame?.homeStarterName || d.detailLineup.homeStarter || "";
-                        return resolveStarterPitcher(
-                          spName,
-                          game.homeTeamId,
-                          gameDetail?.boxScore?.homePitchers?.[0]?.era,
-                          validBoxName,
-                        );
+                        return resolveLineupStarter({
+                          liveStarterName: liveGame?.homeStarterName,
+                          lineupStarterName: d.detailLineup.homeStarter,
+                          teamId: game.homeTeamId,
+                          boxPitcher: gameDetail?.boxScore?.homePitchers?.[0],
+                        });
                       })(),
                       batters: d.detailLineup.home.map((e: LineupEntry) => {
                         const roster = PLAYERS_ROSTER.find((p: { name: string; teamId: number; kboId: string }) => p.name === e.name && p.teamId === game.homeTeamId);

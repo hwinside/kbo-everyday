@@ -1,5 +1,4 @@
 import pitcherStatsJson from "@/lib/constants/stats-2026-pitchers.json";
-import { TEAMS } from "@/lib/constants/teams";
 import { resolveRosterPlayer } from "@/lib/utils/player-roster";
 import { resolvePlayerIdentity } from "@/lib/utils/resolve-player";
 
@@ -7,8 +6,6 @@ type PitcherSeasonRow = {
   era?: string;
   kboId?: string;
   playerId?: string;
-  name?: string;
-  team?: string;
 };
 
 export function normalizePitcherEra(value?: string | null): string | null {
@@ -29,15 +26,6 @@ export function lookupPitcherSeasonEra(kboId?: string): string | null {
   return normalizePitcherEra(row?.era);
 }
 
-function lookupPitcherSeasonIdentity(name: string, teamId: number): PitcherSeasonRow | null {
-  const team = TEAMS.find((candidate) => candidate.id === teamId)?.shortName;
-  if (!name || !team) return null;
-  const matches = (pitcherStatsJson as PitcherSeasonRow[]).filter(
-    (pitcher) => pitcher.name?.trim() === name.trim() && pitcher.team === team,
-  );
-  return matches.length === 1 ? matches[0] : null;
-}
-
 export function resolveStarterPitcher(
   name: string,
   teamId: number,
@@ -45,10 +33,7 @@ export function resolveStarterPitcher(
   boxPitcherName?: string | null,
 ): { name: string; era: string; kboId?: string } {
   const roster = name ? resolveRosterPlayer({ name, teamId }) : null;
-  const seasonIdentity = roster ? null : lookupPitcherSeasonIdentity(name, teamId);
-  const starterKboId = roster?.kboId
-    ?? seasonIdentity?.kboId
-    ?? seasonIdentity?.playerId;
+  const starterKboId = roster?.kboId;
   const boxRoster = boxPitcherName
     ? resolveRosterPlayer({ name: boxPitcherName, teamId })
     : null;
@@ -66,4 +51,23 @@ export function resolveStarterPitcher(
       ?? "-",
     kboId: starterKboId,
   };
+}
+
+export function resolveLineupStarter({
+  liveStarterName,
+  lineupStarterName,
+  teamId,
+  boxPitcher,
+}: {
+  liveStarterName?: string | null;
+  lineupStarterName?: string | null;
+  teamId: number;
+  boxPitcher?: { name?: string | null; era?: string | null } | null;
+}): { name: string; era: string; kboId?: string } {
+  const boxName = boxPitcher?.name?.trim();
+  const validBoxName = boxName && !/^선수\(\d+\)$/.test(boxName) ? boxName : "";
+  const starterName = liveStarterName?.trim()
+    || lineupStarterName?.trim()
+    || validBoxName;
+  return resolveStarterPitcher(starterName, teamId, boxPitcher?.era, validBoxName);
 }
