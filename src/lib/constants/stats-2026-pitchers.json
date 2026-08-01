@@ -6346,5 +6346,28 @@
     "whip": "2.00",
     "kboId": "56366",
     "playerId": "56366"
+  },
+  {
+    "rank": 277,
+    "name": "카라스코",
+    "team": "LG",
+    "era": "0.00",
+    "games": 1,
+    "wins": 0,
+    "losses": 0,
+    "saves": 0,
+    "holds": 0,
+    "wpct": "-",
+    "ip": "5 2/3",
+    "h": 0,
+    "hr": 0,
+    "bb": 0,
+    "hbp": 0,
+    "so": 1,
+    "r": 0,
+    "er": 0,
+    "whip": "0.00",
+    "kboId": "56103",
+    "playerId": "56103"
   }
 ]

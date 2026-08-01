@@ -670,6 +670,7 @@ export default function GameDetailPage() {
                           spName,
                           game.awayTeamId,
                           gameDetail?.boxScore?.awayPitchers?.[0]?.era,
+                          validBoxName,
                         );
                       })(),
                       batters: d.detailLineup.away.map((e: LineupEntry) => {
@@ -687,6 +688,7 @@ export default function GameDetailPage() {
                           spName,
                           game.homeTeamId,
                           gameDetail?.boxScore?.homePitchers?.[0]?.era,
+                          validBoxName,
                         );
                       })(),
                       batters: d.detailLineup.home.map((e: LineupEntry) => {
