@@ -174,10 +174,8 @@ async function main(): Promise<void> {
       const documents = crawled.documents.map((document) => ({
         entityType: "player" as const,
         entityId: source.entity_id,
-        // DB source owner 계약은 모든 chunk의 page_title/canonical_url을 root와 일치시킨다.
-        // 실제 하위문서 provenance는 sectionPath + metadata에 기록한다.
         pageTitle: source.page_title,
-        canonicalUrl: source.canonical_url,
+        canonicalUrl: document.canonicalUrl,
         revision: document.revision,
         sectionPath: document.sectionPath,
         crawledAt: document.crawledAt,
@@ -246,7 +244,7 @@ async function main(): Promise<void> {
         p_entity_type: "player",
         p_entity_id: source.entity_id,
         p_page_title: source.page_title,
-        p_canonical_url: source.canonical_url,
+        p_canonical_url: chunk.meta.canonicalUrl,
         p_revision: chunk.meta.revision,
         p_section_path: chunk.meta.sectionPath,
         p_chunk_index: chunkIndex,

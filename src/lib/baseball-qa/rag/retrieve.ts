@@ -279,8 +279,9 @@ export function cosineSimilarity(left: number[], right: number[]): number {
 export function rankEvidenceByQuery(
   rows: (RagEvidence & { embedding: string | number[] | null })[],
   queryVector: number[],
+  orderBeforeLimit?: (rows: RagEvidence[]) => RagEvidence[],
 ): RagEvidence[] {
-  return rows
+  const ranked = rows
     .map((row) => {
       const vector = parseEmbedding(row.embedding);
       return vector === null ? null : { row, score: cosineSimilarity(vector, queryVector) };
@@ -288,7 +289,6 @@ export function rankEvidenceByQuery(
     .filter((entry): entry is { row: RagEvidence & { embedding: string | number[] | null }; score: number } =>
       entry !== null && entry.score > 0)
     .sort((left, right) => right.score - left.score)
-    .slice(0, RAG_EVIDENCE_LIMIT)
     .map(({ row }) => ({
       content: row.content,
       pageTitle: row.pageTitle,
@@ -298,4 +298,5 @@ export function rankEvidenceByQuery(
       asOf: row.asOf,
       sourceGrade: row.sourceGrade,
     }));
+  return (orderBeforeLimit ? orderBeforeLimit(ranked) : ranked).slice(0, RAG_EVIDENCE_LIMIT);
 }

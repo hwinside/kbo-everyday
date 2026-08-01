@@ -145,7 +145,7 @@ async function searchRag(
   // 나무위키 근거가 계속 evidence[0] 이 되어 위키피디아 우선 계약이 무효가 된다
   // (삼순 R3/R4 P0-4 — server searchRag 미배선으로 지적됨).
   // orderTier2Evidence 는 안정 정렬이라 같은 소스 안의 유사도 순서는 보존된다.
-  return orderTier2Evidence(rankEvidenceByQuery(rows, embedded.vector));
+  return rankEvidenceByQuery(rows, embedded.vector, orderTier2Evidence);
 }
 
 /** 근거를 비신뢰 데이터 블록으로만 전달하는 재서술 호출 (S2b). */

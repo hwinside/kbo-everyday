@@ -49,6 +49,7 @@ import {
   type RagEvidence,
 } from "../../src/lib/baseball-qa/rag/retrieve";
 import { RAG_EMBEDDING_DIM } from "../../src/lib/baseball-qa/rag/contracts";
+import { buildResolutionSourceRow } from "../../src/lib/baseball-qa/rag/source-resolution";
 import {
   extractDisambiguationCandidates,
   verifyCanonicalSubdocumentIdentity,
@@ -382,6 +383,21 @@ async function run(): Promise<void> {
       near,
     );
     assert.match(ranked[0].content, /문학소년/, "질문에 가까운 chunk가 먼저 와야 한다");
+    const priorityRows = [0.99, 0.98, 0.97, 0.96].map((score, index) => ({
+      ...MOON_EVIDENCE,
+      canonicalUrl: `https://namu.wiki/w/문보경${index}`,
+      content: `나무 근거 ${index} — 충분히 긴 서술형 근거 문장입니다.`,
+      embedding: [score, Math.sqrt(1 - score * score), 0],
+    }));
+    priorityRows.push({
+      ...MOON_EVIDENCE,
+      canonicalUrl: "https://ko.wikipedia.org/wiki/문보경",
+      content: "위키피디아 기본 근거 — 충분히 긴 서술형 근거 문장입니다.",
+      embedding: [0.95, Math.sqrt(1 - 0.95 * 0.95), 0],
+    });
+    const priorityRanked = rankEvidenceByQuery(priorityRows, near, orderTier2Evidence);
+    assert.equal(tier2SourceOf(priorityRanked[0].canonicalUrl), "wikipedia", "최종 limit 전에 source priority를 적용해야 한다");
+    assert.equal(priorityRanked.length, RAG_EVIDENCE_LIMIT);
     // 임베딩이 깨진 행은 근거가 되지 않는다.
     assert.equal(rankEvidenceByQuery([{ ...MOON_EVIDENCE, embedding: null }], near).length, 0);
     console.log("PASS 유사도 랭킹 + 손상 임베딩 배제");
@@ -1423,12 +1439,65 @@ async function verifyServingContractOnRealDb(): Promise<void> {
   const db = new PGlite({ extensions: { vector } });
   await db.exec("CREATE ROLE anon NOLOGIN; CREATE ROLE authenticated NOLOGIN; CREATE ROLE service_role NOLOGIN;");
   await db.exec(readFileSync(path.join(process.cwd(), "supabase/migrations/20260731_baseball_genius_rag_sources.sql"), "utf8"));
+  await db.exec(readFileSync(path.join(process.cwd(), "supabase/migrations/20260801220000_baseball_genius_rag_wikipedia_source.sql"), "utf8"));
   const multiDocumentMigration = readFileSync(
     path.join(process.cwd(), "supabase/migrations/20260801223000_baseball_genius_rag_multidocument_snapshot.sql"),
     "utf8",
   );
   await db.exec(multiDocumentMigration);
   await db.exec(multiDocumentMigration); // 재적용 멱등
+  await db.exec(readFileSync(
+    path.join(process.cwd(), "supabase/migrations/20260802010000_baseball_genius_rag_scoped_claim_wikipedia.sql"),
+    "utf8",
+  ));
+
+  // resolver가 만드는 actual payload는 unresolved 상태에서도 candidate_urls/identity_fingerprint가
+  // 모두 채워져야 하고, 같은 source_key의 신규 INSERT와 기존 UPDATE 둘 다 운영 스키마를 통과해야 한다.
+  const unresolvedSource = buildResolutionSourceRow({
+    sourceKey: "wikipedia:player:69102",
+    sourceKind: "wikipedia_document",
+    entityId: "69102",
+    pageTitle: "문보경",
+    candidateUrls: ["https://ko.wikipedia.org/wiki/%EB%AC%B8%EB%B3%B4%EA%B2%BD"],
+    canonicalUrl: null,
+    resolutionStatus: "missing",
+    resolutionNote: "fixture missing",
+    updatedAt: "2026-08-02T00:00:00Z",
+  });
+  const upsertResolutionSource = async (row: ReturnType<typeof buildResolutionSourceRow>) => {
+    await db.query(
+      `INSERT INTO public.genius_rag_sources
+        (source_key,source_kind,entity_type,entity_id,page_title,candidate_urls,canonical_url,
+         resolution_status,resolution_note,source_grade,identity_fingerprint,updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6::text[],$7,$8,$9,$10,$11,$12::timestamptz)
+       ON CONFLICT (source_key) DO UPDATE SET
+         candidate_urls=EXCLUDED.candidate_urls,canonical_url=EXCLUDED.canonical_url,
+         resolution_status=EXCLUDED.resolution_status,resolution_note=EXCLUDED.resolution_note,
+         identity_fingerprint=EXCLUDED.identity_fingerprint,updated_at=EXCLUDED.updated_at`,
+      [row.source_key,row.source_kind,row.entity_type,row.entity_id,row.page_title,row.candidate_urls,
+       row.canonical_url,row.resolution_status,row.resolution_note,row.source_grade,row.identity_fingerprint,row.updated_at],
+    );
+  };
+  await upsertResolutionSource(unresolvedSource);
+  await upsertResolutionSource(buildResolutionSourceRow({
+    ...{
+      sourceKey: unresolvedSource.source_key,
+      sourceKind: "wikipedia_document" as const,
+      entityId: unresolvedSource.entity_id,
+      pageTitle: unresolvedSource.page_title,
+      candidateUrls: unresolvedSource.candidate_urls,
+    },
+    canonicalUrl: unresolvedSource.candidate_urls[0],
+    resolutionStatus: "resolved",
+    resolutionNote: "fixture resolved",
+    updatedAt: "2026-08-02T00:01:00Z",
+  }));
+  const resolvedSource = await db.query<{ resolution_status: string; candidates: number; fingerprint: number }>(
+    `SELECT resolution_status,cardinality(candidate_urls)::int AS candidates,
+            length(identity_fingerprint)::int AS fingerprint
+       FROM public.genius_rag_sources WHERE source_key='wikipedia:player:69102'`,
+  );
+  assert.deepEqual(resolvedSource.rows[0], { resolution_status: "resolved", candidates: 1, fingerprint: 64 });
 
   const embedding = `[${Array.from({ length: RAG_EMBEDDING_DIM }, (_, index) => (index % 7) / 10).join(",")}]`;
   const crawledAt = "2026-08-01T00:00:00Z";
@@ -1509,18 +1578,19 @@ async function verifyServingContractOnRealDb(): Promise<void> {
   )).rows[0];
   assert.ok(generationTwo);
   const subdocs = [
-    { revision: "root-rev", hash: "root-hash", crawled: "2026-08-01T01:00:00Z", path: "문보경" },
-    { revision: "career-rev", hash: "career-hash", crawled: "2026-08-01T01:00:10Z", path: "문보경/선수 경력/2024년" },
+    { revision: "root-rev", hash: "root-hash", crawled: "2026-08-01T01:00:00Z", path: "문보경", canonical: "https://namu.wiki/w/x" },
+    { revision: "career-rev", hash: "career-hash", crawled: "2026-08-01T01:00:10Z", path: "문보경/선수 경력/2024년", canonical: "https://namu.wiki/w/%EB%AC%B8%EB%B3%B4%EA%B2%BD/%EC%84%A0%EC%88%98%20%EA%B2%BD%EB%A0%A5/2024%EB%85%84" },
   ];
   for (const [index, subdoc] of subdocs.entries()) {
     await db.query(
-      `SELECT public.upsert_baseball_genius_rag_chunk($1,$2,$3,'player','69102','문보경','https://namu.wiki/w/x',
-        $4,$5,$6,$7,$8,$9,'tier2',$10::timestamptz,'2026-08-01'::date,$11::extensions.vector,'{}'::jsonb)`,
+      `SELECT public.upsert_baseball_genius_rag_chunk($1,$2,$3,'player','69102','문보경',$4,
+        $5,$6,$7,$8,$9,$10,'tier2',$11::timestamptz,'2026-08-01'::date,$12::extensions.vector,$13::jsonb)`,
       [
         "namu:player:69102", generationTwo.claim_token, generationTwo.claim_generation,
-        subdoc.revision, subdoc.path, index,
+        subdoc.canonical, subdoc.revision, subdoc.path, index,
         `${subdoc.path}에 관한 선수 경력과 별명 설명이 충분히 길게 기록된 하위문서 근거입니다.`,
         subdoc.hash, `${subdoc.hash}-chunk`, subdoc.crawled, embedding,
+        JSON.stringify({ documentCanonicalUrl: subdoc.canonical }),
       ],
     );
   }
@@ -1529,10 +1599,11 @@ async function verifyServingContractOnRealDb(): Promise<void> {
     ["namu:player:69102", generationTwo.claim_token, generationTwo.claim_generation, "root-rev", "root-hash", "2026-08-01T01:00:00Z"],
   )).rows[0].ok;
   assert.equal(multiCompleted, true, "revision이 다른 하위문서 generation이 complete되어야 한다");
-  const multiServed = await db.query<{ section_path: string }>(
-    "SELECT section_path FROM public.genius_rag_serving_chunks WHERE entity_id='69102' ORDER BY section_path",
+  const multiServed = await db.query<{ section_path: string; canonical_url: string }>(
+    "SELECT section_path,canonical_url FROM public.genius_rag_serving_chunks WHERE entity_id='69102' ORDER BY section_path",
   );
   assert.deepEqual(multiServed.rows.map((row) => row.section_path), ["문보경", "문보경/선수 경력/2024년"]);
+  assert.equal(multiServed.rows[1].canonical_url, subdocs[1].canonical, "서빙 provenance는 실제 하위문서 canonical이어야 한다");
 
   await db.close();
   console.log("PASS 실 DB 계약 — stage 미노출 / complete 후 서빙 / entity 필터 / 다문서 mixed provenance atomic swap / migration 멱등");

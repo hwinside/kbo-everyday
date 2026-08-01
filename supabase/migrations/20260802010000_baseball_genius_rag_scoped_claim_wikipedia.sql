@@ -74,8 +74,62 @@ BEGIN
     FROM candidates
     WHERE source.source_key = candidates.source_key
     RETURNING source.*
+  ),
+  purged AS (
+    DELETE FROM public.genius_rag_chunks chunk
+    USING claimed
+    WHERE chunk.source_key = claimed.source_key
+      AND chunk.claim_generation < claimed.claim_generation
+      AND chunk.claim_generation <> claimed.active_claim_generation
+    RETURNING chunk.id
   )
   SELECT * FROM claimed;
+END;
+$$;
+
+-- 하위문서 chunk는 root source와 entity/page ownership을 공유하지만 canonical provenance는
+-- 실제 하위문서 URL이어야 한다. metadata 값과 canonical_url의 exact 일치까지 검증해
+-- 호출자가 임의 URL을 귀속시키지 못하게 한다.
+CREATE OR REPLACE FUNCTION public.validate_baseball_genius_rag_chunk_owner()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_source public.genius_rag_sources%ROWTYPE;
+BEGIN
+  SELECT * INTO v_source
+  FROM public.genius_rag_sources
+  WHERE source_key = NEW.source_key
+  FOR SHARE;
+
+  IF v_source.source_key IS NULL
+    OR v_source.source_kind NOT IN ('namu_document', 'wikipedia_document', 'kbo_ebook')
+    OR v_source.resolution_status <> 'resolved'
+    OR v_source.canonical_url IS NULL
+    OR v_source.ingestion_status <> 'ingesting'
+    OR v_source.claim_token IS DISTINCT FROM NEW.claim_token
+    OR v_source.claim_generation <> NEW.claim_generation
+    OR v_source.lease_until IS NULL
+    OR v_source.lease_until <= clock_timestamp()
+    OR v_source.entity_type <> NEW.entity_type
+    OR v_source.entity_id <> NEW.entity_id
+    OR v_source.page_title <> NEW.page_title
+    OR (
+      v_source.canonical_url <> NEW.canonical_url
+      AND NOT (
+        v_source.source_kind = 'namu_document'
+        AND NEW.canonical_url LIKE 'https://namu.wiki/%'
+        AND NEW.metadata ->> 'documentCanonicalUrl' = NEW.canonical_url
+      )
+    )
+    OR v_source.source_grade <> NEW.source_grade
+  THEN
+    RAISE EXCEPTION 'stale or mismatched rag chunk owner/provenance';
+  END IF;
+  NEW.source_kind := v_source.source_kind;
+  RETURN NEW;
 END;
 $$;
 
