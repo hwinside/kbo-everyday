@@ -9,8 +9,8 @@ import {
 import { resolveRosterPlayer } from "../../src/lib/utils/player-roster";
 import {
   isLineupStarterProvenanceTrusted,
-  isSourceSnapshotNewer,
   shouldCommitResponse,
+  shouldPreserveCanonicalLineup,
 } from "../../src/lib/source-snapshot";
 
 const officialLineupStarters = [
@@ -81,8 +81,8 @@ assert.deepEqual(
     teamId: 4,
     boxPitcher: { name: "다른투수", era: "9.99" },
   }),
-  { name: "타케다", era: "7.10", kboId: "56823" },
-  "a live starter change supersedes the earlier lineup and unrelated box row",
+  { name: "화이트", era: "4.11", kboId: "FP007" },
+  "a mismatched live value cannot supersede the confirmed lineup by request timing",
 );
 assert.deepEqual(
   resolveLineupStarter({
@@ -147,14 +147,14 @@ assert.deepEqual(
 );
 assert.deepEqual(
   resolveLineupStarter({
-    liveStarterName: "곽빈",
-    lineupStarterName: "이영하",
+    liveStarterName: "화이트",
+    lineupStarterName: "타케다",
     liveStarterFresh: true,
     lineupStarterTrusted: true,
-    teamId: 2,
+    teamId: 4,
   }),
-  { name: "곽빈", era: "2.64", kboId: "68220" },
-  "a fresh live mismatch supersedes the earlier confirmed-lineup value",
+  { name: "타케다", era: "7.10", kboId: "56823" },
+  "a later-request stale live mismatch yields to the confirmed lineup",
 );
 assert.deepEqual(
   resolveStarterPitcher("미등록투수", 1, "-"),
@@ -201,33 +201,21 @@ assert.equal(
   "dual-source failure cannot manufacture starter provenance",
 );
 
-const olderLive = { generation: 3, sourceAtMs: 1_000, fetchedAtMs: 1_100 };
-const newerLineup = { generation: 7, sourceAtMs: 1_200, fetchedAtMs: 1_250 };
-assert.equal(isSourceSnapshotNewer(olderLive, newerLineup), false);
 assert.deepEqual(
   resolveLineupStarter({
     liveStarterName: "화이트",
     lineupStarterName: "타케다",
-    liveStarterFresh: isSourceSnapshotNewer(olderLive, newerLineup),
+    liveStarterFresh: true,
     lineupStarterTrusted: true,
     teamId: 4,
   }),
   { name: "타케다", era: "7.10", kboId: "56823" },
-  "newer confirmed lineup supersedes an older successful live snapshot",
+  "confirmed lineup remains monotonic across repeated later stale live polls",
 );
-const newerLive = { generation: 4, sourceAtMs: 1_300, fetchedAtMs: 1_350 };
-assert.equal(isSourceSnapshotNewer(newerLive, newerLineup), true);
-assert.deepEqual(
-  resolveLineupStarter({
-    liveStarterName: "화이트",
-    lineupStarterName: "타케다",
-    liveStarterFresh: isSourceSnapshotNewer(newerLive, newerLineup),
-    lineupStarterTrusted: true,
-    teamId: 4,
-  }),
-  { name: "화이트", era: "4.11", kboId: "FP007" },
-  "newer live snapshot supersedes an older confirmed lineup",
-);
+assert.equal(shouldPreserveCanonicalLineup("kbo-confirmed", "none"), true);
+assert.equal(shouldPreserveCanonicalLineup("naver-preview", "kbo-unconfirmed"), true);
+assert.equal(shouldPreserveCanonicalLineup("kbo-confirmed", "naver-preview"), true);
+assert.equal(shouldPreserveCanonicalLineup("kbo-confirmed", "naver-confirmed"), false);
 assert.equal(shouldCommitResponse(8, 7), false, "older in-flight response generation is fenced");
 assert.equal(shouldCommitResponse(8, 8), true, "latest response generation commits");
 
@@ -242,9 +230,15 @@ assert.ok(
     && gamePage.includes("lineupStarterName: d.detailLineup?.awayStarter")
     && gamePage.includes("liveStarterName: liveGame?.homeStarterName")
     && gamePage.includes("lineupStarterName: d.detailLineup?.homeStarter")
-    && gamePage.includes("isSourceSnapshotNewer(liveSnapshot, detailSnapshot)")
+    && gamePage.includes("liveStarterFresh = Boolean(liveSnapshot)")
     && gamePage.includes("isLineupStarterProvenanceTrusted"),
-  "page binds starter selection to actual hook timestamps and lineup provenance",
+  "page binds starter selection to actual live success and lineup provenance",
+);
+const detailHook = readFileSync("src/lib/hooks/useGameDetail.ts", "utf8");
+assert.ok(
+  detailHook.includes("shouldPreserveCanonicalLineup")
+    && detailHook.includes("lineup: dataRef.current.lineup"),
+  "actual detail polling cannot downgrade a canonical lineup to none/unconfirmed",
 );
 
 console.log("starter ERA smoke: ALL assertions PASS");

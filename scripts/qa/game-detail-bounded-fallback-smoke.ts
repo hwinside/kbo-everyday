@@ -276,7 +276,14 @@ function blackhole(signal?: AbortSignal): Promise<Response> {
 async function scenario(
   name: string,
   kboMode: SourceMode,
-  naverMode: "normal" | "blackhole" | "partial" | "preview-only" | "preview-partial",
+  naverMode:
+    | "normal"
+    | "blackhole"
+    | "partial"
+    | "preview-only"
+    | "preview-partial"
+    | "bf-zero"
+    | "bf-missing",
   state: GameState,
 ) {
   const signals = new Set<AbortSignal>();
@@ -350,6 +357,13 @@ async function scenario(
       return json(boxScore(kboMode === "pitch-zero" ? 0 : 102));
     }
     if (url.includes("/record")) {
+      if (naverMode === "bf-zero" || naverMode === "bf-missing") {
+        const payload = JSON.parse(JSON.stringify(
+          naverRecord(state),
+          (key, value) => key === "bf" ? (naverMode === "bf-zero" ? 0 : undefined) : value,
+        ));
+        return json(payload);
+      }
       if (naverMode === "partial") {
         const payload = naverRecord(state) as {
           result?: { recordData?: { battersBoxscore?: { away?: unknown[]; home?: unknown[] } } };
@@ -542,6 +556,17 @@ async function main() {
   assert.equal(pitchZeroDualPartial.body.boxScore, null, "dual partial box fails closed");
   assert.equal(pitchZeroDualPartial.body.trace?.boxScoreSource, "none");
 
+  for (const naverMode of ["bf-zero", "bf-missing"] as const) {
+    const result = await scenario(
+      `KBO pitchCount zero + Naver ${naverMode}`,
+      "pitch-zero",
+      naverMode,
+      "final",
+    );
+    assert.equal(result.body.boxScore, null, `${naverMode}: positive innings without bf fails closed`);
+    assert.equal(result.body.trace?.boxScoreSource, "none");
+  }
+
   const bothDown = await scenario("KBO + Naver blackhole", "blackhole", "blackhole", "final");
   assert.equal(bothDown.body.status, "scheduled");
   assert.equal(bothDown.body.linescore, null);
@@ -639,8 +664,14 @@ async function main() {
 
   // mutation guard: 후속 fetchGames() 기본 10초 경로가 route에 재유입되면 즉시 red.
   const routeSource = readFileSync("src/app/api/game-detail/route.ts", "utf8");
+  const naverRecordSource = readFileSync("src/lib/crawler/naver-record.ts", "utf8");
   assert.doesNotMatch(routeSource, /\bfetchGames\s*\(/, "route must not reintroduce fetchGames 10s await");
   assert.match(routeSource, /signal:\s*deadlineSignal/g, "shared absolute deadline wiring retained");
+  assert.match(
+    naverRecordSource,
+    /recordedPitchers\.every\(\(pitcher\) => pitcher\.pitchCount > 0\)/,
+    "Naver box completeness remains bound to positive bf for every recorded pitcher",
+  );
 
   console.log("game-detail bounded fallback: actual GET degradation matrix PASS");
 }

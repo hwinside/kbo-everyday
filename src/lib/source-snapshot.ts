@@ -30,6 +30,24 @@ export type LineupSource =
   | "naver-preview"
   | "naver-confirmed";
 
+export function isCanonicalLineupSource(source?: LineupSource | null): boolean {
+  return source === "kbo-confirmed"
+    || source === "naver-confirmed"
+    || source === "naver-preview";
+}
+
+export function shouldPreserveCanonicalLineup(
+  previousSource?: LineupSource | null,
+  incomingSource?: LineupSource | null,
+): boolean {
+  const rank = (source?: LineupSource | null) => (
+    source === "kbo-confirmed" || source === "naver-confirmed" ? 2
+      : source === "naver-preview" ? 1
+        : 0
+  );
+  return rank(previousSource) > rank(incomingSource);
+}
+
 export function isLineupStarterProvenanceTrusted({
   source,
   awayBatters,

@@ -72,10 +72,17 @@ export function resolveLineupStarter({
   const lineupName = lineupStarterName?.trim() || "";
   const boxName = boxPitcher?.name?.trim();
   const validBoxName = boxName && !/^선수\(\d+\)$/.test(boxName) ? boxName : "";
-  const starterName = liveStarterFresh && liveName
-    ? liveName
-    : lineupStarterTrusted
-      ? lineupName
-      : "";
+  // Live와 confirmed lineup이 다르면 요청 완료시각으로 신구를 추측하지 않는다.
+  // 비교 가능한 upstream revision이 없으므로 identity-bound confirmed lineup을 우선한다.
+  const confirmedMismatch = Boolean(
+    lineupStarterTrusted && lineupName && liveName && lineupName !== liveName,
+  );
+  const starterName = confirmedMismatch
+    ? lineupName
+    : liveStarterFresh && liveName
+      ? liveName
+      : lineupStarterTrusted
+        ? lineupName
+        : "";
   return resolveStarterPitcher(starterName, teamId, boxPitcher?.era, validBoxName);
 }

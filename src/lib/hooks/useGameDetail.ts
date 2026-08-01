@@ -2,7 +2,11 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { GameDetailResponse } from "@/app/api/game-detail/route";
-import { shouldCommitResponse, type SourceSnapshot } from "@/lib/source-snapshot";
+import {
+  shouldCommitResponse,
+  shouldPreserveCanonicalLineup,
+  type SourceSnapshot,
+} from "@/lib/source-snapshot";
 
 export type { GameDetailResponse };
 export type {
@@ -27,6 +31,8 @@ export function useGameDetail(
   const stoppedRef = useRef(false);
   const finalSinceRef = useRef<number | null>(null);
   const responseGenerationRef = useRef(0);
+  const dataRef = useRef<GameDetailResponse | null>(null);
+  const snapshotRef = useRef<GameDetailSnapshot | null>(null);
 
   // Max 30 min of polling after final (KBO can take time to fill boxScore, especially preseason)
   const FINAL_MAX_POLL_MS = 30 * 60 * 1000;
@@ -42,14 +48,31 @@ export function useGameDetail(
         setError(json.error || `HTTP ${res.status}`);
         return;
       }
-      setData(json);
-      setSnapshot({
+      const incomingSnapshot: GameDetailSnapshot = {
         generation: responseGeneration,
         sourceAtMs: json.trace.sourceAtMs,
         fetchedAtMs: json.trace.fetchedAtMs,
         lineupSource: json.trace.lineupSource,
         boxScoreSource: json.trace.boxScoreSource,
-      });
+      };
+      const preserveLineup = shouldPreserveCanonicalLineup(
+        snapshotRef.current?.lineupSource,
+        incomingSnapshot.lineupSource,
+      );
+      const committedSnapshot = preserveLineup && snapshotRef.current
+        ? { ...incomingSnapshot, lineupSource: snapshotRef.current.lineupSource }
+        : incomingSnapshot;
+      const committedData = preserveLineup && dataRef.current?.lineup
+        ? {
+            ...json,
+            lineup: dataRef.current.lineup,
+            trace: { ...json.trace, lineupSource: committedSnapshot.lineupSource },
+          }
+        : json;
+      dataRef.current = committedData;
+      snapshotRef.current = committedSnapshot;
+      setData(committedData);
+      setSnapshot(committedSnapshot);
       setError(null);
 
       const isFinalOrCancelled = json.status === "final" || json.status === "cancelled";
@@ -81,7 +104,11 @@ export function useGameDetail(
   }, [gameId]);
 
   useEffect(() => {
+    responseGenerationRef.current++;
     stoppedRef.current = false;
+    finalSinceRef.current = null;
+    dataRef.current = null;
+    snapshotRef.current = null;
     setLoading(true);
     fetchDetail();
 

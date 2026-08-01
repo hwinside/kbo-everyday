@@ -52,7 +52,6 @@ import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
 import { resolveLineupStarter } from "@/lib/stats/pitcher-season";
 import {
   isLineupStarterProvenanceTrusted,
-  isSourceSnapshotNewer,
 } from "@/lib/source-snapshot";
 import PullToRefresh from "@/components/PullToRefresh";
 import PostgameInterviewSection from "@/components/game/PostgameInterviewSection";
@@ -407,7 +406,9 @@ export default function GameDetailPage() {
   const tabIndicatorTeam = myTeamInGame ? getTeamById(myTeamId)! : homeTeam;
 
   const d = deriveGameState(liveGame, game, gameDetail);
-  const liveStarterFresh = isSourceSnapshotNewer(liveSnapshot, detailSnapshot);
+  // 두 API의 요청시각은 payload revision이 아니다. live 성공 여부만 전달하고,
+  // 불일치 시 confirmed lineup 우선 정책은 resolveLineupStarter가 담당한다.
+  const liveStarterFresh = Boolean(liveSnapshot);
   const lineupStarterTrusted = isLineupStarterProvenanceTrusted({
     source: detailSnapshot?.lineupSource,
     awayBatters: d.detailLineup?.away.length ?? 0,
