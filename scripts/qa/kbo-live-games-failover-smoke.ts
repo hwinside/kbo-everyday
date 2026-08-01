@@ -403,8 +403,14 @@ async function routeLevelRegression() {
   }
 }
 
-function neverResponse(): Promise<Response> {
-  return new Promise(() => undefined);
+function abortableStall(signal?: AbortSignal): Promise<Response> {
+  return new Promise((_resolve, reject) => {
+    signal?.addEventListener(
+      "abort",
+      () => reject(new DOMException("aborted", "AbortError")),
+      { once: true },
+    );
+  });
 }
 
 async function withWatchdog<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
@@ -435,13 +441,13 @@ async function routeFailureMatrix() {
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input instanceof Request ? input.url : input);
       if (url.includes("Main.asmx")) {
-        if (mode === "timeout") return neverResponse();
+        if (mode === "timeout") return abortableStall(init?.signal ?? undefined);
         if (mode === "empty") return Response.json({ game: [] });
         return new Response(null, { status: Number(mode) });
       }
       if (url.includes("/api/games?")) return Response.json({ games: witnessGames });
       if (url.includes("api-gw.sports.naver.com/schedule/games?")) {
-        if (naverMode === "timeout") return neverResponse();
+        if (naverMode === "timeout") return abortableStall(init?.signal ?? undefined);
         if (naverMode === "fail") throw new Error("naver down");
         const payload = naverSchedulePayload(date);
         if (naverMode === "partial") payload.result.games.pop();
@@ -586,6 +592,89 @@ async function routeFailureMatrix() {
       assert.equal(body.games.length, 0);
       assert.equal(body.trace.stage, "known-slate-mismatch");
       assert.equal(knownSlateCalls, 1, "durable known slate always queried");
+    }
+
+    // Source cleanup is part of the route contract too. A KBO primary that
+    // delays abort settlement must reach active=0 before Naver success returns.
+    {
+      let activeKbo = 0;
+      let kboSignal: AbortSignal | undefined;
+      globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input instanceof Request ? input.url : input);
+        if (url.includes("Main.asmx")) {
+          activeKbo++;
+          kboSignal = init?.signal ?? undefined;
+          return new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => {
+              setTimeout(() => {
+                activeKbo--;
+                reject(new DOMException("aborted", "AbortError"));
+              }, 60);
+            }, { once: true });
+          });
+        }
+        if (url.includes("/api/games?")) return Response.json({ games: witnessGames });
+        if (url.includes("api-gw.sports.naver.com/schedule/games?")) {
+          return Response.json(naverSchedulePayload(date));
+        }
+        if (url.includes("/relay?")) return Response.json(naverRelayPayload("투수", "타자"));
+        return realFetch(input as RequestInfo, init);
+      }) as typeof fetch;
+      const startedAt = Date.now();
+      const response = await withWatchdog(
+        gameLiveRoute(
+          new NextRequest(`http://localhost/api/game-live?date=${date}`),
+          { fetchKnownSlateIdsImpl: async () => witnessGames.map((game) => game.gameId) },
+        ),
+        6_000,
+        "delayed KBO abort cleanup",
+      );
+      const elapsedMs = Date.now() - startedAt;
+      assert.equal(response.status, 200, "Naver succeeds after delayed KBO abort");
+      assert.ok(elapsedMs < 5_000, `delayed KBO cleanup stays inside hard edge: ${elapsedMs}ms`);
+      assert.equal(kboSignal?.aborted, true, "KBO source receives deadline abort");
+      assert.equal(activeKbo, 0, "KBO source settled before response");
+    }
+
+    // Reserve witness/DB time before sources start. A late Naver source must
+    // abort and fully settle inside that reserved slice, not consume all 5s.
+    {
+      let activeNaver = 0;
+      let naverSignal: AbortSignal | undefined;
+      globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input instanceof Request ? input.url : input);
+        if (url.includes("Main.asmx")) return new Response(null, { status: 503 });
+        if (url.includes("api-gw.sports.naver.com/schedule/games?")) {
+          activeNaver++;
+          naverSignal = init?.signal ?? undefined;
+          return new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => {
+              setTimeout(() => {
+                activeNaver--;
+                reject(new DOMException("aborted", "AbortError"));
+              }, 60);
+            }, { once: true });
+          });
+        }
+        return realFetch(input as RequestInfo, init);
+      }) as typeof fetch;
+      const startedAt = Date.now();
+      const response = await withWatchdog(
+        gameLiveRoute(
+          new NextRequest(`http://localhost/api/game-live?date=${date}`),
+          { fetchKnownSlateIdsImpl: async () => witnessGames.map((game) => game.gameId) },
+        ),
+        6_000,
+        "late Naver source reserved witness budget",
+      );
+      const body = await response.json() as { games: unknown[]; trace: { stage: string } };
+      const elapsedMs = Date.now() - startedAt;
+      assert.equal(response.status, 503, "late Naver source fails closed");
+      assert.equal(body.trace.stage, "dual-fail");
+      assert.equal(body.games.length, 0);
+      assert.ok(elapsedMs < 4_800, `source settles before witness reserve: ${elapsedMs}ms`);
+      assert.equal(naverSignal?.aborted, true, "late Naver source receives abort");
+      assert.equal(activeNaver, 0, "late Naver source settled before response");
     }
 
     // Post-merge P0 regression: a fast durable-ledger failure must abort and

@@ -8,6 +8,8 @@ import { fetchKboLiveGames } from "@/lib/notifications/kbo-live-games";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
 const GAME_LIVE_DEADLINE_MS = 5_000;
+const SLATE_WITNESS_BUDGET_MS = 250;
+const SLATE_SETTLE_RESERVE_MS = 100;
 
 type StarterWitnessGame = {
   gameId: string;
@@ -137,14 +139,16 @@ async function fetchSlateWitnesses(
   deps: GameLiveRouteDeps,
 ): Promise<[StarterWitnessGame[], string[]]> {
   const remainingMs = deadlineAtMs - Date.now();
-  if (remainingMs <= 0) throw new Error("slate_witness_deadline");
+  if (remainingMs <= SLATE_SETTLE_RESERVE_MS) {
+    throw new Error("slate_witness_settle_budget_exhausted");
+  }
 
   const controller = new AbortController();
   // Abort raw fetch/PostgREST work at a soft deadline, leaving enough of the
   // 5s route budget for delayed abort cleanup before the hard response edge.
   // Do not wrap these raw promises in runBeforeDeadline: that race can reject
   // its wrapper while the underlying I/O remains active (post-merge P0).
-  const settleReserveMs = Math.min(250, Math.max(50, Math.floor(remainingMs / 10)));
+  const settleReserveMs = Math.min(250, Math.max(SLATE_SETTLE_RESERVE_MS, Math.floor(remainingMs / 10)));
   const timer = setTimeout(
     () => controller.abort(new DOMException("slate witness deadline", "AbortError")),
     Math.max(1, remainingMs - settleReserveMs),
@@ -207,7 +211,14 @@ export async function gameLiveRoute(
   const deadlineAtMs = Date.now() + GAME_LIVE_DEADLINE_MS;
   
   try {
-    const fetched = await fetchKboLiveGames(date, deadlineAtMs);
+    // Reserve the final route slice for the independent witness and durable
+    // slate query, including their abort cleanup, before any source work starts.
+    const sourceDeadlineAtMs = deadlineAtMs - SLATE_WITNESS_BUDGET_MS;
+    const sourceResult = await fetchKboLiveGames(date, sourceDeadlineAtMs);
+    const fetched = {
+      ...sourceResult,
+      trace: { ...sourceResult.trace, deadlineAtMs },
+    };
     if (!fetched.ok) {
       return NextResponse.json(
         { error: "dual-source live games unavailable", games: [], date, trace: fetched.trace },
