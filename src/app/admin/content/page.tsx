@@ -13,6 +13,7 @@ import {
   ResponsiveContainer,
   Legend,
 } from "recharts";
+import StackedTooltip from "@/components/admin/StackedTooltip";
 import { Loader2, FileText, Trash2 } from "lucide-react";
 import { TEAMS } from "@/lib/constants/teams";
 import { PLAYER_PHOTO_MAP } from "@/lib/constants/player-photos";
@@ -218,7 +219,7 @@ function ContentTrendCard<T extends { date: string }>({
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
             <XAxis dataKey="label" stroke="#636366" fontSize={12} />
             <YAxis stroke="#636366" fontSize={12} />
-            <Tooltip {...tooltipStyle} />
+            <Tooltip content={<StackedTooltip />} />
             {series.length > 1 && <Legend />}
             {series.map((s, i) => (
               <Bar

@@ -11,6 +11,7 @@ import {
   Legend,
   ResponsiveContainer,
 } from "recharts";
+import StackedTooltip from "@/components/admin/StackedTooltip";
 
 type Row = { platform: string; date: string; units: number };
 type Resp = {
@@ -36,11 +37,6 @@ function getPin(): string {
   if (typeof window === "undefined") return "";
   return sessionStorage.getItem("admin_pin") || "";
 }
-
-const tooltipStyle = {
-  contentStyle: { background: "#1C1C1F", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "8px" },
-  labelStyle: { color: "#8E8E93" },
-};
 
 const fmt = (n: number) => n.toLocaleString("ko-KR");
 
@@ -145,7 +141,7 @@ export default function DownloadsPage() {
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
               <XAxis dataKey="date" stroke="#8E8E93" fontSize={11} />
               <YAxis stroke="#8E8E93" fontSize={11} allowDecimals={false} />
-              <Tooltip {...tooltipStyle} />
+              <Tooltip content={<StackedTooltip />} />
               <Legend wrapperStyle={{ fontSize: 12 }} />
               {activePlatforms.map((p, i) => (
                 <Bar
