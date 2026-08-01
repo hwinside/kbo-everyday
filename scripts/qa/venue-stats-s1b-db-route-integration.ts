@@ -490,6 +490,63 @@ async function regularSeasonWindowScopeRegression() {
   assert.equal(future.complete, false, "순연 가능 날짜 미검증이면 complete=true 금지");
   assert.ok(future.failedDates.includes("20261001"));
 
+  // 삼순 P0 RED — 앞의 assert 는 end 뒤 날짜를 **강제로** unverified 로 만들어 반대가설을
+  // 검사하지 않았다. 진짜 경계는 "KBO+Naver 둘 다 미래 날짜를 빈 응답으로 줌" —
+  // 그때 fetch 계층은 emptyVerified=true 를 보고하고, 수정 전엔 그걸 그대로 인정해
+  // complete=true / last=20261031 로 권위 우주를 거짓 확정했다(독립 probe 재현).
+  // end 뒤 horizon 은 응답 내용과 무관하게 구조적 incomplete 여야 한다.
+  const alwaysVerifiedEmpty = await collectSeasonGameUniverse(2026, "0", {
+    today: "2026-10-01",
+    fetcher: async (): Promise<SeasonGameFetchResult> => VERIFIED_EMPTY,
+  });
+  assert.equal(
+    alwaysVerifiedEmpty.complete,
+    false,
+    "end 뒤 미래 날짜가 양 소스 verified-empty 여도 우주 완전함을 확정하면 안 된다",
+  );
+  const beyondEnd = alwaysVerifiedEmpty.expectedDates.filter((d) => d > w.end);
+  assert.ok(beyondEnd.length > 0, "10/1 horizon 이라 end 뒤 날짜가 존재해야 함(전제 확인)");
+  assert.deepEqual(
+    beyondEnd.filter((d) => !alwaysVerifiedEmpty.failedDates.includes(d)),
+    [],
+    "end 뒤 날짜는 전부 failedDates 에 있어야 함(구조적 미검증)",
+  );
+  assert.deepEqual(
+    alwaysVerifiedEmpty.collectedDates.filter((d) => d > w.end),
+    [],
+    "end 뒤 날짜를 수집 성공으로 세지 않음",
+  );
+  // end 이내 구간은 종랰대로 verified-empty 가 성공이다(과잉 차단 아님).
+  assert.ok(
+    alwaysVerifiedEmpty.collectedDates.includes(w.end),
+    "종료일 당일은 verified-empty 로 수집 성공",
+  );
+  assert.deepEqual(
+    alwaysVerifiedEmpty.failedDates.filter((d) => d <= w.end),
+    [],
+    "end 이내는 기존대로 성공 — 이 가드가 정상 구간까지 막지 않는다",
+  );
+
+  // end 뒤에 실제 순연 경기가 있어도 같다 — 경기 데이터는 버리지 않되, 실제 종료일을
+  // 모르므로 우주 완전함은 주장하지 않는다(window 갱신이 유일한 해소 조건).
+  const postponed = await collectSeasonGameUniverse(2026, "0", {
+    today: "2026-10-01",
+    fetcher: async (date): Promise<SeasonGameFetchResult> =>
+      date === "20261001" ? gamesResult([makeFinalGame("20261001LGOB0")]) : VERIFIED_EMPTY,
+  });
+  assert.equal(postponed.complete, false, "end 뒤 순연 경기가 있어도 complete 확정 금지");
+  assert.ok(
+    postponed.games.some((g) => g.gameId === "20261001LGOB0"),
+    "end 뒤 순연 경기 데이터 자체는 버리지 않는다",
+  );
+
+  // 전-시리즌 우주(srId≠"0")는 이 경계 규칙의 대상이 아니다 — 종랰 동작 보존.
+  const allFuture = await collectSeasonGameUniverse(2026, "0,1,3,4,5,7,9", {
+    today: "2026-10-01",
+    fetcher: async (): Promise<SeasonGameFetchResult> => VERIFIED_EMPTY,
+  });
+  assert.equal(allFuture.complete, true, "전-시리즌 우주는 end 경계 규칙 미적용(기존 동작)");
+
   const unknown = await collectSeasonGameUniverse(2027, "0", {
     today: "2027-03-01",
     fetcher: async () => ({ games: [], emptyVerified: false }),

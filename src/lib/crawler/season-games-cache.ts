@@ -208,9 +208,29 @@ function getSeasonDates(season: number, srId = "0,1,3,4,5,7,9", todayOverride?: 
   const window = REGULAR_SEASON_WINDOWS[String(season)];
   if (!window) return dates; // 미등록 시즌 — 기존 fail-close 경로 그대로
   // 개막 전만 확정적으로 자른다. 종료일은 순연으로 유동이므로 window.end 뒤를 조용히
-  // 제외하지 않는다. 현재 horizon이 end를 넘으면 실제 fetch가 그 날짜를 검증하거나
-  // unverified로 남겨 complete=false가 되어야 한다.
+  // 제외하지 않는다 — 제외하면 순연 경기가 우주에서 사라진다.
+  // 대신 collectSeasonGameUniverse 가 end 뒤 날짜를 **구조적 미검증**으로 묶어
+  // complete=false 로 남긴다(isBeyondVerifiedSeasonEnd).
   return dates.filter((d) => d >= window.start);
+}
+
+/**
+ * 정규 전용(srId="0") 우주에서 검증된 시즌 종료일(window.end) 뒤 날짜인가.
+ *
+ * 삼순 P0 — end 뒤는 "아직 일정이 확정되지 않은 구간"이지 "무경기가 확정된 구간"이 아니다.
+ * KBO와 Naver가 둘 다 미래 날짜를 빈 응답으로 주면 fetch 계층은 emptyVerified=true 로
+ * 보고하는데, 그걸 그대로 인정하면 순연/포스트시즌 직전 horizon 에서 다시
+ * "권위 우주 완전함"을 거짓으로 확정한다(독립 probe 재현: today=2026-10-01 +
+ * 전부 verified-empty → complete=true, last=20261031).
+ *
+ * 따라서 응답 내용과 무관하게 구조적으로 미검증 처리한다. 해소 조건은 단 하나 —
+ * REGULAR_SEASON_WINDOWS 의 end 를 확정된 실제 종료일로 갱신하는 것(추측 서빙 금지).
+ */
+export function isBeyondVerifiedSeasonEnd(date: string, srId: string): boolean {
+  if (srId !== REGULAR_ONLY_SR_ID) return false;
+  const window = REGULAR_SEASON_WINDOWS[date.slice(0, 4)];
+  if (!window) return false; // 미등록 연도는 기존 fail-close 경로가 이미 닫는다
+  return date > window.end;
 }
 
 /**
@@ -240,15 +260,24 @@ export async function collectSeasonGameUniverse(
       failedDates.push(dates[i]);
       return;
     }
+    const { games: dateGames, emptyVerified } = r.value;
+    // 경기가 실제로 있으면 데이터는 수집한다(end 뒤 순연 경기도 실제 경기다).
+    games.push(...dateGames);
+    // 삼순 P0 — 검증된 시즌 종료일 뒤 horizon 은 응답 내용과 무관하게 구조적 미검증.
+    // 양 소스가 둘 다 빈 응답이면 fetch 계층은 emptyVerified=true 로 보고하지만,
+    // 그건 "무경기 확정"이 아니라 "아직 일정이 안 잡힌 구간"일 수 있다.
+    // 경기가 있는 경우에도 실제 종료일을 모르므로 우주 완전함을 주장하지 않는다.
+    if (isBeyondVerifiedSeasonEnd(dates[i], srId)) {
+      failedDates.push(dates[i]);
+      return;
+    }
     // 삼순 P0-1 — unverified soft-empty(빈 배열 + 교차검증 미확정)는 성공 날짜로 세지 않는다.
     // 실제 무경기 확정(emptyVerified) 또는 경기 존재(games>0)만 수집 성공.
-    const { games: dateGames, emptyVerified } = r.value;
     if (dateGames.length === 0 && !emptyVerified) {
       failedDates.push(dates[i]);
       return;
     }
     collectedDates.push(dates[i]);
-    games.push(...dateGames);
   });
 
   return {
