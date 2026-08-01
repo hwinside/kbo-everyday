@@ -38,11 +38,11 @@ sed \
   -e 's/timestamptz, date, extensions\.vector(768), jsonb/timestamptz, date, text, jsonb/' \
   supabase/migrations/20260731_baseball_genius_rag_sources.sql | "${PSQL[@]}"
 
-# committed inventory는 migration 직후 932행을 만들며 재실행해도 중복되지 않는다.
+# committed inventory는 migration 직후 933행을 만들며 재실행해도 중복되지 않는다.
 "${PSQL[@]}" -f supabase/migrations/20260731_baseball_genius_rag_sources_seed.sql
 "${PSQL[@]}" -f supabase/migrations/20260731_baseball_genius_rag_sources_seed.sql
-[ "$("${PSQL[@]}" -c 'select count(*) from public.genius_rag_sources')" = "932" ]
-[ "$("${PSQL[@]}" -c "select count(*) from public.genius_rag_sources where entity_type='player' and resolution_status is null")" = "878" ]
+[ "$("${PSQL[@]}" -c 'select count(*) from public.genius_rag_sources')" = "933" ]
+[ "$("${PSQL[@]}" -c "select count(*) from public.genius_rag_sources where entity_type='player' and resolution_status is null")" = "879" ]
 [ "$("${PSQL[@]}" -c "select count(*) from public.claim_baseball_genius_rag_batch(50, 60) where entity_type='player'")" = "0" ]
 
 "${PSQL[@]}" <<'SQL'
@@ -943,4 +943,4 @@ wait "$PID_A" "$PID_B"
 [ "$(sort -u "$WORK/a" "$WORK/b" | wc -l | tr -d ' ')" = "20" ]
 [ "$(cat "$WORK/a" "$WORK/b" | wc -l | tr -d ' ')" = "20" ]
 
-echo "baseball QA source inventory PG17 PASS (seed932·pending878·fault/CAS/concurrency·B1embedding·B2acl·B3reclaim·R2-B1stage→swap+snapshot보존·R2-B2provenance균일·R2-B3idempotent재시도·R2-B4drift→stale강등·R2-B5성공시retry예산회복+연속3회소진·R2-B6실패종료+token/gen불일치no-op·R2-B6b실패시snapshot보존+즉시재claim)"
+echo "baseball QA source inventory PG17 PASS (seed933·pending879·fault/CAS/concurrency·B1embedding·B2acl·B3reclaim·R2-B1stage→swap+snapshot보존·R2-B2provenance균일·R2-B3idempotent재시도·R2-B4drift→stale강등·R2-B5성공시retry예산회복+연속3회소진·R2-B6실패종료+token/gen불일치no-op·R2-B6b실패시snapshot보존+즉시재claim)"

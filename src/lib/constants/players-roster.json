@@ -7821,6 +7821,15 @@
     "birthDate": "2002-07-30"
   },
   {
+    "name": "카라스코",
+    "kboId": "56103",
+    "teamId": 1,
+    "position": "투수",
+    "backNo": "-",
+    "team": "LG",
+    "birthDate": "1987-03-21"
+  },
+  {
     "name": "황석민",
     "kboId": "56628",
     "teamId": 6,

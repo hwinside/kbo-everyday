@@ -33,6 +33,8 @@ const officialLineupStarters = [
   ["곽빈", 2, "68220", "2.64"],
   ["짐머맨", 9, "56799", "0.00"],
   ["배제성", 3, "65516", "4.30"],
+  ["타케다", 4, "56823", "7.10"],
+  ["김윤하", 10, "54319", "6.35"],
 ] as const;
 
 for (const [name, teamId, kboId, era] of officialLineupStarters) {

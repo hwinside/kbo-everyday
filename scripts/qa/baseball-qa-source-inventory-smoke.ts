@@ -16,16 +16,16 @@ import {
 const inventory = inventoryJson as RagSourceInventory;
 const rebuilt = buildSourceInventory(roster as RosterSourcePlayer[], inventory);
 
-assert.equal(roster.length, 878, "roster SSOT count changed; inventory contract must be reviewed");
+assert.equal(roster.length, 879, "roster SSOT count changed; inventory contract must be reviewed");
 assert.equal(KBO_STRUCTURED_SOURCES.length, 43, "KBO navigation universe is an independent fixed contract");
-assert.equal(inventory.sources.length, 878 + 11 + 43);
+assert.equal(inventory.sources.length, 879 + 11 + 43);
 assert.equal(rebuilt.inventoryVersion, inventory.inventoryVersion, "inventory generation must be idempotent");
 assert.deepEqual(rebuilt, inventory, "committed inventory must match the deterministic generator");
 
 const playerSources = inventory.sources.filter((source) => source.entityType === "player");
-assert.equal(playerSources.length, 878);
-assert.equal(new Set(playerSources.map((source) => source.entityId)).size, 878);
-assert.equal(new Set(playerSources.map((source) => source.sourceKey)).size, 878);
+assert.equal(playerSources.length, 879);
+assert.equal(new Set(playerSources.map((source) => source.entityId)).size, 879);
+assert.equal(new Set(playerSources.map((source) => source.sourceKey)).size, 879);
 for (const source of playerSources) {
   assert.equal(source.candidateUrls.length, 3);
   assert.equal(source.canonicalUrl, null, "unverified player URL must not be called canonical");
@@ -104,8 +104,8 @@ assert.notEqual(classified.inventoryVersion, inventory.inventoryVersion,
 
 const coverage = inventoryCoverage(inventory);
 assert.deepEqual(coverage, {
-  total: 878,
-  counts: { resolved: 0, missing: 0, ambiguous: 0, blocked: 0, pending: 878 },
+  total: 879,
+  counts: { resolved: 0, missing: 0, ambiguous: 0, blocked: 0, pending: 879 },
   classificationComplete: false,
 });
 
@@ -154,12 +154,12 @@ const seed = readFileSync(
   "supabase/migrations/20260731_baseball_genius_rag_sources_seed.sql",
   "utf8",
 );
-assert.equal((seed.match(/^  \('/gm) ?? []).length, 932);
+assert.equal((seed.match(/^  \('/gm) ?? []).length, 933);
 assert.ok(seed.includes("ON CONFLICT (source_key) DO UPDATE"));
 assert.ok(seed.includes("target.identity_fingerprint = EXCLUDED.identity_fingerprint"));
 
 const spec = readFileSync("specs/baseball-genius-v2-hybrid-rag.md", "utf8");
-assert.ok(spec.includes("선수 878명 URL inventory는 전수 확정·유지"));
+assert.ok(spec.includes("선수 879명 URL inventory는 전수 확정·유지"));
 assert.ok(spec.includes("실제 질문 조회 빈도 내림차순"));
 assert.ok(spec.includes("S0 merge·Production DB 적용"));
 assert.ok(spec.includes("실제 계정 2턴 End-User QA HOLD"));

@@ -34,11 +34,11 @@
 ### 0.2 데이터 완전성 실측 (삼순 Production 재실측, rev0.2 핵심)
 - `player_game_logs`: **16,958행 / 485경기 중 complete ledger 10경기(2.06%)**. 즉 대부분 경기가 부분 적재 → **선수 시즌 누적 집계는 지금 신뢰성 게이트 미통과.**
 - **final 일정 universe coverage 100% (exact, rev0.3)**: 시즌 누적/집계 답변의 완전성 게이트는 '표본이 많다'가 아니라 **대상 기간의 *종료(final) 경기 일정 universe*를 100% 커버**해야 통과. 기준 일정 universe = `/api/games` 종료 경기 집합(KBO→Naver 이중화 SSOT). 이 universe의 모든 경기가 complete ledger로 적재됐는지 대조해 **누락 0**일 때만 시즌 누적 개방. 1경기라도 누락/부분이면 '확인된 N경기 기준'으로만 답하거나 보류(부분 표본으로 시즌 단정 금지).
-- `players_roster` 테이블: **0행**. 로스터는 정적 JSON(`players-roster.json`, 878명)이 SSOT이고 DB 테이블은 비어 있음 → S1a는 JSON을 dataVersion과 함께 사용, 테이블 의존 금지.
+- `players_roster` 테이블: **0행**. 로스터는 정적 JSON(`players-roster.json`, 879명)이 SSOT이고 DB 테이블은 비어 있음 → S1a는 JSON을 dataVersion과 함께 사용, 테이블 의존 금지.
 - **결론**: S1a에서 "시즌 누적 스탯"은 데이터 완전성이 확보되기 전까지 답하지 않는다(보류). S1a 착수는 **완전성 검증 게이트 통과가 선결**.
 
 ### 0.3 데이터 자산 인벤토리 (실측)
-- 선수 로스터·프로필(이름·kboId·팀·포지션·등번호·생년월일) · `players-roster.json`(878명 정적 JSON) · 내부·정적 · ✅ 즉시 사용(지연 0, 장애 0), dataVersion 필수
+- 선수 로스터·프로필(이름·kboId·팀·포지션·등번호·생년월일) · `players-roster.json`(879명 정적 JSON) · 내부·정적 · ✅ 즉시 사용(지연 0, 장애 0), dataVersion 필수
 - 선수 식별/별칭/동명이인/외국인 ID 역매핑 · `resolve-player.ts`(SSOT) · 내부 로직 · ✅ 엔티티 링킹 재사용
 - 선수 경기별 로그 · Supabase `player_game_logs` · 내부 DB · ⚠️ **complete 2.06%뿐 → 시즌 누적 HOLD**, 개별 경기 라인은 complete flag 있는 것만
 - 선수 시즌 스탯(공식 누적) · `/api/player-stats`→KBO HTML 스크래핑 · 외부 실시간 · ⚠️ 외부 의존·장애 전파(S1b)
@@ -172,7 +172,7 @@
 ---
 
 ## 6. 엔티티 별칭 / 동명이인 — AMBIGUOUS/dataVersion
-- kboId 유일 키(이름 단독키 금지 — 동명이인 **32그룹**, 로스터 878명 실측 2026-07-31; rev0.2의 27은 stale). 최다 김도현·김동현·김태훈·김현수·박건우·이서준·이재원·이주형·최원준 등 3인 동명 포함.
+- kboId 유일 키(이름 단독키 금지 — 동명이인 **32그룹**, 로스터 879명 실측 2026-08-01; rev0.2의 27은 stale). 최다 김도현·김동현·김태훈·김현수·박건우·이서준·이재원·이주형·최원준 등 3인 동명 포함.
 - `resolvePlayer` SSOT: exact→exact+team→partial+team→partial, 외국인 ID 역매핑.
 - 로스터 JSON은 **dataVersion** 부착(어느 버전 로스터로 답했는지 추적).
 - 해석 결과가 유일하지 않으면 **AMBIGUOUS 반환 → 되묻기**(임의 선택 금지).
@@ -273,8 +273,8 @@ rev0.9 B3의 "reclaim 시점 이전 generation purge"는 UNIQUE 충돌은 해소
 - **[PG17 런타임 결함]** 고정 포트 59343 + 빈 locale 탓에 macOS에서 postmaster가 `became multithreaded during startup`으로 즉사해 **게이트가 아예 돌지 못하던** 문제 수정(빈 포트 선택 + `LC_ALL=C`).
 
 ### rev0.7 (하린아빠 KBO 기록실 + 나무위키 전수 RAG 확정, 2026-07-31)
-- **§12 신규**: KBO 기록실 + KBO/10구단/선수별(878명) 나무위키를 전수 RAG 자산으로 구축. 전수 inventory(resolved|missing|ambiguous|blocked 100% 분류), KBO 기록실=structured typed claim(벡터 아님), 나무위키=서술형 hybrid RAG(provenance 메타 필수). 숫자 정본=공식 KBO, 나무위키 숫자는 교차검증 전 확정 claim 금지.
-- **§12.1 실행순서**: S1b-KBO 기록실 inventory/schema → S2a KBO+10팀 ingestion → S2b 선수 878명 batch. 운영 대시보드+재수집 큐.
+- **§12 신규**: KBO 기록실 + KBO/10구단/선수별(879명) 나무위키를 전수 RAG 자산으로 구축. 전수 inventory(resolved|missing|ambiguous|blocked 100% 분류), KBO 기록실=structured typed claim(벡터 아님), 나무위키=서술형 hybrid RAG(provenance 메타 필수). 숫자 정본=공식 KBO, 나무위키 숫자는 교차검증 전 확정 claim 금지.
+- **§12.1 실행순서**: S1b-KBO 기록실 inventory/schema → S2a KBO+10팀 ingestion → S2b 선수 879명 batch. 운영 대시보드+재수집 큐.
 - **§12.2 기술 게이트(rev0.8에서 확정 승격)**: robots/약관 확인기록·접근제한 우회금지·최소 원문저장·canonical provenance는 확정 계약이다. 단 상업 이용 법무 승인만 대량 ingestion/서빙 전 별도 launch gate로 분리해 `decision_pending` 유지.
 - **정책 supersede**: 7/30 "나무위키 운영 RAG NO-GO"는 §5 rev0.2 정책 교체 + §12 하린아빠 확정으로 명시적 supersede.
 - 판정: 범위 확대 GO. S1a 내부 완전성은 내부 시즌 누적 게이트로 유지하되 S1b/S2 착수 선행조건 아님. 구현 merge/deploy는 삼순 리뷰+하린아빠 승인 전 HOLD.
@@ -309,7 +309,7 @@ rev0.9 B3의 "reclaim 시점 이전 generation purge"는 UNIQUE 충돌은 해소
 - **S1b allowlist/provenance·권리·season 검증(§3.2)**: provider 화이트리스트·provenance 추적·rights 게이트·season 일치 검증 4계약.
 - **typed claim 7필드 계약(§3.3)**: value·unit·entityId·provider·asOf·dataVersion·season, 결측 시 claim 무효·보류.
 - **final 일정 universe coverage 100%(§0.2·§8)**: 시즌 누적 완전성 게이트를 '표본 수'가 아닌 '종료 경기 일정 universe 100% 커버(누락 0)'로 정의.
-- **동명이인 32그룹(§6)**: 로스터 878명 실측(27→32, rev0.2 stale 정정).
+- **동명이인 32그룹(§6)**: 로스터 879명 실측(27→32, rev0.2 stale 정정).
 - 판정 유지: S0 exact 계약 반영 후 조건부 GO, S1a/S1b/S2 HOLD.
 
 ### rev0.2 변경 이력 (삼순 1차 NO-GO 반영 매핑)
@@ -329,7 +329,7 @@ rev0.9 B3의 "reclaim 시점 이전 generation purge"는 UNIQUE 충돌은 해소
 
 하린아빠 확정 결정: KBO 기록실, KBO 나무위키, 10개 구단별 나무위키, 로스터의 각 선수별 나무위키를 모두 야잘알봇 검색 자산으로 구축한다. 범위는 전수 수집이지만 답변 신뢰성 계약은 제0원칙을 그대로 적용한다.
 
-- 전수 inventory: KBO 기록실의 제공 기록 범주 전체 + KBO 개요 1페이지 + 10개 구단 페이지 + players-roster.json 878명 각각의 나무위키 canonical page 후보. 각 엔티티는 resolved | missing | ambiguous | blocked 중 하나로 100% 분류하며 조용한 누락을 금지한다.
+- 전수 inventory: KBO 기록실의 제공 기록 범주 전체 + KBO 개요 1페이지 + 10개 구단 페이지 + players-roster.json 879명 각각의 나무위키 canonical page 후보. 각 엔티티는 resolved | missing | ambiguous | blocked 중 하나로 100% 분류하며 조용한 누락을 금지한다.
 - KBO 기록실은 벡터 RAG가 아니라 structured retrieval로 수집·정규화한다. season·entityId·metric·value·unit·provider·asOf·dataVersion을 가진 typed claim만 deterministic renderer에 전달하고, 숫자는 LLM/나무위키에서 생성하지 않는다.
 - 나무위키는 서술형 RAG로 사용한다. chunk 메타 필수값: entityType, entityId(kboId/teamId), pageTitle, canonicalUrl, revision, sectionPath, crawledAt, contentHash, sourceGrade, asOf. 이름 단독 연결 금지, 동명이인은 기존 AMBIGUOUS 계약으로 분리한다.
 - 임베딩은 지원 모델 `gemini-embedding-2`의 768차원 출력을 사용한다. 문서/질의는 **Google 공식 asymmetric retrieval prefix**를 그대로 쓴다 — 질의 `task: search result | query: {content}`, 문서 `title: {pageTitle} | text: {content}`(title 미상 시 `none`). 임의 한글 접두사는 모델이 학습한 prefix와 어긋나 index/query 정렬을 깨므로 사용하지 않는다. `task_type`은 전송하지 않으며, 768개 유한값이 아닌 응답은 저장 전 거부한다. 실 API 768 finite 검증은 `GEMINI_API_KEY` 보유 환경의 별도 launch gate(`verify-embedding-live`)에서 수행하고, PR 게이트는 mock 포맷 exact assert로 고정한다.
@@ -343,7 +343,7 @@ rev0.9 B3의 "reclaim 시점 이전 generation purge"는 UNIQUE 충돌은 해소
 
 1. S1b-KBO 기록실: source inventory → extractor/schema → typed claim/renderer → 장애·시즌·수치 exact eval.
 2. S2a: KBO 개요 1 + 구단 10페이지 ingestion, entity-filtered hybrid retrieval, citation/revision eval.
-3. S2b: 선수 878명 URL inventory는 전수 확정·유지한다. 선수 문서 embedding·갱신은 실제 질문 조회 빈도 내림차순의 작은 batch로 ingestion·평가·롤백 가능하게 확대하되 최종 목표 범위는 전원이다.
+3. S2b: 선수 879명 URL inventory는 전수 확정·유지한다. 선수 문서 embedding·갱신은 실제 질문 조회 빈도 내림차순의 작은 batch로 ingestion·평가·롤백 가능하게 확대하되 최종 목표 범위는 전원이다.
 4. 운영: source coverage/revision/stale/실패율 대시보드와 재수집 큐를 두고, 실제 질문 eval에서 정량 exact와 서술형 citation을 분리 판정한다.
 
 판정: 범위 확대 GO. S1a 내부 player_game_logs 완전성은 내부 시즌 누적 서빙 게이트로 유지하되, KBO 기록실 S1b와 나무위키 S2의 source inventory/ingestion 착수를 막는 선행조건으로 사용하지 않는다. 구현 PR은 삼순 코드리뷰와 하린아빠 merge 승인 전 merge/deploy HOLD.
