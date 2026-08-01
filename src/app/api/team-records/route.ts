@@ -228,7 +228,9 @@ async function fetchPitchingRecords(
   const basic1 = requireTeamRows(
     parseTable(basic1Html),
     "Pitcher Basic1",
-    [2, 3, 9, 10, 11, 14, 16, 17],
+    // IP(9)는 `857 1/3` 같은 KBO 정규 형식이라 generic Number 검증에서 제외한다.
+    // 아래 parseKboInningsOuts가 전용 fail-close 검증을 담당한다.
+    [2, 3, 10, 11, 14, 16, 17],
   );
 
   const results: TeamPitching[] = [];

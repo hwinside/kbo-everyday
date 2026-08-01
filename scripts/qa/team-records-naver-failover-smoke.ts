@@ -7,6 +7,8 @@
  *  - Blocker 2: KBO 5s + Naver 5s 직렬(5,004ms/10,004ms) → 공유 absolute deadline 으로 Naver reserve 확보·bound.
  */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import type { NextRequest } from "next/server";
 
 process.env.NEXT_PUBLIC_SUPABASE_URL ??= "http://127.0.0.1:54321";
@@ -122,7 +124,7 @@ function hitterBasic2(names: readonly string[]): string {
 function runnerBasic(names: readonly string[]): string {
   return htmlTable(names.map((n, i) => [`${i + 1}`, n, ".280", "30", "88"]));
 }
-// Pitcher Basic1: 팀명(1) ERA(2) SV(6) HR(11) SO(14) WHIP(17)
+// Pitcher Basic1: 팀명(1) ERA(2) SV(6) IP(9) HR(11) SO(14) WHIP(17)
 function pitcherBasic1(names: readonly string[]): string {
   return htmlTable(
     names.map((n, i) => [
@@ -135,7 +137,7 @@ function pitcherBasic1(names: readonly string[]): string {
       "35",
       "20",
       ".560",
-      "1290",
+      "1290 1/3",
       "1200",
       "110",
       "480",
@@ -331,7 +333,19 @@ async function main() {
   );
   assert.equal(kboNormal.batting.length, 10);
   assert.equal(new Set(kboNormal.batting.map((r) => r.teamId)).size, 10);
+  assert.equal(kboNormal.pitching[0].inningsOuts, 3871, "KBO fractional IP 전용 파서");
   assert.equal(naverCalls, 0, "정상 KBO HTML → Naver 미호출");
+
+  const venueRouteSource = readFileSync(
+    resolve(process.cwd(), "src/app/api/me/venue-stats/route.ts"),
+    "utf8",
+  );
+  assert.match(venueRouteSource, /loadCachedTeamRecords\(requestedSeason\)/);
+  assert.match(venueRouteSource, /teamRecords,\s*favoriteIds:/);
+  assert.match(
+    venueRouteSource,
+    /teamSeasonTotals:\s*currentBaselines\?\.teamSeasonTotals\s*\?\?\s*null/,
+  );
 
   const partialVariants: KboVariant[] = [
     "hitterBasic1Empty",
