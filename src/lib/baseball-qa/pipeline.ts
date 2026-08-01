@@ -477,6 +477,35 @@ export function routeQuestion(
   return "baseball_rule_term";
 }
 
+/**
+ * 이 질문이 **결정론적으로** 야구 질문임을 확인했는가.
+ *
+ * `routeQuestion`은 미매칭 질문을 과차단하지 않기 위해 마지막에 `baseball_rule_term`으로
+ * **폴백**한다. 즉 비야구 질문도 이 라벨을 달고 내려오며, 비야구 판정은 LLM의
+ * NOT_BASEBALL이 맡는 구조다.
+ *
+ * 공식 RAG를 그 폴백 질문에도 태우면 **비야구 질문이 blocked 대신 unsure로 바뀌고**,
+ * 적대적 provider에서는 무관한 KBO 조문이 근거로 붙은 답이 나간다(삼순 R1 재현).
+ * 그래서 공식 RAG는 **양성 야구 신호가 실제로 있을 때만** 탄다 — 폴백 질문은 종전대로
+ * LLM 분류로 내려보낸다.
+ */
+export function hasExplicitBaseballSignal(
+  question: string,
+  glossary: GlossaryEntry[] = [],
+): boolean {
+  const normalized = question.normalize("NFKC").toLowerCase();
+  const tokens = questionTokens(normalized);
+  if (matchGlossary(glossary, question)) return true;
+  const mentionsGlossaryTerm = glossary.some((entry) =>
+    [entry.term, ...entry.aliases].some((name) => {
+      const normalizedName = name.normalize("NFKC").toLowerCase().trim();
+      return normalizedName.length >= 2 && tokenMatches(tokens, normalizedName);
+    })
+  );
+  if (mentionsGlossaryTerm) return true;
+  return BASEBALL_WORDS.some((word) => tokenMatches(tokens, word));
+}
+
 export interface ValidatedLlmAnswer {
   kind: "answer" | "blocked" | "unsure";
   answer?: string;
@@ -758,6 +787,22 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     return { status: 200, answer: hit.answer, source: "dictionary", term: hit.term, remaining };
   }
 
+  // ②-a 규칙·용어 질문은 KBO 공식 간행물(tier1) 근거를 **global 캐시보다 먼저** 시도한다.
+  //
+  // 순서가 바뀐 이유(삼순 R2): `genius_qa_cache`에는 tier1 적재 이전에 일반 LLM이 생성해 썻은
+  // 답이 수백 행 쌓여 있다. 그것들은 공식 근거가 없던 시절의 생성답이므로 **정본보다 먼저
+  // 나가면 이번 작업이 무의미**해진다(오답 캐시가 tier1을 영원히 가린다).
+  // 검수 사전(①)은 사람이 검수한 답이므로 여전히 앞에 둔다.
+  //
+  // 또 **양성 야구 신호가 있을 때만** 탄다. `routeQuestion`은 미매칭 질문을 과차단하지 않기 위해
+  // `baseball_rule_term`으로 폴백하므로, 비야구 질문도 이 라벨로 내려온다. 그걸 공식 RAG에
+  // 통과시키면 비야구가 blocked 대신 unsure로 바뀌고 적대적 provider에서는 무관한 KBO 조문이
+  // 근거로 붙은 답이 나간다(삼순 R1 재현). 폴백 질문은 종전대로 LLM NOT_BASEBALL 분류로 보낸다.
+  if (deps.searchOfficialRag && deps.callOfficialRagLlm && hasExplicitBaseballSignal(question, glossary)) {
+    const official = await answerOfficialDocumentQuestion(userId, question, questionNorm, remaining, deps);
+    if (official) return official;
+  }
+
   // ② 동일질문 캐시 (토큰 0). 맥락 의존 질문은 global 캐시를 read도 write도 하지 않는다
   // — preseed된 동일 정규화 키가 있어도 맥락 없는 답으로 오염되면 안 된다 (spec §4.1 B5).
   if (!context) {
@@ -777,18 +822,6 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     if (candidate) {
       return answerPlayerDescriptiveQuestion(userId, question, questionNorm, candidate, remaining, deps);
     }
-  }
-
-  // ②-c 규칙·용어 질문은 KBO 공식 간행물(tier1) 근거로 먼저 시도한다.
-  //
-  // 선수 경로와 달리 **fail-close하지 않는다**: 공식 문서에 근거가 없으면 null을 돌려
-  // 아래 일반 LLM 경로로 그대로 내려간다. 이 경로는 기존 답변 품질을 올리기만 하고
-  // 기존에 답하던 질문을 새로 막지 않는다(기능 퇴행 금지).
-  //
-  // 캐시(②)보다 뒤에 두는 이유: 검수 사전·캐시는 토큰 0이고 이미 검수된 답이므로 우선순위가 높다.
-  if (deps.searchOfficialRag && deps.callOfficialRagLlm) {
-    const official = await answerOfficialDocumentQuestion(userId, question, questionNorm, remaining, deps);
-    if (official) return official;
   }
 
   // ③ 미매칭만 LLM (단발, 이력 미전송). durable job 상태로 동일 messageId의 LLM 소비를

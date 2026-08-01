@@ -286,17 +286,59 @@ export type ValidatedRagAnswer =
  * 들어 있어야 통과한다. 한 글자씩 비교하면 "1"이 아무 데나 있어서 전부 통과되므로 의미가 없다.
  * 순서리(한글 숫자 표현)는 대상이 아니다 — 아라비아 숫자만 검사한다.
  */
+const KOREAN_NUMERALS: Record<string, string> = {
+  한: "1", 두: "2", 세: "3", 서너: "3", 네: "4",
+  다섯: "5", 여섯: "6", 일곱: "7", 여덟: "8", 아홉: "9", 열: "10",
+  첫: "1", 둘: "2", 셋: "3", 넷: "4",
+};
+/** 야구 맥락에서 수량을 만드는 단위명사. 이게 붙어야 "수치 주장"으로 본다. */
+const QUANTITY_COUNTERS = "명|번|이닝|루|개|회|장|구|볼|아웃|점|타|배|분|초|일|년|월|주|차|기";
+
+/**
+ * 답변에 쓰인 수치 주장이 전부 근거 안에 존재하는가.
+ *
+ * 대조 단위가 두 가지다:
+ *  1. **단위가 붙은 수량**(`3명`, `세 명`, `2번`): 근거에 동일한 `숫자+단위` 쌍이 있어야 한다.
+ *     맨숫자만 대조하면 무관한 조문의 `5.09`에 들어있는 `9` 때문에 모델의 `9명`이 통과한다
+ *     (삼순이 재현한 false-grounding). 한글 수사(`세 명`)도 아라비아로 정규화해 함께 막는다.
+ *  2. **단위 없는 숫자**(조문 번호 `5.09`, 연도 `1982`): 숫자 토큰 집합으로 대조한다.
+ *     `includes` 부분문자열은 금지 — 근거의 `1982`가 모델의 `198`을 통과시킨다.
+ */
 export function numericTokensGrounded(answer: string, evidence: RagEvidence[]): boolean {
-  const tokens = answer.match(/\d+(?:[.,]\d+)*/g);
-  if (!tokens || tokens.length === 0) return true;
   const raw = evidence.map((row) => row.content).join("\n");
-  // 쉬표 표기 차이(1,000 ↔ 1000)는 같은 값이므로 양쪽 모두에서 제거해 비교한다.
-  const haystack = raw.replace(/,/g, "");
-  // 근거에 있는 숫자 토큰을 **집합**으로 만든다.
-  // 단순 `includes`는 부분문자열을 통과시킨다 — 근거에 "1982"만 있는데 모델이 "198"을 써도
-  // 통과해버려 지어낸 숫자를 못 막는다(회귀로 실증함).
-  const grounded = new Set(haystack.match(/\d+(?:\.\d+)*/g) ?? []);
-  return tokens.every((token) => grounded.has(token.replace(/,/g, "")));
+  const answerNorm = answer.replace(/,/g, "");
+  const haystackForQuantity = raw.replace(/,/g, "");
+
+  // ── (1) 단위가 붙은 수량 ─────────────────────────────────────────────────
+  const koreanWord = Object.keys(KOREAN_NUMERALS).join("|");
+  // 한글 수사 앞에 다른 한글 음절이 붙으면 수사가 아니다.
+  // 이 가드가 없으면 "모두 아웃"의 `두`가 수사로 잡혀 숫자 없는 답까지 차단된다
+  // (내 회귀가 실제로 잡은 결함). 아라비아 숫자는 앞 글자 제약이 필요 없다.
+  const quantityRe = new RegExp(
+    `(?:(\\d+)|(?<![가-힣])(${koreanWord}))\\s*(${QUANTITY_COUNTERS})`,
+    "g",
+  );
+  const quantitySet = (text: string): Set<string> => {
+    const out = new Set<string>();
+    for (const m of text.matchAll(quantityRe)) {
+      const value = m[1] ?? KOREAN_NUMERALS[m[2]];
+      if (!value) continue;
+      out.add(`${value}\u0000${m[3]}`);
+    }
+    return out;
+  };
+  const groundedQuantities = quantitySet(haystackForQuantity);
+  for (const q of quantitySet(answerNorm)) {
+    if (!groundedQuantities.has(q)) return false;
+  }
+
+  // ── (2) 단위 없는 숫자 토큰 ──────────────────────────────────────────────
+  const tokens = answerNorm.match(/\d+(?:\.\d+)*/g);
+  if (!tokens || tokens.length === 0) return true;
+  const raw2 = raw;
+  void raw2;
+  const grounded = new Set(haystackForQuantity.match(/\d+(?:\.\d+)*/g) ?? []);
+  return tokens.every((token) => grounded.has(token));
 }
 
 /**
