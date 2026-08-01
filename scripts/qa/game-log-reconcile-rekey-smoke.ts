@@ -1,36 +1,8 @@
-/**
- * player_game_logs stale key reconciliation — 이름 동일성 rekey 경로 회귀.
- *
- * 사고(2026-08-01 실측): 선수 재식별 시 스탯까지 같이 바뀌거나 과거에 두 선수가 한 ID로
- * 뭉쳐 있다가 분리되면(1→2), "kbo_id만 다르고 나머지 canonical 필드 전부 exact" 라는
- * 1:1 지문 짝 판정이 깨져 `no_rekey_counterpart` 로 영구 거부됐다.
- * 그 결과 운영 원장 29경기가 백필 재실행으로도 복구 불가 상태가 되고,
- * 직관 통계의 팀 타율·ERA·홈런·최애 기록이 전부 `일부 기록 확인 중` 으로 막혔다.
- *
- * 이 회귀가 고정하는 계약:
- *   [효과]  지문 짝이 없어도 "같은 이름·같은 자리"의 added 가 있으면 삭제 허용(재식별 인정)
- *   [방어]  공급자 부분 응답(설명할 added 없음)은 여전히 삭제 0 + fail-closed  ← 삼순 P0 핵심
- *   [순서]  지문 짝이 존재하면 종전 판정을 그대로 쓴다(모호하면 거부) — 완화가 덮어쓰지 않는다
- *   [근거]  로스터에 이름이 없는 ID 는 재식별 근거가 없으므로 설명으로 인정하지 않는다
- */
+/** 경기별 승인표 rekey + 동명이인 fail-close 회귀. */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { planStaleReconciliation } from "@/lib/game-logs/reconcile";
 import type { CanonicalRowInput } from "@/lib/game-logs/completeness";
-import playersRoster from "@/lib/constants/players-roster.json";
-
-const roster = playersRoster as Array<{ kboId?: string; name?: string }>;
-/** 로스터에서 "같은 이름 · 다른 kboId" 실제 쌍을 찾는다(가공 fixture 아님). */
-function findRealRenamePair(): { name: string; oldId: string; newId: string } {
-  const byName = new Map<string, string[]>();
-  for (const p of roster) {
-    if (!p.kboId || !p.name) continue;
-    byName.set(p.name, [...(byName.get(p.name) ?? []), String(p.kboId)]);
-  }
-  for (const [name, ids] of byName) {
-    if (ids.length >= 2) return { name, oldId: ids[0], newId: ids[1] };
-  }
-  throw new Error("동명 kboId 쌍을 로스터에서 찾지 못함");
-}
 
 const base: CanonicalRowInput = {
   game_id: "20260430SSOB0", game_date: "2026-04-30",
@@ -42,100 +14,91 @@ const pitcher = (kboId: string, over: Partial<CanonicalRowInput> = {}): Canonica
   ({ ...base, kbo_id: kboId, player_type: "pitcher", ...over });
 const batter = (kboId: string, over: Partial<CanonicalRowInput> = {}): CanonicalRowInput =>
   ({ ...base, kbo_id: kboId, player_type: "batter", ab: 4, h: 1, ...over });
+const keep = batter("__keep__");
 
 let pass = 0;
 const fail: string[] = [];
 function check(label: string, fn: () => void) {
   try { fn(); pass++; console.log(`  ✓ ${label}`); }
-  catch (e) { fail.push(label); console.log(`  ✗ ${label}\n      ${(e as Error).message}`); }
+  catch (error) { fail.push(label); console.log(`  ✗ ${label}\n      ${(error as Error).message}`); }
+}
+function expectRefusal(before: CanonicalRowInput[], expected: CanonicalRowInput[], reason = "no_rekey_counterpart") {
+  const plan = planStaleReconciliation(before, before, expected, 0);
+  assert.equal(plan.refusal, reason);
+  assert.equal(plan.deletions.length, 0);
 }
 
-const { name: renameName, oldId, newId } = findRealRenamePair();
-console.log(`game-log reconcile rekey 회귀 (로스터 실쌍: ${renameName} ${oldId}↔${newId})`);
+console.log("game-log reconcile 경기별 승인표 회귀");
 
-console.log("\n[효과] 스탯이 함께 바뀐 재식별");
-check("스탯 변동(ip_outs 3→5)이어도 같은 이름이면 삭제 허용", () => {
-  const before = [pitcher(oldId, { ip_outs: 3 }), batter("__keep__")];
-  const expected = [pitcher(newId, { ip_outs: 5 }), batter("__keep__")];
+check("allowlist 승인 한 줄 제거 mutation은 회귀에서 RED", () => {
+  const source = readFileSync("src/lib/game-logs/reconcile.ts", "utf8");
+  for (const gameId of ["20260430SSOB0", "20260505WOSS0", "20260512SSLG0", "20260517HTSS0"]) {
+    assert.match(source, new RegExp(`"${gameId}\\\\u0000pitcher\\\\u000065040\\\\u000062360"`));
+  }
+});
+
+check("승인된 20260430SSOB0 65040→62360만 삭제 허용", () => {
+  const before = [pitcher("65040", { ip_outs: 0 }), keep];
+  const expected = [pitcher("62360", { ip_outs: 3 }), pitcher("AQ003", { ip_outs: 2 }), keep];
   const plan = planStaleReconciliation(before, before, expected, 0);
-  assert.equal(plan.refusal, null, `refusal=${plan.refusal}`);
-  assert.equal(plan.deletions.length, 1);
-  assert.equal(String(plan.deletions[0].kbo_id), oldId);
-});
-
-check("1→2 분리(한 ID가 두 선수로 갈라짐)도 같은 이름 짝이 있으면 허용", () => {
-  const before = [pitcher(oldId, { ip_outs: 0 }), batter("__keep__")];
-  // 재식별된 본인 + 원래 섞여 있던 다른 투수가 함께 등장한다.
-  const expected = [pitcher(newId, { ip_outs: 1 }), pitcher("__other__", { ip_outs: 2 }), batter("__keep__")];
-  const plan = planStaleReconciliation(before, before, expected, 0);
-  assert.equal(plan.refusal, null, `refusal=${plan.refusal}`);
-  assert.equal(plan.deletions.length, 1);
-});
-
-console.log("\n[방어] 부분 응답은 여전히 거부 (삼순 P0)");
-check("설명할 added 가 없으면 no_rekey_counterpart (선수 1명 누락)", () => {
-  const before = [pitcher(oldId), batter("__keep__")];
-  const expected = [batter("__keep__")]; // 투수가 통째로 빠진 부분 응답
-  const plan = planStaleReconciliation(before, before, expected, 0);
-  assert.equal(plan.refusal, "no_rekey_counterpart");
-  assert.equal(plan.deletions.length, 0);
-});
-
-check("같은 이름이어도 자리(팀)가 다르면 설명으로 인정하지 않는다", () => {
-  const before = [pitcher(oldId), batter("__keep__")];
-  const expected = [pitcher(newId, { team_id: 1, team_code: "LG" }), batter("__keep__")];
-  const plan = planStaleReconciliation(before, before, expected, 0);
-  assert.equal(plan.refusal, "no_rekey_counterpart");
-  assert.equal(plan.deletions.length, 0);
-});
-
-check("같은 이름이어도 player_type 이 다르면 인정하지 않는다", () => {
-  const before = [pitcher(oldId), batter("__keep__")];
-  const expected = [batter(newId), batter("__keep__")];
-  const plan = planStaleReconciliation(before, before, expected, 0);
-  assert.equal(plan.refusal, "no_rekey_counterpart");
-});
-
-check("로스터에 이름이 없는 stale ID 는 재식별 근거가 없어 거부", () => {
-  // 지문까지 같으면 경로 (A) 가 정당하게 처리하므로, 경로 (B) 를 타게 스킯을 달리 둔다.
-  const before = [pitcher("__unknown_id__", { ip_outs: 3 }), batter("__keep__")];
-  const expected = [pitcher("__other_unknown__", { ip_outs: 5 }), batter("__keep__")];
-  const plan = planStaleReconciliation(before, before, expected, 0);
-  assert.equal(plan.refusal, "no_rekey_counterpart");
-  assert.equal(plan.deletions.length, 0);
-});
-
-console.log("\n[순서] 지문 짝이 있으면 종전 판정을 유지한다");
-check("동일 지문 후보 복수 → ambiguous_rekey_counterpart (완화가 덮지 않음)", () => {
-  const twin = batter("x", { ab: 1, h: 0 });
-  const oldA = { ...twin, kbo_id: "70001" };
-  const oldB = { ...twin, kbo_id: "70002" };
-  const newA = { ...twin, kbo_id: "80001" };
-  const newB = { ...twin, kbo_id: "80002" };
-  const keep = pitcher("__keep__");
-  // persisted 가 stale 만으로 이뤄지면 suspicious_full_delete 가 먼저 걸리므로
-  // 기존 s1a fixture 처럼 잔존행을 포함시켜 "모호한 짝" 축만 곬눈다.
-  const persisted = [oldA, oldB, keep];
-  const plan = planStaleReconciliation(persisted, persisted, [newA, newB, keep], 0);
-  assert.equal(plan.refusal, "ambiguous_rekey_counterpart");
-  assert.equal(plan.deletions.length, 0);
-});
-
-console.log("\n[기존 가드 유지]");
-check("unresolved 가 있으면 unresolved_present", () => {
-  const before = [pitcher(oldId), batter("__keep__")];
-  const expected = [pitcher(newId), batter("__keep__")];
-  assert.equal(planStaleReconciliation(before, before, expected, 1).refusal, "unresolved_present");
-});
-check("기대가 비면 suspicious_full_delete", () => {
-  const before = [pitcher(oldId), batter("__keep__")];
-  assert.equal(planStaleReconciliation(before, before, [], 0).refusal, "suspicious_full_delete");
-});
-check("stale 이 없으면 삭제 0 · 거부 없음", () => {
-  const rows = [pitcher(oldId), batter("__keep__")];
-  const plan = planStaleReconciliation(rows, rows, rows, 0);
   assert.equal(plan.refusal, null);
-  assert.equal(plan.deletions.length, 0);
+  assert.deepEqual(plan.deletions.map((row) => row.kbo_id), ["65040"]);
+});
+
+for (const game_id of ["20260505WOSS0", "20260512SSLG0", "20260517HTSS0"]) {
+  check(`승인된 ${game_id} 65040→62360 허용`, () => {
+    const oldRow = pitcher("65040", { game_id, ip_outs: 0 });
+    const newRow = pitcher("62360", { game_id, ip_outs: 3 });
+    const kept = batter("__keep__", { game_id });
+    const plan = planStaleReconciliation([oldRow, kept], [oldRow, kept], [newRow, kept], 0);
+    assert.equal(plan.refusal, null);
+    assert.equal(plan.deletions.length, 1);
+  });
+}
+
+check("allowlist 밖 동일 ID쌍은 fail-close", () => {
+  const before = [pitcher("65040", { game_id: "20260518HTSS0" }), keep];
+  const expected = [pitcher("62360", { game_id: "20260518HTSS0", ip_outs: 3 }), keep];
+  expectRefusal(before, expected);
+});
+check("allowlist 역방향은 fail-close", () => {
+  expectRefusal([pitcher("62360"), keep], [pitcher("65040", { ip_outs: 3 }), keep]);
+});
+check("allowlist 1→다 후보 중 승인되지 않은 AQ003은 독립 행", () => {
+  const before = [pitcher("65040"), keep];
+  const expected = [pitcher("62360", { ip_outs: 3 }), pitcher("AQ003", { ip_outs: 2 }), keep];
+  const plan = planStaleReconciliation(before, before, expected, 0);
+  assert.equal(plan.refusal, null);
+  assert.equal(plan.deletions.length, 1);
+  assert.equal(expected.filter((row) => row.kbo_id === "AQ003").length, 1);
+});
+check("unknown ID는 fail-close", () => {
+  expectRefusal([pitcher("unknown"), keep], [pitcher("other", { ip_outs: 3 }), keep]);
+});
+
+for (const [oldId, newId, label] of [
+  ["56709", "52731", "한화 박준영"],
+  ["60146", "51454", "삼성 이승현"],
+] as const) {
+  check(`${label} 동명이인 누락+added/변경에도 삭제 0`, () => {
+    expectRefusal(
+      [pitcher(oldId, { ip_outs: 3 }), keep],
+      [pitcher(newId, { ip_outs: 5 }), keep],
+    );
+  });
+}
+
+check("지문 1:1 exact 경로는 기존대로 유지", () => {
+  const before = [pitcher("old", { ip_outs: 3 }), keep];
+  const expected = [pitcher("new", { ip_outs: 3 }), keep];
+  const plan = planStaleReconciliation(before, before, expected, 0);
+  assert.equal(plan.refusal, null);
+  assert.equal(plan.deletions.length, 1);
+});
+check("unresolved는 승인표보다 우선해 fail-close", () => {
+  const before = [pitcher("65040"), keep];
+  const expected = [pitcher("62360", { ip_outs: 3 }), keep];
+  assert.equal(planStaleReconciliation(before, before, expected, 1).refusal, "unresolved_present");
 });
 
 console.log(`\n결과: ${pass} pass / ${fail.length} fail`);
