@@ -15,7 +15,10 @@ DROP FUNCTION IF EXISTS public.complete_baseball_genius_rag_source(
   text, uuid, bigint, text, text, timestamptz, timestamptz
 );
 
-CREATE FUNCTION public.complete_baseball_genius_rag_source(
+-- ⚠️ CREATE OR REPLACE 여야 한다. 재적용 시 8-인자 함수가 이미 존재하면
+-- 순수 CREATE 는 42723 으로 죽는다(내 첫 판이 실제로 Vercel prebuild 를 깼다).
+-- 위 DROP 은 **구 7-인자** 시그니처만 지우므로, 새 시그니처는 REPLACE 로 멱등하게 둔다.
+CREATE OR REPLACE FUNCTION public.complete_baseball_genius_rag_source(
   p_source_key text,
   p_claim_token uuid,
   p_claim_generation bigint,
