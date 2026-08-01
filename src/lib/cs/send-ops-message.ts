@@ -61,6 +61,11 @@ export async function sendOpsMessageToUser(
   content: string,
   dedupKey?: string,
   origin?: "dm" | "feedback",
+  /**
+   * dm_messages.payload 에 함께 저장할 구조화 데이터 (야잘알봇 답변 유형 등).
+   * 생략하면 NULL — 기존 발송 경로(CS 회신·broadcast·blind-notify)는 무변경이다.
+   */
+  payload?: object | null,
 ): Promise<SendOpsResult> {
   const text = content.replace(/\r\n/g, "\n").trimEnd();
   if (!text.trim()) return { ok: false, reason: "empty_content" };
@@ -77,6 +82,7 @@ export async function sendOpsMessageToUser(
     p_preview: preview,
     p_origin: origin === "feedback" ? "feedback" : "dm",
     p_dedup_key: dedupKey ?? null,
+    p_payload: payload ?? null,
   });
 
   if (error) {

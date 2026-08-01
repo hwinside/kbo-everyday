@@ -1,8 +1,24 @@
 "use client";
 
-import { BASEBALL_GENIUS_NAME } from "@/lib/constants/baseball-genius";
+import {
+  BASEBALL_GENIUS_NAME,
+  geniusMascotSrc,
+  type GeniusMascotState,
+} from "@/lib/constants/baseball-genius";
 
 export type GeniusTypingState = "idle" | "waiting" | "retrying" | "failed";
+
+/**
+ * 대기/실패 상태도 마스코트를 같이 띄운다 (2026-08-02 하린아빠 지시).
+ * 답변이 온 뒤에만 마스코트가 보이면 기다리는 동안 자리가 비어 말풍선이 튀다.
+ * - waiting/retrying → thinking(생각하는 표정)
+ * - failed → unknown(몸하는 표정) — 답변 자체가 안 온 상황과 의미가 같다
+ */
+const STATE_TO_MASCOT: Record<Exclude<GeniusTypingState, "idle">, GeniusMascotState> = {
+  waiting: "thinking",
+  retrying: "thinking",
+  failed: "unknown",
+};
 
 /**
  * 야잘알봇 답변 대기/실패 인디케이터 — 봇 말풍선(좌측) 자리에 렌더한다.
@@ -23,7 +39,15 @@ export default function GeniusTypingIndicator({
     <div className="flex justify-start" data-testid="genius-typing-indicator" data-state={state}>
       <div className="max-w-[75%]">
         <div className="flex items-center gap-1.5 mb-1">
-          <span className="text-xs" aria-hidden>⚾</span>
+          {/* eslint-disable-next-line @next/next/no-img-element -- 정적 마스코트 PNG */}
+          <img
+            src={geniusMascotSrc(STATE_TO_MASCOT[state])}
+            alt=""
+            aria-hidden
+            data-testid="genius-typing-mascot"
+            data-mascot={STATE_TO_MASCOT[state]}
+            className="h-8 w-auto max-w-none object-contain"
+          />
           <span className="text-xs font-semibold text-text-secondary">{BASEBALL_GENIUS_NAME}</span>
         </div>
         {state === "failed" ? (
