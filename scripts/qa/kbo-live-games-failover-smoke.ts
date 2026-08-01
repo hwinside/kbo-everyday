@@ -255,6 +255,7 @@ async function main() {
   // 10) actual GET /api/game-live: KBO 전면 실패(2026-07-30 204 장애 재현) 시에도
   //     5경기 전부 user-facing live 필드가 Naver relay 값으로 채워진다.
   await routeLevelRegression();
+  await routeFailureMatrix();
 
   const gameLiveRoute = readFileSync("src/app/api/game-live/route.ts", "utf8");
   const gameEventsRoute = readFileSync("src/app/api/game-events/route.ts", "utf8");
@@ -263,7 +264,7 @@ async function main() {
   assert.doesNotMatch(gameLiveRoute, /GetKboGameList/);
   assert.doesNotMatch(gameEventsRoute, /GetKboGameList/);
 
-  console.log("kbo-live-games-failover: 12/12 PASS");
+  console.log("kbo-live-games-failover: actual-route matrix PASS");
 }
 
 // ---- actual route-level regression (mocked globalThis.fetch) ----
@@ -340,6 +341,15 @@ async function routeLevelRegression() {
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input instanceof Request ? input.url : input);
     if (url.includes("Main.asmx")) return new Response(null, { status: 503 });
+    if (url.includes("/api/games?")) {
+      return Response.json({
+        games: SLATE.map((g) => ({
+          gameId: `${date}${g.away}${g.home}0`,
+          awayStarterName: `${g.awayName}선발`,
+          homeStarterName: `${g.homeName}선발`,
+        })),
+      });
+    }
     if (url.includes("/relay?")) {
       const match = url.match(/schedule\/games\/(\d{8})([A-Z]{4})0\d{4}\/relay/);
       const slate = SLATE.find((g) => `${g.away}${g.home}` === match?.[2]);
@@ -352,15 +362,26 @@ async function routeLevelRegression() {
     return realFetch(input as RequestInfo, init);
   }) as typeof fetch;
   try {
-    const { GET } = await import("../../src/app/api/game-live/route");
-    const res = await GET(new NextRequest(`http://localhost/api/game-live?date=${date}`));
+    const { gameLiveRoute } = await import("../../src/app/api/game-live/route");
+    const res = await gameLiveRoute(
+      new NextRequest(`http://localhost/api/game-live?date=${date}`),
+      { fetchKnownSlateIdsImpl: async () => SLATE.map((g) => `${date}${g.away}${g.home}0`) },
+    );
     const body = await res.json() as {
+      trace: { source: string; stage: string; deadlineAtMs: number };
       games: Array<{
         gameId: string; status: string; balls: number; strikes: number; outs: number;
         runner1b: boolean; runner2b: boolean; runner3b: boolean;
         currentPitcher: string | null; currentBatter: string | null;
+        awayStarterName: string | null; homeStarterName: string | null;
       }>;
     };
+    assert.equal(res.status, 200);
+    assert.equal(body.trace.source, "naver");
+    assert.equal(body.trace.stage, "starter-witness");
+    assert.equal(res.headers.get("x-game-live-source"), "naver");
+    assert.equal(res.headers.get("x-game-live-stage"), "starter-witness");
+    assert.ok(Number(res.headers.get("x-game-live-deadline")) > Date.now());
     assert.equal(body.games.length, 5);
     for (const slate of SLATE) {
       const game = body.games.find((g) => g.gameId === `${date}${slate.away}${slate.home}0`);
@@ -374,7 +395,272 @@ async function routeLevelRegression() {
       assert.equal(game.runner3b, true);
       assert.equal(game.currentPitcher, slate.pitcher, `${slate.away}${slate.home} pitcher`);
       assert.equal(game.currentBatter, slate.batter, `${slate.away}${slate.home} batter`);
+      assert.equal(game.awayStarterName, `${slate.awayName}선발`);
+      assert.equal(game.homeStarterName, `${slate.homeName}선발`);
     }
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
+function neverResponse(): Promise<Response> {
+  return new Promise(() => undefined);
+}
+
+async function withWatchdog<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label}: watchdog ${timeoutMs}ms exceeded`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+async function routeFailureMatrix() {
+  const date = "20260730";
+  const realFetch = globalThis.fetch;
+  const { gameLiveRoute } = await import("../../src/app/api/game-live/route");
+  const witnessGames = SLATE.map((g) => ({
+    gameId: `${date}${g.away}${g.home}0`,
+    awayStarterName: `${g.awayName}선발`,
+    homeStarterName: `${g.homeName}선발`,
+  }));
+
+  const invoke = async (mode: "503" | "204" | "empty" | "timeout", naverMode: "ok" | "partial" | "timeout" | "fail") => {
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (url.includes("Main.asmx")) {
+        if (mode === "timeout") return neverResponse();
+        if (mode === "empty") return Response.json({ game: [] });
+        return new Response(null, { status: Number(mode) });
+      }
+      if (url.includes("/api/games?")) return Response.json({ games: witnessGames });
+      if (url.includes("api-gw.sports.naver.com/schedule/games?")) {
+        if (naverMode === "timeout") return neverResponse();
+        if (naverMode === "fail") throw new Error("naver down");
+        const payload = naverSchedulePayload(date);
+        if (naverMode === "partial") payload.result.games.pop();
+        return Response.json(payload);
+      }
+      if (url.includes("/relay?")) return Response.json(naverRelayPayload("투수", "타자"));
+      return realFetch(input as RequestInfo, init);
+    }) as typeof fetch;
+    const startedAt = Date.now();
+    const response = await withWatchdog(
+      gameLiveRoute(
+        new NextRequest(`http://localhost/api/game-live?date=${date}`),
+        { fetchKnownSlateIdsImpl: async () => witnessGames.map((game) => game.gameId) },
+      ),
+      6_000,
+      `KBO ${mode} / Naver ${naverMode}`,
+    );
+    const body = await response.json() as { games: unknown[]; trace: { stage: string; deadlineAtMs: number } };
+    return { response, body, elapsedMs: Date.now() - startedAt };
+  };
+
+  try {
+    for (const mode of ["503", "204", "empty", "timeout"] as const) {
+      const result = await invoke(mode, "ok");
+      assert.equal(result.response.status, 200, `KBO ${mode} -> Naver+witness`);
+      assert.equal(result.body.games.length, 5, `KBO ${mode} full slate`);
+      assert.ok(result.elapsedMs < 5_500, `KBO ${mode} deadline bound`);
+    }
+
+    // Scheduled slate is still subject to starter completeness. With KBO down
+    // and both Naver views returning five games but zero starters, the route
+    // must not emit the old silent HTTP 200 / starters 0-of-10 response.
+    {
+      let witnessCalls = 0;
+      globalThis.fetch = (async (input: RequestInfo | URL) => {
+        const url = String(input instanceof Request ? input.url : input);
+        if (url.includes("Main.asmx")) return new Response(null, { status: 503 });
+        if (url.includes("/api/games?")) {
+          witnessCalls++;
+          return Response.json({
+            games: witnessGames.map((game) => ({
+              ...game,
+              awayStarterName: null,
+              homeStarterName: null,
+            })),
+          });
+        }
+        if (url.includes("api-gw.sports.naver.com/schedule/games?")) {
+          const payload = naverSchedulePayload(date);
+          for (const game of payload.result.games) game.statusCode = "BEFORE";
+          return Response.json(payload);
+        }
+        return realFetch(input as RequestInfo);
+      }) as typeof fetch;
+      const response = await withWatchdog(
+        gameLiveRoute(
+          new NextRequest(`http://localhost/api/game-live?date=${date}`),
+          { fetchKnownSlateIdsImpl: async () => witnessGames.map((game) => game.gameId) },
+        ),
+        6_000,
+        "scheduled 0/10 starters",
+      );
+      const body = await response.json() as { games: unknown[]; trace: { stage: string } };
+      assert.equal(response.status, 503, "scheduled starters 0/10 fail closed");
+      assert.equal(body.games.length, 0);
+      assert.equal(body.trace.stage, "starter-witness-failed");
+      assert.equal(witnessCalls, 1, "scheduled slate always calls witness");
+    }
+
+    // A structurally valid KBO 200 containing only 4/5 games must also compare
+    // against the whole-day witness instead of bypassing it as authoritative.
+    {
+      let witnessCalls = 0;
+      const partialKbo = SLATE.slice(0, 4).map((game) => ({
+        G_ID: `${date}${game.away}${game.home}0`,
+        GAME_STATE_SC: "1",
+        CANCEL_SC_ID: "0",
+        AWAY_NM: game.awayName,
+        HOME_NM: game.homeName,
+        T_PIT_P_NM: `${game.awayName}선발`,
+        B_PIT_P_NM: `${game.homeName}선발`,
+      }));
+      globalThis.fetch = (async (input: RequestInfo | URL) => {
+        const url = String(input instanceof Request ? input.url : input);
+        if (url.includes("Main.asmx")) return Response.json({ game: partialKbo });
+        if (url.includes("/api/games?")) {
+          witnessCalls++;
+          return Response.json({ games: witnessGames });
+        }
+        return realFetch(input as RequestInfo);
+      }) as typeof fetch;
+      const response = await withWatchdog(
+        gameLiveRoute(
+          new NextRequest(`http://localhost/api/game-live?date=${date}`),
+          { fetchKnownSlateIdsImpl: async () => witnessGames.map((game) => game.gameId) },
+        ),
+        6_000,
+        "KBO 200 partial 4/5",
+      );
+      const body = await response.json() as { games: unknown[]; trace: { stage: string } };
+      assert.equal(response.status, 503, "KBO 4/5 slate fail closed");
+      assert.equal(body.games.length, 0);
+      assert.equal(body.trace.stage, "known-slate-mismatch");
+      assert.equal(witnessCalls, 1, "KBO partial always calls witness");
+    }
+
+    // KBO/Naver and /api/games can degrade to the same 4/5 slate. The durable
+    // five-game ledger must still reject that correlated partial response.
+    {
+      let knownSlateCalls = 0;
+      const partialWitness = witnessGames.slice(0, 4);
+      const partialKbo = SLATE.slice(0, 4).map((game) => ({
+        G_ID: `${date}${game.away}${game.home}0`,
+        GAME_STATE_SC: "1",
+        CANCEL_SC_ID: "0",
+        AWAY_NM: game.awayName,
+        HOME_NM: game.homeName,
+        T_PIT_P_NM: `${game.awayName}선발`,
+        B_PIT_P_NM: `${game.homeName}선발`,
+      }));
+      globalThis.fetch = (async (input: RequestInfo | URL) => {
+        const url = String(input instanceof Request ? input.url : input);
+        if (url.includes("Main.asmx")) return Response.json({ game: partialKbo });
+        if (url.includes("/api/games?")) return Response.json({ games: partialWitness });
+        return realFetch(input as RequestInfo);
+      }) as typeof fetch;
+      const response = await withWatchdog(
+        gameLiveRoute(
+          new NextRequest(`http://localhost/api/game-live?date=${date}`),
+          {
+            fetchKnownSlateIdsImpl: async () => {
+              knownSlateCalls++;
+              return witnessGames.map((game) => game.gameId);
+            },
+          },
+        ),
+        6_000,
+        "correlated partial 4/5",
+      );
+      const body = await response.json() as { games: unknown[]; trace: { stage: string } };
+      assert.equal(response.status, 503, "correlated 4/5 slate fails closed");
+      assert.equal(body.games.length, 0);
+      assert.equal(body.trace.stage, "known-slate-mismatch");
+      assert.equal(knownSlateCalls, 1, "durable known slate always queried");
+    }
+
+    const partial = await invoke("503", "partial");
+    assert.equal(partial.response.status, 503, "Naver partial must fail closed");
+    assert.equal(partial.body.games.length, 0);
+    assert.equal(partial.body.trace.stage, "known-slate-mismatch");
+
+    const naverTimeout = await invoke("503", "timeout");
+    assert.equal(naverTimeout.response.status, 503, "Naver timeout must fail closed");
+    assert.equal(naverTimeout.body.trace.stage, "dual-fail");
+    assert.ok(naverTimeout.elapsedMs < 5_500, "Naver timeout absolute deadline");
+
+    const dualFail = await invoke("503", "fail");
+    assert.equal(dualFail.response.status, 503, "dual fail must fail closed");
+    assert.equal(dualFail.body.trace.stage, "dual-fail");
+
+    // A same-source empty witness cannot prove an off-day. The durable
+    // game_notify_state slate is independent evidence that five games existed,
+    // so KBO failure/empty + Naver empty + /api/games empty must never become
+    // the old false-green HTTP 200 games=[].
+    for (const mode of ["503", "204", "empty", "timeout"] as const) {
+      let active = 0;
+      globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input instanceof Request ? input.url : input);
+        if (url.includes("Main.asmx")) {
+          if (mode === "timeout") {
+            active++;
+            return new Promise<Response>((_resolve, reject) => {
+              init?.signal?.addEventListener("abort", () => {
+                active--;
+                reject(new DOMException("aborted", "AbortError"));
+              }, { once: true });
+            });
+          }
+          if (mode === "empty") return Response.json({ game: [] });
+          return new Response(null, { status: Number(mode) });
+        }
+        if (url.includes("api-gw.sports.naver.com/schedule/games?")) {
+          return Response.json({ code: 200, success: true, result: { games: [] } });
+        }
+        if (url.includes("/api/games?")) return Response.json({ games: [] });
+        return realFetch(input as RequestInfo, init);
+      }) as typeof fetch;
+      const response = await withWatchdog(
+        gameLiveRoute(
+          new NextRequest(`http://localhost/api/game-live?date=${date}`),
+          { fetchKnownSlateIdsImpl: async () => witnessGames.map((game) => game.gameId) },
+        ),
+        6_000,
+        `known-slate KBO ${mode} / Naver empty`,
+      );
+      const body = await response.json() as { games: unknown[]; trace: { stage: string } };
+      assert.equal(response.status, 503, `known slate KBO ${mode} must fail closed`);
+      assert.equal(body.games.length, 0);
+      assert.equal(body.trace.stage, "known-slate-mismatch");
+      assert.equal(active, 0, `known slate KBO ${mode} outstanding 0`);
+    }
+
+    // Without independent durable evidence, a dual-empty off-day remains a
+    // valid empty slate rather than manufacturing an outage.
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (url.includes("Main.asmx")) return Response.json({ game: [] });
+      if (url.includes("api-gw.sports.naver.com/schedule/games?")) {
+        return Response.json({ code: 200, success: true, result: { games: [] } });
+      }
+      if (url.includes("/api/games?")) return Response.json({ games: [] });
+      return realFetch(input as RequestInfo);
+    }) as typeof fetch;
+    const offday = await gameLiveRoute(
+      new NextRequest(`http://localhost/api/game-live?date=${date}`),
+      { fetchKnownSlateIdsImpl: async () => [] },
+    );
+    assert.equal(offday.status, 200, "no durable slate evidence permits authoritative off-day");
+    assert.deepEqual((await offday.json() as { games: unknown[] }).games, []);
   } finally {
     globalThis.fetch = realFetch;
   }

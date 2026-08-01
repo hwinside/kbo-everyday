@@ -11,6 +11,7 @@ import { isKboGameCancelled } from "@/lib/crawler/kbo-status";
 // 순수 상태 헬퍼 재노출 — 스모크가 supabase 의존 없이 import.
 export { isKboGameCancelled } from "@/lib/crawler/kbo-status";
 import { ALLSTAR_CODE_TO_ID, allstarTeamIdByName } from "@/lib/constants/teams";
+import { runBeforeDeadline } from "@/lib/async-deadline";
 
 /** 숫자 kboId로 로스터 조회 — 외국인 숫자→영문 변환 포함 */
 function findPlayerByNumericId(numericId: string): { name: string } | undefined {
@@ -217,11 +218,30 @@ export async function fetchKboGamesOnly(
 export async function fetchGames(
   date: string,
   srId = "0,1,3,4,5,7,9",
-  opts?: { timeoutMs?: number },
+  opts?: { timeoutMs?: number; deadlineAtMs?: number },
 ): Promise<KboGame[]> {
+  const deadlineAtMs = opts?.deadlineAtMs
+    ?? Date.now() + (opts?.timeoutMs ?? 10_000);
+  const remainingAtStartMs = deadlineAtMs - Date.now();
+  if (remainingAtStartMs <= 0) throw new Error("games deadline exceeded");
+  // When a caller supplies an absolute route deadline, KBO receives only half
+  // of the remaining budget. The other half is reserved for the Naver fallback,
+  // while both requests remain bounded by the same wall-clock deadline.
+  const kboBudgetMs = opts?.deadlineAtMs == null
+    ? remainingAtStartMs
+    : Math.max(1, Math.floor(remainingAtStartMs / 2));
+  const abortBeforeDeadlineMs = (remainingMs: number) => {
+    const settleReserveMs = Math.min(25, Math.max(1, Math.floor(remainingMs / 10)));
+    return Math.max(1, remainingMs - settleReserveMs);
+  };
   let games: KboGame[];
   try {
-    games = await fetchKboGamesOnly(date, srId, opts);
+    games = await runBeforeDeadline(
+      () => fetchKboGamesOnly(date, srId, {
+        signal: AbortSignal.timeout(kboBudgetMs),
+      }),
+      deadlineAtMs,
+    );
   } catch (e) {
     const error = e as Error;
     let reason: "timeout" | "http-error" | "schema-error" | "network-error" = "network-error";
@@ -233,13 +253,24 @@ export async function fetchGames(
       reason = "schema-error";
     }
 
-    await trackFallback("kbo-games", reason, { errorMessage: error.message });
+    // A route-scoped absolute deadline must leave no detached DB write after
+    // the response. Callers without such a deadline retain fallback telemetry.
+    if (opts?.deadlineAtMs == null) {
+      void trackFallback("kbo-games", reason, { errorMessage: error.message }).catch(() => undefined);
+    }
 
     // Fallback: Naver schedule/games. srId 계약 보존(특정 시리즈는 fetchNaverGames 내부 fail-close).
     // Naver 성공 시 그대로 반환(무경기일 빈 배열도 성공) — 무경기일 fallback 500 방지.
     try {
       const { fetchNaverGames } = await import("@/lib/crawler/naver-games");
-      return await fetchNaverGames(date, srId);
+      const remainingMs = deadlineAtMs - Date.now();
+      if (remainingMs <= 0) throw new Error("games deadline exceeded before Naver fallback");
+      return await runBeforeDeadline(
+        () => fetchNaverGames(date, srId, {
+          signal: AbortSignal.timeout(abortBeforeDeadlineMs(remainingMs)),
+        }),
+        deadlineAtMs,
+      );
     } catch {
       // Naver 도 실패(또는 series 보존 불가 fail-close) → 원래 KBO 에러로 throw.
     }
@@ -256,7 +287,14 @@ export async function fetchGames(
   if (games.length === 0) {
     const naver = await import("@/lib/crawler/naver-games");
     try {
-      return await naver.fetchNaverGames(date, srId);
+      const remainingMs = deadlineAtMs - Date.now();
+      if (remainingMs <= 0) throw new Error("games deadline exceeded before Naver cross-check");
+      return await runBeforeDeadline(
+        () => naver.fetchNaverGames(date, srId, {
+          signal: AbortSignal.timeout(abortBeforeDeadlineMs(remainingMs)),
+        }),
+        deadlineAtMs,
+      );
     } catch (naverErr) {
       throw new Error(
         `KBO 200-empty 미검증: Naver 교차확인 실패로 무경기 단정 금지 (${(naverErr as Error).message})`,
@@ -817,6 +855,7 @@ const REGISTER_POSTBACK_TARGET = "ctl00$ctl00$ctl00$cphContents$cphContents$cphC
 const REGISTER_TEAM_FIELD = "ctl00$ctl00$ctl00$cphContents$cphContents$cphContents$hfSearchTeam";
 const REGISTER_DATE_FIELD = "ctl00$ctl00$ctl00$cphContents$cphContents$cphContents$hfSearchDate";
 const REGISTER_DATE_HIDDEN_ID = "cphContents_cphContents_cphContents_hfSearchDate";
+export const REGISTER_COLLECTION_DEADLINE_MS = 30_000;
 
 export interface TeamRosterSnapshot {
   teamId: number;
@@ -835,17 +874,51 @@ function extractRegisterHidden(html: string, id: string): string {
   return m ? m[1] : "";
 }
 
+async function fetchRegisterPage(
+  label: string,
+  init: RequestInit,
+  deadlineAtMs: number,
+  fetchImpl: typeof fetch,
+): Promise<{ response: Response; html: string }> {
+  const remainingMs = deadlineAtMs - Date.now();
+  if (remainingMs <= 0) {
+    throw new RosterCollectionError(`${label} absolute deadline exceeded`);
+  }
+  try {
+    const response = await runBeforeDeadline(
+      () => fetchImpl(REGISTER_URL, {
+        ...init,
+        signal: AbortSignal.timeout(Math.max(1, remainingMs)),
+      }),
+      deadlineAtMs,
+    );
+    const html = await runBeforeDeadline(() => response.text(), deadlineAtMs);
+    return { response, html };
+  } catch {
+    throw new RosterCollectionError(`${label} absolute deadline exceeded`);
+  }
+}
+
 /**
  * 10개 구단 1군 등록명단 스냅샷을 GET 1 + 구단별 POST 10회로 수집.
  * 실패를 조용히 성공으로 묻지 않는다(삼순 P1): HTTP status/WebForms 토큰/날짜/인원수를
  * 검증하고 하나라도 실패하면 RosterCollectionError를 throw한다(호출측 cron이 fail-closed).
  */
-export async function fetchRegisterRosters(): Promise<RegisterRosters> {
-  const initRes = await fetch(REGISTER_URL, { headers: { ...KBO_HTML_HEADERS, Referer: REGISTER_URL } });
+export async function fetchRegisterRosters(opts?: {
+  deadlineAtMs?: number;
+  fetchImpl?: typeof fetch;
+}): Promise<RegisterRosters> {
+  const deadlineAtMs = opts?.deadlineAtMs ?? Date.now() + REGISTER_COLLECTION_DEADLINE_MS;
+  const fetchImpl = opts?.fetchImpl ?? fetch;
+  const { response: initRes, html: initHtml } = await fetchRegisterPage(
+    "Register.aspx GET",
+    { headers: { ...KBO_HTML_HEADERS, Referer: REGISTER_URL } },
+    deadlineAtMs,
+    fetchImpl,
+  );
   if (!initRes.ok) {
     throw new RosterCollectionError(`Register.aspx GET HTTP ${initRes.status}`);
   }
-  const initHtml = await initRes.text();
   const viewState = extractRegisterHidden(initHtml, "__VIEWSTATE");
   const viewStateGen = extractRegisterHidden(initHtml, "__VIEWSTATEGENERATOR");
   const eventValidation = extractRegisterHidden(initHtml, "__EVENTVALIDATION");
@@ -869,7 +942,9 @@ export async function fetchRegisterRosters(): Promise<RegisterRosters> {
       [REGISTER_TEAM_FIELD]: code,
       [REGISTER_DATE_FIELD]: date,
     });
-    const res = await fetch(REGISTER_URL, {
+    const { response: res, html } = await fetchRegisterPage(
+      `Register.aspx POST team ${code}`,
+      {
       method: "POST",
       headers: {
         ...KBO_HTML_HEADERS,
@@ -877,11 +952,13 @@ export async function fetchRegisterRosters(): Promise<RegisterRosters> {
         "Content-Type": "application/x-www-form-urlencoded",
       },
       body: body.toString(),
-    });
+      },
+      deadlineAtMs,
+      fetchImpl,
+    );
     if (!res.ok) {
       throw new RosterCollectionError(`Register.aspx POST HTTP ${res.status} (team ${code})`);
     }
-    const html = await res.text();
     teams.push({ teamId, teamCode: code, entries: parseTeamRegister(html) });
   }
 
