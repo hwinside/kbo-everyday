@@ -56,18 +56,26 @@ export function resolveStarterPitcher(
 export function resolveLineupStarter({
   liveStarterName,
   lineupStarterName,
+  liveStarterFresh,
+  lineupStarterTrusted,
   teamId,
   boxPitcher,
 }: {
   liveStarterName?: string | null;
   lineupStarterName?: string | null;
+  liveStarterFresh: boolean;
+  lineupStarterTrusted: boolean;
   teamId: number;
   boxPitcher?: { name?: string | null; era?: string | null } | null;
 }): { name: string; era: string; kboId?: string } {
+  const liveName = liveStarterName?.trim() || "";
+  const lineupName = lineupStarterName?.trim() || "";
   const boxName = boxPitcher?.name?.trim();
   const validBoxName = boxName && !/^선수\(\d+\)$/.test(boxName) ? boxName : "";
-  const starterName = liveStarterName?.trim()
-    || lineupStarterName?.trim()
-    || validBoxName;
+  const starterName = liveStarterFresh && liveName
+    ? liveName
+    : lineupStarterTrusted
+      ? lineupName
+      : "";
   return resolveStarterPitcher(starterName, teamId, boxPitcher?.era, validBoxName);
 }

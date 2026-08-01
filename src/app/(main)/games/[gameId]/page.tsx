@@ -188,7 +188,7 @@ export default function GameDetailPage() {
     if (tabParam) setActiveTab(tabParam);
   }, [tabParam]);
   const [isFieldCollapsed, setIsFieldCollapsed] = useState(false);
-  const { game: liveGame, refetch: refetchLive } = useLiveGame(gameId, 10000);
+  const { game: liveGame, error: liveError, refetch: refetchLive } = useLiveGame(gameId, 10000);
   const { data: gameDetail, refetch: refetchDetail } = useGameDetail(gameId, 30000);
   // 당겨서 새로고침 시 증가 → KgwanTab 종료 요약이 GET 재조회(오류 카드 stuck 해소). 채팅 등 다른 state 무관.
   const [summaryRefreshEpoch, setSummaryRefreshEpoch] = useState(0);
@@ -403,6 +403,26 @@ export default function GameDetailPage() {
   const tabIndicatorTeam = myTeamInGame ? getTeamById(myTeamId)! : homeTeam;
 
   const d = deriveGameState(liveGame, game, gameDetail);
+  const liveStarterFresh = !liveError;
+  const lineupStarterTrusted = Boolean(
+    d.detailLineup?.isToday === true || isAllStarGameId(gameId),
+  );
+  const awayLineupStarter = resolveLineupStarter({
+    liveStarterName: liveGame?.awayStarterName,
+    lineupStarterName: d.detailLineup?.awayStarter,
+    liveStarterFresh,
+    lineupStarterTrusted,
+    teamId: game.awayTeamId,
+    boxPitcher: gameDetail?.boxScore?.awayPitchers?.[0],
+  });
+  const homeLineupStarter = resolveLineupStarter({
+    liveStarterName: liveGame?.homeStarterName,
+    lineupStarterName: d.detailLineup?.homeStarter,
+    liveStarterFresh,
+    lineupStarterTrusted,
+    teamId: game.homeTeamId,
+    boxPitcher: gameDetail?.boxScore?.homePitchers?.[0],
+  });
   const hasGameProgress = Boolean(
     gameEvents.length > 0
     || gameRelay?.innings.some((inning) => inning.plays.length > 0)
@@ -414,31 +434,19 @@ export default function GameDetailPage() {
 
   const matchupTitle = `${awayTeam.shortName} vs ${homeTeam.shortName}`;
   const starterOnlyLineup: GameLineup | null = (() => {
-    const awayName =
-      liveGame?.awayStarterName?.trim()
-      || d.detailLineup?.awayStarter?.trim()
-      || "";
-    const homeName =
-      liveGame?.homeStarterName?.trim()
-      || d.detailLineup?.homeStarter?.trim()
-      || "";
+    const awayName = awayLineupStarter.name;
+    const homeName = homeLineupStarter.name;
     if (!awayName && !homeName) return null;
     return {
       gameId,
       away: {
         teamId: game.awayTeamId,
-        startingPitcher: resolveLineupStarter({
-          liveStarterName: awayName,
-          teamId: game.awayTeamId,
-        }),
+        startingPitcher: awayLineupStarter,
         batters: [],
       },
       home: {
         teamId: game.homeTeamId,
-        startingPitcher: resolveLineupStarter({
-          liveStarterName: homeName,
-          teamId: game.homeTeamId,
-        }),
+        startingPitcher: homeLineupStarter,
         batters: [],
       },
     };
@@ -640,8 +648,8 @@ export default function GameDetailPage() {
                     linescore={gameDetail?.linescore ?? gameRelay?.linescore ?? null}
                     refreshEpoch={summaryRefreshEpoch}
                     starterNames={{
-                      away: liveGame?.awayStarterName || (gameDetail?.boxScore?.awayPitchers?.[0]?.name && !/^선수\(\d+\)$/.test(gameDetail.boxScore.awayPitchers[0].name) ? gameDetail.boxScore.awayPitchers[0].name : "") || d.detailLineup?.awayStarter || "",
-                      home: liveGame?.homeStarterName || (gameDetail?.boxScore?.homePitchers?.[0]?.name && !/^선수\(\d+\)$/.test(gameDetail.boxScore.homePitchers[0].name) ? gameDetail.boxScore.homePitchers[0].name : "") || d.detailLineup?.homeStarter || "",
+                      away: awayLineupStarter.name,
+                      home: homeLineupStarter.name,
                     }}
                     lineupConfirmed={!!d.detailLineup && d.detailLineup.isToday === true}
                     gameRelay={gameRelay}
@@ -666,16 +674,7 @@ export default function GameDetailPage() {
                     gameId,
                     away: {
                       teamId: game.awayTeamId,
-                      startingPitcher: (() => {
-                        // Naver 폴백 라인업은 awayStarter 를 함께 실어온다 — KBO boxScore/경기목록
-                        // starter 가 모두 빈 장애에서도 선발 표기+AI 분석이 살아있게(삼순 PR#988 P0-1).
-                        return resolveLineupStarter({
-                          liveStarterName: liveGame?.awayStarterName,
-                          lineupStarterName: d.detailLineup.awayStarter,
-                          teamId: game.awayTeamId,
-                          boxPitcher: gameDetail?.boxScore?.awayPitchers?.[0],
-                        });
-                      })(),
+                      startingPitcher: awayLineupStarter,
                       batters: d.detailLineup.away.map((e: LineupEntry) => {
                         const roster = PLAYERS_ROSTER.find((p: { name: string; teamId: number; kboId: string }) => p.name === e.name && p.teamId === game.awayTeamId);
                         return { order: e.order, name: e.name, position: e.position, avg: e.avg || "", kboId: roster?.kboId, teamId: game.awayTeamId };
@@ -683,14 +682,7 @@ export default function GameDetailPage() {
                     },
                     home: {
                       teamId: game.homeTeamId,
-                      startingPitcher: (() => {
-                        return resolveLineupStarter({
-                          liveStarterName: liveGame?.homeStarterName,
-                          lineupStarterName: d.detailLineup.homeStarter,
-                          teamId: game.homeTeamId,
-                          boxPitcher: gameDetail?.boxScore?.homePitchers?.[0],
-                        });
-                      })(),
+                      startingPitcher: homeLineupStarter,
                       batters: d.detailLineup.home.map((e: LineupEntry) => {
                         const roster = PLAYERS_ROSTER.find((p: { name: string; teamId: number; kboId: string }) => p.name === e.name && p.teamId === game.homeTeamId);
                         return { order: e.order, name: e.name, position: e.position, avg: e.avg || "", kboId: roster?.kboId, teamId: game.homeTeamId };
