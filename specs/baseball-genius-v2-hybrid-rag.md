@@ -420,6 +420,18 @@ rev0.8 시점의 "namu.wiki는 프로그래매틱 접근 전면 차단(정상 �
 - **비율 20%** — 실크롤 문서 정리본 길이는 1,899~31,462자(중앙값 약 20,000자)다. 20%면 최단 문서에서도 chunk가 남고, 최장 문서에서는 절대 상한이 걸려 실보존이 7.6~9.6%로 떨어진다(전문 재구성 불가가 강화된다). 25%였다면 최장 문서에서 7,883자까지 허용되어 상한이 사실상 유일한 방어선이 된다.
 - **답을 깨지 않음(실측)**: 문보경 문서(정리본 25,009자)에서 별명 서술 문단이 상한 안에 보존된다. 실제 서빙 관통에서 `문보경 별명이 뭐야?`가 답으로 나온다.
 - **짧은 문서의 fail-close는 계약대로다**: 위키피디아 최단 문서(김백산 191자, 네일 134자)는 보존 예산이 최소 chunk 길이에 못 미쳐 `no_retrievable_snippet_within_retention_budget`으로 저장하지 않는다. 이 선수들은 나무위키(보조 소스)가 커버한다.
+- **하위문서 합산 상한(R4)**: 문서별 20%/2,400자만 적용하면 하위문서 20건에서 최대 48,000자를 쌓아 entity corpus 상당 부분을 재구성할 수 있다. 따라서 메인+하위문서 **전체 정리본 합계의 10% / 12,000자 중 작은 값**을 다시 적용한다. 12,000자는 1회 서빙 최대 근거량 2,400자의 5배다. 문서별 첫 근거부터 round-robin 선별해 traversal 첫 문서의 예산 독점을 막고, 합산 상한을 넘으면 저장하지 않는다.
+
+### 12.8 나무위키 하위문서 bounded 재귀 수집 (2026-08-01 R4, 하린아빠 지시)
+
+메인 문서만으로는 선수 경력·플레이 스타일 등 서술의 절반 이상을 놓칠 수 있으므로, 메인(depth 1)에서 같은 entity 하위문서를 depth 3까지 BFS로 수집한다.
+
+- **entity 귀속**: 확정된 메인 canonical title을 prefix로 사용한다. decoded 문서명이 `${메인}/…`인 링크만 따라가며 다른 선수·일반 문서는 fetch하지 않는다. 하위문서도 최종 URL + `rel=canonical` + page title을 대조하고 canonical title의 prefix 일치를 다시 확인한다.
+- **anchor dedupe**: `#s-2.1`·섹션명 fragment와 query를 제거한 canonical 문서 URL로 정규화·중복 제거한다. 같은 문서의 섹션 링크는 요청 1건이다.
+- **bounded rate**: 모든 하위문서 요청도 동일한 fetcher를 거쳐 문서마다 최소 10초 + 요청별 Chrome 완전 재기동을 강제한다. blocked는 즉시 entity/배치 중단이다.
+- **상한**: `NAMU_MAX_CRAWL_DEPTH=3`, `NAMU_MAX_DOCUMENTS_PER_ENTITY=30`. 최정 실측 고유 하위문서 20+건에 약 40% 여유를 주되, 30건이면 rate 대기만 최대 약 5분으로 제한된다. depth 4 링크 또는 31번째 unique 문서를 발견하면 일부 corpus를 ready로 만들지 않고 entity 전체를 fail-close한다. 이 상한에 맞춰 claim lease는 15분이다.
+- **추적성**: chunk `sectionPath`에 decoded 계층(`문보경/선수 경력/2024년`)을 기록하고 최종 출처 표기에도 노출한다. DB owner 계약상 `canonical_url`은 source root를 유지하며, 실제 하위 경로는 `sectionPath`와 chunk metadata에 남긴다.
+- **실측(2026-08-01)**: 문보경 root에서 고유 문서 10건(root 1 + 하위 9)을 canonical 통과 수집했고, 미래 링크 `문보경/선수 경력/2027년` 1건은 HTTP 404라 저장하지 않고 rejection provenance에 남겼다. prefix 밖 fetch 0건.
 
 **분리된 게이트 — 상업 이용 법무 승인 (`decision_pending`, 미확정 유지)**: 나무위키 CC BY-NC 기반 상업 서빙 가능 여부는 **inventory 단계의 게이트가 아니다.** 대량 ingestion 및 유저 서빙 개시 전 **별도 launch gate**에서 판단하며, 하린아빠 확정 전까지 `decision_pending` 상태를 유지한다. 이 상태에서도 inventory 확정·canonical 검증은 진행한다(수집/서빙과 분리).
 

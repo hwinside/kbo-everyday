@@ -78,6 +78,18 @@ export type CanonicalVerdict =
     }
   | { ok: false; reason: string };
 
+export interface CanonicalSubdocumentInput {
+  requestedUrl: string;
+  finalUrl: string;
+  html: string;
+  /** canonical이 반드시 `${entityRootTitle}/…`로 시작해야 한다. */
+  entityRootTitle: string;
+}
+
+export type CanonicalSubdocumentVerdict =
+  | { ok: true; canonicalUrl: string; pageTitle: string; sectionPath: string; redirected: boolean }
+  | { ok: false; reason: string };
+
 /**
  * 문서 URL 정규화 — 두 URL이 같은 문서를 가리키는지 비교할 수 있는 형태로 만든다.
  * percent-encoding·fragment·trailing slash·쿼리 차이는 같은 문서다. 호스트/경로 접두가 계약 밖이면 null.
@@ -106,6 +118,13 @@ export function normalizeDocumentUrl(value: string, base?: string): string | nul
 /** 제목 정규화 — 공백/유니코드 형태 차이는 같은 제목으로 본다. */
 export function normalizeTitle(value: string): string {
   return value.normalize("NFC").replace(/[_\s]+/g, " ").trim();
+}
+
+/** 정규화된 나무위키 URL에서 decoded 문서 제목(계층 경로)을 꺼낸다. */
+export function documentTitleFromUrl(value: string): string | null {
+  const normalized = normalizeDocumentUrl(value);
+  if (!normalized) return null;
+  return normalizeTitle(normalized.slice(`https://${NAMU_DOCUMENT_HOST}${NAMU_DOCUMENT_PATH_PREFIX}`.length));
 }
 
 /** `<link rel="canonical" href="...">` 추출 (속성 순서 무관). */
@@ -288,4 +307,46 @@ export function verifyCanonicalIdentity(input: CanonicalIdentityInput): Canonica
   if (!identityVerdict.ok) return identityVerdict;
 
   return { ok: true, canonicalUrl: canonical, pageTitle, redirected: requested !== final, identityCategories: categories };
+}
+
+/**
+ * 하위문서 canonical + entity 귀속 게이트.
+ *
+ * 메인 문서는 분류+생년으로 entity를 확정한다. 그 메인에서 발견한 하위문서는 분류가 없을 수 있어
+ * 동일 규칙을 그대로 적용할 수 없다. 대신 HTTP 200 단독 금지(최종 URL + rel=canonical + title)는
+ * 유지하고, decoded canonical 제목이 **확정된 메인 제목의 `${prefix}/…`**인지 추가 확인한다.
+ * 다른 선수·일반 문서로의 링크는 이 함수에서 fail-close된다.
+ */
+export function verifyCanonicalSubdocumentIdentity(
+  input: CanonicalSubdocumentInput,
+): CanonicalSubdocumentVerdict {
+  const requested = normalizeDocumentUrl(input.requestedUrl);
+  if (!requested) return { ok: false, reason: "requested_url_out_of_contract" };
+  const final = normalizeDocumentUrl(input.finalUrl);
+  if (!final) return { ok: false, reason: "final_url_out_of_contract" };
+
+  const canonicalLink = extractCanonicalLink(input.html);
+  if (!canonicalLink) return { ok: false, reason: "canonical_link_absent" };
+  const canonical = normalizeDocumentUrl(canonicalLink, input.finalUrl);
+  if (!canonical) return { ok: false, reason: "canonical_link_out_of_contract" };
+  if (canonical !== final) return { ok: false, reason: "canonical_link_mismatch_final_url" };
+
+  const root = normalizeTitle(input.entityRootTitle);
+  const sectionPath = documentTitleFromUrl(canonical);
+  if (!sectionPath || !sectionPath.startsWith(`${root}/`)) {
+    return { ok: false, reason: "subdocument_entity_prefix_mismatch" };
+  }
+
+  const pageTitle = extractPageTitle(input.html);
+  if (!pageTitle) return { ok: false, reason: "page_title_absent" };
+  if (normalizeTitle(pageTitle) !== sectionPath) {
+    return { ok: false, reason: "page_title_canonical_mismatch" };
+  }
+  return {
+    ok: true,
+    canonicalUrl: canonical,
+    pageTitle,
+    sectionPath,
+    redirected: requested !== final,
+  };
 }

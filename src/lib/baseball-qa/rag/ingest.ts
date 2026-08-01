@@ -37,6 +37,17 @@ export const MIN_CHUNK_CHARS = 40;
  */
 export const RETENTION_MAX_RATIO = 0.2;
 export const RETENTION_MAX_CHARS = 2_400;
+/**
+ * 하위문서 합산 보존 상한 (R4).
+ *
+ * 문서마다 20%/2,400자를 적용하는 것만으로는 최정처럼 20+ 하위문서가 있는 entity에서
+ * 최대 48,000자 이상을 쌓을 수 있다. 각 문서는 잘렸어도 **entity corpus 전체를 상당 부분
+ * 재구성**할 수 있으므로, 모든 하위문서를 합친 정리본 기준 10%와 절대 12,000자를 다시 적용한다.
+ * 12,000자는 서빙 1회 최대 근거량(2,400자)의 5배로, 여러 질문 의도를 커버하되 원문 아카이브가
+ * 되지 않는 상한이다. round-robin으로 문서별 첫 근거부터 고르므로 앞 문서 하나가 예산을 독점하지 않는다.
+ */
+export const ENTITY_RETENTION_MAX_RATIO = 0.1;
+export const ENTITY_RETENTION_MAX_CHARS = 12_000;
 /** 보존 예산이 이보다 작으면 저장 가능한 chunk(최소 40자) 자체가 나오지 않는다. */
 export const MIN_RETENTION_BUDGET = MIN_CHUNK_CHARS;
 
@@ -172,6 +183,16 @@ export type IngestResult =
   | { ok: true; chunks: PreparedChunk[] }
   | { ok: false; reason: string; missingKeys?: string[] };
 
+export type DocumentSetIngestResult =
+  | {
+      ok: true;
+      chunks: PreparedChunk[];
+      documentCount: number;
+      cleanChars: number;
+      retainedChars: number;
+    }
+  | { ok: false; reason: string; missingKeys?: string[] };
+
 /**
  * tier2 문서(나무위키·위키피디아 공통)를 저장 가능한 chunk로 준비한다.
  * 두 소스가 **같은 보존 상한·같은 선별 규칙**을 쓴다 — 소스마다 규칙이 갈리면 한쪽에서 전문이 쌓인다.
@@ -209,4 +230,67 @@ export function prepareTier2Chunks(doc: IngestSourceDoc): IngestResult {
     return { ok: false, reason: "retention_budget_exceeded" };
   }
   return { ok: true, chunks };
+}
+
+/** entity의 메인+하위문서 전부에 문서별 상한과 **합산 상한**을 이중 적용한다. */
+export function prepareTier2DocumentSet(documents: IngestSourceDoc[]): DocumentSetIngestResult {
+  if (documents.length === 0) return { ok: false, reason: "document_set_empty" };
+
+  const cleanChars = documents.reduce((sum, document) => sum + stripWikiMarkup(document.rawText).length, 0);
+  const entityBudget = Math.min(
+    ENTITY_RETENTION_MAX_CHARS,
+    Math.floor(cleanChars * ENTITY_RETENTION_MAX_RATIO),
+  );
+  if (entityBudget < MIN_RETENTION_BUDGET) {
+    return { ok: false, reason: "entity_retention_budget_too_small" };
+  }
+
+  const preparedByDocument: PreparedChunk[][] = [];
+  for (const document of documents) {
+    const prepared = prepareTier2Chunks(document);
+    if (!prepared.ok) {
+      // retrieval 신호가 없는 하위문서는 저장하지 않는 것이 최소 원문저장 계약에 맞다.
+      if (prepared.reason === "no_retrievable_snippet_within_retention_budget") continue;
+      return prepared;
+    }
+    preparedByDocument.push(prepared.chunks);
+  }
+  if (preparedByDocument.length === 0) {
+    return { ok: false, reason: "no_retrievable_document_within_entity_budget" };
+  }
+
+  // 문서별 첫 근거부터 round-robin. traversal 순서의 첫 문서가 합산 예산을 독점하지 않는다.
+  const chunks: PreparedChunk[] = [];
+  let retainedChars = 0;
+  for (let round = 0; ; round += 1) {
+    let pickedInRound = false;
+    for (const documentChunks of preparedByDocument) {
+      const candidate = documentChunks[round];
+      if (!candidate) continue;
+      pickedInRound = true;
+      const remaining = entityBudget - retainedChars;
+      if (remaining < MIN_CHUNK_CHARS) break;
+      const content = candidate.content.slice(0, remaining).trim();
+      if (content.length < MIN_CHUNK_CHARS) continue;
+      chunks.push({
+        ...candidate,
+        content,
+        contentChars: content.length,
+        meta: { ...candidate.meta, contentHash: contentHash(content) },
+      });
+      retainedChars += content.length;
+      if (retainedChars >= entityBudget) break;
+    }
+    if (!pickedInRound || retainedChars >= entityBudget) break;
+  }
+
+  if (chunks.length === 0) return { ok: false, reason: "no_chunk_within_entity_retention_budget" };
+  if (retainedChars > entityBudget) return { ok: false, reason: "entity_retention_budget_exceeded" };
+  return {
+    ok: true,
+    chunks,
+    documentCount: documents.length,
+    cleanChars,
+    retainedChars,
+  };
 }

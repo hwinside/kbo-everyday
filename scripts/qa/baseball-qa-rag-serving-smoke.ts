@@ -51,10 +51,14 @@ import {
 import { RAG_EMBEDDING_DIM } from "../../src/lib/baseball-qa/rag/contracts";
 import {
   extractDisambiguationCandidates,
+  verifyCanonicalSubdocumentIdentity,
   verifyCanonicalIdentity,
   type PlayerDocumentIdentity,
 } from "../../src/lib/baseball-qa/rag/canonical";
 import {
+  ENTITY_RETENTION_MAX_CHARS,
+  ENTITY_RETENTION_MAX_RATIO,
+  prepareTier2DocumentSet,
   prepareTier2Chunks,
   RETENTION_MAX_CHARS,
   RETENTION_MAX_RATIO,
@@ -80,6 +84,13 @@ import {
   WIKIPEDIA_API_URL,
 } from "../../src/lib/baseball-qa/rag/fetch-wikipedia";
 import { S2B_TARGET_PLAYERS, S2B_TARGET_SOURCE_KEYS, isS2bTargetSourceKey } from "../../src/lib/baseball-qa/rag/targets";
+import {
+  crawlNamuEntityDocuments,
+  extractNamuEntitySubdocumentUrls,
+  NAMU_MAX_CRAWL_DEPTH,
+  NAMU_MAX_DOCUMENTS_PER_ENTITY,
+  normalizeNamuEntitySubdocumentUrl,
+} from "../baseball-qa/rag/fetch-namu-browser";
 
 const MOON = { name: "문보경", kboId: "69102" };
 const PLAYERS: PlayerRef[] = [
@@ -338,6 +349,10 @@ async function run(): Promise<void> {
 
   // ── 17. R3 위키피디아 병행 — tier2 기본 소스 + 충돌 계약 ──────────────────────
   await verifyWikipediaTier2Contract();
+
+  // ── 18. R4 하위문서 depth 3 — prefix/anchor/bounds/sectionPath/합산보존 ────────
+  await verifyBoundedNamuSubdocumentCrawl();
+  verifyEntityAggregateRetentionCap();
 
   await verifyServingContractOnRealDb();
   await verifyScopedClaimOnRealDb();
@@ -860,6 +875,12 @@ async function verifyScopedClaimOnRealDb(): Promise<void> {
   const db = new PGlite({ extensions: { vector } });
   await db.exec("CREATE ROLE anon NOLOGIN; CREATE ROLE authenticated NOLOGIN; CREATE ROLE service_role NOLOGIN;");
   await db.exec(readFileSync(path.join(process.cwd(), "supabase/migrations/20260731_baseball_genius_rag_sources.sql"), "utf8"));
+  const multiDocumentMigration = readFileSync(
+    path.join(process.cwd(), "supabase/migrations/20260801223000_baseball_genius_rag_multidocument_snapshot.sql"),
+    "utf8",
+  );
+  await db.exec(multiDocumentMigration);
+  await db.exec(multiDocumentMigration); // 재적용 멱등
   const scopedMigration = readFileSync(path.join(process.cwd(), "supabase/migrations/20260801_baseball_genius_rag_scoped_claim.sql"), "utf8");
   await db.exec(scopedMigration);
   // 멱등성: 같은 migration을 다시 적용해도 실패하지 않는다.
@@ -1163,11 +1184,146 @@ async function verifyWikipediaTier2Contract(): Promise<void> {
   console.log("PASS 위키피디아 tier2 — 기본 소스 우선순위 / 공식 API / 동음이의·생년·비선수 거부 / revid 정본");
 }
 
+/** R4 — 나무위키 하위문서 depth 3 bounded 재귀 수집 계약. */
+async function verifyBoundedNamuSubdocumentCrawl(): Promise<void> {
+  const rootUrl = "https://namu.wiki/w/문보경";
+  const rootHtml = [
+    '<a href="/w/문보경#s-2.1">같은 문서 앵커</a>',
+    '<a href="/w/문보경/선수%20경력#s-2.1">경력 앵커 1</a>',
+    '<a href="/w/문보경/선수%20경력#2024">경력 앵커 2</a>',
+    '<a href="https://namu.wiki/w/%EB%AC%B8%EB%B3%B4%EA%B2%BD/%EC%84%A0%EC%88%98%20%EA%B2%BD%EB%A0%A5/%EA%B5%AD%EA%B0%80%EB%8C%80%ED%91%9C">국가대표</a>',
+    '<a href="/w/최정/선수%20경력">다른 선수</a>',
+    '<a href="/w/KBO%20리그">일반 문서</a>',
+  ].join("\n");
+
+  assert.equal(
+    normalizeNamuEntitySubdocumentUrl("/w/문보경/선수%20경력#s-2.1", rootUrl, "문보경"),
+    "https://namu.wiki/w/문보경/선수 경력",
+  );
+  assert.equal(normalizeNamuEntitySubdocumentUrl("/w/최정/선수 경력", rootUrl, "문보경"), null);
+  assert.deepEqual(extractNamuEntitySubdocumentUrls(rootHtml, rootUrl, "문보경"), [
+    "https://namu.wiki/w/문보경/선수 경력",
+    "https://namu.wiki/w/문보경/선수 경력/국가대표",
+  ], "앵커를 제거한 고유 prefix 문서만 남아야 한다");
+
+  const canonicalHtml = (title: string, links = "") => [
+    `<link rel="canonical" href="https://namu.wiki/w/${encodeURI(title)}">`,
+    `<meta property="og:title" content="${title}">`,
+    `<title>${title} - 나무위키</title>`,
+    links,
+  ].join("\n");
+  const rootIdentityHtml = [
+    canonicalHtml("문보경", '<a href="/w/문보경/선수%20경력#s-2">경력</a>'),
+    '<a href="/w/%EB%B6%84%EB%A5%98:%EB%8C%80%ED%95%9C%EB%AF%BC%EA%B5%AD%EC%9D%98%20%EC%95%BC%EA%B5%AC%20%EC%84%A0%EC%88%98">대한민국의 야구 선수</a>',
+    '<a href="/w/%EB%B6%84%EB%A5%98:2000%EB%85%84%20%EC%B6%9C%EC%83%9D">2000년 출생</a>',
+  ].join("\n");
+  const graph = new Map<string, string>([
+    [rootUrl, rootIdentityHtml],
+    ["https://namu.wiki/w/문보경/선수 경력", canonicalHtml("문보경/선수 경력", '<a href="/w/문보경/선수%20경력/2024년#s-3">시즌</a><a href="/w/최정">외부</a>')],
+    ["https://namu.wiki/w/문보경/선수 경력/2024년", canonicalHtml("문보경/선수 경력/2024년")],
+  ]);
+  const fetchedUrls: string[] = [];
+  const crawl = await crawlNamuEntityDocuments(rootUrl, { name: "문보경", birthYear: "2000" }, {
+    fetchDocument: async (url) => {
+      fetchedUrls.push(url);
+      const html = graph.get(url);
+      if (!html) return { ok: false, status: "missing", reason: "fixture_missing", httpStatus: 404 };
+      return { ok: true, requestedUrl: url, url, html, revision: `fixture:${fetchedUrls.length}`, crawledAt: "2026-08-01T00:00:00Z" };
+    },
+  });
+  assert.equal(crawl.ok, true, JSON.stringify(crawl));
+  if (crawl.ok) {
+    assert.deepEqual(crawl.documents.map((doc) => doc.depth), [1, 2, 3]);
+    assert.deepEqual(crawl.documents.map((doc) => doc.sectionPath), [
+      "문보경", "문보경/선수 경력", "문보경/선수 경력/2024년",
+    ], "sectionPath에 실제 계층 경로가 기록되어야 한다");
+    assert.equal(fetchedUrls.some((url) => url.includes("최정")), false, "prefix 밖 문서를 fetch하면 안 된다");
+    assert.match(
+      composeRagAnswer("경력 답변입니다.", { ...MOON_EVIDENCE, sectionPath: crawl.documents[2].sectionPath }),
+      /문보경\/선수 경력\/2024년/,
+      "계층 sectionPath가 최종 출처 표기에 보여야 한다",
+    );
+  }
+
+  const subVerdict = verifyCanonicalSubdocumentIdentity({
+    requestedUrl: "https://namu.wiki/w/문보경/선수 경력",
+    finalUrl: "https://namu.wiki/w/문보경/선수 경력",
+    html: canonicalHtml("문보경/선수 경력"),
+    entityRootTitle: "문보경",
+  });
+  assert.equal(subVerdict.ok, true, JSON.stringify(subVerdict));
+  const wrongPrefix = verifyCanonicalSubdocumentIdentity({
+    requestedUrl: "https://namu.wiki/w/최정/선수 경력",
+    finalUrl: "https://namu.wiki/w/최정/선수 경력",
+    html: canonicalHtml("최정/선수 경력"),
+    entityRootTitle: "문보경",
+  });
+  assert.equal(wrongPrefix.ok, false, "다른 선수 하위문서가 entity에 귀속되면 안 된다");
+
+  const tooManyLinks = Array.from({ length: 3 }, (_, index) =>
+    `<a href="/w/문보경/하위${index}">하위${index}</a>`).join("");
+  const overDocs = await crawlNamuEntityDocuments(rootUrl, { name: "문보경", birthYear: "2000" }, {
+    maxDocuments: 2,
+    fetchDocument: async (url) => ({
+      ok: true, requestedUrl: url, url,
+      html: url === rootUrl ? rootIdentityHtml.replace('<a href="/w/문보경/선수%20경력#s-2">경력</a>', tooManyLinks) : canonicalHtml(url.split("/w/")[1]),
+      revision: "fixture", crawledAt: "2026-08-01T00:00:00Z",
+    }),
+  });
+  assert.equal(overDocs.ok, false);
+  if (!overDocs.ok) assert.equal(overDocs.reason, "document_limit_exceeded");
+
+  const depthGraph = new Map(graph);
+  depthGraph.set("https://namu.wiki/w/문보경/선수 경력/2024년", canonicalHtml("문보경/선수 경력/2024년", '<a href="/w/문보경/선수%20경력/2024년/전반기">depth4</a>'));
+  const overDepth = await crawlNamuEntityDocuments(rootUrl, { name: "문보경", birthYear: "2000" }, {
+    fetchDocument: async (url) => ({
+      ok: true, requestedUrl: url, url, html: depthGraph.get(url) ?? canonicalHtml(url.split("/w/")[1]),
+      revision: "fixture", crawledAt: "2026-08-01T00:00:00Z",
+    }),
+  });
+  assert.equal(overDepth.ok, false);
+  if (!overDepth.ok) assert.equal(overDepth.reason, "crawl_depth_limit_exceeded");
+  assert.equal(NAMU_MAX_CRAWL_DEPTH, 3);
+  assert.equal(NAMU_MAX_DOCUMENTS_PER_ENTITY, 30);
+  console.log("PASS 하위문서 재귀 — anchor dedupe / prefix 격리 / depth3·문서30 상한 fail-close / sectionPath 계층");
+}
+
+/** R4 — 문서별 상한을 우회하는 다문서 합산 원문 축적을 entity 상한으로 막는다. */
+function verifyEntityAggregateRetentionCap(): void {
+  const documents = Array.from({ length: 20 }, (_, index) => ({
+    entityType: "player" as const,
+    entityId: "69102",
+    pageTitle: "문보경",
+    canonicalUrl: "https://namu.wiki/w/문보경",
+    revision: `rev:${index}`,
+    sectionPath: `문보경/선수 경력/${2007 + index}년`,
+    crawledAt: "2026-08-01T00:00:00Z",
+    asOf: "2026-08-01",
+    rawText: Array.from({ length: 30 }, (_, paragraph) =>
+      `문보경 선수 경력 ${index}-${paragraph}. 별명과 소속팀, 포지션, 플레이 스타일에 관한 유효한 서술 문단입니다. `.repeat(4)).join("\n\n"),
+  }));
+  const prepared = prepareTier2DocumentSet(documents);
+  assert.equal(prepared.ok, true, JSON.stringify(prepared));
+  if (!prepared.ok) return;
+  const totalClean = documents.reduce((sum, doc) => sum + stripWikiMarkup(doc.rawText).length, 0);
+  const retained = prepared.chunks.reduce((sum, chunk) => sum + chunk.contentChars, 0);
+  assert.ok(retained <= ENTITY_RETENTION_MAX_CHARS, `${retained} > ${ENTITY_RETENTION_MAX_CHARS}`);
+  assert.ok(retained <= Math.floor(totalClean * ENTITY_RETENTION_MAX_RATIO));
+  assert.ok(new Set(prepared.chunks.map((chunk) => chunk.meta.sectionPath)).size > 1, "한 하위문서에만 예산이 몰리면 안 된다");
+  console.log(`PASS entity 합산 보존 — 20문서 ${totalClean}자 → ${retained}자(≤10%, ≤12000자), 다문서 전문 재구성 불가`);
+}
+
 /** 실제 migration을 PGlite(pgvector)에 적용해 서빙 뷰·entity 필터 계약을 검증한다. */
 async function verifyServingContractOnRealDb(): Promise<void> {
   const db = new PGlite({ extensions: { vector } });
   await db.exec("CREATE ROLE anon NOLOGIN; CREATE ROLE authenticated NOLOGIN; CREATE ROLE service_role NOLOGIN;");
   await db.exec(readFileSync(path.join(process.cwd(), "supabase/migrations/20260731_baseball_genius_rag_sources.sql"), "utf8"));
+  const multiDocumentMigration = readFileSync(
+    path.join(process.cwd(), "supabase/migrations/20260801223000_baseball_genius_rag_multidocument_snapshot.sql"),
+    "utf8",
+  );
+  await db.exec(multiDocumentMigration);
+  await db.exec(multiDocumentMigration); // 재적용 멱등
 
   const embedding = `[${Array.from({ length: RAG_EMBEDDING_DIM }, (_, index) => (index % 7) / 10).join(",")}]`;
   const crawledAt = "2026-08-01T00:00:00Z";
@@ -1241,8 +1397,40 @@ async function verifyServingContractOnRealDb(): Promise<void> {
   assert.match(finalAnswer, /출처: 문보경/);
   assert.match(finalAnswer, /rev rev1/);
 
+  // 4) R4 다문서 generation — 서로 다른 revision/hash/crawledAt의 하위문서를 한 번에 atomic swap.
+  await db.query("UPDATE public.genius_rag_sources SET ingestion_status='stale' WHERE source_key='namu:player:69102'");
+  const generationTwo = (await db.query<{ claim_token: string; claim_generation: number }>(
+    "SELECT claim_token,claim_generation FROM public.claim_baseball_genius_rag_batch(1,900) WHERE source_key='namu:player:69102'",
+  )).rows[0];
+  assert.ok(generationTwo);
+  const subdocs = [
+    { revision: "root-rev", hash: "root-hash", crawled: "2026-08-01T01:00:00Z", path: "문보경" },
+    { revision: "career-rev", hash: "career-hash", crawled: "2026-08-01T01:00:10Z", path: "문보경/선수 경력/2024년" },
+  ];
+  for (const [index, subdoc] of subdocs.entries()) {
+    await db.query(
+      `SELECT public.upsert_baseball_genius_rag_chunk($1,$2,$3,'player','69102','문보경','https://namu.wiki/w/x',
+        $4,$5,$6,$7,$8,$9,'tier2',$10::timestamptz,'2026-08-01'::date,$11::extensions.vector,'{}'::jsonb)`,
+      [
+        "namu:player:69102", generationTwo.claim_token, generationTwo.claim_generation,
+        subdoc.revision, subdoc.path, index,
+        `${subdoc.path}에 관한 선수 경력과 별명 설명이 충분히 길게 기록된 하위문서 근거입니다.`,
+        subdoc.hash, `${subdoc.hash}-chunk`, subdoc.crawled, embedding,
+      ],
+    );
+  }
+  const multiCompleted = (await db.query<{ ok: boolean }>(
+    "SELECT public.complete_baseball_genius_rag_source($1,$2,$3,$4,$5,$6::timestamptz,now()+interval '30 days') AS ok",
+    ["namu:player:69102", generationTwo.claim_token, generationTwo.claim_generation, "root-rev", "root-hash", "2026-08-01T01:00:00Z"],
+  )).rows[0].ok;
+  assert.equal(multiCompleted, true, "revision이 다른 하위문서 generation이 complete되어야 한다");
+  const multiServed = await db.query<{ section_path: string }>(
+    "SELECT section_path FROM public.genius_rag_serving_chunks WHERE entity_id='69102' ORDER BY section_path",
+  );
+  assert.deepEqual(multiServed.rows.map((row) => row.section_path), ["문보경", "문보경/선수 경력/2024년"]);
+
   await db.close();
-  console.log("PASS 실 DB 계약 — stage 미노출 / complete 후 서빙 / entity 필터 0행 / 서빙 문자열 조립");
+  console.log("PASS 실 DB 계약 — stage 미노출 / complete 후 서빙 / entity 필터 / 다문서 mixed provenance atomic swap / migration 멱등");
 }
 
 run().catch((error: unknown) => {

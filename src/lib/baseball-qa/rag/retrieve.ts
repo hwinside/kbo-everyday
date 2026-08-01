@@ -231,7 +231,10 @@ export function validateRagResponse(raw: string): ValidatedRagAnswer {
 
 /** 서빙 답변에 붙는 출처 표기 — 모델 출력이 아니라 신뢰 가능한 provenance에서 조립한다. */
 export function formatProvenance(evidence: RagEvidence): string {
-  return `\n\n📄 출처: ${evidence.pageTitle} (${evidence.canonicalUrl}) · rev ${evidence.revision} · ${evidence.asOf} 기준`;
+  const section = evidence.sectionPath && evidence.sectionPath !== "본문" && evidence.sectionPath !== evidence.pageTitle
+    ? ` · ${evidence.sectionPath}`
+    : "";
+  return `\n\n📄 출처: ${evidence.pageTitle}${section} (${evidence.canonicalUrl}) · rev ${evidence.revision} · ${evidence.asOf} 기준`;
 }
 
 /** 모델 답변 + 출처 표기를 합친 최종 서빙 문자열. */

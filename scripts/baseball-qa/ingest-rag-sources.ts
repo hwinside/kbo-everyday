@@ -25,13 +25,13 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import { verifyCanonicalIdentity, type PlayerDocumentIdentity } from "../../src/lib/baseball-qa/rag/canonical";
+import { type PlayerDocumentIdentity } from "../../src/lib/baseball-qa/rag/canonical";
 import { embedDocument } from "../../src/lib/baseball-qa/rag/embed";
 import { assertRobotsAllowed, extractDocumentText } from "../../src/lib/baseball-qa/rag/fetch-namu";
 import { fetchWikipediaDocument } from "../../src/lib/baseball-qa/rag/fetch-wikipedia";
-import { prepareTier2Chunks } from "../../src/lib/baseball-qa/rag/ingest";
+import { prepareTier2Chunks, prepareTier2DocumentSet } from "../../src/lib/baseball-qa/rag/ingest";
 import { S2B_TARGET_PLAYERS, S2B_TARGET_SOURCE_KEYS } from "../../src/lib/baseball-qa/rag/targets";
-import { fetchNamuDocumentViaBrowser } from "./rag/fetch-namu-browser";
+import { crawlNamuEntityDocuments } from "./rag/fetch-namu-browser";
 
 interface RagSourceRow {
   source_key: string;
@@ -119,7 +119,8 @@ async function main(): Promise<void> {
   // lease도 ingestion_attempts도 건드리지 않는다(scope skip = retry 예산 0 소비).
   const claimed = await rpc<RagSourceRow[]>("claim_baseball_genius_rag_batch_scoped", {
     p_limit: LIMIT,
-    p_lease_seconds: 300,
+    // depth 3 / 문서 30건 상한은 rate 대기만 최대 5분이다. 크롤+임베딩을 포함해 15분 lease.
+    p_lease_seconds: 900,
     p_source_keys: scope,
   });
   console.log(`claimed ${claimed.length} source(s) (source=${SOURCE}, scope=${scope.length})`);
@@ -144,40 +145,58 @@ async function main(): Promise<void> {
       ?? source.page_title;
     const identity: PlayerDocumentIdentity = { name: targetName, birthYear };
 
-    let rawText: string;
-    let revision: string;
-    let crawledAt: string;
+    let prepared: ReturnType<typeof prepareTier2Chunks> | ReturnType<typeof prepareTier2DocumentSet>;
+    let snapshotRevision: string;
+    let snapshotCrawledAt: string;
+    let documentCount = 1;
+    let aggregateCleanChars: number | null = null;
+    let aggregateRetainedChars: number | null = null;
+    let rejectedDocumentCount = 0;
+    let documentCanonicalBySectionPath = new Map<string, string>([["본문", source.canonical_url]]);
 
     if (SOURCE === "namu") {
-      const fetched = await fetchNamuDocumentViaBrowser(source.canonical_url);
-      if (!fetched.ok) {
+      const crawled = await crawlNamuEntityDocuments(source.canonical_url, identity);
+      if (!crawled.ok) {
         // (b) 봇차단은 우회하지 않는다 — 사유를 남기고, blocked면 배치 전체를 중단한다.
-        await failWith(`${fetched.status}:${fetched.reason}`);
-        if (fetched.status === "blocked") {
+        await failWith(`crawl:${crawled.status}:${crawled.reason}`);
+        if (crawled.status === "blocked") {
           console.error("차단 감지 — 남은 source 수집을 중단한다(§12.2 b, 재시도 폭주 금지)");
           break;
         }
         continue;
       }
-      // (d) 적재 시점 identity 재대조.
-      const verdict = verifyCanonicalIdentity({
-        requestedUrl: fetched.requestedUrl,
-        finalUrl: fetched.url,
-        html: fetched.html,
-        playerIdentity: identity,
-      });
-      if (!verdict.ok) {
-        await failWith(`canonical:${verdict.reason}`);
-        continue;
-      }
-      if (verdict.canonicalUrl !== source.canonical_url) {
+      const root = crawled.documents[0];
+      if (root.canonicalUrl !== source.canonical_url) {
         // 저장된 canonical과 실제 문서 canonical이 다르면 resolution을 다시 받아야 한다.
         await failWith("canonical:stored_canonical_url_drift");
         continue;
       }
-      rawText = extractDocumentText(fetched.html);
-      revision = fetched.revision;
-      crawledAt = fetched.crawledAt;
+      const documents = crawled.documents.map((document) => ({
+        entityType: "player" as const,
+        entityId: source.entity_id,
+        // DB source owner 계약은 모든 chunk의 page_title/canonical_url을 root와 일치시킨다.
+        // 실제 하위문서 provenance는 sectionPath + metadata에 기록한다.
+        pageTitle: source.page_title,
+        canonicalUrl: source.canonical_url,
+        revision: document.revision,
+        sectionPath: document.sectionPath,
+        crawledAt: document.crawledAt,
+        asOf: document.crawledAt.slice(0, 10),
+        rawText: extractDocumentText(document.html),
+      }));
+      const namuPrepared = prepareTier2DocumentSet(documents);
+      prepared = namuPrepared;
+      snapshotRevision = root.revision;
+      snapshotCrawledAt = root.crawledAt;
+      documentCount = crawled.documents.length;
+      rejectedDocumentCount = crawled.rejected.length;
+      documentCanonicalBySectionPath = new Map(
+        crawled.documents.map((document) => [document.sectionPath, document.canonicalUrl]),
+      );
+      if (namuPrepared.ok) {
+        aggregateCleanChars = namuPrepared.cleanChars;
+        aggregateRetainedChars = namuPrepared.retainedChars;
+      }
     } else {
       const fetched = await fetchWikipediaDocument(source.page_title, identity);
       if (!fetched.ok) {
@@ -192,23 +211,21 @@ async function main(): Promise<void> {
         await failWith("canonical:stored_canonical_url_drift");
         continue;
       }
-      rawText = fetched.extract;
-      revision = `revid:${fetched.revisionId}`;
-      crawledAt = fetched.crawledAt;
+      snapshotRevision = `revid:${fetched.revisionId}`;
+      snapshotCrawledAt = fetched.crawledAt;
+      prepared = prepareTier2Chunks({
+        entityType: "player",
+        entityId: source.entity_id,
+        pageTitle: source.page_title,
+        canonicalUrl: source.canonical_url,
+        revision: snapshotRevision,
+        sectionPath: "본문",
+        crawledAt: snapshotCrawledAt,
+        asOf: snapshotCrawledAt.slice(0, 10),
+        rawText: fetched.extract,
+      });
     }
 
-    const asOf = crawledAt.slice(0, 10);
-    const prepared = prepareTier2Chunks({
-      entityType: "player",
-      entityId: source.entity_id,
-      pageTitle: source.page_title,
-      canonicalUrl: source.canonical_url,
-      revision,
-      sectionPath: "본문",
-      crawledAt,
-      asOf,
-      rawText,
-    });
     if (!prepared.ok) {
       await failWith(`prepare:${prepared.reason}`);
       continue;
@@ -230,17 +247,27 @@ async function main(): Promise<void> {
         p_entity_id: source.entity_id,
         p_page_title: source.page_title,
         p_canonical_url: source.canonical_url,
-        p_revision: revision,
-        p_section_path: "본문",
+        p_revision: chunk.meta.revision,
+        p_section_path: chunk.meta.sectionPath,
         p_chunk_index: chunkIndex,
         p_content: chunk.content,
         p_document_content_hash: chunk.documentContentHash,
         p_content_hash: chunk.meta.contentHash,
         p_source_grade: "tier2",
-        p_crawled_at: crawledAt,
-        p_as_of: asOf,
+        p_crawled_at: chunk.meta.crawledAt,
+        p_as_of: chunk.meta.asOf,
         p_embedding: JSON.stringify(embedded.vector),
-        p_metadata: { source: SOURCE, robotsNote },
+        p_metadata: {
+          source: SOURCE,
+          robotsNote,
+          entityDocumentCount: documentCount,
+          entityCleanChars: aggregateCleanChars,
+          entityRetainedChars: aggregateRetainedChars,
+          rejectedDocumentCount,
+          sectionPath: chunk.meta.sectionPath,
+          documentCanonicalUrl: documentCanonicalBySectionPath.get(chunk.meta.sectionPath)
+            ?? source.canonical_url,
+        },
       });
       chunkIndex += 1;
     }
@@ -249,17 +276,21 @@ async function main(): Promise<void> {
       continue;
     }
 
+    const anchorChunk = prepared.chunks.find((chunk) => chunk.meta.revision === snapshotRevision)
+      ?? prepared.chunks[0];
+    snapshotRevision = anchorChunk.meta.revision;
+    snapshotCrawledAt = anchorChunk.meta.crawledAt;
     const staleAfter = new Date(Date.now() + STALE_AFTER_DAYS * 86_400_000).toISOString();
     const completed = await rpc<boolean>("complete_baseball_genius_rag_source", {
       p_source_key: source.source_key,
       p_claim_token: source.claim_token,
       p_claim_generation: source.claim_generation,
-      p_revision: revision,
-      p_content_hash: prepared.chunks[0].documentContentHash,
-      p_crawled_at: crawledAt,
+      p_revision: snapshotRevision,
+      p_content_hash: anchorChunk.documentContentHash,
+      p_crawled_at: snapshotCrawledAt,
       p_stale_after: staleAfter,
     });
-    console.log(`${source.source_key} ${completed ? "READY" : "COMPLETE_REJECTED"} chunks=${chunkIndex}`);
+    console.log(`${source.source_key} ${completed ? "READY" : "COMPLETE_REJECTED"} documents=${documentCount} chunks=${chunkIndex}`);
     if (!completed) await failWith("complete_rejected");
   }
 }
