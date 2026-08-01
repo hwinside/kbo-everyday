@@ -7,6 +7,7 @@
  *  - A1 동일 분모(W/(W+L+D))·officialWinRate 메타 분리, mixed A1 top-level comparable null+perTeam
  *  - AVG/ERA pooled denominator, HR·피안타 per-game, B 표본 가드(AB60/outs81/final3)
  *  - complete·incomplete 혼합 → B/C partial_data fail-closed (+unknownGameIds coverage)
+ *  - 직관 경기 complete + 시즌 baseline만 partial → 직관 사실값 유지·시즌 비교만 null
  *  - C 현재 최애 재계산·appearance/dnp/unknown coverage·C6 역할별 ranking·C5 top1
  *  - D1 1점차 경계, D6 ready+no_wins leaf 승격(§12 고정 payload), D5 cancelled만
  *  - E1 스트릭(일정 기반 current/longest), E2/E3/E4 사실형
@@ -33,6 +34,7 @@ import {
   type B2Value,
   type B4Side,
   type B4Value,
+  type C4Entry,
   type MetricEnvelope,
 } from "@/lib/venue-stats/types";
 import { buildVenueStatsHero } from "@/lib/venue-stats/ui";
@@ -339,6 +341,16 @@ console.log("\n[2] gps scope (story_geofence만 — manual 혼입 금지 #972 �
   ok("C2 F2 ready: ERA 3.00 vs 3.00, K/9=9, outs 54≥15", f2?.state === "ready" && approx((f2?.value as { attendanceEra: number })?.attendanceEra, 3) && approx((f2?.value as { attendanceK9: number })?.attendanceK9, 9));
   const c4 = s.metrics.C4;
   ok("C4 홈런 목격: F1 1방(G1)·appearance 3", (item(c4, "70001")?.value as { homeRuns: number; appearanceGames: number })?.homeRuns === 1 && (item(c4, "70001")?.value as { appearanceGames: number })?.appearanceGames === 3);
+  ok(
+    "C4 타자 안타·타점·홈런 묶음",
+    JSON.stringify((item(c4, "70001")?.value as C4Entry | null)?.batter) ===
+      JSON.stringify({ hits: 5, rbi: 2, homeRuns: 1 }),
+  );
+  ok(
+    "C4 투수 탈삼진·0자책 경기 묶음",
+    (item(c4, "70002")?.value as C4Entry | null)?.pitcher?.strikeouts === 18 &&
+      (item(c4, "70002")?.value as C4Entry | null)?.pitcher?.zeroEarnedRunGames === 0,
+  );
   const c5 = s.metrics.C5;
   const f1c5 = item(c5, "70001")?.value as { batterTop?: { gameId: string; hr: number } };
   ok("C5 F1 batterTop=G1 (HR desc 우선 — §10 lexicographic)", f1c5?.batterTop?.gameId === G1.gameId && f1c5?.batterTop?.hr === 1);
@@ -435,11 +447,13 @@ console.log("\n[5] mixed snapshot team — A1/B perTeam");
         b4Value?.hitsAllowed?.seasonPerGame === null &&
         b4Value?.hitsAllowed?.delta === null,
     );
-    // partial_data(적재 누락) item 은 수치 자체가 불완전이라 계속 전체 null.
+    // 직관 경기는 complete이고 시즌 baseline만 partial이면 직관 사실값은 유지한다.
     ok(
-      "B1 mixed partial_data item 은 여전히 value=null (fail-closed 유지)",
+      "B1 mixed baseline-only partial: 직관값 유지·시즌 비교 null",
       item(s.metrics.B1, String(LG))?.state === "partial_data" &&
-        item(s.metrics.B1, String(LG))?.value === null,
+        approx((item(s.metrics.B1, String(LG))?.value as B1Value | null)?.attendanceAvg, 0.3) &&
+        (item(s.metrics.B1, String(LG))?.value as B1Value | null)?.seasonAvg === null &&
+        (item(s.metrics.B1, String(LG))?.value as B1Value | null)?.delta === null,
     );
   }
   // ─ mixed_team 총 final 이 모자라면 파생 '요정 지수'도 참고용 계약 (삼순 P0-2).
@@ -565,6 +579,60 @@ console.log("\n[7] 시즌 우주 fail-closed — backfill 0 / 부분 backfill / 
   ok("[부분 backfill] B1 partial_data (미적재 시즌 경기 강등 반영)", partial.metrics.B1.state === "partial_data" && partial.metrics.B1.value === null);
   ok("[부분 backfill] unknownGameIds에 ledger 없는 시즌 경기 포함", partialUnknown.includes("20260628LGOB0") && partialUnknown.includes("20260629LGOB0"));
   ok("[부분 backfill] C1 partial_data", partial.metrics.C1.state === "partial_data");
+
+  // (d) 직관 3경기는 전부 complete, 시즌 baseline만 incomplete.
+  // 확정된 직관 사실값까지 숨기지 않되 시즌값·delta는 계속 fail-closed 한다.
+  const baselineOnlyPartial = buildVenueStatsScope(input({
+    scope: "gps",
+    seasonGames: SEASON_GAMES.map((g) =>
+      ["20260628LGOB0", "20260629LGOB0"].includes(g.gameId) ? { ...g, complete: false } : g,
+    ),
+  }));
+  const safeB1 = baselineOnlyPartial.metrics.B1 as MetricEnvelope<B1Value>;
+  ok(
+    "[baseline만 부분] B1 직관 AVG 유지·시즌/delta null",
+    safeB1.state === "partial_data" &&
+      approx(safeB1.value?.attendanceAvg, 0.3) &&
+      safeB1.value?.seasonAvg === null &&
+      safeB1.value?.delta === null,
+  );
+  const safeB2 = baselineOnlyPartial.metrics.B2 as MetricEnvelope<B2Value>;
+  ok(
+    "[baseline만 부분] B2 직관 ERA 유지·시즌/delta null",
+    safeB2.state === "partial_data" &&
+      approx(safeB2.value?.attendanceEra, 3) &&
+      safeB2.value?.seasonEra === null &&
+      safeB2.value?.delta === null,
+  );
+  const safeB4 = baselineOnlyPartial.metrics.B4 as MetricEnvelope<B4Value>;
+  ok(
+    "[baseline만 부분] B4 직관 홈런/피안타 유지·시즌값 null",
+    safeB4.state === "partial_data" &&
+      approx(safeB4.value?.hr.attendancePerGame, 1) &&
+      safeB4.value?.hr.seasonPerGame === null &&
+      safeB4.value?.hitsAllowed.seasonPerGame === null,
+  );
+
+  const safeC1 = item(baselineOnlyPartial.metrics.C1, "70001");
+  ok(
+    "[baseline만 부분] C1 직관 타율·출전 유지, 시즌 타율 null",
+    safeC1?.state === "partial_data" &&
+      approx((safeC1?.value as { attendanceAvg: number | null } | null)?.attendanceAvg, 5 / 11) &&
+      (safeC1?.value as { seasonAvg: number | null } | null)?.seasonAvg === null,
+  );
+  const safeC2 = item(baselineOnlyPartial.metrics.C2, "70002");
+  ok(
+    "[baseline만 부분] C2 직관 ERA·출전 유지, 시즌 ERA null",
+    safeC2?.state === "partial_data" &&
+      approx((safeC2?.value as { attendanceEra: number | null } | null)?.attendanceEra, 3) &&
+      (safeC2?.value as { seasonEra: number | null } | null)?.seasonEra === null,
+  );
+  ok(
+    "[baseline만 부분] C4/C5는 직관 단독 지표라 ready 유지",
+    baselineOnlyPartial.metrics.C4.state === "ready" &&
+      baselineOnlyPartial.metrics.C5.state === "ready" &&
+      (item(baselineOnlyPartial.metrics.C4, "70001")?.value as { homeRuns: number } | null)?.homeRuns === 1,
+  );
 }
 
 console.log(`\n결과: ${pass} pass / ${fail} fail`);

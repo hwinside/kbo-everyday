@@ -349,7 +349,7 @@ export default function DMChatPage() {
           <AlertTriangle size={14} className="flex-shrink-0" />
           <span>
             {isBaseballGeniusConv
-              ? "야구 룰과 용어만 답해요. 선수 기록은 선수 페이지·기록 탭에서 확인해 주세요."
+              ? "야구와 관련된 질문에만 답해요. 그리고 야잘알봇도 실수를 하거나 잘못된 정보를 제공하는 경우가 있어요."
               : isNoReplyConv
               ? noReplyBannerLabel(otherId)
               : "쪽지는 개인 간 대화입니다. 금전 거래 시 사기에 주의하세요."}

@@ -11,6 +11,7 @@ on:
       - "src/components/my/VenueStatsDashboard.tsx"
       - "src/lib/venue-stats/**"
       - "scripts/qa/venue-stats-s2-browser.mjs"
+      - "scripts/qa/venue-stats-s1b-aggregate-smoke.ts"
       - "scripts/qa/venue-stats-s2-ui-smoke.ts"
       - "scripts/qa/venue-stats-s2-effect-guard.mjs"
       - "src/styles/globals.css"
@@ -24,6 +25,7 @@ on:
       - "src/components/my/VenueStatsDashboard.tsx"
       - "src/lib/venue-stats/**"
       - "scripts/qa/venue-stats-s2-browser.mjs"
+      - "scripts/qa/venue-stats-s1b-aggregate-smoke.ts"
       - "scripts/qa/venue-stats-s2-ui-smoke.ts"
       - "scripts/qa/venue-stats-s2-effect-guard.mjs"
       - "src/styles/globals.css"
@@ -50,7 +52,7 @@ jobs:
 
       - name: Lint venue stats S2 surface (fail-closed, warnings blocked)
         # --max-warnings=0 → react-hooks 경고 1건도 check 실패로 이어진다.
-        run: npx eslint --max-warnings=0 src/components/my/VenueStatsDashboard.tsx src/lib/venue-stats scripts/qa/venue-stats-s2-browser.mjs scripts/qa/venue-stats-s2-ui-smoke.ts
+        run: npx eslint --max-warnings=0 src/components/my/VenueStatsDashboard.tsx src/lib/venue-stats scripts/qa/venue-stats-s1b-aggregate-smoke.ts scripts/qa/venue-stats-s2-browser.mjs scripts/qa/venue-stats-s2-ui-smoke.ts
 
       - name: Typecheck
         run: npx tsc --noEmit
@@ -59,6 +61,9 @@ jobs:
         # 실제 VenueStatsDashboard.tsx 소스를 파싱해 effect 내 direct setState 재유입을 차단한다.
         # (react-hooks/set-state-in-effect 가 이 컴포넌트에서 false-green 이라 소스 가드로 고정)
         run: npm run qa:venue-stats-s2-effect-guard
+
+      - name: Run venue stats aggregate contract smoke
+        run: npm run qa:venue-stats-s1b-aggregate
 
       - name: Run venue stats S2 contract smoke
         run: npm run qa:venue-stats-s2-ui

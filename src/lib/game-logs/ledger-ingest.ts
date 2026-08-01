@@ -11,6 +11,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { KboGame } from "@/lib/crawler/kbo-api";
 import { fetchGameBoxscore, type PlayerGameLogRow, type UnresolvedBoxScorePlayer } from "@/lib/game-logs/ingest";
+import { planStaleReconciliation } from "@/lib/game-logs/reconcile";
 import {
   CANONICAL_ROW_FIELDS,
   buildGameIngestion,
@@ -18,6 +19,7 @@ import {
   evaluateIngestion,
   type CanonicalRowInput,
   type IngestionFailureReason,
+  type PlayerResolver,
 } from "@/lib/game-logs/completeness";
 
 export interface LedgerIngestResult {
@@ -26,6 +28,12 @@ export interface LedgerIngestResult {
   failureReason: IngestionFailureReason | null;
   rowsUpserted: number;
   unresolved: UnresolvedBoxScorePlayer[];
+  /**
+   * strict build 가 기대하지 않는 기존 `(kbo_id, player_type)` 행을 몇 개 지웠는지.
+   * 선수 재해석(과거 오매핑) 이후 구 key 가 남아 row 수가 부풀면 hash mismatch 로
+   * 영원히 incomplete 가 된다 — 그걸 정리한 개수다.
+   */
+  staleRowsRemoved: number;
 }
 
 /** YYYYMMDD → YYYY-MM-DD */
@@ -62,7 +70,13 @@ async function upsertLedger(client: SupabaseClient, row: LedgerUpsertRow): Promi
 export async function ingestGameWithLedger(
   client: SupabaseClient,
   game: KboGame,
+  /**
+   * 테스트 seam — 기본값은 production 경로(실제 boxscore 페치 + 로스터 resolver).
+   * 회귀에서 이 오케스트레이터를 그대로 태우기 위해서만 주입한다.
+   */
+  deps: { fetchBoxscore?: typeof fetchGameBoxscore; resolver?: PlayerResolver } = {},
 ): Promise<LedgerIngestResult> {
+  const fetchBoxscore = deps.fetchBoxscore ?? fetchGameBoxscore;
   const gameDate = toIsoDate(game.date);
   const fetchedAt = new Date().toISOString();
 
@@ -81,19 +95,21 @@ export async function ingestGameWithLedger(
       unresolved_count: extra?.unresolved_count ?? 0,
       source_fetched_at: fetchedAt, verified_at: now, failure_reason: reason, updated_at: now,
     });
-    return { gameId: game.gameId, status: "incomplete", failureReason: reason, rowsUpserted, unresolved };
+    return { gameId: game.gameId, status: "incomplete", failureReason: reason, rowsUpserted, unresolved, staleRowsRemoved: 0 };
   };
 
   if (game.awayScore == null || game.homeScore == null) {
     return incomplete("score_unavailable");
   }
 
-  const box = await fetchGameBoxscore(game.gameId);
+  const box = await fetchBoxscore(game.gameId);
   if (!box) {
     return incomplete("boxscore_unavailable");
   }
 
-  const build = buildGameIngestion(game, box);
+  const build = deps.resolver
+    ? buildGameIngestion(game, box, deps.resolver)
+    : buildGameIngestion(game, box);
 
   // §12 fail-closed: 필수필드 결측이면 0 강등도, 부분 적재도 하지 않는다.
   if (build.missingFields.length > 0) {
@@ -103,26 +119,87 @@ export async function ingestGameWithLedger(
   const expectedRowCount = build.rows.length;
   const expectedPayloadHash = canonicalPayloadHash(build.rows);
 
-  // resolve된 행은 unresolved가 있어도 upsert한다(로스터 보강 후 재적재로 complete 승격).
-  let rowsUpserted = 0;
-  for (let i = 0; i < build.rows.length; i += 500) {
-    const chunk = build.rows.slice(i, i + 500);
-    const { error } = await client
+  // §11: DB 재조회 helper (upsert/삭제 결과를 신뢰하지 않는다).
+  // query-guard: bounded -- game_id 단위 선수 행, 경기당 최대 ~60행 (양팀 타자+투수)
+  const reselect = async (): Promise<CanonicalRowInput[]> => {
+    const { data, error } = await client
       .from("player_game_logs")
-      .upsert(chunk, { onConflict: "kbo_id,player_type,game_id" });
-    if (error) throw new Error(`player_game_logs upsert 실패 (${game.gameId} @${i}): ${error.message}`);
-    rowsUpserted += chunk.length;
+      .select(CANONICAL_ROW_FIELDS.join(","))
+      .eq("game_id", game.gameId);
+    if (error) throw new Error(`player_game_logs 재조회 실패 (${game.gameId}): ${error.message}`);
+    return (data ?? []) as unknown as CanonicalRowInput[];
+  };
+
+  // rekey 판정에는 "upsert 전" 상태가 필요하다 — 여기 없던 key 만 이번에 새로 생긴 key 다.
+  const beforeRows = await reselect();
+
+  // ── preflight reconciliation (upsert 전에 판정한다) ────────────────────
+  // upsert 를 먼저 하고 판정하면, 거부되더라도 신 key 가 DB 에 남는다.
+  // 그럼 다음 정상 실행의 beforeRows 에 이미 신 key 가 있어 `added` 가 빈 배열이 되고,
+  // 구 key 는 `no_rekey_counterpart` 로 분류되어 **재시도로도 영원히 복구 불가**가 된다.
+  // (예: 1차에 rekey + 일시적 unresolved 가 같이 오는 경우 — 삼순 P0)
+  //
+  // 그래서 삭제 필요 여부를 **upsert 전 상태로 먼저 판정**하고, 거부되면
+  // 쓰기 자체를 하지 않고 종료한다 — DB 를 직전 상태 그대로 남겨 다음 정상 실행이 복구할 수 있게 한다.
+  const preflight = planStaleReconciliation(
+    beforeRows,
+    beforeRows,
+    build.rows,
+    build.unresolved.length,
+  );
+  if (preflight.refusal) {
+    return incomplete(
+      "row_count_mismatch",
+      {
+        expected_row_count: expectedRowCount,
+        expected_payload_hash: expectedPayloadHash,
+        persisted_row_count: beforeRows.length,
+        unresolved_count: build.unresolved.length,
+      },
+      build.unresolved,
+      0, // 쓰기 없음
+    );
   }
 
-  // §11: DB 재조회로 actual canonical payload hash 검증 (upsert 결과를 신뢰하지 않는다).
-  // query-guard: bounded -- game_id 단위 선수 행, 경기당 최대 ~60행 (양팀 타자+투수)
-  const { data: persisted, error: selectError } = await client
-    .from("player_game_logs")
-    .select(CANONICAL_ROW_FIELDS.join(","))
-    .eq("game_id", game.gameId);
-  if (selectError) throw new Error(`player_game_logs 재조회 실패 (${game.gameId}): ${selectError.message}`);
+  // ── 쓰기: 삭제 + upsert 를 하나의 트랜잭션으로 원자화 ─────────────────────
+  // 두 요청으로 나누면 중간 실패 때 선수 행이 실제로 사라진다. 그 구간은 조용하지 않다 —
+  // `/api/player-game-logs`, team-card 주간 집계, venue-attendance 는 ledger 를 보지 않고
+  // player_game_logs 를 직접 읽으므로 누락값을 그대로 노출한다(삼순 P0).
+  // (venue-stats 만 runtime hash 로 fail-close 한다.)
+  //
+  // 그래서 `reconcile_player_game_logs` RPC 로 묶는다 — 함수 본문이 단일 트랜잭션이라
+  // 중간 실패 시 삭제도 함께 롤백되고, 외부 소비자는 "구 key 만" 또는 "신 key 만" 중
+  // 하나의 일관된 상태만 관측한다.
+  //
+  // 삭제 대상은 preflight 가 upsert 전 상태로 확정했고(rekey 1:1 짝), 거부 없음도 확인했다.
+  const deleteKeys = preflight.deletions.map((row) => ({
+    kboId: String(row.kbo_id),
+    playerType: String(row.player_type),
+  }));
 
-  const persistedRows = (persisted ?? []) as unknown as CanonicalRowInput[];
+  // query-guard: bounded -- 단일 game_id 적재 RPC. 반환은 {deleted, upserted} 스칼라 jsonb 1객체로
+  // 행 집합이 아니고, 쓰기 범위도 경기 1건 박스스코어로 상한이 고정된다
+  // (양팀 타자+투수 = 최대 ~60행; delete_keys ⊆ 기존 경기행). 유저·시간 증가 무관.
+  const { data: reconcileData, error: reconcileError } = await client.rpc(
+    "reconcile_player_game_logs",
+    {
+      p_game_id: game.gameId,
+      p_delete_keys: deleteKeys,
+      p_rows: build.rows,
+    },
+  );
+  // 실패는 조용히 넘기지 않는다 — 부분 상태를 complete 로 남기면 안 된다.
+  if (reconcileError) {
+    throw new Error(
+      `player_game_logs reconcile 실패 (${game.gameId}): ${reconcileError.message}`,
+    );
+  }
+  const reconciled = (reconcileData ?? {}) as { deleted?: number; upserted?: number };
+  const staleRowsRemoved = reconciled.deleted ?? 0;
+  const rowsUpserted = reconciled.upserted ?? 0;
+
+  // 쓰기 결과를 신뢰하지 않고 재조회해 actual canonical payload hash 를 검증한다.
+  const persistedRows = await reselect();
   const actualPayloadHash = canonicalPayloadHash(persistedRows);
 
   const verdict = evaluateIngestion({
@@ -153,6 +230,7 @@ export async function ingestGameWithLedger(
     failureReason: verdict.failureReason,
     rowsUpserted,
     unresolved: build.unresolved,
+    staleRowsRemoved,
   };
 }
 

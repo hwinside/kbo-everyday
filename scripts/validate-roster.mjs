@@ -5,9 +5,8 @@
  * CI 가드: src/lib/constants/players-roster.json에 대해 아래 규칙 전수 검사.
  * 하나라도 FAIL이면 exit 1, PR 머지 차단.
  *
- * 예외 허용:
- *  - 선수 수 변경은 PR body/commit msg에 "roster-size-change" 라벨 포함 시 허용.
- *  - 환경변수 ROSTER_SIZE_CHANGE_ACK=1로도 동일 우회 (CI 외 로컬 검증용).
+ * 선수 수 변경 안전성은 자동 크롤 workflow의 main 대비 delta+ack 가드가 담당한다.
+ * 이 validator는 현재 JSON 자체의 shape/유일성/팀별 하한을 검증한다.
  */
 
 import fs from "node:fs";
@@ -22,9 +21,8 @@ const NATIONALITY_TS_PATH = path.resolve(__dirname, "../src/lib/utils/player-nat
 const FLAGS_DIR = path.resolve(__dirname, "../public/flags");
 
 // ============================================================================
-// 기대값 (스펙 §3.1)
+// 형상 계약 (스펙 §3.1)
 // ============================================================================
-const EXPECTED_COUNT = 878; // 2026-07-28: 신규 외인 보스(56402) 온보딩(+1=878). 이력: PR #871 짐머만(56799) 등록(+1=877), 07-21 쿄야마(AQ008) stale 중복 통합, 07-20 Player/Search.aspx 전수 dry-run 미출전/퓨처스 33명 1회 백필(876).
 const MIN_PER_TEAM = 30;
 const BACKNO_REGEX = /^(\d{1,3}|-|\?)$/; // 숫자 1~3자리 | "-" | "?"
 const KNOWN_TEAMS = new Set([
@@ -66,25 +64,9 @@ if (!Array.isArray(roster)) {
 }
 
 // ============================================================================
-// Check 1: 선수 수 = EXPECTED_COUNT (예외 허용 시 경고로 전환)
+// Check 1: SSOT는 빈 배열이어선 안 된다. 정상 변동을 막는 고정 count는 두지 않는다.
 // ============================================================================
-const sizeChangeAck =
-  process.env.ROSTER_SIZE_CHANGE_ACK === "1" ||
-  (process.env.PR_BODY || "").includes("roster-size-change") ||
-  (process.env.COMMIT_MSG || "").includes("roster-size-change");
-
-if (roster.length !== EXPECTED_COUNT) {
-  if (sizeChangeAck) {
-    warn(
-      `roster count changed: ${roster.length} (expected ${EXPECTED_COUNT}) — acknowledged via roster-size-change`,
-    );
-  } else {
-    fail(
-      `roster count mismatch: got ${roster.length}, expected ${EXPECTED_COUNT}. ` +
-        `If intentional, add "roster-size-change" to PR body or commit message.`,
-    );
-  }
-}
+if (roster.length === 0) fail("roster must not be empty");
 
 // ============================================================================
 // Check 2: core field null/empty
@@ -255,7 +237,7 @@ for (const t of Object.keys(byTeam)) {
 // ============================================================================
 console.log("");
 console.log(`Roster SSOT Validator — ${ROSTER_PATH}`);
-console.log(`  total=${roster.length}  expected=${EXPECTED_COUNT}`);
+console.log(`  total=${roster.length}  contract=shape+unique-id+team-min`);
 console.log(`  teams=${Object.keys(byTeam).sort().map((t) => `${t}:${byTeam[t]}`).join(" ")}`);
 console.log("");
 

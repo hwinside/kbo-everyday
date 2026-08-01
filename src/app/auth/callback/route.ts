@@ -2,6 +2,10 @@ import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import {
+  getUserFacingAuthError,
+  KAKAO_EMAIL_UNVERIFIED_CODE,
+} from "@/lib/auth-error";
 
 // Always redirect to the canonical domain so iOS PWA doesn't end up
 // in the Vercel preview URL after OAuth.
@@ -31,6 +35,13 @@ export async function GET(request: NextRequest) {
   const requestUrl = new URL(request.url);
   const code = requestUrl.searchParams.get("code");
   const isNativeIOS = requestUrl.searchParams.get("native") === "ios";
+  const userFacingError = getUserFacingAuthError(requestUrl.searchParams);
+
+  if (userFacingError === KAKAO_EMAIL_UNVERIFIED_CODE) {
+    const errorUrl = new URL(CANONICAL_ORIGIN);
+    errorUrl.searchParams.set("auth_error", userFacingError);
+    return NextResponse.redirect(errorUrl);
+  }
 
   // 진단용 요청 메타 (PKCE 간헐 에러 원인 추적 목적 — 2026-04-18)
   // User-Agent / Referer / x-forwarded-* 기록해 모바일 vs 데스크톱, 출발 페이지 파악 가능하도록.
