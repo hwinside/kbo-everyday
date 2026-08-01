@@ -37,6 +37,12 @@ import {
   type MetricEnvelope,
 } from "@/lib/venue-stats/types";
 import { buildVenueStatsHero } from "@/lib/venue-stats/ui";
+import {
+  buildCurrentSeasonBaselines,
+  parseSeasonInningsOuts,
+  type FavoriteSeasonBaselineSnapshot,
+} from "@/lib/venue-stats/current-season-baseline";
+import { TEAMS } from "@/lib/constants/teams";
 
 let pass = 0;
 let fail = 0;
@@ -203,13 +209,6 @@ const SEASON_GAMES: SeasonGameVerification[] = [
   { gameId: "20260629LGOB0", gameDate: "2026-06-29", complete: true, teamCodes: ["LG", "OB"] },
 ];
 
-const FAVORITE_SEASON_LOGS: PlayerGameLogRow[] = [
-  ...ATTENDANCE_LOGS.filter((r) => ["70001", "70002", "70004"].includes(r.kbo_id)),
-  log("20260628LGOB0", "70001", "batter", LG, { ab: 4, h: 1 }),
-  log("20260628LGOB0", "70004", "batter", LG, { ab: 10, h: 2 }),
-  log("20260629LGOB0", "70002", "pitcher", LG, { ip_outs: 18, er: 2, k: 6, h_allowed: 4 }),
-];
-
 const FAVORITES: FavoritePlayerSnapshot[] = [
   { playerId: "70001", name: "최애타자", teamId: LG },
   { playerId: "70002", name: "최애투수", teamId: LG },
@@ -224,6 +223,12 @@ const STANDINGS: TeamStanding[] = [
 const TEAM_TOTALS = new Map<number, TeamSeasonTotals>([
   [LG, { teamId: LG, completeGames: 30, ab: 900, h: 225, hr: 30, outs: 810, er: 120, hAllowed: 250 }],
   [KT, { teamId: KT, completeGames: 30, ab: 900, h: 250, hr: 25, outs: 810, er: 100, hAllowed: 240 }],
+]);
+
+const FAVORITE_BASELINES = new Map<string, FavoriteSeasonBaselineSnapshot>([
+  ["70001", { batter: { ab: 19, h: 7, hr: 2, rbi: 3, games: 5 }, pitcher: null }],
+  ["70002", { batter: null, pitcher: { outs: 90, er: 10, k: 30, games: 5 } }],
+  ["70004", { batter: { ab: 63, h: 18, hr: 1, rbi: 0, games: 5 }, pitcher: null }],
 ]);
 
 const BASE_ROWS: VenueAttendanceRow[] = [
@@ -250,7 +255,7 @@ function input(over: Partial<VenueStatsAggregateInput> = {}): VenueStatsAggregat
     ledgers: LEDGERS,
     seasonGames: SEASON_GAMES,
     teamSeasonTotals: TEAM_TOTALS,
-    favoriteSeasonLogs: FAVORITE_SEASON_LOGS,
+    favoriteSeasonBaselines: FAVORITE_BASELINES,
     todayKst: "2026-07-30",
     ...over,
   };
@@ -436,10 +441,10 @@ console.log("\n[5] mixed snapshot team — A1/B perTeam");
         b4Value?.hitsAllowed?.seasonPerGame === null &&
         b4Value?.hitsAllowed?.delta === null,
     );
-    // 직관 경기는 complete이고 시즌 baseline만 partial이면 직관 사실값은 유지한다.
+    // 시즌 비교는 경기별 원장과 분리됐다. 한 경기 표본 미달만 남는다.
     ok(
-      "B1 mixed baseline-only partial: 직관값 유지·시즌 비교 null",
-      item(s.metrics.B1, String(LG))?.state === "partial_data" &&
+      "B1 mixed: 시즌 원장 gap과 무관·1경기 표본 미달",
+      item(s.metrics.B1, String(LG))?.state === "sample_limited" &&
         approx((item(s.metrics.B1, String(LG))?.value as B1Value | null)?.attendanceAvg, 0.3) &&
         (item(s.metrics.B1, String(LG))?.value as B1Value | null)?.seasonAvg === null &&
         (item(s.metrics.B1, String(LG))?.value as B1Value | null)?.delta === null,
@@ -535,93 +540,87 @@ console.log("\n[6] 표본 가드 / D6 no_wins leaf 승격 / attendance_only");
   ok("standings 실패: A1 attendance_only + reasons", noStandings.metrics.A1.state === "attendance_only" && noStandings.metrics.A1.reasons?.includes("standings_unavailable") === true);
 }
 
-// ── 7) 시즌 우주 fail-closed (삼순 NO-GO P0 회귀 — backfill 0/부분/빈 우주) ──
-console.log("\n[7] 시즌 우주 fail-closed — backfill 0 / 부분 backfill / 빈 우주 false-green 금지");
+// ── 7) 시즌 비교 소스 분리 — 직관 원장 gap이 기존 시즌 스냅샷을 막지 않음 ──
+console.log("\n[7] 시즌 비교 소스 분리 — 직관 원장 / 기존 시즌 스냅샷");
 {
-  // (a) backfill 0: 정규 final 우주는 있으나 시즌 ledger 전무 → 전 경기 complete=false 강등.
+  // 시즌 우주 ledger가 전부 incomplete여도, 직관 3경기가 complete면 기존 시즌 스냅샷 비교는 열린다.
   const zeroBackfill = buildVenueStatsScope(input({
+    scope: "gps",
     seasonGames: SEASON_GAMES.map((g) => ({ ...g, complete: false })),
-    teamSeasonTotals: new Map(),
   }));
-  ok("[backfill 0] B1 partial_data·value=null (ready·null false-green 금지)", zeroBackfill.metrics.B1.state === "partial_data" && zeroBackfill.metrics.B1.value === null);
-  ok("[backfill 0] B2/B4도 partial_data", zeroBackfill.metrics.B2.state === "partial_data" && zeroBackfill.metrics.B4.state === "partial_data");
-  // 시즌 complete 0 → 최애 역할 baseline 자체가 미증명 → item worstState=attendance_only (partial보다 상위 fail-closed).
-  ok("[backfill 0] C1 attendance_only fail-closed·value=[] (false-green 금지)", zeroBackfill.metrics.C1.state === "attendance_only" && JSON.stringify(zeroBackfill.metrics.C1.value) === "[]", `actual=${zeroBackfill.metrics.C1.state}`);
+  ok("[backfill 0] B1 ready + 시즌 AVG 노출", zeroBackfill.metrics.B1.state === "ready" && approx((zeroBackfill.metrics.B1.value as B1Value | null)?.seasonAvg, 0.25));
+  ok("[backfill 0] C1 ready + kbo_id 시즌 AVG 노출", item(zeroBackfill.metrics.C1, "70001")?.state === "ready" && approx((item(zeroBackfill.metrics.C1, "70001")?.value as { seasonAvg: number | null } | null)?.seasonAvg, 7 / 19));
   const zbE1 = zeroBackfill.metrics.E1 as MetricEnvelope<{ longest: number; current: number | null }>;
-  ok("[backfill 0] E1은 권위 일정 우주 기반이라 계산 유지 (longest=5)", zbE1.state === "ready" && zbE1.value?.longest === 5);
+  ok("[backfill 0] E1은 일정 우주 metric으로 독립 유지", zbE1.state === "ready");
 
-  // (b) 빈 우주: RPC/우주 소스가 빈 배열을 반환하는 결함 — ready·null false-green이 아니라 fail-closed.
-  const emptyUniverse = buildVenueStatsScope(input({ seasonGames: [], teamSeasonTotals: new Map() }));
-  ok("[빈 우주] B1 attendance_only fail-closed (ready·seasonAvg null 금지)", emptyUniverse.metrics.B1.state === "attendance_only" && emptyUniverse.metrics.B1.value === null);
-  ok("[빈 우주] B2/B4도 attendance_only", emptyUniverse.metrics.B2.state === "attendance_only" && emptyUniverse.metrics.B4.state === "attendance_only");
+  // 빈 일정 우주는 E1만 막고 B/C 시즌 스냅샷에는 전파하지 않는다.
+  const emptyUniverse = buildVenueStatsScope(input({ scope: "gps", seasonGames: [] }));
+  ok("[빈 우주] B1/C1은 기존 시즌 스냅샷으로 ready", emptyUniverse.metrics.B1.state === "ready" && emptyUniverse.metrics.C1.state === "ready");
   const euE1 = emptyUniverse.metrics.E1 as MetricEnvelope<{ perTeam: unknown[] }>;
   ok("[빈 우주] E1 unsupported + schedule_unavailable (ready·perTeam:[] 금지)", euE1.state === "unsupported" && euE1.reasons?.includes("schedule_unavailable") === true);
-  ok("[빈 우주] C1/C2 attendance_only fail-closed", emptyUniverse.metrics.C1.state === "attendance_only" && emptyUniverse.metrics.C2.state === "attendance_only");
 
-  // (c) 부분 backfill: 시즌 우주 중 일부만 ledger 존재 → 나머지가 complete=false로 coverage 반영.
+  // 부분 backfill도 B/C에 전파되지 않는다.
   const partial = buildVenueStatsScope(input({
-    seasonGames: SEASON_GAMES.map((g) =>
-      ["20260628LGOB0", "20260629LGOB0"].includes(g.gameId) ? { ...g, complete: false } : g,
-    ),
-  }));
-  const partialUnknown = partial.metrics.B1.coverage.unknownGameIds as string[];
-  ok("[부분 backfill] B1 partial_data (미적재 시즌 경기 강등 반영)", partial.metrics.B1.state === "partial_data" && partial.metrics.B1.value === null);
-  ok("[부분 backfill] unknownGameIds에 ledger 없는 시즌 경기 포함", partialUnknown.includes("20260628LGOB0") && partialUnknown.includes("20260629LGOB0"));
-  ok("[부분 backfill] C1 partial_data", partial.metrics.C1.state === "partial_data");
-
-  // (d) 직관 3경기는 전부 complete, 시즌 baseline만 incomplete.
-  // 확정된 직관 사실값까지 숨기지 않되 시즌값·delta는 계속 fail-closed 한다.
-  const baselineOnlyPartial = buildVenueStatsScope(input({
     scope: "gps",
     seasonGames: SEASON_GAMES.map((g) =>
       ["20260628LGOB0", "20260629LGOB0"].includes(g.gameId) ? { ...g, complete: false } : g,
     ),
   }));
-  const safeB1 = baselineOnlyPartial.metrics.B1 as MetricEnvelope<B1Value>;
-  ok(
-    "[baseline만 부분] B1 직관 AVG 유지·시즌/delta null",
-    safeB1.state === "partial_data" &&
-      approx(safeB1.value?.attendanceAvg, 0.3) &&
-      safeB1.value?.seasonAvg === null &&
-      safeB1.value?.delta === null,
-  );
-  const safeB2 = baselineOnlyPartial.metrics.B2 as MetricEnvelope<B2Value>;
-  ok(
-    "[baseline만 부분] B2 직관 ERA 유지·시즌/delta null",
-    safeB2.state === "partial_data" &&
-      approx(safeB2.value?.attendanceEra, 3) &&
-      safeB2.value?.seasonEra === null &&
-      safeB2.value?.delta === null,
-  );
-  const safeB4 = baselineOnlyPartial.metrics.B4 as MetricEnvelope<B4Value>;
-  ok(
-    "[baseline만 부분] B4 직관 홈런/피안타 유지·시즌값 null",
-    safeB4.state === "partial_data" &&
-      approx(safeB4.value?.hr.attendancePerGame, 1) &&
-      safeB4.value?.hr.seasonPerGame === null &&
-      safeB4.value?.hitsAllowed.seasonPerGame === null,
-  );
+  ok("[부분 backfill] B1/C1 ready 유지", partial.metrics.B1.state === "ready" && partial.metrics.C1.state === "ready");
 
-  const safeC1 = item(baselineOnlyPartial.metrics.C1, "70001");
-  ok(
-    "[baseline만 부분] C1 직관 타율·출전 유지, 시즌 타율 null",
-    safeC1?.state === "partial_data" &&
-      approx((safeC1?.value as { attendanceAvg: number | null } | null)?.attendanceAvg, 5 / 11) &&
-      (safeC1?.value as { seasonAvg: number | null } | null)?.seasonAvg === null,
-  );
-  const safeC2 = item(baselineOnlyPartial.metrics.C2, "70002");
-  ok(
-    "[baseline만 부분] C2 직관 ERA·출전 유지, 시즌 ERA null",
-    safeC2?.state === "partial_data" &&
-      approx((safeC2?.value as { attendanceEra: number | null } | null)?.attendanceEra, 3) &&
-      (safeC2?.value as { seasonEra: number | null } | null)?.seasonEra === null,
-  );
-  ok(
-    "[baseline만 부분] C4/C5는 직관 단독 지표라 ready 유지",
-    baselineOnlyPartial.metrics.C4.state === "ready" &&
-      baselineOnlyPartial.metrics.C5.state === "ready" &&
-      (item(baselineOnlyPartial.metrics.C4, "70001")?.value as { homeRuns: number } | null)?.homeRuns === 1,
-  );
+  // 기존 시즌 스냅샷 자체가 없을 때만 비교 지표가 attendance_only로 fail-close한다.
+  const noSnapshot = buildVenueStatsScope(input({
+    scope: "gps",
+    teamSeasonTotals: null,
+    favoriteSeasonBaselines: null,
+  }));
+  ok("[시즌 스냅샷 실패] B1/C1 attendance_only", noSnapshot.metrics.B1.state === "attendance_only" && noSnapshot.metrics.C1.state === "attendance_only");
+}
+
+// ── 8) 기존 현재시즌 스냅샷 파서/풀링/freshness ──────────────────────────────
+console.log("\n[8] 기존 현재시즌 스냅샷 — kbo_id exact / pooled totals / stale fallback");
+{
+  const nowMs = Date.parse("2026-08-01T12:00:00Z");
+  const standings = TEAMS.map((team) => ({
+    teamId: team.id, teamName: team.shortName, games: 100,
+    wins: 50, losses: 45, draws: 5, winRate: 0.5, gamesBehind: 0,
+  }));
+  const batters = TEAMS.flatMap((team, index) => [
+    { kboId: `B${index}A`, team: team.shortName, games: 90, ab: 100, hits: 30, hr: 10, rbi: 40 },
+    { kboId: `B${index}B`, team: team.shortName, games: 80, ab: 50, hits: 10, hr: 2, rbi: 15 },
+  ]);
+  const pitchers = TEAMS.flatMap((team, index) => [
+    { kboId: `P${index}A`, team: team.shortName, games: 20, ip: "10 2/3", h: 12, er: 4, so: 15 },
+    { kboId: `P${index}B`, team: team.shortName, games: 10, ip: "1/3", h: 1, er: 1, so: 2 },
+  ]);
+  const built = buildCurrentSeasonBaselines({
+    season: 2026, currentSeason: 2026, generatedAt: "2026-08-01T11:00:00Z", nowMs,
+    standings, favoriteIds: ["B0A", "없는선수"], bundledBatters: batters,
+    bundledPitchers: pitchers,
+    liveBatters: [
+      { kbo_id: "B0A", team: "LG", games: 91, ab: 120, hits: 48, hr: 11, rbi: 41, updated_at: "2026-08-01T11:30:00Z" },
+      { kbo_id: "B0B", team: "LG", games: 0, ab: 0, hits: 0, hr: 0, rbi: 0, updated_at: "2026-05-01T00:00:00Z" },
+    ],
+    livePitchers: [],
+  });
+  const lg = built?.teamSeasonTotals.get(LG);
+  ok("현재시즌만 지원·10구단 exact", built !== null && built.teamSeasonTotals.size === 10);
+  ok("팀 AVG pooled totals ΣH/ΣAB (평균 재평균 금지)", lg?.h === 58 && lg.ab === 170);
+  ok("팀 ERA pooled totals 27×ΣER/Σouts", lg?.er === 5 && lg.outs === 33);
+  ok("fresh DB는 kbo_id exact overlay", built?.favoriteSeasonBaselines.get("B0A")?.batter?.h === 48);
+  ok("stale DB 0 덮어쓰기 금지", lg?.ab === 170 && lg.h === 58);
+  ok("이름 fallback 없음", built?.favoriteSeasonBaselines.get("없는선수")?.batter === null);
+  ok("이닝 파서 10 2/3·1/3 exact", parseSeasonInningsOuts("10 2/3") === 32 && parseSeasonInningsOuts("1/3") === 1 && parseSeasonInningsOuts("10.2") === null);
+  ok("2025는 현재시즌 snapshot 사용 금지", buildCurrentSeasonBaselines({
+    season: 2025, currentSeason: 2026, generatedAt: "2026-08-01T11:00:00Z", nowMs,
+    standings, favoriteIds: [], bundledBatters: batters, bundledPitchers: pitchers,
+    liveBatters: [], livePitchers: [],
+  }) === null);
+  ok("stale 번들 snapshot은 0 대신 fail-close", buildCurrentSeasonBaselines({
+    season: 2026, currentSeason: 2026, generatedAt: "2026-07-01T00:00:00Z", nowMs,
+    standings, favoriteIds: [], bundledBatters: batters, bundledPitchers: pitchers,
+    liveBatters: [], livePitchers: [],
+  }) === null);
 }
 
 console.log(`\n결과: ${pass} pass / ${fail} fail`);

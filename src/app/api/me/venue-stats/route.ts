@@ -24,6 +24,9 @@ import type { LedgerRecord } from "@/lib/game-logs/completeness";
 import { TEAM_ID_TO_CODE, type PlayerGameLogRow } from "@/lib/game-logs/ingest";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { fetchAttendanceGamesWithinDeadline } from "@/lib/venue-attendance/fetch-games";
+import bundledBatters from "@/lib/constants/stats-2026-batters.json";
+import bundledPitchers from "@/lib/constants/stats-2026-pitchers.json";
+import statsMeta from "@/lib/constants/stats-2026-meta.json";
 import type { FavoritePlayerSnapshot } from "@/lib/venue-attendance/player-comparison";
 import type { VenueAttendanceRow } from "@/lib/venue-attendance/summary";
 import {
@@ -33,6 +36,7 @@ import {
   type TeamSeasonTotals,
 } from "@/lib/venue-stats/aggregate";
 import type { SeasonSupportStatus } from "@/lib/venue-stats/types";
+import { buildCurrentSeasonBaselines } from "@/lib/venue-stats/current-season-baseline";
 
 export const maxDuration = 60;
 
@@ -133,31 +137,31 @@ async function fetchLedgers(
   return { ledgers, ok: true };
 }
 
-async function fetchFavoriteSeasonLogs(
-  favorites: FavoritePlayerSnapshot[],
-  season: number,
-): Promise<{ rows: PlayerGameLogRow[]; ok: boolean }> {
-  if (favorites.length === 0) return { rows: [], ok: true };
-  const rows: PlayerGameLogRow[] = [];
-  const pageSize = 1_000;
-  // query-guard: bounded-page -- 최애 ≤5명 × 시즌 ≤144경기 로그를 1k 페이지로 순회
-  for (let from = 0; ; from += pageSize) {
-    const { data, error } = await supabase
-      .from("player_game_logs")
-      .select(
-        "kbo_id, player_type, game_id, game_date, team_id, team_code, opponent_team_id, is_home, result, ab, h, hr, rbi, bb, so, ip_outs, er, h_allowed, k, bb_allowed",
-      )
-      .in("kbo_id", favorites.map((favorite) => favorite.playerId))
-      .gte("game_date", `${season}-01-01`)
-      .lt("game_date", `${season + 1}-01-01`)
-      .order("id", { ascending: true })
-      .range(from, from + pageSize - 1);
-    if (error) return { rows: [], ok: false };
-    const page = (data ?? []) as unknown as PlayerGameLogRow[];
-    rows.push(...page);
-    if (page.length < pageSize) break;
-  }
-  return { rows, ok: true };
+async function fetchLiveSeasonSnapshots(): Promise<{
+  batters: Array<Record<string, unknown>>;
+  pitchers: Array<Record<string, unknown>>;
+}> {
+  const [batterResult, pitcherResult] = await Promise.all([
+    supabase
+      .from("player_stats_batter")
+      .select("kbo_id, team, games, ab, hits, hr, rbi, updated_at")
+      .limit(1_000),
+    supabase
+      .from("player_stats_pitcher")
+      .select("kbo_id, team, games, ip, h, er, so, updated_at")
+      .limit(1_000),
+  ]);
+  return {
+    // DB 열화/실패는 stale 값을 0으로 만들지 않고 버전 고정 번들 스냅샷으로 폴백한다.
+    batters: batterResult.error ? [] : (batterResult.data ?? []) as Array<Record<string, unknown>>,
+    pitchers: pitcherResult.error ? [] : (pitcherResult.data ?? []) as Array<Record<string, unknown>>,
+  };
+}
+
+function oldestStatsGeneratedAt(): string {
+  const batter = Date.parse(statsMeta.battersGeneratedAt);
+  const pitcher = Date.parse(statsMeta.pitchersGeneratedAt);
+  return new Date(Math.min(batter, pitcher)).toISOString();
 }
 
 interface SeasonAggregates {
@@ -416,7 +420,7 @@ export async function GET(req: NextRequest) {
   const currentTeamId =
     typeof profileResult.data?.team_id === "number" ? profileResult.data.team_id : null;
 
-  const [gamesById, logsResult, ledgersResult, seasonAggregates, favoriteSeasonResult, standings] =
+  const [gamesById, logsResult, ledgersResult, seasonAggregates, standings, liveSeasonSnapshots] =
     await Promise.all([
       fetchAttendanceGamesWithinDeadline(rows, {
         fetcher: (date) => fetchGames(date, REGULAR_SEASON_SR_ID),
@@ -427,16 +431,29 @@ export async function GET(req: NextRequest) {
         ? fetchSeasonAggregates(requestedSeason)
         : Promise.resolve<SeasonAggregates>({ seasonGames: null, teamSeasonTotals: null }),
       seasonSupported
-        ? fetchFavoriteSeasonLogs(favorites, requestedSeason)
-        : Promise.resolve({ rows: [], ok: true }),
-      seasonSupported
         ? fetchStandings().catch(() => null as TeamStanding[] | null)
         : Promise.resolve<TeamStanding[] | null>(null),
+      seasonSupported
+        ? fetchLiveSeasonSnapshots()
+        : Promise.resolve({ batters: [], pitchers: [] }),
     ]);
 
   // 로그/ledger 조회 실패는 fail-closed — ledger 없음 취급(incomplete)으로 B/C가 partial로 강등된다.
   const attendanceLogs = logsResult.ok ? logsResult.rows : [];
   const ledgers = ledgersResult.ok ? ledgersResult.ledgers : new Map<string, LedgerRecord>();
+  const currentBaselines = seasonSupported
+    ? buildCurrentSeasonBaselines({
+        season: requestedSeason,
+        currentSeason: nowYear,
+        generatedAt: oldestStatsGeneratedAt(),
+        standings,
+        favoriteIds: favorites.map((favorite) => favorite.playerId),
+        bundledBatters,
+        bundledPitchers,
+        liveBatters: liveSeasonSnapshots.batters,
+        livePitchers: liveSeasonSnapshots.pitchers,
+      })
+    : null;
 
   const shared = {
     season: requestedSeason,
@@ -449,8 +466,8 @@ export async function GET(req: NextRequest) {
     attendanceLogs,
     ledgers,
     seasonGames: seasonAggregates.seasonGames,
-    teamSeasonTotals: seasonAggregates.teamSeasonTotals,
-    favoriteSeasonLogs: favoriteSeasonResult.ok ? favoriteSeasonResult.rows : [],
+    teamSeasonTotals: currentBaselines?.teamSeasonTotals ?? null,
+    favoriteSeasonBaselines: currentBaselines?.favoriteSeasonBaselines ?? null,
     todayKst: todayKst(),
   } as const;
 
