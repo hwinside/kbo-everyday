@@ -6,7 +6,8 @@
  * TTL: 10 minutes during game hours (KST 11:00-24:00), 60 minutes otherwise.
  */
 
-import { fetchGames, type KboGame } from "./kbo-api";
+import { fetchGames, fetchKboGamesOnly, type KboGame } from "./kbo-api";
+import { REGULAR_SEASON_WINDOWS, type RegularSeasonWindow } from "./naver-games";
 
 interface CacheEntry {
   data: KboGame[];
@@ -137,6 +138,29 @@ export async function fetchSeasonUniverseDate(
   date: string,
   srId = "0,1,3,4,5,7,9",
 ): Promise<SeasonGameFetchResult> {
+  // 정규 전용 우주는 source를 숨기는 fetchGames fallback 결과를 곧바로 신뢰하지 않는다.
+  // KBO regular 원본이 비었을 때 Naver 전시리즈와 KBO non-regular를 exact 대조해야
+  // window 내부 올스타(예: 20260711 WEEA0)가 정규 우주로 섞이지 않는다.
+  if (srId === REGULAR_ONLY_SR_ID) {
+    let regular: KboGame[];
+    try {
+      regular = await fetchKboGamesOnly(date, REGULAR_ONLY_SR_ID);
+    } catch {
+      return { games: [], emptyVerified: false };
+    }
+    if (regular.length > 0) return { games: regular, emptyVerified: false };
+    try {
+      const { fetchNaverGames } = await import("./naver-games");
+      const cross = await fetchNaverGames(date, NAVER_FULL_SR_ID);
+      if (cross.length === 0) return { games: [], emptyVerified: true };
+      const nonRegular = await fetchKboGamesOnly(date, NON_REGULAR_SR_ID);
+      const nonRegularIds = new Set(nonRegular.map((game) => game.gameId));
+      return { games: [], emptyVerified: cross.every((game) => nonRegularIds.has(game.gameId)) };
+    } catch {
+      return { games: [], emptyVerified: false };
+    }
+  }
+
   const games = await fetchGames(date, srId);
   if (games.length > 0) return { games, emptyVerified: false };
   // 빈 응답 — 무경기 확정 교차검증. 확정 못하면 unverified(fail-closed 대상).
@@ -150,11 +174,6 @@ export async function fetchSeasonUniverseDate(
     // (시범·올스타는 정규 우주 제외 대상이지 verification 실패가 아님 — 예: 2026-03-12
     // KBO 정규 []·Naver 시범 5경기). 비정규로 설명 안 되는 Naver 경기가 하나라도 남으면
     // 정규경기 soft-drop 가능성 → unverified fail-closed 유지.
-    if (srId === REGULAR_ONLY_SR_ID) {
-      const nonRegular = await fetchGames(date, NON_REGULAR_SR_ID);
-      const nonRegularIds = new Set(nonRegular.map((g) => g.gameId));
-      return { games: [], emptyVerified: cross.every((g) => nonRegularIds.has(g.gameId)) };
-    }
     // 전-시리즈 우주 등 그 외 srId — Naver에 경기가 있으면 실제 경기 누락 가능성 → unverified.
     return { games: [], emptyVerified: false };
   } catch {
@@ -162,9 +181,24 @@ export async function fetchSeasonUniverseDate(
   }
 }
 
-/** 시즌 범위(3월 1일~현재월 말 또는 11월 말)의 모든 YYYYMMDD 날짜. */
-function getSeasonDates(season: number): string[] {
-  const today = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Seoul" });
+/**
+ * 시즌 범위(3월 1일~현재월 말 또는 11월 말)의 모든 YYYYMMDD 날짜.
+ *
+ * 정규시즌 전용(srId="0") 우주는 검증된 개막일 전 날짜만 제외한다.
+ * 3월 1일~개막일 전날은 정규경기가 존재할 수 없는 날짜인데, 그 구간은 window 밖이라
+ * srId="0" 조회가 "KBO 200-empty 미검증"으로 throw 한다(시범경기 오염 방지 fail-close).
+ * 그 날짜를 우주에 넣으면 collectSeasonGameUniverse 가 구조적으로 영원히
+ * complete=false 가 되어 시즌 비교(B/C·E1)가 항상 attendance_only 로 강등된다
+ * (2026 실측: 3/1~3/27 27일 전부 failed → 직관 통계 팀 타율·ERA·홈런 영구 미노출).
+ * window 미등록 연도는 범위를 즐이지 않는다 — 기존대로 fail-close 된다(추측 서빙 금지).
+ */
+function getSeasonDates(
+  season: number,
+  srId = "0,1,3,4,5,7,9",
+  todayOverride?: string,
+  windowOverride?: RegularSeasonWindow,
+): string[] {
+  const today = todayOverride ?? new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Seoul" });
   const [todayYear, todayMonth] = today.split("-").map(Number);
   const startMonth = 3; // KBO 정규시즌 3월 개막
   const endMonth = todayYear === season ? todayMonth : 11;
@@ -175,7 +209,35 @@ function getSeasonDates(season: number): string[] {
       dates.push(`${season}${String(m).padStart(2, "0")}${String(d).padStart(2, "0")}`);
     }
   }
-  return dates;
+  if (srId !== REGULAR_ONLY_SR_ID) return dates;
+  const window = windowOverride ?? REGULAR_SEASON_WINDOWS[String(season)];
+  if (!window) return dates; // 미등록 시즌 — 기존 fail-close 경로 그대로
+  // 개막 전은 확정적으로 자른다. 종료일은 성격을 분리한다.
+  //   · provisional: 현재월/11월 horizon까지 계속 수집하되 end 뒤는 구조적 failed로 둔다.
+  //     고정 lookahead는 더 늦은 순연 경기를 조용히 누락하므로 사용하지 않는다.
+  //   · finalized: end가 실제 종료일이므로 그 날짜에서 정확히 자를 수 있다.
+  return dates.filter((d) => d >= window.start && (!window.finalized || d <= window.end));
+}
+
+/**
+ * 정규 전용(srId="0") 우주에서 이 날짜를 "수집 성공"으로 인정할 수 없는가.
+ *
+ * provisional end는 잔여/순연 일정이 아직 확정되지 않은 경계다. 그 뒤 날짜는
+ * 미래/과거, 빈 응답/경기 존재와 무관하게 구조적 미검증으로 둔다. 실제 종료일과
+ * finalized=true가 함께 등록된 뒤에만 getSeasonDates가 actual end에서 clip한다.
+ */
+export function isBeyondVerifiedSeasonEnd(
+  date: string,
+  srId: string,
+  windowOverride?: RegularSeasonWindow,
+): boolean {
+  if (srId !== REGULAR_ONLY_SR_ID) return false;
+  const window = windowOverride ?? REGULAR_SEASON_WINDOWS[date.slice(0, 4)];
+  if (!window) return false; // 미등록 연도는 기존 fail-close 경로가 이미 닫는다
+  if (date <= window.end) return false;
+  // finalized window는 getSeasonDates에서 end 뒤가 제거된다. provisional end 뒤는
+  // 과거 verified-empty라도 실제 최종일을 모르는 상태이므로 항상 fail-close한다.
+  return !window.finalized;
 }
 
 /**
@@ -191,10 +253,11 @@ function getSeasonDates(season: number): string[] {
 export async function collectSeasonGameUniverse(
   season: number,
   srId = "0,1,3,4,5,7,9",
-  opts?: { fetcher?: SeasonGameFetcher },
+  opts?: { fetcher?: SeasonGameFetcher; today?: string; regularSeasonWindow?: RegularSeasonWindow },
 ): Promise<SeasonGameCollection> {
   const fetcher = opts?.fetcher ?? fetchSeasonUniverseDate;
-  const dates = getSeasonDates(season);
+  const today = opts?.today ?? new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Seoul" });
+  const dates = getSeasonDates(season, srId, today, opts?.regularSeasonWindow);
   const results = await Promise.allSettled(dates.map((d) => fetcher(d, srId)));
 
   const games: KboGame[] = [];
@@ -205,15 +268,21 @@ export async function collectSeasonGameUniverse(
       failedDates.push(dates[i]);
       return;
     }
+    const { games: dateGames, emptyVerified } = r.value;
+    // 경기가 실제로 있으면 데이터는 수집한다(end 뒤 순연 경기도 실제 경기다).
+    games.push(...dateGames);
+    // 삼순 P0 — 종료일 뒤 경계. 자세한 근거는 isBeyondVerifiedSeasonEnd 참조.
+    if (isBeyondVerifiedSeasonEnd(dates[i], srId, opts?.regularSeasonWindow)) {
+      failedDates.push(dates[i]);
+      return;
+    }
     // 삼순 P0-1 — unverified soft-empty(빈 배열 + 교차검증 미확정)는 성공 날짜로 세지 않는다.
     // 실제 무경기 확정(emptyVerified) 또는 경기 존재(games>0)만 수집 성공.
-    const { games: dateGames, emptyVerified } = r.value;
     if (dateGames.length === 0 && !emptyVerified) {
       failedDates.push(dates[i]);
       return;
     }
     collectedDates.push(dates[i]);
-    games.push(...dateGames);
   });
 
   return {
