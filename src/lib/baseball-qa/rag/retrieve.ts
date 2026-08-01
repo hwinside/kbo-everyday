@@ -291,8 +291,19 @@ const KOREAN_NUMERALS: Record<string, string> = {
   다섯: "5", 여섯: "6", 일곱: "7", 여덟: "8", 아홉: "9", 열: "10",
   첫: "1", 둘: "2", 셋: "3", 넷: "4",
 };
-/** 야구 맥락에서 수량을 만드는 단위명사. 이게 붙어야 "수치 주장"으로 본다. */
-const QUANTITY_COUNTERS = "명|번|이닝|루|개|회|장|구|볼|아웃|점|타|배|분|초|일|년|월|주|차|기";
+/**
+ * 야구 맥락에서 수량을 만드는 단위명사. 이게 붙어야 "수치 주장"으로 본다.
+ *
+ * ⚠️ 폐쇄집합이 좁으면 그 자체가 우회로가 된다(삼순 R2 재현):
+ * `사람/팀/선수`가 빠져 있어서 무관한 조문 근거에도 `세 사람`·`두 팀`·`세 선수`가
+ * 전부 grounded=true 였다. 수사가 붙는 야구 수량 단위를 넓게 잡는다.
+ * 긴 단위가 먼저 매칭되도록 길이 내림차순으로 둔다(`이닝`이 `이`보다 앞).
+ */
+const QUANTITY_COUNTERS = [
+  "이닝", "사람", "선수", "타자", "투수", "주자", "베이스",
+  "명", "번", "루", "개", "회", "장", "구", "볼", "아웃", "점", "타", "배",
+  "분", "초", "일", "년", "월", "주", "차", "기", "팀", "군",
+].sort((a, b) => b.length - a.length).join("|");
 
 /**
  * 답변에 쓰인 수치 주장이 전부 근거 안에 존재하는가.
@@ -314,8 +325,12 @@ export function numericTokensGrounded(answer: string, evidence: RagEvidence[]): 
   // 한글 수사 앞에 다른 한글 음절이 붙으면 수사가 아니다.
   // 이 가드가 없으면 "모두 아웃"의 `두`가 수사로 잡혀 숫자 없는 답까지 차단된다
   // (내 회귀가 실제로 잡은 결함). 아라비아 숫자는 앞 글자 제약이 필요 없다.
+  // 수사와 단위 사이의 조사(`둘이 아웃`)까지 한 수량으로 본다. 이 처리가 없으면
+  // `둘이 아웃`이 수량으로 안 잡혀 무관 근거에서도 통과한다(삼순 R2 재현).
+  // ⚠️ 단독 수사 자체를 수치 주장으로 보면 안 된다 — `둘 다 아웃`(= 모두)처럼
+  //    근거의 `모두 아웃`과 같은 뜻인 정상 답까지 차단된다(기존 회귀가 잡았다).
   const quantityRe = new RegExp(
-    `(?:(\\d+)|(?<![가-힣])(${koreanWord}))\\s*(${QUANTITY_COUNTERS})`,
+    `(?:(\\d+)|(?<![가-힣])(${koreanWord}))\\s*(?:이|가|은|는|을|를)?\\s*(${QUANTITY_COUNTERS})`,
     "g",
   );
   const quantitySet = (text: string): Set<string> => {
@@ -333,12 +348,17 @@ export function numericTokensGrounded(answer: string, evidence: RagEvidence[]): 
   }
 
   // ── (2) 단위 없는 숫자 토큰 ──────────────────────────────────────────────
+  // ⚠️ (1)에서 이미 설명된 수량은 여기서 **다시 요구하지 않는다**(삼순 R2 재현).
+  // 근거가 `세 명`이고 답이 `3명`이면 (1)은 정규화로 통과하는데, (2)가 근거 원문에
+  // 아라비아 `3`을 다시 요구해 정당한 답을 과차단했다. 값 집합(한글 수사 정규화 포함)으로 본다.
   const tokens = answerNorm.match(/\d+(?:\.\d+)*/g);
   if (!tokens || tokens.length === 0) return true;
-  const raw2 = raw;
-  void raw2;
   const grounded = new Set(haystackForQuantity.match(/\d+(?:\.\d+)*/g) ?? []);
-  return tokens.every((token) => grounded.has(token));
+  // 근거가 한글 수사(`세 명`)로 적혀 있고 답이 아라비아(`3명`)면 (1)에서 이미 대조됐다.
+  // 여기서 원문 아라비아 표기를 또 요구하면 정당한 답이 과차단된다(삼순 R2 재현).
+  const explained = new Set<string>();
+  for (const q of quantitySet(answerNorm)) explained.add(q.split("\u0000")[0]);
+  return tokens.every((token) => grounded.has(token) || explained.has(token));
 }
 
 /**

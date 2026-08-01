@@ -489,12 +489,34 @@ export function routeQuestion(
  * 그래서 공식 RAG는 **양성 야구 신호가 실제로 있을 때만** 탄다 — 폴백 질문은 종전대로
  * LLM 분류로 내려보낸다.
  */
+/**
+ * "야구 얘기는 그만" 류 **주제 이탈 선언**.
+ *
+ * 삼순 R2 재현: `야구 말고 오늘 날씨 알려줘` / `야구는 됐고 주식 추천해줘` /
+ * `야구 얘기 그만하고 시를 써줘` 는 `야구` 토큰 하나 때문에 양성 신호로 잡혀
+ * NOT_BASEBALL classifier 보다 먼저 공식 RAG 를 태웠고, 무관한 KBO 조문이
+ * 근거로 붙은 답이 서빙됐다. 이런 문장은 야구 질문이 아니라 **야구를 배제하는** 문장이다.
+ */
+const TOPIC_DISMISSAL_PATTERNS: RegExp[] = [
+  /야구\s*(?:얘기|이야기|말|건)?\s*말고/,
+  /야구\s*(?:얘기|이야기)?\s*(?:는|은)?\s*(?:됐|관뒀|집어치)/,
+  /야구\s*(?:얘기|이야기)?\s*그만/,
+  /야구\s*(?:얘기|이야기)?\s*(?:는|은)?\s*(?:빼고|제외하고|아니고|아니라)/,
+];
+
+export function isTopicDismissal(question: string): boolean {
+  const normalized = question.normalize("NFKC").toLowerCase().replace(/\s+/g, " ");
+  return TOPIC_DISMISSAL_PATTERNS.some((re) => re.test(normalized));
+}
+
 export function hasExplicitBaseballSignal(
   question: string,
   glossary: GlossaryEntry[] = [],
 ): boolean {
   const normalized = question.normalize("NFKC").toLowerCase();
   const tokens = questionTokens(normalized);
+  // 주제 이탈 선언은 야구 토큰이 있어도 야구 질문이 아니다 — LLM 분류(NOT_BASEBALL)로 보낸다.
+  if (isTopicDismissal(question)) return false;
   if (matchGlossary(glossary, question)) return true;
   const mentionsGlossaryTerm = glossary.some((entry) =>
     [entry.term, ...entry.aliases].some((name) => {

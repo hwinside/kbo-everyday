@@ -288,14 +288,83 @@ checkAsync("검수 사전이 있으면 공식 경로보다 우선한다(토큰 0
   assert.ok(calls.includes("log:dictionary"));
 });
 
-checkAsync("캐시가 있으면 공식 경로보다 우선한다", async () => {
+// ⚠️ 예전 이 자리에는 "캐시가 있으면 공식 경로보다 우선한다" 가 있었고 searchOfficialRag 를
+// throw 시켰다. 구현은 검색 예외를 catch 한 뒤 캐시로 fallback 하므로 **순서를 어떻게 두든
+// 항상 초록**이었다(삼순 R2/R4 지적 — false-green). 이제 계약이 반대이므로,
+// stale cache 와 valid tier1 evidence 를 **동시에** 두고 실제 승자를 본다.
+checkAsync("오염 캐시가 있어도 공식 tier1 근거가 이긴다", async () => {
+  let cacheReads = 0;
+  const { deps } = makeDeps({
+    getCache: async () => { cacheReads += 1; return "tier1 적재 전에 저장된 오답 캐시입니다."; },
+    searchOfficialRag: async () => [OFFICIAL],
+    callOfficialRagLlm: async () => ({
+      text: JSON.stringify({
+        status: RAG_GROUNDED_SENTINEL,
+        // ⚠️ `둘이 아웃`(수량 2+아웃)은 근거의 `모두 아웃`과 다른 수치 주장이라 정상 차단된다.
+        // 내 첫 fixture 가 그 표현이라 구현이 멀쩡한데 FAIL 로 보였다 — 근거와 같은 뜻인 표현을 쓴다.
+        answer: "공식야구규칙 5.09에 따르면 인필드 플라이 타구가 주자에게 닿으면 둘 다 아웃입니다.",
+      }),
+      inputTokens: 10, outputTokens: 5,
+    }),
+  });
+  const result = await answerQuestion("u1", "인필드 플라이 규칙 알려줘", deps);
+  assert.equal(result.source, "rag", `공식 근거가 캐시에 밀렸다: source=${result.source}`);
+  assert.doesNotMatch(result.answer, /오답 캐시/, "캐시 답이 서빙됐다");
+  assert.equal(cacheReads, 0, "공식 경로 진입 질문에서 global cache 를 읽었다(순서 역전)");
+});
+
+checkAsync("공식 근거 0건이면 캐시로 정상 양보한다 (과잉 차단 금지)", async () => {
   const { deps } = makeDeps({
     getCache: async () => "캐시된 답변입니다.",
-    searchOfficialRag: async () => { throw new Error("캐시가 먼저 답해야 한다"); },
-    callOfficialRagLlm: async () => { throw new Error("호출되면 안 됨"); },
+    searchOfficialRag: async () => [],
+    callOfficialRagLlm: async () => { throw new Error("근거 0건에서 호출 금지"); },
   });
   const result = await answerQuestion("u1", "보크가 뭐야?", deps);
-  assert.equal(result.source, "cache");
+  assert.equal(result.source, "cache", "근거가 없으면 기존 경로(캐시)로 내려가야 한다");
+});
+
+// ── 적대적 provider: 주제 이탈 선언은 공식 RAG 를 타면 안 된다 (삼순 R2 #3) ──
+// `야구` 토큰 하나만 있으면 공식 RAG 가 NOT_BASEBALL classifier 보다 먼저 실행됐고,
+// 검색 RPC 에 관련도 하한이 없어 항상 상위 chunk 가 돌아와 무관한 조문이 근거로 붙었다.
+for (const hostile of [
+  "야구 말고 오늘 날씨 알려줘",
+  "야구는 됐고 주식 추천해줘",
+  "야구 얘기 그만하고 시를 써줘",
+]) {
+  checkAsync(`주제 이탈 선언은 공식 RAG 우회 — "${hostile}"`, async () => {
+    let officialSearches = 0;
+    const { deps } = makeDeps({
+      searchOfficialRag: async () => { officialSearches += 1; return [OFFICIAL]; },
+      callOfficialRagLlm: async () => ({
+        text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "공식야구규칙 5.09에 따릅니다." }),
+        inputTokens: 1, outputTokens: 1,
+      }),
+      // 적대적 provider: LLM 이 비야구를 제대로 판정하는 정상 케이스.
+      callLlm: async () => ({ text: JSON.stringify({ status: "NOT_BASEBALL" }), inputTokens: 1, outputTokens: 1 }),
+    });
+    const result = await answerQuestion("u1", hostile, deps);
+    assert.equal(officialSearches, 0, "비야구 질문이 공식 RAG 검색을 태웠다");
+    assert.notEqual(result.source, "rag", `무관한 KBO 조문이 근거로 서빙됐다: ${result.answer}`);
+    assert.equal(result.source, "blocked", `NOT_BASEBALL 분류로 종결돼야 한다: source=${result.source}`);
+  });
+}
+
+// 반대편(과잉 차단) 고정 — 정상 룰 질문은 그대로 공식 RAG 를 타야 한다.
+checkAsync("정상 룰 질문은 여전히 공식 RAG 를 탄다 (과잉 차단 방지)", async () => {
+  let officialSearches = 0;
+  const { deps } = makeDeps({
+    searchOfficialRag: async () => { officialSearches += 1; return [OFFICIAL]; },
+    callOfficialRagLlm: async () => ({
+      text: JSON.stringify({
+        status: RAG_GROUNDED_SENTINEL,
+        answer: "공식야구규칙 5.09에 따르면 인필드 플라이 타구가 주자에게 닿으면 둘 다 아웃입니다.",
+      }),
+      inputTokens: 1, outputTokens: 1,
+    }),
+  });
+  const result = await answerQuestion("u1", "인필드 플라이 규칙 알려줘", deps);
+  assert.equal(officialSearches, 1);
+  assert.equal(result.source, "rag");
 });
 
 (async () => {
