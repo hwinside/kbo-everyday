@@ -293,6 +293,8 @@ async function runAutoPrWatch(nowIso: string) {
   const issueByKey = new Map(issues.map((i) => [i.key, i]));
 
   // 전이 판정용 직전 상태(job 알림과 같은 테이블, key 네임스페이스만 다름)
+  // query-guard: bounded -- job_name은 PK이고 IN 목록이 컴파일 상수 AUTO_WORKFLOWS로 고정되어
+  // 반환 행 수가 감시 대상 워크플로 개수(현재 2)를 절대 넘지 않는다(런타임 입력 없음).
   const { data: prevRows, error: prevErr } = await supabase
     .from("admin_alert_state")
     .select("job_name,level")
