@@ -23,6 +23,9 @@ export interface TeamBatting {
   hr: number;
   runs: number;
   sb: number;
+  games?: number;
+  ab?: number;
+  hits?: number;
 }
 
 export interface TeamPitching {
@@ -33,6 +36,10 @@ export interface TeamPitching {
   so: number;
   sv: number;
   hra: number;
+  games?: number;
+  inningsOuts?: number;
+  er?: number;
+  hitsAllowed?: number;
 }
 
 export interface TeamRecordsResponse {
@@ -106,6 +113,13 @@ function parseTable(html: string): string[][] {
   return rows;
 }
 
+export function parseKboInningsOuts(value: unknown): number | null {
+  const raw = String(value ?? "").trim();
+  const match = raw.match(/^(\d+)(?:[ .]([012])(?:\/3)?)?$/);
+  if (!match) return null;
+  return Number(match[1]) * 3 + Number(match[2] ?? 0);
+}
+
 /** KBO team name → app TeamData via shortName or name matching */
 function findTeamByKboName(kboName: string) {
   return TEAMS.find(
@@ -174,7 +188,7 @@ async function fetchBattingRecords(
   const basic1 = requireTeamRows(
     parseTable(basic1Html),
     "Hitter Basic1",
-    [2, 6, 10],
+    [2, 3, 5, 6, 7, 10],
   );
   // Basic2 컬럼: 순위(0) 팀명(1) AVG(2) BB(3) IBB(4) HBP(5) SO(6) GDP(7) SLG(8) OBP(9) OPS(10)
   const basic2 = requireTeamRows(parseTable(basic2Html), "Hitter Basic2", [10]);
@@ -193,6 +207,9 @@ async function fetchBattingRecords(
       hr: Number(row[10]),
       runs: Number(row[6]),
       sb: Number(runnerRow[4]),
+      games: Number(row[3]),
+      ab: Number(row[5]),
+      hits: Number(row[7]),
     });
   }
   return results;
@@ -211,12 +228,18 @@ async function fetchPitchingRecords(
   const basic1 = requireTeamRows(
     parseTable(basic1Html),
     "Pitcher Basic1",
-    [2, 6, 11, 14, 17],
+    // IP(9)는 `857 1/3` 같은 KBO 정규 형식이라 generic Number 검증에서 제외한다.
+    // 아래 parseKboInningsOuts가 전용 fail-close 검증을 담당한다.
+    [2, 3, 10, 11, 14, 16, 17],
   );
 
   const results: TeamPitching[] = [];
   for (const team of TEAMS) {
     const row = basic1.get(team.id)!;
+    const inningsOuts = parseKboInningsOuts(row[9]);
+    if (inningsOuts === null) {
+      throw new Error(`KBO Pitcher Basic1 innings invalid: ${row[9]}`);
+    }
     results.push({
       teamId: team.id,
       slug: team.slug,
@@ -225,6 +248,10 @@ async function fetchPitchingRecords(
       so: Number(row[14]),
       sv: Number(row[6]),
       hra: Number(row[11]),
+      games: Number(row[3]),
+      inningsOuts,
+      er: Number(row[16]),
+      hitsAllowed: Number(row[10]),
     });
   }
   return results;
@@ -250,11 +277,17 @@ interface NaverTeamStat {
   offenseHr?: number;
   offenseRun?: number;
   offenseSb?: number;
+  offenseAb?: number;
+  offenseHit?: number;
   defenseEra?: number;
   defenseWhip?: number;
   defenseKk?: number;
   defenseSave?: number;
   defenseHr?: number;
+  defenseInning?: number;
+  defenseEr?: number;
+  defenseHit?: number;
+  gameCount?: number;
 }
 
 function formatRate(
@@ -297,11 +330,17 @@ export function mapNaverTeamRecords(
       row.offenseHr,
       row.offenseRun,
       row.offenseSb,
+      row.offenseAb,
+      row.offenseHit,
       row.defenseEra,
       row.defenseWhip,
       row.defenseKk,
       row.defenseSave,
       row.defenseHr,
+      row.defenseInning,
+      row.defenseEr,
+      row.defenseHit,
+      row.gameCount,
     ];
     if (
       !team ||
@@ -309,6 +348,10 @@ export function mapNaverTeamRecords(
       numericValues.some((value) => !Number.isFinite(value))
     ) {
       throw new Error("Naver team records contain incomplete team data");
+    }
+    const inningsOuts = parseKboInningsOuts(row.defenseInning);
+    if (inningsOuts === null) {
+      throw new Error("Naver team records contain invalid innings");
     }
     seen.add(teamId);
     batting.push({
@@ -319,6 +362,9 @@ export function mapNaverTeamRecords(
       hr: row.offenseHr as number,
       runs: row.offenseRun as number,
       sb: row.offenseSb as number,
+      games: row.gameCount as number,
+      ab: row.offenseAb as number,
+      hits: row.offenseHit as number,
     });
     pitching.push({
       teamId,
@@ -328,6 +374,10 @@ export function mapNaverTeamRecords(
       so: row.defenseKk as number,
       sv: row.defenseSave as number,
       hra: row.defenseHr as number,
+      games: row.gameCount as number,
+      inningsOuts,
+      er: row.defenseEr as number,
+      hitsAllowed: row.defenseHit as number,
     });
   }
 
@@ -397,11 +447,22 @@ export async function loadTeamRecords(
   }
 }
 
+export async function loadCachedTeamRecords(
+  season: number,
+): Promise<TeamRecordsResponse> {
+  if (cache && cache.data.season === season && cache.expiresAt > Date.now()) {
+    return cache.data;
+  }
+  const data = await loadTeamRecords(season);
+  cache = { data, expiresAt: Date.now() + CACHE_TTL_MS };
+  return data;
+}
+
 export async function GET(req: NextRequest) {
   const seasonParam = req.nextUrl.searchParams.get("season") ?? "2026";
   const season = parseInt(seasonParam, 10);
 
-  if (cache && cache.expiresAt > Date.now()) {
+  if (cache && cache.data.season === season && cache.expiresAt > Date.now()) {
     return NextResponse.json(cache.data, {
       headers: {
         "Cache-Control": "public, s-maxage=600, stale-while-revalidate=1200",
@@ -410,8 +471,7 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const data = await loadTeamRecords(season);
-    cache = { data, expiresAt: Date.now() + CACHE_TTL_MS };
+    const data = await loadCachedTeamRecords(season);
 
     return NextResponse.json(data, {
       headers: {
@@ -420,7 +480,7 @@ export async function GET(req: NextRequest) {
     });
   } catch (e: unknown) {
     // Fail soft: return cached stale data if available, else 500
-    if (cache) {
+    if (cache?.data.season === season) {
       return NextResponse.json(cache.data, {
         headers: { "Cache-Control": "public, s-maxage=60" },
       });
