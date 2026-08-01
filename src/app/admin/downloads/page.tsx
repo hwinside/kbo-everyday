@@ -141,7 +141,7 @@ export default function DownloadsPage() {
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
               <XAxis dataKey="date" stroke="#8E8E93" fontSize={11} />
               <YAxis stroke="#8E8E93" fontSize={11} allowDecimals={false} />
-              <Tooltip content={<StackedTooltip />} />
+              <Tooltip content={<StackedTooltip showTotal />} />
               <Legend wrapperStyle={{ fontSize: 12 }} />
               {activePlatforms.map((p, i) => (
                 <Bar

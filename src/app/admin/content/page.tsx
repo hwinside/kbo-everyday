@@ -219,7 +219,7 @@ function ContentTrendCard<T extends { date: string }>({
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
             <XAxis dataKey="label" stroke="#636366" fontSize={12} />
             <YAxis stroke="#636366" fontSize={12} />
-            <Tooltip content={<StackedTooltip />} />
+            <Tooltip content={<StackedTooltip showTotal={series.length > 1} />} />
             {series.length > 1 && <Legend />}
             {series.map((s, i) => (
               <Bar

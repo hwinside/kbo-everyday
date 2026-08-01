@@ -1,9 +1,13 @@
 "use client";
 
 // Shared recharts tooltip for stacked bar charts in /admin.
-// Shows each stacked series plus the total, so admins don't add values by hand.
-// The total row is hidden when only one series is present (it would just repeat
-// the single value).
+// Shows each series plus the stacked total, so admins don't add values by hand.
+//
+// `showTotal` must be decided by the chart *configuration* (how many stacked
+// series the chart declares), never by the hovered payload length. Recharts
+// drops null/undefined entries from `payload` (filterNull), so a 2-series chart
+// hovering a sparse day (e.g. downloads with iOS-only rows) yields a 1-entry
+// payload — the exact day where a total is still meaningful.
 
 type TooltipEntry = { name?: string; value?: number; color?: string };
 
@@ -15,10 +19,12 @@ export default function StackedTooltip({
   active,
   payload,
   label,
+  showTotal,
 }: {
   active?: boolean;
   payload?: TooltipEntry[];
   label?: string | number;
+  showTotal: boolean;
 }) {
   if (!active || !payload || payload.length === 0) return null;
   const total = payload.reduce((sum, p) => sum + (Number(p.value) || 0), 0);
@@ -38,7 +44,7 @@ export default function StackedTooltip({
           {p.name} : {fmt(Number(p.value) || 0)}
         </p>
       ))}
-      {payload.length > 1 && (
+      {showTotal && (
         <p
           style={{
             color: "#FFFFFF",

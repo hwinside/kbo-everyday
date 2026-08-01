@@ -436,7 +436,7 @@ export default function TrafficPage() {
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
               <XAxis dataKey="day" stroke="#8E8E93" fontSize={11} />
               <YAxis stroke="#8E8E93" fontSize={11} allowDecimals={false} />
-              <Tooltip content={<StackedTooltip />} />
+              <Tooltip content={<StackedTooltip showTotal />} />
               <Legend wrapperStyle={{ fontSize: 12 }} />
               <Bar dataKey="ios" name="iOS 앱" stackId="dau" fill="#0A84FF" />
               <Bar dataKey="aos" name="안드 앱" stackId="dau" fill="#3DDC84" radius={[4, 4, 0, 0]} />
@@ -497,7 +497,7 @@ export default function TrafficPage() {
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
               <XAxis dataKey="day" stroke="#8E8E93" fontSize={11} />
               <YAxis stroke="#8E8E93" fontSize={11} />
-              <Tooltip content={<StackedTooltip />} />
+              <Tooltip content={<StackedTooltip showTotal />} />
               <Legend wrapperStyle={{ fontSize: 12 }} />
               {activePlatforms.map((p) => (
                 <Bar

@@ -315,7 +315,7 @@ export default function AdminFeedbackPage() {
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
             <XAxis dataKey="date" stroke="#636366" fontSize={12} />
             <YAxis stroke="#636366" fontSize={12} />
-            <Tooltip content={<StackedTooltip />} />
+            <Tooltip content={<StackedTooltip showTotal />} />
             <Legend />
             <Bar dataKey="버그" stackId="a" fill="#FF453A" />
             <Bar dataKey="데이터 수정" stackId="a" fill="#FFD60A" />
