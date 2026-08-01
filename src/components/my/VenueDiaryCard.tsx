@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { BarChart3, CalendarDays, ChevronRight, Play, Plus, RefreshCw, Trophy } from "lucide-react";
+import { CalendarDays, Play, Plus, RefreshCw, Trophy } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { getTeamById } from "@/lib/constants/teams";
 import { useAuth } from "@/lib/supabase/AuthContext";
@@ -519,24 +519,6 @@ export default function VenueDiaryCard() {
                   </span>
                 </div>
               </div>
-
-              <a
-                href="/my/venue-stats"
-                className="mt-3 flex w-full items-center justify-between rounded-2xl border border-[#ff5263]/30 bg-[#ff5263]/10 px-4 py-3.5 text-left"
-              >
-                <span className="flex items-center gap-2.5">
-                  <span className="flex h-9 w-9 items-center justify-center rounded-full bg-[#ff5263]/15 text-[#ff6574]">
-                    <BarChart3 size={18} />
-                  </span>
-                  <span>
-                    <span className="block text-[14px] font-extrabold text-text-primary">내 직관 통계 보기</span>
-                    <span className="mt-0.5 block text-[11px] font-semibold text-text-tertiary">
-                      요정 지수 · 팀 부스트 · 최애 활약
-                    </span>
-                  </span>
-                </span>
-                <ChevronRight size={18} className="text-text-tertiary" />
-              </a>
 
               {/* 지난 경기 추가하기 */}
               <button

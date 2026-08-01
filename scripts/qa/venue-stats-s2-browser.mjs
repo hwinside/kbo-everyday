@@ -36,27 +36,74 @@ const GEN = mkdtempSync(resolve(tmpdir(), "venue-stats-s2-"));
 const SHOT = resolve(ROOT, "tmp/qa-screenshots/venue-stats-s2-390.png");
 mkdirSync(resolve(ROOT, "tmp/qa-screenshots"), { recursive: true });
 
+const myPagePath = resolve(ROOT, "src/app/(main)/my/page.tsx");
+const entryMarkup = "      <VenueStatsEntryCard />";
+const myPageSourceRaw = readFileSync(myPagePath, "utf8");
+const myPageSource = process.env.VENUE_STATS_S2_MUTATE_MY_ENTRY === "1"
+  ? myPageSourceRaw.replace(entryMarkup, "      {/* injected entry-removal mutation */}")
+  : myPageSourceRaw;
+const entryMarkupCount = myPageSource.split(entryMarkup).length - 1;
+if (entryMarkupCount !== 1) {
+  throw new Error(`MyPage venue stats entry wiring must be unique, got ${entryMarkupCount}`);
+}
+writeFileSync(
+  resolve(GEN, "my-page-mutated.tsx"),
+  myPageSource.replace(entryMarkup, "      {/* mutation: venue stats entry removed */}"),
+);
+
 writeFileSync(resolve(GEN, "auth.jsx"), `
 // 실제 AuthContext 처럼 매 렌더마다 새 객체를 만들지 않는 안정 참조.
 const AUTH={
-  user:{id:"qa",email:"harinclaw@gmail.com"},
+  user:{id:"qa",email:"venue-stats-qa@example.invalid"},
   profile:{favorite_players:[
     {playerId:"53123",name:"오스틴",teamId:1,position:"내야수"},
     {playerId:"p2",name:"이최애",teamId:9,position:"투수"}
-  ]}
+  ],team_id:1,nickname:"QA",avatar_url:null},
+  loading:false,
+  refreshProfile:async()=>{},
+  signOut:async()=>{}
 };
-export const useAuth=()=>AUTH;`);
+const ANON={user:null,profile:null,loading:false};
+export const useAuth=()=>new URLSearchParams(window.location.search).has("anonymous")?ANON:AUTH;`);
 writeFileSync(resolve(GEN, "client.js"), `
-export async function getSafeSession(){return {access_token:"qa"};}`);
+export async function getSafeSession(){return {access_token:"qa"};}
+export const supabase={auth:{getSession:async()=>({data:{session:null}})}};`);
 writeFileSync(resolve(GEN, "back.js"), `
 export const useSafeBack=()=>()=>{};`);
 writeFileSync(resolve(GEN, "image.jsx"), `
 export default function Image(p){return <img {...p}/>;}`);
+writeFileSync(resolve(GEN, "link.jsx"), `
+export default function Link({href,children,...props}){return <a href={href} {...props}>{children}</a>;}`);
+writeFileSync(resolve(GEN, "navigation.js"), `
+export const useRouter=()=>({push:(href)=>window.location.assign(href)});`);
+writeFileSync(resolve(GEN, "motion.jsx"), `
+export const motion={div:({children,initial,animate,transition,...props})=><div {...props}>{children}</div>};`);
+writeFileSync(resolve(GEN, "empty.jsx"), `
+export default function Empty(){return null;}`);
+writeFileSync(resolve(GEN, "pass.jsx"), `
+export default function Pass({children}){return children;}`);
+writeFileSync(resolve(GEN, "favorites.js"), `
+export const getFavoritePlayers=()=>[];
+export const setFavoritePlayers=()=>{};`);
+writeFileSync(resolve(GEN, "myteam.js"), `
+export const getMyTeamId=()=>1;
+export const setMyTeamId=()=>{};`);
+writeFileSync(resolve(GEN, "profile-auth.js"), `
+export const updateProfile=async()=>{};`);
+writeFileSync(resolve(GEN, "game-notification.js"), `
+export const setWidgetMyTeam=async()=>{};`);
+writeFileSync(resolve(GEN, "native-live.js"), `
+export const ID_TO_KBO_CODE={1:"LG"};`);
 writeFileSync(resolve(GEN, "entry.jsx"), `
 import React from "react";
 import {createRoot} from "react-dom/client";
 import VenueStatsDashboard from "@/components/my/VenueStatsDashboard";
-createRoot(document.getElementById("root")).render(<VenueStatsDashboard/>);`);
+import MyPage from "@/app/(main)/my/page";
+import MutatedMyPage from "./my-page-mutated";
+import VenueStatsPage from "@/app/(main)/my/venue-stats/page";
+const path=window.location.pathname;
+const App=path==="/my"?MyPage:path==="/my-mutation"?MutatedMyPage:path==="/my/venue-stats"?VenueStatsPage:VenueStatsDashboard;
+createRoot(document.getElementById("root")).render(<App/>);`);
 
 await build({
   entryPoints: [resolve(GEN, "entry.jsx")],
@@ -71,8 +118,28 @@ await build({
   alias: {
     "@/lib/supabase/AuthContext": resolve(GEN, "auth.jsx"),
     "@/lib/supabase/client": resolve(GEN, "client.js"),
+    "@/lib/supabase/auth": resolve(GEN, "profile-auth.js"),
     "@/lib/hooks/useSafeBack": resolve(GEN, "back.js"),
+    "@/lib/store/favorites": resolve(GEN, "favorites.js"),
+    "@/lib/store/myteam": resolve(GEN, "myteam.js"),
+    "@/lib/capacitor/game-notification": resolve(GEN, "game-notification.js"),
+    "@/lib/native-live-activity": resolve(GEN, "native-live.js"),
+    "@/components/onboarding/TeamSelectModal": resolve(GEN, "empty.jsx"),
+    "@/components/onboarding/PlayerSelectModal": resolve(GEN, "empty.jsx"),
+    "@/components/auth/LoginSheet": resolve(GEN, "empty.jsx"),
+    "@/components/profile/AvatarSelectSheet": resolve(GEN, "empty.jsx"),
+    "@/components/profile/NicknameEditSheet": resolve(GEN, "empty.jsx"),
+    "@/components/my/ProfileCard": resolve(GEN, "empty.jsx"),
+    "@/components/my/InviteSection": resolve(GEN, "empty.jsx"),
+    "@/components/my/FavoritePlayersCard": resolve(GEN, "empty.jsx"),
+    "@/components/my/MenuSection": resolve(GEN, "empty.jsx"),
+    "@/components/feedback/FeedbackSheet": resolve(GEN, "empty.jsx"),
+    "@/components/my/VenueDiaryCard": resolve(GEN, "empty.jsx"),
+    "@/components/admin/AdminOnly": resolve(GEN, "pass.jsx"),
     "next/image": resolve(GEN, "image.jsx"),
+    "next/link": resolve(GEN, "link.jsx"),
+    "next/navigation": resolve(GEN, "navigation.js"),
+    "framer-motion": resolve(GEN, "motion.jsx"),
   },
   logLevel: "error",
 });
@@ -352,6 +419,27 @@ const page = await browser.newPage({ viewport: { width: 390, height: 844 }, devi
 page.on("pageerror", (error) => console.log(`  [pageerror] ${error.message}`));
 
 try {
+  // 일반 로그인 사용자의 실제 진입 DOM → 클릭 → 실제 대시보드 DOM.
+  await page.goto(`http://127.0.0.1:${port}/my`, { waitUntil: "domcontentloaded" });
+  const entry = page.getByTestId("venue-stats-entry");
+  await entry.waitFor();
+  await entry.click();
+  await page.waitForURL(`http://127.0.0.1:${port}/my/venue-stats`);
+  await page.locator('[data-testid="venue-stats-dashboard"]').waitFor();
+
+  // 실제 MyPage에서 진입 배선을 제거한 mutation은 링크를 0개로 만든다.
+  await page.goto(`http://127.0.0.1:${port}/my-mutation`, { waitUntil: "domcontentloaded" });
+  if (await page.getByTestId("venue-stats-entry").count()) {
+    throw new Error("MyPage entry-removal mutation did not remove the venue stats entry");
+  }
+
+  // 익명 직접 URL은 빈 화면/데이터 호출이 아니라 명시적 로그인 유도로 차단한다.
+  await page.goto(`http://127.0.0.1:${port}/my/venue-stats?anonymous=1`, { waitUntil: "domcontentloaded" });
+  await page.getByTestId("venue-stats-login-required").waitFor();
+  if (await page.locator('[data-testid="venue-stats-dashboard"]').count()) {
+    throw new Error("anonymous direct URL rendered venue stats dashboard");
+  }
+
   await page.goto(`http://127.0.0.1:${port}`, { waitUntil: "domcontentloaded" });
   await page.getByText("63", { exact: true }).waitFor();
   const lgSegment = page.getByText("LG 응원 구간", { exact: true }).nth(1).locator("../..");
