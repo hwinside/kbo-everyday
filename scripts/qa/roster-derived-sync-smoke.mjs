@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
@@ -90,11 +91,37 @@ check("auto-merge allowlist is data-only", () => {
   ]) assert.ok(!allowlist.test(file), `expected blocked: ${file}`);
 });
 
-check("reviewed bootstrap seed migration remains byte-identical to main", () => {
-  const baseline = execFileSync("git", ["show", "origin/main:supabase/migrations/20260731_baseball_genius_rag_sources_seed.sql"], {
-    cwd: ROOT, encoding: "utf8",
-  });
-  assert.equal(read("supabase/migrations/20260731_baseball_genius_rag_sources_seed.sql"), baseline);
+// remote ref에 의존하면 shallow clone·Vercel 빌드 환경에서 검사가 조용히 무력해질 수 있다.
+// 리뷰·머지된 bootstrap migration은 불변이므로 고정 SHA-256으로 잠근다.
+const BOOTSTRAP_SEED_PATH = "supabase/migrations/20260731_baseball_genius_rag_sources_seed.sql";
+const BOOTSTRAP_SEED_SHA256 = "0462100bd093a9f1e6d18c7d5feb759df7ba368bffc0d3a620fecda31f25660b";
+check("reviewed bootstrap seed migration is immutable (fixed SHA-256)", () => {
+  const actual = createHash("sha256").update(fs.readFileSync(path.join(ROOT, BOOTSTRAP_SEED_PATH))).digest("hex");
+  assert.equal(actual, BOOTSTRAP_SEED_SHA256, `${BOOTSTRAP_SEED_PATH} was modified; it must stay immutable`);
+});
+
+// P0 재발 경로 직접 봉쇄: 기본 생성 명령이 과거 migration을 건드리면 안 된다.
+check("default build command never touches the bootstrap migration", () => {
+  const before = fs.readFileSync(path.join(ROOT, BOOTSTRAP_SEED_PATH), "utf8");
+  const inventoryBefore = read("data/baseball-qa/source-inventory.json");
+  execFileSync("npm", ["run", "-s", "build:baseball-source-inventory"], { cwd: ROOT, stdio: "pipe" });
+  assert.equal(fs.readFileSync(path.join(ROOT, BOOTSTRAP_SEED_PATH), "utf8"), before,
+    "무옵션 build 명령이 bootstrap migration을 덮어썼다");
+  assert.equal(read("data/baseball-qa/source-inventory.json"), inventoryBefore,
+    "committed inventory가 생성기 재실행과 일치해야 한다(결정론성)");
+});
+
+// seed 재생성은 명시 옵션을 줘도 기존 파일이 있으면 fail-close여야 한다.
+check("--emit-seed refuses to overwrite an existing migration", () => {
+  let threw = false;
+  try {
+    execFileSync("npm", ["run", "-s", "build:baseball-source-inventory:seed"], { cwd: ROOT, stdio: "pipe" });
+  } catch {
+    threw = true;
+  }
+  assert.ok(threw, "기존 migration이 있는데 --emit-seed 가 성공하면 안 된다");
+  const actual = createHash("sha256").update(fs.readFileSync(path.join(ROOT, BOOTSTRAP_SEED_PATH))).digest("hex");
+  assert.equal(actual, BOOTSTRAP_SEED_SHA256, "거부된 뒤에도 원본이 그대로여야 한다");
 });
 
 check("nationality and pending reports are disjoint", () => {
@@ -103,10 +130,14 @@ check("nationality and pending reports are disjoint", () => {
   assert.deepEqual(Object.keys(pending).filter((id) => nationality[id]), []);
 });
 
-check("prebuild includes the read-only relationship gate", () => {
+check("prebuild runs both the relationship gate and this smoke", () => {
   const pkg = JSON.parse(read("package.json"));
-  assert.equal(pkg.scripts["qa:roster-derived-sync"], "node scripts/ci/sync-roster-derived-artifacts.mjs --check");
+  const gate = pkg.scripts["qa:roster-derived-sync"];
+  // 이 smoke 자체가 CI에 안 묶이면 위 검사가 전부 false-green이 된다(삼순 2차 NO-GO).
+  assert.ok(gate.includes("sync-roster-derived-artifacts.mjs --check"), "relationship gate가 빠졌다");
+  assert.ok(gate.includes("roster-derived-sync-smoke.mjs"), "smoke 가 CI에 결속되지 않았다");
   assert.ok(pkg.scripts.prebuild.includes("qa:roster-derived-sync"));
+  assert.equal(pkg.scripts["build:baseball-source-inventory"], "tsx scripts/baseball-qa/build-source-inventory.ts");
 });
 
 console.log(`\nPASS — roster derived sync contract (${pass} pass, roster ${roster.length}명)`);
