@@ -41,7 +41,8 @@ export function shouldPreserveCanonicalLineup(
   incomingSource?: LineupSource | null,
 ): boolean {
   const rank = (source?: LineupSource | null) => (
-    source === "kbo-confirmed" || source === "naver-confirmed" ? 2
+    source === "kbo-confirmed" ? 3
+      : source === "naver-confirmed" ? 2
       : source === "naver-preview" ? 1
         : 0
   );

@@ -66,6 +66,7 @@ assert.deepEqual(
     lineupStarterName: "곽빈",
     liveStarterFresh: true,
     lineupStarterTrusted: true,
+    lineupSource: "kbo-confirmed",
     teamId: 2,
     boxPitcher: { name: "이영하", era: "1.23" },
   }),
@@ -78,6 +79,7 @@ assert.deepEqual(
     lineupStarterName: "화이트",
     liveStarterFresh: true,
     lineupStarterTrusted: true,
+    lineupSource: "kbo-confirmed",
     teamId: 4,
     boxPitcher: { name: "다른투수", era: "9.99" },
   }),
@@ -89,6 +91,7 @@ assert.deepEqual(
     lineupStarterName: "김윤하",
     liveStarterFresh: false,
     lineupStarterTrusted: true,
+    lineupSource: "kbo-confirmed",
     teamId: 10,
     boxPitcher: { name: "이강준", era: "3.21" },
   }),
@@ -175,10 +178,23 @@ assert.deepEqual(
     lineupStarterName: "곽빈",
     liveStarterFresh: false,
     lineupStarterTrusted: previewTrusted,
+    lineupSource: "naver-preview",
     teamId: 2,
   }),
   { name: "곽빈", era: "2.64", kboId: "68220" },
   "live failure + Naver preview-only preserves starter identity and season ERA",
+);
+assert.deepEqual(
+  resolveLineupStarter({
+    liveStarterName: "타케다",
+    lineupStarterName: "화이트",
+    liveStarterFresh: true,
+    lineupStarterTrusted: previewTrusted,
+    lineupSource: "naver-preview",
+    teamId: 4,
+  }),
+  { name: "타케다", era: "7.10", kboId: "56823" },
+  "preview-only is fallback and cannot supersede a current live starter",
 );
 assert.equal(
   isLineupStarterProvenanceTrusted({
@@ -207,6 +223,7 @@ assert.deepEqual(
     lineupStarterName: "타케다",
     liveStarterFresh: true,
     lineupStarterTrusted: true,
+    lineupSource: "kbo-confirmed",
     teamId: 4,
   }),
   { name: "타케다", era: "7.10", kboId: "56823" },
@@ -215,7 +232,8 @@ assert.deepEqual(
 assert.equal(shouldPreserveCanonicalLineup("kbo-confirmed", "none"), true);
 assert.equal(shouldPreserveCanonicalLineup("naver-preview", "kbo-unconfirmed"), true);
 assert.equal(shouldPreserveCanonicalLineup("kbo-confirmed", "naver-preview"), true);
-assert.equal(shouldPreserveCanonicalLineup("kbo-confirmed", "naver-confirmed"), false);
+assert.equal(shouldPreserveCanonicalLineup("kbo-confirmed", "naver-confirmed"), true);
+assert.equal(shouldPreserveCanonicalLineup("naver-confirmed", "kbo-confirmed"), false);
 assert.equal(shouldCommitResponse(8, 7), false, "older in-flight response generation is fenced");
 assert.equal(shouldCommitResponse(8, 8), true, "latest response generation commits");
 
@@ -231,6 +249,7 @@ assert.ok(
     && gamePage.includes("liveStarterName: liveGame?.homeStarterName")
     && gamePage.includes("lineupStarterName: d.detailLineup?.homeStarter")
     && gamePage.includes("liveStarterFresh = Boolean(liveSnapshot)")
+    && gamePage.includes("lineupSource: detailSnapshot?.lineupSource")
     && gamePage.includes("isLineupStarterProvenanceTrusted"),
   "page binds starter selection to actual live success and lineup provenance",
 );

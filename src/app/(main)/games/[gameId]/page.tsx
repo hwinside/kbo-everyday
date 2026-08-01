@@ -420,6 +420,7 @@ export default function GameDetailPage() {
     lineupStarterName: d.detailLineup?.awayStarter,
     liveStarterFresh,
     lineupStarterTrusted,
+    lineupSource: detailSnapshot?.lineupSource,
     teamId: game.awayTeamId,
     boxPitcher: gameDetail?.boxScore?.awayPitchers?.[0],
   });
@@ -428,6 +429,7 @@ export default function GameDetailPage() {
     lineupStarterName: d.detailLineup?.homeStarter,
     liveStarterFresh,
     lineupStarterTrusted,
+    lineupSource: detailSnapshot?.lineupSource,
     teamId: game.homeTeamId,
     boxPitcher: gameDetail?.boxScore?.homePitchers?.[0],
   });

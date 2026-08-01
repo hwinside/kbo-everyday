@@ -1,6 +1,7 @@
 import pitcherStatsJson from "@/lib/constants/stats-2026-pitchers.json";
 import { resolveRosterPlayer } from "@/lib/utils/player-roster";
 import { resolvePlayerIdentity } from "@/lib/utils/resolve-player";
+import type { LineupSource } from "@/lib/source-snapshot";
 
 type PitcherSeasonRow = {
   era?: string;
@@ -58,6 +59,7 @@ export function resolveLineupStarter({
   lineupStarterName,
   liveStarterFresh,
   lineupStarterTrusted,
+  lineupSource,
   teamId,
   boxPitcher,
 }: {
@@ -65,6 +67,7 @@ export function resolveLineupStarter({
   lineupStarterName?: string | null;
   liveStarterFresh: boolean;
   lineupStarterTrusted: boolean;
+  lineupSource?: LineupSource | null;
   teamId: number;
   boxPitcher?: { name?: string | null; era?: string | null } | null;
 }): { name: string; era: string; kboId?: string } {
@@ -74,8 +77,11 @@ export function resolveLineupStarter({
   const validBoxName = boxName && !/^선수\(\d+\)$/.test(boxName) ? boxName : "";
   // Live와 confirmed lineup이 다르면 요청 완료시각으로 신구를 추측하지 않는다.
   // 비교 가능한 upstream revision이 없으므로 identity-bound confirmed lineup을 우선한다.
+  const lineupConfirmed = lineupSource == null
+    ? lineupStarterTrusted
+    : lineupSource === "kbo-confirmed" || lineupSource === "naver-confirmed";
   const confirmedMismatch = Boolean(
-    lineupStarterTrusted && lineupName && liveName && lineupName !== liveName,
+    lineupConfirmed && lineupStarterTrusted && lineupName && liveName && lineupName !== liveName,
   );
   const starterName = confirmedMismatch
     ? lineupName

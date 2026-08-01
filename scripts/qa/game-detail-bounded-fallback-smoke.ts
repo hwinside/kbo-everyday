@@ -283,7 +283,8 @@ async function scenario(
     | "preview-only"
     | "preview-partial"
     | "bf-zero"
-    | "bf-missing",
+    | "bf-missing"
+    | "bf-hidden-row",
   state: GameState,
 ) {
   const signals = new Set<AbortSignal>();
@@ -357,6 +358,13 @@ async function scenario(
       return json(boxScore(kboMode === "pitch-zero" ? 0 : 102));
     }
     if (url.includes("/record")) {
+      if (naverMode === "bf-hidden-row") {
+        const payload = naverRecord(state) as {
+          result: { recordData: { pitchersBoxscore: { away: Array<Record<string, unknown>> } } };
+        };
+        payload.result.recordData.pitchersBoxscore.away.push({ name: "", inn: "1", bf: 0 });
+        return json(payload);
+      }
       if (naverMode === "bf-zero" || naverMode === "bf-missing") {
         const payload = JSON.parse(JSON.stringify(
           naverRecord(state),
@@ -556,7 +564,7 @@ async function main() {
   assert.equal(pitchZeroDualPartial.body.boxScore, null, "dual partial box fails closed");
   assert.equal(pitchZeroDualPartial.body.trace?.boxScoreSource, "none");
 
-  for (const naverMode of ["bf-zero", "bf-missing"] as const) {
+  for (const naverMode of ["bf-zero", "bf-missing", "bf-hidden-row"] as const) {
     const result = await scenario(
       `KBO pitchCount zero + Naver ${naverMode}`,
       "pitch-zero",
@@ -669,8 +677,8 @@ async function main() {
   assert.match(routeSource, /signal:\s*deadlineSignal/g, "shared absolute deadline wiring retained");
   assert.match(
     naverRecordSource,
-    /recordedPitchers\.every\(\(pitcher\) => pitcher\.pitchCount > 0\)/,
-    "Naver box completeness remains bound to positive bf for every recorded pitcher",
+    /rawPitchersComplete\(pb\.away\).*rawPitchersComplete\(pb\.home\)/,
+    "Naver box completeness validates raw pitcher rows before name filtering",
   );
 
   console.log("game-detail bounded fallback: actual GET degradation matrix PASS");
