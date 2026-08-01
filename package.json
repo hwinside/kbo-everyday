@@ -12,6 +12,7 @@
     "transcode:videos": "node scripts/transcode-videos.mjs",
     "qa:ui:comment-crud": "node scripts/qa/ui-smoke-comment-crud.mjs",
     "qa:ui:dm-draft": "node scripts/qa/ui-smoke-dm-draft.mjs",
+    "qa:genius-avatar": "node scripts/qa/genius-avatar-ui-smoke.mjs",
     "qa:dm-atomic": "node scripts/qa/dm-atomic-send-smoke.mjs",
     "qa:ui:gamechat-giphy": "node scripts/qa/ui-smoke-gamechat-giphy.mjs",
     "qa:venue-chat-badge": "tsx scripts/qa/venue-chat-badge-smoke.ts",
