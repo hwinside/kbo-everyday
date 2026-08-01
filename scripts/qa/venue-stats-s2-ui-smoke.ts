@@ -7,7 +7,9 @@ import {
 import {
   batterCompatibility,
   buildVenueStatsHero,
+  awayFanTag,
   MEASURED_ATTENDANCE_DISTRIBUTION,
+  MEASURED_AWAY_DISTRIBUTION,
   scoreConfidenceLevel,
   coverageCaption,
   formatAvg,
@@ -225,6 +227,63 @@ const scope: VenueStatsScopePayload = {
     "low",
     "실측 최대+1 경기에서 '낮음'이면 기준이 너무 높다",
   );
+}
+
+// ─ 하린아빠 2026-08-02: "보통 홈구장만 가는 팬이 대부분인데 원정까지 많이 가는 팬은
+//   정말 찐팬이니 이것도 추가". 임계는 실측 분포 안에서 나뉘어야 한다.
+{
+  assert.equal(awayFanTag({ awayGames: 0, awayStadiums: 0, totalGames: 8 }), null,
+    "원정이 없으면 태그를 붙이지 않는다");
+
+  // 실측: 원정 경험자 12/42(29%) · 최대 2경기 · 최대 2구장.
+  const first = awayFanTag({ awayGames: 1, awayStadiums: 1, totalGames: 8 })!;
+  assert.equal(first.tier, 1);
+  assert.equal(first.label, "첫 원정");
+  assert.equal(first.value, "원정 1경기", "구장 1곳이면 구장 수를 중복 표기하지 않는다");
+
+  // 관측 최대치(2경기·2구장)에서 최소 3단계 이상 — 도달 불가 등급만 남기지 않는다.
+  const atMax = awayFanTag({
+    awayGames: MEASURED_AWAY_DISTRIBUTION.maxAwayGames,
+    awayStadiums: MEASURED_AWAY_DISTRIBUTION.maxAwayStadiums,
+    totalGames: 8,
+  })!;
+  assert.ok(
+    atMax.tier >= 3,
+    `실측 최대 원정(${MEASURED_AWAY_DISTRIBUTION.maxAwayGames}경기·${MEASURED_AWAY_DISTRIBUTION.maxAwayStadiums}구장)에서 3단계 이상이어야 함: tier ${atMax.tier}`,
+  );
+  assert.equal(atMax.label, "전국구 팬");
+
+  // RED — 구 임계(원정 8경기 & 4구장 / 3구장)로 되돌리면 실측 최대에서도 tier 1 에 머문다.
+  assert.ok(
+    awayFanTag({ awayGames: 2, awayStadiums: 1, totalGames: 8 })!.tier >= 2,
+    "관측 최대 원정 경기수(2)는 최소 '원정러' 이상이어야 함(임계 재상향 차단)",
+  );
+
+  // 원정 비중이 전체 평균의 1.5배를 넘으면 1경기여도 승급.
+  const highShare = awayFanTag({ awayGames: 1, awayStadiums: 1, totalGames: 2 })!;
+  assert.equal(highShare.tier, 2, `원정 비중 50%는 '원정러': ${JSON.stringify(highShare)}`);
+  // 반대로 비중이 낮으면 승급하지 않는다(과잉 부여 차단).
+  assert.equal(awayFanTag({ awayGames: 1, awayStadiums: 1, totalGames: 20 })!.tier, 1);
+
+  // 최상위는 관측 밖 "성장 등급" — 현재 아무도 도달하지 못하는 것이 의도.
+  const top = awayFanTag({ awayGames: 3, awayStadiums: 2, totalGames: 12 })!;
+  assert.equal(top.label, "원정대장");
+  assert.equal(top.tier, 4);
+  assert.ok(
+    top.tier > atMax.tier,
+    "성장 등급은 실측 최대보다 위에 있어야 한다",
+  );
+
+  // 단조성 — 원정이 늘수록 등급이 내려가지 않는다.
+  let prev = 0;
+  for (const [g, st] of [[1, 1], [2, 1], [2, 2], [3, 2], [8, 4]] as const) {
+    const tag = awayFanTag({ awayGames: g, awayStadiums: st, totalGames: 20 })!;
+    assert.ok(tag.tier >= prev, `원정 ${g}경기·${st}구장에서 등급이 역행함: ${tag.tier} < ${prev}`);
+    prev = tag.tier;
+  }
+
+  // totalGames 가 0이어도 나눗셈 오염 없이 동작한다.
+  assert.equal(awayFanTag({ awayGames: 1, awayStadiums: 1, totalGames: 0 })!.tier, 1);
 }
 
 // ─ 하린아빠 2026-08-02: "관전가치 기준이 아니라 무조건 팀퍼포먼스와의 상관도를 봐야지".

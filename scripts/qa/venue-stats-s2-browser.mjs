@@ -252,7 +252,12 @@ const scope = (name, wins, rate, excessWin = .18, excessMargin = 1.4) => {
   metrics.E3 = envelope("E3", {firstAttendanceDate:"2024-04-01",daysSinceFirst:842,totalGames:17});
   metrics.E4 = envelope("E4", {topStadium:{name:"잠실",count:6},mostSeenFavorites:[]});
   metrics.A2 = envelope("A2", [{opponentTeamId:2,w:3,l:1,d:0,rate:.75}]);
-  metrics.A3 = envelope("A3", [{stadium:"잠실",homeAway:"home",w:4,l:2,d:0,rate:.667}]);
+  // 원정 찐팬 태그 검증용 — 홈 잠실 + 원정 2개 구장 3경기(하린아빠 2026-08-02).
+  metrics.A3 = envelope("A3", [
+    {stadium:"잠실",homeAway:"home",w:3,l:2,d:0,rate:.6},
+    {stadium:"대구",homeAway:"away",w:1,l:1,d:0,rate:.5},
+    {stadium:"문학",homeAway:"away",w:1,l:0,d:0,rate:1},
+  ]);
   metrics.A4 = envelope("A4", [{weekday:6,w:3,l:1,d:0,rate:.75}]);
   metrics.A5 = {
     ...envelope("A5", [{dayNight:"night",w:4,l:2,d:0,rate:.667},{dayNight:"day",w:2,l:0,d:0,rate:1}]),
@@ -432,6 +437,12 @@ const partialBaselinePayload = {
 // `야간 경기 체질 0승 · 0%`, `7월의 승요 0승 · 0%` 같은 긍정 태그가 렌더됐다.
 const losingSplitScope = (name) => {
   const base = scope(name, 5, .625);
+  // 성적 태그 RED 는 "0승이면 승요류가 하나도 없어야 한다" 계약이다.
+  // 기본 fixture 의 원정 승리가 새어 들어오면 계약이 무력화되므로 A3 도 0승으로 덮는다.
+  base.metrics.A3 = envelope("A3", [
+    {stadium:"잠실",homeAway:"home",w:0,l:2,d:0,rate:0},
+    {stadium:"대구",homeAway:"away",w:0,l:1,d:0,rate:0},
+  ]);
   base.metrics.A5 = {
     ...envelope("A5", [{dayNight:"night",w:0,l:3,d:0,rate:0},{dayNight:"day",w:0,l:3,d:0,rate:0}]),
     // 삼순 P1 재현 — 시즌 낮경기 기회 0인데 참석 1 → 예전엔 `평균의 Infinity배`가 렌더됐다.

@@ -60,6 +60,7 @@ import {
   formatRate,
   formatSigned,
   METRIC_STATE_LABELS,
+  awayFanTag,
   SCORE_CONFIDENCE_LABELS,
   scoreConfidenceLevel,
   splitCells,
@@ -444,23 +445,15 @@ export default function VenueStatsDashboard() {
   })();
 
   // ── 원정 찐팬 태그 (하린아빠 2026-08-02) ────────────────────────────────
-  // "보통 홈구장만 가는 팬이 대부분인데 원정까지 많이 가는 팬은 정말 찐팬".
-  // 삼순: 원정 횟수 + 원정 비중 + 방문 원정구장 수를 함께 보고 단계형으로.
+  // "보통 홈구장만 가는 팬이 대부분인데 원정까지 많이 가는 팬은 정말 찐팬이니 이것도 추가".
+  // 임계는 `awayFanTag` 가 SSOT — 실측 분포 근거·회귀는 ui.ts 주석 참조.
   const awayCells = stadiumCells.filter(({ cell }) => cell.homeAway === "away");
   const awayGames = awayCells.reduce((sum, { cell }) => sum + cell.w + cell.l + cell.d, 0);
   const awayStadiums = new Set(awayCells.map(({ cell }) => cell.stadium)).size;
   const totalSplitGames = stadiumCells.reduce(
     (sum, { cell }) => sum + cell.w + cell.l + cell.d, 0,
   );
-  const awayShare = totalSplitGames > 0 ? awayGames / totalSplitGames : 0;
-  const awayTag = (() => {
-    if (awayGames === 0) return null;
-    const evidence = `원정 ${awayGames}경기 · ${awayStadiums}개 구장`;
-    if (awayGames >= 8 && awayStadiums >= 4) return { label: "원정대장", value: evidence };
-    if (awayStadiums >= 3) return { label: "전국구 팬", value: evidence };
-    if (awayGames >= 2 || awayShare >= 0.4) return { label: "원정러", value: evidence };
-    return { label: "첫 원정", value: evidence };
-  })();
+  const awayTag = awayFanTag({ awayGames, awayStadiums, totalGames: totalSplitGames });
   // 원정 성적 태그는 원정 승률이 실제 플러스일 때만 분리 노출(삼순).
   const awayWinTag = (() => {
     if (awayGames < MIN_FINAL_GAMES) return null;

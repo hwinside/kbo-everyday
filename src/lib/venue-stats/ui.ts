@@ -508,6 +508,75 @@ export function metricEvidence(metric: MetricEnvelope): string {
   return bits.join(" · ");
 }
 
+/**
+ * 원정 직관 성향 — 하린아빠 2026-08-02:
+ * **"보통 홈구장만 가는 팬이 대부분인데 원정까지 많이 가는 팬은 정말 찐팬이니 이것도 추가"**
+ *
+ * ⚠️ 이전 구현(대시보드 인라인)은 임계가 `원정 8경기 & 4개 구장`(원정대장) /
+ * `3개 구장`(전국구 팬) 이었다. 신뢰도 때와 **같은 실수** — 실측 분포를 안 보고 잡았다.
+ *
+ * 실측(`venue_attendance` 55행, 응원팀 실제 출전 49행 · 유효 42명):
+ *   홈 36 · 원정 13 → **원정 비중 26.5%**
+ *   유저별 원정: 0경기 30명 · 1경기 11명 · **2경기 1명(최대)**
+ *   원정 구장 수: 0개 30명 · 1개 11명 · 2개 1명
+ *   원정 경험자 12/42 = **29%** (= 하린아빠 말대로 "대부분은 홈만 간다")
+ *
+ * 즉 구 임계는 **전 유저가 `첫 원정` 하나에만 걸리는** 구조였다.
+ * 관측된 분포 안에서 등급을 나눈다 — 원정 1회부터 이미 상위 29%다.
+ *
+ * ⚠️ 오픈 직후 한 달치 분포이므로 시즌이 쌓이면 재측정 대상.
+ */
+export const MEASURED_AWAY_DISTRIBUTION = {
+  validUsers: 42,
+  awayExperiencedUsers: 12,
+  /** 원정 경험자 비율 — 원정 1회만으로도 상위 29%. */
+  awayExperiencedShare: 12 / 42,
+  /** 관측된 유저별 원정 경기 최대치. */
+  maxAwayGames: 2,
+  /** 관측된 유저별 원정 구장 수 최대치. */
+  maxAwayStadiums: 2,
+  /** 전체 직관 중 원정 비중. */
+  awayShare: 13 / 49,
+} as const;
+
+export interface AwayFanTag {
+  label: string;
+  value: string;
+  /** 단계 — 회귀에서 임계 재상향을 감지하기 위한 서수. */
+  tier: 1 | 2 | 3 | 4;
+}
+
+/**
+ * 원정 성향 태그. 원정 **경기수·구장수·비중**을 함께 본다.
+ *
+ * 단계(실측 기준):
+ *  1 `첫 원정`     원정 1경기 — 이미 상위 29%
+ *  2 `원정러`      원정 2경기(관측 최대) 또는 원정 비중이 전체 평균(26.5%)의 1.5배 이상
+ *  3 `전국구 팬`   원정 구장 2곳 이상 — 관측 최대치
+ *  4 `원정대장`    원정 3경기+ & 구장 2곳+ — 현재 아무도 없는 "미래 등급"
+ *
+ * ④만 관측 밖에 두는 이유: 성장 여지를 남기되, ①~③으로 **현재 유저가 반드시 어딘가에
+ * 도달**하도록 만든다. 도달 불가 등급만 잔뜩 만드는 게 직전 결함이었다.
+ */
+export function awayFanTag(input: {
+  awayGames: number;
+  awayStadiums: number;
+  totalGames: number;
+}): AwayFanTag | null {
+  const { awayGames, awayStadiums, totalGames } = input;
+  if (!Number.isFinite(awayGames) || awayGames <= 0) return null;
+  const evidence = awayStadiums > 1
+    ? `원정 ${awayGames}경기 · ${awayStadiums}개 구장`
+    : `원정 ${awayGames}경기`;
+  const share = totalGames > 0 ? awayGames / totalGames : 0;
+  if (awayGames >= 3 && awayStadiums >= 2) return { label: "원정대장", value: evidence, tier: 4 };
+  if (awayStadiums >= 2) return { label: "전국구 팬", value: evidence, tier: 3 };
+  if (awayGames >= 2 || share >= MEASURED_AWAY_DISTRIBUTION.awayShare * 1.5) {
+    return { label: "원정러", value: evidence, tier: 2 };
+  }
+  return { label: "첫 원정", value: evidence, tier: 1 };
+}
+
 export function coverageCaption(scope: VenueStatsScopePayload): string {
   const { attendanceGames, finalGames, incompleteFinalGames, unavailableGames } = scope.coverage;
   const gaps = incompleteFinalGames + unavailableGames;
