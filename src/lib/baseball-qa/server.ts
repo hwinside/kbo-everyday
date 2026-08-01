@@ -27,6 +27,14 @@ import {
   BASEBALL_QA_SYSTEM_PROMPT,
   buildBaseballQaGeminiRequest,
 } from "@/lib/baseball-qa/gemini-request";
+import {
+  buildRagLlmRequest,
+  RAG_CANDIDATE_LIMIT,
+  rankEvidenceByQuery,
+  type RagEvidence,
+  type RagPlayerCandidate,
+} from "@/lib/baseball-qa/rag/retrieve";
+import { embedQuery } from "@/lib/baseball-qa/rag/embed";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${BASEBALL_QA_GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
@@ -87,6 +95,73 @@ async function callLlm(question: string, context?: ContextTurn): Promise<LlmResu
   };
 }
 
+/** genius_rag_serving_chunks 서빙 행 (snake_case SQL 시그니처). */
+interface RagServingChunkRow {
+  content: string;
+  page_title: string;
+  canonical_url: string;
+  revision: string;
+  section_path: string;
+  as_of: string;
+  source_grade: string;
+  embedding: string | number[] | null;
+}
+
+/**
+ * entity-filtered tier2 근거 검색.
+ *
+ * 서빙 뷰(genius_rag_serving_chunks)만 읽는다 — 이 뷰는 active generation chunk만 노출하므로
+ * 수집 중인 미완성 snapshot이 검색에 새어나지 않는다. entity_id 등가 필터를 걸어
+ * **대상 선수의 문서가 아니면 아예 후보에 들어오지 못하게** 한다(엉뚱한 chunk 답변 차단).
+ * 미수집 선수는 자연히 0행이므로 호출자가 fail-close한다.
+ */
+async function searchRag(
+  candidate: RagPlayerCandidate,
+  question: string,
+): Promise<RagEvidence[]> {
+  const embedded = await embedQuery(question);
+  if (!embedded.ok) return [];
+  // query-guard: bounded -- entity 필터(선수 1명 = 문서 1건) + RAG_CANDIDATE_LIMIT 상한 조회다.
+  const { data, error } = await supabaseAdmin
+    .from("genius_rag_serving_chunks")
+    .select("content, page_title, canonical_url, revision, section_path, as_of, source_grade, embedding")
+    .eq("entity_type", candidate.entityType)
+    .eq("entity_id", candidate.entityId)
+    .limit(RAG_CANDIDATE_LIMIT);
+  if (error) throw error;
+  const rows = ((data ?? []) as RagServingChunkRow[]).map((row) => ({
+    content: row.content,
+    pageTitle: row.page_title,
+    canonicalUrl: row.canonical_url,
+    revision: row.revision,
+    sectionPath: row.section_path,
+    asOf: row.as_of,
+    sourceGrade: row.source_grade === "tier1" ? ("tier1" as const) : ("tier2" as const),
+    embedding: row.embedding,
+  }));
+  return rankEvidenceByQuery(rows, embedded.vector);
+}
+
+/** 근거를 비신뢰 데이터 블록으로만 전달하는 재서술 호출 (S2b). */
+async function callRagLlm(question: string, evidence: RagEvidence[]): Promise<LlmResult> {
+  if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY missing");
+  const res = await fetch(GEMINI_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(buildRagLlmRequest(question, evidence)),
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!res.ok) throw new Error(`Gemini API failed: ${res.status}`);
+  const data = await res.json();
+  const text: string =
+    data.candidates?.[0]?.content?.parts?.find((part: { text?: string }) => part.text)?.text ?? "";
+  return {
+    text,
+    inputTokens: data.usageMetadata?.promptTokenCount ?? null,
+    outputTokens: data.usageMetadata?.candidatesTokenCount ?? null,
+  };
+}
+
 /** baseball_genius_previous_turn RPC 반환 행 (snake_case SQL 시그니처). */
 interface PreviousTurnRowSql {
   question: string | null;
@@ -102,6 +177,14 @@ function makeDeps(messageId: number): QaDeps {
     loadGlossary,
     loadPlayers,
     callLlm,
+    searchRag,
+    callRagLlm,
+    recordRagDemand: async (sourceKeys) => {
+      // query-guard: bounded -- RPC가 source_keys 상한(20)을 강제하는 단일 갱신이다.
+      const { error } = await supabaseAdmin
+        .rpc("record_baseball_genius_source_demand", { p_source_keys: sourceKeys });
+      if (error) throw error;
+    },
     getCache: async (questionNorm) => {
       const { data, error } = await supabaseAdmin
         .from("genius_qa_cache")

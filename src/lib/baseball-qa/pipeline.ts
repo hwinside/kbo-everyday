@@ -10,6 +10,14 @@ import {
 } from "./context";
 import { normalizeKey, normalizeQuestion } from "./normalize";
 import {
+  composeRagAnswer,
+  isDescriptivePlayerQuestion,
+  selectEvidence,
+  validateRagResponse,
+  type RagEvidence,
+  type RagPlayerCandidate,
+} from "./rag/retrieve";
+import {
   BASEBALL_GENIUS_DAILY_LIMIT,
   BASEBALL_GENIUS_MAX_ANSWER_LENGTH,
   BASEBALL_GENIUS_MAX_QUESTION_LENGTH,
@@ -113,6 +121,8 @@ export type MatchPath =
   | "context_missing"
   // 단독 감사·확인 인사 — LLM/캐시 없이 결정론 응답 (#983 모니터에서 별도 라벨).
   | "ack"
+  // 선수 서술형 질문을 수집된 tier2 문서 근거로 답한 경로 (S2b).
+  | "rag"
   | "unsure"
   | "limited"
   | "error"
@@ -133,6 +143,15 @@ export interface QaDeps {
   getCache: (questionNorm: string) => Promise<string | null>;
   setCache: (questionNorm: string, answer: string) => Promise<void>;
   callLlm: (question: string, context?: ContextTurn) => Promise<LlmResult>;
+  /**
+   * 선수 entity로 필터된 tier2 근거 검색 (S2b). 미배선이면 RAG 경로 자체가 비활성이라
+   * 기존 동작 그대로다.
+   */
+  searchRag?: (candidate: RagPlayerCandidate, question: string) => Promise<RagEvidence[]>;
+  /** 근거를 **비신뢰 데이터**로만 전달하는 재서술 호출 (S2b). */
+  callRagLlm?: (question: string, evidence: RagEvidence[]) => Promise<LlmResult>;
+  /** 수요 기반 ingestion 우선순위용 — 질문이 지목한 source를 기록한다. 실패는 무시한다. */
+  recordRagDemand?: (sourceKeys: string[]) => Promise<void>;
   /**
    * 현재 질문 바로 직전의 user turn 1행 (spec §4.1 B1·B2). 후속 문법일 때만 조회한다.
    * 과거 폴백은 없다 — 이 1행이 부적격이면 맥락 없음으로 종료한다.
@@ -321,11 +340,17 @@ function tokensContainSequence(tokens: string[], parts: string[]): boolean {
   return false;
 }
 
-function hasPlayerReference(tokens: string[], players: PlayerRef[]): boolean {
-  // 선수명·KBO ID에도 일반 단어와 동일한 허용 조사 경계(tokenMatches)를 적용한다.
-  // "김도영의", "류현진은", "박해민이", "52605의" 같은 조사 결합형이 exact 미스로
-  // history_hold를 우회해 LLM/캐시에 진입하는 것을 막는다 (삼순 3차 P0).
-  return players.some((player) => {
+/**
+ * 질문이 지목한 로스터 선수 전부를 돌려준다.
+ * 선수명·KBO ID에 일반 단어와 동일한 허용 조사 경계(tokenMatches)를 적용한다.
+ * "김도영의", "류현진은", "박해민이", "52605의" 같은 조사 결합형이 exact 미스로
+ * history_hold를 우회해 LLM/캐시에 진입하는 것을 막는다 (삼순 3차 P0).
+ *
+ * 존재 판정(history_hold)뿐 아니라 RAG entity 해석에도 같은 매칭을 쓴다 — 두 경로가
+ * 서로 다른 이름 매칭을 쓰면 한쪽만 통과하는 우회가 생긴다.
+ */
+export function findPlayerReferences(tokens: string[], players: PlayerRef[]): PlayerRef[] {
+  return players.filter((player) => {
     const nameParts = questionTokens(player.name);
     const kboId = player.kboId.normalize("NFKC").toLowerCase().trim();
     if (kboId.length >= 3 && tokenMatches(tokens, kboId)) return true;
@@ -335,6 +360,52 @@ function hasPlayerReference(tokens: string[], players: PlayerRef[]): boolean {
       ? tokenMatches(tokens, nameParts[0])
       : tokensContainSequence(tokens, nameParts);
   });
+}
+
+function hasPlayerReference(tokens: string[], players: PlayerRef[]): boolean {
+  return findPlayerReferences(tokens, players).length > 0;
+}
+
+/**
+ * RAG 서빙 대상 선수를 해석한다. 답이 나오려면 **정확히 한 명**으로 좁혀져야 한다.
+ *
+ * 동명이인(로스터에 같은 이름이 둘 이상)이면 `null`이다 — 이름 단독으로 한 명을 고르는 것은
+ * 스펙 §12 동명이인 격리 계약 위반이며, 엉뚱한 선수 문서로 답하게 된다.
+ * 두 명 이상을 언급한 질문("A가 잘해 B가 잘해?")도 단일 entity 근거로 답할 수 없어 제외한다.
+ */
+export function resolveRagPlayerCandidate(
+  question: string,
+  players: PlayerRef[],
+): RagPlayerCandidate | null {
+  if (!isDescriptivePlayerQuestion(question)) return null;
+  const normalized = question.normalize("NFKC").toLowerCase();
+  const tokens = questionTokens(normalized);
+  const matched = findPlayerReferences(tokens, players);
+  const distinctIds = new Set(matched.map((player) => player.kboId));
+  if (distinctIds.size !== 1) return null;
+  const target = matched[0];
+
+  // 토큰 매칭은 허용 조사 목록에 없는 결합형("문보경이랑")을 놓친다. history_hold에서는
+  // 한 명만 걸려도 결과가 같지만, RAG는 "이 질문이 정말 한 선수만 가리키는가"가 정확도의 전제다.
+  // 따라서 조사와 무관하게 다른 선수 이름이 문자열로 등장하면 단일 entity로 보지 않는다.
+  // 판정을 보수적으로만 움직인다 — 과탐지는 RAG 미서빙(기존 경로 유지)을 만들 뿐이고,
+  // 놓치면 남의 문서로 답하는 사고가 된다.
+  const mentionsOther = players.some((player) =>
+    player.kboId !== target.kboId &&
+    player.name.length >= 2 &&
+    player.name !== target.name &&
+    normalized.includes(player.name.normalize("NFKC").toLowerCase()) &&
+    // 대상 선수 이름의 부분문자열일 뿐인 경우("양현" ⊂ "양현종")는 제외한다.
+    !target.name.includes(player.name));
+  if (mentionsOther) return null;
+
+  // 같은 이름이 로스터에 둘 이상이면 kboId가 갈려 distinctIds 검사에서 이미 걸러졌다(동명이인 격리).
+  return {
+    entityType: "player",
+    entityId: target.kboId,
+    name: target.name,
+    sourceKey: `namu:player:${target.kboId}`,
+  };
 }
 
 function hasBaseballSignal(value: string): boolean {
@@ -446,6 +517,48 @@ export function matchGlossary(entries: GlossaryEntry[], question: string): Gloss
   return index.get(normalizeKey(question)) ?? index.get(normalizeQuestion(question)) ?? null;
 }
 
+/**
+ * RAG 서빙 시도. 성공하면 출처 표기까지 붙인 최종 답변을, 실패하면 null을 돌려준다.
+ * null은 "이 경로로는 답하지 않는다"는 뜻이며 호출자는 기존 경로를 계속 진행한다.
+ * 검색·LLM 오류도 null로 흡수한다 — RAG는 부가 경로이지 기존 답변을 막는 관문이 아니다.
+ */
+async function tryAnswerFromRag(
+  question: string,
+  candidate: RagPlayerCandidate,
+  deps: QaDeps,
+): Promise<LlmResult & { answer: string } | null> {
+  if (!deps.searchRag || !deps.callRagLlm) return null;
+  // 수요 기록은 ingestion 우선순위 신호일 뿐이라 실패해도 답변 경로를 막지 않는다.
+  if (deps.recordRagDemand) {
+    try {
+      await deps.recordRagDemand([candidate.sourceKey]);
+    } catch {
+      // 무시
+    }
+  }
+  let rows: RagEvidence[];
+  try {
+    rows = await deps.searchRag(candidate, question);
+  } catch {
+    return null;
+  }
+  const evidence = selectEvidence(rows);
+  if (evidence.length === 0) return null;
+
+  let llm: LlmResult;
+  try {
+    llm = await deps.callRagLlm(question, evidence);
+  } catch {
+    return null;
+  }
+  const validated = validateRagResponse(llm.text);
+  if (validated.kind !== "grounded") return null;
+  return {
+    ...llm,
+    answer: composeRagAnswer(validated.answer, evidence[0]),
+  };
+}
+
 export async function answerQuestion(userId: string, rawQuestion: string, deps: QaDeps): Promise<QaResult> {
   const question = rawQuestion.trim();
   const questionNorm = normalizeQuestion(question);
@@ -505,6 +618,20 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     if (cached !== null) {
       await deps.log({ userId, question, questionNorm, matchPath: "cache", answer: cached, inputTokens: null, outputTokens: null });
       return { status: 200, answer: cached, source: "cache", remaining };
+    }
+  }
+
+  // ②-b 선수 서술형 질문은 수집된 tier2 문서 근거로 답한다 (S2b).
+  // 근거가 없거나 계약(수치 금지·출력 가드)을 통과하지 못하면 **답을 만들지 않고** 아래 기존
+  // 경로로 그대로 내려간다 — 미커버 선수는 지금과 동일하게 동작한다(fail-close).
+  if (deps.searchRag && deps.callRagLlm) {
+    const candidate = resolveRagPlayerCandidate(question, players);
+    if (candidate) {
+      const ragAnswer = await tryAnswerFromRag(question, candidate, deps);
+      if (ragAnswer) {
+        await deps.log({ userId, question, questionNorm, matchPath: "rag", answer: ragAnswer.answer, inputTokens: ragAnswer.inputTokens, outputTokens: ragAnswer.outputTokens });
+        return { status: 200, answer: ragAnswer.answer, source: "rag", remaining };
+      }
     }
   }
 
