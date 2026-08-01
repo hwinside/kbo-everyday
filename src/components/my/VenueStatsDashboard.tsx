@@ -507,7 +507,7 @@ export default function VenueStatsDashboard() {
                   const player = favoriteById.get(playerId);
                   const batter = c1ById.get(playerId);
                   const pitcher = c2ById.get(playerId);
-                  const homer = c4ById.get(playerId);
+                  const highlight = c4ById.get(playerId);
                   const team = player ? getTeamById(player.teamId) : null;
                   const photoUrl = player ? getPlayerPhotoUrl(player.name, playerId, player.teamId) : null;
                   return (
@@ -539,10 +539,20 @@ export default function VenueStatsDashboard() {
                             {team?.shortName ?? "최애 선수"}{player?.position ? ` · ${player.position}` : ""}
                           </p>
                         </div>
-                        {homer && (
+                        {highlight?.batter && (
                           <div className="text-right">
-                            <p className="text-[20px] font-black">{homer.homeRuns}개</p>
-                            <p className="text-[10px] text-white/70">홈런 목격</p>
+                            <p className="text-[20px] font-black">{highlight.batter.hits}안타</p>
+                            <p className="text-[10px] text-white/70">
+                              {highlight.batter.rbi}타점 · {highlight.batter.homeRuns}홈런
+                            </p>
+                          </div>
+                        )}
+                        {!highlight?.batter && highlight?.pitcher && (
+                          <div className="text-right">
+                            <p className="text-[20px] font-black">{highlight.pitcher.strikeouts}K</p>
+                            <p className="text-[10px] text-white/70">
+                              {highlight.pitcher.zeroEarnedRunGames}경기 0자책
+                            </p>
                           </div>
                         )}
                       </div>

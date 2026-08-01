@@ -34,6 +34,7 @@ import {
   type B2Value,
   type B4Side,
   type B4Value,
+  type C4Entry,
   type MetricEnvelope,
 } from "@/lib/venue-stats/types";
 import { buildVenueStatsHero } from "@/lib/venue-stats/ui";
@@ -345,6 +346,16 @@ console.log("\n[2] gps scope (story_geofence만 — manual 혼입 금지 #972 �
   ok("C2 F2 ready: ERA 3.00 vs 3.00, K/9=9, outs 54≥15", f2?.state === "ready" && approx((f2?.value as { attendanceEra: number })?.attendanceEra, 3) && approx((f2?.value as { attendanceK9: number })?.attendanceK9, 9));
   const c4 = s.metrics.C4;
   ok("C4 홈런 목격: F1 1방(G1)·appearance 3", (item(c4, "70001")?.value as { homeRuns: number; appearanceGames: number })?.homeRuns === 1 && (item(c4, "70001")?.value as { appearanceGames: number })?.appearanceGames === 3);
+  ok(
+    "C4 타자 안타·타점·홈런 묶음",
+    JSON.stringify((item(c4, "70001")?.value as C4Entry | null)?.batter) ===
+      JSON.stringify({ hits: 5, rbi: 2, homeRuns: 1 }),
+  );
+  ok(
+    "C4 투수 탈삼진·0자책 경기 묶음",
+    (item(c4, "70002")?.value as C4Entry | null)?.pitcher?.strikeouts === 18 &&
+      (item(c4, "70002")?.value as C4Entry | null)?.pitcher?.zeroEarnedRunGames === 0,
+  );
   const c5 = s.metrics.C5;
   const f1c5 = item(c5, "70001")?.value as { batterTop?: { gameId: string; hr: number } };
   ok("C5 F1 batterTop=G1 (HR desc 우선 — §10 lexicographic)", f1c5?.batterTop?.gameId === G1.gameId && f1c5?.batterTop?.hr === 1);

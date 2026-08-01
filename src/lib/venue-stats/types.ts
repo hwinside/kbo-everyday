@@ -135,8 +135,11 @@ export interface C2Entry {
 }
 export interface C4Entry {
   playerId: string;
+  /** 기존 클라이언트 호환 필드. 신규 UI는 batter.homeRuns를 사용한다. */
   homeRuns: number;
   appearanceGames: number;
+  batter: { hits: number; rbi: number; homeRuns: number } | null;
+  pitcher: { strikeouts: number; zeroEarnedRunGames: number } | null;
 }
 export interface C5BatterTop {
   gameId: string;

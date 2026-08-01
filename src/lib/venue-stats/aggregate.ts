@@ -1158,14 +1158,28 @@ function buildC4(ctx: Ctx, cc: CContext): MetricEnvelope<C4Entry[]> {
   if (state !== "ready" && state !== "sample_limited" && state !== "partial_data") return envelope;
 
   for (const a of cc.attendances) {
-    if (a.batterRows.length === 0 && a.coverage.unknown === 0) continue;
+    if (a.batterRows.length === 0 && a.pitcherRows.length === 0 && a.coverage.unknown === 0) continue;
+    const hits = a.batterRows.reduce((s, r) => s + r.h, 0);
+    const rbi = a.batterRows.reduce((s, r) => s + r.rbi, 0);
     const homeRuns = a.batterRows.reduce((s, r) => s + r.hr, 0);
-    const games = new Set(a.batterRows.map((r) => r.game_id)).size;
+    const strikeouts = a.pitcherRows.reduce((s, r) => s + r.k, 0);
+    const zeroEarnedRunGames = new Set(
+      a.pitcherRows
+        .filter((row) => row.ip_outs > 0 && row.er === 0)
+        .map((row) => row.game_id),
+    ).size;
+    const games = new Set([...a.batterRows, ...a.pitcherRows].map((r) => r.game_id)).size;
     const itemState: MetricState =
       a.coverage.unknown > 0 ? "partial_data" : "ready";
     const entry: C4Entry | null =
       itemState === "ready"
-        ? { playerId: a.favorite.playerId, homeRuns, appearanceGames: games }
+        ? {
+            playerId: a.favorite.playerId,
+            homeRuns,
+            appearanceGames: games,
+            batter: a.batterRows.length > 0 ? { hits, rbi, homeRuns } : null,
+            pitcher: a.pitcherRows.length > 0 ? { strikeouts, zeroEarnedRunGames } : null,
+          }
         : null;
     if (entry) envelope.value!.push(entry);
     envelope.items!.push({
