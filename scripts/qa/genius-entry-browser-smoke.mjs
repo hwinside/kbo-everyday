@@ -38,7 +38,10 @@ async function measure(page) {
   return page.evaluate((expectSrc) => {
     const btn = document.querySelector('[data-testid="genius-entry-button"]');
     const dm = document.querySelector('a[href="/messages"]');
-    const header = btn?.closest("header") ?? null;
+    // ⚠️ header 를 btn.closest() 로 찾으면 버튼이 없는 비로그인에서 항상 null 이 되고,
+    //    "헤더 없음" 이라는 무관한 FAIL 이 난다(내 첫 하니스가 그랬다).
+    //    헤더는 버튼 존재와 무관하게 문서에서 직접 찾는다.
+    const header = btn?.closest("header") ?? document.querySelector("header") ?? null;
     const img = btn?.querySelector("img") ?? null;
     const r = (el) => (el ? el.getBoundingClientRect() : null);
     return {
@@ -61,44 +64,52 @@ async function main() {
   let testUser = null;
 
   try {
-    // ---------- 비로그인 ----------
+    // ---------- 비로그인: 진입 자체가 불가능해야 한다 ----------
+    // 2026-08-02 하린아빠 "비로그인 상태면 진입 불가능해야돼".
+    // 종전 계약은 "버튼 노출 + 탭하면 로그인 시트" 였다. 이제는 버튼이 아예 없어야 한다.
+    // 홈(HomeClientShell 자체 헤더)과 뉴스(HeaderProfileLink) 두 헤더 모두 검사한다.
+    for (const pg of [
+      { label: "홈", path: "/" },
+      { label: "뉴스", path: "/news" },
+    ]) {
+      const T = `[비로그인·${pg.label}]`;
+      const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+      const page = await ctx.newPage();
+      await page.goto(`${BASE_URL}${pg.path}`, { waitUntil: "networkidle" });
+
+      // AuthContext 가 세션을 확정할 시간을 준다. 확정 전에도 노출되면 안 되지만,
+      // 확정 후 뒤늦게 나타나는 회귀를 잡으려면 기다린 뒤에 봐야 한다.
+      await page.waitForTimeout(1500);
+      const m = await measure(page);
+
+      ok(`${T} 마스코트 진입점이 노출되지 않는다`, !m.hasBtn);
+      ok(
+        `${T} DOM 에 버튼 자체가 없다(숨김 처리만으로는 불충분)`,
+        (await page.locator('[data-testid="genius-entry-button"]').count()) === 0,
+      );
+      ok(
+        `${T} 헤더 높이가 규격 안(진입점 제거로 레이아웃이 깨지지 않음)`,
+        !!m.headerRect && m.headerRect.height >= HEADER_MIN && m.headerRect.height <= HEADER_MAX,
+        m.headerRect ? `${Math.round(m.headerRect.height)}px` : "(헤더 없음)",
+      );
+      ok(`${T} 가로 overflow 없음`, !m.docOverflowX);
+
+      await ctx.close();
+    }
+
+    // 진입점이 없으니 URL 을 직접 쳐도 대화가 열리면 안 된다(빈 대화 생성 금지).
     {
       const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
       const page = await ctx.newPage();
-      await page.goto(`${BASE_URL}/news`, { waitUntil: "networkidle" });
-      const m = await measure(page);
-
-      ok("[비로그인] 헤더에 마스코트 버튼이 렌더된다", m.hasBtn);
-      ok("[비로그인] 이미지 src가 마스코트 자산", m.srcMatches, m.imgSrc ?? "(없음)");
+      await page.goto(`${BASE_URL}/messages/new-${GENIUS_ID}`, { waitUntil: "networkidle" });
+      await page.waitForTimeout(1200);
+      const body = await page.evaluate(() => document.body.innerText);
+      const composerCount = await page.locator("textarea").count();
       ok(
-        "[비로그인] 이미지가 실제로 로드된다(404 아님)",
-        m.imgNaturalWidth > 0,
-        `naturalWidth=${m.imgNaturalWidth}`,
+        "[비로그인] 대화방 URL 직접 접근도 입력창을 열어주지 않는다",
+        /로그인|카카오|구글/.test(body) || composerCount === 0,
+        `composer=${composerCount} url=${page.url()}`,
       );
-      ok(
-        "[비로그인] 마스코트가 쪽지 아이콘 왼쪽",
-        !!m.btnRect && !!m.dmRect && m.btnRect.x < m.dmRect.x,
-        m.btnRect && m.dmRect ? `mascot.x=${Math.round(m.btnRect.x)} dm.x=${Math.round(m.dmRect.x)}` : "",
-      );
-      ok(
-        "[비로그인] 캐릭터 가시 높이 충분",
-        !!m.imgRect && m.imgRect.height >= MASCOT_MIN_VISIBLE,
-        m.imgRect ? `${Math.round(m.imgRect.height)}px >= ${MASCOT_MIN_VISIBLE}` : "",
-      );
-      ok(
-        "[비로그인] 헤더 높이가 규격 안(밀림 없음)",
-        !!m.headerRect && m.headerRect.height >= HEADER_MIN && m.headerRect.height <= HEADER_MAX,
-        m.headerRect ? `${Math.round(m.headerRect.height)}px` : "",
-      );
-      ok("[비로그인] 가로 overflow 없음", !m.docOverflowX);
-
-      // 비로그인 탭 → 로그인 시트. 방을 만들면 안 된다.
-      await page.click('[data-testid="genius-entry-button"]');
-      await page.waitForTimeout(800);
-      const loginShown = await page.evaluate(() =>
-        /카카오|구글|로그인/.test(document.body.innerText),
-      );
-      ok("[비로그인] 탭하면 로그인 시트, 라우팅 안 함", loginShown && page.url().includes("/news"), page.url());
       await ctx.close();
     }
 
@@ -111,6 +122,16 @@ async function main() {
     });
     if (createErr) throw new Error(`테스트 계정 생성 실패: ${createErr.message}`);
     testUser = created.user;
+
+    // ⚠️ 프로필(닉네임·팀)이 없으면 ProfileSetupWrapper 가 전체화면 모달(z-50)을 띄워
+    //    헤더 클릭을 가로챈다. 그건 신규가입 정상 동작이지 이 PR 과 무관하다
+    //    (내 첫 하니스가 여기서 30초 타임아웃 나고 구현 결함처럼 보였다).
+    //    온보딩을 마친 일반 유저 상태를 만들어 놓고 진입점만 검증한다.
+    const { error: profErr } = await admin.from("profiles").upsert(
+      { id: testUser.id, nickname: `QA진입${Date.now() % 100000}`, team_id: 1 },
+      { onConflict: "id" },
+    );
+    if (profErr) throw new Error(`테스트 프로필 생성 실패: ${profErr.message}`);
 
     const { data: link, error: linkErr } = await admin.auth.admin.generateLink({
       type: "magiclink",
