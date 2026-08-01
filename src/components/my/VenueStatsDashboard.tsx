@@ -60,6 +60,8 @@ import {
   formatRate,
   formatSigned,
   METRIC_STATE_LABELS,
+  SCORE_CONFIDENCE_LABELS,
+  scoreConfidenceLevel,
   splitCells,
   metricEvidence,
   metricTrend,
@@ -337,7 +339,6 @@ export default function VenueStatsDashboard() {
   const bestOpponent = bestSplit(opponentCells);
   const bestStadium = bestSplit(stadiumCells);
   const bestWeekday = bestSplit(weekdayCells);
-  const bestDayNight = bestSplit(dayNightCells);
   const bestMonth = bestSplit(monthCells);
   const bestOpponentName = bestOpponent
     ? getTeamById(bestOpponent.cell.opponentTeamId)?.shortName ?? `팀 ${bestOpponent.cell.opponentTeamId}`
@@ -355,13 +356,69 @@ export default function VenueStatsDashboard() {
   // 예전엔 표본만 충족하면 0승3패에도 `야간 경기 체질`/`7월의 승요`가 렌더됐다.
   const POSITIVE_TAG_RATE = 0.5;
   const isPositiveSplit = (rate: number | null | undefined) => (rate ?? 0) > POSITIVE_TAG_RATE;
-  const bestDayNightLabel = bestDayNight
-    ? (() => {
-        const slot = bestDayNight.cell.dayNight === "day" ? "낮" : "야간";
-        if (isPositiveSplit(bestDayNight.cell.rate)) return `${slot} 경기 체질`;
-        return (bestDayNight.cell.rate ?? 0) === 0 ? `${slot} 경기 인내형` : `${slot} 경기가 그나마`;
-      })()
-    : null;
+
+  // ── 낮 경기 관람 성향 태그 (하린아빠 2026-08-02) ──────────────────────────
+  // "야간경기가 대부분인데 야간 경기 체질은 애매해. 차라리 낮 경기를 유독 많이 보는
+  //  사람에게 별칭을 주는 게 자연스러움" → `야간 경기 체질` 폐기.
+  // 삼순: 단순 횟수가 아니라 **낮 경기 기회 대비 참석 비율**로 판단.
+  const dayOpportunity = (scope?.metrics.A5?.coverage as {
+    dayGameOpportunity?: {
+      attendanceDayGames: number;
+      attendanceTotal: number;
+      seasonDayGames: number;
+      seasonTotal: number;
+    };
+  } | undefined)?.dayGameOpportunity;
+  // 내 낮경기 비중이 팀 일정의 낮경기 비중보다 유의미하게 높을 때만 별칭을 준다.
+  const dayGameTag = (() => {
+    if (!dayOpportunity || dayOpportunity.attendanceTotal < MIN_FINAL_GAMES) return null;
+    if (dayOpportunity.seasonTotal === 0 || dayOpportunity.attendanceDayGames === 0) return null;
+    const mine = dayOpportunity.attendanceDayGames / dayOpportunity.attendanceTotal;
+    const baseline = dayOpportunity.seasonDayGames / dayOpportunity.seasonTotal;
+    if (mine < baseline * 1.5) return null;
+    return {
+      label: mine >= 0.5 ? "햇살 직관러" : "낮경기 수집가",
+      value: `낮 ${dayOpportunity.attendanceDayGames}경기 · 평균의 ${(mine / baseline).toFixed(1)}배`,
+    };
+  })();
+  // 성적을 암시하는 `낮경기 승요`는 낮 경기 초과성과가 실제 플러스일 때만 별도 노출(삼순).
+  const dayGameWinTag = (() => {
+    const dayCell = dayNightCells.find(({ cell }) => cell.dayNight === "day");
+    if (!dayCell || dayCell.sampleLimited) return null;
+    if (!isPositiveSplit(dayCell.cell.rate)) return null;
+    return {
+      label: "낮경기 승요",
+      value: `${dayCell.cell.w}승 ${dayCell.cell.l}패 · ${formatRate(dayCell.cell.rate, 0)}`,
+    };
+  })();
+
+  // ── 원정 찐팬 태그 (하린아빠 2026-08-02) ────────────────────────────────
+  // "보통 홈구장만 가는 팬이 대부분인데 원정까지 많이 가는 팬은 정말 찐팬".
+  // 삼순: 원정 횟수 + 원정 비중 + 방문 원정구장 수를 함께 보고 단계형으로.
+  const awayCells = stadiumCells.filter(({ cell }) => cell.homeAway === "away");
+  const awayGames = awayCells.reduce((sum, { cell }) => sum + cell.w + cell.l + cell.d, 0);
+  const awayStadiums = new Set(awayCells.map(({ cell }) => cell.stadium)).size;
+  const totalSplitGames = stadiumCells.reduce(
+    (sum, { cell }) => sum + cell.w + cell.l + cell.d, 0,
+  );
+  const awayShare = totalSplitGames > 0 ? awayGames / totalSplitGames : 0;
+  const awayTag = (() => {
+    if (awayGames === 0) return null;
+    const evidence = `원정 ${awayGames}경기 · ${awayStadiums}개 구장`;
+    if (awayGames >= 8 && awayStadiums >= 4) return { label: "원정대장", value: evidence };
+    if (awayStadiums >= 3) return { label: "전국구 팬", value: evidence };
+    if (awayGames >= 2 || awayShare >= 0.4) return { label: "원정러", value: evidence };
+    return { label: "첫 원정", value: evidence };
+  })();
+  // 원정 성적 태그는 원정 승률이 실제 플러스일 때만 분리 노출(삼순).
+  const awayWinTag = (() => {
+    if (awayGames < MIN_FINAL_GAMES) return null;
+    const w = awayCells.reduce((sum, { cell }) => sum + cell.w, 0);
+    const l = awayCells.reduce((sum, { cell }) => sum + cell.l, 0);
+    const rate = w + l > 0 ? w / (w + l) : null;
+    if (!isPositiveSplit(rate)) return null;
+    return { label: "원정 승요", value: `${w}승 ${l}패 · ${formatRate(rate, 0)}` };
+  })();
   const bestMonthLabel = bestMonth
     ? isPositiveSplit(bestMonth.cell.rate)
       ? `${bestMonth.cell.month}월의 승요`
@@ -410,11 +467,31 @@ export default function VenueStatsDashboard() {
     key: "close-games", label: "1점차 승부", value: `${d1!.value!.closeGames}경기`,
     icon: <Trophy size={16} className="text-violet-300" />,
   });
-  if (bestDayNight) interestingFacts.push({
-    key: "day-night",
-    label: bestDayNightLabel!,
-    value: `${bestDayNight.cell.w}승 ${bestDayNight.cell.l}패 · ${formatRate(bestDayNight.cell.rate, 0)}`,
-    icon: <span className="text-[15px]">{bestDayNight.cell.dayNight === "day" ? "☀️" : "🌙"}</span>,
+  // `야간 경기 체질`은 폐기 — 야간이 기본값이라 정보가 없다(하린아빠 2026-08-02).
+  // 낮 경기를 유독 많이 보는 사람에게만 관람 성향 별칭을 준다(기회 대비 비율 기준).
+  if (summarySampleReady && dayGameTag) interestingFacts.push({
+    key: "day-game",
+    label: dayGameTag.label,
+    value: dayGameTag.value,
+    icon: <span className="text-[15px]">☀️</span>,
+  });
+  if (summarySampleReady && dayGameWinTag) interestingFacts.push({
+    key: "day-game-win",
+    label: dayGameWinTag.label,
+    value: dayGameWinTag.value,
+    icon: <span className="text-[15px]">🌤️</span>,
+  });
+  if (summarySampleReady && awayTag) interestingFacts.push({
+    key: "away-fan",
+    label: awayTag.label,
+    value: awayTag.value,
+    icon: <span className="text-[15px]">🚄</span>,
+  });
+  if (summarySampleReady && awayWinTag) interestingFacts.push({
+    key: "away-win",
+    label: awayWinTag.label,
+    value: awayWinTag.value,
+    icon: <Trophy size={16} className="text-sky-300" />,
   });
   if (bestMonth) interestingFacts.push({
     key: "month", label: bestMonthLabel!, value: `${bestMonth.cell.w}승 ${bestMonth.cell.l}패 · ${formatRate(bestMonth.cell.rate, 0)}`,
@@ -587,6 +664,21 @@ export default function VenueStatsDashboard() {
                     </span>
                   ))}
               </div>
+            )}
+            {/* 삼순 2026-08-02 — 지수 아래에 상·하향 근거와 신뢰도를 1줄로 노출. */}
+            {!hero.sampleLimited && hero.score != null && (
+              <p data-testid="venue-score-basis" className="mt-1.5 text-[10px] font-bold text-white/70">
+                {(() => {
+                  const top = [...hero.scoreAxes].sort(
+                    (a, b) => Math.abs(b.normalized * b.weight) - Math.abs(a.normalized * a.weight),
+                  )[0];
+                  const direction = hero.score >= 50 ? "높은" : "낮은";
+                  const reason = top
+                    ? `${top.label}${top.normalized >= 0 ? " 우세" : " 열세"}`
+                    : "기대 대비 성과";
+                  return `${reason}가 ${direction} 이유예요 · ${SCORE_CONFIDENCE_LABELS[scoreConfidenceLevel(a1.n)]}(${a1.n}경기)`;
+                })()}
+              </p>
             )}
             <div className="mt-2 flex items-center gap-2.5 text-[14px] font-black">
               <span className="text-sky-400">{hero.attendance?.w ?? 0}승</span>
@@ -836,7 +928,7 @@ export default function VenueStatsDashboard() {
                                     ? "text-rose-300"
                                     : "text-slate-300"
                               }`}>{compatibility.score}<span className="text-[10px] text-white/60">점</span></p>
-                              <p className="mt-0.5 text-[8px] font-bold text-white/55">{compatibility.evidence}</p>
+                              <p className="mt-0.5 text-[10px] font-bold text-white/70">{compatibility.evidence}</p>
                             </>
                           ) : (
                             <p className="max-w-[54px] text-[9px] font-bold leading-tight text-white/60">궁합 측정 중</p>

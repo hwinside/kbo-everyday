@@ -18,8 +18,10 @@ import {
   type MetricState,
   type MetricStateInput,
 } from "@/lib/venue-stats/state";
+import { computeExcessPerformance } from "@/lib/venue-stats/expected";
 import type {
   A1Value,
+  AttendanceExcess,
   A2Cell,
   A3Cell,
   A4Cell,
@@ -87,6 +89,12 @@ export interface SeasonGameVerification {
   gameId: string;
   gameDate: string;
   complete: boolean;
+  /**
+   * 낮 경기(시작 18:00 KST 미만) 여부. 시간 정보가 없으면 undefined.
+   * 삼순 2026-08-02: 낮경기 태그는 "단순 횟수가 아니라 낮 경기 **기회 대비** 참석 비율"이어야 하므로
+   * 팀 시즌 일정의 낮 경기 비중을 알아야 한다.
+   */
+  isDayGame?: boolean;
   /** game_id에서 파싱한 참가팀 코드 2개 (parseGameTeamCodes). 파싱 실패 시 []. */
   teamCodes: string[];
   /** 공식 정규시즌 final 스코어. 구버전/불완전 소스는 undefined로 fail-close. */
@@ -387,6 +395,35 @@ function standingOf(ctx: Ctx, teamId: number): TeamStanding | null {
 }
 
 // A1 ─ 승률 요정 지수
+/**
+ * pregame 기대치 대비 초과성과 — 요정 지수의 본체.
+ * 시즌 우주(seasonGames)가 없거나 한 경기라도 기대치 산출 불가면 null(지수 전체 fail-close).
+ */
+function computeAttendanceExcess(ctx: Ctx, games: ScopeGame[]): AttendanceExcess | null {
+  const seasonGames = ctx.input.seasonGames;
+  if (seasonGames === null || games.length === 0) return null;
+  const excesses = computeExcessPerformance(
+    seasonGames,
+    games.map((g) => ({
+      gameId: g.gameId,
+      gameDate: g.gameDate,
+      myTeamId: g.snapshotTeamId,
+      opponentTeamId: g.opponentTeamId,
+      isHome: g.isHome,
+      result: g.result,
+      myScore: g.myScore,
+      oppScore: g.oppScore,
+    })),
+  );
+  if (excesses === null) return null;
+  const n = excesses.length;
+  return {
+    winExcess: excesses.reduce((sum, e) => sum + e.winExcess, 0) / n,
+    marginExcess: excesses.reduce((sum, e) => sum + e.marginExcess, 0) / n,
+    games: n,
+  };
+}
+
 function buildA1(ctx: Ctx): MetricEnvelope<A1Value> {
   const { c } = ctx;
   const state = pipeline(ctx, {
@@ -410,7 +447,13 @@ function buildA1(ctx: Ctx): MetricEnvelope<A1Value> {
 
   if (state === "mixed_team") {
     // §11 A1 mixed exact: value={attendance,teamComparable:null,deltaPp:null}; items=perTeam[].
-    envelope.value = { attendance, teamComparable: null, deltaPp: null };
+    // 초과성과는 팀이 섞여도 경기별 pregame 기대치 기준이라 전체 합산이 성립한다.
+    envelope.value = {
+      attendance,
+      teamComparable: null,
+      deltaPp: null,
+      excess: computeAttendanceExcess(ctx, c.validFinal),
+    };
     envelope.items = c.snapshotTeams.map((teamId) => {
       const teamGames = c.validFinal.filter((g) => g.snapshotTeamId === teamId);
       const teamAttendance = wld(teamGames);
@@ -459,7 +502,8 @@ function buildA1(ctx: Ctx): MetricEnvelope<A1Value> {
   if (state === "attendance_only" || !standing) {
     // §9 attendance_only — A1 팀 비교만 fail-closed, 직관 사실값은 유지.
     envelope.state = "attendance_only";
-    envelope.value = { attendance, teamComparable: null, deltaPp: null };
+    // 시즌 비교 소스가 없으면 기대치도 없다 — 요정 지수는 미산출(삼순 P0).
+    envelope.value = { attendance, teamComparable: null, deltaPp: null, excess: null };
     envelope.reasons = ctx.seasonComparable ? ["standings_unavailable"] : ["season_not_supported"];
     envelope.coverage.officialWinRate = {
       attendance: ratio(attendance.w, attendance.w + attendance.l),
@@ -469,7 +513,7 @@ function buildA1(ctx: Ctx): MetricEnvelope<A1Value> {
   }
   if (state === "sample_limited") {
     // 표본 미달 — 직관 사실값은 유지하고 팀 비교만 fail-closed (위 mixed 항과 동일 계약).
-    envelope.value = { attendance, teamComparable: null, deltaPp: null };
+    envelope.value = { attendance, teamComparable: null, deltaPp: null, excess: null };
     return envelope;
   }
 
@@ -489,6 +533,7 @@ function buildA1(ctx: Ctx): MetricEnvelope<A1Value> {
       attendance.rate !== null && teamRate !== null
         ? (attendance.rate - teamRate) * 100
         : null,
+    excess: computeAttendanceExcess(ctx, c.validFinal),
   };
   // §9 — KBO 공식 승률 W/(W+L)은 메타데이터로만 (A1 delta에 섞지 않는다).
   envelope.coverage.officialWinRate = {
@@ -496,6 +541,56 @@ function buildA1(ctx: Ctx): MetricEnvelope<A1Value> {
     team: standing.winRate,
   };
   return envelope;
+}
+
+/**
+ * A5 에 "낮 경기 기회 대비 참석" 근거를 붙인다.
+ *
+ * 하린아빠 2026-08-02: "야간경기가 대부분인데 야간경기 체질은 애매해.
+ * 차라리 낮 경기를 유독 많이 보는 사람에게 별칭을 주는 게 자연스러움".
+ * 삼순: "단순 횟수가 아니라 낮 경기 **기회 대비 참석 비율**로 판단해야 합니다."
+ *
+ * 그래서 응원팀 시즌 일정의 낮 경기 비중(기회)과 내 직관의 낮 경기 비중을 함께 싣는다.
+ * 시즌 우주나 시간 정보가 없으면 근거를 붙이지 않는다(태그도 안 생김 — 추정 금지).
+ */
+function withDayGameOpportunity(
+  ctx: Ctx,
+  envelope: MetricEnvelope<A5Cell[]>,
+): MetricEnvelope<A5Cell[]> {
+  const { c } = ctx;
+  const seasonGames = ctx.input.seasonGames;
+  if (seasonGames === null || c.snapshotTeams.length === 0) return envelope;
+
+  // 응원팀(들)이 참가한 정규시즌 경기 중 낮 경기 비중 = "기회".
+  const teamCodes = new Set(
+    c.snapshotTeams.map((teamId) => TEAM_ID_TO_CODE[teamId]).filter(Boolean),
+  );
+  let seasonDayGames = 0;
+  let seasonTotal = 0;
+  for (const game of seasonGames) {
+    if (game.isDayGame === undefined) continue;
+    if (!game.teamCodes.some((code) => teamCodes.has(code))) continue;
+    seasonTotal += 1;
+    if (game.isDayGame) seasonDayGames += 1;
+  }
+  if (seasonTotal === 0) return envelope;
+
+  const attendanceWithTime = c.validFinal.filter((g) => dayNightOf(g.game) !== null);
+  const attendanceDayGames = attendanceWithTime.filter(
+    (g) => dayNightOf(g.game) === "day",
+  ).length;
+  return {
+    ...envelope,
+    coverage: {
+      ...envelope.coverage,
+      dayGameOpportunity: {
+        attendanceDayGames,
+        attendanceTotal: attendanceWithTime.length,
+        seasonDayGames,
+        seasonTotal,
+      },
+    },
+  };
 }
 
 // A2~A6 ─ 스플릿 (cell마다 n/state 별도 — §10)
@@ -1387,18 +1482,6 @@ function buildC6(
 
 // D ─ 관전 서사
 
-/**
- * 경기 질 q(-1~1) — 하린아빠 2026-08-02 지시.
- * "이겨도 얼마나 크게 이기는지, 져도 얼마나 박빙으로 지는지"가 긍정적으로 작용해야 한다.
- * 승리는 마진이 클수록 ↑, 패배는 마진이 작을수록 ↑이며 **1점차 박빙패는 감점이 아니라 가점(+0.10)**.
- * 마진 상한은 6점차(=min((m-1)/5,1)이 1) — 그 이상은 더 벌어져도 같다(섬닝 방지).
- */
-export function gameQualityScore(result: "W" | "L" | "D", margin: number): number {
-  if (result === "D") return 0;
-  const scaled = Math.min(Math.max(Math.abs(margin) - 1, 0) / 5, 1);
-  return result === "W" ? 0.4 + 0.6 * scaled : 0.1 - 1.1 * scaled;
-}
-
 function buildD1(ctx: Ctx): MetricEnvelope<D1Value> {
   const { c } = ctx;
   const state = pipeline(ctx, {
@@ -1413,34 +1496,12 @@ function buildD1(ctx: Ctx): MetricEnvelope<D1Value> {
     c.validFinal.length,
   );
   const closeGameRate = ratio(closeGames, c.validFinal.length);
-  const closeLosses = c.validFinal.filter(
-    (g) => g.result === "L" && Math.abs((g.myScore ?? 0) - (g.oppScore ?? 0)) === 1,
-  ).length;
-  const blowoutWins = c.validFinal.filter(
-    (g) => g.result === "W" && (g.myScore ?? 0) - (g.oppScore ?? 0) >= 5,
-  ).length;
-  // 스코어가 없는 final은 마진을 0으로 추정하지 않고 질 평균 자체를 fail-close 한다
-  // (0으로 잡으면 무승부처럼 보여 요정 지수를 조용히 오염시킨다).
-  const qualityScorable = c.validFinal.every(
-    (g) => g.result !== null && g.myScore != null && g.oppScore != null,
-  );
-  const qualityAvg = qualityScorable
-    ? ratio(
-        c.validFinal.reduce(
-          (sum, g) => sum + gameQualityScore(g.result as "W" | "L" | "D", (g.myScore ?? 0) - (g.oppScore ?? 0)),
-          0,
-        ),
-        c.validFinal.length,
-      )
-    : null;
   const computable = state === "ready" || state === "sample_limited";
   const componentState = state === "ready" ? "ready" : state;
   const envelope: MetricEnvelope<D1Value> = {
     id: "D1",
     state,
-    value: state === "ready"
-      ? { avgRunDiff, closeGameRate, closeGames, qualityAvg, closeLosses, blowoutWins }
-      : null,
+    value: state === "ready" ? { avgRunDiff, closeGameRate, closeGames } : null,
     n: c.validFinal.length,
     denominator: { finalGames: c.validFinal.length },
     coverage: { invalidSnapshot: c.invalidSnapshot },
@@ -1847,9 +1908,12 @@ export function buildVenueStatsScope(input: VenueStatsAggregateInput): VenueStat
     A4: buildSplit<A4Cell>(ctx, "A4", (g) => String(kstWeekday(g.gameDate)), (key, agg) => ({
       weekday: Number(key), ...agg,
     })),
-    A5: buildSplit<A5Cell>(ctx, "A5", (g) => dayNightOf(g.game), (key, agg) => ({
-      dayNight: key as "day" | "night", ...agg,
-    })),
+    A5: withDayGameOpportunity(
+      ctx,
+      buildSplit<A5Cell>(ctx, "A5", (g) => dayNightOf(g.game), (key, agg) => ({
+        dayNight: key as "day" | "night", ...agg,
+      })),
+    ),
     A6: buildSplit<A6Cell>(ctx, "A6", (g) => String(Number(g.gameDate.slice(5, 7))), (key, agg) => ({
       month: Number(key), ...agg,
     })),

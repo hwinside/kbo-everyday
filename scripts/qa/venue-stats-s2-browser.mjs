@@ -177,7 +177,7 @@ const envelope = (id, value, denominator = { finalGames: 8 }) => ({
 // qualityAvg = 경기 질 평균(하린아빠 2026-08-02: 대승·박빙패가 긍정 기여).
 // 요정 지수 v2 는 순수 승률이 아니라 5축 합성이라, fixture 도 비교 근거(deltaPp)와
 // 경기 질을 갖춰야 실제 지수가 산출된다.
-const scope = (name, wins, rate, qualityAvg = .32) => {
+const scope = (name, wins, rate, excessWin = .18, excessMargin = 1.4) => {
   const metrics = Object.fromEntries(metricIds.map((id) => [id, envelope(id, null)]));
   // 팀별 승률 리프트(%p) — 경기수 가중 평균이 (rate-.5)×100 이 되도록 대칭 분배.
   const liftPp = (rate - .5) * 100;
@@ -193,6 +193,8 @@ const scope = (name, wins, rate, qualityAvg = .32) => {
       { key:"9", state:"ready", value:{attendance:{w:2,l:2,d:0,rate:.5},teamComparable:null,deltaPp:liftPp - 5}, n:4, denominator:{} },
     ],
   };
+  // 요정 지수 본체 = pregame 기대치 대비 초과성과(승률 아님).
+  metrics.A1.value.excess = { winExcess: excessWin, marginExcess: excessMargin, games: 8 };
   const teamValues = {
     "1": {
       B1:{attendanceAvg:.286,seasonAvg:.263,delta:.023},
@@ -242,7 +244,7 @@ const scope = (name, wins, rate, qualityAvg = .32) => {
     ],
   });
   // 경기 질 q 평균: 대승 2 · 박빙패 2 섞인 여름상의 “볼 만했다” 분포.
-  metrics.D1 = envelope("D1", {avgRunDiff:1.4,closeGameRate:.25,closeGames:2,qualityAvg,closeLosses:2,blowoutWins:2});
+  metrics.D1 = envelope("D1", {avgRunDiff:1.4,closeGameRate:.25,closeGames:2});
   metrics.D5 = envelope("D5", {cancelledCount:1});
   metrics.D6 = envelope("D6", {maxTeamRuns:{gameId:"g",date:"2026-07-12",runs:9},maxMarginWin:null});
   metrics.E1 = envelope("E1", {current:3,longest:5,perTeam:[]});
@@ -262,20 +264,20 @@ const scope = (name, wins, rate, qualityAvg = .32) => {
   };
 };
 // 지수 sentinel 은 v2 산식 실측값(아래 주석) — 시즌/스코프 간 구분이 되어야 stale 검출이 가능하다.
-//   overall 2026: lift +12.5%p · q .32 → 65
-//   gps    2026: lift -12.5%p · q -.28 → 44
-//   overall 2025: lift -25%p(clamp→-1) · q -.9 → 33
+//   overall 2026: 초과성과 win +.18 · margin +1.4 → 69
+//   gps    2026: 초과성과 win -.12 · margin -1.1 → 39
+//   overall 2025: 초과성과 win -.30 · margin -2.6 → 20
 const payload = {
   season:2026,
   seasonSupport:{status:"supported",supportedSeason:2026},
-  overall:scope("overall",5,.625,.32),
-  gps:scope("gps",3,.375,-.28),
+  overall:scope("overall",5,.625,.18,1.4),
+  gps:scope("gps",3,.375,-.12,-1.1),
 };
 const stalePayload = {
   season:2025,
   seasonSupport:{status:"attendance_only",supportedSeason:2026},
-  overall:scope("overall",2,.25,-.9),
-  gps:scope("gps",1,.125,-.9),
+  overall:scope("overall",2,.25,-.3,-2.6),
+  gps:scope("gps",1,.125,-.3,-2.6),
 };
 
 // 혼합팀 표본 미달(2팀 × 1경기 = 총 2경기 < MIN_FINAL_GAMES).
@@ -371,7 +373,7 @@ const attendanceOnlyScope = (name) => {
   };
   base.metrics.D5 = envelope("D5", { cancelledCount: 0 });
   base.metrics.D6 = envelope("D6", { maxTeamRuns: null, maxMarginWin: null });
-  base.metrics.D1 = envelope("D1", { avgRunDiff: null, closeGameRate: null, closeGames: 0, qualityAvg: null, closeLosses: 0, blowoutWins: 0 });
+  base.metrics.D1 = envelope("D1", { avgRunDiff: null, closeGameRate: null, closeGames: 0 });
   base.metrics.E1 = envelope("E1", { current: 0, longest: 0, perTeam: [] });
   return base;
 };
@@ -519,7 +521,7 @@ try {
   }
 
   await page.goto(`http://127.0.0.1:${port}`, { waitUntil: "domcontentloaded" });
-  await page.getByText("65", { exact: true }).waitFor();
+  await page.getByText("69", { exact: true }).waitFor();
   const lgSegment = page.getByText("LG 응원 구간", { exact: true }).first().locator("../..");
   const hanwhaSegment = page.getByText("한화 응원 구간", { exact: true }).first().locator("../..");
   const lgText = await lgSegment.innerText();
@@ -619,10 +621,10 @@ try {
   await page.locator("select").selectOption("2025");
   await staleRequest;
   await page.locator("select").selectOption("2026");
-  await page.getByText("65", { exact: true }).waitFor();
+  await page.getByText("69", { exact: true }).waitFor();
   await page.waitForTimeout(400);
   if ((await page.locator("select").inputValue()) !== "2026") throw new Error("season selection rolled back");
-  if (await page.getByText("33", { exact: true }).isVisible()) throw new Error("stale 2025 response overwrote 2026");
+  if (await page.getByText("20", { exact: true }).isVisible()) throw new Error("stale 2025 response overwrote 2026");
 
   // 결함주입: 선택 시즌(2025) 요청이 503으로 실패할 때
   // 로딩 중·실패 후 모두 이전 시즌(2026) 수치가 남지 않고 retry UI가 떠야 한다.
@@ -632,19 +634,19 @@ try {
     .catch(() => null);
   await page.locator("select").selectOption("2025");
   await page.waitForTimeout(50);
-  if ((await page.getByText("65", { exact: true }).count()) > 0) {
+  if ((await page.getByText("69", { exact: true }).count()) > 0) {
     throw new Error("stale previous-season value visible while selected season is loading");
   }
   await failedResponse;
   await page.getByRole("button", { name: /통계를 불러오지 못했어요/ }).waitFor({ timeout: 4000 });
-  if ((await page.getByText("65", { exact: true }).count()) > 0) {
+  if ((await page.getByText("69", { exact: true }).count()) > 0) {
     throw new Error("stale previous-season value visible after selected season failed");
   }
   if ((await page.locator("select").inputValue()) !== "2025") throw new Error("failed season selection rolled back");
 
   fail2025 = false;
   await page.locator("select").selectOption("2026");
-  await page.getByText("65", { exact: true }).waitFor();
+  await page.getByText("69", { exact: true }).waitFor();
 
   // 실패했던 시즌을 다시 고를 때, 이전 실패 UI가 새 요청 로딩 전에 한 프레임이라도 재노출되면 안 된다.
   // MutationObserver 로 DOM 변경마다 retry 버튼 존재를 샘플링해 1-frame flash 까지 잡는다.
@@ -669,7 +671,7 @@ try {
   if (immediateRetry) {
     throw new Error("previous failure retry UI visible immediately after reselecting failed season");
   }
-  await page.getByText("33", { exact: true }).waitFor();
+  await page.getByText("20", { exact: true }).waitFor();
   const retryFlash = await page.evaluate(() => {
     window.__retryObserver.disconnect();
     return window.__retryFlash;
@@ -679,10 +681,10 @@ try {
   }
 
   await page.locator("select").selectOption("2026");
-  await page.getByText("65", { exact: true }).waitFor();
+  await page.getByText("69", { exact: true }).waitFor();
 
   await page.getByRole("button", { name: "GPS 인증만" }).click();
-  await page.getByText("44", { exact: true }).waitFor();
+  await page.getByText("39", { exact: true }).waitFor();
   await page.getByRole("button", { name: "상대·구장·요일 상세 통계" }).click();
 
   const contrast = await page.evaluate(() => {
@@ -966,15 +968,20 @@ try {
   await page.getByRole("button", { name: /태그 .*개 더 보기/ }).click();
   const losingFacts = await page.getByTestId("venue-interesting-fact").allInnerTexts();
   const losingText = losingFacts.join("\n");
-  for (const phrase of ["야간 경기 체질", "낮 경기 체질", "7월의 승요"]) {
+  // 야간/낮 "체질" 태그는 폐기됐다 — 야간이 기본값이라 정보가 없다(하린아빠 2026-08-02).
+  for (const phrase of ["야간 경기 체질", "낮 경기 체질", "야간 경기 인내형", "7월의 승요"]) {
     if (losingText.includes(phrase)) {
-      throw new Error(`0승 스플릿에 긍정 태그가 붙음: ${phrase} / ${losingText}`);
+      throw new Error(`폐기/긍정 태그가 0승 스플릿에 붙음: ${phrase} / ${losingText}`);
     }
   }
-  for (const phrase of ["야간 경기 인내형", "7월 인내형"]) {
-    if (!losingText.includes(phrase)) {
-      throw new Error(`0승 스플릿은 정직한 인내형 문구로 바뀌어야 함: ${phrase} / ${losingText}`);
+  // 성적 태그는 승률이 실제 플러스일 때만 — 0승이면 승요류가 하나도 없어야 한다.
+  for (const phrase of ["낮경기 승요", "원정 승요"]) {
+    if (losingText.includes(phrase)) {
+      throw new Error(`0승인데 성적 태그가 붙음: ${phrase} / ${losingText}`);
     }
+  }
+  if (!losingText.includes("7월 인내형")) {
+    throw new Error(`0승 스플릿은 정직한 인내형 문구로 바뀌어야 함: ${losingText}`);
   }
   if (!losingText.includes("0승 3패")) {
     throw new Error(`0승 스플릿은 승·패를 함께 보여줘야 함: ${losingText}`);

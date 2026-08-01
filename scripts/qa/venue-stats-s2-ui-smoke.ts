@@ -7,6 +7,7 @@ import {
 import {
   batterCompatibility,
   buildVenueStatsHero,
+  scoreConfidenceLevel,
   coverageCaption,
   formatAvg,
   formatOuts,
@@ -106,6 +107,8 @@ metrics.A1.value = {
   attendance: { w: 3, l: 1, d: 0, rate: 0.75 },
   teamComparable: { teamId: 1, w: 20, l: 15, d: 1, rate: 20 / 36 },
   deltaPp: 19.4,
+  // pregame 기대치 대비 초과성과 — 요정 지수의 본체(승률 아님).
+  excess: { winExcess: 0.28, marginExcess: 1.2, games: 4 },
 };
 const scope: VenueStatsScopePayload = {
   state: "ready",
@@ -129,14 +132,27 @@ const scope: VenueStatsScopePayload = {
   assert.deepEqual(heroV2.attendance, { w: 3, l: 1, d: 0, rate: 0.75 });
   assert.equal(heroV2.teamRate, 20 / 36);
   assert.equal(heroV2.deltaPp, 19.4);
-  assert.deepEqual(heroV2.scoreAxes.map((axis) => axis.key), ["winLift"]);
-  // deltaPp 19.4%p / 20 = 0.97 축 기여, 신뢰도 4/(4+3)=0.571 → 50 + 50·0.97·0.571 ≈ 78
-  assert.equal(heroV2.score, 78, `winLift 단독축 합성 점수: ${heroV2.score}`);
+  // 축은 pregame 초과성과 기반 — winLift(승점 초과) + quality(마진 초과).
+  assert.deepEqual(heroV2.scoreAxes.map((axis) => axis.key), ["winLift", "quality"]);
   assert.ok(
-    heroV2.scoreConfidence != null && Math.abs(heroV2.scoreConfidence - 4 / 7) < 1e-9,
-    "신뢰도는 n/(n+3) 수축",
+    heroV2.scoreConfidence != null && Math.abs(heroV2.scoreConfidence - Math.sqrt(4 / 7)) < 1e-9,
+    "신뢰도는 √(n/(n+3)) 수축",
   );
-  assert.notEqual(heroV2.score, 75, "v1 순수 승률(75점)으로 회귀하면 안 됨");
+  // v1 회귀 RED — 승률(W/L/D)은 그대로 두고 pregame 초과성과만 뒤집으면 점수가 반드시 달라져야 한다.
+  // `round(rate*100)` 로 되돌리면 두 케이스가 같은 값이 되어 이 assert 가 깨진다.
+  const flipped = JSON.parse(JSON.stringify(metrics)) as VenueStatsScopePayload["metrics"];
+  (flipped.A1.value as { excess: unknown }).excess =
+    { winExcess: -0.28, marginExcess: -1.2, games: 4 };
+  const flippedHero = buildVenueStatsHero({ ...scope, metrics: flipped });
+  assert.deepEqual(
+    flippedHero.attendance,
+    heroV2.attendance,
+    "대조군은 승/패 기록이 동일해야 한다(초과성과만 다름)",
+  );
+  assert.ok(
+    heroV2.score! > 50 && flippedHero.score! < 50,
+    `초과성과 부호가 지수 부호를 결정해야 함(승률 아님): ${heroV2.score} vs ${flippedHero.score}`,
+  );
 }
 
 // ─ 신뢰도 수축은 실제 직관 분포(대부분 1~4경기)에서 변별력을 가져야 한다.
@@ -150,8 +166,9 @@ const scope: VenueStatsScopePayload = {
     cloned.A1.value = {
       attendance: { w: finalGames, l: 0, d: 0, rate: 1 },
       teamComparable: { teamId: 1, w: 50, l: 50, d: 0, rate: 0.5 },
-      // 승률 리프트를 축 끝(+20%p)으로 고정해 신뢰도만 변수로 남긴다.
       deltaPp: 20,
+      // 초과성과를 축 끝으로 고정해 신뢰도만 변수로 남긴다.
+      excess: { winExcess: 0.35, marginExcess: 3, games: finalGames },
     };
     return buildVenueStatsHero({ ...scope, metrics: cloned });
   };
@@ -164,22 +181,38 @@ const scope: VenueStatsScopePayload = {
     at3.score! < at5.score! && at5.score! < at20.score!,
     `신뢰도는 경기수에 대해 단조 증가해야 함: ${at3.score}/${at5.score}/${at20.score}`,
   );
-  // 핵심 RED: 최소 표본(3경기)에서도 상한 리프트가 의미 있는 폭으로 나와야 한다.
-  // √(3/20)=0.387 → 69점에 그치지만, 3/(3+3)=0.5 → 75점.
+  // 핵심 RED: 최소 표본(3경기)에서도 상한 초과성과가 의미 있는 폭으로 나와야 한다.
+  // √(3/20)=0.387 → 69점에 그치지만, √(3/6)=0.707 → 85점.
   assert.ok(
-    at3.score! >= 74,
-    `3경기 상한 리프트가 수축에 뭉개지면 안 됨(실제 유저 대부분이 1~4경기): ${at3.score}`,
+    at3.score! >= 80,
+    `3경기 상한 초과성과가 수축에 뭉개지면 안 됨(실제 유저 대부분이 1~4경기): ${at3.score}`,
   );
   assert.ok(
-    at3.scoreConfidence != null && Math.abs(at3.scoreConfidence - 0.5) < 1e-9,
-    `3경기 신뢰도는 0.5: ${at3.scoreConfidence}`,
+    at3.scoreConfidence != null && Math.abs(at3.scoreConfidence - Math.sqrt(0.5)) < 1e-9,
+    `3경기 신뢰도는 √0.5≈0.71: ${at3.scoreConfidence}`,
   );
+  // 삼순 제품 정책 — 약 5경기면 보정이 "거의" 해제된다.
+  // 실측: 3경기 .707 · 5경기 .791 · 8경기 .853 · 10경기 .877 · 20경기 .933 (상한 1.0)
+  // 5경기가 이미 .79 로 20경기(.93)의 85% 수준이고, 그 뒤로는 완만하게만 오른다.
+  assert.ok(
+    at5.scoreConfidence! >= 0.78,
+    `5경기 신뢰도는 .78 이상이어야 함(보정 거의 해제): ${at5.scoreConfidence}`,
+  );
+  assert.ok(
+    at5.scoreConfidence! / at20.scoreConfidence! >= 0.84,
+    `5→20경기 추가 이득은 완만해야 함: ${at5.scoreConfidence} / ${at20.scoreConfidence}`,
+  );
+  // 신뢰도 라벨은 점수 반응성(r)과 분리된 제품 정책이다(삼순 지적).
+  assert.equal(scoreConfidenceLevel(2), "measuring");
+  assert.equal(scoreConfidenceLevel(3), "low");
+  assert.equal(scoreConfidenceLevel(5), "medium");
+  assert.equal(scoreConfidenceLevel(8), "high");
 }
 
-// ─ 하린아빠 2026-08-02: "이겨도 얼마나 크게, 져도 얼마나 박빙으로"가 긍정 기여하는지.
-// 승률은 똑같은데 경기 질만 다른 두 fixture 로 지수 부호가 갈려야 한다.
+// ─ 하린아빠 2026-08-02: "관전가치 기준이 아니라 무조건 팀퍼포먼스와의 상관도를 봐야지".
+// 지수는 오직 pregame 기대치 대비 초과성과다. 승패 기록이 같아도 초과성과로 부호가 갈린다.
 {
-  const withQuality = (qualityAvg: number, extra: Partial<{ closeGames: number; blowoutWins: number }> = {}) => {
+  const withExcess = (winExcess: number, marginExcess: number) => {
     const cloned = JSON.parse(JSON.stringify(metrics)) as VenueStatsScopePayload["metrics"];
     cloned.A1.n = 10;
     cloned.A1.denominator = { attendanceFinalGames: 10, teamSeasonGames: 100 };
@@ -187,41 +220,45 @@ const scope: VenueStatsScopePayload = {
       attendance: { w: 5, l: 5, d: 0, rate: 0.5 },
       teamComparable: { teamId: 1, w: 50, l: 50, d: 0, rate: 0.5 },
       deltaPp: 0,
-    };
-    cloned.D1.state = "ready";
-    cloned.D1.n = 10;
-    cloned.D1.denominator = { finalGames: 10 };
-    cloned.D1.value = {
-      avgRunDiff: 0,
-      closeGameRate: 0,
-      closeGames: extra.closeGames ?? 0,
-      qualityAvg,
-      closeLosses: 0,
-      blowoutWins: extra.blowoutWins ?? 0,
+      excess: { winExcess, marginExcess, games: 10 },
     };
     return buildVenueStatsHero({ ...scope, metrics: cloned });
   };
 
-  // 같은 5승5패(승률 리프트 0)이지만 — 대승+박빙패 조합은 양수, 박빙승+대패는 음수.
-  const goodQuality = withQuality(0.5);
-  const badQuality = withQuality(-0.5);
-  assert.ok(goodQuality.score != null && badQuality.score != null);
+  // 같은 5승5패인데 — 기대보다 잘했으면 50 위, 못했으면 50 아래.
+  const over = withExcess(0.15, 1.5);
+  const under = withExcess(-0.15, -1.5);
   assert.ok(
-    goodQuality.score! > 50 && badQuality.score! < 50,
-    `승률이 같아도 경기 질로 지수 부호가 갈려야 함: ${goodQuality.score} vs ${badQuality.score}`,
-  );
-  assert.ok(
-    goodQuality.scoreAxes.some((axis) => axis.key === "quality"),
-    "경기 질 축이 지수 구성에 들어야 함",
+    over.score! > 50 && under.score! < 50,
+    `승패가 같아도 기대 대비 성과로 부호가 갈려야 함: ${over.score} vs ${under.score}`,
   );
 
-  // 명경기 보너스는 가점 전용 — 박빙패를 많이 본 젠이 더 낮아지면 안 된다.
-  const withMemorable = withQuality(0, { closeGames: 6 });
-  const withoutMemorable = withQuality(0);
-  assert.ok(
-    withMemorable.score! >= withoutMemorable.score!,
-    `명경기 목격은 감점이 되면 안 됨: ${withMemorable.score} < ${withoutMemorable.score}`,
+  // 관전가치 축(경기 질)·명경기 보너스는 제거됐다 — 이중 가산 금지(삼순 P0).
+  const axisKeys = over.scoreAxes.map((axis) => axis.key);
+  assert.equal(axisKeys.includes("bonus"), false, "명경기 보너스 축은 제거돼야 함");
+  assert.deepEqual(
+    axisKeys.filter((key) => key === "winLift" || key === "quality"),
+    ["winLift", "quality"],
+    "초과성과 2축(승리·득실)이 본체",
   );
+  // 삼순 확정 가중 — 승패 55% : 득실 30%.
+  const byKey = new Map(over.scoreAxes.map((axis) => [axis.key, axis.weight]));
+  assert.equal(byKey.get("winLift"), 0.55);
+  assert.equal(byKey.get("quality"), 0.3);
+
+  // pregame 기대치가 없으면 축 재정규화가 아니라 지수 전체 fail-close (삼순 P0).
+  const noExpectation = JSON.parse(JSON.stringify(metrics)) as VenueStatsScopePayload["metrics"];
+  noExpectation.A1.n = 10;
+  noExpectation.A1.denominator = { attendanceFinalGames: 10, teamSeasonGames: 100 };
+  noExpectation.A1.value = {
+    attendance: { w: 9, l: 1, d: 0, rate: 0.9 },
+    teamComparable: { teamId: 1, w: 50, l: 50, d: 0, rate: 0.5 },
+    deltaPp: 40,
+    excess: null,
+  };
+  const failClosed = buildVenueStatsHero({ ...scope, metrics: noExpectation });
+  assert.deepEqual(failClosed.scoreAxes, [], "기대치 없으면 축 0개");
+  assert.equal(failClosed.score, null, "기대치 없으면 승률(90%)로 대체하지 않고 fail-close");
 }
 
 // ─ 표본 미달 계약: 파생 '요정 지수'는 확정값처럼 노출하지 않는다.
@@ -261,14 +298,13 @@ const scope: VenueStatsScopePayload = {
   assert.equal(readyHero.score, null, "축이 하나도 없으면 승률(100점)으로 대체하지 않고 fail-close");
 
   // 팀별 items 에 비교값이 살아 있으면 mixed_team 이어도 경기수 가중 평균으로 축이 생긴다.
-  const mixedWithLift = JSON.parse(JSON.stringify(mixedReady)) as VenueStatsScopePayload["metrics"];
-  mixedWithLift.A1.items = [
-    { key: "1", state: "ready", value: { attendance: { w: 3, l: 0, d: 0, rate: 1 }, teamComparable: null, deltaPp: 10 }, n: 3, denominator: {} },
-    { key: "2", state: "ready", value: { attendance: { w: 0, l: 3, d: 0, rate: 0 }, teamComparable: null, deltaPp: -10 }, n: 3, denominator: {} },
-  ];
-  const mixedLiftHero = buildVenueStatsHero({ ...scope, metrics: mixedWithLift });
-  assert.deepEqual(mixedLiftHero.scoreAxes.map((a) => a.key), ["winLift"]);
-  assert.equal(mixedLiftHero.score, 50, "대칭 리프트(+10/-10)은 기준점 50으로 수렴");
+  // 초과성과는 팀이 섞여도 경기 단위 pregame 기대치 기준이라 전체 합산이 성립한다.
+  const mixedWithExcess = JSON.parse(JSON.stringify(mixedReady)) as VenueStatsScopePayload["metrics"];
+  (mixedWithExcess.A1.value as { excess: unknown }).excess =
+    { winExcess: 0, marginExcess: 0, games: 6 };
+  const mixedExcessHero = buildVenueStatsHero({ ...scope, metrics: mixedWithExcess });
+  assert.deepEqual(mixedExcessHero.scoreAxes.map((a) => a.key), ["winLift", "quality"]);
+  assert.equal(mixedExcessHero.score, 50, "기대와 정확히 같으면 기준점 50");
 }
 
 // ─ attendance_only(비교 소스 없는 2025 등) 2경기도 참고용 계약 대상 (삼순 P0-1).
@@ -282,6 +318,7 @@ const scope: VenueStatsScopePayload = {
     attendance: { w: 2, l: 0, d: 0, rate: 1 },
     teamComparable: null,
     deltaPp: null,
+    excess: null,
   };
   aoMetrics.A1.items = [];
   const aoHero = buildVenueStatsHero({ ...scope, metrics: aoMetrics });

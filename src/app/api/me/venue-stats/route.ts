@@ -172,6 +172,14 @@ function oldestStatsGeneratedAt(): string {
 interface SeasonAggregates {
   seasonGames: SeasonGameVerification[] | null;
   teamSeasonTotals: Map<number, TeamSeasonTotals> | null;
+  /**
+   * 공식 스코어 우주가 완전한가. false = final 중 일부 스코어/팀ID 결손.
+   *
+   * 삼순 P0 (2026-08-02): 이 결과는 seasonGames 가 non-null 이라도 **캐시하면 안 된다.**
+   * 캐시하면 원천 소스가 복구돼도 TTL(10~60분) 동안 공식 스코어 null 이 고착된다
+   * (재호출 actual 이 `추가 fetch 0 · 공식필드 0` 으로 관측됨).
+   */
+  officialScoresComplete: boolean;
 }
 
 /** 시즌 집계 의존성 주입 seam — 수집 fetcher·RPC 경계만 교체 가능(삼순 P0 fail-closed 회귀용). */
@@ -202,7 +210,7 @@ async function computeSeasonAggregates(
   season: number,
   deps: SeasonAggregatesDeps = {},
 ): Promise<SeasonAggregates> {
-  const failClosed: SeasonAggregates = { seasonGames: null, teamSeasonTotals: null };
+  const failClosed: SeasonAggregates = { seasonGames: null, teamSeasonTotals: null, officialScoresComplete: false };
   let universe: Array<{ gameId: string; gameDate: string }>;
   const officialGames = new Map<string, {
     awayTeamId: number;
@@ -216,6 +224,7 @@ async function computeSeasonAggregates(
   // (하류 aggregate는 팀ID 있는 경기만 먼저 filter하므로 결손을 볼 수 없다).
   // → 하나라도 결손이면 공식 필드를 전부 버리고 B3 시즌 baseline을 null로 fail-close.
   let officialScoreUniverseComplete = true;
+  const dayGameFlags = new Map<string, boolean>();
   try {
     const collection = await collectSeasonGameUniverse(season, REGULAR_SEASON_SR_ID, {
       fetcher: deps.fetcher,
@@ -231,6 +240,9 @@ async function computeSeasonAggregates(
       if (gameDate === null) return failClosed;
       seen.add(g.gameId);
       universe.push({ gameId: g.gameId, gameDate });
+      // 낮/야간 — 팀 시즌 일정의 낮 경기 "기회"를 세기 위해 보존(삼순: 기회 대비 참석 비율).
+      const startHour = Number(String(g.time ?? "").split(":")[0]);
+      if (Number.isInteger(startHour)) dayGameFlags.set(g.gameId, startHour < 18);
       if (
         Number.isInteger(g.awayTeamId) && Number.isInteger(g.homeTeamId) &&
         Number.isInteger(g.awayScore) && Number.isInteger(g.homeScore) &&
@@ -274,6 +286,7 @@ async function computeSeasonAggregates(
       gameDate: g.gameDate,
       complete: g.complete === true,
       teamCodes: parseGameTeamCodes(g.gameId),
+      ...(dayGameFlags.has(g.gameId) ? { isDayGame: dayGameFlags.get(g.gameId) } : {}),
       ...(official ?? {}),
     }];
   });
@@ -336,7 +349,7 @@ async function computeSeasonAggregates(
   for (const teamId of expectedTeamIds) {
     if (!teamSeasonTotals.has(teamId)) return failClosed;
   }
-  return { seasonGames, teamSeasonTotals };
+  return { seasonGames, teamSeasonTotals, officialScoresComplete: officialScoreUniverseComplete };
 }
 
 // ── 삼순 P0-3 — complete-only 시즌 캐시 + single-flight ─────────────────────────
@@ -360,7 +373,9 @@ function seasonAggregatesTtlMs(): number {
 }
 
 function isCompleteAggregates(a: SeasonAggregates): boolean {
-  return a.seasonGames !== null && a.teamSeasonTotals !== null;
+  // 삼순 P0 — 공식 스코어 결손 결과도 "불완전"으로 보아 캐시하지 않는다.
+  // 그래야 소스 정상화 직후 재호출이 실제로 재수집해 공식 스코어를 복구한다.
+  return a.seasonGames !== null && a.teamSeasonTotals !== null && a.officialScoresComplete;
 }
 
 /**
@@ -471,7 +486,7 @@ export async function GET(req: NextRequest) {
       fetchLedgers(gameIds),
       seasonSupported
         ? fetchSeasonAggregates(requestedSeason)
-        : Promise.resolve<SeasonAggregates>({ seasonGames: null, teamSeasonTotals: null }),
+        : Promise.resolve<SeasonAggregates>({ seasonGames: null, teamSeasonTotals: null, officialScoresComplete: false }),
       seasonSupported
         ? fetchStandings().catch(() => null as TeamStanding[] | null)
         : Promise.resolve<TeamStanding[] | null>(null),

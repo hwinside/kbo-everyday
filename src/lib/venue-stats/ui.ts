@@ -6,7 +6,6 @@ import type {
   B4Value,
   C1Entry,
   C2Entry,
-  D1Value,
   MetricEnvelope,
   MetricId,
   VenueStatsScopePayload,
@@ -291,21 +290,58 @@ function weightedDelta<T>(
  * 축이 하나도 없으면 지수 자체를 null 로 fail-close 한다 — 승률로 몰래 대체하지 않는다.
  */
 /**
- * 신뢰도 수축 상수 — `n / (n + k)`.
+ * 신뢰도 수축 — `r = √(n / (n + 3))`.
  *
- * 처음엔 `√(n/20)` 으로 잡았으나 근거 없는 수치였고, 실측상 20경기 직관자는 거의 없다
- * (2026-08-02 `venue_attendance` 55행/48명: 1경기 43명 · 2경기 4명 · 4경기 1명, 최대 4).
- * 20 기준이면 대부분 유저가 신뢰도 0.4 미만에 눌려 지수가 50 근처로 뭉개져 변별력을 잃는다.
+ * 하린아빠 2026-08-02: "20경기씩 직관 가는 사람들이 많지는 않아",
+ * "신뢰도 구간은 경기수 기준을 너무 높게 잡지 마", "10번 가는 사람도 상위 5%일듯".
+ * 실측(`venue_attendance` 48명, 7/4~8/1): P50 1경기 · P95 2경기 · P99 4경기.
+ * 3경기 이상이 이미 상위 2.1%이고 10경기 이상은 0명이다.
  *
- * k=3 이면 3경기 0.50 · 5경기 0.63 · 10경기 0.77 · 20경기 0.87 · 40경기 0.93 으로,
- * 실제 유저가 몬려 있는 3~5경기 구간에서 이미 의미 있는 폭이 나오면서도
- * 표본이 쌓일수록 계속 진짜 값에 가까워진다(1에 도달하지 않는 것도 의도 — 직관은 항상 표본이 적다).
+ * r: 3경기 .71 · 4경기 .76 · 5경기 .79 · 8경기 .85 · 10경기 .88
+ * → **약 5경기면 보정이 거의 해제**되는 제품 정책이다(삼순 2026-08-02 확정).
  *
- * ⚠️ 위 분포는 기능 오픈 직후(7/4~8/1) 한 달치라 시즌 전체 행태가 아니다.
- * 시즌이 쌓이면 재측정해야 하는 값이다.
+ * ⚠️ 위 백분위는 '이용 빈도' 근거이지 통계적 신뢰도 근거가 아니다(삼순 지적).
+ * 그래서 점수 반응성(r)과 사용자에게 보이는 신뢰도 라벨을 분리해 둔다.
  */
 const SCORE_CONFIDENCE_K = 3;
 
+export type ScoreConfidenceLevel = "measuring" | "low" | "medium" | "high";
+
+/**
+ * 신뢰도 라벨 — 점수 반응성(r)과 별도로 노출하는 제품 정책.
+ * 3경기 미만 `측정 중` · 3~4 낮음 · 5~7 보통 · 8+ 높음.
+ */
+export function scoreConfidenceLevel(finalGames: number): ScoreConfidenceLevel {
+  if (finalGames < MIN_FINAL_GAMES) return "measuring";
+  if (finalGames < 5) return "low";
+  if (finalGames < 8) return "medium";
+  return "high";
+}
+
+export const SCORE_CONFIDENCE_LABELS: Record<ScoreConfidenceLevel, string> = {
+  measuring: "측정 중",
+  low: "신뢰도 낮음",
+  medium: "신뢰도 보통",
+  high: "신뢰도 높음",
+};
+
+/**
+ * 요정 지수 축 — 오직 "내가 간 날의 팀 초과성과"만 다룬다.
+ *
+ * 관전가치(경기 질)·명경기 보너스는 제거했다 — 둘이 같은 것을 이중 가산했고,
+ * 무엇보다 "재밌는 경기"는 팀 성과가 아니다(하린아빠 2026-08-02:
+ * "관전가치 기준이 아니라 무조건 팀퍼포먼스와의 상관도를 봐야지").
+ *
+ * 삼순 2026-08-02 확정 가중:
+ *  ① winExcess 55% — pregame 기대승률(상대전력 log5 + 홈/원정) 대비 실제 승점
+ *  ② marginExcess 30% — pregame 기대 마진 대비 실제 마진(상한 적용)
+ *  ③ 타선·마운드 15% — 팀 시즌 대비 초과성과(둘 다 있으면 7.5%씩)
+ *
+ * 핵심: 1점차 패는 5점차 패보다 높지만 **자동 플러스가 아니다.**
+ * 강팀 상대 기대 −3인데 −1이면 플러스 / 약팀 상대 기대 +2인데 −1이면 마이너스.
+ *
+ * pregame 기대치가 없으면 축 재정규화가 아니라 **지수 전체 fail-close**(삼순 P0).
+ */
 function buildScoreAxes(scope: VenueStatsScopePayload): VenueStatsScoreAxis[] {
   const axes: VenueStatsScoreAxis[] = [];
   const push = (
@@ -319,25 +355,20 @@ function buildScoreAxes(scope: VenueStatsScopePayload): VenueStatsScoreAxis[] {
   };
 
   const a1 = scope.metrics.A1 as MetricEnvelope<A1Value> | undefined;
-  const deltaPp = weightedDelta<A1Value>(a1, (v) => v.deltaPp);
-  // ±20%p 를 축 끝으로 둔다(한 시즌 기준 20%p 리프트는 극단값).
-  push("winLift", "승리 리프트", deltaPp == null ? null : deltaPp / 20, 0.35);
+  const excess = a1?.value?.excess ?? null;
+  // 기대치 없음 → 빈 축 배열 → 호출측이 score=null 로 닫는다. 승률로 대체하지 않는다.
+  if (excess == null) return [];
 
-  const d1 = scope.metrics.D1 as MetricEnvelope<D1Value> | undefined;
-  const qualityAvg = d1?.value?.qualityAvg ?? null;
-  push("quality", "경기 질", qualityAvg, 0.25);
+  // 승점 초과는 이론상 ±1이지만 실전 평균 ±0.35면 이미 극단이라 그걸 축 끝으로 둔다.
+  push("winLift", "기대 대비 승리", excess.winExcess / 0.35, 0.55);
+  // 마진 초과 ±3점을 축 끝으로(기대보다 평균 3점 더/덜 = 압도적).
+  push("quality", "기대 대비 득실", excess.marginExcess / 3, 0.3);
 
   const avgDelta = weightedDelta<B1Value>(scope.metrics.B1, (v) => v.delta);
   const runsDelta = weightedDelta<B3Value>(scope.metrics.B3, (v) => v.delta);
   const offenseParts: number[] = [];
   if (avgDelta != null) offenseParts.push(clamp(avgDelta / 0.05, -1, 1));
   if (runsDelta != null) offenseParts.push(clamp(runsDelta / 2, -1, 1));
-  push(
-    "offense",
-    "팀 타선",
-    offenseParts.length > 0 ? offenseParts.reduce((s, v) => s + v, 0) / offenseParts.length : null,
-    0.15,
-  );
 
   // ERA·피안타는 낮을수록 좋으므로 부호를 뒤집어 "개선량"으로 맞춘다.
   const eraDelta = weightedDelta<B2Value>(scope.metrics.B2, (v) => v.delta);
@@ -348,18 +379,15 @@ function buildScoreAxes(scope: VenueStatsScopePayload): VenueStatsScoreAxis[] {
   const moundParts: number[] = [];
   if (eraDelta != null) moundParts.push(clamp(-eraDelta / 1.5, -1, 1));
   if (hitsAllowedDelta != null) moundParts.push(clamp(-hitsAllowedDelta / 2, -1, 1));
-  push(
-    "mound",
-    "팀 마운드",
-    moundParts.length > 0 ? moundParts.reduce((s, v) => s + v, 0) / moundParts.length : null,
-    0.15,
-  );
 
-  // 명경기 보너스 — 가점 전용. 박빙패도 "볼 만한 경기를 봤다"로 상향에만 기여한다.
-  const finalGames = d1?.denominator?.finalGames ?? d1?.n ?? 0;
-  if (d1?.value != null && finalGames > 0) {
-    const memorable = (d1.value.closeGames ?? 0) + (d1.value.blowoutWins ?? 0);
-    push("bonus", "명경기 목격", clamp(memorable / finalGames, 0, 1), 0.1);
+  const mean = (parts: number[]) =>
+    parts.length > 0 ? parts.reduce((s, v) => s + v, 0) / parts.length : null;
+  const offense = mean(offenseParts);
+  const mound = mean(moundParts);
+  const sideCount = (offense == null ? 0 : 1) + (mound == null ? 0 : 1);
+  if (sideCount > 0) {
+    push("offense", "팀 타선", offense, 0.15 / sideCount);
+    push("mound", "팀 마운드", mound, 0.15 / sideCount);
   }
   return axes;
 }
@@ -394,7 +422,7 @@ export function buildVenueStatsHero(scope: VenueStatsScopePayload): VenueStatsHe
   const axisWeight = scoreAxes.reduce((sum, axis) => sum + axis.weight, 0);
   const scoreConfidence = sampleLimited
     ? null
-    : finalGames / (finalGames + SCORE_CONFIDENCE_K);
+    : Math.sqrt(finalGames / (finalGames + SCORE_CONFIDENCE_K));
   const composite =
     axisWeight > 0
       ? scoreAxes.reduce((sum, axis) => sum + axis.normalized * axis.weight, 0) / axisWeight

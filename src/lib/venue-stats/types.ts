@@ -63,10 +63,28 @@ export interface TeamComparable extends WinLossDraw {
 }
 
 /** §10 A1 — 단일 snapshot 팀이면 delta, 복수 팀이면 mixed_team·items=perTeam (§11 mixed shape). */
+/**
+ * 직관 경기의 **경기 시작 전(pregame) 기대치 대비 초과성과**.
+ *
+ * 하린아빠 2026-08-02: "관전가치 기준이 아니라 무조건 팀퍼포먼스와의 상관도를 봐야지".
+ * 삼순 2026-08-02: 대상 경기·이후 경기가 섞인 시즌 누적값은 leakage — 반드시 경기일 이전 데이터로만.
+ * 한 경기라도 pregame 기대치를 못 만들면 null — 축 재정규화가 아니라 지수 전체 fail-close.
+ */
+export interface AttendanceExcess {
+  /** 경기당 평균 (실제 승점 − 기대 승률). -1~1. */
+  winExcess: number;
+  /** 경기당 평균 (실제 마진 − 기대 마진), 점. */
+  marginExcess: number;
+  /** 초과성과를 산출한 경기 수. */
+  games: number;
+}
+
 export interface A1Value {
   attendance: WinLossDraw;
   teamComparable: TeamComparable | null;
   deltaPp: number | null;
+  /** pregame 기대치 대비 초과성과. null=기대치 불가 → 요정 지수 fail-close. */
+  excess?: AttendanceExcess | null;
 }
 
 export interface A2Cell extends WinLossDraw { opponentTeamId: number }
@@ -176,17 +194,6 @@ export interface D1Value {
   avgRunDiff: number | null;
   closeGameRate: number | null;
   closeGames: number;
-  /**
-   * 경기 질 평균(-1~1). 하린아빠 2026-08-02 지시 —
-   * "이겨도 얼마나 크게 이기는지, 져도 얼마나 박빙으로 지는지"를 점수에 반영한다.
-   * 경기별 q: 승 `0.55 + 0.45·min((m-1)/5,1)` / 무 `0.15` / 패 `0.20 - 1.20·min((m-1)/5,1)`.
-   * → 1점차 승 +0.55 · 6점차+ 대승 +1.00 · 1점차 박빙패 **+0.20(감점 아닌 가점)** · 6점차+ 대패 -1.00.
-   */
-  qualityAvg: number | null;
-  /** 1점차 패배(박빙패) 경기수. */
-  closeLosses: number;
-  /** 5점차 이상 승리(대승) 경기수. */
-  blowoutWins: number;
 }
 export interface D5Value { cancelledCount: number }
 export interface D6TopGame { gameId: string; date: string; runs: number }
