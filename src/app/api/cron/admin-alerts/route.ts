@@ -10,8 +10,19 @@ import {
   type JobLevelSnapshot,
 } from "@/lib/admin/job-health";
 import { sendAdminPush } from "@/lib/admin/push";
+import {
+  AUTO_WORKFLOWS,
+  evaluateAutoPrHealth,
+  formatAutoPrAlert,
+  type OpenPrInfo,
+  type WorkflowRunInfo,
+} from "@/lib/admin/auto-pr-health";
 
 const CRON_SECRET = process.env.CRON_SECRET || "";
+const GH_OWNER = "hwinside";
+const GH_REPO = "kbo-everyday";
+/** 하린아빠 텔레그램 chat_id — daily-fallback-report와 동일 대상. */
+const ADMIN_TELEGRAM_CHAT_ID = "6796048731";
 
 export const maxDuration = 60;
 
@@ -190,6 +201,22 @@ export async function GET(req: NextRequest) {
     // prevLevel !== job.level 인데 alerts에 없음 = unknown 관련 무시 전이 → 상태 유지(덮지 않음)
   }
 
+  // ── 자동 PR 파이프라인 감시(2026-08-01 하린아빠 지시)
+  // job-health는 roster-update를 tracked=false + 데이터 신선도로만 보기 때문에
+  // 자동 PR이 죽어도 스탯이 48h 이내면 green이었다(7/26·7/27 실패 + #893·#699 방치가
+  // 며칠간 무알림으로 넘어간 이유). GitHub 상태를 직접 조회해 별도 판정한다.
+  // best-effort — 이 블록 실패가 기존 job 알림 결과를 무효화하지 않는다.
+  let autoPr: { checked: number; issues: number; sent: number; error?: string } = {
+    checked: 0,
+    issues: 0,
+    sent: 0,
+  };
+  try {
+    autoPr = await runAutoPrWatch(nowIso);
+  } catch (e) {
+    autoPr = { checked: 0, issues: 0, sent: 0, error: (e as Error).message };
+  }
+
   const body = {
     checked: current.length,
     problems: current.filter((c) => isProblem(c.level)).length,
@@ -197,10 +224,128 @@ export async function GET(req: NextRequest) {
     claimed,
     sent: sentTotal,
     reverted,
+    autoPr,
     writeErrors,
   };
   if (writeErrors.length > 0) {
     return NextResponse.json(body, { status: 500 });
   }
   return NextResponse.json(body);
+}
+
+/**
+ * 자동 PR 파이프라인 이상 감지 → 상태 전이 시 1회 알림.
+ *
+ * 기존 job 알림과 동일하게 `admin_alert_state`를 써 전이에서만 보낸다
+ * (30분마다 같은 알림이 반복되면 결국 무시하게 된다).
+ * 알림은 어드민 푸시 + 텔레그램 양쪽으로 보낸다 — 푸시 구독이 없거나 기기가
+ * 꺼져 있으면 그것만으로는 "바로 알 수 있게"라는 요구를 못 맞춘다.
+ */
+async function runAutoPrWatch(nowIso: string) {
+  const token = process.env.GITHUB_PAT;
+  if (!token) return { checked: 0, issues: 0, sent: 0, error: "GITHUB_PAT not configured" };
+
+  const nowMs = Date.parse(nowIso);
+  const gh = async (path: string) => {
+    const res = await fetch(`https://api.github.com/repos/${GH_OWNER}/${GH_REPO}${path}`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) throw new Error(`GitHub ${path} HTTP ${res.status}`);
+    return res.json();
+  };
+
+  // 워크플로별 최근 run + 열린 PR 목록
+  const runsByKey = new Map<string, WorkflowRunInfo[]>();
+  for (const def of AUTO_WORKFLOWS) {
+    const data = await gh(`/actions/workflows/${def.workflowFile}/runs?per_page=10`) as {
+      workflow_runs?: { status: string | null; conclusion: string | null; created_at: string | null; html_url?: string }[];
+    };
+    runsByKey.set(
+      def.key,
+      (data.workflow_runs ?? []).map((r) => ({
+        status: r.status,
+        conclusion: r.conclusion,
+        createdAt: r.created_at,
+        htmlUrl: r.html_url ?? null,
+      })),
+    );
+  }
+  const prData = await gh("/pulls?state=open&per_page=100") as {
+    number: number;
+    head?: { ref?: string };
+    created_at: string | null;
+  }[];
+  const openPrs: OpenPrInfo[] = prData.map((pr) => ({
+    number: pr.number,
+    headRefName: pr.head?.ref ?? "",
+    createdAt: pr.created_at,
+    // 체크 상태는 PR당 추가 요청이 필요해 여기선 조회하지 않는다.
+    // 적체 판정은 "열린 시간" 기준이라 체크 여부와 무관하게 성립한다(#699 사례).
+    checksPassing: null,
+  }));
+
+  const issues = evaluateAutoPrHealth(AUTO_WORKFLOWS, runsByKey, openPrs, nowMs);
+  const issueByKey = new Map(issues.map((i) => [i.key, i]));
+
+  // 전이 판정용 직전 상태(job 알림과 같은 테이블, key 네임스페이스만 다름)
+  const { data: prevRows, error: prevErr } = await supabase
+    .from("admin_alert_state")
+    .select("job_name,level")
+    .in("job_name", AUTO_WORKFLOWS.map((d) => d.key));
+  if (prevErr) throw new Error(`admin_alert_state read: ${prevErr.message}`);
+  const prev = new Map<string, string>(
+    (prevRows ?? []).map((r) => [r.job_name as string, r.level as string]),
+  );
+
+  let sent = 0;
+  for (const def of AUTO_WORKFLOWS) {
+    const issue = issueByKey.get(def.key);
+    const nextLevel = issue ? issue.kind : "healthy";
+    const prevLevel = prev.get(def.key) ?? null;
+    if (prevLevel === nextLevel) continue; // 같은 상태 유지 = 무알림
+
+    const { error: writeErr } = await supabase
+      .from("admin_alert_state")
+      .upsert(
+        {
+          job_name: def.key,
+          level: nextLevel,
+          reason: issue?.reason ?? "정상",
+          updated_at: nowIso,
+        },
+        { onConflict: "job_name" },
+      );
+    if (writeErr) throw new Error(`admin_alert_state write: ${writeErr.message}`);
+
+    const title = issue ? "⚠️ 자동 PR 파이프라인 이상" : "✅ 자동 PR 파이프라인 복구";
+    const text = issue ? formatAutoPrAlert(issue) : `${def.label} 정상 복귀`;
+    await Promise.allSettled([
+      sendAdminPush({ title, body: text, url: "/admin/jobs", tag: `auto-pr-${def.key}` }),
+      sendTelegramAlert(`${title}\n${text}`),
+    ]);
+    sent++;
+  }
+
+  return { checked: AUTO_WORKFLOWS.length, issues: issues.length, sent };
+}
+
+/** 텔레그램 best-effort 발송 — 토큰 미설정/실패여도 throw 하지 않는다. */
+async function sendTelegramAlert(text: string): Promise<void> {
+  const botToken = process.env.TELEGRAM_BOT_TOKEN;
+  if (!botToken) return;
+  try {
+    await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: ADMIN_TELEGRAM_CHAT_ID, text }),
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch {
+    // 알림 실패가 cron 자체를 죽이지 않는다(푸시 경로가 남아 있다).
+  }
 }
