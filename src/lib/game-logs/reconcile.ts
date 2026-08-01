@@ -133,24 +133,35 @@ export function planStaleReconciliation(
     const fp = fingerprint(row);
     const counterparts = addedByFingerprint.get(fp) ?? [];
 
-    // (A) 지문 짝이 존재하는 경우 — 종전 판정을 그대로 유지한다(모호하면 여전히 거부).
-    if (counterparts.length > 0) {
-      if (counterparts.length > 1 || (staleByFingerprint.get(fp)?.length ?? 0) > 1) {
-        return none("ambiguous_rekey_counterpart", [rowKey(row)]);
-      }
-      if (String(counterparts[0].player_type) !== String(row.player_type)) {
-        return none("no_rekey_counterpart", [rowKey(row)]);
-      }
+    // (A) 원천 대조로 승인한 경기별 exact rekey — 가장 강한 근거이므로 먼저 본다.
+    //
+    // 지문 휴리스틱보다 앞에 두는 이유: 같은 경기에 기록이 같은 투수가 여럿이면
+    // 지문이 여러 후보와 걸려 `ambiguous` 로 전체 reconcile 이 거부된다.
+    // 그런데 승인표는 KBO raw `pcode` 를 사람이 직접 대조해 넣은 exact 항목이라
+    // "기록이 같아서 모호하다"보다 상위 근거다.
+    // (실측 20260505WOSS0: stale 65040|pitcher ipOuts=3 에 대해 62360·AQ003 두 투수가
+    //  모두 ipOuts=3 → 지문 2건 → ambiguous. 그러나 원천 pcode 상 65040→62360 은 확정이다.)
+    //
+    // 이 순서 변경은 승인표에 있는 4줄 외에는 영향을 주지 않는다 — 승인표가 비면
+    // 바로 (B) 지문 경로로 내려가 종전 판정 그대로다.
+    const approved = approvedCounterparts(row, added);
+    if (approved.length === 1) {
       deletions.push(row);
       continue;
     }
+    if (approved.length > 1) return none("ambiguous_rekey_counterpart", [rowKey(row)]);
 
-    // (B) 원천 대조로 승인한 경기별 exact rekey만 허용한다. 이름·팀·포지션 추정 금지.
-    const approved = approvedCounterparts(row, added);
-    if (approved.length === 0) {
+    // (B) 지문 1:1 — 종전 판정을 그대로 유지한다(모호하면 여전히 거부).
+    if (counterparts.length === 0) {
+      // 대응하는 신규 key 가 없다 = rekey 가 아니라 그냥 사라진 선수(부분 응답).
       return none("no_rekey_counterpart", [rowKey(row)]);
     }
-    if (approved.length > 1) return none("ambiguous_rekey_counterpart", [rowKey(row)]);
+    if (counterparts.length > 1 || (staleByFingerprint.get(fp)?.length ?? 0) > 1) {
+      return none("ambiguous_rekey_counterpart", [rowKey(row)]);
+    }
+    if (String(counterparts[0].player_type) !== String(row.player_type)) {
+      return none("no_rekey_counterpart", [rowKey(row)]);
+    }
     deletions.push(row);
   }
 

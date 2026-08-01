@@ -67,9 +67,10 @@ jobs:
         # tsc 는 프로젝트 전체를 본다 — 이 job 의 목적은 ledger 변경이 타입을 깨지 않는지 확인.
         run: npx tsc --noEmit
 
-      - name: Reconcile rekey regression (이름 동일성 경로 + 부분응답 방어)
-        # 효과: 스탯 변동/1→2 분리 재식별도 치유
-        # 방어: 설명 없는 stale(부분 응답)은 여전히 삭제 0 fail-closed
+      - name: Reconcile rekey regression (경기별 승인표 + 부분응답 방어 + full-shape 경계)
+        # 효과: 원천 pcode 대조로 승인한 경기별 rekey 만 치유
+        # 방어: 설명 없는 stale(부분 응답)·동명이인은 여전히 삭제 0 fail-closed
+        # full-shape: 경기당 stale 이 여럿인 실제 shape(20260505WOSS0) + LG 잔여 3경기 미치유 고정
         run: npm run qa:reconcile-rekey
 
       - name: Ledger DB integration (PGlite, real migrations)

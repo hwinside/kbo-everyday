@@ -101,5 +101,70 @@ check("unresolved는 승인표보다 우선해 fail-close", () => {
   assert.equal(planStaleReconciliation(before, before, expected, 1).refusal, "unresolved_present");
 });
 
+// ── 다중 stale full-shape 경계 (삼순 P0) ────────────────────────────────────
+// 앞의 fixture 들은 경기당 stale 1건만 놓아 실제 경계를 놓쳤다.
+// 운영 20260505WOSS0 의 진짜 shape 은 stale 2건(65040|pitcher, 50167|batter)이고
+// 65040 의 지문 후보가 62360·AQ003 두 건(둘 다 ipOuts=3)라 지문 경로만 으로는
+// `ambiguous_rekey_counterpart` 로 **전체 atomic reconcile 이 거부**된다.
+// 그러면 승인표에 그 한 줄이 있어도 경기가 치유되지 않는다.
+check("[full-shape] 20260505WOSS0 다중 stale — 승인표가 지문 ambiguous 보다 우선", () => {
+  const g = "20260505WOSS0";
+  const staleP = pitcher("65040", { game_id: g, team_code: "SS", ip_outs: 3 });
+  const staleB = batter("50167", { game_id: g, team_code: "WO", ab: 4, h: 0 });
+  const before = [staleP, staleB, keep];
+  const expected = [
+    // 기록이 같은 투수 2명 — 지문만으로는 누가 65040 의 재식별인지 못 정한다.
+    pitcher("62360", { game_id: g, team_code: "SS", ip_outs: 3 }),
+    pitcher("AQ003", { game_id: g, team_code: "SS", ip_outs: 3 }),
+    // 50167 → 51302 는 지문 1:1 (승인표 밖 — 종전 경로로 통과해야 함)
+    batter("51302", { game_id: g, team_code: "WO", ab: 4, h: 0 }),
+    keep,
+  ];
+  const plan = planStaleReconciliation(before, before, expected, 0);
+  assert.equal(plan.refusal, null, "다중 stale 이어도 전부 설명되면 거부하지 않는다");
+  assert.deepEqual(
+    plan.deletions.map((r) => `${r.kbo_id}|${r.player_type}`).sort(),
+    ["50167|batter", "65040|pitcher"],
+    "stale 2건 모두 삭제 계획에 포함",
+  );
+  // AQ003 은 독립 신규 행이지 삭제 대상이 아니다.
+  assert.ok(!plan.deletions.some((r) => r.kbo_id === "AQ003"));
+});
+
+check("[full-shape] 다중 stale 중 하나라도 설명 안 되면 전체 거부(atomic)", () => {
+  const g = "20260505WOSS0";
+  const before = [
+    pitcher("65040", { game_id: g, team_code: "SS", ip_outs: 3 }),
+    // 56709 는 동명이인 박준영 — 승인표 밖이고 지문도 안 맞는다.
+    pitcher("56709", { game_id: g, team_code: "SS", ip_outs: 3 }),
+    keep,
+  ];
+  const expected = [
+    pitcher("62360", { game_id: g, team_code: "SS", ip_outs: 3 }),
+    pitcher("52731", { game_id: g, team_code: "SS", ip_outs: 5 }),
+    keep,
+  ];
+  const plan = planStaleReconciliation(before, before, expected, 0);
+  assert.ok(plan.refusal, "설명 안 되는 stale 이 섞이면 거부");
+  assert.deepEqual(plan.deletions, [], "거부 시 부분 삭제 0 (atomic)");
+});
+
+check("[full-shape] LG 잔여 3경기 패턴(56709/53893)은 여전히 fail-close", () => {
+  // 실측: 20260422HHLG0·20260508LGHH0 → 56709|pitcher, 20260609SKLG0 → 53893|pitcher.
+  // 이 3건은 이 PR 로 치유되지 **않는다** — 화면 blocker 해소 주장의 근거로 쓰지 못하게 고정.
+  expectRefusal(
+    [pitcher("56709", { game_id: "20260422HHLG0", team_code: "HH", ip_outs: 3 }), keep],
+    [pitcher("52731", { game_id: "20260422HHLG0", team_code: "HH", ip_outs: 5 }), keep],
+  );
+  expectRefusal(
+    [pitcher("56709", { game_id: "20260508LGHH0", team_code: "HH", ip_outs: 3 }), keep],
+    [pitcher("52731", { game_id: "20260508LGHH0", team_code: "HH", ip_outs: 5 }), keep],
+  );
+  expectRefusal(
+    [pitcher("53893", { game_id: "20260609SKLG0", team_code: "SK", ip_outs: 9 }), keep],
+    [pitcher("51302", { game_id: "20260609SKLG0", team_code: "SK", ip_outs: 6 }), keep],
+  );
+});
+
 console.log(`\n결과: ${pass} pass / ${fail.length} fail`);
 if (fail.length > 0) { console.error(`실패: ${fail.join(", ")}`); process.exit(1); }
