@@ -207,10 +207,10 @@ export default function HomeHighlights({ team, refreshNonce = 0 }: HomeHighlight
           <div
             key={v.id}
             className="flex-shrink-0 cursor-pointer"
-            style={{ width: "140px", scrollSnapAlign: "start" }}
+            style={{ width: "105px", scrollSnapAlign: "start" }}
             onClick={() => setReelIndex(i)}
           >
-            <div className="relative rounded-xl overflow-hidden" style={{ aspectRatio: "9/16", width: "140px" }}>
+            <div className="relative rounded-xl overflow-hidden" style={{ aspectRatio: "9/16", width: "105px" }}>
               <img src={v.thumbnail} alt={v.title} className="w-full h-full object-cover" />
               <div className="absolute inset-0 bg-gradient-to-t from-black/40 dark:from-black/60 via-transparent to-transparent" />
               <div className="absolute inset-0 flex items-center justify-center">
