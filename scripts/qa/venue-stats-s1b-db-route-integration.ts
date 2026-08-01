@@ -231,6 +231,55 @@ async function seasonUniverseFailClosedRegression() {
   }
   console.log("  ✓ route B3 gate RED: final 1경기 스코어 결손 → 공식 시즌 득점 baseline 전면 fail-close(부분 우주 금지)");
 
+  // ─ cache recovery RED (삼순 2026-08-02 P0): 스코어 결손 결과는 캐시하면 안 된다 ─
+  //   결손 결과가 complete cache 에 들어가면 원천 소스가 복구돼도 TTL(10~60분) 동안
+  //   `추가 fetch 0 · 공식 score 계속 null` 로 고착된다. 실제로 그렇게 관측됐다.
+  let fetchCalls = 0;
+  const countingMissingScore: SeasonGameFetcher = async (date) => {
+    fetchCalls += 1;
+    if (!universeGames[date]) return VERIFIED_EMPTY;
+    if (date === DATE_B) {
+      const broken = { ...makeFinalGame(GAME_B), awayScore: null } as unknown as KboGame;
+      return gamesResult([broken]);
+    }
+    return gamesResult(universeGames[date]);
+  };
+  __resetSeasonAggregatesCaches();
+  const degraded = await fetchSeasonAggregates(2026, { fetcher: countingMissingScore, rpc: faithfulRpc });
+  assert.equal(degraded.seasonGames!.every((g) => g.awayScore === undefined), true);
+  const fetchesAfterDegraded = fetchCalls;
+  assert.ok(fetchesAfterDegraded > 0, "1차 수집은 실제 fetch 를 발생시켜야 함");
+
+  // 소스 정상화 — 캐시가 없어야 재수집이 일어나고 공식 스코어가 복구된다.
+  let recoveredFetchCalls = 0;
+  const countingHealthy: SeasonGameFetcher = async (date) => {
+    recoveredFetchCalls += 1;
+    return universeGames[date] ? gamesResult(universeGames[date]) : VERIFIED_EMPTY;
+  };
+  const recovered = await fetchSeasonAggregates(2026, { fetcher: countingHealthy, rpc: faithfulRpc });
+  assert.ok(
+    recoveredFetchCalls > 0,
+    `결손 결과가 캐시되어 재수집이 0회였음(TTL 고착): ${recoveredFetchCalls}`,
+  );
+  assert.deepEqual(
+    recovered.seasonGames!.map((g) => g.awayScore),
+    [5, 5],
+    "소스 정상화 직후 재호출에서 공식 스코어가 복구돼야 함",
+  );
+  console.log("  ✓ route cache recovery RED: 스코어 결손 결과 no-store → 소스 정상화 재호출이 재수집·복구");
+
+  // 반대로 완전한 결과는 캐시되어 추가 수집이 0회여야 한다(캐시 자체는 살아 있음).
+  let afterCompleteFetches = 0;
+  await fetchSeasonAggregates(2026, {
+    fetcher: async (date) => {
+      afterCompleteFetches += 1;
+      return universeGames[date] ? gamesResult(universeGames[date]) : VERIFIED_EMPTY;
+    },
+    rpc: faithfulRpc,
+  });
+  assert.equal(afterCompleteFetches, 0, "완전 결과는 캐시되어 재수집 0회여야 함");
+  console.log("  ✓ route cache: 완전 결과는 정상 캐시(추가 fetch 0)");
+
   // ─ gate1 RED (일자 1건 reject — off-day transient): 다른 날짜는 성공해도 전체 fail-closed ─
   const rejectOffDay: SeasonGameFetcher = async (date) => {
     if (date === "20260401") throw new Error("transient fetch fail");
