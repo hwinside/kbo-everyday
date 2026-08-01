@@ -14,6 +14,10 @@ import assert from "node:assert/strict";
 import {
   computeExcessPerformance,
   pregameExpectation,
+  HOME_MARGIN_EDGE,
+  HOME_WIN_EDGE,
+  MAX_EXPECTED_MARGIN,
+  MEASURED_HOME_WIN_EDGE_CI,
   MIN_PRIOR_GAMES,
 } from "../../src/lib/venue-stats/expected";
 import type { SeasonGameVerification } from "../../src/lib/venue-stats/aggregate";
@@ -73,7 +77,9 @@ function priorGames(
   return games;
 }
 
-// 강팀(승률 .750, 득실 +2.0) / 약팀(승률 .250, 득실 −2.0) / 중립(.500, 0)
+// ⚠️ 주석과 실제 생성값이 달랐다(삼순 P0 지적). `priorGames` 는 승/패 경기마다 ±2점을
+//    더하는 방식이라 아래 spec 의 runsFor/runsAgainst 는 그대로 반영되지 않는다.
+//    실제 생성값을 아래 §0 에서 계산해 출력하고, 그 값으로 기대치 계약을 검증한다.
 const universe = priorGames([
   { teamId: STRONG, wins: 15, losses: 5, runsFor: 120, runsAgainst: 80 },
   { teamId: WEAK, wins: 5, losses: 15, runsFor: 80, runsAgainst: 120 },
@@ -83,6 +89,35 @@ const universe = priorGames([
 const TARGET_DATE = "2026-07-01";
 
 console.log("venue stats — pregame 기대치 / 초과성과");
+
+// ── ⓪ fixture 자기검증: 주석이 아니라 **실제 생성값**을 출력하고 계약에 쓴다 ──────
+{
+  const summary = new Map<number, { g: number; w: number; rf: number; ra: number }>();
+  for (const game of universe) {
+    const t = game.awayTeamId!;
+    const cur = summary.get(t) ?? { g: 0, w: 0, rf: 0, ra: 0 };
+    cur.g += 1;
+    cur.rf += game.awayScore!;
+    cur.ra += game.homeScore!;
+    if (game.awayScore! > game.homeScore!) cur.w += 1;
+    summary.set(t, cur);
+  }
+  for (const [teamId, v] of [...summary].sort((a, b) => a[0] - b[0])) {
+    console.log(
+      `    fixture team ${teamId}: ${v.g}경기 승률 ${(v.w / v.g).toFixed(3)} 득실 ${((v.rf - v.ra) / v.g).toFixed(2)}`,
+    );
+  }
+  const strong = summary.get(STRONG)!;
+  const weak = summary.get(WEAK)!;
+  ok(
+    "fixture 강팀 승률 > 약팀 승률 (실제 생성값 기준)",
+    strong.w / strong.g > weak.w / weak.g,
+  );
+  ok(
+    "fixture 강팀 득실 > 약팀 득실 (실제 생성값 기준)",
+    (strong.rf - strong.ra) / strong.g > (weak.rf - weak.ra) / weak.g,
+  );
+}
 
 // ── ① 기대치 자체: 강팀 상대는 기대가 낮고, 홈이면 조금 오른다 ────────────────
 {
@@ -279,6 +314,74 @@ function excessOf(params: {
     isHome: false, result: "L", myScore: null, oppScore: 4,
   }]);
   ok("스코어 결손 경기가 있으면 초과성과 전체 null", missingField === null);
+}
+
+// ── ⑥ 상수 근거·민감도 계약 (삼순 P0 2026-08-02) ────────────────────────────
+// 이전 홈 보정(±.02)은 출처 없는 손튜닝이었고, 방향만 보는 RED 는 임의의 작은 값도 통과시켰다.
+// 이제 ①상수가 실측 95%CI 안인지 ②그 크기가 지수 부호를 뒤집지 못하는지를 함께 고정한다.
+{
+  ok(
+    `홈 승률 보정(${HOME_WIN_EDGE})이 실측 95%CI [${MEASURED_HOME_WIN_EDGE_CI.low}, ${MEASURED_HOME_WIN_EDGE_CI.high}] 안`,
+    HOME_WIN_EDGE >= MEASURED_HOME_WIN_EDGE_CI.low && HOME_WIN_EDGE <= MEASURED_HOME_WIN_EDGE_CI.high,
+    `${HOME_WIN_EDGE}`,
+  );
+  // 실측 점추정(+0.0051) 대비 과대 보정 금지 — 발명한 값으로 되돌리면 FAIL.
+  ok(
+    "홈 승률 보정이 실측 점추정의 2배를 넘지 않는다(손튜닝 회귀 차단)",
+    Math.abs(HOME_WIN_EDGE) <= 0.0102 + 1e-12,
+    `${HOME_WIN_EDGE}`,
+  );
+  ok(
+    "홈 마진 보정도 '거의 0' 정책 범위(|x| ≤ 0.1)",
+    Math.abs(HOME_MARGIN_EDGE) <= 0.1,
+    `${HOME_MARGIN_EDGE}`,
+  );
+
+  // 민감도: 홈/원정만 다른 동일 경기에서 초과성과 **부호가 뒤집히면 안 된다.**
+  // (홈 보정이 커지면 원정 승리가 마이너스로 둔갑하는 등 부호 오염이 생긴다)
+  const homeWin = excessOf({
+    myTeamId: NEUTRAL, opponentTeamId: NEUTRAL, isHome: true,
+    result: "W", myScore: 5, oppScore: 3,
+  })!;
+  const awayWin = excessOf({
+    myTeamId: NEUTRAL, opponentTeamId: NEUTRAL, isHome: false,
+    result: "W", myScore: 5, oppScore: 3,
+  })!;
+  ok(
+    "동일 승리는 홈/원정 모두 승점 초과 양수(홈 보정이 부호를 뒤집지 못함)",
+    homeWin.winExcess > 0 && awayWin.winExcess > 0,
+    `${homeWin.winExcess} vs ${awayWin.winExcess}`,
+  );
+  ok(
+    "홈 보정 방향은 유지 — 같은 결과면 원정 초과성과가 더 크다",
+    awayWin.winExcess > homeWin.winExcess && awayWin.marginExcess > homeWin.marginExcess,
+    `${awayWin.winExcess} vs ${homeWin.winExcess}`,
+  );
+  // 보정 크기가 결과 자체(승/패)보다 작아야 한다 — 홈 여부로 승패 초과가 역전되면 안 됨.
+  const homeLoss = excessOf({
+    myTeamId: NEUTRAL, opponentTeamId: NEUTRAL, isHome: true,
+    result: "L", myScore: 3, oppScore: 5,
+  })!;
+  ok(
+    "원정 패배 < 홈 승리 (보정이 승패 신호를 넘지 못함)",
+    homeLoss.winExcess < awayWin.winExcess && homeLoss.winExcess < 0,
+    `${homeLoss.winExcess}`,
+  );
+
+  // 기대 마진 상한은 제품 정책 상수 — 극단 조합에서 발산하지 않는지 경계 고정.
+  const extreme = pregameExpectation(universe, {
+    gameDate: TARGET_DATE, myTeamId: STRONG, opponentTeamId: WEAK, isHome: true,
+  })!;
+  ok(
+    `기대 마진이 정책 상한 ±${MAX_EXPECTED_MARGIN} 안으로 잘린다`,
+    Math.abs(extreme.expectedMargin) <= MAX_EXPECTED_MARGIN + 1e-12,
+    `${extreme.expectedMargin}`,
+  );
+  ok(
+    "기대 승률도 0.05~0.95 로 bounded",
+    extreme.expectedWinProb <= 0.95 && extreme.expectedWinProb >= 0.05,
+    `${extreme.expectedWinProb}`,
+  );
 }
 
 console.log(`\n결과: ${pass} pass / ${fail} fail`);

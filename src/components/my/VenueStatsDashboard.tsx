@@ -82,6 +82,51 @@ interface VenueStatsResponse {
 const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
 const SEASONS = [2026, 2025] as const;
 
+/**
+ * 최애 선수 사진 — runtime 로드 실패 시 팀 로고로 폴백한다.
+ *
+ * 삼순 P1 (2026-08-02): `photoUrl` 이 있으면 `Image` 만 렌더해서, 파일이 지워졌거나
+ * 404 인 URL 에서 깨진 이미지가 그대로 남았다. `onError` 로 실제 로드 실패를 잡아 폴백한다.
+ *
+ * 공용 `PlayerAvatar` 는 쓰지 않는다 — 그 이니셜 폴백은 팀색 글자라 어두운 배경에서
+ * AA 대비를 못 넘긴다(실측 2.75·3.36 < 4.5, S2 browser gate).
+ */
+function FavoritePhoto({
+  photoUrl,
+  playerName,
+  teamLogoPath,
+}: {
+  photoUrl: string | null;
+  playerName: string;
+  teamLogoPath: string | null;
+}) {
+  const [failed, setFailed] = useState(false);
+  const showPhoto = photoUrl !== null && !failed;
+  return (
+    <div
+      data-testid="venue-favorite-photo"
+      data-photo-state={showPhoto ? "photo" : teamLogoPath ? "team-logo" : "placeholder"}
+      className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-full border border-white/10 bg-white/[0.06] shadow-[0_0_18px_rgba(255,82,99,.12)]"
+    >
+      {showPhoto ? (
+        <Image
+          src={photoUrl}
+          alt={playerName}
+          width={48}
+          height={48}
+          unoptimized
+          onError={() => setFailed(true)}
+          className="h-12 w-12 rounded-full object-cover"
+        />
+      ) : teamLogoPath ? (
+        <Image src={teamLogoPath} alt="" width={30} height={30} unoptimized />
+      ) : (
+        <Star size={20} className="text-white/70" />
+      )}
+    </div>
+  );
+}
+
 function StatState({ metric }: { metric: MetricEnvelope }) {
   const good = metric.state === "ready";
   if (good) return null;
@@ -373,12 +418,18 @@ export default function VenueStatsDashboard() {
   const dayGameTag = (() => {
     if (!dayOpportunity || dayOpportunity.attendanceTotal < MIN_FINAL_GAMES) return null;
     if (dayOpportunity.seasonTotal === 0 || dayOpportunity.attendanceDayGames === 0) return null;
+    // 삼순 P1 (2026-08-02) — baseline 0이면 배수가 Infinity 로 렌더됐다
+    // (`낮경기 수집가 · 평균의 Infinity배`). 기회가 0인데 참석이 있다는 건 데이터 모순이므로
+    // "유독 많이 본다"를 주장할 근거가 없다 → 태그 자체를 fail-close 한다.
+    if (dayOpportunity.seasonDayGames === 0) return null;
     const mine = dayOpportunity.attendanceDayGames / dayOpportunity.attendanceTotal;
     const baseline = dayOpportunity.seasonDayGames / dayOpportunity.seasonTotal;
-    if (mine < baseline * 1.5) return null;
+    if (!Number.isFinite(baseline) || baseline <= 0) return null;
+    const ratio = mine / baseline;
+    if (!Number.isFinite(ratio) || ratio < 1.5) return null;
     return {
       label: mine >= 0.5 ? "햇살 직관러" : "낮경기 수집가",
-      value: `낮 ${dayOpportunity.attendanceDayGames}경기 · 평균의 ${(mine / baseline).toFixed(1)}배`,
+      value: `낮 ${dayOpportunity.attendanceDayGames}경기 · 평균의 ${ratio.toFixed(1)}배`,
     };
   })();
   // 성적을 암시하는 `낮경기 승요`는 낮 경기 초과성과가 실제 플러스일 때만 별도 노출(삼순).
@@ -665,18 +716,32 @@ export default function VenueStatsDashboard() {
                   ))}
               </div>
             )}
-            {/* 삼순 2026-08-02 — 지수 아래에 상·하향 근거와 신뢰도를 1줄로 노출. */}
+            {/* 삼순 2026-08-02 — 지수 아래에 상·하향 근거와 신뢰도를 1줄로 노출.
+                ⚠️ 절댓값 1위 축을 고른 뒤 총점 방향을 붙이면 `승리 열세가 높은 이유`처럼
+                모순 문장이 나온다(삼순 P1). 총점과 **같은 방향** 근거를 우선 고르고,
+                반대 방향 축이 있으면 보조로 함께 노출한다. */}
             {!hero.sampleLimited && hero.score != null && (
               <p data-testid="venue-score-basis" className="mt-1.5 text-[10px] font-bold text-white/70">
                 {(() => {
-                  const top = [...hero.scoreAxes].sort(
+                  const byImpact = [...hero.scoreAxes].sort(
                     (a, b) => Math.abs(b.normalized * b.weight) - Math.abs(a.normalized * a.weight),
-                  )[0];
-                  const direction = hero.score >= 50 ? "높은" : "낮은";
-                  const reason = top
-                    ? `${top.label}${top.normalized >= 0 ? " 우세" : " 열세"}`
-                    : "기대 대비 성과";
-                  return `${reason}가 ${direction} 이유예요 · ${SCORE_CONFIDENCE_LABELS[scoreConfidenceLevel(a1.n)]}(${a1.n}경기)`;
+                  );
+                  const positiveScore = hero.score >= 50;
+                  const aligned = byImpact.filter((axis) =>
+                    positiveScore ? axis.normalized > 0 : axis.normalized < 0);
+                  const opposing = byImpact.filter((axis) =>
+                    positiveScore ? axis.normalized < 0 : axis.normalized > 0);
+                  const lead = aligned[0] ?? byImpact[0] ?? null;
+                  const confidence =
+                    `${SCORE_CONFIDENCE_LABELS[scoreConfidenceLevel(a1.n)]}(${a1.n}경기)`;
+                  if (lead == null) return `기대 대비 성과 기준이에요 · ${confidence}`;
+                  const leadText =
+                    `${lead.label} ${lead.normalized >= 0 ? "우세" : "열세"}`;
+                  const counter = opposing[0];
+                  const counterText = counter
+                    ? `, ${counter.label} ${counter.normalized >= 0 ? "우세" : "열세"}는 반대`
+                    : "";
+                  return `${leadText}가 ${positiveScore ? "높은" : "낮은"} 이유예요${counterText} · ${confidence}`;
                 })()}
               </p>
             )}
@@ -687,14 +752,19 @@ export default function VenueStatsDashboard() {
               <span>·</span>
               <span>승률 {formatRate(hero.attendance?.rate)}</span>
             </div>
-            <p className="mt-1.5 text-[11px] font-semibold text-white/70">
+            <p data-testid="venue-score-note" className="mt-1.5 text-[11px] font-semibold text-white/70">
               {hero.sampleLimited
                 ? `종료 경기 ${a1.n}경기 기록이에요 · ${MIN_FINAL_GAMES}경기부터 팀 시즌 비교를 보여드려요`
-                : hero.mixedTeam
-                  ? "응원팀 변경 포함 · 팀별 구간은 아래에서 확인"
-                  : hero.deltaPp == null
-                    ? "팀 시즌 비교값을 확인 중이에요"
-                    : `팀 시즌 승률 ${formatRate(hero.teamRate)}보다 ${formatSigned(hero.deltaPp, 1, "%p")}`}
+                : hero.score == null
+                  // 삼순 P1 (2026-08-02) — 표본은 충족했는데 지수만 없는 경우, 화면에
+                  // `– / 지수 준비 중`만 보이면 원인을 알 수 없다. pregame 기대치를 만들
+                  // 데이터가 부족하다는 사실을 명시한다(시즌 승률 비교로 대체 설명하지 않는다).
+                  ? `직관 ${a1.n}경기 기록은 아래에 있어요 · 상대전력 기준 기대치를 만들 경기 데이터가 아직 부족해요`
+                  : hero.mixedTeam
+                    ? "응원팀 변경 포함 · 팀별 구간은 아래에서 확인"
+                    : hero.deltaPp == null
+                      ? "팀 시즌 비교값을 확인 중이에요"
+                      : `팀 시즌 승률 ${formatRate(hero.teamRate)}보다 ${formatSigned(hero.deltaPp, 1, "%p")}`}
             </p>
             {hero.teamIds.length > 0 && (
               <div className="mt-3 flex items-center gap-1.5 overflow-hidden rounded-lg border border-white/8 bg-white/[0.035] px-2.5 py-2">
@@ -879,26 +949,11 @@ export default function VenueStatsDashboard() {
                   return (
                     <div key={playerId} data-testid="venue-favorite-card" className="rounded-2xl border border-white/8 bg-[#151519] p-3">
                       <div className="flex items-center gap-2.5">
-                        {/* 선수 사진이 있으면 사진, 없으면 종전 팀 로고/별 폴백.
-                            공용 PlayerAvatar 는 쓰지 않는다 — 그 이니셜 폴백은 팀색 글자라
-                            어두운 배경에서 AA 대비를 못 넘긴다(실측 2.75·3.36 < 4.5, S2 browser gate).
-                            이 PR 은 사진 배선만 한다 — 공용 컴포넌트 대비 개선은 별건. */}
-                        <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-full border border-white/10 bg-white/[0.06] shadow-[0_0_18px_rgba(255,82,99,.12)]">
-                          {photoUrl ? (
-                            <Image
-                              src={photoUrl}
-                              alt={player?.name ?? ""}
-                              width={48}
-                              height={48}
-                              unoptimized
-                              className="h-12 w-12 rounded-full object-cover"
-                            />
-                          ) : team ? (
-                            <Image src={team.logoPath} alt="" width={30} height={30} unoptimized />
-                          ) : (
-                            <Star size={20} className="text-white/70" />
-                          )}
-                        </div>
+                        <FavoritePhoto
+                          photoUrl={photoUrl}
+                          playerName={player?.name ?? ""}
+                          teamLogoPath={team?.logoPath ?? null}
+                        />
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-1.5">
                             <p className="truncate text-[16px] font-black">{player?.name ?? playerId}</p>

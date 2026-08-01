@@ -27,12 +27,34 @@ interface PriorRecord {
  */
 export const MIN_PRIOR_GAMES = 5;
 
-/** KBO 홈 어드밴티지 실증 근사 — 승률 +0.02, 마진 +0.15점. 과대 보정 금지. */
-const HOME_WIN_EDGE = 0.02;
-const HOME_MARGIN_EDGE = 0.15;
+/**
+ * 홈 어드밴티지 보정.
+ *
+ * ⚠️ 삼순 P0 (2026-08-02): 이전 값(승률 ±.02 / 마진 ±.15)은 **출처 없는 손튜닝**이었다.
+ *
+ * 실측(2026 `player_game_logs` 홈팀 기준 고유 final 493경기):
+ *   홈 승률(무=0.5) = .5051 → edge **+0.0051**, 95%CI [-0.0391, +0.0492]
+ *   → 신뢰구간이 0을 포함한다. 즉 **현재 데이터로는 홈 어드밴티지가 유의하지 않다.**
+ *
+ * 그래서 발명한 +.02 대신 측정된 점추정치를 쓰고, 상수가 실측 CI 안에 있는지를
+ * 회귀(`qa:venue-stats-expected`)로 고정한다. 시즌이 쌓이면 재측정 대상이다.
+ *
+ * 마진 보정은 직접 실측하지 못했다(KBO 일정 API 500, 우리 DB에 팀 득점 원장 없음).
+ * 승률 edge 와 같은 크기의 "거의 0" 정책값으로 두고, 아래 SENSITIVITY 계약으로
+ * 이 값이 지수 부호를 뒤집지 못하게 묶는다 — 근거 없는 큰 보정을 원천 차단.
+ */
+export const HOME_WIN_EDGE = 0.005;
+export const HOME_MARGIN_EDGE = 0.05;
 
-/** 기대 마진 상한 — 극단 팀 조합에서 기대치가 발산하지 않게 자른다. */
-const MAX_EXPECTED_MARGIN = 4;
+/** 실측 홈 승률 edge 95% CI — 상수가 이 범위를 벗어나면 회귀가 FAIL. */
+export const MEASURED_HOME_WIN_EDGE_CI = { low: -0.0391, high: 0.0492 } as const;
+
+/**
+ * 기대 마진 상한 — 극단 팀 조합에서 기대치가 발산하지 않게 자른다.
+ * 데이터 튜닝이 아니라 **제품 정책 상수**다(삼순 허용 경로). KBO 경기당 팀 득점이
+ * 대략 4~5점대인 점을 감안해 "한 팀이 상대를 평균 4점 차로 압도" 를 사실상 상한으로 본다.
+ */
+export const MAX_EXPECTED_MARGIN = 4;
 
 export interface PregameExpectation {
   /** log5 + 홈 보정 기대 승률(0~1). */

@@ -254,7 +254,11 @@ const scope = (name, wins, rate, excessWin = .18, excessMargin = 1.4) => {
   metrics.A2 = envelope("A2", [{opponentTeamId:2,w:3,l:1,d:0,rate:.75}]);
   metrics.A3 = envelope("A3", [{stadium:"잠실",homeAway:"home",w:4,l:2,d:0,rate:.667}]);
   metrics.A4 = envelope("A4", [{weekday:6,w:3,l:1,d:0,rate:.75}]);
-  metrics.A5 = envelope("A5", [{dayNight:"night",w:4,l:2,d:0,rate:.667}]);
+  metrics.A5 = {
+    ...envelope("A5", [{dayNight:"night",w:4,l:2,d:0,rate:.667},{dayNight:"day",w:2,l:0,d:0,rate:1}]),
+    // 낮경기 "기회 대비 참석" 근거 — baseline 정상(시즌 낮경기 20/200 = 10%).
+    coverage: { dayGameOpportunity: { attendanceDayGames: 2, attendanceTotal: 8, seasonDayGames: 20, seasonTotal: 200 } },
+  };
   metrics.A6 = envelope("A6", [{month:7,w:3,l:1,d:0,rate:.75}]);
   return {
     state:"ready",
@@ -426,7 +430,11 @@ const partialBaselinePayload = {
 // `야간 경기 체질 0승 · 0%`, `7월의 승요 0승 · 0%` 같은 긍정 태그가 렌더됐다.
 const losingSplitScope = (name) => {
   const base = scope(name, 5, .625);
-  base.metrics.A5 = envelope("A5", [{dayNight:"night",w:0,l:3,d:0,rate:0}]);
+  base.metrics.A5 = {
+    ...envelope("A5", [{dayNight:"night",w:0,l:3,d:0,rate:0},{dayNight:"day",w:0,l:3,d:0,rate:0}]),
+    // 삼순 P1 재현 — 시즌 낮경기 기회 0인데 참석 1 → 예전엔 `평균의 Infinity배`가 렌더됐다.
+    coverage: { dayGameOpportunity: { attendanceDayGames: 1, attendanceTotal: 3, seasonDayGames: 0, seasonTotal: 100 } },
+  };
   base.metrics.A6 = envelope("A6", [{month:7,w:0,l:3,d:0,rate:0}]);
   return base;
 };
@@ -448,6 +456,7 @@ let serveSampleLimited = false;
 let serveAttendanceOnly = false;
 let servePartialBaseline = false;
 let serveLosingSplits = false;
+let breakFavoritePhoto = false;
 const server = createServer((req, res) => {
   if (req.url?.startsWith("/api/me/venue-stats")) {
     const requestedSeason = new URL(req.url, "http://127.0.0.1").searchParams.get("season");
@@ -471,7 +480,17 @@ const server = createServer((req, res) => {
   }
   if (req.url === "/app.css") return res.writeHead(200, {"content-type":"text/css"}).end(css.css);
   if (req.url === "/bundle.js") return res.writeHead(200, {"content-type":"text/javascript"}).end(bundle);
+  // 팀 로고 — 사진 폴백이 "실제로 로드되는지"까지 보려면 정적 SVG 를 실제로 서빙해야 한다.
+  if (req.url?.startsWith("/logos/") && req.url.endsWith(".svg")) {
+    const logoPath = resolve(ROOT, `public${req.url}`);
+    if (existsSync(logoPath)) {
+      return res.writeHead(200, {"content-type":"image/svg+xml"}).end(readFileSync(logoPath));
+    }
+    return res.writeHead(404).end();
+  }
   if (req.url === "/players/53123.jpg") {
+    // 삼순 P1 — runtime 로드 실패(404) 주입해 onError 팀 로고 폴백을 실제로 검증한다.
+    if (breakFavoritePhoto) return res.writeHead(404).end();
     return res.writeHead(200, {"content-type":"image/jpeg"})
       .end(readFileSync(resolve(ROOT, "public/players/53123.jpg")));
   }
@@ -613,6 +632,44 @@ try {
   const fallbackSrc = await fallbackImages.first().getAttribute("src");
   if (!fallbackSrc || fallbackSrc.includes("/players/")) {
     throw new Error(`photo-less favorite rendered invalid photo instead of team logo: ${fallbackSrc}`);
+  }
+
+  // 삼순 P1 (2026-08-02) — 사진 URL 이 runtime 에 실패(404)하면 팀 로고로 폴백해야 한다.
+  // 예전엔 `photoUrl` 이 있으면 Image 만 렌더해 깨진 이미지가 그대로 남았다.
+  breakFavoritePhoto = true;
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.getByTestId("venue-favorite-card").first().waitFor({ timeout: 4000 });
+  const brokenSlot = page.getByTestId("venue-favorite-photo").first();
+  await brokenSlot.locator('img[src*="/logos/"], img:not([src*="/players/"])').first()
+    .waitFor({ timeout: 4000 })
+    .catch(() => {});
+  const photoState = await brokenSlot.getAttribute("data-photo-state");
+  if (photoState !== "team-logo") {
+    throw new Error(`404 사진은 팀 로고로 폴백해야 함(actual: ${photoState})`);
+  }
+  const brokenImgs = brokenSlot.locator("img");
+  if (await brokenImgs.count() !== 1) {
+    throw new Error("폴백 후에도 이미지는 정확히 1개여야 함");
+  }
+  const brokenSrc = await brokenImgs.first().getAttribute("src");
+  if (!brokenSrc || brokenSrc.includes("/players/")) {
+    throw new Error(`폴백이 여전히 깨진 선수 사진을 가리킴: ${brokenSrc}`);
+  }
+  const fallbackLoaded = await brokenImgs.first()
+    .evaluate((img) => img.complete && img.naturalWidth > 0);
+  if (!fallbackLoaded) throw new Error("팀 로고 폴백 이미지가 실제로 로드되지 않음");
+  breakFavoritePhoto = false;
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.getByTestId("venue-favorite-card").first().waitFor({ timeout: 4000 });
+  const restoredState = await page.getByTestId("venue-favorite-photo").first()
+    .getAttribute("data-photo-state");
+  if (restoredState !== "photo") {
+    throw new Error(`사진 정상화 후에는 다시 사진이어야 함(actual: ${restoredState})`);
+  }
+  // reload 로 최애 목록이 접힌 상태로 돌아왔으므로 이후 계약을 위해 다시 펼친다.
+  await page.getByRole("button", { name: /다른 최애 .*명 보기/ }).click();
+  if (await favoriteCards.count() !== 5) {
+    throw new Error("사진 폴백 검증 후 최애 펼침 상태를 복원하지 못했습니다");
   }
   await page.getByRole("button", { name: "최애 접기" }).click();
   if (await favoriteCards.count() !== 1) throw new Error("five-favorite collapse did not return to one card");
@@ -985,6 +1042,16 @@ try {
   }
   if (!losingText.includes("0승 3패")) {
     throw new Error(`0승 스플릿은 승·패를 함께 보여줘야 함: ${losingText}`);
+  }
+  // 삼순 P1 — baseline 0(낮경기 기회 0)에서 `평균의 Infinity배` 가 렌더되면 FAIL.
+  const dashboardText = await page.locator('[data-testid="venue-stats-dashboard"]').first().innerText();
+  for (const bad of ["Infinity", "NaN", "undefined"]) {
+    if (dashboardText.includes(bad)) {
+      throw new Error(`비정상 수치 문자열이 화면에 노출됨: ${bad}`);
+    }
+  }
+  if (/햇살 직관러|낮경기 수집가/.test(losingText)) {
+    throw new Error(`낮경기 기회 baseline 0이면 성향 태그를 붙이면 안 됨: ${losingText}`);
   }
 
   console.log(

@@ -200,6 +200,23 @@ function toIsoGameDate(raw: string): string | null {
 }
 
 /**
+ * 경기 시작시각 → 낮경기 여부. 유효한 `HH:mm`(0~23시)만 판정하고 그 밖은 undefined.
+ *
+ * 삼순 P1 (2026-08-02): `Number("") === 0` 이라 예전 구현은 time 결손 경기를
+ * `isDayGame:true`(00시=낮) 로 오분류했다. 결손은 "모름"이지 낮경기가 아니다.
+ */
+export function parseDayGame(time: unknown): boolean | undefined {
+  if (typeof time !== "string") return undefined;
+  const match = /^(\d{1,2}):(\d{2})$/.exec(time.trim());
+  if (!match) return undefined;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (!Number.isInteger(hour) || hour < 0 || hour > 23) return undefined;
+  if (!Number.isInteger(minute) || minute < 0 || minute > 59) return undefined;
+  return hour < 18;
+}
+
+/**
  * S1b 시즌 집계 — §11 경기 우주: 정규시즌 final 전체 스케줄(권위 소스)을 먼저 구성해
  * RPC에 넘기고, RPC가 ledger를 LEFT JOIN해 ledger 없는 경기를 complete=false로 강등한다
  * (우주 누락 금지 — 삼순 리뷰 P0). 일자별 수집이 한 날짜라도 실패한 non-empty partial 우주,
@@ -241,8 +258,10 @@ async function computeSeasonAggregates(
       seen.add(g.gameId);
       universe.push({ gameId: g.gameId, gameDate });
       // 낮/야간 — 팀 시즌 일정의 낮 경기 "기회"를 세기 위해 보존(삼순: 기회 대비 참석 비율).
-      const startHour = Number(String(g.time ?? "").split(":")[0]);
-      if (Number.isInteger(startHour)) dayGameFlags.set(g.gameId, startHour < 18);
+      // ⚠️ `Number("")===0` 이라 time 결손을 그대로 파싱하면 00시=낮경기로 오분류된다(삼순 P1).
+      //    유효한 `HH:mm` 형식 + 0~23 시만 수용하고, 결손/형식 이탈은 undefined 로 남긴다.
+      const dayGame = parseDayGame(g.time);
+      if (dayGame !== undefined) dayGameFlags.set(g.gameId, dayGame);
       if (
         Number.isInteger(g.awayTeamId) && Number.isInteger(g.homeTeamId) &&
         Number.isInteger(g.awayScore) && Number.isInteger(g.homeScore) &&
