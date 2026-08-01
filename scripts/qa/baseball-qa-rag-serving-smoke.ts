@@ -13,7 +13,7 @@
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { PGlite } from "@electric-sql/pglite";
@@ -273,6 +273,64 @@ async function run(): Promise<void> {
     assert.deepEqual(single, { entityType: "player", entityId: "69102", name: "문보경", sourceKey: "namu:player:69102" });
     console.log("PASS 동명이인/다중선수 격리");
   }
+
+  // ── 7-b. 오염 캐시가 있어도 선수 서술형은 RAG 가 이긴다 (삼순 R3/R4 P0-3) ──
+  // 예전엔 cache 가 RAG 앞이라 preseed 된 근거 없는 답이 그대로 재노출됐다.
+  // ⚠️ 이 회귀는 searchRag 를 throw 시키면 안 된다 — 구현이 예외를 catch 하고
+  //    cache 로 fallback 하면 계속 초록이 된다(그게 예전 false-green 이었다).
+  //    stale cache 와 valid tier1/tier2 evidence 를 **동시에** 두고 승자를 본다.
+  {
+    let cacheReads = 0;
+    const { deps, logs } = makeDeps({
+      getCache: async () => {
+        cacheReads += 1;
+        return "예전에 저장된 근거 없는 답이에요.";
+      },
+      searchRag: async () => [MOON_EVIDENCE],
+      callRagLlm: async () => ({
+        text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "문보경 선수는 '문학소년'이라는 별명으로 불려요." }),
+        inputTokens: 3,
+        outputTokens: 3,
+      }),
+    });
+    const result = await answerQuestion("u1", "문보경 별명이 뭐야?", deps);
+    assert.equal(result.source, "rag", `오염 캐시가 RAG 를 이겼다: source=${result.source}`);
+    assert.match(result.answer, /문학소년/);
+    assert.doesNotMatch(result.answer, /예전에 저장된/, "캐시 답이 서빙됐다");
+    assert.equal(cacheReads, 0, "선수 서술형 질문에서 global cache 를 읽었다(순서 역전)");
+    assert.equal(logs.at(-1)?.matchPath, "rag");
+  }
+  // 근거 0건이면 캐시로 흘러가지 않고 fail-close 로 종결해야 한다(캐시 우회 금지).
+  {
+    let cacheReads = 0;
+    const { deps } = makeDeps({
+      getCache: async () => {
+        cacheReads += 1;
+        return "예전에 저장된 근거 없는 답이에요.";
+      },
+      searchRag: async () => [],
+      callRagLlm: async () => { throw new Error("근거 0건에서 호출되면 안 됨"); },
+    });
+    const result = await answerQuestion("u1", "문보경 별명이 뭐야?", deps);
+    assert.equal(result.source, "blocked", "근거 0건인데 캐시로 답했다");
+    assert.equal(cacheReads, 0, "근거 0건 fail-close 경로에서 캐시를 읽었다");
+  }
+  // 룰/용어 등 비-선수 질문은 종전대로 캐시가 살아 있어야 한다(과잉 차단 방지).
+  {
+    let cacheReads = 0;
+    const { deps } = makeDeps({
+      getCache: async () => {
+        cacheReads += 1;
+        return "캐시된 룰 설명이에요.";
+      },
+      searchRag: async () => [MOON_EVIDENCE],
+      callRagLlm: async () => { throw new Error("비-선수 질문에서 RAG 호출 금지"); },
+    });
+    const result = await answerQuestion("u1", "인필드 플라이가 뭐야?", deps);
+    assert.equal(result.source, "cache", `비-선수 질문 캐시 경로 회귀: source=${result.source}`);
+    assert.equal(cacheReads, 1, "비-선수 질문에서 캐시를 읽지 않았다");
+  }
+  console.log("PASS 캐시-RAG 우선순위 — 오염 캐시보다 근거 우선 / 근거 0건도 캐시 우회 금지 / 비선수 캐시 무회귀");
 
   // ── 8. RAG 미배선 시 기존 동작 불변 ─────────────────────────────────────
   {
@@ -874,20 +932,53 @@ function verifyHybridWaiverDocumented(): void {
 async function verifyScopedClaimOnRealDb(): Promise<void> {
   const db = new PGlite({ extensions: { vector } });
   await db.exec("CREATE ROLE anon NOLOGIN; CREATE ROLE authenticated NOLOGIN; CREATE ROLE service_role NOLOGIN;");
-  await db.exec(readFileSync(path.join(process.cwd(), "supabase/migrations/20260731_baseball_genius_rag_sources.sql"), "utf8"));
-  const multiDocumentMigration = readFileSync(
-    path.join(process.cwd(), "supabase/migrations/20260801223000_baseball_genius_rag_multidocument_snapshot.sql"),
-    "utf8",
+  // ⚠️ migration 은 **파일명 사전순**으로 적용된다. 손으로 순서를 정해 적용하면
+  // 실제 배포와 다른 순서가 되어 false-green 이 난다(삼순 R4 P0-1 — 실제로 그랬다:
+  // `20260801_..._scoped_claim` 이 `_`(0x5F) > `2`(0x32) 때문에 220000/223000 뒤에 와서
+  // wikipedia 확장본을 namu 전용으로 되돌렸는데, 이 스모크는 반대 순서로 적용해 통과했다).
+  // 그래서 디렉터리를 실제로 읽어 사전순 그대로 적용한다.
+  const migrationDir = path.join(process.cwd(), "supabase/migrations");
+  const allRag = readdirSync(migrationDir)
+    .filter((f) => f.endsWith(".sql") && /baseball_genius_rag/.test(f))
+    .sort(); // 기본 사전순 = 배포 적용 순서
+
+  // PGlite 는 dm_messages 등 앱 전역 테이블을 갖고 있지 않다. RAG 계열 중에도
+  // genius_question_logs(=DM 결합 base migration 산물)에만 의존하는 파일이 있어
+  // 여기서는 적용할 수 없다. 다만 "적용 못 하는 파일" 을 손으로 고르면 다시
+  // cherry-pick false-green 이 되므로, 제외 대상이 **claim/스키마 계약을 건드리지
+  // 않는다는 것**을 기계로 증명하고 제외한다.
+  const ragMigrations: string[] = [];
+  for (const f of allRag) {
+    const sql = readFileSync(path.join(migrationDir, f), "utf8");
+    const touchesRagContract = /genius_rag_sources|genius_rag_chunks|claim_baseball_genius_rag/.test(sql);
+    if (touchesRagContract) {
+      ragMigrations.push(f);
+      continue;
+    }
+    assert.ok(
+      !/claim_baseball_genius_rag|genius_rag_/.test(sql),
+      `${f} 는 RAG 계약을 건드리는데 적용 대상에서 빠졌다 — 순서 검증이 무의미해진다`,
+    );
+  }
+  assert.ok(
+    ragMigrations.some((f) => /scoped_claim/.test(f)) &&
+      ragMigrations.some((f) => /wikipedia/.test(f)),
+    "순서 사고의 당사자(scoped_claim / wikipedia)가 적용 대상에 없다",
   );
-  await db.exec(multiDocumentMigration);
-  await db.exec(multiDocumentMigration); // 재적용 멱등
-  const scopedMigration = readFileSync(path.join(process.cwd(), "supabase/migrations/20260801_baseball_genius_rag_scoped_claim.sql"), "utf8");
-  await db.exec(scopedMigration);
-  // 멱등성: 같은 migration을 다시 적용해도 실패하지 않는다.
-  await db.exec(scopedMigration);
-  const wikipediaMigration = readFileSync(path.join(process.cwd(), "supabase/migrations/20260801220000_baseball_genius_rag_wikipedia_source.sql"), "utf8");
-  await db.exec(wikipediaMigration);
-  await db.exec(wikipediaMigration);
+  assert.ok(
+    ragMigrations.length >= 4,
+    `RAG migration 을 찾지 못했다(${ragMigrations.length}개) — 경로/패턴 확인 필요`,
+  );
+  for (const f of ragMigrations) {
+    await db.exec(readFileSync(path.join(migrationDir, f), "utf8"));
+  }
+  // 멱등성 재적용은 **기반 스키마 migration을 뺀** 이후 migration만 대상으로 한다.
+  // 기반본(20260731 ...rag_sources)은 `CREATE TRIGGER`를 가드 없이 쓰고 있어 재적용이
+  // 원래부터 불가능하다(42710). 이 PR 범위 밖 선재 성질이라 여기서 바꾸지 않고,
+  // 이후 migration이 재적용 안전한지만 계약으로 고정한다.
+  for (const f of ragMigrations.filter((x) => /^20260801(2|_baseball_genius_rag)|^20260802/.test(x))) {
+    await db.exec(readFileSync(path.join(migrationDir, f), "utf8"));
+  }
 
   const insertSource = async (sourceKey: string, entityType: string, entityId: string, title: string) => {
     await db.query(
@@ -895,10 +986,20 @@ async function verifyScopedClaimOnRealDb(): Promise<void> {
         (source_key, source_kind, entity_type, entity_id, page_title, candidate_urls, canonical_url,
          resolution_status, source_grade, identity_fingerprint)
        VALUES ($1,'namu_document',$2,$3,$4,ARRAY['https://namu.wiki/w/x'],'https://namu.wiki/w/x',
-         'resolved','tier2',$5)`,
+         'resolved','tier2',$5)
+       ON CONFLICT (source_key) DO UPDATE SET
+         entity_type = EXCLUDED.entity_type,
+         entity_id = EXCLUDED.entity_id,
+         page_title = EXCLUDED.page_title,
+         canonical_url = EXCLUDED.canonical_url,
+         resolution_status = 'resolved',
+         ingestion_status = 'not_started',
+         ingestion_attempts = 0`,
       [sourceKey, entityType, entityId, title, randomUUID()],
     );
   };
+  // ⚠️ 이제 seed migration 도 사전순으로 함께 적용되므로 운영 source 일부가 이미 존재한다.
+  // 실제 배포 상태에 더 가까우므로 seed 를 빼지 않고, 대신 upsert 로 원하는 초기 상태를 확정한다.
   // 대상 밖 운영 source(실제 운영에 resolved로 존재하는 KBO 리그/구단) + 대상 source 1건.
   await insertSource("namu:league:kbo", "league", "kbo", "KBO 리그");
   await insertSource("namu:team:1", "team", "1", "LG 트윈스");
@@ -928,11 +1029,15 @@ async function verifyScopedClaimOnRealDb(): Promise<void> {
     assert.equal(row.last_error, null, `${row.source_key}: 범위 밖 source에 오류가 기록되었다`);
   }
   // 범위 밖 source는 여전히 (전역 배치에서) claim 가능해야 한다 = 예산 미소진.
+  // ⚠️ 총 개수로 세지 않는다 — seed migration 도 함께 적용되므로 운영 source 수가 늘면
+  // 개수 기대치가 무관한 이유로 깨진다. 계약은 "이 두 건이 다시 잡히는가" 이다.
   const stillClaimable = await db.query<{ source_key: string }>(
-    "SELECT source_key FROM public.claim_baseball_genius_rag_batch(50, 60) WHERE source_key <> $1",
-    ["namu:player:69102"],
+    "SELECT source_key FROM public.claim_baseball_genius_rag_batch(50, 60)",
   );
-  assert.equal(stillClaimable.rows.length, 2, "범위 밖 운영 source는 여전히 claim 가능해야 한다");
+  const claimableKeys = new Set(stillClaimable.rows.map((r) => r.source_key));
+  for (const key of ["namu:league:kbo", "namu:team:1"]) {
+    assert.ok(claimableKeys.has(key), `범위 밖 운영 source(${key})가 다시 claim되지 않는다 = 예산 소진`);
+  }
 
   // 빈 범위를 "전체"로 해석하면 게이트가 조용히 사라진다 — 명시 거부해야 한다.
   await assert.rejects(
