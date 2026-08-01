@@ -253,12 +253,41 @@ export default function VenueStatsDashboard() {
   const c1ById = new Map((c1?.value ?? []).map((entry) => [entry.playerId, entry]));
   const c2ById = new Map((c2?.value ?? []).map((entry) => [entry.playerId, entry]));
   const c4ById = new Map((c4?.value ?? []).map((entry) => [entry.playerId, entry]));
-  const favoriteBoostById = new Map([
-    ...(c6?.value?.batterRanking ?? []).map((entry) => [entry.playerId, entry.boostPct] as const),
-    ...(c6?.value?.pitcherRanking ?? []).map((entry) => [entry.playerId, entry.boostPct] as const),
-  ]);
-  const favoriteIds = [...new Set([...c1ById.keys(), ...c2ById.keys(), ...c4ById.keys()])]
-    .sort((left, right) => (favoriteBoostById.get(right) ?? -Infinity) - (favoriteBoostById.get(left) ?? -Infinity));
+  const favoriteRegistrationOrder = new Map(
+    (profile?.favorite_players ?? []).map((player, index) => [player.playerId, index]),
+  );
+  const allFavoriteIds = [...new Set([...c1ById.keys(), ...c2ById.keys(), ...c4ById.keys()])]
+    .sort((left, right) =>
+      (favoriteRegistrationOrder.get(left) ?? Number.MAX_SAFE_INTEGER)
+      - (favoriteRegistrationOrder.get(right) ?? Number.MAX_SAFE_INTEGER));
+  // C6의 타자·투수 boostPct는 서로 다른 지표라 역할을 가로질러 숫자로 비교하지 않는다.
+  // 역할별 1위 후보만 만든 뒤, 후보 간 메인은 사용자의 최애 등록순으로 결정한다.
+  const favoriteBoostLeaders = [
+    c6?.value?.batterRanking?.[0]
+      ? { ...c6.value.batterRanking[0], role: "batter" as const }
+      : null,
+    c6?.value?.pitcherRanking?.[0]
+      ? { ...c6.value.pitcherRanking[0], role: "pitcher" as const }
+      : null,
+  ].filter((entry): entry is NonNullable<typeof entry> => entry != null && allFavoriteIds.includes(entry.playerId));
+  const mainFavorite = favoriteBoostLeaders.reduce<(typeof favoriteBoostLeaders)[number] | null>(
+    (selected, candidate) => {
+      if (!selected) return candidate;
+      const selectedOrder = favoriteRegistrationOrder.get(selected.playerId) ?? Number.MAX_SAFE_INTEGER;
+      const candidateOrder = favoriteRegistrationOrder.get(candidate.playerId) ?? Number.MAX_SAFE_INTEGER;
+      return candidateOrder < selectedOrder ? candidate : selected;
+    },
+    null,
+  );
+  const favoriteBoostLabelById = new Map(
+    favoriteBoostLeaders.map((entry) => [
+      entry.playerId,
+      entry.role === "batter" ? "타자 부스트 1위" : "투수 부스트 1위",
+    ] as const),
+  );
+  const favoriteIds = mainFavorite
+    ? [mainFavorite.playerId, ...allFavoriteIds.filter((playerId) => playerId !== mainFavorite.playerId)]
+    : allFavoriteIds;
   const visibleFavoriteIds = favoritesOpen ? favoriteIds : favoriteIds.slice(0, 1);
   const mixedBTeamIds = hero?.mixedTeam
     ? [...new Set(
@@ -557,7 +586,7 @@ export default function VenueStatsDashboard() {
                   <div className="rounded-2xl border border-white/8 bg-white/[0.045] p-4 text-sm font-semibold text-white/70">
                     {METRIC_STATE_LABELS[c1?.state ?? "no_favorite"]}
                   </div>
-                ) : visibleFavoriteIds.map((playerId, favoriteIndex) => {
+                ) : visibleFavoriteIds.map((playerId) => {
                   const player = favoriteById.get(playerId);
                   const batter = c1ById.get(playerId);
                   const pitcher = c2ById.get(playerId);
@@ -598,9 +627,9 @@ export default function VenueStatsDashboard() {
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-1.5">
                             <p className="truncate text-[16px] font-black">{player?.name ?? playerId}</p>
-                            {favoriteIndex === 0 && favoriteBoostById.has(playerId) && (
+                            {favoriteBoostLabelById.has(playerId) && (
                               <span className="shrink-0 rounded-full bg-amber-300/15 px-1.5 py-0.5 text-[9px] font-black text-amber-300">
-                                부스트 1위
+                                {favoriteBoostLabelById.get(playerId)}
                               </span>
                             )}
                           </div>

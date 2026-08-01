@@ -51,6 +51,25 @@ writeFileSync(
   myPageSource.replace(entryMarkup, "      {/* mutation: venue stats entry removed */}"),
 );
 
+const dashboardPath = resolve(ROOT, "src/components/my/VenueStatsDashboard.tsx");
+const crossRoleSelection = "return candidateOrder < selectedOrder ? candidate : selected;";
+const dashboardSourceRaw = readFileSync(dashboardPath, "utf8");
+let dashboardEntryPath = dashboardPath;
+if (process.env.VENUE_STATS_S2_MUTATE_CROSS_ROLE_SORT === "1") {
+  const selectionCount = dashboardSourceRaw.split(crossRoleSelection).length - 1;
+  if (selectionCount !== 1) {
+    throw new Error(`cross-role selection mutation target must be unique, got ${selectionCount}`);
+  }
+  dashboardEntryPath = resolve(GEN, "VenueStatsDashboard-mutated.tsx");
+  writeFileSync(
+    dashboardEntryPath,
+    dashboardSourceRaw.replace(
+      crossRoleSelection,
+      "return candidate.boostPct > selected.boostPct ? candidate : selected;",
+    ),
+  );
+}
+
 writeFileSync(resolve(GEN, "auth.jsx"), `
 // 실제 AuthContext 처럼 매 렌더마다 새 객체를 만들지 않는 안정 참조.
 const AUTH={
@@ -60,7 +79,7 @@ const AUTH={
     {playerId:"p2",name:"이최애",teamId:9,position:"투수"},
     {playerId:"p3",name:"김최애",teamId:1,position:"외야수"},
     {playerId:"p4",name:"박최애",teamId:1,position:"내야수"},
-    {playerId:"p5",name:"최최애",teamId:1,position:"포수"}
+    {playerId:"p5",name:"최최애",teamId:1,position:"투수"}
   ],team_id:1,nickname:"QA",avatar_url:null},
   loading:false,
   refreshProfile:async()=>{},
@@ -127,6 +146,7 @@ await build({
     "@/lib/store/myteam": resolve(GEN, "myteam.js"),
     "@/lib/capacitor/game-notification": resolve(GEN, "game-notification.js"),
     "@/lib/native-live-activity": resolve(GEN, "native-live.js"),
+    "@/components/my/VenueStatsDashboard": dashboardEntryPath,
     "@/components/onboarding/TeamSelectModal": resolve(GEN, "empty.jsx"),
     "@/components/onboarding/PlayerSelectModal": resolve(GEN, "empty.jsx"),
     "@/components/auth/LoginSheet": resolve(GEN, "empty.jsx"),
@@ -192,25 +212,29 @@ const scope = (name, wins, rate) => {
     {playerId:"53123",attendanceAvg:.333,seasonAvg:.278,deltaAvg:.055,attendanceHrPerGame:.2,seasonHrPerGame:.1,attendanceRbiPerGame:1,seasonRbiPerGame:.7,appearances:6,ab:21},
     {playerId:"p3",attendanceAvg:.310,seasonAvg:.270,deltaAvg:.040,attendanceHrPerGame:.1,seasonHrPerGame:.1,attendanceRbiPerGame:.8,seasonRbiPerGame:.6,appearances:5,ab:20},
     {playerId:"p4",attendanceAvg:.290,seasonAvg:.260,deltaAvg:.030,attendanceHrPerGame:.1,seasonHrPerGame:.1,attendanceRbiPerGame:.7,seasonRbiPerGame:.5,appearances:5,ab:20},
-    {playerId:"p5",attendanceAvg:.275,seasonAvg:.255,deltaAvg:.020,attendanceHrPerGame:.1,seasonHrPerGame:.1,attendanceRbiPerGame:.6,seasonRbiPerGame:.5,appearances:5,ab:20},
-  ], {attendanceAB:81});
-  metrics.C2 = envelope("C2", [{playerId:"p2",attendanceEra:2.71,seasonEra:3.88,eraImprovement:1.17,attendanceK9:9.2,seasonK9:8.1,k9Delta:1.1,appearances:4,outs:40}], {attendanceOuts:40});
+  ], {attendanceAB:61});
+  metrics.C2 = envelope("C2", [
+    {playerId:"p2",attendanceEra:2.71,seasonEra:3.88,eraImprovement:1.17,attendanceK9:9.2,seasonK9:8.1,k9Delta:1.1,appearances:4,outs:40},
+    {playerId:"p5",attendanceEra:3.20,seasonEra:3.75,eraImprovement:.55,attendanceK9:8.7,seasonK9:8.0,k9Delta:.7,appearances:4,outs:36},
+  ], {attendanceOuts:76});
   metrics.C4 = envelope("C4", [
     {playerId:"53123",homeRuns:2,appearanceGames:6,batter:{hits:9,rbi:7,homeRuns:2},pitcher:null},
     {playerId:"p2",homeRuns:0,appearanceGames:4,batter:null,pitcher:{strikeouts:12,zeroEarnedRunGames:2}},
     {playerId:"p3",homeRuns:1,appearanceGames:5,batter:{hits:6,rbi:4,homeRuns:1},pitcher:null},
     {playerId:"p4",homeRuns:0,appearanceGames:5,batter:{hits:5,rbi:3,homeRuns:0},pitcher:null},
-    {playerId:"p5",homeRuns:0,appearanceGames:5,batter:{hits:4,rbi:2,homeRuns:0},pitcher:null},
+    {playerId:"p5",homeRuns:0,appearanceGames:4,batter:null,pitcher:{strikeouts:9,zeroEarnedRunGames:1}},
   ]);
   metrics.C5 = envelope("C5", [{playerId:"53123",batterTop:{gameId:"g",date:"2026-07-12",ab:4,h:3,hr:1,rbi:3,bb:1}}]);
   metrics.C6 = envelope("C6", {
     batterRanking:[
-      {playerId:"53123",boostPct:19.8},
-      {playerId:"p3",boostPct:14.8},
-      {playerId:"p4",boostPct:11.5},
-      {playerId:"p5",boostPct:7.8},
+      {playerId:"53123",boostPct:.1978417266},
+      {playerId:"p3",boostPct:.1481481481},
+      {playerId:"p4",boostPct:.1153846154},
     ],
-    pitcherRanking:[{playerId:"p2",boostPct:15.2}],
+    pitcherRanking:[
+      {playerId:"p2",boostPct:.3015463918},
+      {playerId:"p5",boostPct:.1466666667},
+    ],
   });
   metrics.D1 = envelope("D1", {avgRunDiff:1.4,closeGameRate:.25,closeGames:2});
   metrics.D5 = envelope("D5", {cancelledCount:1});
@@ -490,15 +514,26 @@ try {
   const compactHeight = await page.evaluate(() => document.documentElement.scrollHeight);
   if (compactHeight > 1500) throw new Error(`compact dashboard exceeded 1500px before details: ${compactHeight}px`);
 
-  // 최애 5명 actual DOM: 부스트 1위만 기본 노출하고 나머지는 명시적 펼침 뒤에만 보여야 한다.
+  // 최애 5명 actual DOM(타자 3 + 투수 2): 역할별 1위 후보의 boostPct는
+  // 투수(.3015) > 타자(.1978)이지만, 역할 간 숫자 비교 없이 최애 등록순 첫 후보(오스틴)를 메인으로 둔다.
   const favoriteCards = page.getByTestId("venue-favorite-card");
-  if (await favoriteCards.count() !== 1 || !(await favoriteCards.first().innerText()).includes("오스틴")) {
-    throw new Error("five-favorite compact view must show only the #1 boosted favorite");
+  const mainFavoriteText = await favoriteCards.first().innerText();
+  if (await favoriteCards.count() !== 1 || !mainFavoriteText.includes("오스틴")) {
+    throw new Error("cross-role boost values must not override favorite registration order");
+  }
+  if (!mainFavoriteText.includes("타자 부스트 1위") || mainFavoriteText.includes("투수 부스트 1위")) {
+    throw new Error(`main favorite role label mismatch: ${mainFavoriteText}`);
   }
   const favoritesToggle = page.getByRole("button", { name: "다른 최애 4명 보기" });
   await favoritesToggle.click();
   if (await favoriteCards.count() !== 5) {
     throw new Error(`five-favorite expanded view must show 5 cards, got ${await favoriteCards.count()}`);
+  }
+  const pitcherLeaderText = await page.getByText("이최애", { exact: true })
+    .locator('xpath=ancestor::*[@data-testid="venue-favorite-card"][1]')
+    .innerText();
+  if (!pitcherLeaderText.includes("투수 부스트 1위")) {
+    throw new Error(`pitcher role leader label missing: ${pitcherLeaderText}`);
   }
 
   // 최애 사진 회귀: 실제 사진 ID는 정적 JPEG를 로드하고, 사진 없는 ID는 종전 팀 로고를 유지한다.
@@ -860,7 +895,7 @@ try {
   }
 
   console.log(
-    `venue stats S2 browser: PASS (390px, compact<=1500px, novelty<=6+inapplicable omitted, 5-favorite #1 collapse/expand, mixed B1~B4 actual payload, season abort/generation, selected-season 503 fail-closed(no stale value + retry UI), sample-limited facts detail-only+dash score+amber badge+0 baseline, attendance_only 2-game facts+dash score+amber badge+mutation RED, single-team 2x2 card, partial-baseline B/C attendance facts+C4/C5 visible+season hidden, AA ${contrast.minimum.toFixed(2)}:1 across ${contrast.count} texts)\nshot: ${SHOT}`,
+    `venue stats S2 browser: PASS (390px, compact<=1500px, novelty<=6+inapplicable omitted, 5-favorite batter3+pitcher2 role-leader candidate + registration-order main + role labels + collapse/expand, mixed B1~B4 actual payload, season abort/generation, selected-season 503 fail-closed(no stale value + retry UI), sample-limited facts detail-only+dash score+amber badge+0 baseline, attendance_only 2-game facts+dash score+amber badge+mutation RED, single-team 2x2 card, partial-baseline B/C attendance facts+C4/C5 visible+season hidden, AA ${contrast.minimum.toFixed(2)}:1 across ${contrast.count} texts)\nshot: ${SHOT}`,
   );
 } finally {
   await browser.close();
