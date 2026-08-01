@@ -12,7 +12,10 @@
 -- 그래서 기존 시그니처를 명시적으로 DROP 한 뒤 8-인자로 다시 만든다.
 DROP FUNCTION IF EXISTS public.admin_send_ops_message(UUID, UUID, TEXT, TEXT[], TEXT, TEXT, TEXT);
 
-CREATE FUNCTION public.admin_send_ops_message(
+-- ⚠️ CREATE OR REPLACE 여야 한다. 재적용 시 8-인자 함수가 이미 있으면
+-- 순수 CREATE 는 42723 으로 죽는다(같은 유형으로 #1050 Vercel prebuild 가 실제로 깨졌다).
+-- 위 DROP 은 **구 7-인자** 시그니처만 지우므로, 새 시그니처는 REPLACE 로 멱등하게 둔다.
+CREATE OR REPLACE FUNCTION public.admin_send_ops_message(
   p_system_user_id UUID,
   p_user_id UUID,
   p_content TEXT DEFAULT '',
