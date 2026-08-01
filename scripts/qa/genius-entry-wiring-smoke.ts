@@ -104,17 +104,40 @@ check("대상은 야잘알봇 상수 — 하드코딩 UUID 금지", () => {
   );
 });
 
-// --- 비로그인: 방을 만들지 않는다 ---
-check("비로그인은 LoginSheet — 대화 조회/생성 전에 중단", () => {
-  assert.ok(/LoginSheet/.test(entry), "LoginSheet 없음");
-  // ⚠️ 파일 전체에서 indexOf 하면 상단 import 행이 잡혀 항상 "조회가 먼저"로 보인다.
-  // 순서 계약은 클릭 핸들러 본문 안에서만 의미가 있으므로 범위를 좌힌다.
+// --- 비로그인: 진입 자체가 불가능해야 한다 (2026-08-02 하린아빠 지시) ---
+// 종전 구현은 "버튼은 보이고 누르면 LoginSheet" 였다. 지시는 그게 아니라
+// **비로그인이면 진입 불가** — 버튼을 아예 노출하지 않는다.
+check("비로그인이면 버튼을 렌더하지 않는다(early return)", () => {
+  const bodyStart = entry.indexOf("export default function GeniusEntryButton");
+  assert.ok(bodyStart >= 0, "컴포넌트 선언을 찾지 못함");
+  const body = entry.slice(bodyStart);
+
+  const guardIdx = body.search(/if\s*\(\s*loading\s*\|\|\s*!user\s*\)\s*return null/);
+  assert.ok(guardIdx >= 0, "비로그인/세션 미확정 early return 가드 없음");
+
+  // 가드는 JSX 를 만들기 전에 있어야 한다. 뒤에 있으면 버튼이 이미 그려진 뒤다.
+  const renderIdx = body.indexOf("return (");
+  assert.ok(renderIdx >= 0, "렌더 return 을 찾지 못함");
+  assert.ok(guardIdx < renderIdx, "가드가 렌더보다 뒤에 있어 비로그인에게도 버튼이 보인다");
+});
+
+check("로그인 유도 시트로 대체하지 않는다 — 진입 불가가 계약", () => {
+  assert.ok(!/LoginSheet/.test(entry), "LoginSheet 가 남아 있음(비로그인에게 진입 경로를 열어줌)");
+});
+
+check("세션 미확정(loading) 구간에도 노출하지 않는다", () => {
+  // 잠깐 보였다 사라지면 그 찰나에 눌릴 수 있고, 비로그인에게 '있었는데 없어진' 진입점이 된다.
+  assert.ok(/const\s*\{\s*user\s*,\s*loading\s*\}\s*=\s*useAuth\(\)/.test(entry),
+    "useAuth 에서 loading 을 읽지 않음");
+});
+
+check("클릭 핸들러에도 방어 가드가 남아 있다(클릭 시점 세션 만료)", () => {
   const bodyStart = entry.indexOf("const handleClick");
   assert.ok(bodyStart >= 0, "handleClick 핸들러를 찾지 못함");
   const body = entry.slice(bodyStart);
-  const guardIdx = body.indexOf("if (!user)");
+  const guardIdx = body.indexOf("if (!user) return");
   const lookupIdx = body.indexOf("getExistingConversation(");
-  assert.ok(guardIdx >= 0, "비로그인 가드 없음");
+  assert.ok(guardIdx >= 0, "클릭 시점 가드 없음");
   assert.ok(lookupIdx >= 0, "대화 조회 호출 없음");
   assert.ok(guardIdx < lookupIdx, "가드가 대화 조회 뒤에 있어 빈 대화가 생길 수 있음");
 });
