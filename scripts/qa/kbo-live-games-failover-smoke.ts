@@ -614,8 +614,10 @@ async function routeFailureMatrix() {
           witnessSignal = init?.signal ?? undefined;
           return new Promise<Response>((_resolve, reject) => {
             init?.signal?.addEventListener("abort", () => {
-              activeWitness--;
-              reject(new DOMException("aborted", "AbortError"));
+              setTimeout(() => {
+                activeWitness--;
+                reject(new DOMException("aborted", "AbortError"));
+              }, 20);
             }, { once: true });
           });
         }
