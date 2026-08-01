@@ -1,7 +1,12 @@
 import type {
   A1Value,
+  B1Value,
+  B2Value,
+  B3Value,
+  B4Value,
   C1Entry,
   C2Entry,
+  D1Value,
   MetricEnvelope,
   MetricId,
   VenueStatsScopePayload,
@@ -206,8 +211,23 @@ export function pitcherCompatibility(entry: C2Entry | null | undefined): Favorit
   };
 }
 
+export interface VenueStatsScoreAxis {
+  key: "winLift" | "quality" | "offense" | "mound" | "bonus";
+  label: string;
+  /** 정규화 기여도(-1~1). */
+  normalized: number;
+  weight: number;
+}
+
 export interface VenueStatsHero {
   score: number | null;
+  /**
+   * 요정 지수 해석 기준점. 50 = 평소와 같음(요정도 흑염룡도 아님).
+   * 순수 승률이 아니라 "내가 갔을 때 평소보다 얼마나 잘했나"의 합성이다.
+   */
+  scoreAxes: VenueStatsScoreAxis[];
+  /** 지수 수축에 쓴 신뢰도(0~1). 경기가 쌓일수록 1에 수렴. */
+  scoreConfidence: number | null;
   attendance: A1Value["attendance"] | null;
   teamRate: number | null;
   deltaPp: number | null;
@@ -221,11 +241,119 @@ export interface VenueStatsHero {
   sampleLimited: boolean;
 }
 
+/**
+ * mixed_team 에서 B 지표는 top-level 이 null 이고 items[] 에만 팀별 값이 있다.
+ * 경기수(n) 가중 평균으로 합친다 — 한 팀이라도 delta 가 없으면 추정하지 않고 null(축 제외).
+ */
+function weightedDelta<T>(
+  metric: MetricEnvelope | undefined,
+  pick: (value: T) => number | null | undefined,
+): number | null {
+  if (!metric) return null;
+  // mixed_team 은 top-level value 가 존재하되 비교값만 null 인 shape 이다
+  // (`{attendance, teamComparable:null, deltaPp:null}`). value 유무로만 분기하면
+  // 팀별 items 에 살아있는 리프트를 통째로 버리게 된다 — 실제 비교값 기준으로 판정한다.
+  const topLevel =
+    metric.value != null && pick(metric.value as T) != null
+      ? [{ value: metric.value, n: metric.n || 1 }]
+      : [];
+  const sources: Array<{ value: unknown; n: number }> =
+    topLevel.length > 0
+      ? topLevel
+      : (metric.items ?? [])
+          .filter((item) => item.value != null)
+          .map((item) => ({ value: item.value, n: item.n || 1 }));
+  if (sources.length === 0) return null;
+  let weight = 0;
+  let total = 0;
+  for (const source of sources) {
+    const delta = pick(source.value as T);
+    if (delta == null || !Number.isFinite(delta)) return null;
+    total += delta * source.n;
+    weight += source.n;
+  }
+  return weight > 0 ? total / weight : null;
+}
+
+/**
+ * 직관 요정 지수 v2 — 단순 승률이 아니라 "내가 갔을 때 평소보다 얼마나 잘했나"의 합성.
+ *
+ * v1 은 `round(직관승률×100)` 이라 강팀 팬이 자동으로 높았고 3승1패와 30승10패가 같은 75점이었다.
+ * v2 는 5축 가중합 → `50 + 50·합성·신뢰도` 로, **50 = 평소와 같음**이 기준점이다.
+ *  ① winLift 35% — 직관 승률 − 팀 시즌 승률(deltaPp)
+ *  ② quality 25% — 경기 질 평균(D1.qualityAvg). 하린아빠 2026-08-02:
+ *      "이겨도 얼마나 크게 이기는지, 져도 얼마나 박빙으로 지는지"가 긍정적으로 작용
+ *  ③ offense 15% — 팀 타율 delta + 경기당 득점 delta
+ *  ④ mound 15% — 팀 ERA 개선 + 피안타 개선
+ *  ⑤ bonus 10% — 박빙패·대승 등 명경기 목격(가점 전용, 감점 없음)
+ *
+ * 값이 없는 축은 **추정하지 않고 제외**한 뒤 남은 축으로 가중치를 재정규화한다.
+ * 축이 하나도 없으면 지수 자체를 null 로 fail-close 한다 — 승률로 몰래 대체하지 않는다.
+ */
+const SCORE_CONFIDENCE_GAMES = 20;
+
+function buildScoreAxes(scope: VenueStatsScopePayload): VenueStatsScoreAxis[] {
+  const axes: VenueStatsScoreAxis[] = [];
+  const push = (
+    key: VenueStatsScoreAxis["key"],
+    label: string,
+    normalized: number | null,
+    weight: number,
+  ) => {
+    if (normalized == null || !Number.isFinite(normalized)) return;
+    axes.push({ key, label, normalized: clamp(normalized, -1, 1), weight });
+  };
+
+  const a1 = scope.metrics.A1 as MetricEnvelope<A1Value> | undefined;
+  const deltaPp = weightedDelta<A1Value>(a1, (v) => v.deltaPp);
+  // ±20%p 를 축 끝으로 둔다(한 시즌 기준 20%p 리프트는 극단값).
+  push("winLift", "승리 리프트", deltaPp == null ? null : deltaPp / 20, 0.35);
+
+  const d1 = scope.metrics.D1 as MetricEnvelope<D1Value> | undefined;
+  const qualityAvg = d1?.value?.qualityAvg ?? null;
+  push("quality", "경기 질", qualityAvg, 0.25);
+
+  const avgDelta = weightedDelta<B1Value>(scope.metrics.B1, (v) => v.delta);
+  const runsDelta = weightedDelta<B3Value>(scope.metrics.B3, (v) => v.delta);
+  const offenseParts: number[] = [];
+  if (avgDelta != null) offenseParts.push(clamp(avgDelta / 0.05, -1, 1));
+  if (runsDelta != null) offenseParts.push(clamp(runsDelta / 2, -1, 1));
+  push(
+    "offense",
+    "팀 타선",
+    offenseParts.length > 0 ? offenseParts.reduce((s, v) => s + v, 0) / offenseParts.length : null,
+    0.15,
+  );
+
+  // ERA·피안타는 낮을수록 좋으므로 부호를 뒤집어 "개선량"으로 맞춘다.
+  const eraDelta = weightedDelta<B2Value>(scope.metrics.B2, (v) => v.delta);
+  const hitsAllowedDelta = weightedDelta<B4Value>(
+    scope.metrics.B4,
+    (v) => v.hitsAllowed?.delta ?? null,
+  );
+  const moundParts: number[] = [];
+  if (eraDelta != null) moundParts.push(clamp(-eraDelta / 1.5, -1, 1));
+  if (hitsAllowedDelta != null) moundParts.push(clamp(-hitsAllowedDelta / 2, -1, 1));
+  push(
+    "mound",
+    "팀 마운드",
+    moundParts.length > 0 ? moundParts.reduce((s, v) => s + v, 0) / moundParts.length : null,
+    0.15,
+  );
+
+  // 명경기 보너스 — 가점 전용. 박빙패도 "볼 만한 경기를 봤다"로 상향에만 기여한다.
+  const finalGames = d1?.denominator?.finalGames ?? d1?.n ?? 0;
+  if (d1?.value != null && finalGames > 0) {
+    const memorable = (d1.value.closeGames ?? 0) + (d1.value.blowoutWins ?? 0);
+    push("bonus", "명경기 목격", clamp(memorable / finalGames, 0, 1), 0.1);
+  }
+  return axes;
+}
+
 export function buildVenueStatsHero(scope: VenueStatsScopePayload): VenueStatsHero {
   const metric = scope.metrics.A1 as MetricEnvelope<A1Value>;
   const value = metric.value;
   const attendance = value?.attendance ?? null;
-  const rate = attendance?.rate ?? null;
   const teamIds = new Set<number>();
   if (value?.teamComparable?.teamId != null) teamIds.add(value.teamComparable.teamId);
   for (const item of metric.items ?? []) {
@@ -246,9 +374,26 @@ export function buildVenueStatsHero(scope: VenueStatsScopePayload): VenueStatsHe
   const sampleLimited =
     metric.state === "sample_limited" ||
     (metric.state !== "ready" && finalGames < MIN_FINAL_GAMES);
+
+  // v2 합성 지수. 축이 하나도 없으면 null — 승률로 조용히 대체하지 않는다.
+  const scoreAxes = sampleLimited ? [] : buildScoreAxes(scope);
+  const axisWeight = scoreAxes.reduce((sum, axis) => sum + axis.weight, 0);
+  const scoreConfidence = sampleLimited
+    ? null
+    : Math.sqrt(clamp(finalGames / SCORE_CONFIDENCE_GAMES, 0, 1));
+  const composite =
+    axisWeight > 0
+      ? scoreAxes.reduce((sum, axis) => sum + axis.normalized * axis.weight, 0) / axisWeight
+      : null;
+  const score =
+    composite == null || scoreConfidence == null
+      ? null
+      : Math.round(clamp(50 + 50 * composite * scoreConfidence, 0, 100));
+
   return {
-    // S1 계약에 별도 합성 점수는 없다. A1 직관 승률(0~1)을 0~100으로만 표시한다.
-    score: sampleLimited || rate == null ? null : Math.round(rate * 100),
+    score,
+    scoreAxes,
+    scoreConfidence,
     attendance,
     teamRate: value?.teamComparable?.rate ?? null,
     deltaPp: value?.deltaPp ?? null,

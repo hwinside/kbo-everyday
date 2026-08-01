@@ -174,8 +174,13 @@ const metricIds = [
 const envelope = (id, value, denominator = { finalGames: 8 }) => ({
   id, state: "ready", value, n: 8, denominator, coverage: {},
 });
-const scope = (name, wins, rate) => {
+// qualityAvg = 경기 질 평균(하린아빠 2026-08-02: 대승·박빙패가 긍정 기여).
+// 요정 지수 v2 는 순수 승률이 아니라 5축 합성이라, fixture 도 비교 근거(deltaPp)와
+// 경기 질을 갖춰야 실제 지수가 산출된다.
+const scope = (name, wins, rate, qualityAvg = .32) => {
   const metrics = Object.fromEntries(metricIds.map((id) => [id, envelope(id, null)]));
+  // 팀별 승률 리프트(%p) — 경기수 가중 평균이 (rate-.5)×100 이 되도록 대칭 분배.
+  const liftPp = (rate - .5) * 100;
   metrics.A1 = {
     ...envelope("A1", {
       attendance: { w: wins, l: 8 - wins, d: 0, rate },
@@ -184,8 +189,8 @@ const scope = (name, wins, rate) => {
     }),
     state: "mixed_team",
     items: [
-      { key:"1", state:"ready", value:{attendance:{w:3,l:1,d:0,rate:.75},teamComparable:null,deltaPp:null}, n:4, denominator:{} },
-      { key:"9", state:"ready", value:{attendance:{w:2,l:2,d:0,rate:.5},teamComparable:null,deltaPp:null}, n:4, denominator:{} },
+      { key:"1", state:"ready", value:{attendance:{w:3,l:1,d:0,rate:.75},teamComparable:null,deltaPp:liftPp + 5}, n:4, denominator:{} },
+      { key:"9", state:"ready", value:{attendance:{w:2,l:2,d:0,rate:.5},teamComparable:null,deltaPp:liftPp - 5}, n:4, denominator:{} },
     ],
   };
   const teamValues = {
@@ -236,7 +241,8 @@ const scope = (name, wins, rate) => {
       {playerId:"p5",boostPct:.1466666667},
     ],
   });
-  metrics.D1 = envelope("D1", {avgRunDiff:1.4,closeGameRate:.25,closeGames:2});
+  // 경기 질 q 평균: 대승 2 · 박빙패 2 섞인 여름상의 “볼 만했다” 분포.
+  metrics.D1 = envelope("D1", {avgRunDiff:1.4,closeGameRate:.25,closeGames:2,qualityAvg,closeLosses:2,blowoutWins:2});
   metrics.D5 = envelope("D5", {cancelledCount:1});
   metrics.D6 = envelope("D6", {maxTeamRuns:{gameId:"g",date:"2026-07-12",runs:9},maxMarginWin:null});
   metrics.E1 = envelope("E1", {current:3,longest:5,perTeam:[]});
@@ -255,17 +261,21 @@ const scope = (name, wins, rate) => {
     metrics,
   };
 };
+// 지수 sentinel 은 v2 산식 실측값(아래 주석) — 시즌/스코프 간 구분이 되어야 stale 검출이 가능하다.
+//   overall 2026: lift +12.5%p · q .32 → 63
+//   gps    2026: lift -12.5%p · q -.28 → 44
+//   overall 2025: lift -25%p(clamp→-1) · q -.9 → 35
 const payload = {
   season:2026,
   seasonSupport:{status:"supported",supportedSeason:2026},
-  overall:scope("overall",5,.625),
-  gps:scope("gps",3,.375),
+  overall:scope("overall",5,.625,.32),
+  gps:scope("gps",3,.375,-.28),
 };
 const stalePayload = {
   season:2025,
   seasonSupport:{status:"attendance_only",supportedSeason:2026},
-  overall:scope("overall",2,.25),
-  gps:scope("gps",1,.125),
+  overall:scope("overall",2,.25,-.9),
+  gps:scope("gps",1,.125,-.9),
 };
 
 // 혼합팀 표본 미달(2팀 × 1경기 = 총 2경기 < MIN_FINAL_GAMES).
@@ -361,7 +371,7 @@ const attendanceOnlyScope = (name) => {
   };
   base.metrics.D5 = envelope("D5", { cancelledCount: 0 });
   base.metrics.D6 = envelope("D6", { maxTeamRuns: null, maxMarginWin: null });
-  base.metrics.D1 = envelope("D1", { avgRunDiff: null, closeGameRate: null, closeGames: 0 });
+  base.metrics.D1 = envelope("D1", { avgRunDiff: null, closeGameRate: null, closeGames: 0, qualityAvg: null, closeLosses: 0, blowoutWins: 0 });
   base.metrics.E1 = envelope("E1", { current: 0, longest: 0, perTeam: [] });
   return base;
 };
@@ -612,7 +622,7 @@ try {
   await page.getByText("63", { exact: true }).waitFor();
   await page.waitForTimeout(400);
   if ((await page.locator("select").inputValue()) !== "2026") throw new Error("season selection rolled back");
-  if (await page.getByText("25", { exact: true }).isVisible()) throw new Error("stale 2025 response overwrote 2026");
+  if (await page.getByText("35", { exact: true }).isVisible()) throw new Error("stale 2025 response overwrote 2026");
 
   // 결함주입: 선택 시즌(2025) 요청이 503으로 실패할 때
   // 로딩 중·실패 후 모두 이전 시즌(2026) 수치가 남지 않고 retry UI가 떠야 한다.
@@ -659,7 +669,7 @@ try {
   if (immediateRetry) {
     throw new Error("previous failure retry UI visible immediately after reselecting failed season");
   }
-  await page.getByText("25", { exact: true }).waitFor();
+  await page.getByText("35", { exact: true }).waitFor();
   const retryFlash = await page.evaluate(() => {
     window.__retryObserver.disconnect();
     return window.__retryFlash;
@@ -672,7 +682,7 @@ try {
   await page.getByText("63", { exact: true }).waitFor();
 
   await page.getByRole("button", { name: "GPS 인증만" }).click();
-  await page.getByText("38", { exact: true }).waitFor();
+  await page.getByText("44", { exact: true }).waitFor();
   await page.getByRole("button", { name: "상대·구장·요일 상세 통계" }).click();
 
   const contrast = await page.evaluate(() => {

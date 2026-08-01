@@ -1386,6 +1386,19 @@ function buildC6(
 }
 
 // D ─ 관전 서사
+
+/**
+ * 경기 질 q(-1~1) — 하린아빠 2026-08-02 지시.
+ * "이겨도 얼마나 크게 이기는지, 져도 얼마나 박빙으로 지는지"가 긍정적으로 작용해야 한다.
+ * 승리는 마진이 클수록 ↑, 패배는 마진이 작을수록 ↑이며 **1점차 박빙패는 감점이 아니라 가점(+0.10)**.
+ * 마진 상한은 6점차(=min((m-1)/5,1)이 1) — 그 이상은 더 벌어져도 같다(섬닝 방지).
+ */
+export function gameQualityScore(result: "W" | "L" | "D", margin: number): number {
+  if (result === "D") return 0;
+  const scaled = Math.min(Math.max(Math.abs(margin) - 1, 0) / 5, 1);
+  return result === "W" ? 0.4 + 0.6 * scaled : 0.1 - 1.1 * scaled;
+}
+
 function buildD1(ctx: Ctx): MetricEnvelope<D1Value> {
   const { c } = ctx;
   const state = pipeline(ctx, {
@@ -1400,12 +1413,34 @@ function buildD1(ctx: Ctx): MetricEnvelope<D1Value> {
     c.validFinal.length,
   );
   const closeGameRate = ratio(closeGames, c.validFinal.length);
+  const closeLosses = c.validFinal.filter(
+    (g) => g.result === "L" && Math.abs((g.myScore ?? 0) - (g.oppScore ?? 0)) === 1,
+  ).length;
+  const blowoutWins = c.validFinal.filter(
+    (g) => g.result === "W" && (g.myScore ?? 0) - (g.oppScore ?? 0) >= 5,
+  ).length;
+  // 스코어가 없는 final은 마진을 0으로 추정하지 않고 질 평균 자체를 fail-close 한다
+  // (0으로 잡으면 무승부처럼 보여 요정 지수를 조용히 오염시킨다).
+  const qualityScorable = c.validFinal.every(
+    (g) => g.result !== null && g.myScore != null && g.oppScore != null,
+  );
+  const qualityAvg = qualityScorable
+    ? ratio(
+        c.validFinal.reduce(
+          (sum, g) => sum + gameQualityScore(g.result as "W" | "L" | "D", (g.myScore ?? 0) - (g.oppScore ?? 0)),
+          0,
+        ),
+        c.validFinal.length,
+      )
+    : null;
   const computable = state === "ready" || state === "sample_limited";
   const componentState = state === "ready" ? "ready" : state;
   const envelope: MetricEnvelope<D1Value> = {
     id: "D1",
     state,
-    value: state === "ready" ? { avgRunDiff, closeGameRate, closeGames } : null,
+    value: state === "ready"
+      ? { avgRunDiff, closeGameRate, closeGames, qualityAvg, closeLosses, blowoutWins }
+      : null,
     n: c.validFinal.length,
     denominator: { finalGames: c.validFinal.length },
     coverage: { invalidSnapshot: c.invalidSnapshot },

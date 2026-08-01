@@ -100,6 +100,8 @@ const metrics = Object.fromEntries(
     coverage: {},
   }]),
 ) as VenueStatsScopePayload["metrics"];
+metrics.A1.n = 4;
+metrics.A1.denominator = { attendanceFinalGames: 4, teamSeasonGames: 36 };
 metrics.A1.value = {
   attendance: { w: 3, l: 1, d: 0, rate: 0.75 },
   teamComparable: { teamId: 1, w: 20, l: 15, d: 1, rate: 20 / 36 },
@@ -119,15 +121,71 @@ const scope: VenueStatsScopePayload = {
   },
   metrics,
 };
-assert.deepEqual(buildVenueStatsHero(scope), {
-  score: 75,
-  attendance: { w: 3, l: 1, d: 0, rate: 0.75 },
-  teamRate: 20 / 36,
-  deltaPp: 19.4,
-  mixedTeam: false,
-  teamIds: [1],
-  sampleLimited: false,
-});
+// 요정 지수 v2 — 순수 승률이 아니라 5축 합성. 기준점 50 = 평소와 같음.
+// A1만 있는 이 fixture 는 winLift 축 하나만 살아남으므로 가중치 재정규화 후 그 축 단독 기여가 된다.
+{
+  const heroV2 = buildVenueStatsHero(scope);
+  assert.equal(heroV2.sampleLimited, false);
+  assert.deepEqual(heroV2.attendance, { w: 3, l: 1, d: 0, rate: 0.75 });
+  assert.equal(heroV2.teamRate, 20 / 36);
+  assert.equal(heroV2.deltaPp, 19.4);
+  assert.deepEqual(heroV2.scoreAxes.map((axis) => axis.key), ["winLift"]);
+  // deltaPp 19.4%p / 20 = 0.97 축 기여, 신뢰도 √(4/20)=0.447 → 50 + 50·0.97·0.447 ≈ 72
+  assert.equal(heroV2.score, 72, `winLift 단독축 합성 점수: ${heroV2.score}`);
+  assert.ok(
+    heroV2.scoreConfidence != null && Math.abs(heroV2.scoreConfidence - Math.sqrt(4 / 20)) < 1e-9,
+    "신뢰도는 √(경기수/20) 수축",
+  );
+  assert.notEqual(heroV2.score, 75, "v1 순수 승률(75점)으로 회귀하면 안 됨");
+}
+
+// ─ 하린아빠 2026-08-02: "이겨도 얼마나 크게, 져도 얼마나 박빙으로"가 긍정 기여하는지.
+// 승률은 똑같은데 경기 질만 다른 두 fixture 로 지수 부호가 갈려야 한다.
+{
+  const withQuality = (qualityAvg: number, extra: Partial<{ closeGames: number; blowoutWins: number }> = {}) => {
+    const cloned = JSON.parse(JSON.stringify(metrics)) as VenueStatsScopePayload["metrics"];
+    cloned.A1.n = 10;
+    cloned.A1.denominator = { attendanceFinalGames: 10, teamSeasonGames: 100 };
+    cloned.A1.value = {
+      attendance: { w: 5, l: 5, d: 0, rate: 0.5 },
+      teamComparable: { teamId: 1, w: 50, l: 50, d: 0, rate: 0.5 },
+      deltaPp: 0,
+    };
+    cloned.D1.state = "ready";
+    cloned.D1.n = 10;
+    cloned.D1.denominator = { finalGames: 10 };
+    cloned.D1.value = {
+      avgRunDiff: 0,
+      closeGameRate: 0,
+      closeGames: extra.closeGames ?? 0,
+      qualityAvg,
+      closeLosses: 0,
+      blowoutWins: extra.blowoutWins ?? 0,
+    };
+    return buildVenueStatsHero({ ...scope, metrics: cloned });
+  };
+
+  // 같은 5승5패(승률 리프트 0)이지만 — 대승+박빙패 조합은 양수, 박빙승+대패는 음수.
+  const goodQuality = withQuality(0.5);
+  const badQuality = withQuality(-0.5);
+  assert.ok(goodQuality.score != null && badQuality.score != null);
+  assert.ok(
+    goodQuality.score! > 50 && badQuality.score! < 50,
+    `승률이 같아도 경기 질로 지수 부호가 갈려야 함: ${goodQuality.score} vs ${badQuality.score}`,
+  );
+  assert.ok(
+    goodQuality.scoreAxes.some((axis) => axis.key === "quality"),
+    "경기 질 축이 지수 구성에 들어야 함",
+  );
+
+  // 명경기 보너스는 가점 전용 — 박빙패를 많이 본 젠이 더 낮아지면 안 된다.
+  const withMemorable = withQuality(0, { closeGames: 6 });
+  const withoutMemorable = withQuality(0);
+  assert.ok(
+    withMemorable.score! >= withoutMemorable.score!,
+    `명경기 목격은 감점이 되면 안 됨: ${withMemorable.score} < ${withoutMemorable.score}`,
+  );
+}
 
 // ─ 표본 미달 계약: 파생 '요정 지수'는 확정값처럼 노출하지 않는다.
 // mixed_team 은 표본 가드보다 먼저 판정되므로 state 만으로는 총 2경기가 안 걸린다 (삼순 P0-2).
@@ -135,6 +193,7 @@ assert.deepEqual(buildVenueStatsHero(scope), {
   const mixedMetrics = JSON.parse(JSON.stringify(metrics)) as VenueStatsScopePayload["metrics"];
   mixedMetrics.A1.state = "mixed_team";
   mixedMetrics.A1.n = 2;
+  mixedMetrics.A1.denominator = { attendanceFinalGames: 2, teamSeasonGames: 0 };
   mixedMetrics.A1.value = {
     attendance: { w: 2, l: 0, d: 0, rate: 1 },
     teamComparable: null,
@@ -153,12 +212,26 @@ assert.deepEqual(buildVenueStatsHero(scope), {
     "score 는 비워도 사실 W/L/D 는 유지",
   );
 
-  // 총 final 이 가드를 넘으면 mixed_team 이어도 정상 노출.
+  // 총 final 이 가드를 넘으면 mixed_team 이어도 참고용은 벗어난다.
+  // 단, v2 지수는 비교 근거(축)가 하나도 없으면 **순수 승률로 대체하지 않고** null 로 fail-close 한다.
+  // (v1 은 여기서 2승 0패 → 100점을 냈고, 그게 "강팀 팬은 자동으로 높음" 문제의 뿌리였다)
   const mixedReady = JSON.parse(JSON.stringify(mixedMetrics)) as VenueStatsScopePayload["metrics"];
   mixedReady.A1.n = 6;
+  mixedReady.A1.denominator = { attendanceFinalGames: 6, teamSeasonGames: 0 };
   const readyHero = buildVenueStatsHero({ ...scope, metrics: mixedReady });
   assert.equal(readyHero.sampleLimited, false, "mixed_team 이어도 표본 충족이면 참고용 아님");
-  assert.equal(readyHero.score, 100, "표본 충족 mixed_team 은 파생 점수 노출");
+  assert.deepEqual(readyHero.scoreAxes, [], "비교 근거가 없으면 축 0개");
+  assert.equal(readyHero.score, null, "축이 하나도 없으면 승률(100점)으로 대체하지 않고 fail-close");
+
+  // 팀별 items 에 비교값이 살아 있으면 mixed_team 이어도 경기수 가중 평균으로 축이 생긴다.
+  const mixedWithLift = JSON.parse(JSON.stringify(mixedReady)) as VenueStatsScopePayload["metrics"];
+  mixedWithLift.A1.items = [
+    { key: "1", state: "ready", value: { attendance: { w: 3, l: 0, d: 0, rate: 1 }, teamComparable: null, deltaPp: 10 }, n: 3, denominator: {} },
+    { key: "2", state: "ready", value: { attendance: { w: 0, l: 3, d: 0, rate: 0 }, teamComparable: null, deltaPp: -10 }, n: 3, denominator: {} },
+  ];
+  const mixedLiftHero = buildVenueStatsHero({ ...scope, metrics: mixedWithLift });
+  assert.deepEqual(mixedLiftHero.scoreAxes.map((a) => a.key), ["winLift"]);
+  assert.equal(mixedLiftHero.score, 50, "대칭 리프트(+10/-10)은 기준점 50으로 수렴");
 }
 
 // ─ attendance_only(비교 소스 없는 2025 등) 2경기도 참고용 계약 대상 (삼순 P0-1).
@@ -183,13 +256,15 @@ assert.deepEqual(buildVenueStatsHero(scope), {
     "attendance_only 에서도 사실 W/L/D 는 그대로",
   );
 
-  // 같은 attendance_only 여도 표본을 넘기면 정상 노출.
+  // 같은 attendance_only 여도 표본을 넘기면 참고용은 벗어난다.
+  // 다만 attendance_only 는 정의상 시즌 비교 baseline 이 없으므로 v2 지수는 산출되지 않는다
+  // — 승률 100%를 100점으로 치환하는 게 v1 의 핵심 결함이었다.
   const aoReady = JSON.parse(JSON.stringify(aoMetrics)) as VenueStatsScopePayload["metrics"];
   aoReady.A1.n = 8;
   aoReady.A1.denominator = { attendanceFinalGames: 8, teamSeasonGames: 0 };
   const aoReadyHero = buildVenueStatsHero({ ...scope, metrics: aoReady });
   assert.equal(aoReadyHero.sampleLimited, false, "attendance_only 여도 표본 충족이면 참고용 아님");
-  assert.equal(aoReadyHero.score, 100, "표본 충족 attendance_only 는 파생 점수 노출");
+  assert.equal(aoReadyHero.score, null, "시즌 baseline 없는 attendance_only 는 지수 fail-close");
 }
 
 // ─ A2~A6 스플릿: 표본 미달 cell 은 top-level value 에 없고 items 에만 사실값이 있다 (삼순 P0-2).
@@ -240,6 +315,8 @@ assert.equal(formatOuts(20), "6 ⅔");
 assert.equal(coverageCaption(scope), "직관 4경기 · 종료 4경기 · 기록 확인 완료");
 
 metrics.A1.state = "mixed_team";
+metrics.A1.n = 4;
+metrics.A1.denominator = { attendanceFinalGames: 4, teamSeasonGames: 36 };
 metrics.A1.value = {
   attendance: { w: 3, l: 1, d: 0, rate: 0.75 },
   teamComparable: null,

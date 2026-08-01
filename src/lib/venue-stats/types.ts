@@ -176,6 +176,17 @@ export interface D1Value {
   avgRunDiff: number | null;
   closeGameRate: number | null;
   closeGames: number;
+  /**
+   * 경기 질 평균(-1~1). 하린아빠 2026-08-02 지시 —
+   * "이겨도 얼마나 크게 이기는지, 져도 얼마나 박빙으로 지는지"를 점수에 반영한다.
+   * 경기별 q: 승 `0.55 + 0.45·min((m-1)/5,1)` / 무 `0.15` / 패 `0.20 - 1.20·min((m-1)/5,1)`.
+   * → 1점차 승 +0.55 · 6점차+ 대승 +1.00 · 1점차 박빙패 **+0.20(감점 아닌 가점)** · 6점차+ 대패 -1.00.
+   */
+  qualityAvg: number | null;
+  /** 1점차 패배(박빙패) 경기수. */
+  closeLosses: number;
+  /** 5점차 이상 승리(대승) 경기수. */
+  blowoutWins: number;
 }
 export interface D5Value { cancelledCount: number }
 export interface D6TopGame { gameId: string; date: string; runs: number }

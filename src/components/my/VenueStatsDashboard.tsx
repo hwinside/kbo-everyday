@@ -535,9 +535,59 @@ export default function VenueStatsDashboard() {
                     : "border-[#ff596a]/55 text-[#ff9aa5]"
                 }`}
               >
-                {hero.sampleLimited ? METRIC_STATE_LABELS.sample_limited : "승률 요정"}
+                {hero.sampleLimited
+                  ? METRIC_STATE_LABELS.sample_limited
+                  : hero.score == null
+                    ? "지수 준비 중"
+                    : hero.score >= 70
+                      ? "진짜 요정"
+                      : hero.score >= 56
+                        ? "약간 요정"
+                        : hero.score >= 45
+                          ? "평소와 비슷"
+                          : hero.score >= 30
+                            ? "살짝 흑염룡"
+                            : "흑염룡"}
               </span>
             </div>
+            {/* 지수는 승률이 아니라 합성값이라 기준점 50을 명시해야 읽힌다. */}
+            {!hero.sampleLimited && hero.score != null && (
+              <div className="mt-2 flex items-center gap-1.5" data-testid="venue-score-axes">
+                <span className="shrink-0 text-[9px] font-bold text-white/70">50 = 평소</span>
+                <div className="relative h-1.5 flex-1 overflow-hidden rounded-full bg-white/10">
+                  <span className="absolute inset-y-0 left-1/2 w-px bg-white/30" />
+                  <span
+                    className={`absolute inset-y-0 ${hero.score >= 50 ? "bg-emerald-300" : "bg-rose-300"}`}
+                    style={{
+                      left: `${Math.min(hero.score, 50)}%`,
+                      width: `${Math.abs(hero.score - 50)}%`,
+                    }}
+                  />
+                </div>
+              </div>
+            )}
+            {!hero.sampleLimited && hero.scoreAxes.length > 0 && (
+              <div className="mt-1.5 flex flex-wrap gap-1">
+                {[...hero.scoreAxes]
+                  .sort((a, b) => Math.abs(b.normalized * b.weight) - Math.abs(a.normalized * a.weight))
+                  .slice(0, 3)
+                  .map((axis) => (
+                    <span
+                      key={axis.key}
+                      data-testid="venue-score-axis"
+                      className={`rounded-full border px-1.5 py-0.5 text-[9px] font-black ${
+                        axis.normalized > 0.02
+                          ? "border-emerald-300/40 bg-emerald-300/10 text-emerald-300"
+                          : axis.normalized < -0.02
+                            ? "border-rose-300/40 bg-rose-300/10 text-rose-300"
+                            : "border-slate-300/30 bg-slate-300/10 text-slate-300"
+                      }`}
+                    >
+                      {axis.normalized > 0.02 ? "▲" : axis.normalized < -0.02 ? "▼" : "→"} {axis.label}
+                    </span>
+                  ))}
+              </div>
+            )}
             <div className="mt-2 flex items-center gap-2.5 text-[14px] font-black">
               <span className="text-sky-400">{hero.attendance?.w ?? 0}승</span>
               <span className="text-rose-300">{hero.attendance?.l ?? 0}패</span>
