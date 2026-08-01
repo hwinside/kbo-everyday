@@ -289,12 +289,12 @@ export default function DMChatPage() {
           <ChevronLeft size={24} />
         </button>
         {/* 마스코트는 제목 줄 안이 아니라 2줄 텍스트블록 '옆'에 둔다.
-            제목 줄(gap-1.5) 안에 40px 를 넣으면 그 줄이 26→40px 가 돼
-            블록이 41→55px, 헤더가 54→68px 로 커진다(실측 확인함).
-            형제로 빼면 헤더 높이는 max(뒤로 32, 아바타 40, 텍스트 41) 이라 불변. */}
+            제목 줄(gap-1.5) 안에 넣으면 그 줄 자체가 커져 두 줄 간격까지 밀린다.
+            형제로 빼면 헤더 높이는 max(뒤로 32, 슬롯 96, 텍스트 41) 로 예측 가능하다.
+            96px 슬롯은 삼순 확정 규격(목록 64 / 대화방 96, 헤더 108~112px). */}
         {showGeniusMascot && (
           <img src="/mascot/yajalal-avatar.png" alt="야잘알봇"
-               className="w-10 h-10 rounded-full object-cover flex-shrink-0" />
+               className="h-24 w-auto max-w-none object-contain flex-shrink-0" />
         )}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">

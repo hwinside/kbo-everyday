@@ -19,15 +19,21 @@ const BASE_URL = process.argv.find((a) => a.startsWith("--base-url="))?.split("=
 const EXPECT_SRC = "/mascot/yajalal-avatar.png";
 const ADMIN_EMAIL = "harinclaw@gmail.com";   // ADMIN_EMAILS 화이트리스트
 
-// 레이아웃 계약.
+// 레이아웃 계약 (삼순 확정 규격 2026-08-01).
 //
-// ⚠️ 헤더 높이를 고정 상수와 비교하면 안 된다. otherId 해결 전에는 아이콘이
-// 아예 없어 54px 가 잡히고, 해결 후 ⚾ 가 붙으면 56px 가 된다. 같은 코드에서
-// 시점에 따라 값이 달라지므로 상수 대조는 flaky 다(실제로 오판했다).
-// 대신 상태와 무관한 두 가지를 본다.
-//   (a) 아바타 높이 <= 옆 텍스트블록 높이  → 아바타가 헤더 높이를 결정하지 않음
-//   (b) 관리자 헤더 <= 비관리자 헤더        → 마스코트가 헤더를 키우지 않음
-const CARD_H = 82;     // 쪽지함 카드는 아바타 컨테이너(w-10)가 고정이라 상수로 OK
+//   목록   : 카드 높이 82px 유지, 캐릭터 가시 높이 >= 50px
+//   대화방 : 슬롯 96px, 캐릭터 가시 높이 >= 72px, 헤더 108~112px
+//
+// "레이아웃이 안 깨진다" 는 아바타를 안 키우는 것과 다르다. 헤더는 커져도
+// 되고(삼순이 108~112px 를 명시 요구), 깨지면 안 되는 건 카드 한 줄 구조,
+// 제목/설명 두 줄, 뒤로가기 정렬, 가로 overflow 다. 그래서 상수 비교 대신
+// 그 네 가지를 직접 본다.
+const CARD_H = 82;              // 카드 높이는 아바타를 넘치게 그려도 불변이어야 한다
+const LIST_MIN_VISIBLE = 50;    // 목록 캐릭터 최소 가시 높이
+const CHAT_SLOT = 96;           // 대화방 슬롯
+const CHAT_MIN_VISIBLE = 72;    // 대화방 캐릭터 최소 가시 높이
+const CHAT_HEADER_MIN = 104;    // 헤더 허용 범위 (요구 108~112, safe-area 편차 허용)
+const CHAT_HEADER_MAX = 120;
 
 const admin = createClient(SUPABASE_URL, SERVICE_ROLE, {
   auth: { autoRefreshToken: false, persistSession: false },
@@ -110,11 +116,20 @@ const probeList = (expect) => {
     if (getComputedStyle(card).padding !== "0px") break;
     card = card.parentElement;
   }
+  const ib = img.getBoundingClientRect();
+  const cb = card?.getBoundingClientRect();
+  const nick = card?.querySelector("span");
   return {
     hasImg: true, emoji, modal,
     loaded: img.naturalWidth > 0,
     natural: `${img.naturalWidth}x${img.naturalHeight}`,
-    avatarH: g(box), cardH: g(card),
+    slotH: g(box),
+    visibleH: Math.round(ib.height),      // 실제 캐릭터가 보이는 높이(슬롯을 넘칠 수 있다)
+    cardH: g(card),
+    // 카드가 한 줄 구조를 유지하는가 = 아바타가 카드 세로 안에 담기는가
+    withinCard: cb ? ib.top >= cb.top - 1 && ib.bottom <= cb.bottom + 1 : false,
+    nickX: nick ? Math.round(nick.getBoundingClientRect().left) : null,
+    docOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
   };
 };
 
@@ -125,14 +140,30 @@ const probeChat = (expect) => {
   const h1 = hdr?.querySelector("h1");
   const emoji = [...(hdr?.querySelectorAll("*") ?? [])].filter(
     (el) => el.children.length === 0 && el.textContent.trim() === "⚾").length;
+  const back = hdr?.querySelector("button");
+  const sub = h1?.parentElement?.parentElement?.querySelector("p");
+  const ib = img?.getBoundingClientRect();
+  const hb = hdr?.getBoundingClientRect();
   return {
     path: location.pathname, title: h1?.textContent?.trim() ?? null,
     hasImg: !!img, emoji,
     loaded: img ? img.naturalWidth > 0 : false,
-    avatarH: g(img), headerH: g(hdr),
-    textBlockH: g(h1?.parentElement?.parentElement),
+    visibleH: ib ? Math.round(ib.height) : null,
+    headerH: g(hdr),
+    subtitle: sub?.textContent?.trim() ?? null,   // 설명 줄이 살아있는가
+    // 캐릭터가 헤더 밖으로 삐져나오지 않는가
+    withinHeader: ib && hb ? ib.bottom <= hb.bottom + 1 : false,
+    // 뒤로가기/텍스트/헤더 세로 중심 (헤더 상단 기준 오프셋)
+    backCy: back ? Math.round((back.getBoundingClientRect().top + back.getBoundingClientRect().bottom) / 2 - hb.top) : null,
+    textCy: h1?.parentElement?.parentElement
+      ? Math.round((h1.parentElement.parentElement.getBoundingClientRect().top
+                  + h1.parentElement.parentElement.getBoundingClientRect().bottom) / 2 - hb.top) : null,
+    headerCy: hb ? Math.round(hb.height / 2) : null,
+    padTop: hdr ? getComputedStyle(hdr).paddingTop : null,
+    padBottom: hdr ? getComputedStyle(hdr).paddingBottom : null,
     overlaps: img && h1
-      ? img.getBoundingClientRect().right > h1.getBoundingClientRect().left + 1 : false,
+      ? ib.right > h1.getBoundingClientRect().left + 1 : false,
+    docOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
   };
 };
 
@@ -170,7 +201,11 @@ try {
 
   const aList = await aPage.evaluate(probeList, EXPECT_SRC);
   ok("목록: 마스코트 아바타 렌더", aList.hasImg);
-  ok("목록: 이미지 실제 로드됨(404 아님)", !!aList.loaded, `natural=${aList.natural} box=${aList.avatarH}px`);
+  ok("목록: 이미지 실제 로드됨(404 아님)", !!aList.loaded, `natural=${aList.natural}`);
+  ok(`목록: 캐릭터 가시 높이 >= ${LIST_MIN_VISIBLE}px`,
+     aList.visibleH >= LIST_MIN_VISIBLE, `${aList.visibleH}px (슬롯 ${aList.slotH}px)`);
+  ok("목록: 캐릭터가 카드 세로 안에 담김(한 줄 구조 유지)", aList.withinCard);
+  ok("목록: 가로 overflow 0", aList.docOverflow <= 0, `${aList.docOverflow}px`);
   ok("목록: ⚾ 이모지 잔존 0", aList.emoji === 0, `발견 ${aList.emoji}개`);
   ok("목록: 카드 높이 불변", aList.cardH === CARD_H, `${aList.cardH}px (기대 ${CARD_H})`);
   ok("목록: 증거 스크린샷에 설정 모달 없음", !aList.modal);
@@ -180,12 +215,23 @@ try {
   const aChat = await aPage.evaluate(probeChat, EXPECT_SRC);
   ok("대화방: 진입 성공", aChat.path.startsWith("/messages/"), `title=${aChat.title}`);
   ok("대화방: 마스코트 아바타 렌더", aChat.hasImg);
-  ok("대화방: 이미지 실제 로드됨", !!aChat.loaded, `box=${aChat.avatarH}px`);
-  ok("대화방: 아바타가 20px→40px 로 커짐", aChat.avatarH === 40, `${aChat.avatarH}px`);
-  ok("대화방: 아바타가 헤더 높이를 결정하지 않음",
-     aChat.avatarH <= aChat.textBlockH,
-     `아바타 ${aChat.avatarH}px <= 텍스트블록 ${aChat.textBlockH}px`);
+  ok("대화방: 이미지 실제 로드됨", !!aChat.loaded);
+  ok(`대화방: 캐릭터 가시 높이 >= ${CHAT_MIN_VISIBLE}px`,
+     aChat.visibleH >= CHAT_MIN_VISIBLE, `${aChat.visibleH}px (슬롯 ${CHAT_SLOT}px)`);
+  ok(`대화방: 헤더 ${CHAT_HEADER_MIN}~${CHAT_HEADER_MAX}px`,
+     aChat.headerH >= CHAT_HEADER_MIN && aChat.headerH <= CHAT_HEADER_MAX, `${aChat.headerH}px`);
+  ok("대화방: 캐릭터가 헤더 밖으로 안 삐져나옴", aChat.withinHeader);
+  ok("대화방: 제목/설명 두 줄 유지", aChat.subtitle === "AI 야구 룰·용어 도우미", `설명='${aChat.subtitle}'`);
+  // ⚠️ 뒤로가기를 '헤더 세로 중심'과 비교하면 안 된다. 헤더 padding 이
+  // 비대칭이라(pt-safe=0 / pb-3=12px) flex 콘텐츠 중심은 헤더 중심보다 항상
+  // 6~7px 위다 — 관리자 48 vs 55, 비관리자 22 vs 28 로 마스코트와 무관하게
+  // 동일하다. 즉 그 차이는 회귀가 아니라 기존 레이아웃 상수다.
+  // 실제 계약은 "뒤로가기와 텍스트블록이 같은 축에 정렬" 이다(items-center 형제).
+  ok("대화방: 뒤로가기-텍스트블록 세로 정렬 일치",
+     aChat.backCy !== null && aChat.backCy === aChat.textCy,
+     `back=${aChat.backCy} text=${aChat.textCy} (헤더중심 ${aChat.headerCy}, pad ${aChat.padTop}/${aChat.padBottom})`);
   ok("대화방: 아바타-제목 겹침 없음", !aChat.overlaps);
+  ok("대화방: 가로 overflow 0", aChat.docOverflow <= 0, `${aChat.docOverflow}px`);
   ok("대화방: ⚾ 이모지 잔존 0", aChat.emoji === 0, `발견 ${aChat.emoji}개`);
   await aPage.screenshot({ path: "tmp/qa-screenshots/genius-avatar-chat.png" });
   await aCtx.close();
@@ -224,9 +270,15 @@ try {
   const gChat = await gPage.evaluate(probeChat, EXPECT_SRC);
   ok("대화방: 비관리자에겐 마스코트 비노출", !gChat.hasImg);
   ok("대화방: 비관리자는 ⚾ 폴백 유지", gChat.emoji > 0, `${gChat.emoji}개`);
-  ok("대화방: 마스코트가 헤더를 키우지 않음(관리자 <= 비관리자)",
-     aChat.headerH <= gChat.headerH,
-     `관리자 ${aChat.headerH}px <= 비관리자(종전 ⚾) ${gChat.headerH}px`);
+  // 게이트가 실제로 막히면 헤더도 종전 크기로 남아야 한다.
+  // (관리자만 헤더가 커지는 게 의도 — 일반 유저 화면은 건드리지 않는다)
+  ok("대화방: 비관리자 헤더는 종전 크기 유지",
+     gChat.headerH < CHAT_HEADER_MIN,
+     `비관리자 ${gChat.headerH}px < ${CHAT_HEADER_MIN}px (관리자 ${aChat.headerH}px)`);
+  ok("대화방: 비관리자 가로 overflow 0", gChat.docOverflow <= 0, `${gChat.docOverflow}px`);
+  ok("대화방: 비관리자도 뒤로가기-텍스트 정렬 일치(동일 기준)",
+     gChat.backCy !== null && gChat.backCy === gChat.textCy,
+     `back=${gChat.backCy} text=${gChat.textCy}`);
   await gCtx.close();
 } catch (e) {
   ok("스모크 실행", false, e.message);

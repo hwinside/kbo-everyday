@@ -107,13 +107,18 @@ export default function MessagesPage() {
               onClick={() => router.push(`/messages/${conv.id}`)}
             >
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-bg-tertiary flex items-center justify-center flex-shrink-0 overflow-hidden">
+                <div className="w-10 h-10 rounded-full bg-bg-tertiary flex items-center justify-center flex-shrink-0 overflow-visible">
                   {conv.other_nickname === BASEBALL_GENIUS_NAME ? (
-                    // 목록은 아바타 컴테이너(w-10)가 전 행 공용이라 여기만 키우면
-                    // 닉네임 시작 x 가 밀려 다른 행과 정렬이 어긋난다.
-                    // 대신 크롭을 꽉 채워(margin 1.06) 같은 40px 안에서 최대한 크게 보이게 한다.
+                    // 야잘알봇만 원형 프로필이 아니라 캐릭터 전신을 쓴다(삼순 확정 규격).
+                    // 컨테이너 w-10 은 전 행 공용이라 폭을 바꾸면 닉네임 시작 x 가 밀려
+                    // 다른 행과 정렬이 어긋난다. 그래서 폭은 그대로 두고, 캐릭터만
+                    // 64px 슬롯으로 넘치게 그린다(overflow-visible + absolute).
+                    // 세로로 긴 종횡비(0.667)라 64px 슬롯에서 가시 높이가 곧 64px 이다.
                     <AdminOnly fallback={<span className="text-xl" aria-hidden>⚾</span>}>
-                      <img src="/mascot/yajalal-avatar.png" alt="야잘알봇" className="w-full h-full object-cover" />
+                      <span className="relative block w-10 h-10">
+                        <img src="/mascot/yajalal-avatar.png" alt="야잘알봇"
+                             className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-16 w-auto max-w-none" />
+                      </span>
                     </AdminOnly>
                   ) : conv.other_nickname === "크보팬 운영팀" ? (
                     <img src="/apple-touch-icon.png" alt="크보팬" className="w-full h-full object-cover" />
