@@ -1,5 +1,5 @@
 /**
- * 나무위키 수집 게이트 (spec rev0.7 §12.2).
+ * 나무위키 수집 게이트 (spec rev0.7 §12.2) — **순수/네트워크 판정 계약만** 담는다.
  *
  * 계약:
  *  (a) robots.txt 확인기록이 없는 source는 수집하지 않는다. `assertRobotsAllowed`가 실제 robots.txt를
@@ -8,16 +8,23 @@
  *      브라우저 위장 UA·쿠키 주입·challenge solver는 이 모듈에 존재하지 않으며 추가해서도 안 된다.
  *  (c) 원문 전문을 저장하지 않는다. 이 모듈은 응답 본문을 반환만 하고, 저장 단위는 chunk + provenance다.
  *
- * 2026-08-01 실측: namu.wiki는 Cloudflare가 프로그래매틱 접근을 전면 차단한다(정직한 UA/무UA/
- * 브라우저 UA/다른 IP 전부 HTTP 403 + `Attention Required! | Cloudflare`). 따라서 현재 이 경로의
- * 정상 결과는 `blocked`이며, 그것이 계약이 정한 올바른 종료 상태다.
+ * 2026-08-01 (R3 정정): plain `fetch` 경로는 여전히 Cloudflare 403이지만, **실제 Chrome을
+ * 요청마다 새로 띄우고 10초 간격을 두면 정상 200**임이 실측됐다(8/8 200). 그 실크롤 구현은
+ * Playwright 의존 때문에 서버 런타임에 올릴 수 없으므로 **수집 스크립트 쪽**에 둔다:
+ *   `scripts/baseball-qa/rag/fetch-namu-browser.ts`
+ * 이 모듈(=서버 번들에 들어갈 수 있는 `src/`)은 판정 계약(robots/blocked 분류/본문 추출)만 갖고,
+ * Playwright를 import하지 않는다. 회귀가 이 경계를 고정한다.
  */
 
 /** 정직한 자기식별 UA. 브라우저 위장 금지 — 위장은 §12.2 (b) 위반이다. */
 export const RAG_USER_AGENT = "keubofan-rag/1.0 (+https://keubo.fan; contact: ops@keubo.fan)";
 export const NAMU_ROBOTS_URL = "https://namu.wiki/robots.txt";
-/** bounded rate: 연속 요청 사이 최소 간격. */
-export const RAG_FETCH_INTERVAL_MS = 2_000;
+/**
+ * bounded rate: 연속 요청 사이 최소 간격 (§12.2 b).
+ * 실크롤(브라우저) 경로의 실측 하한이다 — 2.5초 연타는 403을 유발했고 10초 간격 8연속은 8/8 200이었다.
+ * 이 값은 수집 스크립트가 **반드시** 지켜야 하며, 브라우저 fetcher는 호출자에 의존하지 않고 스스로 강제한다.
+ */
+export const RAG_FETCH_INTERVAL_MS = 10_000;
 export const RAG_FETCH_TIMEOUT_MS = 15_000;
 
 export type RobotsVerdict =
@@ -81,6 +88,16 @@ export function deriveRevision(headers: Headers, crawledAt: string): string {
   return `crawled:${crawledAt}`;
 }
 
+/**
+ * 차단 페이지 본문 시그니처.
+ * Cloudflare challenge는 200으로 오기도 하고, namu 자체 차단 안내는 `been blocked` 문구를 쓴다.
+ * 이 판정은 plain fetch 경로와 브라우저 경로가 **같은 함수**를 쓴다 — 경로마다 기준이 갈리면
+ * 한쪽에서 차단 페이지가 문서로 저장된다.
+ */
+export function isBlockedDocumentBody(html: string): boolean {
+  return /Attention Required!|cf-browser-verification|Just a moment\.\.\.|been blocked|Verifying you are human/i.test(html);
+}
+
 export async function fetchNamuDocument(
   url: string,
   fetchImpl: typeof fetch = fetch,
@@ -101,8 +118,8 @@ export async function fetchNamuDocument(
     return { ok: false, ...failure, httpStatus: response.status };
   }
   const html = await response.text();
-  // Cloudflare challenge 페이지는 200으로 오기도 한다 — 본문으로도 판별한다.
-  if (/Attention Required!|cf-browser-verification|Just a moment\.\.\./i.test(html)) {
+  // 200으로 오는 challenge/차단 페이지도 blocked다 — 본문으로 판별한다.
+  if (isBlockedDocumentBody(html)) {
     return { ok: false, status: "blocked", reason: "bot_protection_challenge_body" };
   }
   return {

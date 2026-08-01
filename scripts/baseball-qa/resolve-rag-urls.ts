@@ -1,33 +1,49 @@
 /**
- * S2b: 대상 선수(16명)의 나무위키 canonical URL을 해석해 resolution_status를 확정한다.
+ * S2b: 대상 선수(16명)의 tier2 canonical URL을 해석해 resolution_status를 확정한다.
  *
  * 실행: `npm run rag:resolve-urls`  (수동/GitHub Actions. 맥미니 LaunchAgent 금지 — P0)
  *   옵션: `--dry-run` DB 쓰기 없이 판정만 출력
+ *         `--source=wikipedia|namu` 해석할 소스 (기본 wikipedia)
+ *         `--out=<path>` 판정 결과 JSON 저장 (ingest 스크립트 입력)
+ *
+ * 소스 우선순위 (하린아빠 지시, R3): **위키피디아가 기본, 나무위키는 보조**다.
+ *   - wikipedia: 공식 API + 정직한 UA plain fetch. 서버 런타임에서도 가능한 경로다. revid가 정본.
+ *   - namu: Playwright 실크롤(요청마다 브라우저 재기동 + 10초 간격). 별명·팬덤 서술 보충용.
  *
  * 판정 계약 (spec rev0.7 §12 / §12.2 d):
- *   resolved   — 후보 URL 중 **정확히 하나가 canonical 게이트를 통과**하고 동명이인 위험이 없음.
- *                canonical 게이트 = redirect 최종 URL + `rel=canonical` + page title/entity identity 대조.
+ *   resolved   — 후보 중 **정확히 하나가 identity 게이트를 통과**하고 동명이인 위험이 없음.
+ *                identity 게이트 = 최종 URL + rel=canonical(나무위키) + **문서 분류 대조**
+ *                (동음이의 아님 / 야구 선수 분류 / 생년 일치 / 제목에 이름 포함).
  *                **HTTP 200 단독으로는 canonical을 단정하지 않는다.**
- *   ambiguous  — 로스터에 동명이인이 있거나 후보 여럿이 동시에 게이트를 통과 (이름 단독 연결 금지)
- *   missing    — 후보 전부 404/410
- *   blocked    — 봇차단(403/429/503) 등으로 확인 자체가 불가능
+ *   ambiguous  — 로스터에 동명이인이 있거나 후보 여럿이 서로 다른 문서로 동시에 통과
+ *   missing    — 후보 전부 부재
+ *   blocked    — 봇차단 등으로 확인 자체가 불가능
  *
- * ⚠️ 2026-08-01 실측: namu.wiki는 Cloudflare가 프로그래매틱 요청을 전면 차단해 모든 후보가
- * HTTP 403을 반환한다. 계약상 우회는 금지(§12.2 b)이므로 정상 결과는 `blocked`다.
+ * §12.2(b): 차단을 만나면 그 선수에 대한 추가 요청을 중단한다. 우회하지 않는다.
  */
 
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-import { expectedPlayerTitles, verifyCanonicalIdentity } from "../../src/lib/baseball-qa/rag/canonical";
-import { assertRobotsAllowed, fetchNamuDocument, RAG_FETCH_INTERVAL_MS } from "../../src/lib/baseball-qa/rag/fetch-namu";
+import {
+  expectedPlayerTitles,
+  extractDisambiguationCandidates,
+  verifyCanonicalIdentity,
+  type PlayerDocumentIdentity,
+} from "../../src/lib/baseball-qa/rag/canonical";
+import { assertRobotsAllowed } from "../../src/lib/baseball-qa/rag/fetch-namu";
+import { fetchWikipediaDocument } from "../../src/lib/baseball-qa/rag/fetch-wikipedia";
 import { S2B_TARGET_PLAYERS } from "../../src/lib/baseball-qa/rag/targets";
+import { fetchNamuDocumentViaBrowser } from "./rag/fetch-namu-browser";
 
 type Resolution = "resolved" | "missing" | "ambiguous" | "blocked";
+type SourceName = "wikipedia" | "namu";
 
-interface RosterPlayer { name: string; kboId: string; team: string }
+interface RosterPlayer { name: string; kboId: string; team: string; birthDate?: string }
 
 const DRY_RUN = process.argv.includes("--dry-run");
+const SOURCE = (process.argv.find((arg) => arg.startsWith("--source="))?.split("=")[1] ?? "wikipedia") as SourceName;
+const OUT_PATH = process.argv.find((arg) => arg.startsWith("--out="))?.split("=")[1] ?? null;
 
 function loadEnv(): Record<string, string> {
   const env: Record<string, string> = { ...process.env } as Record<string, string>;
@@ -44,28 +60,33 @@ function loadEnv(): Record<string, string> {
   return env;
 }
 
-/**
- * 후보 URL 1건의 canonical 판정.
- * 응답이 와도 §12.2(d) 대조를 통과하지 못하면 canonical이 아니다 — HTTP 200은 근거가 아니다.
- */
 type CandidateProbe =
   | { kind: "canonical"; url: string; canonicalUrl: string; pageTitle: string; redirected: boolean }
-  | { kind: "rejected"; url: string; reason: string }
+  | { kind: "rejected"; url: string; reason: string; disambiguationHtml?: string }
   | { kind: "missing"; url: string; reason: string }
   | { kind: "blocked"; url: string; reason: string };
 
-async function probeCandidate(url: string, expectedTitles: string[]): Promise<CandidateProbe> {
-  const fetched = await fetchNamuDocument(url);
-  if (!fetched.ok) {
-    return { kind: fetched.status, url, reason: fetched.reason };
-  }
+function namuUrl(title: string): string {
+  return `https://namu.wiki/w/${encodeURIComponent(title)}`;
+}
+
+/** 나무위키 후보 1건 판정 — 응답이 와도 identity 대조를 통과하지 못하면 canonical이 아니다. */
+async function probeNamu(title: string, identity: PlayerDocumentIdentity): Promise<CandidateProbe> {
+  const url = namuUrl(title);
+  const fetched = await fetchNamuDocumentViaBrowser(url);
+  if (!fetched.ok) return { kind: fetched.status, url, reason: fetched.reason };
   const verdict = verifyCanonicalIdentity({
     requestedUrl: fetched.requestedUrl,
     finalUrl: fetched.url,
     html: fetched.html,
-    expectedTitles,
+    playerIdentity: identity,
   });
-  if (!verdict.ok) return { kind: "rejected", url, reason: verdict.reason };
+  if (!verdict.ok) {
+    // 동음이의 문서는 "실패"가 아니라 **후보 목록**이다 — 링크를 따라 진짜 문서를 찾는다.
+    return verdict.reason === "disambiguation_document"
+      ? { kind: "rejected", url, reason: verdict.reason, disambiguationHtml: fetched.html }
+      : { kind: "rejected", url, reason: verdict.reason };
+  }
   return {
     kind: "canonical",
     url,
@@ -75,65 +96,144 @@ async function probeCandidate(url: string, expectedTitles: string[]): Promise<Ca
   };
 }
 
+/** 위키피디아 후보 1건 판정 — API가 redirect/부재/분류를 명시하므로 마크업 파싱이 필요 없다. */
+async function probeWikipedia(title: string, identity: PlayerDocumentIdentity): Promise<CandidateProbe> {
+  const url = `https://ko.wikipedia.org/wiki/${encodeURIComponent(title.replace(/ /g, "_"))}`;
+  const fetched = await fetchWikipediaDocument(title, identity);
+  if (!fetched.ok) {
+    if (fetched.status === "blocked") return { kind: "blocked", url, reason: fetched.reason };
+    if (fetched.status === "missing") return { kind: "missing", url, reason: fetched.reason };
+    return { kind: "rejected", url, reason: fetched.reason };
+  }
+  return {
+    kind: "canonical",
+    url,
+    canonicalUrl: fetched.canonicalUrl,
+    pageTitle: fetched.title,
+    redirected: fetched.title !== title,
+  };
+}
+
+/** 위키피디아 후보 제목 — 동명이인은 `이름 (YYYY년)` 형식이 표준이다(실측). */
+function wikipediaCandidateTitles(name: string, birthYear: string): string[] {
+  return [name, `${name} (${birthYear}년)`, `${name} (야구 선수)`];
+}
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+/** 위키피디아 API bounded rate — 공식 API지만 연속 호출 간격을 둔다(§12.2 b). */
+const WIKIPEDIA_INTERVAL_MS = 1_000;
 
 async function main(): Promise<void> {
   const env = loadEnv();
-  const robots = await assertRobotsAllowed();
-  if (!robots.ok) {
-    console.error(`robots.txt 확인 실패(${robots.reason}) — 확인기록 없는 수집은 금지다(§12.2 a).`);
-    process.exit(1);
+  if (SOURCE === "namu") {
+    const robots = await assertRobotsAllowed();
+    if (!robots.ok) {
+      console.error(`robots.txt 확인 실패(${robots.reason}) — 확인기록 없는 수집은 금지다(§12.2 a).`);
+      process.exit(1);
+    }
+    console.log(`namu robots.txt OK: "${robots.allowRule}" (checked ${robots.checkedAt})`);
+  } else {
+    console.log("wikipedia: 공식 API(/w/api.php) 경로. 정직한 UA plain fetch, 우회 없음.");
   }
-  console.log(`robots.txt OK: "${robots.allowRule}" (checked ${robots.checkedAt})`);
 
   const roster = JSON.parse(
     readFileSync(path.join(process.cwd(), "src/lib/constants/players-roster.json"), "utf8"),
   ) as RosterPlayer[];
   const nameCounts = new Map<string, number>();
-  for (const player of roster) nameCounts.set(player.name, (nameCounts.get(player.name) ?? 0) + 1);
+  const byKboId = new Map<string, RosterPlayer>();
+  for (const player of roster) {
+    nameCounts.set(player.name, (nameCounts.get(player.name) ?? 0) + 1);
+    byKboId.set(player.kboId, player);
+  }
 
-  const results: { sourceKey: string; name: string; status: Resolution; canonicalUrl: string | null; note: string }[] = [];
+  interface ResultRow {
+    sourceKey: string;
+    kboId: string;
+    name: string;
+    source: SourceName;
+    status: Resolution;
+    canonicalUrl: string | null;
+    pageTitle: string | null;
+    note: string;
+  }
+  const results: ResultRow[] = [];
 
   for (const target of S2B_TARGET_PLAYERS) {
-    const sourceKey = `namu:player:${target.kboId}`;
+    const sourceKey = `${SOURCE === "namu" ? "namu" : "wikipedia"}:player:${target.kboId}`;
+    const rosterRow = byKboId.get(target.kboId);
+    const birthYear = rosterRow?.birthDate?.slice(0, 4) ?? "";
+    const base = { sourceKey, kboId: target.kboId, name: target.name, source: SOURCE };
+
     if ((nameCounts.get(target.name) ?? 0) > 1) {
       results.push({
-        sourceKey, name: target.name, status: "ambiguous", canonicalUrl: null,
+        ...base, status: "ambiguous", canonicalUrl: null, pageTitle: null,
         note: `로스터 동명이인 ${nameCounts.get(target.name)}건 — 이름 단독 연결 금지(§12)`,
       });
       continue;
     }
-    const expectedTitles = expectedPlayerTitles(target.name);
-    const candidates = expectedTitles.map((title) => `https://namu.wiki/w/${encodeURIComponent(title)}`);
-    const probes: CandidateProbe[] = [];
-    for (const url of candidates) {
-      probes.push(await probeCandidate(url, expectedTitles));
-      await sleep(RAG_FETCH_INTERVAL_MS);
+    if (!/^\d{4}$/.test(birthYear)) {
+      // 생년이 없으면 동명이인을 가려낼 축이 없다 — 확인되지 않은 것을 확인된 것으로 만들지 않는다.
+      results.push({
+        ...base, status: "ambiguous", canonicalUrl: null, pageTitle: null,
+        note: "로스터 생년 결측 — identity 대조 불가(fail-close)",
+      });
+      continue;
     }
-    // canonical 게이트를 통과한 후보만 살아있는 것으로 센다. 통과 못한 200(redirect/soft-200/
-    // 제목 불일치)은 `rejected`이며 canonical 근거가 되지 않는다(§12.2 d).
-    const canonicalHits = probes.filter((probe): probe is Extract<CandidateProbe, { kind: "canonical" }> =>
-      probe.kind === "canonical");
-    // 서로 다른 후보가 같은 canonical 문서로 수렴하면(리다이렉트 별칭) 모호한 것이 아니라 동일 문서다.
-    const distinctCanonical = new Set(canonicalHits.map((probe) => probe.canonicalUrl));
-    const bot = probes.filter((probe) => probe.kind === "blocked");
-    const trace = probes.map((probe) => `${probe.kind}${probe.kind === "canonical" ? "" : `(${probe.reason})`}`).join("/");
-    let verdict: { status: Resolution; canonicalUrl: string | null; note: string };
-    if (distinctCanonical.size === 1) {
+    const identity: PlayerDocumentIdentity = { name: target.name, birthYear };
+
+    const probes: CandidateProbe[] = [];
+    const queue =
+      SOURCE === "namu"
+        ? [...expectedPlayerTitles(target.name)]
+        : wikipediaCandidateTitles(target.name, birthYear);
+    const seen = new Set<string>();
+    let blocked = false;
+
+    while (queue.length > 0 && !blocked) {
+      const title = queue.shift()!;
+      if (seen.has(title)) continue;
+      seen.add(title);
+      const probe = SOURCE === "namu" ? await probeNamu(title, identity) : await probeWikipedia(title, identity);
+      if (SOURCE !== "namu") await sleep(WIKIPEDIA_INTERVAL_MS);
+      probes.push(probe);
+      if (probe.kind === "blocked") {
+        // §12.2(b): 차단은 우회 대상이 아니다. 이 선수에 대한 추가 요청을 즉시 중단한다.
+        blocked = true;
+        break;
+      }
+      if (probe.kind === "rejected" && probe.disambiguationHtml) {
+        for (const candidate of extractDisambiguationCandidates(probe.disambiguationHtml, target.name)) {
+          if (!seen.has(candidate)) queue.push(candidate);
+        }
+      }
+      if (probe.kind === "canonical") break; // identity가 확정되면 더 두들기지 않는다(bounded).
+    }
+
+    const canonicalHits = probes.filter(
+      (probe): probe is Extract<CandidateProbe, { kind: "canonical" }> => probe.kind === "canonical",
+    );
+    const distinct = new Set(canonicalHits.map((probe) => probe.canonicalUrl));
+    const trace = probes
+      .map((probe) => `${probe.kind}${probe.kind === "canonical" ? "" : `(${probe.reason})`}`)
+      .join("/");
+
+    let verdict: { status: Resolution; canonicalUrl: string | null; pageTitle: string | null; note: string };
+    if (distinct.size === 1) {
       const hit = canonicalHits[0];
       verdict = {
         status: "resolved",
         canonicalUrl: hit.canonicalUrl,
-        note: `${new Date().toISOString().slice(0, 10)} canonical 대조 통과(최종URL+rel=canonical+제목 "${hit.pageTitle}"${hit.redirected ? ", redirect 반영" : ""})`,
+        pageTitle: hit.pageTitle,
+        note: `${new Date().toISOString().slice(0, 10)} identity 대조 통과(최종URL+canonical+분류: 야구선수/${birthYear}년 출생, 제목 "${hit.pageTitle}"${hit.redirected ? ", redirect 반영" : ""})`,
       };
-    } else if (distinctCanonical.size > 1) {
-      verdict = { status: "ambiguous", canonicalUrl: null, note: `canonical 문서 ${distinctCanonical.size}건 동시 확정 — 동일인 확정 불가 (${trace})` };
-    } else if (bot.length > 0) {
-      verdict = { status: "blocked", canonicalUrl: null, note: `봇차단으로 확인 불가 (${trace}) — 우회 금지(§12.2 b)` };
+    } else if (distinct.size > 1) {
+      verdict = { status: "ambiguous", canonicalUrl: null, pageTitle: null, note: `문서 ${distinct.size}건 동시 확정 — 동일인 확정 불가 (${trace})` };
+    } else if (blocked) {
+      verdict = { status: "blocked", canonicalUrl: null, pageTitle: null, note: `봇차단으로 확인 불가 (${trace}) — 우회 금지(§12.2 b)` };
     } else {
-      verdict = { status: "missing", canonicalUrl: null, note: `canonical 확정 후보 없음 (${trace})` };
+      verdict = { status: "missing", canonicalUrl: null, pageTitle: null, note: `identity 확정 후보 없음 (${trace})` };
     }
-    results.push({ sourceKey, name: target.name, ...verdict });
+    results.push({ ...base, ...verdict });
     console.log(`${target.name.padEnd(6)} ${verdict.status.padEnd(10)} ${verdict.note}`);
   }
 
@@ -142,6 +242,11 @@ async function main(): Promise<void> {
     return acc;
   }, {});
   console.log("\n판정 요약:", summary);
+
+  if (OUT_PATH) {
+    writeFileSync(OUT_PATH, JSON.stringify(results, null, 2), "utf8");
+    console.log(`판정 결과 저장: ${OUT_PATH}`);
+  }
 
   if (DRY_RUN) {
     console.log("--dry-run: DB 쓰기 생략");

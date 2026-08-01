@@ -16,7 +16,7 @@ import {
 import {
   MAX_CHUNK_CHARS,
   MIN_CHUNK_CHARS,
-  prepareNamuChunks,
+  prepareTier2Chunks,
 } from "../../src/lib/baseball-qa/rag/ingest";
 
 assert.equal(gradeForSourceKind("kbo_structured"), "tier1");
@@ -26,7 +26,7 @@ assert.equal(canGroundNumericClaim("tier2"), false);
 assert.equal(resolveNumericConflict("0.321", "0.300").decision, "use_official");
 assert.equal(resolveNumericConflict(null, "0.300").decision, "hold_numeric");
 
-const prepared = prepareNamuChunks({
+const prepared = prepareTier2Chunks({
   entityType: "player",
   entityId: "75847",
   pageTitle: "테스트 선수",
@@ -48,7 +48,7 @@ if (prepared.ok) {
     Boolean(meta.contentHash) && Boolean(documentContentHash)));
   assert.equal(new Set(prepared.chunks.map(({ documentContentHash }) => documentContentHash)).size, 1);
 }
-assert.equal(prepareNamuChunks({
+assert.equal(prepareTier2Chunks({
   entityType: "player",
   entityId: "75847",
   pageTitle: "테스트 선수",

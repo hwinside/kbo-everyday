@@ -1,11 +1,30 @@
 /**
  * canonical 확정 게이트 (spec rev0.7 §12.2 d).
  *
- * 계약: **HTTP 200 단독으로 canonical을 단정하지 않는다.** 다음 셋을 모두 대조해 통과한 문서만
+ * 계약: **HTTP 200 단독으로 canonical을 단정하지 않는다.** 다음을 모두 대조해 통과한 문서만
  * `resolved`가 될 수 있다.
  *   (1) redirect 최종 URL 정규화 — 요청 후보 URL이 아니라 실제로 도달한 문서 URL을 기준으로 한다.
  *   (2) `rel=canonical` 링크 — 문서가 스스로 선언한 canonical과 최종 URL이 같은 문서를 가리켜야 한다.
- *   (3) page title ↔ entity identity — 문서 제목이 이 entity의 허용 제목 집합과 일치해야 한다.
+ *   (3) 문서 identity — 문서가 **이 선수 본인의 문서**임을 문서 자신의 메타(분류)로 확인한다.
+ *
+ * ⚠️ 2026-08-01 실크롤 실측으로 (3)의 구현이 교체되었다 (R3).
+ * R2까지 (3)은 "제목이 `{이름}` / `{이름}(야구선수)` / `{이름}(야구)` 폐쇄집합에 속하는가"였다.
+ * 실제 나무위키 마크업 16건을 크롤해 이 게이트를 그대로 걸어본 결과 **16/16이 통과했지만
+ * 그중 5건이 선수 본인 문서가 아니었다** — fail-open이다:
+ *   - `강백호` → 동음이의 문서(슬램덩크·래퍼 등). 선수는 `강백호(야구선수)`.
+ *   - `김현준` → 동명이인 문서. 선수는 `김현준(2002년 10월)`.
+ *   - `박재현` → 동명이인 문서. 선수는 `박재현(2006)`.
+ *   - `이원석` → 동명이인 문서. 선수는 `이원석(1999)`.
+ *   - `네일`   → 영어 단어 문서. 선수는 `제임스 네일`.
+ * 제목 폐쇄집합이 무력한 이유는 실제 문서명이 `(야구선수)`가 아니라 `(2002년 10월)`·`(1999)`처럼
+ * **예측 불가능한 구분자**를 쓰거나 등록명 자체가 다르기 때문이다(네일 → 제임스 네일).
+ *
+ * 그래서 identity 근거를 **문서가 스스로 선언한 분류(category)**로 바꾼다:
+ *   (3a) 동음이의/동명이인 분류가 있으면 단일 entity 문서가 아니다 → 거부.
+ *   (3b) "야구 선수" 분류가 없으면 이 선수의 문서가 아니다 → 거부.
+ *   (3c) 로스터 생년과 `{생년}년 출생` 분류가 일치해야 한다 → 동명이인 오귀속의 결정적 차단.
+ *   (3d) 문서 제목이 선수 이름을 포함해야 한다(등록명 표기 차이 허용, 완전 무관 문서 차단).
+ * (1)(2)와 "HTTP 200 단독 canonical 금지"는 그대로 유지된다.
  *
  * 왜 필요한가: status만 보면 redirect나 soft-200(다른 문서를 200으로 돌려주는 경우)에서 **다른 문서의
  * 내용이 이 선수 것으로 귀속**된다. chunk는 DB의 entity_id로 쓰이므로 entity filter는 이 오염을
@@ -20,8 +39,18 @@ export const NAMU_DOCUMENT_HOST = "namu.wiki";
 const NAMU_DOCUMENT_PATH_PREFIX = "/w/";
 /** 제목 뒤에 붙는 사이트 표기 — identity 대조 전에 제거한다. */
 const TITLE_SITE_SUFFIX = /\s*[-|–—]\s*나무위키\s*$/;
-/** 동음이의/목록 페이지는 단일 entity 문서가 아니다. */
+/** 동음이의/목록 페이지는 단일 entity 문서가 아니다(제목 표기 기준). */
 const NON_ENTITY_TITLE_MARKERS = ["(동음이의)", "(동명이인)", "(목록)"];
+/** 나무위키 분류 경로 접두 — 문서가 스스로 선언한 분류 링크는 `/w/분류:...` 형태다. */
+const CATEGORY_PATH_PREFIX = "/w/분류:";
+/** 이 분류가 붙은 문서는 단일 entity 문서가 아니다 (실측: 강백호·김현준·박재현·이원석). */
+const DISAMBIGUATION_CATEGORIES = ["동음이의어", "동명이인", "동음이의"];
+/**
+ * 야구 선수 문서임을 선언하는 분류.
+ * 실측 표기: `대한민국의 야구 선수`, `대한민국의 남자 야구 선수`, `미국의 야구 선수`(외국인 선수).
+ * 접미 일치("야구 선수"로 끝남)로 국적 표기 변형을 흡수한다.
+ */
+const BASEBALL_PLAYER_CATEGORY_SUFFIX = "야구 선수";
 
 export interface CanonicalIdentityInput {
   /** 요청한 후보 URL. */
@@ -30,12 +59,23 @@ export interface CanonicalIdentityInput {
   finalUrl: string;
   /** 응답 본문 HTML. */
   html: string;
-  /** 이 entity가 가질 수 있는 문서 제목 폐쇄집합. */
-  expectedTitles: string[];
+  /**
+   * 선수 identity 대조 근거 (R3, 실 마크업 기준).
+   * 이름과 생년(YYYY)을 함께 요구한다 — 동명이인 문서를 이름만으로 걸러낼 수 없기 때문이다.
+   * 미제공이면 문서 분류 대조를 수행할 수 없으므로 `identity_evidence_absent`로 거부한다(fail-close).
+   */
+  playerIdentity?: PlayerDocumentIdentity;
 }
 
 export type CanonicalVerdict =
-  | { ok: true; canonicalUrl: string; pageTitle: string; redirected: boolean }
+  | {
+      ok: true;
+      canonicalUrl: string;
+      pageTitle: string;
+      redirected: boolean;
+      /** 판정 근거로 쓴 문서 분류 — provenance에 남긴다. */
+      identityCategories: string[];
+    }
   | { ok: false; reason: string };
 
 /**
@@ -105,9 +145,110 @@ function decodeHtmlEntities(value: string): string {
     .replace(/&#39;/g, "'");
 }
 
-/** 선수 문서 제목 폐쇄집합 — inventory가 만든 후보 제목과 동일한 규칙이다. */
+/**
+ * 문서가 스스로 선언한 분류 목록을 추출한다.
+ * 나무위키는 분류를 `<a href="/w/%EB%B6%84%EB%A5%98:...">` 링크로 렌더링한다(실측).
+ * 링크 텍스트가 아니라 **href의 문서명**을 쓴다 — 표시 텍스트는 스타일/약칭으로 흔들릴 수 있다.
+ */
+export function extractDocumentCategories(html: string): string[] {
+  const found: string[] = [];
+  for (const match of html.matchAll(/<a\b[^>]*\bhref\s*=\s*["']([^"']+)["'][^>]*>/gi)) {
+    let href: string;
+    try {
+      href = decodeURIComponent(decodeHtmlEntities(match[1]));
+    } catch {
+      continue;
+    }
+    if (!href.startsWith(CATEGORY_PATH_PREFIX)) continue;
+    const name = normalizeTitle(href.slice(CATEGORY_PATH_PREFIX.length).split(/[?#]/)[0]);
+    if (name && !found.includes(name)) found.push(name);
+  }
+  return found;
+}
+
+/**
+ * 선수 문서 **후보** 제목 — 이건 identity 근거가 아니라 "어디를 먼저 열어볼까"의 순서일 뿐이다.
+ * 실제 identity는 `verifyPlayerDocumentIdentity`(문서 분류 대조)가 판정한다.
+ */
 export function expectedPlayerTitles(name: string): string[] {
   return [`${name}(야구선수)`, name, `${name}(야구)`];
+}
+
+/** 동음이의 문서에서 파생 후보 제목을 뽑을 때 훑는 링크 수 상한 (bounded). */
+export const DISAMBIGUATION_CANDIDATE_LIMIT = 6;
+
+/**
+ * 동음이의/동명이인 문서에서 **같은 이름의 실제 문서 후보**를 뽑는다.
+ *
+ * 실측상 선수 문서명은 `(야구선수)`가 아니라 `(2002년 10월)`·`(1999)`처럼 예측 불가능하다.
+ * 그래서 후보 제목을 규칙으로 만들어내는 대신, 동음이의 문서가 직접 링크한 문서 중
+ * 이름을 포함한 것을 후보로 삼는다(예: `강백호` → `강백호(야구선수)`, `네일` → `제임스 네일`).
+ * 후보가 맞는지는 여기서 판단하지 않는다 — 각 후보를 열어 분류로 확인한다.
+ */
+export function extractDisambiguationCandidates(html: string, name: string): string[] {
+  const target = normalizeTitle(name);
+  const found: string[] = [];
+  for (const match of html.matchAll(/<a\b[^>]*\bhref\s*=\s*["']([^"']+)["'][^>]*>/gi)) {
+    let href: string;
+    try {
+      href = decodeURIComponent(decodeHtmlEntities(match[1]));
+    } catch {
+      continue;
+    }
+    if (!href.startsWith(NAMU_DOCUMENT_PATH_PREFIX)) continue;
+    const title = normalizeTitle(href.slice(NAMU_DOCUMENT_PATH_PREFIX.length).split(/[?#]/)[0]);
+    if (!title || title === target) continue;
+    if (title.startsWith("분류:") || title.startsWith("파일:") || title.startsWith("틀:")) continue;
+    if (!title.includes(target)) continue;
+    if (found.includes(title)) continue;
+    found.push(title);
+    if (found.length >= DISAMBIGUATION_CANDIDATE_LIMIT) break;
+  }
+  return found;
+}
+
+export interface PlayerDocumentIdentity {
+  name: string;
+  /** 로스터 생년 4자리. 동명이인 판별의 결정적 축이다. */
+  birthYear: string;
+}
+
+/**
+ * "이 문서가 이 선수 본인의 문서인가"를 **문서가 스스로 선언한 분류**로 판정한다.
+ *
+ * 나무위키(HTML 분류 링크)와 위키피디아(API `prop=categories`)가 **같은 규칙**을 쓴다 —
+ * 소스마다 기준이 갈리면 한쪽에서 동명이인 문서가 통과한다. 실제로 R2까지 쓰던 제목 폐쇄집합은
+ * 실 마크업에서 5/16을 잘못 통과시켰다(강백호·김현준·박재현·이원석·네일).
+ */
+export function verifyPlayerDocumentIdentity(
+  rawCategories: string[],
+  pageTitle: string,
+  identity: PlayerDocumentIdentity,
+): { ok: true } | { ok: false; reason: string } {
+  // 위키피디아 API는 `분류:` 접두를 붙여 돌려준다. 접두를 벗겨 같은 어휘로 비교한다.
+  const categories = rawCategories.map((category) =>
+    normalizeTitle(category.replace(/^분류:/, "")),
+  );
+  if (categories.length === 0) return { ok: false, reason: "document_categories_absent" };
+
+  // (3a) 동음이의/동명이인 문서는 단일 entity 문서가 아니다.
+  if (categories.some((category) => DISAMBIGUATION_CATEGORIES.some((marker) => category.includes(marker)))) {
+    return { ok: false, reason: "disambiguation_document" };
+  }
+  // (3b) 야구 선수 분류가 없으면 이 선수의 문서가 아니다(예: `네일` = 영어 단어 문서).
+  if (!categories.some((category) => category.endsWith(BASEBALL_PLAYER_CATEGORY_SUFFIX))) {
+    return { ok: false, reason: "not_baseball_player_document" };
+  }
+  // (3c) 생년 대조 — 동명이인 오귀속의 결정적 차단선이다.
+  if (!categories.includes(`${identity.birthYear}년 출생`)) {
+    return { ok: false, reason: "birth_year_mismatch" };
+  }
+  // (3d) 제목이 선수 이름을 포함해야 한다. 등록명 표기 차이(`네일`→`제임스 네일`)는 허용하되,
+  //      이름과 완전히 무관한 문서는 여기서 걸린다.
+  if (!pageTitle.includes(normalizeTitle(identity.name))) {
+    return { ok: false, reason: "page_title_name_mismatch" };
+  }
+  return { ok: true };
 }
 
 /**
@@ -129,20 +270,22 @@ export function verifyCanonicalIdentity(input: CanonicalIdentityInput): Canonica
   if (!canonical) return { ok: false, reason: "canonical_link_out_of_contract" };
   if (canonical !== final) return { ok: false, reason: "canonical_link_mismatch_final_url" };
 
-  // (3) page title ↔ entity identity.
+  // (3) 문서 identity — 문서가 스스로 선언한 메타로 "이 선수 본인의 문서"임을 확인한다.
   const pageTitle = extractPageTitle(input.html);
   if (!pageTitle) return { ok: false, reason: "page_title_absent" };
   if (NON_ENTITY_TITLE_MARKERS.some((marker) => pageTitle.includes(marker))) {
     return { ok: false, reason: "non_entity_page_title" };
   }
-  const allowed = new Set(input.expectedTitles.map(normalizeTitle));
-  if (!allowed.has(pageTitle)) return { ok: false, reason: "page_title_entity_mismatch" };
 
-  // canonical URL의 문서명도 같은 identity여야 한다 (title만 맞고 URL이 다른 문서인 경우 차단).
-  const canonicalTitle = normalizeTitle(
-    canonical.slice(`https://${NAMU_DOCUMENT_HOST}${NAMU_DOCUMENT_PATH_PREFIX}`.length),
-  );
-  if (!allowed.has(canonicalTitle)) return { ok: false, reason: "canonical_url_entity_mismatch" };
+  // identity 근거가 없으면 확정하지 않는다 — 제목 폐쇄집합만으로는 동명이인을 못 거른다(R3 실측).
+  const identity = input.playerIdentity;
+  if (!identity?.name || !/^\d{4}$/.test(identity.birthYear ?? "")) {
+    return { ok: false, reason: "identity_evidence_absent" };
+  }
 
-  return { ok: true, canonicalUrl: canonical, pageTitle, redirected: requested !== final };
+  const categories = extractDocumentCategories(input.html);
+  const identityVerdict = verifyPlayerDocumentIdentity(categories, pageTitle, identity);
+  if (!identityVerdict.ok) return identityVerdict;
+
+  return { ok: true, canonicalUrl: canonical, pageTitle, redirected: requested !== final, identityCategories: categories };
 }

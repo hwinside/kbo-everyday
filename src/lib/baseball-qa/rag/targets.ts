@@ -43,6 +43,17 @@ export const S2B_TARGET_SOURCE_KEYS: string[] = S2B_TARGET_PLAYERS.map(
   ({ kboId }) => `namu:player:${kboId}`,
 );
 
+/**
+ * 위키피디아 source_key (R3). tier2 **기본 소스**는 위키피디아이고 나무위키는 보조다.
+ * 두 소스는 같은 entity를 가리키되 source_key 접두로 구분된다 — 그래야 provenance/재수집이 독립적이다.
+ */
+export const S2B_TARGET_WIKIPEDIA_SOURCE_KEYS: string[] = S2B_TARGET_PLAYERS.map(
+  ({ kboId }) => `wikipedia:player:${kboId}`,
+);
+
 export function isS2bTargetSourceKey(sourceKey: string): boolean {
-  return S2B_TARGET_SOURCE_KEYS.includes(sourceKey);
+  return (
+    S2B_TARGET_SOURCE_KEYS.includes(sourceKey)
+    || S2B_TARGET_WIKIPEDIA_SOURCE_KEYS.includes(sourceKey)
+  );
 }
