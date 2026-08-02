@@ -131,6 +131,10 @@ BEGIN
         v_source.source_kind = 'namu_document'
         AND v_root_path IS NOT NULL
         AND v_chunk_path IS NOT NULL
+        -- WHATWG URL parser는 raw TAB/CR/LF를 parsing 전에 제거한다. DB가 이를
+        -- path 문자로 비교하면 `root/\t../other`를 child로 오인하므로 raw 공백·제어문자는 거부.
+        AND v_source.canonical_url !~ '[[:space:][:cntrl:]]'
+        AND NEW.canonical_url !~ '[[:space:][:cntrl:]]'
         AND position(E'\\' IN v_root_path) = 0
         AND position(E'\\' IN v_chunk_path) = 0
         AND v_root_path !~ '(^|/)[.]{1,2}(/|$)'

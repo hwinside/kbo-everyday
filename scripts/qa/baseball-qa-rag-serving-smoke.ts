@@ -1689,6 +1689,7 @@ async function verifyServingContractOnRealDb(): Promise<void> {
     "https://namu.wiki/w/x/%252e%252e/%EA%B9%80%EB%8F%84%EC%98%81",
     "https://namu.wiki/w/x\\..\\%EA%B9%80%EB%8F%84%EC%98%81",
     "https://namu.wiki/w/x/%2f%EA%B9%80%EB%8F%84%EC%98%81",
+    "https://namu.wiki/w/x/\t../%EA%B9%80%EB%8F%84%EC%98%81",
   ];
   for (const [index, canonical] of traversalCanonicals.entries()) {
     await assert.rejects(
