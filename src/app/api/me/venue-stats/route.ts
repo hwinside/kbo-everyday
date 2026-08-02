@@ -24,6 +24,7 @@ import type { LedgerRecord } from "@/lib/game-logs/completeness";
 import { TEAM_ID_TO_CODE, type PlayerGameLogRow } from "@/lib/game-logs/ingest";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { fetchAttendanceGamesWithinDeadline } from "@/lib/venue-attendance/fetch-games";
+import { fetchGameErrorsWithinDeadline } from "@/lib/venue-stats/game-errors";
 import bundledBatters from "@/lib/constants/stats-2026-batters.json";
 import bundledPitchers from "@/lib/constants/stats-2026-pitchers.json";
 import statsMeta from "@/lib/constants/stats-2026-meta.json";
@@ -491,6 +492,7 @@ export async function GET(req: NextRequest) {
   const [
     gamesById,
     logsResult,
+    gameErrors,
     ledgersResult,
     seasonAggregates,
     standings,
@@ -502,6 +504,11 @@ export async function GET(req: NextRequest) {
         fetcher: (date) => fetchGames(date, REGULAR_SEASON_SR_ID),
       }),
       fetchAttendanceGameLogs(gameIds),
+      // 실책(E) — `발암경기 인내형` 태그용. 실패해도 나머지 집계는 그대로 간다
+      // (확인 못 한 경기는 Map 에 안 들어가고, 집계가 미확인으로 처리한다).
+      fetchGameErrorsWithinDeadline(gameIds).catch(
+        () => new Map<string, { away: number; home: number }>(),
+      ),
       fetchLedgers(gameIds),
       seasonSupported
         ? fetchSeasonAggregates(requestedSeason)
@@ -548,6 +555,7 @@ export async function GET(req: NextRequest) {
     teamSeasonTotals: currentBaselines?.teamSeasonTotals ?? null,
     favoriteSeasonBaselines: currentBaselines?.favoriteSeasonBaselines ?? null,
     todayKst: todayKst(),
+    gameErrors,
   } as const;
 
   const seasonSupport: { status: SeasonSupportStatus; supportedSeason: number } = {

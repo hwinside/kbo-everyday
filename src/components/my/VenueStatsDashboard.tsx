@@ -61,6 +61,7 @@ import {
   formatSigned,
   METRIC_STATE_LABELS,
   awayFanTag,
+  errorToleranceTag,
   scoreBadgeLabel,
   SCORE_CONFIDENCE_LABELS,
   scoreConfidenceLevel,
@@ -464,6 +465,14 @@ export default function VenueStatsDashboard() {
     if (!isPositiveSplit(rate)) return null;
     return { label: "원정 승요", value: `${w}승 ${l}패 · ${formatRate(rate, 0)}` };
   })();
+  // ── 발암경기 인내형 (하린아빠 2026-08-02) ──────────────────────────────
+  // 내 팀이 실책을 쏟아낸 경기를 직관에서 견뎌낸 관람 서사. 승패와 분리한 성향 태그다.
+  // 임계·미확인 처리는 `errorToleranceTag`(ui.ts)가 SSOT.
+  const errorTag = errorToleranceTag({
+    proneGames: d1?.value?.errorProneGames ?? 0,
+    knownGames: d1?.value?.errorKnownGames ?? 0,
+    errorsSeen: d1?.value?.errorsSeen ?? 0,
+  });
   const bestMonthLabel = bestMonth
     ? isPositiveSplit(bestMonth.cell.rate)
       ? `${bestMonth.cell.month}월의 승요`
@@ -537,6 +546,12 @@ export default function VenueStatsDashboard() {
     label: awayWinTag.label,
     value: awayWinTag.value,
     icon: <Trophy size={16} className="text-sky-300" />,
+  });
+  if (summarySampleReady && errorTag) interestingFacts.push({
+    key: "error-tolerance",
+    label: errorTag.label,
+    value: errorTag.value,
+    icon: <span className="text-[15px]">🤯</span>,
   });
   if (bestMonth) interestingFacts.push({
     key: "month", label: bestMonthLabel!, value: `${bestMonth.cell.w}승 ${bestMonth.cell.l}패 · ${formatRate(bestMonth.cell.rate, 0)}`,

@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "prebuild": "npm run qa:query-guard && npm run qa:baseball-source-inventory && npm run qa:baseball-rag-contract && npm run qa:foreign-photo && npm run qa:photos-helper-signature && npm run qa:roster-count-consistency && npm run qa:roster-derived-sync && npm run qa:starter-era && npm run qa:game-detail-bounded-fallback && npm run qa:stats-snapshot-guard && npm run qa:war-benchmark-coverage && npm run qa:videos-rss-status && npm run qa:diary-contrast && npm run qa:venue-stats-expected && npm run qa:home-header-signup-button && npm run qa:venue-stats-s2-effect-guard && npm run qa:venue-stats-s2-header-guard && npm run qa:venue-stats-s2-browser",
+    "prebuild": "npm run qa:query-guard && npm run qa:baseball-source-inventory && npm run qa:baseball-rag-contract && npm run qa:foreign-photo && npm run qa:photos-helper-signature && npm run qa:roster-count-consistency && npm run qa:roster-derived-sync && npm run qa:starter-era && npm run qa:game-detail-bounded-fallback && npm run qa:stats-snapshot-guard && npm run qa:war-benchmark-coverage && npm run qa:videos-rss-status && npm run qa:diary-contrast && npm run qa:venue-stats-expected && npm run qa:venue-stats-error-tag && npm run qa:home-header-signup-button && npm run qa:venue-stats-s2-effect-guard && npm run qa:venue-stats-s2-header-guard && npm run qa:venue-stats-s2-browser",
     "qa:photos-helper-signature": "tsx scripts/qa/photos-helper-signature.ts",
     "qa:field-defense": "tsx scripts/qa/field-defense-boxscore-smoke.ts",
     "transcode:videos": "node scripts/transcode-videos.mjs",
@@ -250,7 +250,8 @@
     "qa:outage-banner": "tsx scripts/qa/outage-notice-banner-smoke.ts",
     "qa:game-log-ledger-orchestrator": "tsx scripts/qa/game-log-ledger-orchestrator.ts",
     "qa:title-orphan": "tsx scripts/qa/title-analysis-orphan-score-smoke.ts",
-    "build:baseball-source-inventory:seed": "tsx scripts/baseball-qa/build-source-inventory.ts --emit-seed"
+    "build:baseball-source-inventory:seed": "tsx scripts/baseball-qa/build-source-inventory.ts --emit-seed",
+    "qa:venue-stats-error-tag": "tsx scripts/qa/venue-stats-error-tag-smoke.ts"
   },
   "dependencies": {
     "@capacitor-firebase/messaging": "^8.3.0",

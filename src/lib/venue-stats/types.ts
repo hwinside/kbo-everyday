@@ -194,6 +194,16 @@ export interface D1Value {
   avgRunDiff: number | null;
   closeGameRate: number | null;
   closeGames: number;
+  /**
+   * 실책 관련 — `발암경기 인내형` 태그용 (하린아빠 2026-08-02).
+   * ⚠️ `errorKnownGames` 는 실책을 **확인한** 경기 수다. 미확인 경기는 0으로 세지 않는다.
+   *    `errorProneGames`/`errorsSeen` 은 확인된 경기에서만 집계한 하한값이다.
+   */
+  errorKnownGames: number;
+  /** 내 팀 실책 2개 이상(실측 팀-경기 상위 15%)인 경기 수. */
+  errorProneGames: number;
+  /** 확인된 경기에서 내 팀이 저지른 실책 총합. */
+  errorsSeen: number;
 }
 export interface D5Value { cancelledCount: number }
 export interface D6TopGame { gameId: string; date: string; runs: number }

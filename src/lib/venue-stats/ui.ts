@@ -618,6 +618,44 @@ export function awayFanTag(input: {
   return { label: "첫 원정", value: evidence, tier: 1 };
 }
 
+/**
+ * `발암경기 인내형` — 하린아빠 2026-08-02 요청 태그.
+ *
+ * "내 팀이 실책을 쏟아낸 경기를 직관에서 견뎌낸" 관람 서사다. 성적 태그가 아니라
+ * 관람 성향 태그이므로 승패와 분리한다(awayFanTag·dayGameTag 와 같은 계열).
+ *
+ * 임계는 `ERROR_PRONE_MIN`(=2, 팀-경기 상위 15%) 실측 근거를 따른다.
+ *
+ * ⚠️ **미확인 경기는 분모에서 빠진다.** `knownGames` 는 실책을 실제로 확인한 경기 수이고,
+ * 확인 0건이면 태그를 만들지 않는다(모르는 것을 "실책 없음"으로 말하지 않는다).
+ */
+export interface ErrorToleranceTag {
+  label: string;
+  value: string;
+  /** 단계 — 회귀에서 임계 재상향을 감지하기 위한 서수. */
+  tier: 1 | 2 | 3;
+}
+
+export function errorToleranceTag(input: {
+  /** 내 팀 실책 2개 이상인 직관 경기 수. */
+  proneGames: number;
+  /** 실책을 실제로 확인한 직관 경기 수(미확인 제외). */
+  knownGames: number;
+  /** 확인된 경기에서 내 팀 실책 총합. */
+  errorsSeen: number;
+}): ErrorToleranceTag | null {
+  const { proneGames, knownGames, errorsSeen } = input;
+  // 확인된 경기가 없으면 판단 불가. 발암경기가 0이면 태그 없음(정상).
+  if (!Number.isFinite(knownGames) || knownGames <= 0) return null;
+  if (!Number.isFinite(proneGames) || proneGames <= 0) return null;
+
+  const evidence = `${proneGames}경기 · 실책 ${errorsSeen}개 목격`;
+  // 3경기+ 는 실측(직관 최대 1회)을 넘는 "성장 등급".
+  if (proneGames >= 3) return { label: "발암경기 전문가", value: evidence, tier: 3 };
+  if (proneGames >= 2) return { label: "발암경기 단골", value: evidence, tier: 2 };
+  return { label: "발암경기 인내형", value: evidence, tier: 1 };
+}
+
 export function coverageCaption(scope: VenueStatsScopePayload): string {
   const { attendanceGames, finalGames, incompleteFinalGames, unavailableGames } = scope.coverage;
   const gaps = incompleteFinalGames + unavailableGames;
