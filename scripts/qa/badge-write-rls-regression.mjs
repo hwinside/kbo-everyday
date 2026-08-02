@@ -20,6 +20,7 @@
  */
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import {
   cleanupDisposableBadgeUser,
   cleanupStageForRequest,
@@ -31,19 +32,34 @@ const SERVICE = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const EXPECT = process.env.EXPECT === "open" ? "open" : "closed";
 const CLEANUP_INJECTION = process.env.QA_INJECT_CLEANUP_FAILURE || "";
 
-for (const [name, value] of [
-  ["NEXT_PUBLIC_SUPABASE_URL", URL_BASE],
-  ["NEXT_PUBLIC_SUPABASE_ANON_KEY", ANON],
-  ["SUPABASE_SERVICE_ROLE_KEY", SERVICE],
-]) {
-  if (!value) {
-    console.error(`badge write rls regression: FAIL — ${name} 미설정 (검증 불가는 실패로 처리)`);
-    process.exit(1);
-  }
-}
-
 const EXCLUSIVE_IDS = ["chairman", "chairman-spouse"];
 const NORMAL_ID = "debut";
+
+export async function runBadgeCleanup({ userId, key, restClient, authClient, injection = "" }) {
+  let injected = false;
+  const injectionStage = injection.replace(/-(throw|non2xx)$/, "");
+  const injectionMode = injection.endsWith("-non2xx") ? "non2xx" : "throw";
+  const withInjection = (kind, client) => async (path, options = {}) => {
+    const stage = cleanupStageForRequest(kind, path, options.method);
+    if (!injected && injection && stage === injectionStage) {
+      injected = true;
+      if (injectionMode === "throw") throw new Error(`injected ${stage} fetch failure`);
+      return { status: 503, ok: false, text: `injected ${stage} non-2xx`, json: null };
+    }
+    return client(path, options);
+  };
+
+  const cleanup = await cleanupDisposableBadgeUser({
+    userId,
+    key,
+    rest: withInjection("rest", restClient),
+    auth: withInjection("auth", authClient),
+  });
+  if (injection && !injected) {
+    cleanup.failures.push(`unknown cleanup injection: ${injection}`);
+  }
+  return cleanup;
+}
 
 async function rest(path, { method = "GET", key, jwt, body, prefer } = {}) {
   const headers = { apikey: key, Authorization: `Bearer ${jwt || key}` };
@@ -77,6 +93,16 @@ async function auth(path, { method = "POST", key, jwt, body } = {}) {
 }
 
 async function main() {
+  for (const [name, value] of [
+    ["NEXT_PUBLIC_SUPABASE_URL", URL_BASE],
+    ["NEXT_PUBLIC_SUPABASE_ANON_KEY", ANON],
+    ["SUPABASE_SERVICE_ROLE_KEY", SERVICE],
+  ]) {
+    if (!value) {
+      throw new Error(`${name} 미설정 (검증 불가는 실패로 처리)`);
+    }
+  }
+
   const stamp = Date.now();
   const email = `qa-badge-rls-${stamp}@keubo-qa.invalid`;
   const password = `Qa!${randomUUID()}`;
@@ -215,28 +241,13 @@ async function main() {
     );
   } finally {
     if (userId) {
-      let injected = false;
-      const injectionStage = CLEANUP_INJECTION.replace(/-(throw|non2xx)$/, "");
-      const injectionMode = CLEANUP_INJECTION.endsWith("-non2xx") ? "non2xx" : "throw";
-      const withInjection = (kind, client) => async (path, options = {}) => {
-        const stage = cleanupStageForRequest(kind, path, options.method);
-        if (!injected && CLEANUP_INJECTION && stage === injectionStage) {
-          injected = true;
-          if (injectionMode === "throw") throw new Error(`injected ${stage} fetch failure`);
-          return { status: 503, ok: false, text: `injected ${stage} non-2xx`, json: null };
-        }
-        return client(path, options);
-      };
-
-      const cleanup = await cleanupDisposableBadgeUser({
+      const cleanup = await runBadgeCleanup({
         userId,
         key: SERVICE,
-        rest: withInjection("rest", rest),
-        auth: withInjection("auth", auth),
+        restClient: rest,
+        authClient: auth,
+        injection: CLEANUP_INJECTION,
       });
-      if (CLEANUP_INJECTION && !injected) {
-        cleanup.failures.push(`unknown cleanup injection: ${CLEANUP_INJECTION}`);
-      }
 
       console.log(
         `  cleanup: badges=${cleanup.badgeCount} profile=${cleanup.profileCount} auth=${cleanup.authCount}`
@@ -246,8 +257,10 @@ async function main() {
   }
 }
 
-main().catch(err => {
-  console.error("badge write rls regression: FAIL");
-  console.error(err instanceof Error ? err.message : err);
-  process.exit(1);
-});
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  main().catch(err => {
+    console.error("badge write rls regression: FAIL");
+    console.error(err instanceof Error ? err.message : err);
+    process.exit(1);
+  });
+}

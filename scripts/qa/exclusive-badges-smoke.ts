@@ -11,9 +11,9 @@ import {
   getVisibleBadgeCatalog,
 } from "../../src/lib/constants/badges";
 import {
-  cleanupDisposableBadgeUser,
   cleanupStageForRequest,
 } from "./badge-write-cleanup.mjs";
+import { runBadgeCleanup } from "./badge-write-rls-regression.mjs";
 
 const exclusiveIds = ["chairman", "chairman-spouse", "keubo-singer"];
 const expected = {
@@ -164,21 +164,22 @@ async function assertCleanupFailureMatrix() {
         assert.ok(stage, `unexpected cleanup request: ${kind} ${options.method || "GET"} ${path}`);
         const count = (calls.get(stage) || 0) + 1;
         calls.set(stage, count);
-        if (stage === targetStage && count === 1) {
-          if (mode === "throw") throw new Error(`injected ${stage} fetch failure`);
-          return { status: 503, ok: false, text: `injected ${stage} non-2xx`, json: null };
-        }
         return cleanResponse(stage);
       };
 
-      const cleanup = await cleanupDisposableBadgeUser({
+      const cleanup = await runBadgeCleanup({
         userId: "offline-user",
         key: "offline-service-key",
-        rest: client("rest"),
-        auth: client("auth"),
+        restClient: client("rest"),
+        authClient: client("auth"),
+        injection: `${targetStage}-${mode}`,
       });
 
-      assert.equal(calls.get(targetStage), 2, `${targetStage} ${mode} retries once`);
+      assert.equal(
+        calls.get(targetStage),
+        1,
+        `${targetStage} ${mode} reaches the real client after the injected first attempt`
+      );
       for (const stage of cleanupStages) {
         assert.ok((calls.get(stage) || 0) >= 1, `${targetStage} ${mode} still reaches ${stage}`);
       }
@@ -187,7 +188,15 @@ async function assertCleanupFailureMatrix() {
         { badges: 0, profile: 0, auth: 0 },
         `${targetStage} ${mode} cleanup reaches 0/0/0`
       );
-      assert.ok(cleanup.failures.length >= 1, `${targetStage} ${mode} remains RED after successful retry`);
+      assert.ok(
+        cleanup.failures.some(failure => failure.includes(`injected ${targetStage}`)),
+        `${targetStage} ${mode} records the runner injection and remains RED after successful retry`
+      );
+      assert.equal(
+        cleanup.failures.some(failure => failure.includes("unknown cleanup injection")),
+        false,
+        `${targetStage} ${mode} must be wired to the actual runner client`
+      );
     }
   }
 }
