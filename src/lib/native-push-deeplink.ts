@@ -62,9 +62,16 @@ export function handleNotificationTapEvent(event: unknown): void {
   const notification = (event as { notification?: { data?: unknown } } | null)?.notification;
   const data = (notification?.data ?? {}) as Record<string, unknown>;
   const url = typeof data.url === "string" ? data.url : null;
-  // 내부 경로(`/`)만 허용 — 절대 URL 로 외부 페이지가 웹뷰에 열리는 것을 차단(기존 계약 유지).
+  // 내부 경로(`/`)만 허용. `//host`와 `/\\host`도 URL parser에서 외부 origin이 되므로
+  // startsWith만 믿지 않고 실제 해석된 origin까지 대조한다.
   if (!url || !url.startsWith("/")) return;
-  navigateOnAppActive(url);
+  try {
+    const parsed = new URL(url, window.location.origin);
+    if (parsed.origin !== window.location.origin) return;
+    navigateOnAppActive(parsed.pathname + parsed.search + parsed.hash);
+  } catch {
+    // malformed path — 이동하지 않는다
+  }
 }
 
 type MessagingListenerSource = {

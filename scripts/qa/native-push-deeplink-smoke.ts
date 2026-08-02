@@ -183,6 +183,8 @@ test("9) 실배선 — 포그라운드 탭 이벤트는 즉시 이동(Android �
 test("10) 실배선 — 외부/비정상 URL 은 이동하지 않는다(기존 계약 유지)", async () => {
   const { handleNotificationTapEvent } = await reset("visible");
   handleNotificationTapEvent(tapEvent("https://evil.example/pwn"));
+  handleNotificationTapEvent(tapEvent("//evil.example/pwn"));
+  handleNotificationTapEvent(tapEvent("/\\evil.example/pwn"));
   handleNotificationTapEvent(tapEvent(""));
   handleNotificationTapEvent(tapEvent(undefined));
   handleNotificationTapEvent(tapEvent(123));
