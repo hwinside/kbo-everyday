@@ -11,11 +11,19 @@ import {
   getVisibleBadgeCatalog,
 } from "../../src/lib/constants/badges";
 
-const exclusiveIds = ["chairman", "chairman-spouse"];
+const exclusiveIds = ["chairman", "chairman-spouse", "keubo-singer"];
 const expected = {
   chairman: { name: "크보팬 회장", icon: "🏛️" },
   "chairman-spouse": { name: "크보팬 회장남편", icon: "🎩" },
+  "keubo-singer": { name: "크보팬 전속가수", icon: "🎤" },
 };
+
+// EXCLUSIVE_BADGE_IDS 와 검증 목록이 벌어지면 신규 한정 배지가 검증 없이 통과한다 — fail-close
+assert.deepEqual(
+  [...EXCLUSIVE_BADGE_IDS].sort(),
+  [...exclusiveIds].sort(),
+  "신규 한정 배지를 스모크 검증 목록에도 추가해야 합니다"
+);
 
 for (const id of exclusiveIds) {
   const badge = ALL_BADGES.find(candidate => candidate.id === id);
@@ -43,15 +51,33 @@ for (const id of exclusiveIds) {
   );
 }
 
-const bothCatalog = getVisibleBadgeCatalog(new Set(exclusiveIds));
-assert.equal(bothCatalog.length, BADGES.length + 2, "multiple exclusive badges count exactly once");
-assert.equal(new Set(bothCatalog.map(badge => badge.id)).size, bothCatalog.length, "catalog has no duplicates");
+const allExclusiveCatalog = getVisibleBadgeCatalog(new Set(exclusiveIds));
+assert.equal(
+  allExclusiveCatalog.length,
+  BADGES.length + exclusiveIds.length,
+  "multiple exclusive badges count exactly once"
+);
+assert.equal(
+  new Set(allExclusiveCatalog.map(badge => badge.id)).size,
+  allExclusiveCatalog.length,
+  "catalog has no duplicates"
+);
+
+// 한 종류만 보유한 사람은 다른 한정 배지 슬롯을 볼 수 없어야 한다
+for (const id of exclusiveIds) {
+  const others = exclusiveIds.filter(other => other !== id);
+  const catalogIds = new Set(getVisibleBadgeCatalog(new Set([id])).map(badge => badge.id));
+  for (const other of others) {
+    assert.equal(catalogIds.has(other), false, `${id} owner must not see ${other} slot`);
+  }
+}
 
 const profileSource = readFileSync("src/app/(main)/profile/[userId]/page.tsx", "utf8");
 assert.match(profileSource, /\{founderBadge && \(\s*<span[^>]+aria-label="파운더">👑<\/span>/, "founder crown remains additive");
 assert.doesNotMatch(profileSource, /chairmanBadge \? \([\s\S]{0,300}aria-label="파운더"/, "chairman must not replace founder crown");
 assert.match(profileSource, />🏛️ 크보팬 회장<\/span>/, "chairman pill rendered");
 assert.match(profileSource, />🎩 크보팬 회장남편<\/span>/, "chairman-spouse pill rendered");
+assert.match(profileSource, />🎤 크보팬 전속가수<\/span>/, "keubo-singer pill rendered");
 
 const tabSource = readFileSync("src/components/profile/BadgesTab.tsx", "utf8");
 assert.match(tabSource, /getVisibleBadgeCatalog\(earnedBadgeIds\)/, "grid uses owner-aware catalog");
