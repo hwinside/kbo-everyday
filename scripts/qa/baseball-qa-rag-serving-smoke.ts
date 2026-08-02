@@ -637,6 +637,10 @@ async function verifyCanonicalGateAgainstRealMarkup(): Promise<void> {
  * 고정하는 것: 저장된 chunk를 전부 이어 붙여도 **원문이 재구성되지 않는다.**
  * 삼순 probe 형태 그대로: 긴 원문을 넣고 저장량/원문길이 비율을 직접 쟰다.
  */
+/** minimal 정책 고정 헬퍼 — 운영 기본값(full)과 무관하게 §12.2(c) 계약을 계속 검증한다. */
+const prepareTier2ChunksMinimal = (doc: Parameters<typeof prepareTier2Chunks>[0]) =>
+  prepareTier2Chunks(doc, "minimal");
+
 function verifyRetentionCap(): void {
   const paragraphs = [
     "문보경은 LG 트윈스 소속 내야수로 팬들 사이에서 문학소년이라는 별명으로 불린다. 주로 3루와 1루를 본다.",
@@ -645,6 +649,8 @@ function verifyRetentionCap(): void {
       `경기 외적인 서술 문단 ${index}. 팬카페·응원가·여녔화·방송 일화 등 retrieval과 무관한 상세 서술이 이어진다. 문서에는 이런 문단이 아주 많다.`),
   ];
   const rawText = paragraphs.join("\n\n");
+  // 이 함수는 **minimal 정책 계약**을 검증한다. 운영 기본값이 full로 바뀌어도
+  // minimal 경로의 상한 계약은 그대로 지켜져야 하므로 정책을 명시해서 고정한다.
   const prepared = prepareTier2Chunks({
     entityType: "player",
     entityId: "69102",
@@ -655,7 +661,7 @@ function verifyRetentionCap(): void {
     crawledAt: "2026-08-01T00:00:00Z",
     asOf: "2026-08-01",
     rawText,
-  });
+  }, "minimal");
   assert.equal(prepared.ok, true, "서술 신호가 있는 문서는 snippet을 남겨야 한다");
   if (!prepared.ok) return;
 
@@ -679,7 +685,7 @@ function verifyRetentionCap(): void {
   // 리드 문단만 entity 정의문으로 남고, 나머지는 전부 버려져야 한다.
   const noSignalParagraphs = Array.from({ length: 10 }, (_, i) =>
     `무관한 서술 ${i}. 이 문단은 질문과 연결되는 신호가 없는 긴 문장입니다.`);
-  const noSignal = prepareTier2Chunks({
+  const noSignal = prepareTier2ChunksMinimal({
     entityType: "player", entityId: "69102", pageTitle: "문보경",
     canonicalUrl: "https://namu.wiki/w/x", revision: "rev1", sectionPath: "본문",
     crawledAt: "2026-08-01T00:00:00Z", asOf: "2026-08-01",
@@ -692,7 +698,7 @@ function verifyRetentionCap(): void {
   }
 
   // 보존 예산이 최소 chunk 길이에도 미달하면 저장하지 않는다(짧은 문서 전문 저장 차단).
-  const tooShort = prepareTier2Chunks({
+  const tooShort = prepareTier2ChunksMinimal({
     entityType: "player", entityId: "69102", pageTitle: "문보경",
     canonicalUrl: "https://namu.wiki/w/x", revision: "rev1", sectionPath: "본문",
     crawledAt: "2026-08-01T00:00:00Z", asOf: "2026-08-01",
@@ -735,7 +741,7 @@ function verifyRetentionCapOnRealDocumentShape(): void {
 
   for (const [label, targetChars] of [["실측 최단급", 1_900], ["중앙값급", 20_000], ["실측 최장급", 31_500]] as const) {
     const clean = stripWikiMarkup(buildDocument(targetChars));
-    const snippets = selectRetrievalSnippets(clean, "문보경");
+    const snippets = selectRetrievalSnippets(clean, "문보경", "minimal");
     const stored = snippets.reduce((sum, snippet) => sum + snippet.length, 0);
     assert.ok(stored <= RETENTION_MAX_CHARS, `${label}: 절대 상한 위반 ${stored} > ${RETENTION_MAX_CHARS}`);
     assert.ok(
@@ -1425,7 +1431,8 @@ function verifyEntityAggregateRetentionCap(): void {
     rawText: Array.from({ length: 30 }, (_, paragraph) =>
       `문보경 선수 경력 ${index}-${paragraph}. 별명과 소속팀, 포지션, 플레이 스타일에 관한 유효한 서술 문단입니다. `.repeat(4)).join("\n\n"),
   }));
-  const prepared = prepareTier2DocumentSet(documents);
+  // entity 합산 상한도 **minimal 정책 계약**이다. 운영 기본값(full)과 무관하게 계속 검증한다.
+  const prepared = prepareTier2DocumentSet(documents, "minimal");
   assert.equal(prepared.ok, true, JSON.stringify(prepared));
   if (!prepared.ok) return;
   const totalClean = documents.reduce((sum, doc) => sum + stripWikiMarkup(doc.rawText).length, 0);
