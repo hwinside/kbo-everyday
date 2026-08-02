@@ -4,7 +4,10 @@ import {
   ACTIVE_BADGE_IDS,
   ALL_BADGES,
   BADGES,
+  BADGE_MAP,
+  CATEGORY_LABELS,
   EXCLUSIVE_BADGE_IDS,
+  RARITY_COLORS,
   getVisibleBadgeCatalog,
 } from "../../src/lib/constants/badges";
 
@@ -21,6 +24,9 @@ for (const id of exclusiveIds) {
   assert.equal(ACTIVE_BADGE_IDS.has(id), true, `${id} active`);
   assert.equal(EXCLUSIVE_BADGE_IDS.has(id), true, `${id} exclusive`);
   assert.equal(BADGES.some(candidate => candidate.id === id), false, `${id} hidden from base catalog`);
+  assert.equal(BADGE_MAP[id]?.id, id, `${id} available to toast/detail consumers`);
+  assert.equal(Object.hasOwn(CATEGORY_LABELS, badge.category), true, `${id} category is renderable`);
+  assert.equal(Object.hasOwn(RARITY_COLORS, badge.rarity), true, `${id} rarity is renderable`);
 }
 
 const emptyCatalog = getVisibleBadgeCatalog(new Set());
@@ -46,5 +52,11 @@ assert.match(profileSource, /\{founderBadge && \(\s*<span[^>]+aria-label="파운
 assert.doesNotMatch(profileSource, /chairmanBadge \? \([\s\S]{0,300}aria-label="파운더"/, "chairman must not replace founder crown");
 assert.match(profileSource, />🏛️ 크보팬 회장<\/span>/, "chairman pill rendered");
 assert.match(profileSource, />🎩 크보팬 회장남편<\/span>/, "chairman-spouse pill rendered");
+
+const tabSource = readFileSync("src/components/profile/BadgesTab.tsx", "utf8");
+assert.match(tabSource, /getVisibleBadgeCatalog\(earnedBadgeIds\)/, "grid uses owner-aware catalog");
+assert.match(tabSource, /badges\.filter\(b => visibleBadgeIds\.has\(b\.badge_id\)\)/, "earned count uses same visible catalog");
+assert.match(tabSource, /\{visibleBadges\.length\}개 중/, "denominator uses same visible catalog");
+assert.doesNotMatch(tabSource, /\{BADGES\.length[^}]*\}개 중/, "global denominator cannot expose hidden slots");
 
 console.log("exclusive badges smoke: PASS (2 definitions / owner-only catalog / founder crown additive)");
