@@ -136,6 +136,9 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   const [libraryLoading, setLibraryLoading] = useState(false);
   // 미디어 타입 토글 — 네이티브 열거는 사진+영상을 섞어 내려주므로 화면단에서 걸러 보여준다.
   const [libraryFilter, setLibraryFilter] = useState<VenueLibraryFilter>("all");
+  // 비동기 열거 응답이 도착했을 때 '지금 어느 탭인가'를 읽기 위한 동기 미러 — setState 반영
+  // 전 구간에 탭이 바뀜을 때 stale 페이지가 다른 탭 목록을 오염시키는 걸 막는다.
+  const libraryFilterRef = useRef<VenueLibraryFilter>("all");
   // 필터 탭 자동 추가 로드 횟수(bounded) — 탭 전환/재조회 시 초기화.
   const libraryAutoPagesRef = useRef(0);
   // 그리드 한 화면 멀티셀렉트 — 탭 토글로 순서 유지, 하단 '선택 완료'는 즉시 닫힌다(삼순 라운드2 #2).
@@ -388,10 +391,19 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
       if (permission === "denied") return;
       // 첫 페이지는 소량(24)만 읽어 그리드를 빨리 연다 — 네이티브가 썸네일을 직렬 생성하므로
       // 한 번에 60개를 기다리면 웜 진입 P95 0.5초와 충돌한다(삼순 라운드2 #3).
+      // 미디어 타입은 **네이티브 쿼리 단계에서** 걸러다달라고 전달한다 — cursor 도 같은
+      // 타입 안에서만 진행하므로 '영상만' 탭에서 첫 페이지부터 영상으로 채워진다.
+      // 구설치본은 이 인자를 무시하고 혼합 목록을 내려주므로(원격 WebView 라 웹만 먼저
+      // 배포될 수 있다) 화면단 filterLibraryAssets 를 fail-safe 로 그대로 유지한다.
+      const requestedTypes = libraryFilterRef.current;
       const page = await listVenueMedia(
         append ? libraryCursor ?? undefined : undefined,
         append ? VENUE_LIBRARY_PAGE_SIZE : VENUE_LIBRARY_FIRST_PAGE_SIZE,
+        requestedTypes === "all" ? undefined : [requestedTypes],
       );
+      if (seq !== pickSeqRef.current) return;
+      // 응답 대기 중 탭이 바뀌었으면 이 페이지는 다른 타입의 결과다 — 버린다(탭 간 오염 방지).
+      if (libraryFilterRef.current !== requestedTypes) return;
       if (seq !== pickSeqRef.current) return;
       setLibraryPermission(page.permission);
       setLibraryCursor(page.nextCursor);
@@ -607,24 +619,37 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   };
 
   /**
-   * 화면에 실제 그려지는 asset — 상단 타입 토글 적용분.
-   * 네이티브 열거(iOS PHFetch / Android MediaStore)가 사진+영상을 한 쿼리로 섞어 내려주고
-   * 타입 파라미터가 없으므로(구설치본 호환 유지) 화면단에서 kind 로 거른다.
+   * 화면에 실제 그려지는 asset — 상단 타입 토글 적용분(**fail-safe**).
+   *
+   * 1차 방어는 네이티브 쿼리 필터다(iOS PHFetch predicate / Android MediaStore selection) —
+   * 그래서 cursor 도 같은 타입 안에서만 페이징한다. 다만 원격 로드(server.url) 앱은 웹이
+   * 먼저 배포될 수 있고, 그 구설치본 브릿지는 `mediaTypes` 를 무시한 혼합 목록을 내려준다.
+   * 그 구간에서도 '영상만' 탭에 사진이 섞이지 않도록 화면단 거르기를 유지한다.
    */
   const visibleLibraryAssets = useMemo(
     () => filterLibraryAssets(libraryAssets, libraryFilter),
     [libraryAssets, libraryFilter],
   );
 
-  /** 타입 토글 선택 — 선택 상태는 유지하고 보이는 목록만 바꾼다(자동 페이징 예산 재시작). */
+  /**
+   * 타입 토글 선택 — 네이티브를 그 타입으로 **재열거**한다(cursor 리셋).
+   * 혼합 목록을 받아 화면에서 걸러내면 첫 페이지(24)에 영상이 1~2개뿐일 때 빈 화면처럼 보인다.
+   * 선택(순서) 상태는 탭을 넘나들어도 그대로 보존된다.
+   */
   const selectLibraryFilter = (next: VenueLibraryFilter) => {
     if (next === libraryFilter) return;
     libraryAutoPagesRef.current = 0;
+    libraryFilterRef.current = next;
     setLibraryFilter(next);
+    setLibraryAssets([]);
+    setLibraryCursor(null);
+    void loadLibrary(false);
   };
 
-  // 영상/사진 탭에서 첫 페이지(24)에 해당 타입이 거의 없으면 빈 화면처럼 보인다.
-  // 한 화면 분량(12)을 채울 때까지 다음 페이지를 자동으로 이어 받는다(최대 6페이지 bounded).
+  // 구설치본 fail-safe — 네이티브가 `mediaTypes` 를 무시해 혼합 목록을 내려주면 '영상만' 탭의
+  // 첫 페이지(24)에 영상이 1~2개뿐일 수 있다. 한 화면 분량(12)을 채울 때까지 다음 페이지를
+  // 자동으로 이어 받는다(최대 6페이지 bounded). 신버전 네이티브에선 첫 페이지가 이미 해당
+  // 타입으로 차서 보통 1회도 도지 않는다.
   useEffect(() => {
     if (!libraryOpen || libraryPermission === "denied") return;
     if (

@@ -328,13 +328,64 @@ console.log("[③ 컴포저 정적 계약 — 단일 sticky CTA / raw 팀변수 
       src.includes("libraryEmptyMessage({"),
   );
   ok(
-    "탭 전환은 네이티브 재열거 없이 화면단에서만 일어난다(구설치본 호환 — 브릿지 파라미터 미사용)",
-    /selectLibraryFilter = \(next: VenueLibraryFilter\) => \{[\s\S]{0,300}?setLibraryFilter\(next\)/.test(
+    "탭 전환은 네이티브를 해당 타입으로 **재열거**한다 — cursor 리셋 + 목록 초기화 + 재조회",
+    /selectLibraryFilter = \(next: VenueLibraryFilter\) => \{[\s\S]{0,600}?setLibraryAssets\(\[\]\)[\s\S]{0,200}?setLibraryCursor\(null\)[\s\S]{0,200}?loadLibrary\(false\)/.test(
       src,
-    ) &&
-      !/selectLibraryFilter = [\s\S]{0,300}?listVenueMedia\(/.test(src) &&
-      // listMedia 호출에 타입 인자를 넘기지 않는다(네이티브 계약 미변경)
-      /listVenueMedia\(\s*append \? libraryCursor/.test(src),
+    ),
+  );
+  ok(
+    "listVenueMedia 에 현재 탭을 전달 — 전체는 undefined(기존 계약), 그 외는 단일 타입 배열",
+    /listVenueMedia\([\s\S]{0,300}?requestedTypes === "all" \? undefined : \[requestedTypes\]/.test(src) &&
+      // 비동기 응답이 도착했을 때 탭이 바뀜으면 버린다(탭 간 목록 오염 방지)
+      /if \(libraryFilterRef\.current !== requestedTypes\) return;/.test(src),
+  );
+  ok(
+    "구설치본 fail-safe — 네이티브가 mediaTypes 를 무시해도 화면단 거르기가 남아 혼합 목록이 안 섞인다",
+    /const visibleLibraryAssets = useMemo\([\s\S]{0,200}?filterLibraryAssets\(libraryAssets, libraryFilter\)/.test(
+      src,
+    ) && /<VenueLibraryGrid[\s\S]{0,200}?assets=\{visibleLibraryAssets\}/.test(src),
+  );
+  ok(
+    "네이티브 실구현 — iOS PHFetch predicate 가 요청 타입으로 갈라지고 미전달은 사진+영상 폴백",
+    (() => {
+      const swift = readFileSync(
+        join(__dirname, "../../ios/App/App/VenueMediaLibraryPlugin.swift"),
+        "utf8",
+      );
+      return (
+        swift.includes('call.getArray("mediaTypes", String.self)') &&
+        // 오직 image 요청이면 image 단일 predicate
+        /wantsImage && !wantsVideo \{[\s\S]{0,200}?PHAssetMediaType\.image\.rawValue/.test(swift) &&
+        /wantsVideo && !wantsImage \{[\s\S]{0,200}?PHAssetMediaType\.video\.rawValue/.test(swift) &&
+        // 폴백은 기존 OR predicate 그대로
+        /return NSPredicate\(\s*format: "mediaType == %d OR mediaType == %d"/.test(swift) &&
+        // fetch 에 실제로 적용되는지(상수만 선언하고 안 쓰는 false-green 차단)
+        swift.includes("options.predicate = self.mediaTypePredicate(requestedTypes)")
+      );
+    })(),
+  );
+  ok(
+    "네이티브 실구현 — Android MediaStore selection 이 요청 타입으로 갈라지고 placeholder 개수가 args 와 일치",
+    (() => {
+      const kt = readFileSync(
+        join(
+          __dirname,
+          "../../android/app/src/main/java/fan/keubo/app/VenueMediaLibraryPlugin.kt",
+        ),
+        "utf8",
+      );
+      return (
+        kt.includes('call.getArray("mediaTypes")') &&
+        /wantsImage && !wantsVideo -> arrayOf\(image\)/.test(kt) &&
+        /wantsVideo && !wantsImage -> arrayOf\(video\)/.test(kt) &&
+        /else -> arrayOf\(image, video\)/.test(kt) &&
+        // selection 이 args 길이에서 파생된다 — IN (?, ?) 하드코딩 잔존 금지
+        kt.includes("val selectionArgs = mediaTypeSelectionArgs(requestedTypes)") &&
+        /val placeholders = selectionArgs\.joinToString\(", "\) \{ "\?" \}/.test(kt) &&
+        kt.includes("MEDIA_TYPE} IN ($placeholders)") &&
+        !/MEDIA_TYPE\} IN \(\?, \?\)/.test(kt)
+      );
+    })(),
   );
   ok(
     "필터 자동 페이징은 bounded — 상한 상수를 쓰고 append 에서만 증가",
@@ -431,7 +482,14 @@ console.log("[B안 브릿지 계약 — 사진첩 열거/asset export]");
     "utf8",
   );
   ok("VenueMediaLibrary 커스텀 플러그인 등록", bridge.includes('registerPlugin<VenueMediaLibraryPlugin>("VenueMediaLibrary")'));
-  ok("최근순 페이지 열거 API", bridge.includes("listMedia(options: { cursor?: string; limit: number })"));
+  ok(
+    "최근순 페이지 열거 API + 미디어 타입 필터(mediaTypes) — 생략 가능(기존 계약 보존)",
+    /listMedia\(options: \{[\s\S]{0,600}?cursor\?: string;[\s\S]{0,400}?limit: number;[\s\S]{0,900}?mediaTypes\?: VenueMediaKind\[\];[\s\S]{0,80}?\}\): Promise<VenueMediaPage>/.test(
+      bridge,
+    ) &&
+      // 호출 헬퍼도 선택적 전달 — 빈 배열이면 아예 보내지 않는다(구버전 동일 동작)
+      /mediaTypes && mediaTypes\.length > 0 \? \{ mediaTypes \} : \{\}/.test(bridge),
+  );
   ok("원본 asset export API", bridge.includes("exportMedia(options: { id: string })"));
   ok(
     "원격 WebView 안전 export — base64 청크 읽기(convertFileSrc/file:// 의존 0)",
