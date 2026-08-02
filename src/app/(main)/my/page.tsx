@@ -27,7 +27,7 @@ import FavoritePlayersCard from "@/components/my/FavoritePlayersCard";
 import MenuSection from "@/components/my/MenuSection";
 import FeedbackSheet from "@/components/feedback/FeedbackSheet";
 import VenueDiaryCard from "@/components/my/VenueDiaryCard";
-import AdminOnly from "@/components/admin/AdminOnly";
+import VenueStatsEntryCard from "@/components/my/VenueStatsEntryCard";
 
 export default function MyPage() {
   const [nicknameStatus, setNicknameStatus] = useState<{
@@ -179,10 +179,15 @@ export default function MyPage() {
         </motion.div>
       )}
 
-      {/* 스토리 지오펜스 인증에서 자동 생성되는 본인 전용 직관 기록 */}
-      <AdminOnly>
-        <VenueDiaryCard />
-      </AdminOnly>
+      {/* 스토리 지오펜스 인증에서 자동 생성되는 본인 전용 직관 기록.
+          2026-08-02 일반 공개(하린아빠 지시) — `AdminOnly` 래퍼를 벗겼다.
+          데이터는 이전부터 소유자 인증 API(`/api/me/venue-attendance`)가 본인 것만
+          내려주므로, 이 변경은 **표시 게이트만** 열고 서버 인가는 그대로다.
+          카드 내부가 비로그인/기록 0건을 자체 처리하므로 별도 가드를 두지 않는다. */}
+      <VenueDiaryCard />
+
+      {/* 로그인 사용자 공통 직관 통계 진입점 */}
+      <VenueStatsEntryCard />
 
       {/* 친구 초대 */}
       <InviteSection />

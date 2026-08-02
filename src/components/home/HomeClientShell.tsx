@@ -663,8 +663,7 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
         <div className="flex items-center gap-1">
           {/* 야잘알봇 바로가기 — 쪽지 아이콘 왼쪽 (2026-08-02 하린아빠 지시).
               ⚠️ 홈은 HeaderProfileLink 를 쓰지 않고 이 헤더를 직접 렌더한다.
-              그래서 공용 컴포넌트만 고치면 홈 유저에게는 진입점이 안 붙는다(삼순 NO-GO P0-1).
-              비로그인도 노출한다 — 버튼 자체가 LoginSheet 를 띄우므로 회원가입 동선이 끊기지 않는다. */}
+              그래서 공용 컴포넌트만 고치면 홈 유저에게는 진입점이 안 붙는다(삼순 NO-GO P0-1). */}
           <GeniusEntryButton />
           {user ? (
             <Link href="/messages" aria-label="쪽지" className="relative flex h-11 w-11 items-center justify-center rounded-full text-text-secondary hover:bg-bg-tertiary transition-colors">
@@ -678,9 +677,11 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
           ) : (
             <button
               onClick={() => setShowLogin(true)}
-              className="px-4 min-h-11 rounded-full bg-accent text-white text-sm font-semibold transition-transform active:scale-95"
+              className="flex h-11 items-center justify-center px-1 transition-transform active:scale-95"
             >
-              회원가입
+              <span className="flex h-8 items-center rounded-full bg-accent px-3 text-[13px] font-semibold leading-none text-white">
+                회원가입
+              </span>
             </button>
           )}
           <Link href="/my" aria-label="마이페이지" className="flex h-11 w-11 items-center justify-center rounded-full hover:bg-bg-tertiary transition-colors">

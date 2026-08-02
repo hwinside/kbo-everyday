@@ -4889,10 +4889,10 @@
   {
     "name": "이병헌",
     "kboId": "69428",
-    "teamId": 8,
+    "teamId": 1,
     "position": "포수",
     "backNo": "23",
-    "team": "삼성",
+    "team": "LG",
     "birthDate": "1999-10-26"
   },
   {
@@ -6698,10 +6698,10 @@
   {
     "name": "차승준",
     "kboId": "55435",
-    "teamId": 8,
+    "teamId": 1,
     "position": "야수",
     "backNo": "35",
-    "team": "삼성",
+    "team": "LG",
     "birthDate": "2006-11-20"
   },
   {
@@ -7900,5 +7900,14 @@
     "backNo": "22",
     "team": "키움",
     "birthDate": "1996-08-02"
+  },
+  {
+    "name": "카라스코",
+    "kboId": "56103",
+    "teamId": 1,
+    "position": "투수",
+    "backNo": "59",
+    "team": "LG",
+    "birthDate": "1987-03-21"
   }
 ]

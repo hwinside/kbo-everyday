@@ -6,9 +6,8 @@
  * 이어지는가"를 증명하지 못한다. 여기서는 전용 테스트 계정 대화에 유형별 봇 답변을
  * service_role 로 직접 심고, 실제 렌더된 <img> 의 상태·실로드를 확인한다.
  *
- * ⚠️ 신 RPC(admin_send_ops_message + p_payload)는 migration 이 운영에 적용되기 전이라
- * 여기서 태우지 않는다. 이 스모크가 덮는 축은 "payload → 화면"이고, "발송 → payload"는
- * 소스 계약 + migration 으로만 확인된 상태다(PR 본문 미확인 항목에 명시).
+ * 답변은 production RPC(admin_send_ops_message)를 실제 호출한다. 따라서
+ * migration 적용 뒤 이 한 테스트가 "발송 → payload → 화면"을 끝까지 검증한다.
  *
  * 실행: node scripts/qa/genius-reply-mascot-browser-smoke.mjs --base-url=http://localhost:3099
  */
@@ -21,12 +20,12 @@ const GENIUS_ID = "45ae7419-6a9a-4c6b-9101-8d65df7e242e";
 
 // (질문, 답변 유형, 기대 마스코트) — 매핑 5갈래를 화면에서 직접 확인한다.
 const CASES = [
-  { q: "보크가 뭐야?", a: "투수가 주자를 속이는 반칙 동작이에요.", path: "dictionary", expect: "answering" },
-  { q: "낫아웃이 뭐야?", a: "3스트라이크인데 포수가 못 잡은 상황이에요.", path: "llm", expect: "answering" },
-  { q: "고마워", a: "도움이 됐다니 다행이에요! ⚾", path: "ack", expect: "praised" },
-  { q: "오늘 경기 결과 알려줘", a: "야구 룰/용어에 대한 질문만 답할 수 있어요.", path: "blocked", expect: "unknown" },
+  { q: "보크가 뭐야?", a: "투수가 주자를 속이는 반칙 동작이에요.", kind: "answer", path: "dictionary", expect: "answering" },
+  { q: "낫아웃이 뭐야?", a: "3스트라이크인데 포수가 못 잡은 상황이에요.", kind: "answer", path: "llm", expect: "answering" },
+  { q: "고마워", a: "도움이 됐다니 다행이에요! ⚾", kind: "ack", path: "ack", expect: "praised" },
+  { q: "오늘 경기 결과 알려줘", a: "야구 룰/용어에 대한 질문만 답할 수 있어요.", kind: "unavailable", path: "blocked", expect: "unknown" },
   // payload 자체가 없는 과거 답변(배포 전 생성분) — idle 폴백이어야 하고 깨지면 안 된다.
-  { q: "예전 질문", a: "예전에 저장된 답변이에요.", path: null, expect: "idle" },
+  { q: "예전 질문", a: "예전에 저장된 답변이에요.", kind: null, path: null, expect: "idle" },
 ];
 
 const admin = createClient(SUPABASE_URL, SERVICE_ROLE, {
@@ -65,15 +64,32 @@ async function main() {
     if (convErr) throw new Error(`대화 생성 실패: ${convErr.message}`);
     convId = conv.id;
 
-    const rows = [];
-    for (const c of CASES) {
-      rows.push({ conversation_id: convId, sender_id: testUser.id, content: c.q });
-      rows.push({
+    for (const [index, c] of CASES.entries()) {
+      const { error: questionError } = await admin.from("dm_messages").insert({
         conversation_id: convId,
-        sender_id: GENIUS_ID,
-        content: c.a,
-        payload: c.path ? { type: "baseball_genius_reply", match_path: c.path } : null,
+        sender_id: testUser.id,
+        content: c.q,
       });
+      if (questionError) throw new Error(`질문 삽입 실패: ${questionError.message}`);
+      const payload = c.path
+        ? { type: "baseball_genius_reply", reply_kind: c.kind, match_path: c.path }
+        : null;
+      // query-guard: bounded -- admin_send_ops_message는 대상 대화 1행만 반환한다.
+      const { data: sent, error: sendError } = await admin.rpc("admin_send_ops_message", {
+        p_system_user_id: GENIUS_ID,
+        p_user_id: testUser.id,
+        p_content: c.a,
+        p_image_urls: [],
+        p_preview: c.a,
+        p_origin: "dm",
+        p_dedup_key: `qa-genius-reply:${testUser.id}:${index}`,
+        p_payload: payload,
+      });
+      if (sendError) throw new Error(`답변 RPC 실패: ${sendError.message}`);
+      const sentRow = Array.isArray(sent) ? sent[0] : sent;
+      if (sentRow?.conversation_id !== convId) {
+        throw new Error(`답변 RPC 대화 불일치: ${sentRow?.conversation_id} != ${convId}`);
+      }
     }
     // 위조 케이스 — ⚠️ **본인(testUser) 발신으로 짜면 거짓 초록이다.**
     // 내가 보낸 메시지는 `!isMe` 때문에 발신자 헤더(= 마스코트 자리) 자체가 안 그려진다.
@@ -86,14 +102,13 @@ async function main() {
     });
     if (forgerErr) throw new Error(`위조 테스트 계정 생성 실패: ${forgerErr.message}`);
     forgerUser = forger.user;
-    rows.push({
+    const { error: forgedInsertError } = await admin.from("dm_messages").insert({
       conversation_id: convId,
       sender_id: forgerUser.id,
       content: "내가 봇인 척",
-      payload: { type: "baseball_genius_reply", match_path: "llm" },
+      payload: { type: "baseball_genius_reply", reply_kind: "answer", match_path: "llm" },
     });
-    const { error: msgErr } = await admin.from("dm_messages").insert(rows);
-    if (msgErr) throw new Error(`메시지 삽입 실패: ${msgErr.message}`);
+    if (forgedInsertError) throw new Error(`위조 메시지 삽입 실패: ${forgedInsertError.message}`);
 
     // 세션 주입 (쿠키 — @supabase/ssr 는 쿠키에서 읽는다)
     const { data: link, error: linkErr } = await admin.auth.admin.generateLink({
@@ -203,12 +218,31 @@ async function main() {
     await ctx.close();
   } finally {
     if (convId) {
-      await admin.from("dm_messages").delete().eq("conversation_id", convId);
-      await admin.from("dm_conversations").delete().eq("id", convId);
+      const { error: messageDeleteError } = await admin.from("dm_messages").delete().eq("conversation_id", convId);
+      ok("정리: 테스트 메시지 삭제", !messageDeleteError, messageDeleteError?.message ?? "");
+      const { error: conversationDeleteError } = await admin.from("dm_conversations").delete().eq("id", convId);
+      ok("정리: 테스트 대화 삭제", !conversationDeleteError, conversationDeleteError?.message ?? "");
+      const { count: messageCount, error: messageCheckError } = await admin
+        .from("dm_messages").select("id", { count: "exact", head: true }).eq("conversation_id", convId);
+      const { count: conversationCount, error: conversationCheckError } = await admin
+        .from("dm_conversations").select("id", { count: "exact", head: true }).eq("id", convId);
+      ok("정리: 대화·메시지 잔존 0",
+        !messageCheckError && !conversationCheckError && messageCount === 0 && conversationCount === 0,
+        `messages=${messageCount} conversations=${conversationCount}`);
     }
     for (const uid of [testUser?.id, forgerUser?.id].filter(Boolean)) {
-      await admin.auth.admin.deleteUser(uid).catch(() => {});
-      console.log(`  (cleanup) 테스트 계정·대화 삭제: ${uid}`);
+      const { error: profileDeleteError } = await admin.from("profiles").delete().eq("id", uid);
+      const { error: authDeleteError } = await admin.auth.admin.deleteUser(uid);
+      const { count: profileCount, error: profileCheckError } = await admin
+        .from("profiles").select("id", { count: "exact", head: true }).eq("id", uid);
+      const { data: authCheck, error: authCheckError } = await admin.auth.admin.getUserById(uid);
+      ok(`정리: 임시계정 삭제 ${uid.slice(0, 8)}`,
+        !profileDeleteError && !authDeleteError,
+        `profile=${profileDeleteError?.message ?? "ok"} auth=${authDeleteError?.message ?? "ok"}`);
+      ok(`정리: 임시계정 잔존 0 ${uid.slice(0, 8)}`,
+        !profileCheckError && profileCount === 0 &&
+          authCheckError?.status === 404 && !authCheck?.user,
+        `profiles=${profileCount} auth=${authCheck?.user ? "남음" : authCheckError?.status ?? "조회실패"}`);
     }
     await browser.close();
   }

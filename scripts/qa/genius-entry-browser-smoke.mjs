@@ -18,14 +18,9 @@ import { SUPABASE_URL, ANON, SERVICE_ROLE, REF, BASE } from "./_env.mjs";
 const BASE_URL = process.argv.find((a) => a.startsWith("--base-url="))?.split("=")[1] ?? BASE;
 const EXPECT_SRC = "/mascot/yajalal-avatar.png";
 const GENIUS_ID = "45ae7419-6a9a-4c6b-9101-8d65df7e242e";
-
-// ⚠️ 쪽지 아이콘을 그리는 헤더는 하나가 아니다.
-// 홈("/")은 HomeClientShell 이 자체 헤더를 직접 렌더하므로 공용 HeaderProfileLink 만
-// 고치면 홈 유저에게는 진입점이 안 붙는다(삼순 NO-GO P0-1 — 실제로 그랬다).
-// 그래서 두 헤더를 모두 실제 화면에서 확인한다.
 const PAGES = [
-  { path: "/", label: "홈" },
-  { path: "/news", label: "뉴스" },
+  { label: "홈", path: "/" },
+  { label: "뉴스", path: "/news" },
 ];
 
 // 헤더 계약: 전역 헤더는 min-h-44px 규격이다. 마스코트를 넣어도 그 규격을 깨면 안 된다.
@@ -51,10 +46,8 @@ async function measure(page) {
     //    "헤더 없음" 이라는 무관한 FAIL 이 난다(내 첫 하니스가 그랬다).
     //    헤더는 버튼 존재와 무관하게 문서에서 직접 찾는다.
     const header = btn?.closest("header") ?? document.querySelector("header") ?? null;
-    // "쪽지 왼쪽" 계약의 기준점. 로그인 헤더에는 쪽지 링크가 있지만, 없을 수 있는
-    // 헤더에서도 판정되도록 바로 오른쪽 형제 컨트롤을 대체 기준으로 둔다.
     const sibling = btn?.parentElement
-      ? [...btn.parentElement.children].find((el) => el !== btn) ?? null
+      ? [...btn.parentElement.children].find((element) => element !== btn) ?? null
       : null;
     const anchor = dm ?? sibling;
     const img = btn?.querySelector("img") ?? null;
@@ -65,7 +58,6 @@ async function measure(page) {
       btnRect: r(btn),
       dmRect: r(dm),
       anchorRect: r(anchor),
-      anchorLabel: dm ? "쪽지" : (anchor?.textContent?.trim().slice(0, 10) || "우측컨트롤"),
       headerRect: r(header),
       imgSrc: img?.getAttribute("src") ?? null,
       imgNaturalWidth: img?.naturalWidth ?? 0,
@@ -117,11 +109,10 @@ async function main() {
       const page = await ctx.newPage();
       await page.goto(`${BASE_URL}/messages/new-${GENIUS_ID}`, { waitUntil: "networkidle" });
       await page.waitForTimeout(1200);
-      const body = await page.evaluate(() => document.body.innerText);
       const composerCount = await page.locator("textarea").count();
       ok(
-        "[비로그인] 대화방 URL 직접 접근도 입력창을 열어주지 않는다",
-        /로그인|카카오|구글/.test(body) || composerCount === 0,
+        "[비로그인] 대화방 URL 직접 접근은 /messages로 이탈한다",
+        new URL(page.url()).pathname === "/messages" && composerCount === 0,
         `composer=${composerCount} url=${page.url()}`,
       );
       await ctx.close();
@@ -207,29 +198,25 @@ async function main() {
     ]);
     await ctx.addInitScript(([k, v]) => window.localStorage.setItem(k, v), [authKey, sessionValue]);
     const page = await ctx.newPage();
-    await page.goto(`${BASE_URL}/news`, { waitUntil: "networkidle" });
+    for (const target of PAGES) {
+      await page.goto(`${BASE_URL}${target.path}`, { waitUntil: "networkidle" });
+      const measured = await measure(page);
+      ok(`[로그인·${target.label}] 헤더에 마스코트 버튼 렌더`, measured.hasBtn);
+      ok(
+        `[로그인·${target.label}] 마스코트가 오른쪽 컨트롤보다 왼쪽`,
+        !!measured.btnRect && !!measured.anchorRect && measured.btnRect.x < measured.anchorRect.x,
+      );
+      ok(
+        `[로그인·${target.label}] 이미지 실제 로드 + 가시높이`,
+        measured.imgNaturalWidth > 0 && !!measured.imgRect && measured.imgRect.height >= MASCOT_MIN_VISIBLE,
+      );
+      ok(
+        `[로그인·${target.label}] 헤더 높이 규격`,
+        !!measured.headerRect && measured.headerRect.height >= HEADER_MIN && measured.headerRect.height <= HEADER_MAX,
+      );
+    }
 
-    const m2 = await measure(page);
-    ok("[로그인] 헤더에 마스코트 버튼이 렌더된다", m2.hasBtn);
-    ok(
-      "[로그인] 마스코트가 쪽지 아이콘 왼쪽",
-      !!m2.btnRect && !!m2.dmRect && m2.btnRect.x < m2.dmRect.x,
-    );
-    ok(
-      "[로그인] 헤더 높이가 규격 안",
-      !!m2.headerRect && m2.headerRect.height >= HEADER_MIN && m2.headerRect.height <= HEADER_MAX,
-      m2.headerRect ? `${Math.round(m2.headerRect.height)}px` : "",
-    );
-    ok(
-      "[로그인] 이미지가 실제로 로드된다(404 아님)",
-      m2.imgNaturalWidth > 0,
-      `naturalWidth=${m2.imgNaturalWidth}`,
-    );
-    ok(
-      "[로그인] 캐릭터 가시 높이 충분",
-      !!m2.imgRect && m2.imgRect.height >= MASCOT_MIN_VISIBLE,
-      m2.imgRect ? `${Math.round(m2.imgRect.height)}px >= ${MASCOT_MIN_VISIBLE}` : "",
-    );
+    await page.goto(`${BASE_URL}/`, { waitUntil: "networkidle" });
 
     // 세션이 실제로 적용됐는지 먼저 확인한다. 미적용이면 클릭은 로그인 시트를 띄우고
     // "라우팅 실패"처럼 보여 진짜 계약을 검증하지 못한다(하니스 결함을 구현 결함으로 오독).
@@ -279,8 +266,18 @@ async function main() {
     await ctx.close();
   } finally {
     if (testUser?.id) {
-      await admin.auth.admin.deleteUser(testUser.id).catch(() => {});
-      console.log(`  (cleanup) 테스트 계정 삭제: ${testUser.id}`);
+      const { error: profileDeleteError } = await admin.from("profiles").delete().eq("id", testUser.id);
+      if (profileDeleteError) throw new Error(`profile cleanup: ${profileDeleteError.message}`);
+      const { error: authDeleteError } = await admin.auth.admin.deleteUser(testUser.id);
+      if (authDeleteError) throw new Error(`auth cleanup: ${authDeleteError.message}`);
+      const { count, error: profileCheckError } = await admin
+        .from("profiles").select("id", { count: "exact", head: true }).eq("id", testUser.id);
+      if (profileCheckError || count !== 0) throw new Error(`profile cleanup postcondition: ${profileCheckError?.message ?? count}`);
+      const { data: authCheck, error: authCheckError } = await admin.auth.admin.getUserById(testUser.id);
+      if (authCheckError?.status !== 404 || authCheck?.user) {
+        throw new Error(`auth cleanup postcondition: ${authCheckError?.message ?? "user remains"}`);
+      }
+      console.log(`  (cleanup) 테스트 계정 삭제·잔존 0: ${testUser.id}`);
     }
     await browser.close();
   }

@@ -14,6 +14,7 @@ export const BASEBALL_GENIUS_MAX_QUESTION_LENGTH = 200;
  * 답변 유형에 따라 매핑해서 답변 시 함께 노출"). design 채널 rev6 자산의 5상태와 1:1.
  */
 export type GeniusMascotState = "idle" | "thinking" | "answering" | "praised" | "unknown";
+export type GeniusReplyKind = "answer" | "ack" | "unavailable";
 
 export const GENIUS_MASCOT_STATES: readonly GeniusMascotState[] = [
   "idle",
@@ -32,31 +33,24 @@ export const GENIUS_MASCOT_STATES: readonly GeniusMascotState[] = [
  * MatchPath 전체를 다 적지 않는다 — `pending` 은 다른 worker 가 이기고 이 worker 는
  * 물러나는 경우라 애초에 쪽지가 발송되지 않는다(= payload 도 안 생긴다).
  */
-const MATCH_PATH_TO_MASCOT: Record<string, GeniusMascotState> = {
-  // 정상 답변 — 사전·캐시·LLM 어느 경로든 유저 입장엔 "답해줌" 이다.
-  dictionary: "answering",
-  cache: "answering",
-  llm: "answering",
-  // 감사 인사 응답 — 칭찬받은 표정
-  ack: "praised",
-  // 답하지 못함 — 모름·범위 밖·맥락 없음·다른 곳 안내·한도·오류
-  unsure: "unknown",
-  blocked: "unknown",
-  context_missing: "unknown",
-  service_redirect: "unknown",
-  history_hold: "unknown",
-  limited: "unknown",
-  error: "unknown",
-};
+const ANSWER_MATCH_PATHS = new Set(["dictionary", "cache", "llm"]);
+
+export function replyKindForMatchPath(matchPath: string): GeniusReplyKind {
+  if (ANSWER_MATCH_PATHS.has(matchPath)) return "answer";
+  if (matchPath === "ack") return "ack";
+  return "unavailable";
+}
 
 /**
  * ⚠️ 모르는 값은 `idle` 로 폴백한다. 배포 전 생성된 과거 답변은 payload 가 없고,
  * 서버에 새 MatchPath 가 추가되면 클라가 모르는 값을 받게 된다.
  * 그때 빈 칸이나 오류 대신 기본 표정을 보여준다.
  */
-export function mascotStateForMatchPath(matchPath: string | null | undefined): GeniusMascotState {
-  if (!matchPath) return "idle";
-  return MATCH_PATH_TO_MASCOT[matchPath] ?? "idle";
+export function mascotStateForReplyKind(replyKind: GeniusReplyKind | null | undefined): GeniusMascotState {
+  if (replyKind === "answer") return "answering";
+  if (replyKind === "ack") return "praised";
+  if (replyKind === "unavailable") return "unknown";
+  return "idle";
 }
 
 /**
@@ -71,6 +65,7 @@ export function geniusMascotSrc(state: GeniusMascotState): string {
 /** 답변 유형을 실은 쪽지 payload. 서버가 쓰고 클라가 읽는다. */
 export interface GeniusReplyPayload {
   type: "baseball_genius_reply";
+  reply_kind: GeniusReplyKind;
   match_path: string;
 }
 
@@ -83,6 +78,8 @@ export interface GeniusReplyPayload {
  */
 export function isGeniusReplyPayload(p: unknown): p is GeniusReplyPayload {
   if (!p || typeof p !== "object") return false;
-  const obj = p as { type?: unknown; match_path?: unknown };
-  return obj.type === "baseball_genius_reply" && typeof obj.match_path === "string";
+  const obj = p as { type?: unknown; reply_kind?: unknown; match_path?: unknown };
+  return obj.type === "baseball_genius_reply" &&
+    (obj.reply_kind === "answer" || obj.reply_kind === "ack" || obj.reply_kind === "unavailable") &&
+    typeof obj.match_path === "string";
 }

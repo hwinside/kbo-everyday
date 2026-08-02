@@ -20,7 +20,8 @@ import {
   GENIUS_MASCOT_STATES,
   geniusMascotSrc,
   isGeniusReplyPayload,
-  mascotStateForMatchPath,
+  mascotStateForReplyKind,
+  replyKindForMatchPath,
 } from "../../src/lib/constants/baseball-genius";
 
 let pass = 0;
@@ -39,11 +40,13 @@ const read = (p: string) => readFileSync(path.join(process.cwd(), p), "utf8");
 // --- (A) 매핑 ---
 check("정상 답변 3경로(사전·캐시·LLM)는 answering", () => {
   for (const p of ["dictionary", "cache", "llm"]) {
-    assert.equal(mascotStateForMatchPath(p), "answering", p);
+    assert.equal(replyKindForMatchPath(p), "answer", p);
+    assert.equal(mascotStateForReplyKind(replyKindForMatchPath(p)), "answering", p);
   }
 });
 check("감사 인사 응답은 praised", () => {
-  assert.equal(mascotStateForMatchPath("ack"), "praised");
+  assert.equal(replyKindForMatchPath("ack"), "ack");
+  assert.equal(mascotStateForReplyKind("ack"), "praised");
 });
 check("답하지 못한 경로는 전부 unknown", () => {
   for (const p of [
@@ -55,14 +58,13 @@ check("답하지 못한 경로는 전부 unknown", () => {
     "limited",
     "error",
   ]) {
-    assert.equal(mascotStateForMatchPath(p), "unknown", p);
+    assert.equal(replyKindForMatchPath(p), "unavailable", p);
+    assert.equal(mascotStateForReplyKind("unavailable"), "unknown", p);
   }
 });
 check("payload 없는 과거 답변·미지 유형은 idle 폴백(오류/빈칸 금지)", () => {
-  assert.equal(mascotStateForMatchPath(null), "idle");
-  assert.equal(mascotStateForMatchPath(undefined), "idle");
-  assert.equal(mascotStateForMatchPath(""), "idle");
-  assert.equal(mascotStateForMatchPath("some_future_match_path"), "idle");
+  assert.equal(mascotStateForReplyKind(null), "idle");
+  assert.equal(mascotStateForReplyKind(undefined), "idle");
 });
 
 // 서버가 실제로 내보내는 MatchPath 전체가 매핑에 덮여 있는가.
@@ -74,8 +76,9 @@ check("서버 MatchPath 전체가 매핑에 덮여 있다(pending 제외)", () =
   const paths = [...m[1].matchAll(/\|\s*"([a-z_]+)"/g)].map((x) => x[1]);
   assert.ok(paths.length >= 10, `MatchPath 파싱 실패(${paths.length}개만 찾음)`);
   // pending 은 다른 worker 가 이기고 이 worker 는 물러나는 경우라 쪽지 자체가 발송되지 않는다.
-  const uncovered = paths.filter((p) => p !== "pending" && mascotStateForMatchPath(p) === "idle");
-  assert.deepEqual(uncovered, [], `매핑 누락(idle 폴백으로 샘): ${uncovered.join(", ")}`);
+  const uncovered = paths.filter((p) =>
+    p !== "pending" && !["answer", "ack", "unavailable"].includes(replyKindForMatchPath(p)));
+  assert.deepEqual(uncovered, [], `reply_kind 누락: ${uncovered.join(", ")}`);
 });
 
 // --- (B) 자산 ---
@@ -110,6 +113,7 @@ const migration = read("supabase/migrations/20260802_ops_message_payload.sql");
 
 check("답변 발송이 실제 유형(result.source)을 payload 로 넘긴다", () => {
   assert.match(server, /type:\s*"baseball_genius_reply"/, "payload type 없음");
+  assert.match(server, /reply_kind:\s*replyKindForMatchPath\(result\.source\)/, "의미 분류 reply_kind 없음");
   assert.match(server, /match_path:\s*result\.source/, "실제 유형 대신 고정값을 쓰고 있음");
   // payload 를 만들어놓고 sendOpsMessageToUser 에 안 넘기면 화면은 영원히 idle 이다.
   const call = server.slice(server.indexOf("const sent = await sendOpsMessageToUser("));
@@ -125,16 +129,15 @@ check("migration 이 payload 를 dm_messages 에 INSERT 한다", () => {
   assert.equal(inserts.length, 2, `INSERT 분기 ${inserts.length}개(2개 기대)`);
   for (const cols of inserts) assert.ok(/payload/.test(cols), `payload 누락: ${cols}`);
 });
-check("멱등 판정에 payload 를 넣지 않는다(기존 발송 경로 계약 불변)", () => {
+check("멱등 판정은 payload까지 동일해야 한다(NULL legacy 포함)", () => {
   const dedupBlock = migration.slice(
     migration.indexOf("EXCEPTION WHEN unique_violation"),
     migration.indexOf("v_deduped := true"),
   );
   assert.ok(dedupBlock.length > 0, "멱등 블록을 찾지 못함");
-  assert.ok(
-    !/m\.payload/.test(dedupBlock),
-    "payload 가 멱등 동일성 판정에 들어감 — 기존 CS/broadcast 재발송이 깨질 수 있음",
-  );
+  assert.match(dedupBlock, /m\.payload\s+IS NOT DISTINCT FROM\s+p_payload/);
+  assert.match(sendOps, /isDeepStrictEqual\(actualPayload, expectedPayload\)/);
+  assert.match(sendOps, /payload\s*\?\?\s*null/);
 });
 
 // --- (D) 클라 배선 ---
@@ -142,9 +145,14 @@ const chat = read("src/app/(main)/messages/[conversationId]/page.tsx");
 const typing = read("src/components/dm/GeniusTypingIndicator.tsx");
 
 check("payload 판정 함수가 위조를 거른다", () => {
-  assert.equal(isGeniusReplyPayload({ type: "baseball_genius_reply", match_path: "llm" }), true);
+  assert.equal(isGeniusReplyPayload({
+    type: "baseball_genius_reply", reply_kind: "answer", match_path: "llm",
+  }), true);
   assert.equal(isGeniusReplyPayload({ type: "news_clipping", articles: [1] }), false);
-  assert.equal(isGeniusReplyPayload({ type: "baseball_genius_reply" }), false);
+  assert.equal(isGeniusReplyPayload({ type: "baseball_genius_reply", match_path: "llm" }), false);
+  assert.equal(isGeniusReplyPayload({
+    type: "baseball_genius_reply", reply_kind: "bogus", match_path: "llm",
+  }), false);
   assert.equal(isGeniusReplyPayload(null), false);
   assert.equal(isGeniusReplyPayload("baseball_genius_reply"), false);
 });
@@ -159,7 +167,7 @@ check("말풍선 마스코트는 봇 발신일 때만 붙는다", () => {
 });
 check("말풍선이 매핑 결과로 자산을 고른다(고정 src 아님)", () => {
   assert.match(chat, /geniusMascotSrc\(mascotState\)/, "동적 src 아님");
-  assert.match(chat, /mascotStateForMatchPath\(geniusReply\?\.match_path\)/, "매핑 미사용");
+  assert.match(chat, /mascotStateForReplyKind\(geniusReply\?\.reply_kind\)/, "의미 분류 매핑 미사용");
 });
 check("대기·실패 인디케이터도 마스코트를 띄운다", () => {
   assert.match(typing, /geniusMascotSrc\(STATE_TO_MASCOT\[state\]\)/, "인디케이터 마스코트 없음");

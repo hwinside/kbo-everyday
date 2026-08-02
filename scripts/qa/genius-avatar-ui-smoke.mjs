@@ -2,9 +2,8 @@
 /**
  * 야잘알봇 마스코트 아바타 End-User QA.
  *
- * 아바타는 관리자에게만 보인다(2026-08-01 하린아빠 지시). 따라서 양쪽을 다 본다.
- *   [관리자]   마스코트 <img> 가 보이고 실제로 로드되며, 레이아웃이 안 밀린다
- *   [비관리자] 마스코트가 없고 종전 ⚾ 폴백이 그대로 뜬다 (게이트가 실제로 막는지)
+ * 공개 롤아웃 계약: 서로 다른 일반 사용자 2명 모두 마스코트를 보고 레이아웃이 동일해야 한다.
+ * 하린아빠 개인/공유 계정은 QA에 사용하지 않고 실행마다 전용 계정을 만든 뒤 검증 후 삭제한다.
  *
  * 설계 시 신경 쓴 것:
  *  - src 문자열만 보면 파일이 404 여도 통과한다 → naturalWidth 로 실제 디코딩 확인
@@ -16,11 +15,12 @@ import playwright from "playwright";
 import sharp from "sharp";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { SUPABASE_URL, ANON, SERVICE_ROLE, REF, BASE } from "./_env.mjs";
 
+const HERE = path.dirname(fileURLToPath(import.meta.url));
 const BASE_URL = process.argv.find((a) => a.startsWith("--base-url="))?.split("=")[1] ?? BASE;
 const EXPECT_SRC = "/mascot/yajalal-avatar.png";
-const ADMIN_EMAIL = "harinclaw@gmail.com";   // ADMIN_EMAILS 화이트리스트
 
 // 레이아웃 계약 (삼순 확정 규격 2026-08-01).
 //
@@ -113,30 +113,26 @@ async function ctxWithSession(browser, session, user) {
   return ctx;
 }
 
-/** 기존 관리자 계정의 세션만 발급받는다. 계정을 만들거나 지우지 않는다. */
-async function adminSession() {
-  const { data: link, error } = await admin.auth.admin.generateLink({
-    type: "magiclink", email: ADMIN_EMAIL,
+async function createTestSession(label) {
+  const stamp = `${Date.now().toString(36)}-${label}`;
+  const email = `qa-avatar-${stamp}@keubo-test.local`;
+  const password = `QaAv!${stamp}`;
+  const { data: created, error: createError } = await admin.auth.admin.createUser({
+    email, password, email_confirm: true,
   });
-  if (error) throw new Error(`generateLink: ${error.message}`);
-  const r = await fetch(
-    `${SUPABASE_URL}/auth/v1/verify?token=${link.properties.hashed_token}&type=magiclink`,
-    { redirect: "manual" });
-  const frag = new URLSearchParams((r.headers.get("location") || "").split("#")[1] || "");
-  const access_token = frag.get("access_token");
-  if (!access_token) throw new Error(`magiclink verify: ${r.status}`);
-  const user = await (await fetch(`${SUPABASE_URL}/auth/v1/user`, {
-    headers: { apikey: ANON, Authorization: `Bearer ${access_token}` },
-  })).json();
-  return {
-    session: {
-      access_token,
-      refresh_token: frag.get("refresh_token"),
-      expires_at: Number(frag.get("expires_at")),
-      expires_in: 3600,
-    },
-    user,
-  };
+  if (createError || !created.user) throw new Error(`createUser: ${createError?.message ?? "user missing"}`);
+  testUserIds.push(created.user.id);
+  const { error: profileError } = await admin.from("profiles").upsert({
+    id: created.user.id, nickname: `QA아바타${label}`, team_id: 1,
+  });
+  if (profileError) throw new Error(`profile upsert: ${profileError.message}`);
+  const response = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
+    method: "POST", headers: { apikey: ANON, "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+  const session = await response.json();
+  if (!response.ok || !session.access_token) throw new Error(`test sign-in: ${response.status}`);
+  return { session, user: created.user };
 }
 
 const probeList = (expect) => {
@@ -223,13 +219,41 @@ async function openGeniusRoom(page) {
 }
 
 let browser = null;
-let guestId = null;
+const testUserIds = [];
 try {
+  const listSource = readFileSync(path.join(HERE, "../../src/app/(main)/messages/page.tsx"), "utf8");
+  const chatSource = readFileSync(path.join(HERE, "../../src/app/(main)/messages/[conversationId]/page.tsx"), "utf8");
+  ok("source: 목록은 nickname이 아닌 bot user_id로 판정",
+     /conv\.other_user_id === BASEBALL_GENIUS_USER_ID/.test(listSource)
+       && !/other_nickname === BASEBALL_GENIUS_NAME/.test(listSource));
+  ok("source: 관리자 gate 0", !/AdminOnly|useIsAdmin/.test(`${listSource}\n${chatSource}`));
+
+  const asset = await sharp(path.join(HERE, "../../public/mascot/yajalal-avatar.png"))
+    .ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  let minX = asset.info.width, minY = asset.info.height, maxX = -1, maxY = -1;
+  for (let y = 0; y < asset.info.height; y += 1) {
+    for (let x = 0; x < asset.info.width; x += 1) {
+      if (asset.data[(y * asset.info.width + x) * asset.info.channels + 3] === 0) continue;
+      minX = Math.min(minX, x); minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
+    }
+  }
+  const alphaWidthRatio = (maxX - minX + 1) / asset.info.width;
+  const alphaHeightRatio = (maxY - minY + 1) / asset.info.height;
+  ok("asset: 알파 bbox 가로·세로 비율 >= 0.98",
+     alphaWidthRatio >= 0.98 && alphaHeightRatio >= 0.98,
+     `${alphaWidthRatio.toFixed(3)}×${alphaHeightRatio.toFixed(3)}`);
+  if (process.argv.includes("--static-only")) {
+    const staticFailed = results.filter((result) => !result.pass);
+    console.log(`\ngenius avatar static: PASS=${results.length - staticFailed.length} FAIL=${staticFailed.length}`);
+    process.exit(staticFailed.length ? 1 : 0);
+  }
+
   browser = await playwright.chromium.launch();
 
-  // ── ① 관리자: 마스코트가 보이고 레이아웃이 안 깨져야 한다 ──────────
-  console.log("[관리자]");
-  const { session: aSess, user: aUser } = await adminSession();
+  // ── ① 일반 사용자 A: 공개 마스코트 + 레이아웃 ───────────────────
+  console.log("[일반 사용자 A]");
+  const { session: aSess, user: aUser } = await createTestSession("A");
   const aCtx = await ctxWithSession(browser, aSess, aUser);
   const aPage = await aCtx.newPage();
   await aPage.goto(`${BASE_URL}/messages`, { waitUntil: "networkidle" });
@@ -282,47 +306,28 @@ try {
   await aPage.screenshot({ path: "tmp/qa-screenshots/genius-avatar-chat.png" });
   await aCtx.close();
 
-  // ── ② 비관리자: 게이트가 실제로 막아야 한다 ────────────────────
-  console.log("[비관리자]");
-  const stamp = Date.now().toString(36);
-  const gEmail = `qa-avatar-${stamp}@keubo.fan`, gPw = `QaAv!${stamp}`;
-  const { data: created, error: cErr } = await admin.auth.admin.createUser({
-    email: gEmail, password: gPw, email_confirm: true,
-  });
-  if (cErr) throw new Error(`createUser: ${cErr.message}`);
-  guestId = created.user.id;
-  // ⚠️ ProfileSetupWrapper 는 profile.team_id 로 판정한다(favorite_team_id 아님).
-  // 잘못된 컬럼을 넣으면 설정 모달이 떠서 목록을 덮고 증거가 무용지물이 된다.
-  const { error: pErr } = await admin.from("profiles").upsert({
-    id: guestId, nickname: `QA손님${stamp.slice(-4)}`, team_id: 1,
-  });
-  if (pErr) throw new Error(`profile upsert: ${pErr.message}`);
-
-  const gSess = await (await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
-    method: "POST", headers: { apikey: ANON, "Content-Type": "application/json" },
-    body: JSON.stringify({ email: gEmail, password: gPw }),
-  })).json();
+  // ── ② 일반 사용자 B: 관리자 allowlist와 무관하게 같은 공개 계약 ───
+  console.log("[일반 사용자 B]");
+  const { session: gSess } = await createTestSession("B");
   const gCtx = await ctxWithSession(browser, gSess);
   const gPage = await gCtx.newPage();
   await gPage.goto(`${BASE_URL}/messages`, { waitUntil: "networkidle" });
   await gPage.waitForTimeout(2000);
 
   const gList = await gPage.evaluate(probeList, EXPECT_SRC);
-  ok("목록: 비관리자에겐 마스코트 비노출", !gList.hasImg);
-  ok("목록: 비관리자는 ⚾ 폴백 유지", gList.emoji > 0, `${gList.emoji}개`);
-  ok("목록: 비관리자 카드 높이 동일", gList.cardH == null || gList.cardH === CARD_H, `${gList.cardH}px`);
+  ok("목록: 일반 사용자 B도 마스코트 노출", gList.hasImg);
+  ok("목록: 일반 사용자 B ⚾ 폴백 0", gList.emoji === 0, `${gList.emoji}개`);
+  ok("목록: 사용자 간 카드 높이 동일", gList.cardH === CARD_H, `${gList.cardH}px`);
 
   await openGeniusRoom(gPage);
   const gChat = await gPage.evaluate(probeChat, EXPECT_SRC);
-  ok("대화방: 비관리자에겐 마스코트 비노출", !gChat.hasImg);
-  ok("대화방: 비관리자는 ⚾ 폴백 유지", gChat.emoji > 0, `${gChat.emoji}개`);
-  // 게이트가 실제로 막히면 헤더도 종전 크기로 남아야 한다.
-  // (관리자만 헤더가 커지는 게 의도 — 일반 유저 화면은 건드리지 않는다)
-  ok("대화방: 비관리자 헤더는 종전 크기 유지",
-     gChat.headerH < CHAT_HEADER_MIN,
-     `비관리자 ${gChat.headerH}px < ${CHAT_HEADER_MIN}px (관리자 ${aChat.headerH}px)`);
-  ok("대화방: 비관리자 가로 overflow 0", gChat.docOverflow <= 0, `${gChat.docOverflow}px`);
-  ok("대화방: 비관리자도 뒤로가기-텍스트 정렬 일치(동일 기준)",
+  ok("대화방: 일반 사용자 B도 마스코트 노출", gChat.hasImg);
+  ok("대화방: 일반 사용자 B ⚾ 폴백 0", gChat.emoji === 0, `${gChat.emoji}개`);
+  ok("대화방: 사용자 B 헤더 108~112px",
+     gChat.headerH >= CHAT_HEADER_MIN && gChat.headerH <= CHAT_HEADER_MAX,
+     `${gChat.headerH}px`);
+  ok("대화방: 일반 사용자 B 가로 overflow 0", gChat.docOverflow <= 0, `${gChat.docOverflow}px`);
+  ok("대화방: 일반 사용자 B도 뒤로가기-텍스트 정렬 일치",
      gChat.backCy !== null && gChat.backCy === gChat.textCy,
      `back=${gChat.backCy} text=${gChat.textCy}`);
   await gCtx.close();
@@ -330,22 +335,19 @@ try {
   ok("스모크 실행", false, e.message);
 } finally {
   if (browser) await browser.close();
-  if (guestId) {
-    // ⚠️ deleteUser 는 throw 하지 않고 resolved `{ error }` 로 실패할 수 있다.
-    // 예전 코드는 반환값을 안 보고 항상 "정리 완료" 를 찍어서, 계정이 남아도
-    // exit 0 으로 성공 기록됐다(삼순 NO-GO P0-3). 결과를 검사하고
-    // 실제로 지워졌는지 postcondition 까지 확인한다.
-    const { error: profDelErr } = await admin.from("profiles").delete().eq("id", guestId);
-    const { error: userDelErr } = await admin.auth.admin.deleteUser(guestId);
-    const { data: leftUser } = await admin.auth.admin.getUserById(guestId).catch(() => ({ data: null }));
-    const { count: leftProfile } = await admin
-      .from("profiles").select("id", { count: "exact", head: true }).eq("id", guestId);
-    ok("QA 임시 계정 삭제 성공(반환 error 없음)",
-       !profDelErr && !userDelErr,
-       `profile=${profDelErr?.message ?? "ok"} user=${userDelErr?.message ?? "ok"}`);
-    ok("QA 임시 계정 잔존 0 (auth·profiles postcondition)",
-       !leftUser?.user && (leftProfile ?? 0) === 0,
-       `auth=${leftUser?.user ? "남음" : "없음"} profiles=${leftProfile ?? 0}`);
+  for (const userId of testUserIds) {
+    const { error: profileDeleteError } = await admin.from("profiles").delete().eq("id", userId);
+    if (profileDeleteError) ok(`정리: profile 삭제 ${userId.slice(0, 8)}`, false, profileDeleteError.message);
+    const { error: authDeleteError } = await admin.auth.admin.deleteUser(userId);
+    if (authDeleteError) ok(`정리: auth 삭제 ${userId.slice(0, 8)}`, false, authDeleteError.message);
+    const { count, error: profileCheckError } = await admin
+      .from("profiles").select("id", { count: "exact", head: true }).eq("id", userId);
+    ok(`정리: profile 잔존 0 ${userId.slice(0, 8)}`, !profileCheckError && count === 0,
+       profileCheckError?.message ?? `count=${count}`);
+    const { data: authCheck, error: authCheckError } = await admin.auth.admin.getUserById(userId);
+    ok(`정리: auth 잔존 0 ${userId.slice(0, 8)}`,
+       authCheckError?.status === 404 && !authCheck?.user,
+       authCheckError?.message ?? "user still exists");
   }
 }
 

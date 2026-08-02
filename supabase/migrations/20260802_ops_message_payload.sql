@@ -82,9 +82,8 @@ BEGIN
     -- 기존 verifyOpsMessageByDedupKey 계약과 동일: 내용이 다르면(broadcast/blind-notify가
     -- 다른 문안을 같은 키로 발송) 위조/오송 의심으로 23505 → 전체 rollback.
     --
-    -- ⚠️ payload 는 이 동일성 판정에 넣지 않는다. 판정 기준을 넓히면 기존 발송 경로의
-    -- 멱등 계약이 조용히 바뀐다(같은 키·같은 문안인데 payload 만 달라 실패). 여기서
-    -- 지켜야 할 것은 "같은 키로 다른 문안이 나가지 않는다" 이고 그 축은 content 다.
+    -- payload 를 쓰는 호출자는 같은 의미값까지 동일해야 멱등 성공이다. 기존
+    -- CS/broadcast/blind-notify는 p_payload=NULL이므로 기존 재발송 계약은 불변이다.
     IF NOT EXISTS (
       SELECT 1 FROM public.dm_messages m
       WHERE m.dedup_key = p_dedup_key
@@ -92,6 +91,7 @@ BEGIN
         AND m.sender_id = p_system_user_id
         AND m.content = v_content
         AND m.image_urls = v_image_urls
+        AND m.payload IS NOT DISTINCT FROM p_payload
     ) THEN
       RAISE EXCEPTION USING errcode = '23505', message = 'dedup_key_conflict_foreign';
     END IF;

@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "generatedFrom": "9d8da92c130fda8bfa84b5fe149ddf05a3f18d5c",
+  "generatedFrom": "7cb3b52567e3844c3c75422a3638ef872f9adba6",
   "violations": {
     "0034fe9a6a6cff327c64": {
       "count": 1,
@@ -372,13 +372,6 @@
       "file": "src/app/api/team-card/route.ts",
       "subject": "player_game_logs",
       "detail": "range pager must declare bounded-page or satisfy the trusted keyset helper contract"
-    },
-    "4794c2410a40ff429f9e": {
-      "count": 1,
-      "kind": "unbounded_collection_api",
-      "file": "src/app/api/auth/naver/callback/route.ts",
-      "subject": "auth.admin.listUsers",
-      "detail": "collection API requires bounded-page/full-scan annotation"
     },
     "47e96ebbd7e908de69d0": {
       "count": 1,

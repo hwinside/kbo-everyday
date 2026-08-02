@@ -303,6 +303,7 @@ async function run() {
       author.id,
       deliveredKey,
       notice,
+      null,
     );
     check("④ production helper 기존 DM 검증", verifiedDelivery.ok && verifiedDelivery.found, verifiedDelivery);
     await must(
@@ -358,6 +359,7 @@ async function run() {
       author.id,
       missingKey,
       notice,
+      null,
     );
     check("⑤ DM 미존재 검증", missingDelivery.ok && !missingDelivery.found, missingDelivery);
     await must(

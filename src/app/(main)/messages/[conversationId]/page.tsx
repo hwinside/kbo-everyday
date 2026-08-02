@@ -16,7 +16,6 @@ import TeamBadge from "@/components/ui/TeamBadge";
 import { linkifyText } from "@/lib/linkify";
 import NewsClippingCard from "@/components/dm/NewsClippingCard";
 import GeniusTypingIndicator from "@/components/dm/GeniusTypingIndicator";
-import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { isNewsClippingPayload } from "@/types/news-clipping";
 import {
   BASEBALL_GENIUS_NAME,
@@ -26,7 +25,7 @@ import {
   BASEBALL_GENIUS_USER_ID,
   geniusMascotSrc,
   isGeniusReplyPayload,
-  mascotStateForMatchPath,
+  mascotStateForReplyKind,
 } from "@/lib/constants/baseball-genius";
 
 const REPORT_CATEGORIES = [
@@ -45,7 +44,7 @@ export default function DMChatPage() {
   const router = useRouter();
   const conversationId = params.conversationId as string;
   const draftTargetId = conversationId.startsWith("new-") ? conversationId.slice(4) : null;
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const {
     messages,
     loading,
@@ -153,9 +152,7 @@ export default function DMChatPage() {
   // 닉네임 위조 방지를 위해 운영팀 user_id로 판정.
   const isOperatorConv = otherId === OPERATOR_USER_ID;
   const isBaseballGeniusConv = otherId === BASEBALL_GENIUS_USER_ID;
-  // 마스코트 아바타는 일단 관리자에게만 (2026-08-01 하린아빠 지시).
-  // 비관리자는 종전 ⚾ 이모지 그대로 — 검증 끝나면 이 게이트만 제거해 전체 롤아웃.
-  const showGeniusMascot = useIsAdmin() && isBaseballGeniusConv;
+  const showGeniusMascot = isBaseballGeniusConv;
   // 뉴스클리퍼 대화 — 자동 발송 전용, 답장 시 자동응답만 옴 (안내 배너 노출)
   const isClipperConv = otherId != null && NEWS_CLIPPER_IDS.has(otherId);
   // 회신 불가(자동 발송 전용) 계정 — 클리퍼 + 긴급공지. 입력창 비활성 + 안내 배너.
@@ -280,6 +277,12 @@ export default function DMChatPage() {
     }, 1500);
   }, [user, otherId, conversationId, reportCategory, reportDetail]);
 
+  useEffect(() => {
+    if (!authLoading && !user) router.replace("/messages");
+  }, [authLoading, user, router]);
+
+  if (authLoading || !user) return null;
+
   return (
     <div className="fixed inset-0 z-[60] flex flex-col bg-bg-primary">
       {/* Header — 기본 디자인 가이드(마이/명전) 앱바 정렬. fixed 오버레이라 탭바/푸터를 덮어 이중 스크롤 제거 */}
@@ -364,7 +367,7 @@ export default function DMChatPage() {
           <AlertTriangle size={14} className="flex-shrink-0" />
           <span>
             {isBaseballGeniusConv
-              ? "야구 룰과 용어만 답해요. 선수 기록은 선수 페이지·기록 탭에서 확인해 주세요."
+              ? "야구와 관련된 질문에만 답해요. 그리고 야잘알봇도 실수를 하거나 잘못된 정보를 제공하는 경우가 있어요."
               : isNoReplyConv
               ? noReplyBannerLabel(otherId)
               : "쪽지는 개인 간 대화입니다. 금전 거래 시 사기에 주의하세요."}
@@ -386,14 +389,14 @@ export default function DMChatPage() {
               (NEWS_CLIPPER_IDS.has(msg.sender_id) || msg.sender_id === OPERATOR_USER_ID);
             const clipping = trustedSender && isNewsClippingPayload(msg.payload) ? msg.payload : null;
             // 답변 유형별 마스코트 — 봇 발신일 때만 신뢰한다(유저가 payload 를 훌내내도 붙지 않게).
-            // payload 가 없는 과거 답변(배포 전 생성분)은 mascotStateForMatchPath 가 idle 로 폴백한다.
+            // payload 가 없는 과거 답변(배포 전 생성분)은 mascotStateForReplyKind 가 idle 로 폴백한다.
             const geniusReply =
               msg.sender_id === BASEBALL_GENIUS_USER_ID && isGeniusReplyPayload(msg.payload)
                 ? msg.payload
                 : null;
             const mascotState =
               msg.sender_id === BASEBALL_GENIUS_USER_ID
-                ? mascotStateForMatchPath(geniusReply?.match_path)
+                ? mascotStateForReplyKind(geniusReply?.reply_kind)
                 : null;
             return (
               <motion.div

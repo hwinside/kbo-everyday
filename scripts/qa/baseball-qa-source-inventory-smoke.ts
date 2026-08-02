@@ -16,16 +16,29 @@ import {
 const inventory = inventoryJson as RagSourceInventory;
 const rebuilt = buildSourceInventory(roster as RosterSourcePlayer[], inventory);
 
-assert.equal(roster.length, 878, "roster SSOT count changed; inventory contract must be reviewed");
+// roster 인원은 콜업·트레이드·외인 교체로 상시 변한다. 여기에 숫자를 하드코딩하면
+// 로스터가 1명만 바뀌어도 매일 새벽 자동 PR의 prebuild가 죽어 스탯/로스터 반영이 통째로
+// 멈춘다(2026-08-01 카라스코 56103, roster 878→879로 실제 발생). 따라서 고정값이 아니라
+// "커밋된 inventory가 현재 roster와 정확히 대응한다"는 *관계*를 계약으로 강제한다.
+// (roster 자체의 급변 방어는 자동 크롤 workflow의 main 대비 Δ+ack 가드 소관.)
+const ROSTER_COUNT = roster.length;
+assert.ok(ROSTER_COUNT > 0, "roster SSOT must not be empty");
 assert.equal(KBO_STRUCTURED_SOURCES.length, 43, "KBO navigation universe is an independent fixed contract");
-assert.equal(inventory.sources.length, 878 + 11 + 43);
+assert.equal(inventory.sources.length, ROSTER_COUNT + NAMU_CORE_SOURCES.length + KBO_STRUCTURED_SOURCES.length);
 assert.equal(rebuilt.inventoryVersion, inventory.inventoryVersion, "inventory generation must be idempotent");
 assert.deepEqual(rebuilt, inventory, "committed inventory must match the deterministic generator");
 
 const playerSources = inventory.sources.filter((source) => source.entityType === "player");
-assert.equal(playerSources.length, 878);
-assert.equal(new Set(playerSources.map((source) => source.entityId)).size, 878);
-assert.equal(new Set(playerSources.map((source) => source.sourceKey)).size, 878);
+assert.equal(playerSources.length, ROSTER_COUNT);
+assert.equal(new Set(playerSources.map((source) => source.entityId)).size, ROSTER_COUNT);
+assert.equal(new Set(playerSources.map((source) => source.sourceKey)).size, ROSTER_COUNT);
+// 커밋된 inventory의 선수 집합이 roster SSOT와 exact 일치해야 한다(누락·유령 0).
+// 개수만 보면 "한 명 빠지고 한 명 늘어난" drift를 놓친다.
+assert.deepEqual(
+  [...new Set(playerSources.map((source) => source.entityId))].sort(),
+  [...new Set((roster as RosterSourcePlayer[]).map((player) => player.kboId))].sort(),
+  "committed inventory player set must match roster SSOT exactly",
+);
 for (const source of playerSources) {
   assert.equal(source.candidateUrls.length, 3);
   assert.equal(source.canonicalUrl, null, "unverified player URL must not be called canonical");
@@ -104,8 +117,8 @@ assert.notEqual(classified.inventoryVersion, inventory.inventoryVersion,
 
 const coverage = inventoryCoverage(inventory);
 assert.deepEqual(coverage, {
-  total: 878,
-  counts: { resolved: 0, missing: 0, ambiguous: 0, blocked: 0, pending: 878 },
+  total: ROSTER_COUNT,
+  counts: { resolved: 0, missing: 0, ambiguous: 0, blocked: 0, pending: ROSTER_COUNT },
   classificationComplete: false,
 });
 
@@ -154,12 +167,20 @@ const seed = readFileSync(
   "supabase/migrations/20260731_baseball_genius_rag_sources_seed.sql",
   "utf8",
 );
-assert.equal((seed.match(/^  \('/gm) ?? []).length, 932);
+const bootstrapRows = (seed.match(/^  \('/gm) ?? []).length;
+assert.ok(bootstrapRows > 0, "bootstrap seed fixture must not be empty");
 assert.ok(seed.includes("ON CONFLICT (source_key) DO UPDATE"));
 assert.ok(seed.includes("target.identity_fingerprint = EXCLUDED.identity_fingerprint"));
+const rosterDelta = readFileSync(
+  "supabase/migrations/20260801184500_baseball_genius_roster_sources_56103.sql",
+  "utf8",
+);
+assert.ok(rosterDelta.includes("namu:player:56103"), "new roster source must ship append-only");
+assert.ok(rosterDelta.includes("namu:player:55435"), "transfer metadata delta missing: 55435");
+assert.ok(rosterDelta.includes("namu:player:69428"), "transfer metadata delta missing: 69428");
 
 const spec = readFileSync("specs/baseball-genius-v2-hybrid-rag.md", "utf8");
-assert.ok(spec.includes("선수 878명 URL inventory는 전수 확정·유지"));
+assert.ok(spec.includes("선수 URL inventory는 전수 확정·유지"));
 assert.ok(spec.includes("실제 질문 조회 빈도 내림차순"));
 assert.ok(spec.includes("S0 merge·Production DB 적용"));
 assert.ok(spec.includes("실제 계정 2턴 End-User QA HOLD"));
