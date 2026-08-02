@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Send, Users, Flame, Trash2, Flag, Ban, MoreHorizontal, Reply, X, ImagePlay } from "lucide-react";
+import { Send, Users, Flame, Trash2, Flag, Ban, MoreHorizontal, Reply, X, ImagePlay, EyeOff } from "lucide-react";
 import { clsx } from "clsx";
 import TeamBadge from "@/components/ui/TeamBadge";
 import { getTeamById, isAllStarGame } from "@/lib/constants/teams";
@@ -21,6 +21,8 @@ interface GameChatProps {
   gameId: string;
   homeTeamId: number;
   awayTeamId: number;
+  onHide?: () => void;
+  toggleDisabled?: boolean;
 }
 
 /* ===== 분위기 게이지 ===== */
@@ -62,7 +64,7 @@ function getRoomId(gameId: string): string {
   return `game:${gameId}`;
 }
 
-export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatProps) {
+export default function GameChat({ gameId, homeTeamId, awayTeamId, onHide, toggleDisabled = false }: GameChatProps) {
   const roomId = getRoomId(gameId);
   const { messages, loading, loadingMore, hasMore, loadMore, sendMessage, deleteMyMessage, deleteAnyMessage, cooldown, cooldownReason, isLoggedIn, countReconcileKey } = useChat(roomId);
   const { homePct } = useMoodGauge(gameId, homeTeamId, awayTeamId);
@@ -434,6 +436,20 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId }: GameChatPro
 
       {/* Mood gauge */}
       <MoodGauge homeTeamId={homeTeamId} awayTeamId={awayTeamId} homePct={homePct} />
+
+      {onHide && (
+        <div className="flex justify-end border-b border-border px-4 py-2">
+          <button
+            type="button"
+            onClick={onHide}
+            disabled={toggleDisabled}
+            className="flex items-center gap-1.5 rounded-lg border border-accent/50 px-3 py-1.5 text-xs font-medium text-accent disabled:opacity-50"
+            aria-label="전체 채팅 끄기"
+          >
+            <EyeOff size={14} /> 채팅 끄기
+          </button>
+        </div>
+      )}
 
       {/* Input — INLINE composer (TOP, V3).
           composer는 messages 리스트 *앞*(MoodGauge 직후)에 위치. reverse
