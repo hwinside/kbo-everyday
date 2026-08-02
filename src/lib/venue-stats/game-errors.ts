@@ -38,7 +38,10 @@ export interface RawErrorObservation {
   gameDate: string;
   /** Naver record identity witness. KBO 는 exact gameId 를 직접 주므로 null. */
   gameTime: string | null;
-  /** Naver `gameInfo.round` 원값. DH 회차 suffix 와 교차검증한다. */
+  /**
+   * Naver `gameInfo.round` 원값(시즌 라운드).
+   * ⚠️ DH 회차가 **아니다** — identity 결속에 쓰지 않는다. 관측 메타로만 보존한다.
+   */
   gameRound: number | null;
   awayTeamId: number;
   homeTeamId: number;
@@ -159,14 +162,15 @@ export function parseNaverErrorObservation(json: unknown): RawErrorObservation |
   const gameInfo = recordData?.gameInfo as Record<string, unknown> | undefined;
   const gameDate = String(gameInfo?.gdate ?? "").trim();
   const gameTime = String(gameInfo?.gtime ?? "").trim();
-  const gameRound = Number(gameInfo?.round);
+  const rawRound = Number(gameInfo?.round);
+  // `round` 는 시즌 라운드이지 DH 회차가 아니다 — identity 계약에 쓰지 않는다(삼순 P1).
+  // 관측 메타로만 보존하고, 결손이어도 관측 자체를 버리지 않는다.
+  const gameRound = Number.isInteger(rawRound) && rawRound > 0 ? rawRound : null;
   const awayTeamId = resolveTeamId(String(gameInfo?.aCode ?? "").trim(), "");
   const homeTeamId = resolveTeamId(String(gameInfo?.hCode ?? "").trim(), "");
   if (
     !/^\d{8}$/.test(gameDate) ||
     !/^\d{2}:\d{2}$/.test(gameTime) ||
-    !Number.isInteger(gameRound) ||
-    gameRound <= 0 ||
     awayTeamId <= 0 ||
     homeTeamId <= 0 ||
     String(gameInfo?.statusCode ?? "") !== "4" ||
@@ -240,36 +244,37 @@ export interface CanonicalGame {
   homeScore: number;
 }
 
-function gameSeq(gameId: string): string | null {
-  return gameId.match(/([0-3])$/)?.[1] ?? null;
-}
-
 /**
  * Naver record 자체에는 exact gameId 가 없으므로 schedule 의 exact 경기와 record 를
- * 시작시각으로 결속한다. 같은 팀 DH 가 둘 이상이면 `round` 끝자리도 schedule gameId 의
- * 회차 suffix(1/2/3)와 일치해야 한다. 단일경기 suffix 0 은 실제 record round 가 11 등
- * 별도 라운드 값을 쓰므로 시간 exact 로만 대조한다(20260801LGOB0 actual: round=11).
+ * **시작시각 유일성**으로 결속한다.
+ *
+ * ⚠️ 이전 구현은 `gameInfo.round` 끝자리를 DH 회차 suffix(1/2)로 봤는데 **틀렸다**
+ * (삼순 P1 2026-08-02). `round` 는 DH 회차가 아니라 시즌 라운드다 — 2024-06-23 실측에서
+ * KT–LG 만 우연히 `11/12` 였고 한화–KIA 는 `7/8`, 두산–삼성은 `8/9` 였다. 그 가정을
+ * 계약으로 두면 KBO 장애 시 대부분의 DH fallback 이 조용히 전부 탈락한다
+ * (실측: `HHHT1·HHHT2·OBSS1·OBSS2` 전부 null).
+ *
+ * 그래서 회차 추론을 버리고, 같은 날짜·같은 대진 후보 중 **record 의 시작시각과 일치하는
+ * 경기가 정확히 하나일 때만** 채택한다. 둘 이상이 같은 시각이면 record 만으로는 어느
+ * 경기인지 구별할 근거가 없으므로 fail-close 한다(추측으로 태그를 만들지 않는다).
  */
 function matchesNaverScheduleWitness(
   observed: RawErrorObservation,
   exact: KboGame,
   schedule: readonly KboGame[],
 ): boolean {
-  if (observed.gameTime === null || observed.gameRound === null) return false;
+  if (observed.gameTime === null) return false;
   if (observed.gameTime !== exact.time) return false;
 
-  const exactSeq = gameSeq(exact.gameId);
-  if (exactSeq === null) return false;
-  const sameMatchCount = schedule.filter(
+  const sameStartTime = schedule.filter(
     (game) =>
       game.date === exact.date &&
       game.awayTeamId === exact.awayTeamId &&
-      game.homeTeamId === exact.homeTeamId,
-  ).length;
-  if (sameMatchCount > 1 || exactSeq !== "0") {
-    return String(observed.gameRound).slice(-1) === exactSeq;
-  }
-  return true;
+      game.homeTeamId === exact.homeTeamId &&
+      game.time === observed.gameTime,
+  );
+  // 시작시각이 exact 경기 하나로 좁혀질 때만 결속을 인정한다.
+  return sameStartTime.length === 1 && sameStartTime[0]?.gameId === exact.gameId;
 }
 
 /**

@@ -165,13 +165,19 @@ async function main() {
         { gtime: "" },
       )) === null,
     );
-    ok(
-      "Naver: round 결손 → 관측 null",
-      parseNaverErrorObservation(naverPayload(
+    // `round` 는 시즌 라운드이지 DH 회차가 아니므로 identity 계약이 아니다(삼순 P1).
+    // 결손해도 관측 자체를 버리지 않고 null 로만 보존한다.
+    {
+      const roundless = parseNaverErrorObservation(naverPayload(
         { away: { r: 1, h: 5, e: 1 }, home: { r: 2, h: 4, e: 0 } },
         { round: undefined },
-      )) === null,
-    );
+      ));
+      ok(
+        "Naver: round 결손은 관측을 버리지 않고 gameRound=null 로 보존",
+        roundless?.away === 1 && roundless.home === 0 && roundless.gameRound === null,
+        JSON.stringify(roundless),
+      );
+    }
     // 정상 케이스는 통과해야 한다(과잉 차단 아님).
     const kboOk = parseKboErrorObservation(kboPayload({ awayR: "1", awayE: "2", homeR: "2", homeE: "0" }));
     ok("KBO 정상 → away 2 / home 0", kboOk?.away === 2 && kboOk?.home === 0, JSON.stringify(kboOk));
@@ -381,48 +387,124 @@ async function main() {
       JSON.stringify(dh2PayloadForDh1),
     );
 
-    const dh2RoundForDh1 = await fetchGameErrors(dh1.gameId, {
-      canonical: dh1,
-      fetchers: {
-        kbo: async () => null,
-        naver: async () => naverPayload(
-          { away: { r: 2, h: 7, e: 9 }, home: { r: 3, h: 9, e: 8 } },
-          { gdate: 20240623, gtime: "14:00", aCode: "KT", hCode: "LG", round: 12 },
-        ),
-        naverSchedule: async () => dhSchedule,
-      },
-    });
-    ok(
-      "Naver DH 시작시각이 같아도 round=12 는 1차전으로 오인하지 않음",
-      dh2RoundForDh1 === null,
-      JSON.stringify(dh2RoundForDh1),
-    );
+    // ⚠️ `round` 는 시즌 라운드이지 DH 회차가 아니다(삼순 P1 2026-08-02).
+    // 2024-06-23 실측: KT–LG 만 우연히 11/12, 한화–KIA 는 7/8, 두산–삼성은 8/9.
+    // 그래서 회차 추론을 쓰면 대부분의 DH fallback 이 조용히 탈락한다 — 시작시각
+    // 유일성으로만 결속하고, 아래는 실제 round 값 세 쌍을 전부 positive 로 고정한다.
+    const dhCases = [
+      { away: "KT", home: "LG", awayTeamId: 3, homeTeamId: 1, rounds: [11, 12], e: [1, 0, 0, 1] },
+      { away: "HH", home: "HT", awayTeamId: 9, homeTeamId: 6, rounds: [7, 8], e: [0, 0, 2, 0] },
+      { away: "OB", home: "SS", awayTeamId: 2, homeTeamId: 8, rounds: [8, 9], e: [1, 1, 0, 0] },
+    ] as const;
 
-    const normalDh1 = await fetchGameErrors(dh1.gameId, {
+    for (const dhCase of dhCases) {
+      const label = `${dhCase.away}–${dhCase.home} round=${dhCase.rounds.join("/")}`;
+      const g1 = canonicalGame(`20240623${dhCase.away}${dhCase.home}1`, {
+        awayTeamId: dhCase.awayTeamId,
+        homeTeamId: dhCase.homeTeamId,
+        awayScore: 2,
+        homeScore: 3,
+      });
+      const g2 = canonicalGame(`20240623${dhCase.away}${dhCase.home}2`, {
+        awayTeamId: dhCase.awayTeamId,
+        homeTeamId: dhCase.homeTeamId,
+        awayScore: 2,
+        homeScore: 3,
+      });
+      const base = naverScheduleWitness(g1)[0];
+      const schedule = [
+        { ...base, time: "14:00" },
+        { ...base, gameId: g2.gameId, time: "17:45" },
+      ];
+      const common = { gdate: 20240623, aCode: dhCase.away, hCode: dhCase.home };
+
+      const first = await fetchGameErrors(g1.gameId, {
+        canonical: g1,
+        fetchers: {
+          kbo: async () => null,
+          naver: async () => naverPayload(
+            { away: { r: 2, h: 7, e: dhCase.e[0] }, home: { r: 3, h: 9, e: dhCase.e[1] } },
+            { ...common, gtime: "14:00", round: dhCase.rounds[0] },
+          ),
+          naverSchedule: async () => schedule,
+        },
+      });
+      ok(
+        `Naver DH 1차전 통과 — ${label}`,
+        first?.away === dhCase.e[0] && first?.home === dhCase.e[1],
+        JSON.stringify(first),
+      );
+
+      const second = await fetchGameErrors(g2.gameId, {
+        canonical: g2,
+        fetchers: {
+          kbo: async () => null,
+          naver: async () => naverPayload(
+            { away: { r: 2, h: 7, e: dhCase.e[2] }, home: { r: 3, h: 9, e: dhCase.e[3] } },
+            { ...common, gtime: "17:45", round: dhCase.rounds[1] },
+          ),
+          naverSchedule: async () => schedule,
+        },
+      });
+      ok(
+        `Naver DH 2차전 통과 — ${label}`,
+        second?.away === dhCase.e[2] && second?.home === dhCase.e[3],
+        JSON.stringify(second),
+      );
+
+      // negative: 2차전 raw(17:45)를 1차전 조회에 주면 시각이 달라 탈락해야 한다.
+      const crossed = await fetchGameErrors(g1.gameId, {
+        canonical: g1,
+        fetchers: {
+          kbo: async () => null,
+          naver: async () => naverPayload(
+            { away: { r: 2, h: 7, e: 9 }, home: { r: 3, h: 9, e: 8 } },
+            { ...common, gtime: "17:45", round: dhCase.rounds[1] },
+          ),
+          naverSchedule: async () => schedule,
+        },
+      });
+      ok(`Naver DH 2차전 raw → 1차전 오인 안 함 — ${label}`, crossed === null, JSON.stringify(crossed));
+
+      // negative: 같은 시각이 schedule 에 둘 이상이면 record 로 구분 불가 → fail-close.
+      const ambiguous = await fetchGameErrors(g1.gameId, {
+        canonical: g1,
+        fetchers: {
+          kbo: async () => null,
+          naver: async () => naverPayload(
+            { away: { r: 2, h: 7, e: 1 }, home: { r: 3, h: 9, e: 0 } },
+            { ...common, gtime: "14:00", round: dhCase.rounds[0] },
+          ),
+          naverSchedule: async () => [
+            { ...base, time: "14:00" },
+            { ...base, gameId: g2.gameId, time: "14:00" },
+          ],
+        },
+      });
+      ok(
+        `Naver 시각 모호(동시각 2경기) → fail-close — ${label}`,
+        ambiguous === null,
+        JSON.stringify(ambiguous),
+      );
+    }
+
+    // round 결손이어도 시각이 유일하면 채택된다(round 는 identity 계약이 아니므로).
+    const roundMissing = await fetchGameErrors(dh1.gameId, {
       canonical: dh1,
       fetchers: {
         kbo: async () => null,
         naver: async () => naverPayload(
           { away: { r: 2, h: 7, e: 1 }, home: { r: 3, h: 9, e: 0 } },
-          { gdate: 20240623, gtime: "14:00", aCode: "KT", hCode: "LG", round: 11 },
+          { gdate: 20240623, gtime: "14:00", aCode: "KT", hCode: "LG", round: undefined },
         ),
         naverSchedule: async () => dhSchedule,
       },
     });
-    ok("Naver 정상 DH 1차전은 통과", normalDh1?.away === 1 && normalDh1.home === 0);
-
-    const normalDh2 = await fetchGameErrors(dh2.gameId, {
-      canonical: dh2,
-      fetchers: {
-        kbo: async () => null,
-        naver: async () => naverPayload(
-          { away: { r: 2, h: 7, e: 0 }, home: { r: 3, h: 9, e: 1 } },
-          { gdate: 20240623, gtime: "17:45", aCode: "KT", hCode: "LG", round: 12 },
-        ),
-        naverSchedule: async () => dhSchedule,
-      },
-    });
-    ok("Naver 정상 DH 2차전은 통과", normalDh2?.away === 0 && normalDh2.home === 1);
+    ok(
+      "Naver round 결손 + 시각 유일 → 채택(round 는 identity 계약 아님)",
+      roundMissing?.away === 1 && roundMissing.home === 0,
+      JSON.stringify(roundMissing),
+    );
 
     // canonical 없으면 대조를 건너뛴다(비final 경기 등).
     const noCanonical = await fetchGameErrors("20260801LGOB0", {
