@@ -9,11 +9,7 @@ import { getTeamById, type TeamData } from "@/lib/constants/teams";
 import { getTeamColor } from "@/lib/utils/team";
 import { getCanonicalPlayerHref } from "@/lib/utils/resolve-player";
 import { computeRosterMovesGroupedDisplay, teamHomeHref } from "@/lib/roster-moves/readiness";
-import {
-  RESULT_TONE_COLOR,
-  gameResultTone,
-  resultToneChipStyle,
-} from "@/lib/ui/result-tone";
+import { gameResultTone, resultToneChipStyle } from "@/lib/ui/result-tone";
 
 type FormResult = "W" | "L" | "D";
 
@@ -422,9 +418,8 @@ export default function TeamCard({ team, gameSlot, refreshNonce = 0 }: TeamCardP
                         {group.moves.map((move, index) => {
                           const isRegister = move.moveType === "register";
                           const label = isRegister ? "등록" : "말소";
-                          // 긍부정 색은 이 파일 위쪽 `최근 N경기` 칩과 같은 SSOT(@/lib/ui/result-tone).
-                          const labelColor =
-                            RESULT_TONE_COLOR[isRegister ? "positive" : "negative"];
+                          // 긍부정 색·배경 모두 이 파일 위쪽 `최근 N경기` 칩과 같은 SSOT(@/lib/ui/result-tone).
+                          // ⚠️ 배경을 `${color}1f` 로 파생 생성하면 SSOT 배경값을 우회한다(삼순 3차 지적).
                           return (
                             <span
                               key={`${move.moveType}-${move.kboPlayerId}-${index}`}
@@ -432,7 +427,7 @@ export default function TeamCard({ team, gameSlot, refreshNonce = 0 }: TeamCardP
                             >
                               <span
                                 className="flex-shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-bold"
-                                style={{ color: labelColor, backgroundColor: `${labelColor}1f` }}
+                                style={resultToneChipStyle(isRegister ? "positive" : "negative")}
                               >
                                 {label}
                               </span>

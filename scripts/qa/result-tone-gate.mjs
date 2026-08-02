@@ -153,17 +153,37 @@ const UNWIRE_TARGETS = {
     "? resultToneTextStyle(gameResultTone(game.result))",
     '? { color: game.result === "W" ? "#4ade80" : game.result === "L" ? "#f87171" : "#9ca3af" }',
   ],
+  // 삼순 3차: 배경까지 SSOT 로 묶으면서 문자열이 바뀌었다. 배경 파생생성(`${color}1f`)으로
+  // 되돌리는 변형이므로 색만 보는 assert 로는 안 잡히고 배경 exact 가 있어야 잡힌다.
   roster: [
     "src/components/team/TeamRosterMovesCard.tsx",
-    'const labelColor = RESULT_TONE_COLOR[isRegister ? "positive" : "negative"];',
-    'const labelColor = isRegister ? "#34D399" : "#F87171";',
+    'style={resultToneChipStyle(isRegister ? "positive" : "negative")}',
+    'style={{ color: isRegister ? "#34D399" : "#F87171", backgroundColor: isRegister ? "rgba(52,211,153,0.12)" : "rgba(248,113,113,0.12)" }}',
   ],
   // 삼순 #1068 2차 Blocker 1·2 — 아래 6개는 이전 게이트가 아예 마운트하지 않아
   // 하드코딩으로 되돌려도 46/0 초록이었다(삼순 결함주입로 재현됨).
   homemoves: [
     "src/components/home/TeamCard.tsx",
-    'RESULT_TONE_COLOR[isRegister ? "positive" : "negative"];',
-    '(isRegister ? "#34D399" : "#F87171");',
+    'style={resultToneChipStyle(isRegister ? "positive" : "negative")}',
+    'style={{ color: isRegister ? "#34D399" : "#F87171", backgroundColor: isRegister ? "rgba(59,130,246,0.20)" : "rgba(245,158,11,0.20)" }}',
+  ],
+  // 삼순 3차: dormant 하던 TeamDashboard 도 승=teamColor/패=회색이었다.
+  teamdashboard: [
+    "src/components/stats/TeamDashboard.tsx",
+    "backgroundColor: resultToneChipStyle(\n                  gameResultTone(game.result as \"W\" | \"L\" | \"D\"),\n                ).backgroundColor,",
+    'backgroundColor: game.result === "W" ? `${teamColor}20` : "rgba(255,255,255,0.03)",',
+  ],
+  // 삼순 3차 결함주입: 대시보드 MetricCard 증감 색을 역전해도 초록이었다.
+  metriccard: [
+    "src/components/my/VenueStatsDashboard.tsx",
+    'trend.tone === "unavailable" ? undefined : resultToneTextStyle(trend.tone);',
+    'trend.tone === "unavailable" ? undefined : resultToneTextStyle(trend.tone === "positive" ? "negative" : trend.tone === "negative" ? "positive" : trend.tone);',
+  ],
+  // 삼순 3차 결함주입: 요정 지수 축 색을 역전해도 초록이었다.
+  scoreaxis: [
+    "src/components/my/VenueStatsDashboard.tsx",
+    "axis.normalized > 0.02\n                          ? \"positive\"\n                          : axis.normalized < -0.02\n                            ? \"negative\"\n                            : \"neutral\",",
+    'axis.normalized > 0.02\n                          ? "negative"\n                          : axis.normalized < -0.02\n                            ? "positive"\n                            : "neutral",',
   ],
   addsheet: [
     "src/components/my/VenueDiaryAddGameSheet.tsx",
@@ -270,6 +290,7 @@ import VenueStatsDashboard from "@/components/my/VenueStatsDashboard";
 import TeamHero from "@/components/team/TeamHero";
 import GameStatsTab from "@/components/game/GameStatsTab";
 import GameDecisionPitchers from "@/components/game/GameDecisionPitchers";
+import TeamDashboard from "@/components/stats/TeamDashboard";
 import {ThemeProvider} from "@/components/ThemeProvider";
 import {getTeamById} from "@/lib/constants/teams";
 const LG=getTeamById(1);
@@ -290,6 +311,7 @@ const App=
   path.startsWith("/uploader/") ? Uploader :
   path.startsWith("/viewer/") ? Viewer :
   path==="/dashboard" ? VenueStatsDashboard :
+  path==="/teamdashboard" ? () => <TeamDashboard teamName="LG 트윈스" teamColor="#C30452" standing={{teamId:1,season:2026,rank:1,wins:50,losses:30,draws:2,pct:0.625,gb:0,streak:"3승",last10:"7-3-0"}}/> :
   path==="/teamhero" ? () => (
     <div>
       <TeamHero team={LG} standings={{rank:1,wins:50,losses:30,draws:2,winRate:".625",gb:"-",streak:"3승"}}/>
@@ -339,6 +361,7 @@ await build({
     "@/components/my/VenueStatsDashboard": aliasFor(
       "src/components/my/VenueStatsDashboard.tsx",
     ),
+    "@/components/stats/TeamDashboard": aliasFor("src/components/stats/TeamDashboard.tsx"),
     "@/components/team/TeamHero": aliasFor("src/components/team/TeamHero.tsx"),
     "@/components/game/GameStatsTab": aliasFor("src/components/game/GameStatsTab.tsx"),
     "@/components/game/GameDecisionPitchers": aliasFor("src/components/game/GameDecisionPitchers.tsx"),
@@ -460,6 +483,32 @@ const gameStatsFixture = {
 // 직관 통계 대시보드 payload — s2-browser 와 **같은** fixture 모듈을 쓴다.
 const venueStatsPayload = venueStatsFixture.payload;
 
+/**
+ * MetricCard(팀 타율/ERA/득점/홈런 4장)는 `hero.mixedTeam === false` 일 때만 렌더된다.
+ * 공용 fixture 는 다중구단(mixed_team) 이라 그대로는 MetricCard 가 한 장도 안 그려졌고,
+ * 그게 바로 삼순 3차 결함주입(증감 색 역전해도 87/0)의 원인이다.
+ * 공용 fixture 를 건드리면 s2-browser 계약이 같이 바뀌므로, 여기서 **단일팀 변형**만 파생한다.
+ * B1~B4 부호: 타율 ↑(positive) · ERA ↓(낮을수록 좋음 → positive) · 득점 ↑(positive) · 홈런 ↑(positive)
+ * → negative 가 한 장도 없으면 "둘 다 나타나야 함" assert 가 못 잡으므로 ERA·홈런을 악화로 둠.
+ */
+const SINGLE_TEAM_METRIC_TONES = ["positive", "positive", "negative", "negative"];
+const singleTeamVenueStatsPayload = (() => {
+  const clone = structuredClone(venueStatsFixture.payload);
+  for (const scopeName of ["overall", "gps"]) {
+    const metrics = clone[scopeName].metrics;
+    // A1 을 ready 로 내려 mixedTeam 을 끕다(그래야 MetricCard 그리드가 살아난다).
+    metrics.A1 = { ...metrics.A1, state: "ready", items: undefined };
+    // 부호를 명시적으로 고정 — 기대 tone 을 테스트가 산수로 재계산하지 않게 한다.
+    metrics.B1 = venueStatsFixture.envelope("B1", { attendanceAvg: .286, seasonAvg: .263, delta: .023 });
+    metrics.B3 = venueStatsFixture.envelope("B3", { runsPerGame: 5.2, seasonRunsPerGame: 4.6, delta: .6, totalRuns: 21 });
+    // ERA 는 higherIsBetter=false → delta 가 양수면 악화 = negative.
+    metrics.B2 = venueStatsFixture.envelope("B2", { attendanceEra: 4.60, seasonEra: 4.01, delta: .59 });
+    // 홈런 감소 → negative.
+    metrics.B4 = venueStatsFixture.envelope("B4", { hr: { attendancePerGame: .7, seasonPerGame: 1.0, delta: -.3 }, hitsAllowed: null });
+  }
+  return clone;
+})();
+
 const schedulePayload = {
   team: "lg",
   month: monthPrefix,
@@ -486,6 +535,10 @@ const css = await postcss([tailwind]).process(
 );
 const bundle = readFileSync(resolve(GEN, "bundle.js"), "utf8");
 
+// 대시보드를 단일팀 모드로 부팅할지. 게이트 본문이 네비게이션 직전에 뒤집는다.
+// (서버가 테스트와 같은 프로세스라 모듈 변수로 충분하다.)
+let singleTeamMode = false;
+
 const json = (res, body) =>
   res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(body));
 const server = createServer((req, res) => {
@@ -500,7 +553,11 @@ const server = createServer((req, res) => {
     return json(res, gameId ? diaryDetailPayload(gameId) : diaryMediaPayload);
   }
   if (url.startsWith("/api/team-schedule")) return json(res, schedulePayload);
-  if (url.startsWith("/api/me/venue-stats")) return json(res, venueStatsPayload);
+  // 단일팀 변형은 MetricCard 그리드(팀 타율/ERA/득점/홈런)를 띄우기 위해서만 쓴다.
+  // 공용 fixture 는 mixed_team 이라 그 그리드가 아예 렌더되지 않고, 그게 곰 삼순 3차
+  // 결함주입(증감 색 역전해도 초록)의 원인이었다.
+  if (url.startsWith("/api/me/venue-stats"))
+    return json(res, singleTeamMode ? singleTeamVenueStatsPayload : venueStatsPayload);
   if (url === "/app.css") return res.writeHead(200, { "content-type": "text/css" }).end(css.css);
   if (url === "/bundle.js")
     return res.writeHead(200, { "content-type": "text/javascript" }).end(bundle);
@@ -641,6 +698,15 @@ try {
     const der = await styleOf(page.getByText("말소", { exact: true }).first());
     check(sameRgb(reg.color, EXPECT_BASE.positive), `홈 인라인 등록 = ${EXPECT_BASE.positive} (got ${reg.color})`);
     check(sameRgb(der.color, EXPECT_BASE.negative), `홈 인라인 말소 = ${EXPECT_BASE.negative} (got ${der.color})`);
+    // 삼순 3차 결함주입: 색만 보면 배경을 blue/amber 로 바꿔도 초록이었다. 배경도 exact.
+    check(
+      sameRgba(reg.backgroundColor, EXPECT_BG.positive),
+      `홈 인라인 등록 배경 = ${EXPECT_BG.positive} (got ${reg.backgroundColor})`,
+    );
+    check(
+      sameRgba(der.backgroundColor, EXPECT_BG.negative),
+      `홈 인라인 말소 배경 = ${EXPECT_BG.negative} (got ${der.backgroundColor})`,
+    );
   }
 
   // ── 2) 팀 등록·말소 배지 ─────────────────────────────────────────────────
@@ -651,6 +717,41 @@ try {
     const der = await styleOf(page.getByText("말소", { exact: true }).first());
     check(sameRgb(reg.color, EXPECT_BASE.positive), `등록 배지색 = ${EXPECT_BASE.positive} (got ${reg.color})`);
     check(sameRgb(der.color, EXPECT_BASE.negative), `말소 배지색 = ${EXPECT_BASE.negative} (got ${der.color})`);
+    check(
+      sameRgba(reg.backgroundColor, EXPECT_BG.positive),
+      `등록 배지 배경 = ${EXPECT_BG.positive} (got ${reg.backgroundColor})`,
+    );
+    check(
+      sameRgba(der.backgroundColor, EXPECT_BG.negative),
+      `말소 배지 배경 = ${EXPECT_BG.negative} (got ${der.backgroundColor})`,
+    );
+  }
+
+  // ── 2-1) dormant TeamDashboard 최근 10경기 (삼순 3차) ────────────────────
+  // import 0 이지만 유지할 컴포넌트라 승=teamColor/패=회색을 SSOT 로 수렴시켰다.
+  await page.goto(`http://127.0.0.1:${port}/teamdashboard`, { waitUntil: "domcontentloaded" });
+  await page.getByText("최근 10경기").waitFor();
+  {
+    const cells = await snapshotByText(page, "^(W|L|D)$", "span");
+    for (const [code, tone] of [["W", "positive"], ["L", "negative"]]) {
+      const hit = cells.find((e) => e.text === code);
+      if (!hit) {
+        check(false, `TeamDashboard ${code} 미렌더`);
+        continue;
+      }
+      check(
+        sameRgb(hit.color, EXPECT_BASE[tone]),
+        `TeamDashboard ${code} = ${EXPECT_BASE[tone]} (got ${hit.color})`,
+      );
+      const cellBg = await page
+        .locator("span", { hasText: new RegExp(`^${code}$`) })
+        .first()
+        .evaluate((el) => getComputedStyle(el.parentElement).backgroundColor);
+      check(
+        sameRgba(cellBg, EXPECT_BG[tone]),
+        `TeamDashboard ${code} 셀 배경 = ${EXPECT_BG[tone]} (got ${cellBg})`,
+      );
+    }
   }
 
   // ── 3) 선수 게임로그 결과 칩 ─────────────────────────────────────────────
@@ -815,6 +916,45 @@ try {
       );
     }
 
+    // ── 9-1) 요정 지수 축 (삼순 3차 결함주입 대상) ─────────────────────
+    // 축은 화면에 ▲/▼/→ 를 직접 그리므로 방향→의미 결속을 그대로 exact 검증할 수 있다.
+    // ⚠️ `전체 기록` 스코프 fixture 는 초과성과가 전부 양수라 ▲만 나온다. 그러면
+    //    positive→negative 단방향 역전을 못 잡으므로 `GPS 인증만`(음수 초과성과) 탭까지
+    //    돌아 ▲·▼ 를 둘 다 확보한다. 한 탭만 보면 그게 곧 false-green 이다.
+    {
+      let sawPositive = false;
+      let sawNegative = false;
+      for (const scopeLabel of ["전체 기록", "GPS 인증만"]) {
+        const tab = page.getByRole("button", { name: scopeLabel });
+        if (await tab.count()) await tab.first().click();
+        await page.getByTestId("venue-score-axis").first().waitFor({ timeout: 8000 });
+        const axes = await page.getByTestId("venue-score-axis").evaluateAll((els) =>
+          els.map((el) => ({ text: (el.textContent ?? "").trim(), color: getComputedStyle(el).color })),
+        );
+        check(axes.length > 0, `요정 지수 축 렌더 · ${scopeLabel} (got ${axes.length})`);
+        for (const axis of axes) {
+          const tone = axis.text.startsWith("\u25b2")
+            ? "positive"
+            : axis.text.startsWith("\u25bc")
+              ? "negative"
+              : "neutral";
+          if (tone === "positive") sawPositive = true;
+          if (tone === "negative") sawNegative = true;
+          check(
+            sameRgb(axis.color, EXPECT_SOFT[tone]),
+            `지수 축 · ${scopeLabel} "${axis.text}" tone=${tone} → soft ${EXPECT_SOFT[tone]} (got ${axis.color})`,
+          );
+        }
+      }
+      check(
+        sawPositive && sawNegative,
+        `지수 축에 ▲·▼ 가 둘 다 관측돼야 역전을 잡는다 (▲=${sawPositive} ▼=${sawNegative})`,
+      );
+      // 뒤 단계(궁합 점수)는 기본 스코프 기준이므로 되돌린다.
+      const back = page.getByRole("button", { name: "전체 기록" });
+      if (await back.count()) await back.first().click();
+    }
+
     // 궁합 점수: positive/negative 가 **서로 다른** SSOT 값이어야 한다.
     const toggle = page.getByRole("button", { name: "다른 최애 4명 보기" });
     if (await toggle.count()) await toggle.click();
@@ -839,6 +979,49 @@ try {
     }
   }
 
+  // ── 9-2) MetricCard 증감 톤 (삼순 3차 결함주입 대상) ──────────────────
+  // 삼순이 positive↔negative 를 역전해도 87/0 초록이었다. 원인은 공용 fixture 가 mixed_team 이라
+  // MetricCard 그리드가 **한 장도 렌더되지 않았던 것** — 전형적인 "안 그려져서 통과".
+  // 단일팀 payload 로 다시 띄워 known-value exact 로 묶는다.
+  // ▲/▼ 방향과 tone 은 독립이므로(ERA 는 ▼가 positive) 화살표로 tone 을 유추하지 않고,
+  // fixture 에서 부호를 명시적으로 고정해 기대 tone 을 상수로 둔다.
+  singleTeamMode = true;
+  await page.goto(`http://127.0.0.1:${port}/dashboard`, { waitUntil: "domcontentloaded" });
+  await page.getByTestId("venue-team-metrics").first().waitFor({ timeout: 8000 });
+  {
+    const trends = await page.getByTestId("venue-metric-trend").evaluateAll((els) =>
+      els.map((el) => ({ text: (el.textContent ?? "").trim(), color: getComputedStyle(el).color })),
+    );
+    check(
+      trends.length === SINGLE_TEAM_METRIC_TONES.length,
+      `MetricCard ${SINGLE_TEAM_METRIC_TONES.length}장 렌더 — 0 이면 삼순이 잡은 "안 그려져서 통과" 재현 (got ${trends.length})`,
+    );
+    const palette = {
+      positive: hexToRgb(EXPECT_BASE.positive).join(","),
+      negative: hexToRgb(EXPECT_BASE.negative).join(","),
+      neutral: hexToRgb(EXPECT_BASE.neutral).join(","),
+    };
+    for (let i = 0; i < Math.min(SINGLE_TEAM_METRIC_TONES.length, trends.length); i += 1) {
+      const tone = SINGLE_TEAM_METRIC_TONES[i];
+      const got = parseComputed(trends[i].color);
+      check(
+        got != null && [got[0], got[1], got[2]].join(",") === palette[tone],
+        `MetricCard[${i}] "${trends[i].text}" tone=${tone} → ${EXPECT_BASE[tone]} (got ${trends[i].color})`,
+      );
+    }
+    // positive 와 negative 가 둘 다 화면에 있어야 역전 mutation 이 잡힌다.
+    const shown = new Set(
+      trends
+        .map((t) => parseComputed(t.color))
+        .filter(Boolean)
+        .map((c) => [c[0], c[1], c[2]].join(",")),
+    );
+    check(
+      shown.has(palette.positive) && shown.has(palette.negative),
+      `MetricCard 에 positive·negative 가 둘 다 나타나야 함 (got ${[...shown].join(" / ")})`,
+    );
+  }
+  singleTeamMode = false;
   // ── 10) 팀 헤더 연승/연패 ─────────────────────────────────────────────────
   await page.goto(`http://127.0.0.1:${port}/teamhero`, { waitUntil: "domcontentloaded" });
   await page.getByText("3승", { exact: true }).first().waitFor();
