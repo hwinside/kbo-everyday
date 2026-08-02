@@ -237,18 +237,3 @@ export async function listenForForegroundNotifications(): Promise<void> {
     foregroundListenerAttached = false;
   }
 }
-
-/** 알림 탭 → 페이로드 data.url 앱 내 경로로 이동 (딥링크) */
-export async function listenForNotificationTap(): Promise<void> {
-  if (!isNative) return;
-  try {
-    const { FirebaseMessaging } = await loadMessaging();
-    await FirebaseMessaging.addListener("notificationActionPerformed", (event) => {
-      const data = (event.notification?.data ?? {}) as Record<string, unknown>;
-      const url = typeof data.url === "string" ? data.url : null;
-      if (url && url.startsWith("/")) window.location.href = url;
-    });
-  } catch {
-    // silent
-  }
-}
