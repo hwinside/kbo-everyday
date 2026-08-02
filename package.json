@@ -20,6 +20,7 @@
     "qa:venue-chat-badge": "tsx scripts/qa/venue-chat-badge-smoke.ts",
     "qa:exclusive-badges": "tsx scripts/qa/exclusive-badges-smoke.ts",
     "qa:exclusive-badges:db": "bash scripts/qa/exclusive-badges-rls-e2e.sh",
+    "qa:exclusive-badges:live": "node scripts/qa/badge-write-rls-regression.mjs",
     "qa:cancelled-chat": "tsx scripts/qa/cancelled-game-chat-smoke.ts",
     "qa:game-chat-visibility": "tsx scripts/qa/game-chat-visibility-smoke.ts",
     "qa:ui:game-chat-visibility": "node scripts/qa/ui-smoke-game-chat-visibility.mjs",
