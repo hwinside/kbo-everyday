@@ -108,7 +108,7 @@ jobs:
         env:
           RESULT_TONE_REQUIRE_BROWSER: "1"
         run: |
-          for target in teamcard diary playerlogs schedule roster homemoves teamdashboard addsheet uploader viewer dashboard metriccard scoreaxis gamestats teamhero decision; do
+          for target in teamcard diary playerlogs schedule roster homemoves teamdashboard addsheet uploader viewer dashboard compatswap metriccard scoreaxis gamestats teamhero decision; do
             if RESULT_TONE_MUTATE_UNWIRE="$target" npm run qa:result-tone; then
               echo "::error::$target 배선 제거가 통과했다 — 해당 화면은 SSOT 에 결속돼 있지 않다"
               exit 1

@@ -205,6 +205,14 @@ const UNWIRE_TARGETS = {
     "style={resultToneTextStyle(compatibility.tone)}",
     'style={{ color: "#36D399" }}',
   ],
+  // 삼순 4차: 궁합 tone 만 **독립 역전**하는 변형. 위 `dashboard` 는 전부 초록 고정이라
+  // "색이 2종 + 팔레트 안" 만 보던 구 게이트도 잡았지만, 역전은 두 색이 그대로 남아
+  // 통과했다(69점이 빨간데 GREEN). known-value exact 가 생기면 이게 RED 여야 한다.
+  compatswap: [
+    "src/components/my/VenueStatsDashboard.tsx",
+    "style={resultToneTextStyle(compatibility.tone)}",
+    'style={resultToneTextStyle(compatibility.tone === "positive" ? "negative" : compatibility.tone === "negative" ? "positive" : compatibility.tone)}',
+  ],
   gamestats: [
     "src/components/game/GameStatsTab.tsx",
     'win: { label: "승", tone: "positive" },\n    loss: { label: "패", tone: "negative" },',
@@ -955,28 +963,59 @@ try {
       if (await back.count()) await back.first().click();
     }
 
-    // 궁합 점수: positive/negative 가 **서로 다른** SSOT 값이어야 한다.
+    // ── 9-1b) 궁합 점수 known-value exact (삼순 4차 blocker) ────────────────
+    // 이전 판본은 "색이 2종 이상 + 팔레트 안" 만 봤다. 그래서 궁합 tone 만 독립 역전하면
+    // 초록/빨강 두 색이 그대로 나타나고 팔레트 안에도 있으니 110/0 GREEN 이었다
+    // (삼순 실측: 69점이 빨강인데 통과). 점수 → 기대 tone 을 값으로 못박는다.
+    //
+    // 기대값은 fixture 를 모듈 공식(batterCompatibility/pitcherCompatibility)에 넣어
+    // 산출한 실측 상수다. 모듈에서 import 하면 구현이 바뀔 때 기대값도 따라 움직여
+    // tautology 가 되므로 여기에 상수로 적는다.
+    //   53123 타자 69 / p3 타자 62 / p4 타자 39 / p2 투수 71 / p5 투수 60
+    //   tone 경계: >=56 positive · <=44 negative · 그 사이 neutral
+    const EXPECT_COMPAT_TONE = { 69: "positive", 62: "positive", 39: "negative", 71: "positive", 60: "positive" };
     const toggle = page.getByRole("button", { name: "다른 최애 4명 보기" });
     if (await toggle.count()) await toggle.click();
-    const scores = await page.getByTestId("venue-compatibility-score").evaluateAll((els) =>
-      els.map((el) => getComputedStyle(el).color),
+    const compat = await page.getByTestId("venue-compatibility-score").evaluateAll((els) =>
+      els.map((el) => ({
+        // 점수 노드는 "69점" 형태(숫자 + 접미 span). 숫자만 뽑는다.
+        text: (el.textContent ?? "").trim(),
+        color: getComputedStyle(el).color,
+      })),
     );
-    check(scores.length >= 2, `궁합 점수 2개 이상 렌더 (got ${scores.length})`);
-    const distinct = new Set(scores);
     check(
-      distinct.size >= 2,
-      `궁합 점수 색이 의미별로 갈리어야 함 — 전부 같은 색이면 의미색 소실 (got ${[...distinct].join(" / ")})`,
+      compat.length === Object.keys(EXPECT_COMPAT_TONE).length,
+      `궁합 점수 ${Object.keys(EXPECT_COMPAT_TONE).length}개 렌더 — 개수가 다르면 fixture 계약이 어긋난 것 (got ${compat.length})`,
     );
-    const allowed = new Set(
-      ["positive", "negative", "neutral"].map((t) => hexToRgb(EXPECT_BASE[t]).join(",")),
-    );
-    for (const color of distinct) {
-      const got = parseComputed(color);
+    const compatPalette = {
+      positive: hexToRgb(EXPECT_BASE.positive).join(","),
+      negative: hexToRgb(EXPECT_BASE.negative).join(","),
+      neutral: hexToRgb(EXPECT_BASE.neutral).join(","),
+    };
+    let sawCompatPositive = false;
+    let sawCompatNegative = false;
+    for (const entry of compat) {
+      const scoreMatch = entry.text.match(/^(\d+)/);
+      check(scoreMatch != null, `궁합 점수 텍스트에서 숫자 추출 (got "${entry.text}")`);
+      if (!scoreMatch) continue;
+      const score = Number(scoreMatch[1]);
+      const tone = EXPECT_COMPAT_TONE[score];
+      // 기대표에 없는 점수 = fixture 나 공식이 바뀐 것. 조용히 넘기면 그게 false-green 이다.
+      check(tone != null, `궁합 점수 ${score} 가 기대표에 있어야 함(공식/fixture 변경 감지)`);
+      if (tone == null) continue;
+      if (tone === "positive") sawCompatPositive = true;
+      if (tone === "negative") sawCompatNegative = true;
+      const got = parseComputed(entry.color);
       check(
-        got != null && allowed.has([got[0], got[1], got[2]].join(",")),
-        `궁합 점수 색이 SSOT 팔레트 안 (got ${color})`,
+        got != null && [got[0], got[1], got[2]].join(",") === compatPalette[tone],
+        `궁합 ${score}점 tone=${tone} → ${EXPECT_BASE[tone]} (got ${entry.color})`,
       );
     }
+    // 한 방향만 있으면 단방향 역전을 못 잡는다.
+    check(
+      sawCompatPositive && sawCompatNegative,
+      `궁합에 positive·negative 가 둘 다 있어야 역전을 잡는다 (positive=${sawCompatPositive} negative=${sawCompatNegative})`,
+    );
   }
 
   // ── 9-2) MetricCard 증감 톤 (삼순 3차 결함주입 대상) ──────────────────
