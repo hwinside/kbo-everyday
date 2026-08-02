@@ -10,7 +10,7 @@ import {
   type PlayerTagChannel,
 } from "@/lib/video/team-channels";
 
-let createShortsFeedGET: typeof import("@/app/api/shorts-feed/route").createShortsFeedGET;
+let handleShortsFeedGET: typeof import("@/app/api/shorts-feed/route").handleShortsFeedGET;
 
 let pass = 0;
 let fail = 0;
@@ -102,12 +102,13 @@ function videoSupabase(rows: VideoRow[]) {
 }
 
 function routeFor(rows: VideoRow[], channels: PlayerTagChannel[] = [activeT3]) {
-  return createShortsFeedGET({
-    supabase: videoSupabase(rows) as never,
-    loadAliases: async () => players,
-    loadChannels: async () => channels,
-    now: () => new Date("2026-08-02T18:00:00.000Z").getTime(),
-  });
+  return (request: NextRequest) =>
+    handleShortsFeedGET(request, {
+      supabase: videoSupabase(rows) as never,
+      loadAliases: async () => players,
+      loadChannels: async () => channels,
+      now: () => new Date("2026-08-02T18:00:00.000Z").getTime(),
+    });
 }
 
 async function favoriteItems(
@@ -214,7 +215,7 @@ check(
 async function finishAsyncChecks() {
   process.env.NEXT_PUBLIC_SUPABASE_URL ||= "http://127.0.0.1:54321";
   process.env.SUPABASE_SERVICE_ROLE_KEY ||= "shorts-route-smoke-key";
-  ({ createShortsFeedGET } = await import("@/app/api/shorts-feed/route"));
+  ({ handleShortsFeedGET } = await import("@/app/api/shorts-feed/route"));
 
   const aliasFailureSupabase = {
     from: () => ({
@@ -301,13 +302,14 @@ async function finishAsyncChecks() {
     sonItems[0]?.id === "son-cheer-song",
   );
 
-  const aliasFailingGET = createShortsFeedGET({
-    supabase: videoSupabase(actualRows) as never,
-    loadAliases: async () => {
-      throw new Error("alias boom");
-    },
-    loadChannels: async () => [activeT3],
-  });
+  const aliasFailingGET = (request: NextRequest) =>
+    handleShortsFeedGET(request, {
+      supabase: videoSupabase(actualRows) as never,
+      loadAliases: async () => {
+        throw new Error("alias boom");
+      },
+      loadChannels: async () => [activeT3],
+    });
   let routeAliasFailedClosed = false;
   try {
     await aliasFailingGET(
@@ -320,13 +322,14 @@ async function finishAsyncChecks() {
   }
   check("actual GET alias lookup error fail-close", routeAliasFailedClosed);
 
-  const channelFailingGET = createShortsFeedGET({
-    supabase: videoSupabase(actualRows) as never,
-    loadAliases: async () => players,
-    loadChannels: async () => {
-      throw new Error("channel boom");
-    },
-  });
+  const channelFailingGET = (request: NextRequest) =>
+    handleShortsFeedGET(request, {
+      supabase: videoSupabase(actualRows) as never,
+      loadAliases: async () => players,
+      loadChannels: async () => {
+        throw new Error("channel boom");
+      },
+    });
   let routeChannelFailedClosed = false;
   try {
     await channelFailingGET(
