@@ -2,6 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
+import { lookupAuthUserByEmail } from "@/lib/supabase/naver-user-lookup";
 
 // ⚠️ 2026-04-21 state 쿠키 도메인 불일치 수정 (fryfish P0)
 // start route와 callback route가 동일 호스트를 사용해야 쿠키 공유 가능.
@@ -194,28 +195,20 @@ export async function GET(request: NextRequest) {
       { auth: { autoRefreshToken: false, persistSession: false } }
     );
 
-    // 이메일로 기존 유저 조회
-    //
-    // 버그 수정 (2026-04-21): listUsers() 기본 perPage=50이라 655명 중 50명만 조회 →
-    // 중간/초기 가입자를 못 찾아 중복 createUser() 시도 → "email already registered" AuthApiError.
-    // 해결: email 정규화(소문자+trim) 후 페이지네이션으로 전수 순회.
+    // 이메일 인덱스로 기존 유저 단건 조회.
+    // listUsers() 페이지 순회는 총 유저가 20,000명을 넘으면 오래된 유저를 누락해
+    // 중복 createUser() → create_user_error를 만들었으므로 사용하지 않는다.
     const normalizedEmail = String(email).trim().toLowerCase();
-    let existingUser: Awaited<ReturnType<typeof supabaseAdmin.auth.admin.listUsers>>["data"]["users"][number] | undefined;
-    for (let page = 1; page <= 20; page++) {
-      const { data: pageData, error: pageErr } =
-        await supabaseAdmin.auth.admin.listUsers({ page, perPage: 1000 });
-      if (pageErr) {
-        console.error("[Naver OAuth] listUsers error:", pageErr.message);
-        break;
-      }
-      const hit = pageData?.users?.find(
-        (u) => (u.email ? u.email.trim().toLowerCase() : "") === normalizedEmail
+    let existingUser;
+    try {
+      existingUser = await lookupAuthUserByEmail(supabaseAdmin, normalizedEmail);
+    } catch (lookupError) {
+      console.error("[Naver OAuth] indexed user lookup error:", {
+        message: (lookupError as Error).message,
+      });
+      return NextResponse.redirect(
+        `${CANONICAL_ORIGIN}?login_error=user_lookup_error`
       );
-      if (hit) {
-        existingUser = hit;
-        break;
-      }
-      if (!pageData?.users || pageData.users.length < 1000) break; // 마지막 페이지
     }
     console.log("[Naver OAuth][step3.5] user lookup", {
       email: normalizedEmail,
