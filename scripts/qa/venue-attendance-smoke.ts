@@ -8,6 +8,7 @@ import {
   type VenueAttendanceRow,
 } from "../../src/lib/venue-attendance/summary";
 import { fetchAttendanceGamesWithinDeadline } from "../../src/lib/venue-attendance/fetch-games";
+import { decideManualAttendanceTeam } from "../../src/lib/venue-diary/manual-upload";
 
 function row(overrides: Partial<VenueAttendanceRow> = {}): VenueAttendanceRow {
   return {
@@ -94,6 +95,22 @@ assert.equal(manual.source, "diary_manual", "직접 추가 source 응답");
 assert.equal(manual.venueVerified, false, "직접 추가는 GPS 인증과 분리");
 assert.equal(win.venueVerified, true, "GPS source만 인증");
 
+assert.deepEqual(
+  decideManualAttendanceTeam(1, { awayTeamId: 1, homeTeamId: 7 }),
+  { ok: true, favoriteTeamId: 1 },
+  "직접 등록 응원팀은 참가팀 허용",
+);
+assert.equal(
+  decideManualAttendanceTeam(9, { awayTeamId: 1, homeTeamId: 7 }).ok,
+  false,
+  "비참가팀 출처 위조 차단",
+);
+assert.equal(
+  decideManualAttendanceTeam("1", { awayTeamId: 1, homeTeamId: 7 }).ok,
+  false,
+  "문자열 팀 id fail-closed",
+);
+
 const migration = readFileSync(
   resolve(process.cwd(), "supabase/migrations/20260721_venue_attendance.sql"),
   "utf8",
@@ -143,6 +160,35 @@ assert.match(
   /diaryGameCount: games\.length/,
   "다이어리 기록 경기수는 직접 추가 포함 전체",
 );
+assert.match(diaryRoute, /\.is\("deleted_at", null\)/, "삭제 기록은 다이어리 조회에서 즉시 제외");
+assert.match(diaryRoute, /upsert_venue_attendance_manual/, "직접 등록/재등록 RPC 사용");
+
+const statsRoute = readFileSync(
+  resolve(process.cwd(), "src/app/api/me/venue-stats/route.ts"),
+  "utf8",
+);
+assert.match(statsRoute, /\.is\("deleted_at", null\)/, "삭제 기록은 인사이트 집계에서 즉시 제외");
+
+const mutationRoute = readFileSync(
+  resolve(process.cwd(), "src/app/api/me/venue-attendance/[id]/route.ts"),
+  "utf8",
+);
+assert.match(mutationRoute, /row\.user_id !== userId[\s\S]*?status: 403/, "타인 원장 변경 403");
+assert.match(mutationRoute, /source !== "diary_manual"[\s\S]*?status: 403/, "GPS 수정 금지");
+assert.match(mutationRoute, /deleted_at: now/, "DELETE는 원장 soft-delete");
+assert.doesNotMatch(
+  mutationRoute,
+  /\.from\("venue_stories"\)|storage\.from/,
+  "기록 삭제가 미디어를 건드리지 않음",
+);
+
+const crudMigration = readFileSync(
+  resolve(process.cwd(), "supabase/migrations/20260802193000_venue_attendance_crud.sql"),
+  "utf8",
+);
+assert.match(crudMigration, /ADD COLUMN IF NOT EXISTS deleted_at/, "soft-delete tombstone");
+assert.match(crudMigration, /v_row\.source <> 'diary_manual'/, "삭제 GPS→직접등록 출처 변경 차단");
+assert.match(crudMigration, /deleted_at = NULL/, "직접 등록 재등록 복원");
 assert.doesNotMatch(
   diaryRoute,
   /(?<!overall)summary: summarizeVenueAttendance\(games\)/i,
