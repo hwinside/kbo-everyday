@@ -75,6 +75,8 @@ const EBOOK_BOARD_URL = "https://www.koreabaseball.com/kbo/board/ebook/ebookpubl
 const MANIFEST_PATH = path.resolve(HERE, "kbo-official-manifest.json");
 const EMBED_MODEL = "gemini-embedding-2";
 const EMBED_DIM = 768;
+// 원문 해시와 별개인 파서/청킹 계약 버전. 같은 PDF라도 이 값이 바뀌면 1회 재적재한다.
+const OFFICIAL_LOADER_REVISION = "kbo-ebook-sections-v2";
 const STALE_AFTER_DAYS = 365; // 공식 e북은 연 단위 개정이다. 30일 재수집은 무의미하다.
 
 const log = (...parts) => console.log(...parts);
@@ -308,10 +310,20 @@ function prepareDocument(doc) {
 // ── source seed SQL 초안 ─────────────────────────────────────────────────────
 const q = (value) => (value === null || value === undefined ? "NULL" : `'${String(value).replace(/'/g, "''")}'`);
 
-function emitSourcesSql(prepared) {
-  const rows = prepared.map((p) => {
-    const fingerprint = sha256(`kbo_ebook|${p.sourceKey}|${p.pageTitle}|${p.doc.file}`);
-    const metadata = JSON.stringify({
+function buildSourceRow(p) {
+  return {
+    source_key: p.sourceKey,
+    source_kind: "kbo_ebook",
+    entity_type: "document",
+    entity_id: p.entityId,
+    page_title: p.pageTitle,
+    candidate_urls: [p.canonicalUrl],
+    canonical_url: p.canonicalUrl,
+    resolution_status: "resolved",
+    resolution_note: "KBO 공식 간행물 e북 PDF (로컬 추출). canonical은 간행물 게시판 기준",
+    source_grade: "tier1",
+    identity_fingerprint: sha256(`kbo_ebook|${p.sourceKey}|${p.pageTitle}|${p.doc.file}`),
+    metadata: {
       retrievalMode: "vector",
       embeddingAllowed: true,
       kind: p.doc.kind,
@@ -319,8 +331,15 @@ function emitSourcesSql(prepared) {
       pagesTotal: p.doc.pagesTotal,
       pagesWithText: p.doc.pages.length,
       canonicalUrlVerified: p.canonicalUrlVerified,
-    });
-    return `  (${q(p.sourceKey)}, 'kbo_ebook', 'document', ${q(p.entityId)}, ${q(p.pageTitle)}, ARRAY[${q(p.canonicalUrl)}]::text[], ${q(p.canonicalUrl)}, 'resolved', ${q("KBO 공식 간행물 e북 PDF (로컬 추출). canonical은 간행물 게시판 기준")}, 'tier1', 'not_started', ${q(fingerprint)}, ${q(metadata)}::jsonb)`;
+      loaderRevision: OFFICIAL_LOADER_REVISION,
+    },
+  };
+}
+
+function emitSourcesSql(prepared) {
+  const rows = prepared.map((p) => {
+    const row = buildSourceRow(p);
+    return `  (${q(row.source_key)}, 'kbo_ebook', 'document', ${q(row.entity_id)}, ${q(row.page_title)}, ARRAY[${q(row.canonical_url)}]::text[], ${q(row.canonical_url)}, 'resolved', ${q(row.resolution_note)}, 'tier1', 'not_started', ${q(row.identity_fingerprint)}, ${q(JSON.stringify(row.metadata))}::jsonb)`;
   });
 
   const sql = `-- 초안: KBO 공식 e북 source 시드. **운영 DB 적용 금지** — 리뷰/머지 게이트 뒤 적용한다.
@@ -449,6 +468,40 @@ async function countActiveChunks(url, key, sourceKey, claimGeneration) {
   return Number(total);
 }
 
+async function ensureAndVerifySources(url, key, rpc, prepared) {
+  const expected = prepared.map(buildSourceRow);
+  const affected = await rpc("ensure_baseball_genius_ebook_sources", { p_sources: expected });
+  if (Number(affected) !== expected.length) {
+    throw new Error(`source_ensure_count_mismatch expected=${expected.length} actual=${affected}`);
+  }
+
+  const response = await fetch(
+    `${url}/rest/v1/genius_rag_sources?source_kind=eq.kbo_ebook&select=source_key,source_kind,entity_type,entity_id,page_title,candidate_urls,canonical_url,resolution_status,source_grade,identity_fingerprint,metadata,ingestion_status,revision,active_claim_generation`,
+    {
+      headers: { apikey: key, Authorization: `Bearer ${key}` },
+      signal: AbortSignal.timeout(60_000),
+    },
+  );
+  if (!response.ok) throw new Error(`source verify HTTP ${response.status}: ${(await response.text()).slice(0, 300)}`);
+  const rows = await response.json();
+  const byKey = new Map(rows.map((row) => [row.source_key, row]));
+  for (const row of expected) {
+    const actual = byKey.get(row.source_key);
+    if (!actual) throw new Error(`source_verify_missing ${row.source_key}`);
+    for (const field of ["source_kind", "entity_type", "entity_id", "page_title", "canonical_url", "resolution_status", "source_grade", "identity_fingerprint"]) {
+      if (actual[field] !== row[field]) throw new Error(`source_verify_field ${row.source_key}.${field}`);
+    }
+    if (JSON.stringify(actual.candidate_urls) !== JSON.stringify(row.candidate_urls)) {
+      throw new Error(`source_verify_field ${row.source_key}.candidate_urls`);
+    }
+    for (const [field, value] of Object.entries(row.metadata)) {
+      if (field === "loaderRevision") continue; // 기존 source의 완료 버전은 refresh 전까지 보존해야 한다.
+      if (actual.metadata?.[field] !== value) throw new Error(`source_verify_metadata ${row.source_key}.${field}`);
+    }
+  }
+  return byKey;
+}
+
 // ── resume 체크포인트 ────────────────────────────────────────────────────────
 function loadState() {
   if (RESET_STATE || !fs.existsSync(STATE_PATH)) return { sources: {} };
@@ -519,6 +572,8 @@ async function main() {
   if (!url || !key) throw new Error("NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY 미설정");
   if (!apiKey) throw new Error("GEMINI_API_KEY 미설정 — embedding NOT NULL이라 chunk 저장 불가");
   const rpc = makeRpc(url, key);
+  // source 생성도 APPLY의 일부다. SQL 초안 파일이 적용됐다고 가정하지 않는다.
+  const sourceRows = await ensureAndVerifySources(url, key, rpc, prepared);
   const state = loadState();
   // claim 실패로 건너뛴 source. 마지막에 종료코드로 드러낸다 — 조용한 skip이 false-success다.
   const skippedSources = [];
@@ -526,6 +581,30 @@ async function main() {
 
   for (const p of prepared) {
     const saved = state.sources[p.sourceKey];
+    const dbSource = sourceRows.get(p.sourceKey);
+    if (!dbSource) throw new Error(`source_missing_after_ensure ${p.sourceKey}`);
+
+    // DB가 이미 같은 원문+같은 로더 계약으로 READY라면 로컬 state와 무관하게 실측 후 종료한다.
+    if (
+      dbSource.ingestion_status === "ready"
+      && dbSource.revision === p.revision
+      && dbSource.metadata?.loaderRevision === OFFICIAL_LOADER_REVISION
+    ) {
+      const activeCount = await countActiveChunks(url, key, p.sourceKey, dbSource.active_claim_generation);
+      if (activeCount !== p.chunks.length) {
+        throw new Error(`ready_chunk_count_mismatch ${p.sourceKey} expected=${p.chunks.length} actual=${activeCount}`);
+      }
+      state.sources[p.sourceKey] = {
+        revision: p.revision,
+        loaderRevision: OFFICIAL_LOADER_REVISION,
+        done: true,
+        verifiedChunks: activeCount,
+      };
+      saveState(state);
+      log(`${p.sourceKey}: 이미 READY chunks=${activeCount} (DB 실측)`);
+      continue;
+    }
+
     // 같은 revision + 유효한 claim이 남아 있으면 이어서 진행한다(resume).
     let claim = null;
     if (saved && saved.revision === p.revision && saved.done !== true) {
@@ -543,19 +622,21 @@ async function main() {
         log(`${p.sourceKey}: resume (chunk ${saved.nextIndex}/${p.chunks.length})`);
       }
     }
-    if (saved?.done === true && saved.revision === p.revision) {
-      log(`${p.sourceKey}: 이미 완료 — 건너뜀`);
-      continue;
-    }
-
     let nextIndex = claim ? saved.nextIndex : 0;
-    if (!claim && REFRESH) {
-      // READY → stale 전환. 같은 revision 이면 0행(무한 재적재 방지)이고 그건 정상이다.
+    const needsRefresh = dbSource.ingestion_status === "ready" && (
+      REFRESH
+      || dbSource.revision !== p.revision
+      || dbSource.metadata?.loaderRevision !== OFFICIAL_LOADER_REVISION
+    );
+    if (!claim && needsRefresh) {
+      // READY → stale 전환. 원문 또는 loaderRevision이 바뀐 경우에만 1회 성립한다.
       const marked = await rpc("request_baseball_genius_rag_refresh", {
         p_source_key: p.sourceKey,
         p_revision: p.revision,
+        p_loader_revision: OFFICIAL_LOADER_REVISION,
       });
-      log(`${p.sourceKey}: --refresh ${marked ? "→ stale 전환(재적재 대상)" : "→ 대상 아님(같은 revision 또는 비 READY)"}`);
+      if (!marked) throw new Error(`refresh_rejected ${p.sourceKey}`);
+      log(`${p.sourceKey}: refresh → stale 전환(원문/로더 계약 갱신)`);
     }
     if (!claim) {
       const claimed = await rpc("claim_baseball_genius_rag_batch_scoped", {
@@ -593,6 +674,7 @@ async function main() {
 
     state.sources[p.sourceKey] = {
       revision: p.revision,
+      loaderRevision: OFFICIAL_LOADER_REVISION,
       claimToken: claim.claim_token,
       claimGeneration: claim.claim_generation,
       nextIndex,
@@ -710,6 +792,7 @@ async function main() {
     }
 
     state.sources[p.sourceKey].done = true;
+    state.sources[p.sourceKey].loaderRevision = OFFICIAL_LOADER_REVISION;
     state.sources[p.sourceKey].verifiedChunks = activeCount;
     saveState(state);
     log(`${p.sourceKey} READY chunks=${activeCount} (DB 실측) ${(Date.now() - t0) / 1000}s`);
