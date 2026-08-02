@@ -149,6 +149,7 @@ export default function DMChatPage() {
   // 닉네임 위조 방지를 위해 운영팀 user_id로 판정.
   const isOperatorConv = otherId === OPERATOR_USER_ID;
   const isBaseballGeniusConv = otherId === BASEBALL_GENIUS_USER_ID;
+  const showGeniusMascot = isBaseballGeniusConv;
   // 뉴스클리퍼 대화 — 자동 발송 전용, 답장 시 자동응답만 옴 (안내 배너 노출)
   const isClipperConv = otherId != null && NEWS_CLIPPER_IDS.has(otherId);
   // 회신 불가(자동 발송 전용) 계정 — 클리퍼 + 긴급공지. 입력창 비활성 + 안내 배너.
@@ -284,10 +285,18 @@ export default function DMChatPage() {
         >
           <ChevronLeft size={24} />
         </button>
+        {/* 마스코트는 제목 줄 안이 아니라 2줄 텍스트블록 '옆'에 둔다.
+            제목 줄(gap-1.5) 안에 넣으면 그 줄 자체가 커져 두 줄 간격까지 밀린다.
+            형제로 빼면 헤더 높이는 max(뒤로 32, 슬롯 96, 텍스트 41) 로 예측 가능하다.
+            96px 슬롯은 삼순 확정 규격(목록 64 / 대화방 96, 헤더 108~112px). */}
+        {showGeniusMascot && (
+          <img src="/mascot/yajalal-avatar.png" alt="야잘알봇"
+               className="h-24 w-auto max-w-none object-contain flex-shrink-0" />
+        )}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">
             {isBaseballGeniusConv ? (
-              <span className="text-lg" aria-hidden>⚾</span>
+              showGeniusMascot ? null : <span className="text-lg" aria-hidden>⚾</span>
             ) : otherName === "크보팬 운영팀" ? (
               <img src="/apple-touch-icon.png" alt="크보팬" className="w-5 h-5 rounded-full object-cover" />
             ) : otherTeamId ? (
@@ -299,7 +308,7 @@ export default function DMChatPage() {
             {!otherId && otherResolved
               ? "읽기 전용"
               : isBaseballGeniusConv
-                ? "AI 야구 룰·용어 도우미"
+                ? "야구 밖에 모르는 바보 AI봇"
               : isNoReplyConv
                 ? "자동 발송 전용"
                 : "1:1 쪽지"}
