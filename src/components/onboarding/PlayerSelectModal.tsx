@@ -14,6 +14,11 @@ import TeamBadge from "@/components/ui/TeamBadge";
 import type { FavoritePlayer } from "@/lib/store/favorites";
 import playersRoster from "@/lib/constants/players-roster.json";
 import { matchHangul } from "@/lib/utils/hangul-search";
+import {
+  normalizePopularityCounts,
+  sortPlayersByPopularity,
+  type PopularityCounts,
+} from "@/lib/utils/player-popularity";
 
 interface PlayerInfo {
   id: string;
@@ -58,6 +63,51 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip, 
   const [showAll, setShowAll] = useState(false);
   const team = getTeamById(teamId);
 
+  // 선수별 "최애선수로 지정한 계정 수" — 목록을 인기순으로 정렬하는 데 쓴다.
+  // 집계는 서버 route(DB RPC)가 하고 여기서는 결과만 받는다.
+  // 최초 목록은 응답 또는 bounded timeout 뒤 한 번만 표시한다. 늦은 응답으로 이미
+  // 터치·스크롤 중인 행이 재정렬되지 않으며, 실패/timeout은 가나다순으로 폴백한다.
+  const [popularity, setPopularity] = useState<PopularityCounts>({});
+  const [popularityStatus, setPopularityStatus] = useState<"loading" | "ready">("loading");
+  useEffect(() => {
+    if (!isOpen) {
+      // 닫힌 동안 다음 open을 loading 상태로 준비해, 재오픈 첫 paint에도 이전 순위가
+      // 잠깐 노출됐다가 이동하는 프레임이 생기지 않게 한다.
+      let cancelled = false;
+      queueMicrotask(() => {
+        if (cancelled) return;
+        setPopularity({});
+        setPopularityStatus("loading");
+      });
+      return () => { cancelled = true; };
+    }
+    let stale = false;
+    let settled = false;
+    const timeout = window.setTimeout(() => {
+      if (stale || settled) return;
+      settled = true;
+      setPopularityStatus("ready");
+    }, 1200);
+    (async () => {
+      try {
+        const res = await fetch("/api/player-popularity");
+        const json = res.ok ? await res.json() : null;
+        if (stale || settled) return;
+        settled = true;
+        setPopularity(normalizePopularityCounts(json?.counts));
+        setPopularityStatus("ready");
+      } catch {
+        if (stale || settled) return;
+        settled = true;
+        setPopularityStatus("ready");
+      }
+    })();
+    return () => {
+      stale = true;
+      window.clearTimeout(timeout);
+    };
+  }, [isOpen]);
+
   const allPlayers = useMemo<PlayerInfo[]>(() => {
     const roster = playersRoster as { kboId: string; name: string; team: string; teamId: number; position: string; backNo: string }[];
     const seen = new Set<string>();
@@ -87,12 +137,22 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip, 
   const selectedPlayersArr = [...selected]
     .map(id => allPlayers.find(p => p.id === id))
     .filter((p): p is PlayerInfo => !!p);
-  const myTeamPlayers = allPlayers.filter(p => p.teamId === teamId);
+  const myTeamPlayers = useMemo(
+    () => sortPlayersByPopularity(allPlayers.filter(p => p.teamId === teamId), popularity),
+    [allPlayers, teamId, popularity],
+  );
   const otherPlayers = allPlayers.filter(p => p.teamId !== teamId);
   const [visibleCount, setVisibleCount] = useState(30);
-  const allDisplayPlayers = search
-    ? allPlayers.filter(p => matchHangul(p.name, search))
-    : showAll ? [...allPlayers].sort((a, b) => a.name.localeCompare(b.name, 'ko')) : myTeamPlayers;
+  // 팀 탭·전체 탭·검색 결과 모두 같은 기준(지정 계정 수 ↓, 동률 가나다순)으로 정렬한다.
+  const allDisplayPlayers = useMemo(() => {
+    if (search) {
+      return sortPlayersByPopularity(
+        allPlayers.filter(p => matchHangul(p.name, search)),
+        popularity,
+      );
+    }
+    return showAll ? sortPlayersByPopularity(allPlayers, popularity) : myTeamPlayers;
+  }, [search, showAll, allPlayers, myTeamPlayers, popularity]);
   const displayPlayers = allDisplayPlayers.slice(0, visibleCount);
 
   // 무한스크롤 onScroll (iOS Safari IntersectionObserver 불안정 대응)
@@ -260,7 +320,11 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip, 
           ref={scrollContainerRef}
           onScroll={handleScroll}
           className="space-y-2 max-h-[45vh] overflow-y-auto overscroll-contain">
-          {displayPlayers.length === 0 ? (
+          {popularityStatus === "loading" ? (
+            <div data-testid="player-popularity-loading" className="text-center py-8 text-text-tertiary text-sm">
+              인기순을 불러오는 중...
+            </div>
+          ) : displayPlayers.length === 0 ? (
             <div className="text-center py-8 text-text-tertiary text-sm">검색 결과가 없습니다</div>
           ) : displayPlayers.map((player) => {
             const isSelected = selected.has(player.id);
