@@ -11,6 +11,7 @@ import {
   diaryPickState,
 } from "@/lib/venue-diary/view";
 import type { DiaryUploadGame } from "@/components/my/VenueDiaryUploader";
+import { gameResultTone, resultToneTextStyle } from "@/lib/ui/result-tone";
 
 const DIARY_SEASON = 2026;
 
@@ -305,12 +306,7 @@ export default function VenueDiaryAddGameSheet({
                 const pick = diaryPickState(count);
                 const selectDisabled = diaryAddSelectDisabled(countsReady, count);
                 const caption = diaryPickCaption(pick);
-                const resultColor =
-                  day.result === "W"
-                    ? "text-blue-500"
-                    : day.result === "L"
-                      ? "text-accent"
-                      : "text-text-tertiary";
+                const resultStyle = resultToneTextStyle(gameResultTone(day.result));
                 return (
                   <div
                     key={day.gameId}
@@ -327,7 +323,10 @@ export default function VenueDiaryAddGameSheet({
                           ? `${getTeamById(teamId ?? 0)?.shortName ?? ""} ${day.score.for} : ${day.score.against} ${day.opponent.shortName}`
                           : `vs ${day.opponent.shortName}`}
                       </span>
-                      <span className={`text-xs font-bold ${caption ? "text-text-tertiary" : resultColor}`}>
+                      <span
+                        className={`text-xs font-bold ${caption ? "text-text-tertiary" : ""}`}
+                        style={caption ? undefined : resultStyle}
+                      >
                         {caption ?? (day.result ? (day.result === "W" ? "승" : day.result === "L" ? "패" : "무") : "종료")}
                       </span>
                     </div>

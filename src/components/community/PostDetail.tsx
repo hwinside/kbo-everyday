@@ -474,37 +474,40 @@ export default function PostDetail({ postId }: PostDetailProps) {
 
       {/* Post */}
       <div className="px-5 py-4">
-        <div className="flex items-center gap-2 mb-3">
-          {post.team_id ? <TeamBadge teamId={post.team_id} size="xs" /> : null}
-          <span className="text-sm font-semibold text-text-primary cursor-pointer hover:text-accent" onClick={() => post.author_id && router.push(`/profile/${post.author_id}`)}>{post.nickname || "익명"}</span>
+        <div className="flex items-center gap-2 mb-3 whitespace-nowrap">
+          {post.team_id ? <div className="shrink-0"><TeamBadge teamId={post.team_id} size="xs" /></div> : null}
+          <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-text-primary cursor-pointer hover:text-accent" onClick={() => post.author_id && router.push(`/profile/${post.author_id}`)}>{post.nickname || "익명"}</span>
           {post.grade === 'staff' && (
             <span className='ml-1 px-1.5 py-0.5 text-[10px] font-bold bg-accent/20 text-accent rounded-full'>운영팀</span>
           )}
           {post.author_id && user && post.author_id !== user.id && (
-            <DMButton targetUserId={post.author_id} size="sm" />
+            <DMButton targetUserId={post.author_id} size="sm" className="shrink-0" />
           )}
-          <span className="text-sm text-text-tertiary ml-auto">
+          <span className="shrink-0 text-sm text-text-tertiary">
             {timeAgo(post.created_at)}{(postPatch.updated_at || post.updated_at) ? " · 수정됨" : ""}
           </span>
           <PostViewBadge
             clickCount={post.click_view_count}
             impressionCount={post.impression_view_count}
+            className="shrink-0"
           />
-          <PostActionsMenu
-            user={user}
-            postEditing={postEditing}
-            authorId={post.author_id}
-            userId={user?.id}
-            canDeleteAny={canDeleteAnyPost}
-            open={postMenuOpen}
-            disabled={deletingPost}
-            onToggle={() => setPostMenuOpen((v) => !v)}
-            onClose={() => setPostMenuOpen(false)}
-            onEdit={startPostEdit}
-            onReport={() => openReport({ type: "post", id: post.id })}
-            onBlock={() => handleBlockUser(post.author_id, { type: "post", id: post.id })}
-            onDelete={handleDeletePost}
-          />
+          <div className="shrink-0">
+            <PostActionsMenu
+              user={user}
+              postEditing={postEditing}
+              authorId={post.author_id}
+              userId={user?.id}
+              canDeleteAny={canDeleteAnyPost}
+              open={postMenuOpen}
+              disabled={deletingPost}
+              onToggle={() => setPostMenuOpen((v) => !v)}
+              onClose={() => setPostMenuOpen(false)}
+              onEdit={startPostEdit}
+              onReport={() => openReport({ type: "post", id: post.id })}
+              onBlock={() => handleBlockUser(post.author_id, { type: "post", id: post.id })}
+              onDelete={handleDeletePost}
+            />
+          </div>
         </div>
 
         {/* 미디어 — 사진 → 글 순서(피드 PhotoFeed와 동일). 인스타식 캐러셀(스와이프+점+더블탭 좋아요).
