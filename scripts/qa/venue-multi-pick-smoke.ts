@@ -36,6 +36,12 @@ import {
   shouldRefreshLibraryOnResume,
   VENUE_LIBRARY_FIRST_PAGE_SIZE,
   VENUE_LIBRARY_PAGE_SIZE,
+  VENUE_LIBRARY_FILTERS,
+  VENUE_LIBRARY_FILTER_MIN_VISIBLE,
+  VENUE_LIBRARY_FILTER_MAX_AUTO_PAGES,
+  filterLibraryAssets,
+  shouldAutoLoadMoreForFilter,
+  libraryEmptyMessage,
   type MultiItemStatus,
 } from "../../src/lib/venue-stories/multi-pick";
 import { teamPalette } from "../../src/design-v2/team-palette";
@@ -195,6 +201,98 @@ console.log("[라운드2 #1 — 앱 복귀 재조회 / 라운드2 #3 — 점진 
   );
 }
 
+console.log("[미디어 타입 토글 — 전체/사진/영상 필터 + 자동 페이징]");
+{
+  const assets = [
+    { id: "a", kind: "image" as const },
+    { id: "b", kind: "video" as const },
+    { id: "c", kind: "image" as const },
+    { id: "d", kind: "video" as const },
+  ];
+  ok(
+    "탭 3개 — 전체/사진/영상",
+    VENUE_LIBRARY_FILTERS.map((t) => t.value).join(",") === "all,image,video" &&
+      VENUE_LIBRARY_FILTERS.map((t) => t.label).join(",") === "전체,사진,영상",
+  );
+  ok(
+    "영상 탭 = video 만, 최근순(원본 배열 순서) 보존",
+    filterLibraryAssets(assets, "video").map((a) => a.id).join(",") === "b,d",
+  );
+  ok(
+    "사진 탭 = image 만",
+    filterLibraryAssets(assets, "image").map((a) => a.id).join(",") === "a,c",
+  );
+  ok(
+    "전체 탭 = 전수 그대로(복사본, 원본 미변경)",
+    filterLibraryAssets(assets, "all").map((a) => a.id).join(",") === "a,b,c,d" &&
+      filterLibraryAssets(assets, "all") !== assets,
+  );
+  ok(
+    "영상 탭에서 한 화면 분량 미달 + 커서 있음 → 다음 페이지 자동 로드(빈 화면 오인 방지)",
+    shouldAutoLoadMoreForFilter({
+      filter: "video",
+      visibleCount: 2,
+      hasCursor: true,
+      loading: false,
+      autoPages: 0,
+    }) === true,
+  );
+  ok(
+    "전체 탭은 자동 추가 로드 안 함(기존 동작 보존 — 수동 '더 불러오기'만)",
+    shouldAutoLoadMoreForFilter({
+      filter: "all",
+      visibleCount: 0,
+      hasCursor: true,
+      loading: false,
+      autoPages: 0,
+    }) === false,
+  );
+  ok(
+    "커서 없음(끝)·로딩 중이면 자동 로드 안 함(중복 호출 금지)",
+    shouldAutoLoadMoreForFilter({
+      filter: "video",
+      visibleCount: 0,
+      hasCursor: false,
+      loading: false,
+      autoPages: 0,
+    }) === false &&
+      shouldAutoLoadMoreForFilter({
+        filter: "video",
+        visibleCount: 0,
+        hasCursor: true,
+        loading: true,
+        autoPages: 0,
+      }) === false,
+  );
+  ok(
+    "자동 로드는 bounded — 상한 도달 시 중단(영상 0개 사진첩에서 무한 브릿지 호출 차단)",
+    shouldAutoLoadMoreForFilter({
+      filter: "video",
+      visibleCount: 0,
+      hasCursor: true,
+      loading: false,
+      autoPages: VENUE_LIBRARY_FILTER_MAX_AUTO_PAGES,
+    }) === false && VENUE_LIBRARY_FILTER_MAX_AUTO_PAGES > 0,
+  );
+  ok(
+    "한 화면 분량을 채우면 자동 로드 중단",
+    shouldAutoLoadMoreForFilter({
+      filter: "video",
+      visibleCount: VENUE_LIBRARY_FILTER_MIN_VISIBLE,
+      hasCursor: true,
+      loading: false,
+      autoPages: 0,
+    }) === false,
+  );
+  ok(
+    "빈 상태 문구 — '사진첩에 아무것도 없음' vs '이 타입만 없음' 구분",
+    libraryEmptyMessage({ filter: "video", totalLoaded: 40 }) === "최근 영상이 없어요" &&
+      libraryEmptyMessage({ filter: "image", totalLoaded: 40 }) === "최근 사진이 없어요" &&
+      libraryEmptyMessage({ filter: "video", totalLoaded: 0 }) === "최근 사진·영상이 없어요" &&
+      libraryEmptyMessage({ filter: "all", totalLoaded: 40 }) === "최근 사진·영상이 없어요",
+  );
+}
+
 console.log("[③ 컴포저 정적 계약 — 단일 sticky CTA / raw 팀변수 금지]");
 {
   const src = readFileSync(
@@ -215,6 +313,35 @@ console.log("[③ 컴포저 정적 계약 — 단일 sticky CTA / raw 팀변수 
     src.includes("teamPalette(team ?? TEAMS.neutral)") && !src.includes("paletteForTeamId("),
   );
   ok("네이티브 사진첩 열거 브릿지 사용", src.includes("listVenueMedia("));
+  ok(
+    "미디어 타입 토글이 그리드에 실배선 — 필터 상태로 걸러난 목록이 VenueLibraryGrid 로 간다",
+    // 탭 렌더 + 선택 핸들러 + 필터 적용 목록이 그리드 assets 로 전달되는 실제 배선까지 확인.
+    src.includes("VENUE_LIBRARY_FILTERS.map(") &&
+      src.includes("selectLibraryFilter(tab.value)") &&
+      /const visibleLibraryAssets = useMemo\([\s\S]{0,200}?filterLibraryAssets\(libraryAssets, libraryFilter\)/.test(
+        src,
+      ) &&
+      /<VenueLibraryGrid[\s\S]{0,200}?assets=\{visibleLibraryAssets\}/.test(src) &&
+      // 걸러지지 않은 원본 배열을 그리드에 그대로 넘기는 구배선 잔존 0
+      !/<VenueLibraryGrid[\s\S]{0,200}?assets=\{libraryAssets\}/.test(src) &&
+      // 빈 상태 문구도 탭별로 갈라진다(하드코딩 문구 잔존 금지)
+      src.includes("libraryEmptyMessage({"),
+  );
+  ok(
+    "탭 전환은 네이티브 재열거 없이 화면단에서만 일어난다(구설치본 호환 — 브릿지 파라미터 미사용)",
+    /selectLibraryFilter = \(next: VenueLibraryFilter\) => \{[\s\S]{0,300}?setLibraryFilter\(next\)/.test(
+      src,
+    ) &&
+      !/selectLibraryFilter = [\s\S]{0,300}?listVenueMedia\(/.test(src) &&
+      // listMedia 호출에 타입 인자를 넘기지 않는다(네이티브 계약 미변경)
+      /listVenueMedia\(\s*append \? libraryCursor/.test(src),
+  );
+  ok(
+    "필터 자동 페이징은 bounded — 상한 상수를 쓰고 append 에서만 증가",
+    src.includes("shouldAutoLoadMoreForFilter({") &&
+      src.includes("libraryAutoPagesRef") &&
+      /libraryAutoPagesRef\.current = append \? libraryAutoPagesRef\.current \+ 1 : 0/.test(src),
+  );
   ok(
     "version gate — 브릿지 미가용이면 기존 file input 폴백(업로드 동선 보존)",
     src.includes("isVenueMediaLibraryAvailable()") &&

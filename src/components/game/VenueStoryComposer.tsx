@@ -56,6 +56,11 @@ import {
   shouldRefreshLibraryOnResume,
   VENUE_LIBRARY_FIRST_PAGE_SIZE,
   VENUE_LIBRARY_PAGE_SIZE,
+  VENUE_LIBRARY_FILTERS,
+  filterLibraryAssets,
+  libraryEmptyMessage,
+  shouldAutoLoadMoreForFilter,
+  type VenueLibraryFilter,
 } from "@/lib/venue-stories/multi-pick";
 import {
   runVenueUploadQueue,
@@ -129,6 +134,10 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   const [libraryPermission, setLibraryPermission] =
     useState<VenueMediaPermission>("prompt");
   const [libraryLoading, setLibraryLoading] = useState(false);
+  // 미디어 타입 토글 — 네이티브 열거는 사진+영상을 섞어 내려주므로 화면단에서 걸러 보여준다.
+  const [libraryFilter, setLibraryFilter] = useState<VenueLibraryFilter>("all");
+  // 필터 탭 자동 추가 로드 횟수(bounded) — 탭 전환/재조회 시 초기화.
+  const libraryAutoPagesRef = useRef(0);
   // 그리드 한 화면 멀티셀렉트 — 탭 토글로 순서 유지, 하단 '선택 완료'는 즉시 닫힌다(삼순 라운드2 #2).
   const [librarySelection, setLibrarySelection] = useState<VenueMediaAsset[]>([]);
   // version gate — 네이티브 브릿지 가용이면 grid, 아니면 기존 file input 폴백(구설치본/웹).
@@ -387,6 +396,8 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
       setLibraryPermission(page.permission);
       setLibraryCursor(page.nextCursor);
       setLibraryAssets((prev) => (append ? [...prev, ...page.assets] : page.assets));
+      // 필터 탭 자동 추가 로드 횟수 — append 만 증가, 새 조회는 리셋(bounded 재시작).
+      libraryAutoPagesRef.current = append ? libraryAutoPagesRef.current + 1 : 0;
     } catch {
       // 브릿지 호출 자체가 실패(구설치본 등) — 기존 file input 동선으로 폴백해 업로드가 끊기지 않게.
       setLibraryOpen(false);
@@ -594,6 +605,50 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
     // 원본 pre-export 없음 — assetId 만 provisional 항목에 남고, export 는 업로드 차례에 lazy 수행.
     void venueMediaSelectionHaptic();
   };
+
+  /**
+   * 화면에 실제 그려지는 asset — 상단 타입 토글 적용분.
+   * 네이티브 열거(iOS PHFetch / Android MediaStore)가 사진+영상을 한 쿼리로 섞어 내려주고
+   * 타입 파라미터가 없으므로(구설치본 호환 유지) 화면단에서 kind 로 거른다.
+   */
+  const visibleLibraryAssets = useMemo(
+    () => filterLibraryAssets(libraryAssets, libraryFilter),
+    [libraryAssets, libraryFilter],
+  );
+
+  /** 타입 토글 선택 — 선택 상태는 유지하고 보이는 목록만 바꾼다(자동 페이징 예산 재시작). */
+  const selectLibraryFilter = (next: VenueLibraryFilter) => {
+    if (next === libraryFilter) return;
+    libraryAutoPagesRef.current = 0;
+    setLibraryFilter(next);
+  };
+
+  // 영상/사진 탭에서 첫 페이지(24)에 해당 타입이 거의 없으면 빈 화면처럼 보인다.
+  // 한 화면 분량(12)을 채울 때까지 다음 페이지를 자동으로 이어 받는다(최대 6페이지 bounded).
+  useEffect(() => {
+    if (!libraryOpen || libraryPermission === "denied") return;
+    if (
+      !shouldAutoLoadMoreForFilter({
+        filter: libraryFilter,
+        visibleCount: visibleLibraryAssets.length,
+        hasCursor: libraryCursor != null,
+        loading: libraryLoading,
+        autoPages: libraryAutoPagesRef.current,
+      })
+    ) {
+      return;
+    }
+    void loadLibrary(true);
+    // loadLibrary 는 최신 state 를 읽는 action — 재생성 된다고 다시 돌 필요 없다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    libraryOpen,
+    libraryPermission,
+    libraryFilter,
+    visibleLibraryAssets.length,
+    libraryCursor,
+    libraryLoading,
+  ]);
 
   /** 그리드만 닫기(선택 변경 파기) — 기존 프리뷰/선택 화면으로 복귀. */
   const closeLibrary = () => {
@@ -1114,29 +1169,61 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
                       </button>
                     </div>
                   </div>
-                ) : libraryAssets.length > 0 ? (
-                  <>
-                    {/* 타일 탭 → 같은 화면 큰 네이티브 썸네일 프리뷰 즉시 갱신 + 선택/해제 토글(삼순 라운드3 #1). */}
-                    <VenueLibraryGrid
-                      assets={libraryAssets}
-                      selection={librarySelection.map((a) => a.id)}
-                      onToggle={toggleLibraryAsset}
-                      accent={palette.accent}
-                      onAccent={palette.onAccent}
-                    />
-                    {libraryCursor && (
-                      <button
-                        onClick={() => void loadLibrary(true)}
-                        disabled={libraryLoading}
-                        className="w-full min-h-11 rounded-xl border border-border px-3 text-sm text-text-secondary disabled:opacity-40"
-                      >
-                        더 불러오기
-                      </button>
-                    )}
-                  </>
                 ) : (
                   <>
-                    {libraryLoading ? (
+                    {/* 미디어 타입 토글 — 네이티브 열거가 사진+영상을 섞어 주므로 화면단에서 걸러 보여준다. */}
+                    <div
+                      role="tablist"
+                      aria-label="미디어 종류"
+                      data-testid="library-filter-tabs"
+                      className="flex items-center gap-1 rounded-xl bg-bg-tertiary/60 p-1"
+                    >
+                      {VENUE_LIBRARY_FILTERS.map((tab) => {
+                        const selected = libraryFilter === tab.value;
+                        return (
+                          <button
+                            key={tab.value}
+                            role="tab"
+                            aria-selected={selected}
+                            data-library-filter={tab.value}
+                            onClick={() => selectLibraryFilter(tab.value)}
+                            className={`flex-1 min-h-11 rounded-lg text-sm font-semibold transition-colors ${
+                              selected ? "" : "text-text-secondary"
+                            }`}
+                            style={
+                              selected
+                                ? { background: palette.accent, color: palette.onAccent }
+                                : undefined
+                            }
+                          >
+                            {tab.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {visibleLibraryAssets.length > 0 ? (
+                      <>
+                        {/* 타일 탭 → 같은 화면 큰 네이티브 썸네일 프리뷰 즉시 갱신 + 선택/해제 토글(삼순 라운드3 #1). */}
+                        <VenueLibraryGrid
+                          key={libraryFilter}
+                          assets={visibleLibraryAssets}
+                          selection={librarySelection.map((a) => a.id)}
+                          onToggle={toggleLibraryAsset}
+                          accent={palette.accent}
+                          onAccent={palette.onAccent}
+                        />
+                        {libraryCursor && (
+                          <button
+                            onClick={() => void loadLibrary(true)}
+                            disabled={libraryLoading}
+                            className="w-full min-h-11 rounded-xl border border-border px-3 text-sm text-text-secondary disabled:opacity-40"
+                          >
+                            더 불러오기
+                          </button>
+                        )}
+                      </>
+                    ) : libraryLoading ? (
                       <div className="grid grid-cols-3 gap-0.5" aria-label="사진첩 불러오는 중">
                         {Array.from({ length: 12 }, (_, index) => (
                           <div
@@ -1146,14 +1233,22 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
                         ))}
                       </div>
                     ) : (
-                      <div className="flex min-h-64 flex-col items-center justify-center gap-2 rounded-2xl border border-border bg-bg-tertiary/30 px-6 text-center">
+                      <div
+                        data-testid="library-empty"
+                        className="flex min-h-64 flex-col items-center justify-center gap-2 rounded-2xl border border-border bg-bg-tertiary/30 px-6 text-center"
+                      >
                         <VideoIcon size={28} className="text-text-tertiary" />
                         <span className="text-sm font-semibold text-text-secondary">
-                          최근 사진·영상이 없어요
+                          {libraryEmptyMessage({
+                            filter: libraryFilter,
+                            totalLoaded: libraryAssets.length,
+                          })}
                         </span>
-                      <span className="text-sm text-text-tertiary">
-                          사진 접근 범위를 확인하거나 새로 촬영한 뒤 다시 열어주세요
-                      </span>
+                        <span className="text-sm text-text-tertiary">
+                          {libraryFilter === "all" || libraryAssets.length === 0
+                            ? "사진 접근 범위를 확인하거나 새로 촬영한 뒤 다시 열어주세요"
+                            : "위 탭을 '전체'로 바꾸면 모두 볼 수 있어요"}
+                        </span>
                       </div>
                     )}
                   </>

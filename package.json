@@ -218,6 +218,7 @@
     "qa:venue-upload-progress": "tsx scripts/qa/venue-upload-progress-smoke.ts",
     "qa:venue-composer-helpers": "tsx scripts/qa/venue-composer-helpers-smoke.ts",
     "qa:venue-multi-pick": "tsx scripts/qa/venue-multi-pick-smoke.ts",
+    "qa:venue-story-video-poster": "tsx scripts/qa/venue-story-video-poster-smoke.ts",
     "qa:venue-validate": "tsx scripts/qa/venue-validate-smoke.ts",
     "qa:venue-user-copy": "tsx scripts/qa/venue-user-copy-smoke.ts",
     "qa:venue-native-gate": "tsx scripts/qa/venue-native-gate-smoke.ts",
