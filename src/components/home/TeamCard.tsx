@@ -9,7 +9,11 @@ import { getTeamById, type TeamData } from "@/lib/constants/teams";
 import { getTeamColor } from "@/lib/utils/team";
 import { getCanonicalPlayerHref } from "@/lib/utils/resolve-player";
 import { computeRosterMovesGroupedDisplay, teamHomeHref } from "@/lib/roster-moves/readiness";
-import { gameResultTone, resultToneChipStyle } from "@/lib/ui/result-tone";
+import {
+  RESULT_TONE_COLOR,
+  gameResultTone,
+  resultToneChipStyle,
+} from "@/lib/ui/result-tone";
 
 type FormResult = "W" | "L" | "D";
 
@@ -418,7 +422,9 @@ export default function TeamCard({ team, gameSlot, refreshNonce = 0 }: TeamCardP
                         {group.moves.map((move, index) => {
                           const isRegister = move.moveType === "register";
                           const label = isRegister ? "등록" : "말소";
-                          const labelColor = isRegister ? "#34D399" : "#F87171";
+                          // 긍부정 색은 이 파일 위쪽 `최근 N경기` 칩과 같은 SSOT(@/lib/ui/result-tone).
+                          const labelColor =
+                            RESULT_TONE_COLOR[isRegister ? "positive" : "negative"];
                           return (
                             <span
                               key={`${move.moveType}-${move.kboPlayerId}-${index}`}
