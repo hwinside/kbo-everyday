@@ -255,8 +255,12 @@ check("사고 재현: 7/26 run 실패 + #893/#699 적체 상황을 잡는다", (
     NOW,
   );
   assert.ok(issue, "그때 이 코드가 있었으면 즉시 알렸어야 한다");
-  // run 실패가 더 직접적인 사유이므로 그것으로 보고된다(적체는 어드민 화면에서 확인).
+  // run 실패와 PR 적체를 함께 보존해야 같은 실패 run 아래 새 PR이 생겨도 다시 알린다.
   assert.equal(issue.kind, "run-failed");
+  assert.match(issue.reason, /#893/);
+  assert.match(issue.reason, /#699/);
+  assert.match(issue.fingerprint, /run:/);
+  assert.match(issue.fingerprint, /pr:/);
 });
 
 
@@ -440,6 +444,68 @@ async function runRouteLevelChecks() {
     } catch { threw = true; }
     check("route: GitHub 조회 실패는 감춰지지 않는다(상위에서 5xx 로 노출)", () => {
       assert.equal(threw, true, "감시기 실패가 조용히 성공으로 끝났다");
+    });
+  }
+
+  // ⑥ 같은 실패 run 아래 새 check-fail/적체 PR이 생기면 새 event로 다시 알린다
+  {
+    const db = makeDb();
+    let pushed = 0;
+    const base = {
+      token: "t",
+      db: db as never,
+      push: async () => { pushed++; return { sent: 1, failed: 0 }; },
+      telegram: async () => ({ sent: 1, failed: 0 }),
+    };
+    const problemPr = {
+      number: 893,
+      head: { ref: "auto/update-roster-stats-20260801", sha: "deadbeef" },
+      html_url: "https://github.com/x/y/pull/893",
+      created_at: new Date(NOW - 3600_000).toISOString(),
+    };
+    await runAutoPrWatch(NOW_ISO, { ...base, fetchGitHub: ghWith([failedRun(77)]) } as never);
+    const afterRun = pushed;
+    await runAutoPrWatch(NOW_ISO, {
+      ...base,
+      fetchGitHub: ghWith([failedRun(77)], [problemPr]),
+    } as never);
+    check("route: 같은 실패 run 아래 새 문제 PR도 다시 알린다", () => {
+      assert.equal(afterRun, 1);
+      assert.equal(pushed, 2, "run-failed 조기 return이 새 PR event를 가렸다");
+      assert.match(db.rows.get("roster-stats-auto-pr")?.level ?? "", /pr:893/);
+    });
+  }
+
+  // ⑦ GITHUB_PAT 누락과 check-runs 조회 실패는 상위 5xx로 올릴 수 있게 throw한다
+  {
+    let missingTokenThrew = false;
+    try {
+      await runAutoPrWatch(NOW_ISO, { token: null, db: makeDb() as never });
+    } catch { missingTokenThrew = true; }
+
+    const problemPr = {
+      number: 893,
+      head: { ref: "auto/update-roster-stats-20260801", sha: "deadbeef" },
+      html_url: "https://github.com/x/y/pull/893",
+      created_at: new Date(NOW - 600_000).toISOString(),
+    };
+    let checkLookupThrew = false;
+    try {
+      await runAutoPrWatch(NOW_ISO, {
+        token: "t",
+        db: makeDb() as never,
+        fetchGitHub: async (path: string) => {
+          if (path.includes("/actions/workflows/update-roster-stats.yml/")) return { workflow_runs: [okRunPayload] };
+          if (path.includes("/actions/workflows/")) return { workflow_runs: [okRunPayload] };
+          if (path.startsWith("/pulls")) return [problemPr];
+          if (path.includes("/check-runs")) throw new Error("GitHub check-runs HTTP 500");
+          return {};
+        },
+      } as never);
+    } catch { checkLookupThrew = true; }
+    check("route: token/check-runs 감시 실패는 성공으로 둔갑하지 않는다", () => {
+      assert.equal(missingTokenThrew, true, "GITHUB_PAT 누락이 정상 반환됐다");
+      assert.equal(checkLookupThrew, true, "check-runs 실패가 healthy/null로 삼켜졌다");
     });
   }
 }

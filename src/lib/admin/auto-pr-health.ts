@@ -112,9 +112,8 @@ function fmtAge(hours: number): string {
 /**
  * 한 워크플로의 이상 여부를 판정한다.
  *
- * 판정 순서에 의미가 있다: run 실패(①)가 있으면 그것이 가장 직접적인 사유이므로 먼저 보고,
- * 그다음 PR 적체(②), 마지막으로 미실행(③)을 본다. 여러 이상이 겹쳐도 알림은 잡당 1건으로
- * 묶어 도배를 막는다(상세는 어드민 화면에서 확인).
+ * run 실패(①)·PR 적체(②)·미실행(③)을 모두 판정한다. 여러 이상이 겹치면 알림은 잡당
+ * 1건으로 묶되 지문과 본문에는 모두 넣어, 같은 run 실패 아래 새 PR 문제가 생겨도 놓치지 않는다.
  *
  * @param runs 최신순일 필요 없음 — 내부에서 createdAt으로 정렬한다.
  * @param openPrs 열려 있는 PR 전체(브랜치 접두사로 이 워크플로 것만 골라 쓴다)
@@ -130,15 +129,7 @@ export function evaluateAutoWorkflow(
     .sort((a, b) => Date.parse(b.createdAt as string) - Date.parse(a.createdAt as string));
 
   const latest = sorted[0];
-  if (!latest) {
-    return {
-      key: def.key,
-      label: def.label,
-      kind: "never-ran",
-      fingerprint: "never-ran:no-runs",
-      reason: `실행 기록이 없습니다 (${def.workflowFile})`,
-    };
-  }
+  const events: { kind: AutoPrIssueKind; fingerprint: string; reason: string }[] = [];
 
   // ① 최신 완료 run이 실패 — **나이와 무관하게** 먼저 보고한다.
   //    오래된 실패를 "미실행"으로 바꿔 알리면 진짜 원인(빌드 깨짐)을 가린다.
@@ -146,9 +137,7 @@ export function evaluateAutoWorkflow(
   const latestCompleted = sorted.find((r) => r.status === "completed");
   if (latestCompleted && latestCompleted.conclusion && latestCompleted.conclusion !== "success") {
     const age = ageHours(latestCompleted.createdAt, nowMs);
-    return {
-      key: def.key,
-      label: def.label,
+    events.push({
       kind: "run-failed",
       // run 고유 id 를 지문에 넣는다 — 다음 날 **다른 run** 이 또 실패하면 새 event 로 다시 알린다.
       fingerprint: `run:${latestCompleted.id ?? latestCompleted.createdAt ?? "unknown"}:${latestCompleted.conclusion}`,
@@ -156,21 +145,25 @@ export function evaluateAutoWorkflow(
         `마지막 실행이 ${latestCompleted.conclusion}` +
         (age !== null ? ` (${fmtAge(age)})` : "") +
         (latestCompleted.htmlUrl ? `\n${latestCompleted.htmlUrl}` : ""),
-    };
+    });
   }
 
   // ③ 미실행 — 주기의 2배를 넘도록 최신 run이 없다(스케줄러가 죽은 경우).
   //    가장 조용한 실패라 별도 판정이 필요하다 — ①은 워크플로가 돌아야만 잡힌다.
-  const latestAge = ageHours(latest.createdAt, nowMs);
-  if (latestAge !== null && latestAge > def.intervalHours * 2) {
-    return {
-      key: def.key,
-      label: def.label,
+  const latestAge = ageHours(latest?.createdAt, nowMs);
+  if (!latest) {
+    events.push({
+      kind: "never-ran",
+      fingerprint: "never-ran:no-runs",
+      reason: `실행 기록이 없습니다 (${def.workflowFile})`,
+    });
+  } else if (latestAge !== null && latestAge > def.intervalHours * 2) {
+    events.push({
       kind: "never-ran",
       // 방치가 길어질수록 "며칠째"가 바뀐다 — 하루 단위로 새 event 로 본다(계속 조용해지지 않게).
       fingerprint: `never-ran:${Math.floor(latestAge / 24)}d`,
       reason: `${fmtAge(latestAge)} 실행되지 않았습니다 (예정 주기 ${def.intervalHours}시간)`,
-    };
+    });
   }
 
   // ② auto PR 문제 — 두 축을 본다(삼순 R1 요구).
@@ -196,9 +189,7 @@ export function evaluateAutoWorkflow(
         return `#${pr.number} ${age === null ? "" : fmtAge(age) + " · "}${checks}${url}`;
       })
       .join("\n");
-    return {
-      key: def.key,
-      label: def.label,
+    events.push({
       kind: "pr-stale",
       // PR 번호 + check 상태를 지문에 넣는다 — 새 PR 이 추가되거나 check 상태가 바뀌면 다시 알린다.
       fingerprint: `pr:${problemPrs
@@ -206,10 +197,25 @@ export function evaluateAutoWorkflow(
         .sort()
         .join(",")}`,
       reason: `자동 PR 문제 ${problemPrs.length}건\n${detail}`,
-    };
+    });
   }
 
-  return null;
+  if (events.length === 0) return null;
+
+  // run 실패가 오래 유지되는 동안 새 check-fail/적체 PR이 생겨도 별도 사건으로 다시
+  // 알리기 위해 모든 동시 원인을 지문과 본문에 포함한다. 한 워크플로당 발송은 1건으로
+  // 묶되, 새 원인이 추가되면 fingerprint가 바뀌어 CAS 알림이 다시 열린다.
+  const priority: AutoPrIssueKind[] = ["run-failed", "pr-stale", "never-ran"];
+  const ordered = [...events].sort(
+    (a, b) => priority.indexOf(a.kind) - priority.indexOf(b.kind),
+  );
+  return {
+    key: def.key,
+    label: def.label,
+    kind: ordered[0].kind,
+    fingerprint: ordered.map((event) => event.fingerprint).join("|"),
+    reason: ordered.map((event) => event.reason).join("\n\n"),
+  };
 }
 
 /** 감시 대상 전체를 평가한다. */

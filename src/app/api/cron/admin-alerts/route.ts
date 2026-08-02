@@ -219,6 +219,7 @@ export async function GET(req: NextRequest) {
   const autoPrErrors: string[] = [];
   try {
     autoPr = await runAutoPrWatch(nowIso);
+    if (autoPr.error) autoPrErrors.push(`autopr-watch:${autoPr.error}`);
     if (autoPr.writeErrors && autoPr.writeErrors.length > 0) autoPrErrors.push(...autoPr.writeErrors);
   } catch (e) {
     autoPr = { checked: 0, issues: 0, sent: 0, error: (e as Error).message };
@@ -267,7 +268,7 @@ export async function runAutoPrWatch(nowIso: string, deps: AutoPrWatchDeps = {})
   const pushFn = deps.push ?? sendAdminPush;
   const telegramFn = deps.telegram ?? sendTelegramAlert;
   const token = deps.token !== undefined ? deps.token : process.env.GITHUB_PAT;
-  if (!token) return { checked: 0, issues: 0, sent: 0, error: "GITHUB_PAT not configured" };
+  if (!token) throw new Error("GITHUB_PAT not configured");
 
   const nowMs = Date.parse(nowIso);
   const gh = deps.fetchGitHub ?? (async (path: string) => {
@@ -317,23 +318,18 @@ export async function runAutoPrWatch(nowIso: string, deps: AutoPrWatchDeps = {})
   for (const pr of watched) {
     const sha = pr.head?.sha;
     if (!sha) { checksByNumber.set(pr.number, null); continue; }
-    try {
-      const status = await gh(`/commits/${sha}/check-runs?per_page=100`) as {
-        check_runs?: { status: string | null; conclusion: string | null }[];
-      };
-      const runs = status.check_runs ?? [];
-      const completed = runs.filter((r) => r.status === "completed");
-      if (completed.length === 0) {
-        checksByNumber.set(pr.number, null); // 아직 판정 불가
-      } else {
-        const bad = completed.some(
-          (r) => r.conclusion !== null && !["success", "neutral", "skipped"].includes(r.conclusion),
-        );
-        checksByNumber.set(pr.number, !bad);
-      }
-    } catch {
-      // 조회 실패는 "성공"으로 둔갑시키지 않는다 — 판정 불가(null)로 남긴다.
-      checksByNumber.set(pr.number, null);
+    const status = await gh(`/commits/${sha}/check-runs?per_page=100`) as {
+      check_runs?: { status: string | null; conclusion: string | null }[];
+    };
+    const runs = status.check_runs ?? [];
+    const completed = runs.filter((r) => r.status === "completed");
+    if (completed.length === 0) {
+      checksByNumber.set(pr.number, null); // 아직 판정 불가
+    } else {
+      const bad = completed.some(
+        (r) => r.conclusion !== null && !["success", "neutral", "skipped"].includes(r.conclusion),
+      );
+      checksByNumber.set(pr.number, !bad);
     }
   }
 
