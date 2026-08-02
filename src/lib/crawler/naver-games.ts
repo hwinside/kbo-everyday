@@ -42,8 +42,18 @@ const NAVER_SERVICEABLE_SR_IDS = new Set<string>([DEFAULT_ALL_SR_ID, REGULAR_SEA
  * 미등록 연도는 fail-close(정규 일정 미확정 상태에서 추측 서빙 금지). 시즌이 바뀌면 갱신
  * (src/app/api/roster-moves/route.ts 의 SEASON_START 상수와 동일한 연 1회 운영).
  */
-export const REGULAR_SEASON_WINDOWS: Readonly<Record<string, { start: string; end: string }>> = {
-  "2026": { start: "20260328", end: "20260930" },
+export interface RegularSeasonWindow {
+  start: string;
+  /** 현재 공식 일정으로 확인된 마지막 날짜. finalized=true일 때만 실제 시즌 종료일이다. */
+  end: string;
+  /** KBO가 우천 순연분까지 포함한 실제 종료일을 확정했는가. */
+  finalized: boolean;
+}
+
+export const REGULAR_SEASON_WINDOWS: Readonly<Record<string, RegularSeasonWindow>> = {
+  // 9/30은 우선 편성분의 경계일 뿐 실제 종료일이 아니다. 잔여 45경기 확정 전에는
+  // 이 날짜 뒤를 잘라 complete로 열지 않는다.
+  "2026": { start: "20260328", end: "20260930", finalized: false },
 };
 
 /** date(YYYYMMDD)가 검증된 정규시즌 window 안인가. 미등록 연도는 false(fail-close). */

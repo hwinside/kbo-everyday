@@ -30,11 +30,14 @@ type SourceMode =
   | "partial"
   | "blackhole"
   | "http-error"
+  | "no-content"
+  | "empty"
   | "sr-retry-blackhole"
   | "detail-schema-error"
   | "detail-http-error"
   | "detail-timeout"
-  | "list-http-error";
+  | "list-http-error"
+  | "pitch-zero";
 type GameState = "scheduled" | "live" | "final" | "cancelled";
 
 function json(data: unknown): Response {
@@ -84,18 +87,14 @@ function lineup() {
   return [[{ LINEUP_CK: true }], [], [], side("홍길동"), side("김선수")];
 }
 
-function pitcher(name: string) {
-  return cells([name, "선발", "승", 0, 0, 0, "9", 31, 102, 30, 6, 0, 2, 8, 2, 2, "2.00"]);
-}
-
-function boxScore() {
+function boxScore(pitchCount = 102) {
   return {
     tables: [
       { rows: [] },
       { rows: [{ row: cells([1, "중", "김선수", 4, 2, 1, 1, ".500"]) }] },
       { rows: [{ row: cells([1, "중", "홍길동", 4, 1, 1, 0, ".250"]) }] },
-      { rows: [{ row: pitcher("원정투수") }] },
-      { rows: [{ row: pitcher("홈투수") }] },
+      { rows: [{ row: cells(["원정투수", "선발", "승", 0, 0, 0, "9", 31, pitchCount, 30, 6, 0, 2, 8, 2, 2, "2.00"]) }] },
+      { rows: [{ row: cells(["홈투수", "선발", "승", 0, 0, 0, "9", 31, pitchCount, 30, 6, 0, 2, 8, 2, 2, "2.00"]) }] },
     ],
   };
 }
@@ -234,19 +233,22 @@ function naverRecord(state: GameState) {
   if (state === "scheduled" || state === "cancelled") {
     return { result: { recordData: {} } };
   }
-  const batter = (name: string) => ({
-    batOrder: 1, pos: "중", name, ab: 4, hit: name === "김선수" ? 1 : 2, run: 1, rbi: 1,
+  const batter = (name: string, order: number) => ({
+    batOrder: order, pos: "중", name, ab: 4, hit: name === "김선수" ? 1 : 2, run: 1, rbi: 1,
     hr: 0, h2: null, h3: null, bb: 0, kk: 1, sb: 0, hra: ".500",
     inn4: name === "김선수" ? "좌2" : "중안",
   });
   const pitcherRow = (name: string) => ({
     name, inn: "9", wls: "승", hit: 6, r: 2, hr: 0, kk: 8,
-    bb: 2, er: 2, pa: 31, ab: 30, era: "2.00",
+    bb: 2, bbhp: 2, bf: 102, er: 2, pa: 31, ab: 30, era: "2.00",
   });
   return {
     result: {
       recordData: {
-        battersBoxscore: { away: [batter("김선수")], home: [batter("홍길동")] },
+        battersBoxscore: {
+          away: Array.from({ length: 9 }, (_, index) => batter(index === 0 ? "김선수" : `원정타자${index + 1}`, index + 1)),
+          home: Array.from({ length: 9 }, (_, index) => batter(index === 0 ? "홍길동" : `홈타자${index + 1}`, index + 1)),
+        },
         pitchersBoxscore: { away: [pitcherRow("원정투수")], home: [pitcherRow("홈투수")] },
         scoreBoard: {
           inn: {
@@ -274,7 +276,15 @@ function blackhole(signal?: AbortSignal): Promise<Response> {
 async function scenario(
   name: string,
   kboMode: SourceMode,
-  naverMode: "normal" | "blackhole",
+  naverMode:
+    | "normal"
+    | "blackhole"
+    | "partial"
+    | "preview-only"
+    | "preview-partial"
+    | "bf-zero"
+    | "bf-missing"
+    | "bf-hidden-row",
   state: GameState,
 ) {
   const signals = new Set<AbortSignal>();
@@ -288,6 +298,7 @@ async function scenario(
     const isKbo = url.includes("koreabaseball.com");
     if (isKbo && kboMode === "blackhole") return blackhole(init?.signal ?? undefined);
     if (isKbo && kboMode === "http-error") return new Response("upstream unavailable", { status: 503 });
+    if (isKbo && kboMode === "no-content") return new Response(null, { status: 204 });
     const isKboList = url.includes("GetKboGameList");
     if (isKbo && kboMode === "detail-timeout" && !isKboList) {
       return blackhole(init?.signal ?? undefined);
@@ -323,10 +334,12 @@ async function scenario(
       }
       if (kboMode === "sr-retry-blackhole" && srId === "0") return json([]);
       if (kboMode === "partial") return json([[{ STADIUM_NM: "잠실", END_TM: "21:20" }]]);
+      if (kboMode === "empty") return json([]);
       return json(scoreboard(state));
     }
     if (url.includes("GetLineUpAnalysis")) {
       if (
+        kboMode === "empty" ||
         kboMode === "partial" ||
         kboMode === "sr-retry-blackhole" ||
         state === "scheduled" ||
@@ -336,15 +349,51 @@ async function scenario(
     }
     if (url.includes("GetBoxScore")) {
       if (
+        kboMode === "empty" ||
         kboMode === "partial" ||
         kboMode === "sr-retry-blackhole" ||
         state === "scheduled" ||
         state === "cancelled"
       ) return json({ tables: [] });
-      return json(boxScore());
+      return json(boxScore(kboMode === "pitch-zero" ? 0 : 102));
     }
-    if (url.includes("/record")) return json(naverRecord(state));
-    if (url.includes("/preview")) return json(naverPreview(state));
+    if (url.includes("/record")) {
+      if (naverMode === "bf-hidden-row") {
+        const payload = naverRecord(state) as {
+          result: { recordData: { pitchersBoxscore: { away: Array<Record<string, unknown>> } } };
+        };
+        payload.result.recordData.pitchersBoxscore.away.push({ name: "", inn: "1", bf: 0 });
+        return json(payload);
+      }
+      if (naverMode === "bf-zero" || naverMode === "bf-missing") {
+        const payload = JSON.parse(JSON.stringify(
+          naverRecord(state),
+          (key, value) => key === "bf" ? (naverMode === "bf-zero" ? 0 : undefined) : value,
+        ));
+        return json(payload);
+      }
+      if (naverMode === "partial") {
+        const payload = naverRecord(state) as {
+          result?: { recordData?: { battersBoxscore?: { away?: unknown[]; home?: unknown[] } } };
+        };
+        const recordData = payload.result?.recordData;
+        if (recordData?.battersBoxscore) recordData.battersBoxscore.home = [];
+        return json(payload);
+      }
+      return json(naverRecord(state));
+    }
+    if (url.includes("/preview")) {
+      if (naverMode === "preview-only" || naverMode === "preview-partial") {
+        const preview = naverPreview("scheduled") as {
+          result: { previewData: { homeTeamLineUp: { fullLineUp: unknown[] } } };
+        };
+        if (naverMode === "preview-partial") {
+          preview.result.previewData.homeTeamLineUp.fullLineUp = [];
+        }
+        return json(preview);
+      }
+      return json(naverPreview(state));
+    }
     if (url.includes("/relay?")) {
       return json({ result: { textRelayData: { inn: 1, textRelays: [] } } });
     }
@@ -398,6 +447,9 @@ async function main() {
   );
   assert.equal(kboDown.body.lineup?.awayStarter, "원정투수", "Naver 폴백 선발투수(원정) 보존");
   assert.equal(kboDown.body.lineup?.homeStarter, "홈투수", "Naver 폴백 선발투수(홈) 보존");
+  assert.equal(kboDown.body.trace?.lineupSource, "naver-confirmed");
+  assert.equal(kboDown.body.trace?.boxScoreSource, "naver");
+  assert.ok(kboDown.body.boxScore.awayPitchers[0].pitchCount > 0, "Naver bf로 pitchCount 복구");
   assert.equal(
     kboDown.body.meta.broadcastChannels?.[0]?.name,
     "KBS N SPORTS",
@@ -495,6 +547,34 @@ async function main() {
   assert.ok(partial.body.meta.broadcastChannels?.length > 0, "degraded detail keeps settled KBO TV_IF");
   assert.deepEqual(partial.degradationEvents, [{ apiName: "kbo-game-detail", reason: "schema-error" }]);
 
+  const pitchZero = await scenario("KBO pitchCount zero + Naver complete", "pitch-zero", "normal", "final");
+  assert.equal(pitchZero.body.trace?.boxScoreSource, "naver");
+  assert.ok(
+    [...pitchZero.body.boxScore.awayPitchers, ...pitchZero.body.boxScore.homePitchers]
+      .every((p: { pitchCount: number }) => p.pitchCount > 0),
+    "KBO 200-partial pitchCount=0 is replaced by complete Naver bf values",
+  );
+
+  const pitchZeroDualPartial = await scenario(
+    "KBO pitchCount zero + Naver partial",
+    "pitch-zero",
+    "partial",
+    "final",
+  );
+  assert.equal(pitchZeroDualPartial.body.boxScore, null, "dual partial box fails closed");
+  assert.equal(pitchZeroDualPartial.body.trace?.boxScoreSource, "none");
+
+  for (const naverMode of ["bf-zero", "bf-missing", "bf-hidden-row"] as const) {
+    const result = await scenario(
+      `KBO pitchCount zero + Naver ${naverMode}`,
+      "pitch-zero",
+      naverMode,
+      "final",
+    );
+    assert.equal(result.body.boxScore, null, `${naverMode}: positive innings without bf fails closed`);
+    assert.equal(result.body.trace?.boxScoreSource, "none");
+  }
+
   const bothDown = await scenario("KBO + Naver blackhole", "blackhole", "blackhole", "final");
   assert.equal(bothDown.body.status, "scheduled");
   assert.equal(bothDown.body.linescore, null);
@@ -517,6 +597,28 @@ async function main() {
     httpError.degradationEvents,
     [{ apiName: "kbo-game-detail", reason: "http-error" }],
   );
+
+  const noContent = await scenario("KBO HTTP 204 + Naver preview-only", "no-content", "preview-only", "final");
+  assert.equal(noContent.body.lineup?.isToday, false);
+  assert.equal(noContent.body.lineup?.away.length, 0);
+  assert.equal(noContent.body.lineup?.home.length, 0);
+  assert.equal(noContent.body.lineup?.awayStarter, "원정투수");
+  assert.equal(noContent.body.lineup?.homeStarter, "홈투수");
+  assert.equal(noContent.body.trace?.lineupSource, "naver-preview");
+
+  const empty = await scenario("KBO HTTP 200 empty + Naver preview-only", "empty", "preview-only", "final");
+  assert.equal(empty.body.trace?.lineupSource, "naver-preview");
+  assert.equal(empty.body.lineup?.awayStarter, "원정투수");
+  assert.equal(empty.body.lineup?.homeStarter, "홈투수");
+
+  const previewPartial = await scenario(
+    "KBO HTTP 200 empty + Naver preview partial",
+    "empty",
+    "preview-partial",
+    "final",
+  );
+  assert.equal(previewPartial.body.lineup, null, "one-sided preview starter fails closed");
+  assert.equal(previewPartial.body.trace?.lineupSource, "none");
 
   // request-context 관제 회귀 매트릭스:
   // scheduled/cancelled의 상세 자연 결측 및 목록 실패는 0건,
@@ -555,6 +657,7 @@ async function main() {
   assert.equal(scheduled.body.lineup?.isToday, false);
   assert.equal(scheduled.body.lineup?.awayStarter, "원정투수");
   assert.equal(scheduled.body.lineup?.homeStarter, "홈투수");
+  assert.equal(scheduled.body.trace?.lineupSource, "naver-preview");
   assert.equal(scheduled.body.lineup?.away.length, 0, "미확정 최근 타순은 노출하지 않음");
   assert.equal(scheduled.body.lineup?.home.length, 0, "미확정 최근 타순은 노출하지 않음");
   assert.equal(scheduled.degradationEvents.length, 0);
@@ -569,10 +672,16 @@ async function main() {
 
   // mutation guard: 후속 fetchGames() 기본 10초 경로가 route에 재유입되면 즉시 red.
   const routeSource = readFileSync("src/app/api/game-detail/route.ts", "utf8");
+  const naverRecordSource = readFileSync("src/lib/crawler/naver-record.ts", "utf8");
   assert.doesNotMatch(routeSource, /\bfetchGames\s*\(/, "route must not reintroduce fetchGames 10s await");
   assert.match(routeSource, /signal:\s*deadlineSignal/g, "shared absolute deadline wiring retained");
+  assert.match(
+    naverRecordSource,
+    /rawPitchersComplete\(pb\.away\).*rawPitchersComplete\(pb\.home\)/,
+    "Naver box completeness validates raw pitcher rows before name filtering",
+  );
 
-  console.log("game-detail bounded fallback: 25 actual GET + degradation scenarios PASS");
+  console.log("game-detail bounded fallback: actual GET degradation matrix PASS");
 }
 
 main()

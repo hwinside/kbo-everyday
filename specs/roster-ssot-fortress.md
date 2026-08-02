@@ -3,6 +3,7 @@
 **Status**: DRAFT v0.2 (2026-04-20 21:00 KST, 삼순이 조건부 GO 3건 반영)
 
 ## Changelog
+- v0.4 (2026-08-01): **고정 count 계약 폐기 → dynamic SSOT**. `EXPECTED_ROSTER_COUNT`/`EXPECTED_COUNT` 상수 3곳을 제거하고 shape·unique kboId·known team·팀별 하한·canary 계약으로 대체. 인원 급변 방어는 자동 크롤 workflow의 main 대비 Δ 가드 + `roster-size-change` ack가 전담. 배경: 고정 count가 로스터 1명 변동만으로 매일 새벽 자동 PR을 영구 머지 불가로 만들었다(카라스코 56103, 878→879 실제 발생).
 - v0.3: 구현 실측치 반영 — static 실제 수 **769명** (772명 → 오염 3건 제거 → 769명). `EXPECTED_ROSTER_COUNT = 769` 확정. T6 선행 완료 (김명규 59378 / 신재인 59377 / 이정준 96153 삭제).
 - v0.2: 삼순이 3가지 강화 조건 반영 — (A) CI 하한선 750 → **755 고정 무예외**, (B) backNo 공란 허용 대신 **의미 있는 상태값(enum)** 분리, core field null 완전 차단, (C) **Supabase 단독 선수 추가 금지 (Phase 1)** = "static only admission, supabase extension only" 원칙 확정
 - v0.1: 초안
@@ -17,7 +18,7 @@
 
 **지금까지 "선수 한 명씩 사라진다"의 재발 원인**:
 
-- static JSON (`src/lib/constants/players-roster.json`, 769명, v0.3 실측) = 안정 기반
+- static JSON (`src/lib/constants/players-roster.json`, 인원은 시즌 중 변동) = 안정 기반
 - Supabase `players_roster` 테이블 (135명 subset) = 최신 외국인/신인 반영용
 - `/api/roster`의 merge는 **static base → supabase override (전체 레코드 통째 교체)**
 
@@ -33,7 +34,7 @@
 
 ### 1.1 결정
 
-- **`src/lib/constants/players-roster.json` = roster SSOT** (**769명**, 단일 진실 소스 / v0.3 확정)
+- **`src/lib/constants/players-roster.json` = roster SSOT** (단일 진실 소스. 인원은 콜업·트레이드로 상시 변하므로 어느 코드에도 고정하지 않는다 / v0.4)
 - **Supabase `players_roster` 테이블 = 확장/오버레이 전용** (core field 보호)
 - **원칙 (v0.2 확정)**: *Static-only roster admission, Supabase extension-only*. 신규 선수(신인/외국인 영입)는 **반드시 static JSON에 PR로 먼저 반영**된 후에만 서비스에 노출. Supabase에 단독으로 존재하는 선수는 `/api/roster` 응답에서 **완전 배제**.
 
@@ -109,7 +110,8 @@ for (const sb of supabasePlayers) {
 
 `scripts/validate-roster.ts` 신설. PR마다 자동 실행:
 
-- [x] **선수 수 검증 (v0.3 구현)**: `players-roster.json` 배열 길이 **= 769 (고정, 무예외)**. 증감 시 PR body/commit msg에 `roster-size-change` 포함 또는 env `ROSTER_SIZE_CHANGE_ACK=1` 필요. 없으면 FAIL. [구현: `scripts/validate-roster.mjs`]
+- [x] **선수 수 계약 (v0.4 개정)**: validator는 고정 count를 들지 않는다. 빈 배열만 FAIL이며, 인원 급변은 자동 크롤 workflow가 **main 대비 |Δ| > 10** 이면 자동머지를 보류하고 `roster-size-change` ack를 요구하는 방식으로 막는다. [구현: `scripts/validate-roster.mjs`, `.github/workflows/update-roster-stats.yml`]
+- [x] **파생 산출물 정합 (v0.4 신규)**: `data/baseball-qa/source-inventory.json`의 선수 집합이 roster SSOT와 exact 일치해야 한다(개수가 아니라 집합). 자동 크롤은 inventory-only로만 재생성하며, 리뷰·머지된 bootstrap migration은 고정 SHA-256으로 불변 잠금. [구현: `scripts/ci/sync-roster-derived-artifacts.mjs`, 회귀 `scripts/qa/roster-derived-sync-smoke.mjs`]
 - [ ] **kboId 중복 검사**: 동일 kboId 2회 이상 출현 시 FAIL
 - [ ] **kboId 공란/null 검사**: 빈 문자열/null/undefined 있으면 FAIL
 - [ ] **core field null 검사 (v0.2 강화)**: `name`, `team`, `teamId`, `position`, `backNo` 중 1개라도 null/undefined/빈 문자열이면 **무조건 FAIL, 예외 없음**
@@ -121,8 +123,8 @@ PR에 `roster: Validation Failed` 체크 뜨면 머지 차단.
 
 ### 3.2 Prod 런타임 모니터
 
-- [x] `/api/health/roster` 신설: 선수 수 ≠ 769 또는 팀당 <30 또는 canary 5명(원태인/구자욱/김재윤/김지찬/오스틴) 누락 시 **HTTP 503 + `issues[]` 반환**. heartbeat에서 1시간에 1회 폴링 → 503 시 Slack #cs 알림
-- `/api/roster`: 선수 수 ≠ 769면 server log에 `[roster-ssot-monitor]` error 기록 (Sentry 수집용)
+- [x] `/api/health/roster` 신설 (v0.4 개정): 고정 count 비교를 빼고 **행 shape(kboId/name/known team) 불량·kboId 중복·팀당 <30·canary 5명 누락** 시 **HTTP 503 + `issues[]` 반환**. heartbeat에서 1시간에 1회 폴링 → 503 시 Slack #cs 알림
+- `/api/roster`: 고정 count 경고 로그는 v0.4에서 제거(정상 변동마다 오알람). 이상 탐지는 `/api/health/roster`의 shape/중복/하한/canary 계약이 담당
 - `api/cron/roster` (auto-crawl) 실행 후 **DB 레코드 수가 전회 대비 -5% 초과 감소하면 rollback + 알림**
 - 매일 09:00 KST heartbeat 체크에 "`/api/roster` 응답 선수 수" 자동 점검 추가
 
