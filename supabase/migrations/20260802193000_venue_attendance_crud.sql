@@ -85,10 +85,11 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
-  v_row    venue_attendance%ROWTYPE;
-  v_target venue_attendance%ROWTYPE;
-  v_keys   TEXT[];
-  v_key    TEXT;
+  v_row      venue_attendance%ROWTYPE;
+  v_original venue_attendance%ROWTYPE;
+  v_target   venue_attendance%ROWTYPE;
+  v_keys     TEXT[];
+  v_key      TEXT;
 BEGIN
   SELECT * INTO v_row FROM venue_attendance WHERE id = p_id;
   IF NOT FOUND THEN
@@ -119,6 +120,7 @@ BEGIN
   IF v_row.deleted_at IS NOT NULL THEN
     RETURN jsonb_build_object('ok', false, 'error', 'deleted');
   END IF;
+  v_original := v_row;
 
   IF v_row.game_id <> p_game_id THEN
     SELECT * INTO v_target
@@ -153,6 +155,21 @@ BEGIN
 
   IF NOT FOUND THEN
     RETURN jsonb_build_object('ok', false, 'error', 'conflict');
+  END IF;
+
+  -- 원경기의 처리 중 수동 미디어가 나중에 archived 되더라도 기록을 되살리지 못하게
+  -- 같은 트랜잭션에서 source tombstone 을 남긴다. 이 함수가 원경기 advisory lock 을
+  -- 계속 보유하므로 story trigger 는 tombstone 커밋 뒤에 실행된다. 이후 실제 GPS 인증은
+  -- record_venue_attendance_from_story()의 diary_manual→story_geofence 승격으로 정상 복원된다.
+  IF v_original.game_id <> p_game_id THEN
+    INSERT INTO venue_attendance (
+      user_id, game_id, game_date, favorite_team_id_snapshot,
+      stadium_name, source, recorded_at, updated_at, deleted_at
+    ) VALUES (
+      v_original.user_id, v_original.game_id, v_original.game_date,
+      v_original.favorite_team_id_snapshot, v_original.stadium_name,
+      'diary_manual', v_original.recorded_at, now(), now()
+    );
   END IF;
 
   RETURN jsonb_build_object('ok', true, 'id', v_row.id);

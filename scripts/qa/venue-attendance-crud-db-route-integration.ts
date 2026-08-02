@@ -530,6 +530,25 @@ async function main() {
 
   // ── 5) 경기 자체 변경(P0-1) ────────────────────────────────────────────────
   {
+    // 먼저 archived 사진이 attendance A를 만든 상태에서 같은 경기의 pending 영상을 둔다.
+    // 이동 뒤 이 영상이 archived 되더라도 원래 경기 A가 다시 살아나면 안 된다.
+    const manualMedia = await db.query<{ id: number }>(
+      `INSERT INTO venue_stories
+         (game_id, user_id, media_type, media_url, media_bucket, media_path,
+          status, expires_at, attendance_source, favorite_team_id_snapshot,
+          game_date, stadium_name, venue_verified)
+       VALUES
+         ($1, $2, 'image', 'https://cdn.example/manual-a.jpg', 'venue-media',
+          'photos/venue-stories/manual-a.jpg', 'archived', now() + interval '7 days',
+          'diary_manual', $3, $4, '잠실', false),
+         ($1, $2, 'video', 'https://cdn.example/manual-a.mp4', 'venue-media',
+          'videos/venue-stories/manual-a.mp4', 'pending', now() + interval '7 days',
+          'diary_manual', $3, $4, '잠실', false)
+       RETURNING id`,
+      [GAME_A, OWNER, LG, "2026-06-14"],
+    );
+    const pendingMediaId = manualMedia.rows[1]!.id;
+
     const moveWrongTeam = await item.PATCH(
       authed(`http://localhost/api/me/venue-attendance/${createdBody.id}`, "owner-token", {
         method: "PATCH",
@@ -578,15 +597,50 @@ async function main() {
     );
     ok(
       "경기 변경은 행을 늘리지 않음(이동이지 신규 생성 아님)",
-      (await countRows(db, "user_id = $1", [OWNER])) === 1,
+      (await countRows(db, "user_id = $1 AND deleted_at IS NULL", [OWNER])) === 1,
+    );
+
+    await db.query(
+      `UPDATE venue_stories
+          SET status = 'archived', archived_at = now()
+        WHERE id = $1`,
+      [pendingMediaId],
+    );
+    ok(
+      "원경기 pending 수동 영상이 terminal 되어도 active 기록은 대상 1건만",
+      (await countRows(db, "user_id = $1 AND deleted_at IS NULL", [OWNER])) === 1,
+    );
+    const sourceTombstone = await db.query<{ source: string; deleted_at: string | null }>(
+      `SELECT source, deleted_at
+         FROM venue_attendance
+        WHERE user_id = $1 AND game_id = $2`,
+      [OWNER, GAME_A],
+    );
+    ok(
+      "원경기에는 GPS 승격 가능한 diary_manual tombstone 유지",
+      sourceTombstone.rows[0]?.source === "diary_manual" &&
+        sourceTombstone.rows[0]?.deleted_at != null,
+      JSON.stringify(sourceTombstone.rows[0]),
     );
     const diary = await diaryOf(list, "owner-token");
     ok(
-      "변경된 경기(LG 2:4 패)가 통계에 즉시 반영",
+      "원경기 미디어 terminal 뒤에도 변경된 경기만 다이어리 반영",
       diary.games.length === 1 &&
         diary.games[0]!.gameId === GAME_B &&
         diary.overallSummary.losses === 1,
       JSON.stringify(diary.overallSummary),
+    );
+    const stats = await statsOf("owner-token");
+    ok(
+      "원경기 미디어 terminal 뒤 venue-stats도 대상 1경기",
+      stats.overall.coverage.attendanceGames === 1,
+      JSON.stringify(stats.overall.coverage),
+    );
+
+    // 뒤 GPS fixture의 미디어 개수 검증과 격리한다. attendance tombstone은 유지한다.
+    await db.query(
+      "DELETE FROM venue_stories WHERE id = ANY($1::bigint[])",
+      [manualMedia.rows.map((row) => row.id)],
     );
   }
 
@@ -652,7 +706,7 @@ async function main() {
     );
     ok(
       "soft-delete tombstone 은 DB에 남는다(GPS 재생성 방지)",
-      (await countRows(db, "user_id = $1 AND deleted_at IS NOT NULL", [OWNER])) === 2,
+      (await countRows(db, "user_id = $1 AND deleted_at IS NOT NULL", [OWNER])) === 3,
     );
 
     const again = await list.POST(
@@ -674,19 +728,8 @@ async function main() {
 
   // ── 8) GPS 기록: 수정 불가 · 삭제 가능 · 미디어 불변 ───────────────────────
   {
-    await db.query(
-      `INSERT INTO venue_attendance
-         (user_id, game_id, game_date, favorite_team_id_snapshot, stadium_name, source)
-       VALUES ($1, $2, $3, $4, $5, 'story_geofence')`,
-      [OWNER, GAME_A, "2026-06-14", LG, "잠실"],
-    );
-    const gps = await db.query<{ id: number }>(
-      "SELECT id FROM venue_attendance WHERE user_id = $1 AND game_id = $2",
-      [OWNER, GAME_A],
-    );
-    const gpsId = gps.rows[0]!.id;
-
-    // 미디어 원본 — 삭제 후에도 반드시 남아야 한다.
+    // 실제 GPS story trigger가 이동 시 남긴 diary_manual tombstone을 인증 기록으로 승격한다.
+    // 이 경로가 막히면 원경기 재생성 차단과 함께 정상 GPS 인증까지 잃는 회귀다.
     await db.query(
       `INSERT INTO venue_stories
          (game_id, user_id, media_type, media_url, media_bucket, media_path,
@@ -697,6 +740,20 @@ async function main() {
                'story_geofence', $3, $4, true)`,
       [GAME_A, OWNER, LG, "2026-06-14"],
     );
+    const gps = await db.query<{ id: number; source: string; deleted_at: string | null }>(
+      `SELECT id, source, deleted_at
+         FROM venue_attendance
+        WHERE user_id = $1 AND game_id = $2`,
+      [OWNER, GAME_A],
+    );
+    const gpsId = gps.rows[0]!.id;
+    ok(
+      "실제 GPS 인증은 원경기 tombstone을 story_geofence로 승격",
+      gps.rows[0]!.source === "story_geofence" && gps.rows[0]!.deleted_at === null,
+      JSON.stringify(gps.rows[0]),
+    );
+
+    // 미디어 원본 — 삭제 후에도 반드시 남아야 한다.
     const mediaBefore = await db.query<{ n: number }>(
       "SELECT count(*)::int AS n FROM venue_stories WHERE user_id = $1",
       [OWNER],
