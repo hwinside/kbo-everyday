@@ -8,6 +8,7 @@ import { chromium } from "playwright";
 import { readFileSync, writeFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
+import { preserveExistingRosterPlayers } from "./lib/roster-preservation.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = join(__dirname, "..");
@@ -294,12 +295,8 @@ async function main() {
   // Merge with existing roster (keep existing players who have no 2026 stats yet).
   // If a numeric KBO id is an alias of an FP/AQ foreign canonical id, never
   // re-add it as a separate roster row.
-  for (const [kboId, existing] of existingMap) {
-    const canonicalId = canonicalKboId(kboId);
-    if (!allPlayers.has(canonicalId)) {
-      allPlayers.set(canonicalId, { ...existing, kboId: canonicalId });
-    }
-  }
+  const preserved = preserveExistingRosterPlayers(allPlayers, existingMap, canonicalKboId);
+  console.log(`  기존 roster 보존(군 복무·미출장 포함): ${preserved}명`);
 
   const roster = [...allPlayers.values()]
     .map((p) => ({

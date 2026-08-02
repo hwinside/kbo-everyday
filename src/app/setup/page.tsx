@@ -8,6 +8,7 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { trackEvent, OnboardingEvents, flushNativeMetaForSignup } from "@/lib/analytics";
 import { getFavoritePlayers } from "@/lib/store/favorites";
+import { NICKNAME_INPUT_PLACEHOLDER, NICKNAME_MAX_LENGTH, validateNickname } from "@/lib/validation/nickname";
 
 export default function SetupPage() {
   const { user } = useAuth();
@@ -70,14 +71,10 @@ export default function SetupPage() {
       return;
     }
     // 형식 검증 먼저 — 형식 위반이면 네트워크 호출하지 않음
-    if (trimmed.length < 2 || trimmed.length > 12) {
+    const validationError = validateNickname(trimmed);
+    if (validationError) {
       setNickStatus("format-error");
-      setNickHint("닉네임은 2~12자로 입력해주세요");
-      return;
-    }
-    if (!/^[가-힣a-zA-Z0-9]+$/.test(trimmed)) {
-      setNickStatus("format-error");
-      setNickHint("한글, 영문, 숫자만 사용 가능합니다");
+      setNickHint(validationError);
       return;
     }
 
@@ -152,12 +149,9 @@ export default function SetupPage() {
 
   function handleNicknameNext() {
     const trimmed = nickname.trim();
-    if (trimmed.length < 2 || trimmed.length > 12) {
-      setError("닉네임은 2~12자로 입력해주세요");
-      return;
-    }
-    if (!/^[가-힣a-zA-Z0-9]+$/.test(trimmed)) {
-      setError("한글, 영문, 숫자만 사용 가능합니다");
+    const validationError = validateNickname(trimmed);
+    if (validationError) {
+      setError(validationError);
       return;
     }
     // 실시간 체크에서 중복 확인된 경우 차단
@@ -254,8 +248,8 @@ export default function SetupPage() {
                 type="text"
                 value={nickname}
                 onChange={(e) => { setNickname(e.target.value); setError(""); }}
-                placeholder="닉네임 (2~12자)"
-                maxLength={12}
+                placeholder={NICKNAME_INPUT_PLACEHOLDER}
+                maxLength={NICKNAME_MAX_LENGTH}
                 className={`w-full bg-bg-tertiary border rounded-xl px-4 py-3 pr-10 text-text-primary placeholder:text-text-tertiary focus:outline-none transition-colors ${
                   nickStatus === "available"
                     ? "border-emerald-500 focus:border-emerald-500"

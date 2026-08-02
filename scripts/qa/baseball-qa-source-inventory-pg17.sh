@@ -51,6 +51,10 @@ BASELINE_PLAYERS=$(grep -c ", 'player'," supabase/migrations/20260731_baseball_g
 [ "$("${PSQL[@]}" -c 'select count(*) from public.genius_rag_sources')" = "$((BASELINE_TOTAL + 1))" ]
 [ "$("${PSQL[@]}" -c "select count(*) from public.genius_rag_sources where source_key='namu:player:56103' and metadata->>'team'='LG'")" = "1" ]
 [ "$("${PSQL[@]}" -c "select count(*) from public.genius_rag_sources where source_key in ('namu:player:55435','namu:player:69428') and metadata->>'team'='LG'")" = "2" ]
+"${PSQL[@]}" -f supabase/migrations/20260802222500_baseball_genius_roster_source_55832.sql
+"${PSQL[@]}" -f supabase/migrations/20260802222500_baseball_genius_roster_source_55832.sql
+[ "$("${PSQL[@]}" -c 'select count(*) from public.genius_rag_sources')" = "$((BASELINE_TOTAL + 2))" ]
+[ "$("${PSQL[@]}" -c "select count(*) from public.genius_rag_sources where source_key='namu:player:55832' and entity_id='55832' and page_title='이율예' and metadata->>'team'='SSG'")" = "1" ]
 [ "$("${PSQL[@]}" -c "select count(*) from public.claim_baseball_genius_rag_batch(50, 60) where entity_type='player'")" = "0" ]
 
 "${PSQL[@]}" <<'SQL'
