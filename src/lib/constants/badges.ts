@@ -9,7 +9,7 @@ export interface BadgeDefinition {
 
 // 1차 프로필에서 노출하는 뱃지 ID (데이터 추적 가능한 것만)
 export const ACTIVE_BADGE_IDS = new Set([
-  "founder",
+  "founder", "chairman",
   "debut", "writer-1", "writer-2", "writer-3", "writer-4", "writer-5",
   "popular-1", "popular-2", "popular-3", "popular-4", "popular-5",
   "inviter-1", "inviter-5", "inviter-10", "inviter-30", "inviter-50", "pioneer-2026",
@@ -22,6 +22,7 @@ export const ACTIVE_BADGE_IDS = new Set([
 
 export const ALL_BADGES: BadgeDefinition[] = [
   // === 특별 ===
+  { id: "chairman", name: "크보팬 회장", icon: "🎩", description: "크보팬 공식 회장 (한정 수여)", category: "special", rarity: "legendary" },
   { id: "founder", name: "파운더", icon: "👑", description: "크보팬 초창기 멤버", category: "special", rarity: "legendary" },
   { id: "wiki", name: "위키 기여자", icon: "📝", description: "선수 프로필 제보 채택", category: "special", rarity: "epic" },
   { id: "bug-hunter", name: "버그헌터", icon: "🐛", description: "버그 제보로 앱 개선에 기여", category: "special", rarity: "epic" },
@@ -105,8 +106,13 @@ export const ALL_BADGES: BadgeDefinition[] = [
   { id: "event2026-writing-supporter", name: "서포터즈", icon: "📣", description: "얼리멤버 이벤트 글쓰기 부문 40~50위", category: "season", rarity: "common" },
 ];
 
-// 활성 뱃지만 노출
-export const BADGES = ALL_BADGES.filter(b => ACTIVE_BADGE_IDS.has(b.id));
+// 한정 수여 뱃지: 미획득자에게는 잠금 슬롯조차 노출하지 않는다 (보유자에게만 표시)
+export const EXCLUSIVE_BADGE_IDS = new Set([
+  "chairman",
+]);
+
+// 활성 뱃지만 노출 (한정 수여 뱃지는 기본 카탈로그에서 제외)
+export const BADGES = ALL_BADGES.filter(b => ACTIVE_BADGE_IDS.has(b.id) && !EXCLUSIVE_BADGE_IDS.has(b.id));
 
 export const BADGE_MAP = Object.fromEntries(ALL_BADGES.map(b => [b.id, b]));
 
