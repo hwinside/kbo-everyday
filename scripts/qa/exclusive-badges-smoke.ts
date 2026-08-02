@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
   ACTIVE_BADGE_IDS,
   ALL_BADGES,
@@ -148,6 +150,42 @@ const cleanupStages = [
   "auth-delete",
   "auth-postcondition",
 ] as const;
+
+function runCleanupCli(injection = "") {
+  const runner = resolve("scripts/qa/badge-write-rls-regression.mjs");
+  const fakeFetch = resolve("scripts/qa/badge-write-fake-fetch.mjs");
+  return spawnSync(process.execPath, ["--import", fakeFetch, runner], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      NEXT_PUBLIC_SUPABASE_URL: "https://offline-badge-qa.invalid",
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: "offline-anon-key",
+      SUPABASE_SERVICE_ROLE_KEY: "offline-service-key",
+      QA_INJECT_CLEANUP_FAILURE: injection,
+    },
+  });
+}
+
+const cleanCli = runCleanupCli();
+assert.equal(
+  cleanCli.status,
+  0,
+  `actual CLI main→cleanup call-site failed with fake fetch:\n${cleanCli.stdout}\n${cleanCli.stderr}`
+);
+assert.match(cleanCli.stdout, /cleanup: badges=0 profile=0 auth=0/, "actual CLI cleanup reaches 0/0/0");
+
+const injectedCli = runCleanupCli("badge-delete-throw");
+assert.notEqual(
+  injectedCli.status,
+  0,
+  "removing QA_INJECT_CLEANUP_FAILURE from the actual main→runBadgeCleanup call-site must turn this gate RED"
+);
+assert.match(
+  `${injectedCli.stdout}\n${injectedCli.stderr}`,
+  /cleanup fail-close:.*injected badge-delete fetch failure/,
+  "actual CLI call-site forwards cleanup injection and fails closed"
+);
 
 function cleanResponse(stage: string) {
   if (stage === "auth-postcondition") return { status: 404, ok: false, text: "not found", json: null };
