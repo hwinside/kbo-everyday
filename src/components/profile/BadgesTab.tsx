@@ -2,7 +2,7 @@
 
 import { motion } from "framer-motion";
 import GlassCard from "@/components/ui/GlassCard";
-import { BADGES, ACTIVE_BADGE_IDS, RARITY_COLORS, CATEGORY_LABELS } from "@/lib/constants/badges";
+import { getVisibleBadgeCatalog, RARITY_COLORS, CATEGORY_LABELS } from "@/lib/constants/badges";
 import type { BadgeDefinition } from "@/lib/constants/badges";
 
 interface UserBadge {
@@ -42,11 +42,13 @@ const RARITY_SHADOW: Record<string, string> = {
 
 export default function BadgesTab({ badges, earnedBadgeIds, onSelectBadge }: BadgesTabProps) {
   const categories = Object.entries(CATEGORY_LABELS);
+  const visibleBadges = getVisibleBadgeCatalog(earnedBadgeIds);
+  const visibleBadgeIds = new Set(visibleBadges.map(badge => badge.id));
 
   return (
     <div className="px-5 space-y-4">
       {categories.map(([catId, catLabel]) => {
-        const catBadges = BADGES.filter(b => b.category === catId);
+        const catBadges = visibleBadges.filter(b => b.category === catId);
         if (catBadges.length === 0) return null;
         return (
           <GlassCard key={catId} className="p-4">
@@ -108,7 +110,7 @@ export default function BadgesTab({ badges, earnedBadgeIds, onSelectBadge }: Bad
       })}
 
       <p className="text-center text-xs text-text-tertiary">
-        {badges.filter(b => ACTIVE_BADGE_IDS.has(b.badge_id)).length}개 획득 / {BADGES.length}개 중
+        {badges.filter(b => visibleBadgeIds.has(b.badge_id)).length}개 획득 / {visibleBadges.length}개 중
       </p>
     </div>
   );
