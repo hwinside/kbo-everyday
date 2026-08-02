@@ -77,20 +77,33 @@ function ok(name: string, cond: boolean, detail?: string) {
 }
 
 // ── 고정 시나리오 ───────────────────────────────────────────────────────────
-// 오늘(KST) 은 실행일마다 달라지므로 페이지가 쓰는 getKSTToday 와 같은 방식으로 계산하고,
-// "오늘=0건, 내일=LG 경기" 를 API stub 으로 만든다. 이러면 어떤 날 실행해도 동일 계약.
+// 오늘(KST) 은 실행일마다 달라지므로 페이지가 쓰는 getKSTToday 와 같은 방식으로 계산한다.
+//
+// ⚠️ 이전 판본은 D+1 에 정상 경기 1건만 놓아서 페이지의 취소 제외 필터를 아예 태우지
+// 못했다(삼순 NO-GO 2026-08-03: `g.status !== "cancelled"` 를 지워도 10/10 GREEN).
+// 그래서 fixture 를 "D+1 = 최애팀 **취소** 경기 / D+2 = 최애팀 정상 경기" 로 바꿔,
+// 필터가 없으면 D+1 취소 경기를 집어 날짜·링크가 틀리도록 경계를 실제로 태운다.
 const MY_TEAM_ID = 1; // LG
 const kstNow = new Date(Date.now() + 9 * 60 * 60 * 1000);
 const TODAY = kstNow.toISOString().slice(0, 10);
-const tomorrow = new Date(kstNow.getTime() + 24 * 60 * 60 * 1000);
-const NEXT_DATE = tomorrow.toISOString().slice(0, 10);
+/** D+1 — 최애팀 경기가 있지만 **취소**. 선택되면 안 된다. */
+const CANCELLED_DATE = new Date(kstNow.getTime() + 24 * 60 * 60 * 1000)
+  .toISOString().slice(0, 10);
+/** D+2 — 최애팀 정상 경기. 이것이 카드에 떠야 한다. */
+const NEXT_DATE = new Date(kstNow.getTime() + 2 * 24 * 60 * 60 * 1000)
+  .toISOString().slice(0, 10);
 const NEXT_GAME_ID = `${NEXT_DATE.replace(/-/g, "")}LGSK0`;
+const CANCELLED_GAME_ID = `${CANCELLED_DATE.replace(/-/g, "")}LGOB0`;
 const compact = (iso: string) => iso.replace(/-/g, "");
 
 /** 페이지가 기대하는 요일 표기(월/일(요일)) — 요일 off-by-one 을 잡기 위해 독립 계산. */
 const WEEKDAY = ["일", "월", "화", "수", "목", "금", "토"];
-const [ny, nm, nd] = NEXT_DATE.split("-").map(Number);
-const EXPECTED_BADGE_DATE = `${nm}/${nd}(${WEEKDAY[new Date(ny, nm - 1, nd).getDay()]})`;
+const badgeDateOf = (iso: string) => {
+  const [y, m, d] = iso.split("-").map(Number);
+  return `${m}/${d}(${WEEKDAY[new Date(y, m - 1, d).getDay()]})`;
+};
+const EXPECTED_BADGE_DATE = badgeDateOf(NEXT_DATE);
+const CANCELLED_BADGE_DATE = badgeDateOf(CANCELLED_DATE);
 
 const NEXT_GAME_PAYLOAD = {
   gameId: NEXT_GAME_ID,
@@ -101,6 +114,17 @@ const NEXT_GAME_PAYLOAD = {
   status: "scheduled",
   time: "18:30",
   stadium: "문학",
+};
+/** D+1 최애팀 취소 경기 — 취소 제외 필터가 없으면 이게 잡혀 D+2 대신 노출된다. */
+const CANCELLED_GAME_PAYLOAD = {
+  gameId: CANCELLED_GAME_ID,
+  awayTeamId: MY_TEAM_ID,
+  homeTeamId: 2,
+  awayScore: null,
+  homeScore: null,
+  status: "cancelled",
+  time: "18:30",
+  stadium: "잠실",
 };
 /** 오늘 열리는 타팀 경기 — "오늘 카드에 날짜가 새면 안 된다" 검증용. */
 const TODAY_OTHER_GAME = {
@@ -126,6 +150,7 @@ function installFetchStub() {
       const m = url.match(/date=(\d{8})/);
       const date = m?.[1] ?? "";
       if (date === compact(TODAY)) return json({ games: [TODAY_OTHER_GAME] });
+      if (date === compact(CANCELLED_DATE)) return json({ games: [CANCELLED_GAME_PAYLOAD] });
       if (date === compact(NEXT_DATE)) return json({ games: [NEXT_GAME_PAYLOAD] });
       return json({ games: [] });
     }
@@ -195,6 +220,20 @@ async function main() {
     `다음 경기 카드 배지에 날짜(${EXPECTED_BADGE_DATE}) 포함`,
     dateBadge != null,
     `badges=${JSON.stringify(badges)}`,
+  );
+
+  // ── 취소 경계: D+1 취소 경기를 건너뛰고 D+2 를 고른다 ──────────────
+  // 페이지의 `g.status !== "cancelled"` 가 없어지면 D+1 취소 경기가 잡혀
+  // 이 두 assert 가 동시에 깨진다(삼순 NO-GO 보완).
+  ok(
+    `취소된 D+1 경기(${CANCELLED_BADGE_DATE})를 선택하지 않음`,
+    !badges.some((b) => b.includes(CANCELLED_BADGE_DATE)),
+    `badges=${JSON.stringify(badges)}`,
+  );
+  ok(
+    "취소 경기 id 가 화면에 등장하지 않음",
+    !el.innerHTML.includes(CANCELLED_GAME_ID),
+    `cancelledId=${CANCELLED_GAME_ID}`,
   );
   ok(
     "다음 경기 배지에 시간 유지",
