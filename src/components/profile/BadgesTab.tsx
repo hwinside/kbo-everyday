@@ -97,6 +97,11 @@ export default function BadgesTab({ badges, earnedBadgeIds, onSelectBadge }: Bad
                         fontSize: "10px",
                         color: earned ? RARITY_COLORS[badge.rarity] : "rgba(180,180,180,0.7)",
                         textShadow: earned ? `0 0 6px ${RARITY_COLORS[badge.rarity]}40` : "none",
+                        // 한글 배지명은 어절 단위로 줄바꿈한다.
+                        // (기본값이면 "크보팬 회장남편" 이 "크보팬 회 / 장남편" 으로 쪼개진다)
+                        wordBreak: "keep-all",
+                        // 공백 없는 긴 토큰만 예외적으로 강제 줄바꿈 — 카드 밖으로 넘치지 않게
+                        overflowWrap: "break-word",
                       }}
                     >
                       {badge.name}
