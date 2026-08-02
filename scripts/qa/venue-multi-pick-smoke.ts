@@ -965,6 +965,9 @@ async function composerProductionWiringRegression() {
   const delayedInitialList = new Promise<NativeListPage>((resolve) => {
     resolveInitialList = resolve;
   });
+  let delayNextList = false;
+  let resolveRapidList!: (page: NativeListPage) => void;
+  let delayedRapidList: Promise<NativeListPage> | null = null;
   const listMediaCalls: NativeListOptions[] = [];
   const exportCalls: string[] = [];
   const exportChunkB64 = Buffer.from("orig").toString("base64"); // 4 bytes
@@ -976,6 +979,13 @@ async function composerProductionWiringRegression() {
         listMedia: async (options: NativeListOptions) => {
           listMediaCalls.push(options);
           if (listMediaCalls.length === 1) return delayedInitialList;
+          if (delayNextList) {
+            delayNextList = false;
+            delayedRapidList = new Promise<NativeListPage>((resolve) => {
+              resolveRapidList = resolve;
+            });
+            return delayedRapidList;
+          }
           return options.mediaTypes?.join(",") === "video" ? videoPage() : imagePage();
         },
         exportMedia: async ({ id }: { id: string }) => {
@@ -1076,6 +1086,37 @@ async function composerProductionWiringRegression() {
     q('[data-asset-id="n1"]') == null && q('[data-asset-id="n2"]') == null,
   );
 
+  // 연속 전체→영상→사진: 전체 재조회가 pending인 동안 두 탭을 빠르게 눌러도 중간 영상은
+  // 호출하지 않고 마지막 사진 요청 하나로 합쳐져야 한다(삼순 1차 NO-GO 보완 게이트).
+  delayNextList = true;
+  await act(async () => {
+    (q('[data-library-filter="all"]') as HTMLElement).click();
+  });
+  await waitFor(
+    "연속 탭 race 전제 — 전체 재조회 pending",
+    () => listMediaCalls.length === 3 && delayedRapidList != null,
+  );
+  await act(async () => {
+    (q('[data-library-filter="video"]') as HTMLElement).click();
+    (q('[data-library-filter="image"]') as HTMLElement).click();
+  });
+  await act(async () => {
+    resolveRapidList(imagePage());
+    await Promise.resolve();
+  });
+  await waitFor(
+    "연속 전체→영상→사진은 마지막 image 네이티브 재조회·렌더",
+    () =>
+      listMediaCalls.length === 4 &&
+      listMediaCalls[3]?.mediaTypes?.join(",") === "image" &&
+      q('[data-asset-id="n1"]') != null,
+  );
+  ok(
+    "연속 탭 중간 video 요청/결과는 남지 않음",
+    listMediaCalls.slice(3).every((call) => call.mediaTypes?.join(",") !== "video") &&
+      q('[data-asset-id="v1"]') == null,
+  );
+
   // 기존 업로드 production 배선 회귀는 전체 탭의 사진 2장으로 계속 검증한다.
   await act(async () => {
     (q('[data-library-filter="all"]') as HTMLElement).click();
@@ -1085,7 +1126,7 @@ async function composerProductionWiringRegression() {
   await waitFor(
     "실제 컴포넌트 — 선체크 통과 후 커스텀 그리드 자동 오픈(네이티브 타일 렌더)",
     () =>
-      listMediaCalls.length === 3 &&
+      listMediaCalls.length === 5 &&
       q('[data-asset-id="n1"]') != null &&
       q('[data-asset-id="n2"]') != null,
   );
