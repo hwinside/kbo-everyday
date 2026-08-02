@@ -551,6 +551,7 @@
     "delete_own_chat_message": "deletes one message",
     "finish_admin_broadcast_recipient": "state transition for one recipient",
     "increment_post_view": "increments one post counter",
+    "lookup_auth_user_id_by_email": "returns at most one auth.users UUID for one normalized email",
     "leaderboard_invite_rollup_refresh": "full snapshot recompute of the invite leaderboard rollup (advisory-locked, idempotent), returns text",
     "leaderboard_writing_rollup_refresh": "full snapshot recompute of the writing leaderboard rollup, returns void",
     "log_urgent_notice_error": "writes one delivery error",

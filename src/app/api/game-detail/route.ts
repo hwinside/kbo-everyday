@@ -10,6 +10,7 @@ import { resolvePlayer } from "@/lib/utils/resolve-player";
 import { fetchNaverRelayBatterCounts } from "@/lib/naver-relay-counts";
 import {
   naverGameId,
+  parseNaverBoxScore,
   parseNaverScoreBoardLinescore,
 } from "@/lib/crawler/naver-record";
 import { fetchNaverGames } from "@/lib/crawler/naver-games";
@@ -60,6 +61,12 @@ export interface GameDetailResponse {
     awayPitchers: PitcherRecord[];
     homePitchers: PitcherRecord[];
   } | null;
+  trace?: {
+    sourceAtMs: number;
+    fetchedAtMs: number;
+    lineupSource: "none" | "kbo-unconfirmed" | "kbo-confirmed" | "naver-preview" | "naver-confirmed";
+    boxScoreSource: "none" | "kbo" | "naver";
+  };
 }
 
 export interface LineupEntry {
@@ -494,33 +501,21 @@ export async function fetchNaverRecord(
       });
     }
 
-    function toPitchers(arr: Record<string, unknown>[]): PitcherRecord[] {
-      return (arr || []).map((p) => ({
-        name: String(p.name || ""),
-        inningsPitched: String(p.inn || "0"),
-        decision: String(p.wls || ""),
-        pitchCount: 0, // Naver record doesn't provide pitch count
-        hits: Number(p.hit) || 0,
-        runs: Number(p.r) || 0,
-        hr: Number(p.hr) || 0,
-        strikeouts: Number(p.kk) || 0,
-        walks: Number(p.bb) || 0,
-        earnedRuns: Number(p.er) || 0,
-        battersFaced: Number(p.pa) || 0,
-        atBats: Number(p.ab) || 0,
-        era: String(p.era || "0.00"),
-      }));
-    }
-
-    const boxScore: GameDetailResponse["boxScore"] =
-      rd.battersBoxscore && rd.pitchersBoxscore
-        ? {
-            awayBatters: toBatters(rd.battersBoxscore.away),
-            homeBatters: toBatters(rd.battersBoxscore.home),
-            awayPitchers: toPitchers(rd.pitchersBoxscore.away),
-            homePitchers: toPitchers(rd.pitchersBoxscore.home),
-          }
-        : null;
+    const canonicalBox = parseNaverBoxScore(rd);
+    const boxScore: GameDetailResponse["boxScore"] = canonicalBox ? {
+      awayBatters: toBatters(rd.battersBoxscore.away),
+      homeBatters: toBatters(rd.battersBoxscore.home),
+      awayPitchers: canonicalBox.awayPitchers.map((pitcher, index) => ({
+        ...pitcher,
+        battersFaced: Number(rd.pitchersBoxscore.away[index]?.pa) || 0,
+        atBats: Number(rd.pitchersBoxscore.away[index]?.ab) || 0,
+      })),
+      homePitchers: canonicalBox.homePitchers.map((pitcher, index) => ({
+        ...pitcher,
+        battersFaced: Number(rd.pitchersBoxscore.home[index]?.pa) || 0,
+        atBats: Number(rd.pitchersBoxscore.home[index]?.ab) || 0,
+      })),
+    } : null;
 
     // Linescore from scoreBoard (summary canonical source 와 공용 파서).
     const linescore: GameDetailResponse["linescore"] = parseNaverScoreBoardLinescore(rd.scoreBoard);
@@ -611,6 +606,7 @@ function reportDetailDegradation(
 }
 
 export async function GET(req: NextRequest) {
+  const sourceAtMs = Date.now();
   const gameId = req.nextUrl.searchParams.get("gameId");
   if (!gameId) {
     return NextResponse.json({ error: "gameId is required" }, { status: 400 });
@@ -688,6 +684,8 @@ export async function GET(req: NextRequest) {
   }
 
   try {
+    let lineupSource: NonNullable<GameDetailResponse["trace"]>["lineupSource"] = "none";
+    let boxScoreSource: NonNullable<GameDetailResponse["trace"]>["boxScoreSource"] = "none";
     const timeoutBatch = {
       data: [null, null, null],
       reasons: ["timeout" as DegradationReason],
@@ -718,10 +716,12 @@ export async function GET(req: NextRequest) {
     let meta = parsedScoreBoard.meta;
     const { linescore: kboLinescore, status: scoreBoardStatus } = parsedScoreBoard;
     let lineup = parseLineup(lineupRes ?? []);
+    if (lineup) lineupSource = lineup.isToday ? "kbo-confirmed" : "kbo-unconfirmed";
     // KBO GetLineUpAnalysis 열화(204/빈응답/타임아웃)면 Naver preview 라인업으로 표시 폴백.
     // KBO 가 응답한 미확정(isToday=false) 라인업은 그대로 존중한다(폴백 트리거 아님).
     if (!lineup) {
       lineup = await untilDeadline(naverLineupPromise, deadlineSignal, null);
+      if (lineup) lineupSource = "naver-confirmed";
     }
     // KBO가 LINEUP_CK=false로 직전 경기 타순을 돌려주는 동안에도 Naver preview에는
     // 오늘 예고선발 1+1이 먼저 발표된다. 직전 타순은 폐기하고 오늘 선발만 별도 보존해,
@@ -736,9 +736,11 @@ export async function GET(req: NextRequest) {
           awayStarter: starters.away,
           homeStarter: starters.home,
         };
+        lineupSource = "naver-preview";
       }
     }
     let boxScore = parseBoxScore(boxScoreRes);
+    if (boxScore) boxScoreSource = "kbo";
     let linescore = kboLinescore;
 
     // 이닝별 셀이 하나라도 채워졌는지. 경기 종료 전환 순간 KBO 스코어보드가
@@ -750,21 +752,38 @@ export async function GET(req: NextRequest) {
     // ScoreBoard가 scheduled인데 BoxScore에 실데이터가 있으면 → 종료된 경기
     const hasRealBoxScore = boxScore &&
       (boxScore.awayBatters.some(b => b.atBats > 0) || boxScore.homeBatters.some(b => b.atBats > 0));
+    const hasPitchCountPartial = Boolean(boxScore && [
+      ...boxScore.awayPitchers,
+      ...boxScore.homePitchers,
+    ].some((pitcher) => (
+      pitcher.inningsPitched.trim() !== ""
+      && !/^0(?:\s+0\/3)?$/.test(pitcher.inningsPitched.trim())
+      && pitcher.pitchCount <= 0
+    )));
+    const hasCompleteBoxScore = Boolean(hasRealBoxScore && !hasPitchCountPartial);
     const kboExpectsDetailData =
       scoreBoardStatus === "live" || scoreBoardStatus === "final" || !!hasRealBoxScore;
     const kboDetailDegraded =
       !meta ||
-      (kboExpectsDetailData && (!hasInningBreakdown(kboLinescore) || !hasRealBoxScore));
+      (kboExpectsDetailData && (!hasInningBreakdown(kboLinescore) || !hasCompleteBoxScore));
 
     // KBO BoxScore가 비어있거나, KBO linescore에 이닝별 값이 없으면 네이버 record API fallback
     let naver: Awaited<ReturnType<typeof fetchNaverRecord>> = null;
-    if (!hasRealBoxScore || !hasInningBreakdown(linescore)) {
+    if (!hasCompleteBoxScore || !hasInningBreakdown(linescore)) {
       naver = await untilDeadline(naverRecordPromise, deadlineSignal, null);
-      // 박스스코어는 KBO가 비어있을 때만 네이버로 교체
-      if (!hasRealBoxScore && naver?.boxScore) {
+      // KBO box가 비거나 실제 투구이닝의 투구수가 0인 partial이면, 완전성 검증을
+      // 통과한 Naver record로만 교체한다. Naver도 partial/timeout이면 box 전체를
+      // 숨겨 거짓 0을 정상값으로 노출하지 않는다.
+      if (!hasCompleteBoxScore && naver?.boxScore) {
         const naverHasData = naver.boxScore.awayBatters.some(b => b.atBats > 0)
           || naver.boxScore.homeBatters.some(b => b.atBats > 0);
-        if (naverHasData) boxScore = naver.boxScore;
+        if (naverHasData) {
+          boxScore = naver.boxScore;
+          boxScoreSource = "naver";
+        }
+      } else if (!hasCompleteBoxScore) {
+        boxScore = null;
+        boxScoreSource = "none";
       }
       // KBO linescore가 없거나 이닝별 값이 비어있으면 네이버 이닝 스코어로 폴백
       const naverLs = naver?.linescore ?? null;
@@ -851,12 +870,23 @@ export async function GET(req: NextRequest) {
         };
       })(),
       boxScore,
+      trace: {
+        sourceAtMs,
+        fetchedAtMs: Date.now(),
+        lineupSource,
+        boxScoreSource,
+      },
     };
 
     const actualKboFailure = kboBatch.reasons[0] ?? kboListResult.reason ?? null;
     const expectsDetailData = status === "live" || status === "final";
     const missingExpectedKboData =
-      expectsDetailData && (!meta || !hasInningBreakdown(kboLinescore) || !hasRealBoxScore);
+      expectsDetailData && (
+        !meta
+        || !hasInningBreakdown(kboLinescore)
+        || !hasRealBoxScore
+        || hasPitchCountPartial
+      );
     const naverHasExpectedData =
       hasInningBreakdown(naver?.linescore ?? null) || !!hasRealBoxScoreFinal || !!listGame;
     const bothSourcesUnavailable =

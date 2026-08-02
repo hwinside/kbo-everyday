@@ -21,7 +21,9 @@ export const MIN_QUESTION_LEN = BASEBALL_GENIUS_MIN_QUESTION_LENGTH;
 export const MAX_QUESTION_LEN = BASEBALL_GENIUS_MAX_QUESTION_LENGTH;
 
 export const BLOCKED_ANSWER = "야구 룰/용어에 대한 질문만 답할 수 있어요. 예: \"보크가 뭐야?\"";
-export const UNSURE_ANSWER = "잘 모르겠어요. 더 정확히 알게 되면 용어사전에 추가할게요!";
+// LLM이 야구 룰/용어인지 확신하지 못한 경우 — 차단 문구가 아니라 확인 질문이다.
+export const UNSURE_ANSWER =
+  "어떤 야구 룰/용어를 여쭤보신 걸까요? 조금만 더 자세히 적어주시면 정확히 답해드릴게요! ⚾";
 export const SERVICE_REDIRECT_ANSWER =
   "크보팬 서비스 관련 문의는 마이페이지 > 피드백 보내기로 보내주시면 운영팀이 확인해요! 저는 야구 룰/용어 질문을 도와드릴게요 ⚾";
 export const HISTORY_HOLD_ANSWER =
@@ -32,9 +34,50 @@ export const CONTEXT_MISSING_ANSWER =
 
 export const LLM_AMBIGUOUS_ANSWER =
   "답변을 저장하는 과정에서 문제가 생겨 이번 질문에는 답을 드리지 못했어요. 같은 질문을 다시 보내주시면 새로 답해드릴게요! ⚾";
+// 직전 답변에 대한 감사·확인 인사 — 질문이 아니라 대화 행위다. 차단 문구를 보내면 안 된다.
+export const ACK_ANSWER = "도움이 됐다니 다행이에요! ⚾";
 
+/**
+ * 단독 감사·확인 인사 폐쇄집합 (삼순 GO / 신기능 B).
+ * `고마워`처럼 직전 답변에 대한 대화 행위는 야구 질문이 아니지만 차단 대상도 아니다.
+ * 폐쇄집합 **full-string 완전일치**만 ACK로 분기한다 — substring 매칭을 하면
+ * `고마운데 주식 추천해줘`처럼 감사 뒤에 새 요청이 붙은 문장이 판정을 우회한다.
+ */
+const ACK_PHRASES = [
+  "고마워", "고마워요", "고마웠어", "고맙습니다", "고맙다",
+  "감사", "감사해", "감사해요", "감사합니다", "감사드립니다",
+  "ㄳ", "ㄱㅅ", "땡큐", "땡스", "thx", "thanks", "thank you",
+  "잘 알겠어", "잘 알겠어요", "알겠어", "알겠어요", "알겠습니다",
+  "이해했어", "이해했어요", "이해됐어", "이해됐어요",
+] as const;
+
+/** 앞뒤 공백 제거 · 중복 공백 축약 · 문말 구두점 제거 · 소문자 · NFC */
+function normalizeAck(value: string): string {
+  return value
+    .normalize("NFC")
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/[?!.,~…♡❤⚾🙏😊ㅎㅋ]+$/u, "")
+    .trim();
+}
+
+const ACK_SET = new Set(ACK_PHRASES.map(normalizeAck));
+
+/**
+ * 단독 감사·확인 인사인지 (폐쇄집합 full-string 완전일치).
+ * 뒤에 새 요청절이 붙은 문장(`고마워 근데 날씨 알려줘`)은 일치하지 않으므로 기존 판정으로 간다.
+ */
+export function isAckPhrase(question: string): boolean {
+  return ACK_SET.has(normalizeAck(question));
+}
+
+/** LLM 판정 계약 (spec: 야구 룰/용어 판정 3분기). */
+export const RULE_TERM_SENTINEL = "BASEBALL_RULE_TERM";
 export const NOT_BASEBALL_SENTINEL = "NOT_BASEBALL";
 export const UNSURE_SENTINEL = "UNSURE";
+/** 구 프롬프트가 쓰던 status 값 — RULE_TERM과 동일 의미로 매핑한다 (in-flight 응답 호환). */
+export const LEGACY_ANSWER_SENTINEL = "ANSWER";
 
 export interface GlossaryEntry {
   term: string;
@@ -58,6 +101,7 @@ export type QuestionRoute =
   | "history_hold"
   | "blocked"
   | "context_missing"
+  | "ack"
   | "baseball_rule_term";
 export type MatchPath =
   | "dictionary"
@@ -67,6 +111,8 @@ export type MatchPath =
   | "history_hold"
   | "blocked"
   | "context_missing"
+  // 단독 감사·확인 인사 — LLM/캐시 없이 결정론 응답 (#983 모니터에서 별도 라벨).
+  | "ack"
   | "unsure"
   | "limited"
   | "error"
@@ -127,7 +173,7 @@ const HISTORY_CONTEXT_WORDS = [
 ];
 const STAT_WORDS = [
   "타율", "방어율", "평균자책", "출루율", "장타율", "ops", "war", "wrc",
-  "홈런", "안타", "타점", "도루", "승", "패", "세이브", "홀드", "삼진", "기록", "스탯",
+  "홈런", "안타", "타점", "도루", "승", "승수", "패", "세이브", "홀드", "삼진", "기록", "스탯",
 ];
 const TEAM_WORDS = [
   "기아", "두산", "롯데", "삼성", "한화", "키움", "엘지", "lg", "kt", "ssg", "nc",
@@ -140,12 +186,98 @@ const BASEBALL_WORDS = [
   "도루", "병살", "태그", "세이프", "엔트리", "로스터", "피치클락", "abs", "시프트",
   "규칙", "용어", "타율", "방어율", "평균자책", "기록", "스탯", "war",
 ];
+/**
+ * 인젝션 지시부의 "명령형·연결형"만 잡는 꼬리 (삼순 4차 P0).
+ * `(무시|잊)`처럼 어간만 보면 사용자의 회상형("규칙 잊었어 다시 알려줘")까지 인젝션으로
+ * 오탐한다. 어미를 명시 열거해 명령/연결형만 남기고, 뒤에 `도`가 붙는 양보형
+ * ("무시해도 되나요")은 lookahead로 제외한다.
+ */
+const INJECTION_COMMAND_TAIL = "(?:무시\\s*(?:해주세요|해줘|해라|하라|하고|해)|잊\\s*(?:어주세요|어버려|어라|어줘|으라|고|어))(?!도)";
+
 const INJECTION_PATTERNS = [
-  /이전\s*(지시|명령).*(무시|잊)/i,
+  // "이전/위/앞의 지시·명령·규칙·프롬프트 무시" 계열. BASEBALL_WORDS fail-closed 게이트가
+  // 빠진 뒤에도 인젝션은 결정론적으로 먼저 차단되어야 하므로 지시어 집합을 맞춘다.
+  new RegExp(`(이전|위|앞)\\s*의?\\s*(지시|명령|규칙|프롬프트).*${INJECTION_COMMAND_TAIL}`, "i"),
   /(시스템|개발자)\s*(프롬프트|메시지|지시)/i,
   /ignore\s+(all\s+)?previous/i,
+  /\bforget\s+(all\s+)?previous\s+(instructions?|prompts?)\b/i,
+  /\breveal\s+(your\s+)?(system\s+)?prompt\b/i,
+  /\bact\s+as\b/i,
+  /(이전|위|앞|앞에\s*나온).*(무시하고|잊고).*역할\s*(변경|바꿔|바꾸)/i,
   /(링크|url).*(줘|출력|보여)/i,
+  /\bignore\b[\s\S]{0,40}\b(previous|above|prior|earlier|prompt|instructions?)\b/i,
 ];
+
+/**
+ * 역할 변경 "명령형" 어미. 어간(변경/교체·바꾸·바꿔·바꿈)과 어미를 분리 조합해
+ * 존대형(`바꾸세요`·`변경하세요`)·`-어` 활용형(`바꾸어줘`)·`-도록 해`·요청형(`변경 부탁해`)까지
+ * 같은 명령 의미를 모두 덮는다. 어미를 개별 문자열로 나열하던 이전 형태는 표기가
+ * 한 글자만 달라도 그대로 LLM에 누수됐다 (삼순 5차 P0).
+ */
+const ROLE_CHANGE_COMMAND = [
+  "(?:변경|교체)(?:해주세요|해주라|해줄래|해줘요|해줘|해라|해요|해봐|해다오|하라|하세요|하십시오|합시다|하고|하도록해|해)",
+  "(?:변경|교체)부탁(?:드립니다|드려요|해줘|해요|해)",
+  "바꾸(?:어주세요|어줘|어라|세요|십시오|라|도록해)",
+  "바꿔(?:주세요|주라|줄래|줘요|줘|요|라|봐|다오)?",
+].join("|");
+
+/** 역할변경 어절이 명령형으로 종결됐는지 (어절 전체 일치). */
+const ROLE_CHANGE_IMPERATIVE = new RegExp(`^(?:${ROLE_CHANGE_COMMAND})$`);
+
+/**
+ * 조사·띄어쓰기를 제거한 압축형에 적용하는 인젝션 패턴 (삼순 2차 P0).
+ * 원문 정규화만으로는 "역할을 바꿔"(목적격 조사)·"지금까지 안내를 무시하고"처럼
+ * 조사·띄어쓰기가 한 칸만 달라도 exact 패턴을 빠져나가 LLM에 누수된다.
+ */
+const INJECTION_COMPACT_PATTERNS = [
+  // "지금까지/이전/앞에 나온 (지시·안내·내용·규칙) ... 무시하고/잊어" 시작형.
+  new RegExp(
+    `(지금까지|이전|앞에나온|앞의|위에나온|기존|처음)(.{0,12})?(지시|명령|규칙|프롬프트|안내|내용|설정|대화)(.{0,12})?${INJECTION_COMMAND_TAIL}`,
+  ),
+];
+
+/**
+ * 역할변경 인젝션 판별 — **명백한 명령형만** 결정론적으로 차단한다 (삼순 11차 + 하린아빠 결정).
+ *
+ * 판정 기준은 하나 — 역할변경 어절 자체가 봇에게 내리는 **명령형 종결**인가
+ * (`역할을 바꿔`·`역할 변경해줘`·`너의 역할을 바꿔라`). 정상 야구 질문으로는 성립하지 않는
+ * 형태이므로 확신을 갖고 차단할 수 있다.
+ *
+ * 연결형(`바꿔서`·`바꾸면`·`바꿔도`) 뒤에 오는 절의 기능을 어미 구조로 판정하던 이전
+ * 휴리스틱은 삭제한다. 그 판정에는 확신이 없어 — 후속절이 지시인지 질문인지 어미만으로는
+ * 갈리지 않아 — `투수 역할을 바꾸면 어떻게 돼요?`·`수비 역할을 바꿔도 괜찮아요?` 같은
+ * **정상 야구 질문을 과차단**했다. 실 Gemini 검증(공격 12/12 `NOT_BASEBALL`→`blocked`,
+ * cache write 0)으로 비야구 방어는 단일 구조화 LLM 판정이 담당함이 입증됐으므로, 애매한
+ * 역할변경 문장은 차단하지 않고 LLM 판정에 위임한다. 게이트 기본값은 "애매하면 통과"다.
+ */
+function hasRoleChangeInjection(tokens: string[]): boolean {
+  for (let index = 0; index < tokens.length; index++) {
+    const roleAt = tokens[index].search(/역할|role/);
+    if (roleAt < 0) continue;
+    const inline = tokens[index]
+      .slice(roleAt)
+      .replace(/^(?:역할|role)/, "")
+      .replace(/^(?:을|를|은|는|이|가|의)/, "");
+    const clause = inline.length > 0 ? inline : (tokens[index + 1] ?? "");
+    if (ROLE_CHANGE_IMPERATIVE.test(clause)) return true;
+    // 명령이 두 어절로 띄어 쓰인 형태(`역할 변경 부탁해`)도 같은 명령형이다 — 인접 1어절만 결합해
+    // 판정한다. 결합 범위를 인접으로 제한해 뒤쪽 무관한 어절이 명령형을 만들어내지 않게 한다.
+    const next = tokens[inline.length > 0 ? index + 1 : index + 2];
+    if (next && ROLE_CHANGE_IMPERATIVE.test(`${clause}${next}`)) return true;
+  }
+  return false;
+}
+
+/**
+ * 인젝션 판정 전용 정규화: 토큰별 "명사 조사"만 제거하고 공백을 없앤 압축 문자열.
+ * `도`·`만`은 명사 조사이면서 동시에 용언 어미(`-해도`, `-지만`)라 무차별 제거하면
+ * `바꿔도`→`바꿔`처럼 조건형이 명령형으로 변조돼 정상 룰 질문을 과차단한다 (삼순 4차 P0).
+ */
+function injectionNormalize(value: string): string {
+  return questionTokens(value)
+    .map((token) => (token.length >= 3 ? token.replace(/(을|를|은|는|이|가|의)$/, "") : token))
+    .join("");
+}
 
 const TOKEN_TRIM_SUFFIXES = [
   "이라는", "이란", "란", "은", "는", "이", "가", "을", "를", "에", "의", "도", "만",
@@ -168,15 +300,40 @@ function tokenMatches(tokens: string[], word: string): boolean {
   });
 }
 
+/**
+ * 공백 포함 canonical 이름(roster 878명 중 28건, 예 "토다 나츠키")을 연속 토큰으로 매칭한다.
+ * 단일 토큰 비교만 하면 이름이 질문에서 두 토큰으로 쪼개져 exact 미스 → history_hold를
+ * 우회해 LLM으로 누수된다 (삼순 2차 P0). 토큰 단위 비교라 단어 경계는 그대로 지키고,
+ * 마지막 토큰에만 기존 허용 조사 경계를 적용한다 ("미치 화이트가").
+ */
+function tokensContainSequence(tokens: string[], parts: string[]): boolean {
+  const last = parts.length - 1;
+  for (let start = 0; start + parts.length <= tokens.length; start++) {
+    let matched = true;
+    for (let offset = 0; offset <= last; offset++) {
+      const token = tokens[start + offset];
+      const part = parts[offset];
+      const ok = offset === last ? tokenMatches([token], part) : token === part;
+      if (!ok) { matched = false; break; }
+    }
+    if (matched) return true;
+  }
+  return false;
+}
+
 function hasPlayerReference(tokens: string[], players: PlayerRef[]): boolean {
   // 선수명·KBO ID에도 일반 단어와 동일한 허용 조사 경계(tokenMatches)를 적용한다.
   // "김도영의", "류현진은", "박해민이", "52605의" 같은 조사 결합형이 exact 미스로
   // history_hold를 우회해 LLM/캐시에 진입하는 것을 막는다 (삼순 3차 P0).
   return players.some((player) => {
-    const name = player.name.normalize("NFKC").toLowerCase().trim();
+    const nameParts = questionTokens(player.name);
     const kboId = player.kboId.normalize("NFKC").toLowerCase().trim();
-    return (name.length >= 2 && tokenMatches(tokens, name)) ||
-      (kboId.length >= 3 && tokenMatches(tokens, kboId));
+    if (kboId.length >= 3 && tokenMatches(tokens, kboId)) return true;
+    if (nameParts.length === 0) return false;
+    if (nameParts.join("").length < 2) return false;
+    return nameParts.length === 1
+      ? tokenMatches(tokens, nameParts[0])
+      : tokensContainSequence(tokens, nameParts);
   });
 }
 
@@ -188,7 +345,10 @@ function hasBaseballSignal(value: string): boolean {
     );
 }
 
-/** LLM 전에 실행하는 보수적 라우터. 불명확하면 fail-closed 한다. */
+/**
+ * LLM 전에 실행하는 결정론적 라우터.
+ * 인젝션·서비스·선수기록·맥락부재만 여기서 종결하고, 나머지는 LLM 판정으로 보낸다.
+ */
 export function routeQuestion(
   question: string,
   glossary: GlossaryEntry[] = [],
@@ -198,13 +358,22 @@ export function routeQuestion(
   const normalized = question.normalize("NFKC").toLowerCase();
   const tokens = questionTokens(normalized);
   if (INJECTION_PATTERNS.some((pattern) => pattern.test(normalized))) return "blocked";
+  const injectionNorm = injectionNormalize(normalized);
+  if (INJECTION_COMPACT_PATTERNS.some((pattern) => pattern.test(injectionNorm))) return "blocked";
+  if (hasRoleChangeInjection(tokens)) return "blocked";
+  // 단독 감사·확인 인사는 질문이 아니라 직전 답변에 대한 대화 행위다 — 차단 문구 대신 짧게 받는다.
+  // 폐쇄집합 full-string 완전일치라 `고마워 근데 날씨 알려줘`처럼 새 요청이 붙으면 여기 걸리지
+  // 않고 아래 기존 판정(비야구면 LLM NOT_BASEBALL → blocked)으로 그대로 내려간다.
+  if (isAckPhrase(question)) return "ack";
   if (SERVICE_WORDS.some((word) => normalized.includes(word))) return "service_redirect";
   const hasStat = STAT_WORDS.some((word) => tokenMatches(tokens, word));
   const hasTeam = TEAM_WORDS.some((word) => tokenMatches(tokens, word));
   if (hasStat && (hasPlayerReference(tokens, players) || hasTeam)) return "history_hold";
   if (
     HISTORY_CONTEXT_WORDS.some((word) => normalized.includes(word)) ||
-    (hasTeam && /누구|언제|몇|기록|성적|역사/.test(normalized))
+    // "순위"는 team-bound일 때만 실시간 기록 질의다. 전역 차단어로 두면
+    // "순위 결정 규칙 알려줘"처럼 팀 없는 룰 질문까지 history_hold로 과차단된다.
+    (hasTeam && /누구|언제|몇|기록|성적|역사|순위/.test(normalized))
   ) {
     return "history_hold";
   }
@@ -220,7 +389,11 @@ export function routeQuestion(
   );
   if (mentionsGlossaryTerm) return "baseball_rule_term";
   if (BASEBALL_WORDS.some((word) => tokenMatches(tokens, word))) return "baseball_rule_term";
-  return "blocked";
+  // 위 결정론적 선차단·선라우팅에 걸리지 않은 나머지는 LLM 판정에 맡긴다.
+  // 여기서 BASEBALL_WORDS 미매칭을 blocked로 fail-closed 하면 "잔루만루가 뭔데"처럼
+  // 붙여쓰기/사전 미수록인 정상 룰 질문이 LLM에 도달조차 못 하고 과차단된다.
+  // 비야구 방어는 LLM의 NOT_BASEBALL 판정 + validateLlmResponse 출력 가드가 맡는다.
+  return "baseball_rule_term";
 }
 
 export interface ValidatedLlmAnswer {
@@ -238,11 +411,16 @@ export function validateLlmResponse(raw: string): ValidatedLlmAnswer {
   }
   if (!value || typeof value !== "object" || Array.isArray(value)) return { kind: "unsure" };
   const row = value as Record<string, unknown>;
-  if (!["ANSWER", NOT_BASEBALL_SENTINEL, UNSURE_SENTINEL].includes(String(row.status))) {
+  const status = String(row.status);
+  // 계약 밖 status는 판정 불명확 → 답변이 아니라 되묻기로 fail-closed 한다.
+  if (
+    ![RULE_TERM_SENTINEL, LEGACY_ANSWER_SENTINEL, NOT_BASEBALL_SENTINEL, UNSURE_SENTINEL]
+      .includes(status)
+  ) {
     return { kind: "unsure" };
   }
-  if (row.status === NOT_BASEBALL_SENTINEL) return { kind: "blocked" };
-  if (row.status === UNSURE_SENTINEL) return { kind: "unsure" };
+  if (status === NOT_BASEBALL_SENTINEL) return { kind: "blocked" };
+  if (status === UNSURE_SENTINEL) return { kind: "unsure" };
   if (typeof row.answer !== "string") return { kind: "unsure" };
   const answer = row.answer.trim();
   if (
@@ -307,6 +485,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       route === "service_redirect" ? SERVICE_REDIRECT_ANSWER :
       route === "history_hold" ? HISTORY_HOLD_ANSWER :
       route === "context_missing" ? CONTEXT_MISSING_ANSWER :
+      route === "ack" ? ACK_ANSWER :
       BLOCKED_ANSWER;
     await deps.log({ userId, question, questionNorm, matchPath: route, answer, inputTokens: null, outputTokens: null });
     return { status: 200, answer, source: route, remaining };
@@ -375,8 +554,9 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     try {
       llm = await deps.callLlm(question, context ?? undefined);
     } catch {
-      await deps.log({ userId, question, questionNorm, matchPath: "error", answer: null, inputTokens: null, outputTokens: null });
-      return { status: 503, answer: "지금은 답변을 가져올 수 없어요. 잠시 후 다시 시도해 주세요.", source: "error", remaining };
+      // timeout/공급자 오류도 판정 불명확이다. 답변·캐시 없이 확인 질문으로 fail-close한다.
+      await deps.log({ userId, question, questionNorm, matchPath: "unsure", answer: null, inputTokens: null, outputTokens: null });
+      return { status: 200, answer: UNSURE_ANSWER, source: "unsure", remaining };
     }
     // 저장 실패는 throw로 전파 — 재처리는 위 ambiguous 경로로 fail-closed되어 재호출이 없다.
     if (deps.storeLlm) await deps.storeLlm(llm);

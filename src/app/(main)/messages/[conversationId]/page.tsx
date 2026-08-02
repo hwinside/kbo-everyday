@@ -16,7 +16,6 @@ import TeamBadge from "@/components/ui/TeamBadge";
 import { linkifyText } from "@/lib/linkify";
 import NewsClippingCard from "@/components/dm/NewsClippingCard";
 import GeniusTypingIndicator from "@/components/dm/GeniusTypingIndicator";
-import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { isNewsClippingPayload } from "@/types/news-clipping";
 import {
   BASEBALL_GENIUS_NAME,
@@ -150,9 +149,7 @@ export default function DMChatPage() {
   // 닉네임 위조 방지를 위해 운영팀 user_id로 판정.
   const isOperatorConv = otherId === OPERATOR_USER_ID;
   const isBaseballGeniusConv = otherId === BASEBALL_GENIUS_USER_ID;
-  // 마스코트 아바타는 일단 관리자에게만 (2026-08-01 하린아빠 지시).
-  // 비관리자는 종전 ⚾ 이모지 그대로 — 검증 끝나면 이 게이트만 제거해 전체 롤아웃.
-  const showGeniusMascot = useIsAdmin() && isBaseballGeniusConv;
+  const showGeniusMascot = isBaseballGeniusConv;
   // 뉴스클리퍼 대화 — 자동 발송 전용, 답장 시 자동응답만 옴 (안내 배너 노출)
   const isClipperConv = otherId != null && NEWS_CLIPPER_IDS.has(otherId);
   // 회신 불가(자동 발송 전용) 계정 — 클리퍼 + 긴급공지. 입력창 비활성 + 안내 배너.
@@ -361,7 +358,7 @@ export default function DMChatPage() {
           <AlertTriangle size={14} className="flex-shrink-0" />
           <span>
             {isBaseballGeniusConv
-              ? "야구 룰과 용어만 답해요. 선수 기록은 선수 페이지·기록 탭에서 확인해 주세요."
+              ? "야구와 관련된 질문에만 답해요. 그리고 야잘알봇도 실수를 하거나 잘못된 정보를 제공하는 경우가 있어요."
               : isNoReplyConv
               ? noReplyBannerLabel(otherId)
               : "쪽지는 개인 간 대화입니다. 금전 거래 시 사기에 주의하세요."}

@@ -99,10 +99,10 @@ export function parseNaverPreviewStarters(
     return null;
   }
 
-  return {
-    away: previewStarterName(previewData, "away"),
-    home: previewStarterName(previewData, "home"),
-  };
+  const away = previewStarterName(previewData, "away");
+  const home = previewStarterName(previewData, "home");
+  if (!away || !home) return null;
+  return { away, home };
 }
 
 /** side 하나를 검증-파싱: 선발투수 정확히 1(이름 필수) + 타자 정확히 9 아니면 null. */

@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { resolveGameLiveDate } from "@/lib/game-live-date";
 import { useVisibilityAwareInterval } from "@/lib/hooks/useVisibilityAwareInterval";
+import { shouldCommitResponse, type SourceSnapshot } from "@/lib/source-snapshot";
 
 export interface LiveGameData {
   gameId: string;
@@ -35,10 +36,16 @@ export interface LiveGameData {
   homeStarterName: string | null;
 }
 
+export interface LiveGameSnapshot extends SourceSnapshot {
+  source: string;
+  stage: string;
+}
+
 export function useLiveGame(gameId?: string, pollInterval = 30000) {
   const [games, setGames] = useState<LiveGameData[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [snapshot, setSnapshot] = useState<LiveGameSnapshot | null>(null);
   const gameDate = resolveGameLiveDate(gameId);
   const requestGenerationRef = useRef(0);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -47,6 +54,7 @@ export function useLiveGame(gameId?: string, pollInterval = 30000) {
   const flightTokenRef = useRef<symbol | null>(null);
   const refreshQueuedRef = useRef(false);
   const mountedRef = useRef(true);
+  const responseGenerationRef = useRef(0);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -64,6 +72,7 @@ export function useLiveGame(gameId?: string, pollInterval = 30000) {
   // Abort를 무시하는 fetch 구현도 generation fence를 통과할 수 없다.
   useEffect(() => {
     requestGenerationRef.current++;
+    responseGenerationRef.current++;
     abortControllerRef.current?.abort();
     abortControllerRef.current = null;
     inFlightRef.current = null;
@@ -74,27 +83,64 @@ export function useLiveGame(gameId?: string, pollInterval = 30000) {
   useEffect(() => {
     const generation = requestGenerationRef.current;
     fetchCurrentGenerationRef.current = async () => {
+      const responseGeneration = ++responseGenerationRef.current;
       const controller = new AbortController();
       abortControllerRef.current = controller;
       try {
         const res = await fetch(`/api/game-live?date=${gameDate}`, {
           signal: controller.signal,
         });
-        const data = await res.json();
-        if (!mountedRef.current || generation !== requestGenerationRef.current) return;
-        if (data.games) setGames(data.games);
-        setError(data.error || null);
+        const data = await res.json() as {
+          games?: LiveGameData[];
+          error?: string;
+          trace?: {
+            source?: string;
+            stage?: string;
+            sourceAtMs?: number;
+            fetchedAtMs?: number;
+          };
+        };
+        if (
+          !mountedRef.current
+          || generation !== requestGenerationRef.current
+          || !shouldCommitResponse(responseGenerationRef.current, responseGeneration)
+        ) return;
+        const trace = data.trace;
+        if (
+          res.ok
+          && Array.isArray(data.games)
+          && trace
+          && Number.isFinite(trace.sourceAtMs)
+          && Number.isFinite(trace.fetchedAtMs)
+        ) {
+          setGames(data.games);
+          setSnapshot({
+            generation: responseGeneration,
+            source: trace.source || "unknown",
+            stage: trace.stage || "unknown",
+            sourceAtMs: trace.sourceAtMs!,
+            fetchedAtMs: trace.fetchedAtMs!,
+          });
+          setError(null);
+        } else {
+          setError(data.error || `HTTP ${res.status}`);
+        }
       } catch (e: unknown) {
         if (
           mountedRef.current
           && generation === requestGenerationRef.current
+          && shouldCommitResponse(responseGenerationRef.current, responseGeneration)
           && (e as Error).name !== "AbortError"
         ) {
           setError((e as Error).message);
         }
       } finally {
         if (abortControllerRef.current === controller) abortControllerRef.current = null;
-        if (mountedRef.current && generation === requestGenerationRef.current) {
+        if (
+          mountedRef.current
+          && generation === requestGenerationRef.current
+          && shouldCommitResponse(responseGenerationRef.current, responseGeneration)
+        ) {
           setLoading(false);
         }
       }
@@ -149,5 +195,5 @@ export function useLiveGame(gameId?: string, pollInterval = 30000) {
   const game = gameId ? games.find(g => g.gameId === gameId) : undefined;
   const liveGames = games.filter(g => g.isLive);
 
-  return { games, game, liveGames, loading, error, refetch: fetchGames };
+  return { games, game, liveGames, loading, error, snapshot, refetch: fetchGames };
 }

@@ -12,8 +12,7 @@ import LoginSheet from "@/components/auth/LoginSheet";
 import { supabase } from "@/lib/supabase/client";
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { BASEBALL_GENIUS_NAME } from "@/lib/constants/baseball-genius";
-import AdminOnly from "@/components/admin/AdminOnly";
+import { BASEBALL_GENIUS_USER_ID } from "@/lib/constants/baseball-genius";
 
 function timeAgo(dateStr: string) {
   const diff = Date.now() - new Date(dateStr).getTime();
@@ -108,18 +107,16 @@ export default function MessagesPage() {
             >
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-full bg-bg-tertiary flex items-center justify-center flex-shrink-0 overflow-visible">
-                  {conv.other_nickname === BASEBALL_GENIUS_NAME ? (
+                  {conv.other_user_id === BASEBALL_GENIUS_USER_ID ? (
                     // 야잘알봇만 원형 프로필이 아니라 캐릭터 전신을 쓴다(삼순 확정 규격).
                     // 컨테이너 w-10 은 전 행 공용이라 폭을 바꾸면 닉네임 시작 x 가 밀려
                     // 다른 행과 정렬이 어긋난다. 그래서 폭은 그대로 두고, 캐릭터만
                     // 64px 슬롯으로 넘치게 그린다(overflow-visible + absolute).
                     // 세로로 긴 종횡비(0.667)라 64px 슬롯에서 가시 높이가 곧 64px 이다.
-                    <AdminOnly fallback={<span className="text-xl" aria-hidden>⚾</span>}>
-                      <span className="relative block w-10 h-10">
-                        <img src="/mascot/yajalal-avatar.png" alt="야잘알봇"
-                             className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-16 w-auto max-w-none" />
-                      </span>
-                    </AdminOnly>
+                    <span className="relative block w-10 h-10">
+                      <img src="/mascot/yajalal-avatar.png" alt="야잘알봇"
+                           className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-16 w-auto max-w-none" />
+                    </span>
                   ) : conv.other_nickname === "크보팬 운영팀" ? (
                     <img src="/apple-touch-icon.png" alt="크보팬" className="w-full h-full object-cover" />
                   ) : conv.other_team_id ? (

@@ -9,7 +9,7 @@ export const revalidate = 300; // 5분 ISR 캐시
 // Roster SSOT Fortress (specs/roster-ssot-fortress.md v0.2)
 // ============================================================================
 // 원칙: "Static only roster admission, Supabase extension only"
-// - src/lib/constants/players-roster.json = roster SSOT (현재 878명, 단일 진실 소스)
+// - src/lib/constants/players-roster.json = roster SSOT (단일 진실 소스)
 // - Supabase players_roster = extension field only (core field 보호)
 // - 신규 선수는 반드시 static JSON PR 경유 (Supabase 단독 추가 불가)
 //
@@ -18,8 +18,6 @@ export const revalidate = 300; // 5분 ISR 캐시
 // Extension field (Supabase override OK):
 //   photoUrl (향후 확장 예정)
 // ============================================================================
-
-const EXPECTED_ROSTER_COUNT = 878; // 2026-07-28 신규 외인 보스(56402) 온보딩 +1 (877→878)
 
 interface RosterPlayer {
   kboId: string;
@@ -77,14 +75,6 @@ function staticFallback(): RosterPlayer[] {
 
 export async function GET() {
   const staticPlayers = staticFallback();
-
-  // specs §3.2: prod 런타임 모니터 — 선수 수 ≠ EXPECTED_COUNT 시 경고 로그
-  // (Sentry/Slack 알림은 별도 미들웨어/헬스체크 엔드포인트에서 처리)
-  if (staticPlayers.length !== EXPECTED_ROSTER_COUNT) {
-    console.error(
-      `[roster-ssot-monitor] static roster count mismatch: expected=${EXPECTED_ROSTER_COUNT} actual=${staticPlayers.length}`,
-    );
-  }
 
   try {
     const supabase = getSupabaseAdmin();
