@@ -509,6 +509,19 @@ export function isTopicDismissal(question: string): boolean {
   return TOPIC_DISMISSAL_PATTERNS.some((re) => re.test(normalized));
 }
 
+function dismissesDetectedBaseballTerm(question: string, terms: readonly string[]): boolean {
+  const normalized = question.normalize("NFKC").toLowerCase().replace(/\s+/g, " ");
+  return terms.some((term) => {
+    const anchor = term.normalize("NFKC").toLowerCase().trim();
+    if (anchor.length < 2 || !normalized.includes(anchor)) return false;
+    const escaped = anchor.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(
+      `${escaped}\\s*(?:얘기|이야기|말|건)?\\s*(?:은|는)?\\s*` +
+      `(?:말고|됐고|됐으니|그만|빼고|제외하고|아니고|아니라)`,
+    ).test(normalized);
+  });
+}
+
 export function hasExplicitBaseballSignal(
   question: string,
   glossary: GlossaryEntry[] = [],
@@ -516,7 +529,11 @@ export function hasExplicitBaseballSignal(
   const normalized = question.normalize("NFKC").toLowerCase();
   const tokens = questionTokens(normalized);
   // 주제 이탈 선언은 야구 토큰이 있어도 야구 질문이 아니다 — LLM 분류(NOT_BASEBALL)로 보낸다.
-  if (isTopicDismissal(question)) return false;
+  const detectedTerms = [
+    ...BASEBALL_WORDS,
+    ...glossary.flatMap((entry) => [entry.term, ...entry.aliases]),
+  ];
+  if (isTopicDismissal(question) || dismissesDetectedBaseballTerm(question, detectedTerms)) return false;
   if (matchGlossary(glossary, question)) return true;
   const mentionsGlossaryTerm = glossary.some((entry) =>
     [entry.term, ...entry.aliases].some((name) => {

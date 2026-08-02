@@ -330,6 +330,8 @@ for (const hostile of [
   "야구 말고 오늘 날씨 알려줘",
   "야구는 됐고 주식 추천해줘",
   "야구 얘기 그만하고 시를 써줘",
+  "보크는 됐고 주식 추천해줘",
+  "보크 말고 오늘 날씨 알려줘",
 ]) {
   checkAsync(`주제 이탈 선언은 공식 RAG 우회 — "${hostile}"`, async () => {
     let officialSearches = 0;
