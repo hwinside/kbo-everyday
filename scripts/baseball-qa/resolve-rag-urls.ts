@@ -33,6 +33,7 @@ import {
 } from "../../src/lib/baseball-qa/rag/canonical";
 import { assertRobotsAllowed } from "../../src/lib/baseball-qa/rag/fetch-namu";
 import { fetchWikipediaDocument } from "../../src/lib/baseball-qa/rag/fetch-wikipedia";
+import { buildResolutionSourceRow } from "../../src/lib/baseball-qa/rag/source-resolution";
 import { S2B_TARGET_PLAYERS } from "../../src/lib/baseball-qa/rag/targets";
 import { fetchNamuDocumentViaBrowser } from "./rag/fetch-namu-browser";
 
@@ -119,6 +120,10 @@ function wikipediaCandidateTitles(name: string, birthYear: string): string[] {
   return [name, `${name} (${birthYear}년)`, `${name} (야구 선수)`];
 }
 
+function wikipediaUrl(title: string): string {
+  return `https://ko.wikipedia.org/wiki/${encodeURIComponent(title.replace(/ /g, "_"))}`;
+}
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 /** 위키피디아 API bounded rate — 공식 API지만 연속 호출 간격을 둔다(§12.2 b). */
 const WIKIPEDIA_INTERVAL_MS = 1_000;
@@ -154,6 +159,7 @@ async function main(): Promise<void> {
     status: Resolution;
     canonicalUrl: string | null;
     pageTitle: string | null;
+    candidateUrls: string[];
     note: string;
   }
   const results: ResultRow[] = [];
@@ -162,7 +168,11 @@ async function main(): Promise<void> {
     const sourceKey = `${SOURCE === "namu" ? "namu" : "wikipedia"}:player:${target.kboId}`;
     const rosterRow = byKboId.get(target.kboId);
     const birthYear = rosterRow?.birthDate?.slice(0, 4) ?? "";
-    const base = { sourceKey, kboId: target.kboId, name: target.name, source: SOURCE };
+    const candidateTitles = SOURCE === "namu"
+      ? [...expectedPlayerTitles(target.name)]
+      : wikipediaCandidateTitles(target.name, birthYear);
+    const candidateUrls = candidateTitles.map((title) => SOURCE === "namu" ? namuUrl(title) : wikipediaUrl(title));
+    const base = { sourceKey, kboId: target.kboId, name: target.name, source: SOURCE, candidateUrls };
 
     if ((nameCounts.get(target.name) ?? 0) > 1) {
       results.push({
@@ -182,10 +192,7 @@ async function main(): Promise<void> {
     const identity: PlayerDocumentIdentity = { name: target.name, birthYear };
 
     const probes: CandidateProbe[] = [];
-    const queue =
-      SOURCE === "namu"
-        ? [...expectedPlayerTitles(target.name)]
-        : wikipediaCandidateTitles(target.name, birthYear);
+    const queue = [...candidateTitles];
     const seen = new Set<string>();
     let blocked = false;
 
@@ -266,6 +273,18 @@ async function main(): Promise<void> {
   const sourceKind = SOURCE === "namu" ? "namu_document" : "wikipedia_document";
   let affected = 0;
   for (const row of results) {
+    const pageTitle = row.pageTitle ?? row.name;
+    const payload = buildResolutionSourceRow({
+      sourceKey: row.sourceKey,
+      sourceKind,
+      entityId: String(row.kboId),
+      pageTitle,
+      candidateUrls: row.candidateUrls,
+      canonicalUrl: row.canonicalUrl,
+      resolutionStatus: row.status,
+      resolutionNote: row.note,
+      updatedAt: new Date().toISOString(),
+    });
     const response = await fetch(`${url}/rest/v1/genius_rag_sources?on_conflict=source_key`, {
       method: "POST",
       headers: {
@@ -275,19 +294,7 @@ async function main(): Promise<void> {
         // merge-duplicates = 있으면 UPDATE, 없으면 INSERT. representation = 반영된 행 반환.
         Prefer: "resolution=merge-duplicates,return=representation",
       },
-      body: JSON.stringify([{
-        source_key: row.sourceKey,
-        source_kind: sourceKind,
-        entity_type: "player",
-        entity_id: String(row.kboId),
-        page_title: row.pageTitle ?? row.name,
-        candidate_urls: row.canonicalUrl ? [row.canonicalUrl] : [],
-        canonical_url: row.canonicalUrl,
-        resolution_status: row.status,
-        resolution_note: row.note,
-        source_grade: "tier2",
-        updated_at: new Date().toISOString(),
-      }]),
+      body: JSON.stringify([payload]),
     });
     if (!response.ok) {
       console.error(`${row.sourceKey} upsert 실패: HTTP ${response.status} ${await response.text()}`);

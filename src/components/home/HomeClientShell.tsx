@@ -672,9 +672,11 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
           ) : (
             <button
               onClick={() => setShowLogin(true)}
-              className="px-4 min-h-11 rounded-full bg-accent text-white text-sm font-semibold transition-transform active:scale-95"
+              className="flex h-11 items-center justify-center px-1 transition-transform active:scale-95"
             >
-              회원가입
+              <span className="flex h-8 items-center rounded-full bg-accent px-3 text-[13px] font-semibold leading-none text-white">
+                회원가입
+              </span>
             </button>
           )}
           <Link href="/my" aria-label="마이페이지" className="flex h-11 w-11 items-center justify-center rounded-full hover:bg-bg-tertiary transition-colors">

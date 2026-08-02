@@ -33,7 +33,10 @@ import {
   RAG_DOCUMENT_CANDIDATE_LIMIT,
   RAG_OFFICIAL_SYSTEM_PROMPT,
   rankEvidenceByQuery,
+  searchSourcePriorityCandidates,
+  type RagDocumentSourceKind,
   type RagEvidence,
+  type RagEvidenceCandidate,
   type RagPlayerCandidate,
 } from "@/lib/baseball-qa/rag/retrieve";
 import { embedQuery } from "@/lib/baseball-qa/rag/embed";
@@ -107,6 +110,7 @@ interface RagServingChunkRow {
   section_path: string;
   as_of: string;
   source_grade: string;
+  source_kind: RagDocumentSourceKind;
   embedding: string | number[] | null;
 }
 
@@ -133,36 +137,54 @@ interface RagOfficialChunkRow {
  * **대상 선수의 문서가 아니면 아예 후보에 들어오지 못하게** 한다(엉뚱한 chunk 답변 차단).
  * 미수집 선수는 자연히 0행이므로 호출자가 fail-close한다.
  */
-async function searchRag(
+export interface RagSearchRuntime {
+  embed: typeof embedQuery;
+  fetchBySourceKind: (
+    candidate: RagPlayerCandidate,
+    sourceKind: RagDocumentSourceKind,
+    limit: number,
+  ) => Promise<RagEvidenceCandidate[]>;
+}
+
+const productionRagSearchRuntime: RagSearchRuntime = {
+  embed: embedQuery,
+  fetchBySourceKind: async (candidate, sourceKind, limit) => {
+    // query-guard: bounded -- caller가 폐쇄집합 source_kind마다 RAG_CANDIDATE_LIMIT(40)을 전달한다.
+    const { data, error } = await supabaseAdmin
+      .from("genius_rag_serving_chunks")
+      .select("content, page_title, canonical_url, revision, section_path, as_of, source_grade, source_kind, embedding")
+      .eq("entity_type", candidate.entityType)
+      .eq("entity_id", candidate.entityId)
+      .eq("source_kind", sourceKind)
+      .limit(limit);
+    if (error) throw error;
+    return ((data ?? []) as RagServingChunkRow[]).map((row) => ({
+      content: row.content,
+      pageTitle: row.page_title,
+      canonicalUrl: row.canonical_url,
+      revision: row.revision,
+      sectionPath: row.section_path,
+      asOf: row.as_of,
+      sourceGrade: row.source_grade === "tier1" ? ("tier1" as const) : ("tier2" as const),
+      embedding: row.embedding,
+    }));
+  },
+};
+
+export async function searchRag(
   candidate: RagPlayerCandidate,
   question: string,
+  runtime: RagSearchRuntime = productionRagSearchRuntime,
 ): Promise<RagEvidence[]> {
-  const embedded = await embedQuery(question);
+  const embedded = await runtime.embed(question);
   if (!embedded.ok) return [];
-  // query-guard: bounded -- entity 필터(선수 1명 = 문서 1건) + RAG_CANDIDATE_LIMIT 상한 조회다.
-  const { data, error } = await supabaseAdmin
-    .from("genius_rag_serving_chunks")
-    .select("content, page_title, canonical_url, revision, section_path, as_of, source_grade, embedding")
-    .eq("entity_type", candidate.entityType)
-    .eq("entity_id", candidate.entityId)
-    .limit(RAG_CANDIDATE_LIMIT);
-  if (error) throw error;
-  const rows = ((data ?? []) as RagServingChunkRow[]).map((row) => ({
-    content: row.content,
-    pageTitle: row.page_title,
-    canonicalUrl: row.canonical_url,
-    revision: row.revision,
-    sectionPath: row.section_path,
-    asOf: row.as_of,
-    sourceGrade: row.source_grade === "tier1" ? ("tier1" as const) : ("tier2" as const),
-    embedding: row.embedding,
-  }));
-  // ⚠️ 유사도 랭킹 뒤에 tier2 소스 우선순위를 **실제 서빙 경로에서** 적용한다.
-  // helper 단위 테스트만 GREEN 이고 여기서 호출하지 않으면, vector 점수가 높은
-  // 나무위키 근거가 계속 evidence[0] 이 되어 위키피디아 우선 계약이 무효가 된다
-  // (삼순 R3/R4 P0-4 — server searchRag 미배선으로 지적됨).
-  // orderTier2Evidence 는 안정 정렬이라 같은 소스 안의 유사도 순서는 보존된다.
-  return orderTier2Evidence(rankEvidenceByQuery(rows, embedded.vector));
+  // query-guard: bounded -- entity + source_kind 폐쇄집합 각각 최대 40행. entity 전체를
+  // 먼저 limit(40)하면 Namu 41건 뒤의 Wikipedia가 DB에서 소실된다.
+  return searchSourcePriorityCandidates(
+    (sourceKind) => runtime.fetchBySourceKind(candidate, sourceKind, RAG_CANDIDATE_LIMIT),
+    embedded.vector,
+    orderTier2Evidence,
+  );
 }
 
 /** 근거를 비신뢰 데이터 블록으로만 전달하는 재서술 호출 (S2b). */
