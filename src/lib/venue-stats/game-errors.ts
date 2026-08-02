@@ -36,6 +36,10 @@ export interface RawErrorObservation {
   /** KBO 는 경기 ID exact, Naver 는 record gameInfo 의 경기일자를 보존한다. */
   gameId: string | null;
   gameDate: string;
+  /** Naver record identity witness. KBO 는 exact gameId 를 직접 주므로 null. */
+  gameTime: string | null;
+  /** Naver `gameInfo.round` 원값. DH 회차 suffix 와 교차검증한다. */
+  gameRound: number | null;
   awayTeamId: number;
   homeTeamId: number;
   away: number;
@@ -133,6 +137,8 @@ export function parseKboErrorObservation(data: unknown): RawErrorObservation | n
     source: "kbo",
     gameId,
     gameDate,
+    gameTime: null,
+    gameRound: null,
     awayTeamId,
     homeTeamId,
     away: away.errors,
@@ -152,10 +158,15 @@ export function parseNaverErrorObservation(json: unknown): RawErrorObservation |
     | undefined;
   const gameInfo = recordData?.gameInfo as Record<string, unknown> | undefined;
   const gameDate = String(gameInfo?.gdate ?? "").trim();
+  const gameTime = String(gameInfo?.gtime ?? "").trim();
+  const gameRound = Number(gameInfo?.round);
   const awayTeamId = resolveTeamId(String(gameInfo?.aCode ?? "").trim(), "");
   const homeTeamId = resolveTeamId(String(gameInfo?.hCode ?? "").trim(), "");
   if (
     !/^\d{8}$/.test(gameDate) ||
+    !/^\d{2}:\d{2}$/.test(gameTime) ||
+    !Number.isInteger(gameRound) ||
+    gameRound <= 0 ||
     awayTeamId <= 0 ||
     homeTeamId <= 0 ||
     String(gameInfo?.statusCode ?? "") !== "4" ||
@@ -173,6 +184,8 @@ export function parseNaverErrorObservation(json: unknown): RawErrorObservation |
     source: "naver",
     gameId: null,
     gameDate,
+    gameTime,
+    gameRound,
     awayTeamId,
     homeTeamId,
     away: awayE,
@@ -225,6 +238,38 @@ export interface CanonicalGame {
   homeTeamId: number;
   awayScore: number;
   homeScore: number;
+}
+
+function gameSeq(gameId: string): string | null {
+  return gameId.match(/([0-3])$/)?.[1] ?? null;
+}
+
+/**
+ * Naver record 자체에는 exact gameId 가 없으므로 schedule 의 exact 경기와 record 를
+ * 시작시각으로 결속한다. 같은 팀 DH 가 둘 이상이면 `round` 끝자리도 schedule gameId 의
+ * 회차 suffix(1/2/3)와 일치해야 한다. 단일경기 suffix 0 은 실제 record round 가 11 등
+ * 별도 라운드 값을 쓰므로 시간 exact 로만 대조한다(20260801LGOB0 actual: round=11).
+ */
+function matchesNaverScheduleWitness(
+  observed: RawErrorObservation,
+  exact: KboGame,
+  schedule: readonly KboGame[],
+): boolean {
+  if (observed.gameTime === null || observed.gameRound === null) return false;
+  if (observed.gameTime !== exact.time) return false;
+
+  const exactSeq = gameSeq(exact.gameId);
+  if (exactSeq === null) return false;
+  const sameMatchCount = schedule.filter(
+    (game) =>
+      game.date === exact.date &&
+      game.awayTeamId === exact.awayTeamId &&
+      game.homeTeamId === exact.homeTeamId,
+  ).length;
+  if (sameMatchCount > 1 || exactSeq !== "0") {
+    return String(observed.gameRound).slice(-1) === exactSeq;
+  }
+  return true;
 }
 
 /**
@@ -292,7 +337,8 @@ export async function fetchGameErrors(
           exact.awayTeamId !== canonical.awayTeamId ||
           exact.homeTeamId !== canonical.homeTeamId ||
           exact.awayScore !== canonical.awayScore ||
-          exact.homeScore !== canonical.homeScore
+          exact.homeScore !== canonical.homeScore ||
+          !matchesNaverScheduleWitness(observed, exact, schedule ?? [])
         ) return null;
       }
       return { away: observed.away, home: observed.home };

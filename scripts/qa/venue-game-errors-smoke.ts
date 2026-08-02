@@ -72,6 +72,8 @@ function naverPayload(
       recordData: {
         gameInfo: {
           gdate: 20260801,
+          gtime: "18:30",
+          round: 11,
           aCode: "LG",
           hCode: "OB",
           statusCode: "4",
@@ -155,6 +157,20 @@ async function main() {
       parseNaverErrorObservation(naverPayload({
         away: { r: 1, h: 5 }, home: { r: 2, h: 4 },
       })) === null,
+    );
+    ok(
+      "Naver: gtime 결손 → 관측 null",
+      parseNaverErrorObservation(naverPayload(
+        { away: { r: 1, h: 5, e: 1 }, home: { r: 2, h: 4, e: 0 } },
+        { gtime: "" },
+      )) === null,
+    );
+    ok(
+      "Naver: round 결손 → 관측 null",
+      parseNaverErrorObservation(naverPayload(
+        { away: { r: 1, h: 5, e: 1 }, home: { r: 2, h: 4, e: 0 } },
+        { round: undefined },
+      )) === null,
     );
     // 정상 케이스는 통과해야 한다(과잉 차단 아님).
     const kboOk = parseKboErrorObservation(kboPayload({ awayR: "1", awayE: "2", homeR: "2", homeE: "0" }));
@@ -337,6 +353,17 @@ async function main() {
       awayScore: 2,
       homeScore: 3,
     });
+    const dh1Schedule = naverScheduleWitness(dh1)[0];
+    const dh2 = canonicalGame("20240623KTLG2", {
+      awayTeamId: 3,
+      homeTeamId: 1,
+      awayScore: 2,
+      homeScore: 3,
+    });
+    const dhSchedule = [
+      { ...dh1Schedule, time: "14:00" },
+      { ...dh1Schedule, gameId: dh2.gameId, time: "17:45" },
+    ];
     const dh2PayloadForDh1 = await fetchGameErrors(dh1.gameId, {
       canonical: dh1,
       fetchers: {
@@ -345,10 +372,7 @@ async function main() {
           { away: { r: 2, h: 7, e: 9 }, home: { r: 3, h: 9, e: 8 } },
           { gdate: 20240623, aCode: "KT", hCode: "LG", round: 12, gtime: "17:45" },
         ),
-        naverSchedule: async () => [{
-          ...naverScheduleWitness(dh1)[0],
-          gameId: "20240623KTLG2",
-        }],
+        naverSchedule: async () => dhSchedule,
       },
     });
     ok(
@@ -356,6 +380,49 @@ async function main() {
       dh2PayloadForDh1 === null,
       JSON.stringify(dh2PayloadForDh1),
     );
+
+    const dh2RoundForDh1 = await fetchGameErrors(dh1.gameId, {
+      canonical: dh1,
+      fetchers: {
+        kbo: async () => null,
+        naver: async () => naverPayload(
+          { away: { r: 2, h: 7, e: 9 }, home: { r: 3, h: 9, e: 8 } },
+          { gdate: 20240623, gtime: "14:00", aCode: "KT", hCode: "LG", round: 12 },
+        ),
+        naverSchedule: async () => dhSchedule,
+      },
+    });
+    ok(
+      "Naver DH 시작시각이 같아도 round=12 는 1차전으로 오인하지 않음",
+      dh2RoundForDh1 === null,
+      JSON.stringify(dh2RoundForDh1),
+    );
+
+    const normalDh1 = await fetchGameErrors(dh1.gameId, {
+      canonical: dh1,
+      fetchers: {
+        kbo: async () => null,
+        naver: async () => naverPayload(
+          { away: { r: 2, h: 7, e: 1 }, home: { r: 3, h: 9, e: 0 } },
+          { gdate: 20240623, gtime: "14:00", aCode: "KT", hCode: "LG", round: 11 },
+        ),
+        naverSchedule: async () => dhSchedule,
+      },
+    });
+    ok("Naver 정상 DH 1차전은 통과", normalDh1?.away === 1 && normalDh1.home === 0);
+
+    const normalDh2 = await fetchGameErrors(dh2.gameId, {
+      canonical: dh2,
+      fetchers: {
+        kbo: async () => null,
+        naver: async () => naverPayload(
+          { away: { r: 2, h: 7, e: 0 }, home: { r: 3, h: 9, e: 1 } },
+          { gdate: 20240623, gtime: "17:45", aCode: "KT", hCode: "LG", round: 12 },
+        ),
+        naverSchedule: async () => dhSchedule,
+      },
+    });
+    ok("Naver 정상 DH 2차전은 통과", normalDh2?.away === 0 && normalDh2.home === 1);
 
     // canonical 없으면 대조를 건너뛴다(비final 경기 등).
     const noCanonical = await fetchGameErrors("20260801LGOB0", {
