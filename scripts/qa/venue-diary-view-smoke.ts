@@ -830,13 +830,29 @@ async function runAsyncRegressions() {
   );
   // fail-closed key 불일치 시엔 10/10 이든 뭐든 전부 선택 차단(diaryAddSelectDisabled 와 결합).
   assert.equal(
-    diaryAddSelectDisabled(diaryCountsReady(openerA1, diaryCountsOwnerKey("userA", 2)), 2),
+    diaryAddSelectDisabled(
+      diaryCountsReady(openerA1, diaryCountsOwnerKey("userA", 2, 2026)),
+      2,
+    ),
     true,
     "재오픈 첫 렌더는 2/10 경기도 선택 차단(이전 세션 count 노출 0)",
   );
+  // 시즌 전환 첫 렌더도 같다 — 2026 counts 를 들고 2025 시트로 넘어가는 순간 전부 차단.
+  assert.equal(
+    diaryAddSelectDisabled(
+      diaryCountsReady(openerA1, diaryCountsOwnerKey("userA", 1, 2025)),
+      2,
+    ),
+    true,
+    "시즌 전환 첫 렌더는 2/10 경기도 선택 차단(다른 시즌 count 노출 0)",
+  );
 }
 
-// 15) Blocker 4 — 2026 counts 소스로 10/10 경기는 2025 탭에서도 잠김(locked) 유지.
+// 15) counts 는 시트에 선택된 시즌과 같은 시즌이어야 한다.
+//     예전엔 시트가 2026 고정이라 "항상 2026 counts" 가 계약이었지만, 지금은 시트가 시즌을
+//     고를 수 있으므로 계약이 "선택 시즌의 counts" 로 바뀌었다. 어느 쪽이든 핵심은 동일하다:
+//     시트가 보여주는 경기와 counts 의 시즌이 엇갈리면 기존 10/10 경기가 0/10 으로 보이는
+//     fail-open 이 된다.
 {
   const groups2026: DiaryMediaGroupInput[] = [
     {
@@ -855,7 +871,7 @@ async function runAsyncRegressions() {
     },
   ];
   const counts = buildDiaryCountsMap(groups2026);
-  // AddGameSheet 가 이 2026 counts 를 받으면 10/10 경기는 locked, 2/10 은 add.
+  // 2026 시트가 2026 counts 를 받으면 10/10 경기는 locked, 2/10 은 add.
   assert.equal(counts.get("20260718LGDS"), 10);
   assert.equal(diaryPickLocked(diaryPickState(counts.get("20260718LGDS") ?? 0)), true, "2026 10/10 → 잠김");
   assert.deepEqual(diaryPickState(counts.get("20260720LGDS") ?? 0), {
@@ -863,21 +879,34 @@ async function runAsyncRegressions() {
     count: 2,
     cap: VENUE_DIARY_MEDIA_CAP,
   });
-  // 버그 재현: 2025 탭 mediaGroups(2026 gameId 없음)로 counts 만들면 0→선택가능(오표시).
-  const counts2025Tab = buildDiaryCountsMap([
+
+  const groups2025: DiaryMediaGroupInput[] = [
     {
-      gameId: "20250801LGDS",
+      gameId: "20250801LGSS0",
       gameDate: "2025-08-01",
-      stadiumName: "잠실",
-      counts: { image: 1, video: 0, total: 1 },
+      stadiumName: "대구",
+      counts: { image: 10, video: 0, total: 10 },
       thumbnails: [],
     },
-  ]);
-  assert.equal(counts2025Tab.get("20260718LGDS"), undefined);
+  ];
+  const counts2025 = buildDiaryCountsMap(groups2025);
+  // 2025 시트가 2025 counts 를 받으면 2025 의 10/10 경기가 제대로 잠긴다.
+  assert.equal(
+    diaryPickLocked(diaryPickState(counts2025.get("20250801LGSS0") ?? 0)),
+    true,
+    "2025 counts 로 2025 10/10 경기 잠김",
+  );
+  // 교차 fail-open 재현 — 시즌이 엇갈리면 양방향 모두 10/10 이 0→선택가능으로 보인다.
+  // 그래서 counts 는 선택 시즌으로 fetch 하고, owner key 에 season 을 넣어 전환 순간을 차단한다.
   assert.deepEqual(
-    diaryPickState(counts2025Tab.get("20260718LGDS") ?? 0),
+    diaryPickState(counts2025.get("20260718LGDS") ?? 0),
     { kind: "pick" },
-    "2025 counts 로는 2026 10/10 경기가 0→선택가능으로 오표시(버그) → 그래서 2026 counts 필수",
+    "2025 counts 로 2026 10/10 을 보면 0→선택가능 오표시(fail-open)",
+  );
+  assert.deepEqual(
+    diaryPickState(counts.get("20250801LGSS0") ?? 0),
+    { kind: "pick" },
+    "2026 counts 로 2025 10/10 을 보면 0→선택가능 오표시(fail-open)",
   );
 }
 
