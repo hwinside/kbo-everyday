@@ -125,6 +125,10 @@ BEGIN
     OR v_source.entity_type <> NEW.entity_type
     OR v_source.entity_id <> NEW.entity_id
     OR v_source.page_title <> NEW.page_title
+    -- exact-equality도 예외가 아니다. source와 chunk가 같은 raw TAB/CR/LF URL이면
+    -- 아래 `canonical_url <>` 분기를 통째로 건너뛰므로 분기 바깥에서 무조건 거부한다.
+    OR v_source.canonical_url ~ '[[:space:][:cntrl:]]'
+    OR NEW.canonical_url ~ '[[:space:][:cntrl:]]'
     OR (
       v_source.canonical_url <> NEW.canonical_url
       AND NOT (
@@ -133,8 +137,6 @@ BEGIN
         AND v_chunk_path IS NOT NULL
         -- WHATWG URL parser는 raw TAB/CR/LF를 parsing 전에 제거한다. DB가 이를
         -- path 문자로 비교하면 `root/\t../other`를 child로 오인하므로 raw 공백·제어문자는 거부.
-        AND v_source.canonical_url !~ '[[:space:][:cntrl:]]'
-        AND NEW.canonical_url !~ '[[:space:][:cntrl:]]'
         AND position(E'\\' IN v_root_path) = 0
         AND position(E'\\' IN v_chunk_path) = 0
         AND v_root_path !~ '(^|/)[.]{1,2}(/|$)'

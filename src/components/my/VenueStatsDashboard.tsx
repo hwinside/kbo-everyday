@@ -42,6 +42,7 @@ import type {
   D1Value,
   D5Value,
   D6Value,
+  D7Value,
   E1Value,
   E2Value,
   E3Value,
@@ -61,6 +62,7 @@ import {
   formatSigned,
   METRIC_STATE_LABELS,
   awayFanTag,
+  venueErrorTags,
   scoreBadgeLabel,
   SCORE_CONFIDENCE_LABELS,
   scoreConfidenceLevel,
@@ -317,6 +319,7 @@ export default function VenueStatsDashboard() {
   const d1 = scope?.metrics.D1 as MetricEnvelope<D1Value> | undefined;
   const d5 = scope?.metrics.D5 as MetricEnvelope<D5Value> | undefined;
   const d6 = scope?.metrics.D6 as MetricEnvelope<D6Value> | undefined;
+  const d7 = scope?.metrics.D7 as MetricEnvelope<D7Value> | undefined;
   const e1 = scope?.metrics.E1 as MetricEnvelope<E1Value> | undefined;
   const e2 = scope?.metrics.E2 as MetricEnvelope<E2Value> | undefined;
   const e3 = scope?.metrics.E3 as MetricEnvelope<E3Value> | undefined;
@@ -445,6 +448,20 @@ export default function VenueStatsDashboard() {
     };
   })();
 
+  // ── 실책 목격 태그 (하린아빠 2026-08-02) ─────────────────────────────────
+  // "유독 실책을 많이 보는 발암경기 인내형". 임계·근거는 `venueErrorTags` 가 SSOT.
+  //
+  // ⚠️ `sample_limited` 도 받는다 (삼순 P1 2026-08-02). 실책은 "내가 본 그 경기에서
+  // 실제로 몇 개 나왔나"라는 관측 사실이라 1경기여도 거짓이 아니다. `ready` 만 받으면
+  // 실측 P50(1경기) 유저는 어떤 실책 태그도 못 받는다(48명 중 47명).
+  // "이 사람은 원래 그렇다"는 성향 주장만 helper 가 3경기+로 가드한다.
+  // 확인된 경기가 0이면 value 자체가 null 이라 자연히 태그가 없다.
+  const errorTags = venueErrorTags(
+    d7?.state === "ready" || d7?.state === "sample_limited" ? d7.value : null,
+  );
+  const errorTag = errorTags.heavy;
+  const cleanDefenseTag = errorTags.clean;
+
   // ── 원정 찐팬 태그 (하린아빠 2026-08-02) ────────────────────────────────
   // "보통 홈구장만 가는 팬이 대부분인데 원정까지 많이 가는 팬은 정말 찐팬이니 이것도 추가".
   // 임계는 `awayFanTag` 가 SSOT — 실측 분포 근거·회귀는 ui.ts 주석 참조.
@@ -525,6 +542,25 @@ export default function VenueStatsDashboard() {
     label: dayGameWinTag.label,
     value: dayGameWinTag.value,
     icon: <span className="text-[15px]">🌤️</span>,
+  });
+  // ── 실책 목격 태그 (하린아빠 2026-08-02 "유독 실책을 많이 보는 발암경기 인내형") ──
+  // 분모는 **실책을 아는 경기(D7.knownGames)** 뿐이다. 모르는 경기를 0으로 세면
+  // "실책을 안 본 사람"으로 둔갑한다.
+  // ⚠️ `summarySampleReady`(A1 3경기+) 게이트를 걸지 않는다 (삼순 P1). 실책 태그의
+  // 표본 판정은 A1 직관 경기수가 아니라 **실책을 확인한 경기수**이고, 그 가드는
+  // `venueErrorTags` 안에 성향/사실 태그별로 이미 들어 있다. 여기서 A1 기준을 다시
+  // 곱하면 1경기 유저에게는 사실 태그마저 사라진다.
+  if (errorTag) interestingFacts.push({
+    key: "errors-seen",
+    label: errorTag.label,
+    value: errorTag.value,
+    icon: <span className="text-[15px]">🤯</span>,
+  });
+  if (cleanDefenseTag) interestingFacts.push({
+    key: "clean-defense",
+    label: cleanDefenseTag.label,
+    value: cleanDefenseTag.value,
+    icon: <span className="text-[15px]">🧤</span>,
   });
   if (summarySampleReady && awayTag) interestingFacts.push({
     key: "away-fan",
