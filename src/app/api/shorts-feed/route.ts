@@ -12,11 +12,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { DEFAULT_EXCLUDE_FLAGS, extractNoiseFlags } from "@/lib/video/noise-flags";
-import {
-  hasRequiredPlayerContext,
-  loadPlayerAliases,
-  titleIncludesPlayerName,
-} from "@/lib/video/player-tagger";
+import { loadPlayerAliases, type PlayerAlias } from "@/lib/video/player-tagger";
+import { revalidateStoredPlayerTags } from "@/lib/video/shorts-player-gate";
 import { isTeamShortRelevant } from "@/lib/video/shorts-relevance";
 import { joinLgFeedRows } from "@/lib/video/shorts-feed-merge";
 import {
@@ -24,7 +21,10 @@ import {
   parseShortsScope,
   resolveShortsQueryPlan,
 } from "@/lib/video/shorts-feed-scope";
-import { getActiveChannels } from "@/lib/video/team-channels";
+import {
+  getPlayerTagChannels,
+  type PlayerTagChannel,
+} from "@/lib/video/team-channels";
 
 export async function GET(req: NextRequest) {
   const team = req.nextUrl.searchParams.get("team") || "_ALL";
@@ -155,20 +155,20 @@ export async function GET(req: NextRequest) {
   // TVING `한화 vs LG` 팬덤중계류 recall 보존, 출처 불명 채널 제품 비교는 차단).
   // (LG 피드 요청이거나 LG 행이 있을 때만 조회 — 다른 팀 피드에 불필요한 쿼리 방지)
   let trustedForLg: ReadonlySet<string> = new Set();
-  let channelTierById: ReadonlyMap<string, number> = new Map();
+  let playerTagChannelById: ReadonlyMap<string, PlayerTagChannel> = new Map();
   const needsPlayerTagRecheck = (data ?? []).some(
     (v) =>
       String(v.source_type ?? "").startsWith("community_") &&
-      Array.isArray(v.player_ids) && v.player_ids.length > 1,
+      Boolean(v.player_id || (Array.isArray(v.player_ids) && v.player_ids.length > 0)),
   );
   if (team === "LG" || (data ?? []).some((v) => v.team_id === "LG") || needsPlayerTagRecheck) {
-    // query-guard: active channel_pool 단일 bounded 조회. LG trusted-channel 판정과
-    // 기존 T2+ player tag 재검증이 같은 결과를 공유해 추가 왕복을 만들지 않는다.
-    const poolChannels = await getActiveChannels(supabaseAdmin);
-    channelTierById = new Map(poolChannels.map((c) => [c.channel_id, c.tier]));
+    // query-guard: channel_pool 단일 bounded 조회. inactive legacy 채널까지 읽어
+    // 저장 당시 tier 계약을 재적용하고, 조회 실패·missing channel은 fail-close한다.
+    const poolChannels = await getPlayerTagChannels(supabaseAdmin);
+    playerTagChannelById = new Map(poolChannels.map((c) => [c.channel_id, c]));
     trustedForLg = new Set(
       poolChannels
-        .filter((c) => c.tier === 1 || c.team_affinity?.includes("LG"))
+        .filter((c) => c.is_active && (c.tier === 1 || c.team_affinity?.includes("LG")))
         .map((c) => c.channel_id),
     );
   }
@@ -187,46 +187,69 @@ export async function GET(req: NextRequest) {
     lgDisplayTeam = joined.displayTeam;
   }
 
-  // Build player_id → name map before filtering so legacy duplicate-name tags can
-  // be distinguished from legitimate multi-player videos without hard-coded names.
+  // Alias lookup errors fail-close in loadPlayerAliases. The same canonical roster is
+  // used for legacy tag revalidation and response labels so the two paths cannot drift.
   const taggedPlayerIds = new Set<string>();
   for (const v of data ?? []) {
     if (v.player_id) taggedPlayerIds.add(v.player_id);
     for (const playerId of v.player_ids ?? []) taggedPlayerIds.add(playerId);
   }
+  let playerAliases: PlayerAlias[] = [];
   const playerNameMap = new Map<string, string>();
   if (taggedPlayerIds.size > 0) {
-    const aliases = await loadPlayerAliases(supabaseAdmin);
-    for (const a of aliases) {
+    playerAliases = await loadPlayerAliases(supabaseAdmin);
+    for (const a of playerAliases) {
       if (taggedPlayerIds.has(a.kbo_id)) playerNameMap.set(a.kbo_id, a.name);
     }
   }
+
+  const requiredFavoriteIds = plan.kind === "player_only" ? new Set(playerIds) : null;
+  data = (data ?? []).map((v) => {
+    const storedIds: string[] = Array.from(
+      new Set([
+        ...(Array.isArray(v.player_ids) ? v.player_ids : []),
+        ...(v.player_id ? [v.player_id] : []),
+      ]),
+    );
+    if (!String(v.source_type ?? "").startsWith("community_") || storedIds.length === 0) {
+      return { ...v, _playerTagAllowed: true };
+    }
+    const channel = v.channel_id ? (playerTagChannelById.get(v.channel_id) ?? null) : null;
+    const checked = revalidateStoredPlayerTags(
+      {
+        title: v.title ?? "",
+        channel_id: v.channel_id ?? null,
+        source_type: v.source_type ?? null,
+        player_id: v.player_id ?? null,
+        player_ids: storedIds,
+        team_id: v.team_id ?? null,
+      },
+      playerAliases,
+      channel,
+      requiredFavoriteIds,
+    );
+    return {
+      ...v,
+      _playerTagAllowed: checked.allowed,
+      player_id: checked.playerId,
+      player_ids: checked.playerIds,
+      team_id: checked.teamId,
+    };
+  });
 
   // Filter out noisy content — DB flags + runtime title recheck
   // Runtime recheck catches videos ingested before new noise patterns were added
   const excludeSet = DEFAULT_EXCLUDE_FLAGS as ReadonlySet<string>;
   const filtered = (data ?? []).filter((v) => {
+    if (v._playerTagAllowed === false) return false;
+    if (plan.kind === "team_only" && v.team_id !== team) return false;
+    if (
+      plan.kind === "mixed" &&
+      v.team_id !== team &&
+      !(v.player_ids ?? []).some((id: string) => playerIds.includes(id))
+    ) return false;
     const flags: string[] = Array.isArray(v.noise_flags) ? v.noise_flags : [];
     if (flags.some((f) => excludeSet.has(f))) return false;
-    // 새 수집 계약 적용 전 저장된 T2+ 오태그도 즉시 차단한다. 일반 뉴스 채널의
-    // 정치인 김민석 영상처럼 팀명 없는 제목은 선수 태그와 파생 team_id를 신뢰하지 않는다.
-    const storedPlayerIds: string[] = Array.isArray(v.player_ids) ? v.player_ids : [];
-    const matchingStoredPlayerNames = storedPlayerIds
-      .map((id) => playerNameMap.get(id))
-      .filter(
-        (name): name is string =>
-          typeof name === "string" && titleIncludesPlayerName(v.title ?? "", name),
-      );
-    const hasAmbiguousDuplicateTag =
-      matchingStoredPlayerNames.length > 1 &&
-      new Set(matchingStoredPlayerNames).size === 1;
-    if (
-      String(v.source_type ?? "").startsWith("community_") &&
-      hasAmbiguousDuplicateTag
-    ) {
-      const tier = v.channel_id ? channelTierById.get(v.channel_id) : undefined;
-      if (tier != null && !hasRequiredPlayerContext(v.title ?? "", null, tier, true)) return false;
-    }
     // 기존 오분류 행도 즉시 차단: LG 약칭만 걸린 커뮤니티 영상은 야구 문맥 필수
     if (!isTeamShortRelevant(v.title ?? "", v.team_id ?? null, {
       hasPlayerTag: Boolean(v.player_id || v.player_ids?.length),

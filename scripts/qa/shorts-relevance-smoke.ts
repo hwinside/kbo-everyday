@@ -55,8 +55,14 @@ const KIM_MINSEOK_PLAYERS: PlayerAlias[] = [
   { kbo_id: "54097", name: "김민석", team: "KT", aliases: [] },
   { kbo_id: "68043", name: "김민", team: "SSG", aliases: [] },
 ];
-check("선수명 prefix 차단: 김민 ≠ 김민석", titleIncludesPlayerName("김민석 연설", "김민"), false);
+check(
+  "선수명 prefix 차단: 김민 ≠ 김민석",
+  titleIncludesPlayerName("김민석 연설", "김민", ["김민", "김민석"]),
+  false,
+);
 check("선수명 조사 허용: 김민석은", titleIncludesPlayerName("김민석은 홈런", "김민석"), true);
+check("고유 선수 붙임말 보존: 손아섭응원가", titleIncludesPlayerName("#손아섭응원가", "손아섭"), true);
+check("고유 선수 붙임말 보존: 손아섭홈런", titleIncludesPlayerName("#손아섭홈런", "손아섭"), true);
 check(
   "동명이인 차단: T3 정치 영상은 선수 태그 없음",
   matchPlayers(
@@ -70,6 +76,11 @@ check(
 check(
   "동명이인 통과: T3 두산+김민석은 두산 선수만 태그",
   matchPlayers("두산 김민석 끝내기 안타", KIM_MINSEOK_PLAYERS, null, 3).join(",") === "53554",
+  true,
+);
+check(
+  "동명이인 차단: 무관한 삼성 팀명은 후보팀 교집합 없음",
+  matchPlayers("삼성 김민석 발언", KIM_MINSEOK_PLAYERS, null, 3).length === 0,
   true,
 );
 check(

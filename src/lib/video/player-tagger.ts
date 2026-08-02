@@ -18,43 +18,24 @@ export interface PlayerAlias {
   aliases: string[];
 }
 
-const PLAYER_NAME_SUFFIXES = [
-  "으로",
-  "부터",
-  "까지",
-  "에게",
-  "한테",
-  "께서",
-  "선수",
-  "은",
-  "는",
-  "이",
-  "가",
-  "을",
-  "를",
-  "의",
-  "에",
-  "도",
-  "만",
-  "와",
-  "과",
-  "랑",
-  "로",
-  "께",
-];
-
-/** `김민`이 `김민석`에 걸리는 한글 prefix 오탐 없이 선수명을 찾는다. */
-export function titleIncludesPlayerName(title: string, name: string): boolean {
+/**
+ * `김민`이 roster의 더 긴 실제 이름 `김민석`에 걸리는 prefix 오탐만 제거한다.
+ * 일반 한글 suffix는 제한하지 않아 `손아섭응원가`·`#손아섭홈런`을 보존한다.
+ */
+export function titleIncludesPlayerName(
+  title: string,
+  name: string,
+  knownNames: readonly string[] = [],
+): boolean {
   let index = title.indexOf(name);
   while (index !== -1) {
-    const rest = title.slice(index + name.length);
-    if (
-      rest === "" ||
-      !/[가-힣]/.test(rest[0]) ||
-      PLAYER_NAME_SUFFIXES.some((suffix) => rest.startsWith(suffix))
-    ) {
-      return true;
-    }
+    const shadowedByLongerRosterName = knownNames.some(
+      (candidate) =>
+        candidate.length > name.length &&
+        candidate.startsWith(name) &&
+        title.startsWith(candidate, index),
+    );
+    if (!shadowedByLongerRosterName) return true;
     index = title.indexOf(name, index + 1);
   }
   return false;
@@ -85,6 +66,11 @@ export async function loadPlayerAliases(
     supabase.from("player_stats_batter").select("kbo_id, name, team"),
     supabase.from("player_stats_pitcher").select("kbo_id, name, team"),
   ]);
+  if (batters.error || pitchers.error) {
+    throw new Error(
+      `player alias lookup failed: ${batters.error?.message ?? pitchers.error?.message ?? "unknown"}`,
+    );
+  }
 
   const seen = new Set<string>();
   const result: PlayerAlias[] = [];
@@ -119,10 +105,13 @@ export function matchPlayers(
 ): string[] {
   const titleTeams = detectAllTeamsFromTitle(title);
   const matched: string[] = [];
+  const knownNames = Array.from(
+    new Set(players.flatMap((player) => [player.name, ...player.aliases]).filter((name) => name.length >= 2)),
+  );
 
   for (const p of players) {
     const names = [p.name, ...p.aliases].filter((n) => n.length >= 2);
-    const nameFound = names.some((name) => titleIncludesPlayerName(title, name));
+    const nameFound = names.some((name) => titleIncludesPlayerName(title, name, knownNames));
     if (!nameFound) continue;
     const ambiguousName = players.some(
       (candidate) => candidate.kbo_id !== p.kbo_id && candidate.name === p.name,
