@@ -2,6 +2,7 @@
 import { PRESEASON_GAMES, PRESEASON_DATES } from "@/lib/constants/preseason-schedule";
 import { useSafeBack } from "@/lib/hooks/useSafeBack";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
+import { getTeamById } from "@/lib/constants/teams";
 
 import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
@@ -226,6 +227,8 @@ export default function GamesPage() {
     return () => { stale = true; };
   }, [myTeamId, selectedDate, today, hasMyTeamGameToday, loadedDate]);
 
+  const myTeamName = myTeamId != null ? getTeamById(myTeamId)?.shortName : undefined;
+
   const gameWeather = (g: GameData) =>
     weather?.key.startsWith(`${selectedDate}|`) ? pickGameWeather(weather.map[g.stadium], g, selectedDate) : null;
 
@@ -290,11 +293,23 @@ export default function GamesPage() {
 
           {!myTeamGame && nextMyGame && (
             <div>
-              <h2 className="text-sm font-semibold text-text-tertiary mb-2 flex items-center gap-1">
+              <h2 className="text-sm font-semibold text-text-tertiary mb-1 flex items-center gap-1">
                 <Star size={14} className="fill-current" /> MY TEAM · 다음 경기 {formatNextGameLabel(nextMyGame.dateStr)}
               </h2>
+              {/*
+                오늘 화면에 다른 날짜 경기를 얹어 보여주므로, 오늘 경기가 없다는 사실을 먼저 명시한다.
+                은/는 조사는 팀명 받침(두산·삼성·키움)에 따라 갈리므로 쓰지 않는다.
+              */}
+              <p className="text-xs text-text-tertiary mb-2">
+                오늘 {myTeamName ? `${myTeamName} ` : ""}경기가 없습니다
+              </p>
               <motion.div variants={item}>
-                <CompactGameCard game={nextMyGame.game} isPreseason={isPreseason} myTeamId={myTeamId} />
+                <CompactGameCard
+                  game={nextMyGame.game}
+                  isPreseason={isPreseason}
+                  myTeamId={myTeamId}
+                  dateStr={nextMyGame.dateStr}
+                />
               </motion.div>
             </div>
           )}

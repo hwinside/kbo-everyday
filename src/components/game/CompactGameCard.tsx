@@ -12,6 +12,11 @@ interface CompactGameCardProps {
   myTeamId?: number | null;
   /** 경기 시간 기준 구장 날씨 (예정=예보, 라이브=실시간). null/undefined면 미노출 */
   weather?: GameWeather | null;
+  /**
+   * 오늘이 아닌 날짜의 경기를 오늘 화면에 얹어 보여줄 때(MY TEAM 다음 경기 카드) 넘긴다.
+   * "YYYY-MM-DD". 넘기면 시간 배지 앞에 날짜를 함께 찍어 오늘 경기로 오독되지 않게 한다.
+   */
+  dateStr?: string;
   game: {
     id: string;
     awayTeamId: number;
@@ -28,7 +33,14 @@ interface CompactGameCardProps {
   };
 }
 
-export default function CompactGameCard({ game, isPreseason, myTeamId, weather }: CompactGameCardProps) {
+/** "YYYY-MM-DD" → "8/4(화)" — 카드 배지용 초압축 표기 */
+function formatBadgeDate(dateStr: string): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const weekday = ["일", "월", "화", "수", "목", "금", "토"][new Date(y, m - 1, d).getDay()];
+  return `${m}/${d}(${weekday})`;
+}
+
+export default function CompactGameCard({ game, isPreseason, myTeamId, weather, dateStr }: CompactGameCardProps) {
   const away = getTeamById(game.awayTeamId)!;
   const home = getTeamById(game.homeTeamId)!;
   const isLive = game.status === "live";
@@ -52,7 +64,15 @@ export default function CompactGameCard({ game, isPreseason, myTeamId, weather }
               isFinal ? "bg-text-tertiary/20 text-text-tertiary" :
               "bg-accent/20 text-accent"
             }`}>
-              {isLive ? `LIVE ${game.inning}` : isCancelled ? "취소" : isFinal ? "종료" : game.time}
+              {isLive
+                ? `LIVE ${game.inning}`
+                : isCancelled
+                  ? "취소"
+                  : isFinal
+                    ? "종료"
+                    : dateStr
+                      ? `${formatBadgeDate(dateStr)} ${game.time}`
+                      : game.time}
             </span>
             {isPreseason && (
               <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-yellow-500/15 text-yellow-500">시범경기</span>
