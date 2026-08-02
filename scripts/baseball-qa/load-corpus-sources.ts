@@ -25,23 +25,11 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import {
-  normalizeCorpusTitle,
-  verifyCorpusPlayerIdentity,
-} from "../../src/lib/baseball-qa/rag/corpus-identity";
+  buildCorpusSourcePlan,
+  parseCorpusJsonl,
+} from "../../src/lib/baseball-qa/rag/corpus-loader";
 import { embedDocument } from "../../src/lib/baseball-qa/rag/embed";
 import { prepareTier2DocumentSet } from "../../src/lib/baseball-qa/rag/ingest";
-
-type CorpusRecord = {
-  doc: string;
-  kind: string;
-  entity: string;
-  depth: number;
-  title: string;
-  canonical: string;
-  len: number;
-  text: string;
-  fetchedAt: string;
-};
 
 type RosterPlayer = { kboId: string; name: string; birthDate?: string };
 
@@ -53,6 +41,8 @@ const LIMIT = Number(argValue("limit") ?? "0");
 const APPLY = args.includes("--apply");
 const CONCURRENCY = Math.max(1, Math.min(12, Number(argValue("concurrency") ?? "6") || 6));
 const STALE_AFTER_DAYS = 30;
+const TEST_EMBEDDING = process.env.NODE_ENV === "test"
+  && process.env.RAG_CORPUS_LOADER_FAKE_EMBEDDING === "1";
 
 interface RagSourceRow {
   source_key: string;
@@ -61,40 +51,6 @@ interface RagSourceRow {
   canonical_url: string;
   claim_token: string;
   claim_generation: number;
-}
-
-/**
- * corpus 읽기 (삼순 NO-GO ②).
- *
- * 손상된 행을 **조용히 무시하면 안 된다.** 크롤 중간에 끊긴 행이 생기면 그 문서는
- * 수집됐는데도 적재에서 사라지고, 아무도 모르는 채 커버리지가 줄어든다.
- *
- * 마지막 행은 크롤이 돌는 중이면 잘려 있을 수 있는 정상 상황이므로 구분해서 보고하고,
- * **중간 행 손상은 실패로 종결**한다(조용한 누락이 가장 나쁜 실패다).
- */
-function readCorpus(file: string): { records: CorpusRecord[]; brokenMiddle: number; brokenTail: number } {
-  const records: CorpusRecord[] = [];
-  const lines = readFileSync(file, "utf8").split("\n");
-  let brokenMiddle = 0;
-  let brokenTail = 0;
-  let lastNonEmptyIndex = -1;
-  for (let index = lines.length - 1; index >= 0; index -= 1) {
-    if (lines[index]?.trim()) {
-      lastNonEmptyIndex = index;
-      break;
-    }
-  }
-  for (const [index, line] of lines.entries()) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    try {
-      records.push(JSON.parse(trimmed) as CorpusRecord);
-    } catch {
-      if (index === lastNonEmptyIndex) brokenTail += 1;
-      else brokenMiddle += 1;
-    }
-  }
-  return { records, brokenMiddle, brokenTail };
 }
 
 function loadEnv(): Record<string, string> {
@@ -110,16 +66,6 @@ function loadEnv(): Record<string, string> {
     // CI에서는 환경변수 주입.
   }
   return env;
-}
-
-function latestRecords(records: CorpusRecord[]): CorpusRecord[] {
-  const latest = new Map<string, CorpusRecord>();
-  for (const record of records) {
-    const key = `${record.entity}\u0000${record.canonical}`;
-    const previous = latest.get(key);
-    if (!previous || previous.fetchedAt < record.fetchedAt) latest.set(key, record);
-  }
-  return [...latest.values()];
 }
 
 async function mapConcurrent<T, R>(
@@ -145,83 +91,27 @@ async function main(): Promise<void> {
   const roster = JSON.parse(
     readFileSync(path.join(process.cwd(), "src/lib/constants/players-roster.json"), "utf8"),
   ) as RosterPlayer[];
-  const byName = new Map<string, RosterPlayer[]>();
-  for (const player of roster) {
-    const list = byName.get(player.name) ?? [];
-    list.push(player);
-    byName.set(player.name, list);
-  }
-
-  const { records, brokenMiddle, brokenTail } = readCorpus(FILE);
-  if (brokenTail > 0) {
-    console.log(`주의: 마지막 행이 잘려 있다(${brokenTail}행). 크롤이 돌는 중이면 정상이다.`);
-  }
-  if (brokenMiddle > 0) {
-    // 조용한 누락을 만들지 않는다 — 수집된 문서가 적재에서 사라지는 것이다.
-    throw new Error(
-      `corpus 중간에 손상된 행이 ${brokenMiddle}건 있다. 적재를 중단한다 — ` +
-      `이를 무시하면 수집된 문서가 아무도 모르게 빠진다(corpus 재생성 필요).`,
-    );
-  }
-  const playerRecords = latestRecords(records.filter((record) => record.kind === "player"));
-  const rootByEntity = new Map<string, CorpusRecord>();
-  for (const record of playerRecords.filter((record) => record.depth === 1)) {
-    const previous = rootByEntity.get(record.entity);
-    if (!previous || previous.fetchedAt < record.fetchedAt) rootByEntity.set(record.entity, record);
-  }
-  const roots = [...rootByEntity.values()];
-  console.log(
-    `corpus ${records.length}행 / 중복제거 ${playerRecords.length}행 / ` +
-    `선수 루트 ${roots.length}명`,
+  const manifest = JSON.parse(
+    readFileSync(path.join(process.cwd(), "src/lib/baseball-qa/namu-core-manifest.json"), "utf8"),
   );
+  const parsed = parseCorpusJsonl(readFileSync(FILE, "utf8"));
+  const planned = buildCorpusSourcePlan(parsed.records, roster, manifest);
+  console.log(`입력 대조: ${JSON.stringify(parsed.counts)}`);
+  console.log(
+    `귀속 계획: source ${planned.plans.length}, 중복제거 문서 ${planned.deduplicated}, ` +
+    `귀속 문서 ${planned.assignedDocuments}, 격리 문서 ${planned.quarantinedDocuments}` +
+    `(선수 ${planned.quarantinedPlayers}명)`,
+  );
+  const byType = planned.plans.reduce<Record<string, number>>((counts, plan) => {
+    counts[plan.entityType] = (counts[plan.entityType] ?? 0) + plan.documents.length;
+    return counts;
+  }, {});
+  console.log(`kind별 귀속 문서: ${JSON.stringify(byType)}`);
 
-  const verdicts = { resolved: 0, ambiguous: 0, rejected: 0, unknown_player: 0 };
-  const reasons = new Map<string, number>();
-  const accepted: { kboId: string; name: string; record: CorpusRecord; documents: CorpusRecord[] }[] = [];
-
-  for (const record of roots) {
-    const candidates = byName.get(record.entity) ?? [];
-    if (candidates.length === 0) {
-      verdicts.unknown_player += 1;
-      continue;
-    }
-    if (candidates.length > 1) {
-      // 로스터 동명이인은 이름만으로 kboId를 특정할 수 없다. 추측하지 않는다.
-      verdicts.ambiguous += 1;
-      reasons.set("roster_name_ambiguous", (reasons.get("roster_name_ambiguous") ?? 0) + 1);
-      continue;
-    }
-    const player = candidates[0];
-    const verdict = verifyCorpusPlayerIdentity({
-      text: record.text,
-      rosterBirthYear: player.birthDate?.slice(0, 4),
-      seedName: record.entity,
-      documentTitle: record.title,
-    });
-    if (verdict.ok) {
-      verdicts.resolved += 1;
-      accepted.push({
-        kboId: player.kboId,
-        name: player.name,
-        record,
-        documents: playerRecords.filter((document) =>
-          document.entity === record.entity
-          && (document.doc === record.doc || document.doc.startsWith(`${record.doc}/`))),
-      });
-      continue;
-    }
-    if (verdict.status === "ambiguous") verdicts.ambiguous += 1;
-    else verdicts.rejected += 1;
-    reasons.set(verdict.reason, (reasons.get(verdict.reason) ?? 0) + 1);
-  }
-
-  console.log(`판정 요약: ${JSON.stringify(verdicts)}`);
-  console.log(`사유 분포: ${JSON.stringify(Object.fromEntries([...reasons].sort((a, b) => b[1] - a[1])))}`);
-
-  const selected = LIMIT > 0 ? accepted.slice(0, LIMIT) : accepted;
-  console.log(`적재 대상: ${selected.length}/${accepted.length}명${LIMIT > 0 ? ` (--limit=${LIMIT})` : ""}`);
+  const selected = LIMIT > 0 ? planned.plans.slice(0, LIMIT) : planned.plans;
+  console.log(`적재 대상: ${selected.length}/${planned.plans.length} source${LIMIT > 0 ? ` (--limit=${LIMIT})` : ""}`);
   for (const entry of selected.slice(0, 5)) {
-    console.log(`  귀속 확정 ${entry.name}(${entry.kboId}) ← ${entry.record.canonical}`);
+    console.log(`  귀속 확정 ${entry.sourceKey} ← ${entry.root.canonical}`);
   }
   if (!APPLY) {
     console.log("\n[dry-run] DB를 쓰지 않았다. 전량 전 `--limit=5 --apply` canary가 필수다.");
@@ -253,10 +143,10 @@ async function main(): Promise<void> {
   let completedSources = 0;
   let completedChunks = 0;
   for (const entry of selected) {
-    const pageTitle = normalizeCorpusTitle(entry.record.title);
+    const pageTitle = entry.pageTitle;
     const documents = entry.documents.map((document) => ({
-      entityType: "player" as const,
-      entityId: entry.kboId,
+      entityType: entry.entityType,
+      entityId: entry.entityId,
       pageTitle,
       canonicalUrl: document.canonical,
       revision: `crawled:${document.fetchedAt}`,
@@ -266,26 +156,35 @@ async function main(): Promise<void> {
       rawText: document.text,
     }));
     const prepared = prepareTier2DocumentSet(documents, "full");
-    if (!prepared.ok) throw new Error(`${entry.name}: prepare:${prepared.reason}`);
+    if (!prepared.ok) throw new Error(`${entry.sourceKey}: prepare:${prepared.reason}`);
 
     // claim 전에 embedding을 끝낸다. 느린 외부 API가 lease를 소모해 마지막 chunk에서
     // 만료되는 실패를 막고, embedding 실패 시 DB에는 한 줄도 쓰지 않는다.
     const embedded = await mapConcurrent(prepared.chunks, CONCURRENCY, async (chunk) => {
-      const result = await embedDocument(chunk.content, pageTitle);
-      if (!result.ok) throw new Error(`${entry.name}: embed:${result.reason}`);
+      const result = await embedDocument(
+        chunk.content,
+        pageTitle,
+        TEST_EMBEDDING
+          ? async () => new Response(JSON.stringify({ embedding: { values: Array(768).fill(0.01) } }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          })
+          : undefined,
+      );
+      if (!result.ok) throw new Error(`${entry.sourceKey}: embed:${result.reason}`);
       return { chunk, vector: result.vector };
     });
 
-    const sourceKey = `namu:player:${entry.kboId}`;
+    const sourceKey = entry.sourceKey;
     const sourceResponse = await fetch(
       `${url}/rest/v1/genius_rag_sources?source_key=eq.${encodeURIComponent(sourceKey)}&select=source_key`,
       {
         method: "PATCH",
         headers: { ...headers, Prefer: "return=representation" },
         body: JSON.stringify({
-          canonical_url: entry.record.canonical,
+          canonical_url: entry.root.canonical,
           resolution_status: "resolved",
-          resolution_note: `A17 corpus identity 통과(${entry.record.fetchedAt})`,
+          resolution_note: `A17 corpus schema/identity 통과(${entry.root.fetchedAt})`,
         }),
       },
     );
@@ -312,8 +211,8 @@ async function main(): Promise<void> {
           p_source_key: sourceKey,
           p_claim_token: source.claim_token,
           p_claim_generation: source.claim_generation,
-          p_entity_type: "player",
-          p_entity_id: entry.kboId,
+          p_entity_type: entry.entityType,
+          p_entity_id: entry.entityId,
           p_page_title: pageTitle,
           p_canonical_url: chunk.meta.canonicalUrl,
           p_revision: chunk.meta.revision,
@@ -337,7 +236,7 @@ async function main(): Promise<void> {
         });
       });
 
-      const rootRevision = `crawled:${entry.record.fetchedAt}`;
+      const rootRevision = `crawled:${entry.root.fetchedAt}`;
       const anchor = prepared.chunks.find((chunk) => chunk.meta.revision === rootRevision);
       if (!anchor) throw new Error(`${sourceKey}: root anchor chunk absent`);
       const completed = await rpc<boolean>("complete_baseball_genius_rag_source", {
@@ -346,7 +245,7 @@ async function main(): Promise<void> {
         p_claim_generation: source.claim_generation,
         p_revision: rootRevision,
         p_content_hash: anchor.documentContentHash,
-        p_crawled_at: entry.record.fetchedAt,
+        p_crawled_at: entry.root.fetchedAt,
         p_stale_after: new Date(Date.now() + STALE_AFTER_DAYS * 86_400_000).toISOString(),
         p_expected_chunk_count: embedded.length,
       });
