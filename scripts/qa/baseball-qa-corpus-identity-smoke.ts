@@ -36,7 +36,10 @@ const REAL = {
 
 /** (1) 실제 오염 문서가 실제로 걸러지는가 — 이 게이트의 존재 이유. */
 function verifyRealContaminationBlocked(): void {
-  const 도영 = verifyCorpusPlayerIdentity({ text: REAL.김도영, rosterBirthYear: "2003" });
+  const 도영 = verifyCorpusPlayerIdentity({
+    text: REAL.김도영, rosterBirthYear: "2003",
+    seedName: "김도영", documentTitle: "김도영 - 나무위키",
+  });
   assert.equal(도영.ok, true, "정상 선수 문서는 통과해야 한다");
 
   const 오스틴 = verifyCorpusPlayerIdentity({ text: REAL.오스틴, rosterBirthYear: "1993" });
@@ -56,7 +59,7 @@ function verifyRealContaminationBlocked(): void {
   ok("실측 오염 차단 — 김도영 통과 / 오스틴·강백호 격리 / 레이예스 거부");
 }
 
-/** (2) 생년 대조: 근거가 있을 때만 판정하고, 없으면 거부하지 않는다. */
+/** (2) 생년 대조: 로스터·문서 양쪽 근거가 없으면 추측하지 않고 격리한다. */
 function verifyBirthYearPolicy(): void {
   const categories = extractCorpusCategories(REAL.김도영);
   assert.equal(matchesBirthYear(categories, "2003"), true);
@@ -69,10 +72,20 @@ function verifyBirthYearPolicy(): void {
   assert.equal(wrong.ok, false);
   if (!wrong.ok) assert.equal(wrong.reason, "birth_year_mismatch");
 
-  // 생년을 모르는 선수(외국인 일부)는 없는 근거로 거부하지 않는다.
-  const unknown = verifyCorpusPlayerIdentity({ text: REAL.김도영, rosterBirthYear: undefined });
-  assert.equal(unknown.ok, true, "생년 미상이어도 야구선수 분류가 있으면 통과한다");
-  ok("생년 대조 — 일치/불일치/근거없음 3분기");
+  const rosterUnknown = verifyCorpusPlayerIdentity({
+    text: REAL.김도영, rosterBirthYear: undefined,
+    seedName: "김도영", documentTitle: "김도영 - 나무위키",
+  });
+  assert.equal(rosterUnknown.ok, false);
+  if (!rosterUnknown.ok) assert.equal(rosterUnknown.reason, "roster_birth_year_absent");
+
+  const documentUnknown = verifyCorpusPlayerIdentity({
+    text: "분류대한민국의 야구 선수KIA 타이거즈/현역", rosterBirthYear: "2003",
+    seedName: "김도영", documentTitle: "김도영 - 나무위키",
+  });
+  assert.equal(documentUnknown.ok, false);
+  if (!documentUnknown.ok) assert.equal(documentUnknown.reason, "document_birth_year_absent");
+  ok("생년 대조 — 일치/불일치/로스터 결측/문서 결측 fail-close");
 }
 
 /** (3) 분류 자체가 없는 문서는 fail-close. */
@@ -117,9 +130,12 @@ function verifyTitleGate(): void {
     assert.equal(other.status, "ambiguous");
     assert.equal(other.reason, "document_title_mismatch");
   }
-  // 제목 정보가 없으면 없는 근거로 거부하지 않는다.
+  // 제목 정보가 없으면 귀속 근거가 없으므로 격리한다.
   const noTitle = verifyCorpusPlayerIdentity({ text: REAL.김도영, rosterBirthYear: "2003" });
-  assert.equal(noTitle.ok, true);
+  assert.equal(noTitle.ok, false);
+  if (!noTitle.ok) assert.equal(noTitle.reason, "document_title_absent");
+  assert.equal(titleMatchesSeed("레이예스", "레예스 - 나무위키"), true);
+  assert.equal(titleMatchesSeed("벤자민", "벤저민 - 나무위키"), true);
   ok("제목 대조 게이트 — 타인 문서 격리 / 풀네임·표기차 허용 / 정보없으면 건너뜀");
 }
 

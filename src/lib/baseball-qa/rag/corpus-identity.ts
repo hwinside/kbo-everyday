@@ -49,6 +49,11 @@ export function titleMatchesSeed(seedName: string, documentTitle: string): boole
   const title = normalizeCorpusTitle(documentTitle);
   if (title.length === 0) return false;
   if (title === seedName) return true;
+  const aliases: Readonly<Record<string, readonly string[]>> = {
+    "레이예스": ["레예스"],
+    "벤자민": ["벤저민"],
+  };
+  if (aliases[seedName]?.includes(title)) return true;
   // 풀네임 문서(`아담 올러`)는 등록명(`올러`)을 토큰으로 포함한다.
   if (title.split(/\s+/).includes(seedName)) return true;
   return false;
@@ -112,20 +117,25 @@ export function verifyCorpusPlayerIdentity(input: {
   if (!hasBaseballPlayerCategory(categories)) {
     return { ok: false, status: "rejected", reason: "not_baseball_player_document" };
   }
+  if (!input.rosterBirthYear || !/^\d{4}$/.test(input.rosterBirthYear)) {
+    return { ok: false, status: "ambiguous", reason: "roster_birth_year_absent" };
+  }
   const birthMatch = matchesBirthYear(categories, input.rosterBirthYear);
-  if (birthMatch === false) {
+  if (birthMatch === null) {
+    return { ok: false, status: "ambiguous", reason: "document_birth_year_absent" };
+  }
+  if (!birthMatch) {
     return { ok: false, status: "rejected", reason: "birth_year_mismatch" };
   }
 
   // 제목 대조 (삼순 NO-GO ①). 생년으로 걸러지지 않는 타인 문서 오귀속을 막는 마지막 방어선이다.
-  // 제목 정보가 없으면 이 검사를 건너뛴다 — 없는 근거로 거부하지 않는다.
-  let matchedTitle = false;
-  if (input.seedName !== undefined && input.documentTitle !== undefined) {
-    matchedTitle = titleMatchesSeed(input.seedName, input.documentTitle);
-    if (!matchedTitle) {
-      // 다른 선수 문서일 수 있다. 추측해서 귀속하지 않고 격리한다.
-      return { ok: false, status: "ambiguous", reason: "document_title_mismatch" };
-    }
+  if (!input.seedName || !input.documentTitle) {
+    return { ok: false, status: "ambiguous", reason: "document_title_absent" };
+  }
+  const matchedTitle = titleMatchesSeed(input.seedName, input.documentTitle);
+  if (!matchedTitle) {
+    // 다른 선수 문서일 수 있다. 추측해서 귀속하지 않고 격리한다.
+    return { ok: false, status: "ambiguous", reason: "document_title_mismatch" };
   }
   return { ok: true, matchedBirthYear: birthMatch === true, matchedTitle };
 }
