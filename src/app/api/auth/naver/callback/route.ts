@@ -194,34 +194,68 @@ export async function GET(request: NextRequest) {
       { auth: { autoRefreshToken: false, persistSession: false } }
     );
 
-    // 이메일로 기존 유저 조회
+    // 이메일로 기존 유저 조회 — GoTrue admin `filter` 로 서버측 검색.
     //
-    // 버그 수정 (2026-04-21): listUsers() 기본 perPage=50이라 655명 중 50명만 조회 →
-    // 중간/초기 가입자를 못 찾아 중복 createUser() 시도 → "email already registered" AuthApiError.
-    // 해결: email 정규화(소문자+trim) 후 페이지네이션으로 전수 순회.
+    // 2026-08-02 P0: 기존 구현은 listUsers 를 20페이지(=상위 2만 명)까지만 훑었다.
+    //   listUsers 는 created_at DESC 라 유저가 2만 명을 넘긴 순간(7/28 04:07) 가장 오래된
+    //   가입자부터 조회 범위 밖으로 밀려났고 → 기존 유저를 못 찾음 → createUser 시도 →
+    //   "email already registered" → login_error=create_user_error. 구가입자 약 5천 명이
+    //   네이버 로그인 전면 불가였다.
+    //   4/21 에도 같은 유형(perPage 50 → 1000)을 겪었는데, 상한을 올리는 방식이라
+    //   유저 수가 자라면 반드시 재발한다. 이번엔 페이지 상한에 의존하지 않는 서버측
+    //   검색으로 바꿔 유저 규모와 무관하게 만든다.
+    //
+    // ⚠️ supabase-js 의 `auth.admin.listUsers()` 는 `filter` 를 지원하지 않는다.
+    //   (auth-js 구현 실측: query 에 page / per_page 만 실음 — filter 를 넘겨도 조용히
+    //    무시되고 "최신 N명"이 돌아온다. 그대로 썼다면 지금 사고와 똑같은 증상이
+    //    그대로 남는다.) 따라서 GoTrue admin REST 를 직접 호출한다.
+    //
+    // ⚠️ GoTrue `filter` 는 부분일치(LIKE)라 여러 명이 돌아올 수 있다
+    //   (실측: filter="gmail.com" → 다수). 반환값을 그대로 쓰지 않고
+    //   정규화 이메일 exact 일치로 반드시 재확인한다.
     const normalizedEmail = String(email).trim().toLowerCase();
-    let existingUser: Awaited<ReturnType<typeof supabaseAdmin.auth.admin.listUsers>>["data"]["users"][number] | undefined;
-    for (let page = 1; page <= 20; page++) {
-      const { data: pageData, error: pageErr } =
-        await supabaseAdmin.auth.admin.listUsers({ page, perPage: 1000 });
-      if (pageErr) {
-        console.error("[Naver OAuth] listUsers error:", pageErr.message);
-        break;
+    type AdminUser = Awaited<ReturnType<typeof supabaseAdmin.auth.admin.listUsers>>["data"]["users"][number];
+    let existingUser: AdminUser | undefined;
+    let lookupOk = true;
+    try {
+      const adminUsersUrl = new URL(
+        "/auth/v1/admin/users",
+        process.env.NEXT_PUBLIC_SUPABASE_URL!
+      );
+      adminUsersUrl.searchParams.set("filter", normalizedEmail);
+      adminUsersUrl.searchParams.set("per_page", "200");
+      const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+      const lookupRes = await fetch(adminUsersUrl.toString(), {
+        headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` },
+      });
+      if (!lookupRes.ok) {
+        throw new Error(`admin users lookup HTTP ${lookupRes.status}`);
       }
-      const hit = pageData?.users?.find(
+      const lookupJson = (await lookupRes.json()) as { users?: AdminUser[] };
+      if (!Array.isArray(lookupJson.users)) {
+        throw new Error("admin users lookup returned no users array");
+      }
+      existingUser = lookupJson.users.find(
         (u) => (u.email ? u.email.trim().toLowerCase() : "") === normalizedEmail
       );
-      if (hit) {
-        existingUser = hit;
-        break;
-      }
-      if (!pageData?.users || pageData.users.length < 1000) break; // 마지막 페이지
+    } catch (e) {
+      // 조회 실패 시 신규 생성으로 흘려보내면 안 된다
+      //   (없는 유저로 오인 → createUser → 중복 에러 = 이번 사고와 동일 증상).
+      //   판별 불가 상태를 성공처럼 처리하지 않고 fail-close 한다.
+      lookupOk = false;
+      console.error("[Naver OAuth][step3.5] user lookup failed", {
+        message: (e as Error)?.message,
+      });
     }
     console.log("[Naver OAuth][step3.5] user lookup", {
       email: normalizedEmail,
+      ok: lookupOk,
       found: !!existingUser,
       userId: existingUser?.id?.slice(0, 8) ?? null,
     });
+    if (!lookupOk) {
+      return NextResponse.redirect(`${CANONICAL_ORIGIN}?login_error=lookup_error`);
+    }
 
     let userId: string;
 
