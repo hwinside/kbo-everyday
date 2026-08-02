@@ -9,6 +9,7 @@ import { getTeamById, type TeamData } from "@/lib/constants/teams";
 import { getTeamColor } from "@/lib/utils/team";
 import { getCanonicalPlayerHref } from "@/lib/utils/resolve-player";
 import { computeRosterMovesGroupedDisplay, teamHomeHref } from "@/lib/roster-moves/readiness";
+import { gameResultTone, resultToneChipStyle } from "@/lib/ui/result-tone";
 
 type FormResult = "W" | "L" | "D";
 
@@ -308,7 +309,7 @@ export default function TeamCard({ team, gameSlot, refreshNonce = 0 }: TeamCardP
                   <div className="flex gap-1.5 justify-end">
                     {data.recentForm.map((r, i) => (
                       <span key={i} className="w-[22px] h-[22px] rounded-[7px] flex items-center justify-center text-[11px] font-extrabold"
-                        style={r === "W" ? { background: "rgba(38,168,109,.22)", color: "#36d399" } : r === "L" ? { background: "rgba(196,1,47,.20)", color: "#ff6b6b" } : { background: "rgba(160,160,170,.18)", color: "#b0b0ba" }}>
+                        style={resultToneChipStyle(gameResultTone(r))}>
                         {r === "W" ? "승" : r === "L" ? "패" : "무"}
                       </span>
                     ))}

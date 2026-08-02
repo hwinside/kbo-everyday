@@ -1,0 +1,105 @@
+name: Result Tone SSOT Gate
+
+# 승패·긍정/부정 컬러톤 SSOT 게이트.
+#
+# 왜 별도 워크플로인가 — 기존 게이트가 이 축에서 false-green 이었다(삼순 #1068 Blocker 2):
+#   RESULT_TONE_COLOR 의 positive/negative 를 서로 바꿔도
+#   ui-contrast-gate(qa:diary-contrast)·venue-stats-s2-gate 가 둘 다 PASS 했다.
+#   - 전자: fixture 가 games=[] 라 결과 칩을 아예 렌더하지 않음
+#   - 후자: 대비(contrast)만 보므로 승/패가 뒤집혀도 대비값은 그대로
+#   그리고 두 워크플로 paths 어디에도 src/lib/ui/result-tone.ts 가 없어
+#   SSOT 파일만 고치면 required check 가 아예 돌지도 않았다.
+#
+# 이 워크플로는 팔레트 exact · W/L/D 의미 매핑 · 기준 화면(홈 TeamCard)과
+# 소비자 실제 DOM 배선을 fail-closed 로 검증한다.
+
+on:
+  pull_request:
+    paths:
+      - "src/lib/ui/result-tone.ts"
+      - "src/components/home/TeamCard.tsx"
+      - "src/components/my/VenueDiaryCard.tsx"
+      - "src/components/my/VenueDiaryAddGameSheet.tsx"
+      - "src/components/my/VenueDiaryUploader.tsx"
+      - "src/components/my/VenueDiaryViewer.tsx"
+      - "src/components/my/VenueStatsDashboard.tsx"
+      - "src/components/player/PlayerGameLogs.tsx"
+      - "src/components/team/TeamRosterMovesCard.tsx"
+      - "src/app/(main)/teams/[teamId]/schedule/page.tsx"
+      - "scripts/qa/result-tone-gate.mjs"
+      - "src/styles/globals.css"
+      - "package.json"
+      - ".github/workflows/result-tone-gate.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "src/lib/ui/result-tone.ts"
+      - "src/components/home/TeamCard.tsx"
+      - "src/components/my/VenueDiaryCard.tsx"
+      - "src/components/my/VenueDiaryAddGameSheet.tsx"
+      - "src/components/my/VenueDiaryUploader.tsx"
+      - "src/components/my/VenueDiaryViewer.tsx"
+      - "src/components/my/VenueStatsDashboard.tsx"
+      - "src/components/player/PlayerGameLogs.tsx"
+      - "src/components/team/TeamRosterMovesCard.tsx"
+      - "src/app/(main)/teams/[teamId]/schedule/page.tsx"
+      - "scripts/qa/result-tone-gate.mjs"
+      - "src/styles/globals.css"
+      - "package.json"
+      - ".github/workflows/result-tone-gate.yml"
+
+jobs:
+  result-tone:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Lint result tone surface (fail-closed, warnings blocked)
+        run: npx eslint --max-warnings=0 src/lib/ui/result-tone.ts scripts/qa/result-tone-gate.mjs src/components/home/TeamCard.tsx src/components/my/VenueDiaryCard.tsx src/components/player/PlayerGameLogs.tsx src/components/team/TeamRosterMovesCard.tsx 'src/app/(main)/teams/[teamId]/schedule/page.tsx'
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Run result tone SSOT gate (fail-closed)
+        # RESULT_TONE_REQUIRE_BROWSER=1 → chromium 미설치/launch 실패도 exit 1.
+        env:
+          RESULT_TONE_REQUIRE_BROWSER: "1"
+        run: npm run qa:result-tone
+
+      - name: Prove gate catches semantic color inversion (mutation RED)
+        # 승/패 색을 역전시켰을 때 게이트가 반드시 실패해야 한다.
+        # 여기서 통과해 버리면 위 GREEN 은 아무것도 증명하지 못한다.
+        env:
+          RESULT_TONE_REQUIRE_BROWSER: "1"
+          RESULT_TONE_MUTATE_SWAP: "1"
+        run: |
+          if npm run qa:result-tone; then
+            echo "::error::색 역전 mutation 이 통과했다 — 게이트가 false-green 이다"
+            exit 1
+          fi
+          echo "mutation RED 확인: 색 역전이 게이트에 걸린다"
+
+      - name: Prove gate catches consumer unwiring (mutation RED)
+        # 각 소비자를 하드코딩 시절로 되돌리면 반드시 실패해야 한다.
+        env:
+          RESULT_TONE_REQUIRE_BROWSER: "1"
+        run: |
+          for target in teamcard diary playerlogs schedule roster; do
+            if RESULT_TONE_MUTATE_UNWIRE="$target" npm run qa:result-tone; then
+              echo "::error::$target 배선 제거가 통과했다 — 해당 화면은 SSOT 에 결속돼 있지 않다"
+              exit 1
+            fi
+            echo "mutation RED 확인: $target 배선 제거가 게이트에 걸린다"
+          done

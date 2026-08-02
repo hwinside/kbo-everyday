@@ -174,12 +174,10 @@ export default function TeamSchedulePage() {
                 : undefined;
 
               // 승패 색은 홈 팀카드 기준 SSOT(@/lib/ui/result-tone). live 는 결과가 아니라 기존 붉은 톤 유지.
-              const resultBg =
-                game?.result === "W"
-                  ? RESULT_TONE_BG.positive
-                  : game?.result === "L"
-                    ? RESULT_TONE_BG.negative
-                    : undefined;
+              // 무승부(D)도 같은 계약으로 중립 배경을 받는다.
+              const resultBg = game?.result
+                ? RESULT_TONE_BG[gameResultTone(game.result)]
+                : undefined;
               const liveBgClass =
                 !game?.result && game?.status === "live" ? "bg-red-500/15" : "";
 
