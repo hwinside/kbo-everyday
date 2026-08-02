@@ -1,0 +1,65 @@
+name: Game Chat Visibility Gate
+
+on:
+  pull_request:
+    paths:
+      - "src/app/(main)/games/**"
+      - "src/app/api/game-chat/prefs/route.ts"
+      - "src/components/game/GameChat.tsx"
+      - "src/components/game/GameChatSlot.tsx"
+      - "src/components/game/KgwanTab.tsx"
+      - "src/hooks/useGameChatVisibility.ts"
+      - "src/lib/game-chat-visibility.ts"
+      - "scripts/qa/game-chat-visibility-smoke.ts"
+      - "scripts/qa/ui-smoke-game-chat-visibility.mjs"
+      - "supabase/migrations/*game_chat_enabled.sql"
+      - "package.json"
+      - ".github/workflows/game-chat-visibility-gate.yml"
+  push:
+    branches: [main]
+    paths:
+      - "src/app/(main)/games/**"
+      - "src/app/api/game-chat/prefs/route.ts"
+      - "src/components/game/GameChat.tsx"
+      - "src/components/game/GameChatSlot.tsx"
+      - "src/components/game/KgwanTab.tsx"
+      - "src/hooks/useGameChatVisibility.ts"
+      - "src/lib/game-chat-visibility.ts"
+      - "scripts/qa/game-chat-visibility-smoke.ts"
+      - "scripts/qa/ui-smoke-game-chat-visibility.mjs"
+      - "supabase/migrations/*game_chat_enabled.sql"
+      - "package.json"
+      - ".github/workflows/game-chat-visibility-gate.yml"
+
+jobs:
+  game-chat-visibility:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm ci --no-audit --no-fund
+      - run: npx playwright install --with-deps chromium
+      - name: Focused lint
+        run: npx eslint --quiet src/app/api/game-chat/prefs/route.ts src/components/game/GameChat.tsx src/components/game/GameChatSlot.tsx src/components/game/KgwanTab.tsx src/hooks/useGameChatVisibility.ts src/lib/game-chat-visibility.ts scripts/qa/game-chat-visibility-smoke.ts scripts/qa/ui-smoke-game-chat-visibility.mjs
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Pure visibility and required wiring gate
+        run: npm run qa:game-chat-visibility
+      - name: Start guest browser fixture
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: npm run dev -- --hostname 127.0.0.1 --port 3057 > /tmp/game-chat-visibility-next.log 2>&1 &
+      - name: Wait for fixture
+        run: |
+          for attempt in $(seq 1 120); do
+            curl --fail --silent http://127.0.0.1:3057/games/20260328-LG-DS >/dev/null && exit 0
+            sleep 1
+          done
+          cat /tmp/game-chat-visibility-next.log
+          exit 1
+      - name: Browser visibility gate
+        run: npm run qa:ui:game-chat-visibility
