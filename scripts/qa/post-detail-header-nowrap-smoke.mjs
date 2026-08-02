@@ -14,7 +14,7 @@ const header = src.match(/<div className="([^"]*whitespace-nowrap[^"]*)">[\s\S]*
 check("작성자 헤더가 줄바꿈을 금지", Boolean(header));
 
 const block = header?.[0] ?? "";
-check("긴 닉네임만 남은 폭 안에서 말줄임", /min-w-0 flex-1 truncate[^"\n]*text-sm/.test(block));
+check("닉네임은 13px로 축소하고 더 길 때만 말줄임", /min-w-0 flex-1 truncate[^"\n]*text-\[13px\]/.test(block));
 check("팀 배지는 축소하지 않음", /className="shrink-0"><TeamBadge/.test(block));
 check("쪽지 버튼은 축소하지 않음", /DMButton[^>]*className="shrink-0"/.test(block));
 check("작성 시간은 축소하지 않음", /className="shrink-0 text-sm text-text-tertiary"/.test(block));

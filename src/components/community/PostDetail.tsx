@@ -476,7 +476,7 @@ export default function PostDetail({ postId }: PostDetailProps) {
       <div className="px-5 py-4">
         <div className="flex items-center gap-2 mb-3 whitespace-nowrap">
           {post.team_id ? <div className="shrink-0"><TeamBadge teamId={post.team_id} size="xs" /></div> : null}
-          <span className="min-w-0 flex-1 truncate text-sm font-semibold text-text-primary cursor-pointer hover:text-accent" onClick={() => post.author_id && router.push(`/profile/${post.author_id}`)}>{post.nickname || "익명"}</span>
+          <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-text-primary cursor-pointer hover:text-accent" onClick={() => post.author_id && router.push(`/profile/${post.author_id}`)}>{post.nickname || "익명"}</span>
           {post.grade === 'staff' && (
             <span className='ml-1 px-1.5 py-0.5 text-[10px] font-bold bg-accent/20 text-accent rounded-full'>운영팀</span>
           )}
