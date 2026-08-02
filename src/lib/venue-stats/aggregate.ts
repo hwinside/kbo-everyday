@@ -40,6 +40,7 @@ import type {
   ComponentEnvelope,
   D1Value,
   D5Value,
+  D7Value,
   D6Value,
   E1PerTeam,
   E1Value,
@@ -60,6 +61,7 @@ import type {
 // 승률/스플릿/팀 경기당 지표 표본 가드. 순수 leaf 모듈(state.ts)이 SSOT —
 // 클라이언트 번들이 node 전용 의존을 끌지 않도록 여기서는 재수출만 한다.
 import { MIN_FINAL_GAMES } from "@/lib/venue-stats/state";
+import { ERROR_PRONE_MIN } from "@/lib/venue-stats/ui";
 import type { FavoriteSeasonBaselineSnapshot } from "@/lib/venue-stats/current-season-baseline";
 
 export { MIN_FINAL_GAMES };
@@ -128,6 +130,11 @@ export interface VenueStatsAggregateInput {
   teamSeasonTotals: ReadonlyMap<number, TeamSeasonTotals> | null;
   /** 기존 현재시즌 선수 스냅샷의 kbo_id exact baseline. null=소스 실패/비지원 시즌. */
   favoriteSeasonBaselines: ReadonlyMap<string, FavoriteSeasonBaselineSnapshot> | null;
+  /**
+   * 직관 경기의 팀별 실책(E). linescore 기반이라 `player_game_logs` 와 무관하다.
+   * **키 부재 = 미확인**(0 아님) — 조회 실패를 "실책 없음"으로 승격시키지 않는다.
+   */
+  gameErrors: ReadonlyMap<string, { away: number; home: number }>;
   /** KST 오늘 (YYYY-MM-DD) — E3 daysSinceFirst. */
   todayKst: string;
 }
@@ -343,6 +350,7 @@ const EMPTY_DENOMINATORS: Record<MetricId, Record<string, number>> = {
   D1: { finalGames: 0 },
   D5: { attendanceGames: 0 },
   D6: { finalGames: 0 },
+  D7: { knownErrorGames: 0 },
   E1: { eligibleTeamFinalGames: 0 },
   E2: { activeMonths: 0 },
   E3: { attendanceGames: 0 },
@@ -1606,6 +1614,88 @@ function buildD6(ctx: Ctx): MetricEnvelope<D6Value> {
   return envelope;
 }
 
+/**
+ /**
+ * D7 — 내가 본 경기의 수비 실책 (하린아빠 2026-08-02 `발암경기 인내형` 태그 근거).
+ *
+ * 데이터 소스는 **linescore 의 `E`(팀별 실책)** 다. 실책은 팀 단위 지표라 선수별로
+ * 쪼갤 이유가 없고, `player_game_logs` 에 컬럼을 더하면 canonical payload hash 가
+ * 바뀌어 운영 complete 원장 468건이 통째로 `payload_hash_mismatch` 가 된다.
+ *
+ * ⚠️ 핵심 계약: 조회 실패 경기는 `gameErrors` 에 **키 자체가 없다**. 그걸 0으로 세면
+ * "실책을 안 본 사람"으로 둔갑하므로, **아는 경기만 분모**로 쓰고 그 수를 `knownGames`
+ * 로 노출한다. 모르는 경기 수도 `coverage.unknownErrorGames` 로 숨기지 않는다.
+ */
+function buildD7(ctx: Ctx): MetricEnvelope<D7Value> {
+  const { c } = ctx;
+  const known = c.validFinal.filter((g) => ctx.input.gameErrors.has(g.gameId));
+
+  const state = pipeline(ctx, {
+    invalidSnapshotGames: c.invalidSnapshot.length,
+    sampleMet: known.length >= MIN_FINAL_GAMES,
+  });
+
+  const envelope: MetricEnvelope<D7Value> = {
+    id: "D7",
+    // ⚠️ §12 사다리(`invalid_snapshot > no_final > sample_limited`)를 덮지 않는다(삼순 P1).
+    //    이전 구현은 `known===0` 이면 `empty` 외 전부 `sample_limited` 로 덮어써서
+    //    cancelled-only(`no_final`)·snapshot 결측/불일치(`invalid_snapshot`)까지 지웠다.
+    //    실책을 못 구한 것은 **정상 final 인데 소스가 없을 때**만 표본 문제다.
+    state: known.length === 0 && state === "ready" ? "sample_limited" : state,
+    value: null,
+    n: known.length,
+    denominator: { knownErrorGames: known.length },
+    coverage: {
+      invalidSnapshot: c.invalidSnapshot,
+      unknownErrorGames: c.validFinal.length - known.length,
+    },
+  };
+  // ⚠️ 표본 미달이어도 **사실값은 보존**한다 (삼순 P1 2026-08-02).
+  //    실책은 "내가 본 그 경기에서 실제로 몇 개 나왔나"라는 관측 사실이라, 표본이 1경기여도
+  //    거짓이 아니다. 여기서 value 를 null 로 버리면 실측 P50(1경기) 유저는 어떤 실책 태그도
+  //    받을 수 없다(48명 중 47명). 표본 부족은 `state=sample_limited` 배지로만 알리고,
+  //    "이 사람은 원래 그렇다"는 **성향 주장**은 소비측(`venueErrorTags`)이 3경기+로 가드한다.
+  //    A1 이 표본 미달에서도 승·패·승률을 노출하는 것과 같은 계약이다.
+  if (known.length === 0) return envelope;
+  if (envelope.state !== "ready" && envelope.state !== "sample_limited") return envelope;
+
+  let myTeamErrors = 0;
+  let opponentErrors = 0;
+  let errorProneGames = 0;
+  let worst: { gameId: string; date: string; errors: number } | null = null;
+  for (const g of known) {
+    const counts = ctx.input.gameErrors.get(g.gameId)!;
+    // 내 팀이 홈이었나 원정이었나에 따라 귀속을 뒤집는다.
+    // isHome 이 null 이면 snapshot 유효성 자체가 깨진 경기이므로 known 에 못 들어온다.
+    const mine = g.isHome ? counts.home : counts.away;
+    const theirs = g.isHome ? counts.away : counts.home;
+    myTeamErrors += mine;
+    opponentErrors += theirs;
+    // `발암경기` = 한 경기에서 내 팀 실책이 임계 이상. 실측 상위 16.2% 구간.
+    if (mine >= ERROR_PRONE_MIN) errorProneGames += 1;
+    // 동률은 최신 date desc → gameId asc (D6 와 동일 정렬 계약).
+    if (
+      mine > 0 &&
+      (worst === null ||
+        mine > worst.errors ||
+        (mine === worst.errors && g.gameDate > worst.date) ||
+        (mine === worst.errors && g.gameDate === worst.date && g.gameId < worst.gameId))
+    ) {
+      worst = { gameId: g.gameId, date: g.gameDate, errors: mine };
+    }
+  }
+
+  envelope.value = {
+    myTeamErrors,
+    opponentErrors,
+    errorProneGames,
+    myErrorsPerGame: ratio(myTeamErrors, known.length),
+    knownGames: known.length,
+    worstGame: worst,
+  };
+  return envelope;
+}
+
 // E ─ 습관·마일스톤
 function streaks(schedule: string[], attended: Set<string>): { current: number; longest: number } {
   let longest = 0;
@@ -1929,6 +2019,7 @@ export function buildVenueStatsScope(input: VenueStatsAggregateInput): VenueStat
     D1: buildD1(ctx),
     D5: buildD5(ctx),
     D6: buildD6(ctx),
+    D7: buildD7(ctx),
     E1: buildE1(ctx),
     E2: buildE2(ctx),
     E3: buildE3(ctx),
