@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect } from "react";
-import { isNative } from "@/lib/capacitor/platform";
+import { isNativeRuntime } from "@/lib/capacitor/platform";
 import { supabase } from "@/lib/supabase/client";
-import { syncNativePushToken, listenForTokenRefresh, listenForForegroundNotifications, listenForNotificationTap } from "@/lib/native-push";
+import { syncNativePushToken, listenForTokenRefresh, listenForForegroundNotifications } from "@/lib/native-push";
+import { listenForNotificationTap } from "@/lib/native-push-deeplink";
 import { bootstrapLiveActivityPushToStart, reregisterPushToStartToken, autoStartMyTeamLiveActivity } from "@/lib/native-live-activity";
 import { bootstrapAndroidLockCardGate } from "@/lib/capacitor/game-notification";
 import { listenForAndroidBackButton } from "@/lib/native-back-button";
@@ -23,11 +24,13 @@ export function NativePushMount() {
     // Android 뒤로가기 처리 — 자체적으로 Android 네이티브를 판정(주입 브릿지 폴백 포함)하므로
     // 원격 로드 시 npm core의 isNative 오판(web) 케이스에도 동작하도록 게이트 앞에서 호출.
     void listenForAndroidBackButton();
-    if (!isNative) return;
+    // 알림 탭 리스너도 정적 core 판정 밖에서 호출한다. remote server.url 앱은 npm core가
+    // web으로 오판해도 주입된 window.Capacitor를 통해 native runtime으로 판정해야 한다.
+    void listenForNotificationTap();
+    if (!isNativeRuntime()) return;
     void syncNativePushToken();
     void listenForTokenRefresh();
     void listenForForegroundNotifications();
-    void listenForNotificationTap();
     // W3b — 잠금화면 Live Activity 자동 시작용 push-to-start 토큰 등록(iOS 17.2+, 그 외 no-op).
     void bootstrapLiveActivityPushToStart();
     // 안드 잠금카드 게이트 — 서버 live_activity pref를 네이티브에 미러(타 기기서 꺼둔 유저/재설치 복원).

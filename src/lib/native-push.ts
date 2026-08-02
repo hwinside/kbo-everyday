@@ -2,7 +2,6 @@
 
 import { isNative, platform } from "@/lib/capacitor/platform";
 import { supabase } from "@/lib/supabase/client";
-import { registerNotificationTapListener } from "@/lib/native-push-deeplink";
 
 // 네이티브(iOS/Android) FCM 푸시 토큰 유틸.
 // 웹 Web Push는 기존 usePushNotification 경로 유지 — 여기는 native 전용.
@@ -236,18 +235,5 @@ export async function listenForForegroundNotifications(): Promise<void> {
     });
   } catch {
     foregroundListenerAttached = false;
-  }
-}
-
-/** 알림 탭 → 페이로드 data.url 앱 내 경로로 이동 (딥링크) */
-export async function listenForNotificationTap(): Promise<void> {
-  if (!isNative) return;
-  try {
-    const { FirebaseMessaging } = await loadMessaging();
-    // 판정·이동은 handleNotificationTapEvent 가 전담 — 즉시 location.href 를 쓰면 iOS 에서
-    // 백그라운드→활성 전환 *중* 호출이라 네비게이션이 유실되고 홈에 머무른다(2026-08-02 사고).
-    await registerNotificationTapListener(FirebaseMessaging);
-  } catch {
-    // silent
   }
 }
