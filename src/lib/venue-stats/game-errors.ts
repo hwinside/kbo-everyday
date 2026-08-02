@@ -209,6 +209,65 @@ export async function fetchGameErrors(
 }
 
 /**
+ * complete-only 결과 캐시 (삼순 P1 2026-08-02).
+ *
+ * 종료 경기의 실책은 **불변 사실**이라 한 번 확정하면 다시 조회할 이유가 없다.
+ * 그런데 `GET /api/me/venue-stats` 는 매 요청마다 전 직관 경기를 조회하고 있었다
+ * (삼순 실측: 동일 경기 2회 호출 시 KBO fetch 2회).
+ *
+ * ⚠️ **성공 + canonical 일치만 캐시한다.** 미확인·timeout·스코어 불일치는 캐시하지
+ * 않는다 — 그걸 캐시하면 소스가 정상화돼도 영원히 "모름"으로 굳는다(no-store 후 재시도).
+ * canonical 이 없는 조회(비final 등)도 캐시하지 않는다. 확정 근거가 없기 때문이다.
+ */
+const completeCache = new Map<string, GameErrorCounts>();
+/** 동일 경기 동시 요청 합류(single-flight). 진행 중 Promise 를 공유한다. */
+const inFlight = new Map<string, Promise<GameErrorCounts | null>>();
+
+function cacheKey(gameId: string, canonical: CanonicalScore): string {
+  return `${gameId}|${canonical.awayScore}-${canonical.homeScore}`;
+}
+
+/** 테스트 전용 — 캐시/single-flight 상태 초기화. */
+export function __resetGameErrorCaches(): void {
+  completeCache.clear();
+  inFlight.clear();
+}
+
+/**
+ * 캐시·single-flight 를 적용한 조회. canonical 이 있는 경기만 캐시 대상이다.
+ */
+async function fetchGameErrorsCached(
+  gameId: string,
+  options: {
+    fetchers?: GameErrorFetchers;
+    canonical?: CanonicalScore | null;
+    signal?: AbortSignal;
+  },
+): Promise<GameErrorCounts | null> {
+  const canonical = options.canonical ?? null;
+  // canonical 이 없으면 확정 근거가 없다 — 캐시도 합류도 하지 않는다.
+  if (canonical === null) return fetchGameErrors(gameId, options);
+
+  const key = cacheKey(gameId, canonical);
+  const cached = completeCache.get(key);
+  if (cached) return cached;
+
+  const running = inFlight.get(key);
+  if (running) return running;
+
+  const task = (async () => {
+    const counts = await fetchGameErrors(gameId, options);
+    // 성공만 캐시. 미확인은 다음 요청에서 다시 시도할 수 있어야 한다.
+    if (counts) completeCache.set(key, counts);
+    return counts;
+  })().finally(() => {
+    inFlight.delete(key);
+  });
+  inFlight.set(key, task);
+  return task;
+}
+
+/**
  * 직관 경기 여러 건의 팀별 실책을 동시성·deadline 안에서 조회.
  *
  * ⚠️ deadline 은 **실제 fetch 까지 abort** 한다(삼순 P1). 바깥 Promise 만 풀면
@@ -250,7 +309,7 @@ export async function fetchGameErrorsWithinDeadline(
       const item = queue[cursor++]!;
       try {
         const counts = await Promise.race([
-          fetchGameErrors(item.gameId, {
+          fetchGameErrorsCached(item.gameId, {
             fetchers: options.fetchers,
             canonical: item.canonical ?? null,
             signal: controller.signal,

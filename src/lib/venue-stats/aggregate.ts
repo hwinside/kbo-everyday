@@ -1615,13 +1615,7 @@ function buildD6(ctx: Ctx): MetricEnvelope<D6Value> {
 }
 
 /**
- * D7 — 내가 본 경기의 수비 실책 (하린아빠 2026-08-02 `발암경기 인내형` 태그 근거).
- *
- * ⚠️ 핵심 계약: `errors` 는 canonical hash 바깥 enrichment 라 경기별로 **미상(NULL)** 일 수
- * 있다. 미상을 0으로 세면 "실책을 거의 못 본 사람"으로 둔갑하므로, **실책을 아는 경기만**
- * 분모로 쓰고 그 수를 `knownGames` 로 함께 노출한다. 아는 경기가 없으면 fail-close(null).
- */
-/**
+ /**
  * D7 — 내가 본 경기의 수비 실책 (하린아빠 2026-08-02 `발암경기 인내형` 태그 근거).
  *
  * 데이터 소스는 **linescore 의 `E`(팀별 실책)** 다. 실책은 팀 단위 지표라 선수별로
@@ -1652,7 +1646,14 @@ function buildD7(ctx: Ctx): MetricEnvelope<D7Value> {
       unknownErrorGames: c.validFinal.length - known.length,
     },
   };
-  if (envelope.state !== "ready" || known.length === 0) return envelope;
+  // ⚠️ 표본 미달이어도 **사실값은 보존**한다 (삼순 P1 2026-08-02).
+  //    실책은 "내가 본 그 경기에서 실제로 몇 개 나왔나"라는 관측 사실이라, 표본이 1경기여도
+  //    거짓이 아니다. 여기서 value 를 null 로 버리면 실측 P50(1경기) 유저는 어떤 실책 태그도
+  //    받을 수 없다(48명 중 47명). 표본 부족은 `state=sample_limited` 배지로만 알리고,
+  //    "이 사람은 원래 그렇다"는 **성향 주장**은 소비측(`venueErrorTags`)이 3경기+로 가드한다.
+  //    A1 이 표본 미달에서도 승·패·승률을 노출하는 것과 같은 계약이다.
+  if (known.length === 0) return envelope;
+  if (envelope.state !== "ready" && envelope.state !== "sample_limited") return envelope;
 
   let myTeamErrors = 0;
   let opponentErrors = 0;

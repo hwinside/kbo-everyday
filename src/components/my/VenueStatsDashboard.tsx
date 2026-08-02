@@ -450,8 +450,15 @@ export default function VenueStatsDashboard() {
 
   // ── 실책 목격 태그 (하린아빠 2026-08-02) ─────────────────────────────────
   // "유독 실책을 많이 보는 발암경기 인내형". 임계·근거는 `venueErrorTags` 가 SSOT.
-  // D7 이 ready 가 아니면(=확인된 경기 부족/조회 실패) 태그를 만들지 않는다.
-  const errorTags = venueErrorTags(d7?.state === "ready" ? d7.value : null);
+  //
+  // ⚠️ `sample_limited` 도 받는다 (삼순 P1 2026-08-02). 실책은 "내가 본 그 경기에서
+  // 실제로 몇 개 나왔나"라는 관측 사실이라 1경기여도 거짓이 아니다. `ready` 만 받으면
+  // 실측 P50(1경기) 유저는 어떤 실책 태그도 못 받는다(48명 중 47명).
+  // "이 사람은 원래 그렇다"는 성향 주장만 helper 가 3경기+로 가드한다.
+  // 확인된 경기가 0이면 value 자체가 null 이라 자연히 태그가 없다.
+  const errorTags = venueErrorTags(
+    d7?.state === "ready" || d7?.state === "sample_limited" ? d7.value : null,
+  );
   const errorTag = errorTags.heavy;
   const cleanDefenseTag = errorTags.clean;
 
@@ -538,14 +545,18 @@ export default function VenueStatsDashboard() {
   });
   // ── 실책 목격 태그 (하린아빠 2026-08-02 "유독 실책을 많이 보는 발암경기 인내형") ──
   // 분모는 **실책을 아는 경기(D7.knownGames)** 뿐이다. 모르는 경기를 0으로 세면
-  // "실책을 안 본 사람"으로 둔갑한다. 그래서 D7 이 ready 일 때만 태그를 만든다.
-  if (summarySampleReady && errorTag) interestingFacts.push({
+  // "실책을 안 본 사람"으로 둔갑한다.
+  // ⚠️ `summarySampleReady`(A1 3경기+) 게이트를 걸지 않는다 (삼순 P1). 실책 태그의
+  // 표본 판정은 A1 직관 경기수가 아니라 **실책을 확인한 경기수**이고, 그 가드는
+  // `venueErrorTags` 안에 성향/사실 태그별로 이미 들어 있다. 여기서 A1 기준을 다시
+  // 곱하면 1경기 유저에게는 사실 태그마저 사라진다.
+  if (errorTag) interestingFacts.push({
     key: "errors-seen",
     label: errorTag.label,
     value: errorTag.value,
     icon: <span className="text-[15px]">🤯</span>,
   });
-  if (summarySampleReady && cleanDefenseTag) interestingFacts.push({
+  if (cleanDefenseTag) interestingFacts.push({
     key: "clean-defense",
     label: cleanDefenseTag.label,
     value: cleanDefenseTag.value,

@@ -15,6 +15,7 @@
 import "./_smoke-env";
 
 import {
+  __resetGameErrorCaches,
   fetchGameErrors,
   fetchGameErrorsWithinDeadline,
   parseErrorCell,
@@ -236,6 +237,81 @@ async function main() {
     ok("deadline 안에 종료(bounded)", elapsed < 2_000, `${elapsed}ms`);
     ok("deadline 초과 경기는 미확인(키 부재)", res.size === 0);
     ok("실제 fetch 가 abort 됨(바깥 Promise 만 푸는 게 아님)", abortObserved);
+  }
+
+  // ── ⑦ complete-only cache + single-flight (삼순 P1 2026-08-02) ──────────
+  // 종료 경기 실책은 불변 사실이라 재조회할 이유가 없다. 그런데 GET 마다 전 직관 경기를
+  // 다시 조회하고 있었다(삼순 실측: 동일 경기 2회 호출 시 KBO fetch 2회).
+  // ⚠️ 성공만 캐시한다 — 미확인을 캐시하면 소스가 정상화돼도 영원히 "모름"으로 굳는다.
+  {
+    const canonical = { awayScore: 2, homeScore: 3 };
+
+    __resetGameErrorCaches();
+    let hits = 0;
+    const okFetchers = {
+      kbo: async () => { hits += 1; return kboPayload({ awayR: "2", awayE: "1", homeR: "3", homeE: "0" }); },
+      naver: async () => null,
+    };
+    const first = await fetchGameErrorsWithinDeadline([{ gameId: "G1", canonical }], { fetchers: okFetchers });
+    const second = await fetchGameErrorsWithinDeadline([{ gameId: "G1", canonical }], { fetchers: okFetchers });
+    ok("동일 경기 2회 조회 시 소스 fetch 1회(complete-only cache)", hits === 1, `hits=${hits}`);
+    ok(
+      "캐시 결과가 최초 결과와 동일",
+      JSON.stringify(first.get("G1")) === JSON.stringify(second.get("G1")),
+      `${JSON.stringify(first.get("G1"))} vs ${JSON.stringify(second.get("G1"))}`,
+    );
+
+    // 미확인은 캐시하지 않는다 → 소스 정상화 시 복구되어야 한다.
+    __resetGameErrorCaches();
+    let broken = true;
+    let recoverCalls = 0;
+    const recovering = {
+      kbo: async () => {
+        recoverCalls += 1;
+        return broken
+          ? kboPayload({ awayR: "2", awayE: "", homeR: "3", homeE: "" })
+          : kboPayload({ awayR: "2", awayE: "1", homeR: "3", homeE: "0" });
+      },
+      naver: async () => null,
+    };
+    const unknown = await fetchGameErrorsWithinDeadline([{ gameId: "G2", canonical }], { fetchers: recovering });
+    ok("미확인 경기는 Map 에 없음", unknown.size === 0);
+    broken = false;
+    const recovered = await fetchGameErrorsWithinDeadline([{ gameId: "G2", canonical }], { fetchers: recovering });
+    ok("미확인은 캐시하지 않아 소스 정상화 시 복구", recovered.get("G2")?.away === 1, JSON.stringify(recovered.get("G2")));
+    ok("복구를 위해 소스를 다시 호출함", recoverCalls === 2, `calls=${recoverCalls}`);
+
+    // canonical 이 다르면(스코어 정정 등) 다른 키 → 재조회.
+    __resetGameErrorCaches();
+    let keyCalls = 0;
+    const keyFetchers = {
+      kbo: async () => { keyCalls += 1; return kboPayload({ awayR: "2", awayE: "1", homeR: "3", homeE: "0" }); },
+      naver: async () => null,
+    };
+    await fetchGameErrorsWithinDeadline([{ gameId: "G3", canonical }], { fetchers: keyFetchers });
+    await fetchGameErrorsWithinDeadline(
+      [{ gameId: "G3", canonical: { awayScore: 5, homeScore: 1 } }],
+      { fetchers: keyFetchers },
+    );
+    ok("canonical 스코어가 바뀌면 캐시를 재사용하지 않음", keyCalls === 2, `calls=${keyCalls}`);
+
+    // single-flight — 동시 요청은 소스를 한 번만 친다.
+    __resetGameErrorCaches();
+    let concurrentCalls = 0;
+    const slowOk = {
+      kbo: async () => {
+        concurrentCalls += 1;
+        await new Promise((r) => setTimeout(r, 40));
+        return kboPayload({ awayR: "2", awayE: "2", homeR: "3", homeE: "1" });
+      },
+      naver: async () => null,
+    };
+    const [c1, c2] = await Promise.all([
+      fetchGameErrorsWithinDeadline([{ gameId: "G4", canonical }], { fetchers: slowOk }),
+      fetchGameErrorsWithinDeadline([{ gameId: "G4", canonical }], { fetchers: slowOk }),
+    ]);
+    ok("동시 요청은 single-flight 로 1회만 조회", concurrentCalls === 1, `calls=${concurrentCalls}`);
+    ok("동시 요청 양쪽 모두 결과 수신", c1.get("G4")?.away === 2 && c2.get("G4")?.away === 2);
   }
 
   console.log(`\n결과: ${pass} pass / ${fail} fail`);

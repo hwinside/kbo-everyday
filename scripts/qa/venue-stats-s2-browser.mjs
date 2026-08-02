@@ -366,6 +366,19 @@ const sampleLimitedScope = (name) => {
   // production aggregate: C1/C2 sample_limited item은 value=null이고 C4 사실형만 남는다.
   base.metrics.C1 = { ...base.metrics.C1, state:"sample_limited", value:[], items:[] };
   base.metrics.C2 = { ...base.metrics.C2, state:"sample_limited", value:[], items:[] };
+  // D7 — 확인된 실책 경기 1건(표본 미달)이지만 **사실값은 보존**되어야 한다(삼순 P1).
+  // 실측 P50 유저가 정확히 이 모양이다: 직관 1~2경기.
+  base.metrics.D7 = {
+    ...envelope("D7", {
+      myTeamErrors: 2, opponentErrors: 0, errorProneGames: 1,
+      myErrorsPerGame: 2, knownGames: 1,
+      worstGame: { gameId: "20260725LGHH0", date: "2026-07-25", errors: 2 },
+    }),
+    state: "sample_limited",
+    n: 1,
+    denominator: { knownErrorGames: 1 },
+    coverage: { unknownErrorGames: 1 },
+  };
   return base;
 };
 const sampleLimitedPayload = {
@@ -965,6 +978,25 @@ try {
     .innerText();
   if (scoreText.trim() !== "–") throw new Error(`sample-limited derived score must be dash, got ${scoreText}`);
 
+  // ── 1경기 사실 태그 DOM 노출 RED (삼순 P1 2026-08-02) ────────────────────
+  // 실측 P50 유저(직관 1~2경기)가 정확히 이 화면이다. 직전 구현은 D7 이 표본 미달이면
+  // value 를 버리고, Dashboard 도 `ready`+`summarySampleReady` 를 요구해서
+  // **48명 중 47명이 어떤 실책 태그도 못 받았다.**
+  // 성향 태그(`발암경기 인내형`)는 3경기+ 필요, 사실 태그는 1경기부터 떠야 한다.
+  {
+    const limitedTags = await page.getByTestId("venue-interesting-fact").allInnerTexts();
+    const limitedTagText = limitedTags.join("\n");
+    if (!limitedTagText.includes("실책 목격자")) {
+      throw new Error(`표본 1경기여도 실책 '사실' 태그는 떠야 함: ${limitedTagText}`);
+    }
+    if (!limitedTagText.includes("한 경기 2실책")) {
+      throw new Error(`1경기 실책 태그 근거가 정확해야 함: ${limitedTagText}`);
+    }
+    if (limitedTagText.includes("발암경기 인내형")) {
+      throw new Error(`1경기에 '성향' 태그를 붙이면 안 됨: ${limitedTagText}`);
+    }
+  }
+
   const limitedLg = await page.getByText("LG 응원 구간", { exact: true }).first().locator("../..").innerText();
   const limitedHanwha = await page.getByText("한화 응원 구간", { exact: true }).first().locator("../..").innerText();
   if (![".286", "3.42", "5.2", "1.3"].every((value) => limitedLg.includes(value))) {
@@ -1007,9 +1039,26 @@ try {
     throw new Error("sample-limited split rows missing 참고용 badge");
   }
 
-  // 표본 미달 사실은 상세의 `참고용` 행에만 남기고, 확정형 요약 pill에는 올리지 않는다.
-  if (await page.getByTestId("venue-interesting-fact").count()) {
-    throw new Error("sample-limited facts must be omitted from confident novelty summary pills");
+  // 표본 미달에서는 **확정형/성향형** 요약 pill 을 올리지 않는다.
+  // ⚠️ 예외: 순수 관측 사실 태그(실책)는 허용한다 (삼순 P1 2026-08-02).
+  //    같은 화면의 hero 가 이미 `2승 0패 100.0%` 라는 사실값을 노출한다 — 표본 미달에서
+  //    숨기는 것은 *파생 지수*이지 *관측 사실*이 아니다. 실책도 "내가 본 그 경기에서
+  //    실제로 몇 개 나왔나"라는 동급의 사실이라 같은 계약을 적용한다.
+  //    성향 주장(`발암경기 인내형`)은 helper 가 3경기+로 막으므로 여기 올라올 수 없다.
+  {
+    const limitedPills = await page.getByTestId("venue-interesting-fact").allInnerTexts();
+    const ERROR_FACT_TAGS = ["실책 목격자", "무결점 수비 관람", "상대 실책 수집가"];
+    const nonFactPills = limitedPills.filter(
+      (t) => !ERROR_FACT_TAGS.some((tag) => t.includes(tag)),
+    );
+    if (nonFactPills.length > 0) {
+      throw new Error(
+        `sample-limited: 관측 사실 외 요약 pill 은 없어야 함: ${JSON.stringify(nonFactPills)}`,
+      );
+    }
+    if (limitedPills.length === 0) {
+      throw new Error("sample-limited: 1경기 유저도 실책 사실 태그는 받아야 함(도달 불가 방지)");
+    }
   }
 
   const badgeRgb = await page.getByText("표본 부족(참고용)", { exact: true }).first()
