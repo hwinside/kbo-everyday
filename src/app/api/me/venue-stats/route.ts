@@ -103,7 +103,9 @@ async function fetchAttendanceGameLogs(
     const { data, error } = await supabase
       .from("player_game_logs")
       .select(
-        "kbo_id, player_type, game_id, game_date, team_id, team_code, opponent_team_id, is_home, result, ab, h, hr, rbi, bb, so, ip_outs, er, h_allowed, k, bb_allowed",
+        // ⚠️ canonical hash 20필드 + `errors`(hash 계약 바깥 enrichment).
+        // 완전성 검증은 `CANONICAL_ROW_FIELDS` 만 쓰므로 여기 추가해도 hash 는 불변이다.
+        "kbo_id, player_type, game_id, game_date, team_id, team_code, opponent_team_id, is_home, result, ab, h, hr, rbi, bb, so, ip_outs, er, h_allowed, k, bb_allowed, errors",
       )
       .in("game_id", gameIds)
       .order("id", { ascending: true })

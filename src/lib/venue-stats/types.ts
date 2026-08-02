@@ -11,7 +11,7 @@ export const METRIC_IDS = [
   "A1", "A2", "A3", "A4", "A5", "A6",
   "B1", "B2", "B3", "B4",
   "C1", "C2", "C4", "C5", "C6",
-  "D1", "D5", "D6",
+  "D1", "D5", "D6", "D7",
   "E1", "E2", "E3", "E4",
 ] as const;
 export type MetricId = (typeof METRIC_IDS)[number];
@@ -196,6 +196,26 @@ export interface D1Value {
   closeGames: number;
 }
 export interface D5Value { cancelledCount: number }
+
+/**
+ * D7 — 내가 본 경기의 수비 실책 (하린아빠 2026-08-02 `발암경기 인내형` 태그).
+ *
+ * `errors` 는 canonical hash 바깥 enrichment 라 경기별로 미상(NULL)일 수 있다.
+ * 그래서 **실책을 아는 경기만 분모**로 쓰고, 그 수를 `knownGames` 로 함께 노출한다.
+ * 모르는 경기를 0으로 세면 "실책을 안 본 사람"으로 둔갑한다.
+ */
+export interface D7Value {
+  /** 내 응원팀 실책 총계(아는 경기 한정). */
+  myTeamErrors: number;
+  /** 상대팀 실책 총계(아는 경기 한정). */
+  opponentErrors: number;
+  /** 경기당 내 팀 실책. */
+  myErrorsPerGame: number | null;
+  /** 실책을 아는 경기 수(=분모). */
+  knownGames: number;
+  /** 내 팀 실책이 가장 많았던 경기. */
+  worstGame: { gameId: string; date: string; errors: number } | null;
+}
 export interface D6TopGame { gameId: string; date: string; runs: number }
 export interface D6MarginWin { gameId: string; date: string; margin: number }
 export interface D6Value {

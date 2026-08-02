@@ -42,6 +42,7 @@ import type {
   D1Value,
   D5Value,
   D6Value,
+  D7Value,
   E1Value,
   E2Value,
   E3Value,
@@ -61,6 +62,7 @@ import {
   formatSigned,
   METRIC_STATE_LABELS,
   awayFanTag,
+  venueErrorTags,
   scoreBadgeLabel,
   SCORE_CONFIDENCE_LABELS,
   scoreConfidenceLevel,
@@ -317,6 +319,7 @@ export default function VenueStatsDashboard() {
   const d1 = scope?.metrics.D1 as MetricEnvelope<D1Value> | undefined;
   const d5 = scope?.metrics.D5 as MetricEnvelope<D5Value> | undefined;
   const d6 = scope?.metrics.D6 as MetricEnvelope<D6Value> | undefined;
+  const d7 = scope?.metrics.D7 as MetricEnvelope<D7Value> | undefined;
   const e1 = scope?.metrics.E1 as MetricEnvelope<E1Value> | undefined;
   const e2 = scope?.metrics.E2 as MetricEnvelope<E2Value> | undefined;
   const e3 = scope?.metrics.E3 as MetricEnvelope<E3Value> | undefined;
@@ -445,6 +448,11 @@ export default function VenueStatsDashboard() {
     };
   })();
 
+  // ── 실책 목격 태그 (하린아빠 2026-08-02) ─────────────────────────────────
+  // "유독 실책을 많이 보는 발암경기 인내형". 임계는 `venueErrorTags` 가 SSOT.
+  const errorTag = venueErrorTags(d7?.state === "ready" ? d7.value : null).heavy;
+  const cleanDefenseTag = venueErrorTags(d7?.state === "ready" ? d7.value : null).clean;
+
   // ── 원정 찐팬 태그 (하린아빠 2026-08-02) ────────────────────────────────
   // "보통 홈구장만 가는 팬이 대부분인데 원정까지 많이 가는 팬은 정말 찐팬이니 이것도 추가".
   // 임계는 `awayFanTag` 가 SSOT — 실측 분포 근거·회귀는 ui.ts 주석 참조.
@@ -525,6 +533,21 @@ export default function VenueStatsDashboard() {
     label: dayGameWinTag.label,
     value: dayGameWinTag.value,
     icon: <span className="text-[15px]">🌤️</span>,
+  });
+  // ── 실책 목격 태그 (하린아빠 2026-08-02 "유독 실책을 많이 보는 발암경기 인내형") ──
+  // 분모는 **실책을 아는 경기(D7.knownGames)** 뿐이다. 모르는 경기를 0으로 세면
+  // "실책을 안 본 사람"으로 둔갑한다. 그래서 D7 이 ready 일 때만 태그를 만든다.
+  if (summarySampleReady && errorTag) interestingFacts.push({
+    key: "errors-seen",
+    label: errorTag.label,
+    value: errorTag.value,
+    icon: <span className="text-[15px]">🤯</span>,
+  });
+  if (summarySampleReady && cleanDefenseTag) interestingFacts.push({
+    key: "clean-defense",
+    label: cleanDefenseTag.label,
+    value: cleanDefenseTag.value,
+    icon: <span className="text-[15px]">🧤</span>,
   });
   if (summarySampleReady && awayTag) interestingFacts.push({
     key: "away-fan",

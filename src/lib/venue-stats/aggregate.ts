@@ -40,6 +40,7 @@ import type {
   ComponentEnvelope,
   D1Value,
   D5Value,
+  D7Value,
   D6Value,
   E1PerTeam,
   E1Value,
@@ -343,6 +344,7 @@ const EMPTY_DENOMINATORS: Record<MetricId, Record<string, number>> = {
   D1: { finalGames: 0 },
   D5: { attendanceGames: 0 },
   D6: { finalGames: 0 },
+  D7: { knownErrorGames: 0 },
   E1: { eligibleTeamFinalGames: 0 },
   E2: { activeMonths: 0 },
   E3: { attendanceGames: 0 },
@@ -1606,6 +1608,77 @@ function buildD6(ctx: Ctx): MetricEnvelope<D6Value> {
   return envelope;
 }
 
+/**
+ * D7 — 내가 본 경기의 수비 실책 (하린아빠 2026-08-02 `발암경기 인내형` 태그 근거).
+ *
+ * ⚠️ 핵심 계약: `errors` 는 canonical hash 바깥 enrichment 라 경기별로 **미상(NULL)** 일 수
+ * 있다. 미상을 0으로 세면 "실책을 거의 못 본 사람"으로 둔갑하므로, **실책을 아는 경기만**
+ * 분모로 쓰고 그 수를 `knownGames` 로 함께 노출한다. 아는 경기가 없으면 fail-close(null).
+ */
+function buildD7(ctx: Ctx): MetricEnvelope<D7Value> {
+  const { c } = ctx;
+  // 경기 단위로 "실책을 아는가" 판정 — 그 경기의 우리 원장 행 중 하나라도 errors 가
+  // 숫자면 적재된 경기다(적재 시 전 행을 0 또는 실값으로 채우므로 부분 NULL 은 없다).
+  const known = c.validFinal.filter((g) =>
+    (ctx.logsByGame.get(g.gameId) ?? []).some((row) => typeof row.errors === "number"),
+  );
+
+  const state = pipeline(ctx, {
+    invalidSnapshotGames: c.invalidSnapshot.length,
+    sampleMet: known.length >= MIN_FINAL_GAMES,
+  });
+
+  const envelope: MetricEnvelope<D7Value> = {
+    id: "D7",
+    state: known.length === 0 && state !== "empty" ? "sample_limited" : state,
+    value: null,
+    n: known.length,
+    denominator: { knownErrorGames: known.length },
+    coverage: {
+      invalidSnapshot: c.invalidSnapshot,
+      // 실책을 모르는 경기 수 — 커버리지를 숨기지 않는다.
+      unknownErrorGames: c.validFinal.length - known.length,
+    },
+  };
+  if (envelope.state !== "ready" || known.length === 0) return envelope;
+
+  let myTeamErrors = 0;
+  let opponentErrors = 0;
+  let worst: { gameId: string; date: string; errors: number } | null = null;
+  for (const g of known) {
+    const rows = ctx.logsByGame.get(g.gameId) ?? [];
+    let mine = 0;
+    let theirs = 0;
+    for (const row of rows) {
+      const e = typeof row.errors === "number" ? row.errors : 0;
+      if (e <= 0) continue;
+      if (g.snapshotTeamId != null && row.team_id === g.snapshotTeamId) mine += e;
+      else theirs += e;
+    }
+    myTeamErrors += mine;
+    opponentErrors += theirs;
+    // 동률은 최신 date desc → gameId asc (D6 와 동일 정렬 계약).
+    if (
+      mine > 0 &&
+      (worst === null ||
+        mine > worst.errors ||
+        (mine === worst.errors && g.gameDate > worst.date) ||
+        (mine === worst.errors && g.gameDate === worst.date && g.gameId < worst.gameId))
+    ) {
+      worst = { gameId: g.gameId, date: g.gameDate, errors: mine };
+    }
+  }
+
+  envelope.value = {
+    myTeamErrors,
+    opponentErrors,
+    myErrorsPerGame: ratio(myTeamErrors, known.length),
+    knownGames: known.length,
+    worstGame: worst,
+  };
+  return envelope;
+}
+
 // E ─ 습관·마일스톤
 function streaks(schedule: string[], attended: Set<string>): { current: number; longest: number } {
   let longest = 0;
@@ -1929,6 +2002,7 @@ export function buildVenueStatsScope(input: VenueStatsAggregateInput): VenueStat
     D1: buildD1(ctx),
     D5: buildD5(ctx),
     D6: buildD6(ctx),
+    D7: buildD7(ctx),
     E1: buildE1(ctx),
     E2: buildE2(ctx),
     E3: buildE3(ctx),

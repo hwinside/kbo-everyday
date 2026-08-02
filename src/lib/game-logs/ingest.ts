@@ -28,6 +28,11 @@ export interface PlayerGameLogRow {
   ab: number; h: number; hr: number; rbi: number; bb: number; so: number;
   // 투수 (ip_outs = 총 아웃 정수)
   ip_outs: number; er: number; h_allowed: number; k: number; bb_allowed: number;
+  /**
+   * 수비 실책 — canonical hash **바깥**의 enrichment (하린아빠 2026-08-02).
+   * `null`/`undefined` = 미상(0 아님). 별도 RPC 로 적재되며 본 적재 계약과 분리된다.
+   */
+  errors?: number | null;
 }
 
 interface RawBatter {
@@ -42,6 +47,14 @@ interface RawPitcher {
 export interface GameBoxscore {
   awayBatters: RawBatter[]; homeBatters: RawBatter[];
   awayPitchers: RawPitcher[]; homePitchers: RawPitcher[];
+  /**
+   * 수비 실책 원본 — 하린아빠 2026-08-02 `발암경기 인내형` 트랙.
+   * 타자/투수 박스스코어에는 실책이 없고 `etcRecords`(주요기록)에만 있다.
+   * `rheb` 는 공식 팀 실책 합계로, 선수별 파싱을 대조 검증하는 데 쓴다.
+   * 둘 다 optional — 구 fixture·다른 소스 경로가 깨지지 않게 한다.
+   */
+  etcRecords?: unknown;
+  rheb?: unknown;
 }
 
 /** KBO "5.1"(5⅓) 이닝 표기 → 총 아웃(정수). "5"=15, "5.1"=16, "5.2"=17. */
@@ -87,6 +100,8 @@ export async function fetchGameBoxscore(kboGameId: string): Promise<GameBoxscore
       homeBatters: rd.battersBoxscore.home ?? [],
       awayPitchers: rd.pitchersBoxscore.away ?? [],
       homePitchers: rd.pitchersBoxscore.home ?? [],
+      etcRecords: rd.etcRecords,
+      rheb: rd.scoreBoard?.rheb,
     };
   } catch {
     return null;
