@@ -10,6 +10,10 @@ import {
   RARITY_COLORS,
   getVisibleBadgeCatalog,
 } from "../../src/lib/constants/badges";
+import {
+  cleanupDisposableBadgeUser,
+  cleanupStageForRequest,
+} from "./badge-write-cleanup.mjs";
 
 const exclusiveIds = ["chairman", "chairman-spouse"];
 const expected = {
@@ -92,4 +96,61 @@ assert.throws(
   "dropping public SELECT policy must turn the static gate RED"
 );
 
-console.log("exclusive badges smoke: PASS (UI visibility / founder additive / exclusive RLS contract + mutation RED)");
+const cleanupStages = [
+  "badge-delete",
+  "profile-delete",
+  "badge-postcondition",
+  "profile-postcondition",
+  "auth-delete",
+  "auth-postcondition",
+] as const;
+
+function cleanResponse(stage: string) {
+  if (stage === "auth-postcondition") return { status: 404, ok: false, text: "not found", json: null };
+  if (stage.endsWith("postcondition")) return { status: 200, ok: true, text: "[]", json: [] };
+  return { status: 204, ok: true, text: "", json: null };
+}
+
+async function assertCleanupFailureMatrix() {
+  for (const targetStage of cleanupStages) {
+    for (const mode of ["throw", "non2xx"] as const) {
+      const calls = new Map<string, number>();
+      const client = (kind: "rest" | "auth") => async (path: string, options: { method?: string } = {}) => {
+        const stage = cleanupStageForRequest(kind, path, options.method);
+        assert.ok(stage, `unexpected cleanup request: ${kind} ${options.method || "GET"} ${path}`);
+        const count = (calls.get(stage) || 0) + 1;
+        calls.set(stage, count);
+        if (stage === targetStage && count === 1) {
+          if (mode === "throw") throw new Error(`injected ${stage} fetch failure`);
+          return { status: 503, ok: false, text: `injected ${stage} non-2xx`, json: null };
+        }
+        return cleanResponse(stage);
+      };
+
+      const cleanup = await cleanupDisposableBadgeUser({
+        userId: "offline-user",
+        key: "offline-service-key",
+        rest: client("rest"),
+        auth: client("auth"),
+      });
+
+      assert.equal(calls.get(targetStage), 2, `${targetStage} ${mode} retries once`);
+      for (const stage of cleanupStages) {
+        assert.ok((calls.get(stage) || 0) >= 1, `${targetStage} ${mode} still reaches ${stage}`);
+      }
+      assert.deepEqual(
+        { badges: cleanup.badgeCount, profile: cleanup.profileCount, auth: cleanup.authCount },
+        { badges: 0, profile: 0, auth: 0 },
+        `${targetStage} ${mode} cleanup reaches 0/0/0`
+      );
+      assert.ok(cleanup.failures.length >= 1, `${targetStage} ${mode} remains RED after successful retry`);
+    }
+  }
+}
+
+assertCleanupFailureMatrix()
+  .then(() => console.log("exclusive badges smoke: PASS (UI/RLS mutation RED + cleanup throw/non-2xx fail-close)"))
+  .catch(error => {
+    console.error(error);
+    process.exitCode = 1;
+  });

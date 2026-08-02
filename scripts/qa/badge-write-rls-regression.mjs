@@ -20,12 +20,16 @@
  */
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import {
+  cleanupDisposableBadgeUser,
+  cleanupStageForRequest,
+} from "./badge-write-cleanup.mjs";
 
 const URL_BASE = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 const SERVICE = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const EXPECT = process.env.EXPECT === "open" ? "open" : "closed";
-const INJECT_CLEANUP_FAILURE = process.env.QA_INJECT_CLEANUP_FAILURE === "badge-delete";
+const CLEANUP_INJECTION = process.env.QA_INJECT_CLEANUP_FAILURE || "";
 
 for (const [name, value] of [
   ["NEXT_PUBLIC_SUPABASE_URL", URL_BASE],
@@ -211,40 +215,33 @@ async function main() {
     );
   } finally {
     if (userId) {
-      const cleanupFailures = [];
-      const badgeDelete = await rest(`user_badges?user_id=eq.${userId}`, {
-        method: "DELETE",
+      let injected = false;
+      const injectionStage = CLEANUP_INJECTION.replace(/-(throw|non2xx)$/, "");
+      const injectionMode = CLEANUP_INJECTION.endsWith("-non2xx") ? "non2xx" : "throw";
+      const withInjection = (kind, client) => async (path, options = {}) => {
+        const stage = cleanupStageForRequest(kind, path, options.method);
+        if (!injected && CLEANUP_INJECTION && stage === injectionStage) {
+          injected = true;
+          if (injectionMode === "throw") throw new Error(`injected ${stage} fetch failure`);
+          return { status: 503, ok: false, text: `injected ${stage} non-2xx`, json: null };
+        }
+        return client(path, options);
+      };
+
+      const cleanup = await cleanupDisposableBadgeUser({
+        userId,
         key: SERVICE,
+        rest: withInjection("rest", rest),
+        auth: withInjection("auth", auth),
       });
-      if (!badgeDelete.ok) cleanupFailures.push(`badge DELETE ${badgeDelete.status}: ${badgeDelete.text}`);
-      if (INJECT_CLEANUP_FAILURE) cleanupFailures.push("injected badge DELETE failure");
-
-      const profileDelete = await rest(`profiles?id=eq.${userId}`, {
-        method: "DELETE",
-        key: SERVICE,
-      });
-      if (!profileDelete.ok) cleanupFailures.push(`profile DELETE ${profileDelete.status}: ${profileDelete.text}`);
-
-      const left = await rest(`user_badges?user_id=eq.${userId}&select=badge_id`, { key: SERVICE });
-      const leftProfile = await rest(`profiles?id=eq.${userId}&select=id`, { key: SERVICE });
-      if (!left.ok) cleanupFailures.push(`badge postcondition 조회 ${left.status}: ${left.text}`);
-      if (!leftProfile.ok) cleanupFailures.push(`profile postcondition 조회 ${leftProfile.status}: ${leftProfile.text}`);
-      if (left.ok && !Array.isArray(left.json)) cleanupFailures.push("badge postcondition 응답이 JSON array가 아님");
-      if (leftProfile.ok && !Array.isArray(leftProfile.json)) cleanupFailures.push("profile postcondition 응답이 JSON array가 아님");
-      if (Array.isArray(left.json) && left.json.length !== 0) cleanupFailures.push(`badge row ${left.json.length}개 잔존`);
-      if (Array.isArray(leftProfile.json) && leftProfile.json.length !== 0) cleanupFailures.push(`profile row ${leftProfile.json.length}개 잔존`);
-
-      const userDelete = await auth(`admin/users/${userId}`, { method: "DELETE", key: SERVICE });
-      if (!userDelete.ok) cleanupFailures.push(`auth user DELETE ${userDelete.status}: ${userDelete.text}`);
-      const leftAuthUser = await auth(`admin/users/${userId}`, { method: "GET", key: SERVICE });
-      if (leftAuthUser.status !== 404) {
-        cleanupFailures.push(`auth user postcondition expected 404, got ${leftAuthUser.status}: ${leftAuthUser.text}`);
+      if (CLEANUP_INJECTION && !injected) {
+        cleanup.failures.push(`unknown cleanup injection: ${CLEANUP_INJECTION}`);
       }
 
       console.log(
-        `  cleanup: badges=${Array.isArray(left.json) ? left.json.length : "invalid"} profile=${Array.isArray(leftProfile.json) ? leftProfile.json.length : "invalid"} auth=${leftAuthUser.status === 404 ? 0 : "present"}`
+        `  cleanup: badges=${cleanup.badgeCount} profile=${cleanup.profileCount} auth=${cleanup.authCount}`
       );
-      assert.deepEqual(cleanupFailures, [], `cleanup fail-close: ${cleanupFailures.join("; ")}`);
+      assert.deepEqual(cleanup.failures, [], `cleanup fail-close: ${cleanup.failures.join("; ")}`);
     }
   }
 }
