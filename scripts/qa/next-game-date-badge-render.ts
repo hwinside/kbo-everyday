@@ -26,6 +26,13 @@ import { JSDOM } from "jsdom";
 process.env.NEXT_PUBLIC_SUPABASE_URL ||= "http://localhost:54321";
 process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||= "qa-anon-key";
 
+// React 의 `act` 는 **development 번들에만** 존재한다(react package.json 의 조건부
+// exports). Vercel prebuild 는 NODE_ENV=production 이라 production 번들이 로드돼
+// `act is not a function` 으로 죽었다(2026-08-03 실측). 로컬에서만 통과하는 게이트는
+// 게이트가 아니므로, 이 하네스는 어디서 돌든 development React 를 쓰도록 고정한다.
+// (import 보다 먼저 세팅돼야 조건부 export 해석에 반영된다.)
+process.env.NODE_ENV = "development";
+
 // ── jsdom 환경 ──────────────────────────────────────────────────────────────
 const dom = new JSDOM(`<!DOCTYPE html><body></body>`, {
   pretendToBeVisual: true,
