@@ -22,7 +22,7 @@ export const ACTIVE_BADGE_IDS = new Set([
 
 export const ALL_BADGES: BadgeDefinition[] = [
   // === 특별 ===
-  { id: "chairman", name: "크보팬 회장", icon: "🎩", description: "크보팬 공식 회장 (한정 수여)", category: "special", rarity: "legendary" },
+  { id: "chairman", name: "크보팬 회장", icon: "🏛️", description: "크보팬 공식 회장 (한정 수여)", category: "special", rarity: "legendary" },
   { id: "founder", name: "파운더", icon: "👑", description: "크보팬 초창기 멤버", category: "special", rarity: "legendary" },
   { id: "wiki", name: "위키 기여자", icon: "📝", description: "선수 프로필 제보 채택", category: "special", rarity: "epic" },
   { id: "bug-hunter", name: "버그헌터", icon: "🐛", description: "버그 제보로 앱 개선에 기여", category: "special", rarity: "epic" },

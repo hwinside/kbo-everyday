@@ -183,7 +183,7 @@ export default function ProfilePage() {
             )}
           </div>
           {chairmanBadge ? (
-            <span className="absolute -top-1 -right-1 text-xl" aria-label="크보팬 회장">🎩</span>
+            <span className="absolute -top-1 -right-1 text-xl" aria-label="크보팬 회장">🏛️</span>
           ) : founderBadge ? (
             <span className="absolute -top-1 -right-1 text-xl" aria-label="파운더">👑</span>
           ) : null}
@@ -193,7 +193,7 @@ export default function ProfilePage() {
         <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
           {team && <TeamBadge teamId={team.id} size="sm" />}
           {chairmanBadge && (
-            <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-amber-500/25 text-amber-300 ring-1 ring-amber-400/50">🎩 크보팬 회장</span>
+            <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-amber-500/25 text-amber-300 ring-1 ring-amber-400/50">🏛️ 크보팬 회장</span>
           )}
           {profile.is_founder && (
             <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-amber-500/20 text-amber-400">FOUNDER</span>
