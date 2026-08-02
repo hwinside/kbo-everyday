@@ -63,10 +63,28 @@ export interface TeamComparable extends WinLossDraw {
 }
 
 /** §10 A1 — 단일 snapshot 팀이면 delta, 복수 팀이면 mixed_team·items=perTeam (§11 mixed shape). */
+/**
+ * 직관 경기의 **경기 시작 전(pregame) 기대치 대비 초과성과**.
+ *
+ * 하린아빠 2026-08-02: "관전가치 기준이 아니라 무조건 팀퍼포먼스와의 상관도를 봐야지".
+ * 삼순 2026-08-02: 대상 경기·이후 경기가 섞인 시즌 누적값은 leakage — 반드시 경기일 이전 데이터로만.
+ * 한 경기라도 pregame 기대치를 못 만들면 null — 축 재정규화가 아니라 지수 전체 fail-close.
+ */
+export interface AttendanceExcess {
+  /** 경기당 평균 (실제 승점 − 기대 승률). -1~1. */
+  winExcess: number;
+  /** 경기당 평균 (실제 마진 − 기대 마진), 점. */
+  marginExcess: number;
+  /** 초과성과를 산출한 경기 수. */
+  games: number;
+}
+
 export interface A1Value {
   attendance: WinLossDraw;
   teamComparable: TeamComparable | null;
   deltaPp: number | null;
+  /** pregame 기대치 대비 초과성과. null=기대치 불가 → 요정 지수 fail-close. */
+  excess?: AttendanceExcess | null;
 }
 
 export interface A2Cell extends WinLossDraw { opponentTeamId: number }
@@ -90,6 +108,10 @@ export interface B2Value {
 }
 export interface B3Value {
   runsPerGame: number | null;
+  /** 응원팀의 정규시즌 경기당 평균 득점. 시즌 경기 우주가 완전할 때만 제공. */
+  seasonRunsPerGame: number | null;
+  /** runsPerGame - seasonRunsPerGame. 양수가 직관 부스트. */
+  delta: number | null;
   totalRuns: number;
 }
 export interface B4Side {

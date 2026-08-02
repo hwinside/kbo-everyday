@@ -27,6 +27,7 @@ import FavoritePlayersCard from "@/components/my/FavoritePlayersCard";
 import MenuSection from "@/components/my/MenuSection";
 import FeedbackSheet from "@/components/feedback/FeedbackSheet";
 import VenueDiaryCard from "@/components/my/VenueDiaryCard";
+import VenueStatsEntryCard from "@/components/my/VenueStatsEntryCard";
 import AdminOnly from "@/components/admin/AdminOnly";
 
 export default function MyPage() {
@@ -183,6 +184,9 @@ export default function MyPage() {
       <AdminOnly>
         <VenueDiaryCard />
       </AdminOnly>
+
+      {/* 로그인 사용자 공통 직관 통계 진입점 — 관리자 전용 다이어리와 분리 */}
+      <VenueStatsEntryCard />
 
       {/* 친구 초대 */}
       <InviteSection />
