@@ -64,11 +64,14 @@ export default function BadgesTab({ badges, earnedBadgeIds, onSelectBadge }: Bad
                     className={`text-center p-2 rounded-xl transition-all cursor-pointer relative ${
                       earned ? "" : "opacity-60"
                     }`}
+                    // containerType: 배지명 font-size 가 카드 폭(cqw)에 비례하도록 컨테이너 기준점을 여기 둔다.
                     style={earned ? {
+                      containerType: "inline-size",
                       background: RARITY_GLOW[badge.rarity],
                       border: `2px solid ${RARITY_BORDER[badge.rarity]}`,
                       boxShadow: RARITY_SHADOW[badge.rarity],
                     } : {
+                      containerType: "inline-size",
                       border: "2px solid transparent",
                     }}
                   >
@@ -94,14 +97,23 @@ export default function BadgesTab({ badges, earnedBadgeIds, onSelectBadge }: Bad
                     <p
                       className="mt-1 font-bold"
                       style={{
-                        fontSize: "10px",
+                        // ★ 이번 hotfix 의 실효 변경.
+                        // 320px 에서 4열 카드의 텍스트 폭은 ~37px 라 10px 글자로는 3.7자밖에
+                        // 못 들어간다. 그래서 `전속가수`(4자)·`회장남편`·`수다쟁이` 같은
+                        // 4자 어절이 반드시 쪼개졌다(하린아빠 Production 실측).
+                        // wordBreak: keep-all 은 "한 줄에 들어갈 수 있을 때" 만 어절을 지키므로,
+                        // 들어갈 공간 자체를 만들어줘야 한다 → 칸 폭(cqw)에 비례해 축소.
+                        // 큰 화면에선 기존 10px 유지(상한), 가독성 하한 8px.
+                        fontSize: "clamp(8px, 2.6cqw, 10px)",
                         color: earned ? RARITY_COLORS[badge.rarity] : "rgba(180,180,180,0.7)",
                         textShadow: earned ? `0 0 6px ${RARITY_COLORS[badge.rarity]}40` : "none",
-                        // 한글 배지명은 어절 단위로 줄바꿈한다.
+                        // 한글 배지명은 어절 단위로만 줄바꿈한다.
                         // (기본값이면 "크보팬 회장남편" 이 "크보팬 회 / 장남편" 으로 쪼개진다)
                         wordBreak: "keep-all",
-                        // 공백 없는 긴 토큰만 예외적으로 강제 줄바꿈 — 카드 밖으로 넘치지 않게
-                        overflowWrap: "break-word",
+                        // 공백 없는 긴 토큰이 칸을 넘어가는 경우의 최종 안전망.
+                        // ⚠️ 이것만으로는 320px 어절 분리가 해결되지 않는다 — 실효 수정은
+                        // 아래 fontSize clamp 다(이 줄을 break-word 로 되돌려도 게이트는 GREEN 이었다).
+                        overflowWrap: "anywhere",
                       }}
                     >
                       {badge.name}

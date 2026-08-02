@@ -1,0 +1,253 @@
+#!/usr/bin/env node
+/**
+ * 배지 카드 배지명 줄바꿈 — 실제 Chromium 렌더 게이트 (320/360/375/390px).
+ *
+ * 배경(삼순 post-merge NO-GO 2026-08-03, Production 실측):
+ *   320px: `크보팬 전속가수` → `크보/팬`, `전속/가수`, `파운더` → `파운/더`
+ *   360·375px: `전속가/수`
+ *   390px: 어절 보존
+ * 그런데 `qa:exclusive-badges` 와 full prebuild 는 GREEN 이었다.
+ *
+ * false-green 의 원인은 소스 문자열 검사였다:
+ *   - `wordBreak: "keep-all"` 이 소스에 있는지만 봤다. 같은 style 에 있는
+ *     `overflowWrap: "break-word"` 가 폭이 모자랄 때 keep-all 을 무력화한다는 사실을
+ *     문자열 검사로는 알 수 없다.
+ *   - 어절 길이 가드가 max-w-lg(512px) 만 가정해 "어절당 8자 안전" 으로 계산했다.
+ *     실제 모바일 4열 카드의 텍스트 폭은 320px 에서 ~37px(한글 3.7자)다.
+ *
+ * 그래서 이 게이트는 문자열이 아니라 **렌더된 line box** 를 본다.
+ * Range.getClientRects() 로 각 어절의 조각이 몇 개의 line box 에 걸쳐 있는지 세고,
+ * 한 어절이 2줄로 쪼개지면 FAIL 한다. 카드 밖으로 넘치는 것도 함께 본다.
+ *
+ * 실행: npm run qa:badge-card-wordwrap
+ */
+import { build } from "esbuild";
+import postcss from "postcss";
+import tailwind from "@tailwindcss/postcss";
+import playwright from "playwright";
+import { createServer } from "node:http";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { resolve } from "node:path";
+
+const REQUIRE_BROWSER = process.env.BADGE_WORDWRAP_REQUIRE_BROWSER === "1";
+let chromiumPath = null;
+try {
+  chromiumPath = playwright.chromium.executablePath();
+} catch {
+  chromiumPath = null;
+}
+if (!chromiumPath || !existsSync(chromiumPath)) {
+  const detail = chromiumPath ? `not found at ${chromiumPath}` : "executablePath unavailable";
+  if (REQUIRE_BROWSER) {
+    console.error(`FAIL: playwright chromium 사용 불가(fail-closed) — ${detail}`);
+    process.exit(1);
+  }
+  console.log(`SKIP: playwright chromium 사용 불가 — ${detail}`);
+  process.exit(0);
+}
+
+const ROOT = process.cwd();
+const GEN = mkdtempSync(resolve(tmpdir(), "badge-wordwrap-"));
+mkdirSync(resolve(ROOT, "tmp/qa-screenshots"), { recursive: true });
+
+// 하린아빠 실사용 기기 + 최소 지원 폭. 320 은 iPhone SE(1st)/갤럭시 폴드 접힘 기준.
+const WIDTHS = [320, 360, 375, 390];
+
+let pass = 0;
+const fails = [];
+const ok = (label, cond, extra = "") => {
+  if (cond) {
+    pass += 1;
+    console.log(`  ✅ ${label}`);
+  } else {
+    fails.push(label);
+    console.log(`  ❌ ${label}${extra ? ` — ${extra}` : ""}`);
+  }
+};
+
+// ── 결함 주입(RED 증명) ─────────────────────────────────────────────────────
+// `--mutate` 는 사고 당시 상태(고정 10px)로 되돌린다. 이 게이트가 실제로 회귀를 잡는지
+// 증명하는 용도이며, RED 가 나와야 정상이다.
+//
+// ⚠️ 처음엔 overflowWrap 을 mutation 대상으로 뒀는데 RED 가 안 나왔다. 실측해보니
+// 이번 사고의 실효 수정은 fontSize clamp 하나였고 overflowWrap 변경은 단독 효과가
+// 없었다(clamp 유지 + break-word 로 되돌려도 14/14 GREEN). 그래서 게이트가 지켜야 할
+// 진짜 대상인 fontSize 를 mutation 한다.
+const MUTATE = process.env.BADGE_WORDWRAP_MUTATE === "1";
+const tabPath = resolve(ROOT, "src/components/profile/BadgesTab.tsx");
+let tabSource = readFileSync(tabPath, "utf8");
+if (MUTATE) {
+  const before = tabSource;
+  tabSource = tabSource.replace(
+    /fontSize: "clamp\(8px, 2\.6cqw, 10px\)",/,
+    'fontSize: "10px",',
+  );
+  if (tabSource === before) {
+    console.error("FAIL: mutation 대상(fontSize clamp)을 찾지 못했습니다");
+    process.exit(1);
+  }
+}
+const tabEntry = resolve(GEN, "BadgesTab.entry.tsx");
+writeFileSync(tabEntry, tabSource);
+
+// 실제 배지 카탈로그에서 한정 배지 + 최장 어절 배지를 뽑아 쓴다(하드코딩 금지).
+const harness = `
+import React from "react";
+import { createRoot } from "react-dom/client";
+import BadgesTab from ${JSON.stringify(tabEntry)};
+import { BADGES, BADGE_MAP, EXCLUSIVE_BADGE_IDS } from ${JSON.stringify(resolve(ROOT, "src/lib/constants/badges.ts"))};
+
+// 한정 배지는 보유해야 렌더되므로 전부 보유 상태로 둔다.
+const owned = new Set([...EXCLUSIVE_BADGE_IDS, "founder"]);
+const badges = [...owned].map((id) => ({ badge_id: id, earned_at: new Date().toISOString() }));
+
+window.__badgeNames = BADGES.filter((b) => !EXCLUSIVE_BADGE_IDS.has(b.id) || owned.has(b.id))
+  .map((b) => b.name);
+
+function App() {
+  return (
+    <div className="mx-auto max-w-lg bg-bg-primary min-h-screen">
+      <BadgesTab badges={badges} earnedBadgeIds={owned} onSelectBadge={() => {}} />
+    </div>
+  );
+}
+createRoot(document.getElementById("root")).render(<App />);
+`;
+const harnessEntry = resolve(GEN, "harness.tsx");
+writeFileSync(harnessEntry, harness);
+
+const bundlePath = resolve(GEN, "bundle.js");
+await build({
+  entryPoints: [harnessEntry],
+  bundle: true,
+  outfile: bundlePath,
+  format: "iife",
+  platform: "browser",
+  jsx: "automatic",
+  loader: { ".ts": "ts", ".tsx": "tsx" },
+  define: { "process.env.NODE_ENV": '"production"' },
+  banner: { js: "globalThis.process=globalThis.process||{env:{NODE_ENV:'production'}};" },
+  absWorkingDir: ROOT,
+  nodePaths: [resolve(ROOT, "node_modules")],
+  tsconfig: resolve(ROOT, "tsconfig.json"),
+  logLevel: "silent",
+});
+
+const cssPath = resolve(ROOT, "src/styles/globals.css");
+const css = (
+  await postcss([tailwind()]).process(readFileSync(cssPath, "utf8"), { from: cssPath })
+).css;
+
+const html = `<!doctype html><html lang="ko" class="dark"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>${css}</style><style>html,body{margin:0;background:#0A0A0B}</style>
+</head><body><div id="root"></div><script src="/bundle.js"></script></body></html>`;
+
+const bundleJs = readFileSync(bundlePath, "utf8");
+const server = createServer((req, res) => {
+  if (req.url === "/bundle.js") {
+    res.writeHead(200, { "Content-Type": "text/javascript" });
+    res.end(bundleJs);
+    return;
+  }
+  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+  res.end(html);
+});
+await new Promise((r) => server.listen(0, "127.0.0.1", r));
+const port = server.address().port;
+
+const browser = await playwright.chromium.launch();
+try {
+  for (const width of WIDTHS) {
+    console.log(`\n[${width}px]`);
+    const page = await browser.newPage({
+      viewport: { width, height: 900 },
+      deviceScaleFactor: 2,
+      isMobile: true,
+      hasTouch: true,
+    });
+    const errors = [];
+    page.on("pageerror", (e) => errors.push(String(e)));
+    await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: "networkidle" });
+    await page.waitForSelector(".grid", { timeout: 10000 });
+
+    if (width === WIDTHS[0]) {
+      const names = await page.evaluate(() => window.__badgeNames ?? []);
+      ok("[하네스] 배지 카탈로그가 실제로 렌더됨", names.length > 0, `names=${names.length}`);
+      ok("[하네스] 페이지 런타임 에러 0", errors.length === 0, errors.join(" | "));
+    }
+
+    // 각 배지명의 어절이 한 line box 안에 남아 있는지 — 렌더 결과로 판정.
+    const broken = await page.evaluate(() => {
+      const out = [];
+      // 배지명 <p> 는 카드(div) 안 마지막 p
+      const cards = [...document.querySelectorAll(".grid > div")];
+      for (const card of cards) {
+        const p = card.querySelector("p");
+        if (!p) continue;
+        const text = (p.textContent ?? "").trim();
+        if (!text) continue;
+        const node = p.firstChild;
+        if (!node || node.nodeType !== 3) continue;
+
+        // 어절별로 Range 를 만들어 line box 개수를 센다.
+        let cursor = 0;
+        const badWords = [];
+        for (const word of text.split(/\s+/)) {
+          const start = text.indexOf(word, cursor);
+          if (start < 0) continue;
+          cursor = start + word.length;
+          const range = document.createRange();
+          range.setStart(node, start);
+          range.setEnd(node, start + word.length);
+          const rects = [...range.getClientRects()];
+          // 서로 다른 top 값 = 다른 line box
+          const tops = new Set(rects.map((r) => Math.round(r.top)));
+          if (tops.size > 1) badWords.push(word);
+        }
+
+        // 카드 밖으로 넘쳤는지
+        const pr = p.getBoundingClientRect();
+        const cr = card.getBoundingClientRect();
+        const overflow = pr.right > cr.right + 0.5 || pr.left < cr.left - 0.5;
+
+        if (badWords.length || overflow) {
+          out.push({ text, badWords, overflow, textWidth: +pr.width.toFixed(1) });
+        }
+      }
+      return out;
+    });
+
+    ok(
+      `${width}px: 모든 배지명이 어절 중간에서 쪼개지지 않음`,
+      broken.filter((b) => b.badWords.length).length === 0,
+      broken.filter((b) => b.badWords.length)
+        .map((b) => `"${b.text}"→[${b.badWords.join(",")}]`).join(" "),
+    );
+    ok(
+      `${width}px: 배지명이 카드 밖으로 넘치지 않음`,
+      broken.filter((b) => b.overflow).length === 0,
+      broken.filter((b) => b.overflow).map((b) => `"${b.text}"`).join(" "),
+    );
+
+    // 가로 스크롤 유발 금지
+    const hOverflow = await page.evaluate(
+      () => document.documentElement.scrollWidth > window.innerWidth + 1,
+    );
+    ok(`${width}px: 가로 overflow 0`, hOverflow === false);
+
+    await page.screenshot({
+      path: resolve(ROOT, `tmp/qa-screenshots/badge-card-${width}.png`),
+      fullPage: true,
+    });
+    await page.close();
+  }
+} finally {
+  await browser.close();
+  server.close();
+  rmSync(GEN, { recursive: true, force: true });
+}
+
+console.log(fails.length === 0 ? `\nPASS — ${pass}/${pass}` : `\nFAIL ${fails.length} / exit 1`);
+process.exit(fails.length === 0 ? 0 : 1);
