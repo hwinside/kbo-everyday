@@ -59,4 +59,12 @@ assert.match(tabSource, /badges\.filter\(b => visibleBadgeIds\.has\(b\.badge_id\
 assert.match(tabSource, /\{visibleBadges\.length\}개 중/, "denominator uses same visible catalog");
 assert.doesNotMatch(tabSource, /\{BADGES\.length[^}]*\}개 중/, "global denominator cannot expose hidden slots");
 
-console.log("exclusive badges smoke: PASS (2 definitions / owner-only catalog / founder crown additive)");
+const rlsMigration = readFileSync(
+  "supabase/migrations/20260803001500_user_badges_service_role_writes.sql",
+  "utf8"
+);
+assert.match(rlsMigration, /DROP POLICY IF EXISTS "Users earn badges"/i, "legacy self-award policy removed");
+assert.match(rlsMigration, /REVOKE INSERT, UPDATE, DELETE[\s\S]*FROM authenticated/i, "authenticated badge writes revoked");
+assert.match(rlsMigration, /service.role/i, "trusted service-role award path documented");
+
+console.log("exclusive badges smoke: PASS (UI visibility / founder additive / exclusive RLS contract)");
