@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import playersRoster from "@/lib/constants/players-roster.json";
 
 /**
  * 선수별 최애선수 지정 계정 수.
@@ -16,12 +17,17 @@ import { getSupabaseAdmin } from "@/lib/supabase/admin";
  */
 export const revalidate = 600; // 10분 — 순위가 실시간일 필요는 없다
 
+const ACTIVE_PLAYER_IDS = [
+  ...new Set(playersRoster.map((player) => String(player.kboId).trim()).filter(Boolean)),
+];
+
 export async function GET() {
   const supabase = getSupabaseAdmin();
-  // query-guard: bounded -- 반환 행은 "최소 1명이라도 최애로 지정한 선수 수" 로, KBO 현역 로스터
-  // 규모(10구단 × 수십명)가 상한이다. profiles 행 수(25,552)가 아니라 선수 수에
-  // 비례하며 2026-08-03 실측 632행·~200ms. 사람이 늘어도 이 값은 로스터 크기를 넘지 못한다.
-  const { data, error } = await supabase.rpc("favorite_player_counts");
+  // query-guard: bounded -- 서버 번들의 roster SSOT를 RPC allowlist로 넘기고 SQL도
+  // 입력·출력을 1,000행으로 hard-bound한다. profiles의 임의 JSONB ID는 결과 행을 늘릴 수 없다.
+  const { data, error } = await supabase.rpc("favorite_player_counts", {
+    p_active_player_ids: ACTIVE_PLAYER_IDS,
+  });
 
   if (error) {
     // fail-safe: 순위를 못 구해도 온보딩은 계속돼야 한다.

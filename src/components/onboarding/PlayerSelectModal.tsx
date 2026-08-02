@@ -65,22 +65,47 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip, 
 
   // 선수별 "최애선수로 지정한 계정 수" — 목록을 인기순으로 정렬하는 데 쓴다.
   // 집계는 서버 route(DB RPC)가 하고 여기서는 결과만 받는다.
-  // 실패해도 빈 맵이면 전원 0 이 되어 기존 가나다순으로 자연 폴백한다(fail-safe).
+  // 최초 목록은 응답 또는 bounded timeout 뒤 한 번만 표시한다. 늦은 응답으로 이미
+  // 터치·스크롤 중인 행이 재정렬되지 않으며, 실패/timeout은 가나다순으로 폴백한다.
   const [popularity, setPopularity] = useState<PopularityCounts>({});
+  const [popularityStatus, setPopularityStatus] = useState<"loading" | "ready">("loading");
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen) {
+      // 닫힌 동안 다음 open을 loading 상태로 준비해, 재오픈 첫 paint에도 이전 순위가
+      // 잠깐 노출됐다가 이동하는 프레임이 생기지 않게 한다.
+      let cancelled = false;
+      queueMicrotask(() => {
+        if (cancelled) return;
+        setPopularity({});
+        setPopularityStatus("loading");
+      });
+      return () => { cancelled = true; };
+    }
     let stale = false;
+    let settled = false;
+    const timeout = window.setTimeout(() => {
+      if (stale || settled) return;
+      settled = true;
+      setPopularityStatus("ready");
+    }, 1200);
     (async () => {
       try {
         const res = await fetch("/api/player-popularity");
-        if (!res.ok) return;
-        const json = await res.json();
-        if (!stale) setPopularity(normalizePopularityCounts(json?.counts));
+        const json = res.ok ? await res.json() : null;
+        if (stale || settled) return;
+        settled = true;
+        setPopularity(normalizePopularityCounts(json?.counts));
+        setPopularityStatus("ready");
       } catch {
-        /* 순위를 못 받아도 온보딩은 계속돼야 한다 */
+        if (stale || settled) return;
+        settled = true;
+        setPopularityStatus("ready");
       }
     })();
-    return () => { stale = true; };
+    return () => {
+      stale = true;
+      window.clearTimeout(timeout);
+    };
   }, [isOpen]);
 
   const allPlayers = useMemo<PlayerInfo[]>(() => {
@@ -295,7 +320,11 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip, 
           ref={scrollContainerRef}
           onScroll={handleScroll}
           className="space-y-2 max-h-[45vh] overflow-y-auto overscroll-contain">
-          {displayPlayers.length === 0 ? (
+          {popularityStatus === "loading" ? (
+            <div data-testid="player-popularity-loading" className="text-center py-8 text-text-tertiary text-sm">
+              인기순을 불러오는 중...
+            </div>
+          ) : displayPlayers.length === 0 ? (
             <div className="text-center py-8 text-text-tertiary text-sm">검색 결과가 없습니다</div>
           ) : displayPlayers.map((player) => {
             const isSelected = selected.has(player.id);

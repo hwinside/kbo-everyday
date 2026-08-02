@@ -15,29 +15,42 @@
 --   같은 프로필이 같은 선수를 중복으로 담고 있어도 1명으로 센다(count distinct).
 --   seq scan 기준 실행시간 ~200ms.
 
-create or replace function public.favorite_player_counts()
+create or replace function public.favorite_player_counts(p_active_player_ids text[])
 returns table (player_id text, fan_count bigint)
 language sql
 stable
-security definer
 set search_path = pg_catalog, public
 as $$
+  with active_players as (
+    -- 앱의 players-roster.json SSOT만 allowlist로 받는다. 호출 배열 자체도 1,000개로
+    -- hard-bound해 잘못된 서버 호출이 profiles의 임의 JSONB ID를 결과 행으로 늘리지 못한다.
+    select distinct btrim(candidate.player_id) as player_id
+    from unnest(p_active_player_ids) as candidate(player_id)
+    where cardinality(p_active_player_ids) between 1 and 1000
+      and btrim(coalesce(candidate.player_id, '')) <> ''
+    limit 1000
+  )
   select
-    -- `->>` 는 jsonb string/number 를 모두 text 로 뽑는다(타입 혼재 정규화).
-    btrim(element ->> 'playerId') as player_id,
+    active.player_id,
     count(distinct p.id) as fan_count
   from public.profiles as p
-  cross join lateral jsonb_array_elements(p.favorite_players) as element
-  where jsonb_typeof(p.favorite_players) = 'array'
-    and element ? 'playerId'
-    and btrim(coalesce(element ->> 'playerId', '')) <> ''
-  group by 1;
+  cross join lateral jsonb_array_elements(
+    case
+      when jsonb_typeof(p.favorite_players) = 'array' then p.favorite_players
+      else '[]'::jsonb
+    end
+  ) as element
+  join active_players as active
+    -- `->>` 는 jsonb string/number 를 모두 text 로 뽑는다(타입 혼재 정규화).
+    on active.player_id = btrim(coalesce(element ->> 'playerId', ''))
+  group by active.player_id
+  order by fan_count desc, active.player_id
+  limit 1000;
 $$;
 
-comment on function public.favorite_player_counts() is
-  '선수별 최애선수 지정 계정 수. 개인 식별 정보 없이 playerId + 집계값만 반환한다. 온보딩 선수 선택 목록 인기순 정렬용.';
+comment on function public.favorite_player_counts(text[]) is
+  '활성 roster allowlist 안의 선수별 최애 지정 계정 수. 입력·출력 최대 1,000행, service_role 전용.';
 
--- 온보딩은 비로그인 상태에서도 뜨므로 anon 도 읽을 수 있어야 한다.
--- security definer 지만 반환값에 개인정보가 없고 집계만 나간다.
-revoke all on function public.favorite_player_counts() from public;
-grant execute on function public.favorite_player_counts() to anon, authenticated, service_role;
+-- 브라우저는 캐시된 서버 route만 호출한다. profiles 집계를 직접 반복 호출할 이유가 없다.
+revoke all on function public.favorite_player_counts(text[]) from public, anon, authenticated;
+grant execute on function public.favorite_player_counts(text[]) to service_role;

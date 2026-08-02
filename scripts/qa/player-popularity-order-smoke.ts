@@ -135,6 +135,13 @@ ok("집계는 서버 route 에서 받는다(클라이언트 profiles 직접 집�
   );
 });
 
+ok("최초 목록은 bounded timeout 뒤 고정(늦은 응답 재정렬 금지)", () => {
+  assert.match(modal, /setPopularityStatus\("loading"\)/);
+  assert.match(modal, /window\.setTimeout\([\s\S]*?1200\)/);
+  assert.match(modal, /if \(stale \|\| settled\) return;[\s\S]*?setPopularity\(/);
+  assert.match(modal, /data-testid="player-popularity-loading"/);
+});
+
 ok("기존 동작 보존: 선택 insertion order", () => {
   assert.match(
     modal,
@@ -156,7 +163,9 @@ ok("기존 동작 보존: 무한스크롤", () => {
 const route = readFileSync("src/app/api/player-popularity/route.ts", "utf8");
 
 ok("route 가 DB RPC 로 집계(앱단 전체 스캔 금지)", () => {
-  assert.match(route, /\.rpc\("favorite_player_counts"\)/);
+  assert.match(route, /\.rpc\("favorite_player_counts", \{/);
+  assert.match(route, /p_active_player_ids: ACTIVE_PLAYER_IDS/);
+  assert.match(route, /players-roster\.json/);
   assert.doesNotMatch(route, /\.from\("profiles"\)\s*\.select/);
 });
 
@@ -189,12 +198,21 @@ ok("RPC 가 계정 단위로 중복 제거(count distinct)", () => {
   assert.match(sql, /count\(distinct p\.id\)/);
 });
 
+ok("RPC 가 active roster allowlist와 SQL 1,000행 hard bound를 강제", () => {
+  assert.match(sql, /unnest\(p_active_player_ids\)/);
+  assert.match(sql, /cardinality\(p_active_player_ids\) between 1 and 1000/);
+  assert.match(sql, /join active_players as active/);
+  assert.match(sql, /limit 1000/);
+});
+
 ok("RPC 반환에 개인 식별 컬럼이 없다", () => {
   assert.match(sql, /returns table \(player_id text, fan_count bigint\)/);
 });
 
-ok("RPC 실행 권한이 온보딩(비로그인 포함)에 열려 있다", () => {
-  assert.match(sql, /grant execute on function public\.favorite_player_counts\(\) to anon, authenticated, service_role;/);
+ok("RPC 직접 실행은 service_role만 허용", () => {
+  assert.match(sql, /revoke all on function public\.favorite_player_counts\(text\[\]\) from public, anon, authenticated;/);
+  assert.match(sql, /grant execute on function public\.favorite_player_counts\(text\[\]\) to service_role;/);
+  assert.doesNotMatch(sql, /grant execute[\s\S]*to anon/);
 });
 
 console.log(`\n✅ player popularity order: PASS ${pass}/${pass}`);

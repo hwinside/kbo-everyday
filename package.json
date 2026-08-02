@@ -18,7 +18,7 @@
     "qa:dm-atomic": "node scripts/qa/dm-atomic-send-smoke.mjs",
     "qa:ui:gamechat-giphy": "node scripts/qa/ui-smoke-gamechat-giphy.mjs",
     "qa:venue-chat-badge": "tsx scripts/qa/venue-chat-badge-smoke.ts",
-    "qa:player-popularity-order": "tsx scripts/qa/player-popularity-order-smoke.ts",
+    "qa:player-popularity-order": "tsx scripts/qa/player-popularity-order-smoke.ts && bash scripts/qa/player-popularity-rpc-pg17.sh && node scripts/qa/player-popularity-order-browser.mjs",
     "qa:exclusive-badges": "tsx scripts/qa/exclusive-badges-smoke.ts",
     "qa:exclusive-badges:db": "bash scripts/qa/exclusive-badges-rls-e2e.sh",
     "qa:exclusive-badges:live": "node scripts/qa/badge-write-rls-regression.mjs",
