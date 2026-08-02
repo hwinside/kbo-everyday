@@ -314,6 +314,64 @@ async function main() {
     ok("동시 요청 양쪽 모두 결과 수신", c1.get("G4")?.away === 2 && c2.get("G4")?.away === 2);
   }
 
+  // ── ⑧ single-flight 가 첫 호출자 deadline 에 종속되지 않는다 (삼순 P1) ────
+  // 실측 결함: A(40ms)·B(500ms)가 같은 경기를 동시에 요청하면 shared task 가
+  // A 의 controller signal 로 fetch 를 걸어서, A 의 abort 가 B 까지 죽였다
+  // (actual: A=null, B=null, source call=1, abort=1).
+  {
+    __resetGameErrorCaches();
+    const canonical = { awayScore: 2, homeScore: 3 };
+    let calls = 0;
+    const slow = async (_id: string, signal?: AbortSignal) => {
+      calls += 1;
+      return new Promise<unknown>((resolve, reject) => {
+        const t = setTimeout(() => resolve(kboPayload({ awayR: "2", awayE: "1", homeR: "3", homeE: "0" })), 100);
+        signal?.addEventListener("abort", () => { clearTimeout(t); reject(new Error("aborted")); });
+      });
+    };
+    const [shortDeadline, longDeadline] = await Promise.all([
+      fetchGameErrorsWithinDeadline([{ gameId: "SF1", canonical }], {
+        deadlineMs: 40, fetchers: { kbo: slow, naver: slow },
+      }),
+      fetchGameErrorsWithinDeadline([{ gameId: "SF1", canonical }], {
+        deadlineMs: 500, fetchers: { kbo: slow, naver: slow },
+      }),
+    ]);
+    ok("짧은 deadline 호출자는 자기 예산에서 미확인", shortDeadline.size === 0, JSON.stringify([...shortDeadline]));
+    ok(
+      "긴 deadline 호출자는 다른 호출자의 abort 에 죽지 않음",
+      longDeadline.get("SF1")?.away === 1,
+      JSON.stringify([...longDeadline]),
+    );
+    ok("합류했으므로 소스는 1회만 호출", calls === 1, `calls=${calls}`);
+  }
+
+  // ── ⑨ 모든 대기자가 이탈하면 shared flight 도 정리된다 ────────────────────
+  {
+    __resetGameErrorCaches();
+    const canonical = { awayScore: 2, homeScore: 3 };
+    let aborted = false;
+    const slow = async (_id: string, signal?: AbortSignal) =>
+      new Promise<unknown>((resolve, reject) => {
+        const t = setTimeout(() => resolve(kboPayload({ awayR: "2", awayE: "1", homeR: "3", homeE: "0" })), 3_000);
+        signal?.addEventListener("abort", () => { aborted = true; clearTimeout(t); reject(new Error("aborted")); });
+      });
+    await fetchGameErrorsWithinDeadline([{ gameId: "SF2", canonical }], {
+      deadlineMs: 60, fetchers: { kbo: slow, naver: slow },
+    });
+    // 유일한 대기자가 떠났으므로 in-flight 네트워크 작업도 취소돼야 한다(고아 방지).
+    await new Promise((r) => setTimeout(r, 30));
+    ok("마지막 대기자 이탈 시 shared flight 취소", aborted);
+
+    // 취소된 뒤에는 캐시가 없으므로 다음 요청이 다시 조회한다(영구 '모름' 금지).
+    let retryCalls = 0;
+    const fast = async () => { retryCalls += 1; return kboPayload({ awayR: "2", awayE: "1", homeR: "3", homeE: "0" }); };
+    const retry = await fetchGameErrorsWithinDeadline([{ gameId: "SF2", canonical }], {
+      fetchers: { kbo: fast, naver: fast },
+    });
+    ok("취소 후 재요청은 정상 복구", retry.get("SF2")?.away === 1 && retryCalls === 1, `calls=${retryCalls}`);
+  }
+
   console.log(`\n결과: ${pass} pass / ${fail} fail`);
   if (fail > 0) process.exit(1);
 }

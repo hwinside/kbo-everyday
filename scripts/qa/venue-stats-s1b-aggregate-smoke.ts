@@ -672,5 +672,73 @@ console.log("\n[8] 팀 공식기록 / 선수 현재시즌 스냅샷 분리");
   ok("공식 published/raw 불일치는 0 대신 B fail-close", mismatchedRate?.teamSeasonTotals === null);
 }
 
+// ── 9) D7 실책 — aggregate actual (삼순 P1 2026-08-02) ──────────────────────
+// ⚠️ 이 블록이 없어서 `buildD7` 의 1경기 사실값 보존을 되돌려도 게이트가 못 잡았다
+//    (삼순 mutation 실증: value=null 로 회귀시켜도 40/40·24/24·105/0·browser 전부 PASS).
+//    D7 은 helper 가 아니라 **aggregate 산출물**을 직접 assert 한다.
+console.log("\n[9] D7 실책 — 확인된 경기만 분모 + 표본 미달 사실값 보존");
+{
+  const errorsOf = (m: Record<string, number[]>) =>
+    new Map(Object.entries(m).map(([gameId, [away, home]]) => [gameId, { away: away!, home: home! }]));
+
+  // G1 홈 LG(5:3 승) · G2 원정 LG(4:4) · G3 원정 LG(1:2 패) · G4 홈 LG(7:1) — 전부 final.
+  // 내 팀(LG) 실책: G1 home=2 · G2 away=1 · G3 away=3 · G4 home=0
+  const full = buildVenueStatsScope(input({
+    gameErrors: errorsOf({
+      [G1.gameId]: [0, 2],
+      [G2.gameId]: [1, 0],
+      [G3.gameId]: [3, 1],
+      [G4.gameId]: [0, 0],
+    }),
+  }));
+  const d7 = full.metrics.D7 as MetricEnvelope<{
+    myTeamErrors: number; opponentErrors: number; errorProneGames: number;
+    myErrorsPerGame: number | null; knownGames: number;
+    worstGame: { gameId: string; errors: number } | null;
+  }>;
+  ok("D7 ready (확인 4경기 ≥ 최소표본)", d7.state === "ready", `state=${d7.state} n=${d7.n}`);
+  ok("D7 knownGames=4 (확인된 경기만 분모)", d7.value?.knownGames === 4, `${d7.value?.knownGames}`);
+  // 홈/원정 귀속이 실제로 뒤집히는지 — 2+1+3+0 = 6
+  ok("D7 내 팀 실책 6 (홈=home칸, 원정=away칸 귀속)", d7.value?.myTeamErrors === 6, `${d7.value?.myTeamErrors}`);
+  // 상대 실책 = G1 away 0 + G2 home 0 + G3 home 1 + G4 away 0 = 1
+  ok("D7 상대 실책 1 (내 팀 반대편 칸만 합산)", d7.value?.opponentErrors === 1, `${d7.value?.opponentErrors}`);
+  ok("D7 발암경기 2건 (G1 2실책 · G3 3실책 ≥ 임계2)", d7.value?.errorProneGames === 2, `${d7.value?.errorProneGames}`);
+  ok("D7 worstGame = G3(3실책)", d7.value?.worstGame?.gameId === G3.gameId && d7.value?.worstGame?.errors === 3,
+    JSON.stringify(d7.value?.worstGame));
+
+  // 미확인 경기는 분모에서 빠지고 coverage 로 노출된다.
+  const partial = buildVenueStatsScope(input({
+    gameErrors: errorsOf({ [G1.gameId]: [0, 2] }),
+  }));
+  const dPartial = partial.metrics.D7 as MetricEnvelope<{ knownGames: number; myTeamErrors: number }>;
+  ok("미확인 경기는 knownGames 에 안 들어감", dPartial.value?.knownGames === 1, `${dPartial.value?.knownGames}`);
+  // validFinal 5경기(G1~G4 + G6) 중 1건만 확인 → 미확인 4건.
+  ok("미확인 경기 수를 coverage 로 노출",
+    (dPartial.coverage as { unknownErrorGames?: number }).unknownErrorGames === 4,
+    `${(dPartial.coverage as { unknownErrorGames?: number }).unknownErrorGames}`);
+
+  // ⚠️ 핵심 RED — 표본 미달(1경기)에서도 **사실값이 보존**되어야 한다.
+  //    `known.length < MIN_FINAL_GAMES` 이면 value=null 로 되돌리는 구 결함을 재주입하면
+  //    아래 3개가 FAIL 한다.
+  ok("표본 미달(1경기)에서도 state=sample_limited", dPartial.state === "sample_limited", `${dPartial.state}`);
+  ok("표본 미달에서도 value 보존 (null 로 버리지 않음)", dPartial.value !== null, JSON.stringify(dPartial.value));
+  ok("표본 미달 사실값 정확 (내 팀 2실책)", dPartial.value?.myTeamErrors === 2, `${dPartial.value?.myTeamErrors}`);
+
+  // 확인된 경기 0건이면 사실 자체가 없으므로 value=null.
+  const none = buildVenueStatsScope(input({ gameErrors: new Map() }));
+  const dNone = none.metrics.D7 as MetricEnvelope<unknown>;
+  ok("확인 0건 → value=null (미확인을 0으로 세지 않음)", dNone.value === null && dNone.n === 0,
+    `state=${dNone.state} n=${dNone.n} value=${JSON.stringify(dNone.value)}`);
+
+  // 실책 0 경기만 확인돼도 그건 사실이다 — value 가 있어야 한다.
+  const zeroOnly = buildVenueStatsScope(input({
+    gameErrors: errorsOf({ [G1.gameId]: [0, 0], [G2.gameId]: [0, 0], [G3.gameId]: [0, 0] }),
+  }));
+  const dZero = zeroOnly.metrics.D7 as MetricEnvelope<{ myTeamErrors: number; knownGames: number }>;
+  ok("실책 0 경기 3건 → 사실값 0/3 (미확인과 구별)",
+    dZero.value?.myTeamErrors === 0 && dZero.value?.knownGames === 3,
+    JSON.stringify(dZero.value));
+}
+
 console.log(`\n결과: ${pass} pass / ${fail} fail`);
 if (fail > 0) process.exit(1);

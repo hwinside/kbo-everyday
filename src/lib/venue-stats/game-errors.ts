@@ -220,8 +220,25 @@ export async function fetchGameErrors(
  * canonical 이 없는 조회(비final 등)도 캐시하지 않는다. 확정 근거가 없기 때문이다.
  */
 const completeCache = new Map<string, GameErrorCounts>();
-/** 동일 경기 동시 요청 합류(single-flight). 진행 중 Promise 를 공유한다. */
-const inFlight = new Map<string, Promise<GameErrorCounts | null>>();
+
+/**
+ * 동일 경기 동시 요청 합류(single-flight).
+ *
+ * ⚠️ shared flight 는 **첫 호출자의 signal 에 종속되면 안 된다**(삼순 P1 2026-08-02).
+ * 예전 구현은 첫 호출의 controller signal 로 fetch 를 걸어놔서, deadline 40ms 인 A 와
+ * 500ms 인 B 가 같은 경기를 동시에 요청하면 A 의 abort 가 공유 task 를 죽이고
+ * **B 까지 실패**했다(실측: A=null, B=null, source call=1, abort=1).
+ *
+ * 그래서 shared flight 는 **자체 controller** 로 돌리고, 대기자 수를 세어
+ * **모든 대기자가 이탈했을 때만** 취소한다. 각 대기자는 자기 deadline 으로 race 하므로
+ * 자기 예산 안에서 독립적으로 성공/실패한다.
+ */
+interface SharedFlight {
+  promise: Promise<GameErrorCounts | null>;
+  controller: AbortController;
+  waiters: number;
+}
+const inFlight = new Map<string, SharedFlight>();
 
 function cacheKey(gameId: string, canonical: CanonicalScore): string {
   return `${gameId}|${canonical.awayScore}-${canonical.homeScore}`;
@@ -252,19 +269,64 @@ async function fetchGameErrorsCached(
   const cached = completeCache.get(key);
   if (cached) return cached;
 
-  const running = inFlight.get(key);
-  if (running) return running;
+  let flight = inFlight.get(key);
+  if (!flight) {
+    const controller = new AbortController();
+    const created: SharedFlight = {
+      controller,
+      waiters: 0,
+      // shared flight 는 자체 signal 로만 취소된다 — 개별 호출자 signal 을 넘기지 않는다.
+      promise: (async () => {
+        const counts = await fetchGameErrors(gameId, {
+          fetchers: options.fetchers,
+          canonical,
+          signal: controller.signal,
+        });
+        // 성공만 캐시. 미확인은 다음 요청에서 다시 시도할 수 있어야 한다.
+        if (counts) completeCache.set(key, counts);
+        return counts;
+      })().finally(() => {
+        // 같은 key 로 이미 새 flight 가 들어섰다면 그걸 지우지 않는다.
+        if (inFlight.get(key) === created) inFlight.delete(key);
+      }),
+    };
+    inFlight.set(key, created);
+    flight = created;
+  }
 
-  const task = (async () => {
-    const counts = await fetchGameErrors(gameId, options);
-    // 성공만 캐시. 미확인은 다음 요청에서 다시 시도할 수 있어야 한다.
-    if (counts) completeCache.set(key, counts);
-    return counts;
-  })().finally(() => {
-    inFlight.delete(key);
-  });
-  inFlight.set(key, task);
-  return task;
+  const shared = flight;
+  shared.waiters += 1;
+  const release = () => {
+    shared.waiters -= 1;
+    // 마지막 대기자까지 떠났으면 그때 취소한다(고아 네트워크 작업 방지).
+    if (shared.waiters <= 0 && inFlight.get(key) === shared) {
+      inFlight.delete(key);
+      shared.controller.abort();
+    }
+  };
+
+  // 호출자 자신의 signal 로만 자기 대기를 끊는다. 다른 대기자에게 전파되지 않는다.
+  const callerSignal = options.signal;
+  if (!callerSignal) {
+    try {
+      return await shared.promise;
+    } finally {
+      release();
+    }
+  }
+  try {
+    return await new Promise<GameErrorCounts | null>((resolve, reject) => {
+      if (callerSignal.aborted) { resolve(null); return; }
+      const onAbort = () => resolve(null);
+      callerSignal.addEventListener("abort", onAbort, { once: true });
+      shared.promise.then(
+        (v) => { callerSignal.removeEventListener("abort", onAbort); resolve(v); },
+        (e) => { callerSignal.removeEventListener("abort", onAbort); reject(e); },
+      );
+    });
+  } finally {
+    release();
+  }
 }
 
 /**
