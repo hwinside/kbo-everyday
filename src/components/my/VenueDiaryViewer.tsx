@@ -14,6 +14,7 @@ import {
   makeDiaryDetailRefresh,
 } from "@/lib/venue-diary/view";
 import { startVenueStoryUrlRefresh } from "@/lib/venue-stories/refresh-policy";
+import { gameResultTone, resultToneChipStyle } from "@/lib/ui/result-tone";
 
 interface DiaryComment {
   id: number;
@@ -51,11 +52,10 @@ interface Props {
   onChanged: () => void;
 }
 
-const RESULT_STYLE: Record<"W" | "L" | "D", string> = {
-  W: "bg-blue-500/15 text-blue-500",
-  L: "bg-red-500/15 text-red-500",
-  D: "bg-gray-500/15 text-text-secondary",
-};
+/** 승패 색은 홈 팀카드 기준 SSOT(@/lib/ui/result-tone)를 따른다. */
+function resultStyle(result: "W" | "L" | "D") {
+  return resultToneChipStyle(gameResultTone(result));
+}
 
 function resultText(result: "W" | "L" | "D"): string {
   return result === "W" ? "승" : result === "L" ? "패" : "무";
@@ -346,7 +346,10 @@ export default function VenueDiaryViewer({ gameId, header, isOpen, onClose, onCh
             <p className="text-white text-base font-bold drop-shadow flex items-center gap-1.5">
               {header.matchLabel}
               {header.result && (
-                <span className={`rounded px-1.5 py-0.5 text-[11px] font-bold ${RESULT_STYLE[header.result]}`}>
+                <span
+                  className="rounded px-1.5 py-0.5 text-[11px] font-bold"
+                  style={resultStyle(header.result)}
+                >
                   {resultText(header.result)}
                 </span>
               )}

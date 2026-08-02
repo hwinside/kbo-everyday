@@ -59,6 +59,7 @@
     "qa:venue-stats-expected": "tsx scripts/qa/venue-stats-expected-performance-smoke.ts",
     "qa:venue-stats-s2-ui": "tsx scripts/qa/venue-stats-s2-ui-smoke.ts",
     "qa:venue-stats-s2-browser": "node scripts/qa/venue-stats-s2-browser.mjs",
+    "qa:result-tone": "node scripts/qa/result-tone-gate.mjs",
     "qa:venue-stats-s2-effect-guard": "node scripts/qa/venue-stats-s2-effect-guard.mjs",
     "qa:venue-stats-s2-header-guard": "node scripts/qa/venue-stats-s2-header-guard.mjs",
     "qa:api-fallback-alert-claim:pg17": "bash scripts/qa/api-fallback-alert-claim-pg17.sh",
