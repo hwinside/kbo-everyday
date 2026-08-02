@@ -130,6 +130,12 @@ export interface VenueStatsAggregateInput {
   favoriteSeasonBaselines: ReadonlyMap<string, FavoriteSeasonBaselineSnapshot> | null;
   /** KST 오늘 (YYYY-MM-DD) — E3 daysSinceFirst. */
   todayKst: string;
+  /**
+   * 직관 game_id별 팀 실책(E). **키가 없으면 "미확인"** — 0으로 채우지 않는다
+   * (0은 "실책 없음"이라는 사실 주장이고, 조회 실패는 사실이 아니라 무지다).
+   * 없으면 실책 기반 지표만 비고 나머지 집계는 그대로 간다.
+   */
+  gameErrors?: ReadonlyMap<string, { away: number; home: number }>;
 }
 
 /** game_id(YYYYMMDD+away2+home2+…)에서 참가팀 코드 2개 파싱. 형식 밖이면 []. */
@@ -160,6 +166,8 @@ interface ScopeGame {
   opponentTeamId: number | null;
   /** §11 runtime completeness (final만 의미). */
   complete: boolean;
+  /** 내 응원팀이 이 경기에서 저지른 실책 수. null=미확인(0과 구분). */
+  myErrors: number | null;
 }
 
 interface Classified {
@@ -256,6 +264,12 @@ function classify(input: VenueStatsAggregateInput): Classified {
       isHome,
       opponentTeamId,
       complete: verify.complete,
+      // isHome 이 null(=snapshot 무효/미종료)이면 어느 쪽 실책이 내 것인지 알 수 없다 → 미확인.
+      myErrors: (() => {
+        const e = input.gameErrors?.get(row.game_id);
+        if (!e || isHome === null) return null;
+        return isHome ? e.home : e.away;
+      })(),
     });
   }
 
@@ -267,6 +281,32 @@ function classify(input: VenueStatsAggregateInput): Classified {
     dedupedRows,
   };
 }
+
+/**
+ * `발암경기` 판정 임계 — 내 팀 실책 **2개 이상**.
+ *
+ * 실측 근거(2026 시즌 200경기 = 400 팀-경기, `/api/game-detail` linescore E):
+ *   0개 210 · 1개 130 · 2개 45 · 3개 14 · 4개 1
+ *   평균 0.665 · P50 0 · P75 1 · P90 2 · P95 2 · P99 3 · 최대 4
+ *   → **2개 이상 = 상위 15%**. 1개는 32.5%라 "발암"이라 부르기엔 흔하다.
+ *
+ * 직관 기록 기준으로도 검증했다(venue_attendance 판정가능 34건 · 28명):
+ *   발암경기 경험자 2/28 = 7.1%, 직관 경기 내 팀 평균 실책 0.471개.
+ *   드물지만 도달 가능한 구간이다(도달 불가 등급을 만들지 않는다 — awayFanTag 교훈).
+ *
+ * ⚠️ 오픈 직후 표본이라 시즌이 쌓이면 재측정 대상.
+ */
+export const ERROR_PRONE_MIN = 2;
+
+/** 위 임계의 실측 근거. 회귀가 이 값으로 "상위 15% 구간인지"를 재검증한다. */
+export const MEASURED_TEAM_GAME_ERRORS = {
+  teamGames: 400,
+  /** 실책 개수별 팀-경기 수. */
+  histogram: { 0: 210, 1: 130, 2: 45, 3: 14, 4: 1 } as Record<number, number>,
+  mean: 0.665,
+  p90: 2,
+  max: 4,
+} as const;
 
 // ── 공통 산식 helpers ────────────────────────────────────────────────────────
 
@@ -1496,12 +1536,22 @@ function buildD1(ctx: Ctx): MetricEnvelope<D1Value> {
     c.validFinal.length,
   );
   const closeGameRate = ratio(closeGames, c.validFinal.length);
+  // 실책 — 미확인(null) 경기는 분모에서 제외한다. 0으로 세면 "실책 없는 경기"가 되어
+  // 조회 실패가 사실로 둔갑한다(삼순이 반복 지적한 fail-close 원칙).
+  const errorKnown = c.validFinal.filter((g) => g.myErrors !== null);
+  const errorKnownGames = errorKnown.length;
+  const errorProneGames = errorKnown.filter(
+    (g) => (g.myErrors ?? 0) >= ERROR_PRONE_MIN,
+  ).length;
+  const errorsSeen = errorKnown.reduce((sum, g) => sum + (g.myErrors ?? 0), 0);
   const computable = state === "ready" || state === "sample_limited";
   const componentState = state === "ready" ? "ready" : state;
   const envelope: MetricEnvelope<D1Value> = {
     id: "D1",
     state,
-    value: state === "ready" ? { avgRunDiff, closeGameRate, closeGames } : null,
+    value: state === "ready"
+      ? { avgRunDiff, closeGameRate, closeGames, errorKnownGames, errorProneGames, errorsSeen }
+      : null,
     n: c.validFinal.length,
     denominator: { finalGames: c.validFinal.length },
     coverage: { invalidSnapshot: c.invalidSnapshot },
