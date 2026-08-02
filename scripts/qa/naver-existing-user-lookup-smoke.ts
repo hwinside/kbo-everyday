@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import type { User } from "@supabase/supabase-js";
+import { resolveNaverUserForCallback } from "../../src/app/api/auth/naver/callback/route";
 import { lookupAuthUserByEmail } from "../../src/lib/supabase/naver-user-lookup";
 
 async function main() {
@@ -46,9 +47,86 @@ async function main() {
     /auth user lookup failed/
   );
 
+  await assert.rejects(
+    lookupAuthUserByEmail({
+      rpc: async () => ({ data: existingUser.id, error: null }),
+      auth: { admin: { getUserById: async () => ({ data: { user: null }, error: null }) } },
+    }, "old-user@naver.com"),
+    /user body missing/
+  );
+
+  const profile = {
+    email: "old-user@naver.com",
+    naverId: "naver-123",
+    name: "Old User",
+    avatarUrl: "",
+  };
+
+  function callbackClient(options: {
+    rpcData?: string | null;
+    rpcError?: { message: string } | null;
+    fetchedUser?: User | null;
+    fetchError?: { message: string } | null;
+  }) {
+    const counts = { create: 0, update: 0 };
+    const createdUser = { id: "new-user-id" } as unknown as User;
+    const client = {
+      rpc: async () => ({
+        data: options.rpcData ?? null,
+        error: options.rpcError ?? null,
+      }),
+      auth: {
+        admin: {
+          getUserById: async () => ({
+            data: { user: options.fetchedUser ?? null },
+            error: options.fetchError ?? null,
+          }),
+          updateUserById: async () => {
+            counts.update += 1;
+            return { data: { user: options.fetchedUser ?? null }, error: null };
+          },
+          createUser: async () => {
+            counts.create += 1;
+            return { data: { user: createdUser }, error: null };
+          },
+        },
+      },
+    } as unknown as Parameters<typeof resolveNaverUserForCallback>[0];
+    return { client, counts };
+  }
+
+  const existing = callbackClient({
+    rpcData: existingUser.id,
+    fetchedUser: existingUser,
+  });
+  assert.deepEqual(
+    await resolveNaverUserForCallback(existing.client, profile),
+    { ok: true, userId: existingUser.id, existing: true }
+  );
+  assert.deepEqual(existing.counts, { create: 0, update: 1 });
+
+  for (const uncertain of [
+    callbackClient({ rpcError: { message: "rpc unavailable" } }),
+    callbackClient({ rpcData: existingUser.id, fetchError: { message: "fetch failed" } }),
+    callbackClient({ rpcData: existingUser.id, fetchedUser: null }),
+  ]) {
+    assert.deepEqual(
+      await resolveNaverUserForCallback(uncertain.client, profile),
+      { ok: false, errorCode: "user_lookup_error" }
+    );
+    assert.equal(uncertain.counts.create, 0);
+  }
+
+  const newUser = callbackClient({ rpcData: null });
+  assert.deepEqual(
+    await resolveNaverUserForCallback(newUser.client, profile),
+    { ok: true, userId: "new-user-id", existing: false }
+  );
+  assert.deepEqual(newUser.counts, { create: 1, update: 0 });
+
   const route = await readFile("src/app/api/auth/naver/callback/route.ts", "utf8");
   assert.doesNotMatch(route, /\.listUsers\s*\(/, "callback must not scan a bounded auth user page window");
-  assert.match(route, /login_error=user_lookup_error/, "lookup failure must fail closed before createUser");
+  assert.match(route, /await resolveNaverUserForCallback\(/, "callback must execute the behavioral seam");
 
   const migration = await readFile(
     "supabase/migrations/20260802124500_lookup_auth_user_by_email.sql",

@@ -40,5 +40,8 @@ export async function lookupAuthUserByEmail(
   if (error) {
     throw new Error(`auth user fetch failed: ${error.message}`);
   }
-  return data.user ?? undefined;
+  if (!data.user) {
+    throw new Error("auth user fetch failed: user body missing");
+  }
+  return data.user;
 }

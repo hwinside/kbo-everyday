@@ -57,6 +57,84 @@ async function upsertNaverIdentity(
 
 const NATIVE_CALLBACK_ORIGIN = "fan.keubo.app://auth/callback";
 
+type NaverLookupClient = Parameters<typeof lookupAuthUserByEmail>[0];
+type NaverAdminClient = NaverLookupClient & {
+  auth: NaverLookupClient["auth"] & {
+    admin: NaverLookupClient["auth"]["admin"] & {
+      updateUserById(
+        userId: string,
+        attributes: { user_metadata: Record<string, unknown> }
+      ): PromiseLike<unknown>;
+      createUser(attributes: {
+        email: string;
+        email_confirm: boolean;
+        user_metadata: Record<string, unknown>;
+      }): PromiseLike<{
+        data: { user: { id: string } | null };
+        error: { message: string } | null;
+      }>;
+    };
+  };
+};
+
+type NaverUserResolution =
+  | { ok: true; userId: string; existing: boolean }
+  | { ok: false; errorCode: "user_lookup_error" | "create_user_error" };
+
+/**
+ * 네이버 callback의 기존 사용자 조회와 신규 생성 분기를 한 seam으로 실행한다.
+ * 조회가 불확실하면 신규 생성을 시도하지 않고 fail-close한다.
+ */
+export async function resolveNaverUserForCallback(
+  supabaseAdmin: NaverAdminClient,
+  profile: {
+    email: string;
+    naverId: string;
+    name: string;
+    avatarUrl: string;
+  }
+): Promise<NaverUserResolution> {
+  const normalizedEmail = profile.email.trim().toLowerCase();
+  let existingUser;
+  try {
+    existingUser = await lookupAuthUserByEmail(supabaseAdmin, normalizedEmail);
+  } catch (lookupError) {
+    console.error("[Naver OAuth] indexed user lookup error:", {
+      message: (lookupError as Error).message,
+    });
+    return { ok: false, errorCode: "user_lookup_error" };
+  }
+
+  if (existingUser) {
+    await supabaseAdmin.auth.admin.updateUserById(existingUser.id, {
+      user_metadata: {
+        ...existingUser.user_metadata,
+        naver_id: profile.naverId,
+        full_name: existingUser.user_metadata?.full_name || profile.name,
+      },
+    });
+    return { ok: true, userId: existingUser.id, existing: true };
+  }
+
+  const { data: newUser, error: createError } =
+    await supabaseAdmin.auth.admin.createUser({
+      email: profile.email,
+      email_confirm: true,
+      user_metadata: {
+        naver_id: profile.naverId,
+        full_name: profile.name,
+        avatar_url: profile.avatarUrl,
+        provider: "naver",
+      },
+    });
+
+  if (createError || !newUser.user) {
+    console.error("[Naver OAuth] Create user error:", createError);
+    return { ok: false, errorCode: "create_user_error" };
+  }
+  return { ok: true, userId: newUser.user.id, existing: false };
+}
+
 /**
  * 네이버 OAuth 콜백 핸들러
  *
@@ -198,58 +276,26 @@ export async function GET(request: NextRequest) {
     // 이메일 인덱스로 기존 유저 단건 조회.
     // listUsers() 페이지 순회는 총 유저가 20,000명을 넘으면 오래된 유저를 누락해
     // 중복 createUser() → create_user_error를 만들었으므로 사용하지 않는다.
-    const normalizedEmail = String(email).trim().toLowerCase();
-    let existingUser;
-    try {
-      existingUser = await lookupAuthUserByEmail(supabaseAdmin, normalizedEmail);
-    } catch (lookupError) {
-      console.error("[Naver OAuth] indexed user lookup error:", {
-        message: (lookupError as Error).message,
-      });
+    const userResolution = await resolveNaverUserForCallback(
+      supabaseAdmin as unknown as NaverAdminClient,
+      {
+        email,
+        naverId: String(naverId),
+        name,
+        avatarUrl: naverProfile.profile_image || "",
+      }
+    );
+    if (!userResolution.ok) {
       return NextResponse.redirect(
-        `${CANONICAL_ORIGIN}?login_error=user_lookup_error`
+        `${CANONICAL_ORIGIN}?login_error=${userResolution.errorCode}`
       );
     }
     console.log("[Naver OAuth][step3.5] user lookup", {
-      email: normalizedEmail,
-      found: !!existingUser,
-      userId: existingUser?.id?.slice(0, 8) ?? null,
+      email: String(email).trim().toLowerCase(),
+      found: userResolution.existing,
+      userId: userResolution.userId.slice(0, 8),
     });
-
-    let userId: string;
-
-    if (existingUser) {
-      // 기존 유저 — naver provider 정보 업데이트
-      userId = existingUser.id;
-      await supabaseAdmin.auth.admin.updateUserById(userId, {
-        user_metadata: {
-          ...existingUser.user_metadata,
-          naver_id: naverId,
-          full_name: existingUser.user_metadata?.full_name || name,
-        },
-      });
-    } else {
-      // 신규 유저 생성
-      const { data: newUser, error: createError } =
-        await supabaseAdmin.auth.admin.createUser({
-          email,
-          email_confirm: true,
-          user_metadata: {
-            naver_id: naverId,
-            full_name: name,
-            avatar_url: naverProfile.profile_image || "",
-            provider: "naver",
-          },
-        });
-
-      if (createError || !newUser.user) {
-        console.error("[Naver OAuth] Create user error:", createError);
-        return NextResponse.redirect(
-          `${CANONICAL_ORIGIN}?login_error=create_user_error`
-        );
-      }
-      userId = newUser.user.id;
-    }
+    const userId = userResolution.userId;
 
     // 3.5 naver provider identity upsert (Supabase 공식 OAuth 미지원 → 수동 insert)
     //     이 단계가 없으면 auth.identities에 email provider만 남아서
