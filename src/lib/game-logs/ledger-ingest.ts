@@ -34,8 +34,6 @@ export interface LedgerIngestResult {
    * 영원히 incomplete 가 된다 — 그걸 정리한 개수다.
    */
   staleRowsRemoved: number;
-  /** 실책 적재 상태 — complete 만 태그 분모에 들어간다. */
-  errorsStatus: "complete" | "unavailable";
 }
 
 /** YYYYMMDD → YYYY-MM-DD */
@@ -55,8 +53,6 @@ interface LedgerUpsertRow {
   verified_at: string;
   failure_reason: IngestionFailureReason | null;
   updated_at: string;
-  /** 실책 적재 상태(hash 계약 바깥). complete=검증 적재, unavailable=미상. */
-  errors_status?: "complete" | "unavailable";
 }
 
 async function upsertLedger(client: SupabaseClient, row: LedgerUpsertRow): Promise<void> {
@@ -99,7 +95,7 @@ export async function ingestGameWithLedger(
       unresolved_count: extra?.unresolved_count ?? 0,
       source_fetched_at: fetchedAt, verified_at: now, failure_reason: reason, updated_at: now,
     });
-    return { gameId: game.gameId, status: "incomplete", failureReason: reason, rowsUpserted, unresolved, staleRowsRemoved: 0, errorsStatus: "unavailable" };
+    return { gameId: game.gameId, status: "incomplete", failureReason: reason, rowsUpserted, unresolved, staleRowsRemoved: 0 };
   };
 
   if (game.awayScore == null || game.homeScore == null) {
@@ -202,24 +198,6 @@ export async function ingestGameWithLedger(
   const staleRowsRemoved = reconciled.deleted ?? 0;
   const rowsUpserted = reconciled.upserted ?? 0;
 
-  // ── 수비 실책 enrichment (하린아빠 2026-08-02 `발암경기 인내형` 트랙) ──────
-  // canonical hash 계약 **바깥**이라 본 적재 RPC와 분리한다. 실패해도 본 적재 판정을
-  // 뒤집지 않고, 그 경기만 실책 미상(NULL)으로 남긴다 — 다음 실행에서 복구 가능.
-  // ⚠️ 실패를 조용히 삼키지 않는다: errors_status 로 "시도했고 안 됐다"를 원장에 남긴다.
-  let errorsStatus: "complete" | "unavailable" = "unavailable";
-  if (build.errors.verified) {
-    const errorRows = [...build.errors.byKey].map(([key, count]) => {
-      const [kboId, playerType] = key.split("|");
-      return { kboId, playerType, errors: count };
-    });
-    // query-guard: bounded -- 단일 game_id 실책 갱신. 쓰기 범위는 경기 1건 행(최대 ~60행).
-    const { error: applyError } = await client.rpc("apply_player_game_log_errors", {
-      p_game_id: game.gameId,
-      p_errors: errorRows,
-    });
-    if (!applyError) errorsStatus = "complete";
-  }
-
   // 쓰기 결과를 신뢰하지 않고 재조회해 actual canonical payload hash 를 검증한다.
   const persistedRows = await reselect();
   const actualPayloadHash = canonicalPayloadHash(persistedRows);
@@ -244,7 +222,6 @@ export async function ingestGameWithLedger(
     unresolved_count: build.unresolved.length,
     source_fetched_at: fetchedAt, verified_at: now,
     failure_reason: verdict.failureReason, updated_at: now,
-    errors_status: errorsStatus,
   });
 
   return {
@@ -254,7 +231,6 @@ export async function ingestGameWithLedger(
     rowsUpserted,
     unresolved: build.unresolved,
     staleRowsRemoved,
-    errorsStatus,
   };
 }
 

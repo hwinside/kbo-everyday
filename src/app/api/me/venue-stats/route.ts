@@ -24,6 +24,7 @@ import type { LedgerRecord } from "@/lib/game-logs/completeness";
 import { TEAM_ID_TO_CODE, type PlayerGameLogRow } from "@/lib/game-logs/ingest";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { fetchAttendanceGamesWithinDeadline } from "@/lib/venue-attendance/fetch-games";
+import { fetchGameErrorsWithinDeadline } from "@/lib/venue-stats/game-errors";
 import bundledBatters from "@/lib/constants/stats-2026-batters.json";
 import bundledPitchers from "@/lib/constants/stats-2026-pitchers.json";
 import statsMeta from "@/lib/constants/stats-2026-meta.json";
@@ -103,9 +104,7 @@ async function fetchAttendanceGameLogs(
     const { data, error } = await supabase
       .from("player_game_logs")
       .select(
-        // ⚠️ canonical hash 20필드 + `errors`(hash 계약 바깥 enrichment).
-        // 완전성 검증은 `CANONICAL_ROW_FIELDS` 만 쓰므로 여기 추가해도 hash 는 불변이다.
-        "kbo_id, player_type, game_id, game_date, team_id, team_code, opponent_team_id, is_home, result, ab, h, hr, rbi, bb, so, ip_outs, er, h_allowed, k, bb_allowed, errors",
+        "kbo_id, player_type, game_id, game_date, team_id, team_code, opponent_team_id, is_home, result, ab, h, hr, rbi, bb, so, ip_outs, er, h_allowed, k, bb_allowed",
       )
       .in("game_id", gameIds)
       .order("id", { ascending: true })
@@ -498,6 +497,7 @@ export async function GET(req: NextRequest) {
     standings,
     liveSeasonSnapshots,
     teamRecords,
+    gameErrors,
   ] =
     await Promise.all([
       fetchAttendanceGamesWithinDeadline(rows, {
@@ -517,6 +517,10 @@ export async function GET(req: NextRequest) {
       seasonSupported
         ? loadCachedTeamRecords(requestedSeason).catch(() => null)
         : Promise.resolve(null),
+      // 실책(D7) — linescore 기반이라 원장과 무관. 실패 경기는 Map 에 안 들어간다(=미확인).
+      fetchGameErrorsWithinDeadline(gameIds).catch(
+        () => new Map<string, { away: number; home: number }>(),
+      ),
     ]);
 
   // 로그/ledger 조회 실패는 fail-closed — ledger 없음 취급(incomplete)으로 B/C가 partial로 강등된다.
@@ -546,6 +550,7 @@ export async function GET(req: NextRequest) {
     favorites,
     attendanceLogs,
     ledgers,
+    gameErrors,
     seasonGames: seasonAggregates.seasonGames,
     teamSeasonTotals: currentBaselines?.teamSeasonTotals ?? null,
     favoriteSeasonBaselines: currentBaselines?.favoriteSeasonBaselines ?? null,

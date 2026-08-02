@@ -20,7 +20,6 @@ import {
   type PlayerGameLogRow,
   type UnresolvedBoxScorePlayer,
 } from "@/lib/game-logs/ingest";
-import { extractErrorText, reconcileGameErrors } from "@/lib/game-logs/errors";
 
 /** §12 canonical row tuple — PlayerGameLogRow 실제 20필드 전체(메타 9 + 스탯 11). 부분 tuple 금지. */
 export const CANONICAL_ROW_FIELDS = [
@@ -101,26 +100,9 @@ export interface MissingRequiredField {
 /** 테스트/특수 경로용 resolver 주입 지점 — 기본은 SSOT resolvePlayer. */
 export type PlayerResolver = (q: { name: string; teamId: number }) => { kboId: string } | null;
 
-/**
- * 수비 실책 enrichment — 하린아빠 2026-08-02 `발암경기 인내형` 트랙.
- *
- * ⚠️ **canonical payload hash 에 넣지 않는다.** `CANONICAL_ROW_FIELDS` 20필드는 운영
- * 원장 468건의 `expected_payload_hash` 기준이라, 필드를 추가하면 그 468건이 전부
- * `payload_hash_mismatch` 로 뒤집혀 직관 통계가 전 유저 fail-close 된다(= P0 장애).
- * 그래서 실책은 hash 계약 **바깥의** 부수 정보로 싣고, 완전성은 자체 신호로 판정한다.
- */
-export interface GameErrorEnrichment {
-  /** `(kbo_id, player_type)` → 실책 수. 검증 통과분만. */
-  byKey: Map<string, number>;
-  /** 이 경기의 실책을 신뢰할 수 있는가. false 면 DB 에 NULL(미상)로 남긴다. */
-  verified: boolean;
-}
-
 export interface GameIngestionBuild {
   /** strict 검증·resolve를 통과한 canonical row set. missingFields가 있으면 비운다(부분 적재 금지). */
   rows: PlayerGameLogRow[];
-  /** 수비 실책 enrichment (canonical hash 바깥). verified=false 면 DB 에 NULL(미상). */
-  errors: GameErrorEnrichment;
   /** 크롤 raw row 수 = 박스스코어 타자+투수 이름 있는 행 전부 (§12 1:1 가드의 좌변). */
   rawRowCount: number;
   /** kbo_id 매핑 성공 행 수. */
@@ -156,7 +138,6 @@ export function buildGameIngestion(
 ): GameIngestionBuild {
   const build: GameIngestionBuild = {
     rows: [], rawRowCount: 0, resolvedRowCount: 0, unresolved: [], missingFields: [],
-    errors: { byKey: new Map(), verified: false },
   };
   if (game.awayScore == null || game.homeScore == null) return build;
 
@@ -250,53 +231,10 @@ export function buildGameIngestion(
     }
   }
 
-  // ── 수비 실책 enrichment (하린아빠 2026-08-02) ────────────────────────────
-  // 선수별 실책은 타자/투수 박스스코어가 아니라 `etcRecords`(주요기록)에만 있다.
-  // 이름 → 팀 판정은 **이 경기에 실제로 출전한 선수**로만 한다(로스터 전역 조회 금지) —
-  // 같은 이름이 다른 팀에 있어도 이 경기 출전자 기준이면 배분이 흔들리지 않는다.
-  {
-    const nameToSide = new Map<string, "away" | "home" | "ambiguous">();
-    const nameToKey = new Map<string, string>();
-    for (const side of sides) {
-      if (!side.teamId) continue;
-      const sideLabel: "away" | "home" = side.isHome ? "home" : "away";
-      for (const b of side.batters) {
-        const name = String(b.name ?? "").trim();
-        if (!name) continue;
-        const prev = nameToSide.get(name);
-        // 같은 이름이 양 팀에 출전 → 배분 불가로 표시(전체 fail-close 유도).
-        nameToSide.set(name, prev && prev !== sideLabel ? "ambiguous" : sideLabel);
-        const resolved = resolver({ name, teamId: side.teamId });
-        if (resolved) nameToKey.set(name, `${resolved.kboId}|batter`);
-      }
-    }
-    const record = reconcileGameErrors({
-      errorText: extractErrorText(box.etcRecords),
-      rheb: box.rheb,
-      resolveTeam: (name) => {
-        const side = nameToSide.get(name);
-        return side === "away" || side === "home" ? side : null;
-      },
-    });
-    if (record) {
-      let allMapped = true;
-      const byKey = new Map<string, number>();
-      for (const [name, count] of record.byPlayerName) {
-        const key = nameToKey.get(name);
-        // 실책 선수가 우리 원장 행으로 매핑되지 않으면(미등록 등) 이 경기는 미상 처리.
-        if (!key) { allMapped = false; break; }
-        byKey.set(key, (byKey.get(key) ?? 0) + count);
-      }
-      if (allMapped) build.errors = { byKey, verified: true };
-    }
-  }
-
   // missing_required_field fail-closed: 부분 row set을 canonical 증거로 쓰지 않는다.
   if (build.missingFields.length > 0) {
     build.rows = [];
     build.resolvedRowCount = 0;
-    // 행이 없으면 실책도 붙일 곳이 없다 — 완전성 신호도 함께 내린다.
-    build.errors = { byKey: new Map(), verified: false };
   }
   return build;
 }

@@ -207,6 +207,8 @@ export interface D5Value { cancelledCount: number }
 export interface D7Value {
   /** 내 응원팀 실책 총계(아는 경기 한정). */
   myTeamErrors: number;
+  /** 내 팀이 `ERROR_PRONE_MIN` 개 이상 실책한 경기 수 = `발암경기`. */
+  errorProneGames: number;
   /** 상대팀 실책 총계(아는 경기 한정). */
   opponentErrors: number;
   /** 경기당 내 팀 실책. */

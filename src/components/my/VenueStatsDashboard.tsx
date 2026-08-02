@@ -449,9 +449,11 @@ export default function VenueStatsDashboard() {
   })();
 
   // ── 실책 목격 태그 (하린아빠 2026-08-02) ─────────────────────────────────
-  // "유독 실책을 많이 보는 발암경기 인내형". 임계는 `venueErrorTags` 가 SSOT.
-  const errorTag = venueErrorTags(d7?.state === "ready" ? d7.value : null).heavy;
-  const cleanDefenseTag = venueErrorTags(d7?.state === "ready" ? d7.value : null).clean;
+  // "유독 실책을 많이 보는 발암경기 인내형". 임계·근거는 `venueErrorTags` 가 SSOT.
+  // D7 이 ready 가 아니면(=확인된 경기 부족/조회 실패) 태그를 만들지 않는다.
+  const errorTags = venueErrorTags(d7?.state === "ready" ? d7.value : null);
+  const errorTag = errorTags.heavy;
+  const cleanDefenseTag = errorTags.clean;
 
   // ── 원정 찐팬 태그 (하린아빠 2026-08-02) ────────────────────────────────
   // "보통 홈구장만 가는 팬이 대부분인데 원정까지 많이 가는 팬은 정말 찐팬이니 이것도 추가".

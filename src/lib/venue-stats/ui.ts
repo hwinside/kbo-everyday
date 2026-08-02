@@ -620,23 +620,37 @@ export function awayFanTag(input: {
 }
 
 /**
- * 실책 목격 태그 — 하린아빠 2026-08-02:
- * **"유독 실책을 많이 보는 발암경기 인내형"** (+ "태그는 사소하고 많을수록 좋아").
+ * 팀-경기 실책 실측 분포 — 2026 시즌 **493경기 / 986 팀-경기 전수**
+ * (Naver record `scoreBoard.rheb.e`, 조회 성공 493/493).
  *
- * ⚠️ 분모 계약이 핵심이다. `errors` 는 canonical hash 바깥 enrichment 라 경기별로
- * **미상(NULL)** 일 수 있고, D7 은 실책을 아는 경기만 `knownGames` 로 센다.
- * 모르는 경기를 0으로 세면 "실책을 안 본 사람"으로 둔갑하므로, D7 이 `ready` 가
- * 아니면 태그를 아예 만들지 않는다(무근거 태그 금지).
+ * ```
+ * 0실책 518 (52.5%) · 1실책 308 (31.2%) · 2실책 109 (11.1%)
+ * 3실책  46 ( 4.7%) · 4실책   4 ( 0.4%) · 5실책   1 ( 0.1%)
+ * 팀-경기 평균 0.695개
+ * ```
  *
- * 기준선: KBO 팀 경기당 실책은 대략 0.6~0.8개다. 내 팀 실책이 경기당 1.0 이상이면
- * 확실히 평균 위, 1.5 이상이면 강한 신호로 본다. 반대로 0이면 '무결점 수비' 쪽.
+ * 누적: `≥1` 47.5% · **`≥2` 16.2%** · `≥3` 5.2% · `≥4` 0.5%
+ *
+ * ⚠️ 이 상수는 회귀가 임계 근거로 직접 검증한다. 임계를 바꾸려면 회귀도 함께 고쳐야
+ * 하므로 근거 없는 재튜닝이 불가능하다(#1055 신뢰도·원정 임계에서 같은 실수를 반복한 뒤 도입).
  */
-export const ERROR_TAG_THRESHOLDS = {
-  /** 경기당 내 팀 실책 — 이 이상이면 `발암경기 인내형`. */
-  heavy: 1.5,
-  /** 경기당 내 팀 실책 — 이 이상이면 `실책 목격자`. */
-  moderate: 1.0,
+export const MEASURED_TEAM_GAME_ERRORS = {
+  games: 493,
+  teamGames: 986,
+  histogram: { 0: 518, 1: 308, 2: 109, 3: 46, 4: 4, 5: 1 } as Record<number, number>,
+  meanPerTeamGame: 0.695,
 } as const;
+
+/**
+ * `발암경기` 판정 임계 — **한 경기에서 내 팀 실책 2개 이상**.
+ *
+ * 실측 상위 16.2% 구간이다. 1개로 내리면 47.5%가 발암경기가 되어 변별력이 없고,
+ * 3개로 올리면 5.2%라 대부분의 유저가 도달하지 못한다(직관 최대 4경기).
+ *
+ * 경기당 평균이 아니라 **경기 단위 판정**을 쓰는 이유: 유저 직관 표본이 1~4경기라
+ * 평균은 잡음이 크고, `발암경기 인내형`이라는 이름 자체가 "그런 경기를 봤다"는 뜻이다.
+ */
+export const ERROR_PRONE_MIN = 2;
 
 export interface VenueErrorTags {
   /** 실책을 많이 본 쪽 태그. */
@@ -645,38 +659,40 @@ export interface VenueErrorTags {
   clean: { label: string; value: string } | null;
 }
 
+/**
+ * 실책 목격 태그 — 하린아빠 2026-08-02:
+ * **"유독 실책을 많이 보는 발암경기 인내형"** (+ "태그는 사소하고 많을수록 좋아").
+ *
+ * ⚠️ 분모 계약이 핵심이다. 실책은 linescore 조회가 실패할 수 있어 경기별로 **미확인**이
+ * 존재하고, D7 은 확인된 경기만 `knownGames` 로 센다. 미확인을 0으로 세면 "실책을 안 본
+ * 사람"으로 둔갑하므로, D7 이 `ready` 가 아니면 태그를 아예 만들지 않는다.
+ */
 export function venueErrorTags(value: D7Value | null | undefined): VenueErrorTags {
   const empty: VenueErrorTags = { heavy: null, clean: null };
   if (!value) return empty;
-  const { myTeamErrors, opponentErrors, myErrorsPerGame, knownGames, worstGame } = value;
-  // 표본이 없으면 어떤 주장도 하지 않는다.
+  const { myTeamErrors, opponentErrors, errorProneGames, knownGames, worstGame } = value;
   if (!Number.isFinite(knownGames) || knownGames < MIN_FINAL_GAMES) return empty;
-  if (myErrorsPerGame == null || !Number.isFinite(myErrorsPerGame)) return empty;
+  if (!Number.isFinite(errorProneGames)) return empty;
 
   const evidence = `내 팀 ${myTeamErrors}실책 · ${knownGames}경기`;
 
-  if (myErrorsPerGame >= ERROR_TAG_THRESHOLDS.heavy) {
+  if (errorProneGames > 0) {
+    // 발암경기를 절반 이상 봤으면 강한 신호, 아니면 목격 사실만.
+    const heavyShare = errorProneGames / knownGames;
+    const worstText = worstGame && worstGame.errors >= ERROR_PRONE_MIN
+      ? `한 경기 ${worstGame.errors}실책 · `
+      : "";
     return {
-      heavy: {
-        label: "발암경기 인내형",
-        // 최악 경기가 있으면 더 구체적으로 — 태그는 사소할수록 재밌다.
-        value: worstGame && worstGame.errors >= 2
-          ? `한 경기 ${worstGame.errors}실책 포함 · ${evidence}`
-          : evidence,
-      },
+      heavy: heavyShare >= 0.5
+        ? { label: "발암경기 인내형", value: `${worstText}발암경기 ${errorProneGames}/${knownGames}` }
+        : { label: "실책 목격자", value: `${worstText}${evidence}` },
       clean: null,
     };
-  }
-  if (myErrorsPerGame >= ERROR_TAG_THRESHOLDS.moderate) {
-    return { heavy: { label: "실책 목격자", value: evidence }, clean: null };
   }
   if (myTeamErrors === 0) {
     return {
       heavy: null,
-      clean: {
-        label: "무결점 수비 관람",
-        value: `${knownGames}경기 내 팀 실책 0`,
-      },
+      clean: { label: "무결점 수비 관람", value: `${knownGames}경기 내 팀 실책 0` },
     };
   }
   // 상대 실책을 더 많이 본 경우 — 반사이익 태그.

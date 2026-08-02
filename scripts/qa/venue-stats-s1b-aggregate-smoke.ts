@@ -266,6 +266,8 @@ function input(over: Partial<VenueStatsAggregateInput> = {}): VenueStatsAggregat
     seasonGames: SEASON_GAMES,
     teamSeasonTotals: TEAM_TOTALS,
     favoriteSeasonBaselines: FAVORITE_BASELINES,
+    // D7 실책 — 기본 fixture 는 미확인(빈 Map). 개별 케이스에서 over 로 주입한다.
+    gameErrors: new Map<string, { away: number; home: number }>(),
     todayKst: "2026-07-30",
     ...over,
   };

@@ -61,6 +61,7 @@ import type {
 // 승률/스플릿/팀 경기당 지표 표본 가드. 순수 leaf 모듈(state.ts)이 SSOT —
 // 클라이언트 번들이 node 전용 의존을 끌지 않도록 여기서는 재수출만 한다.
 import { MIN_FINAL_GAMES } from "@/lib/venue-stats/state";
+import { ERROR_PRONE_MIN } from "@/lib/venue-stats/ui";
 import type { FavoriteSeasonBaselineSnapshot } from "@/lib/venue-stats/current-season-baseline";
 
 export { MIN_FINAL_GAMES };
@@ -129,6 +130,11 @@ export interface VenueStatsAggregateInput {
   teamSeasonTotals: ReadonlyMap<number, TeamSeasonTotals> | null;
   /** 기존 현재시즌 선수 스냅샷의 kbo_id exact baseline. null=소스 실패/비지원 시즌. */
   favoriteSeasonBaselines: ReadonlyMap<string, FavoriteSeasonBaselineSnapshot> | null;
+  /**
+   * 직관 경기의 팀별 실책(E). linescore 기반이라 `player_game_logs` 와 무관하다.
+   * **키 부재 = 미확인**(0 아님) — 조회 실패를 "실책 없음"으로 승격시키지 않는다.
+   */
+  gameErrors: ReadonlyMap<string, { away: number; home: number }>;
   /** KST 오늘 (YYYY-MM-DD) — E3 daysSinceFirst. */
   todayKst: string;
 }
@@ -1615,13 +1621,20 @@ function buildD6(ctx: Ctx): MetricEnvelope<D6Value> {
  * 있다. 미상을 0으로 세면 "실책을 거의 못 본 사람"으로 둔갑하므로, **실책을 아는 경기만**
  * 분모로 쓰고 그 수를 `knownGames` 로 함께 노출한다. 아는 경기가 없으면 fail-close(null).
  */
+/**
+ * D7 — 내가 본 경기의 수비 실책 (하린아빠 2026-08-02 `발암경기 인내형` 태그 근거).
+ *
+ * 데이터 소스는 **linescore 의 `E`(팀별 실책)** 다. 실책은 팀 단위 지표라 선수별로
+ * 쪼갤 이유가 없고, `player_game_logs` 에 컬럼을 더하면 canonical payload hash 가
+ * 바뀌어 운영 complete 원장 468건이 통째로 `payload_hash_mismatch` 가 된다.
+ *
+ * ⚠️ 핵심 계약: 조회 실패 경기는 `gameErrors` 에 **키 자체가 없다**. 그걸 0으로 세면
+ * "실책을 안 본 사람"으로 둔갑하므로, **아는 경기만 분모**로 쓰고 그 수를 `knownGames`
+ * 로 노출한다. 모르는 경기 수도 `coverage.unknownErrorGames` 로 숨기지 않는다.
+ */
 function buildD7(ctx: Ctx): MetricEnvelope<D7Value> {
   const { c } = ctx;
-  // 경기 단위로 "실책을 아는가" 판정 — 그 경기의 우리 원장 행 중 하나라도 errors 가
-  // 숫자면 적재된 경기다(적재 시 전 행을 0 또는 실값으로 채우므로 부분 NULL 은 없다).
-  const known = c.validFinal.filter((g) =>
-    (ctx.logsByGame.get(g.gameId) ?? []).some((row) => typeof row.errors === "number"),
-  );
+  const known = c.validFinal.filter((g) => ctx.input.gameErrors.has(g.gameId));
 
   const state = pipeline(ctx, {
     invalidSnapshotGames: c.invalidSnapshot.length,
@@ -1636,7 +1649,6 @@ function buildD7(ctx: Ctx): MetricEnvelope<D7Value> {
     denominator: { knownErrorGames: known.length },
     coverage: {
       invalidSnapshot: c.invalidSnapshot,
-      // 실책을 모르는 경기 수 — 커버리지를 숨기지 않는다.
       unknownErrorGames: c.validFinal.length - known.length,
     },
   };
@@ -1644,19 +1656,18 @@ function buildD7(ctx: Ctx): MetricEnvelope<D7Value> {
 
   let myTeamErrors = 0;
   let opponentErrors = 0;
+  let errorProneGames = 0;
   let worst: { gameId: string; date: string; errors: number } | null = null;
   for (const g of known) {
-    const rows = ctx.logsByGame.get(g.gameId) ?? [];
-    let mine = 0;
-    let theirs = 0;
-    for (const row of rows) {
-      const e = typeof row.errors === "number" ? row.errors : 0;
-      if (e <= 0) continue;
-      if (g.snapshotTeamId != null && row.team_id === g.snapshotTeamId) mine += e;
-      else theirs += e;
-    }
+    const counts = ctx.input.gameErrors.get(g.gameId)!;
+    // 내 팀이 홈이었나 원정이었나에 따라 귀속을 뒤집는다.
+    // isHome 이 null 이면 snapshot 유효성 자체가 깨진 경기이므로 known 에 못 들어온다.
+    const mine = g.isHome ? counts.home : counts.away;
+    const theirs = g.isHome ? counts.away : counts.home;
     myTeamErrors += mine;
     opponentErrors += theirs;
+    // `발암경기` = 한 경기에서 내 팀 실책이 임계 이상. 실측 상위 16.2% 구간.
+    if (mine >= ERROR_PRONE_MIN) errorProneGames += 1;
     // 동률은 최신 date desc → gameId asc (D6 와 동일 정렬 계약).
     if (
       mine > 0 &&
@@ -1672,6 +1683,7 @@ function buildD7(ctx: Ctx): MetricEnvelope<D7Value> {
   envelope.value = {
     myTeamErrors,
     opponentErrors,
+    errorProneGames,
     myErrorsPerGame: ratio(myTeamErrors, known.length),
     knownGames: known.length,
     worstGame: worst,
