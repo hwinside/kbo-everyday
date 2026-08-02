@@ -23,6 +23,9 @@ import {
   BASEBALL_GENIUS_MIN_QUESTION_LENGTH,
   BASEBALL_GENIUS_PINNED_ROOM_LEAVABLE,
   BASEBALL_GENIUS_USER_ID,
+  geniusMascotSrc,
+  isGeniusReplyPayload,
+  mascotStateForReplyKind,
 } from "@/lib/constants/baseball-genius";
 
 const REPORT_CATEGORIES = [
@@ -385,6 +388,16 @@ export default function DMChatPage() {
               msg.sender_id !== null &&
               (NEWS_CLIPPER_IDS.has(msg.sender_id) || msg.sender_id === OPERATOR_USER_ID);
             const clipping = trustedSender && isNewsClippingPayload(msg.payload) ? msg.payload : null;
+            // 답변 유형별 마스코트 — 봇 발신일 때만 신뢰한다(유저가 payload 를 훌내내도 붙지 않게).
+            // payload 가 없는 과거 답변(배포 전 생성분)은 mascotStateForReplyKind 가 idle 로 폴백한다.
+            const geniusReply =
+              msg.sender_id === BASEBALL_GENIUS_USER_ID && isGeniusReplyPayload(msg.payload)
+                ? msg.payload
+                : null;
+            const mascotState =
+              msg.sender_id === BASEBALL_GENIUS_USER_ID
+                ? mascotStateForReplyKind(geniusReply?.reply_kind)
+                : null;
             return (
               <motion.div
                 key={msg.id}
@@ -396,7 +409,19 @@ export default function DMChatPage() {
                 <div className={`${clipping ? "max-w-[88%] min-w-[70%]" : "max-w-[75%]"} ${isMe ? "order-2" : ""}`}>
                   {!isMe && (
                     <div className="flex items-center gap-1.5 mb-1">
-                      {msg.sender_team_id && <TeamBadge teamId={msg.sender_team_id} size="xs" />}
+                      {mascotState ? (
+                        // eslint-disable-next-line @next/next/no-img-element -- 정적 마스코트 PNG
+                        <img
+                          src={geniusMascotSrc(mascotState)}
+                          alt=""
+                          aria-hidden
+                          data-testid="genius-reply-mascot"
+                          data-state={mascotState}
+                          className="h-8 w-auto max-w-none object-contain"
+                        />
+                      ) : (
+                        msg.sender_team_id && <TeamBadge teamId={msg.sender_team_id} size="xs" />
+                      )}
                       <span className="text-xs font-semibold text-text-secondary">{msg.sender_nickname}</span>
                     </div>
                   )}

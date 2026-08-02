@@ -39,14 +39,42 @@ const CARD_H = 82;              // 카드 높이는 아바타를 넘치게 그�
 const LIST_MIN_VISIBLE = 50;    // 목록 캐릭터 최소 가시 높이
 const CHAT_SLOT = 96;           // 대화방 슬롯
 const CHAT_MIN_VISIBLE = 72;    // 대화방 캐릭터 최소 가시 높이
+// 헤더 게이트는 삼순 합의 규격 그대로 108~112px 로 고정한다 (삼순 NO-GO).
+// 104~120 으로 넓혀두면 규격을 벗어난 레이아웃도 통과해 게이트가 의미를 잃는다.
+// safe-area 편차를 핑계로 넓히지 않는다 — 아래 뷰포트를 390x844 로 고정해
+// env(safe-area-inset-top) 이 0 인 결정론적 조건에서만 측정한다.
 const CHAT_HEADER_MIN = 108;
 const CHAT_HEADER_MAX = 112;
+const VIEWPORT = { width: 390, height: 844 };
 // 정적 자산과 브라우저 렌더가 같은 기준을 쓴다. PNG의 투명 테두리는 제거해
 // 래스터 반올림 뒤에도 가로·세로 alpha bbox가 0.98 아래로 내려가지 않는다.
 const MIN_ALPHA_BBOX_RATIO = 0.98;
 
 // 대화방 부제 문구 (하린아빠 2026-08-01 확정)
 const GENIUS_SUBTITLE = "야구 밖에 모르는 바보 AI봇";
+
+/**
+ * PNG 의 불투명 영역 세로 비율을 실측한다.
+ *
+ * <img> 의 getBoundingClientRect().height 는 **투명 여백까지 포함한 박스**다.
+ * 자산 위아래에 투명 패딩이 생기면 박스는 그대로인데 실제 캐릭터는 작아진다 —
+ * 그런 회귀를 박스 기준 assert 는 못 잡는다(삼순 NO-GO). 그래서 알파 bbox 비율을
+ * 곱해 "화면에서 실제로 보이는 캐릭터 높이" 로 판정한다.
+ */
+async function alphaBboxRatio(publicPath) {
+  const file = path.join(process.cwd(), "public", publicPath.replace(/^\//, ""));
+  const img = sharp(readFileSync(file));
+  const { width, height } = await img.metadata();
+  const buf = await img.raw().ensureAlpha().toBuffer();
+  const bounds = measureVisibleAlphaBounds(buf, { width, height, channels: 4 });
+  if (!bounds) throw new Error(`${publicPath}: 불투명 픽셀 0 (alpha>${GENIUS_ALPHA_CUTOFF})`);
+  return {
+    ratio: (bounds.maxY - bounds.minY + 1) / height,
+    top: bounds.minY,
+    bottom: bounds.maxY,
+    height,
+  };
+}
 
 const admin = createClient(SUPABASE_URL, SERVICE_ROLE, {
   auth: { autoRefreshToken: false, persistSession: false },
@@ -73,7 +101,7 @@ function verifyAlphaCutoffContract() {
 }
 
 async function ctxWithSession(browser, session, user) {
-  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const ctx = await browser.newContext({ viewport: VIEWPORT });
   const key = `sb-${REF}-auth-token`;
   // ⚠️ 쿠키 1개 상한은 4096B 다. magiclink 로 받은 user 객체를 통째로 넣으면
   // identities/app_metadata 때문에 4.3KB 가 되어 CDP 가 "Invalid cookie fields" 로 거부한다.
@@ -249,8 +277,16 @@ try {
   const aList = await aPage.evaluate(probeList, EXPECT_SRC);
   ok("목록: 마스코트 아바타 렌더", aList.hasImg);
   ok("목록: 이미지 실제 로드됨(404 아님)", !!aList.loaded, `natural=${aList.natural}`);
-  ok(`목록: 캐릭터 가시 높이 >= ${LIST_MIN_VISIBLE}px`,
-     aList.visibleH >= LIST_MIN_VISIBLE, `${aList.visibleH}px (슬롯 ${aList.slotH}px)`);
+  // ⚠️ <img> 박스가 아니라 **알파 bbox 실측**으로 판정한다 (삼순 NO-GO).
+  // 자산에 투명 패딩이 생기면 박스 높이는 그대로인데 캐릭터만 작아진다 — 박스 기준은 못 잡는다.
+  const alphaList = await alphaBboxRatio(EXPECT_SRC);
+  const listVisible = Math.round(aList.visibleH * alphaList.ratio);
+  ok(`목록: 캐릭터 실제(알파) 가시 높이 >= ${LIST_MIN_VISIBLE}px`,
+     listVisible >= LIST_MIN_VISIBLE,
+     `${listVisible}px = 박스 ${aList.visibleH}px x 알파비 ${alphaList.ratio.toFixed(3)} (슬롯 ${aList.slotH}px)`);
+  ok("자산에 상하 투명 패딩이 없다(크롭 유지)",
+     alphaList.ratio >= 0.98,
+     `알파비 ${alphaList.ratio.toFixed(3)} (top=${alphaList.top} bottom=${alphaList.bottom} h=${alphaList.height})`);
   ok("목록: 캐릭터가 카드 세로 안에 담김(한 줄 구조 유지)", aList.withinCard);
   ok("목록: 가로 overflow 0", aList.docOverflow <= 0, `${aList.docOverflow}px`);
   ok("목록: ⚾ 이모지 잔존 0", aList.emoji === 0, `발견 ${aList.emoji}개`);
@@ -263,8 +299,10 @@ try {
   ok("대화방: 진입 성공", aChat.path.startsWith("/messages/"), `title=${aChat.title}`);
   ok("대화방: 마스코트 아바타 렌더", aChat.hasImg);
   ok("대화방: 이미지 실제 로드됨", !!aChat.loaded);
-  ok(`대화방: 캐릭터 가시 높이 >= ${CHAT_MIN_VISIBLE}px`,
-     aChat.visibleH >= CHAT_MIN_VISIBLE, `${aChat.visibleH}px (슬롯 ${CHAT_SLOT}px)`);
+  const chatVisible = Math.round(aChat.visibleH * alphaList.ratio);
+  ok(`대화방: 캐릭터 실제(알파) 가시 높이 >= ${CHAT_MIN_VISIBLE}px`,
+     chatVisible >= CHAT_MIN_VISIBLE,
+     `${chatVisible}px = 박스 ${aChat.visibleH}px x 알파비 ${alphaList.ratio.toFixed(3)} (슬롯 ${CHAT_SLOT}px)`);
   ok(`대화방: 헤더 ${CHAT_HEADER_MIN}~${CHAT_HEADER_MAX}px`,
      aChat.headerH >= CHAT_HEADER_MIN && aChat.headerH <= CHAT_HEADER_MAX, `${aChat.headerH}px`);
   ok("대화방: 캐릭터가 헤더 밖으로 안 삐져나옴", aChat.withinHeader);
