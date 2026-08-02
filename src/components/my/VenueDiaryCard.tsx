@@ -181,6 +181,11 @@ export default function VenueDiaryCard() {
   const [attendanceMessage, setAttendanceMessage] = useState<string | null>(null);
 
   const [addOpen, setAddOpen] = useState(false);
+  /** null 이 아니면 시트가 '경기 변경' 모드 — 고른 경기로 이 원장 행을 옮긴다. */
+  const [moveTarget, setMoveTarget] = useState<{
+    attendanceId: number;
+    gameId: string;
+  } | null>(null);
   const [uploadGame, setUploadGame] = useState<DiaryUploadGame | null>(null);
   const [viewer, setViewer] = useState<{ gameId: string; header: DiaryViewerHeader } | null>(null);
 
@@ -366,6 +371,18 @@ export default function VenueDiaryCard() {
   const countsReady = diaryCountsReady(countsOwner, currentCountsKey);
   // 열기 액션에서 counts state 를 동기 초기화한 뒤 open → 같은 커밋에 배칭돼 첫 렌더부터 fail-closed.
   const openAddSheet = useCallback(() => {
+    setMoveTarget(null);
+    setAddCounts(new Map());
+    setAddAttendanceGameIds(new Set());
+    setCountsOwner(null);
+    setCountsError(false);
+    setOpenSeq((s) => s + 1);
+    setAddOpen(true);
+  }, []);
+  /** 직접 등록 기록의 경기 자체를 바꾼다 — 같은 경기 선택 시트를 move 모드로 연다. */
+  const openMoveSheet = useCallback((game: DiaryHomeGame) => {
+    if (game.attendanceId == null || game.attendanceSource !== "diary_manual") return;
+    setMoveTarget({ attendanceId: game.attendanceId, gameId: game.gameId });
     setAddCounts(new Map());
     setAddAttendanceGameIds(new Set());
     setCountsOwner(null);
@@ -730,6 +747,16 @@ export default function VenueDiaryCard() {
                     </button>
                     {game.attendanceId != null && (
                       <div className="mt-2.5 flex items-center justify-end gap-2 border-t border-border pt-2.5">
+                        {game.attendanceSource === "diary_manual" && (
+                          <button
+                            type="button"
+                            disabled={attendanceBusyId != null}
+                            onClick={() => openMoveSheet(game)}
+                            className="inline-flex items-center gap-1 rounded-lg border border-border px-2.5 py-1.5 text-[11px] font-bold text-text-secondary disabled:opacity-50"
+                          >
+                            <CalendarDays size={11} /> 경기 변경
+                          </button>
+                        )}
                         {game.attendanceSource === "diary_manual" &&
                           game.awayTeam != null &&
                           game.homeTeam != null && (
@@ -767,6 +794,8 @@ export default function VenueDiaryCard() {
         countsReady={countsReady}
         countsError={countsError}
         activeAttendanceGameIds={addAttendanceGameIds}
+        moveMode={moveTarget != null}
+        moveFromGameId={moveTarget?.gameId ?? null}
         onRetryCounts={() => setCountsReload((n) => n + 1)}
         onBack={() => setAddOpen(false)}
         onClose={() => setAddOpen(false)}
@@ -775,14 +804,30 @@ export default function VenueDiaryCard() {
           setUploadGame(game);
         }}
         onRecord={(game, selectedTeamId) => {
+          const target = moveTarget;
           setAddOpen(false);
-          void requestAttendanceMutation({
-            method: "POST",
-            body: { gameId: game.gameId, favoriteTeamId: selectedTeamId },
-            successMessage: "직관 기록을 추가했어요. 통계에 바로 반영됐습니다.",
-          }).then((ok) => {
+          setMoveTarget(null);
+          // move 모드면 같은 원장 행을 새 경기로 옮긴다(새 행 생성 아님).
+          void requestAttendanceMutation(
+            target
+              ? {
+                  method: "PATCH",
+                  id: target.attendanceId,
+                  body: { gameId: game.gameId, favoriteTeamId: selectedTeamId },
+                  successMessage: "경기를 변경했어요. 통계에 바로 반영됐습니다.",
+                }
+              : {
+                  method: "POST",
+                  body: { gameId: game.gameId, favoriteTeamId: selectedTeamId },
+                  successMessage: "직관 기록을 추가했어요. 통계에 바로 반영됐습니다.",
+                },
+          ).then((ok) => {
             if (ok) {
-              setAddAttendanceGameIds((prev) => new Set(prev).add(game.gameId));
+              setAddAttendanceGameIds((prev) => {
+                const next = new Set(prev).add(game.gameId);
+                if (target) next.delete(target.gameId);
+                return next;
+              });
             }
           });
         }}

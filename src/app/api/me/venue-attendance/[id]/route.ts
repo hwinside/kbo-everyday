@@ -42,7 +42,20 @@ async function loadOwnedRow(idParam: string, userId: string) {
   return { id, row };
 }
 
-/** 직접 등록 응원팀 수정. GPS 인증 기록은 수정할 수 없다. */
+const MOVE_ERROR_RESPONSE: Record<string, { status: number; error: string }> = {
+  not_found: { status: 404, error: "직관 기록을 찾을 수 없어요" },
+  forbidden: { status: 403, error: "수정 권한이 없습니다" },
+  source_immutable: { status: 403, error: "GPS 인증 기록은 수정할 수 없어요" },
+  deleted: { status: 409, error: "삭제된 기록은 다시 등록한 뒤 수정해주세요" },
+  target_duplicate: { status: 409, error: "이미 기록한 경기예요" },
+  target_gps_conflict: { status: 409, error: "GPS 인증 기록이 있는 경기로는 옮길 수 없어요" },
+  conflict: { status: 409, error: "직관 기록이 변경되어 다시 시도해주세요" },
+};
+
+/**
+ * 직접 등록 기록 수정 — 경기 자체(gameId) 변경과 응원팀 변경을 모두 지원한다.
+ * GPS 인증 기록은 어느 쪽도 수정할 수 없다(삭제만 허용).
+ */
 export async function PATCH(req: NextRequest, context: RouteContext) {
   const verified = await getVerifiedUserFromRequest(req);
   if (!verified) {
@@ -69,7 +82,14 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
   } catch {
     return NextResponse.json({ error: "잘못된 요청" }, { status: 400 });
   }
-  const venue = await resolveGameVenue(owned.row.game_id);
+  // 경기 변경은 서버가 대상 경기를 다시 해석한다 — 클라이언트가 보낸 날짜·구장은 쓰지 않는다.
+  const rawGameId = typeof body.gameId === "string" ? body.gameId.trim() : "";
+  if (rawGameId !== "" && !/^\d{8}[A-Za-z0-9]+$/.test(rawGameId)) {
+    return NextResponse.json({ error: "gameId 형식 오류" }, { status: 400 });
+  }
+  const targetGameId = rawGameId === "" ? owned.row.game_id : rawGameId;
+
+  const venue = await resolveGameVenue(targetGameId);
   const gameDecision = decideManualDiaryGame(venue);
   if (!gameDecision.ok) {
     return NextResponse.json(
@@ -77,6 +97,7 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
       { status: gameDecision.status },
     );
   }
+  // 응원팀은 항상 **이동 후** 경기의 참가팀 기준으로 검증한다(출처/팀 위조 차단).
   const teamDecision = decideManualAttendanceTeam(body.favoriteTeamId, venue);
   if (!teamDecision.ok) {
     return NextResponse.json(
@@ -84,6 +105,37 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
       { status: teamDecision.status },
     );
   }
+
+  if (targetGameId !== owned.row.game_id) {
+    // query-guard: bounded -- 본인 원장 한 행을 이동하고 id/status JSON만 반환
+    const { data: moved, error: moveError } = await supabase.rpc(
+      "move_venue_attendance_manual_game",
+      {
+        p_user_id: verified.user.id,
+        p_id: owned.id,
+        p_game_id: targetGameId,
+        p_game_date: venue.gameDate,
+        p_favorite_team_id: teamDecision.favoriteTeamId,
+        p_stadium_name: venue.stadiumName,
+      },
+    );
+    if (moveError) {
+      return NextResponse.json({ error: "직관 기록 수정 실패" }, { status: 500 });
+    }
+    const result = (moved ?? {}) as { ok?: boolean; id?: number; error?: string };
+    if (result.ok !== true) {
+      const mapped = result.error ? MOVE_ERROR_RESPONSE[result.error] : undefined;
+      if (mapped) {
+        return NextResponse.json({ error: mapped.error }, { status: mapped.status });
+      }
+      return NextResponse.json({ error: "직관 기록 수정 실패" }, { status: 500 });
+    }
+    return NextResponse.json(
+      { success: true, id: owned.id, gameId: targetGameId },
+      { headers: { "Cache-Control": "private, no-store" } },
+    );
+  }
+
   const { data, error } = await supabase
     .from("venue_attendance")
     .update({
@@ -103,7 +155,7 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
     return NextResponse.json({ error: "직관 기록이 변경되어 다시 시도해주세요" }, { status: 409 });
   }
   return NextResponse.json(
-    { success: true, id: owned.id },
+    { success: true, id: owned.id, gameId: targetGameId },
     { headers: { "Cache-Control": "private, no-store" } },
   );
 }

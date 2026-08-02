@@ -35,6 +35,10 @@ interface Props {
   /** counts fetch 실패 여부(0 폴백 금지 → 재시도 노출). */
   countsError: boolean;
   activeAttendanceGameIds: Set<string>;
+  /** true 면 '경기 변경' 모드 — 기존 기록을 고른 경기로 옮긴다(새 기록 생성 아님). */
+  moveMode?: boolean;
+  /** 변경 모드에서 지금 옮기는 기록의 원래 경기(자기 자신은 대상에서 제외). */
+  moveFromGameId?: string | null;
   onRetryCounts: () => void;
   onBack: () => void;
   onClose: () => void;
@@ -69,6 +73,8 @@ export default function VenueDiaryAddGameSheet({
   countsReady,
   countsError,
   activeAttendanceGameIds,
+  moveMode = false,
+  moveFromGameId = null,
   onRetryCounts,
   onBack,
   onClose,
@@ -189,7 +195,9 @@ export default function VenueDiaryAddGameSheet({
             <button onClick={onBack} aria-label="뒤로" className="text-text-tertiary">
               <ChevronLeft size={22} />
             </button>
-            <span className="text-base font-semibold text-text-primary">지난 경기 추가</span>
+            <span className="text-base font-semibold text-text-primary">
+              {moveMode ? "경기 변경" : "지난 경기 추가"}
+            </span>
             <button onClick={onClose} aria-label="닫기" className="text-text-tertiary">
               <X size={22} />
             </button>
@@ -197,7 +205,15 @@ export default function VenueDiaryAddGameSheet({
 
           <div className="px-4 pt-3 shrink-0">
             <p className="text-xs text-text-tertiary">
-              직관했던 <b className="text-text-secondary">{DIARY_SEASON} 종료 경기</b>를 기록하거나 사진·영상을 올려요
+              {moveMode ? (
+                <>
+                  이 기록을 옮길 <b className="text-text-secondary">{DIARY_SEASON} 종료 경기</b>를 골라주세요
+                </>
+              ) : (
+                <>
+                  직관했던 <b className="text-text-secondary">{DIARY_SEASON} 종료 경기</b>를 기록하거나 사진·영상을 올려요
+                </>
+              )}
             </p>
 
             {/* 검색 */}
@@ -318,7 +334,12 @@ export default function VenueDiaryAddGameSheet({
                     <div className="ml-2 flex shrink-0 flex-col gap-1.5">
                       <button
                         type="button"
-                        disabled={activeAttendanceGameIds.has(day.gameId)}
+                        disabled={
+                          moveMode
+                            ? day.gameId === moveFromGameId ||
+                              activeAttendanceGameIds.has(day.gameId)
+                            : activeAttendanceGameIds.has(day.gameId)
+                        }
                         onClick={() => teamId != null && onRecord({
                           gameId: day.gameId,
                           dateLabel: formatDateLabel(day.date, day.stadium),
@@ -331,23 +352,33 @@ export default function VenueDiaryAddGameSheet({
                         }, teamId)}
                         className="rounded-lg bg-brand-primary px-3 py-1.5 text-[11px] font-bold text-white disabled:bg-bg-secondary disabled:text-text-tertiary"
                       >
-                        {activeAttendanceGameIds.has(day.gameId) ? "기록됨" : "기록 추가"}
+                        {moveMode
+                          ? day.gameId === moveFromGameId
+                            ? "현재 경기"
+                            : activeAttendanceGameIds.has(day.gameId)
+                              ? "기록됨"
+                              : "이 경기로 변경"
+                          : activeAttendanceGameIds.has(day.gameId)
+                            ? "기록됨"
+                            : "기록 추가"}
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => !selectDisabled && handlePick(day)}
-                        disabled={selectDisabled}
-                        className="inline-flex items-center justify-center gap-1 rounded-lg border border-border px-2.5 py-1.5 text-[10.5px] font-bold text-text-secondary disabled:text-text-tertiary"
-                      >
-                        {pick.kind === "locked" ? <Lock size={10} /> : <ImagePlus size={10} />}
-                        {!countsReady
-                          ? countsError ? "확인 실패" : "확인 중"
-                          : pick.kind === "locked"
-                            ? `${pick.cap}/${pick.cap}`
-                            : pick.kind === "add"
-                              ? `${pick.count}/${pick.cap} 추가`
-                              : "사진·영상"}
-                      </button>
+                      {!moveMode && (
+                        <button
+                          type="button"
+                          onClick={() => !selectDisabled && handlePick(day)}
+                          disabled={selectDisabled}
+                          className="inline-flex items-center justify-center gap-1 rounded-lg border border-border px-2.5 py-1.5 text-[10.5px] font-bold text-text-secondary disabled:text-text-tertiary"
+                        >
+                          {pick.kind === "locked" ? <Lock size={10} /> : <ImagePlus size={10} />}
+                          {!countsReady
+                            ? countsError ? "확인 실패" : "확인 중"
+                            : pick.kind === "locked"
+                              ? `${pick.cap}/${pick.cap}`
+                              : pick.kind === "add"
+                                ? `${pick.count}/${pick.cap} 추가`
+                                : "사진·영상"}
+                        </button>
+                      )}
                     </div>
                   </div>
                 );
@@ -356,7 +387,11 @@ export default function VenueDiaryAddGameSheet({
             )}
 
             <div className="mt-1 rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-2.5 text-[11.5px] leading-relaxed text-amber-300">
-              ℹ️ 직접 추가 기록은 <b>전체 포함 승률·직관 통계</b>에 바로 반영돼요. GPS 인증 수·인증 배지는 별도로 유지됩니다.
+              {moveMode ? (
+                <>ℹ️ 경기를 바꿔도 <b>사진·영상은 원래 경기에 그대로</b> 남아요. 통계 기록만 옮겨집니다.</>
+              ) : (
+                <>ℹ️ 직접 추가 기록은 <b>전체 포함 승률·직관 통계</b>에 바로 반영돼요. GPS 인증 수·인증 배지는 별도로 유지됩니다.</>
+              )}
             </div>
           </div>
         </motion.div>
