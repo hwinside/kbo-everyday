@@ -37,6 +37,12 @@ export interface RagEvidence {
   sourceGrade: SourceGrade;
 }
 
+export type RagDocumentSourceKind = "wikipedia_document" | "namu_document";
+
+export type RagEvidenceCandidate = RagEvidence & {
+  embedding: string | number[] | null;
+};
+
 export interface RagPlayerCandidate {
   entityType: "player";
   entityId: string;
@@ -53,6 +59,28 @@ export const RAG_EVIDENCE_LIMIT = 4;
  * — 그래서 새 RPC 없이 기존 서빙 뷰(genius_rag_serving_chunks) SELECT만으로 성립한다.
  */
 export const RAG_CANDIDATE_LIMIT = 40;
+
+/**
+ * 소스별 DB 절단을 먼저 수행한 뒤 최종 evidence limit을 적용한다.
+ *
+ * entity 전체에 무순서 limit(40)을 걸면 Namu 41건 뒤의 Wikipedia 1건이 DB에서 이미
+ * 사라져, 이후 source priority 정렬로는 복구할 수 없다. 실제 서버가 이 seam을 사용하고
+ * PGlite 회귀도 같은 seam에 source_kind별 SELECT를 주입한다.
+ */
+export async function searchSourcePriorityCandidates(
+  fetchBySourceKind: (
+    sourceKind: RagDocumentSourceKind,
+    limit: number,
+  ) => Promise<RagEvidenceCandidate[]>,
+  queryVector: number[],
+  orderBeforeLimit: (rows: RagEvidence[]) => RagEvidence[],
+): Promise<RagEvidence[]> {
+  const [wikipediaRows, namuRows] = await Promise.all([
+    fetchBySourceKind("wikipedia_document", RAG_CANDIDATE_LIMIT),
+    fetchBySourceKind("namu_document", RAG_CANDIDATE_LIMIT),
+  ]);
+  return rankEvidenceByQuery([...wikipediaRows, ...namuRows], queryVector, orderBeforeLimit);
+}
 /** 근거 1건당 프롬프트에 넣는 최대 길이. chunk 상한(900자)보다 짧게 잡아 다중 근거를 허용한다. */
 export const RAG_EVIDENCE_MAX_CHARS = 600;
 /** RAG 답변 본문(출처 표기 제외) 상한. */
@@ -279,8 +307,9 @@ export function cosineSimilarity(left: number[], right: number[]): number {
 export function rankEvidenceByQuery(
   rows: (RagEvidence & { embedding: string | number[] | null })[],
   queryVector: number[],
+  orderBeforeLimit?: (rows: RagEvidence[]) => RagEvidence[],
 ): RagEvidence[] {
-  return rows
+  const ranked = rows
     .map((row) => {
       const vector = parseEmbedding(row.embedding);
       return vector === null ? null : { row, score: cosineSimilarity(vector, queryVector) };
@@ -288,7 +317,6 @@ export function rankEvidenceByQuery(
     .filter((entry): entry is { row: RagEvidence & { embedding: string | number[] | null }; score: number } =>
       entry !== null && entry.score > 0)
     .sort((left, right) => right.score - left.score)
-    .slice(0, RAG_EVIDENCE_LIMIT)
     .map(({ row }) => ({
       content: row.content,
       pageTitle: row.pageTitle,
@@ -298,4 +326,5 @@ export function rankEvidenceByQuery(
       asOf: row.asOf,
       sourceGrade: row.sourceGrade,
     }));
+  return (orderBeforeLimit ? orderBeforeLimit(ranked) : ranked).slice(0, RAG_EVIDENCE_LIMIT);
 }
