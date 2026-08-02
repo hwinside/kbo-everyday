@@ -85,6 +85,24 @@ assert.match(tabSource, /badges\.filter\(b => visibleBadgeIds\.has\(b\.badge_id\
 assert.match(tabSource, /\{visibleBadges\.length\}개 중/, "denominator uses same visible catalog");
 assert.doesNotMatch(tabSource, /\{BADGES\.length[^}]*\}개 중/, "global denominator cannot expose hidden slots");
 
+// 배지명은 어절 단위로만 줄바꿈되어야 한다.
+// (기본값이면 "크보팬 회장남편" → "크보팬 회 / 장남편" 처럼 낱자 중간에서 쪼개진다 — 실기기 스크린샷 증거)
+assert.match(tabSource, /wordBreak:\s*"keep-all"/, "badge name must break on word boundaries");
+assert.match(tabSource, /overflowWrap:\s*"break-word"/, "long unbroken tokens must not overflow the card");
+
+// 개행 단위가 카드 폭을 넘지 않는지 — 한정 배지명의 최장 어절 길이 가드.
+// 카드 내부 폭 ≈ (max-w-lg 512 - px-5 40 - GlassCard p-4 32 - gap-3 36) / 4 - p-2 16 ≈ 85px,
+// 10px 볼드 한글 1자 ≈ 10px → 어절당 8자까지 안전.
+for (const id of exclusiveIds) {
+  const badge = BADGE_MAP[id];
+  for (const word of badge.name.split(" ")) {
+    assert.ok(
+      word.length <= 8,
+      `${id} 배지명의 어절 "${word}"이 길어 카드에서 잘립니다(${word.length}자). 어절을 나누거나 짧게 지으세요`
+    );
+  }
+}
+
 const rlsMigration = readFileSync(
   "supabase/migrations/20260803001500_user_badges_service_role_writes.sql",
   "utf8"
