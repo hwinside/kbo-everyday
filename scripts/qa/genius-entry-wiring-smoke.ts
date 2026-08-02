@@ -8,7 +8,7 @@
 // 저기는 실제 렌더/클릭. 배선 계약을 따로 두는 이유는 컴포넌트만 만들고
 // 헤더에 안 붙이거나, 라우팅을 /messages 목록으로 되돌리는 회귀를 잡기 위함.
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { BASEBALL_GENIUS_USER_ID } from "../../src/lib/constants/baseball-genius";
 
@@ -25,18 +25,47 @@ function check(name: string, fn: () => void) {
 
 const read = (p: string) => readFileSync(path.join(process.cwd(), p), "utf8");
 const entry = read("src/components/ui/GeniusEntryButton.tsx");
-const header = read("src/components/ui/HeaderProfileLink.tsx");
+const HEADERS_WITH_DM = [
+  "src/components/ui/HeaderProfileLink.tsx",
+  "src/components/home/HomeClientShell.tsx",
+] as const;
 
-// --- 헤더 배선: 존재 + 쪽지 아이콘 '왼쪽' ---
-check("헤더가 GeniusEntryButton을 렌더한다", () => {
-  assert.ok(/import\s+GeniusEntryButton\s+from/.test(header), "import 없음");
-  assert.ok(/<GeniusEntryButton\s*\/>/.test(header), "렌더 없음");
+for (const file of HEADERS_WITH_DM) {
+  const header = read(file);
+  check(`[${path.basename(file)}] GeniusEntryButton을 렌더한다`, () => {
+    assert.ok(/import\s+GeniusEntryButton\s+from/.test(header), "import 없음");
+    assert.ok(/<GeniusEntryButton\s*\/>/.test(header), "렌더 없음");
+  });
+  check(`[${path.basename(file)}] 마스코트가 쪽지 아이콘보다 왼쪽에 있다`, () => {
+    const mascotIdx = header.indexOf("<GeniusEntryButton");
+    const dmIdx = header.indexOf('href="/messages"');
+    assert.ok(mascotIdx >= 0 && dmIdx >= 0 && mascotIdx < dmIdx, "배선 순서 불일치");
+  });
+}
+
+check("쪽지 링크를 가진 헤더가 회귀 목록에서 누락되지 않는다", () => {
+  const found: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(path.join(process.cwd(), dir), { withFileTypes: true })) {
+      const relative = `${dir}/${entry.name}`;
+      if (entry.isDirectory()) walk(relative);
+      else if (entry.name.endsWith(".tsx")) {
+        const source = read(relative);
+        if (source.includes('href="/messages"') && source.includes('aria-label="쪽지"') && source.includes("min-h-[44px]")) {
+          found.push(relative);
+        }
+      }
+    }
+  };
+  walk("src/components");
+  walk("src/app");
+  assert.deepEqual(found.filter((file) => !HEADERS_WITH_DM.includes(file as never)), []);
 });
-check("마스코트가 쪽지 아이콘보다 왼쪽에 있다", () => {
-  const mascotIdx = header.indexOf("<GeniusEntryButton");
-  const dmIdx = header.indexOf('href="/messages"');
-  assert.ok(mascotIdx >= 0 && dmIdx >= 0, "둘 중 하나를 찾지 못함");
-  assert.ok(mascotIdx < dmIdx, "마스코트가 쪽지 아이콘 오른쪽에 있음");
+
+const chatPage = read("src/app/(main)/messages/[conversationId]/page.tsx");
+check("비로그인 직접 URL은 /messages로 이탈한다", () => {
+  assert.match(chatPage, /if\s*\(!authLoading\s*&&\s*!user\)\s*router\.replace\("\/messages"\)/);
+  assert.match(chatPage, /if\s*\(authLoading\s*\|\|\s*!user\)\s*return null/);
 });
 
 // --- 라우팅: 한 탭에 대화창 ---
