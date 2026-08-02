@@ -14,6 +14,11 @@ import TeamBadge from "@/components/ui/TeamBadge";
 import type { FavoritePlayer } from "@/lib/store/favorites";
 import playersRoster from "@/lib/constants/players-roster.json";
 import { matchHangul } from "@/lib/utils/hangul-search";
+import {
+  normalizePopularityCounts,
+  sortPlayersByPopularity,
+  type PopularityCounts,
+} from "@/lib/utils/player-popularity";
 
 interface PlayerInfo {
   id: string;
@@ -58,6 +63,26 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip, 
   const [showAll, setShowAll] = useState(false);
   const team = getTeamById(teamId);
 
+  // 선수별 "최애선수로 지정한 계정 수" — 목록을 인기순으로 정렬하는 데 쓴다.
+  // 집계는 서버 route(DB RPC)가 하고 여기서는 결과만 받는다.
+  // 실패해도 빈 맵이면 전원 0 이 되어 기존 가나다순으로 자연 폴백한다(fail-safe).
+  const [popularity, setPopularity] = useState<PopularityCounts>({});
+  useEffect(() => {
+    if (!isOpen) return;
+    let stale = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/player-popularity");
+        if (!res.ok) return;
+        const json = await res.json();
+        if (!stale) setPopularity(normalizePopularityCounts(json?.counts));
+      } catch {
+        /* 순위를 못 받아도 온보딩은 계속돼야 한다 */
+      }
+    })();
+    return () => { stale = true; };
+  }, [isOpen]);
+
   const allPlayers = useMemo<PlayerInfo[]>(() => {
     const roster = playersRoster as { kboId: string; name: string; team: string; teamId: number; position: string; backNo: string }[];
     const seen = new Set<string>();
@@ -87,12 +112,22 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip, 
   const selectedPlayersArr = [...selected]
     .map(id => allPlayers.find(p => p.id === id))
     .filter((p): p is PlayerInfo => !!p);
-  const myTeamPlayers = allPlayers.filter(p => p.teamId === teamId);
+  const myTeamPlayers = useMemo(
+    () => sortPlayersByPopularity(allPlayers.filter(p => p.teamId === teamId), popularity),
+    [allPlayers, teamId, popularity],
+  );
   const otherPlayers = allPlayers.filter(p => p.teamId !== teamId);
   const [visibleCount, setVisibleCount] = useState(30);
-  const allDisplayPlayers = search
-    ? allPlayers.filter(p => matchHangul(p.name, search))
-    : showAll ? [...allPlayers].sort((a, b) => a.name.localeCompare(b.name, 'ko')) : myTeamPlayers;
+  // 팀 탭·전체 탭·검색 결과 모두 같은 기준(지정 계정 수 ↓, 동률 가나다순)으로 정렬한다.
+  const allDisplayPlayers = useMemo(() => {
+    if (search) {
+      return sortPlayersByPopularity(
+        allPlayers.filter(p => matchHangul(p.name, search)),
+        popularity,
+      );
+    }
+    return showAll ? sortPlayersByPopularity(allPlayers, popularity) : myTeamPlayers;
+  }, [search, showAll, allPlayers, myTeamPlayers, popularity]);
   const displayPlayers = allDisplayPlayers.slice(0, visibleCount);
 
   // 무한스크롤 onScroll (iOS Safari IntersectionObserver 불안정 대응)
