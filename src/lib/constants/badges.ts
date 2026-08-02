@@ -10,6 +10,7 @@ export interface BadgeDefinition {
 // 1차 프로필에서 노출하는 뱃지 ID (데이터 추적 가능한 것만)
 export const ACTIVE_BADGE_IDS = new Set([
   "founder",
+  "keubo-chairperson",
   "debut", "writer-1", "writer-2", "writer-3", "writer-4", "writer-5",
   "popular-1", "popular-2", "popular-3", "popular-4", "popular-5",
   "inviter-1", "inviter-5", "inviter-10", "inviter-30", "inviter-50", "pioneer-2026",
@@ -23,6 +24,7 @@ export const ACTIVE_BADGE_IDS = new Set([
 export const ALL_BADGES: BadgeDefinition[] = [
   // === 특별 ===
   { id: "founder", name: "파운더", icon: "👑", description: "크보팬 초창기 멤버", category: "special", rarity: "legendary" },
+  { id: "keubo-chairperson", name: "크보팬 회장", icon: "🏛️", description: "크보팬을 이끄는 특별 멤버", category: "special", rarity: "legendary" },
   { id: "wiki", name: "위키 기여자", icon: "📝", description: "선수 프로필 제보 채택", category: "special", rarity: "epic" },
   { id: "bug-hunter", name: "버그헌터", icon: "🐛", description: "버그 제보로 앱 개선에 기여", category: "special", rarity: "epic" },
 
@@ -107,6 +109,25 @@ export const ALL_BADGES: BadgeDefinition[] = [
 
 // 활성 뱃지만 노출
 export const BADGES = ALL_BADGES.filter(b => ACTIVE_BADGE_IDS.has(b.id));
+
+/**
+ * 임명제 배지 — 활동으로 달성할 수 없고 운영이 직접 부여한다.
+ *
+ * 달성 경로가 없으므로 미획득 회색 칸으로 전 유저에게 뿌리면 "이건 어떻게 받나요" CS
+ * 문의만 만들고, 하단 "N개 획득 / M개 중" 의 분모도 아무도 채울 수 없게 된다.
+ * 따라서 보유자 프로필에서만 렌더한다.
+ * (파운더는 초대코드라는 획득 경로가 있어서 이 목록에 넣지 않는다.)
+ */
+export const APPOINTED_BADGE_IDS = new Set(["keubo-chairperson"]);
+
+/** 해당 프로필 그리드에 렌더할 배지 — 임명제는 보유자에게만. */
+export function visibleBadgesFor(
+  earnedBadgeIds: ReadonlySet<string>,
+): BadgeDefinition[] {
+  return BADGES.filter(
+    (b) => !APPOINTED_BADGE_IDS.has(b.id) || earnedBadgeIds.has(b.id),
+  );
+}
 
 export const BADGE_MAP = Object.fromEntries(ALL_BADGES.map(b => [b.id, b]));
 

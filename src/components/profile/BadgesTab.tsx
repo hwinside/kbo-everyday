@@ -2,7 +2,12 @@
 
 import { motion } from "framer-motion";
 import GlassCard from "@/components/ui/GlassCard";
-import { BADGES, ACTIVE_BADGE_IDS, RARITY_COLORS, CATEGORY_LABELS } from "@/lib/constants/badges";
+import {
+  ACTIVE_BADGE_IDS,
+  CATEGORY_LABELS,
+  RARITY_COLORS,
+  visibleBadgesFor,
+} from "@/lib/constants/badges";
 import type { BadgeDefinition } from "@/lib/constants/badges";
 
 interface UserBadge {
@@ -42,11 +47,15 @@ const RARITY_SHADOW: Record<string, string> = {
 
 export default function BadgesTab({ badges, earnedBadgeIds, onSelectBadge }: BadgesTabProps) {
   const categories = Object.entries(CATEGORY_LABELS);
+  // 임명제 배지(크보팬 회장)는 달성 경로가 없어 미보유자에겐 아예 노출하지 않는다.
+  // 분모도 같은 목록에서 가져와야 "12개 획득 / 13개 중"처럼 영원히 못 채우는 분모가 안 된다.
+  const visibleBadges = visibleBadgesFor(earnedBadgeIds);
+  const visibleIds = new Set(visibleBadges.map((b) => b.id));
 
   return (
     <div className="px-5 space-y-4">
       {categories.map(([catId, catLabel]) => {
-        const catBadges = BADGES.filter(b => b.category === catId);
+        const catBadges = visibleBadges.filter(b => b.category === catId);
         if (catBadges.length === 0) return null;
         return (
           <GlassCard key={catId} className="p-4">
@@ -108,7 +117,7 @@ export default function BadgesTab({ badges, earnedBadgeIds, onSelectBadge }: Bad
       })}
 
       <p className="text-center text-xs text-text-tertiary">
-        {badges.filter(b => ACTIVE_BADGE_IDS.has(b.badge_id)).length}개 획득 / {BADGES.length}개 중
+        {badges.filter(b => ACTIVE_BADGE_IDS.has(b.badge_id) && visibleIds.has(b.badge_id)).length}개 획득 / {visibleBadges.length}개 중
       </p>
     </div>
   );
