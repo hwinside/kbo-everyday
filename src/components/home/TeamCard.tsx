@@ -9,6 +9,7 @@ import { getTeamById, type TeamData } from "@/lib/constants/teams";
 import { getTeamColor } from "@/lib/utils/team";
 import { getCanonicalPlayerHref } from "@/lib/utils/resolve-player";
 import { computeRosterMovesGroupedDisplay, teamHomeHref } from "@/lib/roster-moves/readiness";
+import { gameResultTone, resultToneChipStyle } from "@/lib/ui/result-tone";
 
 type FormResult = "W" | "L" | "D";
 
@@ -308,7 +309,7 @@ export default function TeamCard({ team, gameSlot, refreshNonce = 0 }: TeamCardP
                   <div className="flex gap-1.5 justify-end">
                     {data.recentForm.map((r, i) => (
                       <span key={i} className="w-[22px] h-[22px] rounded-[7px] flex items-center justify-center text-[11px] font-extrabold"
-                        style={r === "W" ? { background: "rgba(38,168,109,.22)", color: "#36d399" } : r === "L" ? { background: "rgba(196,1,47,.20)", color: "#ff6b6b" } : { background: "rgba(160,160,170,.18)", color: "#b0b0ba" }}>
+                        style={resultToneChipStyle(gameResultTone(r))}>
                         {r === "W" ? "승" : r === "L" ? "패" : "무"}
                       </span>
                     ))}
@@ -417,7 +418,8 @@ export default function TeamCard({ team, gameSlot, refreshNonce = 0 }: TeamCardP
                         {group.moves.map((move, index) => {
                           const isRegister = move.moveType === "register";
                           const label = isRegister ? "등록" : "말소";
-                          const labelColor = isRegister ? "#34D399" : "#F87171";
+                          // 긍부정 색·배경 모두 이 파일 위쪽 `최근 N경기` 칩과 같은 SSOT(@/lib/ui/result-tone).
+                          // ⚠️ 배경을 `${color}1f` 로 파생 생성하면 SSOT 배경값을 우회한다(삼순 3차 지적).
                           return (
                             <span
                               key={`${move.moveType}-${move.kboPlayerId}-${index}`}
@@ -425,7 +427,7 @@ export default function TeamCard({ team, gameSlot, refreshNonce = 0 }: TeamCardP
                             >
                               <span
                                 className="flex-shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-bold"
-                                style={{ color: labelColor, backgroundColor: `${labelColor}1f` }}
+                                style={resultToneChipStyle(isRegister ? "positive" : "negative")}
                               >
                                 {label}
                               </span>
