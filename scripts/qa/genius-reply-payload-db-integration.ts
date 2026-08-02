@@ -99,15 +99,29 @@ async function main() {
   );
   assert.equal(legacyCount.rows[0]?.count, 1);
 
+  const selectedShapes: Array<{ table: string; columns: string }> = [];
   const helperAdmin = {
     from(table: string) {
+      let selected = "";
       const chain = {
-        select() { return chain; },
+        select(columns: string) {
+          selected = columns;
+          selectedShapes.push({ table, columns });
+          return chain;
+        },
         eq() { return chain; },
         async maybeSingle() {
-          return table === "dm_conversations"
-            ? { data: { id: "conversation-1" }, error: null }
-            : { data: { id: 1, payload: firstPayload }, error: null };
+          if (table === "dm_conversations") {
+            return selected === "id"
+              ? { data: { id: "conversation-1" }, error: null }
+              : { data: null, error: { code: "42703", message: "column dm_conversations.payload does not exist" } };
+          }
+          if (table === "dm_messages") {
+            return selected === "id, payload"
+              ? { data: { id: 1, payload: firstPayload }, error: null }
+              : { data: { id: 1 }, error: null };
+          }
+          return { data: null, error: { code: "42P01", message: "unexpected table" } };
         },
       };
       return chain;
@@ -121,6 +135,16 @@ async function main() {
   );
   assert.equal(helperSame.ok && helperSame.found, true, "helper 동일 payload 검증 실패");
   assert.deepEqual(helperMismatch, { ok: true, found: false }, "helper가 다른 payload를 성공 처리했다");
+  assert.deepEqual(
+    selectedShapes,
+    [
+      { table: "dm_conversations", columns: "id" },
+      { table: "dm_messages", columns: "id, payload" },
+      { table: "dm_conversations", columns: "id" },
+      { table: "dm_messages", columns: "id, payload" },
+    ],
+    "PostgREST select shape가 production schema와 다르면 false-green이다",
+  );
 
   console.log("PASS reply payload DB actual — RPC+helper payload 일치 / mismatch 23505 / legacy NULL 무회귀");
   await db.close();

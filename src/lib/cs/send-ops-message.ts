@@ -27,7 +27,7 @@ export async function verifyOpsMessageByDedupKey(
   const [u1, u2] = [systemUserId, userId].sort();
   const { data: conversation, error: convError } = await admin
     .from("dm_conversations")
-    .select("id, payload")
+    .select("id")
     .eq("user1_id", u1)
     .eq("user2_id", u2)
     .maybeSingle();
@@ -36,7 +36,7 @@ export async function verifyOpsMessageByDedupKey(
 
   const { data: message, error: msgError } = await admin
     .from("dm_messages")
-    .select("id")
+    .select("id, payload")
     .eq("dedup_key", dedupKey)
     .eq("sender_id", systemUserId)
     .eq("conversation_id", conversation.id)
