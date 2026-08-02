@@ -6,6 +6,7 @@ import type {
   B4Value,
   C1Entry,
   C2Entry,
+  D7Value,
   MetricEnvelope,
   MetricId,
   VenueStatsScopePayload,
@@ -18,7 +19,7 @@ export const VENUE_STATS_UI_GROUPS = {
   splits: ["A2", "A3", "A4", "A5", "A6"],
   team: ["B1", "B2", "B3", "B4"],
   favorites: ["C1", "C2", "C4", "C5", "C6"],
-  story: ["D1", "D5", "D6"],
+  story: ["D1", "D5", "D6", "D7"],
   habits: ["E1", "E2", "E3", "E4"],
 } as const satisfies Record<string, readonly MetricId[]>;
 
@@ -616,6 +617,108 @@ export function awayFanTag(input: {
     return { label: "원정러", value: evidence, tier: 2 };
   }
   return { label: "첫 원정", value: evidence, tier: 1 };
+}
+
+/**
+ * 팀-경기 실책 실측 분포 — 2026 시즌 **493경기 / 986 팀-경기 전수**
+ * (Naver record `scoreBoard.rheb.e`, 조회 성공 493/493).
+ *
+ * ```
+ * 0실책 518 (52.5%) · 1실책 308 (31.2%) · 2실책 109 (11.1%)
+ * 3실책  46 ( 4.7%) · 4실책   4 ( 0.4%) · 5실책   1 ( 0.1%)
+ * 팀-경기 평균 0.695개
+ * ```
+ *
+ * 누적: `≥1` 47.5% · **`≥2` 16.2%** · `≥3` 5.2% · `≥4` 0.5%
+ *
+ * ⚠️ 이 상수는 회귀가 임계 근거로 직접 검증한다. 임계를 바꾸려면 회귀도 함께 고쳐야
+ * 하므로 근거 없는 재튜닝이 불가능하다(#1055 신뢰도·원정 임계에서 같은 실수를 반복한 뒤 도입).
+ */
+export const MEASURED_TEAM_GAME_ERRORS = {
+  games: 493,
+  teamGames: 986,
+  histogram: { 0: 518, 1: 308, 2: 109, 3: 46, 4: 4, 5: 1 } as Record<number, number>,
+  meanPerTeamGame: 0.695,
+} as const;
+
+/**
+ * `발암경기` 판정 임계 — **한 경기에서 내 팀 실책 2개 이상**.
+ *
+ * 실측 상위 16.2% 구간이다. 1개로 내리면 47.5%가 발암경기가 되어 변별력이 없고,
+ * 3개로 올리면 5.2%라 대부분의 유저가 도달하지 못한다(직관 최대 4경기).
+ *
+ * 경기당 평균이 아니라 **경기 단위 판정**을 쓰는 이유: 유저 직관 표본이 1~4경기라
+ * 평균은 잡음이 크고, `발암경기 인내형`이라는 이름 자체가 "그런 경기를 봤다"는 뜻이다.
+ */
+export const ERROR_PRONE_MIN = 2;
+
+export interface VenueErrorTags {
+  /** 실책을 많이 본 쪽 태그. */
+  heavy: { label: string; value: string } | null;
+  /** 실책을 거의 못 본 쪽 태그. */
+  clean: { label: string; value: string } | null;
+}
+
+/**
+ * 실책 목격 태그 — 하린아빠 2026-08-02:
+ * **"유독 실책을 많이 보는 발암경기 인내형"** (+ "태그는 사소하고 많을수록 좋아").
+ *
+ * ⚠️ 분모 계약이 핵심이다. 실책은 linescore 조회가 실패할 수 있어 경기별로 **미확인**이
+ * 존재하고, D7 은 확인된 경기만 `knownGames` 로 센다. 미확인을 0으로 세면 "실책을 안 본
+ * 사람"으로 둔갑하므로, 확인된 경기가 0이면 태그를 아예 만들지 않는다.
+ *
+ * ⚠️ 표본 가드는 **태그 성격별로 다르다**(삼순 P1 2026-08-02). 이전에는 네 태그 모두
+ * `MIN_FINAL_GAMES=3` 을 요구해, 실측 48명 분포(1경기 43·2경기 4·4경기 1) 기준
+ * **47/48명이 어떤 태그에도 도달하지 못했다.** "사소한 태그도 많이"라는 제품 의도와 정반대다.
+ *  - 성향 주장(`발암경기 인내형` = "원래 그런 경기를 많이 본다") → 3경기+ 필요
+ *  - 사실 서술(`실책 목격자`·`무결점 수비 관람`·`상대 실책 수집가`) → 1경기부터 성립
+ */
+export function venueErrorTags(value: D7Value | null | undefined): VenueErrorTags {
+  const empty: VenueErrorTags = { heavy: null, clean: null };
+  if (!value) return empty;
+  const { myTeamErrors, opponentErrors, errorProneGames, knownGames, worstGame } = value;
+  if (!Number.isFinite(knownGames) || knownGames < 1) return empty;
+  if (!Number.isFinite(errorProneGames)) return empty;
+
+  const evidence = `내 팀 ${myTeamErrors}실책 · ${knownGames}경기`;
+
+  // ── 성향 태그: "이 사람은 원래 발암경기를 많이 본다" 는 주장이라 표본 3경기+ 필요 ──
+  if (knownGames >= MIN_FINAL_GAMES && errorProneGames / knownGames >= 0.5) {
+    const worstText = worstGame && worstGame.errors >= ERROR_PRONE_MIN
+      ? `한 경기 ${worstGame.errors}실책 · `
+      : "";
+    return {
+      heavy: {
+        label: "발암경기 인내형",
+        value: `${worstText}발암경기 ${errorProneGames}/${knownGames}`,
+      },
+      clean: null,
+    };
+  }
+
+  // ── 사실 태그: "그런 경기를 봤다"는 단일 사건 서술이라 1경기부터 성립 ──
+  if (errorProneGames > 0) {
+    const worstText = worstGame && worstGame.errors >= ERROR_PRONE_MIN
+      ? `한 경기 ${worstGame.errors}실책 · `
+      : "";
+    return { heavy: { label: "실책 목격자", value: `${worstText}${evidence}` }, clean: null };
+  }
+  if (myTeamErrors === 0) {
+    return {
+      heavy: null,
+      clean: { label: "무결점 수비 관람", value: `${knownGames}경기 내 팀 실책 0` },
+    };
+  }
+  if (opponentErrors > myTeamErrors * 2 && opponentErrors >= 2) {
+    return {
+      heavy: null,
+      clean: {
+        label: "상대 실책 수집가",
+        value: `상대 ${opponentErrors}실책 vs 내 팀 ${myTeamErrors}`,
+      },
+    };
+  }
+  return empty;
 }
 
 export function coverageCaption(scope: VenueStatsScopePayload): string {
