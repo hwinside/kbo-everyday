@@ -21,7 +21,8 @@
  * 조회 실패는 사실이 아니라 무지다).
  */
 
-import { resolveTeamId } from "@/lib/crawler/kbo-api";
+import { resolveTeamId, type KboGame } from "@/lib/crawler/kbo-api";
+import { fetchNaverGames } from "@/lib/crawler/naver-games";
 
 /** 한 경기의 원정/홈 실책 수. */
 export interface GameErrorCounts {
@@ -184,6 +185,8 @@ export function parseNaverErrorObservation(json: unknown): RawErrorObservation |
 export interface GameErrorFetchers {
   kbo?: (gameId: string, signal?: AbortSignal) => Promise<unknown>;
   naver?: (gameId: string, signal?: AbortSignal) => Promise<unknown>;
+  /** Naver record 에 없는 exact gameId 를 같은 날짜 schedule 로 교차검증한다. */
+  naverSchedule?: (gameId: string, signal?: AbortSignal) => Promise<KboGame[]>;
 }
 
 async function defaultKboFetch(gameId: string, signal?: AbortSignal): Promise<unknown> {
@@ -206,6 +209,13 @@ async function defaultNaverFetch(gameId: string, signal?: AbortSignal): Promise<
   });
   if (!res.ok) return null;
   return res.json();
+}
+
+async function defaultNaverScheduleFetch(
+  gameId: string,
+  signal?: AbortSignal,
+): Promise<KboGame[]> {
+  return fetchNaverGames(gameId.slice(0, 8), undefined, { signal });
 }
 
 /** 직관 경기 canonical — 원천의 경기 identity·팀·final score 를 exact 대조한다. */
@@ -265,6 +275,26 @@ export async function fetchGameErrors(
       : await defaultNaverFetch(gameId, signal);
     const observed = parseNaverErrorObservation(raw);
     if (observed && matchesCanonical(observed)) {
+      // Naver record.gameInfo 에는 exact gameId 가 없다. 날짜·팀·스코어만 맞추면
+      // 동일 조건의 DH 1/2차전을 서로 오인할 수 있으므로, canonical 조회에서는
+      // 같은 날짜 schedule 의 exact gameId/final/team/score witness 를 추가로 요구한다.
+      // 주입 naver fetcher 가 schedule seam 을 주지 않으면 테스트/호출도 fail-close한다.
+      if (canonical !== null) {
+        const schedule = fetchers.naverSchedule
+          ? await fetchers.naverSchedule(gameId, signal)
+          : fetchers.naver
+            ? null
+            : await defaultNaverScheduleFetch(gameId, signal);
+        const exact = schedule?.find((game) => game.gameId === canonical.gameId);
+        if (
+          !exact ||
+          exact.status !== "final" ||
+          exact.awayTeamId !== canonical.awayTeamId ||
+          exact.homeTeamId !== canonical.homeTeamId ||
+          exact.awayScore !== canonical.awayScore ||
+          exact.homeScore !== canonical.homeScore
+        ) return null;
+      }
       return { away: observed.away, home: observed.home };
     }
     return null;

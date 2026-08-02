@@ -102,6 +102,37 @@ function canonicalGame(
   };
 }
 
+function naverScheduleWitness(canonical: ReturnType<typeof canonicalGame>) {
+  return [{
+    gameId: canonical.gameId,
+    date: canonical.gameId.slice(0, 8),
+    time: "18:30",
+    stadium: "잠실",
+    awayTeamId: canonical.awayTeamId,
+    homeTeamId: canonical.homeTeamId,
+    awayName: "LG",
+    homeName: "두산",
+    awayScore: canonical.awayScore,
+    homeScore: canonical.homeScore,
+    inning: 9,
+    isTop: false,
+    status: "final" as const,
+    awayStarterName: "",
+    homeStarterName: "",
+    winPitcher: "",
+    losePitcher: "",
+    savePitcher: "",
+    strikes: 0,
+    balls: 0,
+    outs: 0,
+    runnersOn: { first: false, second: false, third: false },
+    currentPitcher: "",
+    currentBatter: "",
+    awayRank: 0,
+    homeRank: 0,
+  }];
+}
+
 async function main() {
   console.log("실책 데이터 경로 — 결손≠0 · failover · canonical 대조");
 
@@ -218,6 +249,7 @@ async function main() {
         // KBO 가 다른 스코어(=stale/다른 경기) → 거부하고 Naver 로
         kbo: async () => kboPayload({ awayR: "1", awayE: "9", homeR: "1", homeE: "9" }),
         naver: async () => naverPayload({ away: { r: 2, h: 7, e: 1 }, home: { r: 5, h: 9, e: 0 } }),
+        naverSchedule: async () => naverScheduleWitness(canonical),
       },
     });
     ok(
@@ -250,6 +282,7 @@ async function main() {
           away: { r: 2, h: 7, e: 1 },
           home: { r: 5, h: 9, e: 0 },
         }),
+        naverSchedule: async () => naverScheduleWitness(canonical),
       },
     });
     ok(
@@ -297,6 +330,32 @@ async function main() {
       },
     });
     ok("Naver 동일 스코어 취소 → 미확인(null)", cancelledNaver === null);
+
+    const dh1 = canonicalGame("20240623KTLG1", {
+      awayTeamId: 3,
+      homeTeamId: 1,
+      awayScore: 2,
+      homeScore: 3,
+    });
+    const dh2PayloadForDh1 = await fetchGameErrors(dh1.gameId, {
+      canonical: dh1,
+      fetchers: {
+        kbo: async () => null,
+        naver: async () => naverPayload(
+          { away: { r: 2, h: 7, e: 9 }, home: { r: 3, h: 9, e: 8 } },
+          { gdate: 20240623, aCode: "KT", hCode: "LG", round: 12, gtime: "17:45" },
+        ),
+        naverSchedule: async () => [{
+          ...naverScheduleWitness(dh1)[0],
+          gameId: "20240623KTLG2",
+        }],
+      },
+    });
+    ok(
+      "Naver 동일 날짜·팀·스코어 DH 2차전 payload → 1차전으로 오인하지 않음",
+      dh2PayloadForDh1 === null,
+      JSON.stringify(dh2PayloadForDh1),
+    );
 
     // canonical 없으면 대조를 건너뛴다(비final 경기 등).
     const noCanonical = await fetchGameErrors("20260801LGOB0", {
