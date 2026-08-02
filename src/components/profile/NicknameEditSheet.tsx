@@ -183,11 +183,11 @@ export default function NicknameEditSheet({ isOpen, onClose, currentNickname, st
                     setNickname(e.target.value);
                     setError("");
                   }}
-                  maxLength={NICKNAME_MAX_LENGTH}
+                  maxLength={Math.max(NICKNAME_MAX_LENGTH, currentNickname.length)}
                   placeholder={NICKNAME_INPUT_PLACEHOLDER}
                   className="w-full rounded-2xl border border-black/10 dark:border-white/10 bg-bg-tertiary px-4 py-3 text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent"
                 />
-                <p className="mt-2 text-xs text-text-tertiary">한글, 영문, 숫자만 사용 가능</p>
+                <p className="mt-2 text-xs text-text-tertiary">2~8자 · 한글, 영문, 숫자만 사용 가능</p>
                 {error ? <p className="mt-2 text-xs text-red-400">{error}</p> : null}
               </div>
 

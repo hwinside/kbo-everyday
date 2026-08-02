@@ -257,7 +257,8 @@
     "qa:title-orphan": "tsx scripts/qa/title-analysis-orphan-score-smoke.ts",
     "build:baseball-source-inventory:seed": "tsx scripts/baseball-qa/build-source-inventory.ts --emit-seed",
     "qa:post-detail-header-nowrap-browser": "node scripts/qa/post-detail-header-nowrap-browser.mjs",
-    "qa:nickname-api": "node scripts/qa/nickname-api-behavior.mjs"
+    "qa:nickname-api": "node scripts/qa/nickname-api-behavior.mjs",
+    "qa:nickname-edit-sheet-browser": "node scripts/qa/nickname-edit-sheet-browser.mjs"
   },
   "dependencies": {
     "@capacitor-firebase/messaging": "^8.3.0",
