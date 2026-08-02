@@ -41,7 +41,7 @@ export default function DMChatPage() {
   const router = useRouter();
   const conversationId = params.conversationId as string;
   const draftTargetId = conversationId.startsWith("new-") ? conversationId.slice(4) : null;
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const {
     messages,
     loading,
@@ -273,6 +273,12 @@ export default function DMChatPage() {
       setReportDetail("");
     }, 1500);
   }, [user, otherId, conversationId, reportCategory, reportDetail]);
+
+  useEffect(() => {
+    if (!authLoading && !user) router.replace("/messages");
+  }, [authLoading, user, router]);
+
+  if (authLoading || !user) return null;
 
   return (
     <div className="fixed inset-0 z-[60] flex flex-col bg-bg-primary">
