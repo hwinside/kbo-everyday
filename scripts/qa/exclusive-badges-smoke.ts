@@ -96,17 +96,34 @@ assert.match(tabSource, /wordBreak:\s*"keep-all"/, "badge name must break on wor
 //
 // 소스 문자열로는 실제 줄바꿈을 알 수 없으므로(=이 사고의 교훈),
 // 렌더 검증은 scripts/qa/badge-card-wordwrap-browser.mjs (320/360/375/390px 실제
-// Chromium line box 측정)이 맡는다. 여기서는 그 게이트의 존재와 폰트 축소 계약만 잠그고,
-// 적정성 판단은 실측에 맡긴다.
+// Chromium line box + computed font-size 측정)이 맡는다.
+// 여기서는 소스로 확실히 잠글 수 있는 두 가지만 본다.
+//
+// ⚠️ 이 가드의 직전 판본은 `fontSize: clamp(...cqw...)` 와 `containerType` 을 **요구**했다.
+// 그런데 실측 결과 `clamp(8px, 2.6cqw, 10px)` 는 320~512px 전 구간이 하한 8px 에 고정되어
+// 반응형이 아니었고, 데스크톱까지 배지명을 20% 축소하는 가독성 회귀였다(삼순 NO-GO).
+// 실효 수정은 폰트 축소가 아니라 좁은 폭에서 열 수를 줄여 칸 폭을 넓히는 것이다.
+// 그래서 계약을 뒤집는다 — 폰트는 10px 고정을 강제하고, 반응형 열 수를 요구한다.
+
+// (1) 배지명 폰트는 축소하지 않는다. cqw 기반 축소 재도입을 막는다.
 assert.match(
+  tabSource,
+  /fontSize: "10px",/,
+  "badge name font must stay 10px (cqw 축소는 전 구간 하한 고정 + 가독성 회귀였다)"
+);
+assert.doesNotMatch(
   tabSource,
   /fontSize: "clamp\([^"]*cqw[^"]*\)"/,
-  "badge name font must scale with card width (320px 4열에서 어절이 깨지지 않도록)"
+  "badge name must not shrink with cqw (실측상 반응형이 아니라 상수 하한이 된다)"
 );
-assert.match(
-  tabSource,
-  /containerType: "inline-size"/,
-  "cqw 단위가 동작하려면 카드가 container 여야 한다"
+
+// (2) 좁은 폭에서는 열 수를 줄여 어절이 들어갈 공간 자체를 만든다.
+const gridMatch = tabSource.match(/grid grid-cols-3 min-\[(\d+)px\]:grid-cols-4 gap-3/);
+assert.ok(gridMatch, "badge grid must be responsive (좁은 폭 3열 → 넓은 폭 4열)");
+// 4열 전환을 360px 로 두면 360px 실측 여유가 0.5px 뿐이라 폰트가 조금만 넓어도 다시 깨진다.
+assert.ok(
+  Number(gridMatch[1]) >= 390,
+  `4열 전환 breakpoint 는 390px 이상이어야 한다 (현재 ${gridMatch[1]}px, 360px 는 여유 0.5px)`
 );
 
 const rlsMigration = readFileSync(

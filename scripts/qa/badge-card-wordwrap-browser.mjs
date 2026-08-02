@@ -56,6 +56,7 @@ const WIDTHS = [320, 360, 375, 390];
 
 let pass = 0;
 const fails = [];
+const measured = [];
 const ok = (label, cond, extra = "") => {
   if (cond) {
     pass += 1;
@@ -70,25 +71,41 @@ const ok = (label, cond, extra = "") => {
 // `--mutate` 는 사고 당시 상태(고정 10px)로 되돌린다. 이 게이트가 실제로 회귀를 잡는지
 // 증명하는 용도이며, RED 가 나와야 정상이다.
 //
-// ⚠️ mutation 대상을 두 번 옮겼다. 기록을 남긴다:
+// ⚠️ mutation 대상을 세 번 옮겼다. 기록을 남긴다:
 //   1차 overflowWrap → RED 미발생(단독 효과 없음)
 //   2차 fontSize clamp → 3열 반응형을 도입하자 역시 RED 미발생
-//   3차 grid-cols → 현재 실효 수정. 320px 에서 4열로 되돌리면 칸 폭이 모자라
-//   글자를 줄여도(8px 하한) 4자 어절이 못 들어간다.
+//   3차 grid-cols → 현재 실효 수정. 4열 전환을 좁은 폭으로 되돌리면 칸 폭이 모자라
+//   4자 어절(`회장남편`)이 못 들어간다.
 // 게이트는 "실제로 사고를 막고 있는 변경" 을 지켜야 하므로 grid-cols 를 대상으로 한다.
-const MUTATE = process.env.BADGE_WORDWRAP_MUTATE === "1";
+//
+// 삼순 NO-GO(2026-08-03) 반영: 분절/overflow 만 보면 **읽을 수 없는 폰트도 GREEN** 이다.
+// 실제로 `clamp(1px, 1cqw, 2px)` 를 주입해도 14/14 PASS 했다. 그래서 아래 tiny-font
+// mutation(BADGE_WORDWRAP_MUTATE=font)과 computed font-size 계약을 함께 넣는다.
+// BADGE_WORDWRAP_MUTATE=1|grid  → 반응형 열 수를 사고 당시(항상 4열)로 되돌린다
+// BADGE_WORDWRAP_MUTATE=font     → 배지명을 읽을 수 없는 크기로 줄인다
+const MUTATE = process.env.BADGE_WORDWRAP_MUTATE ?? "";
 const tabPath = resolve(ROOT, "src/components/profile/BadgesTab.tsx");
 let tabSource = readFileSync(tabPath, "utf8");
-if (MUTATE) {
+if (MUTATE === "1" || MUTATE === "grid") {
   const before = tabSource;
   tabSource = tabSource.replace(
-    /grid grid-cols-3 min-\[360px\]:grid-cols-4 gap-3/,
+    /grid grid-cols-3 min-\[\d+px\]:grid-cols-4 gap-3/,
     "grid grid-cols-4 gap-3",
   );
   if (tabSource === before) {
     console.error("FAIL: mutation 대상(grid-cols 반응형)을 찾지 못했습니다");
     process.exit(1);
   }
+} else if (MUTATE === "font") {
+  const before = tabSource;
+  tabSource = tabSource.replace(/fontSize: "10px",/, 'fontSize: "clamp(1px, 1cqw, 2px)",');
+  if (tabSource === before) {
+    console.error("FAIL: mutation 대상(배지명 fontSize)을 찾지 못했습니다");
+    process.exit(1);
+  }
+} else if (MUTATE) {
+  console.error(`FAIL: 알 수 없는 mutation 종류 "${MUTATE}" (grid|font)`);
+  process.exit(1);
 }
 const tabEntry = resolve(GEN, "BadgesTab.entry.tsx");
 writeFileSync(tabEntry, tabSource);
@@ -272,6 +289,26 @@ try {
       tight.map((t) => `"${t.text}" need=${t.need}>avail=${t.avail}`).join(" "),
     );
 
+    // ── 가독성(computed font-size) 계약 ─────────────────────────
+    // 삼순 NO-GO 반영: 분절/overflow 만 보면 읽을 수 없는 폰트도 GREEN 이다.
+    // 실제 계측값으로 최소 크기와 "폭이 늘어도 작아지지 않음" 을 강제한다.
+    const MIN_FONT_PX = 10;
+    const fontPx = await page.evaluate(() => {
+      const sizes = [];
+      for (const card of [...document.querySelectorAll(".grid > div")]) {
+        const p = card.querySelector("p");
+        if (!p || !(p.textContent ?? "").trim()) continue;
+        sizes.push(parseFloat(getComputedStyle(p).fontSize));
+      }
+      return sizes;
+    });
+    ok(
+      `${width}px: 배지명 computed font-size >= ${MIN_FONT_PX}px`,
+      fontPx.length > 0 && Math.min(...fontPx) >= MIN_FONT_PX - 0.01,
+      `min=${fontPx.length ? Math.min(...fontPx) : "n/a"}px`,
+    );
+    measured.push({ width, fontPx: fontPx.length ? Math.min(...fontPx) : 0 });
+
     // 가로 스크롤 유발 금지
     const hOverflow = await page.evaluate(
       () => document.documentElement.scrollWidth > window.innerWidth + 1,
@@ -283,6 +320,16 @@ try {
       fullPage: true,
     });
     await page.close();
+  }
+  // 뷰포트가 커질 때 글자가 작아지면 안 된다(반응형 축소 회귀 방지).
+  for (let i = 1; i < measured.length; i += 1) {
+    const prev = measured[i - 1];
+    const cur = measured[i];
+    ok(
+      `${prev.width}px → ${cur.width}px: 배지명이 작아지지 않음`,
+      cur.fontPx >= prev.fontPx - 0.01,
+      `${prev.fontPx}px → ${cur.fontPx}px`,
+    );
   }
 } finally {
   await browser.close();
