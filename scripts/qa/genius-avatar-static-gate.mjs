@@ -13,12 +13,20 @@
  *   ① alpha cutoff 계약: alpha<=8 은 비가시, alpha>8 부터 가시
  *   ② 실제 배포 PNG 의 알파 bbox 가 가로·세로 모두 >= 0.98
  *      (투명 테두리가 넓으면 실제 캐릭터가 작게 렌더돼 "아바타가 안 보임" 으로 돌아간다)
- *   ③ 자산이 알파 채널을 실제로 가지고 있고 가시 픽셀이 0 이 아님
+ *   ③ 자산이 **파일 자체로** PNG + 알파 채널 보유(hasAlpha/channels=4)이고 가시 픽셀이 0 이 아님
  *
- * 검증력 증명: `--selftest` 는 저알파 자산·cutoff 무력화를 주입해 RED 가 되는지 확인한다.
+ * ⚠️ ③ 이 왜 metadata() 인가(삼순 NO-GO 2026-08-03 2차):
+ * 이전 판은 `sharp(assetPath).ensureAlpha()` 로 읽어 bbox 만 봤다. `ensureAlpha()` 는
+ * RGB PNG 에 불투명 알파를 **자동으로 덧붙인다**. 그래서 캐릭터 배경이 흰 사각형으로
+ * 회귀한 RGB/no-alpha 자산이 들어와도 bbox 1.000×1.000 으로 GREEN 이었다(false-green).
+ * 원본 파일의 metadata 를 먼저 fail-close 로 검사한 뒤에만 픽셀 판정으로 내려간다.
+ *
+ * 검증력 증명: `--selftest` 는 저알파 자산·cutoff 무력화·RGB(no-alpha) 실제 PNG 를
+ * 주입해 RED 가 되는지 확인한다.
  */
 import path from "node:path";
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import sharp from "sharp";
 import {
@@ -62,6 +70,29 @@ function checkCutoffContract(cutoff = GENIUS_ALPHA_CUTOFF) {
 async function checkAsset(assetPath = ASSET, cutoff = GENIUS_ALPHA_CUTOFF) {
   ok("마스코트 자산 존재", existsSync(assetPath), assetPath);
   if (!existsSync(assetPath)) return;
+
+  // ③ 원본 파일 metadata 를 먼저 본다. ensureAlpha() 로 읽은 뒤 판정하면
+  // RGB PNG 가 알파를 가진 것처럼 보여 흰배경 회귀를 놓친다(삼순 2차 blocker).
+  let meta;
+  try {
+    meta = await sharp(assetPath).metadata();
+  } catch (e) {
+    ok("자산 metadata 판독", false, String(e?.message ?? e));
+    return;
+  }
+  ok("자산 포맷이 PNG", meta.format === "png", String(meta.format));
+  ok(
+    "자산이 실제 알파 채널 보유(hasAlpha)",
+    meta.hasAlpha === true,
+    `hasAlpha=${meta.hasAlpha} channels=${meta.channels}`,
+  );
+  ok(
+    "자산 채널 수 4(RGBA)",
+    meta.channels === 4,
+    `channels=${meta.channels}`,
+  );
+  // 알파가 없으면 아래 bbox 는 무의미하다(전면 불투명으로 1.000 이 나온다) → fail-close.
+  if (meta.format !== "png" || meta.hasAlpha !== true || meta.channels !== 4) return;
 
   const asset = await sharp(assetPath).ensureAlpha().raw()
     .toBuffer({ resolveWithObject: true });
@@ -132,7 +163,41 @@ async function selftest() {
     console.log("  ✅ 전투명 자산 RED (가시 픽셀 0 검출)");
   }
 
-  console.log(bad === 0 ? "\n[selftest] PASS — 3/3 결함 검출" : `\n[selftest] FAIL ${bad}`);
+  // (d) RGB/no-alpha **실제 PNG** → 게이트가 non-zero RED 여야 한다.
+  // 삼순 2차 blocker 재현: 이전 판은 ensureAlpha() 가 알파를 덧붙여 bbox 1.000×1.000 GREEN 이었다.
+  // 픽셀 계산이 아니라 checkAsset() 자체를 실제 파일로 돌려서 판정한다.
+  const tmp = mkdtempSync(path.join(tmpdir(), "genius-alpha-"));
+  try {
+    const rgbPath = path.join(tmp, "rgb-no-alpha.png");
+    await sharp({
+      create: { width: 126, height: 189, channels: 3, background: { r: 255, g: 255, b: 255 } },
+    }).png().toFile(rgbPath);
+
+    const rgbMeta = await sharp(rgbPath).metadata();
+    // 픽스처가 의도대로 no-alpha 인지 먼저 확인한다. 아니면 이 selftest 자체가 무의미하다.
+    if (rgbMeta.hasAlpha === true || rgbMeta.channels === 4) {
+      console.log(`  ❌ selftest 픽스처가 no-alpha 가 아님 (hasAlpha=${rgbMeta.hasAlpha} channels=${rgbMeta.channels})`);
+      bad += 1;
+    } else {
+      const beforePass = pass;
+      const beforeFails = fails.length;
+      await checkAsset(rgbPath);
+      const injectedFails = fails.length - beforeFails;
+      // 되돌린다 — selftest 는 본 판정 카운터를 오염시키면 안 된다.
+      pass = beforePass;
+      fails.length = beforeFails;
+      if (injectedFails === 0) {
+        console.log("  ❌ RGB/no-alpha 실제 PNG 가 통과함 (ensureAlpha false-green 회귀)");
+        bad += 1;
+      } else {
+        console.log(`  ✅ RGB/no-alpha 실제 PNG RED (fail ${injectedFails}건, hasAlpha=${rgbMeta.hasAlpha} channels=${rgbMeta.channels})`);
+      }
+    }
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+
+  console.log(bad === 0 ? "\n[selftest] PASS — 4/4 결함 검출" : `\n[selftest] FAIL ${bad}`);
   process.exit(bad === 0 ? 0 : 1);
 }
 
