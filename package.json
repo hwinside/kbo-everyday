@@ -242,6 +242,7 @@
     "qa:polling-fallback": "tsx scripts/qa/polling-fallback-smoke.ts && tsx scripts/qa/polling-fallback-react-smoke.ts",
     "qa:game-live-stream": "tsx scripts/qa/game-live-stream-smoke.ts",
     "qa:home-header-signup-button": "node scripts/qa/home-header-signup-button-smoke.mjs",
+    "qa:post-detail-header-nowrap": "node scripts/qa/post-detail-header-nowrap-smoke.mjs",
     "qa:diary-contrast": "node scripts/qa/venue-diary-card-contrast.mjs",
     "qa:baseball-qa": "tsx scripts/qa/baseball-qa-pipeline-smoke.ts",
     "qa:baseball-qa-live": "tsx scripts/qa/baseball-qa-classifier-live-smoke.ts",
