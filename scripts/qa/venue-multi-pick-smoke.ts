@@ -932,7 +932,40 @@ async function composerProductionWiringRegression() {
   const thumbs: Record<string, string> = {
     n1: "data:image/jpeg;base64,THUMBN1",
     n2: "data:image/jpeg;base64,THUMBN2",
+    v1: "data:image/jpeg;base64,THUMBV1",
   };
+  type NativeListOptions = { mediaTypes?: Array<"image" | "video"> };
+  type NativeListPage = {
+    assets: Array<{
+      id: string;
+      kind: "image" | "video";
+      thumbnailUrl: string;
+      durationMs: number | null;
+      createdAt: number;
+    }>;
+    nextCursor: string | null;
+    permission: "authorized";
+  };
+  const imagePage = (): NativeListPage => ({
+    assets: [
+      { id: "n1", kind: "image", thumbnailUrl: thumbs.n1, durationMs: null, createdAt: 2 },
+      { id: "n2", kind: "image", thumbnailUrl: thumbs.n2, durationMs: null, createdAt: 1 },
+    ],
+    nextCursor: null,
+    permission: "authorized",
+  });
+  const videoPage = (): NativeListPage => ({
+    assets: [
+      { id: "v1", kind: "video", thumbnailUrl: thumbs.v1, durationMs: 8_000, createdAt: 3 },
+    ],
+    nextCursor: null,
+    permission: "authorized",
+  });
+  let resolveInitialList!: (page: NativeListPage) => void;
+  const delayedInitialList = new Promise<NativeListPage>((resolve) => {
+    resolveInitialList = resolve;
+  });
+  const listMediaCalls: NativeListOptions[] = [];
   const exportCalls: string[] = [];
   const exportChunkB64 = Buffer.from("orig").toString("base64"); // 4 bytes
   (dom.window as unknown as Record<string, unknown>).Capacitor = {
@@ -940,14 +973,11 @@ async function composerProductionWiringRegression() {
       VenueMediaLibrary: {
         getPermission: async () => ({ permission: "authorized" }),
         requestPermission: async () => ({ permission: "authorized" }),
-        listMedia: async () => ({
-          assets: [
-            { id: "n1", kind: "image", thumbnailUrl: thumbs.n1, durationMs: null, createdAt: 2 },
-            { id: "n2", kind: "image", thumbnailUrl: thumbs.n2, durationMs: null, createdAt: 1 },
-          ],
-          nextCursor: null,
-          permission: "authorized",
-        }),
+        listMedia: async (options: NativeListOptions) => {
+          listMediaCalls.push(options);
+          if (listMediaCalls.length === 1) return delayedInitialList;
+          return options.mediaTypes?.join(",") === "video" ? videoPage() : imagePage();
+        },
         exportMedia: async ({ id }: { id: string }) => {
           exportCalls.push(id);
           if (id === "n1" && exportCalls.filter((x) => x === "n1").length === 1) {
@@ -1020,10 +1050,44 @@ async function composerProductionWiringRegression() {
     return cond();
   };
 
+  // 삼순 1차 NO-GO 실제 재현: 첫 전체 조회가 지연된 동안 영상 탭을 누른다. 기존 구현은
+  // 새 loadLibrary가 libraryLoading guard에 막히고, 첫 응답은 stale 폐기된 뒤 재조회가 없어
+  // 빈 화면에 영구 고착됐다. latest pending reload가 video 요청을 반드시 이어서 보내야 한다.
+  await waitFor(
+    "race 전제 — 첫 전체 네이티브 조회가 pending인 동안 필터 탭 렌더",
+    () => listMediaCalls.length === 1 && q('[data-library-filter="video"]') != null,
+  );
+  await act(async () => {
+    (q('[data-library-filter="video"]') as HTMLElement).click();
+  });
+  await act(async () => {
+    resolveInitialList(imagePage());
+    await Promise.resolve();
+  });
+  await waitFor(
+    "첫 조회 지연→영상 클릭→latest video 네이티브 재조회·렌더",
+    () =>
+      listMediaCalls.length === 2 &&
+      listMediaCalls[1]?.mediaTypes?.join(",") === "video" &&
+      q('[data-asset-id="v1"]') != null,
+  );
+  ok(
+    "stale 전체 응답의 사진은 영상 탭 목록을 오염시키지 않음",
+    q('[data-asset-id="n1"]') == null && q('[data-asset-id="n2"]') == null,
+  );
+
+  // 기존 업로드 production 배선 회귀는 전체 탭의 사진 2장으로 계속 검증한다.
+  await act(async () => {
+    (q('[data-library-filter="all"]') as HTMLElement).click();
+  });
+
   // 선체크 ok → 커스텀 그리드 자동 오픈(실제 loadLibrary → 주입 브릿지 listMedia)
   await waitFor(
     "실제 컴포넌트 — 선체크 통과 후 커스텀 그리드 자동 오픈(네이티브 타일 렌더)",
-    () => q('[data-asset-id="n1"]') != null && q('[data-asset-id="n2"]') != null,
+    () =>
+      listMediaCalls.length === 3 &&
+      q('[data-asset-id="n1"]') != null &&
+      q('[data-asset-id="n2"]') != null,
   );
 
   // 타일 탭 2회 → 하단 '2개 선택 완료' confirm — 실제 confirmLibrarySelection 이 ComposerItem 생성

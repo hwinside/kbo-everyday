@@ -139,6 +139,16 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   // 비동기 열거 응답이 도착했을 때 '지금 어느 탭인가'를 읽기 위한 동기 미러 — setState 반영
   // 전 구간에 탭이 바뀜을 때 stale 페이지가 다른 탭 목록을 오염시키는 걸 막는다.
   const libraryFilterRef = useRef<VenueLibraryFilter>("all");
+  // React state 반영 전에도 중복 네이티브 열거를 막는 동기 guard. 로딩 중 새 필터 요청은
+  // 버리지 않고 pendingReload 로 합쳐 현재 요청이 끝나는 즉시 **최신 필터**를 다시 읽는다.
+  const libraryLoadingRef = useRef(false);
+  const libraryPendingReloadRef = useRef(false);
+  // 필터 A→B→A처럼 최종 필터 문자열이 다시 같아져도 첫 A의 늦은 응답을 받지 않도록
+  // 모든 조회 의도에 generation을 부여한다(필터 ref 동일성만으로는 막을 수 없는 ABA race).
+  const libraryRequestGenerationRef = useRef(0);
+  // reset→재오픈 뒤 이전 요청의 늦은 finally가 새 요청 loading/pending을 풀지 못하게
+  // 실제 실행 중인 request generation도 별도로 보관한다.
+  const libraryActiveRequestRef = useRef(0);
   // 필터 탭 자동 추가 로드 횟수(bounded) — 탭 전환/재조회 시 초기화.
   const libraryAutoPagesRef = useRef(0);
   // 그리드 한 화면 멀티셀렉트 — 탭 토글로 순서 유지, 하단 '선택 완료'는 즉시 닫힌다(삼순 라운드2 #2).
@@ -314,6 +324,10 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
     uploadInFlightRef.current = false;
     libraryAutoOpenRef.current = false;
     pickSeqRef.current++;
+    libraryPendingReloadRef.current = false;
+    libraryRequestGenerationRef.current++;
+    libraryActiveRequestRef.current = 0;
+    libraryLoadingRef.current = false;
     // data URL(이미지 프리뷰)은 revoke 불필 — blob(비디오)만 해제
     for (const it of items) {
       if (it.previewUrl?.startsWith("blob:")) URL.revokeObjectURL(it.previewUrl);
@@ -360,7 +374,18 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   }, [isOpen]);
 
   const loadLibrary = async (append = false) => {
-    if (libraryLoading) return;
+    if (libraryLoadingRef.current) {
+      if (!append) {
+        // 로딩 중 필터/권한 재조회는 마지막 요청 하나로 합친다. generation을 즉시 올려
+        // 현재 응답을 무효화하고, finally에서 최신 libraryFilterRef로 재조회한다.
+        libraryPendingReloadRef.current = true;
+        libraryRequestGenerationRef.current++;
+      }
+      return;
+    }
+    libraryLoadingRef.current = true;
+    const requestGeneration = ++libraryRequestGenerationRef.current;
+    libraryActiveRequestRef.current = requestGeneration;
     const seq = pickSeqRef.current;
     setLibraryLoading(true);
     setError(null);
@@ -402,20 +427,36 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
         requestedTypes === "all" ? undefined : [requestedTypes],
       );
       if (seq !== pickSeqRef.current) return;
+      if (requestGeneration !== libraryRequestGenerationRef.current) return;
       // 응답 대기 중 탭이 바뀌었으면 이 페이지는 다른 타입의 결과다 — 버린다(탭 간 오염 방지).
       if (libraryFilterRef.current !== requestedTypes) return;
-      if (seq !== pickSeqRef.current) return;
       setLibraryPermission(page.permission);
       setLibraryCursor(page.nextCursor);
       setLibraryAssets((prev) => (append ? [...prev, ...page.assets] : page.assets));
       // 필터 탭 자동 추가 로드 횟수 — append 만 증가, 새 조회는 리셋(bounded 재시작).
       libraryAutoPagesRef.current = append ? libraryAutoPagesRef.current + 1 : 0;
     } catch {
+      // 필터 전환/reset으로 이미 무효화된 과거 요청의 실패가 최신 그리드를 file input으로
+      // 강등시키지 않게 한다. 현재 generation을 소유한 실제 브릿지 실패만 폴백한다.
+      if (
+        seq !== pickSeqRef.current ||
+        requestGeneration !== libraryRequestGenerationRef.current
+      ) {
+        return;
+      }
       // 브릿지 호출 자체가 실패(구설치본 등) — 기존 file input 동선으로 폴백해 업로드가 끊기지 않게.
       setLibraryOpen(false);
       setPickerMode("fileInput");
     } finally {
+      // reset 또는 새 요청이 이 요청을 대체했으면 최신 loading/pending 상태를 건드리지 않는다.
+      if (libraryActiveRequestRef.current !== requestGeneration) return;
+      libraryActiveRequestRef.current = 0;
+      libraryLoadingRef.current = false;
       setLibraryLoading(false);
+      if (libraryPendingReloadRef.current) {
+        libraryPendingReloadRef.current = false;
+        void loadLibrary(false);
+      }
     }
   };
 
@@ -637,7 +678,8 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
    * 선택(순서) 상태는 탭을 넘나들어도 그대로 보존된다.
    */
   const selectLibraryFilter = (next: VenueLibraryFilter) => {
-    if (next === libraryFilter) return;
+    // state 반영 전 연속 탭(A→B→A)도 받아야 하므로 렌더 시점 state가 아닌 최신 ref로 비교한다.
+    if (next === libraryFilterRef.current) return;
     libraryAutoPagesRef.current = 0;
     libraryFilterRef.current = next;
     setLibraryFilter(next);
