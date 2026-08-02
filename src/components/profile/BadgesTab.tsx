@@ -2,7 +2,7 @@
 
 import { motion } from "framer-motion";
 import GlassCard from "@/components/ui/GlassCard";
-import { BADGES, ALL_BADGES, ACTIVE_BADGE_IDS, EXCLUSIVE_BADGE_IDS, RARITY_COLORS, CATEGORY_LABELS } from "@/lib/constants/badges";
+import { ACTIVE_BADGE_IDS, getVisibleBadgeCatalog, RARITY_COLORS, CATEGORY_LABELS } from "@/lib/constants/badges";
 import type { BadgeDefinition } from "@/lib/constants/badges";
 
 interface UserBadge {
@@ -42,18 +42,12 @@ const RARITY_SHADOW: Record<string, string> = {
 
 export default function BadgesTab({ badges, earnedBadgeIds, onSelectBadge }: BadgesTabProps) {
   const categories = Object.entries(CATEGORY_LABELS);
-  // 한정 수여 배지는 보유자에게만 노출한다 (미보유자에겐 잠금 슬롯조차 보이지 않음)
-  const earnedExclusive = ALL_BADGES.filter(
-    b => EXCLUSIVE_BADGE_IDS.has(b.id) && earnedBadgeIds.has(b.id)
-  );
+  const visibleBadges = getVisibleBadgeCatalog(earnedBadgeIds);
 
   return (
     <div className="px-5 space-y-4">
       {categories.map(([catId, catLabel]) => {
-        const catBadges = [
-          ...earnedExclusive.filter(b => b.category === catId),
-          ...BADGES.filter(b => b.category === catId),
-        ];
+        const catBadges = visibleBadges.filter(b => b.category === catId);
         if (catBadges.length === 0) return null;
         return (
           <GlassCard key={catId} className="p-4">
@@ -115,7 +109,7 @@ export default function BadgesTab({ badges, earnedBadgeIds, onSelectBadge }: Bad
       })}
 
       <p className="text-center text-xs text-text-tertiary">
-        {badges.filter(b => ACTIVE_BADGE_IDS.has(b.badge_id)).length}개 획득 / {BADGES.length + earnedExclusive.length}개 중
+        {badges.filter(b => ACTIVE_BADGE_IDS.has(b.badge_id)).length}개 획득 / {visibleBadges.length}개 중
       </p>
     </div>
   );

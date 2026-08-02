@@ -18,6 +18,7 @@
     "qa:dm-atomic": "node scripts/qa/dm-atomic-send-smoke.mjs",
     "qa:ui:gamechat-giphy": "node scripts/qa/ui-smoke-gamechat-giphy.mjs",
     "qa:venue-chat-badge": "tsx scripts/qa/venue-chat-badge-smoke.ts",
+    "qa:exclusive-badges": "tsx scripts/qa/exclusive-badges-smoke.ts",
     "qa:cancelled-chat": "tsx scripts/qa/cancelled-game-chat-smoke.ts",
     "qa:game-chat-visibility": "tsx scripts/qa/game-chat-visibility-smoke.ts",
     "qa:ui:game-chat-visibility": "node scripts/qa/ui-smoke-game-chat-visibility.mjs",
