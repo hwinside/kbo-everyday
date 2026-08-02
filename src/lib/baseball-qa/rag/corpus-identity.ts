@@ -26,8 +26,33 @@
  */
 
 export type CorpusIdentityVerdict =
-  | { ok: true; matchedBirthYear: boolean }
+  | { ok: true; matchedBirthYear: boolean; matchedTitle: boolean }
   | { ok: false; status: "ambiguous" | "rejected"; reason: string };
+
+/** 나무위키 문서 제목 접미사. corpus의 `title`은 `"김도영 - 나무위키"` 형태로 저장된다. */
+export function normalizeCorpusTitle(title: string | undefined): string {
+  return (title ?? "").replace(/\s*-\s*나무위키\s*$/, "").trim();
+}
+
+/**
+ * 시드 이름 ↔ 실제 도착한 문서 제목 대조 (삼순 NO-GO ①).
+ *
+ * 크롤러는 이름으로 검색해 서 링크를 따라가므로 **전혀 다른 선수 문서에 도착할 수 있다.**
+ * 분류만 보면 그 문서도 "야구선수"라 통과해버리므로(fail-open) 제목 대조가 별도로 필요하다.
+ *
+ * 단, 정당한 표기 차이는 거부하면 안 된다(실측):
+ *   `레이예스` → `레예스` (등록명 vs 문서명)
+ *   `올러`     → `아담 올러` (풀네임 문서)
+ * 그래서 "포함 관계"까지는 인정하고, 그마저 아니면 결정하지 않고 `ambiguous`로 격리한다.
+ */
+export function titleMatchesSeed(seedName: string, documentTitle: string): boolean {
+  const title = normalizeCorpusTitle(documentTitle);
+  if (title.length === 0) return false;
+  if (title === seedName) return true;
+  // 풀네임 문서(`아담 올러`)는 등록명(`올러`)을 토큰으로 포함한다.
+  if (title.split(/\s+/).includes(seedName)) return true;
+  return false;
+}
 
 /** 나무위키 문서 머리의 `분류...` 라인. 본문 앞부분에만 나타난다. */
 const CATEGORY_SCAN_CHARS = 1_200;
@@ -73,6 +98,8 @@ export function matchesBirthYear(categories: string, birthYear: string | undefin
 export function verifyCorpusPlayerIdentity(input: {
   text: string;
   rosterBirthYear?: string;
+  seedName?: string;
+  documentTitle?: string;
 }): CorpusIdentityVerdict {
   const categories = extractCorpusCategories(input.text);
   if (categories.length === 0) {
@@ -89,5 +116,16 @@ export function verifyCorpusPlayerIdentity(input: {
   if (birthMatch === false) {
     return { ok: false, status: "rejected", reason: "birth_year_mismatch" };
   }
-  return { ok: true, matchedBirthYear: birthMatch === true };
+
+  // 제목 대조 (삼순 NO-GO ①). 생년으로 걸러지지 않는 타인 문서 오귀속을 막는 마지막 방어선이다.
+  // 제목 정보가 없으면 이 검사를 건너뛴다 — 없는 근거로 거부하지 않는다.
+  let matchedTitle = false;
+  if (input.seedName !== undefined && input.documentTitle !== undefined) {
+    matchedTitle = titleMatchesSeed(input.seedName, input.documentTitle);
+    if (!matchedTitle) {
+      // 다른 선수 문서일 수 있다. 추측해서 귀속하지 않고 격리한다.
+      return { ok: false, status: "ambiguous", reason: "document_title_mismatch" };
+    }
+  }
+  return { ok: true, matchedBirthYear: birthMatch === true, matchedTitle };
 }

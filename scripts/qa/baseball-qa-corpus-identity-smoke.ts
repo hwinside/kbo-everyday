@@ -12,6 +12,8 @@ import assert from "node:assert/strict";
 
 import {
   extractCorpusCategories,
+  normalizeCorpusTitle,
+  titleMatchesSeed,
   hasBaseballPlayerCategory,
   isAmbiguityDocument,
   matchesBirthYear,
@@ -95,8 +97,35 @@ function verifyCategoryNormalization(): void {
   ok("분류 표기 정규화");
 }
 
+/** (5) 제목 대조 게이트 (삼순 NO-GO ①) — 분류만으로는 타인 문서를 못 걸러낸다. */
+function verifyTitleGate(): void {
+  assert.equal(normalizeCorpusTitle("김도영 - 나무위키"), "김도영");
+  assert.equal(titleMatchesSeed("김도영", "김도영 - 나무위키"), true);
+  // 풀네임 문서는 등록명을 토큰으로 포함한다(실측: 올러 -> 아담 올러).
+  assert.equal(titleMatchesSeed("올러", "아담 올러 - 나무위키"), true);
+  // 전혀 다른 선수 문서는 거부된다.
+  assert.equal(titleMatchesSeed("김도영", "문보경 - 나무위키"), false);
+
+  // 핵심: 분류가 정상인 **다른 선수** 문서는 생년도 분류도 통과하므로
+  // 제목 대조가 없으면 fail-open 된다.
+  const other = verifyCorpusPlayerIdentity({
+    text: REAL.김도영, rosterBirthYear: "2003",
+    seedName: "문보경", documentTitle: "김도영 - 나무위키",
+  });
+  assert.equal(other.ok, false, "다른 선수 문서에 도착했는데 통과하면 오귀속이다");
+  if (!other.ok) {
+    assert.equal(other.status, "ambiguous");
+    assert.equal(other.reason, "document_title_mismatch");
+  }
+  // 제목 정보가 없으면 없는 근거로 거부하지 않는다.
+  const noTitle = verifyCorpusPlayerIdentity({ text: REAL.김도영, rosterBirthYear: "2003" });
+  assert.equal(noTitle.ok, true);
+  ok("제목 대조 게이트 — 타인 문서 격리 / 풀네임·표기차 허용 / 정보없으면 건너뜀");
+}
+
 function run(): void {
   verifyRealContaminationBlocked();
+  verifyTitleGate();
   verifyBirthYearPolicy();
   verifyCategoryAbsent();
   verifyCategoryNormalization();

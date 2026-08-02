@@ -46,18 +46,32 @@ const argValue = (name: string): string | undefined =>
 const FILE = argValue("file");
 const LIMIT = Number(argValue("limit") ?? "0");
 
-function readCorpus(file: string): CorpusRecord[] {
+/**
+ * corpus 읽기 (삼순 NO-GO ②).
+ *
+ * 손상된 행을 **조용히 무시하면 안 된다.** 크롤 중간에 끊긴 행이 생기면 그 문서는
+ * 수집됐는데도 적재에서 사라지고, 아무도 모르는 채 커버리지가 줄어든다.
+ *
+ * 마지막 행은 크롤이 돌는 중이면 잘려 있을 수 있는 정상 상황이므로 구분해서 보고하고,
+ * **중간 행 손상은 실패로 종결**한다(조용한 누락이 가장 나쁜 실패다).
+ */
+function readCorpus(file: string): { records: CorpusRecord[]; brokenMiddle: number; brokenTail: number } {
   const records: CorpusRecord[] = [];
-  for (const line of readFileSync(file, "utf8").split("\n")) {
+  const lines = readFileSync(file, "utf8").split("\n");
+  let brokenMiddle = 0;
+  let brokenTail = 0;
+  const lastIndex = lines.length - 1;
+  for (const [index, line] of lines.entries()) {
     const trimmed = line.trim();
     if (!trimmed) continue;
     try {
       records.push(JSON.parse(trimmed) as CorpusRecord);
     } catch {
-      // 크롤 중 끊긴 마지막 줄은 정상 상황이다. 조용히 건너뛰되 개수는 아래에서 보고한다.
+      if (index === lastIndex) brokenTail += 1;
+      else brokenMiddle += 1;
     }
   }
-  return records;
+  return { records, brokenMiddle, brokenTail };
 }
 
 async function main(): Promise<void> {
@@ -73,7 +87,17 @@ async function main(): Promise<void> {
     byName.set(player.name, list);
   }
 
-  const records = readCorpus(FILE);
+  const { records, brokenMiddle, brokenTail } = readCorpus(FILE);
+  if (brokenTail > 0) {
+    console.log(`주의: 마지막 행이 잘려 있다(${brokenTail}행). 크롤이 돌는 중이면 정상이다.`);
+  }
+  if (brokenMiddle > 0) {
+    // 조용한 누락을 만들지 않는다 — 수집된 문서가 적재에서 사라지는 것이다.
+    throw new Error(
+      `corpus 중간에 손상된 행이 ${brokenMiddle}건 있다. 적재를 중단한다 — ` +
+      `이를 무시하면 수집된 문서가 아무도 모르게 빠진다(corpus 재생성 필요).`,
+    );
+  }
   const roots = records.filter((record) => record.kind === "player" && record.depth === 1);
   const targets = LIMIT > 0 ? roots.slice(0, LIMIT) : roots;
   console.log(`corpus ${records.length}행 / 선수 루트문서 ${roots.length}건 / 대상 ${targets.length}건`);
@@ -98,6 +122,8 @@ async function main(): Promise<void> {
     const verdict = verifyCorpusPlayerIdentity({
       text: record.text,
       rosterBirthYear: player.birthDate?.slice(0, 4),
+      seedName: record.entity,
+      documentTitle: record.title,
     });
     if (verdict.ok) {
       verdicts.resolved += 1;
