@@ -53,7 +53,13 @@ export default function BadgesTab({ badges, earnedBadgeIds, onSelectBadge }: Bad
         return (
           <GlassCard key={catId} className="p-4">
             <h3 className="text-sm font-bold text-text-primary mb-3">{catLabel}</h3>
-            <div className="grid grid-cols-4 gap-3">
+            {/*
+              좀은 화면은 3열. 320px × 4열은 칸당 텍스트 폭이 ~30px 밖에 안 나와
+              `전속가수`·`회장남편` 같은 4자 어절이 글자를 아무리 줄여도(8px 하한)
+              들어가지 않는다. 3열로 바꾸면 ~58px 로 늘어 어절이 보존된다.
+              (2026-08-03 Production 사고 — `크보/팬 전속/가수`, `파운/더`)
+            */}
+            <div className="grid grid-cols-3 min-[360px]:grid-cols-4 gap-3">
               {catBadges.map(badge => {
                 const earned = earnedBadgeIds.has(badge.id);
                 return (

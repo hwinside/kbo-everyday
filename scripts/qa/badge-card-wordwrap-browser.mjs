@@ -70,21 +70,23 @@ const ok = (label, cond, extra = "") => {
 // `--mutate` 는 사고 당시 상태(고정 10px)로 되돌린다. 이 게이트가 실제로 회귀를 잡는지
 // 증명하는 용도이며, RED 가 나와야 정상이다.
 //
-// ⚠️ 처음엔 overflowWrap 을 mutation 대상으로 뒀는데 RED 가 안 나왔다. 실측해보니
-// 이번 사고의 실효 수정은 fontSize clamp 하나였고 overflowWrap 변경은 단독 효과가
-// 없었다(clamp 유지 + break-word 로 되돌려도 14/14 GREEN). 그래서 게이트가 지켜야 할
-// 진짜 대상인 fontSize 를 mutation 한다.
+// ⚠️ mutation 대상을 두 번 옮겼다. 기록을 남긴다:
+//   1차 overflowWrap → RED 미발생(단독 효과 없음)
+//   2차 fontSize clamp → 3열 반응형을 도입하자 역시 RED 미발생
+//   3차 grid-cols → 현재 실효 수정. 320px 에서 4열로 되돌리면 칸 폭이 모자라
+//   글자를 줄여도(8px 하한) 4자 어절이 못 들어간다.
+// 게이트는 "실제로 사고를 막고 있는 변경" 을 지켜야 하므로 grid-cols 를 대상으로 한다.
 const MUTATE = process.env.BADGE_WORDWRAP_MUTATE === "1";
 const tabPath = resolve(ROOT, "src/components/profile/BadgesTab.tsx");
 let tabSource = readFileSync(tabPath, "utf8");
 if (MUTATE) {
   const before = tabSource;
   tabSource = tabSource.replace(
-    /fontSize: "clamp\(8px, 2\.6cqw, 10px\)",/,
-    'fontSize: "10px",',
+    /grid grid-cols-3 min-\[360px\]:grid-cols-4 gap-3/,
+    "grid grid-cols-4 gap-3",
   );
   if (tabSource === before) {
-    console.error("FAIL: mutation 대상(fontSize clamp)을 찾지 못했습니다");
+    console.error("FAIL: mutation 대상(grid-cols 반응형)을 찾지 못했습니다");
     process.exit(1);
   }
 }
@@ -139,9 +141,17 @@ const css = (
   await postcss([tailwind()]).process(readFileSync(cssPath, "utf8"), { from: cssPath })
 ).css;
 
+// ⚠️ body 에 앱과 같은 font-family 를 명시해야 한다.
+// 처음엔 이걸 빼먹어 기본 serif 로 렌더됐고, 그 폰트가 더 좁아서
+// 320px 텍스트 폭 30.5px 에 `파운더`(3자)가 간슬히 한 줄에 들어갔다.
+// 그래서 Production 에서는 `파운/더` 로 깨지는데 게이트는 GREEN 이었다(삼순 실측 대조로 발견).
+// 실제 앱은 globals.css 의 --font-sans 를 body 에 적용한다.
 const html = `<!doctype html><html lang="ko" class="dark"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<style>${css}</style><style>html,body{margin:0;background:#0A0A0B}</style>
+<style>${css}</style>
+<style>html,body{margin:0;background:#0A0A0B;
+  font-family:"Montserrat","Noto Sans KR",-apple-system,BlinkMacSystemFont,system-ui,Roboto,sans-serif;}
+</style>
 </head><body><div id="root"></div><script src="/bundle.js"></script></body></html>`;
 
 const bundleJs = readFileSync(bundlePath, "utf8");
@@ -229,6 +239,37 @@ try {
       `${width}px: 배지명이 카드 밖으로 넘치지 않음`,
       broken.filter((b) => b.overflow).length === 0,
       broken.filter((b) => b.overflow).map((b) => `"${b.text}"`).join(" "),
+    );
+
+    // ── 폰트 독립 안전막 ─────────────────────────────────────
+    // line box 측정만 사용하면 실행 환경의 한글 폰트가 좀을 때 간슬하게 통과해버린다.
+    // 실제로 320px 텍스트 폭 30.5px 에서 `파운더`(3자)가 가까스로 한 줄에 들어가
+    // Production 사고(`파운/더`)를 놓쳤다. 그래서 "가장 긴 어절이 칸 폭에
+    // 여유를 두고 들어가는가" 를 폭 숫자로 직접 본다.
+    // 한글 1자 ≈ font-size 이므로, 최장 어절 길이 × fontSize 가 칸 폭 이하여야 한다.
+    const tight = await page.evaluate(() => {
+      const out = [];
+      for (const card of [...document.querySelectorAll(".grid > div")]) {
+        const p = card.querySelector("p");
+        if (!p) continue;
+        const text = (p.textContent ?? "").trim();
+        if (!text) continue;
+        const avail = p.getBoundingClientRect().width;
+        const fontPx = parseFloat(getComputedStyle(p).fontSize);
+        // 한글만 세고 ASCII 는 절반 폭으로 본다(Lv.1 같은 꼬리 보정).
+        const widthOf = (w) => [...w].reduce(
+          (sum, ch) => sum + (/[\u3131-\uD79D]/.test(ch) ? fontPx : fontPx * 0.55), 0);
+        const longest = Math.max(...text.split(/\s+/).map(widthOf));
+        if (longest > avail + 0.5) {
+          out.push({ text, need: +longest.toFixed(1), avail: +avail.toFixed(1) });
+        }
+      }
+      return out;
+    });
+    ok(
+      `${width}px: 최장 어절이 칸 폭 안에 들어감(폰트 독립 계산)`,
+      tight.length === 0,
+      tight.map((t) => `"${t.text}" need=${t.need}>avail=${t.avail}`).join(" "),
     );
 
     // 가로 스크롤 유발 금지
