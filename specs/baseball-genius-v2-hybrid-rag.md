@@ -343,7 +343,7 @@ rev0.9 B3의 "reclaim 시점 이전 generation purge"는 UNIQUE 충돌은 해소
 
 1. S1b-KBO 기록실: source inventory → extractor/schema → typed claim/renderer → 장애·시즌·수치 exact eval.
 2. S2a: KBO 개요 1 + 구단 10페이지 ingestion, entity-filtered hybrid retrieval, citation/revision eval.
-3. S2b: 선수 878명 URL inventory는 전수 확정·유지한다. 선수 문서 embedding·갱신은 실제 질문 조회 빈도 내림차순의 작은 batch로 ingestion·평가·롤백 가능하게 확대하되 최종 목표 범위는 전원이다.
+3. S2b: 선수 URL inventory는 전수 확정·유지한다. 선수 문서 embedding·갱신은 실제 질문 조회 빈도 내림차순의 작은 batch로 ingestion·평가·롤백 가능하게 확대하되 최종 목표 범위는 전원이다.
 4. 운영: source coverage/revision/stale/실패율 대시보드와 재수집 큐를 두고, 실제 질문 eval에서 정량 exact와 서술형 citation을 분리 판정한다.
 
 판정: 범위 확대 GO. S1a 내부 player_game_logs 완전성은 내부 시즌 누적 서빙 게이트로 유지하되, KBO 기록실 S1b와 나무위키 S2의 source inventory/ingestion 착수를 막는 선행조건으로 사용하지 않는다. 구현 PR은 삼순 코드리뷰와 하린아빠 merge 승인 전 merge/deploy HOLD.

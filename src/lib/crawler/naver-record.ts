@@ -152,6 +152,19 @@ export function parseNaverBoxScore(recordData: NaverBoxRecordData | null | undef
   const pb = recordData?.pitchersBoxscore;
   if (!bb || !pb) return null;
 
+  const hasPositiveInnings = (innings: string) =>
+    innings.trim() !== "" && !/^0(?:\s+0\/3)?$/.test(innings.trim());
+  const rawPitchersComplete = (pitchers: NaverBoxPitcher[] | undefined) => {
+    const recorded = (pitchers ?? []).filter((pitcher) => (
+      hasPositiveInnings(normalizeNaverInnings(pitcher.inn))
+    ));
+    return recorded.length >= 1 && recorded.every((pitcher) => {
+      const identity = normalizePlayerName(String(pitcher.name ?? ""), pitcher.pcode);
+      return identity !== "" && !/^선수\(\d+\)$/.test(identity) && naverInt(pitcher.bf) > 0;
+    });
+  };
+  if (!rawPitchersComplete(pb.away) || !rawPitchersComplete(pb.home)) return null;
+
   function toBatter(b: NaverBoxBatter, prevOrder: number): BoxScoreBatterRecord {
     const order = naverInt(b.batOrder);
     const pos = String(b.pos ?? "");
@@ -220,8 +233,13 @@ export function parseNaverBoxScore(recordData: NaverBoxRecordData | null | undef
   // empty" 만 막으면 awayBatters 1명·나머지 empty 같은 partial fixture 가 비지 않게 통과한다.
   // 양팀 각각 usable 타자(정규 타순 9명 이상)·투수(1명 이상) 완전성을 요구 — 한 팀/한
   // 섹션이라도 결측이면 null 로 fail-close.
-  const teamComplete = (batters: BoxScoreBatterRecord[], pitchers: BoxScorePitcherRecord[]) =>
-    batters.length >= MIN_BATTERS_PER_TEAM && pitchers.length >= 1;
+  const teamComplete = (batters: BoxScoreBatterRecord[], pitchers: BoxScorePitcherRecord[]) => {
+    const recordedPitchers = pitchers.filter((pitcher) => hasPositiveInnings(pitcher.inningsPitched));
+    return batters.length >= MIN_BATTERS_PER_TEAM
+      && pitchers.length >= 1
+      && recordedPitchers.length >= 1
+      && recordedPitchers.every((pitcher) => pitcher.pitchCount > 0);
+  };
   const complete =
     teamComplete(result.awayBatters, result.awayPitchers) &&
     teamComplete(result.homeBatters, result.homePitchers);

@@ -4,6 +4,7 @@ import { useState, useMemo } from "react";
 import Link from "next/link";
 import { clsx } from "clsx";
 import { type TeamData, getCompareBarColors } from "@/lib/constants/teams";
+import { resultToneChipStyle } from "@/lib/ui/result-tone";
 import { useTheme } from "@/components/ThemeProvider";
 import type {
   GameStats,
@@ -144,24 +145,28 @@ function teamEra(pitchers: PitcherStat[]): string {
 /* -- result badge -- */
 function ResultBadge({ result }: { result: PitcherStat["result"] }) {
   if (!result) return null;
+  // 승/패는 홈 팀카드 기준 SSOT(@/lib/ui/result-tone). 이전엔 승=빨강·패=파랑으로
+  // 앱 전체와 정반대였다. 세·홀은 승패가 아니라 투수 역할 표시라 tone 체계 밖(현행 유지).
   const map = {
-    win: { label: "승", bg: "bg-red-500/90", text: "text-white" },
-    loss: { label: "패", bg: "bg-blue-500/90", text: "text-white" },
+    win: { label: "승", tone: "positive" },
+    loss: { label: "패", tone: "negative" },
+  } as const;
+  const roleMap = {
     save: { label: "세", bg: "bg-amber-500/90", text: "text-white" },
     hold: { label: "홀", bg: "bg-emerald-500/90", text: "text-white" },
   } as const;
-  const cfg = map[result];
-  return (
-    <span
-      className={clsx(
-        "inline-flex items-center justify-center rounded px-1 py-px text-[9px] font-bold leading-none",
-        cfg.bg,
-        cfg.text
-      )}
-    >
-      {cfg.label}
-    </span>
-  );
+  const base =
+    "inline-flex items-center justify-center rounded px-1 py-px text-[9px] font-bold leading-none";
+  if (result === "win" || result === "loss") {
+    const cfg = map[result];
+    return (
+      <span className={base} style={resultToneChipStyle(cfg.tone)}>
+        {cfg.label}
+      </span>
+    );
+  }
+  const cfg = roleMap[result];
+  return <span className={clsx(base, cfg.bg, cfg.text)}>{cfg.label}</span>;
 }
 
 export default function GameStatsTab({

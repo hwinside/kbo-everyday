@@ -38,11 +38,23 @@ sed \
   -e 's/timestamptz, date, extensions\.vector(768), jsonb/timestamptz, date, text, jsonb/' \
   supabase/migrations/20260731_baseball_genius_rag_sources.sql | "${PSQL[@]}"
 
-# committed inventory는 migration 직후 932행을 만들며 재실행해도 중복되지 않는다.
+# bootstrap seed는 자신의 committed row 수를 만들며 재실행해도 중복되지 않는다.
+BASELINE_TOTAL=$(grep -c '^  (' supabase/migrations/20260731_baseball_genius_rag_sources_seed.sql)
+BASELINE_PLAYERS=$(grep -c ", 'player'," supabase/migrations/20260731_baseball_genius_rag_sources_seed.sql)
 "${PSQL[@]}" -f supabase/migrations/20260731_baseball_genius_rag_sources_seed.sql
 "${PSQL[@]}" -f supabase/migrations/20260731_baseball_genius_rag_sources_seed.sql
-[ "$("${PSQL[@]}" -c 'select count(*) from public.genius_rag_sources')" = "932" ]
-[ "$("${PSQL[@]}" -c "select count(*) from public.genius_rag_sources where entity_type='player' and resolution_status is null")" = "878" ]
+[ "$("${PSQL[@]}" -c 'select count(*) from public.genius_rag_sources')" = "$BASELINE_TOTAL" ]
+[ "$("${PSQL[@]}" -c "select count(*) from public.genius_rag_sources where entity_type='player' and resolution_status is null")" = "$BASELINE_PLAYERS" ]
+
+# 후속 roster 변경은 기존 bootstrap을 변조하지 않고 append-only delta로 적용한다.
+"${PSQL[@]}" -f supabase/migrations/20260801184500_baseball_genius_roster_sources_56103.sql
+[ "$("${PSQL[@]}" -c 'select count(*) from public.genius_rag_sources')" = "$((BASELINE_TOTAL + 1))" ]
+[ "$("${PSQL[@]}" -c "select count(*) from public.genius_rag_sources where source_key='namu:player:56103' and metadata->>'team'='LG'")" = "1" ]
+[ "$("${PSQL[@]}" -c "select count(*) from public.genius_rag_sources where source_key in ('namu:player:55435','namu:player:69428') and metadata->>'team'='LG'")" = "2" ]
+"${PSQL[@]}" -f supabase/migrations/20260802222500_baseball_genius_roster_source_55832.sql
+"${PSQL[@]}" -f supabase/migrations/20260802222500_baseball_genius_roster_source_55832.sql
+[ "$("${PSQL[@]}" -c 'select count(*) from public.genius_rag_sources')" = "$((BASELINE_TOTAL + 2))" ]
+[ "$("${PSQL[@]}" -c "select count(*) from public.genius_rag_sources where source_key='namu:player:55832' and entity_id='55832' and page_title='이율예' and metadata->>'team'='SSG'")" = "1" ]
 [ "$("${PSQL[@]}" -c "select count(*) from public.claim_baseball_genius_rag_batch(50, 60) where entity_type='player'")" = "0" ]
 
 "${PSQL[@]}" <<'SQL'
@@ -943,4 +955,4 @@ wait "$PID_A" "$PID_B"
 [ "$(sort -u "$WORK/a" "$WORK/b" | wc -l | tr -d ' ')" = "20" ]
 [ "$(cat "$WORK/a" "$WORK/b" | wc -l | tr -d ' ')" = "20" ]
 
-echo "baseball QA source inventory PG17 PASS (seed932·pending878·fault/CAS/concurrency·B1embedding·B2acl·B3reclaim·R2-B1stage→swap+snapshot보존·R2-B2provenance균일·R2-B3idempotent재시도·R2-B4drift→stale강등·R2-B5성공시retry예산회복+연속3회소진·R2-B6실패종료+token/gen불일치no-op·R2-B6b실패시snapshot보존+즉시재claim)"
+echo "baseball QA source inventory PG17 PASS (bootstrap${BASELINE_TOTAL}·append-only-roster-delta·fault/CAS/concurrency·B1embedding·B2acl·B3reclaim·R2-B1stage→swap+snapshot보존·R2-B2provenance균일·R2-B3idempotent재시도·R2-B4drift→stale강등·R2-B5성공시retry예산회복+연속3회소진·R2-B6실패종료+token/gen불일치no-op·R2-B6b실패시snapshot보존+즉시재claim)"

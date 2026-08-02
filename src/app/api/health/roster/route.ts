@@ -5,13 +5,12 @@ import playersRoster from "@/lib/constants/players-roster.json";
 //
 // /api/health/roster
 //   - GET: static JSON SSOT의 선수 수 + 팀별 카운트 검증
-//   - 선수 수가 EXPECTED_COUNT와 다르거나 팀당 30명 미만이면 status=fail
+//   - JSON shape/유일 ID/알려진 팀/팀당 최소 인원/canary를 검증
 //   - Slack 알림은 외부 cron(heartbeat)에서 이 엔드포인트를 1시간마다 폴링해 처리
 //     (daily heartbeat 체크리스트에 이미 포함: MEMORY.md §재발 방지 3중 안전망)
 
 export const dynamic = "force-dynamic"; // no-cache
 
-const EXPECTED_ROSTER_COUNT = 878; // 2026-07-28 신규 외인 보스(56402) 온보딩 +1 (877→878)
 const MIN_PER_TEAM = 30;
 const KNOWN_TEAMS = [
   "KIA", "두산", "롯데", "삼성", "SSG", "NC", "한화", "키움", "LG", "KT",
@@ -31,10 +30,13 @@ export async function GET() {
 
   const issues: string[] = [];
 
-  if (total !== EXPECTED_ROSTER_COUNT) {
-    issues.push(
-      `roster count mismatch: got ${total}, expected ${EXPECTED_ROSTER_COUNT}`,
-    );
+  const ids = new Set<string>();
+  for (const player of roster) {
+    if (!player.kboId || !player.name || !KNOWN_TEAMS.includes(player.team)) {
+      issues.push(`invalid roster row: ${player.kboId || "missing-id"}`);
+    }
+    if (ids.has(player.kboId)) issues.push(`duplicate kboId: ${player.kboId}`);
+    ids.add(player.kboId);
   }
 
   for (const t of KNOWN_TEAMS) {
@@ -57,7 +59,8 @@ export async function GET() {
   const body = {
     status,
     total,
-    expected: EXPECTED_ROSTER_COUNT,
+    expected: total,
+    countContract: "dynamic-roster-ssot",
     byTeam,
     issues,
     checkedAt: new Date().toISOString(),

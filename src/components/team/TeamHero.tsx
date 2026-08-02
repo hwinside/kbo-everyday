@@ -3,6 +3,7 @@
 import { motion } from "framer-motion";
 import TeamLogo from "@/components/ui/TeamLogo";
 import { getTeamBgColor, type TeamData } from "@/lib/constants/teams";
+import { resultToneTextStyle } from "@/lib/ui/result-tone";
 
 interface TeamHeroProps {
   team: TeamData;
@@ -42,13 +43,24 @@ export default function TeamHero({ team, standings, stadiumName }: TeamHeroProps
               { label: "승차", value: standings.gb },
               { label: "연속", value: standings.streak },
             ].map((item) => {
-              let valueColor = "text-text-primary";
-              if (item.label === "연속" && item.value.includes("승")) valueColor = "text-green-400";
-              else if (item.label === "연속" && item.value.includes("패")) valueColor = "text-red-400";
+              // 연승/연패 색은 홈 팀카드 기준 SSOT(@/lib/ui/result-tone).
+              const streakStyle =
+                item.label !== "연속"
+                  ? undefined
+                  : item.value.includes("승")
+                    ? resultToneTextStyle("positive")
+                    : item.value.includes("패")
+                      ? resultToneTextStyle("negative")
+                      : undefined;
               return (
                 <div key={item.label} className="text-center">
                   <p className="text-xs text-text-tertiary mb-0.5">{item.label}</p>
-                  <p className={`text-base font-bold ${valueColor}`}>{item.value}</p>
+                  <p
+                    className={`text-base font-bold ${streakStyle ? "" : "text-text-primary"}`}
+                    style={streakStyle}
+                  >
+                    {item.value}
+                  </p>
                 </div>
               );
             })}

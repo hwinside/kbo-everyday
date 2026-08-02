@@ -1,5 +1,4 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { NextRequest } from "next/server";
 import {
   loadPlayerAliases,
   matchPlayers,
@@ -10,6 +9,8 @@ import {
   getPlayerTagChannels,
   type PlayerTagChannel,
 } from "@/lib/video/team-channels";
+
+let createShortsFeedGET: typeof import("@/app/api/shorts-feed/route").createShortsFeedGET;
 
 let pass = 0;
 let fail = 0;
@@ -37,6 +38,99 @@ const activeT3: PlayerTagChannel = {
   is_active: true,
 };
 const inactiveT3: PlayerTagChannel = { ...activeT3, is_active: false };
+
+type VideoRow = {
+  video_id: string;
+  title: string;
+  thumbnail: string;
+  channel: string;
+  channel_id: string | null;
+  published_at: string;
+  source_type: string;
+  player_id: string | null;
+  player_ids: string[];
+  noise_flags: string[];
+  team_id: string | null;
+};
+
+function videoRow(overrides: Partial<VideoRow>): VideoRow {
+  return {
+    video_id: "fixture-video",
+    title: "두산 김민석 끝내기 안타",
+    thumbnail: "https://example.com/thumb.jpg",
+    channel: "News T3",
+    channel_id: activeT3.channel_id,
+    published_at: "2026-08-02T12:00:00.000Z",
+    source_type: "community_short",
+    player_id: "53554",
+    player_ids: ["53554", "54097", "68043"],
+    noise_flags: [],
+    team_id: "두산",
+    ...overrides,
+  };
+}
+
+function videoSupabase(rows: VideoRow[]) {
+  return {
+    from(table: string) {
+      if (table !== "videos") throw new Error(`unexpected table: ${table}`);
+      let selected = [...rows];
+      const query: any = {
+        select: () => query,
+        eq: () => query,
+        neq: () => query,
+        or: () => query,
+        overlaps: (_column: string, ids: string[]) => {
+          selected = selected.filter((row) =>
+            row.player_ids.some((id) => ids.includes(id)),
+          );
+          return query;
+        },
+        gte: () => query,
+        order: () => query,
+        limit: (count: number) => {
+          selected = selected.slice(0, count);
+          return query;
+        },
+        then: (
+          resolve: (value: { data: VideoRow[]; error: null }) => unknown,
+        ) => Promise.resolve({ data: selected, error: null }).then(resolve),
+      };
+      return query;
+    },
+  };
+}
+
+function routeFor(rows: VideoRow[], channels: PlayerTagChannel[] = [activeT3]) {
+  return createShortsFeedGET({
+    supabase: videoSupabase(rows) as never,
+    loadAliases: async () => players,
+    loadChannels: async () => channels,
+    now: () => new Date("2026-08-02T18:00:00.000Z").getTime(),
+  });
+}
+
+async function favoriteItems(
+  rows: VideoRow[],
+  favoriteId: string,
+  channels: PlayerTagChannel[] = [activeT3],
+) {
+  const response = await routeFor(
+    rows,
+    channels,
+  )(
+    new NextRequest(
+      `http://localhost/api/shorts-feed?scope=favorite_players&player_ids=${favoriteId}&limit=30`,
+    ),
+  );
+  check("actual GET status 200", response.status === 200);
+  const body = await response.json();
+  return body.items as Array<{
+    id: string;
+    playerIds: string[];
+    teamId: string | null;
+  }>;
+}
 
 const reportedRow = {
   title: "김민석, 연설 중 돌연 고성 지르더니 무슨 말? / KNN",
@@ -84,15 +178,19 @@ const doosanRow = { ...reportedRow, title: "두산 김민석 끝내기 안타" }
 const doosanResult = revalidateStoredPlayerTags(doosanRow, players, activeT3);
 check(
   "후보팀 교집합으로 두산 김민석 하나만 복원",
-  doosanResult.allowed && doosanResult.playerIds.join(",") === "53554" && doosanResult.teamId === "두산",
+  doosanResult.allowed &&
+    doosanResult.playerIds.join(",") === "53554" &&
+    doosanResult.teamId === "두산",
 );
 check(
   "요청 최애선수가 KT 김민석이면 두산 영상 차단",
-  !revalidateStoredPlayerTags(doosanRow, players, activeT3, new Set(["54097"])).allowed,
+  !revalidateStoredPlayerTags(doosanRow, players, activeT3, new Set(["54097"]))
+    .allowed,
 );
 check(
   "요청 최애선수가 두산 김민석이면 정상 통과",
-  revalidateStoredPlayerTags(doosanRow, players, activeT3, new Set(["53554"])).allowed,
+  revalidateStoredPlayerTags(doosanRow, players, activeT3, new Set(["53554"]))
+    .allowed,
 );
 
 const sonRow = {
@@ -104,16 +202,24 @@ const sonRow = {
 };
 check(
   "Production 붙임말 정상 태그 보존",
-  revalidateStoredPlayerTags(sonRow, players, activeT3, new Set(["77532"])).allowed,
+  revalidateStoredPlayerTags(sonRow, players, activeT3, new Set(["77532"]))
+    .allowed,
 );
 check(
   "longest roster name만 매칭하고 김민 prefix 제거",
-  matchPlayers("김민석 홈런", players, null, 1).sort().join(",") === "53554,54097",
+  matchPlayers("김민석 홈런", players, null, 1).sort().join(",") ===
+    "53554,54097",
 );
 
 async function finishAsyncChecks() {
+  process.env.NEXT_PUBLIC_SUPABASE_URL ||= "http://127.0.0.1:54321";
+  process.env.SUPABASE_SERVICE_ROLE_KEY ||= "shorts-route-smoke-key";
+  ({ createShortsFeedGET } = await import("@/app/api/shorts-feed/route"));
+
   const aliasFailureSupabase = {
-    from: () => ({ select: async () => ({ data: null, error: { message: "alias boom" } }) }),
+    from: () => ({
+      select: async () => ({ data: null, error: { message: "alias boom" } }),
+    }),
   };
   let aliasFailedClosed = false;
   try {
@@ -138,19 +244,100 @@ async function finishAsyncChecks() {
   }
   check("channel lookup error fail-close", channelFailedClosed);
 
-  function routeHasPlayerGate(source: string): boolean {
-    return source.includes("const checked = revalidateStoredPlayerTags(") &&
-      source.includes("_playerTagAllowed: checked.allowed") &&
-      source.includes("if (v._playerTagAllowed === false) return false");
-  }
-  const routePath = join(process.cwd(), "src/app/api/shorts-feed/route.ts");
-  const routeSource = readFileSync(routePath, "utf8");
-  check("actual shorts-feed route에 player gate 결속", routeHasPlayerGate(routeSource));
-  const removalMutation = routeSource.replace(
-    "const checked = revalidateStoredPlayerTags(",
-    "const checked = removedPlayerGate(",
+  const actualRows = [
+    videoRow({
+      video_id: "reported-political",
+      title: reportedRow.title,
+    }),
+    videoRow({
+      video_id: "correct-doosan",
+    }),
+    videoRow({
+      video_id: "missing-channel",
+      channel_id: "missing-channel-id",
+    }),
+  ];
+  const doosanItems = await favoriteItems(actualRows, "53554");
+  check(
+    "actual GET 원 제보·missing channel 제거, 정상 두산 영상만 응답",
+    doosanItems.map((item) => item.id).join(",") === "correct-doosan",
   );
-  check("fault-removal mutation RED", !routeHasPlayerGate(removalMutation));
+  check(
+    "actual GET 저장된 동명이인 태그를 두산 김민석 하나로 정규화",
+    doosanItems[0]?.playerIds.join(",") === "53554" &&
+      doosanItems[0]?.teamId === "두산",
+  );
+
+  const ktItems = await favoriteItems(actualRows, "54097");
+  check(
+    "actual GET KT 김민석 최애에는 두산·정치 영상 0건",
+    ktItems.length === 0,
+  );
+
+  const inactiveItems = await favoriteItems(
+    [videoRow({ video_id: "inactive-political", title: reportedRow.title })],
+    "53554",
+    [inactiveT3],
+  );
+  check(
+    "actual GET inactive channel legacy 오태그 제거",
+    inactiveItems.length === 0,
+  );
+
+  const sonItems = await favoriteItems(
+    [
+      videoRow({
+        video_id: "son-cheer-song",
+        title: "#손아섭응원가 오늘도 뜨겁다",
+        player_id: "77532",
+        player_ids: ["77532"],
+        team_id: "NC",
+      }),
+    ],
+    "77532",
+  );
+  check(
+    "actual GET 붙임말 정상 선수 영상 보존",
+    sonItems[0]?.id === "son-cheer-song",
+  );
+
+  const aliasFailingGET = createShortsFeedGET({
+    supabase: videoSupabase(actualRows) as never,
+    loadAliases: async () => {
+      throw new Error("alias boom");
+    },
+    loadChannels: async () => [activeT3],
+  });
+  let routeAliasFailedClosed = false;
+  try {
+    await aliasFailingGET(
+      new NextRequest(
+        "http://localhost/api/shorts-feed?scope=favorite_players&player_ids=53554",
+      ),
+    );
+  } catch {
+    routeAliasFailedClosed = true;
+  }
+  check("actual GET alias lookup error fail-close", routeAliasFailedClosed);
+
+  const channelFailingGET = createShortsFeedGET({
+    supabase: videoSupabase(actualRows) as never,
+    loadAliases: async () => players,
+    loadChannels: async () => {
+      throw new Error("channel boom");
+    },
+  });
+  let routeChannelFailedClosed = false;
+  try {
+    await channelFailingGET(
+      new NextRequest(
+        "http://localhost/api/shorts-feed?scope=favorite_players&player_ids=53554",
+      ),
+    );
+  } catch {
+    routeChannelFailedClosed = true;
+  }
+  check("actual GET channel lookup error fail-close", routeChannelFailedClosed);
 
   console.log(`\n${pass} passed, ${fail} failed`);
   if (fail > 0) process.exit(1);
