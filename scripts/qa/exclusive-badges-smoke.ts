@@ -63,8 +63,33 @@ const rlsMigration = readFileSync(
   "supabase/migrations/20260803001500_user_badges_service_role_writes.sql",
   "utf8"
 );
-assert.match(rlsMigration, /DROP POLICY IF EXISTS "Users earn badges"/i, "legacy self-award policy removed");
-assert.match(rlsMigration, /REVOKE INSERT, UPDATE, DELETE[\s\S]*FROM authenticated/i, "authenticated badge writes revoked");
-assert.match(rlsMigration, /service.role/i, "trusted service-role award path documented");
 
-console.log("exclusive badges smoke: PASS (UI visibility / founder additive / exclusive RLS contract)");
+function assertRlsMigrationContract(source: string) {
+  assert.match(source, /DROP POLICY IF EXISTS "Users earn badges"/i, "legacy self-award policy removed");
+  assert.match(source, /REVOKE INSERT, UPDATE, DELETE\s+ON public\.user_badges FROM anon/i, "anon badge writes revoked");
+  assert.match(source, /REVOKE INSERT, UPDATE, DELETE\s+ON public\.user_badges FROM authenticated/i, "authenticated badge writes revoked");
+  assert.doesNotMatch(source, /REVOKE[^;]*SELECT[^;]*ON public\.user_badges/i, "public badge SELECT retained");
+  assert.doesNotMatch(source, /DROP POLICY[^;]*"Anyone reads badges"/i, "public badge read policy retained");
+  assert.match(source, /service.role/i, "trusted service-role award path documented");
+}
+
+assertRlsMigrationContract(rlsMigration);
+
+const withoutAnonRevoke = rlsMigration.replace(
+  /REVOKE INSERT, UPDATE, DELETE\s+ON public\.user_badges FROM anon;?/i,
+  ""
+);
+assert.throws(
+  () => assertRlsMigrationContract(withoutAnonRevoke),
+  /anon badge writes revoked/,
+  "removing anon REVOKE must turn the static gate RED"
+);
+
+const withoutPublicRead = `${rlsMigration}\nDROP POLICY IF EXISTS "Anyone reads badges" ON public.user_badges;\n`;
+assert.throws(
+  () => assertRlsMigrationContract(withoutPublicRead),
+  /public badge read policy retained/,
+  "dropping public SELECT policy must turn the static gate RED"
+);
+
+console.log("exclusive badges smoke: PASS (UI visibility / founder additive / exclusive RLS contract + mutation RED)");

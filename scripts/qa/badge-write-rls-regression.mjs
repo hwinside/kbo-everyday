@@ -25,6 +25,7 @@ const URL_BASE = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 const SERVICE = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const EXPECT = process.env.EXPECT === "open" ? "open" : "closed";
+const INJECT_CLEANUP_FAILURE = process.env.QA_INJECT_CLEANUP_FAILURE === "badge-delete";
 
 for (const [name, value] of [
   ["NEXT_PUBLIC_SUPABASE_URL", URL_BASE],
@@ -151,7 +152,20 @@ async function main() {
     }
 
     // 정리 후 service-role 수여 검증
-    await rest(`user_badges?user_id=eq.${userId}`, { method: "DELETE", key: SERVICE });
+    const preAwardCleanup = await rest(`user_badges?user_id=eq.${userId}`, {
+      method: "DELETE",
+      key: SERVICE,
+    });
+    assert.ok(
+      preAwardCleanup.ok,
+      `pre-award badge cleanup 실패: ${preAwardCleanup.status} ${preAwardCleanup.text}`
+    );
+    const afterPreAwardCleanup = await rest(
+      `user_badges?user_id=eq.${userId}&select=badge_id`,
+      { key: SERVICE }
+    );
+    assert.ok(afterPreAwardCleanup.ok, `pre-award cleanup postcondition 조회 실패: ${afterPreAwardCleanup.text}`);
+    assert.deepEqual(afterPreAwardCleanup.json, [], "pre-award cleanup 뒤 badge row가 남음");
 
     // --- (4)(6) service-role 수여는 성공해야 한다 (한정/일반 모두) ---
     const award = await rest("user_badges", {
@@ -197,14 +211,40 @@ async function main() {
     );
   } finally {
     if (userId) {
-      await rest(`user_badges?user_id=eq.${userId}`, { method: "DELETE", key: SERVICE });
-      await rest(`profiles?id=eq.${userId}`, { method: "DELETE", key: SERVICE });
-      await auth(`admin/users/${userId}`, { method: "DELETE", key: SERVICE });
+      const cleanupFailures = [];
+      const badgeDelete = await rest(`user_badges?user_id=eq.${userId}`, {
+        method: "DELETE",
+        key: SERVICE,
+      });
+      if (!badgeDelete.ok) cleanupFailures.push(`badge DELETE ${badgeDelete.status}: ${badgeDelete.text}`);
+      if (INJECT_CLEANUP_FAILURE) cleanupFailures.push("injected badge DELETE failure");
+
+      const profileDelete = await rest(`profiles?id=eq.${userId}`, {
+        method: "DELETE",
+        key: SERVICE,
+      });
+      if (!profileDelete.ok) cleanupFailures.push(`profile DELETE ${profileDelete.status}: ${profileDelete.text}`);
+
       const left = await rest(`user_badges?user_id=eq.${userId}&select=badge_id`, { key: SERVICE });
       const leftProfile = await rest(`profiles?id=eq.${userId}&select=id`, { key: SERVICE });
+      if (!left.ok) cleanupFailures.push(`badge postcondition 조회 ${left.status}: ${left.text}`);
+      if (!leftProfile.ok) cleanupFailures.push(`profile postcondition 조회 ${leftProfile.status}: ${leftProfile.text}`);
+      if (left.ok && !Array.isArray(left.json)) cleanupFailures.push("badge postcondition 응답이 JSON array가 아님");
+      if (leftProfile.ok && !Array.isArray(leftProfile.json)) cleanupFailures.push("profile postcondition 응답이 JSON array가 아님");
+      if (Array.isArray(left.json) && left.json.length !== 0) cleanupFailures.push(`badge row ${left.json.length}개 잔존`);
+      if (Array.isArray(leftProfile.json) && leftProfile.json.length !== 0) cleanupFailures.push(`profile row ${leftProfile.json.length}개 잔존`);
+
+      const userDelete = await auth(`admin/users/${userId}`, { method: "DELETE", key: SERVICE });
+      if (!userDelete.ok) cleanupFailures.push(`auth user DELETE ${userDelete.status}: ${userDelete.text}`);
+      const leftAuthUser = await auth(`admin/users/${userId}`, { method: "GET", key: SERVICE });
+      if (leftAuthUser.status !== 404) {
+        cleanupFailures.push(`auth user postcondition expected 404, got ${leftAuthUser.status}: ${leftAuthUser.text}`);
+      }
+
       console.log(
-        `  cleanup: badges=${(left.json || []).length} profile=${(leftProfile.json || []).length} (둘 다 0이어야 정상)`
+        `  cleanup: badges=${Array.isArray(left.json) ? left.json.length : "invalid"} profile=${Array.isArray(leftProfile.json) ? leftProfile.json.length : "invalid"} auth=${leftAuthUser.status === 404 ? 0 : "present"}`
       );
+      assert.deepEqual(cleanupFailures, [], `cleanup fail-close: ${cleanupFailures.join("; ")}`);
     }
   }
 }
