@@ -13,6 +13,12 @@ import {
 } from "@/lib/video/team-detector";
 import { entriesToRows } from "@/lib/video/entries-to-rows";
 import { joinLgFeedRows, type ShortsRow } from "@/lib/video/shorts-feed-merge";
+import {
+  hasRequiredPlayerContext,
+  matchPlayers,
+  titleIncludesPlayerName,
+  type PlayerAlias,
+} from "@/lib/video/player-tagger";
 import type { PoolChannel } from "@/lib/video/team-channels";
 import type { RssVideoEntry } from "@/lib/video/rss-parser";
 
@@ -42,6 +48,45 @@ check(
 check("hasNonBaseballSignal 종교", hasNonBaseballSignal("하나님의 평가기준!"), true);
 check("hasNonBaseballSignal 정치", hasNonBaseballSignal("정권 찔어 발언"), true);
 check("hasNonBaseballSignal 증시(상속)", hasNonBaseballSignal("LG전자 주가 급등"), true);
+
+// --- 동명이인 선수 태깅: 일반 채널(T2+)은 팀명+선수명 필수 ---
+const KIM_MINSEOK_PLAYERS: PlayerAlias[] = [
+  { kbo_id: "53554", name: "김민석", team: "두산", aliases: [] },
+  { kbo_id: "54097", name: "김민석", team: "KT", aliases: [] },
+  { kbo_id: "68043", name: "김민", team: "SSG", aliases: [] },
+];
+check("선수명 prefix 차단: 김민 ≠ 김민석", titleIncludesPlayerName("김민석 연설", "김민"), false);
+check("선수명 조사 허용: 김민석은", titleIncludesPlayerName("김민석은 홈런", "김민석"), true);
+check(
+  "동명이인 차단: T3 정치 영상은 선수 태그 없음",
+  matchPlayers(
+    "김민석, 연설 중 돌연 고성 지르더니 무슨 말? / KNN",
+    KIM_MINSEOK_PLAYERS,
+    null,
+    3,
+  ).length === 0,
+  true,
+);
+check(
+  "동명이인 통과: T3 두산+김민석은 두산 선수만 태그",
+  matchPlayers("두산 김민석 끝내기 안타", KIM_MINSEOK_PLAYERS, null, 3).join(",") === "53554",
+  true,
+);
+check(
+  "T1 기존 계약: 무팀명 김민석 제목 허용",
+  matchPlayers("김민석 끝내기 안타", KIM_MINSEOK_PLAYERS, null, 1).length === 2,
+  true,
+);
+check(
+  "기존 저장행 차단: T3 무팀명 player tag 재검증",
+  hasRequiredPlayerContext("김민석, 연설 중 돌연 고성 지르더니 무슨 말? / KNN", null, 3, true),
+  false,
+);
+check(
+  "고유 선수명 보존: T3 무팀명 영상 허용",
+  hasRequiredPlayerContext("원태인 완벽투", null, 3, false),
+  true,
+);
 
 // --- 정상 선수 숏츠 (전부 통과돼야 함 — recall 보존) ---
 check("정상: 오스틴 홈런", isPlayerShortRelevant("오스틴 끝내기 만루홈런 폭발!", "오스틴"), true);
