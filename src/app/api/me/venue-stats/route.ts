@@ -24,6 +24,7 @@ import type { LedgerRecord } from "@/lib/game-logs/completeness";
 import { TEAM_ID_TO_CODE, type PlayerGameLogRow } from "@/lib/game-logs/ingest";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { fetchAttendanceGamesWithinDeadline } from "@/lib/venue-attendance/fetch-games";
+import { fetchGameErrorsWithinDeadline } from "@/lib/venue-stats/game-errors";
 import bundledBatters from "@/lib/constants/stats-2026-batters.json";
 import bundledPitchers from "@/lib/constants/stats-2026-pitchers.json";
 import statsMeta from "@/lib/constants/stats-2026-meta.json";
@@ -517,6 +518,29 @@ export async function GET(req: NextRequest) {
         : Promise.resolve(null),
     ]);
 
+  // 실책(D7) — linescore 기반이라 원장과 무관. 실패 경기는 Map 에 안 들어간다(=미확인).
+  // ⚠️ canonical 경기 identity·팀·최종 스코어를 함께 넘겨 stale/다른 경기 응답을
+  //    exact 대조한다(삼순 P0).
+  //    경기 목록 조회 뒤에 실행해야 canonical 을 알 수 있으므로 위 Promise.all 밖이다.
+  const gameErrors = await fetchGameErrorsWithinDeadline(
+    gameIds.map((gameId) => {
+      const game = gamesById.get(gameId);
+      const canonical =
+        game?.status === "final" &&
+        typeof game.awayScore === "number" &&
+        typeof game.homeScore === "number"
+          ? {
+              gameId: game.gameId,
+              awayTeamId: game.awayTeamId,
+              homeTeamId: game.homeTeamId,
+              awayScore: game.awayScore,
+              homeScore: game.homeScore,
+            }
+          : null;
+      return { gameId, canonical };
+    }),
+  ).catch(() => new Map<string, { away: number; home: number }>());
+
   // 로그/ledger 조회 실패는 fail-closed — ledger 없음 취급(incomplete)으로 B/C가 partial로 강등된다.
   const attendanceLogs = logsResult.ok ? logsResult.rows : [];
   const ledgers = ledgersResult.ok ? ledgersResult.ledgers : new Map<string, LedgerRecord>();
@@ -544,6 +568,7 @@ export async function GET(req: NextRequest) {
     favorites,
     attendanceLogs,
     ledgers,
+    gameErrors,
     seasonGames: seasonAggregates.seasonGames,
     teamSeasonTotals: currentBaselines?.teamSeasonTotals ?? null,
     favoriteSeasonBaselines: currentBaselines?.favoriteSeasonBaselines ?? null,
