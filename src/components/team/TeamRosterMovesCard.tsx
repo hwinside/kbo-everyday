@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { getTeamBgColor, type TeamData } from "@/lib/constants/teams";
+import { RESULT_TONE_COLOR } from "@/lib/ui/result-tone";
 
 interface Move {
   kboPlayerId: string;
@@ -119,7 +120,8 @@ export default function TeamRosterMovesCard({ team }: Props) {
               {g.items.map((m, i) => {
                 const isRegister = m.moveType === "register";
                 const label = isRegister ? "등록" : "말소";
-                const labelColor = isRegister ? "#34D399" : "#F87171";
+                // 긍부정 색은 홈 팀카드 기준 SSOT(@/lib/ui/result-tone) — 화면마다 다시 적지 않는다.
+                const labelColor = RESULT_TONE_COLOR[isRegister ? "positive" : "negative"];
                 const body = (
                   <div className="flex items-center gap-2 py-0.5">
                     <span

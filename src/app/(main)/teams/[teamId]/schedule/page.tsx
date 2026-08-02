@@ -6,6 +6,11 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
 import { getTeamBySlug, getTeamBgColor } from "@/lib/constants/teams";
 import TeamLogo from "@/components/ui/TeamLogo";
+import {
+  RESULT_TONE_BG,
+  gameResultTone,
+  resultToneTextStyle,
+} from "@/lib/ui/result-tone";
 
 interface ScheduleDay {
   day: number;
@@ -168,20 +173,26 @@ export default function TeamSchedulePage() {
                 ? getTeamBySlug(game.opponent.slug)
                 : undefined;
 
-              let bgClass = "";
-              if (game?.result === "W") bgClass = "bg-green-500/15";
-              else if (game?.result === "L") bgClass = "bg-red-500/10";
-              else if (game?.status === "live") bgClass = "bg-red-500/15";
+              // 승패 색은 홈 팀카드 기준 SSOT(@/lib/ui/result-tone). live 는 결과가 아니라 기존 붉은 톤 유지.
+              const resultBg =
+                game?.result === "W"
+                  ? RESULT_TONE_BG.positive
+                  : game?.result === "L"
+                    ? RESULT_TONE_BG.negative
+                    : undefined;
+              const liveBgClass =
+                !game?.result && game?.status === "live" ? "bg-red-500/15" : "";
 
               return (
                 <div
                   key={day}
-                  className={`flex flex-col items-center justify-center rounded-lg aspect-square ${bgClass}`}
-                  style={
-                    game?.status === "scheduled"
+                  className={`flex flex-col items-center justify-center rounded-lg aspect-square ${liveBgClass}`}
+                  style={{
+                    ...(resultBg ? { backgroundColor: resultBg } : {}),
+                    ...(game?.status === "scheduled"
                       ? { border: `1px solid ${teamColor}30` }
-                      : undefined
-                  }
+                      : {}),
+                  }}
                 >
                   <span className="text-[10px] text-text-tertiary leading-none">
                     {day}
@@ -192,15 +203,18 @@ export default function TeamSchedulePage() {
                     </div>
                   )}
                   {game && (
-                    <span className={`text-[9px] font-bold leading-none ${
-                      game.result === "W"
-                        ? "text-green-400"
-                        : game.result === "L"
-                        ? "text-red-400"
-                        : game.status === "live"
-                        ? "text-red-400"
-                        : "text-text-secondary"
-                    }`}>
+                    <span
+                      className={`text-[9px] font-bold leading-none ${
+                        !game.result && game.status === "live" ? "text-red-400" : ""
+                      }`}
+                      style={
+                        game.result
+                          ? resultToneTextStyle(gameResultTone(game.result))
+                          : game.status === "live"
+                            ? undefined
+                            : { color: "var(--text-secondary)" }
+                      }
+                    >
                       {game.result
                         ? game.result
                         : game.status === "live"
