@@ -94,7 +94,7 @@ assert.equal(
 );
 
 const routed = Object.values(VENUE_STATS_UI_GROUPS).flat();
-assert.equal(routed.length, 22);
+assert.equal(routed.length, 23); // D7(실책) 추가 — 하린아빠 2026-08-02
 assert.deepEqual([...new Set(routed)].sort(), [...METRIC_IDS].sort());
 
 const metrics = Object.fromEntries(
@@ -585,4 +585,4 @@ assert.deepEqual(mixed.teamIds, [1, 9]);
   assert.equal(SCORE_CONFIDENCE_LABELS.high, "기록 충분");
 }
 
-console.log("venue stats S2 UI smoke: PASS (22/22 routing + hero/scope/format contracts)");
+console.log("venue stats S2 UI smoke: PASS (23/23 routing + hero/scope/format contracts)");

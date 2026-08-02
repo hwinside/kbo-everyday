@@ -32,7 +32,6 @@ import {
   RAG_CANDIDATE_LIMIT,
   RAG_DOCUMENT_CANDIDATE_LIMIT,
   RAG_OFFICIAL_SYSTEM_PROMPT,
-  rankEvidenceByQuery,
   searchSourcePriorityCandidates,
   type RagDocumentSourceKind,
   type RagEvidence,

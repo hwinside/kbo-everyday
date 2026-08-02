@@ -1532,6 +1532,37 @@ async function verifyServingContractOnRealDb(): Promise<void> {
     assert.ok(claim, `${sourceKey} claim 실패`);
     return claim;
   };
+
+  // R8: source와 chunk canonical이 exact-equal이어도 raw 제어문자는 무조건 거부해야 한다.
+  // equality 분기 안쪽에서만 검사하면 WHATWG가 TAB을 제거한 뒤 다른 문서로 이동할 수 있다.
+  const rawControlCanonical = "https://namu.wiki/w/x/\t../%EA%B9%80%EB%8F%84%EC%98%81";
+  await db.query(
+    `INSERT INTO public.genius_rag_sources
+      (source_key,source_kind,entity_type,entity_id,page_title,candidate_urls,canonical_url,
+       resolution_status,source_grade,identity_fingerprint)
+     VALUES ('namu:player:raw-control','namu_document','player','raw-control','제어문자',
+       ARRAY[$1],$1,'resolved','tier2',$2)`,
+    [rawControlCanonical, randomUUID()],
+  );
+  const rawControlClaim = await claimSource("namu:player:raw-control");
+  await assert.rejects(
+    db.query(
+      `SELECT public.upsert_baseball_genius_rag_chunk(
+        'namu:player:raw-control',$1,$2,'player','raw-control','제어문자',$3,
+        'raw-control-rev','본문',0,$4,'raw-control-doc','raw-control-chunk','tier2',
+        $5::timestamptz,'2026-08-01'::date,$6::extensions.vector,
+        jsonb_build_object('documentCanonicalUrl',$3::text))`,
+      [rawControlClaim.claim_token, rawControlClaim.claim_generation, rawControlCanonical,
+       "raw 제어문자 canonical은 source와 chunk가 같아도 거부되어야 하는 충분히 긴 근거입니다.",
+       crawledAt, embedding],
+    ),
+    (error: unknown) => {
+      const message = error instanceof Error ? `${error.message} ${String(error.cause ?? "")}` : String(error);
+      assert.match(message, /stale or mismatched rag chunk owner\/provenance/);
+      return true;
+    },
+    "source와 chunk canonical이 같은 raw 제어문자 URL도 fail-close해야 한다",
+  );
   const ingest = async (sourceKey: string, entityId: string, title: string, content: string) => {
     const claim = await claimSource(sourceKey);
     const hash = `hash-${entityId}`;
