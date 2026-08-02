@@ -148,6 +148,16 @@ t("READY source 재적재 경로가 있다 (삼순 R4 #1050-1)", () => {
   const claimIdx = src.indexOf('rpc("claim_baseball_genius_rag_batch_scoped"');
   if (refreshIdx < 0 || claimIdx < 0) throw new Error("refresh/claim 호출을 못 찾음");
   if (refreshIdx > claimIdx) throw new Error("refresh 가 claim 뒤에 있어 재적재가 성립하지 않는다");
+  if (!/p_loader_revision:\s*OFFICIAL_LOADER_REVISION/.test(src)) {
+    throw new Error("원문 revision과 별개인 loaderRevision을 refresh RPC에 넘기지 않는다");
+  }
+});
+
+t("source ensure가 APPLY 경로에서 claim보다 먼저 실행된다", () => {
+  if (!/ensure_baseball_genius_ebook_sources/.test(src)) throw new Error("source ensure RPC 호출 부재");
+  const ensureIdx = src.indexOf("const sourceRows = await ensureAndVerifySources(url, key, rpc, prepared)");
+  const claimIdx = src.indexOf('rpc("claim_baseball_genius_rag_batch_scoped"');
+  if (ensureIdx < 0 || ensureIdx > claimIdx) throw new Error("source ensure가 claim 전에 실행되지 않는다");
 });
 
 // ── 실제 DB(PGlite)에서 원자성 검증 ─────────────────────────────────────────
@@ -170,15 +180,72 @@ t("READY source 재적재 경로가 있다 (삼순 R4 #1050-1)", () => {
     await db.exec(sql);
   }
 
-  const KEY = "kbo:ebook:test";
+  const KEY = "kbo:ebook:test-0";
   const vec = () => JSON.stringify(Array.from({ length: 768 }, () => 0.01));
-  await db.query(
-    `INSERT INTO public.genius_rag_sources
-      (source_key, source_kind, entity_type, entity_id, page_title, candidate_urls, canonical_url,
-       resolution_status, source_grade, identity_fingerprint)
-     VALUES ($1,'kbo_ebook','document','doc','규칙',ARRAY['https://x'],'https://x','resolved','tier1',$2)`,
-    [KEY, crypto.randomUUID()],
+  const sourcePayload = Array.from({ length: 10 }, (_, index) => ({
+    source_key: `kbo:ebook:test-${index}`,
+    source_kind: "kbo_ebook",
+    entity_type: "document",
+    entity_id: `doc-${index}`,
+    page_title: `규칙 ${index}`,
+    candidate_urls: [`https://example.test/${index}`],
+    canonical_url: `https://example.test/${index}`,
+    resolution_status: "resolved",
+    resolution_note: "fixture",
+    source_grade: "tier1",
+    identity_fingerprint: crypto.createHash("sha256").update(`fixture-${index}`).digest("hex"),
+    metadata: { kind: "fixture", loaderRevision: "kbo-ebook-sections-v1" },
+  }));
+  const ensured = await db.query(
+    "SELECT public.ensure_baseball_genius_ebook_sources($1::jsonb) AS n",
+    [JSON.stringify(sourcePayload)],
   );
+  const ensuredRows = await db.query(
+    `SELECT source_key, source_kind, entity_type, entity_id, page_title, canonical_url,
+            resolution_status, source_grade, identity_fingerprint, metadata
+     FROM public.genius_rag_sources WHERE source_kind='kbo_ebook' ORDER BY source_key`,
+  );
+  t("source 10건 원자 ensure + 필드 exact", () => {
+    if (ensured.rows[0].n !== 10 || ensuredRows.rows.length !== 10) {
+      throw new Error(`ensure=${ensured.rows[0].n} rows=${ensuredRows.rows.length}`);
+    }
+    for (let index = 0; index < 10; index++) {
+      const actual = ensuredRows.rows[index];
+      const expected = sourcePayload[index];
+      for (const field of ["source_key", "source_kind", "entity_type", "entity_id", "page_title", "canonical_url", "resolution_status", "source_grade", "identity_fingerprint"]) {
+        if (actual[field] !== expected[field]) throw new Error(`${index}.${field} 불일치`);
+      }
+      if (actual.metadata.loaderRevision !== "kbo-ebook-sections-v1") throw new Error(`${index}.loaderRevision 불일치`);
+    }
+  });
+
+  let invalidRejected = false;
+  try {
+    await db.query(
+      "SELECT public.ensure_baseball_genius_ebook_sources($1::jsonb)",
+      [JSON.stringify([
+        { ...sourcePayload[0], source_key: "kbo:ebook:atomic-valid", entity_id: "atomic-valid" },
+        { ...sourcePayload[1], source_key: "namu:player:takeover", entity_id: "atomic-invalid" },
+      ])],
+    );
+  } catch {
+    invalidRejected = true;
+  }
+  const atomicRows = await db.query(
+    "SELECT count(*)::int AS n FROM public.genius_rag_sources WHERE entity_id LIKE 'atomic-%'",
+  );
+  t("source ensure는 혼합 오염 입력 전체를 원자 rollback", () => {
+    if (!invalidRejected) throw new Error("비 kbo source_key가 통과했다");
+    if (atomicRows.rows[0].n !== 0) throw new Error(`부분 반영 ${atomicRows.rows[0].n}건`);
+  });
+
+  // 기존 source ensure 재실행은 active 상태와 완료 loaderRevision을 덮어쓰지 않는다.
+  const reensurePayload = sourcePayload.map((row) => ({ ...row, metadata: { ...row.metadata, loaderRevision: "kbo-ebook-sections-v2" } }));
+  await db.query("SELECT public.ensure_baseball_genius_ebook_sources($1::jsonb)", [JSON.stringify(reensurePayload)]);
+  const preserved = await db.query("SELECT metadata->>'loaderRevision' AS loader_revision FROM public.genius_rag_sources WHERE source_key=$1", [KEY]);
+  t("source 재-ensure는 완료 loaderRevision을 선반영하지 않는다", () => {
+    if (preserved.rows[0].loader_revision !== "kbo-ebook-sections-v1") throw new Error("refresh 전에 v2로 덮였다");
+  });
 
   // ⚠️ crawled_at 은 **같은 값**을 chunk 와 complete 양쪽에 써야 한다.
   // 각각 now() 를 부르면 값이 달라 complete 의 provenance EXISTS 조건이 깨지고,
@@ -193,7 +260,7 @@ t("READY source 재적재 경로가 있다 (삼순 R4 #1050-1)", () => {
     const c = claimed.rows[0];
     for (let i = 0; i < n; i++) {
       await db.query(
-        `SELECT public.upsert_baseball_genius_rag_chunk($1,$2,$3,'document','doc','규칙','https://x',
+        `SELECT public.upsert_baseball_genius_rag_chunk($1,$2,$3,'document','doc-0','규칙 0','https://example.test/0',
            $4,$5,$6,$7,$8,$9,'tier1',$11::timestamptz,current_date,$10::vector,'{}'::jsonb)`,
         [KEY, c.claim_token, c.claim_generation, revision, `sec-${i}`, 0,
          `본문 ${i} `.repeat(20), `dochash-${revision}`, `chunkhash-${revision}-${i}`, vec(), CRAWLED_AT],
@@ -212,11 +279,17 @@ t("READY source 재적재 경로가 있다 (삼순 R4 #1050-1)", () => {
     if (ok1.rows[0].ok !== true) throw new Error("정상 적재가 거부됐다");
   });
 
-  // 2차: 기대 5인데 3건만 staged → swap 되면 안 되고 last-good 이 남아야 한다
-  await db.query("SELECT public.request_baseball_genius_rag_refresh($1,'rev2')", [KEY]);
-  const c2 = await stage(3, "rev2");
+  // 2차: 원문 revision은 같지만 loaderRevision이 바뀌면 1회 stale 전환한다.
+  const refresh = await db.query(
+    "SELECT public.request_baseball_genius_rag_refresh($1,'rev1','kbo-ebook-sections-v2') AS ok",
+    [KEY],
+  );
+  t("같은 원문 revision + 새 loaderRevision은 refresh", () => {
+    if (refresh.rows[0].ok !== true) throw new Error("same-content correction이 stale로 전환되지 않았다");
+  });
+  const c2 = await stage(3, "rev1");
   const bad = await db.query(
-    "SELECT public.complete_baseball_genius_rag_source($1,$2,$3,'rev2','dochash-rev2',$4::timestamptz,now()+interval '30 days',5) AS ok",
+    "SELECT public.complete_baseball_genius_rag_source($1,$2,$3,'rev1','dochash-rev1',$4::timestamptz,now()+interval '30 days',5) AS ok",
     [KEY, c2.claim_token, c2.claim_generation, CRAWLED_AT],
   );
   const after = await db.query(
@@ -243,7 +316,7 @@ t("READY source 재적재 경로가 있다 (삼순 R4 #1050-1)", () => {
 
   // 3차: 기대 수가 맞으면 정상 swap + 이전 generation 정리
   const good = await db.query(
-    "SELECT public.complete_baseball_genius_rag_source($1,$2,$3,'rev2','dochash-rev2',$4::timestamptz,now()+interval '30 days',3) AS ok",
+    "SELECT public.complete_baseball_genius_rag_source($1,$2,$3,'rev1','dochash-rev1',$4::timestamptz,now()+interval '30 days',3) AS ok",
     [KEY, c2.claim_token, c2.claim_generation, CRAWLED_AT],
   );
   const after3 = await db.query(
@@ -256,14 +329,21 @@ t("READY source 재적재 경로가 있다 (삼순 R4 #1050-1)", () => {
   );
   t("GREEN — 기대 수 일치면 swap + 이전 generation 정리", () => {
     if (good.rows[0].ok !== true) throw new Error("일치인데 complete 가 거부됐다");
-    if (after3.rows[0].revision !== "rev2") throw new Error(`swap 안 됨: ${after3.rows[0].revision}`);
+    if (after3.rows[0].revision !== "rev1") throw new Error(`swap 안 됨: ${after3.rows[0].revision}`);
     if (oldGone.rows[0].n !== 0) throw new Error(`이전 generation 이 남았다(${oldGone.rows[0].n}건)`);
   });
 
-  t("재적재 요청은 같은 revision 이면 no-op (무한 재적재 방지)", async () => {});
-  const sameRev = await db.query("SELECT public.request_baseball_genius_rag_refresh($1,'rev2') AS ok", [KEY]);
-  t("같은 revision refresh 는 false", () => {
-    if (sameRev.rows[0].ok !== false) throw new Error("같은 revision 인데 stale 로 내렸다");
+  const afterMeta = await db.query("SELECT metadata FROM public.genius_rag_sources WHERE source_key=$1", [KEY]);
+  t("complete가 pending loaderRevision을 원자 승격", () => {
+    if (afterMeta.rows[0].metadata.loaderRevision !== "kbo-ebook-sections-v2") throw new Error("loaderRevision 승격 안 됨");
+    if ("pendingLoaderRevision" in afterMeta.rows[0].metadata) throw new Error("pendingLoaderRevision 잔존");
+  });
+  const sameRev = await db.query(
+    "SELECT public.request_baseball_genius_rag_refresh($1,'rev1','kbo-ebook-sections-v2') AS ok",
+    [KEY],
+  );
+  t("같은 원문+같은 loaderRevision refresh는 false", () => {
+    if (sameRev.rows[0].ok !== false) throw new Error("동일 계약인데 stale 로 내렸다");
   });
   await db.close();
 }
