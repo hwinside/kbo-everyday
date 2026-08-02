@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { Pencil, X } from "lucide-react";
 import { supabase } from "@/lib/supabase/client";
+import { NICKNAME_INPUT_PLACEHOLDER, NICKNAME_MAX_LENGTH, validateNickname } from "@/lib/validation/nickname";
 
 interface NicknameStatus {
   nickname: string;
@@ -87,13 +88,9 @@ export default function NicknameEditSheet({ isOpen, onClose, currentNickname, st
   const handleSave = async () => {
     const trimmed = nickname.trim();
 
-    if (trimmed.length < 2 || trimmed.length > 12) {
-      setError("닉네임은 2~12자로 입력해주세요");
-      return;
-    }
-
-    if (!/^[가-힣a-zA-Z0-9]+$/.test(trimmed)) {
-      setError("한글, 영문, 숫자만 사용 가능합니다");
+    const validationError = validateNickname(trimmed);
+    if (validationError) {
+      setError(validationError);
       return;
     }
 
@@ -186,11 +183,11 @@ export default function NicknameEditSheet({ isOpen, onClose, currentNickname, st
                     setNickname(e.target.value);
                     setError("");
                   }}
-                  maxLength={12}
-                  placeholder="닉네임 (2~12자)"
+                  maxLength={Math.max(NICKNAME_MAX_LENGTH, currentNickname.length)}
+                  placeholder={NICKNAME_INPUT_PLACEHOLDER}
                   className="w-full rounded-2xl border border-black/10 dark:border-white/10 bg-bg-tertiary px-4 py-3 text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent"
                 />
-                <p className="mt-2 text-xs text-text-tertiary">한글, 영문, 숫자만 사용 가능</p>
+                <p className="mt-2 text-xs text-text-tertiary">2~8자 · 한글, 영문, 숫자만 사용 가능</p>
                 {error ? <p className="mt-2 text-xs text-red-400">{error}</p> : null}
               </div>
 

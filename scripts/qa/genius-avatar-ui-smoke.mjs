@@ -17,6 +17,10 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { SUPABASE_URL, ANON, SERVICE_ROLE, REF, BASE } from "./_env.mjs";
+import {
+  GENIUS_ALPHA_CUTOFF,
+  measureVisibleAlphaBounds,
+} from "./genius-avatar-alpha-contract.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const BASE_URL = process.argv.find((a) => a.startsWith("--base-url="))?.split("=")[1] ?? BASE;
@@ -62,16 +66,14 @@ async function alphaBboxRatio(publicPath) {
   const img = sharp(readFileSync(file));
   const { width, height } = await img.metadata();
   const buf = await img.raw().ensureAlpha().toBuffer();
-  let top = -1, bottom = -1;
-  for (let y = 0; y < height; y++) {
-    let opaque = false;
-    for (let x = 0; x < width; x++) {
-      if (buf[(y * width + x) * 4 + 3] > 8) { opaque = true; break; }
-    }
-    if (opaque) { if (top < 0) top = y; bottom = y; }
-  }
-  if (top < 0) throw new Error(`${publicPath}: 불투명 픽셀 0`);
-  return { ratio: (bottom - top + 1) / height, top, bottom, height };
+  const bounds = measureVisibleAlphaBounds(buf, { width, height, channels: 4 });
+  if (!bounds) throw new Error(`${publicPath}: 불투명 픽셀 0 (alpha>${GENIUS_ALPHA_CUTOFF})`);
+  return {
+    ratio: (bounds.maxY - bounds.minY + 1) / height,
+    top: bounds.minY,
+    bottom: bounds.maxY,
+    height,
+  };
 }
 
 const admin = createClient(SUPABASE_URL, SERVICE_ROLE, {
@@ -83,6 +85,20 @@ const ok = (name, pass, detail = "") => {
   results.push({ name, pass });
   console.log(`  ${pass ? "PASS" : "FAIL"}  ${name}${detail ? ` — ${detail}` : ""}`);
 };
+
+function verifyAlphaCutoffContract() {
+  const fixture = Buffer.from([
+    0, 0, 0, 1,
+    0, 0, 0, 9,
+  ]);
+  const strict = measureVisibleAlphaBounds(fixture, { width: 2, height: 1, channels: 4 });
+  const legacy = measureVisibleAlphaBounds(fixture, { width: 2, height: 1, channels: 4 }, 0);
+  ok(
+    `contract: 정적·브라우저 공용 alpha cutoff=${GENIUS_ALPHA_CUTOFF}`,
+    strict?.minX === 1 && strict.maxX === 1 && legacy?.minX === 0 && legacy.maxX === 1,
+    "alpha 1은 제외하고 alpha 9부터 가시 픽셀",
+  );
+}
 
 async function ctxWithSession(browser, session, user) {
   const ctx = await browser.newContext({ viewport: VIEWPORT });
@@ -224,6 +240,7 @@ async function openGeniusRoom(page) {
 let browser = null;
 const testUserIds = [];
 try {
+  verifyAlphaCutoffContract();
   const listSource = readFileSync(path.join(HERE, "../../src/app/(main)/messages/page.tsx"), "utf8");
   const chatSource = readFileSync(path.join(HERE, "../../src/app/(main)/messages/[conversationId]/page.tsx"), "utf8");
   ok("source: 목록은 nickname이 아닌 bot user_id로 판정",
@@ -233,14 +250,9 @@ try {
 
   const asset = await sharp(path.join(HERE, "../../public/mascot/yajalal-avatar.png"))
     .ensureAlpha().raw().toBuffer({ resolveWithObject: true });
-  let minX = asset.info.width, minY = asset.info.height, maxX = -1, maxY = -1;
-  for (let y = 0; y < asset.info.height; y += 1) {
-    for (let x = 0; x < asset.info.width; x += 1) {
-      if (asset.data[(y * asset.info.width + x) * asset.info.channels + 3] === 0) continue;
-      minX = Math.min(minX, x); minY = Math.min(minY, y);
-      maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
-    }
-  }
+  const bounds = measureVisibleAlphaBounds(asset.data, asset.info);
+  if (!bounds) throw new Error(`마스코트 가시 픽셀 0 (alpha>${GENIUS_ALPHA_CUTOFF})`);
+  const { minX, minY, maxX, maxY } = bounds;
   const alphaWidthRatio = (maxX - minX + 1) / asset.info.width;
   const alphaHeightRatio = (maxY - minY + 1) / asset.info.height;
   ok(`asset: 알파 bbox 가로·세로 비율 >= ${MIN_ALPHA_BBOX_RATIO.toFixed(6)}`,

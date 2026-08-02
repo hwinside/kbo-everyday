@@ -23,6 +23,11 @@ import { useAuth } from "@/lib/supabase/AuthContext";
 import { getSafeSession } from "@/lib/supabase/client";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import { getTeamById } from "@/lib/constants/teams";
+import {
+  RESULT_TONE_COLOR,
+  resultToneOutlineStyle,
+  resultToneTextStyle,
+} from "@/lib/ui/result-tone";
 import type {
   A1Value,
   A2Cell,
@@ -162,19 +167,21 @@ function MetricCard({
   embedded?: boolean;
   className?: string;
 }) {
-  const tone = {
-    positive: "text-emerald-300",
-    negative: "text-rose-300",
-    neutral: "text-slate-300",
-    unavailable: "text-white/65",
-  }[trend.tone];
+  // 증감·긍부정 색은 홈 팀카드 기준 SSOT(@/lib/ui/result-tone) — unavailable 만 화면 전용 회색.
+  const toneStyle =
+    trend.tone === "unavailable" ? undefined : resultToneTextStyle(trend.tone);
+  const toneClass = trend.tone === "unavailable" ? "text-white/65" : "";
   return (
     <div className={`min-w-0 p-3 ${embedded ? "" : "rounded-xl border border-white/8 bg-[#151519]"} ${className}`}>
       <div className="flex items-center justify-between gap-2">
         <p className="flex items-center gap-1.5 text-[10px] font-bold text-white/70">{icon}{title}</p>
         <span className="text-[9px] font-semibold text-white/60">{metric.n}경기 기준</span>
       </div>
-      <p data-testid="venue-metric-trend" className={`mt-1 text-[24px] font-black leading-none tracking-tight ${tone}`}>
+      <p
+        data-testid="venue-metric-trend"
+        className={`mt-1 text-[24px] font-black leading-none tracking-tight ${toneClass}`}
+        style={toneStyle}
+      >
         {trend.arrow && <span aria-hidden="true">{trend.arrow} </span>}{trend.label}
       </p>
       <p className="mt-1 text-[10px] font-semibold text-white/70">
@@ -584,7 +591,7 @@ export default function VenueStatsDashboard() {
   });
   if (summarySampleReady && (hero?.attendance?.w ?? 0) >= 3) interestingFacts.push({
     key: "wins-seen", label: "승리 목격자", value: `${hero!.attendance!.w}승 수집`,
-    icon: <Trophy size={16} className="text-emerald-300" />,
+    icon: <Trophy size={16} style={resultToneTextStyle("positive", "soft")} />,
   });
   if (summarySampleReady && (hero?.attendance?.l ?? 0) >= 3) interestingFacts.push({
     key: "loss-endurance", label: "패배 인내형", value: `${hero!.attendance!.l}패 견딤`,
@@ -707,10 +714,12 @@ export default function VenueStatsDashboard() {
                 <div className="relative h-1.5 flex-1 overflow-hidden rounded-full bg-white/10">
                   <span className="absolute inset-y-0 left-1/2 w-px bg-white/30" />
                   <span
-                    className={`absolute inset-y-0 ${hero.score >= 50 ? "bg-emerald-300" : "bg-rose-300"}`}
+                    className="absolute inset-y-0"
                     style={{
                       left: `${Math.min(hero.score, 50)}%`,
                       width: `${Math.abs(hero.score - 50)}%`,
+                      background:
+                        RESULT_TONE_COLOR[hero.score >= 50 ? "positive" : "negative"],
                     }}
                   />
                 </div>
@@ -725,13 +734,16 @@ export default function VenueStatsDashboard() {
                     <span
                       key={axis.key}
                       data-testid="venue-score-axis"
-                      className={`rounded-full border px-1.5 py-0.5 text-[9px] font-black ${
+                      className="rounded-full border px-1.5 py-0.5 text-[9px] font-black"
+                      // 히어로 카드는 붉은 그라데이션 배경이라 base 빨강이 AA 미달(3.69:1 실측) → soft.
+                      style={resultToneOutlineStyle(
                         axis.normalized > 0.02
-                          ? "border-emerald-300/40 bg-emerald-300/10 text-emerald-300"
+                          ? "positive"
                           : axis.normalized < -0.02
-                            ? "border-rose-300/40 bg-rose-300/10 text-rose-300"
-                            : "border-slate-300/30 bg-slate-300/10 text-slate-300"
-                      }`}
+                            ? "negative"
+                            : "neutral",
+                        "soft",
+                      )}
                     >
                       {axis.normalized > 0.02 ? "▲" : axis.normalized < -0.02 ? "▼" : "→"} {axis.label}
                     </span>
@@ -777,9 +789,9 @@ export default function VenueStatsDashboard() {
               </p>
             )}
             <div className="mt-2 flex items-center gap-2.5 text-[14px] font-black">
-              <span className="text-sky-400">{hero.attendance?.w ?? 0}승</span>
-              <span className="text-rose-300">{hero.attendance?.l ?? 0}패</span>
-              <span className="text-white/65">{hero.attendance?.d ?? 0}무</span>
+              <span style={resultToneTextStyle("positive", "soft")}>{hero.attendance?.w ?? 0}승</span>
+              <span style={resultToneTextStyle("negative", "soft")}>{hero.attendance?.l ?? 0}패</span>
+              <span style={resultToneTextStyle("neutral", "soft")}>{hero.attendance?.d ?? 0}무</span>
               <span>·</span>
               <span>승률 {formatRate(hero.attendance?.rate)}</span>
             </div>
@@ -826,11 +838,11 @@ export default function VenueStatsDashboard() {
                 <div data-testid="venue-primary-insights" className="mb-2 grid grid-cols-3 gap-1.5">
                   {bestOpponent && (
                     <div className="min-w-0 rounded-xl border border-emerald-400/20 bg-emerald-400/[0.07] px-2.5 py-2.5">
-                      <Swords size={13} className="text-emerald-300" />
+                      <Swords size={13} style={resultToneTextStyle("positive", "soft")} />
                       <p className="mt-1 truncate text-[11px] font-black text-white">
                         {bestOpponentLabel}
                       </p>
-                      <p className="text-[9px] font-bold text-emerald-300">{bestOpponent.cell.w}승 · {formatRate(bestOpponent.cell.rate, 0)}</p>
+                      <p className="text-[9px] font-bold" style={resultToneTextStyle("positive", "soft")}>{bestOpponent.cell.w}승 · {formatRate(bestOpponent.cell.rate, 0)}</p>
                     </div>
                   )}
                   {bestWeekday && (
@@ -971,12 +983,14 @@ export default function VenueStatsDashboard() {
                         higherIsBetter: false, digits: 2, neutralThreshold: 0.1,
                       });
                   const compatibility = batterCompatibility(batter) ?? pitcherCompatibility(pitcher);
-                  const boostTone = {
-                    positive: "border-emerald-300/40 bg-emerald-300/10 text-emerald-300",
-                    negative: "border-rose-300/40 bg-rose-300/10 text-rose-300",
-                    neutral: "border-slate-300/30 bg-slate-300/10 text-slate-300",
-                    unavailable: "border-white/10 bg-white/[0.04] text-white/60",
-                  }[boostTrend.tone];
+                  const boostToneStyle =
+                    boostTrend.tone === "unavailable"
+                      ? undefined
+                      : resultToneOutlineStyle(boostTrend.tone);
+                  const boostToneClass =
+                    boostTrend.tone === "unavailable"
+                      ? "border-white/10 bg-white/[0.04] text-white/60"
+                      : "";
                   return (
                     <div key={playerId} data-testid="venue-favorite-card" className="rounded-2xl border border-white/8 bg-[#151519] p-3">
                       <div className="flex items-center gap-2.5">
@@ -995,7 +1009,11 @@ export default function VenueStatsDashboard() {
                             )}
                           </div>
                           {boostTrend.tone !== "unavailable" && (
-                            <span data-testid="venue-favorite-trend" className={`mt-0.5 inline-flex rounded-full border px-1.5 py-0.5 text-[9px] font-black ${boostTone}`}>
+                            <span
+                              data-testid="venue-favorite-trend"
+                              className={`mt-0.5 inline-flex rounded-full border px-1.5 py-0.5 text-[9px] font-black ${boostToneClass}`}
+                              style={boostToneStyle}
+                            >
                               {boostTrend.arrow} {batter ? "타율" : "ERA"} {boostTrend.label}
                             </span>
                           )}
@@ -1007,13 +1025,11 @@ export default function VenueStatsDashboard() {
                           {compatibility ? (
                             <>
                               <p className="text-[9px] font-bold text-white/60">성적 궁합</p>
-                              <p data-testid="venue-compatibility-score" className={`text-[24px] font-black leading-none ${
-                                compatibility.tone === "positive"
-                                  ? "text-emerald-300"
-                                  : compatibility.tone === "negative"
-                                    ? "text-rose-300"
-                                    : "text-slate-300"
-                              }`}>{compatibility.score}<span className="text-[10px] text-white/60">점</span></p>
+                              <p
+                                data-testid="venue-compatibility-score"
+                                className="text-[24px] font-black leading-none"
+                                style={resultToneTextStyle(compatibility.tone)}
+                              >{compatibility.score}<span className="text-[10px] text-white/60">점</span></p>
                               <p className="mt-0.5 text-[10px] font-bold text-white/70">{compatibility.evidence}</p>
                             </>
                           ) : (

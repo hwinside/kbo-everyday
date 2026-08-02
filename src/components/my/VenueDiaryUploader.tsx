@@ -20,6 +20,7 @@ import {
   type DiaryUploadItemState,
 } from "@/lib/venue-diary/view";
 import { PENDING_POLL_DELAYS_MS } from "@/lib/venue-stories/composer-helpers";
+import { gameResultTone, resultToneChipStyle } from "@/lib/ui/result-tone";
 
 export interface DiaryUploadGame {
   gameId: string;
@@ -54,11 +55,10 @@ interface Props {
   }) => void;
 }
 
-const RESULT_STYLE: Record<"W" | "L" | "D", string> = {
-  W: "bg-blue-500/15 text-blue-500",
-  L: "bg-red-500/15 text-red-500",
-  D: "bg-gray-500/15 text-text-secondary",
-};
+/** 승패 색은 홈 팀카드 기준 SSOT(@/lib/ui/result-tone)를 따른다. */
+function resultStyle(result: "W" | "L" | "D") {
+  return resultToneChipStyle(gameResultTone(result));
+}
 
 function resultText(result: "W" | "L" | "D"): string {
   return result === "W" ? "승" : result === "L" ? "패" : "무";
@@ -382,7 +382,10 @@ export default function VenueDiaryUploader({ game, isOpen, onBack, onClose, onUp
                 <p className="mt-0.5 text-sm font-bold text-text-primary flex items-center gap-1.5">
                   {game.matchLabel}
                   {game.result && (
-                    <span className={`rounded px-1.5 py-0.5 text-[11px] font-bold ${RESULT_STYLE[game.result]}`}>
+                    <span
+                      className="rounded px-1.5 py-0.5 text-[11px] font-bold"
+                      style={resultStyle(game.result)}
+                    >
                       {resultText(game.result)}
                     </span>
                   )}

@@ -4,6 +4,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CalendarDays, Play, Plus, RefreshCw, Trophy } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { getTeamById } from "@/lib/constants/teams";
+import {
+  gameResultTone,
+  resultToneChipStyle,
+  resultToneTextStyle,
+} from "@/lib/ui/result-tone";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { getSafeSession } from "@/lib/supabase/client";
 import type {
@@ -510,9 +515,9 @@ export default function VenueDiaryCard() {
                 </div>
                 <div className="mt-3 flex items-center justify-between gap-2 border-t border-[#2c1f27] pt-3">
                   <div className="flex gap-3 text-[13px] font-bold">
-                    <span className="text-blue-400">{shown.wins}승</span>
-                    <span className="text-red-400">{shown.losses}패</span>
-                    <span className="text-white/70">{shown.draws}무</span>
+                    <span style={resultToneTextStyle("positive")}>{shown.wins}승</span>
+                    <span style={resultToneTextStyle("negative")}>{shown.losses}패</span>
+                    <span style={resultToneTextStyle("neutral")}>{shown.draws}무</span>
                   </div>
                   <span className="shrink-0 whitespace-nowrap text-[11px] text-white/55">
                     {diaryWinRateScopeCaption(winScope)}
@@ -581,13 +586,8 @@ export default function VenueDiaryCard() {
                       </div>
                       {game.result && (
                         <span
-                          className={`shrink-0 rounded-lg px-2 py-0.5 text-[11px] font-extrabold ${
-                            game.result === "W"
-                              ? "bg-blue-500/15 text-blue-400"
-                              : game.result === "L"
-                                ? "bg-accent/15 text-accent"
-                                : "bg-gray-500/15 text-text-secondary"
-                          }`}
+                          className="shrink-0 rounded-lg px-2 py-0.5 text-[11px] font-extrabold"
+                          style={resultToneChipStyle(gameResultTone(game.result))}
                         >
                           {game.result === "W" ? "승" : game.result === "L" ? "패" : "무"}
                         </span>

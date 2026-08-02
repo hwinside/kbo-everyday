@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getVerifiedUserFromRequest } from "@/lib/auth/verified-user";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
+import { normalizeNickname, validateNickname } from "@/lib/validation/nickname";
 
 const MAX_CHANGES_PER_30_DAYS = 2;
 const WINDOW_DAYS = 30;
@@ -8,22 +9,6 @@ const WINDOW_DAYS = 30;
 type NicknameChangeRow = {
   changed_at: string;
 };
-
-function normalizeNickname(value: unknown) {
-  return typeof value === "string" ? value.trim() : "";
-}
-
-function validateNickname(nickname: string) {
-  if (nickname.length < 2 || nickname.length > 12) {
-    return "닉네임은 2~12자로 입력해주세요";
-  }
-
-  if (!/^[가-힣a-zA-Z0-9]+$/.test(nickname)) {
-    return "한글, 영문, 숫자만 사용 가능합니다";
-  }
-
-  return null;
-}
 
 function buildStatus(changes: NicknameChangeRow[]) {
   const used = changes.length;
