@@ -9,7 +9,7 @@
  * 검증 축:
  *  ① 결손 E 를 0 으로 승격하지 않는가 (공용 파서는 `e ?? 0`/`bsSafeInt("")=0` 로 승격함)
  *  ② KBO valid → 채택 / KBO 결손·비final → Naver / 양쪽 결손 → 미확인(key 부재)
- *  ③ canonical 최종 스코어와 exact 대조해 stale·타 경기 응답 거부
+ *  ③ canonical 경기 ID·팀·최종 스코어와 exact 대조해 stale·타 경기 응답 거부
  *  ④ deadline 이 실제 fetch 를 abort 하는가, 중복 gameId 제거
  */
 import "./_smoke-env";
@@ -38,7 +38,8 @@ function ok(label: string, condition: boolean, detail = "") {
 /** KBO GetScoreBoard 실제 shape. tail 4칸 = R/H/E/BB. */
 function kboPayload(opts: {
   awayR: string; awayE: string; homeR: string; homeE: string;
-  endTm?: string; cancel?: string;
+  gameId?: string; gameDate?: string; awayCode?: string; homeCode?: string;
+  endTm?: string; cancel?: string; cancelId?: string;
 }) {
   const row = (r: string, e: string) => ({
     row: [
@@ -48,14 +49,57 @@ function kboPayload(opts: {
     ],
   });
   return [
-    [{ END_TM: opts.endTm ?? "21:30", CANCEL_SC_NM: opts.cancel ?? "" }],
+    [{
+      G_ID: opts.gameId ?? "20260801LGOB0",
+      G_DT: opts.gameDate ?? "2026-08-01",
+      AWAY_ID: opts.awayCode ?? "LG",
+      HOME_ID: opts.homeCode ?? "OB",
+      END_TM: opts.endTm ?? "21:30",
+      CANCEL_SC_NM: opts.cancel ?? "",
+      CANCEL_SC_ID: opts.cancelId ?? "",
+    }],
     [JSON.stringify({ rows: [row(opts.awayR, opts.awayE), row(opts.homeR, opts.homeE)] })],
   ];
 }
 
 /** Naver record 실제 shape. */
-function naverPayload(rheb: { away: Record<string, unknown>; home: Record<string, unknown> }) {
-  return { result: { recordData: { scoreBoard: { inn: { away: [0], home: [0] }, rheb } } } };
+function naverPayload(
+  rheb: { away: Record<string, unknown>; home: Record<string, unknown> },
+  gameInfo: Record<string, unknown> = {},
+) {
+  return {
+    result: {
+      recordData: {
+        gameInfo: {
+          gdate: 20260801,
+          aCode: "LG",
+          hCode: "OB",
+          statusCode: "4",
+          cancelFlag: "N",
+          ...gameInfo,
+        },
+        scoreBoard: { inn: { away: [0], home: [0] }, rheb },
+      },
+    },
+  };
+}
+
+function canonicalGame(
+  gameId = "20260801LGOB0",
+  opts: Partial<{
+    awayTeamId: number;
+    homeTeamId: number;
+    awayScore: number;
+    homeScore: number;
+  }> = {},
+) {
+  return {
+    gameId,
+    awayTeamId: opts.awayTeamId ?? 1,
+    homeTeamId: opts.homeTeamId ?? 2,
+    awayScore: opts.awayScore ?? 2,
+    homeScore: opts.homeScore ?? 3,
+  };
 }
 
 async function main() {
@@ -99,6 +143,24 @@ async function main() {
     ok(
       "KBO: 취소 경기 → 관측 null",
       parseKboErrorObservation(kboPayload({ awayR: "0", awayE: "0", homeR: "0", homeE: "0", cancel: "우천취소" })) === null,
+    );
+    ok(
+      "KBO: 취소 코드 → 관측 null",
+      parseKboErrorObservation(kboPayload({ awayR: "0", awayE: "0", homeR: "0", homeE: "0", cancelId: "1" })) === null,
+    );
+    ok(
+      "Naver: 비final(statusCode!=4) → 관측 null",
+      parseNaverErrorObservation(naverPayload(
+        { away: { r: 1, h: 5, e: 1 }, home: { r: 0, h: 4, e: 0 } },
+        { statusCode: "3" },
+      )) === null,
+    );
+    ok(
+      "Naver: 취소(cancelFlag!=N) → 관측 null",
+      parseNaverErrorObservation(naverPayload(
+        { away: { r: 0, h: 0, e: 0 }, home: { r: 0, h: 0, e: 0 } },
+        { cancelFlag: "Y" },
+      )) === null,
     );
   }
 
@@ -147,9 +209,9 @@ async function main() {
     ok("양쪽 예외 → 미확인(null)", bothThrow === null);
   }
 
-  // ── ④ canonical 최종 스코어 exact 대조 (stale/타 경기 거부) ──────────────
+  // ── ④ canonical identity·팀·최종 스코어 exact 대조 ───────────────────────
   {
-    const canonical = { awayScore: 2, homeScore: 5 };
+    const canonical = canonicalGame("20260801LGOB0", { awayScore: 2, homeScore: 5 });
     const mismatchedKbo = await fetchGameErrors("20260801LGOB0", {
       canonical,
       fetchers: {
@@ -173,6 +235,69 @@ async function main() {
     });
     ok("양쪽 스코어 불일치 → 미확인(null)", bothMismatch === null, JSON.stringify(bothMismatch));
 
+    const sameScoreOtherGame = await fetchGameErrors("20260801LGOB0", {
+      canonical,
+      fetchers: {
+        kbo: async () => kboPayload({
+          gameId: "20260801KTOB0",
+          awayCode: "KT",
+          awayR: "2",
+          awayE: "9",
+          homeR: "5",
+          homeE: "8",
+        }),
+        naver: async () => naverPayload({
+          away: { r: 2, h: 7, e: 1 },
+          home: { r: 5, h: 9, e: 0 },
+        }),
+      },
+    });
+    ok(
+      "KBO 동일 스코어 다른 경기·팀 → 거부하고 정상 Naver 채택",
+      sameScoreOtherGame?.away === 1 && sameScoreOtherGame.home === 0,
+      JSON.stringify(sameScoreOtherGame),
+    );
+
+    const mismatchedNaverIdentity = await fetchGameErrors("20260801LGOB0", {
+      canonical,
+      fetchers: {
+        kbo: async () => null,
+        naver: async () => naverPayload(
+          { away: { r: 2, h: 7, e: 9 }, home: { r: 5, h: 9, e: 8 } },
+          { gdate: 20260802, aCode: "KT", hCode: "OB" },
+        ),
+      },
+    });
+    ok(
+      "Naver 동일 스코어 다른 날짜·팀 → 미확인(null)",
+      mismatchedNaverIdentity === null,
+      JSON.stringify(mismatchedNaverIdentity),
+    );
+
+    const nonFinalNaver = await fetchGameErrors("20260801LGOB0", {
+      canonical,
+      fetchers: {
+        kbo: async () => null,
+        naver: async () => naverPayload(
+          { away: { r: 2, h: 7, e: 9 }, home: { r: 5, h: 9, e: 8 } },
+          { statusCode: "3" },
+        ),
+      },
+    });
+    ok("Naver 동일 스코어 비final → 미확인(null)", nonFinalNaver === null);
+
+    const cancelledNaver = await fetchGameErrors("20260801LGOB0", {
+      canonical,
+      fetchers: {
+        kbo: async () => null,
+        naver: async () => naverPayload(
+          { away: { r: 2, h: 7, e: 9 }, home: { r: 5, h: 9, e: 8 } },
+          { cancelFlag: "Y" },
+        ),
+      },
+    });
+    ok("Naver 동일 스코어 취소 → 미확인(null)", cancelledNaver === null);
+
     // canonical 없으면 대조를 건너뛴다(비final 경기 등).
     const noCanonical = await fetchGameErrors("20260801LGOB0", {
       canonical: null,
@@ -183,25 +308,27 @@ async function main() {
 
   // ── ⑤ 배치 — 미확인 경기는 Map 에 키 자체가 없다 ─────────────────────────
   {
+    const gameA = "20260801LGOB0";
+    const gameB = "20260802LGOB0";
     const batch = await fetchGameErrorsWithinDeadline(
       [
-        { gameId: "A", canonical: { awayScore: 1, homeScore: 2 } },
-        { gameId: "B", canonical: { awayScore: 1, homeScore: 2 } },
-        { gameId: "A", canonical: { awayScore: 1, homeScore: 2 } }, // 중복
+        { gameId: gameA, canonical: canonicalGame(gameA, { awayScore: 1, homeScore: 2 }) },
+        { gameId: gameB, canonical: canonicalGame(gameB, { awayScore: 1, homeScore: 2 }) },
+        { gameId: gameA, canonical: canonicalGame(gameA, { awayScore: 1, homeScore: 2 }) }, // 중복
       ],
       {
         fetchers: {
           kbo: async (id) =>
-            id === "A"
-              ? kboPayload({ awayR: "1", awayE: "2", homeR: "2", homeE: "1" })
-              : kboPayload({ awayR: "1", awayE: "", homeR: "2", homeE: "" }),
+            id === gameA
+              ? kboPayload({ gameId: id, awayR: "1", awayE: "2", homeR: "2", homeE: "1" })
+              : kboPayload({ gameId: id, gameDate: "2026-08-02", awayR: "1", awayE: "", homeR: "2", homeE: "" }),
           naver: async () => null,
         },
       },
     );
-    ok("확인된 경기만 Map 에 존재", batch.size === 1 && batch.has("A"), JSON.stringify([...batch]));
-    ok("미확인 경기는 키 부재(0 아님)", !batch.has("B"));
-    ok("중복 gameId 는 1회만 처리", batch.get("A")?.away === 2);
+    ok("확인된 경기만 Map 에 존재", batch.size === 1 && batch.has(gameA), JSON.stringify([...batch]));
+    ok("미확인 경기는 키 부재(0 아님)", !batch.has(gameB));
+    ok("중복 gameId 는 1회만 처리", batch.get(gameA)?.away === 2);
   }
 
   // ── ⑥ deadline 이 실제 fetch 를 abort 하는가 (삼순 P1) ───────────────────
@@ -244,7 +371,8 @@ async function main() {
   // 다시 조회하고 있었다(삼순 실측: 동일 경기 2회 호출 시 KBO fetch 2회).
   // ⚠️ 성공만 캐시한다 — 미확인을 캐시하면 소스가 정상화돼도 영원히 "모름"으로 굳는다.
   {
-    const canonical = { awayScore: 2, homeScore: 3 };
+    const gameId = "20260801LGOB0";
+    const canonical = canonicalGame(gameId);
 
     __resetGameErrorCaches();
     let hits = 0;
@@ -252,13 +380,13 @@ async function main() {
       kbo: async () => { hits += 1; return kboPayload({ awayR: "2", awayE: "1", homeR: "3", homeE: "0" }); },
       naver: async () => null,
     };
-    const first = await fetchGameErrorsWithinDeadline([{ gameId: "G1", canonical }], { fetchers: okFetchers });
-    const second = await fetchGameErrorsWithinDeadline([{ gameId: "G1", canonical }], { fetchers: okFetchers });
+    const first = await fetchGameErrorsWithinDeadline([{ gameId, canonical }], { fetchers: okFetchers });
+    const second = await fetchGameErrorsWithinDeadline([{ gameId, canonical }], { fetchers: okFetchers });
     ok("동일 경기 2회 조회 시 소스 fetch 1회(complete-only cache)", hits === 1, `hits=${hits}`);
     ok(
       "캐시 결과가 최초 결과와 동일",
-      JSON.stringify(first.get("G1")) === JSON.stringify(second.get("G1")),
-      `${JSON.stringify(first.get("G1"))} vs ${JSON.stringify(second.get("G1"))}`,
+      JSON.stringify(first.get(gameId)) === JSON.stringify(second.get(gameId)),
+      `${JSON.stringify(first.get(gameId))} vs ${JSON.stringify(second.get(gameId))}`,
     );
 
     // 미확인은 캐시하지 않는다 → 소스 정상화 시 복구되어야 한다.
@@ -274,11 +402,11 @@ async function main() {
       },
       naver: async () => null,
     };
-    const unknown = await fetchGameErrorsWithinDeadline([{ gameId: "G2", canonical }], { fetchers: recovering });
+    const unknown = await fetchGameErrorsWithinDeadline([{ gameId, canonical }], { fetchers: recovering });
     ok("미확인 경기는 Map 에 없음", unknown.size === 0);
     broken = false;
-    const recovered = await fetchGameErrorsWithinDeadline([{ gameId: "G2", canonical }], { fetchers: recovering });
-    ok("미확인은 캐시하지 않아 소스 정상화 시 복구", recovered.get("G2")?.away === 1, JSON.stringify(recovered.get("G2")));
+    const recovered = await fetchGameErrorsWithinDeadline([{ gameId, canonical }], { fetchers: recovering });
+    ok("미확인은 캐시하지 않아 소스 정상화 시 복구", recovered.get(gameId)?.away === 1, JSON.stringify(recovered.get(gameId)));
     ok("복구를 위해 소스를 다시 호출함", recoverCalls === 2, `calls=${recoverCalls}`);
 
     // canonical 이 다르면(스코어 정정 등) 다른 키 → 재조회.
@@ -288,9 +416,9 @@ async function main() {
       kbo: async () => { keyCalls += 1; return kboPayload({ awayR: "2", awayE: "1", homeR: "3", homeE: "0" }); },
       naver: async () => null,
     };
-    await fetchGameErrorsWithinDeadline([{ gameId: "G3", canonical }], { fetchers: keyFetchers });
+    await fetchGameErrorsWithinDeadline([{ gameId, canonical }], { fetchers: keyFetchers });
     await fetchGameErrorsWithinDeadline(
-      [{ gameId: "G3", canonical: { awayScore: 5, homeScore: 1 } }],
+      [{ gameId, canonical: canonicalGame(gameId, { awayScore: 5, homeScore: 1 }) }],
       { fetchers: keyFetchers },
     );
     ok("canonical 스코어가 바뀌면 캐시를 재사용하지 않음", keyCalls === 2, `calls=${keyCalls}`);
@@ -307,11 +435,11 @@ async function main() {
       naver: async () => null,
     };
     const [c1, c2] = await Promise.all([
-      fetchGameErrorsWithinDeadline([{ gameId: "G4", canonical }], { fetchers: slowOk }),
-      fetchGameErrorsWithinDeadline([{ gameId: "G4", canonical }], { fetchers: slowOk }),
+      fetchGameErrorsWithinDeadline([{ gameId, canonical }], { fetchers: slowOk }),
+      fetchGameErrorsWithinDeadline([{ gameId, canonical }], { fetchers: slowOk }),
     ]);
     ok("동시 요청은 single-flight 로 1회만 조회", concurrentCalls === 1, `calls=${concurrentCalls}`);
-    ok("동시 요청 양쪽 모두 결과 수신", c1.get("G4")?.away === 2 && c2.get("G4")?.away === 2);
+    ok("동시 요청 양쪽 모두 결과 수신", c1.get(gameId)?.away === 2 && c2.get(gameId)?.away === 2);
   }
 
   // ── ⑧ single-flight 가 첫 호출자 deadline 에 종속되지 않는다 (삼순 P1) ────
@@ -320,7 +448,8 @@ async function main() {
   // (actual: A=null, B=null, source call=1, abort=1).
   {
     __resetGameErrorCaches();
-    const canonical = { awayScore: 2, homeScore: 3 };
+    const gameId = "20260801LGOB0";
+    const canonical = canonicalGame(gameId);
     let calls = 0;
     const slow = async (_id: string, signal?: AbortSignal) => {
       calls += 1;
@@ -330,17 +459,17 @@ async function main() {
       });
     };
     const [shortDeadline, longDeadline] = await Promise.all([
-      fetchGameErrorsWithinDeadline([{ gameId: "SF1", canonical }], {
+      fetchGameErrorsWithinDeadline([{ gameId, canonical }], {
         deadlineMs: 40, fetchers: { kbo: slow, naver: slow },
       }),
-      fetchGameErrorsWithinDeadline([{ gameId: "SF1", canonical }], {
+      fetchGameErrorsWithinDeadline([{ gameId, canonical }], {
         deadlineMs: 500, fetchers: { kbo: slow, naver: slow },
       }),
     ]);
     ok("짧은 deadline 호출자는 자기 예산에서 미확인", shortDeadline.size === 0, JSON.stringify([...shortDeadline]));
     ok(
       "긴 deadline 호출자는 다른 호출자의 abort 에 죽지 않음",
-      longDeadline.get("SF1")?.away === 1,
+      longDeadline.get(gameId)?.away === 1,
       JSON.stringify([...longDeadline]),
     );
     ok("합류했으므로 소스는 1회만 호출", calls === 1, `calls=${calls}`);
@@ -349,14 +478,15 @@ async function main() {
   // ── ⑨ 모든 대기자가 이탈하면 shared flight 도 정리된다 ────────────────────
   {
     __resetGameErrorCaches();
-    const canonical = { awayScore: 2, homeScore: 3 };
+    const gameId = "20260801LGOB0";
+    const canonical = canonicalGame(gameId);
     let aborted = false;
     const slow = async (_id: string, signal?: AbortSignal) =>
       new Promise<unknown>((resolve, reject) => {
         const t = setTimeout(() => resolve(kboPayload({ awayR: "2", awayE: "1", homeR: "3", homeE: "0" })), 3_000);
         signal?.addEventListener("abort", () => { aborted = true; clearTimeout(t); reject(new Error("aborted")); });
       });
-    await fetchGameErrorsWithinDeadline([{ gameId: "SF2", canonical }], {
+    await fetchGameErrorsWithinDeadline([{ gameId, canonical }], {
       deadlineMs: 60, fetchers: { kbo: slow, naver: slow },
     });
     // 유일한 대기자가 떠났으므로 in-flight 네트워크 작업도 취소돼야 한다(고아 방지).
@@ -366,10 +496,10 @@ async function main() {
     // 취소된 뒤에는 캐시가 없으므로 다음 요청이 다시 조회한다(영구 '모름' 금지).
     let retryCalls = 0;
     const fast = async () => { retryCalls += 1; return kboPayload({ awayR: "2", awayE: "1", homeR: "3", homeE: "0" }); };
-    const retry = await fetchGameErrorsWithinDeadline([{ gameId: "SF2", canonical }], {
+    const retry = await fetchGameErrorsWithinDeadline([{ gameId, canonical }], {
       fetchers: { kbo: fast, naver: fast },
     });
-    ok("취소 후 재요청은 정상 복구", retry.get("SF2")?.away === 1 && retryCalls === 1, `calls=${retryCalls}`);
+    ok("취소 후 재요청은 정상 복구", retry.get(gameId)?.away === 1 && retryCalls === 1, `calls=${retryCalls}`);
   }
 
   console.log(`\n결과: ${pass} pass / ${fail} fail`);

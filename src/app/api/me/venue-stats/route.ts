@@ -519,7 +519,8 @@ export async function GET(req: NextRequest) {
     ]);
 
   // 실책(D7) — linescore 기반이라 원장과 무관. 실패 경기는 Map 에 안 들어간다(=미확인).
-  // ⚠️ canonical 최종 스코어를 함께 넘겨 stale/다른 경기 응답을 걸러낸다(삼순 P0).
+  // ⚠️ canonical 경기 identity·팀·최종 스코어를 함께 넘겨 stale/다른 경기 응답을
+  //    exact 대조한다(삼순 P0).
   //    경기 목록 조회 뒤에 실행해야 canonical 을 알 수 있으므로 위 Promise.all 밖이다.
   const gameErrors = await fetchGameErrorsWithinDeadline(
     gameIds.map((gameId) => {
@@ -528,7 +529,13 @@ export async function GET(req: NextRequest) {
         game?.status === "final" &&
         typeof game.awayScore === "number" &&
         typeof game.homeScore === "number"
-          ? { awayScore: game.awayScore, homeScore: game.homeScore }
+          ? {
+              gameId: game.gameId,
+              awayTeamId: game.awayTeamId,
+              homeTeamId: game.homeTeamId,
+              awayScore: game.awayScore,
+              homeScore: game.homeScore,
+            }
           : null;
       return { gameId, canonical };
     }),

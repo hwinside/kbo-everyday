@@ -21,6 +21,8 @@
  * 조회 실패는 사실이 아니라 무지다).
  */
 
+import { resolveTeamId } from "@/lib/crawler/kbo-api";
+
 /** 한 경기의 원정/홈 실책 수. */
 export interface GameErrorCounts {
   away: number;
@@ -29,6 +31,12 @@ export interface GameErrorCounts {
 
 /** 소스가 돌려준 raw 관측값. `null` = 그 소스에서 확인 불가. */
 export interface RawErrorObservation {
+  source: "kbo" | "naver";
+  /** KBO 는 경기 ID exact, Naver 는 record gameInfo 의 경기일자를 보존한다. */
+  gameId: string | null;
+  gameDate: string;
+  awayTeamId: number;
+  homeTeamId: number;
   away: number;
   home: number;
   /** 교차검증용 최종 득점. canonical 과 대조해 stale/live 응답을 거른다. */
@@ -77,12 +85,24 @@ function stripHtml(v: string): string {
 export function parseKboErrorObservation(data: unknown): RawErrorObservation | null {
   if (!Array.isArray(data) || data.length < 2 || !data[1]) return null;
   const meta = Array.isArray(data[0]) && data[0].length > 0 ? data[0][0] : null;
+  const metaRecord = meta as Record<string, unknown> | null;
   const cancelName = String(
-    (meta as Record<string, unknown> | null)?.CANCEL_SC_NM ?? "",
+    metaRecord?.CANCEL_SC_NM ?? "",
   );
-  if (cancelName.includes("취소") || cancelName.includes("우천")) return null;
+  const cancelId = String(metaRecord?.CANCEL_SC_ID ?? "").trim();
+  if (
+    cancelName.includes("취소") ||
+    cancelName.includes("우천") ||
+    (cancelId !== "" && cancelId !== "0")
+  ) return null;
   // 종료 경기만 — 진행 중 스코어보드의 중간 실책을 최종값으로 쓰지 않는다.
-  if (!String((meta as Record<string, unknown> | null)?.END_TM ?? "").trim()) return null;
+  if (!String(metaRecord?.END_TM ?? "").trim()) return null;
+
+  const gameId = String(metaRecord?.G_ID ?? "").trim();
+  const gameDate = String(metaRecord?.G_DT ?? "").replaceAll("-", "").trim();
+  const awayTeamId = resolveTeamId(String(metaRecord?.AWAY_ID ?? "").trim(), "");
+  const homeTeamId = resolveTeamId(String(metaRecord?.HOME_ID ?? "").trim(), "");
+  if (!gameId || !/^\d{8}$/.test(gameDate) || awayTeamId <= 0 || homeTeamId <= 0) return null;
 
   let parsed: { rows?: { row: { Text: string }[] }[] };
   try {
@@ -108,14 +128,38 @@ export function parseKboErrorObservation(data: unknown): RawErrorObservation | n
   const away = side(parsed.rows[0]?.row);
   const home = side(parsed.rows[1]?.row);
   if (!away || !home) return null;
-  return { away: away.errors, home: home.errors, awayRuns: away.runs, homeRuns: home.runs };
+  return {
+    source: "kbo",
+    gameId,
+    gameDate,
+    awayTeamId,
+    homeTeamId,
+    away: away.errors,
+    home: home.errors,
+    awayRuns: away.runs,
+    homeRuns: home.runs,
+  };
 }
 
 /** Naver record raw → 실책 관측. `rheb.*.e` 가 실제로 숫자일 때만 채택. */
 export function parseNaverErrorObservation(json: unknown): RawErrorObservation | null {
-  const sb = (json as Record<string, never> | null)?.result?.["recordData"]?.["scoreBoard"] as
+  const recordData = (json as Record<string, never> | null)?.result?.["recordData"] as
+    | Record<string, unknown>
+    | undefined;
+  const sb = recordData?.scoreBoard as
     | { rheb?: { away?: Record<string, unknown>; home?: Record<string, unknown> } }
     | undefined;
+  const gameInfo = recordData?.gameInfo as Record<string, unknown> | undefined;
+  const gameDate = String(gameInfo?.gdate ?? "").trim();
+  const awayTeamId = resolveTeamId(String(gameInfo?.aCode ?? "").trim(), "");
+  const homeTeamId = resolveTeamId(String(gameInfo?.hCode ?? "").trim(), "");
+  if (
+    !/^\d{8}$/.test(gameDate) ||
+    awayTeamId <= 0 ||
+    homeTeamId <= 0 ||
+    String(gameInfo?.statusCode ?? "") !== "4" ||
+    String(gameInfo?.cancelFlag ?? "") !== "N"
+  ) return null;
   const rheb = sb?.rheb;
   if (!rheb?.away || !rheb?.home) return null;
   const awayE = parseErrorCell(rheb.away.e);
@@ -124,7 +168,17 @@ export function parseNaverErrorObservation(json: unknown): RawErrorObservation |
   const homeR = parseErrorCell(rheb.home.r);
   // 한쪽만 유효하면 그 경기는 통째로 미확인 — 반쪽 사실로 태그를 만들지 않는다.
   if (awayE === null || homeE === null || awayR === null || homeR === null) return null;
-  return { away: awayE, home: homeE, awayRuns: awayR, homeRuns: homeR };
+  return {
+    source: "naver",
+    gameId: null,
+    gameDate,
+    awayTeamId,
+    homeTeamId,
+    away: awayE,
+    home: homeE,
+    awayRuns: awayR,
+    homeRuns: homeR,
+  };
 }
 
 export interface GameErrorFetchers {
@@ -154,8 +208,11 @@ async function defaultNaverFetch(gameId: string, signal?: AbortSignal): Promise<
   return res.json();
 }
 
-/** 직관 경기의 canonical 최종 스코어 — stale/다른 경기 응답을 걸러내는 기준. */
-export interface CanonicalScore {
+/** 직관 경기 canonical — 원천의 경기 identity·팀·final score 를 exact 대조한다. */
+export interface CanonicalGame {
+  gameId: string;
+  awayTeamId: number;
+  homeTeamId: number;
   awayScore: number;
   homeScore: number;
 }
@@ -163,14 +220,15 @@ export interface CanonicalScore {
 /**
  * 경기 1건의 팀별 실책. KBO → Naver failover. 확인 불가면 null.
  *
- * `canonical` 을 주면 소스 응답의 최종 득점과 **exact 대조**해서, 다른 경기·중간
- * 상태 응답을 채택하지 않는다(삼순 P0). 대조에 실패하면 다음 소스로 넘어간다.
+ * `canonical` 을 주면 소스 응답의 경기 identity·팀·최종 득점을 **exact 대조**해서,
+ * 다른 경기·중간 상태 응답을 채택하지 않는다(삼순 P0). 대조에 실패하면 다음
+ * 소스로 넘어간다.
  */
 export async function fetchGameErrors(
   gameId: string,
   options: {
     fetchers?: GameErrorFetchers;
-    canonical?: CanonicalScore | null;
+    canonical?: CanonicalGame | null;
     signal?: AbortSignal;
   } = {},
 ): Promise<GameErrorCounts | null> {
@@ -178,7 +236,14 @@ export async function fetchGameErrors(
 
   const matchesCanonical = (o: RawErrorObservation) =>
     canonical == null ||
-    (o.awayRuns === canonical.awayScore && o.homeRuns === canonical.homeScore);
+    (canonical.gameId === gameId &&
+      (o.source === "kbo"
+        ? o.gameId === canonical.gameId
+        : o.gameDate === canonical.gameId.slice(0, 8)) &&
+      o.awayTeamId === canonical.awayTeamId &&
+      o.homeTeamId === canonical.homeTeamId &&
+      o.awayRuns === canonical.awayScore &&
+      o.homeRuns === canonical.homeScore);
 
   try {
     if (signal?.aborted) return null;
@@ -215,7 +280,7 @@ export async function fetchGameErrors(
  * 그런데 `GET /api/me/venue-stats` 는 매 요청마다 전 직관 경기를 조회하고 있었다
  * (삼순 실측: 동일 경기 2회 호출 시 KBO fetch 2회).
  *
- * ⚠️ **성공 + canonical 일치만 캐시한다.** 미확인·timeout·스코어 불일치는 캐시하지
+ * ⚠️ **성공 + canonical 일치만 캐시한다.** 미확인·timeout·identity/스코어 불일치는 캐시하지
  * 않는다 — 그걸 캐시하면 소스가 정상화돼도 영원히 "모름"으로 굳는다(no-store 후 재시도).
  * canonical 이 없는 조회(비final 등)도 캐시하지 않는다. 확정 근거가 없기 때문이다.
  */
@@ -240,8 +305,15 @@ interface SharedFlight {
 }
 const inFlight = new Map<string, SharedFlight>();
 
-function cacheKey(gameId: string, canonical: CanonicalScore): string {
-  return `${gameId}|${canonical.awayScore}-${canonical.homeScore}`;
+function cacheKey(gameId: string, canonical: CanonicalGame): string {
+  return [
+    gameId,
+    canonical.gameId,
+    canonical.awayTeamId,
+    canonical.homeTeamId,
+    canonical.awayScore,
+    canonical.homeScore,
+  ].join("|");
 }
 
 /** 테스트 전용 — 캐시/single-flight 상태 초기화. */
@@ -257,7 +329,7 @@ async function fetchGameErrorsCached(
   gameId: string,
   options: {
     fetchers?: GameErrorFetchers;
-    canonical?: CanonicalScore | null;
+    canonical?: CanonicalGame | null;
     signal?: AbortSignal;
   },
 ): Promise<GameErrorCounts | null> {
@@ -338,7 +410,7 @@ async function fetchGameErrorsCached(
  * **확인 못 한 경기는 Map 에 넣지 않는다** — 호출측이 "키 부재 = 미확인"으로 읽는다.
  */
 export async function fetchGameErrorsWithinDeadline(
-  games: readonly { gameId: string; canonical?: CanonicalScore | null }[],
+  games: readonly { gameId: string; canonical?: CanonicalGame | null }[],
   options: {
     deadlineMs?: number;
     maxConcurrency?: number;

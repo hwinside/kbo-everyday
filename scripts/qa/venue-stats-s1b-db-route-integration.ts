@@ -1203,7 +1203,11 @@ async function routeGameErrorsWiringRegression() {
     }],
   };
   /** KBO GetScoreBoard raw — tail 4칸 R/H/E/BB. 원정 LG 2실책 / 홈 한화 0. */
-  const scoreBoardPayload = (awayE: string, homeE: string) => {
+  const scoreBoardPayload = (
+    awayE: string,
+    homeE: string,
+    identity: { gameId?: string; awayCode?: string; homeCode?: string } = {},
+  ) => {
     const row = (r: string, e: string) => ({
       row: [
         { Text: "" }, { Text: "T" },
@@ -1212,12 +1216,25 @@ async function routeGameErrorsWiringRegression() {
       ],
     });
     return [
-      [{ END_TM: "21:30", CANCEL_SC_NM: "" }],
+      [{
+        G_ID: identity.gameId ?? GAME_ID,
+        G_DT: "2025-07-25",
+        AWAY_ID: identity.awayCode ?? "LG",
+        HOME_ID: identity.homeCode ?? "HH",
+        END_TM: "21:30",
+        CANCEL_SC_NM: "",
+      }],
       [JSON.stringify({ rows: [row("15", awayE), row("11", homeE)] })],
     ];
   };
 
-  const install = (opts: { awayE: string; homeE: string }) => {
+  const install = (opts: {
+    awayE: string;
+    homeE: string;
+    scoreGameId?: string;
+    awayCode?: string;
+    homeCode?: string;
+  }) => {
     const calls: string[] = [];
     client.auth.getUser = async (token) => ({
       data: { user: token === "owner-token" ? { id: "owner-user" } : null },
@@ -1241,7 +1258,11 @@ async function routeGameErrorsWiringRegression() {
         return new Response(JSON.stringify(gameListPayload), { status: 200 });
       }
       if (u.includes("GetScoreBoard")) {
-        return new Response(JSON.stringify(scoreBoardPayload(opts.awayE, opts.homeE)), { status: 200 });
+        return new Response(JSON.stringify(scoreBoardPayload(opts.awayE, opts.homeE, {
+          gameId: opts.scoreGameId,
+          awayCode: opts.awayCode,
+          homeCode: opts.homeCode,
+        })), { status: 200 });
       }
       // Naver fallback 포함 그 외 소스는 실패 처리 — 미확인 경로 검증용.
       return new Response("{}", { status: 500 });
@@ -1284,6 +1305,23 @@ async function routeGameErrorsWiringRegression() {
     assert.equal(d7.value.errorProneGames, 1, "2실책 = 발암경기 임계 도달");
     assert.equal(d7.value.worstGame.gameId, GAME_ID);
     console.log("  ✓ route actual: raw GetScoreBoard → D7 사실값(1경기·내 팀 2실책, 원정 귀속)");
+
+    // ── RED: 같은 최종 스코어라도 다른 경기·팀 원천이면 거부 ───────────────
+    install({
+      awayE: "9",
+      homeE: "8",
+      scoreGameId: "20250725KTHH0",
+      awayCode: "KT",
+    });
+    const wrongIdentityBody = await runGet();
+    const wrongIdentityD7 = wrongIdentityBody.overall.metrics.D7;
+    assert.equal(
+      wrongIdentityD7.value,
+      null,
+      `동일 스코어 다른 경기·팀 원천은 미확인이어야 함: ${JSON.stringify(wrongIdentityD7)}`,
+    );
+    assert.equal(wrongIdentityD7.n, 0);
+    console.log("  ✓ route actual: 동일 스코어 다른 경기·팀 원천 → D7 미확인");
 
     // ── RED: 소스가 E 를 비우면 미확인 — 0 으로 승격되지 않는다 ─────────────
     install({ awayE: "", homeE: "" });
