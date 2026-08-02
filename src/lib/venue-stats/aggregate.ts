@@ -1637,7 +1637,11 @@ function buildD7(ctx: Ctx): MetricEnvelope<D7Value> {
 
   const envelope: MetricEnvelope<D7Value> = {
     id: "D7",
-    state: known.length === 0 && state !== "empty" ? "sample_limited" : state,
+    // ⚠️ §12 사다리(`invalid_snapshot > no_final > sample_limited`)를 덮지 않는다(삼순 P1).
+    //    이전 구현은 `known===0` 이면 `empty` 외 전부 `sample_limited` 로 덮어써서
+    //    cancelled-only(`no_final`)·snapshot 결측/불일치(`invalid_snapshot`)까지 지웠다.
+    //    실책을 못 구한 것은 **정상 final 인데 소스가 없을 때**만 표본 문제다.
+    state: known.length === 0 && state === "ready" ? "sample_limited" : state,
     value: null,
     n: known.length,
     denominator: { knownErrorGames: known.length },

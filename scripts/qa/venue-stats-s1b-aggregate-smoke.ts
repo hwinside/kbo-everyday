@@ -413,6 +413,24 @@ console.log("\n[4] cancelled-only / 복합 invalid snapshot / no_favorite");
 
   const noFav = buildVenueStatsScope(input({ rows: [att(G1.gameId, "story_geofence")], favorites: [] }));
   ok("final≥1 + 최애 없음 → C1=no_favorite", noFav.metrics.C1.state === "no_favorite");
+
+  // ── D7 상태 사다리 보존 (삼순 P1 2026-08-02) ────────────────────────────
+  // 이전 구현은 `known===0` 이면 `empty` 외 전부 `sample_limited` 로 덮어써서
+  // §12 사다리(`invalid_snapshot > no_final > sample_limited`) 상위 상태를 지웠다.
+  // 실책을 못 구한 것은 **정상 final 인데 소스가 없을 때**만 표본 문제다.
+  ok("cancelled-only: D7=no_final (sample_limited 로 덮지 않음)",
+    cancelledOnly.metrics.D7.state === "no_final", cancelledOnly.metrics.D7.state);
+  ok("snapshot 결측: D7=invalid_snapshot (사다리 보존)",
+    compound.metrics.D7.state === "invalid_snapshot", compound.metrics.D7.state);
+  ok("snapshot team mismatch: D7=invalid_snapshot (사다리 보존)",
+    mismatch.metrics.D7.state === "invalid_snapshot", mismatch.metrics.D7.state);
+  // 정상 final 인데 소스만 없는 경우에만 sample_limited.
+  const normalNoSource = buildVenueStatsScope(input({
+    rows: [att(G1.gameId, "story_geofence")], gameErrors: new Map(),
+  }));
+  ok("정상 final + 실책 소스 미확인 → D7=sample_limited·value=null",
+    normalNoSource.metrics.D7.state === "sample_limited" && normalNoSource.metrics.D7.value === null,
+    `${normalNoSource.metrics.D7.state} / ${JSON.stringify(normalNoSource.metrics.D7.value)}`);
 }
 
 // ── 5) mixed team (§10·§11) ──────────────────────────────────────────────────
