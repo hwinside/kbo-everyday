@@ -15,6 +15,7 @@ import { useAuth } from "@/lib/supabase/AuthContext";
 import LoginSheet from "@/components/auth/LoginSheet";
 import { createPost, toggleLike } from "@/lib/supabase/usePosts";
 import { useUnifiedFeed } from "@/lib/supabase/useUnifiedFeed";
+import { useFeedScrollRestore } from "@/lib/community/useFeedScrollRestore";
 
 export default function CommunityTeamBoardPage() {
   const params = useParams();
@@ -30,8 +31,15 @@ export default function CommunityTeamBoardPage() {
   const { user } = useAuth();
 
   // 글·사진 한 스트림 통합 피드 (전체글/팀/선수 동일 컴포넌트 공유).
-  const { posts, likedIds, loading, loadingMore, hasMore, loadMore, setPostLiked, reload } =
-    useUnifiedFeed({ kind: "team", teamId: teamSlug });
+  // 복원은 이 라우트 경로로 되돌아온 뒤로가기에서만 발동한다(restorePath).
+  const feedPath = `/community/teams/${teamSlug}`;
+  const {
+    posts, likedIds, loading, loadingMore, hasMore, loadMore, setPostLiked, reload,
+    feedKey, pageCountRef, pendingScrollY, consumePendingScroll,
+  } = useUnifiedFeed({ kind: "team", teamId: teamSlug }, 20, { restorePath: feedPath });
+
+  // 글 상세 진입 후 뒤로가기로 돌아오면 보던 위치·분량 복원(#cs 제보).
+  useFeedScrollRestore({ feedKey, feedPath, pageCountRef, loading, pendingScrollY, consumePendingScroll });
 
   // 좋아요: optimistic 토글 → 서버 반영 → 실패/불일치 시 롤백·reconcile. 비로그인은 no-op.
   const handleLike = useCallback(
