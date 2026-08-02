@@ -169,7 +169,7 @@ await build({
 
 const metricIds = [
   "A1","A2","A3","A4","A5","A6","B1","B2","B3","B4",
-  "C1","C2","C4","C5","C6","D1","D5","D6","E1","E2","E3","E4",
+  "C1","C2","C4","C5","C6","D1","D5","D6","D7","E1","E2","E3","E4",
 ];
 const envelope = (id, value, denominator = { finalGames: 8 }) => ({
   id, state: "ready", value, n: 8, denominator, coverage: {},
@@ -247,6 +247,12 @@ const scope = (name, wins, rate, excessWin = .18, excessMargin = 1.4) => {
   metrics.D1 = envelope("D1", {avgRunDiff:1.4,closeGameRate:.25,closeGames:2});
   metrics.D5 = envelope("D5", {cancelledCount:1});
   metrics.D6 = envelope("D6", {maxTeamRuns:{gameId:"g",date:"2026-07-12",runs:9},maxMarginWin:null});
+  // D7 실책 — 기본 fixture 는 발암경기 과반(3/5) → `발암경기 인내형` 이 실제 DOM 에 떠야 한다.
+  metrics.D7 = envelope("D7", {
+    myTeamErrors: 8, opponentErrors: 2, errorProneGames: 3,
+    myErrorsPerGame: 1.6, knownGames: 5,
+    worstGame: { gameId: "20260725LGHH0", date: "2026-07-25", errors: 3 },
+  });
   metrics.E1 = envelope("E1", {current:3,longest:5,perTeam:[]});
   metrics.E2 = envelope("E2", {seasonCount:8,monthly:[],avgPerActiveMonth:2});
   metrics.E3 = envelope("E3", {firstAttendanceDate:"2024-04-01",daysSinceFirst:842,totalGames:17});
@@ -470,6 +476,14 @@ const losingSplitScope = (name) => {
     coverage: { dayGameOpportunity: { attendanceDayGames: 1, attendanceTotal: 3, seasonDayGames: 0, seasonTotal: 100 } },
   };
   base.metrics.A6 = envelope("A6", [{month:7,w:0,l:3,d:0,rate:0}]);
+  // 실책 미확인(조회 실패) — 확인된 경기 0건이면 실책 태그가 하나도 뜨면 안 된다.
+  base.metrics.D7 = {
+    ...envelope("D7", null),
+    state: "sample_limited",
+    n: 0,
+    denominator: { knownErrorGames: 0 },
+    coverage: { unknownErrorGames: 3 },
+  };
   return base;
 };
 const losingSplitPayload = {
@@ -633,6 +647,26 @@ try {
   for (const lowerTier of ["첫 원정", "원정러", "전국구 팬"]) {
     if (expandedText.includes(lowerTier)) {
       throw new Error(`상위 등급 도달 시 하위 등급이 함께 뜨면 안 됨: ${lowerTier} / ${expandedText}`);
+    }
+  }
+
+  // ── 실책 태그 DOM 배선 RED (삼순 P1 2026-08-02) ─────────────────────────
+  // 직전 라운드에서는 Dashboard 의 errors-seen / clean-defense push 를 둘 다 지워도
+  // browser 가 그대로 PASS 했다(삼순 mutation 실증). fixture 에 D7 자체가 없었기 때문이다.
+  // fixture: 발암경기 3/5 → `발암경기 인내형` + 근거 문자열이 실제 DOM 에 있어야 한다.
+  if (!expandedText.includes("발암경기 인내형")) {
+    throw new Error(`발암경기 3/5 이면 '발암경기 인내형' 태그가 화면에 있어야 함: ${expandedText}`);
+  }
+  if (!expandedText.includes("발암경기 3/5")) {
+    throw new Error(`실책 태그 근거 문자열이 정확해야 함: ${expandedText}`);
+  }
+  if (!expandedText.includes("한 경기 3실책")) {
+    throw new Error(`최악 경기 근거가 포함돼야 함: ${expandedText}`);
+  }
+  // heavy 와 clean 은 동시에 뜨지 않는다.
+  for (const conflicting of ["무결점 수비 관람", "상대 실책 수집가", "실책 목격자"]) {
+    if (expandedText.includes(conflicting)) {
+      throw new Error(`발암경기 인내형과 동시 노출 금지: ${conflicting} / ${expandedText}`);
     }
   }
 
@@ -1139,6 +1173,12 @@ try {
   }
   if (/햇살 직관러|낮경기 수집가/.test(losingText)) {
     throw new Error(`낮경기 기회 baseline 0이면 성향 태그를 붙이면 안 됨: ${losingText}`);
+  }
+  // 실책 확인 0건(조회 실패)이면 실책 태그가 하나도 뜨면 안 된다 — 미확인을 0으로 읽지 않는다.
+  for (const errorTag of ["발암경기 인내형", "실책 목격자", "무결점 수비 관람", "상대 실책 수집가"]) {
+    if (losingText.includes(errorTag)) {
+      throw new Error(`실책 미확인인데 태그가 붙음: ${errorTag} / ${losingText}`);
+    }
   }
 
   console.log(

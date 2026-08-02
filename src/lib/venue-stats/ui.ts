@@ -665,29 +665,43 @@ export interface VenueErrorTags {
  *
  * ⚠️ 분모 계약이 핵심이다. 실책은 linescore 조회가 실패할 수 있어 경기별로 **미확인**이
  * 존재하고, D7 은 확인된 경기만 `knownGames` 로 센다. 미확인을 0으로 세면 "실책을 안 본
- * 사람"으로 둔갑하므로, D7 이 `ready` 가 아니면 태그를 아예 만들지 않는다.
+ * 사람"으로 둔갑하므로, 확인된 경기가 0이면 태그를 아예 만들지 않는다.
+ *
+ * ⚠️ 표본 가드는 **태그 성격별로 다르다**(삼순 P1 2026-08-02). 이전에는 네 태그 모두
+ * `MIN_FINAL_GAMES=3` 을 요구해, 실측 48명 분포(1경기 43·2경기 4·4경기 1) 기준
+ * **47/48명이 어떤 태그에도 도달하지 못했다.** "사소한 태그도 많이"라는 제품 의도와 정반대다.
+ *  - 성향 주장(`발암경기 인내형` = "원래 그런 경기를 많이 본다") → 3경기+ 필요
+ *  - 사실 서술(`실책 목격자`·`무결점 수비 관람`·`상대 실책 수집가`) → 1경기부터 성립
  */
 export function venueErrorTags(value: D7Value | null | undefined): VenueErrorTags {
   const empty: VenueErrorTags = { heavy: null, clean: null };
   if (!value) return empty;
   const { myTeamErrors, opponentErrors, errorProneGames, knownGames, worstGame } = value;
-  if (!Number.isFinite(knownGames) || knownGames < MIN_FINAL_GAMES) return empty;
+  if (!Number.isFinite(knownGames) || knownGames < 1) return empty;
   if (!Number.isFinite(errorProneGames)) return empty;
 
   const evidence = `내 팀 ${myTeamErrors}실책 · ${knownGames}경기`;
 
-  if (errorProneGames > 0) {
-    // 발암경기를 절반 이상 봤으면 강한 신호, 아니면 목격 사실만.
-    const heavyShare = errorProneGames / knownGames;
+  // ── 성향 태그: "이 사람은 원래 발암경기를 많이 본다" 는 주장이라 표본 3경기+ 필요 ──
+  if (knownGames >= MIN_FINAL_GAMES && errorProneGames / knownGames >= 0.5) {
     const worstText = worstGame && worstGame.errors >= ERROR_PRONE_MIN
       ? `한 경기 ${worstGame.errors}실책 · `
       : "";
     return {
-      heavy: heavyShare >= 0.5
-        ? { label: "발암경기 인내형", value: `${worstText}발암경기 ${errorProneGames}/${knownGames}` }
-        : { label: "실책 목격자", value: `${worstText}${evidence}` },
+      heavy: {
+        label: "발암경기 인내형",
+        value: `${worstText}발암경기 ${errorProneGames}/${knownGames}`,
+      },
       clean: null,
     };
+  }
+
+  // ── 사실 태그: "그런 경기를 봤다"는 단일 사건 서술이라 1경기부터 성립 ──
+  if (errorProneGames > 0) {
+    const worstText = worstGame && worstGame.errors >= ERROR_PRONE_MIN
+      ? `한 경기 ${worstGame.errors}실책 · `
+      : "";
+    return { heavy: { label: "실책 목격자", value: `${worstText}${evidence}` }, clean: null };
   }
   if (myTeamErrors === 0) {
     return {
@@ -695,7 +709,6 @@ export function venueErrorTags(value: D7Value | null | undefined): VenueErrorTag
       clean: { label: "무결점 수비 관람", value: `${knownGames}경기 내 팀 실책 0` },
     };
   }
-  // 상대 실책을 더 많이 본 경우 — 반사이익 태그.
   if (opponentErrors > myTeamErrors * 2 && opponentErrors >= 2) {
     return {
       heavy: null,

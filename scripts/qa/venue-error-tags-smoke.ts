@@ -78,46 +78,71 @@ console.log("D7 실책 태그 — 실측 분포 임계 + 확인된 경기만 분
   ok("D7 값 없음(미확인) → 태그 없음",
     venueErrorTags(null).heavy === null && venueErrorTags(null).clean === null);
   ok("undefined → 태그 없음", venueErrorTags(undefined).heavy === null);
-  ok("확인된 경기 2건(최소 표본 미만) → 태그 없음",
-    venueErrorTags(d7({ knownGames: 2, myTeamErrors: 6, errorProneGames: 2 })).heavy === null);
+  ok("확인된 경기 0건 → 태그 없음",
+    venueErrorTags(d7({ knownGames: 0, myTeamErrors: 0 })).heavy === null);
   ok("errorProneGames 비유한값 → 태그 없음",
     venueErrorTags(d7({ errorProneGames: Number.NaN, myTeamErrors: 9 })).heavy === null);
 }
 
-// ── ③ 발암경기 인내형 (하린아빠 지시 태그 본체) ────────────────────────────
+// ── ③ 표본 가드는 태그 성격별로 다르다 (삼순 P1 2026-08-02) ────────────────
+// 실측 48명 분포는 1경기 43 · 2경기 4 · 4경기 1 이다. 네 태그 모두 3경기+를 요구하면
+// 47/48명이 어떤 태그에도 도달하지 못한다 — "사소한 태그도 많이"와 정반대.
 {
-  // 5경기 중 3경기가 발암경기 → 과반 → 강한 신호
+  // 성향 주장은 3경기+ 필요.
+  const oneGameHeavy = venueErrorTags(d7({
+    knownGames: 1, myTeamErrors: 2, errorProneGames: 1,
+    worstGame: { gameId: "g", date: "2026-07-25", errors: 2 },
+  }));
+  ok("1경기에서는 '발암경기 인내형'(성향 주장)을 붙이지 않는다",
+    oneGameHeavy.heavy?.label !== "발암경기 인내형", JSON.stringify(oneGameHeavy.heavy));
+  // 하지만 사실 서술은 1경기부터 성립해야 한다.
+  ok("1경기여도 '실책 목격자'(사실 서술)는 붙는다",
+    oneGameHeavy.heavy?.label === "실책 목격자", JSON.stringify(oneGameHeavy.heavy));
+
+  ok("1경기 실책 0 → 무결점 수비 관람",
+    venueErrorTags(d7({ knownGames: 1, myTeamErrors: 0 })).clean?.label === "무결점 수비 관람");
+  ok("1경기 상대 실책 우위 → 상대 실책 수집가",
+    venueErrorTags(d7({ knownGames: 1, myTeamErrors: 1, opponentErrors: 3 })).clean?.label
+      === "상대 실책 수집가");
+
+  // RED — 실측 P50(1경기) 유저가 어떤 태그에도 못 닿으면 FAIL.
+  const p50Cases = [
+    d7({ knownGames: 1, myTeamErrors: 0 }),
+    d7({ knownGames: 1, myTeamErrors: 2, errorProneGames: 1 }),
+    d7({ knownGames: 1, myTeamErrors: 1, opponentErrors: 3 }),
+  ];
+  ok(
+    "실측 P50(1경기) 유저도 태그에 도달 가능(도달 불가 등급만 만들지 않기)",
+    p50Cases.every((v) => {
+      const t = venueErrorTags(v);
+      return t.heavy != null || t.clean != null;
+    }),
+  );
+
+  // 3경기+ 과반이면 성향 태그로 승격.
   const heavy = venueErrorTags(d7({
     myTeamErrors: 8, errorProneGames: 3, knownGames: 5,
     worstGame: { gameId: "20260725LGHH0", date: "2026-07-25", errors: 3 },
   })).heavy;
-  ok("발암경기 과반 → 발암경기 인내형", heavy?.label === "발암경기 인내형", JSON.stringify(heavy));
+  ok("3경기+ 발암경기 과반 → 발암경기 인내형", heavy?.label === "발암경기 인내형", JSON.stringify(heavy));
   ok("근거에 발암경기/분모 표기", heavy?.value.includes("3/5") === true, heavy?.value);
   ok("최악 경기도 근거에 포함", heavy?.value.includes("한 경기 3실책") === true, heavy?.value);
 
-  // 5경기 중 1경기만 발암 → 목격 사실만
   const moderate = venueErrorTags(d7({
     myTeamErrors: 3, errorProneGames: 1, knownGames: 5,
     worstGame: { gameId: "g", date: "2026-07-25", errors: 2 },
   })).heavy;
   ok("발암경기 소수 → 실책 목격자", moderate?.label === "실책 목격자", JSON.stringify(moderate));
 
-  // 발암경기 0이면 heavy 태그 없음
   ok("발암경기 0 → heavy 없음",
     venueErrorTags(d7({ myTeamErrors: 2, errorProneGames: 0, knownGames: 5 })).heavy === null);
 }
 
-// ── ④ 반대편 태그 (많을수록 좋다 — 사소한 태그 확대) ──────────────────────
+// ── ④ 반대편 태그 ─────────────────────────────────────────────────────────
 {
   const clean = venueErrorTags(d7({ myTeamErrors: 0, knownGames: 6 })).clean;
   ok("내 팀 실책 0 → 무결점 수비 관람", clean?.label === "무결점 수비 관람", JSON.stringify(clean));
   ok("무결점 근거에 분모 표기", clean?.value.includes("6경기") === true, clean?.value);
-
-  const reflected = venueErrorTags(d7({
-    myTeamErrors: 1, opponentErrors: 4, knownGames: 5,
-  })).clean;
-  ok("상대 실책이 2배 초과 → 상대 실책 수집가",
-    reflected?.label === "상대 실책 수집가", JSON.stringify(reflected));
 
   const both = venueErrorTags(d7({
     myTeamErrors: 9, opponentErrors: 20, errorProneGames: 3, knownGames: 5,
