@@ -661,6 +661,9 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
           <img src="/logo-mark.png" alt="크보팬" style={{height: "30px", objectFit: "contain"}} className="-ml-0.5 hidden dark:block" />
         </div>
         <div className="flex items-center gap-1">
+          {/* 야잘알봇 바로가기 — 쪽지 아이콘 왼쪽 (2026-08-02 하린아빠 지시).
+              ⚠️ 홈은 HeaderProfileLink 를 쓰지 않고 이 헤더를 직접 렌더한다.
+              그래서 공용 컴포넌트만 고치면 홈 유저에게는 진입점이 안 붙는다(삼순 NO-GO P0-1). */}
           <GeniusEntryButton />
           {user ? (
             <Link href="/messages" aria-label="쪽지" className="relative flex h-11 w-11 items-center justify-center rounded-full text-text-secondary hover:bg-bg-tertiary transition-colors">
