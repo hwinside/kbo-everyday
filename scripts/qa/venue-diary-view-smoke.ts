@@ -787,24 +787,39 @@ async function runAsyncRegressions() {
   // ── counts owner-key: 재오픈/유저 전환 첫 렌더 stale counts fail-closed ──
   // 시나리오: user A 로 open(seq1) → counts 확정(owner=A:1) → 닫기 → 재오픈(seq2).
   // 재오픈 첫 렌더는 currentKey=A:2 인데 owner 는 아직 A:1 → 불일치 → ready=false(선택 차단).
-  const openerA1 = diaryCountsOwnerKey("userA", 1);
+  const openerA1 = diaryCountsOwnerKey("userA", 1, 2026);
   assert.equal(
-    diaryCountsReady(openerA1, diaryCountsOwnerKey("userA", 1)),
+    diaryCountsReady(openerA1, diaryCountsOwnerKey("userA", 1, 2026)),
     true,
-    "counts 확정된 같은 (user, open) 세션은 ready",
+    "counts 확정된 같은 (user, open, season) 세션은 ready",
   );
   assert.equal(
-    diaryCountsReady(openerA1, diaryCountsOwnerKey("userA", 2)),
+    diaryCountsReady(openerA1, diaryCountsOwnerKey("userA", 2, 2026)),
     false,
     "재오픈(openSeq 증가) 첫 렌더는 이전 counts owner 와 불일치 → fail-closed",
   );
   assert.equal(
-    diaryCountsReady(openerA1, diaryCountsOwnerKey("userB", 1)),
+    diaryCountsReady(openerA1, diaryCountsOwnerKey("userB", 1, 2026)),
     false,
     "유저 전환 첫 렌더는 다른 user 라 불일치 → fail-closed(다른 유저 counts 잔존 0)",
   );
+  // 시즌 전환: 2026 counts 를 2025 시트에 그대로 쓰면 기존 10/10 경기가 0/10 으로 오표시돼
+  // 상한을 뚚는 fail-open 이 된다 → season 이 key 에 들어가 첫 렌더부터 차단돼야 한다.
   assert.equal(
-    diaryCountsReady(null, diaryCountsOwnerKey("userA", 1)),
+    diaryCountsReady(openerA1, diaryCountsOwnerKey("userA", 1, 2025)),
+    false,
+    "시즌 전환 첫 렌더는 다른 시즌 counts 라 불일치 → fail-closed",
+  );
+  assert.equal(
+    diaryCountsReady(
+      diaryCountsOwnerKey("userA", 1, 2025),
+      diaryCountsOwnerKey("userA", 1, 2025),
+    ),
+    true,
+    "2025 counts 확정 후 2025 시트는 ready",
+  );
+  assert.equal(
+    diaryCountsReady(null, diaryCountsOwnerKey("userA", 1, 2026)),
     false,
     "counts 미확정(owner=null)은 항상 fail-closed",
   );
