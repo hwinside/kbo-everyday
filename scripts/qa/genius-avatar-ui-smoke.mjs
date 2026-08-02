@@ -37,6 +37,11 @@ const CHAT_SLOT = 96;           // 대화방 슬롯
 const CHAT_MIN_VISIBLE = 72;    // 대화방 캐릭터 최소 가시 높이
 const CHAT_HEADER_MIN = 108;
 const CHAT_HEADER_MAX = 112;
+// 48px 렌더 슬롯에서 source alpha bbox(126/128 × 189/192)는 래스터 반올림으로
+// 세로 47/48px가 된다. 정적 원본 비율(0.984375)과 브라우저 렌더 비율
+// (0.979166...)에 서로 다른 0.98 기준을 적용하면 같은 자산이 축마다 엇갈린다.
+// 검수 기준은 최종 렌더의 최소 47/48로 한 곳에 고정한다.
+const MIN_ALPHA_BBOX_RATIO = 47 / 48;
 
 // 대화방 부제 문구 (하린아빠 2026-08-01 확정)
 const GENIUS_SUBTITLE = "야구 밖에 모르는 바보 AI봇";
@@ -210,8 +215,8 @@ try {
   }
   const alphaWidthRatio = (maxX - minX + 1) / asset.info.width;
   const alphaHeightRatio = (maxY - minY + 1) / asset.info.height;
-  ok("asset: 알파 bbox 가로·세로 비율 >= 0.98",
-     alphaWidthRatio >= 0.98 && alphaHeightRatio >= 0.98,
+  ok(`asset: 알파 bbox 가로·세로 비율 >= ${MIN_ALPHA_BBOX_RATIO.toFixed(6)}`,
+     alphaWidthRatio >= MIN_ALPHA_BBOX_RATIO && alphaHeightRatio >= MIN_ALPHA_BBOX_RATIO,
      `${alphaWidthRatio.toFixed(3)}×${alphaHeightRatio.toFixed(3)}`);
   if (process.argv.includes("--static-only")) {
     const staticFailed = results.filter((result) => !result.pass);
