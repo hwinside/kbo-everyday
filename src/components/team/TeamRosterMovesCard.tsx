@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { getTeamBgColor, type TeamData } from "@/lib/constants/teams";
+import { resultToneChipStyle } from "@/lib/ui/result-tone";
 
 interface Move {
   kboPlayerId: string;
@@ -119,12 +120,13 @@ export default function TeamRosterMovesCard({ team }: Props) {
               {g.items.map((m, i) => {
                 const isRegister = m.moveType === "register";
                 const label = isRegister ? "등록" : "말소";
-                const labelColor = isRegister ? "#34D399" : "#F87171";
+                // 긍부정 색·배경 모두 홈 팀카드 기준 SSOT(@/lib/ui/result-tone) — 화면마다 다시 적지 않는다.
+                // ⚠️ 배경을 `${color}1f` 로 파생시키면 SSOT 배경값을 우회한다(삼순 3차 지적).
                 const body = (
                   <div className="flex items-center gap-2 py-0.5">
                     <span
                       className="flex-shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-bold"
-                      style={{ color: labelColor, backgroundColor: `${labelColor}1f` }}
+                      style={resultToneChipStyle(isRegister ? "positive" : "negative")}
                     >
                       {label}
                     </span>

@@ -1,0 +1,60 @@
+name: Community Profile UI Gate
+
+# 게시글 작성자 헤더와 닉네임 정책의 실제 브라우저/API 회귀를 fail-closed로 고정한다.
+# Vercel prebuild는 브라우저가 없을 수 있으므로, 이 job이 Chromium 설치와 실제 DOM 검증을 맡는다.
+on:
+  # 실제 DOM 하네스가 TeamBadge/DMButton/PostViewBadge/PostActionsMenu 등 여러 실물
+  # 의존성을 렌더한다. paths allowlist는 새 의존 추가 때 workflow 자체를 SKIP시키므로
+  # 모든 PR에서 실행해 trigger false-green을 원천 차단한다.
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  community-profile-ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Prove missing-browser paths are RED
+        run: |
+          missing_browsers="$(mktemp -d)"
+          if PLAYWRIGHT_BROWSERS_PATH="$missing_browsers" POST_HEADER_REQUIRE_BROWSER=1 npm run qa:post-detail-header-nowrap-browser; then
+            echo "FAIL: post header browser gate passed without Chromium"
+            exit 1
+          fi
+          if PLAYWRIGHT_BROWSERS_PATH="$missing_browsers" NICKNAME_EDIT_REQUIRE_BROWSER=1 npm run qa:nickname-edit-sheet-browser; then
+            echo "FAIL: nickname edit browser gate passed without Chromium"
+            exit 1
+          fi
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Lint regression harnesses
+        run: npx eslint --max-warnings=0 scripts/qa/post-detail-header-nowrap-browser.mjs scripts/qa/nickname-api-behavior.mjs scripts/qa/nickname-edit-sheet-browser.mjs src/lib/validation/nickname.ts
+
+      - name: Run source and API contracts
+        run: |
+          npm run qa:post-detail-header-nowrap
+          npm run qa:nickname-length
+          npm run qa:nickname-api
+
+      - name: Run 390px post header browser gate
+        env:
+          POST_HEADER_REQUIRE_BROWSER: "1"
+        run: npm run qa:post-detail-header-nowrap-browser
+
+      - name: Run legacy nickname edit browser gate
+        env:
+          NICKNAME_EDIT_REQUIRE_BROWSER: "1"
+        run: npm run qa:nickname-edit-sheet-browser
