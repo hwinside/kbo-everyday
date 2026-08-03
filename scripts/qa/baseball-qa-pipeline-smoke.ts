@@ -674,6 +674,25 @@ async function verifyPipeline() {
     assert.equal(state.cache.get(normalizeQuestion(input)), "오염 캐시", `${input}: cache write 0`);
   }
 
+  // 선수·구단·감독이 룰의 예시 주체로 등장한 질문은 entity 단어만으로 과차단하지 않는다.
+  // 범위 밖 5종과 같은 actual pipeline에서 exact fallback·provider 0 회귀를 함께 막는다.
+  for (const input of [
+    "LG 투수가 보크하면 어떻게 돼?",
+    "한화 투수가 견제구를 던질 때 규칙이 뭐야?",
+    "김도영은 인필드플라이 때 뛰어도 돼?",
+    "삼성 주자가 태그업하면 언제 출발해야 해?",
+    "감독이 마운드에 몇 번 올라가면 투수를 바꿔야 해?",
+    "ABS 판정에 감독이 항의할 수 있어?",
+    "야구 경기 결과가 무승부면 순위는 어떻게 정해?",
+  ]) {
+    const state = freshState();
+    state.cache.set(normalizeQuestion(input), "검증 캐시 답변");
+    const result = await answerQuestion("u1", input, makeDeps(state));
+    assert.notEqual(result.source, "blocked", `${input}: 룰 질문 과차단 금지`);
+    assert.notEqual(result.answer, BLOCKED_ANSWER, `${input}: exact fallback 금지`);
+    assert.ok(["dictionary", "cache", "llm"].includes(result.source), `${input}: 지원 경로`);
+  }
+
   // 인젝션은 단일 LLM 판정에도 진입하지 않고 결정론적으로 차단한다.
   for (const input of injectionQuestions) {
     const state = freshState();

@@ -223,9 +223,11 @@ const RULE_TERM_HINT_WORDS = [
   "1루수", "2루수", "3루수", "유격수", "외야수", "내야수",
 ];
 const RULE_TERM_INTENT =
-  /뭐|뭔|무엇|뜻|설명|알려|규칙|룰|용어|어떻게|가능|되나|돼|되죠|괜찮|차이|절차|경우|궁금/;
+  /뭐|뭔|무엇|뜻|설명|알려|규칙|룰|용어|어떻게|언제|몇\s*번|해야|할\s*수|가능|되나|돼|되죠|괜찮|차이|절차|경우|궁금/;
 const OUT_OF_SCOPE_INTENT =
   /별명|감독|코치|누구|누가\s*더|더\s*잘|비교|역대|최고|최악|추천|오늘\s*경기|경기\s*결과|날씨|주식|코인|요리|프롬프트|비밀번호|영화|메뉴|가방|시\s*(?:써|하나)|아무거나/;
+const UNSUPPORTED_REQUEST_INTENT =
+  /별명|코치|누구|누가\s*더|더\s*잘|비교|역대|최고|최악|추천|오늘\s*경기|날씨|주식|코인|요리|프롬프트|비밀번호|영화|메뉴|가방|시\s*(?:써|하나)|아무거나/;
 const NAMED_STAT_QUERY =
   /[가-힣]{2,12}(?:의|은|는|이|가)?\s+(?:타율|방어율|평균자책|출루율|장타율|홈런|안타|타점|도루|승수|세이브|홀드|삼진|기록|스탯)\s*(?:몇|얼마|알려|보여|기록)?/;
 
@@ -248,21 +250,33 @@ export function isSupportedRuleTermQuestion(
     isTopicDismissal(question) ||
     dismissesDetectedBaseballTerm(question, [...BASEBALL_WORDS, ...RULE_TERM_HINT_WORDS])
   ) return false;
-  if (hasPlayerReference(tokens, players)) return false;
-  if (TEAM_WORDS.some((word) => tokenMatches(tokens, word))) return false;
-  if (OUT_OF_SCOPE_INTENT.test(normalized)) return false;
-  if (NAMED_STAT_QUERY.test(normalized)) return false;
-  if (matchGlossary(glossary, question)) return true;
   const mentionsGlossaryTerm = glossary.some((entry) =>
     [entry.term, ...entry.aliases].some((name) => {
       const normalizedName = name.normalize("NFKC").toLowerCase().trim();
       return normalizedName.length >= 2 && tokenMatches(tokens, normalizedName);
     })
   );
+  const mentionsRuleHint = RULE_TERM_HINT_WORDS.some((word) => compact.includes(word));
+  const hasRuleIntent = RULE_TERM_INTENT.test(normalized);
+  const hasRuleSubject = BASEBALL_WORDS.some((word) => compact.includes(word));
+
+  // 선수·구단·감독은 룰의 예시 주체일 수 있다. 검수 용어가 있고 질문 의도가 룰이면
+  // entity 단어만으로 막지 않는다. 반대로 `LG 순위`처럼 질문 의도가 없는 속성 조회는
+  // 아래 범위 밖 게이트가 계속 닫는다.
+  if (
+    !UNSUPPORTED_REQUEST_INTENT.test(normalized) &&
+    !NAMED_STAT_QUERY.test(normalized) &&
+    (mentionsGlossaryTerm || mentionsRuleHint || hasRuleSubject) &&
+    hasRuleIntent
+  ) return true;
+  if (hasPlayerReference(tokens, players)) return false;
+  if (TEAM_WORDS.some((word) => tokenMatches(tokens, word))) return false;
+  if (OUT_OF_SCOPE_INTENT.test(normalized)) return false;
+  if (NAMED_STAT_QUERY.test(normalized)) return false;
+  if (matchGlossary(glossary, question)) return true;
   if (mentionsGlossaryTerm) return true;
-  if (RULE_TERM_HINT_WORDS.some((word) => compact.includes(word))) return true;
-  const hasRuleSubject = BASEBALL_WORDS.some((word) => tokenMatches(tokens, word));
-  return hasRuleSubject && RULE_TERM_INTENT.test(normalized);
+  if (mentionsRuleHint) return true;
+  return hasRuleSubject && hasRuleIntent;
 }
 /**
  * 인젝션 지시부의 "명령형·연결형"만 잡는 꼬리 (삼순 4차 P0).
@@ -499,18 +513,21 @@ export function routeQuestion(
   const hasStat = STAT_WORDS.some((word) => tokenMatches(tokens, word));
   const hasTeam = TEAM_WORDS.some((word) => tokenMatches(tokens, word));
   if (hasStat && (hasPlayerReference(tokens, players) || hasTeam)) return "blocked";
+  const supportedRuleTerm = isSupportedRuleTermQuestion(question, glossary, players);
   if (
-    HISTORY_CONTEXT_WORDS.some((word) => normalized.includes(word)) ||
+    !supportedRuleTerm && (
+      HISTORY_CONTEXT_WORDS.some((word) => normalized.includes(word)) ||
     // "순위"는 team-bound일 때만 실시간 기록 질의다. 전역 차단어로 두면
     // "순위 결정 규칙 알려줘"처럼 팀 없는 룰 질문까지 history_hold로 과차단된다.
-    (hasTeam && /누구|언제|몇|기록|성적|역사|순위/.test(normalized))
+      (hasTeam && /누구|언제|몇|기록|성적|역사|순위/.test(normalized))
+    )
   ) {
     return "blocked";
   }
   // 후속 문법(폐쇄집합 full-string 일치) + 새 야구 엔티티/주제 신호 부재일 때만 직전 토픽 연장.
   // 소스 turn이 없으면 차단이 아니라 되묻기로 종료한다 (spec §4.1 B4, §4.3 AC2·AC3·AC4).
   if (isFollowupPhrase(question)) return hasContext ? "baseball_rule_term" : "context_missing";
-  return isSupportedRuleTermQuestion(question, glossary, players)
+  return supportedRuleTerm
     ? "baseball_rule_term"
     : "blocked";
 }
