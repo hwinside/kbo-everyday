@@ -122,7 +122,7 @@ const macRecoveryFile = writeJsonl(
   fixtures.filter((fixture) => fixture.entity === "레이예스" || fixture.entity === "올러"),
   "\n",
 );
-const dry = await run([`--file=${validFile}`]);
+const dry = await run([`--file=${validFile}`, `--mac-recovery-file=${macRecoveryFile}`]);
 assert.equal(dry.code, 0, dry.stderr);
 assert.match(dry.stdout, /physical.*18/);
 assert.match(dry.stdout, /"player":3/);

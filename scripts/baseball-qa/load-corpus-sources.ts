@@ -1,7 +1,8 @@
 /**
  * A17 corpus(JSONL) → Supabase 적재.
  *
- * 실행: `npm run rag:load-corpus -- --file=/path/to/corpus.jsonl [--limit=N]`
+ * 실행: `npm run rag:load-corpus -- --file=/path/to/corpus.jsonl \
+ *   --mac-recovery-file=/path/to/recovered.jsonl [--limit=N]`
  *
  * 기본은 판정 dry-run이고, `--apply`에서 source resolve → claim → 100% chunk → embed →
  * expected-count complete를 수행한다. 전량 전에는 반드시 `--limit=5 --apply` canary로
@@ -157,6 +158,9 @@ async function main(): Promise<void> {
   const corpusRaw = readFileSync(FILE, "utf8");
   const artifactSha256 = createHash("sha256").update(corpusRaw).digest("hex");
   const parsed = parseCorpusJsonl(corpusRaw);
+  if (!MAC_RECOVERY_FILE) {
+    throw new Error("--mac-recovery-file=<recovered.jsonl>이 필요하다(collector provenance fail-close)");
+  }
   const planned = buildCorpusSourcePlan(parsed.records, roster, manifest);
   const recoveryRecords = MAC_RECOVERY_FILE
     ? parseCorpusJsonl(readFileSync(MAC_RECOVERY_FILE, "utf8")).records
@@ -208,8 +212,6 @@ async function main(): Promise<void> {
     console.log("\n[dry-run] DB를 쓰지 않았다. 전량 전 `--limit=5 --apply` canary가 필수다.");
     return;
   }
-  if (!MAC_RECOVERY_FILE) throw new Error("--apply에는 --mac-recovery-file=<recovered.jsonl>이 필요하다");
-
   const env = loadEnv();
   const url = env.NEXT_PUBLIC_SUPABASE_URL;
   const key = env.SUPABASE_SERVICE_ROLE_KEY;
