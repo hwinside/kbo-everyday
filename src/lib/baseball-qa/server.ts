@@ -34,6 +34,8 @@ import {
 import {
   buildRagLlmRequest,
   RAG_CANDIDATE_LIMIT,
+  RAG_DOCUMENT_CANDIDATE_LIMIT,
+  RAG_OFFICIAL_SYSTEM_PROMPT,
   searchSourcePriorityCandidates,
   type RagDocumentSourceKind,
   type RagEvidence,
@@ -116,6 +118,21 @@ interface RagServingChunkRow {
 }
 
 /**
+ * 공식 문서 검색 RPC 반환 행.
+ * 선수 경로와 달리 **embedding을 돌려받지 않는다** — 정렬을 DB가 끝내므로 앱은 벡터가 필요 없고,
+ * 768차원 벡터 12개를 \uc automation으로 끌어오면 응답만 무거워진다.
+ */
+interface RagOfficialChunkRow {
+  content: string;
+  page_title: string;
+  canonical_url: string;
+  revision: string;
+  section_path: string;
+  as_of: string;
+  source_grade: string;
+}
+
+/**
  * entity-filtered tier2 근거 검색.
  *
  * 서빙 뷰(genius_rag_serving_chunks)만 읽는다 — 이 뷰는 active generation chunk만 노출하므로
@@ -175,11 +192,28 @@ export async function searchRag(
 
 /** 근거를 비신뢰 데이터 블록으로만 전달하는 재서술 호출 (S2b). */
 async function callRagLlm(question: string, evidence: RagEvidence[]): Promise<LlmResult> {
+  return callRagLlmWithPrompt(question, evidence);
+}
+
+/** 공식 간행물(tier1) 근거 전용 호출 — 프롬프트만 다르고 경계는 동일하다. */
+async function callOfficialRagLlm(question: string, evidence: RagEvidence[]): Promise<LlmResult> {
+  return callRagLlmWithPrompt(question, evidence, RAG_OFFICIAL_SYSTEM_PROMPT);
+}
+
+async function callRagLlmWithPrompt(
+  question: string,
+  evidence: RagEvidence[],
+  systemPrompt?: string,
+): Promise<LlmResult> {
   if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY missing");
   const res = await fetch(GEMINI_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(buildRagLlmRequest(question, evidence)),
+    body: JSON.stringify(
+      systemPrompt
+        ? buildRagLlmRequest(question, evidence, systemPrompt)
+        : buildRagLlmRequest(question, evidence),
+    ),
     signal: AbortSignal.timeout(15000),
   });
   if (!res.ok) throw new Error(`Gemini API failed: ${res.status}`);
@@ -191,6 +225,38 @@ async function callRagLlm(question: string, evidence: RagEvidence[]): Promise<Ll
     inputTokens: data.usageMetadata?.promptTokenCount ?? null,
     outputTokens: data.usageMetadata?.candidatesTokenCount ?? null,
   };
+}
+
+/**
+ * KBO 공식 간행물(tier1) 근거 검색 — 규칙·용어 질문용.
+ *
+ * 선수 경로와의 결정적 차이: **entity로 문서를 좁힐 수 없다.** "보크가 뭐야"는 어느 간행물
+ * 몇 페이지에 답이 있는지 질문만으로 알 수 없으므로 공식 문서 코퍼스 전체가 후보다.
+ * 그래서 앱에서 코사인을 재계산하는 선수 경로와 달리 **DB가 pgvector로 정렬해 상위 N만**
+ * 돌려준다(수천 chunk를 앱으로 끌어오면 안 된다).
+ *
+ * 범위는 `entity_type='document'` + `source_grade='tier1'`로 이중 제한한다 — tier2 chunk가
+ * 이 경로로 새면 숫자 허용 계약이 깨진다.
+ */
+async function searchOfficialRag(question: string): Promise<RagEvidence[]> {
+  const embedded = await embedQuery(question);
+  if (!embedded.ok) return [];
+  // query-guard: bounded -- RPC가 RAG_DOCUMENT_CANDIDATE_LIMIT 상한을 강제하는 정렬 조회다.
+  const { data, error } = await supabaseAdmin.rpc("search_baseball_genius_official_chunks", {
+    p_query_embedding: JSON.stringify(embedded.vector),
+    p_limit: RAG_DOCUMENT_CANDIDATE_LIMIT,
+  });
+  if (error) throw error;
+  return ((data ?? []) as RagOfficialChunkRow[]).map((row) => ({
+    content: row.content,
+    pageTitle: row.page_title,
+    canonicalUrl: row.canonical_url,
+    revision: row.revision,
+    sectionPath: row.section_path,
+    asOf: row.as_of,
+    // 계약상 tier1만 돌아오지만, 호출자(`allowsNumericAnswer`)가 다시 확인할 수 있게 실값을 싱는다.
+    sourceGrade: row.source_grade === "tier1" ? ("tier1" as const) : ("tier2" as const),
+  }));
 }
 
 /** baseball_genius_previous_turn RPC 반환 행 (snake_case SQL 시그니처). */
@@ -210,6 +276,8 @@ function makeDeps(messageId: number): QaDeps {
     callLlm,
     searchRag,
     callRagLlm,
+    searchOfficialRag,
+    callOfficialRagLlm,
     recordRagDemand: async (sourceKeys) => {
       // query-guard: bounded -- RPC가 source_keys 상한(20)을 강제하는 단일 갱신이다.
       const { error } = await supabaseAdmin

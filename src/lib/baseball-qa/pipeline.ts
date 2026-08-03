@@ -10,6 +10,7 @@ import {
 } from "./context";
 import { normalizeKey, normalizeQuestion } from "./normalize";
 import {
+  allowsNumericAnswer,
   composeRagAnswer,
   isDescriptivePlayerQuestion,
   selectEvidence,
@@ -150,6 +151,15 @@ export interface QaDeps {
   searchRag?: (candidate: RagPlayerCandidate, question: string) => Promise<RagEvidence[]>;
   /** 근거를 **비신뢰 데이터**로만 전달하는 재서술 호출 (S2b). */
   callRagLlm?: (question: string, evidence: RagEvidence[]) => Promise<LlmResult>;
+  /**
+   * KBO 공식 간행물(tier1) 근거 검색 — 규칙·용어 질문용.
+   *
+   * 선수 경로와 달리 entity로 문서를 특정하지 않는다. 미배선이면 이 경로 자체가 비활성이라
+   * 기존 동작(사전 → 캐시 → 일반 LLM) 그대로다.
+   */
+  searchOfficialRag?: (question: string) => Promise<RagEvidence[]>;
+  /** 공식 간행물 근거 전용 재서술 호출. tier1이므로 근거에 적힌 숫자를 쓸 수 있다. */
+  callOfficialRagLlm?: (question: string, evidence: RagEvidence[]) => Promise<LlmResult>;
   /** 수요 기반 ingestion 우선순위용 — 질문이 지목한 source를 기록한다. 실패는 무시한다. */
   recordRagDemand?: (sourceKeys: string[]) => Promise<void>;
   /**
@@ -467,6 +477,74 @@ export function routeQuestion(
   return "baseball_rule_term";
 }
 
+/**
+ * 이 질문이 **결정론적으로** 야구 질문임을 확인했는가.
+ *
+ * `routeQuestion`은 미매칭 질문을 과차단하지 않기 위해 마지막에 `baseball_rule_term`으로
+ * **폴백**한다. 즉 비야구 질문도 이 라벨을 달고 내려오며, 비야구 판정은 LLM의
+ * NOT_BASEBALL이 맡는 구조다.
+ *
+ * 공식 RAG를 그 폴백 질문에도 태우면 **비야구 질문이 blocked 대신 unsure로 바뀌고**,
+ * 적대적 provider에서는 무관한 KBO 조문이 근거로 붙은 답이 나간다(삼순 R1 재현).
+ * 그래서 공식 RAG는 **양성 야구 신호가 실제로 있을 때만** 탄다 — 폴백 질문은 종전대로
+ * LLM 분류로 내려보낸다.
+ */
+/**
+ * "야구 얘기는 그만" 류 **주제 이탈 선언**.
+ *
+ * 삼순 R2 재현: `야구 말고 오늘 날씨 알려줘` / `야구는 됐고 주식 추천해줘` /
+ * `야구 얘기 그만하고 시를 써줘` 는 `야구` 토큰 하나 때문에 양성 신호로 잡혀
+ * NOT_BASEBALL classifier 보다 먼저 공식 RAG 를 태웠고, 무관한 KBO 조문이
+ * 근거로 붙은 답이 서빙됐다. 이런 문장은 야구 질문이 아니라 **야구를 배제하는** 문장이다.
+ */
+const TOPIC_DISMISSAL_PATTERNS: RegExp[] = [
+  /야구\s*(?:얘기|이야기|말|건)?\s*말고/,
+  /야구\s*(?:얘기|이야기)?\s*(?:는|은)?\s*(?:됐|관뒀|집어치)/,
+  /야구\s*(?:얘기|이야기)?\s*그만/,
+  /야구\s*(?:얘기|이야기)?\s*(?:는|은)?\s*(?:빼고|제외하고|아니고|아니라)/,
+];
+
+export function isTopicDismissal(question: string): boolean {
+  const normalized = question.normalize("NFKC").toLowerCase().replace(/\s+/g, " ");
+  return TOPIC_DISMISSAL_PATTERNS.some((re) => re.test(normalized));
+}
+
+function dismissesDetectedBaseballTerm(question: string, terms: readonly string[]): boolean {
+  const normalized = question.normalize("NFKC").toLowerCase().replace(/\s+/g, " ");
+  return terms.some((term) => {
+    const anchor = term.normalize("NFKC").toLowerCase().trim();
+    if (anchor.length < 2 || !normalized.includes(anchor)) return false;
+    const escaped = anchor.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(
+      `${escaped}\\s*(?:얘기|이야기|말|건)?\\s*(?:은|는)?\\s*` +
+      `(?:말고|됐고|됐으니|그만|빼고|제외하고|아니고|아니라)`,
+    ).test(normalized);
+  });
+}
+
+export function hasExplicitBaseballSignal(
+  question: string,
+  glossary: GlossaryEntry[] = [],
+): boolean {
+  const normalized = question.normalize("NFKC").toLowerCase();
+  const tokens = questionTokens(normalized);
+  // 주제 이탈 선언은 야구 토큰이 있어도 야구 질문이 아니다 — LLM 분류(NOT_BASEBALL)로 보낸다.
+  const detectedTerms = [
+    ...BASEBALL_WORDS,
+    ...glossary.flatMap((entry) => [entry.term, ...entry.aliases]),
+  ];
+  if (isTopicDismissal(question) || dismissesDetectedBaseballTerm(question, detectedTerms)) return false;
+  if (matchGlossary(glossary, question)) return true;
+  const mentionsGlossaryTerm = glossary.some((entry) =>
+    [entry.term, ...entry.aliases].some((name) => {
+      const normalizedName = name.normalize("NFKC").toLowerCase().trim();
+      return normalizedName.length >= 2 && tokenMatches(tokens, normalizedName);
+    })
+  );
+  if (mentionsGlossaryTerm) return true;
+  return BASEBALL_WORDS.some((word) => tokenMatches(tokens, word));
+}
+
 export interface ValidatedLlmAnswer {
   kind: "answer" | "blocked" | "unsure";
   answer?: string;
@@ -613,6 +691,89 @@ async function answerPlayerDescriptiveQuestion(
   return { status: 200, answer, source: "rag", remaining };
 }
 
+/**
+ * 규칙·용어 질문을 **KBO 공식 간행물(tier1) 근거**로 답한다.
+ *
+ * 선수 경로(`answerPlayerDescriptiveQuestion`)와 세 가지가 다르다:
+ *  1. entity로 문서를 특정하지 않는다 — "보크가 뭐야"는 어느 간행물 몇 페이지에 답이 있는지
+ *     질문만으로 알 수 없다. 공식 문서 전체를 벡터로 검색한다.
+ *  2. 근거가 tier1이므로 **숫자를 허용**한다(단 근거에 적힌 숫자만 — `numericTokensGrounded`).
+ *  3. 실패해도 **fail-close하지 않고 null을 돌려** 기존 경로(사전·캐시·일반 LLM)로 내려보낸다.
+ *     이게 핵심이다: 이 경로는 기존 답변 품질을 **올리기만** 하고 기존에 답하던 질문을
+ *     새로 막지 않는다. 선수 경로의 fail-close는 "근거 없으면 생성답 금지"가 목적이었지만,
+ *     규칙 질문은 원래 LLM이 답하던 정상 경로라 같은 논리를 적용하면 기능이 퇴행한다.
+ *
+ * LLM durable 경계는 동일하다 — 한 messageId가 소비하는 LLM 호출은 경로와 무관하게 1회다.
+ * 그래서 이 함수는 **LLM 경계에 들어가기 전에만** null을 돌릴 수 있다(근거 0건).
+ * 경계를 지나면 그 호출을 이미 소비했으므로 아래 일반 LLM로 내려보내지 않고 여기서 종결한다.
+ */
+async function answerOfficialDocumentQuestion(
+  userId: string,
+  question: string,
+  questionNorm: string,
+  remaining: number,
+  deps: QaDeps,
+): Promise<QaResult | null> {
+  let evidence: RagEvidence[];
+  try {
+    evidence = selectEvidence(await deps.searchOfficialRag!(question));
+  } catch {
+    return null; // 검색 실패는 기존 경로로 양보한다(기능 퇴행 금지).
+  }
+  // 근거 0건 = 공식 문서에 답이 없는 질문. LLM을 소비하기 전이므로 안전하게 기존 경로로 내려보낸다.
+  if (evidence.length === 0) return null;
+  // 공식 문서 경로인데 근거가 tier1이 아니면 계약 위반이다 — 숫자 허용을 쓰지 않는다.
+  if (!allowsNumericAnswer(evidence)) return null;
+
+  // ── durable LLM 경계 (선수 경로·일반 경로와 동일 계약) ───────────────────────
+  const failCloseError = async (status: number, answer: string): Promise<QaResult> => {
+    await deps.log({ userId, question, questionNorm, matchPath: "error", answer: null, inputTokens: null, outputTokens: null });
+    return { status, answer, source: "error", remaining };
+  };
+  let llm: LlmResult | null = null;
+  if (deps.getLlmState) {
+    let state: { started: boolean; result: LlmResult | null; ownerActive?: boolean };
+    try {
+      state = await deps.getLlmState();
+    } catch {
+      return failCloseError(503, "지금은 답변을 가져올 수 없어요. 잠시 후 다시 시도해 주세요.");
+    }
+    llm = state.result;
+    if (!llm && state.started) {
+      if (state.ownerActive) return { status: 202, answer: "", source: "pending", remaining };
+      return failCloseError(200, LLM_AMBIGUOUS_ANSWER);
+    }
+  }
+  if (!llm) {
+    if (deps.acquireLlmStart) {
+      let won = false;
+      try {
+        won = await deps.acquireLlmStart();
+      } catch {
+        return failCloseError(503, "지금은 답변을 가져올 수 없어요. 잠시 후 다시 시도해 주세요.");
+      }
+      if (!won) return { status: 202, answer: "", source: "pending", remaining };
+    }
+    try {
+      llm = await deps.callOfficialRagLlm!(question, evidence);
+    } catch {
+      // LLM 호출 실패. 경계를 이미 소비했을 수 있어 일반 경로로 내려보내지 않는다.
+      return failCloseError(200, LLM_AMBIGUOUS_ANSWER);
+    }
+    if (deps.storeLlm) await deps.storeLlm(llm);
+  }
+
+  const validated = validateRagResponse(llm.text, { numericEvidence: true, evidence });
+  if (validated.kind !== "grounded") {
+    // 공식 근거로도 답을 못 만들었다. LLM 호출을 이미 써서 일반 경로 재호출은 안 된다.
+    await deps.log({ userId, question, questionNorm, matchPath: "unsure", answer: UNSURE_ANSWER, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
+    return { status: 200, answer: UNSURE_ANSWER, source: "unsure", remaining };
+  }
+  const answer = composeRagAnswer(validated.answer, evidence[0]);
+  await deps.log({ userId, question, questionNorm, matchPath: "rag", answer, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
+  return { status: 200, answer, source: "rag", remaining };
+}
+
 export async function answerQuestion(userId: string, rawQuestion: string, deps: QaDeps): Promise<QaResult> {
   const question = rawQuestion.trim();
   const questionNorm = normalizeQuestion(question);
@@ -663,6 +824,22 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   if (hit) {
     await deps.log({ userId, question, questionNorm, matchPath: "dictionary", answer: hit.answer, inputTokens: null, outputTokens: null });
     return { status: 200, answer: hit.answer, source: "dictionary", term: hit.term, remaining };
+  }
+
+  // ②-a 규칙·용어 질문은 KBO 공식 간행물(tier1) 근거를 **global 캐시보다 먼저** 시도한다.
+  //
+  // 순서가 바뀐 이유(삼순 R2): `genius_qa_cache`에는 tier1 적재 이전에 일반 LLM이 생성해 썻은
+  // 답이 수백 행 쌓여 있다. 그것들은 공식 근거가 없던 시절의 생성답이므로 **정본보다 먼저
+  // 나가면 이번 작업이 무의미**해진다(오답 캐시가 tier1을 영원히 가린다).
+  // 검수 사전(①)은 사람이 검수한 답이므로 여전히 앞에 둔다.
+  //
+  // 또 **양성 야구 신호가 있을 때만** 탄다. `routeQuestion`은 미매칭 질문을 과차단하지 않기 위해
+  // `baseball_rule_term`으로 폴백하므로, 비야구 질문도 이 라벨로 내려온다. 그걸 공식 RAG에
+  // 통과시키면 비야구가 blocked 대신 unsure로 바뀌고 적대적 provider에서는 무관한 KBO 조문이
+  // 근거로 붙은 답이 나간다(삼순 R1 재현). 폴백 질문은 종전대로 LLM NOT_BASEBALL 분류로 보낸다.
+  if (deps.searchOfficialRag && deps.callOfficialRagLlm && hasExplicitBaseballSignal(question, glossary)) {
+    const official = await answerOfficialDocumentQuestion(userId, question, questionNorm, remaining, deps);
+    if (official) return official;
   }
 
   // ② 선수 서술형 질문은 수집된 tier2 문서 근거로만 답한다 (S2b).
