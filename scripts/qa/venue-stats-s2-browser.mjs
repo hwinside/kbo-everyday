@@ -169,6 +169,14 @@ await build({
 
 // fixture 는 result-tone-gate 와 공유한다(게이트마다 따로 적으면 한쪽만 낡아 false-green).
 import { envelope, scope, payload } from "./fixtures/venue-stats-scope.mjs";
+const excludedPayload = structuredClone(payload);
+for (const scopePayload of [excludedPayload.overall, excludedPayload.gps]) {
+  scopePayload.coverage.attendanceGames = 10;
+  scopePayload.coverage.excludedAttendance = [
+    { gameId: "preseason", reason: "non_regular_season" },
+    { gameId: "favorite-away", reason: "favorite_team_not_playing" },
+  ];
+}
 const stalePayload = {
   season:2025,
   seasonSupport:{status:"attendance_only",supportedSeason:2026},
@@ -408,7 +416,7 @@ const server = createServer((req, res) => {
       : servePartialBaseline ? partialBaselinePayload
       : serveAttendanceOnly ? attendanceOnlyPayload
       : serveSampleLimited ? sampleLimitedPayload
-      : payload;
+      : excludedPayload;
     const delay = requestedSeason === "2025" ? 300 : initial2026Served ? 10 : 0;
     if (requestedSeason === "2026") initial2026Served = true;
     return setTimeout(() => {
@@ -483,6 +491,10 @@ try {
 
   await page.goto(`http://127.0.0.1:${port}`, { waitUntil: "domcontentloaded" });
   await page.getByText("71", { exact: true }).waitFor();
+  const excludedNote = await page.getByTestId("venue-excluded-note").innerText();
+  if (excludedNote !== "통계 제외 · 시범·비정규 1경기 · 응원팀 미출전 1경기") {
+    throw new Error(`excluded attendance reason missing: ${excludedNote}`);
+  }
   const lgSegment = page.getByText("LG 응원 구간", { exact: true }).first().locator("../..");
   const hanwhaSegment = page.getByText("한화 응원 구간", { exact: true }).first().locator("../..");
   const lgText = await lgSegment.innerText();

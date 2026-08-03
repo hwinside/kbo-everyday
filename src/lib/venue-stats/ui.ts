@@ -723,8 +723,28 @@ export function venueErrorTags(value: D7Value | null | undefined): VenueErrorTag
 
 export function coverageCaption(scope: VenueStatsScopePayload): string {
   const { attendanceGames, finalGames, incompleteFinalGames, unavailableGames } = scope.coverage;
+  const excluded = scope.coverage.excludedAttendance?.length ?? 0;
   const gaps = incompleteFinalGames + unavailableGames;
+  if (excluded > 0) {
+    return `총 ${attendanceGames}경기 · 통계 ${finalGames}경기 · 제외 ${excluded}경기${
+      gaps > 0 ? ` · 확인 중 ${gaps}경기` : ""
+    }`;
+  }
   return gaps > 0
     ? `직관 ${attendanceGames}경기 · 종료 ${finalGames}경기 · 확인 중 ${gaps}경기`
     : `직관 ${attendanceGames}경기 · 종료 ${finalGames}경기 · 기록 확인 완료`;
+}
+
+export function excludedAttendanceCaption(scope: VenueStatsScopePayload): string | null {
+  const counts = (scope.coverage.excludedAttendance ?? []).reduce<Record<string, number>>(
+    (result, { reason }) => ({ ...result, [reason]: (result[reason] ?? 0) + 1 }),
+    {},
+  );
+  const parts = [
+    counts.non_regular_season ? `시범·비정규 ${counts.non_regular_season}경기` : null,
+    counts.favorite_team_not_playing
+      ? `응원팀 미출전 ${counts.favorite_team_not_playing}경기`
+      : null,
+  ].filter((part): part is string => part !== null);
+  return parts.length > 0 ? `통계 제외 · ${parts.join(" · ")}` : null;
 }

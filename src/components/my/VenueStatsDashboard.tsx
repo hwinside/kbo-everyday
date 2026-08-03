@@ -60,6 +60,7 @@ import {
   buildVenueStatsHero,
   batterCompatibility,
   coverageCaption,
+  excludedAttendanceCaption,
   formatAvg,
   formatEra,
   formatOuts,
@@ -809,6 +810,11 @@ export default function VenueStatsDashboard() {
                       ? "팀 시즌 비교값을 확인 중이에요"
                       : `팀 시즌 승률 ${formatRate(hero.teamRate)}보다 ${formatSigned(hero.deltaPp, 1, "%p")}`}
             </p>
+            {excludedAttendanceCaption(scope) && (
+              <p data-testid="venue-excluded-note" className="mt-1 text-[10px] font-bold text-amber-200/90">
+                {excludedAttendanceCaption(scope)}
+              </p>
+            )}
             {hero.teamIds.length > 0 && (
               <div className="mt-3 flex items-center gap-1.5 overflow-hidden rounded-lg border border-white/8 bg-white/[0.035] px-2.5 py-2">
                 {hero.teamIds.map((teamId) => {
