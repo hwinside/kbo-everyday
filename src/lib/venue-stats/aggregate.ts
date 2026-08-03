@@ -47,6 +47,7 @@ import type {
   E2Value,
   E3Value,
   E4Value,
+  ExcludedAttendanceEntry,
   FavoriteCoverage,
   InvalidSnapshotEntry,
   ItemEnvelope,
@@ -114,6 +115,8 @@ export interface VenueStatsAggregateInput {
   rows: VenueAttendanceRow[];
   /** 정규시즌(srId="0") 조회 결과. 없는 game_id는 game_unavailable (§10 snapshot 검증). */
   games: ReadonlyMap<string, KboGame>;
+  /** 시범·포스트·올스타 등 정규시즌 외 경기. 다이어리에는 포함하되 팀 통계에서는 제외한다. */
+  nonRegularGames: ReadonlyMap<string, KboGame>;
   /** fetchStandings 결과. null=조회 실패 → A1 팀비교 attendance_only fail-closed. */
   standings: TeamStanding[] | null;
   /** 현재 응원팀 (profiles.team_id) — E1 current 전용. */
@@ -157,6 +160,7 @@ interface ScopeGame {
   game: KboGame | null;
   stadium: string | null;
   snapshotIssue: InvalidSnapshotEntry["reason"] | null;
+  exclusionReason: ExcludedAttendanceEntry["reason"] | null;
   isFinal: boolean;
   isCancelled: boolean;
   /** final + snapshot 유효일 때만. */
@@ -174,6 +178,7 @@ interface Classified {
   /** final + snapshot 유효 (성적 모수, §5). */
   validFinal: ScopeGame[];
   invalidSnapshot: InvalidSnapshotEntry[];
+  excludedAttendance: ExcludedAttendanceEntry[];
   snapshotTeams: number[];
   dedupedRows: number;
 }
@@ -212,20 +217,30 @@ function classify(input: VenueStatsAggregateInput): Classified {
 
   const all: ScopeGame[] = [];
   const invalidSnapshot: InvalidSnapshotEntry[] = [];
+  const excludedAttendance: ExcludedAttendanceEntry[] = [];
   const teams = new Set<number>();
 
   for (const row of rows) {
-    const game = input.games.get(row.game_id) ?? null;
+    const regularGame = input.games.get(row.game_id) ?? null;
+    const nonRegularGame = input.nonRegularGames.get(row.game_id) ?? null;
+    const game = regularGame ?? nonRegularGame;
+    let exclusionReason: ExcludedAttendanceEntry["reason"] | null =
+      !regularGame && nonRegularGame ? "non_regular_season" : null;
     let issue: InvalidSnapshotEntry["reason"] | null = null;
-    if (row.favorite_team_id_snapshot == null) issue = "snapshot_missing";
-    else if (!game) issue = "game_unavailable";
-    else if (
+    if (exclusionReason === null && row.favorite_team_id_snapshot == null) {
+      issue = "snapshot_missing";
+    } else if (exclusionReason === null && !game) {
+      issue = "game_unavailable";
+    } else if (
+      exclusionReason === null &&
+      game &&
       game.awayTeamId !== row.favorite_team_id_snapshot &&
       game.homeTeamId !== row.favorite_team_id_snapshot
     ) {
-      issue = "snapshot_team_mismatch";
+      exclusionReason = "favorite_team_not_playing";
     }
     if (issue) invalidSnapshot.push({ gameId: row.game_id, reason: issue });
+    if (exclusionReason) excludedAttendance.push({ gameId: row.game_id, reason: exclusionReason });
 
     const isFinal = game?.status === "final";
     let myScore: number | null = null;
@@ -233,7 +248,7 @@ function classify(input: VenueStatsAggregateInput): Classified {
     let result: "W" | "L" | "D" | null = null;
     let isHome: boolean | null = null;
     let opponentTeamId: number | null = null;
-    if (!issue && game && isFinal && game.awayScore != null && game.homeScore != null) {
+    if (!issue && !exclusionReason && game && isFinal && game.awayScore != null && game.homeScore != null) {
       isHome = game.homeTeamId === row.favorite_team_id_snapshot;
       myScore = isHome ? game.homeScore : game.awayScore;
       oppScore = isHome ? game.awayScore : game.homeScore;
@@ -255,6 +270,7 @@ function classify(input: VenueStatsAggregateInput): Classified {
       game,
       stadium: game?.stadium ?? row.stadium_name,
       snapshotIssue: issue,
+      exclusionReason,
       isFinal,
       isCancelled: game?.status === "cancelled",
       myScore,
@@ -268,8 +284,11 @@ function classify(input: VenueStatsAggregateInput): Classified {
 
   return {
     all,
-    validFinal: all.filter((g) => g.isFinal && !g.snapshotIssue && g.result !== null),
+    validFinal: all.filter(
+      (g) => g.isFinal && !g.snapshotIssue && !g.exclusionReason && g.result !== null,
+    ),
     invalidSnapshot,
+    excludedAttendance,
     snapshotTeams: [...teams],
     dedupedRows,
   };
@@ -1959,8 +1978,9 @@ export function buildVenueStatsScope(input: VenueStatsAggregateInput): VenueStat
     cancelledGames: c.all.filter((g) => g.isCancelled).length,
     unavailableGames: c.all.filter((g) => g.game === null).length,
     dedupedRows: c.dedupedRows,
-    incompleteFinalGames: c.all.filter((g) => g.isFinal && !g.complete).length,
+    incompleteFinalGames: c.validFinal.filter((g) => !g.complete).length,
     invalidSnapshot: c.invalidSnapshot,
+    excludedAttendance: c.excludedAttendance,
   };
   const filter = {
     scope: input.scope,

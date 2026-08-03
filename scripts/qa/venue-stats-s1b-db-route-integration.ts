@@ -1110,7 +1110,7 @@ async function cacheAndSingleFlightRegression(
 
 function queryResult(data: unknown) {
   const builder: Record<string, unknown> = {};
-  for (const method of ["select", "eq", "in", "gte", "lt", "order", "limit", "range", "maybeSingle"]) {
+  for (const method of ["select", "eq", "in", "is", "gte", "lt", "order", "limit", "range", "maybeSingle"]) {
     builder[method] = () => builder;
   }
   builder.then = (
@@ -1120,7 +1120,7 @@ function queryResult(data: unknown) {
 }
 
 async function routeShapeRegression() {
-  const adminModule = await import("../../src/lib/supabase/admin");
+  const adminModule = await import("@/lib/supabase/admin");
   const client = adminModule.supabaseAdmin as unknown as {
     auth: { getUser: (token: string) => Promise<unknown> };
     from: (table: string) => unknown;
@@ -1137,8 +1137,16 @@ async function routeShapeRegression() {
     throw new Error(`unexpected table: ${table}`);
   };
 
+  const routeModule = await import("../../src/app/api/me/venue-stats/route");
+  routeModule.__setVenueStatsRouteRuntimeDepsForTests({
+    getVerifiedUser: async (request) => request.headers.get("authorization") === "Bearer owner-token"
+      ? { user: { id: "owner-user" } as never, token: "owner-token" }
+      : null,
+    supabaseClient: client as never,
+  });
+
   try {
-    const { GET } = await import("../../src/app/api/me/venue-stats/route");
+    const { GET } = routeModule;
     const unauthorized = await GET(
       new NextRequest("http://localhost/api/me/venue-stats?season=2025"),
     );
@@ -1164,8 +1172,175 @@ async function routeShapeRegression() {
     console.log("  ✓ owner-auth GET actual: 200 + overall/gps 동일 22-ID empty shape");
     console.log("  ✓ unauthenticated GET actual: 401");
   } finally {
+    routeModule.__setVenueStatsRouteRuntimeDepsForTests(null);
     client.auth.getUser = originalGetUser;
     client.from = originalFrom;
+  }
+}
+
+/**
+ * PR #1088 신고 경계 actual GET 회귀.
+ *
+ * aggregate 완성 입력을 직접 넣지 않고 DB 11행 → route의 srId=0/비정규 fetch 분기 →
+ * aggregate payload까지 그대로 태운다. route에서 비정규 fetch 또는 nonRegularGames 전달을
+ * 끊으면 시범경기가 game_unavailable로 바뀌어 이 테스트가 RED여야 한다.
+ */
+async function routeEligibleAttendanceRegression() {
+  const adminModule = await import("@/lib/supabase/admin");
+  const client = adminModule.supabaseAdmin as unknown as {
+    auth: { getUser: (token: string) => Promise<unknown> };
+    from: (table: string) => unknown;
+  };
+  const originalGetUser = client.auth.getUser;
+  const originalFrom = client.from;
+  const originalFetch = globalThis.fetch;
+
+  const eligibleIds = Array.from(
+    { length: 9 },
+    (_, index) => `202506${String(index + 1).padStart(2, "0")}OBLG0`,
+  );
+  const favoriteAwayId = "20250626WONC0";
+  const preseasonId = "20250315OBLG0";
+
+  const rawFinal = (
+    gameId: string,
+    awayCode: string,
+    homeCode: string,
+    awayScore: number,
+    homeScore: number,
+  ) => ({
+    G_ID: gameId,
+    G_DT: gameId.slice(0, 8),
+    G_TM: "18:30",
+    S_NM: "잠실",
+    AWAY_ID: awayCode,
+    HOME_ID: homeCode,
+    AWAY_NM: awayCode,
+    HOME_NM: homeCode,
+    T_SCORE_CN: String(awayScore),
+    B_SCORE_CN: String(homeScore),
+    GAME_INN_NO: 9,
+    GAME_TB_SC: "B",
+    GAME_STATE_SC: "3",
+    CANCEL_SC_ID: "0",
+    T_PIT_P_NM: "",
+    B_PIT_P_NM: "",
+    W_PIT_P_NM: "",
+    L_PIT_P_NM: "",
+    SV_PIT_P_NM: "",
+    STRIKE_CN: 0,
+    BALL_CN: 0,
+    OUT_CN: 0,
+    B1_BAT_ORDER_NO: 0,
+    B2_BAT_ORDER_NO: 0,
+    B3_BAT_ORDER_NO: 0,
+    B_P_NM: "",
+    T_P_NM: "",
+    T_RANK_NO: 1,
+    B_RANK_NO: 2,
+  });
+  const regularGames = [
+    ...eligibleIds.map((gameId, index) =>
+      rawFinal(gameId, "OB", "LG", index === 8 ? 2 : 1, index === 8 ? 2 : 3)),
+    rawFinal(favoriteAwayId, "WO", "NC", 2, 1),
+  ];
+  const nonRegularGames = [rawFinal(preseasonId, "OB", "LG", 1, 4)];
+  const attendanceRows = [
+    ...eligibleIds.map((gameId, index) => ({
+      id: index + 1,
+      game_id: gameId,
+      game_date: `${gameId.slice(0, 4)}-${gameId.slice(4, 6)}-${gameId.slice(6, 8)}`,
+      favorite_team_id_snapshot: 1,
+      stadium_name: "잠실",
+      recorded_at: "2025-06-30T00:00:00Z",
+      source: "diary_manual",
+    })),
+    {
+      id: 10,
+      game_id: favoriteAwayId,
+      game_date: "2025-06-26",
+      favorite_team_id_snapshot: 2,
+      stadium_name: "고척",
+      recorded_at: "2025-06-26T00:00:00Z",
+      source: "diary_manual",
+    },
+    {
+      id: 11,
+      game_id: preseasonId,
+      game_date: "2025-03-15",
+      favorite_team_id_snapshot: 2,
+      stadium_name: "잠실",
+      recorded_at: "2025-03-15T00:00:00Z",
+      source: "diary_manual",
+    },
+  ];
+  const requestedSrIds: string[] = [];
+
+  client.auth.getUser = async (token) => ({
+    data: { user: token === "owner-token" ? { id: "owner-user" } : null },
+    error: token === "owner-token" ? null : { message: "invalid" },
+  });
+  client.from = (table) => {
+    if (table === "venue_attendance") return queryResult(attendanceRows);
+    if (table === "profiles") return queryResult({ favorite_players: [], team_id: 2 });
+    return queryResult([]);
+  };
+  globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+    const target = String(url);
+    if (target.includes("GetKboGameList")) {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { srId?: string };
+      requestedSrIds.push(body.srId ?? "");
+      const games = body.srId === "0"
+        ? regularGames
+        : body.srId === "1,3,4,5,7,9"
+          ? nonRegularGames
+          : [];
+      return new Response(JSON.stringify({ game: games }), { status: 200 });
+    }
+    return new Response("{}", { status: 500 });
+  }) as typeof fetch;
+
+  const routeModule = await import("../../src/app/api/me/venue-stats/route");
+  routeModule.__setVenueStatsRouteRuntimeDepsForTests({
+    getVerifiedUser: async (request) => request.headers.get("authorization") === "Bearer owner-token"
+      ? { user: { id: "owner-user" } as never, token: "owner-token" }
+      : null,
+    supabaseClient: client as never,
+  });
+
+  try {
+    const { GET } = routeModule;
+    const response = await GET(new NextRequest(
+      "http://localhost/api/me/venue-stats?season=2025",
+      { headers: { Authorization: "Bearer owner-token" } },
+    ));
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    const overall = body.overall;
+    const attendance = overall.metrics.A1.value?.attendance;
+    assert.ok(requestedSrIds.includes("0"), "actual GET이 정규시즌 srId=0을 조회해야 함");
+    assert.ok(
+      requestedSrIds.includes("1,3,4,5,7,9"),
+      "actual GET이 비정규 srId를 별도 조회해야 함",
+    );
+    assert.equal(overall.coverage.attendanceGames, 11);
+    assert.equal(overall.coverage.finalGames, 9);
+    assert.deepEqual(overall.coverage.invalidSnapshot, []);
+    assert.deepEqual(
+      overall.coverage.excludedAttendance.map((entry: { reason: string }) => entry.reason).sort(),
+      ["favorite_team_not_playing", "non_regular_season"],
+    );
+    assert.deepEqual(
+      attendance,
+      { w: 8, l: 0, d: 1, rate: 8 / 9 },
+      "신고 계정 팀 통계는 유효 9경기만으로 8승 0패 1무·88.9%",
+    );
+    console.log("  ✓ route actual 신고 fixture: 총11/산출9/8승0패1무/88.9% + 제외사유 1/1");
+  } finally {
+    routeModule.__setVenueStatsRouteRuntimeDepsForTests(null);
+    client.auth.getUser = originalGetUser;
+    client.from = originalFrom;
+    globalThis.fetch = originalFetch;
   }
 }
 
@@ -1180,7 +1355,7 @@ async function routeShapeRegression() {
  */
 async function routeGameErrorsWiringRegression() {
   const GAME_ID = "20250725LGHH0";
-  const adminModule = await import("../../src/lib/supabase/admin");
+  const adminModule = await import("@/lib/supabase/admin");
   const client = adminModule.supabaseAdmin as unknown as {
     auth: { getUser: (token: string) => Promise<unknown> };
     from: (table: string) => unknown;
@@ -1188,6 +1363,13 @@ async function routeGameErrorsWiringRegression() {
   const originalGetUser = client.auth.getUser;
   const originalFrom = client.from;
   const originalFetch = globalThis.fetch;
+  const routeModule = await import("../../src/app/api/me/venue-stats/route");
+  routeModule.__setVenueStatsRouteRuntimeDepsForTests({
+    getVerifiedUser: async (request) => request.headers.get("authorization") === "Bearer owner-token"
+      ? { user: { id: "owner-user" } as never, token: "owner-token" }
+      : null,
+    supabaseClient: client as never,
+  });
 
   /** KBO 경기목록 raw — LG(원정) 15 : 한화(홈) 11 final. */
   const gameListPayload = {
@@ -1273,9 +1455,10 @@ async function routeGameErrorsWiringRegression() {
   const runGet = async () => {
     // ⚠️ complete-only cache 가 이전 케이스 결과를 재사용하면 RED 가 무력화된다.
     //    (최초 작성 때 실제로 이 함정에 걸려 결손 케이스가 앞선 성공값을 그대로 반환했다.)
-    const { __resetGameErrorCaches } = await import("../../src/lib/venue-stats/game-errors");
-    __resetGameErrorCaches();
-    const { GET } = await import("../../src/app/api/me/venue-stats/route");
+    // ⚠️ route 가 실제로 쓰는 모듈 인스턴스의 캐시를 비운다. 상대경로로 game-errors 를
+    //    직접 import 하면 alias 로드본과 별개 인스턴스라 캐시가 안 지워진다(CI 에서 실측).
+    routeModule.__resetVenueStatsRouteGameErrorCachesForTests();
+    const { GET } = routeModule;
     const res = await GET(new NextRequest(
       "http://localhost/api/me/venue-stats?season=2025",
       { headers: { Authorization: "Bearer owner-token" } },
@@ -1338,6 +1521,7 @@ async function routeGameErrorsWiringRegression() {
     );
     console.log("  ✓ route actual: 소스 E 결손 → D7 미확인(0 으로 승격하지 않음)");
   } finally {
+    routeModule.__setVenueStatsRouteRuntimeDepsForTests(null);
     client.auth.getUser = originalGetUser;
     client.from = originalFrom;
     globalThis.fetch = originalFetch;
@@ -1348,6 +1532,7 @@ async function main() {
   await rpcDbRegression();
   await seasonUniverseFailClosedRegression();
   await routeShapeRegression();
+  await routeEligibleAttendanceRegression();
   await routeGameErrorsWiringRegression();
   console.log("\n결과: S1b DB/RPC + 시즌 우주 fail-closed(gate1/2/3) + owner-auth route actual + D7 실책 route 배선 PASS");
 }
