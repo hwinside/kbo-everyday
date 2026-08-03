@@ -21,12 +21,15 @@
  *     쓰기 경로를 증명하지 못한다(2026-08-02 교훈). 전량 전에 소량 canary를 실제로 태운다.
  * (4) **부분 반영 금지** — 기대 건수와 실제 반영 건수가 다르면 실패로 종결한다.
  */
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import {
   buildCorpusSourcePlan,
   buildCorpusSourceIdentity,
+  buildCorpusPreparedSnapshotFingerprint,
+  corpusRecordHash,
   parseCorpusJsonl,
 } from "../../src/lib/baseball-qa/rag/corpus-loader";
 import { embedDocument } from "../../src/lib/baseball-qa/rag/embed";
@@ -38,6 +41,7 @@ const args = process.argv.slice(2);
 const argValue = (name: string): string | undefined =>
   args.find((arg) => arg.startsWith(`--${name}=`))?.split("=").slice(1).join("=");
 const FILE = argValue("file");
+const MAC_RECOVERY_FILE = argValue("mac-recovery-file");
 const LIMIT = Number(argValue("limit") ?? "0");
 const APPLY = args.includes("--apply");
 const CONCURRENCY = Math.max(1, Math.min(12, Number(argValue("concurrency") ?? "6") || 6));
@@ -57,6 +61,7 @@ interface RagSourceStateRow {
   identity_fingerprint: string;
   ingestion_status: string;
   revision: string | null;
+  content_hash: string | null;
   active_claim_generation: number;
 }
 
@@ -109,7 +114,7 @@ async function fetchSourceState(
   const response = await fetch(
     `${url}/rest/v1/genius_rag_sources?source_key=eq.${encodeURIComponent(sourceKey)}`
       + "&select=source_key,source_kind,entity_type,entity_id,page_title,candidate_urls,canonical_url,"
-      + "source_grade,identity_fingerprint,ingestion_status,revision,active_claim_generation",
+      + "source_grade,identity_fingerprint,ingestion_status,revision,content_hash,active_claim_generation",
     { headers },
   );
   if (!response.ok) throw new Error(`${sourceKey}: source GET HTTP ${response.status} ${await response.text()}`);
@@ -149,8 +154,35 @@ async function main(): Promise<void> {
   const manifest = JSON.parse(
     readFileSync(path.join(process.cwd(), "src/lib/baseball-qa/namu-core-manifest.json"), "utf8"),
   );
-  const parsed = parseCorpusJsonl(readFileSync(FILE, "utf8"));
+  const corpusRaw = readFileSync(FILE, "utf8");
+  const artifactSha256 = createHash("sha256").update(corpusRaw).digest("hex");
+  const parsed = parseCorpusJsonl(corpusRaw);
   const planned = buildCorpusSourcePlan(parsed.records, roster, manifest);
+  const recoveryRecords = MAC_RECOVERY_FILE
+    ? parseCorpusJsonl(readFileSync(MAC_RECOVERY_FILE, "utf8")).records
+    : [];
+  const recoveryHashCounts = new Map<string, number>();
+  for (const record of recoveryRecords) {
+    const hash = corpusRecordHash(record);
+    recoveryHashCounts.set(hash, (recoveryHashCounts.get(hash) ?? 0) + 1);
+  }
+  const collectorByLedgerRow = planned.ledger.map((row) => {
+    const remaining = recoveryHashCounts.get(row.recordHash) ?? 0;
+    if (remaining < 1) return "a17_self_cdp" as const;
+    recoveryHashCounts.set(row.recordHash, remaining - 1);
+    return "mac_direct_recovery" as const;
+  });
+  const unmatchedRecovery = [...recoveryHashCounts.values()].reduce((sum, count) => sum + count, 0);
+  if (unmatchedRecovery > 0) throw new Error(`Mac recovery rows absent from corpus: ${unmatchedRecovery}`);
+  const collectorByRecordHash = new Map<string, "a17_self_cdp" | "mac_direct_recovery">();
+  planned.ledger.forEach((row, index) => {
+    const collector = collectorByLedgerRow[index];
+    const previous = collectorByRecordHash.get(row.recordHash);
+    if (previous && previous !== collector) {
+      throw new Error(`identical corpus row has ambiguous collectors: ${row.recordHash}`);
+    }
+    collectorByRecordHash.set(row.recordHash, collector);
+  });
   console.log(`입력 대조: ${JSON.stringify(parsed.counts)}`);
   console.log(
     `귀속 계획: source ${planned.plans.length}, owner+canonical 관계 ${planned.deduplicated}, ` +
@@ -162,6 +194,10 @@ async function main(): Promise<void> {
     return counts;
   }, {});
   console.log(`kind별 귀속 문서: ${JSON.stringify(byType)}`);
+  console.log(
+    `artifact ${artifactSha256}, collector A17 ${collectorByLedgerRow.filter((x) => x === "a17_self_cdp").length}`
+      + ` / Mac recovery ${collectorByLedgerRow.filter((x) => x === "mac_direct_recovery").length}`,
+  );
 
   const selected = LIMIT > 0 ? planned.plans.slice(0, LIMIT) : planned.plans;
   console.log(`적재 대상: ${selected.length}/${planned.plans.length} source${LIMIT > 0 ? ` (--limit=${LIMIT})` : ""}`);
@@ -172,6 +208,7 @@ async function main(): Promise<void> {
     console.log("\n[dry-run] DB를 쓰지 않았다. 전량 전 `--limit=5 --apply` canary가 필수다.");
     return;
   }
+  if (!MAC_RECOVERY_FILE) throw new Error("--apply에는 --mac-recovery-file=<recovered.jsonl>이 필요하다");
 
   const env = loadEnv();
   const url = env.NEXT_PUBLIC_SUPABASE_URL;
@@ -195,6 +232,86 @@ async function main(): Promise<void> {
     return await response.json() as T;
   };
 
+  if (LIMIT === 0) {
+    const existingResponse = await fetch(
+      `${url}/rest/v1/genius_rag_corpus_runs?artifact_sha256=eq.${artifactSha256}`
+        + "&select=expected_rows,assigned_rows,quarantined_rows,latest_owner_relations,collector_counts,status",
+      { headers },
+    );
+    if (!existingResponse.ok) throw new Error(`corpus ledger GET HTTP ${existingResponse.status}`);
+    const existing = await existingResponse.json() as Array<Record<string, unknown>>;
+    const assignedPhysical = planned.ledger.filter((row) => row.disposition === "assigned").length;
+    const quarantinedPhysical = planned.ledger.length - assignedPhysical;
+    const latestRelations = planned.ledger.filter((row) => row.isLatestOwnerRevision).length;
+    const collectorCounts = {
+      a17_self_cdp: collectorByLedgerRow.filter((value) => value === "a17_self_cdp").length,
+      mac_direct_recovery: collectorByLedgerRow.filter((value) => value === "mac_direct_recovery").length,
+    };
+    const ledgerReady = existing.length === 1
+      && existing[0]?.status === "ready"
+      && existing[0]?.expected_rows === planned.ledger.length
+      && existing[0]?.assigned_rows === assignedPhysical
+      && existing[0]?.quarantined_rows === quarantinedPhysical
+      && existing[0]?.latest_owner_relations === latestRelations
+      && JSON.stringify(existing[0]?.collector_counts) === JSON.stringify(collectorCounts);
+    if (!ledgerReady) {
+      const runResponse = await fetch(`${url}/rest/v1/genius_rag_corpus_runs?on_conflict=artifact_sha256`, {
+        method: "POST",
+        headers: { ...headers, Prefer: "resolution=merge-duplicates,return=minimal" },
+        body: JSON.stringify([{
+          artifact_sha256: artifactSha256,
+          expected_rows: planned.ledger.length,
+          assigned_rows: null,
+          quarantined_rows: null,
+          latest_owner_relations: null,
+          collector_counts: {},
+          status: "loading",
+          completed_at: null,
+        }]),
+      });
+      if (!runResponse.ok) throw new Error(`corpus run upsert HTTP ${runResponse.status} ${await runResponse.text()}`);
+      for (let offset = 0; offset < planned.ledger.length; offset += 10) {
+        const rows = planned.ledger.slice(offset, offset + 10).map((row, relativeIndex) => ({
+          artifact_sha256: artifactSha256,
+          row_index: row.rowIndex,
+          record_hash: row.recordHash,
+          kind: row.record.kind,
+          entity: row.record.entity,
+          doc: row.record.doc,
+          depth: row.record.depth,
+          page_title: row.record.title,
+          canonical_url: row.record.canonical,
+          fetched_at: row.record.fetchedAt,
+          content_length: row.record.len,
+          raw_text: row.record.text,
+          disposition: row.disposition,
+          is_latest_owner_revision: row.isLatestOwnerRevision,
+          collector: collectorByLedgerRow[offset + relativeIndex],
+        }));
+        const recordResponse = await fetch(
+          `${url}/rest/v1/genius_rag_corpus_records?on_conflict=artifact_sha256,row_index`,
+          {
+            method: "POST",
+            headers: { ...headers, Prefer: "resolution=merge-duplicates,return=minimal" },
+            body: JSON.stringify(rows),
+          },
+        );
+        if (!recordResponse.ok) {
+          throw new Error(`corpus ledger rows ${offset}: HTTP ${recordResponse.status} ${await recordResponse.text()}`);
+        }
+      }
+      const finalized = await rpc<boolean>("finalize_baseball_genius_rag_corpus_ledger", {
+        p_artifact_sha256: artifactSha256,
+      });
+      if (!finalized) throw new Error("corpus ledger finalize rejected");
+      console.log(`LEDGER READY physical=${planned.ledger.length} assigned=${assignedPhysical} quarantined=${quarantinedPhysical}`);
+    } else {
+      console.log(`LEDGER READY already-loaded physical=${planned.ledger.length}`);
+    }
+  } else {
+    console.log(`LEDGER HOLD canary --limit=${LIMIT}; full run에서 physical ${planned.ledger.length}행을 기록한다.`);
+  }
+
   let completedSources = 0;
   let completedChunks = 0;
   for (const entry of selected) {
@@ -212,6 +329,23 @@ async function main(): Promise<void> {
     }));
     const prepared = prepareTier2DocumentSet(documents, "full");
     if (!prepared.ok) throw new Error(`${entry.sourceKey}: prepare:${prepared.reason}`);
+    const collectorByDocument = new Map(entry.documents.map((document) => [
+      `${document.canonical}\u0000crawled:${document.fetchedAt}`,
+      collectorByRecordHash.get(corpusRecordHash(document)),
+    ]));
+    const preparedChunks = prepared.chunks.map((chunk) => {
+      const collector = collectorByDocument.get(`${chunk.meta.canonicalUrl}\u0000${chunk.meta.revision}`);
+      if (!collector) throw new Error(`${entry.sourceKey}: chunk collector provenance absent`);
+      return { chunk, collector };
+    });
+    const snapshotFingerprint = buildCorpusPreparedSnapshotFingerprint(preparedChunks.map(({ chunk, collector }) => ({
+      canonicalUrl: chunk.meta.canonicalUrl,
+      revision: chunk.meta.revision,
+      sectionPath: chunk.meta.sectionPath,
+      contentHash: chunk.meta.contentHash,
+      documentContentHash: chunk.documentContentHash,
+      collector,
+    })));
 
     const sourceKey = entry.sourceKey;
     const identity = buildCorpusSourceIdentity(entry);
@@ -239,7 +373,11 @@ async function main(): Promise<void> {
       && dbSource.source_grade === "tier2"
       && dbSource.identity_fingerprint === identity.identityFingerprint;
     if (!sourceIdentityMatches) throw new Error(`${sourceKey}: resolved source identity mismatch`);
-    if (dbSource.ingestion_status === "ready" && dbSource.revision === rootRevision) {
+    if (
+      dbSource.ingestion_status === "ready"
+      && dbSource.revision === rootRevision
+      && dbSource.content_hash === snapshotFingerprint
+    ) {
       const activeCount = await countActiveChunks(
         url,
         headers,
@@ -255,9 +393,18 @@ async function main(): Promise<void> {
       continue;
     }
 
+    if (dbSource.ingestion_status === "ready") {
+      const marked = await rpc<boolean>("request_baseball_genius_rag_refresh", {
+        p_source_key: sourceKey,
+        p_revision: rootRevision,
+        p_loader_revision: `corpus-snapshot:${snapshotFingerprint}`,
+      });
+      if (!marked) throw new Error(`${sourceKey}: snapshot refresh rejected`);
+    }
+
     // claim 전에 embedding을 끝낸다. 느린 외부 API가 lease를 소모해 마지막 chunk에서
     // 만료되는 실패를 막고, embedding 실패 시 DB에는 한 줄도 쓰지 않는다.
-    const embedded = await mapConcurrent(prepared.chunks, CONCURRENCY, async (chunk) => {
+    const embedded = await mapConcurrent(preparedChunks, CONCURRENCY, async ({ chunk, collector }) => {
       const result = await embedDocument(
         chunk.content,
         pageTitle,
@@ -269,7 +416,7 @@ async function main(): Promise<void> {
           : undefined,
       );
       if (!result.ok) throw new Error(`${entry.sourceKey}: embed:${result.reason}`);
-      return { chunk, vector: result.vector };
+      return { chunk, collector, vector: result.vector };
     });
 
     const claimed = await rpc<RagClaimRow[]>("claim_baseball_genius_rag_batch_scoped", {
@@ -282,7 +429,7 @@ async function main(): Promise<void> {
     }
     const source = claimed[0];
     try {
-      await mapConcurrent(embedded, CONCURRENCY, async ({ chunk, vector }, chunkIndex) => {
+      await mapConcurrent(embedded, CONCURRENCY, async ({ chunk, collector, vector }, chunkIndex) => {
         await rpc("upsert_baseball_genius_rag_chunk", {
           p_source_key: sourceKey,
           p_claim_token: source.claim_token,
@@ -303,7 +450,7 @@ async function main(): Promise<void> {
           p_embedding: JSON.stringify(vector),
           p_metadata: {
             source: "namu",
-            collector: "A17 self-CDP",
+            collector,
             entityDocumentCount: documents.length,
             entityCleanChars: prepared.cleanChars,
             entityRetainedChars: prepared.retainedChars,
@@ -314,12 +461,12 @@ async function main(): Promise<void> {
 
       const anchor = prepared.chunks.find((chunk) => chunk.meta.revision === rootRevision);
       if (!anchor) throw new Error(`${sourceKey}: root anchor chunk absent`);
-      const completed = await rpc<boolean>("complete_baseball_genius_rag_source", {
+      const completed = await rpc<boolean>("complete_baseball_genius_rag_corpus_source", {
         p_source_key: sourceKey,
         p_claim_token: source.claim_token,
         p_claim_generation: source.claim_generation,
         p_revision: rootRevision,
-        p_content_hash: anchor.documentContentHash,
+        p_content_hash: snapshotFingerprint,
         p_crawled_at: entry.root.fetchedAt,
         p_stale_after: new Date(Date.now() + STALE_AFTER_DAYS * 86_400_000).toISOString(),
         p_expected_chunk_count: embedded.length,

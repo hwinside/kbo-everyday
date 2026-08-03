@@ -81,6 +81,13 @@ fixtures.push(
     canonical: redirectedGameCanonical,
   },
 );
+const historicalText = `${fixtures[0].text} 과거 revision`;
+fixtures.push({
+  ...fixtures[0],
+  len: historicalText.length,
+  text: historicalText,
+  fetchedAt: "2026-08-01T00:00:00.000Z",
+});
 
 function writeJsonl(name: string, rows: unknown[], tail = ""): string {
   const file = path.join(work, name);
@@ -110,14 +117,19 @@ async function run(args: string[], env: Record<string, string> = {}): Promise<{
 
 async function main(): Promise<void> {
 const validFile = writeJsonl("valid.jsonl", fixtures, "\n");
+const macRecoveryFile = writeJsonl(
+  "mac-recovery.jsonl",
+  fixtures.filter((fixture) => fixture.entity === "레이예스" || fixture.entity === "올러"),
+  "\n",
+);
 const dry = await run([`--file=${validFile}`]);
 assert.equal(dry.code, 0, dry.stderr);
-assert.match(dry.stdout, /physical.*17/);
+assert.match(dry.stdout, /physical.*18/);
 assert.match(dry.stdout, /"player":3/);
 assert.match(dry.stdout, /"team":11/);
 assert.match(dry.stdout, /"league":1/);
 assert.match(dry.stdout, /owner\+canonical 관계 17, 적재 관계 15, 격리 관계 2/);
-console.log("PASS actual CLI dry-run — owner+canonical 관계 보존 / redirect opponent owner 격리");
+console.log("PASS actual CLI dry-run — physical 18 / latest relation 17 / redirect owner 격리");
 
 const brokenMiddle = writeJsonl("broken-middle.jsonl", [fixtures[0]], "\n{broken\n" + JSON.stringify(fixtures[1]));
 const middle = await run([`--file=${brokenMiddle}`]);
@@ -147,6 +159,7 @@ const seenSources = new Set<string>();
 const sourceStates = new Map<string, {
   ingestionStatus: "not_started" | "ingesting" | "ready";
   revision: string | null;
+  contentHash: string | null;
   activeClaimGeneration: number;
   sourceKind: string;
   entityType: string;
@@ -158,11 +171,33 @@ const sourceStates = new Map<string, {
   identityFingerprint: string;
 }>();
 const claimCounts = new Map<string, number>();
+const chunkCollectors = new Map<string, Set<string>>();
+const ledgerRecords = new Map<number, Record<string, unknown>>();
+let ledgerRun: Record<string, unknown> | null = null;
 const server = createServer(async (request, response) => {
   const chunks: Buffer[] = [];
   for await (const chunk of request) chunks.push(chunk as Buffer);
   const body = chunks.length > 0 ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {};
   response.setHeader("Content-Type", "application/json");
+  if (request.method === "GET" && request.url?.startsWith("/rest/v1/genius_rag_corpus_runs")) {
+    response.end(JSON.stringify(ledgerRun?.status === "ready" ? [ledgerRun] : []));
+    return;
+  }
+  if (request.method === "POST" && request.url?.startsWith("/rest/v1/genius_rag_corpus_runs")) {
+    const row = (body as Record<string, unknown>[])[0];
+    assert.ok(row);
+    if (ledgerRun?.artifact_sha256 !== row.artifact_sha256) ledgerRecords.clear();
+    ledgerRun = { ...row, status: "loading" };
+    response.statusCode = 201;
+    response.end("null");
+    return;
+  }
+  if (request.method === "POST" && request.url?.startsWith("/rest/v1/genius_rag_corpus_records")) {
+    for (const row of body as Record<string, unknown>[]) ledgerRecords.set(row.row_index as number, row);
+    response.statusCode = 201;
+    response.end("null");
+    return;
+  }
   if (request.method === "GET" && request.url?.startsWith("/rest/v1/genius_rag_sources")) {
     const url = new URL(request.url, "http://127.0.0.1");
     const sourceKey = (url.searchParams.get("source_key") ?? "").replace(/^eq\./, "");
@@ -179,6 +214,7 @@ const server = createServer(async (request, response) => {
       identity_fingerprint: state.identityFingerprint,
       ingestion_status: state.ingestionStatus,
       revision: state.revision,
+      content_hash: state.contentHash,
       active_claim_generation: state.activeClaimGeneration,
     }] : []));
     return;
@@ -204,6 +240,7 @@ const server = createServer(async (request, response) => {
     const state = previous ?? {
       ingestionStatus: "not_started" as const,
       revision: null,
+      contentHash: null,
       activeClaimGeneration: 0,
       sourceKind: body.p_source_kind,
       entityType: body.p_entity_type,
@@ -217,6 +254,7 @@ const server = createServer(async (request, response) => {
     if (state.identityFingerprint !== body.p_identity_fingerprint) {
       state.ingestionStatus = "not_started";
       state.revision = null;
+      state.contentHash = null;
       state.activeClaimGeneration = 0;
       serving.delete(sourceKey);
     }
@@ -240,6 +278,7 @@ const server = createServer(async (request, response) => {
     }
     state.ingestionStatus = "ingesting";
     state.activeClaimGeneration += 1;
+    staged.set(sourceKey, 0);
     claimCounts.set(sourceKey, (claimCounts.get(sourceKey) ?? 0) + 1);
     response.end(JSON.stringify([{
       source_key: sourceKey,
@@ -263,10 +302,13 @@ const server = createServer(async (request, response) => {
       `${body.p_source_key}: canonical owner mismatch`,
     );
     staged.set(body.p_source_key, (staged.get(body.p_source_key) ?? 0) + 1);
+    const collectors = chunkCollectors.get(body.p_source_key) ?? new Set<string>();
+    collectors.add(body.p_metadata.collector);
+    chunkCollectors.set(body.p_source_key, collectors);
     response.end("null");
     return;
   }
-  if (fn === "complete_baseball_genius_rag_source") {
+  if (fn === "complete_baseball_genius_rag_corpus_source") {
     const actual = staged.get(body.p_source_key) ?? 0;
     const complete = actual === body.p_expected_chunk_count && actual > 0;
     if (complete) {
@@ -275,12 +317,41 @@ const server = createServer(async (request, response) => {
       assert.ok(state);
       state.ingestionStatus = "ready";
       state.revision = body.p_revision;
+      state.contentHash = body.p_content_hash;
     }
     response.end(JSON.stringify(complete));
     return;
   }
   if (fn === "fail_baseball_genius_rag_source") {
     response.end("null");
+    return;
+  }
+  if (fn === "request_baseball_genius_rag_refresh") {
+    const state = sourceStates.get(body.p_source_key);
+    if (!state || state.ingestionStatus !== "ready") {
+      response.end("false");
+      return;
+    }
+    state.ingestionStatus = "not_started";
+    response.end("true");
+    return;
+  }
+  if (fn === "finalize_baseball_genius_rag_corpus_ledger") {
+    assert.ok(ledgerRun);
+    assert.equal(ledgerRecords.size, ledgerRun.expected_rows);
+    const rows = [...ledgerRecords.values()];
+    ledgerRun = {
+      ...ledgerRun,
+      assigned_rows: rows.filter((row) => row.disposition === "assigned").length,
+      quarantined_rows: rows.filter((row) => row.disposition === "quarantined").length,
+      latest_owner_relations: rows.filter((row) => row.is_latest_owner_revision === true).length,
+      collector_counts: {
+        a17_self_cdp: rows.filter((row) => row.collector === "a17_self_cdp").length,
+        mac_direct_recovery: rows.filter((row) => row.collector === "mac_direct_recovery").length,
+      },
+      status: "ready",
+    };
+    response.end("true");
     return;
   }
   response.statusCode = 404;
@@ -297,12 +368,13 @@ try {
     SUPABASE_SERVICE_ROLE_KEY: "fixture-service-role",
     GEMINI_API_KEY: "fixture-gemini",
   };
-  const canary = await run([`--file=${validFile}`, "--limit=5", "--apply"], applyEnv);
+  const commonApplyArgs = [`--file=${validFile}`, `--mac-recovery-file=${macRecoveryFile}`];
+  const canary = await run([...commonApplyArgs, "--limit=5", "--apply"], applyEnv);
   assert.equal(canary.code, 0, `${canary.stdout}\n${canary.stderr}`);
   assert.match(canary.stdout, /APPLY 완료: source 5\/5/);
   assert.equal([...sourceStates.values()].filter((state) => state.ingestionStatus === "ready").length, 5);
 
-  const applied = await run([`--file=${validFile}`, "--apply"], applyEnv);
+  const applied = await run([...commonApplyArgs, "--apply"], applyEnv);
   assert.equal(applied.code, 0, `${applied.stdout}\n${applied.stderr}`);
   assert.equal(seenSources.size, 14);
   assert.deepEqual([...seenSources].sort(), [
@@ -323,7 +395,36 @@ try {
   assert.equal([...claimCounts.values()].reduce((sum, count) => sum + count, 0), 14);
   assert.equal(sourceStates.get("namu:player:54529")?.pageTitle, "레예스");
   assert.equal(sourceStates.get("namu:player:55633")?.pageTitle, "아담 올러");
-  console.log("PASS actual E2E — 실 seed 표기차 resolve + canary 5 READY → full skip 5 + claim 9 → serving 14");
+  assert.equal(ledgerRecords.size, fixtures.length);
+  assert.deepEqual(ledgerRun?.collector_counts, { a17_self_cdp: 16, mac_direct_recovery: 2 });
+  assert.equal(ledgerRun?.latest_owner_relations, 17);
+  assert.equal(
+    [...ledgerRecords.values()].filter((row) => row.is_latest_owner_revision === false).length,
+    1,
+    "same owner+canonical의 과거 revision 물리행도 ledger에 남아야 한다",
+  );
+  assert.deepEqual([...chunkCollectors.get("namu:player:54529") ?? []], ["mac_direct_recovery"]);
+  assert.deepEqual([...chunkCollectors.get("namu:player:55633") ?? []], ["mac_direct_recovery"]);
+
+  const kiaSourceKey = manifest.find(({ canonicalTitle }) => canonicalTitle === "KIA 타이거즈")?.sourceKey;
+  assert.ok(kiaSourceKey);
+  const priorKiaClaims = claimCounts.get(kiaSourceKey) ?? 0;
+  const changedFixtures = fixtures.map((fixture) =>
+    fixture.entity === "KIA 타이거즈" && fixture.canonical === redirectedGameCanonical ? {
+    ...fixture,
+    text: fixture.text.replace("검증 가능한", "확인 가능한"),
+    fetchedAt: "2026-08-03T00:00:00.000Z",
+  } : fixture);
+  const changedFile = writeJsonl("changed-child.jsonl", changedFixtures, "\n");
+  const changed = await run([
+    `--file=${changedFile}`,
+    `--mac-recovery-file=${macRecoveryFile}`,
+    "--apply",
+  ], applyEnv);
+  assert.equal(changed.code, 0, `${changed.stdout}\n${changed.stderr}`);
+  assert.equal(claimCounts.get(kiaSourceKey), priorKiaClaims + 1, "동일 root/count의 child 변경은 재claim해야 한다");
+  assert.doesNotMatch(changed.stdout, new RegExp(`READY ${kiaSourceKey} already-loaded`));
+  console.log("PASS actual E2E — 18 physical/17 latest ledger + row provenance + 동일 root/count child 재적재");
 } finally {
   server.close();
 }

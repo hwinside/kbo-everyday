@@ -37,6 +37,14 @@ export type CorpusSourceIdentity = {
   identityFingerprint: string;
 };
 
+export type CorpusLedgerRow = {
+  rowIndex: number;
+  record: CorpusRecord;
+  recordHash: string;
+  disposition: "assigned" | "quarantined";
+  isLatestOwnerRevision: boolean;
+};
+
 type RosterPlayer = { kboId: string; name: string; birthDate?: string };
 type NamuManifestSource = {
   sourceKey: string;
@@ -175,6 +183,39 @@ export function buildCorpusSourceIdentity(plan: CorpusSourcePlan): CorpusSourceI
   return { ...identity, identityFingerprint };
 }
 
+export function corpusRecordHash(record: CorpusRecord): string {
+  return createHash("sha256").update(JSON.stringify({
+    doc: record.doc,
+    kind: record.kind,
+    entity: record.entity,
+    depth: record.depth,
+    title: record.title,
+    canonical: record.canonical,
+    len: record.len,
+    text: record.text,
+    fetchedAt: record.fetchedAt,
+  })).digest("hex");
+}
+
+export type CorpusPreparedSnapshotChunk = {
+  canonicalUrl: string;
+  revision: string;
+  sectionPath: string;
+  contentHash: string;
+  documentContentHash: string;
+  collector: "a17_self_cdp" | "mac_direct_recovery";
+};
+
+/** READY skip은 root가 아니라 실제 serving snapshot 전체가 같을 때만 허용한다. */
+export function buildCorpusPreparedSnapshotFingerprint(
+  chunks: readonly CorpusPreparedSnapshotChunk[],
+): string {
+  return createHash("sha256").update(JSON.stringify(chunks.map((chunk, chunkIndex) => ({
+    chunkIndex,
+    ...chunk,
+  })))).digest("hex");
+}
+
 function corpusOwnerKey(record: CorpusRecord): string {
   return `${record.kind}\u0000${record.entity}\u0000${record.canonical}`;
 }
@@ -211,6 +252,7 @@ export function buildCorpusSourcePlan(
   manifest: NamuManifestSource[],
 ): {
   plans: CorpusSourcePlan[];
+  ledger: CorpusLedgerRow[];
   quarantinedPlayers: number;
   quarantinedDocuments: number;
   assignedDocuments: number;
@@ -339,8 +381,26 @@ export function buildCorpusSourcePlan(
       `corpus accounting mismatch: assigned=${assigned.size} quarantined=${quarantined.size} total=${records.length}`,
     );
   }
+  const latestRecords = new Map(records.map((record) => [corpusOwnerKey(record), record]));
+  const ledger = input.map((record, rowIndex): CorpusLedgerRow => {
+    const ownerKey = corpusOwnerKey(record);
+    const disposition = assigned.has(ownerKey) ? "assigned" : quarantined.has(ownerKey) ? "quarantined" : null;
+    if (!disposition) throw new Error(`physical corpus row unaccounted: ${rowIndex}`);
+    const recordHash = corpusRecordHash(record);
+    return {
+      rowIndex,
+      record,
+      recordHash,
+      disposition,
+      isLatestOwnerRevision: latestRecords.get(ownerKey) === record,
+    };
+  });
+  if (ledger.filter((row) => row.isLatestOwnerRevision).length !== records.length) {
+    throw new Error("physical corpus latest-relation accounting mismatch");
+  }
   return {
     plans,
+    ledger,
     quarantinedPlayers,
     quarantinedDocuments: quarantined.size,
     assignedDocuments: assigned.size,

@@ -53,6 +53,7 @@ import {
 import { RAG_EMBEDDING_DIM } from "../../src/lib/baseball-qa/rag/contracts";
 import { buildResolutionSourceRow } from "../../src/lib/baseball-qa/rag/source-resolution";
 import {
+  buildCorpusPreparedSnapshotFingerprint,
   buildCorpusSourceIdentity,
   type CorpusSourcePlan,
 } from "../../src/lib/baseball-qa/rag/corpus-loader";
@@ -1459,6 +1460,7 @@ async function verifyCorpusLoaderTwoPassOnRealDb(): Promise<void> {
     "20260802010000_baseball_genius_rag_scoped_claim_wikipedia.sql",
     "20260802020000_baseball_genius_rag_complete_expected_count.sql",
     "20260803030000_baseball_genius_rag_corpus_source_resolution.sql",
+    "20260803031000_baseball_genius_rag_corpus_ledger.sql",
   ]) {
     await db.exec(readFileSync(path.join(process.cwd(), "supabase/migrations", migration), "utf8"));
   }
@@ -1513,7 +1515,40 @@ async function verifyCorpusLoaderTwoPassOnRealDb(): Promise<void> {
     assert.equal(result.rows[0]?.ok, true);
     return identity;
   };
-  const ingest = async (item: typeof cases[number], identity: ReturnType<typeof identityFor>) => {
+  const snapshotFor = (
+    identity: ReturnType<typeof identityFor>,
+    contentHash: string,
+    collector: "a17_self_cdp" | "mac_direct_recovery",
+  ) => buildCorpusPreparedSnapshotFingerprint([
+    {
+      canonicalUrl: identity.canonicalUrl,
+      revision: "crawled:fixture",
+      sectionPath: identity.pageTitle,
+      contentHash: "0".repeat(64),
+      documentContentHash: "0".repeat(64),
+      collector: "a17_self_cdp",
+    },
+    {
+      canonicalUrl: `${identity.canonicalUrl}/${encodeURIComponent("선수 경력")}`,
+      revision: "crawled:fixture",
+      sectionPath: `${identity.pageTitle}/선수 경력`,
+      contentHash,
+      documentContentHash: contentHash,
+      collector,
+    },
+  ]);
+  const ingest = async (
+    item: typeof cases[number],
+    identity: ReturnType<typeof identityFor>,
+    options: {
+      contentHash?: string;
+      collector?: "a17_self_cdp" | "mac_direct_recovery";
+      content?: string;
+    } = {},
+  ) => {
+    const contentHash = options.contentHash ?? "1".repeat(64);
+    const collector = options.collector ?? "a17_self_cdp";
+    const snapshotHash = snapshotFor(identity, contentHash, collector);
     const claimed = await db.query<{ claim_token: string; claim_generation: number }>(
       "SELECT claim_token,claim_generation FROM public.claim_baseball_genius_rag_batch_scoped(1,300,ARRAY[$1])",
       [item.sourceKey],
@@ -1521,35 +1556,54 @@ async function verifyCorpusLoaderTwoPassOnRealDb(): Promise<void> {
     const claim = claimed.rows[0];
     assert.ok(claim, `${item.sourceKey}: actual claim absent`);
     const embedding = `[${Array(RAG_EMBEDDING_DIM).fill(0.01).join(",")}]`;
-    await db.query(
-      `SELECT public.upsert_baseball_genius_rag_chunk(
-        $1,$2,$3,'player',$4,$5,$6,'crawled:fixture','본문',0,$7,$8,$9,'tier2',
-        '2026-08-03'::timestamptz,'2026-08-03'::date,$10::extensions.vector,
-        jsonb_build_object('documentCanonicalUrl',$6::text)
-      )`,
-      [item.sourceKey, claim.claim_token, claim.claim_generation, item.entityId, identity.pageTitle,
-       identity.canonicalUrl, `${identity.pageTitle} 선수의 실제 canonical 표기차를 검증하는 충분히 긴 corpus 근거입니다.`,
-       `doc-${item.entityId}`, `chunk-${item.entityId}`, embedding],
-    );
+    const chunks = [
+      {
+        canonicalUrl: identity.canonicalUrl,
+        sectionPath: identity.pageTitle,
+        content: `${identity.pageTitle} 선수의 root 문서 근거를 검증하는 충분히 긴 corpus 본문입니다.`,
+        contentHash: "0".repeat(64),
+        collector: "a17_self_cdp",
+      },
+      {
+        canonicalUrl: `${identity.canonicalUrl}/${encodeURIComponent("선수 경력")}`,
+        sectionPath: `${identity.pageTitle}/선수 경력`,
+        content: options.content ?? `${identity.pageTitle} 선수의 child 문서 근거를 검증하는 충분히 긴 corpus 본문입니다.`,
+        contentHash,
+        collector,
+      },
+    ];
+    for (const [chunkIndex, chunk] of chunks.entries()) {
+      await db.query(
+        `SELECT public.upsert_baseball_genius_rag_chunk(
+          $1,$2,$3,'player',$4,$5,$6,'crawled:fixture',$7,$8,$9,$10,$10,'tier2',
+          '2026-08-03'::timestamptz,'2026-08-03'::date,$11::extensions.vector,
+          jsonb_build_object('documentCanonicalUrl',$6::text,'collector',$12::text)
+        )`,
+        [item.sourceKey, claim.claim_token, claim.claim_generation, item.entityId, identity.pageTitle,
+         chunk.canonicalUrl, chunk.sectionPath, chunkIndex, chunk.content, chunk.contentHash,
+         embedding, chunk.collector],
+      );
+    }
     const completed = await db.query<{ ok: boolean }>(
-      `SELECT public.complete_baseball_genius_rag_source(
+      `SELECT public.complete_baseball_genius_rag_corpus_source(
         $1,$2,$3,'crawled:fixture',$4,'2026-08-03'::timestamptz,
-        now()+interval '30 days',1
+        now()+interval '30 days',2
       ) AS ok`,
-      [item.sourceKey, claim.claim_token, claim.claim_generation, `doc-${item.entityId}`],
+      [item.sourceKey, claim.claim_token, claim.claim_generation, snapshotHash],
     );
     assert.equal(completed.rows[0]?.ok, true);
+    return snapshotHash;
   };
 
   // canary: 실 seed 등록명과 canonical 문서명이 다른 첫 source를 resolve→READY.
   const reyesIdentity = await resolve(cases[0]);
-  await ingest(cases[0], reyesIdentity);
+  const reyesSnapshotA = await ingest(cases[0], reyesIdentity);
 
   // full rerun: 첫 source는 같은 identity/active count를 exact 검증해 skip, 다음 source는 claim/complete.
   const reyesAgain = await resolve(cases[0]);
-  const ready = await db.query<{ page_title: string; candidate_urls: string[]; canonical_url: string; fingerprint: string; chunks: number }>(
+  const ready = await db.query<{ page_title: string; candidate_urls: string[]; canonical_url: string; fingerprint: string; content_hash: string; chunks: number }>(
     `SELECT source.page_title,source.candidate_urls,source.canonical_url,
-            source.identity_fingerprint AS fingerprint,
+            source.identity_fingerprint AS fingerprint, source.content_hash,
             (SELECT count(*)::int FROM public.genius_rag_chunks chunk
               WHERE chunk.source_key=source.source_key
                 AND chunk.claim_generation=source.active_claim_generation) AS chunks
@@ -1562,17 +1616,95 @@ async function verifyCorpusLoaderTwoPassOnRealDb(): Promise<void> {
     candidate_urls: reyesAgain.candidateUrls,
     canonical_url: reyesAgain.canonicalUrl,
     fingerprint: reyesAgain.identityFingerprint,
-    chunks: 1,
+    content_hash: reyesSnapshotA,
+    chunks: 2,
   });
   const ollerIdentity = await resolve(cases[1]);
   await ingest(cases[1], ollerIdentity);
+
+  // root revision과 chunk 수가 같아도 child content/provenance가 바뀌면 READY skip을 금지한다.
+  const reyesSnapshotB = snapshotFor(reyesIdentity, "2".repeat(64), "mac_direct_recovery");
+  assert.notEqual(reyesSnapshotB, reyesSnapshotA);
+  const refreshed = await db.query<{ ok: boolean }>(
+    "SELECT public.request_baseball_genius_rag_refresh($1,'crawled:fixture',$2) AS ok",
+    [cases[0].sourceKey, `corpus-snapshot:${reyesSnapshotB}`],
+  );
+  assert.equal(refreshed.rows[0]?.ok, true);
+  const reingestedSnapshot = await ingest(cases[0], reyesIdentity, {
+    contentHash: "2".repeat(64),
+    collector: "mac_direct_recovery",
+    content: "레예스 선수 경력 child 문서의 변경된 내용과 수집 경로를 검증하는 충분히 긴 corpus 근거입니다.",
+  });
+  assert.equal(reingestedSnapshot, reyesSnapshotB);
+  const changed = await db.query<{ revision: string; content_hash: string; chunks: number; collector: string }>(
+    `SELECT source.revision,source.content_hash,
+            (SELECT count(*)::int FROM public.genius_rag_chunks chunk
+              WHERE chunk.source_key=source.source_key AND chunk.claim_generation=source.active_claim_generation) AS chunks,
+            (SELECT chunk.metadata->>'collector' FROM public.genius_rag_chunks chunk
+              WHERE chunk.source_key=source.source_key AND chunk.claim_generation=source.active_claim_generation
+                AND chunk.canonical_url<>source.canonical_url LIMIT 1) AS collector
+       FROM public.genius_rag_sources source WHERE source.source_key=$1`,
+    [cases[0].sourceKey],
+  );
+  assert.deepEqual(changed.rows[0], {
+    revision: "crawled:fixture",
+    content_hash: reyesSnapshotB,
+    chunks: 2,
+    collector: "mac_direct_recovery",
+  });
   const serving = await db.query<{ c: number }>(
     "SELECT count(*)::int AS c FROM public.genius_rag_serving_chunks WHERE source_key=ANY($1::text[])",
     [cases.map((item) => item.sourceKey)],
   );
-  assert.equal(serving.rows[0]?.c, 2);
+  assert.equal(serving.rows[0]?.c, 4);
+
+  const artifact = "f".repeat(64);
+  await db.query(
+    "INSERT INTO public.genius_rag_corpus_runs(artifact_sha256,expected_rows) VALUES ($1,4)",
+    [artifact],
+  );
+  const ledgerRows = [
+    [0, "a".repeat(64), "assigned", false, "a17_self_cdp", "과거 revision 원문"],
+    [1, "b".repeat(64), "assigned", true, "a17_self_cdp", "최신 revision 원문"],
+    [2, "c".repeat(64), "quarantined", true, "a17_self_cdp", "격리 원문"],
+    [3, "d".repeat(64), "assigned", true, "mac_direct_recovery", "Mac 복구 원문"],
+  ] as const;
+  for (const [rowIndex, recordHash, disposition, latest, collector, rawText] of ledgerRows) {
+    await db.query(
+      `INSERT INTO public.genius_rag_corpus_records
+       (artifact_sha256,row_index,record_hash,kind,entity,doc,depth,page_title,canonical_url,
+        fetched_at,content_length,raw_text,disposition,is_latest_owner_revision,collector)
+       VALUES ($1,$2,$3,'team','KIA 타이거즈','KIA 타이거즈',1,'KIA 타이거즈 - 나무위키',
+        'https://namu.wiki/w/KIA%20%ED%83%80%EC%9D%B4%EA%B1%B0%EC%A6%88','2026-08-03',
+        $4,$5,$6,$7,$8)`,
+      [artifact, rowIndex, recordHash, rawText.length, rawText, disposition, latest, collector],
+    );
+  }
+  const finalized = await db.query<{ ok: boolean }>(
+    "SELECT public.finalize_baseball_genius_rag_corpus_ledger($1) AS ok",
+    [artifact],
+  );
+  assert.equal(finalized.rows[0]?.ok, true);
+  const ledger = await db.query<{
+    expected_rows: number; assigned_rows: number; quarantined_rows: number;
+    latest_owner_relations: number; collector_counts: Record<string, number>; raw_rows: number;
+  }>(
+    `SELECT run.expected_rows,run.assigned_rows,run.quarantined_rows,run.latest_owner_relations,
+            run.collector_counts,(SELECT count(*)::int FROM public.genius_rag_corpus_records record
+              WHERE record.artifact_sha256=run.artifact_sha256 AND length(record.raw_text)>0) AS raw_rows
+       FROM public.genius_rag_corpus_runs run WHERE run.artifact_sha256=$1 AND run.status='ready'`,
+    [artifact],
+  );
+  assert.deepEqual(ledger.rows[0], {
+    expected_rows: 4,
+    assigned_rows: 3,
+    quarantined_rows: 1,
+    latest_owner_relations: 3,
+    collector_counts: { a17_self_cdp: 3, mac_direct_recovery: 1 },
+    raw_rows: 4,
+  });
   await db.close();
-  console.log("PASS corpus loader actual DB 2회 — 레이예스→레예스 / 올러→아담 올러 identity 원자 정렬");
+  console.log("PASS corpus loader actual DB — identity 원자 정렬 + child snapshot mutation + physical ledger");
 }
 
 /** 실제 migration을 PGlite(pgvector)에 적용해 서빙 뷰·entity 필터 계약을 검증한다. */
