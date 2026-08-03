@@ -21,6 +21,7 @@ import {
   type PitcherSeasonRow,
 } from "../../src/lib/stats/pitcher-season";
 import { resolveRosterPlayer } from "../../src/lib/utils/player-roster";
+import { FOREIGN_NUMERIC_TO_ALPHA } from "../../src/lib/constants/foreign-id-map";
 import {
   isLineupStarterProvenanceTrusted,
   shouldCommitResponse,
@@ -39,6 +40,9 @@ const FIXTURE_ROSTER = [
   { name: "동명가", kboId: "10004", teamId: 6 }, // 동명이인 — 팀으로만 분리 가능
   { name: "외인가", kboId: "FX001", teamId: 4 }, // stats에는 숫자 ID로만 존재
   { name: "무기록", kboId: "10005", teamId: 2 }, // roster에는 있으나 stats 없음
+  // 별칭 — 중계/박스스코어 표기가 로스터 등록명과 달라도 같은 canonical ID로 해석된다.
+  // 이름 완전일치만 남기면 이 케이스가 box ERA를 잃는다.
+  { name: "선발", kboId: "10001", teamId: 2 },
 ] as const;
 
 const FIXTURE_NUMERIC: Record<string, string> = { FX001: "59001" };
@@ -123,6 +127,13 @@ assert.deepEqual(
   resolveStarterPitcher("미등록투수", 2, "-"),
   { name: "미등록투수", era: "-", kboId: undefined },
   "unknown pitcher fails closed without guessing",
+);
+// 이름 표기가 달라도 canonical ID가 같으면 동일 identity — box ERA를 채택해야 한다.
+// (이름 완전일치만 남기면 별칭 표기에서 현재 box ERA를 잃고 시즌값으로 후퇴한다.)
+assert.equal(
+  resolveStarterPitcher("선발가", 2, "2.66", "선발").era,
+  "2.66",
+  "같은 canonical ID면 표기가 달라도 box ERA를 채택한다",
 );
 
 // confirmed lineup vs live — 정책 계약
@@ -289,6 +300,75 @@ assert.deepEqual(
   { name: "선발가", era: "2.64", kboId: "10001" },
   "confirmed lineup remains monotonic across repeated later stale live polls",
 );
+// naver-confirmed도 confirmed 등급이다 — kbo-confirmed와 동일하게 fresh live mismatch를 이긴다.
+// (lineupConfirmed에서 naver-confirmed를 빼면 이 케이스가 fresh live로 밀린다.)
+assert.deepEqual(
+  resolveLineupStarter({
+    liveStarterName: "구원가",
+    lineupStarterName: "선발가",
+    liveStarterFresh: true,
+    lineupStarterTrusted: true,
+    lineupSource: "naver-confirmed",
+    teamId: 2,
+  }),
+  { name: "선발가", era: "2.64", kboId: "10001" },
+  "naver-confirmed도 confirmed 등급으로 fresh live mismatch를 이긴다",
+);
+// unconfirmed 소스는 confirmed 대우를 받지 못한다 — fresh live가 이긴다(반대 방향 경계).
+assert.deepEqual(
+  resolveLineupStarter({
+    liveStarterName: "구원가",
+    lineupStarterName: "선발가",
+    liveStarterFresh: true,
+    lineupStarterTrusted: true,
+    lineupSource: "kbo-unconfirmed",
+    teamId: 2,
+  }),
+  { name: "구원가", era: "1.23", kboId: "10002" },
+  "unconfirmed 라인업은 fresh live를 누르지 못한다",
+);
+// untrusted 라인업은 live가 없어도 선발로 승격되지 않는다(fail-close).
+// (lineupStarterTrusted fallback을 무시하면 미신뢰 선발이 그대로 노출된다.)
+assert.deepEqual(
+  resolveLineupStarter({
+    liveStarterName: null,
+    lineupStarterName: "선발가",
+    liveStarterFresh: false,
+    lineupStarterTrusted: false,
+    lineupSource: "kbo-unconfirmed",
+    teamId: 2,
+  }),
+  { name: "", era: "-", kboId: undefined },
+  "untrusted 라인업 선발은 채택하지 않는다",
+);
+// KBO가 선발명을 `선수(66291)` placeholder로 내려주면 box 행도 같은 placeholder다.
+// 이때 이름이 "같다"는 이유로 box ERA를 채택하면 정체불명 선수의 기록이 노출된다.
+// (`^선수\(\d+\)$` 가드를 제거하면 `-` 대신 `1.23`이 나간다 — 실측 확인함.)
+assert.deepEqual(
+  resolveLineupStarter({
+    liveStarterName: "선수(66291)",
+    liveStarterFresh: true,
+    lineupStarterTrusted: false,
+    teamId: 2,
+    boxPitcher: { name: "선수(66291)", era: "1.23" },
+  }),
+  { name: "선수(66291)", era: "-", kboId: undefined },
+  "placeholder 선발명은 동일 placeholder box ERA를 채택하지 못한다",
+);
+// canonical 선발이 있는 경우의 placeholder box도 오염원이 되지 않는다.
+assert.deepEqual(
+  resolveLineupStarter({
+    liveStarterName: "선발가",
+    lineupStarterName: "선발가",
+    liveStarterFresh: true,
+    lineupStarterTrusted: true,
+    lineupSource: "kbo-confirmed",
+    teamId: 2,
+    boxPitcher: { name: "선수(66291)", era: "1.23" },
+  }),
+  { name: "선발가", era: "2.64", kboId: "10001" },
+  "placeholder box 행은 canonical 선발의 ERA를 오염하지 못한다",
+);
 assert.equal(shouldPreserveCanonicalLineup("kbo-confirmed", "none"), true);
 assert.equal(shouldPreserveCanonicalLineup("naver-preview", "kbo-unconfirmed"), true);
 assert.equal(shouldPreserveCanonicalLineup("kbo-confirmed", "naver-preview"), true);
@@ -366,6 +446,41 @@ assert.ok(
   "프로덕션 roster 해석기가 표본 선수를 canonical ID로 되돌려야 한다",
 );
 
+// 외국인 canonical(영문) → 숫자 ID 역매핑을 *프로덕션 데이터로* 태운다.
+// stats-2026-pitchers.json은 현재 276/276이 전부 숫자 ID라, 위의 표본 루프는
+// FP/AQ 경로를 절대 밟지 못한다(삼순 지적 — 이 구간이 false-green이었다).
+//
+// 중요: 표본을 `resolvePlayerIdentity`로 고르면 그 함수가 깨지는 순간 표본이 비어
+// "검증할 게 없다"로 빠져나간다. 그래서 표본은 검증 대상 함수가 아니라
+// SSOT 상수(FOREIGN_NUMERIC_TO_ALPHA)에서 직접 도출한다.
+const alphaToNumericSsot = new Map(
+  Object.entries(FOREIGN_NUMERIC_TO_ALPHA).map(([numeric, alpha]) => [alpha, numeric]),
+);
+const foreignWithStats = rosterRows.filter((p) => {
+  const numeric = alphaToNumericSsot.get(String(p.kboId));
+  return Boolean(numeric && eraIds.has(numeric));
+});
+assert.ok(
+  foreignWithStats.length > 0,
+  "영문 canonical ID로 등록된 외국인 투수 중 시즌 기록 보유자가 최소 1명은 있어야 한다",
+);
+for (const foreign of foreignWithStats) {
+  const numericId = alphaToNumericSsot.get(String(foreign.kboId))!;
+  const tableEra = normalizePitcherEra(
+    eraRows.find((row) => String(row.kboId ?? row.playerId) === numericId)?.era,
+  );
+  assert.equal(
+    productionLookupEra(foreign.kboId),
+    tableEra,
+    `외국인 canonical ${foreign.kboId}가 숫자 ${numericId} 기록으로 역매핑되어야 한다`,
+  );
+  assert.equal(
+    productionResolveStarter(foreign.name, foreign.teamId).era,
+    tableEra,
+    `외국인 ${foreign.name} 선발 해석이 시즌 ERA로 이어져야 한다`,
+  );
+}
+
 /* ────────────────────────────────────────────────────────────────
  * §3. 실제 배선 — 호출부가 계약대로 연결돼 있는지
  * ──────────────────────────────────────────────────────────────── */
@@ -391,6 +506,25 @@ assert.ok(
   detailHook.includes("shouldPreserveCanonicalLineup")
     && detailHook.includes("lineup: dataRef.current.lineup"),
   "actual detail polling cannot downgrade a canonical lineup to none/unconfirmed",
+);
+
+// shouldCommitResponse를 "함수로 가지고 있다"가 아니라 *실제로 포대에 묶여 있는지*를 본다.
+// 펌스를 떼면 늦게 도착한 구세대 응답이 현재 데이터를 덮어쓴다.
+assert.ok(
+  /const responseGeneration = \+\+responseGenerationRef\.current;/.test(detailHook),
+  "응답 generation은 요청당 1회 증가해야 한다",
+);
+assert.ok(
+  /if \(!shouldCommitResponse\(responseGenerationRef\.current, responseGeneration\)\) return;/
+    .test(detailHook),
+  "fetch 직후 구세대 응답은 커밋 전에 조기 반환되어야 한다",
+);
+assert.equal(
+  (detailHook.match(
+    /shouldCommitResponse\(responseGenerationRef\.current, responseGeneration\)/g,
+  ) ?? []).length,
+  3,
+  "성공·예외·finally 세 커밋 지점 전부 generation 펌스를 통과해야 한다",
 );
 
 // 프로덕션 바인딩이 실제 stats/roster JSON에 연결돼 있는지 (fixture로 갈아끼워진 채
