@@ -135,6 +135,12 @@ export function resolveSeasonRecordIntent(
     table: "batter" | "pitcher";
     metric: string;
     pattern: RegExp;
+    /**
+     * 타자/투수 어느 쪽인지 표현만으로는 알 수 없는 공통어인가.
+     * `경기 수`만 해당한다 — 이때만 로스터 포지션으로 disambiguate 한다.
+     * `등판`(투수 전용)·`출장`(타자 전용)은 표현 자체가 테이블을 지정하므로 절대 덮어쓰지 않는다.
+     */
+    ambiguous?: true;
   }> = [
     // 투수 전용(타자 공통명보다 먼저)
     { table: "pitcher", metric: "era", pattern: /평균\s*자책(?:점)?|방어율|\bera\b/i },
@@ -150,6 +156,7 @@ export function resolveSeasonRecordIntent(
     { table: "pitcher", metric: "er", pattern: /자책(?:점)?/ },
     { table: "pitcher", metric: "r", pattern: /실점/ },
     { table: "pitcher", metric: "whip", pattern: /\bwhip\b/i },
+    // `등판`은 투수 전용 표현 — 로스터 포지션이 타자여도 pitcher 테이블 그대로 두고 fail-close 한다.
     { table: "pitcher", metric: "games", pattern: /등판(?:\s*(?:경기|수))?/ },
     // `몇승/몇 승/승수/10승`은 허용하되 승부·승률은 제외.
     { table: "pitcher", metric: "wins", pattern: /(?:몇\s*승(?:수)?|\d+\s*승(?:수)?|승수|승\s*(?:몇|개))(?!부|률|리)/ },
@@ -165,14 +172,18 @@ export function resolveSeasonRecordIntent(
     { table: "batter", metric: "ab", pattern: /타수/ },
     { table: "batter", metric: "runs", pattern: /득점/ },
     { table: "batter", metric: "hits", pattern: /안타/ },
-    { table: "batter", metric: "games", pattern: /출장(?:\s*(?:경기|수))?|경기\s*수/ },
+    // `출장`은 타자 전용 표현. 공통어 `경기 수`보다 먼저 매칭돼야 표현이 보존된다.
+    { table: "batter", metric: "games", pattern: /출장(?:\s*(?:경기|수))?/ },
+    // 공통어 — 여기서만 포지션 결속이 허용된다.
+    { table: "batter", metric: "games", pattern: /경기\s*수/, ambiguous: true },
   ];
 
   const normalized = normalizeWithSpaces(question);
   let best = patterns.find((entry) => entry.pattern.test(normalized));
   if (!best) return { kind: "none" };
-  // `경기 수`는 타자/투수 공통어다. 이름으로 확정된 로스터 포지션이 투수면 pitcher로 결속한다.
-  if (best.metric === "games" && preferredTable) best = { ...best, table: preferredTable };
+  // 공통어 `경기 수`만 이름으로 확정된 로스터 포지션에 결속한다(투수면 pitcher).
+  // explicit `등판`/`출장`까지 뒤집으면 `문보경 등판 수`에 타자 경기 수를 답하는 오답이 된다.
+  if (best.ambiguous && preferredTable) best = { ...best, table: preferredTable };
   // 과거 시즌 차단은 지원 metric 수치 질문에만 적용한다. `작년에 별명이 뭐였어?` 같은
   // 선수 서술형은 기존 RAG로 내려보내야 한다.
   if (hasUnsupportedSeason(question)) return { kind: "unsupported_season" };

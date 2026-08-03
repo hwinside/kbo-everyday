@@ -31,6 +31,14 @@ export async function fetchSeasonRecordRows(
   table: SeasonRecordTable,
   kboId: string,
 ): Promise<SeasonRecordRow[]> {
+  return fetchSeasonRecordRowsImpl(client, table, kboId);
+}
+
+async function fetchSeasonRecordRowsImpl(
+  client: SeasonRecordClient,
+  table: SeasonRecordTable,
+  kboId: string,
+): Promise<SeasonRecordRow[]> {
   const tableName = table === "batter" ? "player_stats_batter" : "player_stats_pitcher";
   // query-guard: bounded -- player_key exact single-entity lookup with hard limit 2.
   const { data, error } = await client
@@ -40,4 +48,19 @@ export async function fetchSeasonRecordRows(
     .limit(2);
   if (error) throw new Error(error.message);
   return (data ?? []) as SeasonRecordRow[];
+}
+
+/**
+ * production `QaDeps.fetchSeasonRecord` 주입값을 만드는 seam.
+ *
+ * 서버가 인라인 lambda로 직접 주입하면 그 lambda 안의 분기를 테스트가 실행할 수 없어
+ * "호출문 존재"만 검사하는 정규식 게이트로 전락한다. `NODE_ENV==='production'이면 []`
+ * 같은 반대가설이 GREEN으로 통과해버리므로(삼순 3차 P0-3), 주입값을 이 factory로
+ * 끌어내 테스트가 **실제 배포되는 함수를 그대로 실행**해 table/kboId/row 전달을 actual 검증한다.
+ */
+export function createSeasonRecordFetcher(
+  client: SeasonRecordClient,
+): (table: SeasonRecordTable, kboId: string) => Promise<SeasonRecordRow[]> {
+  // query-guard: bounded -- player_key exact 일치 + limit 2.
+  return (table, kboId) => fetchSeasonRecordRowsImpl(client, table, kboId);
 }

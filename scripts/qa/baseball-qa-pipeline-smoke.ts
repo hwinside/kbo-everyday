@@ -6,6 +6,7 @@ import { normalizeKey, normalizeQuestion } from "../../src/lib/baseball-qa/norma
 import {
   applyBaseballQaPlayerPick,
   attemptBaseballQaOutbox,
+  collectBaseballQaAnsweredQuestionIds,
   enqueueBaseballQaQuestion,
   getBaseballQaReplyStates,
   observeBaseballQaReplies,
@@ -45,6 +46,7 @@ import {
   UNTRUSTED_METRIC_ANSWER,
 } from "../../src/lib/baseball-qa/stats/season-record";
 import {
+  createSeasonRecordFetcher,
   fetchSeasonRecordRows,
   type SeasonRecordClient,
 } from "../../src/lib/baseball-qa/stats/fetch-season-record";
@@ -92,6 +94,7 @@ const dmChatSource = readFileSync(
   "utf8",
 );
 const routeSource = readFileSync(path.join(process.cwd(), "src/app/api/baseball-qa/route.ts"), "utf8");
+const useDmSource = readFileSync(path.join(process.cwd(), "src/lib/supabase/useDM.ts"), "utf8");
 const serverSource = readFileSync(path.join(process.cwd(), "src/lib/baseball-qa/server.ts"), "utf8");
 assert.doesNotMatch(serverSource, /gemini-2\.5-flash-lite/);
 assert.equal(BASEBALL_QA_GEMINI_MODEL, "gemini-flash-lite-latest");
@@ -178,9 +181,13 @@ assert.doesNotMatch(
 }
 assert.match(serverSource, /sendOpsMessageToUser/);
 assert.match(serverSource, /reserve_baseball_genius_daily_question_for_message/);
-// production seam actual: helper 단위 mock만 GREEN이고 server binding이 끊긴 false-green 방지.
-assert.match(serverSource, /import \{ fetchSeasonRecordRows \} from "@\/lib\/baseball-qa\/stats\/fetch-season-record"/);
-assert.match(serverSource, /fetchSeasonRecord:\s*async\s*\(table, kboId\)[\s\S]*?return fetchSeasonRecordRows\([\s\S]*?table,[\s\S]*?kboId,/);
+// production seam actual (삼순 3차 P0-3): 정규식만 보는 게이트는 `NODE_ENV==='production'이면 []`
+// 같은 반대가설을 GREEN으로 통과시킨다. 그래서 서버가 주입하는 **바로 그 함수**를
+// 이 게이트가 직접 실행해 table/kboId/row 전달을 actual 로 검증한다.
+assert.match(serverSource, /import \{ createSeasonRecordFetcher \} from "@\/lib\/baseball-qa\/stats\/fetch-season-record"/);
+assert.match(serverSource, /fetchSeasonRecord: createSeasonRecordFetcher\(/);
+// 인라인 lambda 재도입(=테스트가 실행할 수 없는 분기) 금지.
+assert.doesNotMatch(serverSource, /fetchSeasonRecord:\s*async\s*\(/);
 // 로스터 인원은 콜업·트레이드로 상시 변하므로 숫자를 고정하지 않는다(2026-08-01 P0:
 // 하드코딩 878이 자동 roster PR을 영구 막았다). 계약은 "선차단 SSOT가 roster JSON이고 비어있지 않다".
 assert.ok(playersRoster.length > 0, "선수 선차단 SSOT는 roster JSON이며 비어 있으면 안 됨");
@@ -1261,6 +1268,42 @@ async function verifyPipeline() {
     assert.equal(ryuGamesTable, "pitcher", "투수 경기수는 pitcher 테이블");
     assert.equal(ryuGamesResult.source, "kbo_structured", "투수 경기수 actual 답변");
 
+    // 삼순 3차 P0-1: 포지션 결속은 **공통어 `경기 수`에만** 적용된다.
+    // explicit `등판`(투수 전용)·`출장`(타자 전용)까지 덮어쓰면 `문보경 등판 수`에
+    // 타자 경기 수를 답하는 오답이 된다. intent 단위 actual + pipeline actual 둘 다 고정한다.
+    for (const [question, preferred, expected, label] of [
+      ["문보경 올해 등판 수 알려줘", "batter", "pitcher", "explicit 등판은 타자 로스터여도 pitcher 유지"],
+      ["류현진 올해 출장 경기 수 알려줘", "pitcher", "batter", "explicit 출장은 투수 로스터여도 batter 유지"],
+      ["류현진 올해 경기 수 몇 개야?", "pitcher", "pitcher", "공통어는 preferred 결속"],
+      ["문보경 올해 경기 수 몇 개야?", "batter", "batter", "공통어는 preferred 결속"],
+    ] as Array<[string, "batter" | "pitcher", "batter" | "pitcher", string]>) {
+      const intent = resolveSeasonRecordIntent(question, preferred);
+      assert.equal(intent.kind, "query", `${question}: 기록 질문으로 인식`);
+      assert.equal(
+        intent.kind === "query" ? intent.query.table : null,
+        expected,
+        `${label} (${question}, preferred=${preferred})`,
+      );
+    }
+    // pipeline actual: 로스터가 타자로 확정된 이름이어도 `등판`은 pitcher 테이블로 간다.
+    const explicitAppearance = freshState();
+    let explicitAppearanceTable: string | null = null;
+    const explicitAppearanceResult = await answerQuestion(
+      "u1",
+      "문보경 올해 등판 수 알려줘",
+      statsDeps(explicitAppearance, [], {
+        fetchSeasonRecord: async (table, kboId) => {
+          explicitAppearanceTable = table;
+          return [{
+            player_key: kboId, kbo_id: kboId, name: "문보경", team: "LG",
+            updated_at: moonRow.updated_at, games: 3,
+          }] as never;
+        },
+      }),
+    );
+    assert.equal(explicitAppearanceTable, "pitcher", "explicit 등판은 production에서도 pitcher 테이블");
+    assert.equal(explicitAppearanceResult.source, "kbo_structured", "explicit 등판도 구조화 경로");
+
     // ⑩ `fetchSeasonRecord` 미주입이면 기록 경로 자체가 비활성 — 기존 동작 그대로.
     const noRecord = freshState();
     const noRecordResult = await answerQuestion("u1", "문보경 올해 2루타 몇개야?", {
@@ -1933,6 +1976,65 @@ async function verifyClientRetryOutbox() {
   assert.deepEqual(freshBody, {
     conversationId: "conversation-fresh", messageId: 111, pickedPlayerKboId: "56143",
   }, "fresh client 카드 탭도 API 요청 1회");
+
+  // 삼순 3차 P0-2: **이미 최종 답변이 있는** 과거 picker 카드 재탭.
+  // 서버는 dedup으로 200만 돌려주고 새 DM을 만들지 않는다 → outbox가 acknowledged=true 로
+  // 남아 typing indicator가 영원히 돌고, 관측할 새 메시지가 없어 지워지지도 않았다.
+  {
+    const answeredHistory = [
+      { sender_id: GENIUS_ID, dedup_key: "baseball-genius-picker:222", payload: { reply_kind: "picker" } },
+      { sender_id: GENIUS_ID, dedup_key: "baseball-genius:222" },
+    ];
+    const answeredIds = collectBaseballQaAnsweredQuestionIds(answeredHistory, GENIUS_ID);
+    assert.deepEqual([...answeredIds], [222], "최종 답변 있는 질문 id 수집");
+    assert.equal(
+      collectBaseballQaAnsweredQuestionIds(
+        [{ sender_id: GENIUS_ID, dedup_key: "baseball-genius-picker:222", payload: { reply_kind: "picker" } }],
+        GENIUS_ID,
+      ).has(222),
+      false,
+      "picker DM만으로는 answered 가 아니다(아직 고를 수 있어야 함)",
+    );
+
+    values.clear();
+    // 관측은 정상대로 돌아가고(picker 닫힘 계약 유지), storage는 비어 있다.
+    observeBaseballQaReplies(storage, answeredHistory, GENIUS_ID);
+    assert.deepEqual(readBaseballQaOutbox(storage), [], "답변 완료 히스토리는 outbox 비어 있음");
+
+    // 과거 picker 재탭 → upsert 자체를 거부해야 한다.
+    const enqueued = applyBaseballQaPlayerPick(storage, "conversation-old", 222, "69102", answeredIds.has(222));
+    assert.equal(enqueued, false, "답변 완료된 질문은 picker 재탭을 수락하지 않는다");
+    assert.deepEqual(readBaseballQaOutbox(storage), [], "과거 picker 재탭은 outbox upsert 0");
+    assert.deepEqual(getBaseballQaReplyStates(readBaseballQaOutbox(storage)), {}, "typing indicator 미발생");
+
+    // 그 상태에서 drain 해도 요청이 생기지 않는다(영원 typing 경로 차단 증거).
+    let staleCalls = 0;
+    await attemptBaseballQaOutbox(storage, "token", async () => {
+      staleCalls += 1;
+      return new Response('{"ok":true}', { status: 200 });
+    });
+    assert.equal(staleCalls, 0, "답변 완료 뒤 재탭은 API 요청 0회");
+    assert.deepEqual(getBaseballQaReplyStates(readBaseballQaOutbox(storage)), {}, "waiting 잔존 0");
+
+    // 반대 경계: 아직 답변이 없는 picker는 그대로 수락되어야 한다(과차단 방지).
+    values.clear();
+    const liveEnqueued = applyBaseballQaPlayerPick(storage, "conversation-live", 333, "56143", false);
+    assert.equal(liveEnqueued, true, "미답변 picker는 정상 수락");
+    assert.equal(readBaseballQaOutbox(storage).length, 1, "미답변 picker는 outbox upsert");
+  }
+
+  // UI 계약 actual: 카드 자체가 비활성화되어야 중복/다른 옵션 연속 탭도 1요청으로 고정된다.
+  // hook이 두 집합을 내려주고 페이지가 disabled 로 쓰는 배선이 끊기면 영원 typing이 재발한다.
+  assert.match(useDmSource, /collectBaseballQaAnsweredQuestionIds/,
+    "useDM이 답변 완료 id 집합을 수집해야 함");
+  assert.match(useDmSource, /geniusPickedQuestionIds/, "이번 세션 선택 id 집합 노출");
+  assert.match(useDmSource, /geniusAnsweredQuestionIds/, "답변 완료 id 집합 노출");
+  assert.match(useDmSource, /if \(geniusPickedQuestionIds\.has\(messageId\)\) return;/,
+    "중복 탭은 hook에서도 요청을 만들지 않는다");
+  assert.match(dmChatSource, /geniusAnsweredQuestionIds\.has\(geniusReply\.question_message_id\)/,
+    "답변 완료된 picker 카드는 disabled");
+  assert.match(dmChatSource, /geniusPickedQuestionIds\.has\(geniusReply\.question_message_id\)/,
+    "선택한 picker 카드는 disabled");
 }
 
 // 공통: dm 테이블 + jobs 테이블 + trigger/RPC를 migration 원본에서 추출해 적재한다.
@@ -2301,8 +2403,64 @@ function auditSeedEvidence(rows: SeedEvidenceRow[]) {
   }
 }
 
+/**
+ * production `QaDeps.fetchSeasonRecord` 주입값 actual (삼순 3차 P0-3).
+ *
+ * 서버가 호출하는 바로 그 factory를 직접 실행해 table 분기·player_key exact·limit 2·row 반환을
+ * 검증한다. 정규식만 보던 기존 게이트는 `NODE_ENV==='production'이면 []` 반대가설을
+ * GREEN으로 통과시켰다 — 이젠 그 분기가 실제로 실행되어 RED가 난다.
+ */
+async function verifyProductionSeasonRecordSeam() {
+  const seamCalls: Array<[string, string | number]> = [];
+  const seamClient: SeasonRecordClient = {
+    from: (table) => ({
+      select: (columns) => ({
+        eq: (column, value) => ({
+          limit: async (limit) => {
+            seamCalls.push(["table", table], ["select", columns], ["column", column], ["value", value], ["limit", limit]);
+            return { data: [{ player_key: value, kbo_id: value, name: "문보경" }], error: null };
+          },
+        }),
+      }),
+    }),
+  };
+  // 서버가 쓰는 것과 동일한 factory 호출. 이 반환값이 곳 QaDeps.fetchSeasonRecord 다.
+  const productionFetcher = createSeasonRecordFetcher(seamClient);
+  const batterRows = await productionFetcher("batter", "69102");
+  const pitcherRows = await productionFetcher("pitcher", "56143");
+  assert.equal(batterRows.length, 1, "production seam은 실제 row 를 돌려준다(빈 배열 순환 금지)");
+  assert.equal(pitcherRows.length, 1, "production seam pitcher row");
+  assert.deepEqual(seamCalls, [
+    ["table", "player_stats_batter"], ["select", "*"], ["column", "player_key"],
+    ["value", "69102"], ["limit", 2],
+    ["table", "player_stats_pitcher"], ["select", "*"], ["column", "player_key"],
+    ["value", "56143"], ["limit", 2],
+  ], "production seam actual = table 분기 + player_key exact + limit 2");
+
+  // 삼순가 준 반대가설 그대로: `NODE_ENV==='production'이면 []`로 기록 조회를 끊는 변종.
+  // 게이트가 기본 NODE_ENV에서만 돌면 그 변종을 못 잡는다 — 실제 production 값으로도 같은
+  // 행동임을 actual 로 묶어 env-의존 분기가 들어오면 RED 가 나게 한다.
+  const env = process.env as Record<string, string | undefined>;
+  const originalNodeEnv = env.NODE_ENV;
+  try {
+    env.NODE_ENV = "production";
+    assert.equal(process.env.NODE_ENV, "production", "env 주입 자체가 실패하면 이 게이트는 무의미하다");
+    seamCalls.length = 0;
+    const productionEnvRows = await createSeasonRecordFetcher(seamClient)("batter", "69102");
+    assert.equal(productionEnvRows.length, 1, "NODE_ENV=production 에서도 실제 row 반환");
+    assert.deepEqual(seamCalls, [
+      ["table", "player_stats_batter"], ["select", "*"], ["column", "player_key"],
+      ["value", "69102"], ["limit", 2],
+    ], "NODE_ENV=production 에서도 동일한 조회를 실제로 수행한다");
+  } finally {
+    if (originalNodeEnv === undefined) delete env.NODE_ENV;
+    else env.NODE_ENV = originalNodeEnv;
+  }
+}
+
 async function main() {
   await verifyPipeline();
+  await verifyProductionSeasonRecordSeam();
   await verifyCrashIdempotentLlmAndQuota();
   await verifyLlmStoreFailureFailClosed();
   await verifyConcurrentLlmBoundaryRace();

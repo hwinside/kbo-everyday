@@ -18,6 +18,7 @@ import {
   readBaseballQaOutbox,
   resetBaseballQaQuestion,
   applyBaseballQaPlayerPick,
+  collectBaseballQaAnsweredQuestionIds,
   type BaseballQaReplyStates,
 } from "@/lib/baseball-qa/client-outbox";
 import { usePollingFallback } from "./usePollingFallback";
@@ -211,9 +212,31 @@ export function useDMChat(conversationId: string) {
   const processingBaseballQaRef = useRef(false);
   const observedBaseballQaReplyIdsRef = useRef(new Set<number>());
   const observedBaseballQaPickerIdsRef = useRef(new Set<number>());
+  /**
+   * picker 선택이 이미 끝난(또는 불가능한) 질문 id.
+   *
+   * 카드를 즉시 비활성화해 같은 카드의 다른 옵션·연속 탭이 여러 요청으로 갈라지지 않게 한다.
+   */
+  const [geniusPickedQuestionIds, setGeniusPickedQuestionIds] =
+    useState<ReadonlySet<number>>(() => new Set<number>());
+  /** 최종 답변이 있는 질문 id — 과거 picker 카드 재탭을 UI에서도 막는다. */
+  const [geniusAnsweredQuestionIds, setGeniusAnsweredQuestionIds] =
+    useState<ReadonlySet<number>>(() => new Set<number>());
 
   const observeBaseballQaMessages = useCallback((nextMessages: DMMessage[]) => {
     if (typeof window === "undefined") return;
+    // 최종 답변 집합은 observed 여부와 무관하게 매 관측마다 갱신한다 — 이미 답변된
+    // 히스토리만 불러온 재진입에서도 picker를 비활성화해야 한다.
+    const answered = collectBaseballQaAnsweredQuestionIds(
+      nextMessages,
+      BASEBALL_GENIUS_USER_ID,
+    );
+    setGeniusAnsweredQuestionIds((prev) =>
+      answered.size === prev.size && [...answered].every((id) => prev.has(id))
+        ? prev
+        : answered,
+    );
+    for (const messageId of answered) observedBaseballQaReplyIdsRef.current.add(messageId);
     const observed = observeBaseballQaReplies(
       window.localStorage,
       nextMessages,
@@ -303,7 +326,23 @@ export function useDMChat(conversationId: string) {
    */
   const pickBaseballQaPlayer = useCallback((messageId: number, kboId: string) => {
     if (typeof window === "undefined" || !conversationId) return;
-    applyBaseballQaPlayerPick(window.localStorage, conversationId, messageId, kboId);
+    // 이미 최종 답변이 있거나 이번 세션에서 이미 고른 질문은 요청을 만들지 않는다.
+    // 서버는 dedup 200만 돌려주고 새 DM이 안 생기므로 outbox가 waiting으로 영원히 남는다.
+    if (geniusPickedQuestionIds.has(messageId)) return;
+    const enqueued = applyBaseballQaPlayerPick(
+      window.localStorage,
+      conversationId,
+      messageId,
+      kboId,
+      observedBaseballQaReplyIdsRef.current.has(messageId),
+    );
+    setGeniusPickedQuestionIds((prev) => {
+      if (prev.has(messageId)) return prev;
+      const next = new Set(prev);
+      next.add(messageId);
+      return next;
+    });
+    if (!enqueued) return;
     setGeniusReplyStates(
       getBaseballQaReplyStates(
         readBaseballQaOutbox(window.localStorage),
@@ -311,7 +350,7 @@ export function useDMChat(conversationId: string) {
       ),
     );
     void processBaseballQaOutbox();
-  }, [conversationId, processBaseballQaOutbox]);
+  }, [conversationId, processBaseballQaOutbox, geniusPickedQuestionIds]);
 
   // 대화 전환(A→B) 즉시 렌더 시점에 이전 대화 화면을 무효화한다:
   // A 메시지 잔존 상태로 B composer 가 뜨면 A 화면을 보고 B 에 오발송하는 창이 생긴다.
@@ -614,6 +653,8 @@ export function useDMChat(conversationId: string) {
     geniusReplyStates,
     retryBaseballQa,
     pickBaseballQaPlayer,
+    geniusPickedQuestionIds,
+    geniusAnsweredQuestionIds,
   };
 }
 

@@ -44,7 +44,7 @@ import {
   type RagEvidenceCandidate,
   type RagPlayerCandidate,
 } from "@/lib/baseball-qa/rag/retrieve";
-import { fetchSeasonRecordRows } from "@/lib/baseball-qa/stats/fetch-season-record";
+import { createSeasonRecordFetcher } from "@/lib/baseball-qa/stats/fetch-season-record";
 import type { SeasonRecordClient } from "@/lib/baseball-qa/stats/fetch-season-record";
 import { embedQuery } from "@/lib/baseball-qa/rag/embed";
 import { orderTier2Evidence } from "@/lib/baseball-qa/rag/fetch-wikipedia";
@@ -361,14 +361,11 @@ function makeDeps(messageId: number, pickedPlayerKboId?: string | null): QaDeps 
      * 섞어버리므로 금지다(삼순 조건 ①). 상한 2로 조회해서 중복행을 숨기지 않고
      * 호출부가 `inconsistent` 로 fail-close 할 수 있게 한다.
      */
-    fetchSeasonRecord: async (table, kboId) => {
-      // query-guard: bounded -- player_key exact 일치 + limit 2.
-      return fetchSeasonRecordRows(
-        supabaseAdmin as unknown as SeasonRecordClient,
-        table,
-        kboId,
-      );
-    },
+    // 인라인 lambda 대신 seam factory를 쓴다 — 테스트가 이 같은 함수를 그대로 실행해
+    // table/kboId/row 전달을 actual 검증한다(정규식만 보는 false-green 제거, 삼순 3차 P0-3).
+    fetchSeasonRecord: createSeasonRecordFetcher(
+      supabaseAdmin as unknown as SeasonRecordClient,
+    ),
     searchOfficialRag,
     callOfficialRagLlm,
     recordRagDemand: async (sourceKeys) => {

@@ -89,7 +89,16 @@ export function applyBaseballQaPlayerPick(
   conversationId: string,
   messageId: number,
   pickedPlayerKboId: string,
-) {
+  /**
+   * 이미 최종 답변(`baseball-genius:{id}`)이 있는 질문인가.
+   *
+   * 진짜면 서버는 dedup으로 200만 돌려주고 새 DM을 만들지 않는다. 그런데도 outbox에
+   * 항목을 넣으면 `acknowledged=true`로 남아 typing indicator가 영원히 돌고, 관측할 새
+   * 메시지가 없어 지워지지도 않는다. 과거 picker 카드 재탭은 여기서 아예 막는다.
+   */
+  alreadyAnswered = false,
+): boolean {
+  if (alreadyAnswered) return false;
   const entries = readBaseballQaOutbox(storage);
   const index = entries.findIndex((row) => row.messageId === messageId);
   const selected: BaseballQaOutboxEntry = {
@@ -105,6 +114,28 @@ export function applyBaseballQaPlayerPick(
   // 서버의 durable picker DM이 정본이다. localStorage가 비었거나 다른 기기여도
   // conversationId + question_message_id로 항목을 복원해 선택 요청을 1회 만든다.
   writeBaseballQaOutbox(storage, entries);
+  return true;
+}
+
+/**
+ * 최종 답변이 이미 도착한 질문 messageId 집합.
+ *
+ * picker 카드는 답변 뒤에도 히스토리에 그대로 남아 있다. 이 집합으로 UI를 비활성화하고
+ * 선택 요청 자체를 막는다 — 판정 규칙은 outbox 관측과 같은 모듈에 둔다(두 곳으로 갈라지면 어깋난다).
+ */
+export function collectBaseballQaAnsweredQuestionIds(
+  messages: BaseballQaReplyMessage[],
+  geniusUserId: string,
+): Set<number> {
+  const answered = new Set<number>();
+  for (const message of messages) {
+    if (message.sender_id !== geniusUserId) continue;
+    const match = /^baseball-genius:(\d+)$/.exec(message.dedup_key ?? "");
+    if (!match) continue;
+    const messageId = Number(match[1]);
+    if (Number.isSafeInteger(messageId) && messageId > 0) answered.add(messageId);
+  }
+  return answered;
 }
 
 export function resetBaseballQaQuestion(storage: StorageLike, messageId: number) {
