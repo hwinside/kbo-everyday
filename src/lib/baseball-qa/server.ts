@@ -20,7 +20,11 @@ import {
   type ContextTurn,
   type PreviousTurnRow,
 } from "@/lib/baseball-qa/context";
-import { BASEBALL_GENIUS_USER_ID } from "@/lib/constants/baseball-genius";
+import {
+  BASEBALL_GENIUS_USER_ID,
+  replyKindForMatchPath,
+  type GeniusReplyPayload,
+} from "@/lib/constants/baseball-genius";
 import playersRoster from "@/lib/constants/players-roster.json";
 import {
   BASEBALL_QA_GEMINI_MODEL,
@@ -510,6 +514,13 @@ export async function processBaseballQaQuestion(input: {
     }
   }
 
+  // 답변 유형을 payload 에 함께 저장한다 — 클라가 유형별 마스코트를 고를 근거(SSOT).
+  // 클라가 답변 문구를 상수와 대조하는 방식은 문구를 고치는 순간 조용히 깨진다.
+  const replyPayload: GeniusReplyPayload = {
+    type: "baseball_genius_reply",
+    reply_kind: replyKindForMatchPath(result.source),
+    match_path: result.source,
+  };
   const sent = await sendOpsMessageToUser(
     supabaseAdmin,
     BASEBALL_GENIUS_USER_ID,
@@ -517,6 +528,7 @@ export async function processBaseballQaQuestion(input: {
     result.answer,
     dedupKey,
     "dm",
+    replyPayload,
   );
   if (!sent.ok) {
     console.error("baseball-genius DM reply failed:", sent.reason);

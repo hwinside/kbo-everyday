@@ -2,6 +2,7 @@
 
 import { motion } from "framer-motion";
 import type { TeamStanding } from "@/lib/types";
+import { gameResultTone, resultToneChipStyle } from "@/lib/ui/result-tone";
 
 interface TeamDashboardProps {
   standing: TeamStanding;
@@ -42,7 +43,6 @@ const item = {
 export default function TeamDashboard({
   standing,
   teamColor,
-  teamName,
 }: TeamDashboardProps) {
   const teamStats = TEAM_STATS[standing.teamId] ?? LEAGUE_AVG;
 
@@ -113,15 +113,20 @@ export default function TeamDashboard({
             <div
               key={i}
               className="flex flex-1 flex-col items-center gap-1 rounded-lg py-2"
+              // 승패 색은 홈 팀카드 기준 SSOT(@/lib/ui/result-tone). 이전엔 승=teamColor·패=회색이라
+              // 팀마다 승색이 달라지고 패는 중립과 구별이 안 됐다(삼순 3차 지적).
               style={{
-                backgroundColor:
-                  game.result === "W" ? `${teamColor}20` : "rgba(255,255,255,0.03)",
+                backgroundColor: resultToneChipStyle(
+                  gameResultTone(game.result as "W" | "L" | "D"),
+                ).backgroundColor,
               }}
             >
               <span
                 className="text-base font-bold"
                 style={{
-                  color: game.result === "W" ? teamColor : "#8E8E93",
+                  color: resultToneChipStyle(
+                    gameResultTone(game.result as "W" | "L" | "D"),
+                  ).color,
                 }}
               >
                 {game.result}

@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import GlassCard from "@/components/ui/GlassCard";
 import { getTeamById } from "@/lib/constants/teams";
+import { gameResultTone, resultToneChipStyle } from "@/lib/ui/result-tone";
 
 interface GameLogRow {
   game_id: string;
@@ -35,13 +36,15 @@ function fmtRate(v: number, digits: number): string {
 
 function ResultChip({ result }: { result: "W" | "L" | "D" }) {
   const label = result === "W" ? "승" : result === "L" ? "패" : "무";
-  const cls =
-    result === "W"
-      ? "bg-green-500/20 text-green-400"
-      : result === "L"
-        ? "bg-red-500/20 text-red-400"
-        : "bg-bg-tertiary text-text-tertiary";
-  return <span className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-bold ${cls}`}>{label}</span>;
+  // 승패 색은 홈 팀카드 기준 SSOT(@/lib/ui/result-tone).
+  return (
+    <span
+      className="inline-block px-1.5 py-0.5 rounded text-[11px] font-bold"
+      style={resultToneChipStyle(gameResultTone(result))}
+    >
+      {label}
+    </span>
+  );
 }
 
 type RowWithCum = GameLogRow & { avg: string; era: string };
@@ -131,13 +134,8 @@ export default function PlayerGameLogs({
           {recent.map((r) => (
             <div
               key={r.game_id}
-              className={`flex-1 aspect-square rounded flex items-center justify-center text-xs font-bold ${
-                r.result === "W"
-                  ? "bg-green-500/20 text-green-400"
-                  : r.result === "L"
-                    ? "bg-red-500/20 text-red-400"
-                    : "bg-bg-tertiary text-text-tertiary"
-              }`}
+              className="flex-1 aspect-square rounded flex items-center justify-center text-xs font-bold"
+              style={resultToneChipStyle(gameResultTone(r.result))}
             >
               {r.result === "W" ? "승" : r.result === "L" ? "패" : "무"}
             </div>
