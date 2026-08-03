@@ -6,16 +6,13 @@ import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { Loader2, Maximize, MessageCircle, Minimize, MoreHorizontal, Share2, Volume2, VolumeX } from "lucide-react";
 import { TransformWrapper, TransformComponent, type ReactZoomPanPinchRef } from "react-zoom-pan-pinch";
-import { getTeamById } from "@/lib/constants/teams";
-import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
-import { parsePlayerTag } from "@/lib/utils/player-tags";
 import { parseAttribution } from "@/lib/gif-collector/attribution";
 import TeamBadge from "@/components/ui/TeamBadge";
 import CommunityAuthorHeader from "@/components/community/CommunityAuthorHeader";
 import type { Post } from "@/lib/supabase/usePosts";
 import { deletePost } from "@/lib/supabase/usePosts";
 import { useAuth } from "@/lib/supabase/AuthContext";
-import type { CommunitySourceLabel } from "@/lib/utils/community-board";
+import { getPostSourceLabel, type CommunitySourceLabel } from "@/lib/utils/community-board";
 import ShareSheet, { type ShareSheetPost } from "@/components/community/ShareSheet";
 import PostViewBadge from "@/components/community/PostViewBadge";
 import { usePostImpression } from "@/lib/community/usePostImpression";
@@ -23,74 +20,6 @@ import CommentSheet from "./CommentSheet";
 import { isShortText, BrandedTextCard } from "./FeedTextCards";
 import PollCardSlot from "./PollCardSlot";
 import { fetchPollSummaries, type PollSummary } from "@/lib/community/poll-client";
-
-function findPlayerByName(name: string): { kboId: string; teamId: number } | null {
-  for (const p of PLAYERS_ROSTER) {
-    if (p.name === name) return { kboId: p.kboId, teamId: p.teamId };
-  }
-  return null;
-}
-
-function findPlayerByKboId(kboId: string): { teamId: number; name: string } | null {
-  for (const p of PLAYERS_ROSTER) {
-    if (p.kboId === kboId) return { teamId: p.teamId, name: p.name };
-  }
-  return null;
-}
-
-type ProminentLabel = { teamShort?: string; teamId?: number; href?: string; players: string[] };
-
-/**
- * 피드 카드 상단 "적극적" 라벨 빌더 (팀 + 선수명) — 하린아빠 스펙.
- * - 팀 태그만: null (헤더 팀배지/출처라벨이 담당)
- * - 선수 1명: "두산 김기연" (선수 페이지 링크)
- * - 선수 N명(같은 팀): "두산 김기연/곽빈" (팀 prefix 1회, 섞이면 팀 생략)
- * 출처 선수명은 sourceLabel(전체글 탭만 주입)이 없어도 board_id(kboId)→roster로 직접 resolve.
- * name-only 태그도 roster로 canonical kboId 변환 후 dedupe → 출처/태그 중복 라벨 방지.
- */
-function buildProminentLabel(post: Post): ProminentLabel | null {
-  const seen = new Set<string>();
-  const players: string[] = [];
-  const teamIds = new Set<number>();
-  let firstKboId: string | null = null;
-
-  const add = (kboId: string | null, displayName: string) => {
-    let rk = kboId;
-    let name = displayName;
-    let teamId: number | undefined;
-    if (rk) {
-      const r = findPlayerByKboId(rk);
-      if (r) { name = r.name; teamId = r.teamId; }
-    } else {
-      const p = findPlayerByName(displayName);
-      if (p) { rk = p.kboId; teamId = p.teamId; }
-    }
-    const key = rk ?? `name:${name}`;
-    if (seen.has(key)) return;
-    seen.add(key);
-    if (firstKboId === null && rk) firstKboId = rk;
-    if (teamId) teamIds.add(teamId);
-    players.push(name);
-  };
-
-  if (post.board_type === "player" && post.board_id) {
-    const r = findPlayerByKboId(post.board_id);
-    if (r) add(post.board_id, r.name);
-  }
-  if (Array.isArray(post.player_tags)) {
-    for (const tag of post.player_tags as string[]) {
-      const { kboId, displayName } = parsePlayerTag(tag);
-      add(kboId, displayName);
-    }
-  }
-
-  if (players.length === 0) return null;
-  const teamId = teamIds.size === 1 ? [...teamIds][0] : undefined;
-  const team = teamId ? getTeamById(teamId) : undefined;
-  // 단일 선수만 선수 페이지로 이동(여러 명은 모호하므로 비링크).
-  const href = players.length === 1 && firstKboId ? `/community/players/${firstKboId}` : undefined;
-  return { teamShort: team?.shortName, teamId, href, players };
-}
 
 /** 카드 최상위에 임프레션 ref를 걸어 세로 50%+ 노출 시 조회수를 집계하는 래퍼. */
 function PostImpressionWrapper({
@@ -902,7 +831,7 @@ export function HeartOverlay({ show }: { show: boolean }) {
   );
 }
 
-export default function PhotoFeed({ posts, loading, onLike, boardType = "team", sourceLabels, likedIds }: PhotoFeedProps) {
+export default function PhotoFeed({ posts, loading, onLike, sourceLabels, likedIds }: PhotoFeedProps) {
   const { user, profile } = useAuth();
   const canDeleteAnyPost = profile?.is_operator === true;
   const controlledLikes = likedIds !== undefined;
@@ -1033,17 +962,7 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
         const isMine = !!user && post.author_id === user.id;
         const hasMedia = post.image_urls.length > 0 || (post.video_urls?.length ?? 0) > 0;
         const body = mergedBody(post);
-        // 선수 라벨 통합: 레거시 선수게시판 출처 + player_tags 를 dedupe (팀/전체 피드에서만; 선수 페이지는 헤더 라벨로 충분)
-        const sourceLabel = sourceLabels?.[post.id];
-        const prominent = boardType !== "player" ? buildProminentLabel(post) : null;
-        // 선수명만(팀 prefix 없이) — 헤더 단일 칩은 TeamBadge가 "두산 " prefix를 붙이므로 분리.
-        const prominentPlayers = prominent
-          ? `${prominent.players.slice(0, 2).join("/")}${prominent.players.length > 2 ? ` 외 ${prominent.players.length - 2}명` : ""}`
-          : "";
-        // 다중 팀 혼합 등 병합 불가 시에만 둘째 줄 pill 폴백.
-        const prominentText = prominent
-          ? `${prominent.teamShort ? prominent.teamShort + " " : ""}${prominentPlayers}`
-          : "";
+        const sourceLabel = sourceLabels ? getPostSourceLabel(post) : null;
 
         if (deletedIds.has(post.id)) return null;
 
@@ -1064,6 +983,19 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
                   isStaff={post.grade === "staff"}
                   meta={<span className="text-xs text-text-tertiary">{timeAgo(post.created_at)}</span>}
                 />
+
+                {sourceLabel ? (
+                  <div className="flex items-center gap-2 px-5 pb-2" data-community-source-label>
+                    <span className="shrink-0 text-[10px] text-text-tertiary">글 소속</span>
+                    {sourceLabel.teamId ? (
+                      <TeamBadge teamId={sourceLabel.teamId} playerName={sourceLabel.playerName} size="sm" />
+                    ) : (
+                      <span className="min-w-0 truncate rounded-full bg-bg-tertiary px-2.5 py-1 text-sm font-bold text-text-primary">
+                        {sourceLabel.text}
+                      </span>
+                    )}
+                  </div>
+                ) : null}
 
                 {/* 질문 + poll 카드 → 탭 시 상세 이동 */}
                 <Link href={`/community/free/${post.id}`} className="block px-5 pb-1 active:opacity-90">
@@ -1164,27 +1096,9 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
                 ) : null}
               />
 
-              {/* 작성자 응원팀과 글의 소속은 의미가 다르므로 분리한다.
-                  출처가 섞이는 화면(sourceLabels 주입)에서만 큰 팀컬러 라벨을 노출한다. */}
-              {sourceLabels && prominent ? (
-                <div className="flex items-center gap-2 px-5 pb-2">
-                  <span className="shrink-0 text-[10px] text-text-tertiary">글 소속</span>
-                  {prominent.teamId ? (
-                    prominent.href ? (
-                      <Link href={prominent.href} className="active:opacity-70">
-                        <TeamBadge teamId={prominent.teamId} playerName={prominentPlayers} size="sm" />
-                      </Link>
-                    ) : (
-                      <TeamBadge teamId={prominent.teamId} playerName={prominentPlayers} size="sm" />
-                    )
-                  ) : (
-                    <span className="min-w-0 truncate rounded-full bg-bg-tertiary px-2.5 py-1 text-sm font-bold text-text-primary">
-                      {prominentText}
-                    </span>
-                  )}
-                </div>
-              ) : sourceLabels && sourceLabel && post.board_type !== "free" ? (
-                <div className="flex items-center gap-2 px-5 pb-2">
+              {/* 혼합 피드에서만 작성자 응원팀과 별개인 콘텐츠 소속을 표시한다. */}
+              {sourceLabel ? (
+                <div className="flex items-center gap-2 px-5 pb-2" data-community-source-label>
                   <span className="shrink-0 text-[10px] text-text-tertiary">글 소속</span>
                   {sourceLabel.teamId ? (
                     <TeamBadge teamId={sourceLabel.teamId} playerName={sourceLabel.playerName} size="sm" />

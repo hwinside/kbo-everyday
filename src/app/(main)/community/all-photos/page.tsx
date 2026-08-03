@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import PhotoFeed from "@/components/community/PhotoFeed";
 import { supabase } from "@/lib/supabase/client";
 import { toggleLike, type Post } from "@/lib/supabase/usePosts";
-import { getCommunitySourceLabel } from "@/lib/utils/community-board";
+import { getPostSourceLabel } from "@/lib/utils/community-board";
 
 type SortTab = "latest" | "hot";
 
@@ -67,7 +67,7 @@ export default function AllPhotosPage() {
   }, [posts, sortTab, nowMs]);
 
   const sourceLabels = useMemo(
-    () => Object.fromEntries(sortedPosts.map((post) => [post.id, getCommunitySourceLabel(post.board_type, post.board_id)])),
+    () => Object.fromEntries(sortedPosts.map((post) => [post.id, getPostSourceLabel(post)])),
     [sortedPosts],
   );
 

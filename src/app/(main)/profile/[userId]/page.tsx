@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useSafeBack } from "@/lib/hooks/useSafeBack";
-import { ChevronLeft, Heart, MessageCircle } from "lucide-react";
+import { ChevronLeft } from "lucide-react";
 import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
 import { supabase } from "@/lib/supabase/client";
 import { useAuth } from "@/lib/supabase/AuthContext";
@@ -20,7 +20,7 @@ import BadgesTab from "@/components/profile/BadgesTab";
 import DMButton from "@/components/ui/DMButton";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
-import { getCommunitySourceLabel } from "@/lib/utils/community-board";
+import CommunityProfilePostRow, { type CommunityProfilePost } from "@/components/profile/CommunityProfilePostRow";
 
 interface UserProfile {
   id: string;
@@ -46,15 +46,7 @@ interface UserBadge {
   earned_at: string;
 }
 
-interface UserPost {
-  id: number;
-  title: string;
-  board_type: string;
-  board_id: string;
-  like_count: number;
-  comment_count: number;
-  created_at: string;
-}
+type UserPost = CommunityProfilePost;
 
 export default function ProfilePage() {
   const { userId } = useParams();
@@ -126,9 +118,10 @@ export default function ProfilePage() {
       }
 
       if (p?.show_posts) {
+        // query-guard: bounded-page -- 프로필 글 탭은 최신 20건만 보여주는 고정 UI 페이지
         const { data: posts } = await supabase
           .from("posts")
-          .select("id, title, board_type, board_id, like_count, comment_count, created_at")
+          .select("id, title, board_type, board_id, like_count, comment_count, created_at, team_tags, player_tags")
           .eq("author_id", userId)
           .order("created_at", { ascending: false })
           .limit(20);
@@ -295,33 +288,12 @@ export default function ProfilePage() {
             <div className="text-center py-8 text-text-tertiary text-sm">아직 작성한 글이 없어요</div>
           ) : (
             posts.map(post => (
-              <GlassCard
+              <CommunityProfilePostRow
                 key={post.id}
-                className="p-3 cursor-pointer hover:bg-black/5 dark:hover:bg-white/5"
+                post={post}
+                timeLabel={timeAgo(post.created_at)}
                 onClick={() => router.push(`/community/players/${post.board_id}/posts/${post.id}`)}
-              >
-                {(() => {
-                  const sourceLabel = getCommunitySourceLabel(post.board_type, post.board_id);
-                  return (
-                    <div className="mb-2 flex items-center gap-2" data-community-source-label>
-                      <span className="shrink-0 text-[10px] text-text-tertiary">글 소속</span>
-                      {sourceLabel.teamId ? (
-                        <TeamBadge teamId={sourceLabel.teamId} playerName={sourceLabel.playerName} size="sm" />
-                      ) : (
-                        <span className="min-w-0 truncate rounded-full bg-bg-tertiary px-2.5 py-1 text-sm font-bold text-text-primary">
-                          {sourceLabel.text}
-                        </span>
-                      )}
-                    </div>
-                  );
-                })()}
-                <p className="text-sm font-medium text-text-primary">{post.title}</p>
-                <div className="flex items-center gap-4 mt-1 text-xs text-text-tertiary">
-                  <span>{timeAgo(post.created_at)}</span>
-                  <span className="flex items-center gap-1"><Heart size={12} /> {post.like_count}</span>
-                  <span className="flex items-center gap-1"><MessageCircle size={12} /> {post.comment_count}</span>
-                </div>
-              </GlassCard>
+              />
             ))
           )}
         </div>

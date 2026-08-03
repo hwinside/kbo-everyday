@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "generatedFrom": "54d9c95f7421c5b8e9e76503c5bbe020290a8570",
+  "generatedFrom": "cf1638a129692b322a9ed9157018326e17025fe1",
   "violations": {
     "0034fe9a6a6cff327c64": {
       "count": 1,
@@ -1196,13 +1196,6 @@
       "count": 1,
       "kind": "ambiguous_growing_limit",
       "file": "src/app/(main)/community/players/[playerId]/page.tsx",
-      "subject": "posts",
-      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
-    },
-    "e2991e04547184e499b4": {
-      "count": 1,
-      "kind": "ambiguous_growing_limit",
-      "file": "src/app/(main)/profile/[userId]/page.tsx",
       "subject": "posts",
       "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
     },

@@ -66,7 +66,7 @@ export default function PostCard({ post, onPress, sourceLabel, pollSummary, poll
 
       {/* 혼합 피드에서만: 작성자 응원팀과 별개인 글의 소속 */}
       {sourceLabel && (
-        <div className="mt-2 flex items-center gap-2">
+        <div className="mt-2 flex items-center gap-2" data-community-source-label>
           <span className="shrink-0 text-[10px] text-text-tertiary">글 소속</span>
           {sourceLabel.teamId ? (
             <TeamBadge teamId={sourceLabel.teamId} playerName={sourceLabel.playerName} size="sm" />

@@ -16,6 +16,7 @@ import { isImageComment, prepareCommentImageForUpload } from "@/lib/community/co
 import { normalizeForFloodKey } from "@/lib/utils/normalize-message";
 import ReportSheet from "@/components/community/ReportSheet";
 import CommunityAuthorHeader from "@/components/community/CommunityAuthorHeader";
+import CommunityCommentRow from "@/components/community/CommunityCommentRow";
 
 interface CommentSheetProps {
   isOpen: boolean;
@@ -617,51 +618,56 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
     const isEdited = !!comment.updated_at;
     const likeCount = comment.like_count ?? 0;
     return (
-      <div key={comment.id} className={isReply ? "pl-10" : ""}>
-        <CommunityAuthorHeader
-          nickname={comment.nickname}
-          teamId={comment.team_id}
-          avatarUrl={(comment as Comment & { avatar_url?: string }).avatar_url}
-          profileHref={comment.author_id ? `/profile/${comment.author_id}` : null}
-          meta={
-            <span className="shrink-0 text-[11px] text-text-tertiary">
-              {timeAgo(comment.created_at)}{isEdited ? " · 수정됨" : ""}
-            </span>
-          }
-          menu={(canDelete || canReport) && !isEditing ? (
-            <div className="relative">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setMenuOpenId((prev) => (prev === comment.id ? null : comment.id));
-                }}
-                className="p-1 text-text-tertiary hover:text-text-primary transition-colors"
-                aria-label="댓글 메뉴"
-              >
-                <MoreHorizontal size={14} />
-              </button>
-              {menuOpenId === comment.id && (
-                <div
-                  className="absolute right-0 top-6 z-10 min-w-[96px] rounded-lg border border-border bg-bg-primary shadow-lg overflow-hidden"
-                  onClick={(e) => e.stopPropagation()}
+      <CommunityCommentRow
+        key={comment.id}
+        kind="sheet"
+        isReply={isReply}
+        header={
+          <CommunityAuthorHeader
+            nickname={comment.nickname}
+            teamId={comment.team_id}
+            avatarUrl={(comment as Comment & { avatar_url?: string }).avatar_url}
+            profileHref={comment.author_id ? `/profile/${comment.author_id}` : null}
+            meta={
+              <span className="shrink-0 text-[11px] text-text-tertiary">
+                {timeAgo(comment.created_at)}{isEdited ? " · 수정됨" : ""}
+              </span>
+            }
+            menu={(canDelete || canReport) && !isEditing ? (
+              <div className="relative">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setMenuOpenId((prev) => (prev === comment.id ? null : comment.id));
+                  }}
+                  className="p-1 text-text-tertiary hover:text-text-primary transition-colors"
+                  aria-label="댓글 메뉴"
                 >
-                  {isMine && (
-                    <button onClick={() => startEdit(comment)} className="block w-full px-3 py-2 text-left text-xs text-text-primary hover:bg-bg-tertiary">수정</button>
-                  )}
-                  {canReport && (
-                    <button onClick={() => { setMenuOpenId(null); setReportCommentId(comment.id); }} className="flex w-full items-center gap-1.5 px-3 py-2 text-left text-xs text-text-primary hover:bg-bg-tertiary">
-                      <Flag size={12} /> 신고
-                    </button>
-                  )}
-                  {canDelete && (
-                    <button onClick={() => handleDelete(comment.id)} className="block w-full px-3 py-2 text-left text-xs text-[#FF453A] hover:bg-bg-tertiary">삭제</button>
-                  )}
-                </div>
-              )}
-            </div>
-          ) : null}
-        />
-        <div className="ml-[50px] min-w-0">
+                  <MoreHorizontal size={14} />
+                </button>
+                {menuOpenId === comment.id && (
+                  <div
+                    className="absolute right-0 top-6 z-10 min-w-[96px] rounded-lg border border-border bg-bg-primary shadow-lg overflow-hidden"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {isMine && (
+                      <button onClick={() => startEdit(comment)} className="block w-full px-3 py-2 text-left text-xs text-text-primary hover:bg-bg-tertiary">수정</button>
+                    )}
+                    {canReport && (
+                      <button onClick={() => { setMenuOpenId(null); setReportCommentId(comment.id); }} className="flex w-full items-center gap-1.5 px-3 py-2 text-left text-xs text-text-primary hover:bg-bg-tertiary">
+                        <Flag size={12} /> 신고
+                      </button>
+                    )}
+                    {canDelete && (
+                      <button onClick={() => handleDelete(comment.id)} className="block w-full px-3 py-2 text-left text-xs text-[#FF453A] hover:bg-bg-tertiary">삭제</button>
+                    )}
+                  </div>
+                )}
+              </div>
+            ) : null}
+          />
+        }
+      >
           {isEditing ? (
             <div className="mt-1 flex items-center gap-1.5">
               <input
@@ -737,8 +743,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
               </div>
             </>
           )}
-        </div>
-      </div>
+      </CommunityCommentRow>
     );
   };
 

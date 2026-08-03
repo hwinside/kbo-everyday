@@ -12,7 +12,7 @@ import LoginSheet from "@/components/auth/LoginSheet";
 import { useUnifiedFeed } from "@/lib/supabase/useUnifiedFeed";
 import { createPost, toggleLike } from "@/lib/supabase/usePosts";
 import { useAuth } from "@/lib/supabase/AuthContext";
-import { getCommunitySourceLabel, type CommunitySourceLabel } from "@/lib/utils/community-board";
+import { getPostSourceLabel, type CommunitySourceLabel } from "@/lib/utils/community-board";
 import { useFeedScrollRestore } from "@/lib/community/useFeedScrollRestore";
 
 export default function AllPostsPage() {
@@ -52,7 +52,7 @@ export default function AllPostsPage() {
   );
 
   const sourceLabels = useMemo<Record<number, CommunitySourceLabel>>(
-    () => Object.fromEntries(posts.map((p) => [p.id, getCommunitySourceLabel(p.board_type, p.board_id)])),
+    () => Object.fromEntries(posts.map((post) => [post.id, getPostSourceLabel(post)])),
     [posts],
   );
 

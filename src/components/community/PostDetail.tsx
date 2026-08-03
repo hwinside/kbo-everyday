@@ -16,18 +16,18 @@ import { parseAttribution } from "@/lib/gif-collector/attribution";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
-import DMButton from "@/components/ui/DMButton";
 import GifPicker from "@/components/community/GifPicker";
 import CommentImageLightbox from "@/components/community/CommentImageLightbox";
 import { isImageComment, prepareCommentImageForUpload } from "@/lib/community/comment-media";
 import LoginSheet from "@/components/auth/LoginSheet";
 import ShareSheet, { type ShareSheetPost } from "@/components/community/ShareSheet";
-import PostViewBadge from "@/components/community/PostViewBadge";
 import CommunityAuthorHeader from "@/components/community/CommunityAuthorHeader";
+import PostDetailAuthorHeader from "@/components/community/PostDetailAuthorHeader";
 import PollBlock from "@/components/community/PollBlock";
 import { trackPostClick } from "@/lib/community/view-tracker";
 import { useBlockedIds, blockUserById } from "@/lib/supabase/useBlock";
 import { supabase } from "@/lib/supabase/client";
+import CommunityCommentRow from "@/components/community/CommunityCommentRow";
 
 interface PostDetailProps {
   postId: number;
@@ -473,28 +473,18 @@ export default function PostDetail({ postId }: PostDetailProps) {
 
       {/* Post */}
       <div className="px-5 py-4">
-        <CommunityAuthorHeader
+        <PostDetailAuthorHeader
           className="mb-3"
           nickname={post.nickname}
           teamId={post.team_id}
           avatarUrl={post.avatar_url}
-          profileHref={post.author_id ? `/profile/${post.author_id}` : null}
+          authorId={post.author_id}
+          viewerId={user?.id}
           isStaff={post.grade === "staff"}
-          meta={
-            <>
-              {post.author_id && user && post.author_id !== user.id && (
-                <DMButton targetUserId={post.author_id} size="sm" className="shrink-0" />
-              )}
-              <span className="shrink-0 text-xs text-text-tertiary">
-                {timeAgo(post.created_at)}{(postPatch.updated_at || post.updated_at) ? " · 수정됨" : ""}
-              </span>
-              <PostViewBadge
-                clickCount={post.click_view_count}
-                impressionCount={post.impression_view_count}
-                className="shrink-0"
-              />
-            </>
-          }
+          timeLabel={timeAgo(post.created_at)}
+          isEdited={!!(postPatch.updated_at || post.updated_at)}
+          clickCount={post.click_view_count}
+          impressionCount={post.impression_view_count}
           menu={
             <PostActionsMenu
               user={user}
@@ -680,53 +670,58 @@ export default function PostDetail({ postId }: PostDetailProps) {
                 const isCmtEdited = !!c.updated_at;
                 const cmtLikeCount = c.like_count ?? 0;
                 return (
-                  <div key={c.id} className={isReply ? "pl-10" : ""}>
-                    <CommunityAuthorHeader
-                      nickname={c.nickname}
-                      teamId={c.team_id}
-                      avatarUrl={c.avatar_url}
-                      profileHref={c.author_id ? `/profile/${c.author_id}` : null}
-                      meta={
-                        <span className="shrink-0 text-xs text-text-tertiary">
-                          {timeAgo(c.created_at)}{isCmtEdited ? " · 수정됨" : ""}
-                        </span>
-                      }
-                      menu={user && !isCmtEditing ? (
-                        <div className="relative">
-                          <button
-                            onClick={(e) => { e.stopPropagation(); setCmtMenuOpenId(prev => prev === c.id ? null : c.id); }}
-                            className="p-1 text-text-tertiary hover:text-text-primary"
-                            aria-label="댓글 메뉴"
-                          >
-                            <MoreHorizontal size={14} />
-                          </button>
-                          {cmtMenuOpenId === c.id && (
-                            <>
-                              <div className="fixed inset-0 z-10" onClick={() => setCmtMenuOpenId(null)} />
-                              <div className="absolute right-0 top-6 z-20 min-w-[96px] rounded-lg border border-border bg-bg-primary shadow-lg overflow-hidden">
-                                {isCmtMine && (
-                                  <button onClick={() => startCmtEdit(c)} className="block w-full px-3 py-2 text-left text-xs text-text-primary hover:bg-bg-tertiary">수정</button>
-                                )}
-                                {!isCmtMine && (
-                                  <button onClick={() => openReport({ type: "comment", id: c.id })} className="flex items-center gap-1.5 w-full px-3 py-2 text-left text-xs text-text-primary hover:bg-bg-tertiary">
-                                    <Flag size={12} /> 신고
-                                  </button>
-                                )}
-                                {!isCmtMine && (
-                                  <button onClick={() => handleBlockUser(c.author_id, { type: "comment", id: c.id })} className="flex items-center gap-1.5 w-full px-3 py-2 text-left text-xs text-text-primary hover:bg-bg-tertiary">
-                                    <Ban size={12} /> 차단
-                                  </button>
-                                )}
-                                {canDeleteCmt && (
-                                  <button onClick={() => handleDeleteComment(c.id)} className="block w-full px-3 py-2 text-left text-xs text-[#FF453A] hover:bg-bg-tertiary">삭제</button>
-                                )}
-                              </div>
-                            </>
-                          )}
-                        </div>
-                      ) : null}
-                    />
-                    <div className="ml-[50px] min-w-0">
+                  <CommunityCommentRow
+                    key={c.id}
+                    kind="detail"
+                    isReply={isReply}
+                    header={
+                      <CommunityAuthorHeader
+                        nickname={c.nickname}
+                        teamId={c.team_id}
+                        avatarUrl={c.avatar_url}
+                        profileHref={c.author_id ? `/profile/${c.author_id}` : null}
+                        meta={
+                          <span className="shrink-0 text-xs text-text-tertiary">
+                            {timeAgo(c.created_at)}{isCmtEdited ? " · 수정됨" : ""}
+                          </span>
+                        }
+                        menu={user && !isCmtEditing ? (
+                          <div className="relative">
+                            <button
+                              onClick={(e) => { e.stopPropagation(); setCmtMenuOpenId(prev => prev === c.id ? null : c.id); }}
+                              className="p-1 text-text-tertiary hover:text-text-primary"
+                              aria-label="댓글 메뉴"
+                            >
+                              <MoreHorizontal size={14} />
+                            </button>
+                            {cmtMenuOpenId === c.id && (
+                              <>
+                                <div className="fixed inset-0 z-10" onClick={() => setCmtMenuOpenId(null)} />
+                                <div className="absolute right-0 top-6 z-20 min-w-[96px] rounded-lg border border-border bg-bg-primary shadow-lg overflow-hidden">
+                                  {isCmtMine && (
+                                    <button onClick={() => startCmtEdit(c)} className="block w-full px-3 py-2 text-left text-xs text-text-primary hover:bg-bg-tertiary">수정</button>
+                                  )}
+                                  {!isCmtMine && (
+                                    <button onClick={() => openReport({ type: "comment", id: c.id })} className="flex items-center gap-1.5 w-full px-3 py-2 text-left text-xs text-text-primary hover:bg-bg-tertiary">
+                                      <Flag size={12} /> 신고
+                                    </button>
+                                  )}
+                                  {!isCmtMine && (
+                                    <button onClick={() => handleBlockUser(c.author_id, { type: "comment", id: c.id })} className="flex items-center gap-1.5 w-full px-3 py-2 text-left text-xs text-text-primary hover:bg-bg-tertiary">
+                                      <Ban size={12} /> 차단
+                                    </button>
+                                  )}
+                                  {canDeleteCmt && (
+                                    <button onClick={() => handleDeleteComment(c.id)} className="block w-full px-3 py-2 text-left text-xs text-[#FF453A] hover:bg-bg-tertiary">삭제</button>
+                                  )}
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        ) : null}
+                      />
+                    }
+                  >
                       {isCmtEditing ? (
                         <div className="mt-1 flex items-center gap-1.5">
                           <input
@@ -790,8 +785,7 @@ export default function PostDetail({ postId }: PostDetailProps) {
                           </div>
                         </>
                       )}
-                    </div>
-                  </div>
+                  </CommunityCommentRow>
                 );
               };
 
