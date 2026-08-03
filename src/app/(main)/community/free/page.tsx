@@ -41,7 +41,7 @@ export default function FreeBoardPage() {
     createdAt: p.created_at,
     author: {
       nickname: p.nickname || "익명",
-      avatarUrl: null,
+      avatarUrl: p.avatar_url ?? null,
       myTeamId: p.team_id || null,
       level: 1,
       title: "",

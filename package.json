@@ -290,7 +290,7 @@
     "qa:baseball-corpus-loader": "tsx scripts/qa/baseball-qa-corpus-loader-smoke.ts",
     "qa:baseball-corpus-ledger-full-pg": "tsx scripts/qa/baseball-qa-corpus-ledger-full-pg.ts",
     "rag:load-corpus": "tsx scripts/baseball-qa/load-corpus-sources.ts",
-    "qa:post-detail-header-nowrap-browser": "node scripts/qa/post-detail-header-nowrap-browser.mjs",
+    "qa:post-detail-header-nowrap-browser": "bash scripts/qa/post-detail-header-nowrap-browser-gate.sh",
     "qa:nickname-api": "node scripts/qa/nickname-api-behavior.mjs",
     "qa:nickname-edit-sheet-browser": "node scripts/qa/nickname-edit-sheet-browser.mjs",
     "qa:venue-error-tags": "tsx scripts/qa/venue-error-tags-smoke.ts",
