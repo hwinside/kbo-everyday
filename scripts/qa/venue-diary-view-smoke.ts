@@ -242,6 +242,25 @@ async function flush(): Promise<void> {
   assert.equal(games[1].thumbnails.length, 2);
   assert.equal(games[1].extraCount, 0, "total 2, 표시 2 → +0");
   assert.equal(games[1].result, null, "성적 join 미스는 null");
+
+  const recordOnly = buildDiaryHomeGames({
+    mediaGroups: [],
+    attendanceGames: [{
+      id: 77,
+      gameId: "G3",
+      gameDate: "2026-08-01",
+      stadiumName: "대전",
+      source: "story_geofence",
+      favoriteTeamId: 10,
+      result: "W",
+      awayTeam: { id: 10, name: "한화", score: 4 },
+      homeTeam: { id: 8, name: "KT", score: 2 },
+    }],
+  });
+  assert.equal(recordOnly.length, 1, "미디어 없는 직관 기록도 홈에 노출");
+  assert.equal(recordOnly[0].total, 0, "기록만 추가는 미디어 0");
+  assert.equal(recordOnly[0].attendanceId, 77, "CRUD 대상 원장 id 보존");
+  assert.equal(recordOnly[0].label.kind, "gps", "미디어 없어도 원장 source로 GPS 라벨");
 }
 
 // 7) 시즌 summary 합산('전체' 세그먼트): winRate 는 합산 표본으로 재계산
