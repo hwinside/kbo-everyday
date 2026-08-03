@@ -16,6 +16,7 @@ import TeamBadge from "@/components/ui/TeamBadge";
 import { linkifyText } from "@/lib/linkify";
 import NewsClippingCard from "@/components/dm/NewsClippingCard";
 import GeniusTypingIndicator from "@/components/dm/GeniusTypingIndicator";
+import GeniusPlayerPicker from "@/components/dm/GeniusPlayerPicker";
 import { isNewsClippingPayload } from "@/types/news-clipping";
 import {
   BASEBALL_GENIUS_NAME,
@@ -51,6 +52,7 @@ export default function DMChatPage() {
     sendMessage,
     geniusReplyStates,
     retryBaseballQa,
+    pickBaseballQaPlayer,
   } = useDMChat(draftTargetId ? "" : conversationId);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -398,6 +400,9 @@ export default function DMChatPage() {
               msg.sender_id === BASEBALL_GENIUS_USER_ID
                 ? mascotStateForReplyKind(geniusReply?.reply_kind)
                 : null;
+            // 동명이인 선택 카드. 선택은 표시값이 아니라 kbo_id 로 보낸다.
+            const pickerOptions =
+              geniusReply?.reply_kind === "picker" ? geniusReply.picker_options ?? null : null;
             return (
               <motion.div
                 key={msg.id}
@@ -437,6 +442,19 @@ export default function DMChatPage() {
                   >
                     {msg.content ? (
                       <p className="whitespace-pre-wrap break-words">{linkifyText(msg.content)}</p>
+                    ) : null}
+                    {pickerOptions ? (
+                      <GeniusPlayerPicker
+                        options={pickerOptions}
+                        onPick={(option) => {
+                          // 재질의 대상은 이 답변이 아니라 **직전 내 질문**이다.
+                          const question = messages
+                            .slice(0, i)
+                            .reverse()
+                            .find((m) => m.sender_id === user?.id);
+                          if (question) pickBaseballQaPlayer(question.id, option.kbo_id);
+                        }}
+                      />
                     ) : null}
                     {Array.isArray(msg.image_urls) && msg.image_urls.length > 0 && (
                       <div className={`grid gap-2 ${msg.content ? "mt-2" : ""}`}>

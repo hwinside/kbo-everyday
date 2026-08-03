@@ -6,6 +6,11 @@ export interface BaseballQaOutboxEntry {
   messageId: number;
   attempts: number;
   acknowledged?: boolean;
+  /**
+   * 동명이인 picker에서 유저가 고른 kboId. 재시도해도 같은 선수로 답하도록 outbox에 같이
+   * 보관한다 — 버리면 재시도 때 picker가 다시 뜨면서 유저 선택이 사라진다.
+   */
+  pickedPlayerKboId?: string;
 }
 
 interface StorageLike {
@@ -39,7 +44,9 @@ export function readBaseballQaOutbox(storage: StorageLike): BaseballQaOutboxEntr
         row.messageId > 0 &&
         Number.isInteger(row.attempts) &&
         row.attempts >= 0 &&
-        (row.acknowledged === undefined || typeof row.acknowledged === "boolean"),
+        (row.acknowledged === undefined || typeof row.acknowledged === "boolean") &&
+        (row.pickedPlayerKboId === undefined ||
+          (typeof row.pickedPlayerKboId === "string" && row.pickedPlayerKboId.length > 0)),
     );
   } catch {
     return [];
@@ -59,6 +66,25 @@ export function enqueueBaseballQaQuestion(
     entries.push({ ...entry, attempts: 0 });
     writeBaseballQaOutbox(storage, entries);
   }
+}
+
+/**
+ * 동명이인 picker 선택을 기존 항목에 붙이고 재시도할 수 있게 되돌린다.
+ *
+ * 새 질문 메시지를 만들지 않고 **원래 질문 messageId 그대로** 재처리한다. 새 메시지를
+ * 만들면 quota가 또 예약되고 대화창에 같은 질문이 두 번 남는다.
+ */
+export function applyBaseballQaPlayerPick(
+  storage: StorageLike,
+  messageId: number,
+  pickedPlayerKboId: string,
+) {
+  const entries = readBaseballQaOutbox(storage).map((row) =>
+    row.messageId === messageId
+      ? { ...row, pickedPlayerKboId, attempts: 0, acknowledged: false }
+      : row,
+  );
+  writeBaseballQaOutbox(storage, entries);
 }
 
 export function resetBaseballQaQuestion(storage: StorageLike, messageId: number) {
@@ -141,6 +167,9 @@ export async function attemptBaseballQaOutbox(
         body: JSON.stringify({
           conversationId: entry.conversationId,
           messageId: entry.messageId,
+          ...(entry.pickedPlayerKboId
+            ? { pickedPlayerKboId: entry.pickedPlayerKboId }
+            : {}),
         }),
       });
       if (response.ok && response.status !== 202) {

@@ -16,7 +16,8 @@ export const BASEBALL_GENIUS_FALLBACK_ANSWER =
  * 답변 유형에 따라 매핑해서 답변 시 함께 노출"). design 채널 rev6 자산의 5상태와 1:1.
  */
 export type GeniusMascotState = "idle" | "thinking" | "answering" | "praised" | "unknown";
-export type GeniusReplyKind = "answer" | "ack" | "unavailable";
+// `picker` = 동명이인이라 되물는 중. 답변도 실패도 아니라 별도 종류다.
+export type GeniusReplyKind = "answer" | "ack" | "unavailable" | "picker";
 
 export const GENIUS_MASCOT_STATES: readonly GeniusMascotState[] = [
   "idle",
@@ -40,6 +41,7 @@ const ANSWER_MATCH_PATHS = new Set(["dictionary", "cache", "llm", "rag"]);
 export function replyKindForMatchPath(matchPath: string): GeniusReplyKind {
   if (ANSWER_MATCH_PATHS.has(matchPath)) return "answer";
   if (matchPath === "ack") return "ack";
+  if (matchPath === "player_picker") return "picker";
   return "unavailable";
 }
 
@@ -52,6 +54,8 @@ export function mascotStateForReplyKind(replyKind: GeniusReplyKind | null | unde
   if (replyKind === "answer") return "answering";
   if (replyKind === "ack") return "praised";
   if (replyKind === "unavailable") return "unknown";
+  // 되물는 중은 "모른다"가 아니라 "생각 중"이다 — unknown 표정을 쓰면 실패처럼 보인다.
+  if (replyKind === "picker") return "thinking";
   return "idle";
 }
 
@@ -64,11 +68,41 @@ export function geniusMascotSrc(state: GeniusMascotState): string {
   return `/mascot/reply/yajalal-${state}-96.png`;
 }
 
+/**
+ * 동명이인 picker 선택지 1개.
+ *
+ * 로스터 실측(2026-08-03): 880명 중 32그룹 72명이 동명이인이며 그중 7그룹은 **같은 팀에도**
+ * 동명이인이 있다. 그래서 팀만 보여주면 구분이 안 되고 등번호·포지션까지 필요하다
+ * (이름+팀+등번호 조합은 로스터에서 유일함을 확인했다).
+ */
+export interface GeniusPickerOption {
+  kbo_id: string;
+  name: string;
+  team: string | null;
+  position: string | null;
+  back_no: string | null;
+}
+
 /** 답변 유형을 실은 쪽지 payload. 서버가 쓰고 클라가 읽는다. */
 export interface GeniusReplyPayload {
   type: "baseball_genius_reply";
   reply_kind: GeniusReplyKind;
   match_path: string;
+  /** `reply_kind === "picker"` 일 때만. 클라가 선택 카드를 렌더한다. */
+  picker_options?: GeniusPickerOption[];
+}
+
+/** picker 선택지 상한 — 서버·클라이 공유하는 계약. */
+export const GENIUS_PICKER_MAX_OPTIONS = 6;
+
+function isPickerOption(p: unknown): p is GeniusPickerOption {
+  if (!p || typeof p !== "object") return false;
+  const o = p as Record<string, unknown>;
+  return typeof o.kbo_id === "string" && o.kbo_id.length > 0 &&
+    typeof o.name === "string" && o.name.length > 0 &&
+    (o.team === null || typeof o.team === "string") &&
+    (o.position === null || typeof o.position === "string") &&
+    (o.back_no === null || typeof o.back_no === "string");
 }
 
 /**
@@ -80,8 +114,20 @@ export interface GeniusReplyPayload {
  */
 export function isGeniusReplyPayload(p: unknown): p is GeniusReplyPayload {
   if (!p || typeof p !== "object") return false;
-  const obj = p as { type?: unknown; reply_kind?: unknown; match_path?: unknown };
-  return obj.type === "baseball_genius_reply" &&
-    (obj.reply_kind === "answer" || obj.reply_kind === "ack" || obj.reply_kind === "unavailable") &&
-    typeof obj.match_path === "string";
+  const obj = p as { type?: unknown; reply_kind?: unknown; match_path?: unknown; picker_options?: unknown };
+  if (obj.type !== "baseball_genius_reply" || typeof obj.match_path !== "string") return false;
+  if (
+    obj.reply_kind !== "answer" && obj.reply_kind !== "ack" &&
+    obj.reply_kind !== "unavailable" && obj.reply_kind !== "picker"
+  ) return false;
+  // 선택지가 붙어 있으면 항목까지 검증한다 — 깨진 payload 로 카드를 그리면 빈 버튼이 난다.
+  // 상한 초과도 거절한다(무한 목록 렌더 방지).
+  if (obj.picker_options !== undefined) {
+    if (!Array.isArray(obj.picker_options)) return false;
+    if (obj.picker_options.length === 0 || obj.picker_options.length > GENIUS_PICKER_MAX_OPTIONS) return false;
+    if (!obj.picker_options.every(isPickerOption)) return false;
+  }
+  // picker 라고 주장하면서 선택지가 없으면 렌더할 것이 없다 — 유효한 payload 가 아니다.
+  if (obj.reply_kind === "picker" && obj.picker_options === undefined) return false;
+  return true;
 }

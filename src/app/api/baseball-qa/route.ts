@@ -13,12 +13,22 @@ export async function POST(req: NextRequest) {
 
   let conversationId: unknown;
   let messageId: unknown;
+  let pickedPlayerKboId: unknown;
   try {
-    ({ conversationId, messageId } = await req.json());
+    ({ conversationId, messageId, pickedPlayerKboId } = await req.json());
   } catch {
     return NextResponse.json({ error: "잘못된 요청입니다" }, { status: 400 });
   }
   if (typeof conversationId !== "string" || !Number.isSafeInteger(messageId) || Number(messageId) <= 0) {
+    return NextResponse.json({ error: "잘못된 요청입니다" }, { status: 400 });
+  }
+  // 동명이인 picker 선택값. 형식만 검증하고(길이·문자종), 실제로 그 id가 로스터에 있는지는
+  // 파이프라인이 확인한다(`resolvePickedPlayerCandidate`) — 없는 id면 무시되어 기존 경로로 간다.
+  if (
+    pickedPlayerKboId !== undefined && pickedPlayerKboId !== null &&
+    (typeof pickedPlayerKboId !== "string" ||
+      !/^[A-Za-z0-9]{1,16}$/.test(pickedPlayerKboId))
+  ) {
     return NextResponse.json({ error: "잘못된 요청입니다" }, { status: 400 });
   }
 
@@ -47,6 +57,7 @@ export async function POST(req: NextRequest) {
     conversationId,
     userId: verified.user.id,
     question: message.content,
+    pickedPlayerKboId: typeof pickedPlayerKboId === "string" ? pickedPlayerKboId : null,
   });
   if (outcome.kind === "pending") {
     return NextResponse.json({ ok: false, pending: true }, { status: 202 });

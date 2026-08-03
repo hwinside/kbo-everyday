@@ -48,6 +48,15 @@ export const LLM_AMBIGUOUS_ANSWER =
 export const ACK_ANSWER = "도움이 됐다니 다행이에요! ⚾";
 
 /**
+ * 동명이인 picker 안내 문구.
+ *
+ * 클라이언트는 payload로 선택 카드를 렌더하지만, payload를 모르는 구버전·알림 미리보기는
+ * 이 텍스트만 보게 된다. 그래서 문구 단독으로도 상황이 전달되게 쓴다.
+ */
+export const PLAYER_PICKER_ANSWER =
+  "같은 이름의 선수가 여럿 있어요. 어느 선수를 말씀하시는 건가요?";
+
+/**
  * 단독 감사·확인 인사 폐쇄집합 (삼순 GO / 신기능 B).
  * `고마워`처럼 직전 답변에 대한 대화 행위는 야구 질문이 아니지만 차단 대상도 아니다.
  * 폐쇄집합 **full-string 완전일치**만 ACK로 분기한다 — substring 매칭을 하면
@@ -95,9 +104,32 @@ export interface GlossaryEntry {
   answer: string;
 }
 
+/**
+ * 동명이인 picker 선택지 1개.
+ *
+ * 로스터 880명 중 32그룹 72명이 동명이인이고, 그중 7그룹은 **같은 팀에도** 동명이인이
+ * 있다(김민준·김태훈·김현수·박준영·이서준·이승현·이주형). 따라서 "팀"만으로는 몳 가리고
+ * 이름+팀+등번호까지 보여줘야 유저가 구분할 수 있다(이 3조합은 로스터에서 유일함을 실측).
+ * 최종 특정은 표시값이 아니라 `kboId`로 한다.
+ */
+export interface PlayerPickerOption {
+  kboId: string;
+  name: string;
+  team: string | null;
+  position: string | null;
+  backNo: string | null;
+}
+
 export interface PlayerRef {
   name: string;
   kboId: string;
+  /**
+   * 동명이인 picker 전용 보조 식별자. 선택지를 사람이 구분할 수 있게 보여주고,
+   * 재질의 문장에서 어느 선수인지 다시 해석하는 데 쓴다. 없으면(미주입) 기존 동작 그대로다.
+   */
+  team?: string | null;
+  position?: string | null;
+  backNo?: string | null;
 }
 
 export interface LlmResult {
@@ -129,6 +161,9 @@ export type MatchPath =
   | "ack"
   // 선수 서술형 질문을 수집된 tier2 문서 근거로 답한 경로 (S2b).
   | "rag"
+  // 동명이인으로 선수를 특정하지 못해 선택지를 되물은 경로. 답변이 아니라 **되물기**라
+  // blocked와 같은 칸에 넣으면 #983 모니터에서 "못 답한 질문"으로 오집계된다.
+  | "player_picker"
   | "unsure"
   | "limited"
   | "error"
@@ -141,6 +176,11 @@ export interface QaResult {
   source: MatchPath;
   term?: string;
   remaining: number;
+  /**
+   * `source === "player_picker"` 일 때만 채워진다. 호출부(server.ts)가 DM payload 로 실어
+   * 클라이언트가 선택 카드를 렌더하게 한다.
+   */
+  pickerOptions?: PlayerPickerOption[];
 }
 
 export interface QaDeps {
@@ -158,6 +198,17 @@ export interface QaDeps {
   callRagLlm?: (question: string, evidence: RagEvidence[]) => Promise<LlmResult>;
   /** 현재 출시 범위는 룰/용어만이다. 선수 RAG는 후속 출시에서 명시적으로 켠다. */
   enablePlayerRag?: boolean;
+  /**
+   * 유저가 동명이인 picker에서 고른 kboId (재질의). 있으면 이름 매칭을 건너뛰고
+   * 이 선수로 확정한다. 로스터에 없는 id면 무시되어 기존 경로로 내려간다.
+   */
+  pickedPlayerKboId?: string | null;
+  /**
+   * picker 되물기 전용 quota 반납. 되물기는 답변이 아니므로 하루 한도를 깎지 않는다
+   * (하린아빠 승인 A안: picker 무료 · 선택 후 답변에서만 1개 차감).
+   * 미주입이면 반납 없이 동작한다 — 기존 호출부 계약 무변경.
+   */
+  releaseDaily?: (userId: string) => Promise<void>;
   /**
    * KBO 공식 간행물(tier1) 근거 검색 — 규칙·용어 질문용.
    *
@@ -626,6 +677,14 @@ export function resolveRagPlayerCandidate(
   const distinctIds = new Set(matched.map((player) => player.kboId));
   if (distinctIds.size !== 1) return null;
   const target = matched[0];
+  return buildCandidate(target, normalized, players);
+}
+
+function buildCandidate(
+  target: PlayerRef,
+  normalized: string,
+  players: PlayerRef[],
+): RagPlayerCandidate | null {
 
   // 토큰 매칭은 허용 조사 목록에 없는 결합형("문보경이랑")을 놓친다. history_hold에서는
   // 한 명만 걸려도 결과가 같지만, RAG는 "이 질문이 정말 한 선수만 가리키는가"가 정확도의 전제다.
@@ -642,6 +701,82 @@ export function resolveRagPlayerCandidate(
   if (mentionsOther) return null;
 
   // 같은 이름이 로스터에 둘 이상이면 kboId가 갈려 distinctIds 검사에서 이미 걸러졌다(동명이인 격리).
+  return {
+    entityType: "player",
+    entityId: target.kboId,
+    name: target.name,
+    sourceKey: `namu:player:${target.kboId}`,
+  };
+}
+
+/** picker 선택지 상한. 로스터 최대 동명이인 그룹이 3명(김동현·김태훈 등)이라 여유를 둔 값. */
+export const PLAYER_PICKER_MAX_OPTIONS = 6;
+
+/**
+ * 동명이인으로 **선수를 특정하지 못한** 서술형 질문인지 판정하고, 그렇다면 선택지를 돌려준다.
+ *
+ * `resolveRagPlayerCandidate`는 후보 kboId가 2개 이상이면 null을 돌려 그대로 끝낸다. 그러면
+ * `김동현 어떤 선수야?`가 이유 설명 없이 차단 문구로 끝난다. 여기서는 대신 "어느 김동현인가"를
+ * 되묻고, 유저가 고른 kboId로 다시 특정해 답한다(하린아빠 2026-08-03 지시).
+ *
+ * ⚠️ 추측으로 한 명을 고르지 않는다. 낙업률 높은 선수를 기본값으로 잡으면 남의 문서로
+ * 답하는 사고가 조용히 나며, 유저는 그게 틀렸는지도 모른다. 모호하면 물어본다.
+ */
+export function resolvePlayerPickerOptions(
+  question: string,
+  players: PlayerRef[],
+): PlayerPickerOption[] | null {
+  if (!isDescriptivePlayerQuestion(question)) return null;
+  const normalized = question.normalize("NFKC").toLowerCase();
+  const tokens = questionTokens(normalized);
+  const matched = findPlayerReferences(tokens, players);
+  if (matched.length === 0) return null;
+
+  // 서로 다른 **이름**이 여럿 걸렸다면 동명이인이 아니라 `A와 B 중 누가~` 같은 비교 질문이다.
+  // 그건 picker로 풀 문제가 아니므로 기존 차단 경로에 맡긴다.
+  const names = new Set(matched.map((player) => player.name));
+  if (names.size !== 1) return null;
+
+  const distinct = new Map<string, PlayerRef>();
+  for (const player of matched) distinct.set(player.kboId, player);
+  // 1명이면 모호하지 않다 — 기존 단일 후보 경로가 그대로 처리한다.
+  if (distinct.size < 2) return null;
+  // 상한을 넘으면 고르게 하는 것 자체가 의미가 없다 — 기존 차단으로 둘려보낸다.
+  if (distinct.size > PLAYER_PICKER_MAX_OPTIONS) return null;
+
+  // 다른 선수까지 같이 언급된 문장은 단일 엔티티 질문이 아니므로 picker 대상이 아니다.
+  const targetName = matched[0].name;
+  const mentionsOther = players.some((player) =>
+    player.name !== targetName &&
+    player.name.length >= 2 &&
+    normalized.includes(player.name.normalize("NFKC").toLowerCase()) &&
+    !targetName.includes(player.name));
+  if (mentionsOther) return null;
+
+  return [...distinct.values()]
+    .map((player) => ({
+      kboId: player.kboId,
+      name: player.name,
+      team: player.team ?? null,
+      position: player.position ?? null,
+      backNo: player.backNo ?? null,
+    }))
+    // 표시 순서를 kboId로 고정한다 — 로스터 파일 순서가 바뀌어도 같은 화면이 나오게.
+    .sort((left, right) => left.kboId.localeCompare(right.kboId));
+}
+
+/**
+ * picker 선택 뒤 재질의에서 온 kboId로 후보를 직접 구성한다.
+ *
+ * 이름 매칭을 건너뛰는 게 핵심이다 — 이름으로 다시 풀면 또 동명이인으로 갈라져 picker가
+ * 무한히 반복된다. 유저가 명시적으로 고른 id만 신뢰하고, 로스터에 없는 id는 거절한다.
+ */
+export function resolvePickedPlayerCandidate(
+  kboId: string,
+  players: PlayerRef[],
+): RagPlayerCandidate | null {
+  const target = players.find((player) => player.kboId === kboId);
+  if (!target) return null;
   return {
     entityType: "player",
     entityId: target.kboId,
@@ -698,13 +833,12 @@ export function routeQuestion(
   if (isFollowupPhrase(question)) return hasContext ? "baseball_rule_term" : "context_missing";
   if (supportedRuleTerm) return "baseball_rule_term";
 
-  // 선수·구단을 지명했는데 룰/용어 질문이 아니면 현 출시 범위 밖이다 — 이건 LLM에 묻지 않고
-  // 계속 결정론적으로 닫는다. roster·구단명은 폐쇄집합이라 신호어 사전처럼 발산하지 않고,
-  // `문보경 별명이 뭐야` 처럼 기록어가 없는 인물 질의까지 LLM 판정에 넘기면 범위 밖 답변과
-  // global cache가 생길 수 있다.
-  if (hasTeam || hasPlayerReference(tokens, players)) return "blocked";
+  // ⚠️ 선수·구단을 지명했다는 이유만으로 차단하지 않는다. tier2 선수 RAG가 확장된 뒤로
+  // `문보경 별명이 뭐야?` 같은 서술형 선수 질문은 근거로 답해야 하는 대상이다
+  // (하린아빠 2026-08-03: "RAG을 확장했기 때문에 '문보경 별명이 뭐야?'도 답변 되어야 해").
+  // 선수 경로는 answerQuestion 앞단의 resolveRagPlayerCandidate가 먼저 가로채 RAG로 보낸다.
 
-  // 기존 범위밖 의도 denylist도 그대로 유지한다. 이건 신호어 사전처럼 "야구 어휘를 전부
+  // 기존 범위밖 의도 denylist는 그대로 유지한다. 이건 신호어 사전처럼 "야구 어휘를 전부
   // 열거해야 하는" 종류가 아니라 범위밖임이 문장 의도로 드러난 고정밀 패턴이라 발산하지
   // 않는다(별명·누구·비교·역대·추천·날씨 등). 이걸까지 LLM에 묻면 토큰만 더 쓴다.
   if (OUT_OF_SCOPE_INTENT.test(normalized) || NAMED_STAT_QUERY.test(normalized)) return "blocked";
@@ -1020,9 +1154,43 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   }
   // 선수 RAG는 후속 출시용 explicit flag가 켜진 테스트/환경에서만 현재 룰·용어 경계를 우회한다.
   // Production은 server.ts에서 false로 고정되어 선수·구단 질문이 provider/cache에 닿지 않는다.
-  const enabledPlayerCandidate = deps.enablePlayerRag
-    ? resolveRagPlayerCandidate(question, players)
+  // 유저가 picker에서 고른 kboId가 있으면 이름 매칭을 건너뛰고 그 선수로 직행한다.
+  // 이름으로 다시 풀면 또 동명이인으로 갈라져 picker가 무한 반복된다.
+  const pickedCandidate = deps.enablePlayerRag && deps.pickedPlayerKboId
+    ? resolvePickedPlayerCandidate(deps.pickedPlayerKboId, players)
     : null;
+  const enabledPlayerCandidate = pickedCandidate ?? (deps.enablePlayerRag
+    ? resolveRagPlayerCandidate(question, players)
+    : null);
+
+  // 동명이인으로 선수를 특정 못 했으면 추측하지 않고 되묻는다 (하린아빠 2026-08-03).
+  // ⚠️ **답변 전 단계**이므로 공식/선수 RAG·LLM·cache 어느 것도 소비하지 않는다.
+  // quota도 되돌려준다 — "어느 김동현이에요?"를 물어본 것만으로 하루 한도를 깎으면
+  // 동명이인 선수만 두 배를 내는 꼴이 된다. 반납은 이 분기에서만 일어난다.
+  if (!enabledPlayerCandidate && deps.enablePlayerRag) {
+    const options = resolvePlayerPickerOptions(question, players);
+    if (options) {
+      if (deps.releaseDaily) {
+        try {
+          await deps.releaseDaily(userId);
+        } catch {
+          // 반납 실패는 유저가 1개 더 쓴 것일 뿐이다 — 되묻기 자체를 막지 않는다.
+        }
+      }
+      await deps.log({
+        userId, question, questionNorm, matchPath: "player_picker",
+        answer: PLAYER_PICKER_ANSWER, inputTokens: null, outputTokens: null,
+      });
+      return {
+        status: 200,
+        answer: PLAYER_PICKER_ANSWER,
+        source: "player_picker",
+        remaining,
+        pickerOptions: options,
+      };
+    }
+  }
+
   const route = enabledPlayerCandidate
     ? "baseball_rule_term"
     : routeQuestion(question, glossary, players, context !== null);

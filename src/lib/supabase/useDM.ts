@@ -17,6 +17,7 @@ import {
   observeBaseballQaReplies,
   readBaseballQaOutbox,
   resetBaseballQaQuestion,
+  applyBaseballQaPlayerPick,
   type BaseballQaReplyStates,
 } from "@/lib/baseball-qa/client-outbox";
 import { usePollingFallback } from "./usePollingFallback";
@@ -275,6 +276,22 @@ export function useDMChat(conversationId: string) {
   const retryBaseballQa = useCallback((messageId: number) => {
     if (typeof window === "undefined") return;
     resetBaseballQaQuestion(window.localStorage, messageId);
+    setGeniusReplyStates(
+      getBaseballQaReplyStates(
+        readBaseballQaOutbox(window.localStorage),
+        new Set([messageId]),
+      ),
+    );
+    void processBaseballQaOutbox();
+  }, [processBaseballQaOutbox]);
+
+  /**
+   * 동명이인 picker 선택 — 새 질문을 보내지 않고 **원래 질문 messageId를 그대로 재처리**한다.
+   * 새 메시지를 만들면 quota가 또 예약되고 대화창에 같은 질문이 두 번 남는다.
+   */
+  const pickBaseballQaPlayer = useCallback((messageId: number, kboId: string) => {
+    if (typeof window === "undefined") return;
+    applyBaseballQaPlayerPick(window.localStorage, messageId, kboId);
     setGeniusReplyStates(
       getBaseballQaReplyStates(
         readBaseballQaOutbox(window.localStorage),
@@ -578,6 +595,7 @@ export function useDMChat(conversationId: string) {
     isLoggedIn: !!user,
     geniusReplyStates,
     retryBaseballQa,
+    pickBaseballQaPlayer,
   };
 }
 

@@ -66,7 +66,14 @@ export const INVALID_QUESTION_ANSWER =
 
 let glossaryCache: { entries: GlossaryEntry[]; loadedAt: number } | null = null;
 const GLOSSARY_TTL_MS = 10 * 60 * 1000;
-const ROSTER_PLAYERS: PlayerRef[] = playersRoster.map(({ name, kboId }) => ({ name, kboId }));
+// picker 선택지를 사람이 구분하려면 팀·포지션·등번호까지 필요하다 — 같은 팀에도 동명이인이 있기 때문이다.
+const ROSTER_PLAYERS: PlayerRef[] = playersRoster.map(({ name, kboId, team, position, backNo }) => ({
+  name,
+  kboId,
+  team: team ?? null,
+  position: position ?? null,
+  backNo: backNo ?? null,
+}));
 
 async function loadGlossary(): Promise<GlossaryEntry[]> {
   if (glossaryCache && Date.now() - glossaryCache.loadedAt < GLOSSARY_TTL_MS) {
@@ -269,15 +276,56 @@ interface PreviousTurnRowSql {
   current_created_at: string | null;
 }
 
+/**
+ * picker 선택을 job 행에 고정하거나, 입력이 없으면 이미 고정된 값을 읽어온다.
+ *
+ * 즉시 경로(/api/baseball-qa)가 약간 진행하다 브라우저가 죽으면 cron drain이 같은 job을 이어받는다.
+ * 그때 drain은 유저가 무엇을 고랐는지 모른다 — DB에 남겨두지 않으면 picker가 다시 뜨면서
+ * 유저 입장에선 방금 고른 것이 사라진다. 저장 실패는 진행을 막지 않고(답변 자체는 가능),
+ * 다음 재처리에서 picker로 되돌아갈 뿐이다.
+ */
+async function persistOrLoadPickedPlayer(
+  messageId: number,
+  input?: string | null,
+): Promise<string | null> {
+  if (input) {
+    const { error } = await supabaseAdmin
+      .from("genius_question_jobs")
+      .update({ picked_player_kbo_id: input, updated_at: new Date().toISOString() })
+      .eq("message_id", messageId);
+    if (error) console.error("baseball-genius picked player persist failed:", error.message);
+    return input;
+  }
+  const { data, error } = await supabaseAdmin
+    .from("genius_question_jobs")
+    .select("picked_player_kbo_id")
+    .eq("message_id", messageId)
+    .maybeSingle();
+  if (error) return null;
+  return (data?.picked_player_kbo_id as string | null) ?? null;
+}
+
 /** messageId에 바인딩된 deps — quota/LLM을 job 행 기준 durable idempotent로 만든다. */
-function makeDeps(messageId: number): QaDeps {
+function makeDeps(messageId: number, pickedPlayerKboId?: string | null): QaDeps {
   return {
     loadGlossary,
     loadPlayers,
     callLlm,
     searchRag,
     callRagLlm,
-    enablePlayerRag: false,
+    // 선수 서술형 RAG 개통 (하린아빠 2026-08-03: "RAG을 확장했기 때문에 '문보경 별명이 뭐야?'도
+    // 답변 되어야 해"). 미수집 선수는 근거 0행이라 그대로 fail-close 된다 — 없는 말을 지어내지 않는다.
+    enablePlayerRag: true,
+    pickedPlayerKboId: pickedPlayerKboId ?? null,
+    releaseDaily: async (userId) => {
+      // query-guard: bounded -- message_id 단위 멱등 단일 행 갱신 RPC.
+      const { error } = await supabaseAdmin
+        .rpc("release_baseball_genius_daily_question_for_message", {
+          p_message_id: messageId,
+          p_user_id: userId,
+        });
+      if (error) throw error;
+    },
     searchOfficialRag,
     callOfficialRagLlm,
     recordRagDemand: async (sourceKeys) => {
@@ -414,6 +462,11 @@ export async function processBaseballQaQuestion(input: {
   conversationId: string;
   userId: string;
   question: string;
+  /**
+   * 동명이인 picker에서 유저가 고른 kboId (재질의). 즉시 경로(route)에서만 전달되며,
+   * job 행에 고정되어 cron drain 재처리에서도 같은 선수로 이어진다.
+   */
+  pickedPlayerKboId?: string | null;
 }): Promise<ProcessOutcome> {
   const { messageId, conversationId, userId } = input;
   const question = input.question.trim();
@@ -481,7 +534,10 @@ export async function processBaseballQaQuestion(input: {
       if (tooShort || question.length > MAX_QUESTION_LEN) {
         result = { status: 200, answer: INVALID_QUESTION_ANSWER, source: "blocked", remaining: 0 };
       } else {
-        result = await answerQuestion(userId, question, makeDeps(messageId));
+        // 선택은 job 행을 SSOT로 삼는다. 즉시 경로가 죽어 cron이 이어받아도 유저가 고른
+        // 그 선수로 답하도록, 입력이 있으면 먼저 고정하고 없으면 저장된 값을 읽는다.
+        const picked = await persistOrLoadPickedPlayer(messageId, input.pickedPlayerKboId);
+        result = await answerQuestion(userId, question, makeDeps(messageId, picked));
       }
       if (result.source === "pending") {
         // LLM winner가 다른 worker (CAS 패배/fence 창) — 이 worker는 ready 저장도 발송도 하지
@@ -528,6 +584,18 @@ export async function processBaseballQaQuestion(input: {
     type: "baseball_genius_reply",
     reply_kind: replyKindForMatchPath(result.source),
     match_path: result.source,
+    // 동명이인 되물기일 때만 선택지를 실는다. 클라는 이걸 보고 카드를 렌더한다.
+    ...(result.pickerOptions
+      ? {
+        picker_options: result.pickerOptions.map((option) => ({
+          kbo_id: option.kboId,
+          name: option.name,
+          team: option.team,
+          position: option.position,
+          back_no: option.backNo,
+        })),
+      }
+      : {}),
   };
   const sent = await sendOpsMessageToUser(
     supabaseAdmin,
