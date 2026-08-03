@@ -31,6 +31,7 @@ type NamuManifestSource = {
   entityId: string;
   requestedTitle: string;
   canonicalTitle: string;
+  canonicalUrl: string;
 };
 
 export type CorpusInputCounts = {
@@ -137,6 +138,36 @@ function latestByCanonical(records: CorpusRecord[]): CorpusRecord[] {
   return [...latest.values()];
 }
 
+function corpusOwnerKey(record: CorpusRecord): string {
+  return `${record.kind}\u0000${record.entity}\u0000${record.canonical}`;
+}
+
+function latestByOwnerCanonical(records: CorpusRecord[]): CorpusRecord[] {
+  const latest = new Map<string, CorpusRecord>();
+  for (const record of records) {
+    const key = corpusOwnerKey(record);
+    const previous = latest.get(key);
+    if (!previous || previous.fetchedAt < record.fetchedAt) latest.set(key, record);
+  }
+  return [...latest.values()];
+}
+
+/** DB validate_baseball_genius_rag_chunk_owner()의 Namu root/child 계약과 동일한 판정. */
+export function isCorpusCanonicalOwnedByRoot(rootCanonical: string, documentCanonical: string): boolean {
+  if (/\s|[\u0000-\u001f\u007f]/.test(rootCanonical + documentCanonical)) return false;
+  const rootPath = rootCanonical.match(/^https:\/\/namu[.]wiki(\/w\/[^?#]+)$/)?.[1];
+  const documentPath = documentCanonical.match(/^https:\/\/namu[.]wiki(\/w\/[^?#]+)$/)?.[1];
+  if (!rootPath || !documentPath) return false;
+  for (const value of [rootPath, documentPath]) {
+    if (
+      value.includes("\\")
+      || /(^|\/)[.]{1,2}(\/|$)/.test(value)
+      || /%(2e|2f|5c|25)/i.test(value)
+    ) return false;
+  }
+  return documentPath === rootPath || documentPath.startsWith(`${rootPath}/`);
+}
+
 export function buildCorpusSourcePlan(
   input: CorpusRecord[],
   roster: RosterPlayer[],
@@ -148,7 +179,9 @@ export function buildCorpusSourcePlan(
   assignedDocuments: number;
   deduplicated: number;
 } {
-  const records = latestByCanonical(input);
+  // canonical 전역 dedup은 같은 경기 문서를 서로 다른 구단 seed가 발견한 관계를 지운다.
+  // owner(kind+entity)+canonical 단위로만 최신본을 고르고, 최종 source 안에서만 canonical을 합친다.
+  const records = latestByOwnerCanonical(input);
   const byName = new Map<string, RosterPlayer[]>();
   for (const player of roster) byName.set(player.name, [...(byName.get(player.name) ?? []), player]);
   const plans: CorpusSourcePlan[] = [];
@@ -158,14 +191,14 @@ export function buildCorpusSourcePlan(
 
   const playerRecords = records.filter((record) => record.kind === "player");
   for (const root of playerRecords.filter((record) => record.depth === 1)) {
-    const documents = playerRecords.filter((record) =>
+    const ownerDocuments = playerRecords.filter((record) =>
       record.entity === root.entity
       && (record.doc === root.doc || record.doc.startsWith(`${root.doc}/`))
     );
     const candidates = byName.get(root.entity) ?? [];
     if (candidates.length !== 1) {
       quarantinedPlayers += 1;
-      for (const document of documents) quarantined.add(document.canonical);
+      for (const document of ownerDocuments) quarantined.add(corpusOwnerKey(document));
       continue;
     }
     const player = candidates[0];
@@ -177,65 +210,89 @@ export function buildCorpusSourcePlan(
     });
     if (!identity.ok) {
       quarantinedPlayers += 1;
-      for (const document of documents) quarantined.add(document.canonical);
+      for (const document of ownerDocuments) quarantined.add(corpusOwnerKey(document));
       continue;
     }
-    for (const document of documents) assigned.add(document.canonical);
+    const ownedDocuments = ownerDocuments.filter((document) =>
+      isCorpusCanonicalOwnedByRoot(root.canonical, document.canonical)
+    );
+    const mismatchedDocuments = ownerDocuments.filter((document) =>
+      !isCorpusCanonicalOwnedByRoot(root.canonical, document.canonical)
+    );
+    for (const document of ownedDocuments) assigned.add(corpusOwnerKey(document));
+    for (const document of mismatchedDocuments) quarantined.add(corpusOwnerKey(document));
     plans.push({
       sourceKey: `namu:player:${player.kboId}`,
       entityType: "player",
       entityId: player.kboId,
       pageTitle: normalizeCorpusTitle(root.title),
       root,
-      documents,
+      documents: latestByCanonical(ownedDocuments),
     });
   }
 
   for (const team of manifest.filter((source) => source.entityType === "team")) {
-    const documents = records.filter((record) =>
+    const ownerDocuments = records.filter((record) =>
       record.kind === "team"
       && (record.entity === team.requestedTitle || record.entity === team.canonicalTitle)
     );
-    const root = documents.find((record) => record.depth === 1);
-    if (!root || documents.length === 0) throw new Error(`team source root absent: ${team.sourceKey}`);
-    for (const document of documents) assigned.add(document.canonical);
+    const root = ownerDocuments.find((record) => record.canonical === team.canonicalUrl)
+      ?? ownerDocuments.find((record) => record.depth === 1);
+    if (!root || ownerDocuments.length === 0) throw new Error(`team source root absent: ${team.sourceKey}`);
+    const ownedDocuments = ownerDocuments.filter((document) =>
+      isCorpusCanonicalOwnedByRoot(root.canonical, document.canonical)
+    );
+    const mismatchedDocuments = ownerDocuments.filter((document) =>
+      !isCorpusCanonicalOwnedByRoot(root.canonical, document.canonical)
+    );
+    for (const document of ownedDocuments) assigned.add(corpusOwnerKey(document));
+    for (const document of mismatchedDocuments) quarantined.add(corpusOwnerKey(document));
     plans.push({
       sourceKey: team.sourceKey,
       entityType: "team",
       entityId: team.entityId,
       pageTitle: normalizeCorpusTitle(root.title),
       root,
-      documents,
+      documents: latestByCanonical(ownedDocuments),
     });
   }
 
   const leagueManifest = manifest.find((source) => source.sourceKey === "namu:league:kbo");
   if (!leagueManifest) throw new Error("namu:league:kbo manifest absent");
-  const leagueDocuments = records.filter((record) =>
+  const leagueOwnerDocuments = records.filter((record) =>
     record.kind === "baseball_general" || record.kind === "kbo_league"
   );
-  const leagueRoot = leagueDocuments.find((record) =>
-    record.kind === "kbo_league" && record.doc === "KBO 리그"
-  ) ?? leagueDocuments.find((record) => record.depth === 1);
-  if (!leagueRoot || leagueDocuments.length === 0) throw new Error("league corpus root absent");
-  for (const document of leagueDocuments) assigned.add(document.canonical);
+  const leagueRoot = leagueOwnerDocuments.find((record) =>
+    record.canonical === leagueManifest.canonicalUrl
+  );
+  if (!leagueRoot || leagueOwnerDocuments.length === 0) throw new Error("league corpus root absent");
+  const leagueDocuments = leagueOwnerDocuments.filter((document) =>
+    isCorpusCanonicalOwnedByRoot(leagueRoot.canonical, document.canonical)
+  );
+  const leagueMismatches = leagueOwnerDocuments.filter((document) =>
+    !isCorpusCanonicalOwnedByRoot(leagueRoot.canonical, document.canonical)
+  );
+  for (const document of leagueDocuments) assigned.add(corpusOwnerKey(document));
+  for (const document of leagueMismatches) quarantined.add(corpusOwnerKey(document));
   plans.push({
     sourceKey: leagueManifest.sourceKey,
     entityType: "league",
     entityId: leagueManifest.entityId,
     pageTitle: leagueManifest.canonicalTitle,
     root: leagueRoot,
-    documents: leagueDocuments,
+    documents: latestByCanonical(leagueDocuments),
   });
 
   const unassignedNonPlayer = records.filter((record) =>
-    record.kind !== "player" && !assigned.has(record.canonical)
+    record.kind !== "player"
+    && !assigned.has(corpusOwnerKey(record))
+    && !quarantined.has(corpusOwnerKey(record))
   );
   if (unassignedNonPlayer.length > 0) {
     throw new Error(`non-player corpus unassigned: ${unassignedNonPlayer.length}`);
   }
   const unaccountedPlayers = playerRecords.filter((record) =>
-    !assigned.has(record.canonical) && !quarantined.has(record.canonical)
+    !assigned.has(corpusOwnerKey(record)) && !quarantined.has(corpusOwnerKey(record))
   );
   if (unaccountedPlayers.length > 0) {
     throw new Error(`player corpus unaccounted: ${unaccountedPlayers.length}`);

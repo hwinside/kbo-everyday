@@ -56,6 +56,19 @@ const fixtures: FixtureRecord[] = [
   ...manifest.filter(({ entityType }) => entityType === "team").map(({ canonicalTitle }) =>
     record("team", canonicalTitle, canonicalTitle, prose(canonicalTitle))),
 ];
+const redirectedGameCanonical = "https://namu.wiki/w/KIA%20%ED%83%80%EC%9D%B4%EA%B1%B0%EC%A6%88/2018%EB%85%84/6%EC%9B%94/3%EC%9D%BC";
+const redirectedGameText = prose("KIA 타이거즈/2018년/6월/3일");
+fixtures.push(
+  {
+    ...record("team", "두산 베어스", "두산 베어스/2018년/6월/3일", redirectedGameText),
+    title: "KIA 타이거즈/2018년/6월/3일 - 나무위키",
+    canonical: redirectedGameCanonical,
+  },
+  {
+    ...record("team", "KIA 타이거즈", "KIA 타이거즈/2018년/6월/3일", redirectedGameText),
+    canonical: redirectedGameCanonical,
+  },
+);
 
 function writeJsonl(name: string, rows: unknown[], tail = ""): string {
   const file = path.join(work, name);
@@ -87,11 +100,12 @@ async function main(): Promise<void> {
 const validFile = writeJsonl("valid.jsonl", fixtures, "\n");
 const dry = await run([`--file=${validFile}`]);
 assert.equal(dry.code, 0, dry.stderr);
-assert.match(dry.stdout, /physical.*13/);
+assert.match(dry.stdout, /physical.*15/);
 assert.match(dry.stdout, /"player":1/);
-assert.match(dry.stdout, /"team":10/);
-assert.match(dry.stdout, /"league":2/);
-console.log("PASS actual CLI dry-run — 4 kind 전부 source 귀속");
+assert.match(dry.stdout, /"team":11/);
+assert.match(dry.stdout, /"league":1/);
+assert.match(dry.stdout, /owner\+canonical 관계 15, 적재 관계 13, 격리 관계 2/);
+console.log("PASS actual CLI dry-run — owner+canonical 관계 보존 / redirect opponent owner 격리");
 
 const brokenMiddle = writeJsonl("broken-middle.jsonl", [fixtures[0]], "\n{broken\n" + JSON.stringify(fixtures[1]));
 const middle = await run([`--file=${brokenMiddle}`]);
@@ -118,6 +132,12 @@ console.log("PASS actual CLI fail-close — middle/tail/schema/host 4종 exit 1"
 const staged = new Map<string, number>();
 const serving = new Map<string, number>();
 const seenSources = new Set<string>();
+const sourceStates = new Map<string, {
+  ingestionStatus: "not_started" | "ingesting" | "ready";
+  revision: string | null;
+  activeClaimGeneration: number;
+}>();
+const claimCounts = new Map<string, number>();
 const server = createServer(async (request, response) => {
   const chunks: Buffer[] = [];
   for await (const chunk of request) chunks.push(chunk as Buffer);
@@ -127,19 +147,58 @@ const server = createServer(async (request, response) => {
     const url = new URL(request.url, "http://127.0.0.1");
     const sourceKey = (url.searchParams.get("source_key") ?? "").replace(/^eq\./, "");
     seenSources.add(sourceKey);
+    if (!sourceStates.has(sourceKey)) {
+      sourceStates.set(sourceKey, {
+        ingestionStatus: "not_started",
+        revision: null,
+        activeClaimGeneration: 0,
+      });
+    }
     response.end(JSON.stringify([{ source_key: sourceKey }]));
+    return;
+  }
+  if (request.method === "GET" && request.url?.startsWith("/rest/v1/genius_rag_sources")) {
+    const url = new URL(request.url, "http://127.0.0.1");
+    const sourceKey = (url.searchParams.get("source_key") ?? "").replace(/^eq\./, "");
+    const state = sourceStates.get(sourceKey);
+    response.end(JSON.stringify(state ? [{
+      source_key: sourceKey,
+      entity_id: "fixture",
+      page_title: "fixture",
+      canonical_url: "https://namu.wiki/w/fixture",
+      ingestion_status: state.ingestionStatus,
+      revision: state.revision,
+      active_claim_generation: state.activeClaimGeneration,
+    }] : []));
+    return;
+  }
+  if (request.method === "GET" && request.url?.startsWith("/rest/v1/genius_rag_chunks")) {
+    const url = new URL(request.url, "http://127.0.0.1");
+    const sourceKey = (url.searchParams.get("source_key") ?? "").replace(/^eq\./, "");
+    const count = serving.get(sourceKey) ?? 0;
+    response.statusCode = 200;
+    response.setHeader("Content-Range", `0-0/${count}`);
+    response.end(count > 0 ? JSON.stringify([{ id: `${sourceKey}:0` }]) : "[]");
     return;
   }
   const fn = request.url?.split("/").pop();
   if (fn === "claim_baseball_genius_rag_batch_scoped") {
     const sourceKey = body.p_source_keys[0];
+    const state = sourceStates.get(sourceKey);
+    if (!state || state.ingestionStatus === "ready") {
+      response.end("[]");
+      return;
+    }
+    state.ingestionStatus = "ingesting";
+    state.activeClaimGeneration += 1;
+    claimCounts.set(sourceKey, (claimCounts.get(sourceKey) ?? 0) + 1);
     response.end(JSON.stringify([{
       source_key: sourceKey,
       entity_id: "fixture",
       page_title: "fixture",
       canonical_url: "https://namu.wiki/w/fixture",
       claim_token: "11111111-1111-4111-8111-111111111111",
-      claim_generation: 1,
+      claim_generation: state.activeClaimGeneration,
     }]));
     return;
   }
@@ -151,7 +210,13 @@ const server = createServer(async (request, response) => {
   if (fn === "complete_baseball_genius_rag_source") {
     const actual = staged.get(body.p_source_key) ?? 0;
     const complete = actual === body.p_expected_chunk_count && actual > 0;
-    if (complete) serving.set(body.p_source_key, actual);
+    if (complete) {
+      serving.set(body.p_source_key, actual);
+      const state = sourceStates.get(body.p_source_key);
+      assert.ok(state);
+      state.ingestionStatus = "ready";
+      state.revision = body.p_revision;
+    }
     response.end(JSON.stringify(complete));
     return;
   }
@@ -166,13 +231,19 @@ await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 const address = server.address();
 assert.ok(address && typeof address === "object");
 try {
-  const applied = await run([`--file=${validFile}`, "--apply"], {
+  const applyEnv = {
     NODE_ENV: "test",
     RAG_CORPUS_LOADER_FAKE_EMBEDDING: "1",
     NEXT_PUBLIC_SUPABASE_URL: `http://127.0.0.1:${address.port}`,
     SUPABASE_SERVICE_ROLE_KEY: "fixture-service-role",
     GEMINI_API_KEY: "fixture-gemini",
-  });
+  };
+  const canary = await run([`--file=${validFile}`, "--limit=5", "--apply"], applyEnv);
+  assert.equal(canary.code, 0, `${canary.stdout}\n${canary.stderr}`);
+  assert.match(canary.stdout, /APPLY 완료: source 5\/5/);
+  assert.equal([...sourceStates.values()].filter((state) => state.ingestionStatus === "ready").length, 5);
+
+  const applied = await run([`--file=${validFile}`, "--apply"], applyEnv);
   assert.equal(applied.code, 0, `${applied.stdout}\n${applied.stderr}`);
   assert.equal(seenSources.size, 12);
   assert.deepEqual([...seenSources].sort(), [
@@ -187,7 +258,9 @@ try {
     "expected-count와 serving chunk 수가 일치해야 한다",
   );
   assert.match(applied.stdout, /APPLY 완료: source 12\/12/);
-  console.log("PASS actual E2E — source 12 → chunk stage → expected-count complete → serving 12");
+  assert.match(applied.stdout, /already-loaded/);
+  assert.equal([...claimCounts.values()].reduce((sum, count) => sum + count, 0), 12);
+  console.log("PASS actual E2E — canary 5 READY → full 재실행 skip 5 + claim 7 → serving 12");
 } finally {
   server.close();
 }

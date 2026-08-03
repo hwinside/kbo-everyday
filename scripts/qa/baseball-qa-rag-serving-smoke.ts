@@ -1563,6 +1563,47 @@ async function verifyServingContractOnRealDb(): Promise<void> {
     },
     "source와 chunk canonical이 같은 raw 제어문자 URL도 fail-close해야 한다",
   );
+
+  // corpus planner 실제 경계: 상대 구단 seed에서 발견한 redirect 문서를 entity 라벨만으로
+  // LG source에 넣으면 canonical root/child 계약이 거부해야 한다. planner는 이 관계를 격리한다.
+  const lgRootCanonical = "https://namu.wiki/w/LG%20%ED%8A%B8%EC%9C%88%EC%8A%A4";
+  const kiaGameCanonical = "https://namu.wiki/w/KIA%20%ED%83%80%EC%9D%B4%EA%B1%B0%EC%A6%88/2018%EB%85%84/6%EC%9B%94/3%EC%9D%BC";
+  await db.query(
+    `INSERT INTO public.genius_rag_sources
+      (source_key,source_kind,entity_type,entity_id,page_title,candidate_urls,canonical_url,
+       resolution_status,source_grade,identity_fingerprint)
+     VALUES ('namu:team:owner-fixture','namu_document','team','1','LG 트윈스',
+       ARRAY[$1],$1,'resolved','tier2',$2)`,
+    [lgRootCanonical, randomUUID()],
+  );
+  const teamClaim = await claimSource("namu:team:owner-fixture");
+  await assert.rejects(
+    db.query(
+      `SELECT public.upsert_baseball_genius_rag_chunk(
+        'namu:team:owner-fixture',$1,$2,'team','1','LG 트윈스',$3,
+        'owner-fixture-rev','상대 구단 redirect',0,$4,'owner-fixture-doc','owner-fixture-bad','tier2',
+        $5::timestamptz,'2026-08-01'::date,$6::extensions.vector,
+        jsonb_build_object('documentCanonicalUrl',$3::text))`,
+      [teamClaim.claim_token, teamClaim.claim_generation, kiaGameCanonical,
+       "KIA canonical을 LG source에 귀속하면 실제 owner trigger가 거부해야 하는 충분히 긴 본문입니다.",
+       crawledAt, embedding],
+    ),
+    /stale or mismatched rag chunk owner\/provenance/,
+    "상대 구단 canonical을 entity 라벨만으로 현재 구단 source에 넣으면 안 된다",
+  );
+  const lgChildCanonical = `${lgRootCanonical}/2018%EB%85%84`;
+  await db.query(
+    `SELECT public.upsert_baseball_genius_rag_chunk(
+      'namu:team:owner-fixture',$1,$2,'team','1','LG 트윈스',$3,
+      'owner-fixture-rev','정상 child',0,$4,'owner-fixture-doc','owner-fixture-good','tier2',
+      $5::timestamptz,'2026-08-01'::date,$6::extensions.vector,
+      jsonb_build_object('documentCanonicalUrl',$3::text))`,
+    [teamClaim.claim_token, teamClaim.claim_generation, lgChildCanonical,
+     "LG root 아래의 정상 canonical은 동일 owner source에 귀속되어야 하는 충분히 긴 본문입니다.",
+     crawledAt, embedding],
+  );
+  console.log("PASS corpus owner actual — 상대 구단 redirect 거부 / root child 허용");
+
   const ingest = async (sourceKey: string, entityId: string, title: string, content: string) => {
     const claim = await claimSource(sourceKey);
     const hash = `hash-${entityId}`;

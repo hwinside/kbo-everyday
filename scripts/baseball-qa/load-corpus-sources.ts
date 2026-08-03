@@ -44,7 +44,17 @@ const STALE_AFTER_DAYS = 30;
 const TEST_EMBEDDING = process.env.NODE_ENV === "test"
   && process.env.RAG_CORPUS_LOADER_FAKE_EMBEDDING === "1";
 
-interface RagSourceRow {
+interface RagSourceStateRow {
+  source_key: string;
+  entity_id: string;
+  page_title: string;
+  canonical_url: string;
+  ingestion_status: string;
+  revision: string | null;
+  active_claim_generation: number;
+}
+
+interface RagClaimRow {
   source_key: string;
   entity_id: string;
   page_title: string;
@@ -85,6 +95,44 @@ async function mapConcurrent<T, R>(
   return results;
 }
 
+async function fetchSourceState(
+  url: string,
+  headers: Record<string, string>,
+  sourceKey: string,
+): Promise<RagSourceStateRow> {
+  const response = await fetch(
+    `${url}/rest/v1/genius_rag_sources?source_key=eq.${encodeURIComponent(sourceKey)}`
+      + "&select=source_key,entity_id,page_title,canonical_url,ingestion_status,revision,active_claim_generation",
+    { headers },
+  );
+  if (!response.ok) throw new Error(`${sourceKey}: source GET HTTP ${response.status} ${await response.text()}`);
+  const rows = await response.json() as RagSourceStateRow[];
+  if (rows.length !== 1 || rows[0]?.source_key !== sourceKey) {
+    throw new Error(`${sourceKey}: source GET ${rows.length}, expected exact 1`);
+  }
+  return rows[0];
+}
+
+async function countActiveChunks(
+  url: string,
+  headers: Record<string, string>,
+  sourceKey: string,
+  claimGeneration: number,
+): Promise<number> {
+  const response = await fetch(
+    `${url}/rest/v1/genius_rag_chunks?select=id`
+      + `&source_key=eq.${encodeURIComponent(sourceKey)}`
+      + `&claim_generation=eq.${encodeURIComponent(String(claimGeneration))}`,
+    { headers: { ...headers, Prefer: "count=exact", Range: "0-0" } },
+  );
+  if (response.status !== 200 && response.status !== 206) {
+    throw new Error(`${sourceKey}: chunk count HTTP ${response.status} ${await response.text()}`);
+  }
+  const total = response.headers.get("content-range")?.split("/")[1];
+  if (!/^\d+$/.test(total ?? "")) throw new Error(`${sourceKey}: chunk count invalid total=${total ?? "missing"}`);
+  return Number(total);
+}
+
 async function main(): Promise<void> {
   if (!FILE) throw new Error("--file=<corpus.jsonl> 이 필요하다");
 
@@ -98,8 +146,8 @@ async function main(): Promise<void> {
   const planned = buildCorpusSourcePlan(parsed.records, roster, manifest);
   console.log(`입력 대조: ${JSON.stringify(parsed.counts)}`);
   console.log(
-    `귀속 계획: source ${planned.plans.length}, 중복제거 문서 ${planned.deduplicated}, ` +
-    `귀속 문서 ${planned.assignedDocuments}, 격리 문서 ${planned.quarantinedDocuments}` +
+    `귀속 계획: source ${planned.plans.length}, owner+canonical 관계 ${planned.deduplicated}, ` +
+    `적재 관계 ${planned.assignedDocuments}, 격리 관계 ${planned.quarantinedDocuments}` +
     `(선수 ${planned.quarantinedPlayers}명)`,
   );
   const byType = planned.plans.reduce<Record<string, number>>((counts, plan) => {
@@ -158,23 +206,6 @@ async function main(): Promise<void> {
     const prepared = prepareTier2DocumentSet(documents, "full");
     if (!prepared.ok) throw new Error(`${entry.sourceKey}: prepare:${prepared.reason}`);
 
-    // claim 전에 embedding을 끝낸다. 느린 외부 API가 lease를 소모해 마지막 chunk에서
-    // 만료되는 실패를 막고, embedding 실패 시 DB에는 한 줄도 쓰지 않는다.
-    const embedded = await mapConcurrent(prepared.chunks, CONCURRENCY, async (chunk) => {
-      const result = await embedDocument(
-        chunk.content,
-        pageTitle,
-        TEST_EMBEDDING
-          ? async () => new Response(JSON.stringify({ embedding: { values: Array(768).fill(0.01) } }), {
-            status: 200,
-            headers: { "Content-Type": "application/json" },
-          })
-          : undefined,
-      );
-      if (!result.ok) throw new Error(`${entry.sourceKey}: embed:${result.reason}`);
-      return { chunk, vector: result.vector };
-    });
-
     const sourceKey = entry.sourceKey;
     const sourceResponse = await fetch(
       `${url}/rest/v1/genius_rag_sources?source_key=eq.${encodeURIComponent(sourceKey)}&select=source_key`,
@@ -196,7 +227,42 @@ async function main(): Promise<void> {
       throw new Error(`${sourceKey}: source affected ${affected.length}, expected 1`);
     }
 
-    const claimed = await rpc<RagSourceRow[]>("claim_baseball_genius_rag_batch_scoped", {
+    const rootRevision = `crawled:${entry.root.fetchedAt}`;
+    const dbSource = await fetchSourceState(url, headers, sourceKey);
+    if (dbSource.ingestion_status === "ready" && dbSource.revision === rootRevision) {
+      const activeCount = await countActiveChunks(
+        url,
+        headers,
+        sourceKey,
+        dbSource.active_claim_generation,
+      );
+      if (activeCount !== prepared.chunks.length) {
+        throw new Error(`${sourceKey}: ready chunk count expected=${prepared.chunks.length} actual=${activeCount}`);
+      }
+      completedSources += 1;
+      completedChunks += activeCount;
+      console.log(`READY ${sourceKey} already-loaded chunks=${activeCount} (DB 실측)`);
+      continue;
+    }
+
+    // claim 전에 embedding을 끝낸다. 느린 외부 API가 lease를 소모해 마지막 chunk에서
+    // 만료되는 실패를 막고, embedding 실패 시 DB에는 한 줄도 쓰지 않는다.
+    const embedded = await mapConcurrent(prepared.chunks, CONCURRENCY, async (chunk) => {
+      const result = await embedDocument(
+        chunk.content,
+        pageTitle,
+        TEST_EMBEDDING
+          ? async () => new Response(JSON.stringify({ embedding: { values: Array(768).fill(0.01) } }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          })
+          : undefined,
+      );
+      if (!result.ok) throw new Error(`${entry.sourceKey}: embed:${result.reason}`);
+      return { chunk, vector: result.vector };
+    });
+
+    const claimed = await rpc<RagClaimRow[]>("claim_baseball_genius_rag_batch_scoped", {
       p_limit: 1,
       p_lease_seconds: 1800,
       p_source_keys: [sourceKey],
@@ -236,7 +302,6 @@ async function main(): Promise<void> {
         });
       });
 
-      const rootRevision = `crawled:${entry.root.fetchedAt}`;
       const anchor = prepared.chunks.find((chunk) => chunk.meta.revision === rootRevision);
       if (!anchor) throw new Error(`${sourceKey}: root anchor chunk absent`);
       const completed = await rpc<boolean>("complete_baseball_genius_rag_source", {
