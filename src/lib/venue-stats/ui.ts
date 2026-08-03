@@ -726,7 +726,9 @@ export function coverageCaption(scope: VenueStatsScopePayload): string {
   const excluded = scope.coverage.excludedAttendance?.length ?? 0;
   const gaps = incompleteFinalGames + unavailableGames;
   if (excluded > 0) {
-    return `총 ${attendanceGames}경기 · 통계 ${finalGames}경기 · 제외 ${excluded}경기`;
+    return `총 ${attendanceGames}경기 · 통계 ${finalGames}경기 · 제외 ${excluded}경기${
+      gaps > 0 ? ` · 확인 중 ${gaps}경기` : ""
+    }`;
   }
   return gaps > 0
     ? `직관 ${attendanceGames}경기 · 종료 ${finalGames}경기 · 확인 중 ${gaps}경기`

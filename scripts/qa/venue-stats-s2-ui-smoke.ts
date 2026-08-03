@@ -483,6 +483,12 @@ assert.equal(
   excludedAttendanceCaption(excludedScope),
   "통계 제외 · 시범·비정규 1경기 · 응원팀 미출전 1경기",
 );
+excludedScope.coverage.unavailableGames = 1;
+assert.equal(
+  coverageCaption(excludedScope),
+  "총 11경기 · 통계 9경기 · 제외 2경기 · 확인 중 1경기",
+  "제외 경기와 확인 중 경기가 함께 있으면 어느 쪽도 숨기지 않는다",
+);
 
 metrics.A1.state = "mixed_team";
 metrics.A1.n = 4;
