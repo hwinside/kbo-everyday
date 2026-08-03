@@ -3,7 +3,7 @@
 import { Heart, MessageCircle } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import TeamBadge from "@/components/ui/TeamBadge";
-import { getPostSourceLabel } from "@/lib/utils/community-board";
+import { getPostDetailHref, getPostSourceLabel } from "@/lib/utils/community-board";
 
 export interface CommunityProfilePost {
   id: number;
@@ -19,19 +19,21 @@ export interface CommunityProfilePost {
 
 export default function CommunityProfilePostRow({
   post,
-  onClick,
+  onNavigate,
   timeLabel,
 }: {
   post: CommunityProfilePost;
-  onClick: () => void;
+  onNavigate: (href: string) => void;
   timeLabel: string;
 }) {
   const sourceLabel = getPostSourceLabel(post);
+  const href = getPostDetailHref(post);
   return (
     <GlassCard
       data-community-profile-post-row
       className="p-3 cursor-pointer hover:bg-black/5 dark:hover:bg-white/5"
-      onClick={onClick}
+      data-post-href={href}
+      onClick={() => onNavigate(href)}
     >
       <div className="mb-2 flex min-w-0 items-center gap-2" data-community-source-label>
         <span className="shrink-0 text-[10px] text-text-tertiary">글 소속</span>

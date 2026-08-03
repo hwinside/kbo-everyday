@@ -36,11 +36,15 @@ copy("src/components/community/CommunityCommentRow.tsx", "CommunityCommentRow.ts
     ? source.replace('className="ml-[50px] min-w-0"', 'className="ml-0 min-w-0"')
     : source,
 );
-copy("src/components/profile/CommunityProfilePostRow.tsx", "CommunityProfilePostRow.tsx", (source) =>
-  process.env.POST_HEADER_MUTATE_PROFILE_SOURCE === "1"
-    ? source.replace("const sourceLabel = getPostSourceLabel(post);", 'const sourceLabel = { text: "자유게시판" };')
-    : source,
-);
+copy("src/components/profile/CommunityProfilePostRow.tsx", "CommunityProfilePostRow.tsx", (source) => {
+  if (process.env.POST_HEADER_MUTATE_PROFILE_SOURCE === "1") {
+    source = source.replace("const sourceLabel = getPostSourceLabel(post);", 'const sourceLabel = { text: "자유게시판" };');
+  }
+  if (process.env.POST_HEADER_MUTATE_PROFILE_ROUTE === "1") {
+    source = source.replace("const href = getPostDetailHref(post);", "const href = `/community/players/${post.board_id}/posts/${post.id}`;");
+  }
+  return source;
+});
 copy("src/lib/constants/avatars.ts", "avatars.ts", (source) =>
   process.env.POST_HEADER_MUTATE_RAW_AVATAR === "1"
     ? source.replace(/\n  if \(avatarUrl\.startsWith\("\/"\) \|\| avatarUrl\.startsWith\("https:\/\/"\)\) \{\n    return avatarUrl;\n  \}/, "")
@@ -75,14 +79,18 @@ const LABEL=getPostSourceLabel(SOURCE);
 const BASE={id:991,boardType:"free",boardId:"free",authorId:"author",title:"실제 PostCard",content:"작성자 응원팀과 글 소속이 다른 fixture",imageUrls:[],videoUrls:[],likeCount:3,commentCount:2,isReported:false,createdAt:new Date().toISOString(),author:{nickname:N,avatarUrl:"/test-avatar.svg",myTeamId:2,grade:"staff",level:1,title:""}};
 function Menu(){return <button className="p-1" aria-label="더보기">•••</button>}
 function CommentFixture({kind,isReply=false,avatarUrl}){return <section data-kind={kind} className="px-5 py-3"><CommentRow kind={kind==="detail-comment"?"detail":"sheet"} isReply={isReply} header={<Header nickname={N} teamId={2} avatarUrl={avatarUrl} profileHref="/profile/author" isStaff menu={<Menu/>} meta={<span className="shrink-0 text-xs text-text-tertiary">12시간 전 · 수정됨</span>}/>}><p className="mt-1 text-sm text-text-primary">실제 댓글 본문 정렬</p></CommentRow></section>}
-function App(){const[presses,setPresses]=useState(0);return <ThemeProvider><main className="w-full bg-bg-primary">
+function App(){const[presses,setPresses]=useState(0);const[routes,setRoutes]=useState([]);return <ThemeProvider><main className="w-full bg-bg-primary">
   <section data-kind="feed" className="mx-5 py-2"><PostCard post={BASE} sourceLabel={LABEL} onPress={()=>setPresses((n)=>n+1)}/><output data-parent-press>{presses}</output></section>
   <section data-kind="poll" className="mx-5 py-2"><PostCard post={{...BASE,id:992,boardType:"poll",title:"투표 질문"}} sourceLabel={LABEL}/></section>
   <section data-kind="dedicated" className="mx-5 py-2"><PostCard post={{...BASE,id:993}}/></section>
   <section data-kind="detail" className="px-5 py-4"><PostDetailAuthorHeader nickname={N} teamId={2} avatarUrl="preset:baseball" authorId="author" viewerId="viewer" isStaff timeLabel="12시간 전" isEdited clickCount={1234} impressionCount={5} menu={<Menu/>}/></section>
   <CommentFixture kind="detail-comment" avatarUrl="/broken-avatar.svg"/>
   <CommentFixture kind="sheet-comment" isReply avatarUrl={null}/>
-  <section data-kind="profile" className="mx-5 py-3"><ProfileRow post={{id:9,title:"프로필 글",board_type:"free",board_id:"free",like_count:1,comment_count:2,created_at:new Date().toISOString(),team_tags:SOURCE.team_tags,player_tags:SOURCE.player_tags}} timeLabel="오늘" onClick={()=>{}}/></section>
+  <section data-kind="profile" className="mx-5 py-3"><ProfileRow post={{id:9,title:"프로필 글",board_type:"free",board_id:"free",like_count:1,comment_count:2,created_at:new Date().toISOString(),team_tags:SOURCE.team_tags,player_tags:SOURCE.player_tags}} timeLabel="오늘" onNavigate={(href)=>setRoutes((rows)=>[...rows,"free:"+href])}/></section>
+  <section data-kind="profile-team" className="mx-5 py-3"><ProfileRow post={{id:10,title:"팀 글",board_type:"team",board_id:"lg",like_count:0,comment_count:0,created_at:new Date().toISOString()}} timeLabel="오늘" onNavigate={(href)=>setRoutes((rows)=>[...rows,"team:"+href])}/></section>
+  <section data-kind="profile-player" className="mx-5 py-3"><ProfileRow post={{id:11,title:"선수 글",board_type:"player",board_id:"62415",like_count:0,comment_count:0,created_at:new Date().toISOString()}} timeLabel="오늘" onNavigate={(href)=>setRoutes((rows)=>[...rows,"player:"+href])}/></section>
+  <section data-kind="profile-poll" className="mx-5 py-3"><ProfileRow post={{id:12,title:"투표 글",board_type:"poll",board_id:"free",like_count:0,comment_count:0,created_at:new Date().toISOString()}} timeLabel="오늘" onNavigate={(href)=>setRoutes((rows)=>[...rows,"poll:"+href])}/></section>
+  <output data-profile-routes>{routes.join("|")}</output>
 </main></ThemeProvider>}
 createRoot(document.getElementById("root")).render(<App/>);`);
 
@@ -191,6 +199,16 @@ try {
     }));
     check("profile 가로 overflow 없음", !profile.overflow);
     check("profile 태그 기반 글 소속 3명", /LG.*박해민\/오스틴 외 1명/.test(profile.source), profile.source);
+
+    for (const kind of ["profile", "profile-team", "profile-player", "profile-poll"]) {
+      await page.locator(`[data-kind="${kind}"] [data-community-profile-post-row]`).click();
+    }
+    const routes = (await page.locator("[data-profile-routes]").textContent()) ?? "";
+    check(
+      "profile 글 탭 board_type별 실제 상세 route",
+      routes === "free:/community/free/9|team:/community/teams/lg/posts/10|player:/community/players/62415/posts/11|poll:/community/free/12",
+      routes,
+    );
     await page.close();
   }
 } finally {

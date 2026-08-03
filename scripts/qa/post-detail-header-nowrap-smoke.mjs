@@ -47,6 +47,8 @@ check("상세 댓글 실제 공용 row 소비", /<CommunityCommentRow[\s\S]*kind
 check("댓글 본문 50px 공용 정렬", /data-community-comment-body className="ml-\[50px\] min-w-0"/.test(commentRow));
 check("프로필 쿼리에 team/player tags", /created_at, team_tags, player_tags/.test(profile));
 check("프로필 actual row가 태그 resolver 소비", /<CommunityProfilePostRow/.test(profile) && /getPostSourceLabel\(post\)/.test(profileRow));
+check("프로필 글 탭은 board_type별 상세 route", /getPostDetailHref\(post\)/.test(profileRow) && /onNavigate=\{\(href\) => router\.push\(href\)\}/.test(profile) && !/community\/players\/\$\{post\.board_id\}\/posts/.test(profile));
+check("상세 route resolver가 free·team·player 분기", /board_type === "player"[\s\S]*community\/players[\s\S]*board_type === "team"[\s\S]*community\/teams[\s\S]*community\/free/.test(sourceResolver));
 check("글소속 resolver는 player_tags 3명·team_tags·legacy 폴백", /post\.player_tags \?\? \[\]/.test(sourceResolver) && /외 \$\{names\.length - 2\}명/.test(sourceResolver) && /post\.team_tags \?\? \[\]/.test(sourceResolver) && /getCommunitySourceLabel\(post\.board_type, post\.board_id\)/.test(sourceResolver));
 check("collector snapshot은 실제 봇 프로필 team", /\.from\("profiles"\)[\s\S]*\.eq\("id", botUserId\)[\s\S]*authorTeamIdSnapshot = botProfile\?\.team_id \?\? null/.test(collector) && !/matchedPlayer[\s\S]*authorTeamIdSnapshot/.test(collector));
 check("게시글 프로필 조회 avatar_url", /profiles\(nickname, team_id, grade, points, avatar_url\)/.test(read("src/lib/supabase/usePosts.ts")));
@@ -54,6 +56,7 @@ check("통합 피드 avatar select+map", /profiles\(nickname, team_id, grade, po
 check("자유게시판 avatar map", /avatarUrl: p\.avatar_url \?\? null/.test(free));
 check("선수 일반·사진 avatar select+map", (player.match(/profiles\(nickname, team_id, grade, avatar_url\)/g) ?? []).length === 2 && /avatarUrl: prof\?\.avatar_url \?\? null/.test(player) && /avatar_url: prof\?\.avatar_url \?\? undefined/.test(player));
 check("browser mutation self-guard가 package script에 결속", /post-detail-header-nowrap-browser-gate\.sh/.test(read("package.json")));
+check("browserless 환경은 mutation 루프 생략", /chromium 없음 — mutation self-guard 생략/.test(read("scripts/qa/post-detail-header-nowrap-browser-gate.sh")));
 
 console.log(failures === 0 ? `\nPASS — ${total}/${total}` : `\nFAIL ${failures}/${total}`);
 process.exit(failures === 0 ? 0 : 1);

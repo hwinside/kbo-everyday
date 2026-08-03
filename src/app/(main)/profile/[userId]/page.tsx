@@ -292,7 +292,7 @@ export default function ProfilePage() {
                 key={post.id}
                 post={post}
                 timeLabel={timeAgo(post.created_at)}
-                onClick={() => router.push(`/community/players/${post.board_id}/posts/${post.id}`)}
+                onNavigate={(href) => router.push(href)}
               />
             ))
           )}

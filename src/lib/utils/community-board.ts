@@ -35,6 +35,13 @@ export function getCommunitySourceLabel(boardType: string, boardId: string): Com
   return team ? { text: team.shortName, teamId: team.id } : { text: "게시판" };
 }
 
+/** 게시글 상세 경로 — board_type별로 실제로 존재하는 route만 반환한다. */
+export function getPostDetailHref(post: { id: number; board_type: string; board_id: string }): string {
+  if (post.board_type === "player") return `/community/players/${post.board_id}/posts/${post.id}`;
+  if (post.board_type === "team") return `/community/teams/${post.board_id}/posts/${post.id}`;
+  return `/community/free/${post.id}`;
+}
+
 interface SourcePostLike {
   board_type: string;
   board_id: string;
