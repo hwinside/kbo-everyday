@@ -1120,7 +1120,7 @@ function queryResult(data: unknown) {
 }
 
 async function routeShapeRegression() {
-  const adminModule = await import("../../src/lib/supabase/admin");
+  const adminModule = await import("@/lib/supabase/admin");
   const client = adminModule.supabaseAdmin as unknown as {
     auth: { getUser: (token: string) => Promise<unknown> };
     from: (table: string) => unknown;
@@ -1177,7 +1177,7 @@ async function routeShapeRegression() {
  * 끊으면 시범경기가 game_unavailable로 바뀌어 이 테스트가 RED여야 한다.
  */
 async function routeEligibleAttendanceRegression() {
-  const adminModule = await import("../../src/lib/supabase/admin");
+  const adminModule = await import("@/lib/supabase/admin");
   const client = adminModule.supabaseAdmin as unknown as {
     auth: { getUser: (token: string) => Promise<unknown> };
     from: (table: string) => unknown;
@@ -1337,7 +1337,7 @@ async function routeEligibleAttendanceRegression() {
  */
 async function routeGameErrorsWiringRegression() {
   const GAME_ID = "20250725LGHH0";
-  const adminModule = await import("../../src/lib/supabase/admin");
+  const adminModule = await import("@/lib/supabase/admin");
   const client = adminModule.supabaseAdmin as unknown as {
     auth: { getUser: (token: string) => Promise<unknown> };
     from: (table: string) => unknown;
