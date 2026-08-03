@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import { validateNickname } from "@/lib/validation/nickname";
 
 // 가벼운 닉네임 가용성 체크 (인증 불필요).
 // 가입 onboarding /setup 에서 입력 중 debounce 호출되는 경로.
@@ -16,16 +17,6 @@ import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
 
-function validateFormat(nickname: string): string | null {
-  if (nickname.length < 2 || nickname.length > 12) {
-    return "닉네임은 2~12자로 입력해주세요";
-  }
-  if (!/^[가-힣a-zA-Z0-9]+$/.test(nickname)) {
-    return "한글, 영문, 숫자만 사용 가능합니다";
-  }
-  return null;
-}
-
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const raw = url.searchParams.get("nickname") ?? "";
@@ -35,7 +26,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ available: false, reason: "닉네임을 입력해주세요" }, { status: 400 });
   }
 
-  const formatError = validateFormat(nickname);
+  const formatError = validateNickname(nickname);
   if (formatError) {
     return NextResponse.json({ available: false, reason: formatError }, { status: 200 });
   }

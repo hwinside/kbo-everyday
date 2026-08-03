@@ -95,6 +95,7 @@ export async function GET(req: NextRequest) {
         authorId,
         dedupKey,
         notice,
+        null,
       );
       if (!verified.ok) {
         updateErrors++;

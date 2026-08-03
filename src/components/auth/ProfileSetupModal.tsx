@@ -6,6 +6,7 @@ import { useAuth } from "@/lib/supabase/AuthContext";
 import { TEAMS as KBO_TEAMS } from "@/lib/constants/teams";
 import Image from "next/image";
 import { trackEvent, OnboardingEvents, flushNativeMetaForSignup } from "@/lib/analytics";
+import { NICKNAME_INPUT_PLACEHOLDER, NICKNAME_MAX_LENGTH, validateNickname } from "@/lib/validation/nickname";
 
 interface Props {
   isOpen: boolean;
@@ -27,12 +28,9 @@ export default function ProfileSetupModal({ isOpen }: Props) {
   async function handleNicknameNext() {
     if (loading) return;
     const trimmed = nickname.trim();
-    if (trimmed.length < 2 || trimmed.length > 12) {
-      setError("닉네임은 2~12자로 입력해주세요");
-      return;
-    }
-    if (!/^[가-힣a-zA-Z0-9]+$/.test(trimmed)) {
-      setError("한글, 영문, 숫자만 사용 가능합니다");
+    const validationError = validateNickname(trimmed);
+    if (validationError) {
+      setError(validationError);
       return;
     }
 
@@ -158,8 +156,8 @@ export default function ProfileSetupModal({ isOpen }: Props) {
                 type="text"
                 value={nickname}
                 onChange={(e) => { setNickname(e.target.value); setError(""); }}
-                placeholder="닉네임 (2~12자)"
-                maxLength={12}
+                placeholder={NICKNAME_INPUT_PLACEHOLDER}
+                maxLength={NICKNAME_MAX_LENGTH}
                 className="w-full bg-bg-tertiary border border-black/10 dark:border-white/10 rounded-xl px-4 py-3 text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent"
               />
               {error && <p className="text-red-400 text-xs mt-2">{error}</p>}
