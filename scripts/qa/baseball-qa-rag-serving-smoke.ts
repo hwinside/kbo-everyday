@@ -22,7 +22,6 @@ import { vector } from "@electric-sql/pglite/vector";
 import {
   answerQuestion,
   BLOCKED_ANSWER,
-  HISTORY_HOLD_ANSWER,
   resolveRagPlayerCandidate,
   type GlossaryEntry,
   type LlmResult,
@@ -255,7 +254,7 @@ async function run(): Promise<void> {
     console.log("PASS 미커버 선수(김도영) → blocked (엉뚱한 chunk 서빙 없음)");
   }
 
-  // ── 5. 수치 질문은 RAG를 타지 않는다 + 기존 history_hold 유지 ───────────
+  // ── 5. 수치 질문은 RAG를 타지 않고 현재 출시범위 exact fallback ──────────
   {
     assert.equal(isDescriptivePlayerQuestion("문보경 별명이 뭐야?"), true);
     assert.equal(isDescriptivePlayerQuestion("문보경 홈런 몇 개야?"), false);
@@ -268,9 +267,9 @@ async function run(): Promise<void> {
       callRagLlm: async () => { throw new Error("unreachable"); },
     });
     const numeric = await answerQuestion("u1", "문보경 타율 알려줘", deps);
-    assert.equal(numeric.source, "history_hold");
-    assert.equal(numeric.answer, HISTORY_HOLD_ANSWER);
-    console.log("PASS 수치 질문 → history_hold 유지 (tier2 수치 서빙 금지)");
+    assert.equal(numeric.source, "blocked");
+    assert.equal(numeric.answer, BLOCKED_ANSWER);
+    console.log("PASS 수치 질문 → exact fallback (tier2 수치 서빙 금지)");
   }
 
   // ── 6. 출력 가드: 숫자·URL·길이·계약 밖 status ─────────────────────────

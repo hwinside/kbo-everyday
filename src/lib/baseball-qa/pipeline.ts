@@ -216,8 +216,54 @@ const BASEBALL_WORDS = [
   "야구", "투수", "타자", "포수", "주자", "심판", "스트라이크", "아웃", "안타",
   "홈런", "이닝", "베이스", "타석", "투구", "수비", "보크", "파울", "번트",
   "도루", "병살", "태그", "세이프", "엔트리", "로스터", "피치클락", "abs", "시프트",
-  "규칙", "용어", "타율", "방어율", "평균자책", "기록", "스탯", "war",
+  "타율", "방어율", "평균자책", "기록", "스탯", "war",
 ];
+const RULE_TERM_HINT_WORDS = [
+  "잔루", "만루", "순위", "인필드플라이", "화이트볼", "너클볼", "포지션", "지명타자", "대타", "대주자",
+  "1루수", "2루수", "3루수", "유격수", "외야수", "내야수",
+];
+const RULE_TERM_INTENT =
+  /뭐|뭔|무엇|뜻|설명|알려|규칙|룰|용어|어떻게|가능|되나|돼|되죠|괜찮|차이|절차|경우|궁금/;
+const OUT_OF_SCOPE_INTENT =
+  /별명|감독|코치|누구|누가\s*더|더\s*잘|비교|역대|최고|최악|추천|오늘\s*경기|경기\s*결과|날씨|주식|코인|요리|프롬프트|비밀번호|영화|메뉴|가방|시\s*(?:써|하나)|아무거나/;
+const NAMED_STAT_QUERY =
+  /[가-힣]{2,12}(?:의|은|는|이|가)?\s+(?:타율|방어율|평균자책|출루율|장타율|홈런|안타|타점|도루|승수|세이브|홀드|삼진|기록|스탯)\s*(?:몇|얼마|알려|보여|기록)?/;
+
+/**
+ * 현재 출시 범위인 야구 룰/용어 질문의 결정론적 경계.
+ *
+ * 범위 밖 질문을 provider 판정에 맡기면 `BASEBALL_RULE_TERM` 오판 한 번으로 일반 LLM 답과
+ * global cache가 생긴다. 따라서 선수·구단·평가/인물 질의는 먼저 닫고, 검수 사전 용어 또는
+ * 야구 규칙 신호 + 질문 의도가 함께 확인된 경우만 RAG/LLM/cache 경계 안으로 보낸다.
+ */
+export function isSupportedRuleTermQuestion(
+  question: string,
+  glossary: GlossaryEntry[] = [],
+  players: PlayerRef[] = [],
+): boolean {
+  const normalized = question.normalize("NFKC").toLowerCase();
+  const compact = normalized.replace(/\s+/g, "");
+  const tokens = questionTokens(normalized);
+  if (
+    isTopicDismissal(question) ||
+    dismissesDetectedBaseballTerm(question, [...BASEBALL_WORDS, ...RULE_TERM_HINT_WORDS])
+  ) return false;
+  if (hasPlayerReference(tokens, players)) return false;
+  if (TEAM_WORDS.some((word) => tokenMatches(tokens, word))) return false;
+  if (OUT_OF_SCOPE_INTENT.test(normalized)) return false;
+  if (NAMED_STAT_QUERY.test(normalized)) return false;
+  if (matchGlossary(glossary, question)) return true;
+  const mentionsGlossaryTerm = glossary.some((entry) =>
+    [entry.term, ...entry.aliases].some((name) => {
+      const normalizedName = name.normalize("NFKC").toLowerCase().trim();
+      return normalizedName.length >= 2 && tokenMatches(tokens, normalizedName);
+    })
+  );
+  if (mentionsGlossaryTerm) return true;
+  if (RULE_TERM_HINT_WORDS.some((word) => compact.includes(word))) return true;
+  const hasRuleSubject = BASEBALL_WORDS.some((word) => tokenMatches(tokens, word));
+  return hasRuleSubject && RULE_TERM_INTENT.test(normalized);
+}
 /**
  * 인젝션 지시부의 "명령형·연결형"만 잡는 꼬리 (삼순 4차 P0).
  * `(무시|잊)`처럼 어간만 보면 사용자의 회상형("규칙 잊었어 다시 알려줘")까지 인젝션으로
@@ -452,46 +498,23 @@ export function routeQuestion(
   if (SERVICE_WORDS.some((word) => normalized.includes(word))) return "service_redirect";
   const hasStat = STAT_WORDS.some((word) => tokenMatches(tokens, word));
   const hasTeam = TEAM_WORDS.some((word) => tokenMatches(tokens, word));
-  if (hasStat && (hasPlayerReference(tokens, players) || hasTeam)) return "history_hold";
+  if (hasStat && (hasPlayerReference(tokens, players) || hasTeam)) return "blocked";
   if (
     HISTORY_CONTEXT_WORDS.some((word) => normalized.includes(word)) ||
     // "순위"는 team-bound일 때만 실시간 기록 질의다. 전역 차단어로 두면
     // "순위 결정 규칙 알려줘"처럼 팀 없는 룰 질문까지 history_hold로 과차단된다.
     (hasTeam && /누구|언제|몇|기록|성적|역사|순위/.test(normalized))
   ) {
-    return "history_hold";
+    return "blocked";
   }
   // 후속 문법(폐쇄집합 full-string 일치) + 새 야구 엔티티/주제 신호 부재일 때만 직전 토픽 연장.
   // 소스 turn이 없으면 차단이 아니라 되묻기로 종료한다 (spec §4.1 B4, §4.3 AC2·AC3·AC4).
   if (isFollowupPhrase(question)) return hasContext ? "baseball_rule_term" : "context_missing";
-  if (matchGlossary(glossary, question)) return "baseball_rule_term";
-  const mentionsGlossaryTerm = glossary.some((entry) =>
-    [entry.term, ...entry.aliases].some((name) => {
-      const normalizedName = name.normalize("NFKC").toLowerCase().trim();
-      return normalizedName.length >= 2 && tokenMatches(tokens, normalizedName);
-    })
-  );
-  if (mentionsGlossaryTerm) return "baseball_rule_term";
-  if (BASEBALL_WORDS.some((word) => tokenMatches(tokens, word))) return "baseball_rule_term";
-  // 위 결정론적 선차단·선라우팅에 걸리지 않은 나머지는 LLM 판정에 맡긴다.
-  // 여기서 BASEBALL_WORDS 미매칭을 blocked로 fail-closed 하면 "잔루만루가 뭔데"처럼
-  // 붙여쓰기/사전 미수록인 정상 룰 질문이 LLM에 도달조차 못 하고 과차단된다.
-  // 비야구 방어는 LLM의 NOT_BASEBALL 판정 + validateLlmResponse 출력 가드가 맡는다.
-  return "baseball_rule_term";
+  return isSupportedRuleTermQuestion(question, glossary, players)
+    ? "baseball_rule_term"
+    : "blocked";
 }
 
-/**
- * 이 질문이 **결정론적으로** 야구 질문임을 확인했는가.
- *
- * `routeQuestion`은 미매칭 질문을 과차단하지 않기 위해 마지막에 `baseball_rule_term`으로
- * **폴백**한다. 즉 비야구 질문도 이 라벨을 달고 내려오며, 비야구 판정은 LLM의
- * NOT_BASEBALL이 맡는 구조다.
- *
- * 공식 RAG를 그 폴백 질문에도 태우면 **비야구 질문이 blocked 대신 unsure로 바뀌고**,
- * 적대적 provider에서는 무관한 KBO 조문이 근거로 붙은 답이 나간다(삼순 R1 재현).
- * 그래서 공식 RAG는 **양성 야구 신호가 실제로 있을 때만** 탄다 — 폴백 질문은 종전대로
- * LLM 분류로 내려보낸다.
- */
 /**
  * "야구 얘기는 그만" 류 **주제 이탈 선언**.
  *
@@ -523,29 +546,6 @@ function dismissesDetectedBaseballTerm(question: string, terms: readonly string[
       `(?:말고|됐고|됐으니|그만|빼고|제외하고|아니고|아니라)`,
     ).test(normalized);
   });
-}
-
-export function hasExplicitBaseballSignal(
-  question: string,
-  glossary: GlossaryEntry[] = [],
-): boolean {
-  const normalized = question.normalize("NFKC").toLowerCase();
-  const tokens = questionTokens(normalized);
-  // 주제 이탈 선언은 야구 토큰이 있어도 야구 질문이 아니다 — LLM 분류(NOT_BASEBALL)로 보낸다.
-  const detectedTerms = [
-    ...BASEBALL_WORDS,
-    ...glossary.flatMap((entry) => [entry.term, ...entry.aliases]),
-  ];
-  if (isTopicDismissal(question) || dismissesDetectedBaseballTerm(question, detectedTerms)) return false;
-  if (matchGlossary(glossary, question)) return true;
-  const mentionsGlossaryTerm = glossary.some((entry) =>
-    [entry.term, ...entry.aliases].some((name) => {
-      const normalizedName = name.normalize("NFKC").toLowerCase().trim();
-      return normalizedName.length >= 2 && tokenMatches(tokens, normalizedName);
-    })
-  );
-  if (mentionsGlossaryTerm) return true;
-  return BASEBALL_WORDS.some((word) => tokenMatches(tokens, word));
 }
 
 export interface ValidatedLlmAnswer {
@@ -810,7 +810,14 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       context = null;
     }
   }
-  const route = routeQuestion(question, glossary, players, context !== null);
+  // 선수 RAG는 후속 출시용 explicit flag가 켜진 테스트/환경에서만 현재 룰·용어 경계를 우회한다.
+  // Production은 server.ts에서 false로 고정되어 선수·구단 질문이 provider/cache에 닿지 않는다.
+  const enabledPlayerCandidate = deps.enablePlayerRag
+    ? resolveRagPlayerCandidate(question, players)
+    : null;
+  const route = enabledPlayerCandidate
+    ? "baseball_rule_term"
+    : routeQuestion(question, glossary, players, context !== null);
   if (route !== "baseball_rule_term") {
     const answer =
       route === "service_redirect" ? SERVICE_REDIRECT_ANSWER :
@@ -840,7 +847,11 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   // `baseball_rule_term`으로 폴백하므로, 비야구 질문도 이 라벨로 내려온다. 그걸 공식 RAG에
   // 통과시키면 비야구가 blocked 대신 unsure로 바뀌고 적대적 provider에서는 무관한 KBO 조문이
   // 근거로 붙은 답이 나간다(삼순 R1 재현). 폴백 질문은 종전대로 LLM NOT_BASEBALL 분류로 보낸다.
-  if (deps.searchOfficialRag && deps.callOfficialRagLlm && hasExplicitBaseballSignal(question, glossary)) {
+  if (
+    deps.searchOfficialRag &&
+    deps.callOfficialRagLlm &&
+    isSupportedRuleTermQuestion(question, glossary, players)
+  ) {
     const official = await answerOfficialDocumentQuestion(userId, question, questionNorm, remaining, deps);
     if (official) return official;
   }
@@ -851,7 +862,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   // 무시된다 — 실제로 `문보경 별명이 뭐야?` 에 preseed 캐시를 넣으면 source=cache 로
   // 재현됐다. 이 분기에 들어오면 **여기서 종결**한다: 근거가 있으면 rag 답변,
   // 근거 0건·근거부족·오염근거는 generic LLM 0 / cache 0 으로 명시 fail-close 한다.
-  const playerCandidate = resolveRagPlayerCandidate(question, players);
+  const playerCandidate = enabledPlayerCandidate;
   if (playerCandidate) {
     if (deps.enablePlayerRag && deps.searchRag && deps.callRagLlm) {
       return answerPlayerDescriptiveQuestion(userId, question, questionNorm, playerCandidate, remaining, deps);
