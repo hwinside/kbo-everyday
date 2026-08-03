@@ -34,7 +34,10 @@ const SOURCE_LABEL: Record<DiarySourceKind, DiarySourceLabel> = {
  */
 export function diaryGameSourceLabel(
   thumbnails: ReadonlyArray<{ venueVerified: boolean }>,
+  attendanceSource?: "story_geofence" | "diary_manual" | null,
 ): DiarySourceLabel {
+  if (attendanceSource === "story_geofence") return SOURCE_LABEL.gps;
+  if (attendanceSource === "diary_manual") return SOURCE_LABEL.manual;
   return thumbnails.some((t) => t.venueVerified) ? SOURCE_LABEL.gps : SOURCE_LABEL.manual;
 }
 
@@ -272,7 +275,12 @@ export interface DiaryMediaGroupInput {
 
 /** 홈(①) 승·무·패/점수 소스(직관 기록 API). */
 export interface DiaryAttendanceInput {
+  id?: number;
   gameId: string;
+  gameDate?: string | null;
+  stadiumName?: string | null;
+  source?: "story_geofence" | "diary_manual";
+  favoriteTeamId?: number | null;
   result: "W" | "L" | "D" | null;
   awayTeam: { id: number; name: string; score: number | null } | null;
   homeTeam: { id: number; name: string; score: number | null } | null;
@@ -288,6 +296,9 @@ export interface DiaryHomeGame {
   /** 썸네일로 보여준 것 외 나머지 개수(`+N`). */
   extraCount: number;
   total: number;
+  attendanceId: number | null;
+  attendanceSource: "story_geofence" | "diary_manual" | null;
+  favoriteTeamId: number | null;
   result: "W" | "L" | "D" | null;
   awayTeam: { id: number; name: string; score: number | null } | null;
   homeTeam: { id: number; name: string; score: number | null } | null;
@@ -295,7 +306,8 @@ export interface DiaryHomeGame {
 
 /**
  * 미디어 그룹(썸네일·라벨)과 직관 기록(점수·결과)을 gameId로 병합한다.
- * 미디어 그룹 순서(최신 경기 먼저)를 보존한다. 썸네일은 홈 상한(6)까지만, 나머지는 extraCount.
+ * 미디어와 직관 원장의 합집합을 최신 경기 순서로 반환한다. 기록만 추가한 경기(total=0)도
+ * CRUD가 가능하도록 반드시 홈에 노출한다.
  */
 export function buildDiaryHomeGames(input: {
   mediaGroups: ReadonlyArray<DiaryMediaGroupInput>;
@@ -306,18 +318,36 @@ export function buildDiaryHomeGames(input: {
   const byGame = new Map<string, DiaryAttendanceInput>();
   for (const game of input.attendanceGames) byGame.set(game.gameId, game);
 
-  return input.mediaGroups.map((group) => {
-    const attendance = byGame.get(group.gameId) ?? null;
-    const thumbnails = group.thumbnails.slice(0, cap);
-    const extraCount = Math.max(0, group.counts.total - thumbnails.length);
+  const mediaByGame = new Map(input.mediaGroups.map((group) => [group.gameId, group]));
+  const gameIds = [
+    ...new Set([
+      ...input.mediaGroups.map((group) => group.gameId),
+      ...input.attendanceGames.map((game) => game.gameId),
+    ]),
+  ].sort((a, b) => {
+    const aDate = mediaByGame.get(a)?.gameDate ?? byGame.get(a)?.gameDate ?? "";
+    const bDate = mediaByGame.get(b)?.gameDate ?? byGame.get(b)?.gameDate ?? "";
+    return bDate.localeCompare(aDate);
+  });
+
+  return gameIds.map((gameId) => {
+    const group = mediaByGame.get(gameId) ?? null;
+    const attendance = byGame.get(gameId) ?? null;
+    const groupThumbs = group?.thumbnails ?? [];
+    const thumbnails = groupThumbs.slice(0, cap);
+    const total = group?.counts.total ?? 0;
+    const extraCount = Math.max(0, total - thumbnails.length);
     return {
-      gameId: group.gameId,
-      gameDate: group.gameDate,
-      stadiumName: group.stadiumName,
-      label: diaryGameSourceLabel(group.thumbnails),
+      gameId,
+      gameDate: group?.gameDate ?? attendance?.gameDate ?? null,
+      stadiumName: group?.stadiumName ?? attendance?.stadiumName ?? null,
+      label: diaryGameSourceLabel(groupThumbs, attendance?.source),
       thumbnails,
       extraCount,
-      total: group.counts.total,
+      total,
+      attendanceId: attendance?.id ?? null,
+      attendanceSource: attendance?.source ?? null,
+      favoriteTeamId: attendance?.favoriteTeamId ?? null,
       result: attendance?.result ?? null,
       awayTeam: attendance?.awayTeam ?? null,
       homeTeam: attendance?.homeTeam ?? null,

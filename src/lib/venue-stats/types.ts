@@ -11,7 +11,7 @@ export const METRIC_IDS = [
   "A1", "A2", "A3", "A4", "A5", "A6",
   "B1", "B2", "B3", "B4",
   "C1", "C2", "C4", "C5", "C6",
-  "D1", "D5", "D6",
+  "D1", "D5", "D6", "D7",
   "E1", "E2", "E3", "E4",
 ] as const;
 export type MetricId = (typeof METRIC_IDS)[number];
@@ -63,10 +63,28 @@ export interface TeamComparable extends WinLossDraw {
 }
 
 /** §10 A1 — 단일 snapshot 팀이면 delta, 복수 팀이면 mixed_team·items=perTeam (§11 mixed shape). */
+/**
+ * 직관 경기의 **경기 시작 전(pregame) 기대치 대비 초과성과**.
+ *
+ * 하린아빠 2026-08-02: "관전가치 기준이 아니라 무조건 팀퍼포먼스와의 상관도를 봐야지".
+ * 삼순 2026-08-02: 대상 경기·이후 경기가 섞인 시즌 누적값은 leakage — 반드시 경기일 이전 데이터로만.
+ * 한 경기라도 pregame 기대치를 못 만들면 null — 축 재정규화가 아니라 지수 전체 fail-close.
+ */
+export interface AttendanceExcess {
+  /** 경기당 평균 (실제 승점 − 기대 승률). -1~1. */
+  winExcess: number;
+  /** 경기당 평균 (실제 마진 − 기대 마진), 점. */
+  marginExcess: number;
+  /** 초과성과를 산출한 경기 수. */
+  games: number;
+}
+
 export interface A1Value {
   attendance: WinLossDraw;
   teamComparable: TeamComparable | null;
   deltaPp: number | null;
+  /** pregame 기대치 대비 초과성과. null=기대치 불가 → 요정 지수 fail-close. */
+  excess?: AttendanceExcess | null;
 }
 
 export interface A2Cell extends WinLossDraw { opponentTeamId: number }
@@ -90,6 +108,10 @@ export interface B2Value {
 }
 export interface B3Value {
   runsPerGame: number | null;
+  /** 응원팀의 정규시즌 경기당 평균 득점. 시즌 경기 우주가 완전할 때만 제공. */
+  seasonRunsPerGame: number | null;
+  /** runsPerGame - seasonRunsPerGame. 양수가 직관 부스트. */
+  delta: number | null;
   totalRuns: number;
 }
 export interface B4Side {
@@ -174,6 +196,28 @@ export interface D1Value {
   closeGames: number;
 }
 export interface D5Value { cancelledCount: number }
+
+/**
+ * D7 — 내가 본 경기의 수비 실책 (하린아빠 2026-08-02 `발암경기 인내형` 태그).
+ *
+ * `errors` 는 canonical hash 바깥 enrichment 라 경기별로 미상(NULL)일 수 있다.
+ * 그래서 **실책을 아는 경기만 분모**로 쓰고, 그 수를 `knownGames` 로 함께 노출한다.
+ * 모르는 경기를 0으로 세면 "실책을 안 본 사람"으로 둔갑한다.
+ */
+export interface D7Value {
+  /** 내 응원팀 실책 총계(아는 경기 한정). */
+  myTeamErrors: number;
+  /** 내 팀이 `ERROR_PRONE_MIN` 개 이상 실책한 경기 수 = `발암경기`. */
+  errorProneGames: number;
+  /** 상대팀 실책 총계(아는 경기 한정). */
+  opponentErrors: number;
+  /** 경기당 내 팀 실책. */
+  myErrorsPerGame: number | null;
+  /** 실책을 아는 경기 수(=분모). */
+  knownGames: number;
+  /** 내 팀 실책이 가장 많았던 경기. */
+  worstGame: { gameId: string; date: string; errors: number } | null;
+}
 export interface D6TopGame { gameId: string; date: string; runs: number }
 export interface D6MarginWin { gameId: string; date: string; margin: number }
 export interface D6Value {

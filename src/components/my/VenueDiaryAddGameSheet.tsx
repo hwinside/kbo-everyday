@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, ChevronLeft, Search, Loader2, Lock, RefreshCw } from "lucide-react";
+import { X, ChevronLeft, Search, Loader2, Lock, RefreshCw, ImagePlus } from "lucide-react";
 import { TEAMS, getTeamById } from "@/lib/constants/teams";
 import {
   diaryAddSelectDisabled,
@@ -11,6 +11,7 @@ import {
   diaryPickState,
 } from "@/lib/venue-diary/view";
 import type { DiaryUploadGame } from "@/components/my/VenueDiaryUploader";
+import { gameResultTone, resultToneTextStyle } from "@/lib/ui/result-tone";
 
 const DIARY_SEASON = 2026;
 
@@ -34,10 +35,16 @@ interface Props {
   countsReady: boolean;
   /** counts fetch 실패 여부(0 폴백 금지 → 재시도 노출). */
   countsError: boolean;
+  activeAttendanceGameIds: Set<string>;
+  /** true 면 '경기 변경' 모드 — 기존 기록을 고른 경기로 옮긴다(새 기록 생성 아님). */
+  moveMode?: boolean;
+  /** 변경 모드에서 지금 옮기는 기록의 원래 경기(자기 자신은 대상에서 제외). */
+  moveFromGameId?: string | null;
   onRetryCounts: () => void;
   onBack: () => void;
   onClose: () => void;
   onPick: (game: DiaryUploadGame) => void;
+  onRecord: (game: DiaryUploadGame, favoriteTeamId: number) => void;
 }
 
 /** 2026 시즌 월(3~11월). */
@@ -66,10 +73,14 @@ export default function VenueDiaryAddGameSheet({
   countsByGame,
   countsReady,
   countsError,
+  activeAttendanceGameIds,
+  moveMode = false,
+  moveFromGameId = null,
   onRetryCounts,
   onBack,
   onClose,
   onPick,
+  onRecord,
 }: Props) {
   const initialMonth = Math.min(Math.max(currentKstMonth(), 3), 11);
   const [teamId, setTeamId] = useState<number | null>(favoriteTeamId);
@@ -185,7 +196,9 @@ export default function VenueDiaryAddGameSheet({
             <button onClick={onBack} aria-label="뒤로" className="text-text-tertiary">
               <ChevronLeft size={22} />
             </button>
-            <span className="text-base font-semibold text-text-primary">지난 경기 추가</span>
+            <span className="text-base font-semibold text-text-primary">
+              {moveMode ? "경기 변경" : "지난 경기 추가"}
+            </span>
             <button onClick={onClose} aria-label="닫기" className="text-text-tertiary">
               <X size={22} />
             </button>
@@ -193,7 +206,15 @@ export default function VenueDiaryAddGameSheet({
 
           <div className="px-4 pt-3 shrink-0">
             <p className="text-xs text-text-tertiary">
-              직관했던 <b className="text-text-secondary">{DIARY_SEASON} 종료 경기</b>를 골라 사진·영상을 올려요
+              {moveMode ? (
+                <>
+                  이 기록을 옮길 <b className="text-text-secondary">{DIARY_SEASON} 종료 경기</b>를 골라주세요
+                </>
+              ) : (
+                <>
+                  직관했던 <b className="text-text-secondary">{DIARY_SEASON} 종료 경기</b>를 기록하거나 사진·영상을 올려요
+                </>
+              )}
             </p>
 
             {/* 검색 */}
@@ -285,20 +306,13 @@ export default function VenueDiaryAddGameSheet({
                 const pick = diaryPickState(count);
                 const selectDisabled = diaryAddSelectDisabled(countsReady, count);
                 const caption = diaryPickCaption(pick);
-                const resultColor =
-                  day.result === "W"
-                    ? "text-blue-500"
-                    : day.result === "L"
-                      ? "text-accent"
-                      : "text-text-tertiary";
+                const resultStyle = resultToneTextStyle(gameResultTone(day.result));
                 return (
-                  <button
+                  <div
                     key={day.gameId}
-                    onClick={() => !selectDisabled && handlePick(day)}
-                    disabled={selectDisabled}
                     className={`flex items-center justify-between rounded-2xl bg-bg-tertiary/60 border px-4 py-3 text-left ${
                       pick.kind === "add" ? "border-accent/40" : "border-border"
-                    } ${selectDisabled ? "opacity-80" : "active:bg-bg-tertiary"}`}
+                    }`}
                   >
                     <div className="flex flex-col gap-0.5 min-w-0">
                       <span className="text-[11px] font-bold text-text-tertiary">
@@ -309,36 +323,74 @@ export default function VenueDiaryAddGameSheet({
                           ? `${getTeamById(teamId ?? 0)?.shortName ?? ""} ${day.score.for} : ${day.score.against} ${day.opponent.shortName}`
                           : `vs ${day.opponent.shortName}`}
                       </span>
-                      <span className={`text-xs font-bold ${caption ? "text-text-tertiary" : resultColor}`}>
+                      <span
+                        className={`text-xs font-bold ${caption ? "text-text-tertiary" : ""}`}
+                        style={caption ? undefined : resultStyle}
+                      >
                         {caption ?? (day.result ? (day.result === "W" ? "승" : day.result === "L" ? "패" : "무") : "종료")}
                       </span>
                     </div>
-                    {!countsReady ? (
-                      <span className="shrink-0 rounded-lg border border-border px-3 py-2 text-xs font-bold text-text-tertiary">
-                        {countsError ? "확인 실패" : "확인 중…"}
-                      </span>
-                    ) : pick.kind === "pick" ? (
-                      <span className="shrink-0 rounded-lg bg-brand-primary px-3 py-2 text-xs font-bold text-white">
-                        선택
-                      </span>
-                    ) : pick.kind === "add" ? (
-                      <span className="shrink-0 flex flex-col items-center rounded-lg border border-brand-primary px-2.5 py-1.5 text-xs font-bold text-brand-primary leading-tight">
-                        {pick.count}/{pick.cap}
-                        <small className="text-[9.5px] text-text-tertiary font-bold">더 추가</small>
-                      </span>
-                    ) : (
-                      <span className="shrink-0 flex items-center gap-1 rounded-lg border border-border px-3 py-2 text-xs font-bold text-text-tertiary">
-                        <Lock size={11} /> {pick.cap}/{pick.cap}
-                      </span>
-                    )}
-                  </button>
+                    <div className="ml-2 flex shrink-0 flex-col gap-1.5">
+                      <button
+                        type="button"
+                        disabled={
+                          moveMode
+                            ? day.gameId === moveFromGameId ||
+                              activeAttendanceGameIds.has(day.gameId)
+                            : activeAttendanceGameIds.has(day.gameId)
+                        }
+                        onClick={() => teamId != null && onRecord({
+                          gameId: day.gameId,
+                          dateLabel: formatDateLabel(day.date, day.stadium),
+                          matchLabel:
+                            day.score.for != null && day.score.against != null
+                              ? `${getTeamById(teamId)?.shortName ?? ""} ${day.score.for} : ${day.score.against} ${day.opponent.shortName}`
+                              : `${getTeamById(teamId)?.shortName ?? ""} vs ${day.opponent.shortName}`,
+                          result: day.result,
+                          existingCount: count,
+                        }, teamId)}
+                        className="rounded-lg bg-brand-primary px-3 py-1.5 text-[11px] font-bold text-white disabled:bg-bg-secondary disabled:text-text-tertiary"
+                      >
+                        {moveMode
+                          ? day.gameId === moveFromGameId
+                            ? "현재 경기"
+                            : activeAttendanceGameIds.has(day.gameId)
+                              ? "기록됨"
+                              : "이 경기로 변경"
+                          : activeAttendanceGameIds.has(day.gameId)
+                            ? "기록됨"
+                            : "기록 추가"}
+                      </button>
+                      {!moveMode && (
+                        <button
+                          type="button"
+                          onClick={() => !selectDisabled && handlePick(day)}
+                          disabled={selectDisabled}
+                          className="inline-flex items-center justify-center gap-1 rounded-lg border border-border px-2.5 py-1.5 text-[10.5px] font-bold text-text-secondary disabled:text-text-tertiary"
+                        >
+                          {pick.kind === "locked" ? <Lock size={10} /> : <ImagePlus size={10} />}
+                          {!countsReady
+                            ? countsError ? "확인 실패" : "확인 중"
+                            : pick.kind === "locked"
+                              ? `${pick.cap}/${pick.cap}`
+                              : pick.kind === "add"
+                                ? `${pick.count}/${pick.cap} 추가`
+                                : "사진·영상"}
+                        </button>
+                      )}
+                    </div>
+                  </div>
                 );
                 })}
               </>
             )}
 
             <div className="mt-1 rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-2.5 text-[11.5px] leading-relaxed text-amber-300">
-              ℹ️ 직접 추가한 기록은 <b>다이어리 경기수·사진첩</b>에만 들어가고, GPS 인증 직관수·승률·인증 배지에는 포함되지 않아요.
+              {moveMode ? (
+                <>ℹ️ 경기를 바꿔도 <b>사진·영상은 원래 경기에 그대로</b> 남아요. 통계 기록만 옮겨집니다.</>
+              ) : (
+                <>ℹ️ 직접 추가 기록은 <b>전체 포함 승률·직관 통계</b>에 바로 반영돼요. GPS 인증 수·인증 배지는 별도로 유지됩니다.</>
+              )}
             </div>
           </div>
         </motion.div>

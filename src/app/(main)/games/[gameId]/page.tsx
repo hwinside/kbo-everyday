@@ -40,7 +40,7 @@ import MatchupCard from "@/components/game/MatchupCard";
 import Diamond from "@/components/game/Diamond";
 import { ChevronUp, ChevronDown } from "lucide-react";
 import ScoreBoard from "@/components/game/ScoreBoard";
-import GameChat from "@/components/game/GameChat";
+import GameChatSlot from "@/components/game/GameChatSlot";
 import { useChatRoomHasMessages } from "@/lib/supabase/useChatRoomHasMessages";
 import KgwanTab from "@/components/game/KgwanTab";
 import LineupTab from "@/components/game/LineupTab";
@@ -79,7 +79,7 @@ function CancelledGameChat({
   if (loading && !hasGameProgress) return null;
   if (!shouldKeepCancelledGameChat({ hasGameProgress, hasExistingMessages: hasMessages })) return null;
 
-  return <GameChat gameId={gameId} homeTeamId={homeTeamId} awayTeamId={awayTeamId} />;
+  return <GameChatSlot gameId={gameId} homeTeamId={homeTeamId} awayTeamId={awayTeamId} />;
 }
 
 /* boxScore → GameStats 변환 */

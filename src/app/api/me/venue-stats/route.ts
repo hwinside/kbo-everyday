@@ -24,6 +24,7 @@ import type { LedgerRecord } from "@/lib/game-logs/completeness";
 import { TEAM_ID_TO_CODE, type PlayerGameLogRow } from "@/lib/game-logs/ingest";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { fetchAttendanceGamesWithinDeadline } from "@/lib/venue-attendance/fetch-games";
+import { fetchGameErrorsWithinDeadline } from "@/lib/venue-stats/game-errors";
 import bundledBatters from "@/lib/constants/stats-2026-batters.json";
 import bundledPitchers from "@/lib/constants/stats-2026-pitchers.json";
 import statsMeta from "@/lib/constants/stats-2026-meta.json";
@@ -172,6 +173,14 @@ function oldestStatsGeneratedAt(): string {
 interface SeasonAggregates {
   seasonGames: SeasonGameVerification[] | null;
   teamSeasonTotals: Map<number, TeamSeasonTotals> | null;
+  /**
+   * 공식 스코어 우주가 완전한가. false = final 중 일부 스코어/팀ID 결손.
+   *
+   * 삼순 P0 (2026-08-02): 이 결과는 seasonGames 가 non-null 이라도 **캐시하면 안 된다.**
+   * 캐시하면 원천 소스가 복구돼도 TTL(10~60분) 동안 공식 스코어 null 이 고착된다
+   * (재호출 actual 이 `추가 fetch 0 · 공식필드 0` 으로 관측됨).
+   */
+  officialScoresComplete: boolean;
 }
 
 /** 시즌 집계 의존성 주입 seam — 수집 fetcher·RPC 경계만 교체 가능(삼순 P0 fail-closed 회귀용). */
@@ -192,6 +201,23 @@ function toIsoGameDate(raw: string): string | null {
 }
 
 /**
+ * 경기 시작시각 → 낮경기 여부. 유효한 `HH:mm`(0~23시)만 판정하고 그 밖은 undefined.
+ *
+ * 삼순 P1 (2026-08-02): `Number("") === 0` 이라 예전 구현은 time 결손 경기를
+ * `isDayGame:true`(00시=낮) 로 오분류했다. 결손은 "모름"이지 낮경기가 아니다.
+ */
+export function parseDayGame(time: unknown): boolean | undefined {
+  if (typeof time !== "string") return undefined;
+  const match = /^(\d{1,2}):(\d{2})$/.exec(time.trim());
+  if (!match) return undefined;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (!Number.isInteger(hour) || hour < 0 || hour > 23) return undefined;
+  if (!Number.isInteger(minute) || minute < 0 || minute > 59) return undefined;
+  return hour < 18;
+}
+
+/**
  * S1b 시즌 집계 — §11 경기 우주: 정규시즌 final 전체 스케줄(권위 소스)을 먼저 구성해
  * RPC에 넘기고, RPC가 ledger를 LEFT JOIN해 ledger 없는 경기를 complete=false로 강등한다
  * (우주 누락 금지 — 삼순 리뷰 P0). 일자별 수집이 한 날짜라도 실패한 non-empty partial 우주,
@@ -202,8 +228,21 @@ async function computeSeasonAggregates(
   season: number,
   deps: SeasonAggregatesDeps = {},
 ): Promise<SeasonAggregates> {
-  const failClosed: SeasonAggregates = { seasonGames: null, teamSeasonTotals: null };
+  const failClosed: SeasonAggregates = { seasonGames: null, teamSeasonTotals: null, officialScoresComplete: false };
   let universe: Array<{ gameId: string; gameDate: string }>;
+  const officialGames = new Map<string, {
+    awayTeamId: number;
+    homeTeamId: number;
+    awayScore: number;
+    homeScore: number;
+  }>();
+  // 삼순 P0 (2026-08-02) — 공식 시즌 득점(B3) baseline은 all-or-nothing이다.
+  // final 우주 중 단 1경기라도 팀ID/스코어가 유효하지 않으면 그 경기만 조용히 빠져
+  // 남은 경기로 "시즌 평균 득점"이 계산되는 부분 우주 false-green이 된다
+  // (하류 aggregate는 팀ID 있는 경기만 먼저 filter하므로 결손을 볼 수 없다).
+  // → 하나라도 결손이면 공식 필드를 전부 버리고 B3 시즌 baseline을 null로 fail-close.
+  let officialScoreUniverseComplete = true;
+  const dayGameFlags = new Map<string, boolean>();
   try {
     const collection = await collectSeasonGameUniverse(season, REGULAR_SEASON_SR_ID, {
       fetcher: deps.fetcher,
@@ -219,10 +258,30 @@ async function computeSeasonAggregates(
       if (gameDate === null) return failClosed;
       seen.add(g.gameId);
       universe.push({ gameId: g.gameId, gameDate });
+      // 낮/야간 — 팀 시즌 일정의 낮 경기 "기회"를 세기 위해 보존(삼순: 기회 대비 참석 비율).
+      // ⚠️ `Number("")===0` 이라 time 결손을 그대로 파싱하면 00시=낮경기로 오분류된다(삼순 P1).
+      //    유효한 `HH:mm` 형식 + 0~23 시만 수용하고, 결손/형식 이탈은 undefined 로 남긴다.
+      const dayGame = parseDayGame(g.time);
+      if (dayGame !== undefined) dayGameFlags.set(g.gameId, dayGame);
+      if (
+        Number.isInteger(g.awayTeamId) && Number.isInteger(g.homeTeamId) &&
+        Number.isInteger(g.awayScore) && Number.isInteger(g.homeScore) &&
+        (g.awayScore ?? -1) >= 0 && (g.homeScore ?? -1) >= 0
+      ) {
+        officialGames.set(g.gameId, {
+          awayTeamId: g.awayTeamId,
+          homeTeamId: g.homeTeamId,
+          awayScore: g.awayScore!,
+          homeScore: g.homeScore!,
+        });
+      } else {
+        officialScoreUniverseComplete = false;
+      }
     }
   } catch {
     return failClosed;
   }
+  if (!officialScoreUniverseComplete) officialGames.clear();
   if (universe.length === 0) return failClosed;
 
   const rpc =
@@ -241,11 +300,14 @@ async function computeSeasonAggregates(
   }
   const seasonGames: SeasonGameVerification[] = payload.games.flatMap((g) => {
     if (typeof g.gameId !== "string" || typeof g.gameDate !== "string") return [];
+    const official = officialGames.get(g.gameId);
     return [{
       gameId: g.gameId,
       gameDate: g.gameDate,
       complete: g.complete === true,
       teamCodes: parseGameTeamCodes(g.gameId),
+      ...(dayGameFlags.has(g.gameId) ? { isDayGame: dayGameFlags.get(g.gameId) } : {}),
+      ...(official ?? {}),
     }];
   });
   // 삼순 P0 gate 2 — RPC 반환 games의 gameId+gameDate exact 집합이 입력 우주와
@@ -307,7 +369,7 @@ async function computeSeasonAggregates(
   for (const teamId of expectedTeamIds) {
     if (!teamSeasonTotals.has(teamId)) return failClosed;
   }
-  return { seasonGames, teamSeasonTotals };
+  return { seasonGames, teamSeasonTotals, officialScoresComplete: officialScoreUniverseComplete };
 }
 
 // ── 삼순 P0-3 — complete-only 시즌 캐시 + single-flight ─────────────────────────
@@ -331,7 +393,9 @@ function seasonAggregatesTtlMs(): number {
 }
 
 function isCompleteAggregates(a: SeasonAggregates): boolean {
-  return a.seasonGames !== null && a.teamSeasonTotals !== null;
+  // 삼순 P0 — 공식 스코어 결손 결과도 "불완전"으로 보아 캐시하지 않는다.
+  // 그래야 소스 정상화 직후 재호출이 실제로 재수집해 공식 스코어를 복구한다.
+  return a.seasonGames !== null && a.teamSeasonTotals !== null && a.officialScoresComplete;
 }
 
 /**
@@ -401,6 +465,7 @@ export async function GET(req: NextRequest) {
       )
       .eq("user_id", verified.user.id)
       .in("source", ["story_geofence", "diary_manual"])
+      .is("deleted_at", null)
       .gte("game_date", `${requestedSeason}-01-01`)
       .lt("game_date", `${requestedSeason + 1}-01-01`)
       .order("game_date", { ascending: false })
@@ -442,7 +507,7 @@ export async function GET(req: NextRequest) {
       fetchLedgers(gameIds),
       seasonSupported
         ? fetchSeasonAggregates(requestedSeason)
-        : Promise.resolve<SeasonAggregates>({ seasonGames: null, teamSeasonTotals: null }),
+        : Promise.resolve<SeasonAggregates>({ seasonGames: null, teamSeasonTotals: null, officialScoresComplete: false }),
       seasonSupported
         ? fetchStandings().catch(() => null as TeamStanding[] | null)
         : Promise.resolve<TeamStanding[] | null>(null),
@@ -453,6 +518,29 @@ export async function GET(req: NextRequest) {
         ? loadCachedTeamRecords(requestedSeason).catch(() => null)
         : Promise.resolve(null),
     ]);
+
+  // 실책(D7) — linescore 기반이라 원장과 무관. 실패 경기는 Map 에 안 들어간다(=미확인).
+  // ⚠️ canonical 경기 identity·팀·최종 스코어를 함께 넘겨 stale/다른 경기 응답을
+  //    exact 대조한다(삼순 P0).
+  //    경기 목록 조회 뒤에 실행해야 canonical 을 알 수 있으므로 위 Promise.all 밖이다.
+  const gameErrors = await fetchGameErrorsWithinDeadline(
+    gameIds.map((gameId) => {
+      const game = gamesById.get(gameId);
+      const canonical =
+        game?.status === "final" &&
+        typeof game.awayScore === "number" &&
+        typeof game.homeScore === "number"
+          ? {
+              gameId: game.gameId,
+              awayTeamId: game.awayTeamId,
+              homeTeamId: game.homeTeamId,
+              awayScore: game.awayScore,
+              homeScore: game.homeScore,
+            }
+          : null;
+      return { gameId, canonical };
+    }),
+  ).catch(() => new Map<string, { away: number; home: number }>());
 
   // 로그/ledger 조회 실패는 fail-closed — ledger 없음 취급(incomplete)으로 B/C가 partial로 강등된다.
   const attendanceLogs = logsResult.ok ? logsResult.rows : [];
@@ -481,6 +569,7 @@ export async function GET(req: NextRequest) {
     favorites,
     attendanceLogs,
     ledgers,
+    gameErrors,
     seasonGames: seasonAggregates.seasonGames,
     teamSeasonTotals: currentBaselines?.teamSeasonTotals ?? null,
     favoriteSeasonBaselines: currentBaselines?.favoriteSeasonBaselines ?? null,

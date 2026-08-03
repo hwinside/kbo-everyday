@@ -3,8 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
-import { X, MoreVertical, Loader2, Trash2, Images } from "lucide-react";
+import { X, MoreVertical, Loader2, Trash2 } from "lucide-react";
 import { getSafeSession } from "@/lib/supabase/client";
+import { isIosNativeRuntime, isNativeRuntime } from "@/lib/capacitor/platform";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import {
   applyDiaryDetailUrlRefresh,
@@ -13,6 +14,7 @@ import {
   makeDiaryDetailRefresh,
 } from "@/lib/venue-diary/view";
 import { startVenueStoryUrlRefresh } from "@/lib/venue-stories/refresh-policy";
+import { gameResultTone, resultToneChipStyle } from "@/lib/ui/result-tone";
 
 interface DiaryComment {
   id: number;
@@ -50,11 +52,10 @@ interface Props {
   onChanged: () => void;
 }
 
-const RESULT_STYLE: Record<"W" | "L" | "D", string> = {
-  W: "bg-blue-500/15 text-blue-500",
-  L: "bg-red-500/15 text-red-500",
-  D: "bg-gray-500/15 text-text-secondary",
-};
+/** 승패 색은 홈 팀카드 기준 SSOT(@/lib/ui/result-tone)를 따른다. */
+function resultStyle(result: "W" | "L" | "D") {
+  return resultToneChipStyle(gameResultTone(result));
+}
 
 function resultText(result: "W" | "L" | "D"): string {
   return result === "W" ? "승" : result === "L" ? "패" : "무";
@@ -223,6 +224,22 @@ export default function VenueDiaryViewer({ gameId, header, isOpen, onClose, onCh
   const showComments = current != null && diaryShowsComments(current.venueVerified);
   const sourceLabel = current ? diaryMediaSourceLabel(current.venueVerified) : null;
 
+  // iOS 네이티브 상태바(시계/배터리)는 z-index 로 덮을 수 없고, 원격 로드(server.url=keubo.fan)
+  // WKWebView 에서는 env(safe-area-inset-top) 이 0 으로 깨지는 기기가 있다. 그래서 상단 크롬을
+  // top-6(24px) 로 고정하면 버튼이 통째로 상태바 밴드 안에 들어가 터치가 상태바에 먹혀
+  // "X·… 둘 다 안 눌려 화면에 갇힘"이 된다(하린아빠 2026-08-02 iOS 리포트).
+  // VenueStoryViewer 가 #795/#843 에서 이미 같은 사고를 겪고 쓰는 보정을 그대로 따른다.
+  // Android·웹/PWA 는 env() 순수값 유지(#843 NO-GO — 전 플랫폼 44px 강제 회귀 방지).
+  const safeTop = isIosNativeRuntime()
+    ? "max(env(safe-area-inset-top, 0px), 44px)"
+    : "env(safe-area-inset-top, 0px)";
+  // 하단 시트는 Android 제스처/3버튼 내비바에 캡션이 가렸다(하린아빠 같은 날 A17 리포트).
+  // Capacitor WebView 는 env(safe-area-inset-bottom) 이 0 으로 오는 경우가 있어
+  // 네이티브 런타임에서만 최소 48px 을 보장한다. 웹은 기존 여백(24px) 그대로.
+  const safeBottom = isNativeRuntime()
+    ? "max(env(safe-area-inset-bottom, 0px), 48px)"
+    : "env(safe-area-inset-bottom, 0px)";
+
   return createPortal(
     <motion.div
       className="fixed inset-0 z-[120] bg-black flex flex-col select-none overflow-hidden"
@@ -230,9 +247,12 @@ export default function VenueDiaryViewer({ gameId, header, isOpen, onClose, onCh
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
     >
-      {/* 진행 도트 */}
+      {/* 진행 도트 — 상태바 아래로 밀어 iOS 상태바와 겹치지 않게 한다. */}
       {media && media.length > 0 && (
-        <div className="absolute top-3 left-0 right-0 z-20 flex gap-1 justify-center px-4">
+        <div
+          className="absolute left-0 right-0 z-20 flex gap-1 justify-center px-4"
+          style={{ top: `calc(${safeTop} + 12px)` }}
+        >
           {media.map((m, i) => (
             <span
               key={m.id}
@@ -242,22 +262,25 @@ export default function VenueDiaryViewer({ gameId, header, isOpen, onClose, onCh
         </div>
       )}
 
-      {/* 상단 닫기/더보기 */}
-      <div className="absolute top-6 left-3 right-3 z-30 flex items-center justify-between">
+      {/* 상단 닫기/더보기 — 상태바 밴드 아래에서 시작하고 44px 터치 타겟을 보장한다. */}
+      <div
+        className="absolute left-3 right-3 z-30 flex items-center justify-between"
+        style={{ top: `calc(${safeTop} + 24px)` }}
+      >
         <button
           onClick={onClose}
           aria-label="닫기"
-          className="w-8 h-8 rounded-full bg-black/45 text-white flex items-center justify-center"
+          className="w-11 h-11 rounded-full bg-black/45 text-white flex items-center justify-center touch-manipulation"
         >
-          <X size={16} />
+          <X size={18} />
         </button>
         {current && (
           <button
             onClick={() => setMenuOpen((v) => !v)}
             aria-label="더보기"
-            className="w-8 h-8 rounded-full bg-black/45 text-white flex items-center justify-center"
+            className="w-11 h-11 rounded-full bg-black/45 text-white flex items-center justify-center touch-manipulation"
           >
-            <MoreVertical size={16} />
+            <MoreVertical size={18} />
           </button>
         )}
       </div>
@@ -266,13 +289,10 @@ export default function VenueDiaryViewer({ gameId, header, isOpen, onClose, onCh
       {menuOpen && current && (
         <>
           <div className="absolute inset-0 z-30" onClick={() => setMenuOpen(false)} />
-          <div className="absolute top-16 right-3 z-40 w-48 rounded-xl border border-border bg-bg-secondary p-1.5 shadow-xl">
-            <button
-              onClick={() => setMenuOpen(false)}
-              className="flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-sm font-semibold text-text-secondary"
-            >
-              <Images size={15} /> 이 경기 사진첩 열기
-            </button>
+          <div
+            className="absolute right-3 z-40 w-48 rounded-xl border border-border bg-bg-secondary p-1.5 shadow-xl"
+            style={{ top: `calc(${safeTop} + 76px)` }}
+          >
             <button
               onClick={handleDelete}
               disabled={busy}
@@ -326,7 +346,10 @@ export default function VenueDiaryViewer({ gameId, header, isOpen, onClose, onCh
             <p className="text-white text-base font-bold drop-shadow flex items-center gap-1.5">
               {header.matchLabel}
               {header.result && (
-                <span className={`rounded px-1.5 py-0.5 text-[11px] font-bold ${RESULT_STYLE[header.result]}`}>
+                <span
+                  className="rounded px-1.5 py-0.5 text-[11px] font-bold"
+                  style={resultStyle(header.result)}
+                >
                   {resultText(header.result)}
                 </span>
               )}
@@ -350,9 +373,12 @@ export default function VenueDiaryViewer({ gameId, header, isOpen, onClose, onCh
         )}
       </div>
 
-      {/* 하단 시트: 캡션 + 댓글/안내 */}
+      {/* 하단 시트: 캡션 + 댓글/안내 — 내비게이션 바 아래로 안 깔리게 안전영역을 더한다. */}
       {current && (
-        <div className="shrink-0 bg-bg-primary border-t border-border px-4 pt-4 pb-6 max-h-[36dvh] overflow-y-auto">
+        <div
+          className="shrink-0 bg-bg-primary border-t border-border px-4 pt-4 max-h-[36dvh] overflow-y-auto"
+          style={{ paddingBottom: `calc(${safeBottom} + 24px)` }}
+        >
           {current.caption && (
             <p className="text-sm text-text-primary leading-relaxed">{current.caption}</p>
           )}

@@ -18,13 +18,18 @@ import {
 } from "@/lib/game-logs/completeness";
 import { METRIC_IDS } from "@/lib/venue-stats/types";
 
-/** collection이 status/date/gameId만 읽으므로 최소 필드만 채우고 KboGame으로 캐스트. */
+/** 시즌 득점 baseline까지 보존하는 final fixture. */
 function makeFinalGame(gameId: string): KboGame {
+  const ids: Record<string, number> = { LG: 1, OB: 2, KT: 3, SS: 8 };
   return {
     gameId,
     date: gameId.slice(0, 8),
     time: "18:30",
     status: "final",
+    awayTeamId: ids[gameId.slice(8, 10)],
+    homeTeamId: ids[gameId.slice(10, 12)],
+    awayScore: 5,
+    homeScore: 3,
   } as unknown as KboGame;
 }
 
@@ -190,9 +195,90 @@ async function seasonUniverseFailClosedRegression() {
   const green = await fetchSeasonAggregates(2026, { fetcher: fullFetcher, rpc: faithfulRpc });
   assert.notEqual(green.seasonGames, null);
   assert.equal(green.seasonGames!.length, 2);
+  assert.deepEqual(
+    green.seasonGames!.map(({ awayTeamId, homeTeamId, awayScore, homeScore }) => ({ awayTeamId, homeTeamId, awayScore, homeScore })),
+    [
+      { awayTeamId: 1, homeTeamId: 2, awayScore: 5, homeScore: 3 },
+      { awayTeamId: 3, homeTeamId: 8, awayScore: 5, homeScore: 3 },
+    ],
+    "공식 final 스코어가 B3 시즌 득점 baseline으로 보존돼야 함",
+  );
   assert.notEqual(green.teamSeasonTotals, null);
   assert.equal(green.teamSeasonTotals!.size, 4);
   console.log("  ✓ route gate GREEN: 완전 우주(날짜 실패 0) + exact-set 일치 + teams exact → seasonGames 2건");
+
+  // ─ B3 gate RED (삼순 2026-08-02 P0): final 우주 중 1경기만 스코어/팀ID가 결손되어도
+  //   공식 시즌 득점 baseline은 전부 fail-close 되어야 한다. 예전엔 그 경기만 officialGames에서
+  //   조용히 빠져 남은 1경기만 분모로 “시즌 평균 득점”이 계산되는 부분 우주 false-green이었다.
+  const missingScoreFetcher: SeasonGameFetcher = async (date) => {
+    if (!universeGames[date]) return VERIFIED_EMPTY;
+    if (date === DATE_B) {
+      const broken = { ...makeFinalGame(GAME_B), awayScore: null } as unknown as KboGame;
+      return gamesResult([broken]);
+    }
+    return gamesResult(universeGames[date]);
+  };
+  __resetSeasonAggregatesCaches();
+  const b3Red = await fetchSeasonAggregates(2026, { fetcher: missingScoreFetcher, rpc: faithfulRpc });
+  // 우주 자체는 유지된다(E1 일정·complete 판정은 스코어와 무관) — 공식 스코어만 전면 fail-close.
+  assert.notEqual(b3Red.seasonGames, null, "스코어 결손이 우주 자체를 지우면 안 된다");
+  assert.equal(b3Red.seasonGames!.length, 2);
+  for (const game of b3Red.seasonGames!) {
+    assert.equal(game.awayScore, undefined, `부분 스코어 우주에서 ${game.gameId} 공식 득점이 남아 있으면 부분 분모 계산이 된다`);
+    assert.equal(game.homeScore, undefined);
+    assert.equal(game.awayTeamId, undefined);
+    assert.equal(game.homeTeamId, undefined);
+  }
+  console.log("  ✓ route B3 gate RED: final 1경기 스코어 결손 → 공식 시즌 득점 baseline 전면 fail-close(부분 우주 금지)");
+
+  // ─ cache recovery RED (삼순 2026-08-02 P0): 스코어 결손 결과는 캐시하면 안 된다 ─
+  //   결손 결과가 complete cache 에 들어가면 원천 소스가 복구돼도 TTL(10~60분) 동안
+  //   `추가 fetch 0 · 공식 score 계속 null` 로 고착된다. 실제로 그렇게 관측됐다.
+  let fetchCalls = 0;
+  const countingMissingScore: SeasonGameFetcher = async (date) => {
+    fetchCalls += 1;
+    if (!universeGames[date]) return VERIFIED_EMPTY;
+    if (date === DATE_B) {
+      const broken = { ...makeFinalGame(GAME_B), awayScore: null } as unknown as KboGame;
+      return gamesResult([broken]);
+    }
+    return gamesResult(universeGames[date]);
+  };
+  __resetSeasonAggregatesCaches();
+  const degraded = await fetchSeasonAggregates(2026, { fetcher: countingMissingScore, rpc: faithfulRpc });
+  assert.equal(degraded.seasonGames!.every((g) => g.awayScore === undefined), true);
+  const fetchesAfterDegraded = fetchCalls;
+  assert.ok(fetchesAfterDegraded > 0, "1차 수집은 실제 fetch 를 발생시켜야 함");
+
+  // 소스 정상화 — 캐시가 없어야 재수집이 일어나고 공식 스코어가 복구된다.
+  let recoveredFetchCalls = 0;
+  const countingHealthy: SeasonGameFetcher = async (date) => {
+    recoveredFetchCalls += 1;
+    return universeGames[date] ? gamesResult(universeGames[date]) : VERIFIED_EMPTY;
+  };
+  const recovered = await fetchSeasonAggregates(2026, { fetcher: countingHealthy, rpc: faithfulRpc });
+  assert.ok(
+    recoveredFetchCalls > 0,
+    `결손 결과가 캐시되어 재수집이 0회였음(TTL 고착): ${recoveredFetchCalls}`,
+  );
+  assert.deepEqual(
+    recovered.seasonGames!.map((g) => g.awayScore),
+    [5, 5],
+    "소스 정상화 직후 재호출에서 공식 스코어가 복구돼야 함",
+  );
+  console.log("  ✓ route cache recovery RED: 스코어 결손 결과 no-store → 소스 정상화 재호출이 재수집·복구");
+
+  // 반대로 완전한 결과는 캐시되어 추가 수집이 0회여야 한다(캐시 자체는 살아 있음).
+  let afterCompleteFetches = 0;
+  await fetchSeasonAggregates(2026, {
+    fetcher: async (date) => {
+      afterCompleteFetches += 1;
+      return universeGames[date] ? gamesResult(universeGames[date]) : VERIFIED_EMPTY;
+    },
+    rpc: faithfulRpc,
+  });
+  assert.equal(afterCompleteFetches, 0, "완전 결과는 캐시되어 재수집 0회여야 함");
+  console.log("  ✓ route cache: 완전 결과는 정상 캐시(추가 fetch 0)");
 
   // ─ gate1 RED (일자 1건 reject — off-day transient): 다른 날짜는 성공해도 전체 fail-closed ─
   const rejectOffDay: SeasonGameFetcher = async (date) => {
@@ -253,6 +339,80 @@ async function seasonUniverseFailClosedRegression() {
   await seriesAwareVerifiedEmptyRegression();
   // ─ P0-3 complete-only 캐시 + single-flight (fetch 카운트 계측) ─
   await cacheAndSingleFlightRegression(routeMod, universeGames);
+  // ─ 삼순 P1 (2026-08-02): time 결손 → isDayGame 미존재 (route actual) ─
+  await dayGameParseRegression(routeMod, faithfulRpc, GAME_A, GAME_B, DATE_A, DATE_B);
+}
+
+/**
+ * 삼순 P1 (2026-08-02) — `time` 결손을 낮경기로 오분류하지 않는지 **route actual** 로 고정.
+ *
+ * 이전 라운드에서 `parseDayGame()` 만 고치고 회귀에 결속하지 않아, 예전 결함
+ * (`if (time === "") return true`)을 재주입해도 전 게이트가 PASS 했다(삼순 mutation 실증).
+ * 여기서는 파서를 직접 부르지 않고 **fetchSeasonAggregates 결과의 seasonGames** 를 본다.
+ */
+async function dayGameParseRegression(
+  routeMod: typeof import("../../src/app/api/me/venue-stats/route"),
+  faithfulRpc: (args: { p_games: Array<{ gameId: string; gameDate: string }> }) => Promise<unknown>,
+  gameA: string,
+  gameB: string,
+  dateA: string,
+  dateB: string,
+) {
+  const { fetchSeasonAggregates, __resetSeasonAggregatesCaches } = routeMod;
+
+  const withTime = (gameId: string, time: unknown): KboGame => ({
+    ...makeFinalGame(gameId),
+    time,
+  } as unknown as KboGame);
+
+  const fetcherOf = (aTime: unknown, bTime: unknown): SeasonGameFetcher =>
+    async (date) => {
+      if (date === dateA) return gamesResult([withTime(gameA, aTime)]);
+      if (date === dateB) return gamesResult([withTime(gameB, bTime)]);
+      return VERIFIED_EMPTY;
+    };
+
+  const runWith = async (aTime: unknown, bTime: unknown) => {
+    __resetSeasonAggregatesCaches();
+    const res = await fetchSeasonAggregates(2026, {
+      fetcher: fetcherOf(aTime, bTime),
+      rpc: faithfulRpc as never,
+    });
+    assert.notEqual(res.seasonGames, null, "우주 자체는 살아 있어야 함(시간만 결손)");
+    const byId = new Map(res.seasonGames!.map((g) => [g.gameId, g]));
+    return byId;
+  };
+
+  // ① 정상 시간 — 낮/야간이 실제로 분류된다(과잉 차단이 아님을 함께 증명).
+  {
+    const byId = await runWith("14:00", "18:30");
+    assert.equal(byId.get(gameA)!.isDayGame, true, "14:00 은 낮경기");
+    assert.equal(byId.get(gameB)!.isDayGame, false, "18:30 은 야간경기");
+  }
+
+  // ② 핵심 RED — 시간 결손/형식 이탈은 `isDayGame` 키 자체가 없어야 한다.
+  //    구 결함(`Number("")===0` → 00시=낮)으로 되돌리면 여기서 FAIL 한다.
+  for (const bad of ["", null, undefined, "  ", "24:00", "09:60", "abc", "1830", 0]) {
+    const byId = await runWith(bad, "18:30");
+    const game = byId.get(gameA)!;
+    assert.ok(
+      !("isDayGame" in game),
+      `time=${JSON.stringify(bad)} 는 낮경기 판정 불가여야 함(actual: ${JSON.stringify(game.isDayGame)})`,
+    );
+    // 같은 응답의 정상 경기는 영향을 받지 않는다(결손 1건이 우주를 오염시키지 않음).
+    assert.equal(byId.get(gameB)!.isDayGame, false);
+  }
+
+  // ③ 낮경기 "기회" 분모 — 시간 결손 경기는 seasonDayGames/seasonTotal 어느 쪽에도
+  //    들어가지 않아야 한다. `isDayGame` 키 부재가 곧 분모 제외 계약이다.
+  {
+    const byId = await runWith("", "13:00");
+    const known = [...byId.values()].filter((g) => "isDayGame" in g);
+    assert.equal(known.length, 1, "시간 아는 경기만 기회 분모에 들어간다");
+    assert.equal(known[0]!.isDayGame, true);
+  }
+
+  console.log("  ✓ route actual: time 결손/형식 이탈 → isDayGame 미존재(낮경기 기회 분모 제외), 정상 시간은 분류됨");
 }
 
 /**
@@ -1009,11 +1169,187 @@ async function routeShapeRegression() {
   }
 }
 
+/**
+ * 삼순 P1 (2026-08-02) — raw 응답 → route(`fetchGameErrorsWithinDeadline`) → aggregate D7
+ * → 사용자 payload 까지 **실제 배선**을 검증한다.
+ *
+ * ⚠️ 이 회귀가 없어서, route 의 `gameErrors` 전달을 빈 Map 으로 끊어도
+ * `venue-game-errors 45/45`·`aggregate 118/0`·`error-tags 24/24`·browser 가 전부 PASS 했다.
+ * 컴포넌트는 각각 검증됐지만 **실사용자에게 태그가 0개여도 전체가 green** 이었다.
+ * 여기서는 global fetch 를 실제 KBO 응답 shape 로 스텁하고 route `GET` 을 그대로 태운다.
+ */
+async function routeGameErrorsWiringRegression() {
+  const GAME_ID = "20250725LGHH0";
+  const adminModule = await import("../../src/lib/supabase/admin");
+  const client = adminModule.supabaseAdmin as unknown as {
+    auth: { getUser: (token: string) => Promise<unknown> };
+    from: (table: string) => unknown;
+  };
+  const originalGetUser = client.auth.getUser;
+  const originalFrom = client.from;
+  const originalFetch = globalThis.fetch;
+
+  /** KBO 경기목록 raw — LG(원정) 15 : 한화(홈) 11 final. */
+  const gameListPayload = {
+    game: [{
+      G_ID: GAME_ID, G_DT: "20250725", G_TM: "18:30", S_NM: "대전",
+      AWAY_ID: "LG", HOME_ID: "HH", AWAY_NM: "LG", HOME_NM: "한화",
+      T_SCORE_CN: "15", B_SCORE_CN: "11", GAME_INN_NO: 9, GAME_TB_SC: "B",
+      GAME_STATE_SC: "3", CANCEL_SC_ID: "0",
+      T_PIT_P_NM: "", B_PIT_P_NM: "", W_PIT_P_NM: "", L_PIT_P_NM: "", SV_PIT_P_NM: "",
+      STRIKE_CN: 0, BALL_CN: 0, OUT_CN: 0,
+      B1_BAT_ORDER_NO: 0, B2_BAT_ORDER_NO: 0, B3_BAT_ORDER_NO: 0,
+      B_P_NM: "", T_P_NM: "", T_RANK_NO: 1, B_RANK_NO: 2,
+    }],
+  };
+  /** KBO GetScoreBoard raw — tail 4칸 R/H/E/BB. 원정 LG 2실책 / 홈 한화 0. */
+  const scoreBoardPayload = (
+    awayE: string,
+    homeE: string,
+    identity: { gameId?: string; awayCode?: string; homeCode?: string } = {},
+  ) => {
+    const row = (r: string, e: string) => ({
+      row: [
+        { Text: "" }, { Text: "T" },
+        { Text: "0" }, { Text: "1" }, { Text: "0" },
+        { Text: r }, { Text: "14" }, { Text: e }, { Text: "3" },
+      ],
+    });
+    return [
+      [{
+        G_ID: identity.gameId ?? GAME_ID,
+        G_DT: "2025-07-25",
+        AWAY_ID: identity.awayCode ?? "LG",
+        HOME_ID: identity.homeCode ?? "HH",
+        END_TM: "21:30",
+        CANCEL_SC_NM: "",
+      }],
+      [JSON.stringify({ rows: [row("15", awayE), row("11", homeE)] })],
+    ];
+  };
+
+  const install = (opts: {
+    awayE: string;
+    homeE: string;
+    scoreGameId?: string;
+    awayCode?: string;
+    homeCode?: string;
+  }) => {
+    const calls: string[] = [];
+    client.auth.getUser = async (token) => ({
+      data: { user: token === "owner-token" ? { id: "owner-user" } : null },
+      error: token === "owner-token" ? null : { message: "invalid" },
+    });
+    client.from = (table) => {
+      if (table === "venue_attendance") {
+        return queryResult([{
+          id: 1, game_id: GAME_ID, game_date: "2025-07-25",
+          favorite_team_id_snapshot: 1, stadium_name: "대전",
+          recorded_at: "2025-07-25T12:00:00Z", source: "story_geofence",
+        }]);
+      }
+      if (table === "profiles") return queryResult({ favorite_players: [], team_id: 1 });
+      return queryResult([]);
+    };
+    globalThis.fetch = (async (url: unknown) => {
+      const u = String(url);
+      calls.push(u);
+      if (u.includes("GetKboGameList")) {
+        return new Response(JSON.stringify(gameListPayload), { status: 200 });
+      }
+      if (u.includes("GetScoreBoard")) {
+        return new Response(JSON.stringify(scoreBoardPayload(opts.awayE, opts.homeE, {
+          gameId: opts.scoreGameId,
+          awayCode: opts.awayCode,
+          homeCode: opts.homeCode,
+        })), { status: 200 });
+      }
+      // Naver fallback 포함 그 외 소스는 실패 처리 — 미확인 경로 검증용.
+      return new Response("{}", { status: 500 });
+    }) as typeof fetch;
+    return calls;
+  };
+
+  const runGet = async () => {
+    // ⚠️ complete-only cache 가 이전 케이스 결과를 재사용하면 RED 가 무력화된다.
+    //    (최초 작성 때 실제로 이 함정에 걸려 결손 케이스가 앞선 성공값을 그대로 반환했다.)
+    const { __resetGameErrorCaches } = await import("../../src/lib/venue-stats/game-errors");
+    __resetGameErrorCaches();
+    const { GET } = await import("../../src/app/api/me/venue-stats/route");
+    const res = await GET(new NextRequest(
+      "http://localhost/api/me/venue-stats?season=2025",
+      { headers: { Authorization: "Bearer owner-token" } },
+    ));
+    assert.equal(res.status, 200);
+    return res.json();
+  };
+
+  try {
+    // ── GREEN: raw 실책 → route → D7 사실값 ────────────────────────────────
+    const calls = install({ awayE: "2", homeE: "0" });
+    const body = await runGet();
+    const d7 = body.overall.metrics.D7;
+
+    assert.ok(
+      calls.some((u) => u.includes("GetScoreBoard")),
+      "route 가 실책 소스를 실제로 호출해야 함(배선 존재 증명)",
+    );
+    // ⚠️ 핵심 RED — route 의 gameErrors 전달을 빈 Map 으로 끊으면 여기서 FAIL.
+    assert.notEqual(d7.value, null, `route 배선이 끊기면 D7 value 가 null 이 된다: ${JSON.stringify(d7)}`);
+    assert.equal(d7.n, 1);
+    assert.equal(d7.state, "sample_limited", "1경기는 표본 미달이지만 사실값은 보존");
+    assert.equal(d7.value.knownGames, 1);
+    // LG 는 원정(away) — away 칸 2가 내 팀 실책으로 귀속돼야 한다.
+    assert.equal(d7.value.myTeamErrors, 2, `원정 귀속 실패: ${JSON.stringify(d7.value)}`);
+    assert.equal(d7.value.opponentErrors, 0);
+    assert.equal(d7.value.errorProneGames, 1, "2실책 = 발암경기 임계 도달");
+    assert.equal(d7.value.worstGame.gameId, GAME_ID);
+    console.log("  ✓ route actual: raw GetScoreBoard → D7 사실값(1경기·내 팀 2실책, 원정 귀속)");
+
+    // ── RED: 같은 최종 스코어라도 다른 경기·팀 원천이면 거부 ───────────────
+    install({
+      awayE: "9",
+      homeE: "8",
+      scoreGameId: "20250725KTHH0",
+      awayCode: "KT",
+    });
+    const wrongIdentityBody = await runGet();
+    const wrongIdentityD7 = wrongIdentityBody.overall.metrics.D7;
+    assert.equal(
+      wrongIdentityD7.value,
+      null,
+      `동일 스코어 다른 경기·팀 원천은 미확인이어야 함: ${JSON.stringify(wrongIdentityD7)}`,
+    );
+    assert.equal(wrongIdentityD7.n, 0);
+    console.log("  ✓ route actual: 동일 스코어 다른 경기·팀 원천 → D7 미확인");
+
+    // ── RED: 소스가 E 를 비우면 미확인 — 0 으로 승격되지 않는다 ─────────────
+    install({ awayE: "", homeE: "" });
+    const unknownBody = await runGet();
+    const unknownD7 = unknownBody.overall.metrics.D7;
+    assert.equal(
+      unknownD7.value, null,
+      `E 결손은 미확인이어야 함(0 승격 금지): ${JSON.stringify(unknownD7)}`,
+    );
+    assert.equal(unknownD7.n, 0);
+    assert.equal(
+      (unknownD7.coverage as { unknownErrorGames?: number }).unknownErrorGames, 1,
+      "미확인 경기 수를 coverage 로 노출",
+    );
+    console.log("  ✓ route actual: 소스 E 결손 → D7 미확인(0 으로 승격하지 않음)");
+  } finally {
+    client.auth.getUser = originalGetUser;
+    client.from = originalFrom;
+    globalThis.fetch = originalFetch;
+  }
+}
+
 async function main() {
   await rpcDbRegression();
   await seasonUniverseFailClosedRegression();
   await routeShapeRegression();
-  console.log("\n결과: S1b DB/RPC + 시즌 우주 fail-closed(gate1/2/3) + owner-auth route actual PASS");
+  await routeGameErrorsWiringRegression();
+  console.log("\n결과: S1b DB/RPC + 시즌 우주 fail-closed(gate1/2/3) + owner-auth route actual + D7 실책 route 배선 PASS");
 }
 
 void main().catch((error) => {

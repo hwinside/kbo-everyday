@@ -11,7 +11,7 @@ import {
   shouldHideStaleCache,
   type SummaryFingerprint,
 } from "@/lib/game-summary/cache-validation";
-import GameChat from "@/components/game/GameChat";
+import GameChatSlot from "@/components/game/GameChatSlot";
 import ContextualStatsBox from "@/components/game/ContextualStatsBox";
 import VenueStorySection from "@/components/game/VenueStorySection";
 import RelayPlayLine from "@/components/game/RelayPlayLine";
@@ -292,7 +292,7 @@ function ScheduledView({ gameId, awayTeamId, homeTeamId, gameDate, gameStartTime
 
       {/* Pre-game chat opens 2 hours before first pitch */}
       {isChatOpen ? (
-        <GameChat gameId={gameId} homeTeamId={homeTeamId} awayTeamId={awayTeamId} />
+        <GameChatSlot gameId={gameId} homeTeamId={homeTeamId} awayTeamId={awayTeamId} />
       ) : (
         <div className="glass-card p-4 text-center space-y-1.5">
           <p className="text-sm font-semibold text-text-primary">크관 채팅은 경기 시작 2시간 전부터 열려요</p>
@@ -487,7 +487,7 @@ function LiveView({
       <VenueStorySection gameId={gameId} />
 
       {/* Chat */}
-      <GameChat gameId={gameId} homeTeamId={homeTeamId} awayTeamId={awayTeamId} />
+      <GameChatSlot gameId={gameId} homeTeamId={homeTeamId} awayTeamId={awayTeamId} />
     </div>
   );
 }
@@ -976,7 +976,7 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore, refres
       <VenueStorySection gameId={gameId} />
 
       {/* Post-game chat */}
-      <GameChat gameId={gameId} homeTeamId={homeTeamId} awayTeamId={awayTeamId} />
+      <GameChatSlot gameId={gameId} homeTeamId={homeTeamId} awayTeamId={awayTeamId} />
     </div>
   );
 }

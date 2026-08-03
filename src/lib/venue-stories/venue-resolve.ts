@@ -15,6 +15,8 @@ export interface ResolvedVenue {
   status: "scheduled" | "live" | "final" | "cancelled" | null;
   gameDate: string | null; // YYYY-MM-DD
   stadiumName: string | null;
+  awayTeamId: number | null;
+  homeTeamId: number | null;
   coord: StadiumCoord | null;
   startMs: number | null;
   uploadOpen: boolean;
@@ -56,6 +58,8 @@ export async function resolveGameVenue(gameId: string): Promise<ResolvedVenue> {
     status: null,
     gameDate: null,
     stadiumName: null,
+    awayTeamId: null,
+    homeTeamId: null,
     coord: null,
     startMs: null,
     uploadOpen: false,
@@ -99,6 +103,8 @@ export async function resolveGameVenue(gameId: string): Promise<ResolvedVenue> {
     status: game.status,
     gameDate: `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}`,
     stadiumName: game.stadium ?? null,
+    awayTeamId: game.awayTeamId,
+    homeTeamId: game.homeTeamId,
     coord,
     startMs,
     uploadOpen,
