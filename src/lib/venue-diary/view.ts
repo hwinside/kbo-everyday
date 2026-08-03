@@ -753,17 +753,22 @@ export function diaryAddSelectDisabled(
   return diaryPickLocked(diaryPickState(count));
 }
 
-// counts 는 특정 (userId, open 세션)에 결속된다. 재오픈/유저 전환 첫 렌더에서 이전 세션의
-// countsReady=true·이전 Map 을 그대로 넘기면 fail-open(2026 10/10 을 0/10 로 오표시)이 된다.
+// counts 는 특정 (userId, open 세션, 시즌)에 결속된다. 재오픈/유저 전환/시즌 전환 첫 렌더에서
+// 이전 counts 를 countsReady=true 로 그대로 넘기면 fail-open(기존 10/10 을 0/10 로 오표시)이 된다.
+// 특히 시즌은 counts 집합 자체가 달라지므로 key 에 반드시 포함해야 한다.
 // effect 초기화는 렌더 뒤라 첫 렌더를 못 막으므로, 렌더 단계에서 owner key 불일치면 즉시
-// fail-closed 한다(Blocker: 재오픈/유저 전환 stale counts).
+// fail-closed 한다(Blocker: 재오픈/유저/시즌 전환 stale counts).
 
-/** counts 소유 key: 이 counts 가 어느 유저·어느 open 세션에 대한 것인지. */
-export function diaryCountsOwnerKey(userId: string, openSeq: number): string {
-  return `${userId}:${openSeq}`;
+/** counts 소유 key: 이 counts 가 어느 유저·open 세션·시즌에 대한 것인지. */
+export function diaryCountsOwnerKey(
+  userId: string,
+  openSeq: number,
+  season: number,
+): string {
+  return `${userId}:${openSeq}:${season}`;
 }
 
-/** owner 가 현재 열린 (userId, openSeq) key 와 정확히 일치할 때만 ready(렌더 단계 fail-closed). */
+/** owner 가 현재 열린 (userId, openSeq, season) key 와 정확히 일치할 때만 ready(렌더 단계 fail-closed). */
 export function diaryCountsReady(
   owner: string | null,
   currentKey: string | null,
