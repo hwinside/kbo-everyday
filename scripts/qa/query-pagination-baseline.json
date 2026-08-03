@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "generatedFrom": "3f4fd91eab7622315e5b13c910842ef03dd226bf",
+  "generatedFrom": "54d9c95f7421c5b8e9e76503c5bbe020290a8570",
   "violations": {
     "0034fe9a6a6cff327c64": {
       "count": 1,
@@ -603,13 +603,6 @@
       "file": "src/lib/notifications/live-activity.ts",
       "subject": "notification_prefs",
       "detail": "add a bound, unique-key lookup, or query-guard annotation"
-    },
-    "70cd45d376448223e6b3": {
-      "count": 1,
-      "kind": "ambiguous_growing_limit",
-      "file": "src/hooks/usePlayerCommunity.ts",
-      "subject": "posts",
-      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
     },
     "71a62964eec7f82389f5": {
       "count": 1,
@@ -1394,13 +1387,6 @@
       "file": "src/lib/supabase/useBlock.ts",
       "subject": "user_blocks",
       "detail": "add a bound, unique-key lookup, or query-guard annotation"
-    },
-    "fb08e1b568f4b4f66356": {
-      "count": 1,
-      "kind": "ambiguous_growing_limit",
-      "file": "src/hooks/usePlayerCommunity.ts",
-      "subject": "posts",
-      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
     },
     "fe5899d81932cd6902bd": {
       "count": 1,

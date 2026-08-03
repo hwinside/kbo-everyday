@@ -4,8 +4,6 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronLeft, Heart, MessageCircle, Share2, Send, Flag, Ban, MoreHorizontal, Check, CornerDownRight, X, ImagePlay, ImagePlus, Loader2 } from "lucide-react";
-import TeamBadge from "@/components/ui/TeamBadge";
-import { getAvatarPath } from "@/lib/constants/avatars";
 import { usePostDetail, createComment, toggleLike, toggleCommentLike, updatePost, deletePost, updateComment, deleteComment, uploadCommentImage } from "@/lib/supabase/usePosts";
 import { editPollPost } from "@/lib/community/poll-client";
 import { canEditOwnPost } from "@/lib/community/post-permissions";
@@ -676,71 +674,59 @@ export default function PostDetail({ postId }: PostDetailProps) {
               for (const root of roots) root.replies = childMap.get(root.id) || [];
 
               const renderCmt = (c: typeof comments[0], isReply = false) => {
-                const avatarPath = getAvatarPath(c.avatar_url ?? null);
-                const cmtTeam = c.team_id ? getTeamById(c.team_id) : undefined;
                 const isCmtMine = !!user && c.author_id === user.id;
                 const canDeleteCmt = isCmtMine || canModerateComments;
                 const isCmtEditing = cmtEditingId === c.id;
                 const isCmtEdited = !!c.updated_at;
                 const cmtLikeCount = c.like_count ?? 0;
                 return (
-                  <div key={c.id} className={`flex gap-2 ${isReply ? "pl-10" : ""}`}>
-                    {avatarPath ? (
-                      <div className="h-10 w-10 shrink-0 cursor-pointer overflow-hidden rounded-full border border-white/20 bg-bg-tertiary" onClick={() => c.author_id && router.push(`/profile/${c.author_id}`)}>
-                        <img src={avatarPath} alt="" className="h-full w-full object-cover" />
-                      </div>
-                    ) : (
-                      <div
-                        className="flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-full border border-white/20 bg-bg-tertiary text-sm font-bold text-text-primary"
-                        onClick={() => c.author_id && router.push(`/profile/${c.author_id}`)}
-                      >
-                        {(c.nickname || "익")[0]}
-                      </div>
-                    )}
-                    <div className="min-w-0 flex-1">
-                      <div className="flex min-w-0 items-center gap-1.5 whitespace-nowrap">
-                        <span className="min-w-0 flex-1 truncate text-[15px] font-semibold text-text-primary cursor-pointer hover:text-accent" onClick={() => c.author_id && router.push(`/profile/${c.author_id}`)}>{c.nickname || "익명"}</span>
-                      </div>
-                      <div className="mt-1 flex min-w-0 items-center gap-1.5 whitespace-nowrap">
-                        {cmtTeam && <TeamBadge teamId={cmtTeam.id} size="xs" suffix="팬" />}
+                  <div key={c.id} className={isReply ? "pl-10" : ""}>
+                    <CommunityAuthorHeader
+                      nickname={c.nickname}
+                      teamId={c.team_id}
+                      avatarUrl={c.avatar_url}
+                      profileHref={c.author_id ? `/profile/${c.author_id}` : null}
+                      meta={
                         <span className="shrink-0 text-xs text-text-tertiary">
                           {timeAgo(c.created_at)}{isCmtEdited ? " · 수정됨" : ""}
                         </span>
-                        {user && !isCmtEditing && (
-                          <div className="relative ml-auto flex-shrink-0">
-                            <button
-                              onClick={(e) => { e.stopPropagation(); setCmtMenuOpenId(prev => prev === c.id ? null : c.id); }}
-                              className="p-1 text-text-tertiary hover:text-text-primary"
-                              aria-label="댓글 메뉴"
-                            >
-                              <MoreHorizontal size={14} />
-                            </button>
-                            {cmtMenuOpenId === c.id && (
-                              <>
-                                <div className="fixed inset-0 z-10" onClick={() => setCmtMenuOpenId(null)} />
-                                <div className="absolute right-0 top-6 z-20 min-w-[96px] rounded-lg border border-border bg-bg-primary shadow-lg overflow-hidden">
-                                  {isCmtMine && (
-                                    <button onClick={() => startCmtEdit(c)} className="block w-full px-3 py-2 text-left text-xs text-text-primary hover:bg-bg-tertiary">수정</button>
-                                  )}
-                                  {!isCmtMine && (
-                                    <button onClick={() => openReport({ type: "comment", id: c.id })} className="flex items-center gap-1.5 w-full px-3 py-2 text-left text-xs text-text-primary hover:bg-bg-tertiary">
-                                      <Flag size={12} /> 신고
-                                    </button>
-                                  )}
-                                  {!isCmtMine && (
-                                    <button onClick={() => handleBlockUser(c.author_id, { type: "comment", id: c.id })} className="flex items-center gap-1.5 w-full px-3 py-2 text-left text-xs text-text-primary hover:bg-bg-tertiary">
-                                      <Ban size={12} /> 차단
-                                    </button>
-                                  )}
-                                  {canDeleteCmt && (
-                                    <button onClick={() => handleDeleteComment(c.id)} className="block w-full px-3 py-2 text-left text-xs text-[#FF453A] hover:bg-bg-tertiary">삭제</button>
-                                  )}
-                                </div>
-                              </>
-                            )}
-                          </div>
-                        )}
-                      </div>
+                      }
+                      menu={user && !isCmtEditing ? (
+                        <div className="relative">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setCmtMenuOpenId(prev => prev === c.id ? null : c.id); }}
+                            className="p-1 text-text-tertiary hover:text-text-primary"
+                            aria-label="댓글 메뉴"
+                          >
+                            <MoreHorizontal size={14} />
+                          </button>
+                          {cmtMenuOpenId === c.id && (
+                            <>
+                              <div className="fixed inset-0 z-10" onClick={() => setCmtMenuOpenId(null)} />
+                              <div className="absolute right-0 top-6 z-20 min-w-[96px] rounded-lg border border-border bg-bg-primary shadow-lg overflow-hidden">
+                                {isCmtMine && (
+                                  <button onClick={() => startCmtEdit(c)} className="block w-full px-3 py-2 text-left text-xs text-text-primary hover:bg-bg-tertiary">수정</button>
+                                )}
+                                {!isCmtMine && (
+                                  <button onClick={() => openReport({ type: "comment", id: c.id })} className="flex items-center gap-1.5 w-full px-3 py-2 text-left text-xs text-text-primary hover:bg-bg-tertiary">
+                                    <Flag size={12} /> 신고
+                                  </button>
+                                )}
+                                {!isCmtMine && (
+                                  <button onClick={() => handleBlockUser(c.author_id, { type: "comment", id: c.id })} className="flex items-center gap-1.5 w-full px-3 py-2 text-left text-xs text-text-primary hover:bg-bg-tertiary">
+                                    <Ban size={12} /> 차단
+                                  </button>
+                                )}
+                                {canDeleteCmt && (
+                                  <button onClick={() => handleDeleteComment(c.id)} className="block w-full px-3 py-2 text-left text-xs text-[#FF453A] hover:bg-bg-tertiary">삭제</button>
+                                )}
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      ) : null}
+                    />
+                    <div className="ml-[50px] min-w-0">
                       {isCmtEditing ? (
                         <div className="mt-1 flex items-center gap-1.5">
                           <input

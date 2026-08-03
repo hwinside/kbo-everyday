@@ -10,8 +10,6 @@ import { useAuth } from "@/lib/supabase/AuthContext";
 import { getTeamById } from "@/lib/constants/teams";
 import TeamBadge from "@/components/ui/TeamBadge";
 import GlassCard from "@/components/ui/GlassCard";
-import { PLAYER_PHOTO_MAP } from "@/lib/constants/player-photos";
-import { TEAMS as KBO_TEAMS } from "@/lib/constants/teams";
 import type { BadgeDefinition } from "@/lib/constants/badges";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 import { getAvatarPath } from "@/lib/constants/avatars";
@@ -22,6 +20,7 @@ import BadgesTab from "@/components/profile/BadgesTab";
 import DMButton from "@/components/ui/DMButton";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
+import { getCommunitySourceLabel } from "@/lib/utils/community-board";
 
 interface UserProfile {
   id: string;
@@ -301,11 +300,21 @@ export default function ProfilePage() {
                 className="p-3 cursor-pointer hover:bg-black/5 dark:hover:bg-white/5"
                 onClick={() => router.push(`/community/players/${post.board_id}/posts/${post.id}`)}
               >
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-black/8 dark:bg-white/10 text-text-tertiary">
-                    {post.board_type === "player" ? `⚾ ${Object.entries(PLAYER_PHOTO_MAP).find(([, id]) => id === post.board_id)?.[0] || post.board_id}` : post.board_type === "team" ? `🏟️ ${KBO_TEAMS.find(t => String(t.id) === post.board_id)?.shortName || post.board_id}` : "💬 자유"}
-                  </span>
-                </div>
+                {(() => {
+                  const sourceLabel = getCommunitySourceLabel(post.board_type, post.board_id);
+                  return (
+                    <div className="mb-2 flex items-center gap-2" data-community-source-label>
+                      <span className="shrink-0 text-[10px] text-text-tertiary">글 소속</span>
+                      {sourceLabel.teamId ? (
+                        <TeamBadge teamId={sourceLabel.teamId} playerName={sourceLabel.playerName} size="sm" />
+                      ) : (
+                        <span className="min-w-0 truncate rounded-full bg-bg-tertiary px-2.5 py-1 text-sm font-bold text-text-primary">
+                          {sourceLabel.text}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })()}
                 <p className="text-sm font-medium text-text-primary">{post.title}</p>
                 <div className="flex items-center gap-4 mt-1 text-xs text-text-tertiary">
                   <span>{timeAgo(post.created_at)}</span>

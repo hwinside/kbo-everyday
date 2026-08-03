@@ -39,7 +39,7 @@ export default function CommunityAuthorHeader({
   );
 
   return (
-    <div className={`flex min-w-0 items-start gap-2.5 ${className}`}>
+    <div data-community-author-header className={`flex min-w-0 items-start gap-2.5 ${className}`}>
       {profileHref ? (
         <Link href={profileHref} aria-label={`${displayName} 프로필 보기`} className="shrink-0 active:opacity-70">
           {avatar}
