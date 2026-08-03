@@ -5,11 +5,17 @@
  * 소스 문자열 검사가 아니라 실제 브라우저 레이아웃을 assert 한다.
  * (삼순 NO-GO 2026-08-02: 바깥 flex 를 제거해도 문자열 스모크가 통과했음)
  *
+ * 2026-08-03 계약 변경: 한 행에 아이디+메타를 다 넣으면 닉네임만 잘렸다(하린아빠 제보).
+ * 이제 1행=아이디 전용 / 2행=쪽지·시간·조회수·더보기 다. 핵심 assert 는
+ * "실제 닉네임 길이에서 말줄임이 발생하지 않는다"다.
+ *
  * 결함주입(mutation) 환경변수 — 각각 RED 여야 한다:
- *   POST_HEADER_MUTATE_FLEX=1        바깥 헤더 flex 제거
- *   POST_HEADER_MUTATE_NOWRAP=1      whitespace-nowrap 제거
- *   POST_HEADER_MUTATE_TRUNCATE=1    닉네임 truncate/min-w-0 제거
- *   POST_HEADER_MUTATE_SHRINK=1      우측 항목 shrink-0 제거
+ *   POST_HEADER_MUTATE_ONELINE=1     2단을 다시 한 행으로 병합(회귀 재현) → FAIL 10
+ *   POST_HEADER_MUTATE_TRUNCATE=1    닉네임 truncate/min-w-0 제거 → FAIL 2
+ *
+ * (구) NOWRAP/SHRINK mutation 은 제거했다. 2단 분리 후에는 320px 에서도 메타 행이
+ * 남아돌아 두 클래스를 지워도 RED 가 안 난다 — 검출력 없는 mutation 을 남겨두면
+ * 그 자체가 false-green 표면이라 계약에서 물린다(클래스는 방어적으로 유지).
  */
 import { build } from "esbuild";
 import postcss from "postcss";
@@ -46,9 +52,10 @@ const GEN = mkdtempSync(resolve(tmpdir(), "post-header-"));
 const DETAIL_PATH = resolve(ROOT, "src/components/community/PostDetail.tsx");
 let detailSource = readFileSync(DETAIL_PATH, "utf8");
 
-const HEADER_OPEN = '<div className="flex items-center gap-2 mb-3 whitespace-nowrap">';
-if (detailSource.split(HEADER_OPEN).length - 1 !== 1) {
-  console.error("FAIL: 작성자 헤더 컨테이너를 특정하지 못함(문구 변경 시 이 스모크를 함께 갱신할 것)");
+const ROW1_OPEN = '<div className="flex items-center gap-2 whitespace-nowrap">';
+const ROW2_OPEN = '<div className="mt-1 flex items-center gap-2 whitespace-nowrap">';
+if (detailSource.split(ROW1_OPEN).length - 1 !== 1 || detailSource.split(ROW2_OPEN).length - 1 !== 1) {
+  console.error("FAIL: 작성자 헤더 2단 컨테이너를 특정하지 못함(문구 변경 시 이 스모크를 함께 갱신할 것)");
   process.exit(1);
 }
 
@@ -59,13 +66,18 @@ if (detailSource.split(NICKNAME_CLASS).length - 1 !== 1) {
 }
 
 const mutations = [];
-if (process.env.POST_HEADER_MUTATE_FLEX === "1") {
-  detailSource = detailSource.replace(HEADER_OPEN, '<div className="items-center gap-2 mb-3 whitespace-nowrap">');
-  mutations.push("flex 제거");
-}
-if (process.env.POST_HEADER_MUTATE_NOWRAP === "1") {
-  detailSource = detailSource.replace(HEADER_OPEN, '<div className="flex items-center gap-2 mb-3">');
-  mutations.push("whitespace-nowrap 제거");
+if (process.env.POST_HEADER_MUTATE_ONELINE === "1") {
+  // 1행 닫힘 </div> 와 2행 여는 태그를 지워 두 행을 하나로 합친다(회귀 재현).
+  const merged = detailSource.replace(
+    /<\/div>\s*\n\s*<div className="mt-1 flex items-center gap-2 whitespace-nowrap">/,
+    "",
+  );
+  if (merged === detailSource) {
+    console.error("FAIL: ONELINE mutation 적용 지점을 찾지 못함");
+    process.exit(1);
+  }
+  detailSource = merged;
+  mutations.push("2단→1행 병합");
 }
 if (process.env.POST_HEADER_MUTATE_TRUNCATE === "1") {
   detailSource = detailSource.replace(
@@ -73,12 +85,6 @@ if (process.env.POST_HEADER_MUTATE_TRUNCATE === "1") {
     'className="text-[13px] font-semibold text-text-primary cursor-pointer hover:text-accent"',
   );
   mutations.push("닉네임 truncate/min-w-0 제거");
-}
-if (process.env.POST_HEADER_MUTATE_SHRINK === "1") {
-  detailSource = detailSource.replaceAll('className="shrink-0"', 'className=""');
-  detailSource = detailSource.replace('className="shrink-0 text-sm text-text-tertiary"', 'className="text-sm text-text-tertiary"');
-  detailSource = detailSource.replace('<div className="shrink-0">\n            <PostActionsMenu', '<div>\n            <PostActionsMenu');
-  mutations.push("shrink-0 제거");
 }
 
 const detailEntry = resolve(GEN, "PostDetail-under-test.tsx");
@@ -91,8 +97,10 @@ writeFileSync(detailEntry, detailSource);
 const LONG_NICKNAME = process.env.POST_HEADER_NICKNAME ?? "가나다라마바사아자차카타";
 // 운영팀 배지까지 붙으면 행이 더 빡빡해져 shrink-0 가 실제로 일을 한다.
 const SCENARIOS = [
-  { name: "일반 작성자", grade: "user" },
-  { name: "운영팀 배지 동반", grade: "staff" },
+  { name: "일반 작성자 390px", grade: "user", width: 390 },
+  { name: "운영팀 배지 동반 390px", grade: "staff", width: 390 },
+  // 최소폭 단말(320px)에서는 2행 메타가 빡빡해져 nowrap/shrink-0 가 실제로 일을 한다.
+  { name: "운영팀 배지 동반 320px", grade: "staff", width: 320 },
 ];
 
 writeFileSync(resolve(GEN, "auth.jsx"), `
@@ -114,7 +122,7 @@ const POST={
   board_type:"free",
   board_id:"free",
   content_type:"general",
-  title:"작성자 헤더 한 줄 회귀",
+  title:"작성자 헤더 2단 회귀",
   content:"본문",
   image_urls:[],
   video_urls:[],
@@ -244,12 +252,12 @@ const browser = await playwright.chromium.launch();
 try {
  for (const scenario of SCENARIOS) {
   console.log(`\n[${scenario.name}]`);
-  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 });
+  const page = await browser.newPage({ viewport: { width: scenario.width, height: 844 }, deviceScaleFactor: 2 });
   page.on("console", (m) => { if (m.type() === "error") console.log(`[console] ${m.text()}`); });
   page.on("pageerror", (e) => console.log(`[pageerror] ${e.message}`));
   await page.goto(`http://127.0.0.1:${port}/?grade=${scenario.grade}`, { waitUntil: "networkidle" });
   try {
-    await page.waitForSelector("text=작성자 헤더 한 줄 회귀", { timeout: 15000 });
+    await page.waitForSelector("text=작성자 헤더 2단 회귀", { timeout: 15000 });
   } catch (err) {
     console.log("[dom]", (await page.content()).slice(0, 1500));
     throw err;
@@ -258,7 +266,8 @@ try {
   const probe = await page.evaluate((nickname) => {
     const nick = Array.from(document.querySelectorAll("span")).find((el) => el.textContent === nickname);
     if (!nick) return { error: "닉네임 요소를 찾지 못함" };
-    const header = nick.parentElement;
+    const header = nick.parentElement;               // 1행 = 아이디 행
+    const metaRow = header.nextElementSibling;       // 2행 = 메타 행
     const hr = header.getBoundingClientRect();
     // items-center 정렬이라 항목마다 높이가 달라 top 은 원래 다르다.
     // "한 행"의 올바른 판정은 세로 구간이 서로 겹치는지(교집합 존재)다.
@@ -274,6 +283,13 @@ try {
     });
     const nickRect = nick.getBoundingClientRect();
     const body = document.body.getBoundingClientRect();
+    const mr = metaRow ? metaRow.getBoundingClientRect() : null;
+    const metaChildren = metaRow
+      ? Array.from(metaRow.children).map((el) => {
+          const r = el.getBoundingClientRect();
+          return { text: (el.textContent || "").slice(0, 12), top: Math.round(r.top), bottom: Math.round(r.bottom), right: Math.round(r.right) };
+        })
+      : [];
     return {
       headerTop: Math.round(hr.top),
       headerHeight: Math.round(hr.height),
@@ -281,6 +297,16 @@ try {
       headerScrollWidth: header.scrollWidth,
       headerDisplay: getComputedStyle(header).display,
       children,
+      meta: mr
+        ? {
+            top: Math.round(mr.top),
+            height: Math.round(mr.height),
+            clientWidth: metaRow.clientWidth,
+            scrollWidth: metaRow.scrollWidth,
+            right: Math.round(mr.right),
+            children: metaChildren,
+          }
+        : null,
       nick: {
         clientWidth: nick.clientWidth,
         scrollWidth: nick.scrollWidth,
@@ -307,24 +333,54 @@ try {
   const overlapTop = Math.max(...probe.children.map((c) => c.top));
   const overlapBottom = Math.min(...probe.children.map((c) => c.bottom));
   check(
-    "작성자 헤더의 모든 항목이 한 행",
-    probe.children.length > 1 && overlapBottom > overlapTop,
+    "1행(아이디 행)의 항목이 모두 같은 행",
+    probe.children.length >= 1 && (probe.children.length === 1 || overlapBottom > overlapTop),
     `공통 세로구간 [${overlapTop}, ${overlapBottom}] / 항목 ${probe.children.length}개`,
   );
   check(
-    "헤더가 가로로 넘치지 않음(scrollWidth === clientWidth)",
+    "1행이 가로로 넘치지 않음(scrollWidth === clientWidth)",
     probe.headerScrollWidth === probe.headerClientWidth,
     `scrollWidth=${probe.headerScrollWidth} clientWidth=${probe.headerClientWidth}`,
   );
   check(
-    "헤더 높이가 한 줄(≤34px)",
+    "1행 높이가 한 줄(≤34px)",
     probe.headerHeight > 0 && probe.headerHeight <= 34,
     `height=${probe.headerHeight}`,
   );
+  // 핵심 회귀: 실제 운영 최장 닉네임(12자)이 잘리면 안 된다.
   check(
-    "긴 닉네임만 말줄임(scrollWidth > clientWidth)",
-    probe.nick.scrollWidth > probe.nick.clientWidth && probe.nick.overflow === "ellipsis",
-    `nick clientWidth=${probe.nick.clientWidth} scrollWidth=${probe.nick.scrollWidth} textOverflow=${probe.nick.overflow}`,
+    "닉네임이 잘리지 않음(scrollWidth === clientWidth)",
+    probe.nick.scrollWidth <= probe.nick.clientWidth,
+    `nick clientWidth=${probe.nick.clientWidth} scrollWidth=${probe.nick.scrollWidth}`,
+  );
+  check(
+    "닉네임 초과분 안전장치는 말줄임 유지",
+    probe.nick.overflow === "ellipsis",
+    `textOverflow=${probe.nick.overflow}`,
+  );
+  check(
+    "메타가 2행으로 분리됨(1행 아래)",
+    Boolean(probe.meta) && probe.meta.top >= probe.headerTop + probe.headerHeight,
+    probe.meta ? `row1 bottom=${probe.headerTop + probe.headerHeight} row2 top=${probe.meta.top}` : "메타 행 없음",
+  );
+  check(
+    "2행이 가로로 넘치지 않음",
+    Boolean(probe.meta) && probe.meta.scrollWidth === probe.meta.clientWidth,
+    probe.meta ? `scrollWidth=${probe.meta.scrollWidth} clientWidth=${probe.meta.clientWidth}` : "",
+  );
+  check(
+    "2행 항목이 모두 같은 행",
+    Boolean(probe.meta) &&
+      probe.meta.children.length > 1 &&
+      Math.min(...probe.meta.children.map((c) => c.bottom)) > Math.max(...probe.meta.children.map((c) => c.top)),
+    probe.meta ? `항목 ${probe.meta.children.length}개` : "",
+  );
+  check(
+    "더보기가 2행 우측 끝에 정렬",
+    Boolean(probe.meta) &&
+      probe.meta.children.length > 0 &&
+      Math.abs(probe.meta.children[probe.meta.children.length - 1].right - probe.meta.right) <= 1,
+    probe.meta ? `last right=${probe.meta.children[probe.meta.children.length - 1]?.right} row right=${probe.meta.right}` : "",
   );
   check("쪽지 버튼 노출 유지", probe.texts.dm);
   check("작성 시간 노출 유지", probe.texts.time);
@@ -332,12 +388,12 @@ try {
   check("더보기 메뉴 노출 유지", probe.texts.menu);
   check(
     "페이지 가로 스크롤 없음",
-    probe.bodyScrollWidth <= 390,
+    probe.bodyScrollWidth <= scenario.width,
     `documentScrollWidth=${probe.bodyScrollWidth}`,
   );
 
   await page.close();
-  total += 9;
+  total += 12;
  }
 } finally {
   await browser.close();

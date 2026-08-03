@@ -474,39 +474,45 @@ export default function PostDetail({ postId }: PostDetailProps) {
 
       {/* Post */}
       <div className="px-5 py-4">
-        <div className="flex items-center gap-2 mb-3 whitespace-nowrap">
-          {post.team_id ? <div className="shrink-0"><TeamBadge teamId={post.team_id} size="xs" /></div> : null}
-          <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-text-primary cursor-pointer hover:text-accent" onClick={() => post.author_id && router.push(`/profile/${post.author_id}`)}>{post.nickname || "익명"}</span>
-          {post.grade === 'staff' && (
-            <span className='ml-1 px-1.5 py-0.5 text-[10px] font-bold bg-accent/20 text-accent rounded-full'>운영팀</span>
-          )}
-          {post.author_id && user && post.author_id !== user.id && (
-            <DMButton targetUserId={post.author_id} size="sm" className="shrink-0" />
-          )}
-          <span className="shrink-0 text-sm text-text-tertiary">
-            {timeAgo(post.created_at)}{(postPatch.updated_at || post.updated_at) ? " · 수정됨" : ""}
-          </span>
-          <PostViewBadge
-            clickCount={post.click_view_count}
-            impressionCount={post.impression_view_count}
-            className="shrink-0"
-          />
-          <div className="shrink-0">
-            <PostActionsMenu
-              user={user}
-              postEditing={postEditing}
-              authorId={post.author_id}
-              userId={user?.id}
-              canDeleteAny={canDeleteAnyPost}
-              open={postMenuOpen}
-              disabled={deletingPost}
-              onToggle={() => setPostMenuOpen((v) => !v)}
-              onClose={() => setPostMenuOpen(false)}
-              onEdit={startPostEdit}
-              onReport={() => openReport({ type: "post", id: post.id })}
-              onBlock={() => handleBlockUser(post.author_id, { type: "post", id: post.id })}
-              onDelete={handleDeletePost}
+        {/* 작성자 헤더 2단 — 1행은 아이디 전용(닉네임이 길어도 잘리지 않게 가로 전체 사용),
+            2행은 쪽지/시간/조회수/더보기 등 메타. 한 줄에 다 넣으면 닉네임만 truncate 되던 문제(2026-08-03). */}
+        <div className="mb-3">
+          <div className="flex items-center gap-2 whitespace-nowrap">
+            {post.team_id ? <div className="shrink-0"><TeamBadge teamId={post.team_id} size="xs" /></div> : null}
+            <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-text-primary cursor-pointer hover:text-accent" onClick={() => post.author_id && router.push(`/profile/${post.author_id}`)}>{post.nickname || "익명"}</span>
+            {post.grade === 'staff' && (
+              <span className='shrink-0 px-1.5 py-0.5 text-[10px] font-bold bg-accent/20 text-accent rounded-full'>운영팀</span>
+            )}
+          </div>
+          <div className="mt-1 flex items-center gap-2 whitespace-nowrap">
+            {post.author_id && user && post.author_id !== user.id && (
+              <DMButton targetUserId={post.author_id} size="sm" className="shrink-0" />
+            )}
+            <span className="shrink-0 text-sm text-text-tertiary">
+              {timeAgo(post.created_at)}{(postPatch.updated_at || post.updated_at) ? " · 수정됨" : ""}
+            </span>
+            <PostViewBadge
+              clickCount={post.click_view_count}
+              impressionCount={post.impression_view_count}
+              className="shrink-0"
             />
+            <div className="ml-auto shrink-0">
+              <PostActionsMenu
+                user={user}
+                postEditing={postEditing}
+                authorId={post.author_id}
+                userId={user?.id}
+                canDeleteAny={canDeleteAnyPost}
+                open={postMenuOpen}
+                disabled={deletingPost}
+                onToggle={() => setPostMenuOpen((v) => !v)}
+                onClose={() => setPostMenuOpen(false)}
+                onEdit={startPostEdit}
+                onReport={() => openReport({ type: "post", id: post.id })}
+                onBlock={() => handleBlockUser(post.author_id, { type: "post", id: post.id })}
+                onDelete={handleDeletePost}
+              />
+            </div>
           </div>
         </div>
 
