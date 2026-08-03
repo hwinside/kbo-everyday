@@ -112,7 +112,11 @@ export type QuestionRoute =
   | "blocked"
   | "context_missing"
   | "ack"
-  | "baseball_rule_term";
+  | "baseball_rule_term"
+  // 룰베이스가 야구인지 아닌지 확정하지 못한 나머지 — 종결하지 않고 LLM 범위판정에 위임한다.
+  // 이 라벨로는 로그를 쓰지 않는다(아래 answerQuestion에서 dictionary/cache/llm/blocked/unsure 중
+  // 하나로 반드시 확정되므로 match_path CHECK 확장이 필요 없다).
+  | "llm_scope_gate";
 export type MatchPath =
   | "dictionary"
   | "cache"
@@ -525,6 +529,18 @@ const MAX_SIGNAL_TOKEN_SPAN = 3;
  */
 const MUTATE_SUBSTRING_SCOPE = process.env.BASEBALL_QA_MUTATE_SUBSTRING_SCOPE === "1";
 
+/**
+ * 2차 가드 결함주입 스위치 (게이트 검증력 증명용).
+ *
+ * 룰베이스가 못 가린 질문(`llm_scope_gate`)의 처리를 과거 두 상태로 되돌린다.
+ * 둘 다 actual matrix가 RED로 죽어야 이 경계를 진짜로 검증하고 있다는 증거가 된다.
+ *   `blocked` — #1091 이전 동작(미매칭 전부 차단). 사전 미수록 정상 룰 질문이 과차단된다.
+ *   `open`    — main 동작(미매칭 fail-open). 비야구 질문이 공식 RAG(tier1 조문)·global
+ *                cache 경계 안으로 들어간다(삼순 R1/R2 재현).
+ * 기본값 off — 운영 경로에는 영향이 없다.
+ */
+const MUTATE_SCOPE_GATE = process.env.BASEBALL_QA_MUTATE_SCOPE_GATE ?? "";
+
 function mentionsSignalWord(tokens: string[], word: string): boolean {
   const needle = word.toLowerCase();
   if (MUTATE_SUBSTRING_SCOPE) {
@@ -680,9 +696,31 @@ export function routeQuestion(
   // 후속 문법(폐쇄집합 full-string 일치) + 새 야구 엔티티/주제 신호 부재일 때만 직전 토픽 연장.
   // 소스 turn이 없으면 차단이 아니라 되묻기로 종료한다 (spec §4.1 B4, §4.3 AC2·AC3·AC4).
   if (isFollowupPhrase(question)) return hasContext ? "baseball_rule_term" : "context_missing";
-  return supportedRuleTerm
-    ? "baseball_rule_term"
-    : "blocked";
+  if (supportedRuleTerm) return "baseball_rule_term";
+
+  // 선수·구단을 지명했는데 룰/용어 질문이 아니면 현 출시 범위 밖이다 — 이건 LLM에 묻지 않고
+  // 계속 결정론적으로 닫는다. roster·구단명은 폐쇄집합이라 신호어 사전처럼 발산하지 않고,
+  // `문보경 별명이 뭐야` 처럼 기록어가 없는 인물 질의까지 LLM 판정에 넘기면 범위 밖 답변과
+  // global cache가 생길 수 있다.
+  if (hasTeam || hasPlayerReference(tokens, players)) return "blocked";
+
+  // 기존 범위밖 의도 denylist도 그대로 유지한다. 이건 신호어 사전처럼 "야구 어휘를 전부
+  // 열거해야 하는" 종류가 아니라 범위밖임이 문장 의도로 드러난 고정밀 패턴이라 발산하지
+  // 않는다(별명·누구·비교·역대·추천·날씨 등). 이걸까지 LLM에 묻면 토큰만 더 쓴다.
+  if (OUT_OF_SCOPE_INTENT.test(normalized) || NAMED_STAT_QUERY.test(normalized)) return "blocked";
+
+  // ── 2차 가드 위임 (하린아빠 2026-08-03 지시) ─────────────────────────────────
+  // 여기까지 온 질문은 "결정론적으로 야구가 아니라고 확정된" 게 아니라 **룰베이스 신호어
+  // 사전이 못 가린** 질문이다. 이걸 blocked로 종결하면 사전이 야구 어휘 전체를 커버해야만
+  // 정상 질문이 안 막히고, 커버리지를 넓히면 `아웃도어`⊃`아웃` 같은 누수가 다시 생긴다.
+  // 사전으로는 수렴하지 않는 싸움이므로 판정을 LLM에 넘긴다.
+  //
+  // 단, 과거처럼 그냥 열어주는(main의 `baseball_rule_term` 폴백) 것도 아니다. 그건 비야구
+  // 질문을 공식 RAG에 태워 무관한 KBO 조문이 근거로 붙게 만들었다(삼순 R1). 이 라벨은
+  // **RAG/tier1 경계 밖**에서 LLM 범위판정만 받는 별도 경로다 — 아래 answerQuestion 참조.
+  if (MUTATE_SCOPE_GATE === "blocked") return "blocked";
+  if (MUTATE_SCOPE_GATE === "open") return "baseball_rule_term";
+  return "llm_scope_gate";
 }
 
 /**
@@ -988,7 +1026,16 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   const route = enabledPlayerCandidate
     ? "baseball_rule_term"
     : routeQuestion(question, glossary, players, context !== null);
-  if (route !== "baseball_rule_term") {
+  // `llm_scope_gate`는 종결 라우트가 아니라 **판정 위임**이다. 여기서 끝내지 않고 아래로 흘려보내되,
+  // 공식 RAG(②-a)·선수 RAG(②) 진입 조건은 그대로라서 tier1 조문에는 닿지 못한다.
+  // 결과적으로 이 라벨은 dictionary / cache / llm / blocked / unsure 중 하나로 반드시 확정되며,
+  // 스스로는 로그에 기록되지 않는다 (genius_question_logs CHECK 확장 불필요).
+  // 2차 가드 경로 여부. `true`면 사전·공식 RAG·선수 RAG·global cache를 전부 건너뛰고
+  // LLM 범위판정만 받는다. 특히 **cache read/write를 둘 다 끔는다** — 이 경로는 질문이
+  // 야구인지 아직 모르는 상태라, 과거에 쌀인 동일 정규화 키의 답을 그대로 내보내면
+  // 범위 밖 답변이 검증 없이 재노출된다(삼순 R2와 동일한 오염캐시 경로).
+  const scopeGate = route === "llm_scope_gate";
+  if (route !== "baseball_rule_term" && !scopeGate) {
     const answer =
       route === "service_redirect" ? SERVICE_REDIRECT_ANSWER :
       route === "history_hold" ? HISTORY_HOLD_ANSWER :
@@ -1000,7 +1047,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   }
 
   // ① 검수 사전 (토큰 0)
-  const hit = matchGlossary(glossary, question);
+  const hit = scopeGate ? null : matchGlossary(glossary, question);
   if (hit) {
     await deps.log({ userId, question, questionNorm, matchPath: "dictionary", answer: hit.answer, inputTokens: null, outputTokens: null });
     return { status: 200, answer: hit.answer, source: "dictionary", term: hit.term, remaining };
@@ -1018,6 +1065,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   // 통과시키면 비야구가 blocked 대신 unsure로 바뀌고 적대적 provider에서는 무관한 KBO 조문이
   // 근거로 붙은 답이 나간다(삼순 R1 재현). 폴백 질문은 종전대로 LLM NOT_BASEBALL 분류로 보낸다.
   if (
+    !scopeGate &&
     deps.searchOfficialRag &&
     deps.callOfficialRagLlm &&
     isSupportedRuleTermQuestion(question, glossary, players)
@@ -1043,7 +1091,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
 
   // ③ 동일질문 캐시 (토큰 0). 맥락 의존 질문은 global 캐시를 read도 write도 하지 않는다
   // — preseed된 동일 정규화 키가 있어도 맥락 없는 답으로 오염되면 안 된다 (spec §4.1 B5).
-  if (!context) {
+  if (!context && !scopeGate) {
     const cached = await deps.getCache(questionNorm);
     if (cached !== null) {
       await deps.log({ userId, question, questionNorm, matchPath: "cache", answer: cached, inputTokens: null, outputTokens: null });
@@ -1117,7 +1165,9 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   }
 
   // 맥락 의존 답변은 global 캐시에 쓰지 않는다 (spec §4.1 B5).
-  if (!context) await deps.setCache(questionNorm, validated.answer);
+  // 2차 가드 경로도 쓰지 않는다 — 읽지도 않으므로 써봐야 사장이고, 룰베이스가 못 가린
+  // 질문의 답을 공유 캐시에 쌓아두면 나중에 경계가 바뀌었을 때 회수할 수 없다.
+  if (!context && !scopeGate) await deps.setCache(questionNorm, validated.answer);
   await deps.log({ userId, question, questionNorm, matchPath: "llm", answer: validated.answer, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
   return { status: 200, answer: validated.answer, source: "llm", remaining };
 }
