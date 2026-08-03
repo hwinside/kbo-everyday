@@ -86,14 +86,24 @@ export function enqueueBaseballQaQuestion(
  */
 export function applyBaseballQaPlayerPick(
   storage: StorageLike,
+  conversationId: string,
   messageId: number,
   pickedPlayerKboId: string,
 ) {
-  const entries = readBaseballQaOutbox(storage).map((row) =>
-    row.messageId === messageId
-      ? { ...row, pickedPlayerKboId, attempts: 0, acknowledged: false, awaitingPlayerPick: false }
-      : row,
-  );
+  const entries = readBaseballQaOutbox(storage);
+  const index = entries.findIndex((row) => row.messageId === messageId);
+  const selected: BaseballQaOutboxEntry = {
+    conversationId,
+    messageId,
+    pickedPlayerKboId,
+    attempts: 0,
+    acknowledged: false,
+    awaitingPlayerPick: false,
+  };
+  if (index >= 0) entries[index] = { ...entries[index], ...selected };
+  else entries.push(selected);
+  // 서버의 durable picker DM이 정본이다. localStorage가 비었거나 다른 기기여도
+  // conversationId + question_message_id로 항목을 복원해 선택 요청을 1회 만든다.
   writeBaseballQaOutbox(storage, entries);
 }
 
@@ -146,7 +156,7 @@ export function observeBaseballQaReplies(
       }
     }
   }
-  if (observed.size === 0) return [];
+  if (observed.size === 0 && pickerObserved.size === 0) return [];
 
   const entries = readBaseballQaOutbox(storage);
   const completed = entries

@@ -141,6 +141,9 @@ BEGIN
       quota_allowed = CASE WHEN quota_released THEN NULL ELSE quota_allowed END,
       quota_remaining = CASE WHEN quota_released THEN NULL ELSE quota_remaining END,
       quota_released = false,
+      -- picker 생성이 5번째 처리에서 성공했어도 selection은 **새 처리 phase**다.
+      -- attempts를 리셋하지 않으면 prepare 직후 worker crash 시 due의 attempts<5 밖에 영구 정체된다.
+      attempts = 0,
       delivery_attempts = 0,
       last_error = NULL,
       updated_at = now()

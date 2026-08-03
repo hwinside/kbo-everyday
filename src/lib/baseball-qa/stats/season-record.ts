@@ -64,13 +64,13 @@ export type PitcherMetricKey = keyof typeof PITCHER_METRICS;
  * 나중에 누가 allowlist 에 넣어버릴 수 있어 명시 집합으로 남긴다.
  */
 export const UNTRUSTED_METRIC_ALIASES = [
-  "타석", "희생번트", "희생타", "희생플라이", "번트타", "pa", "sac", "sf",
+  "타석", "희생번트", "희생타", "희생플라이", "번트타", "사사구", "pa", "sac", "sf",
 ] as const;
 
 /** 시즌 표현. 올해만 답한다 — 과거 시즌 row 가 DB 에 없기 때문이다. */
 const CURRENT_SEASON_WORDS = ["올해", "올시즌", "이번시즌", "금년", "올해의", String(SUPPORTED_SEASON)];
 const UNSUPPORTED_SEASON_WORDS = [
-  "작년", "지난해", "지난시즌", "지난 시즌", "지지난해", "재작년",
+  "작년", "지난해", "지난시즌", "지난 시즌", "전시즌", "전 시즌", "이전시즌", "이전 시즌", "지지난해", "재작년",
   "통산", "커리어", "역대", "생애", "누적",
 ];
 
@@ -118,7 +118,10 @@ export type SeasonRecordIntent =
  *   ③ allowlist 지표 매칭
  *   ④ 수치 질문 형태인지 확인
  */
-export function resolveSeasonRecordIntent(question: string): SeasonRecordIntent {
+export function resolveSeasonRecordIntent(
+  question: string,
+  preferredTable?: "batter" | "pitcher",
+): SeasonRecordIntent {
   const compact = normalize(question);
 
   if (UNTRUSTED_METRIC_ALIASES.some((alias) => compact.includes(normalize(alias)))) {
@@ -141,7 +144,7 @@ export function resolveSeasonRecordIntent(question: string): SeasonRecordIntent 
     { table: "pitcher", metric: "holds", pattern: /홀드/ },
     { table: "pitcher", metric: "wpct", pattern: /승률/ },
     { table: "pitcher", metric: "ip", pattern: /투구\s*이닝|이닝/ },
-    { table: "pitcher", metric: "bb", pattern: /볼넷|포볼|사사구/ },
+    { table: "pitcher", metric: "bb", pattern: /볼넷|포볼/ },
     { table: "pitcher", metric: "hbp", pattern: /몸에\s*맞는\s*(?:공|볼)|사구(?!체)/ },
     { table: "pitcher", metric: "so", pattern: /탈\s*삼진|삼진/ },
     { table: "pitcher", metric: "er", pattern: /자책(?:점)?/ },
@@ -149,8 +152,8 @@ export function resolveSeasonRecordIntent(question: string): SeasonRecordIntent 
     { table: "pitcher", metric: "whip", pattern: /\bwhip\b/i },
     { table: "pitcher", metric: "games", pattern: /등판(?:\s*(?:경기|수))?/ },
     // `몇승/몇 승/승수/10승`은 허용하되 승부·승률은 제외.
-    { table: "pitcher", metric: "wins", pattern: /(?:몇\s*승(?:수)?|\d+\s*승(?:수)?|승수)(?!부|률|리)/ },
-    { table: "pitcher", metric: "losses", pattern: /(?:몇\s*패(?:수)?|\d+\s*패(?:수)?|패수)(?!스트|배|션)/ },
+    { table: "pitcher", metric: "wins", pattern: /(?:몇\s*승(?:수)?|\d+\s*승(?:수)?|승수|승\s*(?:몇|개))(?!부|률|리)/ },
+    { table: "pitcher", metric: "losses", pattern: /(?:몇\s*패(?:수)?|\d+\s*패(?:수)?|패수|패\s*(?:몇|개))(?!스트|배|션)/ },
 
     // 타자
     { table: "batter", metric: "avg", pattern: /(?<!장)타율|타률|애버리지/ },
@@ -166,8 +169,10 @@ export function resolveSeasonRecordIntent(question: string): SeasonRecordIntent 
   ];
 
   const normalized = normalizeWithSpaces(question);
-  const best = patterns.find((entry) => entry.pattern.test(normalized));
+  let best = patterns.find((entry) => entry.pattern.test(normalized));
   if (!best) return { kind: "none" };
+  // `경기 수`는 타자/투수 공통어다. 이름으로 확정된 로스터 포지션이 투수면 pitcher로 결속한다.
+  if (best.metric === "games" && preferredTable) best = { ...best, table: preferredTable };
   // 과거 시즌 차단은 지원 metric 수치 질문에만 적용한다. `작년에 별명이 뭐였어?` 같은
   // 선수 서술형은 기존 RAG로 내려보내야 한다.
   if (hasUnsupportedSeason(question)) return { kind: "unsupported_season" };
@@ -273,6 +278,10 @@ export function resolveSeasonRecord(
     value = String(raw).trim();
     // 타율 `.238`, ERA `3.42`, WHIP `1.23`만. `N/A`·Infinity·음수는 금지.
     if (!/^(?:\d+(?:\.\d{1,3})?|\.\d{1,3})$/.test(value) || Number(value) < 0) {
+      return { kind: "inconsistent" };
+    }
+    // 타율·승률은 확률값이라 [0,1]. ERA/WHIP은 1을 넘을 수 있으므로 공통 상한 금지.
+    if ((query.metric === "avg" || query.metric === "wpct") && Number(value) > 1) {
       return { kind: "inconsistent" };
     }
   } else {

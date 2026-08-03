@@ -1036,8 +1036,9 @@ async function answerSeasonRecordQuestion(
   candidate: RagPlayerCandidate,
   remaining: number,
   deps: QaDeps,
+  intentOverride?: ReturnType<typeof resolveSeasonRecordIntent>,
 ): Promise<QaResult | null> {
-  const intent = resolveSeasonRecordIntent(question);
+  const intent = intentOverride ?? resolveSeasonRecordIntent(question);
   if (intent.kind === "none") return null;
 
   const settle = async (answer: string, matchPath: MatchPath, source: MatchPath): Promise<QaResult> => {
@@ -1401,8 +1402,11 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     // 나무위키 숫자는 정본이 아니므로(§12 수치 계약) tier2 로 답하면 안 되고,
     // 그렇다고 차단해도 안 된다 — 하린아빠 2026-08-03 "기록도 레퍼런스하는거야?".
     if (deps.fetchSeasonRecord) {
+      const rosterPlayer = players.find((player) => player.kboId === playerCandidate.entityId);
+      const preferredTable = rosterPlayer?.position?.includes("투수") ? "pitcher" : "batter";
+      const boundIntent = resolveSeasonRecordIntent(question, preferredTable);
       const record = await answerSeasonRecordQuestion(
-        userId, question, questionNorm, playerCandidate, remaining, deps,
+        userId, question, questionNorm, playerCandidate, remaining, deps, boundIntent,
       );
       if (record) return record;
     }

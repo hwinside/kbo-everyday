@@ -178,6 +178,9 @@ assert.doesNotMatch(
 }
 assert.match(serverSource, /sendOpsMessageToUser/);
 assert.match(serverSource, /reserve_baseball_genius_daily_question_for_message/);
+// production seam actual: helper 단위 mock만 GREEN이고 server binding이 끊긴 false-green 방지.
+assert.match(serverSource, /import \{ fetchSeasonRecordRows \} from "@\/lib\/baseball-qa\/stats\/fetch-season-record"/);
+assert.match(serverSource, /fetchSeasonRecord:\s*async\s*\(table, kboId\)[\s\S]*?return fetchSeasonRecordRows\([\s\S]*?table,[\s\S]*?kboId,/);
 // 로스터 인원은 콜업·트레이드로 상시 변하므로 숫자를 고정하지 않는다(2026-08-01 P0:
 // 하드코딩 878이 자동 roster PR을 영구 막았다). 계약은 "선차단 SSOT가 roster JSON이고 비어있지 않다".
 assert.ok(playersRoster.length > 0, "선수 선차단 SSOT는 roster JSON이며 비어 있으면 안 됨");
@@ -999,16 +1002,25 @@ async function verifyPipeline() {
       "문보경 2019년 홈런 몇 개야?",
       "문보경 2027년 홈런 몇 개야?",
       "문보경 지난 시즌 홈런 몇 개야?",
+      "문보경 전 시즌 홈런 몇 개야?",
+      "문보경 이전 시즌 홈런 몇 개야?",
       "문보경 통산 홈런 몇 개야?",
     ]) {
       assert.equal(resolveSeasonRecordIntent(input).kind, "unsupported_season", `${input}: 2026 외 차단`);
     }
     assert.equal(resolveSeasonRecordIntent("문보경 2026년 홈런 몇 개야?").kind, "query", "2026 명시 허용");
     assert.equal(resolveSeasonRecordIntent("문보경 올해 장타율 알려줘").kind, "none", "장타율을 타율로 오답 금지");
-    const walksIntent = resolveSeasonRecordIntent("류현진 올해 사사구 몇 개야?");
-    assert.equal(walksIntent.kind, "query", "사사구는 지원 투수 지표");
-    if (walksIntent.kind === "query") assert.equal(walksIntent.query.metric, "bb", "사사구는 볼넷 계약");
+    assert.equal(resolveSeasonRecordIntent("류현진 올해 사사구 몇 개야?").kind, "untrusted_metric",
+      "사사구는 볼넷+사구 합산 — 단일 bb로 오답 금지");
     assert.equal(resolveSeasonRecordIntent("문보경 작년에 별명이 뭐였어?").kind, "none", "과거 서술형은 RAG 유지");
+    const pitcherGames = resolveSeasonRecordIntent("류현진 올해 경기 수 몇 개야?", "pitcher");
+    assert.equal(pitcherGames.kind, "query", "공통 경기수는 선수 포지션 결속");
+    if (pitcherGames.kind === "query") assert.equal(pitcherGames.query.table, "pitcher", "투수 경기수");
+    for (const input of ["류현진 올해 승 몇 개야?", "류현진 올해 패 몇 개야?"]) {
+      const intent = resolveSeasonRecordIntent(input, "pitcher");
+      assert.equal(intent.kind, "query", `${input}: 자연어 도달`);
+      if (intent.kind === "query") assert.equal(intent.query.table, "pitcher", `${input}: pitcher`);
+    }
 
     // production query actual: player_key exact + limit 2. name/kbo_id lookup mutation은 이 기록이 RED.
     const lookupCalls: Array<[string, string | number]> = [];
@@ -1152,6 +1164,11 @@ async function verifyPipeline() {
     const invalidValues: Array<[string, Record<string, unknown>]> = [
       ["문보경 올해 2루타 몇개야?", { ...moonRow, doubles: 1.5 }],
       ["문보경 올해 타율 알려줘", { ...moonRow, avg: "N/A" }],
+      ["문보경 올해 타율 알려줘", { ...moonRow, avg: "9.999" }],
+      ["문보경 올해 승률 알려줘", {
+        player_key: "69102", kbo_id: "69102", name: "문보경", team: "LG",
+        updated_at: moonRow.updated_at, wpct: "2.000",
+      }],
       ["문보경 올해 평균자책점 알려줘", {
         player_key: "69102", kbo_id: "69102", name: "문보경", team: "LG",
         updated_at: moonRow.updated_at, era: "N/A",
@@ -1228,6 +1245,21 @@ async function verifyPipeline() {
     assert.equal(pitcherTable, "pitcher", "투수 지표는 pitcher 테이블");
     assert.equal(pitcherResult.source, "kbo_structured", "투수 기록도 구조화 경로");
     assert.match(pitcherResult.answer, /3\.42/, "투수 원값 렌더");
+
+    // 공통어 `경기 수`는 로스터 포지션에 결속한다. 류현진은 투수 테이블이어야 한다.
+    const ryuGames = freshState();
+    let ryuGamesTable: string | null = null;
+    const ryuGamesResult = await answerQuestion("u1", "류현진 올해 경기 수 몇 개야?", statsDeps(ryuGames, [], {
+      fetchSeasonRecord: async (table, kboId) => {
+        ryuGamesTable = table;
+        return [{
+          player_key: kboId, kbo_id: kboId, name: "류현진", team: "한화",
+          updated_at: moonRow.updated_at, games: 20,
+        }] as never;
+      },
+    }));
+    assert.equal(ryuGamesTable, "pitcher", "투수 경기수는 pitcher 테이블");
+    assert.equal(ryuGamesResult.source, "kbo_structured", "투수 경기수 actual 답변");
 
     // ⑩ `fetchSeasonRecord` 미주입이면 기록 경로 자체가 비활성 — 기존 동작 그대로.
     const noRecord = freshState();
@@ -1845,7 +1877,7 @@ async function verifyClientRetryOutbox() {
   }], "45ae7419-6a9a-4c6b-9101-8d65df7e242e");
   assert.equal(readBaseballQaOutbox(storage).length, 1, "picker 관측 뒤 outbox 보존");
   assert.deepEqual(getBaseballQaReplyStates(readBaseballQaOutbox(storage)), {}, "picker 대기 중 typing 종료");
-  applyBaseballQaPlayerPick(storage, 88, "69102");
+  applyBaseballQaPlayerPick(storage, "conversation-1", 88, "69102");
   let pickerRequestBody: Record<string, unknown> | null = null;
   await attemptBaseballQaOutbox(storage, "token", async (_url, init) => {
     pickerRequestBody = JSON.parse(String(init?.body));
@@ -1877,6 +1909,30 @@ async function verifyClientRetryOutbox() {
   await held;
   assert.equal(readBaseballQaOutbox(storage)[0]?.awaitingPlayerPick, true, "picker-before-HTTP race 보존");
   assert.deepEqual(getBaseballQaReplyStates(readBaseballQaOutbox(storage)), {}, "race 뒤에도 재시도 중단");
+
+  // picker DM이 outbox enqueue보다 먼저 오거나, 새 기기/localStorage 유실 상태여도
+  // 관측 id를 반환하고 카드 탭이 exact conversation/message로 항목을 upsert해야 한다.
+  values.clear();
+  const pickerOnlyObserved = observeBaseballQaReplies(storage, [{
+    sender_id: "45ae7419-6a9a-4c6b-9101-8d65df7e242e",
+    dedup_key: "baseball-genius-picker:111",
+    payload: { reply_kind: "picker", question_message_id: 111 },
+  }], "45ae7419-6a9a-4c6b-9101-8d65df7e242e");
+  assert.deepEqual(pickerOnlyObserved, [111], "picker-only 관측도 id 반환");
+  assert.deepEqual(readBaseballQaOutbox(storage), [], "관측만으로 conversationId 추측 금지");
+  applyBaseballQaPlayerPick(storage, "conversation-fresh", 111, "56143");
+  assert.deepEqual(readBaseballQaOutbox(storage), [{
+    conversationId: "conversation-fresh", messageId: 111, pickedPlayerKboId: "56143",
+    attempts: 0, acknowledged: false, awaitingPlayerPick: false,
+  }], "fresh client picker 탭이 outbox upsert");
+  let freshBody: Record<string, unknown> | null = null;
+  await attemptBaseballQaOutbox(storage, "token", async (_url, init) => {
+    freshBody = JSON.parse(String(init?.body));
+    return new Response('{"ok":true}', { status: 200 });
+  });
+  assert.deepEqual(freshBody, {
+    conversationId: "conversation-fresh", messageId: 111, pickedPlayerKboId: "56143",
+  }, "fresh client 카드 탭도 API 요청 1회");
 }
 
 // 공통: dm 테이블 + jobs 테이블 + trigger/RPC를 migration 원본에서 추출해 적재한다.

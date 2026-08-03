@@ -302,8 +302,8 @@ export function useDMChat(conversationId: string) {
    * 새 메시지를 만들면 quota가 또 예약되고 대화창에 같은 질문이 두 번 남는다.
    */
   const pickBaseballQaPlayer = useCallback((messageId: number, kboId: string) => {
-    if (typeof window === "undefined") return;
-    applyBaseballQaPlayerPick(window.localStorage, messageId, kboId);
+    if (typeof window === "undefined" || !conversationId) return;
+    applyBaseballQaPlayerPick(window.localStorage, conversationId, messageId, kboId);
     setGeniusReplyStates(
       getBaseballQaReplyStates(
         readBaseballQaOutbox(window.localStorage),
@@ -311,7 +311,7 @@ export function useDMChat(conversationId: string) {
       ),
     );
     void processBaseballQaOutbox();
-  }, [processBaseballQaOutbox]);
+  }, [conversationId, processBaseballQaOutbox]);
 
   // 대화 전환(A→B) 즉시 렌더 시점에 이전 대화 화면을 무효화한다:
   // A 메시지 잔존 상태로 B composer 가 뜨면 A 화면을 보고 B 에 오발송하는 창이 생긴다.

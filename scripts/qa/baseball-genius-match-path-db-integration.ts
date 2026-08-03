@@ -33,6 +33,7 @@ async function main() {
       quota_reserved boolean not null default false,
       quota_allowed boolean,
       quota_remaining integer,
+      attempts integer not null default 0,
       delivery_attempts integer not null default 0,
       last_error text,
       updated_at timestamptz not null default now()
@@ -58,6 +59,7 @@ async function main() {
     insert into public.genius_question_jobs(
       message_id, user_id, status, source, quota_reserved, quota_allowed, quota_remaining, quota_released
     ) values (1, '${userId}', 'awaiting_selection', 'player_picker', true, true, 4, true);
+    update public.genius_question_jobs set attempts = 5 where message_id = 1;
     insert into public.genius_daily_usage(user_id, kst_day, used)
       values ('${userId}', (clock_timestamp() at time zone 'Asia/Seoul')::date, 1);
   `);
@@ -75,11 +77,16 @@ async function main() {
   );
   assert.equal(prepared.rows[0]?.prepared, true, "picker selection RPC actual");
   const selected = await db.query<{
-    status: string; picked_player_kbo_id: string; quota_reserved: boolean; source: string | null;
-  }>("select status,picked_player_kbo_id,quota_reserved,source from genius_question_jobs where message_id=1");
+    status: string; picked_player_kbo_id: string; quota_reserved: boolean; source: string | null; attempts: number;
+  }>("select status,picked_player_kbo_id,quota_reserved,source,attempts from genius_question_jobs where message_id=1");
   assert.deepEqual(selected.rows[0], {
-    status: "queued", picked_player_kbo_id: "69102", quota_reserved: false, source: null,
-  }, "선택값 persist + 최종답변 quota 재예약 상태");
+    status: "queued", picked_player_kbo_id: "69102", quota_reserved: false, source: null, attempts: 0,
+  }, "선택값 persist + 최종답변 quota 재예약 + selection phase attempts reset");
+  // picker가 5번째 처리에서 성공하고 prepare 직후 worker가 죽어도 due에 다시 잡혀야 한다.
+  const due = await db.query<{ message_id: number }>(
+    "select message_id from genius_question_jobs where message_id=1 and status='queued' and attempts < 5 and lease_until <= clock_timestamp()",
+  );
+  assert.deepEqual(due.rows.map((row) => Number(row.message_id)), [1], "attempts=5 picker selection crash recovery");
   await assert.rejects(
     () => db.exec("insert into public.genius_question_logs(match_path) values ('player_rag')"),
     /check constraint|23514/i,
