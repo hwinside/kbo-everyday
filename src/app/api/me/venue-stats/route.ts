@@ -49,6 +49,26 @@ const REGULAR_SEASON_SR_ID = "0";
 /** 정규 외 시리즈 — 다이어리에는 유지하되 팀 통계 제외 사유를 식별한다. */
 const NON_REGULAR_SEASON_SR_ID = "1,3,4,5,7,9";
 
+type VenueStatsRouteRuntimeDeps = {
+  getVerifiedUser: typeof getVerifiedUserFromRequest;
+  supabaseClient: typeof supabase;
+};
+
+const defaultRouteRuntimeDeps: VenueStatsRouteRuntimeDeps = {
+  getVerifiedUser: getVerifiedUserFromRequest,
+  supabaseClient: supabase,
+};
+let routeRuntimeDeps = defaultRouteRuntimeDeps;
+
+/** 테스트 전용 — actual GET 회귀가 네트워크 없이 인증·DB 경계를 통과하게 한다. */
+export function __setVenueStatsRouteRuntimeDepsForTests(
+  overrides: Partial<VenueStatsRouteRuntimeDeps> | null,
+): void {
+  routeRuntimeDeps = overrides
+    ? { ...defaultRouteRuntimeDeps, ...overrides }
+    : defaultRouteRuntimeDeps;
+}
+
 /** 팀코드 → teamId (parseGameTeamCodes가 쓰는 TEAM_ID_TO_CODE의 역맵) — P0-2 teams exact 대조용. */
 const TEAM_CODE_TO_ID = new Map<string, number>(
   Object.entries(TEAM_ID_TO_CODE).map(([id, code]) => [code, Number(id)]),
@@ -446,7 +466,7 @@ export function __expireSeasonAggregatesCache(season: number): void {
 
 /** 본인 전용 — userId 파라미터를 받지 않아 공개 프로필 조회로 확장되지 않는다 (§9 401·타인 차단). */
 export async function GET(req: NextRequest) {
-  const verified = await getVerifiedUserFromRequest(req);
+  const verified = await routeRuntimeDeps.getVerifiedUser(req);
   if (!verified) {
     return NextResponse.json({ error: "인증이 필요합니다" }, { status: 401 });
   }
@@ -457,10 +477,11 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "season 형식 오류" }, { status: 400 });
   }
   const seasonSupported = requestedSeason === SUPPORTED_SEASON;
+  const routeSupabase = routeRuntimeDeps.supabaseClient;
 
   // query-guard: bounded -- 본인 시즌 직관 기록 상한 200경기 (기존 venue-attendance route와 동일)
   const [attendanceResult, profileResult] = await Promise.all([
-    supabase
+    routeSupabase
       .from("venue_attendance")
       .select(
         "id, game_id, game_date, favorite_team_id_snapshot, stadium_name, recorded_at, source",
@@ -472,7 +493,7 @@ export async function GET(req: NextRequest) {
       .lt("game_date", `${requestedSeason + 1}-01-01`)
       .order("game_date", { ascending: false })
       .limit(200),
-    supabase
+    routeSupabase
       .from("profiles")
       .select("favorite_players, team_id")
       .eq("id", verified.user.id)
