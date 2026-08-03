@@ -260,15 +260,15 @@ export function isSupportedRuleTermQuestion(
     dismissesDetectedBaseballTerm(question, [...BASEBALL_WORDS, ...RULE_TERM_HINT_WORDS])
   ) return false;
   const exactGlossaryMatch = matchGlossary(glossary, question) !== null;
-  const mentionsRuleHint = RULE_TERM_HINT_WORDS.some((word) => compact.includes(word));
+  const mentionsRuleHint = RULE_TERM_HINT_WORDS.some((word) => mentionsSignalWord(tokens, word));
   const mentionsSpecificRuleHint = RULE_TERM_HINT_WORDS.some((word) =>
-    !GENERIC_RULE_TERM_HINTS.has(word) && compact.includes(word)
+    !GENERIC_RULE_TERM_HINTS.has(word) && mentionsSignalWord(tokens, word)
   );
-  const mentionsRuleScopeSignal = RULE_SCOPE_SIGNAL_WORDS.some((word) => compact.includes(word));
+  const mentionsRuleScopeSignal = RULE_SCOPE_SIGNAL_WORDS.some((word) => mentionsSignalWord(tokens, word));
   const mentionsSpecificRuleSignal = RULE_SCOPE_SIGNAL_WORDS.some((word) =>
-    !GENERIC_RULE_SCOPE_WORDS.has(word) && compact.includes(word)
+    !GENERIC_RULE_SCOPE_WORDS.has(word) && mentionsSignalWord(tokens, word)
   );
-  const mentionsRuleActor = RULE_ACTOR_WORDS.some((word) => compact.includes(word));
+  const mentionsRuleActor = RULE_ACTOR_WORDS.some((word) => mentionsSignalWord(tokens, word));
   const mentionsRoleRule = compact.includes("역할") && (
     mentionsRuleActor ||
     /^(?:역할이바뀌면어떻게돼(?:요)?|역할과포지션차이가?뭐야(?:요)?|역할이?(?:뭐야|뭔가요|궁금해))[?!.]*$/.test(compact)
@@ -280,7 +280,7 @@ export function isSupportedRuleTermQuestion(
     mentionsSpecificRuleHint ||
     mentionsSpecificRuleSignal ||
     mentionsRoleRule ||
-    BASEBALL_WORDS.some((word) => compact.includes(word)) ||
+    BASEBALL_WORDS.some((word) => mentionsSignalWord(tokens, word)) ||
     TEAM_WORDS.some((word) => tokenMatches(tokens, word)) ||
     hasPlayerReference(tokens, players);
 
@@ -424,6 +424,125 @@ function tokenMatches(tokens: string[], word: string): boolean {
     if (token === needle) return true;
     return TOKEN_TRIM_SUFFIXES.some((suffix) => token === `${needle}${suffix}`);
   });
+}
+
+/**
+ * 야구 신호어의 토큰 경계 매칭 (삼순 12차 P0).
+ *
+ * `compact.includes("아웃")`은 `아웃도어`, `도루`는 `도루묵`, `세이프`는 `세이프티`,
+ * `번트`는 `번트케이크`까지 야구 신호로 오인해 범위 밖 질문을 provider/LLM/cache 로 흘렸다.
+ * 그래서 신호어는 토큰 경계에서만 인정한다. 다만 `잔루만루는` 같은 복합 축약형을 계속
+ * 살리기 위해, 토큰이 **야구 폐쇄 어휘만으로 완전히 분해될 때**에 한해 결합형도 허용한다.
+ * 어휘 밖 잔여물(`도어`·`묵`·`티`·`케이크`)이 남으면 매칭하지 않는다.
+ */
+const BASEBALL_VOCABULARY: readonly string[] = Array.from(new Set([
+  ...BASEBALL_WORDS,
+  ...RULE_TERM_HINT_WORDS,
+  ...RULE_SCOPE_SIGNAL_WORDS,
+  ...RULE_ACTOR_WORDS,
+].map((word) => word.toLowerCase())));
+
+function stripTokenSuffix(token: string): string[] {
+  const cores = [token];
+  for (const suffix of TOKEN_TRIM_SUFFIXES) {
+    if (token.length > suffix.length && token.endsWith(suffix)) {
+      cores.push(token.slice(0, token.length - suffix.length));
+    }
+  }
+  return cores;
+}
+
+/**
+ * 신호어 뒤에 붙을 수 있는 **문법 꺼리**의 폐쇄 집합.
+ *
+ * 경계 검사를 순수 토큰 일치로만 두면 `만루면`·`잔루만루가뭔데`처럼 조사·어미가 붙은
+ * 정상 질문까지 닫힌다. 반대로 아무 잔여물이나 허용하면 `아웃+도어`·`도루+묵`이 다시 새다.
+ * 그래서 잔여물은 이 폐쇄 문법 단위로 **완전히 분해될 때만** 허용한다.
+ * `도어`는 `도`+`어`로 쪼개지지 않고(`어`가 비문법 단위), `묵`·`티`·`케이크`도 없다.
+ */
+const GRAMMATICAL_TAIL_UNITS: readonly string[] = [
+  "은", "는", "이", "가", "을", "를", "에", "의", "도", "만", "과", "와",
+  "으로", "로", "에서", "에게", "한테", "부터", "까지", "처럼", "보다",
+  "랑", "이랑", "나", "이나", "야", "이야", "요", "이에요", "예요",
+  "면", "이면", "라면", "이라면", "라서", "이라서", "라고", "이라고",
+  "이라는", "이란", "란", "인데", "인가", "일때", "일수", "이며",
+  "뭔데", "뭐야", "뭐", "뭔가요", "뭐예요", "뭐임", "무슨", "뜻",
+  // 서로 붙는 서술 꺼리(`보크하면`·`번트대면`·`도루했을`). 명사 연속(`도어`·`묵`·`케이크`)은
+  // 이 집합에 없으므로 범위 밖 합성어는 여전히 닫힌다.
+  "하", "해", "한", "할", "함", "하면", "해도", "하고", "하는", "했", "했을", "하기",
+  "되", "돼", "된", "될", "됨", "되면", "돼도", "되고", "되는", "됐", "되나", "되죠",
+  "이다", "이고", "이지", "지", "다면", "이라도", "라도", "대면", "인지", "인가요",
+];
+
+function isGrammaticalTail(rest: string): boolean {
+  if (rest.length === 0) return true;
+  return GRAMMATICAL_TAIL_UNITS.some((unit) =>
+    rest.startsWith(unit) && isGrammaticalTail(rest.slice(unit.length))
+  );
+}
+
+/**
+ * `core`가 폐쇄 야구 어휘(+문법 꺼리)로만 분해되며 그 조각에 `needle`이 포함되는지.
+ * `잔루만루가뭔데` = 잔루 + 만루 + (가뭔데) → 허용, `아웃도어` = 아웃 + (도어) → 차단.
+ */
+function decomposesWithNeedle(core: string, needle: string): boolean {
+  const seen = new Map<string, boolean>();
+  const walk = (rest: string, usedNeedle: boolean): boolean => {
+    if (usedNeedle && isGrammaticalTail(rest)) return true;
+    if (rest.length === 0) return false;
+    const key = `${rest}|${usedNeedle ? 1 : 0}`;
+    const cached = seen.get(key);
+    if (cached !== undefined) return cached;
+    let ok = false;
+    for (const word of BASEBALL_VOCABULARY) {
+      if (!rest.startsWith(word)) continue;
+      if (walk(rest.slice(word.length), usedNeedle || word === needle)) {
+        ok = true;
+        break;
+      }
+    }
+    seen.set(key, ok);
+    return ok;
+  };
+  return walk(core, false);
+}
+
+/**
+ * `순위 결정 규칙`처럼 복합 신호어(`순위결정`·`비디오판독`·`희생플라이`)를 띄어쓰면 단일
+ * 토큰으로 잡히지 않는다. 그래서 인접 토큰 창(최대 3)을 결합해서도 매칭한다. 결합은
+ * 연속된 토큰에만 적용되므로 `아웃도어`처럼 한 토큰 안에서 어휘 밖 잔여물이 남는
+ * 경우는 여전히 닫힌다.
+ */
+const MAX_SIGNAL_TOKEN_SPAN = 3;
+
+/**
+ * 결함주입 전용 스위치 (게이트 검증력 증명용).
+ *
+ * `BASEBALL_QA_MUTATE_SUBSTRING_SCOPE=1` 이면 토큰 경계 검사를 과거의 `includes()` 부분문자열
+ * 매칭으로 되돌린다. 이때 `아웃도어`·`도루묵`·`세이프티`·`번트케이크`가 다시 야구 질문으로
+ * 오인되어 actual matrix 가 RED 로 죽어야 한다. RED 가 안 나면 그 게이트는 false-green 이다.
+ * 운영 경로에는 영향이 없고(기본값 off), QA 프로세스에서만 사용한다.
+ */
+const MUTATE_SUBSTRING_SCOPE = process.env.BASEBALL_QA_MUTATE_SUBSTRING_SCOPE === "1";
+
+function mentionsSignalWord(tokens: string[], word: string): boolean {
+  const needle = word.toLowerCase();
+  if (MUTATE_SUBSTRING_SCOPE) {
+    return tokens.join("").includes(needle);
+  }
+  for (let start = 0; start < tokens.length; start++) {
+    const span = Math.min(MAX_SIGNAL_TOKEN_SPAN, tokens.length - start);
+    for (let size = 1; size <= span; size++) {
+      const window = tokens.slice(start, start + size);
+      const head = window.slice(0, size - 1).join("");
+      const matched = stripTokenSuffix(window[size - 1]).some((tail) => {
+        const core = `${head}${tail}`;
+        return core === needle || decomposesWithNeedle(core, needle);
+      });
+      if (matched) return true;
+    }
+  }
+  return false;
 }
 
 /**
