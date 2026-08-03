@@ -32,6 +32,7 @@ export interface Post {
   // joined
   nickname?: string;
   team_id?: number;
+  avatar_url?: string;
   grade?: string;
   points?: number;
 }
@@ -63,9 +64,10 @@ export function usePosts(boardType: string, boardId: string, contentType: "gener
 
     async function fetchPosts() {
       setLoading(true);
+      // query-guard: bounded -- 게시판 목록은 최신 30개만 제공하는 의도된 단일 UI 페이지다.
       const { data } = await supabase
         .from("posts")
-        .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, game_id, player_tags, hashtags, author_team_id_snapshot, seat_info, click_view_count, impression_view_count, profiles(nickname, team_id, grade, points)")
+        .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, game_id, player_tags, hashtags, author_team_id_snapshot, seat_info, click_view_count, impression_view_count, profiles(nickname, team_id, grade, points, avatar_url)")
         .eq("board_type", boardType)
         .eq("board_id", boardId)
         .eq("content_type", contentType)
@@ -85,6 +87,7 @@ export function usePosts(boardType: string, boardId: string, contentType: "gener
             video_urls: ((p as Record<string, unknown>).video_urls ?? []) as string[],
             nickname: prof?.nickname as string | undefined,
             team_id: (snap ?? (prof?.team_id as number | undefined)) as number | undefined,
+            avatar_url: prof?.avatar_url as string | undefined,
             grade: prof?.grade as string | undefined,
             points: (prof?.points as number) ?? 0,
           };
@@ -99,9 +102,10 @@ export function usePosts(boardType: string, boardId: string, contentType: "gener
 
   const reload = useCallback(async () => {
     setLoading(true);
+    // query-guard: bounded -- 새로고침도 동일하게 최신 30개 단일 UI 페이지만 다시 읽는다.
     const { data } = await supabase
       .from("posts")
-      .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, game_id, player_tags, hashtags, author_team_id_snapshot, seat_info, profiles(nickname, team_id, grade, points)")
+      .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, game_id, player_tags, hashtags, author_team_id_snapshot, seat_info, profiles(nickname, team_id, grade, points, avatar_url)")
       .eq("board_type", boardType)
       .eq("board_id", boardId)
       .eq("content_type", contentType)
@@ -120,6 +124,7 @@ export function usePosts(boardType: string, boardId: string, contentType: "gener
           video_urls: ((p as Record<string, unknown>).video_urls ?? []) as string[],
           nickname: prof?.nickname as string | undefined,
           team_id: (snap ?? (prof?.team_id as number | undefined)) as number | undefined,
+          avatar_url: prof?.avatar_url as string | undefined,
           grade: prof?.grade as string | undefined,
           points: (prof?.points as number) ?? 0,
         };
@@ -144,7 +149,7 @@ export function usePostDetail(postId: number) {
       // 게시글
       const { data: p } = await supabase
         .from("posts")
-        .select("*, profiles(nickname, team_id, grade)")
+        .select("*, profiles(nickname, team_id, grade, avatar_url)")
         .eq("id", postId)
         .neq("is_hidden", true) // 신고 블라인드(is_hidden=true) 글은 상세에서도 fail-closed — 목록 쿼리와 동일. poll 본문 우회 노출 차단.
         .maybeSingle(); // 삭제/미존재 글은 정상 no-row — .single()의 PGRST116 406을 유발하지 않는다.
@@ -158,6 +163,7 @@ export function usePostDetail(postId: number) {
           video_urls: (p as Record<string, unknown>).video_urls as string[] ?? [],
           nickname: prof?.nickname as string | undefined,
           team_id: (snap ?? (prof?.team_id as number | undefined)) as number | undefined,
+          avatar_url: prof?.avatar_url as string | undefined,
           grade: prof?.grade as string | undefined,
         });
       }

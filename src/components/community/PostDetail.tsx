@@ -25,6 +25,7 @@ import { isImageComment, prepareCommentImageForUpload } from "@/lib/community/co
 import LoginSheet from "@/components/auth/LoginSheet";
 import ShareSheet, { type ShareSheetPost } from "@/components/community/ShareSheet";
 import PostViewBadge from "@/components/community/PostViewBadge";
+import CommunityAuthorHeader from "@/components/community/CommunityAuthorHeader";
 import PollBlock from "@/components/community/PollBlock";
 import { trackPostClick } from "@/lib/community/view-tracker";
 import { useBlockedIds, blockUserById } from "@/lib/supabase/useBlock";
@@ -474,47 +475,46 @@ export default function PostDetail({ postId }: PostDetailProps) {
 
       {/* Post */}
       <div className="px-5 py-4">
-        {/* 작성자 헤더 2단 — 1행은 아이디 전용(닉네임이 길어도 잘리지 않게 가로 전체 사용),
-            2행은 쪽지/시간/조회수/더보기 등 메타. 한 줄에 다 넣으면 닉네임만 truncate 되던 문제(2026-08-03). */}
-        <div className="mb-3">
-          <div className="flex items-center gap-2 whitespace-nowrap">
-            {post.team_id ? <div className="shrink-0"><TeamBadge teamId={post.team_id} size="xs" /></div> : null}
-            <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-text-primary cursor-pointer hover:text-accent" onClick={() => post.author_id && router.push(`/profile/${post.author_id}`)}>{post.nickname || "익명"}</span>
-            {post.grade === 'staff' && (
-              <span className='shrink-0 px-1.5 py-0.5 text-[10px] font-bold bg-accent/20 text-accent rounded-full'>운영팀</span>
-            )}
-          </div>
-          <div className="mt-1 flex items-center gap-2 whitespace-nowrap">
-            {post.author_id && user && post.author_id !== user.id && (
-              <DMButton targetUserId={post.author_id} size="sm" className="shrink-0" />
-            )}
-            <span className="shrink-0 text-sm text-text-tertiary">
-              {timeAgo(post.created_at)}{(postPatch.updated_at || post.updated_at) ? " · 수정됨" : ""}
-            </span>
-            <PostViewBadge
-              clickCount={post.click_view_count}
-              impressionCount={post.impression_view_count}
-              className="shrink-0"
-            />
-            <div className="ml-auto shrink-0">
-              <PostActionsMenu
-                user={user}
-                postEditing={postEditing}
-                authorId={post.author_id}
-                userId={user?.id}
-                canDeleteAny={canDeleteAnyPost}
-                open={postMenuOpen}
-                disabled={deletingPost}
-                onToggle={() => setPostMenuOpen((v) => !v)}
-                onClose={() => setPostMenuOpen(false)}
-                onEdit={startPostEdit}
-                onReport={() => openReport({ type: "post", id: post.id })}
-                onBlock={() => handleBlockUser(post.author_id, { type: "post", id: post.id })}
-                onDelete={handleDeletePost}
+        <CommunityAuthorHeader
+          className="mb-3"
+          nickname={post.nickname}
+          teamId={post.team_id}
+          avatarUrl={post.avatar_url}
+          profileHref={post.author_id ? `/profile/${post.author_id}` : null}
+          isStaff={post.grade === "staff"}
+          meta={
+            <>
+              {post.author_id && user && post.author_id !== user.id && (
+                <DMButton targetUserId={post.author_id} size="sm" className="shrink-0" />
+              )}
+              <span className="shrink-0 text-xs text-text-tertiary">
+                {timeAgo(post.created_at)}{(postPatch.updated_at || post.updated_at) ? " · 수정됨" : ""}
+              </span>
+              <PostViewBadge
+                clickCount={post.click_view_count}
+                impressionCount={post.impression_view_count}
+                className="shrink-0"
               />
-            </div>
-          </div>
-        </div>
+            </>
+          }
+          menu={
+            <PostActionsMenu
+              user={user}
+              postEditing={postEditing}
+              authorId={post.author_id}
+              userId={user?.id}
+              canDeleteAny={canDeleteAnyPost}
+              open={postMenuOpen}
+              disabled={deletingPost}
+              onToggle={() => setPostMenuOpen((v) => !v)}
+              onClose={() => setPostMenuOpen(false)}
+              onEdit={startPostEdit}
+              onReport={() => openReport({ type: "post", id: post.id })}
+              onBlock={() => handleBlockUser(post.author_id, { type: "post", id: post.id })}
+              onDelete={handleDeletePost}
+            />
+          }
+        />
 
         {/* 미디어 — 사진 → 글 순서(피드 PhotoFeed와 동일). 인스타식 캐러셀(스와이프+점+더블탭 좋아요).
             본문 px-5 패딩 밖으로 -mx-5 full-bleed. mb-4로 아래 본문과 간격(위 간격은 작성자행 mb-3). */}
@@ -686,34 +686,28 @@ export default function PostDetail({ postId }: PostDetailProps) {
                 return (
                   <div key={c.id} className={`flex gap-2 ${isReply ? "pl-10" : ""}`}>
                     {avatarPath ? (
-                      <div className={`${isReply ? "w-6 h-6" : "w-8 h-8"} rounded-full overflow-hidden flex-shrink-0 bg-bg-tertiary cursor-pointer`} onClick={() => c.author_id && router.push(`/profile/${c.author_id}`)}>
-                        <img src={avatarPath} alt="" className="w-full h-full" />
+                      <div className="h-10 w-10 shrink-0 cursor-pointer overflow-hidden rounded-full border border-white/20 bg-bg-tertiary" onClick={() => c.author_id && router.push(`/profile/${c.author_id}`)}>
+                        <img src={avatarPath} alt="" className="h-full w-full object-cover" />
                       </div>
                     ) : (
                       <div
-                        className={`${isReply ? "w-6 h-6 text-[10px]" : "w-8 h-8 text-xs"} rounded-full flex items-center justify-center font-bold text-white flex-shrink-0 cursor-pointer`}
-                        style={{ backgroundColor: cmtTeam ? getTeamBgColor(cmtTeam) : '#6B7280' }}
+                        className="flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-full border border-white/20 bg-bg-tertiary text-sm font-bold text-text-primary"
                         onClick={() => c.author_id && router.push(`/profile/${c.author_id}`)}
                       >
                         {(c.nickname || "익")[0]}
                       </div>
                     )}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <span className={`${isReply ? "text-xs" : "text-sm"} font-semibold text-text-primary cursor-pointer hover:text-accent`} onClick={() => c.author_id && router.push(`/profile/${c.author_id}`)}>{c.nickname || "익명"}</span>
-                        {cmtTeam && (
-                          <span
-                            className="text-[10px] font-bold px-1.5 py-0.5 rounded-md text-white"
-                            style={{ backgroundColor: getTeamBgColor(cmtTeam) }}
-                          >
-                            {cmtTeam.shortName}
-                          </span>
-                        )}
-                        <span className="text-xs text-text-tertiary ml-auto flex-shrink-0">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex min-w-0 items-center gap-1.5 whitespace-nowrap">
+                        <span className="min-w-0 flex-1 truncate text-[15px] font-semibold text-text-primary cursor-pointer hover:text-accent" onClick={() => c.author_id && router.push(`/profile/${c.author_id}`)}>{c.nickname || "익명"}</span>
+                      </div>
+                      <div className="mt-1 flex min-w-0 items-center gap-1.5 whitespace-nowrap">
+                        {cmtTeam && <TeamBadge teamId={cmtTeam.id} size="xs" suffix="팬" />}
+                        <span className="shrink-0 text-xs text-text-tertiary">
                           {timeAgo(c.created_at)}{isCmtEdited ? " · 수정됨" : ""}
                         </span>
                         {user && !isCmtEditing && (
-                          <div className="relative flex-shrink-0">
+                          <div className="relative ml-auto flex-shrink-0">
                             <button
                               onClick={(e) => { e.stopPropagation(); setCmtMenuOpenId(prev => prev === c.id ? null : c.id); }}
                               className="p-1 text-text-tertiary hover:text-text-primary"

@@ -17,6 +17,7 @@ import CommentImageLightbox from "@/components/community/CommentImageLightbox";
 import { isImageComment, prepareCommentImageForUpload } from "@/lib/community/comment-media";
 import { normalizeForFloodKey } from "@/lib/utils/normalize-message";
 import ReportSheet from "@/components/community/ReportSheet";
+import TeamBadge from "@/components/ui/TeamBadge";
 
 interface CommentSheetProps {
   isOpen: boolean;
@@ -627,39 +628,33 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
     return (
       <div key={comment.id} className={`flex gap-2 ${isReply ? "pl-10" : ""}`}>
         {avatarPath ? (
-          <div className={`${isReply ? "w-6 h-6" : "w-8 h-8"} rounded-full overflow-hidden flex-shrink-0 bg-bg-tertiary cursor-pointer`} onClick={goProfile}>
-            <img src={avatarPath} alt="" className="w-full h-full" />
+          <div className="h-10 w-10 shrink-0 cursor-pointer overflow-hidden rounded-full border border-white/20 bg-bg-tertiary" onClick={goProfile}>
+            <img src={avatarPath} alt="" className="h-full w-full object-cover" />
           </div>
         ) : (
           <div
-            className={`${isReply ? "w-6 h-6 text-[10px]" : "w-8 h-8 text-xs"} rounded-full flex items-center justify-center font-bold text-white flex-shrink-0 cursor-pointer`}
-            style={{ backgroundColor: commentTeam ? getTeamBgColor(commentTeam) : '#6B7280' }}
+            className="flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-full border border-white/20 bg-bg-tertiary text-sm font-bold text-text-primary"
             onClick={goProfile}
           >
             {(comment.nickname || "익")[0]}
           </div>
         )}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-1.5">
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-center gap-1.5 whitespace-nowrap">
             <span
-              className={`${isReply ? "text-xs" : "text-sm"} font-semibold text-text-primary cursor-pointer hover:text-accent`}
+              className="min-w-0 flex-1 truncate text-[15px] font-semibold text-text-primary cursor-pointer hover:text-accent"
               onClick={goProfile}
             >
               {comment.nickname || "익명"}
             </span>
-            {commentTeam && (
-              <span
-                className="text-[10px] font-bold px-1.5 py-0.5 rounded-md text-white"
-                style={{ backgroundColor: getTeamBgColor(commentTeam) }}
-              >
-                {commentTeam.shortName}
-              </span>
-            )}
-            <span className="text-[11px] text-text-tertiary ml-auto flex-shrink-0">
+          </div>
+          <div className="mt-1 flex min-w-0 items-center gap-1.5 whitespace-nowrap">
+            {commentTeam && <TeamBadge teamId={commentTeam.id} size="xs" suffix="팬" />}
+            <span className="shrink-0 text-[11px] text-text-tertiary">
               {timeAgo(comment.created_at)}{isEdited ? " · 수정됨" : ""}
             </span>
             {(canDelete || canReport) && !isEditing && (
-              <div className="relative flex-shrink-0">
+              <div className="relative ml-auto flex-shrink-0">
                 <button
                   onClick={(e) => {
                     e.stopPropagation();

@@ -1,22 +1,5 @@
 #!/usr/bin/env node
-/**
- * 게시글 상세 작성자 헤더 — 390px 실제 DOM 렌더 회귀.
- *
- * 소스 문자열 검사가 아니라 실제 브라우저 레이아웃을 assert 한다.
- * (삼순 NO-GO 2026-08-02: 바깥 flex 를 제거해도 문자열 스모크가 통과했음)
- *
- * 2026-08-03 계약 변경: 한 행에 아이디+메타를 다 넣으면 닉네임만 잘렸다(하린아빠 제보).
- * 이제 1행=아이디 전용 / 2행=쪽지·시간·조회수·더보기 다. 핵심 assert 는
- * "실제 닉네임 길이에서 말줄임이 발생하지 않는다"다.
- *
- * 결함주입(mutation) 환경변수 — 각각 RED 여야 한다:
- *   POST_HEADER_MUTATE_ONELINE=1     2단을 다시 한 행으로 병합(회귀 재현) → FAIL 10
- *   POST_HEADER_MUTATE_TRUNCATE=1    닉네임 truncate/min-w-0 제거 → FAIL 2
- *
- * (구) NOWRAP/SHRINK mutation 은 제거했다. 2단 분리 후에는 320px 에서도 메타 행이
- * 남아돌아 두 클래스를 지워도 RED 가 안 난다 — 검출력 없는 mutation 을 남겨두면
- * 그 자체가 false-green 표면이라 계약에서 물린다(클래스는 방어적으로 유지).
- */
+/** 피드·상세·댓글 공용 작성자 헤더 — 320/390px 실제 DOM 회귀. */
 import { build } from "esbuild";
 import postcss from "postcss";
 import tailwind from "@tailwindcss/postcss";
@@ -27,382 +10,49 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 
 const REQUIRE_BROWSER = process.env.POST_HEADER_REQUIRE_BROWSER === "1";
-let chromiumPath = null;
-try {
-  chromiumPath = playwright.chromium.executablePath();
-} catch {
-  chromiumPath = null;
-}
+const chromiumPath = playwright.chromium.executablePath();
 if (!chromiumPath || !existsSync(chromiumPath)) {
-  const detail = chromiumPath ? `not found at ${chromiumPath}` : "executablePath unavailable";
-  if (REQUIRE_BROWSER) {
-    console.error(`FAIL: playwright chromium 사용 불가(fail-closed) — ${detail}`);
-    process.exit(1);
-  }
-  console.log(`SKIP: playwright chromium 사용 불가 — ${detail}`);
-  process.exit(0);
+  console.log(`${REQUIRE_BROWSER ? "FAIL" : "SKIP"}: playwright chromium 사용 불가`);
+  process.exit(REQUIRE_BROWSER ? 1 : 0);
 }
-
 const ROOT = process.cwd();
-const GEN = mkdtempSync(resolve(tmpdir(), "post-header-"));
-
-/* ------------------------------------------------------------------ *
- * 1) 대상 컴포넌트 소스 + 결함주입
- * ------------------------------------------------------------------ */
-const DETAIL_PATH = resolve(ROOT, "src/components/community/PostDetail.tsx");
-let detailSource = readFileSync(DETAIL_PATH, "utf8");
-
-const ROW1_OPEN = '<div className="flex items-center gap-2 whitespace-nowrap">';
-const ROW2_OPEN = '<div className="mt-1 flex items-center gap-2 whitespace-nowrap">';
-if (detailSource.split(ROW1_OPEN).length - 1 !== 1 || detailSource.split(ROW2_OPEN).length - 1 !== 1) {
-  console.error("FAIL: 작성자 헤더 2단 컨테이너를 특정하지 못함(문구 변경 시 이 스모크를 함께 갱신할 것)");
-  process.exit(1);
+const GEN = mkdtempSync(resolve(tmpdir(), "community-author-header-"));
+let source = readFileSync(resolve(ROOT, "src/components/community/CommunityAuthorHeader.tsx"), "utf8");
+const row1 = 'className="flex min-w-0 items-center gap-1.5 whitespace-nowrap"';
+const row2 = 'className="mt-1 flex min-w-0 items-center gap-1.5 whitespace-nowrap"';
+const nick = 'className="min-w-0 flex-1 truncate text-[15px] font-semibold text-text-primary active:opacity-70"';
+if (![row1, row2, nick].every((x) => source.includes(x))) {
+  console.error("FAIL: 공용 헤더 계약 지점을 특정하지 못함"); process.exit(1);
 }
-
-const NICKNAME_CLASS = 'className="min-w-0 flex-1 truncate text-[13px] font-semibold text-text-primary cursor-pointer hover:text-accent"';
-if (detailSource.split(NICKNAME_CLASS).length - 1 !== 1) {
-  console.error("FAIL: 닉네임 span 클래스를 특정하지 못함");
-  process.exit(1);
-}
-
-const mutations = [];
 if (process.env.POST_HEADER_MUTATE_ONELINE === "1") {
-  // 1행 닫힘 </div> 와 2행 여는 태그를 지워 두 행을 하나로 합친다(회귀 재현).
-  const merged = detailSource.replace(
-    /<\/div>\s*\n\s*<div className="mt-1 flex items-center gap-2 whitespace-nowrap">/,
-    "",
-  );
-  if (merged === detailSource) {
-    console.error("FAIL: ONELINE mutation 적용 지점을 찾지 못함");
-    process.exit(1);
-  }
-  detailSource = merged;
-  mutations.push("2단→1행 병합");
+  source = source
+    .replace('className="min-w-0 flex-1"', 'className="flex min-w-0 flex-1 items-center gap-1.5"')
+    .replace(row1, 'className="contents"')
+    .replace(row2, 'className="contents"');
 }
 if (process.env.POST_HEADER_MUTATE_TRUNCATE === "1") {
-  detailSource = detailSource.replace(
-    NICKNAME_CLASS,
-    'className="text-[13px] font-semibold text-text-primary cursor-pointer hover:text-accent"',
-  );
-  mutations.push("닉네임 truncate/min-w-0 제거");
+  source = source.replace(nick, 'className="shrink-0 whitespace-nowrap text-[15px] font-semibold text-text-primary active:opacity-70"');
 }
-
-const detailEntry = resolve(GEN, "PostDetail-under-test.tsx");
-writeFileSync(detailEntry, detailSource);
-
-/* ------------------------------------------------------------------ *
- * 2) 외부 의존 스텁 — 헤더 레이아웃과 무관한 네트워크/네이티브만 대체
- *    (헤더를 구성하는 TeamBadge/DMButton/PostViewBadge/PostActionsMenu 는 실물 사용)
- * ------------------------------------------------------------------ */
-const LONG_NICKNAME = process.env.POST_HEADER_NICKNAME ?? "가나다라마바사아자차카타";
-// 운영팀 배지까지 붙으면 행이 더 빡빡해져 shrink-0 가 실제로 일을 한다.
-const SCENARIOS = [
-  { name: "일반 작성자 390px", grade: "user", width: 390 },
-  { name: "운영팀 배지 동반 390px", grade: "staff", width: 390 },
-  // 최소폭 단말(320px)에서는 2행 메타가 빡빡해져 nowrap/shrink-0 가 실제로 일을 한다.
-  { name: "운영팀 배지 동반 320px", grade: "staff", width: 320 },
-];
-
-writeFileSync(resolve(GEN, "auth.jsx"), `
-const AUTH={
-  user:{id:"viewer-qa",email:"post-header-qa@example.invalid"},
-  profile:{nickname:"뷰어",team_id:1,avatar_url:null,grade:"user"},
-  loading:false,
-  refreshProfile:async()=>{},
-  signOut:async()=>{}
-};
-export const useAuth=()=>AUTH;`);
-
-writeFileSync(resolve(GEN, "usePosts.js"), `
-import {useState} from "react";
-const NICKNAME=${JSON.stringify(LONG_NICKNAME)};
-const POST={
-  id:3832,
-  author_id:"author-qa",
-  board_type:"free",
-  board_id:"free",
-  content_type:"general",
-  title:"작성자 헤더 2단 회귀",
-  content:"본문",
-  image_urls:[],
-  video_urls:[],
-  like_count:0,
-  comment_count:0,
-  created_at:new Date(Date.now()-3600*1000).toISOString(),
-  updated_at:null,
-  click_view_count:12345,
-  impression_view_count:6789,
-  nickname:NICKNAME,
-  team_id:1,
-  grade:new URLSearchParams(window.location.search).get("grade")||"user"
-};
-export function usePostDetail(){
-  const [post]=useState(POST);
-  const [comments,setComments]=useState([]);
-  const [liked,setLiked]=useState(false);
-  return {post,comments,loading:false,liked,setLiked,setComments};
-}
-export const createComment=async()=>{};
-export const toggleLike=async()=>{};
-export const toggleCommentLike=async()=>{};
-export const updatePost=async()=>{};
-export const deletePost=async()=>{};
-export const updateComment=async()=>{};
-export const deleteComment=async()=>{};
-export const uploadCommentImage=async()=>"";`);
-
-writeFileSync(resolve(GEN, "client.js"), `
-export const supabase={auth:{getSession:async()=>({data:{session:null}}),getUser:async()=>({data:{user:null}})}};
-export async function getSafeSession(){return null;}`);
-writeFileSync(resolve(GEN, "useBlock.js"), `
-export const useBlockedIds=()=>({blockedIds:new Set(),refresh:async()=>{}});
-export const blockUserById=async()=>{};`);
-writeFileSync(resolve(GEN, "useDM.js"), `
-export const getExistingConversation=async()=>null;`);
-writeFileSync(resolve(GEN, "view-tracker.js"), `
-export const trackPostClick=()=>{};
-export const currentViewerKey=()=>"qa";`);
-writeFileSync(resolve(GEN, "navigation.js"), `
-export const useRouter=()=>({push:()=>{},replace:()=>{},back:()=>{}});
-export const usePathname=()=>"/community/free/3832";
-export const useSearchParams=()=>new URLSearchParams();`);
-writeFileSync(resolve(GEN, "image.jsx"), `
-export default function Image(p){const{fill,priority,unoptimized,...rest}=p;return <img {...rest}/>;}`);
-writeFileSync(resolve(GEN, "link.jsx"), `
-export default function Link({href,children,...props}){return <a href={href} {...props}>{children}</a>;}`);
-writeFileSync(resolve(GEN, "motion.jsx"), `
-import React from "react";
-const strip=({initial,animate,exit,transition,whileTap,whileHover,layout,variants,...rest})=>rest;
-const make=(tag)=>React.forwardRef((props,ref)=>React.createElement(tag,{...strip(props),ref}));
-export const motion=new Proxy({},{get:(_,tag)=>make(tag)});
-export const AnimatePresence=({children})=>children;`);
-writeFileSync(resolve(GEN, "empty.jsx"), `
-export default function Empty(){return null;}`);
+writeFileSync(resolve(GEN, "CommunityAuthorHeader.tsx"), source);
+const testNickname = process.env.POST_HEADER_MUTATE_TRUNCATE === "1"
+  ? "가나다라마바사아자차카타파하거너더러머버서어저처커터퍼허"
+  : "밀어도안타당겨도안박재현";
+writeFileSync(resolve(GEN, "link.jsx"), `export default function Link({href,children,...p}){return <a href={href} {...p}>{children}</a>}`);
+writeFileSync(resolve(GEN, "image.jsx"), `export default function Image(p){const{unoptimized,priority,...q}=p;return <img {...q}/>} `);
 writeFileSync(resolve(GEN, "entry.jsx"), `
-import React from "react";
-import {createRoot} from "react-dom/client";
+import React from "react"; import {createRoot} from "react-dom/client";
 import {ThemeProvider} from "@/components/ThemeProvider";
-import PostDetail from "./PostDetail-under-test";
-createRoot(document.getElementById("root")).render(<ThemeProvider><PostDetail postId={3832}/></ThemeProvider>);`);
-
-await build({
-  entryPoints: [resolve(GEN, "entry.jsx")],
-  bundle: true,
-  format: "iife",
-  outfile: resolve(GEN, "bundle.js"),
-  jsx: "automatic",
-  absWorkingDir: ROOT,
-  nodePaths: [resolve(ROOT, "node_modules")],
-  tsconfig: resolve(ROOT, "tsconfig.json"),
-  define: { "process.env.NODE_ENV": '"production"' },
-  banner: { js: 'globalThis.process=globalThis.process||{env:{NODE_ENV:"production"}};' },
-  alias: {
-    "@/lib/supabase/AuthContext": resolve(GEN, "auth.jsx"),
-    "@/lib/supabase/usePosts": resolve(GEN, "usePosts.js"),
-    "@/lib/supabase/client": resolve(GEN, "client.js"),
-    "@/lib/supabase/useBlock": resolve(GEN, "useBlock.js"),
-    "@/lib/supabase/useDM": resolve(GEN, "useDM.js"),
-    "@/lib/community/view-tracker": resolve(GEN, "view-tracker.js"),
-    "@/components/auth/LoginSheet": resolve(GEN, "empty.jsx"),
-    "@/components/community/GifPicker": resolve(GEN, "empty.jsx"),
-    "@/components/community/ReportSheet": resolve(GEN, "empty.jsx"),
-    "@/components/community/ShareSheet": resolve(GEN, "empty.jsx"),
-    "@/components/community/CommentImageLightbox": resolve(GEN, "empty.jsx"),
-    "next/image": resolve(GEN, "image.jsx"),
-    "next/link": resolve(GEN, "link.jsx"),
-    "next/navigation": resolve(GEN, "navigation.js"),
-    "framer-motion": resolve(GEN, "motion.jsx"),
-  },
-  logLevel: "error",
-});
-
-/* ------------------------------------------------------------------ *
- * 3) Tailwind CSS — 실제 클래스가 실제 레이아웃을 만들어야 의미가 있다
- * ------------------------------------------------------------------ */
-const GLOBALS = resolve(ROOT, "src/styles/globals.css");
-const cssInput = `@source "${detailEntry}";\n${readFileSync(GLOBALS, "utf8")}`;
-const css = (await postcss([tailwind]).process(cssInput, { from: GLOBALS })).css;
-
-writeFileSync(resolve(GEN, "index.html"), `<!doctype html>
-<html lang="ko"><head><meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
-<style>${css}</style>
-<style>body{margin:0}</style>
-</head><body><div id="root"></div><script src="/bundle.js"></script></body></html>`);
-
-const server = createServer((req, res) => {
-  const file = req.url === "/bundle.js" ? "bundle.js" : "index.html";
-  res.writeHead(200, { "content-type": file.endsWith(".js") ? "text/javascript" : "text/html" });
-  res.end(readFileSync(resolve(GEN, file)));
-});
-await new Promise((r) => server.listen(0, r));
-const port = server.address().port;
-
-/* ------------------------------------------------------------------ *
- * 4) 실제 DOM assert
- * ------------------------------------------------------------------ */
-let failures = 0;
-let total = 0;
-function check(name, ok, detail) {
-  console.log(`${ok ? "  ✅" : "  ❌"} ${name}${detail ? ` — ${detail}` : ""}`);
-  if (!ok) failures += 1;
-}
-
-const browser = await playwright.chromium.launch();
-try {
- for (const scenario of SCENARIOS) {
-  console.log(`\n[${scenario.name}]`);
-  const page = await browser.newPage({ viewport: { width: scenario.width, height: 844 }, deviceScaleFactor: 2 });
-  page.on("console", (m) => { if (m.type() === "error") console.log(`[console] ${m.text()}`); });
-  page.on("pageerror", (e) => console.log(`[pageerror] ${e.message}`));
-  await page.goto(`http://127.0.0.1:${port}/?grade=${scenario.grade}`, { waitUntil: "networkidle" });
-  try {
-    await page.waitForSelector("text=작성자 헤더 2단 회귀", { timeout: 15000 });
-  } catch (err) {
-    console.log("[dom]", (await page.content()).slice(0, 1500));
-    throw err;
-  }
-
-  const probe = await page.evaluate((nickname) => {
-    const nick = Array.from(document.querySelectorAll("span")).find((el) => el.textContent === nickname);
-    if (!nick) return { error: "닉네임 요소를 찾지 못함" };
-    const header = nick.parentElement;               // 1행 = 아이디 행
-    const metaRow = header.nextElementSibling;       // 2행 = 메타 행
-    const hr = header.getBoundingClientRect();
-    // items-center 정렬이라 항목마다 높이가 달라 top 은 원래 다르다.
-    // "한 행"의 올바른 판정은 세로 구간이 서로 겹치는지(교집합 존재)다.
-    const children = Array.from(header.children).map((el) => {
-      const r = el.getBoundingClientRect();
-      return {
-        text: (el.textContent || "").slice(0, 12),
-        top: Math.round(r.top),
-        bottom: Math.round(r.bottom),
-        centerY: Math.round(r.top + r.height / 2),
-        width: Math.round(r.width),
-      };
-    });
-    const nickRect = nick.getBoundingClientRect();
-    const body = document.body.getBoundingClientRect();
-    const mr = metaRow ? metaRow.getBoundingClientRect() : null;
-    const metaChildren = metaRow
-      ? Array.from(metaRow.children).map((el) => {
-          const r = el.getBoundingClientRect();
-          return { text: (el.textContent || "").slice(0, 12), top: Math.round(r.top), bottom: Math.round(r.bottom), right: Math.round(r.right) };
-        })
-      : [];
-    return {
-      headerTop: Math.round(hr.top),
-      headerHeight: Math.round(hr.height),
-      headerClientWidth: header.clientWidth,
-      headerScrollWidth: header.scrollWidth,
-      headerDisplay: getComputedStyle(header).display,
-      children,
-      meta: mr
-        ? {
-            top: Math.round(mr.top),
-            height: Math.round(mr.height),
-            clientWidth: metaRow.clientWidth,
-            scrollWidth: metaRow.scrollWidth,
-            right: Math.round(mr.right),
-            children: metaChildren,
-          }
-        : null,
-      nick: {
-        clientWidth: nick.clientWidth,
-        scrollWidth: nick.scrollWidth,
-        height: Math.round(nickRect.height),
-        overflow: getComputedStyle(nick).textOverflow,
-      },
-      texts: {
-        dm: Boolean(Array.from(document.querySelectorAll("button")).find((b) => (b.textContent || "").includes("쪽지"))),
-        time: Boolean(Array.from(document.querySelectorAll("span")).find((s) => /(분|시간|일) 전/.test(s.textContent || ""))),
-        views: Boolean(Array.from(document.querySelectorAll("span")).find((s) => (s.getAttribute("title") || "") === "조회수")),
-        menu: document.querySelectorAll("svg.lucide-ellipsis, svg.lucide-more-horizontal").length > 0,
-      },
-      bodyScrollWidth: Math.round(document.documentElement.scrollWidth),
-      bodyClientWidth: Math.round(body.width),
-    };
-  }, LONG_NICKNAME);
-
-  if (probe.error) {
-    console.error(`FAIL: ${probe.error}`);
-    process.exit(1);
-  }
-
-  // 모든 항목의 세로 구간이 공통 y 를 공유하면 한 행이다(줄바뜼면 구간이 분리된다).
-  const overlapTop = Math.max(...probe.children.map((c) => c.top));
-  const overlapBottom = Math.min(...probe.children.map((c) => c.bottom));
-  check(
-    "1행(아이디 행)의 항목이 모두 같은 행",
-    probe.children.length >= 1 && (probe.children.length === 1 || overlapBottom > overlapTop),
-    `공통 세로구간 [${overlapTop}, ${overlapBottom}] / 항목 ${probe.children.length}개`,
-  );
-  check(
-    "1행이 가로로 넘치지 않음(scrollWidth === clientWidth)",
-    probe.headerScrollWidth === probe.headerClientWidth,
-    `scrollWidth=${probe.headerScrollWidth} clientWidth=${probe.headerClientWidth}`,
-  );
-  check(
-    "1행 높이가 한 줄(≤34px)",
-    probe.headerHeight > 0 && probe.headerHeight <= 34,
-    `height=${probe.headerHeight}`,
-  );
-  // 핵심 회귀: 실제 운영 최장 닉네임(12자)이 잘리면 안 된다.
-  check(
-    "닉네임이 잘리지 않음(scrollWidth === clientWidth)",
-    probe.nick.scrollWidth <= probe.nick.clientWidth,
-    `nick clientWidth=${probe.nick.clientWidth} scrollWidth=${probe.nick.scrollWidth}`,
-  );
-  check(
-    "닉네임 초과분 안전장치는 말줄임 유지",
-    probe.nick.overflow === "ellipsis",
-    `textOverflow=${probe.nick.overflow}`,
-  );
-  check(
-    "메타가 2행으로 분리됨(1행 아래)",
-    Boolean(probe.meta) && probe.meta.top >= probe.headerTop + probe.headerHeight,
-    probe.meta ? `row1 bottom=${probe.headerTop + probe.headerHeight} row2 top=${probe.meta.top}` : "메타 행 없음",
-  );
-  check(
-    "2행이 가로로 넘치지 않음",
-    Boolean(probe.meta) && probe.meta.scrollWidth === probe.meta.clientWidth,
-    probe.meta ? `scrollWidth=${probe.meta.scrollWidth} clientWidth=${probe.meta.clientWidth}` : "",
-  );
-  check(
-    "2행 항목이 모두 같은 행",
-    Boolean(probe.meta) &&
-      probe.meta.children.length > 1 &&
-      Math.min(...probe.meta.children.map((c) => c.bottom)) > Math.max(...probe.meta.children.map((c) => c.top)),
-    probe.meta ? `항목 ${probe.meta.children.length}개` : "",
-  );
-  check(
-    "더보기가 2행 우측 끝에 정렬",
-    Boolean(probe.meta) &&
-      probe.meta.children.length > 0 &&
-      Math.abs(probe.meta.children[probe.meta.children.length - 1].right - probe.meta.right) <= 1,
-    probe.meta ? `last right=${probe.meta.children[probe.meta.children.length - 1]?.right} row right=${probe.meta.right}` : "",
-  );
-  check("쪽지 버튼 노출 유지", probe.texts.dm);
-  check("작성 시간 노출 유지", probe.texts.time);
-  check("조회수 노출 유지", probe.texts.views);
-  check("더보기 메뉴 노출 유지", probe.texts.menu);
-  check(
-    "페이지 가로 스크롤 없음",
-    probe.bodyScrollWidth <= scenario.width,
-    `documentScrollWidth=${probe.bodyScrollWidth}`,
-  );
-
-  await page.close();
-  total += 12;
- }
-} finally {
-  await browser.close();
-  server.close();
-  rmSync(GEN, { recursive: true, force: true });
-}
-
-if (mutations.length) {
-  console.log(`\n[mutation] ${mutations.join(", ")}`);
-}
-console.log(failures === 0 ? `\nPASS — ${total}/${total}` : `\nFAIL ${failures} / exit 1`);
-process.exit(failures === 0 ? 0 : 1);
+import Header from "./CommunityAuthorHeader";
+const N=${JSON.stringify(testNickname)};
+function Item({kind}){const detail=kind==="detail";return <section data-kind={kind} className="w-full border-b border-border px-4 py-3"><Header nickname={N} teamId={1} avatarUrl={null} profileHref="/profile/qa" meta={<>{detail&&<button className="text-[10px]">쪽지</button>}<span className="text-[11px] text-text-tertiary">12시간 전</span>{detail&&<span className="text-[11px] text-text-tertiary">조회 120</span>}</>} menu={<button aria-label="더보기">•••</button>}/></section>}
+function App(){return <ThemeProvider><main className="w-full bg-bg-primary"><Item kind="feed"/><Item kind="detail"/><Item kind="comment"/></main></ThemeProvider>};createRoot(document.getElementById("root")).render(<App/>);`);
+await build({entryPoints:[resolve(GEN,"entry.jsx")],bundle:true,format:"iife",outfile:resolve(GEN,"bundle.js"),jsx:"automatic",absWorkingDir:ROOT,nodePaths:[resolve(ROOT,"node_modules")],tsconfig:resolve(ROOT,"tsconfig.json"),alias:{"next/link":resolve(GEN,"link.jsx"),"next/image":resolve(GEN,"image.jsx")},logLevel:"error"});
+const globals=resolve(ROOT,"src/styles/globals.css");
+const css=(await postcss([tailwind]).process(`@source "${resolve(GEN,"entry.jsx")}";\n@source "${resolve(GEN,"CommunityAuthorHeader.tsx")}";\n${readFileSync(globals,"utf8")}`,{from:globals})).css;
+writeFileSync(resolve(GEN,"index.html"),`<meta name="viewport" content="width=device-width"><style>${css}body{margin:0}</style><div id="root"></div><script src="/bundle.js"></script>`);
+const server=createServer((req,res)=>{const f=req.url==="/bundle.js"?"bundle.js":"index.html";res.setHeader("content-type",f.endsWith("js")?"text/javascript":"text/html");res.end(readFileSync(resolve(GEN,f)))});await new Promise(r=>server.listen(0,r));
+let failures=0,total=0;const check=(n,ok,d="")=>{total++;console.log(`  ${ok?"✅":"❌"} ${n}${d?` — ${d}`:""}`);if(!ok)failures++};
+const browser=await playwright.chromium.launch();
+try{for(const width of [390,320]){console.log(`\n[${width}px]`);const page=await browser.newPage({viewport:{width,height:844},deviceScaleFactor:2});await page.goto(`http://127.0.0.1:${server.address().port}`,{waitUntil:"networkidle"});const probes=await page.locator("section").evaluateAll((els)=>els.map((section)=>{const avatar=section.querySelector("a > span");const info=avatar?.parentElement?.nextElementSibling;const r1=info?.children[0],r2=info?.children[1];const n=r1?.querySelector("a,span");const ar=avatar?.getBoundingClientRect(),a=r1?.getBoundingClientRect(),b=r2?.getBoundingClientRect();return{kind:section.dataset.kind,avatar:[Math.round(ar?.width||0),Math.round(ar?.height||0)],nick:[n?.clientWidth||0,n?.scrollWidth||0],rows:[Math.round(a?.bottom||0),Math.round(b?.top||0)],team:(r2?.textContent||"").includes("LG 팬"),overflow:section.scrollWidth>section.clientWidth}}));for(const p of probes){check(`${p.kind} 아바타 40px`,p.avatar[0]===40&&p.avatar[1]===40,`${p.avatar}`);check(`${p.kind} 아이디 미잘림`,p.nick[1]<=p.nick[0],`${p.nick[1]}/${p.nick[0]}`);check(`${p.kind} 1·2행 분리`,p.rows[1]>=p.rows[0],`${p.rows}`);check(`${p.kind} 2행 LG 팬 배지`,p.team);check(`${p.kind} 가로 overflow 없음`,!p.overflow)}}}
+finally{await browser.close();server.close();rmSync(GEN,{recursive:true,force:true})}
+console.log(failures?`\nFAIL ${failures}/${total}`:`\nPASS — ${total}/${total}`);process.exit(failures?1:0);

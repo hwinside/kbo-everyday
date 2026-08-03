@@ -6,11 +6,12 @@ import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { Loader2, Maximize, MessageCircle, Minimize, MoreHorizontal, Share2, Volume2, VolumeX } from "lucide-react";
 import { TransformWrapper, TransformComponent, type ReactZoomPanPinchRef } from "react-zoom-pan-pinch";
-import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
+import { getTeamById } from "@/lib/constants/teams";
 import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
 import { parsePlayerTag } from "@/lib/utils/player-tags";
 import { parseAttribution } from "@/lib/gif-collector/attribution";
 import TeamBadge from "@/components/ui/TeamBadge";
+import CommunityAuthorHeader from "@/components/community/CommunityAuthorHeader";
 import type { Post } from "@/lib/supabase/usePosts";
 import { deletePost } from "@/lib/supabase/usePosts";
 import { useAuth } from "@/lib/supabase/AuthContext";
@@ -901,7 +902,7 @@ export function HeartOverlay({ show }: { show: boolean }) {
   );
 }
 
-export default function PhotoFeed({ posts, loading, onLike, boardType = "team", playerLabels, sourceLabels, likedIds }: PhotoFeedProps) {
+export default function PhotoFeed({ posts, loading, onLike, boardType = "team", sourceLabels, likedIds }: PhotoFeedProps) {
   const { user, profile } = useAuth();
   const canDeleteAnyPost = profile?.is_operator === true;
   const controlledLikes = likedIds !== undefined;
@@ -1034,25 +1035,15 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
         const body = mergedBody(post);
         // 선수 라벨 통합: 레거시 선수게시판 출처 + player_tags 를 dedupe (팀/전체 피드에서만; 선수 페이지는 헤더 라벨로 충분)
         const sourceLabel = sourceLabels?.[post.id];
-        // 헤더 작성자 배지(post.team_id)와 같은 팀의 팀 출처 라벨은 중복이므로 숨김
-        // ("같은 라벨이 두 개일 필요 없이 하나로"). 다른 팀(타팀 팬이 팀 게시판에 쓴 글)은 정보가 다르니 유지.
-        const dupTeamLabel =
-          !!sourceLabel?.teamId && !sourceLabel.playerName && sourceLabel.teamId === post.team_id;
         const prominent = boardType !== "player" ? buildProminentLabel(post) : null;
         // 선수명만(팀 prefix 없이) — 헤더 단일 칩은 TeamBadge가 "두산 " prefix를 붙이므로 분리.
         const prominentPlayers = prominent
           ? `${prominent.players.slice(0, 2).join("/")}${prominent.players.length > 2 ? ` 외 ${prominent.players.length - 2}명` : ""}`
           : "";
-        // 단일 팀이면 헤더 작성자 왼쪽 칩 하나로 병합: [(로고)두산 김기연]. 별도 둘째 줄 라벨 제거(2 depth → 1).
-        const mergedInHeader = !!(prominent && prominent.teamId);
         // 다중 팀 혼합 등 병합 불가 시에만 둘째 줄 pill 폴백.
         const prominentText = prominent
           ? `${prominent.teamShort ? prominent.teamShort + " " : ""}${prominentPlayers}`
           : "";
-        const prominentTeam = prominent?.teamId ? getTeamById(prominent.teamId) : undefined;
-        const prominentStyle = prominentTeam
-          ? { backgroundColor: `color-mix(in srgb, ${getTeamBgColor(prominentTeam)} 26%, transparent)` }
-          : undefined;
 
         if (deletedIds.has(post.id)) return null;
 
@@ -1064,31 +1055,15 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
             <div key={post.id}>
               {index > 0 && <div className="h-2 bg-white/[0.02]" />}
               <PostImpressionWrapper postId={post.id} className="overflow-hidden">
-                {/* Author header */}
-                <div className="flex items-center gap-3 px-5 py-3">
-                  {boardType === "player" && playerLabels?.[post.id] ? (
-                    <TeamBadge teamId={playerLabels[post.id].teamId} playerName={playerLabels[post.id].playerName} />
-                  ) : post.team_id ? (
-                    post.author_id ? (
-                      <Link href={`/profile/${post.author_id}`} className="shrink-0 active:opacity-70 transition-opacity">
-                        <TeamBadge teamId={post.team_id} />
-                      </Link>
-                    ) : (
-                      <TeamBadge teamId={post.team_id} />
-                    )
-                  ) : null}
-                  {post.author_id ? (
-                    <Link
-                      href={`/profile/${post.author_id}`}
-                      className="min-w-0 truncate text-base font-medium text-text-primary active:opacity-70 transition-opacity"
-                    >
-                      {post.nickname || "익명"}
-                    </Link>
-                  ) : (
-                    <span className="min-w-0 truncate text-base font-medium text-text-primary">{post.nickname || "익명"}</span>
-                  )}
-                  <span className="ml-auto text-sm text-text-tertiary whitespace-nowrap shrink-0">{timeAgo(post.created_at)}</span>
-                </div>
+                <CommunityAuthorHeader
+                  className="px-5 py-3"
+                  nickname={post.nickname}
+                  teamId={post.team_id}
+                  avatarUrl={post.avatar_url}
+                  profileHref={post.author_id ? `/profile/${post.author_id}` : null}
+                  isStaff={post.grade === "staff"}
+                  meta={<span className="text-xs text-text-tertiary">{timeAgo(post.created_at)}</span>}
+                />
 
                 {/* 질문 + poll 카드 → 탭 시 상세 이동 */}
                 <Link href={`/community/free/${post.id}`} className="block px-5 pb-1 active:opacity-90">
@@ -1151,55 +1126,20 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
               postId={post.id}
               className={zoomedPostId === post.id ? "" : "overflow-hidden"}
             >
-              {/* Author header — 일반게시판(PostCard) 기준 통일 */}
-              <div className="flex items-center gap-3 px-5 py-3">
-                {boardType === "player" && playerLabels?.[post.id] ? (
-                  <TeamBadge teamId={playerLabels[post.id].teamId} playerName={playerLabels[post.id].playerName} />
-                ) : mergedInHeader ? (
-                  prominent!.href ? (
-                    <Link href={prominent!.href} className="shrink-0 active:opacity-70 transition-opacity">
-                      <TeamBadge teamId={prominent!.teamId!} playerName={prominentPlayers} />
-                    </Link>
-                  ) : (
-                    <TeamBadge teamId={prominent!.teamId!} playerName={prominentPlayers} />
-                  )
-                ) : (
-                  post.team_id ? (
-                    post.author_id ? (
-                      <Link
-                        href={`/profile/${post.author_id}`}
-                        aria-label={`${post.nickname || "익명"} 프로필 보기`}
-                        className="shrink-0 active:opacity-70 transition-opacity"
-                      >
-                        <TeamBadge teamId={post.team_id} />
-                      </Link>
-                    ) : (
-                      <TeamBadge teamId={post.team_id} />
-                    )
-                  ) : null
-                )}
-                {post.author_id ? (
-                  <Link
-                    href={`/profile/${post.author_id}`}
-                    className="min-w-0 truncate text-base font-medium text-text-primary active:opacity-70 transition-opacity"
-                  >
-                    {post.nickname || "익명"}
-                  </Link>
-                ) : (
-                  <span className="min-w-0 truncate text-base font-medium text-text-primary">
-                    {post.nickname || "익명"}
+              <CommunityAuthorHeader
+                className="px-5 py-3"
+                nickname={post.nickname}
+                teamId={post.team_id}
+                avatarUrl={post.avatar_url}
+                profileHref={post.author_id ? `/profile/${post.author_id}` : null}
+                isStaff={post.grade === "staff"}
+                meta={
+                  <span className="text-xs text-text-tertiary">
+                    {timeAgo(post.created_at)}{post.updated_at ? " · 수정됨" : ""}
                   </span>
-                )}
-                {post.grade === "staff" && (
-                  <span className="ml-1 px-1.5 py-0.5 text-[10px] font-bold bg-accent/20 text-accent rounded-full">
-                    운영팀
-                  </span>
-                )}
-                <span className="ml-auto text-sm text-text-tertiary flex-shrink-0">
-                  {timeAgo(post.created_at)}{post.updated_at ? " · 수정됨" : ""}
-                </span>
-                {(isMine || canDeleteAnyPost) && (
-                  <div className="relative flex-shrink-0">
+                }
+                menu={(isMine || canDeleteAnyPost) ? (
+                  <div className="relative">
                     <button
                       onClick={(e) => { e.stopPropagation(); setMenuOpenId(prev => prev === post.id ? null : post.id); }}
                       className="p-1 text-text-tertiary hover:text-text-primary"
@@ -1210,7 +1150,7 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
                     {menuOpenId === post.id && (
                       <>
                         <div className="fixed inset-0 z-10" onClick={() => setMenuOpenId(null)} />
-                        <div className="absolute right-0 top-8 z-20 min-w-[112px] rounded-lg border border-border bg-bg-primary shadow-lg overflow-hidden">
+                        <div className="absolute right-0 top-8 z-20 min-w-[112px] overflow-hidden rounded-lg border border-border bg-bg-primary shadow-lg">
                           <button
                             onClick={() => handleDelete(post.id)}
                             className="block w-full px-3 py-2 text-left text-sm text-[#FF453A] hover:bg-bg-tertiary"
@@ -1221,36 +1161,35 @@ export default function PhotoFeed({ posts, loading, onLike, boardType = "team", 
                       </>
                     )}
                   </div>
-                )}
-              </div>
+                ) : null}
+              />
 
-              {/* 선수 라벨(적극적) — 단일 팀은 헤더 칩으로 병합됨. 다중 팀 혼합 등 병합 불가 시에만 팀컬러 pill 폴백. */}
-              {prominent && !mergedInHeader ? (
-                <div className="px-5 pb-2">
-                  {prominent.href ? (
-                    <Link
-                      href={prominent.href}
-                      className="inline-flex items-center rounded-full px-2.5 py-1 text-sm font-bold text-text-primary active:opacity-70 transition-opacity"
-                      style={prominentStyle}
-                    >
-                      {prominentText}
-                    </Link>
+              {/* 작성자 응원팀과 글의 소속은 의미가 다르므로 분리한다.
+                  출처가 섞이는 화면(sourceLabels 주입)에서만 큰 팀컬러 라벨을 노출한다. */}
+              {sourceLabels && prominent ? (
+                <div className="flex items-center gap-2 px-5 pb-2">
+                  <span className="shrink-0 text-[10px] text-text-tertiary">글 소속</span>
+                  {prominent.teamId ? (
+                    prominent.href ? (
+                      <Link href={prominent.href} className="active:opacity-70">
+                        <TeamBadge teamId={prominent.teamId} playerName={prominentPlayers} size="sm" />
+                      </Link>
+                    ) : (
+                      <TeamBadge teamId={prominent.teamId} playerName={prominentPlayers} size="sm" />
+                    )
                   ) : (
-                    <span
-                      className="inline-flex items-center rounded-full px-2.5 py-1 text-sm font-bold text-text-primary"
-                      style={prominentStyle}
-                    >
+                    <span className="min-w-0 truncate rounded-full bg-bg-tertiary px-2.5 py-1 text-sm font-bold text-text-primary">
                       {prominentText}
                     </span>
                   )}
                 </div>
-              ) : sourceLabel && !sourceLabel.playerName && !dupTeamLabel && post.board_type !== "free" ? (
-                /* 선수 없음 → 비선수(팀 등) 출처 라벨. 헤더와 같은 팀이면 위에서 숨김 처리됨. 자유게시판은 배지 숨김(하린아빠 지시 2026-07-25). */
-                <div className="px-5 pb-2">
+              ) : sourceLabels && sourceLabel && post.board_type !== "free" ? (
+                <div className="flex items-center gap-2 px-5 pb-2">
+                  <span className="shrink-0 text-[10px] text-text-tertiary">글 소속</span>
                   {sourceLabel.teamId ? (
-                    <TeamBadge teamId={sourceLabel.teamId} size="xs" />
+                    <TeamBadge teamId={sourceLabel.teamId} playerName={sourceLabel.playerName} size="sm" />
                   ) : (
-                    <span className="inline-flex items-center rounded-full bg-bg-tertiary px-2 py-0.5 text-xs font-medium text-text-secondary">
+                    <span className="min-w-0 truncate rounded-full bg-bg-tertiary px-2.5 py-1 text-sm font-bold text-text-primary">
                       {sourceLabel.text}
                     </span>
                   )}
