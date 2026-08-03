@@ -29,6 +29,10 @@ export type ManualDiaryGameDecision =
   | { ok: true }
   | { ok: false; status: 403 | 404; error: string };
 
+export type ManualAttendanceTeamDecision =
+  | { ok: true; favoriteTeamId: number }
+  | { ok: false; status: 400 | 403; error: string };
+
 /**
  * 과거 경기 직접 추가는 허용 시즌(VENUE_DIARY_MANUAL_SEASONS)의 실제 KBO 종료 경기만 허용한다.
  * 시간 경과나 gameId 날짜만으로 종료를 추정하지 않고 crawler의 final 상태를 권위로 쓴다.
@@ -60,4 +64,22 @@ export function decideManualDiaryGame(
     };
   }
   return { ok: true };
+}
+
+/** 직접 등록 응원팀은 실제 경기 참가팀 중 하나여야 한다. */
+export function decideManualAttendanceTeam(
+  value: unknown,
+  venue: Pick<ResolvedVenue, "awayTeamId" | "homeTeamId">,
+): ManualAttendanceTeamDecision {
+  if (!Number.isInteger(value)) {
+    return { ok: false, status: 400, error: "응원팀을 선택해주세요" };
+  }
+  const favoriteTeamId = value as number;
+  if (
+    favoriteTeamId !== venue.awayTeamId &&
+    favoriteTeamId !== venue.homeTeamId
+  ) {
+    return { ok: false, status: 403, error: "이 경기의 참가팀만 선택할 수 있어요" };
+  }
+  return { ok: true, favoriteTeamId };
 }

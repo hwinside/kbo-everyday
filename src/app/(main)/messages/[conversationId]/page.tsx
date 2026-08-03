@@ -23,6 +23,9 @@ import {
   BASEBALL_GENIUS_MIN_QUESTION_LENGTH,
   BASEBALL_GENIUS_PINNED_ROOM_LEAVABLE,
   BASEBALL_GENIUS_USER_ID,
+  geniusMascotSrc,
+  isGeniusReplyPayload,
+  mascotStateForReplyKind,
 } from "@/lib/constants/baseball-genius";
 
 const REPORT_CATEGORIES = [
@@ -41,7 +44,7 @@ export default function DMChatPage() {
   const router = useRouter();
   const conversationId = params.conversationId as string;
   const draftTargetId = conversationId.startsWith("new-") ? conversationId.slice(4) : null;
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const {
     messages,
     loading,
@@ -149,6 +152,7 @@ export default function DMChatPage() {
   // 닉네임 위조 방지를 위해 운영팀 user_id로 판정.
   const isOperatorConv = otherId === OPERATOR_USER_ID;
   const isBaseballGeniusConv = otherId === BASEBALL_GENIUS_USER_ID;
+  const showGeniusMascot = isBaseballGeniusConv;
   // 뉴스클리퍼 대화 — 자동 발송 전용, 답장 시 자동응답만 옴 (안내 배너 노출)
   const isClipperConv = otherId != null && NEWS_CLIPPER_IDS.has(otherId);
   // 회신 불가(자동 발송 전용) 계정 — 클리퍼 + 긴급공지. 입력창 비활성 + 안내 배너.
@@ -273,6 +277,12 @@ export default function DMChatPage() {
     }, 1500);
   }, [user, otherId, conversationId, reportCategory, reportDetail]);
 
+  useEffect(() => {
+    if (!authLoading && !user) router.replace("/messages");
+  }, [authLoading, user, router]);
+
+  if (authLoading || !user) return null;
+
   return (
     <div className="fixed inset-0 z-[60] flex flex-col bg-bg-primary">
       {/* Header — 기본 디자인 가이드(마이/명전) 앱바 정렬. fixed 오버레이라 탭바/푸터를 덮어 이중 스크롤 제거 */}
@@ -284,10 +294,18 @@ export default function DMChatPage() {
         >
           <ChevronLeft size={24} />
         </button>
+        {/* 마스코트는 제목 줄 안이 아니라 2줄 텍스트블록 '옆'에 둔다.
+            제목 줄(gap-1.5) 안에 넣으면 그 줄 자체가 커져 두 줄 간격까지 밀린다.
+            형제로 빼면 헤더 높이는 max(뒤로 32, 슬롯 96, 텍스트 41) 로 예측 가능하다.
+            96px 슬롯은 삼순 확정 규격(목록 64 / 대화방 96, 헤더 108~112px). */}
+        {showGeniusMascot && (
+          <img src="/mascot/yajalal-avatar.png" alt="야잘알봇"
+               className="h-24 w-auto max-w-none object-contain flex-shrink-0" />
+        )}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">
             {isBaseballGeniusConv ? (
-              <span className="text-lg" aria-hidden>⚾</span>
+              showGeniusMascot ? null : <span className="text-lg" aria-hidden>⚾</span>
             ) : otherName === "크보팬 운영팀" ? (
               <img src="/apple-touch-icon.png" alt="크보팬" className="w-5 h-5 rounded-full object-cover" />
             ) : otherTeamId ? (
@@ -299,7 +317,7 @@ export default function DMChatPage() {
             {!otherId && otherResolved
               ? "읽기 전용"
               : isBaseballGeniusConv
-                ? "AI 야구 룰·용어 도우미"
+                ? "야구 밖에 모르는 바보 AI봇"
               : isNoReplyConv
                 ? "자동 발송 전용"
                 : "1:1 쪽지"}
@@ -370,6 +388,16 @@ export default function DMChatPage() {
               msg.sender_id !== null &&
               (NEWS_CLIPPER_IDS.has(msg.sender_id) || msg.sender_id === OPERATOR_USER_ID);
             const clipping = trustedSender && isNewsClippingPayload(msg.payload) ? msg.payload : null;
+            // 답변 유형별 마스코트 — 봇 발신일 때만 신뢰한다(유저가 payload 를 훌내내도 붙지 않게).
+            // payload 가 없는 과거 답변(배포 전 생성분)은 mascotStateForReplyKind 가 idle 로 폴백한다.
+            const geniusReply =
+              msg.sender_id === BASEBALL_GENIUS_USER_ID && isGeniusReplyPayload(msg.payload)
+                ? msg.payload
+                : null;
+            const mascotState =
+              msg.sender_id === BASEBALL_GENIUS_USER_ID
+                ? mascotStateForReplyKind(geniusReply?.reply_kind)
+                : null;
             return (
               <motion.div
                 key={msg.id}
@@ -381,7 +409,19 @@ export default function DMChatPage() {
                 <div className={`${clipping ? "max-w-[88%] min-w-[70%]" : "max-w-[75%]"} ${isMe ? "order-2" : ""}`}>
                   {!isMe && (
                     <div className="flex items-center gap-1.5 mb-1">
-                      {msg.sender_team_id && <TeamBadge teamId={msg.sender_team_id} size="xs" />}
+                      {mascotState ? (
+                        // eslint-disable-next-line @next/next/no-img-element -- 정적 마스코트 PNG
+                        <img
+                          src={geniusMascotSrc(mascotState)}
+                          alt=""
+                          aria-hidden
+                          data-testid="genius-reply-mascot"
+                          data-state={mascotState}
+                          className="h-8 w-auto max-w-none object-contain"
+                        />
+                      ) : (
+                        msg.sender_team_id && <TeamBadge teamId={msg.sender_team_id} size="xs" />
+                      )}
                       <span className="text-xs font-semibold text-text-secondary">{msg.sender_nickname}</span>
                     </div>
                   )}

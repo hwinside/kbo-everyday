@@ -315,7 +315,7 @@ const App=
   path==="/diary" ? VenueDiaryCard :
   path==="/playerlogs" ? () => <PlayerGameLogs playerId="53123" position="내야수" teamColor="#C30452"/> :
   path==="/roster" ? () => <TeamRosterMovesCard team={LG}/> :
-  path==="/addsheet" ? () => <VenueDiaryAddGameSheet isOpen favoriteTeamId={1} season={2026} onSeasonChange={()=>{}} countsByGame={new Map()} countsReady countsError={false} onRetryCounts={()=>{}} onBack={()=>{}} onClose={()=>{}} onPick={()=>{}}/> :
+  path==="/addsheet" ? () => <VenueDiaryAddGameSheet isOpen favoriteTeamId={1} season={2026} onSeasonChange={()=>{}} countsByGame={new Map()} countsReady countsError={false} activeAttendanceGameIds={new Set()} onRetryCounts={()=>{}} onBack={()=>{}} onClose={()=>{}} onPick={()=>{}} onRecord={()=>{}}/> :
   path.startsWith("/uploader/") ? Uploader :
   path.startsWith("/viewer/") ? Viewer :
   path==="/dashboard" ? VenueStatsDashboard :

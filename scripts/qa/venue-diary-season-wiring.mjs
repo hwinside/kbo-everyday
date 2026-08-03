@@ -109,10 +109,15 @@ const cardEntry = sourceEntry(
   CARD_REL,
   MUTATE === "counts"
     ? (src) =>
-        src.replace(
-          "return fetchDiaryMediaAllPages(token, addSeason, signal);",
-          "return fetchDiaryMediaAllPages(token, VENUE_DIARY_MANUAL_SEASONS[0], signal);",
-        )
+        src
+          .replace(
+            "fetchDiaryMediaAllPages(token, addSeason, signal),",
+            "fetchDiaryMediaAllPages(token, VENUE_DIARY_MANUAL_SEASONS[0], signal),",
+          )
+          .replace(
+            "season=${addSeason}",
+            "season=${VENUE_DIARY_MANUAL_SEASONS[0]}",
+          )
     : null,
 );
 
@@ -274,6 +279,8 @@ const scheduleMonths = () =>
   seen.schedule.map((u) => new URLSearchParams(u.split("?")[1]).get("month"));
 const mediaSeasons = () =>
   seen.media.map((u) => new URLSearchParams(u.split("?")[1]).get("season")).filter(Boolean);
+const attendanceSeasons = () =>
+  seen.attendance.map((u) => new URLSearchParams(u.split("?")[1]).get("season")).filter(Boolean);
 
 // 시트는 포털로 body 직하에 붙고, 카드에도 동명의 시즌 세그먼트(2026/2025/전체)가 있다.
 // 카드 쪽 버튼을 잡으면 전혀 다른 것(조회 시즌 탭)을 클릭하게 되므로 반드시 시트로 스코프한다.
@@ -344,6 +351,7 @@ try {
   // ── 1) 기본(2026) 시트 ────────────────────────────────────────────────────
   seen.schedule.length = 0;
   seen.media.length = 0;
+  seen.attendance.length = 0;
   await page.getByRole("button", { name: /지난 경기 추가하기/ }).click();
   await page.waitForSelector(SHEET, { timeout: 10000 });
   await page.waitForFunction(
@@ -365,19 +373,24 @@ try {
     mediaSeasons().includes("2026"),
     `기본 시트가 2026 counts 조회 (seasons=${mediaSeasons().join(",") || "none"})`,
   );
+  check(
+    attendanceSeasons().includes("2026"),
+    `기본 시트가 2026 직관 기록 조회 (seasons=${attendanceSeasons().join(",") || "none"})`,
+  );
 
   // 경기 행만 골라낸다 — 팀 칩("삼성")도 같은 글자를 담으므로 날짜 라벨(YYYY.MM.DD) 유무로 구분.
   const rowState = async () =>
     page.evaluate((sel) => {
       const root = document.querySelector(sel);
       if (!root) return [];
-      const rows = [...root.querySelectorAll("button")].filter((b) =>
-        /\d{4}\.\d{2}\.\d{2}/.test(b.textContent || ""),
-      );
-      return rows.map((b) => ({
-        text: (b.textContent || "").replace(/\s+/g, " ").trim(),
-        disabled: b.disabled,
-      }));
+      const rows = [...root.querySelectorAll("[data-diary-game-id]")];
+      return rows.map((row) => {
+        const mediaButton = [...row.querySelectorAll("button")].at(-1);
+        return {
+          text: (row.textContent || "").replace(/\s+/g, " ").trim(),
+          disabled: mediaButton?.disabled ?? false,
+        };
+      });
     }, SHEET);
 
   const r2026 = await rowState();
@@ -392,6 +405,7 @@ try {
   // ── 2·3) 2025 전환: 첫 렌더 fail-closed → counts 도착 후 잠김 ──────────────
   seen.schedule.length = 0;
   seen.media.length = 0;
+  seen.attendance.length = 0;
   mediaDelayMs = 900; // counts 를 늦춰 전환 직후의 미확정 상태를 관측
   await sheet(page).getByRole("button", { name: "2025", exact: true }).click();
   // 전환 직후: counts 미확정이므로 어떤 경기도 선택 불가여야 한다.
@@ -437,6 +451,10 @@ try {
     !mediaSeasons().includes("2026"),
     `2025 선택 후 2026 counts 조회 없음 (seasons=${mediaSeasons().join(",") || "none"})`,
   );
+  check(
+    attendanceSeasons().includes("2025") && !attendanceSeasons().includes("2026"),
+    `2025 선택 시 2025 직관 기록만 조회 (seasons=${attendanceSeasons().join(",") || "none"})`,
+  );
 
   const r2025 = await rowState();
   check(r2025.length === 1, `2025 목록에 fixture 경기 1건 (got ${r2025.length})`);
@@ -453,12 +471,15 @@ try {
   // ── 5) 2026 복귀 ──────────────────────────────────────────────────────────
   seen.schedule.length = 0;
   seen.media.length = 0;
+  seen.attendance.length = 0;
   await sheet(page).getByRole("button", { name: "2026", exact: true }).click();
   await waitRows(page, "2026.08.01");
   await waitCountsSettled(page);
   check(
-    scheduleMonths().some((m) => m === "2026-08") && mediaSeasons().includes("2026"),
-    `2026 복귀 시 2026 일정·counts 재조회 (months=${scheduleMonths().join(",")} seasons=${mediaSeasons().join(",")})`,
+    scheduleMonths().some((m) => m === "2026-08") &&
+      mediaSeasons().includes("2026") &&
+      attendanceSeasons().includes("2026"),
+    `2026 복귀 시 2026 일정·counts·직관 기록 재조회 (months=${scheduleMonths().join(",")} media=${mediaSeasons().join(",")} attendance=${attendanceSeasons().join(",")})`,
   );
 
   await ctx.close();
