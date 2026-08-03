@@ -1455,8 +1455,9 @@ async function routeGameErrorsWiringRegression() {
   const runGet = async () => {
     // ⚠️ complete-only cache 가 이전 케이스 결과를 재사용하면 RED 가 무력화된다.
     //    (최초 작성 때 실제로 이 함정에 걸려 결손 케이스가 앞선 성공값을 그대로 반환했다.)
-    const { __resetGameErrorCaches } = await import("../../src/lib/venue-stats/game-errors");
-    __resetGameErrorCaches();
+    // ⚠️ route 가 실제로 쓰는 모듈 인스턴스의 캐시를 비운다. 상대경로로 game-errors 를
+    //    직접 import 하면 alias 로드본과 별개 인스턴스라 캐시가 안 지워진다(CI 에서 실측).
+    routeModule.__resetVenueStatsRouteGameErrorCachesForTests();
     const { GET } = routeModule;
     const res = await GET(new NextRequest(
       "http://localhost/api/me/venue-stats?season=2025",

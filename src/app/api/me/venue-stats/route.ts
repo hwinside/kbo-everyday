@@ -24,7 +24,10 @@ import type { LedgerRecord } from "@/lib/game-logs/completeness";
 import { TEAM_ID_TO_CODE, type PlayerGameLogRow } from "@/lib/game-logs/ingest";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { fetchAttendanceGamesWithinDeadline } from "@/lib/venue-attendance/fetch-games";
-import { fetchGameErrorsWithinDeadline } from "@/lib/venue-stats/game-errors";
+import {
+  fetchGameErrorsWithinDeadline,
+  __resetGameErrorCaches,
+} from "@/lib/venue-stats/game-errors";
 import bundledBatters from "@/lib/constants/stats-2026-batters.json";
 import bundledPitchers from "@/lib/constants/stats-2026-pitchers.json";
 import statsMeta from "@/lib/constants/stats-2026-meta.json";
@@ -67,6 +70,16 @@ export function __setVenueStatsRouteRuntimeDepsForTests(
   routeRuntimeDeps = overrides
     ? { ...defaultRouteRuntimeDeps, ...overrides }
     : defaultRouteRuntimeDeps;
+}
+
+/**
+ * 테스트 전용 — 이 route 가 실제로 쓰는 game-errors 모듈 인스턴스의 캐시를 비운다.
+ * ⚠️ 테스트가 `../../src/lib/...` 상대경로로 직접 import 하면 alias(`@/lib/...`)로 로드된
+ *    route 의 인스턴스와 다른 모듈이 되어(CI 에서 실제로 갈렸다) 캐시가 안 지워지고,
+ *    앞 케이스 결과가 그대로 재사용돼 RED 가 무력화된다. 반드시 이 hook 을 쓴다.
+ */
+export function __resetVenueStatsRouteGameErrorCachesForTests(): void {
+  __resetGameErrorCaches();
 }
 
 /** 팀코드 → teamId (parseGameTeamCodes가 쓰는 TEAM_ID_TO_CODE의 역맵) — P0-2 teams exact 대조용. */
