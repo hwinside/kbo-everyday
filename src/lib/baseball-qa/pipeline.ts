@@ -815,6 +815,17 @@ export function resolvePlayerPickerOptions(
  * 이름 매칭을 건너뛰는 게 핵심이다 — 이름으로 다시 풀면 또 동명이인으로 갈라져 picker가
  * 무한히 반복된다. 유저가 명시적으로 고른 id만 신뢰하고, 로스터에 없는 id는 거절한다.
  */
+export function isPickedPlayerAllowed(
+  question: string,
+  kboId: string,
+  players: PlayerRef[],
+): boolean {
+  // 원 질문에서 서버가 다시 계산한 picker 후보군에 속한 id만 허용한다.
+  // `allowNonDescriptive=true`는 기록 질문(수치어가 있어 descriptive 게이트 거부)도 포함한다.
+  const options = resolvePlayerPickerOptions(question, players, true);
+  return options?.some((option) => option.kboId === kboId) ?? false;
+}
+
 export function resolvePickedPlayerCandidate(
   kboId: string,
   players: PlayerRef[],
@@ -1264,7 +1275,8 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   // Production은 server.ts에서 false로 고정되어 선수·구단 질문이 provider/cache에 닿지 않는다.
   // 유저가 picker에서 고른 kboId가 있으면 이름 매칭을 건너뛰고 그 선수로 직행한다.
   // 이름으로 다시 풀면 또 동명이인으로 갈라져 picker가 무한 반복된다.
-  const pickedCandidate = deps.enablePlayerRag && deps.pickedPlayerKboId
+  const pickedCandidate = deps.enablePlayerRag && deps.pickedPlayerKboId &&
+    isPickedPlayerAllowed(question, deps.pickedPlayerKboId, players)
     ? resolvePickedPlayerCandidate(deps.pickedPlayerKboId, players)
     : null;
   // 기록(수치) 질문은 서술형 게이트에 걸리므로 이름 기반 후보를 따로 붙잡는다.
@@ -1272,6 +1284,21 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   const recordIntent = deps.fetchSeasonRecord
     ? resolveSeasonRecordIntent(question)
     : { kind: "none" as const };
+
+  // **picker보다 먼저** 종결한다. `김동현 통산 홈런`처럼 이름이 모호해도 2026 외 시즌은
+  // 어느 선수를 골라도 답할 수 없으므로 picker를 띄우는 것 자체가 불필요하다(삼순 P0-3).
+  // untrusted metric도 마찬가지 — 고른 뒤 거절하면 유저만 헛동작한다.
+  if (recordIntent.kind === "unsupported_season" || recordIntent.kind === "untrusted_metric") {
+    const answer = recordIntent.kind === "unsupported_season"
+      ? UNSUPPORTED_SEASON_ANSWER
+      : UNTRUSTED_METRIC_ANSWER;
+    await deps.log({
+      userId, question, questionNorm, matchPath: "blocked", answer,
+      inputTokens: null, outputTokens: null,
+    });
+    return { status: 200, answer, source: "blocked", remaining };
+  }
+
   const enabledPlayerCandidate = pickedCandidate ?? (deps.enablePlayerRag
     ? (resolveRagPlayerCandidate(question, players) ??
       (recordIntent.kind !== "none" ? resolveNamedPlayerCandidate(question, players) : null))

@@ -10,6 +10,7 @@ import {
   isAckPhrase,
   MAX_QUESTION_LEN,
   MIN_QUESTION_LEN,
+  isPickedPlayerAllowed,
   type GlossaryEntry,
   type LlmResult,
   type PlayerRef,
@@ -43,7 +44,8 @@ import {
   type RagEvidenceCandidate,
   type RagPlayerCandidate,
 } from "@/lib/baseball-qa/rag/retrieve";
-import type { SeasonRecordRow } from "@/lib/baseball-qa/stats/season-record";
+import { fetchSeasonRecordRows } from "@/lib/baseball-qa/stats/fetch-season-record";
+import type { SeasonRecordClient } from "@/lib/baseball-qa/stats/fetch-season-record";
 import { embedQuery } from "@/lib/baseball-qa/rag/embed";
 import { orderTier2Evidence } from "@/lib/baseball-qa/rag/fetch-wikipedia";
 
@@ -287,14 +289,24 @@ interface PreviousTurnRowSql {
  */
 async function persistOrLoadPickedPlayer(
   messageId: number,
+  question: string,
   input?: string | null,
 ): Promise<string | null> {
   if (input) {
+    // **서버 발급 후보군 membership** 을 먼저 재검증하고, 통과한 뒤에만 영속한다.
+    // 단순히 "로스터에 존재하는 id"만 보면 원 질문 `김동현` picker에 문보경(69102)을
+    // 주입해도 문보경 기록을 답하게 된다(삼순 P0-1 actual). 유저가 ID를 입력하는 구조가
+    // 아니라도 클라이언트 요청은 위조 가능하므로 서버가 원 질문에서 후보군을 다시 계산한다.
+    if (!isPickedPlayerAllowed(question, input, ROSTER_PLAYERS)) return null;
+
     const { error } = await supabaseAdmin
       .from("genius_question_jobs")
       .update({ picked_player_kbo_id: input, updated_at: new Date().toISOString() })
       .eq("message_id", messageId);
-    if (error) console.error("baseball-genius picked player persist failed:", error.message);
+    if (error) {
+      console.error("baseball-genius picked player persist failed:", error.message);
+      return null;
+    }
     return input;
   }
   const { data, error } = await supabaseAdmin
@@ -328,19 +340,17 @@ function makeDeps(messageId: number, pickedPlayerKboId?: string | null): QaDeps 
       if (error) throw error;
     },
     /**
-     * 시즌 기록 조회 (kbo_structured). **kbo_id exact** 로만 본다 — 이름 조회는 동명이인을
+     * 시즌 기록 조회 (kbo_structured). **player_key=kboId exact** 로만 본다 — 이름 조회는 동명이인을
      * 섞어버리므로 금지다(삼순 조건 ①). 상한 2로 조회해서 중복행을 숨기지 않고
      * 호출부가 `inconsistent` 로 fail-close 할 수 있게 한다.
      */
     fetchSeasonRecord: async (table, kboId) => {
-      // query-guard: bounded -- kbo_id exact 일치 + limit 2.
-      const { data, error } = await supabaseAdmin
-        .from(table === "batter" ? "player_stats_batter" : "player_stats_pitcher")
-        .select("*")
-        .eq("kbo_id", kboId)
-        .limit(2);
-      if (error) throw error;
-      return (data ?? []) as unknown as SeasonRecordRow[];
+      // query-guard: bounded -- player_key exact 일치 + limit 2.
+      return fetchSeasonRecordRows(
+        supabaseAdmin as unknown as SeasonRecordClient,
+        table,
+        kboId,
+      );
     },
     searchOfficialRag,
     callOfficialRagLlm,
@@ -552,7 +562,7 @@ export async function processBaseballQaQuestion(input: {
       } else {
         // 선택은 job 행을 SSOT로 삼는다. 즉시 경로가 죽어 cron이 이어받아도 유저가 고른
         // 그 선수로 답하도록, 입력이 있으면 먼저 고정하고 없으면 저장된 값을 읽는다.
-        const picked = await persistOrLoadPickedPlayer(messageId, input.pickedPlayerKboId);
+        const picked = await persistOrLoadPickedPlayer(messageId, question, input.pickedPlayerKboId);
         result = await answerQuestion(userId, question, makeDeps(messageId, picked));
       }
       if (result.source === "pending") {

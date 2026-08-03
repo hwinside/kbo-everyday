@@ -16,6 +16,7 @@ import {
   DAILY_LIMIT,
   HISTORY_HOLD_ANSWER,
   isAckPhrase,
+  isPickedPlayerAllowed,
   matchGlossary,
   routeQuestion,
   NOT_BASEBALL_SENTINEL,
@@ -35,9 +36,17 @@ import {
   buildBaseballQaGeminiRequest,
 } from "../../src/lib/baseball-qa/gemini-request";
 import {
+  BATTER_METRICS,
+  PITCHER_METRICS,
+  resolveSeasonRecordIntent,
+  STATS_STALE_MS,
   UNSUPPORTED_SEASON_ANSWER,
   UNTRUSTED_METRIC_ANSWER,
 } from "../../src/lib/baseball-qa/stats/season-record";
+import {
+  fetchSeasonRecordRows,
+  type SeasonRecordClient,
+} from "../../src/lib/baseball-qa/stats/fetch-season-record";
 import {
   LIVE_INJECTION_DELEGATED,
   LIVE_POSITIVE_ROLE_RULE,
@@ -901,7 +910,7 @@ async function verifyPipeline() {
     const NOW = Date.parse("2026-08-03T12:00:00.000Z");
     // Production 실측값 그대로(2026-08-03 조회): 문보경 69102 · doubles 8 · avg ".238".
     const moonRow = {
-      kbo_id: "69102", name: "문보경", team: "LG",
+      player_key: "69102", kbo_id: "69102", name: "문보경", team: "LG",
       updated_at: "2026-08-02T21:00:44.612+00:00",
       avg: ".238", games: 74, ab: 248, runs: 30, hits: 59,
       doubles: 8, triples: 0, hr: 8, tb: 91, rbi: 43,
@@ -924,6 +933,97 @@ async function verifyPipeline() {
       callOfficialRagLlm: async () => { throw new Error("기록 질문은 공식 RAG 금지"); },
       ...overrides,
     });
+
+    // parser 전 allowlist actual — 공지한 필드가 실제로 전부 열리는지 검증한다.
+    const positiveMetrics: Array<[string, "batter" | "pitcher", string]> = [
+      ["문보경 타율 알려줘", "batter", "avg"],
+      ["문보경 경기 수 몇 개야?", "batter", "games"],
+      ["문보경 타수 알려줘", "batter", "ab"],
+      ["문보경 득점 몇 개야?", "batter", "runs"],
+      ["문보경 안타 몇 개야?", "batter", "hits"],
+      ["문보경 2루타 몇 개야?", "batter", "doubles"],
+      ["문보경 3루타 몇 개야?", "batter", "triples"],
+      ["문보경 홈런 몇 개야?", "batter", "hr"],
+      ["문보경 총루타 알려줘", "batter", "tb"],
+      ["문보경 타점 몇 개야?", "batter", "rbi"],
+      ["류현진 평균자책점 알려줘", "pitcher", "era"],
+      ["류현진 등판 수 알려줘", "pitcher", "games"],
+      ["류현진 몇 승이야?", "pitcher", "wins"],
+      ["류현진 승수 알려줘", "pitcher", "wins"],
+      ["류현진 몇 패야?", "pitcher", "losses"],
+      ["류현진 패수 알려줘", "pitcher", "losses"],
+      ["류현진 세이브 몇 개야?", "pitcher", "saves"],
+      ["류현진 홀드 몇 개야?", "pitcher", "holds"],
+      ["류현진 승률 알려줘", "pitcher", "wpct"],
+      ["류현진 투구이닝 알려줘", "pitcher", "ip"],
+      ["류현진 피안타 몇 개야?", "pitcher", "h"],
+      ["류현진 피홈런 몇 개야?", "pitcher", "hr"],
+      ["류현진 볼넷 몇 개야?", "pitcher", "bb"],
+      ["류현진 사구 몇 개야?", "pitcher", "hbp"],
+      ["류현진 탈삼진 몇 개야?", "pitcher", "so"],
+      ["류현진 실점 몇 점이야?", "pitcher", "r"],
+      ["류현진 자책점 몇 점이야?", "pitcher", "er"],
+      ["류현진 WHIP 알려줘", "pitcher", "whip"],
+    ];
+    assert.deepEqual(
+      new Set(positiveMetrics.filter(([, table]) => table === "batter").map(([, , metric]) => metric)),
+      new Set(Object.keys(BATTER_METRICS)),
+      "타자 allowlist 전 필드 positive actual",
+    );
+    assert.deepEqual(
+      new Set(positiveMetrics.filter(([, table]) => table === "pitcher").map(([, , metric]) => metric)),
+      new Set(Object.keys(PITCHER_METRICS)),
+      "투수 allowlist 전 필드 positive actual",
+    );
+    for (const [input, table, metric] of positiveMetrics) {
+      const intent = resolveSeasonRecordIntent(input);
+      assert.equal(intent.kind, "query", `${input}: query`);
+      if (intent.kind === "query") {
+        assert.equal(intent.query.table, table, `${input}: table`);
+        assert.equal(intent.query.metric, metric, `${input}: metric`);
+      }
+    }
+
+    // token-boundary negative — 1글자 alias가 합성어를 기록 수치로 오답 변환하면 안 된다.
+    for (const input of [
+      "류현진 패스트볼 몇 개 던졌어?",
+      "류현진 승부 몇 번 했어?",
+      "사구체 관절이 몇 개야?",
+    ]) {
+      assert.equal(resolveSeasonRecordIntent(input).kind, "none", `${input}: 합성어 오분류 금지`);
+    }
+
+    // 모든 명시 연도 != 2026 + 지난 시즌/통산은 generic fail-close.
+    for (const input of [
+      "문보경 2019년 홈런 몇 개야?",
+      "문보경 2027년 홈런 몇 개야?",
+      "문보경 지난 시즌 홈런 몇 개야?",
+      "문보경 통산 홈런 몇 개야?",
+    ]) {
+      assert.equal(resolveSeasonRecordIntent(input).kind, "unsupported_season", `${input}: 2026 외 차단`);
+    }
+    assert.equal(resolveSeasonRecordIntent("문보경 2026년 홈런 몇 개야?").kind, "query", "2026 명시 허용");
+
+    // production query actual: player_key exact + limit 2. name/kbo_id lookup mutation은 이 기록이 RED.
+    const lookupCalls: Array<[string, string | number]> = [];
+    const recordingClient: SeasonRecordClient = {
+      from: (table) => ({
+        select: (columns) => ({
+          eq: (column, value) => ({
+            limit: async (limit) => {
+              lookupCalls.push(["table", table], ["select", columns], ["column", column], ["value", value], ["limit", limit]);
+              return { data: [moonRow], error: null };
+            },
+          }),
+        }),
+      }),
+    };
+    const boundRows = await fetchSeasonRecordRows(recordingClient, "batter", "69102");
+    assert.equal(boundRows.length, 1, "server binding row");
+    assert.deepEqual(lookupCalls, [
+      ["table", "player_stats_batter"], ["select", "*"], ["column", "player_key"],
+      ["value", "69102"], ["limit", 2],
+    ], "actual server binding = player_key exact + limit2");
 
     // ① 하린아빠 예시 그대로: `문보경 올해 2루타 몇개 칩어?` → 8
     const doubles = freshState();
@@ -972,6 +1072,16 @@ async function verifyPipeline() {
       assert.doesNotMatch(pastResult.answer, /8입니다/, `${input}: 올해 값 오답 금지`);
       assert.equal(pastResult.answer, UNSUPPORTED_SEASON_ANSWER, `${input}: 지원 시즌 명시 안내`);
     }
+    // 이름이 모호해도 picker보다 먼저 시즌 미지원 안내. 골라도 답할 수 없는 질문이다.
+    const ambiguousPast = freshState();
+    let ambiguousPastFetches = 0;
+    const ambiguousPastResult = await answerQuestion("u1", "김동현 통산 홈런 몇개야?", statsDeps(ambiguousPast, [], {
+      fetchSeasonRecord: async () => { ambiguousPastFetches += 1; return []; },
+      releaseDaily: async () => { throw new Error("미지원 시즌에서 quota 반납/picker 금지"); },
+    }));
+    assert.equal(ambiguousPastResult.answer, UNSUPPORTED_SEASON_ANSWER, "동명이인 통산도 2026-only 안내");
+    assert.equal(ambiguousPastResult.pickerOptions, undefined, "미지원 시즌은 picker 0");
+    assert.equal(ambiguousPastFetches, 0, "미지원 시즌은 fetch 0");
 
     // ⑤ stale — cron 1주기(매일 21:00 UTC)를 넘긴 값은 "오늘 경기가 빠진 값"일 수 있다.
     const stale = freshState();
@@ -980,6 +1090,18 @@ async function verifyPipeline() {
     ]));
     assert.notEqual(staleResult.source, "kbo_structured", "stale 값은 답변 금지");
     assert.doesNotMatch(staleResult.answer, /2루타은? 8/, "stale 값 노출 금지");
+    // 공지 계약은 24h. 25h row가 통과하면 안 된다(기존 30h 구현 회귀).
+    const stale25h = freshState();
+    const stale25hResult = await answerQuestion("u1", "문보경 올해 2루타 몇개야?", statsDeps(stale25h, [
+      { ...moonRow, updated_at: new Date(NOW - STATS_STALE_MS - 60 * 60 * 1000).toISOString() },
+    ]));
+    assert.notEqual(stale25hResult.source, "kbo_structured", "25h row 차단");
+    // 미래 updated_at은 age가 음수라 stale 비교만으로 통과한다 — 오염값으로 차단.
+    const future = freshState();
+    const futureResult = await answerQuestion("u1", "문보경 올해 2루타 몇개야?", statsDeps(future, [
+      { ...moonRow, updated_at: new Date(NOW + 60 * 60 * 1000).toISOString() },
+    ]));
+    assert.notEqual(futureResult.source, "kbo_structured", "future timestamp 차단");
 
     // ⑥ row 0 (미수집 선수) / row 2+ (중복행) — 둘 다 뭐가 맞는지 모른다.
     for (const [label, rows] of [
@@ -1000,6 +1122,30 @@ async function verifyPipeline() {
     ]));
     assert.notEqual(foreignResult.source, "kbo_structured", "타 선수 row 는 fail-close");
     assert.doesNotMatch(foreignResult.answer, /16|김민석/, "타 선수 값·이름 노출 금지");
+    const wrongPlayerKey = freshState();
+    const wrongPlayerKeyResult = await answerQuestion("u1", "문보경 올해 2루타 몇개야?", statsDeps(wrongPlayerKey, [
+      { ...moonRow, player_key: "53554" },
+    ]));
+    assert.notEqual(wrongPlayerKeyResult.source, "kbo_structured", "player_key 불일치 fail-close");
+
+    // count 정수·rate/IP 형식 보호. 값은 있어도 비정상이면 답하지 않는다.
+    const invalidValues: Array<[string, Record<string, unknown>]> = [
+      ["문보경 올해 2루타 몇개야?", { ...moonRow, doubles: 1.5 }],
+      ["문보경 올해 타율 알려줘", { ...moonRow, avg: "N/A" }],
+      ["문보경 올해 평균자책점 알려줘", {
+        player_key: "69102", kbo_id: "69102", name: "문보경", team: "LG",
+        updated_at: moonRow.updated_at, era: "N/A",
+      }],
+      ["문보경 올해 이닝 알려줘", {
+        player_key: "69102", kbo_id: "69102", name: "문보경", team: "LG",
+        updated_at: moonRow.updated_at, ip: "12.5",
+      }],
+    ];
+    for (const [input, row] of invalidValues) {
+      const invalid = freshState();
+      const invalidResult = await answerQuestion("u1", input, statsDeps(invalid, [row]));
+      assert.notEqual(invalidResult.source, "kbo_structured", `${input}: 비정상 값 차단`);
+    }
 
     // ⑧ 동명이인 기록 질문 → picker → 선택한 kboId 값.
     // ⚠️ 동명이인은 위키 chunks 가 0이라 서술형은 못 답하지만, **기록은 답할 수 있다**
@@ -1018,12 +1164,34 @@ async function verifyPipeline() {
       pickedPlayerKboId: "56143",
       fetchSeasonRecord: async (_table, kboId) => {
         queriedKboId = kboId;
-        return [{ ...moonRow, kbo_id: "56143", name: "김동현", team: "LG", hr: 3 }] as never;
+        return [{ ...moonRow, player_key: "56143", kbo_id: "56143", name: "김동현", team: "LG", hr: 3 }] as never;
       },
     }));
     assert.equal(queriedKboId, "56143", "이름이 아니라 선택한 kboId 로 조회");
     assert.equal(dupPickedResult.source, "kbo_structured", "선택 뒤에는 기록 답변");
     assert.match(dupPickedResult.answer, /홈런은? 3/, `선택한 선수 값: ${dupPickedResult.answer}`);
+
+    // valid-but-wrong roster id 공격: 김동현 후보가 아닌 **문보경(69102)**을 주입해도
+    // "로스터에 있는 id"라는 이유만으로 수락하면 안 된다. 원 질문 후보 membership이 계약이다.
+    assert.equal(isPickedPlayerAllowed("김동현 올해 홈런 몇개야?", "56143", players), true,
+      "김동현 picker 후보는 허용");
+    assert.equal(isPickedPlayerAllowed("김동현 올해 홈런 몇개야?", "69102", players), false,
+      "문보경은 유효 로스터 id여도 김동현 후보 밖");
+    const wrongRoster = freshState();
+    const wrongRosterResult = await answerQuestion("u1", "김동현 올해 홈런 몇개야?", statsDeps(wrongRoster, [], {
+      pickedPlayerKboId: "69102",
+      fetchSeasonRecord: async () => { throw new Error("후보 밖 id로 기록 조회 금지"); },
+      releaseDaily: async () => {},
+    }));
+    assert.equal(wrongRosterResult.source, "player_picker", "후보 밖 유효 id는 수락하지 않고 다시 picker");
+    assert.equal(wrongRosterResult.pickerOptions?.length, 3, "원 질문 후보군 유지");
+
+    // server persist도 membership 검사 **뒤**에만 실행되어야 한다. 순서가 뒤집히면
+    // 위조 id가 job에 남아 cron 재처리에서 다시 살아난다.
+    const serverSource = readFileSync(path.resolve("src/lib/baseball-qa/server.ts"), "utf8");
+    const guardPos = serverSource.indexOf("isPickedPlayerAllowed(question, input, ROSTER_PLAYERS)");
+    const persistPos = serverSource.indexOf("update({ picked_player_kbo_id: input");
+    assert.ok(guardPos >= 0 && persistPos > guardPos, "candidate membership 검증 뒤 persist");
 
     // ⑨ 투수 지표도 같은 계약으로 동작한다(테이블만 다르다).
     const pitcher = freshState();
@@ -1032,7 +1200,7 @@ async function verifyPipeline() {
       fetchSeasonRecord: async (table) => {
         pitcherTable = table;
         return [{
-          kbo_id: "69102", name: "문보경", team: "LG",
+          player_key: "69102", kbo_id: "69102", name: "문보경", team: "LG",
           updated_at: "2026-08-02T21:00:44.612+00:00", era: "3.42",
         }] as never;
       },

@@ -69,13 +69,25 @@ export const UNTRUSTED_METRIC_ALIASES = [
 
 /** 시즌 표현. 올해만 답한다 — 과거 시즌 row 가 DB 에 없기 때문이다. */
 const CURRENT_SEASON_WORDS = ["올해", "올시즌", "이번시즌", "금년", "올해의", String(SUPPORTED_SEASON)];
-const PAST_SEASON_WORDS = [
-  "작년", "지난해", "지지난해", "재작년", "통산", "커리어", "역대", "생애", "누적",
-  "2025", "2024", "2023", "2022", "2021", "2020",
+const UNSUPPORTED_SEASON_WORDS = [
+  "작년", "지난해", "지난시즌", "지난 시즌", "지지난해", "재작년",
+  "통산", "커리어", "역대", "생애", "누적",
 ];
 
 function normalize(value: string): string {
   return value.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
+}
+
+function normalizeWithSpaces(value: string): string {
+  return value.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+/** 모든 명시 연도 중 2026 외 값은 미지원. 하드코딩 연도 목록은 2019/2027을 놓친다. */
+function hasUnsupportedSeason(value: string): boolean {
+  const normalized = normalizeWithSpaces(value);
+  if (UNSUPPORTED_SEASON_WORDS.some((word) => normalized.includes(normalizeWithSpaces(word)))) return true;
+  return [...normalized.matchAll(/(?:19|20)\d{2}(?:\s*년|\s*시즌)?/g)]
+    .some((match) => Number(match[0].match(/\d{4}/)?.[0]) !== SUPPORTED_SEASON);
 }
 
 /** 수치를 묻는 문장인가. 이게 false 면 기록 경로가 아니다(서술형 RAG 로 간다). */
@@ -112,49 +124,79 @@ export function resolveSeasonRecordIntent(question: string): SeasonRecordIntent 
   if (UNTRUSTED_METRIC_ALIASES.some((alias) => compact.includes(normalize(alias)))) {
     return { kind: "untrusted_metric" };
   }
-  if (PAST_SEASON_WORDS.some((word) => compact.includes(word))) {
+  if (hasUnsupportedSeason(question)) {
     return { kind: "unsupported_season" };
   }
   if (!NUMERIC_QUESTION.test(compact)) return { kind: "none" };
 
-  // 타자 → 투수 순으로 본다. `hr`·`games` 처럼 양쪽에 있는 지표는 **투수 전용 표현**
-  // (피홈런·등판)이 문장에 있을 때만 투수로 간다.
-  const pitcherHint = /피안타|피홈런|자책|방어율|평균자책|세이브|홀드|이닝|탈삼진|whip|승률|등판|던졌/.test(compact);
+  // substring 매칭은 1글자 `패`를 `패스트볼`에서 잡고, `승`을 `승부`에서 잡는다.
+  // 지표별 경계 regex를 명시해 합성어를 기록 질문으로 오답 변환하지 않는다.
+  const patterns: Array<{
+    table: "batter" | "pitcher";
+    metric: string;
+    pattern: RegExp;
+  }> = [
+    // 투수 전용(타자 공통명보다 먼저)
+    { table: "pitcher", metric: "era", pattern: /평균\s*자책(?:점)?|방어율|\bera\b/i },
+    { table: "pitcher", metric: "hr", pattern: /피\s*홈런/ },
+    { table: "pitcher", metric: "h", pattern: /피\s*안타/ },
+    { table: "pitcher", metric: "saves", pattern: /세이브/ },
+    { table: "pitcher", metric: "holds", pattern: /홀드/ },
+    { table: "pitcher", metric: "wpct", pattern: /승률/ },
+    { table: "pitcher", metric: "ip", pattern: /투구\s*이닝|이닝/ },
+    { table: "pitcher", metric: "bb", pattern: /볼넷|포볼/ },
+    { table: "pitcher", metric: "hbp", pattern: /몸에\s*맞는\s*(?:공|볼)|사구(?!체)/ },
+    { table: "pitcher", metric: "so", pattern: /탈\s*삼진|삼진/ },
+    { table: "pitcher", metric: "er", pattern: /자책(?:점)?/ },
+    { table: "pitcher", metric: "r", pattern: /실점/ },
+    { table: "pitcher", metric: "whip", pattern: /\bwhip\b/i },
+    { table: "pitcher", metric: "games", pattern: /등판(?:\s*(?:경기|수))?/ },
+    // `몇승/몇 승/승수/10승`은 허용하되 승부·승률은 제외.
+    { table: "pitcher", metric: "wins", pattern: /(?:몇\s*승(?:수)?|\d+\s*승(?:수)?|승수)(?!부|률|리)/ },
+    { table: "pitcher", metric: "losses", pattern: /(?:몇\s*패(?:수)?|\d+\s*패(?:수)?|패수)(?!스트|배|션)/ },
 
-  const table = pitcherHint ? "pitcher" : "batter";
-  const metrics: Record<string, { label: string; aliases: readonly string[]; kind: string }> =
-    table === "pitcher" ? PITCHER_METRICS : BATTER_METRICS;
+    // 타자
+    { table: "batter", metric: "avg", pattern: /타율|타률|애버리지/ },
+    { table: "batter", metric: "doubles", pattern: /(?:2|이)\s*루타|투\s*베이스/ },
+    { table: "batter", metric: "triples", pattern: /(?:3|삼)\s*루타|쓰리\s*베이스/ },
+    { table: "batter", metric: "hr", pattern: /홈런|홈란|아치/ },
+    { table: "batter", metric: "tb", pattern: /총\s*루타|루타/ },
+    { table: "batter", metric: "rbi", pattern: /타점/ },
+    { table: "batter", metric: "ab", pattern: /타수/ },
+    { table: "batter", metric: "runs", pattern: /득점/ },
+    { table: "batter", metric: "hits", pattern: /안타/ },
+    { table: "batter", metric: "games", pattern: /출장(?:\s*(?:경기|수))?|경기\s*수/ },
+  ];
 
-  // 더 긴 alias 를 먼저 본다 — `홈런` ⊂ `피홈런` 처럼 짧은 쪽이 먼저 걸리면 오분류된다.
-  const matches = Object.entries(metrics)
-    .flatMap(([key, def]) => def.aliases.map((alias) => ({ key, def, alias: normalize(alias) })))
-    .filter((entry) => compact.includes(entry.alias))
-    .sort((left, right) => right.alias.length - left.alias.length);
-
-  if (matches.length === 0) return { kind: "none" };
-  const best = matches[0];
+  const normalized = normalizeWithSpaces(question);
+  const best = patterns.find((entry) => entry.pattern.test(normalized));
+  if (!best) return { kind: "none" };
+  const metrics = best.table === "pitcher" ? PITCHER_METRICS : BATTER_METRICS;
+  const def = metrics[best.metric as keyof typeof metrics] as {
+    label: string;
+    kind: SeasonRecordQuery["kind"];
+  };
   return {
     kind: "query",
     query: {
-      table,
-      metric: best.key,
-      label: best.def.label,
-      kind: best.def.kind as SeasonRecordQuery["kind"],
+      table: best.table,
+      metric: best.metric,
+      label: def.label,
+      kind: def.kind,
     },
   };
 }
 
 /** 명시적으로 올해를 지목했는가. 시즌 표현이 아예 없으면 현재 시즌으로 본다. */
 export function mentionsCurrentSeason(question: string): boolean {
-  const compact = normalize(question);
-  if (PAST_SEASON_WORDS.some((word) => compact.includes(word))) return false;
-  return true;
+  return !hasUnsupportedSeason(question);
 }
 
 export { CURRENT_SEASON_WORDS };
 
 /** DB row (snake_case 그대로). 값 변환은 하지 않는다. */
 export interface SeasonRecordRow {
+  player_key: string;
   kbo_id: string;
   name: string;
   team: string | null;
@@ -167,9 +209,9 @@ export interface SeasonRecordRow {
  *
  * Vercel cron 실측: `/api/cron/stats` 는 `0 21 * * *` (매일 21:00 UTC) 1회다.
  * 한 주기를 넘겨도 갱신이 없으면 그 값은 "오늘 경기 결과가 빠진 값"일 수 있으므로 답하지 않는다.
- * 여유를 조금 둔다 — cron 이 22:00 에 돌아도 정상이고, 몇 분 지연으로 fail-close 되면 안 된다.
+ * 삼순 확정 계약대로 경계는 24시간이다 — 25시간 row를 허용했던 30h 구현은 회귀다.
  */
-export const STATS_STALE_MS = 30 * 60 * 60 * 1000;
+export const STATS_STALE_MS = 24 * 60 * 60 * 1000;
 
 export type SeasonRecordOutcome =
   | { kind: "ok"; value: string; label: string; asOf: string; name: string; team: string | null }
@@ -196,11 +238,17 @@ export function resolveSeasonRecord(
   // row 0 = 미수집, 2+ = 같은 kboId 가 여러 행 → 어느 게 맞는지 모른다. 둘 다 답하지 않는다.
   if (rows.length !== 1) return rows.length === 0 ? { kind: "missing" } : { kind: "inconsistent" };
   const row = rows[0];
-  // 서버가 특정한 선수의 행이 맞는지 재확인 — 조회 조건이 바뀌어도 여기서 걸린다.
-  if (row.kbo_id !== expectedKboId) return { kind: "inconsistent" };
+  // 서버가 특정한 선수의 행이 맞는지 두 축으로 재확인한다.
+  // player_key 는 upsert 충돌키(정본), kbo_id 는 소비자 식별키다. 둘 중 하나라도 다르면
+  // 조회 조건이 제거/변경됐거나 오염행이다 — 이름이 같아도 답하지 않는다.
+  if (row.player_key !== expectedKboId || row.kbo_id !== expectedKboId) {
+    return { kind: "inconsistent" };
+  }
 
   const updatedAt = Date.parse(row.updated_at);
   if (!Number.isFinite(updatedAt)) return { kind: "inconsistent" };
+  // 미래 시각도 잘못된 데이터다. `now - future`가 음수라 stale 검사만으로는 통과한다.
+  if (updatedAt > now) return { kind: "inconsistent" };
   if (now - updatedAt > STATS_STALE_MS) return { kind: "stale", asOf: row.updated_at };
 
   const raw = row[query.metric];
@@ -209,12 +257,23 @@ export function resolveSeasonRecord(
   // **원값 그대로** 낸다. 재계산하지 않는다 — 타율을 hits/ab 로 다시 구하면 DB 표기와 어긋난다.
   let value: string;
   if (query.kind === "count") {
-    if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0) return { kind: "inconsistent" };
+    // 경기수·안타·2루타 같은 누적 count 는 **0 이상 정수**다. 1.5는 오염값이다.
+    if (typeof raw !== "number" || !Number.isSafeInteger(raw) || raw < 0) {
+      return { kind: "inconsistent" };
+    }
     value = String(raw);
-  } else {
+  } else if (query.kind === "rate") {
     if (typeof raw !== "string" && typeof raw !== "number") return { kind: "inconsistent" };
     value = String(raw).trim();
-    if (!value) return { kind: "missing" };
+    // 타율 `.238`, ERA `3.42`, WHIP `1.23`만. `N/A`·Infinity·음수는 금지.
+    if (!/^(?:\d+(?:\.\d{1,3})?|\.\d{1,3})$/.test(value) || Number(value) < 0) {
+      return { kind: "inconsistent" };
+    }
+  } else {
+    if (typeof raw !== "string") return { kind: "inconsistent" };
+    value = raw.trim();
+    // 이닝은 cron mapper가 보장하는 KBO 표기(예: `120`, `120 1/3`, `120 2/3`)만.
+    if (!/^\d+(?: [12]\/3)?$/.test(value)) return { kind: "inconsistent" };
   }
 
   return {
