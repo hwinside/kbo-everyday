@@ -1,9 +1,6 @@
-// 야잘알봇 헤더 진입점 배선 회귀 (2026-08-02 하린아빠 지시).
+// 야잘알봇 헤더 진입점 핫픽스 회귀 (2026-08-03 하린아빠 지시).
 //
-// 요구: "쪽지 왼쪽에 야잘알봇 아이콘 추가 > 아이콘 누르면 바로 대화창 진입 & 대화 시작"
-//
-// 종전 경로는 쪽지 아이콘 → /messages 목록 → 최상단 야잘알봇 카드 → 대화 시작(3탭).
-// 이 회귀는 "한 탭에 대화창까지" 계약이 실제로 배선돼 있는지를 소스에서 검사한다.
+// 답변 실패 경로를 고치는 동안 헤더 진입점을 노출하지 않는 계약을 검사한다.
 // 브라우저 E2E(qa:genius-entry-browser)와 역할이 다르다 — 여기는 배선 계약,
 // 저기는 실제 렌더/클릭. 배선 계약을 따로 두는 이유는 컴포넌트만 만들고
 // 헤더에 안 붙이거나, 라우팅을 /messages 목록으로 되돌리는 회귀를 잡기 위함.
@@ -32,14 +29,9 @@ const HEADERS_WITH_DM = [
 
 for (const file of HEADERS_WITH_DM) {
   const header = read(file);
-  check(`[${path.basename(file)}] GeniusEntryButton을 렌더한다`, () => {
-    assert.ok(/import\s+GeniusEntryButton\s+from/.test(header), "import 없음");
-    assert.ok(/<GeniusEntryButton\s*\/>/.test(header), "렌더 없음");
-  });
-  check(`[${path.basename(file)}] 마스코트가 쪽지 아이콘보다 왼쪽에 있다`, () => {
-    const mascotIdx = header.indexOf("<GeniusEntryButton");
-    const dmIdx = header.indexOf('href="/messages"');
-    assert.ok(mascotIdx >= 0 && dmIdx >= 0 && mascotIdx < dmIdx, "배선 순서 불일치");
+  check(`[${path.basename(file)}] GeniusEntryButton을 노출하지 않는다`, () => {
+    assert.ok(!/import\s+GeniusEntryButton\s+from/.test(header), "import가 남아 있음");
+    assert.ok(!/<GeniusEntryButton\s*\/>/.test(header), "렌더가 남아 있음");
   });
 }
 
