@@ -13,6 +13,7 @@
  */
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import ts from "typescript";
 import {
   createPitcherSeasonResolver,
   lookupPitcherSeasonEra as productionLookupEra,
@@ -490,9 +491,17 @@ const [prodStarter, prodOther] = pairTeam![1];
 const prodTeamId = pairTeam![0];
 const prodStarterEra = productionLookupEra(prodStarter.kboId);
 const prodOtherEra = productionLookupEra(prodOther.kboId);
+// 판별자는 ERA 값이 아니라 identity(name/kboId)다. 두 투수의 ERA가 우연히 같아지는
+// *정상적인 기록 갱신*에 RED가 나면 이 hotfix가 막으려던 원 사고(데이터 갱신이
+// 빌드를 깨는 순환 참조)가 그대로 재발한다(삼순 3차 지적). 그래서 동률은 GREEN이고,
+// 정책이 깨지면 name/kboId 차이로 RED가 되도록 아래 단정들을 deepEqual로 태운다.
 assert.ok(
-  prodStarterEra && prodOtherEra && prodStarterEra !== prodOtherEra,
-  "프로덕션 정책 검증은 ERA가 서로 다른 두 투수가 필요하다",
+  prodStarterEra && prodOtherEra,
+  "프로덕션 정책 검증 표본 두 투수는 시즌 기록을 보유해야 한다",
+);
+assert.ok(
+  prodStarter.name !== prodOther.name && prodStarter.kboId !== prodOther.kboId,
+  "프로덕션 정책 검증은 identity가 서로 다른 두 투수가 필요하다",
 );
 
 // confirmed 라인업은 fresh live mismatch를 이긴다 (kbo/naver 양쪽 등급).
@@ -619,6 +628,79 @@ assert.ok(
     && gamePage.includes("isLineupStarterProvenanceTrusted"),
   "page binds starter selection to actual live success and lineup provenance",
 );
+/* 위 §3의 문자열 검사는 "어떤 함수가 호출되는가"를 증명하지 못한다. import를 alias로
+ * 받고 같은 파일에 동명의 live-only wrapper를 두면 화면 정책이 깨져도 문자열은 그대로라
+ * 전체 prebuild가 GREEN이었다(삼순 3차 지적). 그래서 호출부 식별자의 *심볼*을 TS 바인더로
+ * 해석해, 두 호출이 모두 프로덕션 모듈의 named import에 직접 연결돼 있는지 확인한다. */
+const GAME_PAGE_PATH = "src/app/(main)/games/[gameId]/page.tsx";
+const pageSource = ts.createSourceFile(
+  GAME_PAGE_PATH,
+  gamePage,
+  ts.ScriptTarget.ESNext,
+  true,
+  ts.ScriptKind.TSX,
+);
+const pageProgram = ts.createProgram({
+  rootNames: [GAME_PAGE_PATH],
+  options: { noResolve: true, noLib: true, allowJs: false, jsx: ts.JsxEmit.Preserve },
+  host: {
+    getSourceFile: (name) => (name === GAME_PAGE_PATH ? pageSource : undefined),
+    getDefaultLibFileName: () => "lib.d.ts",
+    writeFile: () => {},
+    getCurrentDirectory: () => "",
+    getCanonicalFileName: (name) => name,
+    useCaseSensitiveFileNames: () => true,
+    getNewLine: () => "\n",
+    fileExists: (name) => name === GAME_PAGE_PATH,
+    readFile: (name) => (name === GAME_PAGE_PATH ? gamePage : undefined),
+  },
+});
+const pageChecker = pageProgram.getTypeChecker();
+
+function findCalleeIdentifier(variableName: string): ts.Identifier {
+  let found: ts.Identifier | undefined;
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isVariableDeclaration(node)
+      && ts.isIdentifier(node.name)
+      && node.name.text === variableName
+      && node.initializer
+      && ts.isCallExpression(node.initializer)
+      && ts.isIdentifier(node.initializer.expression)
+    ) {
+      found = node.initializer.expression;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(pageSource);
+  assert.ok(found, `\`${variableName}\`가 식별자 호출로 선언되어 있어야 한다`);
+  return found!;
+}
+
+for (const variableName of ["awayLineupStarter", "homeLineupStarter"] as const) {
+  const callee = findCalleeIdentifier(variableName);
+  const symbol = pageChecker.getSymbolAtLocation(callee);
+  assert.ok(symbol, `\`${variableName}\` 호출 대상 심볼을 해석할 수 있어야 한다`);
+  const declaration = symbol!.declarations?.[0];
+  assert.ok(
+    declaration && ts.isImportSpecifier(declaration),
+    `\`${variableName}\`는 로컬 wrapper가 아니라 import된 함수를 직접 호출해야 한다`,
+  );
+  const specifier = declaration as ts.ImportSpecifier;
+  const importedName = (specifier.propertyName ?? specifier.name).text;
+  assert.equal(
+    importedName,
+    "resolveLineupStarter",
+    `\`${variableName}\`는 프로덕션 \`resolveLineupStarter\`를 호출해야 한다`,
+  );
+  const moduleSpecifier = specifier.parent.parent.parent.moduleSpecifier;
+  assert.ok(
+    ts.isStringLiteral(moduleSpecifier)
+      && moduleSpecifier.text === "@/lib/stats/pitcher-season",
+    `\`${variableName}\`의 선발 해석기는 프로덕션 모듈에서 와야 한다`,
+  );
+}
+
 const detailHook = readFileSync("src/lib/hooks/useGameDetail.ts", "utf8");
 assert.ok(
   detailHook.includes("shouldPreserveCanonicalLineup")
