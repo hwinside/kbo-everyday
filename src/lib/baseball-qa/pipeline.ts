@@ -222,12 +222,19 @@ const RULE_TERM_HINT_WORDS = [
   "잔루", "만루", "순위", "인필드플라이", "화이트볼", "너클볼", "포지션", "지명타자", "대타", "대주자",
   "1루수", "2루수", "3루수", "유격수", "외야수", "내야수",
 ];
+const RULE_SCOPE_SIGNAL_WORDS = [
+  "규칙", "룰", "용어", "판정", "보크", "견제", "태그업", "마운드", "비디오판독",
+  "챌린지", "우천중단", "콜드게임", "연장전", "무승부", "스트라이크", "아웃", "파울", "번트",
+  "도루", "병살", "세이프", "피치클락", "시프트", "볼넷", "낫아웃", "희생플라이", "교체",
+];
+const RULE_ACTOR_WORDS = [
+  "감독", "코치", "매니저", "주장", "선수", "투수", "타자", "포수", "주자", "심판", "수비",
+  "지명타자", "대타", "대주자", "1루수", "2루수", "3루수", "유격수", "외야수", "내야수",
+];
 const RULE_TERM_INTENT =
-  /뭐|뭔|무엇|뜻|설명|알려|규칙|룰|용어|어떻게|언제|몇\s*번|해야|할\s*수|가능|되나|돼|되죠|괜찮|차이|절차|경우|궁금/;
+  /뭐|뭔|무엇|뜻|설명|알려|규칙|룰|용어|어떻게|언제|몇\s*번|해야|할\s*수|가능|되나|돼|되죠|괜찮|차이|절차|경우|궁금|바꾸|바뀌|변경|방문|항의|처리|정해/;
 const OUT_OF_SCOPE_INTENT =
-  /별명|감독|코치|누구|누가\s*더|더\s*잘|비교|역대|최고|최악|추천|오늘\s*경기|경기\s*결과|날씨|주식|코인|요리|프롬프트|비밀번호|영화|메뉴|가방|시\s*(?:써|하나)|아무거나/;
-const UNSUPPORTED_REQUEST_INTENT =
-  /별명|코치|누구|누가\s*더|더\s*잘|비교|역대|최고|최악|추천|오늘\s*경기|날씨|주식|코인|요리|프롬프트|비밀번호|영화|메뉴|가방|시\s*(?:써|하나)|아무거나/;
+  /별명|누구|누가\s*더|더\s*잘|비교|역대|최고|최악|추천|오늘\s*경기|날씨|주식|코인|요리|프롬프트|비밀번호|영화|메뉴|가방|하늘|음식|맛집|몇\s*시|시\s*(?:써|하나)|아무거나/;
 const NAMED_STAT_QUERY =
   /[가-힣]{2,12}(?:의|은|는|이|가)?\s+(?:타율|방어율|평균자책|출루율|장타율|홈런|안타|타점|도루|승수|세이브|홀드|삼진|기록|스탯)\s*(?:몇|얼마|알려|보여|기록)?/;
 
@@ -257,16 +264,32 @@ export function isSupportedRuleTermQuestion(
     })
   );
   const mentionsRuleHint = RULE_TERM_HINT_WORDS.some((word) => compact.includes(word));
+  const mentionsRuleScopeSignal = RULE_SCOPE_SIGNAL_WORDS.some((word) => compact.includes(word));
+  const mentionsRuleActor = RULE_ACTOR_WORDS.some((word) => compact.includes(word));
+  const mentionsRoleRule = compact.includes("역할") && (
+    mentionsRuleActor ||
+    /^(?:역할이바뀌면어떻게돼(?:요)?|역할과포지션차이가?뭐야(?:요)?|역할이?(?:뭐야|뭔가요|궁금해))[?!.]*$/.test(compact)
+  );
   const hasRuleIntent = RULE_TERM_INTENT.test(normalized);
-  const hasRuleSubject = BASEBALL_WORDS.some((word) => compact.includes(word));
 
-  // 선수·구단·감독은 룰의 예시 주체일 수 있다. 검수 용어가 있고 질문 의도가 룰이면
-  // entity 단어만으로 막지 않는다. 반대로 `LG 순위`처럼 질문 의도가 없는 속성 조회는
-  // 아래 범위 밖 게이트가 계속 닫는다.
+  // 검수 사전의 실제 용어가 문장에 있으면 축약형(`잔루만루는`)도 용어 질문으로 인정한다.
+  // 일반 엔티티 단어가 아니라 132개 검수 용어 폐쇄집합에만 해당한다.
+  if (mentionsGlossaryTerm && !NAMED_STAT_QUERY.test(normalized)) return true;
   if (
-    !UNSUPPORTED_REQUEST_INTENT.test(normalized) &&
+    mentionsRuleHint &&
+    !hasPlayerReference(tokens, players) &&
+    !TEAM_WORDS.some((word) => tokenMatches(tokens, word)) &&
+    !OUT_OF_SCOPE_INTENT.test(normalized)
+  ) return true;
+
+  // 출시 경계는 부정어 denylist가 아니라 **룰/용어 양성 신호**로 연다. `투수`·`야구` 같은
+  // 일반 엔티티 단어만으로는 절대 열지 않으므로 연봉·티켓·가족 질문이 새 표현으로 바뀌어도
+  // provider/RAG/cache 앞에서 닫힌다. 선수·구단·감독은 보크/역할/마운드 방문 같은 양성
+  // 신호와 질문 의도가 함께 있을 때만 룰의 예시 주체로 허용한다.
+  if (
     !NAMED_STAT_QUERY.test(normalized) &&
-    (mentionsGlossaryTerm || mentionsRuleHint || hasRuleSubject) &&
+    !OUT_OF_SCOPE_INTENT.test(normalized) &&
+    (mentionsRuleHint || mentionsRuleScopeSignal || mentionsRoleRule) &&
     hasRuleIntent
   ) return true;
   if (hasPlayerReference(tokens, players)) return false;
@@ -274,9 +297,7 @@ export function isSupportedRuleTermQuestion(
   if (OUT_OF_SCOPE_INTENT.test(normalized)) return false;
   if (NAMED_STAT_QUERY.test(normalized)) return false;
   if (matchGlossary(glossary, question)) return true;
-  if (mentionsGlossaryTerm) return true;
-  if (mentionsRuleHint) return true;
-  return hasRuleSubject && hasRuleIntent;
+  return false;
 }
 /**
  * 인젝션 지시부의 "명령형·연결형"만 잡는 꼬리 (삼순 4차 P0).

@@ -447,9 +447,10 @@ const roleRuleQuestions = [
   ...LIVE_POSITIVE_TEAM_POSSESSIVE,
 ];
 for (const question of roleRuleQuestions) {
-  assert.ok(
-    ["baseball_rule_term", "blocked"].includes(routeQuestion(question, seedEntries, players)),
-    `룰·용어 경계 밖 라벨 누수: ${question}`,
+  assert.equal(
+    routeQuestion(question, seedEntries, players),
+    "baseball_rule_term",
+    `정상 역할변경 룰 과차단: ${question}`,
   );
 }
 
@@ -531,6 +532,8 @@ assert.equal(
 
 interface MockState {
   cache: Map<string, string>;
+  cacheReads: number;
+  cacheWrites: number;
   logs: MatchPath[];
   used: number;
   llmText: string;
@@ -543,6 +546,8 @@ interface MockState {
 function freshState(overrides: Partial<MockState> = {}): MockState {
   return {
     cache: new Map(),
+    cacheReads: 0,
+    cacheWrites: 0,
     logs: [],
     used: 0,
     llmText: '{"status":"ANSWER","answer":"야구 룰에 따른 검증된 답변이에요."}',
@@ -558,8 +563,14 @@ function makeDeps(state: MockState): QaDeps {
   return {
     loadGlossary: async () => seedEntries,
     loadPlayers: async () => players,
-    getCache: async (key) => state.cache.get(key) ?? null,
-    setCache: async (key, value) => { state.cache.set(key, value); },
+    getCache: async (key) => {
+      state.cacheReads++;
+      return state.cache.get(key) ?? null;
+    },
+    setCache: async (key, value) => {
+      state.cacheWrites++;
+      state.cache.set(key, value);
+    },
     callLlm: async () => {
       state.events.push("llm");
       state.llmCalls++;
@@ -652,6 +663,10 @@ async function verifyPipeline() {
     "LG 트윈스 감독 누구야?",
     "김도영과 문보경 중 누가 더 잘해?",
     "역대 최고 투수는 누구야?",
+    // denylist에 없는 새 속성/사생활/구매 표현도 양성 룰 신호가 없으면 동일하게 닫힌다.
+    "투수 연봉 알려줘",
+    "야구 티켓 가격 알려줘",
+    "투수 여자친구가 뭐야?",
   ]) {
     const state = freshState();
     state.cache.set(normalizeQuestion(input), "오염 캐시");
@@ -670,7 +685,9 @@ async function verifyPipeline() {
     assert.equal(result.answer, BLOCKED_ANSWER, input);
     assert.equal(officialRagCalls, 0, `${input}: official RAG 0`);
     assert.equal(playerRagCalls, 0, `${input}: player RAG 0`);
+    assert.equal(state.cacheReads, 0, `${input}: cache read 0`);
     assert.equal(state.llmCalls, 0, `${input}: generic LLM 0`);
+    assert.equal(state.cacheWrites, 0, `${input}: cache write 0`);
     assert.equal(state.cache.get(normalizeQuestion(input)), "오염 캐시", `${input}: cache write 0`);
   }
 
