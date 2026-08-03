@@ -16,12 +16,10 @@ import {
   DAILY_LIMIT,
   HISTORY_HOLD_ANSWER,
   isAckPhrase,
-  LLM_AMBIGUOUS_ANSWER,
   matchGlossary,
   routeQuestion,
   RULE_TERM_SENTINEL,
   SERVICE_REDIRECT_ANSWER,
-  UNSURE_ANSWER,
   UNSURE_SENTINEL,
   validateLlmResponse,
   type GlossaryEntry,
@@ -771,8 +769,7 @@ async function verifyPipeline() {
     const state = freshState({ llmText });
     const result = await answerQuestion("u1", "잔루만루가 뭔데", makeDeps(state));
     assert.equal(result.source, "unsure", llmText);
-    assert.equal(result.answer, UNSURE_ANSWER, llmText);
-    assert.notEqual(result.answer, BLOCKED_ANSWER, llmText);
+    assert.equal(result.answer, BLOCKED_ANSWER, llmText);
     assert.equal(state.llmCalls, 1, llmText);
     assert.equal(state.used, 1, llmText);
     assert.equal(state.cache.size, 0, llmText);
@@ -782,7 +779,7 @@ async function verifyPipeline() {
   const timeout = freshState({ llmThrows: true });
   const timeoutResult = await answerQuestion("u1", "잔루만루가 뭔데", makeDeps(timeout));
   assert.equal(timeoutResult.source, "unsure");
-  assert.equal(timeoutResult.answer, UNSURE_ANSWER);
+  assert.equal(timeoutResult.answer, BLOCKED_ANSWER);
   assert.equal(timeout.llmCalls, 1);
   assert.equal(timeout.used, 1);
   assert.deepEqual(timeout.events, ["reserve", "llm"]);
@@ -798,7 +795,7 @@ async function verifyPipeline() {
     const result = await answerQuestion("u1", "야구 투구 규칙을 자세히 알려줘", makeDeps(state));
     assert.ok(["blocked", "unsure"].includes(result.source));
     assert.equal(state.cache.size, 0);
-    if (result.source === "unsure") assert.equal(result.answer, UNSURE_ANSWER);
+    if (result.source === "unsure") assert.equal(result.answer, BLOCKED_ANSWER);
   }
 
   const limited = freshState({ used: DAILY_LIMIT });
@@ -936,7 +933,7 @@ async function verifyLlmStoreFailureFailClosed() {
   assert.equal(llmCalls, 1, "storeLlm 실패 재처리가 LLM을 재호출하면 안 됨 (4차 P1)");
   assert.equal(retry.status, 200);
   assert.equal(retry.source, "error");
-  assert.equal(retry.answer, LLM_AMBIGUOUS_ANSWER);
+  assert.equal(retry.answer, BLOCKED_ANSWER);
   assert.equal(cache.size, 0, "ambiguous 경로는 캐시를 오염하면 안 됨");
 }
 

@@ -20,6 +20,7 @@ import {
 } from "./rag/retrieve";
 import {
   BASEBALL_GENIUS_DAILY_LIMIT,
+  BASEBALL_GENIUS_FALLBACK_ANSWER,
   BASEBALL_GENIUS_MAX_ANSWER_LENGTH,
   BASEBALL_GENIUS_MAX_QUESTION_LENGTH,
   BASEBALL_GENIUS_MIN_QUESTION_LENGTH,
@@ -29,7 +30,7 @@ export const DAILY_LIMIT = BASEBALL_GENIUS_DAILY_LIMIT;
 export const MIN_QUESTION_LEN = BASEBALL_GENIUS_MIN_QUESTION_LENGTH;
 export const MAX_QUESTION_LEN = BASEBALL_GENIUS_MAX_QUESTION_LENGTH;
 
-export const BLOCKED_ANSWER = "야구 룰/용어에 대한 질문만 답할 수 있어요. 예: \"보크가 뭐야?\"";
+export const BLOCKED_ANSWER = BASEBALL_GENIUS_FALLBACK_ANSWER;
 // LLM이 야구 룰/용어인지 확신하지 못한 경우 — 차단 문구가 아니라 확인 질문이다.
 export const UNSURE_ANSWER =
   "어떤 야구 룰/용어를 여쭤보신 걸까요? 조금만 더 자세히 적어주시면 정확히 답해드릴게요! ⚾";
@@ -151,6 +152,8 @@ export interface QaDeps {
   searchRag?: (candidate: RagPlayerCandidate, question: string) => Promise<RagEvidence[]>;
   /** 근거를 **비신뢰 데이터**로만 전달하는 재서술 호출 (S2b). */
   callRagLlm?: (question: string, evidence: RagEvidence[]) => Promise<LlmResult>;
+  /** 현재 출시 범위는 룰/용어만이다. 선수 RAG는 후속 출시에서 명시적으로 켠다. */
+  enablePlayerRag?: boolean;
   /**
    * KBO 공식 간행물(tier1) 근거 검색 — 규칙·용어 질문용.
    *
@@ -624,9 +627,9 @@ async function answerPlayerDescriptiveQuestion(
     await deps.log({ userId, question, questionNorm, matchPath: "blocked", answer: BLOCKED_ANSWER, inputTokens: null, outputTokens: null });
     return { status: 200, answer: BLOCKED_ANSWER, source: "blocked", remaining };
   };
-  const failCloseError = async (status: number, answer: string): Promise<QaResult> => {
+  const failCloseError = async (): Promise<QaResult> => {
     await deps.log({ userId, question, questionNorm, matchPath: "error", answer: null, inputTokens: null, outputTokens: null });
-    return { status, answer, source: "error", remaining };
+    return { status: 200, answer: BLOCKED_ANSWER, source: "error", remaining };
   };
 
   // 수요 기록은 ingestion 우선순위 신호일 뿐이라 실패해도 답변 경로를 막지 않는다.
@@ -655,14 +658,14 @@ async function answerPlayerDescriptiveQuestion(
     try {
       state = await deps.getLlmState();
     } catch {
-      return failCloseError(503, "지금은 답변을 가져올 수 없어요. 잠시 후 다시 시도해 주세요.");
+      return failCloseError();
     }
     llm = state.result;
     if (!llm && state.started) {
       // winner가 아직 LLM 경계에 있을 수 있는 창 — loser는 어떤 답변도 발송하지 않는다.
       if (state.ownerActive) return { status: 202, answer: "", source: "pending", remaining };
       // fence 경과: 공급자 응답/과금이 이미 발생했을 수 있다 — 자동 재호출 없이 종결한다.
-      return failCloseError(200, LLM_AMBIGUOUS_ANSWER);
+      return failCloseError();
     }
   }
   if (!llm) {
@@ -671,7 +674,7 @@ async function answerPlayerDescriptiveQuestion(
       try {
         won = await deps.acquireLlmStart();
       } catch {
-        return failCloseError(503, "지금은 답변을 가져올 수 없어요. 잠시 후 다시 시도해 주세요.");
+        return failCloseError();
       }
       if (!won) return { status: 202, answer: "", source: "pending", remaining };
     }
@@ -726,9 +729,9 @@ async function answerOfficialDocumentQuestion(
   if (!allowsNumericAnswer(evidence)) return null;
 
   // ── durable LLM 경계 (선수 경로·일반 경로와 동일 계약) ───────────────────────
-  const failCloseError = async (status: number, answer: string): Promise<QaResult> => {
+  const failCloseError = async (): Promise<QaResult> => {
     await deps.log({ userId, question, questionNorm, matchPath: "error", answer: null, inputTokens: null, outputTokens: null });
-    return { status, answer, source: "error", remaining };
+    return { status: 200, answer: BLOCKED_ANSWER, source: "error", remaining };
   };
   let llm: LlmResult | null = null;
   if (deps.getLlmState) {
@@ -736,12 +739,12 @@ async function answerOfficialDocumentQuestion(
     try {
       state = await deps.getLlmState();
     } catch {
-      return failCloseError(503, "지금은 답변을 가져올 수 없어요. 잠시 후 다시 시도해 주세요.");
+      return failCloseError();
     }
     llm = state.result;
     if (!llm && state.started) {
       if (state.ownerActive) return { status: 202, answer: "", source: "pending", remaining };
-      return failCloseError(200, LLM_AMBIGUOUS_ANSWER);
+      return failCloseError();
     }
   }
   if (!llm) {
@@ -750,7 +753,7 @@ async function answerOfficialDocumentQuestion(
       try {
         won = await deps.acquireLlmStart();
       } catch {
-        return failCloseError(503, "지금은 답변을 가져올 수 없어요. 잠시 후 다시 시도해 주세요.");
+        return failCloseError();
       }
       if (!won) return { status: 202, answer: "", source: "pending", remaining };
     }
@@ -758,7 +761,7 @@ async function answerOfficialDocumentQuestion(
       llm = await deps.callOfficialRagLlm!(question, evidence);
     } catch {
       // LLM 호출 실패. 경계를 이미 소비했을 수 있어 일반 경로로 내려보내지 않는다.
-      return failCloseError(200, LLM_AMBIGUOUS_ANSWER);
+      return failCloseError();
     }
     if (deps.storeLlm) await deps.storeLlm(llm);
   }
@@ -766,8 +769,8 @@ async function answerOfficialDocumentQuestion(
   const validated = validateRagResponse(llm.text, { numericEvidence: true, evidence });
   if (validated.kind !== "grounded") {
     // 공식 근거로도 답을 못 만들었다. LLM 호출을 이미 써서 일반 경로 재호출은 안 된다.
-    await deps.log({ userId, question, questionNorm, matchPath: "unsure", answer: UNSURE_ANSWER, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
-    return { status: 200, answer: UNSURE_ANSWER, source: "unsure", remaining };
+    await deps.log({ userId, question, questionNorm, matchPath: "unsure", answer: BLOCKED_ANSWER, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
+    return { status: 200, answer: BLOCKED_ANSWER, source: "unsure", remaining };
   }
   const answer = composeRagAnswer(validated.answer, evidence[0]);
   await deps.log({ userId, question, questionNorm, matchPath: "rag", answer, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
@@ -783,7 +786,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   try {
     reservation = await deps.reserveDaily(userId, DAILY_LIMIT);
   } catch {
-    return { status: 503, answer: "지금은 질문 한도를 확인할 수 없어요. 잠시 후 다시 시도해 주세요.", source: "error", remaining: 0 };
+    return { status: 200, answer: BLOCKED_ANSWER, source: "error", remaining: 0 };
   }
   if (!reservation.allowed) {
     await deps.log({ userId, question, questionNorm, matchPath: "limited", answer: null, inputTokens: null, outputTokens: null });
@@ -848,11 +851,13 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   // 무시된다 — 실제로 `문보경 별명이 뭐야?` 에 preseed 캐시를 넣으면 source=cache 로
   // 재현됐다. 이 분기에 들어오면 **여기서 종결**한다: 근거가 있으면 rag 답변,
   // 근거 0건·근거부족·오염근거는 generic LLM 0 / cache 0 으로 명시 fail-close 한다.
-  if (deps.searchRag && deps.callRagLlm) {
-    const candidate = resolveRagPlayerCandidate(question, players);
-    if (candidate) {
-      return answerPlayerDescriptiveQuestion(userId, question, questionNorm, candidate, remaining, deps);
+  const playerCandidate = resolveRagPlayerCandidate(question, players);
+  if (playerCandidate) {
+    if (deps.enablePlayerRag && deps.searchRag && deps.callRagLlm) {
+      return answerPlayerDescriptiveQuestion(userId, question, questionNorm, playerCandidate, remaining, deps);
     }
+    await deps.log({ userId, question, questionNorm, matchPath: "blocked", answer: BLOCKED_ANSWER, inputTokens: null, outputTokens: null });
+    return { status: 200, answer: BLOCKED_ANSWER, source: "blocked", remaining };
   }
 
   // ③ 동일질문 캐시 (토큰 0). 맥락 의존 질문은 global 캐시를 read도 write도 하지 않는다
@@ -879,7 +884,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     } catch {
       // LLM 소비 여부를 모르는 채 진행하지 않는다 (재시도 가능한 실패).
       await deps.log({ userId, question, questionNorm, matchPath: "error", answer: null, inputTokens: null, outputTokens: null });
-      return { status: 503, answer: "지금은 답변을 가져올 수 없어요. 잠시 후 다시 시도해 주세요.", source: "error", remaining };
+      return { status: 200, answer: BLOCKED_ANSWER, source: "error", remaining };
     }
     llm = state.result;
     if (!llm && state.started) {
@@ -890,7 +895,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       // fence 경과: 이전 시도가 LLM 호출을 시작했지만 결과 저장 전에 죽은 ambiguous 창 —
       // 공급자 응답/과금이 이미 발생했을 수 있으므로 자동 재호출하지 않고 안내로 종결한다.
       await deps.log({ userId, question, questionNorm, matchPath: "error", answer: null, inputTokens: null, outputTokens: null });
-      return { status: 200, answer: LLM_AMBIGUOUS_ANSWER, source: "error", remaining };
+      return { status: 200, answer: BLOCKED_ANSWER, source: "error", remaining };
     }
   }
   if (!llm) {
@@ -901,7 +906,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       } catch {
         // durable 고정에 실패하면 LLM을 호출하지 않는다 (재시도 가능, LLM 미소비).
         await deps.log({ userId, question, questionNorm, matchPath: "error", answer: null, inputTokens: null, outputTokens: null });
-        return { status: 503, answer: "지금은 답변을 가져올 수 없어요. 잠시 후 다시 시도해 주세요.", source: "error", remaining };
+        return { status: 200, answer: BLOCKED_ANSWER, source: "error", remaining };
       }
       if (!won) {
         // CAS 패배 — 동시 worker가 방금 winner가 됨. 답변 발송 없이 물러난다 (5차 P1).
@@ -913,7 +918,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     } catch {
       // timeout/공급자 오류도 판정 불명확이다. 답변·캐시 없이 확인 질문으로 fail-close한다.
       await deps.log({ userId, question, questionNorm, matchPath: "unsure", answer: null, inputTokens: null, outputTokens: null });
-      return { status: 200, answer: UNSURE_ANSWER, source: "unsure", remaining };
+      return { status: 200, answer: BLOCKED_ANSWER, source: "unsure", remaining };
     }
     // 저장 실패는 throw로 전파 — 재처리는 위 ambiguous 경로로 fail-closed되어 재호출이 없다.
     if (deps.storeLlm) await deps.storeLlm(llm);
@@ -927,7 +932,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   if (validated.kind === "unsure" || !validated.answer) {
     // 추측 금지 → 보류. 캐시 미저장(사전 보강 후 정답 제공 여지).
     await deps.log({ userId, question, questionNorm, matchPath: "unsure", answer: null, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
-    return { status: 200, answer: UNSURE_ANSWER, source: "unsure", remaining };
+    return { status: 200, answer: BLOCKED_ANSWER, source: "unsure", remaining };
   }
 
   // 맥락 의존 답변은 global 캐시에 쓰지 않는다 (spec §4.1 B5).

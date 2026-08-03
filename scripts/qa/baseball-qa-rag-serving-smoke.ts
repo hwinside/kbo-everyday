@@ -23,7 +23,6 @@ import {
   answerQuestion,
   BLOCKED_ANSWER,
   HISTORY_HOLD_ANSWER,
-  LLM_AMBIGUOUS_ANSWER,
   resolveRagPlayerCandidate,
   type GlossaryEntry,
   type LlmResult,
@@ -128,6 +127,7 @@ const MOON_EVIDENCE: RagEvidence = {
 function makeDeps(overrides: Partial<QaDeps> = {}): { deps: QaDeps; logs: { matchPath: string; answer: string | null }[] } {
   const logs: { matchPath: string; answer: string | null }[] = [];
   const deps: QaDeps = {
+    enablePlayerRag: true,
     loadGlossary: async () => GLOSSARY,
     loadPlayers: async () => PLAYERS,
     getCache: async () => null,
@@ -153,6 +153,29 @@ async function run(): Promise<void> {
   assert.equal(isS2bTargetSourceKey("namu:player:52605"), false, "미커버 선수는 대상이 아니다");
   // 동명이인(양현종)은 목록에서 격리되어야 한다 (§12).
   assert.equal(S2B_TARGET_PLAYERS.some((player) => player.name === "양현종"), false);
+
+  // 현재 출시 범위는 룰/용어다. 선수 코퍼스가 READY여도 명시 플래그 없이는
+  // 검색·일반 LLM·캐시를 전부 우회하고 exact 범위 안내로 닫혀야 한다.
+  {
+    let searchCalls = 0;
+    let llmCalls = 0;
+    let cacheReads = 0;
+    const { deps, logs } = makeDeps({
+      enablePlayerRag: false,
+      searchRag: async () => { searchCalls++; return [MOON_EVIDENCE]; },
+      callRagLlm: async () => { llmCalls++; throw new Error("현재 범위에서 호출 금지"); },
+      callLlm: async () => { llmCalls++; throw new Error("현재 범위에서 호출 금지"); },
+      getCache: async () => { cacheReads++; return "오염 캐시"; },
+    });
+    const scoped = await answerQuestion("u1", "문보경 별명이 뭐야?", deps);
+    assert.equal(scoped.source, "blocked");
+    assert.equal(scoped.answer, BLOCKED_ANSWER);
+    assert.equal(searchCalls, 0);
+    assert.equal(llmCalls, 0);
+    assert.equal(cacheReads, 0);
+    assert.equal(logs.at(-1)?.matchPath, "blocked");
+    console.log("PASS 현재 출시 범위 — 선수 질문 exact fallback / RAG·LLM·cache 0");
+  }
 
   // ── 1. RED: 근거가 없으면 문보경 질문은 답이 되지 않는다 ────────────────
   {
@@ -915,7 +938,7 @@ async function verifyRagLlmDurableBoundary(): Promise<void> {
     });
     const ambiguous = await answerQuestion("u1", "문보경 별명이 뭐야?", deps);
     assert.equal(ambiguous.source, "error");
-    assert.equal(ambiguous.answer, LLM_AMBIGUOUS_ANSWER);
+    assert.equal(ambiguous.answer, BLOCKED_ANSWER);
     assert.equal(ragLlmCalls, 0, "ambiguous 창에서 RAG LLM을 재호출하면 안 된다");
   }
 

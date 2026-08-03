@@ -6,6 +6,7 @@ import { supabaseAdmin } from "@/lib/supabase/admin";
 import { sendOpsMessageToUser } from "@/lib/cs/send-ops-message";
 import {
   answerQuestion,
+  BLOCKED_ANSWER,
   isAckPhrase,
   MAX_QUESTION_LEN,
   MIN_QUESTION_LEN,
@@ -276,6 +277,7 @@ function makeDeps(messageId: number): QaDeps {
     callLlm,
     searchRag,
     callRagLlm,
+    enablePlayerRag: false,
     searchOfficialRag,
     callOfficialRagLlm,
     recordRagDemand: async (sourceKeys) => {
@@ -501,16 +503,22 @@ export async function processBaseballQaQuestion(input: {
       if (readyError) throw readyError;
     } catch (error) {
       console.error("baseball-genius pipeline failed:", (error as Error).message);
-      await supabaseAdmin
+      result = { status: 200, answer: BLOCKED_ANSWER, source: "error", remaining: 0 };
+      const { error: fallbackError } = await supabaseAdmin
         .from("genius_question_jobs")
         .update({
-          status: "failed",
-          last_error: "pipeline_failed",
+          status: "ready",
+          answer: result.answer,
+          source: result.source,
+          remaining: result.remaining,
+          last_error: "pipeline_fallback",
           updated_at: new Date().toISOString(),
         })
         .eq("message_id", messageId)
         .eq("status", "processing");
-      return { kind: "failed", status: 503, reason: "답변 생성에 실패했습니다" };
+      if (fallbackError) {
+        return { kind: "failed", status: 503, reason: "답변 fallback 저장에 실패했습니다" };
+      }
     }
   }
 

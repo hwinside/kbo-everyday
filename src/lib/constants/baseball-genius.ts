@@ -8,6 +8,8 @@ export const BASEBALL_GENIUS_PINNED_ROOM_LEAVABLE = false;
 export const BASEBALL_GENIUS_MAX_ANSWER_LENGTH = 200;
 export const BASEBALL_GENIUS_MIN_QUESTION_LENGTH = 2;
 export const BASEBALL_GENIUS_MAX_QUESTION_LENGTH = 200;
+export const BASEBALL_GENIUS_FALLBACK_ANSWER =
+  "야구 룰/용어에 대한 질문만 답할 수 있어요. 예: \"보크가 뭐야?\"";
 
 /**
  * 답변 유형별 마스코트 상태 (2026-08-02 하린아빠 지시 — "design채널 캐릭터를
@@ -33,7 +35,7 @@ export const GENIUS_MASCOT_STATES: readonly GeniusMascotState[] = [
  * MatchPath 전체를 다 적지 않는다 — `pending` 은 다른 worker 가 이기고 이 worker 는
  * 물러나는 경우라 애초에 쪽지가 발송되지 않는다(= payload 도 안 생긴다).
  */
-const ANSWER_MATCH_PATHS = new Set(["dictionary", "cache", "llm"]);
+const ANSWER_MATCH_PATHS = new Set(["dictionary", "cache", "llm", "rag"]);
 
 export function replyKindForMatchPath(matchPath: string): GeniusReplyKind {
   if (ANSWER_MATCH_PATHS.has(matchPath)) return "answer";

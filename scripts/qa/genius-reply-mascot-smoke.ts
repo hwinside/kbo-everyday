@@ -38,8 +38,8 @@ function check(name: string, fn: () => void) {
 const read = (p: string) => readFileSync(path.join(process.cwd(), p), "utf8");
 
 // --- (A) 매핑 ---
-check("정상 답변 3경로(사전·캐시·LLM)는 answering", () => {
-  for (const p of ["dictionary", "cache", "llm"]) {
+check("정상 답변 4경로(사전·캐시·LLM·RAG)는 answering", () => {
+  for (const p of ["dictionary", "cache", "llm", "rag"]) {
     assert.equal(replyKindForMatchPath(p), "answer", p);
     assert.equal(mascotStateForReplyKind(replyKindForMatchPath(p)), "answering", p);
   }
