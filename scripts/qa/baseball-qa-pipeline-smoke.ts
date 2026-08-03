@@ -39,7 +39,6 @@ import {
   BATTER_METRICS,
   PITCHER_METRICS,
   resolveSeasonRecordIntent,
-  STATS_STALE_MS,
   UNSUPPORTED_SEASON_ANSWER,
   UNTRUSTED_METRIC_ANSWER,
 } from "../../src/lib/baseball-qa/stats/season-record";
@@ -1093,7 +1092,9 @@ async function verifyPipeline() {
     // 공지 계약은 24h. 25h row가 통과하면 안 된다(기존 30h 구현 회귀).
     const stale25h = freshState();
     const stale25hResult = await answerQuestion("u1", "문보경 올해 2루타 몇개야?", statsDeps(stale25h, [
-      { ...moonRow, updated_at: new Date(NOW - STATS_STALE_MS - 60 * 60 * 1000).toISOString() },
+      // 테스트가 production 상수를 재사용하면 24h→30h mutation과 함께 기준도 움직여 false-green.
+      // 계약값(25h)을 독립 literal로 고정한다.
+      { ...moonRow, updated_at: new Date(NOW - 25 * 60 * 60 * 1000).toISOString() },
     ]));
     assert.notEqual(stale25hResult.source, "kbo_structured", "25h row 차단");
     // 미래 updated_at은 age가 음수라 stale 비교만으로 통과한다 — 오염값으로 차단.
