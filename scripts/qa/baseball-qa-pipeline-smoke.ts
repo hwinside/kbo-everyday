@@ -4,8 +4,10 @@ import path from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import { normalizeKey, normalizeQuestion } from "../../src/lib/baseball-qa/normalize";
 import {
+  applyBaseballQaPlayerPick,
   attemptBaseballQaOutbox,
   enqueueBaseballQaQuestion,
+  getBaseballQaReplyStates,
   observeBaseballQaReplies,
   readBaseballQaOutbox,
 } from "../../src/lib/baseball-qa/client-outbox";
@@ -1002,6 +1004,11 @@ async function verifyPipeline() {
       assert.equal(resolveSeasonRecordIntent(input).kind, "unsupported_season", `${input}: 2026 외 차단`);
     }
     assert.equal(resolveSeasonRecordIntent("문보경 2026년 홈런 몇 개야?").kind, "query", "2026 명시 허용");
+    assert.equal(resolveSeasonRecordIntent("문보경 올해 장타율 알려줘").kind, "none", "장타율을 타율로 오답 금지");
+    const walksIntent = resolveSeasonRecordIntent("류현진 올해 사사구 몇 개야?");
+    assert.equal(walksIntent.kind, "query", "사사구는 지원 투수 지표");
+    if (walksIntent.kind === "query") assert.equal(walksIntent.query.metric, "bb", "사사구는 볼넷 계약");
+    assert.equal(resolveSeasonRecordIntent("문보경 작년에 별명이 뭐였어?").kind, "none", "과거 서술형은 RAG 유지");
 
     // production query actual: player_key exact + limit 2. name/kbo_id lookup mutation은 이 기록이 RED.
     const lookupCalls: Array<[string, string | number]> = [];
@@ -1042,6 +1049,18 @@ async function verifyPipeline() {
     assert.equal(avgResult.source, "kbo_structured", "타율도 구조화 경로");
     assert.match(avgResult.answer, /\.238/, `원값 렌더: ${avgResult.answer}`);
     assert.doesNotMatch(avgResult.answer, /0\.2379|0\.238\d/, "AVG 재계산 금지");
+
+    // 표시 identity도 로스터 후보와 일치해야 한다. kboId만 같고 이름/팀이 오염된 row는 RED.
+    for (const mutatedRow of [
+      { ...moonRow, name: "다른선수" },
+      { ...moonRow, team: "KT" },
+    ]) {
+      const identity = freshState();
+      const identityResult = await answerQuestion("u1", "문보경 올해 타율 알려줘", statsDeps(identity, [], {
+        fetchSeasonRecord: async () => [mutatedRow],
+      }));
+      assert.equal(identityResult.source, "blocked", "name/team identity mutation fail-close");
+    }
 
     // ③ 신뢰 불가 지표(pa/sac/sf)는 row 에 값이 있어도 답하지 않는다.
     // Production 실측: 330행 중 233행이 pa < ab — 야구 규칙상 불가능한 값이다.
@@ -1815,6 +1834,49 @@ async function verifyClientRetryOutbox() {
   }], "45ae7419-6a9a-4c6b-9101-8d65df7e242e");
   assert.equal(readBaseballQaOutbox(storage).length, 0, "exact 답변 DM 관측 후에만 종료");
   assert.equal(calls, 2, "첫 500 뒤 동일 messageId만 한 번 재시도해야 함");
+
+  // picker는 최종 답변이 아니다. 관측 뒤에도 exact 원 질문 outbox를 보존하고,
+  // 클릭하면 같은 messageId에 선택값을 붙여 실제 API 요청까지 이어져야 한다.
+  enqueueBaseballQaQuestion(storage, { conversationId: "conversation-1", messageId: 88 });
+  observeBaseballQaReplies(storage, [{
+    sender_id: "45ae7419-6a9a-4c6b-9101-8d65df7e242e",
+    dedup_key: "baseball-genius-picker:88",
+    payload: { reply_kind: "picker" },
+  }], "45ae7419-6a9a-4c6b-9101-8d65df7e242e");
+  assert.equal(readBaseballQaOutbox(storage).length, 1, "picker 관측 뒤 outbox 보존");
+  assert.deepEqual(getBaseballQaReplyStates(readBaseballQaOutbox(storage)), {}, "picker 대기 중 typing 종료");
+  applyBaseballQaPlayerPick(storage, 88, "69102");
+  let pickerRequestBody: Record<string, unknown> | null = null;
+  await attemptBaseballQaOutbox(storage, "token", async (_url, init) => {
+    pickerRequestBody = JSON.parse(String(init?.body));
+    return new Response('{"ok":true}', { status: 200 });
+  });
+  assert.deepEqual(pickerRequestBody, {
+    conversationId: "conversation-1", messageId: 88, pickedPlayerKboId: "69102",
+  }, "선택 클릭은 exact 원 질문 id로 실제 요청");
+  assert.equal(readBaseballQaOutbox(storage)[0]?.pickedPlayerKboId, "69102", "선택값 outbox persist");
+  observeBaseballQaReplies(storage, [{
+    sender_id: "45ae7419-6a9a-4c6b-9101-8d65df7e242e",
+    dedup_key: "baseball-genius:88",
+  }], "45ae7419-6a9a-4c6b-9101-8d65df7e242e");
+  assert.equal(readBaseballQaOutbox(storage).length, 0, "최종 답변 관측 뒤에만 picker outbox 종료");
+
+  // Realtime picker가 HTTP 응답보다 먼저 와도 늦은 응답이 awaiting 상태를 덮지 않는다.
+  enqueueBaseballQaQuestion(storage, { conversationId: "conversation-1", messageId: 99 });
+  let releaseRequest!: () => void;
+  const held = attemptBaseballQaOutbox(storage, "token", async () => {
+    await new Promise<void>((resolve) => { releaseRequest = resolve; });
+    return new Response('{"ok":true}', { status: 200 });
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  observeBaseballQaReplies(storage, [{
+    sender_id: "45ae7419-6a9a-4c6b-9101-8d65df7e242e",
+    dedup_key: "baseball-genius-picker:99",
+  }], "45ae7419-6a9a-4c6b-9101-8d65df7e242e");
+  releaseRequest();
+  await held;
+  assert.equal(readBaseballQaOutbox(storage)[0]?.awaitingPlayerPick, true, "picker-before-HTTP race 보존");
+  assert.deepEqual(getBaseballQaReplyStates(readBaseballQaOutbox(storage)), {}, "race 뒤에도 재시도 중단");
 }
 
 // 공통: dm 테이블 + jobs 테이블 + trigger/RPC를 migration 원본에서 추출해 적재한다.

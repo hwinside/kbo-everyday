@@ -91,6 +91,8 @@ export interface GeniusReplyPayload {
   match_path: string;
   /** `reply_kind === "picker"` 일 때만. 클라가 선택 카드를 렌더한다. */
   picker_options?: GeniusPickerOption[];
+  /** picker가 가리키는 원 질문. 답변 도착 순서와 무관하게 exact 질문을 재처리한다. */
+  question_message_id?: number;
 }
 
 /** picker 선택지 상한 — 서버·클라이 공유하는 계약. */
@@ -115,7 +117,7 @@ function isPickerOption(p: unknown): p is GeniusPickerOption {
  */
 export function isGeniusReplyPayload(p: unknown): p is GeniusReplyPayload {
   if (!p || typeof p !== "object") return false;
-  const obj = p as { type?: unknown; reply_kind?: unknown; match_path?: unknown; picker_options?: unknown };
+  const obj = p as { type?: unknown; reply_kind?: unknown; match_path?: unknown; picker_options?: unknown; question_message_id?: unknown };
   if (obj.type !== "baseball_genius_reply" || typeof obj.match_path !== "string") return false;
   if (
     obj.reply_kind !== "answer" && obj.reply_kind !== "ack" &&
@@ -130,5 +132,7 @@ export function isGeniusReplyPayload(p: unknown): p is GeniusReplyPayload {
   }
   // picker 라고 주장하면서 선택지가 없으면 렌더할 것이 없다 — 유효한 payload 가 아니다.
   if (obj.reply_kind === "picker" && obj.picker_options === undefined) return false;
+  if (obj.reply_kind === "picker" &&
+      (!Number.isSafeInteger(obj.question_message_id) || Number(obj.question_message_id) < 1)) return false;
   return true;
 }

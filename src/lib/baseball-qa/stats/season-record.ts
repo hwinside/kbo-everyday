@@ -124,9 +124,6 @@ export function resolveSeasonRecordIntent(question: string): SeasonRecordIntent 
   if (UNTRUSTED_METRIC_ALIASES.some((alias) => compact.includes(normalize(alias)))) {
     return { kind: "untrusted_metric" };
   }
-  if (hasUnsupportedSeason(question)) {
-    return { kind: "unsupported_season" };
-  }
   if (!NUMERIC_QUESTION.test(compact)) return { kind: "none" };
 
   // substring 매칭은 1글자 `패`를 `패스트볼`에서 잡고, `승`을 `승부`에서 잡는다.
@@ -144,7 +141,7 @@ export function resolveSeasonRecordIntent(question: string): SeasonRecordIntent 
     { table: "pitcher", metric: "holds", pattern: /홀드/ },
     { table: "pitcher", metric: "wpct", pattern: /승률/ },
     { table: "pitcher", metric: "ip", pattern: /투구\s*이닝|이닝/ },
-    { table: "pitcher", metric: "bb", pattern: /볼넷|포볼/ },
+    { table: "pitcher", metric: "bb", pattern: /볼넷|포볼|사사구/ },
     { table: "pitcher", metric: "hbp", pattern: /몸에\s*맞는\s*(?:공|볼)|사구(?!체)/ },
     { table: "pitcher", metric: "so", pattern: /탈\s*삼진|삼진/ },
     { table: "pitcher", metric: "er", pattern: /자책(?:점)?/ },
@@ -156,7 +153,7 @@ export function resolveSeasonRecordIntent(question: string): SeasonRecordIntent 
     { table: "pitcher", metric: "losses", pattern: /(?:몇\s*패(?:수)?|\d+\s*패(?:수)?|패수)(?!스트|배|션)/ },
 
     // 타자
-    { table: "batter", metric: "avg", pattern: /타율|타률|애버리지/ },
+    { table: "batter", metric: "avg", pattern: /(?<!장)타율|타률|애버리지/ },
     { table: "batter", metric: "doubles", pattern: /(?:2|이)\s*루타|투\s*베이스/ },
     { table: "batter", metric: "triples", pattern: /(?:3|삼)\s*루타|쓰리\s*베이스/ },
     { table: "batter", metric: "hr", pattern: /홈런|홈란|아치/ },
@@ -171,6 +168,9 @@ export function resolveSeasonRecordIntent(question: string): SeasonRecordIntent 
   const normalized = normalizeWithSpaces(question);
   const best = patterns.find((entry) => entry.pattern.test(normalized));
   if (!best) return { kind: "none" };
+  // 과거 시즌 차단은 지원 metric 수치 질문에만 적용한다. `작년에 별명이 뭐였어?` 같은
+  // 선수 서술형은 기존 RAG로 내려보내야 한다.
+  if (hasUnsupportedSeason(question)) return { kind: "unsupported_season" };
   const metrics = best.table === "pitcher" ? PITCHER_METRICS : BATTER_METRICS;
   const def = metrics[best.metric as keyof typeof metrics] as {
     label: string;
@@ -234,6 +234,8 @@ export function resolveSeasonRecord(
   query: SeasonRecordQuery,
   expectedKboId: string,
   now: number,
+  expectedName?: string,
+  expectedTeam?: string | null,
 ): SeasonRecordOutcome {
   // row 0 = 미수집, 2+ = 같은 kboId 가 여러 행 → 어느 게 맞는지 모른다. 둘 다 답하지 않는다.
   if (rows.length !== 1) return rows.length === 0 ? { kind: "missing" } : { kind: "inconsistent" };
@@ -242,6 +244,10 @@ export function resolveSeasonRecord(
   // player_key 는 upsert 충돌키(정본), kbo_id 는 소비자 식별키다. 둘 중 하나라도 다르면
   // 조회 조건이 제거/변경됐거나 오염행이다 — 이름이 같아도 답하지 않는다.
   if (row.player_key !== expectedKboId || row.kbo_id !== expectedKboId) {
+    return { kind: "inconsistent" };
+  }
+  if (expectedName !== undefined &&
+      (row.name !== expectedName || (row.team ?? null) !== (expectedTeam ?? null))) {
     return { kind: "inconsistent" };
   }
 

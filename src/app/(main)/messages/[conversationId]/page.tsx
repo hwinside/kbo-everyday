@@ -447,12 +447,10 @@ export default function DMChatPage() {
                       <GeniusPlayerPicker
                         options={pickerOptions}
                         onPick={(option) => {
-                          // 재질의 대상은 이 답변이 아니라 **직전 내 질문**이다.
-                          const question = messages
-                            .slice(0, i)
-                            .reverse()
-                            .find((m) => m.sender_id === user?.id);
-                          if (question) pickBaseballQaPlayer(question.id, option.kbo_id);
+                          // 답변 도착 순서가 뒤집혀도 payload에 고정된 exact 원 질문만 재처리한다.
+                          if (geniusReply?.question_message_id) {
+                            pickBaseballQaPlayer(geniusReply.question_message_id, option.kbo_id);
+                          }
                         }}
                       />
                     ) : null}

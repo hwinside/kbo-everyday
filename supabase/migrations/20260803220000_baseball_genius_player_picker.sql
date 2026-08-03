@@ -32,6 +32,17 @@ ALTER TABLE public.genius_question_logs
 ALTER TABLE public.genius_question_jobs
   ADD COLUMN IF NOT EXISTS picked_player_kbo_id text;
 
+ALTER TABLE public.genius_question_jobs
+  ADD COLUMN IF NOT EXISTS picker_options jsonb,
+  ADD COLUMN IF NOT EXISTS picker_question_message_id bigint;
+
+ALTER TABLE public.genius_question_jobs
+  DROP CONSTRAINT IF EXISTS genius_question_jobs_status_check;
+ALTER TABLE public.genius_question_jobs
+  ADD CONSTRAINT genius_question_jobs_status_check CHECK (
+    status IN ('queued', 'processing', 'ready', 'awaiting_selection', 'completed', 'failed')
+  );
+
 -- ── ③ quota 반납 ──────────────────────────────────────────────────────────────
 -- quota 는 라우팅보다 먼저 예약된다(durable idempotent 계약). 되묻기도 그 예약을 이미
 -- 소비한 뒤에 결정되므로, 그대로 두면 동명이인 선수는 "어느 선수?" 1개 + 실제 답변 1개로
@@ -94,4 +105,61 @@ $$;
 REVOKE ALL ON FUNCTION public.release_baseball_genius_daily_question_for_message(bigint, uuid)
   FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.release_baseball_genius_daily_question_for_message(bigint, uuid)
+  TO service_role;
+
+-- picker 선택을 원 질문 job에 원자 고정하고 최종 답변용 quota 예약을 새로 연다.
+CREATE OR REPLACE FUNCTION public.prepare_baseball_genius_player_selection(
+  p_message_id bigint,
+  p_user_id uuid,
+  p_picked_player_kbo_id text
+)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_changed integer;
+BEGIN
+  IF p_message_id IS NULL OR p_message_id < 1 OR p_user_id IS NULL
+     OR nullif(btrim(p_picked_player_kbo_id), '') IS NULL THEN
+    RAISE EXCEPTION USING errcode = '22023', message = 'invalid player selection';
+  END IF;
+
+  UPDATE public.genius_question_jobs
+  SET picked_player_kbo_id = p_picked_player_kbo_id,
+      status = 'queued',
+      lease_until = clock_timestamp(),
+      answer = NULL,
+      source = NULL,
+      remaining = NULL,
+      picker_options = NULL,
+      picker_question_message_id = NULL,
+      -- release 성공이면 최종답변용으로 새 예약을 열고, release 실패면 기존 1회를 재사용한다.
+      -- 어느 경우에도 picker+최종답변 합계가 1회를 넘지 않는다.
+      quota_reserved = CASE WHEN quota_released THEN false ELSE quota_reserved END,
+      quota_allowed = CASE WHEN quota_released THEN NULL ELSE quota_allowed END,
+      quota_remaining = CASE WHEN quota_released THEN NULL ELSE quota_remaining END,
+      quota_released = false,
+      delivery_attempts = 0,
+      last_error = NULL,
+      updated_at = now()
+  WHERE message_id = p_message_id
+    AND user_id = p_user_id
+    AND status = 'awaiting_selection';
+  GET DIAGNOSTICS v_changed = ROW_COUNT;
+  IF v_changed = 1 THEN RETURN true; END IF;
+
+  RETURN EXISTS (
+    SELECT 1 FROM public.genius_question_jobs
+    WHERE message_id = p_message_id AND user_id = p_user_id
+      AND picked_player_kbo_id = p_picked_player_kbo_id
+      AND status IN ('queued', 'processing', 'ready', 'completed')
+  );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.prepare_baseball_genius_player_selection(bigint, uuid, text)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.prepare_baseball_genius_player_selection(bigint, uuid, text)
   TO service_role;

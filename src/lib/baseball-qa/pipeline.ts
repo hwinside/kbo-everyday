@@ -743,6 +743,7 @@ function buildCandidate(
     entityType: "player",
     entityId: target.kboId,
     name: target.name,
+    ...(target.team ? { team: target.team } : {}),
     sourceKey: `namu:player:${target.kboId}`,
   };
 }
@@ -836,6 +837,7 @@ export function resolvePickedPlayerCandidate(
     entityType: "player",
     entityId: target.kboId,
     name: target.name,
+    ...(target.team ? { team: target.team } : {}),
     sourceKey: `namu:player:${target.kboId}`,
   };
 }
@@ -1065,6 +1067,8 @@ async function answerSeasonRecordQuestion(
     intent.query,
     candidate.entityId,
     deps.now ? deps.now() : Date.now(),
+    candidate.name,
+    candidate.team ?? null,
   );
   if (outcome.kind === "ok") {
     const answer = composeSeasonRecordAnswer(outcome);

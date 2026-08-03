@@ -210,6 +210,7 @@ export function useDMChat(conversationId: string) {
     useState<BaseballQaReplyStates>({});
   const processingBaseballQaRef = useRef(false);
   const observedBaseballQaReplyIdsRef = useRef(new Set<number>());
+  const observedBaseballQaPickerIdsRef = useRef(new Set<number>());
 
   const observeBaseballQaMessages = useCallback((nextMessages: DMMessage[]) => {
     if (typeof window === "undefined") return;
@@ -220,7 +221,18 @@ export function useDMChat(conversationId: string) {
     );
     if (observed.length === 0) return;
     for (const messageId of observed) {
-      observedBaseballQaReplyIdsRef.current.add(messageId);
+      // 최종 답변이 질문 INSERT 응답보다 먼저 도착한 경우에만 enqueue를 막는다.
+      // picker는 outbox를 보존해야 선택 클릭이 exact 원 질문을 재처리할 수 있다.
+      if (nextMessages.some((message) =>
+        message.sender_id === BASEBALL_GENIUS_USER_ID &&
+        message.dedup_key === `baseball-genius:${messageId}`)) {
+        observedBaseballQaReplyIdsRef.current.add(messageId);
+      }
+      if (nextMessages.some((message) =>
+        message.sender_id === BASEBALL_GENIUS_USER_ID &&
+        message.dedup_key === `baseball-genius-picker:${messageId}`)) {
+        observedBaseballQaPickerIdsRef.current.add(messageId);
+      }
     }
     setGeniusReplyStates(getBaseballQaReplyStates(readBaseballQaOutbox(window.localStorage)));
   }, []);
@@ -575,6 +587,12 @@ export function useDMChat(conversationId: string) {
               conversationId: result.conversation_id,
               messageId: result.message_id,
             });
+            if (observedBaseballQaPickerIdsRef.current.has(result.message_id)) {
+              observeBaseballQaReplies(window.localStorage, [{
+                sender_id: BASEBALL_GENIUS_USER_ID,
+                dedup_key: `baseball-genius-picker:${result.message_id}`,
+              }], BASEBALL_GENIUS_USER_ID);
+            }
           }
           setGeniusReplyStates(
             getBaseballQaReplyStates(readBaseballQaOutbox(window.localStorage)),

@@ -6,6 +6,8 @@ export interface BaseballQaOutboxEntry {
   messageId: number;
   attempts: number;
   acknowledged?: boolean;
+  /** picker DM을 관측해 사용자 선택만 기다리는 상태. typing indicator/retry는 멈춘다. */
+  awaitingPlayerPick?: boolean;
   /**
    * 동명이인 picker에서 유저가 고른 kboId. 재시도해도 같은 선수로 답하도록 outbox에 같이
    * 보관한다 — 버리면 재시도 때 picker가 다시 뜨면서 유저 선택이 사라진다.
@@ -30,6 +32,13 @@ export type BaseballQaReplyStates = Record<number, BaseballQaReplyState>;
 interface BaseballQaReplyMessage {
   sender_id: string | null;
   dedup_key?: string | null;
+  payload?: unknown;
+}
+
+function isPickerReply(message: BaseballQaReplyMessage): boolean {
+  if (message.dedup_key?.startsWith("baseball-genius-picker:")) return true;
+  if (!message.payload || typeof message.payload !== "object") return false;
+  return (message.payload as { reply_kind?: unknown }).reply_kind === "picker";
 }
 
 export function readBaseballQaOutbox(storage: StorageLike): BaseballQaOutboxEntry[] {
@@ -45,6 +54,7 @@ export function readBaseballQaOutbox(storage: StorageLike): BaseballQaOutboxEntr
         Number.isInteger(row.attempts) &&
         row.attempts >= 0 &&
         (row.acknowledged === undefined || typeof row.acknowledged === "boolean") &&
+        (row.awaitingPlayerPick === undefined || typeof row.awaitingPlayerPick === "boolean") &&
         (row.pickedPlayerKboId === undefined ||
           (typeof row.pickedPlayerKboId === "string" && row.pickedPlayerKboId.length > 0)),
     );
@@ -81,7 +91,7 @@ export function applyBaseballQaPlayerPick(
 ) {
   const entries = readBaseballQaOutbox(storage).map((row) =>
     row.messageId === messageId
-      ? { ...row, pickedPlayerKboId, attempts: 0, acknowledged: false }
+      ? { ...row, pickedPlayerKboId, attempts: 0, acknowledged: false, awaitingPlayerPick: false }
       : row,
   );
   writeBaseballQaOutbox(storage, entries);
@@ -98,14 +108,16 @@ export function getBaseballQaReplyStates(
   entries: BaseballQaOutboxEntry[],
   retryingMessageIds: ReadonlySet<number> = new Set(),
 ): BaseballQaReplyStates {
-  return Object.fromEntries(entries.map((entry) => [
-    entry.messageId,
-    entry.attempts >= BASEBALL_QA_MAX_ATTEMPTS
-      ? "failed"
-      : retryingMessageIds.has(entry.messageId)
-        ? "retrying"
-        : "waiting",
-  ]));
+  return Object.fromEntries(entries
+    .filter((entry) => !entry.awaitingPlayerPick)
+    .map((entry) => [
+      entry.messageId,
+      entry.attempts >= BASEBALL_QA_MAX_ATTEMPTS
+        ? "failed"
+        : retryingMessageIds.has(entry.messageId)
+          ? "retrying"
+          : "waiting",
+    ]));
 }
 
 export function observeBaseballQaReplies(
@@ -114,12 +126,25 @@ export function observeBaseballQaReplies(
   geniusUserId: string,
 ): number[] {
   const observed = new Set<number>();
+  const pickerObserved = new Set<number>();
   for (const message of messages) {
     if (message.sender_id !== geniusUserId) continue;
-    const match = /^baseball-genius:(\d+)$/.exec(message.dedup_key ?? "");
+    const match = /^baseball-genius(?:-picker)?:(\d+)$/.exec(message.dedup_key ?? "");
     if (!match) continue;
     const messageId = Number(match[1]);
-    if (Number.isSafeInteger(messageId) && messageId > 0) observed.add(messageId);
+    if (Number.isSafeInteger(messageId) && messageId > 0) {
+      if (isPickerReply(message)) {
+        pickerObserved.add(messageId);
+        const entries = readBaseballQaOutbox(storage).map((entry) =>
+          entry.messageId === messageId
+            ? { ...entry, acknowledged: true, awaitingPlayerPick: true }
+            : entry,
+        );
+        writeBaseballQaOutbox(storage, entries);
+      } else {
+        observed.add(messageId);
+      }
+    }
   }
   if (observed.size === 0) return [];
 
@@ -133,7 +158,7 @@ export function observeBaseballQaReplies(
       entries.filter((entry) => !observed.has(entry.messageId)),
     );
   }
-  return Array.from(observed);
+  return Array.from(new Set([...observed, ...pickerObserved]));
 }
 
 export async function attemptBaseballQaOutbox(
@@ -197,7 +222,16 @@ export async function attemptBaseballQaOutbox(
   const current = readBaseballQaOutbox(storage);
   writeBaseballQaOutbox(
     storage,
-    current.map((entry) => updates.get(entry.messageId) ?? entry),
+    current.map((entry) => {
+      const update = updates.get(entry.messageId);
+      if (!update) return entry;
+      // 요청 중 picker 관측/선택이 발생하면 오래된 HTTP 응답이 그 새 상태를 덮지 못한다.
+      if (entry.pickedPlayerKboId !== update.pickedPlayerKboId) return entry;
+      if (entry.awaitingPlayerPick) {
+        return { ...update, acknowledged: true, awaitingPlayerPick: true };
+      }
+      return update;
+    }),
   );
   return result;
 }

@@ -318,6 +318,23 @@ async function persistOrLoadPickedPlayer(
   return (data?.picked_player_kbo_id as string | null) ?? null;
 }
 
+async function preparePickedPlayerSelection(
+  messageId: number,
+  userId: string,
+  question: string,
+  pickedPlayerKboId: string,
+): Promise<boolean> {
+  if (!isPickedPlayerAllowed(question, pickedPlayerKboId, ROSTER_PLAYERS)) return false;
+  // query-guard: bounded -- message_id PK 한 행만 갱신하고 boolean scalar 하나를 반환한다.
+  const { data, error } = await supabaseAdmin.rpc("prepare_baseball_genius_player_selection", {
+    p_message_id: messageId,
+    p_user_id: userId,
+    p_picked_player_kbo_id: pickedPlayerKboId,
+  });
+  if (error) throw error;
+  return data === true;
+}
+
 /** messageId에 바인딩된 deps — quota/LLM을 job 행 기준 durable idempotent로 만든다. */
 function makeDeps(messageId: number, pickedPlayerKboId?: string | null): QaDeps {
   return {
@@ -514,6 +531,20 @@ export async function processBaseballQaQuestion(input: {
     return { kind: "completed", deduped: true };
   }
 
+  if (input.pickedPlayerKboId) {
+    try {
+      const prepared = await preparePickedPlayerSelection(
+        messageId, userId, question, input.pickedPlayerKboId,
+      );
+      if (!prepared) {
+        return { kind: "failed", status: 400, reason: "선택한 선수를 확인할 수 없습니다" };
+      }
+    } catch (error) {
+      console.error("baseball-genius player selection failed:", (error as Error).message);
+      return { kind: "failed", status: 503, reason: "선수 선택을 저장할 수 없습니다" };
+    }
+  }
+
   // query-guard: bounded -- messageId PK claim은 claim_state 한 행만 반환한다.
   const { data: claim, error: claimError } = await supabaseAdmin
     .rpc("claim_baseball_genius_question", {
@@ -535,7 +566,7 @@ export async function processBaseballQaQuestion(input: {
   if (claimState === "ready") {
     const { data: readyJob, error: readyError } = await supabaseAdmin
       .from("genius_question_jobs")
-      .select("answer, source, remaining")
+      .select("answer, source, remaining, picker_options, picker_question_message_id")
       .eq("message_id", messageId)
       .eq("conversation_id", conversationId)
       .eq("user_id", userId)
@@ -549,6 +580,9 @@ export async function processBaseballQaQuestion(input: {
       answer: readyJob.answer,
       source: readyJob.source as QaResult["source"],
       remaining: Number(readyJob.remaining ?? 0),
+      ...(Array.isArray(readyJob.picker_options)
+        ? { pickerOptions: readyJob.picker_options as NonNullable<QaResult["pickerOptions"]> }
+        : {}),
     };
   } else {
     try {
@@ -578,6 +612,8 @@ export async function processBaseballQaQuestion(input: {
           answer: result.answer,
           source: result.source,
           remaining: result.remaining,
+          picker_options: result.pickerOptions ?? null,
+          picker_question_message_id: result.pickerOptions ? messageId : null,
           updated_at: new Date().toISOString(),
         })
         .eq("message_id", messageId)
@@ -613,6 +649,7 @@ export async function processBaseballQaQuestion(input: {
     // 동명이인 되물기일 때만 선택지를 실는다. 클라는 이걸 보고 카드를 렌더한다.
     ...(result.pickerOptions
       ? {
+        question_message_id: messageId,
         picker_options: result.pickerOptions.map((option) => ({
           kbo_id: option.kboId,
           name: option.name,
@@ -623,12 +660,15 @@ export async function processBaseballQaQuestion(input: {
       }
       : {}),
   };
+  const deliveryDedupKey = result.source === "player_picker"
+    ? `baseball-genius-picker:${messageId}`
+    : dedupKey;
   const sent = await sendOpsMessageToUser(
     supabaseAdmin,
     BASEBALL_GENIUS_USER_ID,
     userId,
     result.answer,
-    dedupKey,
+    deliveryDedupKey,
     "dm",
     replyPayload,
   );
@@ -654,7 +694,10 @@ export async function processBaseballQaQuestion(input: {
   }
   await supabaseAdmin
     .from("genius_question_jobs")
-    .update({ status: "completed", updated_at: new Date().toISOString() })
+    .update({
+      status: result.source === "player_picker" ? "awaiting_selection" : "completed",
+      updated_at: new Date().toISOString(),
+    })
     .eq("message_id", messageId);
   return {
     kind: "completed",
