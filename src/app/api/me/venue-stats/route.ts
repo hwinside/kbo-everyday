@@ -46,6 +46,8 @@ export const maxDuration = 60;
 const SUPPORTED_SEASON = 2026;
 /** 정규시즌만 (§5). srId 근거는 cron/game-logs·backfill과 동일. */
 const REGULAR_SEASON_SR_ID = "0";
+/** 정규 외 시리즈 — 다이어리에는 유지하되 팀 통계 제외 사유를 식별한다. */
+const NON_REGULAR_SEASON_SR_ID = "1,3,4,5,7,9";
 
 /** 팀코드 → teamId (parseGameTeamCodes가 쓰는 TEAM_ID_TO_CODE의 역맵) — P0-2 teams exact 대조용. */
 const TEAM_CODE_TO_ID = new Map<string, number>(
@@ -490,7 +492,7 @@ export async function GET(req: NextRequest) {
     typeof profileResult.data?.team_id === "number" ? profileResult.data.team_id : null;
 
   const [
-    gamesById,
+    attendanceGames,
     logsResult,
     ledgersResult,
     seasonAggregates,
@@ -499,9 +501,14 @@ export async function GET(req: NextRequest) {
     teamRecords,
   ] =
     await Promise.all([
-      fetchAttendanceGamesWithinDeadline(rows, {
-        fetcher: (date) => fetchGames(date, REGULAR_SEASON_SR_ID),
-      }),
+      Promise.all([
+        fetchAttendanceGamesWithinDeadline(rows, {
+          fetcher: (date) => fetchGames(date, REGULAR_SEASON_SR_ID),
+        }),
+        fetchAttendanceGamesWithinDeadline(rows, {
+          fetcher: (date) => fetchGames(date, NON_REGULAR_SEASON_SR_ID),
+        }),
+      ]).then(([games, nonRegularGames]) => ({ games, nonRegularGames })),
       fetchAttendanceGameLogs(gameIds),
       fetchLedgers(gameIds),
       seasonSupported
@@ -524,7 +531,7 @@ export async function GET(req: NextRequest) {
   //    경기 목록 조회 뒤에 실행해야 canonical 을 알 수 있으므로 위 Promise.all 밖이다.
   const gameErrors = await fetchGameErrorsWithinDeadline(
     gameIds.map((gameId) => {
-      const game = gamesById.get(gameId);
+      const game = attendanceGames.games.get(gameId);
       const canonical =
         game?.status === "final" &&
         typeof game.awayScore === "number" &&
@@ -562,7 +569,8 @@ export async function GET(req: NextRequest) {
     season: requestedSeason,
     supportedSeason: SUPPORTED_SEASON,
     rows,
-    games: gamesById,
+    games: attendanceGames.games,
+    nonRegularGames: attendanceGames.nonRegularGames,
     standings,
     currentTeamId,
     favorites,
