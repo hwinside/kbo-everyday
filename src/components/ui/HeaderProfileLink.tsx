@@ -6,7 +6,6 @@ import { useAuth } from "@/lib/supabase/AuthContext";
 import { getAvatarPath } from "@/lib/constants/avatars";
 import { TEAMS } from "@/lib/constants/teams";
 import { useUnreadDMCount } from "@/lib/supabase/useUnreadDMCount";
-import GeniusEntryButton from "@/components/ui/GeniusEntryButton";
 
 /**
  * 1뎁스 헤더 우측에 배치하는 쪽지 + 프로필 아바타 링크
@@ -24,9 +23,6 @@ export default function HeaderProfileLink() {
 
   return (
     <div className="flex items-center gap-1">
-      {/* 야잘알봇 바로가기 — 쪽지 아이콘 왼쪽 (2026-08-02 하린아빠 지시).
-          종전 경로(쪽지 아이콘 → 목록 → 봇 카드 → 대화 시작)를 한 탭으로 줄인다. */}
-      <GeniusEntryButton />
       <Link href="/messages" aria-label="쪽지" className="relative flex h-11 w-11 items-center justify-center rounded-full text-text-secondary hover:bg-bg-tertiary transition-colors">
         <MessageCircle size={22} />
         {unreadCount > 0 && (

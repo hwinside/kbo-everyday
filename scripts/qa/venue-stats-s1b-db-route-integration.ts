@@ -1110,7 +1110,7 @@ async function cacheAndSingleFlightRegression(
 
 function queryResult(data: unknown) {
   const builder: Record<string, unknown> = {};
-  for (const method of ["select", "eq", "in", "gte", "lt", "order", "limit", "range", "maybeSingle"]) {
+  for (const method of ["select", "eq", "in", "is", "gte", "lt", "order", "limit", "range", "maybeSingle"]) {
     builder[method] = () => builder;
   }
   builder.then = (

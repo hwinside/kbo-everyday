@@ -20,25 +20,46 @@
  */
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
+import {
+  cleanupDisposableBadgeUser,
+  cleanupStageForRequest,
+} from "./badge-write-cleanup.mjs";
 
 const URL_BASE = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 const SERVICE = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const EXPECT = process.env.EXPECT === "open" ? "open" : "closed";
-
-for (const [name, value] of [
-  ["NEXT_PUBLIC_SUPABASE_URL", URL_BASE],
-  ["NEXT_PUBLIC_SUPABASE_ANON_KEY", ANON],
-  ["SUPABASE_SERVICE_ROLE_KEY", SERVICE],
-]) {
-  if (!value) {
-    console.error(`badge write rls regression: FAIL — ${name} 미설정 (검증 불가는 실패로 처리)`);
-    process.exit(1);
-  }
-}
+const CLEANUP_INJECTION = process.env.QA_INJECT_CLEANUP_FAILURE || "";
 
 const EXCLUSIVE_IDS = ["chairman", "chairman-spouse"];
 const NORMAL_ID = "debut";
+
+export async function runBadgeCleanup({ userId, key, restClient, authClient, injection = "" }) {
+  let injected = false;
+  const injectionStage = injection.replace(/-(throw|non2xx)$/, "");
+  const injectionMode = injection.endsWith("-non2xx") ? "non2xx" : "throw";
+  const withInjection = (kind, client) => async (path, options = {}) => {
+    const stage = cleanupStageForRequest(kind, path, options.method);
+    if (!injected && injection && stage === injectionStage) {
+      injected = true;
+      if (injectionMode === "throw") throw new Error(`injected ${stage} fetch failure`);
+      return { status: 503, ok: false, text: `injected ${stage} non-2xx`, json: null };
+    }
+    return client(path, options);
+  };
+
+  const cleanup = await cleanupDisposableBadgeUser({
+    userId,
+    key,
+    rest: withInjection("rest", restClient),
+    auth: withInjection("auth", authClient),
+  });
+  if (injection && !injected) {
+    cleanup.failures.push(`unknown cleanup injection: ${injection}`);
+  }
+  return cleanup;
+}
 
 async function rest(path, { method = "GET", key, jwt, body, prefer } = {}) {
   const headers = { apikey: key, Authorization: `Bearer ${jwt || key}` };
@@ -72,6 +93,16 @@ async function auth(path, { method = "POST", key, jwt, body } = {}) {
 }
 
 async function main() {
+  for (const [name, value] of [
+    ["NEXT_PUBLIC_SUPABASE_URL", URL_BASE],
+    ["NEXT_PUBLIC_SUPABASE_ANON_KEY", ANON],
+    ["SUPABASE_SERVICE_ROLE_KEY", SERVICE],
+  ]) {
+    if (!value) {
+      throw new Error(`${name} 미설정 (검증 불가는 실패로 처리)`);
+    }
+  }
+
   const stamp = Date.now();
   const email = `qa-badge-rls-${stamp}@keubo-qa.invalid`;
   const password = `Qa!${randomUUID()}`;
@@ -151,7 +182,20 @@ async function main() {
     }
 
     // 정리 후 service-role 수여 검증
-    await rest(`user_badges?user_id=eq.${userId}`, { method: "DELETE", key: SERVICE });
+    const preAwardCleanup = await rest(`user_badges?user_id=eq.${userId}`, {
+      method: "DELETE",
+      key: SERVICE,
+    });
+    assert.ok(
+      preAwardCleanup.ok,
+      `pre-award badge cleanup 실패: ${preAwardCleanup.status} ${preAwardCleanup.text}`
+    );
+    const afterPreAwardCleanup = await rest(
+      `user_badges?user_id=eq.${userId}&select=badge_id`,
+      { key: SERVICE }
+    );
+    assert.ok(afterPreAwardCleanup.ok, `pre-award cleanup postcondition 조회 실패: ${afterPreAwardCleanup.text}`);
+    assert.deepEqual(afterPreAwardCleanup.json, [], "pre-award cleanup 뒤 badge row가 남음");
 
     // --- (4)(6) service-role 수여는 성공해야 한다 (한정/일반 모두) ---
     const award = await rest("user_badges", {
@@ -197,20 +241,26 @@ async function main() {
     );
   } finally {
     if (userId) {
-      await rest(`user_badges?user_id=eq.${userId}`, { method: "DELETE", key: SERVICE });
-      await rest(`profiles?id=eq.${userId}`, { method: "DELETE", key: SERVICE });
-      await auth(`admin/users/${userId}`, { method: "DELETE", key: SERVICE });
-      const left = await rest(`user_badges?user_id=eq.${userId}&select=badge_id`, { key: SERVICE });
-      const leftProfile = await rest(`profiles?id=eq.${userId}&select=id`, { key: SERVICE });
+      const cleanup = await runBadgeCleanup({
+        userId,
+        key: SERVICE,
+        restClient: rest,
+        authClient: auth,
+        injection: CLEANUP_INJECTION,
+      });
+
       console.log(
-        `  cleanup: badges=${(left.json || []).length} profile=${(leftProfile.json || []).length} (둘 다 0이어야 정상)`
+        `  cleanup: badges=${cleanup.badgeCount} profile=${cleanup.profileCount} auth=${cleanup.authCount}`
       );
+      assert.deepEqual(cleanup.failures, [], `cleanup fail-close: ${cleanup.failures.join("; ")}`);
     }
   }
 }
 
-main().catch(err => {
-  console.error("badge write rls regression: FAIL");
-  console.error(err instanceof Error ? err.message : err);
-  process.exit(1);
-});
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  main().catch(err => {
+    console.error("badge write rls regression: FAIL");
+    console.error(err instanceof Error ? err.message : err);
+    process.exit(1);
+  });
+}

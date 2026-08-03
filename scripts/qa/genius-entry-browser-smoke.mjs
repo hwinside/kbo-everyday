@@ -1,10 +1,9 @@
 #!/usr/bin/env node
 /**
- * 야잘알봇 헤더 진입점 실브라우저 검증 (2026-08-02 하린아빠 지시).
+ * 야잘알봇 헤더 진입점 미노출 실브라우저 검증 (2026-08-03 하린아빠 지시).
  *
- * 배선 회귀(qa:genius-entry)는 소스 계약만 본다. 여기서는 실제로 렌더되는지,
- * 이미지가 진짜 로드되는지(404여도 <img> 는 DOM 에 남는다), 쪽지 아이콘 왼쪽에
- * 실제 좌표로 있는지, 헤더가 안 깨지는지, 탭하면 어디로 가는지를 본다.
+ * 배선 회귀(qa:genius-entry)는 소스 계약만 본다. 여기서는 로그인 여부와 무관하게
+ * 헤더에서 실제로 사라졌는지, 헤더가 안 깨지는지, 직접 대화 URL은 유지되는지 본다.
  *
  * 로그인 축은 전용 테스트 계정을 그때그때 만들어 쓰고 끝나면 지운다
  * (AGENTS P0: 하린아빠 개인/공유 계정으로 실사용 QA 금지).
@@ -23,10 +22,9 @@ const PAGES = [
   { label: "뉴스", path: "/news" },
 ];
 
-// 헤더 계약: 전역 헤더는 min-h-44px 규격이다. 마스코트를 넣어도 그 규격을 깨면 안 된다.
+// 헤더 계약: 전역 헤더는 min-h-44px 규격이다. 진입점을 빼도 그 규격을 깨면 안 된다.
 const HEADER_MIN = 44;
 const HEADER_MAX = 64; // 44 + safe-area/패딩 여유. 이걸 넘으면 헤더가 밀린 것.
-const MASCOT_MIN_VISIBLE = 32; // 헤더에서 캐릭터가 이보다 작으면 누군지 안 보인다
 
 const admin = createClient(SUPABASE_URL, SERVICE_ROLE, {
   auth: { autoRefreshToken: false, persistSession: false },
@@ -201,15 +199,7 @@ async function main() {
     for (const target of PAGES) {
       await page.goto(`${BASE_URL}${target.path}`, { waitUntil: "networkidle" });
       const measured = await measure(page);
-      ok(`[로그인·${target.label}] 헤더에 마스코트 버튼 렌더`, measured.hasBtn);
-      ok(
-        `[로그인·${target.label}] 마스코트가 오른쪽 컨트롤보다 왼쪽`,
-        !!measured.btnRect && !!measured.anchorRect && measured.btnRect.x < measured.anchorRect.x,
-      );
-      ok(
-        `[로그인·${target.label}] 이미지 실제 로드 + 가시높이`,
-        measured.imgNaturalWidth > 0 && !!measured.imgRect && measured.imgRect.height >= MASCOT_MIN_VISIBLE,
-      );
+      ok(`[로그인·${target.label}] 헤더에 마스코트 버튼 미노출`, !measured.hasBtn);
       ok(
         `[로그인·${target.label}] 헤더 높이 규격`,
         !!measured.headerRect && measured.headerRect.height >= HEADER_MIN && measured.headerRect.height <= HEADER_MAX,
@@ -225,9 +215,8 @@ async function main() {
     const authed = await page.evaluate(() => !/카카오로 시작|구글로 시작/.test(document.body.innerText));
     ok("[로그인] 앱이 테스트 세션을 로그인으로 인식", authed);
 
-    // 핵심 계약: 한 탭에 대화창. 신규 유저라 기존 대화가 없으니 초안 방으로 가야 한다.
-    await page.click('[data-testid="genius-entry-button"]');
-    await page.waitForURL(/\/messages\//, { timeout: 10000 }).catch(() => {});
+    // 헤더만 숨기는 핫픽스이므로 로그인 사용자의 직접 대화 URL은 계속 동작해야 한다.
+    await page.goto(`${BASE_URL}/messages/new-${GENIUS_ID}`, { waitUntil: "networkidle" });
     const url = page.url();
     if (!url.includes("/messages/")) {
       const diag = await page.evaluate(() => ({
@@ -237,7 +226,7 @@ async function main() {
       console.log(`  (diag) loginSheet=${diag.loginSheet} body=${JSON.stringify(diag.bodyHead)}`);
     }
     ok(
-      "[로그인] 한 탭에 야잘알봇 대화창 진입 (목록 경유 없음)",
+      "[로그인] 직접 URL로 야잘알봇 대화창 진입",
       url.includes(`/messages/new-${GENIUS_ID}`),
       url,
     );

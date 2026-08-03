@@ -467,6 +467,7 @@ export async function GET(req: NextRequest) {
       )
       .eq("user_id", verified.user.id)
       .in("source", ["story_geofence", "diary_manual"])
+      .is("deleted_at", null)
       .gte("game_date", `${requestedSeason}-01-01`)
       .lt("game_date", `${requestedSeason + 1}-01-01`)
       .order("game_date", { ascending: false })
