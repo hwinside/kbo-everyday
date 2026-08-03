@@ -667,6 +667,10 @@ async function verifyPipeline() {
     "투수 연봉 알려줘",
     "야구 티켓 가격 알려줘",
     "투수 여자친구가 뭐야?",
+    "축구 규칙 알려줘",
+    "회사 규칙 알려줘",
+    "배터리 교체 가능한 노트북 알려줘",
+    "보크 관련 영화 추천해줘",
   ]) {
     const state = freshState();
     state.cache.set(normalizeQuestion(input), "오염 캐시");

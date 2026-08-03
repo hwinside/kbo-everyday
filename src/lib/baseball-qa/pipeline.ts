@@ -222,11 +222,13 @@ const RULE_TERM_HINT_WORDS = [
   "잔루", "만루", "순위", "인필드플라이", "화이트볼", "너클볼", "포지션", "지명타자", "대타", "대주자",
   "1루수", "2루수", "3루수", "유격수", "외야수", "내야수",
 ];
+const GENERIC_RULE_TERM_HINTS = new Set(["순위", "포지션"]);
 const RULE_SCOPE_SIGNAL_WORDS = [
   "규칙", "룰", "용어", "판정", "보크", "견제", "태그업", "마운드", "비디오판독",
-  "챌린지", "우천중단", "콜드게임", "연장전", "무승부", "스트라이크", "아웃", "파울", "번트",
+  "챌린지", "우천중단", "콜드게임", "연장전", "무승부", "순위결정", "체크스윙", "스트라이크", "아웃", "파울", "번트",
   "도루", "병살", "세이프", "피치클락", "시프트", "볼넷", "낫아웃", "희생플라이", "교체",
 ];
+const GENERIC_RULE_SCOPE_WORDS = new Set(["규칙", "룰", "용어", "판정", "교체"]);
 const RULE_ACTOR_WORDS = [
   "감독", "코치", "매니저", "주장", "선수", "투수", "타자", "포수", "주자", "심판", "수비",
   "지명타자", "대타", "대주자", "1루수", "2루수", "3루수", "유격수", "외야수", "내야수",
@@ -257,29 +259,40 @@ export function isSupportedRuleTermQuestion(
     isTopicDismissal(question) ||
     dismissesDetectedBaseballTerm(question, [...BASEBALL_WORDS, ...RULE_TERM_HINT_WORDS])
   ) return false;
-  const mentionsGlossaryTerm = glossary.some((entry) =>
-    [entry.term, ...entry.aliases].some((name) => {
-      const normalizedName = name.normalize("NFKC").toLowerCase().trim();
-      return normalizedName.length >= 2 && tokenMatches(tokens, normalizedName);
-    })
-  );
+  const exactGlossaryMatch = matchGlossary(glossary, question) !== null;
   const mentionsRuleHint = RULE_TERM_HINT_WORDS.some((word) => compact.includes(word));
+  const mentionsSpecificRuleHint = RULE_TERM_HINT_WORDS.some((word) =>
+    !GENERIC_RULE_TERM_HINTS.has(word) && compact.includes(word)
+  );
   const mentionsRuleScopeSignal = RULE_SCOPE_SIGNAL_WORDS.some((word) => compact.includes(word));
+  const mentionsSpecificRuleSignal = RULE_SCOPE_SIGNAL_WORDS.some((word) =>
+    !GENERIC_RULE_SCOPE_WORDS.has(word) && compact.includes(word)
+  );
   const mentionsRuleActor = RULE_ACTOR_WORDS.some((word) => compact.includes(word));
   const mentionsRoleRule = compact.includes("역할") && (
     mentionsRuleActor ||
     /^(?:역할이바뀌면어떻게돼(?:요)?|역할과포지션차이가?뭐야(?:요)?|역할이?(?:뭐야|뭔가요|궁금해))[?!.]*$/.test(compact)
   );
   const hasRuleIntent = RULE_TERM_INTENT.test(normalized);
+  const isOutOfScopeRequest = OUT_OF_SCOPE_INTENT.test(normalized) || NAMED_STAT_QUERY.test(normalized);
+  const hasBaseballContext =
+    exactGlossaryMatch ||
+    mentionsSpecificRuleHint ||
+    mentionsSpecificRuleSignal ||
+    mentionsRoleRule ||
+    BASEBALL_WORDS.some((word) => compact.includes(word)) ||
+    TEAM_WORDS.some((word) => tokenMatches(tokens, word)) ||
+    hasPlayerReference(tokens, players);
 
   // 검수 사전의 실제 용어가 문장에 있으면 축약형(`잔루만루는`)도 용어 질문으로 인정한다.
   // 일반 엔티티 단어가 아니라 132개 검수 용어 폐쇄집합에만 해당한다.
-  if (mentionsGlossaryTerm && !NAMED_STAT_QUERY.test(normalized)) return true;
+  if (exactGlossaryMatch && !isOutOfScopeRequest) return true;
   if (
     mentionsRuleHint &&
+    hasBaseballContext &&
     !hasPlayerReference(tokens, players) &&
     !TEAM_WORDS.some((word) => tokenMatches(tokens, word)) &&
-    !OUT_OF_SCOPE_INTENT.test(normalized)
+    !isOutOfScopeRequest
   ) return true;
 
   // 출시 경계는 부정어 denylist가 아니라 **룰/용어 양성 신호**로 연다. `투수`·`야구` 같은
@@ -287,8 +300,8 @@ export function isSupportedRuleTermQuestion(
   // provider/RAG/cache 앞에서 닫힌다. 선수·구단·감독은 보크/역할/마운드 방문 같은 양성
   // 신호와 질문 의도가 함께 있을 때만 룰의 예시 주체로 허용한다.
   if (
-    !NAMED_STAT_QUERY.test(normalized) &&
-    !OUT_OF_SCOPE_INTENT.test(normalized) &&
+    !isOutOfScopeRequest &&
+    hasBaseballContext &&
     (mentionsRuleHint || mentionsRuleScopeSignal || mentionsRoleRule) &&
     hasRuleIntent
   ) return true;
