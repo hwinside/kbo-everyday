@@ -13,6 +13,11 @@ import {
   type FavoritePlayerSnapshot,
   type PlayerGameLog,
 } from "@/lib/venue-attendance/player-comparison";
+import { resolveGameVenue } from "@/lib/venue-stories/venue-resolve";
+import {
+  decideManualAttendanceTeam,
+  decideManualDiaryGame,
+} from "@/lib/venue-diary/manual-upload";
 
 export const maxDuration = 60;
 
@@ -90,6 +95,7 @@ export async function GET(req: NextRequest) {
       )
       .eq("user_id", verified.user.id)
       .in("source", ["story_geofence", "diary_manual"])
+      .is("deleted_at", null)
       .gte("game_date", `${requestedSeason}-01-01`)
       .lt("game_date", `${requestedSeason + 1}-01-01`)
       .order("game_date", { ascending: false })
@@ -141,6 +147,67 @@ export async function GET(req: NextRequest) {
       diaryGameCount: games.length,
       games,
     },
+    { headers: { "Cache-Control": "private, no-store" } },
+  );
+}
+
+/** 종료 경기 직접 등록/삭제 후 재등록. 미디어 없이 직관 원장만 만든다. */
+export async function POST(req: NextRequest) {
+  const verified = await getVerifiedUserFromRequest(req);
+  if (!verified) {
+    return NextResponse.json({ error: "인증이 필요합니다" }, { status: 401 });
+  }
+
+  let body: Record<string, unknown>;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "잘못된 요청" }, { status: 400 });
+  }
+  const gameId = typeof body.gameId === "string" ? body.gameId.trim() : "";
+  if (!/^\d{8}[A-Za-z0-9]+$/.test(gameId)) {
+    return NextResponse.json({ error: "gameId 형식 오류" }, { status: 400 });
+  }
+
+  const venue = await resolveGameVenue(gameId);
+  const gameDecision = decideManualDiaryGame(venue);
+  if (!gameDecision.ok) {
+    return NextResponse.json(
+      { error: gameDecision.error },
+      { status: gameDecision.status },
+    );
+  }
+  const teamDecision = decideManualAttendanceTeam(body.favoriteTeamId, venue);
+  if (!teamDecision.ok) {
+    return NextResponse.json(
+      { error: teamDecision.error },
+      { status: teamDecision.status },
+    );
+  }
+
+  // query-guard: bounded -- 유저·경기 unique 원장 한 행의 id/status JSON만 반환
+  const { data, error } = await supabase.rpc("upsert_venue_attendance_manual", {
+    p_user_id: verified.user.id,
+    p_game_id: gameId,
+    p_game_date: venue.gameDate,
+    p_favorite_team_id: teamDecision.favoriteTeamId,
+    p_stadium_name: venue.stadiumName,
+  });
+  if (error) {
+    return NextResponse.json({ error: "직관 기록 저장 실패" }, { status: 500 });
+  }
+  const result = (data ?? {}) as { ok?: boolean; id?: number; error?: string };
+  if (result.ok === false && result.error === "source_conflict") {
+    return NextResponse.json(
+      { error: "GPS 인증 기록은 직접 등록으로 변경할 수 없어요" },
+      { status: 409 },
+    );
+  }
+  if (result.ok !== true || typeof result.id !== "number") {
+    return NextResponse.json({ error: "직관 기록 저장 실패" }, { status: 500 });
+  }
+  return NextResponse.json(
+    { success: true, id: result.id, source: "diary_manual" },
     { headers: { "Cache-Control": "private, no-store" } },
   );
 }

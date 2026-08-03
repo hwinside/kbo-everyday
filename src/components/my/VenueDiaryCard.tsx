@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CalendarDays, Play, Plus, RefreshCw, Trophy } from "lucide-react";
+import { CalendarDays, Play, Plus, RefreshCw, Trophy, Pencil, Trash2 } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { getTeamById } from "@/lib/constants/teams";
 import {
@@ -182,8 +182,15 @@ export default function VenueDiaryCard() {
   );
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [attendanceBusyId, setAttendanceBusyId] = useState<number | null>(null);
+  const [attendanceMessage, setAttendanceMessage] = useState<string | null>(null);
 
   const [addOpen, setAddOpen] = useState(false);
+  /** null 이 아니면 시트가 '경기 변경' 모드 — 고른 경기로 이 원장 행을 옮긴다. */
+  const [moveTarget, setMoveTarget] = useState<{
+    attendanceId: number;
+    gameId: string;
+  } | null>(null);
   const [uploadGame, setUploadGame] = useState<DiaryUploadGame | null>(null);
   const [viewer, setViewer] = useState<{ gameId: string; header: DiaryViewerHeader } | null>(null);
 
@@ -211,7 +218,12 @@ export default function VenueDiaryCard() {
       const diaryGameCount = ok.reduce((sum, r) => sum + r.attendance.diaryGameCount, 0);
       const attendanceGames = ok.flatMap((r) =>
         r.attendance.games.map((g) => ({
+          id: g.id,
           gameId: g.gameId,
+          gameDate: g.date,
+          stadiumName: g.stadium,
+          source: g.source,
+          favoriteTeamId: g.favoriteTeamId,
           result: g.result,
           awayTeam: g.awayTeam,
           homeTeam: g.homeTeam,
@@ -352,6 +364,7 @@ export default function VenueDiaryCard() {
   // 2026 counts 확정 전에는 fail-closed(선택 비활성), 실패 시 0 폴백 금지→재시도. open/user 전환마다
   // stale counts 를 초기화해 다른 유저·이전 세션 잔존을 막는다(Blocker 4).
   const [addCounts, setAddCounts] = useState<Map<string, number>>(new Map());
+  const [addAttendanceGameIds, setAddAttendanceGameIds] = useState<Set<string>>(new Set());
   // countsOwner = 이 counts 가 어느 (userId, openSeq) 에 대한 것인지. 렌더 단계에서 현재 key 와
   // 불일치하면 즉시 fail-closed(diaryCountsReady) → 재오픈/유저 전환 첫 렌더 stale counts 차단.
   const [countsOwner, setCountsOwner] = useState<string | null>(null);
@@ -363,7 +376,20 @@ export default function VenueDiaryCard() {
   const countsReady = diaryCountsReady(countsOwner, currentCountsKey);
   // 열기 액션에서 counts state 를 동기 초기화한 뒤 open → 같은 커밋에 배칭돼 첫 렌더부터 fail-closed.
   const openAddSheet = useCallback(() => {
+    setMoveTarget(null);
     setAddCounts(new Map());
+    setAddAttendanceGameIds(new Set());
+    setCountsOwner(null);
+    setCountsError(false);
+    setOpenSeq((s) => s + 1);
+    setAddOpen(true);
+  }, []);
+  /** 직접 등록 기록의 경기 자체를 바꾼다 — 같은 경기 선택 시트를 move 모드로 연다. */
+  const openMoveSheet = useCallback((game: DiaryHomeGame) => {
+    if (game.attendanceId == null || game.attendanceSource !== "diary_manual") return;
+    setMoveTarget({ attendanceId: game.attendanceId, gameId: game.gameId });
+    setAddCounts(new Map());
+    setAddAttendanceGameIds(new Set());
     setCountsOwner(null);
     setCountsError(false);
     setOpenSeq((s) => s + 1);
@@ -375,17 +401,31 @@ export default function VenueDiaryCard() {
     let alive = true;
     const controller = new AbortController();
     setAddCounts(new Map());
+    setAddAttendanceGameIds(new Set());
     setCountsOwner(null);
     setCountsError(false);
     (async () => {
       // getSafeSession/fetch/json 이 non-settle 이어도 mintWithTimeout 이 8s 에 abort→settle 시켜
       // '확인 중' 영구정지 대신 countsError(재시도 UI)로 도달한다.
-      const groups = await mintWithTimeout<DiaryMediaGroupInput[] | null, number>(
+      const result = await mintWithTimeout<{
+        groups: DiaryMediaGroupInput[];
+        attendanceIds: string[];
+      } | null, number>(
         async (signal) => {
           const session = await getSafeSession();
           const token = session?.access_token;
           if (!token) throw new Error("missing session");
-          return fetchDiaryMediaAllPages(token, CURRENT_SEASON, signal);
+          const [groups, attendanceRes] = await Promise.all([
+            fetchDiaryMediaAllPages(token, CURRENT_SEASON, signal),
+            fetch(`/api/me/venue-attendance?season=${CURRENT_SEASON}`, {
+              headers: { Authorization: `Bearer ${token}` },
+              cache: "no-store",
+              signal,
+            }),
+          ]);
+          if (groups == null || !attendanceRes.ok) return null;
+          const attendance = (await attendanceRes.json()) as AttendanceResponse;
+          return { groups, attendanceIds: attendance.games.map((game) => game.gameId) };
         },
         null,
         {
@@ -396,11 +436,12 @@ export default function VenueDiaryCard() {
         },
       );
       if (!alive || controller.signal.aborted) return;
-      if (groups == null) {
+      if (result == null) {
         setCountsError(true);
         return;
       }
-      setAddCounts(buildDiaryCountsMap(groups));
+      setAddCounts(buildDiaryCountsMap(result.groups));
+      setAddAttendanceGameIds(new Set(result.attendanceIds));
       setCountsOwner(ownerKey);
     })();
     return () => {
@@ -410,6 +451,82 @@ export default function VenueDiaryCard() {
   }, [addOpen, user, openSeq, countsReload]);
 
   const favoriteTeamId = profile?.team_id ?? null;
+
+  const requestAttendanceMutation = useCallback(
+    async (input: {
+      method: "POST" | "PATCH" | "DELETE";
+      id?: number;
+      body?: Record<string, unknown>;
+      successMessage: string;
+    }) => {
+      setAttendanceBusyId(input.id ?? -1);
+      setAttendanceMessage(null);
+      try {
+        const session = await getSafeSession();
+        const token = session?.access_token;
+        if (!token) throw new Error("로그인이 필요해요");
+        const res = await fetch(
+          input.id == null
+            ? "/api/me/venue-attendance"
+            : `/api/me/venue-attendance/${input.id}`,
+          {
+            method: input.method,
+            headers: {
+              Authorization: `Bearer ${token}`,
+              ...(input.body ? { "Content-Type": "application/json" } : {}),
+            },
+            body: input.body ? JSON.stringify(input.body) : undefined,
+            cache: "no-store",
+          },
+        );
+        const data = (await res.json()) as { error?: string };
+        if (!res.ok) throw new Error(data.error ?? "직관 기록 변경 실패");
+        setAttendanceMessage(input.successMessage);
+        await load();
+        return true;
+      } catch (error) {
+        setAttendanceMessage(error instanceof Error ? error.message : "직관 기록 변경 실패");
+        return false;
+      } finally {
+        setAttendanceBusyId(null);
+      }
+    },
+    [load],
+  );
+
+  const deleteAttendance = useCallback(
+    async (game: DiaryHomeGame) => {
+      if (game.attendanceId == null) return;
+      const kind = game.attendanceSource === "story_geofence" ? "GPS 인증 기록" : "직접 등록 기록";
+      if (!window.confirm(`${kind}을 통계에서 삭제할까요? 사진·영상은 그대로 남아요.`)) return;
+      await requestAttendanceMutation({
+        method: "DELETE",
+        id: game.attendanceId,
+        successMessage: "직관 기록을 삭제했어요. 통계에 바로 반영됐습니다.",
+      });
+    },
+    [requestAttendanceMutation],
+  );
+
+  const switchManualTeam = useCallback(
+    async (game: DiaryHomeGame) => {
+      if (game.attendanceId == null || game.attendanceSource !== "diary_manual") return;
+      const candidates = [game.awayTeam, game.homeTeam].filter(
+        (team): team is NonNullable<typeof team> => team != null,
+      );
+      const next = candidates.find((team) => team.id !== game.favoriteTeamId);
+      if (!next) return;
+      const label = getTeamById(next.id)?.shortName ?? next.name;
+      if (!window.confirm(`응원팀을 ${label}(으)로 변경할까요?`)) return;
+      await requestAttendanceMutation({
+        method: "PATCH",
+        id: game.attendanceId,
+        body: { favoriteTeamId: next.id },
+        successMessage: "응원팀을 수정했어요. 통계에 바로 반영됐습니다.",
+      });
+    },
+    [requestAttendanceMutation],
+  );
 
   if (!user) return null;
 
@@ -532,6 +649,11 @@ export default function VenueDiaryCard() {
               >
                 <Plus size={18} /> 지난 경기 추가하기
               </button>
+              {attendanceMessage && (
+                <p className="mt-2 rounded-xl bg-bg-tertiary px-3 py-2 text-center text-xs font-semibold text-text-secondary">
+                  {attendanceMessage}
+                </p>
+              )}
             </>
           ) : null}
         </div>
@@ -551,20 +673,25 @@ export default function VenueDiaryCard() {
             ) : (
               <div className="flex flex-col gap-3">
                 {homeGames.map((game) => (
-                  <button
+                  <div
                     key={game.gameId}
-                    onClick={() =>
-                      setViewer({
-                        gameId: game.gameId,
-                        header: {
-                          matchLabel: matchLabel(game),
-                          dateLabel: `${formatGameDate(game.gameDate)}${game.stadiumName ? ` · ${game.stadiumName}` : ""}`,
-                          result: game.result,
-                        },
-                      })
-                    }
-                    className="rounded-2xl border border-border bg-bg-tertiary p-3 text-left active:opacity-90"
+                    className="rounded-2xl border border-border bg-bg-tertiary p-3"
                   >
+                    <button
+                      type="button"
+                      disabled={game.total === 0}
+                      onClick={() =>
+                        setViewer({
+                          gameId: game.gameId,
+                          header: {
+                            matchLabel: matchLabel(game),
+                            dateLabel: `${formatGameDate(game.gameDate)}${game.stadiumName ? ` · ${game.stadiumName}` : ""}`,
+                            result: game.result,
+                          },
+                        })
+                      }
+                      className="w-full text-left enabled:active:opacity-90"
+                    >
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <p className="text-[11.5px] font-bold text-text-tertiary">
@@ -617,7 +744,42 @@ export default function VenueDiaryCard() {
                         )}
                       </div>
                     )}
-                  </button>
+                    </button>
+                    {game.attendanceId != null && (
+                      <div className="mt-2.5 flex items-center justify-end gap-2 border-t border-border pt-2.5">
+                        {game.attendanceSource === "diary_manual" && (
+                          <button
+                            type="button"
+                            disabled={attendanceBusyId != null}
+                            onClick={() => openMoveSheet(game)}
+                            className="inline-flex items-center gap-1 rounded-lg border border-border px-2.5 py-1.5 text-[11px] font-bold text-text-secondary disabled:opacity-50"
+                          >
+                            <CalendarDays size={11} /> 경기 변경
+                          </button>
+                        )}
+                        {game.attendanceSource === "diary_manual" &&
+                          game.awayTeam != null &&
+                          game.homeTeam != null && (
+                            <button
+                              type="button"
+                              disabled={attendanceBusyId != null}
+                              onClick={() => void switchManualTeam(game)}
+                              className="inline-flex items-center gap-1 rounded-lg border border-border px-2.5 py-1.5 text-[11px] font-bold text-text-secondary disabled:opacity-50"
+                            >
+                              <Pencil size={11} /> 응원팀 변경
+                            </button>
+                          )}
+                        <button
+                          type="button"
+                          disabled={attendanceBusyId != null}
+                          onClick={() => void deleteAttendance(game)}
+                          className="inline-flex items-center gap-1 rounded-lg border border-red-500/30 px-2.5 py-1.5 text-[11px] font-bold text-red-400 disabled:opacity-50"
+                        >
+                          <Trash2 size={11} /> 기록 삭제
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 ))}
               </div>
             )}
@@ -631,12 +793,43 @@ export default function VenueDiaryCard() {
         countsByGame={addCounts}
         countsReady={countsReady}
         countsError={countsError}
+        activeAttendanceGameIds={addAttendanceGameIds}
+        moveMode={moveTarget != null}
+        moveFromGameId={moveTarget?.gameId ?? null}
         onRetryCounts={() => setCountsReload((n) => n + 1)}
         onBack={() => setAddOpen(false)}
         onClose={() => setAddOpen(false)}
         onPick={(game) => {
           setAddOpen(false);
           setUploadGame(game);
+        }}
+        onRecord={(game, selectedTeamId) => {
+          const target = moveTarget;
+          setAddOpen(false);
+          setMoveTarget(null);
+          // move 모드면 같은 원장 행을 새 경기로 옮긴다(새 행 생성 아님).
+          void requestAttendanceMutation(
+            target
+              ? {
+                  method: "PATCH",
+                  id: target.attendanceId,
+                  body: { gameId: game.gameId, favoriteTeamId: selectedTeamId },
+                  successMessage: "경기를 변경했어요. 통계에 바로 반영됐습니다.",
+                }
+              : {
+                  method: "POST",
+                  body: { gameId: game.gameId, favoriteTeamId: selectedTeamId },
+                  successMessage: "직관 기록을 추가했어요. 통계에 바로 반영됐습니다.",
+                },
+          ).then((ok) => {
+            if (ok) {
+              setAddAttendanceGameIds((prev) => {
+                const next = new Set(prev).add(game.gameId);
+                if (target) next.delete(target.gameId);
+                return next;
+              });
+            }
+          });
         }}
       />
 
