@@ -18,6 +18,7 @@ import { SUPABASE_URL, ANON, SERVICE_ROLE, REF, BASE } from "./_env.mjs";
 const BASE_URL = process.argv.find((a) => a.startsWith("--base-url="))?.split("=")[1] ?? BASE;
 const EXPECT_SRC = "/mascot/yajalal-avatar.png";
 const GENIUS_ID = "45ae7419-6a9a-4c6b-9101-8d65df7e242e";
+const SCOPE_NOTICE = "야구 룰, 구단, 선수, 기록 관련 질문만 답변할 수 있어요.";
 const PAGES = [
   { label: "홈", path: "/" },
   { label: "뉴스", path: "/news" },
@@ -81,7 +82,7 @@ async function main() {
       const T = `[비로그인·${pg.label}]`;
       const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
       const page = await ctx.newPage();
-      await page.goto(`${BASE_URL}${pg.path}`, { waitUntil: "networkidle" });
+      await page.goto(`${BASE_URL}${pg.path}`, { waitUntil: "domcontentloaded" });
 
       // AuthContext 가 세션을 확정할 시간을 준다. 확정 전에도 노출되면 안 되지만,
       // 확정 후 뒤늦게 나타나는 회귀를 잡으려면 기다린 뒤에 봐야 한다.
@@ -107,7 +108,7 @@ async function main() {
     {
       const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
       const page = await ctx.newPage();
-      await page.goto(`${BASE_URL}/messages/new-${GENIUS_ID}`, { waitUntil: "networkidle" });
+      await page.goto(`${BASE_URL}/messages/new-${GENIUS_ID}`, { waitUntil: "domcontentloaded" });
       await page.waitForTimeout(1200);
       const composerCount = await page.locator("textarea").count();
       ok(
@@ -198,8 +199,38 @@ async function main() {
     ]);
     await ctx.addInitScript(([k, v]) => window.localStorage.setItem(k, v), [authKey, sessionValue]);
     const page = await ctx.newPage();
+
+    // 론치 팝업: 로그인 계정당 1회, exact 문구·캐릭터·CTA, 닫기 후 재노출 없음.
+    await page.goto(`${BASE_URL}/`, { waitUntil: "domcontentloaded" });
+    const popup = page.locator('[data-testid="genius-launch-popup"]');
+    const popupVisible = await popup.waitFor({ state: "visible", timeout: 8000 }).then(() => true).catch(() => false);
+    ok("[론치 팝업] 로그인 계정 첫 홈에서 노출", popupVisible);
+    if (popupVisible) {
+      const popupState = await popup.evaluate((node) => {
+        const image = node.querySelector("img");
+        return {
+          text: node.textContent ?? "",
+          imageLoaded: (image?.naturalWidth ?? 0) > 0,
+        };
+      });
+      ok("[론치 팝업] 제목·범위 exact·CTA 노출",
+        popupState.text.includes("야잘알봇이 더 똑똑해졌어요")
+          && popupState.text.includes(SCOPE_NOTICE)
+          && popupState.text.includes("야잘알봇에게 물어보기"));
+      ok("[론치 팝업] 야잘알봇 캐릭터 실제 로드", popupState.imageLoaded);
+      await popup.getByRole("button", { name: "닫기" }).click();
+      await page.reload({ waitUntil: "domcontentloaded" });
+      ok("[론치 팝업] 닫기 후 같은 계정에 재노출 없음", await popup.count() === 0);
+      const accountScoped = await page.evaluate((userId) =>
+        localStorage.getItem(`genius_launch_seen_v1_${userId}`) === "1", testUser.id);
+      ok("[론치 팝업] dismiss 키가 계정 ID에 귀속", accountScoped);
+    }
+
     for (const target of PAGES) {
-      await page.goto(`${BASE_URL}${target.path}`, { waitUntil: "networkidle" });
+      await page.goto(`${BASE_URL}${target.path}`, { waitUntil: "domcontentloaded" });
+      // domcontentloaded 뒤 AuthContext가 쿠키 세션을 확정할 때까지 바운드 대기한다.
+      // networkidle은 홈의 지속 요청 때문에 30초 timeout false-negative가 난다.
+      await page.waitForSelector('[data-testid="genius-entry-button"]', { timeout: 8000 }).catch(() => {});
       const measured = await measure(page);
       ok(`[로그인·${target.label}] 헤더에 마스코트 버튼 렌더`, measured.hasBtn);
       ok(
@@ -216,7 +247,18 @@ async function main() {
       );
     }
 
-    await page.goto(`${BASE_URL}/`, { waitUntil: "networkidle" });
+    // CTA도 같은 dismiss 계약을 기록한 뒤 목록을 거치지 않고 대화창으로 진입한다.
+    await page.evaluate((userId) => localStorage.removeItem(`genius_launch_seen_v1_${userId}`), testUser.id);
+    await page.goto(`${BASE_URL}/`, { waitUntil: "domcontentloaded" });
+    await popup.waitFor({ state: "visible", timeout: 8000 });
+    await popup.getByRole("button", { name: "야잘알봇에게 물어보기" }).click();
+    await page.waitForURL(/\/messages\//, { timeout: 10000 }).catch(() => {});
+    ok("[론치 팝업] CTA가 야잘알봇 대화창으로 직접 진입",
+      page.url().includes(`/messages/new-${GENIUS_ID}`), page.url());
+    await page.goto(`${BASE_URL}/`, { waitUntil: "domcontentloaded" });
+    ok("[론치 팝업] CTA 진입 후 재노출 없음", await popup.count() === 0);
+
+    await page.goto(`${BASE_URL}/`, { waitUntil: "domcontentloaded" });
 
     // 세션이 실제로 적용됐는지 먼저 확인한다. 미적용이면 클릭은 로그인 시트를 띄우고
     // "라우팅 실패"처럼 보여 진짜 계약을 검증하지 못한다(하니스 결함을 구현 결함으로 오독).

@@ -19,6 +19,7 @@ import GeniusTypingIndicator from "@/components/dm/GeniusTypingIndicator";
 import { isNewsClippingPayload } from "@/types/news-clipping";
 import {
   BASEBALL_GENIUS_NAME,
+  BASEBALL_GENIUS_BANNER_NOTICE,
   BASEBALL_GENIUS_MAX_QUESTION_LENGTH,
   BASEBALL_GENIUS_MIN_QUESTION_LENGTH,
   BASEBALL_GENIUS_PINNED_ROOM_LEAVABLE,
@@ -367,7 +368,7 @@ export default function DMChatPage() {
           <AlertTriangle size={14} className="flex-shrink-0" />
           <span>
             {isBaseballGeniusConv
-              ? "야구와 관련된 질문에만 답해요. 그리고 야잘알봇도 실수를 하거나 잘못된 정보를 제공하는 경우가 있어요."
+              ? BASEBALL_GENIUS_BANNER_NOTICE
               : isNoReplyConv
               ? noReplyBannerLabel(otherId)
               : "쪽지는 개인 간 대화입니다. 금전 거래 시 사기에 주의하세요."}

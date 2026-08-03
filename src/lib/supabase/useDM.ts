@@ -7,6 +7,7 @@ import { useBlockedIds } from "./useBlock";
 import { OPERATOR_USER_ID } from "@/lib/constants/operator";
 import {
   BASEBALL_GENIUS_NAME,
+  BASEBALL_GENIUS_SCOPE_NOTICE,
   BASEBALL_GENIUS_USER_ID,
 } from "@/lib/constants/baseball-genius";
 import {
@@ -145,7 +146,7 @@ export function useDMList() {
       other_nickname: BASEBALL_GENIUS_NAME,
       other_team_id: null,
       other_avatar_url: null,
-      last_message: "야구 룰이나 용어를 물어보세요 ⚾",
+      last_message: `${BASEBALL_GENIUS_SCOPE_NOTICE} ⚾`,
       last_message_at: new Date(0).toISOString(),
       unread_count: 0,
     };
