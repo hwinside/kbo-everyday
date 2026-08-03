@@ -19,9 +19,12 @@ ALTER TABLE public.genius_question_logs
     match_path IN (
       'dictionary','cache','llm','service_redirect','history_hold',
       'blocked','unsure','limited','error','context_missing','ack','rag',
-      'player_picker'
+      'player_picker','kbo_structured'
     )
   );
+-- `kbo_structured` = 시즌 기록(수치)을 운영 DB 원값으로 답한 경로.
+-- LLM·RAG·cache 를 전혀 쓰지 않으므로 생성답(llm)·근거답(rag)과 리스크가 다르다.
+-- 뜻뭇그려 llm 로 넣으면 어드민 모니터(#983)에서 모델 생성답과 구분이 안 된다.
 
 -- ── ② 선택된 선수 고정 ──────────────────────────────────────────────
 -- 유저의 선택을 job 행에 고정해야 브라우저가 죽어도 cron drain 이 같은 선수로 이어서 답한다.

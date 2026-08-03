@@ -19,6 +19,15 @@ import {
   type RagPlayerCandidate,
 } from "./rag/retrieve";
 import {
+  composeSeasonRecordAnswer,
+  RECORD_MISSING_ANSWER,
+  resolveSeasonRecord,
+  resolveSeasonRecordIntent,
+  UNSUPPORTED_SEASON_ANSWER,
+  UNTRUSTED_METRIC_ANSWER,
+  type SeasonRecordRow,
+} from "./stats/season-record";
+import {
   BASEBALL_GENIUS_DAILY_LIMIT,
   BASEBALL_GENIUS_FALLBACK_ANSWER,
   BASEBALL_GENIUS_MAX_ANSWER_LENGTH,
@@ -161,6 +170,9 @@ export type MatchPath =
   | "ack"
   // 선수 서술형 질문을 수집된 tier2 문서 근거로 답한 경로 (S2b).
   | "rag"
+  // 시즌 기록(수치)을 구조화 DB 원값으로 답한 경로. LLM·RAG·cache 미사용이라
+  // 생성답(llm)·근거답(rag)과 리스크가 전혀 다르다 — #983 모니터에서 분리 관측한다.
+  | "kbo_structured"
   // 동명이인으로 선수를 특정하지 못해 선택지를 되물은 경로. 답변이 아니라 **되물기**라
   // blocked와 같은 칸에 넣으면 #983 모니터에서 "못 답한 질문"으로 오집계된다.
   | "player_picker"
@@ -209,6 +221,17 @@ export interface QaDeps {
    * 미주입이면 반납 없이 동작한다 — 기존 호출부 계약 무변경.
    */
   releaseDaily?: (userId: string) => Promise<void>;
+  /**
+   * 시즌 기록 조회 (kbo_structured). **kboId exact** 로만 조회한다 — 이름 조회는
+   * 동명이인을 섞어버리므로 금지다(삼순 조건 ①). 미주입이면 기록 경로 자체가 비활성이라
+   * 기존 동작(서술형 RAG 또는 차단) 그대로다.
+   */
+  fetchSeasonRecord?: (
+    table: "batter" | "pitcher",
+    kboId: string,
+  ) => Promise<SeasonRecordRow[]>;
+  /** 기록 stale 판정 기준 시각 (테스트 주입). 기본값 `Date.now()`. */
+  now?: () => number;
   /**
    * KBO 공식 간행물(tier1) 근거 검색 — 규칙·용어 질문용.
    *
@@ -671,6 +694,21 @@ export function resolveRagPlayerCandidate(
   players: PlayerRef[],
 ): RagPlayerCandidate | null {
   if (!isDescriptivePlayerQuestion(question)) return null;
+  return resolveNamedPlayerCandidate(question, players);
+}
+
+/**
+ * 질문 의도와 무관하게 **이름으로 단일 선수가 특정되는가**만 본다.
+ *
+ * 서술형 게이트(`isDescriptivePlayerQuestion`)는 숫자·수치어가 있으면 거지하는데, 그건
+ * **tier2(나무위키) 서빙 조건**이지 선수 식별 조건이 아니다. 기록 질문(`문보경 올해 2루타
+ * 몇개칩어?`)은 수치어 때문에 그 게이트에 걸려 후보 자체가 안 잡혔고, 그래서 구조화 DB
+ * 경로까지 도달하지 못했다(게이트가 잡은 결함).
+ */
+export function resolveNamedPlayerCandidate(
+  question: string,
+  players: PlayerRef[],
+): RagPlayerCandidate | null {
   const normalized = question.normalize("NFKC").toLowerCase();
   const tokens = questionTokens(normalized);
   const matched = findPlayerReferences(tokens, players);
@@ -725,8 +763,14 @@ export const PLAYER_PICKER_MAX_OPTIONS = 6;
 export function resolvePlayerPickerOptions(
   question: string,
   players: PlayerRef[],
+  /**
+   * 서술형 게이트를 건너뛴지 여부. 기록 질문은 수치어 때문에 서술형 게이트에 걸리지만,
+   * 동명이인 모호성은 똑같이 존재한다 — 오히려 기록은 동명이인도 답할 수 있어
+   * (Production 실측: 72명 중 28명 타자기록 보유) picker 가 실제로 값을 한다.
+   */
+  allowNonDescriptive = false,
 ): PlayerPickerOption[] | null {
-  if (!isDescriptivePlayerQuestion(question)) return null;
+  if (!allowNonDescriptive && !isDescriptivePlayerQuestion(question)) return null;
   const normalized = question.normalize("NFKC").toLowerCase();
   const tokens = questionTokens(normalized);
   const matched = findPlayerReferences(tokens, players);
@@ -955,6 +999,70 @@ export function matchGlossary(entries: GlossaryEntry[], question: string): Gloss
  * 경로 분기는 질문만으로 결정되므로(서술형 + 단일 entity), 재처리가 같은 경로로 돌아오는 것은
  * 결정론적이다 — 저장된 결과를 어느 검증기로 읽을지가 모호해지지 않는다.
  */
+/**
+ * 시즌 기록(수치) 질문을 구조화 DB 로 답한다 (kbo_structured).
+ *
+ * 하린아빠 2026-08-03: "기록도 레퍼런스하는거야? 가령 문보경 올해 2루타 몇개 침어?"
+ *
+ * 나무위키(tier2) 숫자는 정본이 아니라 그걸로 답하면 안 되고(§12 수치 계약),
+ * 그렇다고 무조건 차단해도 안 된다. 그래서 운영 DB 의 최신 row 를 **원값 그대로** 낸다.
+ *
+ * 안전 계약 (삼순 조건 ①~④):
+ *   ① 조회는 항상 **kboId exact** — 이름 조회 금지(동명이인이 섞인다)
+ *   ② 올해(2026)만 — 작년·통산은 DB 에 row 가 없으므로 fail-close
+ *   ③ 허용 필드는 원값 렌더 — 타율을 hits/ab 로 재계산하지 않는다
+ *   ④ stale/row 0/row 2+/identity 불일치/비정상값 → 답변 금지 + 기준시각 표시
+ *
+ * **LLM · RAG · cache 를 전혀 쓰지 않는다.** 결정론적 조회 1회로 끝난다.
+ * 반환 null 은 "이 경로 대상이 아니다" — 호출부가 서술형 RAG 로 내려보낸다.
+ */
+async function answerSeasonRecordQuestion(
+  userId: string,
+  question: string,
+  questionNorm: string,
+  candidate: RagPlayerCandidate,
+  remaining: number,
+  deps: QaDeps,
+): Promise<QaResult | null> {
+  const intent = resolveSeasonRecordIntent(question);
+  if (intent.kind === "none") return null;
+
+  const settle = async (answer: string, matchPath: MatchPath, source: MatchPath): Promise<QaResult> => {
+    await deps.log({ userId, question, questionNorm, matchPath, answer, inputTokens: null, outputTokens: null });
+    return { status: 200, answer, source, remaining };
+  };
+
+  // 신뢰할 수 없는 지표(pa/sac/sf)·지원 안 하는 시즌은 둘 다 **답변 거절**로 명시 종결한다.
+  // 조용히 서술형 RAG 로 흘리면 위키 숫자가 대신 나가버린다 — 정확히 막으려던 것이다.
+  if (intent.kind === "untrusted_metric") {
+    return settle(UNTRUSTED_METRIC_ANSWER, "blocked", "blocked");
+  }
+  if (intent.kind === "unsupported_season") {
+    return settle(UNSUPPORTED_SEASON_ANSWER, "blocked", "blocked");
+  }
+
+  let rows: SeasonRecordRow[];
+  try {
+    rows = await deps.fetchSeasonRecord!(intent.query.table, candidate.entityId);
+  } catch {
+    // 조회 실패를 "기록 없음"으로 둔갑하지 않는다 — 재시도 가능한 실패다.
+    return settle(BLOCKED_ANSWER, "error", "error");
+  }
+
+  const outcome = resolveSeasonRecord(
+    rows,
+    intent.query,
+    candidate.entityId,
+    deps.now ? deps.now() : Date.now(),
+  );
+  if (outcome.kind === "ok") {
+    const answer = composeSeasonRecordAnswer(outcome);
+    return settle(answer, "kbo_structured", "kbo_structured");
+  }
+  // stale · missing · inconsistent — 전부 안내로 닫는다. 추정값을 내지 않는다.
+  return settle(RECORD_MISSING_ANSWER, "blocked", "blocked");
+}
+
 async function answerPlayerDescriptiveQuestion(
   userId: string,
   question: string,
@@ -1159,8 +1267,14 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   const pickedCandidate = deps.enablePlayerRag && deps.pickedPlayerKboId
     ? resolvePickedPlayerCandidate(deps.pickedPlayerKboId, players)
     : null;
+  // 기록(수치) 질문은 서술형 게이트에 걸리므로 이름 기반 후보를 따로 붙잡는다.
+  // 서술형 게이트는 "tier2 문서로 답해도 되는가" 조건이지 "어느 선수인가" 조건이 아니다.
+  const recordIntent = deps.fetchSeasonRecord
+    ? resolveSeasonRecordIntent(question)
+    : { kind: "none" as const };
   const enabledPlayerCandidate = pickedCandidate ?? (deps.enablePlayerRag
-    ? resolveRagPlayerCandidate(question, players)
+    ? (resolveRagPlayerCandidate(question, players) ??
+      (recordIntent.kind !== "none" ? resolveNamedPlayerCandidate(question, players) : null))
     : null);
 
   // 동명이인으로 선수를 특정 못 했으면 추측하지 않고 되묻는다 (하린아빠 2026-08-03).
@@ -1168,7 +1282,9 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   // quota도 되돌려준다 — "어느 김동현이에요?"를 물어본 것만으로 하루 한도를 깎으면
   // 동명이인 선수만 두 배를 내는 꼴이 된다. 반납은 이 분기에서만 일어난다.
   if (!enabledPlayerCandidate && deps.enablePlayerRag) {
-    const options = resolvePlayerPickerOptions(question, players);
+    // 기록 질문도 picker 대상이다 — 오히려 동명이인은 서술형보다 기록을 더 잘 답한다
+    // (Production 실측: 동명이인 72명 중 28명이 타자기록 보유, 위키 chunks 는 0).
+    const options = resolvePlayerPickerOptions(question, players, recordIntent.kind !== "none");
     if (options) {
       if (deps.releaseDaily) {
         try {
@@ -1250,6 +1366,15 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   // 근거 0건·근거부족·오염근거는 generic LLM 0 / cache 0 으로 명시 fail-close 한다.
   const playerCandidate = enabledPlayerCandidate;
   if (playerCandidate) {
+    // ②-0 시즌 기록(수치) 질문은 위키가 아니라 **구조화 DB** 를 본다 (kbo_structured).
+    // 나무위키 숫자는 정본이 아니므로(§12 수치 계약) tier2 로 답하면 안 되고,
+    // 그렇다고 차단해도 안 된다 — 하린아빠 2026-08-03 "기록도 레퍼런스하는거야?".
+    if (deps.fetchSeasonRecord) {
+      const record = await answerSeasonRecordQuestion(
+        userId, question, questionNorm, playerCandidate, remaining, deps,
+      );
+      if (record) return record;
+    }
     if (deps.enablePlayerRag && deps.searchRag && deps.callRagLlm) {
       return answerPlayerDescriptiveQuestion(userId, question, questionNorm, playerCandidate, remaining, deps);
     }

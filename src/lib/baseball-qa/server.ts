@@ -43,6 +43,7 @@ import {
   type RagEvidenceCandidate,
   type RagPlayerCandidate,
 } from "@/lib/baseball-qa/rag/retrieve";
+import type { SeasonRecordRow } from "@/lib/baseball-qa/stats/season-record";
 import { embedQuery } from "@/lib/baseball-qa/rag/embed";
 import { orderTier2Evidence } from "@/lib/baseball-qa/rag/fetch-wikipedia";
 
@@ -325,6 +326,21 @@ function makeDeps(messageId: number, pickedPlayerKboId?: string | null): QaDeps 
           p_user_id: userId,
         });
       if (error) throw error;
+    },
+    /**
+     * 시즌 기록 조회 (kbo_structured). **kbo_id exact** 로만 본다 — 이름 조회는 동명이인을
+     * 섞어버리므로 금지다(삼순 조건 ①). 상한 2로 조회해서 중복행을 숨기지 않고
+     * 호출부가 `inconsistent` 로 fail-close 할 수 있게 한다.
+     */
+    fetchSeasonRecord: async (table, kboId) => {
+      // query-guard: bounded -- kbo_id exact 일치 + limit 2.
+      const { data, error } = await supabaseAdmin
+        .from(table === "batter" ? "player_stats_batter" : "player_stats_pitcher")
+        .select("*")
+        .eq("kbo_id", kboId)
+        .limit(2);
+      if (error) throw error;
+      return (data ?? []) as unknown as SeasonRecordRow[];
     },
     searchOfficialRag,
     callOfficialRagLlm,

@@ -35,6 +35,10 @@ import {
   buildBaseballQaGeminiRequest,
 } from "../../src/lib/baseball-qa/gemini-request";
 import {
+  UNSUPPORTED_SEASON_ANSWER,
+  UNTRUSTED_METRIC_ANSWER,
+} from "../../src/lib/baseball-qa/stats/season-record";
+import {
   LIVE_INJECTION_DELEGATED,
   LIVE_POSITIVE_ROLE_RULE,
   LIVE_POSITIVE_TEAM_POSSESSIVE,
@@ -871,8 +875,9 @@ async function verifyPipeline() {
     assert.notEqual(compareResult.source, "player_picker", "비교 질문은 picker 아님");
     assert.equal(compareResult.source, "blocked", "비교 질문은 기존대로 차단");
 
-    // ⑥ 수치·기록 질문은 tier2 서빙 금지 계약 그대로다(나무위키 숫자는 정본이 아니다).
-    // 동명이인이어도 picker를 띄우지 않는다 — 골라봐야 답할 수 없는 질문이다.
+    // ⑥ 수치·기록 질문은 tier2(나무위키) 서빙 금지 계약 그대로다 — 위키 숫자는 정본이 아니다.
+    // 단 `fetchSeasonRecord` 미주입(= 기록 경로 비활성) 일 때의 계약이고,
+    // 주입되면 아래 kbo_structured 블록에서 운영 DB 원값으로 답한다.
     for (const input of ["문보경 타율 알려줘", "김동현 홈런 몇 개야?"]) {
       const numeric = freshState();
       const numericResult = await answerQuestion("u1", input, ragDeps(numeric));
@@ -887,6 +892,164 @@ async function verifyPipeline() {
       enablePlayerRag: false,
     });
     assert.equal(disabledResult.pickerOptions, undefined, "RAG off면 picker 없음");
+  }
+
+  // ── 시즌 기록 질의 kbo_structured (하린아빠 2026-08-03) ─────────────────────
+  // "기록도 레퍼런스하는거야? 가령 문보경 올해 2루타 몇개 칩어?"
+  // 수치는 나무위키(tier2)가 아니라 운영 DB 원값으로만 답한다.
+  {
+    const NOW = Date.parse("2026-08-03T12:00:00.000Z");
+    // Production 실측값 그대로(2026-08-03 조회): 문보경 69102 · doubles 8 · avg ".238".
+    const moonRow = {
+      kbo_id: "69102", name: "문보경", team: "LG",
+      updated_at: "2026-08-02T21:00:44.612+00:00",
+      avg: ".238", games: 74, ab: 248, runs: 30, hits: 59,
+      doubles: 8, triples: 0, hr: 8, tb: 91, rbi: 43,
+      // 신뢰 불가 필드도 row 에는 존재한다 — "있지만 안 낸다"를 검증하려면 넣어야 한다.
+      pa: 102, sac: 0, sf: 2,
+    };
+    const statsDeps = (
+      state: MockState,
+      rows: Record<string, unknown>[] = [moonRow],
+      overrides: Partial<QaDeps> = {},
+    ): QaDeps => ({
+      ...makeDeps(state),
+      enablePlayerRag: true,
+      now: () => NOW,
+      fetchSeasonRecord: async () => rows as never,
+      // 기록 경로는 RAG를 써서는 안 된다 — 호출되면 즉시 터지게 한다.
+      searchRag: async () => { throw new Error("기록 질문은 tier2 RAG 금지"); },
+      callRagLlm: async () => { throw new Error("기록 질문은 tier2 RAG 금지"); },
+      searchOfficialRag: async () => { throw new Error("기록 질문은 공식 RAG 금지"); },
+      callOfficialRagLlm: async () => { throw new Error("기록 질문은 공식 RAG 금지"); },
+      ...overrides,
+    });
+
+    // ① 하린아빠 예시 그대로: `문보경 올해 2루타 몇개 칩어?` → 8
+    const doubles = freshState();
+    const doublesResult = await answerQuestion("u1", "문보경 올해 2루타 몇개 칩어?", statsDeps(doubles));
+    assert.equal(doublesResult.source, "kbo_structured", "시즌 기록은 구조화 DB 경로");
+    assert.match(doublesResult.answer, /2루타은? 8/, `원값 8 그대로: ${doublesResult.answer}`);
+    // KST 변환 확인: 08-02T21:00Z + 9h = 08-03 06:00 KST → `08/03`
+    assert.match(doublesResult.answer, /08\/03/, "기준시각 표시(KST)");
+    assert.equal(doubles.llmCalls, 0, "기록 경로는 LLM 0");
+    assert.equal(doubles.cacheReads, 0, "기록 경로는 cache read 0");
+    assert.equal(doubles.cacheWrites, 0, "기록 경로는 cache write 0");
+    assert.deepEqual(doubles.logs, ["kbo_structured"], "#983 모니터 별도 라벨");
+
+    // ② 타율은 **원값 그대로** — hits/ab 로 재계산하면 .2379… 가 나와 DB 표기와 어긋난다.
+    const avg = freshState();
+    const avgResult = await answerQuestion("u1", "문보경 올해 타율 알려줘", statsDeps(avg));
+    assert.equal(avgResult.source, "kbo_structured", "타율도 구조화 경로");
+    assert.match(avgResult.answer, /\.238/, `원값 렌더: ${avgResult.answer}`);
+    assert.doesNotMatch(avgResult.answer, /0\.2379|0\.238\d/, "AVG 재계산 금지");
+
+    // ③ 신뢰 불가 지표(pa/sac/sf)는 row 에 값이 있어도 답하지 않는다.
+    // Production 실측: 330행 중 233행이 pa < ab — 야구 규칙상 불가능한 값이다.
+    for (const [input, leakedValue] of [
+      ["문보경 올해 타석 몇개야?", "102"],
+      ["문보경 희생플라이 몇개야?", "2"],
+    ] as const) {
+      const untrusted = freshState();
+      const untrustedResult = await answerQuestion("u1", input, statsDeps(untrusted));
+      assert.notEqual(untrustedResult.source, "kbo_structured", `${input}: 신뢰불가 지표 답변 금지`);
+      // "값을 말하는 문장"이 아니어야 한다. 안내문 안의 `2루타` 같은 예시까지
+      // 잡으면 오판이므로, 지표명+값 형태로만 누수를 판정한다.
+      assert.doesNotMatch(
+        untrustedResult.answer,
+        new RegExp(`(?:타석|희생플라이|희생번트)\\S*\\s*(?:은|는)?\\s*${leakedValue}\\b`),
+        `${input}: pa/sf 원값 노출 금지`,
+      );
+      assert.equal(untrustedResult.answer, UNTRUSTED_METRIC_ANSWER, `${input}: 명시 거절 안내`);
+      assert.equal(untrusted.llmCalls, 0, `${input}: LLM 0`);
+    }
+
+    // ④ 작년·통산은 DB 에 row 가 없다 — 올해 값을 그것인 양 내주면 오답이다.
+    for (const input of ["문보경 작년 2루타 몇개야?", "문보경 통산 홈런 몇개야?"]) {
+      const past = freshState();
+      const pastResult = await answerQuestion("u1", input, statsDeps(past));
+      assert.notEqual(pastResult.source, "kbo_structured", `${input}: 과거 시즌 fail-close`);
+      assert.doesNotMatch(pastResult.answer, /8입니다/, `${input}: 올해 값 오답 금지`);
+      assert.equal(pastResult.answer, UNSUPPORTED_SEASON_ANSWER, `${input}: 지원 시즌 명시 안내`);
+    }
+
+    // ⑤ stale — cron 1주기(매일 21:00 UTC)를 넘긴 값은 "오늘 경기가 빠진 값"일 수 있다.
+    const stale = freshState();
+    const staleResult = await answerQuestion("u1", "문보경 올해 2루타 몇개야?", statsDeps(stale, [
+      { ...moonRow, updated_at: "2026-07-28T21:00:00.000+00:00" },
+    ]));
+    assert.notEqual(staleResult.source, "kbo_structured", "stale 값은 답변 금지");
+    assert.doesNotMatch(staleResult.answer, /2루타은? 8/, "stale 값 노출 금지");
+
+    // ⑥ row 0 (미수집 선수) / row 2+ (중복행) — 둘 다 뭐가 맞는지 모른다.
+    for (const [label, rows] of [
+      ["row 0", [] as Record<string, unknown>[]],
+      ["row 2", [moonRow, { ...moonRow, doubles: 99 }]],
+    ] as const) {
+      const bad = freshState();
+      const badResult = await answerQuestion("u1", "문보경 올해 2루타 몇개야?", statsDeps(bad, [...rows]));
+      assert.notEqual(badResult.source, "kbo_structured", `${label}: fail-close`);
+      assert.doesNotMatch(badResult.answer, /99/, `${label}: 중복행 값 노출 금지`);
+    }
+
+    // ⑦ **타 선수 row 오염** — 조회 조건이 망가져 다른 선수 row 가 오면 답하지 않는다.
+    // 이게 뚫리면 "문보경 기록"을 물었는데 남의 숫자가 나간다.
+    const foreign = freshState();
+    const foreignResult = await answerQuestion("u1", "문보경 올해 2루타 몇개야?", statsDeps(foreign, [
+      { ...moonRow, kbo_id: "53554", name: "김민석", team: "두산", doubles: 16 },
+    ]));
+    assert.notEqual(foreignResult.source, "kbo_structured", "타 선수 row 는 fail-close");
+    assert.doesNotMatch(foreignResult.answer, /16|김민석/, "타 선수 값·이름 노출 금지");
+
+    // ⑧ 동명이인 기록 질문 → picker → 선택한 kboId 값.
+    // ⚠️ 동명이인은 위키 chunks 가 0이라 서술형은 못 답하지만, **기록은 답할 수 있다**
+    // (Production 실측: 동명이인 72명 중 28명이 타자기록 보유). picker 가 여기서 실제로 값을 한다.
+    const dupPicker = freshState();
+    const dupPickerResult = await answerQuestion("u1", "김동현 올해 홈런 몇개야?", statsDeps(dupPicker, [], {
+      fetchSeasonRecord: async () => { throw new Error("미특정 상태에서 기록 조회 금지"); },
+      releaseDaily: async () => {},
+    }));
+    assert.equal(dupPickerResult.source, "player_picker", "동명이인 기록질문도 되묻는다");
+    assert.equal(dupPickerResult.pickerOptions?.length, 3, "김동현 3명");
+
+    const dupPicked = freshState();
+    let queriedKboId: string | null = null;
+    const dupPickedResult = await answerQuestion("u1", "김동현 올해 홈런 몇개야?", statsDeps(dupPicked, [], {
+      pickedPlayerKboId: "56143",
+      fetchSeasonRecord: async (_table, kboId) => {
+        queriedKboId = kboId;
+        return [{ ...moonRow, kbo_id: "56143", name: "김동현", team: "LG", hr: 3 }] as never;
+      },
+    }));
+    assert.equal(queriedKboId, "56143", "이름이 아니라 선택한 kboId 로 조회");
+    assert.equal(dupPickedResult.source, "kbo_structured", "선택 뒤에는 기록 답변");
+    assert.match(dupPickedResult.answer, /홈런은? 3/, `선택한 선수 값: ${dupPickedResult.answer}`);
+
+    // ⑨ 투수 지표도 같은 계약으로 동작한다(테이블만 다르다).
+    const pitcher = freshState();
+    let pitcherTable: string | null = null;
+    const pitcherResult = await answerQuestion("u1", "문보경 올해 평균자책점 알려줘", statsDeps(pitcher, [], {
+      fetchSeasonRecord: async (table) => {
+        pitcherTable = table;
+        return [{
+          kbo_id: "69102", name: "문보경", team: "LG",
+          updated_at: "2026-08-02T21:00:44.612+00:00", era: "3.42",
+        }] as never;
+      },
+    }));
+    assert.equal(pitcherTable, "pitcher", "투수 지표는 pitcher 테이블");
+    assert.equal(pitcherResult.source, "kbo_structured", "투수 기록도 구조화 경로");
+    assert.match(pitcherResult.answer, /3\.42/, "투수 원값 렌더");
+
+    // ⑩ `fetchSeasonRecord` 미주입이면 기록 경로 자체가 비활성 — 기존 동작 그대로.
+    const noRecord = freshState();
+    const noRecordResult = await answerQuestion("u1", "문보경 올해 2루타 몇개야?", {
+      ...makeDeps(noRecord),
+      enablePlayerRag: true,
+      searchRag: async () => [],
+      callRagLlm: async () => { throw new Error("근거 0이면 호출 안 됨"); },
+    });
+    assert.notEqual(noRecordResult.source, "kbo_structured", "미주입이면 구조화 경로 비활성");
   }
 
   // 선수·구단·감독이 룰의 예시 주체로 등장한 질문은 entity 단어만으로 과차단하지 않는다.

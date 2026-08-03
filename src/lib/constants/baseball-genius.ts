@@ -36,7 +36,8 @@ export const GENIUS_MASCOT_STATES: readonly GeniusMascotState[] = [
  * MatchPath 전체를 다 적지 않는다 — `pending` 은 다른 worker 가 이기고 이 worker 는
  * 물러나는 경우라 애초에 쪽지가 발송되지 않는다(= payload 도 안 생긴다).
  */
-const ANSWER_MATCH_PATHS = new Set(["dictionary", "cache", "llm", "rag"]);
+// `kbo_structured` 도 답변이다 — 시즌 기록을 운영 DB 원값으로 돌려준 경우.
+const ANSWER_MATCH_PATHS = new Set(["dictionary", "cache", "llm", "rag", "kbo_structured"]);
 
 export function replyKindForMatchPath(matchPath: string): GeniusReplyKind {
   if (ANSWER_MATCH_PATHS.has(matchPath)) return "answer";
