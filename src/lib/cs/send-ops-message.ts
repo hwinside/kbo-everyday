@@ -1,4 +1,5 @@
 import type { getSupabaseAdmin } from "@/lib/supabase/admin";
+import { isDeepStrictEqual } from "node:util";
 
 type SupabaseAdmin = ReturnType<typeof getSupabaseAdmin>;
 
@@ -21,6 +22,7 @@ export async function verifyOpsMessageByDedupKey(
   userId: string,
   dedupKey: string,
   expectedContent: string,
+  expectedPayload: object | null,
 ): Promise<VerifyOpsDedupResult> {
   const [u1, u2] = [systemUserId, userId].sort();
   const { data: conversation, error: convError } = await admin
@@ -34,7 +36,7 @@ export async function verifyOpsMessageByDedupKey(
 
   const { data: message, error: msgError } = await admin
     .from("dm_messages")
-    .select("id")
+    .select("id, payload")
     .eq("dedup_key", dedupKey)
     .eq("sender_id", systemUserId)
     .eq("conversation_id", conversation.id)
@@ -42,6 +44,8 @@ export async function verifyOpsMessageByDedupKey(
     .maybeSingle();
   if (msgError) return { ok: false, reason: "dedup_message_lookup_failed" };
   if (!message) return { ok: true, found: false };
+  const actualPayload = (message as { payload?: unknown }).payload ?? null;
+  if (!isDeepStrictEqual(actualPayload, expectedPayload)) return { ok: true, found: false };
   return { ok: true, found: true, conversationId: conversation.id };
 }
 
@@ -61,6 +65,11 @@ export async function sendOpsMessageToUser(
   content: string,
   dedupKey?: string,
   origin?: "dm" | "feedback",
+  /**
+   * dm_messages.payload 에 함께 저장할 구조화 데이터 (야잘알봇 답변 유형 등).
+   * 생략하면 NULL — 기존 발송 경로(CS 회신·broadcast·blind-notify)는 무변경이다.
+   */
+  payload?: object | null,
 ): Promise<SendOpsResult> {
   const text = content.replace(/\r\n/g, "\n").trimEnd();
   if (!text.trim()) return { ok: false, reason: "empty_content" };
@@ -77,13 +86,21 @@ export async function sendOpsMessageToUser(
     p_preview: preview,
     p_origin: origin === "feedback" ? "feedback" : "dm",
     p_dedup_key: dedupKey ?? null,
+    p_payload: payload ?? null,
   });
 
   if (error) {
     // dedup_key 가 다른 대화/발신자와 충돌(위조 의심)이면 RPC 가 23505 로 rollback.
     if (dedupKey && error.code === "23505") {
       // belt-and-suspenders: 같은 대화·운영팀 발신으로 이미 있으면 멱등 성공으로 간주.
-      const verified = await verifyOpsMessageByDedupKey(admin, systemUserId, userId, dedupKey, text);
+      const verified = await verifyOpsMessageByDedupKey(
+        admin,
+        systemUserId,
+        userId,
+        dedupKey,
+        text,
+        payload ?? null,
+      );
       if (verified.ok && verified.found) {
         return { ok: true, conversationId: verified.conversationId };
       }
