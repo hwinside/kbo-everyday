@@ -23,6 +23,8 @@ import {
 import { venueSignCacheKey } from "../../src/lib/venue-stories/media-url";
 import {
   decideManualDiaryGame,
+  manualSeasonOfGameDate,
+  VENUE_DIARY_MANUAL_SEASONS,
   VENUE_DIARY_MANUAL_SOURCE,
 } from "../../src/lib/venue-diary/manual-upload";
 
@@ -354,31 +356,67 @@ assert.equal(isValidDiaryGameId("G_1-2"), true);
 assert.equal(isValidDiaryGameId("G,or(status.eq.active)"), false, "PostgREST filter injection 차단");
 assert.equal(parseDiaryCursor("2026-07-01|G,or(status.eq.active)"), null);
 
-// 9) 과거 직접 추가: 실제 2026 final만, durable source/비공개/전체 보존 상한 계약
-assert.deepEqual(
-  decideManualDiaryGame({
-    exists: true,
-    gameDate: "2026-07-24",
-    status: "final",
-  }),
-  { ok: true },
-  "2026 final 허용",
+// 9) 과거 직접 추가: 허용 시즌의 실제 final만, durable source/비공개/전체 보존 상한 계약
+// 허용 시즌은 SSOT 배열을 그대로 순회한다 — 시즌을 늘려도 테스트가 같이 움직이고,
+// 배열에서 특정 시즌을 빼면 여기서 RED 가 난다.
+assert.ok(
+  VENUE_DIARY_MANUAL_SEASONS.includes(2025) &&
+    VENUE_DIARY_MANUAL_SEASONS.includes(2026),
+  "2025·2026 직접 추가 허용 시즌",
 );
-for (const status of ["scheduled", "live", "cancelled"] as const) {
+for (const season of VENUE_DIARY_MANUAL_SEASONS) {
+  assert.deepEqual(
+    decideManualDiaryGame({
+      exists: true,
+      gameDate: `${season}-07-24`,
+      status: "final",
+    }),
+    { ok: true },
+    `${season} final 허용`,
+  );
+  for (const status of ["scheduled", "live", "cancelled"] as const) {
+    assert.equal(
+      decideManualDiaryGame({ exists: true, gameDate: `${season}-07-24`, status })
+        .ok,
+      false,
+      `${season} ${status} 거부`,
+    );
+  }
+  // 포스트시즌(10~11월)도 같은 시즌으로 허용돼야 한다.
   assert.equal(
-    decideManualDiaryGame({ exists: true, gameDate: "2026-07-24", status }).ok,
-    false,
-    `${status} 거부`,
+    decideManualDiaryGame({
+      exists: true,
+      gameDate: `${season}-10-31`,
+      status: "final",
+    }).ok,
+    true,
+    `${season} 포스트시즌 final 허용`,
   );
 }
+for (const year of [2024, 2027]) {
+  assert.equal(
+    decideManualDiaryGame({
+      exists: true,
+      gameDate: `${year}-07-24`,
+      status: "final",
+    }).ok,
+    false,
+    `허용 시즌 밖(${year}) 거부`,
+  );
+}
+// 시즌 판정은 접두 문자열이 아니라 연도 파싱 — 형식이 어긋나면 fail-closed.
+assert.equal(manualSeasonOfGameDate("2025-07-24"), 2025);
+assert.equal(manualSeasonOfGameDate("20250724"), null, "YYYY-MM-DD 형식만 인정");
+assert.equal(manualSeasonOfGameDate("2025-7-24"), null, "zero-pad 안 된 날짜 거부");
+assert.equal(manualSeasonOfGameDate(null), null);
 assert.equal(
   decideManualDiaryGame({
     exists: true,
-    gameDate: "2025-07-24",
+    gameDate: "20250724",
     status: "final",
   }).ok,
   false,
-  "2026 외 시즌 거부",
+  "형식 어긋난 gameDate 거부",
 );
 assert.equal(VENUE_DIARY_MANUAL_SOURCE, "diary_manual");
 
