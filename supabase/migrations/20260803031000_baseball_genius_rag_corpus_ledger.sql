@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS public.genius_rag_corpus_records (
   page_title text NOT NULL,
   canonical_url text NOT NULL CHECK (canonical_url ~ '^https://namu[.]wiki/w/[^?#]+$'),
   fetched_at timestamptz NOT NULL,
+  -- PostgreSQL char_length와 동일한 Unicode code point 수다(JS UTF-16 code unit 수가 아님).
   content_length integer NOT NULL CHECK (content_length > 0),
   raw_text text NOT NULL,
   disposition text NOT NULL CHECK (disposition IN ('assigned', 'quarantined')),

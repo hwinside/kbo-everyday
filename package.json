@@ -284,6 +284,7 @@
     "qa:baseball-rag-full-retention": "tsx scripts/qa/baseball-qa-rag-full-retention-smoke.ts",
     "qa:baseball-corpus-identity": "tsx scripts/qa/baseball-qa-corpus-identity-smoke.ts",
     "qa:baseball-corpus-loader": "tsx scripts/qa/baseball-qa-corpus-loader-smoke.ts",
+    "qa:baseball-corpus-ledger-full-pg": "tsx scripts/qa/baseball-qa-corpus-ledger-full-pg.ts",
     "rag:load-corpus": "tsx scripts/baseball-qa/load-corpus-sources.ts",
     "qa:post-detail-header-nowrap-browser": "node scripts/qa/post-detail-header-nowrap-browser.mjs",
     "qa:nickname-api": "node scripts/qa/nickname-api-behavior.mjs",

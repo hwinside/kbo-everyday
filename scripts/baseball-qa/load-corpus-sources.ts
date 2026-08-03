@@ -30,6 +30,7 @@ import {
   buildCorpusSourcePlan,
   buildCorpusSourceIdentity,
   buildCorpusPreparedSnapshotFingerprint,
+  corpusContentLength,
   corpusRecordHash,
   parseCorpusJsonl,
 } from "../../src/lib/baseball-qa/rag/corpus-loader";
@@ -284,7 +285,7 @@ async function main(): Promise<void> {
           page_title: row.record.title,
           canonical_url: row.record.canonical,
           fetched_at: row.record.fetchedAt,
-          content_length: row.record.len,
+          content_length: corpusContentLength(row.record.text),
           raw_text: row.record.text,
           disposition: row.disposition,
           is_latest_owner_revision: row.isLatestOwnerRevision,

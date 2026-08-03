@@ -43,7 +43,7 @@ function record(
   };
 }
 
-const prose = (title: string) => `${title}\n분류야구\n${"야구에 관한 검증 가능한 서술입니다. ".repeat(6)}`;
+const prose = (title: string) => `${title}\n분류야구\n🏠 ${"야구에 관한 검증 가능한 서술입니다. ".repeat(6)}`;
 const fixtures: FixtureRecord[] = [
   record(
     "player",
@@ -193,7 +193,14 @@ const server = createServer(async (request, response) => {
     return;
   }
   if (request.method === "POST" && request.url?.startsWith("/rest/v1/genius_rag_corpus_records")) {
-    for (const row of body as Record<string, unknown>[]) ledgerRecords.set(row.row_index as number, row);
+    for (const row of body as Record<string, unknown>[]) {
+      assert.equal(
+        row.content_length,
+        Array.from(row.raw_text as string).length,
+        "ledger content_length는 PostgreSQL char_length와 같은 Unicode code point 단위여야 한다",
+      );
+      ledgerRecords.set(row.row_index as number, row);
+    }
     response.statusCode = 201;
     response.end("null");
     return;
@@ -396,6 +403,10 @@ try {
   assert.equal(sourceStates.get("namu:player:54529")?.pageTitle, "레예스");
   assert.equal(sourceStates.get("namu:player:55633")?.pageTitle, "아담 올러");
   assert.equal(ledgerRecords.size, fixtures.length);
+  const supplementaryRow = [...ledgerRecords.values()].find((row) => (row.raw_text as string).includes("🏠"));
+  assert.ok(supplementaryRow, "supplementary fixture ledger row absent");
+  assert.equal(supplementaryRow.content_length, Array.from(supplementaryRow.raw_text as string).length);
+  assert.notEqual(supplementaryRow.content_length, (supplementaryRow.raw_text as string).length);
   assert.deepEqual(ledgerRun?.collector_counts, { a17_self_cdp: 16, mac_direct_recovery: 2 });
   assert.equal(ledgerRun?.latest_owner_relations, 17);
   assert.equal(

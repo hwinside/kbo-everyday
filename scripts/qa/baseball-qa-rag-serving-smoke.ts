@@ -55,6 +55,7 @@ import { buildResolutionSourceRow } from "../../src/lib/baseball-qa/rag/source-r
 import {
   buildCorpusPreparedSnapshotFingerprint,
   buildCorpusSourceIdentity,
+  corpusContentLength,
   type CorpusSourcePlan,
 } from "../../src/lib/baseball-qa/rag/corpus-loader";
 import {
@@ -1667,7 +1668,7 @@ async function verifyCorpusLoaderTwoPassOnRealDb(): Promise<void> {
     [0, "a".repeat(64), "assigned", false, "a17_self_cdp", "과거 revision 원문"],
     [1, "b".repeat(64), "assigned", true, "a17_self_cdp", "최신 revision 원문"],
     [2, "c".repeat(64), "quarantined", true, "a17_self_cdp", "격리 원문"],
-    [3, "d".repeat(64), "assigned", true, "mac_direct_recovery", "Mac 복구 원문"],
+    [3, "d".repeat(64), "assigned", true, "mac_direct_recovery", "Mac 🏠 복구 원문"],
   ] as const;
   for (const [rowIndex, recordHash, disposition, latest, collector, rawText] of ledgerRows) {
     await db.query(
@@ -1677,7 +1678,7 @@ async function verifyCorpusLoaderTwoPassOnRealDb(): Promise<void> {
        VALUES ($1,$2,$3,'team','KIA 타이거즈','KIA 타이거즈',1,'KIA 타이거즈 - 나무위키',
         'https://namu.wiki/w/KIA%20%ED%83%80%EC%9D%B4%EA%B1%B0%EC%A6%88','2026-08-03',
         $4,$5,$6,$7,$8)`,
-      [artifact, rowIndex, recordHash, rawText.length, rawText, disposition, latest, collector],
+      [artifact, rowIndex, recordHash, corpusContentLength(rawText), rawText, disposition, latest, collector],
     );
   }
   const finalized = await db.query<{ ok: boolean }>(

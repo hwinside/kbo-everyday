@@ -63,6 +63,11 @@ export type CorpusInputCounts = {
   schemaRejected: number;
 };
 
+/** PostgreSQL char_length(text)와 같은 Unicode code point 단위다. */
+export function corpusContentLength(text: string): number {
+  return Array.from(text).length;
+}
+
 export function validateCorpusRecord(value: unknown):
   | { ok: true; record: CorpusRecord }
   | { ok: false; reason: string } {
