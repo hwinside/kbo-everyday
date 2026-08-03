@@ -289,6 +289,8 @@ console.log("[미디어 타입 토글 — 전체/사진/영상 필터 + 자동 �
     libraryEmptyMessage({ filter: "video", totalLoaded: 40 }) === "최근 영상이 없어요" &&
       libraryEmptyMessage({ filter: "image", totalLoaded: 40 }) === "최근 사진이 없어요" &&
       libraryEmptyMessage({ filter: "video", totalLoaded: 0 }) === "최근 사진·영상이 없어요" &&
+      libraryEmptyMessage({ filter: "video", totalLoaded: 0, hasAnyMedia: true }) ===
+        "최근 영상이 없어요" &&
       libraryEmptyMessage({ filter: "all", totalLoaded: 40 }) === "최근 사진·영상이 없어요",
   );
 }
@@ -519,6 +521,23 @@ console.log("[B안 브릿지 계약 — 사진첩 열거/asset export]");
 
 console.log("[네이티브 실구현 — iOS PhotoKit / Android MediaStore / 권한·등록]");
 {
+  const workflow = readFileSync(
+    join(__dirname, "../../.github/workflows/venue-story-picker-gate.yml"),
+    "utf8",
+  );
+  const nativeContractPaths = [
+    "ios/App/App/VenueMediaLibraryPlugin.swift",
+    "ios/App/App/Info.plist",
+    "ios/App/App/MainViewController.swift",
+    "ios/App/App.xcodeproj/project.pbxproj",
+    "android/app/src/main/java/fan/keubo/app/VenueMediaLibraryPlugin.kt",
+    "android/app/src/main/java/fan/keubo/app/MainActivity.java",
+    "android/app/src/main/AndroidManifest.xml",
+  ];
+  ok(
+    "required workflow — 스모크가 직접 읽는 네이티브 계약 파일이 PR/push paths 양쪽에 모두 결속",
+    nativeContractPaths.every((path) => workflow.split(`\"${path}\"`).length - 1 === 2),
+  );
   const swift = readFileSync(
     join(__dirname, "../../ios/App/App/VenueMediaLibraryPlugin.swift"),
     "utf8",
@@ -966,6 +985,7 @@ async function composerProductionWiringRegression() {
     resolveInitialList = resolve;
   });
   let delayNextList = false;
+  let returnEmptyVideoPage = false;
   let resolveRapidList!: (page: NativeListPage) => void;
   let delayedRapidList: Promise<NativeListPage> | null = null;
   const listMediaCalls: NativeListOptions[] = [];
@@ -986,7 +1006,12 @@ async function composerProductionWiringRegression() {
             });
             return delayedRapidList;
           }
-          return options.mediaTypes?.join(",") === "video" ? videoPage() : imagePage();
+          if (options.mediaTypes?.join(",") === "video") {
+            return returnEmptyVideoPage
+              ? { assets: [], nextCursor: null, permission: "authorized" }
+              : videoPage();
+          }
+          return imagePage();
         },
         exportMedia: async ({ id }: { id: string }) => {
           exportCalls.push(id);
@@ -1117,6 +1142,24 @@ async function composerProductionWiringRegression() {
       q('[data-asset-id="v1"]') == null,
   );
 
+  // 사진 2장·영상 0개인 실제 타입별 네이티브 조회. 현재 video 응답 자체는 빈 배열이므로
+  // 직전 all/image 조회에서 확인한 `사진첩에 미디어가 있음` 사실을 보존해야 올바른 안내가 나온다.
+  returnEmptyVideoPage = true;
+  await act(async () => {
+    (q('[data-library-filter="video"]') as HTMLElement).click();
+  });
+  await waitFor(
+    "사진 있음·영상 0 — 실제 Composer가 '최근 영상이 없어요' + 전체 전환 안내",
+    () =>
+      listMediaCalls.length === 5 &&
+      (q('[data-testid="library-empty"]')?.textContent ?? "").includes("최근 영상이 없어요") &&
+      (q('[data-testid="library-empty"]')?.textContent ?? "").includes("위 탭을 '전체'로 바꾸면 모두 볼 수 있어요"),
+  );
+  ok(
+    "사진 있음·영상 0 — 권한 확인 오안내 잔존 0",
+    !(q('[data-testid="library-empty"]')?.textContent ?? "").includes("사진 접근 범위를 확인"),
+  );
+
   // 기존 업로드 production 배선 회귀는 전체 탭의 사진 2장으로 계속 검증한다.
   await act(async () => {
     (q('[data-library-filter="all"]') as HTMLElement).click();
@@ -1126,7 +1169,7 @@ async function composerProductionWiringRegression() {
   await waitFor(
     "실제 컴포넌트 — 선체크 통과 후 커스텀 그리드 자동 오픈(네이티브 타일 렌더)",
     () =>
-      listMediaCalls.length === 5 &&
+      listMediaCalls.length === 6 &&
       q('[data-asset-id="n1"]') != null &&
       q('[data-asset-id="n2"]') != null,
   );

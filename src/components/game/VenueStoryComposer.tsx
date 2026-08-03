@@ -130,6 +130,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   const [phase, setPhase] = useState<Phase>("idle");
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [libraryAssets, setLibraryAssets] = useState<VenueMediaAsset[]>([]);
+  const [libraryKnownHasAnyMedia, setLibraryKnownHasAnyMedia] = useState(false);
   const [libraryCursor, setLibraryCursor] = useState<string | null>(null);
   const [libraryPermission, setLibraryPermission] =
     useState<VenueMediaPermission>("prompt");
@@ -339,6 +340,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
     setPhase("idle");
     setLibraryOpen(false);
     setLibraryAssets([]);
+    setLibraryKnownHasAnyMedia(false);
     setLibraryCursor(null);
     setLibraryPermission("prompt");
     setLibraryLoading(false);
@@ -427,6 +429,13 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
         requestedTypes === "all" ? undefined : [requestedTypes],
       );
       if (seq !== pickSeqRef.current) return;
+      // 타입별 네이티브 쿼리는 `영상 0건`과 `사진첩 전체 0건`을 결과만으로 구분할 수 없다.
+      // 직전 전체/타입 조회에서 하나라도 본 사실을 세션 동안 보존해 필터-empty 안내를 정확히 한다.
+      if (!append && requestedTypes === "all") {
+        setLibraryKnownHasAnyMedia(page.assets.length > 0);
+      } else if (page.assets.length > 0) {
+        setLibraryKnownHasAnyMedia(true);
+      }
       if (requestGeneration !== libraryRequestGenerationRef.current) return;
       // 응답 대기 중 탭이 바뀌었으면 이 페이지는 다른 타입의 결과다 — 버린다(탭 간 오염 방지).
       if (libraryFilterRef.current !== requestedTypes) return;
@@ -1309,10 +1318,11 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
                           {libraryEmptyMessage({
                             filter: libraryFilter,
                             totalLoaded: libraryAssets.length,
+                            hasAnyMedia: libraryKnownHasAnyMedia,
                           })}
                         </span>
                         <span className="text-sm text-text-tertiary">
-                          {libraryFilter === "all" || libraryAssets.length === 0
+                          {libraryFilter === "all" || !libraryKnownHasAnyMedia
                             ? "사진 접근 범위를 확인하거나 새로 촬영한 뒤 다시 열어주세요"
                             : "위 탭을 '전체'로 바꾸면 모두 볼 수 있어요"}
                         </span>

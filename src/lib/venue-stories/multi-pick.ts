@@ -149,12 +149,14 @@ export function shouldAutoLoadMoreForFilter(input: {
 export function libraryEmptyMessage(input: {
   filter: VenueLibraryFilter;
   totalLoaded: number;
+  hasAnyMedia?: boolean;
 }): string {
+  const hasAnyMedia = input.hasAnyMedia ?? input.totalLoaded > 0;
   if (input.filter === "video") {
-    return input.totalLoaded > 0 ? "최근 영상이 없어요" : "최근 사진·영상이 없어요";
+    return hasAnyMedia ? "최근 영상이 없어요" : "최근 사진·영상이 없어요";
   }
   if (input.filter === "image") {
-    return input.totalLoaded > 0 ? "최근 사진이 없어요" : "최근 사진·영상이 없어요";
+    return hasAnyMedia ? "최근 사진이 없어요" : "최근 사진·영상이 없어요";
   }
   return "최근 사진·영상이 없어요";
 }
