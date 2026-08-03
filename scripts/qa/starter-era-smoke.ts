@@ -17,6 +17,7 @@ import {
   createPitcherSeasonResolver,
   lookupPitcherSeasonEra as productionLookupEra,
   normalizePitcherEra,
+  resolveLineupStarter as productionResolveLineupStarter,
   resolveStarterPitcher as productionResolveStarter,
   type PitcherSeasonRow,
 } from "../../src/lib/stats/pitcher-season";
@@ -481,6 +482,123 @@ for (const foreign of foreignWithStats) {
   );
 }
 
+/* 페이지가 실제로 import하는 것은 factory 반환값이 아니라 *export된* `resolveLineupStarter`다.
+ * 그 export를 live-only wrapper로 갈아끼워도 직전까지는 전체 prebuild가 GREEN이었다
+ * (삼순 2차 지적). §1은 factory 반환 함수를, §2는 lookup/resolveStarter만 태웠기 때문이다.
+ * 그래서 여기서는 production export 자체를 실 로스터·실 stats로 호출해 정책을 검증한다. */
+const [prodStarter, prodOther] = pairTeam![1];
+const prodTeamId = pairTeam![0];
+const prodStarterEra = productionLookupEra(prodStarter.kboId);
+const prodOtherEra = productionLookupEra(prodOther.kboId);
+assert.ok(
+  prodStarterEra && prodOtherEra && prodStarterEra !== prodOtherEra,
+  "프로덕션 정책 검증은 ERA가 서로 다른 두 투수가 필요하다",
+);
+
+// confirmed 라인업은 fresh live mismatch를 이긴다 (kbo/naver 양쪽 등급).
+for (const source of ["kbo-confirmed", "naver-confirmed"] as const) {
+  assert.deepEqual(
+    productionResolveLineupStarter({
+      liveStarterName: prodOther.name,
+      lineupStarterName: prodStarter.name,
+      liveStarterFresh: true,
+      lineupStarterTrusted: true,
+      lineupSource: source,
+      teamId: prodTeamId,
+    }),
+    { name: prodStarter.name, era: prodStarterEra, kboId: prodStarter.kboId },
+    `프로덕션 export도 ${source} 라인업을 fresh live보다 우선한다`,
+  );
+}
+// unconfirmed는 confirmed 대우를 받지 못하고 fresh live가 이긴다 (반대 경계).
+assert.deepEqual(
+  productionResolveLineupStarter({
+    liveStarterName: prodOther.name,
+    lineupStarterName: prodStarter.name,
+    liveStarterFresh: true,
+    lineupStarterTrusted: true,
+    lineupSource: "kbo-unconfirmed",
+    teamId: prodTeamId,
+  }),
+  { name: prodOther.name, era: prodOtherEra, kboId: prodOther.kboId },
+  "프로덕션 export에서 unconfirmed 라인업은 fresh live를 누르지 못한다",
+);
+// live가 없을 때만 trusted 라인업으로 폴백하고, untrusted면 fail-close한다.
+assert.deepEqual(
+  productionResolveLineupStarter({
+    liveStarterName: null,
+    lineupStarterName: prodStarter.name,
+    liveStarterFresh: false,
+    lineupStarterTrusted: true,
+    teamId: prodTeamId,
+  }),
+  { name: prodStarter.name, era: prodStarterEra, kboId: prodStarter.kboId },
+  "프로덕션 export는 live 실패 시 trusted 라인업으로 폴백한다",
+);
+assert.deepEqual(
+  productionResolveLineupStarter({
+    liveStarterName: null,
+    lineupStarterName: prodStarter.name,
+    liveStarterFresh: false,
+    lineupStarterTrusted: false,
+    teamId: prodTeamId,
+  }),
+  { name: "", era: "-", kboId: undefined },
+  "프로덕션 export도 untrusted 라인업 선발은 채택하지 않는다",
+);
+// box identity — 다른 투수의 box ERA는 오염원이 되지 못하고, 동일 identity만 채택된다.
+assert.equal(
+  productionResolveLineupStarter({
+    liveStarterName: prodStarter.name,
+    lineupStarterName: prodStarter.name,
+    liveStarterFresh: true,
+    lineupStarterTrusted: true,
+    lineupSource: "kbo-confirmed",
+    teamId: prodTeamId,
+    boxPitcher: { name: prodOther.name, era: "99.99" },
+  }).era,
+  prodStarterEra,
+  "프로덕션 export에서도 다른 투수 box ERA는 선발을 오염하지 못한다",
+);
+assert.equal(
+  productionResolveLineupStarter({
+    liveStarterName: prodStarter.name,
+    lineupStarterName: prodStarter.name,
+    liveStarterFresh: true,
+    lineupStarterTrusted: true,
+    lineupSource: "kbo-confirmed",
+    teamId: prodTeamId,
+    boxPitcher: { name: prodStarter.name, era: "9.99" },
+  }).era,
+  "9.99",
+  "프로덕션 export에서 동일 identity box ERA는 채택된다",
+);
+// placeholder box는 canonical 선발을 오염하지 못한다.
+assert.equal(
+  productionResolveLineupStarter({
+    liveStarterName: prodStarter.name,
+    lineupStarterName: prodStarter.name,
+    liveStarterFresh: true,
+    lineupStarterTrusted: true,
+    lineupSource: "kbo-confirmed",
+    teamId: prodTeamId,
+    boxPitcher: { name: "선수(66291)", era: "1.23" },
+  }).era,
+  prodStarterEra,
+  "프로덕션 export에서 placeholder box는 canonical 선발을 오염하지 못한다",
+);
+assert.deepEqual(
+  productionResolveLineupStarter({
+    liveStarterName: "선수(66291)",
+    liveStarterFresh: true,
+    lineupStarterTrusted: false,
+    teamId: prodTeamId,
+    boxPitcher: { name: "선수(66291)", era: "1.23" },
+  }),
+  { name: "선수(66291)", era: "-", kboId: undefined },
+  "프로덕션 export에서 placeholder 선발명은 동일 placeholder box ERA를 채택하지 못한다",
+);
+
 /* ────────────────────────────────────────────────────────────────
  * §3. 실제 배선 — 호출부가 계약대로 연결돼 있는지
  * ──────────────────────────────────────────────────────────────── */
@@ -508,16 +626,13 @@ assert.ok(
   "actual detail polling cannot downgrade a canonical lineup to none/unconfirmed",
 );
 
-// shouldCommitResponse를 "함수로 가지고 있다"가 아니라 *실제로 포대에 묶여 있는지*를 본다.
-// 펌스를 떼면 늦게 도착한 구세대 응답이 현재 데이터를 덮어쓴다.
+// shouldCommitResponse는 "존재하느냐"가 아니라 *커밋보다 앞이냐*가 핵심이다.
+// 개수·존재만 보면 같은 문장을 setData/setSnapshot 뒤로 옆겨도 GREEN이 되고,
+// 그 상태에서는 늦게 도착한 구세대 응답이 이미 커밋된 뒤다(삼순 2차 지적).
+// 그래서 위치 관계를 고정한다: fetch 파싱 뒤 ∧ 모든 커밋 지점보다 앞.
 assert.ok(
   /const responseGeneration = \+\+responseGenerationRef\.current;/.test(detailHook),
   "응답 generation은 요청당 1회 증가해야 한다",
-);
-assert.ok(
-  /if \(!shouldCommitResponse\(responseGenerationRef\.current, responseGeneration\)\) return;/
-    .test(detailHook),
-  "fetch 직후 구세대 응답은 커밋 전에 조기 반환되어야 한다",
 );
 assert.equal(
   (detailHook.match(
@@ -525,6 +640,42 @@ assert.equal(
   ) ?? []).length,
   3,
   "성공·예외·finally 세 커밋 지점 전부 generation 펌스를 통과해야 한다",
+);
+
+const guardIdx = detailHook.indexOf(
+  "if (!shouldCommitResponse(responseGenerationRef.current, responseGeneration)) return;",
+);
+assert.ok(guardIdx >= 0, "fetch 직후 구세대 응답은 조기 반환되어야 한다");
+
+const parseIdx = detailHook.indexOf("const json = await res.json()");
+assert.ok(parseIdx >= 0, "응답 파싱 지점을 찾을 수 있어야 한다");
+assert.ok(
+  parseIdx < guardIdx,
+  "generation 펌스는 응답 파싱 뒤에 있어야 한다(파싱 전이면 경쟁 창을 닫지 못함)",
+);
+
+// 늦게 도착한 응답이 닿을 수 있는 모든 상태 커밋 지점. 하나라도 펌스보다 앞이면
+// stale 응답이 현재 데이터를 덮어쓴다.
+const commitSites = [
+  "dataRef.current = committedData;",
+  "snapshotRef.current = committedSnapshot;",
+  "setData(committedData);",
+  "setSnapshot(committedSnapshot);",
+] as const;
+for (const site of commitSites) {
+  const idx = detailHook.indexOf(site);
+  assert.ok(idx >= 0, `커밋 지점 \`${site}\`을 찾을 수 있어야 한다`);
+  assert.ok(
+    guardIdx < idx,
+    `generation 펌스는 \`${site}\` 보다 앞에 있어야 한다(stale 응답의 선커밋 방지)`,
+  );
+}
+// 오류 경로의 setError도 마찬가지 — 구세대 실패가 현재 화면을 에러로 덮으면 안 된다.
+const firstSetErrorIdx = detailHook.indexOf("setError(json.error ||");
+assert.ok(firstSetErrorIdx >= 0, "HTTP 오류 커밋 지점을 찾을 수 있어야 한다");
+assert.ok(
+  guardIdx < firstSetErrorIdx,
+  "generation 펌스는 HTTP 오류 setError보다도 앞에 있어야 한다",
 );
 
 // 프로덕션 바인딩이 실제 stats/roster JSON에 연결돼 있는지 (fixture로 갈아끼워진 채
