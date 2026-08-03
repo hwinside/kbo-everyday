@@ -16,7 +16,16 @@ async function fetchWithinDeadline(
   if (remainingMs <= 0) return null;
 
   return new Promise((resolve) => {
-    const timer = setTimeout(() => resolve(null), remainingMs);
+    let timer: ReturnType<typeof setTimeout>;
+    const resolveAtDeadline = () => {
+      const nextRemainingMs = deadlineAt - Date.now();
+      if (nextRemainingMs > 0) {
+        timer = setTimeout(resolveAtDeadline, nextRemainingMs);
+        return;
+      }
+      resolve(null);
+    };
+    timer = setTimeout(resolveAtDeadline, remainingMs);
     void fetcher(date).then(
       (games) => {
         clearTimeout(timer);
