@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
   ACTIVE_BADGE_IDS,
   ALL_BADGES,
@@ -10,6 +12,10 @@ import {
   RARITY_COLORS,
   getVisibleBadgeCatalog,
 } from "../../src/lib/constants/badges";
+import {
+  cleanupStageForRequest,
+} from "./badge-write-cleanup.mjs";
+import { runBadgeCleanup } from "./badge-write-rls-regression.mjs";
 
 const exclusiveIds = ["chairman", "chairman-spouse", "keubo-singer"];
 const expected = {
@@ -107,8 +113,135 @@ const rlsMigration = readFileSync(
   "supabase/migrations/20260803001500_user_badges_service_role_writes.sql",
   "utf8"
 );
-assert.match(rlsMigration, /DROP POLICY IF EXISTS "Users earn badges"/i, "legacy self-award policy removed");
-assert.match(rlsMigration, /REVOKE INSERT, UPDATE, DELETE[\s\S]*FROM authenticated/i, "authenticated badge writes revoked");
-assert.match(rlsMigration, /service.role/i, "trusted service-role award path documented");
 
-console.log("exclusive badges smoke: PASS (UI visibility / founder additive / exclusive RLS contract)");
+function assertRlsMigrationContract(source: string) {
+  assert.match(source, /DROP POLICY IF EXISTS "Users earn badges"/i, "legacy self-award policy removed");
+  assert.match(source, /REVOKE INSERT, UPDATE, DELETE\s+ON public\.user_badges FROM anon/i, "anon badge writes revoked");
+  assert.match(source, /REVOKE INSERT, UPDATE, DELETE\s+ON public\.user_badges FROM authenticated/i, "authenticated badge writes revoked");
+  assert.doesNotMatch(source, /REVOKE[^;]*SELECT[^;]*ON public\.user_badges/i, "public badge SELECT retained");
+  assert.doesNotMatch(source, /DROP POLICY[^;]*"Anyone reads badges"/i, "public badge read policy retained");
+  assert.match(source, /service.role/i, "trusted service-role award path documented");
+}
+
+assertRlsMigrationContract(rlsMigration);
+
+const withoutAnonRevoke = rlsMigration.replace(
+  /REVOKE INSERT, UPDATE, DELETE\s+ON public\.user_badges FROM anon;?/i,
+  ""
+);
+assert.throws(
+  () => assertRlsMigrationContract(withoutAnonRevoke),
+  /anon badge writes revoked/,
+  "removing anon REVOKE must turn the static gate RED"
+);
+
+const withoutPublicRead = `${rlsMigration}\nDROP POLICY IF EXISTS "Anyone reads badges" ON public.user_badges;\n`;
+assert.throws(
+  () => assertRlsMigrationContract(withoutPublicRead),
+  /public badge read policy retained/,
+  "dropping public SELECT policy must turn the static gate RED"
+);
+
+const cleanupStages = [
+  "badge-delete",
+  "profile-delete",
+  "badge-postcondition",
+  "profile-postcondition",
+  "auth-delete",
+  "auth-postcondition",
+] as const;
+
+function runCleanupCli(injection = "") {
+  const runner = resolve("scripts/qa/badge-write-rls-regression.mjs");
+  const fakeFetch = resolve("scripts/qa/badge-write-fake-fetch.mjs");
+  return spawnSync(process.execPath, ["--import", fakeFetch, runner], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      NEXT_PUBLIC_SUPABASE_URL: "https://offline-badge-qa.invalid",
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: "offline-anon-key",
+      SUPABASE_SERVICE_ROLE_KEY: "offline-service-key",
+      QA_INJECT_CLEANUP_FAILURE: injection,
+    },
+  });
+}
+
+const cleanCli = runCleanupCli();
+assert.equal(
+  cleanCli.status,
+  0,
+  `actual CLI main→cleanup call-site failed with fake fetch:\n${cleanCli.stdout}\n${cleanCli.stderr}`
+);
+assert.match(cleanCli.stdout, /cleanup: badges=0 profile=0 auth=0/, "actual CLI cleanup reaches 0/0/0");
+
+const injectedCli = runCleanupCli("badge-delete-throw");
+assert.notEqual(
+  injectedCli.status,
+  0,
+  "removing QA_INJECT_CLEANUP_FAILURE from the actual main→runBadgeCleanup call-site must turn this gate RED"
+);
+assert.match(
+  `${injectedCli.stdout}\n${injectedCli.stderr}`,
+  /cleanup fail-close:.*injected badge-delete fetch failure/,
+  "actual CLI call-site forwards cleanup injection and fails closed"
+);
+
+function cleanResponse(stage: string) {
+  if (stage === "auth-postcondition") return { status: 404, ok: false, text: "not found", json: null };
+  if (stage.endsWith("postcondition")) return { status: 200, ok: true, text: "[]", json: [] };
+  return { status: 204, ok: true, text: "", json: null };
+}
+
+async function assertCleanupFailureMatrix() {
+  for (const targetStage of cleanupStages) {
+    for (const mode of ["throw", "non2xx"] as const) {
+      const calls = new Map<string, number>();
+      const client = (kind: "rest" | "auth") => async (path: string, options: { method?: string } = {}) => {
+        const stage = cleanupStageForRequest(kind, path, options.method);
+        assert.ok(stage, `unexpected cleanup request: ${kind} ${options.method || "GET"} ${path}`);
+        const count = (calls.get(stage) || 0) + 1;
+        calls.set(stage, count);
+        return cleanResponse(stage);
+      };
+
+      const cleanup = await runBadgeCleanup({
+        userId: "offline-user",
+        key: "offline-service-key",
+        restClient: client("rest"),
+        authClient: client("auth"),
+        injection: `${targetStage}-${mode}`,
+      });
+
+      assert.equal(
+        calls.get(targetStage),
+        1,
+        `${targetStage} ${mode} reaches the real client after the injected first attempt`
+      );
+      for (const stage of cleanupStages) {
+        assert.ok((calls.get(stage) || 0) >= 1, `${targetStage} ${mode} still reaches ${stage}`);
+      }
+      assert.deepEqual(
+        { badges: cleanup.badgeCount, profile: cleanup.profileCount, auth: cleanup.authCount },
+        { badges: 0, profile: 0, auth: 0 },
+        `${targetStage} ${mode} cleanup reaches 0/0/0`
+      );
+      assert.ok(
+        cleanup.failures.some(failure => failure.includes(`injected ${targetStage}`)),
+        `${targetStage} ${mode} records the runner injection and remains RED after successful retry`
+      );
+      assert.equal(
+        cleanup.failures.some(failure => failure.includes("unknown cleanup injection")),
+        false,
+        `${targetStage} ${mode} must be wired to the actual runner client`
+      );
+    }
+  }
+}
+
+assertCleanupFailureMatrix()
+  .then(() => console.log("exclusive badges smoke: PASS (UI/RLS mutation RED + cleanup throw/non-2xx fail-close)"))
+  .catch(error => {
+    console.error(error);
+    process.exitCode = 1;
+  });
