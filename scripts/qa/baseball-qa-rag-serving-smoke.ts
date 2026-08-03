@@ -53,6 +53,10 @@ import {
 import { RAG_EMBEDDING_DIM } from "../../src/lib/baseball-qa/rag/contracts";
 import { buildResolutionSourceRow } from "../../src/lib/baseball-qa/rag/source-resolution";
 import {
+  buildCorpusSourceIdentity,
+  type CorpusSourcePlan,
+} from "../../src/lib/baseball-qa/rag/corpus-loader";
+import {
   extractDisambiguationCandidates,
   verifyCanonicalSubdocumentIdentity,
   verifyCanonicalIdentity,
@@ -431,6 +435,7 @@ async function run(): Promise<void> {
   verifyEntityAggregateRetentionCap();
 
   await verifyServingContractOnRealDb();
+  await verifyCorpusLoaderTwoPassOnRealDb();
   await verifyScopedClaimOnRealDb();
 
   console.log("\nbaseball QA RAG serving PASS (RED→GREEN / injection / fail-close / 수치계약 / 동명이인 / 서빙뷰 / canonical / 보존상한 / durable CAS / scoped claim)");
@@ -1441,6 +1446,133 @@ function verifyEntityAggregateRetentionCap(): void {
   assert.ok(retained <= Math.floor(totalClean * ENTITY_RETENTION_MAX_RATIO));
   assert.ok(new Set(prepared.chunks.map((chunk) => chunk.meta.sectionPath)).size > 1, "한 하위문서에만 예산이 몰리면 안 된다");
   console.log(`PASS entity 합산 보존 — 20문서 ${totalClean}자 → ${retained}자(≤10%, ≤12000자), 다문서 전문 재구성 불가`);
+}
+
+/** loader가 쓰는 source identity payload를 실제 DB에서 canary→full 두 번 태운다. */
+async function verifyCorpusLoaderTwoPassOnRealDb(): Promise<void> {
+  const db = new PGlite({ extensions: { vector } });
+  await db.exec("CREATE ROLE anon NOLOGIN; CREATE ROLE authenticated NOLOGIN; CREATE ROLE service_role NOLOGIN;");
+  for (const migration of [
+    "20260731_baseball_genius_rag_sources.sql",
+    "20260801220000_baseball_genius_rag_wikipedia_source.sql",
+    "20260801223000_baseball_genius_rag_multidocument_snapshot.sql",
+    "20260802010000_baseball_genius_rag_scoped_claim_wikipedia.sql",
+    "20260802020000_baseball_genius_rag_complete_expected_count.sql",
+    "20260803030000_baseball_genius_rag_corpus_source_resolution.sql",
+  ]) {
+    await db.exec(readFileSync(path.join(process.cwd(), "supabase/migrations", migration), "utf8"));
+  }
+
+  const cases = [
+    { sourceKey: "namu:player:54529", entityId: "54529", seedTitle: "레이예스", canonicalTitle: "레예스" },
+    { sourceKey: "namu:player:55633", entityId: "55633", seedTitle: "올러", canonicalTitle: "아담 올러" },
+  ];
+  for (const item of cases) {
+    const canonical = `https://namu.wiki/w/${encodeURIComponent(item.canonicalTitle)}`;
+    await db.query(
+      `INSERT INTO public.genius_rag_sources
+        (source_key,source_kind,entity_type,entity_id,page_title,candidate_urls,canonical_url,
+         resolution_status,source_grade,identity_fingerprint)
+       VALUES ($1,'namu_document','player',$2,$3,ARRAY[$4],$4,'resolved','tier2',$5)`,
+      [item.sourceKey, item.entityId, item.seedTitle, canonical, "a".repeat(64)],
+    );
+  }
+
+  const identityFor = (item: typeof cases[number]) => {
+    const canonical = `https://namu.wiki/w/${encodeURIComponent(item.canonicalTitle)}`;
+    const root = {
+      doc: item.canonicalTitle,
+      kind: "player" as const,
+      entity: item.seedTitle,
+      depth: 1,
+      title: `${item.canonicalTitle} - 나무위키`,
+      canonical,
+      len: 1,
+      text: "x",
+      fetchedAt: "2026-08-03T00:00:00.000Z",
+    };
+    const plan: CorpusSourcePlan = {
+      sourceKey: item.sourceKey,
+      entityType: "player",
+      entityId: item.entityId,
+      pageTitle: item.canonicalTitle,
+      root,
+      documents: [root],
+    };
+    return buildCorpusSourceIdentity(plan);
+  };
+  const resolve = async (item: typeof cases[number]) => {
+    const identity = identityFor(item);
+    const result = await db.query<{ ok: boolean }>(
+      `SELECT public.resolve_baseball_genius_rag_corpus_source(
+        $1,$2,$3,$4,$5,$6::text[],$7,'actual corpus fixture',$8
+      ) AS ok`,
+      [identity.sourceKey, identity.sourceKind, identity.entityType, identity.entityId,
+       identity.pageTitle, identity.candidateUrls, identity.canonicalUrl, identity.identityFingerprint],
+    );
+    assert.equal(result.rows[0]?.ok, true);
+    return identity;
+  };
+  const ingest = async (item: typeof cases[number], identity: ReturnType<typeof identityFor>) => {
+    const claimed = await db.query<{ claim_token: string; claim_generation: number }>(
+      "SELECT claim_token,claim_generation FROM public.claim_baseball_genius_rag_batch_scoped(1,300,ARRAY[$1])",
+      [item.sourceKey],
+    );
+    const claim = claimed.rows[0];
+    assert.ok(claim, `${item.sourceKey}: actual claim absent`);
+    const embedding = `[${Array(RAG_EMBEDDING_DIM).fill(0.01).join(",")}]`;
+    await db.query(
+      `SELECT public.upsert_baseball_genius_rag_chunk(
+        $1,$2,$3,'player',$4,$5,$6,'crawled:fixture','본문',0,$7,$8,$9,'tier2',
+        '2026-08-03'::timestamptz,'2026-08-03'::date,$10::extensions.vector,
+        jsonb_build_object('documentCanonicalUrl',$6::text)
+      )`,
+      [item.sourceKey, claim.claim_token, claim.claim_generation, item.entityId, identity.pageTitle,
+       identity.canonicalUrl, `${identity.pageTitle} 선수의 실제 canonical 표기차를 검증하는 충분히 긴 corpus 근거입니다.`,
+       `doc-${item.entityId}`, `chunk-${item.entityId}`, embedding],
+    );
+    const completed = await db.query<{ ok: boolean }>(
+      `SELECT public.complete_baseball_genius_rag_source(
+        $1,$2,$3,'crawled:fixture',$4,'2026-08-03'::timestamptz,
+        now()+interval '30 days',1
+      ) AS ok`,
+      [item.sourceKey, claim.claim_token, claim.claim_generation, `doc-${item.entityId}`],
+    );
+    assert.equal(completed.rows[0]?.ok, true);
+  };
+
+  // canary: 실 seed 등록명과 canonical 문서명이 다른 첫 source를 resolve→READY.
+  const reyesIdentity = await resolve(cases[0]);
+  await ingest(cases[0], reyesIdentity);
+
+  // full rerun: 첫 source는 같은 identity/active count를 exact 검증해 skip, 다음 source는 claim/complete.
+  const reyesAgain = await resolve(cases[0]);
+  const ready = await db.query<{ page_title: string; candidate_urls: string[]; canonical_url: string; fingerprint: string; chunks: number }>(
+    `SELECT source.page_title,source.candidate_urls,source.canonical_url,
+            source.identity_fingerprint AS fingerprint,
+            (SELECT count(*)::int FROM public.genius_rag_chunks chunk
+              WHERE chunk.source_key=source.source_key
+                AND chunk.claim_generation=source.active_claim_generation) AS chunks
+       FROM public.genius_rag_sources source
+      WHERE source.source_key=$1 AND source.ingestion_status='ready' AND source.revision='crawled:fixture'`,
+    [cases[0].sourceKey],
+  );
+  assert.deepEqual(ready.rows[0], {
+    page_title: "레예스",
+    candidate_urls: reyesAgain.candidateUrls,
+    canonical_url: reyesAgain.canonicalUrl,
+    fingerprint: reyesAgain.identityFingerprint,
+    chunks: 1,
+  });
+  const ollerIdentity = await resolve(cases[1]);
+  await ingest(cases[1], ollerIdentity);
+  const serving = await db.query<{ c: number }>(
+    "SELECT count(*)::int AS c FROM public.genius_rag_serving_chunks WHERE source_key=ANY($1::text[])",
+    [cases.map((item) => item.sourceKey)],
+  );
+  assert.equal(serving.rows[0]?.c, 2);
+  await db.close();
+  console.log("PASS corpus loader actual DB 2회 — 레이예스→레예스 / 올러→아담 올러 identity 원자 정렬");
 }
 
 /** 실제 migration을 PGlite(pgvector)에 적용해 서빙 뷰·entity 필터 계약을 검증한다. */

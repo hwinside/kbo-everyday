@@ -51,6 +51,18 @@ const fixtures: FixtureRecord[] = [
     "김도영",
     `김도영\n분류대한민국의 남자 야구 선수2003년 출생\n${"KIA 타이거즈 소속 내야수에 관한 서술입니다. ".repeat(6)}`,
   ),
+  record(
+    "player",
+    "레이예스",
+    "레예스",
+    `레예스\n분류베네수엘라의 야구 선수1994년 출생\n${"롯데 자이언츠 외야수에 관한 서술입니다. ".repeat(6)}`,
+  ),
+  record(
+    "player",
+    "올러",
+    "아담 올러",
+    `아담 올러\n분류미국의 야구 선수1994년 출생\n${"KIA 타이거즈 투수에 관한 서술입니다. ".repeat(6)}`,
+  ),
   record("baseball_general", "야구", "야구", prose("야구")),
   record("kbo_league", "KBO 리그", "KBO 리그", prose("KBO 리그")),
   ...manifest.filter(({ entityType }) => entityType === "team").map(({ canonicalTitle }) =>
@@ -100,11 +112,11 @@ async function main(): Promise<void> {
 const validFile = writeJsonl("valid.jsonl", fixtures, "\n");
 const dry = await run([`--file=${validFile}`]);
 assert.equal(dry.code, 0, dry.stderr);
-assert.match(dry.stdout, /physical.*15/);
-assert.match(dry.stdout, /"player":1/);
+assert.match(dry.stdout, /physical.*17/);
+assert.match(dry.stdout, /"player":3/);
 assert.match(dry.stdout, /"team":11/);
 assert.match(dry.stdout, /"league":1/);
-assert.match(dry.stdout, /owner\+canonical 관계 15, 적재 관계 13, 격리 관계 2/);
+assert.match(dry.stdout, /owner\+canonical 관계 17, 적재 관계 15, 격리 관계 2/);
 console.log("PASS actual CLI dry-run — owner+canonical 관계 보존 / redirect opponent owner 격리");
 
 const brokenMiddle = writeJsonl("broken-middle.jsonl", [fixtures[0]], "\n{broken\n" + JSON.stringify(fixtures[1]));
@@ -136,6 +148,14 @@ const sourceStates = new Map<string, {
   ingestionStatus: "not_started" | "ingesting" | "ready";
   revision: string | null;
   activeClaimGeneration: number;
+  sourceKind: string;
+  entityType: string;
+  entityId: string;
+  pageTitle: string;
+  candidateUrls: string[];
+  canonicalUrl: string;
+  sourceGrade: string;
+  identityFingerprint: string;
 }>();
 const claimCounts = new Map<string, number>();
 const server = createServer(async (request, response) => {
@@ -143,29 +163,20 @@ const server = createServer(async (request, response) => {
   for await (const chunk of request) chunks.push(chunk as Buffer);
   const body = chunks.length > 0 ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {};
   response.setHeader("Content-Type", "application/json");
-  if (request.method === "PATCH" && request.url?.startsWith("/rest/v1/genius_rag_sources")) {
-    const url = new URL(request.url, "http://127.0.0.1");
-    const sourceKey = (url.searchParams.get("source_key") ?? "").replace(/^eq\./, "");
-    seenSources.add(sourceKey);
-    if (!sourceStates.has(sourceKey)) {
-      sourceStates.set(sourceKey, {
-        ingestionStatus: "not_started",
-        revision: null,
-        activeClaimGeneration: 0,
-      });
-    }
-    response.end(JSON.stringify([{ source_key: sourceKey }]));
-    return;
-  }
   if (request.method === "GET" && request.url?.startsWith("/rest/v1/genius_rag_sources")) {
     const url = new URL(request.url, "http://127.0.0.1");
     const sourceKey = (url.searchParams.get("source_key") ?? "").replace(/^eq\./, "");
     const state = sourceStates.get(sourceKey);
     response.end(JSON.stringify(state ? [{
       source_key: sourceKey,
-      entity_id: "fixture",
-      page_title: "fixture",
-      canonical_url: "https://namu.wiki/w/fixture",
+      source_kind: state.sourceKind,
+      entity_type: state.entityType,
+      entity_id: state.entityId,
+      page_title: state.pageTitle,
+      candidate_urls: state.candidateUrls,
+      canonical_url: state.canonicalUrl,
+      source_grade: state.sourceGrade,
+      identity_fingerprint: state.identityFingerprint,
       ingestion_status: state.ingestionStatus,
       revision: state.revision,
       active_claim_generation: state.activeClaimGeneration,
@@ -182,6 +193,44 @@ const server = createServer(async (request, response) => {
     return;
   }
   const fn = request.url?.split("/").pop();
+  if (fn === "resolve_baseball_genius_rag_corpus_source") {
+    const sourceKey = body.p_source_key as string;
+    seenSources.add(sourceKey);
+    const previous = sourceStates.get(sourceKey);
+    const seededPageTitle = sourceKey === "namu:player:54529"
+      ? "레이예스"
+      : sourceKey === "namu:player:55633" ? "올러" : body.p_page_title;
+    const seededFingerprint = previous?.identityFingerprint ?? `seed:${seededPageTitle}`;
+    const state = previous ?? {
+      ingestionStatus: "not_started" as const,
+      revision: null,
+      activeClaimGeneration: 0,
+      sourceKind: body.p_source_kind,
+      entityType: body.p_entity_type,
+      entityId: body.p_entity_id,
+      pageTitle: seededPageTitle,
+      candidateUrls: body.p_candidate_urls,
+      canonicalUrl: body.p_canonical_url,
+      sourceGrade: "tier2",
+      identityFingerprint: seededFingerprint,
+    };
+    if (state.identityFingerprint !== body.p_identity_fingerprint) {
+      state.ingestionStatus = "not_started";
+      state.revision = null;
+      state.activeClaimGeneration = 0;
+      serving.delete(sourceKey);
+    }
+    state.sourceKind = body.p_source_kind;
+    state.entityType = body.p_entity_type;
+    state.entityId = body.p_entity_id;
+    state.pageTitle = body.p_page_title;
+    state.candidateUrls = body.p_candidate_urls;
+    state.canonicalUrl = body.p_canonical_url;
+    state.identityFingerprint = body.p_identity_fingerprint;
+    sourceStates.set(sourceKey, state);
+    response.end("true");
+    return;
+  }
   if (fn === "claim_baseball_genius_rag_batch_scoped") {
     const sourceKey = body.p_source_keys[0];
     const state = sourceStates.get(sourceKey);
@@ -194,15 +243,25 @@ const server = createServer(async (request, response) => {
     claimCounts.set(sourceKey, (claimCounts.get(sourceKey) ?? 0) + 1);
     response.end(JSON.stringify([{
       source_key: sourceKey,
-      entity_id: "fixture",
-      page_title: "fixture",
-      canonical_url: "https://namu.wiki/w/fixture",
+      entity_id: state.entityId,
+      page_title: state.pageTitle,
+      canonical_url: state.canonicalUrl,
       claim_token: "11111111-1111-4111-8111-111111111111",
       claim_generation: state.activeClaimGeneration,
     }]));
     return;
   }
   if (fn === "upsert_baseball_genius_rag_chunk") {
+    const state = sourceStates.get(body.p_source_key);
+    assert.ok(state);
+    assert.equal(body.p_entity_type, state.entityType);
+    assert.equal(body.p_entity_id, state.entityId);
+    assert.equal(body.p_page_title, state.pageTitle);
+    assert.ok(
+      body.p_canonical_url === state.canonicalUrl
+      || body.p_canonical_url.startsWith(`${state.canonicalUrl}/`),
+      `${body.p_source_key}: canonical owner mismatch`,
+    );
     staged.set(body.p_source_key, (staged.get(body.p_source_key) ?? 0) + 1);
     response.end("null");
     return;
@@ -245,10 +304,12 @@ try {
 
   const applied = await run([`--file=${validFile}`, "--apply"], applyEnv);
   assert.equal(applied.code, 0, `${applied.stdout}\n${applied.stderr}`);
-  assert.equal(seenSources.size, 12);
+  assert.equal(seenSources.size, 14);
   assert.deepEqual([...seenSources].sort(), [
     "namu:league:kbo",
     "namu:player:52605",
+    "namu:player:54529",
+    "namu:player:55633",
     ...manifest.filter(({ entityType }) => entityType === "team").map(({ sourceKey }) => sourceKey),
   ].sort());
   assert.equal(serving.size, seenSources.size, "complete 전량이 serving 상태여야 한다");
@@ -257,10 +318,12 @@ try {
     [...staged.values()].reduce((sum, count) => sum + count, 0),
     "expected-count와 serving chunk 수가 일치해야 한다",
   );
-  assert.match(applied.stdout, /APPLY 완료: source 12\/12/);
+  assert.match(applied.stdout, /APPLY 완료: source 14\/14/);
   assert.match(applied.stdout, /already-loaded/);
-  assert.equal([...claimCounts.values()].reduce((sum, count) => sum + count, 0), 12);
-  console.log("PASS actual E2E — canary 5 READY → full 재실행 skip 5 + claim 7 → serving 12");
+  assert.equal([...claimCounts.values()].reduce((sum, count) => sum + count, 0), 14);
+  assert.equal(sourceStates.get("namu:player:54529")?.pageTitle, "레예스");
+  assert.equal(sourceStates.get("namu:player:55633")?.pageTitle, "아담 올러");
+  console.log("PASS actual E2E — 실 seed 표기차 resolve + canary 5 READY → full skip 5 + claim 9 → serving 14");
 } finally {
   server.close();
 }

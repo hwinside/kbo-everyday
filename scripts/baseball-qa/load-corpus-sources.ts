@@ -26,6 +26,7 @@ import path from "node:path";
 
 import {
   buildCorpusSourcePlan,
+  buildCorpusSourceIdentity,
   parseCorpusJsonl,
 } from "../../src/lib/baseball-qa/rag/corpus-loader";
 import { embedDocument } from "../../src/lib/baseball-qa/rag/embed";
@@ -46,9 +47,14 @@ const TEST_EMBEDDING = process.env.NODE_ENV === "test"
 
 interface RagSourceStateRow {
   source_key: string;
+  source_kind: string;
+  entity_type: string;
   entity_id: string;
   page_title: string;
+  candidate_urls: string[];
   canonical_url: string;
+  source_grade: string;
+  identity_fingerprint: string;
   ingestion_status: string;
   revision: string | null;
   active_claim_generation: number;
@@ -102,7 +108,8 @@ async function fetchSourceState(
 ): Promise<RagSourceStateRow> {
   const response = await fetch(
     `${url}/rest/v1/genius_rag_sources?source_key=eq.${encodeURIComponent(sourceKey)}`
-      + "&select=source_key,entity_id,page_title,canonical_url,ingestion_status,revision,active_claim_generation",
+      + "&select=source_key,source_kind,entity_type,entity_id,page_title,candidate_urls,canonical_url,"
+      + "source_grade,identity_fingerprint,ingestion_status,revision,active_claim_generation",
     { headers },
   );
   if (!response.ok) throw new Error(`${sourceKey}: source GET HTTP ${response.status} ${await response.text()}`);
@@ -207,28 +214,31 @@ async function main(): Promise<void> {
     if (!prepared.ok) throw new Error(`${entry.sourceKey}: prepare:${prepared.reason}`);
 
     const sourceKey = entry.sourceKey;
-    const sourceResponse = await fetch(
-      `${url}/rest/v1/genius_rag_sources?source_key=eq.${encodeURIComponent(sourceKey)}&select=source_key`,
-      {
-        method: "PATCH",
-        headers: { ...headers, Prefer: "return=representation" },
-        body: JSON.stringify({
-          canonical_url: entry.root.canonical,
-          resolution_status: "resolved",
-          resolution_note: `A17 corpus schema/identity 통과(${entry.root.fetchedAt})`,
-        }),
-      },
-    );
-    if (!sourceResponse.ok) {
-      throw new Error(`${sourceKey}: source PATCH HTTP ${sourceResponse.status} ${await sourceResponse.text()}`);
-    }
-    const affected = await sourceResponse.json() as { source_key: string }[];
-    if (affected.length !== 1 || affected[0]?.source_key !== sourceKey) {
-      throw new Error(`${sourceKey}: source affected ${affected.length}, expected 1`);
-    }
+    const identity = buildCorpusSourceIdentity(entry);
+    const resolved = await rpc<boolean>("resolve_baseball_genius_rag_corpus_source", {
+      p_source_key: identity.sourceKey,
+      p_source_kind: identity.sourceKind,
+      p_entity_type: identity.entityType,
+      p_entity_id: identity.entityId,
+      p_page_title: identity.pageTitle,
+      p_candidate_urls: identity.candidateUrls,
+      p_canonical_url: identity.canonicalUrl,
+      p_resolution_note: `A17 corpus schema/identity 통과(${entry.root.fetchedAt})`,
+      p_identity_fingerprint: identity.identityFingerprint,
+    });
+    if (!resolved) throw new Error(`${sourceKey}: source resolve rejected`);
 
     const rootRevision = `crawled:${entry.root.fetchedAt}`;
     const dbSource = await fetchSourceState(url, headers, sourceKey);
+    const sourceIdentityMatches = dbSource.source_kind === identity.sourceKind
+      && dbSource.entity_type === identity.entityType
+      && dbSource.entity_id === identity.entityId
+      && dbSource.page_title === identity.pageTitle
+      && JSON.stringify(dbSource.candidate_urls) === JSON.stringify(identity.candidateUrls)
+      && dbSource.canonical_url === identity.canonicalUrl
+      && dbSource.source_grade === "tier2"
+      && dbSource.identity_fingerprint === identity.identityFingerprint;
+    if (!sourceIdentityMatches) throw new Error(`${sourceKey}: resolved source identity mismatch`);
     if (dbSource.ingestion_status === "ready" && dbSource.revision === rootRevision) {
       const activeCount = await countActiveChunks(
         url,

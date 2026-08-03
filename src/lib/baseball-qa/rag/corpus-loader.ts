@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { normalizeCorpusTitle, verifyCorpusPlayerIdentity } from "./corpus-identity";
 
 export const CORPUS_KINDS = ["player", "team", "baseball_general", "kbo_league"] as const;
@@ -22,6 +24,17 @@ export type CorpusSourcePlan = {
   pageTitle: string;
   root: CorpusRecord;
   documents: CorpusRecord[];
+};
+
+export type CorpusSourceIdentity = {
+  sourceKey: string;
+  sourceKind: "namu_document";
+  entityType: CorpusSourcePlan["entityType"];
+  entityId: string;
+  pageTitle: string;
+  candidateUrls: string[];
+  canonicalUrl: string;
+  identityFingerprint: string;
 };
 
 type RosterPlayer = { kboId: string; name: string; birthDate?: string };
@@ -136,6 +149,30 @@ function latestByCanonical(records: CorpusRecord[]): CorpusRecord[] {
     if (!previous || previous.fetchedAt < record.fetchedAt) latest.set(record.canonical, record);
   }
   return [...latest.values()];
+}
+
+export function buildCorpusSourceIdentity(plan: CorpusSourcePlan): CorpusSourceIdentity {
+  const candidateUrls = [plan.root.canonical];
+  const identity = {
+    sourceKey: plan.sourceKey,
+    sourceKind: "namu_document" as const,
+    entityType: plan.entityType,
+    entityId: plan.entityId,
+    pageTitle: plan.pageTitle,
+    candidateUrls,
+    canonicalUrl: plan.root.canonical,
+  };
+  const identityFingerprint = createHash("sha256").update(JSON.stringify({
+    sourceKey: identity.sourceKey,
+    sourceKind: identity.sourceKind,
+    entityType: identity.entityType,
+    entityId: identity.entityId,
+    pageTitle: identity.pageTitle,
+    candidateUrls: identity.candidateUrls,
+    canonicalUrl: identity.canonicalUrl,
+    resolutionStatus: "resolved",
+  })).digest("hex");
+  return { ...identity, identityFingerprint };
 }
 
 function corpusOwnerKey(record: CorpusRecord): string {
