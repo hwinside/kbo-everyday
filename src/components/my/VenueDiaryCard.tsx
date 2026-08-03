@@ -48,6 +48,11 @@ import VenueDiaryUploader, {
 import VenueDiaryViewer, {
   type DiaryViewerHeader,
 } from "@/components/my/VenueDiaryViewer";
+import {
+  isVenueDiaryManualSeason,
+  VENUE_DIARY_MANUAL_SEASONS,
+  type VenueDiaryManualSeason,
+} from "@/lib/venue-diary/manual-upload";
 
 interface AttendanceResponse {
   season: number;
@@ -359,20 +364,28 @@ export default function VenueDiaryCard() {
     [loaded],
   );
 
-  // AddGameSheet 경기 선택은 2026 고정 → 현재 탭(2025 등)과 무관하게 항상 2026 counts 를 쓴다.
-  // 2025 탭에서 열어도 2026 기존 10/10 경기가 0/10으로 오표시되지 않도록 별도 fetch(Blocker 4).
-  // 2026 counts 확정 전에는 fail-closed(선택 비활성), 실패 시 0 폴백 금지→재시도. open/user 전환마다
-  // stale counts 를 초기화해 다른 유저·이전 세션 잔존을 막는다(Blocker 4).
+  // AddGameSheet 시즌은 시트가 아니라 카드가 소유한다 — counts 를 같은 시즌으로 맞춰야 하기 때문.
+  // 카드 상단 세그먼트는 "전체"를 포함하지만 직접 추가는 단일 시즌만 가능하므로,
+  // "전체" 탭에서 열면 최신 시즌을 기본값으로 쓴다.
+  const [addSeason, setAddSeason] = useState<VenueDiaryManualSeason>(
+    VENUE_DIARY_MANUAL_SEASONS[0],
+  );
+  // 선택 시즌 counts 를 그 시즌으로 별도 fetch 한다. 다른 시즌 counts 를 쓰면 기존 10/10 경기가
+  // 0/10 으로 오표시되어 상한을 뚚는다(Blocker 4). 확정 전에는 fail-closed(선택 비활성),
+  // 실패 시 0 폴백 금지→재시도. open/user/시즌 전환마다 stale counts 를 초기화한다.
   const [addCounts, setAddCounts] = useState<Map<string, number>>(new Map());
   const [addAttendanceGameIds, setAddAttendanceGameIds] = useState<Set<string>>(new Set());
-  // countsOwner = 이 counts 가 어느 (userId, openSeq) 에 대한 것인지. 렌더 단계에서 현재 key 와
-  // 불일치하면 즉시 fail-closed(diaryCountsReady) → 재오픈/유저 전환 첫 렌더 stale counts 차단.
+  // countsOwner = 이 counts 가 어느 (userId, openSeq, season) 에 대한 것인지. 렌더 단계에서
+  // 현재 key 와 불일치하면 즉시 fail-closed(diaryCountsReady) → 재오픈·유저·시즌 전환 첫 렌더의
+  // stale counts 를 차단.
   const [countsOwner, setCountsOwner] = useState<string | null>(null);
   const [countsError, setCountsError] = useState(false);
   const [countsReload, setCountsReload] = useState(0);
   const [openSeq, setOpenSeq] = useState(0);
   const currentCountsKey =
-    user && addOpen ? diaryCountsOwnerKey(user.id, openSeq) : null;
+    user && addOpen
+      ? diaryCountsOwnerKey(user.id, openSeq, addSeason)
+      : null;
   const countsReady = diaryCountsReady(countsOwner, currentCountsKey);
   // 열기 액션에서 counts state 를 동기 초기화한 뒤 open → 같은 커밋에 배칭돼 첫 렌더부터 fail-closed.
   const openAddSheet = useCallback(() => {
@@ -381,9 +394,15 @@ export default function VenueDiaryCard() {
     setAddAttendanceGameIds(new Set());
     setCountsOwner(null);
     setCountsError(false);
+    // 시즌 탭이 단일 시즌이면 그 시즌으로, "전체"면 최신 시즌으로 시트를 연다.
+    setAddSeason(
+      season !== "all" && isVenueDiaryManualSeason(season)
+        ? season
+        : VENUE_DIARY_MANUAL_SEASONS[0],
+    );
     setOpenSeq((s) => s + 1);
     setAddOpen(true);
-  }, []);
+  }, [season]);
   /** 직접 등록 기록의 경기 자체를 바꾼다 — 같은 경기 선택 시트를 move 모드로 연다. */
   const openMoveSheet = useCallback((game: DiaryHomeGame) => {
     if (game.attendanceId == null || game.attendanceSource !== "diary_manual") return;
@@ -392,12 +411,32 @@ export default function VenueDiaryCard() {
     setAddAttendanceGameIds(new Set());
     setCountsOwner(null);
     setCountsError(false);
+    // 시즌 탭이 단일 시즌이면 그 시즌으로, "전체"면 최신 시즌으로 시트를 열어 맥락을 이어준다.
+    setAddSeason(
+      season !== "all" && isVenueDiaryManualSeason(season)
+        ? season
+        : VENUE_DIARY_MANUAL_SEASONS[0],
+    );
     setOpenSeq((s) => s + 1);
     setAddOpen(true);
-  }, []);
+  }, [season]);
+  // 시트 안에서 시즌을 바꿔도 즉시 fail-closed 로 떨어지도록 counts 를 동기 초기화한다.
+  const handleAddSeasonChange = useCallback(
+    (next: VenueDiaryManualSeason) => {
+      setAddSeason((prev) => {
+        if (prev === next) return prev;
+        setAddCounts(new Map());
+        setAddAttendanceGameIds(new Set());
+        setCountsOwner(null);
+        setCountsError(false);
+        return next;
+      });
+    },
+    [],
+  );
   useEffect(() => {
     if (!addOpen || !user) return;
-    const ownerKey = diaryCountsOwnerKey(user.id, openSeq);
+    const ownerKey = diaryCountsOwnerKey(user.id, openSeq, addSeason);
     let alive = true;
     const controller = new AbortController();
     setAddCounts(new Map());
@@ -416,8 +455,8 @@ export default function VenueDiaryCard() {
           const token = session?.access_token;
           if (!token) throw new Error("missing session");
           const [groups, attendanceRes] = await Promise.all([
-            fetchDiaryMediaAllPages(token, CURRENT_SEASON, signal),
-            fetch(`/api/me/venue-attendance?season=${CURRENT_SEASON}`, {
+            fetchDiaryMediaAllPages(token, addSeason, signal),
+            fetch(`/api/me/venue-attendance?season=${addSeason}`, {
               headers: { Authorization: `Bearer ${token}` },
               cache: "no-store",
               signal,
@@ -448,7 +487,7 @@ export default function VenueDiaryCard() {
       alive = false;
       controller.abort();
     };
-  }, [addOpen, user, openSeq, countsReload]);
+  }, [addOpen, user, openSeq, countsReload, addSeason]);
 
   const favoriteTeamId = profile?.team_id ?? null;
 
@@ -790,6 +829,8 @@ export default function VenueDiaryCard() {
       <VenueDiaryAddGameSheet
         isOpen={addOpen}
         favoriteTeamId={favoriteTeamId}
+        season={addSeason}
+        onSeasonChange={handleAddSeasonChange}
         countsByGame={addCounts}
         countsReady={countsReady}
         countsError={countsError}
