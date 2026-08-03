@@ -147,6 +147,9 @@ export default function ProfilePage() {
   const team = getTeamById(profile.team_id);
   const earnedBadgeIds = new Set(badges.map(b => b.badge_id));
   const founderBadge = earnedBadgeIds.has("founder");
+  const chairmanBadge = earnedBadgeIds.has("chairman");
+  const singerBadge = earnedBadgeIds.has("keubo-singer");
+  const chairmanSpouseBadge = earnedBadgeIds.has("chairman-spouse");
 
   const timeAgo = (date: string) => {
     const d = new Date(date);
@@ -182,13 +185,22 @@ export default function ProfilePage() {
             )}
           </div>
           {founderBadge && (
-            <span className="absolute -top-1 -right-1 text-xl">👑</span>
+            <span className="absolute -top-1 -right-1 text-xl" aria-label="파운더">👑</span>
           )}
         </div>
 
         <h1 className="mt-4 text-2xl font-bold tracking-tight text-text-primary">{profile.nickname}</h1>
         <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
           {team && <TeamBadge teamId={team.id} size="sm" />}
+          {chairmanBadge && (
+            <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-amber-500/25 text-amber-300 ring-1 ring-amber-400/50">🏛️ 크보팬 회장</span>
+          )}
+          {chairmanSpouseBadge && (
+            <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-amber-500/25 text-amber-300 ring-1 ring-amber-400/50">🎩 크보팬 회장남편</span>
+          )}
+          {singerBadge && (
+            <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-amber-500/25 text-amber-300 ring-1 ring-amber-400/50">🎤 크보팬 전속가수</span>
+          )}
           {profile.is_founder && (
             <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-amber-500/20 text-amber-400">FOUNDER</span>
           )}

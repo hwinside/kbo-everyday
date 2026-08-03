@@ -360,6 +360,79 @@ rev0.9 B3의 "reclaim 시점 이전 generation purge"는 UNIQUE 충돌은 해소
 - **(c) 최소 원문저장 (확정)**: 원문 전문 보존 금지. retrieval에 필요한 **chunk + provenance**만 저장하고, 서빙은 재서술 + 출처링크로 한다. attribution/license 메타 보존.
 - **(d) canonical provenance (확정)**: 모든 chunk는 canonical URL·revision·contentHash·crawledAt·sourceGrade를 보유한다. canonical 미확정 source는 `resolved`가 될 수 없고(DB CHECK + claim 이중 술어로 강제) ingest 대상에서 제외된다. **HTTP 200 단독으로 canonical을 단정하지 않고** redirect 최종 URL 정규화 + page identity(canonical link·title) 일치를 확인한다.
 
+### 12.3 S2b thin-slice waiver — retrieval은 vector-only (2026-08-01, 삼순 R1 P1 반영)
+
+§12는 최종형 retrieval을 "entity filter + hybrid(BM25/vector)"로 정의한다. **S2b 수직 슬라이스의 구현은 hybrid가 아니라 vector-only다** — BM25/lexical 경로는 구현되어 있지 않다. 이를 미구현 결함이 아닌 **명시적 waiver**로 기록한다.
+
+- 근거: entity 필터가 이미 후보를 문서 1건(선수 1명 = source 1건)으로 고정하므로, 남는 상위 선별은 한 문서 안 chunk 수십 개 정렬이다. lexical 병합의 이득은 작고, 도입하려면 tsvector 인덱스 + 새 RPC가 필요해 수직 슬라이스 범위를 벗어난다.
+- 구현 표기: `src/lib/baseball-qa/rag/retrieve.ts`의 `RAG_RETRIEVAL_MODE = "vector_only"`가 계약 표기이며, 회귀(`qa:baseball-rag-serving`)가 이 값과 본 문서의 waiver 존재를 함께 고정한다. "hybrid 구현됨"으로 표기하는 것은 금지된다.
+- 해소 조건: 선수 전수(878명) 확대 단계에서 entity 필터만으로 후보가 충분히 좁혀지지 않거나 동의어/별칭 검색 품질 이슈가 관측되면 hybrid를 별도 트랙으로 구현하고 이 waiver를 해제한다.
+
+### 12.4 tier2 소스 구성 — 위키피디아 기본 / 나무위키 보조 (2026-08-01 R3, 하린아빠 지시)
+
+tier2(서술형) 소스는 **두 개**이며 역할이 다르다. 둘 다 tier2이므로 §12 수치 계약(숫자 정본은 공식 KBO)은 변하지 않는다.
+
+| | 위키피디아(ko) | 나무위키 |
+|---|---|---|
+| 역할 | **기본** | 보조(팬덤 디테일) |
+| 접근 | 공식 API `/w/api.php`, 정직한 UA plain fetch | Playwright 실크롤(수집 스크립트 전용) |
+| revision | `revid` = **정본** | 크롤 시각(`crawled:`) |
+| 서버 런타임 | 가능 | **불가**(Playwright 의존) |
+| source_key | `wikipedia:player:<kboId>` | `namu:player:<kboId>` |
+
+- **충돌 계약**: 서술이 충돌하면 **위키피디아 우선**(`orderTier2Evidence`가 근거 순서를 고정). 나무위키는 위키피디아에 없는 정보(별명·팬덤 서술)를 보충할 때 근거가 된다. 어느 쪽이 근거였는지는 canonical URL 출처 표기로 항상 구분된다.
+- **실측 근거(2026-08-01)**: 위키피디아 선수 문서 평균 약 4천자에 별명 항목이 거의 없다. 나무위키 문보경 문서에는 별명 서술이 다수 있다. 그래서 "기본=검증 절차가 있는 위키피디아, 보조=서술 디테일" 구성이다.
+- **DB**: `source_kind`에 `wikipedia_document` 추가(migration `20260801220000_...`). tier 매핑은 `wikipedia_document → tier2` 강제이며 tier1로 저장할 수 없다.
+
+### 12.5 나무위키 수집 경로 — 실브라우저 bounded rate (2026-08-01 R3, §12.2(b) 준수 방식 확정)
+
+rev0.8 시점의 "namu.wiki는 프로그래매틱 접근 전면 차단(정상 결과 = `blocked`)"은 **plain fetch 경로에 한정된 사실**이며, 다음 조건에서는 우회 없이 정상 200이다(실측 8/8 200, blocked 0).
+
+- 실제 Chrome 채널(`channel: "chrome"`) + headed(`headless: false`)
+- **요청마다 브라우저 완전 재기동**(launch → 1페이지 → close)
+- **요청 간 최소 10초**(`RAG_FETCH_INTERVAL_MS` / `NAMU_BROWSER_MIN_INTERVAL_MS`, fetcher가 스스로 강제)
+
+403의 원인은 봇 판별이 아니라 **같은 브라우저 세션의 연속 요청**이었다(2.5초 연타 시 2번째부터 403, persistent 프로필 403, headless 403). 따라서 이 경로가 하는 일은 **요청 빈도를 낮추는 것**뿐이며 §12.2(b) bounded rate 요구와 같은 방향이다.
+
+- **우회 미사용(계약)**: 위장 UA·challenge solver·쿠키/세션 재사용·persistent 프로필·로그인 우회는 **존재하지 않으며 추가 금지**다. 회귀(`qa:baseball-rag-serving`)가 소스에서 이를 고정한다.
+- **차단 시**: `been blocked` 본문 시그니처 포함 즉시 `blocked`로 종료하고 **배치를 중단**한다(재시도 폭주 금지).
+- **위치 경계**: 실크롤 fetcher는 `scripts/baseball-qa/rag/fetch-namu-browser.ts`에만 존재한다. Playwright는 Vercel 서버리스에 올릴 수 없으므로 `src/`(서빙 번들)는 이를 import하지 않으며, 회귀가 "`src/` 내 playwright import 0건"을 고정한다.
+
+### 12.6 canonical identity 게이트 — 제목 폐쇄집합 → 문서 분류 대조 (2026-08-01 R3, 실 마크업 실측 반영)
+
+§12.2(d)의 identity 대조 방식이 **실 마크업 기준으로 교체**되었다. (1) redirect 최종 URL, (2) `rel=canonical`, "HTTP 200 단독 canonical 금지"는 그대로다.
+
+- **RED(실측)**: 이전 방식(제목이 `{이름}` / `{이름}(야구선수)` / `{이름}(야구)` 폐쇄집합에 속하는가)을 실크롤 HTML 16건에 그대로 걸면 **16/16이 통과하지만 그중 5건이 남의 문서**였다 — `강백호`·`김현준`·`박재현`·`이원석`(동음이의/동명이인 문서), `네일`(영어 단어 문서). 실제 선수 문서명이 `(2002년 10월)`·`(1999)`처럼 예측 불가능하거나 등록명이 다르기(`네일` → `제임스 네일`) 때문이다.
+- **교체된 (3) identity 판정**: 문서가 스스로 선언한 **분류(category)**로 판정한다. 나무위키(HTML 분류 링크)와 위키피디아(API `prop=categories`)가 같은 함수(`verifyPlayerDocumentIdentity`)를 쓴다.
+  - (3a) 동음이의/동명이인 분류가 있으면 거부
+  - (3b) `…야구 선수` 분류가 없으면 거부
+  - (3c) 로스터 생년과 `{생년}년 출생` 분류가 불일치하면 거부 — **동명이인 오귀속의 결정적 차단선**
+  - (3d) 문서 제목에 선수 이름이 포함되어야 함(등록명 표기 차이는 허용)
+  - identity 근거(이름+생년)가 없으면 `identity_evidence_absent`로 **확정하지 않는다**(fail-close)
+- **동음이의 문서 처리**: 실패가 아니라 **후보 목록**으로 쓴다. 문서가 링크한 같은 이름 문서를 후보로 뽑아(`extractDisambiguationCandidates`, 상한 6건) 각각 분류로 확인한다.
+- **실측 결과**: 거부 5/5(구판 fail-open 전부 차단), 통과 16/16(과차단 0). 회귀가 실 마크업 fixture로 이 둘을 함께 고정한다.
+
+### 12.7 최소 원문저장 상한 재산정 (2026-08-01 R3, 실문서 길이 분포 기준)
+
+§12.2(c) 보존 상한을 추정값(25% / 2,700자)에서 **실측 기반**으로 재산정한다: **20% / 2,400자**.
+
+- **절대 상한 2,400자 = `RAG_EVIDENCE_LIMIT`(4) × `RAG_EVIDENCE_MAX_CHARS`(600)** — 서빙이 프롬프트에 넣을 수 있는 근거 총량과 정확히 같다. 그보다 많이 저장하면 **서빙에 한 글자도 쓰이지 않는 원문**을 보관하는 것이고, 그것이 §12.2(c)가 금지하는 바다.
+- **비율 20%** — 실크롤 문서 정리본 길이는 1,899~31,462자(중앙값 약 20,000자)다. 20%면 최단 문서에서도 chunk가 남고, 최장 문서에서는 절대 상한이 걸려 실보존이 7.6~9.6%로 떨어진다(전문 재구성 불가가 강화된다). 25%였다면 최장 문서에서 7,883자까지 허용되어 상한이 사실상 유일한 방어선이 된다.
+- **답을 깨지 않음(실측)**: 문보경 문서(정리본 25,009자)에서 별명 서술 문단이 상한 안에 보존된다. 실제 서빙 관통에서 `문보경 별명이 뭐야?`가 답으로 나온다.
+- **짧은 문서의 fail-close는 계약대로다**: 위키피디아 최단 문서(김백산 191자, 네일 134자)는 보존 예산이 최소 chunk 길이에 못 미쳐 `no_retrievable_snippet_within_retention_budget`으로 저장하지 않는다. 이 선수들은 나무위키(보조 소스)가 커버한다.
+- **하위문서 합산 상한(R4)**: 문서별 20%/2,400자만 적용하면 하위문서 20건에서 최대 48,000자를 쌓아 entity corpus 상당 부분을 재구성할 수 있다. 따라서 메인+하위문서 **전체 정리본 합계의 10% / 12,000자 중 작은 값**을 다시 적용한다. 12,000자는 1회 서빙 최대 근거량 2,400자의 5배다. 문서별 첫 근거부터 round-robin 선별해 traversal 첫 문서의 예산 독점을 막고, 합산 상한을 넘으면 저장하지 않는다.
+
+### 12.8 나무위키 하위문서 bounded 재귀 수집 (2026-08-01 R4, 하린아빠 지시)
+
+메인 문서만으로는 선수 경력·플레이 스타일 등 서술의 절반 이상을 놓칠 수 있으므로, 메인(depth 1)에서 같은 entity 하위문서를 depth 3까지 BFS로 수집한다.
+
+- **entity 귀속**: 확정된 메인 canonical title을 prefix로 사용한다. decoded 문서명이 `${메인}/…`인 링크만 따라가며 다른 선수·일반 문서는 fetch하지 않는다. 하위문서도 최종 URL + `rel=canonical` + page title을 대조하고 canonical title의 prefix 일치를 다시 확인한다.
+- **anchor dedupe**: `#s-2.1`·섹션명 fragment와 query를 제거한 canonical 문서 URL로 정규화·중복 제거한다. 같은 문서의 섹션 링크는 요청 1건이다.
+- **bounded rate**: 모든 하위문서 요청도 동일한 fetcher를 거쳐 문서마다 최소 10초 + 요청별 Chrome 완전 재기동을 강제한다. blocked는 즉시 entity/배치 중단이다.
+- **상한**: `NAMU_MAX_CRAWL_DEPTH=3`, `NAMU_MAX_DOCUMENTS_PER_ENTITY=30`. 최정 실측 고유 하위문서 20+건에 약 40% 여유를 주되, 30건이면 rate 대기만 최대 약 5분으로 제한된다. depth 4 링크 또는 31번째 unique 문서를 발견하면 일부 corpus를 ready로 만들지 않고 entity 전체를 fail-close한다. 이 상한에 맞춰 claim lease는 15분이다.
+- **추적성**: chunk `sectionPath`에 decoded 계층(`문보경/선수 경력/2024년`)을 기록하고 최종 출처 표기에도 노출한다. DB owner 계약상 `canonical_url`은 source root를 유지하며, 실제 하위 경로는 `sectionPath`와 chunk metadata에 남긴다.
+- **실측(2026-08-01)**: 문보경 root에서 고유 문서 10건(root 1 + 하위 9)을 canonical 통과 수집했고, 미래 링크 `문보경/선수 경력/2027년` 1건은 HTTP 404라 저장하지 않고 rejection provenance에 남겼다. prefix 밖 fetch 0건.
+
 **분리된 게이트 — 상업 이용 법무 승인 (`decision_pending`, 미확정 유지)**: 나무위키 CC BY-NC 기반 상업 서빙 가능 여부는 **inventory 단계의 게이트가 아니다.** 대량 ingestion 및 유저 서빙 개시 전 **별도 launch gate**에서 판단하며, 하린아빠 확정 전까지 `decision_pending` 상태를 유지한다. 이 상태에서도 inventory 확정·canonical 검증은 진행한다(수집/서빙과 분리).
 
 - sourceGrade·공식 KBO 우선순위는 Notion §12에 이미 반영됨(중복 아님).

@@ -137,6 +137,7 @@ check("prebuild runs both the relationship gate and this smoke", () => {
   assert.ok(gate.includes("sync-roster-derived-artifacts.mjs --check"), "relationship gate가 빠졌다");
   assert.ok(gate.includes("roster-derived-sync-smoke.mjs"), "smoke 가 CI에 결속되지 않았다");
   assert.ok(pkg.scripts.prebuild.includes("qa:roster-derived-sync"));
+  assert.ok(pkg.scripts.prebuild.includes("qa:roster-preservation"), "군입대 선수 보존 회귀가 prebuild에서 빠졌다");
   assert.equal(pkg.scripts["build:baseball-source-inventory"], "tsx scripts/baseball-qa/build-source-inventory.ts");
 });
 
