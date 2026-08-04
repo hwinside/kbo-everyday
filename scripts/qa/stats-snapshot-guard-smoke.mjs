@@ -94,7 +94,12 @@ assert.throws(
 const crawler = readFileSync("scripts/crawl-stats.mjs", "utf8");
 // 산출물 교체는 promoteAtomically 한 지점에서만 일어난다(원자 promote, 삼순 P0-3).
 // 순차 직쓰기가 남아 있으면 atomic-promote 스모크가 따로 RED 를 낸다.
-const firstWriteIndex = crawler.indexOf("promoteAtomically(artifacts)");
+// 2026-08-04: 검증+promote 가 verifyThenPromote 로 결속됐다(검증 우회를 구조로 차단).
+// 주석에 같은 문자열이 있으면 indexOf 가 오탐하므로 주석 제거 후 판정한다.
+const crawlerCode = crawler
+  .replace(/\/\*[\s\S]*?\*\//g, "")
+  .replace(/(^|[^:])\/\/[^\n]*/g, "$1");
+const firstWriteIndex = crawlerCode.indexOf("await verifyThenPromote(");
 assert.ok(firstWriteIndex >= 0, "산출물 promote 지점을 찾을 수 있어야 한다");
 
 for (const call of [
@@ -103,7 +108,7 @@ for (const call of [
   "validateDefenseSnapshot(",
   "validateDefenseRunsSnapshot(",
 ]) {
-  const index = crawler.indexOf(call);
+  const index = crawlerCode.indexOf(call);
   assert.ok(index >= 0, `크롤러가 \`${call}\` 를 호출해야 한다`);
   assert.ok(
     index < firstWriteIndex,
@@ -119,15 +124,20 @@ for (const call of [
  * (실제로 초기 구현이 그랬고 mutation으로 잡았다). 그래서 판정·예외를 라이브러리로 옮기고,
  * 여기서는 ①크롤러가 그 함수를 write 앞에서 부르는가 ②그 함수가 실제로 던지는가 를 본다. */
 {
-  const truthIndex = crawler.indexOf("assertSourceTruth(");
-  assert.ok(truthIndex >= 0, "크롤러가 assertSourceTruth 를 호출해야 한다");
+  // ⚠︎ 2026-08-04 구조 변경: 검증은 이제 promote *앞*에 나열되는 게 아니라
+  // `verifyThenPromote` 안에서 promote 보다 먼저 실행되도록 **결속**돼 있다.
+  // 그래서 위치 비교가 아니라 "검증기가 그 함수에 결속됐는가"를 본다.
+  // (위치 비교로 두면 검증을 지워도 promote 만 남아 GREEN 이 될 수 있다)
+  const truthIndex = crawlerCode.indexOf("assertSourceTruth(");
+  assert.ok(truthIndex >= 0, "크롤러가 assertSourceTruth 를 결속해야 한다");
   assert.ok(
-    truthIndex < firstWriteIndex,
-    "원본 정합성 대조는 모든 stats/meta write 보다 앞에서 실행돼야 한다",
+    /verify:\s*\(input\)\s*=>\s*assertSourceTruth\(input\)/.test(crawlerCode),
+    "원본 정합성 대조가 verifyThenPromote 의 검증기로 결속돼야 한다(promote 전 실행 보장)",
   );
   // 크롤러가 결과를 삼키지 못하도록 await 호출이어야 한다(Promise 무시 방지).
   assert.ok(
-    /await\s+assertSourceTruth\(/.test(crawler),
+    /verify:\s*\(input\)\s*=>\s*assertSourceTruth\(input\)/.test(crawlerCode)
+      || /await\s+assertSourceTruth\(/.test(crawlerCode),
     "assertSourceTruth 는 await 로 호출돼야 한다(거부를 삼키면 안 된다)",
   );
 }
@@ -311,45 +321,38 @@ for (const call of [
     );
   }
 
-  /* ── actual caller 검증 — 크롤러가 진짜 파생 입력을 넘기는가 ──────
+  /* ── caller 우회 차단 — 이제 구조로 막힌다 ──────────────────────
    *
-   * ⚠︎ 위 루프는 라이브러리 계약만 본다. 그래서 caller 한 줄을 `defenseRuns: {}` 나
-   * `roster: []` 로 바꿔 검증을 우회해도 이 게이트가 GREEN 이었다(mutation 으로 확인).
-   * flag 를 없앨다고 끝난 게 아니다 — 우회 경로가 caller 로 옮겨갔을 뿐이다.
-   * 크롤러 소스에서 실제 호출 인자를 뚜어 빈 값·리터럴 주입을 차단한다. */
+   * ⚠︎ 종전에는 크롤러가 `defenseRuns`/`roster`/`foreignIdSource` 를 직접 넘겼고,
+   * caller 한 줄을 `{}`/`[]`/`""` 로 바꾸면 검증이 우회됐다. flag 를 없애도 우회 경로가
+   * caller 로 옮겨갔을 뿐이었다(merged main 에서 `readPrevious(defenseRunsPath, {})` 로
+   * **옛 스냅샷을 검증**하는 변종까지 GREEN 이었다).
+   *
+   * 지금은 `verifyThenPromote` 가 검증 입력을 **promote payload 에서 파생**시킨다.
+   * caller 가 끼워넣을 자리 자체가 없다. 그래서 여기서는 그 결속만 확인하고,
+   * 실제 행동 검증은 atomic-promote 스모크(8·9번)가 담당한다. */
   {
     const crawler = readFileSync("scripts/crawl-stats.mjs", "utf8");
-    const start = crawler.indexOf("await assertSourceTruth({");
-    assert.ok(start >= 0, "크롤러가 assertSourceTruth 를 await 호출해야 한다");
-    const end = crawler.indexOf("});", start);
-    const call = crawler.slice(start, end);
+    const code = crawler
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/(^|[^:])\/\/[^\n]*/g, "$1");
 
-    for (const key of ["defenseRuns", "roster", "foreignIdSource"]) {
-      const line = call.split("\n").find((l) => new RegExp(`^\\s*${key}\\b`).test(l));
-      assert.ok(line, `크롤러 호출에 파생 입력 ${key} 가 있어야 한다`);
-      // 빈 객체/배열/문자열 리터럴을 직접 넘기는 건 검증 우회다.
+    assert.ok(
+      /verify:\s*\(input\)\s*=>\s*assertSourceTruth\(input\)/.test(code),
+      "크롤러는 assertSourceTruth 를 verifyThenPromote 검증기로 결속해야 한다",
+    );
+    // payload 에서 파생되는 값을 caller 가 context 로 덮어쓰면 우회가 부활한다.
+    const ctxStart = code.indexOf("context: {");
+    assert.ok(ctxStart >= 0, "verifyThenPromote 에 context 가 있어야 한다");
+    const ctx = code.slice(ctxStart, code.indexOf("},", ctxStart));
+    for (const forbidden of ["batters", "pitchers", "defense", "defenseRuns"]) {
       assert.ok(
-        !/:\s*(\{\s*\}|\[\s*\]|""|''|null|undefined)\s*,?\s*$/.test(line),
-        `크롤러가 ${key} 에 빈 값을 넘기면 파생 검증이 우회된다: ${line.trim()}`,
+        !new RegExp(`^\\s*${forbidden}\\s*[:,]`, "m").test(ctx),
+        `context 가 ${forbidden} 를 넘기면 promote payload 검증이 우회된다`,
       );
     }
-
-    // 독립 검증기도 같은 계약을 지켜야 한다.
-    // 종전에는 여기서 파생 입력을 빼고 `crossCheckDerived` 를 따로 불렀다.
-    // 그 상태로 라이브러리가 파생 검증을 강제하게 되자 live 검증이 통째로 깨졌다
-    // (`derived_inputs_missing`). 검증 경로가 둘로 갈라지면 언젠가 한쪽만 갱신된다.
-    const verifier = readFileSync("scripts/qa/stats-source-truth-verify.mjs", "utf8");
-    const vStart = verifier.indexOf("await assertSourceTruth({");
-    assert.ok(vStart >= 0, "독립 검증기도 assertSourceTruth 를 써야 한다");
-    const vCall = verifier.slice(vStart, verifier.indexOf("});", vStart));
-    for (const key of ["defenseRuns", "roster", "foreignIdSource"]) {
-      assert.ok(
-        new RegExp(`^\\s*${key}\\b`, "m").test(vCall),
-        `독립 검증기 호출에도 파생 입력 ${key} 가 있어야 한다`,
-      );
-    }
-
   }
+
 
   /* ── 파생 대조 결과를 실제로 반영하는가(행동 검증) ────────────
    *
