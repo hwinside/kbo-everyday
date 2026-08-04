@@ -17,7 +17,7 @@
  */
 import { readFileSync } from "node:fs";
 import { chromium } from "playwright";
-import { assertSourceTruth, crossCheckDerived } from "../lib/stats-source-truth.mjs";
+import { assertSourceTruth } from "../lib/stats-source-truth.mjs";
 
 const SEASON = process.argv.includes("--season")
   ? process.argv[process.argv.indexOf("--season") + 1]
@@ -40,6 +40,9 @@ const failures = [];
 // 추가해도 여기에는 반영되지 않는 이중 계약이 생겼다.
 const browser = await chromium.launch();
 try {
+  // 파생 입력도 같은 함수에 넘긴다 — `assertSourceTruth` 안에서 파생 교차결속까지 끝난다.
+  // 종전에는 여기서만 따로 `crossCheckDerived` 를 불렀는데, 그 구조 때문에
+  // "파생 검증을 끄는 optional flag" 가 필요해졌고 그 flag 가 곧 우회 스위치가 됐다.
   await assertSourceTruth({
     browser,
     kboBase: KBO_BASE,
@@ -47,6 +50,9 @@ try {
     batters,
     pitchers,
     defense,
+    defenseRuns,
+    roster,
+    foreignIdSource,
     log: (line) => console.log(line.replace(/^ {4}/, "  ")),
   });
 } catch (error) {
@@ -54,10 +60,6 @@ try {
 } finally {
   await browser.close();
 }
-
-failures.push(
-  ...crossCheckDerived({ batters, pitchers, defense, defenseRuns, roster, foreignIdSource }),
-);
 
 if (failures.length) {
   console.error(`\n❌ 원본 정합성 FAIL — ${failures.length}건`);
