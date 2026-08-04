@@ -430,10 +430,55 @@ async function main() {
     assert.ok(result.answer?.includes(String(servedSb)), `server 종단 답변=${result.answer}`);
     assert.equal(llmCalls, 0);
     assert.deepEqual(logs, ["kbo_structured"]);
-    assert.match(
-      SERVER_SRC,
-      /answerQuestion\(userId,\s*question,\s*makeDeps\(messageId,\s*picked\)\)/,
-      "production process가 makeDeps 조립값으로 answerQuestion을 호출하지 않는다",
+  });
+
+  /**
+   * production 진입점 결속을 **AST 로** 고정한다 (삼순 #1100 7차 P0-1).
+   *
+   * ⚠️ 종전은 파일 전체 대상 정규식 1개였다. 그러면 파일 아무 데나 죽은 decoy 호출
+   * (`answerQuestion(userId, question, makeDeps(messageId, picked))`)를 하나 남겨두고
+   * 실제 호출만 다른 deps 로 바꿔도 GREEN 이다.
+   * 그래서 **`processBaseballQaQuestion` 함수 본문 안**으로 범위를 좁히고,
+   * 그 안의 `answerQuestion` 호출이 **유일**하며 3번째 인자가 `makeDeps(...)` 호출임을
+   * 구문 트리에서 직접 확인한다. 바깥 decoy 는 세지 않고, 안쪽을 바꾸면 즉시 RED 다.
+   */
+  await check("processBaseballQaQuestion 본문이 makeDeps 로 answerQuestion 을 호출한다(AST)", async () => {
+    const ts = (await import("typescript")).default;
+    const sf = ts.createSourceFile(
+      "server.ts", SERVER_SRC, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS,
+    );
+    let target: import("typescript").FunctionDeclaration | undefined;
+    sf.forEachChild((node) => {
+      if (ts.isFunctionDeclaration(node) && node.name?.text === "processBaseballQaQuestion") {
+        target = node;
+      }
+    });
+    assert.ok(target?.body, "processBaseballQaQuestion 함수를 찾지 못했다");
+
+    const calls: import("typescript").CallExpression[] = [];
+    const walk = (node: import("typescript").Node) => {
+      if (
+        ts.isCallExpression(node) &&
+        ts.isIdentifier(node.expression) &&
+        node.expression.text === "answerQuestion"
+      ) {
+        calls.push(node);
+      }
+      node.forEachChild(walk);
+    };
+    walk(target!.body!);
+
+    assert.equal(
+      calls.length, 1,
+      `본문 안 answerQuestion 호출이 ${calls.length}개 — 정확히 1개여야 한다(decoy 분기 금지)`,
+    );
+    const depsArg = calls[0].arguments[2];
+    assert.ok(depsArg, "answerQuestion 에 deps 인자가 없다");
+    assert.ok(
+      ts.isCallExpression(depsArg) &&
+      ts.isIdentifier(depsArg.expression) &&
+      depsArg.expression.text === "makeDeps",
+      "deps 가 makeDeps(...) 호출이 아니다 — production 조립을 우회했다",
     );
   });
 

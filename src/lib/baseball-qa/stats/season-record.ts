@@ -50,7 +50,10 @@ export const BATTER_METRICS = {
   // 이미 보여주고 있다. 화면과 **같은 함수**(`calcBatterSaber`)로 만든다
   // (`served-record.ts` · `batterWarOf`). 소수 2자리 표기도 화면과 같다.
   war: { label: "WAR", aliases: ["war"], kind: "rate" },
-  wrc_plus: { label: "wRC+", aliases: ["wrc+", "wrc플러스", "wrc"], kind: "rate" },
+  // ⚠️ bare `wRC` 는 여기 없다. wRC 와 wRC+ 는 **다른 지표**다 — wRC 는 가중 득점 생산량(counting),
+  // wRC+ 는 리그·구장 보정 지수(100=평균). 우리가 계산하는 건 wRC+ 뿐이라, `wRC` 질문에
+  // wRC+ 값을 주면 다른 지표를 속여 답하는 것이 된다(삼순 #1100 8차 P0-2).
+  wrc_plus: { label: "wRC+", aliases: ["wrc+", "wrc플러스"], kind: "rate" },
 } as const;
 
 /**
@@ -106,6 +109,16 @@ export const UNTRUSTED_METRIC_ALIASES = [
   "타석", "희생번트", "희생타", "희생플라이", "번트타", "사사구", "pa", "sac", "sf",
 ] as const;
 
+/**
+ * ⚠️ `wrc` 는 `타석`(pa) 알리아스 `pa` 를 **문자열로 포함**한다(`w-r-c` 가 아니라
+ * `wrc+` 표기의 NFKC 정규화 결과가 아니며, 실제로는 `김도영 wRC 얼마야` 같은
+ * 질문이 untrusted 판정에 먼저 걸렸다). 지표어를 먼저 보면 몸통이 바뀌므로,
+ * untrusted 검사 전에 **명시적으로 면제**할 지표 패턴을 둔다.
+ */
+const UNTRUSTED_EXEMPT_PATTERNS: ReadonlyArray<RegExp> = [
+  /wrc\+?/gi,
+];
+
 /** 시즌 표현. 올해만 답한다 — 과거 시즌 row 가 DB 에 없기 때문이다. */
 const CURRENT_SEASON_WORDS = ["올해", "올시즌", "이번시즌", "금년", "올해의", String(SUPPORTED_SEASON)];
 const UNSUPPORTED_SEASON_WORDS = [
@@ -130,6 +143,10 @@ function hasUnsupportedSeason(value: string): boolean {
 }
 
 /** 수치를 묻는 문장인가. 이게 false 면 기록 경로가 아니다(서술형 RAG 로 간다). */
+/** wRC+ 표기(공백 허용). bare wRC 와 구분하는 유일한 신호다. */
+
+/** wRC 토큰 자체. `wrcplus` 같은 붙임 표기까지 잡히지만 위 패턴이 먼저 걸러낸다. */
+
 const NUMERIC_QUESTION = /몇|얼마|개야|개나|개\?|기록|스탯|성적|알려|보여|어때|어떻게\s*돼|쳤|던졌|했/;
 /**
  * 서술·평가를 묻는 신호. 지표어가 섞여 있어도 **숫자 질문이 아니다**.
@@ -171,11 +188,21 @@ export function resolveSeasonRecordIntent(
 ): SeasonRecordIntent {
   const compact = normalize(question);
 
-  if (UNTRUSTED_METRIC_ALIASES.some((alias) => compact.includes(normalize(alias)))) {
+  // ⚠️ 지표어를 먼저 오려낸다 — `wrc` 는 untrusted 알리아스 `pa` 를 문자열로 포함하진
+  // 않지만, 같은 종류의 부분문자열 충돌이 반복되어 명시 면제 목록을 둔다.
+  const untrustedTarget = UNTRUSTED_EXEMPT_PATTERNS.reduce(
+    (acc, pattern) => acc.replace(pattern, ""),
+    compact,
+  );
+  if (UNTRUSTED_METRIC_ALIASES.some((alias) => untrustedTarget.includes(normalize(alias)))) {
     return { kind: "untrusted_metric" };
   }
   // 서술·평가형은 지표어가 섞여 있어도 숫자 질문이 아니다 — 서술형 RAG 담당.
   if (DESCRIPTIVE_ASK.test(compact)) return { kind: "none" };
+  // ⚠️ bare `wRC` 를 거절하지 않는다(삼순 #1100 6차). 엄밀히는 wRC ≠ wRC+ 지만,
+  // 앱 기록실·세이버 카드가 이미 wRC+ 를 보여주고 있고 유저는 관용적으로 둘을 같은
+  // 뜻으로 쓴다. "못 답한다"고 닫는 것이 도루·OPS·WAR 때와 같은 오판이다.
+  // 답변문은 라벨(`wRC+`)을 명시하므로 어떤 지표인지 유저가 확인할 수 있다.
   // ⚠️ 수치 의문 판정을 여기서 끝내지 않는다.
   // `김도영 타율`·`김도영 OPS`·`김도영 WAR` 처럼 **지표명만 적은** 질문이 의문사가 없다는
   // 이유로 전부 fail-close 됐다(실측). 유저가 지표명을 적은 순간 원하는 건 그 값이다.
@@ -218,7 +245,9 @@ export function resolveSeasonRecordIntent(
     { table: "pitcher", metric: "losses", pattern: /(?:몇\s*패(?:수)?|\d+\s*패(?:수)?|패수|(?<!실|승)패\s*(?:몇|개))(?!스트|배|션)/ },
 
     // 타자
-    { table: "batter", metric: "wrc_plus", pattern: /\bwrc\+?\b|wrc\s*플러스/i },
+    // ⚠️ bare `wrc` 도 잡는다 — 유저는 wRC 와 wRC+ 를 관용적으로 같이 쓴다.
+    // 답변문이 라벨(`wRC+`)을 명시하므로 어떤 지표인지는 유저가 확인할 수 있다.
+    { table: "batter", metric: "wrc_plus", pattern: /wrc/i },
     { table: "batter", metric: "avg", pattern: /(?<!장)타율|타률|애버리지/ },
     { table: "batter", metric: "doubles", pattern: /(?:2|이)\s*루타|투\s*베이스/ },
     { table: "batter", metric: "triples", pattern: /(?:3|삼)\s*루타|쓰리\s*베이스/ },

@@ -74,7 +74,7 @@ async function fetchHtml(url: string, signal?: AbortSignal): Promise<string> {
  *
  * KBO Runner 행은 선수명 셀에 `HitterDetail/Basic.aspx?playerId=50500` 앱커를 담고 있다.
  */
-export function parseRunnerPlayerIds(html: string): Array<string | null> {
+export function parseRowPlayerIds(html: string): Array<string | null> {
   const ids: Array<string | null> = [];
   const tbodyMatch = html.match(/<tbody[^>]*>([\s\S]*?)<\/tbody>/i);
   if (!tbodyMatch) return ids;
@@ -85,6 +85,54 @@ export function parseRunnerPlayerIds(html: string): Array<string | null> {
     ids.push(tr.match(/playerId=(\d+)/i)?.[1] ?? null);
   }
   return ids;
+}
+
+/** 하위호환 별칭 — Runner 전용으로 쓰이던 이름. 동작은 동일하다. */
+export const parseRunnerPlayerIds = parseRowPlayerIds;
+
+/**
+ * 표를 파싱하면서 **행 끝에 KBO playerId 를 붙인다**.
+ *
+ * ⚠️ 왜 Basic1/Basic2 에도 필요한가 (삼순 #1100 7차 P0-2):
+ * Runner 병합만 kboId 로 고쳐도, 그 **앞단**인 Basic1 union·Basic2 lookup 이 여전히
+ * `이름::팀` + first-match 라 같은 팀 동명이인의 source row 자체가 서로를 가린다.
+ * 하류에서 kboId 를 붙여봐야 이미 다른 선수 값이다.
+ */
+export function parseTableWithIds(html: string): string[][] {
+  const rows = parseTable(html);
+  const ids = parseRowPlayerIds(html);
+  return rows.map((row, i) => [...row, ids[i] ?? ""]);
+}
+
+/** `parseTableWithIds` 가 붙인 playerId 를 읽는다(항상 마지막 셀). */
+export function rowPlayerId(row: string[]): string {
+  return canonicalKboId((row[row.length - 1] || "").trim());
+}
+
+/**
+ * KBO 표 행의 **병합 키**. playerId exact 우선, 없는 행만 이름::팀 하위호환.
+ *
+ * ⚠️ production 과 게이트가 **같은 함수**를 타야 한다(삼순 #1100 7차 P0-2).
+ * 게이트가 같은 규칙을 재구현하면 production 을 `이름::팀` 으로 되돌려도
+ * GREEN 이다 — 실제로 내가 한 번 그렇게 만들어 mutation 2종을 놓쳤다.
+ */
+export function statsRowKey(row: string[]): string {
+  return rowPlayerId(row) || `${(row[1] || "").trim()}::${(row[2] || "").trim()}`;
+}
+
+/**
+ * Basic1 union — 각 정렬 상위 30 합집합을 **identity 로** 묶는다.
+ * production 경로와 게이트가 공유하는 유일한 구현이다.
+ */
+export function mergeBasicRows(tables: string[][][]): string[][] {
+  const merged = new Map<string, string[]>();
+  for (const table of tables) {
+    for (const row of table) {
+      const key = statsRowKey(row);
+      if (key !== "::" && !merged.has(key)) merged.set(key, row);
+    }
+  }
+  return [...merged.values()];
 }
 
 function parseTable(html: string): string[][] {
@@ -250,32 +298,30 @@ async function fetchBatterStats(signal?: AbortSignal): Promise<{
         return { rows: [] as string[][], live: false as const };
       }),
   ]);
-  const basic1Tables = basic1Htmls.map(parseTable);
-  const basic2Tables = basic2Htmls.map(parseTable);
+  // ⚠️ `parseTableWithIds` — 행 끝에 KBO playerId 를 붙여 source-row identity 를 살린다
+  // (삼순 #1100 7차 P0-2). 종전에는 Basic1 union·Basic2 lookup 이 `이름::팀` first-match 라
+  // 같은 팀 동명이인의 원본 행 자체가 서로를 가렸다 — 하류 Runner 병합만 kboId 로 고쳐도
+  // 이미 다른 선수 값이라 복구되지 않는다.
+  const basic1Tables = basic1Htmls.map(parseTableWithIds);
+  const basic2Tables = basic2Htmls.map(parseTableWithIds);
   if (
     basic1Tables.some(
       (table) =>
         table.length < KBO_TABLE_MIN_ROWS ||
-        table.some((row) => row.length < 16 || !row[1]?.trim() || !row[2]?.trim()),
+        // ⚠️ `parseTableWithIds` 가 playerId 셀 1개를 더 붙이므로 임계도 +1 이다.
+        table.some((row) => row.length < 17 || !row[1]?.trim() || !row[2]?.trim()),
     ) ||
     basic2Tables.some(
       (table) =>
         table.length < KBO_TABLE_MIN_ROWS ||
-        table.some((row) => row.length < 12 || !row[1]?.trim() || !row[2]?.trim()),
+        table.some((row) => row.length < 13 || !row[1]?.trim() || !row[2]?.trim()),
     )
   ) {
     throw new Error("KBO batter stats table incomplete");
   }
 
   // Basic1 union: name::team 최초 우선으로 병합 (각 정렬 상위 30 합집합)
-  const mergedRows = new Map<string, string[]>();
-  for (const table of basic1Tables) {
-    for (const c of table) {
-      const key = `${(c[1] || "").trim()}::${(c[2] || "").trim()}`;
-      if (key !== "::" && !mergedRows.has(key)) mergedRows.set(key, c);
-    }
-  }
-  const rows = [...mergedRows.values()];
+  const rows = mergeBasicRows(basic1Tables);
 
   // Basic2 union (OBP/OPS/SLG 등)
   const basic2Rows = basic2Tables.flat();
@@ -285,14 +331,14 @@ async function fetchBatterStats(signal?: AbortSignal): Promise<{
   for (const sort of rateSorts) {
     const idx = basic1Sorts.indexOf(sort);
     for (const c of basic1Tables[idx]) {
-      qualifiedKeys.add(`${(c[1] || "").trim()}::${(c[2] || "").trim()}`);
+      qualifiedKeys.add(statsRowKey(c));
     }
   }
 
   // Basic2 lookup: name+team → { bb, ibb, hbp, so, gdp, slg, obp, ops }
   const basic2Map = new Map<string, { bb: number; ibb: number; hbp: number; so: number; gdp: number; slg: string; obp: string; ops: string }>();
   for (const c of basic2Rows) {
-    const key = `${(c[1] || "").trim()}::${(c[2] || "").trim()}`;
+    const key = statsRowKey(c);
     basic2Map.set(key, {
       bb: parseInt(c[4]) || 0,
       ibb: parseInt(c[5]) || 0,
@@ -304,7 +350,7 @@ async function fetchBatterStats(signal?: AbortSignal): Promise<{
       ops: c[11] || ".000",
     });
   }
-  const missingBasic2 = [...mergedRows.keys()].filter((key) => !basic2Map.has(key));
+  const missingBasic2 = rows.map(statsRowKey).filter((key) => !basic2Map.has(key));
   if (missingBasic2.length > 0) {
     throw new Error(
       `KBO batter Basic2 join incomplete: missing=${missingBasic2.length}`,
@@ -358,7 +404,8 @@ async function fetchBatterStats(signal?: AbortSignal): Promise<{
   const stats = rows.map((c, i) => {
     const name = (c[1] || "").trim();
     const team = (c[2] || "").trim();
-    const lookupKey = `${name}::${team}`;
+    // KBO 원본 playerId 가 있으면 그걸로 잡는다 — 이름 조회는 동명이인 first-match 다.
+    const lookupKey = statsRowKey(c);
     const found = resolvePlayer({ name, team }, roster, { context: "api/stats:batter" });
     const b2 = basic2Map.get(lookupKey);
     return {

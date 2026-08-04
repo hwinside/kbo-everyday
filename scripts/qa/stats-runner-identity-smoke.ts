@@ -18,8 +18,14 @@
  * 실행: npm run qa:stats-runner-identity
  */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import playersRoster from "../../src/lib/constants/players-roster.json";
 import {
+  parseTableWithIds,
+  rowPlayerId,
+  statsRowKey,
+  mergeBasicRows,
   applyRunnerStats,
   fetchAllRunnerRows,
   parseRunnerPlayerIds,
@@ -196,6 +202,111 @@ async function main() {
     );
     assert.equal(Number(merged[0].sb), 7);
     assert.equal(Number(merged[0].cs), 3);
+  });
+
+  // ── ④ Basic1/Basic2 source-row identity (삼순 #1100 7차 P0-2) ────────────
+  //
+  // ⚠️ Runner 병합만 kboId 로 고쳐도, 그 앞단인 Basic1 union · Basic2 lookup 이
+  // `이름::팀` first-match 면 **원본 행 자체가** 동명이인끼리 서로를 가린다.
+  // 그 경우 하류에서 뭐를 해도 이미 다른 선수 값이라 복구 불가능하다.
+  const basicHtml = (rows: Array<{ playerId: string | null; name: string; team: string; avg: string }>) =>
+    `<tbody>${rows.map((r, i) => {
+      const nameCell = r.playerId
+        ? `<a href="/Record/Player/HitterDetail/Basic.aspx?playerId=${r.playerId}">${r.name}</a>`
+        : r.name;
+      return `<tr><td>${i + 1}</td><td>${nameCell}</td><td>${r.team}</td><td>${r.avg}</td>` +
+        "<td>1</td>".repeat(12) + "</tr>";
+    }).join("")}</tbody>`;
+
+  await check("parseTableWithIds 가 행 끝에 playerId 를 붙인다", () => {
+    const parsed = parseTableWithIds(basicHtml([
+      { playerId: idA, name: homonym.name, team: homonym.team, avg: ".333" },
+      { playerId: idB, name: homonym.name, team: homonym.team, avg: ".111" },
+    ]));
+    assert.equal(parsed.length, 2);
+    assert.equal(rowPlayerId(parsed[0]), idA, `1행 id=${rowPlayerId(parsed[0])}`);
+    assert.equal(rowPlayerId(parsed[1]), idB, `2행 id=${rowPlayerId(parsed[1])}`);
+    // 기존 셀 인덱스(이름 1 · 팀 2 · 타율 3)는 그대로여야 한다.
+    assert.equal(parsed[0][1], homonym.name);
+    assert.equal(parsed[0][3], ".333");
+  });
+
+  // ⚠️ **production 함수를 그대로 호출한다.** 게이트가 같은 키 규칙을 재구현하면
+  // production 을 `이름::팀` 으로 되돌려도 GREEN 이다 — 실제로 내가 그렇게 만들어
+  // mutation 2종(union 키 복원 · parseTableWithIds → parseTable)을 모두 놓쳤다.
+  await check("같은 팀 동명이인의 Basic1 원본 행이 first-match 로 삼켜지지 않는다", () => {
+    const parsed = parseTableWithIds(basicHtml([
+      { playerId: idA, name: homonym.name, team: homonym.team, avg: ".333" },
+      { playerId: idB, name: homonym.name, team: homonym.team, avg: ".111" },
+    ]));
+    const merged = mergeBasicRows([parsed]);
+    assert.equal(
+      merged.length, 2,
+      `union 결과 ${merged.length}행 — 이름::팀 키라 동명이인이 합쳌졌다`,
+    );
+    const byId = new Map(merged.map((row) => [statsRowKey(row), row]));
+    assert.equal(byId.get(idA)?.[3], ".333", `${idA} 행이 사라졌거나 값이 섞였다`);
+    assert.equal(byId.get(idB)?.[3], ".111", `${idB} 행이 사라졌거나 값이 섞였다`);
+  });
+
+  // 정렬이 달라도(여러 table union) 동일인이 합쳐지면 안 된다 — production 은 6개 정렬을 합친다.
+  await check("여러 정렬 table 을 union 해도 identity 가 유지된다", () => {
+    const t1 = parseTableWithIds(basicHtml([
+      { playerId: idA, name: homonym.name, team: homonym.team, avg: ".333" },
+    ]));
+    const t2 = parseTableWithIds(basicHtml([
+      { playerId: idB, name: homonym.name, team: homonym.team, avg: ".111" },
+      { playerId: idA, name: homonym.name, team: homonym.team, avg: ".333" },
+    ]));
+    const merged = mergeBasicRows([t1, t2]);
+    assert.equal(merged.length, 2, `union ${merged.length}행 — 동명이인이 합쳌졌다`);
+  });
+
+  /**
+   * production 이 **실제로** id 붙은 파서를 쓰는가 — AST 로 고정한다.
+   *
+   * ⚠️ 게이트가 `parseTableWithIds` 를 직접 호출해 검증하면, production 이 그걸 안 쓰고
+   * 맨 `parseTable` 로 되돌려도 GREEN 이다. 실제로 내 첫 게이트가 그 mutation 을 놓쳤다.
+   * 그래서 basic1/basic2 테이블 생성이 `parseTableWithIds` 로 묶였는지를 구문으로 본다.
+   */
+  await check("production basic1/basic2 파싱이 parseTableWithIds 에 결속돼 있다(AST)", async () => {
+    const ts = (await import("typescript")).default;
+    const src = readFileSync(
+      path.join(path.resolve(import.meta.dirname, "../.."), "src/app/api/stats/route.ts"),
+      "utf8",
+    );
+    const sf = ts.createSourceFile("route.ts", src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    const bound = new Map<string, string>();
+    const walk = (node: import("typescript").Node) => {
+      if (
+        ts.isVariableDeclaration(node) &&
+        ts.isIdentifier(node.name) &&
+        (node.name.text === "basic1Tables" || node.name.text === "basic2Tables") &&
+        node.initializer &&
+        ts.isCallExpression(node.initializer) &&
+        ts.isPropertyAccessExpression(node.initializer.expression) &&
+        node.initializer.expression.name.text === "map"
+      ) {
+        const arg = node.initializer.arguments[0];
+        bound.set(node.name.text, arg && ts.isIdentifier(arg) ? arg.text : "<non-identifier>");
+      }
+      node.forEachChild(walk);
+    };
+    sf.forEachChild(walk);
+    for (const name of ["basic1Tables", "basic2Tables"]) {
+      assert.equal(
+        bound.get(name), "parseTableWithIds",
+        `${name} 가 ${bound.get(name) ?? "없음"} 로 파싱된다 — playerId 가 붙지 않아 동명이인이 합쳌진다`,
+      );
+    }
+  });
+
+  await check("playerId 없는 Basic 행은 이름::팀 하위호환으로 내려간다", () => {
+    const parsed = parseTableWithIds(basicHtml([
+      { playerId: null, name: "무명", team: "두산", avg: ".250" },
+    ]));
+    assert.equal(rowPlayerId(parsed[0]), "", "id 가 없는데 값이 나왔다");
+    assert.equal(statsRowKey(parsed[0]), "무명::두산", "하위호환 키가 끊겼다");
   });
 
   if (failures.length > 0) {
