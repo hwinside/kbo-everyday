@@ -33,6 +33,10 @@ export interface PoolChannel {
   team_affinity: string[] | null;
 }
 
+export interface PlayerTagChannel extends PoolChannel {
+  is_active: boolean;
+}
+
 /** Load active channels from channel_pool */
 export async function getActiveChannels(
   supabase: { from: (t: string) => any },
@@ -42,5 +46,19 @@ export async function getActiveChannels(
     .select("channel_id, channel_name, tier, team_affinity")
     .eq("is_active", true)
     .order("tier", { ascending: true });
+  return data ?? [];
+}
+
+/** Legacy player-tag 재검증용: inactive 채널도 포함하고 조회 실패는 fail-close. */
+export async function getPlayerTagChannels(
+  supabase: { from: (t: string) => any },
+): Promise<PlayerTagChannel[]> {
+  // query-guard: bounded -- channel_pool은 운영 allowlist 전체(수백 행 상한),
+  // inactive legacy identity 판정 때문에 페이지 분할 없이 단일 snapshot이 필요하다.
+  const { data, error } = await supabase
+    .from("channel_pool")
+    .select("channel_id, channel_name, tier, team_affinity, is_active")
+    .order("tier", { ascending: true });
+  if (error) throw new Error(`channel metadata lookup failed: ${error.message}`);
   return data ?? [];
 }
