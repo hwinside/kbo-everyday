@@ -520,6 +520,8 @@ async function main() {
       defenseRuns,
       roster: readPrevious(join(CONSTANTS_DIR, "players-roster.json"), []),
       foreignIdSource: readFileSync(join(CONSTANTS_DIR, "foreign-id-map.ts"), "utf-8"),
+      // crawler 는 파생 검증을 건너뛸 수 없다 — 빈 입력이면 던진다.
+      requireDerived: true,
     });
 
     // 원자 promote — 순차 직쓰기는 중간 I/O 실패 시 혼합 snapshot을 남긴다.

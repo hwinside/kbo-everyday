@@ -35,10 +35,11 @@ function makePages({ total = 329, perPage = 30 } = {}) {
  * @param {Set<number>} opts.deadPages 클릭해도 절대 전환되지 않는 페이지
  * @param {number|null} opts.staleAt 해당 페이지에서 이전 화면을 다시 내주는 재렌더
  */
-function makeFakePager(pages, { groupSize = 10, slowPages = new Map(), deadPages = new Set(), staleAt = null, flakyOnce = new Set(), deadGroupSwitch = false, flakyGroupOnce = false } = {}) {
+function makeFakePager(pages, { groupSize = 10, slowPages = new Map(), deadPages = new Set(), staleAt = null, flakyOnce = new Set(), deadGroupSwitch = false, flakyGroupOnce = false, pagerOnlyGroupSwitch = false } = {}) {
   let current = 1; // 1-based
   let pendingTarget = null;
   let pendingDelay = 0;
+  let pagerGroupOverride = null; // pager 만 바뀐 상태를 흉내낸다
   const totalPages = pages.length;
   const groupOf = (page) => Math.floor((page - 1) / groupSize);
 
@@ -80,6 +81,12 @@ function makeFakePager(pages, { groupSize = 10, slowPages = new Map(), deadPages
       this.calls.group++;
       // 클릭은 수락(true)되지만 DOM 전환이 유실되는 경계 — 삼순 실증 케이스.
       if (deadGroupSwitch) return true;
+      // pager 는 다음 그룹으로 바뀌었는데 table 은 stale 인 경계.
+      // `groupSwapped &&` 보호를 빼면 이 상황을 "성공"으로 오인해 페이지를 유실한다.
+      if (pagerOnlyGroupSwitch) {
+        pagerGroupOverride = groupOf(nextGroupFirst);
+        return true;
+      }
       if (flakyGroupOnce) {
         flakyGroupOnce = false;
         return true; // 첫 시도만 유실, 재시도부터 정상
@@ -89,6 +96,7 @@ function makeFakePager(pages, { groupSize = 10, slowPages = new Map(), deadPages
       return true;
     },
     async pagerSignature() {
+      if (pagerGroupOverride !== null) return `group:${pagerGroupOverride}`;
       return `group:${groupOf(pendingTarget ?? current)}`;
     },
     async sleep() {},
@@ -242,6 +250,21 @@ const run = (pager, overrides = {}) =>
     /source_pagination_incomplete/,
     "maxPages 소진은 완주가 아니라 실패여야 한다",
   );
+}
+
+/* 12-b) pager 는 바뀌었는데 table 이 stale 이면 전환 성공이 아니다 (삼순 6차 지적)
+ *       `groupSwapped &&` 보호를 빼면 이 경계가 "성공" 처리돼 페이지가 조용히 유실된다. */
+{
+  const pages = makePages();
+  await assert.rejects(
+    () => run(makeFakePager(pages, { pagerOnlyGroupSwitch: true })),
+    /source_pagination_incomplete/,
+    "pager 만 바뀌고 table 이 stale 이면 그룹 전환 성공으로 보면 안 된다",
+  );
+
+  let rows = null;
+  try { rows = await run(makeFakePager(pages, { pagerOnlyGroupSwitch: true })); } catch { /* expected */ }
+  assert.equal(rows, null, "table stale 상태에서 부분 결과를 정상 반환하면 안 된다");
 }
 
 /* 13) 실제 어댑터 행동 검증 — 문자열이 아니라 fake page 로 직접 태운다.
