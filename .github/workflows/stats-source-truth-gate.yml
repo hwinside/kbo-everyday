@@ -15,56 +15,57 @@ name: Stats Source Truth Gate
 # 배포 자체가 죽기 때문이다. 네트워크·Chromium 이 보장되는 이 전용 워크플로에서만 돈다.
 #
 # ⚠️ GitHub Actions 워크플로 파서는 YAML anchor/alias 를 지원하지 않는다 —
-# pull_request / push paths 는 중복이지만 반드시 그대로 나열해야 한다.
+# pull_request / push paths 는 GitHub 문법상 공유가 안 돼 두 번 나열한다.
+# 한쪽만 고치면 그 이벤트에서 게이트가 조용히 빠지므로 반드시 같이 바꾼다.
 
 on:
   pull_request:
     paths:
-      - "src/lib/constants/stats-2026-batters.json"
-      - "src/lib/constants/stats-2026-pitchers.json"
-      - "src/lib/constants/stats-2026-defense.json"
-      - "src/lib/constants/stats-2026-meta.json"
+      # dependency root 를 broad glob 으로 잡는다.
+      #
+      # ⚠︎ 왜 개별 파일 나열이 아니라 glob 인가 (2026-08-04 삼순):
+      # 개별 나열이면 새 helper 를 만든 뒤 그 helper 만 고치는 PR 에서 workflow 가 통째
+      # SKIP 되고, required check 는 "통과"로 보인다 = trigger 자체가 false-green 이다.
+      # 실제로 이번에 `kbo-select.mjs` 를 새로 만들면서 나열을 손으로 추가해야 했다.
+      #
+      # 반대로 paths 를 아예 없애면 무관한 PR 마다 live KBO + Chromium 게이트가 돌아
+      # 외부 장애·비용이 전체 개발을 막는다. 그래서 "의존 뿌리"를 넓게 잡는 절충이다.
+      - "scripts/lib/**"
+      - "scripts/crawl-stats.mjs"
+      - "scripts/qa/stats-*"
+      - "scripts/qa/kbo-*"
+      - "scripts/qa/atomic-promote-*"
+      - "src/lib/constants/stats-*"
       - "src/lib/constants/player-defense-runs.json"
       - "src/lib/constants/players-roster.json"
       - "src/lib/constants/foreign-id-map.ts"
-      - "scripts/crawl-stats.mjs"
-      - "scripts/lib/stats-source-truth.mjs"
-      - "scripts/lib/stats-snapshot-guard.mjs"
-      - "scripts/lib/atomic-promote.mjs"
-      - "scripts/lib/kbo-pagination.mjs"
-      - "scripts/lib/kbo-select.mjs"
-      - "scripts/lib/defense-runs.mjs"
-      - "scripts/qa/stats-source-truth-verify.mjs"
-      - "scripts/qa/stats-snapshot-guard-smoke.mjs"
-      - "scripts/qa/atomic-promote-smoke.mjs"
-      - "scripts/qa/kbo-pagination-smoke.mjs"
-      - "scripts/qa/kbo-select-smoke.mjs"
       - "package.json"
+      - "package-lock.json"
       - ".github/workflows/stats-source-truth-gate.yml"
   push:
     branches:
       - main
     paths:
-      - "src/lib/constants/stats-2026-batters.json"
-      - "src/lib/constants/stats-2026-pitchers.json"
-      - "src/lib/constants/stats-2026-defense.json"
-      - "src/lib/constants/stats-2026-meta.json"
+      # dependency root 를 broad glob 으로 잡는다.
+      #
+      # ⚠︎ 왜 개별 파일 나열이 아니라 glob 인가 (2026-08-04 삼순):
+      # 개별 나열이면 새 helper 를 만든 뒤 그 helper 만 고치는 PR 에서 workflow 가 통째
+      # SKIP 되고, required check 는 "통과"로 보인다 = trigger 자체가 false-green 이다.
+      # 실제로 이번에 `kbo-select.mjs` 를 새로 만들면서 나열을 손으로 추가해야 했다.
+      #
+      # 반대로 paths 를 아예 없애면 무관한 PR 마다 live KBO + Chromium 게이트가 돌아
+      # 외부 장애·비용이 전체 개발을 막는다. 그래서 "의존 뿌리"를 넓게 잡는 절충이다.
+      - "scripts/lib/**"
+      - "scripts/crawl-stats.mjs"
+      - "scripts/qa/stats-*"
+      - "scripts/qa/kbo-*"
+      - "scripts/qa/atomic-promote-*"
+      - "src/lib/constants/stats-*"
       - "src/lib/constants/player-defense-runs.json"
       - "src/lib/constants/players-roster.json"
       - "src/lib/constants/foreign-id-map.ts"
-      - "scripts/crawl-stats.mjs"
-      - "scripts/lib/stats-source-truth.mjs"
-      - "scripts/lib/stats-snapshot-guard.mjs"
-      - "scripts/lib/atomic-promote.mjs"
-      - "scripts/lib/kbo-pagination.mjs"
-      - "scripts/lib/kbo-select.mjs"
-      - "scripts/lib/defense-runs.mjs"
-      - "scripts/qa/stats-source-truth-verify.mjs"
-      - "scripts/qa/stats-snapshot-guard-smoke.mjs"
-      - "scripts/qa/atomic-promote-smoke.mjs"
-      - "scripts/qa/kbo-pagination-smoke.mjs"
-      - "scripts/qa/kbo-select-smoke.mjs"
       - "package.json"
+      - "package-lock.json"
       - ".github/workflows/stats-source-truth-gate.yml"
   workflow_dispatch:
 
@@ -102,6 +103,9 @@ jobs:
 
       - name: Select/sort change gate
         run: npm run qa:kbo-select
+
+      - name: Gate trigger coverage
+        run: npm run qa:stats-gate-trigger
 
       # ── KBO 원본 전수 대조 ────────────────────────────────────
       - name: Verify stats against KBO source of truth (fail-closed)
