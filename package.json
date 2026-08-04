@@ -147,6 +147,8 @@
     "qa:starter-era": "tsx scripts/qa/starter-era-smoke.ts",
     "qa:stats-snapshot-guard": "node scripts/qa/stats-snapshot-guard-smoke.mjs",
     "qa:stats-source-truth": "node scripts/qa/stats-source-truth-verify.mjs",
+    "qa:stats-freshness": "node scripts/qa/stats-freshness-verify.mjs",
+    "qa:stats-freshness-contract": "node scripts/qa/stats-freshness-contract-smoke.mjs",
     "qa:atomic-promote": "node scripts/qa/atomic-promote-smoke.mjs",
     "qa:kbo-pagination": "node scripts/qa/kbo-pagination-smoke.mjs",
     "qa:naver-runner-name": "tsx scripts/qa/naver-runner-name-smoke.ts",
@@ -366,6 +368,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
     "jsdom": "^26.1.0",
+    "minimatch": "^3.1.5",
     "tailwindcss": "^4",
     "tsx": "^4.22.0",
     "typescript": "^5"
