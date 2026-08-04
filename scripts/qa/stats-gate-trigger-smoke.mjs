@@ -141,11 +141,19 @@ function assertScriptsExist(source, label, minimum) {
    *
    * 그래서 래퍼의 **판정 행동**을 결정론적으로 검증하는 스모크를 contract 게이트에 싣는다.
    * 이 결속이 빠지면 위 구멍이 그대로 다시 열리므로 여기서 고정한다. */
+  /* ⚠︎ alias 가 아니라 **파일 경로**로 불러야 한다(삼순 2차 NO-GO b).
+   * npm alias 경유면 mutation 을 인지하는 decoy alias 하나로 실제 스모크를 0회
+   * 실행하고도 전체 GREEN 을 만들 수 있다 — 여기서 alias 존재만 봤기 때문이었다. */
   assert.ok(
-    /run:\s*npm run qa:stats-freshness-contract\b/.test(source),
-    "contract 게이트가 `qa:stats-freshness-contract` 를 실행해야 한다 —"
-      + " 이게 없으면 freshness 래퍼를 no-op 으로 바꾸는 코드 PR 을 아무도 잡지 못하고,"
-      + " 이후 데이터 PR 은 무력화된 래퍼로 live equality 를 0회 수행한다",
+    /run:\s*node scripts\/qa\/stats-freshness-contract-smoke\.mjs/.test(source),
+    "contract 게이트가 `node scripts/qa/stats-freshness-contract-smoke.mjs` 를"
+      + " 경로로 직접 실행해야 한다 — 이게 없으면 freshness 래퍼를 no-op 으로 바꾸는"
+      + " 코드 PR 을 아무도 잡지 못하고, 이후 데이터 PR 은 무력화된 래퍼로"
+      + " live equality 를 0회 수행한다",
+  );
+  assert.ok(
+    !/npm run qa:stats-freshness-contract(?![\w-])/.test(source),
+    "contract 게이트가 이 스모크를 npm alias 로 부르면 안 된다 — decoy alias 우회 경로",
   );
 }
 

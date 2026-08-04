@@ -61,11 +61,16 @@ const SEASON = process.argv.includes("--season")
  * `qa:stats-gate-trigger` 가 별도로 고정한다(env 자체를 금지). */
 const MIN_STABILITY_WINDOW_MS = 180_000; // 3분 — 전다민 flip 의 관측 주기를 넘긴다
 const MIN_COOLDOWN_MS = 15_000;
-const MIN_ATTEMPTS = 6;
 
 /* 계약 테스트 seam. 실 운영에서 켜지면 안 되며, 켜지면 stdout 에 크게 남는다.
  * 이 seam 없이는 결정론적 행동 검증(수 초)이 불가능하고, 행동 검증이 없으면
- * 이 파일 전체를 `process.exit(0)` 으로 바꿔도 아무도 못 잡는다(삼순 P0). */
+ * 이 파일 전체를 `process.exit(0)` 으로 바꿔도 아무도 못 잡는다.
+ *
+ * ⚠︎ 2026-08-05 삼순 2차 NO-GO: seam 자체가 새 우회로였다. config 출력 직후
+ * `if (!CONTRACT_TEST) process.exit(0)` 한 줄을 넣으면, 시나리오 테스트는 전부 seam=1 이라
+ * 정상 통과하고 prod-mode 테스트는 config 라인만 봤으므로 그것도 통과 —
+ * 운영에서는 검증기를 **0회** 실행하는데 게이트는 전부 GREEN 이 된다.
+ * 그래서 계약 스모크가 prod 모드에서 "검증기가 실제로 spawn 됐는가"를 직접 관측한다. */
 const CONTRACT_TEST = process.env.STATS_FRESHNESS_CONTRACT_TEST === "1";
 
 const clamp = (raw, fallback, floor) => {
@@ -84,6 +89,20 @@ const COOLDOWN_MS = clamp(
   MIN_COOLDOWN_MS,
   MIN_COOLDOWN_MS,
 );
+
+/* ⚠︎ attempts 하한은 상수가 아니라 window·cooldown 에서 **파생**된다(삼순 P1).
+ *
+ * 판정은 연속 동일 판독이 STABILITY_WINDOW 를 덮어야 내려진다. 검증기가 빠르면
+ * 경과 시간은 사실상 `(attempts-1) × cooldown` 이므로, 그 값이 window 에 못 미치면
+ * **안정된 데이터조차 영원히 PASS 할 수 없다**. 종전 고정값 6 은 180s/15s 조합에서
+ * 최대 약 75s 밖에 못 덮어 통과 자체가 불가능했다.
+ *
+ *   필요 회차 = ceil(window / cooldown) + 1
+ *
+ * 파생으로 두면 window·cooldown 을 바꿔도 이 관계가 저절로 유지된다.
+ * (검증기가 느리면 훨씬 적은 회차에서 window 를 덮고 조기 종료한다.) */
+const requiredAttempts = Math.ceil(STABILITY_WINDOW_MS / Math.max(COOLDOWN_MS, 1)) + 1;
+const MIN_ATTEMPTS = CONTRACT_TEST ? 1 : requiredAttempts;
 const MAX_ATTEMPTS = clamp(
   process.env.STATS_FRESHNESS_MAX_ATTEMPTS,
   MIN_ATTEMPTS,
@@ -95,8 +114,18 @@ if (CONTRACT_TEST) {
 }
 console.log(
   `stats freshness config: stability window ${STABILITY_WINDOW_MS}ms · `
-    + `cooldown ${COOLDOWN_MS}ms · max attempts ${MAX_ATTEMPTS}`,
+    + `cooldown ${COOLDOWN_MS}ms · max attempts ${MAX_ATTEMPTS}`
+    + ` (window 를 덮는 데 필요한 최소 회차 ${requiredAttempts})`,
 );
+
+if (!CONTRACT_TEST && MAX_ATTEMPTS < requiredAttempts) {
+  // 도달 불가능한 설정으로는 시작하지 않는다 — 통과할 수 없는 검사를 돌리는 셈이다.
+  console.error(
+    `\n❌ stats_freshness_misconfigured: attempts ${MAX_ATTEMPTS} 로는`
+      + ` 안정 window ${STABILITY_WINDOW_MS}ms 를 덮을 수 없다(필요 ${requiredAttempts})`,
+  );
+  process.exit(1);
+}
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 

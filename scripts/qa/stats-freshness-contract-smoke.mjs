@@ -24,12 +24,35 @@
  * alias 를 no-op 으로 바꾼 변경을 이 스모크가 놓친다(그게 삼순이 지적한 경로 중 하나다).
  *   package alias → 실제 파일 → 그 파일의 행동
  * 이 사슬을 전부 결속한다.
+ *
+ * ── 2026-08-05 삼순 2차 NO-GO 반영 ──────────────────────────
+ *
+ * **(a) prod-mode bypass** — 종전 시나리오는 전부 seam=1 로만 돌았고, floor 테스트는
+ * config 라인만 읽었다. 그래서 config 출력 직후 `if (!CONTRACT_TEST) process.exit(0)`
+ * 한 줄이면 운영에서 검증기를 **0회** 실행하면서 모든 assertion 이 GREEN 이었다.
+ * → prod 모드(seam 꺼진 상태)에서 검증기가 **실제로 spawn 되는지**를 marker 파일로
+ *   직접 관측한다. 3분을 기다리지 않고 첫 회차 spawn 만 확인한 뒤 종료시킨다.
+ *
+ * **(b) decoy alias** — 종전엔 워크플로·RED proof 가 이 스모크를 npm alias 로 불렀고
+ * trigger 는 alias 존재만 봤다. 그래서 mutation 을 인지하는 decoy alias 하나면
+ * 실제 스모크를 0회 실행하고도 전체 GREEN 이 가능했다.
+ * → 워크플로가 이 파일을 **경로로 직접 호출**하고(alias 경유 금지),
+ *   alias ↔ 파일 경로를 **양방향 exact** 로 고정한다(trigger 스모크).
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const SCRIPT_ALIAS = "qa:stats-freshness";
 const VERIFIER_REL = "scripts/qa/stats-source-truth-verify.mjs";
@@ -67,7 +90,7 @@ const wrapperSource = readFileSync(WRAPPER_REL, "utf8");
 check("freshness 워크플로가 이 alias 를 호출", () => {
   const workflow = readFileSync(FRESHNESS_WORKFLOW, "utf8");
   assert.ok(
-    new RegExp(`npm run ${SCRIPT_ALIAS}\\b`).test(workflow),
+    new RegExp(`npm run ${SCRIPT_ALIAS}(?![\\w-])`).test(workflow),
     `${FRESHNESS_WORKFLOW} 가 \`npm run ${SCRIPT_ALIAS}\` 를 호출해야 한다`,
   );
 });
@@ -217,24 +240,160 @@ check("env 로 안정성 파라미터를 낮출 수 없음(floor clamp)", () => 
       `안정 window 하한(180000ms)이 env 로 뚫렸다 — actual ${window}ms`,
     );
     assert.ok(cooldown >= 15_000, `cooldown 하한(15000ms)이 env 로 뚫렸다 — actual ${cooldown}ms`);
-    assert.ok(attempts >= 6, `attempts 하한(6)이 env 로 뚫렸다 — actual ${attempts}`);
+    // attempts 하한은 고정값이 아니라 window/cooldown 에서 파생된다(삼순 P1).
+    const needed = Math.ceil(window / cooldown) + 1;
+    assert.ok(
+      attempts >= needed,
+      `attempts 하한이 env 로 뚫렸다 — actual ${attempts}, 필요 ${needed}`,
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
 /* ── seam 이 프로덕션 경로로 새지 않는지 ───────────────────────── */
+/* ══ self-binding — 이 스모크가 decoy 로 갈려달 수 없게 ══════════
+ *
+ * ⚠︎ 삼순 2차 NO-GO(b): 종전엔 워크플로·RED proof 가 이 스모크를 npm alias 로 불렀고
+ * trigger 는 alias 존재만 봤다. 그래서 mutation 을 인지하는 decoy alias 하나면
+ * 실제 스모크를 0회 실행하고도 전체 GREEN 이 가능했다.
+ *
+ * 이제 워크플로는 이 파일을 **경로로 직접** 부르고, alias 는 유지하되 그 alias 가
+ * 정확히 이 파일을 가리키는지를 **양방향 exact** 로 고정한다. 자기 자신을 직접
+ * 검사하므로 decoy 로 바꾸는 순간 이 assertion 이 죽는다. */
+const SELF_REL = path.relative(process.cwd(), fileURLToPath(import.meta.url));
+const CONTRACT_ALIAS = "qa:stats-freshness-contract";
+const CONTRACT_WORKFLOW = ".github/workflows/stats-contract-gate.yml";
+
+check(`alias \`${CONTRACT_ALIAS}\` ↔ 이 파일 exact 양방향 결속`, () => {
+  const alias = pkg.scripts[CONTRACT_ALIAS];
+  assert.ok(alias, `package.json 에 \`${CONTRACT_ALIAS}\` 가 없다`);
+  const aliasMatch = /^node\s+(\S+\.mjs)$/.exec(alias.trim());
+  assert.ok(
+    aliasMatch,
+    `\`${CONTRACT_ALIAS}\` 는 node 스크립트를 실행해야 한다 (actual: ${alias})`,
+  );
+  assert.equal(
+    path.normalize(aliasMatch[1]),
+    path.normalize(SELF_REL),
+    `\`${CONTRACT_ALIAS}\` 가 이 스모크(${SELF_REL})를 가리키지 않는다 —`
+      + " decoy alias 로 갈려놓고 실제 검증을 0회 실행할 수 있다",
+  );
+});
+
+check("contract 게이트가 이 스모크를 경로로 직접 호출(alias 경유 금지)", () => {
+  const workflow = readFileSync(CONTRACT_WORKFLOW, "utf8");
+  assert.ok(
+    workflow.includes(`node ${SELF_REL}`),
+    `${CONTRACT_WORKFLOW} 가 \`node ${SELF_REL}\` 를 직접 호출해야 한다 —`
+      + " npm alias 경유로 부르면 decoy alias 하나로 전체를 우회할 수 있다",
+  );
+  assert.ok(
+    !new RegExp(`npm run ${CONTRACT_ALIAS}(?![\\w-])`).test(workflow),
+    `${CONTRACT_WORKFLOW} 가 이 스모크를 npm alias 로 부르면 안 된다(decoy 우회 경로)`,
+  );
+});
+
 check("CONTRACT_TEST seam 은 래퍼 안에서만 참조", () => {
   assert.ok(
     /STATS_FRESHNESS_CONTRACT_TEST/.test(wrapperSource),
     "계약 테스트 seam 이 사라졌다 — 결정론적 행동 검증이 불가능해진다",
   );
-  const workflows = [FRESHNESS_WORKFLOW, ".github/workflows/stats-contract-gate.yml"];
+  const workflows = [FRESHNESS_WORKFLOW, CONTRACT_WORKFLOW];
   for (const file of workflows) {
     assert.ok(
       !/STATS_FRESHNESS_CONTRACT_TEST/.test(readFileSync(file, "utf8")),
       `${file} 이 CONTRACT_TEST seam 을 켜면 안 된다`,
     );
+  }
+});
+
+/* ══ 3) prod-mode bypass — seam 이 꺼졌을 때 검증기가 실제로 도는가 ══
+ *
+ * ⚠︎ 삼순 2차 NO-GO 의 핵심. 위 시나리오는 전부 seam=1 로 돌았고 floor 테스트는
+ * config 라인만 읽었다. 그래서 config 출력 직후 `if (!CONTRACT_TEST) process.exit(0)`
+ * 한 줄이면 전부 통과하고, 운영에서는 live equality 가 **0회** 수행된다.
+ *
+ * 여기서는 seam 을 **비운 채**(= 운영과 동일) 래퍼를 띄우고, 검증기가 spawn 되면
+ * marker 파일을 쓰게 해 그 흔적을 직접 관측한다. 안정 window(3분)를 다 기다리지 않고
+ * **첫 회차 spawn** 만 확인한 뒤 종료시킨다. */
+check("prod 모드에서 검증기가 실제로 실행됨(seam bypass 차단)", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "freshness-prod-"));
+  try {
+    mkdirSync(path.join(root, "scripts", "qa"), { recursive: true });
+    copyFileSync(WRAPPER_REL, path.join(root, WRAPPER_REL));
+
+    const marker = path.join(root, "verifier-invoked.marker");
+    writeFileSync(
+      path.join(root, VERIFIER_REL),
+      [
+        "import { appendFileSync } from 'node:fs';",
+        `appendFileSync(${JSON.stringify(marker)}, 'invoked\\n');`,
+        "console.log('stub: ok');",
+        "process.exit(0);",
+      ].join("\n"),
+    );
+
+    const child = spawnSync(process.execPath, [WRAPPER_REL], {
+      cwd: root,
+      encoding: "utf8",
+      // seam 을 명시적으로 비운다 = 운영과 동일한 경로.
+      env: { ...process.env, STATS_FRESHNESS_CONTRACT_TEST: "" },
+      // 안정 window 를 다 기다리지 않는다 — 첫 spawn 만 보면 충분하다.
+      timeout: 20_000,
+      killSignal: "SIGKILL",
+    });
+    const output = `${child.stdout ?? ""}${child.stderr ?? ""}`;
+
+    assert.ok(
+      existsSync(marker),
+      "prod 모드에서 검증기가 한 번도 실행되지 않았다 — seam 이 꺼졌을 때"
+        + " 조기 종료하는 우회로가 있으면 운영에서 live equality 가 0회 수행된다"
+        + `\n${output}`,
+    );
+    assert.ok(
+      !/CONTRACT_TEST=1/.test(output),
+      `seam 을 비워도 계약테스트 모드로 동작했다\n${output}`,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+/* ══ 4) 도달 가능성 — 안정된 데이터가 실제로 PASS 할 수 있는가 ══
+ *
+ * 삼순 P1: 고정 attempts 6 은 180s/15s 에서 경과시간 최대 약 75s 밖에 안 돼
+ * **안정된 데이터조차 영원히 PASS 불가**였다. 통과 불가능한 게이트는
+ * 사실상 데이터 PR 을 영구 차단한다. attempts 를 window/cooldown 에서 파생시켜
+ * 그 관계가 유지되는지 prod 설정 config 로 확인한다. */
+check("prod 설정이 안정 window 에 도달 가능(attempts 파생)", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "freshness-reach-"));
+  try {
+    mkdirSync(path.join(root, "scripts", "qa"), { recursive: true });
+    copyFileSync(WRAPPER_REL, path.join(root, WRAPPER_REL));
+    writeFileSync(
+      path.join(root, VERIFIER_REL),
+      "console.error('  - source_unreachable: stub'); process.exit(1);",
+    );
+    const child = spawnSync(process.execPath, [WRAPPER_REL], {
+      cwd: root,
+      encoding: "utf8",
+      env: { ...process.env, STATS_FRESHNESS_CONTRACT_TEST: "" },
+      timeout: 30_000,
+      killSignal: "SIGKILL",
+    });
+    const output = `${child.stdout ?? ""}${child.stderr ?? ""}`;
+    const config = /stability window (\d+)ms · cooldown (\d+)ms · max attempts (\d+)/.exec(output);
+    assert.ok(config, `config 라인을 찾지 못했다\n${output}`);
+    const [, window, cooldown, attempts] = config.map(Number);
+    const needed = Math.ceil(window / cooldown) + 1;
+    assert.ok(
+      attempts >= needed,
+      `attempts ${attempts} 로는 안정 window ${window}ms 를 덮을 수 없다(필요 ${needed}).`
+        + " 안정된 데이터조차 PASS 불가능해져 데이터 PR 이 영우히 머지되지 않는다",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
 

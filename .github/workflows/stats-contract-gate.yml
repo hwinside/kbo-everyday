@@ -87,8 +87,12 @@ jobs:
         # = live strict equality 가 0회 수행된다.
         #
         # 여기서는 네트워크 없이 스텁 검증기로 래퍼의 **판정 행동**을 직접 검증한다
-        # (안정 PASS/안정 FAIL/flap/unreachable/window 미달/floor clamp).
-        run: npm run qa:stats-freshness-contract
+        # (안정 PASS/안정 FAIL/flap/unreachable/window 미달/floor clamp/prod-mode bypass).
+        #
+        # ⚠️ npm alias 가 아니라 **파일 경로로 직접** 부른다(삼순 2차 NO-GO).
+        # alias 로 부르면 mutation 을 인지하는 decoy alias 하나로 실제 스모크를 0회
+        # 실행하고도 전체 GREEN 을 만들 수 있다 — trigger 는 alias 존재만 보기 때문이다.
+        run: node scripts/qa/stats-freshness-contract-smoke.mjs
 
       # ── 검증력 증명 (결함주입) ────────────────────────────────
       # 아래 스텝들은 "게이트가 통과하면 job 이 죽는" 구조다.
@@ -201,7 +205,7 @@ jobs:
             pkg.scripts['qa:stats-freshness'] = 'echo ok';
             fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
           "
-          if npm run qa:stats-freshness-contract; then
+          if node scripts/qa/stats-freshness-contract-smoke.mjs; then
             echo "::error::freshness alias 를 no-op 으로 바꿨는데 게이트가 통과했다 — live 대조를 지울 수 있다"
             git checkout -- package.json
             exit 1
@@ -219,7 +223,7 @@ jobs:
               'process.exit(0);\n',
             );
           "
-          if npm run qa:stats-freshness-contract; then
+          if node scripts/qa/stats-freshness-contract-smoke.mjs; then
             echo "::error::freshness 래퍼를 exit(0) 로 비웠는데 게이트가 통과했다"
             git checkout -- scripts/qa/stats-freshness-verify.mjs
             exit 1
@@ -251,7 +255,7 @@ jobs:
               src.slice(0, idx) + tail.replace(/process\.exit\(1\);\s*$/, 'process.exit(0);\n'),
             );
           "
-          if npm run qa:stats-freshness-contract; then
+          if node scripts/qa/stats-freshness-contract-smoke.mjs; then
             echo "::error::불안정 판독을 통과로 바꿨는데 게이트가 통과했다 — temporal green 재생산"
             git checkout -- scripts/qa/stats-freshness-verify.mjs
             exit 1
@@ -273,12 +277,56 @@ jobs:
             }
             fs.writeFileSync(p, src.replace(needle, 'const MIN_STABILITY_WINDOW_MS = 1;'));
           "
-          if npm run qa:stats-freshness-contract; then
+          if node scripts/qa/stats-freshness-contract-smoke.mjs; then
             echo "::error::안정 window 하한을 1ms 로 낮췄는데 게이트가 통과했다 — flip 주기 안 2회 판독으로 회귀 가능"
             git checkout -- scripts/qa/stats-freshness-verify.mjs
             exit 1
           fi
           git checkout -- scripts/qa/stats-freshness-verify.mjs
+          git diff --exit-code
+
+      - name: RED proof — prod-mode bypass must fail
+        # config 출력 직후 seam 이 꺼지면 조기 종료하는 우회로(삼순 2차 NO-GO)가
+        # 실제로 잡히는지. 이게 없으면 운영에서 검증기 0회 실행 + 전체 GREEN 이 된다.
+        run: |
+          node -e "
+            const fs = require('fs');
+            const p = 'scripts/qa/stats-freshness-verify.mjs';
+            const src = fs.readFileSync(p, 'utf8');
+            const needle = 'const sleep = (ms) =>';
+            if (!src.includes(needle)) {
+              console.error('주입 지점을 찾지 못했다 — 게이트 대상 코드가 바뀌었다');
+              process.exit(1);
+            }
+            fs.writeFileSync(
+              p,
+              src.replace(needle, 'if (!CONTRACT_TEST) process.exit(0);\n\n' + needle),
+            );
+          "
+          if node scripts/qa/stats-freshness-contract-smoke.mjs; then
+            echo "::error::prod 모드에서 검증기를 건너뛰게 만들었는데 게이트가 통과했다 — live equality 0회"
+            git checkout -- scripts/qa/stats-freshness-verify.mjs
+            exit 1
+          fi
+          git checkout -- scripts/qa/stats-freshness-verify.mjs
+          git diff --exit-code
+
+      - name: RED proof — decoy alias must not replace the real smoke
+        # 이 job 이 스모크를 **경로로** 부르는지. alias 로 부르면 decoy alias 하나로
+        # 실제 스모크를 0회 실행하고도 전체 GREEN 을 만들 수 있다.
+        run: |
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            pkg.scripts['qa:stats-freshness-contract'] = 'echo decoy';
+            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+          if node scripts/qa/stats-freshness-contract-smoke.mjs; then
+            echo "::error::contract alias 를 decoy 로 바꿨는데 게이트가 통과했다"
+            git checkout -- package.json
+            exit 1
+          fi
+          git checkout -- package.json
           git diff --exit-code
 
       - name: RED proof — oracle must share the crawler pagination core
