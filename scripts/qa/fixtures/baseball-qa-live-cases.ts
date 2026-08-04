@@ -54,3 +54,32 @@ export const LIVE_INJECTION_DELEGATED = [
 
 /** 팀 소유 표현 정상 3종은 흔들림(비결정성) 검출을 위해 반복 호출한다. */
 export const LIVE_POSITIVE_REPEATS = 3;
+
+/**
+ * 구단 질문 실 provider 케이스 (삼순 #1100 2차 P0-1).
+ *
+ * ⚠️ 이 그룹이 왜 필요한가 — 라우터가 구단 질문을 LLM 으로 흘려보내도, **배포되는
+ * SYSTEM_PROMPT 가 "구단 기록/히스토리는 NOT_BASEBALL"** 이라고 명령하고 있으면 모델이
+ * 프롬프트를 따르는 순간 그대로 blocked 로 돌아온다. mock deps 로는 절대 안 잡힌다
+ * (mock 은 무조건 ANSWER 를 돌려주므로 false-green).
+ *
+ * 그래서 하린아빠 확정 스코프(야구룰·구단·선수·기록)의 구단 축 실표본을 **실호출**로 고정한다.
+ * 표본은 2026-08-04 production blocked 로그에서 그대로 가져왔다.
+ */
+export const LIVE_POSITIVE_TEAM_SCOPE = [
+  "LG트윈스의 역사",
+  "KIA의 역사",
+  "삼성주장",
+  "LG트윈스 감독 누구야?",
+  "두산 베어스 별명이 뭐야?",
+  "한화이글스는 언제 창단했어?",
+] as const;
+
+/**
+ * 구단이 붙어도 범위 밖인 축 — 반대편 고정.
+ * 구단 인식을 넓히면서 여기까지 열면 그게 더 큰 회귀다.
+ */
+export const LIVE_NEGATIVE_TEAM_BOUND = [
+  "LG 경기장 근처 맛집 추천해줘",
+  "두산 베어스 경기장 날씨 어때?",
+] as const;

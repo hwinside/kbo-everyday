@@ -32,7 +32,49 @@ export const BATTER_METRICS = {
   hr: { label: "홈런", aliases: ["홈런", "홈란", "아치"], kind: "count" },
   tb: { label: "루타", aliases: ["루타", "총루타"], kind: "count" },
   rbi: { label: "타점", aliases: ["타점"], kind: "count" },
+  // ⚠️ 아래 5개는 `player_stats_batter` 테이블에 **컬럼이 없다**. 앱이 실제로 서빙하는
+  // 정본은 `/api/stats` 응답이라 조회 소스를 그쪽으로 분리한다
+  // (`SERVED_ONLY_BATTER_METRICS`). static JSON 이 아니다 — `/api/stats` 는 static 위에
+  // live Runner map 을 덮어쓴다(삼순 3차 P0-3 실측: 이주형 sb static 4 vs 앱 0).
+  //
+  // 하린아빠 2026-08-04 20:42 "도루 OPS가 왜 없어? / 우리가 다 제공하고 있는 데이터인데".
+  // 실제로 선수 상세·팀 기록·타이틀 탭이 전부 이 값을 표시하고 있었다. 내가 DB 테이블
+  // 하나만 보고 "데이터가 없다"고 단정한 것이 틀렸다.
+  sb: { label: "도루", aliases: ["도루"], kind: "count" },
+  cs: { label: "도루실패", aliases: ["도루실패", "도루자"], kind: "count" },
+  obp: { label: "출루율", aliases: ["출루율"], kind: "rate" },
+  slg: { label: "장타율", aliases: ["장타율"], kind: "rate" },
+  ops: { label: "OPS", aliases: ["ops"], kind: "rate" },
+  // WAR 은 **저장된 칼럼이 아니라 기본 스탬에서 파생**된다. 그래서 "DB 에 없다"는
+  // 이유로 못 답한다고 하면 틀리다 — 앱은 선수 상세페이지·기록실·세이버 카드에서
+  // 이미 보여주고 있다. 화면과 **같은 함수**(`calcBatterSaber`)로 만든다
+  // (`served-record.ts` · `batterWarOf`). 소수 2자리 표기도 화면과 같다.
+  war: { label: "WAR", aliases: ["war"], kind: "rate" },
+  // ⚠️ bare `wRC` 는 여기 없다. wRC 와 wRC+ 는 **다른 지표**다 — wRC 는 가중 득점 생산량(counting),
+  // wRC+ 는 리그·구장 보정 지수(100=평균). 우리가 계산하는 건 wRC+ 뿐이라, `wRC` 질문에
+  // wRC+ 값을 주면 다른 지표를 속여 답하는 것이 된다(삼순 #1100 8차 P0-2).
+  wrc_plus: { label: "wRC+", aliases: ["wrc+", "wrc플러스"], kind: "rate" },
 } as const;
+
+/**
+ * DB 테이블이 아니라 **앱이 서빙하는 `/api/stats` 응답**에서 읽어야 하는 타자 지표.
+ *
+ * `player_stats_batter` 는 KBO/Naver cron upsert 결과인데 sb·cs·obp·slg·ops 컬럼이 없다.
+ * 반면 앱 화면(선수 상세·팀 기록·타이틀)은 `/api/stats` 로 이 값들을 보여주고 있다.
+ *
+ * ⚠️ **static JSON 을 직접 읽으면 안 된다**(삼순 #1100 3차 P0-3). `/api/stats` 는 static row
+ * 위에 전페이지 live Runner map 을 마지막에 덮어쓴다. Production 실측(2026-08-04):
+ * 이주형(`50167`) `sb` — static JSON `4` vs 앱 서빙 `0`. static 을 읽으면 봇이 앱과
+ * 다른 숫자를 말한다 — 이 기능의 유일한 계약이 깨진다. 그래서 앱과 **같은 최종 경계**를 본다.
+ *
+ * 겹치는 지표(games·hits·hr·rbi…)는 DB row 와 교차검증해 두 소스가 갈라지면 fail-close 한다.
+ */
+export const SERVED_ONLY_BATTER_METRICS = ["sb", "cs", "obp", "slg", "ops", "war", "wrc_plus"] as const;
+export type ServedOnlyBatterMetric = (typeof SERVED_ONLY_BATTER_METRICS)[number];
+
+export function isServedOnlyMetric(metric: string): metric is ServedOnlyBatterMetric {
+  return (SERVED_ONLY_BATTER_METRICS as readonly string[]).includes(metric);
+}
 
 /** 답변 가능한 투수 지표. Naver 폴백이 매 갱신마다 직접 주는 필드만. */
 export const PITCHER_METRICS = {
@@ -67,6 +109,16 @@ export const UNTRUSTED_METRIC_ALIASES = [
   "타석", "희생번트", "희생타", "희생플라이", "번트타", "사사구", "pa", "sac", "sf",
 ] as const;
 
+/**
+ * ⚠️ `wrc` 는 `타석`(pa) 알리아스 `pa` 를 **문자열로 포함**한다(`w-r-c` 가 아니라
+ * `wrc+` 표기의 NFKC 정규화 결과가 아니며, 실제로는 `김도영 wRC 얼마야` 같은
+ * 질문이 untrusted 판정에 먼저 걸렸다). 지표어를 먼저 보면 몸통이 바뀌므로,
+ * untrusted 검사 전에 **명시적으로 면제**할 지표 패턴을 둔다.
+ */
+const UNTRUSTED_EXEMPT_PATTERNS: ReadonlyArray<RegExp> = [
+  /wrc\+?/gi,
+];
+
 /** 시즌 표현. 올해만 답한다 — 과거 시즌 row 가 DB 에 없기 때문이다. */
 const CURRENT_SEASON_WORDS = ["올해", "올시즌", "이번시즌", "금년", "올해의", String(SUPPORTED_SEASON)];
 const UNSUPPORTED_SEASON_WORDS = [
@@ -91,7 +143,23 @@ function hasUnsupportedSeason(value: string): boolean {
 }
 
 /** 수치를 묻는 문장인가. 이게 false 면 기록 경로가 아니다(서술형 RAG 로 간다). */
+/** wRC+ 표기(공백 허용). bare wRC 와 구분하는 유일한 신호다. */
+
+/** `wRC+` · `wRC 플러스` — 우리가 실제로 계산하는 지표. */
+const WRC_PLUS_PATTERN = /wrc\s*\+|wrc\s*플러스/i;
+
+/** wRC 토큰 자체. bare 여부 판정에 쓴다. */
+const BARE_WRC_PATTERN = /wrc/i;
+
 const NUMERIC_QUESTION = /몇|얼마|개야|개나|개\?|기록|스탯|성적|알려|보여|어때|어떻게\s*돼|쳤|던졌|했/;
+/**
+ * 서술·평가를 묻는 신호. 지표어가 섞여 있어도 **숫자 질문이 아니다**.
+ *
+ * `김도영 홈런 잘 치는 편이야?` 는 홈런 개수가 아니라 평가를 물은 것이라 서술형 RAG 담당이다.
+ * 구단 축의 `TEAM_DESCRIPTIVE_ASK` 와 같은 역할·같은 모양 — 선수 축에도 동일하게 둔다.
+ */
+const DESCRIPTIVE_ASK =
+  /잘\s*(?:치|하|때리|던지|막)|못\s*(?:치|하)|어떤\s*선수|유명|이야기|역사|유래|별명|소개|누구/;
 
 export interface SeasonRecordQuery {
   /** 'batter' | 'pitcher' — 어느 테이블을 볼지. */
@@ -124,10 +192,29 @@ export function resolveSeasonRecordIntent(
 ): SeasonRecordIntent {
   const compact = normalize(question);
 
-  if (UNTRUSTED_METRIC_ALIASES.some((alias) => compact.includes(normalize(alias)))) {
+  // ⚠️ 지표어를 먼저 오려낸다 — `wrc` 는 untrusted 알리아스 `pa` 를 문자열로 포함하진
+  // 않지만, 같은 종류의 부분문자열 충돌이 반복되어 명시 면제 목록을 둔다.
+  const untrustedTarget = UNTRUSTED_EXEMPT_PATTERNS.reduce(
+    (acc, pattern) => acc.replace(pattern, ""),
+    compact,
+  );
+  if (UNTRUSTED_METRIC_ALIASES.some((alias) => untrustedTarget.includes(normalize(alias)))) {
     return { kind: "untrusted_metric" };
   }
-  if (!NUMERIC_QUESTION.test(compact)) return { kind: "none" };
+  // 서술·평가형은 지표어가 섞여 있어도 숫자 질문이 아니다 — 서술형 RAG 담당.
+  if (DESCRIPTIVE_ASK.test(compact)) return { kind: "none" };
+  // bare `wRC` 는 **명시 거절**한다(삼순 #1100 8차 P0-1).
+  // wRC(가중 득점 생산량) ≠ wRC+(리그·구장 보정 지수). 우린 wRC+ 만 계산하므로
+  // bare wRC 에 wRC+ 값을 주면 다른 지표를 속여 답하는 것이다 — 도루·OPS·WAR 은
+  // "앱이 이미 그 값을 보여준다"라 열었지만, 이건 앱이 보여주는 값 자체가 다르다.
+  if (BARE_WRC_PATTERN.test(compact) && !WRC_PLUS_PATTERN.test(compact)) {
+    return { kind: "untrusted_metric" };
+  }
+  // ⚠️ 수치 의문 판정을 여기서 끝내지 않는다.
+  // `김도영 타율`·`김도영 OPS`·`김도영 WAR` 처럼 **지표명만 적은** 질문이 의문사가 없다는
+  // 이유로 전부 fail-close 됐다(실측). 유저가 지표명을 적은 순간 원하는 건 그 값이다.
+  // 그래서 의문사 확인은 **지표 매칭 뒤로** 미룬다(아래 `explicitlyNumeric` 사용부).
+  const explicitlyNumeric = NUMERIC_QUESTION.test(compact);
 
   // substring 매칭은 1글자 `패`를 `패스트볼`에서 잡고, `승`을 `승부`에서 잡는다.
   // 지표별 경계 regex를 명시해 합성어를 기록 질문으로 오답 변환하지 않는다.
@@ -160,9 +247,15 @@ export function resolveSeasonRecordIntent(
     { table: "pitcher", metric: "games", pattern: /등판(?:\s*(?:경기|수))?/ },
     // `몇승/몇 승/승수/10승`은 허용하되 승부·승률은 제외.
     { table: "pitcher", metric: "wins", pattern: /(?:몇\s*승(?:수)?|\d+\s*승(?:수)?|승수|승\s*(?:몇|개))(?!부|률|리)/ },
-    { table: "pitcher", metric: "losses", pattern: /(?:몇\s*패(?:수)?|\d+\s*패(?:수)?|패수|패\s*(?:몇|개))(?!스트|배|션)/ },
+    // ⚠️ `(?<!실|승)` — `도루 실패 몇 개`가 "실패 몇"으로 잡혀 **투수 패전 수**로 답하던
+    // 회귀를 막는다(2026-08-04 도루 지표 추가 중 실측). `승패`도 같은 함정이다.
+    { table: "pitcher", metric: "losses", pattern: /(?:몇\s*패(?:수)?|\d+\s*패(?:수)?|패수|(?<!실|승)패\s*(?:몇|개))(?!스트|배|션)/ },
 
     // 타자
+    // ⚠️ `wRC+`·`wRC 플러스` 만 잡는다. bare `wRC` 는 위에서 명시 거절된다 —
+    // wRC(가중 득점 생산량)와 wRC+(리그·구장 보정 지수)는 다른 지표고 우리는 wRC+ 만
+    // 계산한다. 같은 값으로 답하면 **다른 지표를 속여 답하는 것**이다(삼순 #1100 8차 P0-1).
+    { table: "batter", metric: "wrc_plus", pattern: /wrc\s*\+|wrc\s*플러스/i },
     { table: "batter", metric: "avg", pattern: /(?<!장)타율|타률|애버리지/ },
     { table: "batter", metric: "doubles", pattern: /(?:2|이)\s*루타|투\s*베이스/ },
     { table: "batter", metric: "triples", pattern: /(?:3|삼)\s*루타|쓰리\s*베이스/ },
@@ -172,6 +265,16 @@ export function resolveSeasonRecordIntent(
     { table: "batter", metric: "ab", pattern: /타수/ },
     { table: "batter", metric: "runs", pattern: /득점/ },
     { table: "batter", metric: "hits", pattern: /안타/ },
+    // 도루 계열 — `도루실패/도루자`를 `도루`보다 **먼저** 둔다.
+    // `도루` 패턴이 먼저 매칭되면 `도루 실패 몇 개`가 도루 성공 수로 답해진다.
+    { table: "batter", metric: "cs", pattern: /도루\s*(?:실패|자)/ },
+    { table: "batter", metric: "sb", pattern: /도루/ },
+    // 출루율·장타율·OPS. `(?<!장)타율` 이 위에 있어 `장타율`은 avg 로 안 샌다.
+    { table: "batter", metric: "obp", pattern: /출루율/ },
+    { table: "batter", metric: "slg", pattern: /장타율/ },
+    { table: "batter", metric: "ops", pattern: /\bops\b|오피에스/i },
+    // WAR — `워`로 읽힌 한글 표기는 넣지 않는다(일반어 오탐). 영문 경계만.
+    { table: "batter", metric: "war", pattern: /\bwar\b/i },
     // `출장`은 타자 전용 표현. 공통어 `경기 수`보다 먼저 매칭돼야 표현이 보존된다.
     { table: "batter", metric: "games", pattern: /출장(?:\s*(?:경기|수))?/ },
     // 공통어 — 여기서만 포지션 결속이 허용된다.
@@ -180,7 +283,12 @@ export function resolveSeasonRecordIntent(
 
   const normalized = normalizeWithSpaces(question);
   let best = patterns.find((entry) => entry.pattern.test(normalized));
+  // 지표어가 없으면 이 경로 대상이 아니다. 의문사만 있고 지표가 없는 문장(`김도영 어때?`)은
+  // 여기서 걸러져 서술형 RAG 로 간다.
   if (!best) return { kind: "none" };
+  // 지표어는 잡혔는데 의문 표현이 전혀 없고, 지표명 외의 서술 요구도 없는 경우 —
+  // `김도영 타율` 같은 형태다. 이건 값 요청으로 본다(위 주석 참조).
+  void explicitlyNumeric;
   // 공통어 `경기 수`만 이름으로 확정된 로스터 포지션에 결속한다(투수면 pitcher).
   // explicit `등판`/`출장`까지 뒤집으면 `문보경 등판 수`에 타자 경기 수를 답하는 오답이 된다.
   if (best.ambiguous && preferredTable) best = { ...best, table: preferredTable };

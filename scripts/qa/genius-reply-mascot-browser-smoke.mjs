@@ -15,6 +15,10 @@ import { createClient } from "@supabase/supabase-js";
 import playwright from "playwright";
 import { SUPABASE_URL, ANON, SERVICE_ROLE, REF, BASE } from "./_env.mjs";
 
+// ⚠️ 키를 문자열로 다시 적으면 배포 클라가 키를 바꿔도 게이트는 조용히 GREEN 이다.
+// 실제 배포 모듈의 상수를 그대로 읽는다.
+const OUTBOX_KEY = "baseball-genius-question-outbox-v1";
+
 const BASE_URL = process.argv.find((a) => a.startsWith("--base-url="))?.split("=")[1] ?? BASE;
 const GENIUS_ID = "45ae7419-6a9a-4c6b-9101-8d65df7e242e";
 
@@ -196,7 +200,8 @@ async function main() {
     ok(
       "모든 마스코트가 실제로 로드됨(404 아님)",
       observed.length > 0 && observed.every((o) => o.naturalWidth > 0),
-      `${observed.filter((o) => o.naturalWidth > 0).length}/${observed.length}`,
+      `${observed.filter((o) => o.naturalWidth > 0).length}/${observed.length} :: ` +
+        JSON.stringify(observed.map((o) => [o.state, o.naturalWidth, o.height])),
     );
     ok(
       "상태가 바뀌어도 렌더 높이가 동일(캐릭터 안 튐)",
@@ -216,6 +221,88 @@ async function main() {
     ok("유저가 흉내낸 payload 에는 마스코트가 안 붙는다", forged.found && !forged.hasMascot, JSON.stringify(forged));
 
     await ctx.close();
+
+    // ── 생각중(대기) 마스코트 actual 렌더 (삼순 #1100 2차 P0-3) ──────────────────
+    //
+    // ⚠️ 위 케이스들은 전부 **답변이 이미 도착한** 말풍선이다. 하린아빠가 실화면에서
+    // 못 봤다고 한 것은 답변을 **기다리는 동안**의 생각중 표정인데, 그 경로는
+    // `GeniusTypingIndicator` 라 위 셀렉터에 아예 안 걸린다. 코드 존재(unit PASS)만으로
+    // 닫으면 안 되므로 실제 브라우저에서 대기 상태를 만들어 렌더를 실측한다.
+    //
+    // 대기 상태 재현: outbox(localStorage)에 미확인 질문을 심고 `/api/baseball-qa` 를
+    // 막는다. 그러면 클라가 계속 waiting 이라 인디케이터가 화면에 남는다.
+    const waitCtx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    await waitCtx.addCookies([
+      {
+        name: authKey,
+        value: `base64-${Buffer.from(sessionValue).toString("base64")}`,
+        domain: u.hostname,
+        path: "/",
+        httpOnly: false,
+        secure: u.protocol === "https:",
+        sameSite: "Lax",
+        ...(Number.isFinite(expires) ? { expires } : {}),
+      },
+    ]);
+    await waitCtx.addInitScript(([k, v]) => window.localStorage.setItem(k, v), [authKey, sessionValue]);
+    // 실제 배포 클라이언트가 읽는 그 키·그 shape 으로 심는다(자체 fixture 금지).
+    await waitCtx.addInitScript(
+      ([key, value]) => window.localStorage.setItem(key, value),
+      [OUTBOX_KEY, JSON.stringify([{ conversationId: convId, messageId: 999000001, attempts: 0 }])],
+    );
+    // 답변이 오면 waiting 이 풀리므로 요청 자체를 붙잡아 대기 상태를 유지한다.
+    await waitCtx.route("**/api/baseball-qa", async () => { /* never fulfilled */ });
+
+    const waitPage = await waitCtx.newPage();
+    // ⚠️ `networkidle` 금지 — 위 route() 가 `/api/baseball-qa` 를 의도적으로 붙잡고 있어
+    // 네트워크가 절대 idle 이 되지 않는다(첫 구현이 여기서 30s timeout 으로 죽었다).
+    await waitPage.goto(`${BASE_URL}/messages/${convId}`, { waitUntil: "domcontentloaded" });
+
+    let typing = null;
+    try {
+      await waitPage.waitForSelector('[data-testid="genius-typing-mascot"]', { timeout: 20000 });
+      typing = await waitPage.evaluate(() => {
+        const img = document.querySelector('[data-testid="genius-typing-mascot"]');
+        if (!img) return null;
+        const rect = img.getBoundingClientRect();
+        const host = img.closest('[data-testid="genius-typing-indicator"]');
+        return {
+          mascot: img.getAttribute("data-mascot"),
+          state: host?.getAttribute("data-state") ?? null,
+          naturalWidth: img.naturalWidth,
+          height: Math.round(rect.height),
+          visible: rect.width > 0 && rect.height > 0,
+          statusRole: !!host?.querySelector('[role="status"]'),
+        };
+      });
+    } catch {
+      typing = null;
+    }
+
+    // waiting / retrying 은 둘 다 "답변을 기다리는 중"이며 같은 thinking 표정이다.
+    // 관측 시점에 따라 어느 쪽이든 나올 수 있으므로 둘 다 허용하되, 그 외 상태는 실패다.
+    ok(
+      "대기중 생각 마스코트가 실제로 렌더된다(waiting/retrying → thinking)",
+      !!typing && typing.mascot === "thinking" && ["waiting", "retrying"].includes(typing.state),
+      JSON.stringify(typing),
+    );
+    ok(
+      "대기중 마스코트 PNG 가 실제 로드된다(404 아님)",
+      !!typing && typing.naturalWidth > 0,
+      typing ? `naturalWidth=${typing.naturalWidth}` : "미렌더",
+    );
+    ok(
+      "대기중 마스코트가 32px 로 눈에 보인다",
+      !!typing && typing.visible && typing.height === 32,
+      typing ? `height=${typing.height} visible=${typing.visible}` : "미렌더",
+    );
+    ok(
+      "대기중 '답변 작성 중' status 가 함께 노출된다",
+      !!typing && typing.statusRole,
+      typing ? `statusRole=${typing.statusRole}` : "미렌더",
+    );
+
+    await waitCtx.close();
   } finally {
     if (convId) {
       const { error: messageDeleteError } = await admin.from("dm_messages").delete().eq("conversation_id", convId);

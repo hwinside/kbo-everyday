@@ -24,6 +24,7 @@ import {
   DAILY_LIMIT,
   HISTORY_HOLD_ANSWER,
   isAckPhrase,
+  TEAM_STAT_HOLD_ANSWER,
   isPickedPlayerAllowed,
   LIMITED_ANSWER,
   LLM_AMBIGUOUS_ANSWER,
@@ -201,7 +202,20 @@ assert.doesNotMatch(serverSource, /fetchSeasonRecord:\s*async\s*\(/);
 // 로스터 인원은 콜업·트레이드로 상시 변하므로 숫자를 고정하지 않는다(2026-08-01 P0:
 // 하드코딩 878이 자동 roster PR을 영구 막았다). 계약은 "선차단 SSOT가 roster JSON이고 비어있지 않다".
 assert.ok(playersRoster.length > 0, "선수 선차단 SSOT는 roster JSON이며 비어 있으면 안 됨");
-assert.match(serverSource, /import playersRoster from "@\/lib\/constants\/players-roster\.json"/);
+// production loader seam 결속 (삼순 8차 P0-2): 서버가 인라인 loader 를 다시 들면
+// 게이트가 그 분기를 실행할 수 없어 `return []` 변종이 GREEN 으로 통과한다.
+// 주입값은 반드시 import 한 seam 함수 **그 자체**여야 한다.
+assert.match(serverSource, /import \{\s*loadRosterPlayers,\s*ROSTER_PLAYERS,\s*\} from "@\/lib\/baseball-qa\/roster\/load-roster-players"/);
+assert.match(serverSource, /loadPlayers: loadRosterPlayers,/);
+// 인라인 loader · 로컬 재정의 재도입 금지.
+assert.doesNotMatch(serverSource, /loadPlayers:\s*async\s*\(/);
+assert.doesNotMatch(serverSource, /function loadPlayers\b/);
+// roster JSON 은 seam 모듈이 직접 읽는다 — 선차단 SSOT 경로가 숙주가 아니어야 한다.
+const rosterSeamSource = readFileSync(
+  path.join(process.cwd(), "src/lib/baseball-qa/roster/load-roster-players.ts"),
+  "utf8",
+);
+assert.match(rosterSeamSource, /import playersRoster from "@\/lib\/constants\/players-roster\.json"/);
 assert.doesNotMatch(serverSource, /\.from\("players_roster"\)/);
 assert.doesNotMatch(routeSource, /룰·용어·기록 질문/);
 assert.doesNotMatch(serverSource, /룰·용어·기록 질문/);
@@ -286,8 +300,28 @@ const players: PlayerRef[] = playersRoster.map(({ name, kboId, team, position, b
 for (const question of ["김도영 타율 알려줘", "류현진 방어율 알려줘", "박해민 도루 몇 개야?"]) {
   assert.equal(routeQuestion(question, seedEntries, players), "history_hold", question);
 }
-for (const question of ["류현진 승수", "LG 순위"]) {
-  assert.equal(routeQuestion(question, seedEntries, players), "history_hold", question);
+// 선수 수치 질문은 지원 allowlist 밖이면 안내로 종결한다(운영 DB 에 컬럼이 없다).
+assert.equal(routeQuestion("류현진 승수", seedEntries, players), "history_hold", "류현진 승수");
+// ⚠️ **구단 서술** 질문은 더 이상 `history_hold` 로 끝내지 않는다 (2026-08-04 하린아빠
+// 18:26 "이런 답변이 이제 나와서는 안 되지" + 삼순 #1100 1차 P0-1).
+// 구단은 확정 답변 범위(야구룰·구단·선수·기록) 안이므로 LLM 2차 가드가 답한다.
+// 종단 계약(유저가 받는 source/answer)은 `qa:team-fullname-routing` 이 감싼다.
+for (const question of ["LG트윈스의 역사", "삼성 주장", "두산베어스 창단"]) {
+  assert.equal(routeQuestion(question, seedEntries, players), "llm_scope_gate", question);
+}
+// ⚠️ 단, **팀 단위 수치**는 다시 `history_hold` 다 (삼순 #1100 2차 P0-2).
+// 구단 자체는 범위 안이지만 팀 집계 정본 DB 가 없어 generic LLM 에 넘기면 숫자를 지어낸다.
+// 안내문은 선수 지표(`HISTORY_HOLD_ANSWER`)가 아니라 순위표로 보내는 `TEAM_STAT_HOLD_ANSWER` 다
+// — 유저가 물은 건 팀 집계이므로 선수 지표 목록을 주면 틀린 안내다.
+// ⚠️ 2026-08-05 계약 변경: 팀 수치는 `history_hold`(고정 안내)가 아니라 **`team_record`**
+// (조회 위임)다. 근거였던 "팀 집계 정본이 없다"가 틀렸다 — `/api/standings`·
+// `/api/team-records` 가 순위·팀타율·팀홈런을 이미 서빙하고 앱 순위탭이 그대로 보여준다
+// (하린아빠 2026-08-04 20:42 "우리가 다 제공하고 있는 데이터인데").
+// 우리가 서빙하는 값을 봇만 "못 답한다"고 하는 건 유저에겐 거짓말이다.
+// 조회 실패·미서빙 지표(상대전적 등)만 안내로 fail-close 한다 — 종단 계약은
+// `qa:team-fullname-routing` 이 answerQuestion 실행으로 감싼다.
+for (const question of ["LG 순위", "LG 팀타율 얼마야?", "두산베어스 홈런 몇 개야?"]) {
+  assert.equal(routeQuestion(question, seedEntries, players), "team_record", question);
 }
 // 과차단 회귀 (삼순 NO-GO blocker 1): "순위"는 team-bound일 때만 실시간 기록이다.
 // 팀 없는 순위 "룰" 질문까지 history_hold로 죽이면 핏스 목적과 정반대가 된다.
@@ -332,9 +366,14 @@ for (const question of [
 ]) {
   assert.equal(routeQuestion(question, seedEntries, players), "blocked", question);
 }
-// team-bound `누구/언제`(감독·창단연도)는 기록 질의가 아니라 범위 밖이므로 `blocked` 유지.
-// 기록/역사 어휘(통산·성적·순위·몇…)만 `history_hold` 로 간다 (삼순 7차 P0-2).
-assert.equal(routeQuestion("LG 트윈스 감독 누구야?", seedEntries, players), "blocked");
+// ⚠️ team-bound `누구`(감독·주장)는 더 이상 `blocked` 가 아니다 (삼순 #1100 1차 P0-1).
+// `누구`는 맥락 없이 보면 사적 인물 질문이라 denylist 에 있지만, 구단이 붙으면
+// `LG트윈스 감독 누구야?` 처럼 **구단 질문**이고, 구단은 확정 답변 범위 안이다.
+assert.equal(routeQuestion("LG 트윈스 감독 누구야?", seedEntries, players), "llm_scope_gate");
+// 단, 구단이 붙어도 날씨·맛집·추천 같은 축은 여전히 범위 밖이다 — 면제를
+// 인물·평가·역사 축으로만 좀게 열었는지 확인한다(면제가 넘치면 과소차단이 된다).
+assert.equal(routeQuestion("LG 경기장 근처 맛집 추천해줘", seedEntries, players), "blocked");
+assert.equal(routeQuestion("두산 경기 날씨 어때?", seedEntries, players), "blocked");
 // 반면 ③ 둘 다 안 걸리는 "모르겠는" 질문은 blocked로 종결하지 않고 LLM 범위판정에 위임한다.
 // 이것들이 바로 사전 확장으로 수렴시키려다 무한루프에 빠졌던 구간이다 — 야구 신호어를 부분
 // 문자열로 포함한 비야구어(`아웃도어`⊃`아웃`)와 사전 미수록 정상 룰 질문이 여기 섞인다.
@@ -704,7 +743,12 @@ async function verifyPipeline() {
     ["류현진 승수", "history_hold", HISTORY_HOLD_ANSWER],
     ["김도영 홈런 몇개", "history_hold", HISTORY_HOLD_ANSWER],
     ["52605 기록", "history_hold", HISTORY_HOLD_ANSWER],
-    ["LG 순위", "history_hold", HISTORY_HOLD_ANSWER],
+    // ⚠️ 구단 **서술** 질문은 여기서 빠졌다 — `history_hold` 로 끝내지 않고 LLM 2차 가드가
+    // 답한다 (2026-08-04 하린아빠 18:26 + 삼순 #1100 1차 P0-1). 종단 계약은
+    // `qa:team-fullname-routing` 이 answerQuestion 실행으로 감싼다.
+    // 반면 팀 **수치**는 fail-close 이며 안내문이 다르다 (삼순 #1100 2차 P0-2).
+    ["LG 순위", "history_hold", TEAM_STAT_HOLD_ANSWER],
+    ["LG 팀타율 얼마야?", "history_hold", TEAM_STAT_HOLD_ANSWER],
     // 게이트 1 actual pipeline 회귀: 조사 결합 4건 모두 history_hold / LLM 0 / cache 0.
     ["김도영의 타율 알려줘", "history_hold", HISTORY_HOLD_ANSWER],
     ["류현진은 방어율이 얼마야?", "history_hold", HISTORY_HOLD_ANSWER],
@@ -717,7 +761,7 @@ async function verifyPipeline() {
     ["르윈 디아즈 홈런 몇개", "history_hold", HISTORY_HOLD_ANSWER],
     ["기예르모 에레디아가 타율 얼마야", "history_hold", HISTORY_HOLD_ANSWER],
   ];
-  // blocker 1 actual pipeline: team-bound "LG 순위"는 위 paths에서 history_hold 유지,
+  // blocker 1 actual pipeline: team-bound 수치("LG 순위")는 위 paths에서 history_hold 유지,
   // 팀 없는 순위 룰 질문은 단일 LLM RULE_TERM 경로로 답변되어야 한다.
   const RANK_RULE_ANSWER = "순위가 같으면 야구 규칙에 따라 상대전적 순으로 가려요.";
   for (const input of rankRuleQuestions) {
@@ -750,16 +794,17 @@ async function verifyPipeline() {
   // 나가도 게이트가 통과한다.
   const deterministicClosures: Array<[string, "blocked" | "history_hold"]> = [
     ["문보경 별명이 뭐야?", "blocked"],
-    ["LG 트윈스 별명이 뭐야?", "blocked"],
     ["김도영과 문보경 중 누가 더 잘해?", "blocked"],
     ["보크 관련 영화 추천해줘", "blocked"],
     ["아웃도어 브랜드 추천해줘", "blocked"],
     ["도루묵 요리법 알려줘", "blocked"],
-    // team-bound `누구/언제`(감독·창단연도)는 기록이 아니라 범위 밖 — 앱 기록 탭을
-    // 안내해봐야 거기 없는 정보다. `역대 최고`는 주관 비교라 애초에 범위 밖.
-    ["LG 트윈스 감독 누구야?", "blocked"],
+    // 팀 없는 `역대 최고`는 주관 비교라 여전히 범위 밖이다.
     ["역대 최고 투수는 누구야?", "blocked"],
   ];
+  // ⚠️ 구단이 지명된 인물·별칭·평가 질문은 이 결정론 종결에서 **빠졌다**
+  // (2026-08-04 하린아빠 18:26 + 삼순 #1100 1차 P0-1). `LG트윈스 감독 누구야?`·
+  // `LG 트윈스 별명이 뭐야?` 는 구단 질문이고, 구단은 확정 답변 범위 안이라
+  // LLM 2차 가드가 판정한다. 종단 계약은 `qa:team-fullname-routing` 이 감싼다.
   for (const [input, expectedSource] of deterministicClosures) {
     const expectedAnswer = expectedSource === "history_hold" ? HISTORY_HOLD_ANSWER : BLOCKED_ANSWER;
     const state = freshState();
@@ -1012,6 +1057,18 @@ async function verifyPipeline() {
       ["류현진 실점 몇 점이야?", "pitcher", "r"],
       ["류현진 자책점 몇 점이야?", "pitcher", "er"],
       ["류현진 WHIP 알려줘", "pitcher", "whip"],
+      // 2026-08-04 추가 — `player_stats_batter` 에 컬럼이 없어 스냅샷(`stats-2026-batters.json`)
+      // 으로 답하는 지표. 앱 화면(선수 상세·팀 기록·타이틀)이 쓰는 그 정본이다.
+      ["박해민 도루 몇 개야?", "batter", "sb"],
+      ["황성빈 도루 실패 몇 개야?", "batter", "cs"],
+      ["김도영 출루율 알려줘", "batter", "obp"],
+      ["구자욱 장타율 알려줘", "batter", "slg"],
+      ["문보경 OPS 알려줘", "batter", "ops"],
+      // 2026-08-05 추가 — WAR 은 저장 컬럼이 아니라 기본 스탯에서 파생되는 값이다
+      // (`calcBatterSaber`). 앱은 선수 상세·기록실·세이버 카드에서 이미 보여주고 있었다.
+      // "DB 에 컬럼이 없다"를 "데이터가 없다"로 읽은 게 `도루`·`OPS` 때와 같은 오판이었다.
+      ["김도영 WAR 알려줘", "batter", "war"],
+      ["김도영 wRC+ 알려줘", "batter", "wrc_plus"],
     ];
     assert.deepEqual(
       new Set(positiveMetrics.filter(([, table]) => table === "batter").map(([, , metric]) => metric)),
@@ -1053,7 +1110,14 @@ async function verifyPipeline() {
       assert.equal(resolveSeasonRecordIntent(input).kind, "unsupported_season", `${input}: 2026 외 차단`);
     }
     assert.equal(resolveSeasonRecordIntent("문보경 2026년 홈런 몇 개야?").kind, "query", "2026 명시 허용");
-    assert.equal(resolveSeasonRecordIntent("문보경 올해 장타율 알려줘").kind, "none", "장타율을 타율로 오답 금지");
+    // ⚠️ 장타율은 2026-08-04 부터 **지원 지표**다(스냅샷 소스). 계약의 본질은
+    // "장타율을 `avg`(타율)로 오답하지 않는다" 이므로 그 축은 그대로 두고 기대값만 바꾼다.
+    // `(?<!장)타율` lookbehind 가 실제로 동작하는지 여기서 잡힌다.
+    {
+      const slg = resolveSeasonRecordIntent("문보경 올해 장타율 알려줘");
+      assert.equal(slg.kind, "query", "장타율은 지원 지표");
+      assert.equal(slg.kind === "query" && slg.query.metric, "slg", "장타율을 타율로 오답 금지");
+    }
     assert.equal(resolveSeasonRecordIntent("류현진 올해 사사구 몇 개야?").kind, "untrusted_metric",
       "사사구는 볼넷+사구 합산 — 단일 bb로 오답 금지");
     assert.equal(resolveSeasonRecordIntent("문보경 작년에 별명이 뭐였어?").kind, "none", "과거 서술형은 RAG 유지");
@@ -2170,6 +2234,50 @@ function verifyAnsweredUpdaterIsBoundInHook() {
   const sf = program.getSourceFile(hookPath);
   assert.ok(sf, "useDM.ts 소스파일 로드 실패");
 
+  // ⚠️ **먼저 관측 콜백 자체를 특정한다** (삼순 8차 P0-1).
+  //
+  // 종전에는 arg0 이 "어떤 enclosing 함수의 파라미터인가"만 봤다. 그래서 factory 호출을
+  // 별도 wrapper 함수 안으로 옮기고(그 wrapper 의 파라미터를 arg0 으로 쓰면 구조 검사는 통과)
+  // 실제 `observeBaseballQaMessages` 는 `wrapper([])` 를 부르게 바꾸면, answered 집합은
+  // 영원히 비는데도 core·picker 렌더 게이트·tsc·ESLint 가 전부 GREEN 이었다.
+  //
+  // 그래서 기준을 "**관측 콜백 그 자체**"로 좁힌다: factory 호출은 반드시
+  // `observeBaseballQaMessages` 에 바인드된 useCallback 콜백 **내부**에 있어야 하고,
+  // arg0 은 바로 그 콜백의 파라미터여야 한다.
+  let observerCallback: ts.ArrowFunction | ts.FunctionExpression | undefined;
+  const findObserver = (node: ts.Node) => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === "observeBaseballQaMessages" &&
+      node.initializer &&
+      ts.isCallExpression(node.initializer) &&
+      ts.isIdentifier(node.initializer.expression) &&
+      node.initializer.expression.text === "useCallback"
+    ) {
+      const fn = node.initializer.arguments[0];
+      if (fn && (ts.isArrowFunction(fn) || ts.isFunctionExpression(fn))) observerCallback = fn;
+    }
+    ts.forEachChild(node, findObserver);
+  };
+  findObserver(sf);
+  assert.ok(observerCallback,
+    "observeBaseballQaMessages 는 useCallback(콜백) 으로 선언되어야 한다");
+  const observer = observerCallback;
+  assert.equal(observer.parameters.length, 1,
+    "관측 콜백은 관측 메시지 배열 1인자를 받는다");
+  const observerParam = observer.parameters[0];
+
+  /** `node` 가 `container` 안에 lexically 들어있는가. */
+  const isInside = (node: ts.Node, container: ts.Node) => {
+    let cursor: ts.Node | undefined = node;
+    while (cursor) {
+      if (cursor === container) return true;
+      cursor = cursor.parent;
+    }
+    return false;
+  };
+
   const setterCalls: ts.CallExpression[] = [];
   const walk = (node: ts.Node) => {
     if (
@@ -2193,6 +2301,8 @@ function verifyAnsweredUpdaterIsBoundInHook() {
     const arg = call.arguments[0];
     if (!arg || !ts.isCallExpression(arg)) return [];
     if (!ts.isIdentifier(arg.expression)) return [];
+    // 관측 갱신은 반드시 관측 콜백 안에서 일어난다 — wrapper 로 빼면 여기서 탈락한다.
+    if (!isInside(call, observer)) return [];
     // 이름이 아니라 binder 심볼로 확인 — 같은 이름의 local 함수를 선언해 가리는 걸 막는다.
     const symbol = checker.getSymbolAtLocation(arg.expression);
     const decl = symbol?.declarations?.[0];
@@ -2219,16 +2329,46 @@ function verifyAnsweredUpdaterIsBoundInHook() {
   const arg0Decl = arg0Symbol?.declarations?.[0];
   assert.ok(arg0Decl && ts.isParameter(arg0Decl),
     "arg0 은 observeBaseballQaMessages 가 받은 파라미터여야 한다");
-  // 그 파라미터를 선언한 함수가 곧 이 factory 호출을 감싸는 콜백인지 확인.
-  const enclosing = arg0Decl.parent;
-  let cursor: ts.Node = factoryCalls[0];
-  let insideSameFunction = false;
-  while (cursor.parent) {
-    if (cursor === enclosing) { insideSameFunction = true; break; }
-    cursor = cursor.parent;
-  }
-  assert.ok(insideSameFunction,
-    "arg0 은 이 호출을 감싸는 관측 콜백의 파라미터여야 한다(다른 스코프 값 주입 금지)");
+  // ⚠️ "어떤 enclosing 함수의 파라미터"가 아니라 **관측 콜백 바로 그 파라미터**여야 한다
+  // (삼순 8차 P0-1). 느슨하면 `wrapper(nextMessages)` 를 만들어두고 관측 콜백이
+  // `wrapper([])` 를 부르는 변종이 그대로 통과한다.
+  assert.ok(arg0Decl === observerParam,
+    "arg0 은 observeBaseballQaMessages 콜백의 파라미터 그 자체여야 한다 " +
+    "(wrapper 파라미터·다른 스코프 값 주입 금지)");
+
+  // 관측 콜백이 받은 배열을 버리고 빈 배열을 흘려보내는 경로도 닫는다 — 콜백 본문의
+  // 어떤 호출도 빈 배열 리터럴을 인자로 넘길 수 없다.
+  const emptyArrayArgs: string[] = [];
+  const scanEmptyArray = (node: ts.Node) => {
+    if (ts.isCallExpression(node)) {
+      for (const argument of node.arguments) {
+        if (ts.isArrayLiteralExpression(argument) && argument.elements.length === 0) {
+          emptyArrayArgs.push(node.getText(sf).slice(0, 80));
+        }
+      }
+    }
+    ts.forEachChild(node, scanEmptyArray);
+  };
+  scanEmptyArray(observer.body);
+  assert.deepEqual(emptyArrayArgs, [],
+    `관측 콜백 안에서 빈 배열을 넘기는 호출 금지(관측 입력 폐기 경로): ${emptyArrayArgs.join(" | ")}`);
+
+  // 실제 호출자 경로도 결속한다 — 전체 히스토리(`mapped`)와 Realtime 단건(`[msg]`) 둘 다
+  // 살아있어야 관측이 성립한다. 호출자를 상수로 바꾸거나 지우면 여기서 RED 가 난다.
+  const observerCallArgs: string[] = [];
+  const scanObserverCalls = (node: ts.Node) => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === "observeBaseballQaMessages"
+    ) {
+      observerCallArgs.push(node.arguments.map((a) => a.getText(sf)).join(","));
+    }
+    ts.forEachChild(node, scanObserverCalls);
+  };
+  scanObserverCalls(sf);
+  assert.deepEqual(observerCallArgs.slice().sort(), ["[msg]", "mapped"],
+    "관측 호출은 전체 히스토리(mapped)와 Realtime 단건([msg]) 둘 다여야 한다");
 
   // arg1 은 봇 계정 상수. 다른 id 를 넣으면 봇 답변을 하나도 못 알아본다.
   const arg1 = factoryArgs[1];

@@ -68,6 +68,48 @@ export interface CalcPitcherSaber {
   K_pct: number; BB_pct: number; WAR: number;
 }
 
+/**
+ * 선수 페이지·기록실·야잘알봇이 함께 쓰는 타자 파생 스탯 입력 정규화.
+ *
+ * ⚠️ 종전에는 선수 페이지가 position 없이 WAR 5.22, 봇은 `THIRD_BASE` 보정을 넣어
+ * 5.35를 답했다(김도영 production 실측, 삼순 #1100 6차). 같은 함수를 호출해도 **입력이
+ * 다르면 다른 숫자**다. 그래서 row→calculator 변환 자체를 공용 helper 로 고정한다.
+ * 현재 선수 페이지 계약을 보존하기 위해 position/defRuns 는 넣지 않는다.
+ */
+export function calcBatterSaberFromStats(
+  stats: Record<string, unknown>,
+): CalcBatterSaber | null {
+  const pa = Number(stats.pa);
+  const ab = Number(stats.ab);
+  if (!pa || !ab) return null;
+  return calcBatterSaber({
+    avg: (stats.avg as string | number) ?? 0,
+    hits: Number(stats.hits) || 0,
+    hr: Number(stats.hr) || 0,
+    doubles: Number(stats.doubles) || 0,
+    triples: Number(stats.triples) || 0,
+    ab,
+    pa,
+    runs: Number(stats.runs) || 0,
+    rbi: Number(stats.rbi) || 0,
+    sb: Number(stats.sb) || 0,
+    bb: Number(stats.bb) || 0,
+    so: Number(stats.so) || 0,
+    hbp: Number(stats.hbp) || 0,
+    cs: Number(stats.cs) || 0,
+    sf: stats.sf != null ? Number(stats.sf) : undefined,
+    obp: stats.obp as string | number | undefined,
+    slg: stats.slg as string | number | undefined,
+    ops: stats.ops as string | number | undefined,
+  });
+}
+
+/** 선수 페이지 표기와 같은 소수 2자리 WAR. */
+export function batterWarFromStats(stats: Record<string, unknown>): string | null {
+  const saber = calcBatterSaberFromStats(stats);
+  return saber && Number.isFinite(saber.WAR) ? saber.WAR.toFixed(2) : null;
+}
+
 /** KBO 공식 비율 스탯 파싱 — ".356"/"0.356"/number 모두 처리, 0 이하·비수치는 null(계산 폴백) */
 function parseOfficialRate(v: string | number | undefined): number | null {
   if (v == null) return null;
