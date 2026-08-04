@@ -288,11 +288,47 @@ const STAT_WORDS = [
   "타율", "방어율", "평균자책", "출루율", "장타율", "ops", "war", "wrc",
   "홈런", "안타", "타점", "도루", "승", "승수", "패", "세이브", "홀드", "삼진", "기록", "스탯",
 ];
-const TEAM_WORDS = [
-  "기아", "두산", "롯데", "삼성", "한화", "키움", "엘지", "lg", "kt", "ssg", "nc",
+/**
+ * 구단 식별어. **약칭과 별칭을 따로 두고**, 둘을 붙인 풀네임(`LG트윈스`)은
+ * 아래 `mentionsTeam()` 이 조합으로 인식한다 — 여기에 풀네임을 직접 열거하면
+ * 가지수가 계속 늘고(띄어쓰기·영문·한글 조합) 빠진 조합이 조용히 뚫린다.
+ *
+ * ⚠️ `kia` 누락으로 `KIA의 역사` 가 구단 질문으로 안 잡혔다(2026-08-04 실측).
+ * 로스터 정본의 team 값은 `KIA|KT|LG|NC|SSG|두산|롯데|삼성|키움|한화` 다.
+ */
+const TEAM_SHORT_WORDS = [
+  "기아", "kia", "두산", "롯데", "삼성", "한화", "키움", "엘지", "lg", "kt", "ssg", "nc",
+];
+const TEAM_NICKNAME_WORDS = [
   "타이거즈", "베어스", "자이언츠", "라이온즈", "이글스", "히어로즈", "트윈스",
   "위즈", "랜더스", "다이노스",
 ];
+const TEAM_WORDS = [...TEAM_SHORT_WORDS, ...TEAM_NICKNAME_WORDS];
+
+/**
+ * 구단 지명 여부. 단일 토큰 매칭에 **붙여 쓴 풀네임**을 더한다.
+ *
+ * ⚠️ 왜 필요한가 (2026-08-04 유저 제보 → 실측):
+ * 토큰화는 `LG트윈스의` 를 한 덩어리로 만들어 `lg` 와도 `트윈스` 와도 일치하지
+ * 않는다. 그래서 `LG 트윈스의 역사`(띄어쓰기)는 구단 질문인데 `LG트윈스의 역사`는
+ * 아니게 돼, **띄어쓰기 하나로 답이 갈렸다**. 10개 구단 전부 동일.
+ *
+ * 조합 규칙은 좀게 둔다 — 약칭+별칭이 **바로 이어질 때**만 인정하고, 남는 꺼리는
+ * 기존 문법 꺼리 폐쇄집합(`isGrammaticalTail`)으로만 분해되어야 한다.
+ * 그래서 `두산베어스의` → 허용, `두산베어스키핑` 같은 어휘 밖 잔여물은 닫힌다.
+ * (약칭·별칭을 서로 다른 구단끼리 섞은 `lg라이온즈` 도 질문 의도상 구단 지명이므로
+ *  굳이 구분하지 않는다 — 어느 쪽이든 `history_hold` 로 가는 것이 맞다.)
+ */
+function mentionsTeam(tokens: string[]): boolean {
+  if (TEAM_WORDS.some((word) => tokenMatches(tokens, word))) return true;
+  return tokens.some((token) =>
+    TEAM_SHORT_WORDS.some((short) => {
+      if (!token.startsWith(short)) return false;
+      const rest = token.slice(short.length);
+      return TEAM_NICKNAME_WORDS.some((nick) =>
+        rest.startsWith(nick) && isGrammaticalTail(rest.slice(nick.length)));
+    }));
+}
 const BASEBALL_WORDS = [
   "야구", "투수", "타자", "포수", "주자", "심판", "스트라이크", "아웃", "안타",
   "홈런", "이닝", "베이스", "타석", "투구", "수비", "보크", "파울", "번트",
@@ -362,7 +398,7 @@ export function isSupportedRuleTermQuestion(
     mentionsSpecificRuleSignal ||
     mentionsRoleRule ||
     BASEBALL_WORDS.some((word) => mentionsSignalWord(tokens, word)) ||
-    TEAM_WORDS.some((word) => tokenMatches(tokens, word)) ||
+    mentionsTeam(tokens) ||
     hasPlayerReference(tokens, players);
 
   // 검수 사전의 실제 용어가 문장에 있으면 축약형(`잔루만루는`)도 용어 질문으로 인정한다.
@@ -372,7 +408,7 @@ export function isSupportedRuleTermQuestion(
     mentionsRuleHint &&
     hasBaseballContext &&
     !hasPlayerReference(tokens, players) &&
-    !TEAM_WORDS.some((word) => tokenMatches(tokens, word)) &&
+    !mentionsTeam(tokens) &&
     !isOutOfScopeRequest
   ) return true;
 
@@ -387,7 +423,7 @@ export function isSupportedRuleTermQuestion(
     hasRuleIntent
   ) return true;
   if (hasPlayerReference(tokens, players)) return false;
-  if (TEAM_WORDS.some((word) => tokenMatches(tokens, word))) return false;
+  if (mentionsTeam(tokens)) return false;
   if (OUT_OF_SCOPE_INTENT.test(normalized)) return false;
   if (NAMED_STAT_QUERY.test(normalized)) return false;
   if (matchGlossary(glossary, question)) return true;
@@ -875,7 +911,7 @@ export function routeQuestion(
   if (isAckPhrase(question)) return "ack";
   if (SERVICE_WORDS.some((word) => normalized.includes(word))) return "service_redirect";
   const hasStat = STAT_WORDS.some((word) => tokenMatches(tokens, word));
-  const hasTeam = TEAM_WORDS.some((word) => tokenMatches(tokens, word));
+  const hasTeam = mentionsTeam(tokens);
   // ⚠️ **라벨은 `history_hold`**다 — 차단 범위는 한 글자도 안 바뀌고, 유저가 보는 문구만 달라진다
   // (삼순 7차 P0-2). 여기 도달하는 건 "선수/구단 기록 질문인데 이 지표를 못 답하는" 경우다.
   // 답할 수 있는 지표(타율·방어율…)는 `answerQuestion` 앞단 `kbo_structured` 가 이미 가로채고,
