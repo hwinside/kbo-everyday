@@ -55,6 +55,9 @@ export const LLM_AMBIGUOUS_ANSWER =
   "답변을 저장하는 과정에서 문제가 생겨 이번 질문에는 답을 드리지 못했어요. 같은 질문을 다시 보내주시면 새로 답해드릴게요! ⚾";
 // 직전 답변에 대한 감사·확인 인사 — 질문이 아니라 대화 행위다. 차단 문구를 보내면 안 된다.
 export const ACK_ANSWER = "도움이 됐다니 다행이에요! ⚾";
+// 하루 한도 소진 안내 — 질문에 대한 답이 아니라 상태 고지다.
+// 인라인 템플릿으로 두면 "고정 문구"로 식별되지 않아 분류 게이트가 실답변으로 오판한다.
+export const LIMITED_ANSWER = `오늘 질문 한도(${DAILY_LIMIT}개)를 다 썼어요. 내일 다시 물어봐 주세요!`;
 
 /**
  * 동명이인 picker 안내 문구.
@@ -1258,7 +1261,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     await deps.log({ userId, question, questionNorm, matchPath: "limited", answer: null, inputTokens: null, outputTokens: null });
     return {
       status: 429,
-      answer: `오늘 질문 한도(${DAILY_LIMIT}개)를 다 썼어요. 내일 다시 물어봐 주세요!`,
+      answer: LIMITED_ANSWER,
       source: "limited",
       remaining: 0,
     };

@@ -19,7 +19,7 @@ import {
   resetBaseballQaQuestion,
   applyBaseballQaPlayerPick,
   collectBaseballQaAnsweredQuestionIds,
-  mergeBaseballQaAnsweredQuestionIds,
+  createBaseballQaAnsweredUpdater,
   type BaseballQaReplyStates,
 } from "@/lib/baseball-qa/client-outbox";
 import { usePollingFallback } from "./usePollingFallback";
@@ -238,8 +238,10 @@ export function useDMChat(conversationId: string) {
       nextMessages,
       BASEBALL_GENIUS_USER_ID,
     );
-    setGeniusAnsweredQuestionIds((prev) =>
-      mergeBaseballQaAnsweredQuestionIds(prev, nextMessages, BASEBALL_GENIUS_USER_ID),
+    // updater 를 factory 로 만든다 — 이 call-site 에는 `prev` 가 없으므로 누적을 버릴 방법이
+    // 구조적으로 없다(삼순 6차 P0-3: `merge(new Set(), ...)` 변종 차단).
+    setGeniusAnsweredQuestionIds(
+      createBaseballQaAnsweredUpdater(nextMessages, BASEBALL_GENIUS_USER_ID),
     );
     for (const messageId of answered) observedBaseballQaReplyIdsRef.current.add(messageId);
     const observed = observeBaseballQaReplies(

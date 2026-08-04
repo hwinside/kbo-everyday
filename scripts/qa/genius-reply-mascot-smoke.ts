@@ -84,11 +84,31 @@ check("서버 MatchPath 전체가 명시 분류돼 있다(pending 제외, 폴백
   assert.ok(paths.length >= 10, `MatchPath 파싱 실패(${paths.length}개만 찾음)`);
   // pending 은 다른 worker 가 이기고 이 worker 는 물러나는 경우라 쪽지 자체가 발송되지 않는다.
   const declared = paths.filter((p) => p !== "pending");
-  const uncovered = declared.filter((p) => !(p in MATCH_PATH_REPLY_KIND));
+  // ⚠️ `in` 이 아니라 **own-key** 로 판정한다(삼순 6차 P1). `in` 은 프로토타입 체인까지
+  // 훑기 때문에 `constructor`·`toString` 같은 이름이 union 에 생기면 테이블에 없어도
+  // "덮여 있다"고 통과한다 — 이 게이트 자체가 false-green 이 된다.
+  const uncovered = declared.filter(
+    (p) => !Object.prototype.hasOwnProperty.call(MATCH_PATH_REPLY_KIND, p),
+  );
   assert.deepEqual(uncovered, [], `MATCH_PATH_REPLY_KIND 에 미분류: ${uncovered.join(", ")}`);
   // 반대 방향 — 테이블에만 있고 서버 union 에 없는 죽은 키도 잡는다.
   const stale = Object.keys(MATCH_PATH_REPLY_KIND).filter((p) => !declared.includes(p));
   assert.deepEqual(stale, [], `서버 union 에 없는 죽은 분류: ${stale.join(", ")}`);
+});
+
+// 프로토타입 키가 분류를 뚫고 나오면 안 된다(삼순 6차 P1).
+//
+// `match_path` 는 서버 payload 로 들어오는 **외부 문자열**이다. 테이블을 그냥 인덱싱하면
+// `constructor` 는 `Object` 함수를, `__proto__` 는 프로토타입 객체를 돌려준다. 두 값 모두
+// `?? "unavailable"` 폴백에 안 걸리고 그대로 반환돼, `mascotStateForReplyKind()` 의 어느
+// 분기에도 안 걸려 `idle` 로 떨어진다 — "모르는 값은 unknown 표정"이라는 계약 위반이다.
+check("프로토타입 키를 match_path 로 받아도 unavailable/unknown 으로 fail-close 한다", () => {
+  for (const hostile of ["constructor", "__proto__", "toString", "hasOwnProperty", "valueOf"]) {
+    const kind = replyKindForMatchPath(hostile);
+    assert.equal(kind, "unavailable", `${hostile} → unavailable 이어야 한다 (실제: ${String(kind)})`);
+    assert.equal(mascotStateForReplyKind(kind), "unknown",
+      `${hostile} 은 unknown 표정이어야 한다`);
+  }
 });
 
 // 질문에 **실제로 답한** 경로가 `unavailable`(=모르겠어요 표정)로 분류되면 RED.

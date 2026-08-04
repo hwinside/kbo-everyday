@@ -82,6 +82,15 @@ export function replyKindForMatchPath(matchPath: string): GeniusReplyKind {
   // 인덱싱을 위해서만 넓힌다. 테이블 자체는 `satisfies` 로 union 과 정확히 묶여 있으므로
   // 이 캐스트가 열거 누락을 감추지 않는다(누락은 위에서 컴파일 에러).
   const table: Readonly<Record<string, GeniusReplyKind>> = MATCH_PATH_REPLY_KIND;
+  // ⚠️ **own-property 로만 조회한다** (삼순 6차 P1). 서버 payload 의 `match_path` 는
+  // 외부에서 들어온 문자열이라 `constructor`·`__proto__`·`toString` 같은 프로토타입 키가
+  // 올 수 있다. 그냥 인덱싱하면 `Object` 함수나 프로토타입 객체가 반환되고, 그 값은
+  // `?? "unavailable"` 폴백을 그대로 통과해 `mascotStateForReplyKind()` 에서
+  // 어느 분기에도 안 걸려 `idle` 로 떨어진다 — 모르는 값은 `unknown` 이어야 한다는
+  // 문서·타입 계약과 어긋난다.
+  // `Object.hasOwn` 대신 `hasOwnProperty.call` 을 쓴다 — 전자는 ES2022라 구형 Android
+  // WebView(Capacitor 탑재)에서 없을 수 있고, 그 밍은 런타임에서만 터진다.
+  if (!Object.prototype.hasOwnProperty.call(table, matchPath)) return "unavailable";
   return table[matchPath] ?? "unavailable";
 }
 

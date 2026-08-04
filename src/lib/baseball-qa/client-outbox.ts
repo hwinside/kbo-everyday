@@ -167,6 +167,24 @@ export function mergeBaseballQaAnsweredQuestionIds(
   return merged;
 }
 
+/**
+ * `setGeniusAnsweredQuestionIds` 에 그대로 넘길 **React updater** 를 만든다 (삼순 6차 P0-3).
+ *
+ * ⚠️ 왜 factory 인가: 종전에는 hook 이 `setState((prev) => merge(prev, msgs, id))` 를 직접 썼다.
+ * 그러면 **call-site 가 `prev` 를 직접 손에 쥐고 있어** `merge(new Set(), msgs, id)` 로 바꾸는
+ * 순간 누적이 사라진다(= 과거 answered 유실 → picker 재활성 → 영구 typing 재발).
+ * helper 단위 테스트는 그 변종을 못 잡는다 — helper 는 멀지하기 때문이다.
+ *
+ * factory 는 `prev` 를 인자로 받지 않는다. 유일한 `prev` 공급자는 React 자신이므로
+ * call-site 에는 손대서 망가뜨릴 자리 자체가 없다(구조적 불변).
+ */
+export function createBaseballQaAnsweredUpdater(
+  messages: BaseballQaReplyMessage[],
+  geniusUserId: string,
+): (prev: ReadonlySet<number>) => ReadonlySet<number> {
+  return (prev) => mergeBaseballQaAnsweredQuestionIds(prev, messages, geniusUserId);
+}
+
 export function resetBaseballQaQuestion(storage: StorageLike, messageId: number) {
   const entries = readBaseballQaOutbox(storage).map((row) =>
     row.messageId === messageId ? { ...row, attempts: 0, acknowledged: false } : row,

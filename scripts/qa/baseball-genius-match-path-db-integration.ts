@@ -58,6 +58,8 @@ async function main() {
   await db.exec(readMigration("20260804124500_baseball_genius_match_path_union.sql"));
   await db.exec(readMigration("20260804140000_baseball_genius_player_picker.sql"));
 
+  await verifyFinalAllowlistIsExactUnion(db);
+
   const userId = "00000000-0000-4000-8000-000000000001";
   await db.exec(`
     insert into public.genius_question_logs(match_path)
@@ -101,10 +103,86 @@ async function main() {
   await verifyQuotaReleaseUsesReservedDayBucket(db);
 
   await db.close();
+
   console.log(
     "PASS genius match_path DB actual — picker migration/CHECK/RPC + rag/kbo_structured ledger + " +
       "미지 경로 거부 + quota 반납이 예약일 버킷을 차감",
   );
+}
+
+/**
+ * 최종 CHECK 가 **선행 union 전체 + picker 신규 라벨의 합집합**인지 actual 로 고정한다
+ * (삼순 6차 P0-1).
+ *
+ * ⚠️ 종전 게이트는 신규 4라벨(`rag`/`error`/`player_picker`/`kbo_structured`)만 INSERT 했다.
+ * 그래서 **후행 migration 이 선행 union 의 라벨을 도로 지워도** 게이트가 전부 GREEN 이었다
+ * (삼순이 `ack` 제거 변종으로 재현 — 운영에서는 실 INSERT 23514 로 job 이 죽는다).
+ * 이건 2026-08-04 P0 자체와 같은 사고다: allowlist 를 합집합이 아니라 **재선언**으로 다루면
+ * 새 migration 이 조용히 과거 라벨을 잃는다.
+ *
+ * 그래서 세 축으로 닫는다.
+ *  ① 14개 허용 라벨을 **전부 실제 INSERT** — 하나라도 빠지면 23514 로 RED
+ *  ② 미지 라벨은 거부 — allowlist 가 통째로 열려버리는 반대 방향도 막는다
+ *  ③ `pg_get_constraintdef` 로 최종 정의를 직접 읽어 **집합이 정확히 일치**하는지 대조 —
+ *     라벨이 더 늘어난 것도 잡는다(의도한 확장이면 이 목록을 같이 고쳐야 한다).
+ */
+const FINAL_MATCH_PATH_ALLOWLIST = [
+  "ack",
+  "blocked",
+  "cache",
+  "context_missing",
+  "dictionary",
+  "error",
+  "history_hold",
+  "kbo_structured",
+  "limited",
+  "llm",
+  "player_picker",
+  "rag",
+  "service_redirect",
+  "unsure",
+] as const;
+
+async function verifyFinalAllowlistIsExactUnion(db: PGlite) {
+  // ① 전 라벨 actual INSERT. 선행 union 라벨이 후행에서 지워지면 여기서 23514 로 죽는다.
+  for (const label of FINAL_MATCH_PATH_ALLOWLIST) {
+    await db.query("insert into public.genius_question_logs(match_path) values ($1)", [label]);
+  }
+  const accepted = await db.query<{ match_path: string }>(
+    "select distinct match_path from public.genius_question_logs order by match_path",
+  );
+  assert.deepEqual(
+    accepted.rows.map((row) => row.match_path),
+    [...FINAL_MATCH_PATH_ALLOWLIST],
+    "최종 CHECK 는 선행 union 전체 + picker 신규 라벨을 모두 허용해야 한다",
+  );
+
+  // ② 미지 라벨 거부 — allowlist 가 통째로 열리는 반대 방향.
+  for (const unknown of ["player_rag", "llm_scope_gate", "RAG", ""]) {
+    await assert.rejects(
+      () => db.query("insert into public.genius_question_logs(match_path) values ($1)", [unknown]),
+      /check constraint|23514/i,
+      `미지 라벨은 거부되어야 한다: ${JSON.stringify(unknown)}`,
+    );
+  }
+
+  // ③ 최종 정의를 직접 읽어 집합 동일성 대조. INSERT 만으로는 "더 늘어난" 라벨을 못 잡는다.
+  const def = await db.query<{ definition: string }>(`
+    select pg_get_constraintdef(oid) as definition from pg_constraint
+    where conname = 'genius_question_logs_match_path_check'
+      and conrelid = 'public.genius_question_logs'::regclass
+  `);
+  const definition = def.rows[0]?.definition;
+  assert.ok(definition, "최종 CHECK 정의를 찾지 못함");
+  const declared = [...definition.matchAll(/'([a-z_]*)'/g)].map((m) => m[1]).sort();
+  assert.deepEqual(
+    declared,
+    [...FINAL_MATCH_PATH_ALLOWLIST],
+    `최종 CHECK 라벨 집합이 기대와 다름: ${definition}`,
+  );
+
+  // 이 검사만을 위해 넣은 행은 이후 단정에 섞이지 않게 걷어낸다.
+  await db.exec("delete from public.genius_question_logs");
 }
 
 /**
