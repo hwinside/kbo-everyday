@@ -20,6 +20,7 @@ import assert from "node:assert/strict";
 
 import {
   answerQuestion,
+  BLOCKED_ANSWER,
   type GlossaryEntry,
   type LlmResult,
   type PlayerRef,
@@ -242,7 +243,35 @@ checkAsync("공식 근거로도 답을 못 만들면 unsure로 종결한다(일�
   });
   const result = await answerQuestion("u1", "인필드 플라이 규칙 알려줘", deps);
   assert.equal(result.source, "unsure");
+  assert.equal(result.answer, BLOCKED_ANSWER);
   assert.ok(!calls.includes("callLlm"), "LLM 호출 1회 계약 — 재호출 금지");
+});
+
+checkAsync("공식 RAG timeout은 exact fallback으로 수렴한다", async () => {
+  const { deps, calls } = makeDeps({
+    searchOfficialRag: async () => [OFFICIAL],
+    callOfficialRagLlm: async () => { throw new Error("timeout"); },
+  });
+  const result = await answerQuestion("u1", "인필드 플라이 규칙 알려줘", deps);
+  assert.equal(result.source, "error");
+  assert.equal(result.answer, BLOCKED_ANSWER);
+  assert.ok(!calls.includes("callLlm"), "timeout 뒤 일반 LLM 재호출 금지");
+});
+
+checkAsync("일반 LLM timeout·무응답도 exact fallback으로 수렴한다", async () => {
+  for (const callLlm of [
+    async () => { throw new Error("timeout"); },
+    async () => ({ text: "", inputTokens: null, outputTokens: null }),
+  ]) {
+    const { deps } = makeDeps({
+      searchOfficialRag: async () => [],
+      callOfficialRagLlm: async () => { throw new Error("근거 0건에서 호출 금지"); },
+      callLlm,
+    });
+    const result = await answerQuestion("u1", "잔루만루가 뭔데", deps);
+    assert.equal(result.answer, BLOCKED_ANSWER);
+    assert.ok(["unsure", "error"].includes(result.source));
+  }
 });
 
 checkAsync("검색이 던져도 기능이 죽지 않는다 (기존 경로로 양보)", async () => {

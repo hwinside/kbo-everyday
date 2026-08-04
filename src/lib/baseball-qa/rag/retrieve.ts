@@ -47,6 +47,7 @@ export interface RagPlayerCandidate {
   entityType: "player";
   entityId: string;
   name: string;
+  team?: string | null;
   sourceKey: string;
 }
 
