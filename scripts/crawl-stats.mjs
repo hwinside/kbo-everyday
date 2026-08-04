@@ -19,8 +19,8 @@ import {
   validateDefenseSnapshot,
   validatePitcherSnapshot,
 } from "./lib/stats-snapshot-guard.mjs";
-import { assertSourceTruth } from "./lib/stats-source-truth.mjs";
-import { promoteAtomically, recoverPendingPromotion } from "./lib/atomic-promote.mjs";
+import { recoverPendingPromotion } from "./lib/atomic-promote.mjs";
+import { promoteStatsSnapshot } from "./lib/verified-promote.mjs";
 import { collectAllPages, createKboPageAdapter, signatureOf } from "./lib/kbo-pagination.mjs";
 import { createSelectAdapter, selectAndConfirm } from "./lib/kbo-select.mjs";
 
@@ -308,7 +308,13 @@ function parseIpToFloat(ip) {
   return Math.round(whole * 100) / 100;
 }
 
-async function main() {
+/**
+ * ⚠︎ export 이유: 게이트가 **실제 write 경로를 실행**해야 하기 때문이다.
+ * 소스 문자열 검사로는 `false && await promoteStatsSnapshot(...)` 처럼 호출을 통째 끊는
+ * 우회를 못 잡는다(merged main 에서 실제로 GREEN 이었다). 게이트가 main() 을 직접 돌려
+ * "검증기가 호출됐는가 / 검증 실패 시 산출물이 그대로인가" 를 행동으로 확인한다.
+ */
+export async function main() {
   console.log(`🏟️  KBO 스탯 크롤링 시작 (시즌: ${SEASON})`);
 
   // ⚠︎ 어떤 데이터 read 보다 *먼저* 미완료 promote 를 복구한다.
@@ -492,28 +498,7 @@ async function main() {
     // 분기를 두면 한 줄로 무력화되는데 "호출이 존재하는가" 식 게이트는 그 상태에서도 GREEN이다
     // (실제로 이 파일의 초기 구현이 그랬고, mutation으로 잡아 여기로 옮겼다).
     console.log("\n🔎 원본 정합성 재대조(KBO 독립 재조회)...");
-    // defenseRuns 도 검증 입력에 넣는다 — 종전에는 computeDefenseRuns() 결과가
-    // 검증을 거치지 않고 바로 promote 됐다. 그 사이 값을 주입해도 write 전 게이트가
-    // 전부 GREEN 이었다(삼순 실증). 사후 CI 로만 잡는 건 "검증 전 write 0" 계약이 아니다.
-    await assertSourceTruth({
-      browser,
-      kboBase: KBO_BASE,
-      season: SEASON,
-      batters,
-      pitchers,
-      defense,
-      defenseRuns,
-      roster: readPrevious(join(CONSTANTS_DIR, "players-roster.json"), []),
-      foreignIdSource: readFileSync(join(CONSTANTS_DIR, "foreign-id-map.ts"), "utf-8"),
-    });
 
-    // 원자 promote — 순차 직쓰기는 중간 I/O 실패 시 혼합 snapshot을 남긴다.
-    //
-    // ⚠︎ 종전에는 대상 파일 5개에 writeFileSync 를 그대로 순차 호출했다. 검증은 write
-    // *앞*에서 멈추지만, 2~5번째 쓰기가 실패하거나 프로세스가 죽으면 앞 파일은 이미
-    // 교체된 뒤라 타자만 새것/수비는 옛것 같은 섞인 상태가 남는다(삼순 P0-3).
-    // 그래서 전부 temp 에 쓴 뒤, 한 번에 promote 하고, promote 중 실패하면
-    // 이미 바꾼 파일을 원본 백업으로 되돌린다.
     const artifacts = [
       { path: batterPath, body: JSON.stringify(batters, null, 2) },
       { path: pitcherPath, body: JSON.stringify(pitchers, null, 2) },
@@ -521,7 +506,24 @@ async function main() {
       { path: defenseRunsPath, body: JSON.stringify(defenseRuns, null, 2) },
       { path: metaPath, body: JSON.stringify(meta, null, 2) },
     ];
-    promoteAtomically(artifacts);
+
+    // ⚠︎ 검증기(assertSourceTruth)는 promoteStatsSnapshot **내부에 고정**돼 있다 — caller 가
+    // 고를 수 없다. verifier 를 파라미터로 열어두면 `verify: async () => {}` 한 줄로
+    // 검증 0회가 되고, 문자열 게이트는 위장 필드만 있으면 GREEN 이었다(삼순 실증).
+    // 검증 입력도 caller 가 넘기지 않는다. **promote payload
+    // 에서 파생**해 검증기에 넣는다. 종전에는 caller 한 줄만 바꾸면 우회가 됐고
+    // (`false && await assertSourceTruth`, 옛 defenseRuns 스냅샷 검증) 전 게이트가 GREEN 이었다.
+    // 문자열 검사로는 같은 의미의 다른 표기를 끝없이 놓치므로, 구조로 막는다.
+    await promoteStatsSnapshot({
+      artifacts,
+      context: {
+        browser,
+        kboBase: KBO_BASE,
+        season: SEASON,
+        roster: readPrevious(join(CONSTANTS_DIR, "players-roster.json"), []),
+        foreignIdSource: readFileSync(join(CONSTANTS_DIR, "foreign-id-map.ts"), "utf-8"),
+      },
+    });
 
     console.log(`\n✅ 타자 ${batters.length}명 → ${batterPath}`);
     console.log(`✅ 투수 ${pitchers.length}명 → ${pitcherPath}`);
