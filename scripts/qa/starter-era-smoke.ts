@@ -753,53 +753,104 @@ for (const [variableName, expected] of Object.entries(SIDE_BINDINGS)) {
     );
   }
 
-  // ④ 렌더 소비부가 같은 심볼을 쓰는가 + 호출 뒤 변형이 없는가.
+  // ④ 소비부 — blocklist가 아니라 **allowlist + fail-close**.
+  //
+  // 직전 판은 "알려진 나쁜 형태"(dot-property 대입, Object.assign)만 막고 나머지를 통과시켰다.
+  // 그래서 `awayLineupStarter["era"] = "9.99"`(computed) 나 `{ ...awayLineupStarter, era: "9.99" }`
+  // 파생 alias로 렌더 consumer를 통짜 교체해도 GREEN이었다(삼순 5차 지적).
+  // 나쁜 형태를 열거하는 방식(blocklist)은 새 문법마다 새므로,
+  // **허용된 소비 형태 외엔 전부 RED**로 뒤집는다(allowlist + fail-close).
   const declSymbol = pageChecker.getSymbolAtLocation(declaration.name);
   assert.ok(declSymbol, `\`${variableName}\` 선언 심볼을 해석할 수 있어야 한다`);
-  const references = collectAll(
+  const references = (collectAll(
     (node) => ts.isIdentifier(node) && node.text === variableName && node !== declaration.name,
-  ) as ts.Identifier[];
-  assert.ok(
-    references.length > 0,
-    `\`${variableName}\`는 렌더 경로에서 실제로 소비되어야 한다`,
-  );
+  ) as ts.Identifier[]).filter((node) => {
+    // 프로퍼티 *이름* 위치는 변수 참조가 아니다(심볼이 다름).
+    const parent = node.parent;
+    if (ts.isPropertyAssignment(parent) && parent.name === node) return false;
+    if (ts.isPropertyAccessExpression(parent) && parent.name === node) return false;
+    return true;
+  });
+
+  let starterPropUses = 0;
   for (const reference of references) {
-    // 프로퍼티 이름(`{ awayLineupStarter }` 같은 shorthand 외)은 심볼이 다르므로 제외.
-    const parent = reference.parent;
-    if (
-      (ts.isPropertyAssignment(parent) && parent.name === reference)
-      || (ts.isPropertyAccessExpression(parent) && parent.name === reference)
-    ) continue;
     assert.equal(
       pageChecker.getSymbolAtLocation(reference),
       declSymbol,
-      `\`${variableName}\` 소비부는 선언과 동일한 심볼을 참조해야 한다`,
+      `\`${variableName}\` 참조는 선언과 동일한 심볼이어야 한다`,
     );
-    // 재할당 / property mutation 금지.
-    assert.ok(
-      !(ts.isBinaryExpression(parent)
-        && parent.left === reference
-        && parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment
-        && parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment),
-      `\`${variableName}\`는 호출 뒤 재할당되면 안 된다`,
-    );
-    assert.ok(
-      !(ts.isPropertyAccessExpression(parent)
-        && parent.expression === reference
-        && ts.isBinaryExpression(parent.parent)
+    const parent = reference.parent;
+
+    // 허용 A: `startingPitcher: <ident>` — 실제 렌더 소비 지점.
+    if (
+      ts.isPropertyAssignment(parent)
+      && ts.isIdentifier(parent.name)
+      && parent.name.text === "startingPitcher"
+      && parent.initializer === reference
+    ) {
+      starterPropUses += 1;
+      continue;
+    }
+    // 허용 B: `<ident>.name` 읽기 — 대입문 좌변이 아니어야 한다.
+    if (
+      ts.isPropertyAccessExpression(parent)
+      && parent.expression === reference
+      && parent.name.text === "name"
+      && !(ts.isBinaryExpression(parent.parent)
         && parent.parent.left === parent
         && parent.parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment
-        && parent.parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment),
-      `\`${variableName}\`의 속성은 호출 뒤 변경되면 안 된다`,
-    );
-    assert.ok(
-      !(ts.isCallExpression(parent)
-        && ts.isPropertyAccessExpression(parent.expression)
-        && parent.expression.name.text === "assign"
-        && parent.arguments[0] === reference),
-      `\`${variableName}\`는 \`Object.assign\` 대상이 될 수 없다`,
+        && parent.parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment)
+    ) {
+      continue;
+    }
+    // 그 외 전부 fail-close — computed 접근, spread, 재할당, Object.assign/Reflect.set,
+    // 타입 단언, 임의 함수 인자 전달 등이 여기로 떨어진다.
+    assert.fail(
+      `\`${variableName}\`의 허용되지 않은 소비 형태: `
+        + `\`${reference.parent.getText(pageSource).replace(/\s+/g, " ").slice(0, 90)}\` `
+        + `(startingPitcher 직접 전달 또는 .name 읽기만 허용)`,
     );
   }
+  assert.equal(
+    starterPropUses,
+    2,
+    `\`${variableName}\`는 starterOnly/LineupTab 두 곳의 \`startingPitcher\`로 직접 전달되어야 한다`,
+  );
+}
+
+// 역방향 — 페이지의 *모든* `startingPitcher` 소비 지점이 위 두 선언 심볼만 쓰는지.
+// 이게 없으면 변조된 파생값을 새 이름으로 만들어 렌더에만 꽂는 경로가 열려 있다.
+const starterDeclSymbols = new Set(
+  Object.keys(SIDE_BINDINGS).map((variableName) => {
+    const decl = (collectAll(
+      (node) =>
+        ts.isVariableDeclaration(node)
+        && ts.isIdentifier(node.name)
+        && node.name.text === variableName,
+    ) as ts.VariableDeclaration[])[0];
+    return pageChecker.getSymbolAtLocation(decl.name);
+  }),
+);
+const starterPropAssignments = collectAll(
+  (node) =>
+    ts.isPropertyAssignment(node)
+    && ts.isIdentifier(node.name)
+    && node.name.text === "startingPitcher",
+) as ts.PropertyAssignment[];
+assert.equal(
+  starterPropAssignments.length,
+  4,
+  "페이지의 `startingPitcher` 소비 지점은 away/home × starterOnly/LineupTab = 4개여야 한다",
+);
+for (const assignment of starterPropAssignments) {
+  assert.ok(
+    ts.isIdentifier(assignment.initializer),
+    "`startingPitcher`에는 파생식이 아닌 선발 변수를 그대로 전달해야 한다",
+  );
+  assert.ok(
+    starterDeclSymbols.has(pageChecker.getSymbolAtLocation(assignment.initializer)),
+    "`startingPitcher`는 resolveLineupStarter 선언 심볼을 직접 참조해야 한다(변조 alias 불가)",
+  );
 }
 
 const detailHook = readFileSync("src/lib/hooks/useGameDetail.ts", "utf8");
@@ -818,24 +869,130 @@ assert.ok(
   "응답 generation은 요청당 1회 증가해야 한다",
 );
 
-// 캡처 위치도 계약이다. 캡처를 첫 `await` 뒤로만 옮겨도 guard→commit 순서는 그대로라
-// 전체 prebuild가 GREEN이었다(삼순 3차 지적). 그러면 A→B 요청에서 B가 먼저 완료할 때
-// B가 gen1, 늦게 끝난 A가 gen2를 받아 **stale A가 최종 커밋**된다.
-// 그래서 capture < 첫 await < parse < guard < 모든 commit 을 인덱스로 고정한다.
-const fetchBodyIdx = detailHook.indexOf("const fetchDetail = useCallback(async () => {");
-assert.ok(fetchBodyIdx >= 0, "fetchDetail 본문 시작을 찾을 수 있어야 한다");
-const captureIdx = detailHook.indexOf(
-  "const responseGeneration = ++responseGenerationRef.current;",
+/* 캡처 위치도 계약이다. 캡처를 첫 `await` 뒤로만 옮겨도 guard→commit 순서는 그대로라
+ * 전체 prebuild가 GREEN이었다(삼순 3차). 그러면 A→B 요청에서 B가 먼저 완료할 때
+ * B가 gen1, 늦게 끝난 A가 gen2를 받아 **stale A가 최종 커밋**된다.
+ *
+ * ⚠︎ 그런데 직전 판은 이걸 `indexOf` 문자열 위치로만 봤다. 그래서 첫 await 앞 unreachable
+ * 블록에 똑같은 문장을 dead로 깔아두고, 실제 캡처는 `let`으로 await 뒤에 두면
+ * 게이트가 dead 문자열의 index를 읽어 GREEN이었다(삼순 5차 지적).
+ * 그래서 AST로 바꿔 ①fetchDetail 안 선언이 정확히 1개 ②그 선언이 함수 본문의 직접 statement
+ * ③첫 실제 AwaitExpression보다 앞 ④guard들이 그 선언 심볼을 참조 — 네 개를 함께 고정한다. */
+const HOOK_PATH = "src/lib/hooks/useGameDetail.ts";
+const hookSource = ts.createSourceFile(
+  HOOK_PATH,
+  detailHook,
+  ts.ScriptTarget.ESNext,
+  true,
+  ts.ScriptKind.TS,
 );
-assert.ok(captureIdx > fetchBodyIdx, "generation 캡처는 fetchDetail 본문 안에 있어야 한다");
-const firstAwaitMatch = /\bawait\b/.exec(detailHook.slice(fetchBodyIdx));
-assert.ok(firstAwaitMatch, "fetchDetail 본문의 첫 await 지점을 찾을 수 있어야 한다");
-const firstAwaitIdx = fetchBodyIdx + firstAwaitMatch!.index;
+const hookProgram = ts.createProgram({
+  rootNames: [HOOK_PATH],
+  options: { noResolve: true, noLib: true, allowJs: false },
+  host: {
+    getSourceFile: (name) => (name === HOOK_PATH ? hookSource : undefined),
+    getDefaultLibFileName: () => "lib.d.ts",
+    writeFile: () => {},
+    getCurrentDirectory: () => "",
+    getCanonicalFileName: (name) => name,
+    useCaseSensitiveFileNames: () => true,
+    getNewLine: () => "\n",
+    fileExists: (name) => name === HOOK_PATH,
+    readFile: (name) => (name === HOOK_PATH ? detailHook : undefined),
+  },
+});
+const hookChecker = hookProgram.getTypeChecker();
+
+function collectIn(root: ts.Node, predicate: (node: ts.Node) => boolean): ts.Node[] {
+  const hits: ts.Node[] = [];
+  const visit = (node: ts.Node): void => {
+    if (predicate(node)) hits.push(node);
+    ts.forEachChild(node, visit);
+  };
+  visit(root);
+  return hits;
+}
+
+const fetchDetailDecls = collectIn(
+  hookSource,
+  (node) =>
+    ts.isVariableDeclaration(node)
+    && ts.isIdentifier(node.name)
+    && node.name.text === "fetchDetail",
+) as ts.VariableDeclaration[];
+assert.equal(fetchDetailDecls.length, 1, "`fetchDetail` 선언은 정확히 1개여야 한다");
+const fetchDetailFn = collectIn(
+  fetchDetailDecls[0],
+  (node) => ts.isArrowFunction(node) || ts.isFunctionExpression(node),
+)[0] as ts.ArrowFunction | ts.FunctionExpression | undefined;
+assert.ok(fetchDetailFn?.body, "`fetchDetail`의 async 본문을 찾을 수 있어야 한다");
+const fetchBody = fetchDetailFn!.body as ts.Block;
+assert.ok(ts.isBlock(fetchBody), "`fetchDetail` 본문은 블록이어야 한다");
+
+// ① 선언 유일성 — dead capture를 하나 더 숨어두면 2개가 돼 RED.
+const generationDecls = collectIn(
+  fetchBody,
+  (node) =>
+    ts.isVariableDeclaration(node)
+    && ts.isIdentifier(node.name)
+    && node.name.text === "responseGeneration",
+) as ts.VariableDeclaration[];
+assert.equal(
+  generationDecls.length,
+  1,
+  "`fetchDetail` 안 `responseGeneration` 선언은 정확히 1개여야 한다(dead capture 은폐 방지)",
+);
+const generationDecl = generationDecls[0];
+const generationStatement = generationDecl.parent.parent as ts.Statement;
+
+// ② 함수 본문의 *직접* statement — 조건문·루프 안으로 숨기면 매 호출 실행이 보장되지 않는다.
 assert.ok(
-  captureIdx < firstAwaitIdx,
+  ts.isVariableStatement(generationStatement)
+    && fetchBody.statements.includes(generationStatement),
+  "`responseGeneration` 선언은 fetchDetail 본문의 직접 statement여야 한다(조건부 블록 불가)",
+);
+assert.ok(
+  (generationDecl.parent as ts.VariableDeclarationList).flags & ts.NodeFlags.Const,
+  "`responseGeneration`은 재할당 불가한 const여야 한다",
+);
+
+// ③ 첫 실제 await보다 앞인가.
+const awaits = collectIn(fetchBody, ts.isAwaitExpression);
+assert.ok(awaits.length > 0, "fetchDetail 본문에 await가 있어야 한다");
+const firstAwaitPos = Math.min(...awaits.map((node) => node.pos));
+assert.ok(
+  generationStatement.end <= firstAwaitPos,
   "generation 캡처는 첫 async boundary(await)보다 앞이어야 한다"
     + "(뒤로 올리면 먼저 완료한 최신 응답이 더 낮은 generation을 받아 stale 응답이 최종 커밋된다)",
 );
+
+// ④ guard들이 바로 그 선언 심볼을 쓰는가 — 동명의 다른 변수를 읽고 있으면 무의미하다.
+const generationSymbol = hookChecker.getSymbolAtLocation(generationDecl.name);
+assert.ok(generationSymbol, "`responseGeneration` 선언 심볼을 해석할 수 있어야 한다");
+const guardCalls = collectIn(
+  fetchBody,
+  (node) =>
+    ts.isCallExpression(node)
+    && ts.isIdentifier(node.expression)
+    && node.expression.text === "shouldCommitResponse",
+) as ts.CallExpression[];
+assert.equal(
+  guardCalls.length,
+  3,
+  "성공·예외·finally 세 커밋 지점 전부 generation 펌스를 통과해야 한다",
+);
+for (const guard of guardCalls) {
+  const secondArg = guard.arguments[1];
+  assert.ok(
+    secondArg && ts.isIdentifier(secondArg),
+    "`shouldCommitResponse` 두 번째 인자는 캡처한 generation 변수여야 한다",
+  );
+  assert.equal(
+    hookChecker.getSymbolAtLocation(secondArg as ts.Identifier),
+    generationSymbol,
+    "모든 generation 펌스는 첫 await 앞에서 캡처한 바로 그 선언을 참조해야 한다",
+  );
+}
 assert.equal(
   (detailHook.match(
     /shouldCommitResponse\(responseGenerationRef\.current, responseGeneration\)/g,
