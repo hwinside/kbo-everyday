@@ -54,21 +54,27 @@ export async function selectAndConfirm(io, value, {
       const now = await io.readValue();
       if (now !== target) continue; // 아직 postback 반영 전(또는 유실)
 
-      // 값은 목표다. 표 교체까지 한 번 더 기다리되, 끝내 같아도 실패로 보지는 않는다
-      // — 다른 시즌인데 첫 화면이 우연히 동일할 수 있고, 그건 유실이 아니다.
+      // ⚠︎ 값이 target 인 것만으로는 부족하다.
+      // Playwright `selectOption()` 은 서버 postback 이 끝나기 전에 이미 DOM select 값을
+      // target 으로 바꾼다. 그래서 postback/표 갱신이 유실되면
+      // **"selector 는 2026 인데 표는 2025"** 상태가 실제로 만들어진다.
+      // 종전 판은 이 상태를 `{changed:true, settled:false}` 로 정상 승인했다(삼순 8차 지적).
+      // 전환이 필요했던 경우에는 값 + 표 교체가 **둘 다** 성공 조건이다.
       for (let settle = 0; settle < polls; settle++) {
         const signature = await io.tableSignature();
         if (signature && signature !== before) return { changed: true, settled: true };
         await io.sleep(pollIntervalMs);
       }
-      return { changed: true, settled: false };
+      // 값만 바뀌고 표가 끝내 그대로다 → 다음 attempt 에서 재시도한다.
+      break;
     }
   }
 
   const finalValue = await io.readValue();
   throw new Error(
-    `select_change_failed: ${label} 를 "${target}" 로 바꾸지 못했다`
-    + `(현재 "${finalValue}", 재시도 ${attempts}회 소진) — 다른 조건의 데이터를 읽을 위험이 있어 중단한다`,
+    `source_season_transition_incomplete: ${label} 전환이 확인되지 않았다`
+    + `(목표 "${target}", 현재 값 "${finalValue}", 재시도 ${attempts}회 소진)`
+    + " — selector 값만 바뀌고 표가 그대로면 지난 조건의 데이터를 정본으로 읽는다",
   );
 }
 

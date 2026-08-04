@@ -49,7 +49,7 @@ function makeIo({ initial = "2025", lostClicks = 0, neverApplies = false, tableF
   const io = makeIo({ neverApplies: true });
   await assert.rejects(
     () => selectAndConfirm(io, "2026", { label: "시즌", polls: 3 }),
-    /select_change_failed/,
+    /source_season_transition_incomplete/,
     "select 가 끝내 반영되지 않으면 이전 시즌 데이터로 진행하면 안 된다",
   );
   assert.equal(io.value, "2025", "실패 시 값은 그대로여야 한다");
@@ -72,20 +72,25 @@ function makeIo({ initial = "2025", lostClicks = 0, neverApplies = false, tableF
   assert.equal(io.calls.select, 0, "이미 목표 값이면 건드리지 않는다");
 }
 
-/* 4) 값은 맞는데 표가 그대로 → 실패로 보지 않는다(false RED 방지)
- * 다른 시즌이어도 첫 화면이 우연히 같을 수 있다. 여기서 죽이면 게이트가 매일 크롤을 막는다. */
+/* 4) 값은 target 인데 표가 그대로 → **실패**여야 한다 (삼순 8차 지적)
+ *
+ * ⚠︎ Playwright `selectOption()` 은 서버 postback 이 끝나기 전에 이미 DOM select 값을
+ * target 으로 바꾼다. 그래서 postback/표 갱신이 유실되면 "selector 는 2026 인데 표는 2025"
+ * 상태가 실제로 만들어진다. 종전 스모크는 이 fail-open 을 정답으로 고정하고 있었다.
+ * 전환이 필요했던 경우에는 값 + 표 교체가 둘 다 성공 조건이다. */
 {
   const io = makeIo({ tableFrozen: true });
-  const result = await selectAndConfirm(io, "2026", { label: "시즌", polls: 2 });
-  assert.equal(io.value, "2026");
-  assert.equal(result.changed, true);
-  assert.equal(result.settled, false, "표 미교체는 기록만 하고 통과시킨다");
+  await assert.rejects(
+    () => selectAndConfirm(io, "2026", { label: "시즌", polls: 2, attempts: 2 }),
+    /source_season_transition_incomplete/,
+    "selector 값만 바뀌고 표가 그대로면 지난 조건 데이터를 정본으로 읽는다 — 통과시키면 안 된다",
+  );
 }
 
 /* 5) 재시도 상한을 실제로 지키는가(무한 루프 방지) */
 {
   const io = makeIo({ neverApplies: true });
-  await assert.rejects(() => selectAndConfirm(io, "2026", { attempts: 2, polls: 2 }), /select_change_failed/);
+  await assert.rejects(() => selectAndConfirm(io, "2026", { attempts: 2, polls: 2 }), /source_season_transition_incomplete/);
   assert.equal(io.calls.select, 2, "attempts 만큼만 시도해야 한다");
 }
 
@@ -133,7 +138,7 @@ function makeIo({ initial = "2025", lostClicks = 0, neverApplies = false, tableF
 
   await assert.rejects(
     () => collectKboPages(makePage({ postbackLost: true }), "u", "2026"),
-    /select_change_failed/,
+    /source_season_transition_incomplete/,
     "oracle 은 시즌 전환 미확인 시 OLD-SEASON 행을 반환하면 안 된다",
   );
 }
@@ -154,8 +159,11 @@ function makeIo({ initial = "2025", lostClicks = 0, neverApplies = false, tableF
     let season = "2025";
     let series = "1";
     let sortKey = "ERA_RT";
+    // 실제 KBO 는 series/season/sort 어느 postback 이든 표를 재렌더한다.
+    // fake 가 series 를 표에 반영하지 않으면, 강화된 "값+표 교체" 계약에서
+    // 정상 경로가 false RED 가 된다(모델이 현실과 달라서 나는 실패).
     const rows = () => [{
-      texts: ["1", `${season}/${sortKey}`, "TT"],
+      texts: ["1", `${season}/${series}/${sortKey}`, "TT"],
       hrefs: ["", "?playerId=90001"],
     }];
     return {
@@ -195,7 +203,7 @@ function makeIo({ initial = "2025", lostClicks = 0, neverApplies = false, tableF
   // 시즌 postback 유실 → fail-close
   await assert.rejects(
     () => selectSeason(makePage({ seasonLost: true })),
-    /select_change_failed/,
+    /source_season_transition_incomplete/,
     "crawler 도 시즌 전환 미확인 시 이전 시즌으로 크롤하면 안 된다",
   );
 
