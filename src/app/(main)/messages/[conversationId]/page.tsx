@@ -16,6 +16,7 @@ import TeamBadge from "@/components/ui/TeamBadge";
 import { linkifyText } from "@/lib/linkify";
 import NewsClippingCard from "@/components/dm/NewsClippingCard";
 import GeniusTypingIndicator from "@/components/dm/GeniusTypingIndicator";
+import GeniusPlayerPicker from "@/components/dm/GeniusPlayerPicker";
 import { isNewsClippingPayload } from "@/types/news-clipping";
 import {
   BASEBALL_GENIUS_NAME,
@@ -51,6 +52,9 @@ export default function DMChatPage() {
     sendMessage,
     geniusReplyStates,
     retryBaseballQa,
+    pickBaseballQaPlayer,
+    geniusPickedQuestionIds,
+    geniusAnsweredQuestionIds,
   } = useDMChat(draftTargetId ? "" : conversationId);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -398,6 +402,9 @@ export default function DMChatPage() {
               msg.sender_id === BASEBALL_GENIUS_USER_ID
                 ? mascotStateForReplyKind(geniusReply?.reply_kind)
                 : null;
+            // 동명이인 선택 카드. 선택은 표시값이 아니라 kbo_id 로 보낸다.
+            const pickerOptions =
+              geniusReply?.reply_kind === "picker" ? geniusReply.picker_options ?? null : null;
             return (
               <motion.div
                 key={msg.id}
@@ -437,6 +444,25 @@ export default function DMChatPage() {
                   >
                     {msg.content ? (
                       <p className="whitespace-pre-wrap break-words">{linkifyText(msg.content)}</p>
+                    ) : null}
+                    {pickerOptions ? (
+                      <GeniusPlayerPicker
+                        options={pickerOptions}
+                        // 이미 최종 답변이 달린 과거 picker나 이번에 이미 고른 picker는 비활성화한다.
+                        // 재탭하면 서버는 dedup 200만 돌려주고 새 DM이 안 생겨 typing이 영원히 돌았다.
+                        disabled={
+                          geniusReply?.question_message_id
+                            ? geniusAnsweredQuestionIds.has(geniusReply.question_message_id) ||
+                              geniusPickedQuestionIds.has(geniusReply.question_message_id)
+                            : true
+                        }
+                        onPick={(option) => {
+                          // 답변 도착 순서가 뒤집혀도 payload에 고정된 exact 원 질문만 재처리한다.
+                          if (geniusReply?.question_message_id) {
+                            pickBaseballQaPlayer(geniusReply.question_message_id, option.kbo_id);
+                          }
+                        }}
+                      />
                     ) : null}
                     {Array.isArray(msg.image_urls) && msg.image_urls.length > 0 && (
                       <div className={`grid gap-2 ${msg.content ? "mt-2" : ""}`}>
