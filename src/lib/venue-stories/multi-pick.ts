@@ -79,6 +79,88 @@ export function toggleAssetSelection(
   return { next: [...selected, assetId], overMax: false };
 }
 
+/** 그리드 상단 미디어 타입 토글 — 전체 / 사진 / 영상. */
+export type VenueLibraryFilter = "all" | "image" | "video";
+
+/** 토글 탭 정의(라벨 포함) — UI 와 회귀가 같은 소스를 쓴다. */
+export const VENUE_LIBRARY_FILTERS: ReadonlyArray<{
+  value: VenueLibraryFilter;
+  label: string;
+}> = [
+  { value: "all", label: "전체" },
+  { value: "image", label: "사진" },
+  { value: "video", label: "영상" },
+];
+
+/**
+ * 타입 필터 적용 — 네이티브 열거는 사진+영상을 한 페이지에 섞어 내려주므로(iOS/Android 공통
+ * 하드코딩) 화면단에서 kind 로 걸러 낸다. 원본 배열의 최근순은 그대로 보존한다.
+ */
+export function filterLibraryAssets<T extends { kind: "image" | "video" }>(
+  assets: readonly T[],
+  filter: VenueLibraryFilter,
+): T[] {
+  if (filter === "all") return [...assets];
+  return assets.filter((a) => a.kind === filter);
+}
+
+/**
+ * 필터 탭에서 한 화면을 채우기 위한 최소 노출 개수.
+ * 영상만 보기에서 첫 페이지(24)에 영상이 1~2개뿐이면 빈 화면처럼 보이므로,
+ * 이 수치에 못 미치면 다음 페이지를 자동으로 이어 받는다.
+ */
+export const VENUE_LIBRARY_FILTER_MIN_VISIBLE = 12;
+
+/**
+ * 필터 탭 자동 추가 로드 상한(페이지 수). 영상이 아예 없는 사진첩에서 커서를 끝까지
+ * 따라가며 브릿지를 무한 호출하지 않도록 bounded 로 묶는다. 상한 도달 후에는
+ * 기존 '더 불러오기' 수동 동선만 남는다.
+ */
+export const VENUE_LIBRARY_FILTER_MAX_AUTO_PAGES = 6;
+
+/**
+ * 필터 적용 상태에서 다음 페이지를 자동으로 더 읽어야 하는지 판정(순수).
+ * - 전체 탭은 자동 추가 로드를 하지 않는다(기존 동작 보존).
+ * - 커서가 없으면(사진첩 끝) 더 읽을 것이 없다.
+ * - 로딩 중이면 중복 호출 금지.
+ * - 자동 로드는 MAX_AUTO_PAGES 회로 bounded.
+ */
+export function shouldAutoLoadMoreForFilter(input: {
+  filter: VenueLibraryFilter;
+  visibleCount: number;
+  hasCursor: boolean;
+  loading: boolean;
+  autoPages: number;
+  minVisible?: number;
+  maxAutoPages?: number;
+}): boolean {
+  if (input.filter === "all") return false;
+  if (!input.hasCursor || input.loading) return false;
+  const minVisible = input.minVisible ?? VENUE_LIBRARY_FILTER_MIN_VISIBLE;
+  const maxAutoPages = input.maxAutoPages ?? VENUE_LIBRARY_FILTER_MAX_AUTO_PAGES;
+  if (input.autoPages >= maxAutoPages) return false;
+  return input.visibleCount < minVisible;
+}
+
+/**
+ * 필터 탭이 비었을 때의 안내 문구. '사진첩에 아무것도 없음'과
+ * '이 타입만 없음'을 구분해 유저가 토글을 되돌릴 수 있게 한다.
+ */
+export function libraryEmptyMessage(input: {
+  filter: VenueLibraryFilter;
+  totalLoaded: number;
+  hasAnyMedia?: boolean;
+}): string {
+  const hasAnyMedia = input.hasAnyMedia ?? input.totalLoaded > 0;
+  if (input.filter === "video") {
+    return hasAnyMedia ? "최근 영상이 없어요" : "최근 사진·영상이 없어요";
+  }
+  if (input.filter === "image") {
+    return hasAnyMedia ? "최근 사진이 없어요" : "최근 사진·영상이 없어요";
+  }
+  return "최근 사진·영상이 없어요";
+}
+
 /**
  * 픽 identity — 같은 파일을 다시 골랐을 때 중복 항목 방지용.
  * File 객체 자체는 픽마다 새 인스턴스라 name+size+lastModified 로 판별한다.

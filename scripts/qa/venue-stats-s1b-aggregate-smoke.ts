@@ -258,6 +258,7 @@ function input(over: Partial<VenueStatsAggregateInput> = {}): VenueStatsAggregat
     scope: "overall",
     rows: BASE_ROWS,
     games: GAMES,
+    nonRegularGames: new Map(),
     standings: STANDINGS,
     currentTeamId: LG,
     favorites: FAVORITES,
@@ -409,7 +410,7 @@ console.log("\n[4] cancelled-only / 복합 invalid snapshot / no_favorite");
   ok("invalid coverage=[{gameId,reason:snapshot_missing}]", JSON.stringify(compound.metrics.A1.coverage.invalidSnapshot) === JSON.stringify([{ gameId: G5.gameId, reason: "snapshot_missing" }]));
 
   const mismatch = buildVenueStatsScope(input({ rows: [att(G1.gameId, "story_geofence", KT)] }));
-  ok("snapshot_team_mismatch → invalid_snapshot fail-closed(행 폐기 금지 — §9)", mismatch.metrics.A1.state === "invalid_snapshot" && (mismatch.metrics.A1.coverage.invalidSnapshot as Array<{ reason: string }>)[0]?.reason === "snapshot_team_mismatch");
+  ok("응원팀 미출전 → 다이어리 유지·팀 통계 제외", mismatch.metrics.A1.state === "no_final" && mismatch.coverage.attendanceGames === 1 && mismatch.coverage.finalGames === 0 && mismatch.coverage.excludedAttendance[0]?.reason === "favorite_team_not_playing");
 
   const noFav = buildVenueStatsScope(input({ rows: [att(G1.gameId, "story_geofence")], favorites: [] }));
   ok("final≥1 + 최애 없음 → C1=no_favorite", noFav.metrics.C1.state === "no_favorite");
@@ -422,8 +423,8 @@ console.log("\n[4] cancelled-only / 복합 invalid snapshot / no_favorite");
     cancelledOnly.metrics.D7.state === "no_final", cancelledOnly.metrics.D7.state);
   ok("snapshot 결측: D7=invalid_snapshot (사다리 보존)",
     compound.metrics.D7.state === "invalid_snapshot", compound.metrics.D7.state);
-  ok("snapshot team mismatch: D7=invalid_snapshot (사다리 보존)",
-    mismatch.metrics.D7.state === "invalid_snapshot", mismatch.metrics.D7.state);
+  ok("응원팀 미출전: D7=no_final (통계 제외)",
+    mismatch.metrics.D7.state === "no_final", mismatch.metrics.D7.state);
   // 정상 final 인데 소스만 없는 경우에만 sample_limited.
   const normalNoSource = buildVenueStatsScope(input({
     rows: [att(G1.gameId, "story_geofence")], gameErrors: new Map(),
@@ -431,6 +432,58 @@ console.log("\n[4] cancelled-only / 복합 invalid snapshot / no_favorite");
   ok("정상 final + 실책 소스 미확인 → D7=sample_limited·value=null",
     normalNoSource.metrics.D7.state === "sample_limited" && normalNoSource.metrics.D7.value === null,
     `${normalNoSource.metrics.D7.state} / ${JSON.stringify(normalNoSource.metrics.D7.value)}`);
+}
+
+// ── 4-1) 실제 신고 fixture: 총 11경기 중 산출 9경기 ─────────────────────────
+console.log("\n[4-1] 총경기와 팀 통계 산출 대상 분리");
+{
+  const eligible = Array.from({ length: 9 }, (_, index) => game({
+    gameId: `202607${String(index + 1).padStart(2, "0")}OBLG0`,
+    awayTeamId: OB,
+    homeTeamId: LG,
+    awayScore: index === 8 ? 2 : 1,
+    homeScore: index === 8 ? 2 : 3,
+  }));
+  const favoriteAway = game({
+    gameId: "20260710WONC0",
+    awayTeamId: 10,
+    homeTeamId: 5,
+    awayScore: 2,
+    homeScore: 1,
+  });
+  const preseason = game({
+    gameId: "20260315OBLG0",
+    awayTeamId: OB,
+    homeTeamId: LG,
+    awayScore: 1,
+    homeScore: 4,
+  });
+  const rows = [
+    ...eligible.map((entry) => att(entry.gameId, "story_geofence", LG)),
+    att(favoriteAway.gameId, "story_geofence", LG),
+    att(preseason.gameId, "story_geofence", LG),
+  ];
+  const result = buildVenueStatsScope(input({
+    rows,
+    games: new Map([...eligible, favoriteAway].map((entry) => [entry.gameId, entry])),
+    nonRegularGames: new Map([[preseason.gameId, preseason]]),
+  }));
+  const attendance = (result.metrics.A1.value as {
+    attendance: { w: number; l: number; d: number; rate: number | null };
+  } | null)?.attendance;
+  ok(
+    "신고 fixture: 총 11 / 산출 9 / 8승 0패 1무 / 88.9%",
+    result.coverage.attendanceGames === 11 &&
+      result.coverage.finalGames === 9 &&
+      result.coverage.excludedAttendance.length === 2 &&
+      attendance?.w === 8 && attendance.l === 0 && attendance.d === 1 &&
+      approx(attendance.rate, 8 / 9),
+  );
+  ok(
+    "제외 사유: 시범·비정규 1 / 응원팀 미출전 1",
+    result.coverage.excludedAttendance.filter((entry) => entry.reason === "non_regular_season").length === 1 &&
+      result.coverage.excludedAttendance.filter((entry) => entry.reason === "favorite_team_not_playing").length === 1,
+  );
 }
 
 // ── 5) mixed team (§10·§11) ──────────────────────────────────────────────────

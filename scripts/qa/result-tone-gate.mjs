@@ -315,7 +315,7 @@ const App=
   path==="/diary" ? VenueDiaryCard :
   path==="/playerlogs" ? () => <PlayerGameLogs playerId="53123" position="내야수" teamColor="#C30452"/> :
   path==="/roster" ? () => <TeamRosterMovesCard team={LG}/> :
-  path==="/addsheet" ? () => <VenueDiaryAddGameSheet isOpen favoriteTeamId={1} countsByGame={new Map()} countsReady countsError={false} onRetryCounts={()=>{}} onBack={()=>{}} onClose={()=>{}} onPick={()=>{}}/> :
+  path==="/addsheet" ? () => <VenueDiaryAddGameSheet isOpen favoriteTeamId={1} season={2026} onSeasonChange={()=>{}} countsByGame={new Map()} countsReady countsError={false} activeAttendanceGameIds={new Set()} onRetryCounts={()=>{}} onBack={()=>{}} onClose={()=>{}} onPick={()=>{}} onRecord={()=>{}}/> :
   path.startsWith("/uploader/") ? Uploader :
   path.startsWith("/viewer/") ? Viewer :
   path==="/dashboard" ? VenueStatsDashboard :
@@ -787,6 +787,29 @@ try {
   await page.goto(`http://127.0.0.1:${port}/diary`, { waitUntil: "domcontentloaded" });
   await page.getByText("경기별 기록").waitFor();
   {
+    // 경기별 기록은 기본 접힘(세로 공간 절감)이라 결과 칩이 DOM 에 없다 → 먼저 펼친다.
+    // 접힘 자체의 계약은 qa:venue-diary-games-fold 가 잠그고, 여기서는 tone 만 본다.
+    // attendance/media 가 각각 settle 하며 re-render 하므로 playwright click 은 detach 로 깨진다.
+    // 목록(3경기)이 도착해 토글 count 가 안정된 뒤, 직접 DOM 이벤트로 펼친다.
+    const foldOpened = await page
+      .waitForFunction(
+        () => {
+          const btn = [...document.querySelectorAll("button")].find((b) =>
+            /^경기별 기록/.test((b.textContent || "").trim()),
+          );
+          if (!btn || !/경기별 기록\s*3/.test((btn.textContent || "").replace(/\s+/g, " "))) return false;
+          if (btn.getAttribute("aria-expanded") === "false") btn.click();
+          return btn.getAttribute("aria-expanded") === "true";
+        },
+        null,
+        { timeout: 10000 },
+      )
+      .then(() => true)
+      .catch(() => false);
+    check(foldOpened, "다이어리 '경기별 기록' 펼치기 — 기본 접힘 토글 동작(fold 계약)");
+    if (foldOpened) {
+      await page.locator("span").filter({ hasText: /^(승|패|무)$/ }).first().waitFor({ timeout: 5000 });
+    }
     // 다이어리는 attendance/media fetch 가 각각 settle 하며 re-render 한다 → locator 를 먼저
     // 잡아두면 노드가 detach 돼 getComputedStyle 이 빈 문자열을 돌려준다(색 불일치가 아니라
     // 측정 실패인데 FAIL 로만 보임). 조회와 측정을 같은 tick 안에서 끝낸다.

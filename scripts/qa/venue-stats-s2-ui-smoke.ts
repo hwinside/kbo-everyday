@@ -15,6 +15,7 @@ import {
   scoreBadgeLabel,
   scoreConfidenceLevel,
   coverageCaption,
+  excludedAttendanceCaption,
   formatAvg,
   formatOuts,
   formatRate,
@@ -127,6 +128,7 @@ const scope: VenueStatsScopePayload = {
     dedupedRows: 0,
     incompleteFinalGames: 0,
     invalidSnapshot: [],
+    excludedAttendance: [],
   },
   metrics,
 };
@@ -467,6 +469,26 @@ assert.equal(formatAvg(0.286), ".286");
 assert.equal(formatSigned(-0.41, 2), "−0.41");
 assert.equal(formatOuts(20), "6 ⅔");
 assert.equal(coverageCaption(scope), "직관 4경기 · 종료 4경기 · 기록 확인 완료");
+assert.equal(excludedAttendanceCaption(scope), null);
+
+const excludedScope = structuredClone(scope);
+excludedScope.coverage.attendanceGames = 11;
+excludedScope.coverage.finalGames = 9;
+excludedScope.coverage.excludedAttendance = [
+  { gameId: "preseason", reason: "non_regular_season" },
+  { gameId: "favorite-away", reason: "favorite_team_not_playing" },
+];
+assert.equal(coverageCaption(excludedScope), "총 11경기 · 통계 9경기 · 제외 2경기");
+assert.equal(
+  excludedAttendanceCaption(excludedScope),
+  "통계 제외 · 시범·비정규 1경기 · 응원팀 미출전 1경기",
+);
+excludedScope.coverage.unavailableGames = 1;
+assert.equal(
+  coverageCaption(excludedScope),
+  "총 11경기 · 통계 9경기 · 제외 2경기 · 확인 중 1경기",
+  "제외 경기와 확인 중 경기가 함께 있으면 어느 쪽도 숨기지 않는다",
+);
 
 metrics.A1.state = "mixed_team";
 metrics.A1.n = 4;

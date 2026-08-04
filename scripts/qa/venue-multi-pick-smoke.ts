@@ -36,6 +36,12 @@ import {
   shouldRefreshLibraryOnResume,
   VENUE_LIBRARY_FIRST_PAGE_SIZE,
   VENUE_LIBRARY_PAGE_SIZE,
+  VENUE_LIBRARY_FILTERS,
+  VENUE_LIBRARY_FILTER_MIN_VISIBLE,
+  VENUE_LIBRARY_FILTER_MAX_AUTO_PAGES,
+  filterLibraryAssets,
+  shouldAutoLoadMoreForFilter,
+  libraryEmptyMessage,
   type MultiItemStatus,
 } from "../../src/lib/venue-stories/multi-pick";
 import { teamPalette } from "../../src/design-v2/team-palette";
@@ -195,6 +201,100 @@ console.log("[라운드2 #1 — 앱 복귀 재조회 / 라운드2 #3 — 점진 
   );
 }
 
+console.log("[미디어 타입 토글 — 전체/사진/영상 필터 + 자동 페이징]");
+{
+  const assets = [
+    { id: "a", kind: "image" as const },
+    { id: "b", kind: "video" as const },
+    { id: "c", kind: "image" as const },
+    { id: "d", kind: "video" as const },
+  ];
+  ok(
+    "탭 3개 — 전체/사진/영상",
+    VENUE_LIBRARY_FILTERS.map((t) => t.value).join(",") === "all,image,video" &&
+      VENUE_LIBRARY_FILTERS.map((t) => t.label).join(",") === "전체,사진,영상",
+  );
+  ok(
+    "영상 탭 = video 만, 최근순(원본 배열 순서) 보존",
+    filterLibraryAssets(assets, "video").map((a) => a.id).join(",") === "b,d",
+  );
+  ok(
+    "사진 탭 = image 만",
+    filterLibraryAssets(assets, "image").map((a) => a.id).join(",") === "a,c",
+  );
+  ok(
+    "전체 탭 = 전수 그대로(복사본, 원본 미변경)",
+    filterLibraryAssets(assets, "all").map((a) => a.id).join(",") === "a,b,c,d" &&
+      filterLibraryAssets(assets, "all") !== assets,
+  );
+  ok(
+    "영상 탭에서 한 화면 분량 미달 + 커서 있음 → 다음 페이지 자동 로드(빈 화면 오인 방지)",
+    shouldAutoLoadMoreForFilter({
+      filter: "video",
+      visibleCount: 2,
+      hasCursor: true,
+      loading: false,
+      autoPages: 0,
+    }) === true,
+  );
+  ok(
+    "전체 탭은 자동 추가 로드 안 함(기존 동작 보존 — 수동 '더 불러오기'만)",
+    shouldAutoLoadMoreForFilter({
+      filter: "all",
+      visibleCount: 0,
+      hasCursor: true,
+      loading: false,
+      autoPages: 0,
+    }) === false,
+  );
+  ok(
+    "커서 없음(끝)·로딩 중이면 자동 로드 안 함(중복 호출 금지)",
+    shouldAutoLoadMoreForFilter({
+      filter: "video",
+      visibleCount: 0,
+      hasCursor: false,
+      loading: false,
+      autoPages: 0,
+    }) === false &&
+      shouldAutoLoadMoreForFilter({
+        filter: "video",
+        visibleCount: 0,
+        hasCursor: true,
+        loading: true,
+        autoPages: 0,
+      }) === false,
+  );
+  ok(
+    "자동 로드는 bounded — 상한 도달 시 중단(영상 0개 사진첩에서 무한 브릿지 호출 차단)",
+    shouldAutoLoadMoreForFilter({
+      filter: "video",
+      visibleCount: 0,
+      hasCursor: true,
+      loading: false,
+      autoPages: VENUE_LIBRARY_FILTER_MAX_AUTO_PAGES,
+    }) === false && VENUE_LIBRARY_FILTER_MAX_AUTO_PAGES > 0,
+  );
+  ok(
+    "한 화면 분량을 채우면 자동 로드 중단",
+    shouldAutoLoadMoreForFilter({
+      filter: "video",
+      visibleCount: VENUE_LIBRARY_FILTER_MIN_VISIBLE,
+      hasCursor: true,
+      loading: false,
+      autoPages: 0,
+    }) === false,
+  );
+  ok(
+    "빈 상태 문구 — '사진첩에 아무것도 없음' vs '이 타입만 없음' 구분",
+    libraryEmptyMessage({ filter: "video", totalLoaded: 40 }) === "최근 영상이 없어요" &&
+      libraryEmptyMessage({ filter: "image", totalLoaded: 40 }) === "최근 사진이 없어요" &&
+      libraryEmptyMessage({ filter: "video", totalLoaded: 0 }) === "최근 사진·영상이 없어요" &&
+      libraryEmptyMessage({ filter: "video", totalLoaded: 0, hasAnyMedia: true }) ===
+        "최근 영상이 없어요" &&
+      libraryEmptyMessage({ filter: "all", totalLoaded: 40 }) === "최근 사진·영상이 없어요",
+  );
+}
+
 console.log("[③ 컴포저 정적 계약 — 단일 sticky CTA / raw 팀변수 금지]");
 {
   const src = readFileSync(
@@ -215,6 +315,86 @@ console.log("[③ 컴포저 정적 계약 — 단일 sticky CTA / raw 팀변수 
     src.includes("teamPalette(team ?? TEAMS.neutral)") && !src.includes("paletteForTeamId("),
   );
   ok("네이티브 사진첩 열거 브릿지 사용", src.includes("listVenueMedia("));
+  ok(
+    "미디어 타입 토글이 그리드에 실배선 — 필터 상태로 걸러난 목록이 VenueLibraryGrid 로 간다",
+    // 탭 렌더 + 선택 핸들러 + 필터 적용 목록이 그리드 assets 로 전달되는 실제 배선까지 확인.
+    src.includes("VENUE_LIBRARY_FILTERS.map(") &&
+      src.includes("selectLibraryFilter(tab.value)") &&
+      /const visibleLibraryAssets = useMemo\([\s\S]{0,200}?filterLibraryAssets\(libraryAssets, libraryFilter\)/.test(
+        src,
+      ) &&
+      /<VenueLibraryGrid[\s\S]{0,200}?assets=\{visibleLibraryAssets\}/.test(src) &&
+      // 걸러지지 않은 원본 배열을 그리드에 그대로 넘기는 구배선 잔존 0
+      !/<VenueLibraryGrid[\s\S]{0,200}?assets=\{libraryAssets\}/.test(src) &&
+      // 빈 상태 문구도 탭별로 갈라진다(하드코딩 문구 잔존 금지)
+      src.includes("libraryEmptyMessage({"),
+  );
+  ok(
+    "탭 전환은 네이티브를 해당 타입으로 **재열거**한다 — cursor 리셋 + 목록 초기화 + 재조회",
+    /selectLibraryFilter = \(next: VenueLibraryFilter\) => \{[\s\S]{0,600}?setLibraryAssets\(\[\]\)[\s\S]{0,200}?setLibraryCursor\(null\)[\s\S]{0,200}?loadLibrary\(false\)/.test(
+      src,
+    ),
+  );
+  ok(
+    "listVenueMedia 에 현재 탭을 전달 — 전체는 undefined(기존 계약), 그 외는 단일 타입 배열",
+    /listVenueMedia\([\s\S]{0,300}?requestedTypes === "all" \? undefined : \[requestedTypes\]/.test(src) &&
+      // 비동기 응답이 도착했을 때 탭이 바뀜으면 버린다(탭 간 목록 오염 방지)
+      /if \(libraryFilterRef\.current !== requestedTypes\) return;/.test(src),
+  );
+  ok(
+    "구설치본 fail-safe — 네이티브가 mediaTypes 를 무시해도 화면단 거르기가 남아 혼합 목록이 안 섞인다",
+    /const visibleLibraryAssets = useMemo\([\s\S]{0,200}?filterLibraryAssets\(libraryAssets, libraryFilter\)/.test(
+      src,
+    ) && /<VenueLibraryGrid[\s\S]{0,200}?assets=\{visibleLibraryAssets\}/.test(src),
+  );
+  ok(
+    "네이티브 실구현 — iOS PHFetch predicate 가 요청 타입으로 갈라지고 미전달은 사진+영상 폴백",
+    (() => {
+      const swift = readFileSync(
+        join(__dirname, "../../ios/App/App/VenueMediaLibraryPlugin.swift"),
+        "utf8",
+      );
+      return (
+        swift.includes('call.getArray("mediaTypes", String.self)') &&
+        // 오직 image 요청이면 image 단일 predicate
+        /wantsImage && !wantsVideo \{[\s\S]{0,200}?PHAssetMediaType\.image\.rawValue/.test(swift) &&
+        /wantsVideo && !wantsImage \{[\s\S]{0,200}?PHAssetMediaType\.video\.rawValue/.test(swift) &&
+        // 폴백은 기존 OR predicate 그대로
+        /return NSPredicate\(\s*format: "mediaType == %d OR mediaType == %d"/.test(swift) &&
+        // fetch 에 실제로 적용되는지(상수만 선언하고 안 쓰는 false-green 차단)
+        swift.includes("options.predicate = self.mediaTypePredicate(requestedTypes)")
+      );
+    })(),
+  );
+  ok(
+    "네이티브 실구현 — Android MediaStore selection 이 요청 타입으로 갈라지고 placeholder 개수가 args 와 일치",
+    (() => {
+      const kt = readFileSync(
+        join(
+          __dirname,
+          "../../android/app/src/main/java/fan/keubo/app/VenueMediaLibraryPlugin.kt",
+        ),
+        "utf8",
+      );
+      return (
+        kt.includes('call.getArray("mediaTypes")') &&
+        /wantsImage && !wantsVideo -> arrayOf\(image\)/.test(kt) &&
+        /wantsVideo && !wantsImage -> arrayOf\(video\)/.test(kt) &&
+        /else -> arrayOf\(image, video\)/.test(kt) &&
+        // selection 이 args 길이에서 파생된다 — IN (?, ?) 하드코딩 잔존 금지
+        kt.includes("val selectionArgs = mediaTypeSelectionArgs(requestedTypes)") &&
+        /val placeholders = selectionArgs\.joinToString\(", "\) \{ "\?" \}/.test(kt) &&
+        kt.includes("MEDIA_TYPE} IN ($placeholders)") &&
+        !/MEDIA_TYPE\} IN \(\?, \?\)/.test(kt)
+      );
+    })(),
+  );
+  ok(
+    "필터 자동 페이징은 bounded — 상한 상수를 쓰고 append 에서만 증가",
+    src.includes("shouldAutoLoadMoreForFilter({") &&
+      src.includes("libraryAutoPagesRef") &&
+      /libraryAutoPagesRef\.current = append \? libraryAutoPagesRef\.current \+ 1 : 0/.test(src),
+  );
   ok(
     "version gate — 브릿지 미가용이면 기존 file input 폴백(업로드 동선 보존)",
     src.includes("isVenueMediaLibraryAvailable()") &&
@@ -304,7 +484,14 @@ console.log("[B안 브릿지 계약 — 사진첩 열거/asset export]");
     "utf8",
   );
   ok("VenueMediaLibrary 커스텀 플러그인 등록", bridge.includes('registerPlugin<VenueMediaLibraryPlugin>("VenueMediaLibrary")'));
-  ok("최근순 페이지 열거 API", bridge.includes("listMedia(options: { cursor?: string; limit: number })"));
+  ok(
+    "최근순 페이지 열거 API + 미디어 타입 필터(mediaTypes) — 생략 가능(기존 계약 보존)",
+    /listMedia\(options: \{[\s\S]{0,600}?cursor\?: string;[\s\S]{0,400}?limit: number;[\s\S]{0,900}?mediaTypes\?: VenueMediaKind\[\];[\s\S]{0,80}?\}\): Promise<VenueMediaPage>/.test(
+      bridge,
+    ) &&
+      // 호출 헬퍼도 선택적 전달 — 빈 배열이면 아예 보내지 않는다(구버전 동일 동작)
+      /mediaTypes && mediaTypes\.length > 0 \? \{ mediaTypes \} : \{\}/.test(bridge),
+  );
   ok("원본 asset export API", bridge.includes("exportMedia(options: { id: string })"));
   ok(
     "원격 WebView 안전 export — base64 청크 읽기(convertFileSrc/file:// 의존 0)",
@@ -334,6 +521,23 @@ console.log("[B안 브릿지 계약 — 사진첩 열거/asset export]");
 
 console.log("[네이티브 실구현 — iOS PhotoKit / Android MediaStore / 권한·등록]");
 {
+  const workflow = readFileSync(
+    join(__dirname, "../../.github/workflows/venue-story-picker-gate.yml"),
+    "utf8",
+  );
+  const nativeContractPaths = [
+    "ios/App/App/VenueMediaLibraryPlugin.swift",
+    "ios/App/App/Info.plist",
+    "ios/App/App/MainViewController.swift",
+    "ios/App/App.xcodeproj/project.pbxproj",
+    "android/app/src/main/java/fan/keubo/app/VenueMediaLibraryPlugin.kt",
+    "android/app/src/main/java/fan/keubo/app/MainActivity.java",
+    "android/app/src/main/AndroidManifest.xml",
+  ];
+  ok(
+    "required workflow — 스모크가 직접 읽는 네이티브 계약 파일이 PR/push paths 양쪽에 모두 결속",
+    nativeContractPaths.every((path) => workflow.split(`\"${path}\"`).length - 1 === 2),
+  );
   const swift = readFileSync(
     join(__dirname, "../../ios/App/App/VenueMediaLibraryPlugin.swift"),
     "utf8",
@@ -747,7 +951,44 @@ async function composerProductionWiringRegression() {
   const thumbs: Record<string, string> = {
     n1: "data:image/jpeg;base64,THUMBN1",
     n2: "data:image/jpeg;base64,THUMBN2",
+    v1: "data:image/jpeg;base64,THUMBV1",
   };
+  type NativeListOptions = { mediaTypes?: Array<"image" | "video"> };
+  type NativeListPage = {
+    assets: Array<{
+      id: string;
+      kind: "image" | "video";
+      thumbnailUrl: string;
+      durationMs: number | null;
+      createdAt: number;
+    }>;
+    nextCursor: string | null;
+    permission: "authorized";
+  };
+  const imagePage = (): NativeListPage => ({
+    assets: [
+      { id: "n1", kind: "image", thumbnailUrl: thumbs.n1, durationMs: null, createdAt: 2 },
+      { id: "n2", kind: "image", thumbnailUrl: thumbs.n2, durationMs: null, createdAt: 1 },
+    ],
+    nextCursor: null,
+    permission: "authorized",
+  });
+  const videoPage = (): NativeListPage => ({
+    assets: [
+      { id: "v1", kind: "video", thumbnailUrl: thumbs.v1, durationMs: 8_000, createdAt: 3 },
+    ],
+    nextCursor: null,
+    permission: "authorized",
+  });
+  let resolveInitialList!: (page: NativeListPage) => void;
+  const delayedInitialList = new Promise<NativeListPage>((resolve) => {
+    resolveInitialList = resolve;
+  });
+  let delayNextList = false;
+  let returnEmptyVideoPage = false;
+  let resolveRapidList!: (page: NativeListPage) => void;
+  let delayedRapidList: Promise<NativeListPage> | null = null;
+  const listMediaCalls: NativeListOptions[] = [];
   const exportCalls: string[] = [];
   const exportChunkB64 = Buffer.from("orig").toString("base64"); // 4 bytes
   (dom.window as unknown as Record<string, unknown>).Capacitor = {
@@ -755,14 +996,23 @@ async function composerProductionWiringRegression() {
       VenueMediaLibrary: {
         getPermission: async () => ({ permission: "authorized" }),
         requestPermission: async () => ({ permission: "authorized" }),
-        listMedia: async () => ({
-          assets: [
-            { id: "n1", kind: "image", thumbnailUrl: thumbs.n1, durationMs: null, createdAt: 2 },
-            { id: "n2", kind: "image", thumbnailUrl: thumbs.n2, durationMs: null, createdAt: 1 },
-          ],
-          nextCursor: null,
-          permission: "authorized",
-        }),
+        listMedia: async (options: NativeListOptions) => {
+          listMediaCalls.push(options);
+          if (listMediaCalls.length === 1) return delayedInitialList;
+          if (delayNextList) {
+            delayNextList = false;
+            delayedRapidList = new Promise<NativeListPage>((resolve) => {
+              resolveRapidList = resolve;
+            });
+            return delayedRapidList;
+          }
+          if (options.mediaTypes?.join(",") === "video") {
+            return returnEmptyVideoPage
+              ? { assets: [], nextCursor: null, permission: "authorized" }
+              : videoPage();
+          }
+          return imagePage();
+        },
         exportMedia: async ({ id }: { id: string }) => {
           exportCalls.push(id);
           if (id === "n1" && exportCalls.filter((x) => x === "n1").length === 1) {
@@ -835,10 +1085,93 @@ async function composerProductionWiringRegression() {
     return cond();
   };
 
+  // 삼순 1차 NO-GO 실제 재현: 첫 전체 조회가 지연된 동안 영상 탭을 누른다. 기존 구현은
+  // 새 loadLibrary가 libraryLoading guard에 막히고, 첫 응답은 stale 폐기된 뒤 재조회가 없어
+  // 빈 화면에 영구 고착됐다. latest pending reload가 video 요청을 반드시 이어서 보내야 한다.
+  await waitFor(
+    "race 전제 — 첫 전체 네이티브 조회가 pending인 동안 필터 탭 렌더",
+    () => listMediaCalls.length === 1 && q('[data-library-filter="video"]') != null,
+  );
+  await act(async () => {
+    (q('[data-library-filter="video"]') as HTMLElement).click();
+  });
+  await act(async () => {
+    resolveInitialList(imagePage());
+    await Promise.resolve();
+  });
+  await waitFor(
+    "첫 조회 지연→영상 클릭→latest video 네이티브 재조회·렌더",
+    () =>
+      listMediaCalls.length === 2 &&
+      listMediaCalls[1]?.mediaTypes?.join(",") === "video" &&
+      q('[data-asset-id="v1"]') != null,
+  );
+  ok(
+    "stale 전체 응답의 사진은 영상 탭 목록을 오염시키지 않음",
+    q('[data-asset-id="n1"]') == null && q('[data-asset-id="n2"]') == null,
+  );
+
+  // 연속 전체→영상→사진: 전체 재조회가 pending인 동안 두 탭을 빠르게 눌러도 중간 영상은
+  // 호출하지 않고 마지막 사진 요청 하나로 합쳐져야 한다(삼순 1차 NO-GO 보완 게이트).
+  delayNextList = true;
+  await act(async () => {
+    (q('[data-library-filter="all"]') as HTMLElement).click();
+  });
+  await waitFor(
+    "연속 탭 race 전제 — 전체 재조회 pending",
+    () => listMediaCalls.length === 3 && delayedRapidList != null,
+  );
+  await act(async () => {
+    (q('[data-library-filter="video"]') as HTMLElement).click();
+    (q('[data-library-filter="image"]') as HTMLElement).click();
+  });
+  await act(async () => {
+    resolveRapidList(imagePage());
+    await Promise.resolve();
+  });
+  await waitFor(
+    "연속 전체→영상→사진은 마지막 image 네이티브 재조회·렌더",
+    () =>
+      listMediaCalls.length === 4 &&
+      listMediaCalls[3]?.mediaTypes?.join(",") === "image" &&
+      q('[data-asset-id="n1"]') != null,
+  );
+  ok(
+    "연속 탭 중간 video 요청/결과는 남지 않음",
+    listMediaCalls.slice(3).every((call) => call.mediaTypes?.join(",") !== "video") &&
+      q('[data-asset-id="v1"]') == null,
+  );
+
+  // 사진 2장·영상 0개인 실제 타입별 네이티브 조회. 현재 video 응답 자체는 빈 배열이므로
+  // 직전 all/image 조회에서 확인한 `사진첩에 미디어가 있음` 사실을 보존해야 올바른 안내가 나온다.
+  returnEmptyVideoPage = true;
+  await act(async () => {
+    (q('[data-library-filter="video"]') as HTMLElement).click();
+  });
+  await waitFor(
+    "사진 있음·영상 0 — 실제 Composer가 '최근 영상이 없어요' + 전체 전환 안내",
+    () =>
+      listMediaCalls.length === 5 &&
+      (q('[data-testid="library-empty"]')?.textContent ?? "").includes("최근 영상이 없어요") &&
+      (q('[data-testid="library-empty"]')?.textContent ?? "").includes("위 탭을 '전체'로 바꾸면 모두 볼 수 있어요"),
+  );
+  ok(
+    "사진 있음·영상 0 — 권한 확인 오안내 잔존 0",
+    !(q('[data-testid="library-empty"]')?.textContent ?? "").includes("사진 접근 범위를 확인"),
+  );
+
+  // 기존 업로드 production 배선 회귀는 전체 탭의 사진 2장으로 계속 검증한다.
+  await act(async () => {
+    (q('[data-library-filter="all"]') as HTMLElement).click();
+  });
+
   // 선체크 ok → 커스텀 그리드 자동 오픈(실제 loadLibrary → 주입 브릿지 listMedia)
   await waitFor(
     "실제 컴포넌트 — 선체크 통과 후 커스텀 그리드 자동 오픈(네이티브 타일 렌더)",
-    () => q('[data-asset-id="n1"]') != null && q('[data-asset-id="n2"]') != null,
+    () =>
+      listMediaCalls.length === 6 &&
+      q('[data-asset-id="n1"]') != null &&
+      q('[data-asset-id="n2"]') != null,
   );
 
   // 타일 탭 2회 → 하단 '2개 선택 완료' confirm — 실제 confirmLibrarySelection 이 ComposerItem 생성

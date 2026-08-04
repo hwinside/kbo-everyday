@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, ChevronLeft, Search, Loader2, Lock, RefreshCw } from "lucide-react";
+import { X, ChevronLeft, Search, Loader2, Lock, RefreshCw, ImagePlus } from "lucide-react";
 import { TEAMS, getTeamById } from "@/lib/constants/teams";
 import {
   diaryAddSelectDisabled,
@@ -12,8 +12,13 @@ import {
 } from "@/lib/venue-diary/view";
 import type { DiaryUploadGame } from "@/components/my/VenueDiaryUploader";
 import { gameResultTone, resultToneTextStyle } from "@/lib/ui/result-tone";
+import {
+  VENUE_DIARY_MANUAL_SEASONS,
+  type VenueDiaryManualSeason,
+} from "@/lib/venue-diary/manual-upload";
 
-const DIARY_SEASON = 2026;
+/** 시즌 칩 노출 순서 = 최신 시즌 먼저(서버 허용 시즌 SSOT 그대로). */
+const DIARY_SEASONS = VENUE_DIARY_MANUAL_SEASONS;
 
 interface ScheduleDay {
   date: string; // YYYYMMDD
@@ -29,19 +34,28 @@ interface ScheduleDay {
 interface Props {
   isOpen: boolean;
   favoriteTeamId: number | null;
-  /** gameId → 이미 올린 미디어 개수(N/10 오버레이). */
+  /** 선택된 시즌(카드가 소유). 시트는 이 시즌 일정만 조회한다. */
+  season: VenueDiaryManualSeason;
+  onSeasonChange: (season: VenueDiaryManualSeason) => void;
+  /** gameId → 이미 올린 미디어 개수(N/10 오버레이). 선택 시즌 기준. */
   countsByGame: Map<string, number>;
-  /** 2026 counts 확정 여부. false 면 선택 fail-closed(로딩/오류). */
+  /** 선택 시즌 counts 확정 여부. false 면 선택 fail-closed(로딩/오류). */
   countsReady: boolean;
   /** counts fetch 실패 여부(0 폴백 금지 → 재시도 노출). */
   countsError: boolean;
+  activeAttendanceGameIds: Set<string>;
+  /** true 면 '경기 변경' 모드 — 기존 기록을 고른 경기로 옮긴다(새 기록 생성 아님). */
+  moveMode?: boolean;
+  /** 변경 모드에서 지금 옮기는 기록의 원래 경기(자기 자신은 대상에서 제외). */
+  moveFromGameId?: string | null;
   onRetryCounts: () => void;
   onBack: () => void;
   onClose: () => void;
   onPick: (game: DiaryUploadGame) => void;
+  onRecord: (game: DiaryUploadGame, favoriteTeamId: number) => void;
 }
 
-/** 2026 시즌 월(3~11월). */
+/** 정규+포스트시즌 월(3~11월). 시즌 공통. */
 const SEASON_MONTHS = [3, 4, 5, 6, 7, 8, 9, 10, 11];
 
 function currentKstMonth(): number {
@@ -64,13 +78,19 @@ function formatDateLabel(yyyymmdd: string, stadium: string): string {
 export default function VenueDiaryAddGameSheet({
   isOpen,
   favoriteTeamId,
+  season,
+  onSeasonChange,
   countsByGame,
   countsReady,
   countsError,
+  activeAttendanceGameIds,
+  moveMode = false,
+  moveFromGameId = null,
   onRetryCounts,
   onBack,
   onClose,
   onPick,
+  onRecord,
 }: Props) {
   const initialMonth = Math.min(Math.max(currentKstMonth(), 3), 11);
   const [teamId, setTeamId] = useState<number | null>(favoriteTeamId);
@@ -103,7 +123,7 @@ export default function VenueDiaryAddGameSheet({
     let alive = true;
     setLoading(true);
     setFailed(false);
-    const monthStr = `${DIARY_SEASON}-${String(month).padStart(2, "0")}`;
+    const monthStr = `${season}-${String(month).padStart(2, "0")}`;
     (async () => {
       try {
         const res = await fetch(
@@ -124,13 +144,13 @@ export default function VenueDiaryAddGameSheet({
     return () => {
       alive = false;
     };
-  }, [isOpen, team, month]);
+  }, [isOpen, team, month, season]);
 
   const finalGames = useMemo(() => {
     if (!days) return [];
     const q = query.trim().toLowerCase();
     return days
-      .filter((d) => d.status === "final" && d.date.startsWith(String(DIARY_SEASON)))
+      .filter((d) => d.status === "final" && d.date.startsWith(String(season)))
       .filter((d) => {
         if (!q) return true;
         return (
@@ -139,7 +159,7 @@ export default function VenueDiaryAddGameSheet({
           d.stadium.toLowerCase().includes(q)
         );
       });
-  }, [days, query]);
+  }, [days, query, season]);
 
   if (!isOpen || typeof document === "undefined") return null;
 
@@ -186,7 +206,9 @@ export default function VenueDiaryAddGameSheet({
             <button onClick={onBack} aria-label="뒤로" className="text-text-tertiary">
               <ChevronLeft size={22} />
             </button>
-            <span className="text-base font-semibold text-text-primary">지난 경기 추가</span>
+            <span className="text-base font-semibold text-text-primary">
+              {moveMode ? "경기 변경" : "지난 경기 추가"}
+            </span>
             <button onClick={onClose} aria-label="닫기" className="text-text-tertiary">
               <X size={22} />
             </button>
@@ -194,11 +216,40 @@ export default function VenueDiaryAddGameSheet({
 
           <div className="px-4 pt-3 shrink-0">
             <p className="text-xs text-text-tertiary">
-              직관했던 <b className="text-text-secondary">{DIARY_SEASON} 종료 경기</b>를 골라 사진·영상을 올려요
+              {moveMode ? (
+                <>
+                  이 기록을 옮길 <b className="text-text-secondary">{season} 종료 경기</b>를 골라주세요
+                </>
+              ) : (
+                <>
+                  직관했던 <b className="text-text-secondary">{season} 종료 경기</b>를 기록하거나 사진·영상을 올려요
+                </>
+              )}
             </p>
 
+            {/* 시즌 칩 — 서버 허용 시즌과 같은 목록. */}
+            <div className="mt-3 flex gap-1.5">
+              {DIARY_SEASONS.map((s) => {
+                const on = s === season;
+                return (
+                  <button
+                    key={s}
+                    onClick={() => onSeasonChange(s)}
+                    aria-pressed={on}
+                    className={`rounded-full px-3.5 py-1.5 text-xs font-bold border ${
+                      on
+                        ? "bg-brand-primary border-brand-primary text-white"
+                        : "bg-bg-tertiary border-border text-text-secondary"
+                    }`}
+                  >
+                    {s}
+                  </button>
+                );
+              })}
+            </div>
+
             {/* 검색 */}
-            <div className="mt-3 flex items-center gap-2 rounded-xl bg-bg-tertiary border border-border px-3 py-2.5">
+            <div className="mt-2.5 flex items-center gap-2 rounded-xl bg-bg-tertiary border border-border px-3 py-2.5">
               <Search size={15} className="text-text-tertiary shrink-0" />
               <input
                 value={query}
@@ -265,8 +316,8 @@ export default function VenueDiaryAddGameSheet({
               </div>
             ) : (
               <>
-                {/* fail-closed: 2026 counts 확정 전에는 올린 개수를 불러오는 중(선택 비활성), 실패하면
-                    0 폴백 대신 재시도 버튼을 노출한다(Blocker 4). */}
+                {/* fail-closed: 선택 시즌 counts 확정 전에는 올린 개수를 불러오는 중(선택 비활성),
+                    실패하면 0 폴백 대신 재시도 버튼을 노출한다(Blocker 4). */}
                 {!countsReady &&
                   (countsError ? (
                     <button
@@ -288,13 +339,12 @@ export default function VenueDiaryAddGameSheet({
                 const caption = diaryPickCaption(pick);
                 const resultStyle = resultToneTextStyle(gameResultTone(day.result));
                 return (
-                  <button
+                  <div
                     key={day.gameId}
-                    onClick={() => !selectDisabled && handlePick(day)}
-                    disabled={selectDisabled}
+                    data-diary-game-id={day.gameId}
                     className={`flex items-center justify-between rounded-2xl bg-bg-tertiary/60 border px-4 py-3 text-left ${
                       pick.kind === "add" ? "border-accent/40" : "border-border"
-                    } ${selectDisabled ? "opacity-80" : "active:bg-bg-tertiary"}`}
+                    }`}
                   >
                     <div className="flex flex-col gap-0.5 min-w-0">
                       <span className="text-[11px] font-bold text-text-tertiary">
@@ -312,32 +362,67 @@ export default function VenueDiaryAddGameSheet({
                         {caption ?? (day.result ? (day.result === "W" ? "승" : day.result === "L" ? "패" : "무") : "종료")}
                       </span>
                     </div>
-                    {!countsReady ? (
-                      <span className="shrink-0 rounded-lg border border-border px-3 py-2 text-xs font-bold text-text-tertiary">
-                        {countsError ? "확인 실패" : "확인 중…"}
-                      </span>
-                    ) : pick.kind === "pick" ? (
-                      <span className="shrink-0 rounded-lg bg-brand-primary px-3 py-2 text-xs font-bold text-white">
-                        선택
-                      </span>
-                    ) : pick.kind === "add" ? (
-                      <span className="shrink-0 flex flex-col items-center rounded-lg border border-brand-primary px-2.5 py-1.5 text-xs font-bold text-brand-primary leading-tight">
-                        {pick.count}/{pick.cap}
-                        <small className="text-[9.5px] text-text-tertiary font-bold">더 추가</small>
-                      </span>
-                    ) : (
-                      <span className="shrink-0 flex items-center gap-1 rounded-lg border border-border px-3 py-2 text-xs font-bold text-text-tertiary">
-                        <Lock size={11} /> {pick.cap}/{pick.cap}
-                      </span>
-                    )}
-                  </button>
+                    <div className="ml-2 flex shrink-0 flex-col gap-1.5">
+                      <button
+                        type="button"
+                        disabled={
+                          moveMode
+                            ? day.gameId === moveFromGameId ||
+                              activeAttendanceGameIds.has(day.gameId)
+                            : activeAttendanceGameIds.has(day.gameId)
+                        }
+                        onClick={() => teamId != null && onRecord({
+                          gameId: day.gameId,
+                          dateLabel: formatDateLabel(day.date, day.stadium),
+                          matchLabel:
+                            day.score.for != null && day.score.against != null
+                              ? `${getTeamById(teamId)?.shortName ?? ""} ${day.score.for} : ${day.score.against} ${day.opponent.shortName}`
+                              : `${getTeamById(teamId)?.shortName ?? ""} vs ${day.opponent.shortName}`,
+                          result: day.result,
+                          existingCount: count,
+                        }, teamId)}
+                        className="rounded-lg bg-brand-primary px-3 py-1.5 text-[11px] font-bold text-white disabled:bg-bg-secondary disabled:text-text-tertiary"
+                      >
+                        {moveMode
+                          ? day.gameId === moveFromGameId
+                            ? "현재 경기"
+                            : activeAttendanceGameIds.has(day.gameId)
+                              ? "기록됨"
+                              : "이 경기로 변경"
+                          : activeAttendanceGameIds.has(day.gameId)
+                            ? "기록됨"
+                            : "기록 추가"}
+                      </button>
+                      {!moveMode && (
+                        <button
+                          type="button"
+                          onClick={() => !selectDisabled && handlePick(day)}
+                          disabled={selectDisabled}
+                          className="inline-flex items-center justify-center gap-1 rounded-lg border border-border px-2.5 py-1.5 text-[10.5px] font-bold text-text-secondary disabled:text-text-tertiary"
+                        >
+                          {pick.kind === "locked" ? <Lock size={10} /> : <ImagePlus size={10} />}
+                          {!countsReady
+                            ? countsError ? "확인 실패" : "확인 중"
+                            : pick.kind === "locked"
+                              ? `${pick.cap}/${pick.cap}`
+                              : pick.kind === "add"
+                                ? `${pick.count}/${pick.cap} 추가`
+                                : "사진·영상"}
+                        </button>
+                      )}
+                    </div>
+                  </div>
                 );
                 })}
               </>
             )}
 
             <div className="mt-1 rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-2.5 text-[11.5px] leading-relaxed text-amber-300">
-              ℹ️ 직접 추가한 기록은 <b>다이어리 경기수·사진첩</b>에만 들어가고, GPS 인증 직관수·승률·인증 배지에는 포함되지 않아요.
+              {moveMode ? (
+                <>ℹ️ 경기를 바꿔도 <b>사진·영상은 원래 경기에 그대로</b> 남아요. 통계 기록만 옮겨집니다.</>
+              ) : (
+                <>ℹ️ 직접 추가 기록은 <b>전체 포함 승률·직관 통계</b>에 바로 반영돼요. GPS 인증 수·인증 배지는 별도로 유지됩니다.</>
+              )}
             </div>
           </div>
         </motion.div>

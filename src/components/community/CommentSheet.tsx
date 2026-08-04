@@ -1,11 +1,9 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { useRouter } from "next/navigation";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { Send, X, MoreHorizontal, Check, Heart, CornerDownRight, ImagePlay, ImagePlus, Loader2, Flag } from "lucide-react";
-import { getAvatarPath } from "@/lib/constants/avatars";
 import { createComment, updateComment, deleteComment, toggleCommentLike, uploadCommentImage } from "@/lib/supabase/usePosts";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import LoginSheet from "@/components/auth/LoginSheet";
@@ -17,6 +15,8 @@ import CommentImageLightbox from "@/components/community/CommentImageLightbox";
 import { isImageComment, prepareCommentImageForUpload } from "@/lib/community/comment-media";
 import { normalizeForFloodKey } from "@/lib/utils/normalize-message";
 import ReportSheet from "@/components/community/ReportSheet";
+import CommunityAuthorHeader from "@/components/community/CommunityAuthorHeader";
+import CommunityCommentRow from "@/components/community/CommunityCommentRow";
 
 interface CommentSheetProps {
   isOpen: boolean;
@@ -114,7 +114,6 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
   const [kbInset, setKbInset] = useState(0);
   const [vvHeight, setVvHeight] = useState<number | null>(null);
   const { user, profile } = useAuth();
-  const router = useRouter();
   const canModerateComments = profile?.is_operator === true;
   const shouldRender = isOpen && postId !== null;
 
@@ -612,54 +611,30 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
   const commentTree = buildCommentTree(comments);
 
   const renderComment = (comment: Comment, isReply = false) => {
-    const avatarPath = getAvatarPath((comment as Comment & { avatar_url?: string }).avatar_url ?? null);
-    const commentTeam = comment.team_id ? getTeamById(comment.team_id) : undefined;
     const isMine = !!user && comment.author_id === user.id;
     const canDelete = isMine || canModerateComments;
     const canReport = !!user && !isMine;
     const isEditing = editingId === comment.id;
     const isEdited = !!comment.updated_at;
     const likeCount = comment.like_count ?? 0;
-    const goProfile = () => {
-      if (comment.author_id) router.push(`/profile/${comment.author_id}`);
-    };
-
     return (
-      <div key={comment.id} className={`flex gap-2 ${isReply ? "pl-10" : ""}`}>
-        {avatarPath ? (
-          <div className={`${isReply ? "w-6 h-6" : "w-8 h-8"} rounded-full overflow-hidden flex-shrink-0 bg-bg-tertiary cursor-pointer`} onClick={goProfile}>
-            <img src={avatarPath} alt="" className="w-full h-full" />
-          </div>
-        ) : (
-          <div
-            className={`${isReply ? "w-6 h-6 text-[10px]" : "w-8 h-8 text-xs"} rounded-full flex items-center justify-center font-bold text-white flex-shrink-0 cursor-pointer`}
-            style={{ backgroundColor: commentTeam ? getTeamBgColor(commentTeam) : '#6B7280' }}
-            onClick={goProfile}
-          >
-            {(comment.nickname || "익")[0]}
-          </div>
-        )}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-1.5">
-            <span
-              className={`${isReply ? "text-xs" : "text-sm"} font-semibold text-text-primary cursor-pointer hover:text-accent`}
-              onClick={goProfile}
-            >
-              {comment.nickname || "익명"}
-            </span>
-            {commentTeam && (
-              <span
-                className="text-[10px] font-bold px-1.5 py-0.5 rounded-md text-white"
-                style={{ backgroundColor: getTeamBgColor(commentTeam) }}
-              >
-                {commentTeam.shortName}
+      <CommunityCommentRow
+        key={comment.id}
+        kind="sheet"
+        isReply={isReply}
+        header={
+          <CommunityAuthorHeader
+            nickname={comment.nickname}
+            teamId={comment.team_id}
+            avatarUrl={(comment as Comment & { avatar_url?: string }).avatar_url}
+            profileHref={comment.author_id ? `/profile/${comment.author_id}` : null}
+            meta={
+              <span className="shrink-0 text-[11px] text-text-tertiary">
+                {timeAgo(comment.created_at)}{isEdited ? " · 수정됨" : ""}
               </span>
-            )}
-            <span className="text-[11px] text-text-tertiary ml-auto flex-shrink-0">
-              {timeAgo(comment.created_at)}{isEdited ? " · 수정됨" : ""}
-            </span>
-            {(canDelete || canReport) && !isEditing && (
-              <div className="relative flex-shrink-0">
+            }
+            menu={(canDelete || canReport) && !isEditing ? (
+              <div className="relative">
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
@@ -676,34 +651,23 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
                     onClick={(e) => e.stopPropagation()}
                   >
                     {isMine && (
-                      <button
-                        onClick={() => startEdit(comment)}
-                        className="block w-full px-3 py-2 text-left text-xs text-text-primary hover:bg-bg-tertiary"
-                      >
-                        수정
-                      </button>
+                      <button onClick={() => startEdit(comment)} className="block w-full px-3 py-2 text-left text-xs text-text-primary hover:bg-bg-tertiary">수정</button>
                     )}
                     {canReport && (
-                      <button
-                        onClick={() => { setMenuOpenId(null); setReportCommentId(comment.id); }}
-                        className="flex w-full items-center gap-1.5 px-3 py-2 text-left text-xs text-text-primary hover:bg-bg-tertiary"
-                      >
+                      <button onClick={() => { setMenuOpenId(null); setReportCommentId(comment.id); }} className="flex w-full items-center gap-1.5 px-3 py-2 text-left text-xs text-text-primary hover:bg-bg-tertiary">
                         <Flag size={12} /> 신고
                       </button>
                     )}
                     {canDelete && (
-                      <button
-                        onClick={() => handleDelete(comment.id)}
-                        className="block w-full px-3 py-2 text-left text-xs text-[#FF453A] hover:bg-bg-tertiary"
-                      >
-                        삭제
-                      </button>
+                      <button onClick={() => handleDelete(comment.id)} className="block w-full px-3 py-2 text-left text-xs text-[#FF453A] hover:bg-bg-tertiary">삭제</button>
                     )}
                   </div>
                 )}
               </div>
-            )}
-          </div>
+            ) : null}
+          />
+        }
+      >
           {isEditing ? (
             <div className="mt-1 flex items-center gap-1.5">
               <input
@@ -779,8 +743,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
               </div>
             </>
           )}
-        </div>
-      </div>
+      </CommunityCommentRow>
     );
   };
 

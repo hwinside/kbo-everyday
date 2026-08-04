@@ -9,8 +9,12 @@ import {
   parseFfprobeJson,
   decideVideoVerdict,
   validateAndPromoteVideo,
+  needsServerTranscode,
+  SERVE_READY_MAX_EDGE_PX,
+  SERVE_READY_MAX_BITRATE_BPS,
   type ValidateDeps,
   type FfprobeMeta,
+  type ServeReadiness,
 } from "../../src/lib/venue-stories/video-validate";
 
 let pass = 0;
@@ -53,6 +57,7 @@ function makeDeps(opts: {
   publishOk?: boolean;
   promoteResult?: boolean | "fault";
   rejectResult?: boolean | "fault";
+  readiness?: ServeReadiness;
 }): { deps: ValidateDeps; log: Log } {
   const log: Log = { calls: [] };
   const deps: ValidateDeps = {
@@ -68,8 +73,12 @@ function makeDeps(opts: {
       log.calls.push(`publish:${p}`);
       return opts.publishOk !== false;
     },
-    async promoteRow(id) {
-      log.calls.push(`promote:${id}`);
+    async inspectServeReadiness() {
+      log.calls.push("inspectServeReadiness");
+      return opts.readiness ?? { fastStart: true, maxEdge: 1280 };
+    },
+    async promoteRow(id, _meta, o) {
+      log.calls.push(`promote:${id}:needsTranscode=${o.needsTranscode}`);
       return opts.promoteResult ?? true;
     },
     async rejectRow(id) {
@@ -174,6 +183,198 @@ const okMeta: FfprobeMeta = { durationMs: 12000, width: 720, height: 1280, hasVi
     const outcomes = [a.outcome, b.outcome].sort();
     ok("동시 검증 2회 → promoted 1 + already_claimed 1", outcomes[0] === "already_claimed" && outcomes[1] === "promoted" && status === "active");
     ok("동시성 공개 객체 최종 생존 — loser가 publicBucket 삭제 안 함(불변식)", publicRemovals.length === 0);
+  }
+
+  // ── 후속 최적화 큐(needs_transcode) 서버 실측 판정 (삼순 NO-GO ③) ──
+  // 사고: 클라이언트 정규화가 실패하면 느린 원본이 올라가는데, 종전에는 needs_transcode 가
+  // promoteStatus === "active" 로 **경로별 고정**이라 diary_manual(archived) 은 영구히 미최적화로
+  // 종결됐다. 이젠 서버가 바이트/ffprobe 실측값으로 판정한다.
+  console.log("[(4) 후속 최적화 큐 — 서버 실측 판정]");
+  {
+    const ready: ServeReadiness = { fastStart: true, maxEdge: 1280 };
+    // 8초 3.5MB ≈ 3.5Mbps — 정규화 성공본의 실측 프로필
+    ok(
+      "정규화 성공본(720p·faststart·3.5Mbps) → 큐 불필요",
+      needsServerTranscode({ readiness: ready, bytes: 3_625_733, durationMs: 8_000 }) === false,
+    );
+    // 실측 s847: 12.98초 38.6MB, moov 끝, 1920x1080
+    ok(
+      "실측 s847(faststart 아님) → 큐 필요",
+      needsServerTranscode({
+        readiness: { fastStart: false, maxEdge: 1920 },
+        bytes: 38_560_432,
+        durationMs: 12_978,
+      }) === true,
+    );
+    ok(
+      "faststart 이어도 긴변 1920 → 큐 필요",
+      needsServerTranscode({
+        readiness: { fastStart: true, maxEdge: 1920 },
+        bytes: 3_000_000,
+        durationMs: 8_000,
+      }) === true,
+    );
+    ok(
+      `faststart + 720p 여도 비트레이트 과다(>${SERVE_READY_MAX_BITRATE_BPS}bps) → 큐 필요`,
+      needsServerTranscode({
+        readiness: { fastStart: true, maxEdge: SERVE_READY_MAX_EDGE_PX },
+        bytes: 20_025_217,
+        durationMs: 7_978,
+      }) === true,
+    );
+    ok(
+      "faststart 미상(null) → fail-close 로 큐 필요",
+      needsServerTranscode({
+        readiness: { fastStart: null, maxEdge: 720 },
+        bytes: 1_000_000,
+        durationMs: 8_000,
+      }) === true,
+    );
+    ok(
+      "해상도 미상(null) → fail-close 로 큐 필요",
+      needsServerTranscode({
+        readiness: { fastStart: true, maxEdge: null },
+        bytes: 1_000_000,
+        durationMs: 8_000,
+      }) === true,
+    );
+    ok(
+      "duration 0 → 비트레이트 계산 불가 → 큐 필요",
+      needsServerTranscode({ readiness: ready, bytes: 1_000_000, durationMs: 0 }) === true,
+    );
+  }
+  {
+    // 오케스트레이션 결속 — readiness 가 promoteRow 의 needsTranscode 로 실제 전달되는가
+    const slow = makeDeps({
+      probe: okMeta,
+      readiness: { fastStart: false, maxEdge: 1920 },
+    });
+    await validateAndPromoteVideo(slow.deps, ROW);
+    ok(
+      "느린 원본 → promoteRow(needsTranscode=true) 로 큐에 올라간다",
+      slow.log.calls.includes("promote:7:needsTranscode=true"),
+    );
+    ok(
+      "readiness 실측이 promote 앞에 수행된다",
+      slow.log.calls.indexOf("inspectServeReadiness") <
+        slow.log.calls.findIndex((c) => c.startsWith("promote:")),
+    );
+    const fast = makeDeps({ probe: okMeta, readiness: { fastStart: true, maxEdge: 720 } });
+    await validateAndPromoteVideo(fast.deps, ROW);
+    ok(
+      "이미 최적화된 영상 → promoteRow(needsTranscode=false) — 불필요한 재인코딩 안 한다",
+      fast.log.calls.includes("promote:7:needsTranscode=false"),
+    );
+  }
+
+  // ── (5) **실제 배포되는 서버 deps** 검증 ──
+  // 위 (4)는 fake deps 만 봤기 때문에, video-validate-server.ts 의 needs_transcode 를 종전처럼
+  // `promoteStatus === "active"` 로 되돌려도 GREEN 이었다(삼순 ①과 같은 유형의 false-green —
+  // 자체 mutation 으로 직접 잡았다). 여기서는 실제 realDeps 를 로드해
+  // "promoteRow 가 서버 실측값(needsTranscode)을 그대로 쓰는가"를 supabase 호출 직전까지 추적한다.
+  console.log("[(5) 실배선 검증 — video-validate-server realDeps]");
+  {
+    process.env.NEXT_PUBLIC_SUPABASE_URL ||= "https://smoke.invalid";
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||= "smoke-anon-key";
+    const { __qaRealDeps } = await import("../../src/lib/venue-stories/video-validate-server");
+
+    // supabase client 를 **주입**해 update payload 를 가로채다.
+    // 종전에는 supabaseAdmin 싱글턴을 모든키패치했는데, 모듈 해석 경로가 달라지면
+    // 서로 다른 인스턴스가 돼 로컬 GREEN / CI RED 가 나왔다(2026-08-04 실측).
+    const captured: Record<string, unknown>[] = [];
+    const capturedConds: Record<string, unknown>[] = [];
+    const makeCapturingClient = () => ({
+      from(table: string) {
+        if (table !== "venue_stories") throw new Error(`unexpected table: ${table}`);
+        const conds: Record<string, unknown> = {};
+        const chain: Record<string, unknown> = {};
+        chain.update = (payload: Record<string, unknown>) => {
+          captured.push(payload);
+          capturedConds.push(conds);
+          return chain;
+        };
+        chain.eq = (col: string, val: unknown) => {
+          conds[col] = val;
+          return chain;
+        };
+        chain.select = async () => ({ data: [{ id: 7 }], error: null });
+        return chain;
+      },
+    });
+
+    for (const promoteStatus of ["active", "archived"] as const) {
+      for (const needsTranscode of [true, false]) {
+        captured.length = 0;
+        capturedConds.length = 0;
+        const deps = __qaRealDeps(
+          promoteStatus,
+          makeCapturingClient() as unknown as Parameters<typeof __qaRealDeps>[1],
+        );
+        const r = await deps.promoteRow(7, okMeta, { needsTranscode });
+        ok(
+          `realDeps(${promoteStatus}) promoteRow(needsTranscode=${needsTranscode}) → CAS 성공`,
+          r === true,
+        );
+        ok(
+          `realDeps(${promoteStatus}) 가 needs_transcode=${needsTranscode} 를 그대로 기록(경로별 고정값 아님)`,
+          captured.length === 1 && captured[0].needs_transcode === needsTranscode,
+        );
+        ok(
+          `realDeps(${promoteStatus}) 가 status=${promoteStatus} 로 기록 + pending CAS 유지`,
+          captured[0]?.status === promoteStatus && capturedConds[0]?.status === "pending",
+        );
+      }
+    }
+    // 종전 버그 재현 방지의 핵심: archived + 느린 원본이 큐에 올라가야 한다
+    captured.length = 0;
+    capturedConds.length = 0;
+    await __qaRealDeps(
+      "archived",
+      makeCapturingClient() as unknown as Parameters<typeof __qaRealDeps>[1],
+    ).promoteRow(7, okMeta, { needsTranscode: true });
+    ok(
+      "diary_manual(archived) 느린 영상도 needs_transcode=true — 영구 미최적화 종결 안 된다",
+      captured.length === 1 && captured[0].needs_transcode === true,
+    );
+
+    // inspectServeReadiness 가 실제 파일 바이트를 읽는지(박스 순서 판정) — supabase 무관
+    {
+      const fsMod = await import("node:fs/promises");
+      const osMod = await import("node:os");
+      const pathMod = await import("node:path");
+      const mkBox = (type: string, size: number) => {
+        const b = Buffer.alloc(8);
+        b.writeUInt32BE(size, 0);
+        b.write(type, 4, "latin1");
+        return b;
+      };
+      const tmpDir = await fsMod.mkdtemp(pathMod.join(osMod.tmpdir(), "venue-validate-smoke-"));
+      const fastPath = pathMod.join(tmpDir, "fast.mp4");
+      const slowPath = pathMod.join(tmpDir, "slow.mp4");
+      await fsMod.writeFile(
+        fastPath,
+        Buffer.concat([mkBox("ftyp", 20), Buffer.alloc(12), mkBox("moov", 8), mkBox("mdat", 8)]),
+      );
+      await fsMod.writeFile(
+        slowPath,
+        Buffer.concat([mkBox("ftyp", 20), Buffer.alloc(12), mkBox("mdat", 4096)]),
+      );
+      const deps = __qaRealDeps(
+        "active",
+        makeCapturingClient() as unknown as Parameters<typeof __qaRealDeps>[1],
+      );
+      const rFast = await deps.inspectServeReadiness(fastPath, okMeta);
+      const rSlow = await deps.inspectServeReadiness(slowPath, okMeta);
+      const rMissing = await deps.inspectServeReadiness(pathMod.join(tmpDir, "nope.mp4"), okMeta);
+      ok("realDeps inspectServeReadiness: moov 선행 파일 → fastStart=true", rFast.fastStart === true);
+      ok("realDeps inspectServeReadiness: mdat 선행 파일 → fastStart=false", rSlow.fastStart === false);
+      ok("realDeps inspectServeReadiness: 읽기 실패 → null(fail-close 입력)", rMissing.fastStart === null);
+      ok(
+        "realDeps inspectServeReadiness: maxEdge 가 ffprobe 메타에서 도출",
+        rFast.maxEdge === Math.max(okMeta.width!, okMeta.height!),
+      );
+      await fsMod.rm(tmpDir, { recursive: true, force: true });
+    }
   }
 
   // P0 #2 transcode worker CAS 불변식은 venue-transcode-worker-smoke.ts(processVenueJob 실제 실행)로 이전.

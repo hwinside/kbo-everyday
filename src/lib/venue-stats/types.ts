@@ -260,6 +260,14 @@ export interface InvalidSnapshotEntry {
   reason: SnapshotIssueReason;
 }
 
+export type ExcludedAttendanceReason =
+  | "non_regular_season"
+  | "favorite_team_not_playing";
+export interface ExcludedAttendanceEntry {
+  gameId: string;
+  reason: ExcludedAttendanceReason;
+}
+
 /** §10 C coverage exact. */
 export interface FavoriteCoverage {
   eligible: number;
@@ -275,6 +283,7 @@ export type ScopeName = "overall" | "gps";
 
 export interface VenueStatsScopeCoverage {
   attendanceGames: number;
+  /** 정규시즌 + 응원팀 출전 조건을 충족해 팀 통계에 산입한 종료 경기 수. */
   finalGames: number;
   cancelledGames: number;
   unavailableGames: number;
@@ -282,6 +291,8 @@ export interface VenueStatsScopeCoverage {
   dedupedRows: number;
   incompleteFinalGames: number;
   invalidSnapshot: InvalidSnapshotEntry[];
+  /** 다이어리에는 남지만 팀 성적·요정 지수 산출에서 제외한 경기. */
+  excludedAttendance: ExcludedAttendanceEntry[];
 }
 
 /** §9 Scope={ state,filter,coverage,metrics }. 두 scope는 완전히 동일한 응답 스키마 (§5). */
