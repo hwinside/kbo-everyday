@@ -2,10 +2,8 @@
  * 게이트 **trigger 커버리지** 스모크.
  *
  * ── 배경(2026-08-04, 삼순 연속 지적 + 하린아빠 결정) ──
- * `stats-source-truth-gate.yml` 에 `paths`/`paths-ignore` 가 있으면, 거기 안 걸리는
- * 변경에서 workflow 가 통째 SKIP 되고 required check 는 "통과"로 보인다
- * — **trigger 자체가 false-green** 이다. 그래서 paths 를 제거했다(하린아빠 결정).
- * 이 스모크는 그 결정이 되돌려지지 않는지를 고정한다.
+ * workflow 에 `paths`/`paths-ignore` 가 있으면, 거기 안 걸리는 변경에서 workflow 가
+ * 통째 SKIP 되고 required check 는 "통과"로 보인다 — **trigger 자체가 false-green** 이다.
  *
  * ⚠︎ 직접 파싱은 두 번 뚫렸다(삼순 실증).
  *   1차: `^\s*paths:\s*$` 줄 정규식 → inline flow(`paths: ["docs/**"]`) 통과
@@ -15,18 +13,39 @@
  * YAML 은 같은 의미를 표현하는 방법이 너무 많아서 자체 파서로는 못 닫는다.
  * 그래서 **실제 YAML parser** 로 읽는다. parser 를 쓸 수 없으면 SKIP 이 아니라 FAIL 이다
  * (검증 불가를 통과로 취급하면 게이트가 아니다).
+ *
+ * ── 2026-08-05: 게이트 2분할에 맞춰 계약을 확장 ──────────────────
+ * 종전에는 단일 `stats-source-truth-gate.yml` 이 계약 검증과 live 대조를 함께 했고,
+ * paths 가 아예 없어야 한다는 계약만 있으면 충분했다. 이제는 성격이 나뉜다.
+ *
+ *   - stats-contract-gate  : 결정론적. **paths 금지**(모든 PR 에서 돌아야 한다).
+ *   - stats-freshness-gate : live KBO 대조. 스냅샷이 바뀔 때만 도는 게 맞으므로
+ *                            paths 를 **허용**한다. 대신 그 목록이 검증기가 읽는
+ *                            입력을 전부 덮어야 한다 — 하나라도 빠지면 그 파일만
+ *                            바뀐 데이터 PR 이 게이트를 SKIP 하고 초록으로 보인다.
+ *
+ * 즉 freshness 의 paths 는 성능 최적화가 아니라 **정확성 계약**이고, 그래서 여기서
+ * 검증기 소스를 직접 읽어 대조한다. 목록을 손으로 적은 상수와 비교하면 그 상수가
+ * stale 해지는 순간 같은 구멍이 다시 열리므로, 실제 검증기 코드를 오라클로 쓴다.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+// ⚠︎ minimatch 는 CJS 라 named import 가 안 된다(Node 24 에서 SyntaxError).
+// glob 매칭을 자체 구현하면 `*` 와 `**` 경계에서 또 뚫리므로 검증된 구현을 쓴다.
+import minimatchPkg from "minimatch";
+const minimatch = minimatchPkg.minimatch ?? minimatchPkg;
 
-const WORKFLOW = ".github/workflows/stats-source-truth-gate.yml";
-const workflow = readFileSync(WORKFLOW, "utf8");
+const CONTRACT_WORKFLOW = ".github/workflows/stats-contract-gate.yml";
+const FRESHNESS_WORKFLOW = ".github/workflows/stats-freshness-gate.yml";
+const VERIFIER = "scripts/qa/stats-source-truth-verify.mjs";
+
 const pkg = JSON.parse(readFileSync("package.json", "utf8"));
 
 /* ── 실제 YAML parser 로 읽는다 ──────────────────────────────────
  * `on` 은 YAML 1.1 에서 boolean true 로 파싱된다 — 그 함정까지 parser 가 처리한다. */
-const parsed = await (async () => {
+async function parseOn(path) {
+  const source = readFileSync(path, "utf8");
   const errors = [];
 
   // ① Node 생태계 parser 를 먼저 쓴다(런너 환경 의존이 가장 적다).
@@ -34,10 +53,10 @@ const parsed = await (async () => {
     try {
       const lib = await import(mod);
       const api = lib.default ?? lib;
-      const doc = api.parse ? api.parse(workflow) : api.load(workflow);
+      const doc = api.parse ? api.parse(source) : api.load(source);
       // YAML 1.1 에서 `on:` 은 boolean true 로 온다. 두 표기 모두 받는다.
       const on = doc?.on ?? doc?.[true] ?? doc?.["true"];
-      if (on) return on;
+      if (on) return { on, source };
       errors.push(`${mod}: on 블록을 찾지 못함`);
     } catch (error) {
       errors.push(`${mod}: ${error.message}`);
@@ -53,28 +72,43 @@ const parsed = await (async () => {
     'print(json.dumps({"on": on}, default=str))',
   ].join("\n");
   try {
-    const out = execFileSync("python3", ["-c", script, WORKFLOW], {
+    const out = execFileSync("python3", ["-c", script, path], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     });
-    return JSON.parse(out).on;
+    return { on: JSON.parse(out).on, source };
   } catch (error) {
     errors.push(`python3: ${error.message}`);
   }
 
   // ⚠︎ parser 를 못 쓰면 SKIP 이 아니라 FAIL 이다.
-  // 검증 불가를 통과로 취급하면 이 게이트는 아무것도 검증하지 않는 것과 같다.
   throw new Error(
-    `stats_gate_trigger_unparsable: workflow 를 YAML parser 로 읽지 못했다 — ${errors.join(" | ")}`,
+    `stats_gate_trigger_unparsable: ${path} 를 YAML parser 로 읽지 못했다 — ${errors.join(" | ")}`,
   );
-})();
+}
 
-assert.ok(parsed && typeof parsed === "object", "workflow 의 `on:` 블록을 파싱할 수 있어야 한다");
+/** 게이트가 부르는 npm script 가 package.json 에 실재하는지 확인한다. */
+function assertScriptsExist(source, label, minimum) {
+  const runSteps = [...source.matchAll(/run:\s*npm run ([a-z0-9:_-]+)/gi)].map((m) => m[1]);
+  assert.ok(
+    runSteps.length >= minimum,
+    `${label}: npm script 를 최소 ${minimum}개 실행해야 한다 (actual ${runSteps.length})`,
+  );
+  for (const name of new Set(runSteps)) {
+    assert.ok(
+      pkg.scripts[name],
+      `${label}: package.json 에 \`${name}\` script 가 없다 — 게이트가 죽은 스텝을 부른다`,
+    );
+  }
+}
 
-/* ── 1) paths/paths-ignore filter 가 없어야 한다(표기 무관) ──────── */
+/* ══ 1) contract 게이트 — paths 금지, 전 PR·main push 등록 ══════ */
 {
+  const { on, source } = await parseOn(CONTRACT_WORKFLOW);
+  assert.ok(on && typeof on === "object", "contract 게이트의 `on:` 블록을 파싱할 수 있어야 한다");
+
   const offenders = [];
-  for (const [event, spec] of Object.entries(parsed)) {
+  for (const [event, spec] of Object.entries(on)) {
     if (!spec || typeof spec !== "object") continue;
     for (const key of Object.keys(spec)) {
       if (/^paths(-ignore)?$/.test(key)) offenders.push(`${event}.${key}`);
@@ -83,32 +117,93 @@ assert.ok(parsed && typeof parsed === "object", "workflow 의 `on:` 블록을 �
   assert.deepEqual(
     offenders,
     [],
-    "게이트에 paths/paths-ignore filter 가 있으면 거기 안 걸리는 변경에서 workflow 가 통째 SKIP 되고"
+    "contract 게이트에 paths/paths-ignore 가 있으면 거기 안 걸리는 변경에서 workflow 가 통째 SKIP 되고"
       + " required check 가 '통과'로 보인다(trigger false-green)."
-      + ` 검출: ${offenders.join(", ")}`,
+      + ` 이 게이트는 네트워크를 타지 않아 항상 돌 수 있다. 검출: ${offenders.join(", ")}`,
   );
-}
 
-/* ── 2) 두 이벤트가 모두 등록돼 있어야 한다 ────────────────────── */
-{
-  assert.ok("pull_request" in parsed, "pull_request 트리거가 있어야 한다");
-  assert.ok("push" in parsed, "push 트리거가 있어야 한다");
-  const branches = parsed.push?.branches;
+  assert.ok("pull_request" in on, "contract 게이트에 pull_request 트리거가 있어야 한다");
+  assert.ok("push" in on, "contract 게이트에 push 트리거가 있어야 한다");
+  const branches = on.push?.branches;
   assert.ok(
     Array.isArray(branches) && branches.includes("main"),
-    `push 는 main 브랜치를 대상으로 해야 한다 (actual: ${JSON.stringify(branches)})`,
+    `contract 게이트의 push 는 main 을 대상으로 해야 한다 (actual: ${JSON.stringify(branches)})`,
+  );
+
+  assertScriptsExist(source, "contract 게이트", 3);
+}
+
+/* ══ 2) freshness 게이트 — paths 가 검증기 입력을 전부 덮어야 한다 ══ */
+{
+  const { on, source } = await parseOn(FRESHNESS_WORKFLOW);
+  assert.ok(on && typeof on === "object", "freshness 게이트의 `on:` 블록을 파싱할 수 있어야 한다");
+
+  assert.ok("pull_request" in on, "freshness 게이트에 pull_request 트리거가 있어야 한다");
+  const paths = on.pull_request?.paths;
+  assert.ok(
+    Array.isArray(paths) && paths.length > 0,
+    "freshness 게이트는 스냅샷이 바뀔 때만 돌아야 하므로 paths 가 있어야 한다"
+      + " (없으면 무관한 PR 이 live KBO drift 로 전부 RED 가 된다)",
+  );
+
+  /* ── 검증기가 실제로 읽는 파일을 오라클로 뽑는다 ────────────────
+   *
+   * ⚠︎ 여기서 목록을 손으로 적으면 그 상수가 stale 해지는 순간 같은 구멍이 다시 열린다.
+   * 검증기 소스에서 경로 리터럴을 직접 추출해, paths 가 그걸 전부 덮는지 본다. */
+  const verifier = readFileSync(VERIFIER, "utf8");
+
+  const required = new Set();
+  // `${CONSTANTS}/stats-${SEASON}-batters.json` 같은 템플릿을 glob 으로 정규화한다.
+  for (const [, literal] of verifier.matchAll(/`\$\{CONSTANTS\}\/([^`]+)`/g)) {
+    required.add(`src/lib/constants/${literal.replace(/\$\{SEASON\}/g, "*")}`);
+  }
+  assert.ok(
+    required.size >= 5,
+    `검증기에서 입력 경로를 추출하지 못했다 (actual ${required.size}) — 오라클이 깨졌다.`
+      + " 검증기의 파일 읽기 방식이 바뀌었다면 이 추출도 함께 고쳐야 한다.",
+  );
+
+  // 검증기 자신과 대조 로직도 바뀌면 재확인 대상이다.
+  required.add(VERIFIER);
+  required.add("scripts/lib/stats-source-truth.mjs");
+
+  const uncovered = [...required].filter(
+    (file) => !paths.some((pattern) => minimatch(file, pattern)),
+  );
+  assert.deepEqual(
+    uncovered,
+    [],
+    "freshness paths 가 검증기 입력을 전부 덮지 못한다 — 그 파일만 바뀐 데이터 PR 이"
+      + " 게이트를 SKIP 하고 required check 가 초록으로 보인다."
+      + ` 미커버: ${uncovered.join(", ")}`,
+  );
+
+  assertScriptsExist(source, "freshness 게이트", 1);
+}
+
+/* ══ 3) 두 게이트의 역할이 갈라져 있어야 한다 ═══════════════════
+ *
+ * contract 게이트가 live 대조를 다시 품으면 분할이 무의미해지고, 무관한 PR 이
+ * 또다시 KBO drift 로 RED 가 된다. 반대로 freshness 가 live 대조를 놓치면
+ * strict equality 계약 자체가 사라진다. 양쪽을 다 고정한다. */
+{
+  const contract = readFileSync(CONTRACT_WORKFLOW, "utf8");
+  const freshness = readFileSync(FRESHNESS_WORKFLOW, "utf8");
+
+  assert.ok(
+    !/npm run qa:stats-(source-truth|freshness)\b/.test(contract),
+    "contract 게이트가 live KBO 대조를 부르면 안 된다 —"
+      + " 경기 진행만으로 무관한 PR 이 RED 가 되고, mutation RED 증명도 baseline 이"
+      + " 이미 RED 라 검증력을 입증하지 못한 채 통과한다(2026-08-04 실측)",
+  );
+  assert.ok(
+    /npm run qa:stats-freshness\b/.test(freshness),
+    "freshness 게이트는 live 대조를 수행해야 한다(strict equality 계약 유지)",
+  );
+  assert.ok(
+    pkg.scripts["qa:stats-source-truth"],
+    "완화 없는 원본 대조 검증기(qa:stats-source-truth)는 그대로 남아 있어야 한다",
   );
 }
 
-/* ── 3) 게이트가 부르는 npm script 가 실재해야 한다 ────────────── */
-{
-  const runSteps = [...workflow.matchAll(/run:\s*npm run ([a-z0-9:_-]+)/gi)].map((m) => m[1]);
-  assert.ok(runSteps.length >= 3, `게이트가 npm script 를 실행해야 한다 (actual ${runSteps.length})`);
-  for (const name of new Set(runSteps)) {
-    assert.ok(pkg.scripts[name], `package.json 에 \`${name}\` script 가 없다 — 게이트가 죽은 스텝을 부른다`);
-  }
-}
-
-console.log(
-  `stats gate trigger smoke: ALL assertions PASS (no paths filter, events ${Object.keys(parsed).length})`,
-);
+console.log("stats gate trigger smoke: ALL assertions PASS (contract=no-paths, freshness=covers verifier inputs)");

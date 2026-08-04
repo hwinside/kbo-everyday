@@ -1,0 +1,196 @@
+name: Stats Contract Gate
+
+# 스탯 파이프라인 **계약** 게이트 — 결정론적. live KBO 를 타지 않는다.
+#
+# ── 왜 나눴나(2026-08-05) ──────────────────────────────────────
+# 종전 `stats-source-truth-gate.yml` 은 배선·완주계약·mutation RED 증명과
+# live KBO strict equality 를 한 job 에 몰아넣고 모든 PR 에서 돌렸다. 실측 결과:
+#
+#   ① 무관한 PR 이 전부 RED — 경기가 진행되면 KBO 원본이 커밋 스냅샷보다 앞선다.
+#      8/4 12:46Z 이후 `main` push 와 스탯을 건드리지도 않은 PR 들이 줄줄이 실패했다.
+#      게이트가 코드 결함이 아니라 "시간이 흘렀다"를 보고하고 있었다.
+#
+#   ② mutation RED 증명이 무력화 — 증명 스텝이 전부
+#      `오염 주입 → 게이트가 통과하면 exit 1` 구조다. 그런데 KBO drift 로 baseline 이
+#      이미 RED 면, 오염을 넣든 안 넣든 게이트는 항상 실패한다. 즉 **검증력을 하나도
+#      입증하지 못한 채 job 은 success** 다. 우리가 계속 잡아온 false-green 과 같은 축이다.
+#
+# 그래서 성격이 다른 두 가지를 분리한다.
+#   - 이 파일: 배선·행동 계약 + 검증력 증명. 결정론적이라 **항상** 돌 수 있다.
+#   - stats-freshness-gate.yml: live 원본 대조. 스냅샷이 바뀔 때만 돈다.
+#
+# ⚠️ live strict equality 를 **완화한 게 아니다**. freshness 게이트가 전 행·전 필드
+# 대조를 그대로 수행한다(삼순 NO-GO: "KBO가 앞서면 통과" 식 완화는 오염을 숨긴다).
+# 바뀐 것은 *언제 돌리는가* 와 *원본이 흔들릴 때 어떻게 분류하는가* 뿐이다.
+#
+# ⚠️ paths allowlist 를 두지 않는다(2026-08-04 하린아빠 결정 유지).
+# allowlist 를 두면 거기 안 걸리는 새 의존이 생겼을 때 workflow 가 통째 SKIP 되고
+# required check 는 "통과"로 보인다 = trigger 자체가 false-green 이다.
+# 이 job 은 네트워크가 없어 빠르므로 커버리지를 택한다.
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  stats-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      # ── 배선·행동 계약 (네트워크 없음) ─────────────────────────
+      - name: Snapshot guard contract (fail-closed)
+        # 네 데이터셋 스냅샷 가드가 promote 앞에 배선돼 있는지 +
+        # assertSourceTruth 가 스텁 주입에서 실제로 reject 하는지.
+        #
+        # ⚠️ 이 스텝이 종전 live RED 증명 4종을 **결정론적으로** 대체한다.
+        # stub browser 로 KBO 응답을 고정한 채 ERA 오염 / 도루(sb) 오염 /
+        # 파생(defense-runs) 오염 / 행 누락 / 수집 0행을 각각 주입하고
+        # `assert.rejects` 로 확인한다. baseline 이 항상 PASS 이므로
+        # "오염을 넣었을 때만 RED" 가 실제로 증명된다 — drift 와 무관하다.
+        run: npm run qa:stats-snapshot-guard
+
+      - name: Atomic promote contract (fail-closed)
+        # staging 실패 시 대상 파일 전원 byte-identical, promote 중간 실패 시 롤백.
+        run: npm run qa:atomic-promote
+
+      - name: Pagination completion contract (fail-closed)
+        # 11페이지 fake 페이저로 지연 흡수·재클릭 회복·전환 실패·stale·중간 누락을 행동 검증.
+        run: npm run qa:kbo-pagination
+
+      - name: Select/sort change gate
+        run: npm run qa:kbo-select
+
+      - name: Gate trigger coverage
+        # 두 게이트의 trigger 등록 + freshness paths 가 검증기 입력을 전부 덮는지 결속.
+        run: npm run qa:stats-gate-trigger
+
+      # ── 검증력 증명 (결함주입) ────────────────────────────────
+      # 아래 스텝들은 "게이트가 통과하면 job 이 죽는" 구조다.
+      # 따라서 이 job 의 success 자체가 게이트에 검증력이 있다는 증거다.
+      #
+      # ⚠️ 종전과 달리 여기서 부르는 게이트는 전부 결정론적이다. baseline 이
+      # 외부 상태로 RED 가 되지 않으므로, 증명이 조용히 공회전하지 않는다.
+      - name: RED proof — snapshot guard must fail on injected corruption
+        run: |
+          node -e "
+            const fs = require('fs');
+            const p = 'scripts/lib/stats-source-truth.mjs';
+            let src = fs.readFileSync(p, 'utf8');
+            const needle = 'if (failures.length) {';
+            if (!src.includes(needle)) {
+              console.error('판정 분기를 찾지 못했다 — 게이트 대상 코드가 바뀌었다');
+              process.exit(1);
+            }
+            // 불일치가 있어도 던지지 않도록 판정만 죽인다.
+            fs.writeFileSync(p, src.replace(needle, 'if (false && failures.length) {'));
+          "
+          if npm run qa:stats-snapshot-guard; then
+            echo "::error::원본 대조 판정을 죽였는데 게이트가 통과했다 — 값 대조가 무력하다"
+            git checkout -- scripts/lib/stats-source-truth.mjs
+            exit 1
+          fi
+          git checkout -- scripts/lib/stats-source-truth.mjs
+          git diff --exit-code
+
+      - name: RED proof — derived verification must stay mandatory
+        run: |
+          node -e "
+            const fs = require('fs');
+            const p = 'scripts/lib/stats-source-truth.mjs';
+            let src = fs.readFileSync(p, 'utf8');
+            const needle = 'if (missing.length) {';
+            if (!src.includes(needle)) {
+              console.error('파생 입력 필수 계약을 찾지 못했다 — 게이트 대상 코드가 바뀌었다');
+              process.exit(1);
+            }
+            // 파생 입력이 비어도 통과하도록 fail-close 를 죽인다.
+            fs.writeFileSync(p, src.replace(needle, 'if (false && missing.length) {'));
+          "
+          if npm run qa:stats-snapshot-guard; then
+            echo "::error::파생 검증 skip 이 게이트를 통과했다 — 검증을 끌 수 있다"
+            git checkout -- scripts/lib/stats-source-truth.mjs
+            exit 1
+          fi
+          git checkout -- scripts/lib/stats-source-truth.mjs
+          git diff --exit-code
+
+      - name: RED proof — pagination completion contract must fail closed
+        run: |
+          node -e "
+            const fs = require('fs');
+            const p = 'scripts/lib/kbo-pagination.mjs';
+            let src = fs.readFileSync(p, 'utf8');
+            if (!src.includes('source_pagination_incomplete')) {
+              console.error('완주 계약 예외가 없다 — 게이트 대상 코드가 바뀌었다');
+              process.exit(1);
+            }
+            const needle = '    if (groupClickAccepted) {';
+            if (!src.includes(needle)) {
+              console.error('그룹 전환 실패 분기를 찾지 못했다 — 게이트 대상 코드가 바뀌었다');
+              process.exit(1);
+            }
+            fs.writeFileSync(p, src.replace(needle, '    if (false && groupClickAccepted) {'));
+          "
+          if npm run qa:kbo-pagination; then
+            echo "::error::그룹 전환 유실을 EOF 로 오인해도 게이트가 통과했다"
+            git checkout -- scripts/lib/kbo-pagination.mjs
+            exit 1
+          fi
+          git checkout -- scripts/lib/kbo-pagination.mjs
+          git diff --exit-code
+
+      - name: RED proof — trigger coverage must fail when freshness paths go stale
+        # freshness 게이트가 검증기 입력을 덮지 못하면 데이터 PR 이 게이트를 SKIP 한다.
+        # 그 결손을 trigger 스모크가 실제로 잡는지 증명한다.
+        run: |
+          node -e "
+            const fs = require('fs');
+            const p = '.github/workflows/stats-freshness-gate.yml';
+            const src = fs.readFileSync(p, 'utf8');
+            const needle = '      - \"src/lib/constants/stats-*-defense.json\"';
+            if (!src.includes(needle)) {
+              console.error('freshness paths 에서 defense 항목을 찾지 못했다');
+              process.exit(1);
+            }
+            fs.writeFileSync(p, src.replace(needle, ''));
+          "
+          if npm run qa:stats-gate-trigger; then
+            echo "::error::freshness paths 에 구멍이 생겼는데 trigger 게이트가 통과했다"
+            git checkout -- .github/workflows/stats-freshness-gate.yml
+            exit 1
+          fi
+          git checkout -- .github/workflows/stats-freshness-gate.yml
+          git diff --exit-code
+
+      - name: RED proof — oracle must share the crawler pagination core
+        run: |
+          node -e "
+            const fs = require('fs');
+            const src = fs.readFileSync('scripts/lib/stats-source-truth.mjs', 'utf8');
+            const usesCore = src.includes('createKboPageAdapter') && src.includes('collectAllPages(');
+            if (!usesCore) {
+              console.error('oracle 이 공용 순회 core 를 쓰지 않는다 — crawler 와 완주 계약이 갈라진다');
+              process.exit(1);
+            }
+            if (/async function (scrapeRows|pageSignature|waitForTableChange)\b/.test(src)) {
+              console.error('oracle 에 자체 순회 구현이 남아 있다(이중 구현)');
+              process.exit(1);
+            }
+          "
+
+      - name: Confirm working tree is clean after RED proofs
+        # 결함주입이 하나라도 원복되지 않았으면 여기서 잡힌다.
+        run: git diff --exit-code
