@@ -32,6 +32,7 @@ import {
   answerQuestion,
   BLOCKED_ANSWER,
   HISTORY_HOLD_ANSWER,
+  TEAM_STAT_HOLD_ANSWER,
   type GlossaryEntry,
   type MatchPath,
   type PlayerRef,
@@ -77,10 +78,17 @@ function makeDeps(state: RunState, glossary: GlossaryEntry[] = []): QaDeps {
   };
 }
 
-async function run(question: string): Promise<{ source: MatchPath; answer: string | null }> {
+async function run(
+  question: string,
+): Promise<{ source: MatchPath; answer: string | null; llmCalls: number; logs: MatchPath[] }> {
   const state: RunState = { llmCalls: 0, logs: [] };
   const result = await answerQuestion("u-team-gate", question, makeDeps(state));
-  return { source: result.source as MatchPath, answer: result.answer };
+  return {
+    source: result.source as MatchPath,
+    answer: result.answer,
+    llmCalls: state.llmCalls,
+    logs: state.logs,
+  };
 }
 
 let pass = 0;
@@ -96,7 +104,7 @@ async function check(name: string, fn: () => Promise<void> | void) {
 
 /** 유저가 받으면 안 되는 종결 — 구단 질문에서 이 둘은 0이어야 한다. */
 async function assertAnswerable(question: string, label: string) {
-  const { source, answer } = await run(question);
+  const { source, answer, llmCalls, logs } = await run(question);
   assert.notEqual(
     source, "history_hold",
     `${label} "${question}": 기록 미지원 안내로 종결됐다(하린아빠 18:26 금지)`,
@@ -107,6 +115,13 @@ async function assertAnswerable(question: string, label: string) {
   );
   assert.notEqual(answer, HISTORY_HOLD_ANSWER, `${label} "${question}": 금지 문구 노출`);
   assert.notEqual(answer, BLOCKED_ANSWER, `${label} "${question}": 차단 문구 노출`);
+  // ⚠️ 삼순 #1100 2차 P0-1: "차단 아님"만 보면 약하다. 구단 질문은 **실제로 LLM 답변까지
+  // 도달**해야 하며, 그 경로가 곧 배포 프롬프트가 판정하는 지점이다. 정확히 1콜·source=llm·
+  // 답변 본문까지 exact 로 고정한다(부분 통과·조용한 우회 차단).
+  assert.equal(source, "llm", `${label} "${question}": LLM 답변 경로가 아니다 (source=${source})`);
+  assert.equal(answer, LLM_ANSWER, `${label} "${question}": LLM 답변 본문 불일치`);
+  assert.equal(llmCalls, 1, `${label} "${question}": LLM 호출 ${llmCalls}회 (기대 1)`);
+  assert.deepEqual(logs, ["llm"], `${label} "${question}": 로그 match_path 불일치`);
 }
 
 /**
@@ -139,7 +154,6 @@ async function verifyTeamQuestionsAnswerable() {
         `${short} ${nick}의 역사`,
         `${nick}의 역사`,
         `${short}${nick} 우승`,
-        `${short}${nick} 순위`,
         `${short} 주장`,
       ];
       for (const question of variants) {
@@ -160,21 +174,42 @@ async function verifyTeamQuestionsAnswerable() {
     await check(`실표본 "${question}"`, () => assertAnswerable(question, "실표본"));
   }
 
-  // ⚠️ **수치 지표가 붙은 구단 질문**도 같은 계약이다.
-  //
-  // 이걸 빼두면 구단 종결 조건을 `hasStat && (선수 || 구단)` 으로 되돌려도 게이트가
-  // 못 잡는다 — 위 변형들은 STAT_WORDS 를 안 가지기 때문이다(mutation 실측으로 확인한
-  // 게이트 구멍, MUT-D 가 처음엔 GREEN 이었다). 팀 stat DB 가 없어 근거없는 수치를
-  // 말하면 안 되지만, 그건 LLM 프롬프트의 근거없음 계약이 다룰 일이지 "기록은 못
-  // 답해요"로 끝낼 일이 아니다.
+  // ⚠️ **수치가 없는 구단 질문**은 위 변형들이 STAT_WORDS 를 안 가지므로, 구단 종결
+  // 조건을 `hasStat && (선수 || 구단)` 으로 되돌리는 mutation 을 못 잡는다(MUT-D 가
+  // 처음 GREEN 이었던 이유). 그래서 지표어가 붙은 **서술형** 구단 질문을 따로 태운다.
+  for (const question of [
+    "삼성 라이온즈 홈런 잘 치는 팀이야?",
+    "두산베어스 기록 중에 유명한 이야기 알려줘",
+  ]) {
+    await check(`구단+지표어 서술 "${question}"`, () => assertAnswerable(question, "구단+지표어"));
+  }
+}
+
+// ── 반대 방향 ⓪: 팀 단위 **수치**는 generic LLM 으로 보내지 않는다 ────────────
+// 삼순 #1100 2차 P0-2. 구단은 답변 범위 안이지만 팀 집계 정본 DB 가 없다. 그대로 LLM 에
+// 넘기면 모델이 기억으로 숫자를 지어낸다(환각). 선수 미지원 지표와 동일하게 fail-close 하되
+// 안내문은 순위표로 보내는 `TEAM_STAT_HOLD_ANSWER` 다.
+async function verifyTeamNumericFailsClosed() {
   for (const question of [
     "LG 팀타율 얼마야?",
     "두산베어스 홈런 몇 개야?",
     "KIA타이거즈 승률",
     "삼성 팀방어율",
+    "한화 순위 알려줘",
   ]) {
-    await check(`구단+지표 "${question}"`, () => assertAnswerable(question, "구단+지표"));
+    await check(`팀 수치 fail-close "${question}"`, async () => {
+      const { source, answer, llmCalls } = await run(question);
+      assert.equal(source, "history_hold", `${question}: 팀 수치는 LLM 으로 가면 안 된다`);
+      assert.equal(answer, TEAM_STAT_HOLD_ANSWER, `${question}: 팀 수치 안내문이 아니다`);
+      assert.equal(llmCalls, 0, `${question}: LLM 을 ${llmCalls}회 태웠다 — 숫자 환각 경로`);
+    });
   }
+  // 안내문 계약: "못 한다"만 말하면 유저가 갈 곳이 없다. 다음 행동을 반드시 준다.
+  await check("팀 수치 안내문이 다음 행동을 준다", () => {
+    assert.ok(TEAM_STAT_HOLD_ANSWER.includes("순위표"), "순위표 유도가 없다");
+    assert.notEqual(TEAM_STAT_HOLD_ANSWER, HISTORY_HOLD_ANSWER, "선수 지표 안내와 같은 문구다");
+    assert.ok(!TEAM_STAT_HOLD_ANSWER.includes("기록 탭"), "구 금지 문구(앱 기록 탭)가 남았다");
+  });
 }
 
 // ── 반대 방향 ①: 잘못 조합한 구단명은 구단이 아니다 ─────────────────────────
@@ -299,6 +334,7 @@ async function main() {
   );
 
   await verifyTeamQuestionsAnswerable();
+  await verifyTeamNumericFailsClosed();
   await verifyCrossTeamCombosRejected();
   await verifyOutOfScopeStillBlocked();
   await verifyUnsupportedMetricsStillHeld();

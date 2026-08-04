@@ -24,6 +24,7 @@ import {
   DAILY_LIMIT,
   HISTORY_HOLD_ANSWER,
   isAckPhrase,
+  TEAM_STAT_HOLD_ANSWER,
   isPickedPlayerAllowed,
   LIMITED_ANSWER,
   LLM_AMBIGUOUS_ANSWER,
@@ -301,11 +302,20 @@ for (const question of ["김도영 타율 알려줘", "류현진 방어율 알�
 }
 // 선수 수치 질문은 지원 allowlist 밖이면 안내로 종결한다(운영 DB 에 컬럼이 없다).
 assert.equal(routeQuestion("류현진 승수", seedEntries, players), "history_hold", "류현진 승수");
-// ⚠️ 반면 **구단** 질문은 더 이상 `history_hold` 로 끝내지 않는다 (2026-08-04 하린아빠
+// ⚠️ **구단 서술** 질문은 더 이상 `history_hold` 로 끝내지 않는다 (2026-08-04 하린아빠
 // 18:26 "이런 답변이 이제 나와서는 안 되지" + 삼순 #1100 1차 P0-1).
 // 구단은 확정 답변 범위(야구룰·구단·선수·기록) 안이므로 LLM 2차 가드가 답한다.
 // 종단 계약(유저가 받는 source/answer)은 `qa:team-fullname-routing` 이 감싼다.
-assert.equal(routeQuestion("LG 순위", seedEntries, players), "llm_scope_gate", "LG 순위");
+for (const question of ["LG트윈스의 역사", "삼성 주장", "두산베어스 창단"]) {
+  assert.equal(routeQuestion(question, seedEntries, players), "llm_scope_gate", question);
+}
+// ⚠️ 단, **팀 단위 수치**는 다시 `history_hold` 다 (삼순 #1100 2차 P0-2).
+// 구단 자체는 범위 안이지만 팀 집계 정본 DB 가 없어 generic LLM 에 넘기면 숫자를 지어낸다.
+// 안내문은 선수 지표(`HISTORY_HOLD_ANSWER`)가 아니라 순위표로 보내는 `TEAM_STAT_HOLD_ANSWER` 다
+// — 유저가 물은 건 팀 집계이므로 선수 지표 목록을 주면 틀린 안내다.
+for (const question of ["LG 순위", "LG 팀타율 얼마야?", "두산베어스 홈런 몇 개야?"]) {
+  assert.equal(routeQuestion(question, seedEntries, players), "history_hold", question);
+}
 // 과차단 회귀 (삼순 NO-GO blocker 1): "순위"는 team-bound일 때만 실시간 기록이다.
 // 팀 없는 순위 "룰" 질문까지 history_hold로 죽이면 핏스 목적과 정반대가 된다.
 const rankRuleQuestions = ["야구 순위가 동률이면 어떻게 정해?", "순위 결정 규칙 알려줘"];
@@ -726,9 +736,12 @@ async function verifyPipeline() {
     ["류현진 승수", "history_hold", HISTORY_HOLD_ANSWER],
     ["김도영 홈런 몇개", "history_hold", HISTORY_HOLD_ANSWER],
     ["52605 기록", "history_hold", HISTORY_HOLD_ANSWER],
-    // ⚠️ `LG 순위` 는 여기서 **빠졌다** — 구단 질문은 `history_hold` 로 끝내지 않고
-    // LLM 2차 가드가 답한다 (2026-08-04 하린아빠 18:26 + 삼순 #1100 1차 P0-1).
-    // 구단 종단 계약은 `qa:team-fullname-routing` 이 answerQuestion 실행으로 감싼다.
+    // ⚠️ 구단 **서술** 질문은 여기서 빠졌다 — `history_hold` 로 끝내지 않고 LLM 2차 가드가
+    // 답한다 (2026-08-04 하린아빠 18:26 + 삼순 #1100 1차 P0-1). 종단 계약은
+    // `qa:team-fullname-routing` 이 answerQuestion 실행으로 감싼다.
+    // 반면 팀 **수치**는 fail-close 이며 안내문이 다르다 (삼순 #1100 2차 P0-2).
+    ["LG 순위", "history_hold", TEAM_STAT_HOLD_ANSWER],
+    ["LG 팀타율 얼마야?", "history_hold", TEAM_STAT_HOLD_ANSWER],
     // 게이트 1 actual pipeline 회귀: 조사 결합 4건 모두 history_hold / LLM 0 / cache 0.
     ["김도영의 타율 알려줘", "history_hold", HISTORY_HOLD_ANSWER],
     ["류현진은 방어율이 얼마야?", "history_hold", HISTORY_HOLD_ANSWER],
@@ -741,7 +754,7 @@ async function verifyPipeline() {
     ["르윈 디아즈 홈런 몇개", "history_hold", HISTORY_HOLD_ANSWER],
     ["기예르모 에레디아가 타율 얼마야", "history_hold", HISTORY_HOLD_ANSWER],
   ];
-  // blocker 1 actual pipeline: team-bound "LG 순위"는 위 paths에서 history_hold 유지,
+  // blocker 1 actual pipeline: team-bound 수치("LG 순위")는 위 paths에서 history_hold 유지,
   // 팀 없는 순위 룰 질문은 단일 LLM RULE_TERM 경로로 답변되어야 한다.
   const RANK_RULE_ANSWER = "순위가 같으면 야구 규칙에 따라 상대전적 순으로 가려요.";
   for (const input of rankRuleQuestions) {

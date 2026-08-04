@@ -64,6 +64,21 @@ export const SERVICE_REDIRECT_ANSWER =
 export const HISTORY_HOLD_ANSWER =
   "그 기록은 아직 준비되지 않았어요. 지금은 2026 시즌의 타율·홈런·타점·안타·경기·루타, " +
   "방어율·승·패·세이브·홀드·탈삼진·이닝 같은 기록을 답해드릴 수 있어요! ⚾";
+
+/**
+ * **구단 단위 수치** 전용 fail-close 안내 (삼순 #1100 2차 P0-2).
+ *
+ * 왜 필요한가 — `LG 팀타율`·`두산베어스 홈런 몇 개`·`KIA 순위`는 구단 질문이라
+ * 답변 범위 안이지만, **팀 단위 집계를 담은 정본 DB 가 없다**. 그대로 generic LLM 으로
+ * 보내면 모델이 기억으로 숫자를 지어낸다(환각). 프롬프트의 근거없음 계약은 두 번째
+ * 방어선일 뿐이고, 첫 번째 방어선은 애초에 보내지 않는 것이다.
+ *
+ * 선수 미지원 지표(`HISTORY_HOLD_ANSWER`)와 같은 모양으로 **못 하는 것은 못 한다고 말하되**
+ * 답할 수 있는 범위를 같이 밝혀 유저가 다음 행동을 할 수 있게 한다.
+ */
+export const TEAM_STAT_HOLD_ANSWER =
+  "팀 단위 기록(팀 타율·팀 홈런·현재 순위 같은 수치)은 정확한 자료가 없어 말씀드리기 어려워요. " +
+  "순위·팀 기록은 홈의 순위표에서 바로 보실 수 있고, 구단 이야기나 선수 기록은 제가 답해드릴게요! ⚾";
 // 후속형인데 이어붙일 직전 turn이 없을 때 — 차단 문구가 아니라 정중한 되묻기다 (spec §4.3 AC4).
 export const CONTEXT_MISSING_ANSWER =
   "어떤 내용에 이어서 여쭤보시는 걸까요? 궁금한 야구 룰/용어를 한 번만 더 적어주시면 답해드릴게요! ⚾";
@@ -425,6 +440,40 @@ function isOutOfScopeIntent(normalized: string, hasTeam: boolean): boolean {
 }
 const NAMED_STAT_QUERY =
   /[가-힣]{2,12}(?:의|은|는|이|가)?\s+(?:타율|방어율|평균자책|출루율|장타율|홈런|안타|타점|도루|승수|세이브|홀드|삼진|기록|스탯)\s*(?:몇|얼마|알려|보여|기록)?/;
+
+/**
+ * 구단 질문 중 **팀 단위 수치**를 묻는 것만 결정론적으로 가린다 (삼순 #1100 2차 P0-2).
+ *
+ * 지표어(`STAT_WORDS`)가 붙은 구단 질문이면서 값을 요구하는 의도(`몇`·`얼마`·`알려` 등)가
+ * 있거나, 지표어 자체가 팀 수치 전용 어휘(`팀타율`·`순위`)일 때만 해당된다.
+ *
+ * 왜 좁게 잡는가 — 구단 질문은 대부분 서술이고(`삼성 주장`·`LG의 역사`), 그건 답변 범위
+ * 안이다. 넓게 잡으면 구단 질문을 다시 과차단하는 P0-1 회귀가 된다.
+ */
+const TEAM_NUMERIC_STAT_WORDS = ["팀타율", "팀방어율", "팀평균자책", "팀홈런", "순위", "승률"];
+const NUMERIC_VALUE_ASK = /몇|얼마/;
+
+function isTeamNumericQuestion(normalized: string, tokens: string[], hasStat: boolean): boolean {
+  // ① 팀 수치 전용 어휘는 그 자체로 확정이다(`팀타율`·`순위`·`승률`).
+  //    `STAT_WORDS` 에 없는 단어라 `hasStat` 에 의존하면 안 잡힌다(실측: 첫 구현이 여기서 샜다).
+  if (TEAM_NUMERIC_STAT_WORDS.some((word) => tokenMatches(tokens, word))) return true;
+  // ② 일반 지표어 + **값을 요구하는 의도**(`몇`·`얼마`)일 때만 수치 질문이다.
+  //    `알려`·`보여` 까지 넣으면 `두산 기록 중 유명한 이야기 알려줘` 같은 서술형 구단 질문이
+  //    fail-close 로 끌려간다 — 그건 P0-1(구단 과차단) 회귀다. 실제로 첫 구현이 그렇게 죽었다.
+  return hasStat && NUMERIC_VALUE_ASK.test(normalized);
+}
+
+/**
+ * `history_hold` 안내문을 질문 유형별로 갈라준다.
+ *
+ * 구단 수치에 "2026 시즌 타율·홈런을 답해드려요"(선수 지표 안내)를 내보내면 틀린 안내다 —
+ * 유저가 물은 건 팀 집계이고, 그건 순위표로 보내는 게 정확한 다음 행동이다.
+ */
+export function resolveHoldAnswer(question: string): string {
+  const normalized = question.normalize("NFKC").toLowerCase();
+  const tokens = questionTokens(normalized);
+  return mentionsTeam(tokens) ? TEAM_STAT_HOLD_ANSWER : HISTORY_HOLD_ANSWER;
+}
 
 /**
  * 현재 출시 범위인 야구 룰/용어 질문의 결정론적 경계.
@@ -997,9 +1046,15 @@ export function routeQuestion(
   // `blocked`("룰/용어만 답해요")로 끝내면 둘 다 틀린 안내다. 그대로 아래로 흘려
   // LLM 2차 가드가 범위를 판정하고 답변을 생성하게 한다.
   //
-  // 수치 지표가 붙은 구단 질문(`LG 팀타율`)도 마찬가지다 — team stat DB 가 없어
-  // 수치를 단정해 말하면 안 되지만, 그건 LLM 프롬프트의 근거없음 계약이 다룬다.
-  if (!hasTeam && hasStat && hasPlayerReference(tokens, players)) return "history_hold";
+  // ⚠️ 단, **수치 지표가 붙은 구단 질문**(`LG 팀타율`·`두산베어스 홈런 몇 개`)은 예외다.
+  // 구단 자체는 답변 범위 안이지만 팀 단위 집계 정본이 없어 generic LLM 이 숫자를
+  // 지어낸다(삼순 #1100 2차 P0-2). 선수 미지원 지표와 동일하게 fail-close 하되
+  // 안내문은 `TEAM_STAT_HOLD_ANSWER` 로 갈라진다(아래 `resolveHoldAnswer`).
+  //
+  // 반대로 `삼성 주장`·`LG트윈스의 역사` 처럼 수치가 없는 구단 질문은 그대로
+  // 흘려보낸다 — 서술은 프롬프트 범위 안이고 숫자 환각 리스크가 없다.
+  if (hasStat && hasPlayerReference(tokens, players) && !hasTeam) return "history_hold";
+  if (hasTeam && isTeamNumericQuestion(normalized, tokens, hasStat)) return "history_hold";
 
   const supportedRuleTerm = isSupportedRuleTermQuestion(question, glossary, players);
   if (!supportedRuleTerm) {
@@ -1494,7 +1549,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   if (route !== "baseball_rule_term" && !scopeGate) {
     const answer =
       route === "service_redirect" ? SERVICE_REDIRECT_ANSWER :
-      route === "history_hold" ? HISTORY_HOLD_ANSWER :
+      route === "history_hold" ? resolveHoldAnswer(question) :
       route === "context_missing" ? CONTEXT_MISSING_ANSWER :
       route === "ack" ? ACK_ANSWER :
       BLOCKED_ANSWER;

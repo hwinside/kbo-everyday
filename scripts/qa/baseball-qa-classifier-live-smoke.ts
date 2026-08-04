@@ -20,9 +20,11 @@ import {
 } from "../../src/lib/baseball-qa/gemini-request";
 import {
   LIVE_INJECTION_DELEGATED,
+  LIVE_NEGATIVE_TEAM_BOUND,
   LIVE_POSITIVE_REPEATS,
   LIVE_POSITIVE_ROLE_RULE,
   LIVE_POSITIVE_TEAM_POSSESSIVE,
+  LIVE_POSITIVE_TEAM_SCOPE,
 } from "./fixtures/baseball-qa-live-cases";
 
 const RULE_TERM = "BASEBALL_RULE_TERM";
@@ -111,6 +113,15 @@ async function main() {
   // 양성 경계 문구가 프롬프트에서 사라지면 과차단 회귀가 재발하므로 SSOT를 함께 고정한다.
   assert.match(BASEBALL_QA_SYSTEM_PROMPT, /우리 팀·너희 팀·당신 팀/);
   assert.match(BASEBALL_QA_SYSTEM_PROMPT, /경기 참가자의 역할/);
+  // 삼순 #1100 2차 P0-1: 구단 축이 프롬프트 스코프에서 빠지면 라우터를 고쳐도 다시 blocked.
+  assert.match(BASEBALL_QA_SYSTEM_PROMPT, /KBO 구단/);
+  assert.doesNotMatch(
+    BASEBALL_QA_SYSTEM_PROMPT,
+    /선수·구단 기록\/히스토리[^\n]*NOT_BASEBALL|구단 기록\/히스토리[\s\S]{0,80}답하지 않고/,
+    "구 프롬프트의 '선수·구단 기록/히스토리는 NOT_BASEBALL' 명령이 남아 있다",
+  );
+  // 삼순 #1100 2차 P0-2: 근거없는 수치 금지 계약이 프롬프트에 실제로 있어야 한다.
+  assert.match(BASEBALL_QA_SYSTEM_PROMPT, /수치는 절대 지어내지 않는다/);
 
   const positive = await runGroup(
     apiKey,
@@ -138,6 +149,26 @@ async function main() {
     1,
   );
   assert.equal(injection.total, 18, "인젝션 18종");
+
+  // 구단 축(하린아빠 확정 스코프) — 실 provider 가 답변 범위 안으로 판정해야 한다.
+  const teamScope = await runGroup(
+    apiKey,
+    `구단 스코프 ${LIVE_POSITIVE_TEAM_SCOPE.length}종`,
+    LIVE_POSITIVE_TEAM_SCOPE,
+    RULE_TERM,
+    1,
+  );
+  assert.equal(teamScope.total, LIVE_POSITIVE_TEAM_SCOPE.length, "구단 스코프 표본 수");
+
+  // 구단이 붙어도 범위 밖인 축 — 반대편이 열리면 그것도 회귀다.
+  const teamBoundNegative = await runGroup(
+    apiKey,
+    `구단+범위밖 ${LIVE_NEGATIVE_TEAM_BOUND.length}종`,
+    LIVE_NEGATIVE_TEAM_BOUND,
+    NOT_BASEBALL,
+    1,
+  );
+  assert.equal(teamBoundNegative.total, LIVE_NEGATIVE_TEAM_BOUND.length, "구단+범위밖 표본 수");
 
   console.log("baseball-qa classifier live smoke PASS (실 provider actual)");
 }
