@@ -427,7 +427,12 @@ async function verifyProductionShapedRecordRouting() {
   // 그대로 표시 중이었다. 내가 `player_stats_batter` 테이블만 보고 "없다"고 단정한 것이
   // 틀렸고, 그 오판을 이 게이트가 정답으로 잠그고 있었다.
   // 표본은 **여전히 소스가 없는 지표**로 바꾼다(`병살타`·`실책`·`대타타율`).
-  for (const question of ["김도영 WAR 알려줘", "김도영 wRC 얼마야", "박해민 스탯 알려줘"]) {
+  // ⚠️ 2차 표본 교체 (2026-08-05): `WAR` 도 이제 **답변 가능**하다.
+  // WAR 은 저장된 컬럼이 아니라 기본 스탯에서 파생되는 값이고(`calcBatterSaber`),
+  // 앱은 선수 상세·기록실·세이버 카드에서 이미 그 값을 보여주고 있었다. "DB 에 컬럼이
+  // 없다"를 "데이터가 없다"로 읽은 게 또 틀렸다 — `도루`·`OPS` 때와 같은 오판이다.
+  // 표본은 **정말로 소스가 없는** 지표로 다시 바꾼다(`wRC`·`실책`·총칭 `스탯`).
+  for (const question of ["김도영 wRC 얼마야", "김도영 통산 기록 알려줘", "박해민 스탯 알려줘"]) {
     const { result, counts: c } = await run(question);
     assert.equal(result.source, "history_hold", `${question}: 미지원 지표도 기록 질문이다`);
     assert.equal(result.answer, HISTORY_HOLD_ANSWER, `${question}: 앱 기록 탭 안내`);
@@ -503,7 +508,11 @@ async function verifyProductionRosterLoaderSeam() {
   //
   // ⚠️ 표본 교체 2026-08-04: 종전 `도루`·`출루율`·`OPS` 는 이제 **답변 가능**하다
   // (스냅샷 소스). 계약 축은 그대로 두고 여전히 소스가 없는 지표로 바꾼다.
-  for (const metric of ["WAR 알려줘", "스탯 알려줘", "기록 알려줘"]) {
+  //
+  // ⚠️ 2차 교체 2026-08-05: `WAR` 도 답변 가능해졌다 — 저장 컬럼이 아니라 기본 스탯에서
+  // 파생되는 값이고(`calcBatterSaber`), 앱이 이미 선수 상세·기록실에서 보여주고 있었다.
+  // "DB 에 컬럼이 없다"를 "데이터가 없다"로 읽은 게 `도루`·`OPS` 때와 똑같은 오판이었다.
+  for (const metric of ["wRC 얼마야", "스탯 알려줘", "기록 알려줘"]) {
     const question = `${subject.name} ${metric}`;
     for (const key of Object.keys(counts) as Array<keyof typeof counts>) counts[key] = 0;
     const result = await answerQuestion("u-prod-roster", question, prodDeps());

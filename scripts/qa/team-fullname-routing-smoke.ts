@@ -218,57 +218,115 @@ async function verifyTeamQuestionsAnswerable() {
   }
 }
 
-// ── 반대 방향 ⓪: 팀 단위 **수치**는 generic LLM 으로 보내지 않는다 ────────────
-// 삼순 #1100 2차 P0-2. 구단은 답변 범위 안이지만 팀 집계 정본 DB 가 없다. 그대로 LLM 에
-// 넘기면 모델이 기억으로 숫자를 지어낸다(환각). 선수 미지원 지표와 동일하게 fail-close 하되
-// 안내문은 순위표로 보내는 `TEAM_STAT_HOLD_ANSWER` 다.
-async function verifyTeamNumericFailsClosed() {
-  for (const question of [
-    "LG 팀타율 얼마야?",
-    "두산베어스 홈런 몇 개야?",
-    "KIA타이거즈 승률",
-    "삼성 팀방어율",
-    "한화 순위 알려줘",
-    // ⚠️ 삼순 #1100 3차 P0-2 실표본 — `몇`·`얼마` 없는 **자연어 변형**이 전부 generic LLM
-    // 으로 새고 있었다(`source=llm`, LLM 1콜). 그리고 `홈런 999개, 99승 1패` 같은
-    // 근거없는 숫자가 최종 validator 를 그대로 통과해 유저에게 나갔다.
-    "LG 홈런 알려줘",
-    "KIA 팀 타율 알려줘",
-    "삼성 승패 알려줘",
-    "두산 타율 보여줘",
-    "한화 세이브 알려줘",
-    "키움 도루 알려줘",
-    // ⚠️ 아래는 **요청어(`알려`·`보여`)가 없는** 변형이다. 삼순 4차 P0-2 실표본 그대로.
-    // 요청어 allowlist 방식으로 되돌리면 여기가 전부 뚫린다 — 그게 MUT-V 다.
-    "LG 홈런 수 말해줘",
-    "LG의 타율을 말해줘",
-    "삼성 승패 어떻게 돼?",
-    "두산 홈런은?",
-    "KIA 안타 현황",
-    "LG 전적 알려줘",
-    "LG 승리 수 알려줘",
-    "KIA 패배 몇 번이야",
-    "삼성 득점 알려줘",
-  ]) {
-    await check(`팀 수치 fail-close "${question}"`, async () => {
-      const { source, answer, llmCalls } = await run(question);
-      assert.equal(source, "history_hold", `${question}: 팀 수치는 LLM 으로 가면 안 된다`);
-      assert.equal(answer, TEAM_STAT_HOLD_ANSWER, `${question}: 팀 수치 안내문이 아니다`);
+// ── 팀 단위 **수치**: 지어내지도 않고, 못 한다고 하지도 않는다 ──────────────────
+//
+// ⚠️ 계약이 두 번 바뀌었다. 그 이력을 남긴다.
+//   1차: generic LLM 으로 보냈다 → `홈런 999개, 99승 1패` 환각이 유저에게 나갔다.
+//   2차: 고정 안내문으로 닫았다  → 하린아빠 "도루 OPS가 왜 없어? 우리가 다 제공하고
+//        있는 데이터인데"(2026-08-04 20:42) + "이 답변도 안 내기로 했잖아"(01:04).
+//   3차(지금): **조회해서 답한다.** production 실측(2026-08-05 01:2x)에서
+//        `/api/standings` 가 LG 3위 55승45패를, `/api/team-records` 가 LG 팀타율 .270 ·
+//        홈런 92 · 도루 65 를 이미 서빙하고 있었다. 앱 순위탭·팀기록탭이 그대로 보여준다.
+//        우리가 서빙하는 값을 봇만 "못 답한다"고 하는 건 유저에겐 거짓말이다.
+//
+// 그래서 이 게이트가 고정하는 것은 **환각 0**과 **거짓 안내 0** 둘 다다.
+async function verifyTeamNumericAnswers() {
+  // 실제 서빙 값을 한 번 읽어 기대값을 만든다. 하드코딩하면 순위가 바뀔 때마다 게이트가
+  // 깨지고, 결국 누군가 값을 지워버린다(그게 검증력 0의 시작이다).
+  const { createTeamRecordFetchers } = await import("@/lib/baseball-qa/stats/team-record");
+  const fetchers = createTeamRecordFetchers();
+  const [standings, teamRecords] = await Promise.all([
+    fetchers.fetchStandings(),
+    fetchers.fetchTeamRecords(),
+  ]);
+  const lg = standings.find((row) => row.teamId === 1);
+  const lgBatting = (teamRecords.batting ?? []).find((row) => Number(row.teamId) === 1);
+  assert.ok(lg, "표본 팀(LG) 순위 행이 없다 — 게이트가 검증할 대상이 없다");
+  assert.ok(lgBatting, "표본 팀(LG) 타격 행이 없다");
+
+  const teamDeps = (state: RunState): QaDeps => ({
+    ...makeDeps(state),
+    fetchTeamRecord: fetchers,
+  });
+  const runTeam = async (question: string) => {
+    const state: RunState = { llmCalls: 0, logs: [] };
+    const result = await answerQuestion("u-team-gate", question, teamDeps(state));
+    return { source: result.source as MatchPath, answer: result.answer, llmCalls: state.llmCalls };
+  };
+
+  // ① 서빙되는 지표는 **실제 값**으로 답한다. 안내문으로 끝나면 실패다.
+  const servedCases: Array<[string, string]> = [
+    ["LG 지금 몇 위야?", `${lg!.ranking}위`],
+    ["LG 순위 알려줘", `${lg!.ranking}위`],
+    ["한화 순위 알려줘", `${standings.find((r) => r.teamId === 9)!.ranking}위`],
+    ["LG 전적 알려줘", `${lg!.wins}승`],
+    ["LG 승리 수 알려줘", String(lg!.wins)],
+    ["KIA 패배 몇 번이야", String(standings.find((r) => r.teamId === 6)!.losses)],
+    ["KIA타이거즈 승률", String(standings.find((r) => r.teamId === 6)!.winRate.toFixed(3))],
+    ["LG 팀타율 얼마야?", String(lgBatting!.avg)],
+    ["KIA 팀 타율 알려줘", String((teamRecords.batting ?? []).find((r) => Number(r.teamId) === 6)!.avg)],
+    ["LG 홈런 알려줘", String(lgBatting!.hr)],
+    ["LG 홈런 수 말해줘", String(lgBatting!.hr)],
+    ["두산 홈런은?", String((teamRecords.batting ?? []).find((r) => Number(r.teamId) === 2)!.hr)],
+    ["두산베어스 홈런 몇 개야?", String((teamRecords.batting ?? []).find((r) => Number(r.teamId) === 2)!.hr)],
+    ["키움 도루 알려줘", String((teamRecords.batting ?? []).find((r) => Number(r.teamId) === 10)!.sb)],
+    ["삼성 득점 알려줘", String((teamRecords.batting ?? []).find((r) => Number(r.teamId) === 8)!.runs)],
+    ["KIA 안타 현황", String((teamRecords.batting ?? []).find((r) => Number(r.teamId) === 6)!.hits)],
+    ["삼성 팀방어율", String((teamRecords.pitching ?? []).find((r) => Number(r.teamId) === 8)!.era)],
+    ["한화 세이브 알려줘", String((teamRecords.pitching ?? []).find((r) => Number(r.teamId) === 9)!.sv)],
+  ];
+  for (const [question, expected] of servedCases) {
+    await check(`팀 수치 실값 응답 "${question}"`, async () => {
+      const { source, answer, llmCalls } = await runTeam(question);
+      assert.equal(source, "kbo_structured", `${question}: source=${source} — 조회로 답하지 않았다`);
+      assert.ok(
+        answer?.includes(expected),
+        `${question}: 서빙값 "${expected}" 이 답변에 없다 — 받은 답 "${answer}"`,
+      );
+      assert.notEqual(answer, TEAM_STAT_HOLD_ANSWER,
+        `${question}: 서빙 중인 값을 "못 답한다"고 안내했다 (하린아빠 01:04 금지)`);
+      assert.notEqual(answer, HISTORY_HOLD_ANSWER, `${question}: 선수 지표 안내문이 나갔다`);
       assert.equal(llmCalls, 0, `${question}: LLM 을 ${llmCalls}회 태웠다 — 숫자 환각 경로`);
     });
   }
-  // 안내문 계약: "못 한다"만 말하면 유저가 갈 곳이 없다. 다음 행동을 반드시 준다.
+
+  // ② 우리가 서빙하지 **않는** 팀 수치는 여전히 LLM 에 안 보낸다. 환각 축은 그대로 닫는다.
+  for (const question of ["두산 상대전적 알려줘", "LG 관중 수 몇 명이야?", "삼성 연봉 총액 얼마야?"]) {
+    await check(`미서빙 팀 수치 fail-close "${question}"`, async () => {
+      const { source, answer, llmCalls } = await runTeam(question);
+      assert.equal(source, "history_hold", `${question}: 미서빙 값은 LLM 으로 가면 안 된다`);
+      assert.equal(answer, TEAM_STAT_HOLD_ANSWER, `${question}: 팀 수치 안내문이 아니다`);
+      assert.equal(llmCalls, 0, `${question}: LLM 을 ${llmCalls}회 태웠다`);
+    });
+  }
+
+  // ③ 조회가 실패하면 **추정하지 않는다**. static 폴백도, LLM 위임도 없다.
+  await check("조회 실패 시 fail-close (LLM 0)", async () => {
+    const state: RunState = { llmCalls: 0, logs: [] };
+    const result = await answerQuestion("u-team-gate", "LG 지금 몇 위야?", {
+      ...makeDeps(state),
+      fetchTeamRecord: {
+        fetchStandings: async () => { throw new Error("upstream down"); },
+        fetchTeamRecords: async () => { throw new Error("upstream down"); },
+      },
+    });
+    assert.equal(result.source, "error", `조회 실패가 source=${result.source} 로 끝났다`);
+    assert.equal(state.llmCalls, 0, "조회 실패를 LLM 으로 넘겼다 — 숫자 환각 경로");
+  });
+
+  // ④ 안내문 계약: "못 한다"만 말하면 유저가 갈 곳이 없다. 다음 행동을 반드시 준다.
   await check("팀 수치 안내문이 다음 행동을 준다", () => {
     assert.ok(TEAM_STAT_HOLD_ANSWER.includes("순위표"), "순위표 유도가 없다");
     assert.notEqual(TEAM_STAT_HOLD_ANSWER, HISTORY_HOLD_ANSWER, "선수 지표 안내와 같은 문구다");
     assert.ok(!TEAM_STAT_HOLD_ANSWER.includes("기록 탭"), "구 금지 문구(앱 기록 탭)가 남았다");
   });
 
-  // ⚠️ 반대편 고정 — 수치 fail-close 를 넓히면 서술형 구단 질문을 다시 과차단한다(P0-1 회귀).
-  // 실제로 2차에 `알려`를 수치어로 보다 `두산 기록 중 유명한 이야기 알려줘` 까지 죽였다.
+  // ⚠️ 반대편 고정 — 수치 경로를 넓히면 서술형 구단 질문을 다시 과차단한다(P0-1 회귀).
+  // 실제로 2차에 `알려`를 수치어로 보다 `두산 기록 중 유명한 이야기 알려줘` 까지 죽었다.
   for (const question of [
     "두산베어스 기록 중에 유명한 이야기 알려줘",
     "삼성 라이온즈 홈런 잘 치는 팀이야?",
+    "LG 우승 몇 번 했어?",
   ]) {
     await check(`서술형 구단 질문 보존 "${question}"`, () => assertAnswerable(question, "서술형"));
   }
@@ -516,7 +574,7 @@ async function main() {
   await verifySystemPromptContract();
   await verifyTeamAnswersSurviveFinalValidator();
   await verifyTeamQuestionsAnswerable();
-  await verifyTeamNumericFailsClosed();
+  await verifyTeamNumericAnswers();
   await verifyCrossTeamCombosRejected();
   await verifyOutOfScopeStillBlocked();
   await verifyUnsupportedMetricsStillHeld();

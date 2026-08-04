@@ -313,8 +313,15 @@ for (const question of ["LG트윈스의 역사", "삼성 주장", "두산베어�
 // 구단 자체는 범위 안이지만 팀 집계 정본 DB 가 없어 generic LLM 에 넘기면 숫자를 지어낸다.
 // 안내문은 선수 지표(`HISTORY_HOLD_ANSWER`)가 아니라 순위표로 보내는 `TEAM_STAT_HOLD_ANSWER` 다
 // — 유저가 물은 건 팀 집계이므로 선수 지표 목록을 주면 틀린 안내다.
+// ⚠️ 2026-08-05 계약 변경: 팀 수치는 `history_hold`(고정 안내)가 아니라 **`team_record`**
+// (조회 위임)다. 근거였던 "팀 집계 정본이 없다"가 틀렸다 — `/api/standings`·
+// `/api/team-records` 가 순위·팀타율·팀홈런을 이미 서빙하고 앱 순위탭이 그대로 보여준다
+// (하린아빠 2026-08-04 20:42 "우리가 다 제공하고 있는 데이터인데").
+// 우리가 서빙하는 값을 봇만 "못 답한다"고 하는 건 유저에겐 거짓말이다.
+// 조회 실패·미서빙 지표(상대전적 등)만 안내로 fail-close 한다 — 종단 계약은
+// `qa:team-fullname-routing` 이 answerQuestion 실행으로 감싼다.
 for (const question of ["LG 순위", "LG 팀타율 얼마야?", "두산베어스 홈런 몇 개야?"]) {
-  assert.equal(routeQuestion(question, seedEntries, players), "history_hold", question);
+  assert.equal(routeQuestion(question, seedEntries, players), "team_record", question);
 }
 // 과차단 회귀 (삼순 NO-GO blocker 1): "순위"는 team-bound일 때만 실시간 기록이다.
 // 팀 없는 순위 "룰" 질문까지 history_hold로 죽이면 핏스 목적과 정반대가 된다.
@@ -1057,6 +1064,10 @@ async function verifyPipeline() {
       ["김도영 출루율 알려줘", "batter", "obp"],
       ["구자욱 장타율 알려줘", "batter", "slg"],
       ["문보경 OPS 알려줘", "batter", "ops"],
+      // 2026-08-05 추가 — WAR 은 저장 컬럼이 아니라 기본 스탯에서 파생되는 값이다
+      // (`calcBatterSaber`). 앱은 선수 상세·기록실·세이버 카드에서 이미 보여주고 있었다.
+      // "DB 에 컬럼이 없다"를 "데이터가 없다"로 읽은 게 `도루`·`OPS` 때와 같은 오판이었다.
+      ["김도영 WAR 알려줘", "batter", "war"],
     ];
     assert.deepEqual(
       new Set(positiveMetrics.filter(([, table]) => table === "batter").map(([, , metric]) => metric)),

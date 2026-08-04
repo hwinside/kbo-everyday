@@ -48,6 +48,7 @@ import {
 } from "@/lib/baseball-qa/rag/retrieve";
 import { createSeasonRecordFetcher } from "@/lib/baseball-qa/stats/fetch-season-record";
 import { createServedRecordFetcher } from "@/lib/baseball-qa/stats/served-record";
+import { createTeamRecordFetchers } from "@/lib/baseball-qa/stats/team-record";
 import type { SeasonRecordClient } from "@/lib/baseball-qa/stats/fetch-season-record";
 import { embedQuery } from "@/lib/baseball-qa/rag/embed";
 import { orderTier2Evidence } from "@/lib/baseball-qa/rag/fetch-wikipedia";
@@ -366,6 +367,14 @@ function makeDeps(messageId: number, pickedPlayerKboId?: string | null): QaDeps 
      * 여기도 인라인 lambda 대신 seam factory 를 쓴다(게이트가 실제 배포 함수를 실행).
      */
     fetchServedRecord: createServedRecordFetcher(),
+    /**
+     * 구단 기록 조회 — `/api/standings` · `/api/team-records`.
+     *
+     * 종전에는 구단 수치 질문을 고정 안내문으로 닫았는데, 그 근거("팀 집계 정본이 없다")가
+     * 틀렸다 — 앱 순위탭·팀기록탭이 이미 그 값을 서빙한다(하린아빠 2026-08-04 20:42).
+     * 여기도 인라인 lambda 대신 seam factory 를 쓴다(게이트가 실제 배포 함수를 실행).
+     */
+    fetchTeamRecord: createTeamRecordFetchers(),
     searchOfficialRag,
     callOfficialRagLlm,
     recordRagDemand: async (sourceKeys) => {

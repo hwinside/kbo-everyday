@@ -45,6 +45,11 @@ export const BATTER_METRICS = {
   obp: { label: "출루율", aliases: ["출루율"], kind: "rate" },
   slg: { label: "장타율", aliases: ["장타율"], kind: "rate" },
   ops: { label: "OPS", aliases: ["ops"], kind: "rate" },
+  // WAR 은 **저장된 칼럼이 아니라 기본 스탬에서 파생**된다. 그래서 "DB 에 없다"는
+  // 이유로 못 답한다고 하면 틀리다 — 앱은 선수 상세페이지·기록실·세이버 카드에서
+  // 이미 보여주고 있다. 화면과 **같은 함수**(`calcBatterSaber`)로 만든다
+  // (`served-record.ts` · `batterWarOf`). 소수 2자리 표기도 화면과 같다.
+  war: { label: "WAR", aliases: ["war"], kind: "rate" },
 } as const;
 
 /**
@@ -60,7 +65,7 @@ export const BATTER_METRICS = {
  *
  * 겹치는 지표(games·hits·hr·rbi…)는 DB row 와 교차검증해 두 소스가 갈라지면 fail-close 한다.
  */
-export const SERVED_ONLY_BATTER_METRICS = ["sb", "cs", "obp", "slg", "ops"] as const;
+export const SERVED_ONLY_BATTER_METRICS = ["sb", "cs", "obp", "slg", "ops", "war"] as const;
 export type ServedOnlyBatterMetric = (typeof SERVED_ONLY_BATTER_METRICS)[number];
 
 export function isServedOnlyMetric(metric: string): metric is ServedOnlyBatterMetric {
@@ -125,6 +130,14 @@ function hasUnsupportedSeason(value: string): boolean {
 
 /** 수치를 묻는 문장인가. 이게 false 면 기록 경로가 아니다(서술형 RAG 로 간다). */
 const NUMERIC_QUESTION = /몇|얼마|개야|개나|개\?|기록|스탯|성적|알려|보여|어때|어떻게\s*돼|쳤|던졌|했/;
+/**
+ * 서술·평가를 묻는 신호. 지표어가 섞여 있어도 **숫자 질문이 아니다**.
+ *
+ * `김도영 홈런 잘 치는 편이야?` 는 홈런 개수가 아니라 평가를 물은 것이라 서술형 RAG 담당이다.
+ * 구단 축의 `TEAM_DESCRIPTIVE_ASK` 와 같은 역할·같은 모양 — 선수 축에도 동일하게 둔다.
+ */
+const DESCRIPTIVE_ASK =
+  /잘\s*(?:치|하|때리|던지|막)|못\s*(?:치|하)|어떤\s*선수|유명|이야기|역사|유래|별명|소개|누구/;
 
 export interface SeasonRecordQuery {
   /** 'batter' | 'pitcher' — 어느 테이블을 볼지. */
@@ -160,7 +173,13 @@ export function resolveSeasonRecordIntent(
   if (UNTRUSTED_METRIC_ALIASES.some((alias) => compact.includes(normalize(alias)))) {
     return { kind: "untrusted_metric" };
   }
-  if (!NUMERIC_QUESTION.test(compact)) return { kind: "none" };
+  // 서술·평가형은 지표어가 섞여 있어도 숫자 질문이 아니다 — 서술형 RAG 담당.
+  if (DESCRIPTIVE_ASK.test(compact)) return { kind: "none" };
+  // ⚠️ 수치 의문 판정을 여기서 끝내지 않는다.
+  // `김도영 타율`·`김도영 OPS`·`김도영 WAR` 처럼 **지표명만 적은** 질문이 의문사가 없다는
+  // 이유로 전부 fail-close 됐다(실측). 유저가 지표명을 적은 순간 원하는 건 그 값이다.
+  // 그래서 의문사 확인은 **지표 매칭 뒤로** 미룬다(아래 `explicitlyNumeric` 사용부).
+  const explicitlyNumeric = NUMERIC_QUESTION.test(compact);
 
   // substring 매칭은 1글자 `패`를 `패스트볼`에서 잡고, `승`을 `승부`에서 잡는다.
   // 지표별 경계 regex를 명시해 합성어를 기록 질문으로 오답 변환하지 않는다.
@@ -215,6 +234,8 @@ export function resolveSeasonRecordIntent(
     { table: "batter", metric: "obp", pattern: /출루율/ },
     { table: "batter", metric: "slg", pattern: /장타율/ },
     { table: "batter", metric: "ops", pattern: /\bops\b|오피에스/i },
+    // WAR — `워`로 읽힌 한글 표기는 넣지 않는다(일반어 오탐). 영문 경계만.
+    { table: "batter", metric: "war", pattern: /\bwar\b/i },
     // `출장`은 타자 전용 표현. 공통어 `경기 수`보다 먼저 매칭돼야 표현이 보존된다.
     { table: "batter", metric: "games", pattern: /출장(?:\s*(?:경기|수))?/ },
     // 공통어 — 여기서만 포지션 결속이 허용된다.
@@ -223,7 +244,12 @@ export function resolveSeasonRecordIntent(
 
   const normalized = normalizeWithSpaces(question);
   let best = patterns.find((entry) => entry.pattern.test(normalized));
+  // 지표어가 없으면 이 경로 대상이 아니다. 의문사만 있고 지표가 없는 문장(`김도영 어때?`)은
+  // 여기서 걸러져 서술형 RAG 로 간다.
   if (!best) return { kind: "none" };
+  // 지표어는 잡혔는데 의문 표현이 전혀 없고, 지표명 외의 서술 요구도 없는 경우 —
+  // `김도영 타율` 같은 형태다. 이건 값 요청으로 본다(위 주석 참조).
+  void explicitlyNumeric;
   // 공통어 `경기 수`만 이름으로 확정된 로스터 포지션에 결속한다(투수면 pitcher).
   // explicit `등판`/`출장`까지 뒤집으면 `문보경 등판 수`에 타자 경기 수를 답하는 오답이 된다.
   if (best.ambiguous && preferredTable) best = { ...best, table: preferredTable };

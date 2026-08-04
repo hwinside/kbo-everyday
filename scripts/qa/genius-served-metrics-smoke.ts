@@ -236,6 +236,10 @@ async function main() {
     ["김도영 출루율 얼마야", "batter/obp"],
     ["구자욱 장타율 알려줘", "batter/slg"],
     ["문보경 OPS 알려줘", "batter/ops"],
+    // WAR — 저장 컬럼이 아니라 기본 스탯에서 파생되는 값(`calcBatterSaber`).
+    // 앱은 선수 상세·기록실·세이버 카드에서 이미 보여주고 있었다.
+    ["김도영 WAR 알려줘", "batter/war"],
+    ["김도영 war 얼마야?", "batter/war"],
   ] as const) {
     await check(`매칭 "${question}" → ${expected}`, () => {
       assert.equal(intentOf(question), expected);
@@ -361,6 +365,38 @@ async function main() {
       assert.ok(metric in BATTER_METRICS, `${metric} 이 BATTER_METRICS 에 없다`);
       assert.equal(isServedOnlyMetric(metric), true);
     }
+  });
+  // ⚠️ WAR 이 서빙 전용 목록에서 빠지면 `김도영 WAR` 이 다시 "못 답한다" 안내로 죽는다.
+  // 하린아빠 2026-08-04 20:42 "우리가 다 제공하고 있는 데이터인데" 의 재발 방지선이다.
+  await check("WAR 이 서빙 전용 지표로 선언돼 있다", () => {
+    assert.equal(isServedOnlyMetric("war"), true, "WAR 이 서빙 전용에서 빠졌다");
+    assert.ok("war" in BATTER_METRICS, "WAR 이 BATTER_METRICS 에 없다");
+    const intent = resolveSeasonRecordIntent("김도영 WAR 알려줘");
+    assert.equal(
+      intent.kind === "query" ? intent.query.metric : intent.kind, "war",
+      "WAR 질문이 기록 조회로 매칭되지 않는다",
+    );
+  });
+  // 화면과 같은 산식으로 만든 값인가 — 봇만 다른 숫자를 말하면 이 기능의 계약이 깨진다.
+  await check("WAR 이 화면과 같은 산식(calcBatterSaber)으로 계산된다", async () => {
+    const { calcBatterSaber } = await import("@/lib/utils/sabermetrics-calc");
+    const expected = calcBatterSaber({
+      avg: servedSeasonRow.avg as string, hits: Number(servedSeasonRow.hits) || 0,
+      hr: Number(servedSeasonRow.hr) || 0, doubles: Number(servedSeasonRow.doubles) || 0,
+      triples: Number(servedSeasonRow.triples) || 0, ab: Number(servedSeasonRow.ab) || 0,
+      pa: Number(servedSeasonRow.pa) || 0, runs: Number(servedSeasonRow.runs) || 0,
+      rbi: Number(servedSeasonRow.rbi) || 0, sb: Number(servedSeasonRow.sb) || 0,
+      bb: Number(servedSeasonRow.bb) || 0, so: Number(servedSeasonRow.so) || 0,
+      hbp: Number(servedSeasonRow.hbp) || 0, cs: Number(servedSeasonRow.cs) || 0,
+      sf: servedSeasonRow.sf != null ? Number(servedSeasonRow.sf) : undefined,
+      obp: servedSeasonRow.obp as string | undefined,
+      slg: servedSeasonRow.slg as string | undefined,
+      ops: servedSeasonRow.ops as string | undefined,
+    }).WAR;
+    assert.equal(
+      Number((servedSeasonRow as Record<string, unknown>).war), expected,
+      `봇 WAR 이 화면 산식과 다르다 — 봇 ${(servedSeasonRow as Record<string, unknown>).war} vs 화면 ${expected}`,
+    );
   });
   await check("DB 지표는 서빙 전용으로 분류되지 않는다", () => {
     for (const metric of ["avg", "hr", "rbi", "games"]) {
