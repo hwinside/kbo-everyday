@@ -32,6 +32,8 @@ on:
       - "scripts/qa/venue-story-video-poster-smoke.ts"
       - "scripts/qa/venue-video-normalize-e2e.mjs"
       - "scripts/qa/venue-transcode-worker-smoke.ts"
+      - "scripts/qa/venue-worker-cli-exit-smoke.mjs"
+      - "scripts/qa/venue-workflow-trigger-guard.mjs"
       - "scripts/qa/venue-validate-smoke.ts"
       - "scripts/qa/venue-media-smoke.ts"
       - "scripts/venue-transcode-job.mjs"
@@ -59,6 +61,8 @@ on:
       - "scripts/qa/venue-story-video-poster-smoke.ts"
       - "scripts/qa/venue-video-normalize-e2e.mjs"
       - "scripts/qa/venue-transcode-worker-smoke.ts"
+      - "scripts/qa/venue-worker-cli-exit-smoke.mjs"
+      - "scripts/qa/venue-workflow-trigger-guard.mjs"
       - "scripts/qa/venue-validate-smoke.ts"
       - "scripts/qa/venue-media-smoke.ts"
       - "scripts/venue-transcode-job.mjs"
@@ -94,6 +98,8 @@ jobs:
           scripts/qa/venue-story-video-poster-smoke.ts
           scripts/qa/venue-video-normalize-e2e.mjs
           scripts/qa/venue-transcode-worker-smoke.ts
+          scripts/qa/venue-worker-cli-exit-smoke.mjs
+          scripts/qa/venue-workflow-trigger-guard.mjs
           scripts/qa/venue-validate-smoke.ts
           scripts/qa/venue-media-smoke.ts
           scripts/transcode-videos.mjs
@@ -151,6 +157,12 @@ jobs:
         # 실제 prepareVenueStoryMedia() 를 실행하고 storage.upload 로 들어온 실제 바이트를
         # ffprobe/박스파서로 검사한다. 정규화 호출을 무력화하면 이 스텝이 RED 가 된다.
         run: npm run qa:venue-video-normalize
+
+      - name: Verify gate self-trigger wiring (fail-closed)
+        # required workflow 가 실행하는 QA 스크립트가 이 workflow 의 paths/lint 에 없으면,
+        # 그 스크립트만 약화시키는 PR 이 check 를 아예 트리거하지 않고 머지된다.
+        # 실제 YAML 파서로 paths/lint 를 읽어 역추적 결속을 확인한다(자체 파싱 금지).
+        run: npm run qa:venue-workflow-trigger
 
       - name: Run venue worker CLI exit-code smoke (fail-closed)
         # 워커를 **진짜 subprocess** 로 돌려 main IIFE 가 실패를 exit 1 로 올리는지 본다.
