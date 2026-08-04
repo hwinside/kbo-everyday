@@ -16,7 +16,13 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { promoteAtomically } from "../lib/atomic-promote.mjs";
+import { execFileSync } from "node:child_process";
+import {
+  hasPendingPromotion,
+  listJournalArtifacts,
+  promoteAtomically,
+  recoverPendingPromotion,
+} from "../lib/atomic-promote.mjs";
 
 const sha = (path) => createHash("sha256").update(readFileSync(path)).digest("hex");
 
@@ -107,6 +113,105 @@ function makeFixture(fileCount = 5) {
   for (const path of brandNew) {
     assert.equal(existsSync(path), false, `실패 시 새로 만든 ${path} 는 남으면 안 된다`);
   }
+  rmSync(dir, { recursive: true, force: true });
+}
+
+/* 5) process hard-exit — JS catch 가 실행되지 않는 경계 (삼순 P0-3 blocker)
+ *    첫 rename 직후 `process.exit()` 로 죽이면 catch rollback 이 아예 안 돈다.
+ *    종전 구현은 이때 `new-0 / old-1 / old-2 ...` 혼합 snapshot 을 남겼다.
+ *    저널 + 다음 실행 복구로 "old 전체 또는 new 전체" 만 남아야 한다. */
+{
+  const { dir, artifacts, before } = makeFixture();
+  const script = `
+    import { promoteAtomically } from ${JSON.stringify(new URL("../lib/atomic-promote.mjs", import.meta.url).href)};
+    const artifacts = ${JSON.stringify(artifacts)};
+    promoteAtomically(artifacts, { onBeforeRename: (i) => { if (i === 1) process.exit(86); } });
+  `;
+  const scriptPath = join(dir, "hard-exit.mjs");
+  writeFileSync(scriptPath, script);
+
+  let exitCode = 0;
+  try {
+    execFileSync(process.execPath, [scriptPath], { stdio: "pipe" });
+  } catch (error) {
+    exitCode = error.status;
+  }
+  assert.equal(exitCode, 86, "child 가 hard-exit 로 죽어야 한다");
+
+  // 죽은 직후 디스크는 혼합 상태다 — 그래서 저널이 남아 있어야 한다.
+  assert.ok(
+    hasPendingPromotion(dir),
+    "hard-exit 뒤에는 미완료 promote 저널이 남아 다음 실행이 복구할 수 있어야 한다",
+  );
+
+  // 복구 실행 — old generation 전체로 되돌아가야 한다.
+  const result = recoverPendingPromotion(dir);
+  assert.equal(result.recovered, true, "저널이 있으면 복구가 수행돼야 한다");
+  for (const artifact of artifacts) {
+    assert.equal(
+      sha(artifact.path),
+      before.get(artifact.path),
+      `hard-exit 복구 후 ${artifact.path} 는 이전 세대여야 한다(혼합 snapshot 금지)`,
+    );
+  }
+  assert.equal(hasPendingPromotion(dir), false, "복구 후 저널은 제거돼야 한다");
+  rmSync(dir, { recursive: true, force: true });
+}
+
+/* 6) 다음 promote 가 시작 시 자동으로 복구한다 (수동 호출에 의존하지 않는다) */
+{
+  const { dir, artifacts, before } = makeFixture();
+  const script = `
+    import { promoteAtomically } from ${JSON.stringify(new URL("../lib/atomic-promote.mjs", import.meta.url).href)};
+    const artifacts = ${JSON.stringify(artifacts)};
+    promoteAtomically(artifacts, { onBeforeRename: (i) => { if (i === 2) process.exit(87); } });
+  `;
+  const scriptPath = join(dir, "hard-exit2.mjs");
+  writeFileSync(scriptPath, script);
+  try { execFileSync(process.execPath, [scriptPath], { stdio: "pipe" }); } catch { /* expected */ }
+  assert.ok(hasPendingPromotion(dir), "hard-exit 저널이 남아야 한다");
+
+  // 복구를 따로 부르지 않고 바로 다음 promote 를 돌린다.
+  // 시작 시 자동 복구되므로, 이번 promote 는 깨끗한 old 위에서 시작해 전부 new 가 된다.
+  promoteAtomically(artifacts);
+  for (const artifact of artifacts) {
+    assert.equal(
+      readFileSync(artifact.path, "utf8"),
+      artifact.body,
+      "자동 복구 후 재시도는 전 산출물을 새 세대로 교체해야 한다",
+    );
+    assert.notEqual(sha(artifact.path), before.get(artifact.path));
+  }
+  assert.equal(hasPendingPromotion(dir), false, "성공 후 저널은 남지 않아야 한다");
+  rmSync(dir, { recursive: true, force: true });
+}
+
+/* 7) 저널 배치 직후 죽어도(=rename 0회) 이전 세대가 보존된다 */
+{
+  const { dir, artifacts, before } = makeFixture();
+  assert.throws(
+    () => promoteAtomically(artifacts, { fail: "afterJournal" }),
+    /injected_failure:afterJournal/,
+  );
+  for (const artifact of artifacts) {
+    assert.equal(
+      sha(artifact.path),
+      before.get(artifact.path),
+      "저널만 남기고 죽어도 대상 파일은 이전 세대여야 한다",
+    );
+  }
+  rmSync(dir, { recursive: true, force: true });
+}
+
+/* 8) 성공 경로는 저널 잔여물을 남기지 않는다 */
+{
+  const { dir, artifacts } = makeFixture();
+  promoteAtomically(artifacts);
+  assert.deepEqual(
+    listJournalArtifacts(dir),
+    [],
+    "성공 후 저널 디렉터리에 잔여물이 없어야 한다",
+  );
   rmSync(dir, { recursive: true, force: true });
 }
 

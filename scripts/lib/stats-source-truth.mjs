@@ -240,7 +240,7 @@ export function crossCheckDataset({ label, rows, kbo, columns, checkRowSet = tru
  * 그래도 "호출이 존재하는가" 식 게이트는 GREEN이다(실제로 내 초기 구현이 그랬다).
  * 그래서 대조·판정·예외를 전부 여기서 끝낸다. 호출자는 이걸 부를 수만 있다.
  */
-export async function assertSourceTruth({ browser, kboBase, season, batters, pitchers, defense, log = console.log }) {
+export async function assertSourceTruth({ browser, kboBase, season, batters, pitchers, defense, defenseRuns, roster, foreignIdSource, log = console.log }) {
   const page = await browser.newPage();
   const failures = [];
   try {
@@ -307,6 +307,14 @@ export async function assertSourceTruth({ browser, kboBase, season, batters, pit
     }
   } finally {
     await page.close().catch(() => {});
+  }
+
+  // 파생 산출물(defense-runs)까지 promote *전에* 같은 validator 로 검증한다.
+  // 입력이 주어졌을 때만 돈다(독립 검증기는 자체적으로 crossCheckDerived 를 부른다).
+  if (defenseRuns && roster && foreignIdSource) {
+    failures.push(
+      ...crossCheckDerived({ batters, pitchers, defense, defenseRuns, roster, foreignIdSource }),
+    );
   }
 
   if (failures.length) {

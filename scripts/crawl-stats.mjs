@@ -21,7 +21,7 @@ import {
 } from "./lib/stats-snapshot-guard.mjs";
 import { assertSourceTruth } from "./lib/stats-source-truth.mjs";
 import { promoteAtomically } from "./lib/atomic-promote.mjs";
-import { collectAllPages } from "./lib/kbo-pagination.mjs";
+import { collectAllPages, createKboPageAdapter } from "./lib/kbo-pagination.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = join(__dirname, "..");
@@ -137,29 +137,7 @@ async function scrapeTable(page) {
 
 
 async function scrapeAllPages(page) {
-  return collectAllPages({
-    scrapeTable: () => scrapeTable(page),
-    clickPage: async (targetPageText) => {
-      const btn = await page.locator('a[id*="ucPager_btnNo"]').filter({ hasText: targetPageText }).first();
-      if (!(await btn.count())) return false;
-      await btn.click();
-      await page.waitForLoadState("networkidle").catch(() => {});
-      return true;
-    },
-    clickNextGroup: async () => {
-      const btn = await page.$('a[id$="btnNext"]');
-      if (!btn) return false;
-      await btn.click();
-      await page.waitForLoadState("networkidle").catch(() => {});
-      return true;
-    },
-    pagerSignature: () =>
-      page.$$eval('a[id*="ucPager_btnNo"]', (links) =>
-        links.map((a) => `${a.textContent?.trim()}:${a.className}`).join("|"),
-      ),
-    sleep: (ms) => page.waitForTimeout(ms),
-    log: (line) => console.log(line),
-  });
+  return collectAllPages({ ...createKboPageAdapter(page), log: (line) => console.log(line) });
 }
 
 async function crawlBatterBasic1(page) {
@@ -515,6 +493,9 @@ async function main() {
     // 분기를 두면 한 줄로 무력화되는데 "호출이 존재하는가" 식 게이트는 그 상태에서도 GREEN이다
     // (실제로 이 파일의 초기 구현이 그랬고, mutation으로 잡아 여기로 옮겼다).
     console.log("\n🔎 원본 정합성 재대조(KBO 독립 재조회)...");
+    // defenseRuns 도 검증 입력에 넣는다 — 종전에는 computeDefenseRuns() 결과가
+    // 검증을 거치지 않고 바로 promote 됐다. 그 사이 값을 주입해도 write 전 게이트가
+    // 전부 GREEN 이었다(삼순 실증). 사후 CI 로만 잡는 건 "검증 전 write 0" 계약이 아니다.
     await assertSourceTruth({
       browser,
       kboBase: KBO_BASE,
@@ -522,6 +503,9 @@ async function main() {
       batters,
       pitchers,
       defense,
+      defenseRuns,
+      roster: readPrevious(join(CONSTANTS_DIR, "players-roster.json"), []),
+      foreignIdSource: readFileSync(join(CONSTANTS_DIR, "foreign-id-map.ts"), "utf-8"),
     });
 
     // 원자 promote — 순차 직쓰기는 중간 I/O 실패 시 혼합 snapshot을 남긴다.
