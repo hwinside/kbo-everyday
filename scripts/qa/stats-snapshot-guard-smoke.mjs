@@ -311,6 +311,66 @@ for (const call of [
     );
   }
 
+  /* ── actual caller 검증 — 크롤러가 진짜 파생 입력을 넘기는가 ──────
+   *
+   * ⚠︎ 위 루프는 라이브러리 계약만 본다. 그래서 caller 한 줄을 `defenseRuns: {}` 나
+   * `roster: []` 로 바꿔 검증을 우회해도 이 게이트가 GREEN 이었다(mutation 으로 확인).
+   * flag 를 없앨다고 끝난 게 아니다 — 우회 경로가 caller 로 옮겨갔을 뿐이다.
+   * 크롤러 소스에서 실제 호출 인자를 뚜어 빈 값·리터럴 주입을 차단한다. */
+  {
+    const crawler = readFileSync("scripts/crawl-stats.mjs", "utf8");
+    const start = crawler.indexOf("await assertSourceTruth({");
+    assert.ok(start >= 0, "크롤러가 assertSourceTruth 를 await 호출해야 한다");
+    const end = crawler.indexOf("});", start);
+    const call = crawler.slice(start, end);
+
+    for (const key of ["defenseRuns", "roster", "foreignIdSource"]) {
+      const line = call.split("\n").find((l) => new RegExp(`^\\s*${key}\\b`).test(l));
+      assert.ok(line, `크롤러 호출에 파생 입력 ${key} 가 있어야 한다`);
+      // 빈 객체/배열/문자열 리터럴을 직접 넘기는 건 검증 우회다.
+      assert.ok(
+        !/:\s*(\{\s*\}|\[\s*\]|""|''|null|undefined)\s*,?\s*$/.test(line),
+        `크롤러가 ${key} 에 빈 값을 넘기면 파생 검증이 우회된다: ${line.trim()}`,
+      );
+    }
+
+    // 독립 검증기도 같은 계약을 지켜야 한다.
+    // 종전에는 여기서 파생 입력을 빼고 `crossCheckDerived` 를 따로 불렀다.
+    // 그 상태로 라이브러리가 파생 검증을 강제하게 되자 live 검증이 통째로 깨졌다
+    // (`derived_inputs_missing`). 검증 경로가 둘로 갈라지면 언젠가 한쪽만 갱신된다.
+    const verifier = readFileSync("scripts/qa/stats-source-truth-verify.mjs", "utf8");
+    const vStart = verifier.indexOf("await assertSourceTruth({");
+    assert.ok(vStart >= 0, "독립 검증기도 assertSourceTruth 를 써야 한다");
+    const vCall = verifier.slice(vStart, verifier.indexOf("});", vStart));
+    for (const key of ["defenseRuns", "roster", "foreignIdSource"]) {
+      assert.ok(
+        new RegExp(`^\\s*${key}\\b`, "m").test(vCall),
+        `독립 검증기 호출에도 파생 입력 ${key} 가 있어야 한다`,
+      );
+    }
+
+  }
+
+  /* ── 파생 대조 결과를 실제로 반영하는가(행동 검증) ────────────
+   *
+   * ⚠︎ 정규식으로 `failures.push(...crossCheckDerived(...))` 존재만 보면
+   * `if (false) failures.push(...)` 를 못 잡는다(mutation 으로 확인한 false-green).
+   * 원본은 전부 일치하고 **파생만 오염**된 입력을 넣어, 그 오염이 실제로
+   * 예외로 이어지는지를 행동으로 확인한다. */
+  await assert.rejects(
+    () => assertSourceTruth({
+      browser: stubBrowser, kboBase: "https://kbo.test", season: "2026",
+      batters: ourBatters, pitchers: ourPitchers, defense: ourDefense,
+      ...derived,
+      // defense 에 없는 ID 를 파생에 넣는다 — 원본 대조는 전부 통과하고
+      // 오직 crossCheckDerived 만 잡을 수 있는 오염이다.
+      defenseRuns: { ...derived.defenseRuns, "99999": 1.5 },
+      log: silent,
+    }),
+    /stats_source_truth_mismatch/,
+    "파생(defense-runs) 오염만 있어도 assertSourceTruth 가 던져야 한다(결과 버리기 차단)",
+  );
+
   // 원본을 못 읽으면(0행) 통과가 아니라 실패여야 한다.
   const emptyBrowser = { async newPage() { return buildPage({}); } };
   await assert.rejects(
