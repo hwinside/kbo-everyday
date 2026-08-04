@@ -554,19 +554,21 @@ jobs:
 
       - name: RED proof — source digest dead call and fixed marker must fail
         run: |
-          node -e "
-            const fs = require('fs');
-            const p = 'scripts/lib/stats-source-truth.mjs';
-            const src = fs.readFileSync(p, 'utf8');
-            const needle = '    emitSourceDigest(log, {';
-            if (!src.includes(needle)) process.exit(1);
-            fs.writeFileSync(
-              p,
-              src.replace(needle, '    false && emitSourceDigest(log, {')
-                .replace('    for (const spec of [',
-                  "    log('KBO_SOURCE_DIGEST=' + 'a'.repeat(64));\n\n    for (const spec of ["),
-            );
-          "
+          node <<'NODE'
+          const fs = require('fs');
+          const p = 'scripts/lib/stats-source-truth.mjs';
+          const src = fs.readFileSync(p, 'utf8');
+          const needle = '    emitSourceDigest(log, {';
+          if (!src.includes(needle)) process.exit(1);
+          fs.writeFileSync(
+            p,
+            src.replace(needle, '    false && emitSourceDigest(log, {')
+              .replace(
+                '    for (const spec of [',
+                "    log('KBO_SOURCE_DIGEST=' + 'a'.repeat(64));\n\n    for (const spec of [",
+              ),
+          );
+          NODE
           if node scripts/qa/stats-freshness-contract-smoke.mjs; then
             echo "::error::dead digest call + fixed marker 우회가 통과했다"
             git checkout -- scripts/lib/stats-source-truth.mjs
