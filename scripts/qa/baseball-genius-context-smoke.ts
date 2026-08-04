@@ -344,7 +344,7 @@ async function verifyProductionShapedRecordRouting() {
     // 미지원 지표(`도루`) 케이스용 — 선수가 로스터에 있어야 "선수 기록 질문"으로 인식된다.
     { name: "박해민", kboId: "76313", team: "LG", position: "외야수", backNo: "17" },
   ];
-  const counts = { llm: 0, cacheGet: 0, cacheSet: 0, rag: 0, season: 0 };
+  const counts = { llm: 0, cacheGet: 0, cacheSet: 0, rag: 0, season: 0, served: 0 };
   const prodDeps = (): QaDeps => ({
     loadGlossary: async () => glossary,
     loadPlayers: async () => roster,
@@ -377,6 +377,17 @@ async function verifyProductionShapedRecordRouting() {
         player_key: "52605", kbo_id: "52605", name: "김도영", team: "KIA",
         updated_at: new Date(Date.now() - 3_600_000).toISOString(),
         avg: "0.325", games: 90,
+      }] as never;
+    },
+    // production 배선 (2026-08-05). 앱이 서빙하는 파생 지표(도루·OPS·WAR·wRC+)는
+    // `fetchServedRecord` 주입으로 실값을 답한다. 이걸 빼면 blocked 로 떨어져
+    // "앱이 서빙 중인 값을 못 답한다"는 반대 사고를 게이트가 정답으로 잠그게 된다.
+    fetchServedRecord: async () => {
+      counts.served++;
+      return [{
+        player_key: "52605", kbo_id: "52605", name: "김도영", team: "KIA",
+        updated_at: new Date(Date.now() - 3_600_000).toISOString(),
+        avg: "0.325", games: 90, wrc_plus: "152.4", war: "5.22", sb: 6, ops: "1.022",
       }] as never;
     },
   });
@@ -432,7 +443,7 @@ async function verifyProductionShapedRecordRouting() {
   // 앱은 선수 상세·기록실·세이버 카드에서 이미 그 값을 보여주고 있었다. "DB 에 컬럼이
   // 없다"를 "데이터가 없다"로 읽은 게 또 틀렸다 — `도루`·`OPS` 때와 같은 오판이다.
   // 표본은 **정말로 소스가 없는** 지표로 다시 바꾼다(`wRC`·`실책`·총칭 `스탯`).
-  for (const question of ["김도영 wRC 얼마야", "김도영 통산 기록 알려줘", "박해민 스탯 알려줘"]) {
+  for (const question of ["김도영 통산 기록 알려줘", "박해민 스탯 알려줘"]) {
     const { result, counts: c } = await run(question);
     assert.equal(result.source, "history_hold", `${question}: 미지원 지표도 기록 질문이다`);
     assert.equal(result.answer, HISTORY_HOLD_ANSWER, `${question}: 앱 기록 탭 안내`);
@@ -443,6 +454,24 @@ async function verifyProductionShapedRecordRouting() {
     assert.equal(c.cacheGet, 0, `${question}: cache read 0`);
     assert.equal(c.cacheSet, 0, `${question}: cache write 0`);
     assert.equal(c.rag, 0, `${question}: 선수 RAG 0`);
+  }
+
+  // ⑤ **앱이 서빙하는 파생 지표**(WAR·wRC+)는 안내문이 아니라 실값으로 답한다.
+  // 다시 고정 안내문으로 닫는 회귀가 생기면 여기서 RED 로 멈춘다(삼순 7차 P0).
+  for (const [question, expected] of [
+    ["김도영 wRC 얼마야", "152.4"],
+    ["김도영 wRC+ 알려줘", "152.4"],
+    ["김도영 WAR 알려줘", "5.22"],
+  ] as const) {
+    const { result, counts: c } = await run(question);
+    assert.equal(result.source, "kbo_structured", `${question}: 앱 서빙값으로 답해야 한다`);
+    assert.ok(result.answer.includes(expected),
+      `${question}: 서빙값 ${expected} 이 답변에 없다 — 받은 답 "${result.answer}"`);
+    assert.notEqual(result.answer, HISTORY_HOLD_ANSWER,
+      `${question}: 앱이 서빙 중인 값을 안내문으로 닫았다`);
+    assert.notEqual(result.answer, BLOCKED_ANSWER, `${question}: '룰/용어만' 안내가 나갔다`);
+    assert.equal(c.served, 1, `${question}: 앱 서빙 소스를 실제로 조회해야 한다`);
+    assert.equal(c.llm, 0, `${question}: generic LLM 0`);
   }
 }
 
@@ -512,7 +541,7 @@ async function verifyProductionRosterLoaderSeam() {
   // ⚠️ 2차 교체 2026-08-05: `WAR` 도 답변 가능해졌다 — 저장 컬럼이 아니라 기본 스탯에서
   // 파생되는 값이고(`calcBatterSaber`), 앱이 이미 선수 상세·기록실에서 보여주고 있었다.
   // "DB 에 컬럼이 없다"를 "데이터가 없다"로 읽은 게 `도루`·`OPS` 때와 똑같은 오판이었다.
-  for (const metric of ["wRC 얼마야", "스탯 알려줘", "기록 알려줘"]) {
+  for (const metric of ["스탯 알려줘", "기록 알려줘"]) {
     const question = `${subject.name} ${metric}`;
     for (const key of Object.keys(counts) as Array<keyof typeof counts>) counts[key] = 0;
     const result = await answerQuestion("u-prod-roster", question, prodDeps());
