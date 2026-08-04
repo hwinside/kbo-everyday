@@ -34,6 +34,101 @@ import {
   VENUE_SERVER_MAX_EDGE_PX,
 } from "../venue-transcode-job.mjs";
 
+/**
+ * 회전(display matrix rotation=90) + 오디오 입력 fixture 를 만든다.
+ * P2(captured actual runner) 와 U(direct server seam) 가 **같은** 입력을 쓰도록 공유한다.
+ */
+function makeRotatedAudioFixture(work: string): string {
+  const rawPath = join(work, "raw.mp4");
+  const srcPath = join(work, "src.mp4");
+  execFileSync("ffmpeg", [
+    "-y",
+    "-f", "lavfi", "-i", "testsrc2=size=1920x1080:rate=30",
+    "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100",
+    "-t", "3", "-c:v", "libx264", "-preset", "ultrafast",
+    "-c:a", "aac", "-b:a", "128k", "-shortest", rawPath,
+  ], { stdio: "ignore" });
+  execFileSync("ffmpeg", [
+    "-y", "-display_rotation", "90", "-i", rawPath, "-c", "copy", srcPath,
+  ], { stdio: "ignore" });
+  return srcPath;
+}
+
+type NormalizedProbe = {
+  codec: string | undefined;
+  audioCodec: string | undefined;
+  disp: { width: number; height: number };
+  fastStart: boolean | null;
+  durationSec: number;
+  skewSec: number;
+  driftSec: number;
+};
+
+/** 산출물을 ffprobe + 독립 박스파서로 읽어 정규화 계약 판정에 필요한 값만 돌려준다. */
+function probeNormalized(outPath: string): NormalizedProbe {
+  const probe = JSON.parse(
+    execFileSync("ffprobe", [
+      "-v", "error",
+      "-show_entries", "stream=codec_name,codec_type,width,height,start_time,duration",
+      "-show_entries", "stream_side_data=rotation",
+      "-show_entries", "format=duration",
+      "-of", "json", outPath,
+    ], { encoding: "utf8" }),
+  ) as {
+    streams: {
+      codec_type: string;
+      codec_name?: string;
+      width?: number;
+      height?: number;
+      start_time?: string;
+      duration?: string;
+      side_data_list?: { rotation?: number }[];
+    }[];
+    format: { duration: string };
+  };
+  const v = probe.streams.find((s) => s.codec_type === "video")!;
+  const a = probe.streams.find((s) => s.codec_type === "audio");
+  const rot = v.side_data_list?.find((d) => typeof d.rotation === "number")?.rotation ?? 0;
+  const swapped = Math.abs(rot) % 180 === 90;
+  const disp = swapped
+    ? { width: v.height!, height: v.width! }
+    : { width: v.width!, height: v.height! };
+
+  // 상위 박스 순서로 faststart 판정(독립 구현 — 제품 코드 재사용 안 함)
+  const buf = readFileSync(outPath);
+  let pos = 0;
+  let fastStart: boolean | null = null;
+  while (pos + 8 <= buf.length) {
+    let size = buf.readUInt32BE(pos);
+    const type = buf.subarray(pos + 4, pos + 8).toString("latin1");
+    let header = 8;
+    if (size === 1) {
+      if (pos + 16 > buf.length) break;
+      size = Number(buf.readBigUInt64BE(pos + 8));
+      header = 16;
+    } else if (size === 0) break;
+    if (type === "moov") { fastStart = true; break; }
+    if (type === "mdat") { fastStart = false; break; }
+    if (size < header) break;
+    pos += size;
+  }
+
+  const vStart = parseFloat(v.start_time ?? "NaN");
+  const aStart = parseFloat(a?.start_time ?? "NaN");
+  const vDur = parseFloat(v.duration ?? probe.format.duration);
+  const aDur = parseFloat(a?.duration ?? probe.format.duration);
+
+  return {
+    codec: v.codec_name,
+    audioCodec: a?.codec_name,
+    disp,
+    fastStart,
+    durationSec: parseFloat(probe.format.duration),
+    skewSec: Math.abs(vStart - aStart),
+    driftSec: Math.abs(vDur - aDur),
+  };
+}
+
 let pass = 0;
 let fail = 0;
 function ok(name: string, cond: boolean) {
@@ -810,15 +905,23 @@ async function run() {
   {
     const mod = (await import("../transcode-videos.mjs")) as {
       processVenueStories: (o?: Record<string, unknown>) => Promise<unknown>;
+      venueRunHasFailure: (r: unknown) => boolean;
+      venueRunFailureMessage: (r: unknown) => string;
     };
     ok("P2: transcode-videos.mjs 가 import 가능(env 부재에도 부작용 0)", typeof mod.processVenueStories === "function");
 
     // ① batch 를 실제로 부르는가 + 어떤 인자로 부르는가
     let batchCalls = 0;
     let seenDeps: Record<string, unknown> | null = null;
+    // ⚠️ 종전에는 `deps.db != null && deps.storage !== undefined` 만 봤다.
+    //   그래서 actual 을 `storage: db.storage` → `storage: { __wrongStorage: true }` 로 바꿔도
+    //   113/0 GREEN 이었고(삼순 R5 P1-1 독립 재현), 잘못된 storage 로 download/upload 가
+    //   전수 실패해도 required gate 가 못 잡았다. 이젠 **주입한 객체와 exact identity** 로 결속한다.
+    const injectedStorage = { __marker: "storage" };
+    const injectedDb = { from: () => ({}), storage: injectedStorage };
     await mod.processVenueStories({
       hasFfprobe: true,
-      db: { from: () => ({}), storage: { __marker: "storage" } },
+      db: injectedDb,
       maxAttempts: 3,
       limit: 20,
       runBatch: async (deps: Record<string, unknown>) => {
@@ -829,7 +932,11 @@ async function run() {
     });
     ok(`P2: processVenueStories 가 batch 를 실제로 1회 호출 (실제 ${batchCalls})`, batchCalls === 1);
     const deps = seenDeps as unknown as Record<string, unknown> | null;
-    ok("P2: batch 에 db/storage 전달", deps != null && deps.db != null && deps.storage !== undefined);
+    ok("P2: batch 에 주입한 db 객체 exact identity 전달", deps?.db === injectedDb);
+    ok(
+      "P2: batch 에 db.storage exact identity 전달 (다른 storage 로 바꾸면 RED)",
+      deps?.storage === injectedStorage && deps?.storage === (deps?.db as { storage?: unknown } | undefined)?.storage,
+    );
     ok("P2: batch 에 maxAttempts/limit 전달", deps?.maxAttempts === 3 && deps?.limit === 20);
     ok("P2: batch 에 makeWorkDir/pathFor 배선", typeof deps?.makeWorkDir === "function" && typeof deps?.pathFor === "function");
 
@@ -871,6 +978,49 @@ async function run() {
         ok(
           `P2: runner.probe 가 실제 ffprobe 메타 반환 (dur=${meta.durationMs}ms)`,
           meta.durationMs > 0,
+        );
+      } finally {
+        rmSync(w, { recursive: true, force: true });
+      }
+    }
+
+    // ②-b **captured actual runner** 의 전체 정규화 계약 (삼순 R5 P1-2)
+    //   종전 ② 는 video-only fixture(testsrc2) 라, actual runner 의 transcode 를
+    //   `-an` (오디오 버림) 인코더로 바꿔도 113/0 GREEN 이었다.
+    //   U 는 runner 가 아니라 transcodeVenueVideo() 를 직접 부르므로 그 경로도 못 잡는다.
+    //   → **processVenueStories 가 실제로 실은 runner** 를 U 와 동일한 회전+오디오 fixture 에 돌려
+     //     720x1280 / max-edge / faststart / audio / skew / drift 를 한 경로에서 전부 확인한다.
+    {
+      const w = mkdtempSync(join(tmpdir(), "vt-runner-av-"));
+      try {
+        const src = makeRotatedAudioFixture(w);
+        const out = join(w, "out.mp4");
+        runner!.transcode!(src, out);
+        const m = probeNormalized(out);
+        console.log(
+          `  captured runner 실측: 표시 ${m.disp.width}x${m.disp.height} · ${m.codec}/${m.audioCodec ?? "없음"} · ` +
+            `faststart=${m.fastStart} · skew ${m.skewSec.toFixed(3)}s · drift ${m.driftSec.toFixed(3)}s`,
+        );
+        ok(
+          `P2: captured runner 출력 표시 exact 720x1280 (실제 ${m.disp.width}x${m.disp.height})`,
+          m.disp.width === 720 && m.disp.height === 1280,
+        );
+        ok(
+          `P2: captured runner max-edge ${VENUE_SERVER_MAX_EDGE_PX}px (실제 ${Math.max(m.disp.width, m.disp.height)})`,
+          Math.max(m.disp.width, m.disp.height) === VENUE_SERVER_MAX_EDGE_PX,
+        );
+        ok(`P2: captured runner faststart — 실제 ${m.fastStart}`, m.fastStart === true);
+        ok(
+          `P2: captured runner 오디오 보존 (실제 ${m.audioCodec ?? "없음"}) — runner 만 -an 으로 바꾸면 RED`,
+          m.audioCodec != null,
+        );
+        ok(
+          `P2: captured runner A/V start skew ≤ 50ms (실제 ${(m.skewSec * 1000).toFixed(0)}ms)`,
+          Number.isFinite(m.skewSec) && m.skewSec <= 0.05,
+        );
+        ok(
+          `P2: captured runner A/V duration drift ≤ 150ms (실제 ${(m.driftSec * 1000).toFixed(0)}ms)`,
+          Number.isFinite(m.driftSec) && m.driftSec <= 0.15,
         );
       } finally {
         rmSync(w, { recursive: true, force: true });
@@ -923,6 +1073,48 @@ async function run() {
     })) as { ffprobeMissing?: boolean; failed?: number };
     ok("P2: ffprobe 부재 → batch 미호출", calledWhenNoFfprobe === 0);
     ok("P2: ffprobe 부재 → ffprobeMissing 관제 신호", noProbeRes?.ffprobeMissing === true);
+
+    // ⑤ batch 실패 결과가 **main 관제까지** 그대로 전파되는가 (삼순 R5 P1-3)
+    //   종전 P2 는 batch 호출 횟수/인자만 봤다. 그래서 runBatch 가 돌려준 결과를
+    //   반환 직전에 `failed/updateErrors=0` 으로 덮어 거짓 성공을 반환해도 113/0 GREEN 이었다.
+    //   → sentinel 결과 object 가 그대로 나오는지 + main 의 non-zero 종료 판정 함수가
+    //     그 결과를 실제로 failure 로 읽는지를 함께 결속한다.
+    ok(
+      "P2: main 관제 판정이 import 가능한 함수로 고정됨(인라인 재도입 방지)",
+      typeof mod.venueRunHasFailure === "function" && typeof mod.venueRunFailureMessage === "function",
+    );
+    {
+      // 관제 판정 계약 자체 — 세 축 중 어느 하나라도 non-zero 여야 한다.
+      ok("P2: 관제 — failed>0 를 실패로 판정", mod.venueRunHasFailure({ failed: 1, updateErrors: 0 }) === true);
+      ok("P2: 관제 — updateErrors>0 를 실패로 판정", mod.venueRunHasFailure({ failed: 0, updateErrors: 2 }) === true);
+      ok("P2: 관제 — ffprobeMissing 을 실패로 판정", mod.venueRunHasFailure({ failed: 0, updateErrors: 0, ffprobeMissing: true }) === true);
+      ok("P2: 관제 — 정상 결과는 실패 아님", mod.venueRunHasFailure({ done: 3, failed: 0, updateErrors: 0 }) === false);
+      ok("P2: 관제 — 결과 미상(null)은 실패 아님(기존 동작 보존)", mod.venueRunHasFailure(null) === false);
+
+      // sentinel 전파 — batch 가 돌려준 값이 그대로 나와야 하고,
+      // 그 값이 관제 판정을 실제로 failure 로 만들어야 한다.
+      for (const sentinel of [
+        { done: 1, removed: 0, failed: 7, updateErrors: 0 },
+        { done: 1, removed: 0, failed: 0, updateErrors: 5 },
+      ]) {
+        const res = (await mod.processVenueStories({
+          hasFfprobe: true,
+          db: { from: () => ({}), storage: {} },
+          runBatch: async () => sentinel,
+        })) as Record<string, unknown>;
+        ok(
+          `P2: batch 결과를 그대로 반환(failed=${sentinel.failed}/updateErrors=${sentinel.updateErrors}) — 덮어쓰면 RED`,
+          res?.failed === sentinel.failed && res?.updateErrors === sentinel.updateErrors,
+        );
+        ok(
+          "P2: 그 결과가 main 관제에서 non-zero 종료로 이어짐",
+          mod.venueRunHasFailure(res) === true,
+        );
+      }
+
+      // ffprobe 부재 경로도 관제로 이어져야 한다(green 으로 무시 금지)
+      ok("P2: ffprobe 부재 결과도 main 관제에서 non-zero", mod.venueRunHasFailure(noProbeRes) === true);
+    }
 
     // ⑤ 소스 레벨 금지(보조) — 인라인 루프/조회 재도입
     const raw = readFileSync(join(import.meta.dirname, "..", "transcode-videos.mjs"), "utf8");
@@ -1063,116 +1255,50 @@ async function run() {
       ok("U: ffmpeg/ffprobe 존재(이 계약의 전제 — 부재면 skip 아니라 FAIL)", hasFfmpeg);
 
       if (hasFfmpeg) {
-        // 회전 입력: 1920x1080 본체 + display matrix rotation=90 (표시 1080x1920)
-        const rawPath = join(work, "raw.mp4");
-        const srcPath = join(work, "src.mp4");
+        // 회전 입력: 1920x1080 본체 + display matrix rotation=90 (표시 1080x1920) + 오디오
+        const srcPath = makeRotatedAudioFixture(work);
         const outPath = join(work, "out.mp4");
-        execFileSync("ffmpeg", [
-          "-y",
-          "-f", "lavfi", "-i", "testsrc2=size=1920x1080:rate=30",
-          "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100",
-          "-t", "3", "-c:v", "libx264", "-preset", "ultrafast",
-          "-c:a", "aac", "-b:a", "128k", "-shortest", rawPath,
-        ], { stdio: "ignore" });
-        execFileSync("ffmpeg", [
-          "-y", "-display_rotation", "90", "-i", rawPath, "-c", "copy", srcPath,
-        ], { stdio: "ignore" });
 
         // **실행 경로가 쓰는 바로 그 함수**를 호출
         transcodeVenueVideo(srcPath, outPath);
-
-        const probe = JSON.parse(
-          execFileSync("ffprobe", [
-            "-v", "error",
-            "-show_entries", "stream=codec_name,codec_type,width,height,start_time,duration",
-            "-show_entries", "stream_side_data=rotation",
-            "-show_entries", "format=duration",
-            "-of", "json", outPath,
-          ], { encoding: "utf8" }),
-        ) as {
-          streams: {
-            codec_type: string;
-            codec_name?: string;
-            width?: number;
-            height?: number;
-            start_time?: string;
-            duration?: string;
-            side_data_list?: { rotation?: number }[];
-          }[];
-          format: { duration: string };
-        };
-        const v = probe.streams.find((s) => s.codec_type === "video")!;
-        const a = probe.streams.find((s) => s.codec_type === "audio");
-        const rot = v.side_data_list?.find((d) => typeof d.rotation === "number")?.rotation ?? 0;
-        const swapped = Math.abs(rot) % 180 === 90;
-        const disp = swapped
-          ? { width: v.height!, height: v.width! }
-          : { width: v.width!, height: v.height! };
-
-        // 상위 박스 순서로 faststart 판정(독립 구현)
-        const buf = readFileSync(outPath);
-        let pos = 0;
-        let fastStart: boolean | null = null;
-        while (pos + 8 <= buf.length) {
-          let size = buf.readUInt32BE(pos);
-          const type = buf.subarray(pos + 4, pos + 8).toString("latin1");
-          let header = 8;
-          if (size === 1) {
-            if (pos + 16 > buf.length) break;
-            size = Number(buf.readBigUInt64BE(pos + 8));
-            header = 16;
-          } else if (size === 0) break;
-          if (type === "moov") { fastStart = true; break; }
-          if (type === "mdat") { fastStart = false; break; }
-          if (size < header) break;
-          pos += size;
-        }
+        const m = probeNormalized(outPath);
 
         console.log(
-          `  서버 워커 실측: ${v.width}x${v.height} rot=${rot} → 표시 ${disp.width}x${disp.height} · ` +
-            `${v.codec_name} · faststart=${fastStart} · ${parseFloat(probe.format.duration).toFixed(2)}s`,
+          `  서버 워커 실측: 표시 ${m.disp.width}x${m.disp.height} · ${m.codec} · ` +
+            `faststart=${m.fastStart} · ${m.durationSec.toFixed(2)}s`,
         );
 
-        ok(`U: 출력 코덱 h264 (실제 ${v.codec_name})`, v.codec_name === "h264");
+        ok(`U: 출력 코덱 h264 (실제 ${m.codec})`, m.codec === "h264");
         ok(
-          `U: 표시 긴 변이 정확히 720p ${VENUE_SERVER_MAX_EDGE_PX}px (실제 ${Math.max(disp.width, disp.height)}) — under-resolution 방지`,
-          Math.max(disp.width, disp.height) === VENUE_SERVER_MAX_EDGE_PX,
+          `U: 표시 긴 변이 정확히 720p ${VENUE_SERVER_MAX_EDGE_PX}px (실제 ${Math.max(m.disp.width, m.disp.height)}) — under-resolution 방지`,
+          Math.max(m.disp.width, m.disp.height) === VENUE_SERVER_MAX_EDGE_PX,
         );
         ok(
-          `U: 표시 치수 exact 720x1280 (실제 ${disp.width}x${disp.height})`,
-          disp.width === 720 && disp.height === 1280,
+          `U: 표시 치수 exact 720x1280 (실제 ${m.disp.width}x${m.disp.height})`,
+          m.disp.width === 720 && m.disp.height === 1280,
         );
-        ok("U: 표시 방향 세로 보존", disp.height > disp.width);
-        ok(`U: moov 가 mdat 앞(faststart) — 실제 ${fastStart}`, fastStart === true);
-        ok(`U: 오디오 트랙 보존 (실제 ${a?.codec_name ?? "없음"})`, a != null);
+        ok("U: 표시 방향 세로 보존", m.disp.height > m.disp.width);
+        ok(`U: moov 가 mdat 앞(faststart) — 실제 ${m.fastStart}`, m.fastStart === true);
+        ok(`U: 오디오 트랙 보존 (실제 ${m.audioCodec ?? "없음"})`, m.audioCodec != null);
         ok(
-          `U: duration 보존 (${parseFloat(probe.format.duration).toFixed(2)}s ≈ 3s)`,
-          Math.abs(parseFloat(probe.format.duration) - 3) < 1,
+          `U: duration 보존 (${m.durationSec.toFixed(2)}s ≈ 3s)`,
+          Math.abs(m.durationSec - 3) < 1,
         );
 
         // ── 서버 경로 A/V sync (삼순 중간값 ②, 2026-08-04) ──
         // 종전에는 전체 duration 만 봐서 오디오에 300ms delay 를 넣어도 3.32s≈3s 로 통과했다.
         // 브라우저 E2E 에는 이미 넣었던 계약을 서버 경로에만 빼먹었다 — 동일 계약으로 맞춘다.
-        {
-          const vStart = parseFloat(v.start_time ?? "NaN");
-          const aStart = parseFloat(a?.start_time ?? "NaN");
-          const vDur = parseFloat(v.duration ?? probe.format.duration);
-          const aDur = parseFloat(a?.duration ?? probe.format.duration);
-          const skew = Math.abs(vStart - aStart);
-          const drift = Math.abs(vDur - aDur);
-          console.log(
-            `  서버 A/V: start v=${vStart.toFixed(3)} a=${aStart.toFixed(3)} (skew ${skew.toFixed(3)}s) · ` +
-              `dur v=${vDur.toFixed(3)} a=${aDur.toFixed(3)} (drift ${drift.toFixed(3)}s)`,
-          );
-          ok(
-            `U: A/V start_time 정렬 ≤ 50ms (실제 ${(skew * 1000).toFixed(0)}ms)`,
-            Number.isFinite(skew) && skew <= 0.05,
-          );
-          ok(
-            `U: A/V duration drift ≤ 150ms (실제 ${(drift * 1000).toFixed(0)}ms)`,
-            Number.isFinite(drift) && drift <= 0.15,
-          );
-        }
+        console.log(
+          `  서버 A/V: skew ${m.skewSec.toFixed(3)}s · drift ${m.driftSec.toFixed(3)}s`,
+        );
+        ok(
+          `U: A/V start_time 정렬 ≤ 50ms (실제 ${(m.skewSec * 1000).toFixed(0)}ms)`,
+          Number.isFinite(m.skewSec) && m.skewSec <= 0.05,
+        );
+        ok(
+          `U: A/V duration drift ≤ 150ms (실제 ${(m.driftSec * 1000).toFixed(0)}ms)`,
+          Number.isFinite(m.driftSec) && m.driftSec <= 0.15,
+        );
       }
     } finally {
       rmSync(work, { recursive: true, force: true });

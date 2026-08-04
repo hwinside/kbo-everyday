@@ -352,6 +352,20 @@ export async function processVenueStories(overrides = {}) {
   });
 }
 
+// 배치 결과 → 관제 판정. main 의 non-zero 종료 조건을 **함수로 고정**한다.
+// 종전에는 이 조건이 main IIFE 안 인라인이라(= import 불가) 스모크가 검증할 수 없었고,
+// runBatch 가 failed/updateErrors 를 0 으로 덮어 거짓 성공을 반환해도 required gate 가 GREEN 이었다
+// (삼순 R5 P1-3 독립 재현 2026-08-04).
+export function venueRunHasFailure(res) {
+  const r = res || {};
+  return (r.failed || 0) > 0 || (r.updateErrors || 0) > 0 || Boolean(r.ffprobeMissing);
+}
+
+export function venueRunFailureMessage(res) {
+  const r = res || {};
+  return `❌ 직관 라이브 처리 이상 — 실패 ${r.failed} / 상태기록오류 ${r.updateErrors}${r.ffprobeMissing ? " / ffprobe 부재" : ""} — 관제 non-zero 종료`;
+}
+
 // ── main ── (직접 실행일 때만 — import 시 부작용 0)
 if (IS_MAIN) {
 (async () => {
@@ -382,10 +396,8 @@ if (IS_MAIN) {
 
   console.log("\n── 직관 라이브(venue_stories) 영상 처리 ──");
   const venueRes = (await processVenueStories()) || { failed: 0, updateErrors: 0 };
-  if ((venueRes.failed || 0) > 0 || (venueRes.updateErrors || 0) > 0 || venueRes.ffprobeMissing) {
-    console.error(
-      `❌ 직관 라이브 처리 이상 — 실패 ${venueRes.failed} / 상태기록오류 ${venueRes.updateErrors}${venueRes.ffprobeMissing ? " / ffprobe 부재" : ""} — 관제 non-zero 종료`,
-    );
+  if (venueRunHasFailure(venueRes)) {
+    console.error(venueRunFailureMessage(venueRes));
     process.exit(1);
   }
 })().catch((e) => { console.error("❌", e); process.exit(1); });
