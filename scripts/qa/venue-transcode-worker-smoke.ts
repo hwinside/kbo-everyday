@@ -33,6 +33,7 @@ import {
   selectVenueTranscodeTargets,
   runVenueTranscodeBatch,
   transcodeVenueVideo,
+  createVenueWorkerRunner,
   VENUE_SERVER_MAX_EDGE_PX,
 } from "../venue-transcode-job.mjs";
 
@@ -1566,8 +1567,102 @@ async function run() {
     }
   }
 
+  // ── [W] public(videos) 행 full E2E — 실제 HTTP 다운로드가 파이프라인에 실린다 ──
+  //
+  // ⚠️ 이 블록이 생긴 이유 (삼순 R7 blocker ②, 2026-08-04).
+  //
+  // production `venue-transcode-job.mjs` 의 public 분기
+  //   `inBytes = await runner.downloadToFile(row.media_url, inPath)`
+  // 를 `inBytes = 1` 로 바꿔 **다운로드 호출 자체를 지워도** worker 155/0 · CLI 6/0 GREEN 이었다.
+  //   - 기존 A~K 는 mock runner 라 downloadToFile 이 무엇을 하든 통과
+  //   - captured runner 검증(P2)은 runner 를 **직접** 호출해 processVenueJob 을 우회
+  //   - CLI fixture 는 private venue-media 라 storage.download 분기만 탄다
+  // 즉 "공개 버킷 행이 실제 HTTP 로 원본을 받아오는가"는 어느 게이트도 안 봤다.
+  //
+  // 여기서는 실제 HTTP 서버 + 실제 ffmpeg runner + 실제 processVenueJob 으로
+  // select→download→probe→transcode→upload→done 전 구간을 한 번에 태운다.
+  console.log("[W] public(videos) 행 E2E — 실제 HTTP 바이트가 파이프라인에 실리는가");
+  {
+    const work = mkdtempSync(join(tmpdir(), "vt-public-e2e-"));
+    let server: import("http").Server | null = null;
+    try {
+      const fixture = makeRotatedAudioFixture(work);
+      const payload = readFileSync(fixture);
+      const http = await import("http");
+      let served = 0;
+      server = http.createServer((_req, res) => {
+        served++;
+        res.writeHead(200, { "content-type": "video/mp4", "content-length": String(payload.length) });
+        res.end(payload);
+      });
+      const port: number = await new Promise((resolveFn) => {
+        server!.listen(0, "127.0.0.1", () => resolveFn((server!.address() as { port: number }).port));
+      });
+
+      const state: DbRowState = { id: 1, status: "active", needs_transcode: true, transcode_attempts: 0 };
+      const storage = makeMockStorage();
+      const inPath = join(work, "in.mp4");
+      const outPath = join(work, "out.mp4");
+      const res = await processVenueJob(
+        {
+          ...BASE_ROW,
+          status: "active",
+          needs_transcode: true,
+          media_bucket: "videos", // public 분기 — private 다운로드가 아니라 HTTP 경로
+          media_url: `http://127.0.0.1:${port}/venue-stories/G1/U1/video.mp4`,
+        },
+        {
+          db: makeMockDb(state),
+          storage,
+          // ⬇️ mock 이 아니라 **production runner 조립 그대로**.
+          runner: createVenueWorkerRunner({ downloadToFile: downloadToFileForTest }),
+          inPath,
+          outPath,
+        },
+      );
+
+      ok(`W: public 행이 실제 HTTP 원본을 요청 (실제 ${served}회) — 다운로드 호출 제거 시 RED`, served === 1);
+      ok(
+        `W: 받은 원본이 디스크에 그대로 기록 (실제 ${existsSync(inPath) ? readFileSync(inPath).length : 0}B / 원본 ${payload.length}B)`,
+        existsSync(inPath) && readFileSync(inPath).length === payload.length,
+      );
+      ok("W: 내려받은 바이트가 원본과 동일", existsSync(inPath) && readFileSync(inPath).equals(payload));
+      ok(`W: job 성공 종결 (실제 ${res.result})`, res.result === "done");
+      ok("W: needs_transcode 해제", state.needs_transcode === false);
+
+      // 산출물이 실제 정규화 계약을 만족하는지 — 다운로드본이 진짜 입력으로 쓰였다는 증거.
+      ok("W: 최적화 산출물 생성", existsSync(outPath));
+      const outMeta = probeNormalized(outPath);
+      ok(
+        `W: 산출물 표시 exact 720x1280 (실제 ${outMeta.disp.width}x${outMeta.disp.height})`,
+        outMeta.disp.width === 720 && outMeta.disp.height === 1280,
+      );
+      ok(`W: 산출물 코덱 h264 (실제 ${outMeta.codec})`, outMeta.codec === "h264");
+      ok(`W: 산출물 오디오 보존 (실제 ${outMeta.audioCodec ?? "없음"})`, outMeta.audioCodec != null);
+      ok(`W: 산출물 faststart (실제 ${outMeta.fastStart})`, outMeta.fastStart === true);
+      const dispW = outMeta.disp.width, dispH = outMeta.disp.height;
+      ok(
+        `W: DB 기록 치수가 산출물 기준 (실제 ${state.width}x${state.height} / 표시 ${dispW}x${dispH}) — 입력 1920x1080 기록 시 RED`,
+        (state.width === dispW && state.height === dispH) ||
+          (state.width === dispH && state.height === dispW),
+      );
+    } finally {
+      if (server) await new Promise<void>((r) => server!.close(() => r()));
+      rmSync(work, { recursive: true, force: true });
+    }
+  }
+
   console.log(`\n결과: ${pass} pass / ${fail} fail`);
   if (fail > 0) process.exit(1);
+}
+
+/** production `downloadTo` 와 동일 계약의 다운로더(테스트 주입용). */
+async function downloadToFileForTest(url: string, dest: string): Promise<number> {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`download ${r.status}`);
+  const buf = Buffer.from(await r.arrayBuffer());
+  writeFileSync(dest, buf);
+  return buf.length;
 }
 
 run().catch((e) => { console.error("❌ 테스트 런타임 오류:", e); process.exit(1); });
