@@ -1,5 +1,4 @@
-import { calcBatterSaber } from "@/lib/utils/sabermetrics-calc";
-import playerPositions from "@/lib/constants/player-positions.json";
+import { calcBatterSaberFromStats } from "@/lib/utils/sabermetrics-calc";
 import type { SeasonRecordRow } from "./season-record";
 
 /**
@@ -73,55 +72,15 @@ export async function fetchServedBatterRows(kboId: string): Promise<SeasonRecord
     .filter((row) => String(row.kboId ?? "") === kboId)
     .map((row) => ({
       ...row,
-      // WAR 은 저장된 칼럼이 아니라 **화면과 같은 산식으로 파생**된다(아래 주석).
-      war: batterWarOf(row),
+      // WAR·wRC+는 저장 칼럼이 아니라 **화면과 같은 공용 helper**로 파생한다.
+      war: calcBatterSaberFromStats(row)?.WAR ?? null,
+      wrc_plus: calcBatterSaberFromStats(row)?.wRC_plus ?? null,
       player_key: String(row.kboId ?? ""),
       kbo_id: String(row.kboId ?? ""),
       name: String(row.name ?? ""),
       team: (row.team as string | null) ?? null,
       updated_at: servedAt,
     })) as SeasonRecordRow[];
-}
-
-/**
- * 화면이 보여주는 **그 WAR** 을 그대로 만든다.
- *
- * ⚠️ WAR 은 저장된 값이 아니라 기본 스탬c에서 파생된다 — 그래서 "DB 에 없다"는 이유로
- * 못 답한다고 하면 틀리다. 앱은 선수 상세페이지·기록실·세이버 카드에서 이미 WAR 을
- * 보여주고 있다(하린아빠 2026-08-04 20:42 "우리가 다 제공하고 있는 데이터인데").
- *
- * **같은 함수·같은 입력을 쓴다** — `calcBatterSaber` + 포지션 보정. 봇이 자체 산식을 따로
- * 가지면 화면과 다른 숫자를 말하게 되고, 그게 이 기능의 유일한 계약 위반이다.
- * (수비 runs 는 선수 상세페이지만 주입하므로 여기서는 제외 — 기록실·세이버카드와 동일 입력.)
- */
-const POSITIONS = playerPositions as Record<string, string>;
-
-function batterWarOf(row: Record<string, unknown>): number | null {
-  const pa = Number(row.pa);
-  const ab = Number(row.ab);
-  if (!pa || !ab) return null;
-  const war = calcBatterSaber({
-    avg: (row.avg as string | number) ?? 0,
-    hits: Number(row.hits) || 0,
-    hr: Number(row.hr) || 0,
-    doubles: Number(row.doubles) || 0,
-    triples: Number(row.triples) || 0,
-    ab,
-    pa,
-    runs: Number(row.runs) || 0,
-    rbi: Number(row.rbi) || 0,
-    sb: Number(row.sb) || 0,
-    bb: Number(row.bb) || 0,
-    so: Number(row.so) || 0,
-    hbp: Number(row.hbp) || 0,
-    cs: Number(row.cs) || 0,
-    sf: row.sf != null ? Number(row.sf) : undefined,
-    obp: row.obp as string | number | undefined,
-    slg: row.slg as string | number | undefined,
-    ops: row.ops as string | number | undefined,
-    position: POSITIONS[String(row.kboId ?? "")],
-  }).WAR;
-  return Number.isFinite(war) ? war : null;
 }
 
 /**

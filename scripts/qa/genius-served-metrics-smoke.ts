@@ -41,6 +41,7 @@ import {
 } from "../../src/lib/baseball-qa/stats/served-record";
 import { answerQuestion, type QaDeps } from "../../src/lib/baseball-qa/pipeline";
 import { loadRosterPlayers } from "../../src/lib/baseball-qa/roster/load-roster-players";
+import { calcBatterSaberFromStats } from "../../src/lib/utils/sabermetrics-calc";
 
 let pass = 0;
 const failures: string[] = [];
@@ -119,6 +120,39 @@ async function main() {
       /import\s*\{\s*createServedRecordFetcher\s*\}\s*from\s*"@\/lib\/baseball-qa\/stats\/served-record"/.test(SERVER_SRC),
       "production import 가 seam 을 가리키지 않는다",
     );
+  });
+
+  /**
+   * ⚠️ 위 두 검사는 **소스 문자열**이다 — 삼순 #1100 6차 P0: 소스만 보면
+   * `server.ts` 배선을 지워도 게이트가 GREEN 이다. 그래서 **실제 `makeDeps()` 를
+   * 호출해** 주입물이 존재하는지를 직접 확인한다. supabase admin 모듈이
+   * import 시점에 env 를 요구하므로 더미 env 를 채우고 dynamic import 한다.
+   */
+  await check("production makeDeps() 가 실제로 served/team fetcher 를 물고 나온다", async () => {
+    process.env.NEXT_PUBLIC_SUPABASE_URL ||= "https://gate.invalid.supabase.co";
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||= "gate-dummy";
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||= "gate-dummy";
+    const mod = await import("../../src/lib/baseball-qa/server");
+    assert.equal(typeof mod.makeDeps, "function", "makeDeps 를 직접 태울 수 없다");
+    const deps = mod.makeDeps(1, null) as QaDeps;
+    assert.equal(
+      typeof deps.fetchServedRecord, "function",
+      "production deps 에 fetchServedRecord 가 없다 — 도루/OPS/WAR 기능이 0 이다",
+    );
+    assert.equal(
+      typeof deps.fetchSeasonRecord, "function",
+      "production deps 에 fetchSeasonRecord 가 없다 — 교차검증이 불가능하다",
+    );
+    assert.ok(deps.fetchTeamRecord, "production deps 에 fetchTeamRecord 가 없다 — 구단 수치 기능이 0 이다");
+    assert.equal(
+      typeof deps.fetchTeamRecord!.fetchStandings, "function",
+      "fetchStandings 주입이 끊겼다",
+    );
+    assert.equal(
+      typeof deps.fetchTeamRecord!.fetchTeamRecords, "function",
+      "fetchTeamRecords 주입이 끊겼다",
+    );
+    assert.equal(deps.enablePlayerRag, true, "production 이 선수 RAG 를 꺼놓았다");
   });
 
   // ── ② static 과 서빙값이 다르면 **서빙값**을 답한다 (P0-3 핵심) ──────────
@@ -240,6 +274,8 @@ async function main() {
     // 앱은 선수 상세·기록실·세이버 카드에서 이미 보여주고 있었다.
     ["김도영 WAR 알려줘", "batter/war"],
     ["김도영 war 얼마야?", "batter/war"],
+    ["김도영 wRC 얼마야", "batter/wrc_plus"],
+    ["김도영 wRC+ 알려줘", "batter/wrc_plus"],
   ] as const) {
     await check(`매칭 "${question}" → ${expected}`, () => {
       assert.equal(intentOf(question), expected);
@@ -359,6 +395,48 @@ async function main() {
     assert.notEqual(result.source, "kbo_structured", "두 소스가 갈라졌는데 답했다");
   });
 
+  // 실제 server.makeDeps가 조립한 fetcher를 그대로 태운다. 모듈별 seam을 테스트가 직접
+  // 재조립하면 server.ts 주입을 제거해도 GREEN이었던 5차 P0를 다시 만든다.
+  await check("production server → answerQuestion → served 종단이 실제 값으로 답한다", async () => {
+    process.env.NEXT_PUBLIC_SUPABASE_URL ||= "https://example.supabase.co";
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||= "gate-placeholder";
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||= "gate-placeholder";
+    const { makeDeps: makeServerDeps } = await import("../../src/lib/baseball-qa/server");
+    const wired = makeServerDeps(9_110_000);
+    assert.equal(typeof wired.fetchServedRecord, "function", "server.makeDeps의 served 주입이 끊겼다");
+
+    const logs: string[] = [];
+    let llmCalls = 0;
+    const deps: QaDeps = {
+      ...wired,
+      loadGlossary: async () => [],
+      loadPlayers: loadRosterPlayers,
+      getCache: async () => null,
+      setCache: async () => {},
+      callLlm: async () => {
+        llmCalls += 1;
+        return { text: '{"status":"ANSWER","answer":"999"}', inputTokens: 1, outputTokens: 1 };
+      },
+      reserveDaily: async (_u, limit) => ({ allowed: true, remaining: limit - 1 }),
+      log: async (entry) => { logs.push(entry.matchPath); },
+      fetchSeasonRecord: async () => [dbRow()],
+      // 핵심: fetchServedRecord는 wired 값을 덮지 않는다.
+    };
+    const result = await withFetch(
+      async () => jsonResponse(servedPayload([servedRow])),
+      () => answerQuestion("u-server-wiring", `${subject.name} 도루 몇 개야?`, deps),
+    );
+    assert.equal(result.source, "kbo_structured");
+    assert.ok(result.answer?.includes(String(servedSb)), `server 종단 답변=${result.answer}`);
+    assert.equal(llmCalls, 0);
+    assert.deepEqual(logs, ["kbo_structured"]);
+    assert.match(
+      SERVER_SRC,
+      /answerQuestion\(userId,\s*question,\s*makeDeps\(messageId,\s*picked\)\)/,
+      "production process가 makeDeps 조립값으로 answerQuestion을 호출하지 않는다",
+    );
+  });
+
   // ── ⑨ allowlist 선언 정합 ───────────────────────────────────────────────
   await check("SERVED_ONLY 지표가 전부 BATTER_METRICS 에 선언돼 있다", () => {
     for (const metric of SERVED_ONLY_BATTER_METRICS) {
@@ -378,25 +456,21 @@ async function main() {
     );
   });
   // 화면과 같은 산식으로 만든 값인가 — 봇만 다른 숫자를 말하면 이 기능의 계약이 깨진다.
-  await check("WAR 이 화면과 같은 산식(calcBatterSaber)으로 계산된다", async () => {
-    const { calcBatterSaber } = await import("@/lib/utils/sabermetrics-calc");
-    const expected = calcBatterSaber({
-      avg: servedSeasonRow.avg as string, hits: Number(servedSeasonRow.hits) || 0,
-      hr: Number(servedSeasonRow.hr) || 0, doubles: Number(servedSeasonRow.doubles) || 0,
-      triples: Number(servedSeasonRow.triples) || 0, ab: Number(servedSeasonRow.ab) || 0,
-      pa: Number(servedSeasonRow.pa) || 0, runs: Number(servedSeasonRow.runs) || 0,
-      rbi: Number(servedSeasonRow.rbi) || 0, sb: Number(servedSeasonRow.sb) || 0,
-      bb: Number(servedSeasonRow.bb) || 0, so: Number(servedSeasonRow.so) || 0,
-      hbp: Number(servedSeasonRow.hbp) || 0, cs: Number(servedSeasonRow.cs) || 0,
-      sf: servedSeasonRow.sf != null ? Number(servedSeasonRow.sf) : undefined,
-      obp: servedSeasonRow.obp as string | undefined,
-      slg: servedSeasonRow.slg as string | undefined,
-      ops: servedSeasonRow.ops as string | undefined,
-    }).WAR;
+  await check("WAR·wRC+가 화면과 같은 공용 helper로 계산된다", () => {
+    const expected = calcBatterSaberFromStats(servedSeasonRow);
+    assert.ok(expected, "공용 helper가 표본을 계산하지 못했다");
     assert.equal(
-      Number((servedSeasonRow as Record<string, unknown>).war), expected,
-      `봇 WAR 이 화면 산식과 다르다 — 봇 ${(servedSeasonRow as Record<string, unknown>).war} vs 화면 ${expected}`,
+      Number((servedSeasonRow as Record<string, unknown>).war), expected.WAR,
+      `봇 WAR 이 화면 산식과 다르다 — 봇 ${(servedSeasonRow as Record<string, unknown>).war} vs 화면 ${expected.WAR}`,
     );
+    assert.equal(
+      Number((servedSeasonRow as Record<string, unknown>).wrc_plus), expected.wRC_plus,
+      `봇 wRC+가 화면 산식과 다르다 — 봇 ${(servedSeasonRow as Record<string, unknown>).wrc_plus} vs 화면 ${expected.wRC_plus}`,
+    );
+  });
+  await check("wRC+가 서빙 전용 지표로 선언돼 실제답 경로를 탄다", () => {
+    assert.equal(isServedOnlyMetric("wrc_plus"), true);
+    assert.ok("wrc_plus" in BATTER_METRICS);
   });
   await check("DB 지표는 서빙 전용으로 분류되지 않는다", () => {
     for (const metric of ["avg", "hr", "rbi", "games"]) {

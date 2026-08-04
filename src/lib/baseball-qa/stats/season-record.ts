@@ -50,6 +50,7 @@ export const BATTER_METRICS = {
   // 이미 보여주고 있다. 화면과 **같은 함수**(`calcBatterSaber`)로 만든다
   // (`served-record.ts` · `batterWarOf`). 소수 2자리 표기도 화면과 같다.
   war: { label: "WAR", aliases: ["war"], kind: "rate" },
+  wrc_plus: { label: "wRC+", aliases: ["wrc+", "wrc플러스", "wrc"], kind: "rate" },
 } as const;
 
 /**
@@ -65,7 +66,7 @@ export const BATTER_METRICS = {
  *
  * 겹치는 지표(games·hits·hr·rbi…)는 DB row 와 교차검증해 두 소스가 갈라지면 fail-close 한다.
  */
-export const SERVED_ONLY_BATTER_METRICS = ["sb", "cs", "obp", "slg", "ops", "war"] as const;
+export const SERVED_ONLY_BATTER_METRICS = ["sb", "cs", "obp", "slg", "ops", "war", "wrc_plus"] as const;
 export type ServedOnlyBatterMetric = (typeof SERVED_ONLY_BATTER_METRICS)[number];
 
 export function isServedOnlyMetric(metric: string): metric is ServedOnlyBatterMetric {
@@ -217,6 +218,7 @@ export function resolveSeasonRecordIntent(
     { table: "pitcher", metric: "losses", pattern: /(?:몇\s*패(?:수)?|\d+\s*패(?:수)?|패수|(?<!실|승)패\s*(?:몇|개))(?!스트|배|션)/ },
 
     // 타자
+    { table: "batter", metric: "wrc_plus", pattern: /\bwrc\+?\b|wrc\s*플러스/i },
     { table: "batter", metric: "avg", pattern: /(?<!장)타율|타률|애버리지/ },
     { table: "batter", metric: "doubles", pattern: /(?:2|이)\s*루타|투\s*베이스/ },
     { table: "batter", metric: "triples", pattern: /(?:3|삼)\s*루타|쓰리\s*베이스/ },

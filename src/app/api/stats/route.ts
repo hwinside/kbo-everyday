@@ -322,8 +322,9 @@ async function fetchBatterStats(signal?: AbortSignal): Promise<{
   if (runnerResult.live) {
     for (const c of runnerResult.rows) {
       // ⚠️ 외국인은 KBO 숫자ID vs 로스터 영문ID 로 갈라진다 — canonical 로 맞춰야 키가 맞는다.
-      const playerId = canonicalKboId((c[10] || "").trim());
-      const key = playerId || `${(c[1] || "").trim()}::${(c[2] || "").trim()}`;
+      const key = canonicalKboId((c[10] || "").trim());
+      // playerId 없는 Runner 행은 이름으로 추정 병합하지 않는다 — 동명이인 오염보다 기존값 보존.
+      if (!key) continue;
       runnerMap.set(key, {
         sb: parseInt(c[5]) || 0,
         cs: parseInt(c[6]) || 0,
@@ -337,11 +338,10 @@ async function fetchBatterStats(signal?: AbortSignal): Promise<{
       const name = (c[1] || "").trim();
       const team = (c[2] || "").trim();
       const found = resolvePlayer({ name, team }, roster, { context: "api/stats:runner-key" });
-      return canonicalKboId(found?.kboId ?? "") || `${name}::${team}`;
+      return canonicalKboId(found?.kboId ?? "");
     }),
     ...(batterStats2026 as unknown as PlayerStat[]).map((player) =>
-      canonicalKboId(String(player.kboId || "").trim()) ||
-      `${String(player.name || "").trim()}::${String(player.team || "").trim()}`,
+      canonicalKboId(String(player.kboId || "").trim()),
     ),
   ]);
   const runnerLiveAccepted =
@@ -350,9 +350,8 @@ async function fetchBatterStats(signal?: AbortSignal): Promise<{
   if (!runnerLiveAccepted) {
     runnerMap.clear();
     for (const p of batterStats2026 as unknown as PlayerStat[]) {
-      const key = canonicalKboId(String(p.kboId || "").trim()) ||
-        `${String(p.name || "").trim()}::${String(p.team || "").trim()}`;
-      if (key !== "::") runnerMap.set(key, { sb: Number(p.sb) || 0, cs: Number(p.cs) || 0 });
+      const key = canonicalKboId(String(p.kboId || "").trim());
+      if (key) runnerMap.set(key, { sb: Number(p.sb) || 0, cs: Number(p.cs) || 0 });
     }
   }
 
@@ -411,8 +410,7 @@ export function applyRunnerStats<T extends PlayerStat>(
   return stats.map((player) => {
     // kboId exact 우선 — 같은 팀 동명이인이 서로의 도루를 덮어쓰지 않도록(삼순 4차 P0-3).
     const kboId = canonicalKboId(String((player as PlayerStat).kboId || "").trim());
-    const runner = (kboId ? runnerMap.get(kboId) : undefined) ??
-      runnerMap.get(`${player.name.trim()}::${player.team.trim()}`);
+    const runner = kboId ? runnerMap.get(kboId) : undefined;
     return {
       ...player,
       sb: runner?.sb ?? (Number(player.sb) || 0),

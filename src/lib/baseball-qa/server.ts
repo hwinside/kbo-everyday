@@ -328,7 +328,7 @@ async function preparePickedPlayerSelection(
 }
 
 /** messageId에 바인딩된 deps — quota/LLM을 job 행 기준 durable idempotent로 만든다. */
-function makeDeps(messageId: number, pickedPlayerKboId?: string | null): QaDeps {
+export function makeDeps(messageId: number, pickedPlayerKboId?: string | null): QaDeps {
   return {
     loadGlossary,
     // 인라인 loader 대신 seam 을 그대로 주입한다 — 게이트가 실제 배포 함수를 실행해

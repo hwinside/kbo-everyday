@@ -178,15 +178,15 @@ async function main() {
     );
   });
 
-  await check("kboId 가 없는 행은 이름::팀 로 하위호환 병합된다", () => {
-    const legacyMap = new Map<string, { sb: number; cs: number }>([
+  await check("kboId 없는 행은 이름::팀 값이 있어도 병합하지 않는다", () => {
+    const unsafeMap = new Map<string, { sb: number; cs: number }>([
       ["무명::두산", { sb: 4, cs: 1 }],
     ]);
     const merged = applyRunnerStats(
       [{ rank: 1, name: "무명", team: "두산", kboId: "", sb: 0, cs: 0 }],
-      legacyMap,
+      unsafeMap,
     );
-    assert.equal(Number(merged[0].sb), 4, "하위호환 경로가 끊겼다");
+    assert.equal(Number(merged[0].sb), 0, "name::team fallback이 동명이인 오염을 허용한다");
   });
 
   await check("map 에 없는 선수는 기존 값을 유지한다(0 으로 밀지 않는다)", () => {

@@ -202,7 +202,6 @@ async function verifyTeamQuestionsAnswerable() {
     "삼성주장",
     "LG는 요즘 왜 갑자기 못해?",
     "LG트윈스 감독 누구야?",
-    "LG 우승 몇 번 했어?",
   ]) {
     await check(`실표본 "${question}"`, () => assertAnswerable(question, "실표본"));
   }
@@ -248,6 +247,29 @@ async function verifyTeamNumericAnswers() {
     ...makeDeps(state),
     fetchTeamRecord: fetchers,
   });
+
+  // production server.makeDeps의 실제 fetchTeamRecord 주입을 그대로 태운다. 테스트가 fetcher를
+  // 직접 조립하면 server.ts 배선을 제거해도 GREEN이었던 5차 P0를 다시 만든다.
+  await check("production server.makeDeps → team_record → 최종답 종단", async () => {
+    process.env.NEXT_PUBLIC_SUPABASE_URL ||= "https://example.supabase.co";
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||= "gate-placeholder";
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||= "gate-placeholder";
+    const { makeDeps: makeServerDeps } = await import("../../src/lib/baseball-qa/server");
+    const wired = makeServerDeps(9_110_001);
+    assert.ok(wired.fetchTeamRecord, "server.makeDeps의 fetchTeamRecord 주입이 끊겼다");
+    const state: RunState = { llmCalls: 0, logs: [] };
+    const deps: QaDeps = {
+      ...wired,
+      ...makeDeps(state),
+      // 핵심: fetchTeamRecord는 wired 값을 덮지 않는다.
+      fetchTeamRecord: wired.fetchTeamRecord,
+    };
+    const result = await answerQuestion("u-server-team-wiring", "LG 지금 몇 위야?", deps);
+    assert.equal(result.source, "kbo_structured", `server 종단 source=${result.source}`);
+    assert.ok(result.answer?.includes(`${lg!.ranking}위`), `server 종단 답변=${result.answer}`);
+    assert.equal(state.llmCalls, 0, "팀 수치를 generic LLM으로 보냈다");
+  });
+
   const runTeam = async (question: string) => {
     const state: RunState = { llmCalls: 0, logs: [] };
     const result = await answerQuestion("u-team-gate", question, teamDeps(state));
@@ -291,7 +313,7 @@ async function verifyTeamNumericAnswers() {
   }
 
   // ② 우리가 서빙하지 **않는** 팀 수치는 여전히 LLM 에 안 보낸다. 환각 축은 그대로 닫는다.
-  for (const question of ["두산 상대전적 알려줘", "LG 관중 수 몇 명이야?", "삼성 연봉 총액 얼마야?"]) {
+  for (const question of ["LG 우승 몇 번 했어?", "두산 상대전적 알려줘", "LG 관중 수 몇 명이야?", "삼성 연봉 총액 얼마야?"]) {
     await check(`미서빙 팀 수치 fail-close "${question}"`, async () => {
       const { source, answer, llmCalls } = await runTeam(question);
       assert.equal(source, "history_hold", `${question}: 미서빙 값은 LLM 으로 가면 안 된다`);
@@ -326,7 +348,7 @@ async function verifyTeamNumericAnswers() {
   for (const question of [
     "두산베어스 기록 중에 유명한 이야기 알려줘",
     "삼성 라이온즈 홈런 잘 치는 팀이야?",
-    "LG 우승 몇 번 했어?",
+    "LG 우승 이야기를 알려줘",
   ]) {
     await check(`서술형 구단 질문 보존 "${question}"`, () => assertAnswerable(question, "서술형"));
   }
