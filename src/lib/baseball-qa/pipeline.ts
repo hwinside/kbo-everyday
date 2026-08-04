@@ -47,6 +47,31 @@ export const LLM_AMBIGUOUS_ANSWER =
 export const ACK_ANSWER = "도움이 됐다니 다행이에요! ⚾";
 
 /**
+ * 2026 KBO 공식야구규칙 5.10(d)(PDF p.94, 책자 p.70) 기반 검수 답변.
+ * https://6ptotvmi5753.edge.naverncp.com/KBO_FILE/ebook/pdf/2026_%EC%95%BC%EA%B5%AC%EA%B7%9C%EC%B9%99.pdf
+ * 투수는 같은 이닝에 다른 수비 위치로 한 번 옮겼다가 다시 투수로 돌아올 수 있지만,
+ * 그 이닝에 다시 다른 수비 위치로 옮길 수는 없다.
+ */
+export const PITCHER_POSITION_CHANGE_ANSWER =
+  "가능해요. 투수는 같은 이닝에 다른 수비 위치로 한 번 옮겼다가 다시 투수로 돌아올 수 있어요. 다만 그 이닝에 다시 다른 수비 위치로 옮길 수는 없어요.";
+
+const VERIFIED_PITCHER_POSITION_CHANGE_KEYS = new Set([
+  "당신팀의투수역할변경규칙",
+  "너희팀의투수역할변경규칙",
+  "우리팀의투수역할변경규칙",
+]);
+
+/** 운영에서 모순 캐시가 확인된 동일 룰 3변형은 검수 답변으로 고정해 캐시·LLM을 우회한다. */
+export function matchVerifiedRule(question: string): GlossaryEntry | null {
+  if (!VERIFIED_PITCHER_POSITION_CHANGE_KEYS.has(normalizeQuestion(question))) return null;
+  return {
+    term: "투수 수비 위치 변경",
+    aliases: [],
+    answer: PITCHER_POSITION_CHANGE_ANSWER,
+  };
+}
+
+/**
  * 단독 감사·확인 인사 폐쇄집합 (삼순 GO / 신기능 B).
  * `고마워`처럼 직전 답변에 대한 대화 행위는 야구 질문이 아니지만 차단 대상도 아니다.
  * 폐쇄집합 **full-string 완전일치**만 ACK로 분기한다 — substring 매칭을 하면
@@ -795,6 +820,27 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     };
   }
   const remaining = reservation.remaining;
+
+  // 운영에서 모순 캐시가 확인된 검수 룰은 외부 사전·캐시·LLM보다 먼저 결정론적으로 종결한다.
+  const verifiedHit = matchVerifiedRule(question);
+  if (verifiedHit) {
+    await deps.log({
+      userId,
+      question,
+      questionNorm,
+      matchPath: "dictionary",
+      answer: verifiedHit.answer,
+      inputTokens: null,
+      outputTokens: null,
+    });
+    return {
+      status: 200,
+      answer: verifiedHit.answer,
+      source: "dictionary",
+      term: verifiedHit.term,
+      remaining,
+    };
+  }
 
   const [glossary, players] = await Promise.all([deps.loadGlossary(), deps.loadPlayers()]);
   // 맥락 조회는 후속 문법일 때만 — 일반 질문은 기존 경로 그대로다 (spec §4.1 B4).

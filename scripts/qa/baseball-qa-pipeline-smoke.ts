@@ -18,6 +18,7 @@ import {
   isAckPhrase,
   LLM_AMBIGUOUS_ANSWER,
   matchGlossary,
+  PITCHER_POSITION_CHANGE_ANSWER,
   routeQuestion,
   RULE_TERM_SENTINEL,
   SERVICE_REDIRECT_ANSWER,
@@ -449,6 +450,10 @@ for (const question of roleRuleQuestions) {
     `정상 룰 질문 과차단: ${question}`,
   );
 }
+const verifiedRoleRuleQuestions = new Set<string>(LIVE_POSITIVE_TEAM_POSSESSIVE);
+const llmRoleRuleQuestions = roleRuleQuestions.filter((question) =>
+  !verifiedRoleRuleQuestions.has(question)
+);
 
 // 삼순 GO (신기능 B): 단독 감사·확인 인사는 질문이 아니라 직전 답변에 대한 대화 행위다.
 // 비야구로 차단해 "야구 질문만" 안내를 보내면 안 되고, LLM/캐시도 쓰지 않는다.
@@ -528,6 +533,8 @@ assert.equal(
 
 interface MockState {
   cache: Map<string, string>;
+  cacheReads: number;
+  cacheWrites: number;
   logs: MatchPath[];
   used: number;
   llmText: string;
@@ -540,6 +547,8 @@ interface MockState {
 function freshState(overrides: Partial<MockState> = {}): MockState {
   return {
     cache: new Map(),
+    cacheReads: 0,
+    cacheWrites: 0,
     logs: [],
     used: 0,
     llmText: '{"status":"ANSWER","answer":"야구 룰에 따른 검증된 답변이에요."}',
@@ -555,8 +564,14 @@ function makeDeps(state: MockState): QaDeps {
   return {
     loadGlossary: async () => seedEntries,
     loadPlayers: async () => players,
-    getCache: async (key) => state.cache.get(key) ?? null,
-    setCache: async (key, value) => { state.cache.set(key, value); },
+    getCache: async (key) => {
+      state.cacheReads++;
+      return state.cache.get(key) ?? null;
+    },
+    setCache: async (key, value) => {
+      state.cacheWrites++;
+      state.cache.set(key, value);
+    },
     callLlm: async () => {
       state.events.push("llm");
       state.llmCalls++;
@@ -588,6 +603,22 @@ async function verifyPipeline() {
   cache.cache.set(normalizeQuestion("체크스윙 룰이 뭐야?"), "캐시 답변");
   assert.equal((await answerQuestion("u1", "체크스윙 룰이 뭐야?", makeDeps(cache))).source, "cache");
   assert.equal(cache.llmCalls, 0);
+
+  // Production에서 서로 모순된 global cache 3건이 재노출된 회귀.
+  // 검수 룰은 오염 캐시가 다시 생겨도 read/write·LLM 없이 동일한 공식 답변으로 종결한다.
+  const verifiedAnswers = new Set<string>();
+  for (const question of LIVE_POSITIVE_TEAM_POSSESSIVE) {
+    const state = freshState();
+    state.cache.set(normalizeQuestion(question), "오염 캐시: 재등판은 금지됩니다.");
+    const result = await answerQuestion("u1", question, makeDeps(state));
+    verifiedAnswers.add(result.answer);
+    assert.equal(result.source, "dictionary", question);
+    assert.equal(result.answer, PITCHER_POSITION_CHANGE_ANSWER, question);
+    assert.equal(state.cacheReads, 0, `${question}: global cache read 0`);
+    assert.equal(state.cacheWrites, 0, `${question}: global cache write 0`);
+    assert.equal(state.llmCalls, 0, `${question}: LLM 0`);
+  }
+  assert.equal(verifiedAnswers.size, 1, "팀 소유 표현 3변형은 byte-identical 답변");
 
   const llm = freshState();
   const question = "9회말 야구 룰에서 우천 중단은 어떻게 처리해?";
@@ -659,7 +690,7 @@ async function verifyPipeline() {
   // fixture가 가려서 초록이 됐다. 이제 이 루프는 provider 응답을 모른다는 전제(UNSURE)로
   // "결정론 게이트를 통과해 LLM 1회까지 도달했고 blocked가 아니다"만 주장한다.
   // 실제 status가 BASEBALL_RULE_TERM인지는 npm run qa:baseball-qa-live가 실 Gemini로 판정한다.
-  for (const input of roleRuleQuestions) {
+  for (const input of llmRoleRuleQuestions) {
     const state = freshState({ llmText: `{"status":"${UNSURE_SENTINEL}","answer":""}` });
     const result = await answerQuestion("u1", input, makeDeps(state));
     assert.notEqual(result.source, "blocked", `${input}: 정상 룰 질문이 과차단되면 안 된다`);

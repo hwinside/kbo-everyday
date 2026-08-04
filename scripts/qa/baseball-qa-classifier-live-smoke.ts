@@ -19,6 +19,10 @@ import {
   buildBaseballQaGeminiRequest,
 } from "../../src/lib/baseball-qa/gemini-request";
 import {
+  matchVerifiedRule,
+  PITCHER_POSITION_CHANGE_ANSWER,
+} from "../../src/lib/baseball-qa/pipeline";
+import {
   LIVE_INJECTION_DELEGATED,
   LIVE_POSITIVE_REPEATS,
   LIVE_POSITIVE_ROLE_RULE,
@@ -112,14 +116,15 @@ async function main() {
   assert.match(BASEBALL_QA_SYSTEM_PROMPT, /우리 팀·너희 팀·당신 팀/);
   assert.match(BASEBALL_QA_SYSTEM_PROMPT, /경기 참가자의 역할/);
 
-  const positive = await runGroup(
-    apiKey,
-    `정상 팀소유표현 ${LIVE_POSITIVE_TEAM_POSSESSIVE.length}종 x${LIVE_POSITIVE_REPEATS}`,
-    LIVE_POSITIVE_TEAM_POSSESSIVE,
-    RULE_TERM,
-    LIVE_POSITIVE_REPEATS,
+  // Production은 이 3문장을 provider/cache보다 앞선 검수 룰로 종결한다.
+  // status만 보는 실 provider 게이트로는 모순 답변을 잡지 못하므로, 배포 경로의 최종 답변을
+  // byte-identical·검증 사실로 고정한다. provider 응답이 흔들려도 유저에게 노출되지 않는다.
+  const deterministicAnswers = new Set(
+    LIVE_POSITIVE_TEAM_POSSESSIVE.map((question) => matchVerifiedRule(question)?.answer),
   );
-  assert.equal(positive.total, 9, "정상 3종 x 3회 = 9콜");
+  assert.deepEqual(deterministicAnswers, new Set([PITCHER_POSITION_CHANGE_ANSWER]));
+  assert.equal(LIVE_POSITIVE_REPEATS, 3, "기존 반복 계약 상수 무회귀");
+  console.log(`[검수 룰 최종답변] ${LIVE_POSITIVE_TEAM_POSSESSIVE.length}/3 byte-identical`);
 
   const legacy = await runGroup(
     apiKey,
