@@ -151,3 +151,9 @@ jobs:
         # 실제 prepareVenueStoryMedia() 를 실행하고 storage.upload 로 들어온 실제 바이트를
         # ffprobe/박스파서로 검사한다. 정규화 호출을 무력화하면 이 스텝이 RED 가 된다.
         run: npm run qa:venue-video-normalize
+
+      - name: Run venue worker CLI exit-code smoke (fail-closed)
+        # 워커를 **진짜 subprocess** 로 돌려 main IIFE 가 실패를 exit 1 로 올리는지 본다.
+        # helper/sentinel 만 in-process 로 보면 `if (false && venueRunHasFailure(...))` 가
+        # 통과해 cron 이 실패를 삼킨 채 거짓 성공으로 끝난다(삼순 R6 ③).
+        run: npm run qa:venue-worker-cli-exit

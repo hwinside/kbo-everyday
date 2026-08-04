@@ -303,6 +303,7 @@
     "qa:venue-game-errors": "tsx scripts/qa/venue-game-errors-smoke.ts",
     "qa:venue-attendance-crud:db": "tsx scripts/qa/venue-attendance-crud-db-route-integration.ts",
     "qa:venue-video-normalize": "node scripts/qa/venue-video-normalize-e2e.mjs",
+    "qa:venue-worker-cli-exit": "node scripts/qa/venue-worker-cli-exit-smoke.mjs",
     "qa:genius-match-path-db": "tsx scripts/qa/baseball-genius-match-path-db-integration.ts",
     "qa:kbo-select": "node scripts/qa/kbo-select-smoke.mjs",
     "qa:stats-gate-trigger": "node scripts/qa/stats-gate-trigger-smoke.mjs"
