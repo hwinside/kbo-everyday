@@ -8,6 +8,44 @@ import { basename } from "path";
 
 const VENUE_MAX_DURATION_MS = 16000; // 15초 + 여유
 const VENUE_MAX_BYTES = 50 * 1024 * 1024;
+
+/**
+ * 워커 조회 술어 — **실행 경로가 쓰는 값 그자체**를 여기서 만든다.
+ * 종전에는 이 문자열이 transcode-videos.mjs 안에 인라인이었고, 스모크가 그걸 regex 로
+ * 검색했다 — 그래서 실행 술어에서 archived 를 빼고 주석에만 남겨도 GREEN 이었다
+ * (삼순 독립 재현, 2026-08-04). 이젠 생성 함수를 공유해 행동으로 검증한다.
+ *
+ * 대상:
+ *  - pending: 즉시 경로 fault 잔여(staging 원본)
+ *  - active + needs_transcode: 공개 트레이 720p 대기
+ *  - archived + needs_transcode: 다이어리 전용(이걸 빼놓았던 게 blocker ③의 구멍)
+ */
+export function venueTranscodeOrFilter() {
+  return [
+    "and(status.eq.active,needs_transcode.eq.true)",
+    "and(status.eq.archived,needs_transcode.eq.true)",
+    "status.eq.pending",
+  ].join(",");
+}
+
+/**
+ * venue_stories 최적화 대상 조회 — 주입 가능한 seam.
+ * 실제 워커와 스모크가 **같은 함수**를 타서, 조회 조건이 바뀌면 스모크가 즉시 RED 가 된다.
+ * @returns {Promise<{data: unknown[]|null, error: unknown}>}
+ */
+export async function selectVenueTranscodeTargets(db, { maxAttempts, limit }) {
+  // query-guard: bounded -- 워커 1회당 고정 limit 영상만 처리
+  return db
+    .from("venue_stories")
+    .select(
+      "id, status, media_url, media_bucket, media_path, transcode_attempts, attendance_source",
+    )
+    .eq("media_type", "video")
+    .or(venueTranscodeOrFilter())
+    .lt("transcode_attempts", maxAttempts)
+    .order("created_at", { ascending: true })
+    .limit(limit);
+}
 // A안 A1: 신규 영상은 private venue-media 로 승격·보관(공개 videos 아님). 서빙은 서버 signed URL.
 const VENUE_PRIVATE_MEDIA_BUCKET = "venue-media";
 // private venue 버킷: 공개 URL 이 없으므로 media_url 다운로드 대신 storage API 로 받는다.
@@ -103,6 +141,19 @@ export async function processVenueJob(row, deps) {
 
     runner.transcode(inPath, outPath);
     const outBytes = statSync(outPath).size;
+    // 산출물을 **다시 probe** 해 실제 출력 메타를 기록한다.
+    // 종전에는 입력 meta 를 그대로 썼는데, ffmpeg 가 회전을 반영하고 720p 로 축소하므로
+    // 회전 영상은 1920x1080 으로 기록되면서 실제 파일은 720x1280 이었다(삼순 지적, 2026-08-04).
+    // 뷰어 레이아웃·서버 판정이 어긋나므로 반드시 출력 기준이어야 한다.
+    // probe 실패 시에는 입력 meta 로 fallback 하되 조용히 넘어가지 않고 로그를 남긴다.
+    let outMeta = meta;
+    try {
+      const probed = runner.probe(outPath);
+      if (probed && probed.durationMs > 0) outMeta = probed;
+      else console.log(`  ⚠️ venue ${row.id} 출력 probe 결과 불량 — 입력 메타로 fallback`);
+    } catch (probeErr) {
+      console.log(`  ⚠️ venue ${row.id} 출력 probe 실패 — 입력 메타로 fallback: ${probeErr?.message || probeErr}`);
+    }
     // pending 승격은 private venue-media 로(공개 videos 아님). active 는 기존 버킷 유지(레거시 videos / 신규 venue-media).
     const targetBucket = isPending ? VENUE_PRIVATE_MEDIA_BUCKET : row.media_bucket;
     const newPath = venueOptimizedPath(row.media_path);
@@ -119,9 +170,10 @@ export async function processVenueJob(row, deps) {
         media_url: pub.publicUrl,
         media_bucket: targetBucket,
         media_path: newPath,
-        width: meta.width,
-        height: meta.height,
-        duration_ms: meta.durationMs,
+        // 입력이 아니라 **실제 산출물** 기준(위 outMeta 재 probe)
+        width: outMeta.width,
+        height: outMeta.height,
+        duration_ms: outMeta.durationMs,
         // 게시된 경로(active/archived)는 status 재기록 금지 — 처리 중 신고/어드민이
         // removed로 내린 상태 보존(불변식: worker 최적화 update는 removed 를 되살리지 않는다)
         ...(isPending ? {

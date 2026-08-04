@@ -25,7 +25,7 @@ import { join } from "path";
 
 // processVenueJob은 scripts/venue-transcode-job.mjs — tsx가 ESM .mjs 로드
 // @ts-expect-error JS module, 타입은 테스트 내부에서 검증
-import { processVenueJob } from "../venue-transcode-job.mjs";
+import { processVenueJob, selectVenueTranscodeTargets } from "../venue-transcode-job.mjs";
 
 let pass = 0;
 let fail = 0;
@@ -607,24 +607,104 @@ async function run() {
     }
   }
 
-  // 워커 조회 술어 계약 — archived 가 실제 스캔 대상인가(transcode-videos.mjs)
-  // 상위 스크립트는 supabase env 를 모듈 로드 시점에 요구해 import 할 수 없으므로
-  // 조회 술어 문자열을 직접 읽어 archived 분기가 존재하는지를 고정한다.
-  console.log("[P] 워커 조회 술어에 archived 분기 결속");
+  // ── 워커 조회 seam 행동 검증 (삼순 blocker ①, 2026-08-04) ──
+  // ⚠️ 종전 P 는 transcode-videos.mjs 를 **소스 regex** 로 검색했다. 그래서 실행 .or() 에서
+  // archived 를 빼고 주석에만 남겨도 51/0 GREEN 이었다(삼순 독립 재현).
+  // 이젠 실제 워커와 **같은 함수**(selectVenueTranscodeTargets)를 mock DB 로 돌려
+  // .or 인자값·bounded order/limit·select 컬럼까지 호출 인자로 검증한다.
+  console.log("[P] 워커 조회 seam 행동 검증 (mock DB actual 호출값)");
   {
-    const src = readFileSync(
-      join(import.meta.dirname, "..", "transcode-videos.mjs"),
-      "utf8",
+    const calls: Record<string, unknown[]> = {};
+    const record = (name: string, args: unknown[]) => {
+      calls[name] = args;
+    };
+    const rowsFixture = [{ id: 1 }, { id: 2 }];
+    const chain: Record<string, unknown> = {};
+    chain.select = (...a: unknown[]) => {
+      record("select", a);
+      return chain;
+    };
+    chain.eq = (...a: unknown[]) => {
+      record(`eq:${a[0]}`, a);
+      return chain;
+    };
+    chain.or = (...a: unknown[]) => {
+      record("or", a);
+      return chain;
+    };
+    chain.lt = (...a: unknown[]) => {
+      record(`lt:${a[0]}`, a);
+      return chain;
+    };
+    chain.order = (...a: unknown[]) => {
+      record("order", a);
+      return chain;
+    };
+    chain.limit = (...a: unknown[]) => {
+      record("limit", a);
+      return Promise.resolve({ data: rowsFixture, error: null });
+    };
+    const mockDb = {
+      from: (...a: unknown[]) => {
+        record("from", a);
+        return chain;
+      },
+    };
+
+    const res = await selectVenueTranscodeTargets(mockDb, { maxAttempts: 3, limit: 20 });
+    const orArg = String(calls.or?.[0] ?? "");
+
+    ok("P: venue_stories 테이블 조회", calls.from?.[0] === "venue_stories");
+    ok("P: media_type=video 필터", calls["eq:media_type"]?.[1] === "video");
+    ok(
+      "P: 실행 .or() 인자가 archived+needs_transcode 를 포함(주석 아닌 실값)",
+      orArg.includes("and(status.eq.archived,needs_transcode.eq.true)"),
     );
     ok(
-      "P: .or() 술어가 archived+needs_transcode 를 포함",
-      /and\(status\.eq\.archived,needs_transcode\.eq\.true\)/.test(src),
+      "P: 실행 .or() 인자가 active+needs_transcode 를 포함",
+      orArg.includes("and(status.eq.active,needs_transcode.eq.true)"),
+    );
+    ok("P: 실행 .or() 인자가 pending 을 포함", orArg.includes("status.eq.pending"));
+    ok(
+      "P: 재시도 상한이 조회에 결속(lt transcode_attempts)",
+      calls["lt:transcode_attempts"]?.[1] === 3,
     );
     ok(
-      "P: active+needs_transcode 분기도 유지",
-      /and\(status\.eq\.active,needs_transcode\.eq\.true\)/.test(src),
+      "P: bounded — created_at 오름차순 정렬",
+      calls.order?.[0] === "created_at" &&
+        (calls.order?.[1] as { ascending?: boolean } | undefined)?.ascending === true,
     );
-    ok("P: pending 분기도 유지", /status\.eq\.pending/.test(src));
+    ok("P: bounded — limit 이 그대로 전달", calls.limit?.[0] === 20);
+    ok(
+      "P: 조회 컬럼에 processVenueJob 필수 필드 포함(status/attendance_source 포함)",
+      ["id", "status", "media_bucket", "media_path", "transcode_attempts", "attendance_source"].every(
+        (c) => String(calls.select?.[0] ?? "").includes(c),
+      ),
+    );
+    ok("P: 조회 결과를 그대로 반환", (res as { data?: unknown[] }).data === rowsFixture);
+  }
+
+  // 상위 워커가 이 seam 을 실제로 호출하는지(인라인 조회로 되돌아가면 RED).
+  // 상위 스크립트는 supabase env 를 모듈 로드 시점에 요구해 import 가 안 되므로
+  // 이 항목만 소스 확인이다(위 행동 검증이 본체).
+  console.log("[P2] 상위 워커가 조회 seam 을 사용");
+  {
+    const src = readFileSync(join(import.meta.dirname, "..", "transcode-videos.mjs"), "utf8");
+    ok(
+      "P2: transcode-videos.mjs 가 selectVenueTranscodeTargets 를 호출",
+      /await selectVenueTranscodeTargets\(/.test(src),
+    );
+    // 상위 스크립트에는 video_transcode_jobs 용 .or() 가 별도로 있다(이건 정상).
+    // 금지 대상은 **venue_stories 인라인 조회 재도입**이다 — needs_transcode 를 다룬다면
+    // seam 을 우회한 것이므로 RED.
+    ok(
+      "P2: venue_stories 인라인 조회 재도입 없음(needs_transcode 직접 술어 0)",
+      !/\.or\([^)]*needs_transcode/.test(src),
+    );
+    ok(
+      "P2: venue_stories 선택 컬럼을 상위에서 재선언하지 않음",
+      !/from\("venue_stories"\)[\s\S]{0,200}attendance_source/.test(src),
+    );
   }
 
   console.log(`\n결과: ${pass} pass / ${fail} fail`);

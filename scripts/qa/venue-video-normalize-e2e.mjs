@@ -391,6 +391,27 @@ export const getSafeSession = async () => null;
     ok(`${f.name}: 업로드본 moov 가 mdat 앞(faststart)`, isFastStart(new Uint8Array(outBuf)) === true);
     ok(`${f.name}: 업로드본 비디오 코덱 h264 (실제=${vStream?.codec_name})`, vStream?.codec_name === "h264");
     ok(`${f.name}: 업로드본 긴 변 ≤ ${NORMALIZE_MAX_EDGE}px (실제=${outEdge})`, outEdge != null && outEdge <= NORMALIZE_MAX_EDGE);
+    // ≤ 만 보면 target 을 1280→640 으로 낮추는 under-resolution 결함을 못 잡는다(삼순 독립 재현).
+    // 이 PR 의 명시 계약은 "긴 변 1280 의 720p" 이므로 **source 기반 expected 를 독립 계산**해
+    // exact 로 고정한다. 입력이 1280 보다 크면 리사이즈 후 긴 변은 정확히 1280 이어야 한다.
+    {
+      const srcDisp = displayDims(srcVideo);
+      const srcEdge = Math.max(srcDisp.width, srcDisp.height);
+      if (srcEdge > NORMALIZE_MAX_EDGE) {
+        const scale = NORMALIZE_MAX_EDGE / srcEdge;
+        const even = (v) => Math.max(2, Math.round((v * scale) / 2) * 2);
+        const expected = { width: even(srcDisp.width), height: even(srcDisp.height) };
+        const outDisp = displayDims(vStream);
+        ok(
+          `${f.name}: 표시 치수가 720p 계약 exact 일치 — expected ${expected.width}x${expected.height}, 실제 ${outDisp.width}x${outDisp.height}`,
+          outDisp.width === expected.width && outDisp.height === expected.height,
+        );
+        ok(
+          `${f.name}: 표시 긴 변이 정확히 ${NORMALIZE_MAX_EDGE}px (under-resolution 방지)`,
+          Math.max(outDisp.width, outDisp.height) === NORMALIZE_MAX_EDGE,
+        );
+      }
+    }
     ok(`${f.name}: 오디오 트랙 보존 (실제=${aStream?.codec_name ?? "없음"})`, aStream != null);
     ok(
       `${f.name}: duration 보존 (${outDur.toFixed(2)}s ≈ ${(f.durationMs / 1000).toFixed(1)}s)`,
@@ -423,6 +444,11 @@ export const getSafeSession = async () => null;
       ok(
         `${f.name}: 표시 기준 긴 변 ≤ ${NORMALIZE_MAX_EDGE}px (실제=${Math.max(outDisp.width, outDisp.height)})`,
         Math.max(outDisp.width, outDisp.height) <= NORMALIZE_MAX_EDGE,
+      );
+      // 회전 fixture 는 expected 가 명확하다: 1920x1080 rot=90 → 표시 1080x1920 → 720p 로 720x1280.
+      ok(
+        `${f.name}: 회전 fixture 표시 치수 exact 720x1280 (실제 ${outDisp.width}x${outDisp.height})`,
+        outDisp.width === 720 && outDisp.height === 1280,
       );
     }
 

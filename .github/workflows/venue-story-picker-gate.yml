@@ -96,6 +96,16 @@ jobs:
           scripts/qa/venue-transcode-worker-smoke.ts
           scripts/qa/venue-validate-smoke.ts
           scripts/qa/venue-media-smoke.ts
+          scripts/transcode-videos.mjs
+          scripts/venue-transcode-job.mjs
+
+      - name: Syntax check production workers (.mjs, fail-closed)
+        # tsc 는 .mjs 를 안 보고 스모크는 processVenueJob 만 import 하므로,
+        # 상위 워커 자체의 문법 오류는 어느 게이트에도 안 잡혔다(삼순 독립 재현 2026-08-04:
+        # lint/tsc/smoke 전부 exit 0, node --check 만 exit 1). 파싱 가능성을 명시적으로 검증한다.
+        run: |
+          node --check scripts/transcode-videos.mjs
+          node --check scripts/venue-transcode-job.mjs
 
       - name: Typecheck
         run: npx tsc --noEmit

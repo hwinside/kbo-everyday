@@ -28,7 +28,7 @@ import { resolve, join, basename } from "path";
 import { tmpdir } from "os";
 import { execFileSync } from "child_process";
 import { createHash } from "crypto";
-import { processVenueJob } from "./venue-transcode-job.mjs";
+import { processVenueJob, selectVenueTranscodeTargets } from "./venue-transcode-job.mjs";
 
 // ── env (.env.local 수동 파싱, dotenv 의존성 없음 — award-event-badges.mjs 패턴) ──
 try {
@@ -335,23 +335,13 @@ async function processVenueStories() {
     );
     return { done: 0, removed: 0, failed: (pendingCount ?? 0) > 0 ? (pendingCount ?? 1) : 0, updateErrors: 0, ffprobeMissing: true };
   }
-  // pending(즉시 경로 fault 잔여, staging 원본)
-  //  + active·needs_transcode(공개 트레이 720p 대기)
-  //  + archived·needs_transcode(다이어리 전용 — 2026-08-04 추가)
-  //
-  // archived 를 빼놓았던 것이 삼순 blocker ③의 실제 구멍이었다: 서버가 needs_transcode=true 를
-  // 써도 조회가 안 거줘가서 diary_manual 느린 원본은 한 번도 처리되지 않았다.
+  // 조회 술어는 selectVenueTranscodeTargets(공유 seam)가 소유한다 — 스모크가 같은 함수를
+  // mock DB 로 실행해 .or 값·bounded order/limit 을 행동 검증한다(삼순 blocker ①).
   // query-guard: bounded -- 워커 1회당 고정 LIMIT 영상만 처리
-  const { data: rows, error } = await supabase
-    .from("venue_stories")
-    .select("id, status, media_url, media_bucket, media_path, transcode_attempts, attendance_source")
-    .eq("media_type", "video")
-    .or(
-      "and(status.eq.active,needs_transcode.eq.true),and(status.eq.archived,needs_transcode.eq.true),status.eq.pending",
-    )
-    .lt("transcode_attempts", MAX_ATTEMPTS)
-    .order("created_at", { ascending: true })
-    .limit(LIMIT);
+  const { data: rows, error } = await selectVenueTranscodeTargets(supabase, {
+    maxAttempts: MAX_ATTEMPTS,
+    limit: LIMIT,
+  });
   if (error) throw new Error(`venue_stories 조회 실패: ${error.message}`);
   if (!rows || rows.length === 0) { console.log("직관 라이브 최적화 대기 영상 없음."); return; }
 
