@@ -29,7 +29,7 @@ export interface BaseballQaAttemptResult {
 export type BaseballQaReplyState = "waiting" | "retrying" | "failed";
 export type BaseballQaReplyStates = Record<number, BaseballQaReplyState>;
 
-interface BaseballQaReplyMessage {
+export interface BaseballQaReplyMessage {
   sender_id: string | null;
   dedup_key?: string | null;
   payload?: unknown;

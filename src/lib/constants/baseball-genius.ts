@@ -146,6 +146,27 @@ export interface GeniusReplyPayload {
 /** picker 선택지 상한 — 서버·클라이 공유하는 계약. */
 export const GENIUS_PICKER_MAX_OPTIONS = 6;
 
+/**
+ * picker 카드를 비활성화해야 하는가.
+ *
+ * 재탭하면 서버는 dedup 200만 돌려주고 새 DM 이 안 생겨 typing 이 영원히 돌았다.
+ * 그래서 ①이미 최종 답변이 달린 과거 picker 와 ②이번에 이미 고른 picker 를 닫는다.
+ *
+ * ⚠️ `questionMessageId` 가 없으면 **fail-close**(disabled) 다 — 어느 질문을 가리키는지
+ * 모르면 재처리 대상을 특정할 수 없어 클릭을 받아도 아무 일도 못 한다.
+ *
+ * 이 판정을 페이지 인라인으로 두면 회귀 게이트가 실제 렌더 계약을 잡지 못해
+ * 공용 함수로 뽑았다(삼순 7차 P0-1).
+ */
+export function isGeniusPickerDisabled(
+  questionMessageId: number | undefined,
+  answeredQuestionIds: ReadonlySet<number>,
+  pickedQuestionIds: ReadonlySet<number>,
+): boolean {
+  if (!questionMessageId) return true;
+  return answeredQuestionIds.has(questionMessageId) || pickedQuestionIds.has(questionMessageId);
+}
+
 function isPickerOption(p: unknown): p is GeniusPickerOption {
   if (!p || typeof p !== "object") return false;
   const o = p as Record<string, unknown>;

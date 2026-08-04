@@ -25,6 +25,7 @@ import {
   BASEBALL_GENIUS_PINNED_ROOM_LEAVABLE,
   BASEBALL_GENIUS_USER_ID,
   geniusMascotSrc,
+  isGeniusPickerDisabled,
   isGeniusReplyPayload,
   mascotStateForReplyKind,
 } from "@/lib/constants/baseball-genius";
@@ -450,12 +451,12 @@ export default function DMChatPage() {
                         options={pickerOptions}
                         // 이미 최종 답변이 달린 과거 picker나 이번에 이미 고른 picker는 비활성화한다.
                         // 재탭하면 서버는 dedup 200만 돌려주고 새 DM이 안 생겨 typing이 영원히 돌았다.
-                        disabled={
-                          geniusReply?.question_message_id
-                            ? geniusAnsweredQuestionIds.has(geniusReply.question_message_id) ||
-                              geniusPickedQuestionIds.has(geniusReply.question_message_id)
-                            : true
-                        }
+                        // 판정은 공용 함수로 — 인라인이면 회귀 게이트가 실제 렌더 계약을 못 잡는다.
+                        disabled={isGeniusPickerDisabled(
+                          geniusReply?.question_message_id,
+                          geniusAnsweredQuestionIds,
+                          geniusPickedQuestionIds,
+                        )}
                         onPick={(option) => {
                           // 답변 도착 순서가 뒤집혀도 payload에 고정된 exact 원 질문만 재처리한다.
                           if (geniusReply?.question_message_id) {

@@ -22,6 +22,7 @@ import { vector } from "@electric-sql/pglite/vector";
 import {
   answerQuestion,
   BLOCKED_ANSWER,
+  HISTORY_HOLD_ANSWER,
   resolveRagPlayerCandidate,
   type GlossaryEntry,
   type LlmResult,
@@ -267,8 +268,10 @@ async function run(): Promise<void> {
       callRagLlm: async () => { throw new Error("unreachable"); },
     });
     const numeric = await answerQuestion("u1", "문보경 타율 알려줘", deps);
-    assert.equal(numeric.source, "blocked");
-    assert.equal(numeric.answer, BLOCKED_ANSWER);
+    // tier2 수치 서빙 금지 계약은 그대로. 라벨/문구만 `history_hold`(앱 기록 탭 안내)로
+    // 정확해졌다 — 기록 질문에 "룰/용어만 답할 수 있어요"는 틀린 안내다(삼순 7차 P0-2).
+    assert.equal(numeric.source, "history_hold");
+    assert.equal(numeric.answer, HISTORY_HOLD_ANSWER);
     console.log("PASS 수치 질문 → exact fallback (tier2 수치 서빙 금지)");
   }
 

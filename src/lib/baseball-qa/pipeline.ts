@@ -876,17 +876,30 @@ export function routeQuestion(
   if (SERVICE_WORDS.some((word) => normalized.includes(word))) return "service_redirect";
   const hasStat = STAT_WORDS.some((word) => tokenMatches(tokens, word));
   const hasTeam = TEAM_WORDS.some((word) => tokenMatches(tokens, word));
-  if (hasStat && (hasPlayerReference(tokens, players) || hasTeam)) return "blocked";
+  // ⚠️ **라벨은 `history_hold`**다 — 차단 범위는 한 글자도 안 바뀌고, 유저가 보는 문구만 달라진다
+  // (삼순 7차 P0-2). 여기 도달하는 건 "선수/구단 기록 질문인데 이 지표를 못 답하는" 경우다.
+  // 답할 수 있는 지표(타율·방어율…)는 `answerQuestion` 앞단 `kbo_structured` 가 이미 가로채고,
+  // 서술형은 선수 RAG 가 가로채다. 즉 여기까지 오는 건 `도루`·`출루율`·`OPS` 처럼
+  // **지원 allowlist 밖의 명백한 기록 질문**이다.
+  // `BLOCKED_ANSWER`("룰/용어만 답할 수 있어요")는 그런 질문에 틀린 안내다 — 이 PR 은
+  // 선수 RAG·시즌기록을 여는 PR 이고, 올바른 안내는 `HISTORY_HOLD_ANSWER`("기록은 아직
+  // 정확히 답하기 어려워요, 앱 기록 탭에서 보세요")다.
+  if (hasStat && (hasPlayerReference(tokens, players) || hasTeam)) return "history_hold";
   const supportedRuleTerm = isSupportedRuleTermQuestion(question, glossary, players);
-  if (
-    !supportedRuleTerm && (
-      HISTORY_CONTEXT_WORDS.some((word) => normalized.includes(word)) ||
+  if (!supportedRuleTerm) {
+    // 기록/역사 어휘(통산·성적·시즌…) 또는 team-bound 수치·순위 질의 — 범위 밖이 아니라
+    // **아직 못 답하는 기록 질문**이다. 문구는 `HISTORY_HOLD_ANSWER`(앱 기록 탭 안내).
     // "순위"는 team-bound일 때만 실시간 기록 질의다. 전역 차단어로 두면
-    // "순위 결정 규칙 알려줘"처럼 팀 없는 룰 질문까지 history_hold로 과차단된다.
-      (hasTeam && /누구|언제|몇|기록|성적|역사|순위/.test(normalized))
-    )
-  ) {
-    return "blocked";
+    // "순위 결정 규칙 알려줘"처럼 팀 없는 룰 질문까지 과차단된다.
+    if (
+      HISTORY_CONTEXT_WORDS.some((word) => normalized.includes(word)) ||
+      (hasTeam && /몇|기록|성적|역사|순위/.test(normalized))
+    ) {
+      return "history_hold";
+    }
+    // 반면 team-bound `누구/언제`(감독·창단연도 등)는 기록이 아니라 **범위 밖**이다.
+    // 앱 기록 탭을 안내해봐야 거기 없는 정보라 `BLOCKED_ANSWER` 가 맞는 문구다.
+    if (hasTeam && /누구|언제/.test(normalized)) return "blocked";
   }
   // 후속 문법(폐쇄집합 full-string 일치) + 새 야구 엔티티/주제 신호 부재일 때만 직전 토픽 연장.
   // 소스 turn이 없으면 차단이 아니라 되묻기로 종료한다 (spec §4.1 B4, §4.3 AC2·AC3·AC4).
