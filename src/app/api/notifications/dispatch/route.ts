@@ -104,8 +104,15 @@ async function sendNoReplyAutoReply(conversationId: string, accountId: string): 
   }
 }
 
-/** 쪽지 — 대화 상대(수신자). 운영팀 공지 포함(스펙 확정) */
-async function handleDm(record: Record<string, unknown>): Promise<Dispatch[]> {
+/**
+ * 쪽지 — 대화 상대(수신자). 운영팀 공지 포함(스펙 확정)
+ *
+ * ⚠️ `export` 인 이유 (삼순 #1102 P0-3): 게이트가 소스에서 조건식을 regex 로 꺼내
+ * 평가하면, 위쪽에 동일한 모양의 decoy guard 를 하나 심어두는 것만으로 실제 guard 를
+ * `if (false)` 로 무력화해도 GREEN 이 된다(삼순 mutation 실측). 그래서 **이 함수를
+ * 그대로 호출**해 반환 dispatch 개수로 계약을 검증한다.
+ */
+export async function handleDm(record: Record<string, unknown>): Promise<Dispatch[]> {
   const conversationId = record.conversation_id as string;
   const senderId = record.sender_id as string;
   const content = (record.content as string) || "";

@@ -16,6 +16,7 @@ import TeamBadge from "@/components/ui/TeamBadge";
 import { linkifyText } from "@/lib/linkify";
 import NewsClippingCard from "@/components/dm/NewsClippingCard";
 import GeniusTypingIndicator, { GeniusThinkingBubble } from "@/components/dm/GeniusTypingIndicator";
+import { resolveGeniusThinkingRender } from "@/lib/baseball-qa/thinking-bubble";
 import GeniusPlayerPicker from "@/components/dm/GeniusPlayerPicker";
 import { isNewsClippingPayload } from "@/types/news-clipping";
 import {
@@ -413,10 +414,16 @@ export default function DMChatPage() {
             // ⚠️ **최신 1개만** 붙는다 (하린아빠 2026-08-04 20:33 "세션 중 중복으로 발화할
             // 경우엔 윗쪽 생각중입니다를 삭제하고 최신것만 노출"). 실제 답변 메시지들은
             // 그대로 남고, 생각중 버블만 마지막 질문으로 갈아탄다.
-            const showThinking =
-              isBaseballGeniusConv && isMe && geniusThinkingQuestionId === msg.id;
-            const thinkingPending =
-              showThinking && geniusReplyStates[msg.id] !== undefined;
+            // 생각중 말풍선 표시 규칙은 `thinking-bubble.ts` SSOT 가 정한다.
+            // 인라인으로 두면 게이트가 컴포넌트 단품만 보게 되고, 여기를 통째로 지워도
+            // GREEN 이 된다(삼순 #1102 1차 P0-1 실측).
+            const thinking = resolveGeniusThinkingRender({
+              isGeniusConversation: isBaseballGeniusConv,
+              isMine: isMe,
+              messageId: msg.id,
+              thinkingMessageId: geniusThinkingQuestionId,
+              replyStates: geniusReplyStates,
+            });
             return (
               <Fragment key={msg.id}>
               <motion.div
@@ -504,7 +511,7 @@ export default function DMChatPage() {
                   </div>
                 </div>
               </motion.div>
-              {showThinking && <GeniusThinkingBubble pending={thinkingPending} />}
+              {thinking.show && <GeniusThinkingBubble pending={thinking.pending} />}
               </Fragment>
             );
           })

@@ -5,6 +5,7 @@ import { supabase } from "./client";
 import { useAuth } from "./AuthContext";
 import { useBlockedIds } from "./useBlock";
 import { OPERATOR_USER_ID } from "@/lib/constants/operator";
+import { selectGeniusThinkingMessageId } from "@/lib/baseball-qa/thinking-bubble";
 import {
   BASEBALL_GENIUS_NAME,
   BASEBALL_GENIUS_USER_ID,
@@ -328,12 +329,8 @@ export function useDMChat(conversationId: string) {
   // 여기서 값을 지우지 않으므로 답변 도착으로 outbox 가 비어도 말풍선이 유지되고,
   // 새 질문이 오면 그 질문으로 갈아타 이전 생각중은 화면에서 사라진다.
   useEffect(() => {
-    const ids = Object.keys(geniusReplyStates)
-      .map(Number)
-      .filter((id) => Number.isSafeInteger(id) && id > 0);
-    if (ids.length === 0) return;
-    const latest = Math.max(...ids);
-    setGeniusThinkingQuestionId((prev) => (prev !== null && prev >= latest ? prev : latest));
+    setGeniusThinkingQuestionId((prev) =>
+      selectGeniusThinkingMessageId(geniusReplyStates, prev));
   }, [geniusReplyStates]);
 
   useEffect(() => {
