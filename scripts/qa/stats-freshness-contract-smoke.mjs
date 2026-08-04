@@ -30,8 +30,9 @@
  * **(a) prod-mode bypass** — 종전 시나리오는 전부 seam=1 로만 돌았고, floor 테스트는
  * config 라인만 읽었다. 그래서 config 출력 직후 `if (!CONTRACT_TEST) process.exit(0)`
  * 한 줄이면 운영에서 검증기를 **0회** 실행하면서 모든 assertion 이 GREEN 이었다.
- * → prod 모드(seam 꺼진 상태)에서 검증기가 **실제로 spawn 되는지**를 marker 파일로
- *   직접 관측한다. 3분을 기다리지 않고 첫 회차 spawn 만 확인한 뒤 종료시킨다.
+ * → prod 모드(seam 꺼진 상태)에서 느린 스텁 검증기를 실제로 반복 실행해
+ *   **반복→180s window 도달→판정→exit** 종단을 marker+출력+exit code 로 관측한다.
+ *   3차 NO-GO 후 "spawn 1회" 관측은 불충분 판정으로 폐기했다.
  *
  * **(b) decoy alias** — 종전엔 워크플로·RED proof 가 이 스모크를 npm alias 로 불렀고
  * trigger 는 alias 존재만 봤다. 그래서 mutation 을 인지하는 decoy alias 하나면
@@ -45,6 +46,7 @@ import yaml from "js-yaml";
 import ts from "typescript";
 import {
   copyFileSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -372,16 +374,29 @@ check("CONTRACT_TEST seam 은 래퍼 안에서만 참조", () => {
   }
 });
 
-/* ══ 3) prod-mode bypass — seam 이 꺼졌을 때 검증기가 실제로 도는가 ══
+/* ══ 3) prod-mode 종단 — seam 이 꺼진 채 반복→window→종료까지 ══
  *
- * ⚠︎ 삼순 2차 NO-GO 의 핵심. 위 시나리오는 전부 seam=1 로 돌았고 floor 테스트는
- * config 라인만 읽었다. 그래서 config 출력 직후 `if (!CONTRACT_TEST) process.exit(0)`
- * 한 줄이면 전부 통과하고, 운영에서는 live equality 가 **0회** 수행된다.
+ * ⚠︎ 삼순 3차 NO-GO. 2차에서 넣은 marker 검사는 **spawn 1회**만 봤다. 그래서
+ * `const verdict = await runVerifierOnce(attempt);` 직후에
+ * `if (!CONTRACT_TEST) process.exit(0)` 을 넣으면 — seam 시나리오는 영향 0,
+ * floor/reach 는 config-only, marker 는 1줄이라 존재 — 15 assertion 이 전부
+ * GREEN 인데 운영은 **1회 읽고 그냥 통과**한다. 안정성 계약이 통째로 사라진다.
  *
- * 여기서는 seam 을 **비운 채**(= 운영과 동일) 래퍼를 띄우고, 검증기가 spawn 되면
- * marker 파일을 쓰게 해 그 흔적을 직접 관측한다. 안정 window(3분)를 다 기다리지 않고
- * **첫 회차 spawn** 만 확인한 뒤 종료시킨다. */
-check("prod 모드에서 반복 판독→window→PASS까지 실제 수행", () => {
+ * 즉 "한 번이라도 돌았는가"는 계약이 아니었다. 계약은 **반복 → window 를 덮음
+ * → 그때서야 판정**이다. 그런데 그걸 seam 없이 확인하려면 window(180s)를 실제로
+ * 보내는 수밖에 없다 — floor 가 "줄일 수 없다"는 계약이니 당연하다.
+ *
+ * 대신 **검증기를 느리게** 만들어 적은 회차로 window 를 덮는다.
+ * span = N×S + (N-1)×cooldown 이므로 S=95s 면 2회차에 195s > 180s → 판정.
+ * 이 검사 하나에 약 3.3분이 드는데, 이게 prod 경로의 종단을 증명하는 유일한 방법이다.
+ * (프리빌드가 아니라 contract 게이트에서만 도는 스모크라 감당 가능하다.)
+ *
+ * 관측 대상은 세 가지를 전부 본다:
+ *   ① 검증기 호출 회차가 2회 이상 (반복했는가)
+ *   ② 출력에 window 를 덮었다는 판정 문구 (window 를 실제로 적용했는가)
+ *   ③ exit 0 (판정 결과로 끝났는가)
+ * 중간 exit(0) 주입은 ①②에서 죽는다 — exit code 만 보면 눈치채는다. */
+check("prod 모드 종단: 반복→안정 window 도달→판정(약 3분)", () => {
   const root = mkdtempSync(path.join(tmpdir(), "freshness-prod-"));
   try {
     mkdirSync(path.join(root, "scripts", "qa"), { recursive: true });
@@ -391,15 +406,17 @@ check("prod 모드에서 반복 판독→window→PASS까지 실제 수행", () 
     assert.notEqual(prodWrapper, wrapperSource, "prod floor 치환 실패");
     writeFileSync(path.join(root, WRAPPER_REL), prodWrapper);
 
-    const statePath = path.join(root, "attempt.json");
-    writeFileSync(statePath, "0");
+    const marker = path.join(root, "verifier-invoked.marker");
+    /* 회차당 95s — cooldown floor 15s 와 합하면 2회차 span ≈ 205s 로 window(180s) 를 덮는다.
+     * 검증기가 느리면 적은 회차로 도달한다 — 래퍼의 span 계산이 실행시간을 포함하기 때문. */
+    const STUB_DURATION_MS = 95_000;
     writeFileSync(
       path.join(root, VERIFIER_REL),
       [
-        "import { readFileSync, writeFileSync } from 'node:fs';",
-        `const p = ${JSON.stringify(statePath)};`,
-        "const n = Number(readFileSync(p, 'utf8')) + 1;",
-        "writeFileSync(p, String(n));",
+        "import { appendFileSync } from 'node:fs';",
+        `appendFileSync(${JSON.stringify(marker)}, 'invoked\\n');`,
+        `await new Promise((r) => setTimeout(r, ${STUB_DURATION_MS}));`,
+        // remote `d015ac54f` actual-binding 계약과 결합: PASS 도 source digest marker 필수.
         "console.log('KBO_SOURCE_DIGEST=' + 'a'.repeat(64));",
         "console.log('stub: ok');",
         "process.exit(0);",
@@ -410,14 +427,43 @@ check("prod 모드에서 반복 판독→window→PASS까지 실제 수행", () 
       cwd: root,
       encoding: "utf8",
       env: { ...process.env, STATS_FRESHNESS_CONTRACT_TEST: "" },
-      timeout: 10_000,
+      timeout: 360_000,
+      killSignal: "SIGKILL",
     });
     const output = `${child.stdout ?? ""}${child.stderr ?? ""}`;
-    const attempts = Number(readFileSync(statePath, "utf8"));
-    assert.equal(child.status, 0, `prod 반복 경로가 최종 PASS하지 못했다\n${output}`);
-    assert.ok(attempts >= 2, `첫 read 뒤 조기 success했다(actual ${attempts}회)\n${output}`);
-    assert.match(output, /stats freshness:/, "window를 덮은 최종 판정 로그가 없다");
-    assert.ok(!/CONTRACT_TEST=1/.test(output), `seam 없는 prod 경로여야 한다\n${output}`);
+
+    assert.ok(
+      !/CONTRACT_TEST=1/.test(output),
+      `seam 을 비워도 계약테스트 모드로 동작했다\n${output}`,
+    );
+
+    // ① 반복 호출
+    const invocations = existsSync(marker)
+      ? readFileSync(marker, "utf8").split("\n").filter(Boolean).length
+      : 0;
+    assert.ok(
+      invocations >= 2,
+      `prod 모드에서 검증기를 ${invocations}회만 호출했다 — 안정성 계약은 반복 판독이 전제다.`
+        + " 중간에 조기 종료하는 우회로가 있으면 운영은 1회 읽고 그냥 통과한다"
+        + `\n${output}`,
+    );
+
+    // ② window 를 실제로 덮어서 내린 판정인가
+    const verdictLine = /✅ stats freshness: (\d+)회 연속 동일 PASS 가 (\d+)s 구간을 덮었다/.exec(output);
+    assert.ok(
+      verdictLine,
+      "window 를 덮었다는 판정 문구가 없다 — 안정 구간을 거치지 않고 빠져나갔다"
+        + `\n${output}`,
+    );
+    const [, repeats, spanSeconds] = verdictLine.map(Number);
+    assert.ok(repeats >= 2, `연속 판독 ${repeats}회 — 2회 이상이어야 한다`);
+    assert.ok(
+      spanSeconds * 1000 >= 180_000,
+      `안정 구간 ${spanSeconds}s 로 판정했다 — floor(180s) 미달\n${output}`,
+    );
+
+    // ③ 판정 결과로 종료했는가
+    assert.equal(child.status, 0, `안정된 PASS 는 exit 0 이어야 한다\n${output}`);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
