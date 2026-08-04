@@ -11,6 +11,10 @@
 //   transcode 하고 audio 옵션을 안 주면 AAC 패킷을 그대로 복사한다(AudioEncoder 불필요).
 // - 미지원/실패 환경은 null 반환 → 호출부가 기존 #813 백스톱 문구로 fallback.
 import { VENUE_STORY_MAX_BYTES } from "./types";
+// 박스 파서는 서버(ffprobe 검증 경로)도 같은 판정을 써야 해서 "use client" 없는 모듈로 분리했다.
+import { isFastStartMp4, MP4_HEAD_PROBE_BYTES } from "./mp4-boxes";
+
+export { parseTopLevelBoxTypes, isFastStartMp4 } from "./mp4-boxes";
 
 /** 압축 목표 용량 — 50MiB 하드캡(Supabase Storage) 대비 여유 5MiB */
 export const VENUE_VIDEO_COMPRESS_TARGET_BYTES = 45 * 1024 * 1024;
@@ -30,8 +34,8 @@ export const VENUE_VIDEO_MAX_EDGE_PX = 1920;
 export const VENUE_VIDEO_NORMALIZE_MAX_EDGE_PX = 1280;
 /** 720p H.264 정규화 목표 비트레이트(bps) — 화질/용량 절충. */
 export const VENUE_VIDEO_NORMALIZE_BITRATE_BPS = 3_500_000;
-/** faststart 판정에 읽을 파일 선두 바이트 수(상위 박스 순서 판별용). */
-export const VENUE_VIDEO_HEAD_PROBE_BYTES = 64 * 1024;
+/** faststart 판정에 읽을 파일 선두 바이트 수 — 서버와 동일 상수를 공유한다. */
+export const VENUE_VIDEO_HEAD_PROBE_BYTES = MP4_HEAD_PROBE_BYTES;
 /** 재시도 비트레이트 안전 마진(실측 초과율 보정에 곱해 오버슈트 재발 방지) */
 export const VENUE_VIDEO_RETRY_SAFETY = 0.85;
 /**
@@ -106,51 +110,6 @@ export function shouldNormalizeVideo(input: {
  */
 export function computeNormalizeBitrate(durationMs: number): number {
   return Math.min(VENUE_VIDEO_NORMALIZE_BITRATE_BPS, computeTargetVideoBitrate(durationMs));
-}
-
-/**
- * ISO-BMFF 선두 상위 박스 타입을 순서대로 파싱(순수 — 스모크 공유).
- * head 는 파일 앞부분만이므로 끝까지 못 읽는 것이 정상이다. 잘린 박스는 타입까지만 기록하고 종료.
- */
-export function parseTopLevelBoxTypes(head: Uint8Array): string[] {
-  const types: string[] = [];
-  const view = new DataView(head.buffer, head.byteOffset, head.byteLength);
-  let pos = 0;
-  while (pos + 8 <= head.length) {
-    let size = view.getUint32(pos);
-    const type = String.fromCharCode(
-      head[pos + 4],
-      head[pos + 5],
-      head[pos + 6],
-      head[pos + 7],
-    );
-    types.push(type);
-    let headerBytes = 8;
-    if (size === 1) {
-      if (pos + 16 > head.length) break; // 64bit 길이가 잘림 — 더 진행 불가
-      const hi = view.getUint32(pos + 8);
-      const lo = view.getUint32(pos + 12);
-      size = hi * 2 ** 32 + lo;
-      headerBytes = 16;
-    } else if (size === 0) {
-      break; // '파일 끝까지' 박스 — 이후 상위 박스 없음
-    }
-    if (size < headerBytes) break; // 손상
-    pos += size;
-  }
-  return types;
-}
-
-/**
- * faststart(moov 가 mdat 앞) 여부. true/false 로 확정하지 못하면 null(미상).
- * 미상은 fail-open 이 아니라 "정규화 결과를 선호"하는 쪽으로 쓰인다(chooseUploadVideo).
- */
-export function isFastStartMp4(head: Uint8Array): boolean | null {
-  for (const type of parseTopLevelBoxTypes(head)) {
-    if (type === "moov") return true;
-    if (type === "mdat") return false;
-  }
-  return null;
 }
 
 /**
@@ -410,6 +369,20 @@ export interface NormalizeResult {
   originalFastStart: boolean | null;
   originalBytes: number;
   normalizedBytes: number | null;
+  /**
+   * 정규화본을 못 쓴 이유(채택했으면 null).
+   * 호출부는 이 값이 null 이 아니면 원본이 느린 상태로 올라간다는 뜻으로 읽고
+   * 서버쪽 후속 최적화 큐(needs_transcode)로 반드시 넘겨야 한다(삼순 NO-GO ③).
+   */
+  fallbackReason:
+    | null
+    | "unsupported" // WebCodecs/avc 미지원 환경
+    | "track_dropped" // 트랙 유실 위험 — 무단 무음화 금지
+    | "deadline" // 실행 상한 초과(cancel)
+    | "no_output" // 인코딩 결과 버퍼 없음
+    | "not_faststart" // 산출물이 faststart 가 아님(runtime fail-close)
+    | "not_better" // 정규화본이 원본보다 나을 게 없음
+    | "error"; // 예외
 }
 
 /**
@@ -432,14 +405,18 @@ export async function normalizeVenueVideo(
   },
 ): Promise<NormalizeResult> {
   const originalFastStart = await probeFastStart(file);
-  const fallback: NormalizeResult = {
+  const fallbackWith = (
+    reason: NonNullable<NormalizeResult["fallbackReason"]>,
+    normalizedBytes: number | null = null,
+  ): NormalizeResult => ({
     file,
     normalized: false,
     originalFastStart,
     originalBytes: file.size,
-    normalizedBytes: null,
-  };
-  if (!isVideoCompressSupported()) return fallback;
+    normalizedBytes,
+    fallbackReason: reason,
+  });
+  if (!isVideoCompressSupported()) return fallbackWith("unsupported");
   try {
     const mb = await import("mediabunny");
     const {
@@ -453,7 +430,7 @@ export async function normalizeVenueVideo(
       canEncodeVideo,
     } = mb;
     ensureRealtimeEncoderRegistered(mb);
-    if (!(await canEncodeVideo("avc"))) return fallback;
+    if (!(await canEncodeVideo("avc"))) return fallbackWith("unsupported");
 
     const dims = computeScaledDimensions(
       opts.width,
@@ -482,15 +459,26 @@ export async function normalizeVenueVideo(
       ...(trim ? { trim } : {}),
       // audio 옵션 없음 = 원본 패킷 복사(iOS AudioEncoder 부재 전제 — compressVenueVideo 와 동일)
     });
-    if (!conversion.isValid || conversion.discardedTracks.length > 0) return fallback;
+    if (!conversion.isValid || conversion.discardedTracks.length > 0) {
+      return fallbackWith("track_dropped");
+    }
     conversion.onProgress = (p: number) => opts.onProgress?.(p);
     const completed = await executeWithDeadline(
       conversion,
       opts.deadlineMs ?? VENUE_VIDEO_COMPRESS_DEADLINE_MS,
     );
-    if (!completed) return fallback;
+    if (!completed) return fallbackWith("deadline");
     const buffer = output.target.buffer;
-    if (!buffer) return fallback;
+    if (!buffer) return fallbackWith("no_output");
+    // runtime fail-close — fastStart 옵션 '지정했음'을 믿지 않고 **실제 산출 바이트**의
+    // 상위 박스 순서를 읽어 moov 가 mdat 앞인지 확인한다(삼순 NO-GO ②).
+    // 메타 배치가 밀린 결과물은 첫 재생 지연을 그대로 가져가므로 채택하지 않는다.
+    const outHead = new Uint8Array(
+      buffer.slice(0, Math.min(buffer.byteLength, VENUE_VIDEO_HEAD_PROBE_BYTES)),
+    );
+    if (isFastStartMp4(outHead) !== true) {
+      return fallbackWith("not_faststart", buffer.byteLength);
+    }
     const out = new File([buffer], "venue-story.mp4", { type: "video/mp4" });
     const choice = chooseUploadVideo({
       originalBytes: file.size,
@@ -498,7 +486,7 @@ export async function normalizeVenueVideo(
       originalFastStart,
     });
     if (choice === "original") {
-      return { ...fallback, normalizedBytes: out.size };
+      return fallbackWith("not_better", out.size);
     }
     return {
       file: out,
@@ -506,8 +494,9 @@ export async function normalizeVenueVideo(
       originalFastStart,
       originalBytes: file.size,
       normalizedBytes: out.size,
+      fallbackReason: null,
     };
   } catch {
-    return fallback;
+    return fallbackWith("error");
   }
 }

@@ -386,6 +386,8 @@ export async function prepareVenueStoryMedia(
         height: probe.height,
         onProgress: (r) => onProgress?.(r * 0.4, "compress"),
       });
+      // 정규화 성공/실패는 서버에 보고하지 않는다 — 서버가 ffprobe 실측값으로 직접 판정한다
+      // (클라이언트 보고를 신뢰하면 위조/버그에 후속 최적화 큐가 통째로 뚫린다).
       if (norm.normalized) {
         uploadable = norm.file;
         compressed = true;
@@ -411,6 +413,8 @@ export async function prepareVenueStoryMedia(
       if (!out) return { error: VENUE_VIDEO_TOO_HEAVY_MSG };
       uploadable = out;
       compressed = true;
+      // 구제 압축은 cap 맞추기가 목적이고 faststart 를 보장하지 않는다 → 정규화로 치지 않고
+      // 서버 후속 최적화 큐에 그대로 올린다(clientNormalized 미설정 유지).
       // 메타/포스터는 실제 업로드되는 최종 파일 기준으로 재추출(해상도 변경 가능)
       try {
         probe = await probeVideo(out);

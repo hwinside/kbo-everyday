@@ -8,6 +8,7 @@
 
 import { execFile } from "child_process";
 import { promises as fs, constants as fsConstants } from "fs";
+import { isFastStartMp4, MP4_HEAD_PROBE_BYTES } from "./mp4-boxes";
 import { join } from "path";
 import { tmpdir } from "os";
 import ffprobeInstaller from "@ffprobe-installer/ffprobe";
@@ -82,6 +83,15 @@ export async function runFfprobe(filePath: string): Promise<FfprobeMeta | null |
 
 export type VenueVideoPromoteStatus = "active" | "archived";
 
+/**
+ * QA seam — **실제 배포되는 deps** 를 그대로 노출한다(복사본 아니임).
+ * 스모크가 fake deps 만 검증하면 서버 배선을 바꿔도 GREEN 이 된다(실제로 잡은 false-green).
+ * 이 export 로 venue-validate 스모크가 promoteRow 가 서버 실측값을 쓰는지 직접 검증한다.
+ */
+export function __qaRealDeps(promoteStatus: VenueVideoPromoteStatus): ValidateDeps {
+  return realDeps(promoteStatus);
+}
+
 function realDeps(promoteStatus: VenueVideoPromoteStatus): ValidateDeps {
   return {
     async download(bucket, path) {
@@ -116,7 +126,27 @@ function realDeps(promoteStatus: VenueVideoPromoteStatus): ValidateDeps {
         return false;
       }
     },
-    async promoteRow(id, meta) {
+    async inspectServeReadiness(filePath, meta) {
+      // 선두 바이트를 직접 읽어 moov/mdat 순서를 본다 — ffprobe 는 이 값을 안 준다.
+      let fastStart: boolean | null = null;
+      let handle: fs.FileHandle | null = null;
+      try {
+        handle = await fs.open(filePath, "r");
+        const buf = Buffer.alloc(MP4_HEAD_PROBE_BYTES);
+        const { bytesRead } = await handle.read(buf, 0, MP4_HEAD_PROBE_BYTES, 0);
+        fastStart = isFastStartMp4(new Uint8Array(buf.subarray(0, bytesRead)));
+      } catch {
+        fastStart = null; // 읽기 실패 = 미상 → needsServerTranscode 가 fail-close
+      } finally {
+        await handle?.close().catch(() => {});
+      }
+      const maxEdge =
+        meta.width != null && meta.height != null && meta.width > 0 && meta.height > 0
+          ? Math.max(meta.width, meta.height)
+          : null;
+      return { fastStart, maxEdge };
+    },
+    async promoteRow(id, meta, { needsTranscode }) {
       const { data, error } = await supabase
         .from("venue_stories")
         .update({
@@ -125,8 +155,9 @@ function realDeps(promoteStatus: VenueVideoPromoteStatus): ValidateDeps {
           duration_ms: meta.durationMs,
           width: meta.width,
           height: meta.height,
-          // 직접 추가 영상은 diary-only archived로 종결하며 공개 최적화 워커 대상이 아니다.
-          needs_transcode: promoteStatus === "active",
+          // 서버 실측 기반 후속 최적화 큐 — 경로별 고정값이 아니다.
+          // (종전: promoteStatus === "active" 로 고정 → diary_manual 은 느린 원본이어도 영구 미최적화)
+          needs_transcode: needsTranscode,
           ...(promoteStatus === "archived"
             ? { archived_at: new Date().toISOString() }
             : {}),
