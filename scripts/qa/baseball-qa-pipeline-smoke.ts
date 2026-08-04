@@ -2776,10 +2776,17 @@ async function verifyReplyKindMatchesActualPipelineOutcome() {
   assert.ok(declaredPaths.length >= 14, `MatchPath 파싱 실패(${declaredPaths.length}개)`);
 
   // ⚠️ **legacy 잔존 라벨** — 더 이상 생산되지 않지만 과거 행/payload 가 있어 삭제하지
-  // 못하는 라벨이다. 이 PR 이 룰베이스 선별 차단을 LLM 2차 가드로 바꾸면서
-  // `routeQuestion` 이 `history_hold` 를 더 이상 반환하지 않는다(origin/main 2곳 → 이 브랜치 0곳).
+  // 못하는 라벨을 등록하는 자리다. 지금은 비어 있다.
+  //
+  // 현재 등록: `history_hold`. 이 PR 이 룰베이스 선별 차단을 LLM 2차 가드로 바꾸면서
+  // `routeQuestion` 이 이 라벨을 더 이상 반환하지 않는다(origin/main 2곳 → 이 브랜치 0곳).
   // 그래도 DB allowlist · typed table · 관리자 배지는 **유지해야** 한다 — 과거 로그와
   // 이미 발송된 쪽지 payload 가 이 값을 갖고 있기 때문이다.
+  //
+  // ⚠️ 별도 보고 사항: 그 변화로 `qa:baseball-genius-context` 가 FAIL 중이다(prebuild 미포함).
+  // 라우팅 복원은 이 PR 의 삼순 blocker 범위 밖이라 여기서 건드리지 않는다 —
+  // 문구 정확성(기록 질문에 "룰/용어만 답해요" 를 보내는 것)은 별도 트랙으로 올린다.
+  //
   // 자동 추론 대신 **명시 등록제**로 둔다: 새 라벨을 여기 넣으려면 사람이 이유를 적어야 한다.
   const LEGACY_RETAINED = new Set<string>(["history_hold"]);
   const uncovered = declaredPaths.filter(
