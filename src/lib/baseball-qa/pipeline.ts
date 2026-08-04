@@ -20,7 +20,7 @@ import {
 } from "./rag/retrieve";
 import {
   composeSeasonRecordAnswer,
-  isSnapshotOnlyMetric,
+  isServedOnlyMetric,
   RECORD_MISSING_ANSWER,
   resolveSeasonRecord,
   resolveSeasonRecordIntent,
@@ -28,7 +28,7 @@ import {
   UNTRUSTED_METRIC_ANSWER,
   type SeasonRecordRow,
 } from "./stats/season-record";
-import { crossCheckSnapshotAgainstDb } from "./stats/snapshot-record";
+import { crossCheckServedAgainstDb } from "./stats/served-record";
 import {
   BASEBALL_GENIUS_DAILY_LIMIT,
   BASEBALL_GENIUS_FALLBACK_ANSWER,
@@ -275,7 +275,7 @@ export interface QaDeps {
    * 말하는 것이 가장 나쁜 결과**이므로 화면과 같은 소스를 본다.
    * 미주입이면 해당 지표 경로가 비활성이라 기존 동작 그대로다.
    */
-  fetchSnapshotRecord?: (kboId: string) => Promise<SeasonRecordRow[]>;
+  fetchServedRecord?: (kboId: string) => Promise<SeasonRecordRow[]>;
   /** 기록 stale 판정 기준 시각 (테스트 주입). 기본값 `Date.now()`. */
   now?: () => number;
   /**
@@ -463,14 +463,45 @@ const NAMED_STAT_QUERY =
  */
 const TEAM_NUMERIC_STAT_WORDS = ["팀타율", "팀방어율", "팀평균자책", "팀홈런", "순위", "승률"];
 const NUMERIC_VALUE_ASK = /몇|얼마/;
+/**
+ * **값을 달라는 요청어**. 구체 지표어와 함께 나올 때만 수치 질문으로 본다.
+ *
+ * ⚠️ 지표어 단독으로 닫으면 `삼성 라이온즈 홈런 잘 치는 팀이야?` 같은 **서술·평가**
+ * 구단 질문까지 fail-close 된다 — P0-1(구단 과차단) 회귀다. 게이트가 실제로 잡았다.
+ */
+const STAT_VALUE_ASK = /몇|얼마|알려|보여|알고\s*싶|궁금/;
+
+/**
+ * **구체 지표어** — 이 단어가 구단과 함께 나오면 의문사(`몇`·`얼마`) 없이도 수치 질문이다.
+ *
+ * ⚠️ 왜 `STAT_WORDS` 전체를 쓰지 않는가 (삼순 #1100 3차 P0-2 + 2차 회귀 실측):
+ * `STAT_WORDS` 에는 `기록`·`스탯` 같은 **총칭어**가 섞여 있다. 총칭어까지 이 축에 넣으면
+ * `두산 기록 중 유명한 이야기 알려줘` 같은 서술형 구단 질문이 fail-close 로 끌려가
+ * P0-1(구단 과차단) 회귀가 된다 — 2차에서 실제로 그렇게 죽었다.
+ *
+ * 반대로 `홈런`·`팀 타율`·`승패` 는 총칭이 아니라 **값을 지목한 것**이다. `알려줘`·`보여줘`
+ * 처럼 의문사가 없어도 유저가 기대하는 건 숫자이고, 팀 단위 집계 정본이 없는 이상
+ * generic LLM 은 그 숫자를 지어낸다(삼순 실측: `LG 홈런 알려줘` → `source=llm` +
+ * `홈런 999개, 99승 1패` 통과). 그래서 의문사 유무와 무관하게 닫는다.
+ */
+const TEAM_CONCRETE_STAT_WORDS = [
+  "타율", "방어율", "평균자책", "출루율", "장타율", "ops", "war", "wrc",
+  "홈런", "안타", "타점", "도루", "승", "승수", "패", "승패", "세이브", "홀드", "삼진",
+];
 
 function isTeamNumericQuestion(normalized: string, tokens: string[], hasStat: boolean): boolean {
   // ① 팀 수치 전용 어휘는 그 자체로 확정이다(`팀타율`·`순위`·`승률`).
   //    `STAT_WORDS` 에 없는 단어라 `hasStat` 에 의존하면 안 잡힌다(실측: 첫 구현이 여기서 샜다).
   if (TEAM_NUMERIC_STAT_WORDS.some((word) => tokenMatches(tokens, word))) return true;
-  // ② 일반 지표어 + **값을 요구하는 의도**(`몇`·`얼마`)일 때만 수치 질문이다.
-  //    `알려`·`보여` 까지 넣으면 `두산 기록 중 유명한 이야기 알려줘` 같은 서술형 구단 질문이
-  //    fail-close 로 끌려간다 — 그건 P0-1(구단 과차단) 회귀다. 실제로 첫 구현이 그렇게 죽었다.
+  // ② 구체 지표어 + 값 요청어 — `몇`·`얼마` 없는 자연어 변형을 잡는다.
+  //    `LG 홈런 알려줘`·`KIA 팀 타율 알려줘`·`삼성 승패 알려줘`(삼순 3차 P0-2 실표본).
+  //    반대로 `삼성 라이온즈 홈런 잘 치는 팀이야?` 는 요청어가 없어 그대로 통과한다.
+  if (
+    TEAM_CONCRETE_STAT_WORDS.some((word) => tokenMatches(tokens, word)) &&
+    STAT_VALUE_ASK.test(normalized)
+  ) return true;
+  // ③ 남은 총칭어(`기록`·`스탯`)는 **값을 요구하는 의도**가 함께 있을 때만 수치 질문이다.
+  //    여기까지 완화하지 않으면 서술형 구단 질문이 과차단된다(위 주석 참조).
   return hasStat && NUMERIC_VALUE_ASK.test(normalized);
 }
 
@@ -1011,12 +1042,39 @@ export function resolvePickedPlayerCandidate(
   };
 }
 
+/**
+ * 구단 답변 고유의 야구 신호어.
+ *
+ * ⚠️ 왜 필요한가 (삼순 #1100 3차 P0-1 실측):
+ * `hasBaseballSignal` 은 **LLM 답변 본문**의 최종 안전판이다. 그런데 신호어가 룰·용어
+ * 어휘(`BASEBALL_WORDS`)뿐이라, 프롬프트에서 구단을 열어줘도 정상 구단 답변이 여기서
+ * 다시 폐기됐다:
+ *   `LG 트윈스 감독은 염경엽입니다.`            → unsure
+ *   `LG 트윈스는 1990년 창단한 KBO 구단입니다.` → unsure
+ * 즉 라우터·프롬프트를 다 고쳐도 **유저는 여전히 차단 문구를 받는다**.
+ *
+ * 그래서 구단 답변에 자연스럽게 나타나는 신호를 여기 더한다. 어휘 범위를 무작정 넓히지
+ * 않고 **구단·리그 고유명사 축**만 여는다 — `날씨`·`맛집` 같은 범위밖 답변은 여전히
+ * 이 신호가 없어 걸러진다(문장에 구단명이 섞여도 NOT_BASEBALL sentinel 이 앞서 닫는다).
+ */
+// ⚠️ `팀`·`시즌` 같은 범용어는 **일부러 넣지 않는다** — "우리 팀 회식 메뉴" 처럼 범위밖
+// 문장을 야구 신호로 오인하게 된다. 구단·리그 고유명사만 연다.
+const TEAM_ANSWER_SIGNAL_WORDS: readonly string[] = [
+  "kbo", "구단", "프로야구", "연고", "창단", "모구단", "한국시리즈", "포스트시즌",
+  "정규시즌", "우승", "준우승", "리그", "구장", "홈구장",
+  ...TEAM_WORDS,
+];
+
 function hasBaseballSignal(value: string): boolean {
   const tokens = questionTokens(value);
   return BASEBALL_WORDS.some((word) => tokenMatches(tokens, word)) ||
     ["경기", "공격", "수비", "주루", "득점", "홈플레이트", "마운드"].some((word) =>
       tokenMatches(tokens, word)
-    );
+    ) ||
+    // 구단 답변 축(삼순 #1100 3차 P0-1). `mentionsTeam` 은 구단 지명을, 나머지는
+    // 구단·리그 고유명사를 본다.
+    mentionsTeam(tokens) ||
+    TEAM_ANSWER_SIGNAL_WORDS.some((word) => tokenMatches(tokens, word));
 }
 
 /**
@@ -1269,23 +1327,23 @@ async function answerSeasonRecordQuestion(
   // ⚠️ 두 소스를 섞는 이상 **한쪽만 갱신된 상태**가 위험하다. 봇이 앱과 다른 숫자를
   // 말하는 게 최악이므로, 스냅샷으로 답할 때는 DB row 와 겹치는 지표를 교차검증하고
   // 하나라도 어긋나면 답하지 않는다.
-  const useSnapshot = intent.query.table === "batter" && isSnapshotOnlyMetric(intent.query.metric);
-  if (useSnapshot && !deps.fetchSnapshotRecord) {
+  const useServed = intent.query.table === "batter" && isServedOnlyMetric(intent.query.metric);
+  if (useServed && !deps.fetchServedRecord) {
     // 주입이 없으면 이 지표는 아직 답할 수 없다 — 없는 컬럼을 DB 에서 읽어 봐야 missing 이다.
     return settle(RECORD_MISSING_ANSWER, "blocked", "blocked");
   }
 
   let rows: SeasonRecordRow[];
   try {
-    rows = useSnapshot
-      ? await deps.fetchSnapshotRecord!(candidate.entityId)
+    rows = useServed
+      ? await deps.fetchServedRecord!(candidate.entityId)
       : await deps.fetchSeasonRecord!(intent.query.table, candidate.entityId);
   } catch {
     // 조회 실패를 "기록 없음"으로 둔갑하지 않는다 — 재시도 가능한 실패다.
     return settle(BLOCKED_ANSWER, "error", "error");
   }
 
-  if (useSnapshot) {
+  if (useServed) {
     // 교차검증: 같은 선수의 DB row 와 겹치는 정수 지표가 전부 일치해야 한다.
     // DB 조회가 실패하거나 행이 없으면 **확인 못 한 것**이므로 답하지 않는다.
     let dbRows: SeasonRecordRow[] = [];
@@ -1296,7 +1354,7 @@ async function answerSeasonRecordQuestion(
     } catch {
       return settle(BLOCKED_ANSWER, "error", "error");
     }
-    const cross = crossCheckSnapshotAgainstDb(rows[0], dbRows);
+    const cross = crossCheckServedAgainstDb(rows[0], dbRows);
     if (cross.kind !== "ok") return settle(RECORD_MISSING_ANSWER, "blocked", "blocked");
   }
 

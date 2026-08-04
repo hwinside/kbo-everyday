@@ -33,8 +33,9 @@ export const BATTER_METRICS = {
   tb: { label: "루타", aliases: ["루타", "총루타"], kind: "count" },
   rbi: { label: "타점", aliases: ["타점"], kind: "count" },
   // ⚠️ 아래 5개는 `player_stats_batter` 테이블에 **컬럼이 없다**. 앱이 실제로 서빙하는
-  // 정본은 `stats-2026-batters.json`(=`/api/stats` 가 반환하는 그 데이터)이라
-  // 조회 소스를 그쪽으로 분리한다(`SNAPSHOT_ONLY_BATTER_METRICS`).
+  // 정본은 `/api/stats` 응답이라 조회 소스를 그쪽으로 분리한다
+  // (`SERVED_ONLY_BATTER_METRICS`). static JSON 이 아니다 — `/api/stats` 는 static 위에
+  // live Runner map 을 덮어쓴다(삼순 3차 P0-3 실측: 이주형 sb static 4 vs 앱 0).
   //
   // 하린아빠 2026-08-04 20:42 "도루 OPS가 왜 없어? / 우리가 다 제공하고 있는 데이터인데".
   // 실제로 선수 상세·팀 기록·타이틀 탭이 전부 이 값을 표시하고 있었다. 내가 DB 테이블
@@ -47,21 +48,23 @@ export const BATTER_METRICS = {
 } as const;
 
 /**
- * DB 테이블이 아니라 **스냅샷 JSON**에서 읽어야 하는 타자 지표.
+ * DB 테이블이 아니라 **앱이 서빙하는 `/api/stats` 응답**에서 읽어야 하는 타자 지표.
  *
  * `player_stats_batter` 는 KBO/Naver cron upsert 결과인데 sb·cs·obp·slg·ops 컬럼이 없다.
- * 반면 `/api/stats` 는 `stats-2026-batters.json` 을 정본으로 이 값들을 서빙하고 있고,
- * 앱 화면(선수 상세·팀 기록·타이틀)이 그 숫자를 그대로 보여준다.
+ * 반면 앱 화면(선수 상세·팀 기록·타이틀)은 `/api/stats` 로 이 값들을 보여주고 있다.
  *
- * ⚠️ 봇이 앱과 **다른 숫자**를 말하면 그게 가장 나쁜 결과다. 그래서 화면이 쓰는 소스를
- * 그대로 쓰고, 겹치는 지표(games·avg·hr·rbi…)는 DB row 와 교차검증해 두 소스가 갈라지면
- * fail-close 한다(`resolveSnapshotRecord`).
+ * ⚠️ **static JSON 을 직접 읽으면 안 된다**(삼순 #1100 3차 P0-3). `/api/stats` 는 static row
+ * 위에 전페이지 live Runner map 을 마지막에 덮어쓴다. Production 실측(2026-08-04):
+ * 이주형(`50167`) `sb` — static JSON `4` vs 앱 서빙 `0`. static 을 읽으면 봇이 앱과
+ * 다른 숫자를 말한다 — 이 기능의 유일한 계약이 깨진다. 그래서 앱과 **같은 최종 경계**를 본다.
+ *
+ * 겹치는 지표(games·hits·hr·rbi…)는 DB row 와 교차검증해 두 소스가 갈라지면 fail-close 한다.
  */
-export const SNAPSHOT_ONLY_BATTER_METRICS = ["sb", "cs", "obp", "slg", "ops"] as const;
-export type SnapshotOnlyBatterMetric = (typeof SNAPSHOT_ONLY_BATTER_METRICS)[number];
+export const SERVED_ONLY_BATTER_METRICS = ["sb", "cs", "obp", "slg", "ops"] as const;
+export type ServedOnlyBatterMetric = (typeof SERVED_ONLY_BATTER_METRICS)[number];
 
-export function isSnapshotOnlyMetric(metric: string): metric is SnapshotOnlyBatterMetric {
-  return (SNAPSHOT_ONLY_BATTER_METRICS as readonly string[]).includes(metric);
+export function isServedOnlyMetric(metric: string): metric is ServedOnlyBatterMetric {
+  return (SERVED_ONLY_BATTER_METRICS as readonly string[]).includes(metric);
 }
 
 /** 답변 가능한 투수 지표. Naver 폴백이 매 갱신마다 직접 주는 필드만. */
