@@ -80,7 +80,9 @@ function ffprobeJson(path) {
     "ffprobe",
     [
       "-v", "error",
-      "-show_entries", "stream=codec_name,codec_type,width,height",
+      // start_time/duration 은 A/V sync drift 검증용, side_data 는 display matrix rotation 용
+      "-show_entries", "stream=codec_name,codec_type,width,height,start_time,duration",
+      "-show_entries", "stream_side_data=rotation",
       "-show_entries", "format=duration,size",
       "-of", "json",
       path,
@@ -88,6 +90,25 @@ function ffprobeJson(path) {
     { encoding: "utf8" },
   );
   return JSON.parse(out);
+}
+
+/** 스트림의 display matrix rotation(도). 없으면 null. */
+function streamRotation(stream) {
+  const sd = stream?.side_data_list;
+  if (!Array.isArray(sd)) return null;
+  for (const d of sd) {
+    if (typeof d?.rotation === "number") return d.rotation;
+  }
+  return null;
+}
+
+/** 회전을 반영한 표시 치수(90/270이면 w↔h). */
+function displayDims(stream) {
+  const rot = streamRotation(stream) ?? 0;
+  const swapped = Math.abs(rot) % 180 === 90;
+  return swapped
+    ? { width: stream.height, height: stream.width }
+    : { width: stream.width, height: stream.height };
 }
 
 try {
@@ -126,7 +147,12 @@ try {
     },
     {
       name: "rotated",
-      // 아이폰 세로 촬영은 rotate 메타로 오는 경우가 많다.
+      // 아이폰 세로 촬영은 display matrix rotation 으로 온다.
+      //
+      // ⚠️ 삼순 지적(2026-08-04): 처음에 `-metadata:s:v:0 rotate=90` 을 썼는데
+      // 그건 **display matrix 를 전혀 만들지 않는다**(직접 재현해 ffprobe 확인: side_data 없음).
+      // 즉 회전을 전혀 테스트하지 않는 fixture 였다. 생성 후 `-display_rotation` 으로
+      // 메타를 입혀 실제 side_data rotation 을 만든다(아래 rotateArgs).
       args: [
         "-f", "lavfi", "-i", "testsrc2=size=1920x1080:rate=30",
         "-f", "lavfi", "-i", "sine=frequency=550:sample_rate=44100",
@@ -134,17 +160,29 @@ try {
         "-c:v", "libx264", "-preset", "ultrafast",
         "-b:v", "15M", "-maxrate", "15M", "-bufsize", "30M",
         "-c:a", "aac", "-b:a", "128k", "-shortest",
-        "-metadata:s:v:0", "rotate=90",
       ],
+      // 2패스: 생성본에 display matrix 를 입힌다(재인코딩 없이 -c copy).
+      applyDisplayRotation: 90,
       durationMs: 5_000,
       width: 1920,
       height: 1080,
+      expectSourceRotation: 90,
     },
   ];
 
   for (const f of fixtures) {
     f.path = join(tmp, `${f.name}.mp4`);
-    execFileSync("ffmpeg", ["-y", ...f.args, f.path], { stdio: "ignore" });
+    if (f.applyDisplayRotation != null) {
+      const rawPath = join(tmp, `${f.name}.raw.mp4`);
+      execFileSync("ffmpeg", ["-y", ...f.args, rawPath], { stdio: "ignore" });
+      execFileSync(
+        "ffmpeg",
+        ["-y", "-display_rotation", String(f.applyDisplayRotation), "-i", rawPath, "-c", "copy", f.path],
+        { stdio: "ignore" },
+      );
+    } else {
+      execFileSync("ffmpeg", ["-y", ...f.args, f.path], { stdio: "ignore" });
+    }
     f.bytes = statSync(f.path).size;
     f.head = new Uint8Array(readFileSync(f.path));
     f.probe = ffprobeJson(f.path);
@@ -321,6 +359,15 @@ export const getSafeSession = async () => null;
       const srcV = f.probe.streams.find((s) => s.codec_type === "video");
       ok(`${f.name}: 입력 코덱이 ${f.expectSourceCodec}`, srcV?.codec_name === f.expectSourceCodec);
     }
+    // 회전 fixture 는 **입력이 정말 회전되었는지**를 먼저 고정한다.
+    // 이걸 안 하면 회전 없는 fixture 로 회전 보존을 "검증했다"고 착각한다(삼순 지적, 2026-08-04).
+    const srcVideo = f.probe.streams.find((s) => s.codec_type === "video");
+    if (f.expectSourceRotation != null) {
+      ok(
+        `${f.name}: 입력에 display matrix rotation=${f.expectSourceRotation} 존재 (실제=${streamRotation(srcVideo)})`,
+        Math.abs(streamRotation(srcVideo) ?? 0) === f.expectSourceRotation,
+      );
+    }
 
     // 이 환경이 이 fixture 를 디코딩할 수 있는가로 기대 계약이 갈린다.
     // headless chromium 은 HEVC 를 못 읽는다 → 그 경우는 "안전 fallback"이 계약이다.
@@ -349,6 +396,60 @@ export const getSafeSession = async () => null;
       `${f.name}: duration 보존 (${outDur.toFixed(2)}s ≈ ${(f.durationMs / 1000).toFixed(1)}s)`,
       Math.abs(outDur - f.durationMs / 1000) < 1.0,
     );
+
+    // ── 회전 보존 ──
+    // 회전은 저장 방식이 둘이다: display matrix 를 그대로 옮기거나(rotation 유지),
+    // 픽셀을 실제로 돌려 버리거나(rotation 0 + w/h 교체). 둘 다 유저가 보는 방향은 같다.
+    // 그래서 "표시 방향(가로/세로)이 보존되는가"를 계약으로 잡는다.
+    if (f.expectSourceRotation != null) {
+      const srcDisp = displayDims(srcVideo);
+      const outDisp = displayDims(vStream);
+      const srcPortrait = srcDisp.height > srcDisp.width;
+      const outPortrait = outDisp.height > outDisp.width;
+      console.log(
+        `  회전: 입력 ${srcVideo.width}x${srcVideo.height} rot=${streamRotation(srcVideo)} → 표시 ${srcDisp.width}x${srcDisp.height} / ` +
+          `출력 ${vStream.width}x${vStream.height} rot=${streamRotation(vStream)} → 표시 ${outDisp.width}x${outDisp.height}`,
+      );
+      ok(
+        `${f.name}: 표시 방향 보존 (입력 ${srcPortrait ? "세로" : "가로"} → 출력 ${outPortrait ? "세로" : "가로"})`,
+        srcPortrait === outPortrait,
+      );
+      const srcAspect = srcDisp.width / srcDisp.height;
+      const outAspect = outDisp.width / outDisp.height;
+      ok(
+        `${f.name}: 표시 종횡비 보존 (${srcAspect.toFixed(3)} ≈ ${outAspect.toFixed(3)})`,
+        Math.abs(srcAspect - outAspect) < 0.05,
+      );
+      ok(
+        `${f.name}: 표시 기준 긴 변 ≤ ${NORMALIZE_MAX_EDGE}px (실제=${Math.max(outDisp.width, outDisp.height)})`,
+        Math.max(outDisp.width, outDisp.height) <= NORMALIZE_MAX_EDGE,
+      );
+    }
+
+    // ── A/V sync ──
+    // "오디오 트랙이 있다 + 전체 duration 이 비슷하다"만으로는 싱크를 증명하지 못한다
+    // (삼순 지적). 스트림별 start_time 정렬과 duration drift 를 따로 본다.
+    {
+      const vStart = parseFloat(vStream?.start_time ?? "NaN");
+      const aStart = parseFloat(aStream?.start_time ?? "NaN");
+      const vDur = parseFloat(vStream?.duration ?? outProbe.format.duration);
+      const aDur = parseFloat(aStream?.duration ?? outProbe.format.duration);
+      const startSkew = Math.abs(vStart - aStart);
+      const durDrift = Math.abs(vDur - aDur);
+      console.log(
+        `  A/V: start v=${vStart.toFixed(3)} a=${aStart.toFixed(3)} (skew ${startSkew.toFixed(3)}s) · ` +
+          `dur v=${vDur.toFixed(3)} a=${aDur.toFixed(3)} (drift ${durDrift.toFixed(3)}s)`,
+      );
+      ok(
+        `${f.name}: A/V start_time 정렬 ≤ 50ms (실제 ${(startSkew * 1000).toFixed(0)}ms)`,
+        Number.isFinite(startSkew) && startSkew <= 0.05,
+      );
+      ok(
+        `${f.name}: A/V duration drift ≤ 150ms (실제 ${(durDrift * 1000).toFixed(0)}ms)`,
+        Number.isFinite(durDrift) && durDrift <= 0.15,
+      );
+    }
+
     // prepared 메타가 실제 업로드본과 일치해야 서버 검증/뷰어 레이아웃이 어긋나지 않는다
     ok(
       `${f.name}: prepared 해상도가 실제 업로드본과 일치 (${res.prepared.width}x${res.prepared.height})`,

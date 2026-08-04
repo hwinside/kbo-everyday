@@ -320,7 +320,8 @@ async function probe() {
 //  - pending(즉시 경로 fault 잔여): private staging 에서 다운로드 → ffprobe 재검증
 //    → 통과: 720p 인코딩 후 공개 videos 버킷 게시 + **CAS(status='pending' 조건)** 로 active 승격
 //    → 거부: CAS 로 removed. CAS 패배 = 즉시 경로가 먼저 처리(중복 claim 방지) → skip.
-//  - active+needs_transcode(이미 공개된 원본): 720p 백그라운드 최적화만(실패해도 노출 유지).
+//  - active/archived + needs_transcode(이미 게시된 원본): 720p 백그라운드 최적화만.
+//    status 는 자기 값을 CAS 조건으로 유지하고(archived는 archived 로 닫는다) 실패해도 노출 유지.
 async function processVenueStories() {
   if (!HAS_FFPROBE) {
     // ffprobe 부재 = 서버 권위 duration 검증 전면 skip → pending 영상이 방치되므로 green 으로 넘기지 않고 관제
@@ -334,13 +335,20 @@ async function processVenueStories() {
     );
     return { done: 0, removed: 0, failed: (pendingCount ?? 0) > 0 ? (pendingCount ?? 1) : 0, updateErrors: 0, ffprobeMissing: true };
   }
-  // pending(즉시 경로 fault 잔여, staging 원본) + active·needs_transcode(720p 대기) 동시 스캔
+  // pending(즉시 경로 fault 잔여, staging 원본)
+  //  + active·needs_transcode(공개 트레이 720p 대기)
+  //  + archived·needs_transcode(다이어리 전용 — 2026-08-04 추가)
+  //
+  // archived 를 빼놓았던 것이 삼순 blocker ③의 실제 구멍이었다: 서버가 needs_transcode=true 를
+  // 써도 조회가 안 거줘가서 diary_manual 느린 원본은 한 번도 처리되지 않았다.
   // query-guard: bounded -- 워커 1회당 고정 LIMIT 영상만 처리
   const { data: rows, error } = await supabase
     .from("venue_stories")
     .select("id, status, media_url, media_bucket, media_path, transcode_attempts, attendance_source")
     .eq("media_type", "video")
-    .or("and(status.eq.active,needs_transcode.eq.true),status.eq.pending")
+    .or(
+      "and(status.eq.active,needs_transcode.eq.true),and(status.eq.archived,needs_transcode.eq.true),status.eq.pending",
+    )
     .lt("transcode_attempts", MAX_ATTEMPTS)
     .order("created_at", { ascending: true })
     .limit(LIMIT);

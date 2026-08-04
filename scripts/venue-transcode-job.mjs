@@ -61,6 +61,10 @@ export async function processVenueJob(row, deps) {
   const isPending = row.status === "pending";
   const pendingTargetStatus =
     row.attendance_source === "diary_manual" ? "archived" : "active";
+  // 이미 게시된 행의 최적화 경로는 status 를 절대 바꾸지 않고 그 값을 CAS 조건으로 쓴다.
+  // active(공개 트레이)와 archived(다이어리 전용) 둘 다 대상 — 종전에는 active 만 처리해
+  // diary_manual 느린 원본이 영구 미최적화로 남았다(삼순 blocker ③, 2026-08-04).
+  const publishedStatus = row.status;
   // A안 A1: pending staging 뿐 아니라 active private(venue-media) 원본도 공개 URL 이 없다
   // → storage API 로 다운로드. 레거시 공개 버킷(videos) active 만 media_url 다운로드.
   const usePrivateDownload = isPending || PRIVATE_VENUE_BUCKETS.has(row.media_bucket);
@@ -118,8 +122,8 @@ export async function processVenueJob(row, deps) {
         width: meta.width,
         height: meta.height,
         duration_ms: meta.durationMs,
-        // active 경로는 status 재기록 금지 — 처리 중 신고/어드민이 removed로 내린 상태 보존
-        // (불변식: worker 최적화 update는 removed 영상을 절대 되살리지 않는다)
+        // 게시된 경로(active/archived)는 status 재기록 금지 — 처리 중 신고/어드민이
+        // removed로 내린 상태 보존(불변식: worker 최적화 update는 removed 를 되살리지 않는다)
         ...(isPending ? {
           status: pendingTargetStatus,
           ...(pendingTargetStatus === "archived"
@@ -133,8 +137,9 @@ export async function processVenueJob(row, deps) {
     if (isPending) updQuery = updQuery.eq("status", "pending");
     else {
       updQuery = updQuery
-        .eq("status", "active")
-        .eq("needs_transcode", true); // active 최적화 CAS: 이미 완료된 행 재처리 방지
+        // 자기 status 를 그대로 CAS 조건으로 — archived 는 archived 로 닫는다(삼순 blocker ③).
+        .eq("status", publishedStatus)
+        .eq("needs_transcode", true); // 최적화 CAS: 이미 완료된 행 재처리 방지
     }
     const { data: updRows, error: updErr } = await updQuery.select("id");
     if (updErr) throw new Error(`row 갱신 실패: ${updErr.message}`);
@@ -148,7 +153,7 @@ export async function processVenueJob(row, deps) {
     if (row.media_path !== newPath) {
       try { await storage.from(row.media_bucket).remove([row.media_path]); } catch {}
     }
-    console.log(`  ✅ venue ${row.id} ${fmtMB(inBytes)}→${fmtMB(outBytes)} ${isPending ? `${pendingTargetStatus}(복구승격)` : "active"}`);
+    console.log(`  ✅ venue ${row.id} ${fmtMB(inBytes)}→${fmtMB(outBytes)} ${isPending ? `${pendingTargetStatus}(복구승격)` : publishedStatus}`);
     return { result: "done", inBytes, outBytes, isPending };
 
   } catch (e) {
@@ -169,14 +174,20 @@ export async function processVenueJob(row, deps) {
         .eq("id", row.id)
         .eq("status", "pending"); // CAS: 즉시경로가 이미 active로 승격했으면 0-row skip
     } else {
-      // active 경로: status 재기록 절대 금지 — 처리 중 신고/어드민이 removed로 내린 상태 보존
-      // (불변식: worker catch 도 removed 영상을 active로 되살리지 않는다)
-      catchStatus = "active"; // 로그 출력용(실제 DB 기록 아님)
+      // 게시된 경로(active/archived): status 재기록 절대 금지 — 처리 중 신고/어드민이
+      // removed로 내린 상태 보존(불변식: worker catch 도 removed 를 되살리지 않는다).
+      // 재시도 소진 시에도 status 는 그대로 두고 needs_transcode 만 내려 무한 재큐를 막는다
+      // — 이미 유저에게 보이는 영상이므로 최적화 실패를 이유로 내리면 안 된다.
+      catchStatus = publishedStatus; // 로그 출력용(실제 status 기록 아님)
+      const exhausted = attempts >= maxAttempts;
       failQuery = db
         .from("venue_stories")
-        .update({ transcode_attempts: attempts }) // status 제외 — CAS 미일치 행 보존
+        .update({
+          transcode_attempts: attempts, // status 제외 — CAS 미일치 행 보존
+          ...(exhausted ? { needs_transcode: false } : {}), // 소진 → 큐에서 내림(원본 노출 유지)
+        })
         .eq("id", row.id)
-        .eq("status", "active")       // CAS: removed 된 행이면 0-row → skip
+        .eq("status", publishedStatus) // CAS: removed 된 행이면 0-row → skip
         .eq("needs_transcode", true);  // CAS: 다른 worker가 이미 완료했으면 skip
     }
     const { data: failRows, error: updErr } = await failQuery.select("id");

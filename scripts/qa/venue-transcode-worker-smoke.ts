@@ -19,7 +19,7 @@
  *  (I) active catch CAS DB 오류 → updateError
  *  (K) diary_manual pending 복구 → archived (active 공개 금지)
  */
-import { writeFileSync, mkdtempSync, rmSync } from "fs";
+import { writeFileSync, mkdtempSync, rmSync, readFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -439,6 +439,192 @@ async function run() {
     } finally {
       rmSync(work, { recursive: true, force: true });
     }
+  }
+
+  // ── archived(다이어리 전용) 최적화 경로 — 삼순 blocker ③ (2026-08-04) ──
+  // 사고: 서버가 needs_transcode=true 를 써도 워커가 active 만 처리해서 diary_manual 느린
+  // 원본은 한 번도 최적화되지 않았다. 여기서는 archived 가 실제로 처리되고,
+  // **archived 상태를 유지한 채** 닫히는지를 검증한다.
+  console.log("[L] archived+needs_transcode 최적화 — archived 유지한 채 flag 해제");
+  {
+    const work = mkdtempSync(join(tmpdir(), "vt-test-"));
+    try {
+      const state: DbRowState = {
+        id: 8,
+        status: "archived",
+        needs_transcode: true,
+        transcode_attempts: 0,
+      };
+      const row = {
+        id: 8,
+        status: "archived",
+        needs_transcode: true,
+        attendance_source: "diary_manual",
+        media_url: "",
+        media_bucket: "venue-media",
+        media_path: "venue-stories/G1/U1/manual.mp4",
+        transcode_attempts: 0,
+      };
+      const storage = makeMockStorage({ downloadData: Buffer.alloc(1000, 0xab) });
+      const res = await processVenueJob(row, {
+        db: makeMockDb(state),
+        storage,
+        // private 버킷이라 media_url 다운로드를 쓰면 안 된다
+        runner: makeMockRunner(work, { downloadThrows: true }),
+        inPath: join(work, "in.mp4"),
+        outPath: join(work, "out.mp4"),
+      });
+      ok("L: result=done(archived 도 실제로 처리된다)", res.result === "done");
+      ok("L: status archived 유지(공개 active 로 올리지 않는다)", state.status === "archived");
+      ok("L: needs_transcode false 로 닫힘", state.needs_transcode === false);
+      ok("L: attempts 증가", state.transcode_attempts === 1);
+      ok(
+        "L: 720p 산출물이 private venue-media 버킷에 저장",
+        Object.keys(storage._uploaded).some((k) => k.startsWith("venue-media/")),
+      );
+    } finally {
+      rmSync(work, { recursive: true, force: true });
+    }
+  }
+
+  console.log("[M] archived 처리 중 removed 로 내려가면 → CAS 0-row(resurrect 금지)");
+  {
+    const work = mkdtempSync(join(tmpdir(), "vt-test-"));
+    try {
+      const state: DbRowState = {
+        id: 9,
+        status: "removed",
+        needs_transcode: true,
+        transcode_attempts: 0,
+      };
+      const row = {
+        id: 9,
+        status: "archived",
+        needs_transcode: true,
+        attendance_source: "diary_manual",
+        media_url: "",
+        media_bucket: "venue-media",
+        media_path: "venue-stories/G1/U1/manual.mp4",
+        transcode_attempts: 0,
+      };
+      const res = await processVenueJob(row, {
+        db: makeMockDb(state),
+        storage: makeMockStorage({ downloadData: Buffer.alloc(1000, 0xab) }),
+        runner: makeMockRunner(work, { downloadThrows: true }),
+        inPath: join(work, "in.mp4"),
+        outPath: join(work, "out.mp4"),
+      });
+      ok("M: result=claimedElsewhere", res.result === "claimedElsewhere");
+      ok("M: removed 상태 유지(archived 로 되살리지 않음)", state.status === "removed");
+    } finally {
+      rmSync(work, { recursive: true, force: true });
+    }
+  }
+
+  console.log("[N] 게시된 행 재시도 소진 — status 유지 + 큐에서만 내린다(무한 재큐 방지)");
+  {
+    for (const publishedStatus of ["active", "archived"] as const) {
+      const work = mkdtempSync(join(tmpdir(), "vt-test-"));
+      try {
+        // attempts=2, maxAttempts=3 → 3회째 실패 = 소진
+        const state: DbRowState = {
+          id: 10,
+          status: publishedStatus,
+          needs_transcode: true,
+          transcode_attempts: 2,
+        };
+        const row = {
+          id: 10,
+          status: publishedStatus,
+          needs_transcode: true,
+          media_url: "",
+          media_bucket: "venue-media",
+          media_path: "venue-stories/G1/U1/v.mp4",
+          transcode_attempts: 2,
+        };
+        const res = await processVenueJob(row, {
+          db: makeMockDb(state),
+          storage: makeMockStorage({
+            downloadData: Buffer.alloc(1000, 0xab),
+            uploadError: { message: "영구 실패" },
+          }),
+          runner: makeMockRunner(work, { downloadThrows: true }),
+          inPath: join(work, "in.mp4"),
+          outPath: join(work, "out.mp4"),
+          maxAttempts: 3,
+        });
+        ok(`N(${publishedStatus}): result=failed`, res.result === "failed");
+        ok(
+          `N(${publishedStatus}): 유저 노출 상태 보존(removed 로 내리지 않음)`,
+          state.status === publishedStatus,
+        );
+        ok(
+          `N(${publishedStatus}): 재시도 소진 → needs_transcode=false 로 큐에서 내림`,
+          state.needs_transcode === false,
+        );
+        ok(`N(${publishedStatus}): attempts=3 기록`, state.transcode_attempts === 3);
+      } finally {
+        rmSync(work, { recursive: true, force: true });
+      }
+    }
+  }
+
+  console.log("[O] 게시된 행 재시도 잔여 — 큐 유지(다음 런이 다시 집는다)");
+  {
+    const work = mkdtempSync(join(tmpdir(), "vt-test-"));
+    try {
+      const state: DbRowState = {
+        id: 11,
+        status: "archived",
+        needs_transcode: true,
+        transcode_attempts: 0,
+      };
+      const row = {
+        id: 11,
+        status: "archived",
+        needs_transcode: true,
+        media_url: "",
+        media_bucket: "venue-media",
+        media_path: "venue-stories/G1/U1/v.mp4",
+        transcode_attempts: 0,
+      };
+      const res = await processVenueJob(row, {
+        db: makeMockDb(state),
+        storage: makeMockStorage({
+          downloadData: Buffer.alloc(1000, 0xab),
+          uploadError: { message: "일시 오류" },
+        }),
+        runner: makeMockRunner(work, { downloadThrows: true }),
+        inPath: join(work, "in.mp4"),
+        outPath: join(work, "out.mp4"),
+        maxAttempts: 3,
+      });
+      ok("O: result=failed", res.result === "failed");
+      ok("O: 소진 전이라 needs_transcode=true 유지(재처리 가능)", state.needs_transcode === true);
+      ok("O: status archived 유지", state.status === "archived");
+    } finally {
+      rmSync(work, { recursive: true, force: true });
+    }
+  }
+
+  // 워커 조회 술어 계약 — archived 가 실제 스캔 대상인가(transcode-videos.mjs)
+  // 상위 스크립트는 supabase env 를 모듈 로드 시점에 요구해 import 할 수 없으므로
+  // 조회 술어 문자열을 직접 읽어 archived 분기가 존재하는지를 고정한다.
+  console.log("[P] 워커 조회 술어에 archived 분기 결속");
+  {
+    const src = readFileSync(
+      join(import.meta.dirname, "..", "transcode-videos.mjs"),
+      "utf8",
+    );
+    ok(
+      "P: .or() 술어가 archived+needs_transcode 를 포함",
+      /and\(status\.eq\.archived,needs_transcode\.eq\.true\)/.test(src),
+    );
+    ok(
+      "P: active+needs_transcode 분기도 유지",
+      /and\(status\.eq\.active,needs_transcode\.eq\.true\)/.test(src),
+    );
+    ok("P: pending 분기도 유지", /status\.eq\.pending/.test(src));
   }
 
   console.log(`\n결과: ${pass} pass / ${fail} fail`);
