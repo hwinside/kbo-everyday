@@ -773,6 +773,7 @@ for (const [variableName, expected] of Object.entries(SIDE_BINDINGS)) {
   });
 
   let starterPropUses = 0;
+  let starterNameUses = 0;
   for (const reference of references) {
     assert.equal(
       pageChecker.getSymbolAtLocation(reference),
@@ -791,7 +792,9 @@ for (const [variableName, expected] of Object.entries(SIDE_BINDINGS)) {
       starterPropUses += 1;
       continue;
     }
-    // 허용 B: `<ident>.name` 읽기 — 대입문 좌변이 아니어야 한다.
+    // 허용 B: `<ident>.name` 읽기 — 단, *어디서* 읽는지까지 고정한다.
+    // 읽기를 무조건 허용하면 크관 `starterNames`를 상수 `"WRONG_AWAY"`로 바꿔도
+    // allowlist만 만족되어 GREEN이었다(삼순 6차 지적). 허용 지점은 둘뿐이다.
     if (
       ts.isPropertyAccessExpression(parent)
       && parent.expression === reference
@@ -801,6 +804,30 @@ for (const [variableName, expected] of Object.entries(SIDE_BINDINGS)) {
         && parent.parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment
         && parent.parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment)
     ) {
+      const grand = parent.parent;
+      // B-1: starterOnly 존재 판정 — `const awayName = awayLineupStarter.name;`
+      const isExistenceProbe =
+        ts.isVariableDeclaration(grand)
+        && ts.isIdentifier(grand.name)
+        && grand.name.text === `${expected.side}Name`
+        && grand.initializer === parent;
+      // B-2: 크관 `starterNames={{ away: ..., home: ... }}`
+      const isKgwanStarterName =
+        ts.isPropertyAssignment(grand)
+        && ts.isIdentifier(grand.name)
+        && grand.name.text === expected.side
+        && grand.initializer === parent
+        && ts.isObjectLiteralExpression(grand.parent)
+        && ts.isJsxExpression(grand.parent.parent)
+        && ts.isJsxAttribute(grand.parent.parent.parent)
+        && ts.isIdentifier(grand.parent.parent.parent.name)
+        && grand.parent.parent.parent.name.text === "starterNames";
+      assert.ok(
+        isExistenceProbe || isKgwanStarterName,
+        `\`${variableName}.name\` 읽기는 starterOnly 존재판정 또는 크관 starterNames.${expected.side} 에서만 허용된다`
+          + ` (실제: \`${grand.getText(pageSource).replace(/\s+/g, " ").slice(0, 70)}\`)`,
+      );
+      starterNameUses += 1;
       continue;
     }
     // 그 외 전부 fail-close — computed 접근, spread, 재할당, Object.assign/Reflect.set,
@@ -815,6 +842,48 @@ for (const [variableName, expected] of Object.entries(SIDE_BINDINGS)) {
     starterPropUses,
     2,
     `\`${variableName}\`는 starterOnly/LineupTab 두 곳의 \`startingPitcher\`로 직접 전달되어야 한다`,
+  );
+  assert.equal(
+    starterNameUses,
+    2,
+    `\`${variableName}.name\`은 starterOnly 존재판정 1회 + 크관 starterNames 1회, 총 2회 읽혀야 한다`,
+  );
+}
+
+// 역방향 — 크관 `starterNames`의 away/home이 *상수나 다른 식*으로 대체되지 않았는지.
+// 위 순회는 "선언 참조가 어디에 쓰이나"를 보므로, 참조 자체를 지우면 개수로만 잡힌다.
+// 여기서는 소비 지점 쪽에서 역으로 "무엇이 들어있나"를 확인한다.
+const starterNamesAttrs = collectAll(
+  (node) =>
+    ts.isJsxAttribute(node)
+    && ts.isIdentifier(node.name)
+    && node.name.text === "starterNames",
+) as ts.JsxAttribute[];
+assert.equal(starterNamesAttrs.length, 1, "크관 `starterNames` 소비 지점은 1개여야 한다");
+const starterNamesInit = starterNamesAttrs[0].initializer;
+assert.ok(
+  starterNamesInit
+    && ts.isJsxExpression(starterNamesInit)
+    && starterNamesInit.expression
+    && ts.isObjectLiteralExpression(starterNamesInit.expression),
+  "`starterNames`는 객체 리터럴이어야 한다",
+);
+const starterNamesObject = (starterNamesInit as ts.JsxExpression)
+  .expression as ts.ObjectLiteralExpression;
+for (const [variableName, expected] of Object.entries(SIDE_BINDINGS)) {
+  const prop = starterNamesObject.properties.find(
+    (p): p is ts.PropertyAssignment =>
+      ts.isPropertyAssignment(p) && ts.isIdentifier(p.name) && p.name.text === expected.side,
+  );
+  assert.ok(prop, `크관 \`starterNames\`에 \`${expected.side}\` 프로퍼티가 있어야 한다`);
+  const init = prop!.initializer;
+  assert.ok(
+    ts.isPropertyAccessExpression(init)
+      && init.name.text === "name"
+      && ts.isIdentifier(init.expression)
+      && init.expression.text === variableName,
+    `크관 \`starterNames.${expected.side}\`는 \`${variableName}.name\`이어야 한다`
+      + `(실제: \`${init.getText(pageSource).replace(/\s+/g, " ").slice(0, 60)}\`)`,
   );
 }
 
@@ -864,10 +933,8 @@ assert.ok(
 // 개수·존재만 보면 같은 문장을 setData/setSnapshot 뒤로 옆겨도 GREEN이 되고,
 // 그 상태에서는 늦게 도착한 구세대 응답이 이미 커밋된 뒤다(삼순 2차 지적).
 // 그래서 위치 관계를 고정한다: fetch 파싱 뒤 ∧ 모든 커밋 지점보다 앞.
-assert.ok(
-  /const responseGeneration = \+\+responseGenerationRef\.current;/.test(detailHook),
-  "응답 generation은 요청당 1회 증가해야 한다",
-);
+// (initializer 검사는 아래 AST 구간으로 이관했다. 정규식은 주석의 dead text를 읽어
+// 실제 선언에서 `++`를 빼도 GREEN이었다 — 삼순 6차 지적.)
 
 /* 캡처 위치도 계약이다. 캡처를 첫 `await` 뒤로만 옮겨도 guard→commit 순서는 그대로라
  * 전체 prebuild가 GREEN이었다(삼순 3차). 그러면 A→B 요청에서 B가 먼저 완료할 때
@@ -954,6 +1021,40 @@ assert.ok(
 assert.ok(
   (generationDecl.parent as ts.VariableDeclarationList).flags & ts.NodeFlags.Const,
   "`responseGeneration`은 재할당 불가한 const여야 한다",
+);
+
+// initializer 의미도 AST로 결속한다. 위치·유일성만 보면 `= responseGenerationRef.current`로
+// **증가를 빼도** GREEN이다(모든 poll이 같은 generation을 공유 → stale 커밋).
+// 구 정규식은 주석에 같은 문장을 넣으면 그걸 읽어 통과시켰다(삼순 6차 지적).
+const generationInit = generationDecl.initializer;
+assert.ok(
+  generationInit
+    && ts.isPrefixUnaryExpression(generationInit)
+    && generationInit.operator === ts.SyntaxKind.PlusPlusToken,
+  "`responseGeneration`은 전위 증가(`++`)로 캐프처되어야 한다"
+    + "(증가가 없으면 모든 poll이 같은 generation을 공유해 stale 응답이 커밋된다)",
+);
+const generationOperand = (generationInit as ts.PrefixUnaryExpression).operand;
+assert.ok(
+  ts.isPropertyAccessExpression(generationOperand)
+    && generationOperand.name.text === "current"
+    && ts.isIdentifier(generationOperand.expression)
+    && generationOperand.expression.text === "responseGenerationRef",
+  "`responseGeneration`은 `++responseGenerationRef.current` 여야 한다",
+);
+// ref 심볼까지 동일성 확인 — 동명의 로컬 ref를 따로 만들어 가리면 무의미해진다.
+const refDecls = collectIn(
+  hookSource,
+  (node) =>
+    ts.isVariableDeclaration(node)
+    && ts.isIdentifier(node.name)
+    && node.name.text === "responseGenerationRef",
+) as ts.VariableDeclaration[];
+assert.equal(refDecls.length, 1, "`responseGenerationRef` 선언은 정확히 1개여야 한다");
+assert.equal(
+  hookChecker.getSymbolAtLocation((generationOperand as ts.PropertyAccessExpression).expression),
+  hookChecker.getSymbolAtLocation(refDecls[0].name),
+  "generation 캐프처는 훅의 유일한 `responseGenerationRef`를 증가시켜야 한다",
 );
 
 // ③ 첫 실제 await보다 앞인가.
