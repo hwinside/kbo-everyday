@@ -25,10 +25,15 @@
 import { createClient } from "@supabase/supabase-js";
 import { readFileSync, writeFileSync, rmSync, statSync, mkdtempSync } from "fs";
 import { resolve, join, basename } from "path";
+import { pathToFileURL } from "url";
 import { tmpdir } from "os";
 import { execFileSync } from "child_process";
 import { createHash } from "crypto";
-import { processVenueJob } from "./venue-transcode-job.mjs";
+import {
+  runVenueTranscodeBatch,
+  transcodeVenueVideo,
+  createVenueWorkerRunner,
+} from "./venue-transcode-job.mjs";
 
 // ── env (.env.local 수동 파싱, dotenv 의존성 없음 — award-event-badges.mjs 패턴) ──
 try {
@@ -40,16 +45,30 @@ try {
     }
   }
 } catch {
-  console.warn("⚠️  .env.local 못 읽음 — 환경변수가 이미 주입돼 있다고 가정");
+  if (process.env.NEXT_PUBLIC_SUPABASE_URL) {
+    console.warn("⚠️  .env.local 못 읽음 — 환경변수가 이미 주입돼 있다고 가정");
+  }
 }
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+// 이 파일을 **직접 실행**했을 때만 env 누락으로 종료한다.
+// 종전에는 모듈 로드 시점에 process.exit(1) 을 해서 스모크가 import 조차 못 했고,
+// 그래서 상위 배선(batch 호출·runner 조립)이 소스 검사로만 검증됐다 — batch dead-call 이나
+// transcodeVenueVideo 우회가 GREEN 이었던 원인(삼순 재현, 2026-08-04).
+const IS_MAIN =
+  Boolean(process.argv[1]) && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
-  console.error("❌ NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY 누락");
-  process.exit(1);
+  // import(스모크) 경로에서는 조용히 — 직접 실행만 fail-close
+  if (IS_MAIN) {
+    console.error("❌ NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY 누락");
+    process.exit(1);
+  }
 }
-const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+const supabase = createClient(
+  SUPABASE_URL || "http://localhost:54321",
+  SERVICE_ROLE_KEY || "import-only-placeholder",
+);
 
 // ── args ──
 const argv = process.argv.slice(2);
@@ -96,25 +115,6 @@ function optimizedPath(origPath) {
 // ── 직관 라이브(venue_stories) 헬퍼 ──
 let HAS_FFPROBE = true;
 
-/** ffprobe 로 duration(ms)/해상도 추출 */
-function probeVideoMeta(input) {
-  const out = execFileSync("ffprobe", [
-    "-v", "error",
-    "-select_streams", "v:0",
-    "-show_entries", "stream=width,height",
-    "-show_entries", "format=duration",
-    "-of", "json", input,
-  ]).toString();
-  const j = JSON.parse(out);
-  const s = (j.streams && j.streams[0]) || {};
-  const dur = parseFloat((j.format && j.format.duration) || "0");
-  return {
-    durationMs: Math.round((isNaN(dur) ? 0 : dur) * 1000),
-    width: s.width || null,
-    height: s.height || null,
-  };
-}
-
 async function downloadTo(url, dest) {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`download ${res.status}`);
@@ -123,24 +123,6 @@ async function downloadTo(url, dest) {
   return buf.length;
 }
 
-/** ffmpeg 720p(긴 변 ≤1280) H.264 + faststart. 출력 파일 경로 반환. */
-function transcode(input, output) {
-  execFileSync(
-    "ffmpeg",
-    [
-      "-y", "-i", input,
-      // 1280x1280 박스에 맞춰 축소(확대 안 함) 후 짝수 보정 (libx264 yuv420p 요구)
-      "-vf", "scale='min(1280,iw)':'min(1280,ih)':force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2",
-      "-c:v", "libx264", "-profile:v", "high", "-preset", "veryfast", "-crf", "27",
-      "-pix_fmt", "yuv420p",
-      "-c:a", "aac", "-b:a", "128k",
-      "-movflags", "+faststart",
-      output,
-    ],
-    { stdio: ["ignore", "ignore", "pipe"] }
-  );
-  return output;
-}
 
 /** posts.video_urls 에서 origUrl → newUrl 스왑 (순서/다른 항목 보존). 최신값 재조회 후 갱신. */
 async function swapVideoUrl(postId, origUrl, newUrl) {
@@ -225,7 +207,7 @@ async function processJobs() {
       const outPath = join(work, "out.mp4");
       try {
         const inBytes = await downloadTo(job.original_url, inPath);
-        transcode(inPath, outPath);
+        transcodeVenueVideo(inPath, outPath);
         const outBytes = statSync(outPath).size;
         const ratio = ((1 - outBytes / inBytes) * 100).toFixed(0);
 
@@ -299,7 +281,7 @@ async function probe() {
       const inPath = join(work, "in.mp4"), outPath = join(work, "out.mp4");
       try {
         const inBytes = await downloadTo(s.url, inPath);
-        transcode(inPath, outPath);
+        transcodeVenueVideo(inPath, outPath);
         const outBytes = statSync(outPath).size;
         totIn += inBytes; totOut += outBytes;
         console.log(`post ${s.postId}: ${fmtMB(inBytes)} → ${fmtMB(outBytes)} (절감 ${((1 - outBytes / inBytes) * 100).toFixed(0)}%)`);
@@ -320,11 +302,28 @@ async function probe() {
 //  - pending(즉시 경로 fault 잔여): private staging 에서 다운로드 → ffprobe 재검증
 //    → 통과: 720p 인코딩 후 공개 videos 버킷 게시 + **CAS(status='pending' 조건)** 로 active 승격
 //    → 거부: CAS 로 removed. CAS 패배 = 즉시 경로가 먼저 처리(중복 claim 방지) → skip.
-//  - active+needs_transcode(이미 공개된 원본): 720p 백그라운드 최적화만(실패해도 노출 유지).
-async function processVenueStories() {
-  if (!HAS_FFPROBE) {
+//  - active/archived + needs_transcode(이미 게시된 원본): 720p 백그라운드 최적화만.
+//    status 는 자기 값을 CAS 조건으로 유지하고(archived는 archived 로 닫는다) 실패해도 노출 유지.
+export async function processVenueStories(overrides = {}) {
+  // 배선을 주입 가능하게 둔다 — 스모크가 실제 이 함수를 실행해
+  // "batch 를 진짜 부르는가 / runner 에 transcodeVenueVideo 를 싣는가"를 행동으로 본다.
+  const {
+    runBatch = runVenueTranscodeBatch,
+    makeRunner = createVenueWorkerRunner,
+    db = supabase,
+    hasFfprobe = HAS_FFPROBE,
+    maxAttempts = MAX_ATTEMPTS,
+    limit = LIMIT,
+    // ↓ batch **내부** seam. 스모크가 runBatch 를 가로채지 않고도
+    //   기본 바인딩(runVenueTranscodeBatch)이 실제로 행을 처리하는지 볼 수 있게 뚚는다.
+    //   종전에는 테스트가 항상 runBatch 를 주입해서, 기본값을 0건 반환 스텅으로
+    //   바꿔도 131/0 GREEN 이었다(삼순 R6 ① 독립 재현 2026-08-04).
+    selectTargets,
+    runJob,
+  } = overrides;
+  if (!hasFfprobe) {
     // ffprobe 부재 = 서버 권위 duration 검증 전면 skip → pending 영상이 방치되므로 green 으로 넘기지 않고 관제
-    const { count: pendingCount } = await supabase
+    const { count: pendingCount } = await db
       .from("venue_stories")
       .select("id", { count: "exact", head: true })
       .eq("media_type", "video")
@@ -334,56 +333,73 @@ async function processVenueStories() {
     );
     return { done: 0, removed: 0, failed: (pendingCount ?? 0) > 0 ? (pendingCount ?? 1) : 0, updateErrors: 0, ffprobeMissing: true };
   }
-  // pending(즉시 경로 fault 잔여, staging 원본) + active·needs_transcode(720p 대기) 동시 스캔
-  // query-guard: bounded -- 워커 1회당 고정 LIMIT 영상만 처리
-  const { data: rows, error } = await supabase
-    .from("venue_stories")
-    .select("id, status, media_url, media_bucket, media_path, transcode_attempts, attendance_source")
-    .eq("media_type", "video")
-    .or("and(status.eq.active,needs_transcode.eq.true),status.eq.pending")
-    .lt("transcode_attempts", MAX_ATTEMPTS)
-    .order("created_at", { ascending: true })
-    .limit(LIMIT);
-  if (error) throw new Error(`venue_stories 조회 실패: ${error.message}`);
-  if (!rows || rows.length === 0) { console.log("직관 라이브 최적화 대기 영상 없음."); return; }
-
-  const work = mkdtempSync(join(tmpdir(), "kbo-venue-"));
-  let done = 0, removed = 0, failed = 0, updateErrors = 0, claimedElsewhere = 0;
-  try {
-    for (const row of rows) {
-      const inPath = join(work, "in" + (basename(row.media_path).match(/\.[^.]+$/)?.[0] || ".mp4"));
-      const outPath = join(work, "out.mp4");
-      try {
-        const res = await processVenueJob(row, {
-          db: supabase,
-          storage: supabase.storage,
-          runner: {
-            probe: probeVideoMeta,
-            transcode,
-            downloadToFile: downloadTo,
-          },
-          inPath,
-          outPath,
-          maxAttempts: MAX_ATTEMPTS,
-        });
-        if (res.result === "done") done++;
-        else if (res.result === "removed") removed++;
-        else if (res.result === "claimedElsewhere") claimedElsewhere++;
-        else if (res.result === "updateError") updateErrors++;
-        else if (res.result === "failed") failed++;
-      } finally {
-        for (const f of [inPath, outPath]) { try { rmSync(f); } catch {} }
-      }
-    }
-  } finally {
-    try { rmSync(work, { recursive: true, force: true }); } catch {}
-  }
-  console.log(`직관 라이브 처리: ✅${done} 🚫${removed} ❌${failed} ⏭️${claimedElsewhere} (상태갱신오류 ${updateErrors})`);
-  // 실패 건/상태기록 실패가 있으면 지속 pending/removed 실패 관제를 위해 비정상 종료 시그널을 올린다.
-  return { done, removed, failed, updateErrors };
+  // 조회 + 행별 처리 orchestration 전체를 runVenueTranscodeBatch(공유 seam)가 소유한다.
+  // 종전에는 이 루프가 여기 인라인이라, `for (const row of rows)` 를 `for (const row of [])` 로
+  // 바꿔 선택 결과를 전부 버려도 required gate 가 GREEN 이었다(삼순 독립 재현 2026-08-04).
+  // query-guard: bounded -- 워커 1회당 고정 LIMIT 영상만 처리(seam 내부에서 limit 결속)
+  return runBatch({
+    db,
+    storage: db.storage,
+    runner: makeRunner({ downloadToFile: downloadTo }),
+    ...(selectTargets ? { selectTargets } : {}),
+    ...(runJob ? { runJob } : {}),
+    makeWorkDir: () => mkdtempSync(join(tmpdir(), "kbo-venue-")),
+    pathFor: (workDir, row) => ({
+      inPath: join(workDir, "in" + (basename(row.media_path).match(/\.[^.]+$/)?.[0] || ".mp4")),
+      outPath: join(workDir, "out.mp4"),
+    }),
+    cleanupFiles: (paths) => {
+      for (const f of paths) { try { rmSync(f); } catch {} }
+    },
+    cleanupWorkDir: (workDir) => {
+      try { rmSync(workDir, { recursive: true, force: true }); } catch {}
+    },
+    maxAttempts,
+    limit,
+    log: (msg) => console.log(msg),
+  });
 }
 
-// ── main ──
+// 배치 결과 → 관제 판정. main 의 non-zero 종료 조건을 **함수로 고정**한다.
+// 종전에는 이 조건이 main IIFE 안 인라인이라(= import 불가) 스모크가 검증할 수 없었고,
+// runBatch 가 failed/updateErrors 를 0 으로 덮어 거짓 성공을 반환해도 required gate 가 GREEN 이었다
+// (삼순 R5 P1-3 독립 재현 2026-08-04).
+export function venueRunHasFailure(res) {
+  const r = res || {};
+  return (r.failed || 0) > 0 || (r.updateErrors || 0) > 0 || Boolean(r.ffprobeMissing);
+}
+
+export function venueRunFailureMessage(res) {
+  const r = res || {};
+  return `❌ 직관 라이브 처리 이상 — 실패 ${r.failed} / 상태기록오류 ${r.updateErrors}${r.ffprobeMissing ? " / ffprobe 부재" : ""} — 관제 non-zero 종료`;
+}
+
+/**
+ * main 의 **직관 라이브 단계 전체** — 처리 실행 + 관제 판정 + non-zero 종료.
+ *
+ * ⚠️ 이 seam 이 생긴 이유 (삼순 R6 P0-3, 2026-08-04).
+ *
+ * 종전에는 이 판정이 main IIFE 안 인라인 `if (venueRunHasFailure(venueRes))` 였다. 스모크는
+ * `venueRunHasFailure()` 를 **따로** 불러 계약만 확인했을 뿐, main 이 그 결과로 실제 종료하는지는
+ * 검증하지 못했다. 그래서 그 줄을 `if (false && venueRunHasFailure(venueRes))` 로 바꿔
+ * **배치가 실패해도 exit 0** 이 되는 회귀가 131/0 GREEN 으로 통과했다(삼순 독립 재현).
+ *
+ * 이젠 판정+종료를 이 함수가 소유하고, 스모크가 **실제 자식 프로세스로 실행해 종료코드를 읽는다**.
+ * 종료를 주입으로 갈아끼울 수 없게 `process.exit` 는 여기 고정한다.
+ */
+export async function runVenueStage(overrides = {}) {
+  const { process: processFn = processVenueStories } = overrides;
+  console.log("\n── 직관 라이브(venue_stories) 영상 처리 ──");
+  const venueRes = (await processFn()) || { failed: 0, updateErrors: 0 };
+  if (venueRunHasFailure(venueRes)) {
+    console.error(venueRunFailureMessage(venueRes));
+    process.exit(1);
+  }
+  return venueRes;
+}
+
+// ── main ── (직접 실행일 때만 — import 시 부작용 0)
+if (IS_MAIN) {
 (async () => {
   // ffmpeg 존재 확인
   try { execFileSync("ffmpeg", ["-version"], { stdio: "ignore" }); }
@@ -410,12 +426,7 @@ async function processVenueStories() {
   }
   await processJobs();
 
-  console.log("\n── 직관 라이브(venue_stories) 영상 처리 ──");
-  const venueRes = (await processVenueStories()) || { failed: 0, updateErrors: 0 };
-  if ((venueRes.failed || 0) > 0 || (venueRes.updateErrors || 0) > 0 || venueRes.ffprobeMissing) {
-    console.error(
-      `❌ 직관 라이브 처리 이상 — 실패 ${venueRes.failed} / 상태기록오류 ${venueRes.updateErrors}${venueRes.ffprobeMissing ? " / ffprobe 부재" : ""} — 관제 non-zero 종료`,
-    );
-    process.exit(1);
-  }
+  // 직관 라이브 단계는 seam 이 소유한다 — 판정/종료가 인라인이면 스모크가 검증할 수 없다.
+  await runVenueStage();
 })().catch((e) => { console.error("❌", e); process.exit(1); });
+}

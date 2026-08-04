@@ -11,6 +11,10 @@
 //   transcode 하고 audio 옵션을 안 주면 AAC 패킷을 그대로 복사한다(AudioEncoder 불필요).
 // - 미지원/실패 환경은 null 반환 → 호출부가 기존 #813 백스톱 문구로 fallback.
 import { VENUE_STORY_MAX_BYTES } from "./types";
+// 박스 파서는 서버(ffprobe 검증 경로)도 같은 판정을 써야 해서 "use client" 없는 모듈로 분리했다.
+import { isFastStartMp4, MP4_HEAD_PROBE_BYTES } from "./mp4-boxes";
+
+export { parseTopLevelBoxTypes, isFastStartMp4 } from "./mp4-boxes";
 
 /** 압축 목표 용량 — 50MiB 하드캡(Supabase Storage) 대비 여유 5MiB */
 export const VENUE_VIDEO_COMPRESS_TARGET_BYTES = 45 * 1024 * 1024;
@@ -22,6 +26,16 @@ export const VENUE_VIDEO_MAX_BITRATE_BPS = 12_000_000;
 export const VENUE_VIDEO_MIN_BITRATE_BPS = 1_000_000;
 /** 긴 변 상한(세로 영상이면 height 1920 = 1080p) */
 export const VENUE_VIDEO_MAX_EDGE_PX = 1920;
+/**
+ * 업로드 전 정규화 목표 긴 변 — 720p(1280). 실측(2026-08-04, 업로드본 5건 ffprobe)에서
+ * 원본은 1920x1440~3840x2160 / 13~24Mbps 였고 6.8~14.3초에 16.8~38.6MB 였다.
+ * 720p 3.5Mbps 로 정규화하면 같은 길이가 3~6MB 로 떨어져 첫 재생 대기가 실질적으로 줄어든다.
+ */
+export const VENUE_VIDEO_NORMALIZE_MAX_EDGE_PX = 1280;
+/** 720p H.264 정규화 목표 비트레이트(bps) — 화질/용량 절충. */
+export const VENUE_VIDEO_NORMALIZE_BITRATE_BPS = 3_500_000;
+/** faststart 판정에 읽을 파일 선두 바이트 수 — 서버와 동일 상수를 공유한다. */
+export const VENUE_VIDEO_HEAD_PROBE_BYTES = MP4_HEAD_PROBE_BYTES;
 /** 재시도 비트레이트 안전 마진(실측 초과율 보정에 곱해 오버슈트 재발 방지) */
 export const VENUE_VIDEO_RETRY_SAFETY = 0.85;
 /**
@@ -74,6 +88,52 @@ export function shouldAutoCompressVideo(input: {
   return (
     input.durationMs != null && input.durationMs > 0 && input.sizeBytes > VENUE_STORY_MAX_BYTES
   );
+}
+
+/**
+ * 업로드 전 720p 정규화 대상 판정 — **용량과 무관**하게 duration 이 확인된 모든 영상.
+ * (기존 shouldAutoCompressVideo 는 50MiB 초과분만 대상이라 실제 업로드본 대부분이
+ *  원본 그대로 올라갔고, 그게 첫 재생 지연의 1차 원인이었다. 2026-08-04 실측.)
+ * compressSupported=false(WebCodecs 부재) 면 정규화 불가 → 기존 경로 유지.
+ */
+export function shouldNormalizeVideo(input: {
+  durationMs: number | null;
+  compressSupported: boolean;
+}): boolean {
+  return input.compressSupported && input.durationMs != null && input.durationMs > 0;
+}
+
+/**
+ * 정규화 비트레이트 — 720p 목표치와 duration 기반 cap 예산 중 작은 값.
+ * 15초 이하 게이트라 보통 720p 목표치가 선택되지만, 극단적으로 긴 duration 이
+ * 통과했을 때도 cap 예산을 넘지 않도록 min 을 취한다.
+ */
+export function computeNormalizeBitrate(durationMs: number): number {
+  return Math.min(VENUE_VIDEO_NORMALIZE_BITRATE_BPS, computeTargetVideoBitrate(durationMs));
+}
+
+/**
+ * 원본과 정규화본 중 실제 업로드할 쪽 결정(순수 — 스모크 공유).
+ *  - 정규화 실패(normalizedBytes=null) → 원본
+ *  - 정규화본이 더 작으면 정규화본(첫 재생 대기 감소가 목적)
+ *  - 정규화본이 더 커도, 원본이 cap 초과이거나 faststart 가 아니면 정규화본
+ *    (moov 가 파일 끝이면 재생 시작에 사실상 전량 전송이 필요하다 — 실측 2/5건)
+ *  - 그 외(원본이 이미 작고 faststart) → 원본
+ */
+export function chooseUploadVideo(input: {
+  originalBytes: number;
+  normalizedBytes: number | null;
+  originalFastStart: boolean | null;
+  maxBytes?: number;
+}): "original" | "normalized" {
+  const { originalBytes, normalizedBytes, originalFastStart } = input;
+  const maxBytes = input.maxBytes ?? VENUE_STORY_MAX_BYTES;
+  if (normalizedBytes == null) return "original";
+  if (normalizedBytes > maxBytes) return "original"; // cap 초과 결과물은 쓸 수 없다
+  if (normalizedBytes <= originalBytes) return "normalized";
+  if (originalBytes > maxBytes) return "normalized";
+  if (originalFastStart !== true) return "normalized";
+  return "original";
 }
 
 /**
@@ -280,5 +340,163 @@ export async function compressVenueVideo(
     return result;
   } catch {
     return null; // 어떤 실패든 fallback (기존 게이트 문구가 안전망)
+  }
+}
+
+/** 파일 선두 n바이트를 읽는다(실패 시 null — 판정 미상 취급). */
+async function readHeadBytes(file: Blob, n: number): Promise<Uint8Array | null> {
+  try {
+    const buf = await file.slice(0, n).arrayBuffer();
+    return new Uint8Array(buf);
+  } catch {
+    return null;
+  }
+}
+
+/** 원본 영상의 faststart 여부 — 미상이면 null. */
+export async function probeFastStart(file: Blob): Promise<boolean | null> {
+  const head = await readHeadBytes(file, VENUE_VIDEO_HEAD_PROBE_BYTES);
+  if (!head || head.length < 8) return null;
+  return isFastStartMp4(head);
+}
+
+export interface NormalizeResult {
+  /** 실제 업로드할 파일 — 정규화 실패하면 입력 원본 그대로. */
+  file: File;
+  /** 정규화본을 채택했는지 — 호출부가 메타/포스터 재추출 여부를 결정한다. */
+  normalized: boolean;
+  /** 진단용 — 원본이 faststart 였는지(null=미상). */
+  originalFastStart: boolean | null;
+  originalBytes: number;
+  normalizedBytes: number | null;
+  /**
+   * 정규화본을 못 쓴 이유(채택했으면 null).
+   * 호출부는 이 값이 null 이 아니면 원본이 느린 상태로 올라간다는 뜻으로 읽고
+   * 서버쪽 후속 최적화 큐(needs_transcode)로 반드시 넘겨야 한다(삼순 NO-GO ③).
+   */
+  fallbackReason:
+    | null
+    | "unsupported" // WebCodecs/avc 미지원 환경
+    | "track_dropped" // 트랙 유실 위험 — 무단 무음화 금지
+    | "deadline" // 실행 상한 초과(cancel)
+    | "no_output" // 인코딩 결과 버퍼 없음
+    | "not_faststart" // 산출물이 faststart 가 아님(runtime fail-close)
+    | "not_better" // 정규화본이 원본보다 나을 게 없음
+    | "error"; // 예외
+}
+
+/**
+ * 업로드 전 720p H.264 + faststart 정규화.
+ *
+ * 기존 compressVenueVideo 가 "cap 초과 구제"였다면 이건 "첫 재생 지연 제거"가 목적이다.
+ * mediabunny 는 BufferTarget 사용 시 fastStart='in-memory' 로 moov 를 앞으로 민다(명시 고정).
+ *
+ * 실패/미지원/역효과(결과가 더 크고 원본이 이미 작고 faststart)면 원본을 그대로 돌려
+ * 기존 동작을 깨지 않는다(회귀 위험 최소화).
+ */
+export async function normalizeVenueVideo(
+  file: File,
+  opts: {
+    durationMs: number;
+    width: number;
+    height: number;
+    onProgress?: (ratio: number) => void;
+    deadlineMs?: number;
+  },
+): Promise<NormalizeResult> {
+  const originalFastStart = await probeFastStart(file);
+  const fallbackWith = (
+    reason: NonNullable<NormalizeResult["fallbackReason"]>,
+    normalizedBytes: number | null = null,
+  ): NormalizeResult => ({
+    file,
+    normalized: false,
+    originalFastStart,
+    originalBytes: file.size,
+    normalizedBytes,
+    fallbackReason: reason,
+  });
+  if (!isVideoCompressSupported()) return fallbackWith("unsupported");
+  try {
+    const mb = await import("mediabunny");
+    const {
+      Input,
+      Output,
+      Conversion,
+      Mp4OutputFormat,
+      BufferTarget,
+      BlobSource,
+      ALL_FORMATS,
+      canEncodeVideo,
+    } = mb;
+    ensureRealtimeEncoderRegistered(mb);
+    if (!(await canEncodeVideo("avc"))) return fallbackWith("unsupported");
+
+    const dims = computeScaledDimensions(
+      opts.width,
+      opts.height,
+      VENUE_VIDEO_NORMALIZE_MAX_EDGE_PX,
+    );
+    const input = new Input({ source: new BlobSource(file), formats: ALL_FORMATS });
+    // fastStart 'in-memory' 명시 — BufferTarget 기본값과 같지만 이 모듈의 계약이므로 고정한다.
+    const output = new Output({
+      format: new Mp4OutputFormat({ fastStart: "in-memory" }),
+      target: new BufferTarget(),
+    });
+    const tracks = await input.getTracks();
+    const trim = computeNegativeStartTrim(
+      await Promise.all(tracks.map((t) => t.getFirstTimestamp())),
+    );
+    const conversion = await Conversion.init({
+      input,
+      output,
+      video: {
+        codec: "avc",
+        bitrate: computeNormalizeBitrate(opts.durationMs),
+        forceTranscode: true,
+        ...(dims ? { width: dims.width, height: dims.height, fit: "contain" as const } : {}),
+      },
+      ...(trim ? { trim } : {}),
+      // audio 옵션 없음 = 원본 패킷 복사(iOS AudioEncoder 부재 전제 — compressVenueVideo 와 동일)
+    });
+    if (!conversion.isValid || conversion.discardedTracks.length > 0) {
+      return fallbackWith("track_dropped");
+    }
+    conversion.onProgress = (p: number) => opts.onProgress?.(p);
+    const completed = await executeWithDeadline(
+      conversion,
+      opts.deadlineMs ?? VENUE_VIDEO_COMPRESS_DEADLINE_MS,
+    );
+    if (!completed) return fallbackWith("deadline");
+    const buffer = output.target.buffer;
+    if (!buffer) return fallbackWith("no_output");
+    // runtime fail-close — fastStart 옵션 '지정했음'을 믿지 않고 **실제 산출 바이트**의
+    // 상위 박스 순서를 읽어 moov 가 mdat 앞인지 확인한다(삼순 NO-GO ②).
+    // 메타 배치가 밀린 결과물은 첫 재생 지연을 그대로 가져가므로 채택하지 않는다.
+    const outHead = new Uint8Array(
+      buffer.slice(0, Math.min(buffer.byteLength, VENUE_VIDEO_HEAD_PROBE_BYTES)),
+    );
+    if (isFastStartMp4(outHead) !== true) {
+      return fallbackWith("not_faststart", buffer.byteLength);
+    }
+    const out = new File([buffer], "venue-story.mp4", { type: "video/mp4" });
+    const choice = chooseUploadVideo({
+      originalBytes: file.size,
+      normalizedBytes: out.size,
+      originalFastStart,
+    });
+    if (choice === "original") {
+      return fallbackWith("not_better", out.size);
+    }
+    return {
+      file: out,
+      normalized: true,
+      originalFastStart,
+      originalBytes: file.size,
+      normalizedBytes: out.size,
+      fallbackReason: null,
+    };
+  } catch {
+    return fallbackWith("error");
   }
 }
