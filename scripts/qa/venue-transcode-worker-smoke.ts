@@ -1503,6 +1503,139 @@ async function run() {
   // 지금까지 exact geometry 검증은 **브라우저 경로**만이었고, 서버 워커는 mock runner 가
   // 500B 더미 파일만 써서 scale/faststart/rotation 이 한 번도 실행되지 않았다.
   // 여기서는 실제 ffmpeg 으로 돌려 산출물 바이트를 검사한다(ffmpeg 부재는 skip 아니라 FAIL).
+  // ── [V] public videos 행 — actual processVenueJob 전 경로 (삼순 R7 ②) ──
+  //
+  // 직전까지 downloader 검증은 `runner.downloadToFile()` 를 **직접** 불렀다.
+  // 그래서 제품 call-site 인 processVenueJob 의 public 분기를 우회했고,
+  //   `inBytes = await runner.downloadToFile(row.media_url, inPath);` → `inBytes = 1;`
+  // 한 줄 변이가 worker 155/0 GREEN 이었다(삼순 독립 재현 2026-08-04).
+  // CLI 게이트도 fixture 가 `venue-media` 라 **private 분기만** 타서 이 축을 못 봤다.
+  //
+  // 이젠 public 버킷(`videos`) 행을 실제 HTTP 서버에 물려 processVenueJob 을 통째로
+  // 실행한다: download → probe → transcode → upload → DB 갱신 → done 까지 한 경로.
+  // runner 는 processVenueStories 가 실제로 실어 보내는 **captured actual runner** 를 그대로 쓴다.
+  console.log("[V] public videos 행 — actual processVenueJob 전 경로(download→probe→transcode→done)");
+  {
+    const work = mkdtempSync(join(tmpdir(), "vt-public-"));
+    let server: ReturnType<typeof createServer> | null = null;
+    try {
+      let hasFfmpeg = true;
+      try {
+        execFileSync("ffmpeg", ["-version"], { stdio: "ignore" });
+        execFileSync("ffprobe", ["-version"], { stdio: "ignore" });
+      } catch {
+        hasFfmpeg = false;
+      }
+      ok("V: ffmpeg/ffprobe 존재(이 계약의 전제 — 부재면 skip 아니라 FAIL)", hasFfmpeg);
+
+      if (hasFfmpeg) {
+        // 실제 영상 바이트를 공개 URL 로 서빙하는 서버
+        const srcPath = makeRotatedAudioFixture(work);
+        const payload = readFileSync(srcPath);
+        let served = 0;
+        server = createServer((_req, res) => {
+          served++;
+          res.writeHead(200, {
+            "content-type": "video/mp4",
+            "content-length": String(payload.length),
+          });
+          res.end(payload);
+        });
+        const port: number = await new Promise((resolveFn) => {
+          server!.listen(0, "127.0.0.1", () =>
+            resolveFn((server!.address() as AddressInfo).port),
+          );
+        });
+
+        // processVenueStories 가 실제로 조립해 보내는 runner 를 그대로 획득
+        const mod2 = (await import("../transcode-videos.mjs")) as {
+          processVenueStories: (o?: Record<string, unknown>) => Promise<unknown>;
+        };
+        let actualRunner: {
+          probe: (p: string) => ProbeMeta;
+          transcode: (i: string, o: string) => string;
+          downloadToFile: (u: string, d: string) => Promise<number>;
+        } | null = null;
+        await mod2.processVenueStories({
+          hasFfprobe: true,
+          db: { from: () => ({}), storage: {} },
+          runBatch: async (d: Record<string, unknown>) => {
+            actualRunner = d.runner as typeof actualRunner;
+            return {};
+          },
+        });
+        ok("V: actual runner 획득", actualRunner != null);
+
+        // public 버킷(`videos`) + active → processVenueJob 의 **public 다운로드 분기**
+        const state: DbRowState = {
+          id: 77,
+          status: "active",
+          needs_transcode: true,
+          transcode_attempts: 0,
+        };
+        const row = {
+          id: 77,
+          status: "active",
+          needs_transcode: true,
+          media_url: `http://127.0.0.1:${port}/venue-stories/G1/U1/video.mp4`,
+          media_bucket: "videos", // PRIVATE_VENUE_BUCKETS 에 없음 → public 분기
+          media_path: "venue-stories/G1/U1/video.mp4",
+          transcode_attempts: 0,
+        };
+        const storage = makeMockStorage();
+        const inPath = join(work, "job-in.mp4");
+        const outPath = join(work, "job-out.mp4");
+
+        const res = await processVenueJob(row, {
+          db: makeMockDb(state),
+          storage,
+          runner: actualRunner!,
+          inPath,
+          outPath,
+        });
+
+        ok(
+          `V: public 행이 actual downloader 로 HTTP 수신 (서빙 ${served}회) — call 제거시 RED`,
+          served === 1,
+        );
+        ok(
+          `V: 다운로드한 바이트가 inPath 에 기록됨 (원본 ${payload.length}B)`,
+          existsSync(inPath) && readFileSync(inPath).equals(payload),
+        );
+        ok(`V: result=done (실제 ${(res as { result: string }).result})`, (res as { result: string }).result === "done");
+        ok(
+          `V: inBytes 가 실제 다운로드 크기 (실제 ${(res as { inBytes?: number }).inBytes}B)`,
+          (res as { inBytes?: number }).inBytes === payload.length,
+        );
+        ok("V: needs_transcode 해제(DB 반영)", state.needs_transcode === false);
+        ok("V: status 재기록 없음(active 유지)", state.status === "active");
+
+        // 업로드된 산출물이 **실제 정규화본**인지 — 바이트를 꾺어 검사
+        const uploadedKeys = Object.keys(storage._uploaded);
+        ok(`V: 산출물 1건 업로드 (실제 ${uploadedKeys.length})`, uploadedKeys.length === 1);
+        if (uploadedKeys.length === 1) {
+          const upPath = join(work, "uploaded.mp4");
+          writeFileSync(upPath, storage._uploaded[uploadedKeys[0]]);
+          const upMeta = probeNormalized(upPath);
+          console.log(
+            `  public 경로 실측: ${served}회 수신 · 표시 ${upMeta.disp.width}x${upMeta.disp.height} · ` +
+              `${upMeta.codec}/${upMeta.audioCodec ?? "없음"} · faststart=${upMeta.fastStart}`,
+          );
+          ok(
+            `V: 업로드본 표시 exact 720x1280 (실제 ${upMeta.disp.width}x${upMeta.disp.height})`,
+            upMeta.disp.width === 720 && upMeta.disp.height === 1280,
+          );
+          ok(`V: 업로드본 코덱 h264 (실제 ${upMeta.codec})`, upMeta.codec === "h264");
+          ok(`V: 업로드본 faststart — 실제 ${upMeta.fastStart}`, upMeta.fastStart === true);
+          ok(`V: 업로드본 오디오 보존 (실제 ${upMeta.audioCodec ?? "없음"})`, upMeta.audioCodec != null);
+        }
+      }
+    } finally {
+      if (server) await new Promise<void>((r) => server!.close(() => r()));
+      rmSync(work, { recursive: true, force: true });
+    }
+  }
+
   console.log("[U] 서버 워커 실 ffmpeg — 720p · faststart · 회전 보존");
   {
     const work = mkdtempSync(join(tmpdir(), "vt-ffmpeg-"));
