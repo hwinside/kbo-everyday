@@ -160,19 +160,24 @@ function toVerdict(attempt, code, output, startedAt) {
   const unreachable = /source_unreachable|source_incomplete|source_pagination_incomplete/.test(output);
   const failures = [...output.matchAll(/^\s+-\s+(.+?)\s*$/gm)]
     .map((match) => match[1].trim())
-    // 요약 라인(`stats_source_truth_mismatch: ... N건 불일치`)은 개별 불일치가 아니라
-    // 집계 결과라 회차마다 건수 표기가 달라질 수 있다. 비교 키에서 뺀다.
     .filter((line) => !line.startsWith("stats_source_truth_mismatch:"))
     .sort();
+  const digest = output.match(/KBO_SOURCE_DIGEST=([a-f0-9]{64})/)?.[1] ?? null;
+  // 원본에 도달했는데 digest가 없으면 wrapper/verifier 결속이 끊긴 것이다.
+  const digestMissing = !unreachable && !digest;
 
   return {
     attempt,
     startedAt,
     endedAt: Date.now(),
-    ok: code === 0,
-    unreachable,
+    ok: code === 0 && !digestMissing,
+    unreachable: unreachable || digestMissing,
     failures,
-    key: code === 0 ? "PASS" : `FAIL:${failures.join("\u0001")}`,
+    digest,
+    // 원본 안정성은 digest로, 판정 안정성은 outcome으로 함께 고정한다.
+    key: digest
+      ? `SOURCE:${digest}|OUTCOME:${code === 0 ? "PASS" : `FAIL:${failures.join("\u0001")}`}`
+      : "SOURCE:MISSING",
   };
 }
 

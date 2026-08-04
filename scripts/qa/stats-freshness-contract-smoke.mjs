@@ -129,12 +129,14 @@ function runWrapper(verdicts, env = {}) {
         "const i = Number(readFileSync(statePath, 'utf8'));",
         "writeFileSync(statePath, String(i + 1));",
         "const verdict = verdicts[Math.min(i, verdicts.length - 1)];",
-        "if (verdict === 'PASS') { console.log('stub: ok'); process.exit(0); }",
-        "if (verdict === 'UNREACHABLE') {",
+        "const [outcome, digest = 'a'.repeat(64)] = verdict.split('|DIGEST=');",
+        "if (outcome !== 'UNREACHABLE') console.log('KBO_SOURCE_DIGEST=' + digest);",
+        "if (outcome === 'PASS') { console.log('stub: ok'); process.exit(0); }",
+        "if (outcome === 'UNREACHABLE') {",
         "  console.error('  - source_unreachable: stub');",
         "  process.exit(1);",
         "}",
-        "console.error('  - ' + verdict.slice(5));",
+        "console.error('  - ' + outcome.slice(5));",
         "process.exit(1);",
       ].join("\n"),
     );
@@ -170,6 +172,20 @@ check("안정 FAIL → exit 1 + stats_freshness_mismatch", () => {
   );
   assert.equal(run.status, 1, `재현된 불일치는 RED 여야 한다\n${run.output}`);
   assert.match(run.output, /stats_freshness_mismatch/, "진짜 불일치로 분류해야 한다");
+});
+
+check("같은 PASS 문구라도 원본 digest flap → unstable", () => {
+  const A = "a".repeat(64);
+  const B = "b".repeat(64);
+  const run = runWrapper(
+    [
+      `PASS|DIGEST=${A}`, `PASS|DIGEST=${B}`, `PASS|DIGEST=${A}`,
+      `PASS|DIGEST=${B}`, `PASS|DIGEST=${A}`, `PASS|DIGEST=${B}`,
+    ],
+    FAST,
+  );
+  assert.equal(run.status, 1, `원본 digest가 흔들리는데 통과하면 안 된다\n${run.output}`);
+  assert.match(run.output, /stats_source_unstable/);
 });
 
 check("판독 flap → exit 1 + stats_source_unstable (통과 아님)", () => {
@@ -253,6 +269,18 @@ check("env 로 안정성 파라미터를 낮출 수 없음(floor clamp)", () => 
 });
 
 /* ── seam 이 프로덕션 경로로 새지 않는지 ───────────────────────── */
+/* ══ digest actual binding — source → verifier stdout → wrapper ═════ */
+check("원본 digest actual 결속(source→verifier→wrapper)", () => {
+  const source = readFileSync("scripts/lib/stats-source-truth.mjs", "utf8");
+  const verifier = readFileSync(VERIFIER_REL, "utf8");
+  const wrapper = readFileSync(WRAPPER_REL, "utf8");
+  assert.match(source, /KBO_SOURCE_DIGEST/);
+  assert.match(source, /digestSourceMaps\(\{/);
+  assert.match(verifier, /assertSourceTruth\(\{/);
+  assert.match(verifier, /log:\s*\(line\)\s*=>\s*console\.log/);
+  assert.match(wrapper, /KBO_SOURCE_DIGEST=\(\[a-f0-9\]\{64\}\)/);
+});
+
 /* ══ self-binding — 이 스모크가 decoy 로 갈려달 수 없게 ══════════
  *
  * ⚠︎ 삼순 2차 NO-GO(b): 종전엔 워크플로·RED proof 가 이 스모크를 npm alias 로 불렀고
@@ -347,6 +375,8 @@ check("prod 모드 종단: 반복→안정 window 도달→판정(약 3분)", ()
         "import { appendFileSync } from 'node:fs';",
         `appendFileSync(${JSON.stringify(marker)}, 'invoked\\n');`,
         `await new Promise((r) => setTimeout(r, ${STUB_DURATION_MS}));`,
+        // remote `d015ac54f` actual-binding 계약과 결합: PASS 도 source digest marker 필수.
+        "console.log('KBO_SOURCE_DIGEST=' + 'a'.repeat(64));",
         "console.log('stub: ok');",
         "process.exit(0);",
       ].join("\n"),

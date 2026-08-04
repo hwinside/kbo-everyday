@@ -184,6 +184,12 @@ jobs:
             fi
           fi
 
+      # PR을 먼저 만들고 나서 freshness를 보는 구조면, 불안정/불일치 스냅샷이
+      # 원격 브랜치와 PR로 이미 퍼진다. 생성 전에 같은 wrapper를 직접 fail-close한다.
+      - name: Verify fresh stats before creating PR (fail-closed)
+        if: steps.changes.outputs.changed == 'true'
+        run: node scripts/qa/stats-freshness-verify.mjs
+
       - name: Create PR
         id: pr
         if: steps.changes.outputs.changed == 'true'
