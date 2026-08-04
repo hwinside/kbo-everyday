@@ -131,6 +131,22 @@ function assertScriptsExist(source, label, minimum) {
   );
 
   assertScriptsExist(source, "contract 게이트", 3);
+
+  /* ── freshness 래퍼 행동 계약이 여기 실려야 한다 ────────────────
+   *
+   * ⚠︎ 삼순 P0(2026-08-05): freshness 게이트는 데이터 PR 에서만 돈다. 그래서 코드 PR 에서
+   * 래퍼를 `process.exit(0)` 으로 비우거나 alias 를 no-op 으로 바꿔도 아무 게이트도 안 잡았다
+   * — alias 존재·문자열 확인만 했기 때문이다. 그 PR 이 머지되면 이후 데이터 PR 은 이미
+   * 무력화된 래퍼를 통과시켜 live equality 가 0회 수행된다.
+   *
+   * 그래서 래퍼의 **판정 행동**을 결정론적으로 검증하는 스모크를 contract 게이트에 싣는다.
+   * 이 결속이 빠지면 위 구멍이 그대로 다시 열리므로 여기서 고정한다. */
+  assert.ok(
+    /run:\s*npm run qa:stats-freshness-contract\b/.test(source),
+    "contract 게이트가 `qa:stats-freshness-contract` 를 실행해야 한다 —"
+      + " 이게 없으면 freshness 래퍼를 no-op 으로 바꾸는 코드 PR 을 아무도 잡지 못하고,"
+      + " 이후 데이터 PR 은 무력화된 래퍼로 live equality 를 0회 수행한다",
+  );
 }
 
 /* ══ 2) freshness 게이트 — paths 가 검증기 입력을 전부 덮어야 한다 ══ */
@@ -221,14 +237,17 @@ function assertScriptsExist(source, label, minimum) {
   const contract = readFileSync(CONTRACT_WORKFLOW, "utf8");
   const freshness = readFileSync(FRESHNESS_WORKFLOW, "utf8");
 
+  // ⚠︎ `qa:stats-freshness-contract` 는 네트워크를 타지 않는 결정론적 행동 검증이라 예외다.
+  // 경계를 `(?!-)` 로 명시한다 — `\b` 만 쓰면 하이픈 뒤 접미사가 붙은 이름까지 걸려
+  // 정상 결속을 금지 위반으로 오판한다.
   assert.ok(
-    !/npm run qa:stats-(source-truth|freshness)\b/.test(contract),
+    !/npm run qa:stats-(source-truth|freshness)(?![\w-])/.test(contract),
     "contract 게이트가 live KBO 대조를 부르면 안 된다 —"
       + " 경기 진행만으로 무관한 PR 이 RED 가 되고, mutation RED 증명도 baseline 이"
       + " 이미 RED 라 검증력을 입증하지 못한 채 통과한다(2026-08-04 실측)",
   );
   assert.ok(
-    /npm run qa:stats-freshness\b/.test(freshness),
+    /npm run qa:stats-freshness(?![\w-])/.test(freshness),
     "freshness 게이트는 live 대조를 수행해야 한다(strict equality 계약 유지)",
   );
   assert.ok(

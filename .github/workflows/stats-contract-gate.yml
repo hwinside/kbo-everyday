@@ -77,6 +77,19 @@ jobs:
         # 두 게이트의 trigger 등록 + freshness paths 가 검증기 입력을 전부 덮는지 결속.
         run: npm run qa:stats-gate-trigger
 
+      - name: Freshness wrapper behavior contract (deterministic)
+        # ⚠️ 이 스텝이 삼순 P0(2026-08-05)을 닫는다.
+        #
+        # freshness 게이트는 데이터 PR 에서만 돈다. 그래서 코드 PR 에서 래퍼를
+        # `process.exit(0)` 으로 바꾸거나 package alias 를 no-op 으로 만들어도,
+        # 종전 contract 게이트는 alias 존재·문자열만 봐서 GREEN 이었다. 그 PR 이
+        # 머지되면 이후 데이터 PR 은 이미 무력화된 래퍼를 통과시킨다
+        # = live strict equality 가 0회 수행된다.
+        #
+        # 여기서는 네트워크 없이 스텁 검증기로 래퍼의 **판정 행동**을 직접 검증한다
+        # (안정 PASS/안정 FAIL/flap/unreachable/window 미달/floor clamp).
+        run: npm run qa:stats-freshness-contract
+
       # ── 검증력 증명 (결함주입) ────────────────────────────────
       # 아래 스텝들은 "게이트가 통과하면 job 이 죽는" 구조다.
       # 따라서 이 job 의 success 자체가 게이트에 검증력이 있다는 증거다.
@@ -173,6 +186,99 @@ jobs:
             exit 1
           fi
           git checkout -- .github/workflows/stats-freshness-gate.yml
+          git diff --exit-code
+
+      - name: RED proof — no-op freshness alias must fail
+        # package alias 를 `echo ok` 로 바꾸는 무력화가 실제로 잡히는지.
+        run: |
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            if (!/^node /.test(pkg.scripts['qa:stats-freshness'] ?? '')) {
+              console.error('freshness alias 형태가 바뀌었다 — 게이트 대상이 바뀌었다');
+              process.exit(1);
+            }
+            pkg.scripts['qa:stats-freshness'] = 'echo ok';
+            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+          if npm run qa:stats-freshness-contract; then
+            echo "::error::freshness alias 를 no-op 으로 바꿨는데 게이트가 통과했다 — live 대조를 지울 수 있다"
+            git checkout -- package.json
+            exit 1
+          fi
+          git checkout -- package.json
+          git diff --exit-code
+
+      - name: RED proof — gutted freshness wrapper must fail
+        # 래퍼 본문을 `process.exit(0)` 한 줄로 바꾸는 무력화가 잡히는지.
+        run: |
+          node -e "
+            const fs = require('fs');
+            fs.writeFileSync(
+              'scripts/qa/stats-freshness-verify.mjs',
+              'process.exit(0);\n',
+            );
+          "
+          if npm run qa:stats-freshness-contract; then
+            echo "::error::freshness 래퍼를 exit(0) 로 비웠는데 게이트가 통과했다"
+            git checkout -- scripts/qa/stats-freshness-verify.mjs
+            exit 1
+          fi
+          git checkout -- scripts/qa/stats-freshness-verify.mjs
+          git diff --exit-code
+
+      - name: RED proof — freshness must not accept unstable readings
+        # 흔들리는 판독을 통과로 흘리는 변경(=temporal green 재생산)이 잡히는지.
+        run: |
+          node -e "
+            const fs = require('fs');
+            const p = 'scripts/qa/stats-freshness-verify.mjs';
+            const src = fs.readFileSync(p, 'utf8');
+            const needle = 'console.error(\n  \`\\n❌ stats_source_unstable';
+            const idx = src.indexOf('stats_source_unstable:');
+            if (idx === -1) {
+              console.error('불안정 분류 지점을 찾지 못했다 — 게이트 대상 코드가 바뀌었다');
+              process.exit(1);
+            }
+            // 마지막 fail-close(process.exit(1))를 통과로 뒤집는다.
+            const tail = src.slice(idx);
+            if (!tail.includes('process.exit(1);')) {
+              console.error('불안정 경로의 fail-close 를 찾지 못했다');
+              process.exit(1);
+            }
+            fs.writeFileSync(
+              p,
+              src.slice(0, idx) + tail.replace(/process\.exit\(1\);\s*$/, 'process.exit(0);\n'),
+            );
+          "
+          if npm run qa:stats-freshness-contract; then
+            echo "::error::불안정 판독을 통과로 바꿨는데 게이트가 통과했다 — temporal green 재생산"
+            git checkout -- scripts/qa/stats-freshness-verify.mjs
+            exit 1
+          fi
+          git checkout -- scripts/qa/stats-freshness-verify.mjs
+          git diff --exit-code
+
+      - name: RED proof — stability window floor must hold
+        # 안정 window 하한을 낮추는 변경(20s 2회로 회귀)이 잡히는지.
+        run: |
+          node -e "
+            const fs = require('fs');
+            const p = 'scripts/qa/stats-freshness-verify.mjs';
+            const src = fs.readFileSync(p, 'utf8');
+            const needle = 'const MIN_STABILITY_WINDOW_MS = 180_000;';
+            if (!src.includes(needle)) {
+              console.error('안정 window 하한 상수를 찾지 못했다');
+              process.exit(1);
+            }
+            fs.writeFileSync(p, src.replace(needle, 'const MIN_STABILITY_WINDOW_MS = 1;'));
+          "
+          if npm run qa:stats-freshness-contract; then
+            echo "::error::안정 window 하한을 1ms 로 낮췄는데 게이트가 통과했다 — flip 주기 안 2회 판독으로 회귀 가능"
+            git checkout -- scripts/qa/stats-freshness-verify.mjs
+            exit 1
+          fi
+          git checkout -- scripts/qa/stats-freshness-verify.mjs
           git diff --exit-code
 
       - name: RED proof — oracle must share the crawler pagination core
