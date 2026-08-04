@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "prebuild": "npm run qa:query-guard && npm run qa:naver-existing-user && npm run qa:baseball-source-inventory && npm run qa:baseball-rag-contract && npm run qa:baseball-rag-serving && npm run qa:baseball-rag-full-retention && npm run qa:baseball-corpus-identity && npm run qa:baseball-corpus-loader && npm run qa:baseball-official-loader && npm run qa:baseball-official-rag && npm run qa:baseball-qa && npm run qa:baseball-genius-context && npm run qa:genius-match-path-db && npm run qa:foreign-photo && npm run qa:photos-helper-signature && npm run qa:feed-scroll-restore && npm run qa:roster-count-consistency && npm run qa:roster-derived-sync && npm run qa:roster-preservation && npm run qa:starter-era && npm run qa:game-detail-bounded-fallback && npm run qa:stats-snapshot-guard && npm run qa:war-benchmark-coverage && npm run qa:videos-rss-status && npm run qa:diary-contrast && npm run qa:genius-avatar-static && npm run qa:next-game-date-badge && npm run qa:exclusive-badges && npm run qa:player-popularity-order && npm run qa:venue-stats-s1b-aggregate && npm run qa:venue-stats-expected && npm run qa:home-header-signup-button && npm run qa:venue-stats-s2-effect-guard && npm run qa:venue-stats-s2-header-guard && npm run qa:venue-diary-public && npm run qa:venue-diary-season && npm run qa:venue-diary-viewer-chrome && npm run qa:venue-stats-s2-browser && npm run qa:game-chat-visibility && npm run qa:venue-game-errors && npm run qa:venue-error-tags && npm run qa:nickname-api && npm run qa:post-detail-header-nowrap && npm run qa:post-detail-header-nowrap-browser && npm run qa:genius-entry && npm run qa:genius-reply-mascot && npm run qa:genius-picker-disabled && npm run qa:genius-reply-payload-db && npm run qa:venue-attendance && npm run qa:venue-attendance-crud:db && npm run qa:venue-multi-pick && npm run qa:venue-story-video-poster",
+    "prebuild": "npm run qa:query-guard && npm run qa:naver-existing-user && npm run qa:baseball-source-inventory && npm run qa:baseball-rag-contract && npm run qa:baseball-rag-serving && npm run qa:baseball-rag-full-retention && npm run qa:baseball-corpus-identity && npm run qa:baseball-corpus-loader && npm run qa:baseball-official-loader && npm run qa:baseball-official-rag && npm run qa:baseball-qa && npm run qa:baseball-genius-context && npm run qa:genius-match-path-db && npm run qa:foreign-photo && npm run qa:photos-helper-signature && npm run qa:feed-scroll-restore && npm run qa:roster-count-consistency && npm run qa:roster-derived-sync && npm run qa:roster-preservation && npm run qa:starter-era && npm run qa:game-detail-bounded-fallback && npm run qa:stats-snapshot-guard && npm run qa:atomic-promote && npm run qa:kbo-pagination && npm run qa:kbo-select && npm run qa:stats-gate-trigger && npm run qa:war-benchmark-coverage && npm run qa:videos-rss-status && npm run qa:diary-contrast && npm run qa:genius-avatar-static && npm run qa:next-game-date-badge && npm run qa:exclusive-badges && npm run qa:player-popularity-order && npm run qa:venue-stats-s1b-aggregate && npm run qa:venue-stats-expected && npm run qa:home-header-signup-button && npm run qa:venue-stats-s2-effect-guard && npm run qa:venue-stats-s2-header-guard && npm run qa:venue-diary-public && npm run qa:venue-diary-season && npm run qa:venue-diary-viewer-chrome && npm run qa:venue-stats-s2-browser && npm run qa:game-chat-visibility && npm run qa:venue-game-errors && npm run qa:venue-error-tags && npm run qa:nickname-api && npm run qa:post-detail-header-nowrap && npm run qa:post-detail-header-nowrap-browser && npm run qa:genius-entry && npm run qa:genius-reply-mascot && npm run qa:genius-picker-disabled && npm run qa:genius-reply-payload-db && npm run qa:venue-attendance && npm run qa:venue-attendance-crud:db && npm run qa:venue-multi-pick && npm run qa:venue-story-video-poster",
     "qa:feed-scroll-restore": "tsx scripts/qa/feed-scroll-restore-smoke.ts",
     "qa:ui:feed-scroll-restore-auth": "node scripts/qa/ui-smoke-feed-scroll-restore-auth.mjs",
     "qa:photos-helper-signature": "tsx scripts/qa/photos-helper-signature.ts",
@@ -146,6 +146,9 @@
     "qa:kbo-live-games-failover": "tsx scripts/qa/kbo-live-games-failover-smoke.ts",
     "qa:starter-era": "tsx scripts/qa/starter-era-smoke.ts",
     "qa:stats-snapshot-guard": "node scripts/qa/stats-snapshot-guard-smoke.mjs",
+    "qa:stats-source-truth": "node scripts/qa/stats-source-truth-verify.mjs",
+    "qa:atomic-promote": "node scripts/qa/atomic-promote-smoke.mjs",
+    "qa:kbo-pagination": "node scripts/qa/kbo-pagination-smoke.mjs",
     "qa:naver-runner-name": "tsx scripts/qa/naver-runner-name-smoke.ts",
     "qa:end-streak": "tsx scripts/qa/end-streak-smoke.ts",
     "qa:team-rank": "tsx scripts/qa/team-rank-smoke.ts",
@@ -300,7 +303,9 @@
     "qa:venue-game-errors": "tsx scripts/qa/venue-game-errors-smoke.ts",
     "qa:venue-attendance-crud:db": "tsx scripts/qa/venue-attendance-crud-db-route-integration.ts",
     "qa:venue-video-normalize": "node scripts/qa/venue-video-normalize-e2e.mjs",
-    "qa:genius-match-path-db": "tsx scripts/qa/baseball-genius-match-path-db-integration.ts"
+    "qa:genius-match-path-db": "tsx scripts/qa/baseball-genius-match-path-db-integration.ts",
+    "qa:kbo-select": "node scripts/qa/kbo-select-smoke.mjs",
+    "qa:stats-gate-trigger": "node scripts/qa/stats-gate-trigger-smoke.mjs"
   },
   "dependencies": {
     "@capacitor-firebase/messaging": "^8.3.0",
