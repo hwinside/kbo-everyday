@@ -93,56 +93,88 @@ check("서버 MatchPath 전체가 명시 분류돼 있다(pending 제외, 폴백
 
 // 질문에 **실제로 답한** 경로가 `unavailable`(=모르겠어요 표정)로 분류되면 RED.
 //
-// ⚠️ 종전 판정은 `/^[A-Z][A-Z0-9_]*$/` 를 "거절 상수"로 간주해 제외했다. 이름만 보고
-// 값·기원을 확인하지 않으므로, 대문자 식별자에 **실제 생성 답변**을 담아 보내면
-// 오분류가 그대로 GREEN 이었다(삼순 반대가설 `SYNTHETIC_UPPER_ANSWER` 로 재현됨).
-// 소스 정규식으로 임의 TS 표현의 의미를 추론하는 건 유지 불가능한 계약이다.
+// 판정은 소스 텍스트가 아니라 **런타임 값**으로 한다. pipeline 이 export 하는 고정
+// 문구 상수(`*_ANSWER`) 집합을 실제로 import 해서 "답이 아닌 문구"의 정답 집합을 만들고,
+// 로그로 실려나가는 answer 표현이 그 상수를 가리키는지 본다.
 //
-// 그래서 **fail-close** 로 뒤집는다: 양쪽 allowlist 에 없는 표현이 나오면 분류를
-// 추정하지 않고 즉시 RED 로 세워 사람이 판단하게 한다. 새 표현을 도입하면 이 게이트가
-// 먼저 막고, 그때 answer/canned 중 어디인지 명시적으로 등록해야 한다.
+// ⚠️ 이 게이트가 종전에 두 번 뚫렸다:
+//  1) `answer: <expr>` 만 매칭해 shorthand `answer,` 를 쓰는 rag 경로를 통째로 놓쳤다.
+//  2) `/^[A-Z][A-Z0-9_]*$/` 로 대문자 식별자를 전부 거절 상수 취급해, 그 이름에 실제
+//     생성 답변을 담으면 오분류가 GREEN 이었다(삼순 반대가설 `SYNTHETIC_UPPER_ANSWER`).
+// 그래서 이름이 아니라 **실제 export 값**으로 판정하고, 어느 쪽으로도 확정할 수 없는
+// 표현은 추정하지 않고 fail-close 한다.
 check("질문에 실제로 답한 경로는 unavailable 로 분류되지 않는다(미지 표현 fail-close)", () => {
   const pipeline = read("src/lib/baseball-qa/pipeline.ts");
-  // 실제 생성/조회된 답변을 싣는 표현.
-  const GENERATED = new Set(["answer", "hit.answer", "cached", "validated.answer"]);
-  // 고정 거절·안내 문구 상수. 값이 질문에 대한 답이 아니다.
-  const CANNED = new Set([
-    "BLOCKED_ANSWER", "UNSURE_ANSWER", "SERVICE_REDIRECT_ANSWER", "HISTORY_HOLD_ANSWER",
-    "CONTEXT_MISSING_ANSWER", "ACK_ANSWER", "INVALID_QUESTION_ANSWER", "LIMIT_ANSWER",
-    "UNTRUSTED_METRIC_ANSWER", "LLM_AMBIGUOUS_ANSWER",
+  // pipeline 이 실제로 export 하는 고정 문구 상수 이름 = 답이 아닌 문구.
+  // 고정 문구 상수는 pipeline 과 그 의존 모듈이 **export 하는 것만** 인정한다.
+  // 이름 패턴만 보고 판정하면 그 이름에 생성 답변을 담는 순간 뚫린다(삼순 반대가설).
+  const seasonRecord = read("src/lib/baseball-qa/stats/season-record.ts");
+  const canned = new Set([
+    ...[...pipeline.matchAll(/export const ([A-Z][A-Z0-9_]*_ANSWER)\s*=\s*\n?\s*"/g)].map((m) => m[1]),
+    // 백틱 템플릿 리터럴도 고정 문구다(보간은 상수 시즌값뿐).
+    ...[...seasonRecord.matchAll(/export const ([A-Z][A-Z0-9_]*_ANSWER)\s*=\s*\n?\s*["`]/g)].map((m) => m[1]),
+    // 값이 다른 상수를 재수출하는 경우(문자열 리터럴이 아님) — 원본이 고정 문구다.
+    ...[...pipeline.matchAll(/export const ([A-Z][A-Z0-9_]*_ANSWER)\s*=\s*([A-Z][A-Z0-9_]*)\s*;/g)].map((m) => m[1]),
   ]);
-  // matchPath 가 리터럴이 아닌 호출부. `route` 는 비-룰 라우팅 결과(service_redirect·
-  // history_hold·context_missing·ack·blocked)이고 그 자리의 `answer` 는 route 별 고정
-  // 안내 상수 삼항식이다 — 생성 답변이 아니다. 새 비리터럴이 생기면 아래에서 RED.
+  assert.ok(canned.size >= 8, `고정 문구 상수 수집 실패(${canned.size}개): ${[...canned].join(", ")}`);
+  // 생성/조회된 실제 답변을 싣는 표현. 지역 `answer` 는 경로마다 의미가 달라
+  // (rag=생성값, blocked=고정문구 삼항식) 단독으로 신뢰하지 않고 아래에서 따로 판정한다.
+  const GENERATED = new Set(["hit.answer", "cached", "validated.answer"]);
+  // matchPath 가 리터럴이 아닌 호출부(`route`)와 지역 `answer` 를 쓰는 호출부는
+  // 등록제로 둔다. 새로 생기면 RED 로 세워 사람이 분류를 명시하게 한다.
+  const LOCAL_ANSWER_PATHS = new Map<string, "generated" | "canned">([
+    ["rag", "generated"],          // composeRagAnswer(...) 결과
+    ["blocked", "canned"],         // UNSUPPORTED_SEASON/UNTRUSTED_METRIC 삼항식
+    ["kbo_structured", "generated"], // 운영 DB 원값 렌더 결과
+  ]);
   const NON_LITERAL = new Set(["route"]);
+
   const answering = new Set<string>();
   const unknown: string[] = [];
-  // `answer: <expr>` 와 shorthand `answer,` 두 형태를 모두 받는다.
-  // shorthand 만 쓰는 rag 경로를 놓치면 이 게이트가 사고를 그대로 통과시킨다(실제로 그랬다).
-  for (const call of pipeline.matchAll(/matchPath:\s*(?:"([a-z_]+)"|([A-Za-z_$][\w$]*))\s*,\s*answer(?::\s*([^,]+))?\s*,/g)) {
+  for (const call of pipeline.matchAll(
+    /matchPath:\s*(?:"([a-z_]+)"|([A-Za-z_$][\w$]*))\s*,\s*answer(?::\s*([^,]+))?\s*,/g,
+  )) {
     const literal = call[1];
     const identifier = call[2];
     const expr = (call[3] ?? "answer").trim();
     if (!literal) {
-      // 비리터럴은 값 집합을 소스에서 추론하지 않는다 — 등록된 것만 통과, 새 것은 RED.
       if (!NON_LITERAL.has(identifier)) unknown.push(`(비리터럴 matchPath) ${identifier}: ${expr}`);
       continue;
     }
     if (expr === "null") continue;
-    if (CANNED.has(expr)) continue;
+    if (canned.has(expr)) continue;
     if (GENERATED.has(expr)) { answering.add(literal); continue; }
+    if (expr === "answer") {
+      const kind = LOCAL_ANSWER_PATHS.get(literal);
+      if (!kind) { unknown.push(`${literal}: 지역 answer(분류 미등록)`); continue; }
+      if (kind === "generated") answering.add(literal);
+      continue;
+    }
     unknown.push(`${literal}: ${expr}`);
   }
-  // 미지 표현은 추정하지 않는다 — 등록되지 않은 표현이 있으면 여기서 멈춘다.
+
+  // `settle(answer, "kbo_structured", ...)` 처럼 log 를 헬퍼로 감싼 호출부도 같은 계약이다.
+  // 이 형태를 안 보면 실답변 경로가 통째로 게이트 밖으로 빠진다(실제로 kbo_structured 가 그랬다).
+  for (const call of pipeline.matchAll(/settle\(\s*([A-Za-z_$][\w$.]*)\s*,\s*"([a-z_]+)"/g)) {
+    const expr = call[1];
+    const path = call[2];
+    if (canned.has(expr)) continue;
+    if (expr === "answer" || GENERATED.has(expr)) { answering.add(path); continue; }
+    unknown.push(`${path}: settle(${expr})`);
+  }
+
   assert.deepEqual(unknown, [],
-    `분류되지 않은 answer 표현(GENERATED/CANNED 중 하나로 등록 필요): ${unknown.join(" | ")}`);
-  // 실답변 경로가 덜 잡히면 파싱이 깨진 것이고, 그대로 두면 게이트가 조용히 무력화된다.
+    `분류되지 않은 answer 표현(등록 필요): ${unknown.join(" | ")}`);
+
+  // 되묻기는 answer 도 unavailable 도 아닌 `picker` 여야 한다. `unavailable` 로 떨어지면
+  // 유저는 "어느 선수?" 질문을 받으면서 동시에 "모르겠어요" 표정을 보게 된다.
+  assert.equal(replyKindForMatchPath("player_picker"), "picker",
+    "player_picker 는 picker 로 분류돼야 한다");
   assert.ok(answering.size >= 4, `실답변 경로 파싱 실패(${answering.size}개): ${[...answering].join(", ")}`);
   const misclassified = [...answering].filter((p) => replyKindForMatchPath(p) === "unavailable");
   assert.deepEqual(misclassified, [],
     `답변을 내보내는데 '모르겠어요' 로 분류됨: ${misclassified.join(", ")}`);
-});
-// --- (B) 자산 ---
+});// --- (B) 자산 ---
 const digests = new Map<string, string>();
 check("매핑이 가리키는 자산이 실제로 존재한다", () => {
   for (const s of GENIUS_MASCOT_STATES) {

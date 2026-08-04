@@ -47,10 +47,16 @@ async function main() {
     );
   `);
 
-  // 실제 배포 순서의 후속 CHECK migration을 그대로 적용한다.
-  await db.exec(readMigration("20260801_baseball_genius_ack_match_path.sql"));
-  await db.exec(readMigration("20260801_baseball_genius_rag_match_path.sql"));
-  await db.exec(readMigration("20260803220000_baseball_genius_player_picker.sql"));
+  // 실제 운영 forward-apply 순서를 그대로 재현한다.
+  //
+  // ⚠️ 운영 ledger 정본은 `20260804124500_baseball_genius_match_path_union.sql` 이다.
+  // 날짜만 있는 구 `20260801_*` 두 파일은 version 이 충돌해 ledger 등록에 실패했고,
+  // 그 결과 운영 CHECK 에 `rag` 가 빠진 채 남아 선수 질문 로그 INSERT 가 23514 로
+  // 실패했다(2026-08-04 P0). union hotfix 가 두 라벨을 합집합 한 벌로 다시 선언했으므로
+  // 여기서도 **union 을 먼저 적용한 뒤** 그보다 뒤 timestamp 인 picker 를 얹는다.
+  // 구 개별 파일을 재적용하면 서로가 서로의 라벨을 지우는 순서 의존이 되살아난다.
+  await db.exec(readMigration("20260804124500_baseball_genius_match_path_union.sql"));
+  await db.exec(readMigration("20260804140000_baseball_genius_player_picker.sql"));
 
   const userId = "00000000-0000-4000-8000-000000000001";
   await db.exec(`
