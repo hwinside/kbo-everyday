@@ -1,4 +1,5 @@
 import { computeDefenseRuns } from "./defense-runs.mjs";
+import { collectAllPages, createKboPageAdapter, signatureOf } from "./kbo-pagination.mjs";
 
 /**
  * 스탯 원본 정합성 대조 — 크롤 write 경로와 독립 QA 스크립트가 공유하는 SSOT.
@@ -43,124 +44,48 @@ export const DEFENSE_COLUMNS = [
   [10, "a"], [11, "dp"], [12, "fpct"], [13, "pb"], [14, "sb"], [15, "cs"],
 ];
 
-/** 현재 테이블을 `{id, tds}` 배열로 읽는다. */
-async function scrapeRows(page) {
-  return page.$$eval("tbody tr", (trs) =>
-    trs.map((tr) => {
-      const tds = [...tr.querySelectorAll("td")].map((td) => td.textContent.trim());
-      const anchor = tr.querySelector("a[href*='playerId=']");
-      const id = anchor
-        ? (anchor.getAttribute("href").match(/playerId=(\d+)/) || [])[1]
-        : null;
-      return { id, tds };
-    }),
-  );
-}
-
-/** 현재 페이지의 식별 시그니처(행 id 순서열). 상태 변경 감지용. */
-async function pageSignature(page) {
-  const rows = await scrapeRows(page);
-  return rows.map((r) => r.id ?? "").join(",");
-}
-
 /**
- * 클릭 후 테이블이 *실제로* 바뀌었는지 확인한다.
+ * KBO 기록실 한 화면을 전 페이지 순회해 `키 → 셀 배열`로 수집한다.
  *
- * ⚠︎ 직전 판은 고정 900ms 대기 뒤 바로 다음 페이지로 간주했다. 그래서 KBO가 느리면
- * 이전 페이지를 다시 읽고(id 중복 → 0 new) 페이지 번호만 증가해 **한 페이지(30행)를 통째 건너뛰었다**.
- * 실측: 타자 Basic1이 329 대신 299로 수집돼, 데이터는 멀줥한데 게이트가 30건 false RED를 냈다.
- * fail-close 게이트가 랜덤하게 터지면 매일 크롤을 막아 지금과 같은 정지 사고를 게이트가 스스로 만든다.
- */
-async function waitForTableChange(page, previousSignature, { attempts = 12, intervalMs = 500 } = {}) {
-  for (let i = 0; i < attempts; i++) {
-    await page.waitForTimeout(intervalMs);
-    const signature = await pageSignature(page);
-    if (signature && signature !== previousSignature) return signature;
-  }
-  return null;
-}
-
-/**
- * KBO 기록실 한 화면을 전 페이지 순회해 `playerId → 셀 배열`로 수집한다.
+ * ⚠︎ 순회 로직은 크롤러와 **같은 core**(`collectAllPages` + `createKboPageAdapter`)를 쓴다.
+ * 종전에는 여기에 별도 구현이 있었고, 그쪽에는 그룹 전환 유실을 "마지막 그룹"으로 오인해
+ * 조용히 EOF 처리하는 경로와 maxPages 소진 시 무예외 반환 경로가 남아 있었다.
+ * 그래서 actual crawler 와 independent oracle 이 서로 다른 완주 계약을 가졌다(삼순 지적).
+ * 이중 구현 자체를 없애 같은 fail-close 를 공유한다.
  *
- * 수집 불완전(페이지 전환 실패·0행)은 데이터 불일치가 아니므로 **별도 예외**로 구분해 던진다.
- * 검증 불가를 통과로 취급하면 게이트가 아니고, 불완전 수집을 불일치로 보고하면 false RED가 된다.
+ * 수집 불완전(전환 실패·상한 소진·0행)은 데이터 불일치가 아니므로 별도 예외로 구분된다.
+ * 검증 불가를 통과로 취급하면 게이트가 아니고, 불완전 수집을 불일치로 보고하면 false RED 다.
  */
 export async function collectKboPages(page, url, season, { keyOf } = {}) {
   const makeKey = keyOf ?? ((id) => id);
   await page.goto(url, { waitUntil: "networkidle" });
 
+  const adapter = createKboPageAdapter(page);
+
   const seasonSelector = "#cphContents_cphContents_cphContents_ddlSeason_ddlSeason";
   if (season && (await page.$(seasonSelector))) {
     const current = await page.$eval(seasonSelector, (el) => el.value).catch(() => null);
     if (current !== String(season)) {
-      const before = await pageSignature(page);
+      const before = signatureOf(await adapter.scrapeTable());
       await page.selectOption(seasonSelector, String(season));
       await page.waitForLoadState("networkidle").catch(() => {});
-      await waitForTableChange(page, before);
+      // 시즌 전환도 실제 교체를 기다린다(고정 대기는 이전 시즌 표를 읽는다).
+      for (let i = 0; i < 16; i++) {
+        await page.waitForTimeout(500);
+        const now = signatureOf(await adapter.scrapeTable());
+        if (now && now !== before) break;
+      }
     }
   }
 
+  const rows = await collectAllPages({ ...adapter, log: () => {} });
+
   const seen = new Map();
-  const visitedSignatures = new Set();
-  let pageNum = 1;
-
-  while (pageNum <= 60) {
-    const signature = await pageSignature(page);
-    if (!signature) {
-      throw new Error(`source_incomplete: ${url} page ${pageNum} 에서 0행 — 수집 불완전`);
-    }
-    if (visitedSignatures.has(signature)) {
-      // 같은 화면을 두 번 읽었다 = 페이지 전환이 실제로 안 일어난 것.
-      // 그대로 진행하면 한 페이지를 통째 건너뛰게 된다.
-      throw new Error(
-        `source_incomplete: ${url} page ${pageNum} 가 직전 페이지와 동일 — 페이지 전환 실패`,
-      );
-    }
-    visitedSignatures.add(signature);
-
-    for (const row of await scrapeRows(page)) {
-      if (!row.id) continue;
-      const key = makeKey(row.id, row.tds);
-      if (!seen.has(key)) seen.set(key, row.tds);
-    }
-
-    const nextVisible = page
-      .locator('a[id*="ucPager_btnNo"]')
-      .filter({ hasText: String(pageNum + 1) })
-      .first();
-    if (await nextVisible.count()) {
-      await nextVisible.click();
-      await page.waitForLoadState("networkidle").catch(() => {});
-      const changed = await waitForTableChange(page, signature);
-      if (!changed) {
-        throw new Error(
-          `source_incomplete: ${url} page ${pageNum} → ${pageNum + 1} 전환 후에도 내용이 그대로 — 페이지 유실 위험`,
-        );
-      }
-      pageNum++;
-      continue;
-    }
-
-    const nextGroup = await page.$('a[id$="btnNext"]');
-    if (!nextGroup) break;
-    const beforePager = await page.$$eval('a[id*="ucPager_btnNo"]', (ls) =>
-      ls.map((a) => a.textContent?.trim()).join("|"),
-    );
-    await nextGroup.click();
-    await page.waitForLoadState("networkidle").catch(() => {});
-    const changed = await waitForTableChange(page, signature);
-    const afterPager = await page.$$eval('a[id*="ucPager_btnNo"]', (ls) =>
-      ls.map((a) => a.textContent?.trim()).join("|"),
-    );
-    // 페이저가 그대로면 마지막 그룹 — 정상 종료.
-    if (!afterPager || afterPager === beforePager) break;
-    if (!changed) {
-      throw new Error(
-        `source_incomplete: ${url} 페이지 그룹 전환 후에도 내용이 그대로 — 페이지 유실 위험`,
-      );
-    }
-    pageNum++;
+  for (const row of rows) {
+    const id = (row.hrefs ?? []).map((href) => (href || "").match(/playerId=(\d+)/)?.[1]).find(Boolean);
+    if (!id) continue;
+    const key = makeKey(id, row.texts);
+    if (!seen.has(key)) seen.set(key, row.texts);
   }
 
   if (seen.size === 0) {

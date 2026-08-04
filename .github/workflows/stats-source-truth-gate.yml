@@ -176,6 +176,51 @@ jobs:
           git checkout -- src/lib/constants/stats-2026-defense.json
           git diff --exit-code
 
+      # oracle(assertSourceTruth)과 crawler 가 같은 순회 core 를 쓰는지, 그리고 그 core 의
+      # 완주 계약(그룹 전환 유실 / maxPages 소진)이 실제로 RED 인지 결속한다.
+      # 종전에는 oracle 이 자체 구현을 써서 같은 경계에서 조용히 부분 수집을 반환했다.
+      - name: RED proof — pagination completion contract must fail closed
+        run: |
+          node -e "
+            const fs = require('fs');
+            const p = 'scripts/lib/kbo-pagination.mjs';
+            let src = fs.readFileSync(p, 'utf8');
+            if (!src.includes('source_pagination_incomplete')) {
+              console.error('완주 계약 예외가 없다 — 게이트 대상 코드가 바뀌었다');
+              process.exit(1);
+            }
+            // 템플릿 리터럴을 건드리지 않는 syntax-safe 주입: 분기 조건만 죽인다.
+            const needle = '    if (groupClickAccepted) {';
+            if (!src.includes(needle)) {
+              console.error('그룹 전환 실패 분기를 찾지 못했다 — 게이트 대상 코드가 바뀌었다');
+              process.exit(1);
+            }
+            fs.writeFileSync(p, src.replace(needle, '    if (false && groupClickAccepted) {'));
+          "
+          if npm run qa:kbo-pagination; then
+            echo "::error::그룹 전환 유실을 EOF 로 오인해도 게이트가 통과했다"
+            git checkout -- scripts/lib/kbo-pagination.mjs
+            exit 1
+          fi
+          git checkout -- scripts/lib/kbo-pagination.mjs
+          git diff --exit-code
+
+      - name: RED proof — oracle must share the crawler pagination core
+        run: |
+          node -e "
+            const fs = require('fs');
+            const src = fs.readFileSync('scripts/lib/stats-source-truth.mjs', 'utf8');
+            const usesCore = src.includes('createKboPageAdapter') && src.includes('collectAllPages(');
+            if (!usesCore) {
+              console.error('oracle 이 공용 순회 core 를 쓰지 않는다 — crawler 와 완주 계약이 갈라진다');
+              process.exit(1);
+            }
+            if (/async function (scrapeRows|pageSignature|waitForTableChange)\b/.test(src)) {
+              console.error('oracle 에 자체 순회 구현이 남아 있다(이중 구현)');
+              process.exit(1);
+            }
+          "
+
       - name: Confirm working tree is clean after RED proofs
         # 결함주입이 하나라도 원복되지 않았으면 여기서 잡힌다.
         run: git diff --exit-code

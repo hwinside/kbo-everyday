@@ -166,6 +166,8 @@ for (const call of [
 
   // 실제 collectKboPages 는 page.$$eval("tbody tr", fn) 로 행을 읽는다.
   // 스텁이 그 시그니처를 흉내내도록 별도 구성.
+  // 공용 core(collectAllPages + createKboPageAdapter) 가 읽는 형태로 돌려준다.
+  // adapter.scrapeTable 은 `{texts, hrefs}` 를 기대하므로 stub 도 그 shape 이어야 한다.
   const buildPage = (rowsByUrl) => {
     let current = [];
     return {
@@ -173,11 +175,16 @@ for (const call of [
         const key = Object.keys(rowsByUrl).find((k) => url.includes(k));
         current = rowsByUrl[key] ?? [];
       },
-      async $(sel) { return null; },
+      async $(sel) { return null; },      // btnNext 없음 → 단일 그룹, 정상 EOF
       async $eval() { return null; },
       async $$eval(selector) {
-        if (selector === "tbody tr") return current;
-        return "";
+        if (selector === "tbody tr") {
+          return current.map((r) => ({
+            texts: r.tds,
+            hrefs: r.tds.map((_, i) => (i === 1 ? `?playerId=${r.id}` : "")),
+          }));
+        }
+        return "";                        // pager 없음
       },
       locator() {
         return { filter: () => ({ first: () => ({ async count() { return 0; } }) }) };
