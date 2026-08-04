@@ -134,10 +134,9 @@ async function main() {
   //
   // ⚠️ 삼순 #1102 1차 P0-1: 종전 게이트는 `GeniusThinkingBubble` 단품만 렌더해서,
   // 페이지의 `showThinking` 을 `false` 로 바꿔 말풍선을 전부 제거해도 18/18 GREEN 이었다.
-  // 규칙을 게이트가 자체 재현하는 것도 같은 함정이다 — 배포 코드가 바뀌어도 모른다.
-  // 그래서 `selectGeniusThinkingMessageId` / `resolveGeniusThinkingRender` 를 그대로 실행한다.
+  // 규칙을 게이트가 자체 재현하는 것도 같은 함정이다.
   {
-    const { selectGeniusThinkingMessageId, resolveGeniusThinkingRender } =
+    const { markGeniusThinkingMessageId, resolveGeniusThinkingRender } =
       await import("../../src/lib/baseball-qa/thinking-bubble");
     type States = Record<number, "waiting" | "retrying" | "failed">;
     const render1 = (id: number, thinkingId: number | null, states: States) =>
@@ -148,17 +147,17 @@ async function main() {
     const attachedTo = (messages: number[], thinkingId: number | null, states: States) =>
       messages.filter((id) => render1(id, thinkingId, states).show);
 
-    let thinkingId = selectGeniusThinkingMessageId({ 101: "waiting" } as States, null);
-    check("Q1: 생각중이 Q1 에 붙는다", () => {
+    // Q1 전송 (마커는 **전송 시점**에 찍힌다)
+    let thinkingId = markGeniusThinkingMessageId(101, null);
+    check("Q1 전송: 생각중이 Q1 에 붙는다", () => {
       assert.equal(thinkingId, 101);
       assert.deepEqual(attachedTo([101], thinkingId, { 101: "waiting" } as States), [101]);
     });
     check("Q1 대기 중 pending=true", () =>
       assert.equal(render1(101, thinkingId, { 101: "waiting" } as States).pending, true));
 
-    thinkingId = selectGeniusThinkingMessageId({} as States, thinkingId);
+    // 답변 도착 → outbox 비움. 마커는 그대로라 말풍선이 남는다.
     check("Q1 답변 도착 후에도 말풍선 유지", () => {
-      assert.equal(thinkingId, 101);
       assert.deepEqual(attachedTo([101, 102], thinkingId, {} as States), [101]);
     });
     check("답변 도착 후 pending=false(점 정지)", () => {
@@ -167,24 +166,47 @@ async function main() {
       assert.equal(r.pending, false);
     });
 
-    thinkingId = selectGeniusThinkingMessageId({ 202: "waiting" } as States, thinkingId);
-    check("Q2: 생각중이 최신 질문으로 이동(Q1 제거)", () => {
+    // ⚠️ Blocker 1 (삼순 2차): **답변이 outbox 보다 먼저** 오는 경로.
+    // 이때 enqueue 가 통째로 스킵돼 outbox 는 끝까지 비어 있다. outbox 파생이었으면
+    // 생각중이 한 번도 안 생겼다 — 전송 트리거라 정상 생성된다.
+    check("Blocker1: 답변이 먼저 와 outbox 가 비어도 생각중이 생긴다", () => {
+      const early = markGeniusThinkingMessageId(9001, null);
+      assert.equal(early, 9001);
+      assert.deepEqual(attachedTo([9001], early, {} as States), [9001],
+        "outbox 0 인데 생각중이 안 붙었다 — outbox 파생 회귀");
+      assert.equal(render1(9001, early, {} as States).pending, false);
+    });
+
+    // Q2 전송 → 생각중이 Q2 로 이동, Q1 것은 사라진다
+    thinkingId = markGeniusThinkingMessageId(202, thinkingId);
+    check("Q2 전송: 생각중이 최신 질문으로 이동(Q1 제거)", () => {
       assert.equal(thinkingId, 202);
       assert.deepEqual(
         attachedTo([101, 102, 202, 203], thinkingId, { 202: "waiting" } as States), [202]);
     });
-    thinkingId = selectGeniusThinkingMessageId({ 101: "waiting" } as States, thinkingId);
-    check("늦게 온 과거 대기 상태가 최신을 덮지 않는다", () => assert.equal(thinkingId, 202));
-
-    check("reload 후 thinking 0", () => {
-      const fresh = selectGeniusThinkingMessageId({} as States, null);
-      assert.equal(fresh, null);
-      assert.deepEqual(attachedTo([101, 202], fresh, {} as States), []);
+    check("늦게 온 과거 전송 id 가 최신을 덮지 않는다", () =>
+      assert.equal(markGeniusThinkingMessageId(101, thinkingId), 202));
+    check("잘못된 id 는 무시된다", () => {
+      assert.equal(markGeniusThinkingMessageId(0, thinkingId), 202);
+      assert.equal(markGeniusThinkingMessageId(-1, thinkingId), 202);
+      assert.equal(markGeniusThinkingMessageId(1.5, thinkingId), 202);
     });
 
-    // ⚠️ 실패는 pending 이 아니다 (삼순 #1102 1차 P0-2). 종전엔 "outbox 에 있으면 pending"
-    // 이라 `failed` 에서도 점 3개가 계속 돌면서 아래에 실패·재시도 버블이 같이 떠
-    // 화면이 "생각 중"과 "답변 못 받았어요"를 동시에 말하는 모순이 됐다.
+    // ⚠️ Blocker 2 (삼순 2차): reload/재진입.
+    // 새 hook 인스턴스는 prev=null 이고, 전송 행위가 없으니 마커도 없다.
+    // outbox 는 localStorage 에 남아 있어도 생각중은 되살아나면 안 된다.
+    check("Blocker2: reload 후 thinking 0 (stale outbox 무시)", () => {
+      const fresh: number | null = null;
+      assert.deepEqual(attachedTo([101, 202, 9001], fresh, { 202: "waiting" } as States), [],
+        "stale outbox 로 생각중이 되살아났다");
+    });
+    check("Blocker2: 재진입 후 다시 전송하면 그때부터 붙는다", () => {
+      const afterReload = markGeniusThinkingMessageId(303, null);
+      assert.equal(afterReload, 303);
+      assert.deepEqual(attachedTo([202, 303], afterReload, {} as States), [303]);
+    });
+
+    // ⚠️ 실패는 pending 이 아니다 (삼순 #1102 1차 P0-2).
     check("failed 는 pending=false (재시도 버블과 충돌 방지)", () => {
       const r = render1(303, 303, { 303: "failed" } as States);
       assert.equal(r.show, true, "실패해도 생각중 기록 자체는 남는다");
@@ -205,7 +227,7 @@ async function main() {
 
   // ── 계약 ④: **배포 페이지/훅이 그 SSOT 에 실제로 결속**돼 있다 ──────────────
   // 위가 전부 통과해도 페이지가 그 함수를 안 쓰면 화면엔 아무것도 안 나온다.
-  // 삼순이 `showThinking=false` mutation 으로 정확히 이 구멍을 재현했다.
+  // 삼순이 `showThinking=false` / `useDM marker 제거` mutation 으로 이 구멍을 재현했다.
   {
     const { readFileSync } = await import("node:fs");
     const nodePath = await import("node:path");
@@ -228,9 +250,24 @@ async function main() {
       assert.ok(!/\{false && <GeniusThinkingBubble/.test(page), "말풍선이 false 로 꺼져 있다");
       assert.ok(!/GeniusThinkingBubble pending=\{(?:true|false)\}/.test(page), "pending 이 상수다");
     });
-    check("훅이 selectGeniusThinkingMessageId 를 쓴다", () => {
-      assert.match(hook, /import \{ selectGeniusThinkingMessageId \} from "@\/lib\/baseball-qa\/thinking-bubble"/);
-      assert.match(hook, /selectGeniusThinkingMessageId\(geniusReplyStates, prev\)/);
+    // ⚠️ 훅이 마커를 **전송 시점에** 찍는지까지 확인한다. 이 호출이 사라지면 화면에
+    // 생각중이 영영 안 뜬다(삼순 mutation 2: useDM marker 기록 제거 → 종전 GREEN).
+    check("훅이 markGeniusThinkingMessageId 를 import 한다", () =>
+      assert.match(hook, /import \{ markGeniusThinkingMessageId \} from "@\/lib\/baseball-qa\/thinking-bubble"/));
+    check("훅이 전송 성공 직후 마커를 찍는다", () => {
+      assert.match(hook, /setGeniusThinkingQuestionId\(\(prev\) =>\s*\n?\s*markGeniusThinkingMessageId\(result\.message_id as number, prev\)\)/,
+        "전송 결과 message_id 로 마커를 찍는 호출이 없다");
+    });
+    check("마커가 enqueue 조건 **밖**에 있다(답변 선도착에도 생성)", () => {
+      const markIdx = hook.indexOf("markGeniusThinkingMessageId(result.message_id");
+      const guardIdx = hook.indexOf("if (!observedBaseballQaReplyIdsRef.current.has(result.message_id))");
+      assert.ok(markIdx > 0 && guardIdx > 0, "마커/enqueue guard 위치를 찾지 못했다");
+      assert.ok(markIdx < guardIdx,
+        "마커가 enqueue guard 안에 들어가 있다 — 답변 선도착 시 생각중이 안 생긴다");
+    });
+    check("훅이 outbox 상태에서 마커를 파생하지 않는다(reload 부활 방지)", () => {
+      assert.ok(!/selectGeniusThinkingMessageId/.test(hook),
+        "outbox 파생 방식이 남아 있다 — reload 시 생각중이 되살아난다");
     });
     check("훅이 대화 전환 시 생각중을 비운다(이전 대화 누수 차단)", () =>
       assert.match(hook, /setGeniusThinkingQuestionId\(\(prev\) => \(prev === null \? prev : null\)\)/));

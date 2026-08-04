@@ -14,27 +14,28 @@ import type { BaseballQaReplyStates } from "./client-outbox";
  */
 
 /**
- * 생각중 말풍선을 붙일 질문 id 를 고른다 — **세션 통틀어 최신 1개만**.
+ * 방금 보낸 질문을 생각중 대상으로 삼는다 — **세션 통틀어 최신 1개만**.
  *
- * 하린아빠 2026-08-04 20:33: "세션 중 중복으로 발화할 경우엔 윗쪽 생각중입니다를
- * 삭제하고 최신것만 노출."
+ * 하린아빠 2026-08-04 20:33: "세션동안 유지. 세션 중 중복으로 발화할 경우엔 윗쪽
+ * 생각중입니다를 삭제하고 최신것만 노출."
  *
- * - `states` 가 비어도 `prev` 를 유지한다 → 답변이 도착해 outbox 가 비어도 말풍선이 남는다.
- *   (이게 이번 지시의 핵심이다. Production 실측상 대기 노출이 500ms 뿐이라 그냥 두면
- *    사람 눈에 안 잡힌다.)
- * - 새 질문이 오면 그 질문으로 갈아탄다 → 이전 생각중은 화면에서 사라진다.
- * - **단조 증가**다. Realtime 순서 역전으로 과거 상태가 늦게 도착해도 최신을 되돌리지 않는다.
+ * ⚠️ 트리거가 **전송 시점**인 이유 (삼순 #1102 2차 Blocker 1·2).
+ *
+ * 종전엔 outbox(`geniusReplyStates`)에서 파생했는데 그게 두 방향으로 틀렸다:
+ *  ① **답변이 outbox 보다 먼저 도착하면** `observedBaseballQaReplyIdsRef` 가 먼저 채워져
+ *     enqueue 자체를 건너뛴다 → 생각중이 **한 번도 안 생긴다**(실측 `outbox:0`).
+ *  ② outbox 는 **localStorage 에 영속**된다 → reload/재진입에서 되살아난다.
+ *     계약은 "세션 동안만 유지, 새로고침하면 사라짐"이다.
+ *
+ * 전송은 그 세션에서 내가 실제로 한 행위이므로 두 조건을 동시에 만족한다.
+ * 반환은 단조 증가라 Realtime 순서 역전으로 과거 id 가 늦게 와도 최신을 되돌리지 않는다.
  */
-export function selectGeniusThinkingMessageId(
-  states: BaseballQaReplyStates,
+export function markGeniusThinkingMessageId(
+  sentMessageId: number,
   prev: number | null,
 ): number | null {
-  const ids = Object.keys(states)
-    .map(Number)
-    .filter((id) => Number.isSafeInteger(id) && id > 0);
-  if (ids.length === 0) return prev;
-  const latest = Math.max(...ids);
-  return prev !== null && prev >= latest ? prev : latest;
+  if (!Number.isSafeInteger(sentMessageId) || sentMessageId < 1) return prev;
+  return prev !== null && prev >= sentMessageId ? prev : sentMessageId;
 }
 
 /**

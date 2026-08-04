@@ -5,7 +5,7 @@ import { supabase } from "./client";
 import { useAuth } from "./AuthContext";
 import { useBlockedIds } from "./useBlock";
 import { OPERATOR_USER_ID } from "@/lib/constants/operator";
-import { selectGeniusThinkingMessageId } from "@/lib/baseball-qa/thinking-bubble";
+import { markGeniusThinkingMessageId } from "@/lib/baseball-qa/thinking-bubble";
 import {
   BASEBALL_GENIUS_NAME,
   BASEBALL_GENIUS_USER_ID,
@@ -324,14 +324,6 @@ export function useDMChat(conversationId: string) {
       window.removeEventListener("online", handleOnline);
     };
   }, [user, processBaseballQaOutbox]);
-
-  // 대기 상태로 관측된 질문 중 **가장 최신(id 최대)** 하나만 생각중 대상으로 남긴다.
-  // 여기서 값을 지우지 않으므로 답변 도착으로 outbox 가 비어도 말풍선이 유지되고,
-  // 새 질문이 오면 그 질문으로 갈아타 이전 생각중은 화면에서 사라진다.
-  useEffect(() => {
-    setGeniusThinkingQuestionId((prev) =>
-      selectGeniusThinkingMessageId(geniusReplyStates, prev));
-  }, [geniusReplyStates]);
 
   useEffect(() => {
     if (!Object.values(geniusReplyStates).some((state) => state === "waiting")) return;
@@ -659,6 +651,14 @@ export function useDMChat(conversationId: string) {
           result?.message_id &&
           targetUserId === BASEBALL_GENIUS_USER_ID
         ) {
+          // 생각중 마커는 **전송 시점**에 찍는다 — enqueue 여부와 무관하다.
+          // ⚠️ 답변이 outbox 보다 먼저 도착하면 `observedBaseballQaReplyIdsRef` 가 먼저
+          // 채워져 아래 enqueue 를 건너뛴다. outbox 에서 파생하면 그 경우 생각중이
+          // **한 번도 안 생긴다**(삼순 #1102 2차 Blocker 1, 실측 `outbox:0`).
+          // 또 outbox 는 localStorage 에 영속돼 reload 에서 되살아난다(Blocker 2).
+          // 전송은 이 세션에서 내가 실제로 한 행위라 두 문제를 동시에 없앤다.
+          setGeniusThinkingQuestionId((prev) =>
+            markGeniusThinkingMessageId(result.message_id as number, prev));
           if (!observedBaseballQaReplyIdsRef.current.has(result.message_id)) {
             enqueueBaseballQaQuestion(window.localStorage, {
               conversationId: result.conversation_id,

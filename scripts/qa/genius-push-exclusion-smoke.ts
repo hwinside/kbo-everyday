@@ -32,6 +32,8 @@ const CONV = "33333333-3333-4333-8333-333333333333";
  */
 interface StubState { conv: { user1_id: string; user2_id: string } | null }
 const state: StubState = { conv: null };
+/** POST 종단 검증용 — 실제 발송 시도된 FCM 대상 목록. */
+const fcmCalls: string[][] = [];
 
 function stubSupabase() {
   const chain = (table: string) => ({
@@ -59,7 +61,12 @@ const origLoad = (Module as any)._load;
     return { supabaseAdmin: stubSupabase() };
   }
   if (request.includes("notifications/fcm")) {
-    return { sendFcmToUsers: async () => ({ sent: 0 }) };
+    return {
+      sendFcmToUsers: async (userIds: string[]) => {
+        fcmCalls.push(userIds);
+        return { sent: userIds.length };
+      },
+    };
   }
   if (request.includes("notifications/audience")) {
     return { fetchFavoritePlayerFanIds: async () => [] };
@@ -82,12 +89,15 @@ async function check(name: string, fn: () => void | Promise<void>) {
 }
 
 async function main() {
+  process.env.NOTIFICATIONS_WEBHOOK_SECRET = "qa-secret";
   const mod = await import("../../src/app/api/notifications/dispatch/route");
   const handleDm = (mod as { handleDm?: (r: Record<string, unknown>) => Promise<unknown[]> }).handleDm;
+  const POST = (mod as { POST?: (req: unknown) => Promise<Response> }).POST;
   assert.equal(
     typeof handleDm, "function",
     "dispatch route 가 handleDm 을 export 하지 않는다 — 실제 함수를 호출할 수 없다",
   );
+  assert.equal(typeof POST, "function", "dispatch route 가 POST 를 export 하지 않는다");
 
   /** 실제 `handleDm` 을 호출해 push dispatch 개수를 돌려준다. */
   const dispatchCount = async (senderId: string, receiverId: string) => {
@@ -127,6 +137,43 @@ async function main() {
       !new RegExp(`["']${GENIUS}["']`).test(source),
       "봇 uuid 가 하드코딩돼 있다 — 상수와 어긋나면 조용히 새어나간다",
     );
+  });
+
+  // ── 종단: 실제 `POST` webhook 경로 ────────────────────────────────────────
+  //
+  // ⚠️ 삼순 #1102 2차 Blocker 3: `handleDm` 만 호출하면 **POST 의 dm_messages 배선을
+  // 끊어도** GREEN 이다(`else if (body.table === "dm_messages")` 제거). DB 트리거는
+  // POST 로 들어오므로 그 배선이 죽으면 알림 정책 자체가 안 돈다.
+  // 그래서 POST 를 실제로 호출해 발송된 FCM 대상 수까지 확인한다.
+  const postDispatch = async (senderId: string, receiverId: string) => {
+    state.conv = { user1_id: senderId, user2_id: receiverId };
+    fcmCalls.length = 0;
+    const res = await POST!({
+      headers: { get: (k: string) => (k === "x-webhook-secret" ? "qa-secret" : null) },
+      json: async () => ({
+        table: "dm_messages",
+        record: {
+          conversation_id: CONV, sender_id: senderId,
+          content: "보크가 뭐야?", image_urls: null, payload: null,
+        },
+      }),
+    });
+    const body = await (res as unknown as { json: () => Promise<{ ok?: boolean; ignored?: string }> }).json();
+    return { fcm: fcmCalls.length, body };
+  };
+
+  await check("POST 종단: 봇 답변 → 유저 FCM 0", async () => {
+    const r = await postDispatch(GENIUS, USER_A);
+    assert.equal(r.fcm, 0, `봇 발신인데 FCM ${r.fcm}건 발송`);
+    assert.notEqual(r.body.ignored, "dm_messages", "POST 가 dm_messages 를 아예 무시한다 — 배선 단절");
+  });
+  await check("POST 종단: 유저 질문 → 봇 FCM 0", async () => {
+    assert.equal((await postDispatch(USER_A, GENIUS)).fcm, 0);
+  });
+  await check("POST 종단: 일반 DM 은 FCM 1 (배선 살아있음)", async () => {
+    const r = await postDispatch(USER_A, USER_B);
+    assert.equal(r.fcm, 1,
+      `일반 DM FCM 이 ${r.fcm}건 — 0 이면 POST 의 dm_messages 배선이 끊겼거나 과차단이다`);
   });
 
   if (failures.length > 0) {
