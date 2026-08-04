@@ -17,16 +17,7 @@
  */
 import { readFileSync } from "node:fs";
 import { chromium } from "playwright";
-import {
-  BATTER_BASIC1_COLUMNS,
-  BATTER_BASIC2_COLUMNS,
-  DEFENSE_COLUMNS,
-  PITCHER_COLUMNS,
-  collectKboDefensePages,
-  collectKboPages,
-  crossCheckDataset,
-  crossCheckDerived,
-} from "../lib/stats-source-truth.mjs";
+import { assertSourceTruth, crossCheckDerived } from "../lib/stats-source-truth.mjs";
 
 const SEASON = process.argv.includes("--season")
   ? process.argv[process.argv.indexOf("--season") + 1]
@@ -44,61 +35,22 @@ const foreignIdSource = readFileSync(`${CONSTANTS}/foreign-id-map.ts`, "utf8");
 
 const failures = [];
 
+// ⚠︎ 대조 대상·판정은 크롤러와 **같은 함수**(assertSourceTruth)를 쓴다.
+// 종전에는 이 파일이 자체 spec 목록을 들고 있어서, 라이브러리에 Runner(sb/cs) 대조를
+// 추가해도 여기에는 반영되지 않는 이중 계약이 생겼다.
 const browser = await chromium.launch();
 try {
-  const page = await browser.newPage();
-  const specs = [
-    {
-      label: "투수",
-      rows: pitchers,
-      url: `${KBO_BASE}/Record/Player/PitcherBasic/Basic1.aspx?sort=GAME_CN`,
-      columns: PITCHER_COLUMNS,
-    },
-    {
-      label: "타자",
-      rows: batters,
-      url: `${KBO_BASE}/Record/Player/HitterBasic/Basic1.aspx?sort=GAME_CN`,
-      columns: BATTER_BASIC1_COLUMNS,
-    },
-    {
-      label: "타자(추가지표)",
-      rows: batters,
-      url: `${KBO_BASE}/Record/Player/HitterBasic/Basic2.aspx?sort=GAME_CN`,
-      columns: BATTER_BASIC2_COLUMNS,
-    },
-  ];
-  for (const spec of specs) {
-    const kbo = await collectKboPages(page, spec.url, SEASON);
-    const result = crossCheckDataset({
-      label: spec.label,
-      rows: spec.rows,
-      kbo,
-      columns: spec.columns,
-    });
-    console.log(
-      `  [${spec.label}] 우리 ${result.ourRows}행 / KBO ${result.kboRows}행 · ${result.cells}셀 대조`,
-    );
-    failures.push(...result.failures);
-  }
-
-  // 수비는 `(playerId, pos)` 복합키다 — 한 선수가 여러 포지션을 본다(현재 163명).
-  // 종전에는 수비에 스냅샷 가드도 원본 대조도 없어서 823행 → 30행으로 무너져도 조용히 배포됐다.
-  const kboDefense = await collectKboDefensePages(
-    page,
-    `${KBO_BASE}/Record/Player/Defense/Basic.aspx?sort=GAME_CN`,
-    SEASON,
-  );
-  const defenseResult = crossCheckDataset({
-    label: "수비",
-    rows: defense,
-    kbo: kboDefense,
-    columns: DEFENSE_COLUMNS,
-    keyOf: (row) => `${String(row.kboId ?? "").trim()}|${row.pos ?? ""}`,
+  await assertSourceTruth({
+    browser,
+    kboBase: KBO_BASE,
+    season: SEASON,
+    batters,
+    pitchers,
+    defense,
+    log: (line) => console.log(line.replace(/^ {4}/, "  ")),
   });
-  console.log(
-    `  [수비] 우리 ${defenseResult.ourRows}행 / KBO ${defenseResult.kboRows}행 · ${defenseResult.cells}셀 대조`,
-  );
-  failures.push(...defenseResult.failures);
+} catch (error) {
+  failures.push(String(error?.message ?? error));
 } finally {
   await browser.close();
 }

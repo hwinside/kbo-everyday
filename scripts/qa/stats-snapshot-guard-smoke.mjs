@@ -92,8 +92,10 @@ assert.throws(
 /* ── 실제 배선 — 네 가드가 모두 첫 write보다 앞에서 실행되는가 ──
  * 존재만 확인하면 write 뒤로 옮겨도 GREEN이므로 위치 관계를 고정한다. */
 const crawler = readFileSync("scripts/crawl-stats.mjs", "utf8");
-const firstWriteIndex = crawler.indexOf("writeFileSync(batterPath");
-assert.ok(firstWriteIndex >= 0, "첫 stats write 지점을 찾을 수 있어야 한다");
+// 산출물 교체는 promoteAtomically 한 지점에서만 일어난다(원자 promote, 삼순 P0-3).
+// 순차 직쓰기가 남아 있으면 atomic-promote 스모크가 따로 RED 를 낸다.
+const firstWriteIndex = crawler.indexOf("promoteAtomically(artifacts)");
+assert.ok(firstWriteIndex >= 0, "산출물 promote 지점을 찾을 수 있어야 한다");
 
 for (const call of [
   "validatePitcherSnapshot(",
@@ -200,10 +202,13 @@ for (const call of [
   const batterRow2 = row("90002", "테스트타자", "TT", batterCells2);
   const defenseRow = row("90003", "테스트수비", "TT", ["유격수", "10", "10", "80", "1", "0", "20", "30", "5", "0.980", "0", "0", "0"]);
 
+  // 도루(Runner): 순위0 선수명1 팀명2 G3 SBA4 SB5 CS6 ...
+  const runnerRow = row("90002", "테스트타자", "TT", ["10", "5", "3", "1", "0.750", "0", "0"]);
   const urls = {
     "PitcherBasic": [pitcherRow],
     "HitterBasic/Basic1": [batterRow1],
     "HitterBasic/Basic2": [batterRow2],
+    "Runner": [runnerRow],
     "Defense": [defenseRow],
   };
 
@@ -217,6 +222,7 @@ for (const call of [
     avg: "0.300", games: 10, pa: 40, ab: 35, runs: 5, hits: 10,
     doubles: 2, triples: 0, hr: 1, tb: 15, rbi: 5, sac: 0, sf: 0,
     bb: 4, ibb: 0, hbp: 1, so: 8, gdp: 0, slg: "0.400", obp: "0.380", ops: "0.780",
+    sb: 3, cs: 1,
   }];
   const ourDefense = [{
     kboId: "90003", name: "테스트수비", team: "TT", pos: "유격수",
@@ -252,6 +258,17 @@ for (const call of [
     }),
     /stats_source_truth_mismatch/,
     "수비 행 누락이면 assertSourceTruth 가 던져야 한다",
+  );
+
+  // 도루(sb/cs) 값 오염도 잡아야 한다 — 종전에는 Runner 를 아예 안 읽어 GREEN 이었다.
+  await assert.rejects(
+    () => assertSourceTruth({
+      browser: stubBrowser, kboBase: "https://kbo.test", season: "2026",
+      batters: [{ ...ourBatters[0], sb: 999 }],
+      pitchers: ourPitchers, defense: ourDefense, log: silent,
+    }),
+    /stats_source_truth_mismatch/,
+    "타자 도루 값 오염이면 assertSourceTruth 가 던져야 한다",
   );
 
   // 원본을 못 읽으면(0행) 통과가 아니라 실패여야 한다.

@@ -9,7 +9,7 @@
  */
 
 import { chromium } from "playwright";
-import { readFileSync, writeFileSync } from "fs";
+import { readFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { computeDefenseRuns } from "./lib/defense-runs.mjs";
@@ -20,6 +20,8 @@ import {
   validatePitcherSnapshot,
 } from "./lib/stats-snapshot-guard.mjs";
 import { assertSourceTruth } from "./lib/stats-source-truth.mjs";
+import { promoteAtomically } from "./lib/atomic-promote.mjs";
+import { collectAllPages } from "./lib/kbo-pagination.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = join(__dirname, "..");
@@ -132,91 +134,32 @@ async function scrapeTable(page) {
   );
 }
 
-/** 현재 테이블 내용의 식별 시그니처. 페이지가 *실제로* 바뀌었는지 판정하는 데 쓴다. */
-async function tableSignature(page) {
-  const rows = await scrapeTable(page);
-  return rows.map((r) => (r.texts || []).join("\u0001")).join("\u0002");
-}
 
-/**
- * 클릭 후 테이블이 실제로 교체될 때까지 기다린다.
- *
- * ⚠︎ 종전에는 고정 1,200ms 대기 뒤 무조건 다음 페이지로 간주했다. KBO 응답이 느리면
- * 이전 화면을 다시 읽어("0 new") 페이지 번호만 올라가고, 그 페이지는 통째 유실됐다.
- * 실측 피해: 타자 329→299(30행 누락), 수비 823→30(한 페이지만 남고 전멸).
- * 수비는 스냅샷 가드가 없어 그 상태로 파일에 썰다.
- */
-async function waitForTableSwap(page, previousSignature, { attempts = 16, intervalMs = 500 } = {}) {
-  for (let i = 0; i < attempts; i++) {
-    await page.waitForTimeout(intervalMs);
-    const signature = await tableSignature(page);
-    if (signature && signature !== previousSignature) return signature;
-  }
-  return null;
-}
 
 async function scrapeAllPages(page) {
-  const allRows = [];
-  // 페이지 그룹 이동(btnNext) 시 동일 페이지가 재렌더돼 같은 행이 중복 수집되는 경우가 있다.
-  // 행 전체 시그니처(텍스트+링크 = 선수 고유)로 정확 중복만 제거 — 동명이인은 playerId 링크가 달라 보존.
-  const seen = new Set();
-  let pageNum = 1;
-
-  while (true) {
-    const rows = await scrapeTable(page);
-    if (rows.length === 0) break;
-    const pageSig = rows.map((r) => (r.texts || []).join("\u0001")).join("\u0002");
-    const fresh = rows.filter((r) => {
-      const sig = `${(r.texts || []).join("\u0001")}\u0002${(r.hrefs || []).join("\u0001")}`;
-      if (seen.has(sig)) return false;
-      seen.add(sig);
-      return true;
-    });
-    allRows.push(...fresh);
-    console.log(`    Page ${pageNum}: ${rows.length} rows (${fresh.length} new, total: ${allRows.length})`);
-
-    const targetPageText = String(pageNum + 1);
-    const nextVisibleBtn = await page.locator('a[id*="ucPager_btnNo"]').filter({ hasText: targetPageText }).first();
-    if (await nextVisibleBtn.count()) {
-      await nextVisibleBtn.click();
+  return collectAllPages({
+    scrapeTable: () => scrapeTable(page),
+    clickPage: async (targetPageText) => {
+      const btn = await page.locator('a[id*="ucPager_btnNo"]').filter({ hasText: targetPageText }).first();
+      if (!(await btn.count())) return false;
+      await btn.click();
       await page.waitForLoadState("networkidle").catch(() => {});
-      const swapped = await waitForTableSwap(page, pageSig);
-      if (!swapped) {
-        // 다음 페이지를 눌렀는데 내용이 그대로다 = 전환 실패.
-        // 그냥 진행하면 한 페이지를 통째 놓친다(실제 사고 재현됨).
-        throw new Error(
-          `page_advance_failed: page ${pageNum} → ${pageNum + 1} 전환 후에도 테이블이 그대로 — 수집 불완전`,
-        );
-      }
-      pageNum++;
-      continue;
-    }
-
-    const nextGroupBtn = await page.$('a[id$="btnNext"]');
-    if (!nextGroupBtn) break;
-
-    const beforePager = await page.$$eval('a[id*="ucPager_btnNo"]', (links) =>
-      links.map((a) => `${a.textContent?.trim()}:${a.className}`).join("|")
-    );
-
-    await nextGroupBtn.click();
-    await page.waitForLoadState("networkidle").catch(() => {});
-    const groupSwapped = await waitForTableSwap(page, pageSig);
-
-    const afterPager = await page.$$eval('a[id*="ucPager_btnNo"]', (links) =>
-      links.map((a) => `${a.textContent?.trim()}:${a.className}`).join("|")
-    );
-
-    // 페이저가 그대로면 마지막 그룹 — 정상 종료.
-    if (!afterPager || afterPager === beforePager) break;
-    if (!groupSwapped) {
-      throw new Error(
-        "page_advance_failed: 페이지 그룹 전환 후에도 테이블이 그대로 — 수집 불완전",
-      );
-    }
-  }
-
-  return allRows;
+      return true;
+    },
+    clickNextGroup: async () => {
+      const btn = await page.$('a[id$="btnNext"]');
+      if (!btn) return false;
+      await btn.click();
+      await page.waitForLoadState("networkidle").catch(() => {});
+      return true;
+    },
+    pagerSignature: () =>
+      page.$$eval('a[id*="ucPager_btnNo"]', (links) =>
+        links.map((a) => `${a.textContent?.trim()}:${a.className}`).join("|"),
+      ),
+    sleep: (ms) => page.waitForTimeout(ms),
+    log: (line) => console.log(line),
+  });
 }
 
 async function crawlBatterBasic1(page) {
@@ -581,11 +524,21 @@ async function main() {
       defense,
     });
 
-    writeFileSync(batterPath, JSON.stringify(batters, null, 2));
-    writeFileSync(pitcherPath, JSON.stringify(pitchers, null, 2));
-    writeFileSync(defensePath, JSON.stringify(defense, null, 2));
-    writeFileSync(defenseRunsPath, JSON.stringify(defenseRuns, null, 2));
-    writeFileSync(metaPath, JSON.stringify(meta, null, 2));
+    // 원자 promote — 순차 직쓰기는 중간 I/O 실패 시 혼합 snapshot을 남긴다.
+    //
+    // ⚠︎ 종전에는 대상 파일 5개에 writeFileSync 를 그대로 순차 호출했다. 검증은 write
+    // *앞*에서 멈추지만, 2~5번째 쓰기가 실패하거나 프로세스가 죽으면 앞 파일은 이미
+    // 교체된 뒤라 타자만 새것/수비는 옛것 같은 섞인 상태가 남는다(삼순 P0-3).
+    // 그래서 전부 temp 에 쓴 뒤, 한 번에 promote 하고, promote 중 실패하면
+    // 이미 바꾼 파일을 원본 백업으로 되돌린다.
+    const artifacts = [
+      { path: batterPath, body: JSON.stringify(batters, null, 2) },
+      { path: pitcherPath, body: JSON.stringify(pitchers, null, 2) },
+      { path: defensePath, body: JSON.stringify(defense, null, 2) },
+      { path: defenseRunsPath, body: JSON.stringify(defenseRuns, null, 2) },
+      { path: metaPath, body: JSON.stringify(meta, null, 2) },
+    ];
+    promoteAtomically(artifacts);
 
     console.log(`\n✅ 타자 ${batters.length}명 → ${batterPath}`);
     console.log(`✅ 투수 ${pitchers.length}명 → ${pitcherPath}`);

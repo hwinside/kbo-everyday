@@ -1,3 +1,5 @@
+import { computeDefenseRuns } from "./defense-runs.mjs";
+
 /**
  * 스탯 원본 정합성 대조 — 크롤 write 경로와 독립 QA 스크립트가 공유하는 SSOT.
  *
@@ -25,6 +27,12 @@ export const BATTER_BASIC1_COLUMNS = [
 export const BATTER_BASIC2_COLUMNS = [
   [4, "bb"], [5, "ibb"], [6, "hbp"], [7, "so"], [8, "gdp"], [9, "slg"], [10, "obp"], [11, "ops"],
 ];
+
+/**
+ * 도루 페이지(Runner) — 순위(0) 선수명(1) 팀명(2) G(3) SBA(4) SB(5) CS(6) SB%(7) OOB(8) PKO(9)
+ * 이 페이지를 대조하지 않으면 타자의 `sb`/`cs` 값 오염이 그대로 통과한다(삼순 P0-1).
+ */
+export const RUNNER_COLUMNS = [[5, "sb"], [6, "cs"]];
 
 /**
  * 수비는 한 선수가 여러 포지션을 보므로 playerId 단독이 아니라 `(playerId, pos)` 복합키다.
@@ -245,6 +253,11 @@ export async function assertSourceTruth({ browser, kboBase, season, batters, pit
     const kboBatters2 = await collectKboPages(
       page, `${kboBase}/Record/Player/HitterBasic/Basic2.aspx?sort=GAME_CN`, season,
     );
+    // 도루(Runner) — 타자의 sb/cs 는 이 페이지에서 온다.
+    // 이걸 빼면 전다민 sb 1 → 999 오염이 그대로 통과한다(삼순 P0-1 실증).
+    const kboRunner = await collectKboPages(
+      page, `${kboBase}/Record/Player/Runner/Basic.aspx`, season,
+    );
     // 수비는 `(playerId, pos)` 복합키다 — 한 선수가 여러 포지션을 본다.
     const kboDefense = await collectKboDefensePages(
       page, `${kboBase}/Record/Player/Defense/Basic.aspx?sort=GAME_CN`, season,
@@ -254,6 +267,16 @@ export async function assertSourceTruth({ browser, kboBase, season, batters, pit
       { label: "투수", rows: pitchers, kbo: kboPitchers, columns: PITCHER_COLUMNS },
       { label: "타자", rows: batters, kbo: kboBatters1, columns: BATTER_BASIC1_COLUMNS },
       { label: "타자(추가지표)", rows: batters, kbo: kboBatters2, columns: BATTER_BASIC2_COLUMNS },
+      // Runner 페이지에는 도루 기록이 있는 선수만 등장하므로 행 집합 대조는 하지 않는다.
+      // 대신 등장하는 선수의 sb/cs 값은 반드시 일치해야 하고,
+      // Runner 에 없는 선수는 아래에서 sb/cs = 0 인지 따로 확인한다.
+      {
+        label: "타자(도루)",
+        rows: batters,
+        kbo: kboRunner,
+        columns: RUNNER_COLUMNS,
+        checkRowSet: false,
+      },
       {
         label: "수비",
         rows: defense,
@@ -265,6 +288,22 @@ export async function assertSourceTruth({ browser, kboBase, season, batters, pit
       const result = crossCheckDataset(spec);
       log(`    [${spec.label}] 우리 ${result.ourRows}행 / KBO ${result.kboRows}행 · ${result.cells}셀 대조`);
       failures.push(...result.failures);
+    }
+
+    // Runner 에 없는 선수가 0 이 아닌 도루 기록을 들고 있으면 조작이다.
+    {
+      let checked = 0;
+      for (const row of batters) {
+        const id = String(row.kboId ?? row.playerId ?? "").trim();
+        if (kboRunner.has(id)) continue;
+        checked++;
+        if (Number(row.sb ?? 0) !== 0 || Number(row.cs ?? 0) !== 0) {
+          failures.push(
+            `타자(도루): KBO 도루 기록이 없는 선수에 값이 있음 — playerId=${id}(${row.name}) sb=${row.sb} cs=${row.cs}`,
+          );
+        }
+      }
+      log(`    [타자(도루 미등재)] ${checked}명 sb/cs=0 확인`);
     }
   } finally {
     await page.close().catch(() => {});
@@ -302,11 +341,33 @@ export function crossCheckDerived({ batters, pitchers, defense, defenseRuns, ros
     }
   }
 
-  // defense runs 키는 전부 defense에 실재하는 선수여야 한다.
+  // defense runs 는 참조 무결성만으로는 부족하다.
+  //
+  // ⚠︎ 종전에는 "키가 defense 에 실재하는가"만 봤다. 그래서 값 자체를 조작해도
+  // (삼순 실증: `50054: -3.5 → 995.5`) 게이트가 GREEN 이었다.
+  // defense-runs 는 검증된 defense 에서 결정론적으로 파생되는 값이므로,
+  // 여기서 다시 계산해 저장본과 전 키·전 값을 대조한다.
   {
     const defenseIds = new Set(defense.map((row) => String(row.kboId)));
     for (const id of Object.keys(defenseRuns)) {
       if (!defenseIds.has(id)) fail(`수비runs: defense에 없는 ID ${id}`);
+    }
+
+    const expected = computeDefenseRuns(defense);
+    const expectedKeys = Object.keys(expected);
+    const storedKeys = Object.keys(defenseRuns);
+    for (const id of expectedKeys) {
+      if (!(id in defenseRuns)) fail(`수비runs: 파생 결과에 있으나 저장본에 없음 — ${id}`);
+    }
+    for (const id of storedKeys) {
+      if (!(id in expected)) fail(`수비runs: 저장본에만 있음 — ${id}`);
+    }
+    for (const id of expectedKeys) {
+      if (!(id in defenseRuns)) continue;
+      // 파생값은 소수 1자리로 반올림돼 저장된다(computeDefenseRuns 계약).
+      if (Number(defenseRuns[id]) !== Number(expected[id])) {
+        fail(`수비runs: 값 불일치 ${id} stored=${defenseRuns[id]} derived=${expected[id]}`);
+      }
     }
   }
 
