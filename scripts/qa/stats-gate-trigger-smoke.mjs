@@ -56,7 +56,7 @@ async function parseOn(path) {
       const doc = api.parse ? api.parse(source) : api.load(source);
       // YAML 1.1 에서 `on:` 은 boolean true 로 온다. 두 표기 모두 받는다.
       const on = doc?.on ?? doc?.[true] ?? doc?.["true"];
-      if (on) return { on, source };
+      if (on) return { doc, on, source };
       errors.push(`${mod}: on 블록을 찾지 못함`);
     } catch (error) {
       errors.push(`${mod}: ${error.message}`);
@@ -69,14 +69,15 @@ async function parseOn(path) {
     'with open(sys.argv[1], encoding="utf-8") as f:',
     "    doc = yaml.safe_load(f)",
     'on = doc.get(True, doc.get("on"))',
-    'print(json.dumps({"on": on}, default=str))',
+    'print(json.dumps({"doc": doc, "on": on}, default=str))',
   ].join("\n");
   try {
     const out = execFileSync("python3", ["-c", script, path], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     });
-    return { on: JSON.parse(out).on, source };
+    const parsed = JSON.parse(out);
+    return { doc: parsed.doc, on: parsed.on, source };
   } catch (error) {
     errors.push(`python3: ${error.message}`);
   }
@@ -104,7 +105,7 @@ function assertScriptsExist(source, label, minimum) {
 
 /* ══ 1) contract 게이트 — paths 금지, 전 PR·main push 등록 ══════ */
 {
-  const { on, source } = await parseOn(CONTRACT_WORKFLOW);
+  const { doc, on, source } = await parseOn(CONTRACT_WORKFLOW);
   assert.ok(on && typeof on === "object", "contract 게이트의 `on:` 블록을 파싱할 수 있어야 한다");
 
   const offenders = [];
@@ -141,19 +142,52 @@ function assertScriptsExist(source, label, minimum) {
    *
    * 그래서 래퍼의 **판정 행동**을 결정론적으로 검증하는 스모크를 contract 게이트에 싣는다.
    * 이 결속이 빠지면 위 구멍이 그대로 다시 열리므로 여기서 고정한다. */
-  /* ⚠︎ alias 가 아니라 **파일 경로**로 불러야 한다(삼순 2차 NO-GO b).
-   * npm alias 경유면 mutation 을 인지하는 decoy alias 하나로 실제 스모크를 0회
-   * 실행하고도 전체 GREEN 을 만들 수 있다 — 여기서 alias 존재만 봤기 때문이었다. */
+  /* ⚠︎ 삼순 3차 NO-GO: 문자열/정규식으로 `run: node ...` 포함만 보면 안 된다.
+   * 아래는 전부 유효한 YAML 이고 실제 스모크를 0회/실패무시로 만든다:
+   *   - run: node ... || true
+   *   - run: node ... + if: false
+   *   - job 자체 if: false
+   *   - continue-on-error: true
+   * baseline 이 RED 여도 뒤 mutation proof 는 "expected failure"라 workflow 전체가 GREEN 가능하다.
+   *
+   * 그래서 실제 YAML 구조를 읽어 **유일한 baseline step** 을 특정하고,
+   * run 값 exact·step/job if 없음·continue-on-error 없음·shell override 없음까지 고정한다. */
+  const job = doc?.jobs?.["stats-contract"];
+  assert.ok(job && typeof job === "object", "stats-contract job 이 있어야 한다");
   assert.ok(
-    /run:\s*node scripts\/qa\/stats-freshness-contract-smoke\.mjs/.test(source),
-    "contract 게이트가 `node scripts/qa/stats-freshness-contract-smoke.mjs` 를"
-      + " 경로로 직접 실행해야 한다 — 이게 없으면 freshness 래퍼를 no-op 으로 바꾸는"
-      + " 코드 PR 을 아무도 잡지 못하고, 이후 데이터 PR 은 무력화된 래퍼로"
-      + " live equality 를 0회 수행한다",
+    !("if" in job),
+    "stats-contract job 에 if 조건이 있으면 job 전체를 SKIP 해 required check false-green 이 된다",
   );
   assert.ok(
-    !/npm run qa:stats-freshness-contract(?![\w-])/.test(source),
-    "contract 게이트가 이 스모크를 npm alias 로 부르면 안 된다 — decoy alias 우회 경로",
+    !("continue-on-error" in job),
+    "stats-contract job 에 continue-on-error 가 있으면 baseline RED 를 무시할 수 있다",
+  );
+
+  const baselineName = "Freshness wrapper behavior contract (deterministic)";
+  const matches = (job.steps ?? []).filter((step) => step?.name === baselineName);
+  assert.equal(
+    matches.length,
+    1,
+    `freshness 행동 baseline step 은 정확히 1개여야 한다 (actual ${matches.length})`,
+  );
+  const baseline = matches[0];
+  assert.equal(
+    baseline.run,
+    "node scripts/qa/stats-freshness-contract-smoke.mjs",
+    "freshness 행동 baseline 은 파일 경로를 exact 로 직접 실행해야 한다."
+      + " `|| true`, 파이프, 후속 명령, npm alias 는 실패를 숨기거나 decoy 로 우회할 수 있다",
+  );
+  assert.ok(
+    !("if" in baseline),
+    "freshness 행동 baseline step 에 if 가 있으면 실제 스모크를 0회 실행하고 GREEN 가능",
+  );
+  assert.ok(
+    !("continue-on-error" in baseline),
+    "freshness 행동 baseline step 에 continue-on-error 가 있으면 RED 를 무시 가능",
+  );
+  assert.ok(
+    !("shell" in baseline),
+    "freshness 행동 baseline step 의 shell override 는 exit semantics 를 바꿀 수 있어 금지",
   );
 }
 
