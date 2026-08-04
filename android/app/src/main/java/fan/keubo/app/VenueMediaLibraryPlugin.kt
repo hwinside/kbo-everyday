@@ -150,6 +150,11 @@ class VenueMediaLibraryPlugin : Plugin() {
 
         val limit = max(1, call.getInt("limit") ?: 60)
         val offset = max(0, call.getString("cursor")?.toIntOrNull() ?: 0)
+        // 미디어 타입 필터 — 영상만/사진만 보기. cursor(offset)도 같은 필터된 쿼리 기준이라
+        // 페이징이 그 타입 안에서만 진행한다(혼합 목록을 받아 화면에서 걸러내던 구방식과 다름).
+        val requestedTypes = call.getArray("mediaTypes")?.let { array ->
+            (0 until array.length()).mapNotNull { runCatching { array.getString(it) }.getOrNull() }
+        }
         executor.execute {
             try {
                 val resolver = context.contentResolver
@@ -160,11 +165,10 @@ class VenueMediaLibraryPlugin : Plugin() {
                     MediaStore.Files.FileColumns.DATE_ADDED,
                     MediaStore.Files.FileColumns.DURATION,
                 )
-                val selection = "${MediaStore.Files.FileColumns.MEDIA_TYPE} IN (?, ?)"
-                val selectionArgs = arrayOf(
-                    MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE.toString(),
-                    MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO.toString(),
-                )
+                val selectionArgs = mediaTypeSelectionArgs(requestedTypes)
+                val placeholders = selectionArgs.joinToString(", ") { "?" }
+                val selection =
+                    "${MediaStore.Files.FileColumns.MEDIA_TYPE} IN ($placeholders)"
                 val assets = JSArray()
                 var hasMore = false
                 queryPage(
@@ -220,6 +224,22 @@ class VenueMediaLibraryPlugin : Plugin() {
             } catch (error: Exception) {
                 call.reject("listMedia failed: ${error.message}")
             }
+        }
+    }
+
+    /**
+     * JS `mediaTypes`("image" | "video") → MediaStore MEDIA_TYPE selection args.
+     * 미전달/빈 배열/미지 값은 기존 계약인 사진+영상 전체로 폴백한다(구웹 호환).
+     */
+    private fun mediaTypeSelectionArgs(requested: List<String>?): Array<String> {
+        val image = MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE.toString()
+        val video = MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO.toString()
+        val wantsImage = requested?.contains("image") == true
+        val wantsVideo = requested?.contains("video") == true
+        return when {
+            wantsImage && !wantsVideo -> arrayOf(image)
+            wantsVideo && !wantsImage -> arrayOf(video)
+            else -> arrayOf(image, video)
         }
     }
 

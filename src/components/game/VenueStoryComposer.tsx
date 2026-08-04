@@ -56,6 +56,11 @@ import {
   shouldRefreshLibraryOnResume,
   VENUE_LIBRARY_FIRST_PAGE_SIZE,
   VENUE_LIBRARY_PAGE_SIZE,
+  VENUE_LIBRARY_FILTERS,
+  filterLibraryAssets,
+  libraryEmptyMessage,
+  shouldAutoLoadMoreForFilter,
+  type VenueLibraryFilter,
 } from "@/lib/venue-stories/multi-pick";
 import {
   runVenueUploadQueue,
@@ -125,10 +130,28 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   const [phase, setPhase] = useState<Phase>("idle");
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [libraryAssets, setLibraryAssets] = useState<VenueMediaAsset[]>([]);
+  const [libraryKnownHasAnyMedia, setLibraryKnownHasAnyMedia] = useState(false);
   const [libraryCursor, setLibraryCursor] = useState<string | null>(null);
   const [libraryPermission, setLibraryPermission] =
     useState<VenueMediaPermission>("prompt");
   const [libraryLoading, setLibraryLoading] = useState(false);
+  // 미디어 타입 토글 — 네이티브 열거는 사진+영상을 섞어 내려주므로 화면단에서 걸러 보여준다.
+  const [libraryFilter, setLibraryFilter] = useState<VenueLibraryFilter>("all");
+  // 비동기 열거 응답이 도착했을 때 '지금 어느 탭인가'를 읽기 위한 동기 미러 — setState 반영
+  // 전 구간에 탭이 바뀜을 때 stale 페이지가 다른 탭 목록을 오염시키는 걸 막는다.
+  const libraryFilterRef = useRef<VenueLibraryFilter>("all");
+  // React state 반영 전에도 중복 네이티브 열거를 막는 동기 guard. 로딩 중 새 필터 요청은
+  // 버리지 않고 pendingReload 로 합쳐 현재 요청이 끝나는 즉시 **최신 필터**를 다시 읽는다.
+  const libraryLoadingRef = useRef(false);
+  const libraryPendingReloadRef = useRef(false);
+  // 필터 A→B→A처럼 최종 필터 문자열이 다시 같아져도 첫 A의 늦은 응답을 받지 않도록
+  // 모든 조회 의도에 generation을 부여한다(필터 ref 동일성만으로는 막을 수 없는 ABA race).
+  const libraryRequestGenerationRef = useRef(0);
+  // reset→재오픈 뒤 이전 요청의 늦은 finally가 새 요청 loading/pending을 풀지 못하게
+  // 실제 실행 중인 request generation도 별도로 보관한다.
+  const libraryActiveRequestRef = useRef(0);
+  // 필터 탭 자동 추가 로드 횟수(bounded) — 탭 전환/재조회 시 초기화.
+  const libraryAutoPagesRef = useRef(0);
   // 그리드 한 화면 멀티셀렉트 — 탭 토글로 순서 유지, 하단 '선택 완료'는 즉시 닫힌다(삼순 라운드2 #2).
   const [librarySelection, setLibrarySelection] = useState<VenueMediaAsset[]>([]);
   // version gate — 네이티브 브릿지 가용이면 grid, 아니면 기존 file input 폴백(구설치본/웹).
@@ -302,6 +325,10 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
     uploadInFlightRef.current = false;
     libraryAutoOpenRef.current = false;
     pickSeqRef.current++;
+    libraryPendingReloadRef.current = false;
+    libraryRequestGenerationRef.current++;
+    libraryActiveRequestRef.current = 0;
+    libraryLoadingRef.current = false;
     // data URL(이미지 프리뷰)은 revoke 불필 — blob(비디오)만 해제
     for (const it of items) {
       if (it.previewUrl?.startsWith("blob:")) URL.revokeObjectURL(it.previewUrl);
@@ -313,6 +340,7 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
     setPhase("idle");
     setLibraryOpen(false);
     setLibraryAssets([]);
+    setLibraryKnownHasAnyMedia(false);
     setLibraryCursor(null);
     setLibraryPermission("prompt");
     setLibraryLoading(false);
@@ -348,7 +376,18 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
   }, [isOpen]);
 
   const loadLibrary = async (append = false) => {
-    if (libraryLoading) return;
+    if (libraryLoadingRef.current) {
+      if (!append) {
+        // 로딩 중 필터/권한 재조회는 마지막 요청 하나로 합친다. generation을 즉시 올려
+        // 현재 응답을 무효화하고, finally에서 최신 libraryFilterRef로 재조회한다.
+        libraryPendingReloadRef.current = true;
+        libraryRequestGenerationRef.current++;
+      }
+      return;
+    }
+    libraryLoadingRef.current = true;
+    const requestGeneration = ++libraryRequestGenerationRef.current;
+    libraryActiveRequestRef.current = requestGeneration;
     const seq = pickSeqRef.current;
     setLibraryLoading(true);
     setError(null);
@@ -379,20 +418,54 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
       if (permission === "denied") return;
       // 첫 페이지는 소량(24)만 읽어 그리드를 빨리 연다 — 네이티브가 썸네일을 직렬 생성하므로
       // 한 번에 60개를 기다리면 웜 진입 P95 0.5초와 충돌한다(삼순 라운드2 #3).
+      // 미디어 타입은 **네이티브 쿼리 단계에서** 걸러다달라고 전달한다 — cursor 도 같은
+      // 타입 안에서만 진행하므로 '영상만' 탭에서 첫 페이지부터 영상으로 채워진다.
+      // 구설치본은 이 인자를 무시하고 혼합 목록을 내려주므로(원격 WebView 라 웹만 먼저
+      // 배포될 수 있다) 화면단 filterLibraryAssets 를 fail-safe 로 그대로 유지한다.
+      const requestedTypes = libraryFilterRef.current;
       const page = await listVenueMedia(
         append ? libraryCursor ?? undefined : undefined,
         append ? VENUE_LIBRARY_PAGE_SIZE : VENUE_LIBRARY_FIRST_PAGE_SIZE,
+        requestedTypes === "all" ? undefined : [requestedTypes],
       );
       if (seq !== pickSeqRef.current) return;
+      // 타입별 네이티브 쿼리는 `영상 0건`과 `사진첩 전체 0건`을 결과만으로 구분할 수 없다.
+      // 직전 전체/타입 조회에서 하나라도 본 사실을 세션 동안 보존해 필터-empty 안내를 정확히 한다.
+      if (!append && requestedTypes === "all") {
+        setLibraryKnownHasAnyMedia(page.assets.length > 0);
+      } else if (page.assets.length > 0) {
+        setLibraryKnownHasAnyMedia(true);
+      }
+      if (requestGeneration !== libraryRequestGenerationRef.current) return;
+      // 응답 대기 중 탭이 바뀌었으면 이 페이지는 다른 타입의 결과다 — 버린다(탭 간 오염 방지).
+      if (libraryFilterRef.current !== requestedTypes) return;
       setLibraryPermission(page.permission);
       setLibraryCursor(page.nextCursor);
       setLibraryAssets((prev) => (append ? [...prev, ...page.assets] : page.assets));
+      // 필터 탭 자동 추가 로드 횟수 — append 만 증가, 새 조회는 리셋(bounded 재시작).
+      libraryAutoPagesRef.current = append ? libraryAutoPagesRef.current + 1 : 0;
     } catch {
+      // 필터 전환/reset으로 이미 무효화된 과거 요청의 실패가 최신 그리드를 file input으로
+      // 강등시키지 않게 한다. 현재 generation을 소유한 실제 브릿지 실패만 폴백한다.
+      if (
+        seq !== pickSeqRef.current ||
+        requestGeneration !== libraryRequestGenerationRef.current
+      ) {
+        return;
+      }
       // 브릿지 호출 자체가 실패(구설치본 등) — 기존 file input 동선으로 폴백해 업로드가 끊기지 않게.
       setLibraryOpen(false);
       setPickerMode("fileInput");
     } finally {
+      // reset 또는 새 요청이 이 요청을 대체했으면 최신 loading/pending 상태를 건드리지 않는다.
+      if (libraryActiveRequestRef.current !== requestGeneration) return;
+      libraryActiveRequestRef.current = 0;
+      libraryLoadingRef.current = false;
       setLibraryLoading(false);
+      if (libraryPendingReloadRef.current) {
+        libraryPendingReloadRef.current = false;
+        void loadLibrary(false);
+      }
     }
   };
 
@@ -594,6 +667,64 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
     // 원본 pre-export 없음 — assetId 만 provisional 항목에 남고, export 는 업로드 차례에 lazy 수행.
     void venueMediaSelectionHaptic();
   };
+
+  /**
+   * 화면에 실제 그려지는 asset — 상단 타입 토글 적용분(**fail-safe**).
+   *
+   * 1차 방어는 네이티브 쿼리 필터다(iOS PHFetch predicate / Android MediaStore selection) —
+   * 그래서 cursor 도 같은 타입 안에서만 페이징한다. 다만 원격 로드(server.url) 앱은 웹이
+   * 먼저 배포될 수 있고, 그 구설치본 브릿지는 `mediaTypes` 를 무시한 혼합 목록을 내려준다.
+   * 그 구간에서도 '영상만' 탭에 사진이 섞이지 않도록 화면단 거르기를 유지한다.
+   */
+  const visibleLibraryAssets = useMemo(
+    () => filterLibraryAssets(libraryAssets, libraryFilter),
+    [libraryAssets, libraryFilter],
+  );
+
+  /**
+   * 타입 토글 선택 — 네이티브를 그 타입으로 **재열거**한다(cursor 리셋).
+   * 혼합 목록을 받아 화면에서 걸러내면 첫 페이지(24)에 영상이 1~2개뿐일 때 빈 화면처럼 보인다.
+   * 선택(순서) 상태는 탭을 넘나들어도 그대로 보존된다.
+   */
+  const selectLibraryFilter = (next: VenueLibraryFilter) => {
+    // state 반영 전 연속 탭(A→B→A)도 받아야 하므로 렌더 시점 state가 아닌 최신 ref로 비교한다.
+    if (next === libraryFilterRef.current) return;
+    libraryAutoPagesRef.current = 0;
+    libraryFilterRef.current = next;
+    setLibraryFilter(next);
+    setLibraryAssets([]);
+    setLibraryCursor(null);
+    void loadLibrary(false);
+  };
+
+  // 구설치본 fail-safe — 네이티브가 `mediaTypes` 를 무시해 혼합 목록을 내려주면 '영상만' 탭의
+  // 첫 페이지(24)에 영상이 1~2개뿐일 수 있다. 한 화면 분량(12)을 채울 때까지 다음 페이지를
+  // 자동으로 이어 받는다(최대 6페이지 bounded). 신버전 네이티브에선 첫 페이지가 이미 해당
+  // 타입으로 차서 보통 1회도 도지 않는다.
+  useEffect(() => {
+    if (!libraryOpen || libraryPermission === "denied") return;
+    if (
+      !shouldAutoLoadMoreForFilter({
+        filter: libraryFilter,
+        visibleCount: visibleLibraryAssets.length,
+        hasCursor: libraryCursor != null,
+        loading: libraryLoading,
+        autoPages: libraryAutoPagesRef.current,
+      })
+    ) {
+      return;
+    }
+    void loadLibrary(true);
+    // loadLibrary 는 최신 state 를 읽는 action — 재생성 된다고 다시 돌 필요 없다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    libraryOpen,
+    libraryPermission,
+    libraryFilter,
+    visibleLibraryAssets.length,
+    libraryCursor,
+    libraryLoading,
+  ]);
 
   /** 그리드만 닫기(선택 변경 파기) — 기존 프리뷰/선택 화면으로 복귀. */
   const closeLibrary = () => {
@@ -1114,29 +1245,61 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
                       </button>
                     </div>
                   </div>
-                ) : libraryAssets.length > 0 ? (
-                  <>
-                    {/* 타일 탭 → 같은 화면 큰 네이티브 썸네일 프리뷰 즉시 갱신 + 선택/해제 토글(삼순 라운드3 #1). */}
-                    <VenueLibraryGrid
-                      assets={libraryAssets}
-                      selection={librarySelection.map((a) => a.id)}
-                      onToggle={toggleLibraryAsset}
-                      accent={palette.accent}
-                      onAccent={palette.onAccent}
-                    />
-                    {libraryCursor && (
-                      <button
-                        onClick={() => void loadLibrary(true)}
-                        disabled={libraryLoading}
-                        className="w-full min-h-11 rounded-xl border border-border px-3 text-sm text-text-secondary disabled:opacity-40"
-                      >
-                        더 불러오기
-                      </button>
-                    )}
-                  </>
                 ) : (
                   <>
-                    {libraryLoading ? (
+                    {/* 미디어 타입 토글 — 네이티브 열거가 사진+영상을 섞어 주므로 화면단에서 걸러 보여준다. */}
+                    <div
+                      role="tablist"
+                      aria-label="미디어 종류"
+                      data-testid="library-filter-tabs"
+                      className="flex items-center gap-1 rounded-xl bg-bg-tertiary/60 p-1"
+                    >
+                      {VENUE_LIBRARY_FILTERS.map((tab) => {
+                        const selected = libraryFilter === tab.value;
+                        return (
+                          <button
+                            key={tab.value}
+                            role="tab"
+                            aria-selected={selected}
+                            data-library-filter={tab.value}
+                            onClick={() => selectLibraryFilter(tab.value)}
+                            className={`flex-1 min-h-11 rounded-lg text-sm font-semibold transition-colors ${
+                              selected ? "" : "text-text-secondary"
+                            }`}
+                            style={
+                              selected
+                                ? { background: palette.accent, color: palette.onAccent }
+                                : undefined
+                            }
+                          >
+                            {tab.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {visibleLibraryAssets.length > 0 ? (
+                      <>
+                        {/* 타일 탭 → 같은 화면 큰 네이티브 썸네일 프리뷰 즉시 갱신 + 선택/해제 토글(삼순 라운드3 #1). */}
+                        <VenueLibraryGrid
+                          key={libraryFilter}
+                          assets={visibleLibraryAssets}
+                          selection={librarySelection.map((a) => a.id)}
+                          onToggle={toggleLibraryAsset}
+                          accent={palette.accent}
+                          onAccent={palette.onAccent}
+                        />
+                        {libraryCursor && (
+                          <button
+                            onClick={() => void loadLibrary(true)}
+                            disabled={libraryLoading}
+                            className="w-full min-h-11 rounded-xl border border-border px-3 text-sm text-text-secondary disabled:opacity-40"
+                          >
+                            더 불러오기
+                          </button>
+                        )}
+                      </>
+                    ) : libraryLoading ? (
                       <div className="grid grid-cols-3 gap-0.5" aria-label="사진첩 불러오는 중">
                         {Array.from({ length: 12 }, (_, index) => (
                           <div
@@ -1146,14 +1309,23 @@ export default function VenueStoryComposer({ gameId, isOpen, onClose, onUploaded
                         ))}
                       </div>
                     ) : (
-                      <div className="flex min-h-64 flex-col items-center justify-center gap-2 rounded-2xl border border-border bg-bg-tertiary/30 px-6 text-center">
+                      <div
+                        data-testid="library-empty"
+                        className="flex min-h-64 flex-col items-center justify-center gap-2 rounded-2xl border border-border bg-bg-tertiary/30 px-6 text-center"
+                      >
                         <VideoIcon size={28} className="text-text-tertiary" />
                         <span className="text-sm font-semibold text-text-secondary">
-                          최근 사진·영상이 없어요
+                          {libraryEmptyMessage({
+                            filter: libraryFilter,
+                            totalLoaded: libraryAssets.length,
+                            hasAnyMedia: libraryKnownHasAnyMedia,
+                          })}
                         </span>
-                      <span className="text-sm text-text-tertiary">
-                          사진 접근 범위를 확인하거나 새로 촬영한 뒤 다시 열어주세요
-                      </span>
+                        <span className="text-sm text-text-tertiary">
+                          {libraryFilter === "all" || !libraryKnownHasAnyMedia
+                            ? "사진 접근 범위를 확인하거나 새로 촬영한 뒤 다시 열어주세요"
+                            : "위 탭을 '전체'로 바꾸면 모두 볼 수 있어요"}
+                        </span>
                       </div>
                     )}
                   </>

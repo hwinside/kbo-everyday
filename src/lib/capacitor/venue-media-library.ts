@@ -33,7 +33,16 @@ interface VenueMediaExportHandle {
 interface VenueMediaLibraryPlugin {
   getPermission(): Promise<{ permission: VenueMediaPermission }>;
   requestPermission(): Promise<{ permission: VenueMediaPermission }>;
-  listMedia(options: { cursor?: string; limit: number }): Promise<VenueMediaPage>;
+  listMedia(options: {
+    cursor?: string;
+    limit: number;
+    /**
+     * 열거할 미디어 타입. 생략/빈 배열이면 사진+영상 전체(기존 계약).
+     * 구설치본 네이티브는 이 파라미터를 무시하고 혼합 목록을 내려준다 — 호출부가
+     * 화면단 필터를 fail-safe 로 유지해야 하는 이유(원격 WebView 라 웹만 먼저 배포됨).
+     */
+    mediaTypes?: VenueMediaKind[];
+  }): Promise<VenueMediaPage>;
   exportMedia(options: { id: string }): Promise<VenueMediaExportHandle>;
   readExport(options: { token: string; offset: number; length: number }): Promise<{ data: string }>;
   releaseExport(options: { token: string }): Promise<void>;
@@ -117,11 +126,22 @@ export async function requestVenueMediaPermission(): Promise<VenueMediaPermissio
   return (await callPlugin<{ permission: VenueMediaPermission }>("requestPermission")).permission;
 }
 
+/**
+ * 사진첩 페이지 열거.
+ * @param mediaTypes 열거할 타입(생략 = 사진+영상). 네이티브가 **쿼리 단계에서** 걸러주므로
+ *   nextCursor 도 같은 타입 안에서만 진행한다(혼합 목록을 받아 화면에서 걸러내는 방식과 다름).
+ *   구설치본은 이 인자를 무시하므로 호출부가 화면단 필터를 함께 유지해야 한다.
+ */
 export async function listVenueMedia(
   cursor?: string,
   limit: number = 60,
+  mediaTypes?: VenueMediaKind[],
 ): Promise<VenueMediaPage> {
-  return callPlugin<VenueMediaPage>("listMedia", { ...(cursor ? { cursor } : {}), limit });
+  return callPlugin<VenueMediaPage>("listMedia", {
+    ...(cursor ? { cursor } : {}),
+    limit,
+    ...(mediaTypes && mediaTypes.length > 0 ? { mediaTypes } : {}),
+  });
 }
 
 /** readExport 청크 크기 — 브릿지 메시지당 base64 부담과 왕복 횟수의 절충(4MB). */

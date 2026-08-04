@@ -3,15 +3,13 @@
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useSafeBack } from "@/lib/hooks/useSafeBack";
-import { ChevronLeft, Heart, MessageCircle } from "lucide-react";
+import { ChevronLeft } from "lucide-react";
 import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
 import { supabase } from "@/lib/supabase/client";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { getTeamById } from "@/lib/constants/teams";
 import TeamBadge from "@/components/ui/TeamBadge";
 import GlassCard from "@/components/ui/GlassCard";
-import { PLAYER_PHOTO_MAP } from "@/lib/constants/player-photos";
-import { TEAMS as KBO_TEAMS } from "@/lib/constants/teams";
 import type { BadgeDefinition } from "@/lib/constants/badges";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 import { getAvatarPath } from "@/lib/constants/avatars";
@@ -22,6 +20,7 @@ import BadgesTab from "@/components/profile/BadgesTab";
 import DMButton from "@/components/ui/DMButton";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
+import CommunityProfilePostRow, { type CommunityProfilePost } from "@/components/profile/CommunityProfilePostRow";
 
 interface UserProfile {
   id: string;
@@ -47,15 +46,7 @@ interface UserBadge {
   earned_at: string;
 }
 
-interface UserPost {
-  id: number;
-  title: string;
-  board_type: string;
-  board_id: string;
-  like_count: number;
-  comment_count: number;
-  created_at: string;
-}
+type UserPost = CommunityProfilePost;
 
 export default function ProfilePage() {
   const { userId } = useParams();
@@ -127,9 +118,10 @@ export default function ProfilePage() {
       }
 
       if (p?.show_posts) {
+        // query-guard: bounded-page -- 프로필 글 탭은 최신 20건만 보여주는 고정 UI 페이지
         const { data: posts } = await supabase
           .from("posts")
-          .select("id, title, board_type, board_id, like_count, comment_count, created_at")
+          .select("id, title, board_type, board_id, like_count, comment_count, created_at, team_tags, player_tags")
           .eq("author_id", userId)
           .order("created_at", { ascending: false })
           .limit(20);
@@ -296,23 +288,12 @@ export default function ProfilePage() {
             <div className="text-center py-8 text-text-tertiary text-sm">아직 작성한 글이 없어요</div>
           ) : (
             posts.map(post => (
-              <GlassCard
+              <CommunityProfilePostRow
                 key={post.id}
-                className="p-3 cursor-pointer hover:bg-black/5 dark:hover:bg-white/5"
-                onClick={() => router.push(`/community/players/${post.board_id}/posts/${post.id}`)}
-              >
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-black/8 dark:bg-white/10 text-text-tertiary">
-                    {post.board_type === "player" ? `⚾ ${Object.entries(PLAYER_PHOTO_MAP).find(([, id]) => id === post.board_id)?.[0] || post.board_id}` : post.board_type === "team" ? `🏟️ ${KBO_TEAMS.find(t => String(t.id) === post.board_id)?.shortName || post.board_id}` : "💬 자유"}
-                  </span>
-                </div>
-                <p className="text-sm font-medium text-text-primary">{post.title}</p>
-                <div className="flex items-center gap-4 mt-1 text-xs text-text-tertiary">
-                  <span>{timeAgo(post.created_at)}</span>
-                  <span className="flex items-center gap-1"><Heart size={12} /> {post.like_count}</span>
-                  <span className="flex items-center gap-1"><MessageCircle size={12} /> {post.comment_count}</span>
-                </div>
-              </GlassCard>
+                post={post}
+                timeLabel={timeAgo(post.created_at)}
+                onNavigate={(href) => router.push(href)}
+              />
             ))
           )}
         </div>

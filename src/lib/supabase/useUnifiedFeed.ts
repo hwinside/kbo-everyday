@@ -65,7 +65,7 @@ export function applyBoardFilter<Q extends FeedFilterQuery<Q>>(query: Q, board: 
 }
 
 const SELECT =
-  "id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, game_id, player_tags, team_tags, hashtags, author_team_id_snapshot, click_view_count, impression_view_count, profiles(nickname, team_id, grade, points)";
+  "id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, game_id, player_tags, team_tags, hashtags, author_team_id_snapshot, click_view_count, impression_view_count, profiles(nickname, team_id, grade, points, avatar_url)";
 
 function mapRow(p: Record<string, unknown>): Post {
   const prof = p.profiles as Record<string, unknown> | null;
@@ -78,6 +78,7 @@ function mapRow(p: Record<string, unknown>): Post {
     nickname: prof?.nickname as string | undefined,
     team_id: (snap ?? (prof?.team_id as number | undefined)) as number | undefined,
     grade: prof?.grade as string | undefined,
+    avatar_url: prof?.avatar_url as string | undefined,
     points: (prof?.points as number) ?? 0,
     click_view_count: (p.click_view_count as number | null | undefined) ?? 0,
     impression_view_count: (p.impression_view_count as number | null | undefined) ?? 0,
