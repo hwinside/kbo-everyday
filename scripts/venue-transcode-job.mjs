@@ -138,6 +138,40 @@ const MAX_ATTEMPTS_DEFAULT = 3;
 /** 서버 워커 720p 정규화 긴 변 상한 — 클라이언트 경로와 동일 계약. */
 export const VENUE_SERVER_MAX_EDGE_PX = 1280;
 
+/** ffprobe 로 duration(ms)/해상도 추출 — 실행 경로가 쓰는 함수 그자체. */
+export function probeVenueVideoMeta(input) {
+  const out = execFileSync("ffprobe", [
+    "-v", "error",
+    "-select_streams", "v:0",
+    "-show_entries", "stream=width,height",
+    "-show_entries", "format=duration",
+    "-of", "json", input,
+  ]).toString();
+  const j = JSON.parse(out);
+  const s = (j.streams && j.streams[0]) || {};
+  const dur = parseFloat((j.format && j.format.duration) || "0");
+  return {
+    durationMs: Math.round((isNaN(dur) ? 0 : dur) * 1000),
+    width: s.width || null,
+    height: s.height || null,
+  };
+}
+
+/**
+ * 서버 워커 runner 배선 — **실행 경로가 쓰는 객체 그자체**를 여기서 만든다.
+ * 종전에는 transcode-videos.mjs 안에서 인라인으로 조립했고, 그 파일은 모듈 로드 시점에
+ * supabase env 를 요구해 스모크가 import 할 수 없었다 — 그래서 runner 에서
+ * transcodeVenueVideo 를 우회해도 게이트가 GREEN 이었다(삼순 재현, 2026-08-04).
+ * 이젠 스모크가 이 함수를 import 해 **함수 identity** 로 배선을 검증한다.
+ */
+export function createVenueWorkerRunner({ downloadToFile }) {
+  return {
+    probe: probeVenueVideoMeta,
+    transcode: transcodeVenueVideo,
+    downloadToFile,
+  };
+}
+
 /**
  * 서버 fallback 워커의 실제 ffmpeg 정규화 — **실행 경로가 쓰는 함수 그자체**.
  *

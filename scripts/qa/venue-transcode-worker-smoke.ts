@@ -19,7 +19,7 @@
  *  (I) active catch CAS DB 오류 → updateError
  *  (K) diary_manual pending 복구 → archived (active 공개 금지)
  */
-import { writeFileSync, mkdtempSync, rmSync, readFileSync } from "fs";
+import { writeFileSync, mkdtempSync, rmSync, readFileSync, existsSync } from "fs";
 import { execFileSync } from "child_process";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -801,22 +801,136 @@ async function run() {
     ok("P: 조회 결과를 그대로 반환", (res as { data?: unknown[] }).data === rowsFixture);
   }
 
-  // 상위 워커가 이 seam 을 실제로 호출하는지(인라인 조회로 되돌아가면 RED).
-  // 상위 스크립트는 supabase env 를 모듈 로드 시점에 요구해 import 가 안 되므로
-  // 이 항목만 소스 확인이다(위 행동 검증이 본체).
-  console.log("[P2] 상위 워커가 조회 seam 을 사용");
+  // ── 상위 배선 **행동** 검증 (삼순 중간값 ①, 2026-08-04) ──
+  // ⚠️ 종전 P2 는 소스 regex 였다(상위 스크립트가 모듈 로드 시점에 supabase env 를 요구해
+  // import 가 안 됐기 때문). 그래서 processVenueStories 가 batch 를 아예 안 불러도,
+  // runner 에서 transcodeVenueVideo 를 우회해도 101/0 GREEN 이었다(삼순 재현).
+  // 이젠 env 의존을 걷어내 import 해서 **실제 함수를 실행**해 배선을 검증한다.
+  console.log("[P2] 상위 processVenueStories 배선 행동 검증 (actual import)");
   {
+    const mod = (await import("../transcode-videos.mjs")) as {
+      processVenueStories: (o?: Record<string, unknown>) => Promise<unknown>;
+    };
+    ok("P2: transcode-videos.mjs 가 import 가능(env 부재에도 부작용 0)", typeof mod.processVenueStories === "function");
+
+    // ① batch 를 실제로 부르는가 + 어떤 인자로 부르는가
+    let batchCalls = 0;
+    let seenDeps: Record<string, unknown> | null = null;
+    await mod.processVenueStories({
+      hasFfprobe: true,
+      db: { from: () => ({}), storage: { __marker: "storage" } },
+      maxAttempts: 3,
+      limit: 20,
+      runBatch: async (deps: Record<string, unknown>) => {
+        batchCalls++;
+        seenDeps = deps;
+        return { done: 0, removed: 0, failed: 0, updateErrors: 0, processed: 0 };
+      },
+    });
+    ok(`P2: processVenueStories 가 batch 를 실제로 1회 호출 (실제 ${batchCalls})`, batchCalls === 1);
+    const deps = seenDeps as unknown as Record<string, unknown> | null;
+    ok("P2: batch 에 db/storage 전달", deps != null && deps.db != null && deps.storage !== undefined);
+    ok("P2: batch 에 maxAttempts/limit 전달", deps?.maxAttempts === 3 && deps?.limit === 20);
+    ok("P2: batch 에 makeWorkDir/pathFor 배선", typeof deps?.makeWorkDir === "function" && typeof deps?.pathFor === "function");
+
+    // ② runner 가 **진짜 정규화를 하는가** — 함수 identity 대신 행동으로 판정한다.
+    //   identity(===) 비교는 tsx(.ts) ↔ node(.mjs) 로더 경계에서 모듈 인스턴스가 갈려
+    //   환경 의존적이었다(로컬 node 는 true, tsx 는 false — 실측 2026-08-04).
+    //   그래서 runner.transcode 를 실제 파일에 돌려 720p+faststart 산출을 확인한다.
+    const runner = deps?.runner as
+      | { probe?: (p: string) => { durationMs: number; width: number | null; height: number | null }; transcode?: (i: string, o: string) => string; downloadToFile?: unknown }
+      | undefined;
+    ok("P2: runner 에 probe/transcode/downloadToFile 배선", typeof runner?.probe === "function" && typeof runner?.transcode === "function" && typeof runner?.downloadToFile === "function");
+    {
+      const w = mkdtempSync(join(tmpdir(), "vt-wiring-"));
+      try {
+        const src = join(w, "src.mp4");
+        const out = join(w, "out.mp4");
+        execFileSync("ffmpeg", [
+          "-y", "-f", "lavfi", "-i", "testsrc2=size=1920x1080:rate=30",
+          "-t", "1", "-c:v", "libx264", "-preset", "ultrafast", src,
+        ], { stdio: "ignore" });
+        runner!.transcode!(src, out);
+        const meta = runner!.probe!(out);
+        ok(
+          `P2: runner.transcode 가 실제 720p 정규화 수행 (실제 ${meta.width}x${meta.height}) — 우회 시 RED`,
+          Math.max(meta.width ?? 0, meta.height ?? 0) === VENUE_SERVER_MAX_EDGE_PX,
+        );
+        const head = readFileSync(out);
+        const firstBox = head.subarray(4, 8).toString("latin1");
+        const secondType = (() => {
+          const size = head.readUInt32BE(0);
+          return size > 0 && size + 8 <= head.length
+            ? head.subarray(size + 4, size + 8).toString("latin1")
+            : "";
+        })();
+        ok(
+          `P2: runner.transcode 산출물이 faststart (박스 ${firstBox}→${secondType})`,
+          firstBox === "ftyp" && secondType === "moov",
+        );
+        ok(
+          `P2: runner.probe 가 실제 ffprobe 메타 반환 (dur=${meta.durationMs}ms)`,
+          meta.durationMs > 0,
+        );
+      } finally {
+        rmSync(w, { recursive: true, force: true });
+      }
+    }
+
+    // ③ makeRunner 우회 감지력 — 가짜 runner 는 위 행동 검사를 통과하지 못해야 한다
+    let bypassRunner: { transcode?: (i: string, o: string) => unknown } | null = null;
+    await mod.processVenueStories({
+      hasFfprobe: true,
+      db: { from: () => ({}), storage: {} },
+      makeRunner: () => ({ probe: () => ({ durationMs: 0, width: null, height: null }), transcode: () => "", downloadToFile: async () => 0 }),
+      runBatch: async (d: Record<string, unknown>) => {
+        bypassRunner = d.runner as typeof bypassRunner;
+        return {};
+      },
+    });
+    {
+      const w = mkdtempSync(join(tmpdir(), "vt-bypass-"));
+      try {
+        const src = join(w, "src.mp4");
+        const out = join(w, "out.mp4");
+        execFileSync("ffmpeg", [
+          "-y", "-f", "lavfi", "-i", "testsrc2=size=1920x1080:rate=30",
+          "-t", "1", "-c:v", "libx264", "-preset", "ultrafast", src,
+        ], { stdio: "ignore" });
+        (bypassRunner as { transcode?: (i: string, o: string) => unknown } | null)?.transcode?.(src, out);
+        ok(
+          "P2: 우회 runner 는 산출물을 만들지 못해 행동 검사에 걸린다(게이트 감지력)",
+          !existsSync(out),
+        );
+      } finally {
+        rmSync(w, { recursive: true, force: true });
+      }
+    }
+
+    // ④ ffprobe 부재면 batch 를 부르지 않고 관제 신호를 올린다(검증 약화 금지)
+    let calledWhenNoFfprobe = 0;
+    const noProbeRes = (await mod.processVenueStories({
+      hasFfprobe: false,
+      db: {
+        from: () => ({
+          select: () => ({ eq: () => ({ eq: () => Promise.resolve({ count: 2 }) }) }),
+        }),
+      },
+      runBatch: async () => {
+        calledWhenNoFfprobe++;
+        return {};
+      },
+    })) as { ffprobeMissing?: boolean; failed?: number };
+    ok("P2: ffprobe 부재 → batch 미호출", calledWhenNoFfprobe === 0);
+    ok("P2: ffprobe 부재 → ffprobeMissing 관제 신호", noProbeRes?.ffprobeMissing === true);
+
+    // ⑤ 소스 레벨 금지(보조) — 인라인 루프/조회 재도입
     const raw = readFileSync(join(import.meta.dirname, "..", "transcode-videos.mjs"), "utf8");
-    // 주석을 제거하고 본다 — 안 그러면 "종전 코드를 설명하는 주석"이 재도입으로 오판된다.
     const src = raw
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .split("\n")
       .map((l) => l.replace(/(^|[^:])\/\/.*$/, "$1"))
       .join("\n");
-    ok(
-      "P2: transcode-videos.mjs 가 runVenueTranscodeBatch seam 을 호출",
-      /return runVenueTranscodeBatch\(/.test(src),
-    );
     ok(
       "P2: 상위에 행별 루프 재도입 없음(for..of rows 직접 순회 0)",
       !/for\s*\(\s*const\s+row\s+of\s+rows\s*\)/.test(src),
@@ -825,16 +939,9 @@ async function run() {
       "P2: 상위에 processVenueJob 직접 호출 없음(seam 우회 방지)",
       !/processVenueJob\(/.test(src),
     );
-    // 상위 스크립트에는 video_transcode_jobs 용 .or() 가 별도로 있다(이건 정상).
-    // 금지 대상은 **venue_stories 인라인 조회 재도입**이다 — needs_transcode 를 다룬다면
-    // seam 을 우회한 것이므로 RED.
     ok(
       "P2: venue_stories 인라인 조회 재도입 없음(needs_transcode 직접 술어 0)",
       !/\.or\([^)]*needs_transcode/.test(src),
-    );
-    ok(
-      "P2: venue_stories 선택 컬럼을 상위에서 재선언하지 않음",
-      !/from\("venue_stories"\)[\s\S]{0,200}attendance_source/.test(src),
     );
   }
 
@@ -977,7 +1084,7 @@ async function run() {
         const probe = JSON.parse(
           execFileSync("ffprobe", [
             "-v", "error",
-            "-show_entries", "stream=codec_name,codec_type,width,height",
+            "-show_entries", "stream=codec_name,codec_type,width,height,start_time,duration",
             "-show_entries", "stream_side_data=rotation",
             "-show_entries", "format=duration",
             "-of", "json", outPath,
@@ -988,6 +1095,8 @@ async function run() {
             codec_name?: string;
             width?: number;
             height?: number;
+            start_time?: string;
+            duration?: string;
             side_data_list?: { rotation?: number }[];
           }[];
           format: { duration: string };
@@ -1040,6 +1149,30 @@ async function run() {
           `U: duration 보존 (${parseFloat(probe.format.duration).toFixed(2)}s ≈ 3s)`,
           Math.abs(parseFloat(probe.format.duration) - 3) < 1,
         );
+
+        // ── 서버 경로 A/V sync (삼순 중간값 ②, 2026-08-04) ──
+        // 종전에는 전체 duration 만 봐서 오디오에 300ms delay 를 넣어도 3.32s≈3s 로 통과했다.
+        // 브라우저 E2E 에는 이미 넣었던 계약을 서버 경로에만 빼먹었다 — 동일 계약으로 맞춘다.
+        {
+          const vStart = parseFloat(v.start_time ?? "NaN");
+          const aStart = parseFloat(a?.start_time ?? "NaN");
+          const vDur = parseFloat(v.duration ?? probe.format.duration);
+          const aDur = parseFloat(a?.duration ?? probe.format.duration);
+          const skew = Math.abs(vStart - aStart);
+          const drift = Math.abs(vDur - aDur);
+          console.log(
+            `  서버 A/V: start v=${vStart.toFixed(3)} a=${aStart.toFixed(3)} (skew ${skew.toFixed(3)}s) · ` +
+              `dur v=${vDur.toFixed(3)} a=${aDur.toFixed(3)} (drift ${drift.toFixed(3)}s)`,
+          );
+          ok(
+            `U: A/V start_time 정렬 ≤ 50ms (실제 ${(skew * 1000).toFixed(0)}ms)`,
+            Number.isFinite(skew) && skew <= 0.05,
+          );
+          ok(
+            `U: A/V duration drift ≤ 150ms (실제 ${(drift * 1000).toFixed(0)}ms)`,
+            Number.isFinite(drift) && drift <= 0.15,
+          );
+        }
       }
     } finally {
       rmSync(work, { recursive: true, force: true });

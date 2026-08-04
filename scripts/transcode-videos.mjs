@@ -25,10 +25,15 @@
 import { createClient } from "@supabase/supabase-js";
 import { readFileSync, writeFileSync, rmSync, statSync, mkdtempSync } from "fs";
 import { resolve, join, basename } from "path";
+import { pathToFileURL } from "url";
 import { tmpdir } from "os";
 import { execFileSync } from "child_process";
 import { createHash } from "crypto";
-import { runVenueTranscodeBatch, transcodeVenueVideo } from "./venue-transcode-job.mjs";
+import {
+  runVenueTranscodeBatch,
+  transcodeVenueVideo,
+  createVenueWorkerRunner,
+} from "./venue-transcode-job.mjs";
 
 // ── env (.env.local 수동 파싱, dotenv 의존성 없음 — award-event-badges.mjs 패턴) ──
 try {
@@ -40,16 +45,30 @@ try {
     }
   }
 } catch {
-  console.warn("⚠️  .env.local 못 읽음 — 환경변수가 이미 주입돼 있다고 가정");
+  if (process.env.NEXT_PUBLIC_SUPABASE_URL) {
+    console.warn("⚠️  .env.local 못 읽음 — 환경변수가 이미 주입돼 있다고 가정");
+  }
 }
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+// 이 파일을 **직접 실행**했을 때만 env 누락으로 종료한다.
+// 종전에는 모듈 로드 시점에 process.exit(1) 을 해서 스모크가 import 조차 못 했고,
+// 그래서 상위 배선(batch 호출·runner 조립)이 소스 검사로만 검증됐다 — batch dead-call 이나
+// transcodeVenueVideo 우회가 GREEN 이었던 원인(삼순 재현, 2026-08-04).
+const IS_MAIN =
+  Boolean(process.argv[1]) && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
-  console.error("❌ NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY 누락");
-  process.exit(1);
+  // import(스모크) 경로에서는 조용히 — 직접 실행만 fail-close
+  if (IS_MAIN) {
+    console.error("❌ NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY 누락");
+    process.exit(1);
+  }
 }
-const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+const supabase = createClient(
+  SUPABASE_URL || "http://localhost:54321",
+  SERVICE_ROLE_KEY || "import-only-placeholder",
+);
 
 // ── args ──
 const argv = process.argv.slice(2);
@@ -95,25 +114,6 @@ function optimizedPath(origPath) {
 
 // ── 직관 라이브(venue_stories) 헬퍼 ──
 let HAS_FFPROBE = true;
-
-/** ffprobe 로 duration(ms)/해상도 추출 */
-function probeVideoMeta(input) {
-  const out = execFileSync("ffprobe", [
-    "-v", "error",
-    "-select_streams", "v:0",
-    "-show_entries", "stream=width,height",
-    "-show_entries", "format=duration",
-    "-of", "json", input,
-  ]).toString();
-  const j = JSON.parse(out);
-  const s = (j.streams && j.streams[0]) || {};
-  const dur = parseFloat((j.format && j.format.duration) || "0");
-  return {
-    durationMs: Math.round((isNaN(dur) ? 0 : dur) * 1000),
-    width: s.width || null,
-    height: s.height || null,
-  };
-}
 
 async function downloadTo(url, dest) {
   const res = await fetch(url);
@@ -304,10 +304,20 @@ async function probe() {
 //    → 거부: CAS 로 removed. CAS 패배 = 즉시 경로가 먼저 처리(중복 claim 방지) → skip.
 //  - active/archived + needs_transcode(이미 게시된 원본): 720p 백그라운드 최적화만.
 //    status 는 자기 값을 CAS 조건으로 유지하고(archived는 archived 로 닫는다) 실패해도 노출 유지.
-async function processVenueStories() {
-  if (!HAS_FFPROBE) {
+export async function processVenueStories(overrides = {}) {
+  // 배선을 주입 가능하게 둔다 — 스모크가 실제 이 함수를 실행해
+  // "batch 를 진짜 부르는가 / runner 에 transcodeVenueVideo 를 싣는가"를 행동으로 본다.
+  const {
+    runBatch = runVenueTranscodeBatch,
+    makeRunner = createVenueWorkerRunner,
+    db = supabase,
+    hasFfprobe = HAS_FFPROBE,
+    maxAttempts = MAX_ATTEMPTS,
+    limit = LIMIT,
+  } = overrides;
+  if (!hasFfprobe) {
     // ffprobe 부재 = 서버 권위 duration 검증 전면 skip → pending 영상이 방치되므로 green 으로 넘기지 않고 관제
-    const { count: pendingCount } = await supabase
+    const { count: pendingCount } = await db
       .from("venue_stories")
       .select("id", { count: "exact", head: true })
       .eq("media_type", "video")
@@ -321,10 +331,10 @@ async function processVenueStories() {
   // 종전에는 이 루프가 여기 인라인이라, `for (const row of rows)` 를 `for (const row of [])` 로
   // 바꿔 선택 결과를 전부 버려도 required gate 가 GREEN 이었다(삼순 독립 재현 2026-08-04).
   // query-guard: bounded -- 워커 1회당 고정 LIMIT 영상만 처리(seam 내부에서 limit 결속)
-  return runVenueTranscodeBatch({
-    db: supabase,
-    storage: supabase.storage,
-    runner: { probe: probeVideoMeta, transcode: transcodeVenueVideo, downloadToFile: downloadTo },
+  return runBatch({
+    db,
+    storage: db.storage,
+    runner: makeRunner({ downloadToFile: downloadTo }),
     makeWorkDir: () => mkdtempSync(join(tmpdir(), "kbo-venue-")),
     pathFor: (workDir, row) => ({
       inPath: join(workDir, "in" + (basename(row.media_path).match(/\.[^.]+$/)?.[0] || ".mp4")),
@@ -336,13 +346,14 @@ async function processVenueStories() {
     cleanupWorkDir: (workDir) => {
       try { rmSync(workDir, { recursive: true, force: true }); } catch {}
     },
-    maxAttempts: MAX_ATTEMPTS,
-    limit: LIMIT,
+    maxAttempts,
+    limit,
     log: (msg) => console.log(msg),
   });
 }
 
-// ── main ──
+// ── main ── (직접 실행일 때만 — import 시 부작용 0)
+if (IS_MAIN) {
 (async () => {
   // ffmpeg 존재 확인
   try { execFileSync("ffmpeg", ["-version"], { stdio: "ignore" }); }
@@ -378,3 +389,4 @@ async function processVenueStories() {
     process.exit(1);
   }
 })().catch((e) => { console.error("❌", e); process.exit(1); });
+}
