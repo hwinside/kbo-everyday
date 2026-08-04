@@ -145,7 +145,11 @@ function hasUnsupportedSeason(value: string): boolean {
 /** 수치를 묻는 문장인가. 이게 false 면 기록 경로가 아니다(서술형 RAG 로 간다). */
 /** wRC+ 표기(공백 허용). bare wRC 와 구분하는 유일한 신호다. */
 
-/** wRC 토큰 자체. `wrcplus` 같은 붙임 표기까지 잡히지만 위 패턴이 먼저 걸러낸다. */
+/** `wRC+` · `wRC 플러스` — 우리가 실제로 계산하는 지표. */
+const WRC_PLUS_PATTERN = /wrc\s*\+|wrc\s*플러스/i;
+
+/** wRC 토큰 자체. bare 여부 판정에 쓴다. */
+const BARE_WRC_PATTERN = /wrc/i;
 
 const NUMERIC_QUESTION = /몇|얼마|개야|개나|개\?|기록|스탯|성적|알려|보여|어때|어떻게\s*돼|쳤|던졌|했/;
 /**
@@ -199,10 +203,13 @@ export function resolveSeasonRecordIntent(
   }
   // 서술·평가형은 지표어가 섞여 있어도 숫자 질문이 아니다 — 서술형 RAG 담당.
   if (DESCRIPTIVE_ASK.test(compact)) return { kind: "none" };
-  // ⚠️ bare `wRC` 를 거절하지 않는다(삼순 #1100 6차). 엄밀히는 wRC ≠ wRC+ 지만,
-  // 앱 기록실·세이버 카드가 이미 wRC+ 를 보여주고 있고 유저는 관용적으로 둘을 같은
-  // 뜻으로 쓴다. "못 답한다"고 닫는 것이 도루·OPS·WAR 때와 같은 오판이다.
-  // 답변문은 라벨(`wRC+`)을 명시하므로 어떤 지표인지 유저가 확인할 수 있다.
+  // bare `wRC` 는 **명시 거절**한다(삼순 #1100 8차 P0-1).
+  // wRC(가중 득점 생산량) ≠ wRC+(리그·구장 보정 지수). 우린 wRC+ 만 계산하므로
+  // bare wRC 에 wRC+ 값을 주면 다른 지표를 속여 답하는 것이다 — 도루·OPS·WAR 은
+  // "앱이 이미 그 값을 보여준다"라 열었지만, 이건 앱이 보여주는 값 자체가 다르다.
+  if (BARE_WRC_PATTERN.test(compact) && !WRC_PLUS_PATTERN.test(compact)) {
+    return { kind: "untrusted_metric" };
+  }
   // ⚠️ 수치 의문 판정을 여기서 끝내지 않는다.
   // `김도영 타율`·`김도영 OPS`·`김도영 WAR` 처럼 **지표명만 적은** 질문이 의문사가 없다는
   // 이유로 전부 fail-close 됐다(실측). 유저가 지표명을 적은 순간 원하는 건 그 값이다.
@@ -245,9 +252,10 @@ export function resolveSeasonRecordIntent(
     { table: "pitcher", metric: "losses", pattern: /(?:몇\s*패(?:수)?|\d+\s*패(?:수)?|패수|(?<!실|승)패\s*(?:몇|개))(?!스트|배|션)/ },
 
     // 타자
-    // ⚠️ bare `wrc` 도 잡는다 — 유저는 wRC 와 wRC+ 를 관용적으로 같이 쓴다.
-    // 답변문이 라벨(`wRC+`)을 명시하므로 어떤 지표인지는 유저가 확인할 수 있다.
-    { table: "batter", metric: "wrc_plus", pattern: /wrc/i },
+    // ⚠️ `wRC+`·`wRC 플러스` 만 잡는다. bare `wRC` 는 위에서 명시 거절된다 —
+    // wRC(가중 득점 생산량)와 wRC+(리그·구장 보정 지수)는 다른 지표고 우리는 wRC+ 만
+    // 계산한다. 같은 값으로 답하면 **다른 지표를 속여 답하는 것**이다(삼순 #1100 8차 P0-1).
+    { table: "batter", metric: "wrc_plus", pattern: /wrc\s*\+|wrc\s*플러스/i },
     { table: "batter", metric: "avg", pattern: /(?<!장)타율|타률|애버리지/ },
     { table: "batter", metric: "doubles", pattern: /(?:2|이)\s*루타|투\s*베이스/ },
     { table: "batter", metric: "triples", pattern: /(?:3|삼)\s*루타|쓰리\s*베이스/ },

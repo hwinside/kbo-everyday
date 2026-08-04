@@ -459,8 +459,8 @@ async function verifyProductionShapedRecordRouting() {
   // ⑤ **앱이 서빙하는 파생 지표**(WAR·wRC+)는 안내문이 아니라 실값으로 답한다.
   // 다시 고정 안내문으로 닫는 회귀가 생기면 여기서 RED 로 멈춘다(삼순 7차 P0).
   for (const [question, expected] of [
-    ["김도영 wRC 얼마야", "152.4"],
     ["김도영 wRC+ 알려줘", "152.4"],
+    ["김도영 wRC 플러스 얼마야", "152.4"],
     ["김도영 WAR 알려줘", "5.22"],
   ] as const) {
     const { result, counts: c } = await run(question);

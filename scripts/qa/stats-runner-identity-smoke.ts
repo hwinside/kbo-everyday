@@ -26,6 +26,7 @@ import {
   rowPlayerId,
   statsRowKey,
   mergeBasicRows,
+  buildBatterStat,
   applyRunnerStats,
   fetchAllRunnerRows,
   parseRunnerPlayerIds,
@@ -299,6 +300,48 @@ async function main() {
         `${name} 가 ${bound.get(name) ?? "없음"} 로 파싱된다 — playerId 가 붙지 않아 동명이인이 합쳌진다`,
       );
     }
+  });
+
+  // ── ⑤ 출력 identity · 규정타석 플래그 (삼순 #1100 8차 P0-2/P0-3) ────────
+  //
+  // ⚠️ union 키만 identity 로 갈라도 **출력 `kboId`** 가 로스터 이름 first-match 면
+  // 동명이인 2행이 같은 ID 로 나가 하류에서 다시 섞인다.
+  // 그리고 저장키와 조회키가 갈라지면 `qualifiedRate` 가 전부 0 이 된다.
+  // 둘 다 **실제 배포 함수 `buildBatterStat` 을 호출**해 검증한다.
+  const roster = playersRoster as Parameters<typeof buildBatterStat>[2];
+  const emptyB2 = new Map<string, Parameters<typeof buildBatterStat>[3] extends Map<string, infer V> ? V : never>();
+  const basicRow = (playerId: string | null, name: string, team: string) => {
+    const cells = ["1", name, team, ".300"];
+    while (cells.length < 16) cells.push("1");
+    cells.push(playerId ?? "");
+    return cells;
+  };
+
+  await check("동명이인 2행이 같은 kboId 로 출력되지 않는다", () => {
+    const a = buildBatterStat(basicRow(idA, homonym.name, homonym.team), 0, roster, emptyB2, new Set());
+    const b = buildBatterStat(basicRow(idB, homonym.name, homonym.team), 1, roster, emptyB2, new Set());
+    assert.equal(a.kboId, idA, `1행 kboId=${a.kboId}`);
+    assert.equal(b.kboId, idB, `2행 kboId=${b.kboId}`);
+    assert.notEqual(
+      a.kboId, b.kboId,
+      "동명이인 두 행이 같은 kboId — 로스터 이름 first-match 로 합쳌졌다",
+    );
+    assert.equal(a.playerId, idA);
+    assert.equal(b.playerId, idB);
+  });
+
+  await check("qualifiedRate 저장키와 조회키가 같다(규정타석이 전부 0 이 되지 않는다)", () => {
+    const row = basicRow(idA, homonym.name, homonym.team);
+    // production 과 동일하게 `statsRowKey` 로 저장된 키 집합을 준다.
+    const qualified = new Set([statsRowKey(row)]);
+    const stat = buildBatterStat(row, 0, roster, emptyB2, qualified);
+    assert.equal(
+      stat.qualifiedRate, 1,
+      "규정타석 플래그가 0 — 저장키(playerId)와 조회키가 갈라졌다",
+    );
+    // 집합에 없는 행은 0 이어야 한다(무조건 1 반환 변종 차단).
+    const other = buildBatterStat(basicRow(idB, homonym.name, homonym.team), 1, roster, emptyB2, qualified);
+    assert.equal(other.qualifiedRate, 0, "규정타석 미충족인데 1 이 나왔다");
   });
 
   await check("playerId 없는 Basic 행은 이름::팀 하위호환으로 내려간다", () => {

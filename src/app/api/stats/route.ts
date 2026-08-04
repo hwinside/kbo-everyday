@@ -401,10 +401,39 @@ async function fetchBatterStats(signal?: AbortSignal): Promise<{
     }
   }
 
-  const stats = rows.map((c, i) => {
+  const stats = rows.map((c, i) => buildBatterStat(c, i, roster, basic2Map, qualifiedKeys));
+  return {
+    stats,
+    runnerMap,
+    runnerSource: runnerLiveAccepted ? "live" : "static-fallback",
+    runnerUpdatedAt: runnerLiveAccepted ? new Date().toISOString() : statsMeta.battersGeneratedAt,
+  };
+}
+
+export interface Basic2Entry {
+  bb: number; ibb: number; hbp: number; so: number; gdp: number;
+  slg: string; obp: string; ops: string;
+}
+
+/**
+ * KBO Basic1 행 1개 → 응답 stat 객체.
+ *
+ * ⚠️ **따로 뽑은 이유**(삼순 #1100 8차 P0-2/P0-3): 출력 `kboId`·`qualifiedRate` 가
+ * identity 계약의 종단인데, 인라인 클로저 안에 있으면 게이트가 호출할 수 없어
+ * 그 두 줄을 되돌려도 전부 GREEN 이었다(실측 mutation F·G 둘 다 통과).
+ * 순수 함수로 분리해 게이트가 **실제 배포 함수를 그대로 실행**하게 한다.
+ */
+export function buildBatterStat(
+  c: string[],
+  i: number,
+  roster: RosterPlayer[],
+  basic2Map: Map<string, Basic2Entry>,
+  qualifiedKeys: Set<string>,
+) {
     const name = (c[1] || "").trim();
     const team = (c[2] || "").trim();
     // KBO 원본 playerId 가 있으면 그걸로 잡는다 — 이름 조회는 동명이인 first-match 다.
+    const rowId = rowPlayerId(c);
     const lookupKey = statsRowKey(c);
     const found = resolvePlayer({ name, team }, roster, { context: "api/stats:batter" });
     const b2 = basic2Map.get(lookupKey);
@@ -437,17 +466,14 @@ async function fetchBatterStats(signal?: AbortSignal): Promise<{
       // Runner stats
       sb: 0,
       cs: 0,
-      kboId: found?.kboId || "",
-      playerId: found?.kboId || "",
-      qualifiedRate: qualifiedKeys.has(`${name}::${team}`) ? 1 : 0,
+      // ⚠️ KBO 원본 playerId 가 있으면 **그것이 canonical identity** 다(삼순 #1100 8차 P0-2).
+      // 로스터 이름 조회(`resolvePlayer`)는 같은 팀 동명이인을 first-match 로 합친다 —
+      // union 을 identity 로 갈라놓고도 출력 ID 가 같아지면 하류가 다시 섞인다.
+      kboId: rowId || found?.kboId || "",
+      playerId: rowId || found?.kboId || "",
+      // ⚠️ 저장키와 조회키가 갈라지면 규정타석 플래그가 전부 0 이 된다(내가 낸 회귀).
+      qualifiedRate: qualifiedKeys.has(lookupKey) ? 1 : 0,
     };
-  });
-  return {
-    stats,
-    runnerMap,
-    runnerSource: runnerLiveAccepted ? "live" : "static-fallback",
-    runnerUpdatedAt: runnerLiveAccepted ? new Date().toISOString() : statsMeta.battersGeneratedAt,
-  };
 }
 
 export function applyRunnerStats<T extends PlayerStat>(
@@ -470,6 +496,8 @@ function parsePitcherRow(c: string[], roster: RosterPlayer[]): PlayerStat {
   const name = c[1] || "";
   const team = c[2] || "";
   const found = resolvePlayer({ name, team }, roster, { context: "api/stats:pitcher" });
+  // ⚠️ KBO 원본 playerId 가 canonical — 로스터 이름 조회는 동명이인 first-match 다.
+  const rowId = rowPlayerId(c);
   return {
     rank: 0,
     name,
@@ -490,8 +518,8 @@ function parsePitcherRow(c: string[], roster: RosterPlayer[]): PlayerStat {
     r: parseInt(c[16]) || 0,
     er: parseInt(c[17]) || 0,
     whip: c[18] || "0.00",
-    kboId: found?.kboId || "",
-    playerId: found?.kboId || "",
+    kboId: rowId || found?.kboId || "",
+    playerId: rowId || found?.kboId || "",
   };
 }
 
@@ -508,13 +536,15 @@ async function fetchPitcherStats(signal?: AbortSignal): Promise<PlayerStat[]> {
     sortKeys.map(async (sort) => {
       const url = `${KBO_BASE}/Record/Player/PitcherBasic/Basic1.aspx?sort=${sort}`;
       const html = await fetchHtml(url, signal);
-      const rows = parseTable(html);
+      // 타자와 동일하게 playerId 를 행에 결속한다 — 투수도 동명이인이 있다.
+      const rows = parseTableWithIds(html);
       // ERA_RT는 규정이닝 충족자만 내려와 현재 정상 응답도 19행이다.
       // 나머지 누적 정렬은 정상 페이지의 30행 계약을 그대로 요구한다.
+      // ⚠️ playerId 셀 1개가 더 붙으므로 임계도 +1.
       const minimumRows = sort === "ERA_RT" ? 15 : KBO_TABLE_MIN_ROWS;
       if (
         rows.length < minimumRows ||
-        rows.some((row) => row.length < 19 || !row[1]?.trim() || !row[2]?.trim())
+        rows.some((row) => row.length < 20 || !row[1]?.trim() || !row[2]?.trim())
       ) {
         throw new Error(`KBO pitcher stats ${sort} table incomplete`);
       }
@@ -524,14 +554,14 @@ async function fetchPitcherStats(signal?: AbortSignal): Promise<PlayerStat[]> {
 
   for (const { sort, rows } of results) {
     for (const c of rows) {
-      const name = c[1] || "";
-      const team = c[2] || "";
-      const key = `${name}::${team}`;
+      // ⚠️ 타자와 같은 identity 계약 — playerId exact 우선, 없으면 이름::팀 하위호환.
+      const key = statsRowKey(c);
+      if (key === "::") continue;
       if (sort === "ERA_RT") {
         qualifiedKeys.add(key);
       }
       if (!merged.has(key)) {
-        merged.set(key, parsePitcherRow(c, roster));
+        merged.set(key, { ...parsePitcherRow(c, roster), statsKey: key } as PlayerStat & { statsKey: string });
       }
     }
   }
@@ -541,7 +571,11 @@ async function fetchPitcherStats(signal?: AbortSignal): Promise<PlayerStat[]> {
     .sort((a, b) => Number(a.era || 99) - Number(b.era || 99));
   stats.forEach((p, i) => {
     p.rank = i + 1;
-    p.qualifiedRate = qualifiedKeys.has(`${p.name}::${p.team}`) ? 1 : 0;
+    // ⚠️ 저장키와 조회키가 갈라지면 규정이닝 플래그가 전부 0 이 된다(삼순 #1100 8차 P0-3).
+    const key = (p as PlayerStat & { statsKey?: string }).statsKey
+      ?? `${p.name}::${p.team}`;
+    p.qualifiedRate = qualifiedKeys.has(key) ? 1 : 0;
+    delete (p as PlayerStat & { statsKey?: string }).statsKey;
   });
   return stats;
 }

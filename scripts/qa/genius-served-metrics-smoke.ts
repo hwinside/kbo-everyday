@@ -274,8 +274,11 @@ async function main() {
     // 앱은 선수 상세·기록실·세이버 카드에서 이미 보여주고 있었다.
     ["김도영 WAR 알려줘", "batter/war"],
     ["김도영 war 얼마야?", "batter/war"],
-    ["김도영 wRC 얼마야", "batter/wrc_plus"],
+    // ⚠️ bare `wRC` 는 **거절**이다 — wRC ≠ wRC+ 고 우린 wRC+ 만 계산한다.
+    // 같은 값으로 답하면 다른 지표를 속여 답하는 것이다(삼순 #1100 8차 P0-1).
+    ["김도영 wRC 얼마야", "untrusted_metric"],
     ["김도영 wRC+ 알려줘", "batter/wrc_plus"],
+    ["김도영 wRC 플러스 얼마야", "batter/wrc_plus"],
   ] as const) {
     await check(`매칭 "${question}" → ${expected}`, () => {
       assert.equal(intentOf(question), expected);
@@ -337,7 +340,10 @@ async function main() {
   // 위 검사들은 모듈 단위만 봤다. 그래서 `useServed` 를 항상 false 로 만드는 mutation 에서도
   // 31/31 · full prebuild exit 0 이었다 — 기능이 죽어도 게이트가 GREEN 이었다는 뜻이다.
   // 이제 production 이 쓰는 seam 과 같은 주입으로 `answerQuestion()` 을 돌려 **최종 답변**까지 본다.
-  const servedAnswerRun = async (overrides: Partial<QaDeps> = {}) => {
+  const servedAnswerRun = async (
+    overrides: Partial<QaDeps> = {},
+    question = `${subject.name} 도루 몇 개야?`,
+  ) => {
     const logs: string[] = [];
     let llmCalls = 0;
     const deps: QaDeps = {
@@ -362,10 +368,30 @@ async function main() {
     };
     const result = await withFetch(
       async () => jsonResponse(servedPayload([servedRow])),
-      () => answerQuestion("u-served-e2e", `${subject.name} 도루 몇 개야?`, deps),
+      () => answerQuestion("u-served-e2e", question, deps),
     );
     return { result, logs, llmCalls };
   };
+
+  /**
+   * ⚠️ 종단 질문이 **도루 하나뿐**이면, factory 가 `war`·`wrc_plus` 만 strip 하는
+   * 회귀를 잡지 못한다(삼순 #1100 8차 P0-4). 파생 지표도 같은 종단으로 태운다.
+   */
+  for (const [label, question, expected] of [
+    ["WAR", `${subject.name} WAR 알려줘`, String(servedSeasonRow.war)],
+    ["wRC+", `${subject.name} wRC+ 알려줘`, String(servedSeasonRow.wrc_plus)],
+  ] as const) {
+    await check(`종단: ${label} 질문이 화면과 같은 파생값으로 답해진다`, async () => {
+      const { result, logs, llmCalls } = await servedAnswerRun({}, question);
+      assert.equal(result.source, "kbo_structured", `source=${result.source} (기록 경로를 안 탐)`);
+      assert.ok(
+        result.answer?.includes(expected),
+        `답변에 ${label} 값 ${expected} 이 없다: ${result.answer}`,
+      );
+      assert.equal(llmCalls, 0, `${label} 질문을 LLM 으로 보냈다(환각 경로)`);
+      assert.deepEqual(logs, ["kbo_structured"], `match_path 불일치: ${logs.join(",")}`);
+    });
+  }
 
   await check("종단: 도루 질문이 앱 서빙값으로 답해진다", async () => {
     const { result, logs, llmCalls } = await servedAnswerRun();
