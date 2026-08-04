@@ -28,7 +28,7 @@ import { resolve, join, basename } from "path";
 import { tmpdir } from "os";
 import { execFileSync } from "child_process";
 import { createHash } from "crypto";
-import { processVenueJob, selectVenueTranscodeTargets } from "./venue-transcode-job.mjs";
+import { runVenueTranscodeBatch, transcodeVenueVideo } from "./venue-transcode-job.mjs";
 
 // ── env (.env.local 수동 파싱, dotenv 의존성 없음 — award-event-badges.mjs 패턴) ──
 try {
@@ -123,24 +123,6 @@ async function downloadTo(url, dest) {
   return buf.length;
 }
 
-/** ffmpeg 720p(긴 변 ≤1280) H.264 + faststart. 출력 파일 경로 반환. */
-function transcode(input, output) {
-  execFileSync(
-    "ffmpeg",
-    [
-      "-y", "-i", input,
-      // 1280x1280 박스에 맞춰 축소(확대 안 함) 후 짝수 보정 (libx264 yuv420p 요구)
-      "-vf", "scale='min(1280,iw)':'min(1280,ih)':force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2",
-      "-c:v", "libx264", "-profile:v", "high", "-preset", "veryfast", "-crf", "27",
-      "-pix_fmt", "yuv420p",
-      "-c:a", "aac", "-b:a", "128k",
-      "-movflags", "+faststart",
-      output,
-    ],
-    { stdio: ["ignore", "ignore", "pipe"] }
-  );
-  return output;
-}
 
 /** posts.video_urls 에서 origUrl → newUrl 스왑 (순서/다른 항목 보존). 최신값 재조회 후 갱신. */
 async function swapVideoUrl(postId, origUrl, newUrl) {
@@ -225,7 +207,7 @@ async function processJobs() {
       const outPath = join(work, "out.mp4");
       try {
         const inBytes = await downloadTo(job.original_url, inPath);
-        transcode(inPath, outPath);
+        transcodeVenueVideo(inPath, outPath);
         const outBytes = statSync(outPath).size;
         const ratio = ((1 - outBytes / inBytes) * 100).toFixed(0);
 
@@ -299,7 +281,7 @@ async function probe() {
       const inPath = join(work, "in.mp4"), outPath = join(work, "out.mp4");
       try {
         const inBytes = await downloadTo(s.url, inPath);
-        transcode(inPath, outPath);
+        transcodeVenueVideo(inPath, outPath);
         const outBytes = statSync(outPath).size;
         totIn += inBytes; totOut += outBytes;
         console.log(`post ${s.postId}: ${fmtMB(inBytes)} → ${fmtMB(outBytes)} (절감 ${((1 - outBytes / inBytes) * 100).toFixed(0)}%)`);
@@ -335,50 +317,29 @@ async function processVenueStories() {
     );
     return { done: 0, removed: 0, failed: (pendingCount ?? 0) > 0 ? (pendingCount ?? 1) : 0, updateErrors: 0, ffprobeMissing: true };
   }
-  // 조회 술어는 selectVenueTranscodeTargets(공유 seam)가 소유한다 — 스모크가 같은 함수를
-  // mock DB 로 실행해 .or 값·bounded order/limit 을 행동 검증한다(삼순 blocker ①).
-  // query-guard: bounded -- 워커 1회당 고정 LIMIT 영상만 처리
-  const { data: rows, error } = await selectVenueTranscodeTargets(supabase, {
+  // 조회 + 행별 처리 orchestration 전체를 runVenueTranscodeBatch(공유 seam)가 소유한다.
+  // 종전에는 이 루프가 여기 인라인이라, `for (const row of rows)` 를 `for (const row of [])` 로
+  // 바꿔 선택 결과를 전부 버려도 required gate 가 GREEN 이었다(삼순 독립 재현 2026-08-04).
+  // query-guard: bounded -- 워커 1회당 고정 LIMIT 영상만 처리(seam 내부에서 limit 결속)
+  return runVenueTranscodeBatch({
+    db: supabase,
+    storage: supabase.storage,
+    runner: { probe: probeVideoMeta, transcode: transcodeVenueVideo, downloadToFile: downloadTo },
+    makeWorkDir: () => mkdtempSync(join(tmpdir(), "kbo-venue-")),
+    pathFor: (workDir, row) => ({
+      inPath: join(workDir, "in" + (basename(row.media_path).match(/\.[^.]+$/)?.[0] || ".mp4")),
+      outPath: join(workDir, "out.mp4"),
+    }),
+    cleanupFiles: (paths) => {
+      for (const f of paths) { try { rmSync(f); } catch {} }
+    },
+    cleanupWorkDir: (workDir) => {
+      try { rmSync(workDir, { recursive: true, force: true }); } catch {}
+    },
     maxAttempts: MAX_ATTEMPTS,
     limit: LIMIT,
+    log: (msg) => console.log(msg),
   });
-  if (error) throw new Error(`venue_stories 조회 실패: ${error.message}`);
-  if (!rows || rows.length === 0) { console.log("직관 라이브 최적화 대기 영상 없음."); return; }
-
-  const work = mkdtempSync(join(tmpdir(), "kbo-venue-"));
-  let done = 0, removed = 0, failed = 0, updateErrors = 0, claimedElsewhere = 0;
-  try {
-    for (const row of rows) {
-      const inPath = join(work, "in" + (basename(row.media_path).match(/\.[^.]+$/)?.[0] || ".mp4"));
-      const outPath = join(work, "out.mp4");
-      try {
-        const res = await processVenueJob(row, {
-          db: supabase,
-          storage: supabase.storage,
-          runner: {
-            probe: probeVideoMeta,
-            transcode,
-            downloadToFile: downloadTo,
-          },
-          inPath,
-          outPath,
-          maxAttempts: MAX_ATTEMPTS,
-        });
-        if (res.result === "done") done++;
-        else if (res.result === "removed") removed++;
-        else if (res.result === "claimedElsewhere") claimedElsewhere++;
-        else if (res.result === "updateError") updateErrors++;
-        else if (res.result === "failed") failed++;
-      } finally {
-        for (const f of [inPath, outPath]) { try { rmSync(f); } catch {} }
-      }
-    }
-  } finally {
-    try { rmSync(work, { recursive: true, force: true }); } catch {}
-  }
-  console.log(`직관 라이브 처리: ✅${done} 🚫${removed} ❌${failed} ⏭️${claimedElsewhere} (상태갱신오류 ${updateErrors})`);
-  // 실패 건/상태기록 실패가 있으면 지속 pending/removed 실패 관제를 위해 비정상 종료 시그널을 올린다.
-  return { done, removed, failed, updateErrors };
 }
 
 // ── main ──

@@ -20,12 +20,19 @@
  *  (K) diary_manual pending 복구 → archived (active 공개 금지)
  */
 import { writeFileSync, mkdtempSync, rmSync, readFileSync } from "fs";
+import { execFileSync } from "child_process";
 import { tmpdir } from "os";
 import { join } from "path";
 
 // processVenueJob은 scripts/venue-transcode-job.mjs — tsx가 ESM .mjs 로드
 // @ts-expect-error JS module, 타입은 테스트 내부에서 검증
-import { processVenueJob, selectVenueTranscodeTargets } from "../venue-transcode-job.mjs";
+import {
+  processVenueJob,
+  selectVenueTranscodeTargets,
+  runVenueTranscodeBatch,
+  transcodeVenueVideo,
+  VENUE_SERVER_MAX_EDGE_PX,
+} from "../venue-transcode-job.mjs";
 
 let pass = 0;
 let fail = 0;
@@ -111,18 +118,29 @@ function makeMockStorage(opts: StorageOpts = {}) {
   };
 }
 
+type ProbeMeta = { durationMs: number; width: number | null; height: number | null };
+
 interface RunnerOpts {
-  probeMeta?: { durationMs: number; width: number | null; height: number | null } | "throws";
+  /** 입력(inPath) probe 결과. 종전에는 입출력이 같은 값을 돌려줘 출력 기준 기록을 검증 못했다. */
+  probeMeta?: ProbeMeta | "throws";
+  /** 출력(outPath) probe 결과 — 생략하면 probeMeta 그대로. 입출력 distinct 검증용. */
+  outProbeMeta?: ProbeMeta | "throws";
   transcodeThrows?: boolean;
   downloadBytes?: number;
   downloadThrows?: boolean;
 }
 
 function makeMockRunner(work: string, opts: RunnerOpts = {}) {
+  const inMeta: ProbeMeta | "throws" =
+    opts.probeMeta ?? { durationMs: 5000, width: 720, height: 1280 };
+  const outMeta: ProbeMeta | "throws" = opts.outProbeMeta ?? inMeta;
   return {
-    probe() {
-      const meta = opts.probeMeta ?? { durationMs: 5000, width: 720, height: 1280 };
-      if (meta === "throws") throw new Error("ffprobe 실행 실패");
+    // 입력/출력을 **경로로 구분**해 서로 다른 메타를 돌려준다.
+    // 그래야 "DB 에 어느 쪽이 기록되는가"를 실제로 가를 수 있다(삼순 지적, 2026-08-04).
+    probe(filePath: string) {
+      const isOut = filePath.includes("out");
+      const meta = isOut ? outMeta : inMeta;
+      if (meta === "throws") throw new Error(`ffprobe 실행 실패(${isOut ? "out" : "in"})`);
       return meta;
     },
     transcode(_inPath: string, outPath: string) {
@@ -487,6 +505,105 @@ async function run() {
     }
   }
 
+  // ── 출력 메타 계약 (삼순 blocker ②, 2026-08-04) ──
+  // 종전은 입력 meta 를 그대로 DB 에 썼고(회전 영상 1920x1080 ≠ 실파일 720x1280),
+  // probe 가 throw/불량이어도 입력으로 fallback 해 **성공 종결**했다 — 검증 안 된 산출물을
+  // 확정하고 큐에서도 내렸다. 이젠 출력 기준 기록 + 불량은 failed 로 재시도여야 한다.
+  console.log("[Q] 출력 메타 기록 — 입력이 아니라 재 probe 한 산출물 기준");
+  {
+    const work = mkdtempSync(join(tmpdir(), "vt-test-"));
+    try {
+      const state: DbRowState = { id: 20, status: "active", needs_transcode: true, transcode_attempts: 0 };
+      const row = { ...BASE_ROW, id: 20, status: "active", needs_transcode: true };
+      const res = await processVenueJob(row, {
+        db: makeMockDb(state),
+        storage: makeMockStorage(),
+        runner: makeMockRunner(work, {
+          // 회전 입력(표시 1080x1920) → 720p 출력. 입출력을 distinct 로 둔다.
+          probeMeta: { durationMs: 5000, width: 1920, height: 1080 },
+          outProbeMeta: { durationMs: 5023, width: 720, height: 1280 },
+        }),
+        inPath: join(work, "in.mp4"),
+        outPath: join(work, "out.mp4"),
+      });
+      ok("Q: result=done", res.result === "done");
+      ok(
+        `Q: DB width/height 가 **출력** 720x1280 (실제 ${state.width}x${state.height})`,
+        state.width === 720 && state.height === 1280,
+      );
+      ok(
+        `Q: DB duration_ms 가 **출력** 5023 (실제 ${state.duration_ms})`,
+        state.duration_ms === 5023,
+      );
+      ok(
+        "Q: 입력 치수(1920x1080)가 기록되지 않음",
+        !(state.width === 1920 && state.height === 1080),
+      );
+    } finally {
+      rmSync(work, { recursive: true, force: true });
+    }
+  }
+
+  console.log("[R] 출력 probe throw → 성공 종결 금지(failed → 재시도, 큐 유지)");
+  {
+    const work = mkdtempSync(join(tmpdir(), "vt-test-"));
+    try {
+      const state: DbRowState = { id: 21, status: "active", needs_transcode: true, transcode_attempts: 0 };
+      const row = { ...BASE_ROW, id: 21, status: "active", needs_transcode: true };
+      const storage = makeMockStorage();
+      const res = await processVenueJob(row, {
+        db: makeMockDb(state),
+        storage,
+        runner: makeMockRunner(work, {
+          probeMeta: { durationMs: 5000, width: 1920, height: 1080 },
+          outProbeMeta: "throws",
+        }),
+        inPath: join(work, "in.mp4"),
+        outPath: join(work, "out.mp4"),
+        maxAttempts: 3,
+      });
+      ok("R: result=failed(검증 안 된 산출물을 확정하지 않는다)", res.result === "failed");
+      ok("R: needs_transcode=true 유지(큐에서 안 내림 — 재시도)", state.needs_transcode === true);
+      ok("R: 입력 치수 fallback 기록 없음", state.width === undefined && state.height === undefined);
+      ok("R: 업로드 자체가 일어나지 않음(swap 방지)", Object.keys(storage._uploaded).length === 0);
+      ok("R: attempts 증가", state.transcode_attempts === 1);
+    } finally {
+      rmSync(work, { recursive: true, force: true });
+    }
+  }
+
+  console.log("[S] 출력 probe 불량(width/height null) → 성공 종결 금지");
+  {
+    for (const bad of [
+      { label: "width/height null", meta: { durationMs: 5000, width: null, height: null } },
+      { label: "duration 0", meta: { durationMs: 0, width: 720, height: 1280 } },
+      { label: "width 0", meta: { durationMs: 5000, width: 0, height: 1280 } },
+    ]) {
+      const work = mkdtempSync(join(tmpdir(), "vt-test-"));
+      try {
+        const state: DbRowState = { id: 22, status: "active", needs_transcode: true, transcode_attempts: 0 };
+        const row = { ...BASE_ROW, id: 22, status: "active", needs_transcode: true };
+        const storage = makeMockStorage();
+        const res = await processVenueJob(row, {
+          db: makeMockDb(state),
+          storage,
+          runner: makeMockRunner(work, {
+            probeMeta: { durationMs: 5000, width: 1920, height: 1080 },
+            outProbeMeta: bad.meta,
+          }),
+          inPath: join(work, "in.mp4"),
+          outPath: join(work, "out.mp4"),
+          maxAttempts: 3,
+        });
+        ok(`S(${bad.label}): result=failed`, res.result === "failed");
+        ok(`S(${bad.label}): 큐 유지(needs_transcode=true)`, state.needs_transcode === true);
+        ok(`S(${bad.label}): 업로드/DB swap 없음`, Object.keys(storage._uploaded).length === 0 && state.width === undefined);
+      } finally {
+        rmSync(work, { recursive: true, force: true });
+      }
+    }
+  }
+
   console.log("[M] archived 처리 중 removed 로 내려가면 → CAS 0-row(resurrect 금지)");
   {
     const work = mkdtempSync(join(tmpdir(), "vt-test-"));
@@ -689,10 +806,24 @@ async function run() {
   // 이 항목만 소스 확인이다(위 행동 검증이 본체).
   console.log("[P2] 상위 워커가 조회 seam 을 사용");
   {
-    const src = readFileSync(join(import.meta.dirname, "..", "transcode-videos.mjs"), "utf8");
+    const raw = readFileSync(join(import.meta.dirname, "..", "transcode-videos.mjs"), "utf8");
+    // 주석을 제거하고 본다 — 안 그러면 "종전 코드를 설명하는 주석"이 재도입으로 오판된다.
+    const src = raw
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .map((l) => l.replace(/(^|[^:])\/\/.*$/, "$1"))
+      .join("\n");
     ok(
-      "P2: transcode-videos.mjs 가 selectVenueTranscodeTargets 를 호출",
-      /await selectVenueTranscodeTargets\(/.test(src),
+      "P2: transcode-videos.mjs 가 runVenueTranscodeBatch seam 을 호출",
+      /return runVenueTranscodeBatch\(/.test(src),
+    );
+    ok(
+      "P2: 상위에 행별 루프 재도입 없음(for..of rows 직접 순회 0)",
+      !/for\s*\(\s*const\s+row\s+of\s+rows\s*\)/.test(src),
+    );
+    ok(
+      "P2: 상위에 processVenueJob 직접 호출 없음(seam 우회 방지)",
+      !/processVenueJob\(/.test(src),
     );
     // 상위 스크립트에는 video_transcode_jobs 용 .or() 가 별도로 있다(이건 정상).
     // 금지 대상은 **venue_stories 인라인 조회 재도입**이다 — needs_transcode 를 다룬다면
@@ -705,6 +836,214 @@ async function run() {
       "P2: venue_stories 선택 컬럼을 상위에서 재선언하지 않음",
       !/from\("venue_stories"\)[\s\S]{0,200}attendance_source/.test(src),
     );
+  }
+
+  // ── orchestration 행동 검증 (삼순 4라운드 blocker ①) ──
+  // 조회 술어가 맞아도 `for (const row of rows)` → `for (const row of [])` 로 바꾸면
+  // cron 이 아무 행도 처리하지 않는다. 그 회귀를 행동으로 고정한다.
+  console.log("[T] orchestration — 조회된 행이 전부 processVenueJob 으로 전달되는가");
+  {
+    const rowsFixture = [
+      { id: 101, status: "active", media_path: "a/1.mp4", media_bucket: "venue-media" },
+      { id: 102, status: "archived", media_path: "a/2.mov", media_bucket: "venue-media" },
+      { id: 103, status: "pending", media_path: "a/3.mp4", media_bucket: "venue-staging" },
+    ];
+    const seen: { id: number; inPath: string; outPath: string; maxAttempts: number }[] = [];
+    const cleaned: string[][] = [];
+    let workDirs = 0;
+    let cleanedWorkDir: string | null = null;
+
+    const res = await runVenueTranscodeBatch({
+      db: { __marker: "db" },
+      storage: { __marker: "storage" },
+      runner: { __marker: "runner" },
+      selectTargets: async (db: unknown, opts: { maxAttempts: number; limit: number }) => {
+        ok("T: selectTargets 에 db 가 그대로 전달", (db as { __marker?: string })?.__marker === "db");
+        ok("T: selectTargets 에 maxAttempts/limit 전달", opts.maxAttempts === 3 && opts.limit === 20);
+        return { data: rowsFixture, error: null };
+      },
+      runJob: async (row: { id: number }, deps: Record<string, unknown>) => {
+        seen.push({
+          id: row.id,
+          inPath: deps.inPath as string,
+          outPath: deps.outPath as string,
+          maxAttempts: deps.maxAttempts as number,
+        });
+        return { result: row.id === 102 ? "failed" : "done" };
+      },
+      makeWorkDir: () => {
+        workDirs++;
+        return "/tmp/work";
+      },
+      pathFor: (workDir: string, row: { id: number; media_path: string }) => ({
+        inPath: `${workDir}/in-${row.id}`,
+        outPath: `${workDir}/out-${row.id}`,
+      }),
+      cleanupFiles: (paths: string[]) => cleaned.push(paths),
+      cleanupWorkDir: (w: string) => {
+        cleanedWorkDir = w;
+      },
+      maxAttempts: 3,
+      limit: 20,
+      log: () => {},
+    });
+
+    ok(`T: 조회된 3행이 전부 전달됨 (실제 ${seen.length})`, seen.length === 3);
+    ok(
+      "T: 조회 순서 보존(101→102→103)",
+      seen.map((s) => s.id).join(",") === "101,102,103",
+    );
+    ok("T: 행마다 고유 in/out 경로 전달", seen[0].inPath !== seen[1].inPath && seen[0].outPath !== seen[1].outPath);
+    ok("T: maxAttempts 가 각 행에 전달", seen.every((s) => s.maxAttempts === 3));
+    ok("T: workDir 1회 생성", workDirs === 1);
+    ok(`T: 행마다 임시파일 정리 (실제 ${cleaned.length})`, cleaned.length === 3);
+    ok("T: workDir 정리", cleanedWorkDir === "/tmp/work");
+    ok(
+      `T: 집계 반환 done=2 failed=1 processed=3`,
+      res.done === 2 && res.failed === 1 && res.processed === 3,
+    );
+  }
+
+  console.log("[T2] orchestration — 조회 0건/오류 경계");
+  {
+    const noRows = await runVenueTranscodeBatch({
+      db: {}, storage: {}, runner: {},
+      selectTargets: async () => ({ data: [], error: null }),
+      runJob: async () => {
+        ok("T2: 0건이면 runJob 미호출", false);
+        return { result: "done" };
+      },
+      makeWorkDir: () => {
+        ok("T2: 0건이면 workDir 미생성", false);
+        return "/tmp/x";
+      },
+      pathFor: () => ({ inPath: "i", outPath: "o" }),
+      maxAttempts: 3, limit: 20, log: () => {},
+    });
+    ok("T2: 0건 → processed 0", noRows.processed === 0 && noRows.done === 0);
+
+    let threw = false;
+    try {
+      await runVenueTranscodeBatch({
+        db: {}, storage: {}, runner: {},
+        selectTargets: async () => ({ data: null, error: { message: "DB 다운" } }),
+        runJob: async () => ({ result: "done" }),
+        makeWorkDir: () => "/tmp/x",
+        pathFor: () => ({ inPath: "i", outPath: "o" }),
+        maxAttempts: 3, limit: 20, log: () => {},
+      });
+    } catch {
+      threw = true;
+    }
+    ok("T2: 조회 오류는 삼키지 않고 throw(관제 가능)", threw === true);
+  }
+
+  // ── 서버 워커 실 ffmpeg 계약 (삼순 4라운드 blocker ③) ──
+  // 지금까지 exact geometry 검증은 **브라우저 경로**만이었고, 서버 워커는 mock runner 가
+  // 500B 더미 파일만 써서 scale/faststart/rotation 이 한 번도 실행되지 않았다.
+  // 여기서는 실제 ffmpeg 으로 돌려 산출물 바이트를 검사한다(ffmpeg 부재는 skip 아니라 FAIL).
+  console.log("[U] 서버 워커 실 ffmpeg — 720p · faststart · 회전 보존");
+  {
+    const work = mkdtempSync(join(tmpdir(), "vt-ffmpeg-"));
+    try {
+      let hasFfmpeg = true;
+      try {
+        execFileSync("ffmpeg", ["-version"], { stdio: "ignore" });
+        execFileSync("ffprobe", ["-version"], { stdio: "ignore" });
+      } catch {
+        hasFfmpeg = false;
+      }
+      ok("U: ffmpeg/ffprobe 존재(이 계약의 전제 — 부재면 skip 아니라 FAIL)", hasFfmpeg);
+
+      if (hasFfmpeg) {
+        // 회전 입력: 1920x1080 본체 + display matrix rotation=90 (표시 1080x1920)
+        const rawPath = join(work, "raw.mp4");
+        const srcPath = join(work, "src.mp4");
+        const outPath = join(work, "out.mp4");
+        execFileSync("ffmpeg", [
+          "-y",
+          "-f", "lavfi", "-i", "testsrc2=size=1920x1080:rate=30",
+          "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100",
+          "-t", "3", "-c:v", "libx264", "-preset", "ultrafast",
+          "-c:a", "aac", "-b:a", "128k", "-shortest", rawPath,
+        ], { stdio: "ignore" });
+        execFileSync("ffmpeg", [
+          "-y", "-display_rotation", "90", "-i", rawPath, "-c", "copy", srcPath,
+        ], { stdio: "ignore" });
+
+        // **실행 경로가 쓰는 바로 그 함수**를 호출
+        transcodeVenueVideo(srcPath, outPath);
+
+        const probe = JSON.parse(
+          execFileSync("ffprobe", [
+            "-v", "error",
+            "-show_entries", "stream=codec_name,codec_type,width,height",
+            "-show_entries", "stream_side_data=rotation",
+            "-show_entries", "format=duration",
+            "-of", "json", outPath,
+          ], { encoding: "utf8" }),
+        ) as {
+          streams: {
+            codec_type: string;
+            codec_name?: string;
+            width?: number;
+            height?: number;
+            side_data_list?: { rotation?: number }[];
+          }[];
+          format: { duration: string };
+        };
+        const v = probe.streams.find((s) => s.codec_type === "video")!;
+        const a = probe.streams.find((s) => s.codec_type === "audio");
+        const rot = v.side_data_list?.find((d) => typeof d.rotation === "number")?.rotation ?? 0;
+        const swapped = Math.abs(rot) % 180 === 90;
+        const disp = swapped
+          ? { width: v.height!, height: v.width! }
+          : { width: v.width!, height: v.height! };
+
+        // 상위 박스 순서로 faststart 판정(독립 구현)
+        const buf = readFileSync(outPath);
+        let pos = 0;
+        let fastStart: boolean | null = null;
+        while (pos + 8 <= buf.length) {
+          let size = buf.readUInt32BE(pos);
+          const type = buf.subarray(pos + 4, pos + 8).toString("latin1");
+          let header = 8;
+          if (size === 1) {
+            if (pos + 16 > buf.length) break;
+            size = Number(buf.readBigUInt64BE(pos + 8));
+            header = 16;
+          } else if (size === 0) break;
+          if (type === "moov") { fastStart = true; break; }
+          if (type === "mdat") { fastStart = false; break; }
+          if (size < header) break;
+          pos += size;
+        }
+
+        console.log(
+          `  서버 워커 실측: ${v.width}x${v.height} rot=${rot} → 표시 ${disp.width}x${disp.height} · ` +
+            `${v.codec_name} · faststart=${fastStart} · ${parseFloat(probe.format.duration).toFixed(2)}s`,
+        );
+
+        ok(`U: 출력 코덱 h264 (실제 ${v.codec_name})`, v.codec_name === "h264");
+        ok(
+          `U: 표시 긴 변이 정확히 720p ${VENUE_SERVER_MAX_EDGE_PX}px (실제 ${Math.max(disp.width, disp.height)}) — under-resolution 방지`,
+          Math.max(disp.width, disp.height) === VENUE_SERVER_MAX_EDGE_PX,
+        );
+        ok(
+          `U: 표시 치수 exact 720x1280 (실제 ${disp.width}x${disp.height})`,
+          disp.width === 720 && disp.height === 1280,
+        );
+        ok("U: 표시 방향 세로 보존", disp.height > disp.width);
+        ok(`U: moov 가 mdat 앞(faststart) — 실제 ${fastStart}`, fastStart === true);
+        ok(`U: 오디오 트랙 보존 (실제 ${a?.codec_name ?? "없음"})`, a != null);
+        ok(
+          `U: duration 보존 (${parseFloat(probe.format.duration).toFixed(2)}s ≈ 3s)`,
+          Math.abs(parseFloat(probe.format.duration) - 3) < 1,
+        );
+      }
+    } finally {
+      rmSync(work, { recursive: true, force: true });
+    }
   }
 
   console.log(`\n결과: ${pass} pass / ${fail} fail`);

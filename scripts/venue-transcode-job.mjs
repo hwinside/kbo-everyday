@@ -5,6 +5,7 @@
  */
 import { writeFileSync, readFileSync, statSync } from "fs";
 import { basename } from "path";
+import { execFileSync } from "child_process";
 
 const VENUE_MAX_DURATION_MS = 16000; // 15초 + 여유
 const VENUE_MAX_BYTES = 50 * 1024 * 1024;
@@ -46,11 +47,125 @@ export async function selectVenueTranscodeTargets(db, { maxAttempts, limit }) {
     .order("created_at", { ascending: true })
     .limit(limit);
 }
+
+/**
+ * 조회→행별 처리 orchestration — 주입 가능한 seam.
+ *
+ * 종전에는 이 루프가 transcode-videos.mjs 안에 인라인이어서, `for (const row of rows)` 를
+ * `for (const row of [])` 로 바꿔 **선택 결과를 전부 폐기**해도 required gate 가 GREEN 이었다
+ * (삼순 독립 재현, 2026-08-04). 즉 술어가 맞아도 cron 이 아무 행도 전달하지 않는 회귀를
+ * 못 잡았다. 이젠 스모크가 이 함수를 실행해 행 수·순서·per-row 호출을 행동으로 고정한다.
+ *
+ * @param deps {{
+ *   db: object, storage: object, runner: object,
+ *   selectTargets?: Function,   // 기본 selectVenueTranscodeTargets
+ *   runJob?: Function,          // 기본 processVenueJob
+ *   makeWorkDir: () => string,
+ *   pathFor: (workDir: string, row: object) => { inPath: string, outPath: string },
+ *   cleanupFiles?: (paths: string[]) => void,
+ *   cleanupWorkDir?: (workDir: string) => void,
+ *   maxAttempts: number, limit: number,
+ *   log?: (msg: string) => void,
+ * }}
+ */
+export async function runVenueTranscodeBatch(deps) {
+  const {
+    db,
+    storage,
+    runner,
+    selectTargets = selectVenueTranscodeTargets,
+    runJob = processVenueJob,
+    makeWorkDir,
+    pathFor,
+    cleanupFiles = () => {},
+    cleanupWorkDir = () => {},
+    maxAttempts,
+    limit,
+    log = () => {},
+  } = deps;
+
+  const { data: rows, error } = await selectTargets(db, { maxAttempts, limit });
+  if (error) throw new Error(`venue_stories 조회 실패: ${error.message}`);
+  if (!rows || rows.length === 0) {
+    log("직관 라이브 최적화 대기 영상 없음.");
+    return { done: 0, removed: 0, failed: 0, updateErrors: 0, claimedElsewhere: 0, processed: 0 };
+  }
+
+  const workDir = makeWorkDir();
+  let done = 0,
+    removed = 0,
+    failed = 0,
+    updateErrors = 0,
+    claimedElsewhere = 0,
+    processed = 0;
+  try {
+    for (const row of rows) {
+      const { inPath, outPath } = pathFor(workDir, row);
+      try {
+        processed++;
+        const res = await runJob(row, {
+          db,
+          storage,
+          runner,
+          inPath,
+          outPath,
+          maxAttempts,
+        });
+        if (res.result === "done") done++;
+        else if (res.result === "removed") removed++;
+        else if (res.result === "claimedElsewhere") claimedElsewhere++;
+        else if (res.result === "updateError") updateErrors++;
+        else if (res.result === "failed") failed++;
+      } finally {
+        cleanupFiles([inPath, outPath]);
+      }
+    }
+  } finally {
+    cleanupWorkDir(workDir);
+  }
+  log(
+    `직관 라이브 처리: ✅${done} 🚫${removed} ❌${failed} ⏭️${claimedElsewhere} (상태갱신오류 ${updateErrors})`,
+  );
+  return { done, removed, failed, updateErrors, claimedElsewhere, processed };
+}
+
 // A안 A1: 신규 영상은 private venue-media 로 승격·보관(공개 videos 아님). 서빙은 서버 signed URL.
 const VENUE_PRIVATE_MEDIA_BUCKET = "venue-media";
 // private venue 버킷: 공개 URL 이 없으므로 media_url 다운로드 대신 storage API 로 받는다.
 const PRIVATE_VENUE_BUCKETS = new Set(["venue-media", "venue-staging"]);
 const MAX_ATTEMPTS_DEFAULT = 3;
+
+/** 서버 워커 720p 정규화 긴 변 상한 — 클라이언트 경로와 동일 계약. */
+export const VENUE_SERVER_MAX_EDGE_PX = 1280;
+
+/**
+ * 서버 fallback 워커의 실제 ffmpeg 정규화 — **실행 경로가 쓰는 함수 그자체**.
+ *
+ * 종전에는 transcode-videos.mjs 에 인라인이었고 스모크는 mock runner(500B 더미 파일)만 썼다.
+ * 그래서 server 경로의 scale/faststart/rotation/출력메타가 실파일로 한 번도 검증되지 않았고,
+ * `1280→640` · `+faststart` 제거가 전 게이트를 통과했다(삼순 반대가설, 2026-08-04).
+ * 이젠 스모크가 이 함수를 실제 ffmpeg 으로 실행해 산출물 바이트를 검사한다.
+ *
+ * @param maxEdge 긴 변 상한(기본 720p). 회귀 주입용으로만 바꿈.
+ */
+export function transcodeVenueVideo(input, output, maxEdge = VENUE_SERVER_MAX_EDGE_PX) {
+  execFileSync(
+    "ffmpeg",
+    [
+      "-y", "-i", input,
+      // maxEdge 박스에 맞춰 축소(확대 안 함) 후 짝수 보정 (libx264 yuv420p 요구)
+      "-vf",
+      `scale='min(${maxEdge},iw)':'min(${maxEdge},ih)':force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2`,
+      "-c:v", "libx264", "-profile:v", "high", "-preset", "veryfast", "-crf", "27",
+      "-pix_fmt", "yuv420p",
+      "-c:a", "aac", "-b:a", "128k",
+      "-movflags", "+faststart",
+      output,
+    ],
+    { stdio: ["ignore", "ignore", "pipe"] },
+  );
+  return output;
+}
 
 /** 원본 media_path → 같은 폴더의 720p 최적화본 path */
 export function venueOptimizedPath(mediaPath) {
@@ -141,18 +256,30 @@ export async function processVenueJob(row, deps) {
 
     runner.transcode(inPath, outPath);
     const outBytes = statSync(outPath).size;
-    // 산출물을 **다시 probe** 해 실제 출력 메타를 기록한다.
-    // 종전에는 입력 meta 를 그대로 썼는데, ffmpeg 가 회전을 반영하고 720p 로 축소하므로
-    // 회전 영상은 1920x1080 으로 기록되면서 실제 파일은 720x1280 이었다(삼순 지적, 2026-08-04).
-    // 뷰어 레이아웃·서버 판정이 어긋나므로 반드시 출력 기준이어야 한다.
-    // probe 실패 시에는 입력 meta 로 fallback 하되 조용히 넘어가지 않고 로그를 남긴다.
-    let outMeta = meta;
+    // 산출물을 **다시 probe** 해 실제 출력 메타를 확정한다(업로드·DB swap 앞).
+    //
+    // 종전 ①: 입력 meta 를 그대로 썼다 → ffmpeg 가 회전 반영·720p 축소를 하므로
+    //   회전 영상이 DB 에는 1920x1080, 실파일은 720x1280 이었다.
+    // 종전 ②: probe 가 throw/불량이어도 입력 meta 로 fallback 해 **성공 종결**했다 —
+    //   검증되지 않은 산출물을 확정하고 큐에서도 내려버렸다(삼순 실측, 2026-08-04).
+    //
+    // 이젠 duration>0 **및** width/height>0 을 모두 요구하고, 못 맞추면 throw 해
+    // catch 경로(failed → 재시도)로 보낸다. upload/DB swap 은 일어나지 않는다.
+    let outMeta;
     try {
-      const probed = runner.probe(outPath);
-      if (probed && probed.durationMs > 0) outMeta = probed;
-      else console.log(`  ⚠️ venue ${row.id} 출력 probe 결과 불량 — 입력 메타로 fallback`);
+      outMeta = runner.probe(outPath);
     } catch (probeErr) {
-      console.log(`  ⚠️ venue ${row.id} 출력 probe 실패 — 입력 메타로 fallback: ${probeErr?.message || probeErr}`);
+      throw new Error(`출력 probe 실패: ${probeErr?.message || probeErr}`);
+    }
+    if (
+      !outMeta ||
+      !(outMeta.durationMs > 0) ||
+      !(outMeta.width > 0) ||
+      !(outMeta.height > 0)
+    ) {
+      throw new Error(
+        `출력 probe 불량(dur=${outMeta?.durationMs} ${outMeta?.width}x${outMeta?.height})`,
+      );
     }
     // pending 승격은 private venue-media 로(공개 videos 아님). active 는 기존 버킷 유지(레거시 videos / 신규 venue-media).
     const targetBucket = isPending ? VENUE_PRIVATE_MEDIA_BUCKET : row.media_bucket;
