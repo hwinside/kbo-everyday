@@ -99,7 +99,7 @@ const crawler = readFileSync("scripts/crawl-stats.mjs", "utf8");
 const crawlerCode = crawler
   .replace(/\/\*[\s\S]*?\*\//g, "")
   .replace(/(^|[^:])\/\/[^\n]*/g, "$1");
-const firstWriteIndex = crawlerCode.indexOf("await verifyThenPromote(");
+const firstWriteIndex = crawlerCode.indexOf("await promoteStatsSnapshot(");
 assert.ok(firstWriteIndex >= 0, "산출물 promote 지점을 찾을 수 있어야 한다");
 
 for (const call of [
@@ -125,20 +125,21 @@ for (const call of [
  * 여기서는 ①크롤러가 그 함수를 write 앞에서 부르는가 ②그 함수가 실제로 던지는가 를 본다. */
 {
   // ⚠︎ 2026-08-04 구조 변경: 검증은 이제 promote *앞*에 나열되는 게 아니라
-  // `verifyThenPromote` 안에서 promote 보다 먼저 실행되도록 **결속**돼 있다.
-  // 그래서 위치 비교가 아니라 "검증기가 그 함수에 결속됐는가"를 본다.
-  // (위치 비교로 두면 검증을 지워도 promote 만 남아 GREEN 이 될 수 있다)
-  const truthIndex = crawlerCode.indexOf("assertSourceTruth(");
-  assert.ok(truthIndex >= 0, "크롤러가 assertSourceTruth 를 결속해야 한다");
+    // ⚠︎ 검증기는 이제 promoteStatsSnapshot **내부에 고정**돼 있다. 크롤러는 고를 수 없다.
+  // caller 가 verifier 를 주입할 수 있으면 `verify: async () => {}` 한 줄로 검증 0회가 된다.
   assert.ok(
-    /verify:\s*\(input\)\s*=>\s*assertSourceTruth\(input\)/.test(crawlerCode),
-    "원본 정합성 대조가 verifyThenPromote 의 검증기로 결속돼야 한다(promote 전 실행 보장)",
+    /await promoteStatsSnapshot\(/.test(crawlerCode),
+    "원본 정합성 대조는 promoteStatsSnapshot 내부 고정 검증기로 실행돼야 한다",
   );
-  // 크롤러가 결과를 삼키지 못하도록 await 호출이어야 한다(Promise 무시 방지).
+  // 결과를 삼키지 못하도록 await 호출이어야 한다(Promise 무시 방지).
   assert.ok(
-    /verify:\s*\(input\)\s*=>\s*assertSourceTruth\(input\)/.test(crawlerCode)
-      || /await\s+assertSourceTruth\(/.test(crawlerCode),
-    "assertSourceTruth 는 await 로 호출돼야 한다(거부를 삼키면 안 된다)",
+    /await\s+promoteStatsSnapshot\(/.test(crawlerCode),
+    "promoteStatsSnapshot 은 await 로 호출돼야 한다(거부를 삼키면 안 된다)",
+  );
+  // 검증기 고정을 우회해 crawler 가 직접 verifier 를 넘기면 안 된다.
+  assert.ok(
+    !/\bverify\s*:/.test(crawlerCode),
+    "크롤러가 verify 를 넘기면 검증기 고정이 무의미해진다",
   );
 }
 
@@ -338,12 +339,16 @@ for (const call of [
       .replace(/(^|[^:])\/\/[^\n]*/g, "$1");
 
     assert.ok(
-      /verify:\s*\(input\)\s*=>\s*assertSourceTruth\(input\)/.test(code),
-      "크롤러는 assertSourceTruth 를 verifyThenPromote 검증기로 결속해야 한다",
+      /await promoteStatsSnapshot\(/.test(code),
+      "크롤러는 promoteStatsSnapshot(고정 검증기)으로 promote 해야 한다",
+    );
+    assert.ok(
+      !/\bverify\s*:/.test(code),
+      "크롤러가 verify 를 넘기면 안 된다(검증기 고정이 무의미해진다)",
     );
     // payload 에서 파생되는 값을 caller 가 context 로 덮어쓰면 우회가 부활한다.
     const ctxStart = code.indexOf("context: {");
-    assert.ok(ctxStart >= 0, "verifyThenPromote 에 context 가 있어야 한다");
+    assert.ok(ctxStart >= 0, "promoteStatsSnapshot 에 context 가 있어야 한다");
     const ctx = code.slice(ctxStart, code.indexOf("},", ctxStart));
     for (const forbidden of ["batters", "pitchers", "defense", "defenseRuns"]) {
       assert.ok(

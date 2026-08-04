@@ -245,7 +245,7 @@ function makeFixture(fileCount = 5) {
   );
   for (const laterMarker of [
     "readPrevious(",            // 기존 snapshot read
-    "await verifyThenPromote(", // 검증+교체(구조적 결속)
+    "await promoteStatsSnapshot(", // 검증+교체(구조적 결속)
     "await crawlBatterBasic1(page)", // 실제 크롤 시작 호출부(선언 아님)
   ]) {
     const idx = crawlerCode.indexOf(laterMarker);
@@ -265,7 +265,7 @@ function makeFixture(fileCount = 5) {
 {
   const crawler = readFileSync("scripts/crawl-stats.mjs", "utf8");
   assert.ok(
-    crawler.includes("verifyThenPromote({"),
+    crawler.includes("promoteStatsSnapshot({"),
     "크롤러는 promoteAtomically 로 산출물을 교체해야 한다",
   );
   // 대상 산출물 경로에 직접 writeFileSync 하는 경로가 남아 있으면 원자성이 깨진다.
@@ -294,7 +294,7 @@ console.log("atomic promote smoke: ALL assertions PASS");
  * 문자열 검사는 같은 의미의 다른 표기를 끝없이 놓친다. 그래서 검사 대상을 바꿨다 —
  * 검증 입력을 **promote payload 에서 파생**시켜, 끼워넣을 자리 자체를 없앤다. */
 {
-  const { verifyThenPromote } = await import("../lib/verified-promote.mjs");
+  const { __verifiedPromoteForTest: verifyThenPromote } = await import("../lib/verified-promote.mjs");
   const dir = mkdtempSync(join(tmpdir(), "verified-promote-"));
   const mk = (name, body) => ({ path: join(dir, name), body: JSON.stringify(body) });
 
@@ -393,15 +393,15 @@ console.log("verified promote behavior: PASS");
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/(^|[^:])\/\/[^\n]*/g, "$1");
   // 호출이 단락 평가로 꺼져 있지 않아야 한다.
-  const callLine = code.split("\n").find((l) => l.includes("verifyThenPromote("));
-  assert.ok(callLine, "크롤러는 verifyThenPromote 를 호출해야 한다");
+  const callLine = code.split("\n").find((l) => l.includes("promoteStatsSnapshot("));
+  assert.ok(callLine, "크롤러는 promoteStatsSnapshot 을 호출해야 한다");
   assert.ok(
-    /^\s*await verifyThenPromote\(/.test(callLine),
-    `verifyThenPromote 는 조건 없이 await 호출돼야 한다: ${callLine.trim()}`,
+    /^\s*await promoteStatsSnapshot\(/.test(callLine),
+    `promoteStatsSnapshot 은 조건 없이 await 호출돼야 한다: ${callLine.trim()}`,
   );
   assert.ok(
-    !/(false\s*&&|0\s*&&|if\s*\(\s*false\s*\))[^\n]*verifyThenPromote/.test(code),
-    "verifyThenPromote 호출을 단락 평가로 끄면 안 된다(검증 없이 promote 된다)",
+    !/(false\s*&&|0\s*&&|if\s*\(\s*false\s*\))[^\n]*promoteStatsSnapshot/.test(code),
+    "promoteStatsSnapshot 호출을 단락 평가로 끄면 안 된다(검증 없이 promote 된다)",
   );
   // promote 는 verifyThenPromote 를 통해서만 — 직접 promoteAtomically 우회 금지.
   assert.ok(
@@ -424,7 +424,7 @@ console.log("crawler write-path binding: PASS");
     .replace(/(^|[^:])\/\/[^\n]*/g, "$1");
 
   const ctxStart = code.indexOf("context: {");
-  assert.ok(ctxStart >= 0, "크롤러 verifyThenPromote 호출에 context 가 있어야 한다");
+  assert.ok(ctxStart >= 0, "크롤러 promoteStatsSnapshot 호출에 context 가 있어야 한다");
 
   // ⚠︎ `code.indexOf("},")` 로 끝을 찾으면 값 안의 `{}`(예: `defenseRuns: {}`)에서 잘린다.
   // 실제로 그 때문에 주입 mutation 이 GREEN 이었다. 중괄호 균형으로 정확히 끊는다.
@@ -474,3 +474,73 @@ console.log("crawler write-path binding: PASS");
 }
 
 console.log("crawler context binding: PASS");
+
+/* 11) verifier 는 caller 가 고를 수 없다 — 구조 계약 ─────────────────
+ *
+ * ⚠︎ 삼순 실증: `verify: async () => {}, bindingProof: { verify: (input) => assertSourceTruth(input) }`
+ * 로 **검증 0회 후 promote** 가 가능했는데 snapshot·atomic·tsc 가 전부 GREEN 이었다.
+ * verifier 가 caller 주입값인 한, 문자열로 "assertSourceTruth 가 결속됐는지" 아무리 확인해도
+ * 위장 필드 하나로 뚫린다. 그래서 stats 경로는 verifier 를 **모듈 내부에 고정**했다. */
+{
+  const lib = await import("../lib/verified-promote.mjs");
+  const crawler = readFileSync("scripts/crawl-stats.mjs", "utf8");
+  const code = crawler
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/(^|[^:])\/\/[^\n]*/g, "$1");
+
+  // ① 제품 경로는 verifier 를 받지 않는다.
+  assert.equal(
+    lib.promoteStatsSnapshot.length,
+    1,
+    "promoteStatsSnapshot 은 단일 옵션 객체만 받아야 한다",
+  );
+  const dir = mkdtempSync(join(tmpdir(), "fixed-verifier-"));
+  const mk = (name, body) => ({ path: join(dir, name), body: JSON.stringify(body) });
+  const artifacts = [
+    mk("stats-2026-batters.json", [{ kboId: "1", name: "x", team: "T" }]),
+    mk("stats-2026-pitchers.json", [{ kboId: "2", name: "y", team: "T" }]),
+    mk("stats-2026-defense.json", [{ kboId: "3", pos: "유격수", name: "z", team: "T" }]),
+    mk("player-defense-runs.json", { 3: 1.5 }),
+  ];
+  for (const a of artifacts) writeFileSync(a.path, "OLD");
+
+  // verify 를 주입해도 무시되고, 고정된 실제 검증기가 돌아야 한다.
+  // (browser 가 없으므로 반드시 던진다 = 검증이 실제로 실행됐다는 증거)
+  await assert.rejects(
+    () => lib.promoteStatsSnapshot({
+      artifacts,
+      context: { season: "2026" },
+      verify: async () => {}, // ← 주입 시도
+    }),
+    (error) => !/verified_promote_missing_verifier/.test(error.message),
+    "주입한 no-op verifier 가 쓰이면 안 된다(고정 검증기가 실행돼야 한다)",
+  );
+  for (const a of artifacts) {
+    assert.equal(readFileSync(a.path, "utf8"), "OLD", "검증 실패 시 산출물이 바뀌면 안 된다");
+  }
+  rmSync(dir, { recursive: true, force: true });
+
+  // ② 크롤러가 verifier 를 넘기려는 흔적이 있으면 안 된다.
+  const callStart = code.indexOf("promoteStatsSnapshot({");
+  assert.ok(callStart >= 0, "크롤러는 promoteStatsSnapshot 을 호출해야 한다");
+  let depth = 1;
+  let i = callStart + "promoteStatsSnapshot({".length;
+  for (; i < code.length && depth > 0; i++) {
+    if ("{([".includes(code[i])) depth++;
+    else if ("})]".includes(code[i])) depth--;
+    if (depth === 0) break;
+  }
+  const callBody = code.slice(callStart, i);
+  assert.ok(
+    !/\bverify\s*:/.test(callBody),
+    "크롤러가 verify 를 넘기면 안 된다(검증기는 모듈 내부 고정)",
+  );
+
+  // ③ 테스트 전용 주입 경로를 제품 코드가 쓰면 안 된다.
+  assert.ok(
+    !/__verifiedPromoteForTest/.test(code),
+    "제품 코드가 테스트 전용 주입 경로를 쓰면 검증기 고정이 무의미해진다",
+  );
+}
+
+console.log("fixed verifier contract: PASS");

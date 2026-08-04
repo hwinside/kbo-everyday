@@ -19,9 +19,8 @@ import {
   validateDefenseSnapshot,
   validatePitcherSnapshot,
 } from "./lib/stats-snapshot-guard.mjs";
-import { assertSourceTruth } from "./lib/stats-source-truth.mjs";
 import { recoverPendingPromotion } from "./lib/atomic-promote.mjs";
-import { verifyThenPromote } from "./lib/verified-promote.mjs";
+import { promoteStatsSnapshot } from "./lib/verified-promote.mjs";
 import { collectAllPages, createKboPageAdapter, signatureOf } from "./lib/kbo-pagination.mjs";
 import { createSelectAdapter, selectAndConfirm } from "./lib/kbo-select.mjs";
 
@@ -311,7 +310,7 @@ function parseIpToFloat(ip) {
 
 /**
  * ⚠︎ export 이유: 게이트가 **실제 write 경로를 실행**해야 하기 때문이다.
- * 소스 문자열 검사로는 `false && await verifyThenPromote(...)` 처럼 호출을 통째 끊는
+ * 소스 문자열 검사로는 `false && await promoteStatsSnapshot(...)` 처럼 호출을 통째 끊는
  * 우회를 못 잡는다(merged main 에서 실제로 GREEN 이었다). 게이트가 main() 을 직접 돌려
  * "검증기가 호출됐는가 / 검증 실패 시 산출물이 그대로인가" 를 행동으로 확인한다.
  */
@@ -508,13 +507,15 @@ export async function main() {
       { path: metaPath, body: JSON.stringify(meta, null, 2) },
     ];
 
-    // ⚠︎ 검증 입력을 caller 가 직접 넘기지 않는다. `verifyThenPromote` 가 **promote payload
+    // ⚠︎ 검증기(assertSourceTruth)는 promoteStatsSnapshot **내부에 고정**돼 있다 — caller 가
+    // 고를 수 없다. verifier 를 파라미터로 열어두면 `verify: async () => {}` 한 줄로
+    // 검증 0회가 되고, 문자열 게이트는 위장 필드만 있으면 GREEN 이었다(삼순 실증).
+    // 검증 입력도 caller 가 넘기지 않는다. **promote payload
     // 에서 파생**해 검증기에 넣는다. 종전에는 caller 한 줄만 바꾸면 우회가 됐고
     // (`false && await assertSourceTruth`, 옛 defenseRuns 스냅샷 검증) 전 게이트가 GREEN 이었다.
     // 문자열 검사로는 같은 의미의 다른 표기를 끝없이 놓치므로, 구조로 막는다.
-    await verifyThenPromote({
+    await promoteStatsSnapshot({
       artifacts,
-      verify: (input) => assertSourceTruth(input),
       context: {
         browser,
         kboBase: KBO_BASE,
