@@ -94,9 +94,14 @@ async function main() {
   const POST = (mod as { POST?: (req: unknown) => Promise<Response> }).POST;
   assert.equal(typeof POST, "function", "dispatch route 가 POST 를 export 하지 않는다");
 
-  /** 실제 POST webhook 종단으로 발송된 FCM 대상 수를 돌려준다. */
-  const postDispatch = async (senderId: string, receiverId: string, content = "보크가 뭐야?") => {
-    state.conv = { user1_id: senderId, user2_id: receiverId };
+  /** 실제 POST webhook 종단. 대화 참여자는 고정하고 sender 만 바꿔 양쪽 ternary 를 태운다. */
+  const postDispatch = async (
+    senderId: string,
+    user1Id: string,
+    user2Id: string,
+    content = "보크가 뭐야?",
+  ) => {
+    state.conv = { user1_id: user1Id, user2_id: user2Id };
     fcmCalls.length = 0;
     const res = await POST!({
       headers: { get: (k: string) => (k === "x-webhook-secret" ? "qa-secret" : null) },
@@ -108,23 +113,42 @@ async function main() {
         },
       }),
     });
-    const body = await (res as unknown as { json: () => Promise<{ ignored?: string }> }).json();
-    return { fcm: fcmCalls.length, body };
+    const body = await (res as unknown as {
+      json: () => Promise<{ ok?: boolean; ignored?: string; dispatches?: number; sent?: number }>;
+    }).json();
+    return { status: (res as unknown as { status: number }).status, fcm: [...fcmCalls], body };
   };
 
-  await check("POST 종단: 유저 질문 → 봇 FCM 0", async () => {
-    const r = await postDispatch(USER_A, GENIUS);
-    assert.equal(r.fcm, 0);
+  const assertBotSuppressed = (r: Awaited<ReturnType<typeof postDispatch>>) => {
+    assert.equal(r.status, 200, `HTTP ${r.status}`);
+    assert.equal(r.body.ok, true, `body=${JSON.stringify(r.body)}`);
+    assert.equal(r.body.dispatches, 0, `dispatches=${r.body.dispatches}`);
+    assert.equal(r.body.sent, 0, `sent=${r.body.sent}`);
+    assert.deepEqual(r.fcm, [], `FCM=${JSON.stringify(r.fcm)}`);
     assert.notEqual(r.body.ignored, "dm_messages", "POST dm_messages 배선 단절");
-  });
-  await check("POST 종단: 봇 답변 → 유저 FCM 0", async () =>
-    assert.equal((await postDispatch(GENIUS, USER_A, "답변입니다")).fcm, 0));
-  await check("POST 종단: 봇 picker → 유저 FCM 0", async () =>
-    assert.equal((await postDispatch(GENIUS, USER_B, "어느 선수를 말씀하시나요?")).fcm, 0));
-  await check("POST 종단: 일반 DM FCM 1", async () =>
-    assert.equal((await postDispatch(USER_A, USER_B)).fcm, 1));
-  await check("POST 종단: 반대 방향 일반 DM FCM 1", async () =>
-    assert.equal((await postDispatch(USER_B, USER_A)).fcm, 1));
+  };
+
+  await check("POST 종단: 유저 질문 → 봇 200/dispatch0/sent0/FCM0", async () =>
+    assertBotSuppressed(await postDispatch(USER_A, USER_A, GENIUS)));
+  await check("POST 종단: 봇 답변 → 유저 200/dispatch0/sent0/FCM0", async () =>
+    assertBotSuppressed(await postDispatch(GENIUS, USER_A, GENIUS, "답변입니다")));
+  await check("POST 종단: 봇 picker → 다른 유저 200/dispatch0/sent0/FCM0", async () =>
+    assertBotSuppressed(await postDispatch(GENIUS, USER_B, GENIUS, "어느 선수를 말씀하시나요?")));
+
+  const assertGeneralDm = (
+    r: Awaited<ReturnType<typeof postDispatch>>,
+    expectedReceiver: string,
+  ) => {
+    assert.equal(r.status, 200);
+    assert.equal(r.body.ok, true);
+    assert.equal(r.body.dispatches, 1);
+    assert.equal(r.body.sent, 1);
+    assert.deepEqual(r.fcm, [[expectedReceiver]], `FCM target=${JSON.stringify(r.fcm)}`);
+  };
+  await check("POST 종단: 고정 대화 A(user1)→B(user2), target B", async () =>
+    assertGeneralDm(await postDispatch(USER_A, USER_A, USER_B), USER_B));
+  await check("POST 종단: 고정 대화 B(user2)→A(user1), target A", async () =>
+    assertGeneralDm(await postDispatch(USER_B, USER_A, USER_B), USER_A));
 
   await check("dispatch route 가 봇 uuid 를 하드코딩하지 않는다", async () => {
     const { readFileSync } = await import("node:fs");
