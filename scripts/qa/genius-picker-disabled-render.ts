@@ -21,7 +21,6 @@
  */
 import assert from "node:assert/strict";
 import { JSDOM } from "jsdom";
-import type * as ReactNamespace from "react";
 import {
   createBaseballQaAnsweredUpdater,
   type BaseballQaReplyMessage,
@@ -31,6 +30,16 @@ import {
   isGeniusPickerDisabled,
   type GeniusPickerOption,
 } from "../../src/lib/constants/baseball-genius";
+
+// ⚠️ React 의 `act` 는 **development 번들에만** 있다(react package.json 조건부 exports).
+// Vercel prebuild 는 NODE_ENV=production 이라 production 번들이 로드돼
+// `TypeError: act is not a function` 으로 죽는다 — 2026-08-03 에 `next-game-date-badge-render`
+// 가 똑같이 당했고, 이 파일이 그 교훈을 놓쳐 같은 사고를 반복했다(삼순 8차 실측).
+// 로컬에서만 통과하는 게이트는 게이트가 아니다.
+//
+// react 는 아래에서 **dynamic import** 하므로(정적 import 는 hoisting 돼 이 줄보다 먼저 평가된다)
+// 이 시점 세팅이 조건부 export 해석에 반영된다.
+process.env.NODE_ENV = "development";
 
 const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost/" });
 const globals = globalThis as Record<string, unknown>;
@@ -78,8 +87,12 @@ function check(name: string, fn: () => void) {
 
 async function main() {
   const React = (await import("react")).default;
+  const { act } = await import("react");
   const { createRoot } = await import("react-dom/client");
-  const act = React.act as typeof ReactNamespace.act;
+  // 위 NODE_ENV 고정이 깨지면 여기서 **명시적으로** 죽는다 — 원인 불명 TypeError 대신
+  // 무엇이 잘못됐는지 말해주는 실패로 만든다.
+  assert.equal(typeof act, "function",
+    "React.act 가 없다 — development 번들이 로드되지 않았다(NODE_ENV 고정이 import 보다 늦었는지 확인)");
   const GeniusPlayerPicker = (await import("../../src/components/dm/GeniusPlayerPicker")).default;
 
   /**
