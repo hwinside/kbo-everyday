@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { validatePitcherSnapshot } from "../lib/stats-snapshot-guard.mjs";
+import {
+  validateBatterSnapshot,
+  validateDefenseRunsSnapshot,
+  validateDefenseSnapshot,
+  validatePitcherSnapshot,
+} from "../lib/stats-snapshot-guard.mjs";
 
+/* ── 투수(기존 계약) ─────────────────────────────────────────── */
 const full = Array.from({ length: 276 }, (_, index) => ({
   kboId: String(50000 + index),
   name: `투수${index + 1}`,
@@ -21,10 +27,243 @@ assert.throws(
   "276→246 middle-page omission fails closed",
 );
 
+/* ── 타자 ────────────────────────────────────────────────────
+ * 종전에는 가드가 투수에만 걸려 있어, 타자 페이지가 통째로 빠져도 그대로 썼다. */
+const batters = Array.from({ length: 329 }, (_, index) => ({
+  kboId: String(60000 + index),
+  name: `타자${index + 1}`,
+  team: `T${index % 10}`,
+}));
+assert.doesNotThrow(
+  () => validateBatterSnapshot(batters, batters.map((row) => ({ ...row }))),
+  "complete batter rerun stays GREEN",
+);
+assert.throws(
+  () => validateBatterSnapshot(batters, batters.slice(30)),
+  /batter_snapshot_partial:previous=329,candidate=299,countDelta=30,missing=30/,
+  "타자 한 페이지(30행) 유실은 fail-close",
+);
+
+/* ── 수비 — (kboId, pos) 복합키 ───────────────────────────────
+ * 실측 사고(2026-08-04): 823행 → 30행(첫 페이지만 남음)으로 무너졌는데
+ * 수비에는 가드가 아예 없어 조용히 파일에 썼다. */
+const defense = Array.from({ length: 823 }, (_, index) => ({
+  kboId: String(70000 + Math.floor(index / 2)),
+  name: `수비${index + 1}`,
+  team: `T${index % 10}`,
+  pos: index % 2 === 0 ? "유격수" : "2루수",
+}));
+assert.doesNotThrow(
+  () => validateDefenseSnapshot(defense, defense.map((row) => ({ ...row }))),
+  "complete defense rerun stays GREEN",
+);
+assert.throws(
+  () => validateDefenseSnapshot(defense, defense.slice(0, 30)),
+  /defense_snapshot_partial:previous=823,candidate=30,countDelta=793,missing=793/,
+  "수비 823→30 붕괴는 fail-close (실측 사고 재현)",
+);
+// 같은 선수의 다른 포지션 행이 서로를 상쇄하면 안 된다 — 복합키가 실제로 쓰이는지 확인.
+{
+  const shortstopOnly = defense.filter((row) => row.pos === "유격수");
+  assert.throws(
+    () => validateDefenseSnapshot(defense, shortstopOnly),
+    /defense_snapshot_partial/,
+    "포지션 한 종류만 남으면 복합키 기준으로 누락이 잡혀야 한다",
+  );
+}
+
+/* ── 수비 runs — 배열이 아니라 { kboId: runs } 맵 ────────────── */
+const defenseRuns = Object.fromEntries(
+  Array.from({ length: 271 }, (_, index) => [String(70000 + index), index / 10]),
+);
+assert.doesNotThrow(
+  () => validateDefenseRunsSnapshot(defenseRuns, { ...defenseRuns }),
+  "complete defense-runs rerun stays GREEN",
+);
+assert.throws(
+  () => validateDefenseRunsSnapshot(
+    defenseRuns,
+    Object.fromEntries(Object.entries(defenseRuns).slice(0, 30)),
+  ),
+  /defense_runs_snapshot_partial:previous=271,candidate=30/,
+  "수비runs 271→30 붕괴는 fail-close",
+);
+
+/* ── 실제 배선 — 네 가드가 모두 첫 write보다 앞에서 실행되는가 ──
+ * 존재만 확인하면 write 뒤로 옮겨도 GREEN이므로 위치 관계를 고정한다. */
 const crawler = readFileSync("scripts/crawl-stats.mjs", "utf8");
-const guardIndex = crawler.indexOf("validatePitcherSnapshot(previousPitchers, pitchers)");
 const firstWriteIndex = crawler.indexOf("writeFileSync(batterPath");
-assert.ok(guardIndex >= 0 && firstWriteIndex > guardIndex,
-  "snapshot guard runs before every stats/meta write");
+assert.ok(firstWriteIndex >= 0, "첫 stats write 지점을 찾을 수 있어야 한다");
+
+for (const call of [
+  "validatePitcherSnapshot(",
+  "validateBatterSnapshot(",
+  "validateDefenseSnapshot(",
+  "validateDefenseRunsSnapshot(",
+]) {
+  const index = crawler.indexOf(call);
+  assert.ok(index >= 0, `크롤러가 \`${call}\` 를 호출해야 한다`);
+  assert.ok(
+    index < firstWriteIndex,
+    `\`${call}\` 는 모든 stats/meta write 보다 앞에서 실행돼야 한다`,
+  );
+}
+
+/* ── 원본 대조(값 정확도)가 write 앞에서 *실제로 차단*하는가 ────
+ * 개수 가드만으로는 값 오염을 못 잡는다.
+ *
+ * ⚠︎ 문자열 존재 검사만으로는 부족하다. 크롤러가 판정 분기를 들고 있으면
+ * `if (false && failures.length)` 한 줄로 무력화되는데 존재 검사는 GREEN이다
+ * (실제로 초기 구현이 그랬고 mutation으로 잡았다). 그래서 판정·예외를 라이브러리로 옮기고,
+ * 여기서는 ①크롤러가 그 함수를 write 앞에서 부르는가 ②그 함수가 실제로 던지는가 를 본다. */
+{
+  const truthIndex = crawler.indexOf("assertSourceTruth(");
+  assert.ok(truthIndex >= 0, "크롤러가 assertSourceTruth 를 호출해야 한다");
+  assert.ok(
+    truthIndex < firstWriteIndex,
+    "원본 정합성 대조는 모든 stats/meta write 보다 앞에서 실행돼야 한다",
+  );
+  // 크롤러가 결과를 삼키지 못하도록 await 호출이어야 한다(Promise 무시 방지).
+  assert.ok(
+    /await\s+assertSourceTruth\(/.test(crawler),
+    "assertSourceTruth 는 await 로 호출돼야 한다(거부를 삼키면 안 된다)",
+  );
+}
+
+/* ── assertSourceTruth 행동 검증 — 실제로 던지는지 직접 실행한다 ──
+ * KBO를 호출하지 않도록 browser/page 를 스텁으로 주입한다. */
+{
+  const { assertSourceTruth } = await import("../lib/stats-source-truth.mjs");
+
+  // KBO 페이지를 흉내내는 스텁: 요청 URL에 따라 고정된 행을 돌려준다.
+  const makeStubBrowser = (rowsByUrl) => ({
+    async newPage() {
+      let current = [];
+      return {
+        async goto(url) {
+          const key = Object.keys(rowsByUrl).find((k) => url.includes(k));
+          current = rowsByUrl[key] ?? [];
+        },
+        async $() { return null; },
+        async $eval() { return null; },
+        async $$eval(selector, fn) {
+          // pager 조회는 항상 빈 문자열 → 다음 페이지 없음으로 종료
+          return "";
+        },
+        locator() { return { filter: () => ({ first: () => ({ async count() { return 0; } }) }) }; },
+        async waitForLoadState() {},
+        async waitForTimeout() {},
+        async selectOption() {},
+        async close() {},
+        // scrapeRows 가 쓰는 경로
+        async $$evalRows() { return current; },
+        __rows: () => current,
+      };
+    },
+  });
+
+  // 실제 collectKboPages 는 page.$$eval("tbody tr", fn) 로 행을 읽는다.
+  // 스텁이 그 시그니처를 흉내내도록 별도 구성.
+  const buildPage = (rowsByUrl) => {
+    let current = [];
+    return {
+      async goto(url) {
+        const key = Object.keys(rowsByUrl).find((k) => url.includes(k));
+        current = rowsByUrl[key] ?? [];
+      },
+      async $(sel) { return null; },
+      async $eval() { return null; },
+      async $$eval(selector) {
+        if (selector === "tbody tr") return current;
+        return "";
+      },
+      locator() {
+        return { filter: () => ({ first: () => ({ async count() { return 0; } }) }) };
+      },
+      async waitForLoadState() {},
+      async waitForTimeout() {},
+      async selectOption() {},
+      async close() {},
+    };
+  };
+
+  const row = (id, name, team, cells) => ({ id, tds: ["1", name, team, ...cells] });
+  // 컬럼 인덱스 3부터 값이 시작하므로 넉넉히 채운다.
+  const pad = (n) => Array.from({ length: n }, () => "0");
+
+  const pitcherRow = row("90001", "테스트투수", "TT", [
+    "1.00", "10", "1", "0", "0", "0", "1.000", "10", "5", "0", "2", "0", "9", "1", "1", "0.70",
+  ]);
+  const batterCells1 = ["0.300", "10", "40", "35", "5", "10", "2", "0", "1", "15", "5", "0", "0"];
+  const batterCells2 = ["0.300", "4", "0", "1", "8", "0", "0.400", "0.380", "0.780"];
+  const batterRow1 = row("90002", "테스트타자", "TT", batterCells1);
+  const batterRow2 = row("90002", "테스트타자", "TT", batterCells2);
+  const defenseRow = row("90003", "테스트수비", "TT", ["유격수", "10", "10", "80", "1", "0", "20", "30", "5", "0.980", "0", "0", "0"]);
+
+  const urls = {
+    "PitcherBasic": [pitcherRow],
+    "HitterBasic/Basic1": [batterRow1],
+    "HitterBasic/Basic2": [batterRow2],
+    "Defense": [defenseRow],
+  };
+
+  const ourPitchers = [{
+    kboId: "90001", name: "테스트투수", team: "TT",
+    era: "1.00", games: 10, wins: 1, losses: 0, saves: 0, holds: 0, wpct: "1.000",
+    ip: "10", h: 5, hr: 0, bb: 2, hbp: 0, so: 9, r: 1, er: 1, whip: "0.70",
+  }];
+  const ourBatters = [{
+    kboId: "90002", name: "테스트타자", team: "TT",
+    avg: "0.300", games: 10, pa: 40, ab: 35, runs: 5, hits: 10,
+    doubles: 2, triples: 0, hr: 1, tb: 15, rbi: 5, sac: 0, sf: 0,
+    bb: 4, ibb: 0, hbp: 1, so: 8, gdp: 0, slg: "0.400", obp: "0.380", ops: "0.780",
+  }];
+  const ourDefense = [{
+    kboId: "90003", name: "테스트수비", team: "TT", pos: "유격수",
+    games: 10, ip: "80", e: 1, pko: 0, po: 20, a: 30, dp: 5, fpct: "0.980", pb: 0, sb: 0, cs: 0,
+  }];
+
+  const stubBrowser = { async newPage() { return buildPage(urls); } };
+  const silent = () => {};
+
+  // 일치하면 통과해야 한다.
+  await assertSourceTruth({
+    browser: stubBrowser, kboBase: "https://kbo.test", season: "2026",
+    batters: ourBatters, pitchers: ourPitchers, defense: ourDefense, log: silent,
+  });
+
+  // 값 오염 1건 → 반드시 던져야 한다.
+  await assert.rejects(
+    () => assertSourceTruth({
+      browser: stubBrowser, kboBase: "https://kbo.test", season: "2026",
+      batters: ourBatters,
+      pitchers: [{ ...ourPitchers[0], era: "99.99" }],
+      defense: ourDefense, log: silent,
+    }),
+    /stats_source_truth_mismatch/,
+    "값 오염 1건이면 assertSourceTruth 가 던져야 한다",
+  );
+
+  // 행 누락 1건 → 반드시 던져야 한다.
+  await assert.rejects(
+    () => assertSourceTruth({
+      browser: stubBrowser, kboBase: "https://kbo.test", season: "2026",
+      batters: ourBatters, pitchers: ourPitchers, defense: [], log: silent,
+    }),
+    /stats_source_truth_mismatch/,
+    "수비 행 누락이면 assertSourceTruth 가 던져야 한다",
+  );
+
+  // 원본을 못 읽으면(0행) 통과가 아니라 실패여야 한다.
+  const emptyBrowser = { async newPage() { return buildPage({}); } };
+  await assert.rejects(
+    () => assertSourceTruth({
+      browser: emptyBrowser, kboBase: "https://kbo.test", season: "2026",
+      batters: ourBatters, pitchers: ourPitchers, defense: ourDefense, log: silent,
+    }),
+    /source_unreachable|source_incomplete/,
+    "원본 수집 0행은 통과가 아니라 실패여야 한다",
+  );
+}
 
 console.log("stats snapshot guard smoke: ALL assertions PASS");

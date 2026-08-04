@@ -13,7 +13,13 @@ import { readFileSync, writeFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { computeDefenseRuns } from "./lib/defense-runs.mjs";
-import { validatePitcherSnapshot } from "./lib/stats-snapshot-guard.mjs";
+import {
+  validateBatterSnapshot,
+  validateDefenseRunsSnapshot,
+  validateDefenseSnapshot,
+  validatePitcherSnapshot,
+} from "./lib/stats-snapshot-guard.mjs";
+import { assertSourceTruth } from "./lib/stats-source-truth.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = join(__dirname, "..");
@@ -126,6 +132,29 @@ async function scrapeTable(page) {
   );
 }
 
+/** 현재 테이블 내용의 식별 시그니처. 페이지가 *실제로* 바뀌었는지 판정하는 데 쓴다. */
+async function tableSignature(page) {
+  const rows = await scrapeTable(page);
+  return rows.map((r) => (r.texts || []).join("\u0001")).join("\u0002");
+}
+
+/**
+ * 클릭 후 테이블이 실제로 교체될 때까지 기다린다.
+ *
+ * ⚠︎ 종전에는 고정 1,200ms 대기 뒤 무조건 다음 페이지로 간주했다. KBO 응답이 느리면
+ * 이전 화면을 다시 읽어("0 new") 페이지 번호만 올라가고, 그 페이지는 통째 유실됐다.
+ * 실측 피해: 타자 329→299(30행 누락), 수비 823→30(한 페이지만 남고 전멸).
+ * 수비는 스냅샷 가드가 없어 그 상태로 파일에 썰다.
+ */
+async function waitForTableSwap(page, previousSignature, { attempts = 16, intervalMs = 500 } = {}) {
+  for (let i = 0; i < attempts; i++) {
+    await page.waitForTimeout(intervalMs);
+    const signature = await tableSignature(page);
+    if (signature && signature !== previousSignature) return signature;
+  }
+  return null;
+}
+
 async function scrapeAllPages(page) {
   const allRows = [];
   // 페이지 그룹 이동(btnNext) 시 동일 페이지가 재렌더돼 같은 행이 중복 수집되는 경우가 있다.
@@ -136,6 +165,7 @@ async function scrapeAllPages(page) {
   while (true) {
     const rows = await scrapeTable(page);
     if (rows.length === 0) break;
+    const pageSig = rows.map((r) => (r.texts || []).join("\u0001")).join("\u0002");
     const fresh = rows.filter((r) => {
       const sig = `${(r.texts || []).join("\u0001")}\u0002${(r.hrefs || []).join("\u0001")}`;
       if (seen.has(sig)) return false;
@@ -150,7 +180,14 @@ async function scrapeAllPages(page) {
     if (await nextVisibleBtn.count()) {
       await nextVisibleBtn.click();
       await page.waitForLoadState("networkidle").catch(() => {});
-      await page.waitForTimeout(1200);
+      const swapped = await waitForTableSwap(page, pageSig);
+      if (!swapped) {
+        // 다음 페이지를 눌렀는데 내용이 그대로다 = 전환 실패.
+        // 그냥 진행하면 한 페이지를 통째 놓친다(실제 사고 재현됨).
+        throw new Error(
+          `page_advance_failed: page ${pageNum} → ${pageNum + 1} 전환 후에도 테이블이 그대로 — 수집 불완전`,
+        );
+      }
       pageNum++;
       continue;
     }
@@ -164,13 +201,19 @@ async function scrapeAllPages(page) {
 
     await nextGroupBtn.click();
     await page.waitForLoadState("networkidle").catch(() => {});
-    await page.waitForTimeout(1200);
+    const groupSwapped = await waitForTableSwap(page, pageSig);
 
     const afterPager = await page.$$eval('a[id*="ucPager_btnNo"]', (links) =>
       links.map((a) => `${a.textContent?.trim()}:${a.className}`).join("|")
     );
 
+    // 페이저가 그대로면 마지막 그룹 — 정상 종료.
     if (!afterPager || afterPager === beforePager) break;
+    if (!groupSwapped) {
+      throw new Error(
+        "page_advance_failed: 페이지 그룹 전환 후에도 테이블이 그대로 — 수집 불완전",
+      );
+    }
   }
 
   return allRows;
@@ -237,6 +280,7 @@ async function crawlBatterBasic2(page) {
       slg: c[9] || ".000",
       obp: c[10] || ".000",
       ops: c[11] || ".000",
+      _playerId: extractPlayerId(r.hrefs[1] || ""),
     };
   });
 }
@@ -257,6 +301,7 @@ async function crawlRunner(page) {
       team: c[2] || "",
       sb: parseInt(c[5]) || 0,
       cs: parseInt(c[6]) || 0,
+      _playerId: extractPlayerId(r.hrefs[1] || ""),
     };
   });
 }
@@ -375,17 +420,63 @@ async function main() {
     const runner = await crawlRunner(page);
 
     // Merge batter data
+    //
+    // ⚠︎ 병합 키는 반드시 KBO playerId(canonical ID)다.
+    // 종전에는 `${name}|${team}`을 썼는데, 같은 팀 동명이인이 서로를 덮어써
+    // 한 명이 통째 사라졌다. 실측 결손: 키움 이주형이 둘(50167 외야수 / 51302 내야수)인데
+    // `stats-2026-batters.json`에 51302만 남아 50167의 타격 기록이 서비스에서 통째 사라졌다.
+    // 인원수 게이트(Δ≤10)로는 1명 실종이 절대 잡힐지 않는다.
+    // 투수 경로는 이미 playerId를 쓰고 있었고, 타자 경로만 이름+팀 키였다.
     console.log("\n🔗 타자 데이터 병합...");
     const batterMap = new Map();
 
-    for (const b of basic1) {
-      const key = `${b.name}|${b.team}`;
-      batterMap.set(key, { ...b });
+    /**
+     * canonical ID로만 병합한다. ID가 없는 행은 이름+팀으로 보정하되,
+     * 그 조합이 둘 이상이면(= 동명이인 모호) 추측하지 않고 fail-close 한다.
+     */
+    const ambiguousNameTeam = new Set();
+    {
+      const nameTeamCount = new Map();
+      for (const b of basic1) {
+        const nt = `${b.name}|${b.team}`;
+        nameTeamCount.set(nt, (nameTeamCount.get(nt) ?? 0) + 1);
+      }
+      for (const [nt, count] of nameTeamCount) if (count > 1) ambiguousNameTeam.add(nt);
     }
 
+    const nameTeamToId = new Map();
+    for (const b of basic1) {
+      const nt = `${b.name}|${b.team}`;
+      const id = String(b._playerId || "").trim();
+      if (!id) {
+        throw new Error(
+          `batter_identity_missing: ${nt} — KBO 행에 playerId 링크가 없어 canonical 병합 불가`,
+        );
+      }
+      if (batterMap.has(id)) {
+        throw new Error(`batter_identity_duplicate: playerId=${id} (${nt}) 행이 중복입니다`);
+      }
+      batterMap.set(id, { ...b });
+      if (!ambiguousNameTeam.has(nt)) nameTeamToId.set(nt, id);
+    }
+
+    /** 보조 페이지(Basic2/Runner) 행을 canonical ID로 해석. 모호하면 null. */
+    const resolveBatterKey = (row, source) => {
+      const id = String(row._playerId || "").trim();
+      if (id) return batterMap.has(id) ? id : null;
+      const nt = `${row.name}|${row.team}`;
+      if (ambiguousNameTeam.has(nt)) {
+        // 동명이인 — 추측해서 붙이면 엉뚝한 선수 기록이 오염된다.
+        throw new Error(
+          `batter_merge_ambiguous: ${source} \`${nt}\` 행에 playerId가 없고 동명이인이 있어 해석 불가`,
+        );
+      }
+      return nameTeamToId.get(nt) ?? null;
+    };
+
     for (const b2 of basic2) {
-      const key = `${b2.name}|${b2.team}`;
-      const existing = batterMap.get(key);
+      const key = resolveBatterKey(b2, "Basic2");
+      const existing = key ? batterMap.get(key) : null;
       if (existing) {
         Object.assign(existing, {
           bb: b2.bb,
@@ -401,8 +492,8 @@ async function main() {
     }
 
     for (const r of runner) {
-      const key = `${r.name}|${r.team}`;
-      const existing = batterMap.get(key);
+      const key = resolveBatterKey(r, "Runner");
+      const existing = key ? batterMap.get(key) : null;
       if (existing) {
         existing.sb = r.sb;
         existing.cs = r.cs;
@@ -410,10 +501,10 @@ async function main() {
     }
 
     // Sort by AVG desc and assign ranks + kboId
-    const batters = [...batterMap.values()]
-      .sort((a, b) => parseFloat(b.avg) - parseFloat(a.avg))
-      .map((b, i) => {
-        const kboId = b._playerId || findKboId(b.name, b.team);
+    const batters = [...batterMap.entries()]
+      .sort(([, a], [, b]) => parseFloat(b.avg) - parseFloat(a.avg))
+      .map(([canonicalId, b], i) => {
+        const kboId = canonicalId;
         delete b._playerId;
         return {
           rank: i + 1,
@@ -454,13 +545,41 @@ async function main() {
     // A transient pager skip can return a syntactically valid snapshot with one
     // complete 30-row page missing. Reject it before any stats/meta artifact is
     // written so a fresh timestamp can never bless a partial dataset.
-    let previousPitchers = [];
-    try {
-      previousPitchers = JSON.parse(readFileSync(pitcherPath, "utf-8"));
-    } catch {
-      // First-time season generation has no baseline; non-empty is still enforced.
-    }
-    validatePitcherSnapshot(previousPitchers, pitchers);
+    // ⚠︎ 종전에는 이 가드가 *투수에만* 걸려 있었다. 그래서 페이지네이션이 끊기면
+    // 타자·수비·수비runs는 무너진 채로 그대로 썰다.
+    // 실측 사고(2026-08-04): 수비 823행 → 30행(첫 페이지 한 장만 남음)으로 유실됐는데
+    // 아무 게이트도 발동하지 않고 정상 종료했다. 이제 네 데이터셋 전부에 건다.
+    const readPrevious = (path, fallback) => {
+      try {
+        return JSON.parse(readFileSync(path, "utf-8"));
+      } catch {
+        // First-time season generation has no baseline; non-empty is still enforced.
+        return fallback;
+      }
+    };
+    validatePitcherSnapshot(readPrevious(pitcherPath, []), pitchers);
+    validateBatterSnapshot(readPrevious(batterPath, []), batters);
+    validateDefenseSnapshot(readPrevious(defensePath, []), defense);
+    validateDefenseRunsSnapshot(readPrevious(defenseRunsPath, {}), defenseRuns);
+
+    // 개수·델타 가드는 *값*을 보지 않는다. 곽빈 ERA를 99.99로 바꿔도 전 게이트가 GREEN이었고,
+    // 동명이인 병합 붕괴로 한 명이 통째 사라져도 Δ≤10 안이라 통과됐다.
+    // 그래서 쓰기 *직전*에 KBO 원본을 독립 재조회해 전 행·전 필드를 대조하고,
+    // 값 오염 1건 또는 행 누락/잉여 1건이라도 있으면 아무것도 쓰지 않고 죽는다.
+    // 검증 자체가 불가해도(수집 0행) 실패다 — 검증 불가를 통과로 취급하면 게이트가 아니다.
+    //
+    // 판정·예외는 라이브러리(assertSourceTruth)가 끝낸다. 호출자 쪽에 `if (failures.length)`
+    // 분기를 두면 한 줄로 무력화되는데 "호출이 존재하는가" 식 게이트는 그 상태에서도 GREEN이다
+    // (실제로 이 파일의 초기 구현이 그랬고, mutation으로 잡아 여기로 옮겼다).
+    console.log("\n🔎 원본 정합성 재대조(KBO 독립 재조회)...");
+    await assertSourceTruth({
+      browser,
+      kboBase: KBO_BASE,
+      season: SEASON,
+      batters,
+      pitchers,
+      defense,
+    });
 
     writeFileSync(batterPath, JSON.stringify(batters, null, 2));
     writeFileSync(pitcherPath, JSON.stringify(pitchers, null, 2));

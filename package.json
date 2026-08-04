@@ -144,6 +144,7 @@
     "qa:kbo-live-games-failover": "tsx scripts/qa/kbo-live-games-failover-smoke.ts",
     "qa:starter-era": "tsx scripts/qa/starter-era-smoke.ts",
     "qa:stats-snapshot-guard": "node scripts/qa/stats-snapshot-guard-smoke.mjs",
+    "qa:stats-source-truth": "node scripts/qa/stats-source-truth-verify.mjs",
     "qa:naver-runner-name": "tsx scripts/qa/naver-runner-name-smoke.ts",
     "qa:end-streak": "tsx scripts/qa/end-streak-smoke.ts",
     "qa:team-rank": "tsx scripts/qa/team-rank-smoke.ts",
