@@ -17,6 +17,11 @@
  *   node scripts/transcode-videos.mjs --probe [--limit 1]
  *                                                      # 최신 영상 N개 다운로드+인코딩, 용량 절감만 보고
  *                                                      #   (업로드/스왑/DB 쓰기 전혀 안 함 — 검증용)
+ *   node scripts/transcode-videos.mjs --reencode-probe [--limit 5]
+ *                                                      # 재인코딩 백필 대상(status=done & 구 프로필)을
+ *                                                      #   raw original_url 로 실측 — DB/스토리지 무변경
+ *   node scripts/transcode-videos.mjs --apply --reencode [--limit 20]
+ *                                                      # 백필 실행: 새 버전 경로 업로드 → posts 스왑 → 세대 마킹
  *   node scripts/transcode-videos.mjs --apply [--limit 20]
  *                                                      # 실제 처리: 발견→인코딩→업로드→video_urls 스왑
  *   node scripts/transcode-videos.mjs --apply --post 1234
@@ -27,8 +32,18 @@ import { readFileSync, writeFileSync, rmSync, statSync, mkdtempSync } from "fs";
 import { resolve, join, basename } from "path";
 import { tmpdir } from "os";
 import { execFileSync } from "child_process";
-import { createHash } from "crypto";
 import { processVenueJob } from "./venue-transcode-job.mjs";
+import { processReencodeJob } from "./reencode-job.mjs";
+import {
+  VIDEO_PROFILES,
+  buildTranscodeArgs,
+  shouldReplaceWithReencode,
+  COMMUNITY_PROFILE_VERSION,
+  pickReencodeTargets,
+  reencodeJobFields,
+  isMissingProfileVersionColumn,
+  optimizedPath,
+} from "./video-profiles.mjs";
 
 // ── env (.env.local 수동 파싱, dotenv 의존성 없음 — award-event-badges.mjs 패턴) ──
 try {
@@ -55,9 +70,13 @@ const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
 const argv = process.argv.slice(2);
 const APPLY = argv.includes("--apply");
 const PROBE = argv.includes("--probe");
+// 이미 done 인 job 을 새 인코딩 프로필로 다시 돌려 용량 백필(새 버전 URL 발행, --apply 필요).
+const REENCODE = argv.includes("--reencode");
+// 백필 대상을 reencode 와 같은 로직으로 골라 절감률만 실측(DB/스토리지 무변경).
+const REENCODE_PROBE = argv.includes("--reencode-probe");
 const LIMIT = argv.includes("--limit")
   ? parseInt(argv[argv.indexOf("--limit") + 1], 10)
-  : PROBE ? 1 : 20;
+  : PROBE ? 1 : REENCODE_PROBE ? 3 : 20;
 const ONLY_POST = argv.includes("--post")
   ? parseInt(argv[argv.indexOf("--post") + 1], 10)
   : null;
@@ -81,16 +100,6 @@ function isVideoUrl(url) {
 
 function fmtMB(bytes) {
   return (bytes / 1024 / 1024).toFixed(2) + "MB";
-}
-
-/** 원본 path → 최적화본 path (같은 버킷, transcoded/ 프리픽스, .mp4 강제)
- *  확장자만 다른 동명 파일(same.mp4/same.mov)이 .mp4 로 고정되며 충돌하지 않도록
- *  원본 path 해시를 파일명에 포함. 같은 원본은 항상 같은 path → upsert 멱등 유지. */
-function optimizedPath(origPath) {
-  const name = basename(origPath).replace(/\.[^.]+$/, "");
-  const dir = origPath.slice(0, origPath.length - basename(origPath).length);
-  const h = createHash("sha1").update(origPath).digest("hex").slice(0, 8);
-  return `transcoded/${dir}${name}-${h}.mp4`;
 }
 
 // ── 직관 라이브(venue_stories) 헬퍼 ──
@@ -123,34 +132,32 @@ async function downloadTo(url, dest) {
   return buf.length;
 }
 
-/** ffmpeg 720p(긴 변 ≤1280) H.264 + faststart. 출력 파일 경로 반환. */
-function transcode(input, output) {
-  execFileSync(
-    "ffmpeg",
-    [
-      "-y", "-i", input,
-      // 1280x1280 박스에 맞춰 축소(확대 안 함) 후 짝수 보정 (libx264 yuv420p 요구)
-      "-vf", "scale='min(1280,iw)':'min(1280,ih)':force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2",
-      "-c:v", "libx264", "-profile:v", "high", "-preset", "veryfast", "-crf", "27",
-      "-pix_fmt", "yuv420p",
-      "-c:a", "aac", "-b:a", "128k",
-      "-movflags", "+faststart",
-      output,
-    ],
-    { stdio: ["ignore", "ignore", "pipe"] }
-  );
+/** ffmpeg H.264 + faststart 재인코딩. 출력 파일 경로 반환. */
+function transcode(input, output, profile = VIDEO_PROFILES.community) {
+  execFileSync("ffmpeg", buildTranscodeArgs(input, output, profile), {
+    stdio: ["ignore", "ignore", "pipe"],
+  });
   return output;
 }
 
-/** posts.video_urls 에서 origUrl → newUrl 스왑 (순서/다른 항목 보존). 최신값 재조회 후 갱신. */
+/** 직관 라이브 전용 — 기존 venue 프로필 유지(커뮤니티 압축 강화가 스토리 화질을 건드리지 않게 분리). */
+function transcodeVenue(input, output) {
+  return transcode(input, output, VIDEO_PROFILES.venue);
+}
+
+/** posts.video_urls 에서 origUrl → newUrl 스왑 (순서/다른 항목 보존). 최신값 재조회 후 갱신.
+ *  실제 치환된 항목 수를 반환 — 0 이면 posts 가 그 URL 을 안 들고 있다는 뜻(재인코딩 경로 판별용). */
 async function swapVideoUrl(postId, origUrl, newUrl) {
   const { data: post, error } = await supabase
     .from("posts").select("video_urls").eq("id", postId).single();
   if (error || !post) throw new Error(`post ${postId} 조회 실패: ${error?.message}`);
-  const urls = (post.video_urls ?? []).map((u) => (u === origUrl ? newUrl : u));
+  const current = post.video_urls ?? [];
+  const replaced = current.filter((u) => u === origUrl).length;
+  const urls = current.map((u) => (u === origUrl ? newUrl : u));
   const { error: upErr } = await supabase
     .from("posts").update({ video_urls: urls }).eq("id", postId);
   if (upErr) throw new Error(`post ${postId} 스왑 실패: ${upErr.message}`);
+  return replaced;
 }
 
 async function markJob(originalUrl, fields) {
@@ -237,7 +244,9 @@ async function processJobs() {
           continue;
         }
 
-        const newPath = optimizedPath(parsed.path);
+        // 신규 처리분도 현재 프로필 경로(-v2)로 발행하고 profile_version 을 찍는다
+        // → 재인코딩 백필이 방금 만든 최신본을 다시 잡지 않는다.
+        const newPath = optimizedPath(parsed.path, COMMUNITY_PROFILE_VERSION);
         const buf = readFileSync(outPath);
         const { error: upErr } = await supabase.storage
           .from(parsed.bucket)
@@ -247,7 +256,7 @@ async function processJobs() {
 
         await swapVideoUrl(job.post_id, job.original_url, pub.publicUrl);
         await markJob(job.original_url, {
-          status: "done", optimized_url: pub.publicUrl,
+          status: "done", optimized_url: pub.publicUrl, profile_version: COMMUNITY_PROFILE_VERSION,
           original_bytes: inBytes, optimized_bytes: outBytes, attempts: job.attempts + 1, error: null,
         });
         console.log(`  ✅ post ${job.post_id} ${fmtMB(inBytes)}→${fmtMB(outBytes)} (절감 ${ratio}%)`);
@@ -315,6 +324,149 @@ async function probe() {
   }
 }
 
+// ── reencode: 이미 done 인 job 을 새 프로필로 재인코딩(용량 백필) ──
+//
+// 재인코딩 원본은 항상 original_url(보존된 raw) — 이미 압축된 결과물을 다시 압축하면
+// 세대 손실(generation loss)이 쌓인다.
+//
+// 전진성(progress): 대상은 `status=done AND profile_version < COMMUNITY_PROFILE_VERSION`.
+//   교체(replaced)든 절감 미미 유지(kept)든 처리한 행은 profile_version 을 현재값으로 마킹한다
+//   → 다음 배치에서 다시 안 잡힌다 → 배치가 반복될수록 후보 집합이 단조 감소하고 결국 0이 된다.
+//   실패 건만 미마킹 → 다음 실행에서 자연 재시도(무한 루프 방지는 후보 감소 + 운영 관측으로).
+//
+// CDN 안전(blocker 4): 운영 응답이 `Cache-Control: max-age=3600` + Cloudflare HIT 라
+//   같은 public URL 에 다른 바이트를 upsert 하면 stale/mixed 응답이 생긴다.
+//   → v2 이상은 **새 버전 경로(-v2)에 새 객체**를 올리고 posts.video_urls 를 교체한다.
+//   순서: 업로드 성공 → posts 스왑 → job 마킹. 중간에 죽어도 기존 URL 이 계속 서빙되므로 노출 영향 0.
+//   구 객체는 이 단계에서 삭제하지 않는다(롤백 여지 + CDN TTL 만료 대기).
+
+/** 재인코딩 백필 후보 조회 — reencode() 와 --reencode-probe 가 **같은 선택 로직**을 쓴다.
+ *  마이그레이션 미적용 환경에서는 profile_version 컬럼이 없으므로, 읽기 전용 probe 에 한해
+ *  컬럼 없이 재조회하고 전 행을 세대 0(=전부 백필 대상)으로 간주한다. 쓰기 경로는 호출 전에 막는다. */
+async function fetchReencodeTargets({ allowMissingColumn = false } = {}) {
+  const COLS = "id, post_id, original_url, optimized_url, original_bytes, optimized_bytes, attempts, status";
+  const build = (withVersion) => {
+    // query-guard: bounded -- backfill batch drains a shrinking set: every processed row is stamped
+    // with profile_version = COMMUNITY_PROFILE_VERSION (both replaced and kept), so this predicate
+    // can never re-select it and the candidate set decreases monotonically to zero.
+    let q = supabase
+      .from("video_transcode_jobs")
+      .select(withVersion ? `${COLS}, profile_version` : COLS)
+      .eq("status", "done")
+      .order("optimized_bytes", { ascending: false, nullsFirst: false })
+      .order("id", { ascending: true })
+      .limit(LIMIT);
+    if (withVersion) q = q.lt("profile_version", COMMUNITY_PROFILE_VERSION);
+    if (ONLY_POST) q = q.eq("post_id", ONLY_POST);
+    return q;
+  };
+
+  let { data, error } = await build(true);
+  if (error && allowMissingColumn && isMissingProfileVersionColumn(error)) {
+    console.log("⚠️  profile_version 컬럼 없음(마이그레이션 미적용) — 전 행을 세대 0으로 보고 실측만 진행");
+    ({ data, error } = await build(false));
+  }
+  if (error) throw new Error(`jobs 조회 실패: ${error.message}`);
+  // 순수 선택 규칙(정렬·상한·세대 필터)을 회귀 테스트 가능한 모듈에 위임 — DB 쿼리와 동치.
+  return pickReencodeTargets(data ?? [], LIMIT);
+}
+
+async function reencode() {
+  // 쓰기 경로는 컬럼 없이 돌면 안 된다 — 세대 마킹이 불가능해 매 배치가 같은 행을 재선택한다(전진성 붕괴).
+  const jobs = await fetchReencodeTargets();
+  if (jobs.length === 0) { console.log("재인코딩 대상 없음."); return; }
+
+  const work = mkdtempSync(join(tmpdir(), "kbo-reencode-"));
+  let replaced = 0, kept = 0, failed = 0, totBefore = 0, totAfter = 0;
+  try {
+    for (const job of jobs) {
+      const parsed = parsePublicUrl(job.original_url);
+      if (!parsed) {
+        // 원본 URL 을 못 읽으면 이 세대로는 영구히 처리 불가 → 마킹해 슬롯을 비운다(전진성 보장).
+        console.log(`  ⚠️  post ${job.post_id} 원본 URL 파싱 불가 — skip(세대 마킹)`);
+        await markJob(job.original_url, reencodeJobFields("kept"));
+        kept++;
+        continue;
+      }
+      const inPath = join(work, "in" + (basename(parsed.path).match(/\.[^.]+$/)?.[0] || ".mp4"));
+      const outPath = join(work, "out.mp4");
+      try {
+        const res = await processReencodeJob(job, {
+          storage: supabase.storage,
+          runner: { transcode, downloadToFile: downloadTo },
+          markJob, swapVideoUrl, parsed, inPath, outPath,
+        });
+        const served = res.servedBytes ?? res.inBytes;
+        if (res.outcome === "replaced") {
+          if (res.reusedExisting) console.log(`  ↩️  post ${job.post_id} 이전 실행 업로드본 재사용(중복) — 스왑/마킹만 이어감`);
+          if (res.swapped === 0) console.log(`  ⚠️  post ${job.post_id} posts 에 기존 최적화 URL 없음(수정/삭제됨?) — 스왑 0건`);
+          totBefore += served; totAfter += res.outBytes;
+          console.log(`  ✅ post ${job.post_id} ${fmtMB(served)}→${fmtMB(res.outBytes)}`);
+          replaced++;
+        } else if (res.outcome === "kept") {
+          console.log(`  ⏭️  post ${job.post_id} ${fmtMB(served)}→${fmtMB(res.outBytes)} 절감 미미 keep`);
+          kept++;
+        } else {
+          console.log(`  ❌ post ${job.post_id} 재인코딩 실패(기존 서빙본 유지): ${res.error?.message || res.error}`);
+          failed++;
+        }
+      } finally {
+        for (const f of [inPath, outPath]) { try { rmSync(f); } catch {} }
+      }
+    }
+  } finally {
+    try { rmSync(work, { recursive: true, force: true }); } catch {}
+  }
+  console.log(`\n재인코딩: ✅${replaced} ⏭️${kept} ❌${failed}`);
+  if (totBefore > 0) {
+    console.log(`교체분 합계: ${fmtMB(totBefore)} → ${fmtMB(totAfter)} (절감 ${((1 - totAfter / totBefore) * 100).toFixed(0)}%)`);
+  }
+}
+
+// ── reencode-probe: 백필 대상을 raw original_url 로 실측만(DB/스토리지 무변경) ──
+// probe() 는 아직 job 이 없는 신규 영상만 본다(/transcoded/ 제외) → 이미 done 인 182건의
+// 새 프로필 효과를 검증할 수 없다. 이 경로는 reencode() 와 **동일한 fetchReencodeTargets()** 로
+// 대상을 고르고 인코딩까지만 수행해 절감률을 보고한다. 업로드/스왑/마킹을 전혀 하지 않는다.
+async function reencodeProbe() {
+  const jobs = await fetchReencodeTargets({ allowMissingColumn: true });
+  if (jobs.length === 0) { console.log("재인코딩 대상 없음(백필 완료 상태)."); return; }
+
+  const work = mkdtempSync(join(tmpdir(), "kbo-reencode-probe-"));
+  let totServed = 0, totNew = 0, wouldReplace = 0, wouldKeep = 0, failed = 0;
+  try {
+    for (const job of jobs) {
+      const parsed = parsePublicUrl(job.original_url);
+      if (!parsed) { console.log(`post ${job.post_id}: ⚠️ 원본 URL 파싱 불가`); failed++; continue; }
+      const inPath = join(work, "in" + (basename(parsed.path).match(/\.[^.]+$/)?.[0] || ".mp4"));
+      const outPath = join(work, "out.mp4");
+      try {
+        const inBytes = await downloadTo(job.original_url, inPath);
+        transcode(inPath, outPath);
+        const outBytes = statSync(outPath).size;
+        const servedBytes = job.optimized_bytes ?? inBytes;
+        const replace = shouldReplaceWithReencode(outBytes, job.optimized_bytes ?? null, inBytes);
+        if (replace) wouldReplace++; else wouldKeep++;
+        totServed += servedBytes; totNew += outBytes;
+        console.log(
+          `post ${job.post_id}: 서빙 ${fmtMB(servedBytes)} → 신규 ${fmtMB(outBytes)} ` +
+          `(절감 ${((1 - outBytes / servedBytes) * 100).toFixed(0)}%) ${replace ? "교체예정" : "유지"}`,
+        );
+      } catch (e) {
+        console.log(`post ${job.post_id}: ❌ ${e.message || e}`);
+        failed++;
+      } finally {
+        for (const f of [inPath, outPath]) { try { rmSync(f); } catch {} }
+      }
+    }
+    if (totServed > 0) {
+      console.log(`\n합계(서빙본 기준): ${fmtMB(totServed)} → ${fmtMB(totNew)} (절감 ${((1 - totNew / totServed) * 100).toFixed(0)}%)`);
+    }
+    console.log(`판정: 교체예정 ${wouldReplace} / 유지 ${wouldKeep} / 실패 ${failed} — DB·스토리지 무변경`);
+  } finally {
+    try { rmSync(work, { recursive: true, force: true }); } catch {}
+  }
+}
+
 // ── 직관 라이브(venue_stories) 처리 — **복구 전용**(B+①, 삼순 09:44 #1) ──
 // 즉시 경로(업로드 API 인라인 ffprobe)가 정상 동작하면 pending 은 여기 오지 않는다.
 //  - pending(즉시 경로 fault 잔여): private staging 에서 다운로드 → ffprobe 재검증
@@ -359,7 +511,8 @@ async function processVenueStories() {
           storage: supabase.storage,
           runner: {
             probe: probeVideoMeta,
-            transcode,
+            // 직관 라이브는 기존 venue 프로필 유지 — 커뮤니티 압축 강화가 스토리 화질을 건드리지 않게 분리.
+            transcode: transcodeVenue,
             downloadToFile: downloadTo,
           },
           inPath,
@@ -391,9 +544,25 @@ async function processVenueStories() {
   try { execFileSync("ffprobe", ["-version"], { stdio: "ignore" }); }
   catch { HAS_FFPROBE = false; console.warn("⚠️  ffprobe 없음 — 직관 라이브 영상 duration 검증 불가"); }
 
+  if (REENCODE_PROBE) {
+    console.log(`🔍 reencode-probe (백필 대상 ${LIMIT}개, DB/스토리지 무변경)\n`);
+    await reencodeProbe();
+    return;
+  }
+
   if (PROBE) {
     console.log(`🔍 probe (최신 ${LIMIT}개, DB/스토리지 무변경)\n`);
     await probe();
+    return;
+  }
+
+  if (REENCODE) {
+    if (!APPLY) {
+      console.log("--reencode 는 --apply 와 함께 써야 합니다(실제 교체 수행). 검증은 --reencode-probe.");
+      return;
+    }
+    console.log(`♻️  reencode (백필 대상 ${LIMIT}개, 용량 큰 순 / 프로필 v${COMMUNITY_PROFILE_VERSION})\n`);
+    await reencode();
     return;
   }
 

@@ -213,6 +213,7 @@
     "qa:venue-precheck": "tsx scripts/qa/venue-precheck-smoke.ts",
     "qa:venue-media": "tsx scripts/qa/venue-media-smoke.ts",
     "qa:venue-video-compress": "node scripts/qa/venue-video-compress-e2e.mjs",
+    "qa:video-bitrate": "node scripts/qa/video-bitrate-profile-smoke.mjs",
     "qa:venue-storage-path": "tsx scripts/qa/venue-storage-path-smoke.ts",
     "qa:venue-media-url": "tsx scripts/qa/venue-media-url-smoke.ts",
     "qa:venue-upload-progress": "tsx scripts/qa/venue-upload-progress-smoke.ts",
