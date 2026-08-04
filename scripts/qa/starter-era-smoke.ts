@@ -657,39 +657,83 @@ const pageProgram = ts.createProgram({
 });
 const pageChecker = pageProgram.getTypeChecker();
 
-function findCalleeIdentifier(variableName: string): ts.Identifier {
-  let found: ts.Identifier | undefined;
+/* ⚠︎ 직전 판은 파일 전체를 순회하며 *마지막* 선언 하나만 잡았다. 그래서 실제 outer 호출을
+ * live-only wrapper로 갈아끼운 뒤 `if (false)` 같은 dead 블록에 동명의 direct 호출을 더하면
+ * 후행 선언이 탐색 결과를 덮어써 다시 false-green이었다(삼순 4차 지적). 그래서
+ * ①선언이 정확히 1개인지 ②그 유일 선언의 callee가 프로덕션 import인지 ③side별 team/box 인자가
+ * 교차되지 않았는지 ④렌더 소비부가 같은 심볼을 쓰고 호출 뒤 변형이 없는지를 모두 고정한다. */
+const SIDE_BINDINGS = {
+  awayLineupStarter: {
+    side: "away",
+    liveStarterName: "liveGame?.awayStarterName",
+    lineupStarterName: "d.detailLineup?.awayStarter",
+    teamId: "game.awayTeamId",
+    boxPitcher: "gameDetail?.boxScore?.awayPitchers?.[0]",
+  },
+  homeLineupStarter: {
+    side: "home",
+    liveStarterName: "liveGame?.homeStarterName",
+    lineupStarterName: "d.detailLineup?.homeStarter",
+    teamId: "game.homeTeamId",
+    boxPitcher: "gameDetail?.boxScore?.homePitchers?.[0]",
+  },
+} as const;
+
+function collectAll(predicate: (node: ts.Node) => boolean): ts.Node[] {
+  const hits: ts.Node[] = [];
   const visit = (node: ts.Node): void => {
-    if (
-      ts.isVariableDeclaration(node)
-      && ts.isIdentifier(node.name)
-      && node.name.text === variableName
-      && node.initializer
-      && ts.isCallExpression(node.initializer)
-      && ts.isIdentifier(node.initializer.expression)
-    ) {
-      found = node.initializer.expression;
-    }
+    if (predicate(node)) hits.push(node);
     ts.forEachChild(node, visit);
   };
   visit(pageSource);
-  assert.ok(found, `\`${variableName}\`가 식별자 호출로 선언되어 있어야 한다`);
-  return found!;
+  return hits;
 }
 
-for (const variableName of ["awayLineupStarter", "homeLineupStarter"] as const) {
-  const callee = findCalleeIdentifier(variableName);
-  const symbol = pageChecker.getSymbolAtLocation(callee);
-  assert.ok(symbol, `\`${variableName}\` 호출 대상 심볼을 해석할 수 있어야 한다`);
-  const declaration = symbol!.declarations?.[0];
+/** 인자 프로퍼티 식을 공백 정규화해 원문 그대로 비교한다(매핑 교차 감지용). */
+function propertyText(call: ts.CallExpression, key: string): string | null {
+  const arg = call.arguments[0];
+  if (!arg || !ts.isObjectLiteralExpression(arg)) return null;
+  for (const prop of arg.properties) {
+    if (!ts.isPropertyAssignment(prop)) continue;
+    const name = ts.isIdentifier(prop.name) || ts.isStringLiteral(prop.name) ? prop.name.text : null;
+    if (name !== key) continue;
+    return prop.initializer.getText(pageSource).replace(/\s+/g, "");
+  }
+  return null;
+}
+
+for (const [variableName, expected] of Object.entries(SIDE_BINDINGS)) {
+  // ① 선언 유일성 — dead duplicate로 결함을 숨길 수 없게 한다.
+  const declarations = collectAll(
+    (node) =>
+      ts.isVariableDeclaration(node)
+      && ts.isIdentifier(node.name)
+      && node.name.text === variableName,
+  ) as ts.VariableDeclaration[];
+  assert.equal(
+    declarations.length,
+    1,
+    `\`${variableName}\` 선언은 페이지에 정확히 1개여야 한다(dead duplicate로 결함 은폐 방지)`,
+  );
+  const declaration = declarations[0];
+
+  // ② 유일 선언의 callee가 프로덕션 named import인지.
   assert.ok(
-    declaration && ts.isImportSpecifier(declaration),
+    declaration.initializer
+      && ts.isCallExpression(declaration.initializer)
+      && ts.isIdentifier(declaration.initializer.expression),
+    `\`${variableName}\`는 식별자 호출로 선언되어 있어야 한다`,
+  );
+  const call = declaration.initializer as ts.CallExpression;
+  const calleeSymbol = pageChecker.getSymbolAtLocation(call.expression);
+  const calleeDecl = calleeSymbol?.declarations?.[0];
+  assert.ok(
+    calleeDecl && ts.isImportSpecifier(calleeDecl),
     `\`${variableName}\`는 로컬 wrapper가 아니라 import된 함수를 직접 호출해야 한다`,
   );
-  const specifier = declaration as ts.ImportSpecifier;
-  const importedName = (specifier.propertyName ?? specifier.name).text;
+  const specifier = calleeDecl as ts.ImportSpecifier;
   assert.equal(
-    importedName,
+    (specifier.propertyName ?? specifier.name).text,
     "resolveLineupStarter",
     `\`${variableName}\`는 프로덕션 \`resolveLineupStarter\`를 호출해야 한다`,
   );
@@ -699,6 +743,63 @@ for (const variableName of ["awayLineupStarter", "homeLineupStarter"] as const) 
       && moduleSpecifier.text === "@/lib/stats/pitcher-season",
     `\`${variableName}\`의 선발 해석기는 프로덕션 모듈에서 와야 한다`,
   );
+
+  // ③ side/team 배선 — 원정을 홈팀 roster로 해석하면 동명이인·ERA가 오염된다.
+  for (const key of ["liveStarterName", "lineupStarterName", "teamId", "boxPitcher"] as const) {
+    assert.equal(
+      propertyText(call, key),
+      expected[key].replace(/\s+/g, ""),
+      `\`${variableName}\`의 \`${key}\`는 ${expected.side} 측 입력에 결속되어야 한다`,
+    );
+  }
+
+  // ④ 렌더 소비부가 같은 심볼을 쓰는가 + 호출 뒤 변형이 없는가.
+  const declSymbol = pageChecker.getSymbolAtLocation(declaration.name);
+  assert.ok(declSymbol, `\`${variableName}\` 선언 심볼을 해석할 수 있어야 한다`);
+  const references = collectAll(
+    (node) => ts.isIdentifier(node) && node.text === variableName && node !== declaration.name,
+  ) as ts.Identifier[];
+  assert.ok(
+    references.length > 0,
+    `\`${variableName}\`는 렌더 경로에서 실제로 소비되어야 한다`,
+  );
+  for (const reference of references) {
+    // 프로퍼티 이름(`{ awayLineupStarter }` 같은 shorthand 외)은 심볼이 다르므로 제외.
+    const parent = reference.parent;
+    if (
+      (ts.isPropertyAssignment(parent) && parent.name === reference)
+      || (ts.isPropertyAccessExpression(parent) && parent.name === reference)
+    ) continue;
+    assert.equal(
+      pageChecker.getSymbolAtLocation(reference),
+      declSymbol,
+      `\`${variableName}\` 소비부는 선언과 동일한 심볼을 참조해야 한다`,
+    );
+    // 재할당 / property mutation 금지.
+    assert.ok(
+      !(ts.isBinaryExpression(parent)
+        && parent.left === reference
+        && parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment
+        && parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment),
+      `\`${variableName}\`는 호출 뒤 재할당되면 안 된다`,
+    );
+    assert.ok(
+      !(ts.isPropertyAccessExpression(parent)
+        && parent.expression === reference
+        && ts.isBinaryExpression(parent.parent)
+        && parent.parent.left === parent
+        && parent.parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment
+        && parent.parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment),
+      `\`${variableName}\`의 속성은 호출 뒤 변경되면 안 된다`,
+    );
+    assert.ok(
+      !(ts.isCallExpression(parent)
+        && ts.isPropertyAccessExpression(parent.expression)
+        && parent.expression.name.text === "assign"
+        && parent.arguments[0] === reference),
+      `\`${variableName}\`는 \`Object.assign\` 대상이 될 수 없다`,
+    );
+  }
 }
 
 const detailHook = readFileSync("src/lib/hooks/useGameDetail.ts", "utf8");
@@ -715,6 +816,25 @@ assert.ok(
 assert.ok(
   /const responseGeneration = \+\+responseGenerationRef\.current;/.test(detailHook),
   "응답 generation은 요청당 1회 증가해야 한다",
+);
+
+// 캡처 위치도 계약이다. 캡처를 첫 `await` 뒤로만 옮겨도 guard→commit 순서는 그대로라
+// 전체 prebuild가 GREEN이었다(삼순 3차 지적). 그러면 A→B 요청에서 B가 먼저 완료할 때
+// B가 gen1, 늦게 끝난 A가 gen2를 받아 **stale A가 최종 커밋**된다.
+// 그래서 capture < 첫 await < parse < guard < 모든 commit 을 인덱스로 고정한다.
+const fetchBodyIdx = detailHook.indexOf("const fetchDetail = useCallback(async () => {");
+assert.ok(fetchBodyIdx >= 0, "fetchDetail 본문 시작을 찾을 수 있어야 한다");
+const captureIdx = detailHook.indexOf(
+  "const responseGeneration = ++responseGenerationRef.current;",
+);
+assert.ok(captureIdx > fetchBodyIdx, "generation 캡처는 fetchDetail 본문 안에 있어야 한다");
+const firstAwaitMatch = /\bawait\b/.exec(detailHook.slice(fetchBodyIdx));
+assert.ok(firstAwaitMatch, "fetchDetail 본문의 첫 await 지점을 찾을 수 있어야 한다");
+const firstAwaitIdx = fetchBodyIdx + firstAwaitMatch!.index;
+assert.ok(
+  captureIdx < firstAwaitIdx,
+  "generation 캡처는 첫 async boundary(await)보다 앞이어야 한다"
+    + "(뒤로 올리면 먼저 완료한 최신 응답이 더 낮은 generation을 받아 stale 응답이 최종 커밋된다)",
 );
 assert.equal(
   (detailHook.match(
