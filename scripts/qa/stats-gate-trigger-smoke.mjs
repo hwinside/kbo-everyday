@@ -236,7 +236,21 @@ function assertScriptsExist(source, label, minimum) {
   assertScriptsExist(source, "freshness 게이트", 1);
 }
 
-/* ══ 3) 두 게이트의 역할이 갈라져 있어야 한다 ═══════════════════
+/* ══ 3) updater PR 생성 전 freshness actual binding ═════════════ */
+{
+  const updaterPath = ".github/workflows/update-roster-stats.yml";
+  const updater = readFileSync(updaterPath, "utf8");
+  const verifyNeedle = "run: node scripts/qa/stats-freshness-verify.mjs";
+  const verifyAt = updater.indexOf(verifyNeedle);
+  const prAt = updater.indexOf("- name: Create PR");
+  assert.ok(verifyAt >= 0, "updater가 freshness wrapper를 파일 경로로 직접 실행해야 한다");
+  assert.ok(prAt >= 0 && verifyAt < prAt, "freshness 검증은 PR 생성보다 먼저여야 한다");
+  const verifyBlock = updater.slice(updater.lastIndexOf("- name:", verifyAt), updater.indexOf("- name:", verifyAt));
+  assert.ok(!/continue-on-error:\s*true/.test(verifyBlock), "PR 전 freshness는 fail-close여야 한다");
+  assert.ok(!/npm run qa:stats-freshness/.test(verifyBlock), "decoy alias 우회 방지를 위해 파일 경로로 직접 호출해야 한다");
+}
+
+/* ══ 4) 두 게이트의 역할이 갈라져 있어야 한다 ═══════════════════
  *
  * contract 게이트가 live 대조를 다시 품으면 분할이 무의미해지고, 무관한 PR 이
  * 또다시 KBO drift 로 RED 가 된다. 반대로 freshness 가 live 대조를 놓치면

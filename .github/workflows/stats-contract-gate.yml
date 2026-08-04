@@ -192,6 +192,61 @@ jobs:
           git checkout -- .github/workflows/stats-freshness-gate.yml
           git diff --exit-code
 
+      - name: RED proof — updater must verify freshness before PR creation
+        run: |
+          node -e "
+            const fs = require('fs');
+            const p = '.github/workflows/update-roster-stats.yml';
+            let src = fs.readFileSync(p, 'utf8');
+            const needle = 'run: node scripts/qa/stats-freshness-verify.mjs';
+            if (!src.includes(needle)) process.exit(1);
+            fs.writeFileSync(p, src.replace(needle, 'run: echo decoy'));
+          "
+          if npm run qa:stats-gate-trigger; then
+            echo "::error::updater의 PR 전 freshness를 decoy로 바꿨는데 게이트가 통과했다"
+            git checkout -- .github/workflows/update-roster-stats.yml
+            exit 1
+          fi
+          git checkout -- .github/workflows/update-roster-stats.yml
+          git diff --exit-code
+
+      - name: RED proof — source digest binding must be required
+        run: |
+          node -e "
+            const fs = require('fs');
+            const p = 'scripts/lib/stats-source-truth.mjs';
+            let src = fs.readFileSync(p, 'utf8');
+            const needle = 'export const SOURCE_DIGEST_MARKER = \"KBO_SOURCE_DIGEST\";';
+            if (!src.includes(needle)) process.exit(1);
+            fs.writeFileSync(p, src.replace(needle, 'export const SOURCE_DIGEST_MARKER = \"DECOY_DIGEST\";'));
+          "
+          if node scripts/qa/stats-freshness-contract-smoke.mjs; then
+            echo "::error::원본 digest marker를 끊었는데 contract가 통과했다"
+            git checkout -- scripts/lib/stats-source-truth.mjs
+            exit 1
+          fi
+          git checkout -- scripts/lib/stats-source-truth.mjs
+          git diff --exit-code
+
+      - name: RED proof — freshness paths must reject code-path overreach
+        # 산출물 외 코드 경로가 들어오면 데이터 무변경 PR도 live drift로 무조건 RED다.
+        run: |
+          node -e "
+            const fs = require('fs');
+            const p = '.github/workflows/stats-freshness-gate.yml';
+            let src = fs.readFileSync(p, 'utf8');
+            const needle = '      - \"src/lib/constants/foreign-id-map.ts\"';
+            if (!src.includes(needle)) process.exit(1);
+            fs.writeFileSync(p, src.replace(needle, needle + '\n      - \"scripts/lib/stats-source-truth.mjs\"'));
+          "
+          if npm run qa:stats-gate-trigger; then
+            echo "::error::freshness paths 에 코드 경로가 들어왔는데 게이트가 통과했다"
+            git checkout -- .github/workflows/stats-freshness-gate.yml
+            exit 1
+          fi
+          git checkout -- .github/workflows/stats-freshness-gate.yml
+          git diff --exit-code
+
       - name: RED proof — no-op freshness alias must fail
         # package alias 를 `echo ok` 로 바꾸는 무력화가 실제로 잡히는지.
         run: |

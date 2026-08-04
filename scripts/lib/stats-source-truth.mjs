@@ -1,6 +1,22 @@
+import { createHash } from "node:crypto";
 import { computeDefenseRuns } from "./defense-runs.mjs";
 import { collectAllPages, createKboPageAdapter, signatureOf } from "./kbo-pagination.mjs";
 import { createSelectAdapter, selectAndConfirm } from "./kbo-select.mjs";
+
+export const SOURCE_DIGEST_MARKER = "KBO_SOURCE_DIGEST";
+
+/** 원본 전체 key/value를 순서 독립적인 SHA-256으로 접는다. */
+export function digestSourceMaps(labeledMaps) {
+  const hash = createHash("sha256");
+  for (const label of Object.keys(labeledMaps).sort()) {
+    hash.update(`\n##${label}\n`);
+    const map = labeledMaps[label];
+    for (const key of [...map.keys()].sort()) {
+      hash.update(`${key}\u0001${(map.get(key) ?? []).join("\u0002")}\n`);
+    }
+  }
+  return hash.digest("hex");
+}
 
 /**
  * 스탯 원본 정합성 대조 — 크롤 write 경로와 독립 QA 스크립트가 공유하는 SSOT.
@@ -185,6 +201,15 @@ export async function assertSourceTruth({ browser, kboBase, season, batters, pit
     const kboDefense = await collectKboDefensePages(
       page, `${kboBase}/Record/Player/Defense/Basic.aspx?sort=GAME_CN`, season,
     );
+
+    // freshness 안정성은 실패 문구가 아니라 원본 전체 key/value 자체로 판정한다.
+    log(`${SOURCE_DIGEST_MARKER}=${digestSourceMaps({
+      pitchers: kboPitchers,
+      batters1: kboBatters1,
+      batters2: kboBatters2,
+      runner: kboRunner,
+      defense: kboDefense,
+    })}`);
 
     for (const spec of [
       { label: "투수", rows: pitchers, kbo: kboPitchers, columns: PITCHER_COLUMNS },
