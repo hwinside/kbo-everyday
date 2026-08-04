@@ -39,6 +39,7 @@ import {
   type QaDeps,
 } from "../../src/lib/baseball-qa/pipeline";
 import { loadRosterPlayers } from "../../src/lib/baseball-qa/roster/load-roster-players";
+import { BASEBALL_QA_SYSTEM_PROMPT } from "../../src/lib/baseball-qa/gemini-request";
 
 /**
  * 로스터는 **실제 배포 함수**로 읽는다.
@@ -326,6 +327,45 @@ async function verifyRuleQuestionsStillOpen() {
   }
 }
 
+/**
+ * **배포되는 SYSTEM_PROMPT 자체**의 계약 (삼순 #1100 2차 P0-1·P0-2).
+ *
+ * ⚠️ 왜 필요한가 — 이 파일의 다른 검사는 `callLlm` 을 mock 으로 두고 "질문이 답변 경로까지
+ * 도달하는가"만 본다. 그런데 라우터가 구단 질문을 LLM 으로 흘려보내도, 프롬프트가
+ * `선수·구단 기록/히스토리는 NOT_BASEBALL` 이라고 명령하고 있으면 모델이 프롬프트를 따르는
+ * 순간 그대로 blocked 로 돌아온다. mock 은 무조건 ANSWER 를 주므로 **절대 안 잡힌다**.
+ *
+ * 실제로 이 게이트를 처음 썼을 때 프롬프트 원복 mutation 이 GREEN 이었다(실측).
+ * 그래서 프롬프트 문자열 자체를 계약으로 고정한다. 실 provider 호출은
+ * `qa:baseball-qa-classifier-live`(GEMINI_API_KEY 필요)가 별도로 검증한다.
+ */
+async function verifySystemPromptContract() {
+  await check("프롬프트: 구단이 답변 범위로 명시돼 있다", () => {
+    assert.ok(
+      /답변 범위[\s\S]{0,120}구단/.test(BASEBALL_QA_SYSTEM_PROMPT),
+      "SYSTEM_PROMPT 답변 범위에 구단이 없다 — 라우터가 보내도 모델이 NOT_BASEBALL 로 되돌린다",
+    );
+  });
+  await check("프롬프트: 구단 기록/히스토리를 NOT_BASEBALL 로 명령하지 않는다", () => {
+    assert.ok(
+      !/선수·구단 기록\/히스토리/.test(BASEBALL_QA_SYSTEM_PROMPT),
+      "구 계약(구단 기록/히스토리 → NOT_BASEBALL)이 남아 있다",
+    );
+  });
+  await check("프롬프트: 근거 없는 수치를 금지한다", () => {
+    assert.ok(
+      /지어내지 않는다|지어내지 말/.test(BASEBALL_QA_SYSTEM_PROMPT),
+      "근거없는 수치 금지 계약이 없다 — 팀 수치 질문이 새면 숫자를 만든다",
+    );
+  });
+  await check("프롬프트: 비야구 축은 그대로 NOT_BASEBALL", () => {
+    assert.ok(/NOT_BASEBALL/.test(BASEBALL_QA_SYSTEM_PROMPT));
+    for (const word of ["맛집", "주식", "영화"]) {
+      assert.ok(BASEBALL_QA_SYSTEM_PROMPT.includes(word), `범위 밖 예시 '${word}' 누락`);
+    }
+  });
+}
+
 async function main() {
   players = await loadRosterPlayers();
   assert.ok(
@@ -333,6 +373,7 @@ async function main() {
     `로스터가 비어 있으면 이 게이트는 무의미하다 (len=${players.length})`,
   );
 
+  await verifySystemPromptContract();
   await verifyTeamQuestionsAnswerable();
   await verifyTeamNumericFailsClosed();
   await verifyCrossTeamCombosRejected();
