@@ -126,13 +126,10 @@ jobs:
         # needs_transcode 후속 큐 판정 + video-validate-server 실배선(realDeps) 검증.
         run: npm run qa:venue-validate
 
-      - name: Run venue transcode worker CAS smoke (fail-closed)
-        # archived+needs_transcode 최적화 경로 · 재시도 소진 · resurrect 금지 CAS.
-        run: npm run qa:venue-transcode-worker
-
-      - name: Ensure ffmpeg/ffprobe (video normalize e2e)
-        # 정규화 e2e 는 fixture 합성(ffmpeg)과 산출물 판독(ffprobe)에 실바이너리가 필요하다.
-        # ubuntu-latest 러너에는 기본 탑재되어 있지 않아(2026-08-04 실측 exit 127) 설치한다.
+      - name: Ensure ffmpeg/ffprobe (worker + normalize e2e)
+        # 서버 워커 실 ffmpeg 계약(U)과 정규화 e2e 가 둘 다 실바이너리를 쓴다.
+        # 반드시 두 스모크**보다 앞**에 있어야 한다(2026-08-04: worker 스모크가 먼저 돌아
+        # ffmpeg 부재로 FAIL 했다). ubuntu-latest 러너엔 기본 탑재가 아니라 설치한다.
         # 설치 후에도 없으면 스킵하지 않고 job 을 떨어뜨린다(fail-closed).
         run: |
           if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
@@ -141,6 +138,11 @@ jobs:
           fi
           ffmpeg -version
           ffprobe -version
+
+      - name: Run venue transcode worker CAS smoke (fail-closed)
+        # archived+needs_transcode 최적화 경로 · 재시도 소진 · resurrect 금지 CAS
+        # + orchestration seam 행동 + 서버 워커 실 ffmpeg 720p/faststart/회전 계약.
+        run: npm run qa:venue-transcode-worker
 
       - name: Install Playwright chromium (video normalize e2e)
         run: npx playwright install --with-deps chromium
