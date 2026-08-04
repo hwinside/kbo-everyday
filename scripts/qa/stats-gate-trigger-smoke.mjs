@@ -163,9 +163,14 @@ function assertScriptsExist(source, label, minimum) {
       + " 검증기의 파일 읽기 방식이 바뀌었다면 이 추출도 함께 고쳐야 한다.",
   );
 
-  // 검증기 자신과 대조 로직도 바뀌면 재확인 대상이다.
-  required.add(VERIFIER);
-  required.add("scripts/lib/stats-source-truth.mjs");
+  /* ⚠︎ 검증기·대조 로직 같은 **코드 경로는 일부러 넣지 않는다.**
+   *
+   * 처음엔 "대조 로직이 바뀌면 재확인해야 한다"는 이유로 넣었는데, 그게 곧 이 PR 이
+   * 없애려던 증상이었다 — 데이터 무변경 코드 PR 이 live 대조를 타고, 경기 진행으로
+   * 원본이 앞서간 분량이 전부 불일치로 잡혀 무조건 RED 가 된다.
+   *
+   * 대조 로직 약화는 contract 게이트의 mutation RED 가 모든 PR 에서 결정론적으로 잡는다.
+   * 여기서 커버해야 할 것은 **스냅샷 산출물**뿐이다. */
 
   const uncovered = [...required].filter(
     (file) => !paths.some((pattern) => minimatch(file, pattern)),
@@ -173,10 +178,36 @@ function assertScriptsExist(source, label, minimum) {
   assert.deepEqual(
     uncovered,
     [],
-    "freshness paths 가 검증기 입력을 전부 덮지 못한다 — 그 파일만 바뀐 데이터 PR 이"
+    "freshness paths 가 검증기 입력 산출물을 전부 덮지 못한다 — 그 파일만 바뀐 데이터 PR 이"
       + " 게이트를 SKIP 하고 required check 가 초록으로 보인다."
       + ` 미커버: ${uncovered.join(", ")}`,
   );
+
+  /* ── 과잉 차단 — 코드 경로는 freshness trigger 에 들어오면 안 된다 ────
+   *
+   * 커밋된 스냅샷은 마지막 크롤 시점의 기록이고 live KBO 는 경기가 끝날 때마다
+   * 앞서간다. 그래서 데이터를 하나도 건드리지 않은 코드 PR 에서 live 대조를 돌리면
+   * `games 52→53` 같은 **정상 진행분**이 전부 불일치로 잡혀 무조건 RED 다.
+   * 통과할 수 없는 검사를 돌리는 셈이고, 그게 바로 이 분할이 없애려던 증상이다.
+   *
+   * ⚠︎ 가설이 아니다. 이 분할을 도입한 PR 자신이 `src/lib/constants/` 변경 0 인데도
+   * 초기 paths 에 코드 경로를 넣었다는 이유만으로 게이트가 돌아 투수 20건 불일치로
+   * RED 났다(조동욱·김민·김재윤·이승현 등, 전부 경기 진행에 따른 정상 전진).
+   *
+   * 대조 로직을 약화시키는 코드 변경은 contract 게이트의 mutation RED 증명이 모든
+   * PR 에서 결정론적으로 잡는다. 코드 경로를 빼도 검증 커버리지 손실은 없다. */
+  {
+    for (const pattern of paths) {
+      assert.ok(
+        pattern.startsWith("src/lib/constants/"),
+        "freshness trigger 는 스냅샷 산출물만 대상으로 해야 한다."
+          + " 코드 경로가 들어오면 데이터 무변경 PR 이 live KBO 대조를 타고,"
+          + " 경기 진행으로 원본이 앞서간 분량이 전부 불일치로 잡혀 무조건 RED 된다"
+          + " (2026-08-05 이 분할 PR 자체가 투수 20건으로 재현)."
+          + ` actual: ${pattern}`,
+      );
+    }
+  }
 
   assertScriptsExist(source, "freshness 게이트", 1);
 }

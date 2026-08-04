@@ -24,28 +24,38 @@ name: Stats Freshness Gate
 # ⚠️ 불안정도 exit 1 이다. 통과로 흘려보내면 그게 곧 우리가 잡아낸 temporal green 을
 # 게이트가 스스로 만들어내는 꼴이 된다.
 #
-# ⚠️ 여기 `paths` 는 성능 최적화가 아니라 **정확성 계약**이다. 검증기가 읽는 입력이
-# 하나라도 빠지면 그 파일만 바뀐 PR 이 게이트를 SKIP 하고 required check 는 초록으로 보인다.
-# 그래서 `qa:stats-gate-trigger` 가 이 목록을 검증기 입력과 대조해 결손을 RED 로 만든다.
+# ⚠️ 여기 `paths` 는 성능 최적화가 아니라 **정확성 계약**이고, 양방향이다.
+#
+#   (a) 검증기가 읽는 **산출물**이 하나라도 빠지면, 그 파일만 바뀐 데이터 PR 이
+#       게이트를 SKIP 하고 required check 는 초록으로 보인다.
+#
+#   (b) 반대로 **코드 경로를 넣으면 안 된다.** 커밋된 스냅샷은 마지막 크롤 시점의
+#       기록이고 live KBO 는 경기가 끝날 때마다 앞서간다. 그래서 데이터를 하나도
+#       건드리지 않은 코드 PR 에서 이 게이트를 돌리면 `games 52→53` 같은 **정상
+#       진행분**이 전부 불일치로 잡혀 무조건 RED 다. 통과할 수 없는 검사를 돌리는 셈이고,
+#       그게 바로 이 PR 이 없애려던 증상이다(범위만 좁아질 뿐 같은 문제).
+#
+#       실측: 이 분할 PR 자신이 `src/lib/constants/` 변경 0 인데도 코드 경로 때문에
+#       게이트가 돌아 투수 20건 불일치로 RED 났다(조동욱·김민·김재윤·이승현 등,
+#       전부 경기 진행에 따른 정상 전진). main 스냅샷 05:55Z vs 실행 16:0xZ.
+#
+#       대조 로직을 약화시키는 코드 변경은 stats-contract-gate 의 mutation RED 증명이
+#       **모든 PR 에서 결정론적으로** 잡는다. 그래서 여기서 코드 경로를 빼도 커버리지
+#       손실이 없다. 검증력은 contract 게이트가, 신선도는 이 게이트가 맡는다.
+#
+# 두 방향 모두 `qa:stats-gate-trigger` 가 고정한다(누락도 RED, 코드 경로 추가도 RED).
 
 on:
   pull_request:
     paths:
-      # 검증기(scripts/qa/stats-source-truth-verify.mjs)가 읽는 산출물 전부.
+      # 검증기(scripts/qa/stats-source-truth-verify.mjs)가 읽는 **산출물만**.
+      # 코드 경로를 추가하지 말 것 — 위 (b) 참조. trigger 스모크가 RED 로 막는다.
       - "src/lib/constants/stats-*-batters.json"
       - "src/lib/constants/stats-*-pitchers.json"
       - "src/lib/constants/stats-*-defense.json"
       - "src/lib/constants/player-defense-runs.json"
       - "src/lib/constants/players-roster.json"
       - "src/lib/constants/foreign-id-map.ts"
-      # 대조 로직·크롤 경로가 바뀌면 산출물이 그대로여도 다시 확인해야 한다.
-      - "scripts/lib/stats-source-truth.mjs"
-      - "scripts/lib/kbo-pagination.mjs"
-      - "scripts/lib/verified-promote.mjs"
-      - "scripts/crawl-stats.mjs"
-      - "scripts/qa/stats-source-truth-verify.mjs"
-      - "scripts/qa/stats-freshness-verify.mjs"
-      - ".github/workflows/stats-freshness-gate.yml"
   # 크롤 직후 자동 PR 과 수동 확인용.
   workflow_dispatch:
 
