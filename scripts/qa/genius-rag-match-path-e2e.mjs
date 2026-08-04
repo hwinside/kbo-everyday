@@ -70,6 +70,7 @@ async function main() {
   check("test account created + signed in", Boolean(userId && accessToken));
 
   // ② 실제 유저 세션으로 질문 DM 전송
+  // query-guard: bounded -- RPC 시그니처가 (conversation_id, message_id) 한 행만 반환한다
   const { data: sent, error: sendError } = await userClient
     .rpc("send_dm_message_atomic", {
       p_target_user_id: GENIUS_ID,
@@ -109,6 +110,7 @@ async function main() {
   check("job source=rag", job?.source === "rag", job);
   check("job last_error null", !job?.last_error, job);
 
+  // query-guard: bounded -- 방금 만든 일회용 QA 계정 소유 로그만 대상이라 상한 10행이면 충분하다
   const { data: logs } = await admin
     .from("genius_question_logs")
     .select("id,match_path,answer,created_at")
@@ -120,11 +122,13 @@ async function main() {
   check("log answer non-empty", Boolean(logs?.[0]?.answer?.trim()), logs?.[0]);
 
   // 사용자 본인 세션에서 실제로 봇 답변이 보이는가 (RLS 통과 = 유저 화면 노출)
+  // query-guard: bounded -- 일회용 QA 대화 1개의 메시지만 보며 상한 10행으로 자른다
   const { data: visible } = await userClient
     .from("dm_messages")
     .select("id,sender_id,content,created_at")
     .eq("conversation_id", conversationId)
-    .order("created_at", { ascending: true });
+    .order("created_at", { ascending: true })
+    .limit(10);
   const botMessages = (visible ?? []).filter((m) => m.sender_id === GENIUS_ID);
   check("bot answer visible to end user", botMessages.length === 1, botMessages);
   check(
@@ -142,24 +146,30 @@ async function main() {
   const replayBody = await replay.json().catch(() => ({}));
   check("replay accepted (no 5xx)", replay.status < 500, { status: replay.status, replayBody });
 
+  // query-guard: bounded -- 중복 로그 검출용이라 상한 10행이면 1행 초과를 충분히 잡는다
   const { data: logsAfter } = await admin
     .from("genius_question_logs")
     .select("id")
-    .eq("user_id", userId);
+    .eq("user_id", userId)
+    .limit(10);
   check("no duplicate log after replay", (logsAfter?.length ?? 0) === 1, logsAfter?.length);
 
+  // query-guard: bounded -- 중복 봇 DM 검출용이라 일회용 대화의 상한 10행이면 충분하다
   const { data: msgsAfter } = await admin
     .from("dm_messages")
     .select("id,sender_id")
-    .eq("conversation_id", conversationId);
+    .eq("conversation_id", conversationId)
+    .limit(10);
   const botAfter = (msgsAfter ?? []).filter((m) => m.sender_id === GENIUS_ID);
   check("no duplicate bot DM after replay", botAfter.length === 1, botAfter.length);
 
   // 과금 원장은 genius_daily_usage(user_id, kst_day, used). 재호출 후에도 used=1 이어야 한다.
+  // query-guard: bounded -- 일회용 QA 계정의 당일 원장이라 상한 5행으로 중복까지 잡힌다
   const { data: usageRows } = await admin
     .from("genius_daily_usage")
     .select("kst_day,used")
-    .eq("user_id", userId);
+    .eq("user_id", userId)
+    .limit(5);
   check("daily usage row = 1", (usageRows?.length ?? 0) === 1, usageRows);
   check("quota charged exactly once (used=1)", usageRows?.[0]?.used === 1, usageRows);
   check("job quota_reserved true", job?.quota_reserved === true, job);
@@ -186,14 +196,21 @@ async function cleanup() {
   }
   // 잔존 0 검증
   if (userId) {
-    const { data: logLeft } = await admin.from("genius_question_logs").select("id").eq("user_id", userId);
+    // query-guard: bounded -- cleanup 잔존 검출용이라 상한 5행이면 0 초과를 잡는다
+    const { data: logLeft } = await admin
+      .from("genius_question_logs")
+      .select("id")
+      .eq("user_id", userId)
+      .limit(5);
     if ((logLeft?.length ?? 0) !== 0) problems.push(`logs left: ${logLeft.length}`);
     const { data: profLeft } = await admin.from("profiles").select("id").eq("id", userId);
     if ((profLeft?.length ?? 0) !== 0) problems.push(`profile left: ${profLeft.length}`);
+    // query-guard: bounded -- cleanup 잔존 검출용이라 상한 5행이면 0 초과를 잡는다
     const { data: usageLeft } = await admin
       .from("genius_daily_usage")
       .select("user_id")
-      .eq("user_id", userId);
+      .eq("user_id", userId)
+      .limit(5);
     if ((usageLeft?.length ?? 0) !== 0) problems.push(`daily usage left: ${usageLeft.length}`);
   }
   if (messageId) {
