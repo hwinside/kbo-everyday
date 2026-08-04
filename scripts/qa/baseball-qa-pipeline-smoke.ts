@@ -1050,6 +1050,13 @@ async function verifyPipeline() {
       ["류현진 실점 몇 점이야?", "pitcher", "r"],
       ["류현진 자책점 몇 점이야?", "pitcher", "er"],
       ["류현진 WHIP 알려줘", "pitcher", "whip"],
+      // 2026-08-04 추가 — `player_stats_batter` 에 컬럼이 없어 스냅샷(`stats-2026-batters.json`)
+      // 으로 답하는 지표. 앱 화면(선수 상세·팀 기록·타이틀)이 쓰는 그 정본이다.
+      ["박해민 도루 몇 개야?", "batter", "sb"],
+      ["황성빈 도루 실패 몇 개야?", "batter", "cs"],
+      ["김도영 출루율 알려줘", "batter", "obp"],
+      ["구자욱 장타율 알려줘", "batter", "slg"],
+      ["문보경 OPS 알려줘", "batter", "ops"],
     ];
     assert.deepEqual(
       new Set(positiveMetrics.filter(([, table]) => table === "batter").map(([, , metric]) => metric)),
@@ -1091,7 +1098,14 @@ async function verifyPipeline() {
       assert.equal(resolveSeasonRecordIntent(input).kind, "unsupported_season", `${input}: 2026 외 차단`);
     }
     assert.equal(resolveSeasonRecordIntent("문보경 2026년 홈런 몇 개야?").kind, "query", "2026 명시 허용");
-    assert.equal(resolveSeasonRecordIntent("문보경 올해 장타율 알려줘").kind, "none", "장타율을 타율로 오답 금지");
+    // ⚠️ 장타율은 2026-08-04 부터 **지원 지표**다(스냅샷 소스). 계약의 본질은
+    // "장타율을 `avg`(타율)로 오답하지 않는다" 이므로 그 축은 그대로 두고 기대값만 바꾼다.
+    // `(?<!장)타율` lookbehind 가 실제로 동작하는지 여기서 잡힌다.
+    {
+      const slg = resolveSeasonRecordIntent("문보경 올해 장타율 알려줘");
+      assert.equal(slg.kind, "query", "장타율은 지원 지표");
+      assert.equal(slg.kind === "query" && slg.query.metric, "slg", "장타율을 타율로 오답 금지");
+    }
     assert.equal(resolveSeasonRecordIntent("류현진 올해 사사구 몇 개야?").kind, "untrusted_metric",
       "사사구는 볼넷+사구 합산 — 단일 bb로 오답 금지");
     assert.equal(resolveSeasonRecordIntent("문보경 작년에 별명이 뭐였어?").kind, "none", "과거 서술형은 RAG 유지");

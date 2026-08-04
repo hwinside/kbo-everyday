@@ -32,7 +32,37 @@ export const BATTER_METRICS = {
   hr: { label: "홈런", aliases: ["홈런", "홈란", "아치"], kind: "count" },
   tb: { label: "루타", aliases: ["루타", "총루타"], kind: "count" },
   rbi: { label: "타점", aliases: ["타점"], kind: "count" },
+  // ⚠️ 아래 5개는 `player_stats_batter` 테이블에 **컬럼이 없다**. 앱이 실제로 서빙하는
+  // 정본은 `stats-2026-batters.json`(=`/api/stats` 가 반환하는 그 데이터)이라
+  // 조회 소스를 그쪽으로 분리한다(`SNAPSHOT_ONLY_BATTER_METRICS`).
+  //
+  // 하린아빠 2026-08-04 20:42 "도루 OPS가 왜 없어? / 우리가 다 제공하고 있는 데이터인데".
+  // 실제로 선수 상세·팀 기록·타이틀 탭이 전부 이 값을 표시하고 있었다. 내가 DB 테이블
+  // 하나만 보고 "데이터가 없다"고 단정한 것이 틀렸다.
+  sb: { label: "도루", aliases: ["도루"], kind: "count" },
+  cs: { label: "도루실패", aliases: ["도루실패", "도루자"], kind: "count" },
+  obp: { label: "출루율", aliases: ["출루율"], kind: "rate" },
+  slg: { label: "장타율", aliases: ["장타율"], kind: "rate" },
+  ops: { label: "OPS", aliases: ["ops"], kind: "rate" },
 } as const;
+
+/**
+ * DB 테이블이 아니라 **스냅샷 JSON**에서 읽어야 하는 타자 지표.
+ *
+ * `player_stats_batter` 는 KBO/Naver cron upsert 결과인데 sb·cs·obp·slg·ops 컬럼이 없다.
+ * 반면 `/api/stats` 는 `stats-2026-batters.json` 을 정본으로 이 값들을 서빙하고 있고,
+ * 앱 화면(선수 상세·팀 기록·타이틀)이 그 숫자를 그대로 보여준다.
+ *
+ * ⚠️ 봇이 앱과 **다른 숫자**를 말하면 그게 가장 나쁜 결과다. 그래서 화면이 쓰는 소스를
+ * 그대로 쓰고, 겹치는 지표(games·avg·hr·rbi…)는 DB row 와 교차검증해 두 소스가 갈라지면
+ * fail-close 한다(`resolveSnapshotRecord`).
+ */
+export const SNAPSHOT_ONLY_BATTER_METRICS = ["sb", "cs", "obp", "slg", "ops"] as const;
+export type SnapshotOnlyBatterMetric = (typeof SNAPSHOT_ONLY_BATTER_METRICS)[number];
+
+export function isSnapshotOnlyMetric(metric: string): metric is SnapshotOnlyBatterMetric {
+  return (SNAPSHOT_ONLY_BATTER_METRICS as readonly string[]).includes(metric);
+}
 
 /** 답변 가능한 투수 지표. Naver 폴백이 매 갱신마다 직접 주는 필드만. */
 export const PITCHER_METRICS = {
@@ -160,7 +190,9 @@ export function resolveSeasonRecordIntent(
     { table: "pitcher", metric: "games", pattern: /등판(?:\s*(?:경기|수))?/ },
     // `몇승/몇 승/승수/10승`은 허용하되 승부·승률은 제외.
     { table: "pitcher", metric: "wins", pattern: /(?:몇\s*승(?:수)?|\d+\s*승(?:수)?|승수|승\s*(?:몇|개))(?!부|률|리)/ },
-    { table: "pitcher", metric: "losses", pattern: /(?:몇\s*패(?:수)?|\d+\s*패(?:수)?|패수|패\s*(?:몇|개))(?!스트|배|션)/ },
+    // ⚠️ `(?<!실|승)` — `도루 실패 몇 개`가 "실패 몇"으로 잡혀 **투수 패전 수**로 답하던
+    // 회귀를 막는다(2026-08-04 도루 지표 추가 중 실측). `승패`도 같은 함정이다.
+    { table: "pitcher", metric: "losses", pattern: /(?:몇\s*패(?:수)?|\d+\s*패(?:수)?|패수|(?<!실|승)패\s*(?:몇|개))(?!스트|배|션)/ },
 
     // 타자
     { table: "batter", metric: "avg", pattern: /(?<!장)타율|타률|애버리지/ },
@@ -172,6 +204,14 @@ export function resolveSeasonRecordIntent(
     { table: "batter", metric: "ab", pattern: /타수/ },
     { table: "batter", metric: "runs", pattern: /득점/ },
     { table: "batter", metric: "hits", pattern: /안타/ },
+    // 도루 계열 — `도루실패/도루자`를 `도루`보다 **먼저** 둔다.
+    // `도루` 패턴이 먼저 매칭되면 `도루 실패 몇 개`가 도루 성공 수로 답해진다.
+    { table: "batter", metric: "cs", pattern: /도루\s*(?:실패|자)/ },
+    { table: "batter", metric: "sb", pattern: /도루/ },
+    // 출루율·장타율·OPS. `(?<!장)타율` 이 위에 있어 `장타율`은 avg 로 안 샌다.
+    { table: "batter", metric: "obp", pattern: /출루율/ },
+    { table: "batter", metric: "slg", pattern: /장타율/ },
+    { table: "batter", metric: "ops", pattern: /\bops\b|오피에스/i },
     // `출장`은 타자 전용 표현. 공통어 `경기 수`보다 먼저 매칭돼야 표현이 보존된다.
     { table: "batter", metric: "games", pattern: /출장(?:\s*(?:경기|수))?/ },
     // 공통어 — 여기서만 포지션 결속이 허용된다.

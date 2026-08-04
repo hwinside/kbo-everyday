@@ -47,6 +47,7 @@ import {
   type RagPlayerCandidate,
 } from "@/lib/baseball-qa/rag/retrieve";
 import { createSeasonRecordFetcher } from "@/lib/baseball-qa/stats/fetch-season-record";
+import { createSnapshotRecordFetcher } from "@/lib/baseball-qa/stats/snapshot-record";
 import type { SeasonRecordClient } from "@/lib/baseball-qa/stats/fetch-season-record";
 import { embedQuery } from "@/lib/baseball-qa/rag/embed";
 import { orderTier2Evidence } from "@/lib/baseball-qa/rag/fetch-wikipedia";
@@ -358,6 +359,12 @@ function makeDeps(messageId: number, pickedPlayerKboId?: string | null): QaDeps 
     fetchSeasonRecord: createSeasonRecordFetcher(
       supabaseAdmin as unknown as SeasonRecordClient,
     ),
+    /**
+     * 도루·출루율·장타율·OPS 조회. `player_stats_batter` 에는 이 컬럼이 없고,
+     * 앱 화면(선수 상세·팀 기록·타이틀)이 쓰는 정본은 `stats-2026-batters.json` 이다.
+     * 여기도 인라인 lambda 대신 seam factory 를 쓴다(게이트가 실제 배포 함수를 실행).
+     */
+    fetchSnapshotRecord: createSnapshotRecordFetcher(),
     searchOfficialRag,
     callOfficialRagLlm,
     recordRagDemand: async (sourceKeys) => {

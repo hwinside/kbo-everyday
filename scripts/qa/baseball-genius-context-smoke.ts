@@ -415,13 +415,19 @@ async function verifyProductionShapedRecordRouting() {
     assert.equal(c.cacheGet, 0, "선수 RAG 는 global cache 를 읽지 않는다");
   }
 
-  // ④ **미지원 지표 기록 질문** — 삼순 7차 P0-2 가 잡은 false-green 구간이다.
+  // ④ **지원 allowlist 밖 지표** — 삼순 7차 P0-2 가 잡은 false-green 구간이다.
   //
-  // 지원 지표(`타율`)만 검증하면 구조화 allowlist 밖 지표가 `blocked` 로 떨어져
-  // "야구 룰/용어에 대한 질문만 답할 수 있어요" 를 보내도 게이트가 통과한다.
-  // `도루`·`출루율`·`OPS` 는 명백한 선수 기록 질문이라 그 안내가 틀렸다.
-  // 올바른 종결은 `history_hold` + 앱 기록 탭 안내다.
-  for (const question of ["박해민 도루 몇 개야?", "김도영 출루율 알려줘", "김도영 OPS 얼마야"]) {
+  // 지원 지표만 검증하면 allowlist 밖 지표가 `blocked` 로 떨어져 "야구 룰/용어에 대한
+  // 질문만 답할 수 있어요" 를 보내도 게이트가 통과한다. 명백한 선수 기록 질문에
+  // 그 안내는 틀렸다 — 올바른 종결은 `history_hold` + 지표 특정 안내다.
+  //
+  // ⚠️ 표본 교체 (2026-08-04): `도루`·`출루율`·`OPS` 는 이제 **답변 가능**하다.
+  // 하린아빠 20:42 "도루 OPS가 왜 없어? 우리가 다 제공하고 있는 데이터인데" — 실제로
+  // `/api/stats`(정본 `stats-2026-batters.json`)가 sb·obp·slg·ops 를 서빙하고 앱 화면이
+  // 그대로 표시 중이었다. 내가 `player_stats_batter` 테이블만 보고 "없다"고 단정한 것이
+  // 틀렸고, 그 오판을 이 게이트가 정답으로 잠그고 있었다.
+  // 표본은 **여전히 소스가 없는 지표**로 바꾼다(`병살타`·`실책`·`대타타율`).
+  for (const question of ["김도영 WAR 알려줘", "김도영 wRC 얼마야", "박해민 스탯 알려줘"]) {
     const { result, counts: c } = await run(question);
     assert.equal(result.source, "history_hold", `${question}: 미지원 지표도 기록 질문이다`);
     assert.equal(result.answer, HISTORY_HOLD_ANSWER, `${question}: 앱 기록 탭 안내`);
@@ -492,8 +498,12 @@ async function verifyProductionRosterLoaderSeam() {
     },
   });
 
-  // 미지원 지표 기록 질문 — 로스터가 끊기면 `blocked` 로 떨어지는 바로 그 입력이다.
-  for (const metric of ["도루 몇 개야?", "출루율 알려줘", "OPS 얼마야"]) {
+  // 지원 allowlist 밖 기록 질문 — 로스터가 끊기면 `blocked` 로 떨어지는 바로 그 입력이다.
+  // (`hasPlayerReference` 가 죽으면 `history_hold` 분기 자체에 못 들어간다.)
+  //
+  // ⚠️ 표본 교체 2026-08-04: 종전 `도루`·`출루율`·`OPS` 는 이제 **답변 가능**하다
+  // (스냅샷 소스). 계약 축은 그대로 두고 여전히 소스가 없는 지표로 바꾼다.
+  for (const metric of ["WAR 알려줘", "스탯 알려줘", "기록 알려줘"]) {
     const question = `${subject.name} ${metric}`;
     for (const key of Object.keys(counts) as Array<keyof typeof counts>) counts[key] = 0;
     const result = await answerQuestion("u-prod-roster", question, prodDeps());

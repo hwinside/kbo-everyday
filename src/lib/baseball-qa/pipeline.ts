@@ -20,6 +20,7 @@ import {
 } from "./rag/retrieve";
 import {
   composeSeasonRecordAnswer,
+  isSnapshotOnlyMetric,
   RECORD_MISSING_ANSWER,
   resolveSeasonRecord,
   resolveSeasonRecordIntent,
@@ -27,6 +28,7 @@ import {
   UNTRUSTED_METRIC_ANSWER,
   type SeasonRecordRow,
 } from "./stats/season-record";
+import { crossCheckSnapshotAgainstDb } from "./stats/snapshot-record";
 import {
   BASEBALL_GENIUS_DAILY_LIMIT,
   BASEBALL_GENIUS_FALLBACK_ANSWER,
@@ -265,6 +267,15 @@ export interface QaDeps {
     table: "batter" | "pitcher",
     kboId: string,
   ) => Promise<SeasonRecordRow[]>;
+  /**
+   * 도루·출루율·장타율·OPS 조회 (`SNAPSHOT_ONLY_BATTER_METRICS`).
+   *
+   * `player_stats_batter` 에는 이 컬럼들이 없고, 앱 화면이 실제로 쓰는 정본은
+   * `stats-2026-batters.json`(=`/api/stats` 반환값)이다. **봇이 앱과 다른 숫자를
+   * 말하는 것이 가장 나쁜 결과**이므로 화면과 같은 소스를 본다.
+   * 미주입이면 해당 지표 경로가 비활성이라 기존 동작 그대로다.
+   */
+  fetchSnapshotRecord?: (kboId: string) => Promise<SeasonRecordRow[]>;
   /** 기록 stale 판정 기준 시각 (테스트 주입). 기본값 `Date.now()`. */
   now?: () => number;
   /**
@@ -1250,12 +1261,43 @@ async function answerSeasonRecordQuestion(
     return settle(UNSUPPORTED_SEASON_ANSWER, "blocked", "blocked");
   }
 
+  // ── 소스 선택 ──────────────────────────────────────────────────────────────
+  // 도루·출루율·장타율·OPS 는 `player_stats_batter` 에 **컬럼이 없다**. 앱 화면이 쓰는
+  // 정본은 `stats-2026-batters.json`(=`/api/stats`)이라 그쪽을 본다
+  // (하린아빠 2026-08-04 20:42 "우리가 다 제공하고 있는 데이터인데").
+  //
+  // ⚠️ 두 소스를 섞는 이상 **한쪽만 갱신된 상태**가 위험하다. 봇이 앱과 다른 숫자를
+  // 말하는 게 최악이므로, 스냅샷으로 답할 때는 DB row 와 겹치는 지표를 교차검증하고
+  // 하나라도 어긋나면 답하지 않는다.
+  const useSnapshot = intent.query.table === "batter" && isSnapshotOnlyMetric(intent.query.metric);
+  if (useSnapshot && !deps.fetchSnapshotRecord) {
+    // 주입이 없으면 이 지표는 아직 답할 수 없다 — 없는 컬럼을 DB 에서 읽어 봐야 missing 이다.
+    return settle(RECORD_MISSING_ANSWER, "blocked", "blocked");
+  }
+
   let rows: SeasonRecordRow[];
   try {
-    rows = await deps.fetchSeasonRecord!(intent.query.table, candidate.entityId);
+    rows = useSnapshot
+      ? await deps.fetchSnapshotRecord!(candidate.entityId)
+      : await deps.fetchSeasonRecord!(intent.query.table, candidate.entityId);
   } catch {
     // 조회 실패를 "기록 없음"으로 둔갑하지 않는다 — 재시도 가능한 실패다.
     return settle(BLOCKED_ANSWER, "error", "error");
+  }
+
+  if (useSnapshot) {
+    // 교차검증: 같은 선수의 DB row 와 겹치는 정수 지표가 전부 일치해야 한다.
+    // DB 조회가 실패하거나 행이 없으면 **확인 못 한 것**이므로 답하지 않는다.
+    let dbRows: SeasonRecordRow[] = [];
+    try {
+      dbRows = deps.fetchSeasonRecord
+        ? await deps.fetchSeasonRecord("batter", candidate.entityId)
+        : [];
+    } catch {
+      return settle(BLOCKED_ANSWER, "error", "error");
+    }
+    const cross = crossCheckSnapshotAgainstDb(rows[0], dbRows);
+    if (cross.kind !== "ok") return settle(RECORD_MISSING_ANSWER, "blocked", "blocked");
   }
 
   const outcome = resolveSeasonRecord(
