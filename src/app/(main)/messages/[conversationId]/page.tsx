@@ -56,7 +56,7 @@ export default function DMChatPage() {
     pickBaseballQaPlayer,
     geniusPickedQuestionIds,
     geniusAnsweredQuestionIds,
-    geniusThinkingQuestionIds,
+    geniusThinkingQuestionId,
   } = useDMChat(draftTargetId ? "" : conversationId);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -410,8 +410,11 @@ export default function DMChatPage() {
             // 생각중 말풍선 — **내 질문 바로 아래**에 붙여 대화 순서를 유지한다.
             // 답변이 도착해도 사라지지 않는다(하린아빠 2026-08-04 20:27).
             // `pending` 은 아직 답변 대기 중인지 — 점 3개 애니메이션만 이걸로 가른다.
+            // ⚠️ **최신 1개만** 붙는다 (하린아빠 2026-08-04 20:33 "세션 중 중복으로 발화할
+            // 경우엔 윗쪽 생각중입니다를 삭제하고 최신것만 노출"). 실제 답변 메시지들은
+            // 그대로 남고, 생각중 버블만 마지막 질문으로 갈아탄다.
             const showThinking =
-              isBaseballGeniusConv && isMe && geniusThinkingQuestionIds.has(msg.id);
+              isBaseballGeniusConv && isMe && geniusThinkingQuestionId === msg.id;
             const thinkingPending =
               showThinking && geniusReplyStates[msg.id] !== undefined;
             return (

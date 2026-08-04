@@ -122,9 +122,14 @@ async function handleDm(record: Record<string, unknown>): Promise<Dispatch[]> {
   const receiver = conv.user1_id === senderId ? conv.user2_id : conv.user1_id;
   if (!receiver || receiver === senderId) return [];
 
-  // 야잘알봇는 시스템 계정이므로 유저 질문 수신 푸시는 만들지 않는다.
-  // 반대 방향(야잘알봇 답변 → 유저)은 아래 일반 DM prefKey 정책을 그대로 탄다.
-  if (receiver === BASEBALL_GENIUS_USER_ID) return [];
+  // 야잘알봇 대화는 **양방향 모두** push 대상이 아니다 (하린아빠 2026-08-04 20:33
+  // "야잘알봇은 push알림에서 제외", 삼순 계약: 생각중·답변·picker/ack 전부 포함).
+  //
+  // ⚠️ 종전에는 수신자만 걸렀다(유저 질문 → 봇). 그래서 **봇 답변 → 유저**는 일반 DM
+  // 푸시를 그대로 탔고, 질문 한 번에 알림이 울렸다. 봇은 유저가 화면에서 기다리는
+  // 대화형 기능이라 푸시가 필요 없고, picker 되묻기까지 알림이 가면 소음이 된다.
+  // 발신자 축을 함께 막아야 계약이 완성된다.
+  if (receiver === BASEBALL_GENIUS_USER_ID || senderId === BASEBALL_GENIUS_USER_ID) return [];
 
   // 뉴스클리핑 쪽지 — 일반 쪽지 알림과 분리된 전용 문구 + 전용 prefKey (스펙 확정 문구).
   // payload는 클라 insert로도 채울 수 있으므로 클리퍼 계정 발신일 때만 신뢰 — 아니면 일반

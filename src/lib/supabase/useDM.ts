@@ -224,18 +224,22 @@ export function useDMChat(conversationId: string) {
   const [geniusAnsweredQuestionIds, setGeniusAnsweredQuestionIds] =
     useState<ReadonlySet<number>>(() => new Set<number>());
   /**
-   * "생각중" 을 한 번이라도 거친 질문 id — **append-only**.
+   * 생각중 말풍선을 붙일 질문 id — **세션 통틀어 최신 1개만**.
    *
    * ⚠️ `geniusReplyStates` 는 답변이 도착하면 outbox 에서 빠지며 사라진다. 그래서 생각중
    * 말풍선도 같이 사라졌고, Production 실측상 그 노출이 **500ms** 뿐이라 사람 눈에 안 잡혔다
-   * (사전 히트 답변은 +700ms 에 도착). 하린아빠 2026-08-04 20:27 지시대로 생각중을 대화
-   * 기록으로 남기려면 "지금 대기 중인가"와 별개로 **거쳤다는 사실**을 따로 들고 있어야 한다.
+   * (사전 히트 답변은 +700ms 에 도착). 그래서 "지금 대기 중인가"와 별개로 **거쳤다는 사실**을
+   * 따로 들고 있어야 대화에 남는다.
    *
-   * 대화 전환 시에만 비운다(answered/picked 집합과 같은 규칙) — 이전 대화의 질문 id 가
-   * 다음 대화로 새지 않게.
+   * ⚠️ Set 이 아니라 **단일 id** 인 이유 (하린아빠 2026-08-04 20:33):
+   * "세션 중 중복으로 발화할 경우엔 윗쪽 생각중입니다를 삭제하고 최신것만 노출."
+   * 질문을 여러 번 하면 생각중 버블이 답변 사이사이에 계속 쌓여 대화가 지저분해진다.
+   * 실제 답변 메시지들은 그대로 유지되고, 생각중만 최신 것으로 갈아탄다.
+   *
+   * 대화 전환 시 비운다(answered/picked 집합과 같은 규칙) — 이전 대화 질문 id 누수 차단.
    */
-  const [geniusThinkingQuestionIds, setGeniusThinkingQuestionIds] =
-    useState<ReadonlySet<number>>(() => new Set<number>());
+  const [geniusThinkingQuestionId, setGeniusThinkingQuestionId] =
+    useState<number | null>(null);
 
   const observeBaseballQaMessages = useCallback((nextMessages: DMMessage[]) => {
     if (typeof window === "undefined") return;
@@ -320,22 +324,16 @@ export function useDMChat(conversationId: string) {
     };
   }, [user, processBaseballQaOutbox]);
 
-  // 대기 상태로 관측된 질문은 전부 "생각중을 거친" 것으로 누적한다. 여기서만 더하고
-  // 빼지 않으므로 답변 도착으로 outbox 가 비어도 말풍선이 유지된다.
+  // 대기 상태로 관측된 질문 중 **가장 최신(id 최대)** 하나만 생각중 대상으로 남긴다.
+  // 여기서 값을 지우지 않으므로 답변 도착으로 outbox 가 비어도 말풍선이 유지되고,
+  // 새 질문이 오면 그 질문으로 갈아타 이전 생각중은 화면에서 사라진다.
   useEffect(() => {
     const ids = Object.keys(geniusReplyStates)
       .map(Number)
       .filter((id) => Number.isSafeInteger(id) && id > 0);
     if (ids.length === 0) return;
-    setGeniusThinkingQuestionIds((prev) => {
-      let next: Set<number> | null = null;
-      for (const id of ids) {
-        if (prev.has(id)) continue;
-        next ??= new Set(prev);
-        next.add(id);
-      }
-      return next ?? prev;
-    });
+    const latest = Math.max(...ids);
+    setGeniusThinkingQuestionId((prev) => (prev !== null && prev >= latest ? prev : latest));
   }, [geniusReplyStates]);
 
   useEffect(() => {
@@ -477,7 +475,7 @@ export function useDMChat(conversationId: string) {
     // 바뀔 때 여기서 버린다. 이게 없으면 이전 대화의 question id 가 다음 대화로 샐다.
     setGeniusAnsweredQuestionIds((prev) => (prev.size === 0 ? prev : new Set<number>()));
     setGeniusPickedQuestionIds((prev) => (prev.size === 0 ? prev : new Set<number>()));
-    setGeniusThinkingQuestionIds((prev) => (prev.size === 0 ? prev : new Set<number>()));
+    setGeniusThinkingQuestionId((prev) => (prev === null ? prev : null));
     const generation = ++loadGenerationRef.current;
     requestLoad(() => {
       if (loadGenerationRef.current !== generation) return;
@@ -698,7 +696,7 @@ export function useDMChat(conversationId: string) {
     pickBaseballQaPlayer,
     geniusPickedQuestionIds,
     geniusAnsweredQuestionIds,
-    geniusThinkingQuestionIds,
+    geniusThinkingQuestionId,
   };
 }
 
