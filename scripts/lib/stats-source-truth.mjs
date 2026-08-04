@@ -163,7 +163,7 @@ export function crossCheckDataset({ label, rows, kbo, columns, checkRowSet = tru
  * 그래도 "호출이 존재하는가" 식 게이트는 GREEN이다(실제로 내 초기 구현이 그랬다).
  * 그래서 대조·판정·예외를 전부 여기서 끝낸다. 호출자는 이걸 부를 수만 있다.
  */
-export async function assertSourceTruth({ browser, kboBase, season, batters, pitchers, defense, defenseRuns, roster, foreignIdSource, requireDerived = false, log = console.log }) {
+export async function assertSourceTruth({ browser, kboBase, season, batters, pitchers, defense, defenseRuns, roster, foreignIdSource, log = console.log }) {
   const page = await browser.newPage();
   const failures = [];
   try {
@@ -237,8 +237,10 @@ export async function assertSourceTruth({ browser, kboBase, season, batters, pit
   // ⚠︎ 종전에는 `if (defenseRuns && roster && foreignIdSource)` 였다. 그래서 호출부에
   // 이름만 남기고 `roster: []`, `foreignIdSource: ""`, `defenseRuns: undefined` 를 넣으면
   // 검증이 조용히 skip 되는데도 전 게이트가 GREEN 이었다(삼순 6차 실증).
-  // crawler 모드(requireDerived)에서는 빈값 자체가 계약 위반이므로 fail-close 한다.
-  if (requireDerived) {
+  // ⚠︎ 종전에는 `requireDerived` optional flag 였다. 그래서 caller 한 줄을 `false` 로
+  // 바꾸면 파생 검증을 통째로 skip 할 수 있었는데 전 게이트가 GREEN 이었다(삼순 7차 실증).
+  // 검증을 끌 수 있는 스위치 자체를 없앤다 — 파생 입력은 항상 필수다.
+  {
     const missing = [];
     if (!defenseRuns || Object.keys(defenseRuns).length === 0) missing.push("defenseRuns");
     if (!Array.isArray(roster) || roster.length === 0) missing.push("roster");

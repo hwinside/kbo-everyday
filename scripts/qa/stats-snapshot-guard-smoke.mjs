@@ -239,10 +239,25 @@ for (const call of [
   const stubBrowser = { async newPage() { return buildPage(urls); } };
   const silent = () => {};
 
+  // 파생 검증은 optional 이 아니다(끌 수 있는 flag 자체를 제거했다).
+  // 스텁 호출도 실제 계약대로 파생 입력을 넘긴다.
+  const ourDefenseRuns = { "90003": 0 };
+  const ourRoster = [
+    { name: "테스트투수", kboId: "90001", teamId: 1 },
+    { name: "테스트타자", kboId: "90002", teamId: 1 },
+    { name: "테스트수비", kboId: "90003", teamId: 1 },
+  ];
+  const ourForeignIdSource = 'export const FOREIGN_NUMERIC_TO_ALPHA = { "55855": "FP007" };';
+  const derived = {
+    defenseRuns: ourDefenseRuns,
+    roster: ourRoster,
+    foreignIdSource: ourForeignIdSource,
+  };
+
   // 일치하면 통과해야 한다.
   await assertSourceTruth({
     browser: stubBrowser, kboBase: "https://kbo.test", season: "2026",
-    batters: ourBatters, pitchers: ourPitchers, defense: ourDefense, log: silent,
+    batters: ourBatters, pitchers: ourPitchers, defense: ourDefense, ...derived, log: silent,
   });
 
   // 값 오염 1건 → 반드시 던져야 한다.
@@ -251,7 +266,7 @@ for (const call of [
       browser: stubBrowser, kboBase: "https://kbo.test", season: "2026",
       batters: ourBatters,
       pitchers: [{ ...ourPitchers[0], era: "99.99" }],
-      defense: ourDefense, log: silent,
+      defense: ourDefense, ...derived, log: silent,
     }),
     /stats_source_truth_mismatch/,
     "값 오염 1건이면 assertSourceTruth 가 던져야 한다",
@@ -261,7 +276,7 @@ for (const call of [
   await assert.rejects(
     () => assertSourceTruth({
       browser: stubBrowser, kboBase: "https://kbo.test", season: "2026",
-      batters: ourBatters, pitchers: ourPitchers, defense: [], log: silent,
+      batters: ourBatters, pitchers: ourPitchers, defense: [], ...derived, log: silent,
     }),
     /stats_source_truth_mismatch/,
     "수비 행 누락이면 assertSourceTruth 가 던져야 한다",
@@ -272,18 +287,36 @@ for (const call of [
     () => assertSourceTruth({
       browser: stubBrowser, kboBase: "https://kbo.test", season: "2026",
       batters: [{ ...ourBatters[0], sb: 999 }],
-      pitchers: ourPitchers, defense: ourDefense, log: silent,
+      pitchers: ourPitchers, defense: ourDefense, ...derived, log: silent,
     }),
     /stats_source_truth_mismatch/,
     "타자 도루 값 오염이면 assertSourceTruth 가 던져야 한다",
   );
+
+  // 파생 입력을 비우면(검증을 끄려는 시도) 반드시 던져야 한다.
+  // `requireDerived` optional flag 를 제거했으므로 우회 스위치가 없다.
+  for (const [label, override] of [
+    ["defenseRuns", { defenseRuns: {} }],
+    ["roster", { roster: [] }],
+    ["foreignIdSource", { foreignIdSource: "" }],
+  ]) {
+    await assert.rejects(
+      () => assertSourceTruth({
+        browser: stubBrowser, kboBase: "https://kbo.test", season: "2026",
+        batters: ourBatters, pitchers: ourPitchers, defense: ourDefense,
+        ...derived, ...override, log: silent,
+      }),
+      /derived_inputs_missing/,
+      `파생 입력 ${label} 이 비면 assertSourceTruth 가 던져야 한다(검증 skip 불가)`,
+    );
+  }
 
   // 원본을 못 읽으면(0행) 통과가 아니라 실패여야 한다.
   const emptyBrowser = { async newPage() { return buildPage({}); } };
   await assert.rejects(
     () => assertSourceTruth({
       browser: emptyBrowser, kboBase: "https://kbo.test", season: "2026",
-      batters: ourBatters, pitchers: ourPitchers, defense: ourDefense, log: silent,
+      batters: ourBatters, pitchers: ourPitchers, defense: ourDefense, ...derived, log: silent,
     }),
     /source_unreachable|source_incomplete/,
     "원본 수집 0행은 통과가 아니라 실패여야 한다",
