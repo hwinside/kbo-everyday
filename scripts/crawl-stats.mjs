@@ -21,7 +21,8 @@ import {
 } from "./lib/stats-snapshot-guard.mjs";
 import { assertSourceTruth } from "./lib/stats-source-truth.mjs";
 import { promoteAtomically, recoverPendingPromotion } from "./lib/atomic-promote.mjs";
-import { collectAllPages, createKboPageAdapter } from "./lib/kbo-pagination.mjs";
+import { collectAllPages, createKboPageAdapter, signatureOf } from "./lib/kbo-pagination.mjs";
+import { createSelectAdapter, selectAndConfirm } from "./lib/kbo-select.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = join(__dirname, "..");
@@ -56,85 +57,69 @@ function extractPlayerId(html) {
   return match ? match[1] : "";
 }
 
-async function changeSelectAndWait(page, selector, value, waitMs = 8000) {
-  const current = await page.$eval(selector, (el) => el.value).catch(() => null);
-  if (current === value) return;
-
-  const beforeFirstRow = await page.locator("tbody tr").first().textContent().catch(() => "");
-  await page.selectOption(selector, value);
-
-  try {
-    await page.waitForFunction(
-      ({ selector, value, beforeFirstRow }) => {
-        const el = document.querySelector(selector);
-        const firstRow = document.querySelector("tbody tr")?.textContent?.trim() || "";
-        return !!el && el.value === value && firstRow !== beforeFirstRow;
-      },
-      { selector, value, beforeFirstRow },
-      { timeout: waitMs }
-    );
-  } catch {
-    await page.waitForTimeout(waitMs);
-  }
-
+/**
+ * 드롭다운(시즌·시리즈) 전환 — 확인된 전환만 성공으로 본다.
+ *
+ * ⚠︎ 종전에는 `waitForFunction` 타임아웃을 catch 한 뒤 **고정 대기만 하고 무확인으로
+ * 진행**했다(삼순 6차 지적). postback 이 유실되면 이전 시즌 표를 그대로 크롤해
+ * **데이터셋 전체가 다른 시즌**이 된다. 스냅샷 가드는 개수만 보므로 이걸 못 잡는다.
+ * oracle 과 동일한 fail-close 계약(`selectAndConfirm`)을 공유한다.
+ */
+async function changeSelectAndWait(page, selector, value) {
+  // 표 읽기는 공용 adapter 를 쓴다 — 또 따로 구현하면 계약이 갈라진다.
+  const adapter = createKboPageAdapter(page);
+  await selectAndConfirm(
+    createSelectAdapter(page, selector, async () => signatureOf(await adapter.scrapeTable())),
+    value,
+    { label: selector },
+  );
   await page.waitForLoadState("networkidle").catch(() => {});
-  await page.waitForTimeout(1000);
 }
 
-async function selectSeason(page) {
+// export: 게이트가 실제 함수를 직접 태울 수 있어야 한다(문자열 검사는 `if (false)` 위장을 못 잡는다).
+export async function selectSeason(page) {
   const seriesSelector = "select[name$='ddlSeries$ddlSeries']";
   const seasonSelector = "select[name$='ddlSeason$ddlSeason']";
 
   // Always use regular season for seasonal stat snapshots.
   const hasSeries = await page.$(seriesSelector);
   if (hasSeries) {
-    await changeSelectAndWait(page, seriesSelector, "0", 5000);
+    await changeSelectAndWait(page, seriesSelector, "0");
   }
 
-  await changeSelectAndWait(page, seasonSelector, SEASON, 8000);
+  await changeSelectAndWait(page, seasonSelector, SEASON);
 }
 
-async function sortTable(page, sortKey, waitMs = 5000) {
-  const beforeFirstRow = await page.locator("tbody tr").first().textContent().catch(() => "");
+/**
+ * 정렬 전환 — 이것도 **확인된 교체만** 성공으로 본다.
+ *
+ * ⚠︎ 종전에는 타임아웃을 catch 하고 고정 대기 후 그냥 진행했다(select 와 같은 결손).
+ * 투수 수집은 ERA 기본정렬이 규정이닝 위주라, `GAME_CN` 정렬이 안 먹히면
+ * 불펜·마무리가 통째로 빠진다. 역시 개수 가드로는 안 잡히는 대량 유실이다.
+ */
+export async function sortTable(page, sortKey, { attempts = 3, polls = 10, pollIntervalMs = 500 } = {}) {
+  const adapter = createKboPageAdapter(page);
+  const before = signatureOf(await adapter.scrapeTable());
   const selector = `a[href="javascript:sort('${sortKey}');"]`;
-  const link = await page.$(selector);
-  if (!link) throw new Error(`Sort link not found: ${sortKey}`);
 
-  await link.click();
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    const link = await page.$(selector);
+    if (!link) throw new Error(`Sort link not found: ${sortKey}`);
+    await link.click();
+    await page.waitForLoadState("networkidle").catch(() => {});
 
-  try {
-    await page.waitForFunction(
-      ({ beforeFirstRow }) => {
-        const firstRow = document.querySelector("tbody tr")?.textContent?.trim() || "";
-        return firstRow !== beforeFirstRow;
-      },
-      { beforeFirstRow },
-      { timeout: waitMs }
-    );
-  } catch {
-    await page.waitForTimeout(waitMs);
+    for (let poll = 0; poll < polls; poll++) {
+      await page.waitForTimeout(pollIntervalMs);
+      const now = signatureOf(await adapter.scrapeTable());
+      if (now && now !== before) return;
+    }
   }
 
-  await page.waitForLoadState("networkidle").catch(() => {});
-  await page.waitForTimeout(1000);
-}
-
-async function scrapeTable(page) {
-  return page.$$eval("tbody tr", (rows) =>
-    rows.map((tr) => {
-      const cells = [...tr.querySelectorAll("td")];
-      return {
-        texts: cells.map((td) => td.textContent.trim()),
-        hrefs: cells.map((td) => {
-          const a = td.querySelector("a");
-          return a ? a.getAttribute("href") : "";
-        }),
-      };
-    })
+  throw new Error(
+    `sort_change_failed: ${sortKey} 정렬이 적용되지 않았다(재시도 ${attempts}회 소진)`
+    + ` — 정렬 전 목록을 수집하면 대상이 통째로 바뀜다`,
   );
 }
-
-
 
 async function scrapeAllPages(page) {
   return collectAllPages({ ...createKboPageAdapter(page), log: (line) => console.log(line) });
@@ -237,7 +222,7 @@ async function crawlPitcher(page) {
 
   // ERA 기본 정렬은 규정이닝 투수 위주라 불펜/마무리가 빠진다.
   // 전체 투수 목록을 얻기 위해 등판수(G) 기준으로 재정렬 후 전 페이지를 순회한다.
-  await sortTable(page, "GAME_CN", 6000);
+  await sortTable(page, "GAME_CN");
 
   const rows = await scrapeAllPages(page);
 
@@ -565,7 +550,11 @@ async function main() {
   }
 }
 
-main().catch((e) => {
-  console.error("❌ 크롤링 실패:", e.message);
-  process.exit(1);
-});
+// 직접 실행일 때만 크롤한다. 게이트가 `selectSeason`·`sortTable` 을 import 해
+// 행동을 직접 검증해야 하는데, top-level 실행이면 import 만으로 크롤이 시작된다.
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  main().catch((e) => {
+    console.error("❌ 크롤링 실패:", e.message);
+    process.exit(1);
+  });
+}

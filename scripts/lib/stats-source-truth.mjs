@@ -1,5 +1,6 @@
 import { computeDefenseRuns } from "./defense-runs.mjs";
 import { collectAllPages, createKboPageAdapter, signatureOf } from "./kbo-pagination.mjs";
+import { createSelectAdapter, selectAndConfirm } from "./kbo-select.mjs";
 
 /**
  * 스탯 원본 정합성 대조 — 크롤 write 경로와 독립 QA 스크립트가 공유하는 SSOT.
@@ -64,18 +65,15 @@ export async function collectKboPages(page, url, season, { keyOf } = {}) {
 
   const seasonSelector = "#cphContents_cphContents_cphContents_ddlSeason_ddlSeason";
   if (season && (await page.$(seasonSelector))) {
-    const current = await page.$eval(seasonSelector, (el) => el.value).catch(() => null);
-    if (current !== String(season)) {
-      const before = signatureOf(await adapter.scrapeTable());
-      await page.selectOption(seasonSelector, String(season));
-      await page.waitForLoadState("networkidle").catch(() => {});
-      // 시즌 전환도 실제 교체를 기다린다(고정 대기는 이전 시즌 표를 읽는다).
-      for (let i = 0; i < 16; i++) {
-        await page.waitForTimeout(500);
-        const now = signatureOf(await adapter.scrapeTable());
-        if (now && now !== before) break;
-      }
-    }
+    // ⚠︎ 종전에는 16회 polling 동안 표가 안 바뀌어도 그냥 루프를 빠져나와
+    // **이전 시즌 행**으로 수집을 계속했다(삼순 6차 지적, fake postback 유실로 재현).
+    // 이건 몇 행 유실이 아니라 데이터셋 전체가 다른 시즌이 되는 사고다 —
+    // oracle 이 2025 를 원본으로 삼으면 전 필드 대조가 통째로 뒤집힌다.
+    await selectAndConfirm(
+      createSelectAdapter(page, seasonSelector, async () => signatureOf(await adapter.scrapeTable())),
+      String(season),
+      { label: `${url} 시즌` },
+    );
   }
 
   const rows = await collectAllPages({ ...adapter, log: () => {} });

@@ -32,11 +32,13 @@ on:
       - "scripts/lib/stats-snapshot-guard.mjs"
       - "scripts/lib/atomic-promote.mjs"
       - "scripts/lib/kbo-pagination.mjs"
+      - "scripts/lib/kbo-select.mjs"
       - "scripts/lib/defense-runs.mjs"
       - "scripts/qa/stats-source-truth-verify.mjs"
       - "scripts/qa/stats-snapshot-guard-smoke.mjs"
       - "scripts/qa/atomic-promote-smoke.mjs"
       - "scripts/qa/kbo-pagination-smoke.mjs"
+      - "scripts/qa/kbo-select-smoke.mjs"
       - "package.json"
       - ".github/workflows/stats-source-truth-gate.yml"
   push:
@@ -55,11 +57,13 @@ on:
       - "scripts/lib/stats-snapshot-guard.mjs"
       - "scripts/lib/atomic-promote.mjs"
       - "scripts/lib/kbo-pagination.mjs"
+      - "scripts/lib/kbo-select.mjs"
       - "scripts/lib/defense-runs.mjs"
       - "scripts/qa/stats-source-truth-verify.mjs"
       - "scripts/qa/stats-snapshot-guard-smoke.mjs"
       - "scripts/qa/atomic-promote-smoke.mjs"
       - "scripts/qa/kbo-pagination-smoke.mjs"
+      - "scripts/qa/kbo-select-smoke.mjs"
       - "package.json"
       - ".github/workflows/stats-source-truth-gate.yml"
   workflow_dispatch:
@@ -95,6 +99,9 @@ jobs:
       - name: Pagination completion contract (fail-closed)
         # 11페이지 fake 페이저로 지연 흡수·재클릭 회복·전환 실패·stale·중간 누락을 행동 검증.
         run: npm run qa:kbo-pagination
+
+      - name: Select/sort change gate
+        run: npm run qa:kbo-select
 
       # ── KBO 원본 전수 대조 ────────────────────────────────────
       - name: Verify stats against KBO source of truth (fail-closed)
