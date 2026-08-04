@@ -122,8 +122,15 @@ jobs:
 
       - name: Ensure ffmpeg/ffprobe (video normalize e2e)
         # 정규화 e2e 는 fixture 합성(ffmpeg)과 산출물 판독(ffprobe)에 실바이너리가 필요하다.
-        # 부재면 스킵하지 않고 job 을 떨어뜨린다(fail-closed).
-        run: ffmpeg -version && ffprobe -version
+        # ubuntu-latest 러너에는 기본 탑재되어 있지 않아(2026-08-04 실측 exit 127) 설치한다.
+        # 설치 후에도 없으면 스킵하지 않고 job 을 떨어뜨린다(fail-closed).
+        run: |
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y ffmpeg
+          fi
+          ffmpeg -version
+          ffprobe -version
 
       - name: Install Playwright chromium (video normalize e2e)
         run: npx playwright install --with-deps chromium
