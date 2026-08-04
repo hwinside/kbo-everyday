@@ -277,50 +277,68 @@ const okMeta: FfprobeMeta = { durationMs: 12000, width: 720, height: 1280, hasVi
     process.env.NEXT_PUBLIC_SUPABASE_URL ||= "https://smoke.invalid";
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||= "smoke-anon-key";
     const { __qaRealDeps } = await import("../../src/lib/venue-stories/video-validate-server");
-    const { supabaseAdmin } = await import("../../src/lib/supabase/admin");
 
-    // supabase.from(...).update(payload) 의 payload 를 가로채서 실제 기록값을 읽는다.
+    // supabase client 를 **주입**해 update payload 를 가로채다.
+    // 종전에는 supabaseAdmin 싱글턴을 모든키패치했는데, 모듈 해석 경로가 달라지면
+    // 서로 다른 인스턴스가 돼 로컬 GREEN / CI RED 가 나왔다(2026-08-04 실측).
     const captured: Record<string, unknown>[] = [];
-    const admin = supabaseAdmin as unknown as { from: (t: string) => unknown };
-    const originalFrom = admin.from.bind(supabaseAdmin);
-    admin.from = (table: string) => {
-      if (table !== "venue_stories") return originalFrom(table);
-      const chain = {
-        update(payload: Record<string, unknown>) {
+    const capturedConds: Record<string, unknown>[] = [];
+    const makeCapturingClient = () => ({
+      from(table: string) {
+        if (table !== "venue_stories") throw new Error(`unexpected table: ${table}`);
+        const conds: Record<string, unknown> = {};
+        const chain: Record<string, unknown> = {};
+        chain.update = (payload: Record<string, unknown>) => {
           captured.push(payload);
+          capturedConds.push(conds);
           return chain;
-        },
-        eq: () => chain,
-        select: async () => ({ data: [{ id: 7 }], error: null }),
-      };
-      return chain;
-    };
+        };
+        chain.eq = (col: string, val: unknown) => {
+          conds[col] = val;
+          return chain;
+        };
+        chain.select = async () => ({ data: [{ id: 7 }], error: null });
+        return chain;
+      },
+    });
 
-    try {
-      for (const promoteStatus of ["active", "archived"] as const) {
-        for (const needsTranscode of [true, false]) {
-          captured.length = 0;
-          const deps = __qaRealDeps(promoteStatus);
-          const r = await deps.promoteRow(7, okMeta, { needsTranscode });
-          ok(
-            `realDeps(${promoteStatus}) promoteRow(needsTranscode=${needsTranscode}) → CAS 성공`,
-            r === true,
-          );
-          ok(
-            `realDeps(${promoteStatus}) 가 needs_transcode=${needsTranscode} 를 그대로 기록(경로별 고정값 아님)`,
-            captured.length === 1 && captured[0].needs_transcode === needsTranscode,
-          );
-        }
+    for (const promoteStatus of ["active", "archived"] as const) {
+      for (const needsTranscode of [true, false]) {
+        captured.length = 0;
+        capturedConds.length = 0;
+        const deps = __qaRealDeps(
+          promoteStatus,
+          makeCapturingClient() as unknown as Parameters<typeof __qaRealDeps>[1],
+        );
+        const r = await deps.promoteRow(7, okMeta, { needsTranscode });
+        ok(
+          `realDeps(${promoteStatus}) promoteRow(needsTranscode=${needsTranscode}) → CAS 성공`,
+          r === true,
+        );
+        ok(
+          `realDeps(${promoteStatus}) 가 needs_transcode=${needsTranscode} 를 그대로 기록(경로별 고정값 아님)`,
+          captured.length === 1 && captured[0].needs_transcode === needsTranscode,
+        );
+        ok(
+          `realDeps(${promoteStatus}) 가 status=${promoteStatus} 로 기록 + pending CAS 유지`,
+          captured[0]?.status === promoteStatus && capturedConds[0]?.status === "pending",
+        );
       }
-      // 종전 버그 재현 방지의 핵심: archived + 느린 원본이 큐에 올라가야 한다
-      captured.length = 0;
-      await __qaRealDeps("archived").promoteRow(7, okMeta, { needsTranscode: true });
-      ok(
-        "diary_manual(archived) 느린 영상도 needs_transcode=true — 영구 미최적화 종결 안 된다",
-        captured.length === 1 && captured[0].needs_transcode === true,
-      );
+    }
+    // 종전 버그 재현 방지의 핵심: archived + 느린 원본이 큐에 올라가야 한다
+    captured.length = 0;
+    capturedConds.length = 0;
+    await __qaRealDeps(
+      "archived",
+      makeCapturingClient() as unknown as Parameters<typeof __qaRealDeps>[1],
+    ).promoteRow(7, okMeta, { needsTranscode: true });
+    ok(
+      "diary_manual(archived) 느린 영상도 needs_transcode=true — 영구 미최적화 종결 안 된다",
+      captured.length === 1 && captured[0].needs_transcode === true,
+    );
 
-      // inspectServeReadiness 가 실제 파일 바이트를 읽는지(박스 순서 판정)
+    // inspectServeReadiness 가 실제 파일 바이트를 읽는지(박스 순서 판정) — supabase 무관
+    {
       const fsMod = await import("node:fs/promises");
       const osMod = await import("node:os");
       const pathMod = await import("node:path");
@@ -341,13 +359,13 @@ const okMeta: FfprobeMeta = { durationMs: 12000, width: 720, height: 1280, hasVi
         slowPath,
         Buffer.concat([mkBox("ftyp", 20), Buffer.alloc(12), mkBox("mdat", 4096)]),
       );
-      const deps = __qaRealDeps("active");
+      const deps = __qaRealDeps(
+        "active",
+        makeCapturingClient() as unknown as Parameters<typeof __qaRealDeps>[1],
+      );
       const rFast = await deps.inspectServeReadiness(fastPath, okMeta);
       const rSlow = await deps.inspectServeReadiness(slowPath, okMeta);
-      const rMissing = await deps.inspectServeReadiness(
-        pathMod.join(tmpDir, "nope.mp4"),
-        okMeta,
-      );
+      const rMissing = await deps.inspectServeReadiness(pathMod.join(tmpDir, "nope.mp4"), okMeta);
       ok("realDeps inspectServeReadiness: moov 선행 파일 → fastStart=true", rFast.fastStart === true);
       ok("realDeps inspectServeReadiness: mdat 선행 파일 → fastStart=false", rSlow.fastStart === false);
       ok("realDeps inspectServeReadiness: 읽기 실패 → null(fail-close 입력)", rMissing.fastStart === null);
@@ -356,8 +374,6 @@ const okMeta: FfprobeMeta = { durationMs: 12000, width: 720, height: 1280, hasVi
         rFast.maxEdge === Math.max(okMeta.width!, okMeta.height!),
       );
       await fsMod.rm(tmpDir, { recursive: true, force: true });
-    } finally {
-      admin.from = originalFrom as typeof admin.from;
     }
   }
 

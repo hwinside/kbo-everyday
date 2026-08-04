@@ -87,12 +87,27 @@ export type VenueVideoPromoteStatus = "active" | "archived";
  * QA seam — **실제 배포되는 deps** 를 그대로 노출한다(복사본 아니임).
  * 스모크가 fake deps 만 검증하면 서버 배선을 바꿔도 GREEN 이 된다(실제로 잡은 false-green).
  * 이 export 로 venue-validate 스모크가 promoteRow 가 서버 실측값을 쓰는지 직접 검증한다.
+ *
+ * client 를 주입받는 이유: 스모크가 supabaseAdmin 싱글턴을 목키패치하는 방식은
+ * 모듈 해석 경로(alias "@/..." vs 상대경로)에 따라 같은 인스턴스가 아닐 수 있어
+ * 로컬은 GREEN 인데 CI 는 RED 가 됐다(2026-08-04 실측). 주입은 환경 무관하게 결정적이고,
+ * payload 구성·CAS 조건 등 검증 대상 로직은 그대로 실배선을 탄다.
  */
-export function __qaRealDeps(promoteStatus: VenueVideoPromoteStatus): ValidateDeps {
-  return realDeps(promoteStatus);
+export function __qaRealDeps(
+  promoteStatus: VenueVideoPromoteStatus,
+  client?: SupabaseLike,
+): ValidateDeps {
+  return realDeps(promoteStatus, client);
 }
 
-function realDeps(promoteStatus: VenueVideoPromoteStatus): ValidateDeps {
+/** realDeps 가 쓰는 supabase 최소 인터페이스(QA 주입용). */
+type SupabaseLike = typeof supabase;
+
+function realDeps(
+  promoteStatus: VenueVideoPromoteStatus,
+  client: SupabaseLike = supabase,
+): ValidateDeps {
+  const supabase = client; // 아래 본문은 전부 이 바인딩을 쓴다(모듈 싱글턴 직참조 제거).
   return {
     async download(bucket, path) {
       try {
