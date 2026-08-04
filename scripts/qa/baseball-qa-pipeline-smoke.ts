@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import { normalizeKey, normalizeQuestion } from "../../src/lib/baseball-qa/normalize";
@@ -8,6 +9,7 @@ import {
   attemptBaseballQaOutbox,
   collectBaseballQaAnsweredQuestionIds,
   enqueueBaseballQaQuestion,
+  mergeBaseballQaAnsweredQuestionIds,
   getBaseballQaReplyStates,
   observeBaseballQaReplies,
   readBaseballQaOutbox,
@@ -2023,6 +2025,68 @@ async function verifyClientRetryOutbox() {
     assert.equal(readBaseballQaOutbox(storage).length, 1, "미답변 picker는 outbox upsert");
   }
 
+  // 삼순 5차 P0-a: Realtime 증분 관측이 answered 집합을 **교체**하면 안 된다.
+  //
+  // `observeBaseballQaMessages` 는 전체 히스토리로도 불리고 Realtime INSERT 단건(`[msg]`)으로도
+  // 불린다. 단건 증분은 당연히 그 메시지만 담고 있으므로, 교체하면 이미 답변된 과거
+  // question id 가 전부 사라져 picker 가 다시 활성화되고 영구 typing 이 재발한다.
+  {
+    const history = [
+      { sender_id: GENIUS_ID, dedup_key: "baseball-genius-picker:222", payload: { reply_kind: "picker" } },
+      { sender_id: GENIUS_ID, dedup_key: "baseball-genius:222" },
+      { sender_id: GENIUS_ID, dedup_key: "baseball-genius:333" },
+    ];
+    const afterHistory = mergeBaseballQaAnsweredQuestionIds(new Set<number>(), history, GENIUS_ID);
+    assert.deepEqual([...afterHistory].sort((a, b) => a - b), [222, 333], "전체 히스토리 관측");
+
+    // Realtime 으로 무관한 새 메시지 1건만 들어온 경우 — 기존 answered 가 살아있어야 한다.
+    const afterUnrelatedDelta = mergeBaseballQaAnsweredQuestionIds(
+      afterHistory,
+      [{ sender_id: "someone-else", dedup_key: null }],
+      GENIUS_ID,
+    );
+    assert.deepEqual(
+      [...afterUnrelatedDelta].sort((a, b) => a - b),
+      [222, 333],
+      "무관한 Realtime 증분은 answered 집합을 지우지 않는다",
+    );
+    assert.equal(afterUnrelatedDelta, afterHistory, "변화 없으면 참조 동일(불필요 리렌더 없음)");
+
+    // 새 답변이 Realtime 단건으로 들어오면 기존 집합에 **더해진다**.
+    const afterNewAnswer = mergeBaseballQaAnsweredQuestionIds(
+      afterUnrelatedDelta,
+      [{ sender_id: GENIUS_ID, dedup_key: "baseball-genius:444" }],
+      GENIUS_ID,
+    );
+    assert.deepEqual(
+      [...afterNewAnswer].sort((a, b) => a - b),
+      [222, 333, 444],
+      "새 답변은 누적 merge 된다",
+    );
+
+    // 이게 깨지면 생기는 실제 피해를 actual 로 묶는다: answered 가 사라지면 upsert 가 넘어간다.
+    values.clear();
+    const lostAnswered: ReadonlySet<number> = new Set<number>();
+    assert.equal(
+      applyBaseballQaPlayerPick(storage, "conversation-lost", 222, "69102", lostAnswered.has(222)),
+      true,
+      "answered 가 유실되면 과거 picker 재탭이 수락된다(= 영구 typing 재발 경로)",
+    );
+    values.clear();
+    assert.equal(
+      applyBaseballQaPlayerPick(storage, "conversation-kept", 222, "69102", afterNewAnswer.has(222)),
+      false,
+      "answered 가 유지되면 과거 picker 재탭은 거부된다",
+    );
+    values.clear();
+  }
+
+  // hook 이 교체가 아니라 merge helper 를 쓰는지, 그리고 대화 전환에서만 비우는지.
+  assert.match(useDmSource, /mergeBaseballQaAnsweredQuestionIds\(/,
+    "useDM 은 증분 관측을 누적 merge 해야 한다(집합 교체 금지)");
+  assert.match(useDmSource, /setGeniusAnsweredQuestionIds\(\(prev\) => \(prev\.size === 0 \? prev : new Set<number>\(\)\)\)/,
+    "answered 집합은 대화 전환 시점에서만 초기화된다");
+
   // UI 계약 actual: 카드 자체가 비활성화되어야 중복/다른 옵션 연속 탭도 1요청으로 고정된다.
   // hook이 두 집합을 내려주고 페이지가 disabled 로 쓰는 배선이 끊기면 영원 typing이 재발한다.
   assert.match(useDmSource, /collectBaseballQaAnsweredQuestionIds/,
@@ -2455,6 +2519,63 @@ async function verifyProductionSeasonRecordSeam() {
   } finally {
     if (originalNodeEnv === undefined) delete env.NODE_ENV;
     else env.NODE_ENV = originalNodeEnv;
+  }
+
+  // ⚠️ 위 in-process 주입만으로는 부족하다(삼순 5차 P0-b). 이 파일 최상단 import 가
+  // 이미 모듈을 평가한 뒤에 env 를 바꾸기 때문에, **module scope 에서 한 번 읽는**
+  // 분기(`const IS_PROD = process.env.NODE_ENV === "production"`)는 이미 false 로 굳어 있어
+  // 그대로 GREEN 이 된다. 그래서 **import 보다 먼저** NODE_ENV=production 이 박힌
+  // 별도 프로세스에서 같은 factory 를 fresh-load 해 동일 계약을 다시 확인한다.
+  await verifyProductionSeasonRecordSeamInFreshProcess();
+}
+
+/**
+ * import 시점부터 NODE_ENV=production 인 새 프로세스에서 seam 을 fresh-load 해 검증한다.
+ *
+ * 이게 없으면 module-scope env 상수로 기록 조회를 끊는 변종을 게이트가 놓친다.
+ */
+async function verifyProductionSeasonRecordSeamInFreshProcess() {
+  const probe = path.join(process.cwd(), "scripts", "qa", "tmp-season-record-prod-probe.mts");
+  const source = `
+import assert from "node:assert/strict";
+assert.equal(process.env.NODE_ENV, "production", "probe 프로세스는 import 이전에 production 이어야 한다");
+const { createSeasonRecordFetcher } = await import("../../src/lib/baseball-qa/stats/fetch-season-record");
+const calls = [];
+const client = {
+  from: (table) => ({
+    select: (columns) => ({
+      eq: (column, value) => ({
+        limit: async (limit) => {
+          calls.push(["table", table], ["select", columns], ["column", column], ["value", value], ["limit", limit]);
+          return { data: [{ player_key: value, kbo_id: value, name: "문보경" }], error: null };
+        },
+      }),
+    }),
+  }),
+};
+const rows = await createSeasonRecordFetcher(client)("batter", "69102");
+assert.equal(rows.length, 1, "fresh production process 에서도 실제 row 반환");
+assert.deepEqual(calls, [
+  ["table", "player_stats_batter"], ["select", "*"], ["column", "player_key"],
+  ["value", "69102"], ["limit", 2],
+], "fresh production process 에서도 동일 조회");
+const pitcherRows = await createSeasonRecordFetcher(client)("pitcher", "56143");
+assert.equal(pitcherRows.length, 1, "fresh production process pitcher row");
+`;
+  writeFileSync(probe, source, "utf8");
+  try {
+    const result = spawnSync(process.execPath, ["--import", "tsx", probe], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: { ...process.env, NODE_ENV: "production" },
+    });
+    assert.equal(
+      result.status,
+      0,
+      `import 이전 NODE_ENV=production 프로세스에서 seam 이 깨졌다:\n${result.stdout ?? ""}\n${result.stderr ?? ""}`,
+    );
+  } finally {
+    rmSync(probe, { force: true });
   }
 }
 

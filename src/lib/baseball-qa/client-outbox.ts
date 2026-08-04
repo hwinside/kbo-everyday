@@ -138,6 +138,35 @@ export function collectBaseballQaAnsweredQuestionIds(
   return answered;
 }
 
+/**
+ * answered 집합을 **누적 merge** 한다 — 교체하지 않는다 (삼순 5차 P0-a).
+ *
+ * 관측은 두 경로로 들어온다: 전체 히스토리 재조회와 Realtime INSERT **단건**.
+ * 단건 증분으로 집합을 교체하면 그 메시지 하나에 없는 answered id 가 전부 사라져
+ * 이미 답변된 과거 picker 가 다시 활성화되고, 그걸 탭하면 영구 typing 이 재발한다.
+ *
+ * 참조 동일성을 유지해야 불필요한 리렌더가 안 생기므로, 새 id 가 없으면 `prev` 그대로 돌려준다.
+ * 집합 초기화는 대화 전환 시점에서만 한다(이 함수는 줄이지 않는다).
+ */
+export function mergeBaseballQaAnsweredQuestionIds(
+  prev: ReadonlySet<number>,
+  messages: BaseballQaReplyMessage[],
+  geniusUserId: string,
+): ReadonlySet<number> {
+  const observed = collectBaseballQaAnsweredQuestionIds(messages, geniusUserId);
+  let hasNew = false;
+  for (const id of observed) {
+    if (!prev.has(id)) {
+      hasNew = true;
+      break;
+    }
+  }
+  if (!hasNew) return prev;
+  const merged = new Set(prev);
+  for (const id of observed) merged.add(id);
+  return merged;
+}
+
 export function resetBaseballQaQuestion(storage: StorageLike, messageId: number) {
   const entries = readBaseballQaOutbox(storage).map((row) =>
     row.messageId === messageId ? { ...row, attempts: 0, acknowledged: false } : row,

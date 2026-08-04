@@ -91,8 +91,102 @@ async function main() {
     () => db.exec("insert into public.genius_question_logs(match_path) values ('player_rag')"),
     /check constraint|23514/i,
   );
+
+  await verifyQuotaReleaseUsesReservedDayBucket(db);
+
   await db.close();
-  console.log("PASS genius match_path DB actual — picker migration/CHECK/RPC + rag/kbo_structured ledger + 미지 경로 거부");
+  console.log(
+    "PASS genius match_path DB actual — picker migration/CHECK/RPC + rag/kbo_structured ledger + " +
+      "미지 경로 거부 + quota 반납이 예약일 버킷을 차감",
+  );
+}
+
+/**
+ * quota 반납은 **예약했던 KST 날짜 버킷**을 차감해야 한다 (삼순 5차 P0-c).
+ *
+ * 재현 시나리오: 23:59 에 질문해서 어제 버킷을 한 개 썼고(picker 를 받음),
+ * 자정을 넘긴 00:01 에 선수를 고른다. 반납이 "지금" 날짜를 깎으면
+ *   ① 어제 버킷은 그대로 남아 유저가 어제 한도를 잃고
+ *   ② 오늘 버킷이 깎여 유저가 오늘 한도를 공짜로 한 개 얻는다
+ * — 양쪽으로 틀린다. 두 버킷을 동시에 놓고 정확히 한 쪽만 줄어드는지 actual 로 본다.
+ */
+async function verifyQuotaReleaseUsesReservedDayBucket(db: PGlite) {
+  const userId = "00000000-0000-4000-8000-0000000000c7";
+  await db.exec(`
+    insert into public.genius_daily_usage(user_id, kst_day, used) values
+      ('${userId}', (clock_timestamp() at time zone 'Asia/Seoul')::date - 1, 3),
+      ('${userId}', (clock_timestamp() at time zone 'Asia/Seoul')::date, 7);
+    insert into public.genius_question_jobs(
+      message_id, user_id, status, source, quota_reserved, quota_allowed, quota_remaining, quota_released
+    ) values (777, '${userId}', 'awaiting_selection', 'player_picker', true, true, 17, false);
+    update public.genius_question_jobs
+      set quota_kst_day = (clock_timestamp() at time zone 'Asia/Seoul')::date - 1
+      where message_id = 777;
+  `);
+
+  const released = await db.query<{ released: number }>(
+    "select release_baseball_genius_daily_question_for_message($1,$2) as released",
+    [777, userId],
+  );
+  assert.equal(Number(released.rows[0]?.released), 1, "예약된 job 은 1회 반납된다");
+
+  const buckets = await db.query<{ offset_days: number; used: number }>(`
+    select (kst_day - (clock_timestamp() at time zone 'Asia/Seoul')::date) as offset_days, used
+    from public.genius_daily_usage where user_id = $1 order by kst_day
+  `, [userId]);
+  assert.deepEqual(
+    buckets.rows.map((row) => [Number(row.offset_days), Number(row.used)]),
+    [[-1, 2], [0, 7]],
+    "예약일(어제) 버킷만 3→2 로 줄고 오늘 버킷 7 은 불변이어야 한다",
+  );
+
+  // 멱등: 재호출은 아무 버킷도 건드리지 않는다.
+  const again = await db.query<{ released: number }>(
+    "select release_baseball_genius_daily_question_for_message($1,$2) as released",
+    [777, userId],
+  );
+  assert.equal(Number(again.rows[0]?.released), 0, "반납은 message_id 당 정확히 1회");
+  const afterReplay = await db.query<{ offset_days: number; used: number }>(`
+    select (kst_day - (clock_timestamp() at time zone 'Asia/Seoul')::date) as offset_days, used
+    from public.genius_daily_usage where user_id = $1 order by kst_day
+  `, [userId]);
+  assert.deepEqual(
+    afterReplay.rows.map((row) => [Number(row.offset_days), Number(row.used)]),
+    [[-1, 2], [0, 7]],
+    "재호출에도 버킷 불변",
+  );
+
+  // prepare 는 반납 끝난 예약의 날짜 귀속도 같이 비운다(오래된 날짜 잔류 금지).
+  await db.query("select prepare_baseball_genius_player_selection($1,$2,$3)", [777, userId, "69102"]);
+  const afterPrepare = await db.query<{ quota_kst_day: string | null; quota_reserved: boolean }>(
+    "select quota_kst_day, quota_reserved from public.genius_question_jobs where message_id = 777",
+  );
+  assert.equal(afterPrepare.rows[0]?.quota_kst_day, null, "반납 끝난 예약은 날짜 귀속도 비운다");
+  assert.equal(afterPrepare.rows[0]?.quota_reserved, false, "최종답변용 예약이 새로 열린다");
+
+  // 예약 RPC 가 날짜를 실제로 기록하는지 — 이게 없으면 위 계약이 운영에서 무의미하다.
+  const reserved = await db.query<{ allowed: boolean; remaining: number }>(
+    "select * from reserve_baseball_genius_daily_question_for_message($1,$2,$3)",
+    [777, userId, 20],
+  );
+  assert.equal(reserved.rows[0]?.allowed, true, "재예약은 허용된다");
+  const reservedDay = await db.query<{ offset_days: number | null; has_day: boolean }>(`
+    select (quota_kst_day - (clock_timestamp() at time zone 'Asia/Seoul')::date) as offset_days,
+           (quota_kst_day is not null) as has_day
+    from public.genius_question_jobs where message_id = 777
+  `);
+  // ⚠️ NULL 검사를 먼저 한다. `Number(null) === 0` 이라 이걸 빼면 "기록 안 함"이
+  // offset 0 과 구분되지 않아 계약 무효화 변종이 그대로 GREEN 이 된다(실제로 밟음).
+  assert.equal(
+    reservedDay.rows[0]?.has_day,
+    true,
+    "예약 RPC 는 quota_kst_day 를 반드시 기록해야 한다(NULL 금지)",
+  );
+  assert.equal(
+    Number(reservedDay.rows[0]?.offset_days),
+    0,
+    "예약 RPC 는 차감한 버킷의 KST 날짜를 job 에 기록해야 한다",
+  );
 }
 
 main().catch((error: unknown) => {

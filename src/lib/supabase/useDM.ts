@@ -19,6 +19,7 @@ import {
   resetBaseballQaQuestion,
   applyBaseballQaPlayerPick,
   collectBaseballQaAnsweredQuestionIds,
+  mergeBaseballQaAnsweredQuestionIds,
   type BaseballQaReplyStates,
 } from "@/lib/baseball-qa/client-outbox";
 import { usePollingFallback } from "./usePollingFallback";
@@ -227,14 +228,18 @@ export function useDMChat(conversationId: string) {
     if (typeof window === "undefined") return;
     // 최종 답변 집합은 observed 여부와 무관하게 매 관측마다 갱신한다 — 이미 답변된
     // 히스토리만 불러온 재진입에서도 picker를 비활성화해야 한다.
+    //
+    // ⚠️ **관측은 누적 merge 이지 교체가 아니다**(삼순 5차 P0-a). 이 함수는 전체
+    // 히스토리(`loadMessages`)로도 불리고 Realtime INSERT 단건(`[msg]`)으로도 불린다.
+    // 단건 증분으로 집합을 교체하면 그 메시지 하나에 없는 answered id 가 전부 사라져
+    // 이미 답변된 과거 picker 가 다시 활성화된다(= 영구 typing 재발).
+    // 집합은 **대화 전환 시에만** 비우고(아래 conversationId effect), 그 외엔 단조 증가만 한다.
     const answered = collectBaseballQaAnsweredQuestionIds(
       nextMessages,
       BASEBALL_GENIUS_USER_ID,
     );
     setGeniusAnsweredQuestionIds((prev) =>
-      answered.size === prev.size && [...answered].every((id) => prev.has(id))
-        ? prev
-        : answered,
+      mergeBaseballQaAnsweredQuestionIds(prev, nextMessages, BASEBALL_GENIUS_USER_ID),
     );
     for (const messageId of answered) observedBaseballQaReplyIdsRef.current.add(messageId);
     const observed = observeBaseballQaReplies(
@@ -435,6 +440,10 @@ export function useDMChat(conversationId: string) {
   // 대화 전환 시에는 replace 로 새 대화 메시지만 로드.
   // single-flight 대기 중 대화가 또 바뀌면 generation 가드가 실행 자체를 건너뛴다.
   useEffect(() => {
+    // answered/picked 집합은 관측 단계에서 누적만 하므로(증분 교체 금지), 대화가
+    // 바뀔 때 여기서 버린다. 이게 없으면 이전 대화의 question id 가 다음 대화로 샐다.
+    setGeniusAnsweredQuestionIds((prev) => (prev.size === 0 ? prev : new Set<number>()));
+    setGeniusPickedQuestionIds((prev) => (prev.size === 0 ? prev : new Set<number>()));
     const generation = ++loadGenerationRef.current;
     requestLoad(() => {
       if (loadGenerationRef.current !== generation) return;
