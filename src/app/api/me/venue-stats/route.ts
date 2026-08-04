@@ -24,7 +24,10 @@ import type { LedgerRecord } from "@/lib/game-logs/completeness";
 import { TEAM_ID_TO_CODE, type PlayerGameLogRow } from "@/lib/game-logs/ingest";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { fetchAttendanceGamesWithinDeadline } from "@/lib/venue-attendance/fetch-games";
-import { fetchGameErrorsWithinDeadline } from "@/lib/venue-stats/game-errors";
+import {
+  fetchGameErrorsWithinDeadline,
+  __resetGameErrorCaches,
+} from "@/lib/venue-stats/game-errors";
 import bundledBatters from "@/lib/constants/stats-2026-batters.json";
 import bundledPitchers from "@/lib/constants/stats-2026-pitchers.json";
 import statsMeta from "@/lib/constants/stats-2026-meta.json";
@@ -46,6 +49,38 @@ export const maxDuration = 60;
 const SUPPORTED_SEASON = 2026;
 /** 정규시즌만 (§5). srId 근거는 cron/game-logs·backfill과 동일. */
 const REGULAR_SEASON_SR_ID = "0";
+/** 정규 외 시리즈 — 다이어리에는 유지하되 팀 통계 제외 사유를 식별한다. */
+const NON_REGULAR_SEASON_SR_ID = "1,3,4,5,7,9";
+
+type VenueStatsRouteRuntimeDeps = {
+  getVerifiedUser: typeof getVerifiedUserFromRequest;
+  supabaseClient: typeof supabase;
+};
+
+const defaultRouteRuntimeDeps: VenueStatsRouteRuntimeDeps = {
+  getVerifiedUser: getVerifiedUserFromRequest,
+  supabaseClient: supabase,
+};
+let routeRuntimeDeps = defaultRouteRuntimeDeps;
+
+/** 테스트 전용 — actual GET 회귀가 네트워크 없이 인증·DB 경계를 통과하게 한다. */
+export function __setVenueStatsRouteRuntimeDepsForTests(
+  overrides: Partial<VenueStatsRouteRuntimeDeps> | null,
+): void {
+  routeRuntimeDeps = overrides
+    ? { ...defaultRouteRuntimeDeps, ...overrides }
+    : defaultRouteRuntimeDeps;
+}
+
+/**
+ * 테스트 전용 — 이 route 가 실제로 쓰는 game-errors 모듈 인스턴스의 캐시를 비운다.
+ * ⚠️ 테스트가 `../../src/lib/...` 상대경로로 직접 import 하면 alias(`@/lib/...`)로 로드된
+ *    route 의 인스턴스와 다른 모듈이 되어(CI 에서 실제로 갈렸다) 캐시가 안 지워지고,
+ *    앞 케이스 결과가 그대로 재사용돼 RED 가 무력화된다. 반드시 이 hook 을 쓴다.
+ */
+export function __resetVenueStatsRouteGameErrorCachesForTests(): void {
+  __resetGameErrorCaches();
+}
 
 /** 팀코드 → teamId (parseGameTeamCodes가 쓰는 TEAM_ID_TO_CODE의 역맵) — P0-2 teams exact 대조용. */
 const TEAM_CODE_TO_ID = new Map<string, number>(
@@ -444,7 +479,7 @@ export function __expireSeasonAggregatesCache(season: number): void {
 
 /** 본인 전용 — userId 파라미터를 받지 않아 공개 프로필 조회로 확장되지 않는다 (§9 401·타인 차단). */
 export async function GET(req: NextRequest) {
-  const verified = await getVerifiedUserFromRequest(req);
+  const verified = await routeRuntimeDeps.getVerifiedUser(req);
   if (!verified) {
     return NextResponse.json({ error: "인증이 필요합니다" }, { status: 401 });
   }
@@ -455,21 +490,23 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "season 형식 오류" }, { status: 400 });
   }
   const seasonSupported = requestedSeason === SUPPORTED_SEASON;
+  const routeSupabase = routeRuntimeDeps.supabaseClient;
 
   // query-guard: bounded -- 본인 시즌 직관 기록 상한 200경기 (기존 venue-attendance route와 동일)
   const [attendanceResult, profileResult] = await Promise.all([
-    supabase
+    routeSupabase
       .from("venue_attendance")
       .select(
         "id, game_id, game_date, favorite_team_id_snapshot, stadium_name, recorded_at, source",
       )
       .eq("user_id", verified.user.id)
       .in("source", ["story_geofence", "diary_manual"])
+      .is("deleted_at", null)
       .gte("game_date", `${requestedSeason}-01-01`)
       .lt("game_date", `${requestedSeason + 1}-01-01`)
       .order("game_date", { ascending: false })
       .limit(200),
-    supabase
+    routeSupabase
       .from("profiles")
       .select("favorite_players, team_id")
       .eq("id", verified.user.id)
@@ -490,7 +527,7 @@ export async function GET(req: NextRequest) {
     typeof profileResult.data?.team_id === "number" ? profileResult.data.team_id : null;
 
   const [
-    gamesById,
+    attendanceGames,
     logsResult,
     ledgersResult,
     seasonAggregates,
@@ -499,9 +536,14 @@ export async function GET(req: NextRequest) {
     teamRecords,
   ] =
     await Promise.all([
-      fetchAttendanceGamesWithinDeadline(rows, {
-        fetcher: (date) => fetchGames(date, REGULAR_SEASON_SR_ID),
-      }),
+      Promise.all([
+        fetchAttendanceGamesWithinDeadline(rows, {
+          fetcher: (date) => fetchGames(date, REGULAR_SEASON_SR_ID),
+        }),
+        fetchAttendanceGamesWithinDeadline(rows, {
+          fetcher: (date) => fetchGames(date, NON_REGULAR_SEASON_SR_ID),
+        }),
+      ]).then(([games, nonRegularGames]) => ({ games, nonRegularGames })),
       fetchAttendanceGameLogs(gameIds),
       fetchLedgers(gameIds),
       seasonSupported
@@ -524,7 +566,7 @@ export async function GET(req: NextRequest) {
   //    경기 목록 조회 뒤에 실행해야 canonical 을 알 수 있으므로 위 Promise.all 밖이다.
   const gameErrors = await fetchGameErrorsWithinDeadline(
     gameIds.map((gameId) => {
-      const game = gamesById.get(gameId);
+      const game = attendanceGames.games.get(gameId);
       const canonical =
         game?.status === "final" &&
         typeof game.awayScore === "number" &&
@@ -562,7 +604,8 @@ export async function GET(req: NextRequest) {
     season: requestedSeason,
     supportedSeason: SUPPORTED_SEASON,
     rows,
-    games: gamesById,
+    games: attendanceGames.games,
+    nonRegularGames: attendanceGames.nonRegularGames,
     standings,
     currentTeamId,
     favorites,

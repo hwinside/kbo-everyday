@@ -1,0 +1,94 @@
+name: Venue Story Picker Gate
+
+# 직관 라이브 스토리 픽커/뷰어 게이트 (삼순 #1063 NO-GO — required CI 결속).
+#
+# 배경: qa:venue-multi-pick(필터 전환 race 포함)과 qa:venue-story-video-poster 가
+# package.json 에만 있고 어떤 워크플로에서도 호출되지 않아, 배선이 깨져도 기존 필수
+# 체크(game-log-ledger / venue-stats-s2)는 GREEN 인 false-green 상태였다.
+#
+# 이 게이트는 Composer/Viewer/네이티브 브릿지·플러그인·해당 QA 스크립트가 바뀔 때
+# fail-closed 로 돈다. generation/pending reload 가드나 poster 배선을 제거하면
+# 이 job 이 실제로 RED 가 되어야 한다(결함주입으로 확인).
+#
+# ⚠️ GitHub Actions 워크플로 파서는 YAML anchor/alias 를 지원하지 않는다 —
+# pull_request / push paths 는 중복이지만 반드시 그대로 나열해야 한다.
+
+on:
+  pull_request:
+    paths:
+      - "src/components/game/VenueStoryComposer.tsx"
+      - "src/components/game/VenueStoryViewer.tsx"
+      - "src/components/game/VenueLibraryGrid.tsx"
+      - "src/lib/venue-stories/**"
+      - "src/lib/capacitor/venue-media-library.ts"
+      - "ios/App/App/VenueMediaLibraryPlugin.swift"
+      - "ios/App/App/Info.plist"
+      - "ios/App/App/MainViewController.swift"
+      - "ios/App/App.xcodeproj/project.pbxproj"
+      - "android/app/src/main/java/fan/keubo/app/VenueMediaLibraryPlugin.kt"
+      - "android/app/src/main/java/fan/keubo/app/MainActivity.java"
+      - "android/app/src/main/AndroidManifest.xml"
+      - "scripts/qa/venue-multi-pick-smoke.ts"
+      - "scripts/qa/venue-story-video-poster-smoke.ts"
+      - "eslint.config.mjs"
+      - "package.json"
+      - ".github/workflows/venue-story-picker-gate.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "src/components/game/VenueStoryComposer.tsx"
+      - "src/components/game/VenueStoryViewer.tsx"
+      - "src/components/game/VenueLibraryGrid.tsx"
+      - "src/lib/venue-stories/**"
+      - "src/lib/capacitor/venue-media-library.ts"
+      - "ios/App/App/VenueMediaLibraryPlugin.swift"
+      - "ios/App/App/Info.plist"
+      - "ios/App/App/MainViewController.swift"
+      - "ios/App/App.xcodeproj/project.pbxproj"
+      - "android/app/src/main/java/fan/keubo/app/VenueMediaLibraryPlugin.kt"
+      - "android/app/src/main/java/fan/keubo/app/MainActivity.java"
+      - "android/app/src/main/AndroidManifest.xml"
+      - "scripts/qa/venue-multi-pick-smoke.ts"
+      - "scripts/qa/venue-story-video-poster-smoke.ts"
+      - "eslint.config.mjs"
+      - "package.json"
+      - ".github/workflows/venue-story-picker-gate.yml"
+
+jobs:
+  venue-story-picker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Lint venue story picker surface (fail-closed, warnings blocked)
+        # --max-warnings=0 → react-hooks 경고 1건도 check 실패로 이어진다.
+        run: >-
+          npx eslint --max-warnings=0
+          src/components/game/VenueStoryComposer.tsx
+          src/components/game/VenueStoryViewer.tsx
+          src/components/game/VenueLibraryGrid.tsx
+          src/lib/venue-stories
+          src/lib/capacitor/venue-media-library.ts
+          scripts/qa/venue-multi-pick-smoke.ts
+          scripts/qa/venue-story-video-poster-smoke.ts
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Run venue picker contract + filter race smoke (fail-closed)
+        # 실제 VenueStoryComposer 를 jsdom 에 렌더해 네이티브 브릿지 주입으로
+        # 단일/연속 필터 전환 race(generation·pending reload)를 실행 검증한다.
+        run: npm run qa:venue-multi-pick
+
+      - name: Run venue story viewer poster smoke (fail-closed)
+        # 실제 VenueStoryViewer 를 렌더해 poster/preload DOM 속성을 직접 읽는다.
+        run: npm run qa:venue-story-video-poster

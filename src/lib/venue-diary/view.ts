@@ -34,7 +34,10 @@ const SOURCE_LABEL: Record<DiarySourceKind, DiarySourceLabel> = {
  */
 export function diaryGameSourceLabel(
   thumbnails: ReadonlyArray<{ venueVerified: boolean }>,
+  attendanceSource?: "story_geofence" | "diary_manual" | null,
 ): DiarySourceLabel {
+  if (attendanceSource === "story_geofence") return SOURCE_LABEL.gps;
+  if (attendanceSource === "diary_manual") return SOURCE_LABEL.manual;
   return thumbnails.some((t) => t.venueVerified) ? SOURCE_LABEL.gps : SOURCE_LABEL.manual;
 }
 
@@ -272,7 +275,12 @@ export interface DiaryMediaGroupInput {
 
 /** 홈(①) 승·무·패/점수 소스(직관 기록 API). */
 export interface DiaryAttendanceInput {
+  id?: number;
   gameId: string;
+  gameDate?: string | null;
+  stadiumName?: string | null;
+  source?: "story_geofence" | "diary_manual";
+  favoriteTeamId?: number | null;
   result: "W" | "L" | "D" | null;
   awayTeam: { id: number; name: string; score: number | null } | null;
   homeTeam: { id: number; name: string; score: number | null } | null;
@@ -288,6 +296,9 @@ export interface DiaryHomeGame {
   /** 썸네일로 보여준 것 외 나머지 개수(`+N`). */
   extraCount: number;
   total: number;
+  attendanceId: number | null;
+  attendanceSource: "story_geofence" | "diary_manual" | null;
+  favoriteTeamId: number | null;
   result: "W" | "L" | "D" | null;
   awayTeam: { id: number; name: string; score: number | null } | null;
   homeTeam: { id: number; name: string; score: number | null } | null;
@@ -295,7 +306,8 @@ export interface DiaryHomeGame {
 
 /**
  * 미디어 그룹(썸네일·라벨)과 직관 기록(점수·결과)을 gameId로 병합한다.
- * 미디어 그룹 순서(최신 경기 먼저)를 보존한다. 썸네일은 홈 상한(6)까지만, 나머지는 extraCount.
+ * 미디어와 직관 원장의 합집합을 최신 경기 순서로 반환한다. 기록만 추가한 경기(total=0)도
+ * CRUD가 가능하도록 반드시 홈에 노출한다.
  */
 export function buildDiaryHomeGames(input: {
   mediaGroups: ReadonlyArray<DiaryMediaGroupInput>;
@@ -306,18 +318,36 @@ export function buildDiaryHomeGames(input: {
   const byGame = new Map<string, DiaryAttendanceInput>();
   for (const game of input.attendanceGames) byGame.set(game.gameId, game);
 
-  return input.mediaGroups.map((group) => {
-    const attendance = byGame.get(group.gameId) ?? null;
-    const thumbnails = group.thumbnails.slice(0, cap);
-    const extraCount = Math.max(0, group.counts.total - thumbnails.length);
+  const mediaByGame = new Map(input.mediaGroups.map((group) => [group.gameId, group]));
+  const gameIds = [
+    ...new Set([
+      ...input.mediaGroups.map((group) => group.gameId),
+      ...input.attendanceGames.map((game) => game.gameId),
+    ]),
+  ].sort((a, b) => {
+    const aDate = mediaByGame.get(a)?.gameDate ?? byGame.get(a)?.gameDate ?? "";
+    const bDate = mediaByGame.get(b)?.gameDate ?? byGame.get(b)?.gameDate ?? "";
+    return bDate.localeCompare(aDate);
+  });
+
+  return gameIds.map((gameId) => {
+    const group = mediaByGame.get(gameId) ?? null;
+    const attendance = byGame.get(gameId) ?? null;
+    const groupThumbs = group?.thumbnails ?? [];
+    const thumbnails = groupThumbs.slice(0, cap);
+    const total = group?.counts.total ?? 0;
+    const extraCount = Math.max(0, total - thumbnails.length);
     return {
-      gameId: group.gameId,
-      gameDate: group.gameDate,
-      stadiumName: group.stadiumName,
-      label: diaryGameSourceLabel(group.thumbnails),
+      gameId,
+      gameDate: group?.gameDate ?? attendance?.gameDate ?? null,
+      stadiumName: group?.stadiumName ?? attendance?.stadiumName ?? null,
+      label: diaryGameSourceLabel(groupThumbs, attendance?.source),
       thumbnails,
       extraCount,
-      total: group.counts.total,
+      total,
+      attendanceId: attendance?.id ?? null,
+      attendanceSource: attendance?.source ?? null,
+      favoriteTeamId: attendance?.favoriteTeamId ?? null,
       result: attendance?.result ?? null,
       awayTeam: attendance?.awayTeam ?? null,
       homeTeam: attendance?.homeTeam ?? null,
@@ -723,17 +753,22 @@ export function diaryAddSelectDisabled(
   return diaryPickLocked(diaryPickState(count));
 }
 
-// counts 는 특정 (userId, open 세션)에 결속된다. 재오픈/유저 전환 첫 렌더에서 이전 세션의
-// countsReady=true·이전 Map 을 그대로 넘기면 fail-open(2026 10/10 을 0/10 로 오표시)이 된다.
+// counts 는 특정 (userId, open 세션, 시즌)에 결속된다. 재오픈/유저 전환/시즌 전환 첫 렌더에서
+// 이전 counts 를 countsReady=true 로 그대로 넘기면 fail-open(기존 10/10 을 0/10 로 오표시)이 된다.
+// 특히 시즌은 counts 집합 자체가 달라지므로 key 에 반드시 포함해야 한다.
 // effect 초기화는 렌더 뒤라 첫 렌더를 못 막으므로, 렌더 단계에서 owner key 불일치면 즉시
-// fail-closed 한다(Blocker: 재오픈/유저 전환 stale counts).
+// fail-closed 한다(Blocker: 재오픈/유저/시즌 전환 stale counts).
 
-/** counts 소유 key: 이 counts 가 어느 유저·어느 open 세션에 대한 것인지. */
-export function diaryCountsOwnerKey(userId: string, openSeq: number): string {
-  return `${userId}:${openSeq}`;
+/** counts 소유 key: 이 counts 가 어느 유저·open 세션·시즌에 대한 것인지. */
+export function diaryCountsOwnerKey(
+  userId: string,
+  openSeq: number,
+  season: number,
+): string {
+  return `${userId}:${openSeq}:${season}`;
 }
 
-/** owner 가 현재 열린 (userId, openSeq) key 와 정확히 일치할 때만 ready(렌더 단계 fail-closed). */
+/** owner 가 현재 열린 (userId, openSeq, season) key 와 정확히 일치할 때만 ready(렌더 단계 fail-closed). */
 export function diaryCountsReady(
   owner: string | null,
   currentKey: string | null,

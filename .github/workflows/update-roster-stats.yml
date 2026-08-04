@@ -155,6 +155,33 @@ jobs:
             else
               echo "off_allowlist=false" >> $GITHUB_OUTPUT
             fi
+
+            # roster/사진/inventory 변경 감지 → 자동 머지 fail-close.
+            #
+            # 배경(2026-08-04, 삼순 #1098): stats 경로는 KBO 원본 전수 대조 + 완주 계약 +
+            # 원자 promote 로 닫았지만, roster 크롤러(crawl-roster-v2.mjs)는 아직 고정 대기 후
+            # 페이지 번호만 올리고 그룹 pager 불변 시 조용히 종료한다(quiet EOF).
+            # 그 상태로 두면 roster/사진/inventory 변경도 `Δ≤10 + Vercel` 만으로 자동 머지된다.
+            # roster 경로가 후속 PR 로 닫힐 때까지, 해당 산출물이 바뀌면 사람이 본다.
+            ROSTER_SCOPE_RE='^(public/players/|src/lib/constants/(players-roster\.json|player-photos\.ts|foreign-nationality-pending\.json)|data/baseball-qa/source-inventory\.json)'
+            ROSTER_SCOPE_FILES=$(echo "$CHANGED_FILES" | grep -E "$ROSTER_SCOPE_RE" || true)
+            if [ -n "$ROSTER_SCOPE_FILES" ]; then
+              echo "roster_scope_changed=true" >> $GITHUB_OUTPUT
+              echo "⚠️ roster/사진/inventory 변경 감지 — 자동 머지 보류 대상:"
+              echo "$ROSTER_SCOPE_FILES"
+              {
+                echo "## ⚠️ roster/사진/inventory 변경 — 자동 머지 보류"
+                echo ""
+                echo "roster 크롤러는 아직 완주 계약(bounded retry / quiet EOF 차단)이 없습니다."
+                echo "해당 산출물이 바뀐 PR 은 사람이 검토한 뒤 머지하세요."
+                echo ""
+                echo '```'
+                echo "$ROSTER_SCOPE_FILES"
+                echo '```'
+              } >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "roster_scope_changed=false" >> $GITHUB_OUTPUT
+            fi
           fi
 
       - name: Create PR
@@ -254,6 +281,19 @@ jobs:
               echo "크롤 단계가 생성 데이터 외 파일을 건드렸습니다 — 수동 검토 후 머지하세요."
             } >> "$GITHUB_STEP_SUMMARY"
             echo "❌ allowlist 밖 파일 변경 — 자동 머지 보류: $PR_URL"
+            exit 1
+          fi
+
+          # ②-b roster/사진/inventory 범위 가드 (삼순 #1098 — roster 완주 계약이 후속 PR 로 분리됨)
+          if [ "${{ steps.changes.outputs.roster_scope_changed }}" = "true" ]; then
+            {
+              echo "## ⚠️ roster/사진/inventory 변경 — 자동 머지 보류"
+              echo ""
+              echo "PR: $PR_URL"
+              echo "roster 크롤러의 완주 계약(bounded retry / quiet EOF 차단)이 아직 없습니다."
+              echo "stats-only 변경일 때만 자동 머지합니다 — 이 PR 은 수동 검토 후 머지하세요."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "❌ roster/사진/inventory 변경 — 자동 머지 보류: $PR_URL"
             exit 1
           fi
 

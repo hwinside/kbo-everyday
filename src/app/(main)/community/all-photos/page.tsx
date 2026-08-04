@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import PhotoFeed from "@/components/community/PhotoFeed";
 import { supabase } from "@/lib/supabase/client";
 import { toggleLike, type Post } from "@/lib/supabase/usePosts";
-import { getCommunitySourceLabel } from "@/lib/utils/community-board";
+import { getPostSourceLabel } from "@/lib/utils/community-board";
 
 type SortTab = "latest" | "hot";
 
@@ -22,9 +22,10 @@ export default function AllPhotosPage() {
 
     async function load() {
       setLoading(true);
+      // query-guard: bounded -- 전체 사진 피드는 최신 100개만 제공하는 의도된 단일 UI 페이지다.
       const { data } = await supabase
         .from("posts")
-        .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, game_id, player_tags, team_tags, hashtags, author_team_id_snapshot, click_view_count, impression_view_count, profiles(nickname, team_id, grade, points)")
+        .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, game_id, player_tags, team_tags, hashtags, author_team_id_snapshot, click_view_count, impression_view_count, profiles(nickname, team_id, grade, points, avatar_url)")
         .in("board_type", ["team", "player"])
         .eq("content_type", "photo")
         .neq("is_hidden", true)
@@ -44,6 +45,7 @@ export default function AllPhotosPage() {
           video_urls: ((p as Record<string, unknown>).video_urls ?? []) as string[],
           nickname: profile?.nickname as string | undefined,
           team_id: (snap ?? (profile?.team_id as number | undefined)) as number | undefined,
+          avatar_url: profile?.avatar_url as string | undefined,
           grade: profile?.grade as string | undefined,
           points: (profile?.points as number) ?? 0,
           click_view_count: ((p as Record<string, unknown>).click_view_count as number | null | undefined) ?? 0,
@@ -65,7 +67,7 @@ export default function AllPhotosPage() {
   }, [posts, sortTab, nowMs]);
 
   const sourceLabels = useMemo(
-    () => Object.fromEntries(sortedPosts.map((post) => [post.id, getCommunitySourceLabel(post.board_type, post.board_id)])),
+    () => Object.fromEntries(sortedPosts.map((post) => [post.id, getPostSourceLabel(post)])),
     [sortedPosts],
   );
 

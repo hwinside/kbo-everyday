@@ -45,6 +45,25 @@ DECLARE
 BEGIN
   ASSERT auth.uid() = test_user_id, 'authenticated test identity was not installed';
 
+  ASSERT NOT has_table_privilege('anon', 'public.user_badges', 'INSERT'),
+    'anon INSERT grant survived migration';
+  ASSERT NOT has_table_privilege('anon', 'public.user_badges', 'UPDATE'),
+    'anon UPDATE grant survived migration';
+  ASSERT NOT has_table_privilege('anon', 'public.user_badges', 'DELETE'),
+    'anon DELETE grant survived migration';
+  ASSERT has_table_privilege('anon', 'public.user_badges', 'SELECT'),
+    'anon public SELECT grant regressed';
+  ASSERT has_table_privilege('authenticated', 'public.user_badges', 'SELECT'),
+    'authenticated SELECT grant regressed';
+  ASSERT EXISTS (
+    SELECT 1
+    FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename = 'user_badges'
+      AND policyname = 'Anyone reads badges'
+      AND cmd = 'SELECT'
+  ), 'public badge read policy regressed';
+
   rejected := false;
   BEGIN
     INSERT INTO public.user_badges (user_id, badge_id)

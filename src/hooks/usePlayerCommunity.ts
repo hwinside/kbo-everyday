@@ -11,6 +11,7 @@ interface SupabaseProfileJoin {
   nickname?: string;
   team_id?: number;
   grade?: string;
+  avatar_url?: string | null;
 }
 
 interface SupabasePostRow {
@@ -83,9 +84,10 @@ export function usePlayerCommunity(userTeamId?: number) {
     if (queryIds.length === 0) return;
     setLoading(true);
 
+    // query-guard: bounded -- 선택한 관심선수 집합의 최신 일반글 50개만 보여주는 단일 UI 페이지다.
     let query = supabase
       .from("posts")
-      .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, author_team_id_snapshot, profiles(nickname, team_id, grade)")
+      .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, author_team_id_snapshot, profiles(nickname, team_id, grade, avatar_url)")
       .eq("board_type", "player")
       .eq("content_type", "general")
       .in("board_id", queryIds)
@@ -122,7 +124,7 @@ export function usePlayerCommunity(userTeamId?: number) {
             createdAt: p.created_at,
             author: {
               nickname: prof?.nickname || "익명",
-              avatarUrl: null,
+              avatarUrl: prof?.avatar_url ?? null,
               myTeamId: p.author_team_id_snapshot ?? prof?.team_id ?? 0,
               level: 1,
               title: "",
@@ -141,9 +143,10 @@ export function usePlayerCommunity(userTeamId?: number) {
     if (queryIds.length === 0) return;
     setPhotoLoading(true);
 
+    // query-guard: bounded -- 선택한 관심선수 집합의 최신 사진글 50개만 보여주는 단일 UI 페이지다.
     let query = supabase
       .from("posts")
-      .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, author_team_id_snapshot, click_view_count, impression_view_count, profiles(nickname, team_id, grade)")
+      .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, author_team_id_snapshot, click_view_count, impression_view_count, profiles(nickname, team_id, grade, avatar_url)")
       .eq("board_type", "player")
       .eq("content_type", "photo")
       .in("board_id", queryIds)
@@ -182,6 +185,7 @@ export function usePlayerCommunity(userTeamId?: number) {
             nickname: prof?.nickname || "익명",
             team_id: p.author_team_id_snapshot ?? prof?.team_id,
             grade: prof?.grade,
+            avatar_url: prof?.avatar_url ?? undefined,
             click_view_count: p.click_view_count ?? 0,
             impression_view_count: p.impression_view_count ?? 0,
           };

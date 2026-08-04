@@ -39,11 +39,6 @@ import {
 } from "./og-media";
 import { appendAttribution } from "./attribution";
 import { normalizeQueueTextForPost } from "./text-normalizer";
-import playersRoster from "@/lib/constants/players-roster.json";
-import type { RosterPlayer } from "@/types/api";
-import { getTeamBySlug } from "@/lib/constants/teams";
-
-const ROSTER = playersRoster as RosterPlayer[];
 
 const BUCKET = "photos";
 const STORAGE_FOLDER = "gif-collector";
@@ -346,17 +341,14 @@ export async function publishQueueItem(queueId: number): Promise<PublishResult> 
     return rejectAndReturn(queueId, `all media uploads failed: ${mediaErrors.join("; ")}`);
   }
 
-  // 작성자 팀 스냅샷: 매칭된 선수의 team_id를 기록.
-  // 봇 profile.team_id가 다른 매칭 글로 추후 바뀌더라도 이 글의 작성자 팀 배지는 유지.
-  // team-only 경로 (matched_kbo_id=null + board_type='team')는 slug → team.id 변환.
-  let authorTeamIdSnapshot: number | null = null;
-  if (row.matched_kbo_id) {
-    const matchedPlayer = ROSTER.find((p) => p.kboId === row.matched_kbo_id);
-    authorTeamIdSnapshot = matchedPlayer ? Number(matchedPlayer.teamId) : null;
-  } else if (row.matched_board_type === "team") {
-    const team = getTeamBySlug(row.matched_board_id);
-    authorTeamIdSnapshot = team?.id ?? null;
-  }
+  // 작성자 팀 스냅샷은 콘텐츠 소속팀이 아니라 실제 봇 프로필의 응원팀을 기록한다.
+  // 콘텐츠 팀/선수는 board + tags가 별도 `글 소속` 라벨을 담당한다.
+  const { data: botProfile } = await supabaseAdmin
+    .from("profiles")
+    .select("team_id")
+    .eq("id", botUserId)
+    .maybeSingle<{ team_id: number | null }>();
+  const authorTeamIdSnapshot = botProfile?.team_id ?? null;
 
   // content_type='photo' 고정 — 선수 사진탭/전체 사진탭이 'photo'로 필터링하기 때문.
   // 영상(움짤콜렉터)은 video_urls, 사진(짤콜렉터)은 image_urls에 담는다. 둘 다 content_type='photo'.
