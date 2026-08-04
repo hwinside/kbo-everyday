@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useLayoutEffect, useCallback, type ChangeEvent } from "react";
+import { useState, useRef, useEffect, useLayoutEffect, useCallback, Fragment, type ChangeEvent } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ChevronLeft, Send, EllipsisVertical, AlertTriangle, ShieldBan, Flag, X, ImagePlus, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -15,7 +15,7 @@ import { isNoReplySender, noReplyBannerLabel } from "@/lib/constants/no-reply-se
 import TeamBadge from "@/components/ui/TeamBadge";
 import { linkifyText } from "@/lib/linkify";
 import NewsClippingCard from "@/components/dm/NewsClippingCard";
-import GeniusTypingIndicator from "@/components/dm/GeniusTypingIndicator";
+import GeniusTypingIndicator, { GeniusThinkingBubble } from "@/components/dm/GeniusTypingIndicator";
 import GeniusPlayerPicker from "@/components/dm/GeniusPlayerPicker";
 import { isNewsClippingPayload } from "@/types/news-clipping";
 import {
@@ -56,6 +56,7 @@ export default function DMChatPage() {
     pickBaseballQaPlayer,
     geniusPickedQuestionIds,
     geniusAnsweredQuestionIds,
+    geniusThinkingQuestionIds,
   } = useDMChat(draftTargetId ? "" : conversationId);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -406,9 +407,16 @@ export default function DMChatPage() {
             // 동명이인 선택 카드. 선택은 표시값이 아니라 kbo_id 로 보낸다.
             const pickerOptions =
               geniusReply?.reply_kind === "picker" ? geniusReply.picker_options ?? null : null;
+            // 생각중 말풍선 — **내 질문 바로 아래**에 붙여 대화 순서를 유지한다.
+            // 답변이 도착해도 사라지지 않는다(하린아빠 2026-08-04 20:27).
+            // `pending` 은 아직 답변 대기 중인지 — 점 3개 애니메이션만 이걸로 가른다.
+            const showThinking =
+              isBaseballGeniusConv && isMe && geniusThinkingQuestionIds.has(msg.id);
+            const thinkingPending =
+              showThinking && geniusReplyStates[msg.id] !== undefined;
             return (
+              <Fragment key={msg.id}>
               <motion.div
-                key={msg.id}
                 ref={i === messages.length - 1 ? lastMsgRef : undefined}
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -493,6 +501,8 @@ export default function DMChatPage() {
                   </div>
                 </div>
               </motion.div>
+              {showThinking && <GeniusThinkingBubble pending={thinkingPending} />}
+              </Fragment>
             );
           })
         )}

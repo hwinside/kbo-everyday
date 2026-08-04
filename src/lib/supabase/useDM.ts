@@ -223,6 +223,19 @@ export function useDMChat(conversationId: string) {
   /** 최종 답변이 있는 질문 id — 과거 picker 카드 재탭을 UI에서도 막는다. */
   const [geniusAnsweredQuestionIds, setGeniusAnsweredQuestionIds] =
     useState<ReadonlySet<number>>(() => new Set<number>());
+  /**
+   * "생각중" 을 한 번이라도 거친 질문 id — **append-only**.
+   *
+   * ⚠️ `geniusReplyStates` 는 답변이 도착하면 outbox 에서 빠지며 사라진다. 그래서 생각중
+   * 말풍선도 같이 사라졌고, Production 실측상 그 노출이 **500ms** 뿐이라 사람 눈에 안 잡혔다
+   * (사전 히트 답변은 +700ms 에 도착). 하린아빠 2026-08-04 20:27 지시대로 생각중을 대화
+   * 기록으로 남기려면 "지금 대기 중인가"와 별개로 **거쳤다는 사실**을 따로 들고 있어야 한다.
+   *
+   * 대화 전환 시에만 비운다(answered/picked 집합과 같은 규칙) — 이전 대화의 질문 id 가
+   * 다음 대화로 새지 않게.
+   */
+  const [geniusThinkingQuestionIds, setGeniusThinkingQuestionIds] =
+    useState<ReadonlySet<number>>(() => new Set<number>());
 
   const observeBaseballQaMessages = useCallback((nextMessages: DMMessage[]) => {
     if (typeof window === "undefined") return;
@@ -306,6 +319,24 @@ export function useDMChat(conversationId: string) {
       window.removeEventListener("online", handleOnline);
     };
   }, [user, processBaseballQaOutbox]);
+
+  // 대기 상태로 관측된 질문은 전부 "생각중을 거친" 것으로 누적한다. 여기서만 더하고
+  // 빼지 않으므로 답변 도착으로 outbox 가 비어도 말풍선이 유지된다.
+  useEffect(() => {
+    const ids = Object.keys(geniusReplyStates)
+      .map(Number)
+      .filter((id) => Number.isSafeInteger(id) && id > 0);
+    if (ids.length === 0) return;
+    setGeniusThinkingQuestionIds((prev) => {
+      let next: Set<number> | null = null;
+      for (const id of ids) {
+        if (prev.has(id)) continue;
+        next ??= new Set(prev);
+        next.add(id);
+      }
+      return next ?? prev;
+    });
+  }, [geniusReplyStates]);
 
   useEffect(() => {
     if (!Object.values(geniusReplyStates).some((state) => state === "waiting")) return;
@@ -446,6 +477,7 @@ export function useDMChat(conversationId: string) {
     // 바뀔 때 여기서 버린다. 이게 없으면 이전 대화의 question id 가 다음 대화로 샐다.
     setGeniusAnsweredQuestionIds((prev) => (prev.size === 0 ? prev : new Set<number>()));
     setGeniusPickedQuestionIds((prev) => (prev.size === 0 ? prev : new Set<number>()));
+    setGeniusThinkingQuestionIds((prev) => (prev.size === 0 ? prev : new Set<number>()));
     const generation = ++loadGenerationRef.current;
     requestLoad(() => {
       if (loadGenerationRef.current !== generation) return;
@@ -666,6 +698,7 @@ export function useDMChat(conversationId: string) {
     pickBaseballQaPlayer,
     geniusPickedQuestionIds,
     geniusAnsweredQuestionIds,
+    geniusThinkingQuestionIds,
   };
 }
 
