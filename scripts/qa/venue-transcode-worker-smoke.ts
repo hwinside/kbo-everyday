@@ -20,7 +20,9 @@
  *  (K) diary_manual pending 복구 → archived (active 공개 금지)
  */
 import { writeFileSync, mkdtempSync, rmSync, readFileSync, existsSync } from "fs";
-import { execFileSync } from "child_process";
+import { execFileSync, spawnSync } from "child_process";
+import { createServer } from "http";
+import type { AddressInfo } from "net";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -940,6 +942,48 @@ async function run() {
     ok("P2: batch 에 maxAttempts/limit 전달", deps?.maxAttempts === 3 && deps?.limit === 20);
     ok("P2: batch 에 makeWorkDir/pathFor 배선", typeof deps?.makeWorkDir === "function" && typeof deps?.pathFor === "function");
 
+    // ①-b **default runBatch 결속** (삼순 R6 P0-1)
+    //   위 ① 은 runBatch 를 주입해 "부르긴 하는가"만 봤다. 그래서 production 기본값
+    //   `runBatch = runVenueTranscodeBatch` 를 no-op async 로 바꿔도 131/0 GREEN 이었다 —
+    //   Vercel cron 이 매 실행 0행 처리해도 게이트가 못 잡는다(삼순 독립 재현).
+    //   → **runBatch 를 주입하지 않고** 실행해 기본값이 진짜 batch orchestration 인지 행동으로 본다.
+    //     selectTargets 는 batch 내부 seam 이므로, 기본 runBatch 가 아니면 아예 불리지 않는다.
+    {
+      let selectCalls = 0;
+      let runJobCalls = 0;
+      const rows = [
+        { id: "r1", status: "active", media_bucket: "videos", media_path: "a.mp4", media_url: "https://x/a.mp4", transcode_attempts: 0 },
+        { id: "r2", status: "active", media_bucket: "videos", media_path: "b.mp4", media_url: "https://x/b.mp4", transcode_attempts: 0 },
+      ];
+      const defaultRes = (await mod.processVenueStories({
+        hasFfprobe: true,
+        db: { from: () => ({}), storage: {} },
+        maxAttempts: 3,
+        limit: 20,
+        // ⬇️ runBatch 를 **주입하지 않는다** — production 기본값이 실행되어야 한다.
+        selectTargets: async () => {
+          selectCalls++;
+          return { data: rows, error: null };
+        },
+        runJob: async () => {
+          runJobCalls++;
+          return { result: "done" };
+        },
+      })) as Record<string, unknown>;
+      ok(
+        `P2: default runBatch 가 실제 조회 seam 을 1회 호출 (실제 ${selectCalls}) — no-op 으로 바꾸면 RED`,
+        selectCalls === 1,
+      );
+      ok(
+        `P2: default runBatch 가 선택된 ${rows.length}행을 실제 처리 (실제 ${runJobCalls}) — 행 폐기 시 RED`,
+        runJobCalls === rows.length,
+      );
+      ok(
+        `P2: default runBatch 결과가 처리 행수를 반영 (done=${defaultRes?.done}/processed=${defaultRes?.processed})`,
+        defaultRes?.done === rows.length && defaultRes?.processed === rows.length,
+      );
+    }
+
     // ② runner 가 **진짜 정규화를 하는가** — 함수 identity 대신 행동으로 판정한다.
     //   identity(===) 비교는 tsx(.ts) ↔ node(.mjs) 로더 경계에서 모듈 인스턴스가 갈려
     //   환경 의존적이었다(로컬 node 는 true, tsx 는 false — 실측 2026-08-04).
@@ -948,6 +992,44 @@ async function run() {
       | { probe?: (p: string) => { durationMs: number; width: number | null; height: number | null }; transcode?: (i: string, o: string) => string; downloadToFile?: unknown }
       | undefined;
     ok("P2: runner 에 probe/transcode/downloadToFile 배선", typeof runner?.probe === "function" && typeof runner?.transcode === "function" && typeof runner?.downloadToFile === "function");
+
+    // ②-0 **downloadToFile 이 진짜 받아오는가** (삼순 R6 P0-2)
+    //   종전에는 `typeof === "function"` 만 봤다. 그래서 actual
+    //   `makeRunner({ downloadToFile: downloadTo })` 를 `downloadToFile: async () => 0` 으로
+    //   바꿔도 131/0 GREEN 이었다 — 워커가 입력 파일을 못 받아 전수 실패하는데 미검출.
+    //   → 로컬 HTTP 서버를 띄워 **실제 바이트가 디스크에 떨어지는지** 행동으로 본다.
+    {
+      const payload = Buffer.from("venue-download-probe-".repeat(64), "utf8");
+      const server = createServer((_req, res) => {
+        res.writeHead(200, { "Content-Type": "application/octet-stream" });
+        res.end(payload);
+      });
+      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+      const port = (server.address() as AddressInfo).port;
+      const w = mkdtempSync(join(tmpdir(), "vt-dl-"));
+      try {
+        const dest = join(w, "dl.bin");
+        const bytes = await (runner!.downloadToFile as (u: string, d: string) => Promise<number>)(
+          `http://127.0.0.1:${port}/probe.bin`,
+          dest,
+        );
+        ok(
+          `P2: captured runner.downloadToFile 이 실제 파일을 씀 (${existsSync(dest) ? readFileSync(dest).length : 0}B) — no-op 으로 바꾸면 RED`,
+          existsSync(dest) && readFileSync(dest).length === payload.length,
+        );
+        ok(
+          `P2: downloadToFile 이 실제 바이트 수를 반환 (실제 ${bytes}) — 0 반환이면 RED`,
+          bytes === payload.length,
+        );
+        ok(
+          "P2: 내려받은 내용이 원본과 동일",
+          existsSync(dest) && readFileSync(dest).equals(payload),
+        );
+      } finally {
+        rmSync(w, { recursive: true, force: true });
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    }
     {
       const w = mkdtempSync(join(tmpdir(), "vt-wiring-"));
       try {
@@ -1023,6 +1105,61 @@ async function run() {
           Number.isFinite(m.driftSec) && m.driftSec <= 0.15,
         );
       } finally {
+        rmSync(w, { recursive: true, force: true });
+      }
+    }
+
+    // ②-c **captured actual downloadToFile** 이 진짜 바이트를 받아 파일로 쓰는가 (삼순 R6 ②)
+    //   종전 A/V 테스트는 runner.transcode() 만 직접 불렀다. 그래서 actual 을
+    //   `makeRunner({ downloadToFile: async () => 0 })` 로 바꿔도 131/0 GREEN 이었고,
+    //   production job 은 입력 파일 없이 전수 실패할 수 있었다.
+    //   → 실제 HTTP 서버를 띄워 captured downloader 로 받은 뒤, 그 파일을 그대로
+    //     probe → transcode 까지 이어 전체 체인을 한 경로로 확인한다.
+    {
+      const w = mkdtempSync(join(tmpdir(), "vt-download-"));
+      let server: import("http").Server | null = null;
+      try {
+        const srcPath = makeRotatedAudioFixture(w);
+        const payload = readFileSync(srcPath);
+        const http = await import("http");
+        server = http.createServer((_req, res) => {
+          res.writeHead(200, { "content-type": "video/mp4", "content-length": String(payload.length) });
+          res.end(payload);
+        });
+        const port: number = await new Promise((resolveFn) => {
+          server!.listen(0, "127.0.0.1", () => resolveFn((server!.address() as { port: number }).port));
+        });
+
+        const dl = join(w, "downloaded.mp4");
+        const bytes = await (runner as unknown as {
+          downloadToFile: (u: string, d: string) => Promise<number>;
+        }).downloadToFile(`http://127.0.0.1:${port}/src.mp4`, dl);
+
+        ok(
+          `P2: captured downloadToFile 이 실제 바이트를 반환 (실제 ${bytes}B / 원본 ${payload.length}B) — () => 0 으로 바꾸면 RED`,
+          bytes === payload.length && payload.length > 0,
+        );
+        ok("P2: captured downloadToFile 이 dest 경로에 파일을 쓴다", existsSync(dl));
+        ok(
+          "P2: 받은 바이트가 원본과 동일(빈 파일/절단 방지)",
+          existsSync(dl) && readFileSync(dl).equals(payload),
+        );
+
+        // 다운로드본이 후속 probe/transcode 까지 이어지는가 (채인 전체)
+        const dlMeta = runner!.probe!(dl);
+        ok(
+          `P2: 다운로드본을 captured probe 가 읽음 (dur=${dlMeta.durationMs}ms)`,
+          dlMeta.durationMs > 0,
+        );
+        const dlOut = join(w, "dl-out.mp4");
+        runner!.transcode!(dl, dlOut);
+        const dlNorm = probeNormalized(dlOut);
+        ok(
+          `P2: 다운로드본→transcode 체인이 720x1280 산출 (실제 ${dlNorm.disp.width}x${dlNorm.disp.height})`,
+          dlNorm.disp.width === 720 && dlNorm.disp.height === 1280,
+        );
+      } finally {
+        if (server) await new Promise<void>((r) => server!.close(() => r()));
         rmSync(w, { recursive: true, force: true });
       }
     }
@@ -1116,6 +1253,50 @@ async function run() {
       ok("P2: ffprobe 부재 결과도 main 관제에서 non-zero", mod.venueRunHasFailure(noProbeRes) === true);
     }
 
+    // ⑥ **기본 batch 바인딩**이 실제로 행을 처리하는가 (삼순 R6 ①)
+    //   종전에는 테스트가 항상 runBatch 를 주입해서, 기본값을
+    //   `runBatch = async () => ({...0건})` 으로 바꿔도 131/0 GREEN 이었다.
+    //   seam 은 따로 테스트했지만 "cron 기본 경로가 seam 을 타는가"는 미검증이었다.
+    //   → runBatch 를 **주입하지 않고** 내부 seam(selectTargets/runJob)만 주입해
+    //     기본 바인딩이 조회행을 전부 runJob 까지 전달하는지를 행동으로 본다.
+    {
+      const rows = [
+        { id: 901, status: "active", media_path: "a/1.mp4", media_bucket: "venue-media" },
+        { id: 902, status: "archived", media_path: "a/2.mp4", media_bucket: "venue-media" },
+        { id: 903, status: "pending", media_path: "a/3.mp4", media_bucket: "venue-staging" },
+      ];
+      const seenIds: number[] = [];
+      let selectCalls = 0;
+      const res = (await mod.processVenueStories({
+        hasFfprobe: true,
+        db: { from: () => ({}), storage: {} },
+        maxAttempts: 3,
+        limit: 20,
+        // runBatch 미주입 — 기본값 runVenueTranscodeBatch 가 실행되어야 한다
+        selectTargets: async (_db: unknown, opts: { maxAttempts?: number; limit?: number }) => {
+          selectCalls++;
+          ok(
+            `P2: 기본 batch 가 selectTargets 에 maxAttempts/limit 전달 (실제 ${opts?.maxAttempts}/${opts?.limit})`,
+            opts?.maxAttempts === 3 && opts?.limit === 20,
+          );
+          return { data: rows, error: null };
+        },
+        runJob: async (row: { id: number }) => {
+          seenIds.push(row.id);
+          return { result: "done" };
+        },
+      })) as { processed?: number; done?: number };
+      ok("P2: 기본 batch 바인딩이 실제로 조회를 수행 (dead-stub 으로 바꾸면 RED)", selectCalls === 1);
+      ok(
+        `P2: 기본 batch 바인딩이 조회행 전부를 순서대로 처리 (실제 ${seenIds.join(",")})`,
+        seenIds.length === 3 && seenIds[0] === 901 && seenIds[1] === 902 && seenIds[2] === 903,
+      );
+      ok(
+        `P2: 기본 batch 바인딩 집계가 실처리 수를 반영 (processed=${res?.processed} done=${res?.done})`,
+        res?.processed === 3 && res?.done === 3,
+      );
+    }
+
     // ⑤ 소스 레벨 금지(보조) — 인라인 루프/조회 재도입
     const raw = readFileSync(join(import.meta.dirname, "..", "transcode-videos.mjs"), "utf8");
     const src = raw
@@ -1135,6 +1316,68 @@ async function run() {
       "P2: venue_stories 인라인 조회 재도입 없음(needs_transcode 직접 술어 0)",
       !/\.or\([^)]*needs_transcode/.test(src),
     );
+
+    // ⑥ **CLI 종료코드 행동 검증** (삼순 R6 P0-3)
+    //
+    //   종전 ⑤ 는 `venueRunHasFailure()` 를 *따로* 불러 계약만 봤다. main 이 그 결과로
+    //   실제 non-zero 종료하는지는 아무도 안 봤고, 그래서 actual main 의
+    //   `if (venueRunHasFailure(venueRes))` 를 `if (false && venueRunHasFailure(venueRes))` 로
+    //   바꿔 **배치가 실패해도 exit 0** 이 되는 회귀가 131/0 GREEN 이었다(삼순 독립 재현).
+    //
+    //   이젠 판정+종료를 `runVenueStage()` 가 소유하고, 여기서 **실제 자식 프로세스로 실행해
+    //   종료코드를 읽는다**. in-process 로는 process.exit 를 검증할 수 없다(테스트가 같이 죽는다).
+    {
+      // ⑥-a main 이 그 seam 에 결속돼 있는가 — 인라인 판정 재도입 차단.
+      //   IIFE 본문만 잘라서 본다(정의부 runVenueStage 자체는 당연히 판정을 갖는다).
+      const mainBody = src.slice(src.lastIndexOf("if (IS_MAIN)"));
+      ok(
+        "P2: main 이 runVenueStage() 로 직관 라이브 단계를 실행",
+        /await\s+runVenueStage\(\)/.test(mainBody),
+      );
+      ok(
+        "P2: main 에 인라인 관제 판정 재도입 없음(seam 우회 방지)",
+        !/venueRunHasFailure\(/.test(mainBody) && !/processVenueStories\(/.test(mainBody),
+      );
+
+      // ⑥-b **실제 자식 프로세스 종료코드** — sentinel 실패는 반드시 non-zero.
+      const runStage = (result: unknown) => {
+        const probe = join(import.meta.dirname, `.venue-stage-exit-probe-${process.pid}.mjs`);
+        writeFileSync(
+          probe,
+          `import { runVenueStage } from ${JSON.stringify(join(import.meta.dirname, "..", "transcode-videos.mjs"))};
+` +
+            `await runVenueStage({ process: async () => (${JSON.stringify(result)}) });
+`,
+          "utf8",
+        );
+        try {
+          const r = spawnSync(process.execPath, [probe], { encoding: "utf8" });
+          return { status: r.status, stderr: r.stderr ?? "" };
+        } finally {
+          rmSync(probe, { force: true });
+        }
+      };
+
+      for (const sentinel of [
+        { done: 1, removed: 0, failed: 3, updateErrors: 0 },
+        { done: 1, removed: 0, failed: 0, updateErrors: 2 },
+        { done: 0, removed: 0, failed: 0, updateErrors: 0, ffprobeMissing: true },
+      ]) {
+        const r = runStage(sentinel);
+        ok(
+          `P2: CLI 실패 sentinel(failed=${sentinel.failed}/updateErrors=${sentinel.updateErrors}` +
+            `${sentinel.ffprobeMissing ? "/ffprobeMissing" : ""}) → 종료코드 non-zero (실제 ${r.status}) — 관제 우회 시 RED`,
+          r.status === 1,
+        );
+      }
+      {
+        const okRun = runStage({ done: 3, removed: 0, failed: 0, updateErrors: 0 });
+        ok(
+          `P2: CLI 정상 결과 → 종료코드 0 (실제 ${okRun.status}) — 과잉 실패 판정 방지`,
+          okRun.status === 0,
+        );
+      }
+    }
   }
 
   // ── orchestration 행동 검증 (삼순 4라운드 blocker ①) ──

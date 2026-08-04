@@ -314,6 +314,12 @@ export async function processVenueStories(overrides = {}) {
     hasFfprobe = HAS_FFPROBE,
     maxAttempts = MAX_ATTEMPTS,
     limit = LIMIT,
+    // ↓ batch **내부** seam. 스모크가 runBatch 를 가로채지 않고도
+    //   기본 바인딩(runVenueTranscodeBatch)이 실제로 행을 처리하는지 볼 수 있게 뚚는다.
+    //   종전에는 테스트가 항상 runBatch 를 주입해서, 기본값을 0건 반환 스텅으로
+    //   바꿔도 131/0 GREEN 이었다(삼순 R6 ① 독립 재현 2026-08-04).
+    selectTargets,
+    runJob,
   } = overrides;
   if (!hasFfprobe) {
     // ffprobe 부재 = 서버 권위 duration 검증 전면 skip → pending 영상이 방치되므로 green 으로 넘기지 않고 관제
@@ -335,6 +341,8 @@ export async function processVenueStories(overrides = {}) {
     db,
     storage: db.storage,
     runner: makeRunner({ downloadToFile: downloadTo }),
+    ...(selectTargets ? { selectTargets } : {}),
+    ...(runJob ? { runJob } : {}),
     makeWorkDir: () => mkdtempSync(join(tmpdir(), "kbo-venue-")),
     pathFor: (workDir, row) => ({
       inPath: join(workDir, "in" + (basename(row.media_path).match(/\.[^.]+$/)?.[0] || ".mp4")),
@@ -366,6 +374,30 @@ export function venueRunFailureMessage(res) {
   return `❌ 직관 라이브 처리 이상 — 실패 ${r.failed} / 상태기록오류 ${r.updateErrors}${r.ffprobeMissing ? " / ffprobe 부재" : ""} — 관제 non-zero 종료`;
 }
 
+/**
+ * main 의 **직관 라이브 단계 전체** — 처리 실행 + 관제 판정 + non-zero 종료.
+ *
+ * ⚠️ 이 seam 이 생긴 이유 (삼순 R6 P0-3, 2026-08-04).
+ *
+ * 종전에는 이 판정이 main IIFE 안 인라인 `if (venueRunHasFailure(venueRes))` 였다. 스모크는
+ * `venueRunHasFailure()` 를 **따로** 불러 계약만 확인했을 뿐, main 이 그 결과로 실제 종료하는지는
+ * 검증하지 못했다. 그래서 그 줄을 `if (false && venueRunHasFailure(venueRes))` 로 바꿔
+ * **배치가 실패해도 exit 0** 이 되는 회귀가 131/0 GREEN 으로 통과했다(삼순 독립 재현).
+ *
+ * 이젠 판정+종료를 이 함수가 소유하고, 스모크가 **실제 자식 프로세스로 실행해 종료코드를 읽는다**.
+ * 종료를 주입으로 갈아끼울 수 없게 `process.exit` 는 여기 고정한다.
+ */
+export async function runVenueStage(overrides = {}) {
+  const { process: processFn = processVenueStories } = overrides;
+  console.log("\n── 직관 라이브(venue_stories) 영상 처리 ──");
+  const venueRes = (await processFn()) || { failed: 0, updateErrors: 0 };
+  if (venueRunHasFailure(venueRes)) {
+    console.error(venueRunFailureMessage(venueRes));
+    process.exit(1);
+  }
+  return venueRes;
+}
+
 // ── main ── (직접 실행일 때만 — import 시 부작용 0)
 if (IS_MAIN) {
 (async () => {
@@ -394,11 +426,7 @@ if (IS_MAIN) {
   }
   await processJobs();
 
-  console.log("\n── 직관 라이브(venue_stories) 영상 처리 ──");
-  const venueRes = (await processVenueStories()) || { failed: 0, updateErrors: 0 };
-  if (venueRunHasFailure(venueRes)) {
-    console.error(venueRunFailureMessage(venueRes));
-    process.exit(1);
-  }
+  // 직관 라이브 단계는 seam 이 소유한다 — 판정/종료가 인라인이면 스모크가 검증할 수 없다.
+  await runVenueStage();
 })().catch((e) => { console.error("❌", e); process.exit(1); });
 }
