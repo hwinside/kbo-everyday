@@ -158,7 +158,10 @@ function makeFixture(fileCount = 5) {
   rmSync(dir, { recursive: true, force: true });
 }
 
-/* 6) 다음 promote 가 시작 시 자동으로 복구한다 (수동 호출에 의존하지 않는다) */
+/* 6) 저널이 남은 상태에서 promote 를 부르면 fail-close 한다.
+ *    복구는 promote 진입부가 아니라 **실행 시작부**가 해야 한다.
+ *    (종전에는 promoteAtomically() 안에서 복구해, 크롤·read·검증을 전부
+ *     혼합 세대 위에서 끝낸 뒤에야 되돌렸다 — 삼순 5차 지적) */
 {
   const { dir, artifacts, before } = makeFixture();
   const script = `
@@ -171,18 +174,27 @@ function makeFixture(fileCount = 5) {
   try { execFileSync(process.execPath, [scriptPath], { stdio: "pipe" }); } catch { /* expected */ }
   assert.ok(hasPendingPromotion(dir), "hard-exit 저널이 남아야 한다");
 
-  // 복구를 따로 부르지 않고 바로 다음 promote 를 돌린다.
-  // 시작 시 자동 복구되므로, 이번 promote 는 깨끗한 old 위에서 시작해 전부 new 가 된다.
-  promoteAtomically(artifacts);
+  // 복구 없이 곧장 promote 하면 계약 위반으로 죽어야 한다.
+  assert.throws(
+    () => promoteAtomically(artifacts),
+    /promote_journal_pending/,
+    "저널이 남은 채 promote 하면 fail-close 해야 한다(startup recovery 누락 감지)",
+  );
+
+  // startup recovery 를 먼저 부르면 이전 세대로 복구되고, 그 뒤 promote 는 정상 동작한다.
+  recoverPendingPromotion(dir);
   for (const artifact of artifacts) {
     assert.equal(
-      readFileSync(artifact.path, "utf8"),
-      artifact.body,
-      "자동 복구 후 재시도는 전 산출물을 새 세대로 교체해야 한다",
+      sha(artifact.path),
+      before.get(artifact.path),
+      "startup recovery 후에는 promote 전에 이미 이전 세대여야 한다",
     );
-    assert.notEqual(sha(artifact.path), before.get(artifact.path));
   }
-  assert.equal(hasPendingPromotion(dir), false, "성공 후 저널은 남지 않아야 한다");
+  promoteAtomically(artifacts);
+  for (const artifact of artifacts) {
+    assert.equal(readFileSync(artifact.path, "utf8"), artifact.body);
+  }
+  assert.equal(hasPendingPromotion(dir), false);
   rmSync(dir, { recursive: true, force: true });
 }
 
@@ -213,6 +225,47 @@ function makeFixture(fileCount = 5) {
     "성공 후 저널 디렉터리에 잔여물이 없어야 한다",
   );
   rmSync(dir, { recursive: true, force: true });
+}
+
+/* 9) 실제 배선 — startup recovery 와 파생 검증 인자가 actual call-site 에 결속됐는가
+ *    (둘 다 종전에 제거해도 전 게이트가 GREEN 이었다 — 삼순 5차 지적) */
+{
+  const crawler = readFileSync("scripts/crawl-stats.mjs", "utf8");
+
+  // ① startup recovery 가 어떤 데이터 read 보다 앞이어야 한다.
+  const recoveryIdx = crawler.indexOf("recoverPendingPromotion(CONSTANTS_DIR)");
+  assert.ok(
+    recoveryIdx >= 0,
+    "크롤러는 실행 시작부에서 recoverPendingPromotion(CONSTANTS_DIR) 를 호출해야 한다",
+  );
+  for (const laterMarker of [
+    "readPrevious(",            // 기존 snapshot read
+    "await assertSourceTruth(", // 검증
+    "promoteAtomically(artifacts)", // 실제 교체 호출부(주석 아님)
+    "await crawlBatterBasic1(page)", // 실제 크롤 시작 호출부(선언 아님)
+  ]) {
+    const idx = crawler.indexOf(laterMarker);
+    assert.ok(idx >= 0, `크롤러에서 \`${laterMarker}\` 를 찾을 수 있어야 한다`);
+    assert.ok(
+      recoveryIdx < idx,
+      `startup recovery 는 \`${laterMarker}\` 보다 앞에서 실행돼야 한다`,
+    );
+  }
+  // main() 안이어야 하고, promoteAtomically 호출부에 묻어 있으면 안 된다.
+  const mainIdx = crawler.indexOf("async function main() {");
+  assert.ok(mainIdx >= 0 && recoveryIdx > mainIdx, "startup recovery 는 main() 시작부에 있어야 한다");
+
+  // ② 파생 검증 3인자가 실제 assertSourceTruth 호출에 결속돼야 한다.
+  const callIdx = crawler.indexOf("await assertSourceTruth({");
+  assert.ok(callIdx >= 0, "크롤러는 assertSourceTruth 를 호출해야 한다");
+  const callEnd = crawler.indexOf("});", callIdx);
+  const callArgs = crawler.slice(callIdx, callEnd);
+  for (const arg of ["defenseRuns", "roster:", "foreignIdSource:"]) {
+    assert.ok(
+      callArgs.includes(arg),
+      `assertSourceTruth 호출에 \`${arg}\` 가 있어야 한다(파생값 write 전 차단)`,
+    );
+  }
 }
 
 /* 5) 실제 배선 — 크롤러가 순차 직쓰기 대신 promoteAtomically 를 쓰는가 */

@@ -83,8 +83,15 @@ export function promoteAtomically(artifacts, { fail, onBeforeRename } = {}) {
   if (artifacts.length === 0) return;
 
   const targetDir = dirname(artifacts[0].path);
-  // 시작 전에 이전 실행의 미완료 promote 를 먼저 정리한다.
-  recoverPendingPromotion(targetDir);
+  // ⚠︎ 여기서 복구하면 이미 늦다 — 크롤·read·검증이 혼합 세대 위에서 끝난 뒤다.
+  // startup recovery 는 crawl-stats.mjs 의 main() 시작부(어떤 read 보다 먼저)가 담당한다.
+  // 여기서는 저널이 남아 있으면 계약 위반이므로 fail-close 한다.
+  if (hasPendingPromotion(targetDir)) {
+    throw new Error(
+      "promote_journal_pending: 미완료 promote 저널이 남아 있다 — "
+        + "startup recovery(recoverPendingPromotion)를 실행 시작부에서 먼저 호출해야 한다",
+    );
+  }
 
   const staging = mkdtempSync(join(tmpdir(), "kbo-stats-promote-"));
   const root = journalRoot(targetDir);

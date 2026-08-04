@@ -20,7 +20,7 @@ import {
   validatePitcherSnapshot,
 } from "./lib/stats-snapshot-guard.mjs";
 import { assertSourceTruth } from "./lib/stats-source-truth.mjs";
-import { promoteAtomically } from "./lib/atomic-promote.mjs";
+import { promoteAtomically, recoverPendingPromotion } from "./lib/atomic-promote.mjs";
 import { collectAllPages, createKboPageAdapter } from "./lib/kbo-pagination.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -325,6 +325,20 @@ function parseIpToFloat(ip) {
 
 async function main() {
   console.log(`🏟️  KBO 스탯 크롤링 시작 (시즌: ${SEASON})`);
+
+  // ⚠︎ 어떤 데이터 read 보다 *먼저* 미완료 promote 를 복구한다.
+  //
+  // 종전에는 recoverPendingPromotion() 이 promoteAtomically() 진입 시점에 있었다.
+  // 그러면 크롤·기존 snapshot read·검증을 전부 끝낸 뒤에야 복구되므로,
+  // 직전 실행이 hard-exit 로 죽어 혼합 세대가 남은 상태에서 그대로 출발한다
+  // (= "항상 old 전체 또는 new 전체" 계약 위반, 삼순 5차 지적).
+  // 여기가 startup recovery 의 유일한 올바른 위치다.
+  const recovery = recoverPendingPromotion(CONSTANTS_DIR);
+  if (recovery.recovered) {
+    console.log(
+      `♻️  이전 실행의 미완료 promote 복구: ${recovery.restored.length}개 파일을 이전 세대로 되돌림`,
+    );
+  }
 
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({
