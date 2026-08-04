@@ -1,0 +1,181 @@
+name: Stats Source Truth Gate
+
+# 스탯 데이터 원본 정합성 게이트 (삼순 #1098 P0-2 — required CI 결속).
+#
+# 배경: `qa:stats-source-truth` 가 package.json 에만 있고 어떤 워크플로에서도
+# 호출되지 않아, 곽빈 ERA 를 `2.66 → 99.99` 로 바꾼 상태에서도 전체 `npm run prebuild`
+# 가 exit 0 GREEN 이었다. 즉 크롤러를 우회한 수동 편집·data PR·머지 오염을 자동으로
+# 막는다는 계약이 성립하지 않았다.
+#
+# 이 게이트는 KBO 공식 기록실을 독립 재조회해 저장된 스냅샷과 전 행·전 필드를 대조한다.
+# 값 오염 1건 또는 행 누락/잉여 1건이라도 있으면 RED 다. 원본 수집 자체가 불가해도
+# (수집 0행) 실패다 — 검증 불가를 통과로 취급하면 게이트가 아니다.
+#
+# ⚠️ 일반 prebuild 에는 넣지 않는다. Vercel 빌드 환경이 KBO 에 도달하지 못하면
+# 배포 자체가 죽기 때문이다. 네트워크·Chromium 이 보장되는 이 전용 워크플로에서만 돈다.
+#
+# ⚠️ GitHub Actions 워크플로 파서는 YAML anchor/alias 를 지원하지 않는다 —
+# pull_request / push paths 는 중복이지만 반드시 그대로 나열해야 한다.
+
+on:
+  pull_request:
+    paths:
+      - "src/lib/constants/stats-2026-batters.json"
+      - "src/lib/constants/stats-2026-pitchers.json"
+      - "src/lib/constants/stats-2026-defense.json"
+      - "src/lib/constants/stats-2026-meta.json"
+      - "src/lib/constants/player-defense-runs.json"
+      - "src/lib/constants/players-roster.json"
+      - "src/lib/constants/foreign-id-map.ts"
+      - "scripts/crawl-stats.mjs"
+      - "scripts/lib/stats-source-truth.mjs"
+      - "scripts/lib/stats-snapshot-guard.mjs"
+      - "scripts/lib/atomic-promote.mjs"
+      - "scripts/lib/kbo-pagination.mjs"
+      - "scripts/lib/defense-runs.mjs"
+      - "scripts/qa/stats-source-truth-verify.mjs"
+      - "scripts/qa/stats-snapshot-guard-smoke.mjs"
+      - "scripts/qa/atomic-promote-smoke.mjs"
+      - "scripts/qa/kbo-pagination-smoke.mjs"
+      - "package.json"
+      - ".github/workflows/stats-source-truth-gate.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "src/lib/constants/stats-2026-batters.json"
+      - "src/lib/constants/stats-2026-pitchers.json"
+      - "src/lib/constants/stats-2026-defense.json"
+      - "src/lib/constants/stats-2026-meta.json"
+      - "src/lib/constants/player-defense-runs.json"
+      - "src/lib/constants/players-roster.json"
+      - "src/lib/constants/foreign-id-map.ts"
+      - "scripts/crawl-stats.mjs"
+      - "scripts/lib/stats-source-truth.mjs"
+      - "scripts/lib/stats-snapshot-guard.mjs"
+      - "scripts/lib/atomic-promote.mjs"
+      - "scripts/lib/kbo-pagination.mjs"
+      - "scripts/lib/defense-runs.mjs"
+      - "scripts/qa/stats-source-truth-verify.mjs"
+      - "scripts/qa/stats-snapshot-guard-smoke.mjs"
+      - "scripts/qa/atomic-promote-smoke.mjs"
+      - "scripts/qa/kbo-pagination-smoke.mjs"
+      - "package.json"
+      - ".github/workflows/stats-source-truth-gate.yml"
+  workflow_dispatch:
+
+jobs:
+  stats-source-truth:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Install Playwright Chromium
+        run: npx playwright install chromium --with-deps
+
+      # ── 네트워크 없이 도는 계약들 (배선·행동) ─────────────────────
+      - name: Snapshot guard contract (fail-closed)
+        # 네 데이터셋 스냅샷 가드가 promote 앞에 배선돼 있는지 + assertSourceTruth 가
+        # 스텁 주입에서 실제로 reject 하는지(값 오염·행 누락·도루 오염·수집 0행).
+        run: npm run qa:stats-snapshot-guard
+
+      - name: Atomic promote contract (fail-closed)
+        # staging 실패 시 대상 파일 전원 byte-identical, promote 중간 실패 시 롤백.
+        run: npm run qa:atomic-promote
+
+      - name: Pagination completion contract (fail-closed)
+        # 11페이지 fake 페이저로 지연 흡수·재클릭 회복·전환 실패·stale·중간 누락을 행동 검증.
+        run: npm run qa:kbo-pagination
+
+      # ── KBO 원본 전수 대조 ────────────────────────────────────
+      - name: Verify stats against KBO source of truth (fail-closed)
+        # 투수/타자/타자추가지표/도루/수비 전 행·전 필드 대조 + 파생(defense-runs) 재계산 대조.
+        # 값 오염 1건, 행 누락·잉여 1건이면 RED. 수집 0행(원본 도달 실패)도 RED.
+        run: npm run qa:stats-source-truth
+
+      # ── 검증력 증명 (결함주입) ────────────────────────────────
+      # 아래 스텝들은 "게이트가 통과하면 job 이 죽는" 구조다.
+      # 따라서 이 job 의 success 자체가 게이트에 검증력이 있다는 증거다.
+      # 각 주입 뒤 git 으로 원복하고, 소스 오염이 남지 않았는지 확인한다.
+      - name: RED proof — pitcher ERA corruption must fail
+        run: |
+          node -e "
+            const fs = require('fs');
+            const p = 'src/lib/constants/stats-2026-pitchers.json';
+            const rows = JSON.parse(fs.readFileSync(p, 'utf8'));
+            rows[0].era = '99.99';
+            fs.writeFileSync(p, JSON.stringify(rows, null, 2));
+          "
+          if npm run qa:stats-source-truth; then
+            echo "::error::ERA 오염이 게이트를 통과했다 — 값 대조가 무력하다"
+            git checkout -- src/lib/constants/stats-2026-pitchers.json
+            exit 1
+          fi
+          git checkout -- src/lib/constants/stats-2026-pitchers.json
+          git diff --exit-code
+
+      - name: RED proof — batter stolen-base corruption must fail
+        run: |
+          node -e "
+            const fs = require('fs');
+            const p = 'src/lib/constants/stats-2026-batters.json';
+            const rows = JSON.parse(fs.readFileSync(p, 'utf8'));
+            const target = rows.find((r) => Number(r.sb || 0) > 0) || rows[0];
+            target.sb = 999;
+            fs.writeFileSync(p, JSON.stringify(rows, null, 2));
+          "
+          if npm run qa:stats-source-truth; then
+            echo "::error::도루(sb) 오염이 게이트를 통과했다 — Runner 페이지 대조가 무력하다"
+            git checkout -- src/lib/constants/stats-2026-batters.json
+            exit 1
+          fi
+          git checkout -- src/lib/constants/stats-2026-batters.json
+          git diff --exit-code
+
+      - name: RED proof — defense-runs corruption must fail
+        run: |
+          node -e "
+            const fs = require('fs');
+            const p = 'src/lib/constants/player-defense-runs.json';
+            const map = JSON.parse(fs.readFileSync(p, 'utf8'));
+            const key = Object.keys(map)[0];
+            map[key] = 995.5;
+            fs.writeFileSync(p, JSON.stringify(map, null, 2));
+          "
+          if npm run qa:stats-source-truth; then
+            echo "::error::defense-runs 오염이 게이트를 통과했다 — 파생값 재계산 대조가 무력하다"
+            git checkout -- src/lib/constants/player-defense-runs.json
+            exit 1
+          fi
+          git checkout -- src/lib/constants/player-defense-runs.json
+          git diff --exit-code
+
+      - name: RED proof — row omission must fail
+        run: |
+          node -e "
+            const fs = require('fs');
+            const p = 'src/lib/constants/stats-2026-defense.json';
+            const rows = JSON.parse(fs.readFileSync(p, 'utf8'));
+            rows.splice(0, 1);
+            fs.writeFileSync(p, JSON.stringify(rows, null, 2));
+          "
+          if npm run qa:stats-source-truth; then
+            echo "::error::수비 행 누락이 게이트를 통과했다 — 행 집합 대조가 무력하다"
+            git checkout -- src/lib/constants/stats-2026-defense.json
+            exit 1
+          fi
+          git checkout -- src/lib/constants/stats-2026-defense.json
+          git diff --exit-code
+
+      - name: Confirm working tree is clean after RED proofs
+        # 결함주입이 하나라도 원복되지 않았으면 여기서 잡힌다.
+        run: git diff --exit-code
