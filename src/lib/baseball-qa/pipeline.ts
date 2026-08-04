@@ -23,13 +23,14 @@ import {
   BASEBALL_GENIUS_MAX_ANSWER_LENGTH,
   BASEBALL_GENIUS_MAX_QUESTION_LENGTH,
   BASEBALL_GENIUS_MIN_QUESTION_LENGTH,
+  BASEBALL_GENIUS_SCOPE_NOTICE,
 } from "@/lib/constants/baseball-genius";
 
 export const DAILY_LIMIT = BASEBALL_GENIUS_DAILY_LIMIT;
 export const MIN_QUESTION_LEN = BASEBALL_GENIUS_MIN_QUESTION_LENGTH;
 export const MAX_QUESTION_LEN = BASEBALL_GENIUS_MAX_QUESTION_LENGTH;
 
-export const BLOCKED_ANSWER = "야구 룰/용어에 대한 질문만 답할 수 있어요. 예: \"보크가 뭐야?\"";
+export const BLOCKED_ANSWER = `${BASEBALL_GENIUS_SCOPE_NOTICE} 예: "보크가 뭐야?"`;
 // LLM이 야구 룰/용어인지 확신하지 못한 경우 — 차단 문구가 아니라 확인 질문이다.
 export const UNSURE_ANSWER =
   "어떤 야구 룰/용어를 여쭤보신 걸까요? 조금만 더 자세히 적어주시면 정확히 답해드릴게요! ⚾";

@@ -1,6 +1,10 @@
 /** 야잘알봇 시스템 계정. 배포 전 동일 UUID의 auth/profiles 계정을 프로비저닝한다. */
 export const BASEBALL_GENIUS_USER_ID = "45ae7419-6a9a-4c6b-9101-8d65df7e242e";
 export const BASEBALL_GENIUS_NAME = "야잘알봇";
+export const BASEBALL_GENIUS_SCOPE_NOTICE =
+  "야구 룰, 구단, 선수, 기록 관련 질문만 답변할 수 있어요.";
+export const BASEBALL_GENIUS_BANNER_NOTICE =
+  `${BASEBALL_GENIUS_SCOPE_NOTICE} 그리고 야잘알봇도 실수를 하거나 잘못된 정보를 제공하는 경우가 있어요.`;
 
 /** 하린아빠 확정 대기 중인 권장 기본값(spec §8). */
 export const BASEBALL_GENIUS_DAILY_LIMIT = 20;

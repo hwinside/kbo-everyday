@@ -33,6 +33,7 @@ import FavoritePlayersSection from "@/components/home/FavoritePlayersSection";
 import TodayGamesSection from "@/components/home/TodayGamesSection";
 import LiveGameBanner from "@/components/home/LiveGameBanner";
 import AIAnalysis from "@/components/game/AIAnalysis";
+import GeniusLaunchPopup from "@/components/home/GeniusLaunchPopup";
 
 // Lazy load heavy sections
 import { lazy, Suspense } from "react";
@@ -815,6 +816,7 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
     {showOnboarding && (
       <OnboardingFlow onComplete={handleOnboardingComplete} />
     )}
+    <GeniusLaunchPopup enabled={!showOnboarding && !showPlayerSelect} />
     <PlayerSelectModal
       isOpen={showPlayerSelect}
       teamId={myTeamId ?? 1}
