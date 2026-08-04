@@ -1068,6 +1068,7 @@ async function verifyPipeline() {
       // (`calcBatterSaber`). 앱은 선수 상세·기록실·세이버 카드에서 이미 보여주고 있었다.
       // "DB 에 컬럼이 없다"를 "데이터가 없다"로 읽은 게 `도루`·`OPS` 때와 같은 오판이었다.
       ["김도영 WAR 알려줘", "batter", "war"],
+      ["김도영 wRC+ 알려줘", "batter", "wrc_plus"],
     ];
     assert.deepEqual(
       new Set(positiveMetrics.filter(([, table]) => table === "batter").map(([, , metric]) => metric)),
