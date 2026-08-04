@@ -18,6 +18,7 @@ import path from "node:path";
 import {
   BASEBALL_GENIUS_USER_ID,
   GENIUS_MASCOT_STATES,
+  MATCH_PATH_REPLY_KIND,
   geniusMascotSrc,
   isGeniusReplyPayload,
   mascotStateForReplyKind,
@@ -38,8 +39,10 @@ function check(name: string, fn: () => void) {
 const read = (p: string) => readFileSync(path.join(process.cwd(), p), "utf8");
 
 // --- (A) 매핑 ---
-check("정상 답변 3경로(사전·캐시·LLM)는 answering", () => {
-  for (const p of ["dictionary", "cache", "llm"]) {
+check("정상 답변 4경로(사전·캐시·LLM·선수RAG)는 answering", () => {
+  // `rag` = 선수 서술형 질문을 수집 문서 근거로 답한 경로. 2026-08-04 운영 실측에서
+  // 이 경로가 `unavailable` 로 떨어져 정상 답변에 "모르겠어요" 표정이 붙었다.
+  for (const p of ["dictionary", "cache", "llm", "rag"]) {
     assert.equal(replyKindForMatchPath(p), "answer", p);
     assert.equal(mascotStateForReplyKind(replyKindForMatchPath(p)), "answering", p);
   }
@@ -69,16 +72,51 @@ check("payload 없는 과거 답변·미지 유형은 idle 폴백(오류/빈칸 
 
 // 서버가 실제로 내보내는 MatchPath 전체가 매핑에 덮여 있는가.
 // pipeline.ts 의 union 을 직접 읽는다 — 새 유형이 추가되면 여기서 잡힌다.
-check("서버 MatchPath 전체가 매핑에 덮여 있다(pending 제외)", () => {
+// ⚠️ 종전 게이트는 `replyKindForMatchPath(p)` 결과가 3종 중 하나인지만 봤다.
+// 그 함수는 모르는 값도 `unavailable` 로 폴백하므로 **미분류가 항상 통과**했다.
+// `rag` 사고가 이 false-green 을 그대로 통과한 이유다.
+// 이제 union 을 명시 열거 테이블(MATCH_PATH_REPLY_KIND)의 키와 직접 대조한다.
+check("서버 MatchPath 전체가 명시 분류돼 있다(pending 제외, 폴백 흡수 금지)", () => {
   const pipeline = read("src/lib/baseball-qa/pipeline.ts");
   const m = pipeline.match(/export type MatchPath =([\s\S]*?);/);
   assert.ok(m, "MatchPath union 을 찾지 못함");
   const paths = [...m[1].matchAll(/\|\s*"([a-z_]+)"/g)].map((x) => x[1]);
   assert.ok(paths.length >= 10, `MatchPath 파싱 실패(${paths.length}개만 찾음)`);
   // pending 은 다른 worker 가 이기고 이 worker 는 물러나는 경우라 쪽지 자체가 발송되지 않는다.
-  const uncovered = paths.filter((p) =>
-    p !== "pending" && !["answer", "ack", "unavailable"].includes(replyKindForMatchPath(p)));
-  assert.deepEqual(uncovered, [], `reply_kind 누락: ${uncovered.join(", ")}`);
+  const declared = paths.filter((p) => p !== "pending");
+  const uncovered = declared.filter((p) => !(p in MATCH_PATH_REPLY_KIND));
+  assert.deepEqual(uncovered, [], `MATCH_PATH_REPLY_KIND 에 미분류: ${uncovered.join(", ")}`);
+  // 반대 방향 — 테이블에만 있고 서버 union 에 없는 죽은 키도 잡는다.
+  const stale = Object.keys(MATCH_PATH_REPLY_KIND).filter((p) => !declared.includes(p));
+  assert.deepEqual(stale, [], `서버 union 에 없는 죽은 분류: ${stale.join(", ")}`);
+});
+
+// 질문에 **실제로 답한** 경로가 `unavailable`(=모르겠어요 표정)로 분류되면 RED.
+//
+// 판정 근거는 pipeline 이 그 matchPath 로 무엇을 answer 에 넣는가다:
+//  - 생성/조회된 값(`answer`, `hit.answer`, `cached`, `validated.answer`) → 진짜 답변
+//  - 대문자 상수(`BLOCKED_ANSWER`, `UNSURE_ANSWER` 등) → 고정 거절/안내 문구
+//  - `null` → 답변 없음
+// 거절 안내도 answer 필드에 실려 나가므로 "non-null" 만으로는 구분되지 않는다.
+// 상수 식별자(SCREAMING_SNAKE_CASE)를 안내 문구로 보고 제외한다.
+check("질문에 실제로 답한 경로는 unavailable 로 분류되지 않는다", () => {
+  const pipeline = read("src/lib/baseball-qa/pipeline.ts");
+  const CANNED = /^[A-Z][A-Z0-9_]*$/;
+  const answering = new Set<string>();
+  // `answer: <expr>` 와 shorthand `answer,` 두 형태를 모두 받는다.
+  // shorthand 만 쓰는 rag 경로를 놓치면 이 게이트가 사고를 그대로 통과시킨다(실제로 그랬다).
+  for (const call of pipeline.matchAll(/matchPath:\s*"([a-z_]+)"\s*,\s*answer(?::\s*([^,]+))?\s*,/g)) {
+    const expr = (call[2] ?? "answer").trim();
+    if (expr === "null" || CANNED.test(expr)) continue;
+    answering.add(call[1]);
+  }
+  // dictionary/cache/llm/rag 4경로가 잡혀야 한다. 덜 잡히면 파싱이 깨진 것이고,
+  // 그대로 두면 이 게이트가 조용히 무력화된다.
+  assert.deepEqual([...answering].sort(), ["cache", "dictionary", "llm", "rag"],
+    `실답변 경로 파싱 결과가 기대와 다름: ${[...answering].sort().join(", ")}`);
+  const misclassified = [...answering].filter((p) => replyKindForMatchPath(p) === "unavailable");
+  assert.deepEqual(misclassified, [],
+    `답변을 내보내는데 '모르겠어요' 로 분류됨: ${misclassified.join(", ")}`);
 });
 
 // --- (B) 자산 ---

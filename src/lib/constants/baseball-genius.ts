@@ -25,20 +25,46 @@ export const GENIUS_MASCOT_STATES: readonly GeniusMascotState[] = [
 ] as const;
 
 /**
- * 답변 유형(MatchPath) → 마스코트 상태.
+ * 답변 유형(MatchPath) → 의미 분류(reply_kind). **전 경로를 명시 열거한다.**
  *
  * 유형은 서버가 답변 저장 시점에 `dm_messages.payload` 에 기록한다(SSOT, A안).
  * 클라가 답변 텍스트를 상수와 대조하는 방식(B안)은 문구가 바뀌는 순간 조용히 깨진다.
  *
- * MatchPath 전체를 다 적지 않는다 — `pending` 은 다른 worker 가 이기고 이 worker 는
- * 물러나는 경우라 애초에 쪽지가 발송되지 않는다(= payload 도 안 생긴다).
+ * ⚠️ 열거형인 이유 (2026-08-04 운영 사고): 이전 구현은 `answer` 3종만 Set 으로 두고
+ * 나머지를 전부 `unavailable` 로 폴백했다. 그 결과 새로 뚫린 선수 RAG 경로(`rag`)가
+ * **정상 답변인데도 "모르겠어요" 취급**돼 마스코트가 `unknown` 표정으로 떴다.
+ * 미분류를 조용한 폴백으로 흡수하면 새 경로가 추가될 때마다 같은 사고가 반복된다.
+ * 그래서 여기서 전 경로를 명시하고, 회귀 게이트가 `MatchPath` union 과 이 키 집합을
+ * 대조해 **미분류 경로를 RED 로 잡는다**.
+ *
+ * `pending` 은 다른 worker 가 이기고 이 worker 는 물러나는 경우라 애초에 쪽지가
+ * 발송되지 않는다(= payload 도 안 생긴다). 유일한 열거 제외 대상이다.
  */
-const ANSWER_MATCH_PATHS = new Set(["dictionary", "cache", "llm"]);
+export const MATCH_PATH_REPLY_KIND: Readonly<Record<string, GeniusReplyKind>> = {
+  // 답변을 실제로 내보낸 경로
+  dictionary: "answer",
+  cache: "answer",
+  llm: "answer",
+  rag: "answer",
+  // 감사·확인 인사
+  ack: "ack",
+  // 답하지 못한 경로
+  blocked: "unavailable",
+  unsure: "unavailable",
+  limited: "unavailable",
+  error: "unavailable",
+  context_missing: "unavailable",
+  service_redirect: "unavailable",
+  history_hold: "unavailable",
+};
 
+/**
+ * ⚠️ 런타임 폴백은 `unavailable` 로 유지한다. 서버가 먼저 배포돼 클라가 모르는 값을
+ * 받는 창에서 화면이 깨지지 않아야 하기 때문이다. 다만 그 폴백이 미분류를 덮어
+ * 감추지 않도록, 열거 누락 자체는 위 게이트가 빌드에서 막는다.
+ */
 export function replyKindForMatchPath(matchPath: string): GeniusReplyKind {
-  if (ANSWER_MATCH_PATHS.has(matchPath)) return "answer";
-  if (matchPath === "ack") return "ack";
-  return "unavailable";
+  return MATCH_PATH_REPLY_KIND[matchPath] ?? "unavailable";
 }
 
 /**
