@@ -18,6 +18,12 @@ export function digestSourceMaps(labeledMaps) {
   return hash.digest("hex");
 }
 
+export function emitSourceDigest(log, labeledMaps) {
+  const digest = digestSourceMaps(labeledMaps);
+  log(`${SOURCE_DIGEST_MARKER}=${digest}`);
+  return digest;
+}
+
 /**
  * 스탯 원본 정합성 대조 — 크롤 write 경로와 독립 QA 스크립트가 공유하는 SSOT.
  *
@@ -203,13 +209,13 @@ export async function assertSourceTruth({ browser, kboBase, season, batters, pit
     );
 
     // freshness 안정성은 실패 문구가 아니라 원본 전체 key/value 자체로 판정한다.
-    log(`${SOURCE_DIGEST_MARKER}=${digestSourceMaps({
+    emitSourceDigest(log, {
       pitchers: kboPitchers,
       batters1: kboBatters1,
       batters2: kboBatters2,
       runner: kboRunner,
       defense: kboDefense,
-    })}`);
+    });
 
     for (const spec of [
       { label: "투수", rows: pitchers, kbo: kboPitchers, columns: PITCHER_COLUMNS },

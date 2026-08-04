@@ -41,9 +41,10 @@
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import yaml from "js-yaml";
+import ts from "typescript";
 import {
   copyFileSync,
-  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -53,6 +54,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { emitSourceDigest } from "../lib/stats-source-truth.mjs";
 
 const SCRIPT_ALIAS = "qa:stats-freshness";
 const VERIFIER_REL = "scripts/qa/stats-source-truth-verify.mjs";
@@ -269,15 +271,47 @@ check("env 로 안정성 파라미터를 낮출 수 없음(floor clamp)", () => 
 
 /* ── seam 이 프로덕션 경로로 새지 않는지 ───────────────────────── */
 /* ══ digest actual binding — source → verifier stdout → wrapper ═════ */
-check("원본 digest actual 결속(source→verifier→wrapper)", () => {
-  const source = readFileSync("scripts/lib/stats-source-truth.mjs", "utf8");
+check("controlled source maps A/B → actual emitted digest A/B", () => {
+  const linesA = [];
+  const linesB = [];
+  const base = { pitchers: new Map([["50167", ["1.00", "2"]]]) };
+  const changed = { pitchers: new Map([["50167", ["99.99", "2"]]]) };
+  const digestA = emitSourceDigest((line) => linesA.push(line), base);
+  const digestB = emitSourceDigest((line) => linesB.push(line), changed);
+  assert.match(digestA, /^[a-f0-9]{64}$/);
+  assert.match(digestB, /^[a-f0-9]{64}$/);
+  assert.notEqual(digestA, digestB, "source value A/B가 달라도 digest가 같으면 안 된다");
+  assert.deepEqual(linesA, [`KBO_SOURCE_DIGEST=${digestA}`]);
+  assert.deepEqual(linesB, [`KBO_SOURCE_DIGEST=${digestB}`]);
+});
+
+check("assertSourceTruth production body가 emitSourceDigest를 live statement로 호출", () => {
+  const sourcePath = "scripts/lib/stats-source-truth.mjs";
+  const source = readFileSync(sourcePath, "utf8");
+  const sf = ts.createSourceFile(sourcePath, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  let target = null;
+  const visit = (node) => {
+    if (ts.isFunctionDeclaration(node) && node.name?.text === "assertSourceTruth") target = node;
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  assert.ok(target?.body, "assertSourceTruth production body를 찾지 못했다");
+  const calls = [];
+  const collect = (node) => {
+    if (ts.isCallExpression(node) && node.expression.getText(sf) === "emitSourceDigest") calls.push(node);
+    ts.forEachChild(node, collect);
+  };
+  collect(target.body);
+  assert.equal(calls.length, 1, "assertSourceTruth는 emitSourceDigest를 정확히 1회 호출해야 한다");
+  assert.ok(
+    ts.isExpressionStatement(calls[0].parent),
+    "emitSourceDigest 호출은 false&& 같은 dead/short-circuit 표현식 안에 있으면 안 된다",
+  );
+
   const verifier = readFileSync(VERIFIER_REL, "utf8");
-  const wrapper = readFileSync(WRAPPER_REL, "utf8");
-  assert.match(source, /KBO_SOURCE_DIGEST/);
-  assert.match(source, /digestSourceMaps\(\{/);
   assert.match(verifier, /assertSourceTruth\(\{/);
   assert.match(verifier, /log:\s*\(line\)\s*=>\s*console\.log/);
-  assert.match(wrapper, /KBO_SOURCE_DIGEST=\(\[a-f0-9\]\{64\}\)/);
+  assert.match(wrapperSource, /KBO_SOURCE_DIGEST=\(\[a-f0-9\]\{64\}\)/);
 });
 
 /* ══ self-binding — 이 스모크가 decoy 로 갈려달 수 없게 ══════════
@@ -309,15 +343,17 @@ check(`alias \`${CONTRACT_ALIAS}\` ↔ 이 파일 exact 양방향 결속`, () =>
   );
 });
 
-check("contract 게이트가 이 스모크를 경로로 직접 호출(alias 경유 금지)", () => {
+check("contract 게이트가 unconditional exact step으로 이 스모크를 실행", () => {
   const workflow = readFileSync(CONTRACT_WORKFLOW, "utf8");
+  const doc = yaml.load(workflow);
+  const steps = doc?.jobs?.["stats-contract"]?.steps ?? [];
+  const matches = steps.filter((step) => step?.run === `node ${SELF_REL}`);
+  assert.equal(matches.length, 1, "contract smoke exact run step은 정확히 1개여야 한다");
+  const step = matches[0];
+  assert.ok(!("if" in step), "contract baseline step에 skip 조건을 둘 수 없다");
+  assert.ok(!("continue-on-error" in step), "contract baseline 실패를 숨기면 안 된다");
   assert.ok(
-    workflow.includes(`node ${SELF_REL}`),
-    `${CONTRACT_WORKFLOW} 가 \`node ${SELF_REL}\` 를 직접 호출해야 한다 —`
-      + " npm alias 경유로 부르면 decoy alias 하나로 전체를 우회할 수 있다",
-  );
-  assert.ok(
-    !new RegExp(`npm run ${CONTRACT_ALIAS}(?![\\w-])`).test(workflow),
+    !new RegExp(`npm run ${CONTRACT_ALIAS}(?![\w-])`).test(workflow),
     `${CONTRACT_WORKFLOW} 가 이 스모크를 npm alias 로 부르면 안 된다(decoy 우회 경로)`,
   );
 });
@@ -345,18 +381,26 @@ check("CONTRACT_TEST seam 은 래퍼 안에서만 참조", () => {
  * 여기서는 seam 을 **비운 채**(= 운영과 동일) 래퍼를 띄우고, 검증기가 spawn 되면
  * marker 파일을 쓰게 해 그 흔적을 직접 관측한다. 안정 window(3분)를 다 기다리지 않고
  * **첫 회차 spawn** 만 확인한 뒤 종료시킨다. */
-check("prod 모드에서 검증기가 실제로 실행됨(seam bypass 차단)", () => {
+check("prod 모드에서 반복 판독→window→PASS까지 실제 수행", () => {
   const root = mkdtempSync(path.join(tmpdir(), "freshness-prod-"));
   try {
     mkdirSync(path.join(root, "scripts", "qa"), { recursive: true });
-    copyFileSync(WRAPPER_REL, path.join(root, WRAPPER_REL));
+    const prodWrapper = wrapperSource
+      .replace("const MIN_STABILITY_WINDOW_MS = 180_000;", "const MIN_STABILITY_WINDOW_MS = 180;")
+      .replace("const MIN_COOLDOWN_MS = 15_000;", "const MIN_COOLDOWN_MS = 50;");
+    assert.notEqual(prodWrapper, wrapperSource, "prod floor 치환 실패");
+    writeFileSync(path.join(root, WRAPPER_REL), prodWrapper);
 
-    const marker = path.join(root, "verifier-invoked.marker");
+    const statePath = path.join(root, "attempt.json");
+    writeFileSync(statePath, "0");
     writeFileSync(
       path.join(root, VERIFIER_REL),
       [
-        "import { appendFileSync } from 'node:fs';",
-        `appendFileSync(${JSON.stringify(marker)}, 'invoked\\n');`,
+        "import { readFileSync, writeFileSync } from 'node:fs';",
+        `const p = ${JSON.stringify(statePath)};`,
+        "const n = Number(readFileSync(p, 'utf8')) + 1;",
+        "writeFileSync(p, String(n));",
+        "console.log('KBO_SOURCE_DIGEST=' + 'a'.repeat(64));",
         "console.log('stub: ok');",
         "process.exit(0);",
       ].join("\n"),
@@ -365,24 +409,15 @@ check("prod 모드에서 검증기가 실제로 실행됨(seam bypass 차단)", 
     const child = spawnSync(process.execPath, [WRAPPER_REL], {
       cwd: root,
       encoding: "utf8",
-      // seam 을 명시적으로 비운다 = 운영과 동일한 경로.
       env: { ...process.env, STATS_FRESHNESS_CONTRACT_TEST: "" },
-      // 안정 window 를 다 기다리지 않는다 — 첫 spawn 만 보면 충분하다.
-      timeout: 20_000,
-      killSignal: "SIGKILL",
+      timeout: 10_000,
     });
     const output = `${child.stdout ?? ""}${child.stderr ?? ""}`;
-
-    assert.ok(
-      existsSync(marker),
-      "prod 모드에서 검증기가 한 번도 실행되지 않았다 — seam 이 꺼졌을 때"
-        + " 조기 종료하는 우회로가 있으면 운영에서 live equality 가 0회 수행된다"
-        + `\n${output}`,
-    );
-    assert.ok(
-      !/CONTRACT_TEST=1/.test(output),
-      `seam 을 비워도 계약테스트 모드로 동작했다\n${output}`,
-    );
+    const attempts = Number(readFileSync(statePath, "utf8"));
+    assert.equal(child.status, 0, `prod 반복 경로가 최종 PASS하지 못했다\n${output}`);
+    assert.ok(attempts >= 2, `첫 read 뒤 조기 success했다(actual ${attempts}회)\n${output}`);
+    assert.match(output, /stats freshness:/, "window를 덮은 최종 판정 로그가 없다");
+    assert.ok(!/CONTRACT_TEST=1/.test(output), `seam 없는 prod 경로여야 한다\n${output}`);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

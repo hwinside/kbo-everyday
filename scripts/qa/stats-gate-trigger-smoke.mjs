@@ -31,6 +31,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import yaml from "js-yaml";
 // ⚠︎ minimatch 는 CJS 라 named import 가 안 된다(Node 24 에서 SyntaxError).
 // glob 매칭을 자체 구현하면 `*` 와 `**` 경계에서 또 뚫리므로 검증된 구현을 쓴다.
 import minimatchPkg from "minimatch";
@@ -236,18 +237,21 @@ function assertScriptsExist(source, label, minimum) {
   assertScriptsExist(source, "freshness 게이트", 1);
 }
 
-/* ══ 3) updater PR 생성 전 freshness actual binding ═════════════ */
+/* ══ 3) updater PR 생성 전 freshness unconditional exact binding ═ */
 {
   const updaterPath = ".github/workflows/update-roster-stats.yml";
   const updater = readFileSync(updaterPath, "utf8");
-  const verifyNeedle = "run: node scripts/qa/stats-freshness-verify.mjs";
-  const verifyAt = updater.indexOf(verifyNeedle);
-  const prAt = updater.indexOf("- name: Create PR");
-  assert.ok(verifyAt >= 0, "updater가 freshness wrapper를 파일 경로로 직접 실행해야 한다");
+  const doc = yaml.load(updater);
+  const steps = doc?.jobs?.update?.steps ?? [];
+  const exactRun = "node scripts/qa/stats-freshness-verify.mjs";
+  const matches = steps.filter((step) => step?.run === exactRun);
+  assert.equal(matches.length, 1, "updater freshness exact run step은 정확히 1개여야 한다");
+  const verifyStep = matches[0];
+  assert.ok(!("if" in verifyStep), "updater freshness는 if:false 등으로 skip할 수 없다");
+  assert.ok(!("continue-on-error" in verifyStep), "updater freshness 실패를 숨기면 안 된다");
+  const verifyAt = steps.indexOf(verifyStep);
+  const prAt = steps.findIndex((step) => step?.name === "Create PR");
   assert.ok(prAt >= 0 && verifyAt < prAt, "freshness 검증은 PR 생성보다 먼저여야 한다");
-  const verifyBlock = updater.slice(updater.lastIndexOf("- name:", verifyAt), updater.indexOf("- name:", verifyAt));
-  assert.ok(!/continue-on-error:\s*true/.test(verifyBlock), "PR 전 freshness는 fail-close여야 한다");
-  assert.ok(!/npm run qa:stats-freshness/.test(verifyBlock), "decoy alias 우회 방지를 위해 파일 경로로 직접 호출해야 한다");
 }
 
 /* ══ 4) 두 게이트의 역할이 갈라져 있어야 한다 ═══════════════════

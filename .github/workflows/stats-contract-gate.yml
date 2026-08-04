@@ -400,6 +400,113 @@ jobs:
             }
           "
 
+      - name: RED proof — prod first-read early success must fail
+        run: |
+          node -e "
+            const fs = require('fs');
+            const p = 'scripts/qa/stats-freshness-verify.mjs';
+            const src = fs.readFileSync(p, 'utf8');
+            const needle = 'const verdict = await runVerifierOnce(attempt);';
+            if (!src.includes(needle)) process.exit(1);
+            fs.writeFileSync(p, src.replace(needle, needle + '\n  if (!CONTRACT_TEST) process.exit(0);'));
+          "
+          if node scripts/qa/stats-freshness-contract-smoke.mjs; then
+            echo "::error::prod 첫 read 뒤 success 우회가 통과했다"
+            git checkout -- scripts/qa/stats-freshness-verify.mjs
+            exit 1
+          fi
+          git checkout -- scripts/qa/stats-freshness-verify.mjs
+          git diff --exit-code
+
+      - name: RED proof — workflow baseline suffix and skip must fail
+        run: |
+          cp .github/workflows/stats-contract-gate.yml /tmp/stats-contract-gate.yml
+          node -e "
+            const fs = require('fs');
+            const p = '.github/workflows/stats-contract-gate.yml';
+            const src = fs.readFileSync(p, 'utf8');
+            const needle = 'run: node scripts/qa/stats-freshness-contract-smoke.mjs';
+            if (!src.includes(needle)) process.exit(1);
+            fs.writeFileSync(p, src.replace(needle, needle + ' || true'));
+          "
+          if node scripts/qa/stats-freshness-contract-smoke.mjs; then
+            echo "::error::contract baseline || true 우회가 통과했다"
+            cp /tmp/stats-contract-gate.yml .github/workflows/stats-contract-gate.yml
+            exit 1
+          fi
+          cp /tmp/stats-contract-gate.yml .github/workflows/stats-contract-gate.yml
+          node -e "
+            const fs = require('fs');
+            const p = '.github/workflows/stats-contract-gate.yml';
+            const src = fs.readFileSync(p, 'utf8');
+            const needle = '        run: node scripts/qa/stats-freshness-contract-smoke.mjs';
+            if (!src.includes(needle)) process.exit(1);
+            fs.writeFileSync(p, src.replace(needle, '        if: false\n' + needle));
+          "
+          if node scripts/qa/stats-freshness-contract-smoke.mjs; then
+            echo "::error::contract baseline if:false 우회가 통과했다"
+            cp /tmp/stats-contract-gate.yml .github/workflows/stats-contract-gate.yml
+            exit 1
+          fi
+          cp /tmp/stats-contract-gate.yml .github/workflows/stats-contract-gate.yml
+          git diff --exit-code
+
+      - name: RED proof — updater suffix and skip must fail
+        run: |
+          cp .github/workflows/update-roster-stats.yml /tmp/update-roster-stats.yml
+          node -e "
+            const fs = require('fs');
+            const p = '.github/workflows/update-roster-stats.yml';
+            const src = fs.readFileSync(p, 'utf8');
+            const needle = 'run: node scripts/qa/stats-freshness-verify.mjs';
+            if (!src.includes(needle)) process.exit(1);
+            fs.writeFileSync(p, src.replace(needle, needle + ' || true'));
+          "
+          if npm run qa:stats-gate-trigger; then
+            echo "::error::updater freshness || true 우회가 통과했다"
+            cp /tmp/update-roster-stats.yml .github/workflows/update-roster-stats.yml
+            exit 1
+          fi
+          cp /tmp/update-roster-stats.yml .github/workflows/update-roster-stats.yml
+          node -e "
+            const fs = require('fs');
+            const p = '.github/workflows/update-roster-stats.yml';
+            const src = fs.readFileSync(p, 'utf8');
+            const needle = '        run: node scripts/qa/stats-freshness-verify.mjs';
+            if (!src.includes(needle)) process.exit(1);
+            fs.writeFileSync(p, src.replace(needle, '        if: false\n' + needle));
+          "
+          if npm run qa:stats-gate-trigger; then
+            echo "::error::updater freshness if:false 우회가 통과했다"
+            cp /tmp/update-roster-stats.yml .github/workflows/update-roster-stats.yml
+            exit 1
+          fi
+          cp /tmp/update-roster-stats.yml .github/workflows/update-roster-stats.yml
+          git diff --exit-code
+
+      - name: RED proof — source digest dead call and fixed marker must fail
+        run: |
+          node -e "
+            const fs = require('fs');
+            const p = 'scripts/lib/stats-source-truth.mjs';
+            const src = fs.readFileSync(p, 'utf8');
+            const needle = '    emitSourceDigest(log, {';
+            if (!src.includes(needle)) process.exit(1);
+            fs.writeFileSync(
+              p,
+              src.replace(needle, '    false && emitSourceDigest(log, {')
+                .replace('    for (const spec of [',
+                  "    log('KBO_SOURCE_DIGEST=' + 'a'.repeat(64));\n\n    for (const spec of ["),
+            );
+          "
+          if node scripts/qa/stats-freshness-contract-smoke.mjs; then
+            echo "::error::dead digest call + fixed marker 우회가 통과했다"
+            git checkout -- scripts/lib/stats-source-truth.mjs
+            exit 1
+          fi
+          git checkout -- scripts/lib/stats-source-truth.mjs
+          git diff --exit-code
+
       - name: Confirm working tree is clean after RED proofs
         # 결함주입이 하나라도 원복되지 않았으면 여기서 잡힌다.
         run: git diff --exit-code
