@@ -1,3 +1,5 @@
+import type { MatchPath } from "@/lib/baseball-qa/pipeline";
+
 /** 야잘알봇 시스템 계정. 배포 전 동일 UUID의 auth/profiles 계정을 프로비저닝한다. */
 export const BASEBALL_GENIUS_USER_ID = "45ae7419-6a9a-4c6b-9101-8d65df7e242e";
 export const BASEBALL_GENIUS_NAME = "야잘알봇";
@@ -40,7 +42,7 @@ export const GENIUS_MASCOT_STATES: readonly GeniusMascotState[] = [
  * `pending` 은 다른 worker 가 이기고 이 worker 는 물러나는 경우라 애초에 쪽지가
  * 발송되지 않는다(= payload 도 안 생긴다). 유일한 열거 제외 대상이다.
  */
-export const MATCH_PATH_REPLY_KIND: Readonly<Record<string, GeniusReplyKind>> = {
+export const MATCH_PATH_REPLY_KIND = {
   // 답변을 실제로 내보낸 경로
   dictionary: "answer",
   cache: "answer",
@@ -56,7 +58,13 @@ export const MATCH_PATH_REPLY_KIND: Readonly<Record<string, GeniusReplyKind>> = 
   context_missing: "unavailable",
   service_redirect: "unavailable",
   history_hold: "unavailable",
-};
+  // `satisfies` 가 계약을 **컴파일타임에** 강제한다:
+  //  - 새 MatchPath 를 추가하고 여기 안 적으면 → 타입 에러(누락 불가)
+  //  - union 에 없는 키를 적으면 → 타입 에러(죽은 키 불가)
+  // 소스 정규식으로 TS 표현의 의미를 추론하던 종전 게이트는 대문자 식별자를 전부
+  // 거절 상수로 간주해 실제 생성답까지 제외하는 false-green 이 있었다(삼순 반대가설).
+  // 타입 시스템이 판정 주체가 되면 그 추론 자체가 필요 없다.
+} satisfies Record<Exclude<MatchPath, "pending">, GeniusReplyKind>;
 
 /**
  * ⚠️ 런타임 폴백은 `unavailable` 로 유지한다. 서버가 먼저 배포돼 클라가 모르는 값을
@@ -64,7 +72,10 @@ export const MATCH_PATH_REPLY_KIND: Readonly<Record<string, GeniusReplyKind>> = 
  * 감추지 않도록, 열거 누락 자체는 위 게이트가 빌드에서 막는다.
  */
 export function replyKindForMatchPath(matchPath: string): GeniusReplyKind {
-  return MATCH_PATH_REPLY_KIND[matchPath] ?? "unavailable";
+  // 인덱싱을 위해서만 넓힌다. 테이블 자체는 `satisfies` 로 union 과 정확히 묶여 있으므로
+  // 이 캐스트가 열거 누락을 감추지 않는다(누락은 위에서 컴파일 에러).
+  const table: Readonly<Record<string, GeniusReplyKind>> = MATCH_PATH_REPLY_KIND;
+  return table[matchPath] ?? "unavailable";
 }
 
 /**
