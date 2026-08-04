@@ -1,0 +1,198 @@
+name: Stats Source Truth Gate
+
+# 스탯 데이터 원본 정합성 게이트 (삼순 #1098 P0-2 — required CI 결속).
+#
+# 배경: `qa:stats-source-truth` 가 package.json 에만 있고 어떤 워크플로에서도
+# 호출되지 않아, 곽빈 ERA 를 `2.66 → 99.99` 로 바꾼 상태에서도 전체 `npm run prebuild`
+# 가 exit 0 GREEN 이었다. 즉 크롤러를 우회한 수동 편집·data PR·머지 오염을 자동으로
+# 막는다는 계약이 성립하지 않았다.
+#
+# 이 게이트는 KBO 공식 기록실을 독립 재조회해 저장된 스냅샷과 전 행·전 필드를 대조한다.
+# 값 오염 1건 또는 행 누락/잉여 1건이라도 있으면 RED 다. 원본 수집 자체가 불가해도
+# (수집 0행) 실패다 — 검증 불가를 통과로 취급하면 게이트가 아니다.
+#
+# ⚠️ 일반 prebuild 에는 넣지 않는다. Vercel 빌드 환경이 KBO 에 도달하지 못하면
+# 배포 자체가 죽기 때문이다. 네트워크·Chromium 이 보장되는 이 전용 워크플로에서만 돈다.
+#
+# ⚠️ GitHub Actions 워크플로 파서는 YAML anchor/alias 를 지원하지 않는다 —
+# ⚠️ paths allowlist 를 두지 않는다 (2026-08-04 하린아빠 결정, 삼순 8차 지적).
+#
+# 개별 나열이든 broad glob 이든 allowlist 를 두면, 거기 안 걸리는 새 의존이 생겼을 때
+# workflow 가 통째 SKIP 되고 required check 는 "통과"로 보인다 = trigger 자체가 false-green 이다.
+# 실제로 이번 트랙에서 `kbo-select.mjs` 를 새로 만들 때 나열을 손으로 추가해야 했다.
+# 지금까지 이 PR 에서 잡힌 결함은 대부분 "게이트가 돌지 않는 경로"였으므로,
+# 비용보다 커버리지를 택한다 — 모든 PR / main push 에서 등록·실행한다.
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  stats-source-truth:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Install Playwright Chromium
+        run: npx playwright install chromium --with-deps
+
+      # ── 네트워크 없이 도는 계약들 (배선·행동) ─────────────────────
+      - name: Snapshot guard contract (fail-closed)
+        # 네 데이터셋 스냅샷 가드가 promote 앞에 배선돼 있는지 + assertSourceTruth 가
+        # 스텁 주입에서 실제로 reject 하는지(값 오염·행 누락·도루 오염·수집 0행).
+        run: npm run qa:stats-snapshot-guard
+
+      - name: Atomic promote contract (fail-closed)
+        # staging 실패 시 대상 파일 전원 byte-identical, promote 중간 실패 시 롤백.
+        run: npm run qa:atomic-promote
+
+      - name: Pagination completion contract (fail-closed)
+        # 11페이지 fake 페이저로 지연 흡수·재클릭 회복·전환 실패·stale·중간 누락을 행동 검증.
+        run: npm run qa:kbo-pagination
+
+      - name: Select/sort change gate
+        run: npm run qa:kbo-select
+
+      - name: Gate trigger coverage
+        run: npm run qa:stats-gate-trigger
+
+      # ── KBO 원본 전수 대조 ────────────────────────────────────
+      - name: Verify stats against KBO source of truth (fail-closed)
+        # 투수/타자/타자추가지표/도루/수비 전 행·전 필드 대조 + 파생(defense-runs) 재계산 대조.
+        # 값 오염 1건, 행 누락·잉여 1건이면 RED. 수집 0행(원본 도달 실패)도 RED.
+        run: npm run qa:stats-source-truth
+
+      # ── 검증력 증명 (결함주입) ────────────────────────────────
+      # 아래 스텝들은 "게이트가 통과하면 job 이 죽는" 구조다.
+      # 따라서 이 job 의 success 자체가 게이트에 검증력이 있다는 증거다.
+      # 각 주입 뒤 git 으로 원복하고, 소스 오염이 남지 않았는지 확인한다.
+      - name: RED proof — pitcher ERA corruption must fail
+        run: |
+          node -e "
+            const fs = require('fs');
+            const p = 'src/lib/constants/stats-2026-pitchers.json';
+            const rows = JSON.parse(fs.readFileSync(p, 'utf8'));
+            rows[0].era = '99.99';
+            fs.writeFileSync(p, JSON.stringify(rows, null, 2));
+          "
+          if npm run qa:stats-source-truth; then
+            echo "::error::ERA 오염이 게이트를 통과했다 — 값 대조가 무력하다"
+            git checkout -- src/lib/constants/stats-2026-pitchers.json
+            exit 1
+          fi
+          git checkout -- src/lib/constants/stats-2026-pitchers.json
+          git diff --exit-code
+
+      - name: RED proof — batter stolen-base corruption must fail
+        run: |
+          node -e "
+            const fs = require('fs');
+            const p = 'src/lib/constants/stats-2026-batters.json';
+            const rows = JSON.parse(fs.readFileSync(p, 'utf8'));
+            const target = rows.find((r) => Number(r.sb || 0) > 0) || rows[0];
+            target.sb = 999;
+            fs.writeFileSync(p, JSON.stringify(rows, null, 2));
+          "
+          if npm run qa:stats-source-truth; then
+            echo "::error::도루(sb) 오염이 게이트를 통과했다 — Runner 페이지 대조가 무력하다"
+            git checkout -- src/lib/constants/stats-2026-batters.json
+            exit 1
+          fi
+          git checkout -- src/lib/constants/stats-2026-batters.json
+          git diff --exit-code
+
+      - name: RED proof — defense-runs corruption must fail
+        run: |
+          node -e "
+            const fs = require('fs');
+            const p = 'src/lib/constants/player-defense-runs.json';
+            const map = JSON.parse(fs.readFileSync(p, 'utf8'));
+            const key = Object.keys(map)[0];
+            map[key] = 995.5;
+            fs.writeFileSync(p, JSON.stringify(map, null, 2));
+          "
+          if npm run qa:stats-source-truth; then
+            echo "::error::defense-runs 오염이 게이트를 통과했다 — 파생값 재계산 대조가 무력하다"
+            git checkout -- src/lib/constants/player-defense-runs.json
+            exit 1
+          fi
+          git checkout -- src/lib/constants/player-defense-runs.json
+          git diff --exit-code
+
+      - name: RED proof — row omission must fail
+        run: |
+          node -e "
+            const fs = require('fs');
+            const p = 'src/lib/constants/stats-2026-defense.json';
+            const rows = JSON.parse(fs.readFileSync(p, 'utf8'));
+            rows.splice(0, 1);
+            fs.writeFileSync(p, JSON.stringify(rows, null, 2));
+          "
+          if npm run qa:stats-source-truth; then
+            echo "::error::수비 행 누락이 게이트를 통과했다 — 행 집합 대조가 무력하다"
+            git checkout -- src/lib/constants/stats-2026-defense.json
+            exit 1
+          fi
+          git checkout -- src/lib/constants/stats-2026-defense.json
+          git diff --exit-code
+
+      # oracle(assertSourceTruth)과 crawler 가 같은 순회 core 를 쓰는지, 그리고 그 core 의
+      # 완주 계약(그룹 전환 유실 / maxPages 소진)이 실제로 RED 인지 결속한다.
+      # 종전에는 oracle 이 자체 구현을 써서 같은 경계에서 조용히 부분 수집을 반환했다.
+      - name: RED proof — pagination completion contract must fail closed
+        run: |
+          node -e "
+            const fs = require('fs');
+            const p = 'scripts/lib/kbo-pagination.mjs';
+            let src = fs.readFileSync(p, 'utf8');
+            if (!src.includes('source_pagination_incomplete')) {
+              console.error('완주 계약 예외가 없다 — 게이트 대상 코드가 바뀌었다');
+              process.exit(1);
+            }
+            // 템플릿 리터럴을 건드리지 않는 syntax-safe 주입: 분기 조건만 죽인다.
+            const needle = '    if (groupClickAccepted) {';
+            if (!src.includes(needle)) {
+              console.error('그룹 전환 실패 분기를 찾지 못했다 — 게이트 대상 코드가 바뀌었다');
+              process.exit(1);
+            }
+            fs.writeFileSync(p, src.replace(needle, '    if (false && groupClickAccepted) {'));
+          "
+          if npm run qa:kbo-pagination; then
+            echo "::error::그룹 전환 유실을 EOF 로 오인해도 게이트가 통과했다"
+            git checkout -- scripts/lib/kbo-pagination.mjs
+            exit 1
+          fi
+          git checkout -- scripts/lib/kbo-pagination.mjs
+          git diff --exit-code
+
+      - name: RED proof — oracle must share the crawler pagination core
+        run: |
+          node -e "
+            const fs = require('fs');
+            const src = fs.readFileSync('scripts/lib/stats-source-truth.mjs', 'utf8');
+            const usesCore = src.includes('createKboPageAdapter') && src.includes('collectAllPages(');
+            if (!usesCore) {
+              console.error('oracle 이 공용 순회 core 를 쓰지 않는다 — crawler 와 완주 계약이 갈라진다');
+              process.exit(1);
+            }
+            if (/async function (scrapeRows|pageSignature|waitForTableChange)\b/.test(src)) {
+              console.error('oracle 에 자체 순회 구현이 남아 있다(이중 구현)');
+              process.exit(1);
+            }
+          "
+
+      - name: Confirm working tree is clean after RED proofs
+        # 결함주입이 하나라도 원복되지 않았으면 여기서 잡힌다.
+        run: git diff --exit-code
