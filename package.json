@@ -297,7 +297,8 @@
     "qa:nickname-edit-sheet-browser": "node scripts/qa/nickname-edit-sheet-browser.mjs",
     "qa:venue-error-tags": "tsx scripts/qa/venue-error-tags-smoke.ts",
     "qa:venue-game-errors": "tsx scripts/qa/venue-game-errors-smoke.ts",
-    "qa:venue-attendance-crud:db": "tsx scripts/qa/venue-attendance-crud-db-route-integration.ts"
+    "qa:venue-attendance-crud:db": "tsx scripts/qa/venue-attendance-crud-db-route-integration.ts",
+    "qa:venue-video-normalize": "node scripts/qa/venue-video-normalize-e2e.mjs"
   },
   "dependencies": {
     "@capacitor-firebase/messaging": "^8.3.0",

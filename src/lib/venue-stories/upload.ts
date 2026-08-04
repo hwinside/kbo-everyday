@@ -4,7 +4,13 @@ import { supabase, getSafeSession } from "@/lib/supabase/client";
 import imageCompression from "browser-image-compression";
 import { VENUE_STORY_STAGING_BUCKET, VENUE_STORY_PRIVATE_MEDIA_BUCKET } from "./types";
 import { checkVenueMediaLimits, VENUE_VIDEO_TOO_HEAVY_MSG } from "./media-limits";
-import { shouldAutoCompressVideo, compressVenueVideo } from "./video-compress";
+import {
+  shouldAutoCompressVideo,
+  compressVenueVideo,
+  shouldNormalizeVideo,
+  normalizeVenueVideo,
+  isVideoCompressSupported,
+} from "./video-compress";
 
 export interface PreparedMedia {
   mediaType: "video" | "image";
@@ -361,11 +367,42 @@ export async function prepareVenueStoryMedia(
     });
     if (durationError) return { error: durationError };
 
-    // cap 초과 영상 자동 재인코딩(0~40% 구간) — 실패/미지원이면 기존 #813 백스톱 문구로 fallback
     let uploadable: File = file;
     let compressed = false;
-    if (shouldAutoCompressVideo({ sizeBytes: file.size, durationMs: probe.durationMs })) {
-      const out = await compressVenueVideo(file, {
+
+    // ① 업로드 전 720p H.264 + faststart 정규화 — **용량과 무관하게 전 영상**.
+    // 실측(2026-08-04, 업로드본 5건 ffprobe): 원본이 13~24Mbps·16~38MB 였고 2건은 moov 가
+    // 파일 끝(faststart 아님)이라 첫 재생에 사실상 전량 전송이 필요했다. 정규화 실패/미지원/
+    // 역효과면 원본 그대로 진행하므로 기존 동작은 유지된다(회귀 위험 최소화).
+    if (
+      shouldNormalizeVideo({
+        durationMs: probe.durationMs,
+        compressSupported: isVideoCompressSupported(),
+      })
+    ) {
+      const norm = await normalizeVenueVideo(file, {
+        durationMs: probe.durationMs,
+        width: probe.width,
+        height: probe.height,
+        onProgress: (r) => onProgress?.(r * 0.4, "compress"),
+      });
+      if (norm.normalized) {
+        uploadable = norm.file;
+        compressed = true;
+        // 메타/포스터는 실제 업로드되는 최종 파일 기준으로 재추출(해상도 변경됨)
+        try {
+          probe = await probeVideo(uploadable);
+        } catch (e) {
+          return { error: e instanceof Error ? e.message : "영상을 읽을 수 없습니다" };
+        }
+        onProgress?.(0.4, "upload");
+      }
+    }
+
+    // ② 정규화가 불가/실패했는데 여전히 cap 초과라면 기존 자동압축(구제 경로)으로 흡수.
+    // 실패/미지원이면 기존 #813 백스톱 문구로 fallback.
+    if (shouldAutoCompressVideo({ sizeBytes: uploadable.size, durationMs: probe.durationMs })) {
+      const out = await compressVenueVideo(uploadable, {
         durationMs: probe.durationMs,
         width: probe.width,
         height: probe.height,
