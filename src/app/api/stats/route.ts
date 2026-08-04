@@ -7,7 +7,7 @@ import pitcherStats2026 from "@/lib/constants/stats-2026-pitchers.json";
 import defenseStats2026 from "@/lib/constants/stats-2026-defense.json";
 import statsMeta from "@/lib/constants/stats-2026-meta.json";
 import type { RosterPlayer } from "@/types/api";
-import { resolvePlayer } from "@/lib/utils/resolve-player";
+import { canonicalKboId, resolvePlayer } from "@/lib/utils/resolve-player";
 import { aggregateDefense, type DefenseRow } from "@/lib/utils/defense-aggregate";
 import { mergeFullEntry } from "@/lib/stats/full-entry";
 import {
@@ -60,6 +60,31 @@ async function fetchHtml(url: string, signal?: AbortSignal): Promise<string> {
   if (!res.ok) throw new Error(`KBO stats HTTP ${res.status}`);
   if (!signal) return res.text();
   return readTextWithSignal(res, signal);
+}
+
+/**
+ * Runner 행의 **KBO playerId** 를 순서대로 뽑는다.
+ *
+ * ⚠️ 왜 필요한가 (삼순 #1100 4차 P0-3):
+ * `parseTable` 은 태그를 지워 텍스트만 남기므로 이름·팀만 남는다. 그래서
+ * Runner 병합 키가 `이름::팀` 이었고, **같은 팀 동명이인**이 서로의 도루 값을
+ * 덮어쉗다. 로스터 실측 7그룹 존재(이주형/키움, 이승현/삼성 등),
+ * production `/api/stats` 응답에서도 이주형 2행이 같은 키로 묶이는 것을 확인했다.
+ * 하류 kboId 필터는 **이미 오염된 값**을 복구하지 못하므로 병합 시점에 identity 로 묶는다.
+ *
+ * KBO Runner 행은 선수명 셀에 `HitterDetail/Basic.aspx?playerId=50500` 앱커를 담고 있다.
+ */
+export function parseRunnerPlayerIds(html: string): Array<string | null> {
+  const ids: Array<string | null> = [];
+  const tbodyMatch = html.match(/<tbody[^>]*>([\s\S]*?)<\/tbody>/i);
+  if (!tbodyMatch) return ids;
+  const trMatches = tbodyMatch[1].match(/<tr[^>]*>([\s\S]*?)<\/tr>/gi);
+  if (!trMatches) return ids;
+  for (const tr of trMatches) {
+    if (!/<td[^>]*>/i.test(tr)) continue;
+    ids.push(tr.match(/playerId=(\d+)/i)?.[1] ?? null);
+  }
+  return ids;
 }
 
 function parseTable(html: string): string[][] {
@@ -164,7 +189,11 @@ export async function fetchAllRunnerRows(
         throw new Error(`Runner pager skipped: expected ${seenPages.size + 1}, got ${page}`);
       }
       seenPages.add(page);
-      rows.push(...parseTable(html));
+      const pageRows = parseTable(html);
+      const pageIds = parseRunnerPlayerIds(html);
+      // playerId 를 행 끝에 붙여 호출부가 identity 로 묶을 수 있게 한다(삼순 4차 P0-3).
+      // 기존 인덱스(0~9)는 그대로라 읽는 쪽 계약은 깨지지 않는다.
+      rows.push(...pageRows.map((row, index) => [...row, pageIds[index] ?? ""]));
 
       const eventTarget = runnerNextTarget(html, page);
       if (!eventTarget) break;
@@ -284,10 +313,17 @@ async function fetchBatterStats(signal?: AbortSignal): Promise<{
 
   // Runner 전 페이지 live 수집이 완전히 성공했을 때만 사용한다. 일부 페이지만 성공한 결과와
   // static을 선수별로 섞지 않고, WebForms 수집이 실패한 요청에 한해 static 전체를 최종 fallback.
+  //
+  // ⚠️ 키는 **kboId exact** 다(삼순 4차 P0-3). `이름::팀` 으로 묶으면 같은 팀 동명이인
+  // (로스터 실측 7그룹)이 서로의 도루 값을 덮어쓴다. 하류에서 kboId 로 걸러도
+  // 이미 오염된 값이라 복구되지 않는다. Runner 행의 playerId 가 없는 경우에만
+  // 이름::팀 으로 돌아간다(하위호환).
   const runnerMap = new Map<string, RunnerStat>();
   if (runnerResult.live) {
     for (const c of runnerResult.rows) {
-      const key = `${(c[1] || "").trim()}::${(c[2] || "").trim()}`;
+      // ⚠️ 외국인은 KBO 숫자ID vs 로스터 영문ID 로 갈라진다 — canonical 로 맞춰야 키가 맞는다.
+      const playerId = canonicalKboId((c[10] || "").trim());
+      const key = playerId || `${(c[1] || "").trim()}::${(c[2] || "").trim()}`;
       runnerMap.set(key, {
         sb: parseInt(c[5]) || 0,
         cs: parseInt(c[6]) || 0,
@@ -297,9 +333,15 @@ async function fetchBatterStats(signal?: AbortSignal): Promise<{
   // HTTP 200이어도 pager가 조기 종료될 수 있다. 최종 full 후보(live union + static 전체)를
   // Runner map이 모두 덮지 못하면 부분 live 전체를 폐기하고 static fallback으로 전환한다.
   const requiredRunnerKeys = new Set([
-    ...rows.map((c) => `${(c[1] || "").trim()}::${(c[2] || "").trim()}`),
-    ...(batterStats2026 as unknown as PlayerStat[]).map(
-      (player) => `${String(player.name || "").trim()}::${String(player.team || "").trim()}`,
+    ...rows.map((c) => {
+      const name = (c[1] || "").trim();
+      const team = (c[2] || "").trim();
+      const found = resolvePlayer({ name, team }, roster, { context: "api/stats:runner-key" });
+      return canonicalKboId(found?.kboId ?? "") || `${name}::${team}`;
+    }),
+    ...(batterStats2026 as unknown as PlayerStat[]).map((player) =>
+      canonicalKboId(String(player.kboId || "").trim()) ||
+      `${String(player.name || "").trim()}::${String(player.team || "").trim()}`,
     ),
   ]);
   const runnerLiveAccepted =
@@ -308,7 +350,8 @@ async function fetchBatterStats(signal?: AbortSignal): Promise<{
   if (!runnerLiveAccepted) {
     runnerMap.clear();
     for (const p of batterStats2026 as unknown as PlayerStat[]) {
-      const key = `${String(p.name || "").trim()}::${String(p.team || "").trim()}`;
+      const key = canonicalKboId(String(p.kboId || "").trim()) ||
+        `${String(p.name || "").trim()}::${String(p.team || "").trim()}`;
       if (key !== "::") runnerMap.set(key, { sb: Number(p.sb) || 0, cs: Number(p.cs) || 0 });
     }
   }
@@ -366,7 +409,10 @@ export function applyRunnerStats<T extends PlayerStat>(
   runnerMap: Map<string, RunnerStat>,
 ): T[] {
   return stats.map((player) => {
-    const runner = runnerMap.get(`${player.name.trim()}::${player.team.trim()}`);
+    // kboId exact 우선 — 같은 팀 동명이인이 서로의 도루를 덮어쓰지 않도록(삼순 4차 P0-3).
+    const kboId = canonicalKboId(String((player as PlayerStat).kboId || "").trim());
+    const runner = (kboId ? runnerMap.get(kboId) : undefined) ??
+      runnerMap.get(`${player.name.trim()}::${player.team.trim()}`);
     return {
       ...player,
       sb: runner?.sb ?? (Number(player.sb) || 0),

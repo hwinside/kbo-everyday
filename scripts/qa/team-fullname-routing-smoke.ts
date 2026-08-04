@@ -62,17 +62,25 @@ let players: PlayerRef[] = [];
 const LLM_ANSWER = "LG 트윈스는 서울을 연고로 하는 KBO 구단이에요.";
 
 /**
- * production provider 가 돌려줄 법한 **정상 구단 답변** 표본.
+ * production provider 가 돌려줄 법한 **정상 구단 답변** 표본 — `[원질문, 답변]` 쌍.
  *
- * 삼순가 직접 재현한 세 문장 그대로다 — 종전엔 셀 다 `unsure` 로 폐기됐다.
- * 룰·용어 어휘가 하나도 없는 문장임에 유의한다 — 그게 핵심이다.
+ * ⚠️ 왜 쌍인가 (삼순 #1100 4차 P0-1):
+ * 최종 validator 를 답변 문자열만으로 판정하면 양쪽으로 다 틀린다:
+ *   `염경엽입니다.`                     → 정상 답변인데 신호어가 없어 폐기
+ *   `리그 오브 레전드는 인기 게임입니다.` → 비야구인데 `리그` 때문에 통과
+ * 답변은 짧을수록 자기 맥락을 안 담으므로 원질문과 묶어서 판정해야 한다.
+ * 삼순가 재현한 문장들을 그대로 포함하고, **축약 답변**도 같이 태운다.
  */
-const TEAM_ANSWER_SAMPLES: readonly string[] = [
-  "LG 트윈스 감독은 염경엽입니다.",
-  "LG 트윈스는 1990년 창단한 KBO 구단입니다.",
-  "LG 트윈스는 서울을 연고로 하는 프로야구단입니다.",
-  "두산 베어스의 홈구장은 잠실야구장입니다.",
-  "삼성 라이온즈는 대구를 연고로 합니다.",
+const TEAM_ANSWER_SAMPLES: ReadonlyArray<readonly [string, string]> = [
+  ["LG트윈스 감독 누구야?", "LG 트윈스 감독은 염경엽입니다."],
+  // ⚠️ 축약형 — 삼순 4차 실표본. 답변 본문에 구단명조차 없다.
+  ["LG트윈스 감독 누구야?", "염경엽 감독입니다."],
+  ["LG트윈스 감독 누구야?", "염경엽입니다."],
+  ["LG트윈스의 역사", "LG 트윈스는 1990년 창단한 KBO 구단입니다."],
+  ["LG트윈스는 어떤 팀이야?", "LG 트윈스는 서울을 연고로 하는 프로야구단입니다."],
+  ["두산베어스 홈구장이 어디야?", "두산 베어스의 홈구장은 잠실야구장입니다."],
+  ["삼성 라이온즈 연고가 어디야?", "삼성 라이온즈는 대구를 연고로 합니다."],
+  ["삼성주장", "구자욱 선수입니다."],
 ];
 
 interface RunState {
@@ -230,6 +238,17 @@ async function verifyTeamNumericFailsClosed() {
     "두산 타율 보여줘",
     "한화 세이브 알려줘",
     "키움 도루 알려줘",
+    // ⚠️ 아래는 **요청어(`알려`·`보여`)가 없는** 변형이다. 삼순 4차 P0-2 실표본 그대로.
+    // 요청어 allowlist 방식으로 되돌리면 여기가 전부 뚫린다 — 그게 MUT-V 다.
+    "LG 홈런 수 말해줘",
+    "LG의 타율을 말해줘",
+    "삼성 승패 어떻게 돼?",
+    "두산 홈런은?",
+    "KIA 안타 현황",
+    "LG 전적 알려줘",
+    "LG 승리 수 알려줘",
+    "KIA 패배 몇 번이야",
+    "삼성 득점 알려줘",
   ]) {
     await check(`팀 수치 fail-close "${question}"`, async () => {
       const { source, answer, llmCalls } = await run(question);
@@ -264,9 +283,12 @@ async function verifyTeamNumericFailsClosed() {
  * 종전 게이트는 mock 답변에 `야구 룰` 을 심어랰 이 구간을 건너뛰었다.
  */
 async function verifyTeamAnswersSurviveFinalValidator() {
-  for (const sample of TEAM_ANSWER_SAMPLES) {
-    await check(`validator 통과 "${sample}"`, () => {
-      const validated = validateLlmResponse(JSON.stringify({ status: "ANSWER", answer: sample }));
+  for (const [question, sample] of TEAM_ANSWER_SAMPLES) {
+    await check(`validator 통과 "${question}" ← "${sample}"`, () => {
+      const validated = validateLlmResponse(
+        JSON.stringify({ status: "ANSWER", answer: sample }),
+        question,
+      );
       assert.equal(
         validated.kind, "answer",
         `정상 구단 답변이 ${validated.kind} 로 폐기됐다 — 유저는 차단 문구를 받는다`,
@@ -276,12 +298,9 @@ async function verifyTeamAnswersSurviveFinalValidator() {
   }
 
   // 종단: 같은 답변을 provider 가 돌려줬을 때 `answerQuestion()` 이 그대로 서빙하는가.
-  for (const [question, sample] of [
-    ["LG트윈스 감독 누구야?", "LG 트윈스 감독은 염경엽입니다."],
-    ["LG트윈스의 역사", "LG 트윈스는 1990년 창단한 KBO 구단입니다."],
-    ["삼성주장", "삼성 라이온즈는 대구를 연고로 합니다."],
-  ] as const) {
-    await check(`종단 서빙 "${question}"`, async () => {
+  // ⚠️ 위 표본을 그대로 재사용한다 — 종단용 별도 목록을 두면 한쪽만 느슬해진다.
+  for (const [question, sample] of TEAM_ANSWER_SAMPLES) {
+    await check(`종단 서빙 "${question}" ← "${sample}"`, async () => {
       const state: RunState = { llmCalls: 0, logs: [] };
       const deps: QaDeps = {
         ...makeDeps(state),
@@ -306,16 +325,32 @@ async function verifyTeamAnswersSurviveFinalValidator() {
   }
 
   // 반대편 — 이 완화가 범위밖 답변까지 열어주면 그게 더 큰 회귀다.
-  for (const bad of [
-    "오늘 서울 날씨는 맑고 따뜻합니다.",
-    "근처 맛집으로는 갈비집을 추천해요.",
-    "이 영화는 2020년에 개봉했습니다.",
-  ]) {
+  //
+  // ⚠️ **구단을 지명한 질문에 붙여서** 태운다(삼순 4차 실표본 `리그 오브 레전드`).
+  // 맥락 없이 답변만 넣으면 완화 경로 자체를 안 타서 게이트가 헛도는다.
+  for (const [question, bad] of [
+    ["LG트윈스 응원가 알려줘", "리그 오브 레전드는 인기 게임입니다."],
+    ["LG트윈스 오늘 어때?", "오늘 서울 날씨는 맑고 따뜻합니다."],
+    ["두산베어스 관련 알려줘", "근처 맛집으로는 갈비집을 추천해요."],
+    ["삼성 라이온즈 이야기", "이 영화는 2020년에 개봉했습니다."],
+    ["KIA타이거즈 궁금해", "드라마 추천은 이건 어떨까요."],
+  ] as const) {
     await check(`validator 범위밖 여전히 거부 "${bad}"`, () => {
-      const validated = validateLlmResponse(JSON.stringify({ status: "ANSWER", answer: bad }));
+      const validated = validateLlmResponse(
+        JSON.stringify({ status: "ANSWER", answer: bad }),
+        question,
+      );
       assert.equal(validated.kind, "unsure", `범위밖 답변을 통과시켰다`);
     });
   }
+
+  // 맥락 미전달(기존 호출부)은 기존처럼 fail-close 해야 한다 — 완화가 기본값이 되면 안 된다.
+  await check("질문 맥락 없으면 기존처럼 닫힌다", () => {
+    const validated = validateLlmResponse(
+      JSON.stringify({ status: "ANSWER", answer: "염경엽입니다." }),
+    );
+    assert.equal(validated.kind, "unsure", "맥락 없이 신호어 없는 답변을 통과시켰다");
+  });
 }
 
 // ── 반대 방향 ①: 잘못 조합한 구단명은 구단이 아니다 ─────────────────────────

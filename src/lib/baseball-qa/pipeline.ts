@@ -469,7 +469,20 @@ const NUMERIC_VALUE_ASK = /몇|얼마/;
  * ⚠️ 지표어 단독으로 닫으면 `삼성 라이온즈 홈런 잘 치는 팀이야?` 같은 **서술·평가**
  * 구단 질문까지 fail-close 된다 — P0-1(구단 과차단) 회귀다. 게이트가 실제로 잡았다.
  */
-const STAT_VALUE_ASK = /몇|얼마|알려|보여|알고\s*싶|궁금/;
+/**
+ * 구단+지표 질문 중 **수치가 아니라 서술·평가**를 묻는 신호.
+ *
+ * ⚠️ 방향을 뷘다(삼순 #1100 4차 P0-2). 종전에는 "요청어가 있으면 닫는다"로 두었는데
+ * 요청 표현은 끝없이 늘어난다 — `말해줘`·`어떻게 돼?`·`현황`·`은?` 가 전부 새었고,
+ * 그때마다 generic LLM 이 `홈런 999개, 99승 1패` 를 지어냈다. 열거형 allowlist 로는
+ * 수렴하지 않는다.
+ *
+ * 그래서 지금은 **구단+구체지표는 기본적으로 닫고**, 서술·평가 신호가 명시돈 때만 열어준다.
+ * 틀렸을 때 결과가 비대칭이기 때문이다 — 과차단은 "순위표에서 보세요" 안내지만,
+ * 누수는 **없는 숫자를 사실처럼 말하는** 것이다.
+ */
+const TEAM_DESCRIPTIVE_ASK =
+  /잘\s*(?:치|하|때리|던지|막)|못\s*(?:치|하)|어떤\s*팀|유명|이야기|역사|유래|응원|분위기|성향|스타일|강점|약점|특징|소개/;
 
 /**
  * **구체 지표어** — 이 단어가 구단과 함께 나오면 의문사(`몇`·`얼마`) 없이도 수치 질문이다.
@@ -485,23 +498,25 @@ const STAT_VALUE_ASK = /몇|얼마|알려|보여|알고\s*싶|궁금/;
  * `홈런 999개, 99승 1패` 통과). 그래서 의문사 유무와 무관하게 닫는다.
  */
 const TEAM_CONCRETE_STAT_WORDS = [
-  "타율", "방어율", "평균자책", "출루율", "장타율", "ops", "war", "wrc",
-  "홈런", "안타", "타점", "도루", "승", "승수", "패", "승패", "세이브", "홀드", "삼진",
+  "타율", "방어율", "평균자책", "출루율", "장타율", "ops", "war", "wrc", "whip",
+  "홈런", "안타", "타점", "도루", "세이브", "홀드", "삼진", "볼넷", "실책",
+  // 승패 계열 — 삼순 4차 실표본이 여기서 대거 샜다(`전적`·`승리 수`·`패배`·`득점`).
+  "승", "승수", "승리", "패", "패수", "패배", "승패", "전적", "성적",
+  "득점", "실점", "득실점",
 ];
 
 function isTeamNumericQuestion(normalized: string, tokens: string[], hasStat: boolean): boolean {
   // ① 팀 수치 전용 어휘는 그 자체로 확정이다(`팀타율`·`순위`·`승률`).
   //    `STAT_WORDS` 에 없는 단어라 `hasStat` 에 의존하면 안 잡힌다(실측: 첫 구현이 여기서 샜다).
   if (TEAM_NUMERIC_STAT_WORDS.some((word) => tokenMatches(tokens, word))) return true;
-  // ② 구체 지표어 + 값 요청어 — `몇`·`얼마` 없는 자연어 변형을 잡는다.
-  //    `LG 홈런 알려줘`·`KIA 팀 타율 알려줘`·`삼성 승패 알려줘`(삼순 3차 P0-2 실표본).
-  //    반대로 `삼성 라이온즈 홈런 잘 치는 팀이야?` 는 요청어가 없어 그대로 통과한다.
-  if (
-    TEAM_CONCRETE_STAT_WORDS.some((word) => tokenMatches(tokens, word)) &&
-    STAT_VALUE_ASK.test(normalized)
-  ) return true;
+  // ② 구체 지표어는 **기본적으로 닫는다**. 서술·평가 신호가 명시돈 때만 열어준다.
+  //    종전은 요청어 allowlist 였고, `말해줘`·`어떻게 돼?`·`현황`·`은?` 가 전부 새다
+  //    (삼순 4차 P0-2). 요청 표현을 열거해서 닫는 싸움은 수렴하지 않는다.
+  if (TEAM_CONCRETE_STAT_WORDS.some((word) => tokenMatches(tokens, word))) {
+    return !TEAM_DESCRIPTIVE_ASK.test(normalized);
+  }
   // ③ 남은 총칭어(`기록`·`스탯`)는 **값을 요구하는 의도**가 함께 있을 때만 수치 질문이다.
-  //    여기까지 완화하지 않으면 서술형 구단 질문이 과차단된다(위 주석 참조).
+  //    여기까지 닫으면 `두산 기록 중 유명한 이야기 알려줘` 같은 서술형이 과차단된다.
   return hasStat && NUMERIC_VALUE_ASK.test(normalized);
 }
 
@@ -1057,24 +1072,76 @@ export function resolvePickedPlayerCandidate(
  * 않고 **구단·리그 고유명사 축**만 여는다 — `날씨`·`맛집` 같은 범위밖 답변은 여전히
  * 이 신호가 없어 걸러진다(문장에 구단명이 섞여도 NOT_BASEBALL sentinel 이 앞서 닫는다).
  */
-// ⚠️ `팀`·`시즌` 같은 범용어는 **일부러 넣지 않는다** — "우리 팀 회식 메뉴" 처럼 범위밖
-// 문장을 야구 신호로 오인하게 된다. 구단·리그 고유명사만 연다.
-const TEAM_ANSWER_SIGNAL_WORDS: readonly string[] = [
-  "kbo", "구단", "프로야구", "연고", "창단", "모구단", "한국시리즈", "포스트시즌",
-  "정규시즌", "우승", "준우승", "리그", "구장", "홈구장",
-  ...TEAM_WORDS,
-];
+/**
+ * 답변 본문이 **주제를 벗어난** 신호.
+ *
+ * 신호어 allowlist 를 넓히는 방향은 3차에 실패했다 — `리그` 를 넣었더니
+ * `리그 오브 레전드는 인기 게임입니다.` 가 통과했다(삼순 4차 P0-1).
+ * 그래서 완화 경로에서는 allowlist 가 아니라 **주제이탈 denylist** 로 닫는다.
+ */
+const ANSWER_OFF_TOPIC =
+  /게임|영화|드라마|예능|아이돌|맛집|음식|메뉴|레시피|요리|날씨|기온|주식|코인|부동산|여행|숙소|쇼핑|배송|스마트폰|노트북|갤럭시|프롬프트|비밀번호/;
 
 function hasBaseballSignal(value: string): boolean {
   const tokens = questionTokens(value);
   return BASEBALL_WORDS.some((word) => tokenMatches(tokens, word)) ||
     ["경기", "공격", "수비", "주루", "득점", "홈플레이트", "마운드"].some((word) =>
       tokenMatches(tokens, word)
-    ) ||
-    // 구단 답변 축(삼순 #1100 3차 P0-1). `mentionsTeam` 은 구단 지명을, 나머지는
-    // 구단·리그 고유명사를 본다.
-    mentionsTeam(tokens) ||
-    TEAM_ANSWER_SIGNAL_WORDS.some((word) => tokenMatches(tokens, word));
+    );
+}
+
+/**
+ * 답변이 **원질문 맥락 안에서** 범위 안인가.
+ *
+ * ⚠️ 왜 질문을 같이 보는가 (삼순 #1100 4차 P0-1):
+ * 답변 문자열만 보면 양쪽으로 다 틀렸다.
+ *   `염경엽입니다.`                     → 정상 답변인데 신호어가 없어 폐기
+ *   `리그 오브 레전드는 인기 게임입니다.` → 비야구인데 `리그` 때문에 통과
+ * 답변은 짧을수록 자기 맥락을 안 담는다 — 맥락은 원질문이 가지고 있다.
+ *
+ * 계약:
+ *  ① 답변 자체가 야구면 통과 (기존 동작 불변).
+ *  ② 질문이 구단을 지명한 경우에만 완화하되, 답변에 주제이탈 신호가 없어야 한다.
+ *  ③ 질문 맥락이 없으면(미전달) 기존과 동일하게 fail-close 한다.
+ */
+export function answerInQuestionScope(question: string, answer: string): boolean {
+  if (hasBaseballSignal(answer)) return true;
+  if (!question) return false;
+  const questionTokensNorm = questionTokens(question.normalize("NFKC").toLowerCase());
+  if (!questionMentionsTeam(questionTokensNorm)) return false;
+  return !ANSWER_OFF_TOPIC.test(answer.normalize("NFKC").toLowerCase());
+}
+
+/**
+ * 질문측 구단 지명 판정 (`mentionsTeam` + 야구 어휘 결합형).
+ *
+ * `mentionsTeam` 은 약칭+별칭 결합(`삼성라이온즈`)까지만 인정한다. 그런데 유저는
+ * `삼성주장` 처럼 **구단+야구어를 붙여** 쓴다(오늘 실표본). 이런 토큰은 구단 지명으로
+ * 안 잡혀 validator 완화가 안 먹힌다.
+ *
+ * ⚠️ 그렇다고 `startsWith(약칭)` 만 보면 `삼성전자 주가` 같은 범위밖까지 구단 질문이 된다.
+ * 남는 꺼리가 **야구 폐쇄 어휘 + 문법 꺼리로만 분해**될 때만 인정한다:
+ *   `삼성주장`   = 삼성 + 주장(RULE_ACTOR_WORDS)  → 구단 질문 ⭕️
+ *   `삼성전자` = 삼성 + 전자(어휘 밖)          → 구단 질문 아님 ❌
+ */
+function questionMentionsTeam(tokens: string[]): boolean {
+  if (mentionsTeam(tokens)) return true;
+  return tokens.some((token) =>
+    TEAM_WORDS.some((word) => {
+      if (!token.startsWith(word) || token.length === word.length) return false;
+      return decomposesIntoBaseballVocabulary(token.slice(word.length));
+    }));
+}
+
+/** 남은 문자열이 야구 폐쇄 어휘(+문법 꺼리)로만 분해되는가. 빈 문자열은 인정하지 않는다. */
+function decomposesIntoBaseballVocabulary(rest: string): boolean {
+  if (rest.length === 0) return false;
+  for (const word of BASEBALL_VOCABULARY) {
+    if (!rest.startsWith(word)) continue;
+    if (isGrammaticalTail(rest.slice(word.length))) return true;
+    if (decomposesIntoBaseballVocabulary(rest.slice(word.length))) return true;
+  }
+  return false;
 }
 
 /**
@@ -1217,7 +1284,7 @@ export interface ValidatedLlmAnswer {
 }
 
 /** JSON 스키마·센티널·출력 안전성 검증을 모두 통과한 답만 캐시 가능하다. */
-export function validateLlmResponse(raw: string): ValidatedLlmAnswer {
+export function validateLlmResponse(raw: string, question = ""): ValidatedLlmAnswer {
   let value: unknown;
   try {
     value = JSON.parse(raw.trim());
@@ -1242,7 +1309,8 @@ export function validateLlmResponse(raw: string): ValidatedLlmAnswer {
     answer.length === 0 ||
     answer.length > BASEBALL_GENIUS_MAX_ANSWER_LENGTH ||
     /https?:\/\/|www\.|(?:^|\s)\[[^\]]+\]\([^)]+\)|```|<a\b/i.test(answer) ||
-    !hasBaseballSignal(answer)
+    // ⚠️ 답변 문자열만 보지 않고 **원질문 맥락**과 함께 판정한다(삼순 4차 P0-1).
+    !answerInQuestionScope(question, answer)
   ) {
     return { kind: "unsure" };
   }
@@ -1776,7 +1844,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     if (deps.storeLlm) await deps.storeLlm(llm);
   }
 
-  const validated = validateLlmResponse(llm.text);
+  const validated = validateLlmResponse(llm.text, question);
   if (validated.kind === "blocked") {
     await deps.log({ userId, question, questionNorm, matchPath: "blocked", answer: null, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
     return { status: 200, answer: BLOCKED_ANSWER, source: "blocked", remaining };

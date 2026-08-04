@@ -39,6 +39,8 @@ import {
   createServedRecordFetcher,
   fetchServedBatterRows,
 } from "../../src/lib/baseball-qa/stats/served-record";
+import { answerQuestion, type QaDeps } from "../../src/lib/baseball-qa/pipeline";
+import { loadRosterPlayers } from "../../src/lib/baseball-qa/roster/load-roster-players";
 
 let pass = 0;
 const failures: string[] = [];
@@ -289,7 +291,71 @@ async function main() {
     assert.equal(crossCheckServedAgainstDb(servedSeasonRow, [other]).kind, "mismatch");
   });
 
-  // ── ⑧ allowlist 선언 정합 ───────────────────────────────────────────────
+  // ── ⑧ 종단 행동: deps 조립 → answerQuestion → served fetch → DB 교차 → 최종 답변 ────
+  //
+  // ⚠️ 왜 필요한가 (삼순 #1100 4차 P0-4):
+  // 위 검사들은 모듈 단위만 봤다. 그래서 `useServed` 를 항상 false 로 만드는 mutation 에서도
+  // 31/31 · full prebuild exit 0 이었다 — 기능이 죽어도 게이트가 GREEN 이었다는 뜻이다.
+  // 이제 production 이 쓰는 seam 과 같은 주입으로 `answerQuestion()` 을 돌려 **최종 답변**까지 본다.
+  const servedAnswerRun = async (overrides: Partial<QaDeps> = {}) => {
+    const logs: string[] = [];
+    let llmCalls = 0;
+    const deps: QaDeps = {
+      loadGlossary: async () => [],
+      // 로스터도 실제 배포 함수로 읽는다(자체 fixture 금지 — 삼순 8차 P0-2).
+      loadPlayers: loadRosterPlayers,
+      getCache: async () => null,
+      setCache: async () => {},
+      callLlm: async () => {
+        llmCalls += 1;
+        return { text: '{"status":"ANSWER","answer":"야구 룰 답변이에요."}', inputTokens: 1, outputTokens: 1 };
+      },
+      reserveDaily: async (_u, limit) => ({ allowed: true, remaining: limit - 1 }),
+      log: async (entry) => { logs.push(entry.matchPath); },
+      // ⚠️ production(`server.ts makeDeps`)이 켜는 플래그. 빠뜨리면 선수 후보 자체가 안 잡혀
+      // 기록 경로에 도달조차 못 한다(실측: 이 한 줄이 없어서 history_hold 로 끝났다).
+      enablePlayerRag: true,
+      // ⬇️ production 과 동일한 seam. 이걸 지우거나 무력화하는 mutation 은 RED 가 돼야 한다.
+      fetchServedRecord: createServedRecordFetcher(),
+      fetchSeasonRecord: async () => [dbRow()],
+      ...overrides,
+    };
+    const result = await withFetch(
+      async () => jsonResponse(servedPayload([servedRow])),
+      () => answerQuestion("u-served-e2e", `${subject.name} 도루 몇 개야?`, deps),
+    );
+    return { result, logs, llmCalls };
+  };
+
+  await check("종단: 도루 질문이 앱 서빙값으로 답해진다", async () => {
+    const { result, logs, llmCalls } = await servedAnswerRun();
+    assert.equal(result.source, "kbo_structured", `source=${result.source} (기록 경로를 안 탐)`);
+    assert.ok(
+      result.answer?.includes(String(servedSb)),
+      `답변에 앱 서빙값 ${servedSb} 이 없다: ${result.answer}`,
+    );
+    assert.ok(
+      !result.answer?.includes(`${staticSb}개`),
+      `static 값 ${staticSb} 을 답했다 — 앱과 다른 숫자`,
+    );
+    assert.equal(llmCalls, 0, "기록 질문을 LLM 으로 보냈다(환각 경로)");
+    assert.deepEqual(logs, ["kbo_structured"], `match_path 불일치: ${logs.join(",")}`);
+  });
+
+  await check("종단: served 주입이 끊기면 값을 답하지 않는다", async () => {
+    const { result } = await servedAnswerRun({ fetchServedRecord: undefined });
+    assert.notEqual(result.source, "kbo_structured", "주입이 없는데 수치를 답했다");
+    assert.ok(!result.answer?.includes(String(servedSb)), "주입이 없는데 값이 나갔다");
+  });
+
+  await check("종단: DB 교차검증이 갈라지면 답하지 않는다", async () => {
+    const { result } = await servedAnswerRun({
+      fetchSeasonRecord: async () => [{ ...dbRow(), hr: Number(servedSeasonRow.hr) + 5 }],
+    });
+    assert.notEqual(result.source, "kbo_structured", "두 소스가 갈라졌는데 답했다");
+  });
+
+  // ── ⑨ allowlist 선언 정합 ───────────────────────────────────────────────
   await check("SERVED_ONLY 지표가 전부 BATTER_METRICS 에 선언돼 있다", () => {
     for (const metric of SERVED_ONLY_BATTER_METRICS) {
       assert.ok(metric in BATTER_METRICS, `${metric} 이 BATTER_METRICS 에 없다`);
