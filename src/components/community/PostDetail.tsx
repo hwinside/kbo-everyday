@@ -4,8 +4,6 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronLeft, Heart, MessageCircle, Share2, Send, Flag, Ban, MoreHorizontal, Check, CornerDownRight, X, ImagePlay, ImagePlus, Loader2 } from "lucide-react";
-import TeamBadge from "@/components/ui/TeamBadge";
-import { getAvatarPath } from "@/lib/constants/avatars";
 import { usePostDetail, createComment, toggleLike, toggleCommentLike, updatePost, deletePost, updateComment, deleteComment, uploadCommentImage } from "@/lib/supabase/usePosts";
 import { editPollPost } from "@/lib/community/poll-client";
 import { canEditOwnPost } from "@/lib/community/post-permissions";
@@ -18,17 +16,18 @@ import { parseAttribution } from "@/lib/gif-collector/attribution";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
-import DMButton from "@/components/ui/DMButton";
 import GifPicker from "@/components/community/GifPicker";
 import CommentImageLightbox from "@/components/community/CommentImageLightbox";
 import { isImageComment, prepareCommentImageForUpload } from "@/lib/community/comment-media";
 import LoginSheet from "@/components/auth/LoginSheet";
 import ShareSheet, { type ShareSheetPost } from "@/components/community/ShareSheet";
-import PostViewBadge from "@/components/community/PostViewBadge";
+import CommunityAuthorHeader from "@/components/community/CommunityAuthorHeader";
+import PostDetailAuthorHeader from "@/components/community/PostDetailAuthorHeader";
 import PollBlock from "@/components/community/PollBlock";
 import { trackPostClick } from "@/lib/community/view-tracker";
 import { useBlockedIds, blockUserById } from "@/lib/supabase/useBlock";
 import { supabase } from "@/lib/supabase/client";
+import CommunityCommentRow from "@/components/community/CommunityCommentRow";
 
 interface PostDetailProps {
   postId: number;
@@ -474,24 +473,19 @@ export default function PostDetail({ postId }: PostDetailProps) {
 
       {/* Post */}
       <div className="px-5 py-4">
-        <div className="flex items-center gap-2 mb-3 whitespace-nowrap">
-          {post.team_id ? <div className="shrink-0"><TeamBadge teamId={post.team_id} size="xs" /></div> : null}
-          <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-text-primary cursor-pointer hover:text-accent" onClick={() => post.author_id && router.push(`/profile/${post.author_id}`)}>{post.nickname || "익명"}</span>
-          {post.grade === 'staff' && (
-            <span className='ml-1 px-1.5 py-0.5 text-[10px] font-bold bg-accent/20 text-accent rounded-full'>운영팀</span>
-          )}
-          {post.author_id && user && post.author_id !== user.id && (
-            <DMButton targetUserId={post.author_id} size="sm" className="shrink-0" />
-          )}
-          <span className="shrink-0 text-sm text-text-tertiary">
-            {timeAgo(post.created_at)}{(postPatch.updated_at || post.updated_at) ? " · 수정됨" : ""}
-          </span>
-          <PostViewBadge
-            clickCount={post.click_view_count}
-            impressionCount={post.impression_view_count}
-            className="shrink-0"
-          />
-          <div className="shrink-0">
+        <PostDetailAuthorHeader
+          className="mb-3"
+          nickname={post.nickname}
+          teamId={post.team_id}
+          avatarUrl={post.avatar_url}
+          authorId={post.author_id}
+          viewerId={user?.id}
+          isStaff={post.grade === "staff"}
+          timeLabel={timeAgo(post.created_at)}
+          isEdited={!!(postPatch.updated_at || post.updated_at)}
+          clickCount={post.click_view_count}
+          impressionCount={post.impression_view_count}
+          menu={
             <PostActionsMenu
               user={user}
               postEditing={postEditing}
@@ -507,8 +501,8 @@ export default function PostDetail({ postId }: PostDetailProps) {
               onBlock={() => handleBlockUser(post.author_id, { type: "post", id: post.id })}
               onDelete={handleDeletePost}
             />
-          </div>
-        </div>
+          }
+        />
 
         {/* 미디어 — 사진 → 글 순서(피드 PhotoFeed와 동일). 인스타식 캐러셀(스와이프+점+더블탭 좋아요).
             본문 px-5 패딩 밖으로 -mx-5 full-bleed. mb-4로 아래 본문과 간격(위 간격은 작성자행 mb-3). */}
@@ -670,44 +664,29 @@ export default function PostDetail({ postId }: PostDetailProps) {
               for (const root of roots) root.replies = childMap.get(root.id) || [];
 
               const renderCmt = (c: typeof comments[0], isReply = false) => {
-                const avatarPath = getAvatarPath(c.avatar_url ?? null);
-                const cmtTeam = c.team_id ? getTeamById(c.team_id) : undefined;
                 const isCmtMine = !!user && c.author_id === user.id;
                 const canDeleteCmt = isCmtMine || canModerateComments;
                 const isCmtEditing = cmtEditingId === c.id;
                 const isCmtEdited = !!c.updated_at;
                 const cmtLikeCount = c.like_count ?? 0;
                 return (
-                  <div key={c.id} className={`flex gap-2 ${isReply ? "pl-10" : ""}`}>
-                    {avatarPath ? (
-                      <div className={`${isReply ? "w-6 h-6" : "w-8 h-8"} rounded-full overflow-hidden flex-shrink-0 bg-bg-tertiary cursor-pointer`} onClick={() => c.author_id && router.push(`/profile/${c.author_id}`)}>
-                        <img src={avatarPath} alt="" className="w-full h-full" />
-                      </div>
-                    ) : (
-                      <div
-                        className={`${isReply ? "w-6 h-6 text-[10px]" : "w-8 h-8 text-xs"} rounded-full flex items-center justify-center font-bold text-white flex-shrink-0 cursor-pointer`}
-                        style={{ backgroundColor: cmtTeam ? getTeamBgColor(cmtTeam) : '#6B7280' }}
-                        onClick={() => c.author_id && router.push(`/profile/${c.author_id}`)}
-                      >
-                        {(c.nickname || "익")[0]}
-                      </div>
-                    )}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <span className={`${isReply ? "text-xs" : "text-sm"} font-semibold text-text-primary cursor-pointer hover:text-accent`} onClick={() => c.author_id && router.push(`/profile/${c.author_id}`)}>{c.nickname || "익명"}</span>
-                        {cmtTeam && (
-                          <span
-                            className="text-[10px] font-bold px-1.5 py-0.5 rounded-md text-white"
-                            style={{ backgroundColor: getTeamBgColor(cmtTeam) }}
-                          >
-                            {cmtTeam.shortName}
+                  <CommunityCommentRow
+                    key={c.id}
+                    kind="detail"
+                    isReply={isReply}
+                    header={
+                      <CommunityAuthorHeader
+                        nickname={c.nickname}
+                        teamId={c.team_id}
+                        avatarUrl={c.avatar_url}
+                        profileHref={c.author_id ? `/profile/${c.author_id}` : null}
+                        meta={
+                          <span className="shrink-0 text-xs text-text-tertiary">
+                            {timeAgo(c.created_at)}{isCmtEdited ? " · 수정됨" : ""}
                           </span>
-                        )}
-                        <span className="text-xs text-text-tertiary ml-auto flex-shrink-0">
-                          {timeAgo(c.created_at)}{isCmtEdited ? " · 수정됨" : ""}
-                        </span>
-                        {user && !isCmtEditing && (
-                          <div className="relative flex-shrink-0">
+                        }
+                        menu={user && !isCmtEditing ? (
+                          <div className="relative">
                             <button
                               onClick={(e) => { e.stopPropagation(); setCmtMenuOpenId(prev => prev === c.id ? null : c.id); }}
                               className="p-1 text-text-tertiary hover:text-text-primary"
@@ -739,8 +718,10 @@ export default function PostDetail({ postId }: PostDetailProps) {
                               </>
                             )}
                           </div>
-                        )}
-                      </div>
+                        ) : null}
+                      />
+                    }
+                  >
                       {isCmtEditing ? (
                         <div className="mt-1 flex items-center gap-1.5">
                           <input
@@ -804,8 +785,7 @@ export default function PostDetail({ postId }: PostDetailProps) {
                           </div>
                         </>
                       )}
-                    </div>
-                  </div>
+                  </CommunityCommentRow>
                 );
               };
 

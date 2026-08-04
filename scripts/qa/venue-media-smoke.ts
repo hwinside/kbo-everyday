@@ -30,10 +30,17 @@ import {
   computeScaledDimensions,
   computeNegativeStartTrim,
   executeWithDeadline,
+  shouldNormalizeVideo,
+  computeNormalizeBitrate,
+  parseTopLevelBoxTypes,
+  isFastStartMp4,
+  chooseUploadVideo,
   VENUE_VIDEO_COMPRESS_TARGET_BYTES,
   VENUE_VIDEO_AUDIO_RESERVE_BPS,
   VENUE_VIDEO_MAX_BITRATE_BPS,
   VENUE_VIDEO_MIN_BITRATE_BPS,
+  VENUE_VIDEO_NORMALIZE_MAX_EDGE_PX,
+  VENUE_VIDEO_NORMALIZE_BITRATE_BPS,
 } from "../../src/lib/venue-stories/video-compress";
 
 let pass = 0;
@@ -138,6 +145,153 @@ ok("압축 비대상: duration 미상(null) — 서버 검증으로 fail-close",
   const dOdd = computeScaledDimensions(1079, 2000);
   ok("축소 치수 짝수 정렬(인코더 호환)", dOdd != null && dOdd.width % 2 === 0 && dOdd.height % 2 === 0);
   ok("해상도 미상(0) → null(리사이즈 생략)", computeScaledDimensions(0, 0) === null);
+}
+
+// ── 업로드 전 720p + faststart 정규화(2026-08-04 첫 재생 지연 근본처리) ──
+// 사고 재현 기준: 실제 업로드본 5건 ffprobe 실측이 6.8~14.3초에 16.8~38.6MB·13~24Mbps 였고,
+// 전부 50MiB 이하라 기존 shouldAutoCompressVideo 경로에 하나도 걸리지 않았다.
+{
+  console.log("\n[업로드 전 720p 정규화]");
+  // ① 용량과 무관하게 전 영상 대상 — 이게 이번 수정의 핵심 계약
+  const realWorld = [16_826_284, 20_025_217, 19_169_375, 24_957_446, 38_560_432];
+  ok(
+    "실측 5건(16.8~38.6MB, 전부 cap 이하)이 기존 자동압축에는 하나도 안 걸렸다(사고 재현)",
+    realWorld.every(
+      (b) => shouldAutoCompressVideo({ sizeBytes: b, durationMs: 10_000 }) === false,
+    ),
+  );
+  ok(
+    "실측 5건이 신규 정규화에는 전부 걸린다",
+    realWorld.every(() =>
+      shouldNormalizeVideo({ durationMs: 10_000, compressSupported: true }),
+    ),
+  );
+  ok(
+    "duration 미상(null) → 정규화 제외(서버 검증 fail-close 유지)",
+    shouldNormalizeVideo({ durationMs: null, compressSupported: true }) === false,
+  );
+  ok(
+    "WebCodecs 미지원 → 정규화 제외(기존 경로 유지)",
+    shouldNormalizeVideo({ durationMs: 10_000, compressSupported: false }) === false,
+  );
+
+  // ② 정규화 목표치
+  ok(
+    "정규화 긴 변 상한이 720p(1280) — 기존 1080p 경로보다 작다",
+    VENUE_VIDEO_NORMALIZE_MAX_EDGE_PX === 1280 && VENUE_VIDEO_NORMALIZE_MAX_EDGE_PX < 1920,
+  );
+  {
+    const d = computeScaledDimensions(1920, 1440, VENUE_VIDEO_NORMALIZE_MAX_EDGE_PX);
+    ok(
+      "실측 1920x1440 → 720p 축소(1280x960, 짝수)",
+      d != null && d.width === 1280 && d.height === 960,
+    );
+    const v = computeScaledDimensions(1080, 1920, VENUE_VIDEO_NORMALIZE_MAX_EDGE_PX);
+    ok(
+      "실측 1080x1920 세로 → 긴변 1280으로 축소(기존 1920 상한에서는 미축소였던 케이스)",
+      v != null && v.height === 1280 && v.width === 720,
+    );
+    ok(
+      "이미 720p 이하는 재리사이즈 생략",
+      computeScaledDimensions(720, 1280, VENUE_VIDEO_NORMALIZE_MAX_EDGE_PX) === null,
+    );
+  }
+  ok(
+    "15초 정규화 비트레이트 = 720p 목표치(3.5Mbps)",
+    computeNormalizeBitrate(15_000) === VENUE_VIDEO_NORMALIZE_BITRATE_BPS,
+  );
+  ok(
+    "극단 duration 에서는 cap 예산이 더 작으면 그쪽을 취한다",
+    computeNormalizeBitrate(600_000) === VENUE_VIDEO_MIN_BITRATE_BPS,
+  );
+  ok(
+    "정규화 비트레이트는 실측 원본(13~24Mbps)보다 훨씬 작다",
+    computeNormalizeBitrate(15_000) < 13_000_000,
+  );
+
+  // ③ faststart(moov 위치) 판정 — 실측 박스 배열 그대로
+  const box = (type: string, size: number) => {
+    const b = new Uint8Array(8);
+    new DataView(b.buffer).setUint32(0, size);
+    for (let i = 0; i < 4; i++) b[4 + i] = type.charCodeAt(i);
+    return b;
+  };
+  const concat = (...parts: Uint8Array[]) => {
+    const total = parts.reduce((n, p) => n + p.length, 0);
+    const out = new Uint8Array(total);
+    let off = 0;
+    for (const p of parts) {
+      out.set(p, off);
+      off += p.length;
+    }
+    return out;
+  };
+  {
+    // s841/s750/sample 실측 배열: ftyp → moov → wide → mdat (faststart)
+    const fast = concat(box("ftyp", 20), new Uint8Array(12), box("moov", 8), box("mdat", 8));
+    ok("ftyp → moov → mdat 순서 = faststart true", isFastStartMp4(fast) === true);
+    // s847/s771 실측 배열: ftyp → wide → mdat(거대) → moov(파일 끝)
+    const slow = concat(box("ftyp", 20), new Uint8Array(12), box("wide", 8), box("mdat", 38_543_615));
+    ok("ftyp → wide → mdat(moov 더 뒤) = faststart false", isFastStartMp4(slow) === false);
+    ok(
+      "상위 박스 순서 파싱이 실제 타입을 돌려준다",
+      parseTopLevelBoxTypes(slow).slice(0, 3).join(",") === "ftyp,wide,mdat",
+    );
+    ok("moov/mdat 둘 다 안 보이면 미상(null)", isFastStartMp4(box("ftyp", 20)) === null);
+    ok("빈 head → 미상(null)", isFastStartMp4(new Uint8Array(0)) === null);
+    // 손상 박스(size 가 헤더보다 작음) — 무한루프 금지
+    const broken = concat(box("ftyp", 2), box("moov", 8));
+    ok("손상된 size 에서 무한루프 없이 종료", parseTopLevelBoxTypes(broken).length === 1);
+    // size=0(파일 끝까지) 박스
+    const zero = concat(box("ftyp", 20), new Uint8Array(12), box("mdat", 0));
+    ok("size=0 박스도 타입은 수집하고 종료", isFastStartMp4(zero) === false);
+  }
+
+  // ④ 원본/정규화본 선택 — 역효과 방지가 핵심
+  {
+    const MAXB = VENUE_STORY_MAX_BYTES;
+    ok(
+      "정규화 실패(null) → 원본 유지(회귀 없음)",
+      chooseUploadVideo({ originalBytes: 20e6, normalizedBytes: null, originalFastStart: true }) ===
+        "original",
+    );
+    ok(
+      "정규화본이 더 작으면 정규화본",
+      chooseUploadVideo({ originalBytes: 38.5e6, normalizedBytes: 5e6, originalFastStart: true }) ===
+        "normalized",
+    );
+    ok(
+      "정규화본이 더 큼 + 원본이 이미 작고 faststart → 원본(역효과 방지)",
+      chooseUploadVideo({ originalBytes: 2e6, normalizedBytes: 6e6, originalFastStart: true }) ===
+        "original",
+    );
+    ok(
+      "정규화본이 더 큼지만 원본이 faststart 아니면 정규화본(moov 앞으로 당기기 우선)",
+      chooseUploadVideo({ originalBytes: 2e6, normalizedBytes: 6e6, originalFastStart: false }) ===
+        "normalized",
+    );
+    ok(
+      "faststart 미상(null)은 정규화본 선호(복불복 제거)",
+      chooseUploadVideo({ originalBytes: 2e6, normalizedBytes: 6e6, originalFastStart: null }) ===
+        "normalized",
+    );
+    ok(
+      "정규화본이 cap 초과면 쓸 수 없음 → 원본",
+      chooseUploadVideo({
+        originalBytes: 10e6,
+        normalizedBytes: MAXB + 1,
+        originalFastStart: true,
+      }) === "original",
+    );
+    ok(
+      "원본이 cap 초과면 정규화본이 더 커도 정규화본(원본은 업로드 불가)",
+      chooseUploadVideo({
+        originalBytes: MAXB + 1,
+        normalizedBytes: MAXB,
+        originalFastStart: true,
+      }) === "normalized",
+    );
+  }
 }
 
 // ── fake-fetch 로 probeMediaObject 계약 검증 ──

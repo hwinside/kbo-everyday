@@ -62,18 +62,36 @@ public class VenueMediaLibraryPlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
+    /// JS `mediaTypes`("image" | "video" 배열) → PHFetch predicate.
+    /// 미전달/빈 배열/미지 값은 기존 계약인 사진+영상 전체로 폴백한다(구웹 호환).
+    private func mediaTypePredicate(_ raw: [String]?) -> NSPredicate {
+        let requested = Set(raw ?? [])
+        let wantsImage = requested.contains("image")
+        let wantsVideo = requested.contains("video")
+        if wantsImage && !wantsVideo {
+            return NSPredicate(format: "mediaType == %d", PHAssetMediaType.image.rawValue)
+        }
+        if wantsVideo && !wantsImage {
+            return NSPredicate(format: "mediaType == %d", PHAssetMediaType.video.rawValue)
+        }
+        return NSPredicate(
+            format: "mediaType == %d OR mediaType == %d",
+            PHAssetMediaType.image.rawValue,
+            PHAssetMediaType.video.rawValue
+        )
+    }
+
     @objc func listMedia(_ call: CAPPluginCall) {
         let limit = call.getInt("limit") ?? 60
         let offset = Int(call.getString("cursor") ?? "0") ?? 0
+        // 미디어 타입 필터 — 영상만/사진만 보기. cursor(offset)도 같은 필터된 fetch 기준이라
+        // 페이징이 그 타입 안에서만 진행한다(혼합 목록을 받아 화면에서 걸러내던 구방식과 다름).
+        let requestedTypes = call.getArray("mediaTypes", String.self)
         workQueue.async { [weak self] in
             guard let self else { return }
             let options = PHFetchOptions()
             options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
-            options.predicate = NSPredicate(
-                format: "mediaType == %d OR mediaType == %d",
-                PHAssetMediaType.image.rawValue,
-                PHAssetMediaType.video.rawValue
-            )
+            options.predicate = self.mediaTypePredicate(requestedTypes)
             let fetch = PHAsset.fetchAssets(with: options)
             let total = fetch.count
             var assets: [[String: Any]] = []

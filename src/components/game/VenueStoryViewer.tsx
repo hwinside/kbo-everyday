@@ -715,6 +715,8 @@ export default function VenueStoryViewer({
             ref={videoRef}
             data-story-media="video"
             src={story.mediaUrl}
+            {...(story.thumbUrl ? { poster: story.thumbUrl } : {})}
+            preload="auto"
             className="max-h-full max-w-full w-full h-full object-contain"
             playsInline
             autoPlay

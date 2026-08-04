@@ -24,6 +24,7 @@ export const PRESET_AVATARS: PresetAvatar[] = [
  * avatar_url 값에서 아바타 이미지 경로를 반환.
  * "preset:baseball" → "/avatars/baseball.svg"
  * "custom:https://...supabase.../avatars/xxx.jpg" → URL 부분만 반환
+ * "/apple-touch-icon.png" / "https://..." → 운영·시스템 아바타 원문 반환
  */
 export function getAvatarPath(avatarUrl: string | null): string | null {
   if (!avatarUrl) return null;
@@ -34,6 +35,9 @@ export function getAvatarPath(avatarUrl: string | null): string | null {
   }
   if (avatarUrl.startsWith("custom:")) {
     return avatarUrl.slice("custom:".length);
+  }
+  if (avatarUrl.startsWith("/") || avatarUrl.startsWith("https://")) {
+    return avatarUrl;
   }
   return null;
 }

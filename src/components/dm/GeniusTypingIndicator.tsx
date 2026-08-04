@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  BASEBALL_GENIUS_FALLBACK_ANSWER,
   BASEBALL_GENIUS_NAME,
   geniusMascotSrc,
   type GeniusMascotState,
@@ -52,7 +53,7 @@ export default function GeniusTypingIndicator({
         </div>
         {state === "failed" ? (
           <div className="px-3.5 py-2.5 rounded-2xl rounded-bl-md bg-bg-tertiary text-sm leading-relaxed text-text-primary">
-            <span>답변을 받지 못했어요.</span>{" "}
+            <span>{BASEBALL_GENIUS_FALLBACK_ANSWER}</span>{" "}
             <button
               type="button"
               onClick={onRetry}

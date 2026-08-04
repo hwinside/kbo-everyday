@@ -23,6 +23,7 @@ import {
   readBaseballQaOutbox,
   resetBaseballQaQuestion,
 } from "../../src/lib/baseball-qa/client-outbox";
+import { BASEBALL_GENIUS_FALLBACK_ANSWER } from "../../src/lib/constants/baseball-genius";
 
 const dom = new JSDOM("<!doctype html><html><body></body></html>", {
   url: "http://localhost/",
@@ -240,7 +241,8 @@ test("야잘알봇 타이핑 인디케이터 3전이", async () => {
   render("failed");
   const failedEl = container.querySelector('[data-state="failed"]');
   assert.ok(failedEl, "failed 상태에서 오류 UI가 렌더되어야 한다");
-  assert.match(failedEl!.textContent ?? "", /답변을 받지 못했어요/);
+  assert.ok((failedEl!.textContent ?? "").includes(BASEBALL_GENIUS_FALLBACK_ANSWER));
+  assert.doesNotMatch(failedEl!.textContent ?? "", /답변을 받지 못했어요/);
   const retryBtn = failedEl!.querySelector("button");
   assert.ok(retryBtn, "다시 시도 버튼이 있어야 한다");
   assert.equal(container.querySelector('[role="status"]'), null, "failed 시 대기 인디케이터는 없어야 한다");

@@ -426,6 +426,47 @@ for (const p of rosterRows) {
 }
 const pairTeam = [...byTeam.entries()].find(([, list]) => list.length >= 2);
 assert.ok(pairTeam, "실 로스터에서 같은 팀의 기록 보유 투수 2명을 찾을 수 있어야 한다");
+
+/* main(#1098)이 이 파일에 갖고 있던 동명이인 계약을 **값 비의존 형태로** 보존한다.
+ * 원본은 `양현종 → "4.52"` 처럼 특정 선수 + 고정 수치였고, 병합 뒤 `tableEra("77637")`
+ * 로 바뀌어 있었다. 둘 다 특정 kboId를 하드코딩하므로 로스터가 바뀌면 깨진다.
+ *
+ * 계약의 본질은 "이름이 같아도 팀이 다르면 그 팀의 canonical ID로 해석된다"이므로,
+ * 표본을 실 로스터에서 **동적으로** 고르고 값은 테이블에서 읽어 대조한다.
+ * 값이 바뀌어도 RED가 되지 않고, 팀 분리가 깨지면 RED가 된다. */
+const dupNames = new Map<string, { name: string; kboId: string; teamId: number }[]>();
+for (const p of rosterRows) {
+  if (!eraIds.has(String(p.kboId))) continue;
+  const list = dupNames.get(p.name) ?? [];
+  list.push(p);
+  dupNames.set(p.name, list);
+}
+const dupSample = [...dupNames.values()].find(
+  (list) => new Set(list.map((p) => p.teamId)).size >= 2,
+);
+assert.ok(
+  dupSample,
+  "실 로스터에서 팀이 다른 동명이인 투수(기록 보유)를 찾을 수 있어야 한다",
+);
+for (const dup of dupSample!) {
+  const expected = normalizePitcherEra(
+    eraRows.find((row) => String(row.kboId ?? row.playerId) === String(dup.kboId))?.era,
+  );
+  assert.equal(
+    productionLookupEra(resolveRosterPlayer({ name: dup.name, teamId: dup.teamId })?.kboId),
+    expected,
+    `동명이인 ${dup.name}은 팀 ${dup.teamId} 정본(${dup.kboId})으로 해석돼야 한다`,
+  );
+}
+// 팀 분리가 실제로 갈라지는지 — 두 표본의 canonical ID가 서로 달라야 한다.
+const dupIds = new Set(
+  dupSample!.map((dup) => resolveRosterPlayer({ name: dup.name, teamId: dup.teamId })?.kboId),
+);
+assert.equal(
+  dupIds.size,
+  new Set(dupSample!.map((d) => d.teamId)).size,
+  "동명이인이 팀별로 서로 다른 canonical ID로 해석돼야 한다",
+);
 const [teamId, [starter, other]] = pairTeam!;
 const starterSeasonEra = productionLookupEra(starter.kboId);
 assert.equal(

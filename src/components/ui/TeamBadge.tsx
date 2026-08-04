@@ -12,6 +12,8 @@ interface TeamBadgeProps {
   className?: string;
   /** 선수 게시판용: "LG 김진성" 형태로 표시 */
   playerName?: string;
+  /** 작성자 응원팀처럼 보조 의미를 명시할 때 붙이는 접미사 */
+  suffix?: string;
 }
 
 export default function TeamBadge({
@@ -19,6 +21,7 @@ export default function TeamBadge({
   size = "sm",
   className,
   playerName,
+  suffix,
 }: TeamBadgeProps) {
   const team = getTeamById(teamId);
   const { resolvedTheme } = useTheme();
@@ -67,7 +70,7 @@ export default function TeamBadge({
           className="object-contain"
         />
       </span>
-      {playerName ? `${team.shortName} ${playerName}` : team.shortName}
+      {playerName ? `${team.shortName} ${playerName}` : `${team.shortName}${suffix ? ` ${suffix}` : ""}`}
     </span>
   );
 }
