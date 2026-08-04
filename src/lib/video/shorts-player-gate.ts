@@ -20,6 +20,9 @@ export interface RevalidatedPlayerTags {
 /**
  * 수집 계약을 legacy 저장행에 그대로 재적용한다.
  * channel/alias metadata가 없거나 requested favorite와 교집합이 사라지면 fail-close.
+ * 운영에서 내려간(is_active=false) 채널의 legacy player-tag는 제목 형태와 무관하게
+ * 전부 fail-close한다. 채널이 내려간 이유(오태그·노이즈·저품질)를 제목만으로
+ * 재판정할 수 없기 때문에, 정치 제목뿐 아니라 정상형 제목도 신뢰하지 않는다.
  */
 export function revalidateStoredPlayerTags(
   row: StoredPlayerTagRow,
@@ -38,7 +41,7 @@ export function revalidateStoredPlayerTags(
       teamId: row.team_id,
     };
   }
-  if (!channel || !Number.isFinite(channel.tier)) {
+  if (!channel || !Number.isFinite(channel.tier) || channel.is_active !== true) {
     return { allowed: false, playerId: null, playerIds: [], teamId: null };
   }
 

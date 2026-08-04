@@ -151,6 +151,39 @@ check(
   !revalidateStoredPlayerTags(reportedRow, players, inactiveT3).allowed,
 );
 check(
+  "inactive channel은 정상형 제목도 fail-close",
+  !revalidateStoredPlayerTags(
+    { ...reportedRow, title: "두산 김민석 끕내기 안타", player_ids: ["53554"] },
+    players,
+    inactiveT3,
+    new Set(["53554"]),
+  ).allowed,
+);
+check(
+  "inactive tier1 채널의 고유 선수명도 fail-close",
+  !revalidateStoredPlayerTags(
+    {
+      ...reportedRow,
+      title: "#손아섭응원가 오늘도 뜨겁다",
+      player_id: "77532",
+      player_ids: ["77532"],
+      team_id: "NC",
+    },
+    players,
+    { ...inactiveT3, tier: 1 },
+    new Set(["77532"]),
+  ).allowed,
+);
+check(
+  "동일 채널이 active면 정상형 제목은 보존(over-block 방지)",
+  revalidateStoredPlayerTags(
+    { ...reportedRow, title: "두산 김민석 끕내기 안타", player_ids: ["53554"] },
+    players,
+    activeT3,
+    new Set(["53554"]),
+  ).allowed,
+);
+check(
   "missing channel metadata fail-close",
   !revalidateStoredPlayerTags(reportedRow, players, null).allowed,
 );
@@ -283,6 +316,40 @@ async function finishAsyncChecks() {
   check(
     "actual GET inactive channel legacy 오태그 제거",
     inactiveItems.length === 0,
+  );
+
+  const inactiveNormalItems = await favoriteItems(
+    [
+      videoRow({
+        video_id: "inactive-normal-title",
+        title: "두산 김민석 끕내기 안타",
+        player_id: "53554",
+        player_ids: ["53554"],
+      }),
+    ],
+    "53554",
+    [inactiveT3],
+  );
+  check(
+    "actual GET inactive channel 정상형 제목도 제거",
+    inactiveNormalItems.length === 0,
+  );
+
+  const activeNormalItems = await favoriteItems(
+    [
+      videoRow({
+        video_id: "active-normal-title",
+        title: "두산 김민석 끕내기 안타",
+        player_id: "53554",
+        player_ids: ["53554"],
+      }),
+    ],
+    "53554",
+    [activeT3],
+  );
+  check(
+    "actual GET active channel 정상형 제목은 보존",
+    activeNormalItems.map((item) => item.id).join(",") === "active-normal-title",
   );
 
   const sonItems = await favoriteItems(
