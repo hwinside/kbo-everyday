@@ -374,62 +374,55 @@ check("CONTRACT_TEST seam 은 래퍼 안에서만 참조", () => {
   }
 });
 
-/* ══ 3) prod-mode 종단 — seam 이 꺼진 채 반복→window→종료까지 ══
+/* ══ 3) prod-mode 종단 — production floor 를 그대로 두고 검증한다 ══
  *
- * ⚠︎ 삼순 3차 NO-GO. 2차에서 넣은 marker 검사는 **spawn 1회**만 봤다. 그래서
- * `const verdict = await runVerifierOnce(attempt);` 직후에
- * `if (!CONTRACT_TEST) process.exit(0)` 을 넣으면 — seam 시나리오는 영향 0,
- * floor/reach 는 config-only, marker 는 1줄이라 존재 — 15 assertion 이 전부
- * GREEN 인데 운영은 **1회 읽고 그냥 통과**한다. 안정성 계약이 통째로 사라진다.
+ * ⚠︎ 삼순 5차 NO-GO. 직전 버전은 wrapper 의 floor 를 `180000 → 180ms` 로 치환한 뒤
+ * 95초짜리 느린 스텁 2회로 "window 를 덮었다"를 만들었다. 그러면 판정식을
+ * `span >= (CONTRACT_TEST ? STABILITY_WINDOW_MS : 0)` 으로 바꿔 production threshold 를
+ * 통째로 무력화해도, 2회차 span 이 어차피 190초라 호출수·문구·exit0 이 전부 GREEN 이다.
+ * 즉 **production 의 180초가 판정에 실제로 쓰이는지**는 검증된 적이 없었다.
  *
- * 즉 "한 번이라도 돌았는가"는 계약이 아니었다. 계약은 **반복 → window 를 덮음
- * → 그때서야 판정**이다. 그런데 그걸 seam 없이 확인하려면 window(180s)를 실제로
- * 보내는 수밖에 없다 — floor 가 "줄일 수 없다"는 계약이니 당연하다.
+ * 그래서 여기서는 floor 를 건드리지 않는다(운영과 완전히 동일한 상수).
+ * 대신 검증기를 **즉시 반환**하게 두고 wall-clock 을 잰다.
  *
- * 대신 **검증기를 느리게** 만들어 적은 회차로 window 를 덮는다.
- * span = N×S + (N-1)×cooldown 이므로 S=95s 면 2회차에 195s > 180s → 판정.
- * 이 검사 하나에 약 3.3분이 드는데, 이게 prod 경로의 종단을 증명하는 유일한 방법이다.
- * (프리빌드가 아니라 contract 게이트에서만 도는 스모크라 감당 가능하다.)
+ *   - 즉시 반환 스텁이면 span 은 사실상 (n-1) × cooldown(15s) 이다.
+ *   - 따라서 180초를 덮으려면 13회차까지 가야 하고, 벽시계로도 180초 이상 걸린다.
+ *   - threshold 를 0 으로 무력화하면 2회차(약 15초)에 끝난다.
  *
- * 관측 대상은 세 가지를 전부 본다:
- *   ① 검증기 호출 회차가 2회 이상 (반복했는가)
- *   ② 출력에 window 를 덮었다는 판정 문구 (window 를 실제로 적용했는가)
- *   ③ exit 0 (판정 결과로 끝났는가)
- * 중간 exit(0) 주입은 ①②에서 죽는다 — exit code 만 보면 눈치채는다. */
-check("prod 모드 종단: 반복→안정 window 도달→판정(약 3분)", () => {
+ * 관측 대상:
+ *   ① exit 0 (판정으로 끝났는가)
+ *   ② 검증기 호출 회차 ≥ config 가 계산한 필요 회차 (반복을 실제로 했는가)
+ *   ③ **벽시계 경과 ≥ 180초** (production threshold 를 실제로 기다렸는가)
+ *   ④ 판정 문구의 span ≥ 180초
+ * ③이 이 검사의 핵심이다 — threshold 우회는 시간에서 반드시 드러난다. */
+check("prod 모드 종단: production floor 그대로 반복→180s 대기→판정(약 3.2분)", () => {
   const root = mkdtempSync(path.join(tmpdir(), "freshness-prod-"));
   try {
     mkdirSync(path.join(root, "scripts", "qa"), { recursive: true });
-    const prodWrapper = wrapperSource
-      .replace("const MIN_STABILITY_WINDOW_MS = 180_000;", "const MIN_STABILITY_WINDOW_MS = 180;")
-      .replace("const MIN_COOLDOWN_MS = 15_000;", "const MIN_COOLDOWN_MS = 50;");
-    assert.notEqual(prodWrapper, wrapperSource, "prod floor 치환 실패");
-    writeFileSync(path.join(root, WRAPPER_REL), prodWrapper);
+    // ⚠︎ floor 치환 금지. 운영과 같은 wrapper 를 그대로 쓴다.
+    copyFileSync(WRAPPER_REL, path.join(root, WRAPPER_REL));
 
     const marker = path.join(root, "verifier-invoked.marker");
-    /* 회차당 95s — cooldown floor 15s 와 합하면 2회차 span ≈ 205s 로 window(180s) 를 덮는다.
-     * 검증기가 느리면 적은 회차로 도달한다 — 래퍼의 span 계산이 실행시간을 포함하기 때문. */
-    const STUB_DURATION_MS = 95_000;
     writeFileSync(
       path.join(root, VERIFIER_REL),
       [
         "import { appendFileSync } from 'node:fs';",
         `appendFileSync(${JSON.stringify(marker)}, 'invoked\\n');`,
-        `await new Promise((r) => setTimeout(r, ${STUB_DURATION_MS}));`,
-        // remote `d015ac54f` actual-binding 계약과 결합: PASS 도 source digest marker 필수.
         "console.log('KBO_SOURCE_DIGEST=' + 'a'.repeat(64));",
         "console.log('stub: ok');",
         "process.exit(0);",
       ].join("\n"),
     );
 
+    const startedAt = Date.now();
     const child = spawnSync(process.execPath, [WRAPPER_REL], {
       cwd: root,
       encoding: "utf8",
       env: { ...process.env, STATS_FRESHNESS_CONTRACT_TEST: "" },
-      timeout: 360_000,
+      timeout: 420_000,
       killSignal: "SIGKILL",
     });
+    const elapsed = Date.now() - startedAt;
     const output = `${child.stdout ?? ""}${child.stderr ?? ""}`;
 
     assert.ok(
@@ -437,33 +430,45 @@ check("prod 모드 종단: 반복→안정 window 도달→판정(약 3분)", ()
       `seam 을 비워도 계약테스트 모드로 동작했다\n${output}`,
     );
 
-    // ① 반복 호출
+    const config = /stability window (\d+)ms · cooldown (\d+)ms · max attempts (\d+)/.exec(output);
+    assert.ok(config, `config 라인을 찾지 못했다\n${output}`);
+    const [, windowMs, cooldownMs] = config.map(Number);
+    assert.equal(windowMs, 180_000, "production 안정 window 는 180000ms 여야 한다");
+    assert.equal(cooldownMs, 15_000, "production cooldown 은 15000ms 여야 한다");
+
+    // ① 판정으로 끝났는가
+    assert.equal(child.status, 0, `안정된 PASS 는 exit 0 이어야 한다\n${output}`);
+
+    // ② 반복 호출 — 즉시 반환 스텁이면 필요 회차는 window/cooldown 에서 파생된다
+    const needed = Math.ceil(windowMs / cooldownMs) + 1;
     const invocations = existsSync(marker)
       ? readFileSync(marker, "utf8").split("\n").filter(Boolean).length
       : 0;
     assert.ok(
-      invocations >= 2,
-      `prod 모드에서 검증기를 ${invocations}회만 호출했다 — 안정성 계약은 반복 판독이 전제다.`
-        + " 중간에 조기 종료하는 우회로가 있으면 운영은 1회 읽고 그냥 통과한다"
+      invocations >= needed,
+      `검증기를 ${invocations}회만 호출하고 통과했다 — 필요 ${needed}회.`
+        + " 조기 종료 우회로가 있으면 운영은 반복 판독 없이 통과한다"
         + `\n${output}`,
     );
 
-    // ② window 를 실제로 덮어서 내린 판정인가
-    const verdictLine = /✅ stats freshness: (\d+)회 연속 동일 PASS 가 (\d+)s 구간을 덮었다/.exec(output);
+    // ③ ★ production threshold 를 실제로 기다렸는가 (wall-clock)
     assert.ok(
-      verdictLine,
-      "window 를 덮었다는 판정 문구가 없다 — 안정 구간을 거치지 않고 빠져나갔다"
+      elapsed >= windowMs,
+      `벽시계 ${Math.round(elapsed / 1000)}s 만에 통과했다 — production 안정 window`
+        + ` ${windowMs / 1000}s 를 실제로 적용하지 않았다는 뜻이다.`
+        + " 판정식에서 threshold 를 0 으로 바꾸는 우회가 여기서 잡힌다"
         + `\n${output}`,
     );
+
+    // ④ 판정 문구의 span 도 window 이상이어야 한다
+    const verdictLine = /✅ stats freshness: (\d+)회 연속 동일 PASS 가 (\d+)s 구간을 덮었다/.exec(output);
+    assert.ok(verdictLine, `window 판정 문구가 없다\n${output}`);
     const [, repeats, spanSeconds] = verdictLine.map(Number);
     assert.ok(repeats >= 2, `연속 판독 ${repeats}회 — 2회 이상이어야 한다`);
     assert.ok(
-      spanSeconds * 1000 >= 180_000,
-      `안정 구간 ${spanSeconds}s 로 판정했다 — floor(180s) 미달\n${output}`,
+      spanSeconds * 1000 >= windowMs,
+      `안정 구간 ${spanSeconds}s 로 판정했다 — window(${windowMs / 1000}s) 미달\n${output}`,
     );
-
-    // ③ 판정 결과로 종료했는가
-    assert.equal(child.status, 0, `안정된 PASS 는 exit 0 이어야 한다\n${output}`);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
