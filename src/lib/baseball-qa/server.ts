@@ -6,9 +6,11 @@ import { supabaseAdmin } from "@/lib/supabase/admin";
 import { sendOpsMessageToUser } from "@/lib/cs/send-ops-message";
 import {
   answerQuestion,
+  BLOCKED_ANSWER,
   isAckPhrase,
   MAX_QUESTION_LEN,
   MIN_QUESTION_LEN,
+  isPickedPlayerAllowed,
   type GlossaryEntry,
   type LlmResult,
   type PlayerRef,
@@ -42,6 +44,8 @@ import {
   type RagEvidenceCandidate,
   type RagPlayerCandidate,
 } from "@/lib/baseball-qa/rag/retrieve";
+import { createSeasonRecordFetcher } from "@/lib/baseball-qa/stats/fetch-season-record";
+import type { SeasonRecordClient } from "@/lib/baseball-qa/stats/fetch-season-record";
 import { embedQuery } from "@/lib/baseball-qa/rag/embed";
 import { orderTier2Evidence } from "@/lib/baseball-qa/rag/fetch-wikipedia";
 
@@ -65,7 +69,14 @@ export const INVALID_QUESTION_ANSWER =
 
 let glossaryCache: { entries: GlossaryEntry[]; loadedAt: number } | null = null;
 const GLOSSARY_TTL_MS = 10 * 60 * 1000;
-const ROSTER_PLAYERS: PlayerRef[] = playersRoster.map(({ name, kboId }) => ({ name, kboId }));
+// picker 선택지를 사람이 구분하려면 팀·포지션·등번호까지 필요하다 — 같은 팀에도 동명이인이 있기 때문이다.
+const ROSTER_PLAYERS: PlayerRef[] = playersRoster.map(({ name, kboId, team, position, backNo }) => ({
+  name,
+  kboId,
+  team: team ?? null,
+  position: position ?? null,
+  backNo: backNo ?? null,
+}));
 
 async function loadGlossary(): Promise<GlossaryEntry[]> {
   if (glossaryCache && Date.now() - glossaryCache.loadedAt < GLOSSARY_TTL_MS) {
@@ -268,14 +279,93 @@ interface PreviousTurnRowSql {
   current_created_at: string | null;
 }
 
+/**
+ * picker 선택을 job 행에 고정하거나, 입력이 없으면 이미 고정된 값을 읽어온다.
+ *
+ * 즉시 경로(/api/baseball-qa)가 약간 진행하다 브라우저가 죽으면 cron drain이 같은 job을 이어받는다.
+ * 그때 drain은 유저가 무엇을 고랐는지 모른다 — DB에 남겨두지 않으면 picker가 다시 뜨면서
+ * 유저 입장에선 방금 고른 것이 사라진다. 저장 실패는 진행을 막지 않고(답변 자체는 가능),
+ * 다음 재처리에서 picker로 되돌아갈 뿐이다.
+ */
+async function persistOrLoadPickedPlayer(
+  messageId: number,
+  question: string,
+  input?: string | null,
+): Promise<string | null> {
+  if (input) {
+    // **서버 발급 후보군 membership** 을 먼저 재검증하고, 통과한 뒤에만 영속한다.
+    // 단순히 "로스터에 존재하는 id"만 보면 원 질문 `김동현` picker에 문보경(69102)을
+    // 주입해도 문보경 기록을 답하게 된다(삼순 P0-1 actual). 유저가 ID를 입력하는 구조가
+    // 아니라도 클라이언트 요청은 위조 가능하므로 서버가 원 질문에서 후보군을 다시 계산한다.
+    if (!isPickedPlayerAllowed(question, input, ROSTER_PLAYERS)) return null;
+
+    const { error } = await supabaseAdmin
+      .from("genius_question_jobs")
+      .update({ picked_player_kbo_id: input, updated_at: new Date().toISOString() })
+      .eq("message_id", messageId);
+    if (error) {
+      console.error("baseball-genius picked player persist failed:", error.message);
+      return null;
+    }
+    return input;
+  }
+  const { data, error } = await supabaseAdmin
+    .from("genius_question_jobs")
+    .select("picked_player_kbo_id")
+    .eq("message_id", messageId)
+    .maybeSingle();
+  if (error) return null;
+  return (data?.picked_player_kbo_id as string | null) ?? null;
+}
+
+async function preparePickedPlayerSelection(
+  messageId: number,
+  userId: string,
+  question: string,
+  pickedPlayerKboId: string,
+): Promise<boolean> {
+  if (!isPickedPlayerAllowed(question, pickedPlayerKboId, ROSTER_PLAYERS)) return false;
+  // query-guard: bounded -- message_id PK 한 행만 갱신하고 boolean scalar 하나를 반환한다.
+  const { data, error } = await supabaseAdmin.rpc("prepare_baseball_genius_player_selection", {
+    p_message_id: messageId,
+    p_user_id: userId,
+    p_picked_player_kbo_id: pickedPlayerKboId,
+  });
+  if (error) throw error;
+  return data === true;
+}
+
 /** messageId에 바인딩된 deps — quota/LLM을 job 행 기준 durable idempotent로 만든다. */
-function makeDeps(messageId: number): QaDeps {
+function makeDeps(messageId: number, pickedPlayerKboId?: string | null): QaDeps {
   return {
     loadGlossary,
     loadPlayers,
     callLlm,
     searchRag,
     callRagLlm,
+    // 선수 서술형 RAG 개통 (하린아빠 2026-08-03: "RAG을 확장했기 때문에 '문보경 별명이 뭐야?'도
+    // 답변 되어야 해"). 미수집 선수는 근거 0행이라 그대로 fail-close 된다 — 없는 말을 지어내지 않는다.
+    enablePlayerRag: true,
+    pickedPlayerKboId: pickedPlayerKboId ?? null,
+    releaseDaily: async (userId) => {
+      // query-guard: bounded -- message_id 단위 멱등 단일 행 갱신 RPC.
+      const { error } = await supabaseAdmin
+        .rpc("release_baseball_genius_daily_question_for_message", {
+          p_message_id: messageId,
+          p_user_id: userId,
+        });
+      if (error) throw error;
+    },
+    /**
+     * 시즌 기록 조회 (kbo_structured). **player_key=kboId exact** 로만 본다 — 이름 조회는 동명이인을
+     * 섞어버리므로 금지다(삼순 조건 ①). 상한 2로 조회해서 중복행을 숨기지 않고
+     * 호출부가 `inconsistent` 로 fail-close 할 수 있게 한다.
+     */
+    // 인라인 lambda 대신 seam factory를 쓴다 — 테스트가 이 같은 함수를 그대로 실행해
+    // table/kboId/row 전달을 actual 검증한다(정규식만 보는 false-green 제거, 삼순 3차 P0-3).
+    fetchSeasonRecord: createSeasonRecordFetcher(
+      supabaseAdmin as unknown as SeasonRecordClient,
+    ),
     searchOfficialRag,
     callOfficialRagLlm,
     recordRagDemand: async (sourceKeys) => {
@@ -412,6 +502,11 @@ export async function processBaseballQaQuestion(input: {
   conversationId: string;
   userId: string;
   question: string;
+  /**
+   * 동명이인 picker에서 유저가 고른 kboId (재질의). 즉시 경로(route)에서만 전달되며,
+   * job 행에 고정되어 cron drain 재처리에서도 같은 선수로 이어진다.
+   */
+  pickedPlayerKboId?: string | null;
 }): Promise<ProcessOutcome> {
   const { messageId, conversationId, userId } = input;
   const question = input.question.trim();
@@ -431,6 +526,20 @@ export async function processBaseballQaQuestion(input: {
       .eq("message_id", messageId)
       .neq("status", "completed");
     return { kind: "completed", deduped: true };
+  }
+
+  if (input.pickedPlayerKboId) {
+    try {
+      const prepared = await preparePickedPlayerSelection(
+        messageId, userId, question, input.pickedPlayerKboId,
+      );
+      if (!prepared) {
+        return { kind: "failed", status: 400, reason: "선택한 선수를 확인할 수 없습니다" };
+      }
+    } catch (error) {
+      console.error("baseball-genius player selection failed:", (error as Error).message);
+      return { kind: "failed", status: 503, reason: "선수 선택을 저장할 수 없습니다" };
+    }
   }
 
   // query-guard: bounded -- messageId PK claim은 claim_state 한 행만 반환한다.
@@ -454,7 +563,7 @@ export async function processBaseballQaQuestion(input: {
   if (claimState === "ready") {
     const { data: readyJob, error: readyError } = await supabaseAdmin
       .from("genius_question_jobs")
-      .select("answer, source, remaining")
+      .select("answer, source, remaining, picker_options, picker_question_message_id")
       .eq("message_id", messageId)
       .eq("conversation_id", conversationId)
       .eq("user_id", userId)
@@ -468,6 +577,9 @@ export async function processBaseballQaQuestion(input: {
       answer: readyJob.answer,
       source: readyJob.source as QaResult["source"],
       remaining: Number(readyJob.remaining ?? 0),
+      ...(Array.isArray(readyJob.picker_options)
+        ? { pickerOptions: readyJob.picker_options as NonNullable<QaResult["pickerOptions"]> }
+        : {}),
     };
   } else {
     try {
@@ -479,7 +591,10 @@ export async function processBaseballQaQuestion(input: {
       if (tooShort || question.length > MAX_QUESTION_LEN) {
         result = { status: 200, answer: INVALID_QUESTION_ANSWER, source: "blocked", remaining: 0 };
       } else {
-        result = await answerQuestion(userId, question, makeDeps(messageId));
+        // 선택은 job 행을 SSOT로 삼는다. 즉시 경로가 죽어 cron이 이어받아도 유저가 고른
+        // 그 선수로 답하도록, 입력이 있으면 먼저 고정하고 없으면 저장된 값을 읽는다.
+        const picked = await persistOrLoadPickedPlayer(messageId, question, input.pickedPlayerKboId);
+        result = await answerQuestion(userId, question, makeDeps(messageId, picked));
       }
       if (result.source === "pending") {
         // LLM winner가 다른 worker (CAS 패배/fence 창) — 이 worker는 ready 저장도 발송도 하지
@@ -494,6 +609,8 @@ export async function processBaseballQaQuestion(input: {
           answer: result.answer,
           source: result.source,
           remaining: result.remaining,
+          picker_options: result.pickerOptions ?? null,
+          picker_question_message_id: result.pickerOptions ? messageId : null,
           updated_at: new Date().toISOString(),
         })
         .eq("message_id", messageId)
@@ -501,16 +618,22 @@ export async function processBaseballQaQuestion(input: {
       if (readyError) throw readyError;
     } catch (error) {
       console.error("baseball-genius pipeline failed:", (error as Error).message);
-      await supabaseAdmin
+      result = { status: 200, answer: BLOCKED_ANSWER, source: "error", remaining: 0 };
+      const { error: fallbackError } = await supabaseAdmin
         .from("genius_question_jobs")
         .update({
-          status: "failed",
-          last_error: "pipeline_failed",
+          status: "ready",
+          answer: result.answer,
+          source: result.source,
+          remaining: result.remaining,
+          last_error: "pipeline_fallback",
           updated_at: new Date().toISOString(),
         })
         .eq("message_id", messageId)
         .eq("status", "processing");
-      return { kind: "failed", status: 503, reason: "답변 생성에 실패했습니다" };
+      if (fallbackError) {
+        return { kind: "failed", status: 503, reason: "답변 fallback 저장에 실패했습니다" };
+      }
     }
   }
 
@@ -520,13 +643,29 @@ export async function processBaseballQaQuestion(input: {
     type: "baseball_genius_reply",
     reply_kind: replyKindForMatchPath(result.source),
     match_path: result.source,
+    // 동명이인 되물기일 때만 선택지를 실는다. 클라는 이걸 보고 카드를 렌더한다.
+    ...(result.pickerOptions
+      ? {
+        question_message_id: messageId,
+        picker_options: result.pickerOptions.map((option) => ({
+          kbo_id: option.kboId,
+          name: option.name,
+          team: option.team,
+          position: option.position,
+          back_no: option.backNo,
+        })),
+      }
+      : {}),
   };
+  const deliveryDedupKey = result.source === "player_picker"
+    ? `baseball-genius-picker:${messageId}`
+    : dedupKey;
   const sent = await sendOpsMessageToUser(
     supabaseAdmin,
     BASEBALL_GENIUS_USER_ID,
     userId,
     result.answer,
-    dedupKey,
+    deliveryDedupKey,
     "dm",
     replyPayload,
   );
@@ -552,7 +691,10 @@ export async function processBaseballQaQuestion(input: {
   }
   await supabaseAdmin
     .from("genius_question_jobs")
-    .update({ status: "completed", updated_at: new Date().toISOString() })
+    .update({
+      status: result.source === "player_picker" ? "awaiting_selection" : "completed",
+      updated_at: new Date().toISOString(),
+    })
     .eq("message_id", messageId);
   return {
     kind: "completed",
