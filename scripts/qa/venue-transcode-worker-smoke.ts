@@ -1091,6 +1091,15 @@ async function run() {
           `P2: captured runner max-edge ${VENUE_SERVER_MAX_EDGE_PX}px (실제 ${Math.max(m.disp.width, m.disp.height)})`,
           Math.max(m.disp.width, m.disp.height) === VENUE_SERVER_MAX_EDGE_PX,
         );
+        // ⚠️ **코덱 assert** (삼순 R6 추가 blocker). 종전에는 codec 을 로그로 출력만 하고
+        //   검사하지 않았다. 그래서 captured runner 의 transcode 만 MPEG-4 Part 2 로 바꿔도
+        //   (mpeg4/aac · 720x1280 · faststart · skew 0ms · drift 18ms) 152/0 GREEN 이었다.
+        //   해상도·faststart·A/V 는 다 맞는데 코덱만 틀리면 브라우저/앱 재생이 깨진다 —
+        //   이 PR 의 목적(첫 재생 지연 해소) 자체가 무너지는 회귀다.
+        ok(
+          `P2: captured runner 출력 코덱 h264 (실제 ${m.codec}) — mpeg4 등으로 바꾸면 RED`,
+          m.codec === "h264",
+        );
         ok(`P2: captured runner faststart — 실제 ${m.fastStart}`, m.fastStart === true);
         ok(
           `P2: captured runner 오디오 보존 (실제 ${m.audioCodec ?? "없음"}) — runner 만 -an 으로 바꾸면 RED`,
@@ -1157,6 +1166,15 @@ async function run() {
         ok(
           `P2: 다운로드본→transcode 체인이 720x1280 산출 (실제 ${dlNorm.disp.width}x${dlNorm.disp.height})`,
           dlNorm.disp.width === 720 && dlNorm.disp.height === 1280,
+        );
+        // 체인 끝단도 코덱을 결속한다 — 한 경로만 막으면 다른 경로로 새어나간다.
+        ok(
+          `P2: 다운로드본→transcode 체인 출력 코덱 h264 (실제 ${dlNorm.codec})`,
+          dlNorm.codec === "h264",
+        );
+        ok(
+          `P2: 다운로드본→transcode 체인 오디오 보존 (실제 ${dlNorm.audioCodec ?? "없음"})`,
+          dlNorm.audioCodec != null,
         );
       } finally {
         if (server) await new Promise<void>((r) => server!.close(() => r()));
