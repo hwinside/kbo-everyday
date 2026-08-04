@@ -201,7 +201,20 @@ assert.doesNotMatch(serverSource, /fetchSeasonRecord:\s*async\s*\(/);
 // 로스터 인원은 콜업·트레이드로 상시 변하므로 숫자를 고정하지 않는다(2026-08-01 P0:
 // 하드코딩 878이 자동 roster PR을 영구 막았다). 계약은 "선차단 SSOT가 roster JSON이고 비어있지 않다".
 assert.ok(playersRoster.length > 0, "선수 선차단 SSOT는 roster JSON이며 비어 있으면 안 됨");
-assert.match(serverSource, /import playersRoster from "@\/lib\/constants\/players-roster\.json"/);
+// production loader seam 결속 (삼순 8차 P0-2): 서버가 인라인 loader 를 다시 들면
+// 게이트가 그 분기를 실행할 수 없어 `return []` 변종이 GREEN 으로 통과한다.
+// 주입값은 반드시 import 한 seam 함수 **그 자체**여야 한다.
+assert.match(serverSource, /import \{\s*loadRosterPlayers,\s*ROSTER_PLAYERS,\s*\} from "@\/lib\/baseball-qa\/roster\/load-roster-players"/);
+assert.match(serverSource, /loadPlayers: loadRosterPlayers,/);
+// 인라인 loader · 로컬 재정의 재도입 금지.
+assert.doesNotMatch(serverSource, /loadPlayers:\s*async\s*\(/);
+assert.doesNotMatch(serverSource, /function loadPlayers\b/);
+// roster JSON 은 seam 모듈이 직접 읽는다 — 선차단 SSOT 경로가 숙주가 아니어야 한다.
+const rosterSeamSource = readFileSync(
+  path.join(process.cwd(), "src/lib/baseball-qa/roster/load-roster-players.ts"),
+  "utf8",
+);
+assert.match(rosterSeamSource, /import playersRoster from "@\/lib\/constants\/players-roster\.json"/);
 assert.doesNotMatch(serverSource, /\.from\("players_roster"\)/);
 assert.doesNotMatch(routeSource, /룰·용어·기록 질문/);
 assert.doesNotMatch(serverSource, /룰·용어·기록 질문/);
@@ -2170,6 +2183,50 @@ function verifyAnsweredUpdaterIsBoundInHook() {
   const sf = program.getSourceFile(hookPath);
   assert.ok(sf, "useDM.ts 소스파일 로드 실패");
 
+  // ⚠️ **먼저 관측 콜백 자체를 특정한다** (삼순 8차 P0-1).
+  //
+  // 종전에는 arg0 이 "어떤 enclosing 함수의 파라미터인가"만 봤다. 그래서 factory 호출을
+  // 별도 wrapper 함수 안으로 옮기고(그 wrapper 의 파라미터를 arg0 으로 쓰면 구조 검사는 통과)
+  // 실제 `observeBaseballQaMessages` 는 `wrapper([])` 를 부르게 바꾸면, answered 집합은
+  // 영원히 비는데도 core·picker 렌더 게이트·tsc·ESLint 가 전부 GREEN 이었다.
+  //
+  // 그래서 기준을 "**관측 콜백 그 자체**"로 좁힌다: factory 호출은 반드시
+  // `observeBaseballQaMessages` 에 바인드된 useCallback 콜백 **내부**에 있어야 하고,
+  // arg0 은 바로 그 콜백의 파라미터여야 한다.
+  let observerCallback: ts.ArrowFunction | ts.FunctionExpression | undefined;
+  const findObserver = (node: ts.Node) => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === "observeBaseballQaMessages" &&
+      node.initializer &&
+      ts.isCallExpression(node.initializer) &&
+      ts.isIdentifier(node.initializer.expression) &&
+      node.initializer.expression.text === "useCallback"
+    ) {
+      const fn = node.initializer.arguments[0];
+      if (fn && (ts.isArrowFunction(fn) || ts.isFunctionExpression(fn))) observerCallback = fn;
+    }
+    ts.forEachChild(node, findObserver);
+  };
+  findObserver(sf);
+  assert.ok(observerCallback,
+    "observeBaseballQaMessages 는 useCallback(콜백) 으로 선언되어야 한다");
+  const observer = observerCallback;
+  assert.equal(observer.parameters.length, 1,
+    "관측 콜백은 관측 메시지 배열 1인자를 받는다");
+  const observerParam = observer.parameters[0];
+
+  /** `node` 가 `container` 안에 lexically 들어있는가. */
+  const isInside = (node: ts.Node, container: ts.Node) => {
+    let cursor: ts.Node | undefined = node;
+    while (cursor) {
+      if (cursor === container) return true;
+      cursor = cursor.parent;
+    }
+    return false;
+  };
+
   const setterCalls: ts.CallExpression[] = [];
   const walk = (node: ts.Node) => {
     if (
@@ -2193,6 +2250,8 @@ function verifyAnsweredUpdaterIsBoundInHook() {
     const arg = call.arguments[0];
     if (!arg || !ts.isCallExpression(arg)) return [];
     if (!ts.isIdentifier(arg.expression)) return [];
+    // 관측 갱신은 반드시 관측 콜백 안에서 일어난다 — wrapper 로 빼면 여기서 탈락한다.
+    if (!isInside(call, observer)) return [];
     // 이름이 아니라 binder 심볼로 확인 — 같은 이름의 local 함수를 선언해 가리는 걸 막는다.
     const symbol = checker.getSymbolAtLocation(arg.expression);
     const decl = symbol?.declarations?.[0];
@@ -2219,16 +2278,46 @@ function verifyAnsweredUpdaterIsBoundInHook() {
   const arg0Decl = arg0Symbol?.declarations?.[0];
   assert.ok(arg0Decl && ts.isParameter(arg0Decl),
     "arg0 은 observeBaseballQaMessages 가 받은 파라미터여야 한다");
-  // 그 파라미터를 선언한 함수가 곧 이 factory 호출을 감싸는 콜백인지 확인.
-  const enclosing = arg0Decl.parent;
-  let cursor: ts.Node = factoryCalls[0];
-  let insideSameFunction = false;
-  while (cursor.parent) {
-    if (cursor === enclosing) { insideSameFunction = true; break; }
-    cursor = cursor.parent;
-  }
-  assert.ok(insideSameFunction,
-    "arg0 은 이 호출을 감싸는 관측 콜백의 파라미터여야 한다(다른 스코프 값 주입 금지)");
+  // ⚠️ "어떤 enclosing 함수의 파라미터"가 아니라 **관측 콜백 바로 그 파라미터**여야 한다
+  // (삼순 8차 P0-1). 느슨하면 `wrapper(nextMessages)` 를 만들어두고 관측 콜백이
+  // `wrapper([])` 를 부르는 변종이 그대로 통과한다.
+  assert.ok(arg0Decl === observerParam,
+    "arg0 은 observeBaseballQaMessages 콜백의 파라미터 그 자체여야 한다 " +
+    "(wrapper 파라미터·다른 스코프 값 주입 금지)");
+
+  // 관측 콜백이 받은 배열을 버리고 빈 배열을 흘려보내는 경로도 닫는다 — 콜백 본문의
+  // 어떤 호출도 빈 배열 리터럴을 인자로 넘길 수 없다.
+  const emptyArrayArgs: string[] = [];
+  const scanEmptyArray = (node: ts.Node) => {
+    if (ts.isCallExpression(node)) {
+      for (const argument of node.arguments) {
+        if (ts.isArrayLiteralExpression(argument) && argument.elements.length === 0) {
+          emptyArrayArgs.push(node.getText(sf).slice(0, 80));
+        }
+      }
+    }
+    ts.forEachChild(node, scanEmptyArray);
+  };
+  scanEmptyArray(observer.body);
+  assert.deepEqual(emptyArrayArgs, [],
+    `관측 콜백 안에서 빈 배열을 넘기는 호출 금지(관측 입력 폐기 경로): ${emptyArrayArgs.join(" | ")}`);
+
+  // 실제 호출자 경로도 결속한다 — 전체 히스토리(`mapped`)와 Realtime 단건(`[msg]`) 둘 다
+  // 살아있어야 관측이 성립한다. 호출자를 상수로 바꾸거나 지우면 여기서 RED 가 난다.
+  const observerCallArgs: string[] = [];
+  const scanObserverCalls = (node: ts.Node) => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === "observeBaseballQaMessages"
+    ) {
+      observerCallArgs.push(node.arguments.map((a) => a.getText(sf)).join(","));
+    }
+    ts.forEachChild(node, scanObserverCalls);
+  };
+  scanObserverCalls(sf);
+  assert.deepEqual(observerCallArgs.slice().sort(), ["[msg]", "mapped"],
+    "관측 호출은 전체 히스토리(mapped)와 Realtime 단건([msg]) 둘 다여야 한다");
 
   // arg1 은 봇 계정 상수. 다른 id 를 넣으면 봇 답변을 하나도 못 알아본다.
   const arg1 = factoryArgs[1];
