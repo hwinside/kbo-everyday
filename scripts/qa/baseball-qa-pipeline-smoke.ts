@@ -299,9 +299,13 @@ const players: PlayerRef[] = playersRoster.map(({ name, kboId, team, position, b
 for (const question of ["김도영 타율 알려줘", "류현진 방어율 알려줘", "박해민 도루 몇 개야?"]) {
   assert.equal(routeQuestion(question, seedEntries, players), "history_hold", question);
 }
-for (const question of ["류현진 승수", "LG 순위"]) {
-  assert.equal(routeQuestion(question, seedEntries, players), "history_hold", question);
-}
+// 선수 수치 질문은 지원 allowlist 밖이면 안내로 종결한다(운영 DB 에 컬럼이 없다).
+assert.equal(routeQuestion("류현진 승수", seedEntries, players), "history_hold", "류현진 승수");
+// ⚠️ 반면 **구단** 질문은 더 이상 `history_hold` 로 끝내지 않는다 (2026-08-04 하린아빠
+// 18:26 "이런 답변이 이제 나와서는 안 되지" + 삼순 #1100 1차 P0-1).
+// 구단은 확정 답변 범위(야구룰·구단·선수·기록) 안이므로 LLM 2차 가드가 답한다.
+// 종단 계약(유저가 받는 source/answer)은 `qa:team-fullname-routing` 이 감싼다.
+assert.equal(routeQuestion("LG 순위", seedEntries, players), "llm_scope_gate", "LG 순위");
 // 과차단 회귀 (삼순 NO-GO blocker 1): "순위"는 team-bound일 때만 실시간 기록이다.
 // 팀 없는 순위 "룰" 질문까지 history_hold로 죽이면 핏스 목적과 정반대가 된다.
 const rankRuleQuestions = ["야구 순위가 동률이면 어떻게 정해?", "순위 결정 규칙 알려줘"];
@@ -345,9 +349,14 @@ for (const question of [
 ]) {
   assert.equal(routeQuestion(question, seedEntries, players), "blocked", question);
 }
-// team-bound `누구/언제`(감독·창단연도)는 기록 질의가 아니라 범위 밖이므로 `blocked` 유지.
-// 기록/역사 어휘(통산·성적·순위·몇…)만 `history_hold` 로 간다 (삼순 7차 P0-2).
-assert.equal(routeQuestion("LG 트윈스 감독 누구야?", seedEntries, players), "blocked");
+// ⚠️ team-bound `누구`(감독·주장)는 더 이상 `blocked` 가 아니다 (삼순 #1100 1차 P0-1).
+// `누구`는 맥락 없이 보면 사적 인물 질문이라 denylist 에 있지만, 구단이 붙으면
+// `LG트윈스 감독 누구야?` 처럼 **구단 질문**이고, 구단은 확정 답변 범위 안이다.
+assert.equal(routeQuestion("LG 트윈스 감독 누구야?", seedEntries, players), "llm_scope_gate");
+// 단, 구단이 붙어도 날씨·맛집·추천 같은 축은 여전히 범위 밖이다 — 면제를
+// 인물·평가·역사 축으로만 좀게 열었는지 확인한다(면제가 넘치면 과소차단이 된다).
+assert.equal(routeQuestion("LG 경기장 근처 맛집 추천해줘", seedEntries, players), "blocked");
+assert.equal(routeQuestion("두산 경기 날씨 어때?", seedEntries, players), "blocked");
 // 반면 ③ 둘 다 안 걸리는 "모르겠는" 질문은 blocked로 종결하지 않고 LLM 범위판정에 위임한다.
 // 이것들이 바로 사전 확장으로 수렴시키려다 무한루프에 빠졌던 구간이다 — 야구 신호어를 부분
 // 문자열로 포함한 비야구어(`아웃도어`⊃`아웃`)와 사전 미수록 정상 룰 질문이 여기 섞인다.
@@ -717,7 +726,9 @@ async function verifyPipeline() {
     ["류현진 승수", "history_hold", HISTORY_HOLD_ANSWER],
     ["김도영 홈런 몇개", "history_hold", HISTORY_HOLD_ANSWER],
     ["52605 기록", "history_hold", HISTORY_HOLD_ANSWER],
-    ["LG 순위", "history_hold", HISTORY_HOLD_ANSWER],
+    // ⚠️ `LG 순위` 는 여기서 **빠졌다** — 구단 질문은 `history_hold` 로 끝내지 않고
+    // LLM 2차 가드가 답한다 (2026-08-04 하린아빠 18:26 + 삼순 #1100 1차 P0-1).
+    // 구단 종단 계약은 `qa:team-fullname-routing` 이 answerQuestion 실행으로 감싼다.
     // 게이트 1 actual pipeline 회귀: 조사 결합 4건 모두 history_hold / LLM 0 / cache 0.
     ["김도영의 타율 알려줘", "history_hold", HISTORY_HOLD_ANSWER],
     ["류현진은 방어율이 얼마야?", "history_hold", HISTORY_HOLD_ANSWER],
@@ -763,16 +774,17 @@ async function verifyPipeline() {
   // 나가도 게이트가 통과한다.
   const deterministicClosures: Array<[string, "blocked" | "history_hold"]> = [
     ["문보경 별명이 뭐야?", "blocked"],
-    ["LG 트윈스 별명이 뭐야?", "blocked"],
     ["김도영과 문보경 중 누가 더 잘해?", "blocked"],
     ["보크 관련 영화 추천해줘", "blocked"],
     ["아웃도어 브랜드 추천해줘", "blocked"],
     ["도루묵 요리법 알려줘", "blocked"],
-    // team-bound `누구/언제`(감독·창단연도)는 기록이 아니라 범위 밖 — 앱 기록 탭을
-    // 안내해봐야 거기 없는 정보다. `역대 최고`는 주관 비교라 애초에 범위 밖.
-    ["LG 트윈스 감독 누구야?", "blocked"],
+    // 팀 없는 `역대 최고`는 주관 비교라 여전히 범위 밖이다.
     ["역대 최고 투수는 누구야?", "blocked"],
   ];
+  // ⚠️ 구단이 지명된 인물·별칭·평가 질문은 이 결정론 종결에서 **빠졌다**
+  // (2026-08-04 하린아빠 18:26 + 삼순 #1100 1차 P0-1). `LG트윈스 감독 누구야?`·
+  // `LG 트윈스 별명이 뭐야?` 는 구단 질문이고, 구단은 확정 답변 범위 안이라
+  // LLM 2차 가드가 판정한다. 종단 계약은 `qa:team-fullname-routing` 이 감싼다.
   for (const [input, expectedSource] of deterministicClosures) {
     const expectedAnswer = expectedSource === "history_hold" ? HISTORY_HOLD_ANSWER : BLOCKED_ANSWER;
     const state = freshState();

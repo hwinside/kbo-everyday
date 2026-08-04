@@ -45,8 +45,25 @@ export const UNSURE_ANSWER =
   "어떤 야구 룰/용어를 여쭤보신 걸까요? 조금만 더 자세히 적어주시면 정확히 답해드릴게요! ⚾";
 export const SERVICE_REDIRECT_ANSWER =
   "크보팬 서비스 관련 문의는 마이페이지 > 피드백 보내기로 보내주시면 운영팀이 확인해요! 저는 야구 룰/용어 질문을 도와드릴게요 ⚾";
+/**
+ * **지원 allowlist 밖 지표** 전용 안내.
+ *
+ * ⚠️ 이전 문구(`선수나 구단 기록은 제가 아직 정확히 답해드리기 어려워요 … 앱의 기록 탭`)는
+ * 하린아빠가 2026-08-04 18:26 에 **더 나오면 안 된다**고 명시했다. 이제 선수 서술형은
+ * RAG 가, 시즌 기록은 `kbo_structured` 가 실제로 답하기 때문에 "기록은 못 합니다"는
+ * **거짓말**이 됐다.
+ *
+ * 그럼 왜 이 문구가 아직 필요한가 — 운영 DB 실측(2026-08-04):
+ *   batter: avg games pa ab runs hits doubles triples hr tb rbi sac sf
+ *   pitcher: era games wins losses saves holds wpct ip h hr bb hbp so r er whip
+ * **도루(sb)·출루율·장타율·OPS 컬럼이 아예 없다.** allowlist 에 넣어도 가져올 값이 없고,
+ * LLM 에 넘기면 숫자를 지어낸다. 그래서 **못 답하는 것은 그대로 못 답한다고 말하되**,
+ * "기록 전반"이 아니라 **그 지표**만 못 답한다고 범위를 정확히 밝히고, 답할 수 있는
+ * 지표를 같이 안내해 유저가 다음 행동을 할 수 있게 한다.
+ */
 export const HISTORY_HOLD_ANSWER =
-  "선수나 구단 기록은 제가 아직 정확히 답해드리기 어려워요. 앱의 선수 페이지 / 기록 탭에서 정확한 기록을 볼 수 있어요!";
+  "그 기록은 아직 준비되지 않았어요. 지금은 2026 시즌의 타율·홈런·타점·안타·경기·루타, " +
+  "방어율·승·패·세이브·홀드·탈삼진·이닝 같은 기록을 답해드릴 수 있어요! ⚾";
 // 후속형인데 이어붙일 직전 turn이 없을 때 — 차단 문구가 아니라 정중한 되묻기다 (spec §4.3 AC4).
 export const CONTEXT_MISSING_ANSWER =
   "어떤 내용에 이어서 여쭤보시는 걸까요? 궁금한 야구 룰/용어를 한 번만 더 적어주시면 답해드릴게요! ⚾";
@@ -289,45 +306,73 @@ const STAT_WORDS = [
   "홈런", "안타", "타점", "도루", "승", "승수", "패", "세이브", "홀드", "삼진", "기록", "스탯",
 ];
 /**
- * 구단 식별어. **약칭과 별칭을 따로 두고**, 둘을 붙인 풀네임(`LG트윈스`)은
- * 아래 `mentionsTeam()` 이 조합으로 인식한다 — 여기에 풀네임을 직접 열거하면
- * 가지수가 계속 늘고(띄어쓰기·영문·한글 조합) 빠진 조합이 조용히 뚫린다.
+ * KBO 10개 구단의 **canonical 식별자 ↔ 허용 alias** 쌍.
+ *
+ * 약칭(`lg`)과 별칭(`트윈스`)을 팀별로 묶어 둔다. 붙여 쓴 풀네임(`LG트윈스`)을
+ * 여기에 직접 열거하지 않는 이유는 가지수(띄어쓰기·영문·한글 조합)가 계속 늘고
+ * 빠진 조합이 조용히 뚫리기 때문이다 — 조합은 `mentionsTeam()` 이 계산한다.
+ *
+ * ⚠️ 팀별로 묶는 것이 핵심이다(삼순 1차 P0-2). 약칭·별칭을 평평한 두 배열로 두면
+ * `LG라이온즈`·`KIA베어스`·`두산트윈스` 같은 **존재하지 않는 구단**을 정본으로
+ * 인정하게 된다. 그런 오표기는 구단 지명이 아니므로 LLM 2차 가드로 내려보낸다.
  *
  * ⚠️ `kia` 누락으로 `KIA의 역사` 가 구단 질문으로 안 잡혔다(2026-08-04 실측).
  * 로스터 정본의 team 값은 `KIA|KT|LG|NC|SSG|두산|롯데|삼성|키움|한화` 다.
  */
-const TEAM_SHORT_WORDS = [
-  "기아", "kia", "두산", "롯데", "삼성", "한화", "키움", "엘지", "lg", "kt", "ssg", "nc",
+const TEAM_ALIASES: ReadonlyArray<{
+  readonly canonical: string;
+  readonly shorts: readonly string[];
+  readonly nicks: readonly string[];
+}> = [
+  { canonical: "LG", shorts: ["lg", "엘지"], nicks: ["트윈스"] },
+  { canonical: "KIA", shorts: ["kia", "기아"], nicks: ["타이거즈"] },
+  { canonical: "두산", shorts: ["두산"], nicks: ["베어스"] },
+  { canonical: "롯데", shorts: ["롯데"], nicks: ["자이언츠"] },
+  { canonical: "삼성", shorts: ["삼성"], nicks: ["라이온즈"] },
+  { canonical: "한화", shorts: ["한화"], nicks: ["이글스"] },
+  { canonical: "키움", shorts: ["키움"], nicks: ["히어로즈"] },
+  { canonical: "KT", shorts: ["kt"], nicks: ["위즈"] },
+  { canonical: "SSG", shorts: ["ssg"], nicks: ["랜더스"] },
+  { canonical: "NC", shorts: ["nc"], nicks: ["다이노스"] },
 ];
-const TEAM_NICKNAME_WORDS = [
-  "타이거즈", "베어스", "자이언츠", "라이온즈", "이글스", "히어로즈", "트윈스",
-  "위즈", "랜더스", "다이노스",
-];
-const TEAM_WORDS = [...TEAM_SHORT_WORDS, ...TEAM_NICKNAME_WORDS];
+const TEAM_WORDS = TEAM_ALIASES.flatMap(({ shorts, nicks }) => [...shorts, ...nicks]);
 
 /**
- * 구단 지명 여부. 단일 토큰 매칭에 **붙여 쓴 풀네임**을 더한다.
+ * 구단 지명 여부. 단일 토큰 매칭에 **같은 팀의** 약칭+별칭 결합형을 더한다.
  *
  * ⚠️ 왜 필요한가 (2026-08-04 유저 제보 → 실측):
  * 토큰화는 `LG트윈스의` 를 한 덩어리로 만들어 `lg` 와도 `트윈스` 와도 일치하지
- * 않는다. 그래서 `LG 트윈스의 역사`(띄어쓰기)는 구단 질문인데 `LG트윈스의 역사`는
- * 아니게 돼, **띄어쓰기 하나로 답이 갈렸다**. 10개 구단 전부 동일.
+ * 않는다. 그래서 `LG 트윈스의 역사`(띄어쓰기)와 `LG트윈스의 역사`(붙여쓰기)가
+ * **서로 다른 답을 받았다**. 10개 구단 전부 동일.
  *
- * 조합 규칙은 좀게 둔다 — 약칭+별칭이 **바로 이어질 때**만 인정하고, 남는 꺼리는
- * 기존 문법 꺼리 폐쇄집합(`isGrammaticalTail`)으로만 분해되어야 한다.
- * 그래서 `두산베어스의` → 허용, `두산베어스키핑` 같은 어휘 밖 잔여물은 닫힌다.
- * (약칭·별칭을 서로 다른 구단끼리 섞은 `lg라이온즈` 도 질문 의도상 구단 지명이므로
- *  굳이 구분하지 않는다 — 어느 쪽이든 `history_hold` 로 가는 것이 맞다.)
+ * 조합 규칙은 두 층으로 좀게 둔다.
+ *  ① 약칭과 별칭이 **같은 팀**이어야 한다 — `LG라이온즈`는 구단이 아니다.
+ *  ② 남는 꺼리는 기존 문법 꺼리 폐쇄집합(`isGrammaticalTail`)으로만 분해되어야 한다 —
+ *    `두산베어스의` → 허용, `두산베어스키핑` 같은 어휘 밖 잔여물은 닫힌다.
+ * 둘 다 모두 "구단이 아니다"로 떨어지며, 그러면 차단이 아니라 LLM 2차 가드로 간다.
  */
+/**
+ * 게이트 전용 래퍼 — 질문 문자열을 받아 구단 지명 여부를 돌려준다.
+ *
+ * `mentionsTeam()` 은 토큰 배열을 받으므로 게이트가 토큰화를 **직접 재현**해야 하는데,
+ * 그러면 게이트가 검증 대상의 전처리를 자기 손으로 다시 짜는 셈이라 토큰화가 바뀌어도
+ * 게이트는 조용히 GREEN 이 된다. 배포 경로와 같은 정규화·토큰화를 타도록 여기서 감싼다.
+ */
+export function mentionsTeamForGate(question: string): boolean {
+  return mentionsTeam(questionTokens(question.normalize("NFKC").toLowerCase()));
+}
+
 function mentionsTeam(tokens: string[]): boolean {
   if (TEAM_WORDS.some((word) => tokenMatches(tokens, word))) return true;
   return tokens.some((token) =>
-    TEAM_SHORT_WORDS.some((short) => {
-      if (!token.startsWith(short)) return false;
-      const rest = token.slice(short.length);
-      return TEAM_NICKNAME_WORDS.some((nick) =>
-        rest.startsWith(nick) && isGrammaticalTail(rest.slice(nick.length)));
-    }));
+    TEAM_ALIASES.some(({ shorts, nicks }) =>
+      shorts.some((short) => {
+        if (!token.startsWith(short)) return false;
+        const rest = token.slice(short.length);
+        // 같은 팀의 별칭만 인정한다 — 교차조합(`LG라이온즈`)은 구단이 아니다.
+        return nicks.some((nick) =>
+          rest.startsWith(nick) && isGrammaticalTail(rest.slice(nick.length)));
+      })));
 }
 const BASEBALL_WORDS = [
   "야구", "투수", "타자", "포수", "주자", "심판", "스트라이크", "아웃", "안타",
@@ -354,6 +399,30 @@ const RULE_TERM_INTENT =
   /뭐|뭔|무엇|뜻|설명|알려|규칙|룰|용어|어떻게|언제|몇\s*번|해야|할\s*수|가능|되나|돼|되죠|괜찮|차이|절차|경우|궁금|바꾸|바뀌|변경|방문|항의|처리|정해/;
 const OUT_OF_SCOPE_INTENT =
   /별명|누구|누가\s*더|더\s*잘|비교|역대|최고|최악|추천|오늘\s*경기|날씨|주식|코인|요리|프롬프트|비밀번호|영화|메뉴|가방|하늘|음식|맛집|몇\s*시|시\s*(?:써|하나)|아무거나/;
+
+/**
+ * 위 denylist 중 **구단이 지명되면 범위 밖이 아닌** 패턴.
+ *
+ * ⚠️ `누구`·`별명`·`역대`는 맥락 없이 보면 사적인 인물 질문이지만, 구단이 붙으면
+ * `LG트윈스 감독 누구야?`·`두산 별명이 뭐야?`·`삼성 역대 우승` 처럼 **구단 질문**이다.
+ * 하린아빠가 확정한 답변 범위(야구룰·구단·선수·기록) 안이므로 `blocked` 로 끝내면 틀린
+ * 안내다(삼순 #1100 1차 P0-1 실표본 `LG트윈스 감독 누구야?`).
+ *
+ * 반면 `날씨`·`주식`·`맛집`·`프롬프트` 등은 구단이 붙어도 여전히 범위 밖이다
+ * (`LG 경기장 근처 맛집`). 그래서 면제는 **인물·평가·역사 축만** 좀게 열어둔다.
+ */
+const TEAM_BOUND_IN_SCOPE_INTENT = /별명|누구|누가\s*더|더\s*잘|비교|역대|최고|최악/;
+
+/**
+ * 범위 밖 의도 판정. 구단이 지명되면 인물·평가·역사 축은 면제한다.
+ */
+function isOutOfScopeIntent(normalized: string, hasTeam: boolean): boolean {
+  if (!OUT_OF_SCOPE_INTENT.test(normalized)) return false;
+  if (!hasTeam) return true;
+  // 구단 질문이면 면제 패턴을 지우고 남는 것이 있는지로 다시 본다 —
+  // `LG 경기장 맛집 추천` 처럼 면제부와 범위밖이 섞여 있으면 여전히 범위 밖이다.
+  return OUT_OF_SCOPE_INTENT.test(normalized.replace(new RegExp(TEAM_BOUND_IN_SCOPE_INTENT, "g"), ""));
+}
 const NAMED_STAT_QUERY =
   /[가-힣]{2,12}(?:의|은|는|이|가)?\s+(?:타율|방어율|평균자책|출루율|장타율|홈런|안타|타점|도루|승수|세이브|홀드|삼진|기록|스탯)\s*(?:몇|얼마|알려|보여|기록)?/;
 
@@ -391,7 +460,8 @@ export function isSupportedRuleTermQuestion(
     /^(?:역할이바뀌면어떻게돼(?:요)?|역할과포지션차이가?뭐야(?:요)?|역할이?(?:뭐야|뭔가요|궁금해))[?!.]*$/.test(compact)
   );
   const hasRuleIntent = RULE_TERM_INTENT.test(normalized);
-  const isOutOfScopeRequest = OUT_OF_SCOPE_INTENT.test(normalized) || NAMED_STAT_QUERY.test(normalized);
+  const isOutOfScopeRequest =
+    isOutOfScopeIntent(normalized, mentionsTeam(tokens)) || NAMED_STAT_QUERY.test(normalized);
   const hasBaseballContext =
     exactGlossaryMatch ||
     mentionsSpecificRuleHint ||
@@ -912,31 +982,42 @@ export function routeQuestion(
   if (SERVICE_WORDS.some((word) => normalized.includes(word))) return "service_redirect";
   const hasStat = STAT_WORDS.some((word) => tokenMatches(tokens, word));
   const hasTeam = mentionsTeam(tokens);
-  // ⚠️ **라벨은 `history_hold`**다 — 차단 범위는 한 글자도 안 바뀌고, 유저가 보는 문구만 달라진다
-  // (삼순 7차 P0-2). 여기 도달하는 건 "선수/구단 기록 질문인데 이 지표를 못 답하는" 경우다.
-  // 답할 수 있는 지표(타율·방어율…)는 `answerQuestion` 앞단 `kbo_structured` 가 이미 가로채고,
-  // 서술형은 선수 RAG 가 가로채다. 즉 여기까지 오는 건 `도루`·`출루율`·`OPS` 처럼
-  // **지원 allowlist 밖의 명백한 기록 질문**이다.
-  // `BLOCKED_ANSWER`("룰/용어만 답할 수 있어요")는 그런 질문에 틀린 안내다 — 이 PR 은
-  // 선수 RAG·시즌기록을 여는 PR 이고, 올바른 안내는 `HISTORY_HOLD_ANSWER`("기록은 아직
-  // 정확히 답하기 어려워요, 앱 기록 탭에서 보세요")다.
-  if (hasStat && (hasPlayerReference(tokens, players) || hasTeam)) return "history_hold";
+  // ── 기록 질문의 종착지 (2026-08-04 하린아빠 18:26 + 삼순 #1100 1차 P0-1) ──────────
+  //
+  // ⚠️ 여기는 **선수 기록 중 지원 지표 밖**일 때만 `history_hold` 로 끝낸다.
+  //
+  // 답할 수 있는 지표(타율·방어율…)는 `answerQuestion` 앞단 `kbo_structured` 가 이미
+  // 가로채고, 서술형은 선수 RAG 가 가로챈다. 즉 여기까지 오는 선수 기록 질문은
+  // `도루`·`출루율`·`OPS` 처럼 **운영 DB 에 컬럼 자체가 없는** 지표다(실측 근거는
+  // `HISTORY_HOLD_ANSWER` 주석). LLM 에 넘기면 숫자를 지어내므로 넘기지 않는다.
+  //
+  // 반대로 **구단** 질문(`LG트윈스의 역사`·`삼성 주장`·`LG는 왜 못해?`)과 구단 인물
+  // 질문(`감독 누구야`)은 **더 이상 여기서 종결하지 않는다**. 구단은 하린아빠가
+  // 확정한 답변 범위(야구룰·구단·선수·기록) 안이므로 `history_hold`("못 답해요")나
+  // `blocked`("룰/용어만 답해요")로 끝내면 둘 다 틀린 안내다. 그대로 아래로 흘려
+  // LLM 2차 가드가 범위를 판정하고 답변을 생성하게 한다.
+  //
+  // 수치 지표가 붙은 구단 질문(`LG 팀타율`)도 마찬가지다 — team stat DB 가 없어
+  // 수치를 단정해 말하면 안 되지만, 그건 LLM 프롬프트의 근거없음 계약이 다룬다.
+  if (!hasTeam && hasStat && hasPlayerReference(tokens, players)) return "history_hold";
+
   const supportedRuleTerm = isSupportedRuleTermQuestion(question, glossary, players);
   if (!supportedRuleTerm) {
-    // 기록/역사 어휘(통산·성적·시즌…) 또는 team-bound 수치·순위 질의 — 범위 밖이 아니라
-    // **아직 못 답하는 기록 질문**이다. 문구는 `HISTORY_HOLD_ANSWER`(앱 기록 탭 안내).
-    // "순위"는 team-bound일 때만 실시간 기록 질의다. 전역 차단어로 두면
-    // "순위 결정 규칙 알려줘"처럼 팀 없는 룰 질문까지 과차단된다.
+    // 기록/역사 어휘(통산·성적·시즌…)가 붙은 선수·수치 질문도 같은 이유로 지원 밖이다.
+    // 로스터에 없는 이름(`홍길동 통산 타율`)도 수치를 지어낼 수 있으므로 같은 칸이다.
+    //
+    // ⚠️ 단, **구단이 지명되면 이 분기에 들어오지 않는다**(`!hasTeam`). 구단 질문은
+    // 답변 범위 안이라 LLM 2차 가드가 답해야 하며, 근거 없는 수치를 말하지 않는 것은
+    // 프롬프트 계약이 다룬다(삼순 #1100 1차 P0-1).
     if (
-      HISTORY_CONTEXT_WORDS.some((word) => normalized.includes(word)) ||
-      (hasTeam && /몇|기록|성적|역사|순위/.test(normalized))
+      !hasTeam &&
+      (hasPlayerReference(tokens, players) || hasStat) &&
+      HISTORY_CONTEXT_WORDS.some((word) => normalized.includes(word))
     ) {
       return "history_hold";
     }
-    // 반면 team-bound `누구/언제`(감독·창단연도 등)는 기록이 아니라 **범위 밖**이다.
-    // 앱 기록 탭을 안내해봐야 거기 없는 정보라 `BLOCKED_ANSWER` 가 맞는 문구다.
-    if (hasTeam && /누구|언제/.test(normalized)) return "blocked";
   }
+
   // 후속 문법(폐쇄집합 full-string 일치) + 새 야구 엔티티/주제 신호 부재일 때만 직전 토픽 연장.
   // 소스 turn이 없으면 차단이 아니라 되묻기로 종료한다 (spec §4.1 B4, §4.3 AC2·AC3·AC4).
   if (isFollowupPhrase(question)) return hasContext ? "baseball_rule_term" : "context_missing";
@@ -950,7 +1031,14 @@ export function routeQuestion(
   // 기존 범위밖 의도 denylist는 그대로 유지한다. 이건 신호어 사전처럼 "야구 어휘를 전부
   // 열거해야 하는" 종류가 아니라 범위밖임이 문장 의도로 드러난 고정밀 패턴이라 발산하지
   // 않는다(별명·누구·비교·역대·추천·날씨 등). 이걸까지 LLM에 묻면 토큰만 더 쓴다.
-  if (OUT_OF_SCOPE_INTENT.test(normalized) || NAMED_STAT_QUERY.test(normalized)) return "blocked";
+  // ⚠️ `NAMED_STAT_QUERY` 는 `<이름> <지표>` 모양을 잡는다 — 그런데 구단명도 그 모양에
+  // 걸린다(`두산베어스 홈런 몇 개야?`). 구단은 확정 답변 범위 안이므로 여기서
+  // 차단하지 않고 LLM 2차 가드로 보낸다(삼순 #1100 1차 P0-1). 팀 stat DB 가 없어
+  // 근거없는 수치를 말하면 안 되는 건 LLM 프롬프트의 근거없음 계약이 다룬다.
+  // 선수명 + 지표(`기예기르모 에레디아가 타율 얼마야`)는 그대로 닫힌다.
+  if (isOutOfScopeIntent(normalized, hasTeam) || (!hasTeam && NAMED_STAT_QUERY.test(normalized))) {
+    return "blocked";
+  }
 
   // ── 2차 가드 위임 (하린아빠 2026-08-03 지시) ─────────────────────────────────
   // 여기까지 온 질문은 "결정론적으로 야구가 아니라고 확정된" 게 아니라 **룰베이스 신호어
