@@ -377,6 +377,82 @@ async function main() {
     },
   );
 
+  await check(
+    "상대 매핑 성공 시 최종 응답도 empty 면 캐시 금지 — 마지막 return 경로 직접 태움",
+    async () => {
+      // 앞의 검사들은 조기 emptyResponse 분기만 태워서, 최종 return 의
+      // liveCacheHeaders(!empty, ...) 를 liveCacheHeaders(true, ...) 로 바꿔도 검출되지
+      // 않았다(mutation F GREEN). 실제 로스터 선수로 매핑을 성공시켜 그 경로를 태운다.
+      const roster = (await import("../../src/lib/constants/players-roster.json"))
+        .default as Array<{ name: string; position: string }>;
+      const pitcherName = roster.find((p) => p.position === "투수")?.name;
+      const batterName = roster.find((p) => p.position !== "투수")?.name;
+      assert.ok(pitcherName && batterName, "로스터에서 테스트 선수를 찾지 못함");
+
+      const gameId = "20260805EDGE8";
+      globalThis.fetch = (async (input: RequestInfo | URL) => {
+        const url = String(input instanceof Request ? input.url : input);
+        // 경기 목록은 성공시켜 fetchLiveGame 이 rawGame 을 찾게 한다.
+        if (url.includes("GetKboGameList")) {
+          // parseKboGameListPayload 가 G_ID 패턴·GAME_STATE_SC·AWAY_NM·HOME_NM 을 전부
+          // 검증한다. 하나라도 빠지면 payload 전체가 null 로 떨어져 fetchLiveGame 이
+          // 조기 반환하고 최종 return 을 못 태운다(이게 mutation F 가 GREEN 이었던 이유).
+          return new Response(
+            JSON.stringify({
+              game: [
+                {
+                  G_ID: gameId,
+                  GAME_STATE_SC: "2",
+                  AWAY_NM: "LG",
+                  HOME_NM: "키움",
+                  GAME_TB_SC: "T",
+                  T_P_NM: batterName,
+                  B_P_NM: pitcherName,
+                  GAME_INN_NO: 5,
+                  OUT_CN: 1,
+                  BALL_CN: 2,
+                  STRIKE_CN: 1,
+                  SR_ID: "1",
+                },
+              ],
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        // 선수 기록·박스스코어는 전부 실패 → lines/highlights 가 전부 null → empty:true.
+        return new Response("upstream down", { status: 503 });
+      }) as typeof fetch;
+
+      try {
+        const res = await contextualRoute.GET(ctxReq(`gameId=${gameId}`));
+        const body = (await res.clone().json()) as {
+          empty?: boolean;
+          lines?: unknown;
+          context?: { inning?: number };
+        };
+        // 매핑이 실패하면 조기 분기로 샤서 마지막 return 을 못 태운다 — 그것 자체를
+        // 실패로 취급해야 픽스처가 썬 때 게이트가 조용히 약해지는 것을 막는다.
+        assert.equal(res.status, 200, `기대 200, 실제 ${res.status}`);
+        assert.equal(body.empty, true, "empty:true 경로 재현 실패(픽스처 stale)");
+        // **최종 return 을 실제로 탔는지** 를 응답 내용으로 증명한다. 조기 emptyResponse
+        // 분기는 lines 가 없거나 context.inning 이 rawGame 값을 반영하지 않는다.
+        // 이 검사가 없으면 픽스처가 썬 때 조용히 앞 분기만 태우며 GREEN 이 된다.
+        assert.equal(
+          body.context?.inning,
+          5,
+          `최종 return 경로를 안 타고 조기 분기로 샐다(context.inning=${body.context?.inning})`,
+        );
+        assert.ok(
+          body.lines !== undefined,
+          "최종 return 경로가 아님 — lines 필드 부재",
+        );
+        assertNotCacheable(res, "contextual-stats 최종 return empty");
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    },
+  );
+
   await check("contextual-stats 가 캐시 헤더 SSOT 를 경유한다(직접 문자열 금지)", async () => {
     const { readFileSync } = await import("node:fs");
     for (const path of [
