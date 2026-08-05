@@ -29,7 +29,7 @@ import LoginSheet from "@/components/auth/LoginSheet";
 import CheerSong from "@/components/player/CheerSong";
 import PlayerProfile from "@/components/player/PlayerProfile";
 import PlayerHero, { buildHeroStats, hasHeroImage, type PlayerRanks } from "@/components/player/PlayerHero";
-import { calcBatterSaber, calcPitcherSaber } from "@/lib/utils/sabermetrics-calc";
+import { batterWarFromStats, calcPitcherSaber } from "@/lib/utils/sabermetrics-calc";
 import PlayerRadar from "@/components/player/PlayerRadar";
 import PlayerNews from "@/components/player/PlayerNews";
 import { formatPlayerTag } from "@/lib/utils/player-tags";
@@ -63,15 +63,6 @@ function getTeamColor(teamId: number) {
 }
 function getTeamShortName(teamId: number) {
   return TEAMS.find((t) => t.id === teamId)?.shortName ?? "";
-}
-
-/** 시즌 기록 그리드용 타자 WAR — 세이버메트릭스 카드(NicheStats)와 동일 입력·동일 계산으로 값 일치 보장 */
-function batterWarFromStats(stats: Record<string, string | number>): string | null {
-  const pa = Number(stats.pa);
-  const ab = Number(stats.ab);
-  if (!pa || !ab) return null;
-  const war = calcBatterSaber({ ...stats, so: Number(stats.so) || 0 } as Parameters<typeof calcBatterSaber>[0]).WAR;
-  return isFinite(war) ? war.toFixed(2) : null;
 }
 
 function StatItem({ label, value }: { label: string; value: string | number; color?: string }) {

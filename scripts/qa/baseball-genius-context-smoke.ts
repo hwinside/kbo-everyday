@@ -3,7 +3,8 @@
 // 같은 케이스 안에서 대조한다. DB 축(직전 turn 선정 SQL)은 실제 migration을 PGlite에 적재해
 // 검증하고, 판정 축(자격·TTL·closed-set·cache bypass)은 pipeline/context 순수 함수로 검증한다.
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import { normalizeQuestion } from "../../src/lib/baseball-qa/normalize";
@@ -28,6 +29,7 @@ import {
   type QaDeps,
 } from "../../src/lib/baseball-qa/pipeline";
 import { buildBaseballQaGeminiRequest } from "../../src/lib/baseball-qa/gemini-request";
+import { loadRosterPlayers } from "../../src/lib/baseball-qa/roster/load-roster-players";
 import {
   BASEBALL_GENIUS_MIN_QUESTION_LENGTH,
   BASEBALL_GENIUS_USER_ID,
@@ -342,7 +344,7 @@ async function verifyProductionShapedRecordRouting() {
     // 미지원 지표(`도루`) 케이스용 — 선수가 로스터에 있어야 "선수 기록 질문"으로 인식된다.
     { name: "박해민", kboId: "76313", team: "LG", position: "외야수", backNo: "17" },
   ];
-  const counts = { llm: 0, cacheGet: 0, cacheSet: 0, rag: 0, season: 0 };
+  const counts = { llm: 0, cacheGet: 0, cacheSet: 0, rag: 0, season: 0, served: 0 };
   const prodDeps = (): QaDeps => ({
     loadGlossary: async () => glossary,
     loadPlayers: async () => roster,
@@ -375,6 +377,17 @@ async function verifyProductionShapedRecordRouting() {
         player_key: "52605", kbo_id: "52605", name: "김도영", team: "KIA",
         updated_at: new Date(Date.now() - 3_600_000).toISOString(),
         avg: "0.325", games: 90,
+      }] as never;
+    },
+    // production 배선 (2026-08-05). 앱이 서빙하는 파생 지표(도루·OPS·WAR·wRC+)는
+    // `fetchServedRecord` 주입으로 실값을 답한다. 이걸 빼면 blocked 로 떨어져
+    // "앱이 서빙 중인 값을 못 답한다"는 반대 사고를 게이트가 정답으로 잠그게 된다.
+    fetchServedRecord: async () => {
+      counts.served++;
+      return [{
+        player_key: "52605", kbo_id: "52605", name: "김도영", team: "KIA",
+        updated_at: new Date(Date.now() - 3_600_000).toISOString(),
+        avg: "0.325", games: 90, wrc_plus: "152.4", war: "5.22", sb: 6, ops: "1.022",
       }] as never;
     },
   });
@@ -413,13 +426,24 @@ async function verifyProductionShapedRecordRouting() {
     assert.equal(c.cacheGet, 0, "선수 RAG 는 global cache 를 읽지 않는다");
   }
 
-  // ④ **미지원 지표 기록 질문** — 삼순 7차 P0-2 가 잡은 false-green 구간이다.
+  // ④ **지원 allowlist 밖 지표** — 삼순 7차 P0-2 가 잡은 false-green 구간이다.
   //
-  // 지원 지표(`타율`)만 검증하면 구조화 allowlist 밖 지표가 `blocked` 로 떨어져
-  // "야구 룰/용어에 대한 질문만 답할 수 있어요" 를 보내도 게이트가 통과한다.
-  // `도루`·`출루율`·`OPS` 는 명백한 선수 기록 질문이라 그 안내가 틀렸다.
-  // 올바른 종결은 `history_hold` + 앱 기록 탭 안내다.
-  for (const question of ["박해민 도루 몇 개야?", "김도영 출루율 알려줘", "김도영 OPS 얼마야"]) {
+  // 지원 지표만 검증하면 allowlist 밖 지표가 `blocked` 로 떨어져 "야구 룰/용어에 대한
+  // 질문만 답할 수 있어요" 를 보내도 게이트가 통과한다. 명백한 선수 기록 질문에
+  // 그 안내는 틀렸다 — 올바른 종결은 `history_hold` + 지표 특정 안내다.
+  //
+  // ⚠️ 표본 교체 (2026-08-04): `도루`·`출루율`·`OPS` 는 이제 **답변 가능**하다.
+  // 하린아빠 20:42 "도루 OPS가 왜 없어? 우리가 다 제공하고 있는 데이터인데" — 실제로
+  // `/api/stats`(정본 `stats-2026-batters.json`)가 sb·obp·slg·ops 를 서빙하고 앱 화면이
+  // 그대로 표시 중이었다. 내가 `player_stats_batter` 테이블만 보고 "없다"고 단정한 것이
+  // 틀렸고, 그 오판을 이 게이트가 정답으로 잠그고 있었다.
+  // 표본은 **여전히 소스가 없는 지표**로 바꾼다(`병살타`·`실책`·`대타타율`).
+  // ⚠️ 2차 표본 교체 (2026-08-05): `WAR` 도 이제 **답변 가능**하다.
+  // WAR 은 저장된 컬럼이 아니라 기본 스탯에서 파생되는 값이고(`calcBatterSaber`),
+  // 앱은 선수 상세·기록실·세이버 카드에서 이미 그 값을 보여주고 있었다. "DB 에 컬럼이
+  // 없다"를 "데이터가 없다"로 읽은 게 또 틀렸다 — `도루`·`OPS` 때와 같은 오판이다.
+  // 표본은 **정말로 소스가 없는** 지표로 다시 바꾼다(`wRC`·`실책`·총칭 `스탯`).
+  for (const question of ["김도영 통산 기록 알려줘", "박해민 스탯 알려줘"]) {
     const { result, counts: c } = await run(question);
     assert.equal(result.source, "history_hold", `${question}: 미지원 지표도 기록 질문이다`);
     assert.equal(result.answer, HISTORY_HOLD_ANSWER, `${question}: 앱 기록 탭 안내`);
@@ -430,6 +454,144 @@ async function verifyProductionShapedRecordRouting() {
     assert.equal(c.cacheGet, 0, `${question}: cache read 0`);
     assert.equal(c.cacheSet, 0, `${question}: cache write 0`);
     assert.equal(c.rag, 0, `${question}: 선수 RAG 0`);
+  }
+
+  // ⑤ **앱이 서빙하는 파생 지표**(WAR·wRC+)는 안내문이 아니라 실값으로 답한다.
+  // 다시 고정 안내문으로 닫는 회귀가 생기면 여기서 RED 로 멈춘다(삼순 7차 P0).
+  for (const [question, expected] of [
+    ["김도영 wRC+ 알려줘", "152.4"],
+    ["김도영 wRC 플러스 얼마야", "152.4"],
+    ["김도영 WAR 알려줘", "5.22"],
+  ] as const) {
+    const { result, counts: c } = await run(question);
+    assert.equal(result.source, "kbo_structured", `${question}: 앱 서빙값으로 답해야 한다`);
+    assert.ok(result.answer.includes(expected),
+      `${question}: 서빙값 ${expected} 이 답변에 없다 — 받은 답 "${result.answer}"`);
+    assert.notEqual(result.answer, HISTORY_HOLD_ANSWER,
+      `${question}: 앱이 서빙 중인 값을 안내문으로 닫았다`);
+    assert.notEqual(result.answer, BLOCKED_ANSWER, `${question}: '룰/용어만' 안내가 나갔다`);
+    assert.equal(c.served, 1, `${question}: 앱 서빙 소스를 실제로 조회해야 한다`);
+    assert.equal(c.llm, 0, `${question}: generic LLM 0`);
+  }
+}
+
+/**
+ * production `loadPlayers` 주입값을 **그대로 실행**해 기록 질문 계약을 고정한다.
+ *
+ * ⚠️ 이 게이트가 생긴 이유 (삼순 8차 P0-2, 2026-08-04).
+ *
+ * 위 `verifyProductionShapedRecordRouting` 은 배선 모양은 production 과 같지만 로스터를
+ * **자기 fixture** 로 넣는다. 그래서 실제 배포되는 loader 를 `return []` 로 끊어도
+ * `qa:baseball-qa`·`qa:baseball-genius-context`·`qa:baseball-rag-serving`·tsc·ESLint 가
+ * 전부 GREEN 이었다. 실제로는 로스터가 비면 "선수 기록 질문" 인식 자체가 죽어
+ * `도루/출루율 → blocked`, `OPS → LLM 1회 뒤 blocked` 로 떨어진다 — 유저는 명백한 기록
+ * 질문에 "야구 룰/용어에 대한 질문만 답할 수 있어요" 를 받는다.
+ *
+ * 그래서 여기서는 fixture 를 쓰지 않고 **`server.ts` 가 주입하는 바로 그 함수**를 실행한다.
+ * loader 가 끊기면 여기서 RED 로 멈춘다.
+ */
+async function verifyProductionRosterLoaderSeam() {
+  const roster = await loadRosterPlayers();
+  // 인원 수는 콜업·트레이드로 상시 변하므로 고정하지 않는다(2026-08-01 P0: 하드코딩 878이
+  // 자동 roster PR을 영구 막았다). 계약은 "비어 있지 않다 + 식별자가 실재한다".
+  assert.ok(roster.length > 0, "production loadPlayers 는 실제 로스터를 돌려준다(빈 배열 금지)");
+  assert.ok(
+    roster.every((player) => player.name.length > 0 && player.kboId.length > 0),
+    "production 로스터 항목은 name·kboId 를 모두 갖는다",
+  );
+
+  // 계약 검증에 쓸 선수는 로스터에서 **직접 고른다** — 이름을 하드코딩하면 그 선수가 은퇴/이적한
+  // 날 게이트가 무관하게 깨진다.
+  const subject = roster[0];
+  const counts = { llm: 0, cacheGet: 0, cacheSet: 0, rag: 0, season: 0 };
+  const prodDeps = (): QaDeps => ({
+    loadGlossary: async () => glossary,
+    // ⬇️ fixture 가 아니라 **실제 배포되는 loader**.
+    loadPlayers: loadRosterPlayers,
+    getCache: async () => { counts.cacheGet++; return null; },
+    setCache: async () => { counts.cacheSet++; },
+    callLlm: async () => {
+      counts.llm++;
+      return { text: LLM_TEXT, inputTokens: 1, outputTokens: 1 };
+    },
+    reserveDaily: async (_userId, limit) => ({ allowed: true, remaining: limit - 1 }),
+    log: async () => {},
+    enablePlayerRag: true,
+    now: () => Date.now(),
+    searchRag: async () => {
+      counts.rag++;
+      return [] as never;
+    },
+    callRagLlm: async () => ({
+      text: '{"status":"GROUNDED","answer":"..."}',
+      inputTokens: 1, outputTokens: 1,
+    }),
+    fetchSeasonRecord: async () => {
+      counts.season++;
+      return [] as never;
+    },
+  });
+
+  // 지원 allowlist 밖 기록 질문 — 로스터가 끊기면 `blocked` 로 떨어지는 바로 그 입력이다.
+  // (`hasPlayerReference` 가 죽으면 `history_hold` 분기 자체에 못 들어간다.)
+  //
+  // ⚠️ 표본 교체 2026-08-04: 종전 `도루`·`출루율`·`OPS` 는 이제 **답변 가능**하다
+  // (스냅샷 소스). 계약 축은 그대로 두고 여전히 소스가 없는 지표로 바꾼다.
+  //
+  // ⚠️ 2차 교체 2026-08-05: `WAR` 도 답변 가능해졌다 — 저장 컬럼이 아니라 기본 스탯에서
+  // 파생되는 값이고(`calcBatterSaber`), 앱이 이미 선수 상세·기록실에서 보여주고 있었다.
+  // "DB 에 컬럼이 없다"를 "데이터가 없다"로 읽은 게 `도루`·`OPS` 때와 똑같은 오판이었다.
+  for (const metric of ["스탯 알려줘", "기록 알려줘"]) {
+    const question = `${subject.name} ${metric}`;
+    for (const key of Object.keys(counts) as Array<keyof typeof counts>) counts[key] = 0;
+    const result = await answerQuestion("u-prod-roster", question, prodDeps());
+    assert.equal(result.source, "history_hold",
+      `${question}: production 로스터로도 선수 기록 질문으로 인식돼야 한다`);
+    assert.equal(result.answer, HISTORY_HOLD_ANSWER, `${question}: 앱 기록 탭 안내`);
+    assert.notEqual(result.answer, BLOCKED_ANSWER,
+      `${question}: 기록 질문에 '룰/용어만' 안내를 보내지 않는다`);
+    assert.equal(counts.llm, 0, `${question}: generic LLM 0`);
+    assert.equal(counts.cacheGet, 0, `${question}: cache read 0`);
+    assert.equal(counts.cacheSet, 0, `${question}: cache write 0`);
+    assert.equal(counts.rag, 0, `${question}: 선수 RAG 0`);
+  }
+
+  // ⚠️ 위 in-process 실행만으로는 부족하다. 이 파일 최상단 import 가 이미 모듈을 평가한 뒤라
+  // **module scope 에서 한 번 읽는** 분기(`const IS_PROD = process.env.NODE_ENV === "production"`)
+  // 는 이미 false 로 굳어 있어 그대로 GREEN 이 된다(실측 확인 — season-record 에서 삼순이 잡은
+  // 것과 같은 계열). 그래서 **import 보다 먼저** NODE_ENV=production 이 박힌 별도 프로세스에서
+  // 같은 loader 를 fresh-load 해 동일 계약을 다시 확인한다.
+  await verifyProductionRosterLoaderInFreshProcess();
+}
+
+/** import 시점부터 NODE_ENV=production 인 새 프로세스에서 로스터 loader 를 fresh-load 검증. */
+async function verifyProductionRosterLoaderInFreshProcess() {
+  const probe = path.join(process.cwd(), "scripts", "qa", "tmp-roster-loader-prod-probe.mts");
+  const source = `
+import assert from "node:assert/strict";
+assert.equal(process.env.NODE_ENV, "production", "probe 프로세스는 import 이전에 production 이어야 한다");
+const { loadRosterPlayers } = await import("../../src/lib/baseball-qa/roster/load-roster-players");
+const roster = await loadRosterPlayers();
+assert.ok(roster.length > 0, "fresh production process 에서도 실제 로스터를 돌려준다(빈 배열 금지)");
+assert.ok(
+  roster.every((p) => typeof p.name === "string" && p.name.length > 0 && typeof p.kboId === "string" && p.kboId.length > 0),
+  "fresh production process 로스터 항목은 name·kboId 를 모두 갖는다",
+);
+`;
+  writeFileSync(probe, source, "utf8");
+  try {
+    const result = spawnSync("npx", ["tsx", probe], {
+      cwd: process.cwd(),
+      env: { ...process.env, NODE_ENV: "production" },
+      encoding: "utf8",
+    });
+    assert.equal(
+      result.status,
+      0,
+      `fresh production process 로스터 loader 검증 실패:\n${result.stdout ?? ""}${result.stderr ?? ""}`,
+    );
+  } finally {
+    rmSync(probe, { force: true });
   }
 }
 
@@ -801,6 +963,7 @@ async function main() {
   await verifyAcPipeline();
   verifySourceAllowlistFailClosed();
   await verifyProductionShapedRecordRouting();
+  await verifyProductionRosterLoaderSeam();
   await verifyPreviousTurnSql();
   await verifyRpcAcl();
   verifyWiring();

@@ -13,7 +13,6 @@ import {
   isPickedPlayerAllowed,
   type GlossaryEntry,
   type LlmResult,
-  type PlayerRef,
   type QaDeps,
   type QaResult,
 } from "@/lib/baseball-qa/pipeline";
@@ -27,7 +26,10 @@ import {
   replyKindForMatchPath,
   type GeniusReplyPayload,
 } from "@/lib/constants/baseball-genius";
-import playersRoster from "@/lib/constants/players-roster.json";
+import {
+  loadRosterPlayers,
+  ROSTER_PLAYERS,
+} from "@/lib/baseball-qa/roster/load-roster-players";
 import {
   BASEBALL_QA_GEMINI_MODEL,
   BASEBALL_QA_SYSTEM_PROMPT,
@@ -45,6 +47,8 @@ import {
   type RagPlayerCandidate,
 } from "@/lib/baseball-qa/rag/retrieve";
 import { createSeasonRecordFetcher } from "@/lib/baseball-qa/stats/fetch-season-record";
+import { createServedRecordFetcher } from "@/lib/baseball-qa/stats/served-record";
+import { createTeamRecordFetchers } from "@/lib/baseball-qa/stats/team-record";
 import type { SeasonRecordClient } from "@/lib/baseball-qa/stats/fetch-season-record";
 import { embedQuery } from "@/lib/baseball-qa/rag/embed";
 import { orderTier2Evidence } from "@/lib/baseball-qa/rag/fetch-wikipedia";
@@ -69,14 +73,6 @@ export const INVALID_QUESTION_ANSWER =
 
 let glossaryCache: { entries: GlossaryEntry[]; loadedAt: number } | null = null;
 const GLOSSARY_TTL_MS = 10 * 60 * 1000;
-// picker 선택지를 사람이 구분하려면 팀·포지션·등번호까지 필요하다 — 같은 팀에도 동명이인이 있기 때문이다.
-const ROSTER_PLAYERS: PlayerRef[] = playersRoster.map(({ name, kboId, team, position, backNo }) => ({
-  name,
-  kboId,
-  team: team ?? null,
-  position: position ?? null,
-  backNo: backNo ?? null,
-}));
 
 async function loadGlossary(): Promise<GlossaryEntry[]> {
   if (glossaryCache && Date.now() - glossaryCache.loadedAt < GLOSSARY_TTL_MS) {
@@ -90,10 +86,6 @@ async function loadGlossary(): Promise<GlossaryEntry[]> {
   const entries = (data ?? []) as GlossaryEntry[];
   glossaryCache = { entries, loadedAt: Date.now() };
   return entries;
-}
-
-async function loadPlayers(): Promise<PlayerRef[]> {
-  return ROSTER_PLAYERS;
 }
 
 async function callLlm(question: string, context?: ContextTurn): Promise<LlmResult> {
@@ -336,10 +328,12 @@ async function preparePickedPlayerSelection(
 }
 
 /** messageId에 바인딩된 deps — quota/LLM을 job 행 기준 durable idempotent로 만든다. */
-function makeDeps(messageId: number, pickedPlayerKboId?: string | null): QaDeps {
+export function makeDeps(messageId: number, pickedPlayerKboId?: string | null): QaDeps {
   return {
     loadGlossary,
-    loadPlayers,
+    // 인라인 loader 대신 seam 을 그대로 주입한다 — 게이트가 실제 배포 함수를 실행해
+    // 로스터가 끊기는 변종을 RED 로 잡는다(삼순 8차 P0-2).
+    loadPlayers: loadRosterPlayers,
     callLlm,
     searchRag,
     callRagLlm,
@@ -366,6 +360,21 @@ function makeDeps(messageId: number, pickedPlayerKboId?: string | null): QaDeps 
     fetchSeasonRecord: createSeasonRecordFetcher(
       supabaseAdmin as unknown as SeasonRecordClient,
     ),
+    /**
+     * 도루·출루율·장타율·OPS 조회. `player_stats_batter` 에는 이 컬럼이 없다.
+     * 정본은 **앱이 실제로 서빙하는 `/api/stats` 응답**이다 — static JSON 이 아니다
+     * (삼순 3차 P0-3: `/api/stats` 는 static 위에 live Runner map 을 덮어쓴다).
+     * 여기도 인라인 lambda 대신 seam factory 를 쓴다(게이트가 실제 배포 함수를 실행).
+     */
+    fetchServedRecord: createServedRecordFetcher(),
+    /**
+     * 구단 기록 조회 — `/api/standings` · `/api/team-records`.
+     *
+     * 종전에는 구단 수치 질문을 고정 안내문으로 닫았는데, 그 근거("팀 집계 정본이 없다")가
+     * 틀렸다 — 앱 순위탭·팀기록탭이 이미 그 값을 서빙한다(하린아빠 2026-08-04 20:42).
+     * 여기도 인라인 lambda 대신 seam factory 를 쓴다(게이트가 실제 배포 함수를 실행).
+     */
+    fetchTeamRecord: createTeamRecordFetchers(),
     searchOfficialRag,
     callOfficialRagLlm,
     recordRagDemand: async (sourceKeys) => {
