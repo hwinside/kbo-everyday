@@ -105,13 +105,17 @@ export async function searchSourcePriorityCandidates(
     queryVector: number[],
   ) => Promise<RagEvidenceCandidate[]>,
   queryVector: number[],
-  orderBeforeLimit: (rows: RagEvidence[]) => RagEvidence[],
+  /**
+   * 유사도에 곱할 의도별 가중치(1.0 = 개입 없음).
+   * 순서 강제(hard sort)가 아니라 재점수화라, 더 가까운 반대편 근거는 살아남는다.
+   */
+  weightFor: (canonicalUrl: string) => number,
 ): Promise<RagEvidence[]> {
   const [wikipediaRows, namuRows] = await Promise.all([
     fetchBySourceKind("wikipedia_document", RAG_CANDIDATE_LIMIT, queryVector),
     fetchBySourceKind("namu_document", RAG_CANDIDATE_LIMIT, queryVector),
   ]);
-  return rankEvidenceByQuery([...wikipediaRows, ...namuRows], queryVector, orderBeforeLimit);
+  return rankEvidenceByQuery([...wikipediaRows, ...namuRows], queryVector, weightFor);
 }
 /** 근거 1건당 프롬프트에 넣는 최대 길이. chunk 상한(900자)보다 짧게 잡아 다중 근거를 허용한다. */
 export const RAG_EVIDENCE_MAX_CHARS = 600;
@@ -493,15 +497,25 @@ export function cosineSimilarity(left: number[], right: number[]): number {
 export function rankEvidenceByQuery(
   rows: (RagEvidence & { embedding: string | number[] | null })[],
   queryVector: number[],
-  orderBeforeLimit?: (rows: RagEvidence[]) => RagEvidence[],
+  /**
+   * 소스별 가중치. 생략하면 순수 유사도 순서.
+   *
+   * ⚠️ 예전에는 `orderBeforeLimit`(정렬된 배열을 통꺼 재배치)이었는데, 그러면 유사도가
+   * 무시되어 무관한 근거가 상위를 독점했다(삼순 P0). 지금은 **점수에 곱해** 재정렬한다.
+   */
+  weightFor?: (canonicalUrl: string) => number,
 ): RagEvidence[] {
-  const ranked = rows
+  return rows
     .map((row) => {
       const vector = parseEmbedding(row.embedding);
-      return vector === null ? null : { row, score: cosineSimilarity(vector, queryVector) };
+      if (vector === null) return null;
+      const base = cosineSimilarity(vector, queryVector);
+      if (!(base > 0)) return null;
+      const weight = weightFor ? weightFor(row.canonicalUrl) : 1;
+      return { row, score: base * weight };
     })
     .filter((entry): entry is { row: RagEvidence & { embedding: string | number[] | null }; score: number } =>
-      entry !== null && entry.score > 0)
+      entry !== null)
     .sort((left, right) => right.score - left.score)
     .map(({ row }) => ({
       content: row.content,
@@ -511,6 +525,6 @@ export function rankEvidenceByQuery(
       sectionPath: row.sectionPath,
       asOf: row.asOf,
       sourceGrade: row.sourceGrade,
-    }));
-  return (orderBeforeLimit ? orderBeforeLimit(ranked) : ranked).slice(0, RAG_EVIDENCE_LIMIT);
+    }))
+    .slice(0, RAG_EVIDENCE_LIMIT);
 }

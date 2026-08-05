@@ -86,9 +86,11 @@ import {
 import {
   fetchWikipediaDocument,
   isWikipediaDisambiguation,
-  orderTier2Evidence,
+  classifyTier2Intent,
   tier2SourceOf,
-  TIER2_SOURCE_PRIORITY,
+  tier2WeightForQuestion,
+  TIER2_INTENT_BOOST,
+  TIER2_SOURCES,
   WIKIPEDIA_API_URL,
 } from "../../src/lib/baseball-qa/rag/fetch-wikipedia";
 import { S2B_TARGET_PLAYERS, S2B_TARGET_SOURCE_KEYS, isS2bTargetSourceKey } from "../../src/lib/baseball-qa/rag/targets";
@@ -428,9 +430,30 @@ async function run(): Promise<void> {
       content: "위키피디아 기본 근거 — 충분히 긴 서술형 근거 문장입니다.",
       embedding: [0.95, Math.sqrt(1 - 0.95 * 0.95), 0],
     });
-    const priorityRanked = rankEvidenceByQuery(priorityRows, near, orderTier2Evidence);
-    assert.equal(tier2SourceOf(priorityRanked[0].canonicalUrl), "namu", "최종 limit 전에 source priority(namu 우선)를 적용해야 한다");
+    // 별명(팬덤) 질문이면 나무위키 가중 — 점수가 비슷할 때만 앞선다.
+    const priorityRanked = rankEvidenceByQuery(priorityRows, near, tier2WeightForQuestion("문보경 별명이 뭐야?"));
+    assert.equal(tier2SourceOf(priorityRanked[0].canonicalUrl), "namu", "팬덤 의도에서는 나무위키가 가중되어 앞선다");
     assert.equal(priorityRanked.length, RAG_EVIDENCE_LIMIT);
+    // ⚠️ 가중은 탈락이 아니다 — 훨씬 가까운 위키피디아는 팬덤 질문에서도 살아남아야 한다.
+    const farNamu = [0.30, 0.29, 0.28, 0.27].map((score, index) => ({
+      ...MOON_EVIDENCE,
+      canonicalUrl: `https://namu.wiki/w/문보경${index}`,
+      content: `무관한 나무위키 근거 ${index} — 충분히 긴 서술형 근거 문장입니다.`,
+      embedding: [score, Math.sqrt(1 - score * score), 0],
+    }));
+    farNamu.push({
+      ...MOON_EVIDENCE,
+      canonicalUrl: "https://ko.wikipedia.org/wiki/문보경",
+      content: "질문과 훨씬 가까운 위키피디아 근거 — 충분히 긴 서술형 근거 문장입니다.",
+      embedding: [0.99, Math.sqrt(1 - 0.99 * 0.99), 0],
+    });
+    const notStarved = rankEvidenceByQuery(farNamu, near, tier2WeightForQuestion("문보경 별명이 뭐야?"));
+    assert.equal(tier2SourceOf(notStarved[0].canonicalUrl), "wikipedia",
+      "가중치는 재점수화이지 순서 강제가 아니다 — 훨씬 가까운 근거가 이겨야 한다");
+    // 프로필 의도면 반대로 위키피디아가 가중된다.
+    const profileRanked = rankEvidenceByQuery(priorityRows, near, tier2WeightForQuestion("문보경 소속팀이 어디야?"));
+    assert.equal(tier2SourceOf(profileRanked[0].canonicalUrl), "wikipedia",
+      "프로필 의도에서는 위키피디아가 가중되어 앞선다");
     // 임베딩이 깨진 행은 근거가 되지 않는다.
     assert.equal(rankEvidenceByQuery([{ ...MOON_EVIDENCE, embedding: null }], near).length, 0);
     console.log("PASS 유사도 랭킹 + 손상 임베딩 배제");
@@ -1276,29 +1299,34 @@ function verifyCrawlerBoundaryAndRateContract(): void {
  * revision 부재 시 fail-close. **수치 계약(§12)은 불변** — 둘 다 tier2라 숫자 정본이 아니다.
  */
 async function verifyWikipediaTier2Contract(): Promise<void> {
-  // (1) 우선순위 계약 — 충돌 시 나무위키가 앞선다.
-  assert.deepEqual([...TIER2_SOURCE_PRIORITY], ["namu", "wikipedia"], "tier2 기본 소스는 나무위키다");
+  // (1) 의도별 가중 계약 — 전역 hard sort 는 폐기됐다(삼순 P0).
+  assert.deepEqual([...TIER2_SOURCES], ["namu", "wikipedia"], "tier2 소스 폐쇄집합");
   assert.equal(tier2SourceOf("https://ko.wikipedia.org/wiki/문보경"), "wikipedia");
   assert.equal(tier2SourceOf("https://namu.wiki/w/문보경"), "namu");
   assert.equal(tier2SourceOf("https://example.com/x"), null);
 
-  const namuEvidence: RagEvidence = { ...MOON_EVIDENCE, canonicalUrl: "https://namu.wiki/w/문보경" };
-  const wikiEvidence: RagEvidence = {
-    ...MOON_EVIDENCE,
-    canonicalUrl: "https://ko.wikipedia.org/wiki/문보경",
-    revision: "revid:42169337",
-    content: "문보경은 대한민국의 야구 선수로 KBO 리그 LG 트윈스의 내야수로 활동하고 있다.",
-  };
-  const ordered = orderTier2Evidence([wikiEvidence, namuEvidence]);
-  assert.equal(tier2SourceOf(ordered[0].canonicalUrl), "namu", "충돌 시 나무위키 서술이 앞서야 한다");
-  // 위키피디아를 제거하는 게 아니라 보충으로 뒤에 남긴다.
-  assert.equal(tier2SourceOf(ordered[1].canonicalUrl), "wikipedia", "위키피디아는 보충 근거로 잔존해야 한다");
-  // 안정 정렬 — 같은 소스 안에서는 유사도 순서가 보존된다.
-  const twoNamu = orderTier2Evidence([
-    { ...namuEvidence, content: "첫번째" },
-    { ...namuEvidence, content: "두번째" },
-  ]);
-  assert.deepEqual(twoNamu.map((row) => row.content), ["첫번째", "두번째"]);
+  // 의도 분류 — 팬덤/프로필/중립
+  assert.equal(classifyTier2Intent("문보경 별명이 뭐야?"), "fandom");
+  assert.equal(classifyTier2Intent("문보경 응원가 알려줘"), "fandom");
+  assert.equal(classifyTier2Intent("문보경 소속팀이 어디야?"), "profile");
+  assert.equal(classifyTier2Intent("문보경 데뷔 언제야?"), "profile");
+  assert.equal(classifyTier2Intent("문보경이 누구야?"), "neutral");
+  // 복합 질문은 팬덤 우선 — 위키피디아는 별명을 안 담기 때문이다.
+  assert.equal(classifyTier2Intent("문보경 소속이랑 별명 알려줘"), "fandom");
+
+  const namuUrl = "https://namu.wiki/w/문보경";
+  const wikiUrl = "https://ko.wikipedia.org/wiki/문보경";
+  const fandomWeight = tier2WeightForQuestion("문보경 별명이 뭐야?");
+  assert.equal(fandomWeight(namuUrl), TIER2_INTENT_BOOST, "팬덤 질문은 나무위키를 가중한다");
+  assert.equal(fandomWeight(wikiUrl), 1, "가중은 반대편을 깎지 않는다(탈락 없음)");
+  const profileWeight = tier2WeightForQuestion("문보경 소속팀이 어디야?");
+  assert.equal(profileWeight(wikiUrl), TIER2_INTENT_BOOST, "프로필 질문은 위키피디아를 가중한다");
+  assert.equal(profileWeight(namuUrl), 1);
+  const neutralWeight = tier2WeightForQuestion("문보경이 누구야?");
+  assert.equal(neutralWeight(namuUrl), 1, "중립 질문은 개입하지 않는다");
+  assert.equal(neutralWeight(wikiUrl), 1);
+  // boost 는 순서를 강제할 만큼 크면 안 된다 — 유사도 차이가 뚜렷하면 뒤집히지 않아야 한다.
+  assert.ok(TIER2_INTENT_BOOST < 1.5, "boost 가 너무 크면 사실상 hard sort 가 된다");
 
   // (2) 공식 API 경로 + 정직한 UA. 브라우저/위장 없음.
   assert.equal(WIKIPEDIA_API_URL, "https://ko.wikipedia.org/w/api.php");

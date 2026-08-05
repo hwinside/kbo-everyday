@@ -51,7 +51,7 @@ import { createServedRecordFetcher } from "@/lib/baseball-qa/stats/served-record
 import { createTeamRecordFetchers } from "@/lib/baseball-qa/stats/team-record";
 import type { SeasonRecordClient } from "@/lib/baseball-qa/stats/fetch-season-record";
 import { embedQuery } from "@/lib/baseball-qa/rag/embed";
-import { orderTier2Evidence } from "@/lib/baseball-qa/rag/fetch-wikipedia";
+import { tier2WeightForQuestion } from "@/lib/baseball-qa/rag/fetch-wikipedia";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${BASEBALL_QA_GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
@@ -217,7 +217,9 @@ export async function searchRag(
     (sourceKind) =>
       runtime.fetchBySourceKind(candidate, sourceKind, RAG_CANDIDATE_LIMIT, embedded.vector),
     embedded.vector,
-    orderTier2Evidence,
+    // 순서 강제가 아니라 **질문 의도별 가중**이다(삼순 P0).
+    // 별명·여담은 나무위키를, 소속·프로필은 위키피디아를 살짝 올릴 뿐 반대편을 탈락시키지 않는다.
+    tier2WeightForQuestion(question),
   );
 }
 

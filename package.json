@@ -315,7 +315,8 @@
     "qa:genius-match-path-db": "tsx scripts/qa/baseball-genius-match-path-db-integration.ts",
     "qa:kbo-select": "node scripts/qa/kbo-select-smoke.mjs",
     "qa:stats-gate-trigger": "node scripts/qa/stats-gate-trigger-smoke.mjs",
-    "qa:genius-push-exclusion": "tsx scripts/qa/genius-push-exclusion-smoke.ts"
+    "qa:genius-push-exclusion": "tsx scripts/qa/genius-push-exclusion-smoke.ts",
+    "qa:genius-rag-real-corpus": "tsx scripts/qa/genius-rag-real-corpus-probe.ts"
   },
   "dependencies": {
     "@capacitor-firebase/messaging": "^8.3.0",

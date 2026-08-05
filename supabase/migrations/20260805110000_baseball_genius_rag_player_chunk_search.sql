@@ -67,8 +67,29 @@ BEGIN
     RAISE EXCEPTION 'unsupported source_kind: %', p_source_kind;
   END IF;
 
+  -- entity_type 도 같은 이유로 폐쇄집합이다. 이 RPC 는 선수 tier2 경로 전용이라
+  -- 'document'(tier1 공식간행물)나 오타가 들어오면 조용히 0행이 아니라 드러나야 한다.
+  IF p_entity_type IS DISTINCT FROM 'player' THEN
+    RAISE EXCEPTION 'unsupported entity_type: %', p_entity_type;
+  END IF;
+
+  IF p_entity_id IS NULL OR btrim(p_entity_id) = '' THEN
+    RAISE EXCEPTION 'entity_id is required';
+  END IF;
+
   -- 잘못된 벡터 문자열도 즉시 예외로 드러낸다(조용한 0행 = 근거없음 오인).
+  IF p_query_embedding IS NULL THEN
+    RAISE EXCEPTION 'query embedding is required';
+  END IF;
   v_vec := p_query_embedding::extensions.vector(768);
+
+  -- 영벡터는 코사인 거리가 정의되지 않아 정렬이 무의미해진다(임베딩 실패를
+  -- 조용히 "아무 40건"으로 바꾸는 경로라 fail-close 한다).
+  -- 자기 자신과의 코사인 거리는 정상 벡터면 0, 영벡터면 NaN 이다.
+  -- (`l2_norm` 은 vector/halfvec/sparsevec 오버로드가 있어 text 입력에서 모호해진다.)
+  IF (v_vec OPERATOR(extensions.<=>) v_vec) <> 0 THEN
+    RAISE EXCEPTION 'query embedding must be non-zero';
+  END IF;
 
   RETURN QUERY
   SELECT
