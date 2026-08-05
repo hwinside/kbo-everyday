@@ -2122,11 +2122,8 @@ async function verifyServingContractOnRealDb(): Promise<void> {
           section_path: string; as_of: string; source_grade: string; embedding: string;
         }>(
           `SELECT content,page_title,canonical_url,revision,section_path,as_of::text,source_grade,embedding::text
-             FROM public.genius_rag_serving_chunks
-            WHERE entity_type='player' AND entity_id='69102' AND source_kind=$1
-            ORDER BY embedding OPERATOR(extensions.<=>) $3::extensions.vector
-            LIMIT $2`,
-          [sourceKind, limit, JSON.stringify(queryVector)],
+             FROM public.search_baseball_genius_player_chunks($1,$2,$3,$4,$5)`,
+          ["player", "69102", sourceKind, JSON.stringify(queryVector), limit],
         );
         return fetched.rows.map((row) => ({
           content: row.content,
@@ -2189,16 +2186,15 @@ async function verifyServingContractOnRealDb(): Promise<void> {
     {
       embed: async () => ({ ok: true, vector: JSON.parse(nearVector) as number[] }),
       fetchBySourceKind: async (_candidate, sourceKind, limit, queryVector) => {
+        // 배포되는 RPC 를 그대로 호출한다. 인라인 SQL 로 정렬을 재구현하면
+        // migration 의 ORDER BY 를 지워도 이 테스트가 GREEN 이 된다(실제로 그랬다).
         const fetched = await db.query<{
           content: string; page_title: string; canonical_url: string; revision: string;
           section_path: string; as_of: string; source_grade: string; embedding: string;
         }>(
           `SELECT content,page_title,canonical_url,revision,section_path,as_of::text,source_grade,embedding::text
-             FROM public.genius_rag_serving_chunks
-            WHERE entity_type='player' AND entity_id='69102' AND source_kind=$1
-            ORDER BY embedding OPERATOR(extensions.<=>) $3::extensions.vector
-            LIMIT $2`,
-          [sourceKind, limit, JSON.stringify(queryVector)],
+             FROM public.search_baseball_genius_player_chunks($1,$2,$3,$4,$5)`,
+          ["player", "69102", sourceKind, JSON.stringify(queryVector), limit],
         );
         return fetched.rows.map((row) => ({
           content: row.content,
