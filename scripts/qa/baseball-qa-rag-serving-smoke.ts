@@ -1291,11 +1291,16 @@ function verifyCrawlerBoundaryAndRateContract(): void {
 }
 
 /**
- * R3 — tier2 소스 우선순위 계약 (2026-08-05 하린아빠 지시로 **나무위키 우선**으로 전환).
+ * R3 — tier2 소스 계약. **전역 우선순위는 없고, 질문 의도별 가중만 있다.**
  *
- * 전환 근거(production 실측): ko.wikipedia 문보경 문서는 본문 1문장뿐이라 별명·팬덤 서술이
- * 없다. 그 빈 근거가 프롬프트 첫머리를 차지하면 답변 품질이 떨어진다.
- * 고정하는 것: 우선순위(namu → wikipedia) / 공식 API 경로 / 동음이의 거부 / identity 게이트 공유 /
+ * 경위(2026-08-05): production 실측상 ko.wikipedia 문보경 문서는 본문 1문장뿐이라 별명·팬덤
+ * 서술이 없고, 그 빈 근거가 프롬프트 첫머리를 차지했다. 처음엔 전역 `namu → wikipedia`
+ * hard sort 로 뒤집었으나 삼순 P0 로 **폐기**했다 — 순서 강제는 (a) 프로필·소속 같은
+ * 공식 사실까지 위키피디아를 밀어내고 (b) 훨씬 가까운 위키피디아 근거를 무관한 나무위키 4건에
+ * 전부 탈락시켰다.
+ *
+ * 지금 고정하는 것: 소스 폐쇄집 / **의도별 가중(`tier2WeightForQuestion`, 유사도에 곱함)** /
+ * 가중이 탈락이 아님(더 가까운 반대편이 1위) / 공식 API 경로 / 동음이의 거부 / identity 게이트 공유 /
  * revision 부재 시 fail-close. **수치 계약(§12)은 불변** — 둘 다 tier2라 숫자 정본이 아니다.
  */
 async function verifyWikipediaTier2Contract(): Promise<void> {
