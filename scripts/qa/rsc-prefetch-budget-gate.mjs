@@ -217,9 +217,27 @@ async function runOnce() {
     // harness 실패(30)와 구분해야 mutation 검증력이 성립한다.
     return EXIT_BUDGET_EXCEEDED;
   } finally {
-    server.kill("SIGTERM");
-    await new Promise((r) => setTimeout(r, 800));
+    // ⚠️ 포트가 실제로 풀릴 때까지 기다린다(CI 실측 결함, 2026-08-05):
+    // 고정 800ms 만 자고 끝내면 다음 실행이 `HARNESS-FAIL 포트 사용 중`(exit 30)으로 죽는다.
+    // 실제로 CI 에서 baseline → 첫 mutation 이 그렇게 실패했다.
+    await shutdownServer(server);
   }
+}
+
+/** SIGTERM → 포트 해제 대기 → 안 죽으면 SIGKILL. 최대 15초. */
+async function shutdownServer(child) {
+  try { child.kill("SIGTERM"); } catch { /* 이미 죽음 */ }
+  const deadline = Date.now() + 15000;
+  let killed = false;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 300));
+    if (!(await portBusy())) return;
+    if (!killed && Date.now() > deadline - 10000) {
+      try { child.kill("SIGKILL"); } catch { /* noop */ }
+      killed = true;
+    }
+  }
+  log(`  WARN 포트 ${PORT} 가 15초 안에 해제되지 않았다`);
 }
 
 /** mutation: 실제 소스에서 prefetch 를 되돌린 뒤 재빌드해 RED 를 증명한다. */
