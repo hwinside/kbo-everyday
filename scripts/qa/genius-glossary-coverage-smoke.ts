@@ -283,6 +283,27 @@ async function loadGlossaryFromMigrations(): Promise<GlossaryEntry[]> {
     // 기존 시드에 있던 오답 alias 제거를 되돌린다(비자책은 자책점의 반대 개념).
     expansionSql += `\nUPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['비자책']::text[])) WHERE term = '자책점';\n`;
   }
+  if (MUTATION === "old-rule-version") {
+    // 삼순 4차 재현: 2025 규정 개정 전 구 규정으로 되돌린다.
+    // 규칙이 바뀌었는데 옛 설명을 내보내면 유저는 틀린 룰을 배운다.
+    expansionSql += `\nUPDATE public.baseball_terms SET answer = '1루로 뛰는 주자가 정해진 좁은 통로를 벗어나 수비를 방해하면 아웃되는 규정이에요.\n홈과 1루 사이 마지막 구간에 그려진 선을 기준으로 판단해요.' WHERE term = '쓰리피트';\n`;
+  }
+  if (MUTATION === "missing-condition") {
+    // `인사이드더파크홈런` 에서 '실책 없이' 조건을 뺀다.
+    expansionSql += `\nUPDATE public.baseball_terms SET answer = '타구가 담장을 넘지 않았는데 타자가 그대로 홈까지 달려 들어온 홈런이에요.\n기록은 홈런으로 인정돼요.' WHERE term = '인사이드더파크홈런';\n`;
+  }
+  if (MUTATION === "merge-distinct-pitch") {
+    // 포크볼과 스플리터를 다시 같은 것으로 묶는다(낙차·구속이 다른 별개 구종).
+    expansionSql += `\nUPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['스플리터','splitter']::text[])) WHERE term = '포크볼';\n`;
+  }
+  if (MUTATION === "conflate-dp-gidp") {
+    // 병살(DP, 수비기록)과 병살타(GIDP, 타격기록)를 다시 합친다.
+    expansionSql += `\nUPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['병살','더블플레이','dp']::text[])) WHERE term = '병살타';\n`;
+  }
+  if (MUTATION === "undeclared-answer-fix") {
+    // 선언 없이 시드 answer 를 덮는다. answer_corrections 계약이 살아 있는지 본다.
+    expansionSql += `\nUPDATE public.baseball_terms SET answer = '__undeclared_overwrite__' WHERE term = '보크';\n`;
+  }
   if (MUTATION === "overlong-answer") {
     // 발송 상한을 넘는 답변을 심는다. 길이 계약이 살아있는지 확인.
     expansionSql = expansionSql.replace(
@@ -619,18 +640,51 @@ const seedAnswers = new Map<string, string>(
   ),
 );
 
-check("기존 시드 answer 가 확충으로 덮이지 않는다", () => {
+/**
+ * answer 교정 allowlist.
+ *
+ * 원칙은 "확충은 기존 answer 를 덮지 않는다" 이지만, 기존 답이 **명백한 오답**이면
+ * 그대로 둘 수 없다(2026-08-05 4차: `병살타` 의 시드 답이 실제로는 병살(DP) 설명이었다).
+ * 그 경우 조용히 덮지 않고 데이터 파일의 `answer_corrections` 에 term·사유·새 답을 적고
+ * migration 이 그 term 만 개별 UPDATE 한다.
+ *
+ * ⚠️ 이 목록을 게이트가 **하드코딩하지 않고 데이터 파일에서 읽는** 이유: 게이트가 따로
+ * 적으면 둘이 어긋나도 아무도 모른다. 여기서는 "선언된 교정 = 실제 결과" 까지 대조한다.
+ */
+const expansionData = JSON.parse(
+  readFileSync(path.join(repoRoot, "data/baseball-qa/glossary-expansion-2026-08.json"), "utf8"),
+) as { answer_corrections?: { term: string; reason: string; answer: string }[] };
+const answerCorrections = new Map(
+  (expansionData.answer_corrections ?? []).map((c) => [c.term, c]),
+);
+
+check("기존 시드 answer 는 선언된 교정 목록 외에는 덮이지 않는다", () => {
   assert.ok(seedAnswers.size >= 130, `시드 answer 추출이 정상이어야 함 (현재 ${seedAnswers.size})`);
-  const overwritten: string[] = [];
+  const problems: string[] = [];
   for (const row of raw) {
     const original = seedAnswers.get(row.term);
     if (original === undefined) continue;
-    if (row.answer !== original) overwritten.push(`${row.term}: 시드 answer 와 다름`);
+    const correction = answerCorrections.get(row.term);
+    if (row.answer === original) {
+      // 교정하겠다고 선언해 놓고 실제로는 안 바뀐 경우도 결함이다(조용한 실패).
+      if (correction) problems.push(`${row.term}: 교정 선언했는데 answer 가 그대로다`);
+      continue;
+    }
+    if (!correction) {
+      problems.push(`${row.term}: 선언 없이 시드 answer 가 바뀌었다`);
+      continue;
+    }
+    if (row.answer !== correction.answer) {
+      problems.push(`${row.term}: 실제 answer 가 선언된 교정문과 다르다`);
+    }
+    if (!correction.reason || correction.reason.length < 20) {
+      problems.push(`${row.term}: 교정 사유가 비었거나 너무 짧다`);
+    }
   }
   assert.deepEqual(
-    overwritten,
+    problems,
     [],
-    `사람이 검수한 답을 확충이 덮었다:\n${overwritten.join("\n")}`,
+    `시드 answer 교정 계약 위반:\n${problems.join("\n")}`,
   );
 });
 
@@ -659,13 +713,30 @@ const FACTUAL_CLAIM_PATTERNS: [RegExp, string][] = [
   // 위 두 개로 덮인다. 검출력 없는 규칙을 남겨 오탐을 내는 쪽이 더 나쁘다.
 ];
 
+/**
+ * 연도 표기 허용 목록.
+ *
+ * 막으려는 건 "누가 언제 어떤 기록을 세웠다" 는 **기록 주장**이다(40-40 사고).
+ * 반면 **규칙의 시행 시점**은 용어의 뜻 자체이고, 빼면 오히려 구 규정을 가르치게 된다
+ * (`쓰리피트` 는 2025년에 주로가 넓어졌다 — 안 적으면 답이 틀린다).
+ *
+ * 그래서 전면 금지 대신 term 별 근거를 남긴다. 근거 없이 연도를 쓰면 여전히 RED 다.
+ * 기존 시드에도 같은 성격의 서술이 있다(ABS "2024년 도입", 샐러리캡 "2023년부터").
+ */
+const RULE_YEAR_ALLOWED = new Map<string, string>([
+  ["쓰리피트", "2025 KBO 규정 개정으로 주로가 1루 페어지역 흙까지 확대 — 시행 시점이 뜻의 일부"],
+]);
+
 check("신규 답변에 검증 필요한 사실 주장이 없다", () => {
   const seeded = new Set(seedAnswers.keys());
   const claims: string[] = [];
   for (const row of raw) {
     if (seeded.has(row.term)) continue; // 기존 검수분은 이 확충의 범위가 아니다
     for (const [pattern, label] of FACTUAL_CLAIM_PATTERNS) {
-      if (pattern.test(row.answer)) claims.push(`${row.term}: ${label} — "${row.answer.split("\n")[0]}"`);
+      if (!pattern.test(row.answer)) continue;
+      // 규칙 시행연도는 근거가 선언돼 있으면 통과. 그 외 패턴(유일·최초)은 예외 없음.
+      if (label === "특정 연도" && RULE_YEAR_ALLOWED.has(row.term)) continue;
+      claims.push(`${row.term}: ${label} — "${row.answer.split("\n")[0]}"`);
     }
   }
   assert.deepEqual(
@@ -673,6 +744,17 @@ check("신규 답변에 검증 필요한 사실 주장이 없다", () => {
     [],
     `사전은 뜻만 말한다. 기록·인물 주장은 구조화 DB/RAG 의 몫이다:\n${claims.join("\n")}`,
   );
+});
+
+check("연도 허용 목록이 실제로 쓰이고 있다", () => {
+  // 죽은 예외가 남으면 다음 사람이 "여긴 원래 연도 써도 되나 보다" 하고 늘린다.
+  const dead: string[] = [];
+  for (const [term] of RULE_YEAR_ALLOWED) {
+    const row = raw.find((r) => r.term === term);
+    if (!row) { dead.push(`${term}: 사전에 없는 term`); continue; }
+    if (!/\b(?:19|20)[0-9]{2}\s*년/.test(row.answer)) dead.push(`${term}: 연도가 없는데 예외로 선언됨`);
+  }
+  assert.deepEqual(dead, [], dead.join("\n"));
 });
 
 /**
@@ -712,6 +794,83 @@ check("alias 에 빈 문자열이 없고, 한 글자 약어는 근거가 있다"
     }
   }
   assert.deepEqual(bad, [], bad.join("\n"));
+});
+
+/**
+ * 의미·규칙 정확성 계약 (삼순 2026-08-05 4차).
+ *
+ * 앞선 게이트들은 alias 의 **구조**(충돌·숫자·반대개념·위생)만 봤다. 그래서
+ * "정의가 사실인가" 는 전부 GREEN 으로 통과했고, 삼순이 4건을 잡아냈다.
+ * 기계가 의미를 판정할 수는 없지만, **한 번 지적받은 항목이 되돌아가는 것**은 막을 수 있다.
+ * 아래는 실제 지적을 받은 항목의 핵심 조건을 답변 본문에서 직접 확인한다.
+ */
+const SEMANTIC_CONTRACTS: { term: string; mustInclude: RegExp; why: string }[] = [
+  {
+    term: "쓰리피트",
+    mustInclude: /2025|페어지역|흙/,
+    why: "2025 KBO 개정으로 주로가 1루 페어지역 흙까지 확대 — 구 규정만 쓰면 틀린 룰을 가르친다",
+  },
+  {
+    term: "인사이드더파크홈런",
+    mustInclude: /실책 없이|실책이 없|수비 실책 없/,
+    why: "실책 덕에 홈까지 갔으면 홈런이 아니라 안타+실책이다. 조건이 정의의 핵심",
+  },
+  {
+    term: "병살타",
+    mustInclude: /땅볼/,
+    why: "GIDP 는 땅볼 한정 타격 기록. 이 조건이 빠지면 병살(DP) 설명이 된다",
+  },
+  {
+    term: "병살",
+    mustInclude: /수비|아웃 2개|두 개/,
+    why: "DP 는 한 플레이로 아웃 2개를 잡은 수비 기록",
+  },
+  {
+    term: "스플리터",
+    mustInclude: /포크볼|낙차/,
+    why: "포크볼과의 차이(낙차·구속)를 밝혀야 별개 구종임이 드러난다",
+  },
+];
+
+check("지적받은 항목의 핵심 조건이 답변에 남아 있다", () => {
+  const broken: string[] = [];
+  for (const contract of SEMANTIC_CONTRACTS) {
+    const row = raw.find((r) => r.term === contract.term);
+    if (!row) { broken.push(`${contract.term}: 사전에 없음`); continue; }
+    if (!contract.mustInclude.test(row.answer)) {
+      broken.push(`${contract.term}: 핵심 조건 누락 — ${contract.why}`);
+    }
+  }
+  assert.deepEqual(broken, [], broken.join("\n"));
+});
+
+/**
+ * 별개 개념으로 분리한 쌍이 다시 합쳐지지 않았는지 본다.
+ * alias 로 묶이면 한쪽 질문에 다른 쪽 설명이 나간다.
+ */
+const MUST_STAY_SEPARATE: [string, string][] = [
+  ["포크볼", "스플리터"],
+  ["병살타", "병살"],
+  ["좌완", "우완"],
+  ["상반기", "후반기"],
+  ["희생플라이", "희생타"],
+  ["6-4-3 병살", "4-6-3 병살"],
+  ["30-30 클럽", "40-40 클럽"],
+];
+
+check("분리한 개념이 다시 같은 용어로 합쳐지지 않는다", () => {
+  const merged: string[] = [];
+  for (const [a, b] of MUST_STAY_SEPARATE) {
+    const rowA = raw.find((r) => r.term === a);
+    const rowB = raw.find((r) => r.term === b);
+    if (!rowA || !rowB) { merged.push(`${a}/${b}: 한쪽이 사전에 없음`); continue; }
+    // 서로를 자기 alias 로 갖고 있으면 안 된다(정규화 키 기준으로 비교).
+    const keysA = new Set([rowA.term, ...rowA.aliases].map(normalizeKey));
+    const keysB = new Set([rowB.term, ...rowB.aliases].map(normalizeKey));
+    if (keysA.has(normalizeKey(b))) merged.push(`${a} 가 '${b}' 를 alias 로 가짐`);
+    if (keysB.has(normalizeKey(a))) merged.push(`${b} 가 '${a}' 를 alias 로 가짐`);
+  }
+  assert.deepEqual(merged, [], merged.join("\n"));
 });
 
 check("답변에 외부 링크·마크업이 섞이지 않는다", () => {
