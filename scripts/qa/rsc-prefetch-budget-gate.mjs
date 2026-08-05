@@ -29,6 +29,15 @@
  *
  * `--selftest` 는 mutation 후 재빌드까지 수행한다(느리지만 진짜 RED 증명).
  *
+ * ⚠️ exit code 계약(삼순 NO-GO 2026-08-05 2차):
+ * mutation RED 를 "nonzero 면 통과"로 인정하면, 포트 점유·서버 조기종료·buildId 불일치·
+ * Chromium 부재 같은 **harness 실패**도 RED 로 세어진다(= 측정이 안 됐는데 RED).
+ * 그래서 종료 코드를 의미별로 분리한다:
+ *   0  = 예산 이내(PASS)
+ *   20 = **예산 초과**(= 의미상 RED. mutation 이 이 코드를 내야만 검증력 인정)
+ *   30 = harness 실패(Chromium 부재/포트 점유/서버 조기종료/buildId 불일치/.next 부재)
+ * workflow 는 20 만 RED 로 인정하고 30 은 job 실패로 만든다.
+ *
  * ⚠️ 자기적발(2026-08-05): 첫 판은 포트가 이미 점유돼 있으면 `next start` 가 즉시 죽고
  * **다른 빌드의 stale 서버**를 그대로 측정했다. 그래서 TabBar mutation 이 `_rsc 0건`
  * 으로 GREEN 통과했다 — 측정 대상이 mutation 산출물이 아니었다.
@@ -42,6 +51,11 @@ import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, "../..");
+
+/** 종료 코드 계약 — workflow 가 mutation RED 를 harness 실패와 구분하는 근거. */
+export const EXIT_PASS = 0;
+export const EXIT_BUDGET_EXCEEDED = 20;
+export const EXIT_HARNESS_FAILURE = 30;
 
 const RSC_BUDGET_LOAD = 6;
 const RSC_BUDGET_SCROLL = 10;
@@ -168,27 +182,27 @@ async function runOnce() {
   const chromium = await loadChromium();
   if (!chromium) {
     if (REQUIRE_BROWSER) {
-      log("FAIL Chromium(playwright) 없음 — --require-browser 이므로 fail-close");
-      return 1;
+      log("HARNESS-FAIL Chromium(playwright) 없음 — --require-browser 이므로 fail-close");
+      return EXIT_HARNESS_FAILURE;
     }
     log("SKIP Chromium 없음 (CI 는 --require-browser 로 실행해 fail-close)");
-    return 0;
+    return EXIT_PASS;
   }
   if (!existsSync(path.join(ROOT, ".next"))) {
-    log("FAIL .next 빌드 산출물 없음 — production build 후 실행해야 한다");
-    return 1;
+    log("HARNESS-FAIL .next 빌드 산출물 없음 — production build 후 실행해야 한다");
+    return EXIT_HARNESS_FAILURE;
   }
   if (await portBusy()) {
-    log(`FAIL 포트 ${PORT} 가 이미 사용 중 — 다른 빌드를 측정할 수 있어 fail-close (RSC_GATE_PORT 로 변경 가능)`);
-    return 1;
+    log(`HARNESS-FAIL 포트 ${PORT} 가 이미 사용 중 — 다른 빌드를 측정할 수 있어 fail-close (RSC_GATE_PORT 로 변경 가능)`);
+    return EXIT_HARNESS_FAILURE;
   }
   const expectedBuildId = localBuildId();
   const server = startServer();
   try {
     const ready = await waitReady(server);
-    if (ready !== true) { log(`FAIL next start 준비 실패 (${ready})`); return 1; }
+    if (ready !== true) { log(`HARNESS-FAIL next start 준비 실패 (${ready})`); return EXIT_HARNESS_FAILURE; }
     const idCheck = await servedBuildIdMatches(expectedBuildId);
-    if (!idCheck.ok) { log(`FAIL ${idCheck.reason}`); return 1; }
+    if (!idCheck.ok) { log(`HARNESS-FAIL ${idCheck.reason}`); return EXIT_HARNESS_FAILURE; }
     log(`  buildId ${expectedBuildId} 일치 (방금 빌드한 산출물을 측정)`);
     const m = await measure(chromium);
     log(`  마운트된 내비 Link ${m.navLinks}/5`);
@@ -198,8 +212,10 @@ async function runOnce() {
     log(`  고유 경로 ${uniq.size}개`);
     const fails = judge(m);
     for (const f of fails) log(`  FAIL ${f}`);
-    if (!fails.length) log("  PASS 예산 이내");
-    return fails.length ? 1 : 0;
+    if (!fails.length) { log("  PASS 예산 이내"); return EXIT_PASS; }
+    // 측정은 정상적으로 됐고 결과가 예산을 넘은 것 = 의미상 RED.
+    // harness 실패(30)와 구분해야 mutation 검증력이 성립한다.
+    return EXIT_BUDGET_EXCEEDED;
   } finally {
     server.kill("SIGTERM");
     await new Promise((r) => setTimeout(r, 800));
@@ -240,7 +256,7 @@ async function selftest() {
   log("\n[0] baseline 재빌드");
   if (!build()) { log("FAIL baseline build 실패"); process.exit(1); }
   const base = await runOnce();
-  if (base !== 0) { log("FAIL baseline 이 이미 RED — mutation 검증 불가"); process.exit(1); }
+  if (base !== EXIT_PASS) { log(`FAIL baseline 이 이미 실패(exit ${base}) — mutation 검증 불가`); process.exit(1); }
 
   let bad = 0;
   for (const mut of MUTATIONS) {
@@ -257,8 +273,9 @@ async function selftest() {
     try {
       if (!build()) { log("  FAIL mutated build 실패"); bad++; continue; }
       const code = await runOnce();
-      if (code === 0) { log("  ❌ 이 mutation 이 RED 를 못 만들었다 — 게이트 검증력 없음"); bad++; }
-      else log("  ✅ RED");
+      if (code === EXIT_BUDGET_EXCEEDED) log(`  ✅ RED (exit ${EXIT_BUDGET_EXCEEDED} = 예산 초과)`);
+      else if (code === EXIT_PASS) { log("  ❌ 이 mutation 이 RED 를 못 만들었다 — 게이트 검증력 없음"); bad++; }
+      else { log(`  ❌ harness 실패(exit ${code}) — 측정 자체가 안 됐다. RED 로 인정하지 않는다`); bad++; }
     } finally {
       writeFileSync(abs, original);
       const back = readFileSync(abs, "utf8");
@@ -269,7 +286,7 @@ async function selftest() {
   log("\n[Z] 원본 복원 후 재빌드 + baseline 재확인");
   if (!build()) { log("FAIL 복원 build 실패"); process.exit(1); }
   const after = await runOnce();
-  if (after !== 0) { log("FAIL 복원 후 baseline 이 RED — 오염"); process.exit(1); }
+  if (after !== EXIT_PASS) { log(`FAIL 복원 후 baseline 실패(exit ${after}) — 오염`); process.exit(1); }
 
   log(`\nselftest 결과: 검증력 없는 mutation ${bad}건`);
   process.exit(bad === 0 ? 0 : 1);

@@ -195,7 +195,11 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
           NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
-        run: npm run qa:rsc-prefetch-budget:required
+        # ⚠️ npm alias(`npm run qa:...`) 를 쓰지 않는다(삼순 NO-GO 2026-08-05 2차).
+        # package.json alias 를 `git diff --quiet` 같은 것으로 바꿔치면 브라우저를 한 번도
+        # 안 띄우고도 baseline 0 / dirty mutation nonzero 로 통과한다(#1085 와 같은 축).
+        # 스크립트 경로를 직접 호출해 alias 를 신뢰 경계에서 제거한다.
+        run: node scripts/qa/rsc-prefetch-budget-gate.mjs --require-browser
 
       - name: Prove rsc gate catches prefetch regression (mutation RED)
         # 소스에서 prefetch={false} 를 되돌리고 **재빌드**한 뒤 실브라우저로 측정한다.
@@ -237,9 +241,22 @@ jobs:
             CURRENT_MUT_FILE="$f"
             mutate "$f" "$mode"
             SKIP_PREBUILD=1 npx next build
-            if RSC_GATE_PORT=3971 npm run qa:rsc-prefetch-budget:required; then
-              cp /tmp/rsc-mut-backup "$f"
-              echo "::error::$f ($mode) mutation 이 통과했다 — rsc 게이트가 false-green 이다"
+            # exit 20(예산 초과)만 RED 로 인정한다. 0=통과, 30=harness 실패
+            # (포트 점유·서버 조기종료·buildId 불일치·Chromium 부재)는 둘 다 job 실패로 본다.
+            # "nonzero 면 RED" 로 세면 측정이 안 됐는데도 검증력이 있다고 착각한다(삼순 2차 지적).
+            # npm alias 를 쓰지 않고 스크립트를 직접 호출한다(alias 바꿔치기 decoy 차단).
+            set +e
+            RSC_GATE_PORT=3971 node scripts/qa/rsc-prefetch-budget-gate.mjs --require-browser
+            code=$?
+            set -e
+            cp /tmp/rsc-mut-backup "$f"
+            CURRENT_MUT_FILE=""
+            if [ "$code" -eq 0 ]; then
+              echo "::error::$f ($mode) mutation 이 통과했다(exit 0) — rsc 게이트가 false-green 이다"
+              exit 1
+            fi
+            if [ "$code" -ne 20 ]; then
+              echo "::error::$f ($mode) 가 harness 실패(exit $code) — 측정 자체가 안 됐다. RED 로 인정하지 않는다"
               exit 1
             fi
             cp /tmp/rsc-mut-backup "$f"
