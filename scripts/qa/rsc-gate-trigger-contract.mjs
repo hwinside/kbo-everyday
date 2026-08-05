@@ -38,6 +38,7 @@ const REQUIRED_PATHS = [
 ];
 
 const DIRECT_CALL = "node scripts/qa/rsc-prefetch-budget-gate.mjs";
+const BASELINE_EXACT = "node scripts/qa/rsc-prefetch-budget-gate.mjs --require-browser";
 const ALIAS_CALL = "npm run qa:rsc-prefetch-budget";
 
 /** required job 에서 budget 게이트를 실행하는 named step. 이 step 하나만 검사한다. */
@@ -71,10 +72,13 @@ function check(text) {
     fails.push(`named step "${BASELINE_STEP_NAME}" 을 찾을 수 없다 — 이름이 바뀌면 검사 대상이 사라진다`);
   } else {
     const run = baselineStep.run ?? "";
-    if (run.includes(DIRECT_CALL)) pass.push(`baseline step 이 스크립트를 직접 호출: "${BASELINE_STEP_NAME}"`);
-    else fails.push(`baseline step 이 budget 게이트를 직접 호출(${DIRECT_CALL})하지 않는다`);
-    if (run.includes(ALIAS_CALL))
-      fails.push(`baseline step 이 npm alias(${ALIAS_CALL})를 쓴다 — alias 바꿔치기 decoy 에 뚫린다`);
+    // includes 로 검사하면 `... || true` 나 뒤에 붙인 no-op 에 뚫린다(삼순 NO-GO 5차 지적①).
+    // 실행 라인(주석 #·빈줄 제외)이 정확히 그 단일 명령 하나여야 한다.
+    const execLines = run.split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
+    if (execLines.length === 1 && execLines[0] === BASELINE_EXACT)
+      pass.push(`baseline step 이 정확히 단일 명령: "${BASELINE_EXACT}"`);
+    else
+      fails.push(`baseline step 실행 라인이 정확히 "${BASELINE_EXACT}" 하나가 아니다 (실제: ${JSON.stringify(execLines)}) — || true·no-op 접미사에 뚫릴 수 있다`);
   }
 
   return { fails, pass };
@@ -97,6 +101,17 @@ if (process.argv.includes("--selftest")) {
     ["B. 모든 호출을 npm alias 로 되돌림", (t) =>
       t.replace(/node scripts\/qa\/rsc-prefetch-budget-gate\.mjs --require-browser/g,
                 "npm run qa:rsc-prefetch-budget:required")],
+    ["B3. baseline step 에 `|| true` 접미사(includes 검사면 놓친다)", (t) => {
+      const lines = t.split("\n");
+      let inBaseline = false;
+      return lines.map((ln) => {
+        if (ln.includes("- name: Run _rsc prefetch budget gate (fail-closed)")) inBaseline = true;
+        else if (/^\s*- name:/.test(ln)) inBaseline = false;
+        if (inBaseline && ln.trim() === "run: node scripts/qa/rsc-prefetch-budget-gate.mjs --require-browser")
+          return ln + " || true";
+        return ln;
+      }).join("\n");
+    }],
     ["B2. baseline step 만 npm alias 로 되돌림(전체 join 검색이면 놓친다)", (t) => {
       // named baseline step 의 run 라인만 alias 로 교체. mutation step 은 그대로 둔다.
       const lines = t.split("\n");

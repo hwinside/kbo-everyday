@@ -240,14 +240,21 @@ jobs:
           NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
         run: |
           set +e
-          node scripts/qa/rsc-prefetch-budget-gate.mjs --require-browser
+          out=$(node scripts/qa/rsc-prefetch-budget-gate.mjs --require-browser 2>&1)
           code=$?
           set -e
+          echo "$out"
+          # 아무 exit 30 이 아니라, 바로 그 navLinks<4 분기가 탔음을 전용 marker 로 확인한다
+          # (삼순 NO-GO 5차 지적②: 포트 점유 등 다른 harness 실패의 30 과 구분).
           if [ "$code" -ne 30 ]; then
             echo "::error::불완전 렌더가 exit 30(harness)이 아니라 exit $code 다 — navLinks<4 경계가 깨졌다"
             exit 1
           fi
-          echo "self-protect 확인: 불완전 렌더 → exit 30(harness), RED(20)로 오인 안 됨"
+          if ! echo "$out" | grep -q "RSC_INCOMPLETE_RENDER"; then
+            echo "::error::exit 30 이지만 navLinks 전용 marker(RSC_INCOMPLETE_RENDER)가 없다 — 다른 harness 실패다"
+            exit 1
+          fi
+          echo "self-protect 확인: 불완전 렌더 → exit 30 + RSC_INCOMPLETE_RENDER marker, RED(20)로 오인 안 됨"
 
       - name: Prove rsc gate catches prefetch regression (mutation RED)
         # 소스에서 prefetch={false} 를 되돌리고 **재빌드**한 뒤 실브라우저로 측정한다.

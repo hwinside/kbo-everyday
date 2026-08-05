@@ -226,7 +226,9 @@ async function runOnce() {
     // _rsc 가 적게 잡혀 "예산 이내"로 오인될 수 있고, mutation 이 이걸 유효 RED 로
     // 세면 검증력이 무너진다(삼순 NO-GO 3차 지적①).
     if (m.navLinks < 4) {
-      log(`  HARNESS-FAIL 마운트된 내비 Link ${m.navLinks}개(<4) — 페이지가 제대로 안 그려졌다. 측정 무효`);
+      // 전용 marker: workflow self-protect 스텝이 "아무 exit 30"이 아니라 바로 이 분기가
+      // 탔음을 확인하도록 고정 토큰을 찍는다(삼순 NO-GO 5차 지적②).
+      log(`  HARNESS-FAIL[RSC_INCOMPLETE_RENDER] 마운트된 내비 Link ${m.navLinks}개(<4) — 페이지가 제대로 안 그려졌다. 측정 무효`);
       return EXIT_HARNESS_FAILURE;
     }
     log(`  홈 로드 직후 _rsc ${m.load}건 (예산 ${RSC_BUDGET_LOAD})`);
