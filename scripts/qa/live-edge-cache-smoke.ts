@@ -343,6 +343,61 @@ async function main() {
     }
   });
 
+  console.log("\n[4] contextual-stats 동일 계약 (빈 응답 박제 금지)");
+
+  // 배경: 이 게이트의 초기 버전은 game-relay 만 태워서, contextual-stats 의
+  // liveCacheHeaders(!empty, ...) 를 liveCacheHeaders(true, ...) 로 바꿔도(= 빈
+  // 응답까지 엣지에 박제) GREEN 이었다(mutation F). 매핑 실패·라이브 미조회
+  // 구간의 빈 박스가 TTL 동안 고정되는 유저 버그라 직접 태운다.
+  const contextualRoute = await import("../../src/app/api/contextual-stats/route");
+  const ctxReq = (qs: string) =>
+    new NextRequest(new URL(`http://localhost/api/contextual-stats?${qs}`));
+
+  await check("gameId 누락 400 은 no-store", async () => {
+    const res = await contextualRoute.GET(ctxReq(""));
+    assert.equal(res.status, 400);
+    assertNotCacheable(res, "contextual-stats 400");
+  });
+
+  await check(
+    "라이브 미조회 → empty 응답은 캐시 금지(빈 박스 박제 방지)",
+    async () => {
+      // upstream 을 전면 실패시켜 fetchLiveGame 이 null → emptyResponse 경로.
+      globalThis.fetch = (async () =>
+        new Response("down", { status: 503 })) as typeof fetch;
+      try {
+        const res = await contextualRoute.GET(ctxReq("gameId=20260805EDGE9"));
+        assert.equal(res.status, 200, `기대 200(empty payload), 실제 ${res.status}`);
+        const body = (await res.clone().json()) as { empty?: boolean };
+        assert.equal(body.empty, true, "empty 응답 경로를 재현하지 못함(픽스처 오류)");
+        assertNotCacheable(res, "contextual-stats empty");
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    },
+  );
+
+  await check("contextual-stats 가 캐시 헤더 SSOT 를 경유한다(직접 문자열 금지)", async () => {
+    const { readFileSync } = await import("node:fs");
+    for (const path of [
+      "src/app/api/contextual-stats/route.ts",
+      "src/app/api/game-relay/route.ts",
+      "src/app/api/game-live/route.ts",
+    ]) {
+      const src = readFileSync(path, "utf8");
+      assert.ok(
+        src.includes("@/lib/http/live-cache"),
+        `${path}: 캐시 헤더 SSOT 를 import 하지 않음`,
+      );
+      // 유일한 예외는 SSOT 모듈 자체. route 가 Cache-Control 을 직접 쓰면
+      // 정책이 다시 흔어져 한 곳만 고치고 "적용 완료" 로 오판하게 된다.
+      assert.ok(
+        !/["'`]Cache-Control["'`]\s*:/.test(src),
+        `${path}: Cache-Control 을 직접 생성함 — SSOT 헬퍼만 써야 함`,
+      );
+    }
+  });
+
   console.log(`\n${passed} passed, ${failures.length} failed`);
   if (failures.length > 0) {
     console.log("\n실패:");
