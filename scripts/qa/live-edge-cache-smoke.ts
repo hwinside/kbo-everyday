@@ -329,14 +329,40 @@ async function main() {
     }
   });
 
-  await check("warm cache HIT 응답도 엣지 캐시 헤더를 잃지 않는다", async () => {
+  await check("warm cache HIT 응답도 엣지 캐시 헤더를 잃지 않는다(남은 수명 범위 내)", async () => {
+    // ⚠️ CI 실측 결함(2026-08-06): 이 검사는 원래 warm HIT 에 **full TTL** 을 기대했다.
+    //    remaining-age 계약(HIT 은 남은 수명만큼만) 도입 뒤, 느린 러너에서 첫 GET 이
+    //    1초 넘게 걸리면 남은 수명이 1초 미만이 되어 정당하게 no-store 가 나오는데
+    //    검사가 그걸 실패로 봤다(로컬은 빨라서 통과 → Vercel prebuild 에서 exit 1).
+    //    시계에 의존하지 않도록 **실제 경과시간으로 기대값을 계산**한다.
     installRelayUpstream({ currentInning: 5 });
     try {
+      const t0 = Date.now();
       const first = await relayRoute.GET(makeReq("gameId=20260805EDGE4"));
       assert.equal(first.status, 200);
       const second = await relayRoute.GET(makeReq("gameId=20260805EDGE4"));
       assert.equal(second.status, 200);
-      assertEdgeCacheable(second, RELAY_EDGE_TTL_SECONDS, "game-relay warm HIT");
+
+      const elapsedMs = Date.now() - t0;
+      const remainingMs = RELAY_EDGE_TTL_SECONDS * 1000 - elapsedMs;
+      const cc = parseCacheControl(second);
+
+      if (remainingMs >= 1100) {
+        // 남은 수명이 넉넉하면 반드시 엣지 캐시 대상이어야 한다(헤더 유실 금지).
+        assert.ok(
+          cc.sMaxAge !== null && cc.sMaxAge >= 1,
+          `warm HIT 인데 캐시 헤더 유실: ${cc.raw} (남은 ${remainingMs}ms)`,
+        );
+        assert.ok(
+          cc.sMaxAge! <= RELAY_EDGE_TTL_SECONDS,
+          `warm HIT s-maxage=${cc.sMaxAge} 가 TTL 상한 초과`,
+        );
+        assert.equal(cc.swr, null, `warm HIT 에 SWR 발생: ${cc.raw}`);
+      } else if (remainingMs <= 900) {
+        // 남은 수명이 1초 미만이면 no-store 가 정답이다(반올림 상한 초과 방지).
+        assertNotCacheable(second, `warm HIT 남은 ${remainingMs}ms`);
+      }
+      // 900~1100ms 경계는 반올림 방향이 어느 쪽이어도 계약 위반이 아니라 판정하지 않는다.
     } finally {
       globalThis.fetch = originalFetch;
     }
