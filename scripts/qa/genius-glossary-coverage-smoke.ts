@@ -97,13 +97,49 @@ type MissLogFixture = {
   questions: FixtureItem[];
 };
 
-const fixture = JSON.parse(readFileSync(fixturePath, "utf8")) as MissLogFixture;
+const fixtureRaw = JSON.parse(readFileSync(fixturePath, "utf8")) as MissLogFixture;
+
+/**
+ * fixture 결함 주입.
+ *
+ * `missing-contract` 는 삼순 3차 지적을 재현한다: 라벨(expect/exclude)을 하나 지우면
+ * 그 항목은 expect 검사와 exclude 검사 **양쪽에서 조용히 빠져나간다**. 개수 검사도
+ * `>=` 였을 때는 못 잡았다. XOR 계약이 실제로 살아 있는지 증명한다.
+ */
+const fixture: MissLogFixture = (() => {
+  if (MUTATION === "missing-contract") {
+    const questions = fixtureRaw.questions.map((item, index) =>
+      index === 0 ? ({ q: item.q, count: item.count } as unknown as FixtureItem) : item,
+    );
+    return { ...fixtureRaw, questions };
+  }
+  if (MUTATION === "unknown-exclusion-reason") {
+    // 선언되지 않은 사유 코드를 쓰면(오타 포함) 잡아야 한다.
+    const questions = fixtureRaw.questions.map((item) =>
+      item.exclude ? ({ q: item.q, count: item.count, exclude: "MULTI_CONCEPTS" } as FixtureItem) : item,
+    );
+    return { ...fixtureRaw, questions };
+  }
+  if (MUTATION === "shrink-fixture") {
+    // 어려운 질문을 빼서 통과시키려는 방향.
+    return { ...fixtureRaw, total: fixtureRaw.total - 1, questions: fixtureRaw.questions.slice(1) };
+  }
+  return fixtureRaw;
+})();
 
 /**
  * fixture 자체의 무결성을 먼저 본다.
  * 게이트를 통과시키려고 fixture 에서 어려운 질문을 빼는 순간 커버리지는 올라가고
  * 검증력은 사라진다. 그 방향을 막는다.
  */
+/**
+ * 운영 실측 고유 질문 수. **하한이 아니라 정확값**이다.
+ *
+ * `>= 478` 로 두면 라벨을 지운 항목이 남아 있는 한 개수는 그대로라 통과한다.
+ * 계보: 원본 로그 TERM 라벨 479건 중 완전히 같은 문자열이 1건 중복(`적시타가 뭐야?` 2회).
+ */
+const FIXTURE_EXACT_COUNT = 478;
+
 check("fixture 는 운영 원문이며 축소되지 않았다", () => {
   assert.ok(Array.isArray(fixture.questions), "questions 배열이 있어야 함");
   assert.equal(
@@ -111,13 +147,55 @@ check("fixture 는 운영 원문이며 축소되지 않았다", () => {
     fixture.total,
     "선언된 total 과 실제 항목 수가 일치해야 함",
   );
-  assert.ok(
-    fixture.questions.length >= 478,
-    `fixture 는 운영 실측 478건 이상이어야 함 (현재 ${fixture.questions.length}). 줄이면 게이트가 약해진다`,
+  assert.equal(
+    fixture.questions.length,
+    FIXTURE_EXACT_COUNT,
+    `fixture 는 운영 실측 고유 ${FIXTURE_EXACT_COUNT}건이어야 함 (현재 ${fixture.questions.length})`,
   );
   const unique = new Set(fixture.questions.map((item) => item.q));
   assert.equal(unique.size, fixture.questions.length, "fixture 에 중복 질문이 없어야 함");
 });
+
+/**
+ * ⚠️ fixture 계약을 **런타임에서** 강제한다 (삼순 2026-08-05 3차 지적).
+ *
+ * 앞선 판은 `FixtureItem` 타입으로 expect/exclude 배타를 표현만 하고 실행 시 확인하지
+ * 않았다. JSON 은 타입 검사를 받지 않으므로 **라벨을 하나 지우면 그 항목은 expect 검사
+ * (`if (!item.expect) continue`)와 exclude 검사(`if (!item.exclude) continue`) 양쪽에서
+ * 조용히 빠져나가 GREEN 이 된다**. 개수 검사도 `>=` 라 못 잡았다.
+ *
+ * 그래서 여기서 항목별로 정확히 하나를 갖는지(XOR), 제외 사유가 선언된 코드인지,
+ * 선언된 사유가 실제로 쓰이는지까지 본다.
+ */
+check("fixture 전 항목이 expect XOR exclude 계약을 지킨다", () => {
+  const bad: string[] = [];
+  const usedReasons = new Set<string>();
+  const declared = fixture._exclusion_reasons ?? {};
+
+  assert.ok(
+    Object.keys(declared).length > 0,
+    "_exclusion_reasons 선언이 있어야 함 — 사유 코드가 자유 문자열이면 오타가 조용히 통과한다",
+  );
+
+  for (const item of fixture.questions) {
+    const hasExpect = typeof item.expect === "string" && item.expect.length > 0;
+    const hasExclude = typeof item.exclude === "string" && item.exclude.length > 0;
+    if (hasExpect && hasExclude) bad.push(`${item.q}: expect 와 exclude 를 둘 다 가짐`);
+    else if (!hasExpect && !hasExclude) bad.push(`${item.q}: 라벨 없음 — 양쪽 검사에서 빠진다`);
+    if (hasExclude) {
+      if (!(item.exclude! in declared)) bad.push(`${item.q}: 선언되지 않은 제외 사유 '${item.exclude}'`);
+      usedReasons.add(item.exclude!);
+    }
+  }
+
+  // 죽은 사유 코드도 잡는다 — 남아 있으면 계약이 실제와 어긋난 채로 굳는다.
+  for (const reason of Object.keys(declared)) {
+    if (!usedReasons.has(reason)) bad.push(`제외 사유 '${reason}' 가 선언만 되고 쓰이지 않음`);
+  }
+
+  assert.deepEqual(bad, [], `fixture 계약 위반:\n${bad.join("\n")}`);
+});
+
 
 async function loadGlossaryFromMigrations(): Promise<GlossaryEntry[]> {
   const db = new PGlite();
@@ -196,6 +274,15 @@ async function loadGlossaryFromMigrations(): Promise<GlossaryEntry[]> {
     // 빈 문자열 alias 와 한 글자 alias 를 되돌린다.
     expansionSql += `\nUPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['','a']::text[])) WHERE term = '보살';\n`;
   }
+  if (MUTATION === "opposite-alias") {
+    // 삼순 3차 재현: 반대 개념을 alias 로 되돌린다.
+    // `우투가 뭐야` 에 좌완 설명이 나가면 유저는 왼손/오른손을 거꾸로 배운다.
+    expansionSql += `\nUPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['우완','우투','오른손투수']::text[])) WHERE term = '좌완';\n`;
+  }
+  if (MUTATION === "seed-wrong-alias") {
+    // 기존 시드에 있던 오답 alias 제거를 되돌린다(비자책은 자책점의 반대 개념).
+    expansionSql += `\nUPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['비자책']::text[])) WHERE term = '자책점';\n`;
+  }
   if (MUTATION === "overlong-answer") {
     // 발송 상한을 넘는 답변을 심는다. 길이 계약이 살아있는지 확인.
     expansionSql = expansionSql.replace(
@@ -251,6 +338,61 @@ check("migration 은 멱등이다 (2회 적용해도 중복 term 0)", () => {
 });
 
 // ── ③ alias 충돌 0 ─────────────────────────────────────────────────────────────
+/**
+ * 반대 개념 alias 감사.
+ *
+ * 2026-08-05 3차: `좌완` 에 `우완`·`우투`·`오른손투수` 를, `상반기` 에 `후반기` 를 묶었다.
+ * "다른 개념을 묶지 않는다" 를 이미 두 번 고쳤는데도 **정반대 개념**이 남아 있었다.
+ * `우투가 뭐야` 에 좌완 설명이 나가면 유저는 왼손/오른손을 거꾸로 배운다.
+ *
+ * 기계로 잡을 수 있는 건 대립쌍 접두어다. 완전하지는 않지만(실제로 `상반기/후반기` 는
+ * 이 규칙으로 못 잡아 사람이 찾았다) 가장 흔한 형태는 막는다.
+ */
+const OPPOSITE_PREFIX_PAIRS: [string, string][] = [
+  ["좌", "우"],
+  ["상반", "후반"],
+  ["전반", "후반"],
+  ["승리", "패전"],
+  ["공격", "수비"],
+  ["홈", "원정"],
+  ["성공", "실패"],
+];
+
+/**
+ * 부정 접두어. `비자책` 은 `자책` 을 **문자열로 포함**하므로 위 대립쌍 로직으로는
+ * 절대 못 잡는다(`!alias.includes(a)` 조건에서 탈락). 실제로 `seed-wrong-alias`
+ * mutation 이 GREEN 으로 통과해 이 구멍을 스스로 드러냈다.
+ * 그래서 "alias = 부정접두어 + term(또는 term의 어간)" 형태를 따로 본다.
+ */
+const NEGATION_PREFIXES = ["비", "무", "미", "역"];
+
+check("반대 개념을 같은 용어의 alias 로 묶지 않는다", () => {
+  const bad: string[] = [];
+  for (const row of raw) {
+    for (const alias of row.aliases) {
+      // ① 대립쌍 접두어 (좌/우, 상반/후반 …)
+      for (const [a, b] of OPPOSITE_PREFIX_PAIRS) {
+        const termA = row.term.includes(a);
+        const termB = row.term.includes(b);
+        const aliasA = alias.includes(a);
+        const aliasB = alias.includes(b);
+        if ((termA && aliasB && !aliasA && !termB) || (termB && aliasA && !aliasB && !termA)) {
+          bad.push(`${row.term} ← '${alias}' (대립쌍 ${a}/${b}) — 반대 개념이면 별도 term 이어야 한다`);
+        }
+      }
+      // ② 부정 접두어 (자책 ↔ 비자책)
+      for (const neg of NEGATION_PREFIXES) {
+        if (!alias.startsWith(neg) || row.term.startsWith(neg)) continue;
+        const stripped = alias.slice(neg.length);
+        if (stripped.length >= 2 && row.term.startsWith(stripped)) {
+          bad.push(`${row.term} ← '${alias}' (부정 접두어 '${neg}') — 부정형은 반대 개념이다`);
+        }
+      }
+    }
+  }
+  assert.deepEqual(bad, [], bad.join("\n"));
+});
+
 check("정규화 키 충돌 0 (조용히 가려지는 용어가 없다)", () => {
   const owner = new Map<string, string>();
   const collisions: string[] = [];
