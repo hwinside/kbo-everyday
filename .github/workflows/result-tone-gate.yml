@@ -47,6 +47,9 @@ on:
       - "src/components/game/CompactGameCard.tsx"
       - "src/app/(main)/layout.tsx"
       - "scripts/qa/rsc-prefetch-budget-gate.mjs"
+      - "src/app/(main)/page.tsx"
+      - "src/components/home/**"
+      - "scripts/qa/rsc-gate-trigger-contract.mjs"
   push:
     branches:
       - main
@@ -82,6 +85,9 @@ on:
       - "src/components/game/CompactGameCard.tsx"
       - "src/app/(main)/layout.tsx"
       - "scripts/qa/rsc-prefetch-budget-gate.mjs"
+      - "src/app/(main)/page.tsx"
+      - "src/components/home/**"
+      - "scripts/qa/rsc-gate-trigger-contract.mjs"
 
 jobs:
   result-tone:
@@ -174,6 +180,24 @@ jobs:
       #
       # 직전 판(삼순 NO-GO)은 소스 문자열만 스캔해서, 신규 Link mutation 이
       # `// <Link ...>` 주석 한 줄을 세는 가짜 RED 였다. 그래서 실브라우저 측정으로 바꿨다.
+      - name: RSC gate trigger contract (paths cover home render tree)
+        # budget 게이트를 required 로 얹어도, workflow paths 가 홈 렌더 트리를 안 덮으면
+        # 신규 홈 Link PR 에서 workflow 가 안 돈다(= 게이트 우회). 이 스텝이 그걸 잠근다.
+        # env·브라우저 무의존이라 빌드 앞에 둔다.
+        run: node scripts/qa/rsc-gate-trigger-contract.mjs
+
+      - name: Prove trigger contract catches path removal (mutation RED)
+        run: |
+          set +e
+          node scripts/qa/rsc-gate-trigger-contract.mjs --selftest
+          code=$?
+          set -e
+          if [ "$code" -ne 0 ]; then
+            echo "::error::trigger contract selftest 가 실패했다(exit $code) — 검증력 결손"
+            exit 1
+          fi
+          echo "trigger contract mutation RED 3종 확인"
+
       - name: Build for RSC prefetch budget gate
         # ⚠️ 시크릿이 없으면 `next build` 가 라우트 page-data 수집에서 죽는다(로컬 CI 재현 실측:
         # `Failed to collect page data for /api/admin/downloads`). 빌드가 죽으면 이 게이트는

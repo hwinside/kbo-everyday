@@ -181,8 +181,8 @@ async function measure(chromium) {
 
 function judge(m) {
   const fails = [];
-  if (m.navLinks < 4)
-    fails.push(`마운트된 내비 Link ${m.navLinks}개(<4) — 페이지가 제대로 안 그려졌다. 측정 무효`);
+  // navLinks<4 는 여기서 다루지 않는다 — judge() 는 "측정이 유효할 때의 예산 판정"만 한다.
+  // 불완전 렌더는 runOnce 에서 harness 실패(30)로 분리한다(삼순 NO-GO 3차 지적①).
   if (m.load > RSC_BUDGET_LOAD)
     fails.push(`홈 로드 직후 _rsc ${m.load}건 > 예산 ${RSC_BUDGET_LOAD}`);
   if (m.scroll > RSC_BUDGET_SCROLL)
@@ -218,6 +218,13 @@ async function runOnce() {
     log(`  buildId ${expectedBuildId} 일치 (방금 빌드한 산출물을 측정)`);
     const m = await measure(chromium);
     log(`  마운트된 내비 Link ${m.navLinks}/5`);
+    // 불완전 렌더는 예산 판정 이전에 harness 실패로 처리한다. 페이지가 안 그려지면
+    // _rsc 가 적게 잡혀 "예산 이내"로 오인될 수 있고, mutation 이 이걸 유효 RED 로
+    // 세면 검증력이 무너진다(삼순 NO-GO 3차 지적①).
+    if (m.navLinks < 4) {
+      log(`  HARNESS-FAIL 마운트된 내비 Link ${m.navLinks}개(<4) — 페이지가 제대로 안 그려졌다. 측정 무효`);
+      return EXIT_HARNESS_FAILURE;
+    }
     log(`  홈 로드 직후 _rsc ${m.load}건 (예산 ${RSC_BUDGET_LOAD})`);
     log(`  스크롤 3왕복 후  _rsc ${m.scroll}건 (예산 ${RSC_BUDGET_SCROLL})`);
     const uniq = new Set(m.paths);
