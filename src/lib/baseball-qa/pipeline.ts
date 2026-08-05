@@ -18,6 +18,7 @@ import {
   type RagEvidence,
   type RagPlayerCandidate,
 } from "./rag/retrieve";
+import { displayProvenanceOf } from "./genius-reply-provenance";
 import {
   composeSeasonRecordAnswer,
   isServedOnlyMetric,
@@ -242,6 +243,12 @@ export interface QaResult {
    * 클라이언트가 선택 카드를 렌더하게 한다.
    */
   pickerOptions?: PlayerPickerOption[];
+  /**
+   * 근거 문서 링크. `source === "rag"` 일 때만 채워진다.
+   * 본문에는 `📄 출처: 나무위키` 표시명만 있고, 호출부(server.ts)가 이 URL 을 payload 로 실어
+   * 클라가 그 문구에 하이퍼링크를 씌운다 (하린아빠 2026-08-05 P0).
+   */
+  sourceUrl?: string;
 }
 
 export interface QaDeps {
@@ -1582,8 +1589,11 @@ async function answerPlayerDescriptiveQuestion(
   const validated = validateRagResponse(llm.text);
   if (validated.kind !== "grounded") return failClose();
   const answer = composeRagAnswer(validated.answer, evidence[0]);
+  // 본문에는 표시명만 들어간다. 링크는 payload 로 실어 클라가 그 문구에 앵커를 씌운다.
+  // allowlist 밖이면 null — payload 에도 링크를 싣지 않는다.
+  const sourceUrl = displayProvenanceOf(evidence[0])?.url;
   await deps.log({ userId, question, questionNorm, matchPath: "rag", answer, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
-  return { status: 200, answer, source: "rag", remaining };
+  return { status: 200, answer, source: "rag", remaining, sourceUrl };
 }
 
 /**
@@ -1665,8 +1675,11 @@ async function answerOfficialDocumentQuestion(
     return { status: 200, answer: BLOCKED_ANSWER, source: "unsure", remaining };
   }
   const answer = composeRagAnswer(validated.answer, evidence[0]);
+  // 본문에는 표시명만 들어간다. 링크는 payload 로 실어 클라가 그 문구에 앵커를 씌운다.
+  // allowlist 밖이면 null — payload 에도 링크를 싣지 않는다.
+  const sourceUrl = displayProvenanceOf(evidence[0])?.url;
   await deps.log({ userId, question, questionNorm, matchPath: "rag", answer, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
-  return { status: 200, answer, source: "rag", remaining };
+  return { status: 200, answer, source: "rag", remaining, sourceUrl };
 }
 
 export async function answerQuestion(userId: string, rawQuestion: string, deps: QaDeps): Promise<QaResult> {

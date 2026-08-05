@@ -32,6 +32,28 @@ const CASES = [
   { q: "예전 질문", a: "예전에 저장된 답변이에요.", kind: null, path: null, expect: "idle" },
 ];
 
+// 출처 표기 케이스 (하린아빠 2026-08-05 P0 — `rev crawled:…` 노출 제거).
+//  · 신규: 본문엔 표시명만, 링크는 payload(source_url) → 클라가 앵커를 씌운다
+//  · 구: 이미 발송된 과거 답변. 본문에 전체 URL·rev·기준일이 그대로 남아 있어
+//        표시 시점에 잘라내야 한다(저장 행 UPDATE 없이).
+const NAMU_URL = "https://namu.wiki/w/%EB%AC%B8%EB%B3%B4%EA%B2%BD";
+const PROVENANCE_CASES = [
+  {
+    label: "신규 표기",
+    answer: "문보경 선수의 별명은 문보물이에요.\n\n📄 출처: 나무위키",
+    payload: { type: "baseball_genius_reply", reply_kind: "answer", match_path: "rag", source_url: NAMU_URL },
+    expectLabel: "나무위키",
+    expectHref: NAMU_URL,
+  },
+  {
+    label: "구 표기(과거 발송분)",
+    answer: `문보경 선수의 별명은 문학소년이에요.\n\n📄 출처: 문보경 (${NAMU_URL}) · rev crawled:2026-08-02T02:59:26.899Z · 2026-08-02 기준`,
+    payload: { type: "baseball_genius_reply", reply_kind: "answer", match_path: "rag" },
+    expectLabel: "나무위키",
+    expectHref: NAMU_URL,
+  },
+];
+
 const admin = createClient(SUPABASE_URL, SERVICE_ROLE, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
@@ -95,6 +117,22 @@ async function main() {
         throw new Error(`답변 RPC 대화 불일치: ${sentRow?.conversation_id} != ${convId}`);
       }
     }
+    // 출처 표기 케이스도 같은 대화에 심는다(같은 페이지에서 한 번에 검증).
+    for (const [index, c] of PROVENANCE_CASES.entries()) {
+      // query-guard: bounded -- admin_send_ops_message는 대상 대화 1행만 반환한다.
+      const { error: provError } = await admin.rpc("admin_send_ops_message", {
+        p_system_user_id: GENIUS_ID,
+        p_user_id: testUser.id,
+        p_content: c.answer,
+        p_image_urls: [],
+        p_preview: c.answer.slice(0, 40),
+        p_origin: "dm",
+        p_dedup_key: `qa-genius-provenance:${testUser.id}:${index}`,
+        p_payload: c.payload,
+      });
+      if (provError) throw new Error(`출처 케이스 RPC 실패: ${provError.message}`);
+    }
+
     // 위조 케이스 — ⚠️ **본인(testUser) 발신으로 짜면 거짓 초록이다.**
     // 내가 보낸 메시지는 `!isMe` 때문에 발신자 헤더(= 마스코트 자리) 자체가 안 그려진다.
     // 그래서 sender 검증을 통째로 빼도 그 assert 는 항상 PASS 한다(RED 실험으로 실제 확인함).
@@ -219,6 +257,50 @@ async function main() {
       return { found: true, hasMascot: !!row?.querySelector('[data-testid="genius-reply-mascot"]') };
     });
     ok("유저가 흉내낸 payload 에는 마스코트가 안 붙는다", forged.found && !forged.hasMascot, JSON.stringify(forged));
+
+    // ── 출처 표기 실렌더 (하린아빠 2026-08-05 P0) ──────────────────────────────
+    //
+    // 소스 계약만으로는 "화면에 crawled 가 안 보인다"를 증명하지 못한다.
+    // 실제 렌더된 DOM 텍스트에서 금칙 문자열이 0건인지, 표시명이 앵커인지 직접 읽는다.
+    const provObserved = await page.evaluate(() => {
+      const out = [];
+      for (const node of document.querySelectorAll('[data-testid="genius-provenance"]')) {
+        const bubble = node.parentElement;
+        const anchor = node.querySelector('[data-testid="genius-provenance-link"]');
+        out.push({
+          text: (node.innerText || "").replace(/\s+/g, " ").trim(),
+          href: anchor?.getAttribute("href") ?? null,
+          anchorText: anchor?.textContent?.trim() ?? null,
+          bubbleText: (bubble?.innerText || "").replace(/\s+/g, " ").trim(),
+        });
+      }
+      return { rows: out, pageText: (document.body.innerText || "").replace(/\s+/g, " ") };
+    });
+
+    for (const c of PROVENANCE_CASES) {
+      const hit = provObserved.rows.find(
+        (r) => r.anchorText === `📄 출처: ${c.expectLabel}` && r.href === c.expectHref,
+      );
+      ok(
+        `[${c.label}] 출처가 '${c.expectLabel}' 표시명 + 하이퍼링크로 렌더`,
+        !!hit,
+        hit ? `href=${hit.href}` : JSON.stringify(provObserved.rows),
+      );
+    }
+
+    // 금칙 — 하나라도 화면에 보이면 RED. 이게 이 핫픽스의 본체다.
+    for (const [name, pattern] of [
+      ["crawled", /crawled/i],
+      ["rev 접두", /\brev\s+\S/],
+      ["기준일", /\d{4}-\d{2}-\d{2} 기준/],
+      ["전체 URL 평문", /https:\/\/namu\.wiki\//],
+    ]) {
+      ok(
+        `화면 텍스트에 '${name}' 노출 0건`,
+        !pattern.test(provObserved.pageText),
+        provObserved.pageText.match(pattern)?.[0] ?? "",
+      );
+    }
 
     await ctx.close();
 

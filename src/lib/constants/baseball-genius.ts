@@ -1,4 +1,5 @@
 import type { MatchPath } from "@/lib/baseball-qa/pipeline";
+import { resolveAllowedSource } from "@/lib/baseball-qa/genius-reply-provenance";
 
 /** 야잘알봇 시스템 계정. 배포 전 동일 UUID의 auth/profiles 계정을 프로비저닝한다. */
 export const BASEBALL_GENIUS_USER_ID = "45ae7419-6a9a-4c6b-9101-8d65df7e242e";
@@ -141,6 +142,14 @@ export interface GeniusReplyPayload {
   picker_options?: GeniusPickerOption[];
   /** picker가 가리키는 원 질문. 답변 도착 순서와 무관하게 exact 질문을 재처리한다. */
   question_message_id?: number;
+  /**
+   * 근거 문서 링크. 본문에는 `📄 출처: 나무위키` 표시명만 있고, 클라는 이 URL 로
+   * 그 문구에 앵커를 씨운다 (하린아빠 2026-08-05: "링크도 전문을 노출시키지 말고
+   * '출처: 나무위키'로만 표시하고 하이퍼링크를 다는 방식으로").
+   * 내부 메타(revision·crawledAt·asOf)는 여기 실지 않는다 — 유저가 볼 이유가 없고
+   * `crawled` 같은 단어는 수집 사실을 화면에 적는 것이라 위험하다.
+   */
+  source_url?: string;
 }
 
 /** picker 선택지 상한 — 서버·클라이 공유하는 계약. */
@@ -186,7 +195,7 @@ function isPickerOption(p: unknown): p is GeniusPickerOption {
  */
 export function isGeniusReplyPayload(p: unknown): p is GeniusReplyPayload {
   if (!p || typeof p !== "object") return false;
-  const obj = p as { type?: unknown; reply_kind?: unknown; match_path?: unknown; picker_options?: unknown; question_message_id?: unknown };
+  const obj = p as { type?: unknown; reply_kind?: unknown; match_path?: unknown; picker_options?: unknown; question_message_id?: unknown; source_url?: unknown };
   if (obj.type !== "baseball_genius_reply" || typeof obj.match_path !== "string") return false;
   if (
     obj.reply_kind !== "answer" && obj.reply_kind !== "ack" &&
@@ -203,5 +212,10 @@ export function isGeniusReplyPayload(p: unknown): p is GeniusReplyPayload {
   if (obj.reply_kind === "picker" && obj.picker_options === undefined) return false;
   if (obj.reply_kind === "picker" &&
       (!Number.isSafeInteger(obj.question_message_id) || Number(obj.question_message_id) < 1)) return false;
+  // 입력이 외부에서 오므로 **allowlist hostname 을 실제 URL 파서로 대조**한다 (삼순 P0-2).
+  // `https://` 접두 문자열 검사는 `https://namu.wiki@evil.com/` 같은 형태에 뚫리고,
+  // 임의 외부 주소가 그대로 출처 링크가 되면서 `KBO 공식 자료` 라벨까지 달릴 수 있다.
+  if (obj.source_url !== undefined &&
+      (typeof obj.source_url !== "string" || resolveAllowedSource(obj.source_url) === null)) return false;
   return true;
 }

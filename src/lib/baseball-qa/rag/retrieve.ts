@@ -13,6 +13,7 @@
  */
 
 import { canGroundNumericClaim, type SourceGrade } from "./contracts";
+import { displayProvenanceOf } from "../genius-reply-provenance";
 
 /**
  * 이번 슬라이스의 retrieval 모드 — **vector-only**다 (S2b thin-slice waiver, 삼순 R1 P1 #6).
@@ -447,12 +448,22 @@ export function validateRagResponse(
   return { kind: "grounded", answer };
 }
 
-/** 서빙 답변에 붙는 출처 표기 — 모델 출력이 아니라 신뢰 가능한 provenance에서 조립한다. */
+/**
+ * 출처 표시 규칙은 `../genius-reply-provenance` 가 SSOT 다.
+ * 상세·목록·미리보기가 같은 규칙을 써야 해서 클라도 import 하는 순수 모듈로 뺐다.
+ */
+
+/**
+ * 답변 본문에 붙는 출처 표기.
+ *
+ * payload 를 못 읽는 경로(구버전 클라·알림 미리보기·CS 조회)에서도 출처가 사라지면 안 되므로
+ * **표시명만** 본문에 남긴다. 링크는 payload 로 가고 클라가 이 문자열에 앵커를 씌운다.
+ * 내부 메타(revision·crawledAt·asOf·전체 URL·sectionPath)는 여기 절대 넣지 않는다.
+ */
 export function formatProvenance(evidence: RagEvidence): string {
-  const section = evidence.sectionPath && evidence.sectionPath !== "본문" && evidence.sectionPath !== evidence.pageTitle
-    ? ` · ${evidence.sectionPath}`
-    : "";
-  return `\n\n📄 출처: ${evidence.pageTitle}${section} (${evidence.canonicalUrl}) · rev ${evidence.revision} · ${evidence.asOf} 기준`;
+  const provenance = displayProvenanceOf(evidence);
+  // allowlist 밖 canonical 은 출처를 지어내지 않는다 — 표기 자체를 붙이지 않는다(삼순 P0-1).
+  return provenance ? `\n\n📄 출처: ${provenance.label}` : "";
 }
 
 /** 모델 답변 + 출처 표기를 합친 최종 서빙 문자열. */
