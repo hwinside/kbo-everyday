@@ -994,8 +994,18 @@ async function verifyScopedClaimOnRealDb(): Promise<void> {
   // wikipedia 확장본을 namu 전용으로 되돌렸는데, 이 스모크는 반대 순서로 적용해 통과했다).
   // 그래서 디렉터리를 실제로 읽어 사전순 그대로 적용한다.
   const migrationDir = path.join(process.cwd(), "supabase/migrations");
+  // ⚠️ 파일**명**으로만 골라내면 안 된다 (2026-08-05 자체 적발 false-green).
+  //   신규 RPC migration 을 `..._baseball_genius_player_chunk_search.sql` 로 두었더니
+  //   이름에 `rag` 가 없다는 이유로 적용 대상에서 통째로 빠졌고, 그 결과
+  //   "RPC 에서 ORDER BY 제거" mutation 이 GREEN 으로 통과했다(검출력 0).
+  //   따라서 **내용으로** 판별한다 — RAG 계약 테이블/함수를 건드리면 이름과 무관하게 적용한다.
+  //   판별 기준은 **하나로 통일**한다 — 밖에서 고르는 규칙과 안에서 검사하는 규칙이 다르면
+  //   그 틈으로 또 빠진다. RAG 스키마/함수를 실제로 건드리는 파일만 적용 대상이다.
+  const RAG_CONTRACT_SQL =
+    /genius_rag_sources|genius_rag_chunks|genius_rag_serving_chunks|claim_baseball_genius_rag|search_baseball_genius_player_chunks/;
   const allRag = readdirSync(migrationDir)
-    .filter((f) => f.endsWith(".sql") && /baseball_genius_rag/.test(f))
+    .filter((f) => f.endsWith(".sql"))
+    .filter((f) => RAG_CONTRACT_SQL.test(readFileSync(path.join(migrationDir, f), "utf8")))
     .sort(); // 기본 사전순 = 배포 적용 순서
 
   // PGlite 는 dm_messages 등 앱 전역 테이블을 갖고 있지 않다. RAG 계열 중에도
@@ -1006,7 +1016,7 @@ async function verifyScopedClaimOnRealDb(): Promise<void> {
   const ragMigrations: string[] = [];
   for (const f of allRag) {
     const sql = readFileSync(path.join(migrationDir, f), "utf8");
-    const touchesRagContract = /genius_rag_sources|genius_rag_chunks|claim_baseball_genius_rag/.test(sql);
+    const touchesRagContract = RAG_CONTRACT_SQL.test(sql);
     if (touchesRagContract) {
       ragMigrations.push(f);
       continue;
