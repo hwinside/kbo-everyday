@@ -82,10 +82,14 @@ function check(text) {
 
     // ⚠️ run 만 보면 continue-on-error·if 로 무력화할 수 있다(삼순 NO-GO 6차):
     // continue-on-error: true 면 budget exit20 이 무시되고, if: false 면 step 이 통째로 skip 된다.
+    // continue-on-error 는 allowlist 여야 한다(삼순 NO-GO 7차): blocklist 로 true/"true" 만
+    // 막으면 `${{ true }}`·`${{ fromJSON(...) }}` 같은 expression-true 를 놓친다.
+    // undefined 또는 boolean/문자열 false 만 허용하고, 그 외 모든 값은 실패-삼킴 위험으로 본다.
     const coe = baselineStep["continue-on-error"];
-    if (coe === true || coe === "true")
-      fails.push(`baseline step 에 continue-on-error: true — budget 실패(exit20)가 무시된다`);
-    else pass.push("baseline step continue-on-error 없음/false");
+    if (coe === undefined || coe === false || `${coe}`.trim() === "false")
+      pass.push("baseline step continue-on-error 없음/false");
+    else
+      fails.push(`baseline step continue-on-error=${JSON.stringify(coe)} — undefined/false 외는 실패를 삼킬 위험(expression-true 포함)`);
 
     const cond = baselineStep["if"];
     // if 는 없거나(항상 실행) 명시적으로 항상 참인 표현만 허용한다. 그 외는 skip 위험으로 본다.
@@ -93,6 +97,14 @@ function check(text) {
       || `${cond}`.trim() === "true" || `${cond}`.trim() === "${{ always() }}" || `${cond}`.trim() === "always()";
     if (alwaysTrue) pass.push("baseline step if 없음/항상 true");
     else fails.push(`baseline step 에 if: ${JSON.stringify(cond)} — 조건에 따라 skip 될 수 있다(예: if:false 는 통째 skip)`);
+
+    // shell 은 없거나(기본) canonical 이름만 허용한다. custom template(`|| true`·`{0}`)은
+    // run exact 를 유지한 채 실패를 삼킬 수 있다(삼순 NO-GO 7차).
+    const CANONICAL_SHELLS = new Set(["bash", "sh", "pwsh", "powershell", "python", "cmd"]);
+    const shell = baselineStep["shell"];
+    if (shell === undefined) pass.push("baseline step shell 없음(기본)");
+    else if (CANONICAL_SHELLS.has(`${shell}`.trim())) pass.push(`baseline step shell canonical: ${shell}`);
+    else fails.push(`baseline step shell=${JSON.stringify(shell)} — custom shell template(|| true·{0} 등)은 실패를 삼킬 수 있다`);
   }
 
   return { fails, pass };
@@ -134,6 +146,10 @@ if (process.argv.includes("--selftest")) {
       injectStepKey(t, "Run _rsc prefetch budget gate (fail-closed)", "continue-on-error: true")],
     ["E. baseline step 에 if: false", (t) =>
       injectStepKey(t, "Run _rsc prefetch budget gate (fail-closed)", "if: false")],
+    ["F. baseline step 에 continue-on-error: ${{ true }} (expression-true)", (t) =>
+      injectStepKey(t, "Run _rsc prefetch budget gate (fail-closed)", "continue-on-error: ${{ true }}")],
+    ["G. baseline step 에 custom shell `bash {0} || true`", (t) =>
+      injectStepKey(t, "Run _rsc prefetch budget gate (fail-closed)", "shell: bash {0} || true")],
     ["B3. baseline step 에 `|| true` 접미사(includes 검사면 놓친다)", (t) => {
       const lines = t.split("\n");
       let inBaseline = false;
