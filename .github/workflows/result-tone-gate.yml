@@ -37,6 +37,16 @@ on:
       - "src/styles/globals.css"
       - "package.json"
       - ".github/workflows/result-tone-gate.yml"
+      - "src/components/ui/TabBar.tsx"
+      - "src/components/ui/HeaderProfileLink.tsx"
+      - "src/components/home/CommunityLatestPosts.tsx"
+      - "src/components/home/HomeClientShell.tsx"
+      - "src/components/home/MyTeamHero.tsx"
+      - "src/components/home/TodayGamesSection.tsx"
+      - "src/components/home/AllStarGameCard.tsx"
+      - "src/components/game/CompactGameCard.tsx"
+      - "src/app/(main)/layout.tsx"
+      - "scripts/qa/rsc-prefetch-budget-gate.mjs"
   push:
     branches:
       - main
@@ -62,6 +72,16 @@ on:
       - "src/styles/globals.css"
       - "package.json"
       - ".github/workflows/result-tone-gate.yml"
+      - "src/components/ui/TabBar.tsx"
+      - "src/components/ui/HeaderProfileLink.tsx"
+      - "src/components/home/CommunityLatestPosts.tsx"
+      - "src/components/home/HomeClientShell.tsx"
+      - "src/components/home/MyTeamHero.tsx"
+      - "src/components/home/TodayGamesSection.tsx"
+      - "src/components/home/AllStarGameCard.tsx"
+      - "src/components/game/CompactGameCard.tsx"
+      - "src/app/(main)/layout.tsx"
+      - "scripts/qa/rsc-prefetch-budget-gate.mjs"
 
 jobs:
   result-tone:
@@ -143,4 +163,56 @@ jobs:
           done
           # mutation 은 소스를 메모리에서만 변조해야 한다. 작업트리가 더러워졌으면
           # 변조본이 빌드로 새어들 수 있으므로 fail-close 한다.
+          git diff --exit-code
+
+      # ── _rsc prefetch 예산 (PR #1115 재작성) ─────────────────────────────
+      #
+      # 왜 이 워크플로에 얹는가: 이 게이트는 production build 를 띄우고 실제 Chromium 으로
+      # `_rsc` 요청 수를 세야 의미가 있다. Vercel prebuild 에는 Chromium 이 없어
+      # `SKIP exit 0` 으로 조용히 통과한다(위 fold 게이트와 같은 사고 축).
+      # 여기는 이미 Chromium 을 설치하는 required job 이므로 같은 job 에 결속한다.
+      #
+      # 직전 판(삼순 NO-GO)은 소스 문자열만 스캔해서, 신규 Link mutation 이
+      # `// <Link ...>` 주석 한 줄을 세는 가짜 RED 였다. 그래서 실브라우저 측정으로 바꿨다.
+      - name: Build for RSC prefetch budget gate
+        run: SKIP_PREBUILD=1 npx next build
+
+      - name: Run _rsc prefetch budget gate (fail-closed)
+        # --require-browser → chromium 미설치/launch 실패도 exit 1.
+        env:
+          RSC_GATE_PORT: "3971"
+        run: npm run qa:rsc-prefetch-budget:required
+
+      - name: Prove rsc gate catches prefetch regression (mutation RED)
+        # 소스에서 prefetch={false} 를 되돌리고 **재빌드**한 뒤 실브라우저로 측정한다.
+        # 주석이 아니라 실제 렌더 트리의 Link 가 prefetch 를 다시 켜야만 RED 가 된다.
+        run: |
+          set -e
+          mutate() {
+            python3 - "$1" "$2" <<'PYEOF'
+          import sys
+          f, mode = sys.argv[1], sys.argv[2]
+          s = open(f).read()
+          out = s.replace("<Link prefetch={false}", "<Link") if mode == "off" \
+                else s.replace("prefetch={false}", "prefetch={true}")
+          if out == s:
+              print(f"::error::mutation anchor 불일치: {f} ({mode}) — 변형이 일어나지 않았다")
+              sys.exit(2)
+          open(f, "w").write(out)
+          PYEOF
+          }
+          for spec in "src/components/ui/TabBar.tsx:off" "src/components/home/CommunityLatestPosts.tsx:off" "src/components/home/TodayGamesSection.tsx:true"; do
+            f="${spec%:*}"; mode="${spec##*:}"
+            cp "$f" /tmp/rsc-mut-backup
+            mutate "$f" "$mode"
+            SKIP_PREBUILD=1 npx next build
+            if RSC_GATE_PORT=3971 npm run qa:rsc-prefetch-budget:required; then
+              cp /tmp/rsc-mut-backup "$f"
+              echo "::error::$f ($mode) mutation 이 통과했다 — rsc 게이트가 false-green 이다"
+              exit 1
+            fi
+            cp /tmp/rsc-mut-backup "$f"
+            echo "mutation RED 확인: $f ($mode) 가 rsc 게이트에 걸린다"
+          done
+          # 변조본이 남아 빌드로 새어들면 안 된다.
           git diff --exit-code
