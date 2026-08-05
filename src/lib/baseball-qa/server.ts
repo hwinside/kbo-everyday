@@ -149,33 +149,59 @@ export interface RagSearchRuntime {
     candidate: RagPlayerCandidate,
     sourceKind: RagDocumentSourceKind,
     limit: number,
+    /**
+     * 질문 임베딩. **후보 선정 단계에서부터** 필요하다 — 무순서 절단을 금지하고
+     * DB 가 이 벡터 기준으로 정렬한 상위 N 을 돌려주게 하기 위해 시그니처에 박는다.
+     */
+    queryVector: number[],
   ) => Promise<RagEvidenceCandidate[]>;
 }
 
-const productionRagSearchRuntime: RagSearchRuntime = {
-  embed: embedQuery,
-  fetchBySourceKind: async (candidate, sourceKind, limit) => {
-    // query-guard: bounded -- caller가 폐쇄집합 source_kind마다 RAG_CANDIDATE_LIMIT(40)을 전달한다.
-    const { data, error } = await supabaseAdmin
-      .from("genius_rag_serving_chunks")
-      .select("content, page_title, canonical_url, revision, section_path, as_of, source_grade, source_kind, embedding")
-      .eq("entity_type", candidate.entityType)
-      .eq("entity_id", candidate.entityId)
-      .eq("source_kind", sourceKind)
-      .limit(limit);
-    if (error) throw error;
-    return ((data ?? []) as RagServingChunkRow[]).map((row) => ({
-      content: row.content,
-      pageTitle: row.page_title,
-      canonicalUrl: row.canonical_url,
-      revision: row.revision,
-      sectionPath: row.section_path,
-      asOf: row.as_of,
-      sourceGrade: row.source_grade === "tier1" ? ("tier1" as const) : ("tier2" as const),
-      embedding: row.embedding,
-    }));
-  },
-};
+/** 선수(tier2) 후보 정렬 RPC 이름 — 게이트가 이 상수로 production 배선을 결속한다. */
+export const RAG_PLAYER_CHUNK_SEARCH_RPC = "search_baseball_genius_player_chunks" as const;
+
+/**
+ * production RAG 후보 검색 런타임 팩토리.
+ *
+ * client 를 인자로 받는 이유는 테스트 전용 경로를 만들기 위해서가 아니라,
+ * **게이트가 배포되는 바로 그 함수를 실행**해 "무순서 절단으로 퇴화했는지"를 행동으로
+ * 판정할 수 있게 하기 위해서다. 소스 정규식 검사는 dead decoy 호출로 뚫린다.
+ */
+export function createProductionRagSearchRuntime(
+  client: Pick<typeof supabaseAdmin, "rpc">,
+): RagSearchRuntime {
+  return {
+    embed: embedQuery,
+    fetchBySourceKind: async (candidate, sourceKind, limit, queryVector) => {
+      // ⚠️ 여기서 **정렬 없이** `.from(...).limit(40)` 을 쓰면 안 된다 (2026-08-05 production 사고).
+      //   문보경 나무위키 chunk 는 133건인데 무순서 40건만 받아오면 '문보물' 이 든 chunk_index 51 이
+      //   후보에조차 못 들어와, 앱에서 코사인을 아무리 정확히 계산해도 복구할 수 없다.
+      //   그래서 **DB(pgvector)가 질문 벡터 기준으로 정렬한 상위 N** 만 받는다.
+      //   최종 근거 4건 선택과 소스 우선순위는 종전대로 앱이 하므로 embedding 도 함께 받는다.
+      // query-guard: bounded -- RPC 가 1..50 으로 clamp 하는 정렬 조회이며 caller 는 RAG_CANDIDATE_LIMIT(40) 을 준다.
+      const { data, error } = await client.rpc(RAG_PLAYER_CHUNK_SEARCH_RPC, {
+        p_entity_type: candidate.entityType,
+        p_entity_id: candidate.entityId,
+        p_source_kind: sourceKind,
+        p_query_embedding: JSON.stringify(queryVector),
+        p_limit: limit,
+      });
+      if (error) throw error;
+      return ((data ?? []) as RagServingChunkRow[]).map((row) => ({
+        content: row.content,
+        pageTitle: row.page_title,
+        canonicalUrl: row.canonical_url,
+        revision: row.revision,
+        sectionPath: row.section_path,
+        asOf: row.as_of,
+        sourceGrade: row.source_grade === "tier1" ? ("tier1" as const) : ("tier2" as const),
+        embedding: row.embedding,
+      }));
+    },
+  };
+}
+
+const productionRagSearchRuntime: RagSearchRuntime = createProductionRagSearchRuntime(supabaseAdmin);
 
 export async function searchRag(
   candidate: RagPlayerCandidate,
@@ -186,8 +212,10 @@ export async function searchRag(
   if (!embedded.ok) return [];
   // query-guard: bounded -- entity + source_kind 폐쇄집합 각각 최대 40행. entity 전체를
   // 먼저 limit(40)하면 Namu 41건 뒤의 Wikipedia가 DB에서 소실된다.
+  // 각 source_kind 안에서도 **질문 벡터 기준 상위 40건**이어야 한다(무순서 40건 금지).
   return searchSourcePriorityCandidates(
-    (sourceKind) => runtime.fetchBySourceKind(candidate, sourceKind, RAG_CANDIDATE_LIMIT),
+    (sourceKind) =>
+      runtime.fetchBySourceKind(candidate, sourceKind, RAG_CANDIDATE_LIMIT, embedded.vector),
     embedded.vector,
     orderTier2Evidence,
   );

@@ -92,18 +92,24 @@ export const RAG_CANDIDATE_LIMIT = 40;
  * entity 전체에 무순서 limit(40)을 걸면 Namu 41건 뒤의 Wikipedia 1건이 DB에서 이미
  * 사라져, 이후 source priority 정렬로는 복구할 수 없다. 실제 서버가 이 seam을 사용하고
  * PGlite 회귀도 같은 seam에 source_kind별 SELECT를 주입한다.
+ *
+ * ⚠️ source_kind 로 나누는 것만으로는 부족하다(2026-08-05 production 사고).
+ * 한 소스 안에서도 chunk 가 상한보다 많으면(문보경 나무위키 133건) **무순서 절단**이
+ * 정답 chunk 를 후보에서 통째로 날려버린다. 그래서 `fetchBySourceKind` 구현체는
+ * **질문 벡터 기준 상위 N**을 돌려줘야 하며, 그래서 queryVector 를 함께 넘긴다.
  */
 export async function searchSourcePriorityCandidates(
   fetchBySourceKind: (
     sourceKind: RagDocumentSourceKind,
     limit: number,
+    queryVector: number[],
   ) => Promise<RagEvidenceCandidate[]>,
   queryVector: number[],
   orderBeforeLimit: (rows: RagEvidence[]) => RagEvidence[],
 ): Promise<RagEvidence[]> {
   const [wikipediaRows, namuRows] = await Promise.all([
-    fetchBySourceKind("wikipedia_document", RAG_CANDIDATE_LIMIT),
-    fetchBySourceKind("namu_document", RAG_CANDIDATE_LIMIT),
+    fetchBySourceKind("wikipedia_document", RAG_CANDIDATE_LIMIT, queryVector),
+    fetchBySourceKind("namu_document", RAG_CANDIDATE_LIMIT, queryVector),
   ]);
   return rankEvidenceByQuery([...wikipediaRows, ...namuRows], queryVector, orderBeforeLimit);
 }

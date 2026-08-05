@@ -154,14 +154,21 @@ export async function fetchWikipediaDocument(
 }
 
 /**
- * 두 tier2 소스 충돌 계약 (하린아빠 지시: "위키피디아를 기본으로 하되" 나무위키는 보조).
+ * 두 tier2 소스 충돌 계약 (2026-08-05 하린아빠 지시로 **나무위키 우선으로 전환**).
  *
- * - 두 소스 모두 tier2이므로 **어느 쪽도 수치를 확정하지 못한다**(§12 수치 계약은 그대로).
- * - 서술이 충돌하면 **위키피디아를 우선**한다(편집 검증 절차가 있는 기본 소스).
- * - 나무위키는 위키피디아에 **없는 정보**(별명·팬덤 서술)를 보충할 때만 근거가 된다.
+ * 왜 뒤집었나 — production 실측:
+ *   `문보경 별명이 뭐야?` 에 ko.wikipedia 문보경 문서는 본문 1문장("LG 트윈스의 내야수")뿐이라
+ *   별명·팬덤 서술을 아예 담고 있지 않다. 반면 나무위키에는 문보물·문보검·새보경·문누오가 있다.
+ *   별명/애칭/여담 같은 **팬덤 서술 축에서는 나무위키가 사실상 정본**이고, 위키피디아를 앞세우면
+ *   내용이 빈 근거가 프롬프트 첫머리를 차지한다.
+ *
+ * 안 바뀌는 것:
+ * - 두 소스 모두 tier2이므로 **어느 쪽도 수치를 확정하지 못한다**(§12 수치 계약 그대로).
+ *   기록/숫자의 정본은 여전히 우리 DB(`kbo_structured`)이며 이 순서 변경과 무관하다.
+ * - 위키피디아는 나무위키에 없는 정보를 보충할 때 근거가 된다(제거하지 않는다).
  * - 어느 쪽이 근거였는지는 provenance(canonicalUrl)로 항상 구분된다 — 출처 표기가 소스별로 다르다.
  */
-export const TIER2_SOURCE_PRIORITY = ["wikipedia", "namu"] as const;
+export const TIER2_SOURCE_PRIORITY = ["namu", "wikipedia"] as const;
 export type Tier2Source = (typeof TIER2_SOURCE_PRIORITY)[number];
 
 export function tier2SourceOf(canonicalUrl: string): Tier2Source | null {
@@ -171,8 +178,8 @@ export function tier2SourceOf(canonicalUrl: string): Tier2Source | null {
 }
 
 /**
- * 같은 entity에 대한 tier2 근거 정렬 — 위키피디아가 앞선다.
- * 충돌 시 프롬프트에서 먼저 읽히는 쪽이 기본 서술이 되고, 나무위키는 보충으로 뒤에 붙는다.
+ * 같은 entity에 대한 tier2 근거 정렬 — 나무위키가 앞선다.
+ * 충돌 시 프롬프트에서 먼저 읽히는 쪽이 기본 서술이 되고, 위키피디아는 보충으로 뒤에 붙는다.
  * 정렬은 **안정 정렬**이라 같은 소스 안에서는 유사도 순서가 보존된다.
  */
 export function orderTier2Evidence<T extends { canonicalUrl: string }>(rows: T[]): T[] {
