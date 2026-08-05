@@ -270,6 +270,87 @@ async function run(): Promise<void> {
     ok("미서빙 수치 환각 — 근거 밖 숫자는 답변 거절 후 안내");
   }
 
+  // ── ④-b 교차 chunk 조합 금지 — 단일 근거가 직접 진술한 사실만 (삼순 2026-08-05) ──
+  //
+  // ⚠️ 왜 필요한가: 숫자 대조가 근거 4건을 `join("\n")` 으로 **한 덩어리로 합쳐** 보면,
+  //   서로 다른 chunk 의 숫자를 이어붙인 새 주장이 "근거에 있음"으로 통과한다.
+  //     A: "1994년 태평양 돌핀스를 꺾고 우승했다"
+  //     B: "통산 한국시리즈 우승 횟수는 총 8회다"
+  //     답: "1994년에 8번째 우승을 했어요"   ← 어느 근거도 이렇게 말한 적 없다
+  //   구단 corpus 는 연도·횟수 서술이 여러 문서에 흩어져 있어 이 조합 사고가 가장 잘 난다.
+  //   삼순 기준은 "단일 근거가 직접 진술한 역사 사실만 허용, 계산/추정 금지" 이므로
+  //   한 chunk 가 답의 수치 주장 **전부**를 담고 있을 때만 인정한다.
+  {
+    const YEAR_CHUNK: RagEvidence = {
+      ...LG_EVIDENCE,
+      content: "LG 트윈스는 1994년 태평양 돌핀스를 꺾고 한국시리즈에서 우승했다.",
+      sectionPath: "LG 트윈스/1994년",
+    };
+    const COUNT_CHUNK: RagEvidence = {
+      ...LG_EVIDENCE,
+      content: "LG 트윈스의 통산 한국시리즈 우승 횟수는 총 3회다.",
+      sectionPath: "LG 트윈스/우승",
+    };
+    const { deps, logs, calls } = makeDeps({
+      searchRag: async (candidate) => {
+        calls.search.push(candidate);
+        return candidate.entityType === "team" ? [YEAR_CHUNK, COUNT_CHUNK] : [];
+      },
+      callTeamRagLlm: async (question, evidence) => {
+        calls.teamLlm.push({ question, evidence });
+        return {
+          // 두 chunk 의 숫자를 이어붙인 조합 주장. 각 숫자는 근거 어딘가에 있지만
+          // **한 근거가 이렇게 진술한 적은 없다**.
+          text: JSON.stringify({
+            status: RAG_GROUNDED_SENTINEL,
+            answer: "LG 트윈스는 1994년에 통산 3회째 우승을 달성했어요.",
+          }),
+          inputTokens: 10,
+          outputTokens: 5,
+        };
+      },
+    });
+    const result = await answerQuestion("u1", "LG 우승 몇 번 했어?", deps);
+    assert.notEqual(result.source, "rag",
+      "여러 chunk 의 숫자를 조합한 주장이 rag 답변으로 나갔다(단일 근거 직접 진술 계약 위반)");
+    assert.equal(result.answer, TEAM_STAT_HOLD_ANSWER);
+    assert.equal(logs.at(-1)?.matchPath, "history_hold");
+    ok("교차 chunk 조합 — 단일 근거가 진술하지 않은 수치 주장은 거절");
+  }
+
+  // 반대편 고정 — 한 chunk 가 수치 주장 전부를 담고 있으면 그대로 통과해야 한다.
+  // 이게 없으면 위 계약을 "숫자 전면 금지"로 과하게 조여도 GREEN 이 된다.
+  {
+    const SINGLE_CHUNK: RagEvidence = {
+      ...LG_EVIDENCE,
+      content: "LG 트윈스는 1990년 창단해 그 해 한국시리즈에서 우승했다.",
+      sectionPath: "LG 트윈스/1990년",
+    };
+    const { deps, calls } = makeDeps({
+      searchRag: async (candidate) => {
+        calls.search.push(candidate);
+        return candidate.entityType === "team" ? [SINGLE_CHUNK, SAMSUNG_TITLE_EVIDENCE] : [];
+      },
+      callTeamRagLlm: async (question, evidence) => {
+        calls.teamLlm.push({ question, evidence });
+        return {
+          // 수치(`1990년`)가 **첫 chunk 하나 안에** 전부 있다.
+          text: JSON.stringify({
+            status: RAG_GROUNDED_SENTINEL,
+            answer: "LG 트윈스는 1990년에 창단한 구단이에요.",
+          }),
+          inputTokens: 10,
+          outputTokens: 5,
+        };
+      },
+    });
+    const result = await answerQuestion("u1", "LG 트윈스 역사 알려줘", deps);
+    assert.equal(result.source, "rag",
+      "한 근거가 직접 진술한 수치까지 막으면 정상 구단 서사가 통째로 폐기된다");
+    assert.match(result.answer, /1990년/);
+    ok("단일 근거 직접 진술 — 그 chunk 안의 수치는 그대로 통과(과차단 금지)");
+  }
+
   // ── ⑤ 근거 0건은 fail-close 가 아니라 양보 (#1100 P0-1 회귀 금지) ────────
   {
     const { deps, calls } = makeDeps({ searchRag: async (candidate) => { calls.search.push(candidate); return []; } });

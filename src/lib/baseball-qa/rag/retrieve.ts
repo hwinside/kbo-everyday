@@ -405,8 +405,52 @@ const QUANTITY_COUNTERS = [
  *  2. **단위 없는 숫자**(조문 번호 `5.09`, 연도 `1982`): 숫자 토큰 집합으로 대조한다.
  *     `includes` 부분문자열은 금지 — 근거의 `1982`가 모델의 `198`을 통과시킨다.
  */
-export function numericTokensGrounded(answer: string, evidence: RagEvidence[]): boolean {
-  const raw = evidence.map((row) => row.content).join("\n");
+export interface NumericGroundingOptions {
+  /**
+   * 수치 근거를 **단일 chunk 안에서만** 인정할지.
+   *
+   * ⚠️ 왜 필요한가 (삼순 2026-08-05: "단일 근거가 직접 진술한 역사 사실만 허용"):
+   * 기본 동작은 근거 4건을 `join("\n")` 으로 **한 덩어리로 합쳐** 대조한다. 그러면
+   * chunk A 의 숫자와 chunk B 의 맥락을 이어붙인 답이 통과한다 —
+   *   A: "1994년 한국시리즈에서 …"   B: "통산 우승 횟수는 총 8회"
+   *   답: "LG는 1994년에 8번째 우승을 했어요"  ← 두 숫자 다 '근거에 있음'으로 통과
+   * 이건 근거가 진술한 사실이 아니라 **모델이 조합한 새 주장**이다. 구단 역사처럼
+   * 연도·횟수가 흩어져 있는 corpus 에서 특히 위험하다.
+   *
+   * true 면 "어떤 한 chunk 가 답의 수치 주장 전부를 담고 있는가" 로 판정한다.
+   * 조합이 필요한 답은 통과하지 못하고 fail-close 된다.
+   *
+   * 기본값 false — 공식 간행물(tier1) 경로는 조문 번호와 조건이 다른 chunk 에
+   * 나뉘어 있는 게 정상이라 종전 계약을 유지한다(여기서 바꾸면 규칙 답변이 퇴행한다).
+   */
+  requireSingleSource?: boolean;
+}
+
+export function numericTokensGrounded(
+  answer: string,
+  evidence: RagEvidence[],
+  options: NumericGroundingOptions = {},
+): boolean {
+  if (options.requireSingleSource) {
+    // 수치 주장이 아예 없으면 대조할 것도 없다(빈 근거로도 통과 — 아래 본 검사와 동일).
+    if (!/\d/.test(answer) && !hasKoreanQuantityClaim(answer)) return true;
+    // 한 chunk 가 답의 수치 주장 **전부**를 담고 있어야 한다. 여러 chunk 를 이어붙여
+    // 만든 주장은 근거가 직접 진술한 것이 아니므로 인정하지 않는다.
+    return evidence.some((row) => groundedAgainst(answer, row.content));
+  }
+  return groundedAgainst(answer, evidence.map((row) => row.content).join("\n"));
+}
+
+/** 답변에 한글 수사 기반 수량 주장(`세 번`)이 있는가 — 아라비아 숫자가 없어도 수치 주장이다. */
+function hasKoreanQuantityClaim(answer: string): boolean {
+  const koreanWord = Object.keys(KOREAN_NUMERALS).join("|");
+  return new RegExp(
+    `(?<![\uac00-\ud7a3])(?:${koreanWord})\\s*(?:이|가|은|는|을|를)?\\s*(?:${QUANTITY_COUNTERS})`,
+  ).test(answer);
+}
+
+/** 답변의 수치 주장이 주어진 근거 텍스트 하나 안에 전부 존재하는가. */
+function groundedAgainst(answer: string, raw: string): boolean {
   const answerNorm = answer.replace(/,/g, "");
   const haystackForQuantity = raw.replace(/,/g, "");
 
@@ -469,6 +513,12 @@ export interface ValidateRagOptions {
   /** 숫자 대조용 근거. `numericEvidence`가 true일 때 반드시 함께 넘긴다. */
   evidence?: RagEvidence[];
   /**
+   * 수치 근거를 **단일 chunk 안에서만** 인정할지 (삼순 2026-08-05).
+   * 구단 tier2 경로가 이걸 켜서 "단일 근거가 직접 진술한 역사 사실"만 통과시킨다.
+   * 자세한 사유는 `NumericGroundingOptions.requireSingleSource` 주석 참조.
+   */
+  requireSingleSource?: boolean;
+  /**
    * 답변 길이 상한 명시 지정.
    *
    * 기본값은 `numericEvidence` 에 따라 갈리는데, 그건 공식 조문(tier1)이 길어서였지
@@ -508,7 +558,9 @@ export function validateRagResponse(
   //    모델이 지어낸 수치는 tier1 근거를 달고 나가면 더 위험하므로 기계 대조로 막는다.
   if (!options.numericEvidence) {
     if (/\d/.test(answer)) return { kind: "insufficient", reason: "numeric_claim_ungrounded" };
-  } else if (!numericTokensGrounded(answer, options.evidence ?? [])) {
+  } else if (!numericTokensGrounded(answer, options.evidence ?? [], {
+    requireSingleSource: options.requireSingleSource,
+  })) {
     return { kind: "insufficient", reason: "numeric_not_in_evidence" };
   }
   return { kind: "grounded", answer };

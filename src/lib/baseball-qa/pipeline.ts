@@ -1864,9 +1864,19 @@ async function answerTeamRagQuestion(
     numericEvidence: true,
     evidence,
     maxChars: RAG_ANSWER_MAX_CHARS,
+    // ⚠️ 수치 근거는 **단일 chunk 안에서만** 인정한다 (삼순 2026-08-05:
+    //   "단일 근거가 직접 진술한 역사 사실만 허용, 계산/추정 금지").
+    //
+    //   기본 대조는 근거 4건을 한 덩어리로 합쳐 보므로, chunk A 의 연도와 chunk B 의
+    //   횟수를 이어붙인 새 주장이 "근거에 있음"으로 통과한다:
+    //     A "1994년 한국시리즈…" + B "통산 우승 8회" → "1994년에 8번째 우승"
+    //   구단 corpus 는 연도·횟수가 흩어져 있어 이 조합 사고가 가장 잘 난다.
+    //   그래서 구단 경로만 한 chunk 완결성을 요구한다. 공식 간행물(tier1)은 조문과
+    //   조건이 여러 chunk 에 나뉘는 게 정상이라 그대로 둔다.
+    requireSingleSource: true,
   });
   if (validated.kind !== "grounded") {
-    // 근거로 답을 못 만들었다(근거 밖 숫자 포함). LLM 호출을 이미 썬으므로 재호출 없이 종결한다.
+    // 근거로 답을 못 만들었다(근거 밖 숫자 포함 또는 여러 chunk 조합). 재호출 없이 종결한다.
     // 수치 질문이었으면 "순위표에서 보세요" 안내가 정확한 다음 행동이다.
     const answer = numericQuestion ? TEAM_STAT_HOLD_ANSWER : BLOCKED_ANSWER;
     const matchPath: MatchPath = numericQuestion ? "history_hold" : "unsure";
