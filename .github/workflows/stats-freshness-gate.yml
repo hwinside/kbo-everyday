@@ -1,0 +1,86 @@
+name: Stats Freshness Gate
+
+# 스탯 스냅샷 **신선도** 게이트 — live KBO 원본과 전 행·전 필드 strict equality.
+#
+# ── 계약 ──────────────────────────────────────────────────────
+# 대조 자체는 종전과 **완전히 동일**하다. 값 오염 1건, 행 누락·잉여 1건이면 RED다.
+# "KBO가 앞서면 통과" 같은 완화는 하지 않는다 — 그러면 row-set 변동·오염을 숨긴다.
+#
+# 바뀐 건 두 가지뿐이다.
+#
+#   ① 언제 도는가
+#      스탯 스냅샷(그리고 검증기가 읽는 파생 입력)이 바뀌는 PR 에서만 돈다.
+#      종전에는 모든 PR·main push 에서 돌아, 경기 진행으로 KBO 원본이 앞서가면
+#      스탯을 건드리지도 않은 PR 이 전부 RED 였다(8/4 12:46Z 이후 실측).
+#      코드 계약 검증은 stats-contract-gate.yml 이 모든 PR 에서 계속 담당한다.
+#
+#   ② 원본이 흔들릴 때 어떻게 분류하는가
+#      KBO 는 같은 순간에도 조회마다 다른 행 집합을 준다. 8/4 전다민(54214)은
+#      좌익수/중견수 2행 중 매 조회 하나만 내려와 824 ↔ 825 로 흔들렸다.
+#      그래서 원격 체크는 SUCCESS 인데 같은 커밋을 재조회하면 FAIL 이었다(temporal green).
+#      이제 **연속 2회 동일 판독**을 요구한다. 재현되지 않으면 데이터 판정 대신
+#      `stats_source_unstable` 로 분류한다 — 셋 다 exit 1 이지만 원인이 구분된다.
+#
+# ⚠️ 불안정도 exit 1 이다. 통과로 흘려보내면 그게 곧 우리가 잡아낸 temporal green 을
+# 게이트가 스스로 만들어내는 꼴이 된다.
+#
+# ⚠️ 여기 `paths` 는 성능 최적화가 아니라 **정확성 계약**이고, 양방향이다.
+#
+#   (a) 검증기가 읽는 **산출물**이 하나라도 빠지면, 그 파일만 바뀐 데이터 PR 이
+#       게이트를 SKIP 하고 required check 는 초록으로 보인다.
+#
+#   (b) 반대로 **코드 경로를 넣으면 안 된다.** 커밋된 스냅샷은 마지막 크롤 시점의
+#       기록이고 live KBO 는 경기가 끝날 때마다 앞서간다. 그래서 데이터를 하나도
+#       건드리지 않은 코드 PR 에서 이 게이트를 돌리면 `games 52→53` 같은 **정상
+#       진행분**이 전부 불일치로 잡혀 무조건 RED 다. 통과할 수 없는 검사를 돌리는 셈이고,
+#       그게 바로 이 PR 이 없애려던 증상이다(범위만 좁아질 뿐 같은 문제).
+#
+#       실측: 이 분할 PR 자신이 `src/lib/constants/` 변경 0 인데도 코드 경로 때문에
+#       게이트가 돌아 투수 20건 불일치로 RED 났다(조동욱·김민·김재윤·이승현 등,
+#       전부 경기 진행에 따른 정상 전진). main 스냅샷 05:55Z vs 실행 16:0xZ.
+#
+#       대조 로직을 약화시키는 코드 변경은 stats-contract-gate 의 mutation RED 증명이
+#       **모든 PR 에서 결정론적으로** 잡는다. 그래서 여기서 코드 경로를 빼도 커버리지
+#       손실이 없다. 검증력은 contract 게이트가, 신선도는 이 게이트가 맡는다.
+#
+# 두 방향 모두 `qa:stats-gate-trigger` 가 고정한다(누락도 RED, 코드 경로 추가도 RED).
+
+on:
+  pull_request:
+    paths:
+      # 검증기(scripts/qa/stats-source-truth-verify.mjs)가 읽는 **산출물만**.
+      # 코드 경로를 추가하지 말 것 — 위 (b) 참조. trigger 스모크가 RED 로 막는다.
+      - "src/lib/constants/stats-*-batters.json"
+      - "src/lib/constants/stats-*-pitchers.json"
+      - "src/lib/constants/stats-*-defense.json"
+      - "src/lib/constants/player-defense-runs.json"
+      - "src/lib/constants/players-roster.json"
+      - "src/lib/constants/foreign-id-map.ts"
+  # 크롤 직후 자동 PR 과 수동 확인용.
+  workflow_dispatch:
+
+jobs:
+  stats-freshness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Install Playwright Chromium
+        run: npx playwright install chromium --with-deps
+
+      - name: Verify snapshot against KBO source of truth (stability-confirmed)
+        # 검증기를 fresh process 로 연속 실행해 판독이 재현될 때만 판정한다.
+        #   - 연속 2회 PASS      → GREEN
+        #   - 연속 2회 동일 FAIL → stats_freshness_mismatch (진짜 불일치)
+        #   - 판독 흔들림        → stats_source_unstable (보류)
+        #   - 수집 불가          → stats_source_unreachable (검증 불가)
+        run: npm run qa:stats-freshness
