@@ -49,7 +49,9 @@ import { BASEBALL_GENIUS_MAX_ANSWER_LENGTH } from "../../src/lib/constants/baseb
  * 못 잡고(66% 기준이면 최대 10건 유실이 GREEN), 무엇보다 **억지 alias 로 숫자를 올리는**
  * 방향을 막지 못한다. 대신 fixture 전수를 expect/exclude 로 고정한다(아래 FixtureItem).
  */
-const MIN_TERM_COUNT = 280;
+// 132(기존 시드) + 60(1차 신규, 전원 근거 보유) = 192.
+// 이 숫자가 285 에서 줄어든 이유는 삼순 5차 권고에 따라 근거 없는 항목을 2차로 뺐기 때문이다.
+const MIN_TERM_COUNT = 192;
 
 const MUTATION = process.env.GLOSSARY_GATE_MUTATION ?? "";
 
@@ -267,17 +269,24 @@ async function loadGlossaryFromMigrations(): Promise<GlossaryEntry[]> {
   }
   if (MUTATION === "factual-claim") {
     // 삼순 P0 재현: 사전 답변에 검증 필요한 사실 주장을 되돌린다.
-    // (실제로 나갔던 문장 그대로. 박재홍 2000년은 32홈런·30도루라 두 군데가 틀렸다)
-    expansionSql += `\nUPDATE public.baseball_terms SET answer = '한 시즌에 홈런 40개와 도루 40개를 함께 기록한 걸 말해요.\nKBO에서는 2000년 박재홍 선수 단 한 명뿐인 대기록이에요.' WHERE term = '40-40 클럽';\n`;
+    //
+    // ⚠️ 원래 `40-40 클럽`("2000년 박재홍 단 한 명" — 실제로는 32홈런·30도루)에 심었는데,
+    // 그 term 이 2차로 이월되면서 UPDATE 가 **아무 행도 잡지 못해 GREEN 이 됐다**.
+    // 결함주입은 반드시 **1차에 실재하는 term** 을 때려야 검증력이 있다.
+    // 그래서 1차 잔존 term 에 같은 성격의 주장을 심는다.
+    expansionSql += `\nUPDATE public.baseball_terms SET answer = '1루로 뛰는 주자가 정해진 주로를 벗어나 수비를 방해하면 아웃되는 규정이에요.\nKBO에서는 2015년 단 한 명만 이 규정으로 아웃됐어요.' WHERE term = '쓰리피트';\n`;
   }
   if (MUTATION === "junk-alias") {
     // 빈 문자열 alias 와 한 글자 alias 를 되돌린다.
     expansionSql += `\nUPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['','a']::text[])) WHERE term = '보살';\n`;
   }
   if (MUTATION === "opposite-alias") {
-    // 삼순 3차 재현: 반대 개념을 alias 로 되돌린다.
-    // `우투가 뭐야` 에 좌완 설명이 나가면 유저는 왼손/오른손을 거꾸로 배운다.
-    expansionSql += `\nUPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['우완','우투','오른손투수']::text[])) WHERE term = '좌완';\n`;
+    // 삼순 3차 재현: 서로 다른 개념을 alias 로 되돌린다.
+    //
+    // ⚠️ 원래 `좌완 ← 우완` 으로 심었는데 `좌완` 이 2차 이월되면서 UPDATE 가 아무 행도
+    // 잡지 못해 GREEN 이 됐다(factual-claim 과 같은 함정). 1차 잔존 쌍으로 옮긴다.
+    // `6-4-3`(유격수→2루수→1루수)과 `4-6-3`(2루수→유격수→1루수)은 정반대 순서다.
+    expansionSql += `\nUPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['4-6-3','463']::text[])) WHERE term = '6-4-3 병살';\n`;
   }
   if (MUTATION === "seed-wrong-alias") {
     // 기존 시드에 있던 오답 alias 제거를 되돌린다(비자책은 자책점의 반대 개념).
@@ -545,46 +554,45 @@ check("숫자가 다른 표기를 같은 용어로 묶지 않는다", () => {
  */
 const ANCHORS: [question: string, expectedTerm: string][] = [
   ["적시타가 뭐야", "적시타"],
-  ["적시타", "적시타"],
-  ["타수가 뭐야?", "타수"],
-  ["투런포가 뭐야?", "투런"],
-  ["삼자범퇴가 뭐야?", "삼자범퇴"],
-  ["주루사", "주루사"],
-  ["추격조", "추격조"],
-  ["유격수가 뭐애", "유격수"],
-  ["BABIP", "BABIP"],
-  ["바빕", "BABIP"],
-  ["wOBA가 뭐야?", "wOBA"],
-  ["K/9", "K/9"],
-  ["ISO가 뭐야?", "ISO"],
-  ["Qs+은?", "QS+"],
-  ["볼펜", "불펜"],
-  ["퍼팩트게임", "퍼펙트게임"],
-  ["삼진아웃이 뭐야", "삼진"],
   ["보쿠가 뭐야", "보크"],
-  ["잔루만루", "잔루만루"],
-  ["초구딱", "초구"],
-  ["할푼리 가 뭐에요", "할푼리"],
-  ["게임차가 뭐야", "게임차"],
-  ["1선발이 뭐야", "1선발"],
-  ["필승조", "필승조"],
-  ["영구결번이 뭐야", "영구결번"],
-  ["가을야구", "가을야구"],
-  ["빠던", "빠던"],
-  ["호수비뜻", "호수비"],
-  ["본헤드 플레이가 뭐야", "본헤드 플레이"],
-  ["고의낙구가 뭐야", "고의낙구"],
-  ["페어볼이 뭐야", "페어"],
-  ["제구가 뭐야", "제구"],
-  ["루킹삼진이 머야", "루킹삼진"],
-  ["보살이 뭐야", "보살"],
-  ["수비수 번호", "포지션 번호"],
-  ["643 병살", "6-4-3 병살"],
+  ["Babip", "BABIP"],
+  ["볼넷이머야", "볼넷"],
+  ["볼펜", "불펜"],
+  ["삼진아웃이 뭐야?", "삼진"],
+  ["외야수", "외야수"],
+  ["위닝이 뭐야?", "위닝시리즈"],
+  ["자동고의사구", "자동고의4구"],
+  ["타수가 뭐야?", "타수"],
+  ["투수", "투수"],
+  ["홈런이 모야?", "홈런"],
+  ["희비", "희생플라이"],
+  ["1/3이닝은?", "1/3이닝"],
+  ["1루", "베이스"],
+  ["1루타", "1루타"],
+  ["2b", "2루타"],
+  ["2루수가 뭐야?", "2루수"],
   ["463병살은뭐야", "4-6-3 병살"],
-  ["무사 만루가 뭐야", "무사 만루"],
-  ["홈스틸이 뭐야", "홈스틸"],
-  ["옵트아웃이 뭐야?", "옵트아웃"],
-  ["프랜차이즈 선수가 뭐야", "프랜차이즈 스타"],
+  ["4사구가 모야", "4사구"],
+  ["543플레이", "5-4-3 병살"],
+  ["6-4-3이뭐야", "6-4-3 병살"],
+  ["CP", "마무리투수"],
+  ["Dh는 뭐의", "지명타자"],
+  ["FIP가 뭐야", "FIP"],
+  ["Fc가 뭐야?", "야수선택"],
+  ["Hp", "몸에 맞는 공"],
+  ["ISO가 뭐야?", "ISO"],
+  ["K/9", "K/9"],
+  ["OPS 뜻", "OPS"],
+  ["QS+", "QS+"],
+  ["RF", "우익수"],
+  ["WOBA가 뭐야?", "wOBA"],
+  ["War에대해 쉽게 설명해줘", "WAR"],
+  ["era+", "ERA+"],
+  ["ph", "대타"],
+  ["게임 차", "게임차"],
+  ["고의낙구", "고의낙구"],
+  ["낫아웃아 뭐야", "낫아웃"],
+  ["내야수가 뭐야?", "내야수"],
 ];
 
 check("대표 표본이 올바른 용어로 매칭된다", () => {
@@ -653,7 +661,11 @@ const seedAnswers = new Map<string, string>(
  */
 const expansionData = JSON.parse(
   readFileSync(path.join(repoRoot, "data/baseball-qa/glossary-expansion-2026-08.json"), "utf8"),
-) as { answer_corrections?: { term: string; reason: string; answer: string }[] };
+) as {
+  answer_corrections?: { term: string; reason: string; answer: string }[];
+  new_terms?: { term: string; evidence_url?: string; evidence_note?: string }[];
+  deferred_to_phase2?: { term: string; defer_reason?: string }[];
+};
 const answerCorrections = new Map(
   (expansionData.answer_corrections ?? []).map((c) => [c.term, c]),
 );
@@ -832,11 +844,22 @@ const SEMANTIC_CONTRACTS: { term: string; mustInclude: RegExp; why: string }[] =
   },
 ];
 
+const deferredTerms = new Set(
+  ((expansionData.deferred_to_phase2 ?? []) as { term: string }[]).map((d) => d.term),
+);
+
 check("지적받은 항목의 핵심 조건이 답변에 남아 있다", () => {
   const broken: string[] = [];
   for (const contract of SEMANTIC_CONTRACTS) {
     const row = raw.find((r) => r.term === contract.term);
-    if (!row) { broken.push(`${contract.term}: 사전에 없음`); continue; }
+    if (!row) {
+      // 2차로 이월했으면 사전에 없는 게 정상이다(답을 안 하는 쪽이 안전).
+      // 다만 "선언 없이 사라진" 경우는 잡아야 한다.
+      if (!deferredTerms.has(contract.term)) {
+        broken.push(`${contract.term}: 사전에도 없고 2차 이월 선언도 없음`);
+      }
+      continue;
+    }
     if (!contract.mustInclude.test(row.answer)) {
       broken.push(`${contract.term}: 핵심 조건 누락 — ${contract.why}`);
     }
@@ -863,14 +886,99 @@ check("분리한 개념이 다시 같은 용어로 합쳐지지 않는다", () =
   for (const [a, b] of MUST_STAY_SEPARATE) {
     const rowA = raw.find((r) => r.term === a);
     const rowB = raw.find((r) => r.term === b);
-    if (!rowA || !rowB) { merged.push(`${a}/${b}: 한쪽이 사전에 없음`); continue; }
-    // 서로를 자기 alias 로 갖고 있으면 안 된다(정규화 키 기준으로 비교).
+
+    // 둘 다 없으면 아무 답도 안 나가므로 안전하다(2차 이월).
+    if (!rowA && !rowB) continue;
+
+    // ⚠️ 진짜 위험은 **한쪽만 남은** 경우다. 남은 쪽이 사라진 쪽의 표기를 alias 로
+    // 갖고 있으면, 그 질문에 엉뚱한 개념 설명이 나간다. 그것만 정확히 막는다.
+    // (한쪽만 남았다는 사실 자체는 결함이 아니다 — 답을 안 하는 건 안전한 선택이다)
+    const present = rowA ?? rowB!;
+    const missing = rowA ? b : a;
+    if (!rowA || !rowB) {
+      const keys = new Set([present.term, ...present.aliases].map(normalizeKey));
+      if (keys.has(normalizeKey(missing))) {
+        merged.push(`${present.term} 가 사라진 '${missing}' 를 alias 로 가짐 — 다른 개념 답이 나간다`);
+      }
+      continue;
+    }
+
+    // 둘 다 있으면 서로를 alias 로 가지면 안 된다.
     const keysA = new Set([rowA.term, ...rowA.aliases].map(normalizeKey));
     const keysB = new Set([rowB.term, ...rowB.aliases].map(normalizeKey));
     if (keysA.has(normalizeKey(b))) merged.push(`${a} 가 '${b}' 를 alias 로 가짐`);
     if (keysB.has(normalizeKey(a))) merged.push(`${b} 가 '${a}' 를 alias 로 가짐`);
   }
   assert.deepEqual(merged, [], merged.join("\n"));
+});
+
+/**
+ * 근거 의무화 (삼순 2026-08-05 5차 권고 A안).
+ *
+ * NO-GO 5회가 전부 `editorial_definition` 항목의 의미 오류였다. 게이트는 구조만 검사하지
+ * "이 정의가 사실인가" 는 못 잡으므로, 오류를 하나씩 고치는 방식으로는 끝나지 않는다.
+ *
+ * 그래서 계약을 바꾼다: **1차에 넣는 모든 신규 term 은 근거 URL 과 검증 문구를 갖는다.**
+ * 근거를 못 쓴다는 건 내가 확신하지 못한다는 뜻이므로, 그런 항목은 `deferred_to_phase2` 로
+ * 빼고 2차에서 근거를 붙여 다시 검토한다. 커버리지가 줄어도 틀린 답보다 낫다.
+ */
+check("신규 term 은 전원 근거 URL 과 검증 문구를 갖는다", () => {
+  const terms = (expansionData.new_terms ?? []) as {
+    term: string; evidence_url?: string; evidence_note?: string;
+  }[];
+  assert.ok(terms.length > 0, "신규 term 이 있어야 함");
+  const bad: string[] = [];
+  for (const t of terms) {
+    if (!t.evidence_url) { bad.push(`${t.term}: 근거 URL 없음`); continue; }
+    if (!/^https:\/\//.test(t.evidence_url)) bad.push(`${t.term}: https 근거가 아님 (${t.evidence_url})`);
+    if (!t.evidence_note || t.evidence_note.length < 8) bad.push(`${t.term}: 검증 문구가 비었거나 너무 짧음`);
+  }
+  assert.deepEqual(
+    bad,
+    [],
+    `근거를 못 쓰면 1차에 넣지 않는다 — deferred_to_phase2 로 옮겨라:\n${bad.join("\n")}`,
+  );
+});
+
+check("2차 이월 목록과 1차 신규 목록이 겹치지 않는다", () => {
+  const first = new Set(((expansionData.new_terms ?? []) as { term: string }[]).map((t) => t.term));
+  const deferred = ((expansionData.deferred_to_phase2 ?? []) as { term: string; defer_reason?: string }[]);
+  const overlap = deferred.filter((d) => first.has(d.term)).map((d) => d.term);
+  assert.deepEqual(overlap, [], `같은 term 이 1차·2차에 동시에 있으면 안 된다: ${overlap.join(", ")}`);
+  const noReason = deferred.filter((d) => !d.defer_reason).map((d) => d.term);
+  assert.deepEqual(noReason, [], `이월 사유가 없는 항목: ${noReason.join(", ")}`);
+});
+
+check("2차 이월 term 은 실제로 사전에 적재되지 않았다", () => {
+  // 선언만 하고 migration 에는 남아 있으면 축소가 무의미해진다.
+  const deferred = ((expansionData.deferred_to_phase2 ?? []) as { term: string }[]).map((d) => d.term);
+  const seeded = new Set(seedAnswers.keys());
+  const leaked = deferred.filter((t) => !seeded.has(t) && raw.some((r) => r.term === t));
+  assert.deepEqual(leaked, [], `2차 이월인데 사전에 들어갔다: ${leaked.join(", ")}`);
+});
+
+/**
+ * 결함주입이 실제로 대상을 때리는지 확인한다.
+ *
+ * 2026-08-06 실측: 1차 범위를 축소하자 `40-40 클럽`·`좌완` 이 2차로 빠졌는데,
+ * 그 term 을 때리던 mutation 두 개가 **아무 행도 UPDATE 하지 못해 GREEN** 이 됐다.
+ * "mutation RED 20종" 이라는 보고가 그 순간 거짓이 되는 것이다.
+ *
+ * 그래서 mutation 이 노리는 term 이 1차 사전에 실재하는지 여기서 검사한다.
+ * 사전이 또 바뀌어 대상이 사라지면 이 검사가 먼저 RED 를 낸다.
+ */
+const MUTATION_TARGETS = [
+  "쓰리피트", "6-4-3 병살", "보살", "적시타", "인사이드더파크홈런",
+  "병살타", "병살", "포크볼", "스플리터", "자책점",
+];
+
+check("결함주입 대상 term 이 사전에 실재한다", () => {
+  const missing = MUTATION_TARGETS.filter((t) => !raw.some((r) => r.term === t));
+  assert.deepEqual(
+    missing,
+    [],
+    `이 term 이 없으면 해당 mutation 은 아무것도 안 바꾸고 GREEN 이 된다(검증력 0):\n${missing.join(", ")}`,
+  );
 });
 
 check("답변에 외부 링크·마크업이 섞이지 않는다", () => {
