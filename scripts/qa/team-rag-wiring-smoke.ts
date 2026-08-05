@@ -38,7 +38,11 @@ import {
 } from "../../src/lib/baseball-qa/pipeline";
 import { loadRosterPlayers } from "../../src/lib/baseball-qa/roster/load-roster-players";
 import {
+  RAG_EVIDENCE_MAX_CHARS,
   RAG_GROUNDED_SENTINEL,
+  sanitizeEvidenceContent,
+  selectEvidence,
+  stripNamuDocumentChrome,
   type RagEntityCandidate,
   type RagEvidence,
 } from "../../src/lib/baseball-qa/rag/retrieve";
@@ -397,6 +401,107 @@ async function run(): Promise<void> {
     await answerQuestion("u1", "보크가 뭐야?", deps);
     assert.equal(calls.search.filter((c) => c.entityType === "team").length, 0);
     ok("룰 질문 — 구단 근거 조회 0회");
+  }
+
+  // ── ⑧ 근거 위생 — 나무위키 광고·문서 크롬이 근거로 나가면 안 된다 ──────────
+  //
+  // ⚠️ production 실측 (2026-08-05): `genius_rag_serving_chunks` 의 team chunk 71,531건 중
+  //   광고 358 · 네비게이션 2,449건이 **본문에 섞여** 적재돼 있다(player 도 광고 170·네비 1,346).
+  //   배선만 열고 이걸 두면 두 가지가 깨진다:
+  //     ① 봇이 왁싱·대출 광고를 "근거"로 삼아 답한다
+  //     ② 근거 상한(600자)을 쓰레기가 먹어 정작 시즌 내용이 잘린다
+  //        (실측: 886자 chunk → sanitize 후 600자가 전부 크롬+광고였다)
+  //
+  //   fixture 는 **production 원문 그대로**다(LG 트윈스/1997년 chunk 25). 손으로 지어낸
+  //   문자열을 쓰면 실제 오염 형태가 바뀌었을 때 게이트가 조용히 GREEN 이 된다.
+  {
+    const REAL_AD_CHUNK = [
+      "LG 트윈스/1997년",
+      "최근 수정 시각: 2026-06-19 06:56:38",
+      "편집", "토론", "역사",
+      "분류LG 트윈스/1997년LG 트윈스/시즌한국프로야구/1997년",
+      "더 보기",
+      "",
+      "1:1 프라이빗 탐나다왁싱",
+      "",
+      "www.tamnadawaxing.com",
+      "",
+      "첫 브라질리언 50% 할인 / 개인 샤워실 완비 / 원장 직접 시술 / 무료주차",
+      "",
+      "산후도우미 신청하기",
+      "",
+      "onfit.n.wooyupost.com",
+      "",
+      "산후도우미 신청 방법 졍부지원 복지로 보건소 안내드립니다",
+      "  상위 문서: LG 트윈스",
+      "",
+      "LG 트윈스 1997 시즌 성적",
+      "순위", "승", "무", "패", "승률",
+      "2 / 8", "73", "2", "51", "0.587",
+      "1. 개요",
+      "LG 트윈스의 1997 시즌을 정리한 문서.",
+      "이광환 감독의 경질로 공석이 된 감독 자리에 천보성 코치가 정식 감독으로 승격했다.",
+    ].join("\n");
+
+    const cleaned = sanitizeEvidenceContent(REAL_AD_CHUNK);
+
+    // (a) 광고가 근거에서 사라져야 한다.
+    for (const junk of ["왁싱", "브라질리언", "산후도우미", "무료주차", "tamnadawaxing", "wooyupost"]) {
+      assert.ok(!cleaned.includes(junk), `광고 문구가 근거로 살아남았다: ${junk}`);
+    }
+    // (b) 문서 크롬도 마찬가지다.
+    for (const chrome of ["최근 수정 시각", "더 보기", "상위 문서"]) {
+      assert.ok(!cleaned.includes(chrome), `문서 크롬이 근거로 살아남았다: ${chrome}`);
+    }
+    // (c) **정작 지켜야 할 야구 본문은 남아야 한다** — 과삭제 금지.
+    //     이 반대편 고정이 없으면 "전부 지우기"로도 (a)(b)가 GREEN 이 된다.
+    for (const keep of ["1997 시즌", "천보성", "0.587", "73"]) {
+      assert.ok(cleaned.includes(keep), `야구 본문이 과삭제됐다: ${keep}`);
+    }
+    ok("근거 위생 — 실 production 광고/크롬 제거 + 야구 본문 보존");
+  }
+
+  // 스탯 표 숫자를 도메인으로 오인하면 안 된다 (자체 적발한 치명 결함).
+  // `3.90`·`0.270`·`2026.08.05` 가 도메인으로 잡히면 **앞뒤 줄까지 함께 지워져**
+  // 지키려던 기록이 통째로 날아간다. 광고를 지우려다 본문을 지우는 게 더 나쁜 결과다.
+  {
+    const statLines = ["순위", "3.90", "0.270", "2026.08.05", "1.7", ".270", "73", "0.587"];
+    assert.deepEqual(stripNamuDocumentChrome(statLines), statLines,
+      "숫자 줄을 도메인으로 오인해 스탯 표를 파괴했다");
+    // 반대로 진짜 도메인은 제거되고, 광고 슬롯의 제목·설명(앞뒤 1줄)도 함께 사라진다.
+    assert.deepEqual(
+      stripNamuDocumentChrome(["LG 트윈스 1997 시즌 성적", "명품시계대출", "blog.naver.com/nicewatch_kr", "당일대출 가능", "천보성 감독"]),
+      ["LG 트윈스 1997 시즌 성적", "천보성 감독"],
+      "광고 슬롯(제목/도메인/설명)이 통째로 제거돼야 한다",
+    );
+    ok("도메인 판정 — 스탯 숫자 보존 + 광고 슬롯 3줄 제거");
+  }
+
+  // 위생 뒤 남는 게 없는 chunk 는 근거에서 탈락해야 한다(빈 근거로 답하지 않는다).
+  {
+    const adOnly: RagEvidence = {
+      ...LG_EVIDENCE,
+      content: ["1:1 프라이빗 탐나다왁싱", "www.tamnadawaxing.com", "첫 브라질리언 50% 할인"].join("\n"),
+    };
+    assert.deepEqual(selectEvidence([adOnly]), [], "광고뿐인 chunk 가 근거로 선택됐다");
+    // 정상 근거는 그대로 선택된다.
+    assert.equal(selectEvidence([LG_EVIDENCE]).length, 1);
+    ok("광고 전용 chunk — 근거 탈락 (빈 근거 서빙 금지)");
+  }
+
+  // 근거 상한을 쓰레기가 먹어치우지 않는지 — 위생 전후 '야구 본문' 확보량 비교.
+  {
+    const padded = [
+      "최근 수정 시각: 2026-06-19 06:56:38", "편집", "토론", "역사", "더 보기",
+      "명품시계대출용산전당포", "blog.naver.com/nicewatch_kr", "쉽고 빠른 당일대출 가능해요",
+      "용산PC방 쿠팡", "m.coupang.com", "고사양 용산PC방 렉 없이 부드러운 게임",
+      "LG 트윈스는 1990년 MBC 청룡을 인수해 창단했으며 창단 첫 해 한국시리즈에서 우승했다.",
+    ].join("\n");
+    const cleaned = sanitizeEvidenceContent(padded);
+    assert.ok(cleaned.includes("1990년"), "상한을 광고가 먹어 본문이 잘렸다");
+    assert.ok(cleaned.length <= RAG_EVIDENCE_MAX_CHARS);
+    assert.ok(!/대출|쿠팡|PC방/.test(cleaned), "광고 잔존");
+    ok("근거 상한 — 광고 제거로 본문 확보");
   }
 
   console.log(`\n✅ team RAG wiring contract: ${passed} PASS (후보해석 / 근거조회 / 정본우선 / 환각차단 / 양보 / 플래그 / 판정기)`);

@@ -211,6 +211,69 @@ const EVIDENCE_INSTRUCTION_PATTERNS = [
   /https?:\/\/|www\./i,
 ];
 
+/**
+ * 나무위키 문서 머리에 붙는 **UI 크롬** — 근거가 아니다.
+ * 폐쇄집합이라 발산하지 않는다(문서 본문에는 이런 단독 줄이 나오지 않는다).
+ */
+const NAMU_CHROME_LINE_PATTERNS: RegExp[] = [
+  /^최근\s*수정\s*시각\s*:/,
+  /^(?:편집|토론|역사|더\s*보기|펼치기|접기|목차)$/,
+  /^\[\s*펼치기\s*[·・]\s*접기\s*\]$/,
+  /^분류[^\s]/,           // `분류LG 트윈스/1997년LG 트윈스/시즘…`
+  /^상위\s*문서\s*:/,
+  /^[←→]$/,
+];
+
+/**
+ * **도메인만 있는 줄** — 나무위키 광고 슬롯의 앵커다.
+ *
+ * 기존 `EVIDENCE_INSTRUCTION_PATTERNS` 의 `https?:\/\/|www\.` 는 `www.` 로 시작하는
+ * 줄만 잡아서 `onfit.n.wooyupost.com`·`m.coupang.com`·`blog.naver.com/xxx` 가 그대로 살았다.
+ *
+ * ⚠️ **마지막 세그먼트가 알파벳 TLD** 여야 한다(자체 적발한 치명적 결함).
+ *   처음엔 `[\w가-힣-]+(\.[\w가-힣-]+)+` 로 둘다가 `3.90`(방어율)·`0.270`(타율)·
+ *   `2026.08.05`(날짜)·`1.7` 을 전부 도메인으로 잡았다. 이 함수는 매치된 줄 앞뒤를
+ *   함께 지우므로, 스태트 표(`순위 / 승 / 패 / 3.90`)에서 **지키려던 기록이 통째로
+ *   날아간다**. 광고를 지우려다 본문을 지우는 게 훨씬 나쁜 결과다.
+ *   그래서 TLD 를 영문 2~24자로 강제한다 — 숫자로 끝나는 줄은 절대 매치되지 않는다.
+ */
+const BARE_DOMAIN_LINE =
+  /^(?:https?:\/\/)?[\w가-힣-]+(?:\.[\w가-힣-]+)*\.[a-z]{2,24}(?:\/\S*)?$/i;
+
+/**
+ * 나무위키 본문에 섞인 **광고 슬롯**과 문서 크롬을 제거한다.
+ *
+ * ⚠️ 왜 필요한가 (2026-08-05 production 실측):
+ * `genius_rag_serving_chunks` 의 team chunk 71,531건 중 광고 358·네비 2,449건,
+ * player 17,117건 중 광고 170·네비 1,346건이 본문으로 들어있다. 예:
+ *   `1:1 프라이빗 탐나다왕싱 / www.tamnadawaxing.com / 첫 브라질리언 50% 할인…`
+ * 이걸 안 거르면 두 가지가 깨진다:
+ *   ① 봇이 왕싱 광고를 "근거"로 삼아 답변할 수 있다
+ *   ② `RAG_EVIDENCE_MAX_CHARS`(600자) 상한을 쓰레기가 먹어 **정작 시즘 내용이 잘린다**
+ *     (실측: 886자 chunk → sanitize 후 600자가 전부 크롬+광고였다)
+ *
+ * 제거 규칙은 **구조**로 잡는다 — 광고 어휘(왕싱·대출·분양…)를 열거하면 끝없이 늘고
+ * 빠진 광고가 조용히 통과한다. 나무위키 광고 슬롯은 예외없이
+ *   `[광고제목] / [도메인] / [광고설명]`
+ * 3줄 묶음이므로, **도메인 줄을 앵커로 잡아 앞뒤 1줄씩** 제거한다.
+ * 제거 범위를 ±1 로 묶어 정상 본문 과삭제를 제한한다.
+ */
+export function stripNamuDocumentChrome(lines: string[]): string[] {
+  const drop = new Set<number>();
+  lines.forEach((line, index) => {
+    if (NAMU_CHROME_LINE_PATTERNS.some((pattern) => pattern.test(line))) {
+      drop.add(index);
+      return;
+    }
+    if (!BARE_DOMAIN_LINE.test(line)) return;
+    // 광고 슬롯: 제목 / 도메인 / 설명
+    drop.add(index);
+    if (index > 0) drop.add(index - 1);
+    if (index + 1 < lines.length) drop.add(index + 1);
+  });
+  return lines.filter((_, index) => !drop.has(index));
+}
+
 export function sanitizeEvidenceContent(raw: string): string {
   const withoutFences = raw
     // 제어문자 제거 — 줄 단위 필터를 우회하는 숨은 개행/이스케이프를 막는다.
@@ -219,10 +282,14 @@ export function sanitizeEvidenceContent(raw: string): string {
     .replace(/```/g, " ")
     .replace(/[<>]/g, " ")
     .replace(/\[\/?(?:INST|SYS|자료|참고자료)\]/gi, " ");
-  const kept = withoutFences
+  const rawLines = withoutFences
     .split(/\n+/)
     .map((line) => line.trim())
-    .filter((line) => line.length > 0)
+    .filter((line) => line.length > 0);
+  // ⚠️ 순서가 중요하다 — 크롬/광고 제거를 **먼저** 한다.
+  //   기존 지시문 필터가 `www.` 줄을 이미 지워버리면 광고 슬롯의 앵커가 사라져
+  //   제목·설명 두 줄이 그대로 살아남는다(실측된 오염 경로).
+  const kept = stripNamuDocumentChrome(rawLines)
     .filter((line) => !EVIDENCE_INSTRUCTION_PATTERNS.some((pattern) => pattern.test(line)));
   return kept.join("\n").replace(/[ \t]+/g, " ").trim().slice(0, RAG_EVIDENCE_MAX_CHARS);
 }
