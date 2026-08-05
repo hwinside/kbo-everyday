@@ -95,7 +95,6 @@ async function main() {
 
   const {
     RELAY_EDGE_TTL_SECONDS,
-    LIVE_LIST_EDGE_TTL_SECONDS,
     edgeCacheHeaders,
     liveCacheHeaders,
     NO_STORE_HEADERS,
