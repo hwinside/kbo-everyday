@@ -98,12 +98,24 @@ function localBuildId() {
 }
 
 function startServer() {
-  const child = spawn("npx", ["next", "start", "-p", String(PORT)], {
-    cwd: ROOT, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env },
+  // ⚠️ `npx next start` 로 띄우면 npx 가 중간 프로세스로 남아, SIGTERM 이 실제 next-server
+  // 에 닿지 않는다. CI 에서 baseline 종료 후 포트가 계속 잡혀 있어 mutation 이
+  // `HARNESS-FAIL 포트 사용 중`(exit 30)으로 죽었다(run 31004480842·31005020789 실측).
+  // → ①바이너리를 직접 실행해 중간 프로세스를 없애고 ②detached 로 프로세스 그룹을 만들어
+  //   종료 시 그룹 전체(-pid)에 신호를 보낸다.
+  const bin = path.join(ROOT, "node_modules/.bin/next");
+  const child = spawn(bin, ["start", "-p", String(PORT)], {
+    cwd: ROOT, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env }, detached: true,
   });
   child.__exited = false;
   child.on("exit", () => { child.__exited = true; });
   return child;
+}
+
+/** 프로세스 그룹 전체에 신호. detached 로 띄웠으므로 -pid 가 그룹이다. */
+function signalTree(child, sig) {
+  try { process.kill(-child.pid, sig); return; } catch { /* 그룹이 없으면 단일 */ }
+  try { child.kill(sig); } catch { /* 이미 죽음 */ }
 }
 
 async function waitReady(child, timeoutMs = 60000) {
@@ -226,14 +238,14 @@ async function runOnce() {
 
 /** SIGTERM → 포트 해제 대기 → 안 죽으면 SIGKILL. 최대 15초. */
 async function shutdownServer(child) {
-  try { child.kill("SIGTERM"); } catch { /* 이미 죽음 */ }
+  signalTree(child, "SIGTERM");
   const deadline = Date.now() + 15000;
   let killed = false;
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 300));
     if (!(await portBusy())) return;
     if (!killed && Date.now() > deadline - 10000) {
-      try { child.kill("SIGKILL"); } catch { /* noop */ }
+      signalTree(child, "SIGKILL");
       killed = true;
     }
   }
