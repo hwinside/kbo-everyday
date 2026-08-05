@@ -47,6 +47,11 @@ import type {
 } from "@/lib/contextual-stats/types";
 import type { KboRawGame } from "@/types/api";
 import { fetchKboLiveGames } from "@/lib/notifications/kbo-live-games";
+import {
+  LIVE_LIST_EDGE_TTL_SECONDS,
+  NO_STORE_HEADERS,
+  liveCacheHeaders,
+} from "@/lib/http/live-cache";
 
 export const dynamic = "force-dynamic";
 
@@ -359,7 +364,10 @@ function emptyResponse(gameId: string, context: GameContext): ContextualStatsRes
 export async function GET(req: NextRequest) {
   const gameId = req.nextUrl.searchParams.get("gameId");
   if (!gameId) {
-    return NextResponse.json({ error: "gameId required" }, { status: 400 });
+    return NextResponse.json(
+      { error: "gameId required" },
+      { status: 400, headers: NO_STORE_HEADERS },
+    );
   }
 
   const deadlineAtMs = Date.now() + CONTEXTUAL_DEADLINE_MS;
@@ -380,6 +388,7 @@ export async function GET(req: NextRequest) {
         pitcherName: null,
         batterIsPinch: false,
       }),
+      { headers: NO_STORE_HEADERS },
     );
   }
 
@@ -417,6 +426,7 @@ export async function GET(req: NextRequest) {
         pitcherName: null,
         batterIsPinch: false,
       }),
+      { headers: NO_STORE_HEADERS },
     );
   }
 
@@ -512,5 +522,10 @@ export async function GET(req: NextRequest) {
     fetchedAt: new Date().toISOString(),
     empty,
   };
-  return NextResponse.json(response);
+  // 완전히 채워진 응답만 엣지에 올린다. empty 응답(상대 매핑 실패·라이브 미조회)은
+  // 열화 상태이므로 캐시하면 TTL 동안 빈 박스가 고정된다 — 위 emptyResponse 반환들과
+  // 동일하게 no-store 로 둠(fail-close).
+  return NextResponse.json(response, {
+    headers: liveCacheHeaders(!empty, LIVE_LIST_EDGE_TTL_SECONDS),
+  });
 }

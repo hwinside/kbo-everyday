@@ -6,6 +6,10 @@ import { resolveGameLiveDate } from "@/lib/game-live-date";
 import { isKboGameCancelled } from "@/lib/crawler/kbo-status";
 import { fetchKboLiveGames } from "@/lib/notifications/kbo-live-games";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import {
+  LIVE_LIST_EDGE_TTL_SECONDS,
+  liveCacheHeaders,
+} from "@/lib/http/live-cache";
 
 const GAME_LIVE_DEADLINE_MS = 5_000;
 const SLATE_WITNESS_BUDGET_MS = 250;
@@ -178,11 +182,23 @@ async function fetchSlateWitnesses(
   }
 }
 
-function traceHeaders(trace: GameLiveTrace): Record<string, string> {
+/**
+ * trace 헤더 + 캐시 헤더를 함께 만드는 단일 지점.
+ *
+ * 캐시 헤더를 이 함수 안에 넣는 이유: 이 route 는 fail-close 분기가 여러 개(503)라
+ * 반환 지점마다 헤더를 따로 붙이면 한 곳만 빼먹어도 열화 응답이 엣지에 고정된다.
+ * 모든 반환이 이 함수를 거치므로 cacheable 기본값을 false 로 두면 실수로 빼먹었을 때
+ * 캐시 안 함(안전 방향)으로 기울어진다(fail-close).
+ */
+function traceHeaders(
+  trace: GameLiveTrace,
+  cacheable = false,
+): Record<string, string> {
   return {
     "X-Game-Live-Source": trace.source,
     "X-Game-Live-Stage": trace.stage,
     "X-Game-Live-Deadline": String(trace.deadlineAtMs),
+    ...liveCacheHeaders(cacheable, LIVE_LIST_EDGE_TTL_SECONDS),
   };
 }
 
@@ -312,9 +328,11 @@ export async function gameLiveRoute(
       };
     });
 
+    // 정상 경로만 엣지 캐시 대상이다. 위 503 fail-close 분기들은 cacheable 기본값(false)
+    // 으로 no-store 를 받아 다음 폴링이 즉시 재시도한다.
     return NextResponse.json(
       { games, date, trace },
-      { headers: traceHeaders(trace) },
+      { headers: traceHeaders(trace, true) },
     );
   } catch (e: unknown) {
     const trace: GameLiveTrace = {

@@ -3,7 +3,17 @@ import { trackFallback } from "@/lib/monitoring/api-fallback-tracker";
 import { isAllStarGameId } from "@/lib/constants/teams";
 import { parseNaverPitch, type PitchDetail } from "@/lib/game/pitch-provider";
 import { toDeltaResponse } from "@/lib/game/relay-delta";
+import {
+  NO_STORE_HEADERS,
+  RELAY_EDGE_TTL_SECONDS,
+  edgeCacheHeaders,
+  liveCacheHeaders,
+} from "@/lib/http/live-cache";
 
+// 라우트 자체는 항상 동적으로 실행한다(빌드타임 정적화 금지). 응답별 엣지 캐시는
+// force-dynamic 과 무관하게 Cache-Control 헤더로 결정된다 — 같은 패턴을 쓰는
+// /api/game-relay-events 가 Production 에서 커스텀 no-store 를 그대로 내보내고
+// 있는 것으로 실측 확인했다.
 // Vercel 서버리스에서 캐시 방지 (라이브 데이터는 항상 최신이어야 함)
 export const dynamic = "force-dynamic";
 
@@ -913,7 +923,7 @@ export async function GET(req: NextRequest) {
   if (!gameId) {
     return NextResponse.json(
       { error: "gameId is required" },
-      { status: 400 }
+      { status: 400, headers: NO_STORE_HEADERS },
     );
   }
 
@@ -935,7 +945,12 @@ export async function GET(req: NextRequest) {
     // warm cache HIT 에서도 since delta 를 적용한다(삼순 blocker ①). 캐시는 항상 full 을
     // 저장하므로 fresh 경로와 동일한 toDeltaResponse 로 partial 응답을 파생시켜
     // cache-hit 이 지난 이닝을 재전송하는 origin transfer 낙비를 막는다.
-    return NextResponse.json(toDeltaResponse(cached, sinceInning));
+    //
+    // 엣지 캐시 가능: setCachedResponse 는 !anyInningDegraded 일 때만 저장하므로
+    // cache HIT 응답은 정의상 완전 정상 응답이다.
+    return NextResponse.json(toDeltaResponse(cached, sinceInning), {
+      headers: edgeCacheHeaders(RELAY_EDGE_TTL_SECONDS),
+    });
   }
 
   try {
@@ -962,7 +977,7 @@ export async function GET(req: NextRequest) {
       // being wiped to an empty 200 (which blanks the UI and stalls celebrations).
       return NextResponse.json(
         { error: "relay_upstream_http_error" },
-        { status: 503 },
+        { status: 503, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -1061,7 +1076,7 @@ export async function GET(req: NextRequest) {
       });
       return NextResponse.json(
         { error: "relay_upstream_unrecoverable" },
-        { status: 503 },
+        { status: 503, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -1157,7 +1172,13 @@ export async function GET(req: NextRequest) {
     // linescore/currentInning은 그대로(라이브) 유지 → 실시간 손실 0.
     // safety: 직전 이닝도 포함(since - 1)해 방금 끝난 이닝의 지연 play 반영.
     // cache-hit 경로와 동일한 toDeltaResponse 로 delta 의미를 일치시킨다(since<=0 면 full).
-    return NextResponse.json(toDeltaResponse(response, sinceInning));
+    //
+    // 엣지 캐시는 route 내부 캐시와 **정확히 같은 조건**으로 건다. degraded 응답을
+    // 엣지에 올리면 TTL 동안 열화 응답이 고정되어 다음 폴링의 자가복구를 막는다
+    // (부분 실패 시 last-good 을 내보내되 캐시에는 올리지 않는 계약).
+    return NextResponse.json(toDeltaResponse(response, sinceInning), {
+      headers: liveCacheHeaders(!anyInningDegraded, RELAY_EDGE_TTL_SECONDS),
+    });
   } catch (e) {
     const error = e as Error;
     let reason: "timeout" | "http-error" | "schema-error" | "network-error" = "network-error";
@@ -1179,7 +1200,7 @@ export async function GET(req: NextRequest) {
     // trigger source; non-2xx keeps the last good data and retries next poll.
     return NextResponse.json(
       { error: `relay_upstream_${reason}` },
-      { status: 503 },
+      { status: 503, headers: NO_STORE_HEADERS },
     );
   }
 }
