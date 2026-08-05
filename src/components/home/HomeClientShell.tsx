@@ -661,7 +661,7 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
         </div>
         <div className="flex items-center gap-1">
           {user ? (
-            <Link href="/messages" aria-label="쪽지" className="relative flex h-11 w-11 items-center justify-center rounded-full text-text-secondary hover:bg-bg-tertiary transition-colors">
+            <Link prefetch={false} href="/messages" aria-label="쪽지" className="relative flex h-11 w-11 items-center justify-center rounded-full text-text-secondary hover:bg-bg-tertiary transition-colors">
               <MessageCircle size={22} />
               {unreadDMCount > 0 && (
                 <span className="absolute top-1 right-1 min-w-[16px] h-4 px-1 rounded-full bg-red-500 flex items-center justify-center text-[10px] font-bold text-white leading-none">
@@ -679,7 +679,7 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
               </span>
             </button>
           )}
-          <Link href="/my" aria-label="마이페이지" className="flex h-11 w-11 items-center justify-center rounded-full hover:bg-bg-tertiary transition-colors">
+          <Link prefetch={false} href="/my" aria-label="마이페이지" className="flex h-11 w-11 items-center justify-center rounded-full hover:bg-bg-tertiary transition-colors">
             <HeaderAvatar user={user} profile={profile} />
           </Link>
         </div>
@@ -794,13 +794,13 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
 
       {/* 퀵액션 버튼 */}
       <m.div variants={item} className="flex gap-3 mb-6">
-        <Link href="/community/tickets" className="flex-1">
+        <Link prefetch={false} href="/community/tickets" className="flex-1">
           <GlassCard pressable className="flex items-center gap-3 !p-4">
             <span className="text-lg">🎫</span>
             <span className="text-[15px] leading-[22px] font-medium text-text-primary">티켓양도</span>
           </GlassCard>
         </Link>
-        <Link href="/community/stadiums" className="flex-1">
+        <Link prefetch={false} href="/community/stadiums" className="flex-1">
           <GlassCard pressable className="flex items-center gap-3 !p-4">
             <span className="text-lg">🏟️</span>
             <span className="text-[15px] leading-[22px] font-medium text-text-primary">구장가이드</span>

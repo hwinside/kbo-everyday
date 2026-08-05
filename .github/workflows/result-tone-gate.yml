@@ -37,6 +37,19 @@ on:
       - "src/styles/globals.css"
       - "package.json"
       - ".github/workflows/result-tone-gate.yml"
+      - "src/components/ui/TabBar.tsx"
+      - "src/components/ui/HeaderProfileLink.tsx"
+      - "src/components/home/CommunityLatestPosts.tsx"
+      - "src/components/home/HomeClientShell.tsx"
+      - "src/components/home/MyTeamHero.tsx"
+      - "src/components/home/TodayGamesSection.tsx"
+      - "src/components/home/AllStarGameCard.tsx"
+      - "src/components/game/CompactGameCard.tsx"
+      - "src/app/(main)/layout.tsx"
+      - "scripts/qa/rsc-prefetch-budget-gate.mjs"
+      - "src/app/(main)/page.tsx"
+      - "src/components/home/**"
+      - "scripts/qa/rsc-gate-trigger-contract.mjs"
   push:
     branches:
       - main
@@ -62,6 +75,19 @@ on:
       - "src/styles/globals.css"
       - "package.json"
       - ".github/workflows/result-tone-gate.yml"
+      - "src/components/ui/TabBar.tsx"
+      - "src/components/ui/HeaderProfileLink.tsx"
+      - "src/components/home/CommunityLatestPosts.tsx"
+      - "src/components/home/HomeClientShell.tsx"
+      - "src/components/home/MyTeamHero.tsx"
+      - "src/components/home/TodayGamesSection.tsx"
+      - "src/components/home/AllStarGameCard.tsx"
+      - "src/components/game/CompactGameCard.tsx"
+      - "src/app/(main)/layout.tsx"
+      - "scripts/qa/rsc-prefetch-budget-gate.mjs"
+      - "src/app/(main)/page.tsx"
+      - "src/components/home/**"
+      - "scripts/qa/rsc-gate-trigger-contract.mjs"
 
 jobs:
   result-tone:
@@ -143,4 +169,155 @@ jobs:
           done
           # mutation 은 소스를 메모리에서만 변조해야 한다. 작업트리가 더러워졌으면
           # 변조본이 빌드로 새어들 수 있으므로 fail-close 한다.
+          git diff --exit-code
+
+      # ── _rsc prefetch 예산 (PR #1115 재작성) ─────────────────────────────
+      #
+      # 왜 이 워크플로에 얹는가: 이 게이트는 production build 를 띄우고 실제 Chromium 으로
+      # `_rsc` 요청 수를 세야 의미가 있다. Vercel prebuild 에는 Chromium 이 없어
+      # `SKIP exit 0` 으로 조용히 통과한다(위 fold 게이트와 같은 사고 축).
+      # 여기는 이미 Chromium 을 설치하는 required job 이므로 같은 job 에 결속한다.
+      #
+      # 직전 판(삼순 NO-GO)은 소스 문자열만 스캔해서, 신규 Link mutation 이
+      # `// <Link ...>` 주석 한 줄을 세는 가짜 RED 였다. 그래서 실브라우저 측정으로 바꿨다.
+      - name: RSC gate trigger contract (paths cover home render tree)
+        # budget 게이트를 required 로 얹어도, workflow paths 가 홈 렌더 트리를 안 덮으면
+        # 신규 홈 Link PR 에서 workflow 가 안 돈다(= 게이트 우회). 이 스텝이 그걸 잠근다.
+        # env·브라우저 무의존이라 빌드 앞에 둔다.
+        run: node scripts/qa/rsc-gate-trigger-contract.mjs
+
+      - name: Prove trigger contract catches path removal (mutation RED)
+        run: |
+          set +e
+          node scripts/qa/rsc-gate-trigger-contract.mjs --selftest
+          code=$?
+          set -e
+          if [ "$code" -ne 0 ]; then
+            echo "::error::trigger contract selftest 가 실패했다(exit $code) — 검증력 결손"
+            exit 1
+          fi
+          echo "trigger contract mutation RED 3종 확인"
+
+      - name: Build for RSC prefetch budget gate
+        # ⚠️ 시크릿이 없으면 `next build` 가 라우트 page-data 수집에서 죽는다(로컬 CI 재현 실측:
+        # `Failed to collect page data for /api/admin/downloads`). 빌드가 죽으면 이 게이트는
+        # 아예 돌지 못하므로, repo secrets 를 주입해 CI 에서 실제로 빌드되게 한다.
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
+          NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
+        run: SKIP_PREBUILD=1 npx next build
+
+      - name: Run _rsc prefetch budget gate (fail-closed)
+        # --require-browser → chromium 미설치/launch 실패도 exit 1.
+        env:
+          RSC_GATE_PORT: "3971"
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
+          NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
+        # ⚠️ npm alias(`npm run qa:...`) 를 쓰지 않는다(삼순 NO-GO 2026-08-05 2차).
+        # package.json alias 를 `git diff --quiet` 같은 것으로 바꿔치면 브라우저를 한 번도
+        # 안 띄우고도 baseline 0 / dirty mutation nonzero 로 통과한다(#1085 와 같은 축).
+        # 스크립트 경로를 직접 호출해 alias 를 신뢰 경계에서 제거한다.
+        run: node scripts/qa/rsc-prefetch-budget-gate.mjs --require-browser
+
+      - name: Prove incomplete render maps to harness failure (self-protect RED)
+        # 삼순 NO-GO 4차 지적①: `navLinks<4 → exit 30` 경계가 회귀하면 잡아야 한다.
+        # RSC_GATE_FORCE_INCOMPLETE=1 로 불완전 렌더를 강제하면 게이트는 반드시 exit 30
+        # (harness 실패)을 내야 한다. 만약 누군가 이 분기를 exit 20(RED)으로 바꾸면,
+        # 불완전 렌더가 유효 mutation RED 로 오인되므로 여기서 exit 30 이 아님을 잡는다.
+        env:
+          RSC_GATE_PORT: "3971"
+          RSC_GATE_FORCE_INCOMPLETE: "1"
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
+          NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
+        run: |
+          set +e
+          out=$(node scripts/qa/rsc-prefetch-budget-gate.mjs --require-browser 2>&1)
+          code=$?
+          set -e
+          echo "$out"
+          # 아무 exit 30 이 아니라, 바로 그 navLinks<4 분기가 탔음을 전용 marker 로 확인한다
+          # (삼순 NO-GO 5차 지적②: 포트 점유 등 다른 harness 실패의 30 과 구분).
+          if [ "$code" -ne 30 ]; then
+            echo "::error::불완전 렌더가 exit 30(harness)이 아니라 exit $code 다 — navLinks<4 경계가 깨졌다"
+            exit 1
+          fi
+          if ! echo "$out" | grep -q "RSC_INCOMPLETE_RENDER"; then
+            echo "::error::exit 30 이지만 navLinks 전용 marker(RSC_INCOMPLETE_RENDER)가 없다 — 다른 harness 실패다"
+            exit 1
+          fi
+          echo "self-protect 확인: 불완전 렌더 → exit 30 + RSC_INCOMPLETE_RENDER marker, RED(20)로 오인 안 됨"
+
+      - name: Prove rsc gate catches prefetch regression (mutation RED)
+        # 소스에서 prefetch={false} 를 되돌리고 **재빌드**한 뒤 실브라우저로 측정한다.
+        # 주석이 아니라 실제 렌더 트리의 Link 가 prefetch 를 다시 켜야만 RED 가 된다.
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
+          NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
+        run: |
+          set -e
+          mutate() {
+            python3 - "$1" "$2" <<'PYEOF'
+          import sys
+          f, mode = sys.argv[1], sys.argv[2]
+          s = open(f).read()
+          out = s.replace("<Link prefetch={false}", "<Link") if mode == "off" \
+                else s.replace("prefetch={false}", "prefetch={true}")
+          if out == s:
+              print(f"::error::mutation anchor 불일치: {f} ({mode}) — 변형이 일어나지 않았다")
+              sys.exit(2)
+          open(f, "w").write(out)
+          PYEOF
+          }
+          # set -e 하에서 mutate/build/gate 어느 단계가 죽어도 변조본이 남으면 안 된다.
+          # trap 으로 무조건 원본을 되돌린다(이게 없어 실제로 트리가 오염된 적 있다).
+          CURRENT_MUT_FILE=""
+          restore_mut() {
+            if [ -n "$CURRENT_MUT_FILE" ] && [ -f /tmp/rsc-mut-backup ]; then
+              cp /tmp/rsc-mut-backup "$CURRENT_MUT_FILE"
+              echo "trap: $CURRENT_MUT_FILE 원본 복원"
+            fi
+          }
+          trap restore_mut EXIT
+          for spec in "src/components/ui/TabBar.tsx:off" "src/components/home/CommunityLatestPosts.tsx:off" "src/components/home/TodayGamesSection.tsx:true"; do
+            f="${spec%:*}"; mode="${spec##*:}"
+            cp "$f" /tmp/rsc-mut-backup
+            CURRENT_MUT_FILE="$f"
+            mutate "$f" "$mode"
+            SKIP_PREBUILD=1 npx next build
+            # exit 20(예산 초과)만 RED 로 인정한다. 0=통과, 30=harness 실패
+            # (포트 점유·서버 조기종료·buildId 불일치·Chromium 부재)는 둘 다 job 실패로 본다.
+            # "nonzero 면 RED" 로 세면 측정이 안 됐는데도 검증력이 있다고 착각한다(삼순 2차 지적).
+            # npm alias 를 쓰지 않고 스크립트를 직접 호출한다(alias 바꿔치기 decoy 차단).
+            set +e
+            RSC_GATE_PORT=3971 node scripts/qa/rsc-prefetch-budget-gate.mjs --require-browser
+            code=$?
+            set -e
+            cp /tmp/rsc-mut-backup "$f"
+            CURRENT_MUT_FILE=""
+            if [ "$code" -eq 0 ]; then
+              echo "::error::$f ($mode) mutation 이 통과했다(exit 0) — rsc 게이트가 false-green 이다"
+              exit 1
+            fi
+            if [ "$code" -ne 20 ]; then
+              echo "::error::$f ($mode) 가 harness 실패(exit $code) — 측정 자체가 안 됐다. RED 로 인정하지 않는다"
+              exit 1
+            fi
+            cp /tmp/rsc-mut-backup "$f"
+            CURRENT_MUT_FILE=""
+            echo "mutation RED 확인: $f ($mode) 가 rsc 게이트에 걸린다"
+          done
+          trap - EXIT
+          # 변조본이 남아 빌드로 새어들면 안 된다.
           git diff --exit-code

@@ -3,7 +3,17 @@ import { trackFallback } from "@/lib/monitoring/api-fallback-tracker";
 import { isAllStarGameId } from "@/lib/constants/teams";
 import { parseNaverPitch, type PitchDetail } from "@/lib/game/pitch-provider";
 import { toDeltaResponse } from "@/lib/game/relay-delta";
+import {
+  NO_STORE_HEADERS,
+  RELAY_EDGE_TTL_SECONDS,
+  edgeCacheHeadersForRemaining,
+  liveCacheHeaders,
+} from "@/lib/http/live-cache";
 
+// 라우트 자체는 항상 동적으로 실행한다(빌드타임 정적화 금지). 응답별 엣지 캐시는
+// force-dynamic 과 무관하게 Cache-Control 헤더로 결정된다 — 같은 패턴을 쓰는
+// /api/game-relay-events 가 Production 에서 커스텀 no-store 를 그대로 내보내고
+// 있는 것으로 실측 확인했다.
 // Vercel 서버리스에서 캐시 방지 (라이브 데이터는 항상 최신이어야 함)
 export const dynamic = "force-dynamic";
 
@@ -774,7 +784,9 @@ const NAVER_API_BASE =
  * the next poll retries fresh.
  */
 const responseCache = new Map<string, { data: GameRelayResponse; expiresAt: number }>();
-const CACHE_TTL_MS = 2_000;
+// TTL 단일 owner(삼순 NO-GO 2026-08-06): 엣지 TTL 상수에서 파생시켜
+// route 내부 TTL 과 엣지 TTL 이 따로 놀 수 없게 만든다. 한쪽만 바꾸는 drift 불가.
+const CACHE_TTL_MS = RELAY_EDGE_TTL_SECONDS * 1_000;
 
 /**
  * Per-fetch timeout for inning 2..N relay fetches and the record fetch.
@@ -888,14 +900,41 @@ export function combineRelayInningsNewestFirst(inningRelays: NaverTextRelay[][])
   return [...inningRelays].reverse().flat();
 }
 
-function getCachedResponse(key: string): GameRelayResponse | null {
+/**
+ * cache HIT 시 데이터와 **남은 수명**을 함께 돌려준다.
+ *
+ * 남은 수명이 필요한 이유(삼순 NO-GO 2026-08-06): 이미 age 가 쌓인 snapshot 을
+ * 다시 full 엣지 TTL 로 올리면 route TTL + edge TTL 이 직렬 누적돼 유저가 보는
+ * age 상한이 2배가 된다. 남은 수명만큼만 엣지에 주면 상한이 route TTL 하나로 묶인다.
+ */
+function getCachedResponse(key: string): { data: GameRelayResponse; remainingMs: number } | null {
   const entry = responseCache.get(key);
   if (!entry) return null;
-  if (Date.now() > entry.expiresAt) {
+  const remainingMs = entry.expiresAt - Date.now();
+  if (remainingMs <= 0) {
     responseCache.delete(key);
     return null;
   }
-  return entry.data;
+  return { data: entry.data, remainingMs };
+}
+
+/**
+ * 테스트 전용: 캐시 엔트리의 남은 수명(ms). 없으면 null.
+ *
+ * 왜 필요한가(삼순 NO-GO 2026-08-06 ③): 게이트가 첫 GET **전**의 벽시계로 남은
+ * 수명을 추정하면, 실제 만료 시계는 첫 GET **끝**의 setCachedResponse 에서
+ * 시작하므로 느린 첫 GET 에서 기대값이 실제와 어긋난다(timing false-green).
+ * 추정 대신 실제 엔트리를 읽어 결정론적으로 판정한다.
+ */
+export function __getCacheRemainingMsForTest(
+  gameId: string,
+  inningHint = 0,
+): number | null {
+  // route 가 쓰는 것과 **같은 방식**으로 키를 만든다. 게이트가 키 규칙을 자기
+  // 나름대로 재구현하면 route 가 키를 바꿔도 게이트는 모른 채 GREEN 이 된다.
+  const entry = responseCache.get(`${toNaverGameId(gameId)}-${inningHint}`);
+  if (!entry) return null;
+  return entry.expiresAt - Date.now();
 }
 
 function setCachedResponse(key: string, data: GameRelayResponse): void {
@@ -913,7 +952,7 @@ export async function GET(req: NextRequest) {
   if (!gameId) {
     return NextResponse.json(
       { error: "gameId is required" },
-      { status: 400 }
+      { status: 400, headers: NO_STORE_HEADERS },
     );
   }
 
@@ -935,7 +974,16 @@ export async function GET(req: NextRequest) {
     // warm cache HIT 에서도 since delta 를 적용한다(삼순 blocker ①). 캐시는 항상 full 을
     // 저장하므로 fresh 경로와 동일한 toDeltaResponse 로 partial 응답을 파생시켜
     // cache-hit 이 지난 이닝을 재전송하는 origin transfer 낙비를 막는다.
-    return NextResponse.json(toDeltaResponse(cached, sinceInning));
+    //
+    // 엣지 캐시 가능: setCachedResponse 는 !anyInningDegraded 일 때만 저장하므로
+    // cache HIT 응답은 정의상 완전 정상 응답이다.
+    //
+    // 단 TTL 은 full 이 아니라 **남은 수명**만 준다(삼순 NO-GO 2026-08-06):
+    // route 캐시에서 이미 소비한 age 를 엣지가 또 2초 얹으면 총 age 가 직렬로
+    // 누적된다. 남은 수명이 1초 미만이면 no-store 로 fail-close.
+    return NextResponse.json(toDeltaResponse(cached.data, sinceInning), {
+      headers: edgeCacheHeadersForRemaining(cached.remainingMs, RELAY_EDGE_TTL_SECONDS),
+    });
   }
 
   try {
@@ -962,7 +1010,7 @@ export async function GET(req: NextRequest) {
       // being wiped to an empty 200 (which blanks the UI and stalls celebrations).
       return NextResponse.json(
         { error: "relay_upstream_http_error" },
-        { status: 503 },
+        { status: 503, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -1061,7 +1109,7 @@ export async function GET(req: NextRequest) {
       });
       return NextResponse.json(
         { error: "relay_upstream_unrecoverable" },
-        { status: 503 },
+        { status: 503, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -1157,7 +1205,13 @@ export async function GET(req: NextRequest) {
     // linescore/currentInning은 그대로(라이브) 유지 → 실시간 손실 0.
     // safety: 직전 이닝도 포함(since - 1)해 방금 끝난 이닝의 지연 play 반영.
     // cache-hit 경로와 동일한 toDeltaResponse 로 delta 의미를 일치시킨다(since<=0 면 full).
-    return NextResponse.json(toDeltaResponse(response, sinceInning));
+    //
+    // 엣지 캐시는 route 내부 캐시와 **정확히 같은 조건**으로 건다. degraded 응답을
+    // 엣지에 올리면 TTL 동안 열화 응답이 고정되어 다음 폴링의 자가복구를 막는다
+    // (부분 실패 시 last-good 을 내보내되 캐시에는 올리지 않는 계약).
+    return NextResponse.json(toDeltaResponse(response, sinceInning), {
+      headers: liveCacheHeaders(!anyInningDegraded, RELAY_EDGE_TTL_SECONDS),
+    });
   } catch (e) {
     const error = e as Error;
     let reason: "timeout" | "http-error" | "schema-error" | "network-error" = "network-error";
@@ -1179,7 +1233,7 @@ export async function GET(req: NextRequest) {
     // trigger source; non-2xx keeps the last good data and retries next poll.
     return NextResponse.json(
       { error: `relay_upstream_${reason}` },
-      { status: 503 },
+      { status: 503, headers: NO_STORE_HEADERS },
     );
   }
 }

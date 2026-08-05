@@ -4,7 +4,12 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import type { GameRelayResponse, InningRelay } from "@/app/api/game-relay/route";
 import type { GameEvent } from "@/types/game-events";
 import { planFinalFetch, afterFinalFetch } from "@/lib/hooks/final-relay-fetch";
-import { mergeDeltaInnings, shouldApplyRelayResponse, shouldReleaseInFlight } from "@/lib/game/relay-delta";
+import {
+  mergeDeltaInnings,
+  resolveDeltaSince,
+  shouldApplyRelayResponse,
+  shouldReleaseInFlight,
+} from "@/lib/game/relay-delta";
 import {
   consumeLivePollStream,
   shouldCombineGameEvents,
@@ -107,12 +112,20 @@ export function useGameRelay(
 
         const params = new URLSearchParams({ gameId: requestGameId });
         if (currentInning > 0) params.set("inning", String(currentInning));
-        if (!wantFull) {
-          // 보유한 최대 이닝 번호만 delta로 요청(서버가 since-1부터 내려줌).
-          let maxInn = 0;
-          for (const inn of cache.values()) if (inn.inning > maxInn) maxInn = inn.inning;
-          if (maxInn > 0) params.set("since", String(maxInn));
+        // since 는 로컬 보유 이닝이 아니라 **공유 canonical 이닝**과 일치할 때만 보낸다.
+        // 로컬 최대값을 그대로 보내면 클라이언트별로 쿼리가 갈라져 엣지 캐시 키가
+        // 시청자 수만큼 폭발한다(캐시 적중 불가 → 절감 무효화). 상세 계약은
+        // resolveDeltaSince 주석 참조.
+        let localMaxInning = 0;
+        for (const inn of cache.values()) {
+          if (inn.inning > localMaxInning) localMaxInning = inn.inning;
         }
+        const since = resolveDeltaSince({
+          localMaxInning,
+          canonicalInning: currentInning,
+          wantFull,
+        });
+        if (since > 0) params.set("since", String(since));
 
         const applyRelay = (json: GameRelayResponse) => {
           // parse 후 재확인: gameId 가 headers 통과와 body 파싱 사이에 전환됐을 수 있다(late-body).
