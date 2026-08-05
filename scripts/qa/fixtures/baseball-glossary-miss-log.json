@@ -92,7 +92,7 @@
     {
       "q": "외야수",
       "count": 2,
-      "expect": "외야수"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "위닝이 뭐야?",
@@ -132,7 +132,7 @@
     {
       "q": "투수",
       "count": 2,
-      "expect": "투수"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "홈런이 모야?",
@@ -182,7 +182,7 @@
     {
       "q": "1/3이닝은?",
       "count": 1,
-      "expect": "1/3이닝"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "10-10",
@@ -252,7 +252,7 @@
     {
       "q": "2루수가 뭐야?",
       "count": 1,
-      "expect": "2루수"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "2사만루가뭐야",
@@ -332,7 +332,7 @@
     {
       "q": "463병살은뭐야",
       "count": 1,
-      "expect": "4-6-3 병살"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "4명모두 홈으로 돌아온다는게 무슨뜻이야..?",
@@ -342,12 +342,12 @@
     {
       "q": "4사구가 모야",
       "count": 1,
-      "expect": "4사구"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "4사구가 뭐야?",
       "count": 1,
-      "expect": "4사구"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "4할",
@@ -357,17 +357,17 @@
     {
       "q": "543플레이",
       "count": 1,
-      "expect": "5-4-3 병살"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "6-4-3이뭐야",
       "count": 1,
-      "expect": "6-4-3 병살"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "643 병살",
       "count": 1,
-      "expect": "6-4-3 병살"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "643이뭐아",
@@ -432,22 +432,22 @@
     {
       "q": "게임 차",
       "count": 1,
-      "expect": "게임차"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "게임차가 머야",
       "count": 1,
-      "expect": "게임차"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "게임차가 뭐야",
       "count": 1,
-      "expect": "게임차"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "게임차가 뭐야?",
       "count": 1,
-      "expect": "게임차"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "게임차가 줄어드는 거",
@@ -457,12 +457,12 @@
     {
       "q": "게임차의 정의",
       "count": 1,
-      "expect": "게임차"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "경기 게임차",
       "count": 1,
-      "expect": "게임차"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "고의 자동 사구가 뭐야?",
@@ -472,32 +472,32 @@
     {
       "q": "고의낙구",
       "count": 1,
-      "expect": "고의낙구"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "고의낙구 기준",
       "count": 1,
-      "expect": "고의낙구"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "고의낙구가 뭐야",
       "count": 1,
-      "expect": "고의낙구"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "고의낙구가 뭐야?",
       "count": 1,
-      "expect": "고의낙구"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "고의낙구는 뭐임",
       "count": 1,
-      "expect": "고의낙구"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "고의낙구는?",
       "count": 1,
-      "expect": "고의낙구"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "공의 실밥 갯수",
@@ -547,12 +547,12 @@
     {
       "q": "내야수가 뭐야?",
       "count": 1,
-      "expect": "내야수"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "내야수는 모야",
       "count": 1,
-      "expect": "내야수"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "너가 아는 야구용어 다 말해줘봐",
@@ -687,12 +687,12 @@
     {
       "q": "만루가 뭐임?",
       "count": 1,
-      "expect": "만루"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "만루가뭐야",
       "count": 1,
-      "expect": "만루"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "메이저리거",
@@ -752,7 +752,7 @@
     {
       "q": "무사??",
       "count": 1,
-      "expect": "무사"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "무사만루가뭐냐고",
@@ -847,7 +847,7 @@
     {
       "q": "병살이 뭐얌",
       "count": 1,
-      "expect": "병살"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "병상타가 뭐에요",
@@ -952,7 +952,7 @@
     {
       "q": "볼카운트가 뭐야?",
       "count": 1,
-      "expect": "볼카운트"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "볼펜의 의미가 뭐야",
@@ -992,7 +992,7 @@
     {
       "q": "사사구",
       "count": 1,
-      "expect": "4사구"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "삼구가 뭐야?",
@@ -1127,12 +1127,12 @@
     {
       "q": "수비수 번호",
       "count": 1,
-      "expect": "포지션 번호"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "수비위치 번호좀 알려주세요",
       "count": 1,
-      "expect": "포지션 번호"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "수훈선수",
@@ -1187,7 +1187,7 @@
     {
       "q": "승패세홀 조건",
       "count": 1,
-      "expect": "승패세홀"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "승패세홀 조건 각각 알려줘",
@@ -1212,7 +1212,7 @@
     {
       "q": "쓰리번트",
       "count": 1,
-      "expect": "쓰리번트"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "쓰리피스",
@@ -1237,12 +1237,12 @@
     {
       "q": "아웃카운트가 뭐야?",
       "count": 1,
-      "expect": "아웃카운트"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "아웃카운트가뭐야",
       "count": 1,
-      "expect": "아웃카운트"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "아하 헛스윙이 뭐야?",
@@ -1317,7 +1317,7 @@
     {
       "q": "야구공",
       "count": 1,
-      "expect": "야구공"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "야구에서 홈런은 정확히 어떤 걸 말해?",
@@ -1332,7 +1332,7 @@
     {
       "q": "야수는 뭐야?",
       "count": 1,
-      "expect": "야수"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "어 보크가 뭐임",
@@ -1462,12 +1462,12 @@
     {
       "q": "외야수가 뭐야?",
       "count": 1,
-      "expect": "외야수"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "외야수가뭐야?",
       "count": 1,
-      "expect": "외야수"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "용어 알려줘",
@@ -1477,7 +1477,7 @@
     {
       "q": "우익수가 뭐야?",
       "count": 1,
-      "expect": "우익수"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "우투가 뭐야",
@@ -1537,7 +1537,7 @@
     {
       "q": "유령 주자가 뭐야?",
       "count": 1,
-      "expect": "유령주자"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "음...뜬고아웃은  타자친공이떠서 야수한테 잡이는거야?",
@@ -1547,7 +1547,7 @@
     {
       "q": "인사이드더파크홈런",
       "count": 1,
-      "expect": "인사이드더파크홈런"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "인터넷에서 초구딱이라고 뭐라하던데 초구딱이 뭐야",
@@ -1577,17 +1577,17 @@
     {
       "q": "잔루",
       "count": 1,
-      "expect": "잔루"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "잔루가 뭐야",
       "count": 1,
-      "expect": "잔루"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "잔루가 뭐야?",
       "count": 1,
-      "expect": "잔루"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "잔루만루?",
@@ -1667,7 +1667,7 @@
     {
       "q": "좌익수가 뭐야?",
       "count": 1,
-      "expect": "좌익수"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "좌전안타",
@@ -1717,17 +1717,17 @@
     {
       "q": "중견수",
       "count": 1,
-      "expect": "중견수"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "중견수가 뭐야",
       "count": 1,
-      "expect": "중견수"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "중견수가 뭐야?",
       "count": 1,
-      "expect": "중견수"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "지명 타자의 DH 는 뭐의 약자야?",
@@ -1772,7 +1772,7 @@
     {
       "q": "출루",
       "count": 1,
-      "expect": "출루"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "캐처플라이",
@@ -1792,17 +1792,17 @@
     {
       "q": "퀄리티 스타트 플러스",
       "count": 1,
-      "expect": "QS+"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "퀄스쁠",
       "count": 1,
-      "expect": "QS+"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "퀄스플",
       "count": 1,
-      "expect": "QS+"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "크보딱",
@@ -1867,12 +1867,12 @@
     {
       "q": "탈홈런?",
       "count": 1,
-      "expect": "피홈런"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "탈홈런이 뭐야",
       "count": 1,
-      "expect": "피홈런"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "터프세이브",
@@ -1937,32 +1937,32 @@
     {
       "q": "페어 지역이 뭐야?",
       "count": 1,
-      "expect": "페어"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "페어가 뭐야",
       "count": 1,
-      "expect": "페어"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "페어볼은?",
       "count": 1,
-      "expect": "페어"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "페어볼이 뭐야",
       "count": 1,
-      "expect": "페어"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "페어볼이 뭐야?",
       "count": 1,
-      "expect": "페어"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "페어볼이뭔가",
       "count": 1,
-      "expect": "페어"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "페어와 안타는 다른 건가요",
@@ -1982,17 +1982,17 @@
     {
       "q": "포수보크가 뭐야",
       "count": 1,
-      "expect": "포수보크"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "포지션",
       "count": 1,
-      "expect": "포지션 번호"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "포지션 번호",
       "count": 1,
-      "expect": "포지션 번호"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "포크가뭐야",
@@ -2037,12 +2037,12 @@
     {
       "q": "피안타",
       "count": 1,
-      "expect": "피안타"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "피안타가뭐야",
       "count": 1,
-      "expect": "피안타"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "피처보크",
@@ -2082,7 +2082,7 @@
     {
       "q": "헛 스윙",
       "count": 1,
-      "expect": "헛스윙"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "헤드 퍼스트 슬라이딩",
@@ -2137,12 +2137,12 @@
     {
       "q": "홈스틸",
       "count": 1,
-      "expect": "홈스틸"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "홈스틸이 뭐야",
       "count": 1,
-      "expect": "홈스틸"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "희비가 뭐야?",
@@ -2337,17 +2337,17 @@
     {
       "q": "QS+",
       "count": 1,
-      "expect": "QS+"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "Qs+은?",
       "count": 1,
-      "expect": "QS+"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "RF",
       "count": 1,
-      "expect": "우익수"
+      "exclude": "PHASE2_DEFERRED"
     },
     {
       "q": "rp",

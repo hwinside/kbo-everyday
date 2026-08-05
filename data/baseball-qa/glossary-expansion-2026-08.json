@@ -14,8 +14,10 @@
       "category": "batting",
       "source_kind": "official_record",
       "answer": "주자가 있을 때 안타를 쳐서 그 주자를 홈으로 불러들인 안타예요.\n타점(RBI)이 기록돼요.\n2점을 불러들이면 2타점 적시타라고 불러요.",
-      "evidence_url": "https://www.koreabaseball.com/Record/Player/HitterBasic/Basic1.aspx",
-      "evidence_note": "KBO 공식 기록 항목 정의"
+      "evidence_url": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+      "evidence_note": "KBO 공식야구규칙 9.04(타 점) 조문 원문 대조",
+      "evidence_clause": "공식야구규칙 9.04 타 점",
+      "evidence_quote": "타점을 부여한다"
     },
     {
       "term": "타수",
@@ -27,47 +29,10 @@
       "category": "record",
       "source_kind": "official_record",
       "answer": "타율을 계산할 때 분모가 되는 숫자예요.\n타석 중에서 볼넷·몸에 맞는 공·희생번트·희생플라이는 타수에서 빠져요.\n타율 = 안타 ÷ 타수예요.",
-      "evidence_url": "https://www.koreabaseball.com/Record/Player/HitterBasic/Basic1.aspx",
-      "evidence_note": "KBO 공식 기록 항목 정의"
-    },
-    {
-      "term": "타석",
-      "aliases": [
-        "pa",
-        "plate appearance",
-        "타석수"
-      ],
-      "category": "record",
-      "source_kind": "official_record",
-      "answer": "타자가 타자석에 들어서서 한 번의 결과가 나올 때까지를 말해요.\n볼넷·사구·희생타도 모두 타석에 포함돼요.\n타수보다 넓은 개념이에요.",
-      "evidence_url": "https://www.koreabaseball.com/Record/Player/HitterBasic/Basic1.aspx",
-      "evidence_note": "KBO 공식 기록 항목 정의"
-    },
-    {
-      "term": "볼카운트",
-      "aliases": [
-        "카운트",
-        "count",
-        "볼 카운트"
-      ],
-      "category": "basic",
-      "source_kind": "official_rule",
-      "answer": "지금 타석의 볼과 스트라이크 개수예요.\n보통 '볼-스트라이크' 순서로 2-1처럼 읽어요.\n볼 4개면 볼넷, 스트라이크 3개면 삼진이에요.",
-      "evidence_url": "https://www.koreabaseball.com/Reference/Etc/GameRule.aspx",
-      "evidence_note": "KBO 야구규칙 기준 정의"
-    },
-    {
-      "term": "헛스윙",
-      "aliases": [
-        "헛 스윙",
-        "swing and miss",
-        "헛스윙이"
-      ],
-      "category": "basic",
-      "source_kind": "official_rule",
-      "answer": "타자가 방망이를 휘둘렀는데 공을 맞히지 못한 거예요.\n존을 벗어난 공이어도 헛스윙하면 스트라이크예요.\n3개째면 헛스윙 삼진이에요.",
-      "evidence_url": "https://www.koreabaseball.com/Reference/Etc/GameRule.aspx",
-      "evidence_note": "KBO 야구규칙 기준 정의"
+      "evidence_url": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+      "evidence_note": "KBO 공식야구규칙 9.02(공식기록지 공식기록원이 준비하는 공식기록지는 리그에서 정한 양식으로 작성되 어야 하며 다음 항목을 포함하여야 한다. ⒜ 타자와 주자의 기록 항목은 다음과 같다. ⑴ 타격을 완료한 횟수, 즉 타수) 조문 원문 대조",
+      "evidence_clause": "공식야구규칙 9.02 공식기록지 공식기록원이 준비하는 공식기록지는 리그에서 정한 양식으로 작성되 어야 하며 다음 항목을 포함하여야 한다. ⒜ 타자와 주자의 기록 항목은 다음과 같다. ⑴ 타격을 완료한 횟수, 즉 타수",
+      "evidence_quote": "타격을 완료한 횟수, 즉 타수"
     },
     {
       "term": "1루타",
@@ -79,49 +44,10 @@
       "category": "batting",
       "source_kind": "official_record",
       "answer": "타자가 안타를 치고 1루까지만 나간 거예요.\n가장 기본이 되는 안타예요.\n기록지에는 안타(H)로 함께 집계돼요.",
-      "evidence_url": "https://www.koreabaseball.com/Record/Player/HitterBasic/Basic1.aspx",
-      "evidence_note": "KBO 공식 기록 항목 정의"
-    },
-    {
-      "term": "인사이드더파크홈런",
-      "aliases": [
-        "인사이드 더 파크 홈런",
-        "러닝홈런",
-        "그라운드홈런",
-        "장내홈런"
-      ],
-      "category": "batting",
-      "source_kind": "official_record",
-      "answer": "타구가 담장을 넘지 않았는데 타자가 **수비 실책 없이** 홈까지 달려 들어온 홈런이에요.\n실책 덕에 홈에 들어오면 홈런이 아니라 안타와 실책으로 기록돼요.\n러닝홈런이라고도 불러요.",
-      "evidence_url": "https://www.koreabaseball.com/Record/Player/HitterBasic/Basic1.aspx",
-      "evidence_note": "KBO 공식 기록 항목 정의"
-    },
-    {
-      "term": "쓰리번트",
-      "aliases": [
-        "스리번트",
-        "3번트",
-        "투스트라이크 번트"
-      ],
-      "category": "rule",
-      "source_kind": "official_rule",
-      "answer": "2스트라이크에서 시도하는 번트예요.\n이때 번트한 공이 파울이 되면 곧바로 삼진 아웃이에요.\n그래서 위험 부담이 큰 작전이에요.",
-      "evidence_url": "https://www.koreabaseball.com/Reference/Etc/GameRule.aspx",
-      "evidence_note": "KBO 야구규칙 기준 정의"
-    },
-    {
-      "term": "페어",
-      "aliases": [
-        "페어볼",
-        "페어 볼",
-        "페어지역",
-        "페어 지역"
-      ],
-      "category": "rule",
-      "source_kind": "official_rule",
-      "answer": "타구가 1루선과 3루선 안쪽(페어 지역)에 들어온 걸 말해요.\n페어면 경기가 계속되고 타자는 뛰어야 해요.\n선 바깥으로 나가면 파울이에요.",
-      "evidence_url": "https://www.koreabaseball.com/Reference/Etc/GameRule.aspx",
-      "evidence_note": "KBO 야구규칙 기준 정의"
+      "evidence_url": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+      "evidence_note": "KBO 공식야구규칙 9.06(단타·장타의 결정) 조문 원문 대조",
+      "evidence_clause": "공식야구규칙 9.06 단타·장타의 결정",
+      "evidence_quote": "단타·장타의 결정"
     },
     {
       "term": "BABIP",
@@ -135,7 +61,8 @@
       "source_kind": "editorial_definition",
       "answer": "홈런과 삼진을 뺀, 그라운드 안으로 들어간 타구가 안타가 된 비율이에요.\n운의 영향을 크게 받아 평균(약 .300)에서 크게 벗어나면 되돌아오는 경향이 있어요.",
       "evidence_url": "https://www.mlb.com/glossary/advanced-stats/babip",
-      "evidence_note": "MLB 용어집 계산식: (H-HR)/(AB-K-HR+SF)"
+      "evidence_note": "MLB 공식 용어집 개별 정의 페이지 — raw 200(리다이렉트 없음) 실측",
+      "evidence_clause": "MLB glossary advanced-stats/babip"
     },
     {
       "term": "wOBA",
@@ -149,7 +76,8 @@
       "source_kind": "editorial_definition",
       "answer": "볼넷·단타·2루타·홈런에 각각 다른 가치를 매겨 더한 타격 지표예요.\n출루율과 비슷한 눈금이라 .400이면 아주 좋은 편이에요.\n세이버매트릭스 지표예요.",
       "evidence_url": "https://www.mlb.com/glossary/advanced-stats/woba",
-      "evidence_note": "MLB 용어집: 출루 유형별 가중치를 더한 타격 지표"
+      "evidence_note": "MLB 공식 용어집 개별 정의 페이지 — raw 200(리다이렉트 없음) 실측",
+      "evidence_clause": "MLB glossary advanced-stats/woba"
     },
     {
       "term": "ISO",
@@ -162,7 +90,8 @@
       "source_kind": "editorial_definition",
       "answer": "장타율에서 타율을 뺀 값으로, 순수한 장타력을 보는 지표예요.\n단타를 걷어내고 얼마나 멀리 치는지만 남겨요.\n.200을 넘으면 거포로 봐요.",
       "evidence_url": "https://www.mlb.com/glossary/advanced-stats/isolated-power",
-      "evidence_note": "MLB 용어집: 장타율-타율 = 순수 장타력"
+      "evidence_note": "MLB 공식 용어집 개별 정의 페이지 — raw 200(리다이렉트 없음) 실측",
+      "evidence_clause": "MLB glossary advanced-stats/isolated-power"
     },
     {
       "term": "K/9",
@@ -175,7 +104,8 @@
       "source_kind": "editorial_definition",
       "answer": "투수가 9이닝을 던진다고 가정했을 때 잡는 삼진 개수예요.\n숫자가 높을수록 탈삼진 능력이 좋아요.\n9를 넘으면 상위권으로 봐요.",
       "evidence_url": "https://www.mlb.com/glossary/advanced-stats/strikeouts-per-nine-innings",
-      "evidence_note": "MLB 용어집: 9이닝당 탈삼진"
+      "evidence_note": "MLB 공식 용어집 개별 정의 페이지 — raw 200(리다이렉트 없음) 실측",
+      "evidence_clause": "MLB glossary advanced-stats/strikeouts-per-nine-innings"
     },
     {
       "term": "BB/9",
@@ -188,7 +118,8 @@
       "source_kind": "editorial_definition",
       "answer": "투수가 9이닝당 내주는 볼넷 개수예요.\n낮을수록 제구가 안정적이라는 뜻이에요.\n3 아래면 좋은 편으로 봐요.",
       "evidence_url": "https://www.mlb.com/glossary/advanced-stats/walks-per-nine-innings",
-      "evidence_note": "MLB 용어집: 9이닝당 볼넷"
+      "evidence_note": "MLB 공식 용어집 개별 정의 페이지 — raw 200(리다이렉트 없음) 실측",
+      "evidence_clause": "MLB glossary advanced-stats/walks-per-nine-innings"
     },
     {
       "term": "K/BB",
@@ -201,7 +132,8 @@
       "source_kind": "editorial_definition",
       "answer": "탈삼진을 볼넷으로 나눈 값이에요.\n삼진은 많고 볼넷은 적을수록 높아져요.\n투수의 제구와 위력을 한 번에 보는 지표예요.",
       "evidence_url": "https://www.mlb.com/glossary/advanced-stats/strikeout-to-walk-ratio",
-      "evidence_note": "MLB 용어집: 탈삼진÷볼넷"
+      "evidence_note": "MLB 공식 용어집 개별 정의 페이지 — raw 200(리다이렉트 없음) 실측",
+      "evidence_clause": "MLB glossary advanced-stats/strikeout-to-walk-ratio"
     },
     {
       "term": "FIP",
@@ -214,7 +146,8 @@
       "source_kind": "editorial_definition",
       "answer": "수비의 영향을 뺀 평균자책점이에요.\n삼진·볼넷·몸에 맞는 공·홈런만으로 계산해요.\n평균자책점과 눈금이 비슷해 함께 놓고 비교해요.",
       "evidence_url": "https://www.mlb.com/glossary/advanced-stats/fielding-independent-pitching",
-      "evidence_note": "MLB 용어집: 수비 무관 투구 지표"
+      "evidence_note": "MLB 공식 용어집 개별 정의 페이지 — raw 200(리다이렉트 없음) 실측",
+      "evidence_clause": "MLB glossary advanced-stats/fielding-independent-pitching"
     },
     {
       "term": "ERA+",
@@ -227,7 +160,8 @@
       "source_kind": "editorial_definition",
       "answer": "리그 평균과 구장 효과를 반영해 평균자책점을 100 기준으로 바꾼 지표예요.\n100이 평균이고, 150이면 평균보다 크게 좋다는 뜻이에요.",
       "evidence_url": "https://www.mlb.com/glossary/advanced-stats/adjusted-earned-run-average",
-      "evidence_note": "MLB 용어집: 리그·구장 보정 ERA, 100이 평균"
+      "evidence_note": "MLB 공식 용어집 개별 정의 페이지 — raw 200(리다이렉트 없음) 실측",
+      "evidence_clause": "MLB glossary advanced-stats/adjusted-earned-run-average"
     },
     {
       "term": "OPS+",
@@ -239,23 +173,8 @@
       "source_kind": "editorial_definition",
       "answer": "리그 평균과 구장 효과를 반영해 OPS를 100 기준으로 바꾼 지표예요.\n100이 평균, 130이면 평균보다 30% 좋다는 뜻이에요.",
       "evidence_url": "https://www.mlb.com/glossary/advanced-stats/on-base-plus-slugging-plus",
-      "evidence_note": "MLB 용어집: 리그·구장 보정 OPS, 100이 평균"
-    },
-    {
-      "term": "QS+",
-      "aliases": [
-        "qs+",
-        "퀄리티스타트 플러스",
-        "퀄리티 스타트 플러스",
-        "퀄스플",
-        "퀄스쁠",
-        "퀄수플"
-      ],
-      "category": "record",
-      "source_kind": "editorial_definition",
-      "answer": "선발투수가 7이닝 이상을 던지고 자책점 3점 이하로 막은 경기예요.\n6이닝·3자책 이하인 퀄리티스타트보다 한 단계 높은 기준이에요.",
-      "evidence_url": "https://www.mlb.com/glossary/advanced-stats/quality-start",
-      "evidence_note": "퀄리티스타트(6이닝 3자책 이하) 기준의 상위 개념 — 7이닝 3자책 이하"
+      "evidence_note": "MLB 공식 용어집 개별 정의 페이지 — raw 200(리다이렉트 없음) 실측",
+      "evidence_clause": "MLB glossary advanced-stats/on-base-plus-slugging-plus"
     },
     {
       "term": "실점",
@@ -265,48 +184,11 @@
       ],
       "category": "record",
       "source_kind": "official_record",
-      "answer": "투수가 책임지는 주자가 홈에 들어와 준 점수예요.\n교체된 뒤라도 자기가 내보낸 주자가 득점하면 그 점수는 전임 투수에게 붙어요.\n이 중 수비 실책 등으로 난 점수를 빼면 자책점이에요.",
-      "evidence_url": "https://www.koreabaseball.com/Record/Player/HitterBasic/Basic1.aspx",
-      "evidence_note": "KBO 공식 기록 항목 정의"
-    },
-    {
-      "term": "피안타",
-      "aliases": [
-        "피 안타",
-        "맞은 안타"
-      ],
-      "category": "record",
-      "source_kind": "official_record",
-      "answer": "투수가 상대 타자에게 맞은 안타예요.\n투수 기록에서는 '피'를 붙여 피안타·피홈런처럼 불러요.\n적을수록 좋은 기록이에요.",
-      "evidence_url": "https://www.koreabaseball.com/Record/Player/HitterBasic/Basic1.aspx",
-      "evidence_note": "KBO 공식 기록 항목 정의"
-    },
-    {
-      "term": "피홈런",
-      "aliases": [
-        "피 홈런",
-        "맞은 홈런",
-        "탈홈런"
-      ],
-      "category": "record",
-      "source_kind": "official_record",
-      "answer": "투수가 상대에게 맞은 홈런이에요.\n한 번에 여러 점을 주기 때문에 투수에게 가장 아픈 기록이에요.\n일부 팬은 농담처럼 '탈홈런'이라고 부르기도 해요.",
-      "evidence_url": "https://www.koreabaseball.com/Record/Player/HitterBasic/Basic1.aspx",
-      "evidence_note": "KBO 공식 기록 항목 정의"
-    },
-    {
-      "term": "게임차",
-      "aliases": [
-        "게임 차",
-        "승차",
-        "게임차가",
-        "경기차"
-      ],
-      "category": "league",
-      "source_kind": "official_record",
-      "answer": "순위표에서 두 팀의 승패 차이를 나타내는 값이에요.\n(위 팀 승 - 아래 팀 승)과 (아래 팀 패 - 위 팀 패)를 더해 2로 나눠요.\n0.5면 반 경기 차예요.",
-      "evidence_url": "https://www.koreabaseball.com/Record/Player/HitterBasic/Basic1.aspx",
-      "evidence_note": "KBO 공식 기록 항목 정의"
+      "answer": "투수가 마운드에서 내려간 뒤라도 자기가 내보낸 주자가 홈을 밟으면 그 투수의 실점이에요.\n누가 마운드에 있었는지가 아니라 누가 그 주자를 내보냈는지로 따져요.\n이 중 투수 책임인 것만 자책점이 돼요.",
+      "evidence_url": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+      "evidence_note": "KBO 공식야구규칙 9.16(자책점) 조문 원문 대조",
+      "evidence_clause": "공식야구규칙 9.16 자책점",
+      "evidence_quote": "자책점이란 투수가 책임져야 할 실점을 말한다"
     },
     {
       "term": "보살",
@@ -318,269 +200,10 @@
       "category": "defense",
       "source_kind": "official_record",
       "answer": "수비수가 아웃을 만드는 과정에서 공을 던져 도운 기록이에요.\n직접 아웃을 잡으면 자살(풋아웃), 도우면 보살이에요.\n유격수·2루수에게 많이 쌓여요.",
-      "evidence_url": "https://www.koreabaseball.com/Record/Player/HitterBasic/Basic1.aspx",
-      "evidence_note": "KBO 공식 기록 항목 정의"
-    },
-    {
-      "term": "포지션 번호",
-      "aliases": [
-        "수비 위치 번호",
-        "수비수 번호",
-        "포지션번호",
-        "수비위치번호",
-        "포지션 넘버"
-      ],
-      "category": "position",
-      "source_kind": "official_record",
-      "answer": "기록지에서 수비 위치를 숫자로 적는 방식이에요.\n1 투수, 2 포수, 3 1루수, 4 2루수, 5 3루수, 6 유격수, 7 좌익수, 8 중견수, 9 우익수예요.",
-      "evidence_url": "https://www.koreabaseball.com/Record/Player/HitterBasic/Basic1.aspx",
-      "evidence_note": "KBO 공식 기록 항목 정의"
-    },
-    {
-      "term": "6-4-3 병살",
-      "aliases": [
-        "643 병살",
-        "6-4-3",
-        "643",
-        "643 더블플레이"
-      ],
-      "category": "defense",
-      "source_kind": "official_record",
-      "answer": "공이 지나간 수비 위치를 번호로 적은 거예요.\n6은 유격수, 4는 2루수, 3은 1루수라서 '유격수→2루수→1루수' 병살이라는 뜻이에요.",
-      "evidence_url": "https://www.koreabaseball.com/Record/Player/HitterBasic/Basic1.aspx",
-      "evidence_note": "KBO 공식 기록 항목 정의"
-    },
-    {
-      "term": "투수",
-      "aliases": [
-        "pitcher",
-        "p",
-        "투수가"
-      ],
-      "category": "position",
-      "source_kind": "official_rule",
-      "answer": "마운드에서 타자에게 공을 던지는 선수예요.\n수비 위치 번호는 1번이에요.\n경기 시작을 맡는 선발과 뒤를 이어 던지는 불펜으로 나뉘어요.",
-      "evidence_url": "https://www.koreabaseball.com/Reference/Etc/GameRule.aspx",
-      "evidence_note": "KBO 야구규칙 기준 정의"
-    },
-    {
-      "term": "1루수",
-      "aliases": [
-        "일루수",
-        "1b",
-        "퍼스트"
-      ],
-      "category": "position",
-      "source_kind": "official_rule",
-      "answer": "1루를 지키는 수비수예요.\n수비 위치 번호는 3번이에요.\n다른 야수가 던진 공을 받아 타자 주자를 아웃시키는 역할이 많아요.",
-      "evidence_url": "https://www.koreabaseball.com/Reference/Etc/GameRule.aspx",
-      "evidence_note": "KBO 야구규칙 기준 정의"
-    },
-    {
-      "term": "2루수",
-      "aliases": [
-        "이루수",
-        "세컨",
-        "세컨드베이스맨"
-      ],
-      "category": "position",
-      "source_kind": "official_rule",
-      "answer": "1루와 2루 사이를 지키는 수비수예요.\n수비 위치 번호는 4번이에요.\n유격수와 짝을 이뤄 병살 플레이를 만들어요.",
-      "evidence_url": "https://www.koreabaseball.com/Reference/Etc/GameRule.aspx",
-      "evidence_note": "KBO 야구규칙 기준 정의"
-    },
-    {
-      "term": "3루수",
-      "aliases": [
-        "삼루수",
-        "서드",
-        "핫코너"
-      ],
-      "category": "position",
-      "source_kind": "official_rule",
-      "answer": "3루를 지키는 수비수예요.\n수비 위치 번호는 5번이에요.\n강한 타구가 빠르게 오는 자리라 '핫코너'라고도 불러요.",
-      "evidence_url": "https://www.koreabaseball.com/Reference/Etc/GameRule.aspx",
-      "evidence_note": "KBO 야구규칙 기준 정의"
-    },
-    {
-      "term": "좌익수",
-      "aliases": [
-        "레프트",
-        "lf",
-        "좌익수가"
-      ],
-      "category": "position",
-      "source_kind": "official_rule",
-      "answer": "외야 왼쪽을 지키는 수비수예요.\n수비 위치 번호는 7번이에요.\n타자 기준으로 3루 쪽 바깥 잔디를 맡아요.",
-      "evidence_url": "https://www.koreabaseball.com/Reference/Etc/GameRule.aspx",
-      "evidence_note": "KBO 야구규칙 기준 정의"
-    },
-    {
-      "term": "중견수",
-      "aliases": [
-        "센터",
-        "cf",
-        "중견수가"
-      ],
-      "category": "position",
-      "source_kind": "official_rule",
-      "answer": "외야 한가운데를 지키는 수비수예요.\n수비 위치 번호는 8번이에요.\n담당 범위가 가장 넓어서 발과 수비 범위가 중요한 자리예요.",
-      "evidence_url": "https://www.koreabaseball.com/Reference/Etc/GameRule.aspx",
-      "evidence_note": "KBO 야구규칙 기준 정의"
-    },
-    {
-      "term": "우익수",
-      "aliases": [
-        "라이트",
-        "rf",
-        "우익수가"
-      ],
-      "category": "position",
-      "source_kind": "official_rule",
-      "answer": "외야 오른쪽을 지키는 수비수예요.\n수비 위치 번호는 9번이에요.\n3루까지 던져야 하는 상황이 많아 어깨가 강한 선수가 맡아요.",
-      "evidence_url": "https://www.koreabaseball.com/Reference/Etc/GameRule.aspx",
-      "evidence_note": "KBO 야구규칙 기준 정의"
-    },
-    {
-      "term": "내야수",
-      "aliases": [
-        "인필더",
-        "infielder"
-      ],
-      "category": "position",
-      "source_kind": "official_rule",
-      "answer": "1루수·2루수·3루수·유격수처럼 흙이 깔린 안쪽을 지키는 수비수예요.\n타구 처리와 병살 플레이를 주로 맡아요.\n바깥 잔디를 맡으면 외야수예요.",
-      "evidence_url": "https://www.koreabaseball.com/Reference/Etc/GameRule.aspx",
-      "evidence_note": "KBO 야구규칙 기준 정의"
-    },
-    {
-      "term": "외야수",
-      "aliases": [
-        "아웃필더",
-        "outfielder"
-      ],
-      "category": "position",
-      "source_kind": "official_rule",
-      "answer": "좌익수·중견수·우익수처럼 잔디 바깥쪽을 지키는 수비수예요.\n뜬공을 잡고 담장까지 가는 타구를 막아요.\n안쪽 흙 지역을 맡으면 내야수예요.",
-      "evidence_url": "https://www.koreabaseball.com/Reference/Etc/GameRule.aspx",
-      "evidence_note": "KBO 야구규칙 기준 정의"
-    },
-    {
-      "term": "야수",
-      "aliases": [
-        "필더",
-        "fielder",
-        "야수는"
-      ],
-      "category": "position",
-      "source_kind": "official_rule",
-      "answer": "투수를 뺀 나머지 수비 선수를 통틀어 부르는 말이에요.\n포수·내야수·외야수가 모두 야수예요.\n타격 기록을 이야기할 때 투수와 구분하는 표현이기도 해요.",
-      "evidence_url": "https://www.koreabaseball.com/Reference/Etc/GameRule.aspx",
-      "evidence_note": "KBO 야구규칙 기준 정의"
-    },
-    {
-      "term": "홈스틸",
-      "aliases": [
-        "홈 스틸",
-        "홈 도루",
-        "홈스틸이"
-      ],
-      "category": "running",
-      "source_kind": "official_record",
-      "answer": "3루 주자가 홈으로 도루해 득점하는 거예요.\n성공하기 아주 어려워서 한 시즌에 몇 번 볼까 말까 해요.\n기록은 도루로 인정돼요.",
-      "evidence_url": "https://www.koreabaseball.com/Record/Player/HitterBasic/Basic1.aspx",
-      "evidence_note": "KBO 공식 기록 항목 정의"
-    },
-    {
-      "term": "잔루",
-      "aliases": [
-        "잔루가",
-        "lob",
-        "남은 주자"
-      ],
-      "category": "record",
-      "source_kind": "official_record",
-      "answer": "이닝이 끝났을 때 베이스에 남아 있던 주자예요.\n득점 기회를 살리지 못했다는 뜻이라 아쉬움이 큰 기록이에요.\n영어로는 LOB이라고 적어요.",
-      "evidence_url": "https://www.koreabaseball.com/Record/Player/HitterBasic/Basic1.aspx",
-      "evidence_note": "KBO 공식 기록 항목 정의"
-    },
-    {
-      "term": "만루",
-      "aliases": [
-        "만루가",
-        "베이스 로디드",
-        "풀 베이스"
-      ],
-      "category": "basic",
-      "source_kind": "official_rule",
-      "answer": "1루·2루·3루에 주자가 모두 있는 상황이에요.\n안타 하나로 여러 점이 나고, 홈런이면 만루홈런 4점이에요.\n수비는 어디로 던져도 포스아웃이 가능해요.",
-      "evidence_url": "https://www.koreabaseball.com/Reference/Etc/GameRule.aspx",
-      "evidence_note": "KBO 야구규칙 기준 정의"
-    },
-    {
-      "term": "무사",
-      "aliases": [
-        "노아웃",
-        "무사가",
-        "0아웃"
-      ],
-      "category": "basic",
-      "source_kind": "official_rule",
-      "answer": "그 이닝에 아웃이 아직 하나도 없는 상황이에요.\n아웃 1개면 1사, 2개면 2사라고 불러요.\n'무사 만루'는 아웃 없이 주자가 꽉 찬 최고의 찬스예요.",
-      "evidence_url": "https://www.koreabaseball.com/Reference/Etc/GameRule.aspx",
-      "evidence_note": "KBO 야구규칙 기준 정의"
-    },
-    {
-      "term": "1사",
-      "aliases": [
-        "원아웃",
-        "1아웃",
-        "일사"
-      ],
-      "category": "basic",
-      "source_kind": "official_rule",
-      "answer": "그 이닝에 아웃이 1개 나온 상황을 1사, 2개면 2사라고 해요.\n아직 없으면 무사예요.\n아웃 3개가 되면 공수가 바뀌어요.",
-      "evidence_url": "https://www.koreabaseball.com/Reference/Etc/GameRule.aspx",
-      "evidence_note": "KBO 야구규칙 기준 정의"
-    },
-    {
-      "term": "유령주자",
-      "aliases": [
-        "유령 주자",
-        "승부치기 주자",
-        "고스트러너"
-      ],
-      "category": "rule",
-      "source_kind": "official_rule",
-      "answer": "승부치기에서 이닝 시작 때 안타 없이 미리 베이스에 놓아두는 주자예요.\nKBO 정규시즌에는 쓰지 않고, 승부치기를 적용하는 대회에서 사용해요.",
-      "evidence_url": "https://www.koreabaseball.com/Reference/Etc/GameRule.aspx",
-      "evidence_note": "KBO 야구규칙 기준 정의"
-    },
-    {
-      "term": "고의낙구",
-      "aliases": [
-        "고의 낙구",
-        "고의낙구가",
-        "일부러 떨어뜨리기"
-      ],
-      "category": "rule",
-      "source_kind": "official_rule",
-      "answer": "야수가 병살을 노리고 잡을 수 있는 타구를 일부러 떨어뜨리는 행위예요.\n심판이 고의로 판단하면 타자는 곧바로 아웃되고 주자는 원래 베이스로 돌아가요.",
-      "evidence_url": "https://www.koreabaseball.com/Reference/Etc/GameRule.aspx",
-      "evidence_note": "KBO 야구규칙 기준 정의"
-    },
-    {
-      "term": "포수보크",
-      "aliases": [
-        "캐처보크",
-        "포수 보크",
-        "캐처 보크"
-      ],
-      "category": "rule",
-      "source_kind": "official_rule",
-      "answer": "고의4구 때 포수가 투구를 받기 전에 포수석을 벗어나면 선언되는 반칙이에요.\n주자가 있으면 보크로 처리해 주자가 진루하고, 주자가 없으면 그 투구를 볼로 선언해요.",
-      "evidence_url": "https://www.koreabaseball.com/Reference/Etc/GameRule.aspx",
-      "evidence_note": "KBO 야구규칙 기준 정의"
+      "evidence_url": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+      "evidence_note": "KBO 공식야구규칙 9.10(어시스트) 조문 원문 대조",
+      "evidence_clause": "공식야구규칙 9.10 어시스트",
+      "evidence_quote": "어시스트(ASSIST 아웃도움 보살"
     },
     {
       "term": "쓰리피트",
@@ -593,112 +216,10 @@
       "category": "rule",
       "source_kind": "official_rule",
       "answer": "1루로 뛰는 주자가 정해진 주로를 벗어나 수비를 방해하면 아웃되는 규정이에요.\n2025년부터 3피트 라인 안쪽뿐 아니라 1루 페어지역 안쪽 흙까지 달릴 수 있게 넓어졌어요.",
-      "evidence_url": "https://www.koreabaseball.com/Reference/Etc/GameRule.aspx",
-      "evidence_note": "KBO 야구규칙 기준 정의"
-    },
-    {
-      "term": "4사구",
-      "aliases": [
-        "사사구",
-        "4사구가",
-        "볼넷과 몸에 맞는 공"
-      ],
-      "category": "record",
-      "source_kind": "official_record",
-      "answer": "볼넷(4구)과 몸에 맞는 공(사구)을 합쳐 부르는 말이에요.\n둘 다 타자가 그냥 1루로 나가는 출루예요.\n투수 기록에서 함께 묶어 쓰기도 해요.",
-      "evidence_url": "https://www.koreabaseball.com/Record/Player/HitterBasic/Basic1.aspx",
-      "evidence_note": "KBO 공식 기록 항목 정의"
-    },
-    {
-      "term": "아웃카운트",
-      "aliases": [
-        "아웃 카운트",
-        "아웃카운트가"
-      ],
-      "category": "basic",
-      "source_kind": "official_rule",
-      "answer": "그 이닝에 지금까지 잡은 아웃 개수예요.\n0개면 무사, 1개면 1사, 2개면 2사라고 불러요.\n3개가 되면 공격과 수비가 바뀌어요.",
-      "evidence_url": "https://www.koreabaseball.com/Reference/Etc/GameRule.aspx",
-      "evidence_note": "KBO 야구규칙 기준 정의"
-    },
-    {
-      "term": "투구수",
-      "aliases": [
-        "투구 수",
-        "구수",
-        "피치카운트",
-        "투구수가"
-      ],
-      "category": "pitching",
-      "source_kind": "official_record",
-      "answer": "투수가 그 경기에서 던진 공의 총 개수예요.\n선발은 보통 100개 안팎에서 교체를 고려해요.\n적은 투구수로 길게 던지면 효율이 좋다고 해요.",
-      "evidence_url": "https://www.koreabaseball.com/Record/Player/HitterBasic/Basic1.aspx",
-      "evidence_note": "KBO 공식 기록 항목 정의"
-    },
-    {
-      "term": "인플레이",
-      "aliases": [
-        "인 플레이",
-        "in play",
-        "볼 인 플레이"
-      ],
-      "category": "rule",
-      "source_kind": "official_rule",
-      "answer": "경기가 진행 중이라 주자와 야수가 계속 움직일 수 있는 상태예요.\n타구가 페어 지역에 들어가면 인플레이예요.\n반대로 멈추는 상태는 볼데드예요.",
-      "evidence_url": "https://www.koreabaseball.com/Reference/Etc/GameRule.aspx",
-      "evidence_note": "KBO 야구규칙 기준 정의"
-    },
-    {
-      "term": "출루",
-      "aliases": [
-        "출루가",
-        "on base"
-      ],
-      "category": "record",
-      "source_kind": "official_record",
-      "answer": "타자가 아웃되지 않고 베이스에 나가는 걸 말해요.\n안타뿐 아니라 볼넷·몸에 맞는 공도 출루예요.\n비율로 보면 출루율이 돼요.",
-      "evidence_url": "https://www.koreabaseball.com/Record/Player/HitterBasic/Basic1.aspx",
-      "evidence_note": "KBO 공식 기록 항목 정의"
-    },
-    {
-      "term": "1/3이닝",
-      "aliases": [
-        "3분의 1 이닝",
-        "이닝 소수점",
-        "0.1이닝",
-        "이닝 표기"
-      ],
-      "category": "record",
-      "source_kind": "official_record",
-      "answer": "이닝은 아웃 3개가 1이닝이라, 아웃 1개가 1/3이닝이에요.\n기록지에는 5⅔ 또는 5.2처럼 적어요.\n5.2는 5와 3분의 2이닝이라는 뜻이에요.",
-      "evidence_url": "https://www.koreabaseball.com/Record/Player/HitterBasic/Basic1.aspx",
-      "evidence_note": "KBO 공식 기록 항목 정의"
-    },
-    {
-      "term": "야구공",
-      "aliases": [
-        "공인구",
-        "실밥 개수",
-        "야구공 실밥"
-      ],
-      "category": "rule",
-      "source_kind": "official_rule",
-      "answer": "가죽 두 조각을 붉은 실로 꿰매 만든 공이에요.\n실밥은 108땀으로 꿰매요.\n무게는 약 142~149g, 둘레는 약 22.9~23.5cm예요.",
-      "evidence_url": "https://www.koreabaseball.com/Reference/Etc/GameRule.aspx",
-      "evidence_note": "KBO 야구규칙 기준 정의"
-    },
-    {
-      "term": "라인업",
-      "aliases": [
-        "선발 라인업",
-        "오더",
-        "라인업이"
-      ],
-      "category": "rule",
-      "source_kind": "official_rule",
-      "answer": "그 경기에 나올 선수와 타순·수비 위치를 적은 명단이에요.\n경기 전에 심판에게 제출해요.\nDH는 지명타자 자리를 뜻해요.",
-      "evidence_url": "https://www.koreabaseball.com/Reference/Etc/GameRule.aspx",
-      "evidence_note": "KBO 야구규칙 기준 정의"
+      "evidence_url": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+      "evidence_note": "KBO 공식야구규칙 6.01(방해, 업스트럭션) 조문 원문 대조",
+      "evidence_clause": "공식야구규칙 6.01 방해, 업스트럭션",
+      "evidence_quote": "3피트 라인의 바깥쪽(오른쪽) 또는 파울 라인"
     },
     {
       "term": "베이스",
@@ -714,63 +235,11 @@
       ],
       "category": "basic",
       "source_kind": "official_rule",
-      "answer": "주자가 밟고 지나가는 네 지점이에요.\n타자는 1루→2루→3루를 거쳐 홈에 들어오면 1점이에요.\n한 변 38.1cm 정사각형이고, 홈만 오각형이에요.",
-      "evidence_url": "https://www.koreabaseball.com/Reference/Etc/GameRule.aspx",
-      "evidence_note": "KBO 야구규칙 기준 정의"
-    },
-    {
-      "term": "승패세홀",
-      "aliases": [
-        "승 패 세 홀",
-        "승패세홀 조건",
-        "승패세홀이"
-      ],
-      "category": "record",
-      "source_kind": "official_record",
-      "answer": "투수 기록인 승리·패전·세이브·홀드를 묶어 부르는 말이에요.\n앞선 상황을 지켜 끝내면 세이브, 중간에 지키고 넘기면 홀드예요.\n각각 인정 조건이 따로 있어요.",
-      "evidence_url": "https://www.koreabaseball.com/Record/Player/HitterBasic/Basic1.aspx",
-      "evidence_note": "KBO 공식 기록 항목 정의"
-    },
-    {
-      "term": "4-6-3 병살",
-      "aliases": [
-        "463 병살",
-        "4-6-3",
-        "463",
-        "463병살"
-      ],
-      "category": "defense",
-      "source_kind": "official_record",
-      "answer": "공이 지나간 수비 위치를 번호로 적은 거예요.\n4는 2루수, 6은 유격수, 3은 1루수라서 '2루수→유격수→1루수' 병살이라는 뜻이에요.",
-      "evidence_url": "https://www.koreabaseball.com/Record/Player/HitterBasic/Basic1.aspx",
-      "evidence_note": "KBO 공식 기록 항목 정의"
-    },
-    {
-      "term": "5-4-3 병살",
-      "aliases": [
-        "543 병살",
-        "5-4-3",
-        "543",
-        "543플레이"
-      ],
-      "category": "defense",
-      "source_kind": "official_record",
-      "answer": "공이 지나간 수비 위치를 번호로 적은 거예요.\n5는 3루수, 4는 2루수, 3은 1루수라서 '3루수→2루수→1루수' 병살이라는 뜻이에요.",
-      "evidence_url": "https://www.koreabaseball.com/Record/Player/HitterBasic/Basic1.aspx",
-      "evidence_note": "KBO 공식 기록 항목 정의"
-    },
-    {
-      "term": "파울플라이",
-      "aliases": [
-        "파울 플라이",
-        "파울뜬공",
-        "파울 뜬공"
-      ],
-      "category": "rule",
-      "source_kind": "official_rule",
-      "answer": "파울 지역으로 높이 뜬 타구예요.\n야수가 땅에 닿기 전에 잡으면 파울이어도 아웃이에요.\n포수 근처로 뜨면 캐처플라이라고 불러요.",
-      "evidence_url": "https://www.koreabaseball.com/Reference/Etc/GameRule.aspx",
-      "evidence_note": "KBO 야구규칙 기준 정의"
+      "answer": "1·2·3루에 놓인 사각형 흰색 백이에요.\nKBO 경기장은 사방 45.72cm 크기를 써요.\n주자가 이 백을 밟아야 진루로 인정돼요.",
+      "evidence_url": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+      "evidence_note": "KBO 공식야구규칙 2.03(각 루) 조문 원문 대조",
+      "evidence_clause": "공식야구규칙 2.03 각 루",
+      "evidence_quote": "사방 18인치(45.72cm) 크기의 베이스를 사용한다"
     },
     {
       "term": "희생타",
@@ -781,8 +250,10 @@
       "category": "record",
       "source_kind": "official_record",
       "answer": "자기는 아웃되면서 주자를 다음 베이스로 보내거나 불러들이는 타격을 통틀어 부르는 말이에요.\n번트로 보내면 희생번트(SH), 뜬공으로 불러들이면 희생플라이(SF)로 따로 기록해요.\n둘 다 타수에는 빠져요.",
-      "evidence_url": "https://www.koreabaseball.com/Record/Player/HitterBasic/Basic1.aspx",
-      "evidence_note": "KBO 공식 기록 항목 정의"
+      "evidence_url": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+      "evidence_note": "KBO 공식야구규칙 9.08(희생번트와 희생플라이) 조문 원문 대조",
+      "evidence_clause": "공식야구규칙 9.08 희생번트와 희생플라이",
+      "evidence_quote": "희생번트와 희생플라이"
     },
     {
       "term": "스플리터",
@@ -795,22 +266,8 @@
       "source_kind": "editorial_definition",
       "answer": "검지와 중지를 벌려 잡고 던져 홈플레이트 앞에서 살짝 가라앉는 공이에요.\n직구와 비슷한 속도로 오다 떨어져 헛스윙을 유도해요.\n더 깊게 끼워 낙차를 키운 공은 포크볼이에요.",
       "evidence_url": "https://www.mlb.com/glossary/pitch-types/splitter",
-      "evidence_note": "MLB 용어집 구종 항목 — 포크볼과 별개로 등재"
-    },
-    {
-      "term": "병살",
-      "aliases": [
-        "더블플레이",
-        "더블 플레이",
-        "dp",
-        "겟투",
-        "병살플레이"
-      ],
-      "category": "defense",
-      "source_kind": "official_record",
-      "answer": "수비팀이 한 번의 플레이로 아웃 2개를 잡아낸 걸 말해요.\n수비 기록이라 영어로는 DP라고 해요.\n타자의 땅볼이 원인이면 타자에게 병살타(GIDP)도 함께 기록돼요.",
-      "evidence_url": "https://www.koreabaseball.com/Record/Player/HitterBasic/Basic1.aspx",
-      "evidence_note": "KBO 공식 기록 항목 정의"
+      "evidence_note": "MLB 공식 용어집 개별 정의 페이지 — raw 200(리다이렉트 없음) 실측",
+      "evidence_clause": "MLB glossary pitch-types/splitter"
     }
   ],
   "_alias_removals_note": "기존 사전의 alias 가 신규 term 과 같은 정규화 키로 충돌하면, 먼저 색인된 쪽이 이기고 나머지는 조용히 가려진다. 그래서 분리해 답해야 하는 개념은 기존 alias 에서 명시적으로 뺀다.",
@@ -1364,12 +821,6 @@
       ]
     },
     {
-      "term": "6-4-3 병살",
-      "add_aliases": [
-        "643병살"
-      ]
-    },
-    {
       "term": "적시타",
       "add_aliases": [
         "젖시타",
@@ -1378,28 +829,10 @@
       ]
     },
     {
-      "term": "포지션 번호",
-      "add_aliases": [
-        "포지션",
-        "포지션 넘버",
-        "수비 위치",
-        "수비위치",
-        "야구 포지션"
-      ]
-    },
-    {
       "term": "BABIP",
       "add_aliases": [
         "바빕타",
         "인플레이타율"
-      ]
-    },
-    {
-      "term": "게임차",
-      "add_aliases": [
-        "게임차의",
-        "경기 게임차",
-        "순위 게임차"
       ]
     },
     {
@@ -2032,7 +1465,180 @@
       "category": "league",
       "answer": "정규시즌에서 올스타 브레이크 **뒤** 구간이에요.\n순위 싸움이 가장 치열해지는 시기예요.\n올스타전 앞은 전반기(상반기)예요.",
       "defer_reason": "근거 URL 미확보"
+    },
+    {
+      "term": "타석",
+      "defer_reason": "조문·공식 용어집에서 이 용어를 직접 정의하는 근거를 확인하지 못했다. 근거를 확보한 뒤 2차에서 다시 검토한다."
+    },
+    {
+      "term": "볼카운트",
+      "defer_reason": "조문·공식 용어집에서 이 용어를 직접 정의하는 근거를 확인하지 못했다. 근거를 확보한 뒤 2차에서 다시 검토한다."
+    },
+    {
+      "term": "헛스윙",
+      "defer_reason": "조문·공식 용어집에서 이 용어를 직접 정의하는 근거를 확인하지 못했다. 근거를 확보한 뒤 2차에서 다시 검토한다."
+    },
+    {
+      "term": "인사이드더파크홈런",
+      "defer_reason": "조문·공식 용어집에서 이 용어를 직접 정의하는 근거를 확인하지 못했다. 근거를 확보한 뒤 2차에서 다시 검토한다."
+    },
+    {
+      "term": "쓰리번트",
+      "defer_reason": "조문·공식 용어집에서 이 용어를 직접 정의하는 근거를 확인하지 못했다. 근거를 확보한 뒤 2차에서 다시 검토한다."
+    },
+    {
+      "term": "페어",
+      "defer_reason": "조문·공식 용어집에서 이 용어를 직접 정의하는 근거를 확인하지 못했다. 근거를 확보한 뒤 2차에서 다시 검토한다."
+    },
+    {
+      "term": "QS+",
+      "defer_reason": "조문·공식 용어집에서 이 용어를 직접 정의하는 근거를 확인하지 못했다. 근거를 확보한 뒤 2차에서 다시 검토한다."
+    },
+    {
+      "term": "피안타",
+      "defer_reason": "조문·공식 용어집에서 이 용어를 직접 정의하는 근거를 확인하지 못했다. 근거를 확보한 뒤 2차에서 다시 검토한다."
+    },
+    {
+      "term": "피홈런",
+      "defer_reason": "조문·공식 용어집에서 이 용어를 직접 정의하는 근거를 확인하지 못했다. 근거를 확보한 뒤 2차에서 다시 검토한다."
+    },
+    {
+      "term": "게임차",
+      "defer_reason": "조문·공식 용어집에서 이 용어를 직접 정의하는 근거를 확인하지 못했다. 근거를 확보한 뒤 2차에서 다시 검토한다."
+    },
+    {
+      "term": "포지션 번호",
+      "defer_reason": "조문·공식 용어집에서 이 용어를 직접 정의하는 근거를 확인하지 못했다. 근거를 확보한 뒤 2차에서 다시 검토한다."
+    },
+    {
+      "term": "6-4-3 병살",
+      "defer_reason": "조문·공식 용어집에서 이 용어를 직접 정의하는 근거를 확인하지 못했다. 근거를 확보한 뒤 2차에서 다시 검토한다."
+    },
+    {
+      "term": "투수",
+      "defer_reason": "조문·공식 용어집에서 이 용어를 직접 정의하는 근거를 확인하지 못했다. 근거를 확보한 뒤 2차에서 다시 검토한다."
+    },
+    {
+      "term": "1루수",
+      "defer_reason": "조문·공식 용어집에서 이 용어를 직접 정의하는 근거를 확인하지 못했다. 근거를 확보한 뒤 2차에서 다시 검토한다."
+    },
+    {
+      "term": "2루수",
+      "defer_reason": "조문·공식 용어집에서 이 용어를 직접 정의하는 근거를 확인하지 못했다. 근거를 확보한 뒤 2차에서 다시 검토한다."
+    },
+    {
+      "term": "3루수",
+      "defer_reason": "조문·공식 용어집에서 이 용어를 직접 정의하는 근거를 확인하지 못했다. 근거를 확보한 뒤 2차에서 다시 검토한다."
+    },
+    {
+      "term": "좌익수",
+      "defer_reason": "조문·공식 용어집에서 이 용어를 직접 정의하는 근거를 확인하지 못했다. 근거를 확보한 뒤 2차에서 다시 검토한다."
+    },
+    {
+      "term": "중견수",
+      "defer_reason": "조문·공식 용어집에서 이 용어를 직접 정의하는 근거를 확인하지 못했다. 근거를 확보한 뒤 2차에서 다시 검토한다."
+    },
+    {
+      "term": "우익수",
+      "defer_reason": "조문·공식 용어집에서 이 용어를 직접 정의하는 근거를 확인하지 못했다. 근거를 확보한 뒤 2차에서 다시 검토한다."
+    },
+    {
+      "term": "내야수",
+      "defer_reason": "조문·공식 용어집에서 이 용어를 직접 정의하는 근거를 확인하지 못했다. 근거를 확보한 뒤 2차에서 다시 검토한다."
+    },
+    {
+      "term": "외야수",
+      "defer_reason": "조문·공식 용어집에서 이 용어를 직접 정의하는 근거를 확인하지 못했다. 근거를 확보한 뒤 2차에서 다시 검토한다."
+    },
+    {
+      "term": "야수",
+      "defer_reason": "조문·공식 용어집에서 이 용어를 직접 정의하는 근거를 확인하지 못했다. 근거를 확보한 뒤 2차에서 다시 검토한다."
+    },
+    {
+      "term": "홈스틸",
+      "defer_reason": "조문·공식 용어집에서 이 용어를 직접 정의하는 근거를 확인하지 못했다. 근거를 확보한 뒤 2차에서 다시 검토한다."
+    },
+    {
+      "term": "잔루",
+      "defer_reason": "조문·공식 용어집에서 이 용어를 직접 정의하는 근거를 확인하지 못했다. 근거를 확보한 뒤 2차에서 다시 검토한다."
+    },
+    {
+      "term": "만루",
+      "defer_reason": "조문·공식 용어집에서 이 용어를 직접 정의하는 근거를 확인하지 못했다. 근거를 확보한 뒤 2차에서 다시 검토한다."
+    },
+    {
+      "term": "무사",
+      "defer_reason": "조문·공식 용어집에서 이 용어를 직접 정의하는 근거를 확인하지 못했다. 근거를 확보한 뒤 2차에서 다시 검토한다."
+    },
+    {
+      "term": "1사",
+      "defer_reason": "조문·공식 용어집에서 이 용어를 직접 정의하는 근거를 확인하지 못했다. 근거를 확보한 뒤 2차에서 다시 검토한다."
+    },
+    {
+      "term": "유령주자",
+      "defer_reason": "조문·공식 용어집에서 이 용어를 직접 정의하는 근거를 확인하지 못했다. 근거를 확보한 뒤 2차에서 다시 검토한다."
+    },
+    {
+      "term": "고의낙구",
+      "defer_reason": "조문·공식 용어집에서 이 용어를 직접 정의하는 근거를 확인하지 못했다. 근거를 확보한 뒤 2차에서 다시 검토한다."
+    },
+    {
+      "term": "포수보크",
+      "defer_reason": "조문·공식 용어집에서 이 용어를 직접 정의하는 근거를 확인하지 못했다. 근거를 확보한 뒤 2차에서 다시 검토한다."
+    },
+    {
+      "term": "4사구",
+      "defer_reason": "조문·공식 용어집에서 이 용어를 직접 정의하는 근거를 확인하지 못했다. 근거를 확보한 뒤 2차에서 다시 검토한다."
+    },
+    {
+      "term": "아웃카운트",
+      "defer_reason": "조문·공식 용어집에서 이 용어를 직접 정의하는 근거를 확인하지 못했다. 근거를 확보한 뒤 2차에서 다시 검토한다."
+    },
+    {
+      "term": "투구수",
+      "defer_reason": "조문·공식 용어집에서 이 용어를 직접 정의하는 근거를 확인하지 못했다. 근거를 확보한 뒤 2차에서 다시 검토한다."
+    },
+    {
+      "term": "인플레이",
+      "defer_reason": "조문·공식 용어집에서 이 용어를 직접 정의하는 근거를 확인하지 못했다. 근거를 확보한 뒤 2차에서 다시 검토한다."
+    },
+    {
+      "term": "출루",
+      "defer_reason": "조문·공식 용어집에서 이 용어를 직접 정의하는 근거를 확인하지 못했다. 근거를 확보한 뒤 2차에서 다시 검토한다."
+    },
+    {
+      "term": "1/3이닝",
+      "defer_reason": "조문·공식 용어집에서 이 용어를 직접 정의하는 근거를 확인하지 못했다. 근거를 확보한 뒤 2차에서 다시 검토한다."
+    },
+    {
+      "term": "야구공",
+      "defer_reason": "조문·공식 용어집에서 이 용어를 직접 정의하는 근거를 확인하지 못했다. 근거를 확보한 뒤 2차에서 다시 검토한다."
+    },
+    {
+      "term": "라인업",
+      "defer_reason": "조문·공식 용어집에서 이 용어를 직접 정의하는 근거를 확인하지 못했다. 근거를 확보한 뒤 2차에서 다시 검토한다."
+    },
+    {
+      "term": "승패세홀",
+      "defer_reason": "조문·공식 용어집에서 이 용어를 직접 정의하는 근거를 확인하지 못했다. 근거를 확보한 뒤 2차에서 다시 검토한다."
+    },
+    {
+      "term": "4-6-3 병살",
+      "defer_reason": "조문·공식 용어집에서 이 용어를 직접 정의하는 근거를 확인하지 못했다. 근거를 확보한 뒤 2차에서 다시 검토한다."
+    },
+    {
+      "term": "5-4-3 병살",
+      "defer_reason": "조문·공식 용어집에서 이 용어를 직접 정의하는 근거를 확인하지 못했다. 근거를 확보한 뒤 2차에서 다시 검토한다."
+    },
+    {
+      "term": "파울플라이",
+      "defer_reason": "조문·공식 용어집에서 이 용어를 직접 정의하는 근거를 확인하지 못했다. 근거를 확보한 뒤 2차에서 다시 검토한다."
+    },
+    {
+      "term": "병살",
+      "defer_reason": "조문·공식 용어집에서 이 용어를 직접 정의하는 근거를 확인하지 못했다. 근거를 확보한 뒤 2차에서 다시 검토한다."
     }
   ],
-  "_phase_policy": "1차(이 PR)는 공식 규칙·기록 정의가 있거나 계산식이 표준화된 항목만 담는다. 팬 문화·은어·주관 평가·팀 운영 관용어처럼 뜻이 맥락에 따라 흔들리는 항목은 `deferred_to_phase2` 로 분리해 2차 PR 에서 항목별 근거를 붙여 다시 검토한다. (삼순 2026-08-05 5차 권고 A안 — NO-GO 5회가 전부 editorial 항목의 의미 오류였다)"
+  "_phase_policy": "1차(이 PR)는 공식 규칙·기록 정의가 있거나 계산식이 표준화된 항목만 담는다. 팬 문화·은어·주관 평가·팀 운영 관용어처럼 뜻이 맥락에 따라 흔들리는 항목은 `deferred_to_phase2` 로 분리해 2차 PR 에서 항목별 근거를 붙여 다시 검토한다. (삼순 2026-08-05 5차 권고 A안 — NO-GO 5회가 전부 editorial 항목의 의미 오류였다)",
+  "_evidence_policy": "근거는 '이 문서가 이 용어를 실제로 정의하는가' 로 판정한다. URL 이 200 이라는 것만으로는 근거가 아니다. 6차 리뷰에서 KBO GameRule.aspx 가 302 로 메인에 튕기고 HitterBasic 이 정의가 아닌 통계표인 채 50종의 근거로 쓰이고 있었다(게이트는 URL 문자열만 봐서 GREEN 이었다). 이제 조문 번호·인용문을 함께 적고, 게이트가 인용문을 조문 원문과 대조한다."
 }

@@ -49,9 +49,13 @@ import { BASEBALL_GENIUS_MAX_ANSWER_LENGTH } from "../../src/lib/constants/baseb
  * 못 잡고(66% 기준이면 최대 10건 유실이 GREEN), 무엇보다 **억지 alias 로 숫자를 올리는**
  * 방향을 막지 못한다. 대신 fixture 전수를 expect/exclude 로 고정한다(아래 FixtureItem).
  */
-// 132(기존 시드) + 60(1차 신규, 전원 근거 보유) = 192.
-// 이 숫자가 285 에서 줄어든 이유는 삼순 5차 권고에 따라 근거 없는 항목을 2차로 뺐기 때문이다.
-const MIN_TERM_COUNT = 192;
+// 132(기존 시드) + 18(1차 신규) = 150. **exact 값**이다(하한이 아니라 정확히 이 수).
+//
+// 285 → 192 → 150 으로 두 번 줄었다. 6차 리뷰에서 근거 URL 50종이 무효(302 리다이렉트·
+// 통계표)로 판명돼, 조문 원문을 직접 대조해 확증한 것만 남겼기 때문이다.
+// 하한(>=)이 아니라 exact 로 두는 이유: 하한이면 fixture 에 없는 신규 term 이 조용히
+// 사라져도 통과한다(삼순 6차 지적).
+const EXPECTED_TERM_COUNT = 150;
 
 const MUTATION = process.env.GLOSSARY_GATE_MUTATION ?? "";
 
@@ -221,6 +225,7 @@ async function loadGlossaryFromMigrations(): Promise<GlossaryEntry[]> {
 
   const seedSql = readFileSync(seedSqlPath, "utf8");
   let expansionSql = readFileSync(expansionSqlPath, "utf8");
+  const pristineExpansionSql = expansionSql;
 
   // ── 결함 주입 ───────────────────────────────────────────────────────────────
   // 실제 migration SQL 을 변조해 이 게이트가 RED 를 내는지 증명한다.
@@ -234,9 +239,11 @@ async function loadGlossaryFromMigrations(): Promise<GlossaryEntry[]> {
     expansionSql += `\nDELETE FROM public.baseball_terms WHERE reviewed_at = DATE '2026-08-05';\n`;
   }
   if (MUTATION === "restore-collision") {
-    // 충돌 alias 제거를 되돌린다. `직구` 가 포심에 가려져 조용히 오답이 되는 상태 재현.
+    // 충돌 alias 제거를 되돌린다. 가려진 term 이 조용히 오답이 되는 상태 재현.
+    // 특정 term 을 하드코딩하지 않는다 — 범위가 줄면 그 term 이 사라져 no-op 이 된다.
+    // alias 제거 UPDATE **전부**를 무력화해 제거 계약 자체가 살아있는지 본다.
     expansionSql = expansionSql.replace(
-      /UPDATE public\.baseball_terms SET aliases = ARRAY\(SELECT a FROM unnest\(aliases\)[\s\S]*?WHERE term = '타순';/,
+      /UPDATE public\.baseball_terms SET aliases = ARRAY\(SELECT a FROM unnest\(aliases\)[^;]*;/g,
       "SELECT 1;",
     );
   }
@@ -251,7 +258,10 @@ async function loadGlossaryFromMigrations(): Promise<GlossaryEntry[]> {
     // 삼순 NO-GO 재현: `4-6-3` 을 `6-4-3` 의 alias 로 되돌린다.
     // 6-4-3 은 유격수→2루수→1루수, 4-6-3 은 2루수→유격수→1루수라 정반대다.
     // 사전은 확신에 찬 오답을 내고, 유저는 그게 틀린 줄 모른다.
-    expansionSql += `\nUPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['4-6-3','463','20-20','40-40']::text[])) WHERE term = '6-4-3 병살';\n`;
+    // ⚠️ 대상은 반드시 **1차에 실재하는 term** 이어야 한다. 2차로 빠진 term 을 때리면
+    // UPDATE 가 0행을 잡아 no-op 이 되고, 검증력 0 인데 GREEN 이 된다(2026-08-06 실측).
+    // `K/9`(9이닝당 삼진)에 `K/BB`(삼진/볼넷) 표기를 붙인다 — 숫자·기호가 다른 별개 지표다.
+    expansionSql += `\nUPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['k/bb','k9','bb/9']::text[])) WHERE term = 'K/9';\n`;
   }
   if (MUTATION === "broad-alias") {
     // 넓은 말을 좁은 term 의 alias 로 붙인다(글러브 → 포수 미트, 인필드 → 인필드플라이).
@@ -286,7 +296,8 @@ async function loadGlossaryFromMigrations(): Promise<GlossaryEntry[]> {
     // ⚠️ 원래 `좌완 ← 우완` 으로 심었는데 `좌완` 이 2차 이월되면서 UPDATE 가 아무 행도
     // 잡지 못해 GREEN 이 됐다(factual-claim 과 같은 함정). 1차 잔존 쌍으로 옮긴다.
     // `6-4-3`(유격수→2루수→1루수)과 `4-6-3`(2루수→유격수→1루수)은 정반대 순서다.
-    expansionSql += `\nUPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['4-6-3','463']::text[])) WHERE term = '6-4-3 병살';\n`;
+    // `BABIP`(인플레이 타구 타율)에 `ISO`(순장타율) 표기를 붙인다 — 완전히 다른 지표다.
+    expansionSql += `\nUPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['iso','순장타율']::text[])) WHERE term = 'BABIP';\n`;
   }
   if (MUTATION === "seed-wrong-alias") {
     // 기존 시드에 있던 오답 alias 제거를 되돌린다(비자책은 자책점의 반대 개념).
@@ -298,8 +309,10 @@ async function loadGlossaryFromMigrations(): Promise<GlossaryEntry[]> {
     expansionSql += `\nUPDATE public.baseball_terms SET answer = '1루로 뛰는 주자가 정해진 좁은 통로를 벗어나 수비를 방해하면 아웃되는 규정이에요.\n홈과 1루 사이 마지막 구간에 그려진 선을 기준으로 판단해요.' WHERE term = '쓰리피트';\n`;
   }
   if (MUTATION === "missing-condition") {
-    // `인사이드더파크홈런` 에서 '실책 없이' 조건을 뺀다.
-    expansionSql += `\nUPDATE public.baseball_terms SET answer = '타구가 담장을 넘지 않았는데 타자가 그대로 홈까지 달려 들어온 홈런이에요.\n기록은 홈런으로 인정돼요.' WHERE term = '인사이드더파크홈런';\n`;
+    // 핵심 조건을 뺀 답변으로 되돌린다.
+    // `실점`에서 **책임주자** 조건을 빼면 삼순 5차가 지적한 그 오답으로 돌아간다
+    // (교체 뒤 승계주자 득점이 전임 투수에게 붙는다는 사실이 사라진다).
+    expansionSql += `\nUPDATE public.baseball_terms SET answer = '투수가 마운드에 있는 동안 내준 점수예요.\n이 중 투수 책임인 것만 자책점이 돼요.' WHERE term = '실점';\n`;
   }
   if (MUTATION === "merge-distinct-pitch") {
     // 포크볼과 스플리터를 다시 같은 것으로 묶는다(낙차·구속이 다른 별개 구종).
@@ -321,6 +334,31 @@ async function loadGlossaryFromMigrations(): Promise<GlossaryEntry[]> {
         BASEBALL_GENIUS_MAX_ANSWER_LENGTH + 40,
       )}', 'batting', 'editorial_definition', NULL, 'not_applicable', DATE '2026-08-05'),\n  ('적시타', ARRAY[`,
     );
+  }
+
+  /**
+   * ⚠️ 결함주입이 **아무것도 바꾸지 않으면** 게이트는 당연히 GREEN 이 된다.
+   *
+   * 2026-08-06 실측: 1차 범위를 축소하면서 `40-40 클럽`·`좌완`·`6-4-3 병살`·
+   * `인사이드더파크홈런` 이 2차로 빠졌는데, 그 term 을 때리던 mutation 들이
+   * `WHERE term = '...'` 에서 **0행을 잡아 조용히 no-op** 이 됐다.
+   * 그래도 "mutation RED 20종" 이라고 보고하면 그 보고가 거짓이 된다.
+   *
+   * 대상 term 목록을 손으로 관리하는 방식은 이미 두 번 실패했다(축소 때마다 어긋난다).
+   * 그래서 여기서는 **SQL 이 실제로 달라졌는지**를 기계가 직접 확인한다.
+   * mutation 을 켰는데 SQL 이 그대로면 즉시 실패시킨다 — 검증력 0 인 mutation 을
+   * RED 로 세는 일이 구조적으로 불가능해진다.
+   */
+  if (MUTATION && MUTATION !== "shrink-fixture" && MUTATION !== "missing-contract"
+      && MUTATION !== "unknown-exclusion-reason") {
+    if (expansionSql === pristineExpansionSql) {
+      console.error(
+        `\nFAIL 결함주입 '${MUTATION}' 이 migration SQL 을 전혀 바꾸지 못했다.\n` +
+          "  대상 term 이 사전에서 빠졌을 가능성이 크다. 이 상태의 GREEN 은 검증력 0 이다.\n",
+      );
+      process.exitCode = 1;
+      return;
+    }
   }
 
   await db.exec(seedSql);
@@ -352,8 +390,9 @@ const raw = glossary as unknown as GlossaryRow[];
 
 check("확충 migration 이 실제로 적용되어 사전이 커졌다", () => {
   assert.ok(
-    glossary.length >= MIN_TERM_COUNT,
-    `사전은 ${MIN_TERM_COUNT}종 이상이어야 함 (현재 ${glossary.length})`,
+    glossary.length === EXPECTED_TERM_COUNT,
+    `사전은 정확히 ${EXPECTED_TERM_COUNT}종이어야 함 (현재 ${glossary.length}) — ` +
+      "숫자가 다르면 신규 term 이 유실됐거나 선언 없이 늘어난 것이다",
   );
 });
 
@@ -559,22 +598,14 @@ const ANCHORS: [question: string, expectedTerm: string][] = [
   ["볼넷이머야", "볼넷"],
   ["볼펜", "불펜"],
   ["삼진아웃이 뭐야?", "삼진"],
-  ["외야수", "외야수"],
   ["위닝이 뭐야?", "위닝시리즈"],
   ["자동고의사구", "자동고의4구"],
   ["타수가 뭐야?", "타수"],
-  ["투수", "투수"],
   ["홈런이 모야?", "홈런"],
   ["희비", "희생플라이"],
-  ["1/3이닝은?", "1/3이닝"],
   ["1루", "베이스"],
   ["1루타", "1루타"],
   ["2b", "2루타"],
-  ["2루수가 뭐야?", "2루수"],
-  ["463병살은뭐야", "4-6-3 병살"],
-  ["4사구가 모야", "4사구"],
-  ["543플레이", "5-4-3 병살"],
-  ["6-4-3이뭐야", "6-4-3 병살"],
   ["CP", "마무리투수"],
   ["Dh는 뭐의", "지명타자"],
   ["FIP가 뭐야", "FIP"],
@@ -583,16 +614,24 @@ const ANCHORS: [question: string, expectedTerm: string][] = [
   ["ISO가 뭐야?", "ISO"],
   ["K/9", "K/9"],
   ["OPS 뜻", "OPS"],
-  ["QS+", "QS+"],
-  ["RF", "우익수"],
   ["WOBA가 뭐야?", "wOBA"],
   ["War에대해 쉽게 설명해줘", "WAR"],
   ["era+", "ERA+"],
   ["ph", "대타"],
-  ["게임 차", "게임차"],
-  ["고의낙구", "고의낙구"],
   ["낫아웃아 뭐야", "낫아웃"],
-  ["내야수가 뭐야?", "내야수"],
+  ["도루 뜻", "도루"],
+  ["드래프트", "신인드래프트"],
+  ["등말소는 뭐야", "등록말소"],
+  ["라인드라이브드", "직선타"],
+  ["벤치클라이밍", "벤치클리어링"],
+  ["병산", "병살타"],
+  ["보살", "보살"],
+  ["샐러리캡 제도가 뭐야?", "샐러리캡"],
+  ["서드펜디드 게임이 뭐야", "서스펜디드게임"],
+  ["실점이 뭐야", "실점"],
+  ["쓰리피트", "쓰리피트"],
+  ["안타가 뭐여", "안타"],
+  ["유격수가 뭐애", "유격수"],
 ];
 
 check("대표 표본이 올바른 용어로 매칭된다", () => {
@@ -663,7 +702,10 @@ const expansionData = JSON.parse(
   readFileSync(path.join(repoRoot, "data/baseball-qa/glossary-expansion-2026-08.json"), "utf8"),
 ) as {
   answer_corrections?: { term: string; reason: string; answer: string }[];
-  new_terms?: { term: string; evidence_url?: string; evidence_note?: string }[];
+  new_terms?: {
+    term: string; evidence_url?: string; evidence_note?: string;
+    evidence_clause?: string; evidence_quote?: string;
+  }[];
   deferred_to_phase2?: { term: string; defer_reason?: string }[];
 };
 const answerCorrections = new Map(
@@ -816,30 +858,40 @@ check("alias 에 빈 문자열이 없고, 한 글자 약어는 근거가 있다"
  * 기계가 의미를 판정할 수는 없지만, **한 번 지적받은 항목이 되돌아가는 것**은 막을 수 있다.
  * 아래는 실제 지적을 받은 항목의 핵심 조건을 답변 본문에서 직접 확인한다.
  */
-const SEMANTIC_CONTRACTS: { term: string; mustInclude: RegExp; why: string }[] = [
+/**
+ * 의미 계약 — **AND** 로 검사한다 (삼순 2026-08-05 6차 지적).
+ *
+ * 6차 이전에는 `/2025|페어지역|흙/` 같은 OR 정규식이었다. 그러면 세 조건 중
+ * **한 단어만 남아도 통과**한다 — 정작 핵심인 "1루 페어지역까지 확대" 가 지워져도 GREEN.
+ * 조건이 여러 개라는 건 그 전부가 정의의 일부라는 뜻이므로 전부 있어야 한다.
+ *
+ * 대상은 **1차에 실재하는 term** 만 넣는다. 2차로 빠진 term 을 걸어두면 계약이
+ * 조용히 skip 되어 검증력이 0 이 된다(아래 게이트가 그 상태도 잡는다).
+ */
+const SEMANTIC_CONTRACTS: { term: string; mustIncludeAll: RegExp[]; why: string }[] = [
   {
     term: "쓰리피트",
-    mustInclude: /2025|페어지역|흙/,
-    why: "2025 KBO 개정으로 주로가 1루 페어지역 흙까지 확대 — 구 규정만 쓰면 틀린 룰을 가르친다",
+    mustIncludeAll: [/2025/, /페어지역|페어 지역/, /흙|주로/],
+    why: "2025 KBO 개정으로 주로가 1루 페어지역 흙까지 확대 — 연도·확대범위가 모두 있어야 개정 내용이 전달된다",
   },
   {
-    term: "인사이드더파크홈런",
-    mustInclude: /실책 없이|실책이 없|수비 실책 없/,
-    why: "실책 덕에 홈까지 갔으면 홈런이 아니라 안타+실책이다. 조건이 정의의 핵심",
+    term: "실점",
+    // ⚠️ `/책임/` 을 조건에 넣으면 안 된다. 틀린 답변("이 중 투수 책임인 것만 자책점")에도
+    // 그 단어가 있어서 계약이 통과해버린다(2026-08-06 실측 — mutation 이 GREEN 이었다).
+    // 조건은 **오답과 정답을 실제로 갈라내는 표현**이어야 한다.
+    mustIncludeAll: [/내려간 뒤|마운드에서 내려/, /내보낸 주자/],
+    why:
+      "실점은 '누가 마운드에 있었나'가 아니라 '누가 그 주자를 내보냈나'로 따진다(삼순 5차). " +
+      "교체 뒤 승계주자가 득점해도 전임 투수 실점이라는 게 핵심이라, 그 대목이 빠지면 오답으로 되돌아간다",
   },
   {
-    term: "병살타",
-    mustInclude: /땅볼/,
-    why: "GIDP 는 땅볼 한정 타격 기록. 이 조건이 빠지면 병살(DP) 설명이 된다",
-  },
-  {
-    term: "병살",
-    mustInclude: /수비|아웃 2개|두 개/,
-    why: "DP 는 한 플레이로 아웃 2개를 잡은 수비 기록",
+    term: "베이스",
+    mustIncludeAll: [/45\.72/, /KBO/],
+    why: "KBO 는 2024년부터 사방 45.72cm(18인치)를 쓴다. 38.1cm 로 적으면 틀린 수치(삼순 5차)",
   },
   {
     term: "스플리터",
-    mustInclude: /포크볼|낙차/,
+    mustIncludeAll: [/포크볼/, /낙차|가라앉/],
     why: "포크볼과의 차이(낙차·구속)를 밝혀야 별개 구종임이 드러난다",
   },
 ];
@@ -855,13 +907,20 @@ check("지적받은 항목의 핵심 조건이 답변에 남아 있다", () => {
     if (!row) {
       // 2차로 이월했으면 사전에 없는 게 정상이다(답을 안 하는 쪽이 안전).
       // 다만 "선언 없이 사라진" 경우는 잡아야 한다.
-      if (!deferredTerms.has(contract.term)) {
-        broken.push(`${contract.term}: 사전에도 없고 2차 이월 선언도 없음`);
-      }
+      // 계약을 걸어놓고 대상이 사라지면 검사는 조용히 skip 된다 = 검증력 0.
+      // 2차 이월이더라도 계약은 그때 함께 지워야 한다. 남아 있으면 실패시킨다.
+      broken.push(
+        deferredTerms.has(contract.term)
+          ? `${contract.term}: 2차로 이월됐는데 의미 계약이 남아 있다 — 계약도 함께 옮겨라(조용한 skip 방지)`
+          : `${contract.term}: 사전에도 없고 2차 이월 선언도 없음`,
+      );
       continue;
     }
-    if (!contract.mustInclude.test(row.answer)) {
-      broken.push(`${contract.term}: 핵심 조건 누락 — ${contract.why}`);
+    const missing = contract.mustIncludeAll.filter((re) => !re.test(row.answer));
+    if (missing.length) {
+      broken.push(
+        `${contract.term}: 핵심 조건 ${missing.length}개 누락 (${missing.map(String).join(", ")}) — ${contract.why}`,
+      );
     }
   }
   assert.deepEqual(broken, [], broken.join("\n"));
@@ -922,6 +981,61 @@ check("분리한 개념이 다시 같은 용어로 합쳐지지 않는다", () =
  * 근거를 못 쓴다는 건 내가 확신하지 못한다는 뜻이므로, 그런 항목은 `deferred_to_phase2` 로
  * 빼고 2차에서 근거를 붙여 다시 검토한다. 커버리지가 줄어도 틀린 답보다 낫다.
  */
+/**
+ * 조문 근거 대조 (삼순 2026-08-05 6차 NO-GO).
+ *
+ * 6차에서 드러난 것: **URL 이 200 이라는 사실은 근거가 아니다.**
+ *   · KBO `GameRule.aspx` 는 302 로 메인에 튕기는데 27종의 근거였다
+ *   · `HitterBasic` 은 200 이지만 정의 문서가 아니라 통계표인데 23종의 근거였다
+ *   · 게이트는 URL **문자열 존재**만 봐서 그 50종을 전부 GREEN 으로 통과시켰다
+ *
+ * 그래서 판정 기준을 바꾼다: 조문 번호와 **인용문**을 함께 적고, 그 인용문이
+ * 실제 조문 원문(`kbo-official-rule-clauses.json`, 운영 RAG 에서 추출)에 있는지 대조한다.
+ * 인용문을 지어내면 여기서 RED 가 된다.
+ */
+const clauseFixture = JSON.parse(
+  readFileSync(path.join(repoRoot, "scripts/qa/fixtures/kbo-official-rule-clauses.json"), "utf8"),
+) as { clauses: Record<string, { title: string; text: string }> };
+
+const squash = (v: string) => v.replace(/\s+/g, "");
+
+check("조문 근거는 인용문이 실제 조문 원문에 있어야 한다", () => {
+  const terms = (expansionData.new_terms ?? []) as {
+    term: string; evidence_url?: string; evidence_clause?: string; evidence_quote?: string;
+  }[];
+  const withClause = terms.filter((t) => t.evidence_quote);
+  assert.ok(withClause.length > 0, "조문 근거 term 이 하나도 없다");
+
+  const bad: string[] = [];
+  for (const t of withClause) {
+    const num = (t.evidence_clause ?? "").match(/(\d\.\d{2})/)?.[1];
+    if (!num) { bad.push(`${t.term}: evidence_clause 에 조문 번호가 없음`); continue; }
+    const clause = clauseFixture.clauses[num];
+    if (!clause) { bad.push(`${t.term}: 조문 ${num} 이 원문 fixture 에 없음`); continue; }
+    if (!squash(clause.text).includes(squash(t.evidence_quote!))) {
+      bad.push(`${t.term}: 인용문이 조문 ${num} 원문에 없다 — "${t.evidence_quote!.slice(0, 40)}…"`);
+    }
+  }
+  assert.deepEqual(bad, [], `인용문은 지어낼 수 없다:\n${bad.join("\n")}`);
+});
+
+check("죽은 근거 URL 이 다시 들어오지 않는다", () => {
+  // 실측으로 무효 판정된 URL. 되살아나면 6차 NO-GO 가 그대로 재발한다.
+  const DEAD = [
+    ["GameRule.aspx", "302 로 KBO 메인에 리다이렉트된다(2026-08-06 실측)"],
+    ["HitterBasic", "200 이지만 정의 문서가 아니라 타자 기록 통계표다"],
+    ["Reference/Etc/", "KBO 사이트 개편으로 이 경로 전체가 302 에러 페이지로 간다"],
+  ];
+  const terms = (expansionData.new_terms ?? []) as { term: string; evidence_url?: string }[];
+  const bad: string[] = [];
+  for (const t of terms) {
+    for (const [frag, why] of DEAD) {
+      if ((t.evidence_url ?? "").includes(frag)) bad.push(`${t.term}: ${frag} — ${why}`);
+    }
+  }
+  assert.deepEqual(bad, [], bad.join("\n"));
+});
+
 check("신규 term 은 전원 근거 URL 과 검증 문구를 갖는다", () => {
   const terms = (expansionData.new_terms ?? []) as {
     term: string; evidence_url?: string; evidence_note?: string;
@@ -968,8 +1082,7 @@ check("2차 이월 term 은 실제로 사전에 적재되지 않았다", () => {
  * 사전이 또 바뀌어 대상이 사라지면 이 검사가 먼저 RED 를 낸다.
  */
 const MUTATION_TARGETS = [
-  "쓰리피트", "6-4-3 병살", "보살", "적시타", "인사이드더파크홈런",
-  "병살타", "병살", "포크볼", "스플리터", "자책점",
+  "실점", "베이스", "타수", "보살", "쓰리피트", "희생타", "적시타", "1루타", "BABIP", "FIP",
 ];
 
 check("결함주입 대상 term 이 사전에 실재한다", () => {
