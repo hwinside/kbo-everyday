@@ -306,7 +306,7 @@
     {
       "q": "3k",
       "count": 1,
-      "expect": "삼진"
+      "exclude": "NUMERIC_INTERPRETATION"
     },
     {
       "q": "40-40 클럽",
@@ -1921,7 +1921,7 @@
     {
       "q": "퍼스널 넘버가 뭐야?",
       "count": 1,
-      "expect": "등번호"
+      "exclude": "UNVERIFIED_SLANG"
     },
     {
       "q": "퍼팩트 게임",

@@ -187,6 +187,15 @@ async function loadGlossaryFromMigrations(): Promise<GlossaryEntry[]> {
     // (수정 전 migration 의 `ON CONFLICT DO UPDATE SET answer = excluded.answer` 가 이랬다)
     expansionSql += `\nUPDATE public.baseball_terms SET answer = '__mutation_overwritten__' WHERE term = '보크';\n`;
   }
+  if (MUTATION === "factual-claim") {
+    // 삼순 P0 재현: 사전 답변에 검증 필요한 사실 주장을 되돌린다.
+    // (실제로 나갔던 문장 그대로. 박재홍 2000년은 32홈런·30도루라 두 군데가 틀렸다)
+    expansionSql += `\nUPDATE public.baseball_terms SET answer = '한 시즌에 홈런 40개와 도루 40개를 함께 기록한 걸 말해요.\nKBO에서는 2000년 박재홍 선수 단 한 명뿐인 대기록이에요.' WHERE term = '40-40 클럽';\n`;
+  }
+  if (MUTATION === "junk-alias") {
+    // 빈 문자열 alias 와 한 글자 alias 를 되돌린다.
+    expansionSql += `\nUPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['','a']::text[])) WHERE term = '보살';\n`;
+  }
   if (MUTATION === "overlong-answer") {
     // 발송 상한을 넘는 답변을 심는다. 길이 계약이 살아있는지 확인.
     expansionSql = expansionSql.replace(
@@ -481,6 +490,86 @@ check("기존 시드 answer 가 확충으로 덮이지 않는다", () => {
     [],
     `사람이 검수한 답을 확충이 덮었다:\n${overwritten.join("\n")}`,
   );
+});
+
+/**
+ * 사전 answer 에 **검증이 필요한 사실 주장**을 넣지 않는다.
+ *
+ * 2026-08-05 실제 사고: `40-40 클럽` 답에 "KBO에서는 2000년 박재홍 선수 단 한 명뿐" 이라고
+ * 썼는데 두 군데가 틀렸다 — 박재홍 2000년은 32홈런·30도루였고(그는 1996년 최초 30-30
+ * 달성자다), KBO 40-40 은 2015년 에릭 테임즈가 유일하다. 사전은 사람이 검수한 답을
+ * 그대로 내보내므로 이런 오류는 **확신에 찬 오답**이 되어 나간다.
+ *
+ * 설령 맞더라도 "유일·최초" 류는 다음 달성자가 나오면 틀려진다. 기록 수치는
+ * 구조화 DB(kbo_structured)나 RAG 가 답할 영역이고, 사전은 뜻만 말한다.
+ *
+ * ⚠️ 기존 시드 132종은 대상에서 뺀다. 이미 사람이 검수해 운영 중이고 이 확충의 범위가
+ * 아니다(예: ABS "2024년 도입", 샐러리캡 "2023년부터"). 대상은 이번에 새로 넣는 답뿐이다.
+ */
+const FACTUAL_CLAIM_PATTERNS: [RegExp, string][] = [
+  [/\b(?:19|20)[0-9]{2}\s*년/, "특정 연도"],
+  [/유일|최초|단\s*한\s*명|처음으로/, "유일·최초 주장"],
+  // ⚠️ "특정 선수 이름" 을 정규식으로 잡으려던 시도는 폐기했다.
+  // `[가-힣]{2,4}\s*선수(가|는|…)` 로 짰더니 "선수가 계약을 끝내고"(옵트아웃),
+  // "어깨가 강한 선수가 맡아요"(우익수) 같은 **일반 문장**을 전부 잡았다.
+  // 한국어에서 '선수'는 보통명사라 이름과 구분되지 않는다.
+  // 실제 사고(40-40)는 연도와 '단 한 명' 두 패턴에 모두 걸리므로, 잡아야 할 것은
+  // 위 두 개로 덮인다. 검출력 없는 규칙을 남겨 오탐을 내는 쪽이 더 나쁘다.
+];
+
+check("신규 답변에 검증 필요한 사실 주장이 없다", () => {
+  const seeded = new Set(seedAnswers.keys());
+  const claims: string[] = [];
+  for (const row of raw) {
+    if (seeded.has(row.term)) continue; // 기존 검수분은 이 확충의 범위가 아니다
+    for (const [pattern, label] of FACTUAL_CLAIM_PATTERNS) {
+      if (pattern.test(row.answer)) claims.push(`${row.term}: ${label} — "${row.answer.split("\n")[0]}"`);
+    }
+  }
+  assert.deepEqual(
+    claims,
+    [],
+    `사전은 뜻만 말한다. 기록·인물 주장은 구조화 DB/RAG 의 몫이다:\n${claims.join("\n")}`,
+  );
+});
+
+/**
+ * alias 위생.
+ *
+ * 빈 문자열 alias 는 정규화 키가 "" 가 되어 매칭 자체가 깨진다(`타율` 에 실제로 있었다).
+ *
+ * 한 글자 alias 는 원래 전부 막으려 했는데, 그러면 `k`(삼진)·`e`(실책)·`h`(안타) 같은
+ * **KBO 기록지 표준 약어**까지 죽는다. matchGlossary 는 질문 전체가 그 키와 정확히 같을
+ * 때만 매칭되므로(부분 문자열이 아니다) `k` 한 글자를 물으면 삼진을 답하는 게 맞다.
+ * 그래서 **표준 약어만 근거와 함께 allowlist** 하고 나머지는 막는다.
+ * `보살` 의 `a` 는 여기 없다 — 어시스트 약어로 쓰긴 하지만 우리 로그에 그 질의가 없고,
+ * 한 글자는 오답 시 손해가 커서 근거 없이는 두지 않는다.
+ */
+const SINGLE_LETTER_ALIAS_ALLOWED = new Map<string, string>([
+  ["삼진|k", "KBO 기록지 표준 약어 (strikeout)"],
+  ["실책|e", "KBO 기록지 표준 약어 (error)"],
+  ["안타|h", "KBO 기록지 표준 약어 (hit)"],
+  ["득점|r", "KBO 기록지 표준 약어 (run)"],
+  ["투수|p", "KBO 기록지 표준 약어 (pitcher)"],
+  ["포수|c", "KBO 기록지 표준 약어 (catcher)"],
+]);
+
+check("alias 에 빈 문자열이 없고, 한 글자 약어는 근거가 있다", () => {
+  const bad: string[] = [];
+  for (const row of raw) {
+    for (const alias of row.aliases) {
+      const trimmed = alias.trim();
+      if (trimmed === "") {
+        bad.push(`${row.term}: 빈 alias (정규화 키가 "" 가 된다)`);
+      } else if (/^[a-z0-9]$/i.test(trimmed)) {
+        const key = `${row.term}|${trimmed.toLowerCase()}`;
+        if (!SINGLE_LETTER_ALIAS_ALLOWED.has(key)) {
+          bad.push(`${row.term}: 한 글자 alias '${alias}' — SINGLE_LETTER_ALIAS_ALLOWED 에 근거를 적어라`);
+        }
+      }
+    }
+  }
+  assert.deepEqual(bad, [], bad.join("\n"));
 });
 
 check("답변에 외부 링크·마크업이 섞이지 않는다", () => {

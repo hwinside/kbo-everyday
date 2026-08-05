@@ -6,9 +6,9 @@
 --       (3건만 정규화로 잡혔고 나머지는 사전에 아예 없거나 표기가 달랐다)
 --
 -- 이 migration 이 하는 일:
---   ① 신규 용어 148종 삽입
---   ② 기존 용어에 alias 91건 보강 (오타·약어·구어 표기)
---   ③ 신규 term 과 정규화 키가 충돌하는 기존 alias 2건 제거
+--   ① 신규 용어 149종 삽입
+--   ② 기존 용어에 alias 82건 보강 (오타·약어·구어 표기)
+--   ③ 신규 term 과 정규화 키가 충돌하는 기존 alias 3건 제거
 --
 -- ③이 필요한 이유: matchGlossary 는 Map 에 먼저 들어간 항목이 이기고 뒤엣것은
 -- 조용히 가려진다(에러 없음). 예) 신규 term '직구' vs 기존 '포심'의 alias '직구'.
@@ -31,6 +31,8 @@ UPDATE public.baseball_terms SET aliases = ARRAY(SELECT a FROM unnest(aliases) A
   WHERE term = '위닝시리즈';
 UPDATE public.baseball_terms SET aliases = ARRAY(SELECT a FROM unnest(aliases) AS a WHERE a <> ALL (ARRAY['라인업','오더']::text[]))
   WHERE term = '타순';
+UPDATE public.baseball_terms SET aliases = ARRAY(SELECT a FROM unnest(aliases) AS a WHERE a <> ALL (ARRAY['희생타']::text[]))
+  WHERE term = '희생플라이';
 
 -- ① 신규 용어
 INSERT INTO public.baseball_terms (term, aliases, answer, category, source_kind, source_url, rule_version, reviewed_at)
@@ -68,7 +70,7 @@ KBO 정규 경기는 9이닝으로 치러요.', 'basic', 'editorial_definition',
   ('밀어치기', ARRAY['밀어 치기','반대 방향 타격','밀어친다','밀어치는']::text[], '타자가 몸쪽이 아닌 바깥쪽 공을 자기 반대편 방향으로 치는 거예요.
 오른손 타자는 우측, 왼손 타자는 좌측으로 가요.
 수비 시프트를 깨는 데 유용해요.', 'batting', 'editorial_definition', NULL, 'not_applicable', DATE '2026-08-05'),
-  ('당겨치기', ARRAY['당기는 타구','당겨 치기','풀히팅','풀 스윙 방향']::text[], '타자가 자기 앞쪽 방향으로 강하게 끌어당겨 치는 거예요.
+  ('당겨치기', ARRAY['당기는 타구','당겨 치기','풀히팅']::text[], '타자가 자기 앞쪽 방향으로 강하게 끌어당겨 치는 거예요.
 오른손 타자는 좌측, 왼손 타자는 우측으로 타구가 가요.
 장타가 나기 쉬운 대신 시프트에 걸리기도 해요.', 'batting', 'editorial_definition', NULL, 'not_applicable', DATE '2026-08-05'),
   ('어퍼스윙', ARRAY['어퍼 스윙','upper swing','어퍼컷 스윙']::text[], '방망이가 아래에서 위로 올라가며 지나가는 스윙이에요.
@@ -119,7 +121,7 @@ KBO 정규 경기는 9이닝으로 치러요.', 'basic', 'editorial_definition',
   ('강공', ARRAY['강공 전환','강공전환','강공책']::text[], '번트 같은 작전 대신 타자가 그대로 크게 치도록 두는 거예요.
 번트 자세를 잡았다가 바꾸면 ''강공 전환''이라고 해요.
 한 방으로 큰 점수를 노릴 때 써요.', 'batting', 'editorial_definition', NULL, 'not_applicable', DATE '2026-08-05'),
-  ('버스터', ARRAY['버스터 에그','버스트']::text[], '번트 자세를 취해 수비를 앞으로 끌어낸 뒤 곧바로 스윙으로 바꿔 치는 작전이에요.
+  ('버스터', ARRAY['버스트']::text[], '번트 자세를 취해 수비를 앞으로 끌어낸 뒤 곧바로 스윙으로 바꿔 치는 작전이에요.
 수비가 전진해 있어 빈 곳이 생겨요.
 한국에서 흔히 ''버스터''라고 불러요.', 'batting', 'editorial_definition', NULL, 'not_applicable', DATE '2026-08-05'),
   ('페어', ARRAY['페어볼','페어 볼','페어지역','페어 지역']::text[], '타구가 1루선과 3루선 안쪽(페어 지역)에 들어온 걸 말해요.
@@ -128,7 +130,7 @@ KBO 정규 경기는 9이닝으로 치러요.', 'basic', 'editorial_definition',
   ('빠던', ARRAY['배트플립','빠따던지기','bat flip']::text[], '홈런을 확신했을 때 방망이를 시원하게 던지는 세리머니예요.
 ''빠따 던지기''를 줄인 말이에요.
 KBO 특유의 문화로 해외에서도 유명해요.', 'culture', 'editorial_definition', NULL, 'not_applicable', DATE '2026-08-05'),
-  ('제구', ARRAY['제구력','컨트롤','커맨드']::text[], '투수가 원하는 곳에 공을 정확히 던지는 능력이에요.
+  ('제구', ARRAY['제구력','컨트롤']::text[], '투수가 원하는 곳에 공을 정확히 던지는 능력이에요.
 제구가 흔들리면 볼넷이 늘어나요.
 구속·구위와 함께 투수를 평가하는 핵심 요소예요.', 'pitching', 'editorial_definition', NULL, 'not_applicable', DATE '2026-08-05'),
   ('구위', ARRAY['공의 힘','구위가']::text[], '투수가 던진 공이 타자에게 얼마나 위력적으로 느껴지는지를 뜻해요.
@@ -140,7 +142,7 @@ KBO 특유의 문화로 해외에서도 유명해요.', 'culture', 'editorial_de
   ('투나씽', ARRAY['투낫싱','2-0','투 나씽','2볼 0스트라이크']::text[], '볼 2개, 스트라이크 0개인 볼카운트를 부르는 말이에요.
 타자에게 유리해서 좋은 공을 노리기 좋아요.
 영어 ''two nothing''에서 온 표현이에요.', 'basic', 'editorial_definition', NULL, 'not_applicable', DATE '2026-08-05'),
-  ('볼배합', ARRAY['볼 배합','리드','피칭 디자인']::text[], '포수가 어떤 공을 어떤 순서로 던질지 짜는 것을 말해요.
+  ('볼배합', ARRAY['볼 배합']::text[], '포수가 어떤 공을 어떤 순서로 던질지 짜는 것을 말해요.
 타자 성향과 볼카운트에 따라 달라져요.
 포수의 리드라고도 불러요.', 'pitching', 'editorial_definition', NULL, 'not_applicable', DATE '2026-08-05'),
   ('BABIP', ARRAY['babip','바빕','인플레이 타구 타율','bapip']::text[], '홈런과 삼진을 뺀, 그라운드 안으로 들어간 타구가 안타가 된 비율이에요.
@@ -151,10 +153,10 @@ KBO 특유의 문화로 해외에서도 유명해요.', 'culture', 'editorial_de
   ('ISO', ARRAY['iso','순장타율','아이소']::text[], '장타율에서 타율을 뺀 값으로, 순수한 장타력을 보는 지표예요.
 단타를 걷어내고 얼마나 멀리 치는지만 남겨요.
 .200을 넘으면 거포로 봐요.', 'record', 'editorial_definition', NULL, 'not_applicable', DATE '2026-08-05'),
-  ('K/9', ARRAY['k/9','k9','9이닝당 탈삼진','탈삼진율']::text[], '투수가 9이닝을 던진다고 가정했을 때 잡는 삼진 개수예요.
+  ('K/9', ARRAY['k/9','k9','9이닝당 탈삼진']::text[], '투수가 9이닝을 던진다고 가정했을 때 잡는 삼진 개수예요.
 숫자가 높을수록 탈삼진 능력이 좋아요.
 9를 넘으면 상위권으로 봐요.', 'record', 'editorial_definition', NULL, 'not_applicable', DATE '2026-08-05'),
-  ('BB/9', ARRAY['bb/9','bb9','9이닝당 볼넷','볼넷률']::text[], '투수가 9이닝당 내주는 볼넷 개수예요.
+  ('BB/9', ARRAY['bb/9','bb9','9이닝당 볼넷']::text[], '투수가 9이닝당 내주는 볼넷 개수예요.
 낮을수록 제구가 안정적이라는 뜻이에요.
 3 아래면 좋은 편으로 봐요.', 'record', 'editorial_definition', NULL, 'not_applicable', DATE '2026-08-05'),
   ('K/BB', ARRAY['k/bb','kbb','삼진 볼넷 비율']::text[], '탈삼진을 볼넷으로 나눈 값이에요.
@@ -218,10 +220,10 @@ KBO 특유의 문화로 해외에서도 유명해요.', 'culture', 'editorial_de
   ('우익수', ARRAY['라이트','rf','우익수가']::text[], '외야 오른쪽을 지키는 수비수예요.
 수비 위치 번호는 9번이에요.
 3루까지 던져야 하는 상황이 많아 어깨가 강한 선수가 맡아요.', 'position', 'official_rule', 'https://www.koreabaseball.com/Reference/Etc/GameRule.aspx', '2026', DATE '2026-08-05'),
-  ('내야수', ARRAY['인필더','infielder','내야']::text[], '1루수·2루수·3루수·유격수처럼 흙이 깔린 안쪽을 지키는 수비수예요.
+  ('내야수', ARRAY['인필더','infielder']::text[], '1루수·2루수·3루수·유격수처럼 흙이 깔린 안쪽을 지키는 수비수예요.
 타구 처리와 병살 플레이를 주로 맡아요.
 바깥 잔디를 맡으면 외야수예요.', 'position', 'official_rule', 'https://www.koreabaseball.com/Reference/Etc/GameRule.aspx', '2026', DATE '2026-08-05'),
-  ('외야수', ARRAY['아웃필더','outfielder','외야']::text[], '좌익수·중견수·우익수처럼 잔디 바깥쪽을 지키는 수비수예요.
+  ('외야수', ARRAY['아웃필더','outfielder']::text[], '좌익수·중견수·우익수처럼 잔디 바깥쪽을 지키는 수비수예요.
 뜬공을 잡고 담장까지 가는 타구를 막아요.
 안쪽 흙 지역을 맡으면 내야수예요.', 'position', 'official_rule', 'https://www.koreabaseball.com/Reference/Etc/GameRule.aspx', '2026', DATE '2026-08-05'),
   ('야수', ARRAY['필더','fielder','야수는']::text[], '투수를 뺀 나머지 수비 선수를 통틀어 부르는 말이에요.
@@ -245,7 +247,7 @@ KBO 특유의 문화로 해외에서도 유명해요.', 'culture', 'editorial_de
   ('무사', ARRAY['노아웃','무사가','0아웃']::text[], '그 이닝에 아웃이 아직 하나도 없는 상황이에요.
 아웃 1개면 1사, 2개면 2사라고 불러요.
 ''무사 만루''는 아웃 없이 주자가 꽉 찬 최고의 찬스예요.', 'basic', 'official_rule', 'https://www.koreabaseball.com/Reference/Etc/GameRule.aspx', '2026', DATE '2026-08-05'),
-  ('1사', ARRAY['원아웃','1아웃','일사','2사','투아웃','2아웃']::text[], '그 이닝에 아웃이 1개 나온 상황을 1사, 2개면 2사라고 해요.
+  ('1사', ARRAY['원아웃','1아웃','일사']::text[], '그 이닝에 아웃이 1개 나온 상황을 1사, 2개면 2사라고 해요.
 아직 없으면 무사예요.
 아웃 3개가 되면 공수가 바뀌어요.', 'basic', 'official_rule', 'https://www.koreabaseball.com/Reference/Etc/GameRule.aspx', '2026', DATE '2026-08-05'),
   ('잔루만루', ARRAY['잔루 만루','잔루만루가']::text[], '만루 찬스를 만들고도 점수를 못 내고 주자를 그대로 남긴 상황을 팬들이 부르는 말이에요.
@@ -342,7 +344,7 @@ KBO의 한국시리즈에 해당해요.
   ('상반기', ARRAY['후반기','전반기','상반기와 후반기']::text[], '정규시즌을 올스타 브레이크를 기준으로 나눈 구간이에요.
 올스타전 앞이 전반기(상반기), 뒤가 후반기예요.
 후반기 순위 싸움이 특히 치열해요.', 'league', 'editorial_definition', NULL, 'not_applicable', DATE '2026-08-05'),
-  ('루징시리즈', ARRAY['루징 시리즈','루징','위닝 반대']::text[], '한 팀과의 연속 경기(시리즈)에서 진 경기가 더 많은 걸 말해요.
+  ('루징시리즈', ARRAY['루징 시리즈','루징']::text[], '한 팀과의 연속 경기(시리즈)에서 진 경기가 더 많은 걸 말해요.
 반대로 더 많이 이기면 위닝시리즈예요.
 전부 지면 스윕당했다고 해요.', 'league', 'editorial_definition', NULL, 'not_applicable', DATE '2026-08-05'),
   ('수훈선수', ARRAY['수훈 선수','수훈갑','수훈선수가']::text[], '그 경기 승리에 가장 크게 기여한 선수예요.
@@ -404,7 +406,7 @@ WAR·wRC+·OPS·FIP·BABIP 같은 지표가 여기서 나왔어요.
   ('승패세홀', ARRAY['승 패 세 홀','승패세홀 조건','승패세홀이']::text[], '투수 기록인 승리·패전·세이브·홀드를 묶어 부르는 말이에요.
 앞선 상황을 지켜 끝내면 세이브, 중간에 지키고 넘기면 홀드예요.
 각각 인정 조건이 따로 있어요.', 'record', 'official_record', 'https://www.koreabaseball.com/Record/Player/HitterBasic/Basic1.aspx', '2026', DATE '2026-08-05'),
-  ('등번호', ARRAY['백넘버','퍼스널 넘버','퍼스널넘버','등번호가']::text[], '유니폼 등에 붙는 선수 고유 번호예요.
+  ('등번호', ARRAY['백넘버','등번호가']::text[], '유니폼 등에 붙는 선수 고유 번호예요.
 같은 팀 안에서 겹칠 수 없어요.
 팀에 큰 족적을 남기면 영구결번으로 남기기도 해요.', 'culture', 'editorial_definition', NULL, 'not_applicable', DATE '2026-08-05'),
   ('포수 미트', ARRAY['미트','캐처미트','포수미트']::text[], '포수가 빠른 공을 받기 위해 쓰는 두툼한 전용 글러브예요.
@@ -446,7 +448,8 @@ WAR·wRC+·OPS·FIP·BABIP 같은 지표가 여기서 나왔어요.
 장타력과 주력을 같이 갖췄다는 뜻이에요.
 30-30, 40-40으로 갈수록 희귀해져요.', 'record', 'editorial_definition', NULL, 'not_applicable', DATE '2026-08-05'),
   ('40-40 클럽', ARRAY['40-40','4040클럽','40홈런 40도루']::text[], '한 시즌에 홈런 40개와 도루 40개를 함께 기록한 걸 말해요.
-KBO에서는 2000년 박재홍 선수 단 한 명뿐인 대기록이에요.', 'record', 'editorial_definition', NULL, 'not_applicable', DATE '2026-08-05'),
+장타력과 주력을 모두 갖춰야 해서 KBO에서도 손에 꼽는 대기록이에요.
+30-30보다 한 단계 위예요.', 'record', 'editorial_definition', NULL, 'not_applicable', DATE '2026-08-05'),
   ('파울플라이', ARRAY['파울 플라이','파울뜬공','파울 뜬공']::text[], '파울 지역으로 높이 뜬 타구예요.
 야수가 땅에 닿기 전에 잡으면 파울이어도 아웃이에요.
 포수 근처로 뜨면 캐처플라이라고 불러요.', 'rule', 'official_rule', 'https://www.koreabaseball.com/Reference/Etc/GameRule.aspx', '2026', DATE '2026-08-05'),
@@ -455,7 +458,10 @@ KBO에서는 2000년 박재홍 선수 단 한 명뿐인 대기록이에요.', 'r
 번트나 히트앤런으로 주자를 보내기 좋은 장면이에요.', 'basic', 'editorial_definition', NULL, 'not_applicable', DATE '2026-08-05'),
   ('2사 만루', ARRAY['2사만루','투아웃 만루']::text[], '아웃이 2개인데 1·2·3루에 주자가 모두 있는 상황이에요.
 안타 하나면 여러 점이 나지만, 아웃 하나면 그대로 이닝이 끝나요.
-주자는 전원 자동 스타트예요.', 'basic', 'editorial_definition', NULL, 'not_applicable', DATE '2026-08-05')
+주자는 전원 자동 스타트예요.', 'basic', 'editorial_definition', NULL, 'not_applicable', DATE '2026-08-05'),
+  ('희생타', ARRAY['희생 타','희생타가']::text[], '자기는 아웃되면서 주자를 다음 베이스로 보내거나 불러들이는 타격을 통틀어 부르는 말이에요.
+번트로 보내면 희생번트(SH), 뜬공으로 불러들이면 희생플라이(SF)로 따로 기록해요.
+둘 다 타수에는 빠져요.', 'record', 'official_record', 'https://www.koreabaseball.com/Record/Player/HitterBasic/Basic1.aspx', '2026', DATE '2026-08-05')
 ON CONFLICT (term) DO UPDATE SET
   -- ⚠️ answer 는 여기 없다. 사람이 검수한 문안을 이 경로로 덮지 않는다.
   aliases = excluded.aliases,
@@ -467,15 +473,15 @@ ON CONFLICT (term) DO UPDATE SET
   WHERE baseball_terms.reviewed_at = DATE '2026-08-05';
 
 -- ② 기존 용어 alias 보강 (합집합이라 기존 alias 는 하나도 잃지 않는다)
-UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['볼펜','불팬','볼펜투수','불펜투수','구원투수']::text[]))
+UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['볼펜','불팬','볼펜투수','불펜투수','구원투수','rp','릴리프','중간계투']::text[]))
   WHERE term = '불펜';
 UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['퍼팩트게임','퍼팩트 게임','퍼펙트 게임','완전경기']::text[]))
   WHERE term = '퍼펙트게임';
-UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['삼진아웃','삼진 아웃','삼짖','스트라이크아웃']::text[]))
+UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['삼진아웃','삼진 아웃','삼짖','스트라이크아웃','k','탈삼진이','삼진이']::text[]))
   WHERE term = '삼진';
 UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['보쿠','보크볼','보크가','피처보크','투수 보크']::text[]))
   WHERE term = '보크';
-UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['병살','병상타','더블플레이','더블 플레이','dp']::text[]))
+UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['병살','병상타','더블플레이','더블 플레이','dp','병산','병살타가']::text[]))
   WHERE term = '병살타';
 UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['볼넥','베이스 온 볼스','포 볼']::text[]))
   WHERE term = '볼넷';
@@ -495,7 +501,7 @@ UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases 
   WHERE term = '선발투수';
 UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['등말소','말소','2군 강등']::text[]))
   WHERE term = '등록말소';
-UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['자동고의사구','고의사구','고의4구','고의 사구','자동 고의사구','ibb']::text[]))
+UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['자동고의사구','고의사구','고의4구','고의 사구','자동 고의사구','ibb','고의 자동 사구','자동고의사구가']::text[]))
   WHERE term = '자동고의4구';
 UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['피치클록','피치 클락','피치 클록']::text[]))
   WHERE term = '피치클락';
@@ -509,7 +515,7 @@ UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases 
   WHERE term = '스윕';
 UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['위닝','위닝 시리즈','위닝이']::text[]))
   WHERE term = '위닝시리즈';
-UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['사구','hbp','데드볼']::text[]))
+UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['사구','hbp','데드볼','hpb','hp','사구가']::text[]))
   WHERE term = '몸에 맞는 공';
 UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['ops','출루율 장타율 합']::text[]))
   WHERE term = 'OPS';
@@ -521,15 +527,15 @@ UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases 
   WHERE term = 'WHIP';
 UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['era','방어율','이알에이']::text[]))
   WHERE term = '평균자책점';
-UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['낫 아웃','not out','스트라이크아웃 낫아웃']::text[]))
+UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['낫 아웃','not out','스트라이크아웃 낫아웃','낫아웃아','포수 낫아웃','스트라이크 낫 아웃']::text[]))
   WHERE term = '낫아웃';
-UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['인필드 플라이','인필드플라이가','내야 뜬공 규칙']::text[]))
+UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['인필드 플라이','인필드플라이가','내야 뜬공 규칙','인플라잉','인필드 플레이']::text[]))
   WHERE term = '인필드플라이';
 UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['드래프트','신인 드래프트','지명']::text[]))
   WHERE term = '신인드래프트';
 UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['fc','필더스초이스','야선']::text[]))
   WHERE term = '야수선택';
-UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['희비','sf','희생 플라이','희생타']::text[]))
+UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['희비','sf','희생 플라이','히븨','희비가','희플']::text[]))
   WHERE term = '희생플라이';
 UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['sh','희생 번트','보내기 번트']::text[]))
   WHERE term = '희생번트';
@@ -587,14 +593,10 @@ UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases 
   WHERE term = '쓰리피트';
 UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['643병살']::text[]))
   WHERE term = '6-4-3 병살';
-UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['인플라잉','인필드 플레이']::text[]))
-  WHERE term = '인필드플라이';
 UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['프린차이즈','프렌차이즈','프랜차이즈가']::text[]))
   WHERE term = '프랜차이즈 스타';
-UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['할','푼','리','몇할','타할','n할','3할','4할','1할','2할','5할']::text[]))
+UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['할','몇할','타할','n할','3할','4할','1할','2할','5할']::text[]))
   WHERE term = '할푼리';
-UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['히븨','희비가','희플']::text[]))
-  WHERE term = '희생플라이';
 UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['삼자번퇴가','삼자 번퇴']::text[]))
   WHERE term = '삼자범퇴';
 UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['젖시타','적시타가','타점 적시타']::text[]))
@@ -609,28 +611,14 @@ UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases 
   WHERE term = '게임차';
 UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['초구가','초구딱이']::text[]))
   WHERE term = '초구';
-UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['보살이가','a','어시']::text[]))
+UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['보살이가','어시']::text[]))
   WHERE term = '보살';
 UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['영구 결번이','결번']::text[]))
   WHERE term = '영구결번';
 UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['베트 플립','베트플립','배트 플립']::text[]))
   WHERE term = '빠던';
-UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['병산','병살타가']::text[]))
-  WHERE term = '병살타';
-UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['hpb','hp','사구가']::text[]))
-  WHERE term = '몸에 맞는 공';
-UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['rp','릴리프','중간계투']::text[]))
-  WHERE term = '불펜';
-UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['k','3k','탈삼진이','삼진이']::text[]))
-  WHERE term = '삼진';
-UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY[]::text[]))
-  WHERE term = '타율';
 UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['가중출루','가중 출루','wra']::text[]))
   WHERE term = 'wOBA';
-UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['고의 자동 사구','자동고의사구가']::text[]))
-  WHERE term = '자동고의4구';
-UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['낫아웃아','포수 낫아웃','스트라이크 낫 아웃']::text[]))
-  WHERE term = '낫아웃';
 UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['주요지표','야구 지표','기록 약자']::text[]))
   WHERE term = '세이버매트릭스';
 UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['미트가','포수 글러브']::text[]))
@@ -655,7 +643,7 @@ UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases 
 DO $$
 DECLARE missing text;
 BEGIN
-  SELECT string_agg(t, ', ') INTO missing FROM unnest(ARRAY['불펜','퍼펙트게임','삼진','보크','병살타','볼넷','유격수','지명타자','대타','대주자','포수','마무리투수','선발투수','등록말소','자동고의4구','피치클락','서스펜디드게임','벤치클리어링','퀄리티스타트','스윕','위닝시리즈','몸에 맞는 공','OPS','wRC+','WAR','WHIP','평균자책점','낫아웃','인필드플라이','신인드래프트','야수선택','희생플라이','희생번트','도루','타점','홈런','안타','2루타','3루타','타율','출루율','장타율','득점','이닝','실책','스트라이크존','패전투수','승리투수','포크볼','완투','홀드','세이브','샐러리캡','태그업','뜬공','땅볼','내야안타','자책점','쓰리피트','6-4-3 병살','인필드플라이','프랜차이즈 스타','할푼리','희생플라이','삼자범퇴','적시타','수훈선수','포지션 번호','BABIP','게임차','초구','보살','영구결번','빠던','병살타','몸에 맞는 공','불펜','삼진','타율','wOBA','자동고의4구','낫아웃','세이버매트릭스','포수 미트','완봉','마운드','더그아웃','타순','엔트리','직선타','승률','위닝시리즈','타순']::text[]) AS t
+  SELECT string_agg(t, ', ') INTO missing FROM unnest(ARRAY['불펜','퍼펙트게임','삼진','보크','병살타','볼넷','유격수','지명타자','대타','대주자','포수','마무리투수','선발투수','등록말소','자동고의4구','피치클락','서스펜디드게임','벤치클리어링','퀄리티스타트','스윕','위닝시리즈','몸에 맞는 공','OPS','wRC+','WAR','WHIP','평균자책점','낫아웃','인필드플라이','신인드래프트','야수선택','희생플라이','희생번트','도루','타점','홈런','안타','2루타','3루타','타율','출루율','장타율','득점','이닝','실책','스트라이크존','패전투수','승리투수','포크볼','완투','홀드','세이브','샐러리캡','태그업','뜬공','땅볼','내야안타','자책점','쓰리피트','6-4-3 병살','프랜차이즈 스타','할푼리','삼자범퇴','적시타','수훈선수','포지션 번호','BABIP','게임차','초구','보살','영구결번','빠던','wOBA','세이버매트릭스','포수 미트','완봉','마운드','더그아웃','타순','엔트리','직선타','승률','위닝시리즈','타순','희생플라이']::text[]) AS t
   WHERE NOT EXISTS (SELECT 1 FROM public.baseball_terms bt WHERE bt.term = t);
   IF missing IS NOT NULL THEN
     RAISE EXCEPTION 'alias 보강/제거 대상 term 이 사전에 없습니다: %', missing;
@@ -668,7 +656,7 @@ END $$;
 DO $$
 DECLARE missing text;
 BEGIN
-  SELECT string_agg(t, ', ') INTO missing FROM unnest(ARRAY['야구','적시타','타수','타석','초구','볼카운트','헛스윙','루킹삼진','삼구삼진','1루타','밀어치기','당겨치기','어퍼스윙','레벨스윙','타자일순','장외홈런','인사이드더파크홈런','백투백','투런','쓰리런','좌전안타','중전안타','우전안타','좌중간안타','우중간안타','기습번트','쓰리번트','강공','버스터','페어','빠던','제구','구위','변화구','투나씽','볼배합','BABIP','wOBA','ISO','K/9','BB/9','K/BB','FIP','ERA+','OPS+','QS+','할푼리','실점','피안타','피홈런','게임차','10-10 클럽','30-30 클럽','보살','포지션 번호','6-4-3 병살','투수','1루수','2루수','3루수','좌익수','중견수','우익수','내야수','외야수','야수','홈스틸','주루','주루사','잔루','만루','무사','1사','잔루만루','유령주자','슬라이딩','고의낙구','포수보크','쓰리피트','4사구','스트레이트 볼넷','아웃카운트','1선발','선발 로테이션','필승조','추격조','터프세이브','투구수','피치컴','가을야구','영구결번','프랜차이즈 스타','옵트아웃','승요','허슬두','엘롯라시코','잠실시리즈','코시','불문율','호수비','본헤드 플레이','특타','시즌아웃','2차 드래프트','연고지','월드시리즈','WBC','상반기','루징시리즈','수훈선수','예고선발','DTD','타격감','거포','교타자','좌완','인플레이','송구','수비','출루','삼자범퇴','1/3이닝','야구공','라인업','베이스','무사 만루','스윙','세이버매트릭스','승패세홀','등번호','포수 미트','볼보이','메이저리그','아시아시리즈','섀도플레이','캐처플라이','스탯','도미넌트','발야구','삼구','마스크를 쓴다','4-6-3 병살','5-4-3 병살','20-20 클럽','40-40 클럽','파울플라이','무사 1루','2사 만루']::text[]) AS t
+  SELECT string_agg(t, ', ') INTO missing FROM unnest(ARRAY['야구','적시타','타수','타석','초구','볼카운트','헛스윙','루킹삼진','삼구삼진','1루타','밀어치기','당겨치기','어퍼스윙','레벨스윙','타자일순','장외홈런','인사이드더파크홈런','백투백','투런','쓰리런','좌전안타','중전안타','우전안타','좌중간안타','우중간안타','기습번트','쓰리번트','강공','버스터','페어','빠던','제구','구위','변화구','투나씽','볼배합','BABIP','wOBA','ISO','K/9','BB/9','K/BB','FIP','ERA+','OPS+','QS+','할푼리','실점','피안타','피홈런','게임차','10-10 클럽','30-30 클럽','보살','포지션 번호','6-4-3 병살','투수','1루수','2루수','3루수','좌익수','중견수','우익수','내야수','외야수','야수','홈스틸','주루','주루사','잔루','만루','무사','1사','잔루만루','유령주자','슬라이딩','고의낙구','포수보크','쓰리피트','4사구','스트레이트 볼넷','아웃카운트','1선발','선발 로테이션','필승조','추격조','터프세이브','투구수','피치컴','가을야구','영구결번','프랜차이즈 스타','옵트아웃','승요','허슬두','엘롯라시코','잠실시리즈','코시','불문율','호수비','본헤드 플레이','특타','시즌아웃','2차 드래프트','연고지','월드시리즈','WBC','상반기','루징시리즈','수훈선수','예고선발','DTD','타격감','거포','교타자','좌완','인플레이','송구','수비','출루','삼자범퇴','1/3이닝','야구공','라인업','베이스','무사 만루','스윙','세이버매트릭스','승패세홀','등번호','포수 미트','볼보이','메이저리그','아시아시리즈','섀도플레이','캐처플라이','스탯','도미넌트','발야구','삼구','마스크를 쓴다','4-6-3 병살','5-4-3 병살','20-20 클럽','40-40 클럽','파울플라이','무사 1루','2사 만루','희생타']::text[]) AS t
   WHERE NOT EXISTS (SELECT 1 FROM public.baseball_terms bt WHERE bt.term = t AND bt.reviewed_at = DATE '2026-08-05');
   IF missing IS NOT NULL THEN
     RAISE EXCEPTION '신규 용어가 적재되지 않았습니다(기존 행과 term 충돌 가능): %', missing;
