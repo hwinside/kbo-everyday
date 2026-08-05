@@ -287,10 +287,13 @@ async function main() {
     currentInning: number;
     failInnings?: Set<number>;
     playsPerInning?: (inning: number) => number;
+    /** upstream 응답 지연(ms). 느린 러너/느린 첫 GET 재현용. */
+    delayMs?: number;
   }) {
-    const { currentInning, failInnings = new Set<number>() } = opts;
+    const { currentInning, failInnings = new Set<number>(), delayMs = 0 } = opts;
     const playsPerInning = opts.playsPerInning ?? (() => 2);
     globalThis.fetch = (async (input: RequestInfo | URL) => {
+      if (delayMs > 0) await new Promise((r) => setTimeout(r, delayMs));
       const url = String(input instanceof Request ? input.url : input);
       const m = /[?&]inning=(\d+)/.exec(url);
       if (!m) return new Response("{}", { status: 200 });
@@ -393,40 +396,53 @@ async function main() {
     }
   });
 
-  await check("warm cache HIT 응답도 엣지 캐시 헤더를 잃지 않는다(남은 수명 범위 내)", async () => {
-    // ⚠️ CI 실측 결함(2026-08-06): 이 검사는 원래 warm HIT 에 **full TTL** 을 기대했다.
-    //    remaining-age 계약(HIT 은 남은 수명만큼만) 도입 뒤, 느린 러너에서 첫 GET 이
-    //    1초 넘게 걸리면 남은 수명이 1초 미만이 되어 정당하게 no-store 가 나오는데
-    //    검사가 그걸 실패로 봤다(로컬은 빨라서 통과 → Vercel prebuild 에서 exit 1).
-    //    시계에 의존하지 않도록 **실제 경과시간으로 기대값을 계산**한다.
-    installRelayUpstream({ currentInning: 5 });
+  await check("warm cache HIT 응답이 실제 남은 수명과 일치한다(추정 금지)", async () => {
+    // ⚠️ 이 검사는 두 번 틀렸다(삼순 NO-GO):
+    //  1차: warm HIT 에 **full TTL** 을 기대 → remaining-age 계약 도입 뒤 느린 CI 에서 false-fail.
+    //  2차: `t0` 로 경과시간을 재서 남은 수명을 **추정** → 만료 시계는 첫 GET **끝**의
+    //       setCachedResponse 부터 시작하므로 느린 첫 GET 에서 추정치가 실제와 어긋난다.
+    // → 추정을 버리고 route 의 **실제 캐시 엔트리 남은 수명**을 읽어 판정한다.
+    //   지연을 주입해도 판정이 흔들리지 않아야 timing false-green/false-fail 이 사라진다.
+    const gameId = "20260805EDGE4";
+    // 첫 GET 을 인위적으로 느리게 만들어(1.2초) 느린 러너를 재현한다. 추정 기반이면
+    // 여기서 어긋나고, 실제 remaining 기반이면 흔들리지 않는다.
+    installRelayUpstream({ currentInning: 5, delayMs: 1200 });
     try {
-      const t0 = Date.now();
-      const first = await relayRoute.GET(makeReq("gameId=20260805EDGE4"));
+      const first = await relayRoute.GET(makeReq(`gameId=${gameId}`));
       assert.equal(first.status, 200);
-      const second = await relayRoute.GET(makeReq("gameId=20260805EDGE4"));
-      assert.equal(second.status, 200);
 
-      const elapsedMs = Date.now() - t0;
-      const remainingMs = RELAY_EDGE_TTL_SECONDS * 1000 - elapsedMs;
+      // 캐시가 실제로 채워졌는지부터 확인한다(픽스처가 새면 검사가 조용히 무력화된다).
+      const remainingBefore = relayRoute.__getCacheRemainingMsForTest(gameId);
+      assert.ok(
+        remainingBefore !== null,
+        "첫 GET 이 캐시를 채우지 않았다 — warm HIT 경로를 태울 수 없다(픽스처 오류)",
+      );
+
+      const second = await relayRoute.GET(makeReq(`gameId=${gameId}`));
+      const remainingAfter = relayRoute.__getCacheRemainingMsForTest(gameId);
+      assert.equal(second.status, 200);
       const cc = parseCacheControl(second);
 
-      if (remainingMs >= 1100) {
-        // 남은 수명이 넉넉하면 반드시 엣지 캐시 대상이어야 한다(헤더 유실 금지).
+      // ⚠️ 순간값 하나로 등호 비교하면 1ms 차이로 floor 가 갈려 flake 가 난다(자기적발:
+      //    remaining 1999ms → floor 1 인데 헤더는 2 였다). 헤더가 계산된 시점은
+      //    before~after 사이 어딘가이므로 **그 구간 안에 있는지**로 판정한다.
+      //    구간은 실제 캐시 수명에서 나오므로 여전히 추정이 아니다.
+      const loMs = Math.min(remainingBefore!, remainingAfter ?? 0);
+      const hiMs = Math.max(remainingBefore!, remainingAfter ?? 0);
+      const loSec = Math.floor(loMs / 1000);
+      const hiSec = Math.min(Math.floor(hiMs / 1000), RELAY_EDGE_TTL_SECONDS);
+
+      if (loSec >= 1) {
         assert.ok(
-          cc.sMaxAge !== null && cc.sMaxAge >= 1,
-          `warm HIT 인데 캐시 헤더 유실: ${cc.raw} (남은 ${remainingMs}ms)`,
-        );
-        assert.ok(
-          cc.sMaxAge! <= RELAY_EDGE_TTL_SECONDS,
-          `warm HIT s-maxage=${cc.sMaxAge} 가 TTL 상한 초과`,
+          cc.sMaxAge !== null && cc.sMaxAge >= loSec && cc.sMaxAge <= hiSec,
+          `warm HIT s-maxage=${cc.sMaxAge} 가 실제 남은 수명 구간(${loMs}~${hiMs}ms → ${loSec}~${hiSec}s)을 벗어남: ${cc.raw}`,
         );
         assert.equal(cc.swr, null, `warm HIT 에 SWR 발생: ${cc.raw}`);
-      } else if (remainingMs <= 900) {
-        // 남은 수명이 1초 미만이면 no-store 가 정답이다(반올림 상한 초과 방지).
-        assertNotCacheable(second, `warm HIT 남은 ${remainingMs}ms`);
+      } else if (hiSec < 1) {
+        // 남은 수명 1초 미만이면 no-store 가 정답(반올림으로 상한 초과 방지).
+        assertNotCacheable(second, `warm HIT 남은 ${hiMs}ms`);
       }
-      // 900~1100ms 경계는 반올림 방향이 어느 쪽이어도 계약 위반이 아니라 판정하지 않는다.
+      // loSec=0, hiSec>=1 인 경계는 어느 쪽이든 계약 위반이 아니라 판정하지 않는다.
     } finally {
       globalThis.fetch = originalFetch;
     }

@@ -926,8 +926,13 @@ function getCachedResponse(key: string): { data: GameRelayResponse; remainingMs:
  * 시작하므로 느린 첫 GET 에서 기대값이 실제와 어긋난다(timing false-green).
  * 추정 대신 실제 엔트리를 읽어 결정론적으로 판정한다.
  */
-export function __getCacheRemainingMsForTest(key: string): number | null {
-  const entry = responseCache.get(key);
+export function __getCacheRemainingMsForTest(
+  gameId: string,
+  inningHint = 0,
+): number | null {
+  // route 가 쓰는 것과 **같은 방식**으로 키를 만든다. 게이트가 키 규칙을 자기
+  // 나름대로 재구현하면 route 가 키를 바꿔도 게이트는 모른 채 GREEN 이 된다.
+  const entry = responseCache.get(`${toNaverGameId(gameId)}-${inningHint}`);
   if (!entry) return null;
   return entry.expiresAt - Date.now();
 }
