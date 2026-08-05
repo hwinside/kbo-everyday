@@ -2271,7 +2271,50 @@ async function verifyServingContractOnRealDb(): Promise<void> {
     ["player", "00000", "namu_document", nearVector, 40],
   );
   assert.equal(foreign.rows.length, 0, "entity_id 를 함수 안에서 강제해야 한다");
-  console.log("PASS 선수 chunk 정렬 RPC — 질문벡터 정렬 / tier2 fail-close / 상한 clamp / entity 강제");
+
+  // 4-d) 삼순 P1(2026-08-05) — 나머지 fail-close 4종을 **actual RPC reject** 로 고정한다.
+  //   직전까지는 migration 에만 있고 게이트가 안 태워서, 이 보호를 지워도 GREEN 이었다.
+  //   전부 "조용한 0행" 이 되면 미수집 선수와 구분이 안 돼 배선 실수가 fail-close 로 위장된다.
+  await assert.rejects(
+    db.query(
+      "SELECT * FROM public.search_baseball_genius_player_chunks($1,$2,$3,$4,$5)",
+      ["document", "69102", "namu_document", nearVector, 40],
+    ),
+    /unsupported entity_type/,
+    "entity_type 이 player 가 아니면 예외여야 한다(tier1 경로 혼입 차단)",
+  );
+  await assert.rejects(
+    db.query(
+      "SELECT * FROM public.search_baseball_genius_player_chunks($1,$2,$3,$4,$5)",
+      ["player", "   ", "namu_document", nearVector, 40],
+    ),
+    /entity_id is required/,
+    "공백 entity_id 는 예외여야 한다",
+  );
+  await assert.rejects(
+    db.query(
+      "SELECT * FROM public.search_baseball_genius_player_chunks($1,$2,$3,$4,$5)",
+      ["player", "69102", "namu_document", null, 40],
+    ),
+    /query embedding is required/,
+    "NULL 질문벡터는 예외여야 한다(임베딩 실패를 조용한 0행으로 바꿀 수 없다)",
+  );
+  const zeroVector = `[${Array.from({ length: RAG_EMBEDDING_DIM }, () => 0).join(",")}]`;
+  await assert.rejects(
+    db.query(
+      "SELECT * FROM public.search_baseball_genius_player_chunks($1,$2,$3,$4,$5)",
+      ["player", "69102", "namu_document", zeroVector, 40],
+    ),
+    /query embedding must be non-zero/,
+    "영벡터는 코사인이 정의되지 않아 정렬이 무의미해진다 — 예외여야 한다",
+  );
+  // 정상 벡터는 그대로 통과해야 한다(가드가 닫힌 경로까지 막지 않음을 고정).
+  const guardControl = await db.query<{ content: string }>(
+    "SELECT content FROM public.search_baseball_genius_player_chunks($1,$2,$3,$4,$5)",
+    ["player", "69102", "namu_document", nearVector, 40],
+  );
+  assert.ok(guardControl.rows.length > 0, "정상 입력은 fail-close 에 걸리지 않아야 한다");
+  console.log("PASS 선수 chunk 정렬 RPC — 질문벡터 정렬 / tier2·entity_type·entity_id·NULL·영벡터 fail-close / 상한 clamp / entity 강제");
 
   // 5) R4 다문서 generation — 서로 다른 revision/hash/crawledAt의 하위문서를 한 번에 atomic swap.
   await db.query("UPDATE public.genius_rag_sources SET ingestion_status='stale' WHERE source_key='namu:player:69102'");

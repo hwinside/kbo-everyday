@@ -90,16 +90,21 @@ async function main(): Promise<void> {
     );
 
     const topSource = evidence[0] ? tier2SourceOf(evidence[0].canonicalUrl) : null;
-    const contains = testCase.expectContains
-      ? evidence.some((row) => row.content.includes(testCase.expectContains!))
-      : true;
-    const ok = topSource === testCase.expectSource && contains;
+    // 삼순 P0(2026-08-05): `.some()` 은 1위가 계속 만루바보고 4위에 문보물이 있어도 PASS 다.
+    // 사고의 본질이 "정답 chunk 가 1위로 안 온다" 이므로 **evidence[0] 에 exact 고정**한다.
+    const containsAt = testCase.expectContains
+      ? evidence.findIndex((row) => row.content.includes(testCase.expectContains!))
+      : -1;
+    const topHasExpected = testCase.expectContains ? containsAt === 0 : true;
+    const ok = topSource === testCase.expectSource && topHasExpected;
     if (!ok) failures += 1;
 
     console.log(`\n${ok ? "PASS" : "FAIL"} [${testCase.question}]`);
     console.log(`  intent=${classifyTier2Intent(testCase.question)} 후보 wiki=${wikipedia.length} namu=${namu.length}`);
     console.log(`  기대 top=${testCase.expectSource} 실제 top=${topSource}`
-      + (testCase.expectContains ? ` / '${testCase.expectContains}' 포함=${contains ? "YES" : "NO"}` : ""));
+      + (testCase.expectContains
+        ? ` / '${testCase.expectContains}' 위치=${containsAt < 0 ? "없음" : `${containsAt + 1}위`} (1위여야 통과)`
+        : ""));
     console.log(`  근거: ${testCase.why}`);
     evidence.forEach((row, index) => {
       const source = tier2SourceOf(row.canonicalUrl);

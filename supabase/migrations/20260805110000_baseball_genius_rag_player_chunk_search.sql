@@ -20,8 +20,10 @@
 --      허용 밖 값은 조용한 0행이 아니라 **예외**로 드러낸다.
 --   4. p_limit 은 1..50 으로 clamp — 상한 없는 정렬 조회는 query-guard 위반이다.
 --   5. embedding 을 **반환한다**. 공식 문서 RPC 와 다른 점이며 의도적이다:
---      tier2 경로는 앱이 `rankEvidenceByQuery` + `orderTier2Evidence`(소스 우선순위)로
---      최종 정렬을 하므로 벡터가 필요하다. DB 는 "올바른 후보 40건"을 고르는 역할만 맡고
+--      tier2 경로는 앱이 `rankEvidenceByQuery` 에 질문 의도별 가중(`tier2WeightForQuestion`)을
+--      곱해 최종 정렬을 하므로 벡터가 필요하다. (전역 소스 hard sort `orderTier2Evidence` 는
+--      삼순 P0 로 폐기됐다 — 순서 강제는 더 가까운 반대편 근거를 통째로 탈락시켰다.)
+--      DB 는 "올바른 후보 40건"을 고르는 역할만 맡고
 --      최종 근거 4건 선택은 기존 앱 계약을 그대로 둔다(변경 최소화).
 --      행 수는 종전과 동일(source_kind 당 최대 40)이라 응답 크기 회귀가 없다.
 --
