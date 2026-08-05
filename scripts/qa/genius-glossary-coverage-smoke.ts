@@ -9,7 +9,7 @@
  *
  * 이 게이트가 지키는 계약
  * ───────────────────────
- *  ① 실제 운영 미답변 질문(fixture)에 대한 사전 커버리지가 기준선 아래로 내려가지 않는다.
+ *  ① 실제 운영 미답변 질문(fixture) 전수를 expect/exclude 로 고정한다 — 단건 유실도, 억지 alias 도 RED.
  *  ② 기존 132종이 확충 때문에 가려지지 않는다(자기 자신으로 계속 매칭돼야 한다).
  *  ③ alias 정규화 키 충돌이 0이다.
  *  ④ 답변은 발송 상한(200자) 안이고, 근거 분류가 스키마 계약을 만족한다.
@@ -40,26 +40,16 @@ import { matchGlossary, type GlossaryEntry } from "../../src/lib/baseball-qa/pip
 import { BASEBALL_GENIUS_MAX_ANSWER_LENGTH } from "../../src/lib/constants/baseball-genius";
 
 /**
- * 커버리지 기준선. 확충 시점 실측이 67.6%(478건 중 323건)였다.
+ * 확충 후 사전 총량 하한. 132(기존) + 148(신규) = 280.
  *
- * 왜 100%가 아닌가: 남은 미매칭은 `모든 야구 용어 알려줘`(복수 개념 요청),
- * `완투와 완봉의 차이는?`(비교 질문), `.367이 뭐야?`(수치 해석), 심한 오타처럼
- * **exact 매칭 사전으로는 원래 답할 수 없는 종류**다. 그건 LLM/RAG 경로의 몫이다.
- * 여기서 100%를 요구하면 사전에 억지 항목을 넣게 되고 오답이 늘어난다.
+ * 이미 사전에 있던 용어(완봉·마운드·더그아웃·타순·엔트리·직선타·승률)는 신규가 아니라
+ * alias 보강으로 내렸다 — 사람이 검수한 기존 answer 를 덮지 않기 위해서다.
  *
- * 왜 하한을 두는가: 나중에 누가 alias 를 정리하거나 term 을 지우면 커버리지가 조용히
- * 떨어진다. 그때 이 게이트가 잡는다.
+ * ⚠️ 커버리지 백분율 하한(floor)은 쓰지 않는다. floor 방식은 A 를 잃고 B 를 얻는 회귀를
+ * 못 잡고(66% 기준이면 최대 10건 유실이 GREEN), 무엇보다 **억지 alias 로 숫자를 올리는**
+ * 방향을 막지 못한다. 대신 fixture 전수를 expect/exclude 로 고정한다(아래 FixtureItem).
  */
-const COVERAGE_FLOOR = 0.66;
-
-/**
- * 확충 후 사전 총량 하한. 132(기존) + 141(신규) = 273.
- *
- * 처음엔 148을 신규로 잡았는데, 그중 7건(완봉·마운드·더그아웃·타순·엔트리·직선타·승률)은
- * 이미 사전에 있는 용어였다. 그대로 둘 경우 ON CONFLICT DO UPDATE 가 사람이 검수한
- * 기존 answer 를 덮어쓴다. 그래서 alias 보강으로 내리고 이 숫자를 실측값으로 맞췄다.
- */
-const MIN_TERM_COUNT = 273;
+const MIN_TERM_COUNT = 280;
 
 const MUTATION = process.env.GLOSSARY_GATE_MUTATION ?? "";
 
@@ -84,9 +74,27 @@ function check(name: string, fn: () => void): void {
   }
 }
 
+/**
+ * fixture 항목 계약.
+ *
+ * 모든 항목은 `expect`(이 용어로 답해야 함) 또는 `exclude`(사전으로 답하지 않는 사유)
+ * 중 **정확히 하나**를 갖는다. 백분율 대신 전수 고정을 쓰는 이유는 둘이다.
+ *
+ *  ① 백분율 하한은 단건 유실을 잡지 못한다. 이제는 `expect` 가 하나라도 다른 용어로
+ *     매칭되거나 미매칭이면 그 자리에서 RED 다.
+ *  ② `exclude` 를 강제하지 않으면 **억지 alias 로 커버리지를 올리는** 방향이 통한다.
+ *     실제로 그래서 `4-6-3`(2루수→유격수→1루수)을 `6-4-3`(유격수→2루수→1루수)의
+ *     alias 로 묶어 **정반대 답이 나갈 뻔했다**(2026-08-05 삼순 NO-GO).
+ *     제외 항목에 사전이 답변을 내기 시작하면 그것도 RED 다.
+ */
+type FixtureItem =
+  | { q: string; count: number; expect: string; exclude?: undefined }
+  | { q: string; count: number; exclude: string; expect?: undefined };
+
 type MissLogFixture = {
   total: number;
-  questions: { q: string; count: number }[];
+  _exclusion_reasons: Record<string, string>;
+  questions: FixtureItem[];
 };
 
 const fixture = JSON.parse(readFileSync(fixturePath, "utf8")) as MissLogFixture;
@@ -158,6 +166,26 @@ async function loadGlossaryFromMigrations(): Promise<GlossaryEntry[]> {
       /UPDATE public\.baseball_terms SET aliases = ARRAY\(SELECT DISTINCT unnest\(aliases \|\|[^;]*;/g,
       "SELECT 1;",
     );
+  }
+  if (MUTATION === "wrong-number-alias") {
+    // 삼순 NO-GO 재현: `4-6-3` 을 `6-4-3` 의 alias 로 되돌린다.
+    // 6-4-3 은 유격수→2루수→1루수, 4-6-3 은 2루수→유격수→1루수라 정반대다.
+    // 사전은 확신에 찬 오답을 내고, 유저는 그게 틀린 줄 모른다.
+    expansionSql += `\nUPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['4-6-3','463','20-20','40-40']::text[])) WHERE term = '6-4-3 병살';\n`;
+  }
+  if (MUTATION === "broad-alias") {
+    // 넓은 말을 좁은 term 의 alias 로 붙인다(글러브 → 포수 미트, 인필드 → 인필드플라이).
+    // exclude 로 고정된 질문에 사전이 답하기 시작해야 한다.
+    expansionSql += `\nUPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['인필드']::text[])) WHERE term = '인필드플라이';\n`;
+  }
+  if (MUTATION === "single-term-loss") {
+    // 딱 한 용어만 지운다. 백분율 하한이었다면 GREEN 이었을 크기의 회귀다.
+    expansionSql += `\nDELETE FROM public.baseball_terms WHERE term = '적시타';\n`;
+  }
+  if (MUTATION === "overwrite-answer") {
+    // 재적용이 사람이 검수한 기존 answer 를 덮는 상황을 재현한다.
+    // (수정 전 migration 의 `ON CONFLICT DO UPDATE SET answer = excluded.answer` 가 이랬다)
+    expansionSql += `\nUPDATE public.baseball_terms SET answer = '__mutation_overwritten__' WHERE term = '보크';\n`;
   }
   if (MUTATION === "overlong-answer") {
     // 발송 상한을 넘는 답변을 심는다. 길이 계약이 살아있는지 확인.
@@ -249,27 +277,99 @@ check("기존 시드 용어가 확충에 가려지지 않는다", () => {
   assert.deepEqual(broken, [], `기존 용어가 자기 자신으로 매칭돼야 함:\n${broken.join("\n")}`);
 });
 
-// ── ① 실제 운영 질문 커버리지 ──────────────────────────────────────────────────
-const resolved = fixture.questions.map((item) => ({
-  ...item,
-  hit: matchGlossary(glossary, item.q),
-}));
+// ── ① 실제 운영 질문 전수 고정 (expect / exclude) ─────────────────────────────
+//
+// 백분율이 아니라 **항목 하나하나**를 본다. 이유는 FixtureItem 주석 참조.
+const resolved = fixture.questions.map((item) => ({ ...item, hit: matchGlossary(glossary, item.q) }));
 const hitCount = resolved.filter((item) => item.hit).length;
-const coverage = hitCount / resolved.length;
+const expectCount = fixture.questions.filter((item) => item.expect).length;
 
-check(`운영 미답변 질문 커버리지 ≥ ${(COVERAGE_FLOOR * 100).toFixed(0)}%`, () => {
-  assert.ok(
-    coverage >= COVERAGE_FLOOR,
-    `커버리지 ${(coverage * 100).toFixed(1)}% (${hitCount}/${resolved.length}) — 기준선 ${(COVERAGE_FLOOR * 100).toFixed(0)}% 미만`,
+check("expect 로 고정된 질문이 전부 그 용어로 답변된다 (단건 유실도 RED)", () => {
+  const broken: string[] = [];
+  for (const item of resolved) {
+    if (!item.expect) continue;
+    if (item.hit?.term !== item.expect) {
+      broken.push(`"${item.q}" → ${item.hit?.term ?? "(미매칭)"} (기대 ${item.expect})`);
+    }
+  }
+  assert.deepEqual(broken, [], `${broken.length}건이 기대와 다르게 답변된다:\n${broken.join("\n")}`);
+});
+
+check("exclude 로 고정된 질문에 사전이 답하지 않는다 (억지 alias 차단)", () => {
+  // 이 검사가 없으면 커버리지를 올리려고 넓은 alias 를 붙이는 방향이 통한다.
+  // 그 방향의 끝이 `4-6-3` → `6-4-3` 오답이었다.
+  const leaked: string[] = [];
+  for (const item of resolved) {
+    if (!item.exclude) continue;
+    if (item.hit) leaked.push(`"${item.q}" (${item.exclude}) → 사전이 '${item.hit.term}' 로 답함`);
+  }
+  assert.deepEqual(
+    leaked,
+    [],
+    `사전이 답하면 안 되는 질문에 답한다. alias 범위가 넓어졌는지 확인하라:\n${leaked.join("\n")}`,
+  );
+});
+
+/**
+ * alias 는 term 과 **같은 것**을 가리켜야 한다.
+ *
+ * 숫자가 의미를 이루는 표기에서 숫자가 다르면 다른 개념이다.
+ * `6-4-3`(유격수→2루수→1루수) 과 `4-6-3`(2루수→유격수→1루수) 은 정반대이고,
+ * `30-30` 과 `40-40` 은 아예 다른 기록이다. 그런데도 묶으면 사전이 확신에 찬 오답을 낸다.
+ *
+ * 사람 눈으로는 alias 목록에서 이 결함이 잘 안 보인다. 그래서 기계가 본다:
+ * alias 안의 숫자열이 그 term 의 답변 본문에 없으면 의심 대상으로 올린다.
+ * (정당한 경우는 ALLOWED 에 근거와 함께 명시한다 — 침묵하는 예외를 만들지 않는다)
+ */
+const NUMERIC_ALIAS_ALLOWED = new Map<string, string>([
+  ["6-4-3 병살|643", "붙여 쓴 같은 표기(6-4-3 = 643)"],
+  ["4-6-3 병살|463", "붙여 쓴 같은 표기"],
+  ["5-4-3 병살|543", "붙여 쓴 같은 표기"],
+  ["10-10 클럽|1010", "붙여 쓴 같은 표기"],
+  ["20-20 클럽|2020", "붙여 쓴 같은 표기"],
+  ["30-30 클럽|3030", "붙여 쓴 같은 표기"],
+  ["40-40 클럽|4040", "붙여 쓴 같은 표기"],
+  ["쓰리번트|3", "쓰리 = 3 (한글/숫자 표기 차이)"],
+  ["쓰리피트|3", "쓰리 = 3 (한글/숫자 표기 차이)"],
+  ["삼자범퇴|1", "1-2-3 이닝 = 삼자범퇴의 관용 표기"],
+  ["삼자범퇴|2", "1-2-3 이닝 = 삼자범퇴의 관용 표기"],
+  ["무사|0", "0아웃 = 무사"],
+  ["1선발|1", "term 자체의 숫자"],
+  ["2차 드래프트|2", "term 자체의 숫자"],
+  ["1/3이닝|0", "0.1이닝 = 1/3이닝의 기록지 표기"],
+  ["자동고의4구|4", "고의4구 = 자동고의4구의 준말"],
+  ["이닝|1", "1회·1이닝 = 이닝의 사례 표기"],
+  ["할푼리|1", "n할 = 할푼리 읽는 법 질의"],
+  ["할푼리|2", "n할 = 할푼리 읽는 법 질의"],
+  ["할푼리|3", "n할 = 할푼리 읽는 법 질의"],
+  ["할푼리|4", "n할 = 할푼리 읽는 법 질의"],
+  ["할푼리|5", "n할 = 할푼리 읽는 법 질의"],
+]);
+
+check("숫자가 다른 표기를 같은 용어로 묶지 않는다", () => {
+  const suspicious: string[] = [];
+  for (const row of raw) {
+    const answerDigits = row.answer.match(/[0-9]+/g) ?? [];
+    for (const alias of row.aliases) {
+      for (const num of alias.match(/[0-9]+/g) ?? []) {
+        if (answerDigits.includes(num)) continue;
+        if (NUMERIC_ALIAS_ALLOWED.has(`${row.term}|${num}`)) continue;
+        suspicious.push(`${row.term} ← '${alias}' (답변에 없는 숫자 ${num})`);
+      }
+    }
+  }
+  assert.deepEqual(
+    suspicious,
+    [],
+    `숫자가 다르면 다른 개념일 수 있다. 정당하면 NUMERIC_ALIAS_ALLOWED 에 근거를 적어라:\n${suspicious.join("\n")}`,
   );
 });
 
 /**
  * 대표 표본 고정.
  *
- * 총량(%)만 보면 A 를 지우고 B 를 넣어 숫자를 유지하는 회귀를 놓친다.
- * 그래서 로그 빈도 상위이거나 성격이 뚜렷한 질문들은 **어느 용어로 답해야 하는지까지**
- * 고정한다. 전부 운영 로그 원문이다.
+ * fixture 전수 고정이 있어도 이건 남긴다 — 사람이 읽고 "이건 이렇게 답해야지" 를
+ * 곧바로 확인할 수 있는 목록이 있어야 리뷰가 가능하다. 전부 운영 로그 원문이다.
  */
 const ANCHORS: [question: string, expectedTerm: string][] = [
   ["적시타가 뭐야", "적시타"],
@@ -279,17 +379,17 @@ const ANCHORS: [question: string, expectedTerm: string][] = [
   ["삼자범퇴가 뭐야?", "삼자범퇴"],
   ["주루사", "주루사"],
   ["추격조", "추격조"],
-  ["유격수가 뭐애", "유격수"], // 오타 어미(`뭐애`) 정규화
+  ["유격수가 뭐애", "유격수"],
   ["BABIP", "BABIP"],
   ["바빕", "BABIP"],
   ["wOBA가 뭐야?", "wOBA"],
   ["K/9", "K/9"],
   ["ISO가 뭐야?", "ISO"],
   ["Qs+은?", "QS+"],
-  ["볼펜", "불펜"], // 오타 alias
-  ["퍼팩트게임", "퍼펙트게임"], // 오타 alias
+  ["볼펜", "불펜"],
+  ["퍼팩트게임", "퍼펙트게임"],
   ["삼진아웃이 뭐야", "삼진"],
-  ["보쿠가 뭐야", "보크"], // 오타 alias
+  ["보쿠가 뭐야", "보크"],
   ["잔루만루", "잔루만루"],
   ["초구딱", "초구"],
   ["할푼리 가 뭐에요", "할푼리"],
@@ -308,6 +408,7 @@ const ANCHORS: [question: string, expectedTerm: string][] = [
   ["보살이 뭐야", "보살"],
   ["수비수 번호", "포지션 번호"],
   ["643 병살", "6-4-3 병살"],
+  ["463병살은뭐야", "4-6-3 병살"],
   ["무사 만루가 뭐야", "무사 만루"],
   ["홈스틸이 뭐야", "홈스틸"],
   ["옵트아웃이 뭐야?", "옵트아웃"],
@@ -354,6 +455,34 @@ check("근거 분류가 스키마 계약을 만족한다", () => {
   assert.deepEqual(bad, [], bad.join("\n"));
 });
 
+/**
+ * 기존 시드 answer 원문 보존.
+ *
+ * 확충 migration 은 alias 만 손대고 **사람이 검수한 answer 는 건드리지 않는다**.
+ * 앞선 판(ON CONFLICT DO UPDATE SET answer = excluded.answer)은 재실행 시 기존 답을
+ * 덮어썼다(2026-08-05 삼순 지적). seed SQL 원문과 직접 대조해 그 회귀를 막는다.
+ */
+const seedAnswers = new Map<string, string>(
+  [...readFileSync(seedSqlPath, "utf8").matchAll(/\n\('([^']+)', ARRAY\[[^\]]*\], '((?:[^']|'')*)'/g)].map(
+    (match) => [match[1], match[2].replace(/''/g, "'")],
+  ),
+);
+
+check("기존 시드 answer 가 확충으로 덮이지 않는다", () => {
+  assert.ok(seedAnswers.size >= 130, `시드 answer 추출이 정상이어야 함 (현재 ${seedAnswers.size})`);
+  const overwritten: string[] = [];
+  for (const row of raw) {
+    const original = seedAnswers.get(row.term);
+    if (original === undefined) continue;
+    if (row.answer !== original) overwritten.push(`${row.term}: 시드 answer 와 다름`);
+  }
+  assert.deepEqual(
+    overwritten,
+    [],
+    `사람이 검수한 답을 확충이 덮었다:\n${overwritten.join("\n")}`,
+  );
+});
+
 check("답변에 외부 링크·마크업이 섞이지 않는다", () => {
   // 발송 검증(validateLlmResponse)이 링크를 거절하므로, 사전 답변에 링크가 있으면
   // 사전 경로만 우회해 나가는 불일치가 생긴다.
@@ -364,7 +493,8 @@ check("답변에 외부 링크·마크업이 섞이지 않는다", () => {
 });
 
 console.log(
-  `\n커버리지 ${(coverage * 100).toFixed(1)}% (${hitCount}/${resolved.length}) · 사전 ${glossary.length}종` +
+  `\nfixture ${resolved.length}건 = expect ${expectCount} / exclude ${resolved.length - expectCount}` +
+    ` · 실제 사전 응답 ${hitCount}건 · 사전 ${glossary.length}종` +
     (MUTATION ? ` · MUTATION=${MUTATION}` : ""),
 );
 console.log(`${pass} passed, ${failures.length} failed`);

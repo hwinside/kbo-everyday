@@ -1,1919 +1,2407 @@
 {
   "_source": "운영 genius_question_logs 미답변 실측 (2026-08-05). TERM 라벨만 발췌, 원문 그대로.",
-  "_note": "유저가 실제로 물었는데 답 못 한 질문이다. 임의로 고치거나 다듬지 않는다. 이 파일을 줄이면 게이트가 약해진다.",
+  "_lineage": "원본 로그 라벨 479건 중 완전히 동일한 문자열이 1건 중복이라(`적시타가 뭐야?` 2회 기록) 고유 질문은 478건이다. 빈도(count)는 보존했다.",
+  "_contract": "모든 항목은 `expect`(이 용어로 답해야 함) 또는 `exclude`(사전으로 답하지 않는 사유) 중 하나를 갖는다. 게이트는 둘 다 강제한다 — expect 가 다른 용어로 매칭되거나 미매칭이면 RED, exclude 인데 사전이 답을 내면 RED. 후자가 중요한 이유는, 억지 alias 로 커버리지를 올리면 오답이 생기기 때문이다(2026-08-05 삼순 NO-GO: `4-6-3` 을 `6-4-3` alias 로 묶어 정반대 답이 나갈 뻔했다).",
+  "_exclusion_reasons": {
+    "MULTI_CONCEPT": "여러 개념을 한 번에 요청 — 사전은 1질문 1용어라 구조적으로 못 답한다",
+    "COMPARISON": "두 개념의 차이를 물음 — 사전 항목 하나로는 답이 안 된다",
+    "NUMERIC_INTERPRETATION": "구체적 수치의 해석 요청 — 사전은 정의를 주지 값을 해석하지 않는다",
+    "SEVERE_TYPO": "사람이 읽어도 복원 불가한 오타·깨짐",
+    "UNVERIFIED_SLANG": "뜻을 확인하지 못한 은어·신조어 — 추측해서 정의하면 오답이 된다",
+    "NOT_A_GLOSSARY_QUESTION": "야구 용어가 아니라 관람·서비스 문의",
+    "NARRATIVE_SENTENCE": "서술형 문장 — exact 매칭 대상이 아니며 LLM/RAG 경로의 몫"
+  },
   "total": 478,
   "questions": [
     {
       "q": "적시타가 뭐야",
-      "count": 6
+      "count": 6,
+      "expect": "적시타"
     },
     {
       "q": "적시타가 뭐야?",
-      "count": 5
+      "count": 5,
+      "expect": "적시타"
     },
     {
       "q": "적시타",
-      "count": 4
+      "count": 4,
+      "expect": "적시타"
     },
     {
       "q": "1회에 1번타자부터 9번타자까지 모두 타석이 오는것을 무엇이라고 하나요?",
-      "count": 3
+      "count": 3,
+      "exclude": "NARRATIVE_SENTENCE"
     },
     {
       "q": "보쿠가 뭐야",
-      "count": 3
+      "count": 3,
+      "expect": "보크"
     },
     {
       "q": "용어",
-      "count": 3
+      "count": 3,
+      "exclude": "MULTI_CONCEPT"
     },
     {
       "q": "주루",
-      "count": 3
+      "count": 3,
+      "expect": "주루"
     },
     {
       "q": "1선발",
-      "count": 2
+      "count": 2,
+      "expect": "1선발"
     },
     {
       "q": "바빕",
-      "count": 2
+      "count": 2,
+      "expect": "BABIP"
     },
     {
       "q": "본헤드 플레이가 뭐야",
-      "count": 2
+      "count": 2,
+      "expect": "본헤드 플레이"
     },
     {
       "q": "볼넷이머야",
-      "count": 2
+      "count": 2,
+      "expect": "볼넷"
     },
     {
       "q": "볼펜",
-      "count": 2
+      "count": 2,
+      "expect": "불펜"
     },
     {
       "q": "삼구삼진",
-      "count": 2
+      "count": 2,
+      "expect": "삼구삼진"
     },
     {
       "q": "삼자범퇴가 뭐야?",
-      "count": 2
+      "count": 2,
+      "expect": "삼자범퇴"
     },
     {
       "q": "삼진아웃이 뭐야?",
-      "count": 2
+      "count": 2,
+      "expect": "삼진"
     },
     {
       "q": "외야수",
-      "count": 2
+      "count": 2,
+      "expect": "외야수"
     },
     {
       "q": "위닝이 뭐야?",
-      "count": 2
+      "count": 2,
+      "expect": "위닝시리즈"
     },
     {
       "q": "자동고의사구",
-      "count": 2
+      "count": 2,
+      "expect": "자동고의4구"
     },
     {
       "q": "잔루만루",
-      "count": 2
+      "count": 2,
+      "expect": "잔루만루"
     },
     {
       "q": "주루사",
-      "count": 2
+      "count": 2,
+      "expect": "주루사"
     },
     {
       "q": "추격조",
-      "count": 2
+      "count": 2,
+      "expect": "추격조"
     },
     {
       "q": "타수가 뭐야?",
-      "count": 2
+      "count": 2,
+      "expect": "타수"
     },
     {
       "q": "투런포가 뭐야?",
-      "count": 2
+      "count": 2,
+      "expect": "투런"
     },
     {
       "q": "투수",
-      "count": 2
+      "count": 2,
+      "expect": "투수"
     },
     {
       "q": "홈런이 모야?",
-      "count": 2
+      "count": 2,
+      "expect": "홈런"
     },
     {
       "q": "희비",
-      "count": 2
+      "count": 2,
+      "expect": "희생플라이"
     },
     {
       "q": "Babip",
-      "count": 2
+      "count": 2,
+      "expect": "BABIP"
     },
     {
       "q": "? 삼루가 뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "베이스"
     },
     {
       "q": ".367이 뭐야?",
-      "count": 1
+      "count": 1,
+      "exclude": "NUMERIC_INTERPRETATION"
     },
     {
       "q": "0.324",
-      "count": 1
+      "count": 1,
+      "exclude": "NUMERIC_INTERPRETATION"
     },
     {
       "q": "0.352는 언제 안타를 3개 쳤다는소리?",
-      "count": 1
+      "count": 1,
+      "exclude": "NUMERIC_INTERPRETATION"
     },
     {
       "q": "1-3-4병살",
-      "count": 1
+      "count": 1,
+      "exclude": "NARRATIVE_SENTENCE"
     },
     {
       "q": "1.24면?",
-      "count": 1
+      "count": 1,
+      "exclude": "NUMERIC_INTERPRETATION"
     },
     {
       "q": "1/3이닝은?",
-      "count": 1
+      "count": 1,
+      "expect": "1/3이닝"
     },
     {
       "q": "10-10",
-      "count": 1
+      "count": 1,
+      "expect": "10-10 클럽"
     },
     {
       "q": "1루",
-      "count": 1
+      "count": 1,
+      "expect": "베이스"
     },
     {
       "q": "1루나 3루에 공격팀이 한명 서있는데 누구야?",
-      "count": 1
+      "count": 1,
+      "exclude": "NARRATIVE_SENTENCE"
     },
     {
       "q": "1루타",
-      "count": 1
+      "count": 1,
+      "expect": "1루타"
     },
     {
       "q": "1루타가 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "1루타"
     },
     {
       "q": "1선발 뜻",
-      "count": 1
+      "count": 1,
+      "expect": "1선발"
     },
     {
       "q": "1선발이 뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "1선발"
     },
     {
       "q": "1선발이 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "1선발"
     },
     {
       "q": "1회가 뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "이닝"
     },
     {
       "q": "1회는 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "이닝"
     },
     {
       "q": "1회에 1번타자부터 9번타자까지 모두 타석이 오는것을 무엇이라고 하나요",
-      "count": 1
+      "count": 1,
+      "exclude": "NARRATIVE_SENTENCE"
     },
     {
       "q": "2루가 뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "베이스"
     },
     {
       "q": "2루가 어디야",
-      "count": 1
+      "count": 1,
+      "expect": "베이스"
     },
     {
       "q": "2루수가 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "2루수"
     },
     {
       "q": "2사만루가뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "2사 만루"
     },
     {
       "q": "2차 드래프트",
-      "count": 1
+      "count": 1,
+      "expect": "2차 드래프트"
     },
     {
       "q": "2b",
-      "count": 1
+      "count": 1,
+      "expect": "2루타"
     },
     {
       "q": "369플레이",
-      "count": 1
+      "count": 1,
+      "exclude": "UNVERIFIED_SLANG"
     },
     {
       "q": "3루 응원석 1루 응원석",
-      "count": 1
+      "count": 1,
+      "exclude": "NOT_A_GLOSSARY_QUESTION"
     },
     {
       "q": "3번 4번 사이를 가르는 안타가 무슨 뜻이야?",
-      "count": 1
+      "count": 1,
+      "exclude": "NARRATIVE_SENTENCE"
     },
     {
       "q": "3푼 이런게 뭐야?",
-      "count": 1
+      "count": 1,
+      "exclude": "NUMERIC_INTERPRETATION"
     },
     {
       "q": "3피스",
-      "count": 1
+      "count": 1,
+      "exclude": "UNVERIFIED_SLANG"
     },
     {
       "q": "3피스가뭐야?",
-      "count": 1
+      "count": 1,
+      "exclude": "UNVERIFIED_SLANG"
     },
     {
       "q": "3할이 뭔뜻이죠",
-      "count": 1
+      "count": 1,
+      "expect": "할푼리"
     },
     {
       "q": "3k",
-      "count": 1
+      "count": 1,
+      "expect": "삼진"
     },
     {
       "q": "40-40 클럽",
-      "count": 1
+      "count": 1,
+      "expect": "40-40 클럽"
     },
     {
       "q": "40-40이",
-      "count": 1
+      "count": 1,
+      "expect": "40-40 클럽"
     },
     {
       "q": "423",
-      "count": 1
+      "count": 1,
+      "exclude": "NARRATIVE_SENTENCE"
     },
     {
       "q": "432아웃",
-      "count": 1
+      "count": 1,
+      "exclude": "NARRATIVE_SENTENCE"
     },
     {
       "q": "463병살은뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "4-6-3 병살"
     },
     {
       "q": "4명모두 홈으로 돌아온다는게 무슨뜻이야..?",
-      "count": 1
+      "count": 1,
+      "exclude": "NARRATIVE_SENTENCE"
     },
     {
       "q": "4사구가 모야",
-      "count": 1
+      "count": 1,
+      "expect": "4사구"
     },
     {
       "q": "4사구가 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "4사구"
     },
     {
       "q": "4할",
-      "count": 1
+      "count": 1,
+      "expect": "할푼리"
     },
     {
       "q": "543플레이",
-      "count": 1
+      "count": 1,
+      "expect": "5-4-3 병살"
     },
     {
       "q": "6-4-3이뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "6-4-3 병살"
     },
     {
       "q": "643 병살",
-      "count": 1
+      "count": 1,
+      "expect": "6-4-3 병살"
     },
     {
       "q": "643이뭐아",
-      "count": 1
+      "count": 1,
+      "exclude": "SEVERE_TYPO"
     },
     {
       "q": "7이닝 퍼펙트",
-      "count": 1
+      "count": 1,
+      "exclude": "NUMERIC_INTERPRETATION"
     },
     {
       "q": "9회",
-      "count": 1
+      "count": 1,
+      "expect": "이닝"
     },
     {
       "q": "가을야구",
-      "count": 1
+      "count": 1,
+      "expect": "가을야구"
     },
     {
       "q": "가을야구가 뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "가을야구"
     },
     {
       "q": "가중출루가 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "wOBA"
     },
     {
       "q": "강공",
-      "count": 1
+      "count": 1,
+      "expect": "강공"
     },
     {
       "q": "강공 전환",
-      "count": 1
+      "count": 1,
+      "expect": "강공"
     },
     {
       "q": "강공전환",
-      "count": 1
+      "count": 1,
+      "expect": "강공"
     },
     {
       "q": "거블헤드",
-      "count": 1
+      "count": 1,
+      "exclude": "UNVERIFIED_SLANG"
     },
     {
       "q": "거포 뜻",
-      "count": 1
+      "count": 1,
+      "expect": "거포"
     },
     {
       "q": "거포 뜻이 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "거포"
     },
     {
       "q": "게임 차",
-      "count": 1
+      "count": 1,
+      "expect": "게임차"
     },
     {
       "q": "게임차가 머야",
-      "count": 1
+      "count": 1,
+      "expect": "게임차"
     },
     {
       "q": "게임차가 뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "게임차"
     },
     {
       "q": "게임차가 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "게임차"
     },
     {
       "q": "게임차가 줄어드는 거",
-      "count": 1
+      "count": 1,
+      "exclude": "NARRATIVE_SENTENCE"
     },
     {
       "q": "게임차의 정의",
-      "count": 1
+      "count": 1,
+      "expect": "게임차"
     },
     {
       "q": "경기 게임차",
-      "count": 1
+      "count": 1,
+      "expect": "게임차"
     },
     {
       "q": "고의 자동 사구가 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "자동고의4구"
     },
     {
       "q": "고의낙구",
-      "count": 1
+      "count": 1,
+      "expect": "고의낙구"
     },
     {
       "q": "고의낙구 기준",
-      "count": 1
+      "count": 1,
+      "expect": "고의낙구"
     },
     {
       "q": "고의낙구가 뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "고의낙구"
     },
     {
       "q": "고의낙구가 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "고의낙구"
     },
     {
       "q": "고의낙구는 뭐임",
-      "count": 1
+      "count": 1,
+      "expect": "고의낙구"
     },
     {
       "q": "고의낙구는?",
-      "count": 1
+      "count": 1,
+      "expect": "고의낙구"
     },
     {
       "q": "공의 실밥 갯수",
-      "count": 1
+      "count": 1,
+      "exclude": "NOT_A_GLOSSARY_QUESTION"
     },
     {
       "q": "그 삼진될떼 k가있고 1k 2k 3k 4k 5k 6k 이런게있잖아 무슨차이야?",
-      "count": 1
+      "count": 1,
+      "exclude": "MULTI_CONCEPT"
     },
     {
       "q": "그럼 3할2푼5리 각각 뜻이 뭐야?",
-      "count": 1
+      "count": 1,
+      "exclude": "NUMERIC_INTERPRETATION"
     },
     {
       "q": "그럼 영어 약자로 된 거 다 알려줘",
-      "count": 1
+      "count": 1,
+      "exclude": "MULTI_CONCEPT"
     },
     {
       "q": "그럼 타자가 달성할수있는 대기록은 뭐야?",
-      "count": 1
+      "count": 1,
+      "exclude": "MULTI_CONCEPT"
     },
     {
       "q": "그럼 투수기록의 war은 뭐야?",
-      "count": 1
+      "count": 1,
+      "exclude": "NUMERIC_INTERPRETATION"
     },
     {
       "q": "기습번트",
-      "count": 1
+      "count": 1,
+      "expect": "기습번트"
     },
     {
       "q": "날타빼가 뭐야?",
-      "count": 1
+      "count": 1,
+      "exclude": "UNVERIFIED_SLANG"
     },
     {
       "q": "낫아웃아 뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "낫아웃"
     },
     {
       "q": "내야수가 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "내야수"
     },
     {
       "q": "내야수는 모야",
-      "count": 1
+      "count": 1,
+      "expect": "내야수"
     },
     {
       "q": "너가 아는 야구용어 다 말해줘봐",
-      "count": 1
+      "count": 1,
+      "exclude": "MULTI_CONCEPT"
     },
     {
       "q": "단어들 싹다알려줘",
-      "count": 1
+      "count": 1,
+      "exclude": "MULTI_CONCEPT"
     },
     {
       "q": "당기는 타구",
-      "count": 1
+      "count": 1,
+      "expect": "당겨치기"
     },
     {
       "q": "더블플레이랑 병살이랑 같은거야?",
-      "count": 1
+      "count": 1,
+      "exclude": "COMPARISON"
     },
     {
       "q": "도루 뜻",
-      "count": 1
+      "count": 1,
+      "expect": "도루"
     },
     {
       "q": "도루가 머얌",
-      "count": 1
+      "count": 1,
+      "expect": "도루"
     },
     {
       "q": "도루가뭐여",
-      "count": 1
+      "count": 1,
+      "expect": "도루"
     },
     {
       "q": "도르",
-      "count": 1
+      "count": 1,
+      "exclude": "UNVERIFIED_SLANG"
     },
     {
       "q": "도미넌트",
-      "count": 1
+      "count": 1,
+      "expect": "도미넌트"
     },
     {
       "q": "도미넌트가 뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "도미넌트"
     },
     {
       "q": "드래프트",
-      "count": 1
+      "count": 1,
+      "expect": "신인드래프트"
     },
     {
       "q": "드래프트가 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "신인드래프트"
     },
     {
       "q": "등말소는 뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "등록말소"
     },
     {
       "q": "라인드라이브드",
-      "count": 1
+      "count": 1,
+      "expect": "직선타"
     },
     {
       "q": "라인업 뜰때 dh 이런거 다 알려줘 포지션이 뭔지₩",
-      "count": 1
+      "count": 1,
+      "exclude": "MULTI_CONCEPT"
     },
     {
       "q": "루가 머야?",
-      "count": 1
+      "count": 1,
+      "expect": "베이스"
     },
     {
       "q": "루가 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "베이스"
     },
     {
       "q": "루징",
-      "count": 1
+      "count": 1,
+      "expect": "루징시리즈"
     },
     {
       "q": "루징과 스윕에 차이",
-      "count": 1
+      "count": 1,
+      "exclude": "COMPARISON"
     },
     {
       "q": "루킹 삼진",
-      "count": 1
+      "count": 1,
+      "expect": "루킹삼진"
     },
     {
       "q": "루킹 삼진 아웃이 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "루킹삼진"
     },
     {
       "q": "루킹 삼진이 뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "루킹삼진"
     },
     {
       "q": "루킹삼진도 용어 어니야..?",
-      "count": 1
+      "count": 1,
+      "exclude": "UNVERIFIED_SLANG"
     },
     {
       "q": "루킹삼진이 머야",
-      "count": 1
+      "count": 1,
+      "expect": "루킹삼진"
     },
     {
       "q": "마스크를 쓴다는게 뭔말이야",
-      "count": 1
+      "count": 1,
+      "exclude": "NARRATIVE_SENTENCE"
     },
     {
       "q": "마이너스 기여를 했다는건 무슨뜻이야?",
-      "count": 1
+      "count": 1,
+      "exclude": "NUMERIC_INTERPRETATION"
     },
     {
       "q": "만루가 뭐임?",
-      "count": 1
+      "count": 1,
+      "expect": "만루"
     },
     {
       "q": "만루가뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "만루"
     },
     {
       "q": "메이저리거",
-      "count": 1
+      "count": 1,
+      "expect": "메이저리그"
     },
     {
       "q": "메이져리거",
-      "count": 1
+      "count": 1,
+      "expect": "메이저리그"
     },
     {
       "q": "몇타수 어쩌구 있잖아",
-      "count": 1
+      "count": 1,
+      "exclude": "NUMERIC_INTERPRETATION"
     },
     {
       "q": "몇할이뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "할푼리"
     },
     {
       "q": "모든 야구 용어 알려줘",
-      "count": 1
+      "count": 1,
+      "exclude": "MULTI_CONCEPT"
     },
     {
       "q": "모든걸 다 알려줘",
-      "count": 1
+      "count": 1,
+      "exclude": "MULTI_CONCEPT"
     },
     {
       "q": "무사 1루",
-      "count": 1
+      "count": 1,
+      "expect": "무사 1루"
     },
     {
       "q": "무사 1루가 뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "무사 1루"
     },
     {
       "q": "무사 만루가 뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "무사 만루"
     },
     {
       "q": "무사 만루가 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "무사 만루"
     },
     {
       "q": "무사 만루가뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "무사 만루"
     },
     {
       "q": "무사??",
-      "count": 1
+      "count": 1,
+      "expect": "무사"
     },
     {
       "q": "무사만루가뭐냐고",
-      "count": 1
+      "count": 1,
+      "expect": "무사 만루"
     },
     {
       "q": "뭐 안타 홈런 플라이 어쩌고 저쩌고 하던데 자주 사용되는 야구 용어들의 뜻을 설명해줘",
-      "count": 1
+      "count": 1,
+      "exclude": "MULTI_CONCEPT"
     },
     {
       "q": "뭐냐고 특타가 뭐냐고 병신아",
-      "count": 1
+      "count": 1,
+      "exclude": "NOT_A_GLOSSARY_QUESTION"
     },
     {
       "q": "미트가뭔가여",
-      "count": 1
+      "count": 1,
+      "expect": "포수 미트"
     },
     {
       "q": "밀어치기",
-      "count": 1
+      "count": 1,
+      "expect": "밀어치기"
     },
     {
       "q": "밀어치기가 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "밀어치기"
     },
     {
       "q": "바빕이 뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "BABIP"
     },
     {
       "q": "바빕타",
-      "count": 1
+      "count": 1,
+      "expect": "BABIP"
     },
     {
       "q": "발야구랑 뭐가달라?",
-      "count": 1
+      "count": 1,
+      "exclude": "COMPARISON"
     },
     {
       "q": "백투백",
-      "count": 1
+      "count": 1,
+      "expect": "백투백"
     },
     {
       "q": "버스터",
-      "count": 1
+      "count": 1,
+      "expect": "버스터"
     },
     {
       "q": "베트 플립",
-      "count": 1
+      "count": 1,
+      "expect": "빠던"
     },
     {
       "q": "벤치클라이밍",
-      "count": 1
+      "count": 1,
+      "expect": "벤치클리어링"
     },
     {
       "q": "벤치클라이밍이 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "벤치클리어링"
     },
     {
       "q": "변화구",
-      "count": 1
+      "count": 1,
+      "expect": "변화구"
     },
     {
       "q": "병산",
-      "count": 1
+      "count": 1,
+      "expect": "병살타"
     },
     {
       "q": "병살이 나올때 6-4-3병살플레이라고하거나 다르게하는데 왜6-4-3 더블플레이야?",
-      "count": 1
+      "count": 1,
+      "exclude": "NARRATIVE_SENTENCE"
     },
     {
       "q": "병살이 나올때 중계에서 643더블플레이라고 말하는데 왜 643인지",
-      "count": 1
+      "count": 1,
+      "exclude": "NARRATIVE_SENTENCE"
     },
     {
       "q": "병살이 뭐얌",
-      "count": 1
+      "count": 1,
+      "expect": "병살타"
     },
     {
       "q": "병상타가 뭐에요",
-      "count": 1
+      "count": 1,
+      "expect": "병살타"
     },
     {
       "q": "보살",
-      "count": 1
+      "count": 1,
+      "expect": "보살"
     },
     {
       "q": "보살이 뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "보살"
     },
     {
       "q": "보스만룰",
-      "count": 1
+      "count": 1,
+      "exclude": "UNVERIFIED_SLANG"
     },
     {
       "q": "보크가 머임",
-      "count": 1
+      "count": 1,
+      "expect": "보크"
     },
     {
       "q": "보크가 모야?",
-      "count": 1
+      "count": 1,
+      "expect": "보크"
     },
     {
       "q": "보크가 뭐니",
-      "count": 1
+      "count": 1,
+      "expect": "보크"
     },
     {
       "q": "보크가모야?",
-      "count": 1
+      "count": 1,
+      "expect": "보크"
     },
     {
       "q": "보크가무ㅗ야",
-      "count": 1
+      "count": 1,
+      "exclude": "SEVERE_TYPO"
     },
     {
       "q": "보크가붜야?",
-      "count": 1
+      "count": 1,
+      "exclude": "SEVERE_TYPO"
     },
     {
       "q": "보크볼이 뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "보크"
     },
     {
       "q": "본헤드 플레이",
-      "count": 1
+      "count": 1,
+      "expect": "본헤드 플레이"
     },
     {
       "q": "본헤드 플레이가 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "본헤드 플레이"
     },
     {
       "q": "본헤드플레이",
-      "count": 1
+      "count": 1,
+      "expect": "본헤드 플레이"
     },
     {
       "q": "본헤드플레이가 뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "본헤드 플레이"
     },
     {
       "q": "볼넥",
-      "count": 1
+      "count": 1,
+      "expect": "볼넷"
     },
     {
       "q": "볼넷은머야",
-      "count": 1
+      "count": 1,
+      "expect": "볼넷"
     },
     {
       "q": "볼배합이 뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "볼배합"
     },
     {
       "q": "볼보이",
-      "count": 1
+      "count": 1,
+      "expect": "볼보이"
     },
     {
       "q": "볼은 어떤거에요?",
-      "count": 1
+      "count": 1,
+      "exclude": "NARRATIVE_SENTENCE"
     },
     {
       "q": "볼카운트가 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "볼카운트"
     },
     {
       "q": "볼펜의 의미가 뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "불펜"
     },
     {
       "q": "볼펜이 뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "불펜"
     },
     {
       "q": "볼펜투수의 의미는?",
-      "count": 1
+      "count": 1,
+      "expect": "불펜"
     },
     {
       "q": "불문율",
-      "count": 1
+      "count": 1,
+      "expect": "불문율"
     },
     {
       "q": "불문율이 뭐야??",
-      "count": 1
+      "count": 1,
+      "expect": "불문율"
     },
     {
       "q": "불팬",
-      "count": 1
+      "count": 1,
+      "expect": "불펜"
     },
     {
       "q": "빠던",
-      "count": 1
+      "count": 1,
+      "expect": "빠던"
     },
     {
       "q": "사사구",
-      "count": 1
+      "count": 1,
+      "expect": "4사구"
     },
     {
       "q": "삼구가 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "삼구"
     },
     {
       "q": "삼구삼진은?",
-      "count": 1
+      "count": 1,
+      "expect": "삼구삼진"
     },
     {
       "q": "삼구삼진이 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "삼구삼진"
     },
     {
       "q": "삼구삼진이뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "삼구삼진"
     },
     {
       "q": "삼루가 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "베이스"
     },
     {
       "q": "삼우가 머냐고",
-      "count": 1
+      "count": 1,
+      "exclude": "SEVERE_TYPO"
     },
     {
       "q": "삼우가 뭐야? 삼루",
-      "count": 1
+      "count": 1,
+      "exclude": "SEVERE_TYPO"
     },
     {
       "q": "삼자번퇴",
-      "count": 1
+      "count": 1,
+      "expect": "삼자범퇴"
     },
     {
       "q": "삼자번퇴가 뭐애",
-      "count": 1
+      "count": 1,
+      "expect": "삼자범퇴"
     },
     {
       "q": "삼자범퇴 뜻",
-      "count": 1
+      "count": 1,
+      "expect": "삼자범퇴"
     },
     {
       "q": "삼진아웃",
-      "count": 1
+      "count": 1,
+      "expect": "삼진"
     },
     {
       "q": "삼진아웃이 뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "삼진"
     },
     {
       "q": "삼진아웃이뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "삼진"
     },
     {
       "q": "삼진홈런이 뭐야?",
-      "count": 1
+      "count": 1,
+      "exclude": "UNVERIFIED_SLANG"
     },
     {
       "q": "삼짖",
-      "count": 1
+      "count": 1,
+      "expect": "삼진"
     },
     {
       "q": "상반기",
-      "count": 1
+      "count": 1,
+      "expect": "상반기"
     },
     {
       "q": "상반기와 후반기",
-      "count": 1
+      "count": 1,
+      "expect": "상반기"
     },
     {
       "q": "샐러리캡 제도가 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "샐러리캡"
     },
     {
       "q": "섀도 플레이",
-      "count": 1
+      "count": 1,
+      "expect": "섀도플레이"
     },
     {
       "q": "섀도플레이가뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "섀도플레이"
     },
     {
       "q": "서드펜디드 게임이 뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "서스펜디드게임"
     },
     {
       "q": "선수 통계 지표에서 babip이 뭘 뜻하는거야",
-      "count": 1
+      "count": 1,
+      "exclude": "NARRATIVE_SENTENCE"
     },
     {
       "q": "선수이름앞에 숫자와 알파벳이 뭐야",
-      "count": 1
+      "count": 1,
+      "exclude": "MULTI_CONCEPT"
     },
     {
       "q": "세이버매트릭스를 정리해줘",
-      "count": 1
+      "count": 1,
+      "expect": "세이버매트릭스"
     },
     {
       "q": "송구가 뭐예여",
-      "count": 1
+      "count": 1,
+      "expect": "송구"
     },
     {
       "q": "수비가 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "수비"
     },
     {
       "q": "수비수 번호",
-      "count": 1
+      "count": 1,
+      "expect": "포지션 번호"
     },
     {
       "q": "수비위치 번호좀 알려주세요",
-      "count": 1
+      "count": 1,
+      "expect": "포지션 번호"
     },
     {
       "q": "수훈선수",
-      "count": 1
+      "count": 1,
+      "expect": "수훈선수"
     },
     {
       "q": "스윕이 뭐얍",
-      "count": 1
+      "count": 1,
+      "exclude": "SEVERE_TYPO"
     },
     {
       "q": "스윕이 세판 싹다지는거야?",
-      "count": 1
+      "count": 1,
+      "exclude": "COMPARISON"
     },
     {
       "q": "스윙이 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "스윙"
     },
     {
       "q": "스탯쌓기",
-      "count": 1
+      "count": 1,
+      "expect": "스탯"
     },
     {
       "q": "스탯이 뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "스탯"
     },
     {
       "q": "스트레이트 볼넷이 뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "스트레이트 볼넷"
     },
     {
       "q": "스트레이트 볼넷이랑 그냥 볼넷은 다른거야?",
-      "count": 1
+      "count": 1,
+      "exclude": "COMPARISON"
     },
     {
       "q": "승요",
-      "count": 1
+      "count": 1,
+      "expect": "승요"
     },
     {
       "q": "승요가뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "승요"
     },
     {
       "q": "승패세홀 조건",
-      "count": 1
+      "count": 1,
+      "expect": "승패세홀"
     },
     {
       "q": "승패세홀 조건 각각 알려줘",
-      "count": 1
+      "count": 1,
+      "exclude": "MULTI_CONCEPT"
     },
     {
       "q": "시즌 아웃",
-      "count": 1
+      "count": 1,
+      "expect": "시즌아웃"
     },
     {
       "q": "시즌아웃",
-      "count": 1
+      "count": 1,
+      "expect": "시즌아웃"
     },
     {
       "q": "실점이 뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "실점"
     },
     {
       "q": "쓰리번트",
-      "count": 1
+      "count": 1,
+      "expect": "쓰리번트"
     },
     {
       "q": "쓰리피스",
-      "count": 1
+      "count": 1,
+      "exclude": "UNVERIFIED_SLANG"
     },
     {
       "q": "쓰리피트",
-      "count": 1
+      "count": 1,
+      "expect": "쓰리피트"
     },
     {
       "q": "아니아니 야구 포지션 넘버?라고 해야하나 먼지 알려줘",
-      "count": 1
+      "count": 1,
+      "exclude": "MULTI_CONCEPT"
     },
     {
       "q": "아시아시리즈",
-      "count": 1
+      "count": 1,
+      "expect": "아시아시리즈"
     },
     {
       "q": "아웃카운트가 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "아웃카운트"
     },
     {
       "q": "아웃카운트가뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "아웃카운트"
     },
     {
       "q": "아하 헛스윙이 뭐야?",
-      "count": 1
+      "count": 1,
+      "exclude": "NARRATIVE_SENTENCE"
     },
     {
       "q": "안녕:> 퀄리티스타드랑 퀄수플 조건에 대해 알려줘!",
-      "count": 1
+      "count": 1,
+      "exclude": "MULTI_CONCEPT"
     },
     {
       "q": "안타가 뭐여",
-      "count": 1
+      "count": 1,
+      "expect": "안타"
     },
     {
       "q": "안타이틀 2루타",
-      "count": 1
+      "count": 1,
+      "exclude": "MULTI_CONCEPT"
     },
     {
       "q": "야구",
-      "count": 1
+      "count": 1,
+      "expect": "야구"
     },
     {
       "q": "야구 경기에서 보살이 뭐야?",
-      "count": 1
+      "count": 1,
+      "exclude": "NARRATIVE_SENTENCE"
     },
     {
       "q": "야구 그 유격수 as 이런 용어 뜻이랑 그런거 알려줘",
-      "count": 1
+      "count": 1,
+      "exclude": "MULTI_CONCEPT"
     },
     {
       "q": "야구 순위의 게임 차",
-      "count": 1
+      "count": 1,
+      "exclude": "NARRATIVE_SENTENCE"
     },
     {
       "q": "야구 영구결번 뭐야",
-      "count": 1
+      "count": 1,
+      "exclude": "NARRATIVE_SENTENCE"
     },
     {
       "q": "야구 용어 전부 설명해줘",
-      "count": 1
+      "count": 1,
+      "exclude": "MULTI_CONCEPT"
     },
     {
       "q": "야구 용어들 다 알려주세요",
-      "count": 1
+      "count": 1,
+      "exclude": "MULTI_CONCEPT"
     },
     {
       "q": "야구 포지션 중에 ph가 뭐야?",
-      "count": 1
+      "count": 1,
+      "exclude": "NARRATIVE_SENTENCE"
     },
     {
       "q": "야구 홈런이랑 안타",
-      "count": 1
+      "count": 1,
+      "exclude": "MULTI_CONCEPT"
     },
     {
       "q": "야구가 뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "야구"
     },
     {
       "q": "야구공",
-      "count": 1
+      "count": 1,
+      "expect": "야구공"
     },
     {
       "q": "야구에서 홈런은 정확히 어떤 걸 말해?",
-      "count": 1
+      "count": 1,
+      "exclude": "NARRATIVE_SENTENCE"
     },
     {
       "q": "야구용어 다 알려줘",
-      "count": 1
+      "count": 1,
+      "exclude": "MULTI_CONCEPT"
     },
     {
       "q": "야수는 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "야수"
     },
     {
       "q": "어 보크가 뭐임",
-      "count": 1
+      "count": 1,
+      "exclude": "NARRATIVE_SENTENCE"
     },
     {
       "q": "어려운 야구용어",
-      "count": 1
+      "count": 1,
+      "exclude": "MULTI_CONCEPT"
     },
     {
       "q": "어려운 용어 알려줘",
-      "count": 1
+      "count": 1,
+      "exclude": "MULTI_CONCEPT"
     },
     {
       "q": "어려운 용어 정리 ㄱ",
-      "count": 1
+      "count": 1,
+      "exclude": "MULTI_CONCEPT"
     },
     {
       "q": "어려운 용어 정리좀",
-      "count": 1
+      "count": 1,
+      "exclude": "MULTI_CONCEPT"
     },
     {
       "q": "어퍼스윙",
-      "count": 1
+      "count": 1,
+      "expect": "어퍼스윙"
     },
     {
       "q": "어퍼스윙이 래벨스윙이 무슨뜻이야?",
-      "count": 1
+      "count": 1,
+      "exclude": "COMPARISON"
     },
     {
       "q": "어퍼스윙이 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "어퍼스윙"
     },
     {
       "q": "어퍼스윙이란?",
-      "count": 1
+      "count": 1,
+      "expect": "어퍼스윙"
     },
     {
       "q": "얼라가 뭐야",
-      "count": 1
+      "count": 1,
+      "exclude": "UNVERIFIED_SLANG"
     },
     {
       "q": "얼라가 뭐야?",
-      "count": 1
+      "count": 1,
+      "exclude": "UNVERIFIED_SLANG"
     },
     {
       "q": "엘롯라시코",
-      "count": 1
+      "count": 1,
+      "expect": "엘롯라시코"
     },
     {
       "q": "연고지가 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "연고지"
     },
     {
       "q": "영구결번이 뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "영구결번"
     },
     {
       "q": "영구결번이 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "영구결번"
     },
     {
       "q": "영웅스윙이 뭔가요",
-      "count": 1
+      "count": 1,
+      "exclude": "UNVERIFIED_SLANG"
     },
     {
       "q": "예고선발",
-      "count": 1
+      "count": 1,
+      "expect": "예고선발"
     },
     {
       "q": "예고선발이뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "예고선발"
     },
     {
       "q": "예시를 들어서 .365 이런게 뭐야?",
-      "count": 1
+      "count": 1,
+      "exclude": "NUMERIC_INTERPRETATION"
     },
     {
       "q": "옵트아웃",
-      "count": 1
+      "count": 1,
+      "expect": "옵트아웃"
     },
     {
       "q": "옵트아웃이 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "옵트아웃"
     },
     {
       "q": "옵트아웃이 므ㅓ예요",
-      "count": 1
+      "count": 1,
+      "exclude": "SEVERE_TYPO"
     },
     {
       "q": "완투승과 완봉승의 차이가 뭐야?",
-      "count": 1
+      "count": 1,
+      "exclude": "COMPARISON"
     },
     {
       "q": "완투와 완봉의 차이는?",
-      "count": 1
+      "count": 1,
+      "exclude": "COMPARISON"
     },
     {
       "q": "외야수 종류",
-      "count": 1
+      "count": 1,
+      "exclude": "MULTI_CONCEPT"
     },
     {
       "q": "외야수가 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "외야수"
     },
     {
       "q": "외야수가뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "외야수"
     },
     {
       "q": "용어 알려줘",
-      "count": 1
+      "count": 1,
+      "exclude": "MULTI_CONCEPT"
     },
     {
       "q": "우익수가 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "우익수"
     },
     {
       "q": "우투가 뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "좌완"
     },
     {
       "q": "원정옷은 대부분 검정색인가요?",
-      "count": 1
+      "count": 1,
+      "exclude": "NOT_A_GLOSSARY_QUESTION"
     },
     {
       "q": "월드시리즈",
-      "count": 1
+      "count": 1,
+      "expect": "월드시리즈"
     },
     {
       "q": "위닝",
-      "count": 1
+      "count": 1,
+      "expect": "위닝시리즈"
     },
     {
       "q": "위닝이 뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "위닝시리즈"
     },
     {
       "q": "위닝이 뭐ㅓ야",
-      "count": 1
+      "count": 1,
+      "exclude": "SEVERE_TYPO"
     },
     {
       "q": "유격수 번호가뭐애",
-      "count": 1
+      "count": 1,
+      "exclude": "SEVERE_TYPO"
     },
     {
       "q": "유격수, 좌익수, 지명타자를 모르겠어",
-      "count": 1
+      "count": 1,
+      "exclude": "MULTI_CONCEPT"
     },
     {
       "q": "유격수가 뭐애",
-      "count": 1
+      "count": 1,
+      "expect": "유격수"
     },
     {
       "q": "유격수가 영어로뭐야",
-      "count": 1
+      "count": 1,
+      "exclude": "UNVERIFIED_SLANG"
     },
     {
       "q": "유격수랑 2루수의 차이가 뭐야?",
-      "count": 1
+      "count": 1,
+      "exclude": "COMPARISON"
     },
     {
       "q": "유령 주자가 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "유령주자"
     },
     {
       "q": "음...뜬고아웃은  타자친공이떠서 야수한테 잡이는거야?",
-      "count": 1
+      "count": 1,
+      "exclude": "SEVERE_TYPO"
     },
     {
       "q": "인사이드더파크홈런",
-      "count": 1
+      "count": 1,
+      "expect": "인사이드더파크홈런"
     },
     {
       "q": "인터넷에서 초구딱이라고 뭐라하던데 초구딱이 뭐야",
-      "count": 1
+      "count": 1,
+      "exclude": "NARRATIVE_SENTENCE"
     },
     {
       "q": "인플라잉 이 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "인필드플라이"
     },
     {
       "q": "인필드",
-      "count": 1
+      "count": 1,
+      "exclude": "NARRATIVE_SENTENCE"
     },
     {
       "q": "인필드 플레이가 뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "인필드플라이"
     },
     {
       "q": "일루타",
-      "count": 1
+      "count": 1,
+      "expect": "1루타"
     },
     {
       "q": "잔루",
-      "count": 1
+      "count": 1,
+      "expect": "잔루"
     },
     {
       "q": "잔루가 뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "잔루"
     },
     {
       "q": "잔루가 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "잔루"
     },
     {
       "q": "잔루만루?",
-      "count": 1
+      "count": 1,
+      "expect": "잔루만루"
     },
     {
       "q": "잔루만루가 무ㅜ야",
-      "count": 1
+      "count": 1,
+      "exclude": "SEVERE_TYPO"
     },
     {
       "q": "잔루만루가 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "잔루만루"
     },
     {
       "q": "잔루만루가먼데",
-      "count": 1
+      "count": 1,
+      "expect": "잔루만루"
     },
     {
       "q": "잠실 시리즈",
-      "count": 1
+      "count": 1,
+      "expect": "잠실시리즈"
     },
     {
       "q": "장외홈런",
-      "count": 1
+      "count": 1,
+      "expect": "장외홈런"
     },
     {
       "q": "재치가 뭐야",
-      "count": 1
+      "count": 1,
+      "exclude": "UNVERIFIED_SLANG"
     },
     {
       "q": "적시타 뜻",
-      "count": 1
+      "count": 1,
+      "expect": "적시타"
     },
     {
       "q": "적시타 뜻이뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "적시타"
     },
     {
       "q": "적시타는 야구용어가 아니니?",
-      "count": 1
+      "count": 1,
+      "exclude": "UNVERIFIED_SLANG"
     },
     {
       "q": "전광판에 선수 이름 앞에 숫자랑 알파벳이 있는건 뭘 의미 하는거야?",
-      "count": 1
+      "count": 1,
+      "exclude": "MULTI_CONCEPT"
     },
     {
       "q": "젖살타가 뭐야",
-      "count": 1
+      "count": 1,
+      "exclude": "UNVERIFIED_SLANG"
     },
     {
       "q": "제구가 뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "제구"
     },
     {
       "q": "제구가 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "제구"
     },
     {
       "q": "좌완",
-      "count": 1
+      "count": 1,
+      "expect": "좌완"
     },
     {
       "q": "좌익수가 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "좌익수"
     },
     {
       "q": "좌전안타",
-      "count": 1
+      "count": 1,
+      "expect": "좌전안타"
     },
     {
       "q": "좌전안타가 뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "좌전안타"
     },
     {
       "q": "좌중간안타가 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "좌중간안타"
     },
     {
       "q": "좌중홈은?",
-      "count": 1
+      "count": 1,
+      "exclude": "UNVERIFIED_SLANG"
     },
     {
       "q": "좌중홈은뭐야?",
-      "count": 1
+      "count": 1,
+      "exclude": "UNVERIFIED_SLANG"
     },
     {
       "q": "주루가 뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "주루"
     },
     {
       "q": "주루사 뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "주루사"
     },
     {
       "q": "주루사가 뭔가요?",
-      "count": 1
+      "count": 1,
+      "expect": "주루사"
     },
     {
       "q": "주말시리즈는 두산이야라는 말은 뭔말이야?",
-      "count": 1
+      "count": 1,
+      "exclude": "UNVERIFIED_SLANG"
     },
     {
       "q": "중견수",
-      "count": 1
+      "count": 1,
+      "expect": "중견수"
     },
     {
       "q": "중견수가 뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "중견수"
     },
     {
       "q": "중견수가 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "중견수"
     },
     {
       "q": "지명 타자의 DH 는 뭐의 약자야?",
-      "count": 1
+      "count": 1,
+      "exclude": "NARRATIVE_SENTENCE"
     },
     {
       "q": "지명타자는 야수에 비해 war이 낮아?",
-      "count": 1
+      "count": 1,
+      "exclude": "NUMERIC_INTERPRETATION"
     },
     {
       "q": "초구 가 뭐냐고",
-      "count": 1
+      "count": 1,
+      "expect": "초구"
     },
     {
       "q": "초구 초구 초구",
-      "count": 1
+      "count": 1,
+      "exclude": "NARRATIVE_SENTENCE"
     },
     {
       "q": "초구가 뭐",
-      "count": 1
+      "count": 1,
+      "exclude": "NARRATIVE_SENTENCE"
     },
     {
       "q": "초구가 뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "초구"
     },
     {
       "q": "초구딱",
-      "count": 1
+      "count": 1,
+      "expect": "초구"
     },
     {
       "q": "초구딱이 뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "초구"
     },
     {
       "q": "출루",
-      "count": 1
+      "count": 1,
+      "expect": "출루"
     },
     {
       "q": "캐처플라이",
-      "count": 1
+      "count": 1,
+      "expect": "캐처플라이"
     },
     {
       "q": "코리아시리즈",
-      "count": 1
+      "count": 1,
+      "expect": "코시"
     },
     {
       "q": "코시",
-      "count": 1
+      "count": 1,
+      "expect": "코시"
     },
     {
       "q": "퀄리티 스타트 플러스",
-      "count": 1
+      "count": 1,
+      "expect": "QS+"
     },
     {
       "q": "퀄스쁠",
-      "count": 1
+      "count": 1,
+      "expect": "QS+"
     },
     {
       "q": "퀄스플",
-      "count": 1
+      "count": 1,
+      "expect": "QS+"
     },
     {
       "q": "크보딱",
-      "count": 1
+      "count": 1,
+      "exclude": "UNVERIFIED_SLANG"
     },
     {
       "q": "타석은 뭐고 타수는 뭐야?",
-      "count": 1
+      "count": 1,
+      "exclude": "COMPARISON"
     },
     {
       "q": "타수",
-      "count": 1
+      "count": 1,
+      "expect": "타수"
     },
     {
       "q": "타수는 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "타수"
     },
     {
       "q": "타율이 얼마정도 돼야 잘하는 거야?",
-      "count": 1
+      "count": 1,
+      "exclude": "NUMERIC_INTERPRETATION"
     },
     {
       "q": "타자 투수 주자 스크 뭐시기 안타 홈런 아웃",
-      "count": 1
+      "count": 1,
+      "exclude": "MULTI_CONCEPT"
     },
     {
       "q": "타자가 칠 때 포수가 막는 걸 뭐라해?",
-      "count": 1
+      "count": 1,
+      "exclude": "NARRATIVE_SENTENCE"
     },
     {
       "q": "타자들이 몇할몇푼몇리 이렇게 나오잖아 무ㅛㅡㅇ 뜻이야",
-      "count": 1
+      "count": 1,
+      "exclude": "NUMERIC_INTERPRETATION"
     },
     {
       "q": "타자일순",
-      "count": 1
+      "count": 1,
+      "expect": "타자일순"
     },
     {
       "q": "타자일순 영어로",
-      "count": 1
+      "count": 1,
+      "exclude": "UNVERIFIED_SLANG"
     },
     {
       "q": "타할이뭐여?",
-      "count": 1
+      "count": 1,
+      "expect": "할푼리"
     },
     {
       "q": "탈삼진이 정확하게 뭐야",
-      "count": 1
+      "count": 1,
+      "exclude": "NARRATIVE_SENTENCE"
     },
     {
       "q": "탈홈런?",
-      "count": 1
+      "count": 1,
+      "expect": "피홈런"
     },
     {
       "q": "탈홈런이 뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "피홈런"
     },
     {
       "q": "터프세이브",
-      "count": 1
+      "count": 1,
+      "expect": "터프세이브"
     },
     {
       "q": "투나씽",
-      "count": 1
+      "count": 1,
+      "expect": "투나씽"
     },
     {
       "q": "투나씽 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "투나씽"
     },
     {
       "q": "투나씽이 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "투나씽"
     },
     {
       "q": "투런포는 무엇인가요",
-      "count": 1
+      "count": 1,
+      "expect": "투런"
     },
     {
       "q": "투수의 기록 용어",
-      "count": 1
+      "count": 1,
+      "exclude": "MULTI_CONCEPT"
     },
     {
       "q": "투수의 기록..? 나올때 ERA같은거 있잖아 그게 뭔지 다른것도 다 설명해줘",
-      "count": 1
+      "count": 1,
+      "exclude": "MULTI_CONCEPT"
     },
     {
       "q": "특타가 뭐여",
-      "count": 1
+      "count": 1,
+      "expect": "특타"
     },
     {
       "q": "패배투수는?",
-      "count": 1
+      "count": 1,
+      "expect": "패전투수"
     },
     {
       "q": "퍼스널 넘버가 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "등번호"
     },
     {
       "q": "퍼팩트 게임",
-      "count": 1
+      "count": 1,
+      "expect": "퍼펙트게임"
     },
     {
       "q": "퍼팩트게임",
-      "count": 1
+      "count": 1,
+      "expect": "퍼펙트게임"
     },
     {
       "q": "페어 지역이 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "페어"
     },
     {
       "q": "페어가 뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "페어"
     },
     {
       "q": "페어볼은?",
-      "count": 1
+      "count": 1,
+      "expect": "페어"
     },
     {
       "q": "페어볼이 뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "페어"
     },
     {
       "q": "페어볼이 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "페어"
     },
     {
       "q": "페어볼이뭔가",
-      "count": 1
+      "count": 1,
+      "expect": "페어"
     },
     {
       "q": "페어와 안타는 다른 건가요",
-      "count": 1
+      "count": 1,
+      "exclude": "COMPARISON"
     },
     {
       "q": "포수 스트라이크 낫 아웃이 뭐야?",
-      "count": 1
+      "count": 1,
+      "exclude": "NARRATIVE_SENTENCE"
     },
     {
       "q": "포수가 던지는 공의 종류",
-      "count": 1
+      "count": 1,
+      "exclude": "MULTI_CONCEPT"
     },
     {
       "q": "포수보크가 뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "포수보크"
     },
     {
       "q": "포지션",
-      "count": 1
+      "count": 1,
+      "expect": "포지션 번호"
     },
     {
       "q": "포지션 번호",
-      "count": 1
+      "count": 1,
+      "expect": "포지션 번호"
     },
     {
       "q": "포크가뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "포크볼"
     },
     {
       "q": "포크볼이나 데드볼이 뭐야?",
-      "count": 1
+      "count": 1,
+      "exclude": "COMPARISON"
     },
     {
       "q": "프랜차이즈 선수가 뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "프랜차이즈 스타"
     },
     {
       "q": "프랜차이즈가",
-      "count": 1
+      "count": 1,
+      "expect": "프랜차이즈 스타"
     },
     {
       "q": "프랜차이즈가 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "프랜차이즈 스타"
     },
     {
       "q": "프랜차이즈가뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "프랜차이즈 스타"
     },
     {
       "q": "프린차이즈가 뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "프랜차이즈 스타"
     },
     {
       "q": "플레이아웃이뭐야",
-      "count": 1
+      "count": 1,
+      "exclude": "UNVERIFIED_SLANG"
     },
     {
       "q": "피안타",
-      "count": 1
+      "count": 1,
+      "expect": "피안타"
     },
     {
       "q": "피안타가뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "피안타"
     },
     {
       "q": "피처보크",
-      "count": 1
+      "count": 1,
+      "expect": "보크"
     },
     {
       "q": "피치컴",
-      "count": 1
+      "count": 1,
+      "expect": "피치컴"
     },
     {
       "q": "피치클록",
-      "count": 1
+      "count": 1,
+      "expect": "피치클락"
     },
     {
       "q": "필승조",
-      "count": 1
+      "count": 1,
+      "expect": "필승조"
     },
     {
       "q": "할이 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "할푼리"
     },
     {
       "q": "할푼리 가 뭐에요",
-      "count": 1
+      "count": 1,
+      "expect": "할푼리"
     },
     {
       "q": "허슬두",
-      "count": 1
+      "count": 1,
+      "expect": "허슬두"
     },
     {
       "q": "헛 스윙",
-      "count": 1
+      "count": 1,
+      "expect": "헛스윙"
     },
     {
       "q": "헤드 퍼스트 슬라이딩",
-      "count": 1
+      "count": 1,
+      "expect": "슬라이딩"
     },
     {
       "q": "헷갈리는 야구용어",
-      "count": 1
+      "count": 1,
+      "exclude": "MULTI_CONCEPT"
     },
     {
       "q": "호령존은 뭐야",
-      "count": 1
+      "count": 1,
+      "exclude": "UNVERIFIED_SLANG"
     },
     {
       "q": "호수비가 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "호수비"
     },
     {
       "q": "호수비뜻",
-      "count": 1
+      "count": 1,
+      "expect": "호수비"
     },
     {
       "q": "혹시 1할 5율 같은 단어 알아?",
-      "count": 1
+      "count": 1,
+      "exclude": "NUMERIC_INTERPRETATION"
     },
     {
       "q": "혹시 삼진홈런이 모야?",
-      "count": 1
+      "count": 1,
+      "exclude": "UNVERIFIED_SLANG"
     },
     {
       "q": "혹시 수비 위치 용어를 제대로 알려줄 수 있어?",
-      "count": 1
+      "count": 1,
+      "exclude": "MULTI_CONCEPT"
     },
     {
       "q": "홀드는 어떨때 홀드야?",
-      "count": 1
+      "count": 1,
+      "exclude": "NARRATIVE_SENTENCE"
     },
     {
       "q": "홈런이 모야)",
-      "count": 1
+      "count": 1,
+      "expect": "홈런"
     },
     {
       "q": "홈스틸",
-      "count": 1
+      "count": 1,
+      "expect": "홈스틸"
     },
     {
       "q": "홈스틸이 뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "홈스틸"
     },
     {
       "q": "희비가 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "희생플라이"
     },
     {
       "q": "희비도 야구용어인데",
-      "count": 1
+      "count": 1,
+      "exclude": "UNVERIFIED_SLANG"
     },
     {
       "q": "희생번트",
-      "count": 1
+      "count": 1,
+      "expect": "희생번트"
     },
     {
       "q": "희생플라이는 ops에 들어가?",
-      "count": 1
+      "count": 1,
+      "exclude": "NUMERIC_INTERPRETATION"
     },
     {
       "q": "히븨",
-      "count": 1
+      "count": 1,
+      "expect": "희생플라이"
     },
     {
       "q": "Ab는?",
-      "count": 1
+      "count": 1,
+      "expect": "타수"
     },
     {
       "q": "B S O에게 뭐야",
-      "count": 1
+      "count": 1,
+      "exclude": "MULTI_CONCEPT"
     },
     {
       "q": "BABIP",
-      "count": 1
+      "count": 1,
+      "expect": "BABIP"
     },
     {
       "q": "BABIP이 뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "BABIP"
     },
     {
       "q": "BAPIP이 뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "BABIP"
     },
     {
       "q": "BB/p가뭐야",
-      "count": 1
+      "count": 1,
+      "exclude": "SEVERE_TYPO"
     },
     {
       "q": "CP",
-      "count": 1
+      "count": 1,
+      "expect": "마무리투수"
     },
     {
       "q": "Dh는 뭐의",
-      "count": 1
+      "count": 1,
+      "expect": "지명타자"
     },
     {
       "q": "Dh는 뭐의 약자야?",
-      "count": 1
+      "count": 1,
+      "expect": "지명타자"
     },
     {
       "q": "Dtd가뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "DTD"
     },
     {
       "q": "EPA WRA 이런건 뭐야??",
-      "count": 1
+      "count": 1,
+      "exclude": "MULTI_CONCEPT"
     },
     {
       "q": "era+",
-      "count": 1
+      "count": 1,
+      "expect": "ERA+"
     },
     {
       "q": "fa 적절가격",
-      "count": 1
+      "count": 1,
+      "exclude": "NOT_A_GLOSSARY_QUESTION"
     },
     {
       "q": "fc가 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "야수선택"
     },
     {
       "q": "Fc가 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "야수선택"
     },
     {
       "q": "Fc뜻",
-      "count": 1
+      "count": 1,
+      "expect": "야수선택"
     },
     {
       "q": "Fip",
-      "count": 1
+      "count": 1,
+      "expect": "FIP"
     },
     {
       "q": "FIP가 뭐야",
-      "count": 1
+      "count": 1,
+      "expect": "FIP"
     },
     {
       "q": "FIP가 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "FIP"
     },
     {
       "q": "Hp",
-      "count": 1
+      "count": 1,
+      "expect": "몸에 맞는 공"
     },
     {
       "q": "Hpb",
-      "count": 1
+      "count": 1,
+      "expect": "몸에 맞는 공"
     },
     {
       "q": "Hs",
-      "count": 1
+      "count": 1,
+      "exclude": "SEVERE_TYPO"
     },
     {
       "q": "ISO가 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "ISO"
     },
     {
       "q": "K/9",
-      "count": 1
+      "count": 1,
+      "expect": "K/9"
     },
     {
       "q": "K9",
-      "count": 1
+      "count": 1,
+      "expect": "K/9"
     },
     {
       "q": "k랑 1k가뭐야?",
-      "count": 1
+      "count": 1,
+      "exclude": "COMPARISON"
     },
     {
       "q": "n할 n루 이게 뭔가여",
-      "count": 1
+      "count": 1,
+      "exclude": "NUMERIC_INTERPRETATION"
     },
     {
       "q": "OPS 뜻",
-      "count": 1
+      "count": 1,
+      "expect": "OPS"
     },
     {
       "q": "OPS 히터 뜻",
-      "count": 1
+      "count": 1,
+      "exclude": "NARRATIVE_SENTENCE"
     },
     {
       "q": "Ops가머야",
-      "count": 1
+      "count": 1,
+      "expect": "OPS"
     },
     {
       "q": "ops등 주요지표에대한 설명좀",
-      "count": 1
+      "count": 1,
+      "exclude": "MULTI_CONCEPT"
     },
     {
       "q": "ops뜻이 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "OPS"
     },
     {
       "q": "ph",
-      "count": 1
+      "count": 1,
+      "expect": "대타"
     },
     {
       "q": "QS+",
-      "count": 1
+      "count": 1,
+      "expect": "QS+"
     },
     {
       "q": "Qs+은?",
-      "count": 1
+      "count": 1,
+      "expect": "QS+"
     },
     {
       "q": "RF",
-      "count": 1
+      "count": 1,
+      "expect": "우익수"
     },
     {
       "q": "rp",
-      "count": 1
+      "count": 1,
+      "expect": "불펜"
     },
     {
       "q": "T B S K",
-      "count": 1
+      "count": 1,
+      "exclude": "MULTI_CONCEPT"
     },
     {
       "q": "T가 모야",
-      "count": 1
+      "count": 1,
+      "exclude": "SEVERE_TYPO"
     },
     {
       "q": "V2가 뭐야",
-      "count": 1
+      "count": 1,
+      "exclude": "UNVERIFIED_SLANG"
     },
     {
       "q": "War에대해 쉽게 설명해줘",
-      "count": 1
+      "count": 1,
+      "expect": "WAR"
     },
     {
       "q": "war이 1점대면?",
-      "count": 1
+      "count": 1,
+      "exclude": "NUMERIC_INTERPRETATION"
     },
     {
       "q": "WBC가 머야",
-      "count": 1
+      "count": 1,
+      "expect": "WBC"
     },
     {
       "q": "Woba",
-      "count": 1
+      "count": 1,
+      "expect": "wOBA"
     },
     {
       "q": "wOBA가 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "wOBA"
     },
     {
       "q": "WOBA가 뭐야?",
-      "count": 1
+      "count": 1,
+      "expect": "wOBA"
     },
     {
       "q": "WOBA는?",
-      "count": 1
+      "count": 1,
+      "expect": "wOBA"
     }
   ]
 }

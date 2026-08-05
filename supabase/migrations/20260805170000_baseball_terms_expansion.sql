@@ -6,7 +6,7 @@
 --       (3건만 정규화로 잡혔고 나머지는 사전에 아예 없거나 표기가 달랐다)
 --
 -- 이 migration 이 하는 일:
---   ① 신규 용어 141종 삽입
+--   ① 신규 용어 148종 삽입
 --   ② 기존 용어에 alias 91건 보강 (오타·약어·구어 표기)
 --   ③ 신규 term 과 정규화 키가 충돌하는 기존 alias 2건 제거
 --
@@ -14,8 +14,14 @@
 -- 조용히 가려진다(에러 없음). 예) 신규 term '직구' vs 기존 '포심'의 alias '직구'.
 -- 분리해서 답해야 하는 개념은 기존 alias 에서 명시적으로 뺀다.
 --
--- 멱등: 전부 ON CONFLICT / 조건부 UPDATE. 재실행해도 결과 동일.
--- 데이터 파괴 없음: 기존 answer 는 건드리지 않는다(alias 만 조정).
+-- ⚠️ 기존 answer 는 절대 덮지 않는다 (삼순 2026-08-05 NO-GO).
+--    ①의 INSERT 는 `ON CONFLICT DO UPDATE` 를 쓰되 **answer 는 갱신 대상에서 제외**하고,
+--    갱신 자체도 `WHERE baseball_terms.reviewed_at = '<이 확충의 날짜>'` 로 제한한다.
+--    즉 이 migration 이 만든 행만 자기 자신을 재적용할 수 있고(멱등),
+--    사람이 먼저 검수해 둔 기존 행은 alias 조차 이 경로로 바뀌지 않는다.
+--    기존 행에 붙일 alias 는 ②에서 **합집합**으로만 더한다(파괴 없음).
+--
+-- 멱등: 재실행해도 결과 동일 (②는 DISTINCT 합집합, ③은 조건부 삭제).
 -- ============================================================
 
 BEGIN;
@@ -181,7 +187,7 @@ KBO 특유의 문화로 해외에서도 유명해요.', 'culture', 'editorial_de
   ('10-10 클럽', ARRAY['10-10','1010클럽','10홈런 10도루']::text[], '한 시즌에 홈런 10개와 도루 10개를 동시에 달성한 기록이에요.
 장타력과 주력을 함께 갖췄다는 뜻이에요.
 20-20, 30-30, 40-40으로 올라갈수록 희귀해요.', 'record', 'editorial_definition', NULL, 'not_applicable', DATE '2026-08-05'),
-  ('30-30 클럽', ARRAY['30-30','3030클럽','20-20','20-20 클럽','40-40','40-40 클럽']::text[], '한 시즌 홈런 30개와 도루 30개를 동시에 기록한 걸 말해요.
+  ('30-30 클럽', ARRAY['30-30','3030클럽']::text[], '한 시즌 홈런 30개와 도루 30개를 동시에 기록한 걸 말해요.
 20-20, 40-40도 같은 방식으로 불러요.
 숫자가 커질수록 KBO에서도 손에 꼽는 기록이에요.', 'record', 'editorial_definition', NULL, 'not_applicable', DATE '2026-08-05'),
   ('보살', ARRAY['보살이','어시스트','assist']::text[], '수비수가 아웃을 만드는 과정에서 공을 던져 도운 기록이에요.
@@ -189,7 +195,7 @@ KBO 특유의 문화로 해외에서도 유명해요.', 'culture', 'editorial_de
 유격수·2루수에게 많이 쌓여요.', 'defense', 'official_record', 'https://www.koreabaseball.com/Record/Player/HitterBasic/Basic1.aspx', '2026', DATE '2026-08-05'),
   ('포지션 번호', ARRAY['수비 위치 번호','수비수 번호','포지션번호','수비위치번호','포지션 넘버']::text[], '기록지에서 수비 위치를 숫자로 적는 방식이에요.
 1 투수, 2 포수, 3 1루수, 4 2루수, 5 3루수, 6 유격수, 7 좌익수, 8 중견수, 9 우익수예요.', 'position', 'official_record', 'https://www.koreabaseball.com/Record/Player/HitterBasic/Basic1.aspx', '2026', DATE '2026-08-05'),
-  ('6-4-3 병살', ARRAY['643 병살','6-4-3','643','4-6-3','463','643 더블플레이']::text[], '공이 지나간 수비 위치를 번호로 적은 거예요.
+  ('6-4-3 병살', ARRAY['643 병살','6-4-3','643','643 더블플레이']::text[], '공이 지나간 수비 위치를 번호로 적은 거예요.
 6은 유격수, 4는 2루수, 3은 1루수라서 ''유격수→2루수→1루수'' 병살이라는 뜻이에요.', 'defense', 'official_record', 'https://www.koreabaseball.com/Record/Player/HitterBasic/Basic1.aspx', '2026', DATE '2026-08-05'),
   ('투수', ARRAY['pitcher','p','투수가']::text[], '마운드에서 타자에게 공을 던지는 선수예요.
 수비 위치 번호는 1번이에요.
@@ -239,7 +245,7 @@ KBO 특유의 문화로 해외에서도 유명해요.', 'culture', 'editorial_de
   ('무사', ARRAY['노아웃','무사가','0아웃']::text[], '그 이닝에 아웃이 아직 하나도 없는 상황이에요.
 아웃 1개면 1사, 2개면 2사라고 불러요.
 ''무사 만루''는 아웃 없이 주자가 꽉 찬 최고의 찬스예요.', 'basic', 'official_rule', 'https://www.koreabaseball.com/Reference/Etc/GameRule.aspx', '2026', DATE '2026-08-05'),
-  ('1사', ARRAY['원아웃','1아웃','일사','2사','투아웃','2아웃','이사']::text[], '그 이닝에 아웃이 1개 나온 상황을 1사, 2개면 2사라고 해요.
+  ('1사', ARRAY['원아웃','1아웃','일사','2사','투아웃','2아웃']::text[], '그 이닝에 아웃이 1개 나온 상황을 1사, 2개면 2사라고 해요.
 아직 없으면 무사예요.
 아웃 3개가 되면 공수가 바뀌어요.', 'basic', 'official_rule', 'https://www.koreabaseball.com/Reference/Etc/GameRule.aspx', '2026', DATE '2026-08-05'),
   ('잔루만루', ARRAY['잔루 만루','잔루만루가']::text[], '만루 찬스를 만들고도 점수를 못 내고 주자를 그대로 남긴 상황을 팬들이 부르는 말이에요.
@@ -386,7 +392,7 @@ DH는 지명타자 자리를 뜻해요.', 'rule', 'official_rule', 'https://www.
   ('베이스', ARRAY['루','1루','일루','2루','이루','3루','삼루','누상']::text[], '주자가 밟고 지나가는 네 지점이에요.
 타자는 1루→2루→3루를 거쳐 홈에 들어오면 1점이에요.
 한 변 38.1cm 정사각형이고, 홈만 오각형이에요.', 'basic', 'official_rule', 'https://www.koreabaseball.com/Reference/Etc/GameRule.aspx', '2026', DATE '2026-08-05'),
-  ('무사 만루', ARRAY['무사만루','노아웃 만루','무사 1루','무사1루','1사 만루','2사 만루','2사만루']::text[], '아웃 개수와 주자 위치를 한 번에 부르는 표현이에요.
+  ('무사 만루', ARRAY['무사만루','노아웃 만루']::text[], '아웃 개수와 주자 위치를 한 번에 부르는 표현이에요.
 앞이 아웃 수(무사·1사·2사), 뒤가 주자 상황(1루·만루)이에요.
 무사 만루는 아웃 없이 주자가 꽉 찬 최고의 찬스예요.', 'basic', 'editorial_definition', NULL, 'not_applicable', DATE '2026-08-05'),
   ('스윙', ARRAY['스윙이','swing','방망이 휘두르기']::text[], '타자가 공을 치려고 방망이를 휘두르는 동작이에요.
@@ -401,7 +407,7 @@ WAR·wRC+·OPS·FIP·BABIP 같은 지표가 여기서 나왔어요.
   ('등번호', ARRAY['백넘버','퍼스널 넘버','퍼스널넘버','등번호가']::text[], '유니폼 등에 붙는 선수 고유 번호예요.
 같은 팀 안에서 겹칠 수 없어요.
 팀에 큰 족적을 남기면 영구결번으로 남기기도 해요.', 'culture', 'editorial_definition', NULL, 'not_applicable', DATE '2026-08-05'),
-  ('포수 미트', ARRAY['미트','캐처미트','글러브','포수미트']::text[], '포수가 빠른 공을 받기 위해 쓰는 두툼한 전용 글러브예요.
+  ('포수 미트', ARRAY['미트','캐처미트','포수미트']::text[], '포수가 빠른 공을 받기 위해 쓰는 두툼한 전용 글러브예요.
 손가락이 나뉘어 있지 않아 일반 글러브와 달라요.
 1루수도 전용 미트를 써요.', 'rule', 'editorial_definition', NULL, 'not_applicable', DATE '2026-08-05'),
   ('볼보이', ARRAY['볼걸','볼 보이','볼보이가']::text[], '파울 지역에 앉아 굴러 온 공을 처리하고 심판에게 공을 전달하는 진행 요원이에요.
@@ -414,7 +420,7 @@ WAR·wRC+·OPS·FIP·BABIP 같은 지표가 여기서 나왔어요.
 최근에는 정기적으로 열리지 않아요.', 'league', 'editorial_definition', NULL, 'not_applicable', DATE '2026-08-05'),
   ('섀도플레이', ARRAY['섀도 플레이','쉐도우플레이','섀도우 플레이']::text[], '타구가 오지 않아도 야수가 상황에 맞춰 미리 자리를 잡고 움직여 주는 플레이예요.
 중계 플레이나 베이스 커버가 대표적이에요.', 'defense', 'editorial_definition', NULL, 'not_applicable', DATE '2026-08-05'),
-  ('캐처플라이', ARRAY['캐처 플라이','포수 뜬공','파울플라이']::text[], '타자가 친 공이 포수 근처로 높이 떠서 잡히는 뜬공이에요.
+  ('캐처플라이', ARRAY['캐처 플라이','포수 뜬공']::text[], '타자가 친 공이 포수 근처로 높이 떠서 잡히는 뜬공이에요.
 파울 지역에서 잡혀도 아웃이에요.
 포수가 마스크를 벗고 쫓아가는 장면이 자주 나와요.', 'defense', 'editorial_definition', NULL, 'not_applicable', DATE '2026-08-05'),
   ('스탯', ARRAY['스탯이','stat','기록 지표','스탯쌓기']::text[], '선수의 기록·성적을 뜻하는 말이에요.
@@ -431,17 +437,36 @@ WAR·wRC+·OPS·FIP·BABIP 같은 지표가 여기서 나왔어요.
 첫 공은 초구라고 부르죠.', 'basic', 'editorial_definition', NULL, 'not_applicable', DATE '2026-08-05'),
   ('마스크를 쓴다', ARRAY['마스크','마스크를 쓰다','마스크 쓰다']::text[], '그날 경기에 포수로 출장한다는 뜻이에요.
 포수만 보호 마스크를 쓰기 때문에 생긴 표현이에요.
-''오늘 마스크는 ‹선수›''처럼 써요.', 'culture', 'editorial_definition', NULL, 'not_applicable', DATE '2026-08-05')
+''오늘 마스크는 ‹선수›''처럼 써요.', 'culture', 'editorial_definition', NULL, 'not_applicable', DATE '2026-08-05'),
+  ('4-6-3 병살', ARRAY['463 병살','4-6-3','463','463병살']::text[], '공이 지나간 수비 위치를 번호로 적은 거예요.
+4는 2루수, 6은 유격수, 3은 1루수라서 ''2루수→유격수→1루수'' 병살이라는 뜻이에요.', 'defense', 'official_record', 'https://www.koreabaseball.com/Record/Player/HitterBasic/Basic1.aspx', '2026', DATE '2026-08-05'),
+  ('5-4-3 병살', ARRAY['543 병살','5-4-3','543','543플레이']::text[], '공이 지나간 수비 위치를 번호로 적은 거예요.
+5는 3루수, 4는 2루수, 3은 1루수라서 ''3루수→2루수→1루수'' 병살이라는 뜻이에요.', 'defense', 'official_record', 'https://www.koreabaseball.com/Record/Player/HitterBasic/Basic1.aspx', '2026', DATE '2026-08-05'),
+  ('20-20 클럽', ARRAY['20-20','2020클럽','20홈런 20도루']::text[], '한 시즌에 홈런 20개와 도루 20개를 함께 기록한 걸 말해요.
+장타력과 주력을 같이 갖췄다는 뜻이에요.
+30-30, 40-40으로 갈수록 희귀해져요.', 'record', 'editorial_definition', NULL, 'not_applicable', DATE '2026-08-05'),
+  ('40-40 클럽', ARRAY['40-40','4040클럽','40홈런 40도루']::text[], '한 시즌에 홈런 40개와 도루 40개를 함께 기록한 걸 말해요.
+KBO에서는 2000년 박재홍 선수 단 한 명뿐인 대기록이에요.', 'record', 'editorial_definition', NULL, 'not_applicable', DATE '2026-08-05'),
+  ('파울플라이', ARRAY['파울 플라이','파울뜬공','파울 뜬공']::text[], '파울 지역으로 높이 뜬 타구예요.
+야수가 땅에 닿기 전에 잡으면 파울이어도 아웃이에요.
+포수 근처로 뜨면 캐처플라이라고 불러요.', 'rule', 'official_rule', 'https://www.koreabaseball.com/Reference/Etc/GameRule.aspx', '2026', DATE '2026-08-05'),
+  ('무사 1루', ARRAY['무사1루','노아웃 1루']::text[], '아웃이 하나도 없고 1루에만 주자가 있는 상황이에요.
+앞이 아웃 수(무사·1사·2사), 뒤가 주자 위치예요.
+번트나 히트앤런으로 주자를 보내기 좋은 장면이에요.', 'basic', 'editorial_definition', NULL, 'not_applicable', DATE '2026-08-05'),
+  ('2사 만루', ARRAY['2사만루','투아웃 만루']::text[], '아웃이 2개인데 1·2·3루에 주자가 모두 있는 상황이에요.
+안타 하나면 여러 점이 나지만, 아웃 하나면 그대로 이닝이 끝나요.
+주자는 전원 자동 스타트예요.', 'basic', 'editorial_definition', NULL, 'not_applicable', DATE '2026-08-05')
 ON CONFLICT (term) DO UPDATE SET
+  -- ⚠️ answer 는 여기 없다. 사람이 검수한 문안을 이 경로로 덮지 않는다.
   aliases = excluded.aliases,
-  answer = excluded.answer,
   category = excluded.category,
   source_kind = excluded.source_kind,
   source_url = excluded.source_url,
-  rule_version = excluded.rule_version,
-  reviewed_at = excluded.reviewed_at;
+  rule_version = excluded.rule_version
+  -- 이 확충이 만든 행만 자기 자신을 재적용한다(멱등). 기존 행은 손대지 않는다.
+  WHERE baseball_terms.reviewed_at = DATE '2026-08-05';
 
--- ② 기존 용어 alias 보강 (합집합, 중복 없음)
+-- ② 기존 용어 alias 보강 (합집합이라 기존 alias 는 하나도 잃지 않는다)
 UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['볼펜','불팬','볼펜투수','불펜투수','구원투수']::text[]))
   WHERE term = '불펜';
 UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['퍼팩트게임','퍼팩트 게임','퍼펙트 게임','완전경기']::text[]))
@@ -558,15 +583,15 @@ UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases 
   WHERE term = '내야안타';
 UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['er','자책','자책점이']::text[]))
   WHERE term = '자책점';
-UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['쓰리피스','3피스','스리피트']::text[]))
+UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['스리피트']::text[]))
   WHERE term = '쓰리피트';
-UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['463 병살','463병살','643병살','543플레이','543','423','432','432아웃','1-3-4병살','134병살']::text[]))
+UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['643병살']::text[]))
   WHERE term = '6-4-3 병살';
-UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['인필드','인플라잉','인필드 플레이']::text[]))
+UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['인플라잉','인필드 플레이']::text[]))
   WHERE term = '인필드플라이';
 UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['프린차이즈','프렌차이즈','프랜차이즈가']::text[]))
   WHERE term = '프랜차이즈 스타';
-UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['할','푼','리','몇할','타할','n할']::text[]))
+UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['할','푼','리','몇할','타할','n할','3할','4할','1할','2할','5할']::text[]))
   WHERE term = '할푼리';
 UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['히븨','희비가','희플']::text[]))
   WHERE term = '희생플라이';
@@ -598,7 +623,7 @@ UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases 
   WHERE term = '불펜';
 UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['k','3k','탈삼진이','삼진이']::text[]))
   WHERE term = '삼진';
-UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['3할','4할','1할','2할','타율이 몇할']::text[]))
+UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY[]::text[]))
   WHERE term = '타율';
 UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['가중출루','가중 출루','wra']::text[]))
   WHERE term = 'wOBA';
@@ -625,7 +650,7 @@ UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases 
 UPDATE public.baseball_terms SET aliases = ARRAY(SELECT DISTINCT unnest(aliases || ARRAY['승률이','winning percentage','승률 계산']::text[]))
   WHERE term = '승률';
 
--- 안전장치: alias 보강 대상 term 이 하나라도 없으면 통째로 롤백한다.
+-- 안전장치 A: alias 보강/제거 대상 term 이 하나라도 없으면 통째로 롤백한다.
 -- (오타난 term 을 조용히 무시하면 사전은 그대로인데 migration 은 성공으로 보인다)
 DO $$
 DECLARE missing text;
@@ -634,6 +659,19 @@ BEGIN
   WHERE NOT EXISTS (SELECT 1 FROM public.baseball_terms bt WHERE bt.term = t);
   IF missing IS NOT NULL THEN
     RAISE EXCEPTION 'alias 보강/제거 대상 term 이 사전에 없습니다: %', missing;
+  END IF;
+END $$;
+
+-- 안전장치 B: 신규 용어가 전부 실제로 들어왔는지 확인한다.
+-- ①의 UPDATE 가 reviewed_at 로 제한돼 있으므로, 같은 term 이 다른 날짜로 이미
+-- 존재하면 INSERT 도 UPDATE 도 아무 일을 하지 않고 조용히 지나간다. 그 상태를 잡는다.
+DO $$
+DECLARE missing text;
+BEGIN
+  SELECT string_agg(t, ', ') INTO missing FROM unnest(ARRAY['야구','적시타','타수','타석','초구','볼카운트','헛스윙','루킹삼진','삼구삼진','1루타','밀어치기','당겨치기','어퍼스윙','레벨스윙','타자일순','장외홈런','인사이드더파크홈런','백투백','투런','쓰리런','좌전안타','중전안타','우전안타','좌중간안타','우중간안타','기습번트','쓰리번트','강공','버스터','페어','빠던','제구','구위','변화구','투나씽','볼배합','BABIP','wOBA','ISO','K/9','BB/9','K/BB','FIP','ERA+','OPS+','QS+','할푼리','실점','피안타','피홈런','게임차','10-10 클럽','30-30 클럽','보살','포지션 번호','6-4-3 병살','투수','1루수','2루수','3루수','좌익수','중견수','우익수','내야수','외야수','야수','홈스틸','주루','주루사','잔루','만루','무사','1사','잔루만루','유령주자','슬라이딩','고의낙구','포수보크','쓰리피트','4사구','스트레이트 볼넷','아웃카운트','1선발','선발 로테이션','필승조','추격조','터프세이브','투구수','피치컴','가을야구','영구결번','프랜차이즈 스타','옵트아웃','승요','허슬두','엘롯라시코','잠실시리즈','코시','불문율','호수비','본헤드 플레이','특타','시즌아웃','2차 드래프트','연고지','월드시리즈','WBC','상반기','루징시리즈','수훈선수','예고선발','DTD','타격감','거포','교타자','좌완','인플레이','송구','수비','출루','삼자범퇴','1/3이닝','야구공','라인업','베이스','무사 만루','스윙','세이버매트릭스','승패세홀','등번호','포수 미트','볼보이','메이저리그','아시아시리즈','섀도플레이','캐처플라이','스탯','도미넌트','발야구','삼구','마스크를 쓴다','4-6-3 병살','5-4-3 병살','20-20 클럽','40-40 클럽','파울플라이','무사 1루','2사 만루']::text[]) AS t
+  WHERE NOT EXISTS (SELECT 1 FROM public.baseball_terms bt WHERE bt.term = t AND bt.reviewed_at = DATE '2026-08-05');
+  IF missing IS NOT NULL THEN
+    RAISE EXCEPTION '신규 용어가 적재되지 않았습니다(기존 행과 term 충돌 가능): %', missing;
   END IF;
 END $$;
 
