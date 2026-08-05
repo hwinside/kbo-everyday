@@ -6,6 +6,9 @@ import { resolveGameLiveDate } from "@/lib/game-live-date";
 import { isKboGameCancelled } from "@/lib/crawler/kbo-status";
 import { fetchKboLiveGames } from "@/lib/notifications/kbo-live-games";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import {
+  NO_STORE_HEADERS,
+} from "@/lib/http/live-cache";
 
 const GAME_LIVE_DEADLINE_MS = 5_000;
 const SLATE_WITNESS_BUDGET_MS = 250;
@@ -178,11 +181,23 @@ async function fetchSlateWitnesses(
   }
 }
 
+/**
+ * trace 헤더 + 캐시 헤더를 함께 만드는 단일 지점.
+ *
+ * ⚠️ 이 route 는 **엣지 캐시 대상이 아니다**(삼순 NO-GO 2026-08-06 ①).
+ * relay 와 달리 여기엔 동등한 route 내부 TTL 이 없어서, s-maxage 를 새로 붙이면
+ * 점수·이닝·볼카운트·현재 타석이 그 TTL 만큼 **실제로 더 낡아진다** =
+ * "활성 유저 신선도 저하 0" 하드 제약 위반. 처음 이 PR 이 5초를 붙였고 그건 틀렸다.
+ *
+ * 엣지 캐시를 붙이려면 먼저 route 내부 TTL 을 도입해 동치를 만든 뒤 별도 PR 로 한다.
+ * 그래서 정상 200 이든 fail-close 503 이든 전부 no-store 다.
+ */
 function traceHeaders(trace: GameLiveTrace): Record<string, string> {
   return {
     "X-Game-Live-Source": trace.source,
     "X-Game-Live-Stage": trace.stage,
     "X-Game-Live-Deadline": String(trace.deadlineAtMs),
+    ...NO_STORE_HEADERS,
   };
 }
 
@@ -312,6 +327,8 @@ export async function gameLiveRoute(
       };
     });
 
+    // 정상 경로만 엣지 캐시 대상이다. 위 503 fail-close 분기들은 cacheable 기본값(false)
+    // 으로 no-store 를 받아 다음 폴링이 즉시 재시도한다.
     return NextResponse.json(
       { games, date, trace },
       { headers: traceHeaders(trace) },
