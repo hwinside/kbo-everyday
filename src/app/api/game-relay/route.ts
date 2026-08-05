@@ -6,7 +6,7 @@ import { toDeltaResponse } from "@/lib/game/relay-delta";
 import {
   NO_STORE_HEADERS,
   RELAY_EDGE_TTL_SECONDS,
-  edgeCacheHeaders,
+  edgeCacheHeadersForRemaining,
   liveCacheHeaders,
 } from "@/lib/http/live-cache";
 
@@ -784,7 +784,9 @@ const NAVER_API_BASE =
  * the next poll retries fresh.
  */
 const responseCache = new Map<string, { data: GameRelayResponse; expiresAt: number }>();
-const CACHE_TTL_MS = 2_000;
+// TTL 단일 owner(삼순 NO-GO 2026-08-06): 엣지 TTL 상수에서 파생시켜
+// route 내부 TTL 과 엣지 TTL 이 따로 놀 수 없게 만든다. 한쪽만 바꾸는 drift 불가.
+const CACHE_TTL_MS = RELAY_EDGE_TTL_SECONDS * 1_000;
 
 /**
  * Per-fetch timeout for inning 2..N relay fetches and the record fetch.
@@ -898,14 +900,22 @@ export function combineRelayInningsNewestFirst(inningRelays: NaverTextRelay[][])
   return [...inningRelays].reverse().flat();
 }
 
-function getCachedResponse(key: string): GameRelayResponse | null {
+/**
+ * cache HIT 시 데이터와 **남은 수명**을 함께 돌려준다.
+ *
+ * 남은 수명이 필요한 이유(삼순 NO-GO 2026-08-06): 이미 age 가 쌓인 snapshot 을
+ * 다시 full 엣지 TTL 로 올리면 route TTL + edge TTL 이 직렬 누적돼 유저가 보는
+ * age 상한이 2배가 된다. 남은 수명만큼만 엣지에 주면 상한이 route TTL 하나로 묶인다.
+ */
+function getCachedResponse(key: string): { data: GameRelayResponse; remainingMs: number } | null {
   const entry = responseCache.get(key);
   if (!entry) return null;
-  if (Date.now() > entry.expiresAt) {
+  const remainingMs = entry.expiresAt - Date.now();
+  if (remainingMs <= 0) {
     responseCache.delete(key);
     return null;
   }
-  return entry.data;
+  return { data: entry.data, remainingMs };
 }
 
 function setCachedResponse(key: string, data: GameRelayResponse): void {
@@ -948,8 +958,12 @@ export async function GET(req: NextRequest) {
     //
     // 엣지 캐시 가능: setCachedResponse 는 !anyInningDegraded 일 때만 저장하므로
     // cache HIT 응답은 정의상 완전 정상 응답이다.
-    return NextResponse.json(toDeltaResponse(cached, sinceInning), {
-      headers: edgeCacheHeaders(RELAY_EDGE_TTL_SECONDS),
+    //
+    // 단 TTL 은 full 이 아니라 **남은 수명**만 준다(삼순 NO-GO 2026-08-06):
+    // route 캐시에서 이미 소비한 age 를 엣지가 또 2초 얹으면 총 age 가 직렬로
+    // 누적된다. 남은 수명이 1초 미만이면 no-store 로 fail-close.
+    return NextResponse.json(toDeltaResponse(cached.data, sinceInning), {
+      headers: edgeCacheHeadersForRemaining(cached.remainingMs, RELAY_EDGE_TTL_SECONDS),
     });
   }
 

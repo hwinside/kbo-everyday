@@ -73,6 +73,15 @@ interface ProfileBundle {
   basic: BasicSeasonStats | null;
   situation: SituationTables;
   handedness: ReturnType<typeof parseHandedness>;
+  /**
+   * upstream 일부(basic/situation)를 못 받아 열화된 상태.
+   *
+   * 왜 필요한가(삼순 NO-GO 2026-08-06): 기존 캐시 판정은 `!empty` 였는데
+   * `empty` 는 "모든 줄이 null" 이라 **한 줄이라도 살아 있으면 false** 다.
+   * 즉 profile/box 일부 실패로 한 줄만 남은 부분열화 응답이 "정상"으로
+   * 분류돼 엣지에 5초 고정됐다. 열화 여부를 명시 bit 로 들고 올라간다.
+   */
+  degraded: boolean;
 }
 
 const profileCache = new Map<string, { bundle: ProfileBundle; expiresAt: number }>();
@@ -183,7 +192,11 @@ async function loadProfile(
 
   const handedness = basicHtml ? parseHandedness(basicHtml) : { bat: null, throws: null };
 
-  const bundle: ProfileBundle = { basic, situation, handedness };
+  // basic/situation 중 하나라도 못 받았으면 열화다(둘 다 null 이면 완전 실패).
+  const bundle: ProfileBundle = {
+    basic, situation, handedness,
+    degraded: basicHtml === null || situationHtml === null,
+  };
   // Upstream 전체 장애/timeout의 빈 결과를 1시간 캐시하면 복구 뒤에도 UI가 계속 비게 된다.
   if (basicHtml !== null || situationHtml !== null) {
     profileCache.set(key, { bundle, expiresAt: Date.now() + PROFILE_TTL_MS });
@@ -240,6 +253,8 @@ interface BoxSnapshot {
    * individual row even after the starter gave up multiple hits.
    */
   defendingTeamHits: number | null;
+  /** KBO 박스스코어를 못 받았거나 파싱 실패 = 열화(삼순 NO-GO 2026-08-06). */
+  degraded: boolean;
 }
 
 async function fetchBoxSnapshot(
@@ -260,16 +275,16 @@ async function fetchBoxSnapshot(
     },
     deadlineAtMs,
   );
-  if (!res?.ok) return { batterIsPinch: false, defendingTeamHits: null };
+  if (!res?.ok) return { batterIsPinch: false, defendingTeamHits: null, degraded: true };
   // Body-stall(헤더 200 후 본문 멈춤)도 catch+절대 deadline으로 null degrade — res.text()
   // reject가 Promise.all→route로 전파되어 500 나는 것 차단(삼순 재리뷰 blocker).
   const text = await readTextBeforeDeadline(res, deadlineAtMs);
-  if (text === null) return { batterIsPinch: false, defendingTeamHits: null };
+  if (text === null) return { batterIsPinch: false, defendingTeamHits: null, degraded: true };
   let parsed: { tables?: Array<{ rows?: Array<{ row: Array<{ Text: string }> }> }> };
   try {
     parsed = JSON.parse(text);
   } catch {
-    return { batterIsPinch: false, defendingTeamHits: null };
+    return { batterIsPinch: false, defendingTeamHits: null, degraded: true };
   }
   const tables = parsed.tables ?? [];
 
@@ -331,7 +346,8 @@ async function fetchBoxSnapshot(
     }
   }
 
-  return { batterIsPinch, defendingTeamHits };
+  // 여기까지 왔으면 박스스코어를 실제로 받아 파싱했다 = 정상.
+  return { batterIsPinch, defendingTeamHits, degraded: false };
 }
 
 // ===== Route handler =====
@@ -514,6 +530,15 @@ export async function GET(req: NextRequest) {
     Object.values(lines).every(v => v === null) &&
     Object.values(highlights).every(v => v === null);
 
+  // 부분열화 명시 bit(삼순 NO-GO 2026-08-06).
+  // `empty` 는 "모든 줄이 null" 이라 한 줄이라도 살아 있으면 false 다 → profile/box
+  // 일부 실패로 한 줄만 남은 응답이 "정상"으로 분류돼 엣지에 고정됐다.
+  // upstream 별 열화 bit 를 OR 로 올려 캐시 판정을 fail-close 시킨다.
+  const degraded =
+    boxSnapshot.degraded ||
+    (batterProfile?.degraded ?? false) ||
+    (pitcherProfile?.degraded ?? false);
+
   const response: ContextualStatsResponse = {
     gameId,
     context: ctx,
@@ -522,10 +547,11 @@ export async function GET(req: NextRequest) {
     fetchedAt: new Date().toISOString(),
     empty,
   };
-  // 완전히 채워진 응답만 엣지에 올린다. empty 응답(상대 매핑 실패·라이브 미조회)은
-  // 열화 상태이므로 캐시하면 TTL 동안 빈 박스가 고정된다 — 위 emptyResponse 반환들과
-  // 동일하게 no-store 로 둠(fail-close).
+  // 완전히 채워진 응답만 엣지에 올린다.
+  // - `empty`: 상대 매핑 실패·라이브 미조회 → 빈 박스가 TTL 동안 고정됨
+  // - `degraded`: upstream 일부 실패로 한 줄만 남은 부분열화 → 자가복구를 막음
+  // 둘 중 하나라도 참이면 no-store(fail-close).
   return NextResponse.json(response, {
-    headers: liveCacheHeaders(!empty, LIVE_LIST_EDGE_TTL_SECONDS),
+    headers: liveCacheHeaders(!empty && !degraded, LIVE_LIST_EDGE_TTL_SECONDS),
   });
 }

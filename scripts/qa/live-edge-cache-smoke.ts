@@ -452,6 +452,142 @@ async function main() {
     },
   );
 
+  console.log("\n[5] 삼순 NO-GO 2026-08-06 반영분");
+
+  await check(
+    "route 내부 TTL 과 엣지 TTL 이 단일 owner — drift 불가",
+    async () => {
+      const { readFileSync } = await import("node:fs");
+      const src = readFileSync("src/app/api/game-relay/route.ts", "utf8");
+      // 하드코딩된 리터럴(2_000 등)이면 한쪽만 바뀌는 drift 가 가능하다.
+      // 반드시 엣지 TTL 상수에서 파생돼야 한다.
+      const m = src.match(/const CACHE_TTL_MS = ([^;]+);/);
+      assert.ok(m, "CACHE_TTL_MS 선언을 찾지 못함");
+      assert.ok(
+        /RELAY_EDGE_TTL_SECONDS/.test(m![1]),
+        `CACHE_TTL_MS 가 엣지 TTL 상수에서 파생되지 않음: ${m![1].trim()} — 한쪽만 바뀌면 신선도 계약이 조용히 깨진다`,
+      );
+      // 값 자체도 실제로 일치하는지 런타임으로 확인한다(문자열 검사만으로는 부족).
+      const relaySrcTtl = RELAY_EDGE_TTL_SECONDS * 1000;
+      assert.equal(relaySrcTtl, 2000, `엣지 TTL 파생값 불일치: ${relaySrcTtl}`);
+    },
+  );
+
+  await check(
+    "cache HIT 는 남은 수명만큼만 엣지 TTL — route+edge 직렬 누적(age 2배) 차단",
+    async () => {
+      const { edgeCacheHeadersForRemaining } = await import("../../src/lib/http/live-cache");
+      // 남은 수명이 full TTL 보다 짧으면 그만큼만 준다.
+      const cc1 = parseCacheControl(
+        new Response(null, { headers: edgeCacheHeadersForRemaining(1200, 2) }),
+      );
+      assert.equal(cc1.sMaxAge, 1, `남은 1.2초인데 s-maxage=${cc1.sMaxAge} (직렬 누적 발생)`);
+      // 남은 수명이 1초 미만이면 캐시하지 않는다(반올림으로 상한 초과 방지).
+      assertNotCacheable(
+        new Response(null, { headers: edgeCacheHeadersForRemaining(400, 2) }),
+        "남은 0.4초",
+      );
+      // 남은 수명이 TTL 보다 길어도 TTL 을 넘지 않는다.
+      const cc3 = parseCacheControl(
+        new Response(null, { headers: edgeCacheHeadersForRemaining(99_000, 2) }),
+      );
+      assert.equal(cc3.sMaxAge, 2, `TTL 상한 초과: ${cc3.sMaxAge}`);
+      assertNotCacheable(
+        new Response(null, { headers: edgeCacheHeadersForRemaining(0, 2) }),
+        "남은 0",
+      );
+    },
+  );
+
+  await check(
+    "actual cache HIT: 소비한 age 만큼 엣지 TTL 이 줄어든다(실 route GET, 실시간)",
+    async () => {
+      // ⚠️ age 가 0 인 즉시 HIT 은 full TTL 이 정상이다(총 age = 0 + 2s = 2s, 상한 내).
+      //    그래서 실제로 시간을 흘려보내 age 를 소비시킨 뒤 s-maxage 가 따라 줄어드는지를 본다.
+      //    이것이 "직렬 누적 차단" 의 진짜 계약이다.
+      const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+      installRelayUpstream({ currentInning: 6 });
+      try {
+        const first = await relayRoute.GET(makeReq("gameId=20260806AGE1"));
+        assert.equal(first.status, 200, "사전 상태 구성 실패");
+        assert.equal(
+          parseCacheControl(first).sMaxAge,
+          RELAY_EDGE_TTL_SECONDS,
+          "fresh 응답은 full TTL 이어야 함",
+        );
+
+        // ① 0.6초 소비 → 남은 ~1.4초 → s-maxage 는 1 로 줄어야 한다.
+        await sleep(650);
+        const midHit = await relayRoute.GET(makeReq("gameId=20260806AGE1"));
+        assert.equal(midHit.status, 200, `HIT 경로 200 아님: ${midHit.status}`);
+        const midCc = parseCacheControl(midHit);
+        assert.equal(
+          midCc.sMaxAge,
+          1,
+          `0.65초 소비 후에도 s-maxage=${midCc.sMaxAge} — age 가 직렬 누적된다(총 상한 2배)`,
+        );
+
+        // ② 1.3초 소비 → 남은 0.7초(<1s) → 캐시 금지로 fail-close.
+        await sleep(700);
+        const lateHit = await relayRoute.GET(makeReq("gameId=20260806AGE1"));
+        assert.equal(lateHit.status, 200, `HIT 경로 200 아님: ${lateHit.status}`);
+        assertNotCacheable(lateHit, "남은 수명 1초 미만 HIT");
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    },
+  );
+
+  await check(
+    "game-live actual GET: upstream 실패 503 은 캐시 금지(traceHeaders 기본값 검증)",
+    async () => {
+      const liveRoute = await import("../../src/app/api/game-live/route");
+      const { NextRequest: NR } = await import("next/server");
+      // upstream 전부 실패시켜 fail-close 503 분기를 실제로 태운다.
+      globalThis.fetch = (async () => {
+        throw new Error("qa_forced_upstream_failure");
+      }) as typeof fetch;
+      try {
+        const res = await liveRoute.GET(
+          new NR(new URL("http://localhost/api/game-live?date=20260806")),
+        );
+        assert.ok(
+          res.status >= 500,
+          `upstream 전부 실패인데 ${res.status} — fail-close 분기를 안 탐(게이트 무효)`,
+        );
+        assertNotCacheable(res, `game-live ${res.status}`);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    },
+  );
+
+  await check(
+    "contextual-stats 부분열화(profile/box 일부 실패)는 한 줄 남아도 캐시 금지",
+    async () => {
+      const { readFileSync } = await import("node:fs");
+      const src = readFileSync("src/app/api/contextual-stats/route.ts", "utf8");
+      // `empty` 만으로 판정하면 한 줄이라도 살아 있는 부분열화가 정상으로 분류된다.
+      const m = src.match(/liveCacheHeaders\(([^,]+),/);
+      assert.ok(m, "liveCacheHeaders 호출을 찾지 못함");
+      assert.ok(
+        /degraded/.test(m![1]),
+        `캐시 판정이 열화 bit 를 보지 않음: ${m![1].trim()} — 부분열화가 TTL 동안 박제된다`,
+      );
+      // 열화 bit 가 upstream 별로 실제 채워지는지(선언만 하고 안 쓰면 무효).
+      assert.ok(
+        /boxSnapshot\.degraded/.test(src) &&
+          /batterProfile\?\.degraded/.test(src) &&
+          /pitcherProfile\?\.degraded/.test(src),
+        "열화 bit 가 box/batter/pitcher 전부에서 수집되지 않음",
+      );
+      assert.ok(
+        /degraded: true/.test(src),
+        "fail-close 반환 경로가 degraded 를 표시하지 않음",
+      );
+    },
+  );
+
   await check("contextual-stats 가 캐시 헤더 SSOT 를 경유한다(직접 문자열 금지)", async () => {
     const { readFileSync } = await import("node:fs");
     for (const path of [

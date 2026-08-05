@@ -12,10 +12,19 @@
  * 여기서는 max staleness == TTL 로 정확히 묶는다.
  *
  * relay TTL 2초는 임의값이 아니라 `game-relay` 가 이미 프로세스 내부에서
- * 쓰고 있는 CACHE_TTL_MS(2,000ms) 와 **같은 값**이다. 즉 엣지 캐시를 켜도
- * 유저가 볼 수 있는 최대 지연 상한은 지금과 동일하고, 달라지는 것은 그
- * 2초 창을 여러 lambda 인스턴스가 각자 감당하느냐(현행) 엣지가 한 번만
- * 감당하느냐(변경 후)뿐이다.
+ * 쓰고 있는 CACHE_TTL_MS(2,000ms) 와 **같은 값**이다. 이 동치는 주석이 아니라
+ * 코드로 강제한다 — route 는 `RELAY_EDGE_TTL_SECONDS` 에서 CACHE_TTL_MS 를
+ * 파생시키므로(단일 owner) 한쪽만 바뀌는 drift 가 불가능하다.
+ *
+ * ── 직렬 누적(age) 차단 ─────────────────────────────────────────────────
+ * ⚠️ 삼순 NO-GO(2026-08-06): route 내부 캐시 2초와 엣지 2초는 **직렬**이다.
+ * route-cache 가 만료 직전(예: 남은 수명 0.1초)인 snapshot 으로 엣지 MISS 를
+ * 채우면, 그 snapshot 이 엣지에서 다시 2초 살아 있어 유저가 보는 age 가 최대
+ * ~4초까지 늘어난다. 즉 "TTL 동일 = 지연 상한 동일" 이 성립하지 않았다.
+ *
+ * → cache HIT 응답은 **남은 수명(remaining lifetime)만큼만** 엣지 TTL 을 준다.
+ *   `edgeCacheHeadersForRemaining()` 이 그 계산을 맡고, 남은 수명이 1초 미만이면
+ *   캐시하지 않는다(no-store). 이러면 총 age 상한이 route TTL 하나로 묶인다.
  *
  * ── 캐시 금지 축 ─────────────────────────────────────────────────────────
  * degraded(부분 실패로 stale snapshot 이 섞인) 응답과 에러 응답은 절대
@@ -58,6 +67,27 @@ export function edgeCacheHeaders(ttlSeconds: number): Record<string, string> {
  *
  * @param cacheable 완전 정상 응답이면 true. degraded/부분실패/에러면 false.
  */
+/**
+ * route 내부 캐시 HIT 응답용 헤더.
+ *
+ * 이미 age 가 쌓인 snapshot 을 다시 full TTL 로 엣지에 올리면 age 가 직렬로
+ * 누적된다(위 주석 참조). 남은 수명(ms)을 초 단위로 내림해 그만큼만 준다.
+ * 남은 수명이 1초 미만이면 캐시 가치가 없고 반올림 오차로 상한을 넘길 수 있어
+ * no-store 로 fail-close 한다.
+ *
+ * @param remainingMs 이 snapshot 이 route 캐시에서 살아 있을 남은 시간(ms)
+ * @param ttlSeconds  이 route 의 엣지 TTL 상한
+ */
+export function edgeCacheHeadersForRemaining(
+  remainingMs: number,
+  ttlSeconds: number,
+): Record<string, string> {
+  if (!Number.isFinite(remainingMs) || remainingMs <= 0) return { ...NO_STORE_HEADERS };
+  const remainingSeconds = Math.floor(remainingMs / 1000);
+  if (remainingSeconds < 1) return { ...NO_STORE_HEADERS };
+  return edgeCacheHeaders(Math.min(remainingSeconds, ttlSeconds));
+}
+
 export function liveCacheHeaders(
   cacheable: boolean,
   ttlSeconds: number,
