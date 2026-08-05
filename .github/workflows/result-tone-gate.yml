@@ -175,17 +175,37 @@ jobs:
       # 직전 판(삼순 NO-GO)은 소스 문자열만 스캔해서, 신규 Link mutation 이
       # `// <Link ...>` 주석 한 줄을 세는 가짜 RED 였다. 그래서 실브라우저 측정으로 바꿨다.
       - name: Build for RSC prefetch budget gate
+        # ⚠️ 시크릿이 없으면 `next build` 가 라우트 page-data 수집에서 죽는다(로컬 CI 재현 실측:
+        # `Failed to collect page data for /api/admin/downloads`). 빌드가 죽으면 이 게이트는
+        # 아예 돌지 못하므로, repo secrets 를 주입해 CI 에서 실제로 빌드되게 한다.
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
+          NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
         run: SKIP_PREBUILD=1 npx next build
 
       - name: Run _rsc prefetch budget gate (fail-closed)
         # --require-browser → chromium 미설치/launch 실패도 exit 1.
         env:
           RSC_GATE_PORT: "3971"
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
+          NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
         run: npm run qa:rsc-prefetch-budget:required
 
       - name: Prove rsc gate catches prefetch regression (mutation RED)
         # 소스에서 prefetch={false} 를 되돌리고 **재빌드**한 뒤 실브라우저로 측정한다.
         # 주석이 아니라 실제 렌더 트리의 Link 가 prefetch 를 다시 켜야만 RED 가 된다.
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
+          NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
         run: |
           set -e
           mutate() {
@@ -201,9 +221,20 @@ jobs:
           open(f, "w").write(out)
           PYEOF
           }
+          # set -e 하에서 mutate/build/gate 어느 단계가 죽어도 변조본이 남으면 안 된다.
+          # trap 으로 무조건 원본을 되돌린다(이게 없어 실제로 트리가 오염된 적 있다).
+          CURRENT_MUT_FILE=""
+          restore_mut() {
+            if [ -n "$CURRENT_MUT_FILE" ] && [ -f /tmp/rsc-mut-backup ]; then
+              cp /tmp/rsc-mut-backup "$CURRENT_MUT_FILE"
+              echo "trap: $CURRENT_MUT_FILE 원본 복원"
+            fi
+          }
+          trap restore_mut EXIT
           for spec in "src/components/ui/TabBar.tsx:off" "src/components/home/CommunityLatestPosts.tsx:off" "src/components/home/TodayGamesSection.tsx:true"; do
             f="${spec%:*}"; mode="${spec##*:}"
             cp "$f" /tmp/rsc-mut-backup
+            CURRENT_MUT_FILE="$f"
             mutate "$f" "$mode"
             SKIP_PREBUILD=1 npx next build
             if RSC_GATE_PORT=3971 npm run qa:rsc-prefetch-budget:required; then
@@ -212,7 +243,9 @@ jobs:
               exit 1
             fi
             cp /tmp/rsc-mut-backup "$f"
+            CURRENT_MUT_FILE=""
             echo "mutation RED 확인: $f ($mode) 가 rsc 게이트에 걸린다"
           done
+          trap - EXIT
           # 변조본이 남아 빌드로 새어들면 안 된다.
           git diff --exit-code
