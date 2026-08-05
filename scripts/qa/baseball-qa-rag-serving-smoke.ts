@@ -1764,6 +1764,11 @@ async function verifyServingContractOnRealDb(): Promise<void> {
     path.join(process.cwd(), "supabase/migrations/20260802010000_baseball_genius_rag_scoped_claim_wikipedia.sql"),
     "utf8",
   ));
+  // 선수 chunk 정렬 RPC — 이걸 적용해야 아래 후보 fetch 가 **배포되는 함수**를 탄다.
+  await db.exec(readFileSync(
+    path.join(process.cwd(), "supabase/migrations/20260805110000_baseball_genius_rag_player_chunk_search.sql"),
+    "utf8",
+  ));
 
   // resolver가 만드는 actual payload는 unresolved 상태에서도 candidate_urls/identity_fingerprint가
   // 모두 채워져야 하고, 같은 source_key의 신규 INSERT와 기존 UPDATE 둘 다 운영 스키마를 통과해야 한다.
@@ -2064,17 +2069,16 @@ async function verifyServingContractOnRealDb(): Promise<void> {
         assert.ok(Array.isArray(queryVector) && queryVector.length > 0,
           "후보 fetch 가 질문 벡터를 받아야 한다(무순서 절단 금지)");
         serverFetchedKinds.push(sourceKind);
-        void serverCandidateCounts;
+        // ⚠️ 인라인 SQL 로 정렬을 다시 적으면 **migration 의 RPC 가 아니라 게이트 자기 SQL** 을
+        //   검증하게 된다. 실제로 2026-08-05 에 그 탓에 "RPC 에서 ORDER BY 제거" mutation 이
+        //   GREEN 으로 통과했다. 배포되는 바로 그 함수를 호출한다.
         const fetched = await db.query<{
           content: string; page_title: string; canonical_url: string; revision: string;
           section_path: string; as_of: string; source_grade: string; embedding: string;
         }>(
           `SELECT content,page_title,canonical_url,revision,section_path,as_of::text,source_grade,embedding::text
-             FROM public.genius_rag_serving_chunks
-            WHERE entity_type='player' AND entity_id='69102' AND source_kind=$1
-            ORDER BY embedding OPERATOR(extensions.<=>) $3::extensions.vector
-            LIMIT $2`,
-          [sourceKind, limit, JSON.stringify(queryVector)],
+             FROM public.search_baseball_genius_player_chunks($1,$2,$3,$4,$5)`,
+          ["player", "69102", sourceKind, JSON.stringify(queryVector), limit],
         );
         serverCandidateCounts[sourceKind] = fetched.rows.length;
         return fetched.rows.map((row) => ({
