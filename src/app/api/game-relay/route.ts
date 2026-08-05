@@ -918,6 +918,20 @@ function getCachedResponse(key: string): { data: GameRelayResponse; remainingMs:
   return { data: entry.data, remainingMs };
 }
 
+/**
+ * 테스트 전용: 캐시 엔트리의 남은 수명(ms). 없으면 null.
+ *
+ * 왜 필요한가(삼순 NO-GO 2026-08-06 ③): 게이트가 첫 GET **전**의 벽시계로 남은
+ * 수명을 추정하면, 실제 만료 시계는 첫 GET **끝**의 setCachedResponse 에서
+ * 시작하므로 느린 첫 GET 에서 기대값이 실제와 어긋난다(timing false-green).
+ * 추정 대신 실제 엔트리를 읽어 결정론적으로 판정한다.
+ */
+export function __getCacheRemainingMsForTest(key: string): number | null {
+  const entry = responseCache.get(key);
+  if (!entry) return null;
+  return entry.expiresAt - Date.now();
+}
+
 function setCachedResponse(key: string, data: GameRelayResponse): void {
   if (responseCache.size > 100) {
     const now = Date.now();

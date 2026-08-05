@@ -589,27 +589,140 @@ async function main() {
   );
 
   await check(
-    "contextual-stats 부분열화(profile/box 일부 실패)는 한 줄 남아도 캐시 금지",
+    "부분열화 profile 은 1시간 캐시되지 않는다 — 다음 폴링 자가복구(actual)",
+    async () => {
+      // 삼순 NO-GO ②: loadProfile 이 부분열화 bundle 을 PROFILE_TTL(1h) 로 캐시하면
+      // upstream 이 복구돼도 다음 폴링이 재조회하지 않아 유저 화면이 계속 빈다.
+      // 소스 정규식이 아니라 **실제 실패 → 복구** 를 태워서 확인한다.
+      // ⚠️ 픽스처 함정 2개를 실측으로 찾아 막았다(자기적발):
+      //  ① 팀이 안 맞으면 매핑 결과가 엉켜 loadProfile 을 아예 안 타고 게이트가
+      //     "fetch 0회" 로 조용히 통과한다 → away=LG(공격/타자) home=키움(수비/투수).
+      //  ② 로스터에 있어도 `resolvePlayer` 가 null 을 주는 이름이 있다(동명이인 등).
+      //     그 경우 loadProfile 이 호출되지 않는다 → **실제 resolve 되는 이름만** 쓴다.
+      const roster = (await import("../../src/lib/constants/players-roster.json"))
+        .default as Array<{ name: string; position: string; team: string; kboId: string }>;
+      const { resolvePlayer } = await import("../../src/lib/utils/resolve-player");
+      const isUsable = (p: { name: string; kboId: string }) =>
+        /^[0-9]+$/.test(p.kboId) && resolvePlayer({ name: p.name }) !== null;
+      const batterName = roster.find(
+        (p) => p.team === "LG" && p.position !== "투수" && isUsable(p),
+      )?.name;
+      const pitcherName = roster.find(
+        (p) => p.team === "키움" && p.position === "투수" && isUsable(p),
+      )?.name;
+      assert.ok(pitcherName && batterName, "로스터에서 resolve 가능한 테스트 선수를 찾지 못함");
+
+      const gameId = "20260806HEAL1";
+      let playerFetchOk = false;
+      let playerFetchCount = 0;
+
+      const makeGameList = () =>
+        new Response(
+          JSON.stringify({
+            game: [{
+              G_ID: gameId, GAME_STATE_SC: "2", AWAY_NM: "LG", HOME_NM: "키움",
+              GAME_TB_SC: "T", T_P_NM: batterName, B_P_NM: pitcherName,
+              GAME_INN_NO: 5, OUT_CN: 1, BALL_CN: 2, STRIKE_CN: 1, SR_ID: "1",
+            }],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+
+      globalThis.fetch = (async (input: RequestInfo | URL) => {
+        const url = String(input instanceof Request ? input.url : input);
+        if (url.includes("GetKboGameList")) return makeGameList();
+        if (url.includes("HitterDetail") || url.includes("PitcherDetail")) {
+          playerFetchCount++;
+          if (!playerFetchOk) return new Response("down", { status: 503 });
+          return new Response("<html><body>recovered</body></html>", { status: 200 });
+        }
+        return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
+      }) as typeof fetch;
+
+      try {
+        // 1) 열화 상태로 1회 호출 → 부분열화 bundle 생성
+        await contextualRoute.GET(ctxReq(`gameId=${gameId}`));
+        const afterFirst = playerFetchCount;
+        assert.ok(afterFirst > 0, "선수 프로필 fetch 를 태우지 못함(픽스처 오류)");
+
+        // 2) upstream 복구 후 재호출 → 캐시가 아니라 **재조회** 해야 한다.
+        playerFetchOk = true;
+        await new Promise((r) => setTimeout(r, 3100)); // 짧은 재시도 TTL 경과
+        await contextualRoute.GET(ctxReq(`gameId=${gameId}`));
+
+        assert.ok(
+          playerFetchCount > afterFirst,
+          `열화 bundle 이 캐시에 박혀 재조회가 없다(fetch ${afterFirst} → ${playerFetchCount}) — upstream 복구 후에도 유저 화면이 계속 빈다`,
+        );
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    },
+  );
+
+  await check(
+    "game-live·contextual-stats 는 엣지 캐시 대상이 아니다 — 정상 200 도 no-store",
+    async () => {
+      // 삼순 NO-GO ①: 이 두 route 는 relay 와 달리 동등한 내부 TTL 이 없다.
+      // s-maxage 를 새로 붙이면 점수·이닝·볼카운트가 그만큼 실제로 더 낡아진다
+      // = "활성 유저 신선도 저하 0" 하드 제약 위반. 정상 200 을 실제로 태워 확인한다.
+      const liveRoute = await import("../../src/app/api/game-live/route");
+      const { NextRequest: NR } = await import("next/server");
+      const gameId = "20260806FRESH1";
+      globalThis.fetch = (async (input: RequestInfo | URL) => {
+        const url = String(input instanceof Request ? input.url : input);
+        if (url.includes("GetKboGameList")) {
+          return new Response(
+            JSON.stringify({
+              game: [{
+                G_ID: gameId, GAME_STATE_SC: "2", AWAY_NM: "LG", HOME_NM: "키움",
+                GAME_TB_SC: "T", GAME_INN_NO: 5, OUT_CN: 1, BALL_CN: 2, STRIKE_CN: 1,
+                SR_ID: "1", T_PIT_P_NM: "투수A", B_PIT_P_NM: "투수B",
+              }],
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
+      }) as typeof fetch;
+      try {
+        const res = await liveRoute.GET(
+          new NR(new URL("http://localhost/api/game-live?date=20260806")),
+        );
+        // 200 이든 503 이든 캐시는 금지다(신선도 계약).
+        assertNotCacheable(res, `game-live ${res.status}`);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    },
+  );
+
+  await check(
+    "엣지 캐시는 relay 에만 — 다른 라이브 route 에 s-maxage 재도입 금지(SSOT 계약)",
     async () => {
       const { readFileSync } = await import("node:fs");
-      const src = readFileSync("src/app/api/contextual-stats/route.ts", "utf8");
-      // `empty` 만으로 판정하면 한 줄이라도 살아 있는 부분열화가 정상으로 분류된다.
-      const m = src.match(/liveCacheHeaders\(([^,]+),/);
-      assert.ok(m, "liveCacheHeaders 호출을 찾지 못함");
+      // 동등한 내부 TTL 이 없는 route 가 엣지 캐시 헬퍼를 import 하면 계약 위반이다.
+      for (const path of [
+        "src/app/api/game-live/route.ts",
+        "src/app/api/contextual-stats/route.ts",
+      ]) {
+        // 주석은 제외한다 — 계약을 설명하는 주석에 s-maxage 라는 낱말이 나오는 것은
+        // 위반이 아니다. 실제 코드에서 쓰는지만 본다.
+        const src = readFileSync(path, "utf8")
+          .replace(/\/\*[\s\S]*?\*\//g, "")
+          .split("\n")
+          .filter((l) => !/^\s*\/\//.test(l))
+          .join("\n");
+        assert.ok(
+          !/edgeCacheHeaders|liveCacheHeaders|s-maxage/.test(src),
+          `${path}: 엣지 캐시 헬퍼/헤더를 씀 — 내부 TTL 이 없어 실제 신선도가 저하된다`,
+        );
+      }
+      // relay 는 내부 TTL 이 있으므로 허용 대상이다(반대편 고정).
+      const relaySrc = readFileSync("src/app/api/game-relay/route.ts", "utf8");
       assert.ok(
-        /degraded/.test(m![1]),
-        `캐시 판정이 열화 bit 를 보지 않음: ${m![1].trim()} — 부분열화가 TTL 동안 박제된다`,
-      );
-      // 열화 bit 가 upstream 별로 실제 채워지는지(선언만 하고 안 쓰면 무효).
-      assert.ok(
-        /boxSnapshot\.degraded/.test(src) &&
-          /batterProfile\?\.degraded/.test(src) &&
-          /pitcherProfile\?\.degraded/.test(src),
-        "열화 bit 가 box/batter/pitcher 전부에서 수집되지 않음",
-      );
-      assert.ok(
-        /degraded: true/.test(src),
-        "fail-close 반환 경로가 degraded 를 표시하지 않음",
+        /edgeCacheHeadersForRemaining/.test(relaySrc),
+        "relay 가 엣지 캐시를 잃음 — 절감 효과가 사라진다",
       );
     },
   );

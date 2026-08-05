@@ -26,6 +26,21 @@
  *   `edgeCacheHeadersForRemaining()` 이 그 계산을 맡고, 남은 수명이 1초 미만이면
  *   캐시하지 않는다(no-store). 이러면 총 age 상한이 route TTL 하나로 묶인다.
  *
+ * ── 적용 대상 계약 (삼순 NO-GO 2026-08-06 ①) ────────────────────────────
+ * ⚠️ **동등한 내부 TTL 이 이미 있는 route 에만 엣지 캐시를 붙인다.**
+ *
+ * relay 는 원래부터 프로세스 내부 2초 캐시가 있었다. 그래서 엣지 2초는 새로운
+ * 지연을 만들지 않고, 같은 2초를 여러 lambda 가 각자 감당하던 것을 엣지가 한 번
+ * 감당하도록 바꾸는 것뿐이다(신선도 저하 0).
+ *
+ * 반면 `game-live`·`contextual-stats` 는 그런 내부 TTL 이 **없다**. 여기에
+ * s-maxage 를 새로 붙이면 점수·이닝·볼카운트·현재 타석이 그 TTL 만큼 **실제로 더
+ * 낡아진다** — 이는 "활성 유저 신선도 저하 0" 하드 제약 위반이다.
+ * 처음 이 모듈은 두 route 에도 5초를 붙였고, 그건 틀렸다.
+ *
+ * → 이 두 route 는 엣지 캐시 대상이 아니며 항상 no-store 다. 이들에 엣지 캐시를
+ *   붙이려면 먼저 route 내부 TTL 을 도입해 동치를 만든 뒤 별도 PR 로 해야 한다.
+ *
  * ── 캐시 금지 축 ─────────────────────────────────────────────────────────
  * degraded(부분 실패로 stale snapshot 이 섞인) 응답과 에러 응답은 절대
  * 캐시하지 않는다. 캐시하면 TTL 동안 열화 응답이 고정되어 다음 폴링의
@@ -35,9 +50,6 @@
 
 /** `game-relay` 엣지 TTL. route 내부 CACHE_TTL_MS(2,000ms)와 동일해야 한다. */
 export const RELAY_EDGE_TTL_SECONDS = 2;
-
-/** 경기 목록/맥락 통계처럼 relay 보다 느리게 바뀌는 라이브 API TTL. */
-export const LIVE_LIST_EDGE_TTL_SECONDS = 5;
 
 /** 열화·에러 응답용. 엣지·브라우저 모두 캐시 금지. */
 export const NO_STORE_HEADERS: Record<string, string> = {

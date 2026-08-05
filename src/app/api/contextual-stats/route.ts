@@ -48,9 +48,7 @@ import type {
 import type { KboRawGame } from "@/types/api";
 import { fetchKboLiveGames } from "@/lib/notifications/kbo-live-games";
 import {
-  LIVE_LIST_EDGE_TTL_SECONDS,
   NO_STORE_HEADERS,
-  liveCacheHeaders,
 } from "@/lib/http/live-cache";
 
 export const dynamic = "force-dynamic";
@@ -86,6 +84,13 @@ interface ProfileBundle {
 
 const profileCache = new Map<string, { bundle: ProfileBundle; expiresAt: number }>();
 const PROFILE_TTL_MS = 60 * 60 * 1000;
+/**
+ * 부분열화 bundle 의 짧은 재시도 TTL(삼순 NO-GO 2026-08-06 ②).
+ *
+ * 열화 bundle 을 1시간 캐시하면 upstream 이 복구돼도 다음 폴링이 재조회하지 않아
+ * 유저 화면이 계속 비어 있다. 3초면 다음 폴링 주기에 자연히 재시도된다.
+ */
+const PROFILE_DEGRADED_RETRY_MS = 3_000;
 
 function profileKey(role: "batter" | "pitcher", playerId: string): string {
   return `${role}:${playerId}`;
@@ -192,15 +197,26 @@ async function loadProfile(
 
   const handedness = basicHtml ? parseHandedness(basicHtml) : { bat: null, throws: null };
 
-  // basic/situation 중 하나라도 못 받았으면 열화다(둘 다 null 이면 완전 실패).
-  const bundle: ProfileBundle = {
-    basic, situation, handedness,
-    degraded: basicHtml === null || situationHtml === null,
-  };
-  // Upstream 전체 장애/timeout의 빈 결과를 1시간 캐시하면 복구 뒤에도 UI가 계속 비게 된다.
-  if (basicHtml !== null || situationHtml !== null) {
-    profileCache.set(key, { bundle, expiresAt: Date.now() + PROFILE_TTL_MS });
-  }
+  // 열화 판정은 **fetch 실패뿐 아니라 parse 실패도** 포함한다(삼순 NO-GO ②).
+  // basicHtml 을 받아왔어도 parse 가 null 이면 내용상 비어 있는 것이라 같은 열화다.
+  const situationEmpty =
+    situation.bases.length === 0 &&
+    situation.byHand.length === 0 &&
+    situation.byOuts.length === 0;
+  const degraded =
+    basicHtml === null || situationHtml === null || basic === null || situationEmpty;
+
+  const bundle: ProfileBundle = { basic, situation, handedness, degraded };
+
+  // ⚠️ 부분열화 bundle 을 1시간 캐시하면 다음 폴링이 재조회를 안 해서 자가복구가
+  //    막힌다(삼순 NO-GO ②). 완전 정상일 때만 full TTL 을 주고, 열화 상태는
+  //    짧은 재시도 TTL 만 준다 — 그래야 upstream 복구 직후 다음 폴링이 정상값을
+  //    가져온다. 재시도 TTL 을 0 이 아니라 짧게 두는 이유는 KBO 장애 중 매 폴링이
+  //    upstream 을 두드려 route deadline 을 태우는 것을 막기 위함이다.
+  profileCache.set(key, {
+    bundle,
+    expiresAt: Date.now() + (degraded ? PROFILE_DEGRADED_RETRY_MS : PROFILE_TTL_MS),
+  });
   return bundle;
 }
 
@@ -547,11 +563,13 @@ export async function GET(req: NextRequest) {
     fetchedAt: new Date().toISOString(),
     empty,
   };
-  // 완전히 채워진 응답만 엣지에 올린다.
-  // - `empty`: 상대 매핑 실패·라이브 미조회 → 빈 박스가 TTL 동안 고정됨
-  // - `degraded`: upstream 일부 실패로 한 줄만 남은 부분열화 → 자가복구를 막음
-  // 둘 중 하나라도 참이면 no-store(fail-close).
-  return NextResponse.json(response, {
-    headers: liveCacheHeaders(!empty && !degraded, LIVE_LIST_EDGE_TTL_SECONDS),
-  });
+  // ⚠️ 이 route 는 **엣지 캐시 대상이 아니다**(삼순 NO-GO 2026-08-06 ①).
+  // relay 와 달리 동등한 route 내부 TTL 이 없어서, s-maxage 를 새로 붙이면
+  // 볼카운트·주자·현재 타석이 그 TTL 만큼 실제로 더 낡아진다 =
+  // "활성 유저 신선도 저하 0" 하드 제약 위반. 이 PR 이 5초를 붙였던 건 틀렸다.
+  //
+  // degraded 는 캐시 판정용으로는 더 이상 쓰이지 않지만, 부분열화를 내부 캐시에
+  // 넣지 않는 계약(loadProfile)의 근거로 계속 계산한다.
+  void degraded;
+  return NextResponse.json(response, { headers: NO_STORE_HEADERS });
 }
