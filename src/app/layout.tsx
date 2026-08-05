@@ -9,7 +9,6 @@ import { PageViewTracker } from "@/components/PageViewTracker";
 import { ClientErrorMount } from "@/components/ClientErrorMount";
 import { DwellTracker } from "@/components/DwellTracker";
 import AuthErrorNotice from "@/components/auth/AuthErrorNotice";
-import { Analytics } from "@vercel/analytics/next";
 
 const GA_ID = "G-C0TE4TFLZ4";
 const GADS_ID = "AW-18082281693";
@@ -162,7 +161,6 @@ export default function RootLayout({
             `,
           }}
         />
-        <Analytics />
       </body>
     </html>
   );

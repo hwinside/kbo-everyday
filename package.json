@@ -337,7 +337,6 @@
     "@supabase/ssr": "^0.8.0",
     "@supabase/supabase-js": "^2.98.0",
     "@tanstack/react-virtual": "^3.13.19",
-    "@vercel/analytics": "^1.6.1",
     "browser-image-compression": "^2.0.2",
     "canvas-confetti": "^1.9.4",
     "clsx": "^2.1.1",
