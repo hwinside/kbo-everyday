@@ -1590,7 +1590,8 @@ async function answerPlayerDescriptiveQuestion(
   if (validated.kind !== "grounded") return failClose();
   const answer = composeRagAnswer(validated.answer, evidence[0]);
   // 본문에는 표시명만 들어간다. 링크는 payload 로 실어 클라가 그 문구에 앵커를 씌운다.
-  const { url: sourceUrl } = displayProvenanceOf(evidence[0]);
+  // allowlist 밖이면 null — payload 에도 링크를 싣지 않는다.
+  const sourceUrl = displayProvenanceOf(evidence[0])?.url;
   await deps.log({ userId, question, questionNorm, matchPath: "rag", answer, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
   return { status: 200, answer, source: "rag", remaining, sourceUrl };
 }
@@ -1675,7 +1676,8 @@ async function answerOfficialDocumentQuestion(
   }
   const answer = composeRagAnswer(validated.answer, evidence[0]);
   // 본문에는 표시명만 들어간다. 링크는 payload 로 실어 클라가 그 문구에 앵커를 씌운다.
-  const { url: sourceUrl } = displayProvenanceOf(evidence[0]);
+  // allowlist 밖이면 null — payload 에도 링크를 싣지 않는다.
+  const sourceUrl = displayProvenanceOf(evidence[0])?.url;
   await deps.log({ userId, question, questionNorm, matchPath: "rag", answer, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
   return { status: 200, answer, source: "rag", remaining, sourceUrl };
 }

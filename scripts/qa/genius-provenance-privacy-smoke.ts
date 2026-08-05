@@ -85,13 +85,13 @@ check("구 표기 상세 — 본문 분리 + 링크 복원", () => {
 });
 
 check("구 표기 목록 미리보기 — 출처 줄 통째로 제거 (삼순 P0-1)", () => {
-  const preview = stripProvenanceForPreview(LEGACY_BODY);
+  const preview = stripProvenanceForPreview(LEGACY_BODY, true);
   assert.deepEqual(findLeakedInternalMeta(preview), [], `미리보기에 내부 메타 잔존: ${preview}`);
   assert.equal(preview.includes("📄 출처"), false, "미리보기엔 출처 줄 자체가 없어야 한다");
-  assert.equal(stripProvenanceForPreview(CURRENT_BODY).includes("출처"), false);
+  assert.equal(stripProvenanceForPreview(CURRENT_BODY, true).includes("출처"), false);
   // null/undefined 도 안전해야 한다 — 목록은 last_message 가 null 일 수 있다.
-  assert.equal(stripProvenanceForPreview(null), "");
-  assert.equal(stripProvenanceForPreview(undefined), "");
+  assert.equal(stripProvenanceForPreview(null, true), "");
+  assert.equal(stripProvenanceForPreview(undefined, true), "");
 });
 
 check("신규 표기 — 표시명 분리 + payload 링크 결합", () => {
@@ -163,9 +163,20 @@ check("구 본문의 허용 밖 URL 은 링크 없이 fail-close", () => {
   assert.equal(provenance, null, "허용 밖 URL 이 링크가 되면 안 된다");
 });
 
-check("displayProvenanceOf 는 허용 밖이면 링크를 비운다", () => {
-  const result = displayProvenanceOf({ canonicalUrl: "https://evil.example/x", sourceGrade: "tier2" });
-  assert.equal(result.url, "", "허용 밖 URL 을 링크로 내보내면 안 된다");
+check("허용 밖 canonical 은 출처 자체가 null — 라벨을 지어내지 않는다 (삼순 P0-1)", () => {
+  // 종전 구현은 tier2 면 `나무위키`, tier1 이면 `KBO 공식 자료` 로 폴백했다.
+  // 그건 어디서 왔는지 모르는 근거에 유명 출처 이름을 붙이는 것이라 링크 노출보다 나쁘다.
+  for (const grade of ["tier1", "tier2", undefined] as const) {
+    const result = displayProvenanceOf({ canonicalUrl: "https://evil.example/x", sourceGrade: grade });
+    assert.equal(result, null, `허용 밖인데 출처가 생성됐다(grade=${String(grade)}): ${JSON.stringify(result)}`);
+  }
+  // 서빙 문자열에도 출처 줄 자체가 안 붙어야 한다.
+  const answer = composeRagAnswer("답변입니다.", {
+    content: "근거", pageTitle: "x", canonicalUrl: "https://evil.example/x",
+    revision: "r", sectionPath: "본문", asOf: "2026-08-02", sourceGrade: "tier1",
+  });
+  assert.equal(answer.includes("출처"), false, `허용 밖 근거에 출처 표기가 붙었다: ${answer}`);
+  assert.equal(answer.includes(PROVENANCE_LABELS.official), false, "거짓 라벨이 붙으면 안 된다");
 });
 
 // ── 4. actual wiring — 화면 컴포넌트가 그 함수를 실제로 쓰는가 ──────────────────
@@ -192,32 +203,51 @@ function assertImportsFrom(filePath: string, expectedNames: string[]): void {
   }
 }
 
-/** 식별자가 그 파일에서 **실제로 호출**되는지. import 만 해두고 안 쓰면 의미가 없다. */
-function assertCalled(filePath: string, name: string): void {
+/**
+ * 식별자가 **JSX 렌더 트리 안에서** 그 인자로 실제로 호출되는지 (삼순 P0-2).
+ *
+ * 종전 구현은 "파일 어딘가에서 1회 호출"만 봤다. 그러면 decoy 로
+ * `stripProvenanceForPreview("")` 를 한 줄 남겨두고 실제 렌더는 raw 값을 alias 로
+ * 그려도 GREEN 이다. 그래서 **JsxExpression 안에서** 호출되고 **기대 인자 식별자**를
+ * 받는지까지 고정한다.
+ */
+function assertCalledInJsxWithArg(filePath: string, fn: string, argMatcher: RegExp): void {
   const abs = path.join(process.cwd(), filePath);
   const source = ts.createSourceFile(abs, readFileSync(abs, "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-  let called = false;
-  const visit = (node: ts.Node): void => {
-    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === name) {
-      called = true;
+  let ok = false;
+  const findCall = (node: ts.Node): void => {
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === fn) {
+      const firstArg = node.arguments[0];
+      if (firstArg && argMatcher.test(firstArg.getText(source))) ok = true;
     }
+    ts.forEachChild(node, findCall);
+  };
+  const visit = (node: ts.Node): void => {
+    // JSX 표현식({ ... }) 안쪽만 대상으로 한다 — 렌더에 실제로 쓰이는 자리.
+    if (ts.isJsxExpression(node)) findCall(node);
     ts.forEachChild(node, visit);
   };
   visit(source);
-  assert.equal(called, true, `${filePath} 에서 ${name}() 이 실제로 호출돼야 한다`);
+  assert.equal(ok, true, `${filePath} 의 JSX 안에서 ${fn}(${argMatcher.source}) 이 호출돼야 한다`);
 }
 
 const DETAIL_PAGE = "src/app/(main)/messages/[conversationId]/page.tsx";
 const LIST_PAGE = "src/app/(main)/messages/page.tsx";
 
-check("쪽지 상세가 splitProvenanceForDisplay 를 실제로 호출", () => {
+check("쪽지 상세가 msg.content 로 splitProvenanceForDisplay 를 실제 호출", () => {
   assertImportsFrom(DETAIL_PAGE, ["splitProvenanceForDisplay"]);
-  assertCalled(DETAIL_PAGE, "splitProvenanceForDisplay");
+  // 상세는 JSX 밖(파생 변수)에서 호출하므로 인자 결속만 고정한다.
+  const abs = path.join(process.cwd(), DETAIL_PAGE);
+  const raw = readFileSync(abs, "utf8");
+  assert.match(raw, /splitProvenanceForDisplay\(\s*msg\.content/, "실제 메시지 본문을 넘겨야 한다");
+  // 그리고 그 결과가 렌더에 쓰여야 한다.
+  assertCalledInJsxWithArg(DETAIL_PAGE, "linkifyText", /displayContent/);
 });
 
-check("쪽지 목록이 stripProvenanceForPreview 를 실제로 호출 (삼순 P0-1)", () => {
+check("쪽지 목록이 JSX 안에서 last_message 로 호출 (삼순 P0-1·P0-2)", () => {
   assertImportsFrom(LIST_PAGE, ["stripProvenanceForPreview"]);
-  assertCalled(LIST_PAGE, "stripProvenanceForPreview");
+  // decoy 호출을 남기고 raw 값을 alias 로 렌더하면 GREEN 이던 구멍을 막는다.
+  assertCalledInJsxWithArg(LIST_PAGE, "stripProvenanceForPreview", /conv\.last_message/);
 });
 
 check("목록이 last_message 를 정규화 없이 그대로 렌더하지 않는다", () => {
@@ -228,6 +258,18 @@ check("목록이 last_message 를 정규화 없이 그대로 렌더하지 않는
     false,
     "목록이 last_message 를 정규화 없이 렌더하고 있다",
   );
+});
+
+check("일반 DM 은 정규화 대상이 아니다 (삼순 P1)", () => {
+  // 유저가 쓴 문장이 우연히 출처 suffix 모양이면 잘려나간다. 야잘알봇 대화에만 적용한다.
+  const userText = "이거 봐봐\n\n📄 출처: 나무위키";
+  assert.equal(stripProvenanceForPreview(userText), userText, "일반 DM 이 잘렸다");
+  assert.equal(stripProvenanceForPreview(userText, false), userText);
+  // 야잘알봇 대화로 명시했을 때만 잘라낸다.
+  assert.equal(stripProvenanceForPreview(userText, true), "이거 봐봐");
+  // legacy 본문도 마찬가지 — 일반 DM 이면 손대지 않는다.
+  assert.equal(stripProvenanceForPreview(LEGACY_BODY), LEGACY_BODY);
+  assert.equal(stripProvenanceForPreview(LEGACY_BODY, true).includes("crawled"), false);
 });
 
 check("금칙 판정기가 실제로 검출력을 갖는다", () => {

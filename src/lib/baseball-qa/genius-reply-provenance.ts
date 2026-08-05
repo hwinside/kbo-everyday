@@ -64,18 +64,19 @@ export function resolveAllowedSource(rawUrl: string | null | undefined): Display
   return { label, url: parsed.toString() };
 }
 
-/** 근거 한 건에서 유저 노출 출처를 만든다. allowlist 밖이면 링크 없이 표시명만. */
+/**
+ * 근거 한 건에서 유저 노출 출처를 만든다.
+ *
+ * ⚠️ allowlist 밖이면 **null 이다** (삼순 P0-1, 2026-08-05). 종전 구현은 tier2 면 `나무위키`,
+ * tier1 이면 `KBO 공식 자료` 로 폴백했는데, 그건 **출처를 지어내는 것**이다. 실제로는
+ * 어디서 왔는지 모르는 근거에 유명 출처 이름을 붙이는 셈이라 링크 노출보다 더 나쁘다.
+ * 모르면 출처를 안 붙인다.
+ */
 export function displayProvenanceOf(evidence: {
   canonicalUrl: string;
   sourceGrade?: string;
-}): DisplayProvenance {
-  const allowed = resolveAllowedSource(evidence.canonicalUrl);
-  if (allowed) return allowed;
-  // 링크는 못 걸어도 tier1 이면 공식 자료임은 사실이다. 그 외는 표시할 것이 없다.
-  return {
-    label: evidence.sourceGrade === "tier1" ? PROVENANCE_LABELS.official : PROVENANCE_LABELS.namu,
-    url: "",
-  };
+}): DisplayProvenance | null {
+  return resolveAllowedSource(evidence.canonicalUrl);
 }
 
 const LABEL_ALTERNATION = Object.values(PROVENANCE_LABELS).join("|");
@@ -112,9 +113,10 @@ export function splitProvenanceForDisplay(
   if (current) {
     const body = content.slice(0, current.index).trimEnd();
     const allowed = resolveAllowedSource(payloadSourceUrl);
+    // 링크를 검증하지 못하면 표시명만 남긴다. 본문이 이미 그 이름을 달고 나갔으므로
+    // 이름 자체는 지어낸 값이 아니다 — 다만 클릭 가능한 링크는 만들지 않는다.
     return {
       body,
-      // 링크가 없거나 allowlist 밖이면 표시명만 남긴다 — 링크 없는 출처도 출처다.
       provenance: allowed ?? { label: current[1] as ProvenanceLabel, url: "" },
     };
   }
@@ -128,8 +130,16 @@ export function splitProvenanceForDisplay(
  * payload 가 없는 경로(목록 API 는 `last_message` 문자열만 준다)에서도 동작해야 하므로
  * 인자를 본문 하나만 받는다.
  */
-export function stripProvenanceForPreview(content: string | null | undefined): string {
+export function stripProvenanceForPreview(
+  content: string | null | undefined,
+  /**
+   * 야잘알봇 대화인가. **기본값은 false** — 일반 DM 은 절대 건드리지 않는다(삼순 P1).
+   * 정상 유저 문장이 우연히 출처 suffix 와 같은 모양이면 잘려나가기 때문이다.
+   */
+  isGeniusConversation = false,
+): string {
   if (!content) return "";
+  if (!isGeniusConversation) return content;
   return splitProvenanceForDisplay(content).body;
 }
 

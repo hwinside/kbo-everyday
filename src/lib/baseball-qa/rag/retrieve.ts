@@ -461,7 +461,9 @@ export function validateRagResponse(
  * 내부 메타(revision·crawledAt·asOf·전체 URL·sectionPath)는 여기 절대 넣지 않는다.
  */
 export function formatProvenance(evidence: RagEvidence): string {
-  return `\n\n📄 출처: ${displayProvenanceOf(evidence).label}`;
+  const provenance = displayProvenanceOf(evidence);
+  // allowlist 밖 canonical 은 출처를 지어내지 않는다 — 표기 자체를 붙이지 않는다(삼순 P0-1).
+  return provenance ? `\n\n📄 출처: ${provenance.label}` : "";
 }
 
 /** 모델 답변 + 출처 표기를 합친 최종 서빙 문자열. */
