@@ -1,4 +1,5 @@
 import type { MatchPath } from "@/lib/baseball-qa/pipeline";
+import { resolveAllowedSource } from "@/lib/baseball-qa/genius-reply-provenance";
 
 /** 야잘알봇 시스템 계정. 배포 전 동일 UUID의 auth/profiles 계정을 프로비저닝한다. */
 export const BASEBALL_GENIUS_USER_ID = "45ae7419-6a9a-4c6b-9101-8d65df7e242e";
@@ -211,9 +212,10 @@ export function isGeniusReplyPayload(p: unknown): p is GeniusReplyPayload {
   if (obj.reply_kind === "picker" && obj.picker_options === undefined) return false;
   if (obj.reply_kind === "picker" &&
       (!Number.isSafeInteger(obj.question_message_id) || Number(obj.question_message_id) < 1)) return false;
-  // 입력이 외부에서 오므로 스키마가 맞아도 **https 가 아니면 거절**한다.
-  // `javascript:` 를 그대로 href 에 실으면 클릭 시 스크립트가 도는 경로가 된다.
+  // 입력이 외부에서 오므로 **allowlist hostname 을 실제 URL 파서로 대조**한다 (삼순 P0-2).
+  // `https://` 접두 문자열 검사는 `https://namu.wiki@evil.com/` 같은 형태에 뚫리고,
+  // 임의 외부 주소가 그대로 출처 링크가 되면서 `KBO 공식 자료` 라벨까지 달릴 수 있다.
   if (obj.source_url !== undefined &&
-      (typeof obj.source_url !== "string" || !obj.source_url.startsWith("https://"))) return false;
+      (typeof obj.source_url !== "string" || resolveAllowedSource(obj.source_url) === null)) return false;
   return true;
 }

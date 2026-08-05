@@ -278,7 +278,9 @@ async function main() {
     });
 
     for (const c of PROVENANCE_CASES) {
-      const hit = provObserved.rows.find((r) => r.anchorText === c.expectLabel && r.href === c.expectHref);
+      const hit = provObserved.rows.find(
+        (r) => r.anchorText === `📄 출처: ${c.expectLabel}` && r.href === c.expectHref,
+      );
       ok(
         `[${c.label}] 출처가 '${c.expectLabel}' 표시명 + 하이퍼링크로 렌더`,
         !!hit,

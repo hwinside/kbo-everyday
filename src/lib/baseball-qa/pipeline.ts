@@ -12,13 +12,13 @@ import { normalizeKey, normalizeQuestion } from "./normalize";
 import {
   allowsNumericAnswer,
   composeRagAnswer,
-  displayProvenanceOf,
   isDescriptivePlayerQuestion,
   selectEvidence,
   validateRagResponse,
   type RagEvidence,
   type RagPlayerCandidate,
 } from "./rag/retrieve";
+import { displayProvenanceOf } from "./genius-reply-provenance";
 import {
   composeSeasonRecordAnswer,
   isServedOnlyMetric,

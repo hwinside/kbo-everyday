@@ -29,7 +29,7 @@ import {
   isGeniusReplyPayload,
   mascotStateForReplyKind,
 } from "@/lib/constants/baseball-genius";
-import { splitProvenanceForDisplay } from "@/lib/baseball-qa/rag/retrieve";
+import { splitProvenanceForDisplay } from "@/lib/baseball-qa/genius-reply-provenance";
 
 const REPORT_CATEGORIES = [
   { id: "spam", label: "스팸" },
@@ -459,7 +459,7 @@ export default function DMChatPage() {
                         전체 URL·revision·crawledAt 은 화면에 나오지 않는다 (하린아빠 2026-08-05 P0). */}
                     {provenance ? (
                       <p className="mt-2 text-xs text-text-secondary" data-testid="genius-provenance">
-                        📄 출처:{" "}
+                        {/* 하린아빠 지시: `출처: 나무위키` **문구 전체**를 링크로 묶는다. */}
                         {provenance.url ? (
                           <a
                             href={provenance.url}
@@ -468,10 +468,10 @@ export default function DMChatPage() {
                             className="underline"
                             data-testid="genius-provenance-link"
                           >
-                            {provenance.label}
+                            {`📄 출처: ${provenance.label}`}
                           </a>
                         ) : (
-                          provenance.label
+                          `📄 출처: ${provenance.label}`
                         )}
                       </p>
                     ) : null}

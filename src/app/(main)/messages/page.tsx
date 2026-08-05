@@ -13,6 +13,7 @@ import { supabase } from "@/lib/supabase/client";
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { BASEBALL_GENIUS_USER_ID } from "@/lib/constants/baseball-genius";
+import { stripProvenanceForPreview } from "@/lib/baseball-qa/genius-reply-provenance";
 
 function timeAgo(dateStr: string) {
   const diff = Date.now() - new Date(dateStr).getTime();
@@ -135,7 +136,11 @@ export default function MessagesPage() {
                     )}
                   </div>
                   <div className="flex items-center justify-between mt-0.5">
-                    <p className="text-xs text-text-secondary truncate">{conv.last_message || "대화를 시작해보세요"}</p>
+                    <p className="text-xs text-text-secondary truncate" data-testid="dm-preview">
+                      {/* 목록 미리보기도 출처 줄을 떼어낸다 — 상세만 정규화하면 여기 `rev crawled:…` 가
+                          그대로 남는다(삼순 P0-1). 앵커를 그릴 자리가 없으므로 본문만 보여준다. */}
+                      {stripProvenanceForPreview(conv.last_message) || "대화를 시작해보세요"}
+                    </p>
                     {conv.unread_count > 0 && (
                       <span className="ml-2 flex-shrink-0 w-5 h-5 rounded-full bg-accent flex items-center justify-center text-[10px] font-bold text-white">
                         {conv.unread_count > 9 ? "9+" : conv.unread_count}
