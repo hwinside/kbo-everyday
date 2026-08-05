@@ -54,7 +54,7 @@ export default function TabBar() {
           const active = isActive(tab.href);
           const Icon = tab.icon;
           return (
-            <Link
+            <Link prefetch={false}
               key={tab.href}
               href={tab.href}
               className={clsx(
