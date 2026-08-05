@@ -202,10 +202,16 @@ async function run(): Promise<void> {
     const green = await answerQuestion("u1", "문보경 별명이 뭐야?", deps);
     assert.equal(green.source, "rag", `GREEN 실패: source=${green.source}`);
     assert.match(green.answer, /문학소년/);
-    assert.match(green.answer, /출처:/);
-    assert.match(green.answer, /namu\.wiki/);
-    assert.match(green.answer, /rev etag:abc123/);
-    assert.match(green.answer, /2026-08-01 기준/);
+    // 출처는 **표시명만** 본문에 남는다 (하린아빠 2026-08-05 P0).
+    assert.match(green.answer, /📄 출처: 나무위키$/);
+    // ⚠️ 유저에게 나가면 안 되는 내부 메타 — 하나라도 새면 RED.
+    assert.doesNotMatch(green.answer, /crawled/i, "수집 사실을 화면에 적으면 안 된다");
+    assert.doesNotMatch(green.answer, /rev\s/, "revision 은 내부 provenance 다");
+    assert.doesNotMatch(green.answer, /기준/, "asOf 날짜는 유저가 볼 이유가 없다");
+    assert.doesNotMatch(green.answer, /https?:\/\//, "전체 URL 은 본문에 노출하지 않는다");
+    assert.doesNotMatch(green.answer, /namu\.wiki/, "도메인도 본문에 노출하지 않는다");
+    // 링크는 payload 로 간다 — 클라가 표시명에 앵커를 씌운다.
+    assert.equal(green.sourceUrl, MOON_EVIDENCE.canonicalUrl, "근거 링크는 payload 로 전달해야 한다");
     assert.equal(logs.at(-1)?.matchPath, "rag");
     console.log(`GREEN 문보경 별명이 뭐야? → rag\n      ${green.answer.replace(/\n+/g, " | ")}`);
   }
@@ -1447,10 +1453,12 @@ async function verifyBoundedNamuSubdocumentCrawl(): Promise<void> {
       "문보경", "문보경/선수 경력", "문보경/선수 경력/2024년",
     ], "sectionPath에 실제 계층 경로가 기록되어야 한다");
     assert.equal(fetchedUrls.some((url) => url.includes("최정")), false, "prefix 밖 문서를 fetch하면 안 된다");
-    assert.match(
+    // sectionPath 는 내부 provenance 로만 남는다 — 유저 노출 표기에는 표시명만 들어간다
+    // (하린아빠 2026-08-05 P0). 계층이 실제로 기록되는지는 위 documents 단언이 고정한다.
+    assert.doesNotMatch(
       composeRagAnswer("경력 답변입니다.", { ...MOON_EVIDENCE, sectionPath: crawl.documents[2].sectionPath }),
       /문보경\/선수 경력\/2024년/,
-      "계층 sectionPath가 최종 출처 표기에 보여야 한다",
+      "내부 sectionPath 가 유저 노출 출처 표기에 새면 안 된다",
     );
   }
 
@@ -1996,8 +2004,9 @@ async function verifyServingContractOnRealDb(): Promise<void> {
   const ranked = rankEvidenceByQuery(rows, JSON.parse(embedding) as number[]);
   assert.equal(ranked.length, 1);
   const finalAnswer = composeRagAnswer("문보경 선수의 별명은 문학소년이에요.", selectEvidence(ranked)[0]);
-  assert.match(finalAnswer, /출처: 문보경/);
-  assert.match(finalAnswer, /rev rev1/);
+  assert.match(finalAnswer, /📄 출처: 나무위키$/);
+  assert.doesNotMatch(finalAnswer, /rev\s|crawled|https?:\/\//i,
+    "실 DB 경로에서도 내부 메타가 본문에 새면 안 된다");
 
   // 4) source-priority bounded fetch — Namu 41건 뒤 Wikipedia 1건도 DB 절단 전에 보존한다.
   const wikipediaUrl = unresolvedSource.candidate_urls[0];

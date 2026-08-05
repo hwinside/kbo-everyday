@@ -29,6 +29,7 @@ import {
   isGeniusReplyPayload,
   mascotStateForReplyKind,
 } from "@/lib/constants/baseball-genius";
+import { splitProvenanceForDisplay } from "@/lib/baseball-qa/rag/retrieve";
 
 const REPORT_CATEGORIES = [
   { id: "spam", label: "스팸" },
@@ -406,6 +407,14 @@ export default function DMChatPage() {
             // 동명이인 선택 카드. 선택은 표시값이 아니라 kbo_id 로 보낸다.
             const pickerOptions =
               geniusReply?.reply_kind === "picker" ? geniusReply.picker_options ?? null : null;
+            // 출처 표기 — 본문에는 `📄 출처: 나무위키` 표시명만 있고 링크는 payload 로 온다.
+            // ⚠️ 이미 발송된 과거 답변은 본문에 `(전체URL) · rev crawled:… · … 기준` 이 그대로
+            // 남아 있다. 저장 행을 UPDATE 하지 않고 **표시 시점에** 잘라낸다(원본 보존·롤백 가능).
+            const split = geniusReply && msg.content
+              ? splitProvenanceForDisplay(msg.content, geniusReply.source_url)
+              : null;
+            const displayContent = split ? split.body : msg.content;
+            const provenance = split?.provenance ?? null;
             return (
               <motion.div
                 key={msg.id}
@@ -443,8 +452,28 @@ export default function DMChatPage() {
                         : "bg-bg-tertiary text-text-primary rounded-bl-md"
                     }`}
                   >
-                    {msg.content ? (
-                      <p className="whitespace-pre-wrap break-words">{linkifyText(msg.content)}</p>
+                    {displayContent ? (
+                      <p className="whitespace-pre-wrap break-words">{linkifyText(displayContent)}</p>
+                    ) : null}
+                    {/* 출처는 본문에서 떼어 별도 줄로 그린다 — 표시명만 보이고 링크는 앵커에 숨는다.
+                        전체 URL·revision·crawledAt 은 화면에 나오지 않는다 (하린아빠 2026-08-05 P0). */}
+                    {provenance ? (
+                      <p className="mt-2 text-xs text-text-secondary" data-testid="genius-provenance">
+                        📄 출처:{" "}
+                        {provenance.url ? (
+                          <a
+                            href={provenance.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="underline"
+                            data-testid="genius-provenance-link"
+                          >
+                            {provenance.label}
+                          </a>
+                        ) : (
+                          provenance.label
+                        )}
+                      </p>
                     ) : null}
                     {pickerOptions ? (
                       <GeniusPlayerPicker

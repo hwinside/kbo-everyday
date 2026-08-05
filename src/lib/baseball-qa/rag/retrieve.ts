@@ -447,12 +447,106 @@ export function validateRagResponse(
   return { kind: "grounded", answer };
 }
 
-/** 서빙 답변에 붙는 출처 표기 — 모델 출력이 아니라 신뢰 가능한 provenance에서 조립한다. */
+/**
+ * 유저에게 보이는 출처 **표시명**. 도메인에서 결정론적으로 유도한다.
+ *
+ * ⚠️ 2026-08-05 하린아빠 P0: 이전 표기는 `rev crawled:2026-08-02T02:59:26.899Z · 2026-08-02 기준`
+ * 처럼 **내부 수집 메타데이터를 그대로 노출**했다. 특히 `crawled` 는 우리가 외부 문서를
+ * 긁어온다는 사실을 유저 화면에 적어놓는 것이라 위험하다. 전체 URL 노출도 같은 이유로 뺀다.
+ * revision·crawledAt·asOf 는 **내부 provenance 로만 유지**한다 — 감사·중복제거·정합성 검증에
+ * 계속 쓰이므로 데이터에서 지우는 게 아니라 **표시에서만** 뺀다.
+ */
+export const PROVENANCE_LABELS = {
+  namu: "나무위키",
+  wikipedia: "위키백과",
+  official: "KBO 공식 자료",
+  other: "참고 자료",
+} as const;
+export type ProvenanceLabel = (typeof PROVENANCE_LABELS)[keyof typeof PROVENANCE_LABELS];
+
+/** 유저 노출용 출처 한 건 — 표시명과 링크뿐이다. 내부 메타는 담지 않는다. */
+export interface DisplayProvenance {
+  label: ProvenanceLabel;
+  url: string;
+}
+
+export function provenanceLabelOf(evidence: RagEvidence): ProvenanceLabel {
+  if (evidence.sourceGrade === "tier1") return PROVENANCE_LABELS.official;
+  if (evidence.canonicalUrl.startsWith("https://namu.wiki/")) return PROVENANCE_LABELS.namu;
+  if (/^https:\/\/[a-z-]+\.wikipedia\.org\//.test(evidence.canonicalUrl)) return PROVENANCE_LABELS.wikipedia;
+  return PROVENANCE_LABELS.other;
+}
+
+/** 답변 payload 에 실을 출처. 클라가 `출처: 나무위키` 를 하이퍼링크로 렌더한다. */
+export function displayProvenanceOf(evidence: RagEvidence): DisplayProvenance {
+  return { label: provenanceLabelOf(evidence), url: evidence.canonicalUrl };
+}
+
+/**
+ * 답변 본문에 붙는 출처 표기.
+ *
+ * payload 를 못 읽는 경로(구버전 클라·알림 미리보기·CS 조회)에서도 출처가 사라지면 안 되므로
+ * **표시명만** 본문에 남긴다. 링크는 payload 로 가고 클라가 이 문자열에 앵커를 씌운다.
+ * 내부 메타(revision·crawledAt·asOf·전체 URL)는 여기 절대 넣지 않는다.
+ */
 export function formatProvenance(evidence: RagEvidence): string {
-  const section = evidence.sectionPath && evidence.sectionPath !== "본문" && evidence.sectionPath !== evidence.pageTitle
-    ? ` · ${evidence.sectionPath}`
-    : "";
-  return `\n\n📄 출처: ${evidence.pageTitle}${section} (${evidence.canonicalUrl}) · rev ${evidence.revision} · ${evidence.asOf} 기준`;
+  return `\n\n📄 출처: ${provenanceLabelOf(evidence)}`;
+}
+
+/**
+ * 이미 발송된 과거 답변에 남아 있는 **구 표기**를 표시 시점에 제거한다.
+ *
+ * 표기를 바꿔도 `dm_messages` 에 저장된 과거 본문은 그대로라서, 고치지 않으면 유저는
+ * 계속 `rev crawled:…` 를 본다. 저장된 행을 UPDATE 하지 않고 **렌더 단계에서 정규화**한다
+ * (원본 보존 + 롤백 가능). 구 표기 형태:
+ *   `📄 출처: <문서명>[ · <섹션>] (<URL>) · rev <revision> · <YYYY-MM-DD> 기준`
+ */
+const LEGACY_PROVENANCE_LINE = /\n*📄 출처: .*?\((https?:\/\/[^)]+)\)\s*·\s*rev\s+\S+\s*·\s*\d{4}-\d{2}-\d{2} 기준\s*$/;
+
+function labelForUrl(url: string): ProvenanceLabel {
+  if (url.startsWith("https://namu.wiki/")) return PROVENANCE_LABELS.namu;
+  if (/^https:\/\/[a-z-]+\.wikipedia\.org\//.test(url)) return PROVENANCE_LABELS.wikipedia;
+  return PROVENANCE_LABELS.other;
+}
+
+/** 신규 표기(`\n\n📄 출처: 나무위키`) — 표시명만 있고 링크는 payload 에 있다. */
+const CURRENT_PROVENANCE_LINE = new RegExp(
+  `\n*📄 출처: (${Object.values(PROVENANCE_LABELS).join("|")})\\s*$`,
+);
+
+/**
+ * 화면에 그릴 본문과 출처를 분리한다. 신규·구 표기를 **한 함수**로 처리한다.
+ *
+ * 왜 분리하는가: 출처 문구를 본문 안에 두면 표시명을 하이퍼링크로 만들 수 없다
+ * (본문은 평문 렌더다). 그래서 꼬리의 출처 줄을 떼고, 클라가 `<a>` 로 다시 그린다.
+ *
+ * 왜 구 표기까지 여기서 처리하는가: 표기를 바꿔도 `dm_messages` 에 저장된 과거 본문은
+ * 그대로라 `rev crawled:…` 가 계속 보인다. 저장 행을 UPDATE 하지 않고 **표시 시점에**
+ * 정규화한다 — 원본 보존이라 롤백이 가능하고, 대량 UPDATE 사고 위험도 없다.
+ *
+ * 구 표기 형태: `📄 출처: <문서명>[ · <섹션>] (<URL>) · rev <revision> · <YYYY-MM-DD> 기준`
+ */
+export function splitProvenanceForDisplay(
+  content: string,
+  payloadSourceUrl?: string | null,
+): { body: string; provenance: DisplayProvenance | null } {
+  const legacy = content.match(LEGACY_PROVENANCE_LINE);
+  if (legacy) {
+    const url = legacy[1];
+    return {
+      body: content.slice(0, legacy.index).trimEnd(),
+      provenance: { label: labelForUrl(url), url },
+    };
+  }
+  const current = content.match(CURRENT_PROVENANCE_LINE);
+  if (current) {
+    const body = content.slice(0, current.index).trimEnd();
+    // 링크가 없으면(구버전 payload) 표시명만 남긴다 — 링크 없는 출처도 출처다.
+    return payloadSourceUrl
+      ? { body, provenance: { label: current[1] as ProvenanceLabel, url: payloadSourceUrl } }
+      : { body, provenance: { label: current[1] as ProvenanceLabel, url: "" } };
+  }
+  return { body: content, provenance: null };
 }
 
 /** 모델 답변 + 출처 표기를 합친 최종 서빙 문자열. */
